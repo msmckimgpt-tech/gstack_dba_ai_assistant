@@ -14,6 +14,9 @@ import {
   _probeDatasourceConn, _paintDsConnBadge,
   DB_PICKER_SEARCH_MIN, INTERNAL_SCHEMAS, METADATA_SCHEMAS,
 } from "../admin.js?v=dev";
+// hangul-qwerty-search: 한/영 자판을 잘못 둔 채 친 검색어도 찾아준다(`ㅎㅋ`→`gz`).
+//   저장소 단일 primitive — 매핑표를 여기 복제하지 않는다.
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 /* ── Products pane ───────────────────────────────────────────────────── */
 
@@ -459,16 +462,17 @@ async function resetProductDbInsight(product, db) {
 }
 
 function filteredProducts() {
-  const q = (adminState.productSearch || "").toLowerCase().trim();
+  // hangul-qwerty-search: 원문 + 반대 자판 변환본을 함께 부분일치(항목마다 재생성하지 않게 밖에서 1회).
+  const qv = searchVariants(adminState.productSearch);
   return adminState.products.filter((p) => {
     // 계정 탭 filteredAccounts() 와 동형: 상태 필터 먼저, 그다음 검색어 매칭.
     if (adminState.productFilter === "active" && !p.is_active) return false;
     if (adminState.productFilter === "inactive" && p.is_active) return false;
-    if (!q) return true;
+    if (!qv.length) return true;
     return (
-      (p.product_key || "").toLowerCase().includes(q)
-      || (p.name || "").toLowerCase().includes(q)
-      || (p.description || "").toLowerCase().includes(q)
+      matchesAnyVariant((p.product_key || "").toLowerCase(), qv)
+      || matchesAnyVariant((p.name || "").toLowerCase(), qv)
+      || matchesAnyVariant((p.description || "").toLowerCase(), qv)
     );
   });
 }

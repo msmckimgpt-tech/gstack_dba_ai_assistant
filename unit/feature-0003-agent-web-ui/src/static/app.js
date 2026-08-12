@@ -10,6 +10,10 @@ import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSi
 // modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
 export { bindBackdropDismiss };
+// hangul-qwerty-search: 한/영 자판 전환을 잊고 친 검색어(`ㅈ듀` ↔ `web`)도 찾아주는 저장소
+//   단일 primitive. 관리 콘솔(admin.js) 번들과 공유하며 매핑표를 복제하지 않는다.
+import { matchesAnyVariant, searchVariants } from "./hangul-qwerty.js?v=dev";
+export { matchesAnyVariant, searchVariants };
 // attach-diff-syntax: 파일 유형별 구문 하이라이트도 저장소 단일 primitive. SQL 예약어·타입
 // 목록의 **정본이 그 모듈**이며 아래 sqlTokenizeToFragment(답변 말풍선)도 같은 목록을 쓴다 —
 // 목록을 두 벌 두면 예약어를 한쪽에만 추가하는 결함이 예약된다(modal-dismiss 와 같은 이유).
@@ -1534,18 +1538,19 @@ function moveProductDropupFocus(item, key) {
 function filterProductDropupItems(query) {
   const menu = document.getElementById("productDropupMenu");
   if (!menu) return;
-  const q = (query || "").trim().toLowerCase();
+  // hangul-qwerty-search: 원문 + 반대 자판 변환본 후보(항목마다 재생성하지 않게 루프 밖 1회).
+  const qv = searchVariants(query);
   const items = menu.querySelectorAll(".product-dropup-item");
   let visible = 0;
   items.forEach((it) => {
     const hay = it.dataset.search || "";
-    const match = !q || hay.indexOf(q) !== -1;
+    const match = matchesAnyVariant(hay, qv);
     it.classList.toggle("hidden", !match);
     if (match) visible += 1;
   });
   // 검색어가 있고 보이는 항목이 없을 때만 "검색 결과 없음" 노출.
   const noResult = menu.querySelector(".product-dropup-no-result");
-  if (noResult) noResult.classList.toggle("hidden", !(q && visible === 0));
+  if (noResult) noResult.classList.toggle("hidden", !(qv.length && visible === 0));
 }
 
 // TASK-0261 / conn-tristate: datasource 연결(네트워크) 상태 → 배지 클래스/라벨.
@@ -7387,8 +7392,13 @@ function _searchHighlight(text, q) {
   const safeText = escapeHtml(String(text || ""));
   const trimmed = String(q || "").trim();
   if (!trimmed || trimmed.length < 2) return safeText;
+  // hangul-qwerty-search: 서버가 반대 자판 변환본으로 매칭한 결과는 원문 검색어가 본문에
+  //   없다. 원문만 강조하면 "왜 이 결과가 나왔는지" 가 화면에서 사라진다(codex 적대 리뷰 P3).
+  //   후보 집합 전체를 하나의 교대 패턴으로 강조한다(후보 1개면 종전 정규식과 동치).
+  const terms = searchVariants(trimmed).filter((v) => v && v.length >= 2);
+  if (!terms.length) return safeText;
   try {
-    const re = new RegExp(_searchEscapeRegex(trimmed), "gi");
+    const re = new RegExp(terms.map(_searchEscapeRegex).join("|"), "gi");
     return safeText.replace(re, (m) => `<mark class="search-snippet-hl">${m}</mark>`);
   } catch (_) {
     return safeText;
@@ -7504,7 +7514,9 @@ function _jumpToSearchMatchedMessage() {
     sm.pendingJumpConvId = "";
     return;
   }
-  const needle = q.toLowerCase();
+  // hangul-qwerty-search: 서버 검색이 반대 자판 변환본으로 매칭했을 수 있으므로, 본문 점프도
+  //   같은 후보 집합으로 찾는다(원문만 보면 "검색은 됐는데 점프는 안 되는" 비대칭이 생긴다).
+  const needles = searchVariants(q);
   // point-rail-range window: 렌더 창(DOM)이 아니라 state.messages 전체에서 매칭을 찾아(창
   // 밖이면) 렌더 창을 확장한 뒤 점프한다 — 윈도잉으로 매칭이 DOM 밖일 수 있기 때문.
   const all = Array.isArray(state.messages) ? state.messages : [];
@@ -7512,7 +7524,7 @@ function _jumpToSearchMatchedMessage() {
   for (const m of all) {
     // 리뷰 발견5: id=null(optimistic) 메시지는 점프 대상이 될 수 없으므로 건너뛴다
     // (매칭했는데 id 없어 조용히 중단되는 것 방지).
-    if (m && m.id != null && m.content != null && String(m.content).toLowerCase().indexOf(needle) !== -1) {
+    if (m && m.id != null && m.content != null && matchesAnyVariant(String(m.content).toLowerCase(), needles)) {
       matchId = m.id;
       break;
     }

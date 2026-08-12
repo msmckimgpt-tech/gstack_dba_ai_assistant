@@ -37,15 +37,18 @@ def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, st
     """
     if not conv_ids or not q:
         return {}
-    escaped = app._escape_like_for_search(q)
-    pattern = f"%{escaped}%"
+    # hangul-qwerty-search: 검색 WHERE 가 반대 자판 변환본도 매칭하므로(_conv_store), 발췌도
+    #   같은 후보 집합으로 찾아야 한다 — 원문만 보면 "검색은 됐는데 발췌가 빈" 비대칭이 된다.
+    from routers._conv_store import _like_any_clause, _search_like_patterns
+    patterns = _search_like_patterns(q)
+    np_ = len(patterns)
     placeholders = ",".join(["%s"] * len(conv_ids))
     rows: list[Any] = []
     params = (
         *[str(c) for c in conv_ids],
-        pattern,
+        *patterns,
         *[str(c) for c in conv_ids],
-        pattern,
+        *patterns,
     )
     # AR-M5 cutover: AgentMemoryMessages/AgentCoreMessages MySQL 테이블이 DROP 됨 →
     # PG agent_runtime.messages/core_messages 로 라우팅(미라우팅 시 except→{} 로 검색
@@ -71,12 +74,12 @@ FROM (
     SELECT m.conversation_id AS cid, m.content AS content, m.created_at AS created_at
     FROM agent_runtime.messages m
     WHERE m.conversation_id IN ({placeholders})
-      AND m.content ILIKE %s ESCAPE '!'
+      AND {_like_any_clause("m.content", np_, "ILIKE")}
     UNION ALL
     SELECT cm.conversation_id AS cid, cm.content AS content, cm.created_at AS created_at
     FROM agent_runtime.core_messages cm
     WHERE cm.conversation_id IN ({placeholders})
-      AND cm.content ILIKE %s ESCAPE '!'
+      AND {_like_any_clause("cm.content", np_, "ILIKE")}
   ) AS u
 ) AS t
 WHERE t.rn = 1
@@ -103,14 +106,14 @@ FROM (
            m.CreatedAt AS created_at
     FROM AgentMemoryMessages m
     WHERE m.ConversationId IN ({placeholders})
-      AND m.Content LIKE %s ESCAPE '!'
+      AND {_like_any_clause("m.Content", np_)}
     UNION ALL
     SELECT cm.conversation_id COLLATE utf8mb4_unicode_ci AS cid,
            cm.content AS content,
            cm.created_at AS created_at
     FROM AgentCoreMessages cm
     WHERE cm.conversation_id IN ({placeholders})
-      AND cm.content LIKE %s ESCAPE '!'
+      AND {_like_any_clause("cm.content", np_)}
   ) AS u
 ) AS t
 WHERE t.rn = 1
@@ -126,14 +129,25 @@ WHERE t.rn = 1
     # line 전체 (이전 \n 직후 ~ 다음 \n 직전) 를 반환해 사용자가 의미 있는 문장 단위로
     # 발췌를 보게 한다. 그 line 이 매우 길 경우 매칭 위치 ±60 char clip + "…".
     result: dict[str, str] = {}
-    q_lower = q.lower()
+    # hangul-qwerty-search: 발췌 위치도 후보 집합에서 찾는다. 반대 자판 후보로 매칭된 행은
+    #   원문 검색어가 본문에 없어서, 원문만 찾으면 idx<0 → "첫 줄" 폴백으로 엉뚱한 발췌가 나간다.
+    try:
+        from shared.hangul_qwerty import search_variants as _hq_variants
+        q_variants = _hq_variants(q) or [q.lower()]
+    except Exception:
+        q_variants = [q.lower()]
     LINE_MAX = 220  # 한 line 의 최대 길이 — 초과 시 매칭 위치 기준 ±60 char clip
     HALF_WINDOW = 60
     for cid, content in rows:
         text = str(content or "")
         if not text:
             continue
-        idx = text.lower().find(q_lower)
+        lowered = text.lower()
+        idx, hit_len = -1, len(q)
+        for v in q_variants:
+            found = lowered.find(v)
+            if found >= 0 and (idx < 0 or found < idx):
+                idx, hit_len = found, len(v)
         if idx < 0:
             # LIKE 매칭이나 case-insensitive find 실패 (escape edge) — 첫 line 사용.
             first_line = text.split("\n", 1)[0]
@@ -150,7 +164,7 @@ WHERE t.rn = 1
             else:
                 rel = idx - line_start
                 start = max(0, rel - HALF_WINDOW)
-                end = min(len(line), rel + len(q) + HALF_WINDOW)
+                end = min(len(line), rel + hit_len + HALF_WINDOW)
                 excerpt = line[start:end]
                 if start > 0:
                     excerpt = "…" + excerpt
@@ -191,8 +205,10 @@ def _collect_matched_attachment_names(
     # fail-soft 계약은 헬퍼 경계 전체에 적용된다 — 패턴 조립·백엔드 판정·커서 생성까지
     # 보호해야 직접 호출자(엔드포인트 밖)에서도 "실패 = 빈 dict" 가 성립한다.
     try:
-        escaped = app._escape_like_for_search(q)
-        pattern = f"%{escaped}%"
+        # hangul-qwerty-search: 검색 WHERE 와 같은 후보 집합(원문 + 반대 자판 변환본).
+        from routers._conv_store import _like_any_clause, _search_like_patterns
+        patterns = _search_like_patterns(q)
+        np_ = len(patterns)
         placeholders = ",".join(["%s"] * len(conv_ids))
         scope_id = int(scope_account_id) if scope_account_id is not None else None
         backend_is_pg = app._runtime_backend_is_pg()
@@ -210,7 +226,7 @@ def _collect_matched_attachment_names(
             )
             pg_scope_params = [scope_id, scope_id]
         params = (
-            *[str(c) for c in conv_ids], pattern, *pg_scope_params, int(per_conv_cap)
+            *[str(c) for c in conv_ids], *patterns, *pg_scope_params, int(per_conv_cap)
         )
         try:
             from shared.db import _pg_connect
@@ -236,7 +252,7 @@ FROM (
   JOIN agent_runtime.core_conversations c ON c.conversation_id = att.conversation_id
   WHERE att.conversation_id IN ({placeholders})
     AND att.deleted_at IS NULL AND att.superseded_at IS NULL
-    AND att.original_filename ILIKE %s ESCAPE '!'
+    AND {_like_any_clause("att.original_filename", np_, "ILIKE")}
 {pg_scope_sql}) AS t
 WHERE t.rn <= %s
 ORDER BY t.cid, t.rn
@@ -259,7 +275,7 @@ ORDER BY t.cid, t.rn
             )
             my_scope_params = [scope_id, scope_id]
         params = (
-            *[str(c) for c in conv_ids], pattern, *my_scope_params, int(per_conv_cap)
+            *[str(c) for c in conv_ids], *patterns, *my_scope_params, int(per_conv_cap)
         )
         try:
             cur = conn.cursor()
@@ -280,7 +296,7 @@ FROM (
     ON c.conversation_id COLLATE utf8mb4_unicode_ci = att.ConversationId COLLATE utf8mb4_unicode_ci
   WHERE att.ConversationId IN ({placeholders})
     AND att.DeletedAt IS NULL AND att.SupersededAt IS NULL
-    AND att.OriginalFilename LIKE %s ESCAPE '!'
+    AND {_like_any_clause("att.OriginalFilename", np_)}
 {my_scope_sql}) AS t
 WHERE t.rn <= %s
 ORDER BY t.cid, t.rn

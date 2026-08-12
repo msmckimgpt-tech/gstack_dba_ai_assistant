@@ -13,6 +13,8 @@ import {
   isGroupConversation, isOwnConversation, openConversationItemMenu,
   renderConversationBulkBar, renderConversationHeader, selectConversation,
 } from "../app.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 // ── feature-0024-conversation-folders: 폴더(프로젝트) UI ─────────────────────
 async function loadFolders() {
@@ -255,8 +257,10 @@ function openMoveConversationDialog(cid) {
   const renderList = () => {
     listEl.innerHTML = "";
     const q = (search.value || "").trim().toLowerCase();
+    // hangul-qwerty-search: 원문 + 반대 자판 변환본 후보로 부분일치.
+    const qv = searchVariants(search.value);
     let folders = state.folders.slice();
-    if (q) folders = folders.filter((f) => String(f.name || "").toLowerCase().includes(q));
+    if (qv.length) folders = folders.filter((f) => matchesAnyVariant(String(f.name || "").toLowerCase(), qv));
     if (sortSel.value === "recent") folders.sort((a, b) => Number(b.folder_id) - Number(a.folder_id));
     else folders.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
     if (!folders.length) {

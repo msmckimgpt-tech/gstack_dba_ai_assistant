@@ -750,10 +750,26 @@ def _audit_compose_where(
         args.append(params["to_at"])
     if params.get("q"):
         # ActionCode + ResourceId substring (PII 노출 면적 최소화 — ChangeJson body 미검색).
-        conds.append("(ActionCode LIKE %s OR ResourceId LIKE %s)")
-        like_pat = f"%{params['q']}%"
-        args.append(like_pat)
-        args.append(like_pat)
+        # hangul-qwerty-search: 두 컬럼 모두 영문 코드라, 한/영 전환을 잊고 친 검색어
+        #   (`ㅁㅅㅅㅁ초` → `attach`)를 변환 후보로 함께 본다. 후보 1개면 종전 SQL 과 동치.
+        try:
+            from shared.hangul_qwerty import search_variants
+            _variants = search_variants(params["q"]) or [str(params["q"])]
+        except Exception:
+            _variants = [str(params["q"])]
+        # SECURITY §8.3 — 모든 LIKE 는 `ESCAPE '!'` + `!`/`%`/`_` 3-char escape. 본 필터는
+        #   종전에 escape 가 없어 검색어의 `%`/`_` 가 와일드카드로 새던 상태였다(codex 적대
+        #   리뷰 P2). 후보 확장과 같은 cycle 에서 규약을 맞춘다 — escape 는 후보마다 개별 적용.
+        from routers._conv_store import _escape_like_for_search
+        like_pats = [f"%{_escape_like_for_search(str(v))}%" for v in _variants]
+        conds.append(
+            "(" + " OR ".join(
+                ["ActionCode LIKE %s ESCAPE '!'"] * len(like_pats)
+                + ["ResourceId LIKE %s ESCAPE '!'"] * len(like_pats)
+            ) + ")"
+        )
+        args.extend(like_pats)
+        args.extend(like_pats)
     # 3. Cursor (Id DESC pagination).
     if cursor_id is not None and cursor_id > 0:
         conds.append("Id < %s")

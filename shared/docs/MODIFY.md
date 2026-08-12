@@ -142,3 +142,22 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - 사유: 라이브 `agent_runtime.llm_usage` 의 3 task 가 taxonomy 미등록이라 관리 콘솔 `AI 운영 현황 > 운영 현황` 카테고리 드릴다운에서 '미분류 활동' 으로 노출됐다(1,258 / 332 / 4회). 전부 insight 워커 분석 파이프라인 산출물.
 - 영향 소비자: `feature-0003-agent-web-ui` (`routers/ai_ops.py` 카테고리 롤업·Attention, `routers/admin_usage.py` 사용 기록 라벨) — 표시 계층만. 다른 feature 영향 없음(taxonomy 는 web 관제 표시 전용, 워커·에이전트 런타임 미참조).
 - 교차 참조 정본: `unit/feature-0003-agent-web-ui/docs/MODIFY.md` CHG-20260803T154922-aiops-taxonomy-unmapped · REVIEW.md REV-20260803T154922-aiops-taxonomy-unmapped.
+
+## CHG-20260812T181700-hangul-qwerty-search — `shared/hangul_qwerty.py` 신설 (한/영 자판 변환, Minor §12.3)
+- 변경: 신규 모듈 `shared/hangul_qwerty.py`. 두벌식(KS X 5002) 한↔영 자판 상호 변환 —
+  `hangul_to_qwerty` / `qwerty_to_hangul`(IME 조합 오토마타) / `search_variants` /
+  `alternate_layout_variants` / `matches_search_query`. 기존 shared 모듈 무변경(신규 파일만).
+- 사유: 사용자가 한/영 전환을 잊고 친 검색어(`rmffhqjf` → `글로벌`)를 검색이 흡수하지 못해
+  "검색 결과가 없습니다" 만 나오던 마찰. 서버 검색이 **web(`routers/*`)과 agent
+  (`modules/metadata_graph.py`) 두 서비스**에 걸쳐 있어 feature 내부 `modules/` 로는 공유가
+  불가능하다 — 이미지에서 `from modules import …` 는 feature-0002 패키지를 가리켜 ImportError.
+  `shared/` 는 Dockerfile 이 `/app/shared` 로 배치해 두 서비스가 `from shared.X` 로 쓰는 자리다.
+- 프론트 정본은 `unit/feature-0003-agent-web-ui/src/static/hangul-qwerty.js` 이며 **두 파일의
+  매핑표는 같은 값**이어야 한다. 회귀 잠금: `unit/feature-0003-agent-web-ui/tests/
+  verify_hangul_qwerty.mjs` 가 두 파일을 파싱해 자모↔키 표를 값 단위로 대조한다.
+- Affected Features: feature-0003-agent-web-ui(정본 — 검색 지점 배선 전수),
+  feature-0002-agent-core(`modules/metadata_graph.py` 그래프 검색 — cross-feature 편집).
+  다른 feature 영향 없음(신규 모듈, 기존 심볼 무변경).
+- 교차 참조 정본: `unit/feature-0003-agent-web-ui/docs/MODIFY.md`
+  CHG-20260812T181700-ai-claude-hangul-qwerty-search · REVIEW.md REV-20260812T181700-… ·
+  FUNCTION.md REQ-20260812-hangul-qwerty-search.

@@ -739,16 +739,21 @@ LEFT JOIN agent_runtime.kv kv_topic
             # AR-M4 포팅 때 이 escape 가 유실돼 `%`/`_` 가 wildcard 로 새던 상태였다. MySQL
             # 경로(`_list_conversations`)·발췌 수집(`_collect_matched_excerpts`)과 동일 semantics 로
             # 복원한다(검색어의 `%`/`_` 는 리터럴).
-            pattern = f"%{app._escape_like_for_search(normalized_q)}%"
+            # hangul-qwerty-search: 원문 + 반대 자판 변환본을 같은 컬럼에서 OR 로 본다
+            #   (후보 1개면 종전과 동일한 SQL). EXISTS 는 여전히 축당 1회다.
+            patterns = _search_like_patterns(normalized_q)
+            np_ = len(patterns)
             search_subclauses = [
-                "c.topic ILIKE %s ESCAPE '!'",
-                "kv_topic.value ILIKE %s ESCAPE '!'",
+                _like_any_clause("c.topic", np_, "ILIKE"),
+                _like_any_clause("kv_topic.value", np_, "ILIKE"),
                 "EXISTS (SELECT 1 FROM agent_runtime.messages m "
-                "WHERE m.conversation_id = c.conversation_id AND m.content ILIKE %s ESCAPE '!')",
+                "WHERE m.conversation_id = c.conversation_id AND "
+                + _like_any_clause("m.content", np_, "ILIKE") + ")",
                 "EXISTS (SELECT 1 FROM agent_runtime.core_messages cm "
-                "WHERE cm.conversation_id = c.conversation_id AND cm.content ILIKE %s ESCAPE '!')",
+                "WHERE cm.conversation_id = c.conversation_id AND "
+                + _like_any_clause("cm.content", np_, "ILIKE") + ")",
             ]
-            sp_params: list[Any] = [pattern, pattern, pattern, pattern]
+            sp_params: list[Any] = list(patterns) * 4
             # 첨부 파일명 축(SECURITY §8.2) — **첨부 조회 권한 보유자에게만** 켠다.
             # `conversation.list.any`(목록)와 `conversation.attachment.read.any`(첨부)는 독립
             # 권한이라, 목록 권한만으로 축을 켜면 "그 대화에 이 파일명이 있는가"가 매칭 여부로
@@ -773,9 +778,10 @@ LEFT JOIN agent_runtime.kv kv_topic
                         "EXISTS (SELECT 1 FROM agent_runtime.core_attachments att "
                         "WHERE att.conversation_id = c.conversation_id "
                         "AND att.deleted_at IS NULL AND att.superseded_at IS NULL "
-                        "AND att.original_filename ILIKE %s ESCAPE '!'" + att_scope_sql + ")"
+                        "AND " + _like_any_clause("att.original_filename", np_, "ILIKE")
+                        + att_scope_sql + ")"
                     )
-                    sp_params.append(pattern)
+                    sp_params.extend(patterns)
                     sp_params.extend(att_scope_params)
             where_clauses.append("(" + " OR ".join(search_subclauses) + ")")
             params.extend(sp_params)
@@ -1146,31 +1152,34 @@ LEFT JOIN WebAccounts owner
 
         # Body / title / owner-username search.
         if normalized_q:
-            escaped = app._escape_like_for_search(normalized_q)
-            pattern = f"%{escaped}%"
+            # hangul-qwerty-search: 원문 + 반대 자판 변환본(후보 1개면 종전과 동일한 SQL).
+            #   PG 경로(_list_conversations_pg)와 동형 — 두 경로가 어긋나면 백엔드에 따라
+            #   검색 결과가 달라진다.
+            patterns = _search_like_patterns(normalized_q)
+            np_ = len(patterns)
             search_subclauses = [
-                "c.topic LIKE %s ESCAPE '!'",
-                "topic_kv.`Value` LIKE %s ESCAPE '!'",
+                _like_any_clause("c.topic", np_),
+                _like_any_clause("topic_kv.`Value`", np_),
             ]
-            sp_params: list[Any] = [pattern, pattern]
+            sp_params: list[Any] = list(patterns) * 2
             # owner.Username search — .any only (risk 3: prevent .own user from
             # probing account existence cross-account via row presence).
             if has_any:
-                search_subclauses.append("owner.Username LIKE %s ESCAPE '!'")
-                sp_params.append(pattern)
+                search_subclauses.append(_like_any_clause("owner.Username", np_))
+                sp_params.extend(patterns)
             # Body EXISTS subqueries (AgentMemoryMessages + AgentCoreMessages).
             search_subclauses.append(
                 "EXISTS (SELECT 1 FROM AgentMemoryMessages m "
                 "WHERE m.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci "
-                "AND m.Content LIKE %s ESCAPE '!')"
+                "AND " + _like_any_clause("m.Content", np_) + ")"
             )
-            sp_params.append(pattern)
+            sp_params.extend(patterns)
             search_subclauses.append(
                 "EXISTS (SELECT 1 FROM AgentCoreMessages cm "
                 "WHERE cm.conversation_id = c.conversation_id "
-                "AND cm.content LIKE %s ESCAPE '!')"
+                "AND " + _like_any_clause("cm.content", np_) + ")"
             )
-            sp_params.append(pattern)
+            sp_params.extend(patterns)
             # 첨부 파일명 축 — PG 경로(_list_conversations_pg)와 동형. 첨부 조회 권한
             # 보유자에게만 켜고(`.own` 이면 본인 소유·멤버 대화로 EXISTS 를 좁힘),
             # 가시성은 첨부 목록과 동일(DeletedAt/SupersededAt IS NULL). SECURITY §8.2.
@@ -1192,9 +1201,10 @@ LEFT JOIN WebAccounts owner
                         "EXISTS (SELECT 1 FROM WebConversationAttachments att "
                         "WHERE att.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci "
                         "AND att.DeletedAt IS NULL AND att.SupersededAt IS NULL "
-                        "AND att.OriginalFilename LIKE %s ESCAPE '!'" + att_scope_sql + ")"
+                        "AND " + _like_any_clause("att.OriginalFilename", np_)
+                        + att_scope_sql + ")"
                     )
-                    sp_params.append(pattern)
+                    sp_params.extend(patterns)
                     sp_params.extend(att_scope_params)
             where_clauses.append("(" + " OR ".join(search_subclauses) + ")")
             params.extend(sp_params)
@@ -5673,6 +5683,34 @@ def _escape_like_for_search(s: str) -> str:
     Order matters: ! must be escaped first (otherwise % / _ replacements would
     inject unescaped !). Escapes !, %, _."""
     return s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
+def _search_like_patterns(q: str) -> list[str]:
+    """hangul-qwerty-search: 검색어와 **반대 자판 변환본**을 LIKE 패턴 리스트로 만든다.
+
+    첫 항목이 항상 원문이라, 후보가 1개면 종전 동작과 완전히 같다(회귀 0). 한/영 전환을
+    잊고 친 검색어(`rmffhqjf` → `글로벌`)를 서버 검색에서도 흡수한다. escape 는 SECURITY
+    §8.3 규약대로 각 후보에 개별 적용 — 변환은 자판 매핑일 뿐 `%`/`_`/`!` 를 만들지 않지만,
+    escape 를 후보마다 거는 것이 규약의 단일 진입점이다.
+    """
+    try:
+        from shared.hangul_qwerty import search_variants
+        variants = search_variants(q)
+    except Exception:   # 변환 모듈 문제로 검색 자체가 죽지 않게 — 원문 검색으로 degrade.
+        variants = []
+    if not variants:
+        variants = [q]
+    return [f"%{_escape_like_for_search(v)}%" for v in variants]
+
+
+def _like_any_clause(column_sql: str, count: int, op: str = "LIKE") -> str:
+    """같은 컬럼을 `count` 개의 LIKE 패턴과 OR 로 비교하는 조건식.
+
+    `LIKE ANY(ARRAY[...])` 는 `ESCAPE` 를 함께 쓸 수 없어(PG 문법) OR 전개를 쓴다.
+    EXISTS 서브쿼리 **안쪽**에서 전개하므로 후보가 늘어도 서브쿼리 수는 그대로다.
+    """
+    n = max(1, int(count))
+    return "(" + " OR ".join([f"{column_sql} {op} %s ESCAPE '!'"] * n) + ")"
 
 def _mention_count_regex(username: str | None) -> str | None:
     try:

@@ -1421,6 +1421,21 @@ def _node_dict(row):
     return d
 
 
+def _layout_query_variants(query: str) -> list:
+    """hangul-qwerty-search: 검색어 원문 + **반대 자판 변환본**(소문자) 후보 목록.
+
+    사용자가 한/영 전환을 잊고 친 그래프 검색어(`tmzlem` → `스키드`)를 흡수한다. 첫 항목이
+    항상 원문이라 후보 1개면 종전 동작과 동일하다. 정본은 `shared/hangul_qwerty.py` —
+    프론트(`static/hangul-qwerty.js`)·웹 검색 경로와 같은 매핑표를 쓴다.
+    """
+    try:
+        from shared.hangul_qwerty import search_variants
+        out = search_variants(query)
+    except Exception:
+        out = []
+    return out or [str(query or "").lower()]
+
+
 def _analysis_match_keys(cur, query: str, scope: str | None, limit: int, autocommit: bool = True) -> list:
     """AI 능동 분석 본문(node_analysis_jobs.analysis) 부분일치 → 매칭 node_key 목록.
 
@@ -1446,7 +1461,11 @@ def _analysis_match_keys(cur, query: str, scope: str | None, limit: int, autocom
         except Exception:
             sp = False
     try:
-        params = [query.lower()]
+        # hangul-qwerty-search: 원문 + 반대 자판 변환본(`rmffhqjf` → `글로벌`) 후보를 OR 로.
+        #   후보가 1개면 종전 SQL 과 동치라 회귀 0.
+        qvs = _layout_query_variants(query)
+        params: list = list(qvs)
+        pos_sql = " OR ".join(["position(%s in lower(analysis::text)) > 0"] * len(qvs))
         scope_sql = ""
         if scope:
             scope_sql = " AND scope_key = %s"
@@ -1455,7 +1474,7 @@ def _analysis_match_keys(cur, query: str, scope: str | None, limit: int, autocom
         cur.execute(
             "SELECT DISTINCT node_key FROM node_analysis_jobs "
             "WHERE status = 'done' AND analysis IS NOT NULL "
-            "AND position(%s in lower(analysis::text)) > 0" + scope_sql + " "
+            "AND (" + pos_sql + ")" + scope_sql + " "
             "LIMIT %s", tuple(params))
         keys = [r[0] for r in cur.fetchall() if r and r[0]]
         if sp:
@@ -1495,7 +1514,8 @@ def search_nodes(query: str, limit: int = _SEARCH_CAP, scope: str | None = None,
     try:
         cur = c.cursor()
         _set_age_path(cur)
-        ql = _cq(query.lower())
+        # hangul-qwerty-search: 원문 + 반대 자판 변환본 후보(첫 항목이 원문 — 1개면 종전과 동치).
+        qvs = _layout_query_variants(query)
         scope_clause = f" AND n.scope_key = {_cq(scope)}" if scope else ""
         # (3) AI 능동 분석 본문 매칭 → node_key 집합(동일 커넥션·별도 테이블). 아래 Cypher 에 key IN 으로 합류.
         analysis_keys = _analysis_match_keys(cur, query, scope, limit,
@@ -1506,19 +1526,28 @@ def search_nodes(query: str, limit: int = _SEARCH_CAP, scope: str | None = None,
             lits = ", ".join(_cq(k) for k in analysis_keys)
             key_clause = f" OR n.key IN [{lits}]"
         # (1)+(2) 이름/FQN/컨텐츠 카테고리 라벨 CONTAINS. toLower(null)=null 은 OR 에서 무시(비클러스터 노드 안전).
+        #   hangul-qwerty-search: 후보마다 세 필드를 OR 로 편다(후보 1개면 종전 절과 문자열 동치).
+        name_clause = " OR ".join(
+            f"toLower(n.name) CONTAINS {_cq(v)} OR toLower(n.fqn) CONTAINS {_cq(v)} "
+            f"OR toLower(n.semantic_cluster_label) CONTAINS {_cq(v)}"
+            for v in qvs
+        )
         rows = _cypher(cur,
-            f"MATCH (n) WHERE ((toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql} "
-            f"OR toLower(n.semantic_cluster_label) CONTAINS {ql}){key_clause}){scope_clause} "
+            f"MATCH (n) WHERE (({name_clause}){key_clause}){scope_clause} "
             f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source, n.ordinal, "
             f"n.routine_type, n.semantic_cluster_label LIMIT {fetch_n}", 9)
         out = [_node_dict(r) for r in rows]
         # 매칭 근거(match_via) — 이름/카테고리는 반환값에서 재확인, 분석은 key 집합으로 판정.
-        qn = query.lower()
+        #   hangul-qwerty-search: 판정도 후보 집합 기준 — 반대 자판으로 매칭된 노드가
+        #   match_via 없이 돌아가면 UI 가 "왜 나왔는지" 를 표시하지 못한다.
         for nd in out:
             via = []
-            if qn in (nd.get("name") or "").lower() or qn in (nd.get("fqn") or "").lower():
+            nm_l = (nd.get("name") or "").lower()
+            fq_l = (nd.get("fqn") or "").lower()
+            cl_l = (nd.get("cluster_label") or "").lower()
+            if any((v in nm_l) or (v in fq_l) for v in qvs):
                 via.append("name")
-            if qn in (nd.get("cluster_label") or "").lower():
+            if any(v in cl_l for v in qvs):
                 via.append("category")
             if nd.get("key") in analysis_set:
                 via.append("analysis")
@@ -1534,12 +1563,22 @@ def search_nodes(query: str, limit: int = _SEARCH_CAP, scope: str | None = None,
                 for i, nd in enumerate(out):
                     rows_sql.append("(%s::int, %s, %s, %s)")
                     vparams.extend([i, nd.get("name") or "", nd.get("fqn") or "", nd.get("cluster_label") or ""])
+                # hangul-qwerty-search: 점수도 **후보 집합의 최댓값**으로 낸다. 원문만으로
+                #   채점하면 반대 자판으로 매칭된 노드가 score≈0 이 되어, 아래 정렬 후
+                #   `limit` 재절단에서 통째로 탈락한다 — 매칭은 됐는데 결과에서 사라지는
+                #   경로다(codex 적대 리뷰 P2). 후보 1개면 종전 식과 동치.
+                score_terms = " , ".join(
+                    ["GREATEST(similarity(lower(x.nm), lower(%s)), "
+                     "similarity(lower(x.fq), lower(%s)), "
+                     "similarity(lower(x.cl), lower(%s)))"] * len(qvs)
+                )
+                score_params: list = []
+                for _v in qvs:
+                    score_params.extend([_v, _v, _v])
                 cur.execute(
-                    "SELECT x.i, GREATEST(similarity(lower(x.nm), lower(%s)), "
-                    "                     similarity(lower(x.fq), lower(%s)), "
-                    "                     similarity(lower(x.cl), lower(%s))) AS score "
+                    "SELECT x.i, GREATEST(" + score_terms + ") AS score "
                     "FROM (VALUES " + ",".join(rows_sql) + ") AS x(i, nm, fq, cl)",
-                    tuple([query, query, query] + vparams))
+                    tuple(score_params + vparams))
                 smap = {int(r[0]): float(r[1]) for r in cur.fetchall()}
                 for i, nd in enumerate(out):
                     nd["score"] = round(smap.get(i, 0.0), 4)

@@ -7,6 +7,8 @@ import {
   renderCrossPageBanner, actionLabel,
   _probeDatasourceConn, _paintDsConnDot,
 } from "../admin.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 /* ── TASK-0205/0207: 데이터소스 관리 pane (CRUD, 자격증명 DB 암호화 저장) ─────────────
  * 계정/역할/제품/설정 과 동일한 list-detail nav 패턴 (DESIGN.md §2):
@@ -52,9 +54,10 @@ function renderDatasourcesPane() {
 // TASK-0278 — 검색 필터를 적용한 visible datasource 목록(select-all / bulk / shift-range 공용).
 function _dsFiltered() {
   const dsList = adminState.datasources || [];
-  const q = (adminState._dsSearch || "").trim().toLowerCase();
-  return q
-    ? dsList.filter((ds) => (ds.key || "").toLowerCase().includes(q) || (ds.host || "").toLowerCase().includes(q))
+  const qv = searchVariants(adminState._dsSearch);
+  return qv.length
+    ? dsList.filter((ds) => matchesAnyVariant((ds.key || "").toLowerCase(), qv)
+                         || matchesAnyVariant((ds.host || "").toLowerCase(), qv))
     : dsList.slice();
 }
 

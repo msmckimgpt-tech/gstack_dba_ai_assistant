@@ -82,8 +82,13 @@ def test_analysis_match_keys_sql_and_params():
     assert "status = 'done'" in sql
     assert "position(%s in lower(analysis::text))" in sql
     assert "scope_key = %s" in sql
-    # bind param: (query.lower(), scope, limit) — injection-safe.
-    assert params[0] == "결제" and params[1] == "mssql-abc" and params[-1] == 50
+    # bind param: (…검색어 후보…, scope, limit) — injection-safe.
+    # hangul-qwerty-search: 후보 = 원문 + 반대 자판 변환본('결제' → 'rufwp'). 플레이스홀더
+    #   수와 파라미터 수가 어긋나면 실행 자체가 깨지므로 그 정합을 단언한다.
+    assert params[0] == "결제"
+    assert "rufwp" in params                       # 반대 자판 후보가 실제로 실렸다
+    assert params[-2] == "mssql-abc" and params[-1] == 50
+    assert sql.count("%s") == len(params)
 
 
 def test_analysis_match_keys_no_scope_omits_scope_clause():
@@ -92,7 +97,10 @@ def test_analysis_match_keys_no_scope_omits_scope_clause():
     assert keys == ["k1"]
     sql, params = _analysis_sql(cur)
     assert "scope_key" not in sql
-    assert params == ("spawn", 10)
+    # hangul-qwerty-search: 원문 + 반대 자판 후보('spawn' → '넴주') 뒤에 limit 하나.
+    assert params[0] == "spawn" and params[-1] == 10
+    assert "넴주" in params
+    assert sql.count("%s") == len(params)
 
 
 def test_analysis_match_keys_short_query_skipped():

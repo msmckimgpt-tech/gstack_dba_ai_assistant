@@ -21,6 +21,9 @@ import {
 } from "./admin/metadata.js?v=dev";
 export { _metaPopulateScopeSelect };  // usage.js 의 "../admin.js" import 계약 보존 (re-export)
 import { filteredRoles, renderRoleList, renderRoleDetail, startNewRole } from "./admin/roles.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 전환을 잊고 친 검색어(`ㅎㅋ` ↔ `gz`)도 찾아주는 저장소 단일
+//   primitive. 작업 화면(app.js) 번들과 공유하며, 매핑표를 어느 소비처에도 복제하지 않는다.
+import { matchesAnyVariant, searchVariants } from "./hangul-qwerty.js?v=dev";
 const mermaid = window.mermaid;   // UMD 전역 bridge(module scope 의 bare mermaid 참조 보존).
 
 /* =====================================================================
@@ -117,11 +120,11 @@ export const INTERNAL_SCHEMAS = new Set(["agent_memory"]);
 //  와 동일 idiom. 아래 4개는 순수/DOM helper — admin.js 상태에 의존하지 않아 jsdom 으로 검증한다.
 export const DB_PICKER_SEARCH_MIN = 6;
 
-// 검색 부분일치(대소문자 무시). 순수 함수 — 일치하는 이름만 반환.
+// 검색 부분일치(대소문자 무시 + 한/영 자판 교차). 순수 함수 — 일치하는 이름만 반환.
 function dbPickerFilterNames(names, query) {
-  const q = String(query == null ? "" : query).trim().toLowerCase();
-  if (!q) return (names || []).slice();
-  return (names || []).filter((n) => String(n).toLowerCase().includes(q));
+  const qv = searchVariants(query);
+  if (!qv.length) return (names || []).slice();
+  return (names || []).filter((n) => matchesAnyVariant(String(n).toLowerCase(), qv));
 }
 
 // 정규식 다중 매칭(대소문자 무시 'i'). 순수 함수 — { ok, matches, error }.
@@ -142,11 +145,11 @@ export function dbPickerRegexMatches(names, pattern) {
 // 드롭다운 항목(.admin-db-picker-item)에 검색어 적용 — .hidden 토글 + 표시 개수 반환.
 //  item.dataset.search 는 buildPicker 가 채운 소문자 DB명.
 export function applyDbPickerSearch(listEl, query) {
-  const q = String(query == null ? "" : query).trim().toLowerCase();
+  const qv = searchVariants(query);
   let shown = 0;
   (listEl ? listEl.querySelectorAll(".admin-db-picker-item") : []).forEach((it) => {
     const hay = it.dataset.search || "";
-    const hit = !q || hay.includes(q);
+    const hit = matchesAnyVariant(hay, qv);
     it.classList.toggle("hidden", !hit);
     if (hit) shown += 1;
   });

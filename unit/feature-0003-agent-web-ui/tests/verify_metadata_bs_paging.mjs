@@ -27,6 +27,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { hangulQwertyClassicSource } from "./esm-classic-inject.mjs";
 import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -142,7 +143,9 @@ const { document } = dom.window;
 // 실제 상수 값을 본문에 포함시켜(테스트가 PAGE_SIZE 값에 결속) applyFilter+renderPager 를 한 스코프로 구성.
 const factory = new Function(
   "document", "adminState",
-  `const META_BS_PAGE_SIZE = ${PAGE_SIZE};
+  // hangul-qwerty-search: 검색 필터가 import 하는 정본 primitive 를 같은 스코프에 선주입.
+  `${hangulQwertyClassicSource(STATIC)}
+   const META_BS_PAGE_SIZE = ${PAGE_SIZE};
    ${applyFilterSrc}
    ${renderPagerSrc}
    return _metaBootstrapApplyFilter;`,

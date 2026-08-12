@@ -16,6 +16,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { hangulQwertyClassicSource } from "./esm-classic-inject.mjs";
 import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -68,7 +69,8 @@ const { document } = dom.window;
 globalThis.document = document;
 
 const factory = new Function(
-  `${block}\n return { DB_PICKER_SEARCH_MIN, dbPickerFilterNames, dbPickerRegexMatches, applyDbPickerSearch, applyDbPickerRegexHighlight };`
+  // hangul-qwerty-search: 검색 필터가 import 하는 정본 primitive 를 같은 스코프에 선주입.
+  `${hangulQwertyClassicSource(STATIC)}\n${block}\n return { DB_PICKER_SEARCH_MIN, dbPickerFilterNames, dbPickerRegexMatches, applyDbPickerSearch, applyDbPickerRegexHighlight };`
 );
 const H = factory();
 

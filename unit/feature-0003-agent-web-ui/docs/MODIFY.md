@@ -3454,3 +3454,53 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md`,
   `docs/evidence/pb0008-dbpicker-layout-stability-postdeploy-20260812.png`.
 - Timestamp: 2026-08-12T18:10:00+09:00
+
+## CHG-20260812T181700-ai-claude-hangul-qwerty-search — 한/영 자판 교차 검색 (Minor §12.3)
+
+- Date: 2026-08-12. REQ-20260812-hangul-qwerty-search. 사용자 요청(첨부 화면 2건: 제품 드롭업
+  `ㅈ듀` → "검색 결과가 없습니다", 제품 관리 `ㅎㅋ` → "제품이 없습니다").
+- **신규 primitive 2벌(같은 매핑표)**:
+  - `src/static/hangul-qwerty.js` — ESM. `hangulToQwerty` / `qwertyToHangul`(IME 조합 오토마타)
+    / `searchVariants` / `matchesSearchQuery` / `matchesAnyVariant`.
+  - `shared/hangul_qwerty.py`(§17 교차참조 기록) — 서버 동형. web·agent 두 서비스가 공유해야
+    하므로 feature 내부 `modules/` 가 아니라 `shared/` 에 둔다(이미지에서 `from modules import`
+    는 feature-0002 패키지를 가리켜 ImportError 가 된다 — 배포 시점에야 드러날 결함을 선차단).
+- **클라이언트 배선 13곳**: `static/app.js`(제품 드롭업 필터 · 검색결과 메시지 점프),
+  `static/app/sidebar.js`(폴더 이동), `static/admin.js`(DB picker 순수/DOM 필터 2),
+  `static/admin/{products,accounts,roles,datasources,settings,usage,metadata}.js`(제품·계정·
+  역할·데이터소스·설정·사용량 드릴·메타데이터 목록/부트스트랩 테이블), `static/graph/graph-ctxmenu.js`
+  (검색 관련도 채점을 후보 최댓값으로).
+- **서버 배선 6경로**: `routers/_conv_store.py`(대화 검색 PG/MySQL 두 경로 + 신규 헬퍼
+  `_search_like_patterns`/`_like_any_clause`), `routers/_prompt_context.py`(매칭 발췌·매칭
+  첨부 파일명 — 발췌 위치 탐색도 후보 기준), `routers/admin_conversations.py`(보관 대화),
+  `routers/_audit_infra.py`(감사 로그 `q` — ActionCode/ResourceId 는 영문이라 한글 오타 흡수가
+  특히 유효), `unit/feature-0002-agent-core/src/modules/metadata_graph.py`(그래프 Cypher 이름/
+  FQN/카테고리 + 분석문 본문 — cross-feature 편집).
+- **회귀 0 설계**: 후보 배열의 첫 항목이 항상 원문이라 변환 대상이 없는 검색어는 후보가 1개이고
+  조립 SQL 이 종전과 문자열 동치다(pytest 가 기계 단언). 후보는 **2자 이상**만 채택 —
+  1자 후보(`dk` → `아`)가 정상 결과를 오염시키는 것을 하네스가 실측 포착해 게이트를 넣었다.
+- 신규 테스트: `tests/verify_hangul_qwerty.mjs`(48건 — 변환 왕복·후보 계약·JS↔Python 매핑표
+  파일 대조·배선 census), `tests/test_hangul_qwerty.py`(39건). 기존 하네스 4종
+  (`verify_product_picker_search` · `verify_dbpicker_search_regex` · `verify_dbpicker_layout_stability`
+  · `verify_metadata_bs_paging`)은 classic 주입 realm 에 primitive 를 선주입하도록 보강
+  (`tests/esm-classic-inject.mjs` 에 `hangulQwertyClassicSource` 추가) — stub 이 아닌 정본 소스를
+  넣어 vacuous 통과를 막았다.
+- 기존 테스트 갱신: `unit/feature-0002-agent-core/tests/test_graph_search_content.py` 2건 —
+  후보 확장에 맞춰 "플레이스홀더 수 = 파라미터 수" 정합을 단언하도록 강화(완화 아님).
+- 회귀: pytest 전 스위트가 main 기준선과 동일(사전 실패 `test_oauth_exhaustion_gate` = `chattr`
+  부재 1건만) · 프론트 mjs 하네스 54종 전건 PASS.
+
+## CHG-20260812T190500-ai-claude-hangul-qwerty-search-codex — 적대 리뷰 지적 6건 반영 (같은 cycle)
+
+- Date: 2026-08-12. REV-20260812T181700-hangul-qwerty-search [CODEX] 의 P2 5건 · P3 1건 반영.
+- `shared/hangul_qwerty.py` · `static/hangul-qwerty.js`: 최소 길이 게이트를 **원문에도** 적용
+  (1자 검색어는 확장 자체를 하지 않음 — `가` → `rk` 로 `marketing`·`worker` 가 잡히던 경로).
+- `routers/_audit_infra.py` · `routers/admin_conversations.py`(PG·MySQL): LIKE 에 `ESCAPE '!'` +
+  3-char escape 적용 — 두 엔드포인트는 종전부터 escape 가 없어 `%`/`_` 가 와일드카드로 샜다
+  (SECURITY §8.3 규약 위반 상태). 후보 확장으로 같은 라인을 건드리는 cycle 에서 함께 봉인.
+- `unit/feature-0002-agent-core/src/modules/metadata_graph.py`: pg_trgm relevance 점수를 후보
+  집합의 **최댓값**으로 산출 — 원문만 채점하면 변환 후보로 매칭된 노드가 score≈0 이라
+  정렬 후 `limit` 재절단에서 탈락(매칭됐는데 결과에서 사라지는 경로).
+- `static/app.js` `_searchHighlight`: 강조를 후보 집합 교대 패턴으로 — 반대 자판 매칭 결과가
+  강조 0 이던 것 해소.
+- 회귀 테스트 3건 신설(원문 1자 게이트 · 감사 escape · 보관 escape). mjs 49 · pytest 41 PASS.

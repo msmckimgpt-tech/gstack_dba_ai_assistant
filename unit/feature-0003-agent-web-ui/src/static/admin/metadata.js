@@ -8,6 +8,8 @@ import {
   adminState, apiFetch, can, showToast, $, formatDateTime,
   loadSampleReview, _sampleFeedbackAction,
 } from "../admin.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 // 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). graph-panel-perms(task4): 기능별 세부 권한으로 분리.
 const _METADATA_SUBTAB_PERM = {
@@ -1045,15 +1047,16 @@ const _METADATA_EMPTY_MSG = {
 };
 
 // metadata-list-detail: 좌측 목록 클라이언트 검색 — 서브뷰별 표시 필드 부분일치(소문자).
-function _metaItemMatchesSearch(it, sub, q) {
-  if (!q) return true;
+//   hangul-qwerty-search: `qv` 는 원문 + 반대 자판 변환본 후보 배열(호출부가 1회 생성).
+function _metaItemMatchesSearch(it, sub, qv) {
+  if (!qv || !qv.length) return true;
   let hay = "";
   if (sub === "glossary") hay = `${it.term || ""} ${it.definition || ""}`;
   else if (sub === "enums") hay = `${it.schema_name || ""} ${it.table_name || ""} ${it.column_name || ""} ${it.code || ""} ${it.label || ""}`;
   else if (sub === "tables") hay = `${it.schema_name || ""} ${it.table_name || ""} ${it.description || ""}`;
   else if (sub === "columns") hay = `${it.schema_name || ""} ${it.table_name || ""} ${it.column_name || ""} ${it.description || ""}`;
   else if (sub === "samples") hay = `${it.nl_question || ""} ${it.sql || ""} ${it.domain || ""}`;
-  return hay.toLowerCase().includes(q);
+  return matchesAnyVariant(hay.toLowerCase(), qv);
 }
 
 // L5: KPI 는 distinctive signal 만 표기 — bare total("총 N건")은 #metadataCount 와 중복이므로 금지.
@@ -1265,7 +1268,8 @@ function renderMetadataList() {
   const sub = adminState.metadata.subTab;
   // metadata-list-detail: 좌측 목록 검색(title/body 부분일치). 카운트는 검색 시 필터/전체 표기.
   const q = (adminState.metadata.search || "").trim().toLowerCase();
-  const items = q ? allItems.filter((it) => _metaItemMatchesSearch(it, sub, q)) : allItems;
+  const qv = searchVariants(adminState.metadata.search);   // hangul-qwerty-search: 원문 + 반대 자판 후보
+  const items = qv.length ? allItems.filter((it) => _metaItemMatchesSearch(it, sub, qv)) : allItems;
   // perm-atomic-split: 행 편집 affordance = 수정(update) 원자 게이트(samples=검수 단일).
   const canEdit = can(_METADATA_SUBTAB_UPDATE_PERM[sub] || "metadata.table.update");
   if (countEl) countEl.textContent = q ? `${items.length}/${allItems.length}건` : `${items.length}건`;
@@ -2616,13 +2620,14 @@ function _metaBootstrapApplyFilter() {
   const search = document.getElementById("metadataBootstrapSearch");
   const count = document.getElementById("metadataBootstrapFilterCount");
   const q = (search ? search.value : "").trim().toLowerCase();
+  const qv = searchVariants(search ? search.value : "");   // hangul-qwerty-search: 원문 + 반대 자판 후보
   const blocks = wrap.querySelectorAll(".admin-meta-bs-table");
   const bs = adminState.metadata.bootstrap;
   // 1) 필터 매칭 — 검색어 부분일치한 블록만 페이징 대상. 비매칭은 즉시 숨김.
   const matched = [];
   blocks.forEach((b) => {
     const nm = [(b.dataset.schema || ""), (b.dataset.table || "")].filter(Boolean).join(".").toLowerCase();
-    if (!q || nm.includes(q)) matched.push(b);
+    if (matchesAnyVariant(nm, qv)) matched.push(b);
     else b.style.display = "none";
   });
   // 2) 페이지 클램프 — 매칭 수 기준(검색으로 결과가 줄면 현재 페이지가 범위 밖일 수 있음).

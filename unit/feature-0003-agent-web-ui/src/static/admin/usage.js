@@ -8,6 +8,8 @@ import {
 } from "../admin.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (작업 화면 번들과 공유).
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 // TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
 //   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
@@ -259,8 +261,8 @@ async function loadUsage(opts) {
       return;
     }
     const all = (st.byAccount || []).filter((a) => usageRoleKeyOf(a) === st.drillRole);
-    const q = (st.drillQuery || "").trim().toLowerCase();
-    const filtered = q ? all.filter((a) => usageAcctLabelOf(a).toLowerCase().includes(q)) : all;
+    const qv = searchVariants(st.drillQuery);
+    const filtered = qv.length ? all.filter((a) => matchesAnyVariant(usageAcctLabelOf(a).toLowerCase(), qv)) : all;
     const pageSize = st.drillPageSize || 10;
     const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
     if (st.drillPage >= pages) st.drillPage = pages - 1;
@@ -270,7 +272,7 @@ async function loadUsage(opts) {
       label: usageAcctLabelOf(a), total_tokens: a.total_tokens || 0, cost_usd: a.cost_usd || 0, models: a.models || [],
       _account_id: a.account_id,  // TASK-0263: 클릭 시 대화 모달 필터용(라벨에서 파싱하지 않고 직접 보존)
     }));
-    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""} · 계정 클릭 시 사용 기록 보기`;
+    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${qv.length ? " (검색됨)" : ""} · 계정 클릭 시 사용 기록 보기`;
     if (toolsEl) toolsEl.classList.remove("hidden");
     // TASK-0263: 계정 막대 클릭 → 그 계정의 기여 대화 모달(현재 모델 필터 context 동반).
     const onAcctClick = (label) => {

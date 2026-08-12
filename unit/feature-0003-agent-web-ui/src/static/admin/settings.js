@@ -8,6 +8,8 @@ import {
   adminState, apiFetch, can, $,
   bindPaneSubtabs, buildSystemPromptEditor, refreshPendingUI, showGuidanceDetail,
 } from "../admin.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 const SETTINGS_PANEL_MOUNTERS = {
   // feature-0021 console-subtabs(2026-07-16): 프롬프트 = 단일 패널 + 서브탭[전역/지침/스킬].
@@ -65,9 +67,9 @@ function bindSettingsSearch() {
 function applySettingsSearchFilter(query) {
   const list = $("settingsList");
   if (!list) return;
-  const q = (query || "").trim().toLowerCase();
+  const qv = searchVariants(query);
   list.querySelectorAll(".admin-list-row[data-settings-tab]").forEach((row) => {
-    if (!q) {
+    if (!qv.length) {
       row.style.display = "";
       return;
     }
@@ -77,7 +79,7 @@ function applySettingsSearchFilter(query) {
       row.getAttribute("data-settings-keywords") || "",
       row.textContent || "",
     ].join(" ").toLowerCase();
-    row.style.display = haystack.includes(q) ? "" : "none";
+    row.style.display = matchesAnyVariant(haystack, qv) ? "" : "none";
   });
   updateSettingsListCount();
 }

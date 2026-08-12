@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 // esm-classic-inject.mjs — admin.js/app.js 의 ES module 전환(ITEM-P5b Cycle 7~10 · ITEM-09) 후속.
 // jsdom classic <script> 주입 하네스(verify_perm_self_scope · verify_db_rule_pending ·
 // verify_ds_accordion_collapse)가 `SyntaxError: Cannot use import statement outside a module`
@@ -11,6 +14,15 @@
 // 한계(의도된 fail-loud): 제거된 import 심볼(다른 모듈의 함수)을 top-level 에서 즉시 실행하는
 // 코드가 생기면 ReferenceError 로 표면화된다 — 무음 통과가 아니므로, 그 시점에 해당 하네스가
 // 심볼 stub 을 realm 에 선주입하는 방식으로 대응한다.
+// hangul-qwerty-search: 검색 지점들이 `static/hangul-qwerty.js` 의 `searchVariants` /
+// `matchesAnyVariant` 를 import 하므로, classic 주입 하네스는 그 심볼을 realm 에 미리 넣어야
+// 한다(위 "한계" 단락이 지시하는 대응). **stub 이 아니라 정본 소스 자체**를 넣는다 — stub 을
+// 두면 하네스가 검색 동작을 vacuous 하게 통과시킨다.
+//   사용: 조립 문자열 맨 앞에 `${hangulQwertyClassicSource(STATIC)}` 를 붙인다.
+export function hangulQwertyClassicSource(staticDir) {
+  return stripEsmForClassicInject(readFileSync(join(staticDir, "hangul-qwerty.js"), "utf8"));
+}
+
 export function stripEsmForClassicInject(src) {
   return src
     .replace(/^import\s+"[^"]+";.*$/gm, "")  // bare(side-effect) import 선행 제거 — from-규칙의 다음 문장 월경(over-consumption) 차단
