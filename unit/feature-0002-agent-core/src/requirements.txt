@@ -34,3 +34,11 @@ pymssql>=2.2.0
 # kNN 코사인 행렬 계산. 종전 requirements 에 없어 _cluster_edges 가 ImportError 를 삼키고 빈 엣지를
 # 반환 → 전 시스템 semantic_cluster 0건으로 조용히 무산됐다(라이브 실측 2026-07-13). 하드 dep.
 numpy>=1.26.0
+
+# feature-0041: `ext-tool-mcp` 서비스(`/app/ext_tools/external_tool_mcp_http.py`)가 쓰는 MCP SDK.
+# ⚠ 이 이미지는 web·워커가 공유하지만 `mcp` 를 import 하는 것은 그 서비스 하나뿐이다.
+# 그럼에도 여기에 두는 이유: compose 가 같은 이미지로 그 프로세스를 띄우므로, 없으면
+# **파일은 COPY 됐는데 기동만 죽는다**(2026-08-13 배포 1차 실패로 실증 — COPY 만 검사하고
+# 의존은 검사하지 않던 사각). 별도 이미지를 파는 대신 단일 이미지 규약을 유지한다.
+# ⚠ 하한 1.9 — streamable-http 전송은 그 이전 v1 에 없다(import 만 되고 run 에서 죽는다).
+mcp>=1.9.0

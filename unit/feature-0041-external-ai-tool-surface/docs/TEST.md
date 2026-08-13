@@ -173,3 +173,33 @@ HTTP 프로브 · `deploy-web.sh WORKERS` 편입 · Dockerfile 이 HTTP 어댑�
 ### Run 2026-08-13 (5차) — POST-DEPLOY 라이브
 
 (배포 후 기록)
+
+### Run 2026-08-13 (5차) — HTTP 전송 컨테이너 실기동 (Environment: agent 이미지 + SDK 2.0)
+
+배포 실패 후, 고친 어댑터를 **실제 컨테이너**에서 띄우고 MCP 프로토콜을 왕복시켰다.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | SDK 2.0 으로 기동(`Uvicorn running`) | ✅ |
+| 2 | `POST /api/ai/mcp` → `initialize` | **200** (SSE `event: message`) ✅ |
+| 3 | 구 경로 `POST /mcp` | **404** ✅ (경로 정합이 실제로 걸려 있다) |
+| 4 | `tools/list` | **9종** 전부 ✅ |
+| 5 | 무토큰 `tools/call open_task` | `no_authorization` ✅ (ctx 헤더 경로 작동) |
+| 6 | 가짜 토큰 `tools/call open_task` | **상류 401 전달** ✅ (검증된 TLS 로 web 도달) |
+
+단위 스위트 **168건 PASS**.
+
+### Run 2026-08-13 (6차) — 동작 테스트 + 뮤테이션 (Environment: local pytest)
+
+codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다. 가짜 SDK 모듈을 주입해 어댑터를
+실제 import·호출한다.
+
+| 뮤테이션 | 결과 |
+|---|---|
+| v1 헤더 경로(`ctx.request_context.request.headers`) 제거 | **KILLED** |
+| SNI 고정 무력화(`server_hostname=self.host`) | **KILLED** |
+| `Host` 헤더 제거 | **KILLED** |
+| verify-off 전수검사 → 첫 후보만 | **KILLED** |
+| requirements 검사: `mcp` 줄 삭제 | **KILLED** (부분문자열 검사일 땐 SURVIVED — 그래서 고쳤다) |
+
+스위트 **180건 PASS**.

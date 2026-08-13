@@ -120,6 +120,12 @@ source_of_truth: true
 - ANCHOR.md §1~§3 작성 (대안 4개 · 시나리오 1개)
 - TASK.md §2.1 구현 계획 작성
 
+### 3차 출하 후속 (2026-08-13)
+
+- [x] `ext-tool-mcp` 라이브 기동 실패 3중 원인 수정(이미지 의존 · SDK 2.0 · TLS upstream)
+- [x] codex 2차 P1×3·P2×2 전건 수정 + 뮤테이션 4종 KILL 확인
+- [x] 컨테이너 실기동 e2e(initialize/tools.list/무토큰/가짜토큰) 실측
+
 ## 7. Next Action
 - 사람 1회 인가로 전 구간 e2e 확정(`docs/E2E_RUNBOOK.md`) → TEST.md §3 Run 기록 → AC-1 종결
 - 원장 데이터가 쌓이면 P1 도구(`execute_sql` + 행 예산) 도입 여부 판단

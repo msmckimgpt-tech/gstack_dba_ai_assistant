@@ -82,6 +82,63 @@ def test_open_task_cap_is_actually_enforced():
     tl.check_open_tasks(None, account_id=1)
 
 
+def test_upstream_tls_is_verified_not_disabled():
+    """★ web replica 는 TLS 로 듣지만 인증서 SAN 에 컨테이너 이름이 없다. 여기서 검증을 끄면
+    Bearer token 이 사내망 MITM 에 노출된다 — Caddy 처럼 **검증 대상 이름만 고정**한다."""
+    compose = _read("docker-compose.yml")
+    block = compose[compose.index("  ext-tool-mcp:"):]
+    block = block[:block.index("\n  insight-worker:")]
+    assert "EXT_TOOL_CA_BUNDLE: /certs/rootCA.pem" in block
+    assert "EXT_TOOL_UPSTREAM_TLS_SERVER_NAME" in block and "EXT_TOOL_UPSTREAM_HOST_HEADER" in block
+    assert "EXT_TOOL_VERIFY_TLS" not in block, "검증을 끄는 설정이 들어갔다"
+    assert "/certs:ro" in block, "rootCA 를 마운트하지 않으면 기동은 되고 호출만 실패한다"
+    assert "/shared" in block, "volumes 를 덮어쓰며 agent-common 의 /shared 가 사라졌다"
+
+
+def test_sni_pinning_keeps_hostname_verification_on():
+    """이름 고정은 검증을 **켠 채** 대상만 바꾸는 것이다. 이 클래스가 check_hostname 을
+    건드리면 그 순간 사내 CA 가 서명한 아무 이름의 인증서나 통과한다."""
+    src = _read("unit", "feature-0041-external-ai-tool-surface", "src",
+                "external_tool_mcp_http.py")
+    assert "_SniHTTPSConnection" in src and "server_hostname=self.sni_hostname" in src
+    body = src[src.index("class _SniHTTPSConnection"):src.index("class _NoRedirect")]
+    assert "check_hostname" not in body, "SNI 경로가 호스트명 검증을 끄고 있다"
+    assert "verify_mode" not in body
+
+
+@pytest.mark.parametrize("adapter", ["external_tool_mcp_server.py", "external_tool_mcp_http.py"])
+def test_adapters_support_both_mcp_sdk_generations(adapter):
+    """★ SDK 2.0 이 `mcp.server.fastmcp` 를 제거했다. 가이드가 안내하는 `pip install mcp` 는
+    이제 2.x 를 주므로, v1 만 지원하면 **안내대로 설치한 사용자가 바로 깨진다**
+    (2026-08-13 배포 실패로 실증 — 이미지에 2.0 이 깔려 기동 불가)."""
+    src = _read("unit", "feature-0041-external-ai-tool-surface", "src", adapter)
+    assert "from mcp.server.mcpserver import" in src, "v2 경로 미지원"
+    assert "from mcp.server.fastmcp import" in src, "v1 경로 미지원(구 SDK 사용자)"
+    assert "FastMCP(" not in src, "생성자가 v1 클래스명에 고정돼 있다"
+
+
+def test_http_adapter_reads_headers_through_tool_context(codex_p1=True):
+    """v2 에는 모듈 전역 `get_context()` 가 없다. 도구가 받은 ctx 로만 헤더를 읽어야 하며,
+    두 세대의 접근 경로(`ctx.headers` / `ctx.request_context.request.headers`)를 모두 다뤄야
+    한다 — 하나만 다루면 한쪽 세대에서 **전 호출이 no_authorization** 이 된다."""
+    src = _read("unit", "feature-0041-external-ai-tool-surface", "src",
+                "external_tool_mcp_http.py")
+    assert "mcp.get_context()" not in src, "v2 에 없는 전역 API 에 의존한다"
+    assert 'getattr(ctx, "headers", None)' in src
+    assert "ctx.request_context.request.headers" in src
+    assert "def open_task(ctx: McpContext" in src, "도구가 ctx 를 받지 않으면 헤더에 못 닿는다"
+
+
+def test_deploy_surfaces_startup_failure_cause():
+    """★ `상태=none` 만 남기고 롤백하면 운영자가 원인을 못 본다 — 롤백이 이미지를 바꾼 뒤라
+    로그가 사라지기도 한다(2026-08-13 실증: 원인은 컨테이너 로그 1줄이었다)."""
+    sh = _read("bin", "deploy-web.sh")
+    assert "dump_service_logs()" in sh
+    fail_line = [ln for ln in sh.splitlines() if "기동 실패." in ln and "err " in ln]
+    assert fail_line and "dump_service_logs" in fail_line[0], \
+        "기동 실패 경로가 로그를 남기지 않는다"
+
+
 def test_e2e_script_verifies_tls_when_ca_available(codex_p1=True):
     """★ 토큰을 싣는 스크립트가 `-k` 로 고정돼 있으면 MITM 에 무방비다."""
     sh = _read("unit", "feature-0041-external-ai-tool-surface", "scripts", "e2e-authorize.sh")
@@ -143,8 +200,12 @@ def test_compose_declares_ext_tool_mcp_service():
     svc = d["services"].get("ext-tool-mcp")
     assert svc, "compose 에 ext-tool-mcp 서비스가 없다"
     env = svc["environment"]
-    assert env["EXT_TOOL_API_BASE_URL"].startswith("http://web-"), "upstream 이 내부 web 이 아니다"
-    assert env["EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM"] == "1"
+    # 기본값은 https — web replica 가 TLS 로 듣기 때문이다(`ENABLE_WEB_TLS=1`).
+    # 평문 배포를 쓰는 환경은 EXT_TOOL_API_BASE_URL 로 덮어쓴다.
+    assert "web-a:8000" in env["EXT_TOOL_API_BASE_URL"], "upstream 이 내부 web 이 아니다"
+    assert ":-https://" in env["EXT_TOOL_API_BASE_URL"], "기본값이 https 가 아니다"
+    assert "EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM" not in env, \
+        "평문 예외가 기본 배포에 남아 있다 — TLS upstream 에서는 불필요하다"
     assert env["EXT_TOOL_HTTP_ALLOW_PUBLIC_BIND"] == "1"
     assert "ports" not in svc, "★ 포트를 직접 공개하면 평문 수신이 LAN 에 열린다 (Caddy 경유만)"
 
