@@ -3968,3 +3968,13 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - **정직 표기**: 프롬프트·datamark 은 확률적 완화이지 보장이 아니며 confused-deputy 경로가 남는다 →
   SECURITY §47.4 에 수용 위험으로 명시, provenance 기반 tool 게이트는 후속 과제.
 - 테스트 46 PASS(적대 리뷰가 지적한 5경로 전부 회귀 고정).
+
+## CHG-20260813T203000-ai-claude-feature-0003-group-attach-postdeploy — POST-DEPLOY 라이브 실측 기록 (doc-only)
+
+- 사유: 선행 cycle `20260813T1830-group-attach-scope-window` 의 배포(main `db15bfcb`) 후 실측 종결.
+- 대상: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(status `fixed:undeployed` →
+  `fixed:deployed:verified` + 실측 근거·미실측 축) · `unit/feature-0003-agent-web-ui/docs/TASK.md`
+  (배포 후 항목 마감). **코드 변경 0**.
+- 결과: 마찰 당사자(비업로더 멤버)의 첨부 스코프가 **0건 → 8건**. 업로더·1:1 무회귀.
+  web-a/web-b/ask-worker `GIT_COMMIT=db15bfcb` · 무중단 실측 0.
+- 정직: bounded 멤버 축소의 라이브 발동은 조건(은닉 구간 실재 멤버) 부재로 미실측 — 단위 테스트 한정.

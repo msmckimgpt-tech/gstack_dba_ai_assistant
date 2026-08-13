@@ -4774,3 +4774,13 @@ Windows 브라우저가 정본**(visual_verification_scope: always). 테스트�
   적대 리뷰가 지적한 5개 경로는 전부 회귀 테스트로 고정했다(fail-open 3종 · 이름 조회 실패 · floor).
 - 한계(정직): 게이트 쿼리의 **라이브 실행**은 배포 후 실측 대상이다. 단위 테스트는 fake 커서라
   SQL 문법·계획은 검증하지 못한다(구조 잠금 정규식으로 축만 고정).
+
+## REV-20260813T203000-group-attach-postdeploy [SKIPPED:doc-only] — POST-DEPLOY 실측 기록
+
+- Related Change: `CHG-20260813T203000-ai-claude-feature-0003-group-attach-postdeploy`
+- Trigger: §18.8 dispatch 표 키워드 **0건** + **코드 변경 0**(원장·TASK 문서만) → 패널 skip.
+  선행 cycle 의 코드 변경은 `REV-20260813T183000-group-attach-scope-window`
+  ([CODEX:adversarial-security], P1 2·P2 3 전건 반영)에서 이미 집행됐다.
+- 검증: 기록된 수치는 전부 배포본 실행 결과다 — `GIT_COMMIT` 3서비스 · caddy `no upstreams
+  available` 0 · 판정 함수 직접 호출 3/3. 기록과 실행 사이에 추정이 없다.
+- Human Approval Needed: 아니오 (doc-only, 선행 cycle 의 Critical 승인 범위 내 사후 기록).
