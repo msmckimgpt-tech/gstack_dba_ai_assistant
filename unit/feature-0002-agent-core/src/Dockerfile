@@ -48,6 +48,11 @@ COPY unit/feature-0002-agent-core/src/scripts /app/scripts
 COPY unit/feature-0002-agent-core/alembic.ini /app/alembic.ini
 COPY unit/feature-0002-agent-core/alembic /app/alembic
 COPY unit/feature-0003-agent-web-ui/src /app/web
+# feature-0041: HTTP/SSE MCP 전송 프로세스(`ext-tool-mcp` 서비스)가 실행하는 스크립트.
+# ⚠ 서버측 **보안 모듈은 여기 넣지 않는다** — 그건 /app/web 에 있고 web 이 소비한다.
+#   이 디렉터리에는 별도 프로세스로 도는 어댑터만 둔다(2026-08-12 라이브 기동 실패의 교훈:
+#   COPY 되지 않는 경로에 서버 코드를 두면 repo 테스트는 통과하고 배포만 죽는다).
+COPY unit/feature-0041-external-ai-tool-surface/src/external_tool_mcp_http.py /app/ext_tools/external_tool_mcp_http.py
 
 # ITEM-09 what#3 (AGENTS.md §13.1 v3.35.1 1순위): 정적 자산 ?v= 스탬프 빌드 주입.
 # 소스는 고정 placeholder(?v=dev — hand-edit 커밋 금지·병렬 충돌 표면 제거), 빌드가

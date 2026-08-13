@@ -184,3 +184,38 @@ source_of_truth: true
   기존 발견 경로 200 · 도구 표면 무토큰 401.
 - 정직 표기: HTTP/SSE 전송은 **라이브 미기동**(포트·TLS 프록시 운영 결정 선행). 코드 경로만 확보.
 - Human Approval Needed: 아니오.
+
+## REV-20260812-0009 [CODEX:P1x4,P2x2] — 잔여 3건 완결 (HTTP 기동 · 콘솔 노출 · e2e 절차서)
+
+- Related Change: CHG-20260812-0009
+- Reviewer: `/codex review` (§18.8 대체 패널)
+
+### 지적과 처리
+
+1. **[P1] `ext-tool-mcp` 에 `networks` 누락** — compose 기본 네트워크에 붙어 `dbnet` 의 web·caddy
+   와 이름 해석이 안 된다. 기동은 성공하고 **모든 도구 호출만 502** 가 되는, 헬스체크로도 안
+   잡히는 형태였다. → `networks: [dbnet]` + 헬스체크를 TCP 에서 **HTTP 프로브**로 교체.
+2. **[P1] 엣지 경로와 서버 경로 불일치** — Caddy 가 `/api/ai/mcp` 를 그대로 넘기는데 FastMCP 는
+   `/mcp` 에서 듣고 있었다(전량 404). → `_HTTP_PATH = "/api/ai/mcp"` 로 통일.
+3. **[P1] e2e 스크립트가 `curl -k`** — access/refresh token 을 TLS 검증 없이 전송. → 사내 rootCA
+   가 있으면 `--cacert` 로 **검증**, 없을 때만 경고와 함께 `-k`(모드를 화면에 표시).
+4. **[P1] 존재하지 않는 방어를 콘솔이 표시** — `AGENT_EXT_TOOL_CONCURRENCY` 는 소비처가 없고
+   `AGENT_EXT_TASK_OPEN_MAX` 는 집행되지 않았으며 RPM 은 `open_task` 에 안 걸려 있었다.
+   운영자가 "동시 실행을 제한했다" 고 믿는 상태가 가장 위험하다. → 미구현 knob **삭제**,
+   `check_open_tasks` 구현 + `open_task` 에 RPM·미제출 게이트 배선.
+5. **[P2] MCP 전송 계층 무인증** — Bearer 는 도구 실행 시점에만 검사되므로 그 전에 익명
+   클라이언트가 스트림을 열어 프로세스 자원을 소모할 수 있다. → 엣지에서 `Authorization`
+   **헤더 존재 자체**를 요구해 익명 연결 차단(유효성은 여전히 upstream 몫).
+6. **[P2] upstream 이 `web-a` 고정 + TCP 헬스체크** → 콤마 목록 failover(**연결 실패에만** 재시도
+   — HTTP 오류를 넘기면 같은 부작용이 두 번 난다) + HTTP 프로브.
+
+### 자체 발견 (codex 지적 아님)
+
+- Caddy `@noauth`/`respond` 를 `handle` **밖**에 두면 adapt 결과에서 401 라우트가 프록시 뒤로
+  밀려 **무력화**된다. `caddy adapt` 로 내부 순서가 `['static_response', 'reverse_proxy']` 인
+  것을 확인하고 블록 안으로 이동. 테스트가 이 순서를 단정한다.
+
+- Risks: 4번이 이번 cycle 의 교훈이다 — **콘솔에 노출한 knob 은 그 자체로 "이 방어가 있다" 는
+  주장**이다. 소비처 없이 노출하면 문서보다 강한 거짓 안심을 만든다. `runtime_settings.py` 에
+  주석으로 규율을 고정했고 `DEFAULTS` 와의 키 일치를 테스트가 검사한다.
+- Human Approval Needed: 아니오 (`deploy_scope: included`).

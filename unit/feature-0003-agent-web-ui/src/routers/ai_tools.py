@@ -112,6 +112,19 @@ async def open_task(request: Request, ctx=Depends(require_ai_token),
     if not question_raw:
         return _json_err(400, "question 이 필요합니다.")
 
+    # codex P1 — 상한이 구조 조회에만 걸려 있어 `open_task` 는 무제한이었다. task 생성도
+    #   DB 쓰기라 같은 축으로 세고, 미제출 누적 상한도 여기서만 집행된다.
+    try:
+        _ledger.check_limits(_pg(), account_id=int(account.get("id") or 0),
+                             client_id=ctx.get("client_id"))
+        _ledger.check_open_tasks(conn, account_id=int(account.get("id") or 0))
+    except _ledger.RateLimited as exc:
+        _safe_record(account, ctx, tool="open_task", outcome="gated", detail=exc.limit)
+        return JSONResponse({"error": exc.message}, status_code=429,
+                            headers={"Retry-After": str(exc.retry_after)})
+    except _ledger.LedgerUnavailable as exc:
+        return _json_err(503, f"상한을 확인할 수 없어 요청을 중단했습니다: {exc}")
+
     verdict = _guard.classify_injection(question_raw)
     if verdict["verdict"] == "reject":
         _safe_record(account, ctx, tool="open_task", outcome="denied",
