@@ -10282,3 +10282,15 @@ clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js
 ### 9. Requested Scope
 
 - "첨부파일이 명칭 순으로 정렬" — ✓ (패널·휴지통·일괄 다운로드 + 컴포저 pill 렌더 4표면)
+
+## 20260813T1700-attach-name-sort-postdeploy — POST-DEPLOY 라이브 실측 종결 (doc-only)
+
+- [x] PR #1251 머지 → main `7afed974` → `sudo bash bin/deploy-web.sh --web-only` — soak 통과 ·
+      엣지 `no upstreams available` **0건**(무중단 실측) · 파리티 web-a·web-b `mysql-ai-web:7afed974`
+- [x] PB-0008 라이브 재실측 — 39첨부 대화 전건 이름순(Run 1 과 차이 0) +
+      **요청 스크린샷의 파일 세트**가 `01 → 02 → 03 → 04 → 08 → 09` 로 정렬됨을 배포본에서 확인
+- [x] 라이브 데이터 변경 0(열람 경로만) · fragment Run 2 + TEST/MODIFY/REVIEW 기록
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 요청 화면에서 직접 확인)

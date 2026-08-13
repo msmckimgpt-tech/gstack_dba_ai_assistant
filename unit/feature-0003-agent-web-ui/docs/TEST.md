@@ -2813,3 +2813,15 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   (2번 = 수정 전/후 rail+스크롤바 가로 6배 확대 나란히 대조).
 - Run 기록 정본: `docs/test-runs.d/20260813T155000-rail-async-relayout.md`.
 - **Pass/Fail: PASS**
+
+## 20260813T1700-attach-name-sort-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+- **Environment: Windows-browser (PB-0008)** — **PASS**. 배포 PR #1251 → main `7afed974` →
+  `deploy-web.sh --web-only`(web-a·web-b 양쪽 `mysql-ai-web:7afed974` · soak 통과 ·
+  엣지 `no upstreams available` **0건** · `/healthz` 200). 실 Chrome/150 `https://localhost/`:
+  ① 프리뷰와 같은 39첨부 대화 — 전건 이름순, Run 1 과 차이 0.
+  ② **요청의 출발점이 된 파일 세트**(`20260709_[MV] Log_v2 이슈 대응_*.sql` 6건, 요청 스크린샷에서
+  `08 → 01 → 02 → 03 → 04 → 09`) — 라이브에서 `01 → 02 → 03 → 04 → 08 → 09`.
+  라이브 데이터 변경 0(열람 경로만).
+- Run 기록 정본: `docs/test-runs.d/20260813T154300-attach-list-name-sort.md` Run 2.
+- **Pass/Fail: PASS** — 시각검증 축 종결(이월 없음).

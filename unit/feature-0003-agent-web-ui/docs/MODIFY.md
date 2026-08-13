@@ -3823,3 +3823,12 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   업로드 직후 순서가 삽입 순으로 남았다.
 - 신규 `tests/verify_attach_pill_name_sort.mjs`(13) + pytest 2축 추가(N5 초장문 숫자 · S3 snake_case).
 - Timestamp: 2026-08-13T16:20:00+09:00
+
+## CHG-20260813T1700-ai-claude-corp-attach-name-sort-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- 선행 `CHG-20260813T1543-…-attach-list-name-sort` 가 이월한 라이브 baked 자산 검증을 종결한다.
+  코드 변경 0 — 기록만.
+- 배포: PR #1251 → main `7afed974` → `deploy-web.sh --web-only`(무중단 실측 0건 · healthz 200).
+- Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T154300-attach-list-name-sort.md`,
+  `docs/evidence/pb0008-attach-name-sort-3-postdeploy.png`.
+- Timestamp: 2026-08-13T17:00:00+09:00
