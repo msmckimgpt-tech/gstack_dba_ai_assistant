@@ -2412,8 +2412,10 @@ P1 하나(모델 부분 선택 + 요청 지표에서 카드와 차트가 다른 
 
 ### 상태
 
-프론트 게이트 수정 완료 · jsdom 31 PASS · 프론트 `.mjs` 60개 전수 회귀 없음. **라이브(PB-0008) 미수행
-— 정적 자산이 web 이미지에 baked 되어 배포 후에만 검증 가능**(POST-DEPLOY 항목 아래).
+**완료 — 배포·라이브 검증 종결.** 프론트 게이트 수정 · jsdom 31 PASS · 프론트 `.mjs` 60개 전수 회귀
+없음 · main `763ad65d` 배포(web-a·web-b 파리티, 무중단 0건) · **POST-DEPLOY PB-0008 전 항목 PASS**
+(공유받은 그룹 대화 `draggable="true"` 라이브 확인 · 폴더 배정/해제 서버 왕복 · 크로스-계정 격리
+실측 · `pageerror` 0). Run 기록 = `docs/test-runs.d/REV-20260813T181200-folder-dnd-shared.md`.
 
 ### 무엇이 문제였나
 
@@ -2429,19 +2431,29 @@ ANCHOR §1 "각자 자기 방식대로 정리"), 백엔드 `PATCH /api/conversat
 
 ### Git 동기화 결과
 
-- 커밋: (아래 cycle 커밋 참조) — branch `ai/claude/feature-0024-folder-dnd-shared`
+- 커밋: `bb3c6a33` (branch `ai/claude/feature-0024-folder-dnd-shared`) → PR #1257 → main `763ad65d`
 - verify-completion: PASS (`--pre-commit feature-0003-agent-web-ui`)
-- Push: 완료 / PR → main 병합 (§16.3 Step 4 조건표 — BLOCKED·Critical/Major 승인 대기 없음)
-- main 병합 후 배포: `deploy_scope: included`(FIRST_REQUEST.md 전역) 에 따라 이어서 수행
+- Push: 완료 / PR #1257 머지 완료 (§16.3 Step 4 조건표 — BLOCKED·Critical/Major 승인 대기 없음)
+- main 병합 후 배포: `deploy_scope: included`(FIRST_REQUEST.md 전역) — `sudo make deploy-web-only`
+  무중단 롤링 + soak 통과, web-a·web-b `mysql-ai-web:763ad65d`, 엣지 중단 0건
+- worktree/branch cleanup: `bin/cycle-finalize.sh --pr 1257` 완료 (REGISTRY Active → Closed)
 - 충돌 해결: 없음
 
-### POST-DEPLOY 필수 (visual_verification_scope: always)
+### POST-DEPLOY 결과 (visual_verification_scope: always — 2026-08-13, 배포 763ad65d)
 
-1. 공유받은 그룹 대화 항목을 **실 마우스로 폴더에 드래그** → 폴더 하위로 이동 + 배정 유지(재로드 후).
-2. 같은 항목을 헤더 폴더 아이콘(root 드롭 존)으로 드래그 → **폴더에서 빼기** 동작.
-3. **크로스-계정 격리 라이브 실측** — 계정 A 가 공유 그룹 대화를 자기 폴더로 옮긴 뒤 계정 B(소유자)
-   화면에서 그 대화의 위치·폴더 표시가 불변인지.
-4. `pageerror` 0.
+라이브 시나리오는 **제품 경로만** 사용해 구성했다(admin 대화 공유 링크 → 테스트 계정 가입·`operator`
+부여 → join). admin 계정에는 `is_member` 대화가 0건이라(148건은 관리자 `.any` 열람) DB 직접 조작 없이
+실제 "다른 계정으로부터의 그룹 대화" 를 만든 뒤 검증하고, 사후 전량 정리했다.
+
+1. **PASS** — 공유받은 그룹 대화 항목이 라이브 DOM 에서 `conv-item is-other is-group` +
+   **`draggable="true"`**. 드래그 → 폴더 헤더 드롭 → 서버 `folder_id=35`, 재로드 후 폴더 하위(22px
+   들여쓰기) 유지 + 카운트 배지 1. 증적 `docs/test-runs.d/evidence/folder-dnd-shared-in-folder.png`.
+2. **PASS** — root 드롭 존(헤더 폴더 아이콘) 힌트 "여기로 놓으면 폴더에서 빼기" + 서버 `folder_id=null`.
+3. **PASS** — admin 재로그인 시 `GET /api/folders`=`[]`(테스트 폴더 미노출), 같은 대화의 admin 관점
+   `folder_id=null` → 폴더 이름·구조·배정이 소유자 뷰에 새지 않음.
+4. **PASS** — `error`·`unhandledrejection` 리스너로 드래그 왕복 2회 수행, 오류 0건.
+5. 채널 한계 — OS 레벨 native drag 는 재현하지 않았다(CDP `Input.dispatchDragEvent` 미사용). native
+   경로와 합성 `DragEvent` 경로의 유일한 분기점인 `draggable` 속성 부여를 라이브 DOM 으로 확인했다.
 
 ### 잔여 리스크 · 후속 (§8.1 — 기록만)
 

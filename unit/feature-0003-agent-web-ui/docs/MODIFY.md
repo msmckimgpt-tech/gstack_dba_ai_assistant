@@ -3892,3 +3892,12 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   (`folder_conversation_map` PK `(account_id, conversation_id)`) 그대로 — 소유자·타 멤버 뷰 불변.
 - 검증: jsdom 31 PASS · 수정 전 재현 시 대상 11건 FAIL(테스트 판별력 실증) · 프론트 `.mjs` 60개 전수
   exit 0 · ESM 구문 PASS. 라이브 = POST-DEPLOY PB-0008.
+
+## CHG-20260813T184000-ai-claude-feature-0003-folder-dnd-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- 사유: 선행 cycle `20260813T1812-folder-dnd-shared-group` 의 배포(main `763ad65d`) 후 라이브 종결.
+- 대상: `docs/test-runs.d/REV-20260813T181200-folder-dnd-shared.md`(POST-DEPLOY Run + frontmatter
+  verdict) · `docs/test-runs.d/evidence/folder-dnd-shared-in-folder.png`(신규 증적) · `docs/TASK.md` ·
+  `docs/REPORT.md`. **코드 변경 0**.
+- 결과: 공유받은 그룹 대화 `draggable="true"` 라이브 확인 · 폴더 배정/해제 서버 왕복 · 크로스-계정
+  격리(admin 뷰 folder 미노출·folder_id null) · `pageerror` 0 · 무중단 0건. 테스트 데이터 정리 완료.

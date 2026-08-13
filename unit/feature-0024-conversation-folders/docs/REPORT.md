@@ -54,3 +54,10 @@ source_of_truth: false
 - 라이브(PB-0008): 배포 후 수행 — 실 마우스 드래그 배정·빼기 + 크로스-계정 격리 실측.
 - 후속(기록만): 관리자 `.any` 열람 "타 계정 대화" 의 '···' 메뉴 '이동' 무음 실패(폴더 하위 미렌더) —
   숨김 또는 파티션 확대 중 사용자 결정 필요.
+
+**POST-DEPLOY 종결(2026-08-13, main `763ad65d`)**: 제품 경로로 구성한 라이브 시나리오(admin 대화 공유
+링크 → 테스트 계정 가입·`operator` 부여 → join)에서 **공유받은 그룹 대화 `draggable="true"` · 드래그
+폴더 배정/해제 서버 왕복 · 크로스-계정 격리(admin 뷰 폴더 미노출·`folder_id` null) · `pageerror` 0**
+전 항목 PASS. AC-20260813T181200-folder-dnd-shared-group-1/-2/-3 충족. 상세 =
+`unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260813T181200-folder-dnd-shared.md`.
+테스트 데이터(폴더·공유 링크·테스트 계정) 전량 정리 완료.

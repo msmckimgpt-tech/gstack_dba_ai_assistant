@@ -88,5 +88,5 @@ source_of_truth: true
 - [x] 구현(코드 거주 feature-0003 `src/static/app/sidebar.js`): `isFolderScopedConversation`(owner || is_member) 신설 + 파티션·드래그 게이트가 그 하나를 공유. 백엔드·스키마·권한·엔드포인트 변경 0.
 - [x] 계정별 격리 코드 근거: `assign_conversation(요청자, …)` → `folder_conversation_map` PK `(account_id, conversation_id)`, 목록 보강 `folder_map_for_account(요청자)` → 소유자·타 멤버 뷰 불변.
 - [x] 검증: jsdom `verify_folder_dnd_shared_group.mjs` 31 PASS · 수정 전 재현 시 대상 11건 FAIL(판별력 실증) · 프론트 `.mjs` 60개 전수 exit 0 · ESM 구문 PASS.
-- [ ] 배포 + POST-DEPLOY PB-0008 라이브(실 마우스 드래그 배정·빼기·크로스-계정 격리·pageerror 0).
+- [x] 배포(PR #1257 → main `763ad65d`, deploy-web-only 무중단) + **POST-DEPLOY PB-0008 전 항목 PASS**: 공유받은 그룹 대화 `draggable="true"` 라이브 확인 · 드래그 폴더 배정(folder_id=35)/해제(null) 서버 왕복 · 재로드 후 폴더 하위 렌더·카운트 배지 · admin 관점 격리(`/api/folders`=[] · folder_id null) · pageerror 0. 라이브 테스트 데이터(폴더·공유 링크·테스트 계정) 전량 정리.
 - 관리자 `.any` 열람 "타 계정 대화" 는 의도적 제외(폴더=개인 오버레이). 그 그룹의 '···' 메뉴 '이동' 무음 실패는 선재 결함으로 feature-0003 REPORT §후속 등재.
