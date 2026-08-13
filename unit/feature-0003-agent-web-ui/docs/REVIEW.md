@@ -4421,3 +4421,8 @@ resolve 한 결과다(리뷰어 주장 그대로 수용하지 않음).
   실제 대화가 캐시를 적중시키는지는 배포 후 라이브 실측으로만 확인된다 → POST-DEPLOY 이월(TEST.md).
 - 캐시 지표는 **소급되지 않는다**. 배포 직후 화면에서 0 으로 보이는 것은 정상이며, 신규 호출이
   쌓이면서 채워진다.
+
+## REV-20260813T152000-ai-claude-corp-usage-metric-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+선행 cycle 의 라이브 검증 결과를 TEST.md/TASK.md 에 기록하는 doc-only 변경(코드·정책 doc 무변경) —
+§18.8 표 첫 행에 따라 panel skip. 기록된 실측 자체는 라이브 DB·실 브라우저 관측이 근거다.

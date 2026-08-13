@@ -2692,3 +2692,37 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   증거: `docs/evidence/pb0008-attach-source-compare-{1-source,2-diff,3-back,4-oldest-latest,5-same-version}.png`.
 - Run 기록 정본: `docs/test-runs.d/20260813T122457-attach-source-compare.md`.
 - **Pass/Fail: PASS** (배포 후 POST-DEPLOY 재실측은 이월).
+
+## 20260813T1520-usage-metric-charts-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+선행 cycle(`20260813T1135-usage-metric-charts`)이 이월한 **라이브 baked 자산 검증**을 종결한다.
+
+- [x] PR #1241 머지 → main `d2730350` → `make migrate`(0056 적용, live current 확인) →
+      `sudo make deploy-web`(web 롤링 + 워커 + gateway reconcile). 무중단 실측
+      `no upstreams available` **0건** · 파리티 web-a/web-b/insight/ask 전부 `d2730350` · `/healthz` 200.
+
+### Run 2026-08-13 — Environment: Windows-browser (PB-0008) · 실 Chrome/150.0.7871.128 · `https://localhost/admin`
+
+| 축 | 실측 | 결과 |
+|---|---|---|
+| 카드 8종 렌더 | 요청 360 · 호출 24,917 · 총 토큰 163,261,652 · 입력 121,621,690 · 출력 41,639,962 · **캐시 읽기 72,865 · 캐시 쓰기 72,865** · 추정 비용 $430.91 | PASS |
+| 지표 전환(총 토큰→비용) | 일별 라벨 `12,286,912`→`$29.18` · 도넛 84.2/10.6/5.1% → **67.0/20.9/12.0%**(모델 단가차 반영) · 역할 카드 좌우 스왑(추정 비용 \| 총 토큰) | PASS |
+| **전환이 애니메이션인가** | 같은 rect 노드 유지(`sameRectNode=true`) + `getAnimations()` 가 **CSSTransition `height`/`y` running** 반환 + computed height rAF 샘플 34프레임 중 **17프레임이 시작·끝 사이**(24.8→24.76→24.63→23.99→22.56→…→14.1) | PASS |
+| 비-가산 지표(요청) | 기간 차트 20막대 전부 단일 세그먼트 · 역할 막대 세그먼트 `[1,1,1]`(0폭 소멸 없음) · 안내 "요청은 모델을 넘나들어 모델별로 나누지 않습니다." | PASS |
+| 캐시 지표 | 안내 "캐시 읽기·쓰기는 입력에 포함된 내역입니다." · 역할 카드 제목 "캐시 읽기" 연동 | PASS |
+| **캐시 계측 end-to-end** | 배포 후 실제 대화 2라운드 — `id 84869` 15:14:34 `cache_write=72,865` (캐시 생성) → `id 84870` 15:15:29 `cache_read=72,865` (**적중**). DB 실조회로 확인 | PASS |
+
+### 측정 방법에서 배운 것 (재현 시 주의)
+
+첫 시도에서 `getBoundingClientRect().height` 로 샘플링해 **전환이 안 걸린 것처럼 보였다**(첫 프레임에
+이미 최종값). SVG geometry property 는 layout box 가 **최종 style 값** 기준으로 계산돼, 진행 중인
+transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` 로 재측정하니 정상 곡선이
+나왔고 `getAnimations()` 가 CSSTransition running 을 반환해 교차 확인됐다. **측정 도구를 먼저
+의심해야 하는 부류** — 코드 결함으로 오보고할 뻔한 지점이다.
+
+### 정직 표기
+
+- 캐시 지표는 **소급되지 않는다**. 현재 값(72,865)은 전부 배포 이후 2라운드분이며, 30일 창의 누적
+  토큰(1.6억) 대비 미미한 것은 정상이다 — 시간이 지나며 채워진다.
+- 캐시 읽기와 쓰기가 같은 값인 것은 **우연이 아니라 기대 동작**이다(같은 접두를 한 번 쓰고 한 번 읽음).
+  DB 행 단위로 갈라져 있음을 확인했다(쓰기 행과 읽기 행이 별개).

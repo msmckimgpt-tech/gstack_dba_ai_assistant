@@ -10111,3 +10111,16 @@ pending 게이트 그대로). `/diff` 의 `from==to` 400(존재 oracle 방지) �
 - "가능하다면 cache hit 된 입출력 또한 항목에 추가" — ✓ (마이그 0056 + `_record_llm_usage` 캡처 +
   집계 8축 + 카드 2종 + 상세 표 2열. **"가능하다면" 의 실체를 실측으로 확인**: 캐시 컬럼도
   `cache_control` 도 없어 값이 존재하지 않았고, 사용자 결정으로 캐싱 활성화까지 포함)
+
+## 20260813T1520-usage-metric-charts-postdeploy — POST-DEPLOY 라이브 실측 종결 (비-정책 doc-only)
+
+- [x] PR #1241 머지 → main `d2730350` → `make migrate`(0056) → `sudo make deploy-web`
+      (무중단 0건 · 파리티 4컨테이너 `d2730350` · healthz 200)
+- [x] PB-0008 실 Chrome/150 라이브 — 카드 8종 · 지표 전환(값·도넛·역할 스왑) · **CSSTransition running
+      + computed height 34프레임 중 17프레임 중간값** · 비-가산 단일 세그먼트 · 안내 문구 2종
+- [x] 캐시 계측 end-to-end DB 실조회 — `cache_write=72,865`(15:14:34) → `cache_read=72,865`(15:15:29)
+- [x] 측정 함정 기록 — `getBoundingClientRect()` 는 SVG geometry transition 중간값을 보지 못한다
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본에서 지표 전환·애니메이션·캐시 적재 전건 실측 PASS)
