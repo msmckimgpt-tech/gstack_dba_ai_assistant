@@ -3395,11 +3395,18 @@ def _resolve_conversation_attachment_scope(
     무엇을 실제로 볼지는 assistant 가 자율 판단한다(메타는 전량 노출, 본문은 인라인 상한
     안에서 주입되고 초과분은 read_attachment 도구로 조회).
 
-    보안 스코프는 종전 가드를 그대로 유지한다:
+    보안 스코프:
       - ConversationId 스코프 — 타 대화 첨부 유입 차단(TASK-0284 IDOR 안전망).
-      - sender_scope=True(그룹 대화, feature-0009 CSO F1) — 발신자 본인 첨부만. 타 멤버
-        첨부가 발신자 권한의 실행 맥락에 실려 datasource 를 끌어오는 권한상승을 차단한다.
-        (2026-07-29 사용자 결정으로 그룹 가드는 유지.)
+      - sender_scope=True(그룹 대화) — **공유창 window 정합 게이트**. 종전에는 그룹이면
+        무조건 발신자 본인 첨부만이었으나(feature-0009 CSO F1), 그 가드는 *열람 경계와
+        어긋나* 마찰을 만들었다: 첨부는 이미 그룹 전원이 열람·다운로드하는데
+        (REQ-GC-R6 · `_account_can_access_attachment`) assistant 만 못 봐서, 첨부를
+        올리지 않은 멤버가 `@assistant` 를 부르면 "첨부파일이 보이지 않습니다" 로 답했다
+        (FR-group-attach-sender-scope-blocks-members, 라이브 6/6 대화 노출).
+        2026-08-13 사용자 결정으로 **대화 스코프 + window 게이트**로 대체한다 —
+        `shared.share_window` 가 이 발신자에게 가려진 표시 메시지가 실재하는지 보고,
+        하나라도 가려져 있으면 종전 동작(본인 첨부만)으로 fail-closed 축소한다.
+        (판정 근거·시간축 왜곡 회피 이유는 `shared/share_window.py` docstring 참조.)
       - SupersededAt IS NULL — 버전 체인의 최신본만(구버전 중복 주입 방지).
 
     **client_ids 는 대화가 확정된 경우 스코프에 합치지 않는다** (적대 리뷰 security/qa BLOCK):
@@ -3420,6 +3427,21 @@ def _resolve_conversation_attachment_scope(
     if not conversation_id:
         return client[:_ATTACHMENT_SCOPE_COUNT_CAP]
 
+    # 그룹 대화의 실제 필터는 공유창 window 게이트가 정한다(위 docstring). 판정 정본은
+    # `shared.share_window` 한 곳 — agent_core 의 주입 게이트도 같은 함수를 쓴다(경계 분기 방지).
+    restrict_to_sender = False
+    if sender_scope:
+        try:
+            from shared.share_window import group_attachment_is_sender_only
+            restrict_to_sender = group_attachment_is_sender_only(conversation_id, account_id)
+        except Exception:
+            # 게이트 자체를 물어볼 수 없으면 종전 동작(발신자 한정)으로 좁힌다.
+            logging.getLogger(__name__).warning(
+                "_resolve_conversation_attachment_scope: window 게이트 실패 → sender-only (cid=%s)",
+                conversation_id, exc_info=True,
+            )
+            restrict_to_sender = True
+
     scoped: list[int] = []
     rows = None
     # PG cutover 정합 — 읽기 백엔드가 PG 면 mirror 에서(동일 최신본·미삭제 필터), 실패 시 MySQL 폴백.
@@ -3436,7 +3458,7 @@ def _resolve_conversation_attachment_scope(
     if rows is not None:
         for r in rows:
             try:
-                if sender_scope and int(r.get("account_id") or r.get("AccountId") or 0) != int(account_id):
+                if restrict_to_sender and int(r.get("account_id") or r.get("AccountId") or 0) != int(account_id):
                     continue
                 _status = str(r.get("upload_status") or r.get("UploadStatus") or "")
                 if _status not in ("uploaded", "ingested"):
@@ -3450,9 +3472,9 @@ def _resolve_conversation_attachment_scope(
     else:
         try:
             cur = conn.cursor()
-            _sender_sql = " AND AccountId = %s" if sender_scope else ""
+            _sender_sql = " AND AccountId = %s" if restrict_to_sender else ""
             _params: tuple = (str(conversation_id),)
-            if sender_scope:
+            if restrict_to_sender:
                 _params = _params + (int(account_id),)
             cur.execute(
                 f"SELECT Id FROM WebConversationAttachments "
@@ -3469,8 +3491,8 @@ def _resolve_conversation_attachment_scope(
             cur.close()
         except Exception:
             # 해소 실패 시 폴백 정책은 그룹 여부로 갈린다.
-            #  - 그룹(sender_scope): **fail-closed** — 클라이언트 선택분으로 폴백하면 발신자 가드를
-            #    거치지 않은 id 가 그대로 실행 맥락에 들어가 CSO F1 이 무력화된다. 첨부 없이 답변한다.
+            #  - 그룹(sender_scope): **fail-closed** — 클라이언트 선택분으로 폴백하면 DB 스코프도
+            #    window 게이트도 거치지 않은 id 가 그대로 실행 맥락에 들어간다. 첨부 없이 답변한다.
             #  - 1:1·이어받기: client 선택분 폴백(종전 D16 동작). 하위 소비자가 ConversationId 를
             #    다시 스코프하므로 타 대화 유입은 차단되고, 첨부가 줄어들 뿐이다.
             logging.getLogger(__name__).warning(
