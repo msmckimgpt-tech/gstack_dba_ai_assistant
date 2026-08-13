@@ -506,3 +506,9 @@ source_of_truth: true
 combo 가 뷰포트보다 커져 중심 기준 판정이 "이동 0" 을 냈고, 방금 펼쳐진 테이블이 전부 화면 밖이었다.
 1차 구현이 이 경로의 기존 중앙 이동을 "과하다" 며 바꾼 것은 **사용자 요청 범위를 넘은 변경**이었고
 그것이 회귀의 원인이다. keep-in-view 는 카메라 처리가 아예 없던 경로에만 둔다.
+
+## CHG-20260813T1700-ai-claude-corp-feature-0016-expand-camera-evidence — POST-FIX 라이브 재검증 증적 (2026-08-13, 문서 전용)
+
+실행 코드 0줄. 배포 `f9cfd2a0` 에서 정정(스키마 펼침 중앙 focus 복원)의 효과를 회귀 재현본과 같은
+조작으로 대조 확인하고 Run 에 기록. 대상: `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260813T1121-…md`
+(POST-FIX Run 추가) · `unit/feature-0016-metadata-graph/docs/{TASK,REPORT}.md`.

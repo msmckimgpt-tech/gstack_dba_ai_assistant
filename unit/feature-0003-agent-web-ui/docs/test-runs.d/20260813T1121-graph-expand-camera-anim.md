@@ -93,3 +93,20 @@ x≈426→651 로 **약 225px 이동**했는데, 선택한 `billingsummary` 는 
 추종을 라이브에서 재현하지 못함 — 그 분기는 헤드리스 계약 테스트(C2·C9)로만 검증됐다. 라이브에서
 그 조건을 인위적으로 만들려면 대상이 화면 밖으로 밀리는 대규모 shelf 재배치가 필요하고, 본 세션의
 소규모 스키마(테이블 3개)에서는 발생하지 않았다.
+
+### Run (2026-08-13, POST-FIX 재검증) — **Environment: Windows-browser (Chrome 150, 배포 f9cfd2a0)**
+
+증적: `artifacts/pb0008/20260813-graph-expand-camera-anim/{07-postfix-schema-cards,08-postfix-schema-expand-centered}.png`
+
+- **배포 반영 실측**: web-a·web-b `GIT_COMMIT=f9cfd2a0`. 서빙 자산의 `_metaGraphExpandSchema` 안에
+  `focusElement` 1회 · `_metaGraphKeepInView` **0회** — 정정이 라이브에 올랐다. 엣지 무중단
+  `no upstreams available` **0건**.
+- **회귀 해소 확인 (PASS — 같은 조작의 전/후 대조)**: `07`(스키마 카드 4장) → `gunzlogin` 카드 클릭 →
+  `08`. status 는 종전과 같은 "테이블·함수 **9개 펼침**" 인데, 이번에는 펼쳐진 9개가 **전부 화면에
+  보인다**(로그인 세션 4 · 보안 비밀번호 3 · sessionkey 2 — 우측 상세 패널의 "테이블 2개 · 함수·프로시저
+  7개" 와 일치). 회귀 재현본이었던 `06`(카드만 남고 전부 화면 밖)과 **같은 조작·같은 스키마**에서
+  결과가 갈린다 = 원인·수정 모두 확정.
+- **애니메이션 동시 동작**: 같은 조작에서 `move {items:6, moved:6, skipped:0, reason:""}` — 중앙 이동과
+  재배치 트윈이 함께 정상 동작(둘이 서로를 막지 않는다).
+- **여전히 미측정(변동 없음)**: 트윈 중간 프레임 시각 캡처 · "재배치로 화면 이탈 시 추종" 라이브 재현.
+  두 항목은 위 PRE/POST-DEPLOY Run 의 한계 설명과 동일하며, 사용자 육안 확인이 남은 항목이다.
