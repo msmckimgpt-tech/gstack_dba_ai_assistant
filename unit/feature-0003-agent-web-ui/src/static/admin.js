@@ -6,6 +6,7 @@ import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
   RS_RESET, RS_MODEL_PREFIX, RS_REASONING_PREFIX, RS_AGENT_MAX_PREFIX, RS_PERF_KEYS,
+  RS_EXT_TOOL_KEYS,
   mountGuidanceRegistryPanel,
 } from "./admin/settings.js?v=dev";
 export { mountGuidanceRegistryPanel };  // aiops.js 의 "../admin.js" import 계약 보존 (re-export)
@@ -1513,7 +1514,9 @@ function getSystemPromptPending(args) {
 // TASK-0184: drill* = 역할 막대 클릭 시 펼치는 계정 drill-down 상태(byAccount 캐시·역할·페이지·검색).
 // TASK-0198: selectedModels = 모델 필터(null → 전체, 배열 → 선택 모델 키만). _lastRaw/_lastKey =
 //   마지막 응답 캐시(days|gran). 모델 칩 토글은 재조회 없이 캐시로 재렌더(loadUsage({refetch:false})).
-adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, _lastRaw: null, _lastKey: null };
+// usage-metric-charts(2026-08-13): metric = 요약 카드로 고른 차트 지표(요청/호출/총 토큰/입력/
+//   출력/캐시 읽기/캐시 쓰기/추정 비용). 기본은 종전 화면과 같은 총 토큰.
+adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, metric: "total_tokens", _lastRaw: null, _lastKey: null };
 
 // TASK-AIOPS: AI 운영 현황 패널 상태 (첫 진입 시 lazy-load, 새로고침 버튼으로 재조회).
 adminState.aiOps = { initialized: false, data: null };
@@ -3478,11 +3481,12 @@ export function refreshPendingUI() {
   // feature-0018 UX: 런타임 설정 pending 요약 + 설정 pane 좌측 nav row dirty 표시.
   const rsPending = adminState.pending.runtimeSettings || new Map();
   if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
-  let rsTimeoutDirty = false, rsModelDirty = false, rsPerfDirty = false;
+  let rsTimeoutDirty = false, rsModelDirty = false, rsPerfDirty = false, rsExtToolDirty = false;
   rsPending.forEach((_v, k) => {
     const key = String(k);
     if (key.startsWith(RS_MODEL_PREFIX) || key.startsWith(RS_REASONING_PREFIX) || key.startsWith(RS_AGENT_MAX_PREFIX)) rsModelDirty = true;
     else if (RS_PERF_KEYS.has(key)) rsPerfDirty = true;  // feature-0025: 성능·병렬 서브탭으로 라우팅
+    else if (RS_EXT_TOOL_KEYS.has(key)) rsExtToolDirty = true;  // feature-0041: 외부 AI 도구 서브탭
     else rsTimeoutDirty = true;
   });
   // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).
@@ -3504,6 +3508,7 @@ export function refreshPendingUI() {
   markSettingsNav("runtime-timeouts", rsTimeoutDirty);
   markSettingsNav("model-thinking-budgets", rsModelDirty);
   markSettingsNav("performance-parallelism", rsPerfDirty);
+  markSettingsNav("ext-tool-limits", rsExtToolDirty);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
   // Dashboard auto-refresh if visible

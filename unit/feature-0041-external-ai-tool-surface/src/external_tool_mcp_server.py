@@ -35,11 +35,20 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-try:
-    from mcp.server.fastmcp import FastMCP
-except Exception as exc:  # pragma: no cover — 런처가 사전 안내
-    sys.stderr.write(f"[ext-tool-mcp] mcp SDK import 실패 — `pip install mcp` 후 재시도. ({exc})\n")
-    raise
+# ── MCP SDK 호환층 ────────────────────────────────────────────────────────────
+# SDK 2.0 이 `mcp.server.fastmcp` 를 제거하고 `mcp.server.mcpserver.MCPServer` 로 갈았다.
+# 가이드가 안내하는 `pip install mcp` 는 이제 2.x 를 준다 — v1 만 지원하면 **안내대로 설치한
+# 사용자가 바로 깨진다.** `add_tool(fn, name=…, description=…)` 은 두 버전 시그니처가 같아
+# 등록부는 공유한다.
+try:  # v2 (2.0+)
+    from mcp.server.mcpserver import MCPServer as _Server
+except Exception:
+    try:  # v1 (1.x)
+        from mcp.server.fastmcp import FastMCP as _Server
+    except Exception as exc:  # pragma: no cover — 런처가 사전 안내
+        sys.stderr.write(
+            f"[ext-tool-mcp] mcp SDK import 실패 — `pip install mcp` 후 재시도. ({exc})\n")
+        raise
 
 
 def _require(name: str) -> str:
@@ -108,7 +117,7 @@ Workflow: open_task(question) -> get_task_context(task_id) -> structure tools ->
 submit_answer requires source_tasks: declare which task ids you actually used as evidence.
 """.strip()
 
-mcp = FastMCP(f"mysql-ai-tools-{LABEL}", instructions=_INSTRUCTIONS)
+mcp = _Server(f"mysql-ai-tools-{LABEL}", instructions=_INSTRUCTIONS)
 
 
 def _name(base: str) -> str:

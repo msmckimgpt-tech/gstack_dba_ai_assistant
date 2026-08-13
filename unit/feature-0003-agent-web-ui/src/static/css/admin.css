@@ -2063,6 +2063,41 @@
 /* TASK-0204: '모델별' 분리 카드 그리드(.admin-usage-mcards*) + TASK-0202 dim/접힘 규칙 제거 —
    상단 '모델' 칩 바가 모델별 분리/선택을 대신하고, hover 결합 접힘이 잭을 유발해 섹션 자체를 폐기. */
 
+/* ── usage-metric-charts(2026-08-13): 요약 카드 = 차트 지표 선택기 + 전환 애니메이션 ────────
+   요약 카드를 누르면 아래 차트가 그 지표로 다시 그려진다. 노드를 유지한 채 기하만 바꾸므로
+   아래 transition 이 막대의 이동·신축을 담당한다(값이 점프하지 않는다). */
+.admin-usage-metric--pick {
+  /* button 이지만 시각은 기존 .metric-card 그대로 — 선택 가능하다는 신호만 얹는다. */
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.admin-usage-metric--pick:hover { border-color: var(--accent); }
+.admin-usage-metric--pick.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--surface);
+}
+.admin-usage-metric--pick.is-active span { color: var(--accent); }
+.admin-usage-metric--pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 지표 선택으로 오해가 생기는 경우에만 나타나는 한 줄(비-가산 지표·캐시 포함관계). */
+.admin-usage-metric-note { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); }
+/* 세로 막대 — 기하를 style(CSS property)로 실어야 transition 이 걸린다(SVG presentation
+   attribute 는 전환 대상이 아니다). x/width 는 기간이 그대로면 안 변하고 y/height 만 움직인다. */
+.admin-usage-bar { transition: y .42s cubic-bezier(.4, 0, .2, 1), height .42s cubic-bezier(.4, 0, .2, 1), opacity .2s; }
+/* 도넛 세그먼트 — 길이(dasharray)와 시작각(dashoffset)이 함께 움직인다. */
+.admin-usage-arc { transition: stroke-dasharray .42s cubic-bezier(.4, 0, .2, 1), stroke-dashoffset .42s cubic-bezier(.4, 0, .2, 1); }
+/* 가로 막대 트랙·세그먼트(역할별·계정별). */
+.admin-usage-hbar-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+.admin-usage-hbar-track { display: flex; background: var(--border-subtle); border-radius: 4px; height: 14px; overflow: hidden; }
+.admin-usage-hseg { height: 100%; transition: width .42s cubic-bezier(.4, 0, .2, 1); }
+/* 도넛 레이아웃(구 인라인 style 대체 — 클래스로 옮겨 전환 규칙과 한곳에서 관리). */
+.admin-usage-donut-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.admin-usage-donut-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; }
+.admin-usage-donut-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .admin-usage-bar, .admin-usage-arc, .admin-usage-hseg { transition: none; }
+}
+
 /* TASK-0184: 역할 stacked 막대 행 — 계정 drill-down 진입(클릭) 가능. */
 .admin-usage-hbar-row { margin: 6px 0; }
 .admin-usage-hbar-row--click { cursor: pointer; border-radius: var(--r-sm); padding: 4px 6px; margin: 2px -6px; transition: background .12s; }
@@ -2362,3 +2397,6 @@
   color: #92400e;
 }
 
+/* usage-metric-charts: 모델 부분 선택 + 비-가산 지표(요청)는 성립하지 않아 비활성 — 값도 "—". */
+.admin-usage-metric--pick.is-disabled { opacity: .5; cursor: not-allowed; }
+.admin-usage-metric--pick.is-disabled:hover { border-color: var(--border); }

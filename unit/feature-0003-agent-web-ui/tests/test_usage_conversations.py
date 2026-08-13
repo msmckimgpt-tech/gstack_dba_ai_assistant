@@ -83,10 +83,14 @@ class _FakeDt:
         return hash(self._s)
 
 
-def _row(cid, topic, owner, model, calls, tok, pt, ct, last="2026-06-15T10:00:00Z"):
-    # 컬럼 순서: conversation_id, topic, owner_account_id, created_at, updated_at, blocked_at, m, calls, tok, pt, ct, last_used
+def _row(cid, topic, owner, model, calls, tok, pt, ct, last="2026-06-15T10:00:00Z",
+         cache_read=0, cache_write=0):
+    # 컬럼 순서: conversation_id, topic, owner_account_id, created_at, updated_at, blocked_at, m, calls,
+    #            tok, pt, ct, last_used, cache_read, cache_write
+    # usage-metric-charts(2026-08-13): 캐시 두 축은 컬럼 부재 경로에서도 리터럴 0 으로 **같은 자리**를
+    #   채우므로(0056 사다리 규약) 더블도 항상 14컬럼이다 — 실 SQL 과 arity 를 맞춰 둔다.
     return (cid, topic, owner, _FakeDt("2026-06-01T00:00:00Z"), _FakeDt("2026-06-15T09:00:00Z"),
-            None, model, calls, tok, pt, ct, _FakeDt(last))
+            None, model, calls, tok, pt, ct, _FakeDt(last), cache_read, cache_write)
 
 
 # ── Q1: 대화별 fold + INNER JOIN ───────────────────────────────────────────────

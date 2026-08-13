@@ -11,6 +11,31 @@ import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
+// ── usage-metric-charts(2026-08-13): 요약 카드 = 차트 지표 선택기 ───────────────────────
+//
+// 요청: "[요청, 호출, 총 토큰, 입력, 출력, 비용] 패널을 클릭했을 때 차트 또한 해당 값에 따라
+// 부드럽게 재구성" + "cache hit 된 입출력 항목 추가".
+//
+// `stackable=false` 는 **모델별 분해가 성립하지 않는** 지표다. `requests` 는 distinct run_id 라
+// 한 요청이 여러 모델을 횡단하면 모델별 distinct 의 합이 전체 distinct 보다 커진다 — 그대로 쌓으면
+// 막대 높이가 요약 카드 값을 넘는다. 그래서 이 지표만 버킷 총계(by_day.requests)로 단일 막대를
+// 그리고, 모델 분해가 없다는 사실을 캡션에 명시한다(무음으로 틀린 stacked 를 보여주지 않는다).
+//
+// 캐시 두 지표는 **입력(prompt_tokens)의 부분집합**이다(게이트웨이 실측: prompt = 순수입력 +
+// 캐시읽기 + 캐시쓰기). 합산해 총량을 만들지 않도록 선택 시 캡션으로 그 관계를 알린다.
+const USAGE_METRICS = [
+  { key: "requests", label: "요청", money: false, stackable: false },
+  { key: "calls", label: "호출", money: false, stackable: true },
+  { key: "total_tokens", label: "총 토큰", money: false, stackable: true },
+  { key: "prompt_tokens", label: "입력", money: false, stackable: true },
+  { key: "completion_tokens", label: "출력", money: false, stackable: true },
+  { key: "cache_read_tokens", label: "캐시 읽기", money: false, stackable: true, cache: true },
+  { key: "cache_write_tokens", label: "캐시 쓰기", money: false, stackable: true, cache: true },
+  { key: "cost_usd", label: "추정 비용", money: true, stackable: true },
+];
+const USAGE_METRIC_DEFAULT = "total_tokens";
+const usageMetricOf = (key) => USAGE_METRICS.find((m) => m.key === key) || USAGE_METRICS.find((m) => m.key === USAGE_METRIC_DEFAULT);
+
 // TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
 //   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
 async function loadUsage(opts) {
@@ -30,6 +55,17 @@ async function loadUsage(opts) {
   const trendTitleEl = document.getElementById("usageTrendTitle");
   const GRAN_LABEL = { hour: "시간별", day: "일별", week: "주별", month: "월별" };
   if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran] || "일별";
+  // usage-metric-charts: 이 렌더 패스가 그릴 지표(요약 카드 선택값). 미설정·미지 키는 총 토큰.
+  //   모델을 부분 선택한 상태에서 **비-가산 지표(요청)** 는 성립하지 않는다 — 요청(distinct run_id)은
+  //   모델로 나눌 수 없어 카드는 모델별 합, 기간 차트는 전체 기준이 되어 같은 화면의 두 수가 어긋난다.
+  //   그래서 그 조합에서는 기본 지표로 강등하고, 카드도 비활성 + "—" 로 표시한다(상세 표가 부분 선택
+  //   시 요청/호출을 "—" 로 두는 규칙과 같은 취급).
+  const _metricLocked = (adminState.usage.selectedModels != null);
+  let metric = usageMetricOf(adminState.usage.metric);
+  if (_metricLocked && !metric.stackable) {
+    metric = usageMetricOf(USAGE_METRIC_DEFAULT);
+    adminState.usage.metric = metric.key;
+  }
   if (summaryEl && refetch) summaryEl.textContent = "로딩 중…";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
@@ -119,29 +155,50 @@ async function loadUsage(opts) {
       showUsageConvModal({ error: (err && err.message) || "사용 기록 조회 실패", title: o.title || "사용 기록" });
     }
   };
-  // 기간별 토큰 사용량 — 모델별 누적(stacked) 세로 막대 + 막대 총합 라벨 + hover 툴팁.
-  const renderStacked = (el, byDayModel) => {
+  // 기간별 사용량 — 선택 지표의 모델별 누적(stacked) 세로 막대 + 막대 총합 라벨 + hover 툴팁.
+  //
+  // usage-metric-charts: 같은 (기간·단위·모델집합·분해모드) 안에서 **지표만 바뀌면 SVG 를 다시
+  // 만들지 않고 기존 <rect> 의 y/height 를 갱신**한다. 그래야 CSS transition 이 걸려 막대가
+  // 부드럽게 이동한다(노드를 새로 만들면 전환이 아니라 점프가 된다). 기간·모델 집합이 바뀌면
+  // 막대의 정체성이 달라지므로 그때는 재생성한다.
+  //   · 재사용 판정 키(_sig) = 분해모드 | 일자들 | 모델들 | 차트 폭
+  //   · 기하 갱신은 **style** 로 한다 — SVG presentation attribute 로 쓰면 transition 대상이 아니다.
+  const renderStacked = (el, byDayModel, byDay, metric) => {
     if (!el) return;
-    const rows = byDayModel || [];
-    if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
-    const dayMap = {}; const costMap = {}; const models = [];  // TASK-0263: costMap = day→model→cost
-    rows.forEach((r) => {
-      dayMap[r.day] = dayMap[r.day] || {};
-      dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
-      costMap[r.day] = costMap[r.day] || {};
-      costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
-      if (!models.includes(r.model)) models.push(r.model);
-    });
+    const mk = metric.key;
+    const stacked = metric.stackable;
+    // 비-가산 지표(요청)는 모델 분해 없이 버킷 총계 한 덩어리로 그린다(위 USAGE_METRICS 주석 참조).
+    const SOLO = "__all__";
+    const dayMap = {}; const costMap = {}; const models = [];
+    if (stacked) {
+      (byDayModel || []).forEach((r) => {
+        dayMap[r.day] = dayMap[r.day] || {};
+        dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r[mk] || 0);
+        costMap[r.day] = costMap[r.day] || {};
+        costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
+        if (!models.includes(r.model)) models.push(r.model);
+      });
+    } else {
+      (byDay || []).forEach((r) => {
+        dayMap[r.day] = { [SOLO]: (r[mk] || 0) };
+        costMap[r.day] = { [SOLO]: 0 };
+      });
+      models.push(SOLO);
+    }
     const days = Object.keys(dayMap).sort();
+    if (!days.length) { el._sig = ""; el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
     const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
     const maxT = Math.max(1, ...totalsByDay);
+    const fmtV = metric.money ? usd : num;
     /* TASK-0180: viewBox 폭을 카드 실제 폭에 맞춰 일별 차트가 넓은 카드를 꽉 채우게 한다
        (높이는 H 고정 → SVG width:100%/height:auto 시 정확히 H px). 측정 실패 시 760 폴백. */
     const cw = Math.max(360, Math.round(el.clientWidth || 0) || 760);
     const W = cw, H = 200, pL = 56, pB = 26, pT = 10, pR = 14;
     const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
     const step = plotW / n, bw = Math.max(2, Math.min(64, step * 0.66));
-    let bars = "", valLabels = "";
+    // 세그먼트 기하 + 툴팁을 한 번 계산해 생성/갱신 두 경로가 **같은 값**을 쓰게 한다.
+    const segs = [];
+    const labels = [];
     days.forEach((d, di) => {
       const x = pL + di * step + (step - bw) / 2;
       const dayTot = totalsByDay[di];
@@ -152,47 +209,144 @@ async function loadUsage(opts) {
         const pct = dayTot ? (v / dayTot * 100).toFixed(1) : "0";
         // TASK-0263: hover 에 모델별 비용 + 클릭 시 그 일자·모델 기여 대화 모달(data-usage-* 후크).
         const cst = costMap[d][m] || 0;
-        const costTip = cst > 0 ? `<br>추정 ${usd(cst)}` : "";
-        bars += `<rect class='admin-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>' data-usage-day='${esc(d)}' data-usage-model='${esc(m)}'/>`;
+        const costTip = (!metric.money && cst > 0) ? `<br>추정 ${usd(cst)}` : "";
+        const who = stacked ? ` · ${esc(m)}` : "";
+        const pctTip = stacked ? ` (${pct}%)` : "";
+        segs.push({
+          key: `${d}|${m}`, x, y, h, w: bw, day: d, model: stacked ? m : null,
+          fill: stacked ? mcol(m) : CHART_COLORS[0],
+          tip: `${esc(d)}${who}<br><b>${fmtV(v)}</b> ${esc(metric.label)}${pctTip}${costTip}`
+            + `<br><span style="opacity:.8">클릭: 사용 기록 보기</span>`,
+        });
       });
       if (bw >= 20 && (dayTot / maxT) > 0.05) {
-        valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${num(dayTot)}</text>`;
+        labels.push({ key: d, x: x + bw / 2, y: y - 3, text: fmtV(dayTot) });
       }
     });
+    const sig = [stacked ? "S" : "1", days.join(","), models.join(","), W].join("|");
+    const svg = el.querySelector("svg");
+    if (svg && el._sig === sig) {
+      // ── in-place 갱신(지표 전환) — 노드 유지 → CSS transition 이 막대를 이동시킨다.
+      const byKey = new Map(segs.map((s) => [s.key, s]));
+      svg.querySelectorAll("rect[data-seg]").forEach((r) => {
+        const s = byKey.get(r.getAttribute("data-seg"));
+        if (!s) { r.style.height = "0px"; r.style.opacity = "0"; return; }
+        byKey.delete(s.key);
+        r.style.opacity = "";
+        r.style.y = s.y.toFixed(1) + "px";
+        r.style.height = s.h.toFixed(1) + "px";
+        r.setAttribute("data-tip", s.tip);
+      });
+      // 이전 렌더에 없던 세그먼트(그 지표에서만 값이 생긴 모델)는 새로 붙인다. 값 라벨 <g> **앞**에
+      // 넣어야 라벨이 막대에 가리지 않는다(SVG 는 나중에 그린 것이 위). 높이 0 으로 넣고 다음
+      // 프레임에 목표 높이를 주어 새 막대도 솟아오르듯 나타나게 한다.
+      const anchor = svg.querySelector("[data-vlabels]");
+      byKey.forEach((s) => {
+        const html = segRect({ ...s, y: s.y + s.h, h: 0 });
+        if (anchor) anchor.insertAdjacentHTML("beforebegin", html);
+        else svg.insertAdjacentHTML("beforeend", html);
+        const node = svg.querySelector(`rect[data-seg="${CSS.escape(s.key)}"]`);
+        if (node) requestAnimationFrame(() => {
+          node.style.y = s.y.toFixed(1) + "px";
+          node.style.height = s.h.toFixed(1) + "px";
+        });
+      });
+      const lbl = svg.querySelector("[data-vlabels]");
+      if (lbl) lbl.innerHTML = labels.map((L) => vLabel(L)).join("");
+      const axMax = svg.querySelector("[data-axis-max]");
+      if (axMax) axMax.textContent = fmtV(maxT);
+      bindTip(el);
+      bindUsageDrill(el);
+      return;
+    }
     const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
-      + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='var(--text-muted)'>${num(maxT)}</text>`
+      + `<text data-axis-max x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='var(--text-muted)'>${fmtV(maxT)}</text>`
       + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='10' fill='var(--text-muted)'>0</text>`;
     let xl = "";
     [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 3), Math.floor(2 * n / 3), n - 1])].forEach((di) => {
       const x = pL + di * step + step / 2;
       xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
     });
-    const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(m)};display:inline-block;'></span>${esc(m)}</span>`).join("");
-    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
+    const legend = stacked
+      ? models.map((m) => `<span class='admin-usage-legend-item'><span class='admin-usage-swatch' style='background:${mcol(m)};'></span>${esc(m)}</span>`).join("")
+      : "";
+    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}`
+      + segs.map((s) => segRect(s)).join("")
+      + `<g data-vlabels>${labels.map((L) => vLabel(L)).join("")}</g>${xl}</svg>`
+      + (legend ? `<div class='admin-usage-legend'>${legend}</div>` : "");
+    el._sig = sig;
     bindTip(el);
     bindUsageDrill(el);  // TASK-0263: 막대 클릭 → 그 일자·모델 기여 대화 모달.
   };
-  // 모델별 비중 — 도넛 + hover 툴팁(토큰·비중·추정비용).
-  const renderDonut = (el, byModel) => {
+  // 막대 세그먼트 1개. 기하를 **style 로** 실어 이후 지표 전환이 transition 을 타게 한다
+  // (attribute 로 쓰면 CSS transition 대상이 아니라 값이 즉시 점프한다).
+  const segRect = (s) => `<rect class='admin-usage-clickable admin-usage-bar' data-seg='${esc(s.key)}'`
+    + ` style='x:${s.x.toFixed(1)}px;y:${s.y.toFixed(1)}px;width:${s.w.toFixed(1)}px;height:${s.h.toFixed(1)}px;'`
+    + ` fill='${s.fill}' rx='1' data-tip='${s.tip}'`
+    + (s.day ? ` data-usage-day='${esc(s.day)}'` : "")
+    + (s.model ? ` data-usage-model='${esc(s.model)}'` : "") + `/>`;
+  const vLabel = (L) => `<text x='${L.x.toFixed(1)}' y='${L.y.toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${L.text}</text>`;
+  // 모델별 비중 — 선택 지표 기준 도넛 + hover 툴팁(값·비중·호출·추정비용).
+  //
+  // usage-metric-charts: 모델 집합이 같으면 <circle> 을 재사용하고 stroke-dasharray/dashoffset 만
+  // 갱신한다 → 세그먼트가 부드럽게 회전·신축한다. `requests` 처럼 모델 합이 전체와 어긋날 수 있는
+  // 지표는 중앙 총계를 **모델 합**으로 표기해 도넛 안의 산술과 라벨이 일치하도록 한다(요약 카드의
+  // 전체 요청 수와는 다를 수 있고, 그 차이는 캡션이 설명한다).
+  const renderDonut = (el, byModel, metric) => {
     if (!el) return;
+    const mk = metric.key;
+    const fmtV = metric.money ? usd : num;
     const rows = (byModel || []).map((r) => ({
       label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
-      value: r.total_tokens || 0, calls: r.calls || 0, cost: r.cost_usd || 0,
+      value: r[mk] || 0, calls: r.calls || 0, cost: r.cost_usd || 0,
     })).filter((r) => r.value > 0);
-    if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
+    if (!rows.length) { el._sig = ""; el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
     const total = rows.reduce((a, b) => a + b.value, 0);
 
     const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70;
-    let off = 0, segs = "";
-    rows.forEach((r) => {
+    let off = 0;
+    const arcs = rows.map((r) => {
       const len = (r.value / total) * C;
-      const costTip = r.cost > 0 ? `<br>추정 ${usd(r.cost)}` : "";
-      // TASK-0263: 도넛 세그먼트 클릭 → 그 모델 기여 대화 모달(data-usage-model). 라벨=COALESCE(resolved,model)=백엔드 필터 키.
-      segs += `<circle class='admin-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>' data-usage-model='${esc(r.label)}'/>`;
+      const costTip = (!metric.money && r.cost > 0) ? `<br>추정 ${usd(r.cost)}` : "";
+      const a = {
+        label: r.label, dash: `${len.toFixed(2)} ${(C - len).toFixed(2)}`, offset: (-off).toFixed(2),
+        pct: (r.value / total * 100).toFixed(1),
+        tip: `${esc(r.label)}<br><b>${fmtV(r.value)}</b> ${esc(metric.label)} (${(r.value / total * 100).toFixed(1)}%)`
+          + `<br>${num(r.calls)} 호출${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>`,
+      };
       off += len;
+      return a;
     });
-    const legend = rows.map((r) => `<div class='admin-usage-clickable' data-usage-model='${esc(r.label)}' style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(r.label)};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
-    el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='var(--text-muted)'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='var(--text)'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
+    const sig = rows.map((r) => r.label).join(",");
+    const svg = el.querySelector("svg");
+    if (svg && el._sig === sig) {
+      arcs.forEach((a) => {
+        const c = svg.querySelector(`circle[data-arc="${CSS.escape(a.label)}"]`);
+        if (!c) return;
+        c.style.strokeDasharray = a.dash;
+        c.style.strokeDashoffset = a.offset;
+        c.setAttribute("data-tip", a.tip);
+      });
+      const cap = el.querySelector("[data-donut-label]");
+      if (cap) cap.textContent = metric.label;
+      const tot = el.querySelector("[data-donut-total]");
+      if (tot) tot.textContent = fmtV(total);
+      el.querySelectorAll("[data-legend-pct]").forEach((n2) => {
+        const a = arcs.find((x) => x.label === n2.getAttribute("data-legend-pct"));
+        if (a) n2.textContent = a.pct + "%";
+      });
+      bindTip(el);
+      bindUsageDrill(el);
+      return;
+    }
+    // TASK-0263: 도넛 세그먼트 클릭 → 그 모델 기여 대화 모달(data-usage-model). 라벨=COALESCE(resolved,model)=백엔드 필터 키.
+    const segs = arcs.map((a) => `<circle class='admin-usage-clickable admin-usage-arc' data-arc='${esc(a.label)}' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(a.label)}' stroke-width='22' style='stroke-dasharray:${a.dash};stroke-dashoffset:${a.offset};' transform='rotate(-90 ${cx} ${cy})' data-tip='${a.tip}' data-usage-model='${esc(a.label)}'/>`).join("");
+    const legend = arcs.map((a) => `<div class='admin-usage-clickable admin-usage-donut-row' data-usage-model='${esc(a.label)}'><span class='admin-usage-swatch' style='background:${mcol(a.label)};'></span><span class='admin-usage-donut-name'>${esc(a.label)}</span><strong data-legend-pct='${esc(a.label)}'>${a.pct}%</strong></div>`).join("");
+    el.innerHTML = `<div class='admin-usage-donut-wrap'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}`
+      + `<text data-donut-label x='70' y='66' text-anchor='middle' font-size='11' fill='var(--text-muted)'>${esc(metric.label)}</text>`
+      + `<text data-donut-total x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='var(--text)'>${fmtV(total)}</text></svg>`
+      + `<div style='flex:1;min-width:150px;'>${legend}</div></div>`;
+    el._sig = sig;
     bindTip(el);
     bindUsageDrill(el);  // TASK-0263
   };
@@ -209,22 +363,61 @@ async function loadUsage(opts) {
   };
   // TASK-0181: 모델별 누적(stacked) 가로 막대 — 역할별/계정별 토큰·비용을 어떤 모델로 썼는지 색 분해.
   // rows = [{label, total_tokens, cost_usd, models:[{model, total_tokens, cost_usd}]}]. 모델 색 = 전역 modelColor.
-  const renderStackedHBar = (el, rows, valueKey, valFmt, onRowClick) => {
+  const renderStackedHBar = (el, rows, valueKey, valFmt, onRowClick, stackable) => {
     if (!el) return;
     const fmt = valFmt || num;
-    const data = (rows || []).map((r) => ({ label: r.label, value: r[valueKey] || 0, models: r.models || [] })).filter((r) => r.value > 0);
-    if (!data.length) { el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
-    const max = Math.max(...data.map((r) => r.value));
+    // usage-metric-charts: 비-가산 지표(요청)는 모델별 분해가 성립하지 않는다. models[] 로 쌓으면
+    //   세그먼트가 전부 0 폭이 되어 막대가 사라진 것처럼 보이므로, 엔티티 값 하나로 그린다.
+    const solo = (stackable === false);
+    // usage-metric-charts: 지표에 따라 엔티티 값이 0 이 될 수 있으므로(예: 캐시 미사용 역할) 행 자체를
+    //   지우지 않고 **0 폭 막대로 남긴다** — 행이 사라졌다 나타나면 전환이 끊기고 목록 높이가 튄다.
+    //   단 어느 지표에서도 값이 없는 엔티티는 애초에 호출측 view 에서 빠진다.
+    const data = (rows || []).map((r) => ({
+      label: r.label, value: r[valueKey] || 0,
+      models: solo ? [{ model: "__all__", [valueKey]: r[valueKey] || 0 }] : (r.models || []),
+    }));
+    if (!data.length) { el._sig = ""; el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
+    const max = Math.max(1, ...data.map((r) => r.value));
     const clickable = typeof onRowClick === "function";  // TASK-0184: 역할 막대 클릭 → 계정 drill-down.
+    // 세그먼트 폭·툴팁을 먼저 계산(생성·갱신 두 경로 공용).
+    const segOf = (r) => (r.models || []).map((m) => {
+      // TASK-0263: 토큰 차트 hover 에도 모델별 추정 비용 병기(valueKey 가 cost_usd 면 이미 비용이라 중복 생략).
+      const extraCost = (valueKey !== "cost_usd" && (m.cost_usd || 0) > 0) ? `<br>추정 ${usd(m.cost_usd)}` : "";
+      return {
+        model: m.model, w: ((m[valueKey] || 0) / max * 100).toFixed(2),
+        color: solo ? CHART_COLORS[0] : mcol(m.model),
+        tip: solo
+          ? `${esc(r.label)}<br><b>${fmt(m[valueKey] || 0)}</b>`
+          : `${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey] || 0)}</b>${extraCost}`,
+      };
+    });
+    const sig = (solo ? "1|" : "S|")
+      + data.map((r) => r.label + ">" + (r.models || []).map((m) => m.model).join("+")).join("|")
+      + (clickable ? "|c" : "");
+    if (el._sig === sig && el.querySelector(".admin-usage-hbar-row")) {
+      // ── in-place 갱신(지표 전환) — width 만 바꿔 CSS transition 이 막대를 늘이고 줄인다.
+      data.forEach((r) => {
+        const row = el.querySelector(`.admin-usage-hbar-row[data-label="${CSS.escape(r.label)}"]`);
+        if (!row) return;
+        const val = row.querySelector("[data-hbar-val]");
+        if (val) val.textContent = fmt(r.value);
+        const segs = segOf(r);
+        row.querySelectorAll("[data-hseg]").forEach((sEl, i) => {
+          const s = segs[i];
+          if (!s) { sEl.style.width = "0%"; return; }
+          sEl.style.width = s.w + "%";
+          sEl.setAttribute("data-tip", s.tip);
+        });
+      });
+      bindTip(el);
+      return;
+    }
     el.innerHTML = data.map((r) => {
-      const segs = (r.models || []).filter((m) => (m[valueKey] || 0) > 0).map((m) => {
-        // TASK-0263: 토큰 차트 hover 에도 모델별 추정 비용 병기(valueKey 가 cost_usd 면 이미 비용이라 중복 생략).
-        const extraCost = (valueKey !== "cost_usd" && (m.cost_usd || 0) > 0) ? `<br>추정 ${usd(m.cost_usd)}` : "";
-        return `<div data-tip='${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey])}</b>${extraCost}' style='width:${(m[valueKey] / max * 100).toFixed(2)}%;background:${mcol(m.model)};height:100%;'></div>`;
-      }).join("");
+      const segs = segOf(r).map((s) => `<div data-hseg class='admin-usage-hseg' data-tip='${s.tip}' style='width:${s.w}%;background:${s.color};'></div>`).join("");
       const cls = "admin-usage-hbar-row" + (clickable ? " admin-usage-hbar-row--click" : "");
-      return `<div class='${cls}' data-label='${esc(r.label)}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='display:flex;background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'>${segs}</div></div>`;
+      return `<div class='${cls}' data-label='${esc(r.label)}'><div class='admin-usage-hbar-head'><span>${esc(r.label)}</span><strong data-hbar-val>${fmt(r.value)}</strong></div><div class='admin-usage-hbar-track'>${segs}</div></div>`;
     }).join("");
+    el._sig = sig;
     bindTip(el);
     if (clickable) {
       el.querySelectorAll(".admin-usage-hbar-row--click").forEach((row, i) => {
@@ -268,7 +461,9 @@ async function loadUsage(opts) {
     if (st.drillPage >= pages) st.drillPage = pages - 1;
     if (st.drillPage < 0) st.drillPage = 0;
     const start = st.drillPage * pageSize;
+    // usage-metric-charts: 지표 전환이 계정 축에서도 성립하도록 원본 축을 통째로 실어 보낸다.
     const pageRows = filtered.slice(start, start + pageSize).map((a) => ({
+      ...a,
       label: usageAcctLabelOf(a), total_tokens: a.total_tokens || 0, cost_usd: a.cost_usd || 0, models: a.models || [],
       _account_id: a.account_id,  // TASK-0263: 클릭 시 대화 모달 필터용(라벨에서 파싱하지 않고 직접 보존)
     }));
@@ -288,8 +483,11 @@ async function loadUsage(opts) {
       openUsageConversations({ scope: "admin", account_id: row._account_id, title: label });
     };
     if (pageRows.length) {
-      renderStackedHBar(chartEl, pageRows, "total_tokens", num, onAcctClick);
-      renderStackedHBar(costChartEl, pageRows, "cost_usd", usd, onAcctClick);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
+      // usage-metric-charts: 역할 차트와 같은 지표 쌍(선택 지표 | 비용, 선택이 비용이면 총 토큰).
+      const dm = usageMetricOf(adminState.usage.metric);
+      const ds = usageMetricOf(dm.key === "cost_usd" ? "total_tokens" : "cost_usd");
+      renderStackedHBar(chartEl, pageRows, dm.key, dm.money ? usd : num, onAcctClick, dm.stackable);
+      renderStackedHBar(costChartEl, pageRows, ds.key, ds.money ? usd : num, onAcctClick, ds.stackable);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
     } else {
       chartEl.innerHTML = "<p class='admin-usage-empty'>검색 결과가 없습니다.</p>";
       if (costChartEl) costChartEl.innerHTML = "";
@@ -337,13 +535,32 @@ async function loadUsage(opts) {
     const reModels = (models) => (models || []).filter((m) => inSel(m.model));
     const reEntity = (r) => {
       const models = reModels(r.models);
-      const total_tokens = models.reduce((a, m) => a + (m.total_tokens || 0), 0);
-      const cost_usd = Math.round(models.reduce((a, m) => a + (m.cost_usd || 0), 0) * 10000) / 10000;
-      return { ...r, models, total_tokens, cost_usd };
+      // usage-metric-charts: 지표 8종 중 모델 분해가 가능한 축은 선택 모델 기여분으로 전부 재합산한다.
+      //   (종전엔 total_tokens/cost 만 재계산 — 지표 전환이 생기면서 나머지 축도 필요해졌다.)
+      const out = { ...r, models };
+      ["calls", "total_tokens", "prompt_tokens", "completion_tokens",
+       "cache_read_tokens", "cache_write_tokens"].forEach((k) => {
+        out[k] = models.reduce((a, m) => a + (m[k] || 0), 0);
+      });
+      out.cost_usd = Math.round(models.reduce((a, m) => a + (m.cost_usd || 0), 0) * 10000) / 10000;
+      return out;
     };
     // 역할·계정: 선택 모델 기여분만 남기고, 그 기여가 0 인 엔티티는 차트/표에서 제외.
     const by_role = all ? (data.by_role || []) : (data.by_role || []).map(reEntity).filter((r) => r.total_tokens > 0 || r.cost_usd > 0);
     const by_account = all ? (data.by_account || []) : (data.by_account || []).map(reEntity).filter((r) => r.total_tokens > 0 || r.cost_usd > 0);
+    // by_day: 비-가산 지표(요청)의 단일 막대 소스. 모델 부분 선택 시에는 버킷의 요청 수를 모델별로
+    //   나눌 수 없으므로(모델 횡단) by_day_model 의 선택분 합으로 대체 가능한 축만 재계산하고,
+    //   requests 는 원본 값을 유지한 채 아래 캡션이 "전체 기준" 임을 알린다.
+    let by_day = data.by_day || [];
+    if (!all) {
+      const acc = {};
+      by_day_model.forEach((r) => {
+        const e = acc[r.day] || (acc[r.day] = { day: r.day });
+        ["calls", "total_tokens", "prompt_tokens", "completion_tokens",
+         "cache_read_tokens", "cache_write_tokens"].forEach((k) => { e[k] = (e[k] || 0) + (r[k] || 0); });
+      });
+      by_day = by_day.map((d) => ({ ...d, ...(acc[d.day] || {}) }));
+    }
     // totals: 전체면 응답 totals 그대로, 부분 선택이면 by_model 합으로 재계산(prompt/completion/calls/requests/cost).
     let totals;
     if (all) {
@@ -354,10 +571,12 @@ async function loadUsage(opts) {
         requests: sumK("requests"), calls: sumK("calls"),
         total_tokens: sumK("total_tokens"), prompt_tokens: sumK("prompt_tokens"),
         completion_tokens: sumK("completion_tokens"),
+        cache_read_tokens: sumK("cache_read_tokens"),
+        cache_write_tokens: sumK("cache_write_tokens"),
         cost_usd: Math.round(sumK("cost_usd") * 10000) / 10000,
       };
     }
-    return { totals, by_model, by_day_model, by_role, by_account };
+    return { totals, by_model, by_day_model, by_day, by_role, by_account };
   };
   // TASK-0198: 모델 필터 칩 바 — 전체 모델 목록 + 선택 토글. days/gran 동일 캐시로 재렌더(재조회 X).
   const renderModelFilter = (allModelKeys) => {
@@ -416,34 +635,68 @@ async function loadUsage(opts) {
     const isPartial = (selSet != null);
     if (summaryEl) {
       // TASK-0177: dashboard 와 동일한 .metric-card / .summary-metrics 로 통일.
-      // TASK-0198: ① 합계 카드(선택 모델 기준) ② 모델별 분리 카드(모델당 토큰/호출/요청/비용).
-      const card = (label, val) => `<article class='metric-card admin-usage-metric'><span>${label}</span><strong>${val}</strong></article>`;
+      // TASK-0198: 합계 카드(선택 모델 기준).
+      // usage-metric-charts: 각 카드는 **차트 지표 선택기**다. 클릭하면 아래 차트 전부가 그 값으로
+      //   다시 그려진다(재조회 없이 캐시 재렌더). 카드는 button 으로 만들어 키보드·스크린리더에서도
+      //   선택 가능하게 하고, 선택 상태는 aria-pressed 로 노출한다.
+      const card = (m) => {
+        const off = (isPartial && !m.stackable);   // 모델 부분 선택 + 비-가산 지표 = 성립 불가
+        const raw = t[m.key];
+        const val = off ? "—" : (m.money ? usd(raw) : num(raw));
+        const on = (m.key === metric.key);
+        return `<button type='button' class='metric-card admin-usage-metric admin-usage-metric--pick`
+          + `${on ? " is-active" : ""}${off ? " is-disabled" : ""}'`
+          + ` data-metric='${esc(m.key)}' aria-pressed='${on ? "true" : "false"}'${off ? " disabled" : ""}`
+          + `${off ? " title='모델을 선택하면 요청 수는 모델별로 나눌 수 없습니다'" : ""}>`
+          + `<span>${esc(m.label)}</span><strong>${val}</strong></button>`;
+      };
       const scopeLabel = isPartial ? `선택 ${selSet.size}개 모델` : "전체 모델";
-      const totalsHtml =
+      summaryEl.innerHTML =
         `<div class='admin-usage-summary-head'><span class='admin-usage-summary-scope'>${esc(scopeLabel)}</span></div>` +
-        `<div class='summary-metrics'>` +
-        card("요청", num(t.requests)) +
-        card("호출", num(t.calls)) +
-        card("총 토큰", num(t.total_tokens)) +
-        card("Prompt", num(t.prompt_tokens)) +
-        card("Completion", num(t.completion_tokens)) +
-        ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
+        `<div class='summary-metrics' role='group' aria-label='차트 지표'>` +
+        USAGE_METRICS.map(card).join("") +
         `</div>`;
-      // TASK-0204: '모델별' 분리 카드 그리드 제거 — 상단 '모델' 칩 바 + '전체' 가 모델별 분리/선택을
-      //   이미 담당해 중복이고, hover 결합 dim/접힘(TASK-0202)이 re-render 와 충돌해 잭(즉시 사라짐·
-      //   빈 공간·레이아웃 점프)을 유발. 요약은 합계 카드(선택 스코프 기준)만 남긴다.
-      summaryEl.innerHTML = totalsHtml;
+      summaryEl.querySelectorAll("[data-metric]").forEach((b) => {
+        b.addEventListener("click", () => {
+          const key = b.getAttribute("data-metric");
+          if (key === adminState.usage.metric) return;
+          adminState.usage.metric = key;
+          loadUsage({ refetch: false });  // 캐시 재렌더(재조회 X) — 차트만 새 지표로 전환.
+        });
+      });
     }
-    // TASK-0164/0166: 일별 stacked / 모델별 도넛 (선택 모델 view 기준).
-    renderStacked(dayChartEl, view.by_day_model);
-    renderDonut(modelChartEl, view.by_model);
-    // TASK-0181: 역할별·계정별 [토큰|비용] 을 모델별 누적(stacked) 막대로 — 어떤 모델로 썼는지 색 분해.
+    // 지표 관련 안내는 **오해가 생기는 지표에서만** 한 줄. 그 외에는 아무것도 붙이지 않는다.
+    const noteEl = document.getElementById("usageMetricNote");
+    if (noteEl) {
+      let note = "";
+      if (!metric.stackable) note = "요청은 모델을 넘나들어 모델별로 나누지 않습니다.";
+      else if (metric.cache) note = "캐시 읽기·쓰기는 입력에 포함된 내역입니다.";
+      noteEl.textContent = note;
+      noteEl.classList.toggle("hidden", !note);
+    }
+    // TASK-0164/0166: 일별 stacked / 모델별 도넛 (선택 모델 view + 선택 지표 기준).
+    renderStacked(dayChartEl, view.by_day_model, view.by_day, metric);
+    renderDonut(modelChartEl, view.by_model, metric);
+    // TASK-0181: 역할별·계정별을 모델별 누적(stacked) 막대로 — 어떤 모델로 썼는지 색 분해.
+    // usage-metric-charts: 왼쪽 카드는 선택 지표, 오른쪽은 비용. 선택이 비용이면 오른쪽을 총 토큰으로
+    //   바꿔 같은 차트가 두 번 뜨지 않게 한다(제목도 함께 바뀐다).
+    const sideMetric = usageMetricOf(metric.key === "cost_usd" ? "total_tokens" : "cost_usd");
     const roleRows = (view.by_role || []).map((r) => ({
-      label: String(r.role == null ? "-" : r.role), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
+      label: String(r.role == null ? "-" : r.role), models: r.models || [],
+      calls: r.calls || 0, requests: r.requests || 0,
+      total_tokens: r.total_tokens || 0, prompt_tokens: r.prompt_tokens || 0,
+      completion_tokens: r.completion_tokens || 0,
+      cache_read_tokens: r.cache_read_tokens || 0, cache_write_tokens: r.cache_write_tokens || 0,
+      cost_usd: r.cost_usd || 0,
     }));
-    // TASK-0184: 계정별 독립 차트 제거 → 역할 토큰/비용 막대 클릭 시 계정 drill-down 펼침.
-    renderStackedHBar(roleChartEl, roleRows, "total_tokens", num, toggleAccountDrill);
-    renderStackedHBar(roleCostChartEl, roleRows, "cost_usd", usd, toggleAccountDrill);
+    const setTitle = (id, text) => { const n2 = document.getElementById(id); if (n2) n2.textContent = text; };
+    setTitle("usageRoleChartMetric", metric.label);
+    setTitle("usageRoleCostChartMetric", sideMetric.label);
+    setTitle("usageDrillChartMetric", metric.label);
+    setTitle("usageDrillCostChartMetric", sideMetric.label);
+    // TASK-0184: 계정별 독립 차트 제거 → 역할 막대 클릭 시 계정 drill-down 펼침.
+    renderStackedHBar(roleChartEl, roleRows, metric.key, metric.money ? usd : num, toggleAccountDrill, metric.stackable);
+    renderStackedHBar(roleCostChartEl, roleRows, sideMetric.key, sideMetric.money ? usd : num, toggleAccountDrill, sideMetric.stackable);
     // 계정 drill 데이터 보관 후 현재 펼침 상태 재렌더(선택 모델 view 의 by_account 와 정합 유지).
     adminState.usage.byAccount = view.by_account || [];
     renderAccountDrill();
@@ -456,7 +709,10 @@ async function loadUsage(opts) {
       } },
       { key: "requests", label: "요청", fmt: num, align: "right" }, { key: "calls", label: "호출", fmt: num, align: "right" },
       { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
-      { key: "prompt_tokens", label: "prompt", fmt: num, align: "right" }, { key: "completion_tokens", label: "completion", fmt: num, align: "right" },
+      { key: "prompt_tokens", label: "입력", fmt: num, align: "right" }, { key: "completion_tokens", label: "출력", fmt: num, align: "right" },
+      // usage-metric-charts: 캐시 두 축은 입력의 내역 — 입력 바로 뒤에 둬 포함 관계가 읽히게 한다.
+      { key: "cache_read_tokens", label: "캐시 읽기", fmt: num, align: "right" },
+      { key: "cache_write_tokens", label: "캐시 쓰기", fmt: num, align: "right" },
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
     // TASK-0176/0177/0181: 역할별·계정별 표에도 요청(메시지)·호출·추정 비용(차트와 일치).

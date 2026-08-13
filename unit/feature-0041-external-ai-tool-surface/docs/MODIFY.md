@@ -121,3 +121,72 @@ source_of_truth: true
 - Files: `docs/TEST.md` §3 (3차 Run) · `docs/REPORT.md` §3.1 · `docs/TASK.md`
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260812-0009
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 잔여 3건 완결 — **HTTP/SSE 전송 라이브 기동**(compose 서비스 + 엣지 경로) ·
+  **상한 콘솔 노출**(runtime_settings 슬라이스) · **전 구간 e2e 절차서**(사람 1회 개입).
+  codex 리뷰 P1 4건·P2 2건 전건 in-cycle 수정. 테스트 161건.
+- Files:
+  - `docker-compose.yml` (`ext-tool-mcp` 신규 서비스 — `networks: [dbnet]` · HTTP 프로브 헬스체크)
+  - `unit/feature-0002-agent-core/src/Dockerfile` (HTTP 어댑터 1개만 `/app/ext_tools/` 로 COPY)
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` (`handle /api/ai/mcp*` — 익명 401 선차단)
+  - `bin/deploy-web.sh` (`WORKERS` 에 `ext-tool-mcp` 추가 — 롤아웃 스파인 편입)
+  - `shared/runtime_settings.py` (`external_tool_surface` 그룹 4 knob)
+  - `unit/feature-0003-agent-web-ui/src/tool_ledger.py` (`effective_limits` · `check_open_tasks`)
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` (`open_task` 에 RPM·미제출 게이트)
+  - `unit/feature-0041-.../src/external_tool_mcp_http.py` (경로 정합 · replica failover · https 전수)
+  - `unit/feature-0041-.../docs/E2E_RUNBOOK.md` + `scripts/e2e-authorize.sh` (신규)
+  - `unit/feature-0041-.../tests/test_bringup_and_limits.py` (신규)
+- Impact: 신규 컨테이너 1개(dbnet). 엣지에 경로 1개 추가 — `/api/ai/mcp*` 만 분기하고 나머지
+  `/api/ai/*` 는 그대로 web 이 받는다. `open_task` 에 게이트 2종이 붙어 **한도 초과 시 429**
+  (기존 200 이던 조합이 429 가 될 수 있음 — 기본값 기준 정상 사용에서는 도달하지 않는다).
+- Rollback Notes: compose 서비스 제거 + Caddyfile `handle /api/ai/mcp*` 블록 제거로 원복.
+  knob 은 삭제해도 `DEFAULTS` 가 남아 집행은 유지된다.
+
+## CHG-20260813-0010
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **라이브 기동 실패 3중 원인 수정** — ① agent 이미지에 `mcp` 미설치 ②
+  MCP SDK 2.0 이 `mcp.server.fastmcp` 제거 ③ upstream 이 평문이 아니라 TLS.
+  배포 실패 후 컨테이너에서 실제로 기동·프로토콜 왕복을 확인하고 고쳤다.
+- Files:
+  - `unit/feature-0002-agent-core/src/requirements.txt` (`mcp>=1.2.0`)
+  - `unit/feature-0041-.../src/external_tool_mcp_http.py` (SDK 호환층 · ctx 기반 헤더 ·
+    `_SniHTTPSConnection`/`_SniHTTPSHandler` · Host 헤더)
+  - `unit/feature-0041-.../src/external_tool_mcp_server.py` (SDK 호환층)
+  - `docker-compose.yml` (https upstream · rootCA 마운트 · SNI/Host 고정 · 평문 예외 제거)
+  - `bin/deploy-web.sh` (`dump_service_logs` — 기동 실패 시 원인 노출)
+  - `unit/feature-0041-.../tests/{test_bringup_and_limits,test_container_importability,
+    test_remaining_surface}.py`
+- Impact: `ext-tool-mcp` 가 실제로 기동한다. 다른 서비스는 이미지에 패키지 1개가 늘어날 뿐
+  코드 경로 무변경. upstream 연결이 평문→**검증된 TLS** 로 강화됐다.
+- Rollback Notes: compose 서비스 제거로 원복. `mcp` 의존은 남아도 무해(아무도 import 안 함).
+
+## CHG-20260813-0011
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 콘솔 상한을 **전용 패널**로 이동 — 배포 후 실제 렌더를 확인하니 그룹 미분류라
+  `timeouts` 버킷으로 흘러 **'실행 타임아웃' 패널 안에 섞여** 있었다(문서는 별도 섹션이
+  있는 것처럼 기술 — 과장이었다).
+- Files:
+  - `shared/runtime_settings.py` (`ext_tool` 버킷 + 응답 포함)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (패널 `ext-tool-limits` + 서브탭 nav)
+  - `unit/feature-0003-agent-web-ui/src/static/admin/settings.js`
+    (`mountExtToolLimitsPanel`·`renderExtToolLimits`·`RS_EXT_TOOL_KEYS`)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (미저장 dot 서브탭 라우팅)
+  - `unit/feature-0041-.../tests/test_bringup_and_limits.py` (배치 회귀 4건)
+- Impact: 기존 패널 4종 무변경(추가만). `timeouts` 버킷에서 4행이 빠져 나온다.
+- Rollback Notes: 버킷 분기 제거 시 자동으로 이전 동작(timeouts 혼입)으로 돌아간다.
+
+## CHG-20260813-0012
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 배포 후 검증 증적 기록 — PB-0008 콘솔 패널 재검증(수정 전/후) + 라이브 엣지 경유
+  MCP 전 구간 프로브. **문서 전용**(코드 0).
+- Files: `docs/TEST.md` §3 (8·9차 Run) · `docs/REPORT.md` §3.3 ·
+  `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260813T140000-ext-tool-limits-panel.md` §3·§4
+  (+ evidence 2장)
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

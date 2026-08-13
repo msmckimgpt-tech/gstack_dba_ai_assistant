@@ -122,6 +122,39 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 	# 자기 빌드 스탬프(`static/.asset-stamp`)를 알아 “일치할 때만 immutable / 불일치면 no-store”
 	# 를 판정할 수 있다. 여기서 헤더를 강제하면 그 판정을 덮어써 불변식이 무력화되므로 두지 않는다.
 
+	# ── 외부 AI 도구 표면 MCP (HTTP/SSE, feature-0041) ────────────────────────────
+	# 외부 AI 가 런처 설치 없이 URL 하나로 붙게 하는 경로 — 같은 호스트·같은 인증서를 쓰므로
+	# 사용자는 `https://<host>/api/ai/mcp` 와 access token 만 등록하면 된다.
+	#
+	# ⚠ `handle` 순서가 의미를 갖는다 — 이 블록이 아래 기본 `handle`(web) 보다 **앞**에 있어야
+	#   web 으로 새지 않는다. 경로 접두는 `/api/ai/mcp` 이고 `/api/ai/*` 의 다른 경로
+	#   (manifest·guide·openapi·capabilities·tools·oauth)는 그대로 web 이 받는다.
+	#
+	# MCP streamable-http 는 장수명 스트림을 쓰므로 flush 를 끄고 타임아웃을 넉넉히 둔다.
+	# upstream 이 죽어도 이 경로만 502 이고 대화 서빙(web)은 무영향이다.
+	# codex P2: MCP 전송 계층에는 인증 verifier 가 없고 Bearer 는 **도구 실행 시점**에만 검사된다.
+	# 그 사이에 무인증 클라이언트가 initialize/세션/스트림을 열어 프로세스 메모리를 소모할 수
+	# 있으므로, 엣지에서 **Authorization 헤더 존재 자체**를 요구해 익명 연결을 아예 차단한다.
+	# (유효성 검사는 여전히 upstream 의 몫 — 여기서 하는 것은 익명 차단뿐이다.)
+	handle /api/ai/mcp* {
+		# ⚠ 이 검사는 **handle 블록 안**에 있어야 한다. 밖에 두면 adapt 결과에서 이 라우트가
+		#   `handle` 뒤로 밀려 익명 요청이 먼저 프록시로 나간다(무력화). 블록 안에서는
+		#   `respond` 가 `reverse_proxy` 보다 앞서 평가된다.
+		@noauth not header Authorization *
+		respond @noauth 401 {
+			body "{\"error\":\"unauthorized\",\"error_description\":\"Authorization: Bearer <access_token> required\"}"
+			close
+		}
+
+		reverse_proxy ext-tool-mcp:8971 {
+			flush_interval -1
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
 	handle {
 		reverse_proxy web-a:8000 web-b:8000 {
 			lb_policy cookie weblb

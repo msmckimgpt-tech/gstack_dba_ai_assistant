@@ -70,6 +70,19 @@ sources:
   (구조적 한계 — 각인·선언·대조는 "몰라서 섞임"만 제거)
 - `submit_answer` 미호출은 강제 불가 (소프트 강제: 미제출률 노출 + 임계 초과 시 신규 task 제한)
 
-## 7. 변경 이력 (이 카드)
+## 7. 접속 방법 (사용자 관점)
+
+설치물이 없다. MCP 클라이언트에 **URL + access token** 만 등록한다:
+
+- 엔드포인트: `https://<host>/api/ai/mcp` (streamable-http)
+- 헤더: `Authorization: Bearer <access_token>` — 없으면 **엣지에서 401**(익명 연결 차단)
+- 토큰 발급: `/api/ai/guide` 부록 B (등록 → 브라우저 인가 1회 → 토큰 교환)
+
+여러 계정을 **동시에** 다룰 때는 stdio 런처(`external_tool_mcp_server.py`)를 권한다 — 도구
+이름에 라벨이 접미돼 호출자 AI 가 세션을 구분할 수 있다(L1). HTTP 전송에는 그 층이 없다.
+
+## 8. 변경 이력 (이 카드)
 
 - 2026-08-12: 초안 작성 (계획 cycle)
+- 2026-08-13: 3차 출하 반영 — HTTP/SSE 전송 라이브 기동(`ext-tool-mcp` + 엣지 `/api/ai/mcp`) ·
+  상한 4종 콘솔 노출 · e2e 절차서. §7 접속 방법 추가

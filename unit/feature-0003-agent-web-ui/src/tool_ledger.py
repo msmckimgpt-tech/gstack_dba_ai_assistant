@@ -19,14 +19,16 @@ from __future__ import annotations
 
 from typing import Any
 
-# 상한 기본값. 운영 조절은 shared/runtime_settings 의 동명 키가 덮는다(콘솔 live).
+# 상한 기본값 — `shared/runtime_settings._EXT_TOOL_SPECS` 의 `default` 와 **반드시 일치**해야
+# 한다(그 모듈의 주석 규약: 리터럴 복제본은 양쪽을 함께 수정). 테스트가 동치를 단정한다.
 DEFAULTS: dict[str, int] = {
     "AGENT_EXT_TOOL_RPM": 120,             # 계정·분당 호출
-    "AGENT_EXT_TOOL_CONCURRENCY": 4,       # client 동시 실행
     "AGENT_EXT_TOOL_ROWS_PER_HOUR": 200_000,   # 계정·시간당 누적 반환 행수
     "AGENT_EXT_TOOL_BYTES_PER_HOUR": 64 * 1024 * 1024,
     "AGENT_EXT_TASK_OPEN_MAX": 20,         # 미제출 task 상한(소프트 강제)
 }
+# 동시 실행 상한은 in-flight 카운터가 필요해 미구현 — **콘솔에도 노출하지 않는다**
+# (존재하지 않는 방어를 표시하지 않는다는 규약, codex P1).
 
 
 class LedgerUnavailable(Exception):
@@ -67,14 +69,66 @@ def record(pg_conn, *, account_id: int, tool: str, outcome: str = "ok",
         raise LedgerUnavailable(f"원장 기록 실패: {exc}") from exc
 
 
+def effective_limits(overrides: dict[str, int] | None = None) -> dict[str, int]:
+    """콘솔(runtime_settings) live 값 → 없으면 DEFAULTS. 명시 overrides 가 최우선(테스트용).
+
+    운영자가 '시스템 > 설정 > 외부 AI 도구' 에서 값을 바꾸면 **재기동 없이** 다음 호출부터
+    반영된다(apply_mode=live). 설정 모듈을 못 읽으면 조용히 DEFAULTS 로 떨어진다 — 여기서
+    fail-closed 로 가면 설정 조회 장애가 곧 전면 차단이 되는데, 상한 자체는 코드 기본값으로도
+    집행되므로 그럴 이유가 없다(원장 조회 실패와는 성격이 다르다).
+    """
+    conf = dict(DEFAULTS)
+    try:
+        from shared import runtime_settings as _rs
+        for key in DEFAULTS:
+            try:
+                val = _rs.get_int(key)
+            except Exception:
+                continue
+            if val is not None:
+                conf[key] = int(val)
+    except Exception:
+        pass
+    conf.update(overrides or {})
+    return conf
+
+
+def check_open_tasks(mem_conn, *, account_id: int,
+                     limits: dict[str, int] | None = None) -> None:
+    """미제출(`Status='open'`) task 누적 상한. **소프트 강제의 유일한 집행면**이다.
+
+    최종 답변 제출은 강제할 수 없으므로(구조적 한계 — FUNCTION §9), 미제출이 쌓이면 새 작업
+    시작을 막아 완만히 압박한다. 조회 실패는 **통과**시킨다 — 이건 부하 상한이 아니라 규율
+    장치라, 조회 장애가 작업 시작 자체를 막을 이유가 없다(원장 fail-closed 와 성격이 다르다).
+    """
+    cap = int(effective_limits(limits).get("AGENT_EXT_TASK_OPEN_MAX", 0) or 0)
+    if cap <= 0 or mem_conn is None:
+        return
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute("SELECT COUNT(*) FROM WebAiTasks WHERE AccountId = %s AND Status = 'open'",
+                        (int(account_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception:
+        return
+    open_n = int((row or [0])[0] or 0)
+    if open_n >= cap:
+        raise RateLimited(
+            f"제출하지 않은 작업이 {open_n}개입니다(상한 {cap}). 기존 작업을 "
+            f"submit_answer 로 마무리한 뒤 새 작업을 여세요.",
+            retry_after=60, limit="open_tasks")
+
+
 def check_limits(pg_conn, *, account_id: int, client_id: str | None,
                  limits: dict[str, int] | None = None) -> None:
     """호출 **전** 게이트. 초과면 RateLimited, 조회 불가면 LedgerUnavailable(둘 다 거절).
 
     조회 불가를 통과시키지 않는 이유는 record() 와 같다 — 집행할 수 없는 상한은 상한이 아니다.
     """
-    conf = dict(DEFAULTS)
-    conf.update(limits or {})
+    conf = effective_limits(limits)
     if pg_conn is None:
         raise LedgerUnavailable("원장 연결이 없습니다.")
     try:
@@ -94,11 +148,12 @@ def check_limits(pg_conn, *, account_id: int, client_id: str | None,
     except Exception as exc:  # noqa: BLE001
         raise LedgerUnavailable(f"상한 조회 실패: {exc}") from exc
 
-    if rpm >= conf["AGENT_EXT_TOOL_RPM"]:
+    # 0 이하 = 무제한(콘솔 스펙의 minimum=0 규약). 운영자가 급히 풀어야 할 때의 탈출구다.
+    if conf["AGENT_EXT_TOOL_RPM"] > 0 and rpm >= conf["AGENT_EXT_TOOL_RPM"]:
         raise RateLimited("분당 도구 호출 상한을 초과했습니다.", retry_after=60, limit="rpm")
-    if rows_h >= conf["AGENT_EXT_TOOL_ROWS_PER_HOUR"]:
+    if conf["AGENT_EXT_TOOL_ROWS_PER_HOUR"] > 0 and rows_h >= conf["AGENT_EXT_TOOL_ROWS_PER_HOUR"]:
         raise RateLimited("시간당 반환 행수 상한을 초과했습니다.", retry_after=600, limit="rows")
-    if bytes_h >= conf["AGENT_EXT_TOOL_BYTES_PER_HOUR"]:
+    if conf["AGENT_EXT_TOOL_BYTES_PER_HOUR"] > 0 and bytes_h >= conf["AGENT_EXT_TOOL_BYTES_PER_HOUR"]:
         raise RateLimited("시간당 반환 바이트 상한을 초과했습니다.", retry_after=600, limit="bytes")
 
 

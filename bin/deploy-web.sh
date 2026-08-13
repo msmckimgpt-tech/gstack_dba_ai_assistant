@@ -85,7 +85,10 @@ AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask/ops 워커 공용
 # feature-0039: ops-scheduler 도 같은 agent 이미지를 쓰므로 워커 롤아웃 대상에 포함한다.
 # 빠지면 정기 잡(백업·복원 리허설·그래프 sync)이 배포 후에도 구 이미지로 계속 돈다 —
 # "배포는 됐는데 잡만 stale" 은 조용히 오래 가는 종류의 결함이다.
-WORKERS=(insight-worker ask-worker ops-scheduler)
+# feature-0041: ext-tool-mcp(외부 AI 도구 표면 MCP HTTP 전송) 도 같은 agent 이미지를 쓴다.
+#   롤아웃 대상에서 빠지면 이미지만 새로 빌드되고 이 컨테이너는 **구코드로 계속 도는**
+#   드리프트가 생긴다(서비스별 GIT_COMMIT 불일치 — 배포 완료 판정의 근거가 흔들린다).
+WORKERS=(insight-worker ask-worker ops-scheduler ext-tool-mcp)
 AGENT_LASTGOOD_FILE="$STATE_DIR/deploy-agent.last-good"
 WORKER_READY_TIMEOUT="${DEPLOY_WORKER_READY_TIMEOUT:-300}"    # insight 최악 unhealthy 확정(start 60s+60s×3=240s)보다 여유(리뷰 m-3 — 경계 동률 false-fail 방지)
 GATEWAY_READY_TIMEOUT="${DEPLOY_GATEWAY_READY_TIMEOUT:-180}"
@@ -838,6 +841,17 @@ worker_commit() {  # $1=svc → 컨테이너의 GIT_COMMIT (실패 시 빈 값)
   "${DC_PROD[@]}" exec -T "$1" printenv GIT_COMMIT 2>/dev/null | tr -d '[:space:]' || true
 }
 
+# 워커 기동 실패 시 **원인을 화면에 남긴다**. 2026-08-13 배포에서 `ext-tool-mcp 상태=none` 만
+# 출력한 채 워커군 전체가 롤백됐는데, 실제 원인은 컨테이너 로그 1줄
+# (`ModuleNotFoundError: No module named 'mcp'`)이었다. 그 1줄이 없으면 운영자는 롤백된
+# 컨테이너를 뒤져야 하고, 롤백이 이미 이미지를 바꾼 뒤라 원인 로그가 사라지기도 한다.
+dump_service_logs() {  # $1=svc — 진단 전용(실패해도 배포 판정에 영향 없음)
+  local svc="$1"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  err "  ↳ $svc 최근 로그 20줄:"
+  "${DC[@]}" logs --tail 20 --no-color "$svc" 2>&1 | sed 's/^/      /' >&2 || true
+}
+
 wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 생략) → 0 성공
   local svc="$1" want="${3:-}" deadline=$(( SECONDS + $2 )) st got rc
   [ "$DRY_RUN" -eq 1 ] && return 0
@@ -854,11 +868,12 @@ wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 
         if [ -z "$want" ] || [ "$got" = "$want" ]; then log "  $svc healthy (GIT_COMMIT=${got:-?})"; return 0; fi
         err "$svc healthy 이지만 GIT_COMMIT=$got (기대=$want) — 핀/빌드 불일치."; return 1 ;;
       exited|dead|none)
-        err "$svc 상태=$st — 기동 실패."; return 1 ;;
+        err "$svc 상태=$st — 기동 실패."; dump_service_logs "$svc"; return 1 ;;
     esac
     sleep 5
   done
   err "$svc 가 ${2}s 내 healthy 도달 실패(최종 상태=$(container_health "$svc"))."
+  dump_service_logs "$svc"
   return 1
 }
 
