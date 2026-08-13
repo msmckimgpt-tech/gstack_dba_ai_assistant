@@ -3865,3 +3865,11 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `test_pixi_adapter.js` T17/T19 전환 + **T31 씬-diff 신규** ·
   `test_g6build_layoutmemo.js` **T7 신규**(컬럼 ingest 캐시 적중 + 적중==fresh 동일성).
 - 백엔드·스키마·권한·마이그레이션 변경 **0** (프론트 전용).
+
+## CHG-20260813T1700-ai-claude-feature-0003-graph-expand-perf-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- 사유: 선행 cycle `20260813T1600-graph-expand-perf` 의 배포(main `16da577f`) 후 라이브 재측정 종결.
+- 대상: `docs/test-runs.d/REV-20260813T160000-graph-expand-perf.md` §5 POST-DEPLOY 채움 ·
+  `docs/TASK.md` cycle 섹션 · `docs/REPORT.md` 잔여 항목 갱신. **코드 변경 0**.
+- 결과: 라이브 n=3 이 격리 프리뷰 수치를 그대로 재현(클릭→펼침 544ms · 블로킹 134ms ·
+  drawMs 32.8ms · 재생성 21 · 라벨 19) · 무중단 `no upstreams available` 0건 · pageerror 0.

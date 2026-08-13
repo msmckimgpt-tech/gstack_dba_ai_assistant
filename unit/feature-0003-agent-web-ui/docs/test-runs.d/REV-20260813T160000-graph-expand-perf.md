@@ -69,6 +69,31 @@ verdict: PASS
   - `test_pixi_adapter.js` **304** (T17/T19 위치-제외 서명 전환 + **T31 씬-diff 13건 신규**)
   - `test_g6build_layoutmemo.js` **25** (**T7 신규** — 컬럼 ingest 캐시 적중 + 적중==fresh 좌표 동일)
 
-## 5. POST-DEPLOY
+## 5. POST-DEPLOY — 라이브 실측 (2026-08-13, main `16da577f`)
 
-- (배포 후 기록) 서빙 자산에 `nodeShapeSig`·`_metaGraphPrefetchColumns` 존재 확인 + 라이브 재측정
+**배포**: PR #1255 머지 → main `16da577f` → `sudo make deploy-web-only` (무중단 롤링 + 90s soak 통과).
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | replica 파리티 | web-a·web-b 모두 `mysql-ai-web:16da577f` (= main HEAD) |
+| 2 | `/healthz` | `200` · `git_commit=16da577f` · `mysql_ok` · `pg_ok` |
+| 3 | **무중단 실측** | 엣지 로그 `no upstreams available` **0건** (스크립트 성공 보고가 아닌 직접 계측 — RUNBOOK §10 [5]) |
+| 4 | 서빙 자산 배선 | `graph-renderer-pixi.js` 에 `nodeShapeSig` **2건** · `graph-ctxmenu.js` 에 `_metaGraphPrefetchColumns` **2건** · `graph-core.js` 에 `_metaColPrefetchClear` **2건** |
+
+**라이브 재측정** (동일 시나리오 — `mysql-mv-qa-game`/`web_ranking` 693 노드, 16-컬럼 테이블 펼침, n=3):
+
+| 지표 | 개선 전(main, n=4) | **라이브 배포본(n=3)** | 격리 프리뷰(n=3) |
+|---|---|---|---|
+| 클릭 → 펼침 완료 | 915ms | **544ms** (544/554/542) | 556ms |
+| 메인스레드 블로킹 | 344ms | **134ms** (134/150/114) | 133ms |
+| pixi `drawMs` | 210ms | **32.8ms** (46.4/31.9/32.8) | 35ms |
+| 오브젝트 재생성 `made` | 537 | **21** (21/21/21) | 21 |
+| 라벨 재생성 | 523 | **19** (19/19/19) | 19 |
+| 재사용 / 재배치 | 264 / — | 771~805 / 217~222 | 771 / 514 |
+
+프리뷰 수치와 **차이 없음** — 격리 프리뷰가 라이브를 정확히 예측했다.
+
+**시각·오류**: 3개 테이블 펼침 후 렌더 정상(컬럼 행 · "−" 컨트롤 · 선택 링 · masonry 재배치),
+`pageerror`/`unhandledrejection` **0건**. 캡처 `live-expanded.png`.
+
+**미변경 확인**: 재배치 이동 트윈 360ms 는 사용자 결정("360ms 유지")대로 그대로다.
