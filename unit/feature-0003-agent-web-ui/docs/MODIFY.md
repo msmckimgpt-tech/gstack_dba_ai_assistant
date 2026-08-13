@@ -3736,3 +3736,14 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 
 `docs/TEST.md` 에 Run 2(PB-0008 실 Chrome/150 라이브) + 측정 함정 기록 append, `docs/TASK.md` 에
 POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
+
+## CHG-20260813T1310-attach-source-compare-postdeploy POST-DEPLOY 라이브 실측 종결 (doc-only)
+
+- 선행 `CHG-20260813T1224-attach-source-compare` 가 이월한 라이브 baked 자산 검증을 종결한다.
+  코드 변경 0 — 기록만.
+- 배포: PR #1243 → main `c5a27e0d` → `sudo make deploy-web-only`. web-a·web-b 양쪽 대상 SHA ·
+  soak 통과 · 엣지 `no upstreams available` **0건**(무중단 실측) · `/healthz` 200.
+- 라이브 재실측 결과 **프리뷰와 차이 0**(5단계 전 축). 캡처 5매가 커밋본과 **byte-identical** 이라
+  main worktree 는 dirty 0 을 유지했다(§13.2.7 F0 — 증거 갱신이 필요 없었다).
+- Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T122457-attach-source-compare.md`.
+- Timestamp: 2026-08-13T13:10:00+09:00

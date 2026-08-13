@@ -2726,3 +2726,20 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   토큰(1.6억) 대비 미미한 것은 정상이다 — 시간이 지나며 채워진다.
 - 캐시 읽기와 쓰기가 같은 값인 것은 **우연이 아니라 기대 동작**이다(같은 접두를 한 번 쓰고 한 번 읽음).
   DB 행 단위로 갈라져 있음을 확인했다(쓰기 행과 읽기 행이 별개).
+
+## 20260813T1310-attach-source-compare-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+- **Environment: Windows-browser (PB-0008)** — **PASS**. PR #1243 → main `c5a27e0d` →
+  `sudo make deploy-web-only`(web-a·web-b 양쪽 `mysql-ai-web:c5a27e0d` · soak 통과 · 엣지
+  `no upstreams available` **0건** = 무중단 실측 · `/healthz` 200).
+  실 Chrome/150 `https://localhost/` 에서 라이브 7버전 체인(`probe_a.sql`)으로 **전 축 재실측 —
+  프리뷰(Run 1)와 차이 0**: 원문 화면 126행 · 비교 기준 선택기 215×26px @x=33 · diff 전용 컨트롤
+  rect 0×0(숨김) → v1 기준 비교 `v1 → v7` · `+5 / -0` · 추가 5행 → 같은 버전 복귀 **fetch 0회
+  계측** → 목록 버튼 title `v1(최초) ↔ v7(최신) 비교 …` + 기준 v1/비교 v7 → 비교 모달 같은 버전
+  → 원문 121행 + `같은 버전을 선택했습니다 — v1 원문입니다.`(종전 안내문 소멸).
+  **캡처 byte-identical**: POST-DEPLOY 캡처 5매가 커밋된 Run 1 캡처와 바이트 동일(`git status`
+  dirty 0) — 프리뷰↔라이브 렌더가 픽셀 단위로 같다는 직접 증거이자 main mutation 0(§13.2.7 F0).
+  **라이브 데이터 변경 0**(열람 경로만).
+  → Run 1 이 이월했던 "라이브 baked 자산" 축을 **종결**.
+- Run 기록 정본: `docs/test-runs.d/20260813T122457-attach-source-compare.md` Run 2.
+- **Pass/Fail: PASS**

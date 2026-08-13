@@ -4426,3 +4426,19 @@ resolve 한 결과다(리뷰어 주장 그대로 수용하지 않음).
 
 선행 cycle 의 라이브 검증 결과를 TEST.md/TASK.md 에 기록하는 doc-only 변경(코드·정책 doc 무변경) —
 §18.8 표 첫 행에 따라 panel skip. 기록된 실측 자체는 라이브 DB·실 브라우저 관측이 근거다.
+
+## REV-20260813T131000-attach-source-compare-postdeploy [SKIPPED:non-policy-doc] — PASS
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1310-attach-source-compare-postdeploy`
+- Reason: changed paths are docs only — 코드·스키마·권한 변경 0(POST-DEPLOY 실측 기록)
+- Timestamp: 2026-08-13T13:10:00+09:00
+
+- **판정 근거**: "배포됐다" 를 종료코드가 아니라 **서빙 주체의 실제 SHA + 서빙 자산 문자열**로
+  확인했다(web-a·web-b `mysql-ai-web:c5a27e0d`, 라이브 `attach-diff.js`/`composer.js` 에 신규
+  심볼 존재). 무중단도 스크립트의 "성공 보고" 가 아니라 엣지 로그 `no upstreams available` **0건**
+  으로 실측했다(§16.3 deploy-backed 완료 기준 · feature-0014 RUNBOOK §10 [5]).
+- **캡처 byte-identical 의 의미**: POST-DEPLOY 캡처가 Run 1(격리 프리뷰) 캡처와 바이트 동일해
+  `git status` 가 dirty 0 이었다. 이는 ① 프리뷰↔라이브 렌더가 픽셀 단위로 같다는 직접 증거이고
+  ② 증거 파일을 갱신할 필요가 없어 main worktree mutation 이 0 이라는 뜻이다(§13.2.7 F0 준수).
+  캡처를 덮어쓴 뒤 dirty 를 확인하는 순서였기에 위반 여부를 사후가 아니라 그 자리에서 판정할 수 있었다.
+- Human Approval Needed: no
