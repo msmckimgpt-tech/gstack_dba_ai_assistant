@@ -225,3 +225,12 @@ source_of_truth: true
   `docs/TEST.md` (11차 Run)
 - Impact: 가이드는 익명 노출 자산이나 인스턴스 데이터 0 유지.
 - Rollback Notes: 해당 없음(문서).
+
+## CHG-20260813-0015
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 가이드 배포 반영 실측 기록. 문서 전용(코드 0).
+- Files: `docs/TEST.md` (12차 Run) · `unit/feature-0003-agent-web-ui/docs/test-runs.d/
+  REV-20260813T200000-guide-text-asset.md` §2
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

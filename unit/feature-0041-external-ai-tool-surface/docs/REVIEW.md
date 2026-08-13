@@ -344,3 +344,10 @@ source_of_truth: true
   "주소만 등록" 을 두고, 런북은 개발자 회귀 검증용으로 격하했다. AI 독자에게 "사용자에게 셸
   스크립트 실행을 요구하지 말 것" 을 명시했다.
 - Human Approval Needed: 아니오.
+
+## REV-20260813-0015 [SKIPPED:post-deploy-record] — 가이드 반영 실측 (코드 0)
+
+- Related Change: CHG-20260813-0015
+- Reason: 배포 결과 기록. 코드 0.
+- 요지: 이 자산의 유일한 의미 있는 실패 모드("배포본 미반영")를 내용 대조로 확인했다.
+- Human Approval Needed: 아니오.
