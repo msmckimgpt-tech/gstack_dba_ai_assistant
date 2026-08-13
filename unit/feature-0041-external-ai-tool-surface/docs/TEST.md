@@ -203,3 +203,17 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | requirements 검사: `mcp` 줄 삭제 | **KILLED** (부분문자열 검사일 땐 SURVIVED — 그래서 고쳤다) |
 
 스위트 **180건 PASS**.
+
+### Run 2026-08-13 (7차) — 콘솔 배치 (Environment: local pytest + 라이브 payload 확인)
+
+라이브 배포본에서 `runtime_settings` payload 버킷을 직접 확인해 **'실행 타임아웃' 패널에
+섞여 있던 것**을 적발하고 전용 패널로 분리했다.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | payload 에 `ext_tool` 버킷 존재 + 응답 포함 | ✅ |
+| 2 | `admin.html` 패널·서브탭 nav·mount div | ✅ |
+| 3 | `settings.js` 패널 등록 + 재렌더 훅 + 전용 버킷 소비 | ✅ |
+| 4 | 미저장 dot 이 `ext-tool-limits` 서브탭으로 라우팅 | ✅ |
+| 5 | 프론트 키 미러 ↔ 백엔드 스펙 일치 | ✅ |
+| 뮤테이션 | 버킷 분기 제거 / 미러 키 1개 누락 | 둘 다 **KILLED** |
