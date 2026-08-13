@@ -223,19 +223,27 @@ async function loadUsage(opts) {
         labels.push({ key: d, x: x + bw / 2, y: y - 3, text: fmtV(dayTot) });
       }
     });
-    // signature 는 **막대의 가로 배치**(일자 집합 · 차트 폭)만으로 정한다. 분해모드·모델집합은
-    // 세로 구성일 뿐이라 여기 넣으면 '요청'↔다른 지표, 모델 칩 토글이 전부 재생성이 되어
-    // 전환이 점프한다. 가로 배치가 그대로면 노드를 유지해 세그먼트 증감을 애니메이션으로 흡수한다.
-    const sig = [days.join(","), W].join("|");
+    // signature 는 **일자 집합**만으로 정한다. 분해모드·모델집합은 세로 구성일 뿐이고, 차트 폭은
+    // 스크롤바 유무로 흔들린다('요청'은 범례가 없어 페이지가 짧아지고 → 세로 스크롤바가 사라져
+    // 12px 차이 — 라이브 실측). 이것들을 넣으면 '요청'↔다른 지표·모델 칩 토글이 전부 재생성이 되어
+    // 전환이 점프한다. 일자 집합이 같으면 노드를 유지하고, 세그먼트 증감과 폭 변화를 아래에서 흡수한다.
+    const sig = days.join(",");
     const svg = el.querySelector("svg");
     if (svg && el._sig === sig) {
       // ── in-place 갱신(지표 전환) — 노드 유지 → CSS transition 이 막대를 이동시킨다.
+      //    폭이 달라졌을 수 있으므로 좌표계(viewBox)와 가로 기하(x·width)·축도 함께 맞춘다.
+      //    x/width 는 transition 대상이 아니라 즉시 반영되고, y/height 만 애니메이션한다.
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const ax = svg.querySelector("[data-axis]");
+      if (ax) ax.innerHTML = axisInner(W, H, pL, pR, plotH, pT, fmtV(maxT));
       const byKey = new Map(segs.map((s) => [s.key, s]));
       svg.querySelectorAll("rect[data-seg]").forEach((r) => {
         const s = byKey.get(r.getAttribute("data-seg"));
         if (!s) { r.style.height = "0px"; r.style.opacity = "0"; return; }
         byKey.delete(s.key);
         r.style.opacity = "";
+        r.style.x = s.x.toFixed(1) + "px";
+        r.style.width = s.w.toFixed(1) + "px";
         r.style.y = s.y.toFixed(1) + "px";
         r.style.height = s.h.toFixed(1) + "px";
         r.setAttribute("data-tip", s.tip);
@@ -256,20 +264,14 @@ async function loadUsage(opts) {
       });
       const lbl = svg.querySelector("[data-vlabels]");
       if (lbl) lbl.innerHTML = labels.map((L) => vLabel(L)).join("");
-      const axMax = svg.querySelector("[data-axis-max]");
-      if (axMax) axMax.textContent = fmtV(maxT);
+      const xlg = svg.querySelector("[data-xlabels]");
+      if (xlg) xlg.innerHTML = xLabelsInner(days, n, pL, step, H);
       bindTip(el);
       bindUsageDrill(el);
       return;
     }
-    const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
-      + `<text data-axis-max x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='var(--text-muted)'>${fmtV(maxT)}</text>`
-      + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='10' fill='var(--text-muted)'>0</text>`;
-    let xl = "";
-    [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 3), Math.floor(2 * n / 3), n - 1])].forEach((di) => {
-      const x = pL + di * step + step / 2;
-      xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
-    });
+    const axis = `<g data-axis>${axisInner(W, H, pL, pR, plotH, pT, fmtV(maxT))}</g>`;
+    const xl = `<g data-xlabels>${xLabelsInner(days, n, pL, step, H)}</g>`;
     const legend = stacked
       ? models.map((m) => `<span class='admin-usage-legend-item'><span class='admin-usage-swatch' style='background:${mcol(m)};'></span>${esc(m)}</span>`).join("")
       : "";
@@ -289,6 +291,16 @@ async function loadUsage(opts) {
     + (s.day ? ` data-usage-day='${esc(s.day)}'` : "")
     + (s.model ? ` data-usage-model='${esc(s.model)}'` : "") + `/>`;
   const vLabel = (L) => `<text x='${L.x.toFixed(1)}' y='${L.y.toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${L.text}</text>`;
+  // 축·x라벨은 폭(W)에 의존하므로 생성·갱신이 같은 식을 쓰도록 빌더로 둔다(전환 대상 아님 — 즉시 반영).
+  const axisInner = (W2, H2, pL2, pR2, plotH2, pT2, maxLabel) =>
+    `<line x1='${pL2}' y1='${pT2 + plotH2}' x2='${W2 - pR2}' y2='${pT2 + plotH2}' stroke='var(--border)'/>`
+    + `<text x='${pL2 - 6}' y='${pT2 + 9}' text-anchor='end' font-size='10' fill='var(--text-muted)'>${maxLabel}</text>`
+    + `<text x='${pL2 - 6}' y='${pT2 + plotH2}' text-anchor='end' font-size='10' fill='var(--text-muted)'>0</text>`;
+  const xLabelsInner = (days2, n2, pL2, step2, H2) =>
+    [...new Set(n2 <= 1 ? [0] : [0, Math.floor(n2 / 3), Math.floor(2 * n2 / 3), n2 - 1])].map((di) => {
+      const x = pL2 + di * step2 + step2 / 2;
+      return `<text x='${x.toFixed(1)}' y='${H2 - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days2[di]))}</text>`;
+    }).join("");
   // 모델별 비중 — 선택 지표 기준 도넛 + hover 툴팁(값·비중·호출·추정비용).
   //
   // usage-metric-charts: 모델 집합이 같으면 <circle> 을 재사용하고 stroke-dasharray/dashoffset 만
