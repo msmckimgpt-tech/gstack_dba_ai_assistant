@@ -3747,7 +3747,51 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   main worktree 는 dirty 0 을 유지했다(§13.2.7 F0 — 증거 갱신이 필요 없었다).
 - Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T122457-attach-source-compare.md`.
 - Timestamp: 2026-08-13T13:10:00+09:00
+## CHG-20260813T1550-rail-async-relayout — 우측 스크롤 ↔ 대화 뱃지 정합 (mermaid 지연 렌더)
 
+- REQ-20260813T155000-rail-async-relayout (Minor §12.3). 사용자 보고: "채팅 화면의 우측 스크롤과
+  대화 뱃지의 영역이 정합하지 않는다 — 답변에 mermaid 형식이 나타날 경우 확인된다."
+- 근본 원인: `layoutMessagePointRail()` 은 호출 시점의 `messageLog.scrollHeight`·메시지 높이로
+  막대 `top%`/`height%` 를 지정하는데, 재호출 트리거 5곳(렌더·prepend 보정·페이징 복원·창 확장·
+  `window.resize`) 중 **콘텐츠 자체의 비동기 성장**이 없었다. ```mermaid 는
+  `renderMermaidDiagrams()` 가 Promise 뒤에 SVG 를 넣으므로(mermaid-render.js) 배치가 끝난 뒤
+  높이가 수백 px 뛰고, 스크롤바 thumb(실제 높이)과 rail 막대(옛 비율)가 갈라진다. 같은 성장이
+  `renderMessages` 가 맞춘 "맨 아래"도 깨뜨려 최신 답변이 화면 밖으로 밀렸다.
+  공유 대화 뷰(`share.js setupSharePointRail`)는 이 축을 ResizeObserver 로 이미 해결해 뒀고
+  **메인 채팅 뷰만 미적용**이었다 — §16.7 G8(결정의 적용면 누락).
+- 변경 (`static/app.js` 단독):
+  - 신설 `_scheduleRailRelayout`(rAF 병합 · 재고정 → 배치 → 하이라이트 순서) ·
+    `_observeRailContentResize`(**메시지 row `[data-message-id]` 를 관찰** — `messageLog` 는 flex 로
+    높이가 고정돼 콘텐츠 성장에 ResizeObserver 가 발화하지 않는다 · 렌더마다 disconnect 후 재관찰 ·
+    미지원 환경 `RAIL_RELAYOUT_FALLBACK_MS=[300,1000,2500]` 폴백 · `<img>`/`<iframe>` load capture).
+  - 신설 맨-아래 pin: `_engageRailBottomPin`(settle 600ms / ceiling 8s, 재렌더는 창 연장만) ·
+    `_repinRailBottomIfActive` · `_releaseRailBottomPin` · `_onRailBottomPinKeydown`.
+  - 배선 6곳: engage 1(`renderMessages` bottom-scroll 직후) · observe 1(`renderMessagePointRail`
+    말미) · release 4(`_animatePointScroll` · `_endAppendScrollPreserve` · 페이징 복원 rAF ·
+    `_maybeExpandOrLoadOlder`). `scroll` 이벤트는 해제 트리거로 쓰지 않는다(pin 자신의 scrollTop
+    변경이 scroll 을 유발해 첫 성장에서 자가 해제된다).
+- codex 적대 리뷰(§18.8.2 carve-out) [P1] 2 · [P2] 2 **전건 반영**: ① `_liveSyncTick` 의 위치
+  보존 분기에서 pin 해제(내가 찾은 release 4곳에 빠져 있었다) ② `#pendingAssistantBubble` 을
+  관찰 대상에 포함 + **`MutationObserver`(childList)로 교체 추적** — progress.js 가 그 row 를
+  `replaceChild` 하므로 한 번 observe 로는 끊긴다(호출부 점수정 대신 클래스 잠금, §16.7 G10)
+  ③ 네이티브 스크롤바 조작 → 컨테이너 `pointerdown` 해제 ④ 폴백 환경 settle 창을
+  `마지막 폴백+400ms` 로 연장(W8 로 불변식 잠금).
+- **라이브가 자기 회귀를 잡았다**: ③의 초판은 "pin 이 설정한 `scrollTop` 과 불일치 = 사용자 조작"
+  휴리스틱이었는데, **뷰포트 위쪽** 성장 시 브라우저 스크롤 앵커링의 자동 조정이 그 불일치를 만들어
+  pin 이 조기 해제됐다(PB-0008 재측정 `gap=1,611px` = 수정 전과 같은 증상). 헤드리스 26축은 성장이
+  아래쪽에서만 일어나 전건 통과 상태였다 — 진짜 경계축은 "성장이 뷰포트 위인가 아래인가"(§16.7 G4).
+  `pointerdown` 판별로 교체 + 하네스 **T11**(위쪽 성장 시 pin 유지)·**W5b**(폐기 휴리스틱 재발
+  방지) 추가 → `gap=0` 복귀.
+- 검증: 신규 실브라우저 하네스 `tests/headless/verify_point_rail_async_relayout.py` **26/26 PASS** ·
+  `--baseline` 재현 FAIL 4(T2 178.2px · T4 507px · T7 97.96px, T8 재현 판정 OK) ·
+  기존 `verify_*.mjs` 57/57 · pytest 전건 PASS · **PB-0008 라이브 대조**(같은 대화·자산만 다른
+  프리뷰 2개): 오차 86.58px→0.11px, 맨아래 gap 1,631px→0px, thumb 불일치 0, JS 오류 0.
+- Files: `unit/feature-0003-agent-web-ui/src/static/app.js`,
+  `unit/feature-0003-agent-web-ui/tests/headless/verify_point_rail_async_relayout.py`(신규),
+  `docs/{FUNCTION,TASK,TEST,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/20260813T155000-rail-async-relayout.md`(신규),
+  `docs/evidence/pb0008-rail-async-relayout-*.png`(신규 5매).
+- Timestamp: 2026-08-13T15:50:00+09:00
 ## CHG-20260813T1543-ai-claude-corp-attach-list-name-sort — 첨부 목록 이름순 정렬
 
 - 요청: "프로젝트 내 서비스에서, 첨부파일이 명칭 순으로 정렬되도록 구성해주세요."

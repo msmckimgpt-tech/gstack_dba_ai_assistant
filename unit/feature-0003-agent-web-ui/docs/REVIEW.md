@@ -4442,7 +4442,60 @@ resolve 한 결과다(리뷰어 주장 그대로 수용하지 않음).
   ② 증거 파일을 갱신할 필요가 없어 main worktree mutation 이 0 이라는 뜻이다(§13.2.7 F0 준수).
   캡처를 덮어쓴 뒤 dirty 를 확인하는 순서였기에 위반 여부를 사후가 아니라 그 자리에서 판정할 수 있었다.
 - Human Approval Needed: no
+## REV-20260813T155000-ai-claude-corp-rail-async-relayout [CODEX:rail-async-relayout] — CONCERN (P1 2 · P2 2 → 4건 전건 반영, 그중 1건은 반영 초판이 라이브 회귀를 유발해 재설계)
 
+- Related TASK: feature-0003-agent-web-ui (20260813T1550-rail-async-relayout)
+- Source: codex review (`codex review --uncommitted`)
+- Trigger: UI/layout/scroll keyword matched (UI·화면·레이아웃·스크롤) — code change.
+  §18.8 dispatch 표는 ux·design subagent 를 요구하지만, 본 세션에는 **상위 우선순위 도구 제약**
+  ("Do not call the AgentTool unless the user requested it")이 걸려 있다. AGENTS.md §18.8.2
+  「상위 우선순위 지시 carve-out」에 따라 subagent panel 을 호출하지 않고, 제약 없는 채널
+  (codex review + 신규 실브라우저 하네스 + PB-0008 라이브 대조)로 검증했다. 미검증 도메인은
+  아래 [SKIPPED:tool-restricted:ux,design] 로 명시한다.
+- Timestamp: 2026-08-13T15:50:00+09:00
+- Verdict: CONCERN (P1 2건이 실제 결함이었고 전건 수정 — 수정 후 재검증 PASS)
+- Artifact: `docs/test-runs.d/20260813T155000-rail-async-relayout.md` (Run 1 하네스 26/26 ·
+  Run 2 PB-0008 라이브 대조) + `docs/evidence/pb0008-rail-async-relayout-*.png`
+- Critical issue (반영 내역):
+  - **[P1] live-sync 위치 보존 경로의 pin 미해제** — `_liveSyncTick` 이 사용자가 하단에서 80px
+    이상 떨어져 있을 때 `renderMessages()` 후 `prevTop` 을 복원하는데, 그 렌더가 engage 한 pin 이
+    살아 있어 뒤이은 성장이 사용자를 하단으로 끌어내린다. → 그 분기에서 `_releaseRailBottomPin()`.
+    내가 찾은 release 배선 4곳에 이 경로가 빠져 있었다(적용면 누락 — 지적이 정확했다).
+  - **[P1] pending 말풍선 성장 미관찰** — `#pendingAssistantBubble` 은 `data-message-id` 가 없어
+    관찰 대상에서 빠지는데 그 높이가 `scrollHeight` 에 들어가므로 progress step 이 쌓이면 확정
+    메시지 막대가 stale 해진다. 게다가 progress.js 는 그 row 를 **`replaceChild` 로 교체**하므로
+    한 번 observe 해도 연결이 끊긴다. → pending row 를 대상에 포함 + **`MutationObserver`
+    (childList) 로 교체·추가를 따라잡아 클래스 전체를 잠갔다**(§16.7 G10 — 호출부마다 재관찰을
+    심는 점수정 대신 구조로).
+  - **[P2] 네이티브 스크롤바 조작 시 pin 미해제** — 스크롤바 클릭·드래그는 wheel/touch/key 를
+    발생시키지 않는다. → **컨테이너 `pointerdown`** 으로 해제.
+    ⚠ **반영 초판이 라이브 회귀를 만들었다**: "pin 이 설정한 `scrollTop` 과 불일치 = 사용자 조작"
+    휴리스틱으로 구현했더니, **뷰포트 위쪽** 성장 시 브라우저 스크롤 앵커링의 자동 조정이 그
+    불일치를 만들어 pin 이 조기 해제됐다 — 라이브 재측정에서 `A_entry gap=1,611px`(수정 전과 같은
+    증상). 헤드리스 26축은 성장이 아래쪽에서만 일어나 전건 통과 상태였다(§16.7 **G4** — 진짜
+    경계축은 "성장이 뷰포트 위인가 아래인가"였다). scroll 값 비교는 *브라우저 자동 조정*과
+    *사용자 조작*을 구분할 수 없다는 것이 결론이고, `pointerdown`(의미론적 "사용자가 눌렀다")으로
+    교체 후 `gap=0` 복귀. 하네스에 **T11**(위쪽 성장 시 pin 유지)·**W5b**(폐기 휴리스틱 재발 방지)
+    를 추가했다.
+  - **[P2] 폴백 환경의 settle 창 부족** — ResizeObserver 부재 시 성장 신호가 `[300,1000,2500]ms`
+    타이머로만 오는데 settle 600ms 는 첫 폴백 직후 만료돼 이후 성장에서 스크롤이 새 하단에 못
+    붙는다. → 폴백 모드에서 settle 을 `마지막 폴백 + 400ms` 로 연장(ceiling 8s 상한 유지) +
+    관계 불변식을 **W8** 로 잠금.
+- 자기 판단 기록(반영하지 않은 것 없음): 4건 모두 실제 시나리오로 판단해 전건 반영했다. P2 2건은
+  "우선순위 낮음" 이 아니라 **사용자 조작과 자동 스크롤이 싸우는 축**이라 pin 설계의 정합성 자체에
+  관계된다고 보았다.
+- Human Approval Needed: no
+
+## REV-20260813T155000-rail-async-relayout-panel [SKIPPED:tool-restricted:ux,design] — 미검증 범위 명시
+
+- Related TASK: feature-0003-agent-web-ui (20260813T1550-rail-async-relayout)
+- Reason: §18.8 dispatch 표가 UI/layout 키워드에 대해 ux·design subagent 를 요구하나, 본 세션의
+  상위 우선순위 도구 제약(AgentTool 금지)으로 panel 을 호출하지 않았다(§18.8.2 carve-out).
+  대체 채널로 codex review(위 entry) + 신규 실브라우저 하네스 26축 + PB-0008 라이브 전/후 대조를
+  수행했다. **미검증으로 남은 것**: ux·design 관점의 정성 평가(뱃지 시각 언어·상호작용 관례).
+  본 변경은 렌더 기하를 바꾸지 않고 **좌표 정합만 복원**하므로(막대 색·폭·형태·클릭 규약 무변경)
+  그 도메인의 blast radius 는 낮다고 판단하되, 판단은 판단이고 미검증은 미검증으로 표기한다.
+- Timestamp: 2026-08-13T15:50:00+09:00
 ## REV-20260813T154300-ai-claude-corp-attach-list-name-sort [CODEX:attach-list-name-sort] — PASS
 
 - Related TASK: feature-0003-agent-web-ui / `20260813T1543-attach-list-name-sort`

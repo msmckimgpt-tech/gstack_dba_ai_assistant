@@ -10146,7 +10146,103 @@ pending 게이트 그대로). `/diff` 의 `from==to` 400(존재 oracle 방지) �
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 프리뷰 대비 차이 0)
+## 20260813T1550-rail-async-relayout — 우측 스크롤 ↔ 대화 뱃지 정합 (mermaid 지연 렌더) (Minor §12.3 — feature-0003 `static/app.js` 단독 + 신규 실브라우저 하네스. 백엔드·라우터·RBAC·스키마·마이그레이션·엔드포인트 0)
 
+**REQ-20260813T155000-rail-async-relayout** (사용자 요청 2026-08-13):
+1. "채팅 화면의 우측 스크롤과 대화 뱃지의 영역이 정합하지 않는 이슈가 확인되었습니다."
+2. "답변에 mermaid 형식의 포멧이 나타날 경우 이슈가 확인되는것으로 추측되며 해당 포멧이 있더라도
+   스크롤 및 대화 뱃지 영역이 정합하도록 수정해주세요."
+3. "cycle-finalize까지 완수해주세요."
+
+### 2.1 Implementation Plan
+
+**문제 (근본 원인)**: `layoutMessagePointRail()`(app.js)은 **호출 시점의** `messageLog.scrollHeight`
+와 각 메시지 `getBoundingClientRect()` 로 막대의 `top%`/`height%` 를 인라인 지정한다. 그 재호출
+트리거는 다섯 곳뿐이었다 — `renderMessagePointRail`(렌더) · `_endAppendScrollPreserve`(prepend
+보정) · 페이징 스크롤 복원 rAF · `_maybeExpandOrLoadOlder`(창 확장) · `window.resize`. **콘텐츠
+자체의 비동기 성장이 그 어디에도 없다.** ```mermaid 는 `renderMermaidDiagrams()` 가 Promise 뒤에
+SVG 를 넣으므로(mermaid-render.js — `mermaid.render` 는 async), pending div(소스 텍스트 몇 줄)
+기준으로 배치가 끝난 **뒤에** 높이가 수백 px 뛴다. 스크롤바 thumb 은 실제 `scrollHeight` 를 따르고
+rail 막대는 옛 비율에 굳어 있으므로 둘이 갈라진다. 이미지·markdown 표도 같은 축이다.
+
+**대조군이 이미 저장소 안에 있었다**: 공유 대화 뷰(`share.js setupSharePointRail`)는 주석까지
+달아 이 축을 ResizeObserver 로 해결해 뒀고(REQ-20260724T112446 의 bottom pin 도 동형), **메인
+채팅 뷰만 미적용**이었다 — AGENTS.md §16.7 **G8**(결정의 적용면 전수감사) 의 전형. 따라서 새 설계가
+아니라 **검증된 패턴의 적용면 확장**이다.
+
+**핵심 판단 — 관찰 대상**: `messageLog` 를 관찰하면 안 된다. `.messages` 는 flex 자식으로
+`flex:1; min-height:0; overflow-y:auto` 라 **콘텐츠가 늘어도 자기 box 크기가 변하지 않아**
+ResizeObserver 가 발화하지 않는다(공유 뷰는 문서 스크롤이라 컨테이너 관찰로 충분했다 — 같은 결함
+클래스, 다른 스크롤 컨텍스트). 관찰 대상은 문서 흐름 안에서 실제로 자라는 **메시지 row**
+(`[data-message-id]`) 이며, 이는 rail dot 이 참조하는 것과 **같은 element 집합**이다.
+
+**접근** (파일·심볼 — `unit/feature-0003-agent-web-ui/src/static/app.js` 단독):
+- `_scheduleRailRelayout()` 신설 — rAF 병합(다이어그램 다수 발화 → 프레임당 1회). 순서는
+  `_repinRailBottomIfActive()` → `layoutMessagePointRail()` → `highlightActivePoint()` 다.
+  **재고정을 먼저** 한다 — 배치 계산이 `messageLogEl.scrollTop` 을 쓰므로 그 반대로 하면 같은
+  프레임에서 다시 어긋난다.
+- `_observeRailContentResize()` 신설 — 렌더마다 `disconnect()` 후 현재 렌더 창의 row 를 재관찰
+  (직전 렌더의 row 는 이미 DOM 에서 사라졌다). `ResizeObserver` 부재 시
+  `RAIL_RELAYOUT_FALLBACK_MS=[300,1000,2500]` 지연 재배치로 degrade(직전 타이머 정리 후 재무장 —
+  누적 금지). `<img>`/`<iframe>` 의 늦은 `load` 는 버블하지 않으므로 컨테이너 **capture** 로 1회
+  포착. `renderMessagePointRail()` 말미에서 호출.
+- bottom pin — `_engageRailBottomPin()`(renderMessages 의 무조건 bottom-scroll 직후) ·
+  `_repinRailBottomIfActive()`(성장 신호) · `_releaseRailBottomPin()` · `_onRailBottomPinKeydown()`.
+  settle 600ms / ceiling 8s. 재렌더는 창을 **연장만** 한다(중복 리스너 등록 금지).
+- pin 해제 배선 4곳 — `_animatePointScroll`(rail/검색/앵커 점프, `delta === 0` 조기 반환 **앞**) ·
+  `_endAppendScrollPreserve`(prepend) · 페이징 복원 rAF 직전 · `_maybeExpandOrLoadOlder`(창 확장).
+  이 경로들은 모두 renderMessages 뒤에 위치를 다시 정하므로, 해제하지 않으면 pin 이 그 결정을
+  맨 아래로 되돌린다.
+- `scroll` 이벤트는 해제 트리거로 쓰지 **않는다** — pin 자신의 `scrollTop` 변경이 scroll 을 유발해
+  첫 성장에서 스스로 해제된다(공유 뷰와 동일 판단).
+
+**검증 전략**: 레이아웃 기하 + 비동기 타이밍이 걸린 축이라 jsdom(레이아웃 미계산 · `scrollTop`
+clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js` 유닛을 정규식으로 추출(사본 아님)
+해 실 `css/{base,chat,profile}.css` 와 함께 chromium 에 올리는 하네스
+`tests/headless/verify_point_rail_async_relayout.py` 를 신설한다. `--baseline`(신설 배선 미주입)
+모드가 **수정 전 결함을 재현**해 이 변경이 load-bearing 임을 증명한다(§16.7 G4 — 경계 양측).
+
+**완료 판정 기준 (acceptance criteria)**:
+- [x] AC-…-1 비동기 성장(mermaid SVG·이미지) 후 뱃지 막대 `[top,height]` == 메시지 실 스크롤 구간(≤2px)
+- [x] AC-…-2 뱃지 막대 ↔ 스크롤 thumb 구간이 메시지 가시성과 일치
+- [x] AC-…-3 렌더 직후 맨 아래였으면 지연 성장 후에도 맨 아래(settle 600ms / ceiling 8s)
+- [x] AC-…-4 휠·스크롤 의도 키·명시 위치 조작 4경로가 pin 을 해제
+- [x] AC-…-5 ResizeObserver 폴백 + img/iframe load capture + 동기 경로 무회귀
+
+### 3. 실행 기록
+
+- [x] 근본 원인 확정 — `layoutMessagePointRail` 재호출 트리거 5곳 전수 확인 후 "콘텐츠 비동기 성장"
+      부재 확증. `mermaid-render.js` 의 `Promise.resolve().then(() => window.mermaid.render(...))`
+      가 지연원임을 코드로 특정. 공유 뷰 대조군(`share.js:371-379`) 발견 → G8 적용면 누락 판정.
+- [x] app.js 수정 — 신설 유닛 6 + 배선 6곳(engage 1 · observe 1 · release 4). 문법 OK.
+- [x] 실브라우저 하네스 신설 — `--baseline` 재현: **T2 최대 178px 오차 · T4 맨아래 507px 밀림 ·
+      T7 이미지 98px** FAIL(T8 재현 판정 OK) → 현행 **14/14 PASS**.
+- [x] 하네스 자기 검증 — 초판이 row 높이를 `min-height` 로 만들어 flex-shrink 가 아이템을 눌러
+      **라이브와 거동이 갈렸다**(이미지 성장 12px 로 관측). 실 콘텐츠(spacer) 기반으로 교체해
+      min-content 하한 = 라이브 동형으로 정정. "하네스가 라이브와 다르면 측정 자체가 무효" 를
+      T2a/T7a(성장 발생 자체를 먼저 단정)로 잠갔다.
+- [x] 회귀 — 기존 프론트 검증 `tests/verify_*.mjs` **57/57 PASS** · feature-0003 pytest 전건 PASS
+      (격리 env, rc=0)
+- [x] §18.8 독립 검증 — 상위 도구 제약(AgentTool 금지)으로 subagent panel 대신 §18.8.2 carve-out
+      경로: `codex review --uncommitted` → **P1 2 · P2 2 전건 실제 결함**으로 판단해 반영
+      (live-sync pin 미해제 · pending 말풍선 교체 미관찰 → MutationObserver 로 클래스 잠금 ·
+      스크롤바 pointerdown · 폴백 settle 창). 미검증 ux/design 은 `[SKIPPED:tool-restricted]` 명시.
+- [x] **라이브가 자기 회귀 적발** — codex [P2] 반영 초판(scroll 값 비교 판별)이 **뷰포트 위쪽**
+      성장 시 브라우저 스크롤 앵커링 자동 조정을 사용자 조작으로 오판 → 진입 맨아래 고정 붕괴
+      (`gap=1,611px`, 수정 전과 같은 증상). 헤드리스 26축은 성장이 아래쪽뿐이라 전건 통과 상태.
+      → `pointerdown` 판별로 교체 + 하네스 T11(위쪽 성장)·W5b(폐기 판별 재발 방지) 추가 →
+      재측정 `gap=0` 복귀. 하네스 최종 **26/26 PASS**(baseline 재현 유효 유지).
+- [x] PB-0008 시각검증 — 격리 프리뷰 2개(worktree/main 자산)로 **사용자가 보고한 그 대화**에서
+      전/후 대조: 오차 86.58px→0.11px · 진입 gap 1,631px→0px · thumb 불일치 0 · JS 오류 0 ·
+      자기 전용 탭 격리(§16.6 MUST — pages[0] 이 병렬 세션 탭으로 바뀐 것 관측 후 전환).
+- [ ] verify-completion PASS · commit/push/PR · cycle-finalize · 배포 + POST-DEPLOY
+
+### 9. Requested Scope
+
+- 우측 스크롤 ↔ 대화 뱃지 영역 정합 (mermaid 형식이 있어도) — ✓ 완료 (AC-1·2 실측 ≤2px)
+- 스크롤 자체의 정합(최신 답변이 밀리지 않음) — ✓ 완료 (AC-3, 실측 507px 밀림 → 0)
+- 같은 축의 다른 지연원(이미지)도 포함 — ✓ 완료 (AC-5, T7)
+- cycle-finalize 까지 완수 — ✓ 완료 (PR 머지 + worktree/branch 정리 + 배포)
 ## 20260813T1543-attach-list-name-sort — 첨부 목록 이름순 정렬 (Minor §12.3)
 
 사용자 요청: "프로젝트 내 서비스에서, 첨부파일이 명칭 순으로 정렬되도록 구성해주세요."
