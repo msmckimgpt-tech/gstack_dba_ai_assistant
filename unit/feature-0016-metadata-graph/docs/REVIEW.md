@@ -935,3 +935,17 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
   5건을 남겼고, 그 Run 전에는 시각검증을 통과한 것으로 보고하지 않는다.
 - 검증: 헤드리스 그래프 스위트 1155(기준선) → **1290 PASS / 0 FAIL** · 뮤테이션 19종 전건 KILLED ·
   관련 pytest 46 PASS · `node --check` 3파일 PASS.
+
+## REV-20260813T160000-ai-claude-corp-feature-0016-expand-camera-postdeploy [SKIPPED:one-line-revert-to-prior-behavior] — PASS
+
+- Reason: 실행 코드 변경이 **1줄**이고, 그 1줄은 **직전 배포 이전의 동작으로 되돌리는 것**이다
+  (`_metaGraphExpandSchema` 의 `focusElement(key,false)` 복원 — 이 경로에 오래 있던 코드). 새 알고리즘·
+  새 의존성·새 상태가 없고, 되돌림 대상의 적대 검증은 `REV-20260813T112100-…[CODEX:…]` 가 담당했다.
+- 근거는 라이브 화면 실측이다(증적 5장 + status/계측 대조). 상세는 test-runs.d POST-DEPLOY Run.
+- 자가 점검에서 확인한 것: keep-in-view 를 남겨둔 3경로(컬럼 펼침·컬럼 접기·스키마 접기)는 모두
+  **원래 카메라 처리가 없었거나 대상이 작아지는** 경로라 같은 기전(큰 combo 중심 판정)이 성립하지
+  않는다 — 되돌림 범위를 스키마 펼침 1곳으로 좁힌 근거.
+- **판정을 바꾼 사실**: "이미 보이는 카드까지 중앙으로 끌어오는 것은 과하다" 는 1차 구현의 전제는
+  사용자 요청에 없던 판단이었고, 라이브가 그 판단을 반증했다. 요청 범위를 넘은 개선은 회귀 위험을
+  스스로 만든다 — 이 건을 LEARNINGS 후보로 남긴다.
+- 검증: 헤드리스 전 스위트 **1290 PASS / 0 FAIL**(계약 반전 2건 포함) · `node --check` PASS.

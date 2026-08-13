@@ -371,12 +371,17 @@ const screenRect = (g, b) => ({ x0: b.x0 + g.pan.x, y0: b.y0 + g.pan.y, x1: b.x1
       return ctx.slice(i, j < 0 ? ctx.length : j);
     };
     ok(bodyOf("_metaGraphToggleColumns").length > 100, "D bodyOf 가 함수 본문을 실제로 잡는다(가드 자체 검증)");
-    for (const fn of ["_metaGraphToggleColumns", "_metaGraphCollapse", "_metaGraphExpandSchema", "_metaGraphCollapseSchema"]) {
+    // keep-in-view 는 **카메라 처리가 아예 없던 경로 + 접기** 에만 둔다.
+    for (const fn of ["_metaGraphToggleColumns", "_metaGraphCollapse", "_metaGraphCollapseSchema"]) {
       ok(bodyOf(fn).indexOf("_metaGraphKeepInView") >= 0, "D 배선 — " + fn + " 이 keep-in-view 호출");
     }
-    // 스키마 펼침의 hard focusElement 중앙 점프는 제거됐다(제자리 원칙 회귀 차단)
-    ok(bodyOf("_metaGraphExpandSchema").indexOf("focusElement") < 0,
-      "D 스키마 펼침의 무조건 중앙 focusElement 제거");
+    // 스키마 **펼침**은 중앙 focus 유지 — POST-DEPLOY 라이브에서 keep-in-view 로 바꾼 것이 회귀임이
+    //   드러났다: 펼친 combo 가 뷰포트보다 커져 '중심이 안전영역 안 = 이동 0' 이 되고, 방금 펼쳐진
+    //   테이블들이 화면 밖에 남았다. 요청 범위를 넘은 변경이었으므로 기존 동작으로 되돌린다.
+    ok(bodyOf("_metaGraphExpandSchema").indexOf("focusElement") >= 0,
+      "D 스키마 펼침은 중앙 focus 유지(POST-DEPLOY 정정 — 회귀 재발 차단)");
+    ok(bodyOf("_metaGraphExpandSchema").indexOf("_metaGraphKeepInView") < 0,
+      "D 스키마 펼침에 keep-in-view 미배선(펼친 내용이 화면 밖에 남는 회귀 차단)");
     ok(/import \{[^}]*_metaGraphKeepInView[^}]*\} from "\.\/graph-core\.js/.test(ctxRaw),
       "D import 배선(ESM free-var 사고 재발 차단)");
   }
