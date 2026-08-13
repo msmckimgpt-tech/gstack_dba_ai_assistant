@@ -1,6 +1,6 @@
 {
-  "total_routes": 245,
-  "api_routes": 244,
+  "total_routes": 247,
+  "api_routes": 246,
   "ordered": [
     {
       "path": "/static",
@@ -1635,6 +1635,28 @@
       "path": "/api/ai/connect/token",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/mcp/{rest:path}",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/mcp",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
       ],
       "type": "APIRoute"
     },

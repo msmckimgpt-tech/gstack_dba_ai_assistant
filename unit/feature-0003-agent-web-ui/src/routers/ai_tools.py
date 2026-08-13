@@ -75,6 +75,19 @@ def _challenge(request: Request) -> dict[str, str]:
             f'Bearer resource_metadata="{origin}/.well-known/oauth-protected-resource"'}
 
 
+# 엣지(Caddy)가 **무토큰 `/api/ai/mcp*` 요청만** 여기로 넘긴다. 목적은 두 가지다.
+#   ① 익명 요청이 `ext-tool-mcp` 에 닿아 MCP 세션/스트림을 열지 못하게 한다(원래 차단 목적).
+#   ② 그러면서 401 의 `resource_metadata` **호스트가 접속에 쓴 호스트와 같아야** 한다 —
+#      이 배포는 사내 이름·공인 IP·loopback 여러 이름으로 도달하고, 엣지에 이름을 박아 두면
+#      IP 로 붙은 외부 클라이언트가 해석 안 되는 이름을 따라가다 discovery 가 끊긴다(실측).
+# 여기서 만들면 `request.base_url` 이 접속 호스트를 따르고, TrustedHost 가 그 호스트를 이미
+# 검증한다(엣지에서 `{host}` 를 되비추면 검증 없는 반사가 된다).
+@router.api_route("/api/ai/mcp", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])
+@router.api_route("/api/ai/mcp/{rest:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])
+def mcp_unauthenticated(request: Request, rest: str = "") -> JSONResponse:
+    raise app._AuthError("Bearer access token 이 필요합니다.", 401, _challenge(request))
+
+
 def require_ai_token(request: Request, conn=Depends(app.get_conn)) -> dict[str, Any]:
     """access token → 계정 컨텍스트. 세션이 죽었으면 401(= '세션 실재' 집행면)."""
     token = _bearer(request)

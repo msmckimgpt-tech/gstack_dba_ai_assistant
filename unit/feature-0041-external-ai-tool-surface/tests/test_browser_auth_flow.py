@@ -213,12 +213,29 @@ def test_auth_error_headers_are_opt_in():
     assert 'headers=getattr(exc, "headers", None) or None' in src
 
 
-def test_edge_401_carries_the_same_challenge():
+def test_anonymous_mcp_401_is_answered_by_the_app_not_a_fixed_host():
+    """★ 이 배포는 사내 이름·공인 IP·loopback 여러 이름으로 도달한다. 엣지가 401 을 직접
+    만들면서 공개 호스트를 박아 두면, **IP 로 붙은 외부 클라이언트가 해석되지 않는 이름**을
+    따라가다 discovery 가 끊긴다(라이브 실측). 앱이 만들면 `request.base_url` 이 접속 호스트를
+    따르고 TrustedHost 가 그 호스트를 이미 검증한다."""
     cf = _read("unit", "feature-0006-lan-proxy-access", "src", "caddy", "Caddyfile")
     block = cf[cf.index("handle /api/ai/mcp*"):]
     block = block[:block.index("\n\thandle {")]
-    assert "WWW-Authenticate" in block and "resource_metadata=" in block
-    assert "oauth-protected-resource" in block
+    code = "\n".join(ln for ln in block.splitlines() if not ln.strip().startswith("#"))
+
+    assert "@noauth not header Authorization *" in code, "익명 차단 자체가 사라졌다"
+    assert "WWW-Authenticate" not in code, "엣지가 아직 단서를 직접 만든다(호스트 고정)"
+    assert "{host}" not in code.split("header_up Host")[0], \
+        "검증 없이 요청 Host 를 되비춘다"
+    # 익명은 web 으로, 인증된 요청만 ext-tool-mcp 로 — 순서가 뒤집히면 익명이 MCP 에 닿는다.
+    assert code.index("web-a:8000") < code.index("ext-tool-mcp:8971")
+
+    tools = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
+    assert 'def mcp_unauthenticated(' in tools
+    assert '@router.api_route("/api/ai/mcp"' in tools
+    assert '@router.api_route("/api/ai/mcp/{rest:path}"' in tools, "하위 경로가 비어 있다"
+    body = tools[tools.index("def mcp_unauthenticated("):tools.index("def require_ai_token(")]
+    assert "_challenge(request)" in body and "401" in body
 
 
 # ── ④ 연결 페이지 (OAuth 미지원 클라이언트) ──────────────────────────────────

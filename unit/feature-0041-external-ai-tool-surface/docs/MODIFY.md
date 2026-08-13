@@ -234,3 +234,18 @@ source_of_truth: true
   REV-20260813T200000-guide-text-asset.md` §2
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260814-0016
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **엣지 401 의 호스트 고정 해소** — 익명 `/api/ai/mcp*` 401 을 엣지가 직접 만들지
+  않고 앱으로 넘긴다. 외부 접속이 공인 IP(`https://112.185.196.20/`) 기반이라 드러난 결함:
+  엣지가 `WWW-Authenticate` 에 공개 호스트를 박아 두어, IP 로 붙은 클라이언트가 **해석되지
+  않는 이름**을 따라가다 discovery 가 끊겼다.
+- Files:
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` (`handle @noauth` → web 프록시)
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` (`mcp_unauthenticated` 라우트)
+  - `docs/ROUTEMAP.md` · `tests/route_snapshot_p5b.json` (route +2)
+- Impact: 익명 차단 목적은 유지(익명은 web 으로, 인증된 요청만 `ext-tool-mcp`). 인증된 MCP
+  스트림 경로 무변경. 앱에 `/api/ai/mcp` 라우트가 생겨 **web 직접 호출 시**에도 401+단서를 준다.
+- Rollback Notes: Caddyfile 블록 원복 + 라우트 삭제.
