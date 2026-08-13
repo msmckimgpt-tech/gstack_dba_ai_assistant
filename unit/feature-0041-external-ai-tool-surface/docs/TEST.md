@@ -255,3 +255,15 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 
 `safeNextTarget` 은 node 로 9 케이스 실행: `/ai/connect`·쿼리 포함 경로는 허용,
 `//evil.com`·`/\evil.com`·`https://evil.com`·`javascript:`·빈 값은 거절.
+
+### Run 2026-08-13 (11차) — POST-DEPLOY 인증 접근성 (Environment: live · `5f20ee88`)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 서비스 6종 GIT_COMMIT | 전부 `5f20ee88` ✅ |
+| 2 | caddy `no upstreams available` | **0건** ✅ |
+| 3 | `/.well-known/oauth-protected-resource` · `-authorization-server` · 경로접미 변형 | 전부 **200** ✅ |
+| 4 | 엣지 무토큰 401 의 `WWW-Authenticate` | `Bearer resource_metadata="https://…/.well-known/oauth-protected-resource"` ✅ |
+| 5 | 앱 무토큰 401 의 `WWW-Authenticate` | 동일 ✅ (엣지·앱 단서 일치) |
+| 6 | **미로그인 `authorize`** (구 404 자리) | `302 → /?next=…` → **최종 200** ✅ |
+| 7 | `/ai/connect` · `/api/ai/connect/status` | **200** ✅ |

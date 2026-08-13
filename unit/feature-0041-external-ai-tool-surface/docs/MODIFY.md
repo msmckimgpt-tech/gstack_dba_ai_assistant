@@ -215,3 +215,13 @@ source_of_truth: true
   발급하지 않는다 — 이 URL 을 직접 호출하던 자동화가 있다면 동의 화면을 받는다(설계상 의도).
   scope 집행이 켜지므로 `data.read` 가 없는 토큰은 403 — 현행 발급물은 전부 `data.read` 다.
 - Rollback Notes: 라우터·정적 파일 되돌림. 스키마 변경 없음(nonce 는 기존 `WebOAuthGrants` 재사용).
+
+## CHG-20260813-0014
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 사용자 안내 정본 갱신 + POST-DEPLOY 기록. **문서 전용**(코드 0).
+- Files: `static/ai-api-guide.md` (부록 B.0-1 신설 — "주소만 등록" 이 먼저 · scope·동의 화면
+  주의 추가) · `docs/E2E_RUNBOOK.md` (스크립트를 **개발자 회귀 검증용**으로 격하) ·
+  `docs/TEST.md` (11차 Run)
+- Impact: 가이드는 익명 노출 자산이나 인스턴스 데이터 0 유지.
+- Rollback Notes: 해당 없음(문서).

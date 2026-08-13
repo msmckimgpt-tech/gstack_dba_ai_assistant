@@ -335,3 +335,12 @@ source_of_truth: true
 - Risks: 3번은 **다른 feature 의 보안 장치(강제 변경)를 내 진입점이 우회시킨** 사례다. 새 진입점을
   만들 때 "기존 모달·게이트가 SPA 안에서만 강제되는가" 를 확인해야 한다.
 - Human Approval Needed: 아니오 (`deploy_scope: included`).
+
+## REV-20260813-0014 [SKIPPED:post-deploy-record] — 배포 후 기록 + 안내 정본 갱신 (코드 0)
+
+- Related Change: CHG-20260813-0014
+- Reason: 라이브 검증 결과 기록과 사용자 안내 문구 갱신(코드 0).
+- 요지: **스크립트를 "사용 방법" 으로 안내하던 것이 문제의 절반**이었다. 가이드 최상단에
+  "주소만 등록" 을 두고, 런북은 개발자 회귀 검증용으로 격하했다. AI 독자에게 "사용자에게 셸
+  스크립트 실행을 요구하지 말 것" 을 명시했다.
+- Human Approval Needed: 아니오.
