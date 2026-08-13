@@ -10124,3 +10124,25 @@ pending 게이트 그대로). `/diff` 의 `from==to` 400(존재 oracle 방지) �
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본에서 지표 전환·애니메이션·캐시 적재 전건 실측 PASS)
+
+## 20260813T1310-attach-source-compare-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+선행 cycle(`20260813T1224-attach-source-compare`)이 이월한 **라이브 baked 자산 검증**을 종결한다.
+
+- [x] PR #1243 머지 → main `c5a27e0d` → `sudo make deploy-web-only` — soak 통과 · 엣지
+      `no upstreams available` **0건**(무중단 실측) · `/healthz` 200
+- [x] 배포 파리티 — web-a·web-b 양쪽 `mysql-ai-web:c5a27e0d`(= main HEAD) · 서빙
+      `attach-diff.js` 에 `_bodyState`(8)·`_renderSourceBody`(5)·`attach-source-cmp`(4) ·
+      `composer.js` 에 `oldestNum`(4)·`vnums`(2)·"최초"(2)
+- [x] 라이브 전 축 재실측 — 프리뷰(Run 1)와 **차이 0**: 원문 화면(126행·선택기 215×26px @x=33·
+      diff 컨트롤 rect 0×0) → v1 기준 비교(`v1 → v7`·`+5 / -0`·추가 5행) → 같은 버전 복귀
+      **fetch 0회** → 목록 버튼 `v1(최초) ↔ v7(최신)` → 비교 모달 같은 버전 → 원문 121행 + 배너
+- [x] **캡처 byte-identical** — POST-DEPLOY 캡처 5매가 커밋된 Run 1 캡처와 바이트 동일
+      (`git status` dirty 0). 프리뷰와 라이브의 렌더가 픽셀 단위로 같다는 직접 증거이며,
+      동시에 main worktree mutation 0(§13.2.7 F0)이다.
+- [x] 라이브 데이터 변경 0 — 열람 경로만 사용(첨부 생성·삭제·편집 없음)
+- [x] fragment Run 2 append + TEST/MODIFY/REVIEW 기록
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 프리뷰 대비 차이 0)
