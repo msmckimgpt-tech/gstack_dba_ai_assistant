@@ -144,14 +144,30 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 		#   `WWW-Authenticate: … resource_metadata=…` 가 없으면 클라이언트가 인증을
 		#   어디서 받아야 할지 몰라 스스로 시작하지 못한다(= 사람이 손으로 대신해야 함).
 		#   upstream 의 401 과 같은 단서를 엣지에서도 준다.
+		# ⚠ 그 단서의 **호스트는 접속에 쓴 호스트여야 한다.** 이 배포는 사내 이름·공인 IP·
+		#   loopback 등 여러 이름으로 도달하는데, 여기서 공개 호스트를 박아 두면 IP 로 붙은
+		#   외부 클라이언트가 **해석되지 않는 이름**을 따라가다 discovery 가 끊긴다(실측).
+		#   그래서 401 을 엣지에서 만들지 않고 **앱으로 넘긴다** — 앱은 이미
+		#   `request.base_url` 로 같은 단서를 만들고 TrustedHost(WEB_ALLOWED_HOSTS)로 호스트를
+		#   검증한다. 엣지에서 `{host}` 를 되비추면 검증 없는 반사가 되므로 택하지 않았다.
+		#   (익명 요청이 ext-tool-mcp 에 닿지 않는다는 원래 목적은 그대로 지켜진다.)
 		@noauth not header Authorization *
-		respond @noauth 401 {
-			body "{\"error\":\"unauthorized\",\"error_description\":\"Authorization: Bearer <access_token> required\"}"
-			close
-		}
-		header @noauth {
-			WWW-Authenticate `Bearer resource_metadata="https://{$WEB_PUBLIC_HOST}/.well-known/oauth-protected-resource"`
-			Content-Type "application/json"
+		handle @noauth {
+			reverse_proxy web-a:8000 web-b:8000 {
+				lb_policy cookie weblb
+				lb_try_duration 5s
+				lb_try_interval 250ms
+				transport http {
+					tls
+					tls_trust_pool file /certs/rootCA.pem
+					tls_server_name {$WEB_PUBLIC_HOST}
+					dial_timeout 5s
+				}
+				header_up Host {host}
+				header_up X-Forwarded-For {client_ip}
+				header_up X-Forwarded-Proto https
+				header_up X-Forwarded-Port 443
+			}
 		}
 
 		reverse_proxy ext-tool-mcp:8971 {
