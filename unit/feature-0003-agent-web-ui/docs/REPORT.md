@@ -2469,6 +2469,13 @@ ANCHOR §1 "각자 자기 방식대로 정리"), 백엔드 `PATCH /api/conversat
 
 ## 20260813T1930 — 그룹 멤버 프론트 권한 게이트 정합 (member-scope-gates)
 
+> ⚠ **정정됨 (2026-08-13, `20260813T2010-member-leave-branch`)** — 아래 A-1~A-4 서술의 전제가 틀렸다.
+> `can(permission)` 은 인자를 버리고 로그인 여부만 반환하므로(display-permissive) 중단·즉시답변·
+> 연장은 멤버가 **원래 막히지 않았고**, 그 predicate 교체는 no-op(의미 명료화)이다. "연장 배너가
+> 떠도 승인 불가 → 타임아웃" 은 사실이 아니다. 실효 결함은 (a) B 축 오도 안내 2건 (b) 설정 팝업의
+> **보관/나가기 분기 사망**(멤버 나가기 경로 부재)이며 (b) 는 후속 cycle 에서 수정했다. 정정 상세 =
+> 아래 `## 20260813T2010` 섹션 · `docs/LEARNINGS.md LRN-20260813-display-permissive-can-invalidates-gate-audit`.
+
 사용자 감사 요청: "별도로 표시-집행 불일치가 나타나는 부분이나, 소유자가 과도하게 좁혀진 이슈가
 나타난 부분이 있는지 검토해주세요." → 감사 후 사용자가 **A+B+C 수정 범위 승인**.
 
@@ -2521,3 +2528,55 @@ ANCHOR §1 "각자 자기 방식대로 정리"), 백엔드 `PATCH /api/conversat
   않는다(무음 실패) — 숨김 vs 파티션 확대는 사용자 결정 필요.
 - 실행시간 연장의 타임아웃 실피해는 코드 경로 대조로 확정했고, 타임아웃까지 기다린 라이브 재현은
   하지 않았다.
+
+---
+
+## 20260813T2010 — 감사 결론 정정 + 멤버 '나가기' 분기 복원 (member-leave-branch)
+
+### 정정 (선행 cycle 의 오진)
+
+`can(permission)` 은 `void permission; return Boolean(state.user)` — 인자를 버린다(TASK-0098
+display-permissive "넓게 표시 + 백엔드 403"). 따라서 선행 cycle 이 "확정 결함" 으로 보고한
+**중단·즉시답변·실행시간 연장은 멤버가 원래 막히지 않았다**. 그 predicate 교체는 동작 무변화
+(의미 명료화)이며, "연장 배너가 떠도 승인 불가 → run 타임아웃" 은 **사실이 아니다**. 실효였던 것은
+오도 안내 2건(`isOwnConversation` 단독 조건 — `can()` 무관)이고, 라이브에서 소거를 확인했다.
+
+오진 원인: 판정 함수(`can()`)의 정의를 확인하지 않고 코드 대조를 "확정" 으로 불렀다. 재발 방지는
+`docs/LEARNINGS.md` `LRN-20260813-display-permissive-can-invalidates-gate-audit`(규칙 5개).
+
+### 그 오진이 가리고 있던 실효 결함 (본 cycle 수정)
+
+같은 `can()` 특성 때문에 '대화 설정' 팝업의 `canArchive` 가 항상 true → 코드 주석이 설계한
+"멤버에게는 보관 대신 '나가기'" **분기가 죽어 있었다**. 라이브 실측(멤버 계정):
+
+- 팝업 `dangerBtn.textContent === "보관"`, 팝업 내 '나가기' 문구 **부재**
+- `POST /api/delete_conversations` → `failed:[{reason:"forbidden"}]` (보관 안 됨)
+- `PATCH …/title` → `403 "소유자만 대화 제목을 변경할 수 있습니다."`
+
+→ 멤버는 그룹 대화를 **나갈 UI 경로가 없었다**(서버는 self-leave 를 허용하는데도). 판정을
+`isOwnConversation(conversation) || canOpenAdminConsole()` 로 교체해 복원.
+
+### 테스트 측 교훈 (거짓 PASS 2회)
+
+기존 `verify_settings_archive_leave.mjs` 는 `includes("canDeleteConversation(conversation)")` 로
+"그 함수를 쓴다" 만 잠갔다 — 함수가 상수 true 라 분기가 죽는다는 사실은 문자열로 볼 수 없다.
+정정 중에는 **내가 쓴 주석의 구 코드 인용**이 같은 단언을 또 통과시켰다. 두 지점 모두 **주석 제외
+코드 라인만** 검사하도록 바꾸고, 행위(렌더된 라벨 + 호출된 액션)를 잠그는 실 DOM 테스트를 신설했다.
+
+### Git 동기화 결과
+
+- 커밋: (본 cycle) — branch `ai/claude/feature-0003-member-leave-branch`
+- verify-completion: PASS (`--pre-commit feature-0003-agent-web-ui`)
+- Push / PR / main 병합: §16.3 Step 4 자동 · 배포: `deploy_scope: included`
+
+### POST-DEPLOY 필수
+
+멤버 계정으로 ① '설정' 팝업에 **'나가기'** 노출 ② 클릭 → self-leave 실제 수행(목록에서 사라짐)
+③ 소유자 계정에서는 '보관' 유지 ④ `pageerror` 0.
+
+### 잔여 (§8.1 — 기록만)
+
+- 제목 입력이 멤버에게 활성이고 서버 403 — display-permissive 컨벤션상 의도된 현 동작(테스트로 고정).
+  UX 를 더 정확히 하려면 per-code `can()` 도입이 필요하고, 그건 TASK-0098 결정을 되돌리는 별 작업이다.
+- 선행 cycle 의 D 항목(dead `buildPermissionPills` · 검색 배지 라벨 · `.any` 대화 폴더 '이동' 무음
+  실패)은 여전히 미해결 — 사용자 결정 대기.

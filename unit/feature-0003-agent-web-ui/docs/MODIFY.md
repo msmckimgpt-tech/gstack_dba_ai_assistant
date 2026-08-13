@@ -3921,6 +3921,26 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - 백엔드·스키마·권한 카탈로그·엔드포인트 변경 **0** (프론트 표시 계층만 — 서버 enforcement 불변).
 - 검증: jsdom 53 PASS · 수정 전 재현(동일 스크립트로 HEAD 평가 시 멤버 제어 전부 false) ·
   프론트 `.mjs` 61개 전수 exit 0 · ESM 구문 PASS. 라이브 = POST-DEPLOY PB-0008.
+
+## CHG-20260813T201000-ai-claude-feature-0003-member-leave-branch — 멤버 '나가기' 분기 복원 + 감사 결론 정정
+
+- 사유: 선행 cycle 의 라이브 검증에서 `can()` 이 **인자를 무시**(display-permissive)한다는 사실이
+  드러나 감사 결론 일부가 무효화됐고, 동시에 그 특성이 만든 **실효 결함**(멤버 나가기 경로 부재)이
+  확정됐다.
+- 대상:
+  - `src/static/app.js` — `openConversationSettings` 의 `const canArchive =
+    canDeleteConversation(conversation)`(→ 항상 true) 를 **`isOwnConversation(conversation) ||
+    canOpenAdminConsole()`** 로 교체. owner·관리자는 '보관', 비소유 그룹 멤버는 **'나가기'**.
+    ⚠ display-permissive `can()` 을 분기 판정에 쓰지 말라는 경고를 주석에 명문화.
+  - `tests/verify_member_leave_branch.mjs` — **신규**(jsdom 실 DOM 22): 소유자/멤버/관리자 3분기 +
+    클릭 결과 액션(`deleteConversation` vs `leaveConversation`) + 정본 `can()` 전제 단언 + 구조 4.
+  - `tests/verify_settings_archive_leave.mjs` — **거짓 PASS 정정**: 구 단언이 "그 함수를 쓴다" 만
+    잠갔던 것을 새 판정 기준으로 교체 + **주석 제외 코드 라인만** 검사(주석 인용 취약성 제거).
+  - `tests/verify_member_scope_gates.mjs` — 헤더·라벨 정정(per-code `can` 주입 = 미래 계약 잠금).
+  - `docs/LEARNINGS.md` — LRN-20260813 기록. 문서 5종 + STATUS 정정.
+- 백엔드·권한 카탈로그·스키마 변경 **0**.
+- 검증: 신규 22 PASS(수정 전 재현 시 6건 FAIL) · 정정 테스트 23 PASS · 프론트 `.mjs` 62개 전수
+  exit 0. 라이브 = POST-DEPLOY PB-0008.
 ## CHG-20260813T183000-ai-claude-feature-0003-group-attach-scope-window — 공유 대화 첨부 스코프 확대 + 공유창 window 게이트
 
 - 사유: `/_dqa:conversation_audit` 사용자 명시 호출 — 공유 대화에서 assistant 가 타 멤버 첨부를

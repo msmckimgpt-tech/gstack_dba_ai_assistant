@@ -4726,6 +4726,46 @@ Windows 브라우저가 정본**(visual_verification_scope: always). 테스트�
 `git show HEAD:app.js` 를 같은 스크립트로 평가해 수정 전 멤버 제어가 전부 `false` 임을 실측해
 확인했다. 실행시간 연장의 "배너는 뜨는데 승인 불가 → 타임아웃" 은 코드 경로 대조로 확정했고
 (배너 렌더는 소유 무관, 버튼만 `markAccessBlocked`), 타임아웃까지 기다린 라이브 재현은 하지 않았다.
+
+## REV-20260813T201000-ai-claude-feature-0003-member-leave-branch [SKIPPED:frontend-branch-fix-plus-audit-correction] SHIP — 멤버 '나가기' 분기 복원 + 선행 감사 결론 정정
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T2010-member-leave-branch`
+- Timestamp: 2026-08-13T20:10:00+09:00
+- Human Approval Needed: no — 사용자 승인 범위(A-4 "멤버 나가기 경로") 내의 원인 정정 수정.
+
+**Panel skip 사유(§18.8)**: 프론트 분기 판정 1줄 + 테스트/문서. 신규 엔드포인트·권한·백엔드 0.
+
+**정정 (§16.5 정직성 — 선행 cycle 의 오진 기록)**
+
+선행 `REV-20260813T193000` 은 A-1~A-4 를 "확정 결함" 으로 서술했다. **그 판정의 전제가 틀렸다** —
+`can(permission)` 이 `void permission; return Boolean(state.user)` 라 `can("X.any") || …` 형태는
+로그인 사용자에게 항상 true 이고, `markAccessBlocked`·`showPermissionDeniedToast` 는 도달하지 않는다.
+따라서 중단·즉시답변·연장은 멤버가 **원래 막히지 않았고**, 배포된 predicate 교체는 그 축에서 no-op
+(의미 명료화)이다. 오진 원인은 **판정 함수의 정의를 확인하지 않고** 코드 대조를 "확정" 으로 부른 것 —
+그 사실은 auto-memory 에도 있었는데 적용하지 않았다. 재발 방지는 `docs/LEARNINGS.md`
+`LRN-20260813-display-permissive-can-invalidates-gate-audit` 규칙 5개로 남겼다.
+
+**본 cycle 이 고치는 것은 실측으로 확정했다**
+
+- 라이브(배포 `fa99ed69`, 멤버 계정 `dqa_memtest`): 설정 팝업 `dangerBtn.textContent === "보관"`,
+  `hasLeaveWord: false` — 멤버에게 나가기 진입점이 없다.
+- 같은 계정으로 서버 호출: `/api/delete_conversations` → `failed:[{reason:"forbidden"}]`(보관 안 됨),
+  `PATCH …/title` → `403 "소유자만 대화 제목을 변경할 수 있습니다."` — 프론트가 내민 버튼이 서버에서
+  **항상 거부**됨을 양쪽에서 확인(§16.7 G4).
+- 수정 후 하네스로 HEAD 를 평가하면 case2 가 6건 FAIL(멤버가 '보관' + archive 호출) — 판별력 실증.
+
+**설계 판단 — 왜 `canOpenAdminConsole()` 인가**: `.any` 권한 보유를 프론트에서 알 방법은
+`console_access` 플래그뿐이다(`/api/session` 이 직렬화하는 유일한 권한성 사실 — `permissions` 맵은
+TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하는 경로를 유지하면서 일반 멤버에게는
+나가기를 주는 최소 판정이다. 서버는 여전히 `.any` 로 집행하므로 프론트 판정이 과대해도 403 로 막힌다.
+
+**의도적으로 건드리지 않은 것**: 제목 입력(`titleInput.disabled = !canRename`)은 멤버에게 활성이고
+서버가 403 한다. 이는 이 코드베이스가 채택한 display-permissive 컨벤션("넓게 표시 + 백엔드 403")이며
+**분기가 아니라 표시**라 나가기 건과 성질이 다르다. 현 동작을 테스트로 고정(case5)해, per-code `can()`
+이 도입되면 FAIL 로 함께 재검토되게 했다.
+
+**검증 채널·한계**: jsdom 실 DOM 렌더까지 검증했고 **서버 왕복은 라이브에서 별도 확인**(위 forbidden/
+403 실측). 멤버가 '나가기' 를 눌러 실제로 빠지는 end-to-end 는 POST-DEPLOY PB-0008 항목이다.
 ## REV-20260813T183000-group-attach-scope-window [CODEX:adversarial-security] — 공유 대화 첨부 스코프 확대
 
 - Related Change: `CHG-20260813T183000-ai-claude-feature-0003-group-attach-scope-window`

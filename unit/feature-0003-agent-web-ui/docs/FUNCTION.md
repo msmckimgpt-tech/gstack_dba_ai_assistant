@@ -3946,6 +3946,12 @@ draggable 이 아니었다(`'···' 메뉴 > 이동` 으로만 가능).
 
 ## REQ-20260813-member-scope-gates — 대화 조작 권한의 `.own` 범위를 서버 경계와 일치시킴 (Minor §12.3, frontend-only)
 
+> ⚠ **정정 (2026-08-13)**: 아래 표의 중단·즉시답변·실행시간 연장은 **수정 전에도 멤버가 실행할 수
+> 있었다** — `can()` 이 display-permissive(인자 무시·로그인=true)라 `.own`/`.any` 후보 차이가 결과에
+> 영향을 주지 않는다. 본 REQ 의 predicate 교체는 그 축에서 **동작 무변화(의미 명료화)** 이고, 실효는
+> 안내문(읽기 전용 오도) 소거다. 멤버의 **'대화 설정' 팝업 → 나가기** 는 별 원인(분기 판정에
+> display-permissive `can()` 사용)이라 `REQ-20260813-member-leave-branch` 에서 고쳤다.
+
 사용자 감사 요청("표시-집행 불일치 / 소유자가 과도하게 좁혀진 이슈 검토")의 산출. 백엔드는
 `conversation.<action>.own` 을 **대화 소유자 또는 그룹 대화 멤버** 로 판정한다
 (`_account_can_access_conversation` — feature-0009 "멤버십이 열람 경계"). 프론트가 이를 소유자
@@ -3990,3 +3996,40 @@ draggable 이 아니었다(`'···' 메뉴 > 이동` 으로만 가능).
   않는다(그 안내는 `.any` 열람 대화 전용).
 - `AC-20260813T193000-member-scope-gates-4` — 제목 변경·보관·복제는 멤버에게 여전히 차단되고,
   `.own` 권한 미보유 계정은 멤버여도 차단된다(비대칭·AND 조건 보존).
+
+---
+
+## REQ-20260813-member-leave-branch — '대화 설정' 팝업의 보관/나가기 분기를 사실 기반 판정으로 (Minor §12.3, frontend-only)
+
+### 동작
+
+`conv-item ···` > **설정** 팝업의 '대화 관리' 섹션은:
+
+| 사용자 | danger 버튼 | 호출 |
+|---|---|---|
+| 대화 소유자 | **보관** | `deleteConversation(cid)` → `POST /api/delete_conversations` |
+| 관리자(`console_access`) | **보관** | 동일 (서버가 `.any` 로 허용) |
+| **비소유 그룹 멤버** | **나가기** | `leaveConversation(cid)` → `DELETE …/members/{me}` (self-leave) |
+| owner·멤버·관리자 모두 아님 + 비그룹 | (섹션 미렌더) | — |
+
+### 불변식
+
+- **분기 판정은 display-permissive `can()` 을 쓰지 않는다**: `canArchive =
+  isOwnConversation(conversation) || canOpenAdminConsole()`. `can()` 은 인자를 버리고 로그인 여부만
+  반환하므로(app.js — TASK-0098) 분기에 쓰면 **한쪽 갈래가 영구히 죽는다**. 실제로 구
+  `canDeleteConversation(conversation)` 판정 하에서 멤버는 항상 '보관' 을 받았고, 서버가 그 조작을
+  거부해(`reason:"forbidden"` 실측) **나가기 경로가 존재하지 않았다**.
+- **표시(넓게) vs 분기(배타 선택) 구분**: 버튼 하나를 보여줄지 말지는 `can()`(넓게 표시 + 백엔드
+  403)이 맞다. "A 냐 B 냐" 를 가르는 데는 서버가 실제 직렬화하는 사실만 쓴다 — 소유 대조
+  (`owner_account_id`) · `/api/session` 의 `console_access`. `permissions` 맵은 미직렬화라 사용 불가.
+- 서버 enforcement 불변 — 프론트 판정이 과대해도 `.any` 게이트가 403 으로 막는다.
+- 제목 입력(`titleInput.disabled = !canRenameConversation(...)`)은 멤버에게 활성이고 서버가 403 한다.
+  이는 **분기가 아니라 표시**이므로 display-permissive 컨벤션 그대로 유지한다(테스트로 현 동작 고정).
+
+### AC
+
+- `AC-20260813T201000-member-leave-branch-1` — 비소유 그룹 멤버가 '설정' 팝업에서 **'나가기'** 버튼을
+  보고, 클릭 시 self-leave 가 수행된다.
+- `AC-20260813T201000-member-leave-branch-2` — 소유자·관리자는 '보관' 버튼을 유지한다.
+- `AC-20260813T201000-member-leave-branch-3` — 분기 판정에 `canDeleteConversation`(항상 true) 이
+  다시 쓰이면 구조 테스트가 FAIL 한다.

@@ -77,3 +77,10 @@ source_of_truth: false
 나갈 UI 경로조차 없던** 결함 4건을 정합했다(사용자 감사 요청). 서버·권한 카탈로그 무변경. 상세 =
 `unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` `20260813T1930` ·
 Run fragment `REV-20260813T193000-member-scope-gates.md`. 라이브 실측(멤버 계정 버튼 왕복) = POST-DEPLOY.
+
+**2026-08-13 정정 + 실효 수정 (cross-ref feature-0003 `20260813T2010-member-leave-branch`)**: 직전 항목이
+"멤버가 중단·재촉·연장을 할 수 없었다" 고 적은 것은 **사실이 아니다** — 프론트 `can()` 이 인자를 무시해
+(display-permissive) 그 조작들은 원래 가능했다. 실효 결함은 **'대화 설정' 팝업의 보관/나가기 분기가
+죽어 멤버에게 나가기 진입점이 없던 것**이다(서버는 self-leave 를 허용하는데도). 분기 판정을 소유 사실 +
+`console_access` 기반으로 바꿔 복원했다. 상세 = feature-0003 `REV-20260813T201000` ·
+`docs/LEARNINGS.md LRN-20260813-display-permissive-can-invalidates-gate-audit`.

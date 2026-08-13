@@ -726,6 +726,38 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
   4. 기하 계측 전에 **포커스·스크롤 상태를 리셋**한다(앞 단계의 부작용이 좌표를 오염시킨다).
   5. red 를 보면 **pristine main 기준선과 실패 집합을 대조**해 귀책을 먼저 가른다.
 
+## LRN-20260813-display-permissive-can-invalidates-gate-audit
+
+- **category**: mistake
+- **맥락**: 사용자가 "표시-집행 불일치 / 소유자가 과도하게 좁혀진 이슈" 감사를 요청했다. 프론트
+  게이트(`requiredPermissionsFor` · `can*Conversation`)와 백엔드
+  `_account_can_access_conversation` 33 호출지점을 전수 대조해 4건을 "확정 결함" 으로 보고했다.
+- **무슨 일이 일어났나**: 보고 후 라이브 검증에서 **멤버 계정에 '보관' 버튼과 제목 입력이 활성**인
+  것을 보고서야 `can()` 정의를 확인했다 — 이 코드베이스의 `can(permission)` 은
+  **`void permission; return Boolean(state.user)`** 다(TASK-0098 display-permissive). 즉
+  `can("X.any") || (isOwnConversation && can("X.own"))` 는 로그인 사용자에게 **항상 true** 이고
+  `markAccessBlocked`/`showPermissionDeniedToast` 는 도달하지 않는다. 내가 "멤버가 중단·즉시답변·
+  연장에서 막힌다" 고 단정한 3건은 **실효 결함이 아니었다**(배포한 변경은 그 축에서 no-op).
+  이 사실은 이미 auto-memory 에도 기록돼 있었는데 적용하지 않았다.
+- **그 오진이 가린 진짜 결함**: 같은 `can()` 특성 때문에 '대화 설정' 팝업의
+  `const canArchive = canDeleteConversation(conversation)` 가 항상 true → 코드 주석이 설계한
+  "멤버에게는 보관 대신 '나가기'" **분기가 죽어 있었다**. 서버는 멤버의 보관을 forbidden 으로
+  거부하므로(라이브 실측) **멤버가 그룹 대화를 나갈 UI 경로가 아예 없었다**. 표시(넓게 보여주기)와
+  **분기**(A 냐 B 냐)의 차이가 핵심이다 — display-permissive 는 전자에만 안전하다.
+- **왜 통과했나 (테스트 측 교훈)**: 기존 `verify_settings_archive_leave.mjs` 는
+  `settingsFn.includes("canDeleteConversation(conversation)")` 로 **"그 함수를 쓴다" 만** 잠갔다.
+  함수가 항상 true 라 분기가 죽는다는 사실은 문자열로 볼 수 없다 — 전형적 vacuous 구조 단언.
+  게다가 정정 중에 **내가 쓴 주석이 구 코드를 인용해** 같은 단언을 계속 통과시켰다(같은 함정 2회).
+- **규칙**:
+  1. 권한/게이트 감사는 **판정 함수의 정의를 먼저 읽는다**. `can()`·`hasPermission()` 류가 인자를
+     쓰는지 확인하지 않은 대조는 결론이 무효다.
+  2. display-permissive 판정자는 **표시/숨김에만** 쓴다. **분기(보관 vs 나가기 같은 상호배타 선택)**
+     판정에는 서버가 실제 직렬화하는 사실(소유 대조·`console_access` 플래그)을 쓴다.
+  3. 구조(정규식/`includes`) 단언은 **"어떤 함수를 호출한다" 를 잠그지 말고** 행위(렌더된 라벨,
+     호출된 액션)를 잠근다. 호출 대상이 상수 함수면 구조 단언은 vacuous 하다.
+  4. 구조 단언은 **주석을 제외한 코드 라인만** 검사한다(주석의 구 코드 인용이 거짓 PASS 를 만든다).
+  5. 코드 대조로 "확정" 을 말하기 전에 **라이브 1-probe** 로 전제를 깬다 — 이번 오진은 라이브에서
+     30초에 드러났다.
 ## LRN-20260813-read-boundary-and-write-boundary-drift-apart
 
 - **category**: pattern

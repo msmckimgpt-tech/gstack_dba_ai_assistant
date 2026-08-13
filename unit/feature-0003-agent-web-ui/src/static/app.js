@@ -6074,7 +6074,22 @@ async function openConversationSettings(cid) {
   //    보관은 feature-0009 gc-group-authz-flag 로 owner/admin 전용이라, 비보유 멤버에게
   //    보관을 노출하면 항상 거부된다 — 대신 멤버십에서 빠지는 '나가기'를 제공한다.
   //  - 둘 다 해당 없음(타인 1:1 열람 등)이면 섹션 자체를 렌더링하지 않는다.
-  const canArchive = canDeleteConversation(conversation);
+  //
+  // member-leave-branch (2026-08-13 라이브 실측): 구 `canDeleteConversation(conversation)` 은
+  //   `can("conversation.delete.any") || (isOwnConversation && can("conversation.delete.own"))` 인데
+  //   `can()` 은 **인자를 버리고 로그인 여부만 반환**한다(TASK-0098 display-permissive) → 로그인
+  //   사용자에게 **항상 true**. 그래서 위 주석이 설계한 분기가 작동하지 못하고, 그룹 대화 멤버도
+  //   언제나 '보관' 쪽으로 갔다. 서버는 멤버의 보관을 2차 owner 게이트로 거부하므로
+  //   (`/api/delete_conversations` → `reason: "forbidden"` 실측) **멤버에게는 나가기 경로가 아예
+  //   없었다** — self-leave 는 서버가 허용하는데도(§`is_self_leave`) UI 진입점이 없다.
+  //   판정을 `can()`(전부 true) 이 아니라 **서버가 실제로 직렬화하는 사실**로 바꾼다:
+  //     - `isOwnConversation` = 소유 사실(owner_account_id 대조)
+  //     - `canOpenAdminConsole()` = `/api/session` 의 `console_access` 플래그(= `console.access` 보유)
+  //   → owner·관리자는 '보관', 비소유 그룹 멤버는 '나가기'. 서버 enforcement 는 불변이며
+  //   프론트가 "항상 거부되는 버튼" 을 내밀지 않게 된다(§16.7 G4 — 경계 양측 일치).
+  //   ⚠ display-permissive `can()` 을 **분기(branch)** 판정에 쓰면 이 부류 결함이 재발한다.
+  //   표시 여부(넓게 보여주기)에는 `can()` 이 맞지만, "A 냐 B 냐" 를 가르는 데는 쓸 수 없다.
+  const canArchive = isOwnConversation(conversation) || canOpenAdminConsole();
   const isGroup = isGroupConversation(conversation);
   if (canArchive || isGroup) {
     const manageSec = document.createElement("div");

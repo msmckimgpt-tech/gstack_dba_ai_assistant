@@ -60,16 +60,25 @@ ok("··· 메뉴에 '공유' 항목 유지", !!menuFn && /make\("공유"/.test(
 ok("··· 메뉴에 '설정' 항목 유지", !!menuFn && /make\("설정"/.test(menuFn));
 
 // [변경2] 설정 팝업 '대화 관리' 섹션: 권한 분기 + 보관/나가기.
-ok("설정 팝업에 '대화 관리' 섹션 라벨", !!settingsFn && settingsFn.includes("대화 관리"));
-ok("설정 팝업이 canDeleteConversation 으로 보관 권한 판정", !!settingsFn && settingsFn.includes("canDeleteConversation(conversation)"));
-ok("설정 팝업이 isGroupConversation 으로 그룹 판정", !!settingsFn && settingsFn.includes("isGroupConversation(conversation)"));
-ok("설정 팝업: 보관 권한 분기(if (canArchive))", !!settingsFn && /if\s*\(\s*canArchive\s*\)/.test(settingsFn));
-ok("설정 팝업: 보관 버튼이 deleteConversation 호출", !!settingsFn && settingsFn.includes("deleteConversation(cid)"));
-ok("설정 팝업: 나가기 버튼이 leaveConversation 호출", !!settingsFn && settingsFn.includes("leaveConversation(cid)"));
-ok("설정 팝업: 보관/나가기 라벨 모두 존재", !!settingsFn && settingsFn.includes('"보관"') && settingsFn.includes('"나가기"'));
-ok("설정 팝업: danger 섹션 클래스 부여", !!settingsFn && settingsFn.includes("conv-settings-sec-danger"));
+const settingsCode = (settingsFn || "").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+ok("설정 팝업에 '대화 관리' 섹션 라벨", !!settingsFn && settingsCode.includes("대화 관리"));
+// member-leave-branch (2026-08-13 정정): 구 단언은 `canDeleteConversation(conversation)` 문자열 존재만
+//   확인했다 — 그 함수가 display-permissive `can()`(인자 무시·항상 true) 때문에 **분기를 죽인다**는
+//   사실은 문자열로 볼 수 없어, 멤버가 늘 '보관'을 받던 결함을 이 테스트가 통과시켰다(거짓 PASS).
+//   판정을 새 기준(소유 사실 + console_access)으로 바꾸고, **주석 인용에 속지 않도록 코드 라인만**
+//   검사한다. 실 행위(멤버 → '나가기' 버튼 + leaveConversation 호출)는 verify_member_leave_branch.mjs.
+ok("설정 팝업 보관 판정이 소유 사실 + console_access 기반(display-permissive can() 미사용)",
+  /const canArchive = isOwnConversation\(conversation\) \|\| canOpenAdminConsole\(\);/.test(settingsCode));
+ok("설정 팝업 보관 판정에 canDeleteConversation(항상 true) 미사용",
+  !/canArchive = canDeleteConversation/.test(settingsCode));
+ok("설정 팝업이 isGroupConversation 으로 그룹 판정", !!settingsFn && settingsCode.includes("isGroupConversation(conversation)"));
+ok("설정 팝업: 보관 권한 분기(if (canArchive))", !!settingsFn && /if\s*\(\s*canArchive\s*\)/.test(settingsCode));
+ok("설정 팝업: 보관 버튼이 deleteConversation 호출", !!settingsFn && settingsCode.includes("deleteConversation(cid)"));
+ok("설정 팝업: 나가기 버튼이 leaveConversation 호출", !!settingsFn && settingsCode.includes("leaveConversation(cid)"));
+ok("설정 팝업: 보관/나가기 라벨 모두 존재", !!settingsFn && settingsCode.includes('"보관"') && settingsCode.includes('"나가기"'));
+ok("설정 팝업: danger 섹션 클래스 부여", !!settingsFn && settingsCode.includes("conv-settings-sec-danger"));
 // 섹션은 보관 권한 또는 그룹일 때만 — 둘 다 아니면 미렌더(가드 존재).
-ok("설정 팝업: (canArchive || isGroup) 가드로 조건 렌더", !!settingsFn && /if\s*\(\s*canArchive\s*\|\|\s*isGroup\s*\)/.test(settingsFn));
+ok("설정 팝업: (canArchive || isGroup) 가드로 조건 렌더", !!settingsFn && /if\s*\(\s*canArchive\s*\|\|\s*isGroup\s*\)/.test(settingsCode));
 
 // [변경3] leaveConversation: 본인 account_id 대상 members DELETE (self-leave).
 ok("leaveConversation: members 엔드포인트 호출", !!leaveFn && leaveFn.includes("/members/"));

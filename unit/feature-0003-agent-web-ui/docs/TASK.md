@@ -10478,6 +10478,47 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - 그 수정(A+B+C 승인 범위) — ✓ (predicate 2계층 + 오도 안내 2건 + 잠재 함정 정리, 53 assertions)
 - 범위 밖(기록만): D 항목 — dead `buildPermissionPills`(`state.user.permissions` 미직렬화) ·
   검색 결과 배지 라벨 불일치 · 관리자 `.any` 열람 대화의 폴더 '이동' 무음 실패.
+
+## 20260813T2010-member-leave-branch — 감사 결론 정정 + 멤버 '나가기' 분기 복원 (라이브 실측 발단)
+
+선행 cycle `20260813T1930-member-scope-gates` 의 **결론 일부를 정정**하고, 그 과정에서 라이브로
+드러난 **실효 결함**(멤버가 그룹 대화를 나갈 UI 경로 부재)을 고친다.
+
+- [x] **정정 사실**: `can(permission)` 은 `void permission; return Boolean(state.user)` (app.js —
+      TASK-0098 display-permissive). 따라서 `can("X.any") || (isOwnConversation && can("X.own"))`
+      는 로그인 사용자에게 **항상 true** → `markAccessBlocked`/`showPermissionDeniedToast` 미도달.
+      선행 cycle 이 "확정 결함" 으로 보고한 **A-1(중단)·A-2(즉시답변)·A-3(연장)은 실효 결함이 아니며**,
+      그 predicate 교체는 **동작 무변화(no-op, 의미 명료화)** 다. "연장 배너가 떠도 승인 불가 →
+      타임아웃" 서술은 **사실이 아니다**. A-4 도 '설정 메뉴 blocked' 가 아니었다(메뉴는 열렸다).
+- [x] **실효였던 것**: B(오도 안내 2건 — `isOwnConversation` 단독 조건이라 `can()` 무관) 은 실제
+      결함이었고 라이브에서 소거 확인(멤버 대화에서 accessNotice hidden · 컴포저 안내 빈 문자열).
+- [x] **라이브에서 드러난 진짜 결함 (본 cycle 수정)**: '대화 설정' 팝업의
+      `const canArchive = canDeleteConversation(conversation)` 가 항상 true → 주석이 설계한
+      "멤버에게는 보관 대신 '나가기'" 분기가 죽어 **멤버는 항상 '보관' 버튼을 받았다**. 서버는
+      멤버 보관을 거부(`/api/delete_conversations` → `reason:"forbidden"` 실측) → **나가기 UI 경로
+      부재**. 판정을 `isOwnConversation(conversation) || canOpenAdminConsole()` 로 교체 —
+      `can()`(전부 true) 대신 서버가 실제 직렬화하는 사실(owner 대조 · `console_access`).
+- [x] 신규 `tests/verify_member_leave_branch.mjs` (jsdom **실 DOM 렌더** 22) — 소유자 '보관'+
+      deleteConversation · **멤버 '나가기'+leaveConversation** · 관리자 '보관' 유지 · 제목 입력
+      활성(컨벤션 문서화) · 정본 `can()` 전제 단언 · 구조 잠금 4.
+- [x] **수정 전 재현** — 같은 하네스로 HEAD app.js 평가: case2 **6건 FAIL**(멤버가 '보관' 을 받고
+      클릭 시 서버가 forbidden 하는 archive 를 호출). 수정 후 22 PASS.
+- [x] 기존 테스트 **거짓 PASS 정정** — `verify_settings_archive_leave.mjs` 가
+      `includes("canDeleteConversation(conversation)")` 로 "그 함수를 쓴다" 만 잠가 결함을 통과시켰고,
+      정정 중 **내 주석의 구 코드 인용**이 같은 단언을 또 통과시켰다. 판정을 새 기준으로 바꾸고
+      **주석 제외 코드 라인만** 검사하도록 전환(같은 함정 2회 관측 → 규칙화).
+- [x] `verify_member_scope_gates.mjs` 헤더·케이스 라벨 정정 — per-code `can` 주입은 현 런타임 증거가
+      아니라 **후보 권한 집합의 "미래 계약" 잠금**임을 명시.
+- [x] `docs/LEARNINGS.md` `LRN-20260813-display-permissive-can-invalidates-gate-audit` 기록.
+- [x] 프론트 `.mjs` **62개 전수 exit 0**.
+- [ ] 배포 후 PB-0008 — 멤버 계정 '설정' 팝업에 '나가기' 노출 + 클릭 시 self-leave 실측.
+
+### 9. Requested Scope
+
+- (사용자 승인 A+B+C 중) A-4 "멤버 나가기 경로" — ✓ 원인을 정확히 짚어 수정(분기 판정을 사실 기반으로)
+- A-1~A-3 — ◑ 정정: 실효 결함 아니었음. 배포된 predicate 변경은 no-op(의미 명료화)으로 유지하고
+  문서·테스트의 잘못된 단정을 이 cycle 에서 정정.
+- B — ✓ 라이브 소거 확인. C — ✓ (dead 정리).
 ## 20260813T1830-group-attach-scope-window — 공유 대화에서 모든 멤버 첨부를 assistant 가 참조 (Critical §12.3, 사용자 승인)
 
 - **출처**: `/_dqa:conversation_audit` 사용자 명시 호출 — "공유 대화 내부에서 assistant 가 첨부파일을
