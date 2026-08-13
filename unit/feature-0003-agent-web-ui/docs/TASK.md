@@ -10367,3 +10367,20 @@ clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js
 - 잔여(미개선, 사용자 판단 필요) — 재배치 이동 트윈 360ms(`MOVE_TWEEN_MS`, 2026-08-13 사용자 요청으로
   도입)는 **의도된 연출**이라 이번 범위에서 건드리지 않았다. 개선 후 체감 시간에서 차지하는 비중이
   커졌으므로 REPORT.md 에 수치와 함께 표면화한다(§16.6 "증상-가림(애니 제거) 금지" 준수).
+
+## 20260813T1700-graph-expand-perf-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+선행 cycle(`20260813T1600-graph-expand-perf`)의 배포·라이브 검증을 종결한다.
+
+- [x] PR #1255 머지 → main `16da577f` → `sudo make deploy-web-only` — 무중단 롤링 + 90s soak 통과
+- [x] 배포 파리티 — web-a·web-b 모두 `mysql-ai-web:16da577f` · `/healthz` `git_commit=16da577f`
+- [x] **무중단 실측** — 엣지 `no upstreams available` **0건**(스크립트 성공 보고가 아닌 직접 계측)
+- [x] 서빙 자산 배선 — `nodeShapeSig`(2) · `_metaGraphPrefetchColumns`(2) · `_metaColPrefetchClear`(2)
+- [x] **라이브 재측정 n=3 — 프리뷰와 차이 없음**: 클릭→펼침 **544ms**(개선 전 915ms) · 블로킹
+      **134ms**(344ms) · `drawMs` **32.8ms**(210ms) · 재생성 **21**(537) · 라벨 재생성 **19**(523)
+- [x] 시각·오류 — 3테이블 펼침 렌더 정상, `pageerror` 0
+- [x] 트윈 360ms 미변경(사용자 결정 "360ms 유지") 확인
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 종결 — ✓ (라이브 배포본에서 개선폭 재현 확인, 시각 회귀 0)

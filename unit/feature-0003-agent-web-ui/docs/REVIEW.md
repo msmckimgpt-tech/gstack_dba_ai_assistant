@@ -4609,3 +4609,18 @@ subagent 도메인(backend/qa) 미커버 범위는 아래 "채널 한계" 에 �
 Windows 브라우저 시각·인터랙션 검증(TEST fragment)으로 메웠다. backend/qa subagent 관점 중
 **서버 부하 축**(클릭당 동시 GET 2건 발생)은 위 "선재 중복 흡수" 로 순증 0 임을 코드로 확인했으나
 부하 실측은 하지 않았다 — `[SKIPPED:tool-restricted:backend-load-measurement]`.
+
+## REV-20260813T170000-ai-claude-feature-0003-graph-expand-perf-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1700-graph-expand-perf-postdeploy`
+- Reason: changed paths are docs only — 코드·스키마·권한 변경 0(POST-DEPLOY 실측 기록)
+- Timestamp: 2026-08-13T17:00:00+09:00
+
+- **판정 근거**: "배포됐다" 를 스크립트 종료코드가 아니라 **서빙 주체의 실제 SHA + 서빙 자산의 신규
+  심볼**로 확인했고(web-a·web-b `mysql-ai-web:16da577f`, `nodeShapeSig`/`_metaGraphPrefetchColumns`/
+  `_metaColPrefetchClear` 각 2건), 무중단도 엣지 로그 `no upstreams available` **0건**으로 실측했다
+  (§16.3 deploy-backed 완료 기준 · feature-0014 RUNBOOK §10 [5]).
+- **격리 프리뷰의 예측력 확인**: 배포 전 격리 컨테이너에서 얻은 수치(556/133/35/21/19)와 라이브
+  수치(544/134/32.8/21/19)가 사실상 일치했다 — 프리뷰 측정을 라이브 대용으로 쓴 판단이 사후적으로
+  검증됐다. 다만 **프리뷰 PASS 를 완료 근거로 삼지는 않았고**, 라이브 재측정을 별도로 수행했다.
+- Human Approval Needed: no
