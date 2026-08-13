@@ -1121,10 +1121,14 @@ async function _metaGraphExpandSchema(key, opts) {
   if (silent) return "expanded";   // 호출측(LoadRoots)이 apply+fit — 이중 렌더 방지
   await _metaG6Apply(false);       // 제자리 원칙(ADR-004 ②) — 전체 fit 없이.
   _metaSetBusy(key, false, seq);   // §57.8: busy 는 bake 로 보존 — 소유 op 가 직접 해제
-  // graph-keep-in-view(2026-08-13): 종전 `focusElement(key,false)` 는 **이미 잘 보이는 카드까지 매번
-  //   중앙으로 끌어와** 화면이 튀었다(제자리 원칙과 모순). 같은 의도('shelf 재배치 대비 시야 고정')를
-  //   벗어났을 때만 최소 이동으로 달성한다. 카메라 API 부재 폴백 번들은 fallbackFocus 로 구 동작 보존.
-  _metaGraphKeepInView(key, seq, { fallbackFocus: true });
+  // graph-keep-in-view(2026-08-13 POST-DEPLOY 정정): 이 경로는 **중앙 focus 를 유지한다**.
+  //   1차 구현은 "이미 보이는 카드까지 중앙으로 끌어오는 게 과하다" 며 keep-in-view 로 바꿨는데,
+  //   라이브에서 그 판단이 틀렸음이 드러났다 — 스키마를 펼치면 combo 가 뷰포트보다 커지고, 큰 요소는
+  //   중심 기준으로 판정하므로 "중심이 안전영역 안" = 이동 0 이 되어 **방금 펼쳐진 테이블 9개가 화면
+  //   밖에 남았다**(status 는 '9개 펼침' 인데 화면엔 카드만). 사용자 요청은 "선택한 노드를 잃지 않게"
+  //   였고 이 경로의 기존 중앙 이동은 그 요청과 충돌하지 않는다 — 요청 범위를 넘어 바꾼 것이 회귀였다.
+  //   keep-in-view 는 카메라 처리가 **아예 없던** 경로(컬럼 펼침·접기)와 접기 경로에만 둔다.
+  try { await _metaGraph.graph.focusElement(key, false); } catch (_) {}   // shelf 재배치 대비 시야 고정(무애니)
   _metaGraphStatus(`${nm}: 테이블·함수 ${cnt}개 펼침 — "−" 로 접기, 테이블 클릭=컬럼${note}`);
   return "expanded";
 }

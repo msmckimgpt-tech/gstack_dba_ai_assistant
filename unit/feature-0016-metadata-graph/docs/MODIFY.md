@@ -492,3 +492,17 @@ source_of_truth: true
 | `unit/feature-0003-agent-web-ui/tests/headless/test_graph_expand_camera.js` | 신설 — keep-in-view 순수 판정 · 루프 계약 · 4경로 배선 |
 
 근거·검증은 REPORT.md `20260813T1121-expand-camera-anim` 참조.
+
+## CHG-20260813T1600-ai-claude-corp-feature-0016-expand-camera-postdeploy — 스키마 펼침 중앙 focus 복원 (POST-DEPLOY 정정, 2026-08-13)
+
+| 파일 | 변경 |
+|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-ctxmenu.js` | `_metaGraphExpandSchema` 의 keep-in-view → **기존 `focusElement(key,false)` 복원**(1줄) |
+| `unit/feature-0003-agent-web-ui/tests/headless/test_graph_expand_camera.js` | D 배선 계약 반전 — 스키마 펼침은 중앙 focus 유지·keep-in-view 미배선을 단언(회귀 재발 차단) |
+| `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` | 적용 경로 4 → 3(컬럼 펼침·컬럼 접기·스키마 접기) + 사유 명시 · AC-3 정정 |
+| `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260813T1121-…md` | POST-DEPLOY Windows-browser Run 추가(증적 5장 · 계측 실측 · 한계 2건 명시) |
+
+근거: 배포본 라이브 검증에서 스키마 펼침 시 status 는 "9개 펼침" 인데 화면엔 카드만 남았다 — 펼친
+combo 가 뷰포트보다 커져 중심 기준 판정이 "이동 0" 을 냈고, 방금 펼쳐진 테이블이 전부 화면 밖이었다.
+1차 구현이 이 경로의 기존 중앙 이동을 "과하다" 며 바꾼 것은 **사용자 요청 범위를 넘은 변경**이었고
+그것이 회귀의 원인이다. keep-in-view 는 카메라 처리가 아예 없던 경로에만 둔다.
