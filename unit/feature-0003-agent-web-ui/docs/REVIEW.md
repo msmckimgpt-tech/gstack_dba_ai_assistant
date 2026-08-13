@@ -4561,3 +4561,9 @@ resolve 한 결과다(리뷰어 주장 그대로 수용하지 않음).
   그 파일 세트**(`20260709_[MV] Log_v2 이슈 대응_*.sql`)를 라이브에서 열어 `01 → 02 → 03 → 04 →
   08 → 09` 를 확인했다. 요청의 이행은 테스트 통과가 아니라 그 화면에서 증명된다.
 - Human Approval Needed: no
+
+## REV-20260813T174100-rail-relayout-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- Related TASK: feature-0003-agent-web-ui (20260813T1741-rail-async-relayout-postdeploy)
+- Reason: changed paths are docs/evidence only outside policy-doc list (코드 변경 0 — 라이브 실측 기록)
+- Timestamp: 2026-08-13T17:41:00+09:00
