@@ -4667,7 +4667,6 @@ REV-20260723T190000-folder-ux(DnD 도입), REV-20260723T200000-newfolder-btn. �
 Windows 브라우저가 정본**(visual_verification_scope: always). 테스트가 실제 결함을 잡는지는 코드만
 되돌려 대상 11건 FAIL·회귀 축 PASS 로 실증했다. 서버 라운드트립·크로스-계정 격리의 **라이브** 실측
 (계정 A 가 공유 그룹 대화를 자기 폴더로 이동 → 계정 B 화면 불변)도 POST-DEPLOY 항목이다.
-
 ## REV-20260813T184000-ai-claude-feature-0003-folder-dnd-postdeploy [SKIPPED:non-policy-doc]
 
 - Related TASK: feature-0003-agent-web-ui / `20260813T1840-folder-dnd-postdeploy`
@@ -4767,3 +4766,51 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
 
 **검증 채널·한계**: jsdom 실 DOM 렌더까지 검증했고 **서버 왕복은 라이브에서 별도 확인**(위 forbidden/
 403 실측). 멤버가 '나가기' 를 눌러 실제로 빠지는 end-to-end 는 POST-DEPLOY PB-0008 항목이다.
+## REV-20260813T183000-group-attach-scope-window [CODEX:adversarial-security] — 공유 대화 첨부 스코프 확대
+
+- Related Change: `CHG-20260813T183000-ai-claude-feature-0003-group-attach-scope-window`
+  (friction-id `FR-group-attach-sender-scope-blocks-members`, 위험등급 **Critical §12.3**).
+- Trigger (§18.8 dispatch): changeset 에 `auth/credential/세션`(인가 경계 변경)·`schema/query`
+  (신규 PG 게이트 쿼리)·프롬프트 계약 변경이 함께 걸린다 → **security + backend + qa** 렌즈.
+  세션 지시로 Agent 도구를 쓰지 않으므로 §18.9 대체 채널인 **codex CLI**(별도 도구)로 집행했다.
+- 집행 형태: staged diff 를 codex 가 직접 읽고(`git diff --cached`) 5축(fail-closed 완전성 ·
+  SQL 동형성 · 두 분기 적용 · positional index 회귀 · 프롬프트 통제 실효성)을 적대 검증.
+  결과 **[P1] 2건 · [P2] 3건**. 게이트 = FAIL → 아래 반영 후 재검증 대상.
+
+### 반영 (5/5)
+
+- **[P1-1] 그룹 판정 실패가 fail-open** — `_conversation_is_group()`/`_is_group_conversation()` 은
+  PG 오류 시 `False` 를 돌려주므로 window 게이트를 **건너뛰고 대화 전체로 열린다**. 판정 실패가
+  가장 넓은 스코프로 귀결되는 구조였다. → 그룹 여부를 게이트가 **직접** 판정하도록 흡수(멤버 수·
+  소유자·window 를 한 쿼리에서). 호출측 선-게이팅 제거(`sender_scope=True` 고정). 1:1·fork 는
+  멤버 ≤ 1 로 판정돼 무회귀. **회귀는 아니었다**(종전에도 판정 실패 시 대화 전체였다) — 그러나
+  "게이트로 봉인했다" 는 주장과 어긋나므로 수정했다.
+- **[P1-2] 프롬프트 통제는 보안 경계가 아니다(confused-deputy 잔존)** — 타당하다. 다만 지적의
+  전제 하나는 **부정확**했다: 첨부 본문은 이미 `_datamark_untrusted` 비신뢰 구획에 들어간다
+  (`agent_core.py`, TASK-20260619T033714). 방어는 산문 단독이 아니라 datamark + 기존 인젝션 지침 +
+  출처 계약 3층이다. 그럼에도 **확률적 완화이지 보장이 아니다**(§14 와 같은 전제) → 타 멤버 파일의
+  datamark **구획 헤더에 업로더**를 추가하고, **잔여 위험을 SECURITY §47.4 에 명시**했다.
+  provenance 기반 tool 게이트는 별도 설계·승인이 필요한 **후속 과제**로 남긴다(정직 표기).
+- **[P2-3] hidden_count 가 `_msg_outside_window` 와 비동형** — floor 존재 시 assistant 답변의
+  recall 태그(`recall_full`·`recall_floor_created_at`)로도 메시지가 숨는데 SQL 은 그 축을 세지
+  않는다. → **floor 설정 멤버는 은닉 수와 무관하게 sender-only** 로 바꿔 비동형 구간을 구조적으로
+  제거했다(그 축까지 SQL 로 재현하면 두 구현이 갈릴 위험이 실익보다 크다). ceiling-only 멤버만
+  은닉 구간을 계산하며, 그 축에서는 동형이 성립한다. 라이브 bounded 멤버 2명은 전부 ceiling-only.
+- **[P2-4] LEFT JOIN 멤버 행 NULL → 전체 스코프(fail-open)** — → 소유자 판정을 같은 쿼리에 넣고,
+  **그룹인데 멤버 행이 없으면(비-owner) sender-only**. 누락·불일치도 좁은 쪽으로 떨어진다.
+- **[P2-5] 라벨·계약이 이름 조회 실패 시 함께 사라짐** — 스코프만 열리고 방어가 빠지는 최악 조합.
+  → 계약 발동 조건을 **row 사실**(`_has_other_uploader`)로 옮기고, 이름은 있으면 쓰고 없으면
+  `another member` 로 적되 **타 멤버라는 사실은 잃지 않게** 했다. 부수 효과로 본인 파일만 있는
+  그룹에는 계약이 붙지 않아 프롬프트도 절약된다.
+
+### 확인된 무결 축 (codex 검증)
+
+- 축 3 — `restrict_to_sender` 는 PG(`_conv_store.py:3461`)·MySQL(`:3475`) **양 분기 모두** 적용.
+- 축 4 — 업로더 컬럼을 SELECT **끝에** 붙여 기존 `row[0..11]` 소비자 보존, 다른 positional 소비자 없음.
+
+### 검증
+
+- 신규·갱신 테스트 **46 PASS**(게이트 규칙 18 · 스코프 해소 21 · 출처 계약 10 중 중복 제외).
+  적대 리뷰가 지적한 5개 경로는 전부 회귀 테스트로 고정했다(fail-open 3종 · 이름 조회 실패 · floor).
+- 한계(정직): 게이트 쿼리의 **라이브 실행**은 배포 후 실측 대상이다. 단위 테스트는 fake 커서라
+  SQL 문법·계획은 검증하지 못한다(구조 잠금 정규식으로 축만 고정).

@@ -76,21 +76,52 @@ def test_scope_keeps_latest_version_and_active_rows_only():
     assert "UploadStatus IN ('uploaded','ingested')" in sql
 
 
-def test_group_conversation_keeps_sender_scope_guard():
-    """그룹 대화는 발신자 본인 첨부만 (feature-0009 CSO F1 유지, 2026-07-29 사용자 결정).
+def _gate(monkeypatch, sender_only: bool):
+    """공유창 window 게이트(`shared.share_window`) 판정을 고정한다.
 
-    타 멤버 첨부가 발신자 권한의 실행 맥락에 실려 datasource 를 끌어오는 권한상승
-    (indirect prompt injection)을 막는 가드다 — 스코프 확대가 이 경계를 넘지 않아야 한다.
+    `_resolve_conversation_attachment_scope` 는 게이트를 함수 안에서 import 하므로 모듈 속성을
+    바꾸면 그대로 반영된다. 게이트 자체의 판정 규칙은 test_share_window_gate.py 가 검증한다.
     """
+    import shared.share_window as sw
+    monkeypatch.setattr(sw, "group_attachment_is_sender_only", lambda *a, **k: sender_only)
+
+
+def test_group_conversation_sees_all_member_attachments_when_nothing_hidden(monkeypatch):
+    """공유 대화에서 가려진 구간이 없으면 **모든 멤버의 첨부**가 스코프에 들어온다.
+
+    FR-group-attach-sender-scope-blocks-members (2026-08-13 사용자 결정): 종전에는 그룹이면
+    무조건 발신자 본인 첨부만이라(CSO F1), 첨부를 올리지 않은 멤버가 `@assistant` 를 부르면
+    "첨부파일이 보이지 않습니다" 로 답했다 — 정작 그 멤버는 같은 파일을 화면에서 열람·
+    다운로드할 수 있는데도(REQ-GC-R6). 이 테스트가 그 마찰의 해소를 고정한다.
+    """
+    _gate(monkeypatch, sender_only=False)
     captured: dict = {}
     app._resolve_conversation_attachment_scope(
         _CaptureConn(captured, rows=_rows(9)), "conv-group", 42, sender_scope=True
     )
-    assert "AccountId = %s" in captured["sql"], "그룹 대화 발신자 가드 누락(권한상승 경로)"
+    assert "AccountId = %s" not in captured["sql"], "가려진 구간이 없으면 발신자로 좁히지 않는다"
+    assert "ConversationId = %s" in captured["sql"], "대화 스코프(IDOR 안전망)는 유지"
+
+
+def test_group_conversation_narrows_to_sender_when_window_hides_messages(monkeypatch):
+    """공유창 window 로 **가려진 표시 메시지가 있는** 멤버는 종전대로 본인 첨부만(fail-closed).
+
+    첨부는 표시 메시지에 바인딩되지 않아 "그 첨부가 가려진 구간의 것인지" 를 판정할 수단이
+    없다. 그래서 은닉이 실재하면 확대를 적용하지 않는다 — §21 AR-1(windowed 멤버 열람 제약)
+    무회귀.
+    """
+    _gate(monkeypatch, sender_only=True)
+    captured: dict = {}
+    app._resolve_conversation_attachment_scope(
+        _CaptureConn(captured, rows=_rows(9)), "conv-group", 42, sender_scope=True
+    )
+    assert "AccountId = %s" in captured["sql"], "은닉 구간이 있는 멤버는 발신자 가드 유지"
     assert 42 in tuple(captured["params"])
 
-    # 1:1·이어받기는 발신자 필터 없이 대화 전체 (fork/cross-account 에서도 목록과 주입이 일치)
-    captured.clear()
+
+def test_direct_conversation_never_consults_window_gate():
+    """1:1·이어받기는 발신자 필터 없이 대화 전체 (fork/cross-account 에서도 목록과 주입이 일치)."""
+    captured: dict = {}
     app._resolve_conversation_attachment_scope(
         _CaptureConn(captured, rows=_rows(9)), "conv-1to1", 42, sender_scope=False
     )
@@ -176,16 +207,38 @@ def test_pg_path_filters_status_and_orders_latest_first(monkeypatch):
     assert out == [31, 22, 10], "최신 우선 정렬 + 상태 필터가 PG 경로에서도 성립해야 함"
 
 
-def test_pg_path_applies_group_sender_guard(monkeypatch):
-    """PG 경로에서도 그룹 발신자 가드가 성립 — 라이브에서 실제로 실행되는 분기."""
+def test_pg_path_includes_other_members_when_nothing_hidden(monkeypatch):
+    """PG 경로(라이브 기본 백엔드)에서도 타 멤버 첨부가 스코프에 들어온다 — 마찰 해소 축."""
+    _gate(monkeypatch, sender_only=False)
     _with_pg(monkeypatch, [_pg_row(10, account_id=7), _pg_row(22, account_id=99)])
     out = app._resolve_conversation_attachment_scope(None, "conv-group", 7, sender_scope=True)
-    assert out == [10], "타 멤버(account 99) 첨부가 발신자 스코프에 들어오면 안 됨"
+    assert out == [22, 10], "타 멤버(account 99) 첨부도 참조 가능해야 함(REQ-GC-R6 정합)"
+
+
+def test_pg_path_applies_group_sender_guard_when_window_hides(monkeypatch):
+    """PG 경로에서도 은닉 구간이 있으면 발신자 가드가 성립 — 라이브에서 실제로 실행되는 분기."""
+    _gate(monkeypatch, sender_only=True)
+    _with_pg(monkeypatch, [_pg_row(10, account_id=7), _pg_row(22, account_id=99)])
+    out = app._resolve_conversation_attachment_scope(None, "conv-group", 7, sender_scope=True)
+    assert out == [10], "가려진 구간이 있는 멤버에게 타 멤버(account 99) 첨부가 들어오면 안 됨"
 
     # 1:1 은 같은 대화의 타 계정 첨부도 정상 포함(fork·이어받기)
     _with_pg(monkeypatch, [_pg_row(10, account_id=7), _pg_row(22, account_id=99)])
     out = app._resolve_conversation_attachment_scope(None, "conv-1to1", 7, sender_scope=False)
     assert out == [22, 10]
+
+
+def test_group_scope_narrows_when_window_gate_itself_fails(monkeypatch):
+    """게이트를 물어볼 수 없으면(예외) 좁은 쪽 — 확대는 판정에 성공했을 때만 적용된다."""
+    import shared.share_window as sw
+
+    def _boom(*a, **k):
+        raise RuntimeError("pg down")
+
+    monkeypatch.setattr(sw, "group_attachment_is_sender_only", _boom)
+    _with_pg(monkeypatch, [_pg_row(10, account_id=7), _pg_row(22, account_id=99)])
+    out = app._resolve_conversation_attachment_scope(None, "conv-group", 7, sender_scope=True)
+    assert out == [10], "게이트 실패 시 종전 동작(발신자 한정)으로 fail-closed"
 
 
 def test_pg_path_is_capped(monkeypatch):

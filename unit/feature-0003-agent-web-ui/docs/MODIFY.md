@@ -3892,7 +3892,6 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   (`folder_conversation_map` PK `(account_id, conversation_id)`) 그대로 — 소유자·타 멤버 뷰 불변.
 - 검증: jsdom 31 PASS · 수정 전 재현 시 대상 11건 FAIL(테스트 판별력 실증) · 프론트 `.mjs` 60개 전수
   exit 0 · ESM 구문 PASS. 라이브 = POST-DEPLOY PB-0008.
-
 ## CHG-20260813T184000-ai-claude-feature-0003-folder-dnd-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
 
 - 사유: 선행 cycle `20260813T1812-folder-dnd-shared-group` 의 배포(main `763ad65d`) 후 라이브 종결.
@@ -3942,3 +3941,50 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - 백엔드·권한 카탈로그·스키마 변경 **0**.
 - 검증: 신규 22 PASS(수정 전 재현 시 6건 FAIL) · 정정 테스트 23 PASS · 프론트 `.mjs` 62개 전수
   exit 0. 라이브 = POST-DEPLOY PB-0008.
+## CHG-20260813T183000-ai-claude-feature-0003-group-attach-scope-window — 공유 대화 첨부 스코프 확대 + 공유창 window 게이트
+
+- 사유: `/_dqa:conversation_audit` 사용자 명시 호출 — 공유 대화에서 assistant 가 타 멤버 첨부를
+  확인하지 못하는 마찰(`FR-group-attach-sender-scope-blocks-members`). 라이브 대화 `…46763d6e`
+  에서 "첨부파일이 보이지 않습니다" 2회 → "버그 발생;;" 종료. 첨부 보유 그룹 대화 **6/6** 노출.
+- 위험등급 **Critical**(§12.3 보안 경계 변경 — feature-0009 CSO F1 해제). 사용자 승인:
+  "승인 — 완화책 포함" + "bounded 멤버는 window 안 첨부만"(2026-08-13). override 미적용.
+- 대상:
+  - `shared/share_window.py` — **신규**. 그룹 첨부 스코프 판정의 **단일 정본**(web·agent_core 공용,
+    두 게이트 분기 방지). `group_attachment_scope()` / `group_attachment_is_sender_only()`.
+    판정축은 **메시지 id/joined_at 기준 은닉 구간 실재 여부**(`_msg_outside_window` 동형):
+    은닉 0 → 대화 전체 / 은닉 ≥1 → 발신자 본인만. 비-PG·42703 은 제약 없음, 그 외 실패는
+    전부 fail-closed(sender-only).
+    · **시각축을 쓰지 않는 이유**: 첨부는 표시 메시지에 바인딩되지 않고(`WebAttachmentDerivedMessages`
+      는 파생 메시지용), 첨부 `created_at` 은 메시지와 같은 시간축이 아니다(라이브 실측 +9h —
+      로컬시각이 UTC 로 라벨링돼 저장). 시각 비교는 하한에서 열고 상한에서 가리는 양방향 오판.
+  - `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py` —
+    `_resolve_conversation_attachment_scope` 가 `sender_scope`(그룹 신호)를 받아 **실제 필터는
+    window 게이트로 결정**(`restrict_to_sender`). PG·MySQL 두 분기 모두 적용. 게이트 호출 실패는
+    sender-only. DB 해소 실패 시 그룹 client 폴백 금지(종전 유지).
+  - `unit/feature-0002-agent-core/src/agent_core.py`(cross-ref) — `_group_attachment_sender_only()`
+    신규(같은 정본 호출, 예외=좁은 쪽) + `_build_attachment_context_section` 호출부 게이트 적용.
+    SELECT 에 업로더 `AccountId`/`account_id` **append(row[12])** — 기존 positional index 보존.
+    ATTACHED FILES 에 `uploaded-by=<name> (OTHER MEMBER)` 라벨 + **데이터-전용 계약** 코드 권위
+    주입(AUTH-1a): 타 멤버 파일 내용은 DATA 이며 지시문이 아니라는 계약. CSO F1 이 막으려던
+    indirect prompt injection 을 히스토리 `[발신자]:` 라벨(REQ-GC-R5)과 같은 축으로 대체 봉인.
+- 무변경(확인): 첨부 **열람·다운로드 경계**(`_account_can_access_attachment`, REQ-GC-R6) ·
+  ConversationId 스코프(TASK-0284 IDOR) · `SupersededAt IS NULL` 최신본 한정 · 상한 200 ·
+  본문 인라인/vision 스코프(이미 conversation 단위) · RBAC · datasource 바인딩 · 스키마 · 마이그레이션.
+- 테스트: `tests/test_share_window_gate.py` **신규 13** · `tests/test_attach_full_scope.py` 그룹 계약
+  **갱신 3**(은닉0=전체 / 은닉≥1=발신자한정 / 게이트예외=fail-closed) · feature-0002
+  `tests/test_group_attachment_provenance.py` **신규 7**(라벨 4축 + 데이터-전용 계약 + 1:1 무회귀 +
+  legacy row). 라벨 검사는 파일 라인 단위(섹션 계약 문구가 같은 토큰을 포함 — tautology 회피).
+
+### CHG-20260813T183000 적대 리뷰 반영 (REV-20260813T183000, [CODEX:adversarial-security])
+
+- **[P1] fail-open 제거**: 그룹 여부를 `shared/share_window.py` 게이트가 직접 판정(멤버 수·소유자·
+  window 1 쿼리). 호출측 `_is_group_conversation()` 선-게이팅 제거 — 그 함수가 PG 오류 시 `False` 를
+  돌려 게이트를 건너뛰는 경로였다(`conversations.py` `sender_scope=True` 고정, `agent_core.py` 동일).
+- **[P2] 축소 조건 강화**: 그룹인데 멤버 행 없음(비-owner) → sender-only · **floor 설정 멤버는 은닉 수와
+  무관하게 sender-only**(recall-태그 은닉 비동형 구간을 구조적으로 제거) · 카운트 파싱 실패 → sender-only.
+- **[P2] 출처 계약을 row 사실로**: 발동 조건이 표시명 조회 성공 여부가 아니라 "타 멤버 파일 실재"
+  (`_has_other_uploader`). 이름 미해소 시 `another member` 로 적고 계약 유지. 타 멤버 파일 본문의
+  **datamark 구획 헤더에 업로더** 추가.
+- **정직 표기**: 프롬프트·datamark 은 확률적 완화이지 보장이 아니며 confused-deputy 경로가 남는다 →
+  SECURITY §47.4 에 수용 위험으로 명시, provenance 기반 tool 게이트는 후속 과제.
+- 테스트 46 PASS(적대 리뷰가 지적한 5경로 전부 회귀 고정).

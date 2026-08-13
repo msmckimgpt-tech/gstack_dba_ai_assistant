@@ -3743,14 +3743,17 @@ async def ask(request: Request) -> JSONResponse:
         # feature-0003 attach-full-scope (2026-07-29 사용자 결정): 참조 스코프를 프론트 selection
         # 에서 **이 대화의 활성 첨부 전량**으로 옮긴다. 첨부가 걸린 대화를 이어서 진행할 때 이전
         # 턴 첨부가 통째로 빠지던 마찰(프론트 bucket 이 비는 진입 경로)을 구조적으로 제거한다.
-        # 그룹 대화는 발신자 본인 첨부만(feature-0009 CSO F1 유지) — 아래 헬퍼가 게이트한다.
-        # 실패해도 client 선택분으로 폴백해 답변을 막지 않는다.
+        # 공유(그룹) 대화의 축소 여부는 **window 게이트가 단독 판정**한다(`shared.share_window`).
+        # 여기서 `_conversation_is_group()` 으로 선-게이팅하지 않는 이유: 그 함수는 PG 오류 시
+        # False 를 돌려주므로, 판정 실패가 곧 "게이트 건너뛰고 대화 전체" 라는 fail-open 이 된다
+        # (§18.8 적대 리뷰 [P1]). 게이트는 멤버 수·소유자·window 를 한 쿼리에서 함께 읽고,
+        # 하나라도 확인 못 하면 발신자 본인 첨부로 좁힌다. 1:1·fork 는 멤버 ≤ 1 로 판정돼 무회귀.
         attachment_ids_clean = app._resolve_conversation_attachment_scope(
             conn,
             conv_id,
             int(account["id"]),
             client_ids=client_attachment_ids + new_attachment_ids_clean,
-            sender_scope=app._conversation_is_group(conv_id or ""),
+            sender_scope=True,
         )
 
         # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
