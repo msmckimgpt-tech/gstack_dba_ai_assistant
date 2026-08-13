@@ -496,22 +496,25 @@ def test_record_llm_usage_latency_column(monkeypatch):
     sink: list = []
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: _CaptureConn(sink))
 
-    # 미전달 → latency_ms=NULL 및 step_gap_ms=NULL (미측정=NULL). 0033: 컬럼 순서 (…, target,
-    #   latency_ms, step_gap_ms, target_scope) — 0047 로 맨 끝이 target_scope 가 되어
-    #   latency=params[-3], step_gap=params[-2], target_scope=params[-1] 로 한 칸씩 밀렸다(의도된 계약 변경).
+    # 미전달 → latency_ms=NULL 및 step_gap_ms=NULL (미측정=NULL). 컬럼 순서 (…, target, latency_ms,
+    #   step_gap_ms, target_scope, cache_read_tokens, cache_write_tokens) — 0056(캐시 계측)이 맨 뒤에
+    #   두 컬럼을 더하며 latency=params[-5], step_gap=params[-4], target_scope=params[-3] 로 두 칸씩
+    #   밀렸다(의도된 계약 변경). 캐시는 usage 미제공 시 0(미측정 NULL 아님 — 0 이 사실이다).
     llm._record_llm_usage("claude-haiku-4", "agent", _resp())
     assert len(sink) == 1
     sql, params = sink[0]
     assert "latency_ms" in sql and "step_gap_ms" in sql
-    assert params[-3] is None, "latency 미전달 시 NULL"
-    assert params[-2] is None, "step_gap 미전달 시 NULL"
-    assert params[-1] is None, "target_scope 미전달·ContextVar 미설정 시 NULL"
+    assert "cache_read_tokens" in sql and "cache_write_tokens" in sql
+    assert params[-5] is None, "latency 미전달 시 NULL"
+    assert params[-4] is None, "step_gap 미전달 시 NULL"
+    assert params[-3] is None, "target_scope 미전달·ContextVar 미설정 시 NULL"
+    assert params[-2] == 0 and params[-1] == 0, "캐시 미제공 응답은 0"
 
-    # 명시값 → 그대로 전달 (latency=params[-3], step_gap=params[-2])
+    # 명시값 → 그대로 전달 (latency=params[-5], step_gap=params[-4])
     sink.clear()
     llm._record_llm_usage("claude-haiku-4", "agent", _resp(), latency_ms=123, step_gap_ms=1300)
-    assert sink[0][1][-3] == 123    # latency_ms(전체 왕복)
-    assert sink[0][1][-2] == 1300   # step_gap_ms(단계 간 간격)
+    assert sink[0][1][-5] == 123    # latency_ms(전체 왕복)
+    assert sink[0][1][-4] == 1300   # step_gap_ms(단계 간 간격)
 
 
 def test_record_llm_usage_skips_without_usage(monkeypatch):
@@ -554,9 +557,9 @@ def test_record_llm_usage_step_gap_column_absent_fallback(monkeypatch):
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
     llm._record_llm_usage("claude-haiku-4", "agent", _resp(),
                           target="public.users", latency_ms=42, step_gap_ms=1300)
-    # 0047 로 사다리가 4단(…,target_scope / …,step_gap / …,latency / latency)이 되어,
-    #   step_gap_ms 를 포함하는 앞 2단이 실패한다(종전 1단).
-    assert conn.rolled_back == 2              # step_gap 포함 INSERT 2회 실패 → rollback
+    # 0056 으로 사다리가 5단(…,cache / …,target_scope / …,step_gap / …,latency / latency)이 되어,
+    #   step_gap_ms 를 포함하는 앞 3단이 실패한다(0047 시점 2단 → 0056 에서 3단).
+    assert conn.rolled_back == 3              # step_gap 포함 INSERT 3회 실패 → rollback
     assert len(sink) == 1
     sql, params = sink[0]
     assert "step_gap_ms" not in sql and "target" in sql   # 폴백 = (…, target, latency_ms)
@@ -573,8 +576,8 @@ def test_record_llm_usage_target_column_absent_fallback(monkeypatch):
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
     llm._record_llm_usage("claude-haiku-4", "table_insight", _resp(),
                           target="public.users", latency_ms=42, step_gap_ms=1300)
-    # 0047: "target" 부분문자열은 target_scope 단계도 매칭 → 앞 3단 실패 후 최소 base 성공(종전 2단).
-    assert conn.rolled_back == 3              # target 포함 INSERT 3회 실패
+    # "target" 부분문자열은 target_scope 단계도 매칭 → 앞 4단(0056 캐시단 포함) 실패 후 최소 base 성공.
+    assert conn.rolled_back == 4              # target 포함 INSERT 4회 실패
     assert len(sink) == 1
     sql, params = sink[0]
     assert "target" not in sql and "step_gap_ms" not in sql   # 폴백 = base 컬럼
@@ -656,15 +659,15 @@ def test_query_activity_with_cursor_no_more():
 
 class _NoTargetCur(_PlainCur):
     """0032: target 컬럼 부재(마이그 미적용/agent image stale) 시뮬레이션 —
-    SELECT 에 ', target' 포함 첫 실행은 UndefinedColumn 흉내로 예외, 재실행(base 컬럼)은 통과.
-    _query_activity 의 자가치유 폴백(rollback → base 컬럼 재조회)을 검증한다."""
+    SELECT 에 ', target' 이 있으면 **매번** UndefinedColumn 흉내로 예외(컬럼이 없는 DB 라면 몇 번을
+    시도해도 없다), base 컬럼 재실행만 통과. _query_activity 의 자가치유 폴백을 검증한다.
+    (0056 으로 사다리가 3단이 되며, 종전의 '첫 실행만 실패' 플래그는 두 번째 target 시도를 통과시켜
+     컬럼 부재 상황을 더는 재현하지 못했다 — 더블을 의도대로 정정.)"""
     def __init__(self, rows):
         super().__init__(rows)
         self.connection = self       # cur.connection.rollback() 대상
-        self._raised = False
     def execute(self, sql, params=None):
-        if ", target" in sql and not self._raised:
-            self._raised = True
+        if ", target" in sql:
             raise RuntimeError('column "target" does not exist')
         super().execute(sql, params)
     def rollback(self):

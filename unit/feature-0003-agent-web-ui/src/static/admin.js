@@ -1513,7 +1513,9 @@ function getSystemPromptPending(args) {
 // TASK-0184: drill* = 역할 막대 클릭 시 펼치는 계정 drill-down 상태(byAccount 캐시·역할·페이지·검색).
 // TASK-0198: selectedModels = 모델 필터(null → 전체, 배열 → 선택 모델 키만). _lastRaw/_lastKey =
 //   마지막 응답 캐시(days|gran). 모델 칩 토글은 재조회 없이 캐시로 재렌더(loadUsage({refetch:false})).
-adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, _lastRaw: null, _lastKey: null };
+// usage-metric-charts(2026-08-13): metric = 요약 카드로 고른 차트 지표(요청/호출/총 토큰/입력/
+//   출력/캐시 읽기/캐시 쓰기/추정 비용). 기본은 종전 화면과 같은 총 토큰.
+adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, metric: "total_tokens", _lastRaw: null, _lastKey: null };
 
 // TASK-AIOPS: AI 운영 현황 패널 상태 (첫 진입 시 lazy-load, 새로고침 버튼으로 재조회).
 adminState.aiOps = { initialized: false, data: null };

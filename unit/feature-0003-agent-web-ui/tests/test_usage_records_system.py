@@ -99,10 +99,12 @@ class _FakePG:
 
 
 def _sys_row(task, target, actor, model, calls, tok, pt, ct, last="2026-07-20T10:00:00Z",
-             conv_exists=False, target_scope=""):
+             conv_exists=False, target_scope="", cache_read=0, cache_write=0):
     # 컬럼 순서: task, target, actor(conversation_id), m, calls, tok, pt, ct, last_used, conv_exists,
-    #            target_scope(0047 — 기록된 데이터소스 scope_key, 미기록/legacy 는 "")
-    return (task, target, actor, model, calls, tok, pt, ct, _FakeDt(last), conv_exists, target_scope)
+    #            target_scope(0047 — 기록된 데이터소스 scope_key, 미기록/legacy 는 ""),
+    #            cache_read, cache_write(0056 — 컬럼 부재 경로도 리터럴 0 으로 같은 자리를 채운다)
+    return (task, target, actor, model, calls, tok, pt, ct, _FakeDt(last), conv_exists, target_scope,
+            cache_read, cache_write)
 
 
 # ── S1: 여집합 정의(대화 목록과 상보) ─────────────────────────────────────────
@@ -512,10 +514,11 @@ def test_r4_missing_column_falls_back_to_legacy_query():
         def cursor(self, *a, **k):
             return _NoColCursor(self._rows_seq, self._sink)
 
-    pg = _NoColPG([None, rows, []], sink)   # [0]=실패한 첫 질의 자리, [1]=폴백 집계, [2]=해소
+    # 0056 로 사다리 3단: [0] scope+cache 실패 · [1] scope-only 실패 · [2] 둘 다 없는 판 성공 · [3] 해소
+    pg = _NoColPG([None, None, rows, []], sink)
     items, _ = app._query_usage_system_records(pg, days=30, model=None, day_label=None, gran="day")
     assert pg.rolled_back is True
     assert len(items) == 1 and items[0]["task"] == "table_insight"
     assert items[0]["scope_source"] is None      # 기록값 없음 → legacy 취급
-    # 폴백 SQL 은 target_scope 를 참조하지 않는다.
-    assert "u.target_scope" not in sink[1][0]
+    # 최종 성공 SQL 은 target_scope 를 참조하지 않는다(사다리 마지막 단).
+    assert "u.target_scope" not in sink[2][0]

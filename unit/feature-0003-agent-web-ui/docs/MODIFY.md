@@ -3634,3 +3634,50 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-13T01:03:01+09:00
+
+## CHG-20260813T1135-ai-claude-corp-usage-metric-charts — 사용량 요약 카드 = 차트 지표 선택기 + 프롬프트 캐시 계측·활성화 (Major §12.3)
+
+**요청**: "[요청, 호출, 총 토큰, 입력, 출력, 비용] 패널 클릭 시 차트도 해당 값으로 부드럽게 재구성"
++ "가능하다면 cache hit 된 입출력도 항목 추가". 사용자 결정(2026-08-13): **계측 + 캐싱 활성화**.
+
+### 화면 (feature-0003)
+
+- `src/static/admin/usage.js` — `USAGE_METRICS` 8종 정의. 요약 카드를 `button`(aria-pressed)으로
+  렌더해 지표 선택기로 전환(클릭 → `adminState.usage.metric` 갱신 → 캐시 재렌더). `renderStacked` /
+  `renderDonut` / `renderStackedHBar` 를 지표 인자화하고, 키 signature 가 같으면 **노드를 유지한 채
+  기하만 갱신**(CSS transition 이 걸리도록 style 로 지정). `requests` 는 비-가산이라 `by_day` 총계
+  단일 막대. `buildView` 가 부분 모델 선택 시 8축을 모두 재합산. 상세 표에 캐시 2열 추가,
+  `prompt`/`completion` 라벨을 `입력`/`출력` 으로(사용자 어휘 정합).
+- `src/static/admin.js` — `adminState.usage.metric` 초기값(`total_tokens`).
+- `src/static/admin.html` — 지표 안내 1줄(`#usageMetricNote`) + 역할·drill 카드 제목을 지표 연동
+  `span` 으로. 기간 차트 제목 "토큰 사용량" → "사용량"(지표 가변).
+- `src/static/css/admin.css` — 선택 카드 상태(accent 테두리·inset ring·focus-visible), 막대/도넛/
+  가로막대 transition(0.42s), `prefers-reduced-motion` 존중, 도넛·hbar 인라인 style 을 클래스로.
+
+### 집계·비용 (feature-0003)
+
+- `src/routers/admin_usage.py` — `_estimate_llm_cost_usd` 에 캐시 인자 2개(기본 0 → 기존 7 호출처
+  무회귀) + 캐시 단가 배수 상수. `admin_llm_usage` 의 totals/by_model/by_day/by_day_model/by_account
+  에 지표 8축 실적재. `_aggregate_usage_by_role` 폴딩이 8축 보존. `_usage_cache_exec` 자가치유
+  헬퍼(컬럼 부재 → 리터럴 0 재실행). `_query_usage_conversations`·`_query_usage_system_records` 도
+  캐시 인지 비용(후자는 scope×cache 3단 사다리).
+- `src/routers/profile.py` · `ai_ops.py` · `admin_console.py` — 같은 캐시 인지 비용식 적용(적용면
+  전수 — 한 화면만 반영하면 화면 간 비용이 어긋난다).
+- `src/app.py` — `_usage_cache_exprs` / `_usage_cache_exec` / 캐시 단가 상수 재노출.
+
+### LLM 기록·캐싱 (feature-0002)
+
+- `alembic/versions/20260813_0056_llm_usage_cache_tokens.py` — `cache_read_tokens` /
+  `cache_write_tokens` INTEGER NOT NULL DEFAULT 0 **expand-only**. `MAX_MIGRATION.txt` 갱신.
+- `src/modules/llm.py` — `_cache_tokens_of()`(최상위 → details 폴백), `_record_llm_usage` 컬럼
+  사다리에 캐시 2컬럼 추가(최상단), `_apply_prompt_cache()` 신규 + 비대화 chokepoint 적용.
+- `src/agent_core.py` — 대화 경로(`_call_llm`)에서 OAuth identity 주입 **뒤**에 캐시 부착.
+
+### 테스트
+
+- 신규: `feature-0003/tests/test_usage_metric_axes.py`(6) ·
+  `feature-0003/tests/headless/test_usage_metric_switch.js`(21, 실 Chromium) ·
+  `feature-0002/tests/test_llm_usage_record.py`(+8).
+- 계약 갱신: `test_ai_ops.py` · `test_usage_conversations.py` · `test_usage_records_system.py` —
+  SQL 컬럼 증가에 맞춰 더블 row arity·사다리 단수 단정 갱신. `_NoTargetCur` 는 "첫 실행만 실패"
+  플래그 때문에 사다리 3단에서 컬럼 부재를 재현하지 못하던 것을 정정(무음 통과 차단).

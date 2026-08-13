@@ -464,12 +464,15 @@
              TASK-0177: 디자인 정렬 — .metric-card 요약, 차트 surface 카드, 토큰 통일, 8px spacing. -->
         <!-- TASK-0198: 모델 필터 칩 바 — 전체/모델별 토글. 선택 모델 기준으로 아래 요약·차트·역할·계정이 좁혀진다(재조회 없이 캐시 재렌더). -->
         <div id="usageModelFilter" class="admin-usage-filter" role="group" aria-label="모델 필터"></div>
+        <!-- usage-metric-charts(2026-08-13): 요약 카드가 차트 지표 선택기다. 카드를 누르면 아래 차트
+             전부가 그 값 기준으로 다시 그려진다(재조회 없이 캐시 재렌더 + 막대 전환 애니메이션). -->
         <div id="usageSummary" class="admin-usage-section">로딩 중…</div>
+        <p id="usageMetricNote" class="admin-usage-metric-note hidden"></p>
         <!-- TASK-0180: 카테고리별 행 구조 — ① 시간별 토큰(4) : 모델별 비중(1),
              ② 역할별 [토큰 | 비용], ③ 계정별 [토큰 | 비용]. (몰아넣기 grid 폐기) -->
         <div class="admin-usage-section admin-usage-trend-row">
           <div class="admin-usage-card admin-usage-trend-main">
-            <h3 class="admin-usage-h3"><span id="usageTrendTitle">일별</span> 토큰 사용량 <span class="admin-usage-caption">· 모델별 누적, 막대 hover 시 상세</span></h3>
+            <h3 class="admin-usage-h3"><span id="usageTrendTitle">일별</span> 사용량 <span class="admin-usage-caption">· 모델별 누적, 막대 hover 시 상세</span></h3>
             <div id="usageDayChart"></div>
           </div>
           <div class="admin-usage-card admin-usage-trend-side">
@@ -479,11 +482,11 @@
         </div>
         <div class="admin-usage-section admin-usage-row">
           <div class="admin-usage-card">
-            <h3 class="admin-usage-h3">역할별 <span class="admin-usage-caption">· 토큰</span></h3>
+            <h3 class="admin-usage-h3">역할별 <span class="admin-usage-caption">· <span id="usageRoleChartMetric">총 토큰</span></span></h3>
             <div id="usageRoleChart"></div>
           </div>
           <div class="admin-usage-card">
-            <h3 class="admin-usage-h3">역할별 비용 <span class="admin-usage-caption">· 추정</span></h3>
+            <h3 class="admin-usage-h3">역할별 <span class="admin-usage-caption">· <span id="usageRoleCostChartMetric">추정 비용</span></span></h3>
             <div id="usageRoleCostChart"></div>
           </div>
         </div>
@@ -505,11 +508,11 @@
             <div class="admin-usage-drill-body">
               <div class="admin-usage-drill-charts">
                 <div class="admin-usage-drill-col">
-                  <h4 class="admin-usage-h4">토큰</h4>
+                  <h4 class="admin-usage-h4" id="usageDrillChartMetric">총 토큰</h4>
                   <div id="usageDrillChart"></div>
                 </div>
                 <div class="admin-usage-drill-col">
-                  <h4 class="admin-usage-h4">추정 비용</h4>
+                  <h4 class="admin-usage-h4" id="usageDrillCostChartMetric">추정 비용</h4>
                   <div id="usageDrillCostChart"></div>
                 </div>
               </div>

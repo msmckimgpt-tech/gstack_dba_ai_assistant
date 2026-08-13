@@ -78,20 +78,24 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
     # 대화별 × 모델 분해(모델 stacked·비용용) → Python fold. LIMIT 은 대화 수 기준(+1 로 truncated 감지).
     # 모델 분해 키도 canonical family — 대화 모달의 models[] 가 도넛과 동일 표기로 표시(라우팅 변형 미분점).
     _canon_m = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
-    sql = (
-        "SELECT u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, "
-        f"c.blocked_at, {_canon_m} AS m, count(*) AS calls, "
-        "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
-        "max(u.created_at) AS last_used "
-        "FROM agent_runtime.llm_usage u "
-        "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-        f"WHERE {where_sql} "
-        "GROUP BY u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, c.blocked_at, "
-        f"{_canon_m}"
-    )
+
+    # usage-metric-charts: 캐시 인지 비용 — 차트 막대와 이 모달의 비용이 같은 식이어야 정합.
+    #   컬럼 부재(0056 미적용)는 _usage_cache_exec 가 리터럴 0 판으로 재실행해 흡수(컬럼 자리 동일).
+    def _sql(cr: str, cw: str) -> str:
+        return (
+            "SELECT u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, "
+            f"c.blocked_at, {_canon_m} AS m, count(*) AS calls, "
+            "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
+            f"max(u.created_at) AS last_used, sum({cr}) AS cr, sum({cw}) AS cw "
+            "FROM agent_runtime.llm_usage u "
+            "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+            f"WHERE {where_sql} "
+            "GROUP BY u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, c.blocked_at, "
+            f"{_canon_m}"
+        )
     fold: dict = {}
     with pg.cursor() as cur:
-        cur.execute(sql, tuple(params))
+        _usage_cache_exec(cur, pg, _sql, tuple(params), alias="u")
         for r in (cur.fetchall() or []):
             cid = r[0]
             e = fold.get(cid)
@@ -108,11 +112,12 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
                 fold[cid] = e
             mk, calls_r = r[6], int(r[7] or 0)
             tok_r, pt_r, ct_r = int(r[8] or 0), int(r[9] or 0), int(r[10] or 0)
+            cr_r, cw_r = (int(r[12] or 0), int(r[13] or 0)) if len(r) > 13 else (0, 0)
             e["calls"] += calls_r
             e["total_tokens"] += tok_r
             e["prompt_tokens"] += pt_r
             e["completion_tokens"] += ct_r
-            mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r)
+            mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r, cr_r, cw_r)
             e["cost_usd"] += mc
             mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
             mm["total_tokens"] += tok_r
@@ -152,6 +157,46 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
 #   를 바로 읽는다. run 단위 원장이 필요하면 'AI 운영 현황 > 운영 현황'의 최근 활동 피드가 정본.
 
 _USAGE_SYS_LIMIT = 200  # 시스템 사용 기록 상한(대화 목록 _USAGE_CONV_LIMIT 과 동일 규모).
+
+
+def _usage_cache_exprs(alias: str = "") -> "tuple[str, str]":
+    """(cache_read, cache_write) 집계 표현식 — 0056 적용 DB 용."""
+    p = f"{alias}." if alias else ""
+    return (f"COALESCE({p}cache_read_tokens, 0)", f"COALESCE({p}cache_write_tokens, 0)")
+
+
+# 캐시 컬럼(0056) 부재 시 같은 자리에 채우는 리터럴. **컬럼 개수·순서가 두 경로에서 동일**해야
+# 호출측의 위치 인덱스가 흔들리지 않는다(0032/0047 사다리와 같은 규약).
+_USAGE_CACHE_OFF = ("0", "0")
+
+
+def _usage_cache_exec(cur, pg, build_sql, params=None, alias: str = "") -> bool:
+    """캐시 컬럼 포함 SQL 을 실행하고, 컬럼이 없으면 리터럴 0 판으로 **재실행**한다.
+
+    0056 이 `cache_read_tokens` / `cache_write_tokens` 를 추가하기 전 DB(마이그 지연·개발 DB·구
+    이미지)에서 컬럼을 그대로 참조하면 사용량 화면이 통째로 500 이 된다. 저장소의 기존 자가치유
+    관례(0032 target / 0047 target_scope 폴백 재조회)와 **같은 방식**으로 흡수한다 — 정상 경로에서
+    추가 왕복이 없고(information_schema probe 불요), 실패 경로만 rollback 후 한 번 더 조회한다.
+
+    build_sql(cache_read_expr, cache_write_expr) → SQL 문자열.
+    반환: 캐시 컬럼이 실재해 값이 실집계됐으면 True, 리터럴 0 폴백이면 False.
+    """
+    on = _usage_cache_exprs(alias)
+    try:
+        cur.execute(build_sql(*on), params) if params is not None else cur.execute(build_sql(*on))
+        return True
+    except Exception:
+        # 원인을 단정하지 않는다 — 재실행이 **성공했을 때만** 캐시 컬럼 부재로 판정할 수 있다.
+        # 캐시 표현식 외에는 두 판이 동일하므로, 리터럴 0 판도 실패하면 다른 결함(문법·alias 등)이며
+        # 그 예외는 삼키지 않고 그대로 올려 보낸다(무음 0 으로 위장한 성공 금지).
+        try:
+            pg.rollback()  # 실패 트랜잭션은 abort 상태라 재쿼리 전 rollback 필수
+        except Exception:
+            pass
+        cur.execute(build_sql(*_USAGE_CACHE_OFF), params) if params is not None else cur.execute(build_sql(*_USAGE_CACHE_OFF))
+        logging.getLogger(__name__).warning(
+            "usage: 캐시 컬럼 없이 재조회 성공 — 0056 미적용으로 판단해 캐시 축 0 표시", exc_info=True)
+        return False
 
 # target 해소 소스 — 어느 것도 정본 단독이 아니라 union 한다(각자 커버가 다르다):
 #   table_descriptions(콘솔 테이블 설명 SSOT, scope_key) · routine_objects(프로시저/함수,
@@ -324,7 +369,8 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
     #   (ai_ops `_query_activity` 의 has_target 폴백과 동형). 그 경우 legacy 경로(역해소)만 작동.
     #   GROUP BY 에 포함하는 이유: 같은 `schema.table` 이라도 데이터소스가 다르면 **다른 행**이어야
     #   한다(그게 이 컬럼을 만든 이유). NULL(legacy·비-DS 활동)끼리는 종전처럼 하나로 묶인다.
-    def _build_sql(with_scope: bool) -> str:
+    # usage-metric-charts: 캐시 인지 비용(차트·대화목록과 동일 식). 0056 미적용이면 리터럴 0.
+    def _build_sql(with_scope: bool, cr: str = "0", cw: str = "0") -> str:
         scope_sel = "COALESCE(u.target_scope, '') AS tscope, " if with_scope else "'' AS tscope, "
         scope_grp = ", COALESCE(u.target_scope, '')" if with_scope else ""
         return (
@@ -333,8 +379,10 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
             "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
             "max(u.created_at) AS last_used, "
             "bool_or(c.conversation_id IS NOT NULL) AS conv_exists, "
-            # 폴백 변형도 리터럴 '' 로 같은 자리를 채워 **컬럼 인덱스가 두 경로에서 동일**하다(r[10]).
-            f"{scope_sel[:-2]} "
+            # 폴백 변형도 리터럴 '' / 0 으로 같은 자리를 채워 **컬럼 인덱스가 모든 경로에서 동일**하다
+            # (tscope=r[10], cr=r[11], cw=r[12]).
+            f"{scope_sel[:-2]}, "
+            f"sum({cr}) AS cr, sum({cw}) AS cw "
             "FROM agent_runtime.llm_usage u "
             "LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
             f"WHERE {where_sql} "
@@ -343,16 +391,26 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
 
     fold: dict = {}
     with pg.cursor() as cur:
-        try:
-            cur.execute(_build_sql(True), tuple(params))
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "usage system records: target_scope 컬럼 부재로 legacy 경로 폴백(0047 미적용?)", exc_info=True)
+        # 컬럼 사다리 — 두 마이그가 독립적으로 빠질 수 있어 조합을 위에서부터 시도한다:
+        #   ① scope(0047) + cache(0056)  ② scope 만(0056 미적용 — 배포 순서상 실재하는 상태)
+        #   ③ 둘 다 없음(구 이미지)
+        #   "scope 없는데 cache 있는" 조합은 0047 < 0056 이라 실재하지 않으므로 시도하지 않는다.
+        #   어느 단계든 SELECT 컬럼 **개수·순서는 동일**하다(부재분은 리터럴 '' / 0).
+        _on = _usage_cache_exprs("u")
+        _ladder = ((True, _on[0], _on[1]), (True, "0", "0"), (False, "0", "0"))
+        for _i, (_scope, _cr, _cw) in enumerate(_ladder):
             try:
-                pg.rollback()  # 실패 트랜잭션 abort 정리
+                cur.execute(_build_sql(_scope, _cr, _cw), tuple(params))
+                break
             except Exception:
-                pass
-            cur.execute(_build_sql(False), tuple(params))
+                logging.getLogger(__name__).warning(
+                    "usage system records: 컬럼 사다리 %d단 실패 — 다음 단계로 폴백", _i + 1, exc_info=True)
+                try:
+                    pg.rollback()  # 실패 트랜잭션 abort 정리
+                except Exception:
+                    pass
+                if _i == len(_ladder) - 1:
+                    raise
         for r in (cur.fetchall() or []):
             task, tgt, actor = (r[0] or ""), (r[1] or ""), (r[2] or "")
             # 0047: 기록된 데이터소스 scope_key(없으면 ""). 같은 target 이라도 데이터소스가 다르면
@@ -379,11 +437,12 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
                 fold[key] = e
             mk, calls_r = r[3], int(r[4] or 0)
             tok_r, pt_r, ct_r = int(r[5] or 0), int(r[6] or 0), int(r[7] or 0)
+            cr_r, cw_r = (int(r[11] or 0), int(r[12] or 0)) if len(r) > 12 else (0, 0)
             e["calls"] += calls_r
             e["total_tokens"] += tok_r
             e["prompt_tokens"] += pt_r
             e["completion_tokens"] += ct_r
-            mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r)
+            mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r, cr_r, cw_r)
             e["cost_usd"] += mc
             mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
             mm["total_tokens"] += tok_r
@@ -450,18 +509,28 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
         return app._json_error("usage 저장소(PG) 연결 실패", 503)
     try:
         win = f"now() - interval '{days} days'"
+        # usage-metric-charts: 캐시 축(0056). 첫 질의에서 컬럼 실재를 판정하고 그 결과를 이 요청의
+        #   나머지 질의가 공유한다 — 질의마다 폴백을 반복하지 않으면서도 미적용 DB 에서 화면이 죽지 않는다.
+        _CACHE_R, _CACHE_W = _usage_cache_exprs()
+        _CACHE_R_U, _CACHE_W_U = _usage_cache_exprs("u")
         with pg.cursor() as cur:
             # TASK-0181: requests = 작업 화면에서 보낸 요청 수(distinct run_id; NULL=insight 등 제외).
-            cur.execute(
+            # usage-metric-charts: 캐시 읽기/쓰기 합도 함께 — 요약 카드 지표이자 비용식 입력.
+            if not _usage_cache_exec(cur, pg, lambda cr, cw: (
                 f"SELECT COALESCE(count(*),0), COALESCE(sum(prompt_tokens),0), "
                 f"COALESCE(sum(completion_tokens),0), COALESCE(sum(total_tokens),0), "
-                f"COALESCE(count(distinct run_id),0) "
+                f"COALESCE(count(distinct run_id),0), "
+                f"COALESCE(sum({cr}),0), COALESCE(sum({cw}),0) "
                 f"FROM agent_runtime.llm_usage WHERE created_at >= {win}"
-            )
-            t = cur.fetchone() or (0, 0, 0, 0, 0)
+            )):
+                # 컬럼 부재 확정 — 이 요청의 나머지 질의도 리터럴 0 으로 간다(재실패 방지).
+                _CACHE_R, _CACHE_W = _USAGE_CACHE_OFF
+                _CACHE_R_U, _CACHE_W_U = _USAGE_CACHE_OFF
+            t = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0)
             totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
                       "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
-                      "requests": int(t[4])}
+                      "requests": int(t[4]),
+                      "cache_read_tokens": int(t[5] or 0), "cache_write_tokens": int(t[6] or 0)}
             # usage-model-canonical: 실제 서빙 모델(COALESCE(resolved_model, model))을 canonical
             # family 로 접어 집계 → 라우팅 변형 alias(-interactive/-chat/-root)·실 모델 ID·gemma 폴백이
             # 한 논리 모델로 합쳐진다('모델별 비중' 도넛 중복 분점 해소). run_id distinct 도 canonical
@@ -470,7 +539,8 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
             _canon = canonical_usage_model_sql("COALESCE(resolved_model, model)")
             cur.execute(
                 f"SELECT {_canon} AS m, count(*), sum(total_tokens), "
-                f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id) "
+                f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id), "
+                f"sum({_CACHE_R}), sum({_CACHE_W}) "
                 f"FROM agent_runtime.llm_usage "
                 f"WHERE created_at >= {win} GROUP BY {_canon} "
                 f"ORDER BY 3 DESC NULLS LAST LIMIT 50"
@@ -479,18 +549,21 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
             for r in (cur.fetchall() or []):
                 m = r[0]
                 pt_m, ct_m = int(r[3] or 0), int(r[4] or 0)
+                cr_m, cw_m = int(r[6] or 0), int(r[7] or 0)
                 by_model.append({"model": m, "resolved_model": m, "calls": int(r[1]),
                                  "requests": int(r[5] or 0),
                                  "total_tokens": int(r[2] or 0), "prompt_tokens": pt_m,
                                  "completion_tokens": ct_m,
-                                 "cost_usd": app._estimate_llm_cost_usd(m, pt_m, ct_m)})
+                                 "cache_read_tokens": cr_m, "cache_write_tokens": cw_m,
+                                 "cost_usd": app._estimate_llm_cost_usd(m, pt_m, ct_m, cr_m, cw_m)})
             # TASK-0176: 계정 × 모델 분해 → 계정별 추정 비용 산출(비용은 모델별 단가라
             # 모델 분해 필수). Python 으로 계정별 fold(calls/tokens/cost). 역할별 비용은
             # _aggregate_usage_by_role 가 enrich 된 by_account 의 cost_usd 를 재합산.
             _canon_u = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
             cur.execute(
                 f"SELECT c.owner_account_id, {_canon_u}, count(*), "
-                f"sum(u.total_tokens), sum(u.prompt_tokens), sum(u.completion_tokens) "
+                f"sum(u.total_tokens), sum(u.prompt_tokens), sum(u.completion_tokens), "
+                f"sum({_CACHE_R_U}), sum({_CACHE_W_U}) "
                 f"FROM agent_runtime.llm_usage u "
                 f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
                 f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id, {_canon_u}"
@@ -499,14 +572,32 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
             for r in (cur.fetchall() or []):
                 aid = int(r[0]) if r[0] is not None else None
                 mk, calls_r, tok_r, pt_r, ct_r = r[1], int(r[2]), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0)
-                e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
+                cr_r, cw_r = int(r[6] or 0), int(r[7] or 0)
+                e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0,
+                                                "prompt_tokens": 0, "completion_tokens": 0,
+                                                "cache_read_tokens": 0, "cache_write_tokens": 0,
+                                                "cost_usd": 0.0, "_models": {}})
                 e["calls"] += calls_r
                 e["total_tokens"] += tok_r
-                mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r)
+                # usage-metric-charts: 지표 전환(입력/출력/캐시)이 계정·역할 축에서도 성립하도록
+                #   엔티티 레벨과 모델 분해 양쪽에 같은 축을 보존한다.
+                e["prompt_tokens"] += pt_r
+                e["completion_tokens"] += ct_r
+                e["cache_read_tokens"] += cr_r
+                e["cache_write_tokens"] += cw_r
+                mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r, cr_r, cw_r)
                 e["cost_usd"] += mc
                 # TASK-0181: 계정 × 모델 분해 보존(stacked 막대용).
-                mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
+                mm = e["_models"].setdefault(mk, {"model": mk, "calls": 0, "total_tokens": 0,
+                                                  "prompt_tokens": 0, "completion_tokens": 0,
+                                                  "cache_read_tokens": 0, "cache_write_tokens": 0,
+                                                  "cost_usd": 0.0})
+                mm["calls"] += calls_r
                 mm["total_tokens"] += tok_r
+                mm["prompt_tokens"] += pt_r
+                mm["completion_tokens"] += ct_r
+                mm["cache_read_tokens"] += cr_r
+                mm["cache_write_tokens"] += cw_r
                 mm["cost_usd"] += mc
             # TASK-0181: 계정별 요청 수(distinct run_id; run 은 conversation=계정 단위, NULL 제외).
             cur.execute(
@@ -524,27 +615,39 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
                 for m in a["models"]:
                     m["cost_usd"] = round(m["cost_usd"], 4)
             # TASK-0166: granularity bucket(시/일/주/월) 시계열 — 호출/토큰/prompt/completion.
+            # usage-metric-charts: requests(distinct run_id)·캐시 축 추가. requests 는 모델 가산이
+            #   성립하지 않아(한 run 이 여러 모델 횡단) by_day_model 로 분해할 수 없다 — 그래서
+            #   버킷 총계를 여기서 따로 실어 보내고, 프론트가 그 지표에서만 단일 막대로 그린다.
             cur.execute(
                 f"SELECT {bucket_expr} AS b, count(*), sum(total_tokens), "
-                f"sum(prompt_tokens), sum(completion_tokens) FROM agent_runtime.llm_usage "
+                f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id), "
+                f"sum({_CACHE_R}), sum({_CACHE_W}) FROM agent_runtime.llm_usage "
                 f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}"
             )
             by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0),
-                       "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0)}
+                       "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0),
+                       "requests": int(r[5] or 0),
+                       "cache_read_tokens": int(r[6] or 0), "cache_write_tokens": int(r[7] or 0)}
                       for r in (cur.fetchall() or [])]
             # TASK-0164/0166: bucket × 모델 분해 (stacked bar). 최근 bucket_limit 버킷만
             # (서브쿼리로 by_day 와 동일 버킷 집합 보장 → 차트 정합).
             # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(cost_usd) 산출 → hover 표시.
             cur.execute(
                 f"SELECT {bucket_expr} AS b, {_canon} , sum(total_tokens), "
-                f"sum(prompt_tokens), sum(completion_tokens) "
+                f"sum(prompt_tokens), sum(completion_tokens), count(*), "
+                f"sum({_CACHE_R}), sum({_CACHE_W}) "
                 f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
                 f"AND {bucket_expr} IN (SELECT {bucket_expr} FROM agent_runtime.llm_usage "
                 f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) "
                 f"GROUP BY 1, 2 ORDER BY 1"
             )
+            # usage-metric-charts: 지표 전환용 축을 버킷×모델 단위로 전량 보존(프론트가 재계산 없이 선택).
             by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
-                             "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
+                             "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0),
+                             "calls": int(r[5] or 0),
+                             "cache_read_tokens": int(r[6] or 0), "cache_write_tokens": int(r[7] or 0),
+                             "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0),
+                                                                    int(r[6] or 0), int(r[7] or 0))}
                             for r in (cur.fetchall() or [])]
     finally:
         try:
@@ -668,19 +771,44 @@ def admin_usage_conversations(request: Request, account=Depends(app.get_current_
 
 # ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (4종). app 전역은 app.X 동적 참조. ====
 
-def _estimate_llm_cost_usd(model: str | None, prompt_tokens: int, completion_tokens: int) -> float:
+def _estimate_llm_cost_usd(model: str | None, prompt_tokens: int, completion_tokens: int,
+                           cache_read_tokens: int = 0, cache_write_tokens: int = 0) -> float:
     """TASK-0166: 모델 토큰 → 추정 비용(USD). 단가 미상(로컬/edge 등)은 0.
 
     usage-model-canonical: 단가 조회 키를 canonical family 로 접는다. 단가표
     (_LLM_PRICE_USD_PER_1M)는 base alias(claude-haiku-4/claude-sonnet-4)만 등록돼, 라우팅 변형
     (claude-haiku-4-chat/-interactive)이나 실 모델 ID(claude-haiku-4-5-20251001)가 그대로 들어오면
     미매칭으로 비용 $0 로 오표시되던 gap 이 있었다. canonical 화로 변형/실ID 도 올바른 단가로 계상되고,
-    gemma 폴백(edge)은 canonical 'edge' → 단가 미등록 → 0(로컬 무료) 로 정직하게 남는다."""
+    gemma 폴백(edge)은 canonical 'edge' → 단가 미등록 → 0(로컬 무료) 로 정직하게 남는다.
+
+    usage-metric-charts(2026-08-13) — **캐시 인지 단가**: `prompt_tokens` 는 캐시 토큰을 포함한
+    값이다(게이트웨이 실측: 5039 = 순수입력 37 + 캐시쓰기 5002). 프롬프트 캐싱을 켠 뒤 이 함수가
+    종전처럼 prompt 전량을 정가로 계산하면 캐시 적중분을 **10배 과대 계상**한다. 그래서 입력을
+    세 구간으로 분해한다:
+        순수 입력 = prompt - cache_read - cache_write   →  정가
+        캐시 쓰기                                        →  정가 × 1.25 (기록 오버헤드)
+        캐시 읽기                                        →  정가 × 0.10 (적중 할인)
+    계수는 Anthropic 5분 ephemeral 캐시의 공시 배수다(정확 단가는 시점별 변동 — 운영자 참고용 "추정").
+
+    무회귀: 캐시 인자 미전달(기본 0) 또는 캐시 0 인 레거시 행이면 순수 입력 = prompt 라 종전 식과
+    **완전히 동일한 값**이 나온다. 캐시 값이 prompt 보다 큰 이상 데이터는 순수 입력을 0 으로 clamp 한다.
+    """
     key = canonical_usage_model(model)
     p = app._LLM_PRICE_USD_PER_1M.get(key)
     if not p:
         return 0.0
-    return round((prompt_tokens or 0) / 1e6 * p["in"] + (completion_tokens or 0) / 1e6 * p["out"], 4)
+    pt = int(prompt_tokens or 0)
+    cr = max(0, int(cache_read_tokens or 0))
+    cw = max(0, int(cache_write_tokens or 0))
+    plain = max(0, pt - cr - cw)
+    in_rate = p["in"] / 1e6
+    return round(
+        plain * in_rate
+        + cw * in_rate * app._LLM_CACHE_WRITE_MULT
+        + cr * in_rate * app._LLM_CACHE_READ_MULT
+        + (completion_tokens or 0) / 1e6 * p["out"],
+        4,
+    )
 
 def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
     """TASK-0163: 계정별 LLM usage 를 역할별로 폴딩.
@@ -696,15 +824,25 @@ def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
         else:
             key = row.get("role") or "(역할 없음)"
         b = buckets.setdefault(key, {"role": key, "calls": 0, "requests": 0,
-                                     "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
+                                     "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                                     "cache_read_tokens": 0, "cache_write_tokens": 0,
+                                     "cost_usd": 0.0, "_models": {}})
         b["calls"] += int(row.get("calls") or 0)
         b["requests"] += int(row.get("requests") or 0)  # TASK-0181: 요청 수(distinct run_id) 합산
         b["total_tokens"] += int(row.get("total_tokens") or 0)
+        # usage-metric-charts: 지표 전환 축(입력/출력/캐시)도 역할로 합산.
+        for _k in ("prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_write_tokens"):
+            b[_k] += int(row.get(_k) or 0)
         b["cost_usd"] += float(row.get("cost_usd") or 0)  # TASK-0176: 역할별 추정 비용 합산
         # TASK-0181: 역할별 모델 분해(stacked 막대용) — 계정의 models[] 를 역할로 합산.
         for m in (row.get("models") or []):
-            mm = b["_models"].setdefault(m["model"], {"model": m["model"], "total_tokens": 0, "cost_usd": 0.0})
+            mm = b["_models"].setdefault(m["model"], {"model": m["model"], "calls": 0, "total_tokens": 0,
+                                                      "prompt_tokens": 0, "completion_tokens": 0,
+                                                      "cache_read_tokens": 0, "cache_write_tokens": 0,
+                                                      "cost_usd": 0.0})
             mm["total_tokens"] += int(m.get("total_tokens") or 0)
+            for _k in ("calls", "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_write_tokens"):
+                mm[_k] += int(m.get(_k) or 0)
             mm["cost_usd"] += float(m.get("cost_usd") or 0)
     out = []
     for b in buckets.values():
@@ -791,6 +929,11 @@ _USAGE_GRAN = {
 # TASK-0166: LLM 비용 추정 단가 (USD per 1M tokens). 로컬 LLM(edge/core/auto/code)=0.
 # Bedrock claude 공시가 근사 — 정확 단가는 시점/리전별 변동하므로 운영자 참고용 "추정"이다.
 # 별칭(model) 기준 매핑(LiteLLM 이 resolved_model 에도 별칭을 반환하는 경우가 많음).
+# usage-metric-charts(2026-08-13): 프롬프트 캐시 단가 배수(Anthropic 5분 ephemeral 공시 기준).
+#   캐시 쓰기는 정가의 1.25배, 캐시 읽기는 0.1배. 입력 단가에만 곱한다(출력은 캐시 개념 없음).
+_LLM_CACHE_WRITE_MULT = 1.25
+_LLM_CACHE_READ_MULT = 0.10
+
 _LLM_PRICE_USD_PER_1M = {
     "claude-haiku-4": {"in": 1.0, "out": 5.0},
     "claude-sonnet-4": {"in": 3.0, "out": 15.0},

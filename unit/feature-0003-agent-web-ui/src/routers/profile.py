@@ -104,16 +104,22 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
             # 해소 + admin 과 동일 규칙. model==resolved_model==canonical 로 채워 드릴다운 필터
             # (_query_usage_conversations, canonical)와 클릭 키가 정합(프론트 무변경).
             _canon_u = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
-            cur.execute(
+            # usage-metric-charts(2026-08-13): 캐시 인지 비용 — 관리 화면과 **같은 식**이어야 개인
+            #   사용량과 전체 집계가 어긋나지 않는다. 0056 미적용 DB 는 리터럴 0 표현식으로 폴백.
+            _cr, _cw = app._usage_cache_exprs("u")
+            if not app._usage_cache_exec(cur, pg, lambda cr, cw: (
                 f"SELECT {_canon_u} AS m, count(*), "
-                f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens) {base} "
+                f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens), "
+                f"sum({cr}), sum({cw}) {base} "
                 f"GROUP BY {_canon_u} "
-                "ORDER BY 3 DESC NULLS LAST LIMIT 50",
-                (aid,),
-            )
+                "ORDER BY 3 DESC NULLS LAST LIMIT 50"
+            ), (aid,), alias="u"):
+                _cr, _cw = "0", "0"
             by_model = [{"model": r[0], "resolved_model": r[0], "calls": int(r[1]),
                          "total_tokens": int(r[2] or 0), "requests": int(r[3] or 0),
-                         "cost_usd": app._estimate_llm_cost_usd(r[0], int(r[4] or 0), int(r[5] or 0))}
+                         "cache_read_tokens": int(r[6] or 0), "cache_write_tokens": int(r[7] or 0),
+                         "cost_usd": app._estimate_llm_cost_usd(r[0], int(r[4] or 0), int(r[5] or 0),
+                                                                int(r[6] or 0), int(r[7] or 0))}
                         for r in (cur.fetchall() or [])]
             cur.execute(
                 f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
@@ -124,13 +130,14 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
                       for r in (cur.fetchall() or [])]
             cur.execute(
                 f"SELECT {bucket_expr} AS b, {_canon_u}, sum(u.total_tokens), "
-                f"sum(u.prompt_tokens), sum(u.completion_tokens) "
+                f"sum(u.prompt_tokens), sum(u.completion_tokens), sum({_cr}), sum({_cw}) "
                 f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
                 f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",
                 (aid, aid),
             )
             by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
-                             "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
+                             "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0),
+                                                                    int(r[5] or 0), int(r[6] or 0))}
                             for r in (cur.fetchall() or [])]
             # TASK-0263: 본인 총 추정 비용(모델별 합).
             totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)

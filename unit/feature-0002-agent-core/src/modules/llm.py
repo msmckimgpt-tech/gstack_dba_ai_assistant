@@ -22,6 +22,7 @@ __all__ = [
     "TOPIC_PROMPT",
     "VALIDATION_PROMPT",
     "_build_summary_payload",
+    "_apply_prompt_cache",
     "_compute_plan_timeout_sec",
     "_find_tool_name",
     "_generate_topic_from_request",
@@ -668,6 +669,119 @@ def _get_llm_client(timeout_sec: int | None = None, model: str | None = None) ->
 _get_openai_client = _get_llm_client
 
 
+def _cache_tokens_of(usage) -> "tuple[int, int]":
+    """응답 usage → (cache_read_tokens, cache_write_tokens). 미제공/파싱불가는 (0, 0).
+
+    판독 순서(둘 다 실측으로 확인된 형태):
+      1) 최상위 `cache_read_input_tokens` / `cache_creation_input_tokens` (litellm 이 Anthropic
+         원형을 그대로 실어 주는 필드)
+      2) `prompt_tokens_details.cached_tokens` / `.cache_creation_tokens` (OpenAI 호환 형태)
+    한쪽만 채우는 provider 변형에서도 계측이 0 으로 굳지 않도록 폴백을 둔다. 음수/비수치는 0.
+    """
+    def _i(v) -> int:
+        try:
+            n = int(v or 0)
+        except Exception:
+            return 0
+        return n if n > 0 else 0
+
+    read = _i(getattr(usage, "cache_read_input_tokens", 0))
+    write = _i(getattr(usage, "cache_creation_input_tokens", 0))
+    det = getattr(usage, "prompt_tokens_details", None)
+    if det is not None:
+        if isinstance(det, dict):
+            d_read, d_write = _i(det.get("cached_tokens")), _i(det.get("cache_creation_tokens"))
+        else:
+            d_read = _i(getattr(det, "cached_tokens", 0))
+            d_write = _i(getattr(det, "cache_creation_tokens", 0))
+        # 두 축을 **독립적으로** 폴백한다 — provider 가 최상위에 read 만, details 에 write 만 채우는
+        # 혼합 형태에서 한쪽을 통째로 잃지 않게(둘 다 있으면 최상위가 우선).
+        read = read or d_read
+        write = write or d_write
+    return (read, write)
+
+
+# 프롬프트 캐시 최소 부착 길이(문자). Anthropic 의 캐시 최소 토큰은 모델별로 다르고
+# (Haiku 2048 / Sonnet·Opus 1024) 미달이면 캐시가 **생성되지 않는다**. 미달 요청에 굳이
+# cache_control 을 붙여도 에러는 아니지만 의미가 없으므로, 한글·영문 혼재를 감안한
+# 보수적 문자수 임계로 걸러 짧은 helper 호출(classify/topic 등)을 제외한다.
+_PROMPT_CACHE_MIN_CHARS = 4000
+
+
+def _apply_prompt_cache(messages: "list[dict[str, Any]] | None", model: str | None) -> "list[dict[str, Any]] | None":
+    """system 프롬프트에 `cache_control` 을 부착해 Anthropic 프롬프트 캐싱을 켠다 (2026-08-13).
+
+    배경: 이 저장소는 그동안 `cache_control` 을 어디에서도 보내지 않아 캐싱이 **한 번도 켜진 적이
+    없었다**(repo 전역 grep 0건 — 착수 전 실측). 대화 경로는 같은 system 프롬프트(제품·역할·계정
+    3계층 조립본 + 도구 스펙)를 매 라운드 재전송하므로 캐시 적중률이 구조적으로 높다.
+
+    설계 — **단일 helper, 세 적용 지점**:
+      · `agent_core._call_llm`                   (사용자 대면 대화 — SYSTEM_PROMPT_* 5.8~6.8k자)
+      · `_openai_chat_completion_with_deadline`  (이 chokepoint 를 경유하는 경로 전부)
+      · `llm_node_analysis`                      (직접 호출 · NODE_ANALYSIS_PROMPT 9.1k자)
+    **적용면 근거(§16.7 G8 — 이름이 아니라 실측)**: 이 모듈에는 chokepoint 를 우회하는 직접
+    `client.chat.completions.create` 호출이 16곳 있다. 그 중 system 프롬프트가 캐시 임계
+    (`_PROMPT_CACHE_MIN_CHARS`)를 넘는 것은 `NODE_ANALYSIS_PROMPT`(9,124자) 하나뿐이라 위에 명시
+    적용했고, 나머지는 전부 2,170자 이하(ORIGIN_SHIFT 2170 · ENUM_SUGGEST 1373 · 그 외 1.2k 이하)라
+    부착해도 캐시가 생성되지 않는 no-op 이다. 즉 **캐시 이득이 존재하는 경로는 전수 적용**됐다.
+
+    부착 규칙:
+      · **마지막 system 메시지**의 마지막 블록에만 붙인다. Anthropic 은 그 지점까지의 접두
+        (tools + 앞선 system 전부)를 한 캐시 블록으로 잡으므로 브레이크포인트 1개면 충분하다.
+        OAuth frontier identity 가 첫 system 으로 앞에 붙는 경우에도 그 identity 까지 함께 캐시된다.
+      · content 가 문자열이면 `[{type:text, text:…, cache_control:…}]` 블록 배열로 승격한다.
+        이미 블록 배열이면 마지막 text 블록에만 부착(기존 구조 보존).
+      · 대화 히스토리(user/assistant)에는 붙이지 않는다 — 매 턴 꼬리가 바뀌어 캐시 write 만
+        늘고 적중이 안 된다. 안정 접두인 system 만 대상으로 한다.
+
+    가드(붙이지 않는 경우) — 어느 쪽도 에러가 아니라 "그냥 캐싱 안 함" 으로 조용히 지나간다:
+      · 로컬 LLM(edge/core/gemma 등) — 캐싱 개념이 없다.
+      · system 이 없거나 임계(`_PROMPT_CACHE_MIN_CHARS`) 미만 — 캐시 최소 길이 미달이라 무의미.
+      · 이미 어딘가에 `cache_control` 이 있음 — 호출측이 직접 관리하는 경우 존중.
+
+    반환: 부착이 필요 없으면 **원본 리스트 그대로**(동일 객체), 부착하면 얕은 복사본. 호출측
+    메시지 배열을 in-place 로 오염시키지 않는다(같은 messages 를 재사용하는 재시도 경로 안전).
+    """
+    try:
+        if not messages or is_local_llm_model(model):
+            return messages
+        last_sys = -1
+        for i, m in enumerate(messages):
+            if isinstance(m, dict) and m.get("role") == "system":
+                last_sys = i
+        if last_sys < 0:
+            return messages
+        # 이미 캐시 지시가 있으면 존중(중복 브레이크포인트 방지 — Anthropic 상한 4개).
+        for m in messages:
+            c = m.get("content") if isinstance(m, dict) else None
+            if isinstance(c, list) and any(isinstance(b, dict) and b.get("cache_control") for b in c):
+                return messages
+        content = messages[last_sys].get("content")
+        if isinstance(content, str):
+            if len(content) < _PROMPT_CACHE_MIN_CHARS:
+                return messages
+            blocks = [{"type": "text", "text": content}]
+        elif isinstance(content, list) and content:
+            total = sum(len(str(b.get("text") or "")) for b in content if isinstance(b, dict))
+            if total < _PROMPT_CACHE_MIN_CHARS:
+                return messages
+            blocks = [dict(b) if isinstance(b, dict) else b for b in content]
+        else:
+            return messages
+        # 마지막 text 블록에 브레이크포인트. text 블록이 없으면(이미지 등) 부착 대상 없음.
+        idx = next((j for j in range(len(blocks) - 1, -1, -1)
+                    if isinstance(blocks[j], dict) and blocks[j].get("type") == "text"), -1)
+        if idx < 0:
+            return messages
+        blocks[idx] = {**blocks[idx], "cache_control": {"type": "ephemeral"}}
+        out = list(messages)
+        out[last_sys] = {**messages[last_sys], "content": blocks}
+        return out
+    except Exception:
+        # 캐싱은 최적화일 뿐이라 어떤 실패도 요청을 막지 않는다 — 원본 그대로 보낸다.
+        return messages
+
+
 def _record_llm_usage(
     model: str, task: str, resp,
     conversation_id: str | None = None, run_id: str | None = None,
@@ -694,6 +808,15 @@ def _record_llm_usage(
         tt = int(getattr(usage, "total_tokens", 0) or (pt + ct))
         if tt <= 0:
             return
+        # usage-metric-charts(2026-08-13): 프롬프트 캐시 읽기/쓰기 토큰.
+        #   게이트웨이(litellm) 응답 usage 에는 최상위 cache_read_input_tokens /
+        #   cache_creation_input_tokens 가 실려 오고(캐싱 미사용 호출도 0 으로 존재),
+        #   OpenAI 형식 소비자를 위한 prompt_tokens_details.{cached_tokens,cache_creation_tokens}
+        #   도 함께 온다. 최상위를 우선하고 details 를 폴백으로 둔다 — provider 가 한쪽만
+        #   채우는 변형에서도 계측이 조용히 0 으로 굳지 않게.
+        #   **prompt_tokens 는 이 둘을 포함한 값**이라(실측 5039 = text 37 + creation 5002)
+        #   합산해서 총량을 다시 만들지 않는다. 소비측 비용식이 정가/할인 단가로 분해한다.
+        cr, cw = _cache_tokens_of(usage)
         conv = conversation_id if conversation_id is not None else (str(getattr(cfg, "MEMORY_CONVERSATION_ID", "") or "") or None)
         run = run_id if run_id is not None else (str(getattr(cfg, "CURRENT_RUN_ID", "") or "") or None)
         # TASK-0163: provider 가 응답으로 반환한 실제 서빙 모델명(LiteLLM 이 별칭을 해소한
@@ -742,7 +865,10 @@ def _record_llm_usage(
                       "prompt_tokens, completion_tokens, total_tokens")
         _base_vals = (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt)
         _ladder = (
-            ("target, latency_ms, step_gap_ms, target_scope", (tgt, lat, gap, tscope)),  # 0047 적용(정상)
+            # 0056 적용(정상) — 캐시 계측 포함.
+            ("target, latency_ms, step_gap_ms, target_scope, cache_read_tokens, cache_write_tokens",
+             (tgt, lat, gap, tscope, cr, cw)),
+            ("target, latency_ms, step_gap_ms, target_scope", (tgt, lat, gap, tscope)),  # 0056 부재
             ("target, latency_ms, step_gap_ms",               (tgt, lat, gap)),          # 0047 부재
             ("target, latency_ms",                            (tgt, lat)),               # 0033 부재
             ("latency_ms",                                    (lat,)),                   # 0032 부재
@@ -804,7 +930,10 @@ def _openai_chat_completion_with_deadline(
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     create_kwargs: dict[str, Any] = {
         "model": model,
-        "messages": messages,
+        # usage-metric-charts(2026-08-13): 안정 접두(system)에 프롬프트 캐시 브레이크포인트 부착.
+        #   비대화 경로(검증·요약·인사이트 등)도 같은 system 을 반복 전송하는 호출이 많다.
+        #   임계 미만·로컬 LLM 은 helper 가 원본을 그대로 돌려주므로 종전 동작 무변경.
+        "messages": _apply_prompt_cache(messages, model),
         "timeout": _openai_request_timeout(timeout_sec),
     }
     # feature-0021: 호출 단위 max_tokens override — 양수면 task 별 카탈로그 cap 대신 사용
@@ -1846,10 +1975,12 @@ def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None,
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
-            messages=[
+            # usage-metric-charts: 이 경로는 **노드마다** 같은 9k자 system 을 재전송하므로 캐시 이득이
+            #   가장 크다. deadline chokepoint 를 경유하지 않는 직접 호출이라 여기서 명시 적용한다.
+            messages=_apply_prompt_cache([
                 {"role": "system", "content": NODE_ANALYSIS_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _insight_model),
             **_max_tokens_kwargs(_insight_model, "insight"),
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
