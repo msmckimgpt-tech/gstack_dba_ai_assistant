@@ -179,3 +179,14 @@ source_of_truth: true
   - `unit/feature-0041-.../tests/test_bringup_and_limits.py` (배치 회귀 4건)
 - Impact: 기존 패널 4종 무변경(추가만). `timeouts` 버킷에서 4행이 빠져 나온다.
 - Rollback Notes: 버킷 분기 제거 시 자동으로 이전 동작(timeouts 혼입)으로 돌아간다.
+
+## CHG-20260813-0012
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 배포 후 검증 증적 기록 — PB-0008 콘솔 패널 재검증(수정 전/후) + 라이브 엣지 경유
+  MCP 전 구간 프로브. **문서 전용**(코드 0).
+- Files: `docs/TEST.md` §3 (8·9차 Run) · `docs/REPORT.md` §3.3 ·
+  `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260813T140000-ext-tool-limits-panel.md` §3·§4
+  (+ evidence 2장)
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

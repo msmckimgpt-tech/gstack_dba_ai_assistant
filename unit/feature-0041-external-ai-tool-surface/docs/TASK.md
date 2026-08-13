@@ -127,6 +127,7 @@ source_of_truth: true
 - [x] 컨테이너 실기동 e2e(initialize/tools.list/무토큰/가짜토큰) 실측
 - [x] 라이브 엣지 경유 전 구간 프로브(엣지 익명 401 · initialize 200 · tools/list 9종 · 상류 401)
 - [x] **PB-0008 로 콘솔 배치 결함 적발·수정** — 상한이 '실행 타임아웃' 패널에 섞여 있었다
+- [x] 수정 후 PB-0008 재검증 — 전용 패널 4행 렌더 · 타임아웃 패널에서 분리 확인(증거 2장)
 
 ## 7. Next Action
 - 사람 1회 인가로 전 구간 e2e 확정(`docs/E2E_RUNBOOK.md`) → TEST.md §3 Run 기록 → AC-1 종결
