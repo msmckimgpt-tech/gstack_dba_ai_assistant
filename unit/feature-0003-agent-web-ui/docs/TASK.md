@@ -10589,3 +10589,18 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
   출처 라벨/데이터-전용 계약 + 20건 신규 테스트). 라이브 실측은 배포 후.
 - 첨부 버전의 사용자별 트리 분기(assistant 독자 계보) — **후속 cycle 로 분리**(스키마 마이그레이션 +
   UNIQUE 제약 변경 + 백필 + 프론트 트리 UI + 다수 소비자 경로 → 본 cycle 응집 한계 초과).
+
+## 20260813T2130-member-gates-postdeploy — 멤버 게이트 2-cycle POST-DEPLOY 라이브 종결 (doc-only)
+
+- [x] PR #1261 머지(#1260 과 충돌 → main 병합으로 append-only 문서 4건 양쪽 보존 해소) → main
+      `660e9fcf` → `sudo make deploy-web-only` 무중단(엣지 중단 0건) · web-a·web-b 파리티 healthy
+- [x] **(1) 멤버 '나가기' 버튼 라이브 노출** + 정확한 안내 문구 (증적 캡처)
+- [x] **(2) 나가기 end-to-end** — 클릭 → self-leave → 목록에서 사라짐 + `…/members` 404
+- [x] **(3) 대조군** — 소유자(admin) 같은 팝업에서 '보관' 유지 (분기 양방향 정확)
+- [x] **(4) `pageerror` 0**
+- [x] 선행 cycle B 축 재확인 — 멤버 대화에서 "읽기 전용/조회만 가능" 오도 안내 소거
+- [x] 라이브 테스트 데이터 정리(공유 링크·테스트 계정·대화 원상)
+
+### 9. Requested Scope
+
+- 선행 2 cycle(member-scope-gates 정정 + member-leave-branch)의 POST-DEPLOY 종결 — ✓

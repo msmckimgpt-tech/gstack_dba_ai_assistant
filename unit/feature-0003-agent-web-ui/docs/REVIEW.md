@@ -4824,3 +4824,16 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
 - 검증: 기록된 수치는 전부 배포본 실행 결과다 — `GIT_COMMIT` 3서비스 · caddy `no upstreams
   available` 0 · 판정 함수 직접 호출 3/3. 기록과 실행 사이에 추정이 없다.
 - Human Approval Needed: 아니오 (doc-only, 선행 cycle 의 Critical 승인 범위 내 사후 기록).
+
+## REV-20260813T213000-ai-claude-feature-0003-member-gates-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T2130-member-gates-postdeploy`
+- Reason: changed paths are docs only — 코드·스키마·권한 변경 0 (POST-DEPLOY 실측 기록 + 증적)
+- Timestamp: 2026-08-13T21:30:00+09:00
+- Human Approval Needed: no
+
+- **판정 근거**: 서빙 주체의 실제 SHA(web-a·web-b `mysql-ai-web:660e9fcf`) + 엣지 무중단 0건 +
+  **분기 양방향 실측**(멤버='나가기' → 실제 이탈 / 소유자='보관')으로 확인했다. 앞선 오진의 교훈대로
+  "코드가 그러하다" 가 아니라 **배포본에서 두 갈래를 각각 구동**해 판정했다.
+- **충돌 해소의 안전성**: 다른 세션 #1260 과의 충돌 4건은 전부 append-only 문서 말미 경합이라 양쪽
+  항목을 보존했고(§13.1), 병합 후 프론트 `.mjs` 62개를 재실행해 회귀 0을 확인한 뒤 머지했다.

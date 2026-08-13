@@ -65,3 +65,37 @@ verdict: PASS (pre-commit — 실 DOM jsdom 22 + 수정 전 6건 FAIL 재현 + �
 2. 클릭 → 확인 다이얼로그 → self-leave 수행 → 그 대화가 목록에서 사라짐.
 3. 소유자 계정에서는 같은 팝업이 '보관' 을 유지.
 4. `pageerror` 0.
+
+### Run (2026-08-13) — POST-DEPLOY 라이브 검증 — **Environment: Windows-browser (win-browser.py relay, 배포 660e9fcf)**
+
+**배포 전달 확인 (PASS)**: PR #1261 머지(다른 세션의 #1260 과 충돌 → `git merge origin/main` 으로
+append-only 문서 4건을 **양쪽 항목 보존**으로 해소 후 재검증) → main `660e9fcf` →
+`sudo make deploy-web-only` 무중단 롤링 + 90s soak 통과. web-a·web-b 모두
+`mysql-ai-web:660e9fcf` **healthy**, `/healthz git_commit=660e9fcf`, 엣지 `no upstreams available`
+**0건**. 병합 후 프론트 `.mjs` 62개 전수 재실행 exit 0 (충돌 해소가 회귀를 만들지 않음).
+
+**라이브 시나리오**: admin 대화 공유 링크 → 테스트 계정 `dqa_leavetest`(id 53) 가입 → `operator`
+부여 → join → 그 계정 관점에서 "다른 계정 소유 그룹 대화의 비소유 멤버".
+
+**(1) ★ 멤버 '나가기' 노출 (PASS)**: `···` > 설정 팝업의 '대화 관리' 섹션 danger 버튼
+`textContent === "나가기"`, 안내 `"이 그룹 대화에서 나갑니다. 다시 초대받기 전까지 새 메시지를 볼 수
+없습니다."`. 수정 전 같은 계정에서는 `"보관"` + '나가기' 문구 부재였다(같은 세션에서 배포 전 실측).
+증적: `evidence/member-leave-btn-live.png`.
+
+**(2) ★ 나가기 end-to-end (PASS)**: 버튼 클릭 → self-leave 수행 → 그 대화가 목록에서 **사라짐**
+(`convStillVisible: false`, 남은 대화 0). 이후 `GET …/members` → **404**(접근 불가 — 정상).
+
+**(3) 대조군 — 소유자는 '보관' 유지 (PASS)**: admin(`bootstrap_admin`) 재로그인 후 같은 대화의 설정
+팝업 danger 버튼 = `"보관"`. 즉 분기가 양방향으로 정확히 작동한다(§16.7 G4 경계 양측).
+
+**(4) `pageerror` 0 (PASS)**: `error`·`unhandledrejection` 리스너로 팝업 개봉·클릭·나가기 전 구간 수집 0건.
+
+**라이브 테스트 데이터 정리 (완료)**: 공유 링크 `share_id 92` 삭제 · 테스트 계정 53 soft-delete ·
+대상 대화 제목/멤버수 원상(`"1+1 은? 숫자만 답해줘. (PB-0008 B3 스모크)"`, `member_count: 1`) ·
+보관되지 않음. (앞선 cycle 과 동일하게 `is_group` 영구 플래그만 남는다 — 과거 스모크 대화.)
+
+**선행 cycle(member-scope-gates)의 B 축 라이브 재확인 (PASS)**: 같은 멤버 계정에서 대화 활성 시
+`accessNotice` hidden · 컴포저 제목/힌트 빈 문자열 · 전송 버튼 `is-access-blocked` 미부여 — "읽기
+전용 대화 / 조회만 가능" 오도 안내가 소거됐다(그 축은 실효 결함이었고 수정이 라이브에서 확인됨).
+
+**Pass/Fail: POST-DEPLOY 전 항목 PASS.** AC-20260813T201000-member-leave-branch-1/-2/-3 충족.

@@ -3998,3 +3998,12 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - 결과: 마찰 당사자(비업로더 멤버)의 첨부 스코프가 **0건 → 8건**. 업로더·1:1 무회귀.
   web-a/web-b/ask-worker `GIT_COMMIT=db15bfcb` · 무중단 실측 0.
 - 정직: bounded 멤버 축소의 라이브 발동은 조건(은닉 구간 실재 멤버) 부재로 미실측 — 단위 테스트 한정.
+
+## CHG-20260813T213000-ai-claude-feature-0003-member-gates-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- 사유: `20260813T2010-member-leave-branch` 배포(main `660e9fcf`) 후 라이브 종결.
+- 대상: `docs/test-runs.d/REV-20260813T201000-member-leave-branch.md`(POST-DEPLOY Run) ·
+  `docs/test-runs.d/evidence/member-leave-btn-live.png`(신규 증적) · `docs/TASK.md` · `docs/REPORT.md`.
+  **코드 변경 0**.
+- 결과: 멤버 '나가기' 노출·end-to-end 이탈·소유자 '보관' 대조군·pageerror 0 전 항목 PASS.
+  선행 B 축(오도 안내 소거)도 같은 계정에서 재확인. 테스트 데이터 정리 완료.
