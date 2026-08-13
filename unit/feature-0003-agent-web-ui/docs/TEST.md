@@ -2893,3 +2893,21 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
 - **Environment: Windows-browser (PB-0008)** — **미수행(POST-DEPLOY 이월)**, 사유: ESM JS 라 미머지
   프리뷰 불가. **이 3차 결함 자체가 라이브 실측으로만 드러난 축**이며(헤드리스 뮤턴트 생존),
   재배포 후 같은 probe 스크립트로 `enterMid < enterEnd` 를 실 Chrome 에서 확인한다.
+
+## 20260813T1900-usage-metric-profile — 프로필 '사용 내역' 지표 체계 정합 (frontend + profile 집계)
+
+| # | 케이스 | 기대 |
+|---|---|---|
+| 1 | 카드 구성 | 지표 **정본과 동일 순서·동일 라벨** 8종(캐시 2종 포함) |
+| 2 | 카드 값 | totals 와 일치(캐시 읽기 1,200 실측) |
+| 3 | 지표 전환 | 노드 유지 + 중간 프레임이 시작·끝 사이 |
+| 4 | 값 정합 | 총 토큰 3:1 → 비용 0.6 → 캐시 읽기 도넛 5:1 |
+| 5 | 비-가산(요청) | 보이는 막대 버킷당 1개 · 비율 1.5 · 경계 전환도 재생성 아님 |
+| 6 | 안내 문구 | 관리 화면과 **같은 문구**(정본 함수 공유) |
+| 7 | 도넛 | 중앙 라벨·총계가 지표를 따름 |
+
+- **`tests/headless/test_profile_usage_metric.js` — 15 PASS / 0 FAIL** (실 Chromium)
+- 관리 화면 하네스 **37 PASS** 유지(공용 정의 전환 후에도 회귀 0)
+- pytest **4,441 passed / 4 skipped**
+- **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(ESM JS · 미머지 프리뷰 불가).
+  배포 후 프로필 드로어에서 카드 클릭 전환을 실 Chrome 으로 실측한다.

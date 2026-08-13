@@ -12,6 +12,8 @@ import {
 } from "../app.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
+// usage-metric-charts: 지표 정의 정본(관리 콘솔 LLM 사용량 화면과 공유).
+import { USAGE_METRICS, USAGE_METRIC_DEFAULT, usageMetricOf, usageMetricNote } from "../usage-metrics.js?v=dev";
 
 function switchProfileTab(tab) {
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
@@ -215,6 +217,13 @@ function showProfileBackupCodes(box, codes) {
 // 툴팁은 SVG <title> 로 가볍게(관리 콘솔의 커스텀 hover 툴팁 대신).
 const PROFILE_USAGE_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
 const PROFILE_USAGE_SYS_COLOR = "#94a3b8";
+// usage-metric-charts(2026-08-13): 지표 정의는 관리 콘솔과 **같은 정본**을 쓴다 — 두 화면이 같은
+//   원장을 보므로 목록·라벨·가산성이 복제되면 어긋난다.
+const _pUsageMetricState = { metric: USAGE_METRIC_DEFAULT };
+
+// 비-가산 지표의 단일 막대 색 — 모델을 뜻하지 않으므로 모델 색맵을 쓰지 않는다.
+const PROFILE_USAGE_SOLO_COLOR = "#6366f1";
+
 const _pUsageNum = (v) => (Number(v) || 0).toLocaleString();
 const _pUsageUsd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const _pUsageEsc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -331,26 +340,36 @@ function profileUsageColorMap(models) {
 
 // 기간별 토큰 — 모델별 누적 세로 막대 (admin renderStacked 의 축약).
 // TASK-0263: <title> 에 추정 비용 병기 + 막대 클릭 → 그 일자·모델 기여(본인) 대화 모달.
-function renderProfileUsageStacked(el, byDayModel, cmap) {
+function renderProfileUsageStacked(el, byDayModel, byDay, cmap, metric) {
   if (!el) return;
-  const rows = byDayModel || [];
-  if (!rows.length) { el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
+  const mk = metric.key;
+  const stacked = metric.stackable;
+  const SOLO = "__all__";
   const dayMap = {}; const costMap = {}; const models = [];
-  rows.forEach((r) => {
-    dayMap[r.day] = dayMap[r.day] || {};
-    dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
-    costMap[r.day] = costMap[r.day] || {};
-    costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
-    if (!models.includes(r.model)) models.push(r.model);
-  });
+  if (stacked) {
+    (byDayModel || []).forEach((r) => {
+      dayMap[r.day] = dayMap[r.day] || {};
+      dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r[mk] || 0);
+      costMap[r.day] = costMap[r.day] || {};
+      costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
+      if (!models.includes(r.model)) models.push(r.model);
+    });
+  } else {
+    // 비-가산 지표(요청)는 모델 분해가 성립하지 않아 버킷 총계 한 덩어리로 그린다.
+    (byDay || []).forEach((r) => { dayMap[r.day] = { [SOLO]: (r[mk] || 0) }; costMap[r.day] = { [SOLO]: 0 }; });
+    models.push(SOLO);
+  }
   const days = Object.keys(dayMap).sort();
+  if (!days.length) { el._sig = ""; el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
   const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
   const maxT = Math.max(1, ...totalsByDay);
+  const fmtV = metric.money ? _pUsageUsd : _pUsageNum;
   const cw = Math.max(280, Math.round(el.clientWidth || 0) || 380);
   const W = cw, H = 150, pL = 46, pB = 22, pT = 8, pR = 10;
   const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
   const step = plotW / n, bw = Math.max(2, Math.min(40, step * 0.66));
-  let bars = "";
+  // 기하·툴팁을 한 번 계산해 생성·갱신 두 경로가 같은 값을 쓰게 한다(관리 화면과 동일 규약).
+  const segs = [];
   days.forEach((d, di) => {
     const x = pL + di * step + (step - bw) / 2;
     let y = pT + plotH;
@@ -358,48 +377,122 @@ function renderProfileUsageStacked(el, byDayModel, cmap) {
       const v = dayMap[d][m] || 0; if (v <= 0) return;
       const h = (v / maxT) * plotH; y -= h;
       const cst = costMap[d][m] || 0;
-      const costT = cst > 0 ? ` · 추정 ${_pUsageUsd(cst)}` : "";
-      bars += `<rect class='profile-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m] || PROFILE_USAGE_SYS_COLOR}' rx='1' data-usage-day='${_pUsageEsc(d)}' data-usage-model='${_pUsageEsc(m)}'><title>${_pUsageEsc(d)} · ${_pUsageEsc(m)}: ${_pUsageNum(v)} 토큰${costT} (클릭: 대화 보기)</title></rect>`;
+      const costT = (!metric.money && cst > 0) ? ` · 추정 ${_pUsageUsd(cst)}` : "";
+      const who = stacked ? ` · ${_pUsageEsc(m)}` : "";
+      segs.push({ key: `${d}|${m}`, x, y, h, w: bw, day: d, model: stacked ? m : null,
+                  fill: stacked ? (cmap[m] || PROFILE_USAGE_SYS_COLOR) : PROFILE_USAGE_SOLO_COLOR,
+                  tip: `${_pUsageEsc(d)}${who}: ${fmtV(v)} ${_pUsageEsc(metric.label)}${costT} (클릭: 대화 보기)` });
     });
   });
-  const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
-    + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='9' fill='var(--text-muted)'>${_pUsageNum(maxT)}</text>`
+  const shortLabel = (s2) => { s2 = String(s2); return s2.length > 7 ? s2.slice(5) : s2; };
+  const axisInner = () => `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
+    + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='9' fill='var(--text-muted)'>${fmtV(maxT)}</text>`
     + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='9' fill='var(--text-muted)'>0</text>`;
-  const shortLabel = (s) => { s = String(s); return s.length > 7 ? s.slice(5) : s; };
-  let xl = "";
-  [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 2), n - 1])].forEach((di) => {
+  const xlInner = () => [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 2), n - 1])].map((di) => {
     const x = pL + di * step + step / 2;
-    xl += `<text x='${x.toFixed(1)}' y='${H - 7}' text-anchor='middle' font-size='9' fill='var(--text-muted)'>${_pUsageEsc(shortLabel(days[di]))}</text>`;
-  });
-  const legend = models.map((m) => `<span class='profile-usage-legend-item'><span class='profile-usage-swatch' style='background:${cmap[m] || PROFILE_USAGE_SYS_COLOR};'></span>${_pUsageEsc(m)}</span>`).join("");
-  el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${xl}</svg><div class='profile-usage-legend'>${legend}</div>`;
+    return `<text x='${x.toFixed(1)}' y='${H - 7}' text-anchor='middle' font-size='9' fill='var(--text-muted)'>${_pUsageEsc(shortLabel(days[di]))}</text>`;
+  }).join("");
+  const segRect = (sg) => `<rect class='profile-usage-clickable profile-usage-bar' data-seg='${_pUsageEsc(sg.key)}'`
+    + ` style='x:${sg.x.toFixed(1)}px;y:${sg.y.toFixed(1)}px;width:${sg.w.toFixed(1)}px;height:${sg.h.toFixed(1)}px;'`
+    + ` fill='${sg.fill}' rx='1'`
+    + (sg.day ? ` data-usage-day='${_pUsageEsc(sg.day)}'` : "")
+    + (sg.model ? ` data-usage-model='${_pUsageEsc(sg.model)}'` : "")
+    + `><title>${sg.tip}</title></rect>`;
+  // signature = 일자 집합만. 분해모드·모델집합·폭을 넣으면 지표 전환이 재생성이 되어 점프한다
+  // (관리 화면에서 라이브로 확인된 기전 — 폭은 스크롤바 유무로도 흔들린다).
+  const sig = days.join(",");
+  const svg = el.querySelector("svg");
+  if (svg && el._sig === sig) {
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const ax = svg.querySelector("[data-axis]"); if (ax) ax.innerHTML = axisInner();
+    const xg = svg.querySelector("[data-xlabels]"); if (xg) xg.innerHTML = xlInner();
+    const byKey = new Map(segs.map((sg) => [sg.key, sg]));
+    svg.querySelectorAll("rect[data-seg]").forEach((r) => {
+      const sg = byKey.get(r.getAttribute("data-seg"));
+      if (!sg) { r.style.height = "0px"; r.style.opacity = "0"; return; }
+      byKey.delete(sg.key);
+      r.style.opacity = "";
+      r.style.x = sg.x.toFixed(1) + "px"; r.style.width = sg.w.toFixed(1) + "px";
+      r.style.y = sg.y.toFixed(1) + "px"; r.style.height = sg.h.toFixed(1) + "px";
+      const t = r.querySelector("title"); if (t) t.textContent = sg.tip;
+    });
+    const anchor = svg.querySelector("[data-xlabels]");
+    byKey.forEach((sg) => {
+      const html = segRect({ ...sg, y: sg.y + sg.h, h: 0 });
+      if (anchor) anchor.insertAdjacentHTML("beforebegin", html); else svg.insertAdjacentHTML("beforeend", html);
+      const node = svg.querySelector(`rect[data-seg="${CSS.escape(sg.key)}"]`);
+      if (node) { void node.getBoundingClientRect(); node.style.y = sg.y.toFixed(1) + "px"; node.style.height = sg.h.toFixed(1) + "px"; }
+    });
+    bindProfileUsageDrill(el);
+    return;
+  }
+  const legend = stacked
+    ? models.map((m) => `<span class='profile-usage-legend-item'><span class='profile-usage-swatch' style='background:${cmap[m] || PROFILE_USAGE_SYS_COLOR};'></span>${_pUsageEsc(m)}</span>`).join("")
+    : "";
+  el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>`
+    + `<g data-axis>${axisInner()}</g>${segs.map(segRect).join("")}<g data-xlabels>${xlInner()}</g></svg>`
+    + `<div class='profile-usage-legend'>${legend}</div>`;
+  el._sig = sig;
   bindProfileUsageDrill(el);
 }
 
 // 모델별 비중 — 도넛.
 // TASK-0263: <title> 에 추정 비용 병기 + 세그먼트/범례 클릭 → 그 모델 기여(본인) 대화 모달.
-function renderProfileUsageDonut(el, byModel, cmap) {
+function renderProfileUsageDonut(el, byModel, cmap, metric) {
   if (!el) return;
+  const mk = metric.key;
+  const fmtV = metric.money ? _pUsageUsd : _pUsageNum;
+  // 값 0 인 모델도 0 길이 arc 로 남긴다 — 지표마다 목록이 늘었다 줄면 재생성(=점프)이 된다.
   const rows = (byModel || []).map((r) => ({
     label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
-    value: r.total_tokens || 0, cost: r.cost_usd || 0,
-  })).filter((r) => r.value > 0);
-  if (!rows.length) { el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
+    value: r[mk] || 0, cost: r.cost_usd || 0,
+  }));
   const total = rows.reduce((a, b) => a + b.value, 0);
+  if (!rows.length || total <= 0) { el._sig = ""; el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
   const R = 46, C = 2 * Math.PI * R, cx = 60, cy = 60;
-  let off = 0, segs = "";
-  rows.forEach((r) => {
+  let off = 0;
+  const arcs = rows.map((r) => {
     const len = (r.value / total) * C;
-    const costT = r.cost > 0 ? ` · 추정 ${_pUsageUsd(r.cost)}` : "";
-    segs += `<circle class='profile-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[r.label] || PROFILE_USAGE_SYS_COLOR}' stroke-width='18' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-usage-model='${_pUsageEsc(r.label)}'><title>${_pUsageEsc(r.label)}: ${_pUsageNum(r.value)} 토큰${costT} (${(r.value / total * 100).toFixed(1)}%, 클릭: 대화 보기)</title></circle>`;
+    const costT = (!metric.money && r.cost > 0) ? ` · 추정 ${_pUsageUsd(r.cost)}` : "";
+    const a = { label: r.label, dash: `${len.toFixed(2)} ${(C - len).toFixed(2)}`, offset: (-off).toFixed(2),
+                pct: (r.value / total * 100).toFixed(1),
+                tip: `${_pUsageEsc(r.label)}: ${fmtV(r.value)} ${_pUsageEsc(metric.label)}${costT} (${(r.value / total * 100).toFixed(1)}%, 클릭: 대화 보기)` };
     off += len;
+    return a;
   });
-  const legend = rows.map((r) => `<div class='profile-usage-donut-row profile-usage-clickable' data-usage-model='${_pUsageEsc(r.label)}' title='클릭: 이 모델 기여 대화 보기'><span class='profile-usage-swatch' style='background:${cmap[r.label] || PROFILE_USAGE_SYS_COLOR};'></span><span class='profile-usage-donut-label'>${_pUsageEsc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
-  el.innerHTML = `<div class='profile-usage-donut'><svg viewBox='0 0 120 120' style='width:110px;height:110px;flex:none;'>${segs}<text x='60' y='57' text-anchor='middle' font-size='10' fill='var(--text-muted)'>총 토큰</text><text x='60' y='72' text-anchor='middle' font-size='12' font-weight='700' fill='var(--text)'>${_pUsageNum(total)}</text></svg><div class='profile-usage-donut-legend'>${legend}</div></div>`;
+  const sig = rows.map((r) => r.label).join(",");
+  const svg = el.querySelector("svg");
+  if (svg && el._sig === sig) {
+    arcs.forEach((a) => {
+      const c = svg.querySelector(`circle[data-arc="${CSS.escape(a.label)}"]`);
+      if (!c) return;
+      c.style.strokeDasharray = a.dash;
+      c.style.strokeDashoffset = a.offset;
+      const t = c.querySelector("title"); if (t) t.textContent = a.tip;
+    });
+    const cap = el.querySelector("[data-donut-label]"); if (cap) cap.textContent = metric.label;
+    const tot = el.querySelector("[data-donut-total]"); if (tot) tot.textContent = fmtV(total);
+    el.querySelectorAll("[data-legend-pct]").forEach((n2) => {
+      const a = arcs.find((x) => x.label === n2.getAttribute("data-legend-pct"));
+      if (a) n2.textContent = a.pct + "%";
+    });
+    bindProfileUsageDrill(el);
+    return;
+  }
+  const segs = arcs.map((a) => `<circle class='profile-usage-clickable profile-usage-arc' data-arc='${_pUsageEsc(a.label)}' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[a.label] || PROFILE_USAGE_SYS_COLOR}' stroke-width='18' style='stroke-dasharray:${a.dash};stroke-dashoffset:${a.offset};' transform='rotate(-90 ${cx} ${cy})' data-usage-model='${_pUsageEsc(a.label)}'><title>${a.tip}</title></circle>`).join("");
+  const legend = arcs.map((a) => `<div class='profile-usage-donut-row profile-usage-clickable' data-usage-model='${_pUsageEsc(a.label)}' title='클릭: 이 모델 기여 대화 보기'><span class='profile-usage-swatch' style='background:${cmap[a.label] || PROFILE_USAGE_SYS_COLOR};'></span><span class='profile-usage-donut-label'>${_pUsageEsc(a.label)}</span><strong data-legend-pct='${_pUsageEsc(a.label)}'>${a.pct}%</strong></div>`).join("");
+  el.innerHTML = `<div class='profile-usage-donut'><svg viewBox='0 0 120 120' style='width:110px;height:110px;flex:none;'>${segs}`
+    + `<text data-donut-label x='60' y='57' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${_pUsageEsc(metric.label)}</text>`
+    + `<text data-donut-total x='60' y='72' text-anchor='middle' font-size='12' font-weight='700' fill='var(--text)'>${fmtV(total)}</text></svg>`
+    + `<div class='profile-usage-donut-legend'>${legend}</div></div>`;
+  el._sig = sig;
   bindProfileUsageDrill(el);
 }
 
-async function loadProfileUsage() {
+// opts.reuse=true → 마지막 응답으로 재렌더만(지표 전환). 기본은 재조회.
+function _pUsageRerender() { loadProfileUsage({ reuse: true }).catch(() => {}); }
+
+async function loadProfileUsage(opts) {
   const summaryEl = document.getElementById("profileUsageSummary");
   const dayEl = document.getElementById("profileUsageDayChart");
   const modelEl = document.getElementById("profileUsageModelChart");
@@ -412,28 +505,58 @@ async function loadProfileUsage() {
   const gran = (granSel && GRAN_LABEL[granSel.value]) ? granSel.value : "day";
   const trendTitleEl = document.getElementById("profileUsageTrendTitle");
   if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran];
-  summaryEl.innerHTML = "<div class='profile-usage-empty'>불러오는 중…</div>";
-  if (dayEl) dayEl.innerHTML = "";
-  if (modelEl) modelEl.innerHTML = "";
+  if (!(opts && opts.reuse)) {
+    summaryEl.innerHTML = "<div class='profile-usage-empty'>불러오는 중…</div>";
+    // 지표 전환(reuse)에서는 차트를 비우지 않는다 — 비우면 노드가 사라져 전환이 점프가 된다.
+    if (dayEl) { dayEl.innerHTML = ""; dayEl._sig = ""; }
+    if (modelEl) { modelEl.innerHTML = ""; modelEl._sig = ""; }
+  }
   let data;
-  try {
-    data = await apiFetch(`/api/profile/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
-  } catch (err) {
-    summaryEl.innerHTML = "<div class='profile-usage-empty'>사용 내역을 불러오지 못했습니다.</div>";
-    return;
+  if (opts && opts.reuse && _pUsageMetricState._lastRaw) {
+    data = _pUsageMetricState._lastRaw;   // 지표 전환 — 같은 응답으로 다시 그린다(재조회 X)
+  } else {
+    try {
+      data = await apiFetch(`/api/profile/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
+    } catch (err) {
+      summaryEl.innerHTML = "<div class='profile-usage-empty'>사용 내역을 불러오지 못했습니다.</div>";
+      return;
+    }
+    // 기간/단위가 바뀌면 모델 집합이 달라질 수 있다 — 지표 선택은 유지(사용자 의도)하되 캐시는 교체.
+    _pUsageMetricState._lastRaw = data;
   }
   const t = data.totals || {};
-  const card = (label, val) => `<div class='profile-usage-metric'><span>${label}</span><strong>${val}</strong></div>`;
-  // TASK-0263: 본인 추정 비용 카드 추가(단가 미상 로컬은 $0.00).
-  const costCard = (t.cost_usd != null) ? card("추정 비용", _pUsageUsd(t.cost_usd)) : "";
-  summaryEl.innerHTML = card("요청", _pUsageNum(t.requests)) + card("호출", _pUsageNum(t.calls)) + card("총 토큰", _pUsageNum(t.total_tokens)) + costCard;
+  // usage-metric-charts: 요약 카드가 **차트 지표 선택기**다(관리 콘솔 LLM 사용량 화면과 같은 규칙·
+  //   같은 지표 정본). 카드를 누르면 아래 두 차트가 그 값으로 다시 그려진다 — 재조회 없이 캐시 재렌더.
+  const metric = usageMetricOf(_pUsageMetricState.metric);
+  const card = (m) => {
+    const on = (m.key === metric.key);
+    const val = m.money ? _pUsageUsd(t[m.key]) : _pUsageNum(t[m.key]);
+    return `<button type='button' class='profile-usage-metric profile-usage-metric--pick${on ? " is-active" : ""}'`
+      + ` data-pmetric='${_pUsageEsc(m.key)}' aria-pressed='${on ? "true" : "false"}'>`
+      + `<span>${_pUsageEsc(m.label)}</span><strong>${val}</strong></button>`;
+  };
+  summaryEl.innerHTML = USAGE_METRICS.map(card).join("");
+  summaryEl.querySelectorAll("[data-pmetric]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const key = b.getAttribute("data-pmetric");
+      if (key === _pUsageMetricState.metric) return;
+      _pUsageMetricState.metric = key;
+      _pUsageRerender();                 // 재조회 없이 캐시로 다시 그린다
+    });
+  });
+  const noteEl = document.getElementById("profileUsageMetricNote");
+  if (noteEl) {
+    const note = usageMetricNote(metric);
+    noteEl.textContent = note;
+    noteEl.classList.toggle("hidden", !note);
+  }
   // 모델 색맵 — 일별/도넛이 같은 모델은 같은 색 (키 = COALESCE(resolved,model) 로 일치).
   const ms = [];
   (data.by_model || []).forEach((m) => { const k = (m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"); if (!ms.includes(k)) ms.push(k); });
   (data.by_day_model || []).forEach((m) => { if (m.model && !ms.includes(m.model)) ms.push(m.model); });
   const cmap = profileUsageColorMap(ms);
-  renderProfileUsageStacked(dayEl, data.by_day_model, cmap);
-  renderProfileUsageDonut(modelEl, data.by_model, cmap);
+  renderProfileUsageStacked(dayEl, data.by_day_model, data.by_day, cmap, metric);
+  renderProfileUsageDonut(modelEl, data.by_model, cmap, metric);
 }
 
 // gc-settings-notif: 알림 환경설정 패널(프로필>계정>알림) 렌더. 체크박스 상태 + 데스크톱 알림

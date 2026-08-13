@@ -10,31 +10,12 @@ import {
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
+// usage-metric-charts: 지표 정의 정본(프로필 사용 내역 화면과 공유).
+import { USAGE_METRICS, USAGE_METRIC_DEFAULT, usageMetricOf, usageMetricNote, usageSideMetric } from "../usage-metrics.js?v=dev";
 
-// ── usage-metric-charts(2026-08-13): 요약 카드 = 차트 지표 선택기 ───────────────────────
-//
-// 요청: "[요청, 호출, 총 토큰, 입력, 출력, 비용] 패널을 클릭했을 때 차트 또한 해당 값에 따라
-// 부드럽게 재구성" + "cache hit 된 입출력 항목 추가".
-//
-// `stackable=false` 는 **모델별 분해가 성립하지 않는** 지표다. `requests` 는 distinct run_id 라
-// 한 요청이 여러 모델을 횡단하면 모델별 distinct 의 합이 전체 distinct 보다 커진다 — 그대로 쌓으면
-// 막대 높이가 요약 카드 값을 넘는다. 그래서 이 지표만 버킷 총계(by_day.requests)로 단일 막대를
-// 그리고, 모델 분해가 없다는 사실을 캡션에 명시한다(무음으로 틀린 stacked 를 보여주지 않는다).
-//
-// 캐시 두 지표는 **입력(prompt_tokens)의 부분집합**이다(게이트웨이 실측: prompt = 순수입력 +
-// 캐시읽기 + 캐시쓰기). 합산해 총량을 만들지 않도록 선택 시 캡션으로 그 관계를 알린다.
-const USAGE_METRICS = [
-  { key: "requests", label: "요청", money: false, stackable: false },
-  { key: "calls", label: "호출", money: false, stackable: true },
-  { key: "total_tokens", label: "총 토큰", money: false, stackable: true },
-  { key: "prompt_tokens", label: "입력", money: false, stackable: true },
-  { key: "completion_tokens", label: "출력", money: false, stackable: true },
-  { key: "cache_read_tokens", label: "캐시 읽기", money: false, stackable: true, cache: true },
-  { key: "cache_write_tokens", label: "캐시 쓰기", money: false, stackable: true, cache: true },
-  { key: "cost_usd", label: "추정 비용", money: true, stackable: true },
-];
-const USAGE_METRIC_DEFAULT = "total_tokens";
-const usageMetricOf = (key) => USAGE_METRICS.find((m) => m.key === key) || USAGE_METRICS.find((m) => m.key === USAGE_METRIC_DEFAULT);
+// usage-metric-charts(2026-08-13): 요약 카드 = 차트 지표 선택기.
+// 지표 정의(목록·라벨·가산성·안내문)는 **공용 정본** `usage-metrics.js` 하나뿐이다 —
+// 프로필 '사용 내역' 화면과 같은 원장을 보므로 정의가 복제되면 화면마다 어긋난다.
 
 // TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
 //   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
@@ -516,7 +497,7 @@ async function loadUsage(opts) {
     if (pageRows.length) {
       // usage-metric-charts: 역할 차트와 같은 지표 쌍(선택 지표 | 비용, 선택이 비용이면 총 토큰).
       const dm = usageMetricOf(adminState.usage.metric);
-      const ds = usageMetricOf(dm.key === "cost_usd" ? "total_tokens" : "cost_usd");
+      const ds = usageSideMetric(dm);
       renderStackedHBar(chartEl, pageRows, dm.key, dm.money ? usd : num, onAcctClick, dm.stackable);
       renderStackedHBar(costChartEl, pageRows, ds.key, ds.money ? usd : num, onAcctClick, ds.stackable);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
     } else {
@@ -699,9 +680,7 @@ async function loadUsage(opts) {
     // 지표 관련 안내는 **오해가 생기는 지표에서만** 한 줄. 그 외에는 아무것도 붙이지 않는다.
     const noteEl = document.getElementById("usageMetricNote");
     if (noteEl) {
-      let note = "";
-      if (!metric.stackable) note = "요청은 모델을 넘나들어 모델별로 나누지 않습니다.";
-      else if (metric.cache) note = "캐시 읽기·쓰기는 입력에 포함된 내역입니다.";
+      const note = usageMetricNote(metric);
       noteEl.textContent = note;
       noteEl.classList.toggle("hidden", !note);
     }
@@ -711,7 +690,7 @@ async function loadUsage(opts) {
     // TASK-0181: 역할별·계정별을 모델별 누적(stacked) 막대로 — 어떤 모델로 썼는지 색 분해.
     // usage-metric-charts: 왼쪽 카드는 선택 지표, 오른쪽은 비용. 선택이 비용이면 오른쪽을 총 토큰으로
     //   바꿔 같은 차트가 두 번 뜨지 않게 한다(제목도 함께 바뀐다).
-    const sideMetric = usageMetricOf(metric.key === "cost_usd" ? "total_tokens" : "cost_usd");
+    const sideMetric = usageSideMetric(metric);
     const roleRows = (view.by_role || []).map((r) => ({
       label: String(r.role == null ? "-" : r.role), models: r.models || [],
       calls: r.calls || 0, requests: r.requests || 0,

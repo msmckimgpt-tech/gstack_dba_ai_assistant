@@ -16,6 +16,7 @@ const path = require("path");
 const STATIC = path.join(__dirname, "..", "..", "src", "static");
 const USAGE_JS = path.join(STATIC, "admin", "usage.js");
 const ADMIN_CSS = path.join(STATIC, "css", "admin.css");
+const METRICS_JS = path.join(STATIC, "usage-metrics.js");   // 지표 정의 정본(두 화면 공유)
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -29,7 +30,10 @@ function moduleSource() {
   let src = fs.readFileSync(USAGE_JS, "utf8");
   src = src.replace(/^import\s[\s\S]*?from\s+"[^"]+";\s*$/gm, "");
   src = src.replace(/^export\s*\{[^}]*\};\s*$/gm, "");
-  return src;
+  // 지표 정의는 **정본 소스 자체**를 주입한다(stub 을 두면 목록·라벨·가산성 검사가 vacuous 해진다
+  // — `esm-classic-inject.hangulQwertyClassicSource` 와 같은 규약).
+  const metrics = fs.readFileSync(METRICS_JS, "utf8").replace(/^export\s+/gm, "");
+  return metrics + "\n" + src;
 }
 
 // 결정론 픽스처 — 지표마다 **다른 비율**을 갖도록 만든다(전환이 실제로 값을 따라가는지 보려면
