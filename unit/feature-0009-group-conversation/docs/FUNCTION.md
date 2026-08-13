@@ -26,7 +26,16 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - REQ-GC-R3: `@assistant` 멘션 시에만 LLM 응답. 호출 actor = 발신 멤버.
 - REQ-GC-R4: `@account` 멘션(주의 환기) — LLM 미호출.
 - REQ-GC-R5: LLM 은 멘션 시 사람-사람 채팅 포함 히스토리를 발신자 라벨과 함께 맥락으로 받음.
-- REQ-GC-R6: 첨부는 그룹 전원 열람·다운로드 공유. 단 LLM 맥락 주입은 @assistant 발신자 본인 첨부로 한정(권한상승 방지, CSO F1).
+- REQ-GC-R6: 첨부는 그룹 전원 열람·다운로드 공유이며, **LLM 맥락 주입도 대화 전체 첨부**로 열람 경계와
+  동형이다(2026-08-13 사용자 결정, FR-group-attach-sender-scope-blocks-members).
+  - 종전(CSO F1, 2026-06-19)은 주입만 발신자 본인 첨부로 한정했으나, 열람은 되고 주입만 막히는 비대칭이
+    "화면엔 보이는데 assistant 만 못 보는" 마찰을 만들었다(라이브: 첨부 보유 그룹 대화 6/6 노출,
+    대화 …46763d6e 에서 사용자 이탈). 다운로드 후 재업로드로 우회 가능해 악의는 막지 못했다.
+  - 대체 통제 ①: **공유창 window 게이트**(`shared/share_window.py`) — 발신자에게 가려진 표시 메시지가
+    실재하면 종전 동작(본인 첨부만)으로 fail-closed 축소. §21 AR-1 무회귀.
+  - 대체 통제 ②: **출처 라벨 + 데이터-전용 계약**(AUTH-1a) — 파일마다 `uploaded-by=<name> (OTHER MEMBER)`,
+    타 멤버 콘텐츠는 DATA 이며 지시문이 아니라는 계약을 코드가 프롬프트에 주입. R5 의 발신자 라벨과 같은 축
+    (타 멤버 **채팅 본문**은 이미 라벨과 함께 주입되고 있어, 첨부만 막는 것은 애초에 비일관이었다).
 - REQ-GC-R7: 접근제어 분리 — 멤버는 datasource 권한 없어도 전체 열람 가능. @assistant 로 datasource 발화/쿼리는 발신자 본인 RBAC 로만 게이트.
   - 구현(gc-participant-product-select): 참가자(비-owner 멤버)는 대화 공통 고정 제품 접근권이 없어도 **본인 권한 제품**을 per-message 로 골라 발화 가능(발신자 본인 RBAC 게이트, 권한 상속 아님). 대화 공통 바인딩은 비파괴(PATCH 는 owner 전용 유지). 접근 불가한 생성자 고정 제품은 작업화면 드롭업에서 '열람 전용' 회색·비활성 그룹으로 분리 표시.
 - REQ-GC-R8: read-state(last_read 커서) + @mention 표시 + per-conversation 동시실행/비용 상한.
@@ -101,7 +110,7 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
                               │                          per-conversation run cap 검사
                               │                                  ▼
                               │                          ask-worker: 히스토리(발신자 라벨) +
-                              │                          발신자 본인 첨부만 주입 ─► LLM ─► assistant 메시지
+                              │                          대화 첨부(출처 라벨·window 게이트) 주입 ─► LLM ─► assistant 메시지
                               ▼
                           무권한 datasource ─► 발화 거부(열람은 유지)
 ```

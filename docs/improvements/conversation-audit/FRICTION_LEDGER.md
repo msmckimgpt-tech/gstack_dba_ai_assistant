@@ -6,6 +6,82 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-group-attach-sender-scope-blocks-members — fixed:undeployed (L4↔L1; 열람 경계와 주입 경계의 비대칭)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **46** · 적대 리뷰 [P1]2/[P2]3 전건 반영 후
+  재검증 · ruff clean). 배포 전. 배포 후 라이브 실측으로만 `verified` 로 닫는다.
+- **source**: 사용자 명시 호출(2026-08-13) — "`@assistant 첨부 파일 확인` / 공유 대화 내부에서
+  assistant 가 첨부파일을 확인하지 못하는 이슈. 공유대화 내부에서는 모든 사용자의 첨부파일을
+  assistant 가 참조할 수 있도록 구성해주세요."
+- **modality**: 그룹 비동기 · **conv(마스킹)**: `…46763d6e`(멤버 2) · 대조군 `…3f48cbb7` ·
+  `…80c204e0` · `…b96bf3dc` · `…d73acef6` · `…e4263afd`
+- **last_seen**: 2026-08-13 · **seen_count**: 1 · **seen_distinct_conv**: 6
+
+- **증상(signal)**: `E-AST` 동일 실패 2회 반복 + `E-USR` 명시 불만 + `I-TOK` 좌절 토큰 + `I-SIL` 종료.
+  계정 A 가 SQL 4건을 첨부해 정상 리뷰를 받은 뒤, 합류한 계정 B 가 `@assistant` 를 두 번 호출하자
+  **"현재 대화에 첨부파일이 보이지 않습니다"** 가 반복됐고 사용자가 **"버그 발생;;"** 을 남기고
+  대화가 끊겼다. 화면에서는 그 파일이 보이고 다운로드도 되는 상태였다.
+- **suspected_layers**: L4(로드 스코프)가 범인 · L1(프롬프트 섹션 부재)로 표출 · L7(표면 비대칭)이 입구.
+- **confirmed_root_cause**: **열람 경계와 주입 경계의 비대칭.** 첨부는 그룹 전원이 열람·다운로드
+  하는데(REQ-GC-R6 · `attachments.py::_account_can_access_attachment`) LLM 주입만 발신자 본인으로
+  좁혀져 있었다(feature-0009 CSO F1, 2026-06-19 결정 · 2026-07-29 재확인). choke-point 2곳이
+  **같은 정책의 물리적 동일 뿌리**라 한 곳만 고치면 다른 곳이 그대로 막는다:
+  `_conv_store.py::_resolve_conversation_attachment_scope`(`AccountId` 필터로 스코프 0건) ·
+  `agent_core.py::_build_attachment_context_section`(account 스코프 폴백).
+  재발경로 = **정책/구조**(코드 권위선으로 봉인).
+- **corroboration**: **structural** — 첨부 보유 그룹 대화 **6/6(100%)** 에 비업로더 발신자가 존재하고,
+  그중 실제 assistant 호출까지 이어진 실패가 2건 관측(2026-08-13). 빈도가 아니라 코드 경로가
+  모든 그룹 대화에 항상 발동하는 구조다.
+- **F4 재평가(정직)**: CSO F1 은 **의도된 가드**라 자동 수정하지 않고 표면화 → 사용자 승인
+  ("완화책 포함" + "bounded 멤버는 window 안 첨부만"). 가드 실효성: ① 기밀성 노출은 늘지 않는다
+  (이미 다운로드 가능) ② injection 위협은 실재 ③ 그러나 타 멤버 **채팅 본문**은 이미 발신자
+  라벨과 함께 주입 중이라 첨부만 막는 건 비일관 ④ 다운로드 후 재업로드로 우회 가능해 악의는
+  못 막고 정직한 사용자만 막았다. feature-0009 ANCHOR §1·§2(완전 격리 Alt-C 기각)와도 어긋났다.
+- **봉인**: ① 스코프를 대화 전체로 열고 **공유창 window 게이트**(`shared/share_window.py`, web·
+  agent_core 공용 단일 정본)로 축소 조건을 둔다 — 가려진 표시 메시지가 실재하는 발신자만
+  종전 동작. **그룹 여부도 게이트가 판정**(호출측 선-게이팅은 PG 오류 시 fail-open 이었다).
+  ② 출처 라벨 + 데이터-전용 계약 코드 권위 주입(AUTH-1a) + 타 멤버 파일 datamark 헤더에 업로더.
+  ③ 읽기 확대 ≠ 쓰기 확대 — 타 멤버 첨부 갱신 불가 사실과 대체 경로를 프롬프트가 **미리** 고지
+  (2차 마찰 예방, L2 거부 피드백 정형화).
+- **시간축 함정(재사용 교훈)**: 첨부 `created_at` 은 표시/코어 메시지와 **다른 시간축**이다
+  (라이브 실측 +9h — 로컬시각이 UTC 로 라벨링돼 저장). 첨부는 표시 메시지에 바인딩되지도 않는다.
+  그래서 window 를 시각으로 자르면 하한에서 열고 상한에서 가리는 **양방향 오판**이 난다 →
+  판정축을 **메시지 id/joined_at 은닉 구간 실재 여부**로 잡았다. 이 시간축 왜곡은 fork 의
+  `_attachment_outside_window` 에도 영향을 주는 **별도 결함**이다(아래 신규 항목).
+- **fix**: `CHG-20260813T183000-ai-claude-feature-0003-group-attach-scope-window` /
+  **코드 거주 `feature-0003-agent-web-ui`**(primary) + `feature-0002-agent-core`(cross-ref) +
+  `shared/share_window.py` / `REV-20260813T183000-group-attach-scope-window [CODEX:adversarial-security]`.
+  위험등급 **Critical §12.3**(보안 경계 변경) — 사용자 승인 획득, override 미적용.
+  정책 정본 갱신: SECURITY **§47 신규** · feature-0009 `REQ-GC-R6` · feature-0003 FUNCTION AC 3건 ·
+  ADR-20260813T183000.
+- **rc_ids**: RC-1(web 스코프 해소 발신자 필터) · RC-2(agent_core 주입 발신자 폴백) — 동일 뿌리 병합.
+- **batch-id**: B-20260813T183000-group-attach-scope-window
+- **라이브 실측 필요분(§정직)**: ① 대화 `…46763d6e` 에서 계정 B 의 `@assistant` 첨부 참조 성공
+  ② 게이트 쿼리의 라이브 실행(단위 테스트는 fake 커서라 SQL 문법·계획 미검증)
+  ③ bounded 멤버 축소가 실제로 발동하는지. 배포 후 재corroboration 으로 `verified` 판정.
+- **수용 위험(§47.4)**: 프롬프트·datamark 은 확률적 완화이지 보장이 아니며, 타 멤버 파일이 실린
+  턴의 도구 실행에 provenance 게이트는 없다(confused-deputy 잔존). 후속 과제로 등재.
+
+---
+
+## FR-attachment-created-at-timeaxis-skew — report-only (L4; 저장 시간축 불일치)
+
+- **status**: `report-only` — 이번 cycle 에서 **발견**했으나 별도 뿌리라 분리(응집 한계). 수정 안 함.
+- **source**: `FR-group-attach-sender-scope-blocks-members` 진단 중 라이브 실측(2026-08-13).
+- **증상**: 첨부의 `created_at` 이 표시/코어 메시지의 `created_at` 과 **다른 시간축**으로 저장된다.
+  실측: 현재 UTC 09:28 시점에 방금 올린 첨부가 `18:23 UTC` 로 기록(로컬 KST 값이 UTC 로 라벨링,
+  +9h 미래). 메시지 쪽은 정상 UTC.
+- **영향**: 첨부 시각을 메시지 시각과 비교하는 모든 경로가 오판한다 — 확인된 소비자는 fork 의
+  `_attachment_outside_window(att_ca, lower_ca, upper_ca)`(공유창 window 로 첨부를 clip)이며,
+  하한에서는 가려야 할 첨부를 통과시키고 상한에서는 통과시킬 첨부를 가린다. 목록 정렬·기간 필터도
+  같은 축을 쓰면 영향권이다.
+- **왜 이번 cycle 에서 안 고쳤나**: 저장 시각 정정은 **기존 행 백필**(어느 행이 어느 축인지 판별)과
+  소비자 전수 점검을 수반해 Critical 보안 변경과 같은 batch 에 넣으면 응집이 깨진다. 이번 cycle 은
+  그 축을 **쓰지 않는** 판정(메시지 id 기준)으로 우회했다.
+- **필요한 사람 액션**: 별도 cycle 로 ① 기록 시점의 tz 처리 정정 ② 기존 행 판별·백필 전략 결정
+  ③ 소비자 전수(fork clip·정렬·필터) 점검. 해소되면 window 게이트를 "은닉 구간에 속한 첨부만
+  제외" 로 정밀화할 수 있다.
+
 ## FR-llm-transient-exhaustion-discards-run — fixed:undeployed (L6↔인프라 경계; 재시도 예산이 인프라 교체 공백보다 짧아 소진 = 전량 폐기)
 
 - **status**: `fixed:undeployed` — 코드/테스트(신규 **23** + 선행 cycle 계약 테스트 1건 갱신 ·

@@ -101,3 +101,31 @@ source_of_truth: true
 - **Alternatives**: (a) 즉시 실삭제 — 오조작 회수 불가(기각, 사용자 결정). (b) 삭제 권한을 현 백엔드대로 그룹 멤버 전원 — 제3자가 남의 파일을 지우는 사고 경로(기각, 사용자 결정). (c) 업로더 본인만 — 방치된 파일 정리 수단이 사라진다(기각, 사용자 결정). (d) 최신 삭제 시 첨부를 목록에서 숨김 — "이 버전만" 의 의미가 무너진다(기각, 사용자 결정). (e) 프론트가 소유권을 추정해 버튼을 표시 — 표시·집행 두 벌이 어긋난다(기각, §16.7 G6).
 - **Consequences**: 잘못 올린 파일을 회수할 수 있게 되고, 그 대가로 삭제라는 파괴적 표면이 생긴다 — soft-delete + 휴지통이 완충이며, retention 만료 후에는 되돌릴 수 없다(휴지통에 남은 기간을 표시한다). 그룹 대화에서 **업로더가 아닌 멤버는 더 이상 삭제할 수 없다** — 선행 동작 대비 좁아지는 변경이며, 열람은 영향받지 않는다. 일괄 ZIP 은 web 프로세스가 객체를 읽어 스풀에 담으므로 대용량 대화에서 I/O 가 늘 수 있어 상한(`ATTACHMENT_BULK_ZIP_MAX_BYTES`, 기본 512MB)을 두고 초과 시 개별 다운로드로 안내한다. 안내 문구의 "첨부는 대화에 계속 쌓입니다" 는 사실이 아니게 되어 제거했다. 신규 테이블·마이그레이션·권한 코드는 **0** (기존 컬럼·권한 재사용).
 - **Cross-ref**: FUNCTION `REQ-20260806-attach-manage` · TASK `20260806T1541-attach-manage` · MODIFY `CHG-20260806T154100-attach-manage` · supersede 대상 `ADR-20260729T163000-attach-append-only` · `ADR-20260729T140200-attach-full-scope`(참조 스코프=대화 전량, 유효).
+
+## ADR-20260813T183000 — 공유 대화 첨부의 LLM 참조 경계: 발신자-한정 → 대화 스코프 + window 게이트
+
+- **Status**: Accepted (사용자 결정 2026-08-13, Critical §12.3 — 보안 경계 변경, override 미적용)
+- **Context**: 그룹 대화에서 첨부 LLM 주입만 발신자 본인으로 좁혀져 있었고(feature-0009 CSO F1,
+  2026-06-19 결정 · 2026-07-29 재확인), 열람·다운로드는 전원 공유였다(REQ-GC-R6). 이 비대칭이
+  "화면엔 보이는데 assistant 만 못 보는" 마찰을 만들어 라이브에서 사용자 이탈까지 관측됐다
+  (`FR-group-attach-sender-scope-blocks-members`, 첨부 보유 그룹 대화 6/6 노출).
+- **Decision**: ① 그룹 첨부 스코프를 **대화 전체**로 열되 **공유창 window 게이트**로 축소 조건을 둔다
+  (은닉 표시 메시지가 실재하는 발신자만 종전 동작). ② 판정은 **단일 정본**(`shared/share_window.py`)에
+  두고 web 스코프 해소와 agent_core 주입 게이트가 **같은 함수**를 쓴다. ③ CSO F1 이 겨냥한 indirect
+  prompt injection 은 **출처 라벨 + 데이터-전용 계약**(AUTH-1a)으로 대체 통제한다. ④ 읽기만 열고
+  **쓰기 경계는 불변**으로 두되, 그 한계를 프롬프트가 미리 고지한다.
+- **Alternatives**:
+  - *가드 유지(수정 안 함)* — 기각: 마찰이 구조적이고(6/6) ANCHOR §1·§2 의 협업 전제와 어긋난다.
+    가드 자체도 다운로드 후 재업로드로 우회 가능해 악의는 못 막고 정직한 사용자만 막았다.
+  - *스코프만 열기(완화책 없음)* — 기각(사용자 선택지에서 미채택): injection 위협이 무방비로 남는다.
+  - *첨부 `created_at` 을 window 경계와 직접 비교* — **기각(중요)**: 첨부는 표시 메시지에 바인딩되지
+    않고 `created_at` 이 메시지와 다른 시간축이다(라이브 실측 +9h, 로컬시각이 UTC 로 라벨링돼 저장).
+    하한에서 열고 상한에서 가리는 양방향 오판이 난다. 대신 **은닉 구간 실재 여부**(메시지 id/joined_at)
+    로 게이트한다 — 정밀도는 낮지만 오판 방향이 항상 안전한 쪽이다.
+  - *열람 경계까지 좁혀 대칭 맞추기* — 기각: 협업 가치 훼손 + ANCHOR Alt-C 기각 재확인.
+- **Consequences**: 은닉 구간이 있는 bounded 멤버는 window 안 첨부도 못 본다(과차단 — 첨부↔메시지
+  연결이 없어 정밀 판정 불가). 첨부 시간축 왜곡이 해소되면 "은닉 구간 첨부만 제외" 로 정밀화 가능하며,
+  그 왜곡은 fork 의 `_attachment_outside_window` 에도 영향을 주는 **별도 결함**으로 원장에 등재한다.
+- **Cross-ref**: SECURITY §47 · FUNCTION `AC-20260813T183000-group-attach-scope-window-{1,2,3}` ·
+  feature-0009 `REQ-GC-R6`(갱신) · TASK `20260813T1830-group-attach-scope-window` ·
+  FRICTION_LEDGER `FR-group-attach-sender-scope-blocks-members`.
