@@ -4952,3 +4952,12 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
 - 한계(정직): 분기·연장 경로는 MinIO·audit·dual-write 를 함께 태워 fake 로 전 구간을 돌리기 어려워
   **소스 구조 잠금**으로 계약을 고정했다(§16.7 G10 동형). 실제 INSERT/supersede 의 라이브 동작은
   배포 후 실측 대상이다.
+
+## REV-20260814T023000-attach-branch-postdeploy [SKIPPED:doc-only] — POST-DEPLOY 실측 기록
+
+- Related Change: `CHG-20260814T023000-ai-claude-feature-0003-attach-branch-postdeploy`
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(TASK 문서만) → 패널 skip. 선행 cycle 의
+  코드 변경은 `REV-20260814T010000-attach-version-branching`([CODEX:adversarial-data-integrity],
+  P1 3·P2 1 전건 반영)에서 집행됐다.
+- 검증: 기록된 수치는 전부 배포본 실행 결과다(GIT_COMMIT 3서비스 · caddy 0 · 계보 조회 직접 호출).
+- Human Approval Needed: 아니오 (doc-only, 선행 cycle 승인 범위 내 사후 기록).

@@ -4106,3 +4106,12 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   이어서 수정할 수 없다. → 소유자를 반영해 `READ-ONLY for you` / `your lineage — you can extend it`
   으로 갈라 적는다.
 - 회귀 고정: 위 4축 전부 테스트 추가(재업로드 역할 스코프 · root dedupe · 동명 모호성 · 소유자 표기).
+
+## CHG-20260814T023000-ai-claude-feature-0003-attach-branch-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- 사유: 선행 cycle `20260814T0100-attach-version-branching` 의 배포(main `6fbccbc7`) 후 실측 종결.
+- 대상: `unit/feature-0003-agent-web-ui/docs/TASK.md` 배포 항목 마감. **코드 변경 0**.
+- 결과: web-a/web-b/ask-worker `GIT_COMMIT=6fbccbc7` · 무중단 실측 0 · 배포본에서 계보 조회
+  (`_load_filename_lineage_heads`) 예외 없이 동작, 동명 파일의 계정별 계보가 각각 head 1건으로 분리.
+- 정직: 분기 INSERT/supersede 실동작·프롬프트 계보 블록 렌더는 라이브 write 를 유발해 미실측
+  (단위 테스트 한정) — 다음 실사용 수정본에서 확인 가능.
