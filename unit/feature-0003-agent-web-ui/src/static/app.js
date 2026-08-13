@@ -3192,6 +3192,10 @@ export function renderMessages() {
   }
 
   messageLogEl.scrollTop = messageLogEl.scrollHeight;
+  // rail-async-relayout: 이 "맨 아래"는 지금 높이 기준이다. ```mermaid·이미지가 나중에
+  // 렌더되며 높이가 커지면 최신 답변이 화면 밖으로 밀리므로, 콘텐츠가 안정될 때까지
+  // (사용자가 조작하지 않는 한) 재고정한다.
+  _engageRailBottomPin();
   // TASK-0061 Phase 4 (REQ-20260515-0006): point rail 동기화.
   renderMessagePointRail();
   _updateHistoryTopIndicator();
@@ -3812,6 +3816,10 @@ function renderMessagePointRail() {
   // TASK-0062: dot 위치를 messageLog 의 scrollHeight 기준 비례로 재배치.
   layoutMessagePointRail();
   highlightActivePoint();
+  // rail-async-relayout: 위 배치는 "이 순간의" 높이 기준이다. ```mermaid 다이어그램·이미지·
+  // 표처럼 늦게 렌더되는 콘텐츠가 메시지 높이를 바꾸면 그 배치가 통째로 어긋나므로,
+  // 성장 신호를 추적해 재배치한다(공유 뷰 setupSharePointRail 과 동형).
+  _observeRailContentResize();
 }
 
 // TASK-0062 (REQ-20260515-0012) + point-rail-range: 각 뱃지를 messageLog scrollHeight
@@ -3839,6 +3847,166 @@ function layoutMessagePointRail() {
     dot.style.top = `${topPct}%`;
     dot.style.height = `${heightPct}%`;
   });
+}
+
+// ── rail-async-relayout: 비동기 콘텐츠 높이 변화 추적 ─────────────────────────
+// 문제: layoutMessagePointRail 은 호출 시점의 scrollHeight·메시지 높이로 막대를 배치하는데,
+// ```mermaid 다이어그램은 renderMermaidDiagrams() 가 **Promise 로 나중에** SVG 를 넣는다
+// (mermaid-render.js). pending 상태(소스 텍스트 몇 줄)에서 배치한 뒤 SVG 가 들어오면 그
+// 메시지 높이와 전체 scrollHeight 가 수백 px 늘어나므로, 이미 지정된 top%/height% 가 실제
+// 스크롤 위치와 어긋난다 — 우측 스크롤바 위치와 뱃지 영역이 불일치하는 사용자 증상.
+// 이미지·markdown 표·인라인 CSV 표도 같은 축이다.
+//
+// 해법: 성장 신호를 관찰해 재배치. **관찰 대상은 messageLog 가 아니라 메시지 row 들이다** —
+// messageLog 는 flex(min-height:0 + overflow-y:auto)로 높이가 뷰포트에 고정돼 콘텐츠가
+// 늘어도 자기 box 크기는 변하지 않아 ResizeObserver 가 발화하지 않는다. row 는 문서 흐름
+// 안이라 자식 SVG 삽입 시 자기 높이가 늘어난다. (공유 뷰는 문서 스크롤이라 컨테이너 관찰로
+// 충분했다 — share.js setupSharePointRail. 같은 결함 클래스, 다른 스크롤 컨텍스트.)
+const RAIL_RELAYOUT_FALLBACK_MS = [300, 1000, 2500];  // ResizeObserver 미지원 환경 재배치 시점.
+let _railResizeObserver = null;
+let _railChildObserver = null;
+let _railRelayoutRaf = 0;
+let _railLoadWired = false;
+let _railFallbackTimers = [];
+let _railFallbackMode = false;   // ResizeObserver 부재 → 지연 타이머로 성장을 좇는 환경.
+
+// rAF 로 합쳐 과다 호출 방지(다이어그램 여러 개가 각각 발화해도 프레임당 1회 재배치).
+// 스크롤 재고정을 **먼저** 한다 — layoutMessagePointRail 의 좌표 계산이 messageLog.scrollTop
+// 을 쓰므로, 재고정 전에 배치하면 같은 프레임에서 다시 어긋난다.
+function _scheduleRailRelayout() {
+  if (_railRelayoutRaf) return;
+  _railRelayoutRaf = requestAnimationFrame(() => {
+    _railRelayoutRaf = 0;
+    _repinRailBottomIfActive();
+    layoutMessagePointRail();
+    highlightActivePoint();
+  });
+}
+
+function _observeRailContentResize() {
+  if (!messageLogEl) return;
+  // 늦게 로드되는 <img> 는 intrinsic size 가 없어 문서를 늘린다. load 는 버블하지 않으므로
+  // capture 로 컨테이너에서 포착한다(1회 등록 — messageLog element 는 재렌더에도 동일).
+  if (!_railLoadWired) {
+    _railLoadWired = true;
+    messageLogEl.addEventListener("load", (ev) => {
+      const t = ev && ev.target;
+      if (t && (t.tagName === "IMG" || t.tagName === "IFRAME")) _scheduleRailRelayout();
+    }, true);
+  }
+  if (typeof ResizeObserver === "undefined") {
+    // 미지원 환경 폴백: 알려진 지연 시점에 재배치(공유 뷰와 동일 임계). 렌더마다 재무장하되
+    // 직전 타이머는 정리해 누적을 막는다.
+    _railFallbackMode = true;   // settle 창을 마지막 폴백 시점까지 늘린다(아래 pin 참조).
+    _railFallbackTimers.forEach((id) => { try { clearTimeout(id); } catch (_) {} });
+    _railFallbackTimers = RAIL_RELAYOUT_FALLBACK_MS.map(
+      (ms) => window.setTimeout(_scheduleRailRelayout, ms));
+    return;
+  }
+  // 관찰 대상이 **교체되면** ResizeObserver 연결이 끊긴다 — progress.js 는 진행 중 말풍선을
+  // `replaceChild` 로 새 element 로 갈아끼운다. 개별 호출부에 재관찰을 심는 대신 messageLog 의
+  // childList 를 감시해 어떤 경로의 교체·추가든 재관찰하도록 클래스 전체를 닫는다(§16.7 G10).
+  if (!_railChildObserver && typeof MutationObserver !== "undefined") {
+    try {
+      _railChildObserver = new MutationObserver(() => {
+        _observeRailContentResize();
+        _scheduleRailRelayout();
+      });
+      _railChildObserver.observe(messageLogEl, { childList: true });
+    } catch (_) { _railChildObserver = null; }
+  }
+  if (!_railResizeObserver) _railResizeObserver = new ResizeObserver(_scheduleRailRelayout);
+  else _railResizeObserver.disconnect();   // 직전 렌더의 row 들은 이미 DOM 에서 사라졌다.
+  // rail dot 이 참조하는 것과 같은 element 집합(렌더 창 안의 메시지 row) + **진행 중 말풍선**.
+  // pending 말풍선은 `data-message-id` 가 없지만(아직 저장 전) progress step 이 도착하며
+  // in-place 로 교체돼 높이가 계속 자라고, 그 높이가 scrollHeight 에 들어가므로 관찰에서
+  // 빠지면 확정 메시지 막대들이 stale 해진다(codex [P1]).
+  const targets = Array.from(messageLogEl.querySelectorAll("[data-message-id]"));
+  const pendingRow = messageLogEl.querySelector("#pendingAssistantBubble");
+  if (pendingRow) targets.push(pendingRow);
+  targets.forEach((row) => {
+    try { _railResizeObserver.observe(row); } catch (_) {}
+  });
+}
+
+// ── rail-async-relayout: 맨-아래 고정(bottom pin) ─────────────────────────────
+// renderMessages 는 렌더 직후 messageLog 를 맨 아래로 보낸다(채팅 UI 관례). 그런데 위와 같은
+// 비동기 성장이 그 뒤에 일어나면 방금 맞춘 "맨 아래"가 어긋나 최신 답변이 화면 밖으로 밀린다.
+// 성장이 멈춘 뒤 settle_ms 지나면 해제하고, 성장이 안 멈춰도 ceiling 에서 강제 해제한다.
+// 사용자가 스크롤 제스처·스크롤 의도 키를 쓰거나 명시적 위치 조작(rail 점프·페이징 보존·창
+// 확장) 이 일어나면 즉시 해제해 자동 스크롤이 사용자 조작과 싸우지 않게 한다.
+// (scroll 이벤트는 해제 트리거가 아니다 — pin 자신의 scrollTop 변경이 scroll 을 유발해
+// 첫 성장에서 스스로 해제돼 버린다. 공유 뷰 bottom pin 과 동일 판단.)
+const RAIL_BOTTOM_PIN_SETTLE_MS = 600;
+// ResizeObserver 부재 환경은 성장 신호가 고정 타이머([300,1000,2500]ms)로만 오므로, settle
+// 600ms 는 첫 폴백 직후 만료돼 이후 성장에서 스크롤이 새 하단에 못 붙는다(codex [P2]).
+// 폴백 모드에서는 마지막 폴백 시점 + 여유까지 settle 창을 늘린다(ceiling 은 그대로 상한).
+const RAIL_BOTTOM_PIN_SETTLE_FALLBACK_MS = RAIL_RELAYOUT_FALLBACK_MS[RAIL_RELAYOUT_FALLBACK_MS.length - 1] + 400;
+const RAIL_BOTTOM_PIN_CEILING_MS = 8000;
+let _railBottomPinActive = false;
+let _railBottomPinSettleTimer = 0;
+let _railBottomPinCeilingTimer = 0;
+function _railPinSettleMs() {
+  return _railFallbackMode ? RAIL_BOTTOM_PIN_SETTLE_FALLBACK_MS : RAIL_BOTTOM_PIN_SETTLE_MS;
+}
+
+// 네이티브 스크롤바 클릭·드래그는 wheel/touch/key 를 발생시키지 않는다(codex [P2]) — 스크롤
+// 컨테이너에 대한 **pointerdown** 으로 잡는다. 스크롤바는 element 의 border-box 안이라 그
+// 누름이 컨테이너에 전달된다.
+//
+// ⚠ 폐기된 대안 — "pin 이 설정한 scrollTop 을 기억해 scroll 이벤트에서 불일치를 사용자
+// 조작으로 판정": 라이브(PB-0008)가 회귀를 잡았다. **뷰포트 위쪽**에서 콘텐츠가 자라면
+// 브라우저의 스크롤 앵커링이 scrollTop 을 자동 조정하는데, 그 조정이 "불일치" 로 읽혀 pin 이
+// 조기 해제됐다 → 진입 시 맨-아래 고정이 깨짐(실측 gap 1,611px, 수정 전과 같은 증상).
+// 즉 scroll 값 비교는 *브라우저 자동 조정*과 *사용자 조작*을 구분하지 못한다. 헤드리스 하네스는
+// 성장이 뷰포트 아래쪽에서만 일어나 이 축을 건드리지 않아 통과시켰다(§16.7 G4 — 경계축은
+// "성장이 뷰포트 위인가 아래인가" 였다. 하네스에 T11 로 추가).
+
+function _onRailBottomPinKeydown(ev) {
+  switch (ev && ev.key) {
+    case "ArrowUp": case "ArrowDown": case "PageUp": case "PageDown":
+    case "Home": case "End":
+      _releaseRailBottomPin();
+  }
+}
+
+function _releaseRailBottomPin() {
+  if (!_railBottomPinActive) return;
+  _railBottomPinActive = false;
+  if (messageLogEl) {
+    messageLogEl.removeEventListener("wheel", _releaseRailBottomPin);
+    messageLogEl.removeEventListener("touchstart", _releaseRailBottomPin);
+    messageLogEl.removeEventListener("pointerdown", _releaseRailBottomPin);
+  }
+  window.removeEventListener("keydown", _onRailBottomPinKeydown);
+  if (_railBottomPinSettleTimer) { clearTimeout(_railBottomPinSettleTimer); _railBottomPinSettleTimer = 0; }
+  if (_railBottomPinCeilingTimer) { clearTimeout(_railBottomPinCeilingTimer); _railBottomPinCeilingTimer = 0; }
+}
+
+function _engageRailBottomPin() {
+  if (!messageLogEl) return;
+  const armSettle = () => {
+    if (!_railBottomPinActive) return;
+    if (_railBottomPinSettleTimer) clearTimeout(_railBottomPinSettleTimer);
+    _railBottomPinSettleTimer = window.setTimeout(_releaseRailBottomPin, _railPinSettleMs());
+  };
+  if (_railBottomPinActive) { armSettle(); return; }  // 재렌더는 창을 연장만 한다.
+  _railBottomPinActive = true;
+  messageLogEl.addEventListener("wheel", _releaseRailBottomPin, { passive: true });
+  messageLogEl.addEventListener("touchstart", _releaseRailBottomPin, { passive: true });
+  // 네이티브 스크롤바 클릭·드래그(codex [P2]) — wheel/touch/key 가 없는 경로.
+  messageLogEl.addEventListener("pointerdown", _releaseRailBottomPin, { passive: true });
+  window.addEventListener("keydown", _onRailBottomPinKeydown);
+  armSettle();
+  _railBottomPinCeilingTimer = window.setTimeout(_releaseRailBottomPin, RAIL_BOTTOM_PIN_CEILING_MS);
+}
+
+// 성장 신호에서 호출 — pin 이 살아 있는 동안에만 맨 아래로 재고정하고 settle 을 리셋한다.
+function _repinRailBottomIfActive() {
+  if (!_railBottomPinActive || !messageLogEl) return;
+  messageLogEl.scrollTop = messageLogEl.scrollHeight;
+  if (_railBottomPinSettleTimer) clearTimeout(_railBottomPinSettleTimer);
+  _railBottomPinSettleTimer = window.setTimeout(_releaseRailBottomPin, _railPinSettleMs());
 }
 
 function highlightActivePoint() {
@@ -3877,6 +4045,10 @@ function _easeOutExpo(t) {
 // scrollTop 을 from→to 로 EaseOutExpo 애니메이션. setter 는 1 개 인자(다음 위치)를 받는다.
 function _animatePointScroll(setter, from, to) {
   const delta = to - from;
+  // rail-async-relayout: 명시적 위치 이동(막대 클릭·검색·앵커 점프)은 맨-아래 pin 을 즉시
+  // 해제한다 — 목표 지점으로 옮겨 놓고 pin 이 다시 맨 아래로 끌어당기면 점프가 무효가 된다.
+  // (delta 0 인 no-op 점프도 "사용자가 위치를 확정했다" 는 신호이므로 해제 뒤에 반환한다.)
+  _releaseRailBottomPin();
   if (delta === 0) return;
   // point-rail-range window: 프로그래매틱 스크롤(막대 클릭·검색·앵커 점프) 중에는 최상단
   // 자동 로드를 억제한다(_maybeExpandOrLoadOlder). 애니메이션이 최상단 근처를 지날 때 prepend 가
@@ -4624,6 +4796,9 @@ export async function loadHistory({ append = false, branchView = null, preserveS
     // feature-0019 paging-scroll-preserve: 페이징 재렌더는 렌더 창 확장(_applyRenderWindowSoon —
     // 다시 맨-아래로 스크롤)을 생략하고, 저장한 스크롤 위치를 rAF(layout 확정 후)로 복원한다.
     if (messageLogEl && _psTop != null) {
+      // rail-async-relayout: 보존 위치로 되돌리는 경로이므로 맨-아래 pin 을 해제한다
+      // (renderMessages 가 engage 한 pin 이 살아 있으면 복원 직후 다시 맨 아래로 끌어당긴다).
+      _releaseRailBottomPin();
       requestAnimationFrame(() => {
         const _maxTop = Math.max(0, messageLogEl.scrollHeight - messageLogEl.clientHeight);
         messageLogEl.scrollTop = Math.min(_psTop, _maxTop);
@@ -4687,6 +4862,9 @@ function _beginAppendScrollPreserve(append) {
 
 function _endAppendScrollPreserve(append) {
   if (!append || !messageLogEl) return;
+  // rail-async-relayout: prepend 는 "보던 지점 유지" 경로다 — renderMessages 가 engage 한
+  // 맨-아래 pin 을 해제하지 않으면 보정 직후 다시 맨 아래로 끌려간다.
+  _releaseRailBottomPin();
   const delta = messageLogEl.scrollHeight - (state._preAppendScrollHeight || 0);
   messageLogEl.scrollTop = (state._preAppendScrollTop || 0) + delta;
   layoutMessagePointRail();
@@ -4765,6 +4943,9 @@ function _maybeExpandOrLoadOlder() {
     const preH = messageLogEl.scrollHeight, preT = messageLogEl.scrollTop;
     state.renderCount = Math.min(rc + WINDOW_RENDER_BATCH, total);
     renderMessages();
+    // rail-async-relayout: 위로 스크롤해 창을 확장한 경로 — 사용자가 위쪽을 보고 있으므로
+    // renderMessages 가 engage 한 맨-아래 pin 을 해제한 뒤 위치를 보정한다.
+    _releaseRailBottomPin();
     messageLogEl.scrollTop = preT + (messageLogEl.scrollHeight - preH);
     layoutMessagePointRail();
   } else if (state.hasMoreHistory) {
@@ -7964,7 +8145,13 @@ async function _liveSyncTick() {
     state.messages = [...state.messages, ...incoming];
     _notifyMentions(incoming, false);  // feature-0009: 나를 멘션한 새 메시지 알림(토스트/OS)
     renderMessages();
-    if (!nearBottom) log.scrollTop = prevTop;  // 과거 읽는 중이면 위치 유지(append 는 하단)
+    if (!nearBottom) {
+      log.scrollTop = prevTop;  // 과거 읽는 중이면 위치 유지(append 는 하단)
+      // rail-async-relayout: 이것도 "보던 위치 유지" 경로다 — renderMessages 가 engage 한
+      // 맨-아래 pin 을 해제하지 않으면, 뒤이은 비동기 성장(mermaid/이미지)이 과거를 읽던
+      // 사용자를 하단으로 끌어내린다(codex [P1]).
+      _releaseRailBottomPin();
+    }
     // feature-0009 gc-unread-badge: 활성 대화(보는 중)에 도착한 새 메세지는 즉시 읽음 처리 → 배지 0 유지.
     try { _markActiveConversationRead(); } catch (_e) {}
     return true;

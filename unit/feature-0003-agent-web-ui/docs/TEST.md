@@ -2743,3 +2743,38 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   → Run 1 이 이월했던 "라이브 baked 자산" 축을 **종결**.
 - Run 기록 정본: `docs/test-runs.d/20260813T122457-attach-source-compare.md` Run 2.
 - **Pass/Fail: PASS**
+
+## Run — 20260813T1550-rail-async-relayout (우측 스크롤 ↔ 대화 뱃지 정합, mermaid 지연 렌더)
+
+- **Environment: CLI(headless chromium)** — 신규 `tests/headless/verify_point_rail_async_relayout.py`.
+  실 `app.js` 유닛 정규식 추출(사본 아님) + 실 `css/{base,chat,profile}.css` 를 chromium 에 올려
+  뱃지 막대 좌표를 px 로 실측. **현행 26/26 PASS**(codex 지적 4건 + 라이브 회귀 1건을 잠근
+  T9~T11·W4~W8 포함).
+  `--baseline`(신설 배선 미주입 = 수정 전)에서 **T2 178.2px · T4 맨아래 507px 밀림 · T7 이미지
+  97.96px** FAIL 로 결함이 재현되고 T8 재현 판정 OK — 이 변경이 load-bearing 임의 증거(§16.7 G4).
+  하네스 자기 검증: 초판이 row 높이를 `min-height` 로 만들어 flex-shrink 가 아이템을 눌러
+  라이브와 거동이 갈렸다(이미지 성장 12px 로만 관측) → 실 콘텐츠(spacer) 기반으로 교체.
+- **회귀** — 기존 프론트 검증 `tests/verify_*.mjs` **57/57 PASS** · feature-0003 pytest 전건 PASS
+  (격리 env `DB_PORT=1`·`AGENT_KB_PG_PORT=1` 등, rc=0).
+- **Environment: Windows-browser (PB-0008)** — **PASS**. 실 Chrome/150.0.7871.128 + §13.2.9 격리
+  프리뷰 **2개**(`web-rail-relayout-preview` :18097 = worktree 자산 / `web-rail-baseline-preview`
+  :18096 = main 자산 대조군, 라이브 이미지·env 공유 → **자산만 다른 대조**).
+  데이터는 **사용자가 이슈를 보고한 그 대화**(`20260812082809-e4263afd` "스키마 개선 BEFORE/AFTER
+  다이어그램" · mermaid SVG 3개 실렌더 · 문서 4,967~5,134px).
+  **수정 전 → 수정 후**: 뱃지↔메시지 구간 최대 오차 **86.58px → 0.11px**(자기 탭 재측정 0.20px) ·
+  진입 시 맨-아래 gap **1,631px → 0px**. thumb 정합 불일치 0(보이는 2건만 겹침).
+  상호작용(자기 탭, 확정 코드): 막대 60% 클릭 정밀 점프(4206→2629) · **실 휠 입력** 후 위치 유지
+  (2629→1729, pin 개입 0) · 두 경우 모두 정합 유지 · JS 오류 0.
+  **라이브가 자기 회귀를 적발**: codex [P2] 반영 초판(scroll 값 비교로 스크롤바 조작 판별)이
+  **뷰포트 위쪽 성장** 시 브라우저 스크롤 앵커링의 자동 조정을 사용자 조작으로 오판해
+  `A_entry gap=1,611px`(수정 전과 같은 증상)을 냈고, 헤드리스 26축은 성장이 아래쪽에서만
+  일어나 전건 통과 상태였다 → 판별을 컨테이너 `pointerdown` 으로 교체 + 하네스 T11/W5b 추가로
+  클래스 잠금 → 재측정 `gap=0` 복귀(§16.7 G4·G10).
+  **신원 대조**(§16.6 c): :18097 서빙 `app.js` 에 `_observeRailContentResize` 2건 / :18096 은 0건.
+  **세션 격리**(§16.6 MUST): 검증 도중 공유 CDP `pages[0]` 이 병렬 세션의 `/admin` 탭으로 바뀐 것을
+  관측(read-only eval 1회 + 실패한 scrollTop 대입 1회 도달, 남의 화면 미변경) → `context.new_page()`
+  자기 전용 탭으로 전환해 이후 전부 그 탭에서 수행하고 종료 시 그 탭만 닫았다.
+  증거: `docs/evidence/pb0008-rail-async-relayout-{1-entry,2-before-after,3-midjump,4-wheel,5-baseline-full}.png`
+  (2번 = 수정 전/후 rail+스크롤바 가로 6배 확대 나란히 대조).
+- Run 기록 정본: `docs/test-runs.d/20260813T155000-rail-async-relayout.md`.
+- **Pass/Fail: PASS**
