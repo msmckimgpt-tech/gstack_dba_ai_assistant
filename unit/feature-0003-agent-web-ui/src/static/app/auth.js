@@ -2,6 +2,7 @@
 //   handleLogin/TOTP/강제 비밀번호 변경/handleSignup). app.js 비연속 2세그먼트
 //   (구 L1318–1382 · L11685–11859)를 byte-동치 이동 (본문 무수정 — ITEM-P5b).
 //   handleLogout 은 앱 전역 타이머 let 재할당(ESM import-binding write 금지) 탓 app.js 잔류.
+import { safeNextTarget } from "./next-target.js?v=dev";
 import {
   state, apiFetch, showToast, initializeWorkspace,
   authOverlayEl, loginErrorEl, signupErrorEl,
@@ -62,6 +63,22 @@ function showOAuthErrorIfPresent() {
   }
 }
 
+// 로그인 후 복귀. 판정은 `next-target.js` 의 순수 함수가 한다(브라우저 없이 검증 가능해야
+// 하는 부분 — 틀리면 오픈 리다이렉트다). 여기는 그 결과를 실행만 한다.
+//
+// ⚠ 비밀번호 강제 변경 대상은 복귀시키지 않는다. codex 리뷰가 잡은 우회 —
+//   임시 비밀번호 사용자가 `?next=/ai/connect` 로 곧장 넘어가 세션 결합 토큰을 발급받으면
+//   강제 변경 모달을 건너뛴 채 외부 AI 접근이 열린다(서버측에서도 같은 이유로 거절한다).
+function consumeNextTarget() {
+  if (state.user && state.user.must_change_password) { return false; }
+  let raw = null;
+  try { raw = new URLSearchParams(window.location.search).get("next"); } catch (_e) { raw = null; }
+  const target = safeNextTarget(raw, window.location.origin);
+  if (!target) { return false; }
+  window.location.replace(target);
+  return true;
+}
+
 function showAuthOverlay() {
   authOverlayEl.classList.remove("hidden");
   refreshOAuthLoginButtons();
@@ -90,6 +107,10 @@ async function handleLogin(event) {
       return;
     }
     state.user = payload.user;
+    // feature-0041: 인가·연결 진입점이 로그인 때문에 튕긴 경우 원래 가려던 곳으로 돌려보낸다.
+    // 이게 없으면 사용자는 로그인 후 작업 화면에 떨어지고, 무엇을 하려 했는지 스스로 다시
+    // 찾아야 한다(외부 AI 인가 링크는 재현이 어렵다 — 클라이언트가 만든 일회성 URL 이다).
+    if (consumeNextTarget()) { return; }
     hideAuthOverlay();
     await initializeWorkspace();
     // TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 관리자가 비밀번호 초기화한 계정이면
@@ -133,6 +154,9 @@ function showTotpLoginPrompt(totpToken) {
       });
       state.user = res.user;
       overlay.remove();
+      // codex P2 — 여기에 복귀가 없으면 **2FA 를 켠 계정만** 인가 화면으로 못 돌아간다
+      // (보안을 강화한 사용자가 더 나쁜 경험을 받는 형태).
+      if (consumeNextTarget()) return;
       hideAuthOverlay();
       await initializeWorkspace();
       if (res.used_backup_code) showToast("백업 코드로 로그인했습니다. 새 백업 코드 발급을 권장합니다.");
@@ -249,4 +273,4 @@ async function handleSignup(event) {
   }
 }
 
-export { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal };
+export { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget };

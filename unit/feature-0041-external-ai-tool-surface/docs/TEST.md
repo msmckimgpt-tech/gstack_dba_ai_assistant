@@ -240,3 +240,36 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 5 | `tools/list` | **9종** ✅ |
 | 6 | `tools/call open_task` (가짜 토큰) | **상류 401 도달** ✅ (검증된 TLS 로 web 에 닿음) |
 | 7 | 기존 경로 `/livez`·`/api/ai/manifest`·`/api/ai/openapi.json` | 전부 **200** ✅ |
+
+### Run 2026-08-13 (10차) — 인증 접근성 (Environment: local pytest + node)
+
+스위트 **235건 PASS**. 문자열이 아니라 **동작**을 보는 절을 추가했다.
+
+| 뮤테이션 | 결과 |
+|---|---|
+| 오픈 리다이렉트 판정을 URL 해석 → 문자열 검사로 되돌림 | **KILLED** |
+| scope 지원 밖을 조용히 무시 | **KILLED** |
+| consent token 세션 결합 제거 | **KILLED** |
+| consent token 서명 검증 제거 | **KILLED** |
+| consent nonce 단일사용 해제 | **KILLED** |
+
+`safeNextTarget` 은 node 로 9 케이스 실행: `/ai/connect`·쿼리 포함 경로는 허용,
+`//evil.com`·`/\evil.com`·`https://evil.com`·`javascript:`·빈 값은 거절.
+
+### Run 2026-08-13 (11차) — POST-DEPLOY 인증 접근성 (Environment: live · `5f20ee88`)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 서비스 6종 GIT_COMMIT | 전부 `5f20ee88` ✅ |
+| 2 | caddy `no upstreams available` | **0건** ✅ |
+| 3 | `/.well-known/oauth-protected-resource` · `-authorization-server` · 경로접미 변형 | 전부 **200** ✅ |
+| 4 | 엣지 무토큰 401 의 `WWW-Authenticate` | `Bearer resource_metadata="https://…/.well-known/oauth-protected-resource"` ✅ |
+| 5 | 앱 무토큰 401 의 `WWW-Authenticate` | 동일 ✅ (엣지·앱 단서 일치) |
+| 6 | **미로그인 `authorize`** (구 404 자리) | `302 → /?next=…` → **최종 200** ✅ |
+| 7 | `/ai/connect` · `/api/ai/connect/status` | **200** ✅ |
+
+### Run 2026-08-13 (12차) — 가이드 배포 반영 (Environment: live · `86d89b60`)
+
+`GET /api/ai/guide` **200**(23,005 bytes) · `B.0-1`·`/ai/connect`·"셸 스크립트 실행을 요구하지
+말 것"·`invalid_scope` 전부 포함(= 배포본 갱신 반영) · 익명 노출 인스턴스 데이터 **0건** ·
+무중단 `no upstreams available` **0건**.

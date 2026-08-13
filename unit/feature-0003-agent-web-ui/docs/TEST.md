@@ -2744,6 +2744,41 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
 - Run 기록 정본: `docs/test-runs.d/20260813T122457-attach-source-compare.md` Run 2.
 - **Pass/Fail: PASS**
 
+## 20260813T1543-attach-list-name-sort — 첨부 목록 이름순 정렬
+
+- **자동(pytest)** — 신규 `tests/test_attach_list_name_sort.py` **12 passed**: 자연 정렬(숫자 수치비교
+  + 사전순 역단언) · casefold · 한글 가나다 · None/빈 이름 · tie-break(version→id) · PG 형상 행 ·
+  bulk 체인 인접 · 체인 대표=최신 이름 · 목록 API 응답 순서 · 휴지통 이름순 + **절단 SQL 불변**
+  (`DeletedAt DESC` + `LIMIT 200`) · bulk 경로의 헬퍼 경유 · PG alias 계약.
+  회귀 `-k "attach or conv"` **391 passed** · `ruff` clean. 전체 스위트의 유일 실패
+  `test_oauth_exhaustion_gate` 는 컨테이너 `chattr` 부재로 **pristine main 동일 재현** → 귀책 아님.
+- **Environment: Windows-browser (PB-0008)** — **PASS**. 실 Chrome/150 + 격리 프리뷰 **2대 A/B**
+  (`:18099` worktree src = 수정 후 / `:18098` main src = 수정 전), 같은 라이브 대화(첨부 39건,
+  `08051122_`·`v2_`·`v2_1_`·`v3_` 접두 혼재)를 같은 브라우저로 대조:
+  수정 전 = 업로드 순(DB `Id ASC` 일치), 수정 후 = **39건 완전 이름순**.
+  `v2_1_…` 이 `v2_D_…` 앞에 서서 자연 정렬(숫자 조각 우선)이 실측됐다. 화면 순서와 같은 세션의
+  `GET /api/conversations/{cid}/attachments` 응답 순서가 **전건 일치**(프론트 재배열 없음).
+  세션 격리: 자기 생성 탭에서만 조작, 병렬 세션 탭 2개 무접촉, 종료 시 자기 탭만 닫음.
+  라이브 데이터 변경 0(열람 경로만). 증거:
+  `docs/evidence/pb0008-attach-name-sort-{1-sorted,2-baseline}.png`.
+- Run 기록 정본: `docs/test-runs.d/20260813T154300-attach-list-name-sort.md`.
+- **Pass/Fail: PASS** (배포 후 POST-DEPLOY 재실측은 이월).
+
+### 후속 — codex 리뷰 반영분 재검증 (2026-08-13 16:20)
+
+- pytest `test_attach_list_name_sort.py` **14 passed**(N5 초장문 숫자열 `ValueError` 방어 ·
+  S3 snake_case 키 fallback 추가) · 첨부·대화 회귀 **393 passed** · ruff clean.
+- 신규 프론트 하네스 `tests/verify_attach_pill_name_sort.mjs` **13 PASS** — 정본 비교자(`byName`)를
+  소스에서 추출해 실행(로직 재구현 0): 숫자 수치 비교 + **사전순 역단언**(vacuous 아님) · 대소문자 ·
+  한글 · id tie-break · 이름 없는 항목, 배선은 **정렬 호출 개수 2**(두 목록 모두)로 잠금,
+  뮤테이션 역검증 2축.
+- composer 계열 기존 하네스 회귀 0 — `verify_attach_multi_upload`(28) ·
+  `verify_attach_date_compact`(18) · `verify_attach_source_compare`(72) ·
+  `verify_attach_bubble_diff_entry`(47).
+- **미실측(정직 표기)**: 업로드 **직후** pill 목록의 실브라우저 순서는 재지 않았다 — 프리뷰 컨테이너가
+  라이브 DB 를 보므로 업로드 실측은 라이브 데이터 변경을 낳는다(본 cycle 의 '데이터 변경 0' 원칙과 충돌).
+  그 경로는 하네스(정본 비교자 실행 + 배선 개수)로 덮었고, 서버 목록 경로는 PB-0008 A/B 로 실측했다.
+
 ## Run — 20260813T1550-rail-async-relayout (우측 스크롤 ↔ 대화 뱃지 정합, mermaid 지연 렌더)
 
 - **Environment: CLI(headless chromium)** — 신규 `tests/headless/verify_point_rail_async_relayout.py`.

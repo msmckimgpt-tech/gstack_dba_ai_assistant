@@ -195,3 +195,15 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
 - knob `0 이하` → 무제한(집행 skip) / 양수 → 집행 (`test_zero_means_unlimited`)
 - 교차오염 값 길이 임계(8자) → 8자 이상 원문 일치 탐지 / 미만 무시(오탐 방지,
   `test_detect_ignores_short_values_to_avoid_false_positives`)
+
+### 인증 접근성 (2026-08-13)
+
+- [x] 미로그인 `authorize` 404 결함 해소(`/?next=` 복귀 · 로그인 3경로 전부)
+- [x] 동의 화면 + POST 결정(서명 consent token · 세션 결합 · nonce 단일 사용)
+- [x] RFC 8414/9728 discovery 4경로 + 401 `WWW-Authenticate`(앱·엣지)
+- [x] 콘솔 발급 페이지 `/ai/connect`(refresh 없음 · 세션 수명)
+- [x] codex P1×3·P2×3 전건 수정 + 뮤테이션 8종 KILL
+- [x] **머지 전 PB-0008** — 격리 컨테이너에서 결함 2건 적발·수정·재확인
+- [x] 라이브 배포(`5f20ee88`) + POST-DEPLOY 7항 검증
+- [x] 사용자 안내 정본 갱신 — 가이드 최상단 "주소만 등록", 런북은 개발자 회귀용으로 격하
+- [x] 가이드 배포 반영 실측(`86d89b60`) — 이 cycle 종료

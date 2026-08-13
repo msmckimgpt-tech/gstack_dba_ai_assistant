@@ -3747,7 +3747,6 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   main worktree 는 dirty 0 을 유지했다(§13.2.7 F0 — 증거 갱신이 필요 없었다).
 - Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T122457-attach-source-compare.md`.
 - Timestamp: 2026-08-13T13:10:00+09:00
-
 ## CHG-20260813T1550-rail-async-relayout — 우측 스크롤 ↔ 대화 뱃지 정합 (mermaid 지연 렌더)
 
 - REQ-20260813T155000-rail-async-relayout (Minor §12.3). 사용자 보고: "채팅 화면의 우측 스크롤과
@@ -3793,3 +3792,34 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/test-runs.d/20260813T155000-rail-async-relayout.md`(신규),
   `docs/evidence/pb0008-rail-async-relayout-*.png`(신규 5매).
 - Timestamp: 2026-08-13T15:50:00+09:00
+## CHG-20260813T1543-ai-claude-corp-attach-list-name-sort — 첨부 목록 이름순 정렬
+
+- 요청: "프로젝트 내 서비스에서, 첨부파일이 명칭 순으로 정렬되도록 구성해주세요."
+- `unit/feature-0003-agent-web-ui/src/routers/conversations.py`
+  - 신규 `_natural_filename_key(name)` — 숫자 구간은 int, 나머지는 casefold 문자열로 비교하는 정렬 키.
+  - 신규 `_sort_attachment_rows_by_name(rows)` — 목록 정렬(이름 → 원문 → VersionNumber → Id).
+    MySQL dictionary cursor 와 PG mirror 가 **같은 PascalCase 키**(`_PG_ATTACH_SELECT` alias)라 한 함수가 두 경로를 덮는다.
+  - 신규 `_sort_attachment_rows_for_bulk(rows)` — 그룹(root) 사이는 그 체인의 최신 이름으로,
+    그룹 안은 `VersionNumber` ASC 로 정렬(버전 체인 인접 유지).
+  - `list_conversation_attachments` — PG/MySQL rows 합류 직후 정렬(경로별 collation 차이 차단).
+  - `_list_deleted_conversation_attachments` — 표시 순서만 이름순. 절단 SQL(`DeletedAt DESC` + `LIMIT 200`) 불변.
+  - `bulk_download_conversation_attachments` — id 필터·열람 window clip 이 끝난 rows 에 bulk 정렬 적용
+    (ZIP 엔트리명 중복 번호 부여도 이 순서를 따라 결정적).
+- `unit/feature-0003-agent-web-ui/src/static/release-notes-data.js` — 2026-08-13 릴리즈 블록 + `generated` 갱신.
+- 신규 `unit/feature-0003-agent-web-ui/tests/test_attach_list_name_sort.py` — 12축.
+- 프론트 정렬 코드 **추가 0** — 서버 응답 순서가 SSOT(중복 정렬은 두 규칙이 어긋난다).
+- 무변경(의도): `/api/attachments/{id}/versions`(VersionNumber ASC) · LLM 컨텍스트 첨부 주입 순서.
+- Timestamp: 2026-08-13T15:43:00+09:00
+
+## CHG-20260813T1620-ai-claude-corp-attach-name-sort-hardening — codex 리뷰 반영
+
+- `routers/conversations.py`
+  - `_natural_filename_key` — 4,000자 초과 숫자열은 `float("inf")` 로 강등(파이썬 int↔str 4,300자리
+    제한의 `ValueError` 로 목록·휴지통·일괄 다운로드가 통째로 500 이 되는 경로 차단).
+  - `_sort_attachment_rows_by_name` — `original_filename`/`version_number`/`id` snake_case fallback
+    (어느 read 경로가 표기를 바꿔도 정렬이 조용히 무의미해지지 않게).
+- `static/app/composer.js` — `_renderAttachmentPills` 의 `newItems`·`sessionItems` 를 `byName`
+  (`localeCompare` numeric + id tie-break)으로 정렬. 같은 패널의 **두 번째 렌더러**라 서버 정렬만으로는
+  업로드 직후 순서가 삽입 순으로 남았다.
+- 신규 `tests/verify_attach_pill_name_sort.mjs`(13) + pytest 2축 추가(N5 초장문 숫자 · S3 snake_case).
+- Timestamp: 2026-08-13T16:20:00+09:00

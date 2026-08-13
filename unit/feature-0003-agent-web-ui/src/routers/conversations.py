@@ -2241,6 +2241,88 @@ async def upload_conversation_attachment(
     finally:
         conn.close()
 
+def _natural_filename_key(name: Any) -> tuple:
+    """파일명을 '사람이 읽는 순서'로 비교하는 정렬 키 (숫자 구간은 수치 비교).
+
+    사전순만 쓰면 `..._02_...` 다음에 `..._10_...` 이 아니라 `..._100_...` 이 오고
+    (`"10" < "2"`), 실제 첨부는 `01_`, `02_`, `10_` 처럼 자리수가 섞인 접두를 달고
+    올라온다 — 목록이 이름순인데도 사용자가 기대한 순서가 아니게 된다. 숫자 조각은
+    int 로, 그 밖은 casefold 문자열로 비교한다(대소문자만 다른 이름이 갈라지지 않게).
+    한글은 완성형 코드포인트가 곧 가나다순이라 별도 collation 없이 정합한다.
+
+    DB collation 이 아니라 파이썬에서 정하는 이유: 첨부 목록의 read 경로가 MySQL 정본과
+    PG mirror 두 벌이라(§attachment_pg_mirror) `ORDER BY` 에 맡기면 두 경로의 collation
+    차이가 그대로 순서 차이로 새어 나온다. 정렬 규칙을 한 함수로 모으면 어느 경로로
+    읽히든 같은 순서가 나온다.
+    """
+    import re as _re
+    parts = _re.split(r"(\d+)", str(name or ""))
+    key: list[tuple] = []
+    for idx, part in enumerate(parts):
+        if idx % 2:                      # 정규식 캡처 그룹 = 숫자 조각
+            # 파이썬은 4,300 자리를 넘는 int↔str 변환을 거부한다(CVE-2020-10735 완화).
+            # 파일명 컬럼이 255자라 정상 경로에서는 닿지 않지만, legacy·malformed 행 하나가
+            # 목록·휴지통·일괄 다운로드를 통째로 500 으로 떨어뜨리는 것은 정렬이 감수할 위험이
+            # 아니다 — 변환 불가한 초장문 숫자는 "아주 큰 수"(inf)로 두고 자기들끼리는 문자열로
+            # 가른다. 0 으로 강등하면 4,300 자리 숫자가 `1` 보다 앞에 서는 거짓 순서가 된다.
+            key.append((0, int(part), "") if len(part) <= 4_000 else (0, float("inf"), part))
+        elif part:
+            key.append((1, 0, part.casefold()))
+    return tuple(key)
+
+
+def _sort_attachment_rows_by_name(rows: list) -> list:
+    """첨부 행을 파일명 순으로 정렬한다 (동명이인은 버전 → id 로 결정적 tie-break).
+
+    행은 MySQL(dictionary cursor)·PG mirror(alias 로 같은 키) 양쪽 모두 PascalCase 키를
+    쓴다 — `_PG_ATTACH_SELECT` 가 `original_filename AS "OriginalFilename"` 으로 맞춰 둔
+    덕에 한 함수가 두 경로를 모두 받는다.
+    """
+    def _key(r):
+        d = r if isinstance(r, dict) else dict(r)
+        # 키 이름은 PascalCase 가 계약이지만, 어느 read 경로가 snake_case 로 바뀌어도 정렬이
+        # **조용히 무의미해지지 않게**(전부 빈 이름 → 원래 순서 유지) 두 표기를 모두 받는다.
+        name = d.get("OriginalFilename") or d.get("original_filename") or ""
+        return (
+            _natural_filename_key(name),
+            str(name),                                   # casefold 동률(A.sql vs a.sql) 안정화
+            int(d.get("VersionNumber") or d.get("version_number") or 1),
+            int(d.get("Id") or d.get("id") or 0),
+        )
+    return sorted(rows, key=_key)
+
+
+def _sort_attachment_rows_for_bulk(rows: list) -> list:
+    """일괄 다운로드용 정렬 — 목록 패널과 같은 이름순, 단 버전 체인은 한 덩어리로 유지.
+
+    화면에서 이름순으로 본 것을 ZIP·개별 저장 목록에서 업로드 순으로 다시 만나면 같은
+    대화의 같은 첨부인데 순서가 두 벌이 된다. 그렇다고 `scope=all` 에서 정렬 키를 행별
+    이름으로 잡으면 AI 편집으로 이름이 바뀐 버전이 제 체인에서 떨어져 나간다 — 그래서
+    그룹(root) 사이만 그 체인의 **최신 이름**(목록 패널에 보이는 이름)으로 줄 세우고,
+    그룹 안은 `VersionNumber` ASC 를 유지한다.
+    """
+    def _root_of(r) -> int:
+        return int(r.get("RootAttachmentId") or r.get("Id") or 0)
+
+    chain_name: dict[int, tuple[int, str]] = {}
+    for r in rows:
+        root = _root_of(r)
+        ver = int(r.get("VersionNumber") or 1)
+        if ver >= chain_name.get(root, (0, ""))[0]:
+            chain_name[root] = (ver, str(r.get("OriginalFilename") or ""))
+
+    def _key(r):
+        name = chain_name.get(_root_of(r), (0, ""))[1]
+        return (
+            _natural_filename_key(name),
+            name,
+            _root_of(r),
+            int(r.get("VersionNumber") or 1),
+            int(r.get("Id") or 0),
+        )
+    return sorted(rows, key=_key)
+
+
 @router.get("/api/conversations/{cid}/attachments")
 def list_conversation_attachments(cid: str, request: Request, state: str = "active", account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """대화의 첨부 목록. 권한: read.{own,any}.
@@ -2304,6 +2386,12 @@ def list_conversation_attachments(cid: str, request: Request, state: str = "acti
             rows = cur.fetchall() or []
         finally:
             cur.close()
+
+    # 표시 순서 = 파일명 순(REQ-20260813-attach-name-sort). 종전에는 업로드 순(Id ASC)이라
+    # 같은 작업의 `01_`~`09_` 파일이 올린 차례대로 흩어져, 사용자가 이름으로 찾으려면 목록
+    # 전체를 훑어야 했다. 정렬은 두 read 경로(MySQL 정본·PG mirror)가 합류한 **뒤** 한 번만
+    # 적용해 경로별 collation 차이가 순서로 새지 않게 한다.
+    rows = _sort_attachment_rows_by_name(list(rows or []))
 
     # ② TASK-0285: 각 첨부의 버전 체인 길이(version_count) + AI 수정본 개수(ai_version_count)를
     # 집계해 목록에 표면화한다. 목록 SQL 은 최신 버전만 노출(SupersededAt IS NULL)하므로, 같은
@@ -2386,6 +2474,12 @@ def _list_deleted_conversation_attachments(conn, cid: str, account=None) -> JSON
         rows = cur.fetchall() or []
     finally:
         cur.close()
+
+    # 활성 목록과 같은 규칙으로 이름순 표시(REQ-20260813-attach-name-sort). 위 SQL 의
+    # `DeletedAt DESC` + `LIMIT 200` 은 **무엇을 가져올지**(최근 삭제분)를 정하는 절단
+    # 기준이라 그대로 두고, 가져온 것의 표시 순서만 바꾼다 — 정렬을 SQL 로 옮기면 이름이
+    # 앞선 오래된 삭제분이 200 칸을 채워 방금 지운 파일이 휴지통에서 사라진다.
+    rows = _sort_attachment_rows_by_name(list(rows or []))
 
     # 관리 권한이 있는 행만 **반환**한다 — 표시만 숨기면 응답에는 원본 파일명·크기·
     # sha256 이 그대로 실려, 삭제 전에는 전원이 보던 것이 삭제 **후에도** 계속 보인다.
@@ -2557,6 +2651,8 @@ def bulk_download_conversation_attachments(
         return app._json_error(
             "다운로드할 첨부가 없습니다." if not clipped_count
             else "열람 가능한 범위에 첨부가 없습니다.", 404)
+
+    rows = _sort_attachment_rows_for_bulk(rows)
 
     if fmt == "manifest":
         # 저장할 최종 이름은 **서버가 정한다** — 프론트가 같은 규칙을 복제하면 ZIP 경로와

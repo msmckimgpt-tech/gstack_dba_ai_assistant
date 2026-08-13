@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>외부 AI 연결 요청</title>
+  <link rel="stylesheet" href="/static/ai-connect.css?v=dev" />
+</head>
+<body class="aic-body">
+  <main class="aic-card">
+    <p class="aic-brand">Database Query Assistant</p>
+    <h1>외부 AI 연결 요청</h1>
+    <p class="aic-lead" id="consentLead">요청 내용을 확인하는 중…</p>
+
+    <dl class="aic-rows aic-hidden" id="consentRows">
+      <div class="aic-row"><dt>클라이언트</dt><dd id="consentClient"></dd></div>
+      <div class="aic-row"><dt>계정</dt><dd id="consentAccount"></dd></div>
+      <div class="aic-row"><dt>요청 권한</dt><dd id="consentScope"></dd></div>
+      <div class="aic-row"><dt>돌아갈 곳</dt><dd id="consentRedirect"></dd></div>
+    </dl>
+
+    <div class="aic-note aic-hidden" id="consentNote">
+      <p>허용하면 이 AI 가 <strong>내 계정 권한 범위 안에서</strong> 데이터를 조회합니다. 내 권한 밖의 데이터에는 닿지 못합니다.</p>
+      <p>추론에 드는 <strong>LLM 비용은 호출한 쪽</strong>이 부담합니다. 이 서비스의 사용량이 아닙니다.</p>
+      <p><strong>로그아웃하면 이 연결도 끊깁니다.</strong> 조회 내역은 감사 기록에 남습니다.</p>
+    </div>
+
+    <p class="aic-status" id="consentStatus"></p>
+
+    <div class="aic-actions aic-hidden" id="consentActions">
+      <button type="button" class="aic-btn" id="consentDeny">거부</button>
+      <button type="button" class="aic-btn aic-btn--primary" id="consentApprove">허용</button>
+    </div>
+
+    <p class="aic-foot">이 요청을 시작한 기억이 없다면 <strong>거부</strong>하세요. 자세한 내용은 <a href="/api/ai/guide" target="_blank" rel="noopener">연동 가이드</a>.</p>
+  </main>
+  <script src="/static/oauth-consent.js?v=dev"></script>
+</body>
+</html>

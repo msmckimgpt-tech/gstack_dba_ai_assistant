@@ -1548,18 +1548,26 @@ def _require_permission(
 # 응답 셰이프({"error":msg}+status)를 _AuthError + exception handler 로 1:1 보존한다.
 # 핸들러는 점진적으로 이 의존성으로 마이그한다(DI_SEAM_BLUEPRINT.md). 도입 시점엔 미사용 → behavior-neutral.
 class _AuthError(Exception):
-    """인증/인가 실패 신호 — _auth_error_handler 가 {"error":msg}+status 로 직렬화한다."""
+    """인증/인가 실패 신호 — _auth_error_handler 가 {"error":msg}+status 로 직렬화한다.
 
-    def __init__(self, message: str, status_code: int) -> None:
+    feature-0041: `headers` 는 선택. 외부 AI 도구 표면의 401 은 `WWW-Authenticate` 로
+    **인증 방법의 위치**를 알려야 MCP 클라이언트가 스스로 인증을 시작할 수 있다(RFC 9728).
+    기존 호출부는 인자를 안 주므로 응답 셰이프·헤더 모두 무변경이다.
+    """
+
+    def __init__(self, message: str, status_code: int,
+                 headers: dict[str, str] | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.headers = headers
 
 
 @app.exception_handler(_AuthError)
 async def _auth_error_handler(request: Request, exc: _AuthError) -> JSONResponse:
     # _json_error 와 동일 셰이프. HTTPException 의 {"detail": ...} 회귀를 방지한다.
-    return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+    return JSONResponse({"error": exc.message}, status_code=exc.status_code,
+                        headers=getattr(exc, "headers", None) or None)
 
 
 def get_conn():

@@ -6,7 +6,7 @@ import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgr
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
 // messages.js 의 "../app.js" import 계약 보존 (re-export) — 첨부 다운로드 진입점.
 export { _downloadAttachmentById };
-import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal } from "./app/auth.js?v=dev";
+import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget } from "./app/auth.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
 export { bindBackdropDismiss };
@@ -7504,6 +7504,9 @@ async function initialize() {
       renderComposer();
       return;
     }
+    // feature-0041: 이미 로그인된 채로 `?next=` 를 들고 들어온 경우(다른 탭에서 로그인 등)
+    // 작업 화면을 그리지 않고 바로 원래 목적지로 보낸다.
+    if (consumeNextTarget()) return;
     hideAuthOverlay();
     state.user = session.user;
     await initializeWorkspace();
