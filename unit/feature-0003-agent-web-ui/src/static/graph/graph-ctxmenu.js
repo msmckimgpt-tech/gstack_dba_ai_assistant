@@ -9,7 +9,7 @@ import { _metaRelAdjacency } from "./graph-rellayout.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { searchVariants } from "../hangul-qwerty.js?v=dev";
 import { _metaSimGroups } from "./graph-simgroups.js?v=dev";
-import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKo, _metaDbObjKind, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
+import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKo, _metaDbObjKind, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphKeepInView, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 
 // ── graph-ctxmenu: 노드 우클릭 상세 상호작용 (REQ-20260702T113000) ──────────────────
@@ -1038,6 +1038,10 @@ async function _metaGraphToggleColumns(key) {
     if (colNodes.length > 0) {
       _metaGraph.expanded.add(key);
       await _metaG6Apply(false);   // fit=false — 제자리 펼침(버그② — 카메라 점프·재확산 없음).
+      // graph-keep-in-view(사용자 요청 2026-08-13): 컬럼이 늘면 shelf 가 재배치돼 **방금 클릭한 테이블이
+      //   화면 밖으로 밀려날 수 있다**(종전엔 이 경로에 카메라 보정이 전혀 없어 사용자가 노드를 다시
+      //   찾아야 했다). 벗어났을 때만 최소 이동으로 되돌린다 — 보이는 채로 끝나면 카메라는 그대로다.
+      _metaGraphKeepInView(key, seq);   // fire-and-forget: 상태줄·busy 해제를 지연시키지 않는다(seq 로 폐기)
       _metaSetBusy(key, false, seq);   // §57.8: busy 는 bake 로 보존 — 소유 op 가 직접 해제
       _metaGraphStatus(`${nm} 컬럼 ${colNodes.length}개 펼침 — "−" 버튼으로 접기`);
     } else {
@@ -1117,7 +1121,10 @@ async function _metaGraphExpandSchema(key, opts) {
   if (silent) return "expanded";   // 호출측(LoadRoots)이 apply+fit — 이중 렌더 방지
   await _metaG6Apply(false);       // 제자리 원칙(ADR-004 ②) — 전체 fit 없이.
   _metaSetBusy(key, false, seq);   // §57.8: busy 는 bake 로 보존 — 소유 op 가 직접 해제
-  try { await _metaGraph.graph.focusElement(key, false); } catch (_) {}   // shelf 재배치 대비 시야 고정(무애니)
+  // graph-keep-in-view(2026-08-13): 종전 `focusElement(key,false)` 는 **이미 잘 보이는 카드까지 매번
+  //   중앙으로 끌어와** 화면이 튀었다(제자리 원칙과 모순). 같은 의도('shelf 재배치 대비 시야 고정')를
+  //   벗어났을 때만 최소 이동으로 달성한다. 카메라 API 부재 폴백 번들은 fallbackFocus 로 구 동작 보존.
+  _metaGraphKeepInView(key, seq, { fallbackFocus: true });
   _metaGraphStatus(`${nm}: 테이블·함수 ${cnt}개 펼침 — "−" 로 접기, 테이블 클릭=컬럼${note}`);
   return "expanded";
 }
@@ -1127,7 +1134,10 @@ function _metaGraphCollapseSchema(key) {
   if (!_metaGraph.graph || !key) return;
   if (!_metaGraph.schemaExpanded.has(key)) return;
   _metaGraph.schemaExpanded.delete(key);
-  _metaG6Apply(false);
+  // graph-keep-in-view: 접기도 shelf 를 재배치한다 — 카드가 화면 밖으로 밀리면 되돌린다(seq 는 현재
+  //   세대를 그대로 써서 이후 조작이 들어오면 자동 폐기).
+  const _seq = _metaGraph._opSeq;
+  _metaG6Apply(false).then(() => _metaGraphKeepInView(key, _seq)).catch(() => {});
   _metaGraphStatus(`'${_metaComboName(key)}' 스키마를 접었습니다 — 카드를 클릭하면 다시 펼쳐집니다.`);
 }
 
@@ -1184,7 +1194,9 @@ function _metaGraphCollapse(key) {
   _metaGraph.expanded.delete(key);
   _metaGraph.colsByTable.delete(key);   // graph-perf-bg: 컬럼 전부 제거 → 인덱스 카운트 해제(O(1) hasCols 정합).
   if (_metaGraph.introspected) _metaGraph.introspected.delete(key);
-  _metaG6Apply(false);
+  // graph-keep-in-view: 컬럼 제거로 shelf 가 다시 압축되면서 테이블이 화면 밖으로 밀릴 수 있다.
+  const _seq = _metaGraph._opSeq;
+  _metaG6Apply(false).then(() => _metaGraphKeepInView(key, _seq)).catch(() => {});
   _metaGraphStatus(`'${nm}' 테이블 컬럼을 접었습니다 — 테이블을 클릭하면 다시 펼쳐집니다.`);
 }
 

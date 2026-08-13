@@ -97,6 +97,51 @@ export const PixiAdapterPure = {
     return { zoom: nz, x: cursor.x - mx * nz, y: cursor.y - my * nz };
   },
 
+  // graph-move-anim(사용자 요청 2026-08-13 "노드 위치 재배치가 깜빡이는 순식간이라 이동을 인지할 수 없다"):
+  //   직전 씬 대비 **어느 노드를 애니메이션으로 옮길지** 고르는 순수 판정. `draw()` 의 오브젝트 풀 diff 는
+  //   위치를 서명(nodeSig)에 담아 이동 노드를 파기→최종 위치 재생성하므로 중간 프레임이 아예 없다 —
+  //   여기서 고른 노드만 어댑터가 `from → to` 로 트윈한다.
+  //   선별 기준(비용 상한이 곧 정확성 — 대형 스코프에서 전량 트윈은 프레임을 무너뜨린다):
+  //     ① 직전 씬과 새 씬 **양쪽에 존재**하고 이동량이 minDelta 초과 — 신규/소멸 노드는 대상 아님.
+  //     ② `vis`(model 좌표 가시 rect, 마진 포함) 안에 **출발 또는 도착**이 걸린 노드만 — 화면 밖 이동은
+  //        보이지 않으므로 애니메이션 가치가 0 이고 비용만 든다.
+  //     ③ `cap` 초과분은 잘라내고 `skipped` 로 **보고**한다(무음 절단 금지 — AGENTS.md §16.7 G9-b).
+  //     ④ **씬 교체 감지** — 직전과 겹치는 노드 비율이 minOverlap 미만이면 재배치가 아니라 새 화면이다
+  //        (스코프 전환·검색·중심보기). 이때 트윈은 '날아다니는 화면'이 되므로 통째로 포기한다.
+  //   반환 {items:[{id,from:[x,y],to:[x,y]}], moved, skipped, reason}. reason 은 빈 결과의 사유(관측용).
+  moveTweenPlan(prevPos, nodes, opts) {
+    const o = opts || {};
+    const minDelta = (o.minDelta != null) ? o.minDelta : 0.5;
+    const cap = (o.cap != null) ? o.cap : 600;
+    const minOverlap = (o.minOverlap != null) ? o.minOverlap : 0.3;
+    const vis = o.vis || null;
+    const list = nodes || [];
+    const empty = (reason) => ({ items: [], moved: 0, skipped: 0, reason });
+    if (!prevPos || typeof prevPos.get !== "function" || !prevPos.size || !list.length) return empty("no-prev");
+    let overlap = 0;
+    for (const n of list) if (prevPos.has(n.id)) overlap += 1;
+    // 분모는 **양쪽 씬의 큰 쪽**이다. 새 씬 기준만 쓰면 이전 씬의 부분집합(검색 prune·모드 전환으로 500개
+    //   중 1개만 남는 경우)이 겹침 100% 로 계산돼 가드를 그대로 통과한다 — 남은 1개가 옛 배치에서
+    //   날아오는 그림이 되고, 그것이 정확히 이 가드가 막으려던 '새 화면' 이다(codex review 2차 P2).
+    if (overlap / Math.max(list.length, prevPos.size) < minOverlap) return empty("scene-switch");
+    const inVis = (x, y) => !vis || (x >= vis.x0 && x <= vis.x1 && y >= vis.y0 && y <= vis.y1);
+    const items = [];
+    let moved = 0, skipped = 0;
+    for (const n of list) {
+      const p = prevPos.get(n.id);
+      if (!p) continue;
+      const s = n.style || {};
+      const tx = s.x, ty = s.y;
+      if (!isFinite(tx) || !isFinite(ty) || !isFinite(p[0]) || !isFinite(p[1])) continue;
+      if (Math.abs(tx - p[0]) <= minDelta && Math.abs(ty - p[1]) <= minDelta) continue;
+      moved += 1;
+      if (!inVis(p[0], p[1]) && !inVis(tx, ty)) { skipped += 1; continue; }   // 화면 밖 이동 — 즉시 반영
+      if (items.length >= cap) { skipped += 1; continue; }                    // 상한 초과 — 즉시 반영(보고됨)
+      items.push({ id: n.id, from: [p[0], p[1]], to: [tx, ty] });
+    }
+    return { items, moved, skipped, reason: items.length ? "" : (moved ? "all-filtered" : "no-move") };
+  },
+
   // 대시 세그먼트: 폴리라인을 [on,off] 반복으로 분할 → [[x1,y1,x2,y2],...] (D2 점선 등가).
   dashSegments(x1, y1, x2, y2, dash) {
     const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
@@ -147,11 +192,14 @@ export const PixiAdapterPure = {
   },
 
   // 노드 bbox (모델 좌표, 좌상단 기준). rect=[w,h] 중심, circle=지름 중심.
-  nodeBBox(n) {
+  //   `at`(선택, [x,y]): 중심 좌표 override. graph-move-anim 트윈 중에는 모델(`n.style`)이 이미 **최종**
+  //   위치라, 화면에 보이는 위치로 hit-test 하려면(WYSIWYG) 중심만 갈아끼운 bbox 가 필요하다.
+  nodeBBox(n, at) {
     const s = n.style || {};
-    if (n.type === "circle") { const r = (typeof s.size === "number" ? s.size : 11) / 2; return { x: s.x - r, y: s.y - r, w: 2 * r, h: 2 * r }; }
+    const cx = at ? at[0] : s.x, cy = at ? at[1] : s.y;
+    if (n.type === "circle") { const r = (typeof s.size === "number" ? s.size : 11) / 2; return { x: cx - r, y: cy - r, w: 2 * r, h: 2 * r }; }
     const w = Array.isArray(s.size) ? s.size[0] : (s.size || 100), h = Array.isArray(s.size) ? s.size[1] : 24;
-    return { x: s.x - w / 2, y: s.y - h / 2, w, h };
+    return { x: cx - w / 2, y: cy - h / 2, w, h };
   },
 
   // combo bbox = 자식 union + padding (G6 auto-fit 대체). combo 미소속 노드는 무시.
@@ -202,6 +250,24 @@ export const PixiAdapterPure = {
     for (const n of bucket) {
       if (filter && !filter(n)) continue;
       const b = this.nodeBBox(n);
+      if (mx < b.x || mx > b.x + b.w || my < b.y || my > b.y + b.h) continue;
+      const z = (n.style && n.style.zIndex) || 0;
+      if (z >= bestZ) { bestZ = z; best = n; }
+    }
+    return best;
+  },
+
+  // graph-move-anim: **이동 중인 노드**만 대상으로 하는 선형 hit-test. 트윈 중 노드는 모델(최종) 좌표에
+  //   버킷팅된 grid 로는 찾을 수 없다(보이는 자리는 비어 있고 목적지가 눌린다). grid 를 매 프레임 다시
+  //   굽는 방법도 있으나 그건 **화면 전체 노드**에 비례하는 비용을 22 프레임 반복하는 것이라, 이동 대상이
+  //   상한(트윈 cap)으로 묶인 선형 스캔을 **포인터 이벤트당 1회** 하는 쪽이 싸다(프레임당 비용 0).
+  //   movers: [{n, at:[x,y]}] — `at` 은 트윈이 매 프레임 제자리 갱신하는 배열이라 재할당이 없다.
+  hitTestMoving(mx, my, movers, filter) {
+    let best = null, bestZ = -Infinity;
+    for (const m of (movers || [])) {
+      const n = m.n;
+      if (filter && !filter(n)) continue;
+      const b = this.nodeBBox(n, m.at);
       if (mx < b.x || mx > b.x + b.w || my < b.y || my > b.y + b.h) continue;
       const z = (n.style && n.style.zIndex) || 0;
       if (z >= bestZ) { bestZ = z; best = n; }
@@ -494,6 +560,21 @@ const HOVER_EXPAND_MS = 160;
 const HOVER_COLLAPSE_MS = 110;   // 이탈 축소 — 확장보다 짧게(되돌아감은 빠르게 느껴지는 게 자연스럽다)
 const HOVER_EXPAND_MAXW = 460;
 
+// graph-move-anim(사용자 요청 2026-08-13): 재배치 이동 트윈 파라미터.
+//   MS = 지속시간. 360ms 는 "이동을 눈으로 좇을 수 있는" 하한(~250ms)과 "기다린다고 느끼는" 상한(~500ms)
+//     사이다 — 펼침은 사용자가 방금 클릭한 결과라 지연으로 읽히면 안 된다.
+//   CAP = 한 번에 트윈할 노드 수 상한. 초과분은 즉시 최종 위치(기존 동작) + `skipped` 로 관측에 남긴다.
+//   VIS_MARGIN = 가시 rect 판정 마진(화면 px). 화면 밖에서 들어오는 노드도 도입부가 보이도록 여유를 준다.
+//   MIN_OVERLAP = 직전 씬과 겹치는 노드 비율 하한. 미만이면 '재배치'가 아니라 '씬 교체'라 트윈하지 않는다.
+//   EDGE_CAP = 매 프레임 따라 그려야 하는 관계선 수 상한. 노드 수가 아니라 **관계선 수**가 프레임
+//     비용의 지배항이라(허브 노드 하나가 수백 선을 끈다) 노드 상한만으로는 비용이 안 잡힌다.
+//     초과하면 트윈 자체를 포기한다 — 끊기는 애니메이션은 없느니만 못하다(관측에 사유를 남긴다).
+const MOVE_TWEEN_MS = 360;
+const MOVE_TWEEN_CAP = 600;
+const MOVE_TWEEN_EDGE_CAP = 1500;
+const MOVE_TWEEN_VIS_MARGIN = 240;
+const MOVE_TWEEN_MIN_OVERLAP = 0.3;
+
 // graph-perf: 렌더 비용 관측 지점(graph-state.js `_metaPerf` 와 같은 전역을 공유한다 — 어댑터는
 //   graph-state 를 import 하지 않는 엔진-중립 모듈이라 로컬로 lazy-init 한다). 계측 전용·fail-soft.
 function _pxPerf() {
@@ -514,6 +595,13 @@ export class PixiGraphAdapter {
     this._built = { nodes: [], edges: [], combos: [] };
     this._objs = new Map();            // id → PIXI.Container/Graphics (오브젝트 풀)
     this._hitGrid = null;
+    // graph-move-anim: 재배치 이동 트윈 상태. _prevPos=직전 씬 좌표 스냅샷(setData 가 캡처, draw 가 소비),
+    //   _tweenPos=트윈 중에만 유효한 화면좌표 오버레이(관계선 끝점), _moveTween=세대 토큰.
+    this._userCamSeq = 0;       // 사용자 카메라 조작(팬·줌·미니맵) 세대 — keep-in-view 추종의 중단 신호
+    this._prevPos = null;
+    this._tweenPos = null;
+    this._tweenMovers = null;   // 트윈 중 노드 [{n, at}] — hit-test 선형 스캔 대상
+    this._moveTween = null;
     this._labelRes = Math.min((typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1) * 2, 4);
     // graph-label-hover-expand: hover 확장 상태. _hoverId=현재 확장 대상 노드 id(변화 시에만 재구성),
     //   _labelWCache=전체 라벨 폭 측정 캐시(잘림 판정·목표폭 산출 — 폰트 파라미터+텍스트가 같으면 폭 동일).
@@ -689,7 +777,16 @@ export class PixiGraphAdapter {
   }
   _boundsOf(id) {
     const n = this._built.nodes.find(x => x.id === id);
-    if (n) { const b = PixiAdapterPure.nodeBBox(n); return { x: b.x, y: b.y, width: b.w, height: b.h }; }
+    // graph-move-anim: 트윈 중이면 **보이는 위치**의 bbox 를 준다. 카메라 보정(`_metaGraphKeepInView`)과
+    //   중앙 focus(`_metaGraphAnimateFocus`)가 이 값을 읽는데, 최종 좌표를 주면 노드가 아직 반대편에
+    //   그려져 있는 동안 카메라가 목적지로 가버려 **애니메이션 내내 그 노드가 화면 밖**이 된다 —
+    //   "선택한 노드를 잃지 않게" 라는 요구 자체를 뒤집는다(codex review 4차 P2). 두 카메라 루프 모두
+    //   매 프레임 재조회하는 follow 구조라, 움직이는 목표를 그대로 따라가 안착 시점에 함께 수렴한다.
+    if (n) {
+      const p = this._tweenPos && this._tweenPos.get(id);
+      const b = PixiAdapterPure.nodeBBox(n, p || null);
+      return { x: b.x, y: b.y, width: b.w, height: b.h };
+    }
     const c = this._built.combos.find(x => x.id === id);
     if (c) { const b = PixiAdapterPure.comboBBox(c.id, this._built.nodes, (c.style || {}).padding); if (b) return { x: b.x, y: b.y, width: b.w, height: b.h }; }
     return null;
@@ -750,6 +847,7 @@ export class PixiGraphAdapter {
       // graph-label-hover-expand: 줌으로 커서 아래 노드가 바뀌어도 pointermove 는 안 온다 → 최신 커서 좌표를
       //   먼저 기록해 두면 _applyCam 의 _revalidateHover 가 그 좌표로 재판정한다.
       const s = scr(e); this._hoverPt = s;
+      this._userCamSeq += 1;   // graph-move-anim: 사용자 줌도 카메라 소유권 회수
       this._applyCam(PixiAdapterPure.zoomAroundCursor(this._cam, e.deltaY < 0 ? 1.12 : 0.9, s, this.zoomRange)); }, { passive: false });
     const onDown = (e) => {
       this._ptrDown = true;   // graph-label-hover-expand: 버튼 눌림 동안 hover 판정 정지(아래 _probeHover 가드)
@@ -775,7 +873,7 @@ export class PixiGraphAdapter {
         else { mode = "nodedrag"; this._emitDrag("dragstart", down.hit, e, s, mx, my); }
         this._setLabelHover(null);   // graph-label-hover-expand: 팬/드래그 개시 = hover 종료(확장 카드 잔상 방지)
       }
-      if (mode === "pan") this._applyCam({ zoom: this._cam.zoom, x: down.ox + dx, y: down.oy + dy });
+      if (mode === "pan") { this._userCamSeq += 1; this._applyCam({ zoom: this._cam.zoom, x: down.ox + dx, y: down.oy + dy }); }   // graph-move-anim: 사용자 팬 = 카메라 소유권 회수(진행 중 keep-in-view 추종 중단)
       else if (mode === "nodedrag") {
         // grabbed 요소를 델타만큼 이동(모델 좌표) — graph-core 핸들러가 종속을 translateElementTo 로 따라 옮긴다.
         const ddx = mx - down.lmx, ddy = my - down.lmy; down.lmx = mx; down.lmy = my;
@@ -851,7 +949,9 @@ export class PixiGraphAdapter {
     //   "이름 뒷부분을 보려고 다가가면 닫히는" 깜빡임이 난다(codex review P1).
     const cur = this._hoverCard;
     if (cur && PixiAdapterPure.hoverCardHit(mx, my, cur.g, cur.w, cur.c ? cur.c.position.x : null)) return;   // 클램프된 실제 중심 기준
-    const hit = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => !this._isCatBg(nd)) : null;
+    // graph-move-anim: `_pick` 과 **같은 판정기**를 쓴다 — 한쪽만 트윈을 고려하면 보이는 노드를 hover 해도
+    //   카드가 안 뜨거나 엉뚱한 노드가 뜬다(codex review 2차 P2).
+    const hit = this._hitNodes(mx, my, (nd) => !this._isCatBg(nd));
     this._setLabelHover(hit || null);
   }
 
@@ -1059,17 +1159,34 @@ export class PixiGraphAdapter {
     const cur = this._hoverCard;
     if (cur && cur.node && PixiAdapterPure.hoverCardHit(mx, my, cur.g, cur.w, cur.c ? cur.c.position.x : null)) return cur.node;
     // tier1: 실 요소(카드·테이블·GB/GH/GX·CATH/CATX 등, cat-bg 제외) — z 최상위
-    const n = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => !this._isCatBg(nd)) : null;
+    const n = this._hitNodes(mx, my, (nd) => !this._isCatBg(nd));
     if (n) return n;
     // tier2: 스키마 클러스터 배경(combo) — 카테고리 밴드보다 우선
     const c = PixiAdapterPure.hitTestCombo(mx, my, this._built.combos || [], this._built.nodes || []);
     if (c) return Object.assign({ __combo: true }, c);
     // tier3: 카테고리 밴드 배경(cat-bg) — 밴드 고유 여백/헤더밖 영역 우클릭·드래그만 카테고리로
-    const cb = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => this._isCatBg(nd)) : null;
-    return cb || null;
+    return this._hitNodes(mx, my, (nd) => this._isCatBg(nd)) || null;
+  }
+  // graph-move-anim: 노드 hit-test 단일 진입점 — **보이는 대로 눌린다**(WYSIWYG).
+  //   트윈 중이면 ① grid 에서 이동 중인 노드를 제외하고(그 버킷은 목적지라 stale) ② 이동 노드는 화면
+  //   좌표로 선형 스캔한 뒤 ③ z 가 큰 쪽을 고른다. 평시(트윈 없음)엔 기존 grid 경로 그대로 = 무회귀.
+  //   `_pick`(클릭·우클릭·드래그)과 `_probeHover`(라벨 확장) 가 **같은 함수**를 쓰게 해, 한쪽만 고쳐
+  //   "클릭은 되는데 hover 는 안 되는" 반쪽 상태가 나오지 않게 한다.
+  _hitNodes(mx, my, filter) {
+    const tp = this._tweenPos, mv = this._tweenMovers;
+    const gridFilter = tp ? ((nd) => (!filter || filter(nd)) && !tp.has(nd.id)) : filter;
+    const gridHit = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, gridFilter) : null;
+    if (!mv || !mv.length) return gridHit;
+    const movHit = PixiAdapterPure.hitTestMoving(mx, my, mv, filter);
+    if (!movHit) return gridHit;
+    if (!gridHit) return movHit;
+    const zg = (gridHit.style && gridHit.style.zIndex) || 0, zm = (movHit.style && movHit.style.zIndex) || 0;
+    return zm >= zg ? movHit : gridHit;
   }
   // graph-edge-flow: zoom 을 넘겨 곡선 근사 해상도를 화면 기준으로 맞춘다(줌아웃 시 샘플 절약).
-  _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom), this._cam.zoom); }
+  //   끝점은 `_resolvePos`(트윈 오버레이 우선) 로 해소한다 — 관계선은 트윈 중 **그려진 좌표**를 따라가므로
+  //   판정도 같은 좌표여야 한다(모델 최종 좌표로 판정하면 보이는 선을 눌러도 빗나간다, codex review 2차 P2).
+  _pickEdge(mx, my) { const posOf = (id) => this._resolvePos(id); return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom), this._cam.zoom); }
   _isCombo(id) { return this._built.combos.some(c => c.id === id); }
   // 이슈#3: 미니맵 상호작용 — 스크린(canvas-relative) 점이 미니맵 박스 안인가.
   _inMinimap(sx, sy) {
@@ -1085,6 +1202,7 @@ export class PixiGraphAdapter {
     const lx = Math.max(0, Math.min(mw, sx - mm.c.position.x)), ly = Math.max(0, Math.min(mh, sy - mm.c.position.y));
     const [mx, my] = PixiAdapterPure.minimapToModel(lx, ly, pr);
     const [vw, vh] = this.getSize(), cam = this._cam;
+    this._userCamSeq += 1;   // graph-move-anim: 미니맵 클릭·드래그도 사용자 카메라 조작
     this._applyCam({ zoom: cam.zoom, x: vw / 2 - mx * cam.zoom, y: vh / 2 - my * cam.zoom });
   }
   // M2: graph-core 의 _metaElementDragEnable 을 G6-shape 이벤트로 호출(주입 시). 미주입이면 항상 허용.
@@ -1093,6 +1211,11 @@ export class PixiGraphAdapter {
     try { return fn({ target: { id: hit.id }, targetType: hit.__combo ? "combo" : "node", buttons: (e && e.buttons) || 1, button: (e && typeof e.button === "number") ? e.button : 0 }); } catch (_) { return true; }
   }
   _moveElement(id, ddx, ddy) {
+    // graph-move-anim: **사용자 조작이 애니메이션을 이긴다**. 트윈이 살아 있는 채로 드래그하면 매 프레임
+    //   트윈이 캡처한 from/to 로 되돌려 써서 손끝과 화면이 어긋나고, 종단 처리가 stale 목적지로 되돌린다
+    //   (codex review 3차 P1). 정지 = 대상 전원을 최종 위치에 즉시 안착시키고 오버레이를 걷는 것이라,
+    //   이후 드래그는 평시와 동일한 경로(모델 좌표 갱신)로 진행된다.
+    if (this._moveTween) this._stopMoveTween();
     const n = this._built.nodes.find(x => x.id === id);
     if (n) { n.style.x += ddx; n.style.y += ddy; const o = this._objs.get(id); if (o) o.position.set(n.style.x, n.style.y); this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128); this._scheduleEdgeRefresh([id]); return; }   // B1: hit-grid 재구성(이동 후 클릭 유지). graph-edge-follow-drag: 이동 노드의 관계선 추종(perf: rAF 코얼레싱)
     // combo(스키마 배경) 드래그: 자식 노드 전체 + combo 카드 배경(자식 파생 bbox 이므로 같은 델타)을 함께 이동(M1)
@@ -1151,9 +1274,127 @@ export class PixiGraphAdapter {
   //   현재 좌표), 비-node(combo/장식) 또는 인덱스 부재는 getElementPosition(bbox 중심) 폴백. getElementPosition 의
   //   O(N) nodes.find 를 incident 엣지마다 2회 돌던 비용(O(incident×N)) 제거.
   _resolvePos(id) {
+    // graph-move-anim: 이동 트윈 중에는 **화면에 보이는 좌표**가 관계선의 끝점이어야 한다. 모델
+    //   (`n.style`)은 이미 최종 위치라, 이 오버레이가 없으면 선이 노드를 떠나 목적지에 먼저 가 붙는다.
+    //   오버레이는 트윈 수명 동안만 존재하고(종료 시 null) 모델은 끝까지 건드리지 않는다 —
+    //   `_metaG6Build` 의 배치 메모이즈·미니맵 서명·hit-grid 가 전부 모델을 읽기 때문이다.
+    const tp = this._tweenPos;
+    if (tp) { const p = tp.get(id); if (p) return [p[0], p[1]]; }
     const nb = this._nodeById;
     if (nb) { const n = nb.get(id); if (n) return [n.style.x, n.style.y]; }
     return this.getElementPosition(id);
+  }
+
+  // ── graph-move-anim: 재배치 이동 트윈 ─────────────────────────────────────────
+  //   요청(REQ): "노드 위치 재배치가 깜빡이는 순식간이라 각 이동을 인지하기 어렵다 — 애니메이션으로
+  //   사용자가 이동을 인지하게". 전역 G6 애니메이션은 레이아웃 셔플을 재유발하므로 켜지 않고
+  //   (graph-core `_metaGraphAnimateFocus` 주석의 같은 근거), **결정론 배치는 그대로 둔 채** 어댑터가
+  //   컨테이너 좌표만 `from → to` 로 옮긴다. 모델·서명·미니맵·hit-grid 는 최종 값을 유지한다.
+  //   비활성 조건(전부 기존 즉시 반영으로 안전 폴백): prefers-reduced-motion · rAF 부재 ·
+  //   씬 교체 · 이동 0 · 화면 밖 · 상한 초과. 관측은 `__META_GRAPH_PERF.move`.
+  _startMoveTween(built) {
+    const prev = this._prevPos; this._prevPos = null;
+    if (!prev || !this.world) return;
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+    let reduced = false;
+    try { reduced = !!(typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) {}
+    if (!raf || reduced) { try { _pxPerf().move = { items: 0, reason: reduced ? "reduced-motion" : "no-raf" }; } catch (_) {} return; }
+    // 가시 rect(model 좌표) — 화면 밖 이동은 트윈하지 않는다(보이지 않는 비용).
+    let vis = null;
+    try {
+      const [vw, vh] = this.getSize(), cam = this._cam, m = MOVE_TWEEN_VIS_MARGIN;
+      if (isFinite(vw) && isFinite(vh) && vw > 0 && vh > 0) {
+        const a = PixiAdapterPure.screenToModel(-m, -m, cam), b = PixiAdapterPure.screenToModel(vw + m, vh + m, cam);
+        vis = { x0: Math.min(a[0], b[0]), y0: Math.min(a[1], b[1]), x1: Math.max(a[0], b[0]), y1: Math.max(a[1], b[1]) };
+      }
+    } catch (_) { vis = null; }
+    const plan = PixiAdapterPure.moveTweenPlan(prev, built.nodes || [], {
+      vis, cap: MOVE_TWEEN_CAP, minOverlap: MOVE_TWEEN_MIN_OVERLAP });
+    try { _pxPerf().move = { items: plan.items.length, moved: plan.moved, skipped: plan.skipped, reason: plan.reason, ms: MOVE_TWEEN_MS }; } catch (_) {}
+    if (!plan.items.length) return;
+    // 출발 위치로 되감기 + 관계선 끝점 오버레이 개시(첫 프레임부터 선이 노드에 붙어 있게).
+    const live = [], movedIds = new Set(), tp = new Map(), movers = [];
+    const byId = new Map();
+    for (const n of (built.nodes || [])) byId.set(n.id, n);
+    for (const it of plan.items) {
+      const o = this._objs.get(it.id);
+      if (!o || typeof o.position === "undefined") continue;
+      o.position.set(it.from[0], it.from[1]);
+      const at = [it.from[0], it.from[1]];   // 트윈이 제자리 갱신하는 좌표 — 관계선·hit-test 가 공유
+      tp.set(it.id, at);
+      movedIds.add(it.id);
+      live.push({ o, from: it.from, to: it.to, id: it.id });
+      const nd = byId.get(it.id); if (nd) movers.push({ n: nd, at });
+    }
+    if (!live.length) return;
+    // 관계선 예산 — 프레임 비용의 지배항은 노드가 아니라 **따라 그릴 선의 수**다(허브 하나가 수백 선).
+    //   초과하면 트윈을 열지 않고 즉시 최종 위치로 둔다(부분 애니메이션보다 정직한 즉시 반영).
+    let incident = 0;
+    try { incident = this._incidentEdges(movedIds).length; } catch (_) { incident = 0; }
+    if (incident > MOVE_TWEEN_EDGE_CAP) {
+      for (const it of live) { try { it.o.position.set(it.to[0], it.to[1]); } catch (_) {} }
+      try { _pxPerf().move = { items: 0, moved: plan.moved, skipped: plan.moved, reason: "edge-cap", incident }; } catch (_) {}
+      return;
+    }
+    try { _pxPerf().move.incident = incident; } catch (_) {}
+    // 오버레이 개시 — 이 시점부터 관계선·hit-test·요소 bounds 가 **보이는 좌표**를 본다(첫 프레임 콜백
+    //   이전에 들어오는 pointer 이벤트도 정합). hit-grid 는 건드리지 않는다: 이동 노드는 grid 에서
+    //   제외되고 `_hitNodes` 의 선형 스캔이 맡는다(프레임당 O(전체노드) 재구성 제거 — codex 4차 P2).
+    this._tweenPos = tp;
+    this._tweenMovers = movers;
+    // 드래그와 같은 상황(좌표가 매 프레임 바뀐다)이므로 같은 절약을 쓴다 — 트윈 동안 관계선은 저품질
+    //   1가닥으로 그리고 종단에서 고품질로 되돌린다. 드래그 중 rebuild 로 진입한 경우를 위해 **직전 값을
+    //   복원**한다(강제 false 로 드래그의 저품질 최적화를 깨지 않게).
+    const prevLowFi = this._lowFi;
+    this._lowFi = true;
+    this._refreshIncidentEdges(movedIds);
+    const t0 = _pxNow(), ease = (t) => 1 - Math.pow(1 - t, 3);
+    const state = { raf: null, live, movedIds, prevLowFi };
+    const step = () => {
+      if (this._moveTween !== state) return;   // 새 draw/정지가 선점 — 세대 토큰(hover-flow 와 동일 어휘)
+      const k = Math.min(1, (_pxNow() - t0) / MOVE_TWEEN_MS), e = ease(k);
+      for (const it of live) {
+        const x = it.from[0] + (it.to[0] - it.from[0]) * e, y = it.from[1] + (it.to[1] - it.from[1]) * e;
+        // **매 프레임 오브젝트를 재조회**한다 — `setElementState`(busy 해제·선택 점등·분석 마커)는 트윈 도중에도
+        //   노드를 파기하고 최종 위치로 새로 만든다. 캡처한 참조만 붙들면 그 순간부터 화면은 안 움직이는데
+        //   관계선만 계속 보간돼 노드가 튀고 선이 떨어진다(codex review P1). 재조회 = 교체돼도 자가 치유.
+        const o = this._objs.get(it.id) || it.o;
+        it.o = o;
+        try { o.position.set(x, y); } catch (_) {}
+        const p = tp.get(it.id); if (p) { p[0] = x; p[1] = y; }
+      }
+      if (k < 1) {
+        this._refreshIncidentEdges(movedIds);
+        this._render();
+        state.raf = raf(step);
+        return;
+      }
+      this._finishMoveTween(state, true);
+    };
+    this._moveTween = state;
+    state.raf = raf(step);
+  }
+  // 트윈 종단/중단 공통 — 오버레이를 **먼저** 걷어야 관계선이 모델 최종 좌표로 다시 구워진다(서명도 최종값
+  //   복원: 중간 위치 서명이 남으면 다음 full draw 가 '동일 서명 = 재사용' 으로 옛 그림을 살린다).
+  //   저품질 플래그도 여기서 되돌린 뒤 고품질로 1회 재페인트한다(드래그의 `_flushEdgeRefresh` 와 같은 역할).
+  _finishMoveTween(state, render) {
+    this._moveTween = null;
+    this._tweenPos = null;
+    this._tweenMovers = null;   // 오버레이 소멸 → hit-test·관계선·bounds 가 모델 최종 좌표로 복귀
+    this._lowFi = state.prevLowFi;
+    this._refreshIncidentEdges(state.movedIds);
+    if (render) { this._renderMinimap(); this._render(); }
+  }
+  // 진행 중 트윈 정지 — 대상 노드를 **최종 위치로 즉시 안착**시키고 오버레이·저품질 플래그를 되돌린다.
+  _stopMoveTween() {
+    const st = this._moveTween;
+    if (!st) { this._tweenPos = null; this._tweenMovers = null; return; }
+    if (st.raf != null) { try { cancelAnimationFrame(st.raf); } catch (_) {} }
+    // `step` 과 같은 이유로 **현재 오브젝트를 재조회**한다 — 프레임 사이에 `setElementState` 가 노드를
+    //   교체했으면 캡처된 참조는 파기된 것이고, 그것만 최종 위치로 옮기면 화면에 남은 새 오브젝트는
+    //   중간 위치에 굳는다(모델은 최종 → 화면·모델 불일치, codex review 6차 P2).
+    for (const it of st.live) { const o = this._objs.get(it.id) || it.o; try { o.position.set(it.to[0], it.to[1]); } catch (_) {} }
+    this._finishMoveTween(st, false);   // 렌더는 호출부(draw/destroy)가 이어서 수행
   }
   // 드래그 중 엣지 재그림 rAF 코얼레싱: pointermove 가 프레임보다 자주 발화하거나 한 프레임에 _moveElement +
   //   (graph-core 종속이동)translateElementTo 가 겹쳐 호출돼도 이동 id 를 누적해 **프레임당 1회** 재그림+렌더.
@@ -1190,6 +1431,12 @@ export class PixiGraphAdapter {
   }
   // 드래그 이벤트 합성 — payload 에 target.id + buttons/button/targetType(_metaEventButtons·enable predicate 용).
   _emitDrag(phase, hit, e, s, mx, my) {
+    // graph-move-anim: 드래그 개시 시점에 트윈을 **먼저** 끝낸다. graph-core 의 dragstart 핸들러가
+    //   `getElementPosition`(모델=최종 좌표)으로 잡기 오프셋과 종속 노드 offset 을 계산하는데, 트윈이
+    //   살아 있으면 화면상 노드는 다른 곳에 있어 첫 델타가 튀고 종속 이동 offset 이 어긋난다
+    //   (codex review 5차 P2). 정지는 대상 전원을 최종 위치에 안착시키므로, 이후 드래그는 화면과
+    //   모델이 일치한 상태에서 평시 경로로 진행된다("조작이 애니메이션을 이긴다" 규칙의 일관 적용).
+    if (phase === "dragstart" && this._moveTween) this._stopMoveTween();
     const kind = hit.__combo ? "combo" : "node";
     const pl = this._payload(hit, s, mx, my, e);
     pl.targetType = hit.__combo ? "combo" : "node";
@@ -1208,7 +1455,24 @@ export class PixiGraphAdapter {
   }
 
   // ── 데이터/렌더 ──
-  setData(built) { this._built = built || { nodes: [], edges: [], combos: [] }; this._edgeIndex = null; this._nodeById = null; }   // graph-edge-drag-perf: 인접/노드 인덱스 무효화(draw 가 재구성)
+  setData(built) {
+    // graph-move-anim: **직전 씬의 노드 위치**를 교체 직전에 캡처한다 — draw() 의 diff 는 이동 노드를
+    //   파기 후 최종 위치로 재생성하므로, 여기서 잡지 않으면 '어디서 왔는지'가 영영 사라진다.
+    //   트윈 진행 중 재-setData 면 스냅샷은 `_tweenPos`(현재 화면상 위치) 우선 — 중간 위치에서 이어져
+    //   연속 펼침이 순간이동으로 되돌아가지 않는다.
+    try { this._prevPos = this._snapshotPos(this._built); } catch (_) { this._prevPos = null; }
+    this._built = built || { nodes: [], edges: [], combos: [] }; this._edgeIndex = null; this._nodeById = null;   // graph-edge-drag-perf: 인접/노드 인덱스 무효화(draw 가 재구성)
+  }
+  _snapshotPos(built) {
+    const m = new Map(), tp = this._tweenPos;
+    for (const n of ((built && built.nodes) || [])) {
+      const s = n.style || {};
+      const cur = tp && tp.get(n.id);   // 트윈 중이면 화면에 실제로 보이는 좌표가 출발점이다
+      if (cur) m.set(n.id, [cur[0], cur[1]]);
+      else if (isFinite(s.x) && isFinite(s.y)) m.set(n.id, [s.x, s.y]);
+    }
+    return m;
+  }
   async setScene(built) { this.setData(built); await this.draw(); return this; }
 
   // scene diff 오브젝트 풀(후속 최적화): 매 draw 전량 destroy/recreate 대신 id+서명 기반 재사용.
@@ -1218,6 +1482,7 @@ export class PixiGraphAdapter {
   async draw() {
     await this._ready;
     if (!this.world) return;   // 비브라우저/미배선 — no-op
+    this._stopMoveTween();   // graph-move-anim: 진행 중 이동 트윈을 **diff 앞에서** 정지 — 아래 재생성이 컨테이너를 파기하므로 stale rAF 가 파기된 객체에 쓰는 것을 차단.
     this._stopHoverFlow();   // detail-hover-flow: 좌표가 바뀌면 흐름 폴리라인이 stale — rAF 를 먼저 세운다(분리된 Graphics 에 계속 페인트하는 누수 차단).
     this._clearHoverLayer();   // detail-hover-fx: rebuild 로 노드 좌표가 바뀌면 stale 강조 제거(hover 는 transient — 재hover 시 재도출).
     this._clearLabelHover();   // graph-label-hover-expand: rebuild 로 좌표·라벨·폭이 바뀌면 stale 확장 카드 제거
@@ -1256,6 +1521,9 @@ export class PixiGraphAdapter {
     this._lastDrawStats = { reused, made, total: specs.length };
     this._hitGrid = PixiAdapterPure.buildHitGrid(built.nodes, 128);
     this._renderMinimap();
+    // graph-move-anim: 오브젝트가 **최종 위치로 생성된 직후** 출발 위치로 되돌리고 트윈을 건다.
+    //   미니맵·hit-grid 는 최종 기하 기준 그대로다(클릭은 안착 지점에 떨어지고 미니맵은 튀지 않는다).
+    this._startMoveTween(built);
     this._render();
     // graph-perf(사용자 요청 2026-07-28): 라벨·draw 비용을 라이브에서 그대로 읽을 수 있게 남긴다.
     //   label-lod 의 억제 통계(window.__META_GRAPH_PERF.label)와 같은 객체를 공유 — 억제가 실제로
@@ -1522,6 +1790,10 @@ export class PixiGraphAdapter {
     n.states = Array.isArray(states) ? states : [states];
     const old = this._objs.get(id);
     if (old && this.world) { const idx = this.world.getChildIndex(old); const fresh = this._drawNode(n); try { old.destroy({ children: true }); } catch (_) {} this.world.removeChild(old); this.world.addChildAt(fresh, Math.max(0, Math.min(idx, this.world.children.length)));
+      // graph-move-anim: 이 노드가 트윈 중이면 새 오브젝트를 **현재 보이는 좌표**에 놓는다. `_drawNode` 는
+      //   모델(최종) 위치로 만들므로 그대로 두면 상태 변경 순간 노드만 목적지로 점프한다(다음 프레임에
+      //   재조회로 회복되지만 그 1프레임이 눈에 띈다 — codex review P1 의 잔여 깜빡임).
+      { const tp = this._tweenPos, p = tp && tp.get(id); if (p) { try { fresh.position.set(p[0], p[1]); } catch (_) {} } }
       if (this._objSig) this._objSig.delete(id);   // 풀 서명 무효화(증분 갱신 — 다음 full draw 가 재계산)
       // graph-label-hover-expand: hover 중인 노드의 상태가 바뀌면 확장 카드의 halo 도 즉시 동기화한다
       //   (카드를 지우면 커서가 멎은 채 확장이 사라져 깜빡임 — 폭 유지 + 재페인트가 정답).
@@ -1538,6 +1810,7 @@ export class PixiGraphAdapter {
   // 요소 절대이동 (드래그 종속 동반이동, gap #6). map {id:[x,y]} — 모델 좌표.
   translateElementTo(map, anim) {
     if (!map || typeof map !== "object") return;
+    if (this._moveTween) this._stopMoveTween();   // graph-move-anim: 절대이동(드래그 종속 동반이동)도 조작 — 트윈보다 우선
     const moved = [];
     for (const id in map) {
       const p = map[id]; if (!Array.isArray(p)) continue;
@@ -1548,6 +1821,20 @@ export class PixiGraphAdapter {
     this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1: 종속 이동 후 hit-grid 갱신
     this._scheduleEdgeRefresh(moved);   // graph-edge-follow-drag: 종속 노드(컬럼·장식) 이동 시 관계선 추종(perf: rAF 코얼레싱)
   }
+  // graph-move-anim: 이 요소가 **아직 이동 중**인가. 카메라 보정(`_metaGraphKeepInView`)이 "지금 보인다"
+  //   만으로 종료하지 않게 하는 신호다 — 트윈 시작 시점의 노드는 **출발(=직전에 보이던) 위치**에 있어
+  //   보정이 0 으로 수렴해 즉시 끝나고, 그 뒤 트윈이 노드를 화면 밖으로 데려가면 아무도 따라가지
+  //   않는다(codex review 5차 P1 — 요청의 주 시나리오가 그대로 재현되던 경로).
+  //   id 생략 시 "트윈이 하나라도 살아 있는가". G6 폴백 어댑터엔 부재 → 호출측 feature-detect.
+  isElementAnimating(id) {
+    if (!this._moveTween) return false;
+    if (id == null) return true;
+    return !!(this._tweenPos && this._tweenPos.has(id));
+  }
+  // graph-move-anim: 사용자가 카메라를 직접 조작한 횟수. `_metaGraphKeepInView` 가 시작 시점 값을 기억했다가
+  //   달라지면 추종을 그만둔다 — 펼침 직후 사용자가 팬/줌 하는데 카메라가 다시 노드 쪽으로 끌어당기면
+  //   "조작이 애니메이션을 이긴다" 규칙이 깨진다(codex review 6차 P2). 프로그램 이동은 이 값을 올리지 않는다.
+  getUserCameraSeq() { return this._userCamSeq || 0; }
   getPluginInstance(key) { return key === "minimap" ? (this._minimap || null) : null; }   // G6 minimap 플러그인 호환(자체 렌더)
   // detail-hover-fx: 상세 패널 하위 항목 hover 시 비커밋 강조. spec={nodes:[id],edges:[[idA,idB]],color?}.
   //   노드=bbox 강조 링, 엣지=끝점 사이 굵은 강조선(+양끝 노드 링). world-space 라 팬/줌 자동 정합.
@@ -1688,6 +1975,7 @@ export class PixiGraphAdapter {
   resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); this._repaintHoverCard(); } this._render(); }
   destroy() {
     try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
+    try { this._stopMoveTween(); } catch (_) {}   // graph-move-anim: 이동 트윈 rAF 정리(파기된 컨테이너 접근 차단)
     try { if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf); } catch (_) {}   // graph-edge-drag-perf: 코얼레싱 rAF 정리
     try { if (this._edgeZoomRaf) cancelAnimationFrame(this._edgeZoomRaf); } catch (_) {}   // §85: 줌 재페인트 rAF 정리
     try { this._stopHoverFlow(); } catch (_) {}   // detail-hover-flow: 강조선 흐름 애니메이션 rAF 정리
