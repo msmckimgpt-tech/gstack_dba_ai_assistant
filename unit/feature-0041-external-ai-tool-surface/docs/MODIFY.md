@@ -144,3 +144,22 @@ source_of_truth: true
   (기존 200 이던 조합이 429 가 될 수 있음 — 기본값 기준 정상 사용에서는 도달하지 않는다).
 - Rollback Notes: compose 서비스 제거 + Caddyfile `handle /api/ai/mcp*` 블록 제거로 원복.
   knob 은 삭제해도 `DEFAULTS` 가 남아 집행은 유지된다.
+
+## CHG-20260813-0010
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **라이브 기동 실패 3중 원인 수정** — ① agent 이미지에 `mcp` 미설치 ②
+  MCP SDK 2.0 이 `mcp.server.fastmcp` 제거 ③ upstream 이 평문이 아니라 TLS.
+  배포 실패 후 컨테이너에서 실제로 기동·프로토콜 왕복을 확인하고 고쳤다.
+- Files:
+  - `unit/feature-0002-agent-core/src/requirements.txt` (`mcp>=1.2.0`)
+  - `unit/feature-0041-.../src/external_tool_mcp_http.py` (SDK 호환층 · ctx 기반 헤더 ·
+    `_SniHTTPSConnection`/`_SniHTTPSHandler` · Host 헤더)
+  - `unit/feature-0041-.../src/external_tool_mcp_server.py` (SDK 호환층)
+  - `docker-compose.yml` (https upstream · rootCA 마운트 · SNI/Host 고정 · 평문 예외 제거)
+  - `bin/deploy-web.sh` (`dump_service_logs` — 기동 실패 시 원인 노출)
+  - `unit/feature-0041-.../tests/{test_bringup_and_limits,test_container_importability,
+    test_remaining_surface}.py`
+- Impact: `ext-tool-mcp` 가 실제로 기동한다. 다른 서비스는 이미지에 패키지 1개가 늘어날 뿐
+  코드 경로 무변경. upstream 연결이 평문→**검증된 TLS** 로 강화됐다.
+- Rollback Notes: compose 서비스 제거로 원복. `mcp` 의존은 남아도 무해(아무도 import 안 함).

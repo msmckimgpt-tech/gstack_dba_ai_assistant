@@ -107,3 +107,54 @@ def test_mcp_adapter_stays_feature_local():
     adapter = os.path.join(_HERE, "..", "src", "external_tool_mcp_server.py")
     assert os.path.isfile(adapter), "MCP 어댑터는 feature-local src 에 남아 있어야 한다"
     assert not os.path.isfile(os.path.join(_WEB_SRC, "external_tool_mcp_server.py"))
+
+
+# ── 컨테이너에서 도는 스크립트의 서드파티 의존 ────────────────────────────────
+
+def test_container_entrypoint_third_party_imports_are_installed(codex_p1=True):
+    """★ COPY 만 검사하면 **파일은 있는데 기동만 죽는** 사각이 남는다(2026-08-13 실증).
+
+    compose 가 agent 이미지로 띄우는 스크립트의 최상위 서드파티 import 는 전부 그 이미지의
+    requirements 에 있어야 한다. 배포는 `ext-tool-mcp 상태=none` 이라는 모호한 메시지만 남기고
+    워커군 전체를 롤백시켰다 — 실제 원인은 `ModuleNotFoundError: No module named 'mcp'` 였다.
+    """
+    import ast
+    import sys as _sys
+
+    def _slurp(*parts: str) -> str:
+        with open(os.path.join(_REPO, *parts), encoding="utf-8") as fh:
+            return fh.read()
+
+    # ⚠ 파일 전체를 부분문자열로 검사하면 **주석에 적힌 이름**이 통과시킨다 —
+    # 이 테스트를 처음 그렇게 썼다가 뮤테이션(`mcp` 줄 삭제)이 살아남는 것을 보고 고쳤다.
+    # 실제 requirement 줄만 파싱해 배포명 집합을 만든다.
+    raw = _slurp("unit", "feature-0002-agent-core", "src", "requirements.txt")
+    req = set()
+    for line in raw.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        name = re.split(r"[\[<>=!~;\s]", line, 1)[0].strip().lower()
+        if name:
+            req.add(name.replace("_", "-"))
+    src = _slurp("unit", "feature-0041-external-ai-tool-surface", "src",
+                 "external_tool_mcp_http.py")
+    tree = ast.parse(src)
+
+    tops = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            tops.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            tops.add(node.module.split(".")[0])
+
+    stdlib = set(getattr(_sys, "stdlib_module_names", ()))
+    # import 이름 ≠ 배포 이름인 경우만 여기에 적는다(현재는 없음 — 늘면 추가).
+    _DIST = {}
+    missing = [m for m in sorted(tops)
+               if m not in stdlib and m != "__future__"
+               and _DIST.get(m, m).replace("_", "-") not in req]
+    assert not missing, (
+        f"컨테이너 진입점이 import 하지만 requirements 에 없는 패키지: {missing} — "
+        "이미지는 빌드되고 COPY 도 되지만 기동만 죽는다"
+    )

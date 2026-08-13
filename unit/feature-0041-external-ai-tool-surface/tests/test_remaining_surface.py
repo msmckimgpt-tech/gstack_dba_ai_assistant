@@ -188,7 +188,9 @@ def test_adapters_refuse_to_follow_redirects(adapter, codex_p1=True):
     src = _read(os.path.join(_HERE, "..", "src", adapter))
     assert "_NoRedirect" in src, f"{adapter} 가 리다이렉트를 추종한다 — 토큰 유출 경로"
     assert "urlopen(req" not in src, f"{adapter} 가 아직 기본 opener 를 쓴다"
-    assert "_opener(ctx).open(req" in src
+    # HTTP 어댑터는 opener 를 모듈 1회 생성하므로 인자가 없다(codex P2).
+    assert "_opener(" in src and ".open(req, timeout=" in src, \
+        f"{adapter} 가 커스텀 opener 를 거치지 않는다"
 
 
 def test_http_transport_declares_weaker_isolation_honestly():

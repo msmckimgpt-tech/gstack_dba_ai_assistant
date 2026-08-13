@@ -1511,6 +1511,21 @@ REST 가 정본이고 MCP 어댑터는 얇은 래퍼라는 원칙은 유지되�
 > `reverse_proxy` 뒤로 밀려 **무력화된다**(익명 요청이 먼저 프록시로 나간다). 이번 cycle 에
 > 실제로 그 형태로 작성했다가 `caddy adapt` 내부 순서를 읽고 잡았다. 테스트가 순서를 단정한다.
 
+**upstream 은 검증된 TLS 다(검증을 끄지 않는다).** web replica 는 `ENABLE_WEB_TLS=1` 에서 8000 을
+TLS 로 듣지만 인증서 SAN 에는 공개 호스트만 있고 `web-a` 같은 컨테이너 이름은 없다. 여기서
+호스트명 검증을 끄면 이 채널로 흐르는 **Bearer token 이 사내망 MITM 에 노출**된다. Caddy 가
+이미 쓰는 해법을 그대로 채택했다 — 검증을 끄는 것이 아니라 **검증 대상 이름을 고정**한다
+(`tls_server_name` ↔ `EXT_TOOL_UPSTREAM_TLS_SERVER_NAME`, `header_up Host` ↔
+`EXT_TOOL_UPSTREAM_HOST_HEADER`, 체인은 `/certs/rootCA.pem`). 부수 효과로 평문 예외
+(`EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM`)가 기본 배포에서 사라졌다.
+
+**이미지 경계는 파일 존재가 아니라 의존까지가 계약이다.** 2026-08-13 배포는 어댑터 파일이
+COPY 됐는데도 `mcp` 패키지가 이미지에 없어 기동에 실패했다(같은 cycle 에서 두 번째 형태 —
+첫 번째는 서버 모듈 미포함). 컨테이너 진입점의 서드파티 import 가 전부 이미지 requirements 에
+있는지 정적으로 검사한다. 아울러 **MCP SDK 2.0 이 `mcp.server.fastmcp` 를 제거**했으므로 두
+세대를 모두 받는다 — 가이드가 안내하는 `pip install mcp` 가 2.x 를 주기 때문에, v1 만 지원하면
+안내를 따른 사용자가 그대로 깨진다.
+
 **콘솔에 올린 상한은 그 자체가 방어의 주장이다.** `external_tool_surface` 그룹 4 knob
 (RPM · 시간당 행수 · 시간당 바이트 · 미제출 task 상한)을 운영자에게 노출하면서, **소비처 없는
 knob 을 함께 노출하면 운영자가 존재하지 않는 방어를 믿게 된다**는 것을 codex 리뷰로 확인했다
