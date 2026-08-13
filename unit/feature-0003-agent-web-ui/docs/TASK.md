@@ -9929,3 +9929,89 @@ rmffhqjf = 글로벌 - tmzlem = 스키드 - 등…"
 - [x] 적대검증 2렌즈(ULTRACODE `wf_bfcbc1c9`, A=사용자향 언어 · B=사실정확성/커버리지) 13건을 **정본·실코드·라이브로 전건 독립 재검증**: 언어 교정 6건 반영, **배포 게이트 지적 3건(blocker 1 + major 2)은 실측으로 refute**. 상세는 REVIEW `REV-20260813T010301-doc-sync-rn-0813`.
 - [x] 검증: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 34/0 동일 = 회귀 0, 편집 전·후 두 번 실측) · 구조(releases 46→47 · `releases[0].date`=2026-08-12 9항목 · `generated`==head.date · 기존 46 블록 전량 보존 · type/area enum 위반 0 · 스키마 외 키 0) · 내부용어 누출 정규식 스캔(feature-id·sha·§·PR#·ADR·PB-0008·모듈/함수/파일명·인프라 용어·픽셀 22 패턴) **0**.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(2026-07-12 ITEM-09 빌드 자동주입 regime · `?v=dev` 고정 · `index.html`/`admin.html` 편집 0).
+
+## 20260813T1135-usage-metric-charts — LLM 사용량 요약 패널 클릭 → 차트 지표 전환 + 캐시 토큰 계측·표시 (Major §12.3 — LLM 요청 페이로드 변경 + DB expand 마이그, `/_template:entry` arg-given)
+
+사용자 요청(2026-08-13): "LLM 사용량에서 [요청, 호출, 총 토큰, 입력, 출력, 비용] 패널을 클릭했을 때
+차트 또한 해당 값에 따라 부드럽게 재구성되도록 개선. 추가로 가능하다면 cache hit 된 입출력도 항목에 추가."
+
+**착수 전 실측(§16.7 G7 — 이름·문서 아닌 실 resolve)**
+- 라이브 `agent_runtime.llm_usage` 실 스키마 조회: 캐시 관련 컬럼 **부재**(14컬럼 전량 확인).
+- `_record_llm_usage` 는 prompt/completion/total 3종만 판독. repo 전역 `cache_control` grep **0건**
+  → Anthropic 프롬프트 캐싱 **미활성**.
+- 게이트웨이(litellm) 직접 2회 호출 실증: 응답 usage 에 `cache_read_input_tokens` /
+  `cache_creation_input_tokens` 는 **항상 존재**. `cache_control` 주입 시 1회차 creation=5002 →
+  2회차 read=5002 로 캐싱 정상 작동. 미주입 호출은 양쪽 0.
+- `prompt_tokens` 는 캐시 토큰을 **포함**한다(5039 = text 37 + creation 5002 실측) → 현행 비용식은
+  캐시 활성 시 캐시분을 정가로 과대 계상하게 된다.
+- 사용자 결정(2026-08-13): "계측 + 캐싱 활성화" 선택.
+
+### 2.1 Implementation Plan
+
+**A. 계측 (feature-0002-agent-core)**
+- `alembic/versions/20260813_0056_llm_usage_cache_tokens.py` (신규) — `agent_runtime.llm_usage` 에
+  `cache_read_tokens` / `cache_write_tokens` INTEGER NOT NULL DEFAULT 0 **expand-only** 추가.
+- `src/modules/llm.py::_record_llm_usage` — usage 에서 캐시 토큰 판독(최상위
+  `cache_read_input_tokens`/`cache_creation_input_tokens` 우선, `prompt_tokens_details.cached_tokens`/
+  `.cache_creation_tokens` 폴백) + 컬럼 사다리 최상단에 신규 2컬럼 추가(구 스키마 자가치유 유지).
+- `src/modules/llm.py::_apply_prompt_cache` (신규) — system 메시지 마지막 블록에 `cache_control`
+  주입. 단일 helper 로 두고 `_openai_chat_completion_with_deadline`(helper·인사이트 chokepoint)와
+  `agent_core._call_llm`(대화) 양쪽에서 호출 → 적용면 전수(§16.7 G8).
+  가드: 로컬 LLM 제외 · system 길이 임계 미만 제외(캐시 최소 길이 미달 write 낭비 차단) · 이미
+  블록 배열이면 마지막 블록에만 부착.
+
+**B. 집계·비용 (feature-0003-agent-web-ui)**
+- `src/routers/admin_usage.py::_estimate_llm_cost_usd` — 선택 인자 `cache_read`/`cache_write` 추가
+  (기본 0 → 기존 7 호출처 무회귀). 식: `(prompt-cache_read-cache_write)*in + cache_write*in*1.25
+  + cache_read*in*0.1 + completion*out`.
+- `admin_llm_usage` — totals/by_model/by_day_model/by_account(+models[])/by_day 에 지표 축 확장:
+  `calls`·`prompt_tokens`·`completion_tokens`·`cache_read_tokens`·`cache_write_tokens`·`requests`.
+- `src/routers/profile.py`·`ai_ops.py`·`admin_console.py` — 같은 캐시 인지 비용식 적용(적용면 전수).
+
+**C. 화면 (feature-0003-agent-web-ui)**
+- `src/static/admin/usage.js` — 요약 카드를 **지표 선택기**로 전환. 지표 8종
+  (요청·호출·총 토큰·입력·출력·캐시 읽기·캐시 쓰기·추정 비용). 선택 지표로 일별 차트·도넛·
+  역할별 막대·계정 drill 을 재구성. 노드 재사용 + CSS transition 으로 **부드러운 전환**
+  (day|model 키 signature 동일 시 in-place 갱신, 다르면 재생성). `requests` 는 distinct run_id 라
+  모델 가산이 성립하지 않으므로 일별 차트는 단일 막대로 표시하고 그 사실을 캡션 1줄로 표기.
+- `src/static/css/admin.css` — 선택 카드 상태 + 전환 애니메이션 + `prefers-reduced-motion` 존중.
+
+**완료 판정 기준(acceptance criteria)**
+1. 요약 카드 8종 중 아무거나 클릭 → 일별/도넛/역할별/계정 차트가 그 지표로 바뀌고, 같은 기간·모델
+   집합에서는 막대가 **애니메이션으로 이동**한다(즉시 점프 아님).
+2. 선택 지표의 차트 총합이 그 지표 요약 카드 값과 일치한다(가산 지표 한정, requests 는 예외 명시).
+3. 캐시 읽기/쓰기 카드가 존재하고, 캐싱 활성 후 신규 호출에서 0 이 아닌 값이 집계된다(라이브 실측).
+4. 캐시 인지 비용식이 캐시 0 인 레거시 행에 대해 기존 값과 **동일**하다(무회귀).
+5. `make test` 회귀 0 · PB-0008 실 Windows 브라우저에서 클릭 전환 시각검증 캡처.
+
+**위험도**: Major (§12.3) — LLM 요청 페이로드 변경(캐싱) + DB expand 마이그. 파괴적 변경·인증/인가
+변경 없음. 롤백은 `cache_control` 주입 해제 1지점 + 컬럼 drop 으로 단순.
+
+### 7. Completion Checklist (20260813T1135-usage-metric-charts)
+
+- [x] 모든 REQ 의 AC 가 구현되었다 (지표 8종 전환 + 부드러운 재구성 + 캐시 항목 + 캐싱 활성화)
+- [x] 자동 테스트가 통과한다 (pytest 4364 passed · 헤드리스 실 Chromium 21 PASS)
+- [x] 웹/UI 변경 시각검증 — 실 Chromium 렌더 실측 완료, **Windows-browser Run 은 POST-DEPLOY 이월**
+      (사유 TEST.md §3 명시: 미머지 ES module JS 는 `docker cp` 프리뷰가 원리적으로 불충분)
+- [x] FUNCTION.md 가 현재 동작과 일치한다
+- [x] MODIFY.md 에 변경 이력이 기록되었다 (`CHG-20260813T1135-…`)
+- [x] REVIEW.md 에 판단 근거가 기록되었다 (`REV-20260813T113500-…`)
+- [x] REPORT.md 에 최종 상태가 반영되었다
+- [x] TEST.md 에 테스트 결과가 기록되었다 (케이스 10건 + Run + fragment)
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md 에 기능 상태가 갱신되었다
+- [x] ANCHOR.md §1~§3 (기존 feature — 신규 앵커 불요, 충돌 없음)
+- [ ] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS (§16.3)
+- [ ] Git 커밋·원격 동기화 (§16.3)
+- [ ] **마이그 0056 적용 + 배포** (deploy_scope: included)
+- [ ] **POST-DEPLOY 라이브 실측** — PB-0008 카드 클릭 전환 + 캐시 토큰 DB 실적재 확인
+
+### 9. Requested Scope
+
+- "[요청, 호출, 총 토큰, 입력, 출력, 비용] 패널을 클릭했을 때 차트 또한 해당 값에 따라 부드럽게
+  재구성" — ✓ (요약 카드 8종을 지표 선택기로. 일별 막대·도넛·역할별·계정 drill 이 선택 지표로
+  재구성되며, 노드를 유지한 채 기하만 바꿔 CSS transition 으로 이동. 실 Chromium 에서 막대비
+  3:1→0.6→7:1 정합 + 중간 프레임이 시작·끝 사이임을 실측)
+- "가능하다면 cache hit 된 입출력 또한 항목에 추가" — ✓ (마이그 0056 + `_record_llm_usage` 캡처 +
+  집계 8축 + 카드 2종 + 상세 표 2열. **"가능하다면" 의 실체를 실측으로 확인**: 캐시 컬럼도
+  `cache_control` 도 없어 값이 존재하지 않았고, 사용자 결정으로 캐싱 활성화까지 포함)

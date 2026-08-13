@@ -183,16 +183,28 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
             )
         return cur.fetchall() or []
 
+    # usage-metric-charts(2026-08-13): 캐시 토큰(0056)을 사다리 최상단에 추가한다. 행 단위 비용이
+    #   캐시 할인 단가를 반영해야 관리 콘솔 사용량 집계와 같은 값이 된다. 컬럼 부재(마이그 미적용·
+    #   stale image)면 한 단계씩 내려가 피드 자체는 계속 뜬다(기존 target 자가치유와 동형).
+    has_cache = True
+    has_target = True
     try:
-        rows = _fetch(_BASE_COLS + ", target")
-        has_target = True
+        rows = _fetch(_BASE_COLS + ", target, cache_read_tokens, cache_write_tokens")
     except Exception:
+        has_cache = False
         try:
-            cur.connection.rollback()  # abort 트랜잭션 정리 후 target 제외 재조회
+            cur.connection.rollback()
         except Exception:
             pass
-        rows = _fetch(_BASE_COLS)
-        has_target = False
+        try:
+            rows = _fetch(_BASE_COLS + ", target")
+        except Exception:
+            try:
+                cur.connection.rollback()  # abort 트랜잭션 정리 후 target 제외 재조회
+            except Exception:
+                pass
+            rows = _fetch(_BASE_COLS)
+            has_target = False
     has_more = len(rows) > limit
     items = []
     for r in rows[:limit]:
@@ -205,10 +217,13 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
         served_canonical = canonical_usage_model(served)
         prompt_t = int(r[5] or 0)
         completion_t = int(r[6] or 0)
+        # 인덱스 12/13 = cache_read/cache_write (사다리 최상단 경로에서만 존재).
+        cache_r = int(r[12] or 0) if (has_cache and len(r) > 12) else 0
+        cache_w = int(r[13] or 0) if (has_cache and len(r) > 13) else 0
         items.append({
             "id": int(r[0]), "task": r[1], "category": tx["category"], "label": tx["label"],
             "model": served_canonical, "total_tokens": int(r[4] or 0),
-            "cost_usd": app._estimate_llm_cost_usd(served, prompt_t, completion_t),
+            "cost_usd": app._estimate_llm_cost_usd(served, prompt_t, completion_t, cache_r, cache_w),
             "latency_ms": (int(r[7]) if r[7] is not None else None),
             "created_at": (r[8].isoformat() if r[8] else None),
             # ── 상세 확장용 additive 필드 ──
@@ -460,14 +475,17 @@ def admin_ai_ops(
                 # _estimate 내부 canonical 로 이미 정확했음). 마지막 raw 모델 그룹핑을 제거해 향후 모델 차원
                 # 노출 시 라우팅 변형 재분점을 구조적으로 예방하는 것이 본 변경의 실질 효과.
                 try:
-                    cur.execute(
+                    # usage-metric-charts: 캐시 인지 비용. 컬럼 부재(0056 미적용)면 리터럴 0 판으로 재실행.
+                    app._usage_cache_exec(cur, pg, lambda cr, cw: (
                         f"SELECT task, {canonical_usage_model_sql('COALESCE(resolved_model, model)')} AS m, count(*), "
-                        f"sum(prompt_tokens), sum(completion_tokens), sum(total_tokens) "
+                        f"sum(prompt_tokens), sum(completion_tokens), sum(total_tokens), "
+                        f"sum({cr}), sum({cw}) "
                         f"FROM agent_runtime.llm_usage WHERE created_at >= {win} GROUP BY task, 2"
-                    )
+                    ))
                     for r in (cur.fetchall() or []):
                         task, m = r[0], r[1]
                         calls, pt, ct, tt = int(r[2] or 0), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0)
+                        crw, cww = int(r[6] or 0), int(r[7] or 0)
                         tx = taxonomy_for(task)
                         e = cat_fold.setdefault(tx["category"], {
                             "category": tx["category"], "calls": 0, "total_tokens": 0,
@@ -475,7 +493,7 @@ def admin_ai_ops(
                         })
                         e["calls"] += calls
                         e["total_tokens"] += tt
-                        e["cost_usd"] += app._estimate_llm_cost_usd(m, pt, ct)
+                        e["cost_usd"] += app._estimate_llm_cost_usd(m, pt, ct, crw, cww)
                         te = e["_tasks"].setdefault(task, {
                             "task": task, "label": tx["label"], "calls": 0, "total_tokens": 0,
                         })

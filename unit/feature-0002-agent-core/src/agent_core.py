@@ -70,7 +70,7 @@ from modules.memory import (
 )
 from shared.model_catalog import OAUTH_FRONTIER_IDENTITY, conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, requires_oauth_frontier_identity, thinking_budget_for_level
 from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
-from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
+from modules.llm import _apply_prompt_cache, _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 # FR-summary-writer-disconnected: 답변 후 큐레이션에서 대화 요약을 갱신한다(alias 로 노출해
 # 테스트가 agent_core 심볼 하나만 patch 하면 되도록 — 다른 큐레이션 호출과 동일 패턴).
 from modules.llm import refresh_conversation_summary as _refresh_conversation_summary
@@ -4821,6 +4821,11 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # (haiku)은 미요구라 미주입(working 경로 무영향).
     if requires_oauth_frontier_identity(model):
         effective_messages = [{"role": "system", "content": OAUTH_FRONTIER_IDENTITY}, *effective_messages]
+    # usage-metric-charts(2026-08-13): 프롬프트 캐시 브레이크포인트를 **identity 주입 뒤**에 건다.
+    # 캐시 접두는 "이 지점까지 전부" 라, 마지막 system 에 부착하면 identity + 제품 프롬프트 + 도구
+    # 스펙이 한 덩어리로 캐시된다. 대화는 같은 접두를 라운드마다 재전송하므로 적중률이 가장 높은 지점.
+    # 임계 미만·로컬 LLM 은 helper 가 원본을 그대로 돌려준다(무회귀).
+    effective_messages = _apply_prompt_cache(effective_messages, model)
     # FR-edge-fallback-conversation-context-loss (2026-07-07): 이 함수는 정의상 사용자 대면 assistant
     # 답변(task='agent') 경로다. edge(gemma) 폴백이 걸린 alias(claude-haiku-4)는 litellm 호출 시 edge-free
     # 대화 전용 alias(claude-haiku-4-chat)로 치환해, 두 claude 계정 완전 장애 시 gemma 로 강등되지 않고

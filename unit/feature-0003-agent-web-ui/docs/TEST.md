@@ -2609,3 +2609,37 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(이 env 에서 편집 전·후 두 번 실측). 구조: releases 46→47, `generated`==`releases[0].date`==2026-08-12, 기존 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, 내부용어 누출 0(22 패턴). 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).
 - 라이브 파리티 실측(배포 게이트 확증): 서빙 static 6종(`hangul-qwerty.js`·`admin/products.js`·`graph/graph-roleviz.js`·`graph/graph-core.js`·`app/attach-diff.js`·`admin/metadata.js`)이 라이브(`https://localhost:443/static/...`)에서 브랜치 blob 과 byte-identical(`?v=` 정규화 후), `/healthz` 200, 이미지 web `105fa2b7` · agent `e1372f32`, alembic 라이브 head `0055`(= `MAX_MIGRATION.txt`), `db_objects` 339행.
 - **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).
+
+## 20260813T1135-usage-metric-charts — 요약 카드 클릭 → 차트 지표 전환 + 캐시 계측 (web/UI + 집계 + LLM 기록, Major §12.3)
+
+### 1. 케이스 정의
+
+| # | 케이스 | 기대 |
+|---|---|---|
+| 1 | 요약 카드 8종 렌더 | 요청·호출·총 토큰·입력·출력·캐시 읽기·캐시 쓰기·추정 비용 (기본 선택 = 총 토큰) |
+| 2 | 카드 클릭 → 일별 차트 | 막대 높이가 **그 지표의 값 비율**과 일치 |
+| 3 | 카드 클릭 → 전환 방식 | 노드 재사용 + CSS transition (값 점프 금지) |
+| 4 | 요청(비-가산) 지표 | 모델 분해 없이 버킷 총계 단일 막대 + 사유 1줄 |
+| 5 | 캐시 지표 | 값 반영 + "입력에 포함된 내역" 1줄 (60자 예산) |
+| 6 | 도넛·역할·계정 차트 | 같은 지표를 따르고, 오른쪽 카드는 비용(선택이 비용이면 총 토큰) |
+| 7 | 캐시 인지 비용식 | 캐시 0 인 레거시 행은 **종전 값과 동일**(무회귀), 캐시분은 read 0.1x / write 1.25x |
+| 8 | 캐시 계측 캡처 | 최상위 필드 · `prompt_tokens_details` 폴백 · 부재 시 0 |
+| 9 | `_apply_prompt_cache` | 마지막 system 블록에만 부착 · 짧은 system/로컬 LLM/기존 지시 시 원본 그대로 |
+| 10 | 컬럼 사다리 | 0056 미적용 DB 에서 리터럴 0 재실행으로 화면 유지 |
+
+### 2. 회귀 잠금 (신규 하네스)
+
+- `feature-0003/tests/test_usage_metric_axes.py` (6건) — 캐시 인지 비용식 + 역할 폴딩 8축 보존
+- `feature-0002/tests/test_llm_usage_record.py` (+8건) — 캐시 캡처 3 · `_apply_prompt_cache` 5
+- `feature-0003/tests/headless/test_usage_metric_switch.js` (21건) — 실 Chromium 렌더·전환 실측
+
+### 3. Run 기록
+
+- **Environment: Windows-browser (PB-0008)** — **미수행(POST-DEPLOY 이월)**, 사유 명시: 본 변경의
+  본체가 ES module JS 라 미머지 `docker cp` 프리뷰가 원리적으로 불충분(asset stamp 미주입 →
+  모듈 이중 인스턴스 + Chrome 모듈 캐시가 구버전 실행). 대신 **같은 렌더 엔진(Chromium)** 으로
+  실 자산을 로드해 21축 실측 PASS. 머지·배포 후 라이브 baked 자산에서 재실측해 Run 2 append.
+- Run 기록 정본: `docs/test-runs.d/20260813T1135-usage-metric-charts.md` (§5.3 fragment).
+- **전수 회귀**: pytest **4364 passed / 4 skipped**. 환경 제약 1건
+  (`test_oauth_exhaustion_gate::test_write_failure_after_successful_post_cannot_kill_slot_selection`,
+  `chattr` 부재)은 `repo/`(main) 동일 이미지 실행에서 **동일 재현** — 본 변경 귀책 아님.
