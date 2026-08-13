@@ -368,3 +368,11 @@ source_of_truth: true
 - 함정 기록: 격리 장비를 비표준 포트(18444)로 노출하면 Host 에 포트가 붙어 Caddy 사이트
   매칭이 달라진다(IP 호스트가 404). 컨테이너 네트워크 안에서 **443 으로** 재현해야 한다.
 - Human Approval Needed: 아니오.
+
+## REV-20260814-0017 [SKIPPED:post-deploy-record] — 호스트 정합 배포 검증 (코드 0)
+
+- Related Change: CHG-20260814-0017
+- Reason: 배포 결과 기록. 코드 0.
+- 요지: 공인 IP·사내 이름·loopback 3종 모두 401 단서가 자기 호스트를 가리키고, 익명 차단과
+  인증 경로(MCP `initialize` 200)는 그대로다.
+- Human Approval Needed: 아니오.
