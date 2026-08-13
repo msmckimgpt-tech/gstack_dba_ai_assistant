@@ -99,8 +99,8 @@ export const PixiAdapterPure = {
 
   // graph-move-anim(사용자 요청 2026-08-13 "노드 위치 재배치가 깜빡이는 순식간이라 이동을 인지할 수 없다"):
   //   직전 씬 대비 **어느 노드를 애니메이션으로 옮길지** 고르는 순수 판정. `draw()` 의 오브젝트 풀 diff 는
-  //   위치를 서명(nodeSig)에 담아 이동 노드를 파기→최종 위치 재생성하므로 중간 프레임이 아예 없다 —
-  //   여기서 고른 노드만 어댑터가 `from → to` 로 트윈한다.
+  //   이동 노드를 최종 위치로 **재배치**(graph-expand-perf 이전에는 파기→재생성)하므로 중간 프레임이 아예
+  //   없다 — 여기서 고른 노드만 어댑터가 `from → to` 로 트윈한다.
   //   선별 기준(비용 상한이 곧 정확성 — 대형 스코프에서 전량 트윈은 프레임을 무너뜨린다):
   //     ① 직전 씬과 새 씬 **양쪽에 존재**하고 이동량이 minDelta 초과 — 신규/소멸 노드는 대상 아님.
   //     ② `vis`(model 좌표 가시 rect, 마진 포함) 안에 **출발 또는 도착**이 걸린 노드만 — 화면 밖 이동은
@@ -409,7 +409,22 @@ export const PixiAdapterPure = {
   // 오브젝트 풀 요소 서명(재사용 판정 — 렌더 기하 영향 전량 포착). draw() 와 테스트가 공유.
   //   node: type+combo+style+states (§18.8 m1: type 포함 — circle/rect 기하 갈림). edge: 끝점+style.
   //   combo: style+bbox(자식 파생). 좌표는 0.1px 양자화(FP 노이즈 무불필요 recreate 방지, m2 일관).
-  nodeSig(n) { return "N|" + (n.type || "") + "|" + (n.combo || "") + "|" + JSON.stringify(n.style || {}) + "|" + ((n.states || []).join(",")); },
+  // graph-expand-perf(2026-08-13): **위치를 뺀** 노드 서명. `_drawNode` 는 x/y 를 컨테이너 `position.set` 에만
+  //   쓰고 나머지 자식(Graphics·라벨·역할 배지·상태 오버레이)은 전부 로컬 좌표계라, **이동만 한 노드는 파기·
+  //   재생성할 이유가 없다** — `position.set` 한 번이면 화면이 같다. 종전 `nodeSig` 는 style 을 통째로
+  //   JSON.stringify 해 x/y 가 섞였고, 그래서 컬럼 하나를 펼쳐 masonry 가 재균형될 때마다 **이동한 형제
+  //   수백 개가 전부 destroy→re-create** 됐다(라이브 실측: 693 노드 스키마에서 1테이블 펼침 = made 538 ·
+  //   labelsCreated 524 · drawMs 207ms — draw 비용의 지배항이 라벨 재생성이었다).
+  //   `for...in` 은 JSON.stringify 와 같은 삽입 순서를 따르므로 서명 결정론은 그대로다(같은 build 코드가
+  //   같은 순서로 style 을 만든다). x/y 만 제외해 "모양이 같은가" 만 묻는다.
+  nodeShapeSig(n) {
+    const s = n.style || {};
+    let body = "";
+    for (const k in s) { if (k === "x" || k === "y") continue; body += k + ":" + JSON.stringify(s[k]) + ","; }
+    return "N|" + (n.type || "") + "|" + (n.combo || "") + "|{" + body + "}|" + ((n.states || []).join(","));
+  },
+  // combo 는 bbox 의 **크기**만 기하에 들어가고(roundRect 0,0,w,h) x/y 는 컨테이너 위치다 — 노드와 동형 분리.
+  comboShapeSig(c, bb) { return "C|" + JSON.stringify(c.style || {}) + "|" + bb.w.toFixed(1) + "," + bb.h.toFixed(1); },
   edgeSig(e, a, b) { return "E|" + e.source + "|" + e.target + "|" + JSON.stringify(e.style || {}) + "|" + a[0].toFixed(1) + "," + a[1].toFixed(1) + "," + b[0].toFixed(1) + "," + b[1].toFixed(1); },
 
   // graph-edge-drag-perf: 인접 인덱스(node id → incident edge[]). 드래그 재그림이 이동 노드의 인접 엣지만
@@ -421,7 +436,6 @@ export const PixiAdapterPure = {
     for (const e of (edges || [])) { add(e.source, e); if (e.target !== e.source) add(e.target, e); }
     return idx;
   },
-  comboSig(c, bb) { return "C|" + JSON.stringify(c.style || {}) + "|" + bb.x.toFixed(1) + "," + bb.y.toFixed(1) + "," + bb.w.toFixed(1) + "," + bb.h.toFixed(1); },
   edgeId(e) { return e.id != null ? e.id : ("__e:" + e.source + ">" + e.target); },
 
   // §80 BitmapText tint: "#rgb"/"#rrggbb"/number → {tint, valid}. 비-hex(rgb()/named)면 valid=false(Text 폴백 유도).
@@ -1499,26 +1513,42 @@ export class PixiGraphAdapter {
     // spec 목록 + 서명
     const specs = [];
     for (const c of (built.combos || [])) { const bb = PixiAdapterPure.comboBBox(c.id, built.nodes, (c.style || {}).padding); if (!bb) continue;
-      specs.push({ id: c.id, sig: PixiAdapterPure.comboSig(c, bb), make: () => this._drawCombo(c, bb) }); }
+      specs.push({ id: c.id, sig: PixiAdapterPure.comboShapeSig(c, bb), pos: [bb.x, bb.y], make: () => this._drawCombo(c, bb) }); }
     // graph-edge-drag-perf: 인접 인덱스(node id → incident edge[]) — 드래그 재그림이 O(E) 전량 스캔 대신 O(incident).
     //   토폴로지(source/target)만 의존 → 드래그(좌표만 변화) 동안 유효, setData 에서 무효화. 미해소 끝점 엣지도 포함(완전).
     this._edgeIndex = PixiAdapterPure.buildEdgeIndex(built.edges);
     for (const e of (built.edges || [])) {
       const a = pos(e.source), b = pos(e.target); if (!a || !b) continue;
       const eid = PixiAdapterPure.edgeId(e);
-      specs.push({ id: eid, sig: PixiAdapterPure.edgeSig(e, a, b), make: () => { const g = this._drawEdge(e, a, b); this._objs.set(eid, g); return g; } }); }
-    for (const n of (built.nodes || [])) specs.push({ id: n.id, sig: PixiAdapterPure.nodeSig(n), make: () => this._drawNode(n) });
+      specs.push({ id: eid, sig: PixiAdapterPure.edgeSig(e, a, b), edge: e, ea: a, eb: b, make: () => { const g = this._drawEdge(e, a, b); this._objs.set(eid, g); return g; } }); }
+    for (const n of (built.nodes || [])) specs.push({ id: n.id, sig: PixiAdapterPure.nodeShapeSig(n), pos: [n.style.x, n.style.y], make: () => this._drawNode(n) });
     // diff
     if (!this._objSig) this._objSig = new Map();
     const nextIds = new Set(); for (const sp of specs) nextIds.add(sp.id);
     for (const [id, obj] of Array.from(this._objs)) { if (!nextIds.has(id)) { try { obj.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(obj); } catch (_) {} this._objs.delete(id); this._objSig.delete(id); } }
-    let reused = 0, made = 0;
+    let reused = 0, made = 0, moved = 0, repainted = 0;
     for (const sp of specs) {
-      if (this._objSig.get(sp.id) === sp.sig && this._objs.has(sp.id)) { reused++; continue; }   // 서명 동일 → 재사용
-      const old = this._objs.get(sp.id); if (old) { try { old.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(old); } catch (_) {} }
+      if (this._objSig.get(sp.id) === sp.sig && this._objs.has(sp.id)) {
+        // graph-expand-perf: 모양 서명이 같으면 **이동만** 반영한다(파기·재생성 없음 = 라벨 재생성 0).
+        //   위치를 서명에서 뺐으므로 여기서 명시적으로 동기화해야 화면과 모델이 어긋나지 않는다.
+        if (sp.pos) {
+          const o = this._objs.get(sp.id), p = o && o.position;
+          if (p && (p.x !== sp.pos[0] || p.y !== sp.pos[1])) { try { o.position.set(sp.pos[0], sp.pos[1]); moved++; } catch (_) {} }
+        }
+        reused++; continue;
+      }
+      const old = this._objs.get(sp.id);
+      // graph-expand-perf: 엣지는 **in-place 재-path**(clear+재그림)로 교체한다 — `_refreshIncidentEdges`(드래그)가
+      //   이미 쓰는 경로다. destroy/new Graphics 는 GPU 지오메트리 재할당 + GC churn 을 부르는데, 엣지는
+      //   끝점 좌표만 바뀌는 경우가 절대다수(형제 이동)라 그 비용이 통째로 낭비였다.
+      if (old && sp.edge && old.parent === this.world && typeof old.clear === "function") {
+        this._paintEdge(old, sp.edge, sp.ea, sp.eb);
+        this._objSig.set(sp.id, sp.sig); repainted++; reused++; continue;
+      }
+      if (old) { try { old.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(old); } catch (_) {} }
       const obj = sp.make(); this.world.addChild(obj); this._objSig.set(sp.id, sp.sig); made++;
     }
-    this._lastDrawStats = { reused, made, total: specs.length };
+    this._lastDrawStats = { reused, made, moved, repainted, total: specs.length };
     this._hitGrid = PixiAdapterPure.buildHitGrid(built.nodes, 128);
     this._renderMinimap();
     // graph-move-anim: 오브젝트가 **최종 위치로 생성된 직후** 출발 위치로 되돌리고 트윈을 건다.
@@ -1531,7 +1561,7 @@ export class PixiGraphAdapter {
     try {
       const perf = _pxPerf(), ls = this._labelStat;
       perf.render = { drawMs: Math.round((_pxNow() - drawT0) * 100) / 100,
-        objects: specs.length, reused, made,
+        objects: specs.length, reused, made, moved, repainted,
         labelsCreated: ls.created, labelsBitmap: ls.bitmap, labelsText: ls.text,
         labelMs: Math.round(ls.ms * 100) / 100 };
     } catch (_) {}

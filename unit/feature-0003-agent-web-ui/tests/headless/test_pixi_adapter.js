@@ -178,15 +178,22 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
 }
 
 // ── 오브젝트 풀 서명 (§18.8 M2: 재사용/재생성 정합) ──
-// T17 nodeSig: type/combo/style/states 변화 시 서명 differ, 동일 시 same
+// T17 nodeShapeSig: type/combo/style/states 변화 시 서명 differ, **위치(x/y)만 변하면 동일**.
+//   graph-expand-perf: 위치는 컨테이너 `position.set` 으로만 쓰이므로 파기·재생성 사유가 아니다 —
+//   서명에서 빼야 masonry 재균형(형제 수백 이동)이 라벨 재생성 폭풍을 부르지 않는다.
 {
   const n = { id: "a", type: "rect", combo: "S", states: [], style: { x: 1, y: 2, size: [150, 24], fill: "#0072B2" } };
-  const s0 = Pure.nodeSig(n);
-  ok(Pure.nodeSig({ ...n }) === s0, "T17 동일 노드 서명 동일(재사용)");
-  ok(Pure.nodeSig({ ...n, states: ["selected"] }) !== s0, "T17 states 변화 → 서명 differ(recreate)");
-  ok(Pure.nodeSig({ ...n, style: { ...n.style, x: 999 } }) !== s0, "T17 위치 변화 → 서명 differ");
-  ok(Pure.nodeSig({ ...n, type: "circle" }) !== s0, "T17 type 변화 → 서명 differ(m1 — circle/rect 기하)");
-  ok(Pure.nodeSig({ ...n, fill: "x" }) === s0, "T17 비-style 필드 무관(fill 은 style 안)");
+  const s0 = Pure.nodeShapeSig(n);
+  ok(Pure.nodeShapeSig({ ...n }) === s0, "T17 동일 노드 서명 동일(재사용)");
+  ok(Pure.nodeShapeSig({ ...n, states: ["selected"] }) !== s0, "T17 states 변화 → 서명 differ(recreate)");
+  ok(Pure.nodeShapeSig({ ...n, style: { ...n.style, x: 999, y: -40 } }) === s0, "T17 위치만 변화 → 서명 동일(재배치만)");
+  ok(Pure.nodeShapeSig({ ...n, style: { ...n.style, size: [151, 24] } }) !== s0, "T17 크기 변화 → 서명 differ(기하 재생성)");
+  ok(Pure.nodeShapeSig({ ...n, style: { ...n.style, labelText: "t" } }) !== s0, "T17 라벨 변화 → 서명 differ");
+  ok(Pure.nodeShapeSig({ ...n, style: { ...n.style, opacity: 0.3 } }) !== s0, "T17 dim(opacity) 변화 → 서명 differ");
+  ok(Pure.nodeShapeSig({ ...n, type: "circle" }) !== s0, "T17 type 변화 → 서명 differ(m1 — circle/rect 기하)");
+  ok(Pure.nodeShapeSig({ ...n, combo: "T" }) !== s0, "T17 combo 변화 → 서명 differ");
+  ok(Pure.nodeShapeSig({ ...n, fill: "x" }) === s0, "T17 비-style 필드 무관(fill 은 style 안)");
+  ok(typeof Pure.nodeSig === "undefined", "T17 위치-포함 nodeSig 는 폐기(SSOT 단일화)");
 }
 // T18 edgeSig: 끝점 이동 시 differ (노드 이동 → 엣지 재생성)
 {
@@ -196,12 +203,16 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(Pure.edgeSig(e, [0, 0], [100, 50]) !== s0, "T18 끝점 이동 → 서명 differ(재생성)");
   ok(Pure.edgeId({ source: "a", target: "b" }).startsWith("__e:"), "T18 id 없는 엣지 폴백 키");
 }
-// T19 comboSig: bbox(자식 파생) 변화 시 differ
+// T19 comboShapeSig: bbox **크기** 변화 시 differ, 원점(x/y) 이동만이면 동일(재배치).
+//   `_drawCombo` 는 roundRect(0,0,w,h) 로 그리고 x/y 는 컨테이너 위치라 노드와 같은 분리가 성립한다.
 {
   const c = { id: "S", style: { fill: "#3f4b8c", lineDash: [6, 4] } };
-  const s0 = Pure.comboSig(c, { x: 0, y: 0, w: 200, h: 100 });
-  ok(Pure.comboSig(c, { x: 0, y: 0, w: 200, h: 100 }) === s0, "T19 bbox 동일 → 서명 동일");
-  ok(Pure.comboSig(c, { x: 0, y: 0, w: 250, h: 100 }) !== s0, "T19 bbox 변화(자식 이동) → 서명 differ");
+  const s0 = Pure.comboShapeSig(c, { x: 0, y: 0, w: 200, h: 100 });
+  ok(Pure.comboShapeSig(c, { x: 0, y: 0, w: 200, h: 100 }) === s0, "T19 bbox 동일 → 서명 동일");
+  ok(Pure.comboShapeSig(c, { x: 40, y: -80, w: 200, h: 100 }) === s0, "T19 원점만 이동 → 서명 동일(재배치만)");
+  ok(Pure.comboShapeSig(c, { x: 0, y: 0, w: 250, h: 100 }) !== s0, "T19 폭 변화(자식 증가) → 서명 differ");
+  ok(Pure.comboShapeSig(c, { x: 0, y: 0, w: 200, h: 160 }) !== s0, "T19 높이 변화(컬럼 펼침) → 서명 differ");
+  ok(typeof Pure.comboSig === "undefined", "T19 위치-포함 comboSig 는 폐기(SSOT 단일화)");
 }
 
 // T20 hexToTint (BitmapText tint 파싱, §80 — 실 PixiAdapterPure.hexToTint 경로 검증. 비-hex=valid:false→Text 폴백)
@@ -1193,6 +1204,63 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   }
 }
 
-console.log("──────");
-console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
-process.exit(fail === 0 ? 0 : 1);
+// ── T31 scene diff — graph-expand-perf: 이동은 재배치, 모양 변경만 재생성, 엣지는 in-place 재-path ──
+//   실측 근거(693 노드 스키마에서 1 테이블 컬럼 펼침): 종전 diff 는 위치가 서명에 있어 이동한 형제
+//   538개를 파기·재생성했고 그중 524개가 라벨 재생성이었다(drawMs 207ms). 아래는 그 회귀를 잠근다.
+async function T31() {
+  const mkC = () => ({ position: { x: 0, y: 0, set(x, y) { this.x = x; this.y = y; } }, destroyed: false,
+    destroy() { this.destroyed = true; }, });
+  const mkInst = () => {
+    const inst = Object.create(Adapter.prototype);
+    inst._ready = Promise.resolve();
+    inst.world = { children: [], addChild(o) { this.children.push(o); o.parent = this; },
+      removeChild(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); } };
+    inst._objs = new Map(); inst._objSig = null; inst._built = { nodes: [], edges: [], combos: [] };
+    inst.made = { node: 0, combo: 0, edge: 0, paint: 0 };
+    inst._stopMoveTween = () => {}; inst._stopHoverFlow = () => {}; inst._clearHoverLayer = () => {};
+    inst._clearLabelHover = () => {}; inst._renderMinimap = () => {}; inst._render = () => {};
+    inst._startMoveTween = () => {}; inst._emit = () => {};
+    inst._drawNode = (n) => { inst.made.node++; const c = mkC(); c.position.set(n.style.x, n.style.y); inst._objs.set(n.id, c); return c; };
+    inst._drawCombo = (c, bb) => { inst.made.combo++; const o = mkC(); o.position.set(bb.x, bb.y); inst._objs.set(c.id, o); return o; };
+    inst._drawEdge = (e) => { inst.made.edge++; const g = mkC(); g.clear = () => {}; return g; };
+    inst._paintEdge = (g) => { inst.made.paint++; return g; };
+    inst.getElementRenderBounds = () => null;
+    return inst;
+  };
+  const scene = (dx) => ({
+    nodes: [{ id: "a", type: "rect", combo: "S", states: [], style: { x: 0 + dx, y: 0, size: [100, 24], fill: "#0f7d8c" } },
+            { id: "b", type: "rect", combo: "S", states: [], style: { x: 200 + dx, y: 0, size: [100, 24], fill: "#0f7d8c" } }],
+    edges: [{ id: "e1", source: "a", target: "b", style: { stroke: "#ccc" } }],
+    combos: [{ id: "S", style: { fill: "#3f4b8c" } }],
+  });
+  const inst = mkInst();
+  inst.setData(scene(0)); await inst.draw();
+  ok(inst.made.node === 2 && inst.made.combo === 1 && inst.made.edge === 1, "T31 최초 draw — 전부 생성");
+  const objA = inst._objs.get("a"), objS = inst._objs.get("S");
+  // ① 전원 이동(모양 동일) → 재생성 0, 재배치 2, 엣지는 in-place 재-path
+  inst.setData(scene(500)); await inst.draw();
+  ok(inst.made.node === 2, "T31 이동만 → 노드 재생성 0(누적 2 유지)");
+  ok(inst._objs.get("a") === objA, "T31 이동해도 같은 오브젝트 재사용(라벨 재생성 없음)");
+  ok(objA.position.x === 500, "T31 재사용 오브젝트가 새 위치로 재배치됨");
+  ok(objA.destroyed === false, "T31 이동 노드가 파기되지 않음");
+  ok(inst._lastDrawStats.made === 0 && inst._lastDrawStats.moved === 3, "T31 통계 — made 0 / moved 3(노드2+combo1)");
+  ok(inst.made.edge === 1 && inst.made.paint === 1, "T31 끝점 이동 엣지는 in-place 재-path(재생성 0)");
+  ok(inst._objs.get("S") === objS, "T31 combo 오브젝트 재사용");
+  ok(objS.position.x === (500 - 100 / 2 - 16), "T31 combo 도 원점만 이동 → 재배치(bbox 좌측 pad)");
+  // ② 모양 변경(states) → 그 노드만 재생성
+  const s2 = scene(500); s2.nodes[0].states = ["selected"];
+  inst.setData(s2); await inst.draw();
+  ok(inst.made.node === 3, "T31 states 변경 노드만 재생성(+1)");
+  ok(objA.destroyed === true, "T31 재생성 대상은 파기됨");
+  ok(inst._objs.get("b") !== undefined && inst._lastDrawStats.made === 1, "T31 형제는 그대로 재사용");
+  // ③ combo 크기 변경(컬럼 펼침으로 자식 bbox 확대) → combo 재생성
+  const s3 = scene(500); s3.nodes[1].style.size = [100, 400];
+  inst.setData(s3); await inst.draw();
+  ok(inst.made.combo === 2, "T31 combo 크기 변경 → 재생성");
+}
+
+T31().then(() => {
+  console.log("──────");
+  console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
+  process.exit(fail === 0 ? 0 : 1);
+});

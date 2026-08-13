@@ -447,6 +447,9 @@ function _metaRelevance(name, fqn, qvs) {
 //   재검색 키스트로크마다 호출해 비매칭 카드의 누적을 막고, 클리어 시엔 검색 잔재만 걷어낸다.
 function _metaSearchPrunePristine() {
   if (!_metaGraph.searchAdded.size) return;
+  // graph-expand-perf(codex 적대리뷰 P2): prune 도 모델을 바꾸는 경로다 — 리셋과 동일하게 선-fetch 캐시를
+  //   버려, 회수된 키가 TTL 안에 재등장할 때 이전 payload 가 소비되지 않게 한다(요청은 다시 뜨면 그만).
+  _metaColPrefetchClear();
   const referenced = new Set();
   _metaGraph.edges.forEach((e) => { referenced.add(e.source); referenced.add(e.target); });
   _metaGraph.searchAdded.forEach((k) => {
@@ -780,7 +783,10 @@ async function _metaGraphShowDetail(key) {
   _metaGraphStatus("상세 조회 중…");
   let data;
   try {
-    data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`);
+    // graph-expand-perf: 컬럼 펼침 선-fetch 가 이미 같은 GET 을 띄웠으면 그 promise 를 공유한다(중복 왕복 제거).
+    const pre = _metaColPeek(key, "graph");
+    if (pre) { const r = await pre; if (r.ok) data = r.v; else throw r.e; }
+    else data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`);
   } catch (err) {
     _metaGraphStatus((err && err.message) || "상세 조회 실패");
     return;
@@ -964,6 +970,69 @@ function _metaGraphBindDetailHover(el, selfKey) {
 //   flat 목록이 상단 컬럼 섹션과 중복이라 삭제되면서 이 헬퍼도 orphan 이 됐다. 컬럼별·방향별 추적 행은
 //   _metaGraphRenderDetail 의 relRow/dirGroup 이 담당한다(더 풍부: 방향 그룹·의미 툴팁).
 
+// ── graph-expand-perf(2026-08-13): 컬럼 펼침 선-fetch ──────────────────────────────────────────
+//   문제: 테이블 단일 클릭의 컬럼 펼침은 더블클릭(이웃확장)과 구분하려고 **340ms 타이머 뒤에** 시작한다
+//   (graph-core `_metaGraphOnNodeClick`). 그런데 그 타이머는 *모델 변경* 을 미루려는 것인데 **네트워크까지
+//   같이 미뤄져**, 라이브 실측에서 클릭→"컬럼 조회 중…" 이 500ms, 펼침 완료가 935ms 였다(693 노드 스키마).
+//   즉 체감 지연의 3분의 1 이상이 아무 일도 하지 않는 대기였다.
+//   해법: 클릭 즉시 **GET 두 개만** 띄워 두고(모델·상태·카메라 무접촉 — 순수 읽기), 340ms 뒤 실제 펼침이
+//   시작될 때 그 응답을 이어받는다. 더블클릭으로 판명되면 응답은 그냥 버려진다(GET 이라 부작용 0).
+//   · 저장하는 promise 는 **절대 reject 하지 않는다** — 버려질 수 있으므로 unhandledrejection 을 만들지 않게
+//     `{ok,v|e}` 로 감싸고, 소비 시점에 `_metaColTake` 가 원래대로 throw 해 기존 try/catch 의미를 보존한다.
+//   · 소비는 1회(take)다. 재클릭은 새로 prefetch 하거나 실제 fetch 로 자연 폴백한다.
+const _META_COL_PREFETCH_TTL = 8000;   // 340ms 타이머 + 느린 왕복을 덮되, 재사용 창은 최소로(세대 오염 표면 축소)
+const _metaColPrefetch = new Map();   // tableKey -> { graph: Promise|null, columns: Promise|null, at: ts }
+function _metaColWrap(p) { return p.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e })); }
+function _metaColPrefetchSweep(now) {
+  _metaColPrefetch.forEach((v, k) => { if (now - v.at > _META_COL_PREFETCH_TTL) _metaColPrefetch.delete(k); });
+}
+// 클릭 즉시 호출(fire-and-forget). Table 이 아니거나 이미 완전 펼침이면 아무것도 하지 않는다 —
+//   `_metaGraphToggleColumns` 의 조기-return 조건과 **같은 판정**이라 불필요한 요청을 만들지 않는다.
+function _metaGraphPrefetchColumns(key) {
+  if (!key || !_metaGraph.graph) return;
+  const node = _metaGraph.nodes.get(key);
+  if (!node || node.label !== "Table") return;
+  if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
+  if (!_metaGraph.introspectMiss) _metaGraph.introspectMiss = new Set();
+  // codex 적대리뷰 P2: 호출측(graph-core `_metaGraphOnNodeClick` 의 340ms 타이머)은 `!_metaTableHasCols(id)`
+  //   일 때만 펼침을 건다. 여기 가드를 그보다 넓게 두면 **부분 펼침 테이블**에서 선-fetch 만 뜨고 소비자가
+  //   없어 요청이 버려진다 — 호출측과 **같은 조건**으로 맞춰 낭비 요청 자체를 만들지 않는다.
+  if (_metaTableHasCols(key)) return;
+  const now = Date.now();
+  _metaColPrefetchSweep(now);
+  if (_metaColPrefetch.has(key)) return;   // 진행 중인 선-fetch 재사용(연타 이중 요청 차단)
+  const ent = { at: now, graph: null, columns: null };
+  ent.graph = _metaColWrap(apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`));
+  if (!_metaGraph.introspected.has(key)) {
+    ent.columns = _metaColWrap(apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`));
+  }
+  _metaColPrefetch.set(key, ent);
+}
+// 선-fetch 응답을 이어받거나(1회 소비) 없으면 지금 요청한다. 실패는 원래 예외로 재-throw.
+async function _metaColTake(key, kind, fetcher) {
+  const ent = _metaColPrefetch.get(key);
+  const p = ent && ent[kind];
+  if (!p) return fetcher();
+  ent[kind] = null;
+  if (!ent.graph && !ent.columns) _metaColPrefetch.delete(key);
+  const r = await p;
+  if (r.ok) return r.v;
+  throw r.e;
+}
+// codex 적대리뷰 P2: 상세 조회(`_metaGraphShowDetail`)가 쏘는 GET 은 선-fetch 의 `graph` 와 **완전히 같은
+//   요청**이다(`graph?node=<key>&depth=1`). 종전에도 상세와 컬럼펼침이 같은 GET 을 각각 한 번씩 쐈으므로
+//   (선재 중복), 여기서 **같은 promise 를 공유**해 클릭당 왕복을 하나 줄인다. 소비하지 않고 엿보기만 하므로
+//   뒤이어 오는 `_metaColTake`(펼침)가 그대로 이어받는다 — promise 는 멀티캐스트라 안전하다.
+//   ⚠ 응답 객체를 공유하게 되므로 **소비자는 mutate 하기 전에 얕은 복사**를 해야 한다(아래 ToggleColumns).
+function _metaColPeek(key, kind) {
+  const ent = _metaColPrefetch.get(key);
+  return (ent && ent[kind]) || null;
+}
+// 모델 리셋(스코프 전환·초기화)과 함께 비운다 — codex 적대리뷰 P1(GATE): 리셋 전에 뜬 응답이 TTL 안에
+//   재클릭으로 소비되면 이전 세대 payload 가 새 모델에 ingest 될 수 있다. 세대 토큰을 다는 대신 리셋
+//   경로에서 통째로 버려 그 클래스를 구조적으로 없앤다(요청은 다시 뜨면 그만 — GET 이라 부작용 0).
+function _metaColPrefetchClear() { _metaColPrefetch.clear(); }
+
 // 테이블 단일 클릭 = **자신의 컬럼 인라인 펼침(펼침 전용)**. 이미 펼쳐졌으면 no-op(버그① — 클릭으론 안 접힘).
 //   접힘: "−" 컨트롤(_metaGraphCollapse). 그래프 컬럼(HAS_COLUMN) 없으면 information_schema 즉석조회(introspect).
 async function _metaGraphToggleColumns(key) {
@@ -992,7 +1061,11 @@ async function _metaGraphToggleColumns(key) {
   if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }   // 폐기 — busy 소유 op 일 때만 해제(후속 op 가 rebuild 없이 끝나도 busy 잔류 방지)
   try {
     let data;
-    try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`); }
+    // graph-expand-perf: 클릭 시점에 띄워 둔 선-fetch 를 이어받는다(없으면 지금 요청 — 동작 동일).
+    //   상세 조회와 **같은 응답 객체**를 공유할 수 있으므로(위 `_metaColPeek`) 아래에서 `data.nodes` 를
+    //   재할당하기 전에 얕은 복사한다 — 공유 payload 를 제자리 변형하면 상세 패널이 잡고 있는 배열이 바뀐다.
+    try { const d = await _metaColTake(key, "graph", () => apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`));
+          data = { ...(d || {}), nodes: ((d && d.nodes) || []).slice(), edges: ((d && d.edges) || []).slice() }; }
     catch (_) { data = { nodes: [], edges: [] }; }
     if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
     if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
@@ -1005,7 +1078,7 @@ async function _metaGraphToggleColumns(key) {
     //   TTL 캐시). 이미 온전한 테이블은 아래 dedupe 에서 no-op 이라 표시가 바뀌지 않는다.
     if (!_metaGraph.introspected.has(key)) {
       try {
-        const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
+        const col = await _metaColTake(key, "columns", () => apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`));
         if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
         if (col && col.introspected && (col.nodes || []).length) {
           _metaGraph.introspected.add(key);
@@ -1030,8 +1103,11 @@ async function _metaGraphToggleColumns(key) {
       const k = String(x.key || "").toLowerCase();
       if (!k) return;
       const prev = _colSeen.get(k);
-      if (!prev) { _colSeen.set(k, x); return; }
-      if (prev.ordinal == null && x.ordinal != null) prev.ordinal = x.ordinal;   // 순서만 보완
+      // graph-expand-perf(codex 적대리뷰 P2 — aliasing): 응답 노드 객체는 상세 조회와 **공유**될 수 있으므로
+      //   (선-fetch promise 공유) 여기 담을 때 얕은 복사한다. 아래 `prev.ordinal = …` 이 원본을 제자리
+      //   변형하면 상세 패널이 잡고 있는 같은 객체가 바뀐다. 배열 slice 만으로는 원소 aliasing 이 남는다.
+      if (!prev) { _colSeen.set(k, { ...x }); return; }
+      if (prev.ordinal == null && x.ordinal != null) prev.ordinal = x.ordinal;   // 순서만 보완(복사본에만)
     });
     const colNodes = [..._colSeen.values()];
     _metaGraphIngest(colNodes, []);
@@ -3740,4 +3816,4 @@ async function _metaGraphLoadNodeAnalysis(key) {
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)
 
 
-export { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForContentCategory, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols };
+export { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForContentCategory, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaColPrefetchClear, _metaGraphPrefetchColumns, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols };
