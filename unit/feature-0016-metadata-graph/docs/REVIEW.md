@@ -903,3 +903,35 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
   모두 머지·배포됐다.
 - 주장 근거는 서빙 컨테이너 grep(자산 baked 2중 확인) · 동일 배율 스크린샷 · 재현 가능한 SQL 집계다.
 - 정직 표기: 픽셀 계측의 ±1px 한계와 어휘 통일의 설계상 잔여(`우편` 1밴드 등)를 Run 에 명시했다.
+
+## REV-20260813T112100-ai-claude-corp-feature-0016-expand-camera-anim [CODEX:graph-expand-camera-anim] — PASS-WITH-FIXES
+
+- Trigger: `UI/screen/layout/화면·레이아웃` keyword matched + `performance/렌더 비용` — §18.8 표의 ux·design
+  및 backend·qa 축. 세션-레벨 도구 제약(요청 없는 Agent tool 호출 금지)이 걸려 있어 §18.8.2 의 해소 순서에
+  따라 **제약 없는 채널**(`codex review --uncommitted`)로 수행했다(§18.8.1 경량 경로 2번, check #9 accepted).
+  `[SKIPPED:tool-restricted:*]` 없음 — 이 채널이 대상 도메인(상호작용·렌더 비용·회귀 표면)을 실제로 덮었다.
+- 대상: CHG-20260813T1121-…-expand-camera-anim (`graph-core.js` keep-in-view / `graph-ctxmenu.js` 4경로 배선 /
+  `graph-renderer-pixi.js` 이동 트윈·hit-test / 헤드리스 테스트 2파일).
+
+**결과: 7라운드, P1 3건 · P2 11건 전건 in-cycle 흡수.** 초판은 "동작은 하는데 상호작용이 어긋나는" 부류의
+결함을 다수 갖고 있었고, **그중 어느 것도 자동 테스트가 스스로 드러내지 못했다** — 전부 리뷰가 지적한
+뒤 회귀 가드를 신설했다. 라운드별 지적·대응은 REPORT.md `20260813T1121-expand-camera-anim` 의 표 참조.
+
+- 판정을 바꾼 대표 2건:
+  - **[4차 P2 ↔ 5차 P1 의 긴장]** 카메라가 읽는 요소 bounds 를 *최종 좌표* 로 두면 노드가 아직 반대편에
+    그려진 동안 카메라가 목적지로 가 애니메이션 내내 노드를 잃고(4차), *트윈 좌표* 로 두면 개시 시점에
+    "이미 보인다" 로 즉시 수렴해 이후 이탈을 아무도 따라가지 않는다(5차). 어느 한쪽만으로는 요구가
+    성립하지 않는다 → **트윈 좌표 + "이동이 끝났을 때만 종료"**(`isElementAnimating`) 두 축을 함께 도입.
+  - **[4차 P2 성능]** 트윈 중 hit-test 를 맞추려 프레임마다 hit-grid 를 전량 재구성했는데, 이는 이동
+    노드 상한과 무관하게 **화면 전체 노드**에 비례하는 비용을 22프레임 반복하는 것이었다 → grid 는
+    건드리지 않고 이동 노드만 **선형 스캔**(포인터 이벤트당 1회, 프레임당 0)으로 전환.
+- 자가 적대 점검에서 **철회한 지적 1건**: "combo 배경이 트윈을 안 따라간다" 를 결함으로 적으려다,
+  자식 bbox 파생이라 매 프레임 전량 재계산이 필요하고 시각적으로도 "상자가 먼저 서고 내용물이
+  안착" 이 자연스러운 그림임을 확인해 **의도된 절충**으로 REPORT 에 명시하는 쪽으로 바꿨다.
+- 기계적 cross-ref 점검(§18.8.1 공통 MUST): 신규 export 3종이 `graph-core.js` export 목록과
+  `graph-ctxmenu.js` import 에 모두 등재됨을 테스트로 단언(ESM free-var 사고 재발 차단축).
+- **미충족 명시**: [7차 P1] 실 Windows 브라우저 시각검증(PB-0008)은 ES module 특성상 배포 후에만
+  성립한다 — `test-runs.d/20260813T1121-graph-expand-camera-anim.md` 에 사유와 POST-DEPLOY 확인 항목
+  5건을 남겼고, 그 Run 전에는 시각검증을 통과한 것으로 보고하지 않는다.
+- 검증: 헤드리스 그래프 스위트 1155(기준선) → **1290 PASS / 0 FAIL** · 뮤테이션 19종 전건 KILLED ·
+  관련 pytest 46 PASS · `node --check` 3파일 PASS.

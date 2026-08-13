@@ -253,7 +253,9 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ];
   const combos = [{ id: "s2", style: { padding: [30, 16, 14, 16] } }];   // s2 bbox ≈ x 359..541, y 208..276
   const hg = Pure.buildHitGrid(nodes, 128);
-  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg };
+  // graph-move-anim: 트윈 없음(_tweenPos/_tweenMovers null) → `_hitNodes` 가 기존 grid 경로 그대로.
+  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg,
+    _tweenPos: null, _tweenMovers: null, _hitNodes: Adapter.prototype._hitNodes };
   const pick = (x, y) => Adapter.prototype._pick.call(ctx, x, y);
 
   // 수정 전 결함 witness: 필터 없는 raw hitTest 는 스키마 combo 영역(365,270)에서 CAT node 를 반환(오라우팅 근원)
@@ -288,7 +290,9 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ];
   const combos = [{ id: "s2", style: { padding: [30, 16, 14, 16] } }];
   const hg = Pure.buildHitGrid(nodes, 128);
-  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg };
+  // graph-move-anim: 트윈 없음(_tweenPos/_tweenMovers null) → `_hitNodes` 가 기존 grid 경로 그대로.
+  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg,
+    _tweenPos: null, _tweenMovers: null, _hitNodes: Adapter.prototype._hitNodes };
   const pick = (x, y) => Adapter.prototype._pick.call(ctx, x, y);
 
   // ① 밴드 위 sim-group 박스(GB) 우클릭 → 그 GB 노드(밴드로 흡수 안 됨) → 컨텐츠 카테고리 메뉴
@@ -587,6 +591,7 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   const ctx = { _built: { nodes, edges: [], combos: [{ id: "C1", style: {} }] },
     _hitGrid: Pure.buildHitGrid(nodes, 128), _cam: { zoom: 1, x: 0, y: 0 },
     _inMinimap() { return false; }, _isCatBg: Adapter.prototype._isCatBg,
+    _tweenPos: null, _tweenMovers: null, _hitNodes: Adapter.prototype._hitNodes,
     _setLabelHover(n) { got = n; } };
   const origCombo = Pure.hitTestCombo; let comboCalls = 0;
   Pure.hitTestCombo = function () { comboCalls++; return origCombo.apply(this, arguments); };
@@ -693,6 +698,7 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   let calls = 0, got = "unset";
   const ctx = { _built: { nodes, edges: [], combos: [] }, _hitGrid: Pure.buildHitGrid(nodes, 128),
     _cam: { zoom: 1, x: 0, y: 0 }, _inMinimap() { return false; }, _isCatBg: Adapter.prototype._isCatBg,
+    _tweenPos: null, _tweenMovers: null, _hitNodes: Adapter.prototype._hitNodes,
     _hoverCard: { g, w: 220 }, _setLabelHover(n) { calls++; got = n; } };
   Adapter.prototype._probeHover.call(ctx, 205, 50);
   ok(calls === 0, "T26 확장 카드 위 커서 → _setLabelHover 미호출(현 hover 유지)");
@@ -702,7 +708,8 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   // codex review 4차 P2: 확장 카드 위 클릭/우클릭/드래그는 **원 노드**로 라우팅(_pick tier0) —
   //   드러난 영역이 캔버스·이웃으로 새어 선택이 풀리거나 엉뚱한 메뉴가 뜨는 것 차단.
   const pctx = { _built: { nodes, edges: [], combos: [] }, _hitGrid: Pure.buildHitGrid(nodes, 128),
-    _isCatBg: Adapter.prototype._isCatBg, _hoverCard: { g, w: 220, node: nodes[0] } };
+    _isCatBg: Adapter.prototype._isCatBg, _hoverCard: { g, w: 220, node: nodes[0] },
+    _tweenPos: null, _tweenMovers: null, _hitNodes: Adapter.prototype._hitNodes };
   const hitCard = Adapter.prototype._pick.call(pctx, 205, 50);
   ok(hitCard && hitCard.id === "N1", "T26 _pick tier0 — 확장 카드 위(원 bbox 밖)는 원 노드로 라우팅");
   pctx._hoverCard = null;
@@ -741,6 +748,7 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(calls === 0, "T26 pointer 눌림 중 → hover 프로브 무동작(드래그 유령 카드 차단)");
   // 눌림 해제(pointerup/pointercancel) 후에는 정상 복귀 — 플래그가 고착되면 hover 가 영구 정지한다.
   ctx._ptrDown = false; ctx._hitGrid = null; ctx._cam = { zoom: 1, x: 0, y: 0 }; ctx._built = { nodes: [], edges: [], combos: [] };
+  ctx._tweenPos = null; ctx._tweenMovers = null; ctx._hitNodes = Adapter.prototype._hitNodes; ctx._isCatBg = Adapter.prototype._isCatBg;
   Adapter.prototype._probeHover.call(ctx, 10, 10);
   ok(calls === 1, "T26 눌림 해제 후 hover 판정 복귀(플래그 고착 없음)");
 }
@@ -805,6 +813,384 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(mono, "T27 dashArcs 각도 단조증가·비퇴화");
   ok(within, "T27 각 대시 호길이 ≤ on 길이(직선 대시와 동일 스케일)");
   ok(arcs[arcs.length - 1][1] <= 2 * Math.PI + 1e-9, "T27 한 바퀴를 넘지 않음");
+}
+
+// ── T28 moveTweenPlan: 재배치 이동 트윈 대상 선별(graph-move-anim, 2026-08-13) ──
+//   잠그는 계약: ① 이동한 노드만 ② 신규/소멸 노드 제외 ③ 화면 밖 이동 제외(비용 0) ④ 상한 초과는
+//   **보고되는** 절단(무음 금지) ⑤ 씬 교체(겹침 부족)는 통째로 포기 ⑥ 미세 이동은 무시.
+{
+  const mk = (id, x, y) => ({ id, style: { x, y } });
+  const prev = new Map([["a", [0, 0]], ["b", [10, 10]], ["c", [20, 20]]]);
+
+  // ① 이동한 노드만 — b 는 제자리
+  {
+    const p = Pure.moveTweenPlan(prev, [mk("a", 100, 0), mk("b", 10, 10), mk("c", 20, 60)], {});
+    ok(p.items.length === 2, "T28 이동 노드만 선별");
+    ok(p.items.map(i => i.id).sort().join(",") === "a,c", "T28 제자리 노드 제외");
+    ok(p.moved === 2 && p.skipped === 0, "T28 moved/skipped 회계");
+    const a = p.items.find(i => i.id === "a");
+    ok(a.from[0] === 0 && a.from[1] === 0 && a.to[0] === 100 && a.to[1] === 0, "T28 from/to 좌표");
+  }
+  // ② 신규 노드(직전 씬에 없음)는 대상 아님 — 트윈할 출발점이 없다
+  {
+    const p = Pure.moveTweenPlan(prev, [mk("a", 100, 0), mk("b", 10, 10), mk("c", 20, 20), mk("d", 500, 500)], {});
+    ok(!p.items.some(i => i.id === "d"), "T28 신규 노드 제외");
+  }
+  // ③ 미세 이동(minDelta 이하)은 무시 — 부동소수 흔들림으로 트윈이 켜지지 않게
+  {
+    const p = Pure.moveTweenPlan(prev, [mk("a", 0.3, 0.3), mk("b", 10, 10), mk("c", 20, 20)], {});
+    ok(p.items.length === 0 && p.moved === 0 && p.reason === "no-move", "T28 미세 이동 무시");
+  }
+  // ④ 가시영역 밖 이동 제외 — 출발·도착 **어느 쪽도** 안 걸칠 때만 제외한다
+  //    (화면 안에서 밖으로 떠나는 이동은 사용자가 그 이탈을 보므로 대상이다).
+  {
+    const vis = { x0: -50, y0: -50, x1: 50, y1: 50 };
+    const far = new Map([["a", [0, 0]], ["b", [10, 10]], ["c", [900, 900]]]);
+    const p = Pure.moveTweenPlan(far, [mk("a", 40, 40), mk("b", 10, 10), mk("c", 1200, 1200)], { vis });
+    ok(p.items.length === 1 && p.items[0].id === "a", "T28 화면 밖 이동 제외");
+    ok(p.moved === 2 && p.skipped === 1, "T28 제외분이 skipped 로 보고됨(무음 절단 금지)");
+    // 도착만 화면 안이어도 대상(밖에서 들어오는 이동은 보인다)
+    const p2 = Pure.moveTweenPlan(new Map([["a", [900, 900]]]), [mk("a", 0, 0)], { vis });
+    ok(p2.items.length === 1, "T28 화면 밖 → 안 이동은 대상");
+    // 화면 안에서 밖으로 떠나는 이동도 대상(이탈이 보인다)
+    const p3 = Pure.moveTweenPlan(new Map([["a", [0, 0]]]), [mk("a", 900, 900)], { vis });
+    ok(p3.items.length === 1, "T28 화면 안 → 밖 이동도 대상");
+  }
+  // ⑤ 상한 — 초과분은 즉시 반영 + skipped 로 보고
+  {
+    const big = new Map(), nodes = [];
+    for (let i = 0; i < 10; i++) { big.set("n" + i, [0, 0]); nodes.push(mk("n" + i, 100 + i, 100)); }
+    const p = Pure.moveTweenPlan(big, nodes, { cap: 4 });
+    ok(p.items.length === 4, "T28 cap 적용");
+    ok(p.moved === 10 && p.skipped === 6, "T28 cap 초과분 skipped 보고");
+  }
+  // ⑥-a 부분집합 씬 교체 — 새 씬이 **이전 씬의 부분집합**이면 새 씬 기준 겹침은 100% 다.
+  //     분모를 양쪽의 큰 쪽으로 잡지 않으면 검색 prune(500→1)이 '재배치'로 오판된다.
+  {
+    const many = new Map();
+    for (let i = 0; i < 100; i++) many.set("n" + i, [i, 0]);
+    const p = Pure.moveTweenPlan(many, [mk("n0", 500, 500)], {});
+    ok(p.items.length === 0 && p.reason === "scene-switch", "T28 부분집합 prune 은 씬 교체(분모=큰 쪽)");
+    // 정상 펼침(기존 전량 유지 + 신규 추가)은 계속 트윈 대상
+    const grow = [];
+    for (let i = 0; i < 100; i++) grow.push(mk("n" + i, i, 40));
+    for (let i = 0; i < 20; i++) grow.push(mk("new" + i, i, 80));
+    const p2 = Pure.moveTweenPlan(many, grow, {});
+    ok(p2.items.length === 100, "T28 펼침(전량 유지 + 신규)은 트윈 유지", p2.items.length);
+  }
+  // ⑥ 씬 교체 감지 — 직전과 겹치는 비율이 하한 미만이면 트윈 포기(스코프 전환·검색·중심보기)
+  {
+    const nodes = [mk("a", 100, 100)];
+    for (let i = 0; i < 20; i++) nodes.push(mk("x" + i, i * 10, 0));
+    const p = Pure.moveTweenPlan(prev, nodes, {});
+    ok(p.items.length === 0 && p.reason === "scene-switch", "T28 씬 교체는 트윈 포기");
+    // minOverlap 을 낮추면 같은 입력이 트윈 대상이 된다(임계가 실제로 판정에 쓰임)
+    const p2 = Pure.moveTweenPlan(prev, nodes, { minOverlap: 0.01 });
+    ok(p2.items.length === 1 && p2.items[0].id === "a", "T28 minOverlap 임계가 판정을 가른다");
+  }
+  // ⑦ 빈 입력 안전 — 직전 스냅샷 없음/노드 없음은 조용히 no-op
+  {
+    ok(Pure.moveTweenPlan(null, [mk("a", 1, 1)], {}).items.length === 0, "T28 prev 없음 → no-op");
+    ok(Pure.moveTweenPlan(new Map(), [mk("a", 1, 1)], {}).reason === "no-prev", "T28 빈 prev → no-prev");
+    ok(Pure.moveTweenPlan(prev, [], {}).items.length === 0, "T28 노드 없음 → no-op");
+  }
+  // ⑧ 비유한 좌표 방어(build 결함·미해소 좌표가 트윈을 NaN 으로 오염시키지 않게)
+  {
+    const p = Pure.moveTweenPlan(new Map([["a", [0, 0]], ["b", [0, 0]]]),
+      [mk("a", NaN, 10), mk("b", 50, 50)], { minOverlap: 0 });
+    ok(p.items.length === 1 && p.items[0].id === "b", "T28 비유한 좌표 노드 제외");
+  }
+}
+
+// ── T29 이동 트윈 수명주기 (graph-move-anim) ──
+//   Pixi 없이 어댑터 프로토타입만 빌려 계약을 잠근다: ① setData 가 **직전 좌표를 캡처**한다
+//   ② 트윈 개시 시 오브젝트가 **출발 위치로 되감긴다**(그렇지 않으면 애니메이션이 존재하지 않는다)
+//   ③ 시간이 흐르면 최종 위치로 수렴하고 ④ 종단에 오버레이(`_tweenPos`)·저품질 플래그가 **되돌아간다**
+//   ⑤ 진행 중 정지(다음 draw)는 최종 위치로 즉시 안착 ⑥ 관계선 예산 초과는 트윈을 열지 않는다.
+{
+  // rAF 를 수동 큐로 — 프레임 진행을 테스트가 통제한다(시간 의존 flake 제거).
+  const frames = [];
+  sandbox.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
+  sandbox.cancelAnimationFrame = () => {};
+  let clock = 0;
+  sandbox.performance.now = () => clock;
+  const drain = (t) => { clock = t; const q = frames.splice(0); for (const f of q) f(); };
+
+  const mkObj = () => ({ position: { x: 0, y: 0, set(x, y) { this.x = x; this.y = y; } } });
+  const mkInst = (edgesLen) => {
+    const inst = Object.create(Adapter.prototype);
+    inst.world = { scale: { x: 1 }, position: { x: 0, y: 0 } };
+    inst._objs = new Map();
+    inst._built = { nodes: [], edges: [], combos: [] };
+    inst._edgeIndex = null; inst._lowFi = false;
+    inst._prevPos = null; inst._tweenPos = null; inst._moveTween = null;
+    inst.getSize = () => [1000, 600];
+    inst._renderMinimap = () => {};
+    inst._render = () => {};
+    inst._refreshIncidentEdges = () => { inst.__refreshes = (inst.__refreshes || 0) + 1; };
+    inst._incidentEdges = () => new Array(edgesLen || 0).fill(0);
+    return inst;
+  };
+  const seed = (inst, from, to) => {
+    inst._built = { nodes: [{ id: "a", style: { x: from[0], y: from[1] } }], edges: [], combos: [] };
+    inst.setData({ nodes: [{ id: "a", style: { x: to[0], y: to[1] } }], edges: [], combos: [] });
+    const o = mkObj(); o.position.set(to[0], to[1]);   // draw() 가 최종 위치로 만든 상태
+    inst._objs.set("a", o);
+    return o;
+  };
+
+  // ①②③④ 정상 수명주기
+  {
+    const inst = mkInst(0);
+    const o = seed(inst, [0, 0], [200, 100]);
+    ok(inst._prevPos && inst._prevPos.get("a")[0] === 0, "T29 setData 가 직전 좌표 캡처");
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    ok(o.position.x === 0 && o.position.y === 0, "T29 개시 시 출발 위치로 되감김");
+    ok(!!inst._tweenPos && !!inst._moveTween, "T29 오버레이·세대 토큰 생성");
+    ok(inst._lowFi === true, "T29 트윈 중 관계선 저품질");
+    drain(180);   // 중간 프레임 — 출발과 도착 사이
+    ok(o.position.x > 0 && o.position.x < 200, "T29 중간 프레임은 경로 위", o.position.x);
+    ok(inst._tweenPos.get("a")[0] === o.position.x, "T29 오버레이가 화면 좌표를 따라감");
+    drain(1000);  // 종단
+    ok(o.position.x === 200 && o.position.y === 100, "T29 최종 위치 수렴", o.position);
+    ok(inst._tweenPos === null && inst._moveTween === null, "T29 종단에 오버레이·토큰 해제");
+    ok(inst._lowFi === false, "T29 종단에 관계선 고품질 복원");
+  }
+  // ⑤ 진행 중 정지(다음 draw) → 최종 위치 즉시 안착 + 상태 정리
+  {
+    const inst = mkInst(0);
+    const o = seed(inst, [0, 0], [200, 100]);
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    drain(120);
+    inst._stopMoveTween();
+    ok(o.position.x === 200 && o.position.y === 100, "T29 정지 시 최종 위치 즉시 안착", o.position);
+    ok(inst._tweenPos === null && inst._moveTween === null && inst._lowFi === false, "T29 정지 시 상태 정리");
+    const before = o.position.x;
+    drain(1000);   // 취소된 프레임이 살아 돌아오지 않는다
+    ok(o.position.x === before, "T29 정지 후 stale 프레임 무동작");
+  }
+  // ⑥ 관계선 예산 초과 → 트윈을 열지 않고 최종 위치(끊기는 애니메이션 방지)
+  {
+    const inst = mkInst(100000);
+    const o = seed(inst, [0, 0], [200, 100]);
+    inst._startMoveTween(inst._built);
+    ok(inst._moveTween === null && o.position.x === 200, "T29 관계선 예산 초과 시 즉시 최종 위치");
+  }
+  // ⑦ 직전 스냅샷이 없으면(첫 draw) 조용히 no-op
+  {
+    const inst = mkInst(0);
+    inst._objs.set("a", mkObj());
+    inst.setData({ nodes: [{ id: "a", style: { x: 5, y: 5 } }], edges: [], combos: [] });
+    inst._startMoveTween(inst._built);
+    ok(inst._moveTween === null, "T29 첫 draw 는 트윈 없음");
+  }
+  // ⑧ 트윈 도중 오브젝트 교체(setElementState = busy 해제·선택 점등·분석 마커)에도 계속 움직인다.
+  //    캡처한 참조만 붙들면 그 순간부터 노드는 멈추고 관계선만 보간돼 선이 떨어진다(codex review P1).
+  {
+    const inst = mkInst(0);
+    const oldObj = seed(inst, [0, 0], [400, 0]);
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    drain(100);
+    const midX = oldObj.position.x;
+    const fresh = mkObj(); fresh.position.set(400, 0);   // _drawNode 는 최종 위치로 만든다
+    inst._objs.set("a", fresh);                          // setElementState 가 교체한 상황
+    drain(200);
+    ok(fresh.position.x > midX && fresh.position.x < 400, "T29 교체된 오브젝트가 이어서 움직임", fresh.position.x);
+    ok(oldObj.position.x === midX, "T29 파기된 옛 오브젝트는 더 이상 갱신 안 됨");
+    drain(1000);
+    ok(fresh.position.x === 400, "T29 교체 후에도 최종 위치 수렴");
+  }
+  // ⑨ 오버레이는 **첫 프레임 콜백 전에** 활성이고, 그 사이 포인터 이벤트도 보이는 좌표로 판정된다.
+  //    (hit-grid 는 건드리지 않는다 — 이동 노드는 grid 에서 제외되고 `_hitNodes` 선형 스캔이 맡는다.)
+  {
+    const inst = mkInst(0);
+    inst._built = { nodes: [{ id: "a", type: "rect", style: { x: 0, y: 0, size: [100, 24], zIndex: 4 } }], edges: [], combos: [] };
+    inst.setData({ nodes: [{ id: "a", type: "rect", style: { x: 900, y: 0, size: [100, 24], zIndex: 4 } }], edges: [], combos: [] });
+    inst._objs.set("a", mkObj());
+    const gridBefore = Pure.buildHitGrid(inst._built.nodes, 128);   // draw() 가 만든 목적지 기준 grid
+    inst._hitGrid = gridBefore;
+    inst._isCatBg = Adapter.prototype._isCatBg;
+    inst._hoverCard = null;
+    clock = 0;   // 트윈 시작 시각 기준(앞 블록의 시계를 물려받지 않게)
+    inst._startMoveTween(inst._built);
+    ok(!!inst._tweenMovers && inst._tweenMovers.length === 1, "T29 트윈 개시 직후 movers 활성");
+    ok(inst._hitGrid === gridBefore, "T29 hit-grid 는 재구성하지 않는다(프레임당 O(N) 제거)");
+    ok(Adapter.prototype._pick.call(inst, 0, 0) !== null, "T29 첫 프레임 전에도 보이는 좌표가 hit");
+    ok(Adapter.prototype._pick.call(inst, 900, 0) === null, "T29 첫 프레임 전 목적지는 hit 아님");
+    drain(1000);
+    ok(inst._tweenMovers === null, "T29 종단에 movers 해제");
+    ok(Adapter.prototype._pick.call(inst, 900, 0) !== null, "T29 안착 후 최종 좌표에서 hit(복귀)");
+  }
+  // ⑩ 드래그가 트윈을 이긴다 — 조작 중 프레임이 손끝 위치를 덮어쓰지 않는다(codex review 3차 P1)
+  {
+    const inst = mkInst(0);
+    const o = seed(inst, [0, 0], [400, 0]);
+    inst._scheduleEdgeRefresh = () => {};
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    drain(100);
+    ok(inst._moveTween !== null, "T29 (전제) 드래그 전 트윈 진행 중");
+    Adapter.prototype._moveElement.call(inst, "a", 10, 5);   // 사용자가 노드를 잡아 끈다
+    ok(inst._moveTween === null && inst._tweenPos === null, "T29 드래그가 트윈을 취소");
+    const model = inst._built.nodes[0].style;
+    ok(model.x === 410 && model.y === 5, "T29 드래그 델타가 모델 최종 좌표에 적용", model);
+    ok(o.position.x === 410 && o.position.y === 5, "T29 화면도 손끝 위치", o.position);
+    drain(1000);   // 취소된 트윈 프레임이 되살아나 덮어쓰지 않는다
+    ok(o.position.x === 410 && o.position.y === 5, "T29 취소 후 stale 프레임이 드래그 위치를 덮지 않음", o.position);
+  }
+  // ⑪ 요소 bounds 가 **보이는 위치**를 따른다 — 카메라 보정(`_metaGraphKeepInView`)·중앙 focus 가 이 값을
+  //    읽는다. 최종 좌표를 주면 노드가 아직 반대편에 그려진 동안 카메라가 목적지로 가버려, 애니메이션
+  //    내내 그 노드가 화면 밖이 된다("선택한 노드를 잃지 않게" 요구의 정반대 — codex review 4차 P2).
+  {
+    const inst = mkInst(0);
+    inst._built = { nodes: [{ id: "a", type: "rect", style: { x: 0, y: 0, size: [100, 24], zIndex: 4 } }], edges: [], combos: [] };
+    inst.setData({ nodes: [{ id: "a", type: "rect", style: { x: 1000, y: 0, size: [100, 24], zIndex: 4 } }], edges: [], combos: [] });
+    inst._objs.set("a", mkObj());
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    const b0 = Adapter.prototype.getElementRenderBounds.call(inst, "a");
+    ok(b0 && Math.abs(b0.center[0] - 0) < 1e-6, "T29 개시 시 bounds = 출발 위치(카메라가 보이는 곳을 본다)", b0 && b0.center);
+    drain(180);
+    const b1 = Adapter.prototype.getElementRenderBounds.call(inst, "a");
+    ok(b1.center[0] > 0 && b1.center[0] < 1000, "T29 진행 중 bounds = 보간 위치(목적지 아님)", b1.center);
+    drain(1000);
+    const b2 = Adapter.prototype.getElementRenderBounds.call(inst, "a");
+    ok(Math.abs(b2.center[0] - 1000) < 1e-6, "T29 안착 후 bounds = 최종 위치", b2.center);
+  }
+  // ⑫ `isElementAnimating` — 카메라 보정이 "지금 보인다" 로 조기 종료하지 않게 하는 신호.
+  {
+    const inst = mkInst(0);
+    const o = seed(inst, [0, 0], [400, 0]);
+    ok(Adapter.prototype.isElementAnimating.call(inst, "a") === false, "T29 트윈 전 = 미이동");
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    ok(Adapter.prototype.isElementAnimating.call(inst, "a") === true, "T29 트윈 중 = 이동 중");
+    ok(Adapter.prototype.isElementAnimating.call(inst, "zzz") === false, "T29 이동 대상 아닌 id 는 false");
+    ok(Adapter.prototype.isElementAnimating.call(inst) === true, "T29 인자 생략 = 트윈 존재 여부");
+    drain(1000);
+    ok(Adapter.prototype.isElementAnimating.call(inst, "a") === false, "T29 안착 후 = 미이동");
+    ok(o.position.x === 400, "T29 (전제) 안착 확인");
+  }
+  // ⑬ dragstart 가 트윈을 **먼저** 끝낸다 — graph-core 핸들러가 모델 좌표로 잡기 오프셋을 계산하므로,
+  //    트윈이 살아 있으면 첫 델타가 튀고 종속 이동 offset 이 어긋난다.
+  {
+    const inst = mkInst(0);
+    const o = seed(inst, [0, 0], [400, 0]);
+    inst._emit = () => {};
+    inst._renderMinimapViewport = () => {};
+    inst._flushEdgeRefresh = () => {};
+    inst._payload = () => ({});
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    drain(100);
+    ok(inst._moveTween !== null, "T29 (전제) dragstart 전 트윈 진행 중");
+    Adapter.prototype._emitDrag.call(inst, "dragstart", { id: "a" }, null, { x: 0, y: 0 }, 0, 0);
+    ok(inst._moveTween === null, "T29 dragstart 가 트윈을 종료");
+    ok(o.position.x === 400 && Adapter.prototype.getElementPosition.call(inst, "a")[0] === 400,
+      "T29 dragstart 후 화면·모델 좌표 일치(잡기 오프셋 정합)", o.position.x);
+  }
+  // ⑭ 정지 시에도 **현재** 오브젝트를 최종 위치로 — 프레임 사이 교체(setElementState)가 있었으면
+  //    캡처된 참조는 파기된 것이라, 그것만 옮기면 화면에 남은 새 오브젝트가 중간 위치에 굳는다.
+  {
+    const inst = mkInst(0);
+    const oldObj = seed(inst, [0, 0], [400, 0]);
+    inst._scheduleEdgeRefresh = () => {};
+    clock = 0;
+    inst._startMoveTween(inst._built);
+    drain(100);
+    const fresh = mkObj(); fresh.position.set(oldObj.position.x, 0);   // 교체본은 중간 위치에 있다
+    inst._objs.set("a", fresh);
+    inst._stopMoveTween();
+    ok(fresh.position.x === 400, "T29 정지 시 교체본이 최종 위치로 안착", fresh.position.x);
+  }
+  frames.length = 0;
+}
+
+// ── T30 트윈 중 hit-test 정합(WYSIWYG) ──
+//   grid 를 최종 좌표로 두면 **보이는 자리는 안 눌리고 빈 목적지가 눌린다**(codex review P2).
+{
+  const nodes = [{ id: "a", type: "rect", style: { x: 900, y: 0, size: [100, 24], zIndex: 4 } }];
+  const seen = new Map([["a", [0, 0]]]);          // 지금 화면에 보이는 위치
+  const posOf = (n) => seen.get(n.id) || null;
+  // 평시(트윈 없음) — grid 가 최종 좌표에서 잡는다
+  {
+    const hg = Pure.buildHitGrid(nodes, 128);
+    ok(Pure.hitTest(900, 0, hg, nodes) !== null, "T30 평시: 최종 좌표에서 hit");
+    ok(Pure.hitTest(0, 0, hg, nodes) === null, "T30 평시: 다른 좌표는 miss(무회귀)");
+  }
+  // 트윈 중 — 이동 노드는 선형 스캔(hitTestMoving)이 **보이는 좌표**로 잡는다
+  {
+    const movers = [{ n: nodes[0], at: seen.get("a") }];
+    ok(Pure.hitTestMoving(0, 0, movers) !== null, "T30 트윈 중: 보이는 좌표에서 hit(선형 스캔)");
+    ok(Pure.hitTestMoving(900, 0, movers) === null, "T30 트윈 중: 아직 도착 안 한 목적지는 miss");
+    ok(Pure.hitTestMoving(0, 0, movers, () => false) === null, "T30 hitTestMoving 도 tier filter 적용");
+    ok(Pure.hitTestMoving(0, 0, []) === null && Pure.hitTestMoving(0, 0, null) === null, "T30 빈 movers 안전");
+    // `at` 은 트윈이 제자리 갱신하는 배열 — 재할당 없이 판정이 따라간다
+    seen.get("a")[0] = 450;
+    ok(Pure.hitTestMoving(450, 0, movers) !== null, "T30 at 배열 제자리 갱신이 판정에 반영");
+    seen.get("a")[0] = 0;
+  }
+  // grid 와 hitTest 의 override 는 **짝** — 한쪽만 주면 판정이 어긋난다(계약 명시)
+  // nodeBBox 의 중심 override
+  {
+    const b = Pure.nodeBBox(nodes[0], [10, 20]);
+    ok(b.x === -40 && b.y === 8 && b.w === 100 && b.h === 24, "T30 nodeBBox 중심 override", b);
+    const b0 = Pure.nodeBBox(nodes[0]);
+    ok(b0.x === 850, "T30 override 없으면 기존 동작(무회귀)", b0);
+  }
+  // **배선** — 순수함수가 옳아도 `_pick` 이 override 를 넘기지 않으면 화면과 클릭이 어긋난 채 통과한다
+  //   (§16.7 G6 계열: 로직이 아니라 등록 누락이 결함이 되는 부류). 호출부 레벨로 잠근다.
+  {
+    const tp = new Map([["a", [0, 0]]]);
+    const ctx = {
+      _hoverCard: null, _built: { nodes, edges: [], combos: [] },
+      _hitGrid: Pure.buildHitGrid(nodes, 128),
+      _isCatBg: Adapter.prototype._isCatBg, _hitNodes: Adapter.prototype._hitNodes,
+      _tweenPos: tp, _tweenMovers: [{ n: nodes[0], at: tp.get("a") }],
+    };
+    const hit = Adapter.prototype._pick.call(ctx, 0, 0);
+    ok(hit && hit.id === "a", "T30 배선 — _pick 이 트윈 좌표로 판정(보이는 자리 클릭)");
+    ok(Adapter.prototype._pick.call(ctx, 900, 0) === null, "T30 배선 — 목적지는 아직 클릭 대상 아님");
+    ctx._tweenPos = null; ctx._tweenMovers = null;   // 트윈 종료 → 오버레이 소멸(기존 계약 복귀)
+    ok(Adapter.prototype._pick.call(ctx, 900, 0) !== null, "T30 배선 — 트윈 종료 후 최종 좌표 판정 복귀");
+  }
+  // **hover 배선** — `_pick` 만 고치고 `_probeHover` 를 빠뜨리면 "클릭은 되는데 hover 는 안 되는"
+  //   반쪽 상태가 된다(같은 화면·다른 판정 기준). 두 경로가 같은 override 를 쓰는지 잠근다.
+  {
+    const tp = new Map([["a", [0, 0]]]);
+    let got = "unset";
+    const ctx = {
+      _ptrDown: false, _hoverCard: null, _built: { nodes, edges: [], combos: [] },
+      _hitGrid: Pure.buildHitGrid(nodes, 128),
+      _isCatBg: Adapter.prototype._isCatBg, _hitNodes: Adapter.prototype._hitNodes,
+      _tweenPos: tp, _tweenMovers: [{ n: nodes[0], at: tp.get("a") }],
+      _inMinimap: () => false, _setLabelHover(n) { got = n; },
+      get _cam() { return { zoom: 1, x: 0, y: 0 }; },
+    };
+    Adapter.prototype._probeHover.call(ctx, 0, 0);
+    ok(got && got.id === "a", "T30 배선 — _probeHover 도 트윈 좌표로 판정");
+    Adapter.prototype._probeHover.call(ctx, 900, 0);
+    ok(got === null, "T30 배선 — hover 도 목적지는 아직 대상 아님");
+  }
+  // **엣지 배선** — 관계선은 트윈 중 그려진 좌표를 따라가므로 판정 끝점도 `_resolvePos`(오버레이 우선)여야 한다.
+  {
+    const tp = new Map([["a", [0, 0]], ["b", [0, 200]]]);
+    const ctx = {
+      _built: { nodes: [], edges: [{ source: "a", target: "b", style: {} }], combos: [] },
+      _nodeById: new Map([["a", { style: { x: 900, y: 0 } }], ["b", { style: { x: 900, y: 200 } }]]),
+      _tweenPos: tp, _resolvePos: Adapter.prototype._resolvePos,
+      getElementPosition: () => null,
+      get _cam() { return { zoom: 1, x: 0, y: 0 }; },
+    };
+    const onVisible = Adapter.prototype._pickEdge.call(ctx, 0, 100);
+    ok(!!onVisible, "T30 배선 — _pickEdge 가 보이는 관계선을 잡는다");
+    ctx._tweenPos = null;   // 트윈 종료 → 모델 좌표
+    ok(Adapter.prototype._pickEdge.call(ctx, 0, 100) == null, "T30 배선 — 종료 후엔 모델 좌표 기준(무회귀)");
+    ok(!!Adapter.prototype._pickEdge.call(ctx, 900, 100), "T30 배선 — 종료 후 최종 좌표에서 잡힘");
+  }
 }
 
 console.log("──────");
