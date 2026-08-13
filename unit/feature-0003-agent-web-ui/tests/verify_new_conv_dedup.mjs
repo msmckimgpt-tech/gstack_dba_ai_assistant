@@ -121,6 +121,11 @@ ok("[B] renderConversationList 추출", Boolean(renderSrc));
 const treeSrc = extractFn(appJs, "_buildOwnDateTree");
 const ymdSrc = extractFn(appJs, "_ymdKey");
 ok("[B] _buildOwnDateTree/_ymdKey 추출", Boolean(treeSrc) && Boolean(ymdSrc));
+// folder-dnd-shared: own/others 파티션이 `isFolderScopedConversation`(owner || is_member) 로
+// 단일화됐다 — 실함수를 렌더와 같은 클로저에 넣어(주입 인자 isOwnConversation 을 그대로 쓰게)
+// 파티션 계약을 stub 으로 대체하지 않는다.
+const folderScopedSrc = extractFn(appJs, "isFolderScopedConversation");
+ok("[B] isFolderScopedConversation 추출", Boolean(folderScopedSrc));
 const { buildOwnDateTree, ymdKey } = new Function(`${ymdSrc}\n${treeSrc}\n return { buildOwnDateTree: _buildOwnDateTree, ymdKey: _ymdKey };`)();
 
 const dom = new JSDOM("<!doctype html><html><body><div id='convList'></div></body></html>");
@@ -138,7 +143,7 @@ function buildRender(conversationListEl) {
     "_buildOwnDateTree", "_ymdKey",  // 날짜 트리 빌더 — 실함수 주입(아래 추출)
     "openConversationItemMenu", "closeConversationItemMenu",
     "_switchToPendingConversationContext", "selectConversation", "renderConversationBulkBar",
-    `${renderSrc}\n return renderConversationList;`,
+    `${folderScopedSrc}\n${renderSrc}\n return renderConversationList;`,
   );
   return factory(
     conversationListEl,

@@ -3897,3 +3897,44 @@ border box 안쪽으로 그려지지 않으므로 글자 영역 마크색 픽셀
 - `AC-20260813T154300-attach-name-sort-2` — 이름 안의 숫자는 수치로 비교된다(`_02_` < `_10_`).
 - `AC-20260813T154300-attach-name-sort-3` — 휴지통 목록도 이름순이되, 최근 삭제분 200건이라는 절단 기준은 유지된다.
 - `AC-20260813T154300-attach-name-sort-4` — 일괄 다운로드(ZIP·매니페스트)가 같은 이름순을 따르고, 버전 체인은 인접 유지된다.
+
+---
+
+## REQ-20260813-folder-dnd-shared-group — 공유받은 그룹 대화도 폴더 drag&drop 이동 (사이드바, Minor §12.3, frontend-only)
+
+사용자 요청("서비스 내 다른 계정으로부터의 그룹 대화 또한, drag&drop으로 폴더 별 이동이 가능하도록
+구성해주세요."). 기능 명세 정본은 feature-0024-conversation-folders
+(`REQ-20260813-folder-dnd-shared-group`); 본 feature 는 **코드 거주** 측 명세다.
+
+### 동작
+
+좌측 대화 목록에서 **폴더 오버레이 대상 대화**는 `folder.manage.own` 보유 시 드래그해 폴더 헤더에
+놓으면 그 폴더로 배정되고, 헤더의 폴더 아이콘(root 드롭 존)에 놓으면 폴더에서 빠진다. 오버레이 대상 =
+**내 대화 + 다른 계정이 공유한 그룹 대화(`is_member`)**. 종전에는 후자가 폴더 안에 렌더되면서도
+draggable 이 아니었다(`'···' 메뉴 > 이동` 으로만 가능).
+
+### 불변식
+
+- **단일 predicate**: `app/sidebar.js` `isFolderScopedConversation(item)`(`isOwnConversation(item) ||
+  item.is_member`) 하나를 ① own/others 파티션(폴더 하위 렌더 대상) ② `buildCompactItem` 의 draggable
+  게이트가 **공유**한다. 두 지점이 갈라지면 "폴더에 보이는데 끌 수 없다"(이번 결함) 또는 "끌었는데
+  폴더에 안 보인다" 가 생긴다.
+- **계정별 격리**: 배정은 요청자 계정 row(`folder_conversation_map` PK `(account_id, conversation_id)`)
+  뿐이고 목록 보강도 `folder_map_for_account(요청자)` → 소유자·타 멤버 사이드바는 불변.
+- **표시 ≠ 인가**: 프론트는 display-permissive(`can()`), 실제 집행은 백엔드 —
+  `PATCH /api/conversations/{cid}/folder` 가 `_account_can_access_conversation`(그룹 멤버 열람 허용) +
+  `_require_folder_owner`(대상 폴더 소유) 로 이중 게이트. 본 변경으로 **백엔드·권한·스키마·엔드포인트
+  변경 0**.
+- **관리자 `.any` 열람 "타 계정 대화" 제외**: 폴더는 개인 오버레이이고 그 그룹은 폴더 파티션 대상이
+  아니라, 배정해도 폴더 하위에 렌더되지 않는다(무음 실패) → draggable 미부여.
+- `mine`(=`isOwnConversation`) 은 소유 표시 클래스(`is-own`/`is-other`)·멀티선택·삭제 인덱스에서
+  **다른 의미로 계속 쓰인다** — 통합하지 않았다.
+
+### AC
+
+- `AC-20260813T181200-folder-dnd-shared-group-1` — 다른 계정 소유 그룹 대화(내가 멤버)가 `draggable`
+  이고, 폴더 헤더 드롭 → 배정 / root 드롭 존 → 해제가 된다.
+- `AC-20260813T181200-folder-dnd-shared-group-2` — 그 이동이 요청자 계정에만 반영되고 소유자·타 멤버
+  화면은 불변이다.
+- `AC-20260813T181200-folder-dnd-shared-group-3` — `folder.manage.own` 미보유 계정에는 내 대화·공유
+  대화 모두 `draggable` 이 부여되지 않는다.

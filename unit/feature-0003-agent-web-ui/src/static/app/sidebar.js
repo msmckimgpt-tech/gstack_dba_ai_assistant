@@ -573,6 +573,19 @@ export function _saveCollapsedGroups() {
 
 // feature-0038 Cycle 9: 폴더 관리 세그먼트 2 은 app/sidebar.js 로 분리 (구 L2584–2908).
 
+// folder-dnd-shared: "이 대화가 요청자 폴더 오버레이의 대상인가" 단일 판정.
+//   폴더 배정은 **계정별 오버레이**(FUNCTION.md REQ-20260723-folder-organize, ANCHOR §1 —
+//   같은 그룹 대화를 멤버 각자가 자기 트리에 배치, 소유자 뷰 불변)이므로 대상은
+//   `내 대화 + 다른 계정이 공유한 그룹 대화(is_member)` 다. owner·멤버 모두 아닌
+//   관리자 `.any` 열람 대화("타 계정 대화" 그룹)는 폴더 파티션 대상이 아니다.
+//   ★ 사이드바 **폴더 하위 렌더 파티션** 과 **드래그 게이트** 가 이 하나의 predicate 을
+//   공유해야 "폴더에 보이는데 끌 수 없다" / "끌었는데 폴더에 안 보인다" 는 표시-집행
+//   불일치가 구조적으로 생기지 않는다 (이전에는 파티션 = owner|member, draggable = owner
+//   로 갈라져 공유받은 그룹 대화가 드래그 불가였다).
+export function isFolderScopedConversation(item) {
+  return Boolean(item) && (isOwnConversation(item) || Boolean(item.is_member));
+}
+
 export function renderConversationList() {
   conversationListEl.innerHTML = "";
   const hasDraftPending = Boolean(state.pendingNewConversation) && !state.pendingConversationEntries.has(state.pendingSentinel);
@@ -591,7 +604,7 @@ export function renderConversationList() {
     // feature-0009: 내가 소유했거나 멤버로 참여한 그룹 대화는 일반(내 대화) 카테고리로.
     // 최근 갱신순(updated_at desc, 백엔드 정렬 + 날짜 그룹)이라 활발한 대화가 상단에 온다.
     // owner·멤버 모두 아닌(관리자 .any 열람) 대화만 "타 계정 대화" 그룹.
-    if (isOwnConversation(item) || item.is_member) own.push(item);
+    if (isFolderScopedConversation(item)) own.push(item);
     else others.push(item);
   });
 
@@ -786,8 +799,13 @@ export function renderConversationList() {
       if (ev.key === "Enter" || ev.key === " ") toggleMenu(ev);
     });
     button.appendChild(menuTrigger);
-    // 개선6: 자기 대화는 드래그로 폴더에 넣거나 뺄 수 있다(folder.manage.own 보유 시).
-    if (mine && can("folder.manage.own")) {
+    // 개선6: 폴더 오버레이 대상 대화는 드래그로 폴더에 넣거나 뺄 수 있다(folder.manage.own 보유 시).
+    //   folder-dnd-shared: 게이트를 `mine` → `isFolderScopedConversation` 로 넓혀 **다른 계정이
+    //   공유한 그룹 대화(is_member)** 도 폴더별 이동이 된다. '···' 메뉴 '이동'(openMoveConversationDialog)
+    //   과 백엔드 `PATCH /api/conversations/{cid}/folder`(_account_can_access_conversation 게이트 —
+    //   그룹 멤버 열람 허용)는 이미 멤버 대화를 허용했고 draggable 만 owner 로 좁혀져 있었다.
+    //   배정은 계정 스코프 row(folder_conversation_map)라 소유자·타 멤버 뷰는 불변.
+    if (isFolderScopedConversation(item) && can("folder.manage.own")) {
       button.setAttribute("draggable", "true");
       button.addEventListener("dragstart", (ev) => {
         state.dqaDrag = { type: "conv", id: String(item.id) };

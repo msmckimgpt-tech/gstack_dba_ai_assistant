@@ -55,3 +55,8 @@ source_of_truth: true
 - Date: 2026-07-23. Files: `static/index.html`(폴더 아이콘 버튼 #newFolderBtn)·`static/app.js`(클릭·권한 동기화·root 드롭 이관·도구바 제거)·`static/styles.css`(.btn-new-folder 스타일·도구바 CSS 제거).
 - 좌측 대화목록의 `conv-folder-tools`('＋ 새 폴더' 바) 제거 → '새 대화' 버튼 우측 폴더 아이콘 버튼으로 통합(미니멀). 검색 아이콘과 동일 30x30 스타일. 클릭→createFolderFlow(null). _syncNewFolderBtn: folder.list.own 없으면 hidden·manage.own 없으면 disabled. DnD root 드롭 존을 폴더 아이콘 버튼으로 이관(hover 힌트). createFolderAndMove=autoRename:false.
 - 검증: node --check OK. 라이브=POST-DEPLOY PB-0008. Cross-ref: REV/TEST-20260723T200000-newfolder-btn.
+
+## CHG-20260813T181200-folder-dnd-shared-group (사용자 요청 — 공유받은 그룹 대화 폴더 DnD)
+- Date: 2026-08-13. Files: `unit/feature-0003-agent-web-ui/src/static/app/sidebar.js`(코드 거주 feature) + 동 feature `tests/verify_folder_dnd_shared_group.mjs`(신규) · `tests/verify_new_conv_dedup.mjs`(하네스 동반). 본 feature 는 docs-only(FUNCTION §2 REQ·§3 In Scope·§11 AC 2건 추가).
+- `isFolderScopedConversation`(owner || is_member) 신설 — 사이드바 폴더 파티션과 draggable 게이트가 **같은 predicate** 사용. 구 게이트 `mine && can("folder.manage.own")` → `isFolderScopedConversation(item) && can("folder.manage.own")`.
+- 신규 엔드포인트/권한/백엔드/스키마 0 — 기존 owner-scope 폴더 API + 계정별 배정 row 그대로. Cross-ref: feature-0003 `CHG/REV-20260813T181200` · `docs/test-runs.d/REV-20260813T181200-folder-dnd-shared.md`.
