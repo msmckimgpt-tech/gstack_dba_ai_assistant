@@ -2837,3 +2837,22 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
 - `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(이 env 에서 편집 전·후 두 번 실측). 구조: `releases` 48 불변, `generated`=="2026-08-13"==`releases[0].date`, `releases[0].items` 1→11(work 6 · admin 4 · common 1), 기존 47 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, date 내림차순 정상(말미 `"이전"` 라벨 블록은 설계상 정상), 내부용어 누출 0(37 패턴).
 - 라이브 파리티 실측(배포 게이트 확증): 편집 **전** 서빙 static(`https://localhost/static/release-notes-data.js`)이 브랜치 blob 과 md5 정확 일치(`795fce1960ad33fa7ecc0e90824ea729`), 라이브 컨테이너 6종(web-a·web-b·ask-worker·insight-worker·ops-scheduler·ext-tool-mcp) 전부 `:d585250b`(= HEAD = origin/main), `/healthz` 200, 서빙 index.html 의 캐시버스터 `?v=51af138635ba`(빌드 주입 해시 — 소스 placeholder `?v=dev` 유지).
 - **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).
+
+## 20260813T1640-usage-metric-solo-anim — '요청' 경계 전환 애니메이션 복구 (frontend-only, Minor §12.3)
+
+### 1. 케이스 정의
+
+| # | 케이스 | 기대 |
+|---|---|---|
+| 1 | 총 토큰 → 요청 | SVG 노드 유지 · 모델 세그먼트가 중간 높이를 거쳐 접힘 · 단일 막대가 0 에서 자람 |
+| 2 | 요청 → 총 토큰 | SVG 노드 유지 · 단일 막대가 중간 높이를 거쳐 접힘 |
+| 3 | 요청 지표 표시 | 보이는 막대 = 버킷당 1개(`\|__all__`) · 모델 세그먼트 전부 0 높이 |
+| 4 | 역할 가로막대 | 첫 세그먼트에 전체 값 · 나머지 0% · 폭·색 전환 |
+
+### 2. Run 기록
+
+- **실 Chromium 하네스 `test_usage_metric_switch.js` — 32 PASS / 0 FAIL**(기존 25 + 신규 5 + 정정 2).
+- **뮤테이션 역검증 5/5 KILLED** — signature 를 수정 전 형태(`[stacked, days, models, W]`)로 되돌리면
+  경계 전환 5건이 정확히 FAIL 한다(`sameSvg:false` = 재생성 = 사용자가 보고한 점프 증상 재현).
+- **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(ESM JS 라 미머지 프리뷰 불가, 선행
+  cycle 과 동일 사유). 배포 후 양방향 경계 전환을 라이브에서 재실측한다.

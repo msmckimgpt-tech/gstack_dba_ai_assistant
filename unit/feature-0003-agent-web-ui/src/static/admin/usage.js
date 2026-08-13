@@ -223,7 +223,10 @@ async function loadUsage(opts) {
         labels.push({ key: d, x: x + bw / 2, y: y - 3, text: fmtV(dayTot) });
       }
     });
-    const sig = [stacked ? "S" : "1", days.join(","), models.join(","), W].join("|");
+    // signature 는 **막대의 가로 배치**(일자 집합 · 차트 폭)만으로 정한다. 분해모드·모델집합은
+    // 세로 구성일 뿐이라 여기 넣으면 '요청'↔다른 지표, 모델 칩 토글이 전부 재생성이 되어
+    // 전환이 점프한다. 가로 배치가 그대로면 노드를 유지해 세그먼트 증감을 애니메이션으로 흡수한다.
+    const sig = [days.join(","), W].join("|");
     const svg = el.querySelector("svg");
     if (svg && el._sig === sig) {
       // ── in-place 갱신(지표 전환) — 노드 유지 → CSS transition 이 막대를 이동시킨다.
@@ -296,12 +299,14 @@ async function loadUsage(opts) {
     if (!el) return;
     const mk = metric.key;
     const fmtV = metric.money ? usd : num;
+    // 값 0 인 모델도 **0 길이 arc 로 남긴다** — 지표를 바꿀 때마다 목록이 늘었다 줄면 세그먼트
+    // 정체성이 흔들려 재생성(=점프)이 된다. 전부 0 이면 그때만 빈 상태.
     const rows = (byModel || []).map((r) => ({
       label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
       value: r[mk] || 0, calls: r.calls || 0, cost: r.cost_usd || 0,
-    })).filter((r) => r.value > 0);
-    if (!rows.length) { el._sig = ""; el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
+    }));
     const total = rows.reduce((a, b) => a + b.value, 0);
+    if (!rows.length || total <= 0) { el._sig = ""; el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
 
     const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70;
     let off = 0;
@@ -391,9 +396,8 @@ async function loadUsage(opts) {
           : `${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey] || 0)}</b>${extraCost}`,
       };
     });
-    const sig = (solo ? "1|" : "S|")
-      + data.map((r) => r.label + ">" + (r.models || []).map((m) => m.model).join("+")).join("|")
-      + (clickable ? "|c" : "");
+    // 행 구성(라벨 순서·클릭 가능 여부)만 signature — 세그먼트 증감은 아래에서 흡수한다.
+    const sig = data.map((r) => r.label).join("|") + (clickable ? "|c" : "");
     if (el._sig === sig && el.querySelector(".admin-usage-hbar-row")) {
       // ── in-place 갱신(지표 전환) — width 만 바꿔 CSS transition 이 막대를 늘이고 줄인다.
       data.forEach((r) => {
@@ -402,12 +406,23 @@ async function loadUsage(opts) {
         const val = row.querySelector("[data-hbar-val]");
         if (val) val.textContent = fmt(r.value);
         const segs = segOf(r);
-        row.querySelectorAll("[data-hseg]").forEach((sEl, i) => {
+        const track = row.querySelector(".admin-usage-hbar-track");
+        const cur = row.querySelectorAll("[data-hseg]");
+        cur.forEach((sEl, i) => {
           const s = segs[i];
-          if (!s) { sEl.style.width = "0%"; return; }
+          if (!s) { sEl.style.width = "0%"; return; }   // 초과분은 접는다(노드는 남겨 재사용)
           sEl.style.width = s.w + "%";
+          sEl.style.background = s.color;
           sEl.setAttribute("data-tip", s.tip);
         });
+        // 부족분은 0 폭으로 붙였다가 다음 프레임에 목표 폭 — 새 세그먼트도 자라나며 나타난다.
+        for (let i = cur.length; i < segs.length && track; i += 1) {
+          const s = segs[i];
+          track.insertAdjacentHTML("beforeend",
+            `<div data-hseg class='admin-usage-hseg' data-tip='${s.tip}' style='width:0%;background:${s.color};'></div>`);
+          const node = track.lastElementChild;
+          requestAnimationFrame(() => { node.style.width = s.w + "%"; });
+        }
       });
       bindTip(el);
       return;

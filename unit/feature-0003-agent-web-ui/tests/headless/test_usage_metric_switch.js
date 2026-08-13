@@ -192,9 +192,14 @@ __USAGE_SRC__
   // ── 6) 요청(비-가산) — 모델 분해 없이 단일 막대 + 사유 안내 ─────────────────────
   await page.click('[data-metric="requests"]');
   await page.waitForTimeout(600);
-  const solo = await barsFor();
-  check("요청 지표는 버킷당 막대 1개(모델 분해 안 함)",
-    solo.length === 2 && solo.every((b) => b.key.endsWith("|__all__")), solo);
+  // 전환 재사용을 위해 비활성 세그먼트는 **0 높이로 DOM 에 남는다**(재생성하면 전환이 점프가 된다).
+  // 사용자에게 보이는 것은 height>0 인 막대뿐이므로 그 기준으로 단정한다.
+  const soloAll = await barsFor();
+  const solo = soloAll.filter((b) => b.h > 0);
+  check("요청 지표는 보이는 막대가 버킷당 1개(모델 분해 안 함)",
+    solo.length === 2 && solo.every((b) => b.key.endsWith("|__all__")), soloAll);
+  check("요청 지표에서 모델 세그먼트는 전부 0 높이(접힘)",
+    soloAll.filter((b) => !b.key.endsWith("|__all__")).every((b) => b.h === 0), soloAll);
   const soloRatio = solo[0].h / solo[1].h;   // by_day.requests 6 : 4
   check("요청 막대비 1.5 (=6/4)", Math.abs(soloRatio - 1.5) < 0.06, solo);
   const note2 = await page.textContent("#usageMetricNote");
@@ -233,7 +238,9 @@ __USAGE_SRC__
     ns.map((n) => ({ label: n.getAttribute("data-label"),
                      segs: [...n.querySelectorAll("[data-hseg]")].map((s) => s.style.width) })));
   check("요청 지표에서 역할 막대가 0 폭으로 사라지지 않는다",
-    roleSegs.length === 2 && roleSegs.every((r) => r.segs.length === 1 && parseFloat(r.segs[0]) > 0), roleSegs);
+    roleSegs.length === 2 && roleSegs.every((r) => parseFloat(r.segs[0]) > 0), roleSegs);
+  check("요청 지표 역할 막대는 첫 세그먼트에 전체 값(나머지는 0% 접힘)",
+    roleSegs.every((r) => r.segs.slice(1).every((w) => parseFloat(w) === 0)), roleSegs);
   //   (b) 모델을 부분 선택하면 요청 카드가 비활성 + "—" 이고 지표가 기본값으로 강등된다
   //       (카드=모델별 합 vs 차트=전체 기준 불일치를 애초에 막는다).
   await page.click('#usageModelFilter [data-model-key="claude-haiku-4"]');
@@ -245,6 +252,62 @@ __USAGE_SRC__
     (await page.getAttribute('[data-metric="total_tokens"]', "aria-pressed")) === "true");
   const partialBars = await barsFor();
   check("부분 선택 후에도 차트가 정상 렌더", partialBars.length > 0, partialBars.length);
+
+  // ── 11) '요청' 경계 전환도 애니메이션인가 (사용자 보고 2026-08-13) ─────────────────
+  //   '요청'은 모델 분해가 없어 막대의 **키 집합 자체가 달라진다**. 초기 구현은 그 경우 SVG 를
+  //   재생성해 전환이 점프였다. 노드를 유지하고 세그먼트 증감을 애니메이션으로 흡수해야 한다.
+  await page.click('#usageModelFilter [data-model-key="__ALL__"]');   // 부분 선택 해제(요청 지표 활성화)
+  await page.waitForTimeout(600);
+  const modeSwitch = await page.evaluate(async (dir) => {
+    const from = dir === "in" ? "total_tokens" : "requests";
+    const to = dir === "in" ? "requests" : "total_tokens";
+    document.querySelector(`[data-metric="${from}"]`).click();
+    await new Promise((r) => setTimeout(r, 700));
+    const svgBefore = document.querySelector("#usageDayChart svg");
+    // 전환 전 존재하던 세그먼트 하나를 추적한다(사라지는 쪽 = 0 으로 줄어야 한다).
+    const leaving = document.querySelector("#usageDayChart rect[data-seg]");
+    const leavingKey = leaving.getAttribute("data-seg");
+    const h0 = parseFloat(getComputedStyle(leaving).height);
+    document.querySelector(`[data-metric="${to}"]`).click();
+    await new Promise((r) => setTimeout(r, 110));
+    const svgMid = document.querySelector("#usageDayChart svg");
+    const leavingMid = document.querySelector(`#usageDayChart rect[data-seg="${CSS.escape(leavingKey)}"]`);
+    const hMid = leavingMid ? parseFloat(getComputedStyle(leavingMid).height) : null;
+    // 새로 들어오는 세그먼트도 중간값이어야 한다(0 에서 자라는 중).
+    // 들어오는 쪽 = 단일 막대(`|__all__`). 사라지는 중인 모델 세그먼트를 집지 않도록 명시 지정한다.
+    const enterKey = leavingKey.split("|")[0] + "|__all__";
+    const entering = document.querySelector(`#usageDayChart rect[data-seg="${CSS.escape(enterKey)}"]`);
+    const enterMid = entering ? parseFloat(getComputedStyle(entering).height) : null;
+    await new Promise((r) => setTimeout(r, 800));
+    const enterEnd = enterKey
+      ? parseFloat(getComputedStyle(document.querySelector(`#usageDayChart rect[data-seg="${CSS.escape(enterKey)}"]`)).height)
+      : null;
+    return { sameSvg: svgBefore === svgMid, h0, hMid, enterMid, enterEnd };
+  }, "in");
+  check("총 토큰 → 요청: SVG 노드 유지(재생성 아님)", modeSwitch.sameSvg === true, modeSwitch);
+  check("총 토큰 → 요청: 사라지는 세그먼트가 중간 높이(점프 아님)",
+    modeSwitch.hMid !== null && modeSwitch.hMid > 0.5 && modeSwitch.hMid < modeSwitch.h0 - 0.5, modeSwitch);
+  check("총 토큰 → 요청: 새 막대가 0 에서 자란다",
+    modeSwitch.enterMid !== null && modeSwitch.enterEnd !== null
+    && modeSwitch.enterMid < modeSwitch.enterEnd - 0.5, modeSwitch);
+
+  const modeBack = await page.evaluate(async () => {
+    document.querySelector('[data-metric="requests"]').click();
+    await new Promise((r) => setTimeout(r, 700));
+    const svgBefore = document.querySelector("#usageDayChart svg");
+    const solo = document.querySelector('#usageDayChart rect[data-seg$="|__all__"]');
+    const h0 = parseFloat(getComputedStyle(solo).height);
+    document.querySelector('[data-metric="total_tokens"]').click();
+    await new Promise((r) => setTimeout(r, 110));
+    const soloMid = document.querySelector('#usageDayChart rect[data-seg$="|__all__"]');
+    const hMid = soloMid ? parseFloat(getComputedStyle(soloMid).height) : null;
+    const sameSvg = svgBefore === document.querySelector("#usageDayChart svg");
+    await new Promise((r) => setTimeout(r, 800));
+    return { sameSvg, h0, hMid };
+  });
+  check("요청 → 총 토큰: SVG 노드 유지", modeBack.sameSvg === true, modeBack);
+  check("요청 → 총 토큰: 단일 막대가 중간 높이로 줄어든다(점프 아님)",
+    modeBack.hMid !== null && modeBack.hMid > 0.5 && modeBack.hMid < modeBack.h0 - 0.5, modeBack);
 
   await page.screenshot({ path: path.join(__dirname, "usage-metric-switch.png"), fullPage: false });
   await browser.close();

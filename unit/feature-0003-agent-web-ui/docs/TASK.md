@@ -10612,3 +10612,22 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] 적대검증(ULTRACODE 워크플로 `wf_285f2b56-8df`, 5 에이전트 — 4축 병렬 분석 + RN 축 refute-first 검증) 결함 **6건(P1 2 · P2 4)** 을 오케스트레이터가 정본으로 **독립 재검증**해 전건 확정·반영: [P1] '공유 링크 관리' 토스트를 사용자 체감 결함으로 서술 → `app.js:1173` `can()` 이 인자를 버려(`void permission; return Boolean(state.user)`) 그 토스트는 **도달 불가**이며 정본 REPORT 정정 배너가 철회한 오진(A-4)의 재생산 → 문장 삭제. [P1] 가려진 대화 초대 멤버 동작을 "볼 수 있는 구간의 첨부" 로 서술 → `shared/share_window.py:40` `SCOPE_SENDER_ONLY = "sender-only"`(본인 첨부만·fail-closed) 와 불일치 → 실제 동작으로 교정. [P2] 08-07 블록 재서술 · 라이브 노출 0 인 knob 삭제 서술 · 오도 안내 2곳 위치·문면 오기(`composer.js:346` "읽기 전용 대화" / `app.js:2462` "다른 계정의 대화는 조회만 가능합니다") · `0.1픽셀` 무의미 정밀도 → 전건 교정.
 - [x] 검증: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 34/0 동일 = 회귀 0, 편집 전·후 두 번 실측) · 구조(releases 48 불변 · `releases[0].date`=2026-08-13 · items 1→11 · `generated`==head.date · 기존 47 블록 전량 보존 · type/area enum 위반 0 · 스키마 외 키 0 · date 내림차순 정상) · 내부용어 누출 정규식 스캔(feature-id·sha·§·PR#·ADR·PB-0008·모듈/함수/파일명·인프라 용어·픽셀 37 패턴) **0**.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음** — 소스는 `?v=dev` placeholder 고정이고 Dockerfile `inject_asset_stamp.py` 가 빌드 시 콘텐츠 해시를 주입하며 `bin/deploy-web.sh:1092` 가 placeholder 잔존 시 배포를 ABORT 한다(2026-07-12 ITEM-09 regime · 라이브 실측 `?v=51af138635ba`). `index.html`/`admin.html` 편집 0.
+
+## 20260813T1640-usage-metric-solo-anim — '요청' 경계 전환 애니메이션 복구 (Minor §12.3, frontend-only)
+
+사용자 보고(2026-08-13): "'요청' 에서 다른 요소로 전환하거나 다른 요소에서 '요청' 을 클릭하여
+차트를 전환할 때 부드러운 애니메이션이 적용되지 않는 이슈".
+
+- [x] 원인 규명 — signature 에 분해모드·모델집합이 들어가 '요청'(키 `일자|__all__`)과 다른 지표
+      (키 `일자|모델`) 사이에서 항상 SVG 재생성 → 새 노드라 transition 미적용(=점프)
+- [x] `renderStacked` signature 를 가로 배치(일자·폭)로 축소 + 세그먼트 접기/자라기로 흡수
+- [x] `renderDonut` 0 값 모델을 0 길이 arc 로 유지(라벨 집합 안정화)
+- [x] `renderStackedHBar` 세그먼트 부족분 추가 로직 신설 + 색 전환
+- [x] 헤드리스 회귀 잠금 5건 + 기존 검사 3건 정정 — **32 PASS · 뮤테이션 5/5 KILLED**
+- [x] `bin/verify-completion.sh --pre-commit` PASS → 커밋·PR·배포
+- [ ] POST-DEPLOY 라이브 양방향 경계 전환 재실측
+
+### 9. Requested Scope
+
+- "'요청' ↔ 다른 요소 전환 시 부드러운 애니메이션이 적용되지 않는 이슈 수정" — ✓ (양방향 모두
+  노드 유지 전환으로 복구. 같은 뿌리였던 **모델 칩 토글 점프**도 함께 해소)
