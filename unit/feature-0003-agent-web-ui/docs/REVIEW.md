@@ -4859,7 +4859,6 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
 - **테스트 env**: 무인 cron(WSL2 컨테이너 호스트). `verify_release_notes.mjs` 는 `unit/feature-0003-agent-web-ui` 에서 실행(jsdom `/tmp/node_modules`). PB-0008 은 TEST.md 에 미수행 사유·대체 검증 명시.
 - **cache-buster**: 수기 bump 없음. 소스 `?v=dev` placeholder 고정 + Dockerfile `inject_asset_stamp.py` 빌드 주입 + `bin/deploy-web.sh:1092` 가 placeholder 잔존 시 배포 ABORT(2026-07-12 ITEM-09). 라이브 실측 토큰 `?v=51af138635ba`. `index.html`/`admin.html` 편집 0.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.
-
 ## REV-20260813T164000-ai-claude-corp-usage-metric-solo-anim [SKIPPED:non-policy-doc] — 프론트 표시 계층 전환 규칙 정정
 
 **Trigger**: UI/layout keyword — 그러나 변경 표면이 `static/admin/usage.js` 렌더 3함수 +
@@ -4912,3 +4911,26 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
 
 - 축·x라벨 갱신이 `innerHTML` 교체라 그 순간 텍스트 노드가 새로 만들어진다. 전환 대상이 아니므로
   시각적 영향은 없다(선·숫자는 제자리에 즉시 그려진다).
+## REV-20260813T164000-ai-claude-corp-usage-metric-solo-anim [SKIPPED:non-policy-doc] — 프론트 표시 계층 전환 규칙 정정
+
+**Trigger**: UI/layout keyword — 그러나 변경 표면이 `static/admin/usage.js` 렌더 3함수 +
+`css/admin.css` 1선언 + 하네스로, 신규 권한·스키마·엔드포인트·데이터 경로 0. §18.8 표의 코드 변경
+행에 해당하나 실질은 **선행 cycle 이 만든 전환 규칙의 경계 결함 수정**이라 경량 경로로 처리하고,
+대신 **뮤테이션 역검증으로 검사의 판별력을 실증**했다(수정 전 sig 복원 시 5건 정확히 FAIL).
+
+### 판단 근거
+
+- **왜 signature 를 좁혔나** — 초기 설계는 "세그먼트 정체성이 달라지면 재생성" 이었고 그게 옳다고
+  봤다. 실제로는 '요청'이 그 경계를 매 클릭 넘나드는 **일상 경로**였다(사용자가 바로 발견). 막대의
+  정체성을 결정하는 것은 세로 구성이 아니라 **가로 배치**(어느 일자 자리에 서는가)이므로, 세로
+  구성 변화는 접기/자라기로 표현하는 편이 사용자가 보는 연속성과 맞는다.
+- **0 높이 노드를 남기는 비용** — 키 집합이 유한(일자 × (모델+1))하고 지표 전환마다 증가하지
+  않는다. 남은 노드는 다음 전환에서 재사용되므로 누적이 아니라 재활용이다.
+- **검사도 함께 정정** — "요청 지표는 막대 1개" 같은 기존 단정은 0 높이 노드를 남기는 새 설계와
+  맞지 않는다. 다만 완화가 아니라 **사용자에게 보이는 것(height>0)** 기준으로 다시 적었고,
+  "모델 세그먼트가 전부 0 높이로 접혔다" 는 단정을 추가해 커버리지를 오히려 넓혔다.
+
+### 잔여
+
+- 도넛에서 값 0 인 모델이 범례에 `0.0%` 로 남는다. 캐시 지표처럼 일부 모델만 값이 있는 경우
+  "그 모델은 0" 이라는 사실 표기라 오해가 없다고 판단했다(숨기면 목록이 흔들린다).
