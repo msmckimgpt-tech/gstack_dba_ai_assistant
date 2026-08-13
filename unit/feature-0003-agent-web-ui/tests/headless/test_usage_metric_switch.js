@@ -309,6 +309,37 @@ __USAGE_SRC__
   check("요청 → 총 토큰: 단일 막대가 중간 높이로 줄어든다(점프 아님)",
     modeBack.hMid !== null && modeBack.hMid > 0.5 && modeBack.hMid < modeBack.h0 - 0.5, modeBack);
 
+  // ── 12) 차트 폭이 달라진 채 전환해도 재생성되지 않는다 (라이브 결함의 실제 기전) ──────
+  //   '요청'은 범례가 없어 페이지가 짧아지고 → 세로 스크롤바가 사라져 차트 폭이 12px 달라진다.
+  //   폭을 signature 에 넣으면 그 자체로 재생성이 되므로, 폭 변화는 in-place 가 흡수해야 한다.
+  //   (헤드리스 픽스처는 스크롤바가 없어 자연 재현이 안 되므로 폭을 직접 바꿔 같은 조건을 만든다.)
+  const widthCase = await page.evaluate(async () => {
+    const el = document.getElementById("usageDayChart");
+    document.querySelector('[data-metric="total_tokens"]').click();
+    await new Promise((r) => setTimeout(r, 700));
+    const svg0 = el.querySelector("svg");
+    const vb0 = svg0.getAttribute("viewBox");
+    const sig0 = String(el._sig);
+    el.parentElement.style.width = "640px";           // 스크롤바 출현과 동형(폭만 변함)
+    document.querySelector('[data-metric="requests"]').click();
+    await new Promise((r) => setTimeout(r, 900));
+    const svg1 = el.querySelector("svg");
+    const barX = [...el.querySelectorAll("rect[data-seg]")]
+      .filter((n) => parseFloat(getComputedStyle(n).height) > 0)
+      .map((n) => Math.round(parseFloat(getComputedStyle(n).x)));
+    const axisLine = svg1.querySelector("[data-axis] line");
+    return { sameSvg: svg0 === svg1, sig0, sig1: String(el._sig),
+             vb0, vb1: svg1.getAttribute("viewBox"),
+             axisX2: axisLine ? Math.round(parseFloat(axisLine.getAttribute("x2"))) : null,
+             barX, maxLabel: svg1.querySelector("[data-axis] text").textContent };
+  });
+  check("폭이 바뀌어도 SVG 재생성 안 함(노드 유지)", widthCase.sameSvg === true, widthCase);
+  check("폭 변화가 signature 를 흔들지 않는다", widthCase.sig0 === widthCase.sig1, widthCase);
+  check("viewBox 가 새 폭으로 갱신된다", widthCase.vb0 !== widthCase.vb1 && /^0 0 6\d\d 200$/.test(widthCase.vb1), widthCase);
+  check("축·막대가 새 폭 안에 다시 배치된다",
+    widthCase.axisX2 !== null && widthCase.axisX2 < 640 && widthCase.barX.every((x) => x < 640), widthCase);
+  await page.evaluate(() => { document.getElementById("usageDayChart").parentElement.style.width = "760px"; });
+
   await page.screenshot({ path: path.join(__dirname, "usage-metric-switch.png"), fullPage: false });
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);

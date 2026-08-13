@@ -4034,3 +4034,15 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - `src/static/css/admin.css` — `.admin-usage-hseg` 에 `background` 전환 추가(단일 색 ↔ 모델 색).
 - `tests/headless/test_usage_metric_switch.js` — 양방향 경계 전환 회귀 잠금 5건 + 기존 검사 3건을
   새 설계(0 높이 노드 유지)에 맞춰 "보이는 막대" 기준으로 정정. 32 PASS · 뮤테이션 역검증 5/5.
+
+## CHG-20260813T1720-ai-claude-corp-usage-metric-solo-anim-width — 폭 흔들림까지 흡수 (같은 결함의 2차 기전)
+
+1차 수정(분해모드·모델집합 제거) 후 **라이브에서 여전히 재생성**됐다. 실측으로 갈라낸 2차 기전:
+'요청'은 범례가 없어 페이지가 짧아지고 → 세로 스크롤바가 사라져 **차트 폭이 12px 달라진다**
+(sig `…|1299` vs `…|1287`). 헤드리스는 픽스처가 작아 스크롤바가 없어 재현되지 않았다.
+
+- `usage.js` — signature 를 **일자 집합만**으로 축소(W 제거). in-place 경로가 `viewBox`·축·x라벨·
+  막대 `x`/`width` 를 새 폭으로 다시 맞춘다(가로는 즉시 반영, 세로만 애니메이션). 축·x라벨은
+  생성·갱신이 같은 식을 쓰도록 `axisInner`/`xLabelsInner` 빌더로 추출.
+- 하네스 — 폭을 직접 바꿔 같은 조건을 만드는 회귀 잠금 4건 추가(**36 PASS**). 뮤테이션 2종
+  (W 를 sig 에 복원 / viewBox 갱신 제거) 모두 KILLED.

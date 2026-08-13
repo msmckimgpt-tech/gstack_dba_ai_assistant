@@ -2856,3 +2856,21 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   경계 전환 5건이 정확히 FAIL 한다(`sameSvg:false` = 재생성 = 사용자가 보고한 점프 증상 재현).
 - **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(ESM JS 라 미머지 프리뷰 불가, 선행
   cycle 과 동일 사유). 배포 후 양방향 경계 전환을 라이브에서 재실측한다.
+
+### 20260813T1720 후속 — 폭 흔들림(2차 기전) 회귀 잠금
+
+1차 수정 후 **라이브에서만** 재생성이 남았다. 원인은 차트 폭(1299 vs 1287) — '요청'의 범례 부재가
+페이지 높이를 줄여 세로 스크롤바를 없앤 결과다. 헤드리스 픽스처는 스크롤바가 없어 자연 재현이
+안 되므로, 컨테이너 폭을 직접 바꿔 동형 조건을 만든 검사 4건을 추가했다.
+
+- **36 PASS / 0 FAIL** (기존 32 + 폭 4)
+- **뮤테이션 2/2 KILLED** — ① W 를 sig 에 복원 → "폭이 바뀌어도 재생성 안 함"·"sig 안 흔들림" FAIL
+  ② in-place viewBox 갱신 제거 → "viewBox 가 새 폭으로 갱신" FAIL
+- **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(ESM JS 라 미머지 프리뷰 불가, 선행
+  cycle 과 동일 사유). 배포 후 양방향 경계 전환을 라이브에서 재실측한다.
+
+- **Environment: Windows-browser (PB-0008)** — **미수행(POST-DEPLOY 이월)**, 사유: ESM JS 변경이라
+  미머지 `docker cp` 프리뷰가 원리적으로 불충분(asset stamp 미주입 → 모듈 이중 인스턴스). **2차
+  기전 자체가 라이브 실측으로 규명됐다** — 1차 배포본에서 `sameSvg:false` 와 sig 폭 차이(1299 vs
+  1287)를 직접 관측해 원인을 갈라냈고, 그 조건을 헤드리스에 이식해 회귀를 잠갔다. 재배포 후 양방향
+  경계 전환을 실 Chrome 에서 재실측한다.

@@ -10625,6 +10625,7 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] `renderStackedHBar` 세그먼트 부족분 추가 로직 신설 + 색 전환
 - [x] 헤드리스 회귀 잠금 5건 + 기존 검사 3건 정정 — **32 PASS · 뮤테이션 5/5 KILLED**
 - [x] `bin/verify-completion.sh --pre-commit` PASS → 커밋·PR·배포
+- [x] 2차 기전(폭 흔들림) 규명·수정 — 라이브 실측 1299 vs 1287 · 회귀 잠금 4건 · 뮤테이션 2/2
 - [ ] POST-DEPLOY 라이브 양방향 경계 전환 재실측
 
 ### 9. Requested Scope
