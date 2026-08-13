@@ -4548,3 +4548,16 @@ resolve 한 결과다(리뷰어 주장 그대로 수용하지 않음).
   - ZIP 중복 이름의 구분 번호가 어느 첨부에 붙는지가 새 정렬 순서를 따라 바뀔 수 있다 —
     manifest 와 ZIP 이 **같은 배열**을 쓰므로 한 요청 안에서 어긋나지 않는다.
   - 검색 결과의 첨부 chip(`created_at DESC`)은 관련성/최신순 표면이라 범위 밖으로 두었다.
+
+## REV-20260813T170000-attach-name-sort-postdeploy [SKIPPED:non-policy-doc] — PASS
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1700-attach-name-sort-postdeploy`
+- Reason: changed paths are docs only — 코드·스키마·권한 변경 0(POST-DEPLOY 실측 기록)
+- Timestamp: 2026-08-13T17:00:00+09:00
+
+- **판정 근거**: "배포됐다" 를 스크립트 종료코드가 아니라 **서빙 주체의 실제 SHA**(web-a·web-b
+  `mysql-ai-web:7afed974`)와 **엣지 로그**(`no upstreams available` 0건)로 확인했다.
+- **검증의 종착점을 요청 화면에 맞췄다**: 임의의 첨부 대화가 아니라 **사용자가 스크린샷으로 보여준
+  그 파일 세트**(`20260709_[MV] Log_v2 이슈 대응_*.sql`)를 라이브에서 열어 `01 → 02 → 03 → 04 →
+  08 → 09` 를 확인했다. 요청의 이행은 테스트 통과가 아니라 그 화면에서 증명된다.
+- Human Approval Needed: no

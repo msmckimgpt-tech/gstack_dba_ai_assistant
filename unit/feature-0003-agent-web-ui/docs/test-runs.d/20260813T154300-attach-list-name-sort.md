@@ -46,3 +46,18 @@ verdict: PASS
 - `ruff check` — All checks passed.
 
 - **Pass/Fail: PASS** (배포 후 baked 자산 POST-DEPLOY 재실측은 이월).
+
+# Run 2 — POST-DEPLOY 라이브 실측 (baked 자산)
+
+- **Environment: Windows-browser** — 실 Chrome/150, `https://localhost/`(Caddy → web-a/web-b).
+- 배포: PR #1251 → main `7afed974` → `sudo bash bin/deploy-web.sh --web-only`. 양 replica
+  `mysql-ai-web:7afed974` · soak 통과 · 엣지 `no upstreams available` **0건**(무중단 실측) · `/healthz` 200.
+- 결과 A — 프리뷰와 같은 대화(첨부 39건): 화면 목록 **전건 이름순**, Run 1 과 차이 0.
+- 결과 B — **사용자 요청의 출발점이 된 그 파일 세트**(`20260709_[MV] Log_v2 이슈 대응_*.sql` 6건,
+  요청 스크린샷에서 `08 → 01 → 02 → 03 → 04 → 09` 로 흩어져 있던 것):
+  라이브 배포본에서 `01_rename_table → 02_refill_table_trigger → 03_refill_table_schedule →
+  04_proc_log_schedule → 08_fix_log_tables → 09_fix_schedule` 로 정렬 — 요청이 화면에서 이행됨.
+- 증거: `../evidence/pb0008-attach-name-sort-3-postdeploy.png`.
+- 라이브 데이터 변경 0(열람 경로만).
+- 이월: 없음 — 본 Run 으로 시각검증 축 종결. (업로드 **직후** pill 순서의 실브라우저 실측은
+  업로드가 곧 라이브 데이터 변경이라 하네스로 대체한다는 Run 1 의 기록 유지.)
