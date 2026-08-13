@@ -40,10 +40,10 @@ sources:
 
 ## 2. 상태
 
-- **단계**: in-progress (P0 도구 9종 + OAuth AS + MCP stdio / HTTP·SSE 어댑터 구현 완료 · 1차 `a68fbbac` / 2차 `e1372f32` 라이브 배포 + POST-DEPLOY 12항·8항 실측 완료)
-- **마지막 갱신**: 2026-08-12
+- **단계**: in-progress (P0 도구 9종 + OAuth AS + 전송 어댑터 2종 구현 완료 · HTTP/SSE 를 `ext-tool-mcp` 서비스로 **라이브 기동** + 엣지 `/api/ai/mcp` · 상한 4종 콘솔 전용 패널 · **URL 접속 인증**(discovery + 동의 화면 + `/ai/connect`) 완료 · 1차 `a68fbbac` / 2차 `e1372f32` / 3차 `89b7cd54`→`feadc089` / 인증 접근성 `5f20ee88` 라이브 배포 + POST-DEPLOY 전건 실측 완료)
+- **마지막 갱신**: 2026-08-13
 - **AI 작업자**: claude / feature-0041 cycle
-- **잔여**: 관리 콘솔 '외부 도구 한도' 탭(사용자 결정으로 별도 cycle — admin.js 동시 편집 충돌 + PB-0008 하드 게이트, 상한 자체는 runtime 기본값으로 이미 집행 중) · 사람 1회 인가가 필요한 전 구간 e2e(설계상 자동화 불가) · P1 이후 도구(`execute_sql` 등) 별도 단계
+- **잔여**: 사람 1회 브라우저 인가가 필요한 **전 구간 e2e 실행**(절차서 `docs/E2E_RUNBOOK.md` + 스크립트 완비 — 인가 지점이 "신원 = 우리 로그인 세션" 축의 생성점이라 설계상 자동화 불가 · 실행 후 TEST.md §3 Run 기록으로 AC-1 종결) · P1 이후 도구(`execute_sql` 등)는 사용자 결정(2026-08-12)에 따라 **운영 데이터를 보고 판단**(근거 = `tool_call_usage` 원장의 도구별 호출 분포·미제출률·한도 도달 빈도)이므로 원장 축적 대기. *해소됨*: 관리 콘솔 상한 노출(3차 출하에서 `runtime_settings` 그룹 `external_tool_surface` 슬라이스로 냈고 후속 cycle 이 **전용 패널로 분리** — PB-0008 이 '실행 타임아웃' 패널에 섞여 있던 오배치를 적발했다) · HTTP/SSE 라이브 기동 · 미로그인 인가 불가(`/login` 404). 역할별/계정별 override 는 미도입(전역 상한만).
 
 ## 3. 책임 경계
 
@@ -76,7 +76,7 @@ sources:
 
 - 엔드포인트: `https://<host>/api/ai/mcp` (streamable-http)
 - 헤더: `Authorization: Bearer <access_token>` — 없으면 **엣지에서 401**(익명 연결 차단)
-- 토큰 발급: `/api/ai/guide` 부록 B (등록 → 브라우저 인가 1회 → 토큰 교환)
+- 토큰 발급: **주소만 등록하면 클라이언트가 스스로 인증을 시작한다** — RFC 9728 (`/.well-known/oauth-protected-resource`) · RFC 8414(`/.well-known/oauth-authorization-server`) discovery 4경로 + 401 `WWW-Authenticate` 로 AS 를 알려주고, 사람은 로그인 후 **동의 화면에서 [허용]** 만 누른다(서명 consent token · 세션 결합 · nonce 단일 사용 — 동의 화면이 없으면 SameSite=Lax + GET 발급이 링크 클릭 탈취 경로가 된다). MCP discovery 를 지원하지 않는 클라이언트는 콘솔 발급 페이지 **`/ai/connect`** 에서 토큰을 직접 받는다(1회 노출·세션 수명·refresh 없음 — 발급 결과를 서버에 다시 묻지 않으므로 **다시 볼 수 없다**). 개발자 회귀용 스크립트 절차는 `docs/E2E_RUNBOOK.md` 로 격하됐다(사용자 안내 정본 = 가이드 최상단 "주소만 등록").
 
 여러 계정을 **동시에** 다룰 때는 stdio 런처(`external_tool_mcp_server.py`)를 권한다 — 도구
 이름에 라벨이 접미돼 호출자 AI 가 세션을 구분할 수 있다(L1). HTTP 전송에는 그 층이 없다.
@@ -86,3 +86,4 @@ sources:
 - 2026-08-12: 초안 작성 (계획 cycle)
 - 2026-08-13: 3차 출하 반영 — HTTP/SSE 전송 라이브 기동(`ext-tool-mcp` + 엣지 `/api/ai/mcp`) ·
   상한 4종 콘솔 노출 · e2e 절차서. §7 접속 방법 추가
+- 2026-08-14 (doc_sync): 3차 출하 **후속 3 cycle** 반영 — `ext-tool-mcp` 라이브 기동 실패 3중 원인 수정(이미지 의존 · SDK 2.0 · TLS upstream) · 상한을 '실행 타임아웃' 패널에서 **전용 패널로 분리**(PB-0008 적발) · **인증 접근성**: 미로그인 `authorize` 404(= 문서가 "브라우저로 인가한다" 고 적은 그 경로가 실제로는 404 였다) 해소 + RFC 8414/9728 discovery 4경로 + 서명 consent token 동의 화면(세션 결합·nonce 1회 · 링크 클릭 탈취 경로 동반 차단) + 발급 페이지 `/ai/connect` + 복귀 대상 `safeNextTarget`(문자열 검사로는 `/\evil.com` 이 통과하는데 브라우저가 `\` 를 `/` 로 정규화하므로 **URL 해석 결과의 origin** 비교 = 오픈 리다이렉트 차단). 정적 자산 5종은 feature-0003 `src/static/` 에 거주(`ai-connect.{html,css,js}` · `oauth-consent.{html,js}` · `app/next-target.js`). §2 상태·잔여 정정 + §7 접속 방법 URL 방식으로 갱신. 정본 REPORT §3.2~§3.4 · TASK §5.1·§9 · 머지 `89b7cd54`·`34376206`·`feadc089`·`b63243d1`·`5f20ee88`·`86d89b60`·`2c59c183`.
