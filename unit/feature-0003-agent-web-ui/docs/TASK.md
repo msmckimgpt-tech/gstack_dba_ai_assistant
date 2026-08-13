@@ -10146,3 +10146,43 @@ pending 게이트 그대로). `/diff` 의 `from==to` 400(존재 oracle 방지) �
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 프리뷰 대비 차이 0)
+
+## 20260813T1543-attach-list-name-sort — 첨부 목록 이름순 정렬 (Minor §12.3)
+
+사용자 요청: "프로젝트 내 서비스에서, 첨부파일이 명칭 순으로 정렬되도록 구성해주세요."
+(첨부 파일 패널 스크린샷 동반 — `…_08_`, `…_01_`, `…_02_` … 가 업로드 순으로 흩어진 화면)
+
+### 2.1 Implementation Plan
+
+- `routers/conversations.py`
+  - `_natural_filename_key()` — 숫자 구간 수치 비교 + casefold 정렬 키(신규)
+  - `_sort_attachment_rows_by_name()` — 목록 정렬(신규, MySQL·PG mirror 공통 키)
+  - `_sort_attachment_rows_for_bulk()` — 그룹 사이 이름순 + 체인 인접 유지(신규)
+  - `list_conversation_attachments` — 두 read 경로 합류 후 정렬 적용
+  - `_list_deleted_conversation_attachments` — 표시만 이름순(절단 SQL 불변)
+  - `bulk_download_conversation_attachments` — 확정된 rows 에 bulk 정렬 적용
+- `static/release-notes-data.js` — 2026-08-13 블록 추가(사용자 가시 변경)
+- 완료 판정: AC-…-1~4 (FUNCTION.md) + 신규 pytest 12축 + PB-0008 실 브라우저 대조
+- 위험도: **Minor** — 표시 순서만. 권한·스키마·마이그레이션·엔드포인트 0, 파괴적 변경 0.
+
+### 작업
+
+- [x] 정렬 헬퍼 3종 구현 (`_natural_filename_key` · `_sort_attachment_rows_by_name` · `_sort_attachment_rows_for_bulk`)
+- [x] 활성 목록 · 휴지통 · 일괄 다운로드 3경로 적용 (프론트 정렬 중복 없음 — 서버가 SSOT)
+- [x] 신규 `tests/test_attach_list_name_sort.py` **12 passed** (자연 정렬·casefold·한글·None·tie-break·
+      체인 인접·대표 이름·API 응답·절단 SQL 불변·PG alias 계약)
+- [x] 회귀 — 첨부·대화 관련 391 passed, 전체 스위트 EXIT=1 의 유일 실패는
+      `test_oauth_exhaustion_gate`(컨테이너 `chattr` 부재) → **pristine main 동일 재현**으로 귀책 아님 확인
+- [x] ruff clean
+- [x] PB-0008 실 Chrome/150 — 격리 프리뷰(:18099, worktree src) vs baseline(:18098, main src)
+      **같은 대화·같은 브라우저 A/B**: 수정 후 39건 완전 이름순 / 수정 전 업로드 순 재현
+- [x] 릴리즈노트 2026-08-13 블록
+
+- [x] codex 적대 리뷰 2라운드 — 1라운드 지적 3건 전건 반영(컴포저 pill 삽입 순서·PG snake_case 키
+      fallback·초장문 숫자열 `ValueError` 방어), 2라운드 **P1 없음(P1_COUNT=0)**
+- [x] 신규 프론트 하네스 `tests/verify_attach_pill_name_sort.mjs` **13 PASS**(뮤테이션 역검증 포함) ·
+      composer 계열 기존 하네스 회귀 0(28·18·72·47)
+
+### 9. Requested Scope
+
+- "첨부파일이 명칭 순으로 정렬" — ✓ (패널·휴지통·일괄 다운로드 + 컴포저 pill 렌더 4표면)
