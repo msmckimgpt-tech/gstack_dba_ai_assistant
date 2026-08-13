@@ -383,6 +383,8 @@ CREATE TABLE IF NOT EXISTS agent_runtime.llm_usage (
     target            VARCHAR(200),   -- 0032: 인사이트 분석 대상(schema / schema.table / 노드 FQN). 표시 전용, 집계 무영향(task 분리).
     target_scope      VARCHAR(96),    -- 0047: target 이 속한 데이터소스 scope_key(=rag_objects.datasource_key 공간). 사용 기록 드릴다운의 콘솔 스코프 선택 키. 데이터소스 개념 없는 활동은 NULL.
     step_gap_ms       INTEGER,        -- 0033: 에이전트 라운드 간 간격(도구·오케스트레이션) ms. 지연 KPI(p50/p95)의 '단계 간 간격' 축. 첫 라운드/단발 호출 NULL.
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,  -- 0056: 프롬프트 캐시 적중 입력 토큰. **prompt_tokens 에 포함된 내역**(별도 축 아님) — 비용식이 할인 단가로 분해한다.
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,  -- 0056: 프롬프트 캐시 기록 입력 토큰(정가 1.25배). 캐싱 미사용 호출·구 기록은 0.
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_llm_usage_created ON agent_runtime.llm_usage (created_at DESC);

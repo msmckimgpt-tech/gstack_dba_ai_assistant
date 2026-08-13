@@ -172,9 +172,12 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 - 교차오염 의심 이벤트 (client_id·task 쌍·판정 근거)
 - 인젝션 판정 카운터 (allow/neutralize/reject, client 단위 누적)
 - task 미제출률 (client·계정 단위)
-- 관리 콘솔: `시스템 > 설정 > **외부 AI 도구**`(runtime_settings 그룹 `external_tool_surface`) —
-  4 knob 을 운영자가 재기동 없이 조절. 역할별/계정별 override 는 미도입(전역 상한만) —
-  `WebRoleTokenQuotas` 패턴 복제는 실수요가 확인된 뒤로 미룬다
+- 관리 콘솔: `시스템 > 설정 > **외부 AI 도구**` — **전용 패널**(`ext-tool-limits`)로 4 knob 을
+  운영자가 재기동 없이 조절. payload 는 `ext_tool` 버킷(`external_tool_surface` 그룹).
+  ⚠ 그룹을 미분류로 두면 `timeouts` 버킷으로 흘러가 **'실행 타임아웃' 패널에 섞인다**
+  (라이브에서 실제로 그렇게 렌더됐다 — 부하 상한을 타임아웃 화면에서 찾게 된다).
+  역할별/계정별 override 는 미도입(전역 상한만) — `WebRoleTokenQuotas` 패턴 복제는 실수요
+  확인 후로 미룬다
 
 ## 13. Pre-approved Changes
 
@@ -194,8 +197,8 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 | 부하 원장 | `src/tool_ledger.py` + alembic 0055 | AC-6(원장·429·fail-closed) |
 | 도구 표면 | `routers/ai_tools.py` | AC-4(`get_task_context` LLM 0) · AC-7(원 질문·답변 적재) |
 | MCP 어댑터(stdio) | `src/external_tool_mcp_server.py` | L1 세션 격리(라벨 필수·https 강제·응답 상한) |
-| MCP 어댑터(HTTP) | `src/external_tool_mcp_http.py` + compose `ext-tool-mcp` + Caddy `/api/ai/mcp` | 설치물 0 접속면. L1 없음(정직 표기) · 익명 연결 엣지 차단 |
-| 상한 조절 | `shared/runtime_settings.py` 그룹 `external_tool_surface` | AC-6 의 운영 조절면 |
+| MCP 어댑터(HTTP) | `src/external_tool_mcp_http.py` + compose `ext-tool-mcp` + Caddy `/api/ai/mcp` | 설치물 0 접속면. L1 없음(정직 표기) · 익명 연결 엣지 차단 · **SDK v1/v2 양 세대** · upstream 은 이름 고정한 **검증된 TLS** |
+| 상한 조절 | `shared/runtime_settings.py` 그룹 `external_tool_surface` + `ext_tool` payload 버킷 · `admin.html` 패널 `ext-tool-limits` · `admin/settings.js` `mountExtToolLimitsPanel` | AC-6 의 운영 조절면 |
 | 무회귀 | — | AC-9(feature-0023 `ask` 축 · 전 스위트 green) |
 | 무회귀(부트스트랩) | `_ensure_oauth_client_schema` 예외 봉인 | catchup 체인 중단 방지 — 신규 테이블 부재는 이 feature 만 fail-closed, 무관 서브시스템 무영향 |
 
@@ -207,6 +210,12 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 **노출 규율**: 콘솔에 올린 knob 은 그 자체로 "이 방어가 존재한다" 는 주장이다. 소비처 없는
 knob 은 두지 않는다(`AGENT_EXT_TOOL_CONCURRENCY` 를 이 사유로 삭제 — REV-20260812-0009 #4).
 `DEFAULTS` ↔ 콘솔 스펙 키 일치를 테스트가 검사한다.
+
+**SDK 세대**: `mcp` 파이썬 SDK 2.0 이 `mcp.server.fastmcp` 를 제거하고
+`mcp.server.mcpserver.MCPServer` 로 갈았다. 가이드가 안내하는 `pip install mcp` 는 2.x 를 주므로
+**두 세대를 모두 받는다.** v2 엔 전역 `get_context()` 가 없어 헤더는 도구가 받은 ctx 로 읽는다
+(`ctx.headers` / `ctx.request_context.request.headers`). 이미지 하한은 `mcp>=1.9`
+(그 이전 v1 엔 streamable-http 전송이 없어 import 만 되고 run 에서 죽는다).
 
 **전송 2종 차이(정직 표기)**: stdio 는 도구 이름에 라벨을 접미해 **호출자 AI 가 세션을 구분**할
 수 있다(L1). HTTP 는 단일 표면이라 L1 이 없다 — 여러 계정을 동시에 다룰 때는 stdio 를 권한다.

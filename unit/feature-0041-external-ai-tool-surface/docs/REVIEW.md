@@ -219,3 +219,81 @@ source_of_truth: true
   주장**이다. 소비처 없이 노출하면 문서보다 강한 거짓 안심을 만든다. `runtime_settings.py` 에
   주석으로 규율을 고정했고 `DEFAULTS` 와의 키 일치를 테스트가 검사한다.
 - Human Approval Needed: 아니오 (`deploy_scope: included`).
+
+## REV-20260813-0010 [CODEX:P1x3,P2x2] — 배포 실패 3중 원인과 수정
+
+- Related Change: CHG-20260813-0010
+
+`make deploy-web` 이 `ext-tool-mcp 상태=none` 으로 실패하고 워커군이 last-good 으로 롤백됐다
+(web 은 신코드 유지 — expand/contract 로 안전). 원인이 **셋** 겹쳐 있었다.
+
+1. **`mcp` 패키지가 이미지에 없었다.** Dockerfile COPY 는 테스트로 고정했지만 **런타임 의존**은
+   아무도 검사하지 않았다. → `requirements.txt` 추가 + "컨테이너 진입점의 서드파티 import 는
+   전부 requirements 에 있어야 한다" 는 정적 검사 추가.
+   ⚠ 그 검사를 처음엔 파일 전체 부분문자열로 썼는데, **주석에 적힌 `ext-tool-mcp` 가 통과**
+   시켜 뮤테이션(`mcp` 줄 삭제)이 살아남았다. requirement 줄만 파싱하도록 고쳐 KILL 확인.
+2. **MCP SDK 2.0 이 `mcp.server.fastmcp` 를 제거**했다(`mcp.server.mcpserver.MCPServer`).
+   `pip install mcp` 는 이제 2.x 를 주므로 **가이드대로 설치한 사용자도 깨진다**. → 두 세대를
+   모두 받는 호환층. v2 엔 전역 `get_context()` 가 없어 헤더 접근을 **도구가 받은 ctx** 경유로
+   바꿨다(`ctx.headers` / `ctx.request_context.request.headers` 양쪽).
+3. **upstream 이 평문이 아니었다.** `ENABLE_WEB_TLS=1` 이라 web replica 는 8000 에서 TLS 로 듣고,
+   인증서 SAN 에 `web-a` 가 없어 이름 검증이 실패한다. 검증을 끄는 대신 **Caddy 와 같은 모델**
+   (`tls_server_name` + `header_up Host`)을 채택 — `_SniHTTPSConnection` 으로 검증 대상 이름만
+   고정하고 rootCA 로 체인 검증한다. 결과적으로 평문 예외(`ALLOW_PLAINTEXT_UPSTREAM`)가
+   기본 배포에서 사라져 **보안이 오히려 강해졌다**.
+
+- 라이브 실측: 컨테이너에서 SDK 2.0 으로 기동 → `initialize` 200 · `tools/list` **9종** ·
+  무토큰 호출 `no_authorization` · 가짜 토큰 호출 **상류 401 전달** · 구 경로 `/mcp` 404.
+- Risks: 1번이 이번 cycle 두 번째 "COPY 는 맞는데 기동이 죽는다" 사례다(첫 번째는 8/12
+  `oauth_store` 미포함). **이미지 경계는 파일 존재만이 아니라 의존까지가 계약**이다.
+- Human Approval Needed: 아니오.
+
+### codex 2차 리뷰 (같은 변경에 대한 적대 패널) — P1×3 · P2×2 전건 수정
+
+1. **[P1] 검증 끄기 가드가 첫 upstream 만 검사** — `https://localhost,https://공격자` 조합이면
+   첫 후보가 loopback 이라 통과하고, failover 후보에도 **같은 `CERT_NONE` 컨텍스트**로 토큰이
+   나간다. → `BASE_URLS` **전수** 검사로 교체(위반 목록을 메시지에 찍는다).
+2. **[P1] `mcp>=1.2.0` 은 streamable-http 가 없던 버전을 허용** — import 는 성공하고 생성자
+   인자가 조용히 무시된 뒤 `run()` 에서 죽는다. → 하한을 `1.9.0` 으로 올리고, v1 경로에서
+   `run_streamable_http_async` 부재를 **기동 시점에** fail-loud 로 잡는다.
+3. **[P1] healthcheck 가 404·5xx 도 healthy 로 읽음** — 모든 `HTTPError` 를 성공 처리하고
+   있었다. **바로 그 404(경로 불일치)가 이번 cycle 의 실제 결함**이었는데 healthcheck 는 그걸
+   통과시켰을 것이다. → 허용 코드를 `400/405/406` 으로 고정(GET 은 이 전송의 정상 메서드가
+   아니라 406 이 "살아 있음"의 신호 — 라이브 실측으로 확인).
+4. **[P2] TLS·헤더 테스트가 문자열만 검사** — "구현이 실행 시 전부 `no_authorization` 을
+   반환해도 통과한다"는 지적 그대로다. → `test_http_adapter_behavior.py` 신설: 가짜 SDK 모듈을
+   주입해 어댑터를 **실제로 import·실행**한다(로컬에 mcp 가 없다고 skip 하면 그거야말로
+   vacuous pass). 뮤테이션 4종(v1 헤더 경로 제거 · SNI 고정 무력화 · Host 헤더 제거 ·
+   전수검사→첫 후보) 전부 KILL 확인.
+5. **[P2] 호출마다 SSLContext 생성 + opener 영구 캐시** — 장기 실행 프로세스라 호출 수에 비례해
+   누수. → 컨텍스트·opener 를 모듈 1회 생성으로 전환.
+
+- Risks: 3번은 **방어가 오히려 결함을 숨기던** 사례다. healthcheck 를 느슨하게 쓰면 "healthy 인데
+  아무것도 안 되는" 상태가 배포를 통과한다. 4번은 이번 cycle 에서 두 번째 vacuous-pass 적발이다
+  (첫 번째는 requirements 부분문자열 검사). **문자열 검사는 계약을 못 지킨다** — 뮤테이션으로
+  확인하지 않은 테스트는 없는 것과 같다.
+
+## REV-20260813-0011 [SKIPPED:self-found-live-defect] — 콘솔 배치 정정
+
+- Related Change: CHG-20260813-0011
+- Reason: 배포 후 **내가 쓴 문서가 사실이 아님을 라이브에서 확인**하고 즉시 고친 건이다
+  (외부 지적 아님). "`시스템 > 설정 > 외부 AI 도구` 에서 조절" 이라고 적었는데, 실제로는
+  그룹이 미분류라 payload 가 `timeouts` 버킷으로 흘려보내 '실행 타임아웃' 패널 안에
+  카테고리 소제목으로 렌더되고 있었다. 조절은 가능했으나 **있지도 않은 섹션을 문서가
+  주장**하는 상태였고, 부하 상한을 타임아웃 화면에 두는 것 자체가 오분류다.
+- 교훈: `runtime_settings` 에 그룹 상수를 추가해도 **payload 버킷 분기까지 하지 않으면
+  UI 는 조용히 기타 취급**한다. 그룹 추가 = 3곳(스펙·버킷·패널) 계약이다.
+- 검증: 뮤테이션 2종 KILL(버킷 분기 제거 · 프론트 미러 키 누락). 프론트 미러와 백엔드
+  스펙의 키 일치를 테스트가 단정한다(드리프트하면 dot 라우팅이 조용히 틀린다).
+- Human Approval Needed: 아니오.
+
+## REV-20260813-0012 [SKIPPED:post-deploy-record] — 배포 후 검증 기록 (코드 0)
+
+- Related Change: CHG-20260813-0012
+- Reason: 라이브 검증 결과 기록(문서 전용). 코드·설정 변경 0.
+- 검증 요지: 서비스 6종 `feadc089` 일치 · 무중단 0건 · 엣지 익명 401 · `initialize` 200 ·
+  `tools/list` 9종 · 도구 호출이 **검증된 TLS 로 web 도달**(가짜 토큰 → 상류 401) ·
+  PB-0008 로 콘솔 전용 패널 4행 렌더 + 타임아웃 패널에서 분리 확인.
+- 정직 표기: **인가 이후 구간 e2e 는 여전히 미실측**(사람 브라우저 인가 1회 필요 —
+  `docs/E2E_RUNBOOK.md`). AC-1 은 열린 채로 둔다.
+- Human Approval Needed: 아니오.

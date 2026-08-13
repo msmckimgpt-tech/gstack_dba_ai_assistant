@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import http.client
 import ssl
 import sys
 import urllib.error
@@ -41,11 +42,22 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-try:
-    from mcp.server.fastmcp import FastMCP
-except Exception as exc:  # pragma: no cover — 런처가 사전 안내
-    sys.stderr.write(f"[ext-tool-mcp-http] mcp SDK import 실패 — `pip install mcp`. ({exc})\n")
-    raise
+# ── MCP SDK 호환층 ────────────────────────────────────────────────────────────
+# SDK 2.0 이 `mcp.server.fastmcp` 를 제거하고 `mcp.server.mcpserver.MCPServer` 로 갈았다.
+# `pip install mcp` 는 이제 2.x 를 준다 — v1 만 지원하면 **사용자가 안내대로 설치한 순간
+# 깨진다.** 두 API 를 모두 받는다(2026-08-13 배포 실패로 실증: 이미지에 2.0 이 깔려 기동 불가).
+_SDK = 0
+try:  # v2 (2.0+)
+    from mcp.server.mcpserver import Context as McpContext, MCPServer as _Server
+    _SDK = 2
+except Exception:
+    try:  # v1 (1.x)
+        from mcp.server.fastmcp import Context as McpContext, FastMCP as _Server
+        _SDK = 1
+    except Exception as exc:  # pragma: no cover — 런처가 사전 안내
+        sys.stderr.write(
+            f"[ext-tool-mcp-http] mcp SDK import 실패 — `pip install mcp`. ({exc})\n")
+        raise
 
 
 def _fatal(name: str):  # pragma: no cover — 모듈 로드 시점 fail-loud
@@ -84,16 +96,31 @@ def _require_https(url: str) -> str:
 _RAW_BASE = str(os.getenv("EXT_TOOL_API_BASE_URL", "") or "").strip() or _fatal("EXT_TOOL_API_BASE_URL")
 BASE_URLS = [_require_https(u.strip().rstrip("/")) for u in _RAW_BASE.split(",") if u.strip()]
 BASE_URL = BASE_URLS[0]
+# ── upstream TLS 이름 고정 (Caddy 와 동일 모델) ──────────────────────────────
+# web replica 는 `web-a:8000` 에서 **TLS 로** 듣지만 인증서 SAN 은 공개 호스트
+# (`mysql-ai.company.local`) 뿐이라 컨테이너 이름으로는 호스트명 검증이 실패한다. Caddy 는
+# 이 문제를 `tls_server_name {$WEB_PUBLIC_HOST}` + `header_up Host {host}` 로 푼다 — 검증을
+# **끄는 게 아니라 검증 대상 이름을 고정**하는 방식이다. 어댑터도 같은 모델을 쓴다:
+#   · TLS 핸드셰이크의 SNI·호스트명 검증 대상 = EXT_TOOL_UPSTREAM_TLS_SERVER_NAME
+#   · 앱의 TrustedHost 통과용 Host 헤더 = EXT_TOOL_UPSTREAM_HOST_HEADER
+# 둘 다 미설정이면 URL 호스트를 그대로 쓴다(= 일반 인터넷 사용자의 기본 동작 불변).
+_TLS_SERVER_NAME = str(os.getenv("EXT_TOOL_UPSTREAM_TLS_SERVER_NAME", "") or "").strip()
+_HOST_HEADER = str(os.getenv("EXT_TOOL_UPSTREAM_HOST_HEADER", "") or "").strip()
 _CA_BUNDLE = str(os.getenv("EXT_TOOL_CA_BUNDLE", "") or "").strip()
 _VERIFY_TLS = str(os.getenv("EXT_TOOL_VERIFY_TLS", "1")).lower() not in ("0", "false", "no", "off")
 if not _VERIFY_TLS:
     # codex P2 — 이 채널로 Bearer token 이 나간다. 검증 끄기는 **loopback upstream** 에서만
     # 의미가 있다(로컬 개발). 운영 호스트를 향한 채로 끄면 토큰을 MITM 에 그대로 내준다.
-    _host = (urllib.parse.urlparse(BASE_URL).hostname or "").lower()
-    if _host not in ("127.0.0.1", "::1", "localhost"):
+    #
+    # codex P1(2차): 첫 후보만 보면 `https://localhost,https://공격자` 로 우회된다 — failover
+    # 후보도 같은 CERT_NONE 컨텍스트를 쓰므로 **전부** loopback 이어야 한다.
+    _bad = [h for h in ((urllib.parse.urlparse(u).hostname or "").lower() for u in BASE_URLS)
+            if h not in ("127.0.0.1", "::1", "localhost")]
+    if _bad:
         sys.stderr.write(
             f"[ext-tool-mcp-http] FATAL: EXT_TOOL_VERIFY_TLS=0 은 loopback upstream 에서만 "
-            f"허용됩니다(현재 {_host}). 사내 사설 CA 는 EXT_TOOL_CA_BUNDLE 로 지정하세요.\n")
+            f"허용됩니다(위반: {', '.join(_bad)}). "
+            f"사내 사설 CA 는 EXT_TOOL_CA_BUNDLE 로 지정하세요.\n")
         raise SystemExit(2)
 _TIMEOUT = float(os.getenv("EXT_TOOL_TIMEOUT_SEC", "60") or "60")
 _MAX_BYTES = int(os.getenv("EXT_TOOL_MAX_BYTES", str(8 * 1024 * 1024)) or (8 * 1024 * 1024))
@@ -135,41 +162,62 @@ NOTE: this HTTP transport has no per-session tool-name separation (the stdio lau
 If you drive several accounts at once, prefer the stdio launcher — isolation is one layer thicker.
 """.strip()
 
-mcp = FastMCP("mysql-ai-tools-http", instructions=_INSTRUCTIONS,
-              streamable_http_path=_HTTP_PATH, port=_PORT, host=_BIND)
+# codex P1(2차) — v1 계열이라도 streamable-http 가 없던 초기 버전(≤1.8)이 있다. import 만
+# 성공한 채 생성자 인자가 조용히 무시되고 run() 에서 죽으면 원인을 찾기 어렵다. **여기서**
+# 확인하고 실패한다.
+if _SDK == 1 and not hasattr(_Server, "run_streamable_http_async"):  # pragma: no cover
+    sys.stderr.write(
+        "[ext-tool-mcp-http] FATAL: 설치된 mcp SDK 에 streamable-http 전송이 없습니다. "
+        "`pip install -U 'mcp>=1.9'` 로 올리세요.\n")
+    raise SystemExit(2)
+
+# v1 은 바인딩을 생성자 설정으로, v2 는 `run()` 인자로 받는다.
+if _SDK == 2:
+    mcp = _Server("mysql-ai-tools-http", instructions=_INSTRUCTIONS)
+    _RUN_KW: dict[str, Any] = {"host": _BIND, "port": _PORT,
+                               "streamable_http_path": _HTTP_PATH}
+else:  # pragma: no cover — v1 경로(구 SDK 사용자)
+    mcp = _Server("mysql-ai-tools-http", instructions=_INSTRUCTIONS,
+                  streamable_http_path=_HTTP_PATH, port=_PORT, host=_BIND)
+    _RUN_KW = {}
 
 
-def _bearer_from_context() -> str:
-    """현재 MCP 요청의 Authorization 헤더. **보관하지 않고 그때그때 읽는다.**"""
+def _bearer_from_context(ctx: Any) -> str:
+    """현재 MCP 요청의 Authorization 헤더. **보관하지 않고 그때그때 읽는다.**
+
+    v2 는 `Context.headers`, v1 은 `Context.request_context.request.headers` 다. 모듈 전역
+    `get_context()` 는 v2 에 없으므로 **도구가 받은 ctx 를 통해서만** 읽는다.
+    """
+    headers = getattr(ctx, "headers", None)
+    if headers is None:
+        try:
+            headers = ctx.request_context.request.headers
+        except Exception:
+            return ""
     try:
-        req = mcp.get_context().request_context.request
-        raw = str(req.headers.get("authorization", "") or "")
-        return raw if raw else ""
+        return str(headers.get("authorization", "") or "")
     except Exception:
         return ""
 
 
-def _post(path: str, payload: dict[str, Any]) -> str:
-    auth = _bearer_from_context()
+def _post(path: str, payload: dict[str, Any], ctx: Any) -> str:
+    auth = _bearer_from_context(ctx)
     if not auth:
         return json.dumps({"error": "no_authorization",
                            "detail": "Authorization: Bearer <access_token> 헤더가 필요합니다."},
                           ensure_ascii=False)
     body = json.dumps(payload).encode("utf-8")
-    ctx = None
-    if _CA_BUNDLE:
-        ctx = ssl.create_default_context(cafile=_CA_BUNDLE)
-    elif not _VERIFY_TLS:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
     last_err = ""
     for base in BASE_URLS:
+        headers = {"Authorization": auth, "Content-Type": "application/json"}
+        if _HOST_HEADER:
+            # 앱의 TrustedHost(WEB_ALLOWED_HOSTS)는 컨테이너 이름을 모른다 — Caddy 도 같은
+            # 이유로 `header_up Host` 를 쓴다. 이게 없으면 400 이 난다.
+            headers["Host"] = _HOST_HEADER
         req = urllib.request.Request(f"{base}{path}", data=body, method="POST",
-                                     headers={"Authorization": auth,
-                                              "Content-Type": "application/json"})
+                                     headers=headers)
         try:
-            with _opener(ctx).open(req, timeout=_TIMEOUT) as resp:
+            with _opener().open(req, timeout=_TIMEOUT) as resp:
                 raw = resp.read(_MAX_BYTES + 1)
                 if len(raw) > _MAX_BYTES:
                     return json.dumps({"error": "response_too_large"}, ensure_ascii=False)
@@ -185,6 +233,32 @@ def _post(path: str, payload: dict[str, Any]) -> str:
                       ensure_ascii=False)
 
 
+class _SniHTTPSConnection(http.client.HTTPSConnection):
+    """`server_hostname` 을 URL 호스트가 아닌 고정 이름으로 wrap 한다.
+
+    stdlib 의 `HTTPSConnection.connect()` 는 SNI 를 `self.host` 로 고정한다. 검증을 끄지 않고
+    이름만 바꾸려면 그 한 줄을 대체하는 수밖에 없다(= Caddy `tls_server_name` 과 같은 일).
+    """
+
+    sni_hostname: str | None = None
+
+    def connect(self):  # noqa: D102 — stdlib override
+        http.client.HTTPConnection.connect(self)
+        self.sock = self._context.wrap_socket(
+            self.sock, server_hostname=self.sni_hostname or self.host)
+
+
+class _SniHTTPSHandler(urllib.request.HTTPSHandler):
+    """위 커넥션을 쓰는 handler. `_context` 는 부모가 들고 있다."""
+
+    def https_open(self, req):  # noqa: D102 — stdlib override
+        def _factory(host, **kw):
+            conn = _SniHTTPSConnection(host, **kw)
+            conn.sni_hostname = _TLS_SERVER_NAME
+            return conn
+        return self.do_open(_factory, req, context=self._context)
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """codex P1 — urllib 기본 opener 는 리다이렉트를 자동 추종하며 `Authorization` 헤더를
     **다른 호스트로도** 실어 보낸다. 우리 API 는 도구 호출에 리다이렉트를 쓰지 않으므로
@@ -194,17 +268,35 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER_CACHE: dict = {}
+def _build_ssl_context():
+    """codex P2(2차) — env 로 정해지는 상수다. 호출마다 만들면 CA 를 매번 파싱하고
+    opener 캐시가 호출 수만큼 자란다(장기 실행 프로세스라 그대로 누수)."""
+    if _CA_BUNDLE:
+        return ssl.create_default_context(cafile=_CA_BUNDLE)
+    if not _VERIFY_TLS:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
 
 
-def _opener(ctx):
-    key = id(ctx)
-    if key not in _OPENER_CACHE:
-        handlers = [_NoRedirect()]
-        if ctx is not None:
-            handlers.append(urllib.request.HTTPSHandler(context=ctx))
-        _OPENER_CACHE[key] = urllib.request.build_opener(*handlers)
-    return _OPENER_CACHE[key]
+_SSL_CONTEXT = _build_ssl_context()
+
+
+def _build_opener():
+    handlers = [_NoRedirect()]
+    if _SSL_CONTEXT is not None:
+        handlers.append(_SniHTTPSHandler(context=_SSL_CONTEXT) if _TLS_SERVER_NAME
+                        else urllib.request.HTTPSHandler(context=_SSL_CONTEXT))
+    return urllib.request.build_opener(*handlers)
+
+
+_OPENER = _build_opener()
+
+
+def _opener(ctx=None):  # ctx 는 하위호환 인자 — 컨텍스트는 모듈 상수다.
+    return _OPENER
 
 
 def _defang(text: str) -> str:
@@ -215,57 +307,59 @@ def _defang(text: str) -> str:
 
 
 @mcp.tool(description="작업을 열고 원 질문을 서비스에 기록한다. 반환된 task_id 를 이후 호출에 쓴다.")
-def open_task(question: str, product_id: int | None = None) -> str:
-    return _post("/api/ai/tools/open_task", {"question": question, "product_id": product_id})
+def open_task(ctx: McpContext, question: str, product_id: int | None = None) -> str:
+    return _post("/api/ai/tools/open_task",
+                 {"question": question, "product_id": product_id}, ctx)
 
 
 @mcp.tool(description="이 task 의 grounding 번들(도메인 개요·클러스터 요약·증거). 먼저 호출하라.")
-def get_task_context(task_id: str) -> str:
-    return _post("/api/ai/tools/get_task_context", {"task_id": task_id})
+def get_task_context(ctx: McpContext, task_id: str) -> str:
+    return _post("/api/ai/tools/get_task_context", {"task_id": task_id}, ctx)
 
 
 @mcp.tool(description="최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수).")
-def submit_answer(task_id: str, answer: str, source_tasks: list[str]) -> str:
+def submit_answer(ctx: McpContext, task_id: str, answer: str,
+                  source_tasks: list[str]) -> str:
     return _post("/api/ai/tools/submit_answer",
-                 {"task_id": task_id, "answer": answer, "source_tasks": source_tasks})
+                 {"task_id": task_id, "answer": answer, "source_tasks": source_tasks}, ctx)
 
 
 @mcp.tool(description="접근 가능한 스키마(DB) 목록.")
-def list_schemas(task_id: str, datasource: str | None = None) -> str:
+def list_schemas(ctx: McpContext, task_id: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/list_schemas",
-                 {"task_id": task_id, "arguments": {"datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="스키마의 테이블 목록과 개요.")
-def describe_schema(task_id: str, schema_name: str, datasource: str | None = None) -> str:
+def describe_schema(ctx: McpContext, task_id: str, schema_name: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/describe_schema",
                  {"task_id": task_id,
-                  "arguments": {"schema_name": schema_name, "datasource": datasource}})
+                  "arguments": {"schema_name": schema_name, "datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="테이블의 컬럼·타입·키.")
-def describe_table(task_id: str, table: str, datasource: str | None = None) -> str:
+def describe_table(ctx: McpContext, task_id: str, table: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/describe_table",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="키워드로 관련 테이블 검색.")
-def search_tables(task_id: str, keyword: str, datasource: str | None = None) -> str:
+def search_tables(ctx: McpContext, task_id: str, keyword: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/search_tables",
-                 {"task_id": task_id, "arguments": {"keyword": keyword, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"keyword": keyword, "datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="테이블의 외래키 관계.")
-def get_foreign_keys(task_id: str, table: str, datasource: str | None = None) -> str:
+def get_foreign_keys(ctx: McpContext, task_id: str, table: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/get_foreign_keys",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="테이블의 인덱스.")
-def get_table_indexes(task_id: str, table: str, datasource: str | None = None) -> str:
+def get_table_indexes(ctx: McpContext, task_id: str, table: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/get_table_indexes",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}}, ctx)
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    mcp.run(transport="streamable-http", **_RUN_KW)

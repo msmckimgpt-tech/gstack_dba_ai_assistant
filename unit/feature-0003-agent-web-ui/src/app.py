@@ -3768,6 +3768,10 @@ from routers.admin_usage import (  # noqa: E402
     _aggregate_usage_by_role,
     _usage_bucket_match_sql,
     _enrich_usage_conv_owner_meta,
+    # usage-metric-charts(2026-08-13): 캐시 축 SQL — 사용량을 집계하는 라우터가 공유한다
+    # (profile·ai_ops·admin_console). 컬럼 부재(0056 미적용)는 리터럴 0 재실행으로 흡수.
+    _usage_cache_exprs,
+    _usage_cache_exec,
 )
 from routers.admin_quotas import (  # noqa: E402
     _quota_upsert,
@@ -3894,6 +3898,9 @@ from routers.admin_metadata import (  # noqa: E402
 from routers.admin_usage import (  # noqa: E402
     _USAGE_GRAN,
     _LLM_PRICE_USD_PER_1M,
+    # usage-metric-charts(2026-08-13): 캐시 단가 배수 — _estimate_llm_cost_usd 가 app.X 로 참조.
+    _LLM_CACHE_WRITE_MULT,
+    _LLM_CACHE_READ_MULT,
 )
 from routers._audit_infra import (  # noqa: E402
     _AUDIT_CHAIN_FIELDS,

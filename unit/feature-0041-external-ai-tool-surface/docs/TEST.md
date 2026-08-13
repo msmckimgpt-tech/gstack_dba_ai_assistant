@@ -173,3 +173,70 @@ HTTP 프로브 · `deploy-web.sh WORKERS` 편입 · Dockerfile 이 HTTP 어댑�
 ### Run 2026-08-13 (5차) — POST-DEPLOY 라이브
 
 (배포 후 기록)
+
+### Run 2026-08-13 (5차) — HTTP 전송 컨테이너 실기동 (Environment: agent 이미지 + SDK 2.0)
+
+배포 실패 후, 고친 어댑터를 **실제 컨테이너**에서 띄우고 MCP 프로토콜을 왕복시켰다.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | SDK 2.0 으로 기동(`Uvicorn running`) | ✅ |
+| 2 | `POST /api/ai/mcp` → `initialize` | **200** (SSE `event: message`) ✅ |
+| 3 | 구 경로 `POST /mcp` | **404** ✅ (경로 정합이 실제로 걸려 있다) |
+| 4 | `tools/list` | **9종** 전부 ✅ |
+| 5 | 무토큰 `tools/call open_task` | `no_authorization` ✅ (ctx 헤더 경로 작동) |
+| 6 | 가짜 토큰 `tools/call open_task` | **상류 401 전달** ✅ (검증된 TLS 로 web 도달) |
+
+단위 스위트 **168건 PASS**.
+
+### Run 2026-08-13 (6차) — 동작 테스트 + 뮤테이션 (Environment: local pytest)
+
+codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다. 가짜 SDK 모듈을 주입해 어댑터를
+실제 import·호출한다.
+
+| 뮤테이션 | 결과 |
+|---|---|
+| v1 헤더 경로(`ctx.request_context.request.headers`) 제거 | **KILLED** |
+| SNI 고정 무력화(`server_hostname=self.host`) | **KILLED** |
+| `Host` 헤더 제거 | **KILLED** |
+| verify-off 전수검사 → 첫 후보만 | **KILLED** |
+| requirements 검사: `mcp` 줄 삭제 | **KILLED** (부분문자열 검사일 땐 SURVIVED — 그래서 고쳤다) |
+
+스위트 **180건 PASS**.
+
+### Run 2026-08-13 (7차) — 콘솔 배치 (Environment: local pytest + 라이브 payload 확인)
+
+라이브 배포본에서 `runtime_settings` payload 버킷을 직접 확인해 **'실행 타임아웃' 패널에
+섞여 있던 것**을 적발하고 전용 패널로 분리했다.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | payload 에 `ext_tool` 버킷 존재 + 응답 포함 | ✅ |
+| 2 | `admin.html` 패널·서브탭 nav·mount div | ✅ |
+| 3 | `settings.js` 패널 등록 + 재렌더 훅 + 전용 버킷 소비 | ✅ |
+| 4 | 미저장 dot 이 `ext-tool-limits` 서브탭으로 라우팅 | ✅ |
+| 5 | 프론트 키 미러 ↔ 백엔드 스펙 일치 | ✅ |
+| 뮤테이션 | 버킷 분기 제거 / 미러 키 1개 누락 | 둘 다 **KILLED** |
+
+### Run 2026-08-13 (8차) — PB-0008 콘솔 패널 (Environment: Windows-browser · Runner: AI)
+
+- Bridge: relay `http://172.26.144.1:9223` (Chrome/150.0.7871.128) · 라이브 `feadc089`
+- Evidence: `unit/feature-0003-agent-web-ui/docs/test-runs.d/evidence/REV-20260813T-ext-tool-panel-{before,after}.png`
+
+**수정 전(결함 적발)**: 상한 4종이 '실행 타임아웃' 패널의 카테고리로 렌더됨. 서브탭 nav 에
+`ext-tool-limits` 없음. → 문서가 주장하던 전용 섹션은 존재하지 않았다.
+
+**수정 후(PASS)**: 서브탭 nav 에 '외부 AI 도구' 등장 · 패널 가시 · 4행(라벨·단위·기본값·'즉시
+반영' 배지) 렌더 · '실행 타임아웃' 에서 해당 카테고리 소멸(`stillMixed: false`) · 기존 8종 보존.
+
+### Run 2026-08-13 (9차) — 라이브 엣지 경유 MCP 전 구간 (Environment: live · feadc089)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 서비스 6종 GIT_COMMIT 일치 | ✅ |
+| 2 | caddy `no upstreams available` | **0건** ✅ |
+| 3 | 무토큰 `POST /api/ai/mcp` (엣지 익명 차단) | **401** ✅ |
+| 4 | 토큰 헤더 有 → `initialize` | **200** + serverInfo ✅ |
+| 5 | `tools/list` | **9종** ✅ |
+| 6 | `tools/call open_task` (가짜 토큰) | **상류 401 도달** ✅ (검증된 TLS 로 web 에 닿음) |
+| 7 | 기존 경로 `/livez`·`/api/ai/manifest`·`/api/ai/openapi.json` | 전부 **200** ✅ |

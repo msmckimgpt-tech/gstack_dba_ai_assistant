@@ -841,6 +841,17 @@ worker_commit() {  # $1=svc → 컨테이너의 GIT_COMMIT (실패 시 빈 값)
   "${DC_PROD[@]}" exec -T "$1" printenv GIT_COMMIT 2>/dev/null | tr -d '[:space:]' || true
 }
 
+# 워커 기동 실패 시 **원인을 화면에 남긴다**. 2026-08-13 배포에서 `ext-tool-mcp 상태=none` 만
+# 출력한 채 워커군 전체가 롤백됐는데, 실제 원인은 컨테이너 로그 1줄
+# (`ModuleNotFoundError: No module named 'mcp'`)이었다. 그 1줄이 없으면 운영자는 롤백된
+# 컨테이너를 뒤져야 하고, 롤백이 이미 이미지를 바꾼 뒤라 원인 로그가 사라지기도 한다.
+dump_service_logs() {  # $1=svc — 진단 전용(실패해도 배포 판정에 영향 없음)
+  local svc="$1"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  err "  ↳ $svc 최근 로그 20줄:"
+  "${DC[@]}" logs --tail 20 --no-color "$svc" 2>&1 | sed 's/^/      /' >&2 || true
+}
+
 wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 생략) → 0 성공
   local svc="$1" want="${3:-}" deadline=$(( SECONDS + $2 )) st got rc
   [ "$DRY_RUN" -eq 1 ] && return 0
@@ -857,11 +868,12 @@ wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 
         if [ -z "$want" ] || [ "$got" = "$want" ]; then log "  $svc healthy (GIT_COMMIT=${got:-?})"; return 0; fi
         err "$svc healthy 이지만 GIT_COMMIT=$got (기대=$want) — 핀/빌드 불일치."; return 1 ;;
       exited|dead|none)
-        err "$svc 상태=$st — 기동 실패."; return 1 ;;
+        err "$svc 상태=$st — 기동 실패."; dump_service_logs "$svc"; return 1 ;;
     esac
     sleep 5
   done
   err "$svc 가 ${2}s 내 healthy 도달 실패(최종 상태=$(container_health "$svc"))."
+  dump_service_logs "$svc"
   return 1
 }
 

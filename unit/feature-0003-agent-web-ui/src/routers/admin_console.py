@@ -528,10 +528,13 @@ def _dash_widget_usage(pg, days: int) -> dict:
         # family 로 접어(admin 콘솔 LLM 사용량 도넛과 동일 규칙) 라우팅 변형/실ID/gemma 폴백 중복 분점
         # 해소. 위젯이 deep-link 로 LLM 사용량 탭을 여므로 표기 정합 유지.
         _canon = canonical_usage_model_sql("COALESCE(resolved_model, model)")
-        cur.execute(
-            f"SELECT {_canon}, sum(total_tokens), sum(prompt_tokens), sum(completion_tokens) "
+        # usage-metric-charts(2026-08-13): 캐시 인지 비용 — 이 위젯은 LLM 사용량 탭으로 deep-link 하므로
+        #   두 화면의 비용이 같은 식이어야 한다. 0056 미적용 DB 는 리터럴 0 표현식으로 폴백.
+        app._usage_cache_exec(cur, pg, lambda cr, cw: (
+            f"SELECT {_canon}, sum(total_tokens), sum(prompt_tokens), sum(completion_tokens), "
+            f"sum({cr}), sum({cw}) "
             f"FROM agent_runtime.llm_usage WHERE {where} GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 50"
-        )
+        ))
         rows = cur.fetchall() or []
         c = 0.0
         tk = 0
@@ -539,7 +542,9 @@ def _dash_widget_usage(pg, days: int) -> dict:
         for x in rows:
             m = str(x[0] or "?")
             mt = int(x[1] or 0)
-            c += app._estimate_llm_cost_usd(m, int(x[2] or 0), int(x[3] or 0))
+            c += app._estimate_llm_cost_usd(m, int(x[2] or 0), int(x[3] or 0),
+                                            int(x[4] or 0) if len(x) > 5 else 0,
+                                            int(x[5] or 0) if len(x) > 5 else 0)
             tk += mt
             models.append({"label": m, "value": mt})
         return round(c, 2), tk, models
