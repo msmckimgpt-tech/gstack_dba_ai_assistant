@@ -648,9 +648,18 @@ function describePermission(code = "") {
 }
 
 // 동작(action)을 실행하기 위해 필요한 "대안 권한 코드" 집합을 반환한다.
-// any/own 이원화된 항목은 현재 대화가 본인 소유인지에 따라 own 까지 후보로 포함한다.
+// any/own 이원화된 항목은 현재 대화가 `.own` 적용 범위인지에 따라 own 까지 후보로 포함한다.
+//
+// member-scope-gates: `.own` 범위는 액션마다 **서버 경계가 다르다**. 하나의 `own` 변수로 뭉치면
+//   그룹 대화 멤버가 서버는 허용하는 조작에서 blocked 되거나(과소), 반대로 서버가 2차 owner
+//   게이트로 막는 조작이 활성으로 보인다(과대). 서버 라우트의 게이트 구성에 맞춰 둘로 나눈다:
+//     - ownScope = owner OR 멤버 → 서버가 `_account_can_access_conversation` 만 쓰는 액션
+//     - owner    = 소유자 단독   → 서버가 2차 owner 게이트를 덧붙인 액션
 function requiredPermissionsFor(action, conversation = currentConversation()) {
+  // 서버 2차 owner 게이트가 있는 액션용(제목 변경·보관·복제·공유 링크 관리).
   const own = conversation ? isOwnConversation(conversation) : false;
+  // 서버가 owner OR 그룹 멤버를 허용하는 액션용(중단·즉시답변·실행시간연장).
+  const ownScope = conversation ? isOwnScopeConversation(conversation) : false;
   switch (action) {
     case "conversation.ask":
       return { label: "대화 요청 실행", codes: ["conversation.ask"] };
@@ -660,18 +669,26 @@ function requiredPermissionsFor(action, conversation = currentConversation()) {
       return { label: "대화 제목 변경", codes: own ? ["conversation.rename.any", "conversation.rename.own"] : ["conversation.rename.any"] };
     case "conversation.delete":
       return { label: "대화 삭제", codes: own ? ["conversation.delete.any", "conversation.delete.own"] : ["conversation.delete.any"] };
+    // 아래 3종은 서버가 `_account_can_access_conversation(…, ".own", ".any")` 단독 게이트라
+    // 그룹 대화 멤버도 허용된다(2차 owner 게이트 없음) → ownScope 사용.
     case "conversation.cancel":
-      return { label: "대화 중단", codes: own ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
+      return { label: "대화 중단", codes: ownScope ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
     case "conversation.finalize":
-      return { label: "즉시 답변", codes: own ? ["conversation.finalize.any", "conversation.finalize.own"] : ["conversation.finalize.any"] };
+      return { label: "즉시 답변", codes: ownScope ? ["conversation.finalize.any", "conversation.finalize.own"] : ["conversation.finalize.any"] };
     case "conversation.extend":
-      return { label: "실행시간 연장", codes: own ? ["conversation.extend.any", "conversation.extend.own"] : ["conversation.extend.any"] };
+      return { label: "실행시간 연장", codes: ownScope ? ["conversation.extend.any", "conversation.extend.own"] : ["conversation.extend.any"] };
     case "conversation.duplicate":
       return { label: "대화 복사", codes: own ? ["conversation.duplicate.any", "conversation.duplicate.own"] : ["conversation.duplicate.any"] };
     case "conversation.share":
       return { label: "대화 공유", codes: ["conversation.share.create"] };
+    // '설정' 메뉴(openConversationSettings)의 게이트. 서버 read 계열(`/api/history` ·
+    // `/api/use_conversation` · `…/members` 등)은 전부 멤버를 허용하고, 이 팝업이 담은 조작은
+    // 팝업 내부에서 각각 정확히 게이트된다(제목=canRename[owner], 보관=canDelete[owner],
+    // **나가기=멤버 전용 self-leave**, 음소거=로컬). owner 로 좁히면 멤버가 팝업 자체를 못 열어
+    // **그룹 대화에서 나갈 UI 경로가 사라진다** → ownScope 사용. (구 label "공유 링크 관리" 는
+    // 통합 이전 잔재 — 토스트에 무관한 사유가 노출됐다.)
     case "conversation.read":
-      return { label: "공유 링크 관리", codes: own ? ["conversation.read.any", "conversation.read.own"] : ["conversation.read.any"] };
+      return { label: "대화 설정", codes: ownScope ? ["conversation.read.any", "conversation.read.own"] : ["conversation.read.any"] };
     default:
       return { label: action, codes: [] };
   }
@@ -1171,6 +1188,24 @@ export function isOwnConversation(conversation = currentConversation()) {
   return Number(conversation.owner_account_id || 0) === Number(state.user.id || 0);
 }
 
+// member-scope-gates: 백엔드가 `conversation.<action>.own` 권한을 적용하는 **범위**.
+//   서버의 `_account_can_access_conversation`(app.py) 은 `.own` 을 "대화 소유자 **또는** 그룹 대화
+//   멤버" 로 판정한다(feature-0009 — "멤버십이 열람 경계"). 프론트가 이 정의를 `isOwnConversation`
+//   (소유자 단독)으로 좁히면, 멤버는 서버가 200 을 주는 조작에서 버튼이 blocked 되고 "권한이
+//   없습니다" 라는 **거짓 사유**를 본다(실측된 결함: 중단·즉시답변·실행시간연장).
+//
+//   ★ 두 predicate 는 **의도적으로 분리**한다 — 액션마다 서버의 경계가 다르기 때문이다:
+//     - `isOwnScopeConversation`(여기) = 서버가 owner OR 멤버를 허용하는 액션
+//       (`/api/cancel` · `/api/finalize` · `/api/extend` · 발화 `/api/ask` · 첨부 열람 등)
+//     - `isOwnConversation` = 서버가 **2차 owner 게이트**를 추가로 두는 액션
+//       (제목 변경 `PATCH …/title` · 보관 · 복제 `…/duplicate` · 공유 joinable 토글 · 공유 링크 목록)
+//   새 액션을 추가할 때는 서버 라우트에 2차 owner 게이트(`_conversation_owned_by_account` /
+//   `_conversation_owner_account_id`)가 있는지 보고 둘 중 하나를 고른다.
+export function isOwnScopeConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return isOwnConversation(conversation) || Boolean(conversation.is_member);
+}
+
 export function canOpenAdminConsole() {
   // TASK-0102: console_access 플래그 우선, 없으면 role.key 기반 fallback.
   // console_access 가 서버 응답에 포함된 경우 그것을 신뢰 (TASK-0100 이후 서버).
@@ -1189,7 +1224,9 @@ export function canAskInConversation(conversation = currentConversation()) {
   }
   // TASK-0248: 참조 제품이 삭제되어 차단된 대화는 진행 불가 (이력 열람·공유는 가능).
   if (conversation.blocked) return false;
-  return isOwnConversation(conversation);
+  // member-scope-gates: 그룹 대화 멤버도 발화 가능(sendPrompt 가 `is_member` 를 명시 허용하고
+  //   백엔드 `/api/ask` 도 멤버를 통과시킨다). 여기서 소유자로 좁히면 같은 기능의 두 지점이 갈린다.
+  return isOwnScopeConversation(conversation);
 }
 
 function canRenameConversation(conversation = currentConversation()) {
@@ -1202,20 +1239,26 @@ function canDeleteConversation(conversation = currentConversation()) {
   return can("conversation.delete.any") || (isOwnConversation(conversation) && can("conversation.delete.own"));
 }
 
+// member-scope-gates: 아래 3종은 서버가 `_account_can_access_conversation(…, ".own", ".any")` 만으로
+//   게이트하므로 **그룹 대화 멤버도 허용**된다(2차 owner 게이트 없음 — 제목 변경·보관과 다른 점).
+//   멤버는 그룹 대화에서 `@assistant` 를 직접 호출할 수 있으므로(sendPrompt 가 `is_member` 허용),
+//   자기가 띄운 run 을 중단·재촉·연장하는 것은 반드시 가능해야 한다. `isOwnConversation` 으로
+//   좁혀 두면 서버가 200 을 주는 조작에서 버튼이 blocked 되고 "권한이 없습니다" 라는 거짓 사유가
+//   뜬다(실행시간 연장은 배너까지 떠 있는데 승인 불가 → 그 run 이 타임아웃).
 export function canCancelConversation(conversation = currentConversation()) {
   if (!conversation) return false;
-  return can("conversation.cancel.any") || (isOwnConversation(conversation) && can("conversation.cancel.own"));
+  return can("conversation.cancel.any") || (isOwnScopeConversation(conversation) && can("conversation.cancel.own"));
 }
 
 function canFinalizeConversation(conversation = currentConversation()) {
   if (!conversation) return false;
-  return can("conversation.finalize.any") || (isOwnConversation(conversation) && can("conversation.finalize.own"));
+  return can("conversation.finalize.any") || (isOwnScopeConversation(conversation) && can("conversation.finalize.own"));
 }
 
 // feature-0030: 실행시간 연장 승인 가능 여부 (즉시 답변과 동형 게이트, 코드만 다름).
 function canExtendConversation(conversation = currentConversation()) {
   if (!conversation) return false;
-  return can("conversation.extend.any") || (isOwnConversation(conversation) && can("conversation.extend.own"));
+  return can("conversation.extend.any") || (isOwnScopeConversation(conversation) && can("conversation.extend.own"));
 }
 
 export function currentConversation() {
@@ -2411,7 +2454,11 @@ export function renderAccessNotice() {
     accessNoticeEl.classList.remove("hidden");
     return;
   }
-  if (conversation && !isOwnConversation(conversation)) {
+  // member-scope-gates: 공유받은 그룹 대화(내가 멤버)는 **조회 전용이 아니다** — 발화·중단·
+  //   즉시답변·연장이 모두 허용된다. 종전엔 `!isOwnConversation` 이라 멤버에게도 "조회만
+  //   가능합니다" 를 띄워, 사용자가 실제로 할 수 있는 일을 못 한다고 믿게 했다. 조회 전용은
+  //   owner·멤버 모두 아닌 대화(관리자 `.any` 열람)에만 해당한다.
+  if (conversation && !isOwnScopeConversation(conversation)) {
     accessNoticeEl.textContent = "다른 계정의 대화는 조회만 가능합니다. 새 대화를 만들거나 본인 대화로 전환하세요.";
     accessNoticeEl.classList.remove("hidden");
   }
