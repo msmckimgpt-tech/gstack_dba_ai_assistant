@@ -286,3 +286,13 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 
 수정 전 라이브 실측(대조): 엣지는 세 경우 모두 `mysql-ai.company.local` 을 반환했고, 앱은
 접속 호스트를 따랐다 — 그 불일치가 IP 접속 시 discovery 를 끊었다.
+
+### Run 2026-08-14 (14차) — POST-DEPLOY 호스트 정합 (Environment: live · `be7e5d00`)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 401 단서가 접속 호스트를 따름 — `112.185.196.20` / `mysql-ai.company.local` / `localhost` | 3종 전부 **자기 호스트** ✅ |
+| 2 | 익명 `/api/ai/mcp` | **401** ✅ (차단 유지) |
+| 3 | 토큰 헤더 有 → `initialize` | **200** ✅ (인증 경로는 여전히 `ext-tool-mcp` 도달) |
+| 4 | IP 경유 discovery 자기정합 | `resource=https://112.185.196.20/api/ai/mcp` · `AS=https://112.185.196.20` ✅ |
+| 5 | `no upstreams available` | **0건** ✅ |
