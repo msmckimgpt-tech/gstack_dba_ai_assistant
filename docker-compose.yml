@@ -355,6 +355,45 @@ services:
         condition: service_healthy
         required: false
 
+  # ── 외부 AI 도구 표면 MCP (HTTP/SSE 전송, feature-0041) ──────────────────────
+  # 외부 AI 가 런처 설치 없이 **URL + 토큰만 등록**해 붙게 하는 경로. Caddy 가
+  # `/api/ai/mcp*` 를 여기로 넘긴다(같은 호스트·같은 인증서 — 접근 편의 최대화).
+  #
+  # web 컨테이너에 **얹지 않고 별도 프로세스**로 둔 이유: FastMCP 는 자체 세션/백그라운드
+  # 상태를 갖는 서드파티 ASGI 앱이라, 라이브 대화를 서빙하는 web 안에 마운트하면 그 결함이
+  # 곧 전면 장애가 된다. 여기서 죽어도 web 은 무영향이다(Caddy 가 이 경로만 502).
+  #
+  # 토큰은 **보관하지 않는다** — 클라이언트 Authorization 헤더를 upstream 으로 그대로 넘긴다.
+  # upstream 은 내부 평문(web-a:8000)이며 CONTRIBUTING §10 single TLS termination 규약을 따른다.
+  ext-tool-mcp:
+    <<: *agent-common
+    environment:
+      TZ: ${TZ}
+      LANG: ${APP_LANG}
+      PYTHONIOENCODING: utf-8
+      # codex P2: 단일 replica 고정은 그 replica 의 롤링 재시작마다 MCP 를 끊는다.
+      #   콤마 목록으로 주고 어댑터가 **연결 실패에만** 다음 후보로 넘어간다(HTTP 오류는 전달).
+      EXT_TOOL_API_BASE_URL: http://web-a:8000,http://web-b:8000
+      EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM: "1"   # compose 내부 네트워크 전용(위 주석 참조)
+      EXT_TOOL_HTTP_BIND: 0.0.0.0              # Caddy 가 도달해야 함
+      EXT_TOOL_HTTP_ALLOW_PUBLIC_BIND: "1"     # 평문 수신 명시 동의 — TLS 는 Caddy 가 종단
+      EXT_TOOL_HTTP_PORT: "8971"
+      EXT_TOOL_TIMEOUT_SEC: "120"
+    # codex P1: `<<: *agent-common` 만으로는 이 서비스가 네트워크에 붙지 않아 caddy·web 을
+    #   해석하지 못한다(전 경로 502). dbnet 이 caddy·web 과 공유하는 망이다.
+    networks: [dbnet]
+    entrypoint: ["python", "-u",
+                 "/app/ext_tools/external_tool_mcp_http.py"]
+    # codex P2: TCP 연결만 보면 upstream 이 죽어도 healthy 로 읽힌다. MCP 엔드포인트가 실제로
+    #   HTTP 를 응답하는지까지 본다(405/406 도 "살아 있음" — GET 은 이 전송의 정상 메서드가 아님).
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,urllib.error,sys;\nreq=urllib.request.Request('http://127.0.0.1:8971/api/ai/mcp');\ntry:\n    urllib.request.urlopen(req,timeout=5); sys.exit(0)\nexcept urllib.error.HTTPError:\n    sys.exit(0)\nexcept Exception:\n    sys.exit(1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 15s
+
   insight-worker:
     <<: *agent-common
     environment:

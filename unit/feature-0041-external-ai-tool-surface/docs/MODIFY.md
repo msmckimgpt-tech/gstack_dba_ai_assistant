@@ -121,3 +121,26 @@ source_of_truth: true
 - Files: `docs/TEST.md` §3 (3차 Run) · `docs/REPORT.md` §3.1 · `docs/TASK.md`
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260812-0009
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 잔여 3건 완결 — **HTTP/SSE 전송 라이브 기동**(compose 서비스 + 엣지 경로) ·
+  **상한 콘솔 노출**(runtime_settings 슬라이스) · **전 구간 e2e 절차서**(사람 1회 개입).
+  codex 리뷰 P1 4건·P2 2건 전건 in-cycle 수정. 테스트 161건.
+- Files:
+  - `docker-compose.yml` (`ext-tool-mcp` 신규 서비스 — `networks: [dbnet]` · HTTP 프로브 헬스체크)
+  - `unit/feature-0002-agent-core/src/Dockerfile` (HTTP 어댑터 1개만 `/app/ext_tools/` 로 COPY)
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` (`handle /api/ai/mcp*` — 익명 401 선차단)
+  - `bin/deploy-web.sh` (`WORKERS` 에 `ext-tool-mcp` 추가 — 롤아웃 스파인 편입)
+  - `shared/runtime_settings.py` (`external_tool_surface` 그룹 4 knob)
+  - `unit/feature-0003-agent-web-ui/src/tool_ledger.py` (`effective_limits` · `check_open_tasks`)
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` (`open_task` 에 RPM·미제출 게이트)
+  - `unit/feature-0041-.../src/external_tool_mcp_http.py` (경로 정합 · replica failover · https 전수)
+  - `unit/feature-0041-.../docs/E2E_RUNBOOK.md` + `scripts/e2e-authorize.sh` (신규)
+  - `unit/feature-0041-.../tests/test_bringup_and_limits.py` (신규)
+- Impact: 신규 컨테이너 1개(dbnet). 엣지에 경로 1개 추가 — `/api/ai/mcp*` 만 분기하고 나머지
+  `/api/ai/*` 는 그대로 web 이 받는다. `open_task` 에 게이트 2종이 붙어 **한도 초과 시 429**
+  (기존 200 이던 조합이 429 가 될 수 있음 — 기본값 기준 정상 사용에서는 도달하지 않는다).
+- Rollback Notes: compose 서비스 제거 + Caddyfile `handle /api/ai/mcp*` 블록 제거로 원복.
+  knob 은 삭제해도 `DEFAULTS` 가 남아 집행은 유지된다.

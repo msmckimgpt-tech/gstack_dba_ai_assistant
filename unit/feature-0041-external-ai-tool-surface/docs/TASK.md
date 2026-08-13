@@ -101,14 +101,17 @@ source_of_truth: true
 
 **해소됨(2026-08-12 2차 cycle)**: HTTP/SSE 전송 · 발견 자료 · L4 비대칭 flag · 라이브 배포.
 
+**해소됨(2026-08-13 3차 cycle)**: HTTP/SSE 라이브 기동 · 상한 콘솔 노출 · e2e 절차서.
+
+콘솔 노출은 **bespoke `admin.js` 탭이 아니라 `runtime_settings` 슬라이스**로 냈다 — 그 파일을
+다른 활성 브랜치 2개가 편집 중이라 충돌 위험이 컸고, 기존 설정 화면이 그룹을 자동 렌더하므로
+같은 결과를 프론트 수정 0 으로 얻는다. 역할별/계정별 override 는 미도입(전역 상한만).
+
 남은 것:
-- **관리 콘솔 '외부 도구 한도' 탭** — 사용자 결정(2026-08-12)으로 **이번 출하에서 제외**.
-  사유: (a) `admin.js` 를 다른 활성 브랜치 2개가 동시 편집 중이라 충돌 위험이 크고
-  (b) `visual_verification_scope: always` 라 PB-0008 실 브라우저 검증이 하드 게이트여서
-  붙이면 나머지 3건 출하까지 그 검증에 묶인다. **상한 자체는 runtime 기본값으로 이미 집행 중**
-  이고 탭은 조절 편의 UI다(기능 공백 아님). 별도 cycle.
-- **인증된 전 구간 e2e** — 인가에 사람 브라우저 로그인·동의가 필요(설계상 자동화 불가).
-- P1 이후 도구(`execute_sql` 등) — 원 계획대로 별도 단계.
+- **인증된 전 구간 e2e 실행** — 절차서·스크립트 완비. 인가에 사람 브라우저 로그인·동의가
+  필요(설계상 자동화 불가 — 그 지점이 신원 축의 생성점이다). 실행 후 TEST.md §3 에 Run 기록.
+- P1 이후 도구(`execute_sql` 등) — 사용자 결정(2026-08-12): **운영 데이터를 보고 판단**.
+  판단 근거는 `tool_call_usage` 원장(도구별 호출 분포 · 미제출률 · 한도 도달 빈도).
 
 ## 6. Done
 - 요구사항 확정 (2026-08-12 대화 — 신원/비용 2축, 동시 다중 세션 허용, 검증 이관 범위,
@@ -118,7 +121,8 @@ source_of_truth: true
 - TASK.md §2.1 구현 계획 작성
 
 ## 7. Next Action
-- 콘솔 '외부 도구 한도' 탭 별도 cycle(admin.js 충돌 정리 후) · 사람 1회 인가로 전 구간 e2e 확정
+- 사람 1회 인가로 전 구간 e2e 확정(`docs/E2E_RUNBOOK.md`) → TEST.md §3 Run 기록 → AC-1 종결
+- 원장 데이터가 쌓이면 P1 도구(`execute_sql` + 행 예산) 도입 여부 판단
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다 (AC-1~11 — 단, AC-1·AC-2 의 **라이브** 확인은 배포 후, §5.1)
@@ -154,23 +158,31 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
 - [x] `(e) 인젝션 3단 판정 + §14 재사용` — 산출물: `session_guard.classify_injection` ·
       배선: reject 8건 / **정상 식별자 allow 7건**(오탐 회귀) / neutralize 2건
 - [x] `(f) 전송 (i) stdio` — 산출물: `external_tool_mcp_server.py` · 배선: `test_mcp_adapter.py` 7건
-- [ ] `(f) 전송 (ii) HTTP/SSE` — **미구현**. 사유·계획: TASK §5.1 (FastMCP streamable_http +
-      auth_server_provider). 현재는 stdio 만으로도 사용 가능
+- [x] `(f) 전송 (ii) HTTP/SSE` — 산출물: `external_tool_mcp_http.py` + compose `ext-tool-mcp` +
+      Caddy `handle /api/ai/mcp*` · 배선: `test_bringup_and_limits.py` (경로 정합 · dbnet ·
+      익명 401 선차단 · failover 조건). 사용자는 `https://<host>/api/ai/mcp` + access token 만
+      등록하면 된다(설치물 0)
 - [x] `대화 기록 우리 쪽 보존` — 산출물: `WebAiTasks`(원 질문) + 원장(조회 이력) +
       `submit_answer`(최종 답변) · 한계: 제출은 자발적(소프트 강제, FUNCTION §9 명시)
-- [x] `세션 격리 (동시 다중 허용)` — 산출물: L1 tool 이름 라벨 접미 · L2 각인 · L3 대조 · ·
-      배선: 각 층 테스트. **L4 flag 는 미구현**(§5.1)
-- [ ] `라이브 배포 + e2e` — **미실시**. 사유: 본 worktree 에서 서비스 미기동. 계획: §5.1
+- [x] `세션 격리 (동시 다중 허용)` — 산출물: L1 tool 이름 라벨 접미 · L2 각인 · L3 대조 ·
+      L4 권한 비대칭 flag(**원장 전용** — codex P1 반영) · 배선: 각 층 테스트
+- [x] `라이브 배포` — 산출물: TEST.md §3 Run 1~5 (3회 무중단 롤아웃, GIT_COMMIT 서비스별 일치)
+- [ ] `인증된 전 구간 e2e` — **절차서까지 완료, 실행은 사람 1회**. 산출물:
+      `docs/E2E_RUNBOOK.md` + `scripts/e2e-authorize.sh`(등록→PKCE→**사람 인가**→토큰→도구→제출
+      →refresh 회전→구 refresh 재사용 401→무토큰 401). 사유: 인가 단계가 **설계상 유일한 신원
+      생성 지점**이라 자동화하면 신원 축이 사라진다(사용자 결정 2026-08-12)
 
-**주장 affordance 실측 (G3)**: 본 cycle 은 코드 경로를 만들되 **라이브 e2e 를 구동하지 않았다.**
-"외부 AI 가 등록→인가→토큰→도구 호출→제출 을 완주한다" 는 **아직 실측되지 않은 주장**이며,
-단위 테스트가 각 구간 계약만 고정한다. 배포 후 5-probe(등록 201 / 인가 302+code / 토큰 200 /
-도구 200+각인 / 무토큰 401) 를 TEST.md §3 에 기록해야 이 항목이 닫힌다.
+**주장 affordance 실측 (G3)**: 무인 구간(등록 201 / 무토큰 401 / 매니페스트·가이드 서빙 /
+엣지 익명 401)은 TEST.md §3 Run 1·3·5 에 라이브 실측이 있다. **인가 이후 구간**(토큰 교환 →
+도구 호출 → 제출)은 사람 로그인이 필요해 여전히 **미실측 주장**이며, `scripts/e2e-authorize.sh`
+1회 실행 결과를 TEST.md §3 에 Run 으로 기록해야 AC-1 이 닫힌다. 이 상태를 "완료" 로 적지 않는다.
 
 **경계변수 양측 검증 (G4)**:
 - `AGENT_EXT_TOOL_RPM`(120) → 경계 이하 통과 / 도달 시 429 (`test_check_limits_blocks_rpm`,
   `test_check_limits_passes_under_threshold`)
 - `AGENT_EXT_TOOL_ROWS_PER_HOUR`(200,000) · `_BYTES_PER_HOUR`(64MiB) → 각각 도달 시 429
 - 인가 코드 TTL(60s) → 만료 전 소비 성공 / 만료 후 거절 (`test_auth_code_expires`)
+- `AGENT_EXT_TASK_OPEN_MAX`(20) → 미만 통과 / 도달 시 429 (`test_open_task_cap_is_actually_enforced`)
+- knob `0 이하` → 무제한(집행 skip) / 양수 → 집행 (`test_zero_means_unlimited`)
 - 교차오염 값 길이 임계(8자) → 8자 이상 원문 일치 탐지 / 미만 무시(오탐 방지,
   `test_detect_ignores_short_values_to_avoid_false_positives`)

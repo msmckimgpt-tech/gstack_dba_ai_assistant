@@ -1323,6 +1323,82 @@ def ask_worker_idle_poll_sec() -> float:
 # 스펙은 프로세스 수명 내 정적이다(타임아웃=리터럴, 모델 예산=import-time 고정 카탈로그 순회).
 # get_int·model_thinking_budget_override 가 매 MCP 요청·매 timeout 해석마다 spec_for 를 호출하므로
 # 전체 스펙/인덱스를 1회 계산 후 메모이즈한다(적대 backend MINOR — hot-path 재빌드 제거).
+
+# ── 외부 AI 도구 표면 상한 (feature-0041) ─────────────────────────────────
+# 외부 AI 가 **자기 계정 LLM 으로 추론**하므로 이 트래픽은 `llm_usage` 에 행을 남기지 않는다 —
+# 즉 토큰 축 한도(`WebRoleTokenQuotas`/`WebAccountTokenQuotas`·백그라운드 예산)가 전부 0 으로
+# 읽혀 통과한다. 비용은 우리가 안 내지만 **부하는 우리 DB 가 내므로** 호출·행수·바이트를 세는
+# 별도 축이 필요하고, 그 상한이 아래 knob 이다(원장 = `agent_runtime.tool_call_usage`).
+#
+# 전부 live — 도구 호출 진입마다 읽으므로 재기동 없이 즉시 반영된다.
+#
+# ⚠ **소비처 없는 knob 은 여기 두지 않는다** (codex REV-20260813-0001 P1): 콘솔에 보이는데
+#   아무 데서도 읽지 않으면 운영자가 "막아 뒀다" 고 믿는 방어가 실재하지 않게 된다. 동시 실행
+#   상한(`AGENT_EXT_TOOL_CONCURRENCY`)은 in-flight 카운터가 필요해 이번 범위 밖이라 **제거**했다 —
+#   구현되면 그때 다시 올린다.
+# 별도 콘솔 탭을 만들지 않고 이 슬라이스에 얹는 이유: 운영자가 이미 쓰는 '시스템 > 설정' 한
+# 화면에서 조절하게 하는 편이 새 탭을 익히게 하는 것보다 낫고, `admin.js` 를 건드리지 않아
+# 병렬 편집 충돌도 없다.
+GROUP_EXT_TOOL = "external_tool_surface"
+
+_EXT_TOOL_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "key": "AGENT_EXT_TOOL_RPM",
+        "category": "외부 AI 도구",
+        "label": "계정당 분당 도구 호출 상한",
+        "description": "외부 AI 가 1분 동안 호출할 수 있는 도구 수(계정 기준). 외부 에이전트는 "
+                       "사람 대화 리듬을 따르지 않아 짧은 시간에 몰아칠 수 있습니다. 초과하면 429 와 "
+                       "재시도 시각을 돌려줍니다. 0 이하면 무제한.",
+        "unit": "회/분",
+        "default": 120,
+        "minimum": 0,
+        "maximum": 100000,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_EXT_TOOL_ROWS_PER_HOUR",
+        "category": "외부 AI 도구",
+        "label": "계정당 시간당 반환 행수 상한",
+        "description": "외부 AI 에게 1시간 동안 내보낼 수 있는 총 행수. **대량 추출 방어의 핵심 값**입니다 "
+                       "— 한 번에 많이 주지 않아도 반복 호출로 테이블 전체를 가져갈 수 있으므로, 건당이 "
+                       "아니라 누적으로 셉니다. 0 이하면 무제한.",
+        "unit": "행",
+        "default": 200000,
+        "minimum": 0,
+        "maximum": 100000000,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_EXT_TOOL_BYTES_PER_HOUR",
+        "category": "외부 AI 도구",
+        "label": "계정당 시간당 반환 바이트 상한",
+        "description": "행수와 별개로 응답 크기 총량을 제한합니다. 행이 적어도 컬럼이 크면 반출량이 "
+                       "커지므로 두 축을 함께 둡니다. 0 이하면 무제한.",
+        "unit": "바이트",
+        "default": 67108864,
+        "minimum": 0,
+        "maximum": 10737418240,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_EXT_TASK_OPEN_MAX",
+        "category": "외부 AI 도구",
+        "label": "미제출 작업 허용 개수",
+        "description": "외부 AI 가 열어 두고 `submit_answer` 로 닫지 않은 작업의 허용 수. 최종 답변 제출은 "
+                       "강제할 수 없으므로(구조적 한계) 미제출이 쌓이면 새 작업 시작을 제한하는 방식으로 "
+                       "완만히 압박합니다. 0 이하면 무제한.",
+        "unit": "개",
+        "default": 20,
+        "minimum": 0,
+        "maximum": 1000,
+        "apply_mode": "live",
+    },
+)
+
+
+def _ext_tool_specs() -> tuple[dict[str, Any], ...]:
+    return tuple(dict(spec, group=GROUP_EXT_TOOL) for spec in _EXT_TOOL_SPECS)
+
 _SPECS_CACHE: tuple[dict[str, Any], ...] | None = None
 _SPEC_INDEX_CACHE: dict[str, dict[str, Any]] | None = None
 
@@ -1340,6 +1416,7 @@ def list_specs() -> tuple[dict[str, Any], ...]:
             + _scratch_specs()
             + _folder_specs()
             + _perf_specs()
+            + _ext_tool_specs()
         )
     return _SPECS_CACHE
 

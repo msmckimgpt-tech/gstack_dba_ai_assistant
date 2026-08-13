@@ -54,18 +54,36 @@ def _fatal(name: str):  # pragma: no cover — 모듈 로드 시점 fail-loud
 
 
 def _require_https(url: str) -> str:
-    """stdio 와 동일 정책 — 이 채널로 Bearer token 이 오간다."""
+    """stdio 와 동일 정책 — 이 채널로 Bearer token 이 오간다.
+
+    예외 하나: `EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM=1` 이면 평문 upstream 을 허용한다. 이 서버를
+    **compose 내부 네트워크**에 두고 web 컨테이너(`web-a:8000`)로 직접 붙일 때를 위한 것이며,
+    CONTRIBUTING §10 의 "single TLS termination — 엣지가 종단하고 내부 서비스는 plaintext" 규약과
+    정합한다. 내부 네트워크 밖에서는 절대 켜지 말 것(토큰이 평문으로 흐른다).
+    """
     parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme == "https" or (parsed.scheme == "http" and host in
                                     ("127.0.0.1", "::1", "localhost")):
         return url
-    sys.stderr.write(f"[ext-tool-mcp-http] FATAL: BASE_URL 은 https 여야 합니다. got={url}\n")
+    if (parsed.scheme == "http"
+            and str(os.getenv("EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM", "")).strip() == "1"):
+        sys.stderr.write(
+            f"[ext-tool-mcp-http] WARN: 평문 upstream 허용({host}) — compose 내부 네트워크 전용 "
+            f"설정입니다. 외부 경로에서는 절대 사용하지 마세요.\n")
+        return url
+    sys.stderr.write(
+        f"[ext-tool-mcp-http] FATAL: BASE_URL 은 https 여야 합니다(loopback 예외). got={url}\n"
+        f"  compose 내부 네트워크라면 EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM=1 로 명시 동의하세요.\n")
     raise SystemExit(2)
 
 
-BASE_URL = _require_https(str(os.getenv("EXT_TOOL_API_BASE_URL", "") or "").strip().rstrip("/")
-                          or _fatal("EXT_TOOL_API_BASE_URL"))
+# codex P2 — upstream 을 **콤마 목록**으로 받아 연결 실패 시에만 다음 후보로 넘어간다.
+# HTTP 오류(401/403/429/5xx)는 그대로 전달한다: 그건 upstream 이 살아서 판정한 결과이므로
+# 다른 replica 로 재시도하면 같은 답을 두 번 받거나(무의미) 부작용을 두 번 낼 수 있다.
+_RAW_BASE = str(os.getenv("EXT_TOOL_API_BASE_URL", "") or "").strip() or _fatal("EXT_TOOL_API_BASE_URL")
+BASE_URLS = [_require_https(u.strip().rstrip("/")) for u in _RAW_BASE.split(",") if u.strip()]
+BASE_URL = BASE_URLS[0]
 _CA_BUNDLE = str(os.getenv("EXT_TOOL_CA_BUNDLE", "") or "").strip()
 _VERIFY_TLS = str(os.getenv("EXT_TOOL_VERIFY_TLS", "1")).lower() not in ("0", "false", "no", "off")
 if not _VERIFY_TLS:
@@ -80,6 +98,10 @@ if not _VERIFY_TLS:
 _TIMEOUT = float(os.getenv("EXT_TOOL_TIMEOUT_SEC", "60") or "60")
 _MAX_BYTES = int(os.getenv("EXT_TOOL_MAX_BYTES", str(8 * 1024 * 1024)) or (8 * 1024 * 1024))
 _PORT = int(os.getenv("EXT_TOOL_HTTP_PORT", "8971") or "8971")
+# codex P1 — 엣지가 `/api/ai/mcp` 를 **경로 그대로** 넘기므로 이 서버도 같은 경로에서 받아야
+# 한다. `/mcp` 로 받으면 네트워크가 붙은 뒤에도 전 요청이 404 다. 엣지에서 prefix 를 벗기는
+# 대신 양쪽 경로를 일치시킨다 — MCP 클라이언트가 보는 URL 과 서버 설정이 같아 디버깅이 쉽다.
+_HTTP_PATH = str(os.getenv("EXT_TOOL_HTTP_PATH", "/api/ai/mcp") or "/api/ai/mcp")
 
 # ── 수신 바인딩 (codex P1) ────────────────────────────────────────────────────
 # 이 서버는 **평문 HTTP 로 수신**한다(FastMCP streamable-http). 0.0.0.0 에 열면 전달하기도
@@ -114,7 +136,7 @@ If you drive several accounts at once, prefer the stdio launcher — isolation i
 """.strip()
 
 mcp = FastMCP("mysql-ai-tools-http", instructions=_INSTRUCTIONS,
-              streamable_http_path="/mcp", port=_PORT, host=_BIND)
+              streamable_http_path=_HTTP_PATH, port=_PORT, host=_BIND)
 
 
 def _bearer_from_context() -> str:
@@ -134,9 +156,6 @@ def _post(path: str, payload: dict[str, Any]) -> str:
                            "detail": "Authorization: Bearer <access_token> 헤더가 필요합니다."},
                           ensure_ascii=False)
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(f"{BASE_URL}{path}", data=body, method="POST",
-                                 headers={"Authorization": auth,
-                                          "Content-Type": "application/json"})
     ctx = None
     if _CA_BUNDLE:
         ctx = ssl.create_default_context(cafile=_CA_BUNDLE)
@@ -144,18 +163,26 @@ def _post(path: str, payload: dict[str, Any]) -> str:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-    try:
-        with _opener(ctx).open(req, timeout=_TIMEOUT) as resp:
-            raw = resp.read(_MAX_BYTES + 1)
-            if len(raw) > _MAX_BYTES:
-                return json.dumps({"error": "response_too_large"}, ensure_ascii=False)
-            return raw.decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        detail = _defang(e.read(_MAX_BYTES).decode("utf-8", "replace")[:1000])
-        return json.dumps({"error": f"HTTP {e.code}", "detail": detail}, ensure_ascii=False)
-    except Exception as e:  # noqa: BLE001
-        return json.dumps({"error": "request_failed", "detail": _defang(str(e)[:300])},
-                          ensure_ascii=False)
+    last_err = ""
+    for base in BASE_URLS:
+        req = urllib.request.Request(f"{base}{path}", data=body, method="POST",
+                                     headers={"Authorization": auth,
+                                              "Content-Type": "application/json"})
+        try:
+            with _opener(ctx).open(req, timeout=_TIMEOUT) as resp:
+                raw = resp.read(_MAX_BYTES + 1)
+                if len(raw) > _MAX_BYTES:
+                    return json.dumps({"error": "response_too_large"}, ensure_ascii=False)
+                return raw.decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            # upstream 이 살아서 판정한 결과 — 다른 replica 로 넘기지 않는다.
+            detail = _defang(e.read(_MAX_BYTES).decode("utf-8", "replace")[:1000])
+            return json.dumps({"error": f"HTTP {e.code}", "detail": detail}, ensure_ascii=False)
+        except Exception as e:  # noqa: BLE001 — 연결 실패만 다음 후보로
+            last_err = str(e)[:300]
+            continue
+    return json.dumps({"error": "request_failed", "detail": _defang(last_err)},
+                      ensure_ascii=False)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

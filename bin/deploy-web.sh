@@ -85,7 +85,10 @@ AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask/ops 워커 공용
 # feature-0039: ops-scheduler 도 같은 agent 이미지를 쓰므로 워커 롤아웃 대상에 포함한다.
 # 빠지면 정기 잡(백업·복원 리허설·그래프 sync)이 배포 후에도 구 이미지로 계속 돈다 —
 # "배포는 됐는데 잡만 stale" 은 조용히 오래 가는 종류의 결함이다.
-WORKERS=(insight-worker ask-worker ops-scheduler)
+# feature-0041: ext-tool-mcp(외부 AI 도구 표면 MCP HTTP 전송) 도 같은 agent 이미지를 쓴다.
+#   롤아웃 대상에서 빠지면 이미지만 새로 빌드되고 이 컨테이너는 **구코드로 계속 도는**
+#   드리프트가 생긴다(서비스별 GIT_COMMIT 불일치 — 배포 완료 판정의 근거가 흔들린다).
+WORKERS=(insight-worker ask-worker ops-scheduler ext-tool-mcp)
 AGENT_LASTGOOD_FILE="$STATE_DIR/deploy-agent.last-good"
 WORKER_READY_TIMEOUT="${DEPLOY_WORKER_READY_TIMEOUT:-300}"    # insight 최악 unhealthy 확정(start 60s+60s×3=240s)보다 여유(리뷰 m-3 — 경계 동률 false-fail 방지)
 GATEWAY_READY_TIMEOUT="${DEPLOY_GATEWAY_READY_TIMEOUT:-180}"

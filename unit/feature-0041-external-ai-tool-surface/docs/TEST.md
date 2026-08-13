@@ -154,3 +154,22 @@ HTTP 전송: 토큰 무보관 · https 강제 · **loopback 기본 바인딩** �
 **HTTP/SSE 전송 미기동**: 신규 프로세스라 라이브에 띄우지 않았다 — 기동은 운영 결정(포트 개방·
 TLS 종단 프록시 배치가 선행). 코드 경로는 단위 계약으로 고정했고, 기존 서비스에 영향 0
 (어느 compose 서비스에도 배선하지 않음).
+
+### Run 2026-08-12 (4차) — 잔여 3건 완결 단위 (Environment: local pytest)
+
+| 스위트 | 결과 |
+|---|---|
+| `unit/feature-0041-external-ai-tool-surface/tests` | **161건 PASS** (기존 136 + 신규 25) |
+
+신규 커버리지 요지 — **기동**: compose 서비스가 `dbnet` 에 있음(없으면 전량 502) · 헬스체크가
+HTTP 프로브 · `deploy-web.sh WORKERS` 편입 · Dockerfile 이 HTTP 어댑터만 COPY(서버측 보안 모듈이
+어댑터 경로에 들어가면 안 된다) · 엣지 경로와 `_HTTP_PATH` 일치 · 익명 401 이 `reverse_proxy`
+**앞**(순서가 뒤집히면 무력화) · failover 는 연결 실패에만.
+**한도**: 콘솔 knob 4종 ↔ `DEFAULTS` 키 일치 · **소비처 없는 knob 부재**(존재하지 않는 방어 표시
+금지) · `0 이하 = 무제한` · `open_task` 에 RPM·미제출 게이트 배선 · `check_open_tasks` 경계
+양측(3<5 통과 / 5>=5 429) · 조회 실패 시 통과(규율 장치이지 부하 상한이 아니다).
+**e2e**: 스크립트가 rootCA 존재 시 `--cacert` 로 검증하고 미검증 모드를 화면에 표시.
+
+### Run 2026-08-13 (5차) — POST-DEPLOY 라이브
+
+(배포 후 기록)
