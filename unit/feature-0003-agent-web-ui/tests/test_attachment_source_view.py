@@ -50,6 +50,7 @@ from test_attachment_version_diff import (  # noqa: F401 — fake 재사용(중�
     _patch_auth,
     _row,
     _body,
+    _src,
 )
 
 
@@ -290,3 +291,87 @@ def test_e13_missing_object_key_is_404_not_503(monkeypatch):
     resp = att_router.get_attachment_source(10, _Request())
     assert resp.status_code == 404
     assert storage.head_reads == [] and storage.reads == []
+
+
+# ── C1~C5: 체인 요약(비교 기준 선택기용) — REQ-20260813-attach-source-compare ──
+# 사용자 요청(2026-08-13): "첨부파일의 '문서 원문' 화면에서도 버전 간 비교를 수행할 수 있도록."
+# 선택기를 채우려면 체인이 필요한데, `/versions` 를 따로 부르면 왕복이 늘고(원문 모달의 요청이
+# `/source` 한 번이라는 계약이 깨진다) 버전마다 MinIO presign 이 생긴다. `/source` 가 같은
+# 게이트 안에서 체인 **요약**을 함께 싣는다.
+def _patch_chain(monkeypatch, chain):
+    monkeypatch.setattr(
+        app, "_load_attachment_version_chain",
+        lambda conn, root, scope_row=None: list(chain),
+    )
+
+
+def test_c1_source_payload_carries_version_chain(monkeypatch):
+    chain = [_row(vid=10, version=1), _row(vid=11, version=2), _row(vid=12, version=3)]
+    base = _row(vid=12, version=3)
+    _setup(monkeypatch, base, {"conv-1/u3/f.sql": b"SELECT 1;\n"})
+    _patch_chain(monkeypatch, chain)
+    body = _body(att_router.get_attachment_source(12, _Request()))
+    assert [v["version_number"] for v in body["versions"]] == [1, 2, 3]
+    # 각 항목은 선택기가 라벨을 만들 수 있어야 한다(번호·주체·최신 여부·id).
+    v3 = body["versions"][2]
+    assert v3["id"] == 12 and v3["created_by_role"] == "user"
+    assert set(v3) >= {"id", "version_number", "created_by_role", "created_at",
+                       "size", "sha256", "kind", "original_filename", "is_latest"}
+
+
+def test_c2_chain_summary_excludes_object_key_and_signed_url(monkeypatch):
+    """선택기는 **무엇을 고를지**만 알면 된다 — 저장소 경로·서명 URL 은 싣지 않는다.
+
+    `/versions`(다운로드 경로)는 버전마다 presign 을 만들지만 이 payload 는 그 비용도 그 노출도
+    갖지 않는다. 노출 범위가 `/versions` 응답의 부분집합이라는 사실을 데이터로 고정한다.
+    """
+    chain = [_row(vid=10, version=1), _row(vid=11, version=2)]
+    _setup(monkeypatch, _row(vid=11, version=2), {"conv-1/u2/f.sql": b"a\n"})
+    _patch_chain(monkeypatch, chain)
+    body = _body(att_router.get_attachment_source(11, _Request()))
+    assert body["versions"]
+    for v in body["versions"]:
+        assert "signed_url" not in v and "object_key" not in v and "ObjectKey" not in v
+
+
+def test_c3_chain_load_failure_is_fail_soft(monkeypatch):
+    """체인 조회 실패는 **비교 기능만** 없애고 원문은 그대로 준다.
+
+    원문 보기가 이 조회에 종속되면 체인 쿼리 한 번의 실패가 "내용을 볼 수 없음" 으로 번진다.
+    프론트는 `versions` 가 2개 미만이면 선택기를 숨기므로 빈 배열이 곧 종전 동작이다.
+    """
+    def _boom(conn, root, scope_row=None):
+        raise RuntimeError("chain query failed")
+    _setup(monkeypatch, _row(vid=10, version=1), {"conv-1/u1/f.sql": b"SELECT 1;\n"})
+    monkeypatch.setattr(app, "_load_attachment_version_chain", _boom)
+    body = _body(att_router.get_attachment_source(10, _Request()))
+    assert body["versions"] == []
+    assert body["viewable"] is True
+    assert [r["right"] for r in body["rows"]] == ["SELECT 1;"]
+
+
+def test_c4_binary_degraded_payload_also_carries_chain(monkeypatch):
+    """바이너리 강등 화면에서도 체인을 싣는다 — 그 화면의 비교는 메타 비교(`comparable=false`)로
+    답할 수 있고, 조용히 선택기를 없애면 사용자는 비교 자체가 불가하다고 읽는다."""
+    chain = [_row(vid=10, version=1, kind="pdf"), _row(vid=11, version=2, kind="pdf")]
+    _setup(monkeypatch, _row(vid=11, version=2, kind="pdf"), {})
+    _patch_chain(monkeypatch, chain)
+    body = _body(att_router.get_attachment_source(11, _Request()))
+    assert body["viewable"] is False and body["reason"] == "binary"
+    assert [v["version_number"] for v in body["versions"]] == [1, 2]
+
+
+def test_c5_version_side_is_single_source_of_format():
+    """`/source` 의 `version`·`versions` 와 `/diff` 의 `from`·`to` 는 **같은 함수**로 만든다.
+
+    형식이 두 벌이면 필드 하나가 조용히 빠지는 방식으로 어긋나고(프론트는 두 dict 를 같은
+    라벨러·같은 select 에 넣는다), 그 결과 어느 화면에서는 "AI 수정" 이 뜨고 다른 화면에서는
+    안 뜨는 비대칭이 된다.
+    """
+    src = _src("routers/attachments.py")
+    assert src.count("def _version_side(") == 1
+    assert src.count("_version_side(") >= 4          # 정의 1 + version + versions + from/to
+    assert "def _side(" not in src, "nested 사본이 남아 있다"
+    row = _row(vid=11, version=2, role="assistant", superseded=True)
+    side = att_router._version_side(row)
+    assert side["created_by_role"] == "assistant" and side["is_latest"] is False

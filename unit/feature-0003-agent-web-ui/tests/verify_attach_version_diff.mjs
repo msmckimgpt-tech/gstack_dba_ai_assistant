@@ -355,8 +355,17 @@ function extractFn(src, name) {
   // 인자 안에 `Array.isArray(...)` 같은 중첩 괄호가 있어 `[^)]*` 로는 못 잡는다(한 줄 한정 스캔).
   ok("B4 호출부가 attachmentId 를 넘긴다",
     /_renderAttachmentVersionsBox\(versionsBox,.*,\s*a\.id\)/.test(composerJs));
-  ok("B5 머리 진입점 = 기본 쌍(사전선택 없이 모달)",
-    /attach-list-versions-compare[\s\S]*?openAttachmentDiffModal\(attachmentId, versions\)/.test(boxFn));
+  // 사용자 요청 2026-08-13: 머리 진입점의 기본 쌍은 **최초 → 최신** 이다. 이 버튼은 체인 전체를
+  // 대표하는 진입점이라 "이 파일이 처음부터 지금까지 어떻게 바뀌었나" 가 기대와 맞고, 직전↔최신은
+  // 각 버전 행의 `⇄`(B6)가 이미 담당한다 — 두 진입점이 같은 쌍을 여는 중복도 사라진다.
+  ok("B5 머리 진입점 = 최초 → 최신 사전선택",
+    /attach-list-versions-compare[\s\S]*?openAttachmentDiffModal\(\s*attachmentId, versions,\s*oldestNum === latestNum \? undefined : \{ from: oldestNum, to: latestNum \}\)/
+      .test(boxFn));
+  // 번호는 배열 순서가 아니라 **값의 min** 으로 얻는다 — 중간 버전이 삭제된 체인(attach-manage
+  // soft-delete)에서도 실제로 남아 있는 양 끝을 가리켜야 한다(없는 번호를 preselect 하면 select
+  // 가 조용히 첫 옵션으로 떨어져 엉뚱한 쌍이 "최초↔최신" 으로 보인다 — 말풍선 칩에서 관측된 기전).
+  ok("B5b 최초 버전 번호는 값의 min 으로 얻는다(중간 버전 삭제 체인 방어)",
+    /const oldestNum = vnums\.length \? Math\.min\(\.\.\.vnums\) : latestNum;/.test(boxFn));
   ok("B6 행 진입점 = 그 버전 ↔ 최신(다단계 비교 직행)",
     /openAttachmentDiffModal\(attachmentId, versions, \{ from: vnum, to: latestNum \}\)/.test(boxFn));
   // 최신 행의 `⇄` 는 자기 자신과의 비교라 무의미 — 조건이 실제로 걸려 있는지.

@@ -239,6 +239,33 @@ _BODY_VIEW_HEADERS = {
 }
 
 
+def _version_side(row: dict[str, Any]) -> dict[str, Any]:
+    """버전 한 행의 **식별·메타** 요약. `/source` 의 `version`·`versions` 와 `/diff` 의
+    `from`·`to` 가 같은 형식을 쓴다.
+
+    한 함수로 둔 이유: 프론트가 이 dict 들을 같은 헬퍼(`_versionLabel`)로 라벨링하고 같은
+    `<select>` 에 넣는다. 형식이 갈리면 어느 화면에서는 "AI 수정" 이 뜨고 다른 화면에서는
+    안 뜨는 비대칭이 생기며, 그 비대칭은 필드 하나가 조용히 빠지는 방식으로 나타난다
+    (이 저장소가 반복 관측한 "규칙 두 벌" 결함 기전).
+
+    **ObjectKey·서명 URL 은 싣지 않는다** — 선택기는 무엇을 고를지만 알면 되고, 다운로드
+    경로는 `/versions` 가 따로 담당한다(그쪽은 버전마다 presign 을 만든다).
+    """
+    created = row.get("CreatedAt")
+    return {
+        "id": int(row.get("Id") or 0),
+        "version_number": int(row.get("VersionNumber") or 1),
+        "created_by_role": str(row.get("CreatedByRole") or "user"),
+        "created_at": created.isoformat() if hasattr(created, "isoformat") else (
+            str(created) if created else None),
+        "size": int(row.get("SizeBytes") or 0),
+        "sha256": str(row.get("Sha256") or ""),
+        "kind": str(row.get("Kind") or ""),
+        "original_filename": str(row.get("OriginalFilename") or ""),
+        "is_latest": not bool(row.get("SupersededAt")),
+    }
+
+
 @router.get("/api/attachments/{attachment_id}/source")
 def get_attachment_source(attachment_id: int, request: Request) -> JSONResponse:
     """REQ-20260807T-attach-source-view: 첨부 **한 버전의 본문 원문** 조회.
@@ -251,6 +278,17 @@ def get_attachment_source(attachment_id: int, request: Request) -> JSONResponse:
     (`RootAttachmentId` + `VersionNumber` 구조) 경로의 id 하나로 버전이 이미 특정된다.
     `?version=` 을 얹으면 같은 대상을 가리키는 식별 경로가 둘이 되고, 그 중 하나만 스코프 검사를
     통과하는 비대칭이 생길 수 있다. 구버전 원문은 그 버전의 id 로 호출한다.
+
+    **체인 요약(`versions`)을 함께 싣는다** (REQ-20260813-attach-source-compare, 사용자 요청
+    2026-08-13: "문서 원문 화면에서도 버전 간 비교를 수행할 수 있도록"). 원문 화면의 비교 기준
+    선택기가 쓴다. `/versions` 를 따로 부르지 않는 이유는 두 가지다:
+      - 그 엔드포인트는 버전마다 MinIO presign 을 만든다(다운로드용). 선택기에는 쓰이지 않는
+        비용이며, 체인이 길면 왕복 1회에 presign N회가 실린다.
+      - 원문 모달의 요청이 `/source` **한 번**이라는 기존 계약(테스트 A8)을 지킨다 — 왕복을
+        늘리지 않고 같은 게이트 안에서 답한다.
+    노출 범위는 `/versions` 응답의 **부분집합**(번호·시각·작성 주체·크기·해시)이고 서명 URL 은
+    빠진다 — 이미 통과한 read 게이트가 체인 전체를 덮는다(`_load_attachment_version_chain` 의
+    `scope_row` 재확인 포함).
 
     권한·게이트는 `/diff` 와 **동형**이다 — 본문 bytes 를 그대로 노출하기 때문이다:
       - 기준 첨부의 `conversation.attachment.read.{own,any}` 재사용 (**신규 권한 코드 0**)
@@ -296,23 +334,27 @@ def get_attachment_source(attachment_id: int, request: Request) -> JSONResponse:
             )
 
         row = base
-        created = row.get("CreatedAt")
+        root_id = int(row.get("RootAttachmentId") or 0) or int(row.get("Id") or 0)
         payload: dict[str, Any] = {
             "attachment_id": int(row.get("Id") or 0),
-            "root_attachment_id": int(row.get("RootAttachmentId") or 0) or int(row.get("Id") or 0),
+            "root_attachment_id": root_id,
             "filename": str(row.get("OriginalFilename") or ""),
-            "version": {
-                "id": int(row.get("Id") or 0),
-                "version_number": int(row.get("VersionNumber") or 1),
-                "created_by_role": str(row.get("CreatedByRole") or "user"),
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else (
-                    str(created) if created else None),
-                "size": int(row.get("SizeBytes") or 0),
-                "sha256": str(row.get("Sha256") or ""),
-                "kind": str(row.get("Kind") or ""),
-                "is_latest": not bool(row.get("SupersededAt")),
-            },
+            "version": _version_side(row),
         }
+        # 체인 요약 — 원문 화면의 비교 기준 선택기용(위 docstring 참조). 조회 실패는 **비교
+        # 기능만 없애고 원문은 그대로 준다**(fail-soft): 원문 보기가 이 조회에 종속되면 체인
+        # 쿼리 한 번의 실패가 "내용을 볼 수 없음" 으로 번진다. 프론트는 `versions` 가 2개
+        # 미만이면 선택기를 숨기므로, 빈 배열이 곧 종전 동작이다.
+        try:
+            payload["versions"] = [
+                _version_side(r)
+                for r in app._load_attachment_version_chain(conn, root_id, scope_row=base)
+            ]
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "get_attachment_source: version chain load failed (root=%s)", root_id,
+                exc_info=True)
+            payload["versions"] = []
 
         if str(row.get("Kind") or "") not in tuple(app._VERSION_DIFF_TEXT_KINDS):
             payload.update({"viewable": False, "reason": "binary"})
@@ -438,26 +480,15 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
         if not left or not right:
             return app._json_error("지정한 버전을 찾을 수 없습니다.", 404)
 
-        def _side(row: dict[str, Any]) -> dict[str, Any]:
-            created = row.get("CreatedAt")
-            return {
-                "id": int(row.get("Id") or 0),
-                "version_number": int(row.get("VersionNumber") or 1),
-                "created_by_role": str(row.get("CreatedByRole") or "user"),
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else (
-                    str(created) if created else None),
-                "size": int(row.get("SizeBytes") or 0),
-                "sha256": str(row.get("Sha256") or ""),
-                "kind": str(row.get("Kind") or ""),
-                "original_filename": str(row.get("OriginalFilename") or ""),
-                "is_latest": not bool(row.get("SupersededAt")),
-            }
-
         payload: dict[str, Any] = {
             "root_attachment_id": root_id,
             "filename": str(right.get("OriginalFilename") or left.get("OriginalFilename") or ""),
-            "from": _side(left),
-            "to": _side(right),
+            # 형식 정본은 모듈 레벨 `_version_side` — `/source` 의 `version`·`versions` 와 공유한다
+            # (nested 사본이던 것을 REQ-20260813-attach-source-compare 에서 승격. 원문 화면의
+            #  선택기가 `/source` 의 체인과 `/diff` 의 from/to 를 같은 라벨러로 다루므로, 형식이
+            #  두 벌이면 필드 하나가 조용히 빠지는 방식으로 어긋난다).
+            "from": _version_side(left),
+            "to": _version_side(right),
         }
 
         text_kinds = tuple(app._VERSION_DIFF_TEXT_KINDS)
