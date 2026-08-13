@@ -267,3 +267,9 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 5 | 앱 무토큰 401 의 `WWW-Authenticate` | 동일 ✅ (엣지·앱 단서 일치) |
 | 6 | **미로그인 `authorize`** (구 404 자리) | `302 → /?next=…` → **최종 200** ✅ |
 | 7 | `/ai/connect` · `/api/ai/connect/status` | **200** ✅ |
+
+### Run 2026-08-13 (12차) — 가이드 배포 반영 (Environment: live · `86d89b60`)
+
+`GET /api/ai/guide` **200**(23,005 bytes) · `B.0-1`·`/ai/connect`·"셸 스크립트 실행을 요구하지
+말 것"·`invalid_scope` 전부 포함(= 배포본 갱신 반영) · 익명 노출 인스턴스 데이터 **0건** ·
+무중단 `no upstreams available` **0건**.
