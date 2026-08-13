@@ -1718,6 +1718,9 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
     reasoning: list[dict[str, Any]] = []
     redteam: list[dict[str, Any]] = []
     performance: list[dict[str, Any]] = []
+    # feature-0041: 외부 AI 도구 표면 상한. 미분류로 두면 **'실행 타임아웃' 패널에 섞인다** —
+    # 이 값들은 타임아웃이 아니라 부하 상한이라 운영자가 엉뚱한 곳에서 찾게 된다(라이브 확인).
+    ext_tool: list[dict[str, Any]] = []
     for spec in list_specs():
         key = str(spec["key"])
         has_override = key in ov
@@ -1757,6 +1760,8 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
             redteam.append(row)
         elif spec.get("group") == GROUP_PERF:
             performance.append(row)
+        elif spec.get("group") == GROUP_EXT_TOOL:
+            ext_tool.append(row)
         else:
             timeouts.append(row)
     return {
@@ -1770,6 +1775,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
         "adaptive_models": list(_adaptive_thinking_models()),
         "redteam": redteam,
         "performance": performance,
+        "ext_tool": ext_tool,
         "meta": {
             "snapshot_path": snapshot_path(),
             "disabled": _disabled(),

@@ -6,6 +6,7 @@ import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
   RS_RESET, RS_MODEL_PREFIX, RS_REASONING_PREFIX, RS_AGENT_MAX_PREFIX, RS_PERF_KEYS,
+  RS_EXT_TOOL_KEYS,
   mountGuidanceRegistryPanel,
 } from "./admin/settings.js?v=dev";
 export { mountGuidanceRegistryPanel };  // aiops.js 의 "../admin.js" import 계약 보존 (re-export)
@@ -3478,11 +3479,12 @@ export function refreshPendingUI() {
   // feature-0018 UX: 런타임 설정 pending 요약 + 설정 pane 좌측 nav row dirty 표시.
   const rsPending = adminState.pending.runtimeSettings || new Map();
   if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
-  let rsTimeoutDirty = false, rsModelDirty = false, rsPerfDirty = false;
+  let rsTimeoutDirty = false, rsModelDirty = false, rsPerfDirty = false, rsExtToolDirty = false;
   rsPending.forEach((_v, k) => {
     const key = String(k);
     if (key.startsWith(RS_MODEL_PREFIX) || key.startsWith(RS_REASONING_PREFIX) || key.startsWith(RS_AGENT_MAX_PREFIX)) rsModelDirty = true;
     else if (RS_PERF_KEYS.has(key)) rsPerfDirty = true;  // feature-0025: 성능·병렬 서브탭으로 라우팅
+    else if (RS_EXT_TOOL_KEYS.has(key)) rsExtToolDirty = true;  // feature-0041: 외부 AI 도구 서브탭
     else rsTimeoutDirty = true;
   });
   // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).
@@ -3504,6 +3506,7 @@ export function refreshPendingUI() {
   markSettingsNav("runtime-timeouts", rsTimeoutDirty);
   markSettingsNav("model-thinking-budgets", rsModelDirty);
   markSettingsNav("performance-parallelism", rsPerfDirty);
+  markSettingsNav("ext-tool-limits", rsExtToolDirty);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
   // Dashboard auto-refresh if visible

@@ -260,3 +260,44 @@ def test_script_asserts_the_reuse_defense():
     """★ 이 단계가 빠지면 e2e 가 '되더라' 만 확인하고 **탈취 방어는 미검증**으로 남는다."""
     sh = _read("unit", "feature-0041-external-ai-tool-surface", "scripts", "e2e-authorize.sh")
     assert "구 refresh 재사용" in sh and 'reuse" = "401"' in sh.replace("$", "")
+
+
+# ── 콘솔 배치 (라이브에서 잘못 렌더된 것을 잡은 회귀) ────────────────────────
+
+def test_ext_tool_knobs_get_their_own_payload_bucket():
+    """★ 그룹을 미분류로 두면 payload 가 **timeouts 버킷**으로 흘려보내 '실행 타임아웃' 패널
+    안에 섞인다 — 부하 상한을 타임아웃 화면에서 찾게 된다. 라이브에서 실제로 그랬다."""
+    src = _read("shared", "runtime_settings.py")
+    body = src[src.index("def build_admin_payload") if "def build_admin_payload" in src else 0:]
+    assert "ext_tool: list[dict[str, Any]] = []" in src
+    assert "elif spec.get(\"group\") == GROUP_EXT_TOOL:" in src
+    assert '"ext_tool": ext_tool,' in src, "버킷을 만들고 응답에 싣지 않았다"
+
+
+def test_console_frontend_mounts_a_dedicated_panel():
+    js = _read("unit", "feature-0003-agent-web-ui", "src", "static", "admin", "settings.js")
+    html = _read("unit", "feature-0003-agent-web-ui", "src", "static", "admin.html")
+    assert '"ext-tool-limits": mountExtToolLimitsPanel' in js
+    assert "data.ext_tool" in js, "패널이 전용 버킷을 읽지 않는다"
+    assert 'renderExtToolLimits(x)' in js, "재렌더 훅이 없으면 저장 후 화면이 낡는다"
+    assert 'data-settings-panel="ext-tool-limits"' in html
+    assert 'data-settings-tab="ext-tool-limits"' in html, "서브탭 nav 가 없으면 도달할 수 없다"
+    assert 'id="extToolLimitsMount"' in html
+
+
+def test_pending_dot_routes_to_the_right_subtab():
+    """미저장 변경 dot 이 엉뚱한 탭에 찍히면 운영자가 무엇을 바꿨는지 못 찾는다."""
+    admin = _read("unit", "feature-0003-agent-web-ui", "src", "static", "admin.js")
+    assert "RS_EXT_TOOL_KEYS" in admin
+    assert 'markSettingsNav("ext-tool-limits", rsExtToolDirty)' in admin
+
+
+def test_frontend_key_mirror_matches_backend_specs():
+    """★ 프론트 미러가 백엔드 스펙과 어긋나면 dot 라우팅이 조용히 틀린다(백엔드가 SSOT)."""
+    import re as _re
+    js = _read("unit", "feature-0003-agent-web-ui", "src", "static", "admin", "settings.js")
+    block = js[js.index("const RS_EXT_TOOL_KEYS"):]
+    block = block[:block.index("]);")]
+    mirrored = set(_re.findall(r'"([A-Z_]+)"', block))
+    backend = {s["key"] for s in rs.list_specs() if s.get("group") == "external_tool_surface"}
+    assert mirrored == backend, f"미러 드리프트 — 프론트만: {mirrored - backend}, 백엔드만: {backend - mirrored}"

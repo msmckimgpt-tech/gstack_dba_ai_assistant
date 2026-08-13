@@ -21,6 +21,8 @@ const SETTINGS_PANEL_MOUNTERS = {
   "redteam-review": mountRedteamReviewPanel,
   // feature-0025: 워커 성능·병렬 처리 운영 값 (runtime_settings performance 그룹).
   "performance-parallelism": mountPerformanceParallelismPanel,
+  // feature-0041: 외부 AI 도구 표면 부하 상한 (runtime_settings external_tool_surface 그룹).
+  "ext-tool-limits": mountExtToolLimitsPanel,
 };
 
 // feature-0021 console-subtabs: 프롬프트 패널 — 서브탭[전역 시스템 프롬프트 | 작동 지침 | 스킬].
@@ -161,6 +163,13 @@ const RS_PERF_KEYS = new Set([
   "AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "AGENT_ASK_WORKER_CONCURRENCY", "AGENT_ASK_WORKER_IDLE_POLL_MS",
   "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "AGENT_KB_EMBEDDING_INTERVAL_SEC",
 ]);
+// feature-0041: 외부 AI 도구 표면 키 미러(= runtime_settings._EXT_TOOL_SPECS). 위와 같은 용도 —
+// 미저장 변경 dot 을 **해당 서브탭**에 찍는다. 없으면 '실행 타임아웃' 에 잘못 찍힌다.
+// 백엔드가 SSOT — 키 추가 시 함께 갱신(테스트가 두 목록의 일치를 검사한다).
+const RS_EXT_TOOL_KEYS = new Set([
+  "AGENT_EXT_TOOL_RPM", "AGENT_EXT_TOOL_ROWS_PER_HOUR",
+  "AGENT_EXT_TOOL_BYTES_PER_HOUR", "AGENT_EXT_TASK_OPEN_MAX",
+]);
 
 function rsApplyBadge(applyMode) {
   const span = document.createElement("span");
@@ -215,6 +224,8 @@ function rerenderRuntimeSettingsPanels() {
   if (r && adminState.settings.mountedPanels.has("redteam-review")) renderRedteamReviewSettings(r);
   const p = $("performanceParallelismMount");
   if (p && adminState.settings.mountedPanels.has("performance-parallelism")) renderPerformanceParallelism(p);
+  const x = $("extToolLimitsMount");
+  if (x && adminState.settings.mountedPanels.has("ext-tool-limits")) renderExtToolLimits(x);
 }
 
 // 정렬 grid 행(라벨+배지 / 설명 / 입력+단위 / 상태·기본값). timeouts·models 공용.
@@ -448,6 +459,63 @@ async function renderPerformanceParallelism(mount) {
   const panel = document.createElement("div");
   panel.className = "rs-panel";
   // category 순서 보존 그룹핑(그래프 노드 분석 → cluster_label → 사용자 답변 처리 → 지식베이스 임베딩).
+  const order = [];
+  const byCat = new Map();
+  for (const it of items) {
+    const cat = it.category || "기타";
+    if (!byCat.has(cat)) { byCat.set(cat, []); order.push(cat); }
+    byCat.get(cat).push(it);
+  }
+  for (const cat of order) {
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = cat;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of byCat.get(cat)) list.appendChild(buildRuntimeSettingRow(it, canWrite));
+    group.append(gtitle, list);
+    panel.appendChild(group);
+  }
+  if (!canWrite) {
+    const note = document.createElement("div");
+    note.className = "rs-readonly-note";
+    note.textContent = "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
+    panel.appendChild(note);
+  }
+  mount.appendChild(panel);
+}
+
+// feature-0041: 외부 AI 도구 표면 상한 패널. **전용 패널을 두는 이유**: 이 값들은 타임아웃이
+// 아니라 부하 상한인데, 그룹 미분류로 두면 payload 가 timeouts 버킷으로 흘려보내 '실행 타임아웃'
+// 패널 안에 섞인다 — 운영자가 엉뚱한 곳에서 찾게 된다(라이브에서 실제로 그렇게 렌더됐다).
+// 렌더는 성능 패널과 동일한 정렬 grid + 카테고리 그룹(buildRuntimeSettingRow 공용).
+async function mountExtToolLimitsPanel() {
+  const mount = $("extToolLimitsMount");
+  if (!mount) return;
+  if (!can("system.runtime.read")) {
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
+    return;
+  }
+  await renderExtToolLimits(mount);
+}
+
+async function renderExtToolLimits(mount) {
+  rsErrorPlaceholder(mount, "불러오는 중…");
+  let data;
+  try {
+    data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
+  } catch (err) {
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
+    return;
+  }
+  const canWrite = can("system.runtime.write");
+  const items = Array.isArray(data.ext_tool) ? data.ext_tool : [];
+  if (!items.length) { rsErrorPlaceholder(mount, "등록된 외부 도구 상한 항목이 없습니다."); return; }
+  mount.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
   const order = [];
   const byCat = new Map();
   for (const it of items) {
@@ -878,4 +946,5 @@ export {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
   RS_RESET, RS_MODEL_PREFIX, RS_REASONING_PREFIX, RS_AGENT_MAX_PREFIX, RS_PERF_KEYS,
+  RS_EXT_TOOL_KEYS,
 };

@@ -163,3 +163,19 @@ source_of_truth: true
 - Impact: `ext-tool-mcp` 가 실제로 기동한다. 다른 서비스는 이미지에 패키지 1개가 늘어날 뿐
   코드 경로 무변경. upstream 연결이 평문→**검증된 TLS** 로 강화됐다.
 - Rollback Notes: compose 서비스 제거로 원복. `mcp` 의존은 남아도 무해(아무도 import 안 함).
+
+## CHG-20260813-0011
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 콘솔 상한을 **전용 패널**로 이동 — 배포 후 실제 렌더를 확인하니 그룹 미분류라
+  `timeouts` 버킷으로 흘러 **'실행 타임아웃' 패널 안에 섞여** 있었다(문서는 별도 섹션이
+  있는 것처럼 기술 — 과장이었다).
+- Files:
+  - `shared/runtime_settings.py` (`ext_tool` 버킷 + 응답 포함)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (패널 `ext-tool-limits` + 서브탭 nav)
+  - `unit/feature-0003-agent-web-ui/src/static/admin/settings.js`
+    (`mountExtToolLimitsPanel`·`renderExtToolLimits`·`RS_EXT_TOOL_KEYS`)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (미저장 dot 서브탭 라우팅)
+  - `unit/feature-0041-.../tests/test_bringup_and_limits.py` (배치 회귀 4건)
+- Impact: 기존 패널 4종 무변경(추가만). `timeouts` 버킷에서 4행이 빠져 나온다.
+- Rollback Notes: 버킷 분기 제거 시 자동으로 이전 동작(timeouts 혼입)으로 돌아간다.
