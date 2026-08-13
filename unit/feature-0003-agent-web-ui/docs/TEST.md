@@ -2874,7 +2874,6 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   기전 자체가 라이브 실측으로 규명됐다** — 1차 배포본에서 `sameSvg:false` 와 sig 폭 차이(1299 vs
   1287)를 직접 관측해 원인을 갈라냈고, 그 조건을 헤드리스에 이식해 회귀를 잠갔다. 재배포 후 양방향
   경계 전환을 실 Chrome 에서 재실측한다.
-<<<<<<< HEAD
 
 ### 20260813T1810 후속 — 신규 세그먼트 '첫 등장' 전환 (라이브 전용 축)
 
@@ -2894,5 +2893,3 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
 - **Environment: Windows-browser (PB-0008)** — **미수행(POST-DEPLOY 이월)**, 사유: ESM JS 라 미머지
   프리뷰 불가. **이 3차 결함 자체가 라이브 실측으로만 드러난 축**이며(헤드리스 뮤턴트 생존),
   재배포 후 같은 probe 스크립트로 `enterMid < enterEnd` 를 실 Chrome 에서 확인한다.
-=======
->>>>>>> origin/main
