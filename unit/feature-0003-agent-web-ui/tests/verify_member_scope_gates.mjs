@@ -11,6 +11,20 @@
 //   대조군: 제목 변경(rename) · 보관(delete) · 복제(duplicate) 는 서버가 **2차 owner 게이트**를
 //   덧붙이므로 멤버 차단이 정답이다 — 이 테스트는 그 비대칭이 유지되는지도 함께 잠근다.
 //
+//   ⚠ **정정 (2026-08-13, 라이브 실측 후)**: 이 파일은 `can(code)` 를 **권한 코드별로 판정하는**
+//   stub 으로 주입한다. 그러나 **정본 `can()` 은 인자를 버리고 로그인 여부만 반환**한다
+//   (app.js — TASK-0098 display-permissive "넓게 표시 + 백엔드 403"). 따라서:
+//     - 현 런타임에서 `markAccessBlocked` 는 로그인 사용자에게 **blocked 를 붙이지 않는다** —
+//       즉 아래 case2/5/6 이 다루는 "멤버가 버튼에서 막힌다" 는 **수정 전에도 발생하지 않았다**.
+//       최초 감사에서 이 사실을 확인하지 않아 A-1~A-3 을 실효 결함으로 오판했다.
+//     - 그럼에도 이 케이스들은 가치가 있다: `requiredPermissionsFor` 가 내놓는 **후보 권한 집합이
+//       서버 경계와 일치하는지**를 잠근다(코드별 판정이 도입되거나 다른 소비자가 후보 집합을 읽을
+//       때 곧바로 실효가 된다). 즉 **"미래 계약" 잠금**이며 현 blocked 동작의 증거는 아니다.
+//     - 실효 축은 (a) predicate 자체의 의미 (b) 안내문 조건(`can()` 무관 — `isOwnConversation`
+//       단독이었다) 이다. (b) 는 라이브에서 소거가 확인됐다.
+//   실효 결함이었던 '보관/나가기 분기'(display-permissive can() 이 분기를 죽인 건)는 별 파일
+//   `verify_member_leave_branch.mjs` 가 **실 DOM 행위**로 검증한다.
+//
 //   실행: node verify_member_scope_gates.mjs   (Node18 + jsdom@22, /tmp 우선 해석)
 //   라이브 정본(멤버 계정으로 실제 버튼 클릭 → 서버 왕복)은 PB-0008 Windows-browser.
 
@@ -143,12 +157,12 @@ const OPERATOR = [
   ok("[case1] ownScope: null-safe", g.isOwnScopeConversation(null) === false);
 }
 
-// ── Case 2: ★ 멤버가 자기 run 을 제어할 수 있다 (서버가 허용하는 3종) ──────────
+// ── Case 2: 후보 권한 집합이 서버 경계와 일치 (가정: per-code can — 위 정정 참조) ────
 {
   const g = build({ perms: OPERATOR, conversation: SHARED_GROUP });
-  ok("[case2] ★ 중단(cancel) 허용", g.canCancelConversation(SHARED_GROUP) === true);
-  ok("[case2] ★ 즉시 답변(finalize) 허용", g.canFinalizeConversation(SHARED_GROUP) === true);
-  ok("[case2] ★ 실행시간 연장(extend) 허용", g.canExtendConversation(SHARED_GROUP) === true);
+  ok("[case2] 중단(cancel) — 후보에 .own 포함", g.canCancelConversation(SHARED_GROUP) === true);
+  ok("[case2] 즉시 답변(finalize) — 동일", g.canFinalizeConversation(SHARED_GROUP) === true);
+  ok("[case2] 실행시간 연장(extend) — 동일", g.canExtendConversation(SHARED_GROUP) === true);
   ok("[case2] 발화(ask) 허용", g.canAskInConversation(SHARED_GROUP) === true);
   // 권한 후보 집합에 `.own` 이 포함돼야 blocked 되지 않는다.
   ok("[case2] requiredPermissionsFor(cancel) 에 .own 포함",
@@ -168,13 +182,13 @@ const OPERATOR = [
   ok("[case3] 내 대화에서는 rename 허용(회귀 없음)", g.canRenameConversation(MY_CONV) === true);
 }
 
-// ── Case 4: '···' > 설정 메뉴가 멤버에게 열린다 (self-leave 경로 보존) ──────────
+// ── Case 4: 설정 메뉴 후보 집합 + 라벨 정정 (현 런타임에선 원래 열려 있었다) ─────────
 {
   const g = build({ perms: OPERATOR, conversation: SHARED_GROUP });
   const item = g.makeMenuItem("설정", {
     action: "conversation.read", conversation: SHARED_GROUP, onSelect: () => {},
   });
-  ok("[case4] ★ 설정 메뉴 항목이 blocked 아님(멤버 = 나가기 경로)",
+  ok("[case4] 설정 메뉴 항목이 blocked 아님",
     !item.classList.contains("is-access-blocked"));
   ok("[case4] aria-disabled 미부여", item.getAttribute("aria-disabled") === null);
   // .any 열람 대화(owner·멤버 아님)에서는 여전히 blocked — 경계 양측.
@@ -187,19 +201,19 @@ const OPERATOR = [
     g.requiredPermissionsFor("conversation.read", SHARED_GROUP).label === "대화 설정");
 }
 
-// ── Case 5: markAccessBlocked — 멤버 대화의 연장 버튼이 활성 ───────────────────
+// ── Case 5: markAccessBlocked (가정: per-code can) — 멤버 대화 연장 버튼 활성 ────────
 {
   const g = build({ perms: OPERATOR, conversation: SHARED_GROUP });
   const btn = document.createElement("button");
   g.markAccessBlocked(btn, "conversation.extend", SHARED_GROUP);
-  ok("[case5] ★ 연장 버튼 blocked 아님", !btn.classList.contains("is-access-blocked"));
+  ok("[case5] 연장 버튼 blocked 아님", !btn.classList.contains("is-access-blocked"));
   ok("[case5] title 비어 있음(거짓 사유 없음)", btn.title === "");
   const btn2 = document.createElement("button");
   g.markAccessBlocked(btn2, "conversation.extend", ANY_VIEW);
   ok("[case5] .any 열람 대화 연장 버튼은 blocked 유지", btn2.classList.contains("is-access-blocked"));
 }
 
-// ── Case 6: 권한 자체가 없으면 멤버여도 차단(과대 개방 방지) ───────────────────
+// ── Case 6: 과대 개방 방지 (가정: per-code can) — `.own` 미보유면 멤버도 차단 ─────────
 {
   const g = build({ perms: ["conversation.ask"], conversation: SHARED_GROUP });
   ok("[case6] cancel.own 미보유 → 멤버도 차단", g.canCancelConversation(SHARED_GROUP) === false);

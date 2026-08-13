@@ -5,6 +5,12 @@ scope: 그룹 대화 멤버의 프론트 권한 게이트를 백엔드 `.own`(ow
 verdict: PASS (pre-commit — jsdom 53 + 수정 전 재현 실측 + 프론트 .mjs 61개 전수 회귀 0) / 라이브 = POST-DEPLOY
 ---
 
+> ⚠ **정정 (2026-08-13, 라이브 실측 후)**: 본 Run 이 전제한 "멤버가 버튼에서 blocked 된다" 는
+> **사실이 아니다** — `can()` 이 인자를 무시하므로(display-permissive) `markAccessBlocked` 는 로그인
+> 사용자에게 blocked 를 붙이지 않는다. 이 Run 의 jsdom 케이스들은 per-code `can` 을 가정한
+> **후보 권한 집합 계약**을 잠근 것이며 현 런타임 blocked 동작의 증거가 아니다. 실효 결함이었던
+> '보관/나가기 분기'는 `REV-20260813T201000-member-leave-branch.md` 에서 실 DOM 행위로 검증했다.
+
 ### Run (2026-08-13) — member-scope-gates pre-commit — **Environment: CLI (node 18 + jsdom@22)**
 
 - **신규 `tests/verify_member_scope_gates.mjs` — 53 passed / 0 failed**
