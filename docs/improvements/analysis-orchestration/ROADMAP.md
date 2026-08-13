@@ -44,11 +44,18 @@ ITEM-03 ─┘  (T0 자원)     (L0 증거)   (L1 주입)   (thin 재정의)
                              │             (L2 요약)   (L3 lazy)   (소비 배선)
                              └──enables──▶ ITEM-10 · ITEM-11
                                            (검증층)   (플래너)
+
+T4 (2026-08-14 추가 — 요청당 낭비 제거):
+ITEM-13 (형제 dedup, 독립)
+ITEM-14 (캐싱 검증 스파이크) ──gates──▶ ITEM-15 (프롬프트 계약 정리)
 ```
 
 - `ITEM-01/02/03 → ITEM-04`: L0 은 운영 DB 를 읽는다. `ds` 자원 게이트가 없으면 부하 제어가 강제
   수단 없는 선언이 된다.
 - `ITEM-04 → ITEM-07/10`: 접지 없는 합성은 추측의 요약이고, 접지 없는 검증은 추측의 검증이다.
+- `ITEM-14 → ITEM-15`: 두 항목은 **프롬프트 길이를 반대 방향으로 민다**. ITEM-15 는 프롬프트를
+  줄이고, 캐싱은 최소 캐시 prefix(Haiku 4.5 = 4,096 토큰) 이상이어야 발동한다. 스파이크 결과를
+  모르는 채 둘을 동시에 진행하면 한쪽이 다른 쪽을 무효화한다.
 
 ## 2. Phase 시퀀스
 
@@ -59,6 +66,7 @@ ITEM-03 ─┘  (T0 자원)     (L0 증거)   (L1 주입)   (thin 재정의)
 | T1.5 | ITEM-12 | — | (없음) — T2 게이트 |
 | T2 | ITEM-07·08·09 | 07→08 순차, 09 병렬 | ITEM-05 done + ITEM-12 done |
 | T3 | ITEM-10·11 | 병렬 | ITEM-05 done |
+| T4 | ITEM-13·14·15 | 13 독립 / 14→15 순차 | (없음) |
 
 Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이 충족되면 후행 Phase 항목도 ready 다.
 
@@ -306,6 +314,121 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **effort**: 中
 - **notes**: PR #1089 머지·배포(eee1f4fb)·PB-0008 PASS. 게이트 커버리지 96%(진입점 3곳) — 나머지는 계량되지만 차단되지 않음(ADR-0032-05). 라이브 실증: 상한을 낮춘 별도 프로세스에서 3개 게이트 모두 `claimed=0` 으로 차단, 사용자 경로 365만 토큰(24h)은 예산에서 제외 확인.
 
+### ITEM-13 · 노드 분석 형제 dedup (요청 수 자체를 줄인다)
+- **status**: rejected (2026-08-14 — 착수 직후 전제 반증)
+- **rejected_because**: 등재 근거였던 "중복률 69.3%"는 **이름 중복률**이었고, 착수 후 측정한
+  **내용 중복률은 사실상 0** 이다. 라이브 실측(`node_analysis_jobs` done + analysis):
+  `AccountId` 261잡 → distinct summary **260**(99.6% 고유) · `regdate` 193 → **193**(100%) ·
+  `member_srl` 104 → **104**(100%) · Table `character` 8 → **8**. 육안 확인 결과 이는 LLM
+  비결정성이 아니라 **부모 테이블 맥락을 반영한 유의미한 차이**였다 —
+  `dbLog.EquipTransform.AccountId`="장비 변환 이벤트를 수행한 플레이어 계정",
+  `dbLog.Cheat.AccountId`="부정행위 적발 기록을 특정 플레이어 계정과 연결",
+  `dbLog.ClassBuff.AccountId`="어느 게임 계정이 어떤 클래스 버프를 받았는지". 형제에게 대표
+  분석을 상속시키면 이 맥락이 통째로 사라진다 — 절감이 아니라 **정보 손실**이다.
+- **재논의 조건**: 이름이 아니라 **payload 구조 동일성**(부모 테이블·FK 상대·description 까지 일치)
+  으로 판정하는 축을 세우고, 그 축의 실제 히트율이 유의미함을 먼저 측정할 것. 현 데이터에서는
+  그 조건을 만족하는 형제가 드물 것으로 보인다(위 실측이 그 방증)
+- **feature_id**: feature-0042-analysis-dedup
+- **dimension**: performance
+- **risk_grade**: Major
+- **depends_on**: []
+- **enables**: []
+- **why**: 요청당 낭비를 줄이는 세 후보(dedup·캐싱·프롬프트 축소) 중 유일하게 **입력·출력 양쪽**을
+  줄인다 — 나머지 둘은 입력만 건드린다. 라이브 실측(`node_analysis_jobs` 전량, 2026-08-13):
+  Column 6,258잡 / distinct name 1,922 = **중복률 69.3%**(`AccountId` 261회 · `regdate` 193회 ·
+  `member_srl` 104회), Table 3,355 / 1,796 = 46.5%, Routine 3,069 / 2,100 = 31.6%. 같은 구조의
+  형제를 매번 따로 LLM 에 보내고 있다.
+- **fit_verdict**: adopt-with-guard (guard: 이름만으로 묶지 않는다 · 대표 유래를 숨기지 않는다)
+- **what**: `_enqueue_neighbors` 에 **형제 게이트**를 추가한다 — 구조 동일 형제는 대표 1건만 큐잉하고
+  나머지는 대표 분석을 상속한다. 판정 축은 insight 의 검증된 패턴을 이식한다(`_build_table_groups`
+  = base_stem + fingerprint **이중 축**). **이름 단독 판정 금지** — 같은 `AccountId` 라도 소속
+  테이블이 다르면 참조 대상과 역할이 다르다. 상속분은 대표 유래를 분석문에 명시해 "자기 분석"으로
+  위장시키지 않는다(insight 의 `source_meta.table_family` 와 동형).
+- **entry_points**: `node_analysis.py:2194 _enqueue_neighbors`(게이트 삽입 — relevance 게이트·예산
+  캡·`FOR UPDATE` 원자화가 이미 있는 자리) · `node_analysis.py:_persist`(대표 유래 키) ·
+  `insight.py:151 _build_table_groups`(판정 축 재사용)
+- **acceptance**: (a) 이름은 같지만 구조가 다른 노드가 **묶이지 않음**을 단위 테스트로 단정,
+  (b) 상속 분석문에 대표 유래가 남아 UI 가 구분 가능, (c) 게이트 OFF 시 종전과 byte-동치,
+  (d) 라이브에서 enqueue 억제분이 계측되고 분석 품질(`node_analysis_verdicts` supported 비율)이
+  게이트 전후로 악화되지 않음
+- **guards**: 스키마 변경 0(대표 유래는 `analysis` JSON 키 추가로 표현 — alembic 불필요) ·
+  기본 OFF 로 배포해 라이브에서 켠다
+- **effort**: 中
+
+### ITEM-14 · 프롬프트 캐싱 검증 스파이크 (ITEM-15 의 방향 게이트)
+- **status**: done (2026-08-14)
+- **feature_id**: feature-0042-analysis-dedup
+- **dimension**: operational
+- **risk_grade**: Minor
+- **depends_on**: []
+- **enables**: [ITEM-15]
+- **why**: `node_analysis` 입력의 약 80%가 매 호출 재전송되는 고정 시스템 프롬프트다
+  (`NODE_ANALYSIS_PROMPT` 9,124자 ≈ 1,780 토큰 = `min(prompt_tokens)` 1,778 과 일치, 입력 p50
+  2,177). 고정 prefix + 고빈도 반복은 prompt caching 의 교과서 사례인데, **지금은 발동조차 하지
+  않는다** — Haiku 4.5 의 최소 캐시 prefix 는 4,096 토큰이라 미달이면 에러 없이 조용히 무시된다.
+- **fit_verdict**: adopt-with-guard (guard: 스파이크 전에 프롬프트를 건드리지 않는다)
+- **what**: 코드 변경 전에 **전제 3항을 라이브로 확정**한다 — (1) litellm(OpenAI 규약) 경유로
+  `cache_control` 이 Anthropic 까지 passthrough 되는가, (2) 4,096 토큰 미만에서 실제로 무음
+  실패하는가(`cache_creation_input_tokens` 관측), (3) 구독형 OAuth 사용량 한도 회계에 캐시 읽기
+  0.1× 가 반영되는가. 결과가 양성이면 ITEM-15 는 "프롬프트 축소"가 아니라 "캐시 가능 형태로
+  재구성"이 된다.
+- **entry_points**: `llm.py:1847 llm_node_analysis`(현재 `chat.completions.create` 직접 호출 —
+  `cache_control` 을 실을 채널이 없다) · `litellm_config.yaml`
+- **acceptance**: 3항 각각에 대해 **관측된 수치**로 판정(추정 금지). 음성 항목은 음성으로 기록한다
+- **effort**: 小
+- **notes**: 라이브 프로브 실행(`insight-worker` 컨테이너 → `bedrock-gateway`, `claude-haiku-4-meta`,
+  각 조건 2회 호출). **관측 결과**:
+
+  | 조건 | prompt_tokens | cache_creation | cache_read | 판정 |
+  |---|---:|---:|---:|---|
+  | A. 433 토큰 + `cache_control` | 433 / 433 | 0 | 0 | **무음 실패 확인** — 에러 없이 무시 |
+  | B. 4,463 토큰 + `cache_control` | 4,463 / 4,463 | **4,422** → 0 | 0 → **4,422** | **캐시 발동 확인** |
+  | C. 4,463 토큰, `cache_control` 없음 | 4,463 / 4,463 | 0 | 0 | 대조군 정상 |
+
+  → (1) **litellm passthrough 동작한다** — OpenAI 규약 `content` 블록에 `cache_control` 을 실으면
+  Anthropic 까지 전달된다(별도 전송 경로 불필요). (2) **4,096 미만은 무음 실패한다** — 현
+  `NODE_ANALYSIS_PROMPT` 1,780 토큰은 `cache_control` 을 붙여도 영구 미발동. (3) 관측 채널 존재 —
+  `usage.cache_creation_input_tokens` / `cache_read_input_tokens` 가 OpenAI 응답에 그대로 실리고
+  `prompt_tokens_details.cached_tokens` 로도 매핑된다.
+  **미확정으로 남긴 1항**: 구독형 OAuth 사용량 한도 회계에 캐시 읽기 0.1× 가 반영되는지는 usage·헤더
+  어디에도 노출되지 않아 이 프로브로 판정 불가 — 장기 관측 과제로 이월(추정하지 않는다).
+
+### ITEM-15 · 프롬프트 계약 정리 → **캐시 가능 형태로 재구성** (ITEM-14 로 방향 확정)
+- **status**: pending (방향 확정 — 착수 전 안전망 필요)
+- **feature_id**: feature-0042-analysis-dedup
+- **dimension**: performance
+- **risk_grade**: Major
+- **depends_on**: [ITEM-14]
+- **enables**: []
+- **why**: 요청당 ~1,780 토큰의 고정 오버헤드. 다만 블록 분해 결과 9,124자의 60%가 계약
+  4블록이다(Caveats 16% · Evidence-first 16% · Output 스키마 15% · Input 스키마 13%). 그리고 각
+  블록은 특정 회귀에 대응해 추가된 흔적이 명확하다 — Caveats rule 은 코드 주석이 스스로
+  `IMPORTANT — this is the field operators complained about` 라고 적고 있고, Untrusted-data rule 은
+  프롬프트 인젝션 방어, Refine rule 은 §55 refine-not-override 계약이다. **군더더기 제거가 아니라
+  계약 축소**라는 뜻이다.
+- **fit_verdict**: adopt-with-guard (guard: 안전망 없이 착수 금지)
+- **what**: ITEM-14 가 **양성으로 나왔으므로 방향은 "축소"가 아니라 "캐시 가능 형태로 재구성"이다.**
+  현 1,780 토큰을 줄이면 캐시는 영영 발동하지 않는다(4,096 하한). 대신 프롬프트를 4,096 토큰 이상으로
+  **정당하게** 키운다 — 억지 padding 이 아니라 **few-shot 예시 2~3개**(Table·Column·Routine 각 1개,
+  입력 payload → 기대 출력 JSON)를 추가한다. 예시는 (a) 캐시 하한을 자연스럽게 넘기고 (b) 계약 4블록이
+  산문으로 설명하던 것을 실물로 보여줘 품질도 올린다. 안정 prefix(계약+예시)를 앞, 가변 payload 를
+  뒤로 두고 `cache_control` 은 system 블록 끝에 1개.
+  **경제성**: 캐시 write 1.25× 1회 + read 0.1× N회이므로 5분 TTL 창에 2회 이상 호출이면 이득이다.
+  워커는 60초 tick 으로 연속 호출하므로 창 안 재호출이 정상 경로다.
+- **entry_points**: `llm.py:931 NODE_ANALYSIS_PROMPT`(예시 추가) ·
+  `llm.py:1847 llm_node_analysis`(system 을 `content` 블록 리스트로 + `cache_control`) ·
+  `_record_llm_usage`(캐시 필드 계측 — 현재 `usage` 의 cache 컬럼을 저장하지 않는다)
+- **acceptance**: (a) 라이브에서 `cache_read_input_tokens > 0` 이 실제로 관측될 것(ITEM-14 의 B 조건이
+  운영 경로에서 재현), (b) 변경 전후 `node_analysis_verdicts` 의 supported 비율이 악화되지 않음,
+  (c) 캐시 미발동(하한 미달·프롬프트 변경 직후)에도 분석이 정상 동작(fail-open)
+- **blocked_reason**: ~~ITEM-14 미완~~ **해소(2026-08-14)**. 남은 차단 사유는 **검증 표본 부족** 하나다 —
+  `node_analysis_verdicts` 140건(supported 114 · unverifiable 14 · contradicted 12), 증거 커버리지
+  `metadata_table_stats` 152행 / done 잡 12,088 = **1.3%**. 프롬프트 회귀 테스트는 **0건**
+  (`unit/*/tests/` 전수 grep). 이 상태로 프롬프트를 바꾸면 품질 회귀를 관측할 수단이 없다.
+  → 선행: ITEM-11 플래너로 증거 커버리지 확대, 또는 프롬프트 출력 계약(JSON 필드 존재·caveats 빈값
+  규칙 등)을 고정하는 최소 회귀 테스트 신설
+- **effort**: 小(편집) / 中(검증)
+
 ## 4. 보류·기각 (재논의 방지)
 
 | finding | verdict | 사유 |
@@ -318,11 +441,28 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 | L1 전량 확대(+15,000콜) | **보류** | 중요도 상위 + lazy 로 두고 전역 이해는 L2/L3 가 담당(LazyGraphRAG 교훈) |
 | **일일 토큰 cap 재평가** | **완료 → ITEM-12 신설** | 실측으로 전제 반전 확정(7일 Anthropic 8,654콜/55,567,176 토큰 vs edge 25콜 = 과금 lane 99.7%). cap 은 ITEM-12 로 구현, circuit-breaker 는 `llm_provider_health` 가 이미 담당하므로 신규 구현 안 함 |
 | 원시 샘플값 수집 | **기각** | 사용자 확정(2026-07-30) — PII 표면 제거. 문자열 극단값(min/max)도 실질 원시값이라 함께 배제, 길이 분포 + 패턴 클래스로 대체 |
+| LLM 요청 batch 화 (Message Batches API / 다건 묶기) | **기각** | 2026-08-14 사용자 질문. Batches API = 전송 경로 부재 + 구독형이라 50% 할인 가치 0 + 24h SLA 불일치. 다건 묶기 = 출력이 안 줄어 max_tokens 상한 초과(p95×5 = 13,535 > 13,000) + per-job 상태기계(attempts·backoff·회로차단) 붕괴. 상세는 §5 "T4 추가 경위" |
+| **노드 분석 형제 dedup (ITEM-13)** | **기각** | 이름 중복률(69.3%)과 **내용 중복률(≈0)** 을 혼동한 등재였다. `AccountId` 261잡 → distinct summary 260. 형제 분석문의 차이는 비결정성이 아니라 부모 테이블 맥락이라 상속은 정보 손실이다. 상세는 ITEM-13 `rejected_because` |
 
 ## 5. 진행 현황 (improve_cycle 갱신)
 
-- 총 12 · **done 12** · in-progress 0 · pending 0 · blocked 0
-- 다음 ready: (없음 — 로드맵 완주 2026-07-31)
+- 총 15 · **done 13** (ITEM-14 추가) · in-progress 0 · pending 1 (ITEM-15) · rejected 1 (ITEM-13)
+- 다음 ready: **없음** — ITEM-15 는 방향이 확정됐으나 검증 표본 부족으로 착수 보류
+  (선행: 증거 커버리지 확대 또는 프롬프트 출력 계약 회귀 테스트 신설)
+- T1~T3 는 2026-07-31 완주. **T4 는 2026-08-14 추가** — batch 요청 구조 검토(사용자 요청)에서
+  batch 자체는 기각되었으나 그 검토가 드러낸 요청당 낭비를 다루는 트랙이다.
+
+### T4 추가 경위 (2026-08-14)
+
+사용자 질문은 "워커의 LLM 요청을 batch 형태로 보내는 구조가 적절한가"였다. 두 해석 모두 기각됐다:
+
+| 해석 | 판정 | 근거 |
+|---|---|---|
+| Anthropic Message Batches API | **기각** | (1) 앱은 OpenAI 규약으로 litellm 에 보내므로 별도 엔드포인트에 도달 경로가 없다 (2) 50% 할인은 종량제 전제인데 서빙이 **OAuth 구독 토큰**이라 토큰당 과금이 없다 → 할인 가치 0 (3) 최대 24h SLA 가 진행률을 보며 기다리는 준실시간 잡(tick 60초 · lease 900초)과 불일치. Bedrock/Vertex 미지원도 겹친다 |
+| 여러 대상을 한 요청에 묶기 | **기각** | 출력은 줄지 않는다 — `node_analysis` 출력 p95 2,707 × 5 = 13,535 > 실질 여유 13,000(max_tokens 18,000 − thinking 5,000), 단건도 cap 히트 이력 있음. 더해 per-job 상태기계(attempts·backoff·회로차단·refine pass_no)가 잡 1건 단위라 부분 실패를 표현할 수 없다. 같은 결론이 이미 코드에 있다 — `analysis_verify` docstring: *"판정은 1건 1콜이다(배치하면 한 건의 오판이 다른 건으로 번진다)"* |
+
+기각의 부산물로 **요청당 낭비의 정량**이 확보됐고(입력 80%가 고정 프롬프트, 형제 중복률 최대
+69.3%), 그것을 batch 보다 싼 수단으로 회수하는 것이 T4 다.
 
 ### 완주 시점 라이브 실측
 
