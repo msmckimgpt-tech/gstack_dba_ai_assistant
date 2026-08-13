@@ -129,3 +129,28 @@ source_of_truth: true
 - **Cross-ref**: SECURITY §47 · FUNCTION `AC-20260813T183000-group-attach-scope-window-{1,2,3}` ·
   feature-0009 `REQ-GC-R6`(갱신) · TASK `20260813T1830-group-attach-scope-window` ·
   FRICTION_LEDGER `FR-group-attach-sender-scope-blocks-members`.
+
+## ADR-20260814T010000 — 첨부 버전 계보 분기: 별도 root 체인 (스키마 미확장)
+
+- **Status**: Accepted (사용자 결정 2026-08-14, Major §12.3)
+- **Context**: assistant 수정본이 사용자 계보에 `v+1` 로 편입되고 사용자 최신본을 supersede 해,
+  한 계보에 사람 버전과 AI 버전이 섞였다(라이브 39체인). 사용자는 "내가 올린 최신" 을 목록에서
+  잃고, assistant 는 "누구 기준 최신" 을 구분하지 못했다.
+- **Decision**: ① assistant 수정본을 **별도 root 체인의 v1** 로 분기하고 원 계보는 건드리지 않는다
+  (supersede 없음). ② 자기 계보 재편집은 그 계보에서 `v+1` 로 **연장**. ③ 분기 지점은 **MetaJson**
+  에 기록해 스키마·UNIQUE 를 건드리지 않는다. ④ "최신" 의 두 축(**계보 내** / **시간순**)을 프롬프트
+  블록과 API `lineages` 로 **함께** 노출한다. ⑤ 기존 혼합 체인은 **백필하지 않는다**(사용자 결정).
+- **Alternatives**:
+  - *`BranchKey` 컬럼 추가 + `UNIQUE(Root, Branch, Version)`* — 기각(사용자 선택): 조회·인덱스는
+    정확해지나 MySQL 정본 + PG 미러 양쪽 스키마 변경 · 39체인 백필 · 소비자 다수(versions·diff·
+    delete scope=chain·다운로드 파일명) 수정이 따른다. 얻는 정확성 대비 롤백 단위가 거칠다.
+  - *표시 계층만 변경* — 기각: 버전 번호가 여전히 공유돼 "독자적인 버전 관리" 요구를 절반만 충족.
+  - *기존 39체인 분리 백필* — 기각(사용자 선택): 사용자가 이미 본 버전 번호가 재배치되고 되돌리기
+    어렵다. 과거 이력은 있는 그대로 두는 편이 정직하다.
+- **Consequences**: 같은 파일명이 목록에 **둘 이상** 보일 수 있다(사용자 계보 head + AI 계보 head).
+  이는 의도된 결과이며 기존 `AI 수정` 배지로 구분된다. 프론트 버전 모달의 **기준 토글 UI 는 미구현**
+  — API 축은 실렸고 후속 cycle 대상이다. MetaJson 기반 트리라 계보 관계로 **인덱스 조회는 못 한다**
+  (파일명+대화 스코프 조회로 충분한 현재 규모에서는 문제되지 않는다).
+- **Cross-ref**: FUNCTION `REQ-20260814-attach-version-branching` · TASK
+  `20260814T0100-attach-version-branching` · MODIFY `CHG-20260814T010000-…` ·
+  선행 `ADR-20260813T183000`(공유 대화 첨부 스코프).

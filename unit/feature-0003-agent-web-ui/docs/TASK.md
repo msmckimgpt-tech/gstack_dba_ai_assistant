@@ -10649,3 +10649,63 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 - "'요청' ↔ 다른 요소 전환 시 부드러운 애니메이션이 적용되지 않는 이슈 수정" — ✓ (양방향 모두
   노드 유지 전환으로 복구. 같은 뿌리였던 **모델 칩 토글 점프**도 함께 해소)
+## 20260814T0100-attach-version-branching — 첨부 버전 계보를 작성 주체별로 분기 (Major §12.3, 사용자 결정)
+
+- **출처**: 사용자 요청(2026-08-13) — "첨부파일의 버전 관리 또한 사용자별로 트리 형태로 구분되도록
+  구성해주세요. (assistant 또한, 독자적인 버전 관리를 진행)" + 후속 결정(2026-08-14) — "별도 root
+  체인 분기를 적용. 다만 버전 비교 기준을 [자기 버전 기준 / 시간별 버전 기준]으로 구성되어야 하며
+  assistant 또한 각 기준에 따른 버전 분기를 인지해야 한다."
+
+### 조사 — 무엇이 이미 돼 있었나 (정직)
+
+- [x] **사용자별 분리는 이미 충족**: 재업로드 체인 스코프가 `(conversation_id, account_id,
+      OriginalFilename)`(`_find_latest_same_name_attachment`)라 사람끼리는 계보가 섞이지 않는다.
+- [x] **미충족은 두 가지**: ① assistant 수정본이 사용자 계보에 `v+1` 로 편입되고 사용자 최신본을
+      **supersede** 해 목록에서 밀어냈다 ② 계보가 갈리면 "최신" 이 두 뜻이 되는데 그 축이 없었다.
+- [x] 라이브 분포: 활성 첨부 1012 · assistant 생성본 66 · **역할이 섞인 체인 39**(전체 787).
+
+### 조치
+
+- [x] **분기 판정** — source 의 `CreatedByRole` 로 갈린다: 사람 첨부면 **새 root 체인 v1**(분기),
+      assistant 계보면 그 계보 **v+1**(연장). 스키마·UNIQUE(Root,Version) 불변.
+- [x] **supersede 조건화** — 분기일 때는 원 계보를 끄지 **않는다**. 이 가드가 없으면 AI 수정본이
+      사용자 최신본을 목록에서 밀어내 계보를 나눈 목적의 정반대가 된다.
+- [x] **분기 지점 기록** — `MetaJson.branch_of_attachment_id` / `branch_of_root_id` /
+      `branch_owner_role`. 스키마를 늘리지 않으므로 트리 복원의 유일한 단서다.
+- [x] **dual-write 정합** — 분기는 체인 조회 대상이 없으므로(root=NULL) 새 row 만 미러.
+- [x] **두 기준 인지(프롬프트)** — 같은 파일명에 계보가 둘 이상이면 `## FILE VERSION LINEAGES`
+      블록을 싣는다: 계보별 소유자·버전·시각 + **시간순 최신 마커** + "최신이 모호하면 어느 계보인지
+      먼저 밝히고 행동" 계약. 첨부 SELECT 에 `CreatedAt` append(row[13]).
+- [x] **두 기준 인지(API)** — `/api/attachments/{id}/versions` 에 `lineages` 축 추가(같은 대화·같은
+      파일명의 계보 head 를 시간순). 기존 `versions`(계보 내 축)는 불변.
+- [x] **도구 지시 갱신** — "내 편집은 사용자 파일을 덮어쓰지 않고 내 계보를 만든다 · 상대 계보의
+      버전 번호를 내 것으로 주장하지 말 것".
+- [x] **기존 39체인은 그대로 둔다**(사용자 결정) — 과거 이력 보존, 새 수정본부터 분기 적용.
+
+### 검증
+
+- [x] `unit/feature-0002-agent-core/tests/test_attach_version_lineage_prompt.py` **신규 10** —
+      단일 계보 무주입 · 파일명 다르면 미병합 · 두 축 렌더 · **시간순 최신 마커**(v1 이 v2 보다
+      나중인 함정 포함) · 역순 · 분기 출처 · 표시명 · 계약 문구 · 시각 결손 · 도구 지시.
+- [x] `unit/feature-0003-agent-web-ui/tests/test_attach_version_branching.py` **신규 8** —
+      계보 head 쿼리 스코프(대화+파일명+head 한정) · 빈 인자 무쿼리 · **fail-soft** ·
+      분기 판정축 · v1 새 root · **분기 시 supersede 안 함** · 분기지점 기록 · dual-write.
+- [x] **테스트가 실제 결함을 잡았다**: `_load_filename_lineage_heads` 의 `conn.cursor()` 가 try
+      밖에 있어 획득 실패가 호출측으로 전파됐다(이 저장소에서 반복된 패턴) → try 안으로 이동.
+- [x] 적대 패널 `[CODEX:adversarial-data-integrity]` — **[P1] 3 · [P2] 1 전건 반영**:
+      ① 사용자 재업로드가 AI 계보로 편입되던 경로(역할 스코프 누락 — 이 하나로 분리가 무너진다)
+      ② `read_attachment(filename=…)` 이 동명 후보 중 Id 최대를 조용히 선택 → **되묻기**로 전환
+      ③ 같은 root 의 live head 2개를 두 계보로 오인 → **root 당 1건** dedupe
+      ④ 타 멤버 소유 AI 계보를 "by you" 로 오표기 → 소유자 반영(READ-ONLY 표기).
+- [x] 관련 스위트 **61 PASS** · 전체 스위트 회귀 실패 0(잔여는 선재 환경 의존 파일 1개).
+- [ ] verify-completion · 배포 후 라이브 실측(분기 INSERT/supersede 실동작).
+
+### 9. Requested Scope
+
+- 첨부 버전을 사용자별 트리로 구분 — ✓ (사람끼리는 기존 스코프로 이미 분리, assistant 는 이번에
+  별도 계보로 분기).
+- assistant 독자 버전 관리 — ✓ (자기 계보에서 v1→v2 로 이어지고, 사용자 계보를 덮지 않는다).
+- 두 기준(자기 버전/시간별) 비교 + assistant 인지 — ✓ (프롬프트 계보 블록 + API `lineages` 축).
+- **이번 범위 밖(정직)**: 프론트 버전 모달의 **기준 토글 UI**. API 축은 실었으나 `attach-diff.js`
+  는 아직 계보 내 축만 그린다. 목록에서는 기존 `AI 수정` 배지로 계보가 구분돼 보인다 —
+  트리 시각화·토글은 후속 cycle.

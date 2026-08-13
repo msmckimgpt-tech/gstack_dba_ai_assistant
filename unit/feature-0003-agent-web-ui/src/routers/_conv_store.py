@@ -1943,22 +1943,39 @@ def _materialize_assistant_attachment_edits(
             _skip(f"attachment_id={src_id}: 대화/계정 첨부 용량 상한을 초과했습니다.")
             continue
 
-        # 버전 체인: root = source 의 root(없으면 source 자신). 체인 내 최대 VersionNumber+1.
-        root_id = int(src.get("RootAttachmentId") or 0) or src_id
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                SELECT COALESCE(MAX(VersionNumber), 1)
-                FROM WebConversationAttachments
-                WHERE RootAttachmentId = %s OR Id = %s
-                """,
-                (root_id, root_id),
-            )
-            row = cur.fetchone()
-            next_version = int((row[0] if row else 1) or 1) + 1
-        finally:
-            cur.close()
+        # ── 버전 계보 결정 (REQ-20260814-attach-version-branching, 사용자 결정 2026-08-14) ──
+        # 종전에는 assistant 수정본이 **사용자 계보에 v+1 로 편입**되고 사용자 최신본을 supersede
+        # 했다. 한 파일의 계보에 사람이 올린 버전과 AI 가 만든 버전이 섞여, "내가 올린 최신" 과
+        # "AI 가 고친 최신" 을 사용자도 assistant 도 구분할 수 없었다.
+        #
+        # 이제 **작성 주체별로 계보를 나눈다**(별도 root 체인 분기):
+        #   - source 가 사람 첨부      → 새 root 체인의 v1 로 **분기**. 원 계보는 건드리지 않는다
+        #                                (supersede 없음 — 사용자 최신본이 가려지면 안 된다).
+        #   - source 가 assistant 계보 → 그 계보의 v+1 로 **연장**(자기 계보 안에서만 supersede).
+        # 분기 지점은 MetaJson 에 남겨 트리를 복원한다(스키마 변경 0 — UNIQUE(Root,Version) 불변).
+        _src_role = str(src.get("CreatedByRole") or "user")
+        _branch_from_user_chain = _src_role != "assistant"
+        if _branch_from_user_chain:
+            root_id = 0          # INSERT 시 RootAttachmentId=NULL → 자기 자신이 새 계보의 root
+            next_version = 1
+            _supersede_root_id = 0
+        else:
+            root_id = int(src.get("RootAttachmentId") or 0) or src_id
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    """
+                    SELECT COALESCE(MAX(VersionNumber), 1)
+                    FROM WebConversationAttachments
+                    WHERE RootAttachmentId = %s OR Id = %s
+                    """,
+                    (root_id, root_id),
+                )
+                row = cur.fetchone()
+                next_version = int((row[0] if row else 1) or 1) + 1
+            finally:
+                cur.close()
+            _supersede_root_id = root_id
 
         # 명칭 정합(FR-attachment-update-pasted-not-versioned → attach-multi-upload 로 개정):
         # 새 버전 파일명은 **원본 파일명을 그대로 승계**한다. LLM 이 filename 을 주더라도 무시하고,
@@ -2035,8 +2052,15 @@ def _materialize_assistant_attachment_edits(
                     # 공간이다. 첨부 영속도 피드백(H5(b))과 대칭으로 id_space 를 저장해, history 표시
                     # 시 (message_id, id_space) 복합 키로만 매칭 → core 공간 숫자 겹침에 의한 wrong-bubble 차단.
                     json.dumps({"assistant_edit_of": src_id, "message_id": int(message_id or 0),
-                                "message_id_space": "display"}),
-                    root_id, next_version,
+                                "message_id_space": "display",
+                                # REQ-20260814-attach-version-branching: 분기 지점 기록.
+                                # 스키마를 늘리지 않고 트리를 복원하는 유일한 단서다 —
+                                # branch_of = 이 계보가 갈라져 나온 첨부, branch_of_root = 그 계보의 root.
+                                **({"branch_of_attachment_id": src_id,
+                                    "branch_of_root_id": int(src.get("RootAttachmentId") or 0) or src_id,
+                                    "branch_owner_role": "assistant"}
+                                   if _branch_from_user_chain else {})}),
+                    (root_id or None), next_version,
                 ),
             )
             new_id = int(cur.lastrowid or 0)
@@ -2054,19 +2078,24 @@ def _materialize_assistant_attachment_edits(
         # 직전 최신 버전을 superseded 마킹 — 새 버전만 목록 노출. 보안리뷰 V8: WHERE 를
         # `VersionNumber < new_version` 기준으로 둬, 직전 supersede 가 일부 실패해 비-superseded
         # 구버전이 남아 있어도 다음 materialize 가 자가 정정(더 옛 버전 전부 끔).
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                UPDATE WebConversationAttachments
-                SET SupersededAt = UTC_TIMESTAMP(6)
-                WHERE (RootAttachmentId = %s OR Id = %s)
-                  AND VersionNumber < %s AND SupersededAt IS NULL AND DeletedAt IS NULL
-                """,
-                (root_id, root_id, next_version),
-            )
-        finally:
-            cur.close()
+        #
+        # REQ-20260814-attach-version-branching: **분기(새 계보 v1)일 때는 supersede 하지 않는다.**
+        # 사용자 계보의 최신본을 AI 분기가 가리면, 사용자는 자기가 올린 최신 파일을 목록에서
+        # 잃는다 — 계보를 나눈 목적이 그 반대다. 자기 계보 연장일 때만 그 계보 안에서 끈다.
+        if _supersede_root_id:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    """
+                    UPDATE WebConversationAttachments
+                    SET SupersededAt = UTC_TIMESTAMP(6)
+                    WHERE (RootAttachmentId = %s OR Id = %s)
+                      AND VersionNumber < %s AND SupersededAt IS NULL AND DeletedAt IS NULL
+                    """,
+                    (_supersede_root_id, _supersede_root_id, next_version),
+                )
+            finally:
+                cur.close()
         try:
             conn.commit()
         except Exception:
@@ -2076,13 +2105,17 @@ def _materialize_assistant_attachment_edits(
         try:
             from web.modules import attachment_pg_mirror as _apm
             if _apm.dual_write_enabled():
-                _chcur = conn.cursor()
-                _chcur.execute(
-                    "SELECT Id FROM WebConversationAttachments WHERE RootAttachmentId = %s OR Id = %s",
-                    (root_id, root_id),
-                )
-                _chain_ids = [int(r[0]) for r in (_chcur.fetchall() or []) if r and r[0] is not None]
-                _chcur.close()
+                # 분기(새 계보 v1)면 체인 조회 대상이 없다(root_id=0) — 새 row 만 미러한다.
+                # 연장이면 supersede 가 닿은 체인 전체를 다시 미러해야 PG 쪽 head 가 맞는다.
+                _chain_ids: list[int] = []
+                if _supersede_root_id:
+                    _chcur = conn.cursor()
+                    _chcur.execute(
+                        "SELECT Id FROM WebConversationAttachments WHERE RootAttachmentId = %s OR Id = %s",
+                        (_supersede_root_id, _supersede_root_id),
+                    )
+                    _chain_ids = [int(r[0]) for r in (_chcur.fetchall() or []) if r and r[0] is not None]
+                    _chcur.close()
                 _apm.mirror_attachments(conn, list({*_chain_ids, int(new_id)}))
         except Exception:
             pass
@@ -2095,8 +2128,10 @@ def _materialize_assistant_attachment_edits(
             _audit_ctx.update({
                 "assistant_edit_of": src_id,
                 "version_number": next_version,
-                "root_attachment_id": root_id,
+                # 분기면 새 row 자신이 root 다(RootAttachmentId=NULL) — audit 에 0 을 남기지 않는다.
+                "root_attachment_id": root_id or new_id,
                 "created_by_role": "assistant",
+                "version_lineage": "branch" if _branch_from_user_chain else "extend",
             })
             app._audit_user_action(
                 conn, request, account,
@@ -6726,6 +6761,67 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
     finally:
         cur.close()
 
+def _load_filename_lineage_heads(
+    conn, conversation_id: str, filename: str, *, limit: int = 20
+) -> list[dict[str, Any]]:
+    """같은 대화·같은 파일명의 **모든 계보 head** 를 시간순(최신 우선)으로.
+
+    REQ-20260814-attach-version-branching: assistant 수정본이 사용자 계보에 편입되지 않고 별도
+    계보로 분기하면서, 한 파일명에 계보가 여럿 공존한다. 그래서 "이 파일의 최신" 이 두 뜻을
+    갖는다:
+      - **계보 내 최신** — 한 체인 안의 최고 VersionNumber (기존 `versions` 축)
+      - **시간순 최신** — 파일명이 같은 모든 체인을 통틀어 가장 나중에 만들어진 것 (이 함수)
+    두 축을 함께 줘야 사용자도 assistant 도 "누구 기준 최신인가" 를 혼동하지 않는다.
+
+    `SupersededAt IS NULL` 이므로 각 계보에서 head 1건씩만 나온다. 조회는 **MySQL 정본**을
+    쓴다 — dual-write 미러 지연으로 방금 만든 분기가 목록에서 빠지면, 비교 UI 가 존재하는
+    계보를 없다고 말하게 된다(`_find_latest_same_name_attachment` 와 같은 이유).
+    """
+    if not (conversation_id and filename):
+        return []
+    # cursor 획득도 try 안에 둔다 — 밖에 두면 획득 실패가 호출측으로 전파돼 이 축의 fail-soft
+    # 계약이 깨진다(이 저장소에서 반복된 결함: 자원 획득을 try 밖에 두기).
+    cur = None
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT Id, RootAttachmentId, AccountId, CreatedByRole, VersionNumber,
+                   OriginalFilename, CreatedAt, MetaJson
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s AND OriginalFilename = %s
+              AND SupersededAt IS NULL AND DeletedAt IS NULL AND DeletePending = 0
+            ORDER BY CreatedAt DESC, Id DESC
+            LIMIT %s
+            """,
+            (str(conversation_id), str(filename), int(limit)),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        # §18.8 적대 리뷰 [P1]: **root 당 1건**으로 접는다. 업로드 경로는 INSERT commit 뒤에
+        # supersede 하고 그 실패를 삼키므로(기존 결함), 같은 체인에 live head 가 둘 남을 수 있다.
+        # 그 상태를 그대로 반환하면 **한 계보를 두 계보로 오인**해 "AI 가 만든 다른 버전이 있다"
+        # 는 거짓 사실이 프롬프트·UI 로 나간다. 같은 root 면 최신(정렬 선두) 하나만 남긴다.
+        deduped: list[dict[str, Any]] = []
+        seen_roots: set[int] = set()
+        for r in rows:
+            _root = int(r.get("RootAttachmentId") or 0) or int(r.get("Id") or 0)
+            if _root in seen_roots:
+                continue
+            seen_roots.add(_root)
+            deduped.append(r)
+        return deduped
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_load_filename_lineage_heads 실패 (cid=%s) — 빈 목록", conversation_id, exc_info=True)
+        return []
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        except Exception:
+            pass
+
+
 def _find_latest_same_name_attachment(
     conn, conversation_id: str, account_id: int, filename: str
 ) -> dict[str, Any] | None:
@@ -6756,6 +6852,12 @@ def _find_latest_same_name_attachment(
             FROM WebConversationAttachments
             WHERE ConversationId = %s AND AccountId = %s AND OriginalFilename = %s
               AND DeletedAt IS NULL AND DeletePending = 0 AND SupersededAt IS NULL
+              -- REQ-20260814-attach-version-branching (§18.8 적대 리뷰 [P1]): **사용자 계보만**
+              -- 편입 대상이다. AI 수정본이 별도 계보로 분기한 뒤로는 같은 파일명에 head 가 둘
+              -- 이상 공존하는 것이 정상인데, 역할을 가리지 않으면 Id 가 큰 AI head 가 뽑혀
+              -- 사용자의 재업로드가 **AI 계보의 v2** 로 편입되고 그 head 를 supersede 한다.
+              -- 계보 분리가 한 번의 재업로드로 무너지는 경로였다.
+              AND COALESCE(CreatedByRole, 'user') <> 'assistant'
             ORDER BY VersionNumber DESC, Id DESC
             LIMIT 1
             """,

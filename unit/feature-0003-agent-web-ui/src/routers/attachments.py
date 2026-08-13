@@ -226,7 +226,43 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
                 d, include_signed_url=bool(signed_url), signed_url=signed_url)
             ser["can_manage"] = bool(gate(d))
             versions.append(ser)
-        return JSONResponse({"root_attachment_id": root_id, "versions": versions})
+
+        # REQ-20260814-attach-version-branching: 두 번째 비교 축(**시간순**). assistant 수정본이
+        # 별도 계보로 분기하므로 같은 파일명에 계보가 여럿 공존한다. `versions` 만 주면 소비자는
+        # 자기 체인만 보고 "이게 이 파일의 최신" 이라고 말하게 된다 — 다른 계보에 더 나중 버전이
+        # 있어도 모른다. 계보 head 를 시간순으로 함께 실어 두 축을 모두 표현할 수 있게 한다.
+        lineages: list[dict[str, Any]] = []
+        try:
+            heads = app._load_filename_lineage_heads(
+                conn, str(base.get("ConversationId") or ""), str(base.get("OriginalFilename") or ""))
+            for h in heads:
+                _h_root = int(h.get("RootAttachmentId") or 0) or int(h.get("Id") or 0)
+                _meta = app._meta_json_to_dict(h.get("MetaJson"))
+                lineages.append({
+                    "root_attachment_id": _h_root,
+                    "head_attachment_id": int(h.get("Id") or 0),
+                    "version_number": int(h.get("VersionNumber") or 1),
+                    "created_by_role": str(h.get("CreatedByRole") or "user"),
+                    "is_assistant_generated": str(h.get("CreatedByRole") or "user") == "assistant",
+                    "account_id": int(h.get("AccountId") or 0),
+                    "created_at": (
+                        h["CreatedAt"].isoformat() if hasattr(h.get("CreatedAt"), "isoformat")
+                        else (str(h.get("CreatedAt")) if h.get("CreatedAt") else None)),
+                    "branched_from_attachment_id": int(_meta.get("branch_of_attachment_id") or 0) or None,
+                    "is_current_lineage": _h_root == root_id,
+                })
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "get_attachment_versions: 계보 목록 해소 실패 (id=%s) — versions 만 반환",
+                attachment_id, exc_info=True)
+            lineages = []
+
+        return JSONResponse({
+            "root_attachment_id": root_id,
+            "versions": versions,
+            # 시간순 정렬(최신 우선). 계보가 1개뿐이면 자기 자신만 들어온다.
+            "lineages": lineages,
+        })
     finally:
         conn.close()
 
