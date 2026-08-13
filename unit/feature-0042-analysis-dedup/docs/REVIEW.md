@@ -58,3 +58,12 @@ source_of_truth: true
   은 포함되지 않아 §18.8 verification panel 대상이 아니다.
   판정의 근거가 되는 실측은 REV-0002·0003 과 TEST.md §3 Run 에 수치로 남겼다.
 - Timestamp: 2026-08-13T23:19:02Z
+
+## REV-20260814-0005 [SKIPPED:non-policy-doc]
+- Related TASK: feature-0042-analysis-dedup
+- Reason: changed paths are docs only outside policy-doc list — ITEM-15 선행 안전망 방식 확정
+  (ROADMAP + REPORT + TASK + MODIFY). 코드 변경 0건이라 §18.8 panel 대상이 아니다.
+  판단 근거: 두 선택지 중 증거 커버리지 확대는 **착수 시점을 통제할 수 없어**(워커가 채우는 축,
+  현재 1.3%) ITEM-15 를 무기한 대기시킨다. 출력 계약 회귀 테스트는 지금 만들 수 있고 LLM 없이
+  결정론적으로 판정하므로 unblock 수단으로 우월하다. 두 축은 배타적이지 않다.
+- Timestamp: 2026-08-13T23:19:02Z

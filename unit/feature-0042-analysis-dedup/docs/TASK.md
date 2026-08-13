@@ -34,6 +34,7 @@ source_of_truth: true
 - [x] TASK-0004 ITEM-14 캐싱 라이브 프로브 (3조건 × 2회 호출) + 결과 등재
 - [x] TASK-0005 ITEM-15 방향 확정(축소 → 캐시 가능 재구성) + 잔여 차단사유 갱신
 - [x] TASK-0006 unit 문서 일습 작성
+- [x] TASK-0007 ITEM-15 선행 안전망 방식 확정 (출력 계약 회귀 테스트 채택) — 구현은 별도 cycle
 
 ## 4. In Progress
 - 없음
