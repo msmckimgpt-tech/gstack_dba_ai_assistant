@@ -1617,6 +1617,140 @@ async function _metaGraphAnimateFocusRun(g, key, seq, opts) {
   }
 }
 
+// ── graph-keep-in-view: 펼침/접기 재배치로 **선택한 노드를 시야에서 잃지 않게** ────────────────
+//   요청(REQ, 2026-08-13): "노드를 클릭해 확장할 때 펼쳐지는 크기가 커 전체 재배치가 일어나면 기존에
+//   선택한 노드의 위치를 카메라에서 잃어버려 다시 찾아야 한다 — 벗어나면 탄력적으로 추적해 달라".
+//   `_metaGraphAnimateFocus`(더블클릭 이웃확장)와 **의도가 다르다**: 저쪽은 앵커를 뷰포트 *중앙*으로
+//   데려오는 능동 이동이고, 이쪽은 **벗어났을 때만** 최소 이동으로 되돌리는 수동 보정이다. 컬럼 펼침은
+//   "제자리 펼침"(ADR-004 ②)이 계약이라, 잘 보이는 노드까지 중앙으로 끌어오면 그 계약을 깬다.
+//   따라서 이미 안전영역 안이면 **1프레임도 카메라를 움직이지 않는다**(불필요한 점프 0).
+const _META_KEEPIN_MAXMS = 900;   // 추종 예산 — 재빌드 프리즈로 rAF 가 탈동조해도 여기서 확정 종료
+const _META_KEEPIN_HARDMS = 2600; // 절대 상한 — 중앙 focus tween 양보 대기까지 포함한 총 수명(무한 대기 차단)
+const _META_KEEPIN_K = 0.26;      // 프레임당 잔여 delta 비율(ease-out follow — `_metaGraphAnimateFocusRun` 과 같은 계열)
+// 안전영역 여백: 가장자리에 딱 붙여 놓으면 "보이긴 하는데 잘린 것 같은" 상태가 된다. 짧은 변의 12%,
+//   24~120px 로 클램프(작은 패널에서 여백이 화면을 삼키지 않게).
+function _metaKeepInViewInset(W, H) {
+  return Math.max(24, Math.min(120, Math.round(Math.min(W, H) * 0.12)));
+}
+// 순수 판정(헤드리스 테스트 대상): 화면좌표 rect 를 안전영역 안으로 넣는 **최소** 이동량 [dx,dy].
+//   축마다 독립. 요소가 안전영역보다 크면(펼쳐진 스키마 combo 등) 전체를 넣는 것이 불가능하므로
+//   **중심**이 안전영역 안에 있는지로 판정한다 — 아니면 큰 요소를 만날 때마다 카메라가 끝없이 밀린다.
+function _metaKeepInViewDelta(rect, vp, inset) {
+  const ins = Math.max(0, inset || 0);
+  const axis = (a0, a1, len) => {
+    if (!isFinite(a0) || !isFinite(a1) || !isFinite(len)) return 0;
+    const lo = ins, hi = len - ins;
+    if (!(hi > lo)) return 0;                       // 뷰포트가 여백보다 작다 — 판정 불가(이동 안 함)
+    if (a1 - a0 <= hi - lo) {                       // 안전영역에 통째로 들어가는 크기
+      if (a0 < lo) return lo - a0;
+      if (a1 > hi) return hi - a1;
+      return 0;
+    }
+    const c = (a0 + a1) / 2;                        // 안전영역보다 큰 요소 — 중심 기준
+    if (c < lo) return lo - c;
+    if (c > hi) return hi - c;
+    return 0;
+  };
+  return [axis(rect.x0, rect.x1, vp.w), axis(rect.y0, rect.y1, vp.h)];
+}
+// opts.fallbackFocus: 카메라 API 가 없는 폴백 번들에서 무애니 focusElement 로 대체할지. 기존에 hard
+//   focusElement 를 쓰던 경로(스키마 펼침)만 true — 새로 추종을 얻는 경로는 폴백에서 no-op(무회귀).
+// 세대 토큰(`_keepInGen`): 카메라 추종은 **동시에 하나만** 살아야 한다. 접기 경로는 `_opSeq` 를 올리지
+//   않으므로(진행 중 fetch 를 죽이지 않으려는 기존 규약) seq 만으로는 직전 루프가 살아남아, 서로 반대
+//   방향을 요구하는 두 루프가 같은 카메라를 밀어 화면이 진동한다(codex review 5차 P2). `_opSeq` 를
+//   건드리지 않고 카메라 소유권만 넘기는 별도 토큰으로 직렬화한다(hover-pan `_metaHoverPanGen` 과 동일 어휘).
+async function _metaGraphKeepInView(key, seq, opts) {
+  const g = _metaGraph.graph;
+  if (!g || !key) return;
+  const abort = (opts && typeof opts.abort === "function") ? opts.abort : null;
+  const gen = (_metaGraph._keepInGen = (_metaGraph._keepInGen || 0) + 1);
+  if (typeof g.getElementRenderBounds !== "function" || typeof g.getViewportByCanvas !== "function"
+      || typeof g.translateBy !== "function" || typeof g.getSize !== "function") {
+    if (opts && opts.fallbackFocus) {
+      try { const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}
+    }
+    return;
+  }
+  const now = () => (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  const raf = () => new Promise((r) => { (typeof window !== "undefined" && window.requestAnimationFrame) ? window.requestAnimationFrame(() => r()) : setTimeout(r, 16); });
+  // 접근성: prefers-reduced-motion 이면 **추종 자체를 애니메이션으로 하지 않는다** — 노드 이동 트윈만
+  //   끄고 카메라를 900ms 동안 흘려보내면 모션 감소 요청을 반쪽만 지킨 것이다(codex review 5차 P2).
+  //   보정은 필요하므로(그렇지 않으면 노드를 잃는다) **1회 즉시 이동**으로 대체한다.
+  let reduced = false;
+  try { reduced = !!(typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) {}
+  const rectNow = () => {
+    let W, H;
+    try { const s = g.getSize(); W = s[0]; H = s[1]; } catch (_) { W = H = NaN; }
+    let rect = null;
+    try {
+      const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key);   // 접힌 컨텐츠는 조상으로 승격(ancestor-focus 와 동일 사다리)
+      if (fel) {
+        const b = g.getElementRenderBounds(fel);
+        const p0 = g.getViewportByCanvas([b.min[0], b.min[1]]);
+        const p1 = g.getViewportByCanvas([b.max[0], b.max[1]]);
+        rect = { x0: Math.min(p0[0], p1[0]), y0: Math.min(p0[1], p1[1]), x1: Math.max(p0[0], p1[0]), y1: Math.max(p0[1], p1[1]) };
+      }
+    } catch (_) { rect = null; }
+    const okv = isFinite(W) && isFinite(H) && W > 0 && H > 0 && rect && isFinite(rect.x0) && isFinite(rect.y1);
+    return okv ? { rect, W, H } : null;
+  };
+  // 사용자가 카메라를 직접 조작하면(팬·줌·미니맵) 추종을 그만둔다 — "조작이 애니메이션을 이긴다".
+  //   팬 핸들러는 `_opSeq` 를 올리지 않으므로 seq 가드로는 잡히지 않고, 그대로 두면 사용자가 끌어놓은
+  //   화면을 카메라가 최대 900ms 동안 도로 끌어당긴다(codex review 6차 P2). 프로그램 이동(자기 자신의
+  //   translateBy)은 이 값을 올리지 않으므로 자기 취소는 일어나지 않는다.
+  const userCam = () => { try { return (typeof g.getUserCameraSeq === "function") ? g.getUserCameraSeq() : null; } catch (_) { return null; } };
+  const userCam0 = userCam();
+  // 1회 즉시 보정으로 대체하는 두 경우:
+  //   ① prefers-reduced-motion — 위 참조.
+  //   ② **사용자 카메라 조작을 관측할 수 없는 번들**(G6 폴백에는 `getUserCameraSeq` 가 없다). 관측 못 하면
+  //      양보도 못 하므로, 900ms 동안 카메라를 붙들고 있는 대신 한 번만 보정하고 손을 뗀다 — 사용자가
+  //      끌어놓은 화면을 되돌릴 창 자체를 없앤다(codex review 7차 P2). 보정 자체는 유지한다(노드를 잃지 않게).
+  if (reduced || userCam0 == null) {
+    const r = rectNow();
+    if (!r) return;
+    const [dx, dy] = _metaKeepInViewDelta(r.rect, { w: r.W, h: r.H }, _metaKeepInViewInset(r.W, r.H));
+    if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) { try { g.translateBy([dx, dy], false); } catch (_) {} }
+    return;
+  }
+  const tHard = now();
+  let t0 = now();
+  while (true) {
+    if (abort && abort()) return;
+    if (gen !== _metaGraph._keepInGen) return;                   // 다른 추종이 카메라 소유권을 가져감
+    if (userCam0 != null && userCam() !== userCam0) return;      // 사용자가 카메라를 잡았다 — 즉시 양보
+    if (seq != null && seq !== _metaGraph._opSeq) return;        // 후속 op 로 폐기
+    if (now() - tHard > _META_KEEPIN_HARDMS) return;             // 절대 상한(양보 대기 포함)
+    if (_metaGraph._focusLive != null) {
+      // 중앙 focus tween 이 카메라를 소유 중 — **포기하지 않고 양보한다**. 종전엔 여기서 return 했는데,
+      //   호출부가 fire-and-forget 이라 focus 가 끝난 뒤 아무도 재시도하지 않았다: 한 노드를 focus 하는
+      //   동안 다른 노드를 펼치면 그 노드가 화면 밖으로 밀려도 영영 보정되지 않는다(codex review 2차 P2).
+      //   양보 구간은 추종 예산(MAXMS)에서 제외하고, 총 수명은 HARDMS 가 막는다.
+      t0 = now();
+      await raf();
+      continue;
+    }
+    if (now() - t0 > _META_KEEPIN_MAXMS) return;
+    const r = rectNow();
+    if (r) {
+      const [dx, dy] = _metaKeepInViewDelta(r.rect, { w: r.W, h: r.H }, _metaKeepInViewInset(r.W, r.H));
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+        // **"지금 보인다" 로 끝내지 않는다.** 트윈 개시 직후의 노드는 아직 출발(=직전에 보이던) 위치에
+        //   있어 여기서 항상 수렴으로 읽힌다 — 그대로 종료하면 뒤이어 트윈이 노드를 화면 밖으로
+        //   데려가도 따라갈 주체가 없다(codex review 5차 P1: 요청의 주 시나리오가 그대로 재현).
+        //   이동이 끝났을 때만 종료하고, 이동 중이면 예산을 소모하지 않고 지켜본다.
+        let animating = false;
+        try { animating = (typeof g.isElementAnimating === "function") && !!g.isElementAnimating(_metaRenderedIdFor(key) || _metaRenderedAncestorFor(key)); } catch (_) { animating = false; }
+        if (!animating) return;
+        t0 = now();
+      } else {
+        try { g.translateBy([dx * _META_KEEPIN_K, dy * _META_KEEPIN_K], false); } catch (_) { return; }
+      }
+    }
+    // rect 미해소(재빌드 중 일시)면 이 프레임 skip — MAXMS 까지 재시도(조기 포기 없음).
+    await raf();
+  }
+}
+
 // ── detail-hover-fx: 우측 상세 패널 하위 항목 hover 시각 효과(비커밋 — 커밋 선택/전체 rebuild 미접촉) ──
 //   요청(REQ): 상세 패널의 "관련된 객체 및 연결" 하위 항목에 마우스를 올리면 시각적 명확성을 준다.
 //     · 카테고리/스키마 클러스터 행 → 해당 객체로 부드러운 카메라 이동
@@ -2798,4 +2932,4 @@ function _metaGraphOnNodeClick(e) {
 }
 
 
-export { _META_GRAPH_COLOR, _META_LABEL_KO, _META_DBOBJ_ROLE, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKind, _metaDbObjKo, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaRendererKind, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
+export { _META_GRAPH_COLOR, _META_LABEL_KO, _META_DBOBJ_ROLE, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKind, _metaDbObjKo, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaRendererKind, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphKeepInView, _metaKeepInViewDelta, _metaKeepInViewInset, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };

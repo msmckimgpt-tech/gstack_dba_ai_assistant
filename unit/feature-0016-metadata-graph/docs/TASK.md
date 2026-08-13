@@ -4156,3 +4156,68 @@ cheap no-op` 이라 이 캡이 드러나지 않았고, **전수 재계산이라�
       **1,648 → 1,279(−22.4%)** · `우편 시스템` 5밴드 → **0** · `메일시스템`(공백없음) → **0**.
 - [x] E.16 band-visual-fit POST-DEPLOY 육안 재검증 — 싱글턴 밴드 3 → **0**(`기타` 7 → 10),
       칩 라벨 넘침 해소(`spGetGuildRankingAl…` 우여백 −3px → **+14px**). Run 기록 참조.
+
+
+## 20260813T1121-expand-camera-anim
+
+> 사용자 요청(원문 요지): ① 노드를 클릭해 확장할 때 펼침 크기가 커 전체 재배치가 일어나면 **선택한
+> 노드를 카메라에서 잃어버려 다시 찾아야 한다** → 선택 노드가 카메라를 벗어나면 **탄력적으로 추종**할 것.
+> ② 다른 노드의 재배치가 **깜빡이는 순식간**이라 각 이동을 인지할 수 없다 → **애니메이션**으로 이동을 인지 가능하게.
+
+### 2.1 Implementation Plan
+
+**현상 진단(코드 실측)**
+- 더블클릭 이웃확장(`_metaGraphExpand`)만 적응형 follow tween(`_metaGraphAnimateFocus`, 앵커를 뷰포트
+  **중앙**으로)을 갖는다. **단일클릭 컬럼 펼침(`_metaGraphToggleColumns`)·접기(`_metaGraphCollapse`)에는
+  카메라 추종이 전혀 없다** — `_metaG6Apply(false)` 만 호출하고 끝난다. 이것이 사용자 보고의 직접 기전.
+- `_metaGraphExpandSchema`/`CollapseSchema` 는 `focusElement(key,false)` 로 **항상 무애니 중앙 점프**
+  (이미 잘 보이던 경우에도 화면이 튄다) 또는 아무 처리 없음.
+- 재배치는 `setData()`+`draw()` 1프레임 점프. `draw()` 의 오브젝트 풀 diff 서명(`nodeSig`)에 x/y 가
+  들어 있어, 이동 노드는 **파기 → 최종 위치 재생성** = 중간 프레임이 존재하지 않는다.
+
+**변경 대상(구체 경로·심볼)**
+
+| 파일 | 심볼 | 변경 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js` | `_metaKeepInViewDelta`(신설·순수) | 화면좌표 rect 를 안전영역 안으로 넣는 최소 이동량. 안전영역보다 큰 요소는 **중심 기준**으로 판정 |
+| 〃 | `_metaGraphKeepInView` / `_metaGraphKeepInViewRun`(신설) | rAF 적응형 follow — **이미 보이면 1프레임도 움직이지 않는다**. `_opSeq` 폐기·`MAXMS` 상한 |
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-ctxmenu.js` | `_metaGraphToggleColumns` · `_metaGraphCollapse` · `_metaGraphExpandSchema` · `_metaGraphCollapseSchema` | rebuild 직후 keep-in-view 배선(스키마는 기존 hard `focusElement` 대체) |
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-renderer-pixi.js` | `PixiAdapterPure.moveTweenPlan`(신설·순수) | 직전 씬 대비 이동 노드 중 **애니메이션 대상** 선별(임계·가시영역·상한·씬교체 감지) |
+| 〃 | `setData` / `_snapshotPos` / `_startMoveTween` / `_stopMoveTween` / `_resolvePos` | 직전 위치 스냅샷 → draw 후 `from→to` ease-out 트윈 + 관계선 추종 |
+
+**접근(3~5줄)**
+1. 카메라: "중앙 정렬"이 아니라 **keep-in-view**(벗어날 때만, 최소 이동)로 새 primitive 를 만들고
+   추종은 매 프레임 잔여 delta 의 일정 비율(ease-out follow)로 — 재빌드로 앵커가 더 움직여도 수렴한다.
+2. 애니메이션: 모델(`n.style`)은 **건드리지 않고** 어댑터가 컨테이너 좌표만 `from→to` 로 트윈하고,
+   트윈 중에만 유효한 `_tweenPos` 오버레이를 `_resolvePos` 가 우선 조회해 **관계선이 노드를 따라간다**.
+3. 비용 상한: 화면(+마진) 밖 노드·상한 초과·씬 교체(직전과 겹치는 노드 비율 < 30%)·
+   `prefers-reduced-motion` 은 애니메이션 없이 즉시 최종 위치(기존 동작).
+
+**완료 판정 기준(acceptance criteria)**
+- AC-1 선택 노드가 rebuild 후 **뷰포트 안에 남아 있으면 카메라가 움직이지 않는다**(불필요한 점프 0).
+- AC-2 선택 노드가 rebuild 후 안전영역을 벗어나면 카메라가 **최소 이동으로 안전영역 안까지** 수렴한다.
+- AC-3 컬럼 펼침/접기·스키마 펼침/접기 4경로 전부에서 AC-1·AC-2 가 성립한다.
+- AC-4 이동 노드는 **직전 위치에서 새 위치로 시간에 걸쳐** 이동하고 관계선이 그 좌표를 따라간다.
+- AC-5 애니메이션은 화면 밖·대량·씬교체·reduced-motion 에서 **자동 비활성**(기존 즉시 반영과 동일).
+- AC-6 헤드리스 전 스위트 무회귀(기준선 **1155 PASS / 0 FAIL**) + 신규 계약 테스트 통과.
+- AC-7 PB-0008 실 Windows 브라우저에서 ①추종 ②애니메이션 육안·CDP 실-paint 확인(§16.6 렌더-성능 축).
+
+**위험도**: **Minor** — 표시 계층 한정·비파괴(스키마·인가·응답 shape·백엔드 무변경). 성능 축은
+AC-5 의 상한과 §16.6 CDP 실-paint 실측으로 다룬다(헤드리스 rAF-FPS 는 근거로 쓰지 않는다).
+
+### 9. Requested Scope
+
+- [x] R1 선택 노드가 카메라를 벗어나면 탄력적으로 추종 (AC-1·2·3) — 코드·헤드리스 완료, 라이브 시각검증 이월
+- [x] R2 노드 재배치를 애니메이션으로 인지 가능하게 (AC-4·5) — 코드·헤드리스 완료, 라이브 시각검증 이월
+
+### 진행
+
+- [x] EA.1 keep-in-view 순수 판정 + rAF 적응형 follow 루프(`graph-core.js`)
+- [x] EA.2 컬럼 펼침/접기 · 스키마 펼침/접기 4경로 배선(`graph-ctxmenu.js`) + 스키마의 무조건 중앙 점프 제거
+- [x] EA.3 이동 트윈(`graph-renderer-pixi.js`) — 직전 좌표 스냅샷 · 360ms ease-out · 관계선/hit-test/bounds 오버레이
+- [x] EA.4 비용 상한 — reduced-motion · 씬 교체 · 화면 밖 · 노드 600 · 관계선 1500(전부 관측에 사유 기록)
+- [x] EA.5 헤드리스 회귀 — 기준선 1155 → **1290 PASS / 0 FAIL**, 뮤테이션 19종 전건 KILLED
+- [x] EA.6 §18.8 적대 검증(codex 7라운드) — P1 3 · P2 11 전건 in-cycle 흡수(REVIEW.md)
+- [ ] EA.7 **POST-DEPLOY PB-0008 실 Windows 브라우저 시각검증 + CDP 실-paint** — ES module 특성상 배포
+      후에만 성립(사유·확인항목은 `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260813T1121-…md`).
+      이 Run 전에는 시각검증 통과로 보고하지 않는다.

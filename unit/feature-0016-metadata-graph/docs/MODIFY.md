@@ -477,3 +477,18 @@ source_of_truth: true
 
 실행 코드 0줄. 배포본 `a17f769b` 에서 수정 2건의 화면 반영을 확인하고, label-canon 이 전 scope 에
 적용된 뒤의 전역 지표를 측정해 기록. 상세는 `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260803T1730-visual-postdeploy.md`.
+
+## CHG-20260813T1121-ai-claude-corp-feature-0016-expand-camera-anim — 펼침 시 선택 노드 추종 + 재배치 애니메이션 (2026-08-13)
+
+사용자 요청 2건: ① 노드를 클릭해 확장할 때 재배치가 일어나면 **선택한 노드를 카메라에서 잃어버린다**
+→ 벗어나면 탄력적으로 추종 ② 재배치가 **깜빡이는 순식간**이라 이동을 인지할 수 없다 → 애니메이션.
+
+| 파일 | 변경 |
+|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js` | `_metaKeepInViewDelta`(순수 — 안전영역 밖일 때의 최소 이동, 큰 요소는 중심 기준)·`_metaKeepInViewInset`·`_metaGraphKeepInView`(rAF 적응형 follow, 이미 보이면 무동작·focus tween 양보 후 재개) 신설 + export |
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-ctxmenu.js` | 컬럼 펼침/접기·스키마 펼침/접기 4경로에 keep-in-view 배선. 스키마 펼침의 **무조건 중앙 `focusElement`** 제거(제자리 원칙 회복, 폴백 번들은 `fallbackFocus` 로 구 동작 보존) |
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-renderer-pixi.js` | `PixiAdapterPure.moveTweenPlan`(대상 선별 — 이동량·가시영역·상한·씬교체)·`hitTestMoving`(이동 노드 선형 hit)·`nodeBBox(n, at)` 중심 override / 어댑터: `setData` 직전 좌표 스냅샷 · `_startMoveTween`/`_finishMoveTween`/`_stopMoveTween` · `_tweenPos`·`_tweenMovers` 오버레이(관계선 끝점·hit-test·요소 bounds 공용) · `_hitNodes` 단일 판정기(`_pick`·`_probeHover` 공유) · 드래그/`translateElementTo` 가 트윈 선점 |
+| `unit/feature-0003-agent-web-ui/tests/headless/test_pixi_adapter.js` | T28 선별 계약 · T29 트윈 수명주기(교체 자가치유·드래그 선점·bounds 추종) · T30 hit-test 정합·배선 |
+| `unit/feature-0003-agent-web-ui/tests/headless/test_graph_expand_camera.js` | 신설 — keep-in-view 순수 판정 · 루프 계약 · 4경로 배선 |
+
+근거·검증은 REPORT.md `20260813T1121-expand-camera-anim` 참조.
