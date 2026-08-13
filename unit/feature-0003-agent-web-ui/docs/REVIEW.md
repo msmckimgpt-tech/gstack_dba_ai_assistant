@@ -4837,3 +4837,25 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
   "코드가 그러하다" 가 아니라 **배포본에서 두 갈래를 각각 구동**해 판정했다.
 - **충돌 해소의 안전성**: 다른 세션 #1260 과의 충돌 4건은 전부 append-only 문서 말미 경합이라 양쪽
   항목을 보존했고(§13.1), 병합 후 프론트 `.mjs` 62개를 재실행해 회귀 0을 확인한 뒤 머지했다.
+
+## REV-20260814T010301-doc-sync-rn-0814 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-08-13 블록 10항목 append doc_sync 정합
+
+- Related TASK: feature-0003-agent-web-ui / `20260814T010301-doc-sync-rn-0814`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + 그 companion 문서).
+- Timestamp: 2026-08-14T01:03:01+09:00
+- Human Approval Needed: no
+
+- **타깃별 실질 검증**: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 34/0 동일 = 회귀 0) · 구조 단언(releases 48 불변 · head date 2026-08-13 · items 1→11 · `generated`==head.date · 기존 47 블록 보존 · enum 위반 0 · 스키마 외 키 0).
+- **블록 date 판정**: 델타 창(`807fce6f`..HEAD) 27 커밋의 git-date 가 전부 2026-08-13 이고 그 date 블록이 owning feature 커밋 `0c3b0d01` 의 self-add 로 **이미 존재**했다 → 신규 블록(08-13 중복 헤더 / 08-14 허위 배포일) 대신 **기존 블록에 append**. `generated` 는 top-block date 규약대로 불변.
+- **배포 게이트 = 물리 실측으로 판정**(정본 문면이 아니라 라이브): 컨테이너 6종 전부 `:d585250b` = HEAD = origin/main 이므로 10항목의 근거 커밋 전건이 배포본에 포함. 서빙 static md5 파리티 정확 일치 · `/healthz` 200 → **유보 항목 0**.
+- **적대검증(ULTRACODE `wf_285f2b56-8df` · 5 에이전트)**: RN 축 refute-first 검증이 결함 6건(P1 2 · P2 4) 적발. 오케스트레이터가 **워크플로 판정을 그대로 신뢰하지 않고 정본으로 독립 재검증**해 전건 CONFIRMED:
+  - [P1 확정] `src/static/app.js:1173-1179` — `can(permission)` 은 `void permission; return Boolean(state.user)`(display-permissive, TASK-0098). 따라서 `showPermissionDeniedToast`/`markAccessBlocked` 는 로그인 사용자에게 도달하지 않고, '공유 링크 관리' 토스트는 표시된 적이 없다. `docs/REPORT.md:2472` 정정 배너가 A-1~A-4 를 명시 철회했는데 초안이 A-4 를 사용자향 표면에 되살리고 있었다 → 삭제.
+  - [P1 확정] `shared/share_window.py:40` `SCOPE_SENDER_ONLY = "sender-only"  # 발신자 본인 첨부만 (fail-closed / 종전 CSO F1)` — 은닉 구간이 실재하는 멤버는 "볼 수 있는 구간의 첨부" 가 아니라 **본인 첨부만** 받는다. 초안은 미래 정밀화(첨부 시간축 왜곡 해소 후)를 현재 동작으로 적었다 → 실제 동작으로 교정.
+  - [P2 확정] 08-07 블록(`release-notes-data.js` "버전 비교에서 두 버전의 내용이 같으면 문서 원문을 보여 줍니다")의 재서술 → 이번 창의 신규분(`from == to` 같은 버전 두 개 선택 경로)만 남기도록 교정.
+  - [P2 확정] 미집행 knob 은 `89b7cd54` **같은 커밋 안**에서 머지 전 제거돼 라이브 노출 0 → "화면에 보이던 상한을 없앴다" 서술 삭제(패널 오배치 정정은 `feadc089` POST-DEPLOY 실측이라 유지).
+  - [P2 확정] 오도 안내 2곳은 서로 다른 요소 — `src/static/app/composer.js:346` "읽기 전용 대화"(입력창) / `src/static/app.js:2462` "다른 계정의 대화는 조회만 가능합니다"(대화 위쪽 안내줄) → 각각 인용.
+  - [P2 확정] `0.1픽셀` 소수점 정밀도(파일 전체 `픽셀` 선례 0) → 사용자 판단에 기여하는 근사치로 교체.
+- **포함/제외 판정**: 델타 27 non-merge 중 사용자 체감 변화 10건 채택. 제외 12건은 POST-DEPLOY 실측 기록·증적 전용(코드 변경 0), `86d89b60`/`2c59c183`(안내 정본 URL 화)는 항목 ②의 새 흐름 서술과 같은 사실이라 흡수, `34376206`(라이브 기동 3중 원인)의 사용자 체감분도 항목 ② 말미로 흡수.
+- **테스트 env**: 무인 cron(WSL2 컨테이너 호스트). `verify_release_notes.mjs` 는 `unit/feature-0003-agent-web-ui` 에서 실행(jsdom `/tmp/node_modules`). PB-0008 은 TEST.md 에 미수행 사유·대체 검증 명시.
+- **cache-buster**: 수기 bump 없음. 소스 `?v=dev` placeholder 고정 + Dockerfile `inject_asset_stamp.py` 빌드 주입 + `bin/deploy-web.sh:1092` 가 placeholder 잔존 시 배포 ABORT(2026-07-12 ITEM-09). 라이브 실측 토큰 `?v=51af138635ba`. `index.html`/`admin.html` 편집 0.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.

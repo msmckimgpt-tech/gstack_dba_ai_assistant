@@ -4033,3 +4033,6 @@ draggable 이 아니었다(`'···' 메뉴 > 이동` 으로만 가능).
 - `AC-20260813T201000-member-leave-branch-2` — 소유자·관리자는 '보관' 버튼을 유지한다.
 - `AC-20260813T201000-member-leave-branch-3` — 분기 판정에 `canDeleteConversation`(항상 true) 이
   다시 쓰이면 구조 테스트가 FAIL 한다.
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0814, 2026-08-13 블록 append)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 기존 2026-08-13 블록에 10항목 append + summary 증강. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 48 불변 · head items 1→11 · `generated` 불변).

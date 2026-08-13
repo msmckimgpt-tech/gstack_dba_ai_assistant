@@ -4007,3 +4007,16 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   **코드 변경 0**.
 - 결과: 멤버 '나가기' 노출·end-to-end 이탈·소유자 '보관' 대조군·pageerror 0 전 항목 PASS.
   선행 B 축(오도 안내 소거)도 같은 계정에서 재확인. 테스트 데이터 정리 완료.
+
+## CHG-20260814T010301-doc-sync-rn-0814 (2026-08-13 블록 append) 릴리즈노트 콘텐츠 — 기존 08-13 블록에 10항목 append + summary 증강
+
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 **기존 date "2026-08-13" 블록**에 10 items append(원문 창 in-place 비교 · 외부 AI URL 접속 인증 · LLM 사용량 차트 지표 선택기 · 그래프 펼침 카메라 추종/재배치 · 외부 AI 도구 상한 패널 · 공유 그룹 대화 폴더 이동 · 그래프 펼침 체감 지연 · 공유 대화 첨부 LLM 참조 · 멤버 나가기 경로 · 우측 스크롤 정합) + 그 블록 summary 증강(기존 첨부 이름순 정렬 서술 4문장 **원문 그대로 보존** 후 확장). 그 배포일 블록이 owning feature 커밋(`0c3b0d01`)의 self-add 로 **이미 존재**하므로 신규 블록 prepend 가 아니라 append. `generated` 불변("2026-08-13") · `releases` 48 불변 · head items 1→11.
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수/파일명·테이블명·내부 설정키·ADR·PB-0008·인프라 용어(replica/gateway/worker/quiesce/OAuth/SSE/MCP/SSOT/alembic)·픽셀 소수점 누출 **0**(37 패턴 정규식 기계 검증).
+- 적대검증 반영 6건(ULTRACODE `wf_285f2b56-8df` refute-first 렌즈, 오케스트레이터가 정본으로 전건 독립 재검증): P1 2건(정정된 오진 A-4 재생산 · 은닉 구간 멤버 동작을 실제 fail-closed 와 다르게 서술) + P2 4건(08-07 블록 재서술 · 라이브 노출 0 인 knob 삭제 서술 · 오도 안내 2곳 위치·문면 오기 · 무의미 정밀도).
+- **배포 게이트 = 물리 실측**: 라이브 컨테이너 6종 전부 `:d585250b`(= HEAD = origin/main) · 서빙 static md5 파리티 정확 일치 · `/healthz` 200 → 10항목 전건 배포 완료(유보 0).
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09 · `deploy-web.sh` 가 placeholder 잔존 시 ABORT). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 동일) · 블록 수 48 불변 · head date 2026-08-13 · items 11 · 항목 enum·스키마 외 키 0 · 기존 47 블록 보존 · `generated`==head.date · 내부용어 누출 0.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-14T01:03:01+09:00

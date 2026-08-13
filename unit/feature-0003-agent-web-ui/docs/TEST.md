@@ -2831,3 +2831,9 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   라이브 데이터 변경 0(열람 경로만).
 - Run 기록 정본: `docs/test-runs.d/20260813T154300-attach-list-name-sort.md` Run 2.
 - **Pass/Fail: PASS** — 시각검증 축 종결(이월 없음).
+
+## TASK-20260814T010301-doc-sync-rn-0814 — 릴리즈노트 기존 2026-08-13 블록에 10항목 append (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`)의 **기존 date 블록에 items append + summary 문자열 교체**만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다(신규 블록·신규 그룹도 없어 렌더 경로가 종전과 동일). 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(releases 48 불변 · head items 1→11 · 기존 47 블록 전량 보존 · type/area enum 위반 0 · `generated` 불변) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 동일 = 회귀 0).
+- `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(이 env 에서 편집 전·후 두 번 실측). 구조: `releases` 48 불변, `generated`=="2026-08-13"==`releases[0].date`, `releases[0].items` 1→11(work 6 · admin 4 · common 1), 기존 47 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, date 내림차순 정상(말미 `"이전"` 라벨 블록은 설계상 정상), 내부용어 누출 0(37 패턴).
+- 라이브 파리티 실측(배포 게이트 확증): 편집 **전** 서빙 static(`https://localhost/static/release-notes-data.js`)이 브랜치 blob 과 md5 정확 일치(`795fce1960ad33fa7ecc0e90824ea729`), 라이브 컨테이너 6종(web-a·web-b·ask-worker·insight-worker·ops-scheduler·ext-tool-mcp) 전부 `:d585250b`(= HEAD = origin/main), `/healthz` 200, 서빙 index.html 의 캐시버스터 `?v=51af138635ba`(빌드 주입 해시 — 소스 placeholder `?v=dev` 유지).
+- **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).
