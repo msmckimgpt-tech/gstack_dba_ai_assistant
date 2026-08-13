@@ -4667,3 +4667,23 @@ REV-20260723T190000-folder-ux(DnD 도입), REV-20260723T200000-newfolder-btn. �
 Windows 브라우저가 정본**(visual_verification_scope: always). 테스트가 실제 결함을 잡는지는 코드만
 되돌려 대상 11건 FAIL·회귀 축 PASS 로 실증했다. 서버 라운드트립·크로스-계정 격리의 **라이브** 실측
 (계정 A 가 공유 그룹 대화를 자기 폴더로 이동 → 계정 B 화면 불변)도 POST-DEPLOY 항목이다.
+
+## REV-20260813T184000-ai-claude-feature-0003-folder-dnd-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1840-folder-dnd-postdeploy`
+- Reason: changed paths are docs only — 코드·스키마·권한 변경 0 (POST-DEPLOY 실측 기록 + 증적 캡처)
+- Timestamp: 2026-08-13T18:40:00+09:00
+- Human Approval Needed: no
+
+- **판정 근거**: "배포됐다" 를 스크립트 종료코드가 아니라 **서빙 주체의 실제 SHA + 서빙 자산의 신규
+  심볼**(web-a·web-b `mysql-ai-web:763ad65d`, `isFolderScopedConversation` 4매치)로 확인했고, 무중단도
+  엣지 로그 `no upstreams available` **0건**으로 실측했다.
+- **요청 시나리오를 우회하지 않았다**: admin 계정에는 `is_member` 대화가 0건이어서(148건은 관리자
+  `.any` 열람) 그 계정만으로는 대상 케이스를 관측할 수 없었다. DB 에 멤버 row 를 직접 넣는 우회 대신
+  **제품 경로**(공유 링크 생성 → 테스트 계정 가입·역할 부여 → join)로 실제 "다른 계정으로부터의 그룹
+  대화" 를 만들어 검증했다 — 실사용자 대화·계정을 건드리지 않았고 사후 전량 정리했다.
+- **격리는 대조군으로 확인**: 배정 후 admin 재로그인 시 folder 목록이 비어 있고 같은 대화의 folder_id
+  가 null 이었다 — "이동이 됐다" 와 "타 계정에 새지 않는다" 를 각각 실측(§16.7 G4 경계 양측).
+- **한계 명시**: OS 레벨 native drag 는 재현하지 않았다(CDP `Input.dispatchDragEvent` 미사용).
+  native 경로와 합성 경로의 유일한 분기점인 `draggable` 속성 부여를 라이브 DOM 으로 확인해 그 간극을
+  좁혔고, 이 사실을 Run fragment 에 그대로 남겼다.

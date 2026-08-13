@@ -10418,3 +10418,25 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 - 다른 계정으로부터의 그룹 대화도 drag&drop 으로 폴더별 이동 — ✓ (프론트 게이트 확대 + 계정별 격리
   코드 근거 확인 + jsdom 31건 + 수정 전 재현). 라이브 실측은 배포 후 PB-0008.
+
+## 20260813T1840-folder-dnd-postdeploy — 공유 그룹 대화 폴더 DnD POST-DEPLOY 라이브 실측 (doc-only)
+
+선행 cycle(`20260813T1812-folder-dnd-shared-group`)의 배포·라이브 검증을 종결한다.
+
+- [x] PR #1257 머지 → main `763ad65d` → `sudo make deploy-web-only` — 무중단 롤링 + 90s soak 통과
+- [x] 배포 파리티 — web-a·web-b 모두 `mysql-ai-web:763ad65d` healthy · `/healthz git_commit=763ad65d`
+- [x] **무중단 실측** — 엣지 `no upstreams available` **0건**(직접 계측)
+- [x] 서빙 자산 배선 — `/static/app/sidebar.js` 에 `isFolderScopedConversation` 4매치
+- [x] 라이브 시나리오 구성(제품 경로만) — admin 대화 공유 링크 → 테스트 계정 `dqa_dndtest` 가입·
+      `operator` 부여 → join → "다른 계정으로부터의 그룹 대화" 성립(owner≠나 + is_member + is_group)
+- [x] **(1) 공유받은 그룹 대화 `draggable="true"`** 라이브 DOM 확인 (`conv-item is-other is-group`)
+- [x] (2) 드래그 → 폴더 배정 왕복 — 서버 `folder_id=35` · 재로드 후 폴더 하위 렌더(22px)·카운트 배지 1
+- [x] (3) root 드롭 존 → 폴더에서 빼기 — 힌트 텍스트 + 서버 `folder_id=null` (재배정도 정상)
+- [x] (4) **크로스-계정 격리** — admin 관점 `GET /api/folders`=`[]`, 같은 대화 `folder_id=null`
+- [x] (5) `pageerror` 0 (error·unhandledrejection 리스너, 드래그 왕복 2회)
+- [x] 라이브 테스트 데이터 정리 — 폴더 삭제·self-leave·공유 링크 삭제·테스트 계정 soft-delete
+      (불가역 흔적 1건: 대상 대화 `is_group` 영구 플래그 — 과거 스모크 대화라 실사용 영향 없음)
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 종결 — ✓ (요청의 핵심 시나리오를 라이브에서 실측, 격리·오류 0 확인)
