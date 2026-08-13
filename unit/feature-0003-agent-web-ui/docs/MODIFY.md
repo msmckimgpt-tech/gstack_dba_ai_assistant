@@ -3731,3 +3731,8 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 계약 갱신: `test_ai_ops.py` · `test_usage_conversations.py` · `test_usage_records_system.py` —
   SQL 컬럼 증가에 맞춰 더블 row arity·사다리 단수 단정 갱신. `_NoTargetCur` 는 "첫 실행만 실패"
   플래그 때문에 사다리 3단에서 컬럼 부재를 재현하지 못하던 것을 정정(무음 통과 차단).
+
+## CHG-20260813T1520-ai-claude-corp-usage-metric-charts-postdeploy — POST-DEPLOY 라이브 실측 기록 (doc-only)
+
+`docs/TEST.md` 에 Run 2(PB-0008 실 Chrome/150 라이브) + 측정 함정 기록 append, `docs/TASK.md` 에
+POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
