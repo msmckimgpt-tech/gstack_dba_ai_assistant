@@ -6,10 +6,12 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-group-attach-sender-scope-blocks-members — fixed:undeployed (L4↔L1; 열람 경계와 주입 경계의 비대칭)
+## FR-group-attach-sender-scope-blocks-members — fixed:deployed:verified (L4↔L1; 열람 경계와 주입 경계의 비대칭)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **46** · 적대 리뷰 [P1]2/[P2]3 전건 반영 후
-  재검증 · ruff clean). 배포 전. 배포 후 라이브 실측으로만 `verified` 로 닫는다.
+- **status**: `fixed:deployed:verified` — PR #1260 merge(main `db15bfcb`) → 전체 롤아웃
+  (web-a/web-b/ask-worker `GIT_COMMIT=db15bfcb` 확인 · 무중단 실측 `no upstreams available` **0**)
+  → **배포본 라이브 실측 3/3 PASS**(아래). 코드/테스트 신규 **46** · 적대 리뷰 [P1]2/[P2]3 전건
+  반영 · verify-completion 18/18 · 컨테이너 make test 통과 · ruff clean.
 - **source**: 사용자 명시 호출(2026-08-13) — "`@assistant 첨부 파일 확인` / 공유 대화 내부에서
   assistant 가 첨부파일을 확인하지 못하는 이슈. 공유대화 내부에서는 모든 사용자의 첨부파일을
   assistant 가 참조할 수 있도록 구성해주세요."
@@ -56,9 +58,20 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   ADR-20260813T183000.
 - **rc_ids**: RC-1(web 스코프 해소 발신자 필터) · RC-2(agent_core 주입 발신자 폴백) — 동일 뿌리 병합.
 - **batch-id**: B-20260813T183000-group-attach-scope-window
-- **라이브 실측 필요분(§정직)**: ① 대화 `…46763d6e` 에서 계정 B 의 `@assistant` 첨부 참조 성공
-  ② 게이트 쿼리의 라이브 실행(단위 테스트는 fake 커서라 SQL 문법·계획 미검증)
-  ③ bounded 멤버 축소가 실제로 발동하는지. 배포 후 재corroboration 으로 `verified` 판정.
+- **라이브 실측(2026-08-13, 배포 후 — READ-ONLY)**: 실제 대화에 메시지를 쓰지 않고(원장 불변제약)
+  배포본의 판정 함수를 직접 호출해 마찰 해소 조건을 증명했다.
+  - **마찰 당사자 해소**: 대화 `…46763d6e` 의 비업로더 멤버(A-10, ceiling=2170 bounded)에 대해
+    게이트 = `conversation`, 스코프 해소 = **첨부 8건**. 종전 이 값이 **0건**이어서 assistant 가
+    "첨부파일이 보이지 않습니다" 로 답했다 — 그 조건이 사라졌다.
+  - **업로더 무회귀**: 같은 대화 A-50 도 동일 8건.
+  - **1:1 무회귀**: 첨부 보유 1:1 대화 2건(`…c96a9df7`·`…2b107db9`) 게이트 = `conversation`,
+    각 4건 정상.
+  - **게이트 쿼리 라이브 실행 확인**(단위 테스트는 fake 커서라 SQL 문법·계획을 못 본다) —
+    PG 백엔드(`RUNTIME=postgres`·`ATTACH=postgres`)에서 예외 없이 판정.
+- **아직 실측 못 한 축(정직)**: **bounded 멤버 축소의 라이브 발동**. 현재 라이브에 은닉 구간이
+  실재하는 멤버가 없어(bounded 2명 전부 ceiling-only·은닉 0) 조건 자체가 생성되지 않는다 —
+  단위 테스트로만 증명됐다. 또한 실사용 재발 감시(비업로더 발신자의 실패 빈도 시계열)는 다음
+  audit 호출의 corroboration 재측정 대상이다.
 - **수용 위험(§47.4)**: 프롬프트·datamark 은 확률적 완화이지 보장이 아니며, 타 멤버 파일이 실린
   턴의 도구 실행에 provenance 게이트는 없다(confused-deputy 잔존). 후속 과제로 등재.
 

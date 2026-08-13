@@ -10535,7 +10535,12 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       4축 + 데이터-전용 계약 + 1:1 무회귀 + legacy row 폴백. 라벨 검사는 **파일 라인 단위**(섹션 계약
       문구가 같은 토큰을 포함해 전체 문자열 검사는 tautology).
 - [x] 회귀: feature-0002 전체 스위트 PASS · feature-0003 전체 스위트 PASS · ruff clean.
-- [ ] 배포 후 라이브 실측 — 대화 `…46763d6e` 에서 계정 B 의 `@assistant` 첨부 참조 성공(PB-0008).
+- [x] 배포 후 라이브 실측(READ-ONLY, 2026-08-13) — PR #1260 merge(main `db15bfcb`) → 전체 롤아웃
+      (web-a/web-b/ask-worker `GIT_COMMIT=db15bfcb` · 무중단 `no upstreams available` **0**).
+      배포본 판정 함수 직접 호출 **3/3 PASS**: 마찰 당사자(A-10) 게이트=`conversation`·스코프
+      **8건**(종전 0건) · 업로더 무회귀 8건 · 1:1 2건 무회귀(각 4건). 실제 대화에 메시지를 쓰지
+      않았다(원장 불변제약). **미실측**: bounded 축소의 라이브 발동 — 라이브에 은닉 구간이 실재하는
+      멤버가 없어 조건이 생성되지 않는다(단위 테스트로만 증명).
 
 ### 9. Requested Scope
 
