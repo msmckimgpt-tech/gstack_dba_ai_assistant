@@ -286,3 +286,14 @@ source_of_truth: true
 - 검증: 뮤테이션 2종 KILL(버킷 분기 제거 · 프론트 미러 키 누락). 프론트 미러와 백엔드
   스펙의 키 일치를 테스트가 단정한다(드리프트하면 dot 라우팅이 조용히 틀린다).
 - Human Approval Needed: 아니오.
+
+## REV-20260813-0012 [SKIPPED:post-deploy-record] — 배포 후 검증 기록 (코드 0)
+
+- Related Change: CHG-20260813-0012
+- Reason: 라이브 검증 결과 기록(문서 전용). 코드·설정 변경 0.
+- 검증 요지: 서비스 6종 `feadc089` 일치 · 무중단 0건 · 엣지 익명 401 · `initialize` 200 ·
+  `tools/list` 9종 · 도구 호출이 **검증된 TLS 로 web 도달**(가짜 토큰 → 상류 401) ·
+  PB-0008 로 콘솔 전용 패널 4행 렌더 + 타임아웃 패널에서 분리 확인.
+- 정직 표기: **인가 이후 구간 e2e 는 여전히 미실측**(사람 브라우저 인가 1회 필요 —
+  `docs/E2E_RUNBOOK.md`). AC-1 은 열린 채로 둔다.
+- Human Approval Needed: 아니오.

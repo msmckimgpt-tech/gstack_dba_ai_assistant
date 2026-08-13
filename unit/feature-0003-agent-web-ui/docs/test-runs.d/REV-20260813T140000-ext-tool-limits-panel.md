@@ -41,6 +41,22 @@ verdict: PASS (결함 적발 → 수정)
 - `admin.js` 미저장 dot 을 해당 서브탭으로 라우팅(`RS_EXT_TOOL_KEYS`)
 - 회귀 4건 + 뮤테이션 2종(버킷 분기 제거 · 미러 키 누락) KILL 확인
 
-## 3. 수정 후 재검증
+## 3. 수정 후 재검증 (라이브 `feadc089`, 동일 브리지)
 
-동일 절차로 배포 후 재실행 — 아래 §4 에 결과를 append 한다.
+- **Evidence**: `evidence/REV-20260813T-ext-tool-panel-after.png`
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 설정 서브탭 nav 에 `ext-tool-limits` 등장 | ✅ (`["prompts","runtime-timeouts","model-thinking-budgets","redteam-review","performance-parallelism","ext-tool-limits"]`) |
+| 2 | 패널 가시(`extToolLimitsMount.offsetParent !== null`) | ✅ |
+| 3 | 행 4개 · 라벨·단위·기본값·'즉시 반영' 배지 렌더 | ✅ (분당 호출 120회/분 · 시간당 행수 200000행 · 시간당 바이트 67108864바이트 · 미제출 20개) |
+| 4 | **'실행 타임아웃' 패널에서 '외부 AI 도구' 카테고리 사라짐** | ✅ (`stillMixed: false`) |
+| 5 | 기존 타임아웃 카테고리 8종 보존 | ✅ |
+
+**Verdict: PASS** — 결함을 화면에서 잡고, 수정 후 같은 화면에서 확인했다.
+
+## 4. 남은 미검증 (정직 표기)
+
+이 Run 은 **콘솔 설정 화면**만 다룬다. feature-0041 의 인증 전 구간 e2e(브라우저 인가 →
+토큰 교환 → 도구 호출 → 제출)는 사람 로그인·동의가 필요해 별도이며,
+`unit/feature-0041-external-ai-tool-surface/docs/E2E_RUNBOOK.md` 로 남아 있다.
