@@ -1146,8 +1146,23 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
     cmpBtn.type = "button";
     cmpBtn.className = "attach-list-versions-compare";
     cmpBtn.textContent = "⇄ 버전 비교";
-    cmpBtn.title = "두 버전을 골라 내용 차이를 봅니다 (여러 단계 떨어진 버전도 가능)";
-    cmpBtn.addEventListener("click", () => openAttachmentDiffModal(attachmentId, versions));
+    // 기본 비교쌍 = **최초 버전 → 최신 버전**(사용자 요청 2026-08-13). 모달 자체의 기본값은
+    // "직전↔최신" 이지만, 이 버튼은 체인 전체를 대표하는 진입점이라 눌렀을 때 "이 파일이 처음부터
+    // 지금까지 어떻게 바뀌었나" 가 나오는 것이 기대와 맞다. 직전↔최신은 각 버전 행의 `⇄` 가
+    // 이미 담당하므로 두 진입점의 역할이 갈린다(같은 쌍을 두 버튼이 여는 중복도 사라진다).
+    //
+    // 번호는 배열 순서가 아니라 **값의 min/max** 로 얻는다 — 중간 버전이 삭제된 체인(attach-manage
+    // soft-delete)에서도 실제로 남아 있는 양 끝을 가리켜야 한다.
+    const vnums = versions
+      .map((v) => Number(v.version_number || 1))
+      .filter((n) => Number.isFinite(n));
+    const oldestNum = vnums.length ? Math.min(...vnums) : latestNum;
+    cmpBtn.title = oldestNum === latestNum
+      ? "두 버전을 골라 내용 차이를 봅니다 (여러 단계 떨어진 버전도 가능)"
+      : `v${oldestNum}(최초) ↔ v${latestNum}(최신) 비교 — 다른 쌍은 모달에서 고릅니다`;
+    cmpBtn.addEventListener("click", () => openAttachmentDiffModal(
+      attachmentId, versions,
+      oldestNum === latestNum ? undefined : { from: oldestNum, to: latestNum }));
     head.appendChild(cmpBtn);
     box.appendChild(head);
   }

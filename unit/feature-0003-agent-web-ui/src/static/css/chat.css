@@ -3019,6 +3019,11 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
 .attach-diff-ctxtoggle[hidden],
 .attach-diff-hltoggle[hidden],
 .attach-diff-viewtoggle[hidden] { display: none; }
+/* 원문 화면의 비교 기준 선택기(REQ-20260813-attach-source-compare)는 `.attach-diff-ctl` 의
+   `display: inline-flex` 를 물려받으므로 **같은 트랩에 걸린다** — 버전이 하나뿐인 첨부에서
+   `el.hidden = true` 를 줘도 select 가 그대로 보인다("고를 것이 하나뿐인 컨트롤을 두지 않는다"
+   는 계약이 CSS 층에서 무력화). jsdom 은 `.hidden` 속성만 보므로 이 축은 CSS 로만 닫힌다. */
+.attach-source-cmpctl[hidden] { display: none; }
 /* diff 표가 없는 화면(내용 동일·바이너리·같은 버전·조회 실패)의 diff 전용 컨트롤은 **비활성**이다
    — 숨기면 `.attach-diff-stats{margin-left:auto}` 때문에 컨트롤 바가 통째로 흔들린다(버전 쌍을
    오가며 훑을 때 누르려던 버튼이 이동). 비활성은 위치를 지키면서 "지금은 쓸 수 없다" 를 말한다. */

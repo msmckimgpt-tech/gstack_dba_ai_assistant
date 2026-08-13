@@ -2643,3 +2643,52 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - **전수 회귀**: pytest **4364 passed / 4 skipped**. 환경 제약 1건
   (`test_oauth_exhaustion_gate::test_write_failure_after_successful_post_cannot_kill_slot_selection`,
   `chattr` 부재)은 `repo/`(main) 동일 이미지 실행에서 **동일 재현** — 본 변경 귀책 아님.
+
+## 20260813T1224-attach-source-compare — 문서 원문 화면의 버전 비교 (REQ-20260813-attach-source-compare)
+
+### 케이스
+
+| ID | 케이스 | 기대 |
+|---|---|---|
+| TEST-20260813T122457-attach-source-compare-1 | 원문 모달의 비교 기준 선택기 | 체인 2개↑ 노출 · 옵션=체인 전체 · 기본=이 버전(`· 이 버전` 표기) · 체인 1개/`versions` 부재면 숨김 |
+| TEST-…-2 | 다른 버전 선택 | 같은 모달에서 `/diff` 렌더 · 제목 `버전 비교 (vA → vB)` · 통계 `+N / -M` · 방향은 오래된→새로운 정규화 |
+| TEST-…-3 | 같은 버전 선택 | **재요청 0** 으로 원문 복귀 · 제목·통계도 원문 기준 |
+| TEST-…-4 | 변경사항 없음(identical) | 원문 표 + 사유 배너(해시 동일이면 "내용이 동일합니다", 다르면 "줄 내용은 같지만…") |
+| TEST-…-5 | diff 전용 컨트롤 | 원문 상태 숨김 · 비교 상태 노출 · 그릴 표 없으면 비활성 + 사유 title |
+| TEST-…-6 | 비교 모달 `from==to` | 그 버전 id 의 `/source` 원문 + `같은 버전을 선택했습니다 — vN 원문입니다.` · 종전 안내문 소멸 · 재렌더에도 배너 유지 |
+| TEST-…-7 | 목록 `⇄ 버전 비교` | 최초→최신 사전선택(번호는 값의 min/max) · title 이 그 사실을 밝힘 |
+| TEST-…-8 | 서버 payload | `/source` 에 `versions` 체인 요약(서명 URL·ObjectKey 없음) · 조회 실패 fail-soft · `_version_side` 단일 정본 |
+| TEST-…-9 | 계약 유지 | 왕복 1회(`/source` 만) · `?version=` 부재 · `/diff` from==to 400 불변 · 렌더러·판정면 복제 0 |
+| TEST-…-10 | CSS `[hidden]` | `.attach-source-cmpctl[hidden]{display:none}` — author `inline-flex` 가 UA 규칙을 이기는 트랩 봉인 |
+
+### Run
+
+- **자동(jsdom·정적)** — 신규 `tests/verify_attach_source_compare.mjs` **72 pass / 0 fail**.
+  기존 첨부 하네스 회귀: `verify_attach_source_view.mjs` 77 · `verify_attach_diff_identical_source.mjs`
+  61 · `verify_attach_version_diff.mjs` 126 · `verify_attach_diff_syntax_highlight.mjs` 146 ·
+  `verify_attach_source_markdown.mjs` 102 · `verify_attach_bubble_diff_entry.mjs` 47 — **전건 green**.
+- **pytest** — `test_attachment_source_view.py`(신규 C1~C5 포함) + `test_attachment_version_diff.py`
+  **71 passed / 0 failed**. 전체 스위트에서 실패 1건(`test_oauth_exhaustion_gate` — 컨테이너에
+  `chattr` 바이너리 부재)은 **pristine main 에서 동일 재현**(같은 이미지·명령으로 실측) → 환경 의존
+  선재 red, 본 cycle 귀책 아님.
+- **Environment: Windows-browser (PB-0008)** — **PASS**. 실 Chrome/150 + §13.2.9 격리 프리뷰 컨테이너
+  (`web-attach-src-cmp-preview`, worktree `src` 마운트, `http://localhost:18099`), 라이브 데이터
+  (대화 `20260807035225-9cb592cb` · `probe_a.sql` **7버전 체인**)로 5단계 실측:
+  ① 원문 화면 — 제목 `문서 원문 — probe_a.sql (v7 · 최신)` · 통계 `126줄 · 7KB` · 비교 기준 select
+     실렌더(`display:flex`, 215×26px @x=33) · 옵션 7개 · 기본 `v7 … · 이 버전` · 원문 126행 ·
+     diff 전용 컨트롤 rect 0×0(숨김) · 구문 색 토글 노출.
+  ② v1 선택 → `버전 비교 — probe_a.sql (v1 → v7)` · `+5 / -0` · 2열 diff · 추가행 5 ·
+     gap `동일한 114줄 생략` · diff 컨트롤 노출·활성.
+  ③ v7 재선택 → 원문 복귀 · **fetch 호출 0회**(재요청 없음을 계측으로 실증) · 126행 복원.
+  ④ 목록 `⇄ 버전 비교` — title `v1(최초) ↔ v7(최신) 비교 — 다른 쌍은 모달에서 고릅니다` ·
+     클릭 시 기준=v1 / 비교=v7.
+  ⑤ 비교 모달에서 같은 버전(v1/v1) → 원문 121행 + 배너 `같은 버전을 선택했습니다 — v1 원문입니다.` ·
+     종전 `서로 다른 두 버전을 선택하세요` **소멸** · diff 컨트롤 비활성.
+  **신원 대조**(§16.6 c): 서빙 중인 `attach-diff.js`(88,874B)에 `_bodyState`·`_renderSourceBody`·
+  `attach-source-cmp` 존재 = 자기 빌드 산출물.
+  **세션 격리**(§16.6 MUST): 공유 CDP 포트에 병렬 세션이 붙어 `pages[0]` 이 남의 탭(`/admin`)으로
+  바뀐 것을 검증 도중 관측 → `context.new_page()` 로 **자기 생성 탭**을 만들어 그 탭에서만 조작·캡처하고
+  종료 시 그 탭만 닫았다. 남의 탭은 조작하지 않았다.
+  증거: `docs/evidence/pb0008-attach-source-compare-{1-source,2-diff,3-back,4-oldest-latest,5-same-version}.png`.
+- Run 기록 정본: `docs/test-runs.d/20260813T122457-attach-source-compare.md`.
+- **Pass/Fail: PASS** (배포 후 POST-DEPLOY 재실측은 이월).

@@ -9929,7 +9929,103 @@ rmffhqjf = 글로벌 - tmzlem = 스키드 - 등…"
 - [x] 적대검증 2렌즈(ULTRACODE `wf_bfcbc1c9`, A=사용자향 언어 · B=사실정확성/커버리지) 13건을 **정본·실코드·라이브로 전건 독립 재검증**: 언어 교정 6건 반영, **배포 게이트 지적 3건(blocker 1 + major 2)은 실측으로 refute**. 상세는 REVIEW `REV-20260813T010301-doc-sync-rn-0813`.
 - [x] 검증: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 34/0 동일 = 회귀 0, 편집 전·후 두 번 실측) · 구조(releases 46→47 · `releases[0].date`=2026-08-12 9항목 · `generated`==head.date · 기존 46 블록 전량 보존 · type/area enum 위반 0 · 스키마 외 키 0) · 내부용어 누출 정규식 스캔(feature-id·sha·§·PR#·ADR·PB-0008·모듈/함수/파일명·인프라 용어·픽셀 22 패턴) **0**.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(2026-07-12 ITEM-09 빌드 자동주입 regime · `?v=dev` 고정 · `index.html`/`admin.html` 편집 0).
+## 20260813T1224-attach-source-compare — 문서 원문 화면에서의 버전 비교 + "비교할 것이 없으면 원문" 수렴 + 목록 비교 버튼 기본쌍 (Minor §12.3 — feature-0003 `routers/attachments.py`(payload 필드 추가)·`static/app/attach-diff.js`·`static/app/composer.js`·`static/css/chat.css` + 신규 하네스. 신규 엔드포인트·권한 코드·스키마·마이그레이션 0)
 
+**REQ-20260813-attach-source-compare** (사용자 요청 2026-08-13):
+1. "프로젝트 내 서비스에서, 첨부파일의 '문서 원문' 화면에서도 버전 간 비교를 수행할 수 있도록 구성해주세요."
+2. "추가로, 같은 버전이나 / 버전 간 변경사항이 없는 경우에는 문서 원문을 그대로 출력하도록 구성해주세요."
+3. "추가로, 기본적인 '버전 비교' 버튼은 [가장 원본인 버전 -> 가장 최신의 버전] 으로 비교하여 출력하도록 구성해주세요."
+
+### 2.1 Implementation Plan
+
+**문제**: 원문 보기 모달(`openAttachmentSourceModal`)은 비교 진입점이 **0** 이었고 그 계약이
+docstring 에 명시돼 있었다("버전 선택기를 두지 않는다"). 반대로 비교 모달에서 **같은 버전 두 개**를
+고르면 "서로 다른 두 버전을 선택하세요" 안내만 남아 **본문이 0 인 화면**이 됐다. 내용이 동일한
+쌍(`identical`)은 이미 원문을 출력했으므로(2026-08-07), "비교할 것이 없다" 는 **같은 사실**에 두
+화면이 서로 다르게 답하던 비대칭이다.
+
+**접근** (파일·심볼):
+- `src/routers/attachments.py` — `_version_side()` 모듈 레벨 신설(`/diff` 의 nested `_side` 승격,
+  형식 정본 1벌) + `get_attachment_source()` payload 에 `versions`(체인 요약) 추가. `/versions` 를
+  따로 부르지 않는다: 왕복 1회 계약 유지 + presign 비용 0. 체인 조회 실패는 **fail-soft**.
+- `src/static/app/attach-diff.js` —
+  ① `_bodyState(data, kind)` 신설: 본문 유무·원문 뷰 여부·diff 표 유무의 **단일 판정면**(두 모달
+     공유. 사본이 세 벌 될 자리였다). ② `_renderSourceBody()` 추출: `/source` 응답 → 원문 화면
+     (두 모달 공유). ③ `_sourceClipped`/`_sourceStatsText`/`_diffStatsText`/`_mdBlockedNotice`/
+     `_mdFallbackNotice` 추출(문구·판정 복제 제거). ④ 원문 모달에 `비교 기준` select +
+     보기 방식·맥락 토글(비교 상태에서만 노출) + 제목/통계 상태 전환(`syncHead`). ⑤ 비교 모달의
+     `from === to` → 그 버전 id 의 `/source` + 사유 배너(`preface`).
+- `src/static/app/composer.js` — `⇄ 버전 비교` 버튼 preselect = `{from: min(vnums), to: latestNum}`.
+- `src/static/css/chat.css` — `.attach-source-cmpctl[hidden] { display: none }`(author
+  `display:inline-flex` 가 UA `[hidden]` 를 이기는 트랩 — 선행 cycle 이 같은 기전을 문서화).
+
+**완료 판정 기준**:
+- AC-20260813T122457-attach-source-compare-1 — 원문 화면에 비교 기준 선택기가 있고(체인 2개 이상),
+  다른 버전을 고르면 **같은 모달에서** 그 쌍의 diff 가 렌더된다. 방향은 오래된→새로운 정규화.
+- AC-20260813T122457-attach-source-compare-2 — 같은 버전(=이 버전)을 고르면 **재요청 없이** 원문이
+  그대로 출력된다.
+- AC-20260813T122457-attach-source-compare-3 — 고른 쌍의 변경사항이 없으면(`identical`) 원문이
+  출력된다(원문 화면의 비교 경로도 선행 `identical` 렌더 경로를 재사용).
+- AC-20260813T122457-attach-source-compare-4 — 비교 모달에서 같은 버전 두 개를 고르면 그 버전의
+  원문이 출력되고, 같은 버전을 골랐다는 사유가 배너로 표시된다(종전 안내문 대체).
+- AC-20260813T122457-attach-source-compare-5 — 첨부 목록의 `⇄ 버전 비교` 버튼이 **최초→최신** 쌍을
+  기본 선택한다(각 버전 행의 `⇄` 는 그대로 그 버전↔최신 — 두 진입점의 역할 분리).
+
+**위험도: Minor** (§12.3) — 비파괴적 payload 필드 추가 + 표시 계층. 신규 엔드포인트 0 · 신규 권한
+코드 0 · 스키마/마이그레이션 0 · 인가 경계 무변경(`/source`·`/diff` 의 기존 read.{own,any} + D21
+pending 게이트 그대로). `/diff` 의 `from==to` 400(존재 oracle 방지) 계약도 불변.
+
+### 작업
+
+- [x] A. 서버 — `_version_side` 승격(사본 0) + `/source` payload `versions` + fail-soft
+- [x] B. 프론트 판정·렌더 공용화 — `_bodyState`·`_renderSourceBody`·통계/배너 헬퍼
+- [x] C. 원문 모달 — 비교 기준 select · diff 렌더 · 상태별 제목/통계/컨트롤 — AC-…-1
+- [x] D. 원문 모달 — 같은 버전 선택 시 재요청 0 원문 · identical 원문 — AC-…-2·3
+- [x] E. 비교 모달 — `from==to` → 그 버전 `/source` 원문 + 사유 배너 — AC-…-4
+- [x] F. 목록 `⇄ 버전 비교` 버튼 — 최초→최신 preselect(번호는 값의 min/max) — AC-…-5
+- [x] G. CSS — `.attach-source-cmpctl[hidden]` 봉인(jsdom 이 못 보는 축)
+- [x] H1. 신규 하네스 `tests/verify_attach_source_compare.mjs` **72 checks green**(URL 별 응답
+      stub — 단일 응답 stub 은 "어느 요청에 어떤 답이 갔는지" 를 못 봐 방향 정규화·재요청 0 축이
+      vacuous 하게 통과한다)
+- [x] H2. 기존 하네스 회귀 — `verify_attach_source_view.mjs` 77 · `..._diff_identical_source.mjs` 61 ·
+      `..._version_diff.mjs` 126 · `..._diff_syntax_highlight.mjs` 146 · `..._source_markdown.mjs` 102 ·
+      `..._bubble_diff_entry.mjs` 47 **전건 green**(리팩터로 계약이 옮겨간 소스-grep 축 3건은 새
+      구조로 갱신 — 취지 보존: "판정면이 하나인가" 를 **함수 정의 개수**로 단정하도록 강화)
+- [x] H3. pytest 신규 5축(`test_attachment_source_view.py` C1~C5) + 첨부 2파일 71 passed
+- [x] H4. pytest 전체 스위트 — 실패 1건(`test_oauth_exhaustion_gate`, 컨테이너 `chattr` 부재)은
+      **pristine main 동일 재현** → 환경 의존 선재 red(귀책 아님). 첨부 도메인 71 passed
+- [x] I. **PB-0008 실 Chrome/150 PASS** — 격리 프리뷰 + 라이브 7버전 체인으로 5단계 실측(원문
+      126행·선택기 215×26px → v1 비교 `+5 / -0` → 같은 버전 복귀 **fetch 0회** → 목록 버튼
+      v1(최초)↔v7(최신) → 비교 모달 같은 버전 원문+배너). §16.6 세션 격리 — 자기 생성 탭 전용
+- [x] J. docs — FUNCTION · TEST(케이스 10 + Run) · MODIFY · REVIEW · REPORT · test-runs.d · STATUS
+- [ ] K. verify-completion → commit → PR → 머지 → 배포 → POST-DEPLOY
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다 (AC-…-1 ~ -5)
+- [x] 자동 테스트가 통과한다 (신규 mjs 72 + pytest 5축 · 기존 첨부 하네스 559 checks green)
+- [x] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 `docs/test-runs.d/` fragment 에
+      `Environment: Windows-browser` Run 을 기록했다 (§15.4.1 · PB-0008)
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다 (`CHG-20260813T1224-…`)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (`REV-20260813T1224-…`)
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md에 테스트 결과가 기록되었다
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] ANCHOR.md §1~§3 (기존 feature — 신규 앵커 불요, 요청과 §1~§3 충돌 없음)
+- [ ] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS (§16.3)
+- [ ] Git 커밋·원격 동기화 (§16.3)
+
+### 9. Requested Scope
+
+- "첨부파일의 '문서 원문' 화면에서도 버전 간 비교를 수행할 수 있도록" — ✓ (원문 모달에 `비교 기준`
+  선택기 신설 → 같은 모달에서 diff 렌더. 체인은 `/source` 가 함께 주므로 왕복 1회 유지)
+- "같은 버전이나 / 버전 간 변경사항이 없는 경우에는 문서 원문을 그대로 출력" — ✓ (원문 화면: 같은
+  버전 = 재요청 0 원문 · identical = 원문. 비교 모달: `from==to` 안내문 → 그 버전 원문 + 사유 배너.
+  **두 화면 모두** 적용 — 같은 사실에 두 화면이 다르게 답하지 않게)
+- "기본적인 '버전 비교' 버튼은 [가장 원본인 버전 -> 가장 최신의 버전] 으로 비교하여 출력" — ✓
+  (목록의 `⇄ 버전 비교` preselect = min→max. 각 버전 행의 `⇄` 는 그대로 그 버전↔최신)
 ## 20260813T1135-usage-metric-charts — LLM 사용량 요약 패널 클릭 → 차트 지표 전환 + 캐시 토큰 계측·표시 (Major §12.3 — LLM 요청 페이로드 변경 + DB expand 마이그, `/_template:entry` arg-given)
 
 사용자 요청(2026-08-13): "LLM 사용량에서 [요청, 호출, 총 토큰, 입력, 출력, 비용] 패널을 클릭했을 때

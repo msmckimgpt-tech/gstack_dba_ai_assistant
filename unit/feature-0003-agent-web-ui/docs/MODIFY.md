@@ -3634,7 +3634,57 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-13T01:03:01+09:00
+## CHG-20260813T1224-attach-source-compare 문서 원문 화면의 버전 비교 + "비교할 것이 없으면 원문" 수렴(두 화면) + 목록 비교 버튼 기본쌍 최초→최신
 
+- **원문 모달에 비교를 들였다**(REQ-20260813-attach-source-compare-①). `openAttachmentSourceModal`
+  이 두 화면(원문/비교)을 갖는다: 컨트롤 바의 `비교 기준` select 로 전환하고, 다른 창을 띄우지
+  않는다. 체인은 `/source` 응답의 신규 `versions` 로 오므로 **왕복은 여전히 1회**(`/versions` 를
+  부르면 presign N회 + 왕복 2회가 되고, "원문 모달의 요청은 `/source` 하나" 라는 기존 계약도 깨진다).
+  체인 1개면 select 를 숨긴다 — 버전 하나짜리 첨부가 이 모달의 원래 대상이다.
+- **"비교할 것이 없다" 를 한 화면으로 수렴**(②). 종전 비대칭: 내용이 동일한 쌍(`identical`)은 이미
+  원문을 출력했는데(08-07), **같은 버전** 두 개를 고른 화면은 "서로 다른 두 버전을 선택하세요" 안내만
+  남아 본문이 0 이었다. 이제 원문 모달의 같은-버전 선택은 **재요청 없이** 받아 둔 원문을 다시 그리고,
+  비교 모달의 `from==to` 는 그 버전 id 의 `/source` 를 불러 원문 + `같은 버전을 선택했습니다 — vN
+  원문입니다.` 배너를 낸다(제목이 여전히 "버전 비교" 라 배너가 없으면 고장으로 읽힌다). 배너는 렌더
+  옵션에 담아 토글 재렌더에도 유지한다 — 한 번만 append 하면 다음 렌더에서 조용히 사라진다.
+  `/diff` 의 `from==to` **400 은 그대로**다(존재 여부 oracle 방지 계약) — 같은 버전은 그 버전의 id
+  로 답한다.
+- **목록의 `⇄ 버전 비교` 기본쌍 = 최초 → 최신**(③). 이 버튼은 체인 전체를 대표하는 진입점이고
+  직전↔최신은 각 버전 행의 `⇄` 가 이미 담당한다 — 두 진입점이 같은 쌍을 열던 중복도 사라진다.
+  번호는 배열 순서가 아니라 **값의 min/max** 로 얻는다(중간 버전이 삭제된 체인에서 없는 번호를
+  preselect 하면 `<select>` 가 조용히 첫 옵션으로 떨어져 엉뚱한 쌍이 "최초↔최신" 으로 보인다 —
+  말풍선 칩에서 이미 관측된 기전).
+- **복제 제거가 이 변경의 절반이다**. 원문 모달이 비교를 수행하게 되면서 판정·렌더·문구 사본이 세 벌이
+  될 자리였다: ① `_bodyState(data, kind)` — 본문 유무/원문 뷰/diff 표 유무의 **단일 판정면**(두 모달의
+  `syncHlToggle`·`syncDiffOnlyControls`·`syncToggles` 가 전부 이것을 호출) ② `_renderSourceBody()` —
+  `/source` 응답 → 원문 화면(두 모달 공유) ③ `_sourceClipped`/`_sourceStatsText`/`_diffStatsText` —
+  제목·통계 문구 ④ `_mdBlockedNotice`/`_mdFallbackNotice` — 마크다운 배너 문구 ⑤ 서버 `_version_side()`
+  — 버전 요약 형식(`/diff` 의 nested `_side` 를 모듈 레벨로 승격, `/source` 의 `version`·`versions` 와
+  공유). 표 렌더러는 종전대로 `_renderSource` 하나다.
+- **서버**: `get_attachment_source` payload 에 `versions`(체인 요약, ASC) 추가. 노출은 `/versions`
+  응답의 **부분집합**(서명 URL·ObjectKey 없음)이고 게이트는 무변경(read.{own,any} + D21 pending).
+  체인 조회 실패는 **fail-soft** — `versions: []` 로 답해 비교만 없애고 원문은 준다(원문 보기가 이
+  조회에 종속되면 쿼리 한 번의 실패가 "내용을 볼 수 없음" 으로 번진다). 바이너리 강등 payload 에도
+  체인을 싣는다(그 화면의 비교는 메타 비교로 답할 수 있다).
+- **CSS 트랩 봉인**: `.attach-source-cmpctl` 은 `.attach-diff-ctl` 의 `display:inline-flex` 를 물려받아
+  UA `[hidden]{display:none}` 를 이긴다 → `.attach-source-cmpctl[hidden]{display:none}` 추가. jsdom 은
+  `.hidden` 속성만 보므로 이 축은 CSS 로만 닫힌다(선행 cycle 이 hl 토글에서 같은 기전을 적발·문서화).
+- **diff 전용 컨트롤의 노출 정책이 두 모달에서 의도적으로 다르다**: 비교 모달은 상시 노출 + 비활성
+  (그쪽은 diff 가 기본 화면이라 사용자가 버튼 위치를 외운다 — 숨기면 `margin-left:auto` 때문에 바가
+  흔들린다), 원문 모달은 비교 상태에서만 노출(기본 화면이 원문이라 상시 노출하면 대부분의 시간에 쓸 수
+  없는 컨트롤이 떠 있다). 원문 모달에는 gap 국소 전개를 두지 않는다 — 전개는 전체 맥락 재요청 + 쌍별
+  캐시가 필요한 비교 전용 흐름이고, `동일한 줄도 모두 보기` 라는 대안 경로가 있다.
+- Verification: 신규 `tests/verify_attach_source_compare.mjs` **72 checks green**(URL 별 응답 stub —
+  단일 응답 stub 으로는 방향 정규화·재요청 0 축이 vacuous 하게 통과한다) · 기존 첨부 하네스 6종
+  **559 checks green**(리팩터로 계약이 옮겨간 소스-grep 축 3건 갱신 — "판정면이 하나인가" 를 함수 정의
+  **개수**로 단정하도록 강화) · pytest 신규 5축(C1~C5) + 첨부 2파일 **71 passed** · 전체 스위트에서
+  실패 1건은 `chattr` 바이너리 부재(환경)로 **pristine main 동일 재현 — 귀책 아님**.
+- Files: `src/routers/attachments.py`, `src/static/app/attach-diff.js`, `src/static/app/composer.js`,
+  `src/static/css/chat.css`, `tests/verify_attach_source_compare.mjs`(신규),
+  `tests/verify_attach_diff_identical_source.mjs`, `tests/verify_attach_version_diff.mjs`,
+  `tests/test_attachment_source_view.py`, `docs/{TASK,FUNCTION,TEST,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/20260813T122457-attach-source-compare.md`.
+- Timestamp: 2026-08-13T12:24:57+09:00
 ## CHG-20260813T1135-ai-claude-corp-usage-metric-charts — 사용량 요약 카드 = 차트 지표 선택기 + 프롬프트 캐시 계측·활성화 (Major §12.3)
 
 **요청**: "[요청, 호출, 총 토큰, 입력, 출력, 비용] 패널 클릭 시 차트도 해당 값으로 부드럽게 재구성"

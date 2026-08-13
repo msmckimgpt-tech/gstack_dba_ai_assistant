@@ -805,6 +805,87 @@ function _identicalFlags(data) {
   return { clipped, shaDiff: Boolean(a) && Boolean(b) && a !== b };
 }
 
+/**
+ * 한 화면의 **본문 상태**를 판정하는 단일 면 — 이 모듈의 컨트롤 노출·비활성은 전부 여기서 갈린다.
+ *
+ * 판정을 함수 하나로 모은 이유: 컨트롤마다 자기 조건을 따로 쓰면 같은 화면에서 어떤 토글은
+ * 사라지고 어떤 토글은 남는 "규칙 없는 컨트롤 바" 가 된다(§18.8 패널이 실제로 지적한 결함).
+ * 이제 두 모달이 같은 화면에서 같은 답을 얻는다 — 원문 보기 모달도 비교를 수행하게 되면서
+ * (REQ-20260813-attach-source-compare) 판정 사본이 세 벌이 될 자리였다.
+ *
+ * @param {object|null} data  `/source` 또는 `/diff` 응답
+ * @param {"source"|"diff"} kind  응답 스키마 — 본문 유무 키가 다르다(`viewable` vs `comparable`)
+ * @returns {{rows:number, hasBody:boolean, sourceView:boolean, hasDiff:boolean}}
+ *   - `hasBody`: 칠할 본문 줄이 화면에 있다(구문 색 토글의 전제).
+ *   - `sourceView`: 그 본문이 **원문**이다 — 원문 응답은 항상 그렇고, diff 응답은 내용이
+ *     동일할 때만 그렇다(줄 대조 diff 를 마크다운으로 렌더하면 대조가 사라진다).
+ *   - `hasDiff`: diff 표가 실제로 그려진다(보기 방식·맥락 토글의 전제).
+ */
+function _bodyState(data, kind) {
+  const isDiff = kind === "diff";
+  const rows = Array.isArray(data?.rows) ? data.rows.length : 0;
+  const hasBody = Boolean(data) && rows > 0
+    && (isDiff ? data.comparable !== false : data.viewable !== false);
+  const sourceView = hasBody && (isDiff ? Boolean(data.identical) : true);
+  const hasDiff = Boolean(isDiff && hasBody && !data.identical);
+  return { rows, hasBody, sourceView, hasDiff };
+}
+
+// `/source` 응답의 절단 여부. 절단·해시와 같은 계열의 판정이다 — **"원문" 은 전량을 봤을 때만
+// 쓸 수 있는 말**이므로(`_identicalFlags` 와 같은 원칙) 절단이면 제목·통계·배너가 함께 강도를
+// 낮춘다. 두 모달이 같은 함수를 쓴다(원문 보기 · 비교의 같은-버전 화면).
+function _sourceClipped(data) {
+  return Boolean(data && (
+    (data.truncated && (data.truncated.source || data.truncated.rows))
+    || data.stats?.lines_partial));
+}
+
+/** `/source` 응답 한 벌의 요약 배지 문구 — 절단이면 "앞 N행" 으로 말한다. */
+function _sourceStatsText(data) {
+  if (!data || data.viewable === false) return "";
+  const shown = Array.isArray(data.rows) ? data.rows.length : 0;
+  const size = _fmtBytes(data.version?.size);
+  return _sourceClipped(data)
+    ? `앞 ${shown}행 표시 · 전체 ${size}`
+    : `${Number(data.stats?.lines || 0)}줄 · ${size}`;
+}
+
+/** `/diff` 응답 한 벌의 요약 배지 문구. 배너(`_renderBody`)와 **같은 판정**(`_identicalFlags`)을
+ *  쓴다 — 한 화면의 두 요약이 서로 반박하면 사용자는 어느 쪽을 믿을지 판단할 수 없다. */
+function _diffStatsText(data) {
+  if (!data || data.comparable === false) return "";
+  const st = data.stats || {};
+  if (!data.identical) return `+${Number(st.added || 0)} / -${Number(st.removed || 0)}`;
+  const flags = _identicalFlags(data);
+  if (flags.clipped) return "차이 없음(부분 비교)";
+  if (flags.shaDiff) return "줄 차이 없음 · 파일은 다름";
+  return "차이 없음 — 원문 표시";
+}
+
+// 마크다운 렌더의 두 배너. 문구를 한 곳에 두는 이유는 이 모듈의 다른 복제 사례와 같다 —
+// 두 화면(원문 보기 · 비교의 identical 화면)이 같은 사실을 다른 말로 알리면, 한쪽만 고쳐지는
+// 방식으로 갈라진다.
+function _mdBlockedNotice({ blockedMedia, deadLinks }) {
+  if (!blockedMedia && !deadLinks) return null;
+  const el = document.createElement("div");
+  el.className = "attach-diff-notice is-warn";
+  const parts = [];
+  if (blockedMedia) parts.push(`이미지·미디어 ${blockedMedia}건`);
+  if (deadLinks) parts.push(`앱 내부 링크 ${deadLinks}건`);
+  el.textContent =
+    `${parts.join(" · ")}을 차단했습니다 — 문서를 여는 것만으로 열람 사실이 외부로 새거나 `
+    + "클릭 한 번으로 내 권한이 쓰이지 않도록 막았습니다. 원래 주소는 본문에 표시됩니다.";
+  return el;
+}
+
+function _mdFallbackNotice() {
+  const el = document.createElement("div");
+  el.className = "attach-diff-notice is-warn";
+  el.textContent =
+    "마크다운으로 렌더하지 못해 원문으로 표시합니다 (렌더 라이브러리 미로드일 수 있습니다).";
+  return el;
+}
+
 // 원문 렌더 — **두 버전의 내용이 동일할 때** 쓰는 제3의 표현(사용자 요청 2026-08-07:
 // "파일 내용이 동일하다면 문서 원문을 출력").
 //
@@ -859,6 +940,110 @@ function _renderSource(container, data, opts) {
   }
   table.appendChild(tbody);
   container.appendChild(table);
+}
+
+/**
+ * `/source` 응답 한 벌을 **원문 화면**으로 그린다 — 강등(바이너리)·절단 배너·빈 문서·원문 표.
+ *
+ * 두 모달이 공유한다: 원문 보기 모달의 기본 화면이자, 비교 모달에서 **같은 버전 두 개를 고른**
+ * 화면(REQ-20260813-attach-source-compare — 사용자 요청 "같은 버전이나 버전 간 변경사항이 없는
+ * 경우에는 문서 원문을 그대로 출력"). 종전 비교 모달은 그 선택에 "서로 다른 두 버전을
+ * 선택하세요" 안내만 두어 **본문이 없는 화면**이었다.
+ *
+ * `_renderBody` 의 identical 경로와 역할이 겹치지 않는다 — 그쪽은 `/diff` 스키마(`from`/`to`·
+ * `comparable`·`truncated.from_source`)를 읽고, 이쪽은 `/source` 스키마(`version`·`viewable`·
+ * `truncated.source`)를 읽는다. 표를 그리는 렌더러는 양쪽 모두 `_renderSource` 하나다.
+ */
+function _renderSourceBody(bodyEl, data, opts) {
+  const o = opts || {};
+  const anchor = o.keepScroll
+    ? _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"))
+    : null;
+  bodyEl.innerHTML = "";
+  if (!data) return;
+
+  // 호출부가 준 상태 안내를 본문보다 **먼저** 싣는다 — 비교 모달에서 같은 버전을 골라 원문이
+  // 나온 화면은, 그 사실을 말하지 않으면 "비교가 고장 났다" 로 읽힌다(제목은 여전히 "버전
+  // 비교" 다). 강등·절단 분기보다 앞에 두는 이유: 바이너리라도 "같은 버전을 골랐다" 는 사실은
+  // 그대로 유효하다.
+  if (o.preface) {
+    const el = document.createElement("div");
+    el.className = `attach-diff-notice ${o.prefaceTone || "is-same"}`;
+    el.textContent = String(o.preface);
+    bodyEl.appendChild(el);
+  }
+
+  // 볼 수 없는 형식(스프레드시트·PDF·이미지 등) — 메타로 강등해 답한다. 조용히 빈 화면을
+  // 주면 사용자는 기능이 고장 났다고 읽는다.
+  // (`source_unavailable` 은 서버가 **503** 으로 답하므로 `apiFetch` 가 throw 하고 호출부의
+  //  catch 경로로 간다 — 여기서 그 사유를 분기하면 도달 불가 코드가 된다.)
+  if (data.viewable === false) {
+    const msg = document.createElement("div");
+    msg.className = "attach-diff-notice";
+    msg.textContent =
+      "이 형식(스프레드시트·PDF·이미지 등)은 원문 보기를 지원하지 않습니다. 내려받아 확인하세요.";
+    bodyEl.appendChild(msg);
+    const v = data.version || {};
+    const meta = document.createElement("table");
+    meta.className = "attach-diff-meta";
+    const rowOf = (label, val) =>
+      `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(val)}</td></tr>`;
+    meta.innerHTML = "<tbody>" +
+      rowOf("작성 주체", v.created_by_role === "assistant" ? "AI 수정" : "사용자") +
+      rowOf("크기", _fmtBytes(v.size)) +
+      rowOf("등록 시각", v.created_at || "-") +
+      rowOf("sha256", (v.sha256 || "").slice(0, 16) + "…") +
+      "</tbody>";
+    bodyEl.appendChild(meta);
+    return;
+  }
+
+  // 절단 배너 — 무음 절단 금지(`/diff` 화면과 같은 계약).
+  const tr = data.truncated || {};
+  if (tr.source) {
+    const capMB = ((data.caps?.source_bytes || 0) / 1048576).toFixed(0);
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice is-warn";
+    el.textContent = `원본이 ${capMB}MB 를 넘어 앞부분만 표시했습니다 — 이후 내용은 보이지 않습니다.`;
+    bodyEl.appendChild(el);
+  }
+  if (tr.rows) {
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice is-warn";
+    el.textContent = `문서가 길어 앞쪽 ${Number(data.caps?.rows || 0)}행만 표시했습니다.`;
+    bodyEl.appendChild(el);
+  }
+
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (rows.length === 0) {
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice";
+    el.textContent = "문서가 비어 있습니다.";
+    bodyEl.appendChild(el);
+    return;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "attach-diff-splitwrap";
+  const scroller = document.createElement("div");
+  scroller.className = "attach-diff-scroller";
+  // 렌더 결과에 따라 배너를 **뒤에 만들어 본문 앞에 끼운다** — 차단 건수·폴백 사유는
+  // 렌더가 끝나야 알 수 있고, 사용자는 그 사실을 본문보다 먼저 봐야 한다.
+  let mdNotice = null;
+  _renderSource(scroller, data, {
+    ...o,
+    onMdRendered: (res) => { mdNotice = _mdBlockedNotice(res); },
+    onMdFallback: () => {
+      mdNotice = _mdFallbackNotice();
+      // 컨트롤을 **화면과 일치**시킨다 — 체크는 켜져 있는데 원문 표가 보이면 사용자는 토글이
+      // 고장 났다고 읽는다(codex 적대 리뷰 [P2]). 저장값은 건드리지 않는다: 이 전환은 사용자의
+      // 선택이 아니라 실패로 인한 강등이므로 다음 열람에서 다시 시도한다.
+      if (typeof o.onMdFallbackSync === "function") o.onMdFallbackSync();
+    },
+  });
+  wrap.appendChild(scroller);
+  if (mdNotice) bodyEl.appendChild(mdNotice);
+  bodyEl.appendChild(wrap);
+  _restoreScrollAnchor(scroller, anchor);
 }
 
 function _renderBody(bodyEl, data, mode, opts) {
@@ -962,22 +1147,11 @@ function _renderBody(bodyEl, data, mode, opts) {
     let mdNotice = null;
     _renderSource(srcScroller, data, {
       ...(opts || {}),
-      onMdRendered: ({ blockedMedia, deadLinks }) => {
-        if (!blockedMedia && !deadLinks) return;
-        mdNotice = document.createElement("div");
-        mdNotice.className = "attach-diff-notice is-warn";
-        const parts = [];
-        if (blockedMedia) parts.push(`이미지·미디어 ${blockedMedia}건`);
-        if (deadLinks) parts.push(`앱 내부 링크 ${deadLinks}건`);
-        mdNotice.textContent =
-          `${parts.join(" · ")}을 차단했습니다 — 문서를 여는 것만으로 열람 사실이 외부로 새거나 `
-          + "클릭 한 번으로 내 권한이 쓰이지 않도록 막았습니다. 원래 주소는 본문에 표시됩니다.";
-      },
+      // 배너 문구는 원문 보기 화면과 **같은 헬퍼**에서 온다 — 같은 사실을 두 화면이 다른 말로
+      // 알리면 한쪽만 고쳐지는 방식으로 갈라진다.
+      onMdRendered: (res) => { mdNotice = _mdBlockedNotice(res); },
       onMdFallback: () => {
-        mdNotice = document.createElement("div");
-        mdNotice.className = "attach-diff-notice is-warn";
-        mdNotice.textContent =
-          "마크다운으로 렌더하지 못해 원문으로 표시합니다 (렌더 라이브러리 미로드일 수 있습니다).";
+        mdNotice = _mdFallbackNotice();
         // 원문 보기 모달과 같은 이유로 컨트롤을 화면과 일치시킨다(codex [P2]) — 저장값은 불변.
         if (typeof opts.onMdFallbackSync === "function") opts.onMdFallbackSync();
       },
@@ -1223,17 +1397,17 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   // 이 모달의 마크다운 렌더는 **identical(원문 출력) 화면 한정**이다 — 줄 대조 diff 를 렌더하면
   // 어느 줄이 바뀌었는지가 사라진다. 그래서 노출 판정에 `identical` 이 들어간다(하이라이트
   // 토글이 `identical` 을 제외하지 **않는** 것과 정반대이며, 이 비대칭은 의도다).
-  const mdRenderable = (data) => _isMarkdownFile(filename)
-    && Boolean(data) && data.comparable !== false && Boolean(data.identical)
-    && Array.isArray(data.rows) && data.rows.length > 0;
-  const syncHlToggle = (data) => {
-    const md = mdRenderable(data);
+  // 판정면은 모듈 공용 `_bodyState` 다 — 같은 화면을 두 모달이 다르게 판정하지 않도록
+  // (원문 보기 모달이 비교를 수행하게 되면서 사본이 세 벌이 될 자리였다).
+  const mdRenderable = (data, kind) =>
+    _isMarkdownFile(filename) && _bodyState(data, kind || "diff").sourceView;
+  const syncHlToggle = (data, kind) => {
+    const md = mdRenderable(data, kind);
     mdWrap.hidden = !md;
     if (md) mdCb.checked = mdOn;
-    const paintable = Boolean(detectedLang) && Boolean(data)
-      && data.comparable !== false
-      && Array.isArray(data.rows) && data.rows.length > 0
-      && !(md && mdOn);   // 렌더된 문서에는 칠할 원문 줄이 없다
+    // 렌더된 문서에는 칠할 원문 줄이 없다 → `md && mdOn` 이면 구문 색 토글을 숨긴다.
+    const paintable = Boolean(detectedLang) && _bodyState(data, kind || "diff").hasBody
+      && !(md && mdOn);
     hlWrap.hidden = !paintable;
     if (!paintable) return;
     hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
@@ -1256,9 +1430,8 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   //  않는다. 그쪽이 숨김인 것은 그 이유이며, 이 비대칭은 의도다.)
   const viewToggleEl = backdrop.querySelector(".attach-diff-viewtoggle");
   const ctxToggleEl = backdrop.querySelector(".attach-diff-ctxtoggle");
-  const syncDiffOnlyControls = (data) => {
-    const hasDiff = Boolean(data) && data.comparable !== false && !data.identical
-      && Array.isArray(data.rows) && data.rows.length > 0;
+  const syncDiffOnlyControls = (data, kind) => {
+    const { hasDiff } = _bodyState(data, kind || "diff");
     const why = hasDiff ? "" : "비교할 차이가 없는 화면이라 표시 방식을 바꿀 대상이 없습니다.";
     for (const b of modeBtns) { b.disabled = !hasDiff; b.title = why; }
     ctxCb.disabled = !hasDiff;
@@ -1269,6 +1442,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   syncDiffOnlyControls(null);   // 응답 전에는 비활성 — `syncHlToggle(null)` 과 같은 뜻
 
   let lastData = null;
+  // 같은 버전 두 개를 고른 화면의 `/source` 응답. diff 응답과 **스키마가 달라** 한 변수에
+  // 섞지 않는다(`viewable` vs `comparable` · `version` vs `from`/`to` · `truncated.source` vs
+  // `truncated.from_source`). 판정·렌더가 어느 스키마를 읽는지는 `viewKind` 가 정한다.
+  let srcData = null;
+  let viewKind = "diff";   // "diff" | "source"
+  const curData = () => (viewKind === "source" ? srcData : lastData);
   let reqSeq = 0;
   let ratio = _readSplitRatio();
   // gap 국소 전개용 전체 맥락 캐시 — 현재 선택 쌍에 대해 1회만 받아 재사용한다.
@@ -1280,12 +1459,13 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   // 렌더 옵션 — rows 는 매 렌더 시점의 표시 행(전개 결과 포함).
   const renderOpts = () => ({
     ratio,
-    rows: (lastData && lastData.rows) || [],
+    rows: (curData() && curData().rows) || [],
     // 하이라이트가 꺼져 있으면 lang 을 아예 넘기지 않는다 — 렌더러가 종전 평문 경로를 타므로
     // "끔" 이 곧 이전 동작과 동일함이 구조로 보장된다(끈 상태에 잔여 span 이 남지 않는다).
     lang: hlOn ? detectedLang : null,
-    // identical 원문 화면에서만 참 — `_renderBody` 의 diff 경로는 이 값을 읽지 않는다.
-    md: mdOn && mdRenderable(lastData),
+    // identical 원문 화면(또는 같은-버전 원문 화면)에서만 참 — `_renderBody` 의 diff 경로는
+    // 이 값을 읽지 않는다.
+    md: mdOn && mdRenderable(curData(), viewKind),
     onMdFallbackSync: () => {
       mdCb.checked = false;
       hlWrap.hidden = !detectedLang;
@@ -1297,11 +1477,21 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     onRatioChange: (r) => { ratio = r; },
     // "동일한 줄도 모두 보기" 가 켜져 있으면 이미 전부 보이므로 전개 버튼을 달지 않는다.
     onExpandGap: ctxCb.checked ? null : expandGap,
+    // 같은-버전 원문 화면임을 알리는 배너. 재렌더(토글 조작)에도 유지되어야 하므로 렌더
+    // 옵션에 담는다 — 한 번만 append 하면 다음 재렌더에서 조용히 사라진다.
+    preface: viewKind === "source"
+      ? `같은 버전을 선택했습니다 — v${Number(fromSel.value)} 원문입니다.`
+      : null,
   });
 
   // 재렌더는 **기본적으로 스크롤을 보존**한다. 새 비교(버전 쌍 변경)만 최상단으로 돌아간다 —
   // 그건 다른 내용이므로 위치 보존이 오히려 혼란이다.
   const rerender = (keepScroll = true) => {
+    if (viewKind === "source") {
+      // 같은 버전 두 개를 고른 화면 — 원문 보기 모달과 **같은 렌더러**를 쓴다.
+      if (srcData) _renderSourceBody(bodyEl, srcData, { ...renderOpts(), keepScroll });
+      return;
+    }
     if (lastData) _renderBody(bodyEl, lastData, mode, { ...renderOpts(), keepScroll });
   };
 
@@ -1353,13 +1543,57 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     const to = Number(toSel.value);
     fullRowsCache = null;   // 쌍이 바뀌면 전개 캐시 무효
     if (from === to) {
+      // 같은 버전 두 개 = 비교할 것이 없는 선택. 종전에는 "서로 다른 두 버전을 선택하세요"
+      // 안내만 두어 **본문이 0 인 화면**이었다 — 사용자가 확인하려던 내용이 아무것도 없다.
+      // 그 버전의 **원문을 그대로 출력**한다(사용자 요청 2026-08-13: "같은 버전이나 / 버전 간
+      // 변경사항이 없는 경우에는 문서 원문을 그대로 출력"). 내용이 동일한 쌍(`identical`)이
+      // 이미 원문을 출력하므로, 같은 버전만 빈 화면으로 남는 비대칭이었다.
+      //
+      // `/diff` 에 `from==to` 를 허용하지 **않는다** — 그 400 은 존재 여부 oracle 방지 계약의
+      // 일부다. 각 버전이 자기 id 를 가지므로 그 id 의 `/source` 를 부르면 된다(원문 보기
+      // 모달이 쓰는 것과 같은 엔드포인트·같은 게이트).
+      viewKind = "source";
       lastData = null;
-      statsEl.textContent = "";
-      bodyEl.innerHTML = '<div class="attach-diff-notice">서로 다른 두 버전을 선택하세요.</div>';
-      syncHlToggle(null);
-      syncDiffOnlyControls(null);
+      const target = list.find((v) => Number(v.version_number || 1) === from);
+      const vid = Number(target?.id || 0);
+      const seqSrc = ++reqSeq;
+      if (!vid) {
+        // 체인 payload 에 id 가 없는 경우(구버전 응답 형식) — 조용히 빈 화면을 주지 않는다.
+        srcData = null;
+        statsEl.textContent = "";
+        bodyEl.innerHTML =
+          '<div class="attach-diff-notice is-warn">이 버전의 원문을 찾지 못했습니다.</div>';
+        syncHlToggle(null, "source");
+        syncDiffOnlyControls(null, "source");
+        return;
+      }
+      statsEl.textContent = "불러오는 중…";
+      if (!keepScroll) bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
+      try {
+        const data = await apiFetch(`/api/attachments/${encodeURIComponent(vid)}/source`);
+        if (seqSrc !== reqSeq) return;   // 늦게 도착한 응답이 최신 선택을 덮지 않게
+        srcData = data;
+        syncHlToggle(data, "source");
+        syncDiffOnlyControls(data, "source");
+        statsEl.textContent = _sourceStatsText(data);
+        if (keepScroll && pendingAnchor) {
+          _renderSourceBody(bodyEl, data, { ...renderOpts(), keepScroll: false });
+          _restoreScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"), pendingAnchor);
+        } else {
+          rerender(false);
+        }
+      } catch (e) {
+        if (seqSrc !== reqSeq) return;
+        srcData = null;
+        syncHlToggle(null, "source");
+        syncDiffOnlyControls(null, "source");
+        statsEl.textContent = "";
+        bodyEl.innerHTML = `<div class="attach-diff-notice is-warn">${escapeHtml(e?.message || "원문을 불러오지 못했습니다.")}</div>`;
+      }
       return;
     }
+    viewKind = "diff";
+    srcData = null;
     const seq = ++reqSeq;
     statsEl.textContent = "비교 중…";
     // 보존 요청이면 기존 표를 남겨 둔다 — 지우면 '불러오는 중' 사이에 화면이 튄다.
@@ -1372,19 +1606,10 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       lastData = data;
       syncHlToggle(data);   // 칠할 본문이 실제로 왔을 때만 토글이 보인다
       syncDiffOnlyControls(data);
-      const st = data.stats || {};
       // 배지도 배너와 **같은 판정**(`_identicalFlags`)을 쓴다 — 한 화면의 두 요약이 서로
-      // 반박하면 사용자는 어느 쪽을 믿을지 판단할 수 없다.
-      const flags = _identicalFlags(data);
-      statsEl.textContent = data.comparable === false
-        ? ""
-        : !data.identical
-          ? `+${Number(st.added || 0)} / -${Number(st.removed || 0)}`
-          : flags.clipped
-            ? "차이 없음(부분 비교)"
-            : flags.shaDiff
-              ? "줄 차이 없음 · 파일은 다름"
-              : "차이 없음 — 원문 표시";
+      // 반박하면 사용자는 어느 쪽을 믿을지 판단할 수 없다. 문구 정본은 `_diffStatsText`
+      // (원문 보기 모달이 비교를 수행하게 되면서 두 모달이 같은 배지를 쓴다).
+      statsEl.textContent = _diffStatsText(data);
       if (keepScroll && pendingAnchor) {
         _renderBody(bodyEl, data, mode, { ...renderOpts(), keepScroll: false });
         _restoreScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"), pendingAnchor);
@@ -1435,7 +1660,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   mdCb.addEventListener("change", () => {
     mdOn = mdCb.checked;
     _writeMdRenderOn(mdOn);
-    syncHlToggle(lastData);   // 구문 색 토글 노출이 md 상태에 종속된다
+    syncHlToggle(curData(), viewKind);   // 구문 색 토글 노출이 md 상태에 종속된다
     rerender();
   });
 
@@ -1443,19 +1668,34 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
 }
 
 /**
- * 첨부 **원문 보기** 모달을 연다 (REQ-20260807T-attach-source-view).
+ * 첨부 **원문 보기** 모달을 연다 — 그리고 그 화면에서 **버전 간 비교까지** 수행한다
+ * (REQ-20260807T-attach-source-view + REQ-20260813-attach-source-compare).
  *
  * 사용자 요청(2026-08-07): "별도로 추가된 버전이 없는 첨부파일 또한, 클릭했을 때 문서 원문이
  * 출력되도록 구성해주세요."
+ * 사용자 요청(2026-08-13): "첨부파일의 '문서 원문' 화면에서도 버전 간 비교를 수행할 수 있도록
+ * 구성해주세요. 추가로, 같은 버전이나 / 버전 간 변경사항이 없는 경우에는 문서 원문을 그대로
+ * 출력하도록 구성해주세요."
  *
- * 왜 비교 모달로 대신할 수 없나: 버전이 하나뿐인 첨부에는 **비교할 짝이 없다**. `/diff` 는 두
- * 버전을 요구하고 `from==to` 를 400 으로 막으므로(존재 여부 oracle 방지 계약), 원문 전용
- * 엔드포인트 `GET /api/attachments/{id}/source` 를 별도로 둔다. 렌더는 비교 모달의 identical
- * 화면과 **같은 `_renderSource`** 를 쓴다 — 같은 파일이 두 화면에서 다르게 보이지 않는다.
+ * 화면은 두 상태를 갖는다. 기본은 **이 버전의 원문**이고, 컨트롤 바의 `비교 기준` 선택기로
+ * **같은 모달 안에서** 비교로 전환한다 — 다른 창을 띄우지 않는다. 원문을 읽다가 "이게 직전
+ * 버전과 무엇이 다른가" 로 넘어가는 것은 하나의 흐름이고, 그 사이에 모달이 갈리면 보던 위치와
+ * 켜 둔 토글이 리셋된다.
  *
- * **버전 선택기를 두지 않는다**: 체인의 각 버전은 자기 id 를 가지므로 `attachmentId` 하나로
- * 버전이 이미 특정된다. 고를 것이 하나뿐인 select 는 조작할 수 없는 컨트롤이고(이 모듈이
- * 금지한 거짓 어포던스), 구버전 원문은 그 버전의 id 로 이 모달을 열면 된다.
+ * **되돌아오는 조건 두 가지**(사용자 요청 2026-08-13 후단):
+ *   - 기준으로 **이 버전 자신**을 고르면 → 요청 없이 이미 받아 둔 원문을 다시 그린다.
+ *   - 고른 쌍의 **내용이 같으면**(`identical`) → `_renderBody` 가 원문을 그린다(선행 계약).
+ * 두 경우 모두 "비교할 것이 없다" 는 같은 사실이므로 같은 화면(원문)으로 수렴한다.
+ *
+ * **버전 목록은 `/source` 응답이 함께 준다**(`versions`) — `/versions` 를 따로 부르지 않는
+ * 이유는 서버 docstring 에 있다(왕복 1회 유지 + presign 비용 0). 체인이 1개면 선택기를
+ * **숨긴다**: 고를 것이 하나뿐인 select 는 조작할 수 없는 컨트롤이고, 이 모듈이 금지한 거짓
+ * 어포던스다.
+ *
+ * 유지되는 종전 계약: `?version=` 쿼리는 없다(각 버전이 자기 id 를 가지므로 식별 경로를 둘로
+ * 만들지 않는다). 비교는 **버전 번호**로 `/diff` 에 넘기고, 방향은 항상 **오래된 → 새로운**
+ * 으로 정규화한다(문서 이력은 시간 순으로 읽는다 — 기준으로 더 새 버전을 골랐다고 화면의
+ * 좌우가 뒤집히면 같은 쌍이 두 방향으로 보인다).
  *
  * @param {number|string} attachmentId  첨부(=버전) id — 권한·대상 기준
  * @param {object} [opts]
@@ -1483,7 +1723,21 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
     '  </div>' +
     '  <div class="attach-diff-controls">' +
+    // 비교 기준 선택기 — 체인에 다른 버전이 있을 때만 보인다(`fillCompareSelect`). 관용구·클래스는
+    // 비교 모달의 `기준`/`비교` select 와 같다(`.attach-diff-ctl`) — 같은 성격의 컨트롤을 두
+    // 화면에서 다른 모양으로 두지 않는다.
+    '    <label class="attach-source-cmpctl attach-diff-ctl" hidden><span>비교 기준</span>' +
+    '<select class="attach-source-cmp"></select></label>' +
     '    <span class="attach-diff-stats" role="status" aria-live="polite"></span>' +
+    // 보기 방식·맥락 토글은 **비교 상태에서만** 나타난다. 비교 모달은 이 둘을 상시 노출하고
+    // 비활성으로 두는데(그 모달에서는 diff 가 기본 화면이라 위치를 외운다), 이 모달의 기본
+    // 화면은 원문이므로 상시 노출하면 대부분의 시간에 쓸 수 없는 컨트롤이 떠 있게 된다.
+    '    <div class="attach-diff-viewtoggle" role="group" aria-label="보기 방식" hidden>' +
+    '      <button type="button" class="attach-diff-mode" data-mode="split">좌우 2열</button>' +
+    '      <button type="button" class="attach-diff-mode" data-mode="unified">단일열</button>' +
+    '    </div>' +
+    '    <label class="attach-diff-ctxtoggle" hidden><input type="checkbox" class="attach-diff-ctxfull">' +
+    '<span>동일한 줄도 모두 보기</span></label>' +
     // 마크다운 렌더 토글 — `.md` 첨부에서만 보인다(사용자 요청 2026-08-12). 기본 켬이며
     // 끄면 종전의 줄번호+원문 표로 돌아간다. 구문 색 토글과 **동시에 보이지 않는다**:
     // 렌더된 문서에는 칠할 원문 줄이 없어 그 토글이 아무 일도 하지 않는 거짓 어포던스가 된다.
@@ -1521,6 +1775,12 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   const hlLabel = backdrop.querySelector(".attach-diff-hl-label");
   const mdWrap = backdrop.querySelector(".attach-source-mdtoggle");
   const mdCb = backdrop.querySelector(".attach-source-md-cb");
+  const cmpWrap = backdrop.querySelector(".attach-source-cmpctl");
+  const cmpSel = backdrop.querySelector(".attach-source-cmp");
+  const viewToggleEl = backdrop.querySelector(".attach-diff-viewtoggle");
+  const ctxToggleEl = backdrop.querySelector(".attach-diff-ctxtoggle");
+  const ctxCb = backdrop.querySelector(".attach-diff-ctxfull");
+  const modeBtns = Array.from(backdrop.querySelectorAll(".attach-diff-mode"));
 
   fnameEl.textContent = String(o.filename || "파일");
   let detectedLang = detectCodeLanguage(fnameEl.textContent);
@@ -1528,191 +1788,230 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   hlCb.checked = hlOn;
   let mdOn = _readMdRenderOn();
   mdCb.checked = mdOn;
+  // 보기 방식·맥락·중앙선 비율은 비교 모달과 **같은 저장 키**를 쓴다 — 한 화면에서 고른 표시
+  // 방식이 다른 화면에서 리셋되면 두 기능처럼 보인다.
+  let mode = _readViewMode();
+  let ratio = _readSplitRatio();
+  ctxCb.checked = _readContextFull();
+  const syncModeButtons = () => {
+    for (const b of modeBtns) b.classList.toggle("is-active", b.dataset.mode === mode);
+  };
+  syncModeButtons();
 
-  let lastData = null;
+  // 두 화면의 응답을 **각자의 변수**에 둔다 — 스키마가 다르므로(`viewable` vs `comparable`,
+  // `version` vs `from`/`to`) 한 변수에 섞으면 판정이 어느 스키마를 보는지 알 수 없게 된다.
+  let srcData = null;     // `/source` — 이 버전의 원문(정본, 재요청 없이 재사용)
+  let diffData = null;    // `/diff` — 선택한 기준과의 비교
+  let viewKind = "source";
+  let thisVersion = 0;    // 이 모달이 가리키는 버전 번호(선택기 기본값 · 비교의 한쪽)
   let reqSeq = 0;
+  const curData = () => (viewKind === "diff" ? diffData : srcData);
 
   /** 이 화면에 마크다운으로 렌더할 본문이 실제로 있는가 (파일명만으로 판정하지 않는다). */
-  const mdRenderable = (data) => _isMarkdownFile(fnameEl.textContent)
-    && Boolean(data) && data.viewable !== false
-    && Array.isArray(data.rows) && data.rows.length > 0;
+  const mdRenderable = (data, kind) =>
+    _isMarkdownFile(fnameEl.textContent) && _bodyState(data, kind || viewKind).sourceView;
 
-  const syncToggles = (data) => {
-    // 노출 판정은 `syncHlToggle` 과 같은 원칙 — **렌더할 본문이 실제로 왔을 때만** 보인다.
-    const md = mdRenderable(data);
+  const syncToggles = (data, kind) => {
+    const k = kind || viewKind;
+    // 노출 판정은 비교 모달의 `syncHlToggle` 과 **같은 함수**(`_bodyState`)를 쓴다 —
+    // 렌더할 본문이 실제로 왔을 때만 보인다.
+    const md = mdRenderable(data, k);
     mdWrap.hidden = !md;
     if (md) mdCb.checked = mdOn;
     // 마크다운으로 보는 동안 구문 색 토글은 숨긴다(칠할 원문 줄이 화면에 없다 — 거짓 어포던스).
-    const paintable = Boolean(detectedLang) && Boolean(data) && data.viewable !== false
-      && Array.isArray(data.rows) && data.rows.length > 0 && !(md && mdOn);
+    const state = _bodyState(data, k);
+    const paintable = Boolean(detectedLang) && state.hasBody && !(md && mdOn);
     hlWrap.hidden = !paintable;
-    if (!paintable) return;
-    hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
-    hlCb.checked = hlOn;
+    if (paintable) {
+      hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+      hlCb.checked = hlOn;
+    }
+    // diff 전용 컨트롤 — 비교 상태에서만 나타나고, 그릴 diff 표가 있을 때만 활성이다
+    // (내용이 같은 쌍은 원문 화면이므로 표시 방식을 바꿀 대상이 없다 — 비교 모달과 같은 사유).
+    const inDiff = k === "diff";
+    viewToggleEl.hidden = !inDiff;
+    ctxToggleEl.hidden = !inDiff;
+    if (inDiff) {
+      const why = state.hasDiff ? "" : "비교할 차이가 없는 화면이라 표시 방식을 바꿀 대상이 없습니다.";
+      for (const b of modeBtns) { b.disabled = !state.hasDiff; b.title = why; }
+      ctxCb.disabled = !state.hasDiff;
+      ctxToggleEl.title = why;
+      viewToggleEl.classList.toggle("is-disabled", !state.hasDiff);
+      ctxToggleEl.classList.toggle("is-disabled", !state.hasDiff);
+    }
   };
   const syncHlToggle = syncToggles;   // 기존 호출부 이름 보존(같은 함수 — 판정면이 하나여야 한다)
-  syncToggles(null);
+  syncToggles(null, "source");
 
   // 컨트롤이 하나도 없으면 컨트롤 바를 통째로 숨긴다 — 바이너리 화면에서 통계도 토글도 없이
   // padding + border-bottom 만 남아 제목 아래에 정체불명의 빈 띠가 그어졌다(§18.8 design 지적).
   const syncControlsBar = () => {
-    controlsEl.hidden = !statsEl.textContent && hlWrap.hidden && mdWrap.hidden;
+    controlsEl.hidden = !statsEl.textContent && hlWrap.hidden && mdWrap.hidden
+      && cmpWrap.hidden && viewToggleEl.hidden;
   };
   syncControlsBar();
 
-  const renderOpts = () => ({
-    lang: hlOn ? detectedLang : null,
-    md: mdOn && mdRenderable(lastData),
-  });
+  // 제목·버전 태그·통계는 **상태에 따라 다르게 말한다** — 한 모달이 두 화면을 갖게 됐으므로,
+  // 지금 보고 있는 것이 원문인지 비교인지가 제목에서 먼저 읽혀야 한다.
+  const syncHead = () => {
+    if (viewKind === "diff") {
+      titleWordEl.textContent = "버전 비교";
+      const f = Number(diffData?.from?.version_number || 0);
+      const t = Number(diffData?.to?.version_number || 0);
+      verTagEl.textContent = f && t ? ` (v${f} → v${t})` : "";
+      statsEl.textContent = _diffStatsText(diffData);
+      return;
+    }
+    const clipped = _sourceClipped(srcData);
+    titleWordEl.textContent = clipped ? "문서 앞부분" : "문서 원문";
+    // 어느 버전의 원문인지 화면에 남긴다 — 체인의 모든 버전이 같은 파일명을 쓰므로
+    // 번호가 없으면 구별 단서가 0 이다(§18.8 ux 지적).
+    const vn = Number(srcData?.version?.version_number || 0);
+    verTagEl.textContent = vn > 1 || srcData?.version?.is_latest === false
+      ? ` (v${vn}${srcData?.version?.is_latest === false ? "" : " · 최신"})`
+      : "";
+    statsEl.textContent = _sourceStatsText(srcData);
+  };
 
-  // 절단·해시와 같은 계열의 판정: **"원문" 은 전량을 봤을 때만 쓸 수 있는 말**이다.
-  // (비교 모달 `_identicalFlags` 와 같은 원칙 — 형제 화면이 명시적으로 금지한 것을 여기서
-  //  반복하지 않는다. 절단이면 제목·통계·배너가 함께 강도를 낮춘다.)
-  const isClipped = (data) => Boolean(data && (
-    (data.truncated && (data.truncated.source || data.truncated.rows))
-    || data.stats?.lines_partial));
+  const renderOpts = () => ({
+    ratio,
+    rows: (curData() && curData().rows) || [],
+    lang: hlOn ? detectedLang : null,
+    md: mdOn && mdRenderable(curData(), viewKind),
+    onRatioChange: (r) => { ratio = r; },
+    // gap 국소 전개는 이 모달에 두지 않는다 — 전개는 "전체 맥락" 재요청 + 쌍별 캐시가 필요한
+    // 비교 전용 흐름이고, 여기서 더 보려면 "동일한 줄도 모두 보기" 라는 대안 경로가 이미 있다.
+    // (버튼을 만들지 않으므로 눌러서 실패하는 경로도 없다.)
+    onExpandGap: null,
+    onMdFallbackSync: () => {
+      mdCb.checked = false;
+      hlWrap.hidden = !detectedLang;
+      if (detectedLang) {
+        hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+        hlCb.checked = hlOn;
+      }
+      syncControlsBar();
+    },
+  });
 
   // 재렌더는 **스크롤을 보존**한다 — `bodyEl.innerHTML = ""` 가 scroller 요소를 통째로 갈아치우고
   // 스크롤은 그 요소의 상태이므로 함께 사라진다. 원문 뷰는 축약이 없어 항상 전량(최대 6,000행)을
   // 그리므로 diff 보다 잃는 거리가 크다(§18.8 ux 지적 — 비교 모달 AC-AVD-15 와 같은 계약).
+  //
+  // 두 화면 모두 **비교 모달과 같은 렌더러**를 쓴다: 원문은 `_renderSourceBody`, 비교는
+  // `_renderBody`. 이 모달이 자기 렌더러를 따로 갖지 않는 것이 "같은 파일이 두 화면에서 다르게
+  // 보이지 않는다" 는 계약의 실행면이다.
   const render = (renderCfg) => {
-    const data = lastData;
     const keepScroll = Boolean(renderCfg && renderCfg.keepScroll);
-    const anchor = keepScroll
+    if (viewKind === "diff") {
+      if (diffData) _renderBody(bodyEl, diffData, mode, { ...renderOpts(), keepScroll });
+      return;
+    }
+    _renderSourceBody(bodyEl, srcData, { ...renderOpts(), keepScroll });
+  };
+
+  /** 원문 화면으로 (되)돌아간다 — 이미 받아 둔 `/source` 응답을 다시 그린다(재요청 0). */
+  const showSource = (renderCfg) => {
+    viewKind = "source";
+    diffData = null;
+    syncToggles(srcData, "source");
+    syncHead();
+    syncControlsBar();
+    render(renderCfg);
+  };
+
+  // 비교 기준 선택기 — `/source` 가 준 체인으로 채운다. **이 버전이 기본 선택**이고 그 선택은
+  // 곧 원문 보기다. 체인이 1개면 숨긴다 — 고를 것이 하나뿐인 select 는 조작할 수 없는 컨트롤이고
+  // (이 모듈이 금지한 거짓 어포던스), 버전이 하나인 첨부가 이 모달의 원래 대상이다.
+  const fillCompareSelect = (data) => {
+    const chain = (Array.isArray(data?.versions) ? [...data.versions] : [])
+      .sort((a, b) => Number(a.version_number || 1) - Number(b.version_number || 1));
+    cmpSel.innerHTML = "";
+    if (chain.length < 2) { cmpWrap.hidden = true; return; }
+    for (const v of chain) {
+      const n = Number(v.version_number || 1);
+      const opt = document.createElement("option");
+      opt.value = String(n);
+      // 자기 자신도 목록에 둔다 — 비교 상태에서 원문으로 되돌아오는 **명시적 경로**가 되고,
+      // "같은 버전을 고르면 원문" 이라는 계약이 화면에서 조작 가능해진다(사용자 요청 후단).
+      opt.textContent = n === thisVersion ? `${_versionLabel(v)} · 이 버전` : _versionLabel(v);
+      cmpSel.appendChild(opt);
+    }
+    cmpSel.value = String(thisVersion);
+    cmpWrap.hidden = false;
+  };
+
+  const loadDiff = async (basisVersionRaw, loadOpts) => {
+    const basis = Number(basisVersionRaw);
+    // 같은 버전 = 비교할 것이 없다 → 원문을 그대로 출력한다(요청 없이 정본 재사용).
+    if (!basis || basis === thisVersion) { showSource({ keepScroll: false }); return; }
+    const keepScroll = Boolean(loadOpts && loadOpts.keepScroll);
+    const pendingAnchor = keepScroll
       ? _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"))
       : null;
-    bodyEl.innerHTML = "";
-    if (!data) return;
-
-    // 볼 수 없는 형식(스프레드시트·PDF·이미지 등) — 메타로 강등해 답한다. 조용히 빈 화면을
-    // 주면 사용자는 기능이 고장 났다고 읽는다.
-    // (`source_unavailable` 은 서버가 **503** 으로 답하므로 `apiFetch` 가 throw 하고 아래 catch
-    //  경로로 간다 — 여기서 그 사유를 분기하면 도달 불가 코드가 된다. 서버가 payload 에 `error`
-    //  문구를 실어 catch 가 그대로 보여 준다.)
-    if (data.viewable === false) {
-      const msg = document.createElement("div");
-      msg.className = "attach-diff-notice";
-      msg.textContent =
-        "이 형식(스프레드시트·PDF·이미지 등)은 원문 보기를 지원하지 않습니다. 내려받아 확인하세요.";
-      bodyEl.appendChild(msg);
-      const v = data.version || {};
-      const meta = document.createElement("table");
-      meta.className = "attach-diff-meta";
-      const rowOf = (label, val) =>
-        `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(val)}</td></tr>`;
-      meta.innerHTML = "<tbody>" +
-        rowOf("작성 주체", v.created_by_role === "assistant" ? "AI 수정" : "사용자") +
-        rowOf("크기", _fmtBytes(v.size)) +
-        rowOf("등록 시각", v.created_at || "-") +
-        rowOf("sha256", (v.sha256 || "").slice(0, 16) + "…") +
-        "</tbody>";
-      bodyEl.appendChild(meta);
-      return;
+    // 방향은 **오래된 → 새로운** 으로 정규화한다(docstring 참조) — 기준으로 더 새 버전을
+    // 골랐다고 좌우가 뒤집히면 같은 쌍이 두 방향으로 보인다.
+    const from = Math.min(basis, thisVersion);
+    const to = Math.max(basis, thisVersion);
+    const seq = ++reqSeq;
+    viewKind = "diff";
+    statsEl.textContent = "비교 중…";
+    // 보존 요청이면 기존 표를 남겨 둔다 — 지우면 '불러오는 중' 사이에 화면이 튄다.
+    if (!keepScroll) bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
+    const qs = new URLSearchParams({ from_version: String(from), to_version: String(to) });
+    if (ctxCb.checked) qs.set("context", "full");
+    try {
+      const data = await apiFetch(
+        `/api/attachments/${encodeURIComponent(attachmentId)}/diff?${qs.toString()}`);
+      if (seq !== reqSeq) return;   // 늦게 도착한 응답이 최신 선택을 덮지 않게
+      diffData = data;
+      syncToggles(data, "diff");
+      syncHead();
+      syncControlsBar();
+      render({ keepScroll: false });
+      if (keepScroll && pendingAnchor) {
+        _restoreScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"), pendingAnchor);
+      }
+    } catch (e) {
+      if (seq !== reqSeq) return;
+      diffData = null;
+      syncToggles(null, "diff");
+      syncHead();   // 제목은 "버전 비교" 로 두고 태그·통계는 비운다(diffData 부재)
+      syncControlsBar();
+      bodyEl.innerHTML =
+        `<div class="attach-diff-notice is-warn">${escapeHtml(e?.message || "비교에 실패했습니다.")}</div>`;
     }
-
-    // 절단 배너 — 무음 절단 금지(`/diff` 화면과 같은 계약).
-    const tr = data.truncated || {};
-    if (tr.source) {
-      const capMB = ((data.caps?.source_bytes || 0) / 1048576).toFixed(0);
-      const el = document.createElement("div");
-      el.className = "attach-diff-notice is-warn";
-      el.textContent = `원본이 ${capMB}MB 를 넘어 앞부분만 표시했습니다 — 이후 내용은 보이지 않습니다.`;
-      bodyEl.appendChild(el);
-    }
-    if (tr.rows) {
-      const el = document.createElement("div");
-      el.className = "attach-diff-notice is-warn";
-      el.textContent = `문서가 길어 앞쪽 ${Number(data.caps?.rows || 0)}행만 표시했습니다.`;
-      bodyEl.appendChild(el);
-    }
-
-    const rows = Array.isArray(data.rows) ? data.rows : [];
-    if (rows.length === 0) {
-      const el = document.createElement("div");
-      el.className = "attach-diff-notice";
-      el.textContent = "문서가 비어 있습니다.";
-      bodyEl.appendChild(el);
-      return;
-    }
-    const wrap = document.createElement("div");
-    wrap.className = "attach-diff-splitwrap";
-    const scroller = document.createElement("div");
-    scroller.className = "attach-diff-scroller";
-    // 렌더 결과에 따라 배너를 **뒤에 만들어 본문 앞에 끼운다** — 차단 건수·폴백 사유는
-    // 렌더가 끝나야 알 수 있고, 사용자는 그 사실을 본문보다 먼저 봐야 한다.
-    let mdNotice = null;
-    _renderSource(scroller, data, {
-      ...renderOpts(),
-      onMdRendered: ({ blockedMedia, deadLinks }) => {
-        if (!blockedMedia && !deadLinks) return;
-        mdNotice = document.createElement("div");
-        mdNotice.className = "attach-diff-notice is-warn";
-        const parts = [];
-        if (blockedMedia) parts.push(`이미지·미디어 ${blockedMedia}건`);
-        if (deadLinks) parts.push(`앱 내부 링크 ${deadLinks}건`);
-        mdNotice.textContent =
-          `${parts.join(" · ")}을 차단했습니다 — 문서를 여는 것만으로 열람 사실이 외부로 새거나 `
-          + "클릭 한 번으로 내 권한이 쓰이지 않도록 막았습니다. 원래 주소는 본문에 표시됩니다.";
-      },
-      onMdFallback: () => {
-        mdNotice = document.createElement("div");
-        mdNotice.className = "attach-diff-notice is-warn";
-        mdNotice.textContent =
-          "마크다운으로 렌더하지 못해 원문으로 표시합니다 (렌더 라이브러리 미로드일 수 있습니다).";
-        // 컨트롤을 **화면과 일치**시킨다 — 체크는 켜져 있는데 원문 표가 보이면 사용자는
-        // 토글이 고장 났다고 읽는다(codex 적대 리뷰 [P2]). 저장값은 건드리지 않는다:
-        // 이 전환은 사용자의 선택이 아니라 실패로 인한 강등이므로 다음 열람에서 다시 시도한다.
-        mdCb.checked = false;
-        hlWrap.hidden = !detectedLang;
-        if (detectedLang) {
-          hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
-          hlCb.checked = hlOn;
-        }
-        syncControlsBar();
-      },
-    });
-    wrap.appendChild(scroller);
-    if (mdNotice) bodyEl.appendChild(mdNotice);
-    bodyEl.appendChild(wrap);
-    _restoreScrollAnchor(scroller, anchor);
   };
 
   const load = async () => {
     const seq = ++reqSeq;
+    viewKind = "source";
     statsEl.textContent = "불러오는 중…";
     bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
     try {
       const data = await apiFetch(
         `/api/attachments/${encodeURIComponent(attachmentId)}/source`);
       if (seq !== reqSeq) return;   // 늦게 도착한 응답이 최신 선택을 덮지 않게
-      lastData = data;
+      srcData = data;
       // 파일명은 서버가 정본이다 — 호출부가 이름을 안 넘겼을 때(말풍선 칩 등) 제목·언어
       // 판정이 어긋나지 않게 응답으로 다시 맞춘다.
       if (data.filename && data.filename !== fnameEl.textContent) {
         fnameEl.textContent = String(data.filename);
         detectedLang = detectCodeLanguage(fnameEl.textContent);
       }
-      syncHlToggle(data);
-      // 어느 버전의 원문인지 화면에 남긴다 — 체인의 모든 버전이 같은 파일명을 쓰므로
-      // 번호가 없으면 구별 단서가 0 이다(§18.8 ux 지적).
-      const vn = Number(data.version?.version_number || 0);
-      verTagEl.textContent = vn > 1 || data.version?.is_latest === false
-        ? ` (v${vn}${data.version?.is_latest === false ? "" : " · 최신"})`
-        : "";
-      const clipped = isClipped(data);
-      titleWordEl.textContent = clipped ? "문서 앞부분" : "문서 원문";
-      const shown = Array.isArray(data.rows) ? data.rows.length : 0;
-      statsEl.textContent = data.viewable === false
-        ? ""
-        : clipped
-          ? `앞 ${shown}행 표시 · 전체 ${_fmtBytes(data.version?.size)}`
-          : `${Number(data.stats?.lines || 0)}줄 · ${_fmtBytes(data.version?.size)}`;
+      thisVersion = Number(data.version?.version_number || 1);
+      fillCompareSelect(data);
+      syncToggles(data, "source");
+      syncHead();
       syncControlsBar();
       render();
     } catch (e) {
       if (seq !== reqSeq) return;
-      lastData = null;
-      syncHlToggle(null);
+      srcData = null;
+      diffData = null;
+      viewKind = "source";
+      cmpWrap.hidden = true;
+      syncToggles(null, "source");
       statsEl.textContent = "";
       titleWordEl.textContent = "문서 원문";
       verTagEl.textContent = "";
@@ -1721,6 +2020,26 @@ export function openAttachmentSourceModal(attachmentId, opts) {
         `<div class="attach-diff-notice is-warn">${escapeHtml(e?.message || "원문을 불러오지 못했습니다.")}</div>`;
     }
   };
+
+  // 비교 기준 변경 — 같은 버전이면 원문으로 되돌아오고(요청 0), 다른 버전이면 그 쌍을 비교한다.
+  cmpSel.addEventListener("change", () => { loadDiff(cmpSel.value); });
+
+  // 보기 방식(2열/단일열) — 같은 응답의 다른 표현이므로 재요청하지 않는다.
+  for (const b of modeBtns) {
+    b.addEventListener("click", () => {
+      mode = b.dataset.mode === "unified" ? "unified" : "split";
+      _writeViewMode(mode);
+      syncModeButtons();
+      render({ keepScroll: true });
+    });
+  }
+
+  // 맥락 범위는 **서버가 축약을 계산**하므로 재요청이 필요하다(프론트에 축약 로직을 재구현하면
+  // 같은 쌍에 두 화면이 나온다 — 비교 모달과 같은 사유). 보던 위치는 유지한다.
+  ctxCb.addEventListener("change", () => {
+    _writeContextFull(ctxCb.checked);
+    if (viewKind === "diff") loadDiff(cmpSel.value, { keepScroll: true });
+  });
 
   // 같은 응답의 표시 방식만 바뀌므로 재요청 없이 재렌더하고, **보고 있던 줄을 유지**한다
   // (비교 모달과 동일 계약 — 계약의 절반만 옮기면 스크롤이 최상단으로 튄다).
@@ -1736,7 +2055,7 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   mdCb.addEventListener("change", () => {
     mdOn = mdCb.checked;
     _writeMdRenderOn(mdOn);
-    syncToggles(lastData);      // 구문 색 토글 노출이 md 상태에 종속된다
+    syncToggles(curData(), viewKind);   // 구문 색 토글 노출이 md 상태에 종속된다
     syncControlsBar();
     render({ keepScroll: false });
   });

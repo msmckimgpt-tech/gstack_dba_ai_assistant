@@ -237,8 +237,12 @@ console.log("\n[C] 구문 하이라이트");
   ok("C4 lang 부재 시 종전 평문 경로(span 0)",
     plain.querySelectorAll('[class^="code-tok-"]').length === 0);
   // 하이라이트 토글 노출 조건에서 identical 제외가 사라졌는지(원문도 칠할 본문이 있다).
+  // 판정면은 공용 `_bodyState` 의 `hasBody` 이며(REQ-20260813-attach-source-compare 에서 두
+  // 모달이 공유), **그 정의에 `identical` 이 들어가지 않는다** — 들어가면 원문 화면만 무색으로
+  // 남아 같은 파일이 diff 에서는 색이 있고 원문에서는 없는 비일관이 된다.
   ok("C5 토글 노출 조건이 identical 을 배제하지 않는다",
-    /const paintable = Boolean\(detectedLang\) && Boolean\(data\)\s*\n\s*&& data\.comparable !== false\s*\n\s*&& Array\.isArray\(data\.rows\)/.test(diffJs));
+    /const paintable = Boolean\(detectedLang\) && _bodyState\(data, kind \|\| "diff"\)\.hasBody/.test(diffJs)
+    && /const hasBody = Boolean\(data\) && rows > 0\s*\n\s*&& \(isDiff \? data\.comparable !== false : data\.viewable !== false\);/.test(diffJs));
 }
 
 // ── (D) 거짓 어포던스 차단 — 모달을 **실제로 열어** 컨트롤 상태를 본다 ────────────
@@ -310,8 +314,14 @@ const openWith = async (resp) => {
 
   ok("D5 응답 전 초기 상태도 비활성(깜빡임 없음)",
     /syncDiffOnlyControls\(null\);\s+\/\/ 응답 전에는 비활성/.test(diffJs));
-  ok("D6 판정면이 syncHlToggle 과 동일(comparable·identical·rows 3축)",
-    /const hasDiff = Boolean\(data\) && data\.comparable !== false && !data\.identical\s*\n\s*&& Array\.isArray\(data\.rows\) && data\.rows\.length > 0;/.test(diffJs));
+  // 판정면이 **함수 하나**임을 구조로 단정한다 — 두 sync 함수가 같은 `_bodyState` 를 호출하고
+  // 그 함수는 모듈에 한 번만 정의된다. 조건식을 각자 복제하던 종전 형태(정규식 2벌)는 한쪽만
+  // 고쳐지는 방식으로 갈라졌고, 원문 보기 모달이 비교를 수행하게 되면서 사본이 세 벌이 될
+  // 자리였다(REQ-20260813-attach-source-compare).
+  ok("D6 판정면이 syncHlToggle 과 동일(공용 `_bodyState` 하나)",
+    /const \{ hasDiff \} = _bodyState\(data, kind \|\| "diff"\);/.test(diffJs)
+    && /const hasDiff = Boolean\(isDiff && hasBody && !data\.identical\);/.test(diffJs)
+    && (diffJs.match(/function _bodyState\(/g) || []).length === 1);
 
   // CSS 트랩 — author `display:inline-flex` 가 UA `[hidden]{display:none}` 를 이긴다.
   // 하이라이트 토글의 숨김 계약(AC-AVD-23)이 CSS 층에서 무력화돼 있던 선행 결함의 봉인.
