@@ -194,6 +194,7 @@ Rules:
 
 Hard rules:
 - `source_attachment_id` MUST be the attachment_id of the file you are editing (shown in the ATTACHED FILES list). Without it the file cannot be saved. If the file the user wants updated is NOT in the current ATTACHED FILES list, ask them to re-attach it — do NOT paste the full body as a fallback.
+- **YOUR EDITS LIVE IN THEIR OWN VERSION CHAIN — you never overwrite the user's file.** Editing a file the user uploaded starts a SEPARATE lineage at v1 that branches from the version you edited; their own chain and its latest version stay exactly as they were. Editing a file YOU produced continues YOUR chain (v1 → v2 → …). So: pick `source_attachment_id` by which lineage the user means — their newest version when they ask you to update THEIR file, your newest edit when they ask you to keep refining YOUR version (the "FILE VERSION LINEAGES" section, when present, lists both with attachment_ids). Never tell the user their original was replaced or superseded by your edit, and never claim a version number from the other lineage as yours.
 - **Do NOT set `filename`.** Omit it. The system automatically names the new version consistently with the original — the original stem plus a version suffix (`report.csv` → `report_v2.csv` → `report_v3.csv`) — and always keeps the original extension. Only set `filename` if the user explicitly asks for a different name; even then the system still enforces the version suffix and original extension.
 - The `attachment-edit` block is NEVER shown to the user as text. The system removes it from your answer and saves its content as a new downloadable version of that attachment, then shows a "📎 수정본 전달" chip the user can download.
 - THEREFORE never paste the whole file body as a normal ```sql / ```text / ``` block when an updated file was requested. The user reads the diff (what changed) and downloads the full updated file. Dumping the entire body as plain text is wrong: it floods the chat and the user cannot download it.
@@ -626,7 +627,10 @@ def _load_scoped_attachment_rows() -> list[dict]:
         placeholders = ", ".join(["%s"] * len(ids))
         params: tuple = tuple(int(i) for i in ids) + (conversation_id,)
         cur.execute(
-            f"SELECT Id, OriginalFilename, Kind, ObjectKey, UploadStatus, MetaJson "
+            # REQ-20260814-attach-version-branching: 계보 식별자(CreatedByRole/VersionNumber)를
+            # 함께 읽는다 — 동명 첨부가 여럿일 때 "어느 계보인지" 를 되물으려면 필요하다.
+            f"SELECT Id, OriginalFilename, Kind, ObjectKey, UploadStatus, MetaJson, "
+            f"CreatedByRole, VersionNumber "
             f"FROM WebConversationAttachments "
             f"WHERE Id IN ({placeholders}) AND ConversationId = %s "
             f"AND DeletedAt IS NULL AND DeletePending = 0 ORDER BY Id DESC",
@@ -640,6 +644,8 @@ def _load_scoped_attachment_rows() -> list[dict]:
                 "object_key": str(row[3] or ""),
                 "status": str(row[4] or ""),
                 "meta_json": row[5],
+                "created_by_role": str(row[6] or "user") if len(row) > 6 else "user",
+                "version_number": int(row[7] or 1) if len(row) > 7 and row[7] is not None else 1,
             })
         cur.close()
     except Exception:
@@ -713,7 +719,23 @@ def read_attachment_content(
                 f'"{filename}" 이라는 첨부를 이 대화에서 찾지 못했습니다. '
                 f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
             )}
-        target = cands[0]  # rows 가 Id DESC — 동명 파일은 최신본
+        # REQ-20260814-attach-version-branching (§18.8 적대 리뷰 [P1]): 동명 파일이 여럿인 것은
+        # 이제 **정상 상태**다 — 사람 계보 head 와 AI 계보 head 가 같은 이름으로 공존한다.
+        # 종전처럼 Id 가 가장 큰 것을 조용히 고르면, 모델이 "사용자가 올린 파일" 을 읽으려 해도
+        # 자기가 만든 수정본을 읽고 그것을 사용자 파일이라 서술한다(조용한 오독). 이름만으로
+        # 가릴 수 없으면 **고르지 말고 되묻는다** — 어느 계보인지는 모델이 아는 정보다.
+        if len(cands) > 1:
+            _opts = ", ".join(
+                f"attachment_id={r['id']}"
+                f"({'AI 수정본' if str(r.get('created_by_role') or '') == 'assistant' else '사용자 업로드'}"
+                f" v{r.get('version_number') or 1})"
+                for r in cands[:8]
+            )
+            return {"ok": False, "error": (
+                f'"{filename}" 이름의 첨부가 {len(cands)}건 있습니다(사람이 올린 계보와 AI 수정 계보가 '
+                f"같은 이름으로 공존할 수 있습니다). 어느 것을 읽을지 `attachment_id` 로 지정하세요 — {_opts}"
+            )}
+        target = cands[0]
     else:
         return {"ok": False, "error": "filename 또는 attachment_id 중 하나를 지정하세요."}
 
@@ -1452,7 +1474,8 @@ def _build_attachment_context_section(
                         # — 그룹 대화에서 "누가 올린 파일인가" 를 라벨로 밝히기 위한 것(아래 UPLOADER 주석).
                         f"SELECT id, conversation_id, original_filename, kind, mime_type, "
                         f"size_bytes, size_bucket, upload_status, meta_json::text, "
-                        f"root_attachment_id, version_number, created_by_role, account_id "
+                        f"root_attachment_id, version_number, created_by_role, account_id, "
+                        f"(created_at AT TIME ZONE 'UTC') AS created_at "
                         f"FROM agent_runtime.core_attachments "
                         f"WHERE id IN ({_ph}) AND {_scope_sql} "
                         f"AND deleted_at IS NULL AND delete_pending = 0 ORDER BY id ASC",
@@ -1480,7 +1503,7 @@ def _build_attachment_context_section(
                 f"""
                 SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
                        SizeBytes, SizeBucket, UploadStatus, MetaJson,
-                       RootAttachmentId, VersionNumber, CreatedByRole, AccountId
+                       RootAttachmentId, VersionNumber, CreatedByRole, AccountId, CreatedAt
                 FROM WebConversationAttachments
                 WHERE Id IN ({placeholders}) AND {_scope_sql} AND DeletedAt IS NULL AND DeletePending = 0
                 ORDER BY Id ASC
@@ -1523,6 +1546,11 @@ def _build_attachment_context_section(
     # 타 멤버 파일의 attachment_id → 표시 라벨. 본문 datamark 구획 헤더에도 출처를 실어,
     # 모델이 비신뢰 구획 안에서도 "이건 다른 사람이 올린 파일" 을 잃지 않게 한다.
     _other_uploader_of: dict[int, str] = {}
+    # REQ-20260814-attach-version-branching: 파일명 → 계보 목록. assistant 수정본이 사용자 계보에
+    # 편입되지 않고 **별도 계보로 분기**하므로, 한 파일명에 계보가 둘 이상 공존할 수 있다.
+    # 그러면 "최신" 이 두 뜻을 갖는다 — (a) 각 계보 안의 최신 (b) 시간순 최신. 모델이 둘을
+    # 구분하지 못하면 "최신본을 고쳤다" 면서 남의 계보를 집거나 오래된 것을 집는다.
+    _lineages: dict[str, list[dict]] = {}
     # NEW_ATTACHMENT_IDS: 이번 요청에 새로 첨부된 파일 ID set (신규 vs 세션 라벨링용).
     new_ids_set = _load_new_attachment_ids()
 
@@ -1605,6 +1633,8 @@ def _build_attachment_context_section(
         created_by_role = str(row[11] or "user") if len(row) > 11 and row[11] is not None else "user"
         # FR-group-attach-sender-scope-blocks-members: 업로더(row[12]) — 그룹에서 출처 라벨용.
         uploader_account_id = int(row[12] or 0) if len(row) > 12 and row[12] is not None else 0
+        # REQ-20260814-attach-version-branching: 생성 시각(row[13]) — 계보 요약의 시간순 축.
+        created_at_raw = row[13] if len(row) > 13 else None
         meta_obj: dict = {}
         try:
             meta_raw = row[8]
@@ -1733,10 +1763,88 @@ def _build_attachment_context_section(
                 _uname = _uploader_labels.get(int(uploader_account_id)) or "another member"
                 uploader_label = f" 👤uploaded-by={_uname} (OTHER MEMBER)"
                 _other_uploader_of[attachment_id] = _uname
+        # REQ-20260814-attach-version-branching: 계보 요약용 사실 적재(렌더는 순회 후 1회).
+        if filename:
+            _lineages.setdefault(filename, []).append({
+                "id": attachment_id,
+                "version": version_number,
+                "role": created_by_role,
+                "uploader": uploader_account_id,
+                "created_at": created_at_raw,
+                "branch_of": meta_obj.get("branch_of_attachment_id") if isinstance(meta_obj, dict) else None,
+            })
         # TASK-0284: 파일명을 맨 앞에 따옴표로 노출 — LLM 이 첨부를 attachment_id(일련번호)가 아닌
         # 파일명으로 지칭하게 한다(사용자 혼란 방지). attachment_id 는 보조 참조로 괄호 안에 둔다.
         lines.append(
             f'- file "{filename}" (attachment_id={attachment_id}) kind={kind} size={size_bucket} status={upload_status}{source_label}{version_label}{uploader_label}{meta_text}'
+        )
+
+    # ── REQ-20260814-attach-version-branching: 계보 요약(두 기준의 최신본) ──────────────
+    # 사람이 올린 계보와 AI 가 만든 계보가 같은 파일명으로 공존할 때만 렌더한다. 계보가 하나면
+    # "최신" 이 모호하지 않으므로 아무것도 붙이지 않는다(프롬프트 절약).
+    _multi = {fn: v for fn, v in _lineages.items() if len(v) > 1}
+    if _multi:
+        def _ca_key(e: dict):
+            """created_at 정렬 키 — 타입이 섞여도(문자열/None) 예외 없이 뒤로 민다."""
+            v = e.get("created_at")
+            return (0, str(v)) if v is not None else (1, "")
+
+        def _ca_show(v) -> str:
+            if v is None:
+                return "시각 미상"
+            try:
+                return v.strftime("%Y-%m-%d %H:%M")
+            except Exception:  # noqa: BLE001 — 문자열/기타 타입
+                return str(v)[:16]
+
+        lines.append("")
+        lines.append("## FILE VERSION LINEAGES — 같은 파일명, 서로 다른 버전 계보")
+        lines.append(
+            "A file edited by you is kept in its OWN version chain, separate from the chain the person "
+            "uploaded. So for the files below **\"the latest\" has two different answers** and you must "
+            "not collapse them:"
+        )
+        lines.append(
+            "  · **per-lineage latest** — the newest version *within one chain* (that person's own latest, "
+            "or your own latest edit)"
+        )
+        lines.append(
+            "  · **overall latest** — whichever version is newest *by time*, across every chain of that filename"
+        )
+        for fn in sorted(_multi):
+            entries = sorted(_multi[fn], key=_ca_key)
+            newest_id = entries[-1]["id"] if entries else 0
+            lines.append(f'- "{fn}" — {len(entries)} lineages:')
+            for e in entries:
+                if str(e.get("role") or "") == "assistant":
+                    # §18.8 적대 리뷰 [P2]: AI 수정본이라고 전부 "내 것" 이 아니다. 저장 경로는
+                    # source 의 AccountId 가 호출자와 같을 때만 새 버전을 만들므로, 다른 멤버의
+                    # 요청으로 만들어진 AI 파일은 이 호출자가 **이어서 수정할 수 없다**.
+                    # 그걸 "by you" 로 적으면 모델이 편집을 시도했다 조용히 거부당한다.
+                    _own = not e.get("uploader") or (account_id and int(e["uploader"]) == int(account_id))
+                    if _own:
+                        who = "AI-edited (your lineage — you can extend it)"
+                    else:
+                        _onm = _uploader_labels.get(int(e.get("uploader") or 0)) if _uploader_labels else None
+                        who = (f"AI-edited for {_onm or 'another member'} — READ-ONLY for you"
+                               if not _own else "AI-edited")
+                    origin = f", branched from attachment_id={e['branch_of']}" if e.get("branch_of") else ""
+                else:
+                    _nm = _uploader_labels.get(int(e.get("uploader") or 0)) if _uploader_labels else None
+                    who = f"uploaded by {_nm}" if _nm else "uploaded by the user"
+                    origin = ""
+                mark = "  ← overall latest (newest by time)" if e["id"] == newest_id else ""
+                lines.append(
+                    f"    • {who} — v{e['version']} (attachment_id={e['id']}, {_ca_show(e.get('created_at'))}"
+                    f"{origin}){mark}"
+                )
+        lines.append(
+            "**HOW TO USE THIS**: when the user says 최신/latest without naming a lineage, say which one you "
+            "mean before acting (e.g. \"사용자님이 올리신 최신 v2 기준으로\" vs \"제가 수정한 최신 v1 기준으로\"). "
+            "When they ask you to update THEIR file, edit the newest version of THEIR chain — not your own "
+            "edit — and when they ask to continue from your edit, use the newest version of YOUR chain. "
+            "Editing any of these creates the next version of the chain you edited; it never overwrites the "
+            "other lineage."
         )
 
     # text kind 파일 내용 주입 (TASK-0124).

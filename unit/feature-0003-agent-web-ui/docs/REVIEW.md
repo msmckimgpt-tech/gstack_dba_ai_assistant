@@ -4934,3 +4934,21 @@ TASK-0098 로 미직렬화). 관리자가 타 계정 그룹 대화를 보관하�
 
 - 도넛에서 값 0 인 모델이 범례에 `0.0%` 로 남는다. 캐시 지표처럼 일부 모델만 값이 있는 경우
   "그 모델은 0" 이라는 사실 표기라 오해가 없다고 판단했다(숨기면 목록이 흔들린다).
+## REV-20260814T010000-attach-version-branching [CODEX:adversarial-data-integrity] — 버전 계보 분기
+
+- Related Change: `CHG-20260814T010000-ai-claude-feature-0003-attach-version-branching`
+  (REQ-20260814-attach-version-branching, 위험등급 **Major §12.3**).
+- Trigger (§18.8 dispatch): `schema/query`(버전 체인 쿼리·신규 계보 조회) + 데이터 생성 경로 변경
+  → **backend + qa** 렌즈. 세션 지시로 Agent 도구 미사용 → §18.9 대체 채널 **codex CLI**.
+- 집행: staged diff 를 codex 가 직접 읽고 5축(계보 가정 파손 소비자 · supersede 생략의 정합성 ·
+  `RootAttachmentId=NULL` 상호작용 · 신규 조회 IDOR · 프롬프트가 코드가 보장 못 하는 것을 말하는가)
+  적대 검증. 결과 **[P1] 3건 · [P2] 1건** → 전건 반영(MODIFY 의 반영 절 참조).
+- **가장 중요한 적발**: 사용자 재업로드가 AI 계보로 편입되는 경로. 분기를 도입하면서 *반대 방향*
+  (사용자 업로드 → 계보 선택)의 역할 스코프를 놓쳤다. 이 하나로 계보 분리가 무너진다.
+- 무결 확인(codex): `RootAttachmentId=NULL` ↔ `UNIQUE(Root,Version)` · `WHERE Root=X OR Id=X` 형태 ·
+  chain 삭제/diff · ZIP 중복명 · 분기 row 의 PG 미러에서 별도 결함 없음.
+- 검증: 신규/갱신 테스트 **20**(계보 프롬프트 13 · 분기 계약 10 중 신규 2 포함 · versioning 2) +
+  관련 스위트 61 PASS. 전체 스위트 회귀 실패 0(잔여는 선재 환경 의존 파일 1개).
+- 한계(정직): 분기·연장 경로는 MinIO·audit·dual-write 를 함께 태워 fake 로 전 구간을 돌리기 어려워
+  **소스 구조 잠금**으로 계약을 고정했다(§16.7 G10 동형). 실제 INSERT/supersede 의 라이브 동작은
+  배포 후 실측 대상이다.
