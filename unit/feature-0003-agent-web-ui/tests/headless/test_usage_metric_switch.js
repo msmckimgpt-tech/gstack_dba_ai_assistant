@@ -340,6 +340,28 @@ __USAGE_SRC__
     widthCase.axisX2 !== null && widthCase.axisX2 < 640 && widthCase.barX.every((x) => x < 640), widthCase);
   await page.evaluate(() => { document.getElementById("usageDayChart").parentElement.style.width = "760px"; });
 
+  // ── 13) '그 지표에서 처음 생기는 막대'의 첫 등장도 애니메이션인가 ─────────────────────
+  //   기존 검사는 노드가 이미 남아 있는 2회차 이후를 봤다. 차트를 새로 그린 직후(=`|__all__`
+  //   노드가 아직 없는 상태)의 **첫 전환**을 측정해야 신규 삽입 경로가 검증된다.
+  const firstAppear = await page.evaluate(async () => {
+    const el = document.getElementById("usageDayChart");
+    el._sig = "";                       // 강제 재생성 → __all__ 노드 없는 상태로 되돌림
+    document.querySelector('[data-metric="total_tokens"]').click();
+    await new Promise((r) => setTimeout(r, 800));
+    const had = !!el.querySelector('rect[data-seg$="|__all__"]');
+    document.querySelector('[data-metric="requests"]').click();
+    await new Promise((r) => setTimeout(r, 110));
+    const n = el.querySelector('rect[data-seg$="|__all__"]');
+    const mid = n ? parseFloat(getComputedStyle(n).height) : null;
+    const running = n ? n.getAnimations().map((a) => a.transitionProperty) : [];
+    await new Promise((r) => setTimeout(r, 900));
+    const end = n ? parseFloat(getComputedStyle(n).height) : null;
+    return { hadNodeBefore: had, mid, end, running };
+  });
+  check("신규 막대의 첫 등장도 0 에서 자란다(점프 아님)",
+    firstAppear.hadNodeBefore === false && firstAppear.mid !== null
+    && firstAppear.mid > 0.3 && firstAppear.mid < firstAppear.end - 0.5, firstAppear);
+
   await page.screenshot({ path: path.join(__dirname, "usage-metric-switch.png"), fullPage: false });
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);

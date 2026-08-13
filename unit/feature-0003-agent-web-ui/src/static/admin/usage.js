@@ -257,10 +257,13 @@ async function loadUsage(opts) {
         if (anchor) anchor.insertAdjacentHTML("beforebegin", html);
         else svg.insertAdjacentHTML("beforeend", html);
         const node = svg.querySelector(`rect[data-seg="${CSS.escape(s.key)}"]`);
-        if (node) requestAnimationFrame(() => {
+        if (node) {
+          // 시작 스타일(높이 0)을 **확정시킨 뒤** 목표값을 준다. rAF 한 번은 스타일 재계산 전에
+          // 두 값이 같은 프레임에 들어가 transition 이 발동하지 않을 수 있다(라이브 실측).
+          void node.getBoundingClientRect();
           node.style.y = s.y.toFixed(1) + "px";
           node.style.height = s.h.toFixed(1) + "px";
-        });
+        }
       });
       const lbl = svg.querySelector("[data-vlabels]");
       if (lbl) lbl.innerHTML = labels.map((L) => vLabel(L)).join("");
@@ -433,7 +436,8 @@ async function loadUsage(opts) {
           track.insertAdjacentHTML("beforeend",
             `<div data-hseg class='admin-usage-hseg' data-tip='${s.tip}' style='width:0%;background:${s.color};'></div>`);
           const node = track.lastElementChild;
-          requestAnimationFrame(() => { node.style.width = s.w + "%"; });
+          void node.getBoundingClientRect();   // 시작 폭(0%) 확정 후 목표값 — 위와 같은 이유
+          node.style.width = s.w + "%";
         }
       });
       bindTip(el);

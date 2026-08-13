@@ -4058,3 +4058,9 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - `src/static/css/admin.css` — `.admin-usage-hseg` 에 `background` 전환 추가(단일 색 ↔ 모델 색).
 - `tests/headless/test_usage_metric_switch.js` — 양방향 경계 전환 회귀 잠금 5건 + 기존 검사 3건을
   새 설계(0 높이 노드 유지)에 맞춰 "보이는 막대" 기준으로 정정. 32 PASS · 뮤테이션 역검증 5/5.
+
+## CHG-20260813T1810-ai-claude-corp-usage-metric-first-appear — 신규 세그먼트 첫 등장 전환 (라이브 전용 축)
+
+`usage.js` — 새로 삽입되는 막대/세그먼트에 목표값을 주기 전 강제 reflow 로 시작 스타일을 확정
+(세로·가로 양쪽). rAF 한 번은 라이브 Chrome 에서 시작 스타일 확정 전에 목표값이 들어가 transition
+이 미발동했다(헤드리스는 발동 — 환경차). 하네스에 검사 1건 추가(**헤드리스 판별력 없음** 명시).
