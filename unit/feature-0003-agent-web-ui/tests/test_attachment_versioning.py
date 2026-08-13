@@ -182,8 +182,13 @@ def test_p2_parse_robust_to_garbage():
     assert app._parse_attachment_edit_blocks(zero_id) == []
 
 
-# ── M1: 정상 materialize ──────────────────────────────────────────────────────
-def test_m1_materialize_creates_new_version(monkeypatch):
+# ── M1: 정상 materialize (사용자 첨부 편집 = 별도 계보로 분기) ─────────────────
+def test_m1_materialize_branches_from_user_chain(monkeypatch):
+    """REQ-20260814-attach-version-branching: 사람이 올린 첨부를 편집하면 **새 계보의 v1** 이다.
+
+    종전에는 사용자 계보에 v2 로 편입되고 사용자 최신본을 supersede 했다. 그러면 사용자는 자기가
+    올린 최신 파일을 목록에서 잃는다 — 작성 주체별로 계보를 나눈 목적의 정반대다.
+    """
     storage = _install_fake_storage(monkeypatch)
     store = {"max_version": 1, "new_id": 9001}
     conn = _Conn(store)
@@ -191,8 +196,8 @@ def test_m1_materialize_creates_new_version(monkeypatch):
     monkeypatch.setattr(app, "_load_attachment_row", lambda c, i: (
         _src_row() if int(i) == 100 else {
             "Id": 9001, "ConversationId": "conv-1", "AccountId": 1,
-            "OriginalFilename": "orig_v2.txt", "Kind": "text", "SizeBytes": 20,
-            "VersionNumber": 2, "RootAttachmentId": 100, "CreatedByRole": "assistant",
+            "OriginalFilename": "orig.txt", "Kind": "text", "SizeBytes": 20,
+            "VersionNumber": 1, "RootAttachmentId": None, "CreatedByRole": "assistant",
             "SupersededAt": None, "DeletedAt": None, "DeletePending": 0,
             "MimeType": "text/plain", "SizeBucket": "<1KB", "Sha256": "x",
             "UploadStatus": "uploaded", "DeleteReason": None, "MetaJson": None,
@@ -210,19 +215,56 @@ def test_m1_materialize_creates_new_version(monkeypatch):
         conn, account=_account(), conversation_id="conv-1", answer=answer, message_id=5,
     )
     assert len(created) == 1
-    # INSERT 가 version=2, role='assistant' 로 실행됐는지
     ins = store.get("insert_params")
     assert ins is not None
-    # INSERT params 끝부분: ... root_id, next_version (VALUES 순서상 RootAttachmentId, VersionNumber)
-    assert 2 in ins, f"VersionNumber=2 가 INSERT params 에 있어야 함: {ins}"
-    assert 100 in ins, f"RootAttachmentId=100 이 INSERT params 에 있어야 함: {ins}"
+    # VALUES 순서상 마지막 두 자리가 (RootAttachmentId, VersionNumber).
+    assert ins[-2] is None, f"분기는 새 계보의 root 여야 함(RootAttachmentId=NULL): {ins}"
+    assert ins[-1] == 1, f"분기는 v1 이어야 함: {ins}"
+    # 분기 지점이 MetaJson 에 남는다(스키마 미확장 트리 복원의 유일한 단서).
+    assert '"branch_of_attachment_id": 100' in ins[10]
+    assert '"branch_of_root_id": 100' in ins[10]
     # MinIO put 호출됨
     assert len(storage.put_calls) == 1
-    # 부모 supersede UPDATE 실행됨
-    assert "superseded_sql" in store
+    # **사용자 계보를 supersede 하지 않는다** — 이 가드가 이 변경의 핵심이다.
+    assert "superseded_sql" not in store, "분기가 사용자 최신본을 끄면 안 됨"
     # 새 버전 직렬화 결과
     assert created[0]["is_assistant_generated"] is True
-    assert created[0]["version_number"] == 2
+    assert created[0]["version_number"] == 1
+
+
+def test_m1b_materialize_extends_assistant_chain(monkeypatch):
+    """자기 계보(assistant) 재편집은 **연장**이다 — v+1 + 그 계보 안에서만 supersede."""
+    _install_fake_storage(monkeypatch)
+    store = {"max_version": 1, "new_id": 9002}
+    conn = _Conn(store)
+
+    ai_src = dict(_src_row())
+    ai_src.update({"Id": 200, "CreatedByRole": "assistant", "RootAttachmentId": None, "VersionNumber": 1})
+
+    monkeypatch.setattr(app, "_load_attachment_row", lambda c, i: (
+        ai_src if int(i) == 200 else {
+            "Id": 9002, "ConversationId": "conv-1", "AccountId": 1,
+            "OriginalFilename": "orig.txt", "Kind": "text", "SizeBytes": 20,
+            "VersionNumber": 2, "RootAttachmentId": 200, "CreatedByRole": "assistant",
+            "SupersededAt": None, "DeletedAt": None, "DeletePending": 0,
+            "MimeType": "text/plain", "SizeBucket": "<1KB", "Sha256": "x",
+            "UploadStatus": "uploaded", "DeleteReason": None, "MetaJson": None,
+        }
+    ))
+    monkeypatch.setattr(app, "_check_attachment_size_caps", lambda *a, **k: (True, ""))
+
+    created = app._materialize_assistant_attachment_edits(
+        conn, account=_account(),
+        conversation_id="conv-1",
+        answer='```attachment-edit\n{"source_attachment_id": 200}\n또 수정\n```',
+        message_id=6,
+    )
+    assert len(created) == 1
+    ins = store.get("insert_params")
+    assert ins[-2] == 200, f"연장은 기존 계보 root 를 유지해야 함: {ins}"
+    assert ins[-1] == 2, f"연장은 v+1 이어야 함: {ins}"
+    assert '"branch_of_attachment_id"' not in ins[10], "연장은 분기가 아니다"
+    assert "superseded_sql" in store, "연장은 자기 계보의 구버전을 꺼야 한다"
 
 
 # ── M2: 바이너리 kind 거부 ────────────────────────────────────────────────────

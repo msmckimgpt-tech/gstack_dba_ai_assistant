@@ -273,3 +273,16 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 `GET /api/ai/guide` **200**(23,005 bytes) · `B.0-1`·`/ai/connect`·"셸 스크립트 실행을 요구하지
 말 것"·`invalid_scope` 전부 포함(= 배포본 갱신 반영) · 익명 노출 인스턴스 데이터 **0건** ·
 무중단 `no upstreams available` **0건**.
+
+### Run 2026-08-14 (13차) — 엣지 401 호스트 정합 (Environment: 격리 엣지+web, 브랜치 코드)
+
+컨테이너 네트워크 안에서 **443** 으로 Host 3종을 넣어 실측.
+
+| Host | 상태 | `WWW-Authenticate` |
+|---|---|---|
+| `112.185.196.20` | 401 | `…https://112.185.196.20/.well-known/oauth-protected-resource` ✅ |
+| `mysql-ai.company.local` | 401 | `…https://mysql-ai.company.local/…` ✅ |
+| `localhost` | 401 | `…https://localhost/…` ✅ |
+
+수정 전 라이브 실측(대조): 엣지는 세 경우 모두 `mysql-ai.company.local` 을 반환했고, 앱은
+접속 호스트를 따랐다 — 그 불일치가 IP 접속 시 discovery 를 끊었다.

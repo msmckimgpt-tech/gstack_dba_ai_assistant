@@ -4064,3 +4064,51 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 `usage.js` — 새로 삽입되는 막대/세그먼트에 목표값을 주기 전 강제 reflow 로 시작 스타일을 확정
 (세로·가로 양쪽). rAF 한 번은 라이브 Chrome 에서 시작 스타일 확정 전에 목표값이 들어가 transition
 이 미발동했다(헤드리스는 발동 — 환경차). 하네스에 검사 1건 추가(**헤드리스 판별력 없음** 명시).
+## CHG-20260814T010000-ai-claude-feature-0003-attach-version-branching — 첨부 버전 계보를 작성 주체별로 분기
+
+- 사유: 사용자 요청 "첨부파일의 버전 관리 또한 사용자별로 트리 형태로 구분(assistant 또한 독자적인
+  버전 관리)" + 후속 결정 "별도 root 체인 분기 · 비교 기준을 [자기 버전/시간별] 두 축으로 · assistant
+  도 각 기준을 인지". 선행 cycle `20260813T1830-group-attach-scope-window` 의 후속.
+- 위험등급 **Major §12.3**(첨부 생성 경로·프롬프트 계약 변경 — 보안 경계는 불변). 스키마 변경 **0**.
+- 대상(코드 거주 feature-0003):
+  - `src/routers/_conv_store.py`
+    - `_materialize_assistant_attachment_edits`: 분기 판정(`_branch_from_user_chain` — source 의
+      `CreatedByRole`) → 사람 첨부면 `RootAttachmentId=NULL, VersionNumber=1`(새 계보), assistant
+      계보면 종전대로 `v+1`. **supersede 를 `_supersede_root_id` 로 조건화** — 분기일 때 원 계보를
+      끄지 않는다(사용자 최신본 보존). MetaJson 에 `branch_of_attachment_id`/`branch_of_root_id`/
+      `branch_owner_role` 기록(스키마 미확장 트리 복원). dual-write 는 분기 시 새 row 만 미러.
+      audit 에 `version_lineage: branch|extend` + 분기 시 `root_attachment_id = new_id`.
+    - `_load_filename_lineage_heads` **신규** — 같은 대화·같은 파일명의 계보 head 를 시간순으로.
+      **MySQL 정본** 조회(미러 지연으로 방금 만든 분기가 빠지면 비교 UI 가 거짓말을 한다).
+      cursor 획득을 try 안에 두어 fail-soft 계약을 지킨다.
+  - `src/routers/attachments.py`: `GET /api/attachments/{id}/versions` 응답에 **`lineages` 축**
+    추가(시간순 계보 head + `branched_from_attachment_id` + `is_current_lineage`). 기존 `versions`
+    (계보 내 축)·권한 게이트·직렬화는 불변. 실패는 fail-soft(빈 배열).
+  - `src/app.py`: `_load_filename_lineage_heads` re-export.
+- 대상(cross-ref feature-0002-agent-core):
+  - `src/agent_core.py`: 첨부 SELECT 에 `CreatedAt` append(row[13], PG/MySQL 양쪽 — 기존 positional
+    index 보존) · **`## FILE VERSION LINEAGES` 블록** 신규(같은 파일명 계보 ≥2 일 때만): 계보별
+    소유자·버전·시각 + **시간순 최신 마커** + 두 축 정의 + "최신이 모호하면 어느 계보인지 밝히고
+    행동" 계약 · `attachment-edit` 도구 지시에 "내 편집은 사용자 파일을 덮어쓰지 않는다" 명시.
+- 무변경: UNIQUE `UQ_WCA_VersionChain(RootAttachmentId, VersionNumber)` · 스키마 · 마이그레이션 ·
+  RBAC · 첨부 열람/다운로드 경계 · 업로드(사용자 재업로드) 체인 로직 · 기존 39개 혼합 체인(보존).
+- 테스트: `test_attach_version_lineage_prompt.py` **신규 10** · `test_attach_version_branching.py`
+  **신규 8**. 후자가 실제 결함 1건 적발(cursor 획득이 try 밖 → fail-soft 파손) → 수정.
+
+### CHG-20260814T010000 적대 리뷰 반영 (REV-20260814T010000, [CODEX:adversarial-data-integrity])
+
+- **[P1] 사용자 재업로드가 AI 계보를 다시 합침** — `_find_latest_same_name_attachment` 가 동명 head 를
+  역할 구분 없이 골라, 사용자 재업로드가 **AI 계보의 v2** 로 편입되고 그 head 를 supersede 했다.
+  한 번의 재업로드로 계보 분리가 무너지는 경로. → `COALESCE(CreatedByRole,'user') <> 'assistant'`
+  로 **사용자 계보만** 편입 대상.
+- **[P1] `read_attachment(filename=…)` 이 잘못된 계보를 조용히 읽음** — 동명 후보가 여럿이면 Id 최대를
+  집었다. 동명 공존이 이제 정상 상태라, 모델이 사용자 파일을 읽으려 해도 자기 수정본을 읽고 그것을
+  사용자 파일이라 서술한다. → **복수면 고르지 않고 되묻는다**(계보·버전을 붙인 선택지 제시).
+  `_load_scoped_attachment_rows` 에 `CreatedByRole`/`VersionNumber` 추가(안내가 사실이 되도록).
+- **[P1] 같은 root 의 live head 2개를 두 계보로 오인** — 업로드 경로가 INSERT commit 뒤 supersede 하고
+  실패를 삼켜(기존 결함) 한 체인에 head 가 둘 남을 수 있다. → `_load_filename_lineage_heads` 가
+  **root 당 1건**으로 접는다. (트랜잭션 분리는 이 cycle 범위 밖 — 기존 결함으로 REPORT 이월.)
+- **[P2] 타 멤버 소유 AI 계보를 "by you" 로 오표기** — 저장 경로는 source `AccountId` 일치를 요구하므로
+  이어서 수정할 수 없다. → 소유자를 반영해 `READ-ONLY for you` / `your lineage — you can extend it`
+  으로 갈라 적는다.
+- 회귀 고정: 위 4축 전부 테스트 추가(재업로드 역할 스코프 · root dedupe · 동명 모호성 · 소유자 표기).

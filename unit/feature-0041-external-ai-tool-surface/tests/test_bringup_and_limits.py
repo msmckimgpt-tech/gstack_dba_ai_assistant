@@ -147,15 +147,18 @@ def test_e2e_script_verifies_tls_when_ca_available(codex_p1=True):
 
 
 def test_caddy_blocks_anonymous_mcp_connections(codex_p2=True):
-    """MCP 전송 계층엔 verifier 가 없다 — 익명 스트림 개설을 엣지에서 끊는다."""
+    """MCP 전송 계층엔 verifier 가 없다 — 익명 스트림 개설을 엣지에서 끊는다.
+
+    2026-08-14: 401 본문을 엣지가 만들지 않고 **앱으로 넘기도록** 바꿨다(호스트 고정 문제).
+    차단 자체는 그대로다 — 익명은 web 으로, 인증된 요청만 `ext-tool-mcp` 로 간다.
+    """
     cf = _read("unit", "feature-0006-lan-proxy-access", "src", "caddy", "Caddyfile")
     block = cf[cf.index("handle /api/ai/mcp*"):]
     block = block[:block.index("\n\thandle {")]
-    # 주석에도 `reverse_proxy` 가 나오므로 지시어 줄만 남긴다 — 주석을 세면 순서 판정이 뒤집힌다.
     directives = "\n".join(ln for ln in block.splitlines() if not ln.strip().startswith("#"))
     assert "@noauth not header Authorization *" in directives
-    assert directives.index("respond @noauth") < directives.index("reverse_proxy"), \
-        "401 이 reverse_proxy 뒤면 익명 요청이 먼저 프록시로 나간다"
+    assert directives.index("web-a:8000") < directives.index("ext-tool-mcp:8971"), \
+        "익명 경로가 ext-tool-mcp 뒤면 익명 요청이 MCP 세션을 연다"
 
 
 def test_mcp_path_matches_edge_path(codex_p1=True):

@@ -235,7 +235,13 @@ knob 은 두지 않는다(`AGENT_EXT_TOOL_CONCURRENCY` 를 이 사유로 삭제 
 
 ### 15.2 자동이 성립하는 조건 (RFC 9728 → 8414)
 
-1. 무토큰 호출의 **401 에 `WWW-Authenticate: Bearer resource_metadata="…"`** — 엣지·앱 양쪽.
+1. 무토큰 호출의 **401 에 `WWW-Authenticate: Bearer resource_metadata="…"`**.
+   그 URL 의 **호스트는 접속에 쓴 호스트와 같아야 한다.** 이 배포는 사내 이름·공인 IP
+   (`https://112.185.196.20/`)·loopback 여러 이름으로 도달하므로, 하나를 박아 두면 다른 이름으로
+   붙은 클라이언트가 해석되지 않는 주소를 따라가다 끊긴다. 그래서 엣지는 익명 요청을
+   **앱으로 넘기고**(익명이 `ext-tool-mcp` 에 닿지 않는다는 목적은 유지), 앱이
+   `request.base_url` 로 단서를 만든다 — TrustedHost 가 그 호스트를 이미 검증한다.
+   엣지에서 `{host}` 를 되비추는 방식은 `:443` catch-all 탓에 **검증 없는 반사**가 되어 배제했다.
 2. `GET /.well-known/oauth-protected-resource` → 이 자원의 AS 위치.
 3. `GET /.well-known/oauth-authorization-server` → 엔드포인트·`S256` 전용 광고.
    (둘 다 경로 접미 변형 `/{rest}` 도 응답 — 클라이언트마다 조회 형태가 다르다.)
