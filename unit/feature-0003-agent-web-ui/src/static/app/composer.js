@@ -526,8 +526,17 @@ function _renderAttachmentPills() {
 
   if (!sidePanelList) return;
 
-  const newItems = items.filter((it) => it.source !== "session");
-  const sessionItems = items.filter((it) => it.source === "session");
+  // REQ-20260813-attach-name-sort: 같은 패널을 두 렌더러가 쓴다 — 서버 목록
+  // (`_loadConversationAttachmentList`)과 이 컴포저 bucket 렌더. 서버 쪽만 이름순으로 두면
+  // 업로드 직후에는 push 순서(z.txt → a.txt)로 보이다가 패널을 다시 열면 순서가 바뀐다.
+  // 이 목록은 아직 서버 응답이 아닌 **로컬 상태**라 서버가 순서를 정할 수 없어, 여기서만
+  // 같은 규칙(숫자 구간 수치 비교 + 대소문자 무시)으로 정렬한다.
+  const byName = (a, b) =>
+    String(a?.name || "").localeCompare(String(b?.name || ""), undefined,
+      { numeric: true, sensitivity: "base" })
+    || (Number(a?.id || 0) - Number(b?.id || 0));
+  const newItems = items.filter((it) => it.source !== "session").sort(byName);
+  const sessionItems = items.filter((it) => it.source === "session").sort(byName);
 
   const countBadge = document.getElementById("composerAttachCountBadge");
   if (!items.length) {
