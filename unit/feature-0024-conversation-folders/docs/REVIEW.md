@@ -38,3 +38,9 @@ source_of_truth: true
 
 ## REV-20260723T200000-newfolder-btn [SKIPPED:frontend-ux-button-relocation-existing-api] SHIP — '+ 새 폴더' 바 → '새 대화' 우측 폴더 아이콘
 - Panel skip 사유(§18.8): 순수 프론트 UX — 폴더 생성 버튼 위치만 이동(도구바→헤더 아이콘). 신규 엔드포인트/권한/백엔드 0, 동일 createFolderFlow/moveConversationToFolder/moveFolderTo 재사용. 권한 게이팅(_syncNewFolderBtn)은 기존 can() 기준. 새 공격면 없음. 라이브=PB-0008.
+
+## REV-20260813T181200-folder-dnd-shared-group [SKIPPED:frontend-display-gate-widen-existing-gated-api] SHIP — 공유받은 그룹 대화 폴더 DnD 개방
+- Panel skip 사유(§18.8): 프론트 draggable 부여 조건 단독 확대 — 신규 엔드포인트/권한/백엔드/RBAC 게이트 0이고, 동일 조작이 '···' 메뉴 '이동' 으로 **이미 가능**했다(새 공격면 아님, 두 번째 입력 수단). 선례 REV-20260723T190000-folder-ux · REV-20260723T200000-newfolder-btn. 본 세션은 subagent 호출이 사용자 제약으로 금지돼 직접 적대 점검을 수행하고 근거를 코드로 남겼다.
+- 프라이버시 점검(폴더는 REV-20260723T170000 크로스-계정 노출 사고 이력): 배정 = 요청자 계정 row upsert(`folder_conversation_map` PK `(account_id, conversation_id)`) · 목록 보강 = `folder_map_for_account(요청자)` · 폴더 트리 = 항상 owner-scope(`.any` 폐지) → 타 계정 화면에 폴더 이름·구조·배정 미노출. 임의 cid PATCH 는 `_account_can_access_conversation` + `_require_folder_owner` 로 차단.
+- 관리자 `.any` 열람 대화 제외 판단: 폴더 파티션 대상이 아니라 배정해도 폴더 하위 미렌더(무음 실패) → 드래그 미부여. 상세 판단·후속은 feature-0003 REV-20260813T181200 · REPORT §후속.
+- Human Approval Needed: no (Minor §12.3 — 표시 계층, 백엔드 enforcement 불변)

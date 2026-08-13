@@ -19,12 +19,17 @@ source_of_truth: true
 - REQ-20260723-folder-recursive: 폴더 **재귀 중첩**. 최대 깊이는 **런타임 설정값**(WebRuntimeSettings, 기본 4)으로 조절. **grandfathering**: 설정을 낮춰도 이미 깊어진 폴더는 소급 강제·평탄화하지 않고 그대로 보존한다. 상한은 **create/move 시점에만** 강제하되 "더 깊어지는 경우"만 차단(같거나 얕아지는 이동은 항상 허용). 순환 방지.
 - REQ-20260723-folder-knowledge: 폴더 단위 **커스텀 프롬프트** + **미리 첨부된 파일**. 요청 시 **요청자의 폴더 기준**으로 시스템 프롬프트·첨부 컨텍스트에 주입(per-asker, ask-time). 폴더 소유자=요청자라 IDOR 안전.
 - REQ-20260723-folder-query-scope: (DQA 특화) 폴더에 **기본 데이터소스/제품·스키마 스코프**·규약 지침을 핀 → 폴더 내 대화가 상속(반복 마찰 차단).
+- REQ-20260813-folder-dnd-shared-group: **다른 계정이 공유한 그룹 대화도 사이드바 drag&drop 으로
+  폴더별 이동**(사용자 요청 2026-08-13). REQ-organize 의 "계정별 배정" 을 드래그 입력 수단까지
+  완성하는 것 — 대상 판정은 `내 대화 + is_member 그룹 대화`(= 폴더 파티션과 동일 predicate). 관리자
+  `.any` 열람 "타 계정 대화" 는 폴더 파티션 대상이 아니므로 제외(개인 오버레이 경계 유지).
 - REQ-20260723-folder-rbac: 폴더 조작 권한을 RBAC 카탈로그에 등록. **폴더는 엄격한 개인(per-user) 오버레이**이므로 `folder.list.own`/`folder.manage.own` **own 권한만** 둔다(2026-07-23 프라이버시 수정 — `folder.*.any` 크로스-계정 권한은 폴더 노출 벡터라 폐지). 폴더는 어떤 권한으로도 타 계정에 노출·관리되지 않는다.
 
 ## 3. In Scope
 - PG `agent_runtime` 신규 테이블 `conversation_folders`(계정 소유·재귀 self-FK·지침·스코프 핀) + `folder_conversation_map`(계정별 대화↔폴더 배정) + alembic 0044 + GRANT + `agent_runtime_schema.sql` parity.
 - 폴더 CRUD 라우트, 대화 배정/이동, 폴더 삭제(대화 보관·승격), 재귀 조회(WITH RECURSIVE + depth cap).
 - 대화 목록 payload 에 요청자 스코프 `folder_id` 추가(순수 additive), 사이드바 재귀 폴더 렌더(app.js:3022 seam) + 드래그/우클릭 이동 + breadcrumb.
+- 드래그 대상 판정 단일화 — `isFolderScopedConversation`(owner || is_member) 하나를 **폴더 파티션과 draggable 게이트가 공유**해, "폴더에 보이는데 끌 수 없다" 류 표시-집행 불일치를 구조로 차단(2026-08-13 folder-dnd-shared-group).
 - 폴더 프롬프트: `conversation_folders.instructions` → `compose_system_prompt` 주입(요청자 폴더 기준).
 - 폴더 파일: 폴더-소유 첨부를 요청자 폴더 기준으로 ask-time 컨텍스트 주입(첨부 스코프 게이트를 conv→요청자-폴더 확장, 폴더 소유=요청자 안전).
 - 런타임 max-depth 설정(WebRuntimeSettings) + admin UI.
@@ -90,6 +95,8 @@ source_of_truth: true
 - AC-20260723T054724-folder-recursive-1: max-depth 설정값까지 중첩 가능, 초과 생성/이동은 거부. 순환 배정 거부.
 - AC-20260723T054724-folder-knowledge-1: 폴더 지침·파일이 폴더 내 대화의 assistant 응답 컨텍스트에 요청자 기준으로 주입됨(라이브 실측).
 - AC-20260723T054724-folder-idor-1: 타 계정 폴더/미접근 대화 배정·조회 시도가 403 으로 차단(§18.8 적대 검증).
+- AC-20260813T181200-folder-dnd-shared-group-1: 다른 계정이 소유한 그룹 대화(내가 멤버)를 사이드바에서 **드래그해 폴더로 이동**할 수 있고, 폴더 안 항목을 root 드롭 존으로 드래그해 뺄 수 있다(`folder.manage.own` 보유 시).
+- AC-20260813T181200-folder-dnd-shared-group-2: 그 이동은 요청자 계정 스코프에만 반영된다 — 소유자·타 멤버의 사이드바 위치·폴더 표시는 불변(라이브 크로스-계정 실측).
 
 ## 12. Observability
 - 폴더 CRUD/배정 audit 로그, depth-cap/순환 거부 카운트.

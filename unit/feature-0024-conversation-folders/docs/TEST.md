@@ -84,3 +84,9 @@ source_of_truth: true
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
 
 - **[POST-DEPLOY 2026-07-23] newfolder-btn 라이브 (PASS, Windows-browser, c5af349c)**: PR #929→main c5af349c→deploy-web(soak PASS). 서빙 index.html #newFolderBtn·app.js _syncNewFolderBtn 확인. win-browser(bootstrap_admin): 헤더 폴더 아이콘 버튼 exists/visible/enabled=true·**oldToolsBarGone=true**(기존 바 제거)·클릭→폴더 생성(delta 1)+인라인 rename 진입·기본명 "새 폴더". 상단 [＋ 새 대화][🗂 폴더][🔍 검색] 정합(스크린샷 scratchpad/newfolder-btn-header.png). 테스트 폴더 정리(활성 0). Pass/Fail: **PASS**.
+
+### Run (2026-08-13) — folder-dnd-shared-group (공유받은 그룹 대화 폴더 DnD)
+
+- 테스트·Run 기록 정본은 코드 거주 feature: `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260813T181200-folder-dnd-shared.md`
+  (jsdom 31 PASS · 수정 전 재현 대상 11건 FAIL 실증 · 프론트 `.mjs` 60개 전수 exit 0).
+- **Environment: Windows-browser 는 POST-DEPLOY** — 정적 자산이 web 이미지 baked 라 배포 후 서빙.

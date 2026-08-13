@@ -10384,3 +10384,37 @@ clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 종결 — ✓ (라이브 배포본에서 개선폭 재현 확인, 시각 회귀 0)
+
+## 20260813T1812-folder-dnd-shared-group — 다른 계정이 공유한 그룹 대화도 폴더 drag&drop 이동 (사용자 요청)
+
+사용자 요청 원문: "서비스 내 다른 계정으로부터의 그룹 대화 또한, drag&drop으로 폴더 별 이동이
+가능하도록 구성해주세요." 코드 거주 = feature-0003(`src/static/app/sidebar.js`), 기능 명세 정본 =
+feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
+
+- [x] 진단 — 표시-집행 불일치 1지점: 사이드바 폴더 파티션은 `isOwnConversation(item) || item.is_member`
+      인데 draggable 부여만 `mine`(owner) 이라, 공유받은 그룹 대화는 **폴더 안에 보이면서도 드래그
+      불가**. 백엔드 `PATCH /api/conversations/{cid}/folder`(`_account_can_access_conversation` —
+      그룹 멤버 열람 허용) 와 '···' 메뉴 '이동'(`can("folder.manage.own")` 만) 은 이미 멤버 대화를
+      허용 → 결함은 프론트 draggable 게이트 단독.
+- [x] 수정 — `isFolderScopedConversation(item)` predicate 신설(owner || is_member) + **파티션과
+      드래그 게이트가 그 하나를 공유**. 점수정(draggable 조건만 손보기) 대신 두 지점을 단일 판정으로
+      묶어 재발 클래스를 구조로 잠금(§16.7 G10).
+- [x] 계정별 격리 재확인(코드 근거) — 배정 row = `folder_conversation_map(account_id, conversation_id)`
+      PK, `assign_conversation(_acct_id(account), …)`, 목록 보강 `folder_map_for_account(요청자)` →
+      멤버가 자기 폴더에 배치해도 **소유자·타 멤버 뷰 불변**(FUNCTION.md REQ-20260723-folder-organize).
+- [x] 관리자 `.any` 열람 "타 계정 대화" 는 **의도적 제외** — 폴더는 개인 오버레이이고 그 그룹은 폴더
+      파티션 대상이 아니라, 배정해도 폴더 하위에 렌더되지 않는다(무음 실패 방지). REPORT §후속 등재.
+- [x] 신규 테스트 `tests/verify_folder_dnd_shared_group.mjs` (jsdom, 31 assertions) — 공유 그룹 대화
+      draggable + dragstart 페이로드 배선 + 폴더 하위 렌더/카운트 + 권한 미보유 미부여 + 타 계정 대화
+      미부여 + predicate 단위 + 구조 잠금 4건.
+- [x] **수정 전 재현 실증** — 코드만 되돌려 실행 시 대상 11건 FAIL(공유 대화 draggable·dragstart·
+      폴더 안 draggable·구조 4), 회귀 축(내 대화 draggable / 타 계정 미부여 / 권한 없음)은 PASS 유지.
+- [x] 동반 하네스 갱신 `tests/verify_new_conv_dedup.mjs` — renderConversationList 추출 실행 하네스가
+      새 predicate 을 realm 에 두지 않아 ReferenceError → 실함수 동반 추출(stub 대체 아님).
+- [x] 프론트 `.mjs` 전수 회귀 — 60개 전부 exit 0 (sidebar.js 참조 6개 포함), ESM 구문 검사 PASS.
+- [ ] 배포 후 PB-0008 실 Windows 브라우저 라이브 검증 (visual_verification_scope: always)
+
+### 9. Requested Scope
+
+- 다른 계정으로부터의 그룹 대화도 drag&drop 으로 폴더별 이동 — ✓ (프론트 게이트 확대 + 계정별 격리
+  코드 근거 확인 + jsdom 31건 + 수정 전 재현). 라이브 실측은 배포 후 PB-0008.

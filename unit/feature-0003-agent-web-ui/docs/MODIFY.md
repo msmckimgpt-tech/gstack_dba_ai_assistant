@@ -3873,3 +3873,22 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/TASK.md` cycle 섹션 · `docs/REPORT.md` 잔여 항목 갱신. **코드 변경 0**.
 - 결과: 라이브 n=3 이 격리 프리뷰 수치를 그대로 재현(클릭→펼침 544ms · 블로킹 134ms ·
   drawMs 32.8ms · 재생성 21 · 라벨 19) · 무중단 `no upstreams available` 0건 · pageerror 0.
+
+## CHG-20260813T181200-ai-claude-feature-0024-folder-dnd-shared — 공유받은 그룹 대화 폴더 DnD 개방
+
+- 사유: 사용자 요청 "서비스 내 다른 계정으로부터의 그룹 대화 또한, drag&drop으로 폴더 별 이동이
+  가능하도록 구성해주세요." (feature-0024 REQ-20260813-folder-dnd-shared-group).
+- 대상(코드 거주 feature-0003):
+  - `src/static/app/sidebar.js` — `isFolderScopedConversation(item)`(owner || is_member) **신설·export**.
+    ① own/others 파티션(구 `isOwnConversation(item) || item.is_member`) ② `buildCompactItem` 의 드래그
+    게이트(구 `mine && can("folder.manage.own")`) **두 지점이 같은 predicate 사용** — 폴더에 보이는
+    항목과 끌 수 있는 항목이 정의상 일치. 렌더·클래스(`is-own`/`is-other`)·멀티선택·`dataset.idx` 는
+    기존 `mine` 유지(소유 표시·삭제 선택 의미 불변).
+  - `tests/verify_folder_dnd_shared_group.mjs` — **신규**(jsdom 31): draggable/dragstart/폴더 하위
+    렌더·카운트/권한 미보유/타 계정 대화 제외/predicate 단위/구조 잠금.
+  - `tests/verify_new_conv_dedup.mjs` — renderConversationList 추출 하네스에 새 predicate **실함수
+    동반 추출**(stub 아님 — 파티션 계약을 vacuous 하게 만들지 않기 위함).
+- 백엔드·스키마·권한·마이그레이션·엔드포인트 변경 **0**. 배정 저장은 기존 계정 스코프 경로
+  (`folder_conversation_map` PK `(account_id, conversation_id)`) 그대로 — 소유자·타 멤버 뷰 불변.
+- 검증: jsdom 31 PASS · 수정 전 재현 시 대상 11건 FAIL(테스트 판별력 실증) · 프론트 `.mjs` 60개 전수
+  exit 0 · ESM 구문 PASS. 라이브 = POST-DEPLOY PB-0008.

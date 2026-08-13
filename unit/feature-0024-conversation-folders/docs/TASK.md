@@ -82,3 +82,11 @@ source_of_truth: true
 ## TASK-20260723T200000-newfolder-btn — '+ 새 폴더' 바를 '새 대화' 우측 폴더 아이콘으로(미니멀) (사용자 요청)
 - [x] 도구바 제거 + 헤더 폴더 아이콘 버튼(#newFolderBtn) + 권한 동기화 + DnD root 드롭 이관. node --check OK.
 - [x] 배포(PR #929→main c5af349c) + **POST-DEPLOY PB-0008 PASS**: 헤더 폴더 아이콘 버튼 노출·활성, 기존 '＋ 새 폴더' 바 제거(oldToolsBarGone), 클릭→무프롬프트 '새 폴더' 생성+인라인편집. 스크린샷 newfolder-btn-header.png([새 대화][🗂][🔍]). 테스트 폴더 정리(활성 0).
+
+## TASK-20260813T181200-folder-dnd-shared-group — 다른 계정이 공유한 그룹 대화도 폴더 DnD 이동 (사용자 요청)
+- [x] 진단: 폴더 파티션은 `owner || is_member` 인데 draggable 부여만 owner(`mine`) → 공유받은 그룹 대화가 폴더 안에 보이면서 드래그 불가(표시-집행 불일치). 백엔드 PATCH `/api/conversations/{cid}/folder`(`_account_can_access_conversation` — 멤버 열람 허용) 와 '···' 메뉴 '이동' 은 이미 허용.
+- [x] 구현(코드 거주 feature-0003 `src/static/app/sidebar.js`): `isFolderScopedConversation`(owner || is_member) 신설 + 파티션·드래그 게이트가 그 하나를 공유. 백엔드·스키마·권한·엔드포인트 변경 0.
+- [x] 계정별 격리 코드 근거: `assign_conversation(요청자, …)` → `folder_conversation_map` PK `(account_id, conversation_id)`, 목록 보강 `folder_map_for_account(요청자)` → 소유자·타 멤버 뷰 불변.
+- [x] 검증: jsdom `verify_folder_dnd_shared_group.mjs` 31 PASS · 수정 전 재현 시 대상 11건 FAIL(판별력 실증) · 프론트 `.mjs` 60개 전수 exit 0 · ESM 구문 PASS.
+- [ ] 배포 + POST-DEPLOY PB-0008 라이브(실 마우스 드래그 배정·빼기·크로스-계정 격리·pageerror 0).
+- 관리자 `.any` 열람 "타 계정 대화" 는 의도적 제외(폴더=개인 오버레이). 그 그룹의 '···' 메뉴 '이동' 무음 실패는 선재 결함으로 feature-0003 REPORT §후속 등재.

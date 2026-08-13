@@ -4624,3 +4624,46 @@ Windows 브라우저 시각·인터랙션 검증(TEST fragment)으로 메웠다.
   수치(544/134/32.8/21/19)가 사실상 일치했다 — 프리뷰 측정을 라이브 대용으로 쓴 판단이 사후적으로
   검증됐다. 다만 **프리뷰 PASS 를 완료 근거로 삼지는 않았고**, 라이브 재측정을 별도로 수행했다.
 - Human Approval Needed: no
+
+## REV-20260813T181200-ai-claude-feature-0024-folder-dnd-shared [SKIPPED:frontend-display-gate-widen-existing-gated-api] SHIP — 공유받은 그룹 대화 폴더 DnD 개방
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1812-folder-dnd-shared-group`
+- Timestamp: 2026-08-13T18:12:00+09:00
+- Human Approval Needed: no (Minor §12.3 — 프론트 표시 계층, 백엔드 enforcement·스키마·권한 불변)
+
+**Panel skip 사유(§18.8)**: 신규 엔드포인트·권한·RBAC 게이트·백엔드 로직 0. 변경은 이미 §18.8 리뷰된
+폴더 API(REV-20260723T170000 에서 엄격 owner-scope 확정)를 호출하는 **프론트 draggable 부여 조건**
+단독이며, 같은 조작이 '···' 메뉴 '이동'(openMoveConversationDialog) 으로 **이미 가능했다** — 즉 새
+공격면이 아니라 기존 허용 동작에 두 번째 입력 수단을 붙인 것. 동일 부류 선례:
+REV-20260723T190000-folder-ux(DnD 도입), REV-20260723T200000-newfolder-btn. 본 세션은 subagent 호출이
+사용자 제약으로 금지돼 있어 아래 적대 점검을 직접 수행하고 근거를 코드로 남긴다.
+
+**직접 적대 점검 (프라이버시 축 — 폴더는 과거 크로스-계정 노출 사고 이력 있음, REV-20260723T170000)**
+
+- **타 계정 뷰 오염?** 없음. 배정은 `assign_conversation(_acct_id(account), cid, folder_id)` →
+  `folder_conversation_map` PK `(account_id, conversation_id)` 의 요청자 row upsert/delete 뿐이고,
+  목록 보강은 `folder_map_for_account(요청자)` 라 소유자·타 멤버 payload 의 `folder_id` 는 불변.
+  폴더 트리 자체도 `GET /api/folders` 가 항상 owner-scope(`.any` 폐지). → 멤버가 자기 폴더에 배치해도
+  타 계정 화면에 폴더 이름·구조·배정이 나타나지 않는다.
+- **접근 권한 없는 대화를 끌 수 있나?** 없음. 드래그 대상은 서버가 준 목록(접근 가능분)에서만 만들어지고,
+  `is_member` 는 서버 계산 필드다. 프론트를 우회해 임의 cid 를 PATCH 해도 라우트가
+  `_account_can_access_conversation(conversation.read.own, conversation.read.any)` 로 차단(404).
+  대상 폴더도 `_require_folder_owner` 로 요청자 소유만.
+- **권한 게이트 회귀?** `can("folder.manage.own")` 는 그대로 AND 조건 — 미보유 계정은 draggable 미부여
+  (테스트 case4). 프론트는 display-permissive 컨벤션이고 실제 거부는 백엔드 403/404 가 담당.
+- **관리자 `.any` 열람 대화(타 계정 대화 그룹)**: 의도적으로 제외했다. 폴더는 개인 오버레이이며 그
+  그룹은 폴더 파티션 대상이 아니라, 배정이 성공해도 폴더 하위에 렌더되지 않아 **무음 실패**가 된다.
+  드래그는 막고, 기존 '···' 메뉴 경로의 같은 무음 실패는 선재 결함으로 REPORT §후속 에 등재(§8.1 —
+  기록만). 이번 변경이 그 표면을 넓히지 않는다.
+
+**설계 판단 — 점수정 대신 predicate 단일화**: draggable 조건만 `mine → mine || is_member` 로 고치면
+파티션(L594)과 게이트(L807)가 여전히 별개 표현으로 남아 한쪽만 바뀌는 재발이 가능하다. 두 지점을
+`isFolderScopedConversation` 하나로 묶고 그 사실을 소스 정규식 4건으로 잠갔다(§16.7 G10). `mine` 은
+소유 표시·멀티선택·삭제 인덱스에서 여전히 다른 의미이므로 남겼다(과잉 통합 회피).
+
+**검증 채널·한계 (정직 표기)**: jsdom 은 실제 마우스 드래그와 DataTransfer 를 구현하지 않아
+`draggable` 속성 + `dragstart` 핸들러의 `state.dqaDrag` 배선까지만 판정한다(정본 코드가
+`dataTransfer` 접근을 try 로 감싸는 이유). **드롭 → 배정 → 재렌더 round-trip 은 배포 후 PB-0008 실
+Windows 브라우저가 정본**(visual_verification_scope: always). 테스트가 실제 결함을 잡는지는 코드만
+되돌려 대상 11건 FAIL·회귀 축 PASS 로 실증했다. 서버 라운드트립·크로스-계정 격리의 **라이브** 실측
+(계정 A 가 공유 그룹 대화를 자기 폴더로 이동 → 계정 B 화면 불변)도 POST-DEPLOY 항목이다.
