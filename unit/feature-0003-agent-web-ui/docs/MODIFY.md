@@ -3843,3 +3843,25 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T155000-rail-async-relayout.md`,
   `docs/evidence/pb0008-rail-async-relayout-{6,7}-postdeploy-*.png`.
 - Timestamp: 2026-08-13T17:41:00+09:00
+## CHG-20260813T1600-ai-claude-feature-0003-graph-expand-perf — 그래프 '노드 펼침' 성능 3축 개선
+
+- 사유: 사용자 리포트 "노드를 펼칠 때 체감될 정도로 느리게 펼쳐집니다 — 병목 원인 파악 후 개선".
+  라이브 CDP Profiler 실측으로 병목을 3축에 귀속(TASK `20260813T1600-graph-expand-perf` R1~R3).
+- 대상(코드 거주 feature-0003 `src/static/graph/`):
+  - `graph-renderer-pixi.js` — `nodeSig`/`comboSig` **폐기** → `nodeShapeSig`/`comboShapeSig`(위치 제외)
+    신설. `draw()` 의 오브젝트 풀 diff 가 ① 모양 동일 = `position.set` 재배치(파기·라벨 재생성 0)
+    ② 엣지는 `_paintEdge` in-place 재-path ③ 모양 변경만 재생성. `_lastDrawStats`·
+    `__META_GRAPH_PERF.render` 에 `moved`·`repainted` 계측 추가. `moveTweenPlan` 주석의 stale 서술 정정.
+  - `graph-core.js` — `_metaTopoSig` 가 `label==="Column"` 노드를 서명에서 제외(+ 개수 필드도 비-Column
+    기준으로 교체) · §73 헤더 주석의 오기("colsByTable 거주라 자연 제외") 정정 ·
+    `_metaGraphOnNodeClick` 이 Table 단일클릭 시 `_metaGraphPrefetchColumns(id)` 선행 호출 ·
+    `_metaGraphResetModel` 이 `_metaColPrefetchClear()` 수행.
+  - `graph-ctxmenu.js` — 선-fetch 계층 신설(`_metaColPrefetch` Map · `_metaGraphPrefetchColumns` ·
+    `_metaColTake`(소비) · `_metaColPeek`(공유) · `_metaColPrefetchClear` · TTL 8s · reject 하지 않는
+    `{ok,v|e}` 래핑) · `_metaGraphToggleColumns` 가 두 GET 을 선-fetch 에서 이어받고 공유 payload 를
+    얕은 복사 + 컬럼 노드도 per-node 복사 후 dedupe · `_metaGraphShowDetail` 이 같은 promise 공유 ·
+    `_metaSearchPrunePristine` 도 캐시 clear.
+- 테스트: `tests/headless/test_graph_expand_prefetch.js` **신규(15)** ·
+  `test_pixi_adapter.js` T17/T19 전환 + **T31 씬-diff 신규** ·
+  `test_g6build_layoutmemo.js` **T7 신규**(컬럼 ingest 캐시 적중 + 적중==fresh 동일성).
+- 백엔드·스키마·권한·마이그레이션 변경 **0** (프론트 전용).

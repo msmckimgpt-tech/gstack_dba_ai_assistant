@@ -4567,3 +4567,45 @@ resolve 한 결과다(리뷰어 주장 그대로 수용하지 않음).
 - Related TASK: feature-0003-agent-web-ui (20260813T1741-rail-async-relayout-postdeploy)
 - Reason: changed paths are docs/evidence only outside policy-doc list (코드 변경 0 — 라이브 실측 기록)
 - Timestamp: 2026-08-13T17:41:00+09:00
+## REV-20260813T160000-ai-claude-feature-0003-graph-expand-perf [CODEX:graph-expand-perf] — PASS
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1600-graph-expand-perf`
+- Source: codex review (codex-cli 0.146.0, uncommitted diff · 2 라운드)
+- Trigger: performance/latency/caching keyword matched (성능·지연·캐싱) — §18.8 dispatch
+- Timestamp: 2026-08-13T16:00:00+09:00
+- Verdict: PASS (반영 후 P1 0건)
+- Human Approval Needed: no
+
+**검증 채널 선택 근거 (§18.8.2 상위 우선순위 지시 carve-out)**: 본 세션에는 하네스 수준의
+"요청 없이 Agent tool 을 호출하지 말라" 제약이 걸려 있어 subagent panel 을 쓰지 않았다. §18.8.2 가
+정한 순서대로 **제약 없는 채널**(codex review — §18.8.1 경로 2, check #9 accepted)로 수행했고,
+판정 기준 정본은 `docs/CODE_REVIEW.md` 를 읽도록 지시해 도구 기본 판정으로 흐르지 않게 했다.
+subagent 도메인(backend/qa) 미커버 범위는 아래 "채널 한계" 에 명시한다.
+
+**라운드 1 — P1(GATE) 1건 / P2 2건**
+
+- **P1 — 선-fetch 응답의 세대 오염**: `_metaColPrefetch` 가 모델 리셋에서 비워지지 않아, 리셋 전에
+  뜬 응답이 TTL 안의 재클릭으로 소비될 수 있었다. → `_metaGraphResetModel` 에서 `_metaColPrefetchClear()`.
+  (판정: 키에 scope 가 포함돼 교차-스코프 오염은 불가하고 같은 URL 의 재응답이라 실 피해는 작지만,
+  "리셋이 캐시를 남긴다" 는 **클래스 자체**가 구조적 결함이라 수용.)
+- **P2 — 중복 GET**: 상세 조회가 이미 `graph?node=&depth=1` 을 쏜다. → 선-fetch promise 를 상세와
+  **공유**해 클릭당 왕복을 1건 줄였다(이 중복은 본 변경 이전부터 존재 — 개선 방향으로 흡수).
+- **P2 — 부분 펼침 테이블에서 선-fetch 미소비**: 가드를 호출측(340ms 타이머의 `!_metaTableHasCols`)과
+  **동일 조건**으로 좁혀 낭비 요청 자체를 만들지 않게 했다.
+
+**라운드 2 — 후속 지적 반영**
+
+- **P2 — 얕은 복사로 aliasing 미차단**: `slice()` 는 배열만 복사하고 노드 객체는 공유돼 `ordinal`
+  보완이 원본을 제자리 변형했다. → dedupe 시 **per-node 얕은 복사**(`{ ...x }`). 회귀 테스트 T8.
+- **P2 — 검색 prune 경로 캐시 미삭제**: `_metaSearchPrunePristine` 도 모델 변형 경로 → 동일하게
+  `_metaColPrefetchClear()`. 회귀 테스트 T9. TTL 도 20s → **8s**(재사용 창 최소화).
+- **미수용(선재 결함으로 분류, 본 cycle 범위 밖)**: ① `_metaGraphShowDetail` 이 fetch 후 세대 가드
+  없이 렌더하는 것 — `main` 에서도 동일하며 본 변경이 만든 경로가 아니다(공유 promise 는 같은 URL·
+  같은 시점 응답). ② 상세 backfill 의 `/columns` 와 펼침의 `/columns` 중복 — 역시 선재.
+  둘 다 REPORT.md §후속 에 등재.
+
+**채널 한계 (정직 표기)**: codex 는 diff 정적 분석이며, ①DOM 이 필요한 상세 backfill 경합 ②실
+브라우저 렌더 정합은 커버하지 못한다. 그 두 축은 각각 헤드리스 계약 테스트(15건)와 PB-0008 실
+Windows 브라우저 시각·인터랙션 검증(TEST fragment)으로 메웠다. backend/qa subagent 관점 중
+**서버 부하 축**(클릭당 동시 GET 2건 발생)은 위 "선재 중복 흡수" 로 순증 0 임을 코드로 확인했으나
+부하 실측은 하지 않았다 — `[SKIPPED:tool-restricted:backend-load-measurement]`.

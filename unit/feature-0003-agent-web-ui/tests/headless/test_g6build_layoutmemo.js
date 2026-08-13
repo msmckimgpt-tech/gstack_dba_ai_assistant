@@ -98,9 +98,9 @@ const check=(n,c,e)=>{ if(c){pass++;console.log("PASS",n);}else{fail++;console.l
   const A = buildFull();
   const sigA = g.__M._layoutSig;
   const tA = new Map(tbl(A).map(n=>[n.id,[n.style.x,n.style.y]]));
-  // 컬럼 부여(colsByTable) — nodes 에 컬럼 노드도 추가하지만 서명은 nodes 키 해시라 변함... → 확인
-  // 실제 앱에서 컬럼은 nodes 에 들어가되 kind=column. 서명은 전체 nodes 키 해시라 컬럼 추가 시 서명 변경됨.
-  // 단 컬럼 추가는 위상 변경(무효화 정당) — 여기선 "colsByTable 만" 바꿔 정렬 무관성 확인:
+  // 컬럼은 실제 앱에서 `_metaGraph.nodes` 에 label:"Column" 으로 들어간다. graph-expand-perf(2026-08-13)
+  // 부터 서명이 Column 을 **제외**하므로 컬럼 ingest 도 캐시 적중이다(아래 T7 이 그 경로를 직접 잠근다).
+  // 여기서는 colsByTable 만 바꿔 "정렬은 컬럼과 무관" 이라는 원래 불변식을 유지 검증한다:
   g.__M.colsByTable.set(`${SCOPE}:s0.user_tbl_0`, 4);
   const B = buildFull();
   check("T3 colsByTable 변경(노드 불변)은 서명 무변경", g.__M._layoutSig === sigA, [sigA, g.__M._layoutSig]);
@@ -164,6 +164,41 @@ const check=(n,c,e)=>{ if(c){pass++;console.log("PASS",n);}else{fail++;console.l
   g.__M.roles.set(`${SCOPE}:s0.guild_tbl_1`, "transaction");
   const B = buildFull();
   check("T6 roles 변경 후 rebuild 성공(캐시 무효화·stale 아님)", B && B.nodes.length > 0, undefined);
+}
+
+// T7 graph-expand-perf(2026-08-13): **컬럼 노드 ingest 는 정렬 캐시를 무효화하지 않는다**.
+//   회귀 배경: 종전 서명은 nodes 전량 해시라 label:"Column" 이 들어오는 순간 서명이 바뀌었고, 그래서
+//   사용자가 가장 자주 하는 조작(테이블 클릭 = 컬럼 펼침)마다 relOrder(barycenter 4-sweep)+simGroups 를
+//   전 모델 재계산했다. 아래는 ① 서명 불변 ② **캐시 적중 결과 == 캐시를 강제로 비운 fresh 결과**
+//   (메모이즈가 stale 을 만들지 않음) ③ 컬럼이 정상 방출됨 을 함께 단정한다.
+{
+  seed(3, 8, 0);
+  const A = buildFull();
+  const sigA = g.__M._layoutSig;
+  const tblOrderA = tbl(A).map(n => n.id);
+  // 실제 컬럼 펼침과 동형: Column 노드를 nodes 에 넣고 colsByTable 카운트를 올린다.
+  const target = `${SCOPE}:s0.user_tbl_0`;
+  for (let c = 0; c < 6; c++) {
+    const cf = `s0.user_tbl_0.c${c}`;
+    g.__M.nodes.set(`${SCOPE}:${cf}`, { key: `${SCOPE}:${cf}`, label: "Column", name: "c" + c, fqn: cf });
+  }
+  g.__M.colsByTable.set(target, 6);
+  const B = buildFull();
+  check("T7 Column 노드 ingest 는 서명 무변경(정렬 캐시 적중)", g.__M._layoutSig === sigA, [sigA, g.__M._layoutSig]);
+  check("T7 컬럼 6개 방출", col(B).length === 6, col(B).length);
+  // 캐시를 강제로 비우고 같은 모델을 다시 build → 캐시 적중분과 **완전히 동일**해야 한다(stale 아님).
+  g.__M._layoutSig = undefined; g.__M._relOrderCache = null; g.__M._simCache = new Map();
+  const C = buildFull();
+  const cmp = samePos(B, C);
+  check("T7 캐시 적중 build == 캐시 무효화 후 fresh build(좌표 완전 동일)", cmp.ok, cmp);
+  check("T7 fresh 재계산 후 서명 동일(결정론)", g.__M._layoutSig === sigA, [sigA, g.__M._layoutSig]);
+  // 테이블 **순서** 자체도 컬럼 유무와 무관해야 한다(정렬 입력이 아니므로).
+  const tblOrderB = tbl(B).map(n => n.id);
+  check("T7 컬럼 추가가 테이블 방출 집합을 바꾸지 않음", tblOrderA.length === tblOrderB.length, [tblOrderA.length, tblOrderB.length]);
+  // 반대로 **테이블** 추가는 여전히 무효화되어야 한다(제외가 과도하지 않음).
+  const nk = `${SCOPE}:s0.user_tbl_zz`;
+  g.__M.nodes.set(nk, { key: nk, label: "Table", name: "user_tbl_zz", fqn: "s0.user_tbl_zz" });
+  check("T7 Table 추가는 여전히 서명 변경(제외가 과도하지 않음)", g.__M._layoutSig !== g._metaTopoSig(), undefined);
 }
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);

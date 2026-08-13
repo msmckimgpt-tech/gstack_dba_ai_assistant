@@ -10317,3 +10317,53 @@ clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 프리뷰 대비 차이 0)
+## 20260813T1600-graph-expand-perf — 그래프 뷰 '노드 펼침' 체감 지연 근본 개선
+
+사용자 리포트: "'그래프 뷰' 에서, 노드를 펼칠 때 체감될 정도로 느리게 펼쳐집니다. 성능적인 병목
+이슈의 원인을 파악 후 개선해주세요."
+
+**라이브 실측으로 병목을 귀속**한 뒤(추정 아님) 3개 축을 고쳤다. 측정 대상은 `mysql-mv-qa-game`
+스코프의 `web_ranking`(689 테이블, 렌더 노드 693) 에서 16-컬럼 테이블 1개를 클릭해 펼치는 동작
+이며, 실 Windows Chrome(자기 세션 전용 인스턴스) + CDP Profiler 로 계측했다.
+
+### 근본원인 (실측 귀속)
+
+- [x] **R1 — pixi 오브젝트 풀 diff 가 '이동' 을 '재생성' 으로 취급** (지배항)
+      `nodeSig` 가 `style` 전체를 `JSON.stringify` 해 **x/y 가 서명에 포함**됐다. 컬럼 하나를 펼치면
+      masonry 가 재균형돼 형제 수백 개가 이동하고, 그 전부가 destroy→re-create 됐다.
+      실측: `made 538` · `labelsCreated 524` · `drawMs 207~254ms`(라벨 생성이 draw 비용의 지배항).
+- [x] **R2 — 340ms 더블클릭 판별 타이머가 네트워크까지 지연**
+      타이머의 목적은 *모델 변경* 을 미루는 것인데 GET 도 함께 미뤄져, 클릭 후 ~500ms 가 지나서야
+      "컬럼 조회 중…" 이 시작됐다. 클릭→펼침완료 ~915ms 중 340ms 가 순수 대기였다.
+- [x] **R3 — 배치-정렬 메모이즈(§73)가 컬럼 펼침마다 무효화**
+      `_metaTopoSig` 가 `_metaGraph.nodes` 전량을 해시하는데 **컬럼도 `label:"Column"` 으로 그 Map
+      에 산다**. 정작 가장 잦은 조작인 컬럼 펼침이 매번 relOrder(barycenter 4-sweep)+simGroups 를
+      전 모델 재계산시켰다. 코드 주석은 "컬럼은 서명에서 자연 제외" 라 적혀 있었으나 **사실과 반대**
+      였고, 기존 테스트도 그 사실을 인지한 채 검증을 우회하고 있었다(T3 주석).
+
+### 조치
+
+- [x] R1 — `nodeShapeSig`/`comboShapeSig`(위치 제외) 도입. 모양 서명이 같으면 `position.set` 재배치,
+      다르면 기존대로 재생성. 엣지는 destroy/new 대신 `_paintEdge` **in-place 재-path**.
+      위치-포함 `nodeSig`/`comboSig` 는 폐기(SSOT 단일화).
+- [x] R2 — 클릭 즉시 컬럼 GET 2건을 **선-fetch**(모델·카메라·상태 무접촉)하고 340ms 뒤 펼침이 그
+      promise 를 이어받는다. 더블클릭이면 응답은 버려진다(GET 이라 부작용 0).
+      상세 조회(`_metaGraphShowDetail`)도 **같은 promise 를 공유**해 선재 중복 왕복 1건을 제거.
+- [x] R3 — `_metaTopoSig` 에서 `label==="Column"` 제외 + 오기 주석 정정.
+
+### 검증
+
+- [x] 헤드리스 회귀 **1,283 PASS / 0 FAIL**(graph 계열 전량) — 신규 `test_graph_expand_prefetch.js`
+      15 + `test_pixi_adapter.js` T31 씬-diff 13 + `test_g6build_layoutmemo.js` T7 6
+- [x] 격리 preview 컨테이너(자기 worktree 빌드, 공유 트리 무수정 — §13.2.9)로 **base n=4 vs 개선 n=3**
+      동일 모델·동일 좌표 대조
+- [x] §18.8.1 codex 적대검증 2라운드 — P1(GATE) 1건 + P2 4건 전건 반영
+- [x] PB-0008 실 Windows 브라우저 시각·인터랙션 회귀 (펼침 렌더 픽셀 동일 · 드래그 · 접기 · pageerror 0)
+
+### 9. Requested Scope
+
+- 그래프 뷰 노드 펼침 지연의 **원인 파악** — ✓ (R1/R2/R3 를 CDP Profiler + 상태줄 타임라인으로 귀속)
+- 그 원인의 **개선** — ✓ (3축 모두 수정, 격리 프리뷰에서 개선폭 실측)
+- 잔여(미개선, 사용자 판단 필요) — 재배치 이동 트윈 360ms(`MOVE_TWEEN_MS`, 2026-08-13 사용자 요청으로
+  도입)는 **의도된 연출**이라 이번 범위에서 건드리지 않았다. 개선 후 체감 시간에서 차지하는 비중이
+  커졌으므로 REPORT.md 에 수치와 함께 표면화한다(§16.6 "증상-가림(애니 제거) 금지" 준수).

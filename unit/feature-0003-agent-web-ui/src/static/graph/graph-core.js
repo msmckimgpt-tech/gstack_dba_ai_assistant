@@ -9,7 +9,7 @@ import { _META_ROLE, _metaColStyle, _metaDbObjEdgeStyle, _metaDbObjStyle, _metaC
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
-import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForContentCategory, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
+import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForContentCategory, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaColPrefetchClear, _metaGraphPrefetchColumns, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 // feature-0016 §78: PixiJS v8 렌더러 어댑터(SceneAdapter, G6.Graph 인터페이스 호환). 배선 seam.
 import { PixiGraphAdapter } from "./graph-renderer-pixi.js?v=dev";
@@ -27,13 +27,28 @@ function _metaRendererKind() {
 //   결과는 (로드된 테이블/루틴 = nodes + 정렬이 읽는 객체 속성, REFERENCES 관계 = edges, 역할 = roles,
 //   펼친 스키마 = schemaExpanded, mode)에만 의존하고 **컬럼(colsByTable)·freeplace(clusterOffset/nodePos/
 //   groupOffset)·선택·뷰포트와 무관**. → 서명 무변경이면(팬·줌·선택·마커·컬럼토글·드래그) 정렬 재사용 →
-//   rebuild 를 방출 비용만 남긴다. 컬럼은 nodes(Map) 아닌 colsByTable 거주라 서명서 자연 제외 = 컬럼토글도 적중.
+//   rebuild 를 방출 비용만 남긴다. 컬럼 노드는 `label:"Column"` 으로 nodes 에 실재하므로 **명시 제외**해야
+//   컬럼토글이 적중한다(graph-expand-perf 2026-08-13 — 종전 주석의 "colsByTable 거주라 자연 제외" 는 오기였고,
+//   실제로는 매 컬럼 펼침이 캐시를 날렸다. 아래 _metaTopoSig 의 Column 제외 분기 참조).
 //   ⚠ 적대리뷰(§73) F1/F2 반영: simGroups/relOrder 는 노드 **키**뿐 아니라 **객체 속성**(name·fqn·cluster_id·
 //   cluster_label — affix·be:클러스터·정렬)과 **roles**(Phase-3 역할 폴백 _metaRoleOf)도 읽으므로 서명에 포함.
 //   키만 해시하면 AI 분석 완료(roles 변경·nodes 무변경) 또는 재-ingest(속성 변경·키 무변경)에서 stale 캐시 발생.
 function _metaTopoSig() {
   const hs = (str, h) => { for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h; };
-  let nh = 0; _metaGraph.nodes.forEach((v, k) => {
+  // graph-expand-perf(2026-08-13): **Column 노드는 서명에서 제외**한다. 위 §73 주석은 "컬럼은 colsByTable
+  //   거주라 서명서 자연 제외 = 컬럼토글도 적중" 이라 적었지만 **사실이 아니었다** — 컬럼은 `_metaGraph.nodes`
+  //   에 `label:"Column"` 으로 들어간다(build L100-105 분기·`_metaGraphCollapse` 의 nodes.delete 가 근거).
+  //   그래서 정작 사용자가 가장 자주 하는 조작인 **테이블 클릭=컬럼 펼침이 매번 서명을 바꿔** relOrder(barycenter
+  //   4-sweep)+simGroups 를 전 모델 재계산시켰다(메모이즈 도입 목적을 정확히 빗나감).
+  //   제외가 안전한 근거: 두 캐시 함수의 입력은 `groups[*].tables`(Table/Routine/DbObject)와 REFERENCES
+  //   인접행렬뿐이고 **Column 을 읽는 경로가 없다**(_metaRelOrderAll·_metaSimGroups 전문 확인). REFERENCES
+  //   끝점이 컬럼 키여도 `_metaRelTableKeyOf`→`_metaColParent` 가 **문자열 파싱**으로 소속 테이블을 얻으므로
+  //   Column 노드의 존재 여부와 무관하다. 관계 자체가 바뀌면 아래 `eh`/`en`(REFERENCES 해시)이 잡는다.
+  //   ⚠ 컬럼 수는 배치 **높이**(realH)에 영향을 주지만 그건 캐시 대상이 아닌 masonry 방출부가 매 build
+  //   계산한다 — 캐시하는 것은 '순서' 뿐이고 순서는 컬럼과 무관하다.
+  let nh = 0, nn = 0; _metaGraph.nodes.forEach((v, k) => {
+    if (v && v.label === "Column") return;
+    nn++;
     nh = hs(k + "|" + (v.name || "") + "|" + (v.fqn || "") + "|" + (v.cluster_id != null ? v.cluster_id : "") + "|" + (v.cluster_label || ""), nh);
   });
   let rh = 0, rn = 0; _metaGraph.roles.forEach((role, k) => { rn++; rh = hs(k + "=" + String(role), rh); });   // F1: 역할 폴백 그룹핑
@@ -46,7 +61,7 @@ function _metaTopoSig() {
   //   `groups` 조립(위 L74~80)이 kind 필터를 적용하므로 필터 토글은 simGroups/relOrder 의 입력(멤버 집합)을
   //   바꾼다. 종전 서명은 모델(nodes)만 봐서 필터 변경 후 _simCache 가 stale 로 남았고(숨긴 루틴이 그룹에
   //   계속 계수), 패널이 그 캐시를 SSOT 로 소비하면서 표면화됐다. 서명에 포함하면 토글이 캐시를 무효화한다.
-  return _metaGraph.nodes.size + "|" + en + "|" + rn + "|" + nh + "|" + eh + "|" + rh + "|"
+  return nn + "|" + en + "|" + rn + "|" + nh + "|" + eh + "|" + rh + "|"
     + [..._metaGraph.schemaExpanded].sort().join(",") + "|" + _metaGraph.mode + "|"
     + [...(_metaGraph.hiddenKinds || [])].sort().join(",");
 }
@@ -1990,6 +2005,9 @@ function _metaGraphResetModel() {
   //   스코프의 컬럼이 새 화면 상세에 뜨고(같은 fqn 다른 ds), miss 기록이 남아 재조회가 영구 차단된다.
   _metaGraph.detailCols.clear();
   _metaGraph.detailColsMiss.clear();
+  // graph-expand-perf(codex 적대리뷰 P1): 컬럼 펼침 선-fetch 캐시도 모델과 함께 버린다 — 리셋 전에 뜬
+  //   응답이 TTL(20s) 안의 재클릭으로 소비되면 이전 세대 payload 가 새 모델에 ingest 될 수 있다.
+  _metaColPrefetchClear();
   _metaGraph.detailColsInflight.clear();
   if (_metaGraph.introspectMiss) _metaGraph.introspectMiss.clear();   // 스코프 전환 시 실패 기록도 초기화(재시도 가능)
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
@@ -2908,6 +2926,10 @@ function _metaGraphOnNodeClick(e) {
     return;
   }
   const n = _metaGraph.nodes.get(id);
+  // graph-expand-perf(2026-08-13): 아래 340ms 타이머는 **모델 변경**을 더블클릭과 구분하려는 것이지
+  //   네트워크를 미루려는 것이 아니다. 컬럼 GET 두 개를 지금 띄워 두면(순수 읽기 — 모델·카메라·상태 무접촉)
+  //   타이머가 만료될 때 응답이 이미 와 있어 대기가 사라진다. 더블클릭이면 응답은 버려진다(부작용 0).
+  if (n && n.label === "Table") _metaGraphPrefetchColumns(id);
   _metaGraphShowDetail(id);
   if (n && n.label === "Table") {
     if (_metaGraph._clickTimer) clearTimeout(_metaGraph._clickTimer);
