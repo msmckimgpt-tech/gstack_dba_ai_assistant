@@ -4020,3 +4020,17 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-14T01:03:01+09:00
+
+## CHG-20260813T1640-ai-claude-corp-usage-metric-solo-anim — '요청' 경계 전환 애니메이션 복구 (Minor §12.3, frontend-only)
+
+사용자 보고: '요청' ↔ 다른 지표 전환에서만 애니메이션이 없었다.
+
+- `src/static/admin/usage.js`
+  - `renderStacked` signature 를 `[days, W]` 로 축소(분해모드·모델집합 제거) — 세그먼트 키 집합이
+    달라도 노드를 유지해 접기/자라기로 전환을 흡수한다. 모델 칩 토글도 함께 부드러워진다.
+  - `renderDonut` 이 값 0 인 모델을 0 길이 arc 로 유지(라벨 집합 안정화).
+  - `renderStackedHBar` signature 에서 solo 접두·모델 목록 제거 + **세그먼트 부족분 추가 로직**
+    신설(종전엔 추가 경로가 없어 개수가 바뀌면 재생성됐다) + 색 갱신.
+- `src/static/css/admin.css` — `.admin-usage-hseg` 에 `background` 전환 추가(단일 색 ↔ 모델 색).
+- `tests/headless/test_usage_metric_switch.js` — 양방향 경계 전환 회귀 잠금 5건 + 기존 검사 3건을
+  새 설계(0 높이 노드 유지)에 맞춰 "보이는 막대" 기준으로 정정. 32 PASS · 뮤테이션 역검증 5/5.
