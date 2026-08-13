@@ -2569,10 +2569,12 @@ display-permissive "넓게 표시 + 백엔드 403"). 따라서 선행 cycle 이 
 - verify-completion: PASS (`--pre-commit feature-0003-agent-web-ui`)
 - Push / PR / main 병합: §16.3 Step 4 자동 · 배포: `deploy_scope: included`
 
-### POST-DEPLOY 필수
+### POST-DEPLOY 결과 (2026-08-13, 배포 `660e9fcf` — 전 항목 PASS)
 
-멤버 계정으로 ① '설정' 팝업에 **'나가기'** 노출 ② 클릭 → self-leave 실제 수행(목록에서 사라짐)
-③ 소유자 계정에서는 '보관' 유지 ④ `pageerror` 0.
+① 멤버 계정 '설정' 팝업 danger 버튼 = **'나가기'** + 안내 "이 그룹 대화에서 나갑니다…"
+(증적 `docs/test-runs.d/evidence/member-leave-btn-live.png`) ② 클릭 → self-leave 수행 → 대화가
+목록에서 사라짐 + `…/members` 404 ③ 소유자(admin)는 같은 팝업에서 **'보관'** 유지(분기 양방향 정확)
+④ `pageerror` 0. 선행 B 축(오도 안내 소거)도 같은 계정에서 재확인. 테스트 데이터 정리 완료.
 
 ### 잔여 (§8.1 — 기록만)
 
