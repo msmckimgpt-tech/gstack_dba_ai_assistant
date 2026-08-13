@@ -82,4 +82,21 @@ verdict: PASS
   — 2번이 수정 전/후 rail+스크롤바를 가로 6배 확대해 나란히 붙인 판독용 캡처다(§16.6 픽셀-클래스
   변경은 element 상태로 대체 불가).
 - 라이브 데이터 변경 0 — 열람·스크롤 경로만 사용(발화·편집·삭제 없음).
-- 이월: **POST-DEPLOY**(main 머지 후 baked 자산) 재확인은 배포 직후 Run 3 으로 기록한다.
+- 이월: **POST-DEPLOY**(main 머지 후 baked 자산) 재확인 → 아래 Run 3 에서 종결.
+
+# Run 3 — POST-DEPLOY 라이브 실측 (baked 자산)
+
+- **Environment: Windows-browser** — 실 Chrome/150, `https://localhost/`(Caddy → web-a/web-b),
+  자기 생성 탭(§16.6 세션 격리).
+- 배포: PR **#1252** → main `c6c43463` → `make deploy-web-only`(scoped sudo). 양 replica
+  `mysql-ai-web:c6c43463`(= main HEAD) · soak 통과 · `/healthz` 200 ·
+  **무중단 실측: 배포 창 `no upstreams available` 0건**(§16.6 [5] — soak 성공 ≠ 무중단).
+- 신원 대조: 서빙 `https://localhost/static/app.js` 에 신설 심볼(`_observeRailContentResize`·
+  `_railChildObserver`·`RAIL_BOTTOM_PIN_SETTLE_MS`) **10건** — 자기 빌드 확인.
+- 결과 **PASS — 프리뷰(Run 2 확정 코드)와 차이 0**, 같은 대화(`20260812082809-e4263afd`,
+  mermaid SVG 3개 실렌더):
+  - 진입: `scrollTop 4206 == maxScrollTop` → **gap 0**(최신 답변 가시) · 뱃지 오차 **0.20px** · JS 오류 0
+  - 막대 60% 클릭: `4206 → 2629` 정밀 점프, pin 이 되돌리지 않음, 정합 유지
+  - 실 휠 입력: `2629 → 1729` 이동 후 유지(pin 개입 0), 정합 유지
+- 증거: `../evidence/pb0008-rail-async-relayout-{6-postdeploy-entry,7-postdeploy-midjump}.png`.
+- 라이브 데이터 변경 0 — 열람·스크롤 경로만 사용.

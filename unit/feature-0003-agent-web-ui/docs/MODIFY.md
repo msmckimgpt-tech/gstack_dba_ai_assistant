@@ -3832,3 +3832,14 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T154300-attach-list-name-sort.md`,
   `docs/evidence/pb0008-attach-name-sort-3-postdeploy.png`.
 - Timestamp: 2026-08-13T17:00:00+09:00
+
+## CHG-20260813T1741-rail-async-relayout-postdeploy — POST-DEPLOY 라이브 실측 종결
+
+- 선행 `CHG-20260813T1550-rail-async-relayout` 가 이월한 baked 자산 검증을 종결한다. 코드 변경 0 — 기록만.
+- 배포: PR #1252 → main `c6c43463` → `make deploy-web-only`. 양 replica `mysql-ai-web:c6c43463` ·
+  soak 통과 · `/healthz` 200 · **배포 창 `no upstreams available` 0건**(무중단 실측).
+- 라이브 재실측 결과 **프리뷰(확정 코드)와 차이 0**: 진입 맨-아래 gap **0** · 뱃지 오차 **0.20px** ·
+  막대 60% 클릭 정밀 점프 · 실 휠 입력 후 위치 유지 · JS 오류 0. 라이브 데이터 변경 0(열람·스크롤만).
+- Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260813T155000-rail-async-relayout.md`,
+  `docs/evidence/pb0008-rail-async-relayout-{6,7}-postdeploy-*.png`.
+- Timestamp: 2026-08-13T17:41:00+09:00

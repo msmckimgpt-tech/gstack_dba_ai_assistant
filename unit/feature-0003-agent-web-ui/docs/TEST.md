@@ -2811,7 +2811,13 @@ transition 이 이 API 에 반영되지 않는다. `getComputedStyle().height` �
   자기 전용 탭으로 전환해 이후 전부 그 탭에서 수행하고 종료 시 그 탭만 닫았다.
   증거: `docs/evidence/pb0008-rail-async-relayout-{1-entry,2-before-after,3-midjump,4-wheel,5-baseline-full}.png`
   (2번 = 수정 전/후 rail+스크롤바 가로 6배 확대 나란히 대조).
-- Run 기록 정본: `docs/test-runs.d/20260813T155000-rail-async-relayout.md`.
+- **Environment: Windows-browser (POST-DEPLOY)** — **PASS**. PR #1252 → main `c6c43463` →
+  `make deploy-web-only`(파리티 `mysql-ai-web:c6c43463` 양 replica · soak 통과 · `/healthz` 200 ·
+  **배포 창 `no upstreams available` 0건** = 무중단 실측). 서빙 `app.js` 신설 심볼 10건(신원 대조).
+  라이브 baked 자산에서 **프리뷰와 차이 0**: 진입 gap **0** · 뱃지 오차 **0.20px** · 막대 60% 클릭
+  정밀 점프(4206→2629) · 실 휠 입력 후 위치 유지(2629→1729) · JS 오류 0. 라이브 데이터 변경 0.
+  증거: `docs/evidence/pb0008-rail-async-relayout-{6-postdeploy-entry,7-postdeploy-midjump}.png`.
+- Run 기록 정본: `docs/test-runs.d/20260813T155000-rail-async-relayout.md` (Run 1~3).
 - **Pass/Fail: PASS**
 
 ## 20260813T1700-attach-name-sort-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)

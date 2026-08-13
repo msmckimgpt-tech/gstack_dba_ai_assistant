@@ -10235,7 +10235,12 @@ clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js
 - [x] PB-0008 시각검증 — 격리 프리뷰 2개(worktree/main 자산)로 **사용자가 보고한 그 대화**에서
       전/후 대조: 오차 86.58px→0.11px · 진입 gap 1,631px→0px · thumb 불일치 0 · JS 오류 0 ·
       자기 전용 탭 격리(§16.6 MUST — pages[0] 이 병렬 세션 탭으로 바뀐 것 관측 후 전환).
-- [ ] verify-completion PASS · commit/push/PR · cycle-finalize · 배포 + POST-DEPLOY
+- [x] verify-completion PASS(16 checks) · commit `2407bb70` · origin/main 병합(§16.4 자율 — 말미
+      append 충돌 2건 양쪽 보존) · PR **#1252** CI CLEAN → `cycle-finalize --pr 1252`
+      (머지 `c6c43463` · worktree remove · branch -d · 원격 브랜치 정리 · REGISTRY Closed)
+- [x] 배포(deploy_scope: included) + POST-DEPLOY — `make deploy-web-only` · 파리티
+      `mysql-ai-web:c6c43463` 양 replica · **무중단 실측 `no upstreams available` 0건** ·
+      라이브 재실측 **프리뷰와 차이 0**(진입 gap 0 · 오차 0.20px · 점프·휠 정합 유지 · JS 오류 0)
 
 ### 9. Requested Scope
 
@@ -10294,3 +10299,21 @@ clamp 없음)과 정적 스캔이 **원리적으로** 못 본다 → 실 `app.js
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 요청 화면에서 직접 확인)
+
+## 20260813T1741-rail-async-relayout-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+선행 cycle(`20260813T1550-rail-async-relayout`)이 이월한 **라이브 baked 자산 검증**을 종결한다.
+
+- [x] PR #1252 머지 → main `c6c43463` → `make deploy-web-only` — soak 통과 · 엣지
+      `no upstreams available` **0건**(무중단 실측) · `/healthz` 200
+- [x] 배포 파리티 — web-a·web-b 양쪽 `mysql-ai-web:c6c43463`(= main HEAD) · 서빙 `app.js` 에
+      신설 심볼(`_observeRailContentResize`·`_railChildObserver`·`RAIL_BOTTOM_PIN_SETTLE_MS`) 10건
+- [x] 라이브 전 축 재실측 — 프리뷰(확정 코드)와 **차이 0**: 진입 맨-아래 gap **0** · 뱃지 오차
+      **0.20px** · 막대 60% 클릭 정밀 점프(4206→2629) · 실 휠 입력 후 위치 유지(2629→1729) ·
+      두 경우 모두 정합 유지 · JS 오류 0
+- [x] 자기 생성 탭에서만 조작(§16.6 세션 격리) · 라이브 데이터 변경 0(열람·스크롤 경로만)
+- [x] fragment Run 3 append + TEST/MODIFY/REVIEW 기록
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 프리뷰 대비 차이 0)
