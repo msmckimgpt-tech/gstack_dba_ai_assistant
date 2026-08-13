@@ -220,3 +220,51 @@ knob 은 두지 않는다(`AGENT_EXT_TOOL_CONCURRENCY` 를 이 사유로 삭제 
 **전송 2종 차이(정직 표기)**: stdio 는 도구 이름에 라벨을 접미해 **호출자 AI 가 세션을 구분**할
 수 있다(L1). HTTP 는 단일 표면이라 L1 이 없다 — 여러 계정을 동시에 다룰 때는 stdio 를 권한다.
 서버측 방어(L2 각인·L3 대조·L4 원장)는 두 전송에 동일하게 적용된다.
+
+## 15. 인증 진입 (2026-08-13 — 접근성 재설계)
+
+사용자가 "특정 스크립트 실행은 접근성이 매우 낮다" 고 지적했다. 원인은 **표준 discovery 부재**
+였고, 조사 중 **미로그인 사용자는 인가를 시작할 방법 자체가 없었음**(`/login` 404)도 드러났다.
+
+### 15.1 두 경로
+
+| 클라이언트 | 사용자가 하는 일 |
+|---|---|
+| MCP OAuth 지원(Claude Desktop/Code 등) | 설정에 `https://<host>/api/ai/mcp` 입력 → **브라우저가 저절로 열림** → 로그인 → [허용]. 등록·PKCE·코드 교환은 클라이언트가 한다 |
+| 그 외 · 수동 | `https://<host>/ai/connect` 접속 → [연결 토큰 발급] → 설정 JSON 복사 |
+
+### 15.2 자동이 성립하는 조건 (RFC 9728 → 8414)
+
+1. 무토큰 호출의 **401 에 `WWW-Authenticate: Bearer resource_metadata="…"`** — 엣지·앱 양쪽.
+2. `GET /.well-known/oauth-protected-resource` → 이 자원의 AS 위치.
+3. `GET /.well-known/oauth-authorization-server` → 엔드포인트·`S256` 전용 광고.
+   (둘 다 경로 접미 변형 `/{rest}` 도 응답 — 클라이언트마다 조회 형태가 다르다.)
+
+셋 중 하나만 빠져도 클라이언트는 "인증이 필요하다" 만 알고 **어디서** 받는지 몰라, 사람이
+등록·PKCE·코드 복사를 대신하게 된다.
+
+### 15.3 동의 화면 (보안이 목적)
+
+세션 쿠키가 `SameSite=Lax` 라 **top-level GET navigation 에는 쿠키가 실린다.** 동의 단계가
+없으면 공격자가 DCR 로 자기 redirect_uri 를 등록한 뒤 로그인된 사용자에게 링크를 클릭하게
+만드는 것만으로 그 계정의 코드를 가져간다(PKCE 는 공격자가 verifier 를 만드니 무력).
+
+- `GET /api/ai/oauth/authorize` — 미로그인이면 `/?next=…`, 로그인이면 **동의 화면만** 렌더
+- `GET /api/ai/oauth/authorize/info` — 검증을 **여기서 끝내고** 서명된 consent token 발급
+- `POST /api/ai/oauth/authorize/decision` — **유일한 코드 발급 지점**. consent token 은
+  세션 결합 + TTL 600s + **nonce 단일 사용**(DB UNIQUE — replica 2대에서도 한 번)
+
+발급 3경로(`info`·`decision`·`connect/token`)는 **강제 비밀번호 변경 대기 계정을 403 으로
+거절**한다. 그 모달은 SPA 안에서만 강제되므로 새 진입점이 그 앞으로 빠져나갈 수 있었다.
+
+### 15.4 scope
+
+지원 집합은 `data.read` 뿐이고, 그 밖은 **발급 전 거절**(`invalid_scope`)한다. 조용히 무시하면
+사용자는 넓게 승인했다고 믿고 클라이언트는 좁은 토큰을 받는다. 집행은
+`ai_tools.require_ai_token` 이 하며 없으면 **403**.
+
+### 15.5 콘솔 토큰
+
+`POST /api/ai/connect/token` — **refresh 없음**(회전할 client 가 없다), 수명 = **남은 세션
+수명**(상한 12h). `ACCESS_TTL_SEC`(15분)를 쓰면 설정 파일에 붙여넣자마자 죽는다.
+어차피 로그아웃하면 수명과 무관하게 즉시 무효다.

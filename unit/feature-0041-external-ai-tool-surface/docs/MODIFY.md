@@ -190,3 +190,28 @@ source_of_truth: true
   (+ evidence 2장)
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260813-0013
+- Date: 2026-08-13
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **인증 접근성 재설계** — 셸 스크립트 없이 "URL 접속 → 로그인 → 허용" 으로 끝나게
+  했다. 사용자 지적("특정 스크립트 실행은 접근성이 매우 낮다")의 뿌리는 **표준 discovery 부재**
+  였고, 그 과정에서 **미로그인 사용자가 `/login` 404 를 보던 결함**과 **동의 화면 부재로 인한
+  링크 클릭 탈취 경로**를 함께 잡았다.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py` (동의 흐름 3엔드포인트 ·
+    RFC 8414/9728 메타데이터 4 · 콘솔 발급 2 · scope 정규화 · 강제변경 차단)
+  - `unit/feature-0003-agent-web-ui/src/oauth_store.py` (`consume_consent_nonce` ·
+    `issue_console_token`)
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` (401 `WWW-Authenticate` · scope 집행)
+  - `unit/feature-0003-agent-web-ui/src/app.py` (`_AuthError.headers` — 선택 인자)
+  - `unit/feature-0003-agent-web-ui/src/routers/static_pages.py` (`/ai/connect`)
+  - `static/{oauth-consent,ai-connect}.{html,js}` · `static/ai-connect.css` ·
+    `static/app/next-target.js` (신규)
+  - `static/app/auth.js` · `static/app.js` (로그인 후 `?next=` 복귀 3경로)
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` (엣지 401 챌린지)
+  - `docs/ROUTEMAP.md` · `tests/route_snapshot_p5b.json` (route +9 반영)
+- Impact: **기존 401 응답 셰이프 무변경**(헤더는 준 곳에만). `authorize` GET 이 더 이상 코드를
+  발급하지 않는다 — 이 URL 을 직접 호출하던 자동화가 있다면 동의 화면을 받는다(설계상 의도).
+  scope 집행이 켜지므로 `data.read` 가 없는 토큰은 403 — 현행 발급물은 전부 `data.read` 다.
+- Rollback Notes: 라우터·정적 파일 되돌림. 스키마 변경 없음(nonce 는 기존 `WebOAuthGrants` 재사용).

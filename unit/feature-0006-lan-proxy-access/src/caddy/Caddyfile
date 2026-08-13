@@ -140,10 +140,18 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 		# ⚠ 이 검사는 **handle 블록 안**에 있어야 한다. 밖에 두면 adapt 결과에서 이 라우트가
 		#   `handle` 뒤로 밀려 익명 요청이 먼저 프록시로 나간다(무력화). 블록 안에서는
 		#   `respond` 가 `reverse_proxy` 보다 앞서 평가된다.
+		# ⚠ 이 401 은 **MCP 클라이언트가 처음 만나는 응답**이다. RFC 9728 의
+		#   `WWW-Authenticate: … resource_metadata=…` 가 없으면 클라이언트가 인증을
+		#   어디서 받아야 할지 몰라 스스로 시작하지 못한다(= 사람이 손으로 대신해야 함).
+		#   upstream 의 401 과 같은 단서를 엣지에서도 준다.
 		@noauth not header Authorization *
 		respond @noauth 401 {
 			body "{\"error\":\"unauthorized\",\"error_description\":\"Authorization: Bearer <access_token> required\"}"
 			close
+		}
+		header @noauth {
+			WWW-Authenticate `Bearer resource_metadata="https://{$WEB_PUBLIC_HOST}/.well-known/oauth-protected-resource"`
+			Content-Type "application/json"
 		}
 
 		reverse_proxy ext-tool-mcp:8971 {

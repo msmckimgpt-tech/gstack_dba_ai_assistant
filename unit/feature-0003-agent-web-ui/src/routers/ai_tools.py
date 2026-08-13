@@ -61,18 +61,36 @@ def _bearer(request: Request) -> str:
     return raw[7:].strip() if raw[:7].lower() == "bearer " else ""
 
 
+_REQUIRED_SCOPE = "data.read"
+
+
+def _challenge(request: Request) -> dict[str, str]:
+    """RFC 9728 — 401 이 **인증 방법의 위치**를 알려준다.
+
+    이게 없으면 MCP 클라이언트는 "인증이 필요하다"는 것만 알고 *어디서* 받는지 모른다.
+    그래서 사람이 등록·PKCE·코드 교환을 손으로 대신해야 했다(셸 스크립트가 필요했던 이유).
+    """
+    origin = str(request.base_url).rstrip("/")
+    return {"WWW-Authenticate":
+            f'Bearer resource_metadata="{origin}/.well-known/oauth-protected-resource"'}
+
+
 def require_ai_token(request: Request, conn=Depends(app.get_conn)) -> dict[str, Any]:
     """access token → 계정 컨텍스트. 세션이 죽었으면 401(= '세션 실재' 집행면)."""
     token = _bearer(request)
     if not token:
-        raise app._AuthError("Bearer access token 이 필요합니다.", 401)
+        raise app._AuthError("Bearer access token 이 필요합니다.", 401, _challenge(request))
+    if conn is None:
+        # `app.get_conn` 은 memory DB 실패를 흡수해 None 을 준다. 분기하지 않으면 AttributeError
+        # 로 500 이 나고, 그 500 은 클라이언트에 "토큰이 잘못됐다" 로 읽힌다(재인증 루프).
+        raise app._AuthError("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
     cur = conn.cursor()
     try:
         resolved = _store.resolve_access_token(cur, token)
     finally:
         cur.close()
     if not resolved:
-        raise app._AuthError("유효하지 않거나 만료된 토큰입니다.", 401)
+        raise app._AuthError("유효하지 않거나 만료된 토큰입니다.", 401, _challenge(request))
     account = app._load_account_by_id(conn, int(resolved["account_id"])) \
         if hasattr(app, "_load_account_by_id") else None
     if account is None:
@@ -83,6 +101,12 @@ def require_ai_token(request: Request, conn=Depends(app.get_conn)) -> dict[str, 
         account = rows[0] if rows else None
     if not account:
         raise app._AuthError("계정을 찾을 수 없습니다.", 401)
+    # codex P1 — 저장된 scope 를 아무도 읽지 않으면 동의 화면이 표시한 범위가 **장식**이 된다.
+    # 도구 표면은 전부 읽기이므로 요구 scope 는 하나뿐이지만, 집행 지점이 존재해야 나중에
+    # 쓰기 도구를 추가할 때 "그때 붙이자" 가 되지 않는다.
+    granted = {t for t in str(resolved.get("scopes") or "").replace(",", " ").split() if t}
+    if _REQUIRED_SCOPE not in granted:
+        raise app._AuthError(f"이 토큰에는 {_REQUIRED_SCOPE} 권한이 없습니다.", 403)
     return {"account": account, "client_id": resolved.get("client_id"),
             "session_id": resolved.get("session_id"), "scopes": resolved.get("scopes")}
 

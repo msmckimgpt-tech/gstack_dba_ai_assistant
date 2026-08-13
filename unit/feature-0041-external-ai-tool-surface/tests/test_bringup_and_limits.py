@@ -90,7 +90,7 @@ def test_upstream_tls_is_verified_not_disabled():
     block = block[:block.index("\n  insight-worker:")]
     assert "EXT_TOOL_CA_BUNDLE: /certs/rootCA.pem" in block
     assert "EXT_TOOL_UPSTREAM_TLS_SERVER_NAME" in block and "EXT_TOOL_UPSTREAM_HOST_HEADER" in block
-    assert "EXT_TOOL_VERIFY_TLS" not in block, "검증을 끄는 설정이 들어갔다"
+    assert "EXT_TOOL_VERIFY_TLS" not in block, "검증을 끄는 설정이 들어갔다"  # compose 엔 주석 형태 없음
     assert "/certs:ro" in block, "rootCA 를 마운트하지 않으면 기동은 되고 호출만 실패한다"
     assert "/shared" in block, "volumes 를 덮어쓰며 agent-common 의 /shared 가 사라졌다"
 
