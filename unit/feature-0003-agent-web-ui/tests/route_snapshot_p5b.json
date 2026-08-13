@@ -1,6 +1,6 @@
 {
-  "total_routes": 236,
-  "api_routes": 235,
+  "total_routes": 245,
+  "api_routes": 244,
   "ordered": [
     {
       "path": "/static",
@@ -23,6 +23,13 @@
     },
     {
       "path": "/share/{token}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/ai/connect",
       "methods": [
         "GET"
       ],
@@ -1562,6 +1569,20 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/ai/oauth/authorize/info",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/oauth/authorize/decision",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/ai/oauth/token",
       "methods": [
         "POST"
@@ -1570,6 +1591,48 @@
     },
     {
       "path": "/api/ai/oauth/revoke",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/.well-known/oauth-authorization-server",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/.well-known/oauth-authorization-server/{rest:path}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/.well-known/oauth-protected-resource",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/.well-known/oauth-protected-resource/{rest:path}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/connect/status",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/connect/token",
       "methods": [
         "POST"
       ],

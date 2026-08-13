@@ -278,6 +278,67 @@ def issue_token_pair(cur, *, client_id: str, account_id: int, session_id: int | 
             "expires_in": ACCESS_TTL_SEC, "token_type": "Bearer", "scope": scopes or ""}
 
 
+def consume_consent_nonce(cur, nonce: str) -> bool:
+    """동의서 1회 소비. **DB UNIQUE 로 판정**한다 — 프로세스 메모리로 하면 replica 두 대에서
+    각각 한 번씩, 즉 두 번 통과한다.
+
+    코드 테이블을 재사용한다(같은 수명·같은 정리 대상). `CodeHash` 가 UNIQUE 이므로 두 번째
+    INSERT 는 실패하고, 그 실패가 곧 "이미 처리된 동의" 다.
+    """
+    n = str(nonce or "").strip()
+    if not n:
+        return False
+    try:
+        cur.execute(
+            "INSERT INTO WebOAuthGrants "
+            "(CodeHash, ClientId, AccountId, SessionId, RedirectUri, CodeChallenge, "
+            " CodeChallengeMethod, Scopes, ExpiresAt, ConsumedAt) "
+            "VALUES (%s, %s, 0, NULL, %s, %s, 'S256', NULL, %s, CURRENT_TIMESTAMP)",
+            (token_hash("consent:" + n), "consent-nonce", "", "consent-nonce",
+             _utcnow() + timedelta(seconds=900)),
+        )
+    except Exception:
+        return False
+    return True
+
+
+CONSOLE_CLIENT_ID = "console-manual"
+
+
+# 콘솔 토큰 수명 상한. 세션이 이보다 오래 살아도 여기서 끊는다(붙여넣은 설정이 잊혀진 채
+# 무한정 유효해지지 않게).
+CONSOLE_TOKEN_MAX_TTL_SEC = 12 * 3600
+
+
+def issue_console_token(cur, *, account_id: int, session_id: int,
+                        scopes: str | None = "data.read") -> dict[str, Any]:
+    """콘솔에서 사람이 직접 발급하는 access token (OAuth 흐름을 지원하지 않는 클라이언트용).
+
+    **refresh token 을 주지 않는다.** 회전할 client 가 없으므로 쓸 데가 없고, 복사·붙여넣기로
+    유통되는 화면에 secret 을 하나 더 늘리는 것은 순손실이다.
+
+    수명은 `ACCESS_TTL_SEC`(15분)가 아니라 **남은 세션 수명**(상한 12시간)이다. 15분짜리를
+    설정 파일에 붙여넣게 하는 것은 쓸 수 없는 기능을 준 것과 같다(브라우저 검증에서 "약 0시간"
+    으로 드러났다). 어차피 `resolve_access_token` 이 세션 실재를 확인하므로 **로그아웃하면
+    수명과 무관하게 즉시 죽는다** — 수명을 세션에 맞추는 것이 실제 동작과도 일치한다.
+    """
+    cur.execute("SELECT ExpiresAt FROM WebAuthSessions WHERE Id = %s", (int(session_id),))
+    row = cur.fetchone()
+    remain = int((_as_naive(row[0]) - _utcnow()).total_seconds()) if row and row[0] else 0
+    ttl = max(60, min(CONSOLE_TOKEN_MAX_TTL_SEC, remain or CONSOLE_TOKEN_MAX_TTL_SEC))
+
+    access = new_secret("mat_")
+    cur.execute(
+        "INSERT INTO WebOAuthTokens "
+        "(TokenHash, TokenType, FamilyId, ClientId, AccountId, SessionId, Scopes, ExpiresAt) "
+        "VALUES (%s, 'access', %s, %s, %s, %s, %s, %s)",
+        (token_hash(access), new_family_id(), CONSOLE_CLIENT_ID, int(account_id),
+         int(session_id), scopes, _utcnow() + timedelta(seconds=ttl)),
+    )
+    return {"access_token": access, "expires_in": ttl,
+            "token_type": "Bearer", "scope": scopes or ""}
+
+
 def revoke_family(cur, family_id: str, *, reason: str = "reuse") -> None:
     """계열 전체 폐기. reuse 탐지 시의 유일한 올바른 대응 — 개별 토큰만 죽이면 공격자와
     정상 사용자가 번갈아 갱신하며 공존한다."""

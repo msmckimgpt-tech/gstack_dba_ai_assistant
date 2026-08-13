@@ -240,3 +240,18 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 5 | `tools/list` | **9종** ✅ |
 | 6 | `tools/call open_task` (가짜 토큰) | **상류 401 도달** ✅ (검증된 TLS 로 web 에 닿음) |
 | 7 | 기존 경로 `/livez`·`/api/ai/manifest`·`/api/ai/openapi.json` | 전부 **200** ✅ |
+
+### Run 2026-08-13 (10차) — 인증 접근성 (Environment: local pytest + node)
+
+스위트 **235건 PASS**. 문자열이 아니라 **동작**을 보는 절을 추가했다.
+
+| 뮤테이션 | 결과 |
+|---|---|
+| 오픈 리다이렉트 판정을 URL 해석 → 문자열 검사로 되돌림 | **KILLED** |
+| scope 지원 밖을 조용히 무시 | **KILLED** |
+| consent token 세션 결합 제거 | **KILLED** |
+| consent token 서명 검증 제거 | **KILLED** |
+| consent nonce 단일사용 해제 | **KILLED** |
+
+`safeNextTarget` 은 node 로 9 케이스 실행: `/ai/connect`·쿼리 포함 경로는 허용,
+`//evil.com`·`/\evil.com`·`https://evil.com`·`javascript:`·빈 값은 거절.

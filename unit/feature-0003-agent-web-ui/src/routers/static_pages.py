@@ -46,6 +46,14 @@ def share_page(token: str) -> FileResponse:
     return app.FileResponse(app.STATIC_DIR / "share.html", headers=app._HTML_NO_CACHE)
 
 
+# feature-0041: 외부 AI 연결 페이지. **익명 접근 가능** — 로그인 안내와 MCP 접속 주소만
+# 보여주고, 토큰 발급은 별도 인증 API(`/api/ai/connect/token`)가 세션을 확인한다. 정적 HTML 만
+# 서브하고 상태 판단은 클라이언트 JS 가 `/api/ai/connect/status` 로 한다(share.html 과 같은 형태).
+@router.get("/ai/connect")
+def ai_connect_page() -> FileResponse:
+    return app.FileResponse(app.STATIC_DIR / "ai-connect.html", headers=app._HTML_NO_CACHE)
+
+
 @router.get("/healthz")
 def healthz() -> JSONResponse:
     """TASK-0126 (#5 split-brain / #4 워커 가시성): 배포 provenance + readiness probe.
