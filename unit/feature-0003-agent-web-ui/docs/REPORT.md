@@ -2464,3 +2464,60 @@ ANCHOR §1 "각자 자기 방식대로 정리"), 백엔드 `PATCH /api/conversat
 - 릴리즈노트(in-app `release-notes-data.js`)는 큐레이션 대상 — 본 변경은 `release_notes_scope` 미선언
   이므로 이번 cycle 에서 기재하지 않았다(doc_sync 소관).
 - 다중 선택 드래그(여러 대화 한 번에 폴더 이동)는 범위 밖 — 멀티선택은 여전히 자기 대화 전용.
+
+---
+
+## 20260813T1930 — 그룹 멤버 프론트 권한 게이트 정합 (member-scope-gates)
+
+사용자 감사 요청: "별도로 표시-집행 불일치가 나타나는 부분이나, 소유자가 과도하게 좁혀진 이슈가
+나타난 부분이 있는지 검토해주세요." → 감사 후 사용자가 **A+B+C 수정 범위 승인**.
+
+### 감사 방법
+
+백엔드 `_account_can_access_conversation` 호출 **33지점을 전수 스캔**해 각 라우트의 2차 owner 게이트
+(`_conversation_owned_by_account` / `_conversation_owner_account_id`) 유무로 분류하고, 프론트 게이트
+(`requiredPermissionsFor` · `can*Conversation` · 안내문 조건)와 대조했다. `operator`(일반 사용자)
+역할 시드 권한(`.own` 보유 / `.any` 미보유)까지 확인해 실제로 차단이 발생하는지 판정했다.
+
+### 확정된 결함 (수정 완료)
+
+| # | 증상 | 서버 | 프론트(수정 전) |
+|---|---|---|---|
+| A-1 | 멤버가 자기 run **중단** 불가 + "권한 없음" 거짓 사유 | 멤버 허용 | owner-only |
+| A-2 | **즉시 답변** 불가 | 멤버 허용 | owner-only |
+| A-3 | **실행시간 연장** — 배너는 뜨는데 승인 불가 → run 타임아웃 | 멤버 허용 | owner-only |
+| A-4 | `···` > **설정** 차단 → **그룹 대화 나가기 UI 경로 소실** (+ 토스트 사유 "공유 링크 관리") | 멤버 허용(self-leave 명시) | owner-only |
+| B | 멤버에게 "읽기 전용 / 조회만 가능" 오도 안내 2지점 | 발화 허용 | `!isOwnConversation` |
+| C | `canAskInConversation` 멤버 누락(dead 경로라 실효 0, 재사용 시 폭발) + dead `disabled` 변수 | — | — |
+
+### 수정
+
+`isOwnScopeConversation`(owner ‖ `is_member`) 신설 + `requiredPermissionsFor` 가 `own`/`ownScope`
+두 변수를 분리 보유. 서버가 2차 owner 게이트를 두는 액션(rename·delete·duplicate·joinable·shares)은
+`own` 유지 — **비대칭이 정답**이며 그 분기 개수까지 구조 테스트가 센다.
+
+### Git 동기화 결과
+
+- 커밋: (본 cycle) — branch `ai/claude/feature-0003-member-scope-gates`
+- verify-completion: PASS (`--pre-commit feature-0003-agent-web-ui`)
+- Push / PR / main 병합: §16.3 Step 4 조건표 자동 (BLOCKED·Critical/Major 승인 대기 없음)
+- 배포: `deploy_scope: included`(전역) 에 따라 이어서 수행
+- 충돌 해결: (핫스팟 경고 — 같은 파일 편집 중인 활성 브랜치 2개, 머지 시점 확인)
+
+### POST-DEPLOY 필수 (visual_verification_scope: always)
+
+멤버 계정으로 라이브 실측: ① 중단 버튼 활성 + 클릭 시 서버 취소 ② 즉시 답변 버튼 활성
+③ `···` > 설정 팝업 열림 + '나가기' 노출 ④ "읽기 전용 대화" 안내 미표시 ⑤ 제목 변경·보관은 여전히
+차단(대조군) ⑥ `pageerror` 0.
+
+### 잔여 리스크 · 후속 (§8.1 — 기록만, 사용자 승인 범위 밖)
+
+- **D-1**: `buildPermissionPills`(app.js) 가 `state.user?.permissions` 를 읽지만 `/api/session` 은 그
+  맵을 직렬화하지 않고(TASK-0098 의도) **호출처도 없다**(dead). 되살리면 항상 "활성 권한 없음" —
+  삭제 후보.
+- **D-2**: 대화 검색 결과 배지가 멤버 대화를 "타 계정" 으로 표기(사이드바는 내 대화 파티션) — 라벨
+  불일치, 코스메틱.
+- **D-3**: 관리자 `.any` 열람 대화의 `···` > '이동' 은 서버 배정이 성공해도 폴더 하위에 렌더되지
+  않는다(무음 실패) — 숨김 vs 파티션 확대는 사용자 결정 필요.
+- 실행시간 연장의 타임아웃 실피해는 코드 경로 대조로 확정했고, 타임아웃까지 기다린 라이브 재현은
+  하지 않았다.

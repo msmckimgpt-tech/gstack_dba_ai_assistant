@@ -10440,3 +10440,42 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 ### 9. Requested Scope
 
 - 선행 cycle 의 POST-DEPLOY 종결 — ✓ (요청의 핵심 시나리오를 라이브에서 실측, 격리·오류 0 확인)
+
+## 20260813T1930-member-scope-gates — 그룹 대화 멤버 프론트 권한 게이트를 백엔드 `.own` 정의에 정합 (사용자 감사 요청)
+
+사용자 요청: "별도로 표시-집행 불일치가 나타나는 부분이나, 소유자가 과도하게 좁혀진 이슈가 나타난
+부분이 있는지 검토해주세요." → 감사 결과 A(기능 결함 4건)·B(오도 안내 2건)·C(잠재 함정) 수정 승인.
+
+- [x] 감사 — 백엔드 `_account_can_access_conversation` 호출 **33지점 전수 스캔**, 각 라우트의 2차
+      owner 게이트(`_conversation_owned_by_account`/`_conversation_owner_account_id`) 유무로 분류.
+      `.own` = "owner OR 그룹 멤버" 인데 프론트는 `isOwnConversation`(소유자 단독) 으로 좁혀 있었다.
+- [x] **A-1~A-3**: 중단 `/api/cancel` · 즉시 답변 `/api/finalize` · 실행시간 연장 `/api/extend` —
+      서버 2차 게이트 없음(멤버 허용) vs 프론트 owner-only → 멤버가 자기 `@assistant` run 을
+      제어 불가 + "권한이 없습니다" 거짓 사유. 연장은 배너가 떠 있는데 승인 불가 → run 타임아웃.
+- [x] **A-4**: `···` > '설정'(`action: "conversation.read"`) 도 owner-only → 멤버가 팝업을 못 열어
+      **그룹 대화 나가기(self-leave) UI 경로가 소실**(서버는 `is_self_leave` 를 명시 허용).
+      라벨도 통합 이전 잔재 "공유 링크 관리" → "대화 설정" 로 정정(토스트 사유 오도 해소).
+- [x] **B**: 멤버에게 "읽기 전용 대화 / 요청을 이어서 보낼 수 없습니다"(composer) · "다른 계정의
+      대화는 조회만 가능합니다"(accessNotice) 를 띄우던 2지점 — 멤버는 실제로 발화 가능(feature-0009
+      핵심). `isOwnScopeConversation` 기준으로 교체.
+- [x] **C**: `canAskInConversation` 이 멤버를 누락(현재 유일 소비처가 dead 변수라 실효 0이었으나
+      재사용 시 즉시 멤버 전송 차단) → predicate 교체 + dead `disabled` 변수·미사용 import 제거 +
+      `sendPrompt` 인라인 가드(`!isOwnConversation && !is_member`)를 공용 predicate 로 통일.
+- [x] 구조 — `isOwnScopeConversation`(owner‖멤버) 신설, `requiredPermissionsFor` 가 `own`/`ownScope`
+      **두 변수를 분리 보유**하고 액션별로 서버 경계에 맞는 쪽을 쓴다. 대조군(rename·delete·
+      duplicate)은 `own` 유지 — 서버에 2차 owner 게이트가 실재하므로 멤버 차단이 정답.
+- [x] 신규 `tests/verify_member_scope_gates.mjs` (jsdom, 53 assertions) — 멤버 허용 4종 + 대조군
+      차단 유지 + 권한 미보유 시 멤버도 차단(과대 개방 방지) + `.any` 열람 대화 차단 유지(경계 양측)
+      + 구조 잠금 10건.
+- [x] **수정 전 재현 실증** — 동일 스크립트로 `git show HEAD:app.js` 평가: 멤버 대화에서 중단·
+      즉시답변·연장 전부 `false`, cancel 후보 `["…cancel.any"]`, read 라벨 "공유 링크 관리".
+      수정 후: 전부 `true`, 후보에 `.own` 포함, 라벨 "대화 설정".
+- [x] 프론트 `.mjs` **61개 전수 exit 0**(그룹/멤버 계열 9개 개별 확인) · ESM 구문 PASS.
+- [ ] 배포 후 PB-0008 라이브 — 멤버 계정으로 중단/즉시답변/설정(나가기) 실측 + 안내문 소거 확인.
+
+### 9. Requested Scope
+
+- 표시-집행 불일치 · 과도하게 좁은 owner 게이트 검토 — ✓ (백엔드 33지점 전수 대조로 4건 확정)
+- 그 수정(A+B+C 승인 범위) — ✓ (predicate 2계층 + 오도 안내 2건 + 잠재 함정 정리, 53 assertions)
+- 범위 밖(기록만): D 항목 — dead `buildPermissionPills`(`state.user.permissions` 미직렬화) ·
+  검색 결과 배지 라벨 불일치 · 관리자 `.any` 열람 대화의 폴더 '이동' 무음 실패.

@@ -70,3 +70,10 @@ source_of_truth: false
 
 ## 8. Suggested Improvements
 - S3 에서 LLM 히스토리 발신자 라벨은 구조적 메타로(주입 방지), 첨부 주입은 발신자-한정 적용(CSO F1).
+
+**2026-08-13 — 멤버 프론트 권한 게이트 정합 (cross-ref, 코드 거주 feature-0003)**: 본 feature 가 서버에서
+"멤버십 = 열람 경계"(`_account_can_access_conversation` 이 `.own` 을 owner OR 멤버로 판정)로 정한 것을
+프론트가 소유자 단독으로 좁혀, 멤버가 **자기 `@assistant` run 을 중단·재촉·연장할 수 없고 그룹 대화에서
+나갈 UI 경로조차 없던** 결함 4건을 정합했다(사용자 감사 요청). 서버·권한 카탈로그 무변경. 상세 =
+`unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` `20260813T1930` ·
+Run fragment `REV-20260813T193000-member-scope-gates.md`. 라이브 실측(멤버 계정 버튼 왕복) = POST-DEPLOY.

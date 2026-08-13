@@ -4687,3 +4687,43 @@ Windows 브라우저가 정본**(visual_verification_scope: always). 테스트�
 - **한계 명시**: OS 레벨 native drag 는 재현하지 않았다(CDP `Input.dispatchDragEvent` 미사용).
   native 경로와 합성 경로의 유일한 분기점인 `draggable` 속성 부여를 라이브 DOM 으로 확인해 그 간극을
   좁혔고, 이 사실을 Run fragment 에 그대로 남겼다.
+
+## REV-20260813T193000-ai-claude-feature-0003-member-scope-gates [SKIPPED:frontend-display-gate-align-to-server-boundary] SHIP — 그룹 멤버 권한 게이트 정합
+
+- Related TASK: feature-0003-agent-web-ui / `20260813T1930-member-scope-gates`
+- Timestamp: 2026-08-13T19:30:00+09:00
+- Human Approval Needed: no — 사용자가 감사 결과를 보고 **A+B+C 수정 범위를 명시 승인**(2026-08-13).
+  등급 Minor §12.3(프론트 표시 계층, 백엔드 enforcement·권한 카탈로그·스키마 불변).
+
+**Panel skip 사유(§18.8)**: 신규 엔드포인트·권한 코드·RBAC 카탈로그·백엔드 로직 0. 변경은 프론트
+게이트를 **서버가 이미 집행하는 경계**로 맞춘 것이며, 각 액션의 서버 경계를
+`_account_can_access_conversation` 33 호출지점 전수 스캔으로 확인했다(아래). 본 세션은 subagent
+호출이 사용자 제약으로 금지돼 직접 적대 점검을 수행했다.
+
+**"넓히는" 변경의 과대 개방 위험 점검 (핵심 축)**
+
+- 프론트를 넓히면 서버가 막아야 한다 — 실제로 막는지 라우트별로 확인했다. 넓힌 4종은 전부
+  `_account_can_access_conversation(…, ".own", ".any")` **단독** 게이트이고 2차 owner 게이트가 없다
+  (`/api/cancel` conversations.py:531 · `/api/finalize` 591 · `/api/extend` 626 · read 계열).
+  즉 멤버 허용은 **서버의 기존 결정**이고 프론트가 그것을 부정하고 있었다.
+- 반대 방향(과대)으로 새지 않는지도 확인 — `rename`(2999, owner 2차 게이트) · `archive`(4785) ·
+  `duplicate`(817, 엄격 `_conversation_owned_by_account`) · 공유 `joinable` 토글 · `…/shares`(1830)
+  는 `own` 을 유지했다. 테스트 case3 가 이 비대칭을 잠근다(멤버에게 rename/delete/duplicate 는
+  여전히 차단, 내 대화에서는 허용).
+- 권한 자체가 없는 계정은 멤버여도 차단됨을 별도 케이스로 확인(case6) — `.own` **권한 보유**가
+  여전히 AND 조건이다. 즉 "멤버면 무조건 허용" 이 아니라 "멤버도 `.own` 범위" 로만 넓혔다.
+- `.any` 열람 대화(owner·멤버 모두 아님)는 `ownScope=false` 이므로 종전과 동일하게 `.any` 권한자
+  (관리자)만 통과 — 일반 사용자에게 새 표면이 열리지 않는다(case4·case5·case7 경계 양측).
+
+**설계 판단 — 왜 predicate 를 하나로 통합하지 않았나**: `own` 을 전부 `ownScope` 로 바꾸면 서버가
+2차 owner 게이트로 막는 액션(제목 변경·보관·복제)이 활성으로 보여 **반대 방향 불일치**가 생긴다
+(클릭 → 403). 서버 경계가 액션마다 다르므로 프론트도 두 계층을 유지하고, 어느 쪽을 쓸지 판정하는
+기준(서버 라우트에 2차 owner 게이트가 있는지)을 predicate 주석에 명문화했다. 구조 잠금 10건이
+두 계층의 분기 개수(`codes: ownScope ?` 4 / `codes: own ?` 3)까지 센다 — 한쪽만 늘어나면 FAIL.
+
+**검증 채널·한계 (정직 표기)**: jsdom 은 판정 함수와 `markAccessBlocked`/`makeMenuItem` 의 DOM
+효과까지 검증했고, **서버 왕복은 검증하지 않았다**. 멤버 계정으로 실제 버튼을 눌러 200 을 받는
+라이브 실측은 POST-DEPLOY PB-0008 항목이다(visual_verification_scope: always). 테스트 판별력은
+`git show HEAD:app.js` 를 같은 스크립트로 평가해 수정 전 멤버 제어가 전부 `false` 임을 실측해
+확인했다. 실행시간 연장의 "배너는 뜨는데 승인 불가 → 타임아웃" 은 코드 경로 대조로 확정했고
+(배너 렌더는 소유 무관, 버튼만 `markAccessBlocked`), 타임아웃까지 기다린 라이브 재현은 하지 않았다.

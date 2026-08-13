@@ -554,3 +554,14 @@ source_of_truth: true
 - Rollback Notes: 프론트 3파일 revert 로 완전 가역. 데이터 영향 없음(localStorage 키
   `mad.gcFirstUseGuide.v1` 만 남으며 무해).
 - Timestamp: 2026-08-07T15:00:00+09:00
+
+## CHG-20260813T193000-member-scope-gates (cross-ref — 코드 거주 feature-0003)
+- Date: 2026-08-13. 그룹 대화 **멤버**의 프론트 권한 게이트가 백엔드 `.own`(= owner OR 멤버, 본 feature
+  의 `_account_can_access_conversation` 정의) 보다 좁아, 멤버가 서버 허용 조작에서 막히던 4건을 정합.
+  중단 `/api/cancel` · 즉시 답변 `/api/finalize` · 실행시간 연장 `/api/extend` · `···` > '설정'
+  (= **그룹 대화 나가기 self-leave 경로**). 오도 안내 2건("읽기 전용 대화" / "조회만 가능")도 소거.
+- 파일은 전부 feature-0003 거주(`static/app.js` · `static/app/composer.js` · 신규 테스트) — 본 feature
+  는 docs cross-ref 만. 상세 = feature-0003 `CHG/REV-20260813T193000` ·
+  `docs/test-runs.d/REV-20260813T193000-member-scope-gates.md`.
+- 본 feature 의 서버 경계(멤버십 = 열람 경계, self-leave 허용)는 **무변경** — 프론트가 그 결정을
+  부정하고 있던 것을 바로잡았다.

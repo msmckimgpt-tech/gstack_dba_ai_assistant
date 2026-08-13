@@ -3938,3 +3938,52 @@ draggable 이 아니었다(`'···' 메뉴 > 이동` 으로만 가능).
   화면은 불변이다.
 - `AC-20260813T181200-folder-dnd-shared-group-3` — `folder.manage.own` 미보유 계정에는 내 대화·공유
   대화 모두 `draggable` 이 부여되지 않는다.
+
+---
+
+## REQ-20260813-member-scope-gates — 대화 조작 권한의 `.own` 범위를 서버 경계와 일치시킴 (Minor §12.3, frontend-only)
+
+사용자 감사 요청("표시-집행 불일치 / 소유자가 과도하게 좁혀진 이슈 검토")의 산출. 백엔드는
+`conversation.<action>.own` 을 **대화 소유자 또는 그룹 대화 멤버** 로 판정한다
+(`_account_can_access_conversation` — feature-0009 "멤버십이 열람 경계"). 프론트가 이를 소유자
+단독으로 좁혀 멤버가 서버 허용 조작에서 막히던 것을 바로잡는다.
+
+### 동작
+
+`folder.manage.own` 계열과 마찬가지로, 그룹 대화 멤버(공유받은 대화)는 다음을 할 수 있다 — 해당
+`.own` 권한을 보유한 경우:
+
+| 조작 | 진입점 | 서버 라우트 |
+|---|---|---|
+| 진행 중 요청 **중단** | 컴포저 중단 버튼 · 인터럽트 재전송 | `POST /api/cancel` |
+| **즉시 답변** | 컴포저 '즉시 답변' 버튼 | `POST /api/finalize` |
+| **실행시간 연장** 승인 | 타임아웃 임박 배너 버튼 | `POST /api/extend` |
+| **대화 설정** 팝업 (음소거 · **그룹 대화 나가기**) | conv-item `···` > 설정 | read 계열 · `DELETE …/members/{me}` |
+| 발화 (`@assistant` 호출 · 그룹 채팅) | 컴포저 전송 | `POST /api/ask` · `…/messages` |
+
+### 불변식
+
+- **predicate 2계층 (의도적 비대칭)**: `isOwnScopeConversation`(owner ‖ `is_member`) = 서버가
+  `_account_can_access_conversation` **단독**으로 게이트하는 액션. `isOwnConversation`(소유자 단독)
+  = 서버가 **2차 owner 게이트**를 덧붙인 액션 — 제목 변경 · 보관 · 복제 · 공유 `joinable` 토글 ·
+  공유 링크 목록. 새 액션 추가 시 서버 라우트에 `_conversation_owned_by_account` /
+  `_conversation_owner_account_id` 재확인이 있는지 보고 고른다.
+- `requiredPermissionsFor` 는 `own`·`ownScope` **두 변수를 함께 보유**하고 case 별로 골라 쓴다.
+  하나로 뭉치면 한쪽 방향으로 반드시 불일치가 생긴다(좁히면 멤버 차단, 넓히면 클릭 후 403).
+- **`.own` 권한 보유는 여전히 AND 조건** — 멤버라는 사실만으로 열리지 않는다.
+- **`.any` 열람 대화**(owner·멤버 모두 아님)는 종전과 동일하게 `.any` 권한자만 — 새 표면 없음.
+- **안내문도 같은 경계**: "읽기 전용 대화" / "다른 계정의 대화는 조회만 가능합니다" 는
+  `ownScope=false` 일 때만 — 멤버에게 표시하면 실제 가능한 일을 못 한다고 오도한다.
+- 표시 ≠ 인가: 프론트는 display 계층이고 집행은 서버(403/404). 본 변경으로 **백엔드·권한 카탈로그·
+  스키마·엔드포인트 변경 0**.
+
+### AC
+
+- `AC-20260813T193000-member-scope-gates-1` — 그룹 대화 멤버(`.own` 보유)가 중단·즉시 답변·실행시간
+  연장을 실행할 수 있고, 버튼에 blocked 표시·거짓 권한 사유가 붙지 않는다.
+- `AC-20260813T193000-member-scope-gates-2` — 멤버가 `···` > '설정' 팝업을 열어 **그룹 대화 나가기**
+  를 수행할 수 있다.
+- `AC-20260813T193000-member-scope-gates-3` — 멤버 대화에서 "읽기 전용 / 조회만 가능" 안내가 표시되지
+  않는다(그 안내는 `.any` 열람 대화 전용).
+- `AC-20260813T193000-member-scope-gates-4` — 제목 변경·보관·복제는 멤버에게 여전히 차단되고,
+  `.own` 권한 미보유 계정은 멤버여도 차단된다(비대칭·AND 조건 보존).

@@ -3901,3 +3901,24 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/REPORT.md`. **코드 변경 0**.
 - 결과: 공유받은 그룹 대화 `draggable="true"` 라이브 확인 · 폴더 배정/해제 서버 왕복 · 크로스-계정
   격리(admin 뷰 folder 미노출·folder_id null) · `pageerror` 0 · 무중단 0건. 테스트 데이터 정리 완료.
+
+## CHG-20260813T193000-ai-claude-feature-0003-member-scope-gates — 그룹 멤버 권한 게이트 정합
+
+- 사유: 사용자 감사 요청("표시-집행 불일치 / 소유자가 과도하게 좁혀진 이슈") → 백엔드
+  `_account_can_access_conversation` 33지점 전수 대조로 4건 확정 + 오도 안내 2건 + 잠재 함정 1건.
+- 대상:
+  - `src/static/app.js` — **`isOwnScopeConversation`(owner ‖ `is_member`) 신설·export**.
+    `requiredPermissionsFor` 가 `own`(서버 2차 owner 게이트 있는 액션) / `ownScope`(서버가 멤버
+    허용) **두 변수를 분리 보유** → `conversation.cancel`·`finalize`·`extend`·`read` 는 ownScope,
+    `rename`·`delete`·`duplicate` 는 own 유지(비대칭 의도). `conversation.read` 라벨
+    "공유 링크 관리" → "대화 설정"(통합 이전 잔재 정정). `canCancel/Finalize/Extend/AskInConversation`
+    4종 predicate 교체. `renderAccessNotice` 조회 전용 판정도 ownScope.
+  - `src/static/app/composer.js` — '읽기 전용 대화' 안내 조건 ownScope 화, `sendPrompt` 인라인 가드
+    (`!isOwnConversation(active) && !active.is_member`)를 공용 predicate 로 통일, dead
+    `const disabled = !canAskInConversation() || busy;` 제거(계산만 하고 미사용), 그로 인해 미사용이
+    된 import 2개(`canAskInConversation`·`isOwnConversation`) 정리.
+  - `tests/verify_member_scope_gates.mjs` — **신규**(jsdom 53): 멤버 허용 4종 · 대조군 차단 유지 ·
+    권한 미보유 시 멤버도 차단 · `.any` 열람 대화 차단 유지 · 구조 잠금 10.
+- 백엔드·스키마·권한 카탈로그·엔드포인트 변경 **0** (프론트 표시 계층만 — 서버 enforcement 불변).
+- 검증: jsdom 53 PASS · 수정 전 재현(동일 스크립트로 HEAD 평가 시 멤버 제어 전부 false) ·
+  프론트 `.mjs` 61개 전수 exit 0 · ESM 구문 PASS. 라이브 = POST-DEPLOY PB-0008.

@@ -30,7 +30,6 @@ import {
   apiFetch,
   applyLlmProviderStatus,
   can,
-  canAskInConversation,
   canCancelConversation,
   cancelShareRange,
   clearPendingBubble,
@@ -44,7 +43,7 @@ import {
   fetchAskStatus,
   isCurrentConvBusy,
   isGroupConversation,
-  isOwnConversation,
+  isOwnScopeConversation,
   isParticipantInSharedConversation,
   markAccessBlocked,
   mentionAcEl,
@@ -254,7 +253,10 @@ function renderComposer() {
   // TASK-0248: 활성 대화가 참조 제품 삭제로 차단되었는지.
   const activeConv = currentConversation();
   const isBlocked = Boolean(activeConv && activeConv.blocked);
-  const disabled = !canAskInConversation() || busy;
+  // member-scope-gates: 구 `const disabled = !canAskInConversation() || busy;` 는 계산 후 어디에도
+  //   쓰이지 않는 dead 변수였다(전송 버튼은 아래 `hasAsk && !isBlocked` 로 게이트). 남겨 두면
+  //   "발화 가능 여부" 의 두 번째 정의로 오인돼 다시 배선될 위험이 있어 제거한다 — 발화 가능
+  //   판정의 단일 진실원은 `canAskInConversation`(→ isOwnScopeConversation) 이다.
   // TASK-0047: composer busy 상태 변화에 따라 product chip 도 disabled 동기화.
   renderProductChip();
   // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
@@ -336,7 +338,11 @@ function renderComposer() {
     composerHintEl.textContent =
       (activeConv.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.") +
       " 이력 열람·공유는 가능하며, 복제(사본 만들기)로 새 대화에서 이어갈 수 있습니다.";
-  } else if (currentConversation() && !isOwnConversation(currentConversation())) {
+  } else if (currentConversation() && !isOwnScopeConversation(currentConversation())) {
+    // member-scope-gates: 공유받은 그룹 대화(내가 멤버)는 읽기 전용이 아니다 — 발화가 허용된다
+    //   (sendPrompt 가 `is_member` 를 명시 허용, 백엔드 `/api/ask` 도 통과). 종전엔
+    //   `!isOwnConversation` 이라 멤버에게 "요청을 이어서 보낼 수 없습니다" 를 띄워, feature-0009
+    //   의 핵심 동작을 스스로 부정했다. 읽기 전용은 owner·멤버 모두 아닌 대화에만 해당한다.
     composerTitleEl.textContent = "읽기 전용 대화";
     composerHintEl.textContent = "타 계정 대화에는 요청을 이어서 보낼 수 없습니다. 새 대화를 생성하세요.";
   } else if (busy) {
@@ -2451,7 +2457,10 @@ async function sendPrompt() {
   }
   const active = currentConversation();
   // feature-0009: 그룹 대화 멤버도 발화/채팅 가능(owner OR 멤버). 비-멤버 타계정 대화만 차단.
-  if (active && !isOwnConversation(active) && !active.is_member) {
+  // member-scope-gates: 인라인 `!isOwnConversation(active) && !active.is_member` 를 공용 predicate
+  //   로 교체 — 발화 허용 범위가 `canAskInConversation`(렌더 게이트)과 여기(실행 가드) 두 곳에
+  //   있는데 서로 다른 표현이면 한쪽만 바뀌는 재발이 가능하다.
+  if (active && !isOwnScopeConversation(active)) {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
     return;
   }
