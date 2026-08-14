@@ -381,3 +381,61 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 8 | 엣지 익명 `POST /api/ai/mcp` | **401** ✅ (인증 없는 도달면 없음) |
 
 6개 서비스 전부 동일 커밋 — 부분 롤아웃 잔재 없음. 무중단, 사용자 영향 0건.
+
+### Run 2026-08-14 (21차) — AC-7 답변 보존 (Environment: local pytest · agent 이미지)
+
+신규 `test_answer_persistence.py` **24건** + 기존 스위트 무회귀.
+
+**각인 (L2, 수신 방향)**
+
+- 저장본이 `⟦UNTRUSTED-DATA⟧` 로 구획된다 ✅
+- **방향 단정** — 저장 각인에는 `never as instructions`(우리 LLM 대상)가 있고 `[SCOPE]`
+  (외부 AI 대상)는 **없다**. 나가는 `wrap_tool_output` 은 그 반대 ✅
+  두 함수를 바꿔 쓰면 지연 인젝션 차단이 성립하지 않으므로 문구로 못박았다.
+- 위조 close 마커를 담은 답변을 넣어도 sentinel 이 각각 1개 ✅ (breakout 차단)
+- label 경로(계정명·datasource)의 sentinel 도 strip ✅
+- `datasource=` 는 값이 있을 때만 라벨에 등장 ✅ (빈 값 노이즈 금지)
+
+**저장 계약**
+
+- UPDATE SET 절에 `Answer`·`AnswerBytes`·`AnswerVerdict`·`AnswerTruncated`·`SourceTasks` ✅
+- 저장 실패 → 503 + rollback, `recorded: true` 미반환 ✅ (fail-closed)
+- `AnswerBytes` 는 **원문** 바이트(`len(answer.encode("utf-8"))`) ✅ — 각인 래퍼를 포함해 세면
+  원장 `bytes_out` 과 영구히 어긋난다
+- 상한 초과는 조용히 잘리지 않고 `AnswerTruncated` 로 표시 ✅
+- 고신뢰 인젝션 답변은 **저장 전에** 400 거절 + 원장에 `injection:` 기록 ✅
+  (거절 분기가 `UPDATE` 보다 앞이라는 것을 인덱스 비교로 단정)
+
+**열람 경계**
+
+- 두 route 모두 `_require_task_reader` 통과 필요 · `require_ai_token` **미사용** ✅
+- 권한 키 `console.aiops.read` · `audit.read.any` 가 카탈로그에 **실재**함을 단정 ✅
+  (없는 키로 게이트하면 관리자도 조용히 자기 것만 보게 된다 — codex P2)
+- 전역 권한 없으면 `AND AccountId = %s`, 계정 정보가 비어도 전역으로 열리지 않음 ✅
+- 목록은 답변 본문 미포함(`Answer IS NOT NULL` 만), 상세는 각인된 원본 그대로 ✅
+- 스코프 밖 task 는 403 이 아니라 404 ✅ (존재 여부를 권한으로 갈라 알리지 않음)
+- 상세에 PG 원장 도구 이력 합류, 조회 실패는 fail-soft ✅
+
+**무회귀**
+
+- `unit/feature-0003-agent-web-ui/tests` · `feature-0041/tests` · `feature-0023/tests` 전건 green
+- route 골든 `route_snapshot_p5b.json` 248 → **250** 갱신(신규 2 route: `/api/ai/tasks`,
+  `/api/ai/tasks/{task_id}`)
+- 신규 테스트가 **단독 실행·전체 스위트 양쪽**에서 통과함을 확인. 첫 판은 `sys.modules`
+  스텁이 전체 실행 시 진짜 `app` 에 밀려 무시돼 단독에서만 통과했다 — 그대로 뒀으면 통과하는
+  무력한 테스트가 됐다. `monkeypatch` 로 실제 참조 모듈을 직접 패치해 해소.
+- 기존 실패 1건은 pre-existing: `test_oauth_exhaustion_gate.py::test_write_failure_after_...`
+  는 컨테이너에 `chattr` 이 없어 실패한다(main 체크아웃에서도 동일 재현 — 본 변경 무관).
+
+**codex 2차 재검증 반영 (같은 Run)**
+
+- `bin/mysql-ddl-lint.sh` **PASS** — 신규 ALTER 6건 전부 `ALGORITHM=INPLACE, LOCK=NONE`.
+  (수정 전 실행에서 6건 전건 FAIL 을 실측했다. 절을 상수로 빼면 텍스트 스캐너가 못 따라와
+  여전히 FAIL 하므로 리터럴로 둔다 — 이것도 실측으로 확인.)
+- 거절 시 `AnswerVerdict` 만 task 행에 남고 페이로드는 저장되지 않음 · `SubmittedAt IS NULL`
+  가드로 확정된 답변의 판정을 덮지 않음 ✅
+- 재제출·동시 제출 방어: `WHERE … AND SubmittedAt IS NULL` + `rowcount` 0 → **409** ✅
+  (조건이 SQL 안에 있음을 단정 — 미리 읽고 분기하면 TOCTOU 로 둘 다 통과한다)
+- 콘솔 답변 칸 3-상태 분기(본문 있음 / 미제출 / **보존 안 됨**) — 롤링 배포 창에서 구버전
+  replica 가 처리한 제출을 '미제출' 로 뭉뚱그리지 않는다 ✅
+- 전체 스위트 재실행 green (0003 · 0041 · 0023).

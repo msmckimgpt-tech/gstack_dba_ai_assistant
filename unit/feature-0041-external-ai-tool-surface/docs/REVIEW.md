@@ -550,3 +550,93 @@ approx_rows 였다 — 정답이 손에 있었는데 안내하지 않았다.
   ADR-003 의 관찰(적재 레코드에 datasource 식별자를 포함하면 같은 부류의 혼동이 구조적으로
   예방된다)을 그 설계 입력으로 넘긴다.
 - Human Approval Needed: 아니오(본 변경). AC-7 구현 cycle 은 별도 계획 승인 대상.
+
+## REV-20260814-0026 [CODEX:P2x5,P3x1] — AC-7 대화 적재 구현
+
+- Related Change: CHG-20260814-0026
+- Trigger: code change — `schema`(컬럼 추가) · `API`(신규 endpoint 2) · `UI`(콘솔 서브탭) ·
+  `credential/session`(권한 게이트) 키워드 매칭 → backend · security · qa · ux.
+  §18.8.1 의 codex-review 경로로 수행(이 feature 의 기존 리뷰 5회와 동일 채널).
+- 결과: **P2 5건 · P3 1건 전건 수정**. 절반이 "내가 문서에 적은 것을 코드가 안 한다" 부류였다 —
+  이 cycle 자체가 그 부류를 고치려고 시작됐다는 점에서 뼈아프다.
+
+| # | 지적 | 실측 확인 | 조치 |
+|---|---|---|---|
+| P2-1 | 열람 route 가 로그인만 요구 | 사실 — `_require_account` 뿐 | `_require_task_reader` 신설, `console.aiops.read` 미보유 403 |
+| P2-2 | `admin.console.access` 가 **없는 권한 키** | 사실 — 코드베이스 전역에서 내 새 코드 2곳에만 등장 | 실재 키로 교체(`console.aiops.read` / `audit.read.any`) + 키 실재 회귀 테스트 |
+| P2-3 | 고신뢰 인젝션 답변을 저장하고 `recorded:true` 반환 | 사실 — 판정만 컬럼에 남기고 통과 | 400 거절(= `open_task` 와 동일 계약, AC-8) · 시도는 원장에 기록 |
+| P2-4 | 상세에 도구 이력 없음 | 사실 — `WebAiTasks` 만 조회 | `_task_tool_calls` 로 PG 원장 합류(fail-soft) |
+| P2-5 | 목록이 비거나 실패하면 '새로고침' 버튼이 죽음 | 사실 — early return 뒤에 바인딩 | 바인딩을 **모든 early return 앞**으로 |
+| P3-1 | 인라인 하드코딩 색상 | 사실 — feature-0003 `docs/AGENTS.md` §10 **절대 금지사항** | `--tag-*` 토큰으로 전량 교체(하드코딩 잔재 0건 확인) |
+
+- **가장 중요한 것 — P2-2 는 "존재하지 않는 방어" 의 거울상이다.** 이 저장소는 *없는 방어를
+  콘솔이 표시한* 사례를 세 번 기록했는데, 이번은 *없는 권한으로 게이트해 기능이 조용히 죽는*
+  형태였다. `_account_has_permission` 은 미정의 키에 항상 False 를 주므로 **관리자도 전역
+  조회를 못 받고 자기 것만 보게 되며, 화면에는 아무 오류도 없다.** 문자열이 그럴듯해서
+  리뷰어도 사람도 놓치기 쉬운 부류라, 권한 키 실재를 테스트로 못박았다
+  (`test_permission_keys_actually_exist_in_the_catalog`).
+- **P2-3 의 판단 근거**: 거절이 보존(AC-7)과 충돌하는 것처럼 보이지만 아니다. 시도는 원장에
+  `outcome=denied` + `detail=injection:…` 로 남으므로 감사 신호는 보존되고, 영속 기록에는
+  공격 페이로드가 '정상 답변' 으로 앉지 않는다. 두 요구를 모두 만족하는 유일한 배치다.
+- **P2-4 의 판단 근거**: 답변은 외부 런타임의 **주장**이다. 그 주장을 검증할 사실(어느 도구로
+  어느 datasource 를 얼마나 읽었나)이 없으면 콘솔은 감사 도구가 아니라 주장 열람기가 된다.
+  단 이 합류는 **fail-soft** 다 — 원장 조회 실패가 보존된 질문·답변 표시까지 죽이면 안 된다
+  (저장 경로의 fail-closed 와 목적이 다르다).
+- 검증: 신규 24건 + 기존 스위트(0002/0003/0023/0041) green. 단독 실행·전체 스위트 **양쪽**에서
+  통과 확인 — 첫 판은 `sys.modules` 스텁이 전체 실행 시 무시돼 단독에서만 통과했다(그대로
+  뒀으면 '통과하는 무력한 테스트' 가 됐다). route 골든 +2 갱신.
+- Human Approval Needed: 아니오 (ADR-002 로 계획 승인 완료 · PLAN-APPROVED 2026-08-14).
+
+### REV-20260814-0026 · codex 2차 (재검증) — P1×2 · P2×2 추가 적발, 전건 수정
+
+1차 수정 후 재검증에서 **더 무거운 것들**이 나왔다. 1차가 인가·계약 층이었다면 2차는
+**배포·동시성 층**이다 — 코드만 읽어서는 안 보이고 "이게 라이브에 어떻게 올라가나" 를 물어야
+나오는 부류다.
+
+| # | 지적 | 실측 확인 | 조치 |
+|---|---|---|---|
+| P1-1 | ALTER 에 online DDL 절 누락 | **`bin/mysql-ddl-lint.sh` 가 6건 전부 적발**(실행 확인) | 6개 ALTER 에 `ALGORITHM=INPLACE, LOCK=NONE` 리터럴 삽입 → lint 통과 |
+| P1-2 | 롤링 배포 창에서 구버전 replica 가 답변을 저장하지 않음 | 사실. 단 CONVENTIONS §12.1 기준 **expand(안전)** 이라 규약 위반은 아님 | 구버전 동작은 바꿀 수 없으므로 **가시화**로 대응(아래) |
+| P2-1 | 거절 시 `AnswerVerdict` 가 task 행에 안 남음 | 사실 — UPDATE 앞에서 return | `_mark_answer_verdict` 로 **판정만** 기록(페이로드 제외) |
+| P2-2 | 무조건 UPDATE 라 재제출·동시 제출이 확정 답변을 덮어씀 | 사실 | `WHERE … AND SubmittedAt IS NULL` + `rowcount` 0 → **409** |
+
+- **P1-1 이 이 리뷰의 값을 가장 잘 보여준다.** 기존 `ADD COLUMN` 60건이 online 절 없이 있어
+  "이 파일의 관례" 로 보였지만, lint 가 **diff-mode**(origin/main 대비 신규/변경만)라 기존은
+  grandfathered 이고 내 6건만 걸린다. 관례를 눈으로 따라간 것이 곧 게이트 위반이었다.
+  `agent_memory` 는 replica 없는 단일 인스턴스라 silent COPY 는 곧 체감 중단이다.
+  ⚠ lint 는 **텍스트 스캐너**다 — 절을 상수로 빼서 `+ _ONLINE` 으로 붙이면 따라오지 못해
+  여전히 FAIL 한다(실제로 한 번 그렇게 실패했다). 리터럴로 둔다.
+- **P1-2 는 "고칠 수 없는 것을 정직하게 표시" 로 해결했다.** 롤링 창의 구버전 replica 는 저장
+  코드가 없어 상태만 갱신하고 성공을 돌려준다 — 그 replica 의 동작을 이번 배포가 바꿀 수는
+  없다. 대신 콘솔이 답변 칸을 **세 상태**로 가른다: 본문 있음 / 미제출 / **보존 안 됨**
+  (`status=submitted` 인데 본문 NULL). 셋째를 '미제출' 로 뭉뚱그리면 "제출했는데 왜 없지" 를
+  영영 알 수 없다. 이 feature 의 반복 결함이 정확히 "없는 것을 있는 것처럼 보이게 한 것"
+  이었으므로, 없으면 없다고 보이게 하는 쪽을 택했다.
+- **P2-2 의 조건은 SQL 안에 있어야 한다.** `_load_task` 로 미리 읽고 분기하면 두 요청이 같은
+  `open` 을 보고 둘 다 통과한다(TOCTOU). `WHERE … AND SubmittedAt IS NULL` + `rowcount` 로
+  원자화했다. 최종 답변은 감사 기록이라 한 번 확정되면 파괴 불가여야 한다.
+
+**최종 상태**: 2라운드 합계 **P1×2 · P2×7 · P3×1 전건 수정**. 재검증 후 스위트 전건 green,
+`mysql-ddl-lint` PASS.
+
+## REV-20260814-0027 [SKIPPED:copy-only] — PB-0008 이 잡은 상세/목록 문구 불일치
+
+- Related Change: CHG-20260814-0027
+- Reason: 사용자 대면 문구만 변경(로직·권한·저장 경로 무변경) → panel SKIP.
+- Trigger: 코드 경로 변경 0. 표시 문자열 분기 1건.
+- 요지: **배포 후 실제 화면을 보고서야 드러났다.** 단위 테스트는 목록과 상세를 각각 검사했을
+  뿐 "둘이 같은 말을 하는가" 를 묻지 않았다. 이 feature 가 반복해 낸 결함(문서·화면이 사실과
+  다르게 말함)의 화면 내부 버전이라, 발견 즉시 고쳤다.
+- Human Approval Needed: 아니오.
+
+## REV-20260814-0028 [SKIPPED:post-deploy-record] — 문구 정합 배포 검증 (코드 0)
+
+- Related Change: CHG-20260814-0028
+- Reason: 배포 결과 기록. 코드 0.
+- 요지: 목록 `보존 안 됨` 과 상세 문구가 일치함을 라이브(`6cd45761`)에서 실측했고, 구 문구
+  (`답변이 제출되지 않았습니다`) 부재를 eval 로 단정했다. 무중단 `no upstreams available` 0건.
+- 남긴 교훈: **"배포 명령이 끝났다" 와 "롤아웃이 끝났다" 는 다르다.** 1차 배포가 실행측
+  `timeout` 에 걸려(exit 143) 워커 3종이 구버전으로 남았는데, `/healthz` 는 그 상태에서도
+  `status: ok` 였다 — 엣지가 web 만 보기 때문이다. 서비스별 `GIT_COMMIT` 을 직접 세는 것이
+  유일한 확인 방법이고, 그래서 이 feature 의 POST-DEPLOY Run 은 매번 그 표를 남긴다.
+- Human Approval Needed: 아니오.

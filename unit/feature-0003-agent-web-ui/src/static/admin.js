@@ -2,6 +2,7 @@
 import { _metaShowGraph, _metaGraphLoadRoots, _metaRoleLegendTips, _metaGraph } from "./graph/graph.js?v=dev";
 import { loadUsage } from "./admin/usage.js?v=dev";
 import { loadAiOps } from "./admin/aiops.js?v=dev";
+import { loadExtTasks } from "./admin/exttasks.js?v=dev";
 import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
@@ -2316,11 +2317,17 @@ function initAiConsoleSubtabs() {
   if (can("console.usage.read")) visible.push("usage");
   if (can("console.aiops.read")) visible.push("ops");
   if (can("console.reasoning.read")) visible.push("reasoning");
+  // feature-0041 AC-7: 외부 AI 작업 원장. 표시 게이트는 운영 현황과 같은 축(console.aiops.read)
+  // 이며, **실제 스코프 집행은 백엔드**(`_task_scope_clause`)가 한다 — `can()` 은 표시-관대라
+  // 판정에 쓰지 않는다(이 저장소의 기존 회귀 사례).
+  if (can("console.aiops.read")) visible.push("exttasks");
   bindPaneSubtabs(pane, "ai", (key) => {
     if (key === "usage" && !adminState.usage.initialized) { adminState.usage.initialized = true; loadUsage(); }
     else if (key === "ops" && !adminState.aiOps.initialized) { adminState.aiOps.initialized = true; loadAiOps(); }
     else if (key === "reasoning" && !(adminState.reasoning && adminState.reasoning.initialized)) {
       adminState.reasoning = { initialized: true, redteamCursor: null }; loadReasoning();
+    } else if (key === "exttasks" && !(adminState.extTasks && adminState.extTasks.initialized)) {
+      adminState.extTasks = { initialized: true }; loadExtTasks();
     }
   }, { visibleKeys: visible });
 }

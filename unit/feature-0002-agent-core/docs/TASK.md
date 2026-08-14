@@ -85,6 +85,34 @@ source_of_truth: true
       중 축 추가 — 개수를 세는 테스트라 계약 변경이 곧 실패로 드러났다).
 - [ ] verify-completion → PR → 배포(영향 서비스 전부) → 라이브 실측
       (900초 timeout 소멸 · 5분+ 무변화 건수 감소 · `llm_stream_done` 로그로 chunk 흐름 확인)
+## TASK-20260814T160000-ask-kv-terminal-seal — 조기 종료 run 의 KV terminal 봉인 (Major §12.3)
+
+`/_dqa:conversation_audit` 라이브 진단(FR-early-return-kv-never-finalized). 사용자가 SQL 첨부
+2건을 올리고 쿼리 리뷰를 요청했는데 **"5분이 지나도 시작 자체가 진행되지 않는"** 상태로 보고됐다.
+실측하니 job 은 요청 0.12초 만에 `error` 로 끝나 있었고(primary datasource 회로차단), KV
+`last_status` 만 `processing` + enqueue sentinel(`enqpre-…`)로 남아 `/api/ask_result` 가 45초
+주기로 **15분 넘게 무한 폴링** 중이었다. 대화에는 사용자 질문조차 저장되지 않았다.
+
+- [x] 근본 확정 — `run_agent` 가 KV 를 실제 run_id 로 인계(`set_run_status(processing)`)하기
+      **전**에 `result["error"]` 만 채우고 예외 없이 정상 return 하는 조기 종료 경로가 12곳.
+      워커의 KV 마감은 `raised` / `_deferred_terminal` / resume-giveup 세 갈래뿐이라 전부 놓쳤다
+      ("run_agent 는 정상 종료 시 KV 를 이미 기록했다" 는 전제가 거짓).
+- [x] corroboration(structural) — 조기 종료 실패 **22 job / 20 대화**(전체 271 대화의 7.4%,
+      2026-06-10~08-14, 평균 0.17초 사망). 안전망이 걸린 예외 경로는 1건뿐.
+- [x] 봉인 A — `modules/ask.py::_ensure_kv_terminal`: job terminal 전이 **앞**에서 KV terminal 을
+      무조건 보장(12개 경로 + 미래 경로를 한 곳에서 덮는 권위선). 이미 terminal 이면 no-op,
+      다른 실제 run 이 인계했으면 skip(supersede 존중), `enqpre-` sentinel 은 마감 대상.
+      답변이 있는데 KV 만 못 쓴 run 은 `done` 으로 마감(성공 턴 날조 방지).
+- [x] 봉인 B — `ask_jobs.latest_terminal_job_for_conversation` + `/api/ask_result` backstop:
+      KV 가 마감되지 않아도 `ask_jobs` terminal 을 권위로 읽어 long-poll 을 푼다(내부 attach 가
+      job_id 로 갖는 보증을 재접속 폴백 경로에 대칭 부여). 활성 job 이 있으면 미적용.
+- [x] 봉인 C — `agent_core._persist_early_exit`: 조기 종료도 사용자 질문 + 오류 안내를 대화에
+      남기고 KV 를 마감한다(datasource 계열 조기 return 4곳에 연결).
+- [x] 테스트 17건 신규(`tests/test_ask_kv_terminal_seal.py`) — 회귀 재현(sentinel 고착) 포함.
+- [x] CI 회귀 2건 수정(`CHG-20260814T170000`) — 조기 종료 말풍선의 **제품 귀속 각인 복구**
+      (미각인 시 FE 가 대화 바인딩 폴백 → 제품 전환 때 사후 변경) + `test_web_perf_p1` 의 고정
+      6,000자 창을 함수 경계 기반으로 교체. 로컬 테스트 범위를 좁게 잡아 놓친 것이 원인.
+- [ ] 배포 후 라이브 실측 — 무한 폴링 소멸 확인 후 원장 `verified` 전이.
 
 ## TASK-20260807T130000-redteam-abortable-review — 자가 검증 대기 구간의 사용자 탈출구 복구 (Major §12.3)
 

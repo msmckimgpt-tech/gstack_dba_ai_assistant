@@ -2489,6 +2489,48 @@ def _ensure_oauth_client_schema(conn) -> None:
             )
         except Exception:
             pass
+        # AC-7(대화 적재) — 답변 보존 컬럼. 2026-08-14 까지 `submit_answer` 는 Status 만 갱신했고
+        # 답변 본문은 어디에도 남지 않았다(원장에 bytes_out 수치로만). 사용자 요구
+        # ("외부 AI 세션의 대화 기록 또한 우리 쪽에 남겨야 합니다", 2026-08-12)의 답변 축이다.
+        #
+        # 멱등 추가 — `WebProductDatabases.DatasourceKey` idiom 복제. 실패를 **삼키지 않고**
+        # logging.error 로 올린다: 컬럼이 없으면 저장 경로가 fail-closed 로 꺼지므로 누출은
+        # 없지만, 운영자가 "보존되고 있다" 고 오해하면 안 된다(이 feature 의 반복 결함).
+        # ⚠ 모든 ALTER 에 `ALGORITHM=INPLACE, LOCK=NONE` 필수 (CONVENTIONS §13.1 ·
+        # `bin/mysql-ddl-lint.sh` 가 diff-mode 로 강제). agent_memory 는 replica 없는 단일
+        # 인스턴스라 silent COPY 로 떨어지면 그 테이블 DML 이 락에 걸려 체감 중단이 된다.
+        # LOCK=NONE 의 의도는 online 불가 시 **에러로 표면화**하는 것이다(조용한 락 금지).
+        # (lint 는 텍스트 스캐너다 — 상수 결합으로 빼면 따라오지 못하므로 절을 리터럴로 둔다.)
+        for _col, _ddl in (
+            # 각인(datamark)된 답변 본문. TEXT(64KB) 는 실측 6~8KB 답변에 여유가 없어 MEDIUMTEXT.
+            ("Answer", "ALTER TABLE WebAiTasks ADD COLUMN Answer MEDIUMTEXT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # **원문** 바이트 수(각인 래퍼 제외). 원장 bytes_out 과 대조 가능해야 한다.
+            ("AnswerBytes", "ALTER TABLE WebAiTasks ADD COLUMN AnswerBytes INT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # 답변에 대한 인젝션 3단 판정. 질문의 InjectionVerdict 와 같은 축.
+            ("AnswerVerdict", "ALTER TABLE WebAiTasks ADD COLUMN AnswerVerdict VARCHAR(16) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # 상한 초과로 절단됐는지. 조용한 절단을 금지하기 위한 가시 플래그.
+            ("AnswerTruncated", "ALTER TABLE WebAiTasks ADD COLUMN AnswerTruncated TINYINT(1) NOT NULL DEFAULT 0, ALGORITHM=INPLACE, LOCK=NONE"),
+            # 외부 AI 가 선언한 근거 task 목록(교차오염 대조 입력). 판정과 함께 남겨야 사후에
+            # "무엇을 근거로 썼다고 주장했는가" 를 재구성할 수 있다.
+            ("SourceTasks", "ALTER TABLE WebAiTasks ADD COLUMN SourceTasks TEXT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # ADR-003 관찰: 어느 datasource 를 본 답변인지 기록 자체에 남으면, 이후 제품
+            # 바인딩이 교체돼도 "이 답변은 그때 그 DB 를 본 것" 이 자명해진다. 2026-08-14 의
+            # `dbauth` 혼동이 정확히 이 정보의 부재에서 왔다.
+            ("DatasourceKey", "ALTER TABLE WebAiTasks ADD COLUMN DatasourceKey VARCHAR(128) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+        ):
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                    "AND TABLE_NAME='WebAiTasks' AND COLUMN_NAME=%s", (_col,))
+                if int((cur.fetchone() or [0])[0]) > 0:
+                    continue
+                cur.execute(_ddl)
+            except Exception as _alter_exc:
+                logging.getLogger(__name__).error(
+                    "[ai-task] WebAiTasks.%s 컬럼 추가 실패 — 외부 AI 답변 보존이 비활성화된다"
+                    "(런타임 fail-closed: submit_answer 가 5xx). 운영자 수동 ALTER 필요: %r",
+                    _col, _alter_exc,
+                )
     except Exception:
         # 커서 획득 실패 등 — 여기서 흡수한다(catchup 체인 보호, 위 docstring 참조).
         pass

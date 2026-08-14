@@ -6206,6 +6206,30 @@ def _get_ask_job_status(job_id: int) -> str | None:
             except Exception:
                 pass
 
+def _latest_ask_job_terminal(conversation_id: str) -> dict[str, Any] | None:
+    """활성 job 이 없는 대화의 마지막 terminal job(status/run_id/error). 실패·미가용 시 None.
+
+    conv-audit FR-early-return-kv-never-finalized(봉인 B): `/api/ask_result` 가 KV
+    `last_status` 만 보고 terminal 을 판정하던 것을 보완한다. run 이 KV 를 마감하지 못하고
+    끝난 경우에도 `ask_jobs` 의 종료 사실로 long-poll 을 풀어 프런트 무한 폴링을 막는다.
+    worker mode 가 아니거나 테이블 미가용이면 None → 호출부는 종전 KV 판정만 쓴다(회귀 0).
+    """
+    from shared.db import _pg_connect
+    from modules import ask_jobs as _aj
+    pg = None
+    try:
+        pg = _pg_connect()
+        return _aj.latest_terminal_job_for_conversation(pg, conversation_id)
+    except Exception:
+        return None
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+
 def _runtime_backend_is_pg() -> bool:
     return os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres"
 

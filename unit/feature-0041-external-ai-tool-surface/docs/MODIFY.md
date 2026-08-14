@@ -383,3 +383,57 @@ source_of_truth: true
 - Impact: 코드 0 · 런타임 무영향. AC-7 은 승인된 후속 cycle 로 이월되며 Critical 등급이라
   §7.1 계획 승인이 선행한다.
 - Rollback Notes: 해당 없음(결정 기록).
+
+## CHG-20260814-0026
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface (AC-7 · ADR-002 승인 2026-08-14)
+- Summary: **AC-7 대화 적재 구현**. 외부 AI 가 제출한 최종 답변을 `WebAiTasks` 에 보존하고,
+  저장 시점에 비신뢰 데이터로 각인하며, 사람 운영자용 열람 경로(REST + 관리 콘솔 서브탭)를
+  붙였다. 저장 위치는 원안(`agent_runtime.messages`)이 아니라 전용 컬럼이다 — ANCHOR §2.1
+  Alt-F(사용자 결정).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/_bootstrap_schema.py` — `WebAiTasks` 에
+    `Answer`(MEDIUMTEXT) · `AnswerBytes` · `AnswerVerdict` · `AnswerTruncated` · `SourceTasks` ·
+    `DatasourceKey` 멱등 추가. ALTER 실패는 삼키지 않고 `logging.error`(보존 비활성 사실을
+    운영자가 알아야 한다)
+  - `unit/feature-0003-agent-web-ui/src/session_guard.py` — `wrap_external_answer()` 신설 +
+    `_EXTERNAL_ANSWER_NOTE`. **`wrap_tool_output` 과 방향이 반대**인 각인
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` — `submit_answer` 저장 단계 ·
+    고신뢰 인젝션 400 거절 · `open_task` 의 `DatasourceKey` · 열람 2 route ·
+    `_task_tool_calls`(PG 원장 합류)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` · `admin.js` ·
+    `admin/exttasks.js`(신규) — 'AI 운영 현황 > 외부 AI 작업' 서브탭
+  - `unit/feature-0003-agent-web-ui/tests/route_snapshot_p5b.json` — route +2 골든 갱신
+  - `unit/feature-0041-.../tests/test_answer_persistence.py`(신규 24건)
+  - `unit/feature-0041-.../docs/{ANCHOR,FUNCTION,TASK}.md`
+- Impact: **신규 저장면**이 생긴다 — 통제 밖 런타임이 작성한 텍스트를 영속화한다. 완화는 셋:
+  저장 시점 각인(⟦UNTRUSTED-DATA⟧, 읽는 쪽이 잊을 수 없게) · 고신뢰 인젝션 거절 ·
+  열람은 `console.aiops.read` 뒤(외부 토큰 도달 불가). 기존 제출 경로의 반환 스키마·교차오염
+  대조·원장 기록은 무변경. 소급 복구는 불가(이전 2건의 답변 본문은 존재하지 않는다).
+- codex 2차 반영: 6개 ALTER 에 `ALGORITHM=INPLACE, LOCK=NONE`(§13.1 lint 게이트) ·
+  거절 시 `AnswerVerdict` 만 task 행에 기록(`_mark_answer_verdict`) · 재제출/동시 제출은
+  `WHERE … AND SubmittedAt IS NULL` + rowcount 로 **409**(확정 답변 불변) · 콘솔 답변 칸을
+  3-상태(본문 있음/미제출/**보존 안 됨**)로 분기해 롤링 배포 창의 구버전 처리분을 가시화.
+- Rollback Notes: 컬럼은 additive(expand, CONVENTIONS §12.1)라 코드 revert 만으로 안전
+  (데이터는 남고 읽는 코드만 사라진다). revert 시 보존이 다시 멈추므로 AC-7 은 열린 결함으로
+  되돌아간다.
+
+## CHG-20260814-0027
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface (AC-7)
+- Summary: **PB-0008 실측이 잡은 화면 불일치 수정**. 목록 답변 칸은 '보존 안 됨' 인데 상세는
+  '답변이 제출되지 않았습니다' 라고 말해, 같은 사실을 두 화면이 다르게 서술했다. 상세도 목록과
+  같은 3-상태(본문 있음 / 미제출 / **보존 안 됨**)를 쓰도록 맞추고, 보존 안 된 경우 사유
+  (롤링 창 구버전 처리 · 보존 도입 이전 제출)와 "도구 이력은 남아 있다" 를 함께 안내한다.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin/exttasks.js` (`detailHtml`)
+- Impact: 표시 문구만. 데이터·권한·저장 경로 무변경.
+- Rollback Notes: 문구 원복.
+
+## CHG-20260814-0028
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface (AC-7)
+- Summary: CHG-0027(문구 정합) 배포 반영 실측 기록. **문서 전용(코드 0).**
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md` + `docs/test-runs.d/evidence/` (PB-0008 캡처) ·
+  `unit/feature-0041-.../docs/{TASK,REPORT}.md`
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

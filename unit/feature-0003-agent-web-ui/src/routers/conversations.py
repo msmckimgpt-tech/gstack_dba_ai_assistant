@@ -3202,6 +3202,9 @@ async def ask_result(
     loop = asyncio.get_event_loop()
     deadline = loop.time() + wait_s
     poll_interval = 0.5
+    # 봉인 B: ask_jobs terminal backstop 의 다음 확인 시각(0=첫 tick 에서 즉시). KV 가 이미
+    # 마감된 정상 대화에서는 위 판정이 먼저 return 하므로 이 조회 자체가 일어나지 않는다.
+    _job_backstop_at = 0.0
     last_snapshot: dict[str, Any] = {}
     def _poll_once() -> "dict[str, Any] | None":
         """스냅샷 1회 — **동기 DB 구간 전체**를 워커 스레드에서 실행 (feature-0028 P1-A).
@@ -3255,6 +3258,53 @@ async def ask_result(
                 "timeout": False,
             }
             return JSONResponse(payload)
+        # conv-audit FR-early-return-kv-never-finalized(봉인 B): KV 가 마감되지 않았어도
+        # worker job 이 이미 terminal 이면 **그쪽이 권위**다. run 이 KV 를 남기지 못하고 끝나면
+        # (조기 종료·프로세스 소실) 위 판정이 영원히 성립하지 않아 프런트가 45초 폴링을 무한
+        # 반복했다(실측 dead-air 는 stale 임계 18분까지). 내부 attach 루프가 job_id 로 갖는
+        # 보증을 재접속 폴백 경로에도 대칭으로 준다. 활성 job 이 있으면 헬퍼가 None 을 주므로
+        # 진행 중 답변을 끊지 않는다. 매 tick 조회는 PG 연결 낭비라 5초 주기로만 확인한다.
+        if loop.time() >= _job_backstop_at:
+            # 첫 tick 은 즉시(고아는 곧바로 해소), 그 뒤 10초 주기. 진행 중 대화에서는 헬퍼가
+            # 활성 job 조회 1회로 None 을 주고 끝나지만, feature-0028 P1-A 가 줄여 둔 호출당
+            # PG 연결 수를 되돌리지 않도록 간격을 둔다.
+            _job_backstop_at = loop.time() + 10.0
+            job_term = await asyncio.to_thread(app._latest_ask_job_terminal, cid)
+            if job_term and ((not requested_run_id)
+                             or requested_run_id == str(job_term.get("run_id") or "")):
+                job_status = str(job_term.get("status") or "error")
+                job_run_id = str(job_term.get("run_id") or "")
+                latest = snapshot.pop("_latest_assistant", {}) or {}
+                # §18.8 codex [P1]: 저장된 마지막 assistant 가 **이 job 의 답변이라는 보장이
+                # 없다**(직전 run 의 답변·진행 중 partial). KV 경로의 has_answer 와 동일하게
+                # run_id 를 대조해, 일치할 때만 답변으로 싣는다.
+                _latest_run_id = ""
+                if isinstance(latest, dict):
+                    _meta = latest.get("meta") or {}
+                    if isinstance(_meta, dict):
+                        _latest_run_id = str(_meta.get("run_id") or "").strip()
+                has_answer = (bool(latest) and job_status == "done"
+                              and bool(job_run_id) and _latest_run_id == job_run_id)
+                logging.getLogger(__name__).info(
+                    "ask_result: KV 미마감 run 을 ask_jobs terminal 로 해소 cid=%s job=%s "
+                    "job_status=%s kv_status=%s", cid, job_term.get("id"), job_status,
+                    server_status or "<empty>",
+                )
+                return JSONResponse({
+                    "conversation_id": cid,
+                    "status": job_status,
+                    "raw_status": job_status,
+                    "display_status": job_status,
+                    "is_stale": False,
+                    "status_at": snapshot.get("status_at", ""),
+                    "run_id": str(job_term.get("run_id") or ""),
+                    "step_count": snapshot.get("step_count", 0),
+                    "duration_ms": snapshot.get("duration_ms", 0),
+                    "error": str(job_term.get("error") or "") or None,
+                    "has_answer": has_answer,
+                    "assistant": latest if has_answer else None,
+                    "timeout": False,
+                })
         if loop.time() >= deadline:
             break
         await asyncio.sleep(poll_interval)
