@@ -4136,3 +4136,8 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   (`_load_filename_lineage_heads`) 예외 없이 동작, 동명 파일의 계정별 계보가 각각 head 1건으로 분리.
 - 정직: 분기 INSERT/supersede 실동작·프롬프트 계보 블록 렌더는 라이브 write 를 유발해 미실측
   (단위 테스트 한정) — 다음 실사용 수정본에서 확인 가능.
+
+## CHG-20260813T2000-ai-claude-corp-usage-metric-final-postdeploy — 양 화면 POST-DEPLOY 실측 기록 (doc-only)
+
+`docs/TEST.md` 에 관리·프로필 라이브 Run + 검증 함정 2건(`getBoundingClientRect` 미반영 ·
+`display:none` 조상에서 transition 미발동) 기록. 코드 변경 0.

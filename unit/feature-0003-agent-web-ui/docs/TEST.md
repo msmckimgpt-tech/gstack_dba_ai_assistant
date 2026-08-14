@@ -2911,3 +2911,37 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
 - pytest **4,441 passed / 4 skipped**
 - **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(ESM JS · 미머지 프리뷰 불가).
   배포 후 프로필 드로어에서 카드 클릭 전환을 실 Chrome 으로 실측한다.
+
+## 20260813T2000-usage-metric-final-postdeploy — 관리·프로필 양 화면 POST-DEPLOY 라이브 실측 (doc-only)
+
+`main ea25a840` 배포(무중단 0건 · web-a/b 파리티 · `usage-metrics.js` 서빙 확인) 후 실 Chrome/150 실측.
+
+### Run 2026-08-13 — Environment: Windows-browser (PB-0008)
+
+**관리 콘솔** — 3개 기전 전건 해소:
+
+| 축 | 실측 |
+|---|---|
+| 총 토큰 → 요청 | `sameSvg:true` · 사라지는 세그먼트 28.3 → **22.39** → 0 · 새 막대 **14.68 → 70.3**(0에서 자람) · `anims:["height","y"]` |
+| 요청 → 총 토큰 | `sameSvg:true` · 단일 막대 70.3 → **48.71** → 0 · `anims:["height","opacity"]` |
+
+**프로필 사용 내역** — 관리 화면과 동일 거동:
+
+| 축 | 실측 |
+|---|---|
+| 카드 8종 | 요청 88 · 호출 523 · 총 토큰 22,482,623 · 입력 21,812,408 · 출력 670,215 · 캐시 0/0 · $26.18 |
+| 총 토큰 → 비용 | `sameSvg:true` · 105.4 → **101.97** → 97.1 · `anims:["height","y"]` |
+| 총 토큰 → 요청 | `sameSvg:true` · 접히는 중 **67.31** · 새 막대 **36.81 → 120** · 단일 막대 12개 · 안내 문구 일치 |
+
+프로필 캐시가 0인 것은 **정상**이다 — 캐시 기록은 계정 10·50 의 대화에 있고(각 471,671/316,883 · 293,311/356,582)
+이 계정(bootstrap_admin)의 본인 대화에는 아직 없다. 프로필은 정의상 본인 소유 대화만 집계한다.
+
+### 검증 함정 2건 (재현 시 주의 — 둘 다 코드 결함으로 오인할 뻔했다)
+
+1. **`getBoundingClientRect()` 로는 SVG geometry transition 이 안 보인다** — layout box 가 최종 style
+   값 기준이라 진행 중 값이 반영되지 않는다. `getComputedStyle().height` + `getAnimations()` 로 본다.
+2. **`display:none` 조상 아래에서는 transition 이 발동하지 않는다(브라우저 정상 동작)** — 프로필
+   드로어를 열 때 기본 탭이 '프롬프트'라, '계정' 탭을 활성화하지 않은 채 서브탭만 클릭하면 차트가
+   `drawer-pane:none` 아래에 있어 전환이 죽는다. 사용자 경로대로 **계정 탭 → 사용 내역** 순으로 열고
+   `getClientRects().length > 0` 을 확인한 뒤 측정해야 한다. (부모 체인 덤프로 갈라냄:
+   `drawer-pane hidden:none` → 탭 활성화 후 `drawer-pane:flex`.)
