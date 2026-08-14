@@ -6,6 +6,60 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-early-return-kv-never-finalized — fixed:undeployed (L4↔L7 경계; run 이 KV 를 마감하지 못하면 프런트는 영원히 기다린다)
+
+- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 26 + 회귀 56 = **82 PASS**, verify-completion
+  **18/18**, ruff clean, §18.8 codex [P1] 6건 중 4건 수정·2건 근거 기록). **배포 전** → 라이브 실측 미수행.
+- **source**: 사용자 명시 호출(2026-08-14) — "`새 대화` 대화가 5분이 지났는데도 **시작 자체가 진행되지
+  않는** 상황(첨부 2종 추가·쿼리 리뷰 요청). 근본적인 원인을 분석하여 개선해주세요."
+- **modality**: 1:1 동기(`is_group=f`) · **conv(마스킹)**: `…bcc2bfa0` · **account(마스킹)**: A-10 ·
+  **product(마스킹)**: P-94(멀티 datasource 7 바인딩)
+- **last_seen**: 2026-08-14 · **seen_count**: 1 · **seen_distinct_conv**: 20(60일 조기 종료 기준)
+- **symptom_confidence**: high (사용자 보고 + 라이브 완전 재현) · **rootcause_confidence**: high
+  (코드 file:line + `ask_jobs`/`kv`/`core_messages` + web 액세스 로그 4중 삼각측량)
+- **suspected_layers**: **L4↔L7 경계** — 상태 마감(런타임 계약)과 그 상태를 소비하는 표면(long-poll).
+
+- **증상(signal)**: `E-USR` 명시 보고 + `I-DIY` 수동 우회 + `I-SIL` 이탈.
+  15:31:32.1 job 생성 → 15:31:32.3 claim → **15:31:32.4 `error`(0.12초)**. 그런데 사용자 화면은
+  계속 대기 상태였고, **15:35:16 사용자가 데이터소스 7개를 손수 연결 테스트**(원인을 몰라 직접 파봄),
+  15:36:04 부터 `/api/ask_result?wait=45` 가 45초 주기로 반복, **15:54:58 사용자가 직접 취소**(23분).
+  `core_messages` **0행** — 사용자 질문조차 남지 않았다.
+- **confirmed_root_cause**: `agent_core.py::_run_agent_core` 가 KV 를 실제 run_id 로 인계
+  (`set_run_status(processing, run_id)`)하기 **전**에 `result["error"]` 만 채우고 **예외 없이 정상
+  return** 하는 조기 종료 경로가 **12곳**. 워커(`modules/ask.py::_execute_job`)의 KV 마감은
+  `raised` / `_deferred_terminal` / resume-giveup **3갈래뿐**이고 그 전제("run_agent 는 정상 종료 시
+  KV 를 이미 기록했다")가 **거짓**이라 전부 놓쳤다 → KV `last_status='processing'` +
+  `last_status_run_id='enqpre-…'`(enqueue 갭 sentinel) **영구 고착**. `/api/ask_result` 는 terminal
+  판정을 **KV 단일 소스**로 하므로 무한 폴링(내부 attach 는 `job_id` backstop 이 있는데 **재접속 폴백
+  경로엔 없는 비대칭**). 사용자 체감 상한은 stale 임계 `AGENT_ASK_WORKER_STALE_SEC`
+  = `max(AGENT_TIMEOUT_SEC×3,…)+180` = **1,080초(18분)**. 재발경로 = **코드 구조**(권위선으로 봉인).
+- **corroboration**: **structural** — 조기 종료 실패(0.x초 사망 · `answer=""` · `steps=[]`)
+  **22 job / 20 distinct_conv**(전체 648 job · 271 대화 → **대화의 7.4%**), 2026-06-10~08-14,
+  평균 0.172초. 그중 예외 경로(안전망 작동)는 **1건뿐**이고 나머지 **22건이 안전망 없는 조기 return**.
+- **거짓양성 기각(`refuted`)**: ① **datasource 회로차단으로 턴을 막는 동작 자체는 결함이 아니다** —
+  원장 `FR-datasource-eager-connect-blocks-datasource-free-turn`(2026-08-07 사용자 판단
+  `rejected`: 접지되지 않은 답변 금지)의 **의도된 가드**. 그 판단을 존중해 건드리지 않고, 결함을
+  **"차단 사실이 사용자에게 전달되지 않는 경로"** 로 위치 재지정했다(F4 재적용). ② 인프라 기인 아님 —
+  문제의 primary(`mysql-kr-an2-player`)는 **15:34:27 자동 회복**했는데도 job 은 이미 죽어 있었고 재시도가
+  없었다. ③ `FR-ask-orphan-redeploy-dead-air` 재발 아님 — 워커 소실·재배포 시그니처 부재(job 은 claim 후
+  0.12초 정상 종료).
+- **봉인**: (A) 워커가 `finish_ask_job` **앞**에서 KV terminal 무조건 보장 — 12개 경로 + 미래 경로를
+  한 곳에서 덮는 권위선(이미 terminal 이면 no-op · 다른 실제 run 이면 skip · `enqpre-` sentinel 은
+  자기 외 활성 job 이 없을 때만 마감 · `raised`/error/answer 로 done↔error 판별 · 판정 실패 시 무write)
+  (B) `/api/ask_result` 가 `ask_jobs` terminal 을 **권위 backstop** 으로 참조(활성 job 있으면 미적용 ·
+  `claimed` 포함 · `has_answer` 는 run_id 대조 · 첫 tick 즉시 + 10초 주기) (C) 조기 종료도 **사용자
+  질문 1행 + 오류 1행 + KV terminal** 을 남긴다(datasource 계열 4곳). 보안 경계·RBAC·큐 상태기계 무변경.
+- **disposition 근거**: Major(§12.3 — 코어 워커 lifecycle·KV 상태 계약) → attended human-decision.
+  사용자가 AskUserQuestion 으로 봉인 범위 **A+B+C** 명시 선택(2026-08-14) → PLAN-APPROVED 후 구현.
+  structural corroboration + 코드 file:line confirmed(high) → fix-now.
+- **fix**: `CHG-20260814T160000-ask-kv-terminal-seal` / **코드 거주 `feature-0002-agent-core`**
+  (소비 지점 `feature-0003-agent-web-ui` 는 cross-ref) / `REV-20260814T160000-ask-kv-terminal-seal`
+- **rc_ids**: RC-1(워커 KV 마감 3갈래 전제 붕괴) · RC-2(ask_result KV 단일 소스 비대칭) ·
+  RC-3(조기 종료가 사용자 질문 유실) · **batch-id**: B-20260814T160000-ask-kv-terminal-seal
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "마감 계약이 동작함" 까지만 증명한다. **"실제 대화의
+  무한 폴링 소멸"** 은 배포 후 실측분(미수행) → 다음 audit 이 corroboration(조기 종료 job 의 KV
+  terminal 도달률 · `enqpre-` 고착 대화 수) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+
 ## OBS-attach-chain-multiple-live-heads — 관측 항목 (수정 안 함, 발생 시 승격)
 
 - **status**: `report-only` — **라이브 발생 0건**(2026-08-14 실측)이라 고치지 않고 **관측만** 둔다.

@@ -92,7 +92,10 @@ def test_ask_result_polls_in_worker_thread():
     """(소스 잠금) long-poll 스냅샷은 asyncio.to_thread 로 — async 본문 blocking DB 금지."""
     src = (Path(webapp.__file__).parent / "routers" / "conversations.py").read_text(encoding="utf-8")
     i = src.index("async def ask_result(")
-    body = src[i:i + 6000]
+    # 함수 **경계**로 자른다. 종전엔 고정 6,000자 창이라 본문이 그보다 길어지면 아래 마커를
+    # 못 찾고 ValueError 로 터졌다 — 계약 위반이 아니라 창 부족인데 실패로 보이는 취약점.
+    _next = src.find("\n@router.", i)
+    body = src[i:_next if _next != -1 else len(src)]
     assert "await asyncio.to_thread(_poll_once)" in body
     # 루프 **본문** 안에서 동기 커넥션을 직접 열지 않는다(헬퍼 안으로 이동).
     loop_start = body.index("while True:")

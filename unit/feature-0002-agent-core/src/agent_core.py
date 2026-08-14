@@ -4042,6 +4042,83 @@ def _ensure_web_conversation_metadata(conn, conversation_id: str, topic: str = P
         pass
 
 
+def _persist_early_exit(mem_conn, cid: str, run_id: str, error_text: str,
+                        user_message: str, account_id=None,
+                        sender_username: str = "",
+                        dedup_user_message_since=None,
+                        product_id=None, product_mode: str = "pinned") -> None:
+    """run 이 **시작 단계에서** 끝날 때 대화에 흔적을 남기고 KV 를 마감한다.
+
+    conv-audit FR-early-return-kv-never-finalized(봉인 C). datasource 선연결 실패처럼
+    본 루프 진입 전에 끝나는 경로는 종전에 `result["error"]` 만 채우고 곧바로 return 했다.
+    그 지점은 사용자 메시지 저장(아래 `_save_message(user)`)과 KV 인계
+    (`set_run_status(processing, run_id)`) **앞**이라, 결과적으로
+
+      · 대화에 **사용자 질문조차 남지 않고**(새로고침하면 방금 쓴 요청문이 사라진다)
+      · KV 는 enqueue sentinel + `processing` 으로 고착돼 프런트가 무한 대기했다.
+
+    사용자에게는 "요청이 시작조차 되지 않은" 것으로 보인다(사용자 보고 2026-08-14).
+    그래서 조기 종료도 **정상 종료와 같은 흔적**을 남긴다 — 질문 1행 + 오류 1행 + KV terminal.
+    실패는 전부 흡수한다(이 경로는 이미 실패 처리 중이라 2차 예외로 덮으면 안 된다).
+
+    KV write 는 무조건(`only_if_current_run` 미사용)이다 — 이 run 이 방금 claim 한 자기
+    상태를 쓰는 것이고, 인계 지점(6487)의 processing write 와 같은 semantics 다.
+    """
+    if not cid:
+        return
+    _err = str(error_text or "").strip()
+    try:
+        if _writes_allowed(mem_conn, cid):
+            _msg = str(user_message or "").strip()
+            if _msg:
+                _meta: dict[str, Any] | None = None
+                if account_id:
+                    _meta = {"sender_account_id": int(account_id)}
+                    if sender_username:
+                        _meta["sender_username"] = sender_username
+                        _meta["group_chat"] = True
+                    else:
+                        _uname = _lookup_account_username(mem_conn, account_id)
+                        if _uname:
+                            _meta["sender_username"] = _uname
+                # 재시도(job requeue)로 이미 저장된 요청문을 두 줄로 만들지 않는다 —
+                # 정상 경로(_save_message 호출부)와 동일한 근거 기반 억제.
+                _dup = _user_message_already_persisted(
+                    cid, _msg, account_id, dedup_user_message_since,
+                    mirror_sender_account_id=(int(account_id)
+                                              if (sender_username and account_id) else None),
+                )
+                if not _dup.get("core"):
+                    _save_message(mem_conn, cid, "user", content=_msg,
+                                  sender_account_id=account_id)
+                if not _dup.get("display"):
+                    _mirror_message(mem_conn, cid, "user", _msg, run_id, meta=_meta)
+            if _err:
+                # 정상 error 종료(아래 `elif result["error"]`)와 같은 형식 — 원인을 대화에 남겨
+                # 사용자가 토스트를 놓쳐도 화면에서 확인할 수 있게 한다.
+                # **제품 귀속 각인 필수**(msg-speaker-attribution 계약): 각인이 빠진 말풍선은 FE 가
+                # 대화 바인딩으로 폴백해 표시하고, 제품을 바꾸면 그 말풍선만 사후 변경된다. 정규
+                # 계산 지점(`_answer_product_attribution` 호출)은 datasource 연결 **뒤**라 이 시점엔
+                # 아직 없으므로 여기서 직접 산출한다.
+                try:
+                    _answer_product_meta = _answer_product_attribution(
+                        mem_conn, product_id, product_mode)
+                except Exception:
+                    _answer_product_meta = {}
+                _error_text = f"오류: {_err}"
+                _save_message(mem_conn, cid, "assistant", content=_error_text)
+                _mirror_message(mem_conn, cid, "assistant", _error_text, run_id,
+                                meta={"internal": False, **_answer_product_meta})
+    except Exception:
+        logger.warning("early-exit 대화 기록 실패 conv=%s run=%s", cid, run_id, exc_info=True)
+    try:
+        set_run_status(mem_conn, cid, "error", run_id=run_id,
+                       error=_err or "요청이 시작되지 못한 채 종료되었습니다.")
+    except Exception:
+        logger.warning("early-exit KV terminal 기록 실패 conv=%s run=%s", cid, run_id,
+                       exc_info=True)
+
+
 def _user_message_already_persisted(conversation_id: str, content: str,
                                     sender_account_id, since,
                                     mirror_sender_account_id=None) -> dict:
@@ -6248,6 +6325,9 @@ def _run_agent_core(
             result["error"] = f"DB 연결 실패(eval datasource): {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
+            _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
+                                account_id, sender_username, dedup_user_message_since,
+                                product_id, product_mode)
             return result
         _init_detail["dataplane_connect_ms"] = round((time.perf_counter() - _dp_t0) * 1000.0, 1)
         import modules.tools as _tools_mod
@@ -6273,6 +6353,9 @@ def _run_agent_core(
                 result["error"] = f"DB 연결 실패(멀티 datasource primary): {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
+            _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
+                                account_id, sender_username, dedup_user_message_since,
+                                product_id, product_mode)
             return result
         # primary datasource 를 run-wide 기본 컨텍스트로(grounding·첫 tool 기본값).
         _ds = _multi_ds_list[0]
@@ -6301,6 +6384,9 @@ def _run_agent_core(
             result["error"] = f"데이터 소스 설정 오류: {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
+            _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
+                                account_id, sender_username, dedup_user_message_since,
+                                product_id, product_mode)
             return result
         _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
         def _reconnect_dataplane():   # noqa: E306 — 원 연결과 동일 좌표 클로저(폴백 없음)
@@ -6326,6 +6412,9 @@ def _run_agent_core(
                     result["error"] = f"DB 연결 실패: {e}"
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
+                _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
+                                    account_id, sender_username, dedup_user_message_since,
+                                    product_id, product_mode)
                 return result
         # initpro: 성공·폴백 어느 쪽이든 여기 도달 — 연결 확립에 쓴 총 시간을 기록한다.
         # (실패해서 return 하는 경로는 답변이 없어 breakdown 자체가 안 남는다.)

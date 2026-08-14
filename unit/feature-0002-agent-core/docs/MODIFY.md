@@ -8,6 +8,57 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260814T170000-ask-kv-seal-ci-regression (조기 종료 말풍선의 제품 귀속 각인 복구, Major 후속)
+
+`CHG-20260814T160000-ask-kv-terminal-seal` 의 **CI 회귀 2건 수정**. 적대 패널(codex)은 통과했으나
+CI 가 잡았다 — **로컬 테스트 범위를 좁게 잡아(신규 + ask 계열만) 두 파일을 돌리지 않은 것이 원인**
+이며, 이후 CI 와 동일 범위(5 unit)로 재실행했다.
+
+- `src/agent_core.py`: `_persist_early_exit` 의 assistant 미러가 **제품 귀속 각인을 빠뜨렸다**
+  (`test_msg_speaker_attribution` 구조 단언 위반). 각인 없는 말풍선은 FE 가 대화 바인딩으로
+  폴백해 표시하고, 제품을 바꾸면 **그 말풍선만 사후 변경**된다(테스트 docstring 이 지목하는 바로
+  그 시나리오 — "오류 말풍선이 미각인으로 남아"). 정규 계산 지점
+  (`_answer_product_attribution` 호출)은 datasource 연결 **뒤**라 조기 종료 시점엔 존재하지
+  않으므로, 함수 안에서 직접 산출하도록 하고 호출부 4곳에 `product_id`/`product_mode` 를
+  전달했다. **계약 충족이지 테스트 우회가 아니다.**
+- `unit/feature-0003-agent-web-ui/tests/test_web_perf_p1.py`:
+  `test_ask_result_polls_in_worker_thread` 가 `ask_result` 본문을 **고정 6,000자**로 잘라
+  검사해, 본문이 길어지자 마커를 못 찾고 `ValueError` 로 터졌다. 잠그려는 계약
+  (long-poll 스냅샷·backstop 을 `asyncio.to_thread` 로 — async 본문 blocking DB 금지)은
+  **그대로 지켜지고 있었고**, 창 크기만 부족했다. 창을 다음 `@router.` 경계까지로 바꿔
+  취약점을 제거했다(단언 자체는 불변).
+- 코드 계약 변경 없음(봉인 A/B/C 동작 동일). 검증: 실패했던 2건 포함 **52 PASS**,
+  CI 동일 범위 5 unit 전체 재실행(`chattr` 미설치로 인한 컨테이너 환경 실패 1건은 pre-existing).
+
+## CHG-20260814T160000-ask-kv-terminal-seal (조기 종료 run 의 KV terminal 봉인, Major)
+
+conv-audit `FR-early-return-kv-never-finalized`. 사용자 보고 "5분이 지나도 시작 자체가 진행되지
+않음"(SQL 첨부 2건 + 쿼리 리뷰 요청). 실제로는 job 이 0.12초 만에 `error` 로 끝났는데 KV 만
+`processing` + `enqpre-` sentinel 로 고착해 `/api/ask_result` 가 45초 주기로 15분 넘게 무한 폴링.
+
+**근본**: `run_agent` 는 KV 를 실제 run_id 로 인계하기 **전**에 `result["error"]` 만 채우고 예외
+없이 정상 return 하는 조기 종료 경로가 12곳인데, 워커 KV 마감은 `raised` / `_deferred_terminal` /
+resume-giveup 세 갈래뿐이라 전부 놓쳤다. 재발경로 = **코드 구조**(권위선으로 봉인).
+
+- `src/modules/ask.py`: `_ensure_kv_terminal()` 신설 — `finish_ask_job` **앞**에서 KV terminal 을
+  무조건 보장(long-poll 1차 판정 소스가 KV 이므로 job 전이보다 먼저 풀어야 대기가 즉시 끝난다).
+  이미 terminal 이면 no-op · 다른 실제 run 이 인계했으면 skip(TASK-0241 supersede 존중) ·
+  `enqpre-` sentinel 은 "아직 아무 run 도 인계 못 함" 이므로 마감 대상 · 답변이 있는데 KV 만
+  못 쓴 run 은 `done` 으로 마감(성공 턴을 실패로 날조하지 않는다) · 판정 실패 시 무write.
+- `src/modules/ask_jobs.py`: `latest_terminal_job_for_conversation()` 신설 — 활성(pending/running)
+  job 이 없는 대화의 마지막 terminal job(status/run_id/error). 활성 job 이 있으면 `None`(진행 중
+  답변을 끊지 않는 안전 조건).
+- `src/agent_core.py`: `_persist_early_exit()` 신설 + datasource 계열 조기 return **4곳**에 연결
+  (eval / 멀티 primary / 해석 오류 / 단일). 사용자 질문 + 오류 안내를 대화에 남기고 KV 를 마감한다.
+  재시도 중복 저장은 기존 `_user_message_already_persisted` 근거로 억제. 기록 실패해도 KV 마감은 수행.
+- `tests/test_ask_kv_terminal_seal.py`: 신규 26건(봉인 A 14 · B 6 · C 5 + [P1] 반영 회귀). 회귀 재현
+  (`processing` + `enqpre-` 고착 → error 마감) 포함.
+
+
+**cross-ref**: 봉인 B 의 소비 지점은 `feature-0003-agent-web-ui`
+(`routers/conversations.py::ask_result` + `routers/_conv_store.py::_latest_ask_job_terminal` +
+`app.py` 재수출) — 코드 거주 primary 는 본 feature(큐/워커 계약), verify 도 본 feature 로 수행.
+
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
 ## CHG-20260807T160000-redteam-abortable-postdeploy (배포 실증 + 원장/학습 환류, doc-only)

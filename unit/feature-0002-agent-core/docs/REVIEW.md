@@ -8,6 +8,60 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260814T170000-ask-kv-seal-ci-regression [SKIPPED:no-new-contract] (TASK-20260814T160000)
+- **Trigger**: §18.8 dispatch — 선행 `REV-20260814T160000-ask-kv-terminal-seal`(codex backend+qa)이
+  본 changeset 의 계약을 이미 적대 검증했다. 본 후속은 **그 계약을 바꾸지 않고**, CI 가 잡은 회귀
+  2건을 계약에 맞추는 수정이라 새 패널을 돌리지 않는다(코드 동작 계약 변경 0).
+- **정직 기록 — 적대 패널이 통과시킨 것을 CI 가 잡았다**:
+  1. 조기 종료 오류 말풍선의 **제품 귀속 각인 누락**(`test_msg_speaker_attribution` 구조 단언).
+     각인이 없으면 FE 가 대화 바인딩으로 폴백해 표시하고 제품 전환 시 그 말풍선만 사후 변경된다.
+     `_answer_product_attribution` 을 함수 내부에서 산출하고 호출부 4곳에 제품 컨텍스트를 전달해
+     **계약을 충족**했다(단언 완화·우회 아님).
+  2. `test_web_perf_p1::test_ask_result_polls_in_worker_thread` 의 **고정 6,000자 창** 취약점.
+     잠그려는 계약(`asyncio.to_thread` 경유)은 지켜지고 있었고 창만 부족했다 → 함수 경계 기반으로
+     교체. 단언 자체는 불변.
+- **왜 놓쳤나(재발 방지)**: 로컬 검증을 **신규 + ask 계열 테스트로 좁게** 잡아 두 파일이 실행되지
+  않았다. 구조 단언 테스트는 "내가 만진 모듈" 이 아니라 **소스 전체를 스캔**하므로 변경 파일 기준
+  선별이 통하지 않는다 → 이후 CI 와 동일 범위(5 unit) 재실행으로 확인.
+- **검증**: 실패했던 2건 포함 **52 PASS**, CI 동일 범위 5 unit 전체 통과(`chattr` 미설치 1건은
+  컨테이너 환경 제약 · pre-existing · CI runner 에선 통과), ruff clean.
+
+## REV-20260814T160000-ask-kv-terminal-seal [CODEX:backend+qa] — [P1] 6건 중 4건 수정·2건 근거 기록, [P2] 7건 판정 (TASK-20260814T160000)
+- **Trigger**: §18.8 dispatch — `schema/query/마이그레이션`(ask_jobs SQL 계약) + 동시성(worker lease·
+  KV 상태 슬롯) 신호 → **backend, qa**. §18.8.2 제약-없는-채널 우선에 따라 `codex`(gpt-5.6-luna,
+  read-only sandbox, xhigh) 로 수행. **정직 기록**: 백그라운드 실행 3회가 stdin/파일 접근 문제로
+  프리앰블만 내고 종료했고(무검증), 전면 실행 1회에서 실제 판정을 받았다. 앞선 3회는 결과로 세지 않는다.
+- **[P1] 수정 4건**
+  1. **backstop 활성 집합에 `claimed` 누락** — `status IN ('pending','running')` 이라 claim~running
+     창의 job 을 활성으로 못 봐, 그 사이 backstop 이 **직전 run 의 terminal** 을 돌려주어 진행 중
+     답변을 끊을 수 있었다. 테이블 CHECK 제약·sweep 활성 집합과 동일하게 `claimed` 포함으로 수정.
+  2. **`enqpre-` sentinel 소유 미확인** — 종료하는 run 이 본 sentinel 이 *자기 것이라는 보장이 없다*
+     (취소→즉시 재요청 창). 새 요청의 sentinel 을 덮으면 그 요청이 시작 전에 실패로 표시된다.
+     `has_other_active_job_for_conversation(conn, cid, exclude_job_id)` 로 **자기 외 활성 job 이 있으면
+     보류**(판정 실패도 보류 — 남은 대기는 stale 창이 받는다).
+  3. **`raised` 무시** — 예외로 끝난 run 에 부분 `answer` 가 남아 있으면 `done` 으로 마감돼 job 전이
+     (`error`)와 어긋났다. `raised` 를 error 조건에 포함.
+  4. **backstop `has_answer` 가 run 대조 없음** — 저장된 마지막 assistant 가 이 job 의 답변이라는
+     보장이 없다(직전 run·진행 중 partial). KV 경로와 동일하게 `meta.run_id == job.run_id` 대조.
+- **[P1] 근거 기록 2건(수정 안 함)**
+  5. **read-then-write 비원자(CAS 없음)** — 기존 `set_run_status(only_if_current_run=…)` 와 **동일한
+     비원자 패턴**이며 그 계약이 이미 "orphan 의 terminal write 는 새 run claim 보다 수 초 뒤" 라는
+     근거로 수용돼 있다(TASK-0241). 다만 창을 좁히기 위해 **KV 가 이미 내 run 을 가리킬 때만
+     `only_if_current_run=True`** 로 write 하도록 조건부 가드를 넣었다. sentinel·빈 값에 가드를 켜면
+     곧 skip 이라 봉인 자체가 무력화되므로 그 경우만 무조건 write 를 유지한다(회귀 테스트로 고정).
+  6. **취소 run 이 `error` 로 마감될 수 있음** — 워커는 `result` 로 취소를 알 수 없다(`_slim_result`
+     keep 목록에 취소 키 없음, `agent_core` 는 KV 에만 `canceled` 를 남긴다). 정상 취소는 KV 가
+     terminal 이라 no-op 이고, sentinel+취소라는 좁은 창에서만 `error` 로 표시된다. **무한 대기보다
+     정확한 실패 표시가 낫다**고 판단해 현 범위 유지 — 취소 신호를 result 에 싣는 것은 워커 계약
+     변경이라 별 cycle.
+- **[P2] 판정** — ① backstop 예외 삼킴 → **의도**(미가용 시 종전 KV 판정만, 회귀 0) ② C 의 대화 기록
+  실패 후 KV 만 마감 → **의도**(기록 실패가 무한 폴링으로 되돌아가지 않게; 주석·테스트로 고정)
+  ③ dedup 비원자·assistant 오류행 반복 저장 → 조기 종료는 재큐 대상이 아니라 실질 창이 좁고, 기존
+  정상 경로와 동일한 fail-open 정책(중복 1행 < 요청문 유실) ④ `account_id=None` + `sender_username`
+  시 meta 누락 → **기존 정상 저장 경로와 동형**(`if account_id:` 게이트 동일) — 신규 회귀 아님.
+- **검증**: 신규 26 + 기존 회귀 56 = **82 PASS**(ask_jobs·ask_worker·redeploy-handoff·supersede 포함),
+  ruff clean. 라이브 실측(무한 폴링 소멸)은 배포 후 — 원장 `unverified-live` 로 정직 표기.
+
 ## REV-20260807T160000-redteam-abortable-postdeploy [SKIPPED:non-policy-doc] (TASK-20260807T130000)
 - **Trigger**: §18.8 dispatch 표 첫 행 — 비정책 doc-only(배포 실증 기록 · 마찰 원장 status 갱신 ·
   LEARNINGS 환류). 코드 변경 0, 스키마·RBAC·엔드포인트·프롬프트 무변경.
