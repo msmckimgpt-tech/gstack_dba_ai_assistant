@@ -110,6 +110,15 @@ cross-cut)·`docker-compose.yml`·`Makefile`·`bin/alembic-migrate.sh`.
   run 을 마치는 중이다).
 - **정직 표기**: drain 예산은 실측 max(2,024s)를 다 덮지 않는다. 초과분은 재큐되고 배포 말미 요약에
   `DRAIN-TIMEOUT` 으로 남는다 — 조용히 넘기면 "무중단이었다" 로 읽힌다(LRN-20260811T1557).
+- **drain 관측은 hostname 기준이다(MUST, CHG-20260814T133000)**: 완주 여부는 "그 **인스턴스가**
+  자기 이름으로 claim 한 running job" 으로 센다(`claimed_by LIKE '%-<hostname>-%'`). hostname 은
+  **stop 전에** 확보해야 한다 — `docker compose ps -q` 는 running 만 반환하므로(라이브 실측),
+  stop 후 컨테이너로 다시 조회하면 빈 값이 나와 **결과가 항상 0 인 상수**가 된다(vacuous pass).
+  같은 이유로 surge 존재 확인은 `ps -aq` 다: leaked surge 는 대개 "stop 됐는데 rm 실패" 형태로
+  남고, `ps -q` 는 정확히 그 형태를 놓친다.
+- **잔존 run 은 성공이 아니다(MUST)**: 정상 종료했는데 그 인스턴스 소유 running 이 남았다면 완주도
+  반납도 못 한 run 이다 → `=CUT` 기록 + 강행 카운터. 관측 실패는 `drained-unverified` 로 남기고
+  조용함으로 읽지 않는다.
 - **적용 범위**: 배포 스파인 한정. `bin/safe-recreate.sh` 의 ask-worker 경로는 여전히 §7-Q 를 쓴다
   (surge 인프라가 없다). 코드 반영이 목적이면 `make deploy-workers` 를 쓴다.
 
