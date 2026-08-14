@@ -11,7 +11,10 @@ __all__ = [
     "_should_retry_db_error",
     "connect",
     "connect_with_retry",
+    "datasource_access_guidance",
+    "datasource_connect_error_message",
     "execute_sql",
+    "is_datasource_auth_error",
     "list_server_databases",
     "probe_datasource",
     "records_to_columns_rows",
@@ -107,6 +110,197 @@ _POOL_LOCK = threading.Lock()
 #   키 산출(_breaker_key) + connect-stage 실패 분류(_is_connect_breaker_failure) + bounded
 #   connect timeout 만 보유하고, 상태/게이트/복구는 conn_health 가 단일 소유한다.
 # ─────────────────────────────────────────────────────────────────────────────
+# ds-connect-network-guidance: 데이터소스 연결이 제한될 때의 **사용자 행동 안내 정본**.
+#
+# 사용자 요청(2026-08-14): "assistant 에게 요청했을 때 요청된 데이터소스에 연결이 제한되면
+# '머신의 네트워크 이슈'·'VPN 연결 이슈' 를 확인해달라고 명시적으로 안내하라."
+#
+# 이 서비스의 데이터소스는 사내망 안에 있고 사용자는 VPN 을 경유한다 — 실제 관측되는 연결
+# 제한의 지배적 원인이 (a) 사용자 단말의 네트워크 단절 (b) VPN 세션 만료/해제 다. 종전 문구는
+# 드라이버 예외를 그대로 노출하거나("DB 연결 실패: 2003 (HY000): Can't connect…") 지연만
+# 알려서, 사용자가 **자기 쪽에서 무엇을 확인해야 하는지** 알 수 없었다.
+#
+# 정본을 여기 한 곳에 둔다 — surface 가 여럿(agent_core run-start 3 · tools.execute_tool 연결
+# 수립 4 · 연결 이후 단절 2)이라 문구를 각 자리에 복제하면 그 복제가 곧 drift 기전이 된다
+# (§18.8 패널이 반복 지적한 실패 모드).
+#
+# 인증 실패는 **제외**한다: 자격증명 거부(1045/18456)는 네트워크·VPN 이 이미 정상 도달했다는
+# 증거라, 거기에 "VPN 을 확인하세요" 를 붙이면 사용자를 엉뚱한 곳으로 보낸다. 분류가 애매하면
+# 네트워크·VPN 안내로 폴백한다(요청된 안내가 누락되는 쪽보다 안전).
+#
+# 줄바꿈 규약: 이 문구는 (a) 대화 말풍선(assistant 메시지 → `markdownToHtml`, marked 기본
+# `breaks:false`)과 (b) 콘솔 Panel·로그의 평문, 두 곳에 같은 문자열로 나간다. 그래서 문단
+# 경계는 **빈 줄**로 둔다 — 한 줄 개행만 쓰면 마크다운에서 문단이 통째로 한 줄에 붙는다.
+_DS_ACCESS_CHECKLIST = (
+    "- **머신의 네트워크 이슈**: 지금 사용 중인 PC·서버의 네트워크 연결이 정상인지"
+    "(사내 다른 시스템에 접속되는지) 확인해 주세요.\n"
+    "- **VPN 연결 이슈**: 사내 VPN 이 연결되어 있는지 확인하고, 끊겼거나 세션이 만료됐다면 "
+    "재접속한 뒤 다시 요청해 주세요."
+)
+
+_DS_ACCESS_TAIL = (
+    "위 두 가지가 모두 정상인데도 같은 안내가 반복되면, 관리자에게 해당 데이터소스의 "
+    "상태 점검을 요청해 주세요."
+)
+
+_DS_AUTH_GUIDE = (
+    "네트워크·VPN 은 데이터소스까지 정상 도달했으나 **계정 인증이 거부**됐습니다 "
+    "(자격증명 오류 또는 권한 변경). 관리자에게 해당 데이터소스의 계정·비밀번호·접근 권한 "
+    "확인을 요청해 주세요."
+)
+
+# REV-20260814T190000 [CODEX] P2-4: 초판은 `"using password"` 를 단독 인증 지문으로 썼는데 그
+# 문자열은 거부 여부와 무관하게 나타날 수 있고(`2003 … while using password authentication
+# plugin` 실증), errno 를 먼저 보지 않아 **도달성 실패가 인증으로 오분류**돼 정작 요청된
+# 네트워크·VPN 안내가 사라졌다. 그래서 판정 순서를 뒤집는다 — **도달성 코드/지문이 항상 우선**.
+_DS_REACHABILITY_CODES = frozenset({2002, 2003, 2005, 2006, 2013, 2055})
+_DS_REACHABILITY_PATTERNS = (
+    "can't connect", "cant connect", "unable to connect", "connection refused",
+    # 'timeout' 단독은 쓰지 않는다 — 쿼리 시간 상한(statement timeout) 문구까지 도달성으로
+    # 오분류한다. 연결 축에서 실제로 나타나는 형태만 나열한다.
+    "timed out", "connection timeout", "login timeout", "read timeout", "socket timeout",
+    "name or service not known", "no route to host",
+    "host is unreachable", "network is unreachable", "connection reset",
+    "unknown host", "getaddrinfo", "ssl connection has been closed",
+)
+# 인증 거부 지문 — 코드가 가장 신뢰도 높고(errno·sqlstate), 문구는 보조.
+_DS_AUTH_CODES = frozenset({1044, 1045, 18456})
+# 42000 은 MySQL 문법오류와 공유하는 범용 상태코드라 인증 지문에서 제외한다
+# (1044 는 errno 로 이미 잡힌다).
+_DS_AUTH_SQLSTATES = frozenset({"28000", "28P01"})
+_DS_AUTH_PATTERNS = (
+    "access denied",
+    "authentication failed",
+    "login failed for user",
+    "password authentication failed",
+    "not allowed to connect",
+    "cannot open database",
+)
+
+
+def _sanitize_inline(text: "str | None", limit: int) -> str:
+    """사용자 문구에 끼워 넣을 값을 **1줄·유한 길이**로 정규화.
+
+    개행·제어문자를 공백으로 접고, 구획 마커로 쓰이는 괘선(`─`)과 datamark sentinel 괄호(`⟦⟧`)를
+    제거한다 — 이 값들은 드라이버 예외·운영자 입력에서 오므로 신뢰 대상이 아니고, 그대로 실으면
+    tool 결과의 안내/지시 구획을 위조할 수 있다(REV-20260814T190000 [CODEX] P1-3)."""
+    s = str(text or "")
+    s = "".join((" " if (ch in "\r\n\t" or ord(ch) < 32) else ch) for ch in s)
+    for bad in ("─", "⟦", "⟧"):
+        s = s.replace(bad, "")
+    s = " ".join(s.split()).strip()
+    if len(s) > limit:
+        s = s[: max(0, limit - 1)].rstrip() + "…"
+    return s
+
+
+def _err_codes(err: "BaseException") -> "tuple[set[int], set[str]]":
+    """예외에서 숫자 코드·sqlstate 를 최대한 긁어온다.
+
+    드라이버마다 노출 방식이 다르다 — mysql.connector 는 `errno`/`sqlstate`, pymssql 은
+    `args=(18456, b"...")`, psycopg 는 `sqlstate`/`pgcode`. 문구 매칭보다 코드가 신뢰도 높으므로
+    (현지화된 서버 메시지에도 견딘다) 코드부터 모은다."""
+    codes: "set[int]" = set()
+    states: "set[str]" = set()
+    for attr in ("errno", "pgcode", "code"):
+        v = getattr(err, attr, None)
+        if isinstance(v, int):
+            codes.add(v)
+        elif isinstance(v, str) and v.strip():
+            states.add(v.strip().upper())
+    for attr in ("sqlstate", "pgcode"):
+        v = getattr(err, attr, None)
+        if isinstance(v, str) and v.strip():
+            states.add(v.strip().upper())
+    for a in (getattr(err, "args", None) or ()):
+        if isinstance(a, int):
+            codes.add(a)
+    return codes, {s.upper() for s in states}
+
+
+def is_datasource_reachability_error(err: "BaseException | None") -> bool:
+    """연결이 **서버에 닿지 못해** 실패했는지(네트워크·VPN 축) 판정.
+
+    `is_datasource_auth_error` 보다 **우선**한다 — 도달 실패는 인증 판정에 필요한 대화 자체가
+    성립하지 않았다는 뜻이라, 메시지에 인증 어휘가 섞여 있어도 원인은 도달성이다."""
+    if err is None:
+        return False
+    if isinstance(err, DatasourceCircuitOpen):
+        return True   # health probe 가 닿지 못해 격리한 상태 = 도달성 축
+    codes, _ = _err_codes(err)
+    if codes & _DS_REACHABILITY_CODES:
+        return True
+    msg = str(err).lower()
+    return any(p in msg for p in _DS_REACHABILITY_PATTERNS)
+
+
+def is_datasource_auth_error(err: "BaseException | None") -> bool:
+    """연결 거부 사유가 **인증**인지 판정. True 면 네트워크·VPN 안내를 붙이지 않는다.
+
+    MySQL 1044(DB 접근 거부)·1045(계정 거부), SQL Server 18456(로그인 실패), PostgreSQL
+    `28P01` 을 코드(errno·sqlstate·args)로 먼저 인식하고 문구는 보조로 쓴다 — 서버 메시지가
+    현지화돼도 코드는 남는다. **도달성 실패가 먼저 판정되면 무조건 False** (P2-4).
+    판정 불가는 False — 즉 네트워크·VPN 안내로 폴백한다(요청된 안내가 누락되는 쪽이 더 나쁘다)."""
+    if err is None:
+        return False
+    if isinstance(err, DatasourceCircuitOpen):
+        return False
+    if is_datasource_reachability_error(err):
+        return False
+    codes, states = _err_codes(err)
+    if codes & _DS_AUTH_CODES:
+        return True
+    if states & _DS_AUTH_SQLSTATES:
+        return True
+    msg = str(err).lower()
+    return any(p in msg for p in _DS_AUTH_PATTERNS)
+
+
+def datasource_access_guidance(err: "BaseException | None" = None) -> str:
+    """연결 제한 시 사용자에게 노출할 **확인 안내 블록**(정본).
+
+    기본은 머신 네트워크 + VPN 2항목 체크리스트. 인증 거부로 확인되면 자격증명 안내로 대체한다
+    (그 경우 네트워크·VPN 은 이미 정상이므로 오도 방지)."""
+    if is_datasource_auth_error(err):
+        return _DS_AUTH_GUIDE
+    return (
+        "먼저 아래 두 가지를 확인해 주세요.\n\n"
+        f"{_DS_ACCESS_CHECKLIST}\n\n"
+        f"{_DS_ACCESS_TAIL}"
+    )
+
+
+def datasource_connect_error_message(
+    label: "str | None" = None,
+    err: "BaseException | None" = None,
+    *,
+    include_cause: bool = True,
+) -> str:
+    """연결 **실패**(회로차단 아님) 시 사용자에게 그대로 노출할 정본 문구.
+
+    `label` 은 멀티 datasource 에서 어느 데이터소스인지 특정한다(사용자 요청 "요청된 각
+    데이터소스"). 원인 문자열은 진단 가치가 있어 유지하되 안내 뒤로 밀어 배치한다 — 종전에는
+    드라이버 원문이 첫 줄이라 사용자가 행동 지침을 읽기 전에 좌절했다.
+
+    REV-20260814T190000 [CODEX] P1-3: 라벨·원인은 **1줄로 정규화하고 길이를 자른다**. 이 문구는
+    tool 결과로도 나가고 그 안에서 구획 마커(`───`)를 쓰기 때문에, 개행이나 마커 문자가 섞인
+    라벨/예외가 구획을 위조할 수 있었다. `_sanitize_inline` 이 그 표면을 닫는다."""
+    label_s = _sanitize_inline(label, 64)
+    # 라벨이 있으면 따옴표 뒤에 조사를 띄어 쓴다(저장소 기존 문구 관례: "데이터소스 'x' 를 …").
+    # 라벨이 없으면 붙여 써야 한국어가 자연스럽다("데이터소스에").
+    head = (
+        f"데이터소스 '{label_s}' 에 연결하지 못해 이 요청을 처리할 수 없습니다."
+        if label_s else
+        "데이터소스에 연결하지 못해 이 요청을 처리할 수 없습니다."
+    )
+    body = datasource_access_guidance(err)
+    if include_cause and err is not None:
+        cause = _sanitize_inline(str(err), 300)
+        if cause:
+            return f"{head}\n\n{body}\n\n(상세: {cause})"
+    return f"{head}\n\n{body}"
+
+
 class DatasourceCircuitOpen(Exception):
     """datasource 연결 health unstable — 연결 시도 없이 즉시 fail-fast(격리).
 
@@ -131,12 +325,21 @@ class DatasourceCircuitOpen(Exception):
         "DB 연결 실패 / 불안정 / 차단" 프레이밍은 서비스 자체가 고장난 것처럼 읽혀 신뢰를
         떨어뜨린다(사용자 보고 2026-06-25). 그래서 (1) 지연 주체를 *연결된 데이터소스*로
         명시하고 (2) 격리(다른 작업 보호) 이유와 (3) 자동 재연결·재시도 안내를 담는다.
-        surface(agent_core / tools)가 접두어 없이 이 문구만 그대로 노출한다."""
+        surface(agent_core / tools)가 접두어 없이 이 문구만 그대로 노출한다.
+
+        ds-connect-network-guidance: 여기에 (4) 확인 안내를 덧붙인다. 회로차단은 백그라운드
+        liveness probe 가 datasource 에 **닿지 못했다**는 신호이므로, 사용자 단말의 네트워크·
+        VPN 단절이 그 지배적 원인이다. 다만 자동 복구되는 일시 지연도 같은 문구를 쓰므로,
+        1회성 지연을 고장으로 오인시키지 않도록 "반복되면" 조건절을 유지한다(2026-06-25 신뢰
+        보호 결정 불변)."""
         return (
             "현재 연결된 데이터소스의 응답이 일시적으로 지연되고 있습니다. "
             "다른 작업에 영향이 가지 않도록 잠시 대기하며, "
             f"약 {int(self.retry_after) + 1}초 뒤 자동으로 재연결합니다. "
-            "잠시 후 다시 요청해 주세요."
+            "잠시 후 다시 요청해 주세요.\n\n"
+            "이 안내가 반복된다면 접속 환경을 먼저 확인해 주세요.\n\n"
+            f"{_DS_ACCESS_CHECKLIST}\n\n"
+            f"{_DS_ACCESS_TAIL}"
         )
 
 

@@ -116,6 +116,44 @@ source_of_truth: true
     `sync_graph` 가 `errors=0/step_failures=0` 리포트를 돌려주고 `metadata_graph_sync.py` 가
     이를 `ok=True`(exit 0)로 해석해 **cron 이 PG 순단을 놓친다**.
 - Insight 워커 사이클 결과는 `agent_memory.agentmemorykv` 의 `insight_worker_last_status / _error / _duration_ms / _run_id` 키로 관측된다.
+- **데이터플레인 연결 제한 안내 계약** (CHG-20260814T190000-ds-connect-network-guidance):
+  사용자가 assistant 에게 요청했는데 대상 데이터소스에 **연결이 제한**되면, 사용자에게 나가는
+  문구는 `shared/db.py` 의 정본(`datasource_access_guidance` /
+  `datasource_connect_error_message` / `DatasourceCircuitOpen.user_message`)만 사용한다.
+  - **부착 대상 — 연결 수립 단계**: `agent_core` run-start 조기 종료 3갈래(eval · 멀티
+    datasource primary · 단일) + `tools.execute_tool` 3갈래(라우터 `conn_for` 실패 ·
+    `conn is None` · 단일 holder 재연결 실패). 회로차단(`DatasourceCircuitOpen`)은 "반복되면
+    확인" 조건절로 같은 체크리스트를 붙이고, 멀티 바인딩에서는 대상 라벨을 앞에 표기한다.
+  - **부착 대상 — 연결 이후 단절**(REV [CODEX] P1-2): 죽은 연결(2006/2013)은 **1회차는 종전
+    재시도 프레이밍**(다음 호출이 자동 재연결로 실제 해소), 같은 run 에서 **반복되면** 회선
+    단절로 보고 안내 부착(`tools._DEAD_CONN_STREAK`). 도달성 오류(timeout·no route 등)는
+    재시도로 안 풀리므로 1회차부터 안내. 핸들러가 예외를 삼키고 오류 **문구**로 돌려주는
+    경로도 `_augment_output_for_connectivity` 가 흡수하되, **오류 접두어로 시작하는 출력만**
+    검사해 결과 데이터의 "timeout" 오탐을 막는다.
+  - **문구 계약**: '머신의 네트워크 이슈' · 'VPN 연결 이슈' 두 항목이 **문자열 그대로** 존재하고,
+    항목마다 행동(다른 시스템 접속 확인 / VPN 재접속)이 붙는다. 드라이버 원문은 진단용으로
+    유지하되 안내 **뒤**에 배치한다.
+  - **원인 분류 — 도달성이 인증보다 우선**(REV [CODEX] P2-4): `is_datasource_reachability_error`
+    가 먼저 판정하고(errno 2002/2003/2005/2006/2013 + `can't connect`/`timed out`/`no route` 등),
+    그 다음에만 인증(1044/1045/18456 · sqlstate 28000/28P01 · `access denied`/`login failed`)을
+    본다. 코드는 `errno`·`sqlstate`·`pgcode`·`args` 에서 모두 긁어 현지화된 서버 메시지에도
+    견딘다. 인증 거부는 네트워크·VPN 이 **이미 도달했다**는 증거라 자격증명 안내로 분기하고,
+    분류 불가는 네트워크·VPN 안내로 폴백한다.
+  - **주입·노출 표면**(REV [CODEX] P1-3): 라벨·원인은 `shared.db._sanitize_inline` 으로 1줄
+    정규화 + 길이 상한(64 / 300)을 거친다 — 개행·괘선(`─`)·datamark sentinel(`⟦⟧`) 이 안내
+    구획을 위조하지 못하게. 드라이버 원문 노출 자체는 선재 동작이며 진단 가치 때문에 유지한다
+    (수용 위험).
+  - **미부착(의도)**: 유휴 세션 종료(`_dataplane_error_text` — 자동 재연결 대상) · 미바인딩 라벨
+    거부(설정 오류) · `str(DatasourceCircuitOpen)` 기술 문구(insight `scan_outcome` 분류 계약).
+  - **LLM 전달 — 지시는 비신뢰 구획 *밖*에서만 유효**(REV [CODEX] P1-1, 계약의 핵심):
+    `agent_core` 는 모든 tool 결과를 `_datamark_untrusted` 로 `⟦UNTRUSTED-DATA⟧ …
+    ⟦/UNTRUSTED-DATA⟧` 안에 감싸고, 시스템 프롬프트 `_INJECTION_GUARD_NOTICE` 는 **그 구간의
+    지시를 결코 따르지 말라**고 못박는다. 따라서 전달 지시를 tool 결과 문자열에 실으면
+    **무시되도록 설계된 자리**에 놓인다. 계약은 이렇게 쪼갠다 —
+    (a) `tools` 는 결과로 **사용자 안내 블록만** 돌려주고 `_DS_RESTRICTION_NOTICE` ContextVar
+    를 세운다(문자열 sentinel 이 아니라 ContextVar: DB 값·첨부 본문이 흉내낼 수 없는 코드 전용
+    채널), (b) `agent_core` 가 `take_datasource_restriction_notice()` 로 소비해 datamark **닫는
+    sentinel 뒤**에 `_DS_RESTRICTION_RELAY_DIRECTIVE`(코드-권위)를 덧붙인다.
 
 ## 10. Dependencies
 ### 내부 기능 의존성
@@ -314,6 +352,27 @@ source_of_truth: true
 - AC-0165 (REQ-20260609-0172 / TASK-0172, **Major** §12.3): `AGENT_QUERY_MAX_EXECUTION_MS`>0 이면 `_tool_execute_sql` 이 `SET SESSION max_execution_time` 으로 SELECT 시간 상한을 세션에 적용한다(폭주 backstop). 0/비활성 또는 적용 실패 시 무영향(fail-open). "무거운 쿼리는 감수" 정책상 기본 generous/off.
 - AC-0196 (TASK-0196, **Minor** §12.3 — AR-M5 cutover 라우팅 누락 복구): LOCAL agent tool `convo_search`(다른 대화 기록을 메시지/요약/주제로 검색)가 `AGENT_RUNTIME_READ_BACKEND == "postgres"` 일 때 삭제된 MySQL `AgentMemoryMessages`/`AgentMemorySummary`/`AgentMemoryKv` 대신 PG `agent_runtime.messages`/`summary`/`kv` 를 조회한다. PG 술어는 `ILIKE`(MySQL utf8mb4_unicode_ci case-insensitive 패리티), `kv.key`/`value`(비예약어) unquoted, `include_current=False` 시 현재 대화 제외, 결과 shape(conversation_id/role/content/created_at/source) 무변경. legacy(env≠postgres)는 기존 MySQL 경로 보존. 미라우팅 시 도구가 삭제 테이블 조회로 throw(에이전트 검색 기능 사망)하던 회귀를 차단한다.
 - AC-0197 (TASK-0200, **Minor** §12.3 — 도구 읽기경로 하드닝): `convo_search` 의 사용자 질의가 LIKE/ILIKE 패턴에 들어갈 때 메타문자(`%`,`_`,escape `!`)가 이스케이프되어 와일드카드로 새지 않는다("100%"/"table_name" 등 리터럴 매칭). 비어 있지 않은 질의는 `%<escaped>%` + `ESCAPE '!'`, 빈 질의는 `%`(전체 매칭, ESCAPE 없음). PG(ILIKE)·MySQL legacy(LIKE) 6 절 공통, like_pattern·like_escape 는 분기 전 1회 계산. `_collect_matched_excerpts` 의 기존 이스케이프와 parity 일치. (REV-20260610-0196 지적 MINOR 의 실행.)
+
+- AC-20260814-ds-connect-guidance-1 (REQ-20260814-ds-connect-network-guidance, **Minor** §12.3):
+  데이터소스 연결 제한 5갈래(위 §9 계약)에서 사용자에게 반환되는 문자열에 `머신의 네트워크 이슈`
+  와 `VPN 연결 이슈` 가 그대로 포함되고, 각 항목에 확인 행동이 붙는다. 문구 정의는 `shared/db.py`
+  한 곳에만 존재한다(복제 census).
+- AC-20260814-ds-connect-guidance-2 (REQ-20260814-ds-connect-network-guidance, **Minor** §12.3):
+  인증 거부(1044/1045/18456/`password authentication failed`)는 네트워크·VPN 안내 대신 자격증명
+  안내를 반환한다. 분류 불가·원인 미상은 네트워크·VPN 안내로 폴백한다.
+- AC-20260814-ds-connect-guidance-3 (REQ-20260814-ds-connect-network-guidance, **Minor** §12.3):
+  `str(DatasourceCircuitOpen(...))` 기술 문구는 변경 전과 동일하다(insight `scan_outcome` 분류·
+  로그 소비자 계약). 안내는 `user_message()` 에만 실린다.
+- AC-20260814-ds-connect-guidance-4 (REQ-20260814-ds-connect-network-guidance, **Minor** §12.3):
+  도구 경로(`execute_tool`)의 연결 제한 결과 문자열에는 **행동 지시가 들어 있지 않고**, 대신
+  `take_datasource_restriction_notice()` 가 True 를 반환한다. `agent_core` 는 그 신호를 받아
+  `_datamark_untrusted` 의 닫는 sentinel **뒤**에 전달 지시를 덧붙인다.
+- AC-20260814-ds-connect-guidance-5 (REQ-20260814-ds-connect-network-guidance, **Minor** §12.3):
+  연결 수립 이후 단절도 안내가 도달한다 — 죽은 연결은 같은 run 에서 반복될 때, 도달성 오류는
+  즉시. 정상 결과 데이터에 "timeout" 같은 단어가 있어도 안내를 붙이지 않는다(오탐 잠금).
+- AC-20260814-ds-connect-guidance-6 (REQ-20260814-ds-connect-network-guidance, **Minor** §12.3):
+  라벨·원인은 1줄로 정규화되고 길이 상한을 넘지 않으며, 개행·괘선(`─`)·datamark sentinel
+  (`⟦⟧`)이 제거돼 안내/지시 구획을 위조할 수 없다.
 
 ## 12. Observability
 - LLM 토큰 사용량 회계 (TASK-0136 + TASK-0163): 모든 LLM 호출은 단일 chokepoint
@@ -1094,6 +1153,13 @@ MSSQL 은 루틴이 압도적이다(`atum2_db_1`: 라벨 달린 루틴 865 vs �
 - AC-20260814T080000-attach-provenance-gate-3 (실패 방향·배치): 신호를 확인할 수 없으면(contextvar 조회 실패·import 실패) **차단**한다. 게이트는 `execute_tool` 의 **선두**에 있어 모든 도구가 거치며, 새 도구가 추가돼도 자동으로 덮인다.
 - AC-20260814T080000-attach-provenance-gate-4 (거부 품질): 거부 문자열은 **왜 막혔는지 · 무엇은 되는지(조회) · 어떻게 푸는지(그 파일 없이 재요청 / 본인 파일로 / 분석만 이어가기)** 와 "이유를 사용자에게 숨기지 말 것" 을 함께 싣는다. 이유 없는 거부는 모델이 같은 호출을 반복하거나 사용자에게 "실패" 만 전하게 만든다.
 - AC-20260814T080000-attach-provenance-gate-5 (왜 확인이 아니라 차단인가): 이 시스템은 비동기 워커라 **턴 중간 사용자 확인 수단이 없다**. 모델 자신이 세우는 확인 플래그는 방어가 되지 않는다 — 주입된 지시가 그 플래그도 세우게 만들 수 있다. 그래서 "이번 턴 거부 + 다음 턴 사용자 선택" 으로 둔다.
+
+- REQ-20260814-ds-connect-network-guidance (사용자 요청 2026-08-14, **Minor** §12.3 — 사용자 안내
+  문구): "프로젝트 내 서비스에서 assistant 에게 요청했을 때, 요청된 각 데이터소스에 연결이 제한될
+  경우 '머신의 네트워크 이슈' 및 'VPN 연결 이슈' 라는 부분을 확인해달라고 명시적으로 error message
+  및 가이드를 출력해주세요." 데이터소스가 사내망 안에 있고 사용자가 VPN 을 경유하는 배치라, 관측되는
+  연결 제한의 지배적 원인이 단말 네트워크 단절/VPN 세션 만료다. 종전 문구는 드라이버 원문만 노출해
+  행동 지침이 0 이었다. 신규 RBAC·스키마·엔드포인트 0. AC-20260814-ds-connect-guidance-1 ~ -4.
 
 - REQ-20260814-vision-provenance (선행 `attach-provenance-gate` 의 §18.8 미해소분 해소, 사용자 지시 "우선순위에 따라 진행" 1순위, **Critical §12.3**): 이미지 첨부도 텍스트와 같은 provenance 신호를 세운다. 이미지는 **datamark 로 감쌀 수 없는** 콘텐츠라 프롬프트에 그대로 들어가며, 신호가 없으면 도구 게이트가 이 축에서 통째로 비어 있다.
 - AC-20260814T100000-vision-provenance-1 (소유자 전달): 이미지 조회가 `AccountId` 를 함께 싣고(**MySQL 폴백 + PG 미러 양쪽** — 한쪽만 실으면 읽기 백엔드에 따라 방어가 사라진다) inline JSON 에 `account_id` 로 동봉한다. 인라인 로더가 소유자와 호출자를 비교해 다르면 신호를 세운다 — **로더 자신이 책임지며 호출측에 의존하지 않는다**.

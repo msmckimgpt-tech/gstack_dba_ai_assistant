@@ -8,6 +8,36 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260814T190000-ds-connect-network-guidance (데이터소스 연결 제한 안내: 머신 네트워크·VPN 확인, Minor)
+
+- **왜**: 사용자 요청(2026-08-14) — assistant 요청 중 데이터소스 연결이 제한되면 사용자가
+  자기 환경에서 확인할 것을 명시하라. 이 서비스의 데이터소스는 사내망 안에 있고 사용자는 VPN 을
+  경유하므로 관측되는 연결 제한의 지배적 원인이 단말 네트워크 단절 / VPN 세션 만료다. 종전 문구는
+  드라이버 원문(`2003 (HY000): Can't connect …`)만 노출해 행동 지침이 0 이었다.
+- `shared/db.py`: 안내 **정본** 신설 — `_DS_ACCESS_CHECKLIST`(머신 네트워크·VPN 2항목) +
+  `datasource_access_guidance()` + `datasource_connect_error_message(label, err)` +
+  `is_datasource_auth_error(err)`. `DatasourceCircuitOpen.user_message()` 에 "반복되면 확인"
+  조건절로 같은 체크리스트 부착(2026-06-25 신뢰 보호 프레이밍 불변 — 1회성 지연을 고장으로
+  오인시키지 않는다). `str(e)` 기술 문구는 **불변**(insight `scan_outcome` 분류·로그 계약).
+- `unit/feature-0002-agent-core/src/agent_core.py`: run-start 조기 종료 2갈래(멀티 datasource
+  primary · 단일 경로)가 정본 문구를 사용. 어느 데이터소스인지 라벨로 특정.
+- `unit/feature-0002-agent-core/src/modules/tools.py`: `execute_tool` 3갈래(라우터 연결 실패 ·
+  `conn is None` · 단일 holder 재연결 실패) + 회로차단 2갈래를 정본 경유로 전환.
+  `_ds_unreachable_tool_result()` 신설 — tool 결과는 **모델 입력**이라 안내 블록(`───` 구간)과
+  "그대로 전달 · 우회 금지 · 부재 단정 금지" 지시를 분리해 싣는다.
+- **미변경(의도)**: `_dataplane_error_text`(유휴 세션 종료 → 자동 재연결, '제한' 아님) ·
+  미바인딩 라벨 거부(설정 오류) · eval harness 전용 `DB 연결 실패(eval datasource)`.
+- **§18.8 적대 리뷰(codex) 흡수** — `shared/db.py`: `is_datasource_reachability_error` 신설 +
+  **도달성 우선** 판정, `_err_codes`(errno/sqlstate/pgcode/args), `_sanitize_inline`(개행·괘선·
+  datamark sentinel 제거 + 길이 상한). `tools.py`: 전달 지시를 결과 문자열에서 제거하고
+  `_DS_RESTRICTION_NOTICE` ContextVar 신호 + `take_datasource_restriction_notice()` 로 전환,
+  `_DEAD_CONN_STREAK` 반복 에스컬레이션, `_augment_output_for_connectivity`(오류 접두어 게이트),
+  `_ds_delayed_label_prefix`·`_holder_label`. `agent_core.py`: `_DS_RESTRICTION_RELAY_DIRECTIVE`
+  를 `_datamark_untrusted` **닫는 sentinel 뒤**(신뢰 공간)에 append, 단일 경로 폴백의 **최종**
+  예외 채택(`except Exception as e2`), eval 경로도 정본 사용.
+- 테스트: `unit/feature-0002-agent-core/tests/test_ds_connect_network_guidance.py` 신규 46건.
+  **뮤테이션 10종 전건 KILL**.
+
 ## CHG-20260814T175000-ask-kv-seal-postdeploy (배포 실증 + 원장 환류 + 심링크 오염 정리, doc+hygiene)
 
 - **배포 실증(2026-08-14)**: PR #1303 merge main `6cd45761` → `deploy-web` 전체 롤아웃.

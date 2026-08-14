@@ -34,6 +34,40 @@ source_of_truth: true
 - TEST-20260710-auth-cooldown: `pytest tests/test_mssql_auth_cooldown.py` — MSSQL insight 순회 **로그인실패**(18456) 조기 skip + **datasource label 키** cooldown 검증(REV-20260710 흡수). (a) cooldown 헬퍼/prune 6건(set/active·만료 자동정리·clear·ttl=0 비활성·None key·`_prune_auth_cooldown` 삭제/rename 누수 차단), (b) `run_insight_cycle` 순회 통합 5건: 같은 datasource 10 DB 중 첫 18456 시 실제 connect 1회만(AC1), cooldown 중 다음 cycle connect 0회(AC2), `AGENT_INSIGHT_AUTH_COOLDOWN_SEC=0` 시 cycle 내 skip 유지·cycle 간 재시도(AC4), **HIGH-1 같은 host:port 다른 login 은 연쇄차단 안 됨**(`test_different_login_same_endpoint_not_chained`), **HIGH-2 916("Cannot open database")은 다른 DB 순회 계속**(`test_per_db_916_does_not_skip_other_dbs`).
 
 ## 3. Test Run History
+### 20260814T190000-ds-connect-network-guidance 데이터소스 연결 제한 안내(머신 네트워크·VPN) (Minor §12.3, 2026-08-14, primary feature-0002) — **Environment: unit (백엔드 문구 계약 전용 · 웹/UI static·template 변경 0 → CHECK#13 미해당)**
+- `python3 -m py_compile shared/db.py src/agent_core.py src/modules/tools.py` → 통과.
+- 신규 `pytest unit/feature-0002-agent-core/tests/test_ds_connect_network_guidance.py` → **46 passed**
+  (§18.8 codex 적대 리뷰 [P1]3·[P2]5 흡수 후).
+  축: (1) 안내 정본에 '머신의 네트워크 이슈'·'VPN 연결 이슈' 문자열 그대로 + 행동 문구 존재
+  (2) 도달 가능성 실패 5종(2003·timeout·DNS·no route·원인 미상) 전건 안내 부착 + 라벨 특정
+  (3) 인증 거부 4종(1044·1045·18456·PG 28P01 문구)은 네트워크·VPN 안내 **미부착** + 자격증명 안내
+  (4) 회로차단 `user_message()` 안내 부착하되 "자동으로 재연결"·"반복" 프레이밍 유지,
+  `str(e)` 기술 문구 **완전 불변**(insight `scan_outcome` 계약)
+  (5) `execute_tool` 4갈래(라우터 실패·라우터 회로차단·`conn is None`·단일 holder 실패) 전건
+  안내 + LLM 전달 지시 동봉 + 안내 블록이 지시문보다 앞
+  (6) 범위 밖 회귀 가드 — 미바인딩 라벨 거부·유휴 세션 종료(`_dataplane_error_text`)에는 미부착
+  (7) 문구 복제 금지 census(정의는 `shared/db.py` 1곳) + 옛 리터럴 재도입 census.
+- 추가 축(리뷰 흡수분): 전달 지시가 **비신뢰 구획 밖**에 오는지(`_datamark_untrusted` 닫는
+  sentinel 뒤) · 연결 이후 단절 3형(1회 죽은연결=재시도 프레이밍 / 반복=안내 에스컬레이션 /
+  도달성 오류=즉시 안내) · 핸들러 삼킨 오류문구 흡수 + **결과 데이터의 "timeout" 오탐 잠금** ·
+  라벨·원인 1줄 정규화 및 길이 상한 · 회로차단 라벨 표기 · AST 호출지점 census.
+- **뮤테이션 역검증 10/10 KILLED**: ① 회로차단 안내 제거 ② auth 분류 상시 False ③ 옛 리터럴
+  복원 ④ 전달 지시를 tool 결과 안으로 되돌림(P1-1 회귀 → 6건 FAIL) ⑤ 반복 죽은연결
+  에스컬레이션 무력화 ⑥ `_sanitize_inline` 무력화(3건 FAIL) ⑦ 도달성 우선순위 제거 +
+  `"using password"` 지문 복원 ⑧ router 경로 증강 배선 제거 ⑨ 단일 경로 증강 배선 제거
+  ⑩ agent_core 전달 지시 append 제거. (원상 복구 후 46 passed 재확인 — vacuous pass 아님.)
+- **자체 적발**: 초판 테스트는 `_augment_output_for_connectivity` 를 **직접 호출**만 해서
+  `execute_tool` 배선을 지워도 green 이었다(게이트 뒤 호출 blind spot). 실제 도구 실행
+  parametrized 테스트 추가 후 해당 뮤테이션이 KILL 됨을 확인.
+- 전체 스위트 `make test`(전용 compose 프로젝트, 라이브 미참여) — **회귀 0**. 유일한 FAIL
+  `test_oauth_exhaustion_gate.py::test_write_failure_after_successful_post_cannot_kill_slot_selection`
+  은 **선재 기준선**임을 실증: 같은 컨테이너 하네스로 **pristine main(45cfab51)** 를 돌려 동일
+  1건만 FAIL(집합 일치)했고, 두 트리 모두 그 파일 단독 실행에서는 PASS 한다(전-스위트 부하 하의
+  `chattr +i` + 90초 subprocess/로컬 HTTP 서버 의존 flake). 본 changeset 은 OAuth 회전 스크립트와
+  코드 경로가 겹치지 않는다.
+- 라이브 실증은 **POST-DEPLOY 이월** — 실제 연결 제한(네트워크·VPN 단절) 재현이 라이브 데이터소스
+  가용성에 종속. 배포 후 문구 도달을 원장 지표로 확인한다(정직 기록: 본 cycle 미수행).
+
 - 2026-07-16 (TASK-20260716-redteam-axis-rederive — 자가검증 BLOCK 축 인지 재도출):
   - `python3 -m py_compile src/modules/redteam.py shared/runtime_settings.py src/agent_core.py` → 통과.
   - 로컬 `pytest -q unit/feature-0002-agent-core/tests/test_redteam.py`(PYTHONPATH=src:worktree) → **31 passed** (기존 21 + 신규 10: 축별 라우팅·completeness max 게이팅·evidence 재계산·rederive disabled/무산출 폴백·인젝션 sentinel·B1 sentinel breakout 차단).
