@@ -5107,3 +5107,15 @@ doc-only(코드 0). 기록의 근거는 라이브 DB 조회와 실 Chrome 관측
 - codex 가 무결 확인한 축: 정렬 키의 숫자·일시·빈 값 fallback 이 표시값과 일치 · 1건/전체 모드/
   초과 페이지 보정 · `rowsByIdx` 로 정렬 후 nav 목적지 보존 · 대화 링크 · ESC/close/배경 dismiss ·
   이스케이프 · profile(self) 판 무회귀.
+
+## REV-20260814T101500-usage-pager-sticky [SKIPPED:tool-restricted:ux-design] — CSS 1-rule + 마크업 순서
+- Related TASK: feature-0003-agent-web-ui (TASK-20260814T090000-usage-records-sort-page 후속)
+- Reason: 본 세션은 subagent 도구 사용을 금지하는 상위 지시 하에 있고(§18.8 carve-out), 변경은
+  직전 cycle 의 codex 적대 리뷰가 이미 덮은 표면에 대한 **CSS 1 규칙 + 마크업 순서 1줄**이다.
+  결함 자체가 라이브 시각 검증(PB-0008)에서 나왔고, 검증도 같은 채널로 되돌아간다 — 미검증으로
+  남는 도메인은 ux(레이아웃)이며 이는 배포 후 PB-0008 재실측으로 닫는다.
+- Timestamp: 2026-08-14T10:15:00+09:00
+- 판단 근거: sticky 요소는 (a) 투명하면 아래 행이 비치고 (b) 안내 문구를 덮을 수 있다 — 둘 다
+  배경·경계선 부여와 마크업 순서로 처리하고 구조 테스트(L9)로 잠갔다.
+- 한계(정직): 실제 겹침·틈은 실 브라우저에서만 보인다. 배포 후 PB-0008 로 첫 화면 페이저 가시성과
+  스크롤 끝 겹침을 재확인한다.

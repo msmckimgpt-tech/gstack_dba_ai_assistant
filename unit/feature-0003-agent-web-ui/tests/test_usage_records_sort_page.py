@@ -109,3 +109,15 @@ def test_l7_css_rules_exist():
 
 def test_l8_behavior_harness_present():
     assert os.path.exists(os.path.join(TESTS_DIR, "verify_usage_records_sort_page.mjs"))
+
+
+def test_l9_pager_sticks_to_scroll_bottom():
+    """페이저가 목록 끝에만 있으면 페이지를 넘기려 매번 50행을 스크롤해야 한다(PB-0008 실측)."""
+    assert re.search(r"\.usage-rec-pager\s*\{[^}]*position:\s*sticky", CSS), "페이저가 sticky 가 아니다"
+    assert re.search(r"\.usage-rec-pager\s*\{[^}]*bottom:", CSS)
+    # 투명하면 그 아래 행이 비쳐 읽힌다 — 배경과 경계선이 있어야 한다.
+    assert re.search(r"\.usage-rec-pager\s*\{[^}]*background:", CSS)
+    # 마크업 순서: 안내 문구 뒤(마지막) 여야 sticky 페이저가 문구를 가리지 않는다.
+    body = USAGE_JS[USAGE_JS.index("bodyHtml = `<div class='usage-conv-tablewrap'>"):]
+    body = body[:body.index("}")]
+    assert body.index("truncNote") < body.index("usage-rec-pager"), "페이저가 안내 문구보다 앞에 있다"

@@ -1080,8 +1080,10 @@ function showUsageConvModal(state) {
       // thead/tbody/페이저는 비워 두고 renderTable() 이 채운다(정렬·페이지 이동 시 같은 경로).
       bodyHtml = `<div class='usage-conv-tablewrap'><table class='admin-usage-table usage-conv-table'>`
         + `<thead class='usage-rec-head'></thead><tbody class='usage-rec-body'></tbody></table></div>`
-        + `<div class='usage-rec-pager'></div>`
-        + truncNote + hint;
+        + truncNote + hint
+        // 페이저는 **마지막**에 둔다 — 스크롤 컨테이너 바닥에 sticky 로 붙이므로(CSS), 안내 문구
+        // 위에 겹쳐 뜨지 않으면서 첫 화면부터 손에 닿는다.
+        + `<div class='usage-rec-pager'></div>`;
     }
   }
   overlay.innerHTML =
