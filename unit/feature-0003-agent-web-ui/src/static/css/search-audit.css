@@ -824,6 +824,41 @@
 /* usage-rec-sub / -goto / -note (행 두 번째 줄 이동 안내) 는 2026-07-28 사용자 결정으로 제거 —
    안내는 링크의 hover 툴팁(title)만으로 전달한다. 대응 CSS 도 dead rule 로 남기지 않고 삭제. */
 
+/* usage-records-sort-page: 열 머리 정렬 트리거 + 페이지네이션 바.
+   열 머리는 <th> 안의 button 이다(단순 클릭 핸들러가 아니라) — 키보드 포커스·Enter/Space
+   활성화·aria-sort 를 브라우저 기본 동작으로 얻기 위함. th 의 sticky/배경은 그대로 유지된다. */
+.usage-conv-table th .usage-rec-sort {
+  appearance: none; border: 0; background: none; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 3px; width: 100%;
+}
+.usage-conv-table th.num .usage-rec-sort { justify-content: flex-end; }
+.usage-conv-table th .usage-rec-sort:hover { color: var(--text, #111827); }
+.usage-conv-table th .usage-rec-sort:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 2px; border-radius: 3px; }
+.usage-conv-table th .usage-rec-sort.is-active { color: var(--primary, #2563eb); }
+/* 방향 표식은 비활성 열에서도 자리를 차지해야 정렬을 바꿀 때 열 폭이 흔들리지 않는다. */
+.usage-rec-sort-ind { display: inline-block; min-width: 0.9em; font-size: 9px; line-height: 1; }
+
+.usage-rec-pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 12px; color: var(--text-2, #475569);
+}
+.usage-rec-pager-ctl { display: inline-flex; align-items: center; gap: 4px; }
+.usage-rec-page-btn {
+  appearance: none; cursor: pointer; font: inherit; line-height: 1;
+  min-width: 26px; padding: 4px 7px; border-radius: var(--r-sm, 4px);
+  border: 1px solid var(--border-subtle, #e5e7eb); background: var(--surface-1, #fff); color: var(--text-2, #475569);
+}
+.usage-rec-page-btn:hover:not(:disabled) { background: var(--bg, #f3f4f6); color: var(--text, #111827); }
+.usage-rec-page-btn:disabled { opacity: 0.45; cursor: default; }
+.usage-rec-page-btn:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 1px; }
+.usage-rec-pager-pos { padding: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-rec-pager-size { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; white-space: nowrap; }
+.usage-rec-pager-size select {
+  font: inherit; padding: 3px 6px; border-radius: var(--r-sm, 4px);
+  border: 1px solid var(--border-subtle, #e5e7eb); background: var(--surface-1, #fff); color: var(--text, #111827);
+}
+.usage-rec-pager-info { font-variant-numeric: tabular-nums; }
+
 /* profile 판: 작업 화면(app.js) 독립 모달(admin-modal 클래스 미공유). */
 .usage-conv-overlay {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 1200;
