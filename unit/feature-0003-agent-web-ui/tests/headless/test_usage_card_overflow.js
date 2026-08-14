@@ -36,8 +36,9 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>__CSS__</s
 <style>body{margin:0;font-family:system-ui}
  :root{--text:#111;--text-2:#444;--text-muted:#777;--border:#ddd;--border-subtle:#eee;
        --surface:#fff;--bg:#fafafa;--accent:#4f46e5;--r-sm:6px;--r-md:8px}
- /* 드로어 패딩을 모사 — 실제 .profile-section 안에 놓인다. */
- #host{padding:0 16px;box-sizing:border-box}</style></head><body>
+ /* 드로어 패딩을 **라이브 실측값으로** 모사한다 — 드로어 폭 370px 일 때 요약 컨테이너는 306px
+    (=64px 차). 16px 로 잡으면 하네스가 라이브보다 관대해져 트랙 폭 결정을 판별하지 못한다. */
+ #host{padding:0 32px;box-sizing:border-box}</style></head><body>
 <div id="host"><div id="sum" class="profile-usage-summary"></div></div>
 <script type="module">
 __METRICS__
@@ -165,6 +166,13 @@ window.render = () => {
       s2.textContent = s2.textContent.startsWith("$") ? "$1,234,567.89" : "999,999,999,999";
     });
   });
+  // 320px(드로어 최소 극단)에서 12자 + 2열은 **양립하지 않는다**(실측: 12자 133px vs 가용 116px).
+  //   둘 중 열 수를 지키는 쪽을 택했다 — 12자는 이 제품의 도달 범위 밖(현재 개인 30일 2,248만
+  //   = 10자, 전체 1.6억 = 11자)인 반면, 1열 전락은 지금 매일 보는 화면을 두 배 길게 만든다.
+  //   실측 경계: 12자(133px)를 2열로 담으려면 카드 157px = 트랙 157px 이 필요하고, 그러면 340px
+  //   에서도 2열이 깨진다. 따라서 보장 범위를 이렇게 확정한다 —
+  //     · 라이브 도달 범위(11자)  → **320px(최소 드로어)까지** 넘침 0
+  //     · 그 위(12자, 조 직전)    → **420px 이상**에서 넘침 0 (좁은 드로어에서는 열 수를 우선)
   const extreme = await page.evaluate((width) => {
     document.getElementById("host").style.width = width + "px";
     const bad = [];
@@ -173,9 +181,41 @@ window.render = () => {
       if (t.scrollWidth > t.clientWidth + 0.5) bad.push({ k: c.getAttribute("data-pmetric"), txt: t.textContent, scroll: t.scrollWidth, client: t.clientWidth });
     });
     return bad;
+  }, 420);
+  check("12자(조 직전) 값이 420px 이상에서 넘침 0", extreme.length === 0, extreme);
+  await page.evaluate(() => {
+    document.querySelectorAll(".profile-usage-metric strong").forEach((s2) => {
+      s2.textContent = s2.textContent.startsWith("$") ? "$123,456.78" : "163,261,652";   // 라이브 전체 최대치
+    });
+  });
+  const live11 = await page.evaluate((width) => {
+    document.getElementById("host").style.width = width + "px";
+    const bad = [];
+    document.querySelectorAll(".profile-usage-metric").forEach((c) => {
+      const t = c.querySelector("strong");
+      if (t.scrollWidth > t.clientWidth + 0.5) bad.push({ k: c.getAttribute("data-pmetric"), txt: t.textContent, scroll: t.scrollWidth, client: t.clientWidth });
+    });
+    return bad;
   }, 320);
-  check("현실 상한(12자, 조 직전) 값도 320px 에서 넘침 0", extreme.length === 0, extreme);
+  check("라이브 최대치(11자)는 최소 폭 320px 에서도 넘침 0", live11.length === 0, live11);
   await page.evaluate(() => window.render());
+
+  // 넘침만 없애고 1열로 떨어뜨리면 세로 스크롤이 길어진다 — 실제 값에서는 **열 수를 지켜야** 한다.
+  //   (사용자가 보던 화면이 2열이었고, 1열은 같은 정보를 두 배 길이로 만든다.)
+  await page.evaluate(() => window.render());
+  const cols = [];
+  for (const w of [340, 370, 420, 560]) {
+    cols.push(await page.evaluate((width) => {
+      document.getElementById("host").style.width = width + "px";
+      const cards = [...document.querySelectorAll(".profile-usage-metric")];
+      const tops = new Set(cards.map((c) => Math.round(c.getBoundingClientRect().top)));
+      return { width, rows: tops.size, perRow: Math.round(cards.length / tops.size) };
+    }, w));
+  }
+  // 340px 미만은 1열이 자연스럽다(카드가 넓어져 값이 온전히 보인다). 기준은 **사용자가 보던 폭**
+  //   — 보고 스크린샷이 2열이었고 그 폭(≈370px)에서 2열을 지켜야 화면이 종전처럼 읽힌다.
+  check("사용자가 보던 폭(370px 이상)에서 2열 이상 유지",
+    cols.filter((c) => c.width >= 370).every((c) => c.perRow >= 2), cols);
 
   await page.evaluate(() => { document.getElementById("host").style.width = "360px"; });
   await page.screenshot({ path: path.join(__dirname, "usage-card-overflow.png"), clip: { x: 0, y: 0, width: 380, height: 260 } });

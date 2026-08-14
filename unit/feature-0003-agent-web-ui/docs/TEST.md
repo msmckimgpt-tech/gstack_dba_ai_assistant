@@ -3012,6 +3012,25 @@ Chromium 에서 정량 측정한다.
   줄여가며 재실측). CSS 전용이라 `docker cp` 프리뷰가 가능한 부류지만, 같은 cycle 의 JS 변경이
   없으므로 배포 후 확인이 더 정확하다.
 
+### 20260813T2210 후속 — 트랙·폰트를 뮤테이션으로 확정
+
+선행 값(트랙 150px·폰트 14px)은 뮤테이션에서 문제가 드러났다. **하네스 패딩이 라이브와 달라
+(16px vs 실측 32px) 트랙 결정을 판별하지 못했고**, 그 상태에서 고른 값이 사용자가 보던 폭을 1열로
+전락시켰다. 패딩을 실측값으로 맞춘 뒤 재탐색해 **트랙 138px · 폰트 15px** 로 확정했다.
+
+| 뮤턴트 | 결과 |
+|---|---|
+| 구 `flex:1 + min-width:84px`(보고 상태) | **4건 FAIL** — 넘침 검사 전부 |
+| 트랙 150px | **1건 FAIL** — "370px 이상 2열 유지" |
+| 트랙 120px | **1건 FAIL** — "라이브 최대치(11자) @320px" |
+| 폰트 14px (선행값) | **생존** → 15px 로 되돌림(검증되지 않는 축소) |
+| container query `clamp` | **생존** → 미채택 |
+
+**6 PASS / 0 FAIL**. 보장 범위: 11자 @320px(최소 드로어) · 12자 @420px 이상 · 370px 이상 2열.
+
+- **Environment: Windows-browser (PB-0008)** — **미수행(POST-DEPLOY 이월)**, 사유: 이 조정의 근거가
+  된 1열 전락 자체를 **선행 배포본 라이브 캡처로 확인**했고(370px 드로어에서 1열), 재배포 후 같은
+  폭에서 2열 복귀 + 넘침 0 을 실 Chrome 으로 재실측한다.
 ### Run (2026-08-14) — profile-usage-sort-page: 프로필 사용 내역 표 정렬·페이지네이션 — **Environment: Windows-browser (PB-0008 배포 후 실측 예정 — 프로필 사용 내역은 로그인 세션 + 본인 라이브 집계가 있어야 열리고, sticky 열 머리·페이저는 레이아웃 산물이라 jsdom 으로 대체 불가. 다만 이번엔 레이아웃 축을 **실 Chromium 하네스로 선행 계측**했다: `tests/headless/verify_usage_pager_layout.py` 12 PASS, 뮤턴트로 검출력 확인. visual_verification_scope: always)**
 
 - 대상: `src/static/app/profile.js`(모달 정렬·페이징) · `src/static/admin/usage.js`(esc 강화) ·

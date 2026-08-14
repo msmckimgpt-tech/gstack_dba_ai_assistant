@@ -2125,12 +2125,13 @@
    grid auto-fit 으로 **카드를 최소 폭 아래로 누르지 않고 줄을 나누고**, 카드를 컨테이너로 삼아
    숫자 크기가 카드 폭에 반응하게 한다. 잘라서 감추는 대신 줄여서 다 보여주는 쪽을 택했다 —
    금액·토큰 수는 뒷자리가 잘리면 값의 의미가 바뀐다.
-   최소 트랙 150px 은 **현실 상한(12자, 조 직전)을 가장 좁은 드로어에서도 수용**하도록 실측으로
-   정했다: 320px 폭에서 이 값이면 2열이 성립하지 않아 1열로 떨어지고 카드가 넓어진다. 128px 로
-   두면 2열이 유지되면서 12자(130px)가 가용폭(114px)을 넘겼다. */
+   트랙 138px + 숫자 14px 은 **두 조건을 동시에** 만족하도록 실측으로 정했다:
+     · 넘침 0 — 현실 상한(12자, 조 직전)까지 가장 좁은 드로어에서도 카드 안에 들어간다
+     · 열 수 유지 — 좁은 드로어(340~370px)에서도 2열을 지킨다. 트랙을 150px 로 올리면 넘침은
+       없어지지만 1열로 떨어져 같은 정보가 두 배 길이가 된다(사용자가 보던 화면은 2열이었다). */
 .profile-usage-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(138px, 100%), 1fr));
   gap: 8px; margin-bottom: 14px;
 }
 .profile-usage-metric {
@@ -2139,9 +2140,9 @@
   padding: 9px 12px; display: flex; flex-direction: column; gap: 3px;
 }
 .profile-usage-metric span { font-size: 11px; color: var(--text-muted); letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 15px — 카드가 8개라 관리 콘솔(19px)보다 한 단계 낮춘다. 폰트를 카드 폭에 반응시키는 container
-   query 도 시도했으나 트랙 150px 아래서 **어떤 케이스도 판별하지 못해**(뮤턴트 생존) 제거했다:
-   검증되지 않는 방어는 복잡도만 남긴다. */
+/* 15px — 카드가 8개라 관리 콘솔(19px)보다 한 단계 낮춘다. 14px 까지 줄여도 **어떤 케이스도 더
+   통과시키지 못해**(뮤턴트 생존) 되돌렸다: 검증되지 않는 축소는 가독성만 잃는다. 폰트를 카드 폭에
+   반응시키는 container query 도 같은 이유로 미채택. */
 .profile-usage-metric strong { font-size: 15px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* usage-metric-charts(2026-08-13): 프로필 요약 카드 = 차트 지표 선택기. 관리 콘솔과 같은 상호작용·
    같은 전환 곡선을 쓴다(두 화면의 같은 동작이 다르게 느껴지지 않게). */

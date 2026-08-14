@@ -4193,7 +4193,28 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/REPORT.md`(이월: 열 폭 재계산 ≤4% · profile 판 미적용) · `docs/TASK.md` · `docs/REVIEW.md` ·
   `docs/evidence/pb0008-usage-pager-sticky-20260814.png`(첫 화면 페이저 시각 증거).
 - 코드 무변경.
+## CHG-20260813T2130-ai-claude-corp-usage-card-overflow — 사용량 요약 카드 넘침 수정 (Minor §12.3, CSS 전용)
 
+- `src/static/css/admin.css` — `.profile-usage-summary` 를 flex → **grid auto-fit
+  minmax(min(150px,100%),1fr)**, `.profile-usage-metric` 에 `min-width:0`, 숫자 15px + `nowrap`,
+  라벨은 ellipsis 허용. 최소 트랙 150px 은 320px 폭에서 12자 값을 수용하도록 실측으로 결정.
+- `tests/headless/test_usage_card_overflow.js` (**신규 4건**) — 폭 9단계 스윕 × (카드가 컨테이너를
+  벗어남 / 텍스트가 카드를 벗어남) 정량 측정 + 값 길이 증가(9자·12자) + 관리 콘솔 축.
+  뮤테이션: 구 flex 복원 시 3건 FAIL(사용자 보고 상태 재현), clamp 제거는 **생존** → clamp 미채택.
+
+## CHG-20260813T2210-ai-claude-corp-usage-card-overflow-tune — 트랙·폰트를 뮤테이션으로 조여 확정 (Minor §12.3)
+
+선행 커밋(트랙 150px·폰트 14px)을 뮤테이션 결과에 맞춰 정정한다.
+
+- **트랙 150px → 138px** — 150px 은 넘침은 막지만 사용자가 보던 폭(≈370px)에서 **1열로 전락**시켜
+  같은 정보를 두 배 길이로 만든다. 138px 은 넘침·열 수 양쪽에서 조여진 값(120px 은 넘침 재발,
+  150px 은 1열 전락 — 두 뮤턴트가 각각 다른 검사를 FAIL 시킨다).
+- **폰트 14px → 15px 복원** — 14px 은 **어떤 케이스도 더 통과시키지 못했다**(뮤턴트 생존).
+  검증되지 않는 축소는 가독성만 잃는다.
+- **하네스 패딩 16px → 32px** — 라이브 실측(드로어 370px 일 때 요약 컨테이너 306px = 64px 차)에
+  맞췄다. 종전 값은 하네스를 라이브보다 관대하게 만들어 **트랙 폭 결정을 판별하지 못했다**(150px
+  뮤턴트가 생존했던 원인).
+- 검사 2건 추가·정정: 라이브 최대치(11자) @320px · 12자 @420px · "370px 이상 2열 유지".
 ## CHG-20260814T110000 프로필 사용 내역 표에 정렬·페이지네이션 이식 + 이식 중 적발 결함 (REV-20260814T110000-profile-usage-sort-page)
 
 - 대상: `src/static/app/profile.js` `showProfileUsageConvModal` — 열 정의(5축) · 표시값 기준 정렬 키 ·
