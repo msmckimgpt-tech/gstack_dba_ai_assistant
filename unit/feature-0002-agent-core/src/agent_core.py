@@ -5115,6 +5115,281 @@ def _model_supports_temperature(model: str) -> bool:
     return model_supports_temperature(model)
 
 
+# ══════════════════════════════════════════════════════════════════
+#  LLM 스트리밍 수집 — conv-audit FR-llm-attempt-cap-inside-latency-tail
+# ══════════════════════════════════════════════════════════════════
+# 왜 스트리밍인가(shared/config.py `AGENT_LLM_STREAM_ENABLED` 주석의 실측 근거 요약):
+# 비스트리밍 단일 호출에서 per-attempt 상한은 "**응답 완료까지**" 를 재므로, 콘솔 상한
+# (900s)이 성공 지연 분포의 꼬리(30일 max 854s) 안쪽에 놓여 정상 추론이 통째로 폐기됐다.
+# 스트리밍에서는 같은 상한이 **chunk 간 무응답 간격**에 걸리므로 긴 정상 추론은 살고,
+# 진짜 hang 만 잡힌다. 동시에 chunk 도착이 진행 신호가 되어 "멈춘 것으로 보임" 도 해소된다.
+#
+# 이 모듈의 불변 계약: 아래 수집기가 돌려주는 message-like 객체는 비스트리밍
+# `response.choices[0].message` 와 **같은 표면**(`.content` / `.tool_calls[i].id` /
+# `.tool_calls[i].function.name` / `.arguments`)만 노출한다 — 그래야 `_call_llm` 의 소비처
+# 3곳(메인 라운드 · red-team 재생성 · red-team 재추론)이 무변경으로 남는다.
+
+class _LLMStreamCanceled(Exception):
+    """스트림 수신 중 사용자 취소를 감지해 중단했다.
+
+    **일시 실패가 아니다** — 호출측은 이 예외를 재시도 분류로 넘기지 않고 취소 경로로
+    보낸다. 종전에는 per-attempt 전체(최대 15분)가 단일 블로킹 호출이라 그 사이 눌린
+    중단이 반영되지 않았다.
+    """
+
+
+class _LLMStreamFinalizeRequested(Exception):
+    """스트림 수신 중 사용자가 '즉시 답변' 을 눌렀다.
+
+    §18.8 패널 [P1]: 초판은 취소만 보고 finalize 는 보지 않아, 사용자가 버튼을 눌러도 현재
+    호출이 끝날 때까지(그리고 tool_calls 가 오면 도구 실행까지) 반영되지 않았다. 취소는 반영
+    하는데 즉시 답변은 무시하는 **비대칭**이었다.
+
+    취소와 달리 run 을 끝내지 않는다 — 바깥 루프의 finalize 처리(도구를 끄고 "지금까지 모은
+    정보로 최종 답변" 라운드)로 넘긴다. 그 경로는 **도구 없는** 라운드를 부르므로, 패널이
+    경계한 "도구를 켠 원래 라운드를 그대로 다시 부르는" 회귀가 아니다.
+    """
+
+
+class _LLMStreamIncomplete(Exception):
+    """스트림이 `finish_reason` 없이 끝났다 = **완결 신호를 못 받았다**.
+
+    자체 적대 검토에서 잡은, **비스트리밍에는 없던 실패 모드**다. 비스트리밍은 HTTP 응답
+    전체를 파싱하므로 부분 응답이라는 상태가 존재하지 않는다. 스트리밍은 중간에 소켓이
+    조용히 닫히면(프록시 EOF·게이트웨이 교체) 이터레이터가 그냥 `StopIteration` 으로 끝나
+    **정상 종료와 구별되지 않는다** → 절단된 답변이 완전한 답변으로, 불완전 JSON
+    `arguments` 가 완전한 도구 호출로 하류에 전달된다(`FR-attach-delivery-truncated-by-output-cap`
+    · `FR-partial-evidence-false-verification` 이 막으려던 바로 그 부류의 새 입구).
+
+    그래서 완결 신호 부재는 **실패로 올린다**. 별도 분기가 필요 없다 —
+    `classify_agent_llm_failure` 가 미분류 예외를 transient 로 보내므로 같은 라운드 재호출로
+    흡수되고(누적 `messages` 무손실), 이미 오래 태운 실패라면 `_llm_retry_allowed` 의 `_slow`
+    판정이 값싼 예산에서 자동으로 빼낸다.
+    """
+
+
+class _StreamedFunction:
+    __slots__ = ("name", "arguments")
+
+    def __init__(self, name: str = "", arguments: str = "") -> None:
+        self.name = name
+        self.arguments = arguments
+
+
+class _StreamedToolCall:
+    __slots__ = ("id", "type", "function")
+
+    def __init__(self, id: str = "", type: str = "function",  # noqa: A002 — SDK 표면 동형
+                 function: "_StreamedFunction | None" = None) -> None:
+        self.id = id
+        self.type = type
+        self.function = function if function is not None else _StreamedFunction()
+
+
+class _StreamedMessage:
+    """비스트리밍 message 와 같은 계약만 노출하는 누적 결과."""
+
+    __slots__ = ("role", "content", "tool_calls")
+
+    def __init__(self, role: str = "assistant", content: "str | None" = None,
+                 tool_calls: "list[_StreamedToolCall] | None" = None) -> None:
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls or None
+
+
+class _StreamedResponseShim:
+    """`_record_llm_usage` 가 기대하는 response-like(.usage/.model)."""
+
+    __slots__ = ("usage", "model")
+
+    def __init__(self, usage: Any = None, model: str = "") -> None:
+        self.usage = usage
+        self.model = model
+
+
+def _merge_tool_call_deltas(acc: "dict[int, _StreamedToolCall]", deltas: Any) -> None:
+    """tool_calls delta 를 index 별로 조립한다.
+
+    OpenAI 스트리밍 규약: `function.name` 은 첫 조각에 한 번, `arguments` 는 여러 조각으로
+    나뉘어 온다. 그래서 **name 은 첫 값만 채택**(litellm 의 Anthropic 변환이 같은 name 을
+    반복 실어 보내도 중복 연결되지 않게)하고 **arguments 는 순서대로 이어붙인다**.
+    """
+    for d in deltas or []:
+        try:
+            idx = int(getattr(d, "index", 0) or 0)
+        except Exception:
+            idx = 0
+        cur = acc.get(idx)
+        if cur is None:
+            cur = _StreamedToolCall()
+            acc[idx] = cur
+        _id = getattr(d, "id", None)
+        if _id:
+            cur.id = str(_id)
+        _ty = getattr(d, "type", None)
+        if _ty:
+            cur.type = str(_ty)
+        fn = getattr(d, "function", None)
+        if fn is None:
+            continue
+        _name = getattr(fn, "name", None)
+        if _name and not cur.function.name:
+            cur.function.name = str(_name)
+        _args = getattr(fn, "arguments", None)
+        if _args:
+            cur.function.arguments = (cur.function.arguments or "") + str(_args)
+
+
+def _collect_llm_stream(stream: Any, *,
+                        on_progress: "Any | None" = None,
+                        abort_check: "Any | None" = None,
+                        progress_interval_sec: float = 0.0,
+                        abort_poll_sec: float = 0.0) -> "tuple[_StreamedMessage, str, Any, str, dict]":
+    """chunk 를 누적해 (message, finish_reason, usage, served_model, stats) 로 접는다.
+
+    - `usage` 는 `choices=[]` 인 마지막 chunk 로 오므로 choices 가드 **앞에서** 포착한다
+      (`_prompt_context.py` 의 검증된 스트리밍 패턴과 동형).
+    - `on_progress`/`abort_check` 는 **주기 게이트**로만 호출한다. chunk 마다 부르면
+      DB 폴링이 chunk 수만큼 늘어난다(무거운 추론은 수천 chunk).
+    - `abort_check` 는 `""|None`(계속) · `"cancel"`(사용자 중단) · `"finalize"`('즉시 답변')
+      을 돌려준다. 각각 `_LLMStreamCanceled` / `_LLMStreamFinalizeRequested` 로 올린다 —
+      두 신호의 하류 처리가 다르기 때문에(§18.8 패널 [P1]) 한 bool 로 합치지 않는다.
+      누적분은 버린다(절단된 답변·불완전 tool_calls 를 답변으로 승격시키지 않는다).
+
+    **한계(§18.8 패널 [P1] — 근거 있는 채택)**: 주기 게이트는 `for chunk in stream` 안에 있어
+    **다음 chunk 를 받은 뒤에만** 열린다. 따라서 upstream 이 완전히 무응답인 구간에서는 진행
+    표시도 abort 확인도 일어나지 않고 종전처럼 상한까지 블로킹한다(악화는 아니다 — 종전엔 호출
+    전체가 그랬다). 이 봉인이 실제로 개선하는 것은 **chunk 가 흐르는 구간**, 즉 정상적으로
+    오래 걸리는 추론이다(라이브 실측: ttft 2.16s 이후 reasoning delta 연속 도착 — 관측된
+    무진전 구간의 지배적 다수가 이 부류다). 무응답 구간까지 덮으려면 watchdog 스레드가 필요
+    하고, 그 스레드가 진행 표시를 쓰려면 **런타임 DB 커넥션을 메인 스레드와 공유**해야 해
+    (`_emit_activity` → `save_memory_step`) 동시 사용 위험이 이 cycle 의 이득을 넘는다.
+    별 항목으로 이월한다.
+    """
+    t0 = time.perf_counter()
+    content_parts: list[str] = []
+    tool_acc: "dict[int, _StreamedToolCall]" = {}
+    finish_reason = ""
+    usage: Any = None
+    served = ""
+    n_chunks = 0
+    reasoning_chars = 0
+    last_progress = t0
+    last_abort = t0
+
+    # §18.8 패널 [P2]: abort 로 빠져나갈 때 응답을 닫지 않으면 SDK 의 GC 시점까지 연결과
+    # upstream 생성이 남을 수 있다. 정상 종료·예외 어느 경로로 나가도 닫는다(close 미지원
+    # 더블/구 SDK 면 no-op).
+    try:
+        for chunk in stream:
+            n_chunks += 1
+            _u = getattr(chunk, "usage", None)
+            if _u is not None:
+                usage = _u
+            if not served:
+                _m = getattr(chunk, "model", None)
+                if _m:
+                    served = str(_m)
+            choices = getattr(chunk, "choices", None)
+            if choices:
+                ch = choices[0]
+                delta = getattr(ch, "delta", None)
+                if delta is not None:
+                    _c = getattr(delta, "content", None)
+                    if _c:
+                        content_parts.append(str(_c))
+                    # reasoning/thinking delta 는 **누적하지 않는다** — provider-private chain of
+                    # thought 를 사용자 답변으로 노출하지 않는 기존 정책(아래 raw_answer 처리와
+                    # 동일 취지). 진행 신호용으로 분량만 센다.
+                    _r = getattr(delta, "reasoning_content", None)
+                    if _r:
+                        reasoning_chars += len(str(_r))
+                    _tcs = getattr(delta, "tool_calls", None)
+                    if _tcs:
+                        _merge_tool_call_deltas(tool_acc, _tcs)
+                _fr = getattr(ch, "finish_reason", None)
+                if _fr:
+                    finish_reason = str(_fr)
+
+            now = time.perf_counter()
+            if abort_check is not None and abort_poll_sec > 0 and (now - last_abort) >= abort_poll_sec:
+                last_abort = now
+                try:
+                    _signal = str(abort_check() or "")
+                except Exception:
+                    _signal = ""   # 판정 실패는 중단으로 보지 않는다(fail-open — 답변 계속)
+                if _signal == "cancel":
+                    raise _LLMStreamCanceled("user canceled during stream")
+                if _signal == "finalize":
+                    raise _LLMStreamFinalizeRequested("user requested immediate answer during stream")
+            if on_progress is not None and progress_interval_sec > 0 and (now - last_progress) >= progress_interval_sec:
+                last_progress = now
+                try:
+                    on_progress({
+                        "elapsed_sec": now - t0,
+                        "chunks": n_chunks,
+                        "content_chars": sum(len(p) for p in content_parts),
+                        "reasoning_chars": reasoning_chars,
+                    })
+                except (_LLMStreamCanceled, _LLMStreamFinalizeRequested):
+                    raise
+                except Exception:
+                    pass   # 진행 표시 실패가 답변을 깨지 않는다
+    finally:
+        try:
+            _close = getattr(stream, "close", None)
+            if callable(_close):
+                _close()
+        except Exception:
+            pass
+
+    # 완결 신호 검사(`_LLMStreamIncomplete` docstring 의 실패 모드). 조용한 EOF 를 정상 종료와
+    # 구별하는 유일한 단서가 `finish_reason` 이다 — 라이브 실측에서 gateway 는 이 값을 항상
+    # 실어 보낸다(stop 확인). 없으면 절단분을 답변으로 승격시키지 않고 재시도에 맡긴다.
+    if not finish_reason:
+        raise _LLMStreamIncomplete(
+            "stream ended without finish_reason "
+            f"(chunks={n_chunks} content_chars={sum(len(p) for p in content_parts)} "
+            f"tool_calls={len(tool_acc)})"
+        )
+    tool_calls = [tool_acc[k] for k in sorted(tool_acc) if tool_acc[k].function.name]
+    _content = "".join(content_parts)
+    msg = _StreamedMessage(
+        role="assistant",
+        # 비스트리밍은 tool_calls 만 있을 때 content=None 이다 — 그 표면을 맞춘다.
+        content=_content if _content else None,
+        tool_calls=tool_calls or None,
+    )
+    stats = {
+        "chunks": n_chunks,
+        "content_chars": len(_content),
+        "reasoning_chars": reasoning_chars,
+        "tool_calls": len(tool_calls),
+        "elapsed_sec": time.perf_counter() - t0,
+    }
+    return msg, finish_reason, usage, served, stats
+
+
+def _stream_options_rejected(exc: Exception) -> bool:
+    """`stream_options`(include_usage) 를 거부하는 SDK/게이트웨이인가.
+
+    레퍼런스(`_prompt_context.py`)는 어떤 예외든 stream_options 없이 재시도하지만, 대화
+    경로에서 그러면 **실제 장애도 한 번 더 태워** 사용자 대기가 배가된다(이 봉인이 없애려는
+    바로 그 증상). 그래서 판정을 좁힌다 — 인자 자체를 모르는 SDK(TypeError) 또는 그 파라미터
+    를 지목한 400 만 폴백 대상이다.
+    """
+    _txt = str(exc)
+    if isinstance(exc, TypeError):
+        # §18.8 패널 [P2]: 모든 TypeError 를 "인자 미지원" 으로 보면 SDK 내부 변환 오류나 잘못된
+        # tool schema 까지 두 번째 provider 호출로 재전송된다. 인자 이름을 지목한 것만 받는다.
+        return "stream_options" in _txt or "include_usage" in _txt
+    if "stream_options" not in _txt and "include_usage" not in _txt:
+        return False
+    return ("400" in _txt or "invalid_request" in _txt.lower()
+            or "unsupported" in _txt.lower() or "unrecognized" in _txt.lower())
+
+
 def _call_llm(client: OpenAI, messages: list[dict], model: str,
               temperature: float | None = None,
               tools: list[dict] | None = None,
@@ -5122,8 +5397,17 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
               run_id: str | None = None,
               step_gap_ms: int | None = None,
               reasoning_level: str | None = None,
-              timeout_override: int | None = None) -> Any:
+              timeout_override: int | None = None,
+              on_stream_progress: "Any | None" = None,
+              stream_abort_check: "Any | None" = None) -> Any:
     """OpenAI API를 호출한다.
+
+    conv-audit FR-llm-attempt-cap-inside-latency-tail: 호출은 **스트리밍**으로 나가고
+    (`AGENT_LLM_STREAM_ENABLED`), 반환 계약은 비스트리밍과 동일한 message-like 이다.
+    `stream_abort_check` 는 `""|"cancel"|"finalize"` 를 돌려주는 콜백이다. 메인 라운드는 진행
+    표시와 abort 를 모두 넘기고, red-team 재생성·재추론 경로는 **abort 만** 넘긴다 — 그쪽은
+    자체 진행 표시를 이미 갖고 있으나(`FR-redteam-first-pass-unabortable` 봉인) 호출 **사이**
+    에서만 abort 를 보므로, 스트림 중 탈출구는 여기서만 열 수 있다(§18.8 패널 [P1]).
 
     TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
     가 가리키는 image_attachments JSON 이 있으면 messages_for_provider() 가 첫
@@ -5211,6 +5495,14 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         int(timeout_override) if timeout_override and int(timeout_override) > 0
         else max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC")))
     )
+    # conv-audit FR-llm-attempt-cap-inside-latency-tail: body `timeout` 은 **종전 그대로**
+    # 콘솔 값을 싣는다(feature-0007 계약 보존). 초판은 "스트리밍에서 gateway 가 전체 스트림을
+    # 이 값으로 자를 것" 이라 보고 run 예산 배수로 키웠으나, **라이브 실측이 그 가정을 반증**
+    # 했다 — body timeout=3s 로 6.5초 스트림을 요청해도 절단되지 않았다(litellm 은 스트리밍
+    # 요청에서 이 값을 전체 스트림 상한으로 적용하지 않는다). 근거 없이 운영자 계약("콘솔
+    # 값이 곧 per-attempt upstream 상한")을 깨지 않는다. 아래 per-request 클라이언트 timeout
+    # 만 의미가 바뀐다 — 스트리밍에서 그것은 "완료까지" 가 아니라 **chunk 간 무응답** 상한이다.
+    _stream_on = bool(getattr(cfg, "AGENT_LLM_STREAM_ENABLED", True))
     _extra_body: dict[str, Any] = {"timeout": _timeout_sec}
     _think_style = model_thinking_style(model)
     if _think_style == "budget":
@@ -5238,7 +5530,49 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # extra_body 는 timeout(항상)+thinking/output_config(해당 시)를 병합해 항상 전달한다.
     kwargs["extra_body"] = _extra_body
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
-    response = client.chat.completions.create(**kwargs)
+    # ── conv-audit FR-llm-attempt-cap-inside-latency-tail: 스트리밍 수집 ──────────
+    # 반환 계약(message-like)·usage 회계·finish_reason 채널은 비스트리밍과 동일하게 유지한다.
+    # 킬 스위치(`AGENT_LLM_STREAM_ENABLED=false`)면 종전 경로로 그대로 되돌아간다.
+    _stream_stats: "dict | None" = None
+    if _stream_on:
+        _stream_kwargs = dict(kwargs)
+        _stream_kwargs["stream"] = True
+        _stream_kwargs["stream_options"] = {"include_usage": True}
+        # per-request read 상한 = chunk 간 무응답 상한(위 주석). 클라이언트 생성 시의 총-대기
+        # 값을 이 요청에 한해 덮어쓴다 — 스트리밍에서는 "완료까지" 가 아니라 "다음 chunk 까지".
+        _stream_kwargs["timeout"] = _timeout_sec
+        try:
+            _stream = client.chat.completions.create(**_stream_kwargs)
+        except Exception as _e_stream_open:
+            if not _stream_options_rejected(_e_stream_open):
+                raise
+            _stream_kwargs.pop("stream_options", None)
+            _stream = client.chat.completions.create(**_stream_kwargs)
+        _msg, _finish_reason, _usage_obj, _served_model, _stream_stats = _collect_llm_stream(
+            _stream,
+            on_progress=on_stream_progress,
+            abort_check=stream_abort_check,
+            progress_interval_sec=float(cfg.AGENT_LLM_STREAM_PROGRESS_SEC),
+            abort_poll_sec=float(cfg.AGENT_LLM_STREAM_CANCEL_POLL_SEC),
+        )
+        # §18.8 패널 [P2]: `stream_options` 폴백으로 usage chunk 가 없으면 이 호출의 토큰·비용이
+        # 회계에서 조용히 사라진다. 삼키지 말고 남긴다 — 집계 공백의 원인을 사후 추적할 수 있게.
+        if _usage_obj is None:
+            try:
+                logger.warning(
+                    "llm_stream_usage_missing conv=%s run=%s model=%s — 토큰 회계 누락"
+                    "(stream_options 폴백 또는 provider 미지원)",
+                    conversation_id, run_id, outbound_model,
+                )
+            except Exception:
+                pass
+        # 아래 공통 후처리(usage 회계·finish_reason)가 비스트리밍과 같은 코드를 타도록
+        # response-like 로 감싼다. `_record_llm_usage` 는 `.usage`/`.model` 만 읽는다.
+        response = _StreamedResponseShim(usage=_usage_obj, model=_served_model or outbound_model)
+    else:
+        response = client.chat.completions.create(**kwargs)
+        _msg = response.choices[0].message
+        _finish_reason = str(getattr(response.choices[0], "finish_reason", "") or "")
     # feature-0031 (infdetail, §18.8 패널 MAJOR-3): 호출측이 **순수 왕복**만 llm_ms 로 집계할 수
     # 있도록 이 창의 소요를 넘긴다. 호출측이 `_call_llm` 전체를 재면 그 안의 오케스트레이션
     # (첨부 인라인 로드·messages_for_provider 재조립·runtime_settings DB 읽기(TTL 10s 라 라운드마다
@@ -5269,11 +5603,26 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # 잘리기 전에 쓰인 "6개 파일 전부 갱신했습니다" 같은 문장이 그대로 남아 허위 완료 선언이 됐다
     # (관측: completion_tokens 100,000 = 상한 정확히 도달, 첨부 6건 중 1건만 전달).
     # 반환 타입(message)은 다수 호출자가 의존하므로 바꾸지 않고, 사실만 run-scoped 채널에 남긴다.
+    # conv-audit: 스트리밍 경로도 같은 채널을 채운다(마지막 chunk 의 finish_reason).
     try:
-        _LLM_LAST_FINISH_REASON_CTX.set(str(getattr(response.choices[0], "finish_reason", "") or ""))
+        _LLM_LAST_FINISH_REASON_CTX.set(str(_finish_reason or ""))
     except Exception:
         pass
-    return response.choices[0].message
+    if _stream_stats is not None:
+        # 관측 전용(§정직): 무거운 추론이 실제로 chunk 를 흘렸는지 — 상한이 chunk-간 간격에
+        # 걸린다는 이 봉인의 전제가 라이브에서 성립하는지 사후 확인할 수 있는 유일한 흔적.
+        try:
+            logger.info(
+                "llm_stream_done conv=%s run=%s chunks=%s content_chars=%s reasoning_chars=%s "
+                "tool_calls=%s elapsed=%.1fs finish=%s usage=%s",
+                conversation_id, run_id, _stream_stats.get("chunks"),
+                _stream_stats.get("content_chars"), _stream_stats.get("reasoning_chars"),
+                _stream_stats.get("tool_calls"), float(_stream_stats.get("elapsed_sec") or 0.0),
+                _finish_reason or "", getattr(response, "usage", None) is not None,
+            )
+        except Exception:
+            pass
+    return _msg
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -6947,6 +7296,35 @@ def _run_agent_core(
         _llm_retry_n = 0
         _llm_waited_total = 0.0       # 이 라운드 재시도 대기 누적(값싼 실패 예산 게이트)
         _llm_defer_to_outer = False   # 패널 P1-2: '즉시 답변' 은 바깥 루프가 정본으로 처리한다
+
+        # conv-audit FR-llm-attempt-cap-inside-latency-tail (RC-2 봉인): 한 라운드의 LLM 호출은
+        # 무거운 추론에서 수 분~15분 걸린다. 종전에는 그 구간 내내 위 activity 하나가 마지막
+        # 표시로 남아, **살아 있는 run 이 멈춘 것으로 보였다**(실측: 사용자가 장애로 판단해
+        # 운영 개입 요청). 스트리밍으로 chunk 가 도착하므로 그 사실을 주기적으로 표면에 올린다.
+        def _stream_progress_cb(_info: "dict", _round: int = llm_round) -> None:
+            _elapsed = float(_info.get("elapsed_sec") or 0.0)
+            _mins = max(1, int(_elapsed // 60))
+            _emit_activity(
+                f"AI 가 답변을 추론하는 중 — {_mins}분 경과, 응답을 계속 받고 있습니다"
+                + (f" ({_round}회차)" if _round > 1 else "")
+            )
+
+        def _stream_abort_cb() -> str:
+            """스트림 수신 중 탈출구 판정: 취소와 '즉시 답변' 을 **구분해서** 돌려준다.
+
+            §18.8 패널 [P1]: 초판은 취소만 봤다 — 사용자가 '즉시 답변' 을 눌러도 현재 호출이
+            끝날 때까지(그리고 tool_calls 가 오면 도구 실행까지) 반영되지 않는 비대칭이었다.
+            finalize 는 run 을 끝내지 않고 바깥 루프의 도구-없는 마무리 라운드로 넘긴다.
+            """
+            if _cancel_requested_for_run(mem_conn, cid, run_id):
+                return "cancel"
+            try:
+                if _finalize_seen["hit"] or _finalize_requested(mem_conn, cid, run_id):
+                    return "finalize"
+            except Exception:
+                pass
+            return ""
+
         while True:
             _llm_exc: "Exception | None" = None
             _attempt_t0 = time.perf_counter()
@@ -6960,8 +7338,22 @@ def _run_agent_core(
                     step_gap_ms=_step_gap_ms,
                     reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
                     timeout_override=_ext_llm_timeout,  # feature-0030: 연장 승인 시 per-attempt 확장
+                    on_stream_progress=_stream_progress_cb,   # conv-audit RC-2: 진행 표면화
+                    stream_abort_check=_stream_abort_cb,      # conv-audit: 긴 호출 중 탈출구
                 )
                 _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
+            except _LLMStreamFinalizeRequested:
+                # conv-audit(§18.8 [P1]): 스트림 중 '즉시 답변'. 취소와 달리 run 을 끝내지 않고
+                # 바깥 루프가 정본대로 마무리한다 — 도구를 끈 라운드를 부르므로 "도구를 켠 원래
+                # 라운드를 그대로 다시" 부르는 회귀가 아니다. step_count 는 증가시키지 않았다.
+                _llm_defer_to_outer = True
+                break
+            except _LLMStreamCanceled:
+                # conv-audit: 스트림 수신 중 사용자 취소. **일시 실패가 아니다** — 재시도
+                # 분류로 넘기면 사용자가 중단한 요청을 계속 태운다(`FR-llm-transient-*` 패널
+                # P1-2 가 세운 "탈출구를 재시도가 삼키지 않는다" 원칙).
+                canceled_by_user = True
+                break
             except Exception as _e_round:
                 _llm_exc = _e_round
             if _llm_exc is None:
@@ -7186,11 +7578,20 @@ def _run_agent_core(
                         # 모델이 재작성한다 (_build_self_review_messages docstring 참조).
                         _rev_messages = _build_self_review_messages(
                             base if base is not None else messages, draft, instruction)
-                        _rev = _call_llm(client, _rev_messages, model,
-                                         temperature=temperature,
-                                         conversation_id=cid, run_id=run_id,
-                                         reasoning_level=reasoning_level,
-                                         timeout_override=_ext_llm_timeout)
+                        # conv-audit(§18.8 [P1]): red-team LLM 호출도 스트림 중 탈출구를 갖는다.
+                        # `_rt_abort` 는 호출 **사이**에서만 평가되므로, 이 콜백 없이는 리뷰어
+                        # 재생성 한 번이 per-attempt 상한까지 사용자 신호를 무시했다. abort 는
+                        # 예외로 올라오므로 여기서 잡아 **초안 유지**(기존 fail-open 과 동일)로
+                        # 되돌린다 — run 을 깨지 않는다.
+                        try:
+                            _rev = _call_llm(client, _rev_messages, model,
+                                             temperature=temperature,
+                                             conversation_id=cid, run_id=run_id,
+                                             reasoning_level=reasoning_level,
+                                             timeout_override=_ext_llm_timeout,
+                                             stream_abort_check=_rt_stream_abort_cb)
+                        except (_LLMStreamCanceled, _LLMStreamFinalizeRequested):
+                            return None
                         _txt = _strip_leaked_tool_notes(getattr(_rev, "content", "") or "")
                         _txt = _txt.strip()
                         if not _txt:
@@ -7282,7 +7683,9 @@ def _run_agent_core(
                                                      temperature=temperature, tools=_rd_tools,
                                                      conversation_id=cid, run_id=run_id,
                                                      reasoning_level=reasoning_level,
-                                                     timeout_override=_ext_llm_timeout)
+                                                     timeout_override=_ext_llm_timeout,
+                                                     stream_abort_check=_rt_stream_abort_cb)
+                            # abort 예외도 이 except 가 잡아 초안 유지로 빠진다(기존 fail-open).
                             except Exception:
                                 break
                             _rd_tcs = getattr(_rd_resp, "tool_calls", None)
@@ -7384,6 +7787,19 @@ def _run_agent_core(
                             _finalize_seen["hit"] = True
                             return True
                         return False
+
+                    def _rt_stream_abort_cb() -> str:
+                        """red-team LLM 호출의 스트림 중 탈출구(§18.8 [P1]).
+
+                        red-team 은 취소와 '즉시 답변' 을 구분할 필요가 없다 — 둘 다 "그만하고
+                        지금 답변" 이고, 상위 콜백이 초안 유지로 빠지면 그 의도가 충족된다.
+                        그래서 `_rt_abort` 의 합산 판정을 그대로 쓰고 `cancel` 로 통일한다.
+                        판정 실패는 계속(fail-open) — 오중단으로 완성된 리뷰를 버리지 않는다.
+                        """
+                        try:
+                            return "cancel" if _rt_abort() else ""
+                        except Exception:
+                            return ""
 
                     _rt_answer, _rt_meta = _redteam.orchestrate_review(
                         question=user_message,

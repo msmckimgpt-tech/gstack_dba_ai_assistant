@@ -97,12 +97,28 @@ class _Resp:
         self.model = "m"
 
 
+# conv-audit FR-llm-attempt-cap-inside-latency-tail: 대화 경로는 stream=True 로 나간다.
+# 더블은 두 모드를 다 지원한다(스트리밍 기본 + 킬 스위치 off 종전 경로).
+def _final_stream():
+    yield type("C", (), {
+        "choices": [type("Ch", (), {
+            "delta": type("D", (), {"content": "FINAL", "tool_calls": None,
+                                    "reasoning_content": None})(),
+            "finish_reason": "stop",
+        })()],
+        "usage": None, "model": "m",
+    })()
+    yield type("C", (), {"choices": [], "usage": _Usage(), "model": "m"})()
+
+
 class _Completions:
     def __init__(self, sink):
         self._sink = sink
 
     def create(self, **kwargs):
         self._sink.append(kwargs)
+        if kwargs.get("stream"):
+            return _final_stream()
         return _Resp()
 
 
@@ -126,7 +142,8 @@ def _call(monkeypatch, model, reasoning_level):
         _Client(sink), [{"role": "user", "content": "hi"}], model,
         reasoning_level=reasoning_level,
     )
-    assert out == "FINAL"
+    # conv-audit: 스트리밍 경로의 반환은 누적된 message-like 다(계약: `.content`).
+    assert out.content == "FINAL"
     assert len(sink) == 1
     kw = sink[0]
     # feature-0007 timeout-console-sync: _call_llm 은 모델·레벨 무관하게 항상 live
