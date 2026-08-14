@@ -5187,3 +5187,8 @@ CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
   마커·전송 표기 전부 고정). 전체 스위트 회귀 확인.
 - 한계(정직): 실제 차감은 **배포 시 1회** 일어나므로 사전 실측이 불가능하다. 배포 후 모순 건수
   (`CreatedAt > SupersededAt|DeletedAt`)가 **234 → 0** 인지, MySQL↔PG 미러가 일치하는지로 확인한다.
+
+## REV-20260814T120000-profile-sort-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+- Related TASK: feature-0003-agent-web-ui
+- Reason: changed paths are docs + evidence image only (no code, no policy doc)
+- Timestamp: 2026-08-14T12:00:00+09:00

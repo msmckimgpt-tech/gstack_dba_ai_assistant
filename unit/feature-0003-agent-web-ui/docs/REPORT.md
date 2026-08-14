@@ -2650,3 +2650,9 @@ POST-DEPLOY Run). 라이브에서 나온 결함 1건(페이저가 50행 아래�
 - **좁은 폭 페이저 축의 검출력 부재**: `verify_usage_pager_layout.py` L2 는 줄바꿈을 제거한
   뮤턴트도 통과한다 — 현재는 회귀 가드일 뿐 결함을 잡는 축이 아니다(정직 표기).
 - **열 폭 재계산(≤4%, 직전 cycle 이월 유지)**: 페이지 전환 시 auto table-layout 이 열 폭을 다시 잡는다.
+
+#### profile-usage-sort-page POST-DEPLOY 종결 (2026-08-14, ac1403c4)
+
+프로필 판의 정렬·페이지네이션·키보드·sticky 열 머리, 그리고 관리 콘솔 판의 재확인(스크롤러
+단일화 영향 + 가로 넘침 무회귀)을 실 Windows 브라우저에서 확인했다(TEST.md POST-DEPLOY Run).
+두 화면이 같은 규칙으로 동작함을 라이브에서 확증했다.

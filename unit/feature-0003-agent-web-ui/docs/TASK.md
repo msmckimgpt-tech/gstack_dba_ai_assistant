@@ -10884,3 +10884,9 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - 첨부 시간축 왜곡 해소 — ✓ (기록 UTC 전환 + Id 상한 1회 백필 + PG 미러 동반 + 재실행 방지).
 - 이번 범위 밖(정직): **다른 테이블의 동일 패턴**은 건드리지 않았다(`DEFAULT CURRENT_TIMESTAMP` 를
   쓰는 컬럼이 더 있을 수 있으나, 첨부 밖으로 스코프를 넓히면 회귀 검증 범위가 급격히 커진다).
+
+## TASK-20260814T120000-profile-sort-postdeploy — POST-DEPLOY 라이브 실측 기록 (docs-only)
+
+- [x] 프로필 판 PB-0008 실측(정렬·페이지·키보드·sticky 열 머리·페이저 가시성) + 시각 증거 첨부.
+- [x] 관리 콘솔 판 재확인 — 스크롤러 단일화 영향(sticky 유지) + 가로 넘침 무회귀.
+- [x] 미검증 명시(콘솔 에러 미수집 · 좁은 폭은 헤드리스 계측으로 갈음).
