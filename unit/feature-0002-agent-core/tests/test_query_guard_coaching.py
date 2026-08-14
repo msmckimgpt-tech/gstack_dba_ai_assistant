@@ -269,11 +269,31 @@ def test_worst_plan_row_chosen_by_effective_rows():
     assert facts["worst"]["table"] == "b"   # 실효 900,000 > 1,000
 
 
-def test_coach_static_fallback_holds_for_aggregate_without_facts():
-    """[P2] facts 가 없으면(MSSQL) 집계 쿼리여도 **기존 정적 문구** — 골든 계약이 조용히 깨지지 않게."""
+def test_coach_never_invents_plan_facts_it_does_not_have():
+    """[P2 원 우려 보존] facts 가 없으면(MSSQL) **계획에서 유도한** 문구를 지어내면 안 된다.
+    접근형태·인덱스·파티션은 계획을 봐야 알 수 있고, 없는데 말하면 거짓 진단이다."""
+    out = tools._heavy_query_coach("SELECT a FROM dbo.big WHERE x=1", 5_000_000, 1_000_000, {}, seen=1)
+    for plan_only in ("실행계획", "접근형태", "사용 인덱스", "스캔 파티션"):
+        assert plan_only not in out, f"계획 사실 없이 '{plan_only}' 를 말한다"
+    assert "재구성" in out and "최후수단" in out       # 비집계 → 기존 정적 문구 유지
+
+
+def test_coach_gives_aggregate_advice_even_without_plan_facts():
+    """★ 2026-08-14 계약 변경. 집계 판정은 **SQL 형태**만 보므로 계획 사실이 필요 없다.
+
+    예전엔 이 조언이 `if worst:` 안에 있어서, 계획을 주지 않는 엔진(MSSQL)에서는 `COUNT(*)`
+    쿼리가 "서버측 집계(COUNT/SUM)를 쓰세요" 라는 **이미 한 일을 시키는** 일반론만 받았다.
+    외부 AI 가 그걸 받고 구간 2분할로 우회했는데 **총 스캔량은 동일**했다 — 게이트가 부하를
+    못 줄이고 마찰만 만들었다(라이브 제보).
+    """
     out = tools._heavy_query_coach("SELECT COUNT(*) FROM dbo.big", 5_000_000, 1_000_000, {}, seen=1)
-    assert "재구성" in out and "최후수단" in out
-    assert "전역 집계" not in out and "실행계획" not in out
+    assert "전역 집계" in out, "집계 쿼리에 집계 조언을 안 준다"
+    assert "approx_rows" in out, "이미 손에 있는 근사치를 안 알려준다"
+    assert "총 스캔량을 줄이지 않습니다" in out, "분할 우회가 무의미하다는 사실을 안 알린다"
+    # 계획 사실은 여전히 지어내지 않는다.
+    assert "실행계획" not in out and "접근형태" not in out
+    # 이미 COUNT 인 쿼리에 "서버측 집계를 쓰세요" 라고 답하지 않는다.
+    assert "서버측 집계(COUNT/SUM/GROUP BY)" not in out
 
 
 def test_coach_does_not_advertise_confirm_when_policy_ignores_it():

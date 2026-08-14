@@ -296,3 +296,33 @@ def test_ledger_keeps_the_datasource_even_though_execute_tool_pops_it():
         "실행 뒤에 읽으면 이미 pop 된 뒤다"
     tools = _read(*_TOOLS)
     assert 'arguments.pop("datasource"' in tools, "전제가 바뀌었다 — 이 테스트를 재검토하라"
+
+
+# ── 실사용 제보 2차 — 게이트·거부 메시지 (2026-08-14) ────────────────────────
+
+def test_catalog_function_block_points_at_the_standard_alternative():
+    """★ 차단 자체는 유지하되(권한 탐침 함수와 한 목록이라 선별 완화는 경계를 흐린다),
+    같은 정보를 얻는 표준 경로를 알려준다 — 안 알려주면 sys 카탈로그 조합을 반복 시도한다."""
+    # `modules` 를 스텁으로 갈아끼우는 다른 테스트가 있어 import 순서에 따라 실패한다
+    # — 소스에서 함수만 떼어 **실행**한다(문자열 검사가 아니라 동작을 본다).
+    src = _read(*_TOOLS)
+    seg = src[src.index("_CATALOG_NAME_FUNCS = ("):src.index("def _heavy_query_coach(")]
+    ns: dict = {"str": str, "any": any}
+    exec(compile(seg, "<catalog>", "exec"), ns)
+    fn = ns["_catalog_function_redirect"]
+    hint = fn("forbidden function: object_name")
+    assert "INFORMATION_SCHEMA" in hint
+    assert "REFERENTIAL_CONSTRAINTS" in hint, "외래키 경로를 안 알려준다"
+    assert fn("multi-statement not allowed") == "", "무관한 거부에도 안내가 붙는다"
+
+    assert "_catalog_function_redirect(guard.error_reason)" in src, "거부 메시지에 안 붙는다"
+
+
+def test_estimate_failure_message_does_not_blame_query_size():
+    """★ '범위를 좁혀라' 는 오도다 — 계획을 못 받아온 것이지 쿼리가 무거운 게 아니다.
+    라이브 제보: 같은 논리를 다른 형태로 재작성하니 통과했다."""
+    src = code_only(_read(*_TOOLS))
+    seg = src[src.index("⚠ 사전 부하추정에 실패했습니다") - 200:]
+    seg = seg[:seg.index("elif est >")]
+    assert "쿼리가 무거워서가 아닙니다" in seg
+    assert "다른 형태로 재작성" in seg

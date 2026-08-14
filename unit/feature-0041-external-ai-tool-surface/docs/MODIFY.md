@@ -309,3 +309,18 @@ source_of_truth: true
 - Files: `docs/TEST.md` (18차 Run) · `docs/TASK.md`
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260814-0022
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 실사용 2차 제보 — **부하 게이트 코칭이 집계 쿼리에 틀린 조언**을 하던 것과, 카탈로그
+  함수 거부·추정 실패 메시지가 다음 행동을 오도하던 것을 고쳤다. 차단 기준·denylist 는 **무변경**
+  (사용자 결정 2026-08-14: 둘 다 보수적 선택).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/tools.py` (집계 조언을 엔진 무관하게 ·
+    `_catalog_function_redirect` 신설 · 추정 실패 문구)
+  - `unit/feature-0002-agent-core/tests/test_query_guard_coaching.py` (계약 갱신)
+  - `unit/feature-0041-.../tests/test_execute_sql_surface.py` (회귀 2건)
+- Impact: **문구만 변경** — 차단 여부·임계·denylist 동일. 사내 assistant 대화 경로도 같은
+  코칭을 받으므로 함께 개선된다.
+- Rollback Notes: 문구 원복.

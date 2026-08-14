@@ -2596,6 +2596,27 @@ def _heavy_block_seen(run_id: str, target: str = "") -> int:
     return n
 
 
+# 카탈로그 **이름 조회** 함수(`OBJECT_NAME`·`COL_NAME` 등)는 권한 탐침 함수와 한 목록에 있어
+# 함께 차단된다. 차단 자체는 유지하되(경계를 흐리지 않는다), 같은 정보를 얻는 **표준 경로**를
+# 알려준다 — 안 알려주면 모델이 sys 카탈로그 조합을 반복 시도하다 포기한다(2026-08-14 제보:
+# `sys.foreign_keys` 경로가 막혀 information_schema 로 직접 우회해야 했다).
+_CATALOG_NAME_FUNCS = (
+    "object_name", "object_schema_name", "object_id", "col_name", "schema_name", "schema_id",
+    "type_name", "index_name", "db_name",
+)
+
+
+def _catalog_function_redirect(reason: str) -> str:
+    low = str(reason or "").lower()
+    if not any(fn in low for fn in _CATALOG_NAME_FUNCS):
+        return ""
+    return (
+        "카탈로그 이름 조회는 `INFORMATION_SCHEMA` 로 하세요 — 테이블/컬럼은 "
+        "`INFORMATION_SCHEMA.TABLES`·`.COLUMNS`, 외래키는 `.REFERENTIAL_CONSTRAINTS` + "
+        "`.KEY_COLUMN_USAGE` 조합이 표준이며 이 표면에서 허용됩니다. "
+    )
+
+
 def _heavy_query_coach(sql: str, est: int, warn_thr: int, facts: dict, seen: int,
                        trust_llm_confirm: bool = True) -> str:
     """부하게이트 차단 메시지 — EXPLAIN 이 이미 아는 **왜 무거운지**를 실어 자기교정을 유도.
@@ -2631,13 +2652,19 @@ def _heavy_query_coach(sql: str, est: int, warn_thr: int, facts: dict, seen: int
             f"[실행계획] 대상 `{tbl or '?'}` — " + ", ".join(diag) + "."
         )
 
+    # 전역 집계는 "더 가볍게 재작성" 이 원리적으로 불가능하다 — 그 사실을 말해 주지 않으면
+    # 모델이 같은 집계를 형태만 바꿔 무한 재제출한다(관측된 실패 모드).
+    #
+    # ⚠ 이 판정은 **SQL 형태**만 본다 — 실행계획 사실이 필요 없다. 그런데 예전엔 `if worst:`
+    #   안에 있어서, 계획 사실을 주지 않는 엔진(MSSQL)에서는 집계 쿼리가 "서버측 집계(COUNT/SUM)
+    #   를 쓰세요" 라는 **이미 한 일을 시키는** 일반론만 받았다. 외부 AI 가 그걸 받고 구간
+    #   2분할로 우회했는데 **총 스캔량은 동일**했다 — 게이트가 부하를 못 줄이고 마찰만 만들었다
+    #   (2026-08-14 실사용 제보). 형태 기반 조언은 엔진과 무관하게 준다.
+    is_agg = bool(re.search(
+        r"\b(count|sum|avg|min|max|group_concat|std|stddev|var_pop|var_samp|variance)\s*\(",
+        sql or "", re.IGNORECASE,
+    ))
     if worst:
-        # 전역 집계는 "더 가볍게 재작성" 이 원리적으로 불가능하다 — 그 사실을 말해 주지 않으면
-        # 모델이 같은 집계를 형태만 바꿔 무한 재제출한다(관측된 실패 모드).
-        is_agg = bool(re.search(
-            r"\b(count|sum|avg|min|max|group_concat|std|stddev|var_pop|var_samp|variance)\s*\(",
-            sql or "", re.IGNORECASE,
-        ))
         if atype in ("all", "index") and not key_used:
             lines.append(
                 "→ WHERE 절이 인덱스를 타지 못해 대상 전체를 훑습니다. `get_table_indexes` 로 이 테이블의 "
@@ -2645,18 +2672,23 @@ def _heavy_query_coach(sql: str, est: int, warn_thr: int, facts: dict, seen: int
                 "테이블은 보통 시각 컬럼 = 파티션 키)** 으로 범위를 좁히세요. 인덱스가 없는 컬럼을 조건에 "
                 "써도 스캔량은 줄지 않습니다."
             )
-        if is_agg:
-            lines.append(
-                "→ 이 쿼리는 **전역 집계**라 컬럼을 줄이거나 LIMIT 을 붙여도 스캔량이 줄지 않습니다"
-                "(집계는 대상 전체를 읽어야 값이 나옵니다). 기간·파티션으로 **집계 대상 자체**를 좁히거나, "
-                "대략적 전체 행수만 필요하면 `search_tables` 의 approx_rows 를 쓰세요."
-            )
-    else:
+    elif not is_agg:
         # 계획 사실을 주지 않는 엔진(MSSQL 등) — 진단 없이 **기존 정적 문구 그대로**(골든 계약).
-        # 쿼리 형태로 추정한 조언을 여기서 섞으면 그 계약이 조용히 깨진다(codex P2).
+        # 계획에서 **유도한** 조언을 여기 섞으면 그 계약이 조용히 깨진다(codex P2). 아래 집계
+        # 안내는 계획이 아니라 SQL 형태에서 나오므로 그 계약과 무관하다.
         lines.append(
             "→ 같은 목적을 유지하면서 DB 부하가 더 적은 쿼리로 재구성하세요: 필요한 컬럼만 SELECT, "
             "WHERE 로 대상 한정(id/상태/기간), 서버측 집계(COUNT/SUM/GROUP BY), 표본은 LIMIT/TOP n."
+        )
+
+    if is_agg:
+        lines.append(
+            "→ 이 쿼리는 **전역 집계**라 컬럼을 줄이거나 LIMIT 을 붙여도 스캔량이 줄지 않습니다"
+            "(집계는 대상 전체를 읽어야 값이 나옵니다). 대략적 전체 행수만 필요하면 "
+            "`list_schemas`·`describe_schema`·`search_tables` 가 이미 주는 **approx_rows** 를 쓰세요. "
+            "⚠ 구간을 나눠 여러 번 돌리는 것은 **총 스캔량을 줄이지 않습니다** — 게이트만 우회할 뿐 "
+            "DB 부하는 같습니다. 정말 정확한 값이 필요하면 기간·파티션으로 **집계 대상 자체**를 좁히거나, "
+            "좁힐 수 없다면 `confirm_heavy=true` 로 근거를 밝히고 한 번에 실행하세요."
         )
     if not trust_llm_confirm:
         # 운영자 정책이 모델의 confirm 을 무시하는데 "호출하면 실행합니다" 라고 안내하면, 모델은
@@ -2800,6 +2832,7 @@ def _tool_execute_sql(conn, args: dict) -> str:
             f"오류: 보안 정책상 차단된 SQL — {guard.error_reason}. "
             f"execute_sql 은 단일 SELECT/CTE 분석 쿼리만 허용됩니다 "
             f"(스키마 구조 탐색은 list_schemas/describe_table 등 전용 도구 사용). "
+            f"{_catalog_function_redirect(guard.error_reason)}"
             f"{_dialect_correction_hint(sql)}"
             f"{_routine_introspection_redirect(sql)}"
         )
@@ -2868,9 +2901,13 @@ def _tool_execute_sql(conn, args: dict) -> str:
                             "다음 도구 호출에서 자동으로 재연결되므로 **같은 쿼리를 그대로 다시 실행**하세요."
                         )
                     return (
-                        "⚠ 사전 부하추정에 실패했습니다 (실행계획 미취득 — SHOWPLAN 권한·연결 확인). "
-                        "부하게이트(gate) 모드에서 안전을 위해 차단합니다. WHERE 조건·기간·집계 범위를 좁히거나 "
-                        "TOP/행 제한을 추가해 더 작은 쿼리로 다시 시도하세요."
+                        "⚠ 사전 부하추정에 실패했습니다 (실행계획 미취득). 부하게이트(gate) 모드에서 "
+                        "안전을 위해 차단합니다. **쿼리가 무거워서가 아닙니다** — 계획을 못 받아온 것입니다. "
+                        "원인은 셋 중 하나입니다: ① SHOWPLAN 권한 ② 일시적 연결 상태 "
+                        "③ **특정 SQL 형태에서 계획 취득 실패**(라이브 사례: `TRY_CAST` 를 쓴 쿼리가 막혔고 "
+                        "같은 논리를 JOIN+CAST 로 재작성하니 통과). 따라서 범위를 좁히는 것만으로는 "
+                        "풀리지 않을 수 있습니다 — **같은 논리를 다른 형태로 재작성**해 보고, 그래도 "
+                        "안 되면 그 사실을 사용자에게 알리세요."
                     )
             elif est > warn_thr and not confirm_heavy:
                 # 무거운 쿼리(추정치 보유). gate=실행 전 가로채고 LLM 이 더 가벼운 쿼리로 재작성하도록
