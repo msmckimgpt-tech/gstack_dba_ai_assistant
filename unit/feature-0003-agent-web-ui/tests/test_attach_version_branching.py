@@ -172,7 +172,9 @@ def test_cross_lineage_diff_authorizes_each_side_independently():
     여기서 기준 하나만 검사하면 임의 attachment_id 두 개의 본문을 나란히 여는 경로가 된다.
     """
     src = inspect.getsource(_attachments_router.get_attachment_version_diff)
-    seg = src.split("if cross_lineage:")[-1].split("        else:", 1)[0]
+    # `if cross_lineage:` 는 소스에 여러 번 나온다(파라미터 파싱 · 본문 · 헤더 정정).
+    # 위치로 고르면 코드가 늘 때마다 조용히 다른 블록을 검사하게 된다 — **내용으로** 고른다.
+    seg = next(b for b in src.split("if cross_lineage:") if "from_att_id)" in b)
     assert "for _side in (left, right)" in seg
     assert "_account_can_access_attachment" in seg
 
@@ -180,7 +182,9 @@ def test_cross_lineage_diff_authorizes_each_side_independently():
 def test_cross_lineage_diff_is_scoped_to_same_conversation_and_filename():
     """같은 대화·같은 파일명으로 스코프한다 — 범용 '아무 첨부 2개 비교' 경로가 되면 안 된다."""
     src = inspect.getsource(_attachments_router.get_attachment_version_diff)
-    seg = src.split("if cross_lineage:")[-1].split("        else:", 1)[0]
+    # `if cross_lineage:` 는 소스에 여러 번 나온다(파라미터 파싱 · 본문 · 헤더 정정).
+    # 위치로 고르면 코드가 늘 때마다 조용히 다른 블록을 검사하게 된다 — **내용으로** 고른다.
+    seg = next(b for b in src.split("if cross_lineage:") if "from_att_id)" in b)
     assert "ConversationId" in seg and "같은 대화" in seg
     assert "OriginalFilename" in seg and "같은 파일" in seg
 
