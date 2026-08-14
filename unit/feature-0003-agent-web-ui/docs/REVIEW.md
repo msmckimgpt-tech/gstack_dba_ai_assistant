@@ -5124,6 +5124,28 @@ doc-only(코드 0). 기록의 근거는 라이브 DB 조회와 실 Chrome 관측
 - Related TASK: feature-0003-agent-web-ui
 - Reason: changed paths are docs + evidence image only (no code, no policy doc)
 - Timestamp: 2026-08-14T10:45:00+09:00
+
+## REV-20260814T110000-profile-usage-sort-page [CODEX:adversarial-frontend-port] — CONCERN (P1 0건 · P2 4건 → 3건 반영 · 1건 계측으로 반증)
+- Related TASK: feature-0003-agent-web-ui
+- Source: codex exec (staged diff 적대 리뷰 — 이식 누락/상태·재렌더/경계/회귀/CSS 5축)
+- Trigger: §18.8 dispatch 표가 UI 변경에 ux 패널을 요구하나 본 세션에는 subagent 금지 상위 지시가
+  있어 §18.8 "제약 없는 채널 우선"(1번)의 codex-review 를 택했다. 레이아웃 도메인은 **실 Chromium
+  하네스로 직접 계측**해 덮었고(미검증으로 남기지 않았다), 최종 시각은 PB-0008.
+- Timestamp: 2026-08-14T11:00:00+09:00
+- Verdict: CONCERN — [P1] 0. [P2] 4건 중
+  ① 속성 인젝션(`'` 미이스케이프) → **반영**. 관리 콘솔은 타인 제목을 보므로 stored 경로 실재.
+  ② sticky 열 머리가 스크롤러에 미부착 → **반영**(스크롤러 단일화). 뮤턴트로 4건 FAIL 확인.
+  ③ 좁은 폭 페이저 넘침 → **반증**. 320/480/640px 실측 통과, 뮤턴트(줄바꿈 제거)도 통과 =
+     이 축은 현재 검출력이 없다. 지적을 수용하는 대신 계측 결과를 기록하고, 방어적 줄바꿈만 유지.
+  ④ 오래된 응답이 현재 모달을 덮는 경합 → **이월**(아래 한계 참조).
+- **판단 기록 — ④를 이번에 고치지 않은 이유**: `openProfileUsageConversations` 의 요청-응답 경합은
+  이번 변경이 만든 것이 아니라 **선재 구조**이고, 관리 콘솔 판(`openUsageConversations`)에도 똑같이
+  있다. 한쪽만 고치면 "두 화면 규칙을 맞춘다"는 이번 cycle 의 목적과 어긋나고, 양쪽을 고치는 것은
+  요청 범위(정렬·페이지네이션 정합) 밖의 확장이다. REPORT 에 이월로 명시한다 — 숨기지 않는다.
+- 검증: node 45(profile) + 50(admin 무회귀) · 실 Chromium 12(두 화면 × sticky/폭/가시성, 뮤턴트
+  검출력 확인) · pytest 16 · feature-0003 전체 스위트 회귀 0.
+- 한계(정직): jsdom·헤드리스는 실 Windows 폰트·스크롤바 폭·DPI 를 반영하지 않는다. 배포 후
+  PB-0008 로 두 화면을 모두 재확인한다(관리 콘솔 판은 스크롤러 변경의 영향을 받는다).
 ## REV-20260813T213000-ai-claude-corp-usage-card-overflow [SKIPPED:non-policy-doc] — 카드 넘침 수정
 
 CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.

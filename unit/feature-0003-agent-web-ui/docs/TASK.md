@@ -10797,6 +10797,22 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       가시성 전 축 실측 → TEST.md POST-DEPLOY Run 기록(시각 증거 `docs/evidence/` 첨부).
 - [x] 미검증 항목 명시 — 열 폭 재계산(≤4%, 이월) · 브라우저 콘솔 에러 미수집.
 - [x] REPORT.md 이월 항목 정리.
+
+## TASK-20260814T110000-profile-usage-sort-page — 프로필 사용 내역 표 정렬·페이지네이션 (Minor §12.3)
+
+요청(사용자): "정상적으로 작동하는것을 확인했습니다. 사용자 프로필 화면에서도 정합하게 적용해주세요."
+
+- [x] `app/profile.js` 대화 목록 모달에 열 정렬 + 페이지네이션 이식(관리 콘솔 판과 규칙 동일).
+- [x] 적대 리뷰 [P2] 4건 처리 — 속성 인젝션 수정(양 판) · sticky 스크롤러 단일화(양 판) ·
+      좁은 폭 넘침은 **계측으로 반증** · 요청-응답 경합은 선재 구조라 이월(사유 REVIEW 기록).
+- [x] `tests/verify_profile_usage_sort_page.mjs` **45 PASS**(규칙 정합 8축 포함).
+- [x] `tests/headless/verify_usage_pager_layout.py` **12 PASS**(실 Chromium, 뮤턴트로 검출력 확인).
+- [x] `tests/test_usage_records_sort_page.py` **16 PASS** · feature-0003 전체 스위트 회귀 0.
+- [ ] 배포 후 PB-0008 — 프로필 판 실측 + **관리 콘솔 판 재확인**(스크롤러 변경 영향).
+
+### Requested Scope
+
+- 프로필 화면에도 정합하게 — ✓ (규칙 동일성을 테스트로 잠금).
 ## 20260813T2130-usage-card-overflow — 요약 카드가 좁은 폭에서 내부 범위를 벗어나는 이슈 (Minor §12.3)
 
 사용자 보고: "프로필 화면을 조정했을 때, 좁은 공간으로 인해 요소 내 텍스트 길이에 따라 내부 범위를

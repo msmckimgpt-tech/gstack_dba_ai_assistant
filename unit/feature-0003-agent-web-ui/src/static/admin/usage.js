@@ -48,7 +48,10 @@ async function loadUsage(opts) {
     adminState.usage.metric = metric.key;
   }
   if (summaryEl && refetch) summaryEl.textContent = "로딩 중…";
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  // 이 값도 **속성**(`data-metric='…'`, `data-tip='…'`)에 들어가므로 따옴표까지 이스케이프한다 —
+  // 지금 흘러드는 값(모델 카탈로그 키)이 안전하다는 사실에 의존하지 않는다(모달 판과 같은 규칙).
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
   const usd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // TASK-0166: 상용 대시보드식 hover 툴팁 (의존성 0). data-tip 속성을 가진 요소에 마우스.
@@ -817,7 +820,10 @@ function applyUsageNav(nav) {
 //   합쳐 토큰 큰 순 정렬한다(구분 배지로 종류 표기). 종전 '대화 목록' 은 대화 귀속분만 보여
 //   라이브 기준 전체 토큰의 약 절반(시스템 사용분)이 목록에서 사라졌다.
 function showUsageConvModal(state) {
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  // ⚠ `'` 까지 이스케이프한다 — 이 값은 `title='…'` 같은 **작은따옴표 속성**에도 들어가므로,
+  //   남겨 두면 (관리자가 보는) 타인의 대화 제목만으로 속성을 탈출할 수 있다(적대 리뷰 [P2]).
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
   const usd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtDt = (s) => {

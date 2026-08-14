@@ -4193,6 +4193,30 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/REPORT.md`(이월: 열 폭 재계산 ≤4% · profile 판 미적용) · `docs/TASK.md` · `docs/REVIEW.md` ·
   `docs/evidence/pb0008-usage-pager-sticky-20260814.png`(첫 화면 페이저 시각 증거).
 - 코드 무변경.
+
+## CHG-20260814T110000 프로필 사용 내역 표에 정렬·페이지네이션 이식 + 이식 중 적발 결함 (REV-20260814T110000-profile-usage-sort-page)
+
+- 대상: `src/static/app/profile.js` `showProfileUsageConvModal` — 열 정의(5축) · 표시값 기준 정렬 키 ·
+  thead 정렬 버튼(aria-sort) · 페이지 슬라이스 렌더 · 페이저 · 상호작용 위임 · 포커스 복원.
+  관리 콘솔 판(`admin/usage.js`)과 상수·규칙을 동일하게 맞췄다(테스트가 두 소스를 대조해 잠근다).
+- **[P2] 속성 인젝션(적대 리뷰)** — `_pUsageEsc` / admin `esc` 가 `&<>` 만 이스케이프하는데 값이
+  `title='…'` 같은 **작은따옴표 속성**에 들어가, 대화 제목만으로 속성을 탈출해 이벤트 핸들러를
+  심을 수 있었다(`x' onmouseover='alert(1)`). 관리 콘솔은 **타인의 대화 제목**을 보므로 stored
+  경로가 실재한다. → 양 판 모두 `"`·`'` 포함으로 강화(`admin/usage.js` 차트 스코프 `esc` 도 함께 —
+  `data-metric='…'` 속성에 쓰인다).
+- **[P2] sticky 열 머리가 실제 스크롤러에 안 붙음(적대 리뷰)** — `.usage-conv-tablewrap` 의
+  `overflow-x:auto` 가 sticky 의 containing scroll box 가 되는데 그 박스는 세로로 스크롤하지 않아
+  머리가 붙을 곳이 없었다(목록을 내리면 머리가 사라져 정렬 버튼 재도달 불가). → 가로 넘침을
+  **세로 스크롤러**(`.usage-conv-body` / `.usage-conv-content`)로 옮겨 스크롤러를 하나로 만들었다.
+  관리 콘솔 판도 함께 고쳐진다.
+- **[P2→반증] 좁은 폭 페이저 넘침** — 실 Chromium 320/480/640px 실측에서 **재현되지 않았다**
+  (`.usage-rec-pager` 의 `flex-wrap: wrap` 이 이미 흡수). 지적을 그대로 수용하지 않고 계측으로
+  확인했다. 다만 컨트롤이 늘어날 때를 대비해 `.usage-rec-pager-ctl` 에도 줄바꿈을 허용해 뒀다
+  (방어적, 무해). **이 축은 회귀 가드일 뿐 결함 수정이 아니다** — 뮤턴트로 검출력이 없음을 확인.
+- 무변경: 백엔드 `/api/profile/usage/conversations`, 응답 스키마, 권한.
+- 테스트: `tests/verify_profile_usage_sort_page.mjs` **신규 45**(관리 콘솔 판과의 규칙 정합 8축 포함) ·
+  `tests/headless/verify_usage_pager_layout.py` **신규 12**(실 Chromium, 두 화면 × sticky/폭/가시성) ·
+  `tests/test_usage_records_sort_page.py` **+7 → 16**.
 ## CHG-20260813T2130-ai-claude-corp-usage-card-overflow — 사용량 요약 카드 넘침 수정 (Minor §12.3, CSS 전용)
 
 - `src/static/css/admin.css` — `.profile-usage-summary` 를 flex → **grid auto-fit
