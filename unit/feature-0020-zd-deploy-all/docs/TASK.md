@@ -172,6 +172,7 @@ source_of_truth: true
 - [x] T9 전체 스위트 실행 — 귀책 실패 0. pre-existing 1건(`chattr` 미설치 환경 의존,
       main 기준선에서 동일 재현).
 - [x] T10 verify-completion → commit → PR #1295 → 머지(73c02c71)
+- [x] T12 자가 검증 — 적대 재검토 + 라이브 가설 실측(D1 drain 관측 상수화 · D2 stopped leaked 미감지 적발·수정) + surge 공존 실증 + 뮤테이션 11/11 KILLED
 - [x] T11 라이브 배포 + POST-DEPLOY 검증 — exit 0 · 6서비스 전부 73c02c71 · surge 잔존 0 · 엣지 503 0건 · alive 파일/healthcheck/drain 예산 실증 (TEST.md POST-DEPLOY 기록)
 
 ### Completion Checklist

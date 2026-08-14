@@ -922,7 +922,11 @@ wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 
 # 반환 규약(호출자가 롤백 여부를 가른다 — 이 구분이 없으면 무관한 실패에 멀쩡한 워커를 되돌린다):
 #   0 = 교체 완료 / 1 = **신 이미지 결함**(본체가 신 이미지로 못 뜸 → 워커군 롤백 대상)
 #   2 = 본체 무접촉 중단(surge 준비 실패 등 — 구 워커가 계속 서빙, 롤백 불필요)
-ask_surge_cid() { "${DC_SURGE_PROD[@]}" ps -q "$ASK_WORKER_SURGE" 2>/dev/null | head -1; }
+# ⚠ `ps -aq` 다(`ps -q` 아님). compose v2 의 `ps -q` 는 **running 만** 반환한다 — 라이브 실측
+# (2026-08-14 자가 검증): stop 직후 `ps -q` = 빈 값, `ps -aq` = cid. leaked surge 는 대개
+# "stop 은 됐는데 rm 이 실패한" 형태로 남으므로, `ps -q` 로 찾으면 **정확히 그 형태를 놓친다**
+# (그 컨테이너는 `up -d` 로 되살아나 큐에서 다시 일한다). 존재 여부는 상태와 무관해야 한다.
+ask_surge_cid() { "${DC_SURGE_PROD[@]}" ps -aq "$ASK_WORKER_SURGE" 2>/dev/null | head -1; }
 
 ask_surge_health() {
   local cid; cid="$(ask_surge_cid)"
@@ -953,36 +957,62 @@ wait_ask_surge_healthy() {  # $1 = timeout_s → 0 성공
 # 그 컨테이너가 **자기 이름으로 claim 한** running job 수. worker_id 는
 # `ask-worker[<role>]-<hostname>-<pid>` 이고 hostname 은 컨테이너 hostname 이다.
 # 조회 불가는 0 이 아니라 unknown — 여기서 0 으로 읽으면 "다 끝났다" 는 거짓 안심이 된다.
-ask_container_running_jobs() {  # $1 = svc → 정수 | "unknown"
-  local cid host
-  cid="$("${DC_SURGE_PROD[@]}" ps -q "$1" 2>/dev/null | head -1)"
-  [ -n "$cid" ] || { echo 0; return 0; }   # 컨테이너가 없으면 그 이름으로 도는 것도 없다
-  host="$(docker inspect -f '{{.Config.Hostname}}' "$cid" 2>/dev/null | tr -d '[:space:]')"
-  [ -n "$host" ] || { echo unknown; return 0; }
-  _ask_jobs_count "claimed_by LIKE '%-${host}-%'"
+ask_container_hostname() {  # $1 = svc → 컨테이너 hostname | 빈 값(부재/조회 불가)
+  # `ps -aq` — stopped 도 포함해야 한다. drain **후** 조회가 이 함수의 주 용도이고, 그 시점
+  # 컨테이너는 정지 상태라 `ps -q` 로는 안 보인다(라이브 실측 2026-08-14).
+  local cid
+  cid="$("${DC_SURGE_PROD[@]}" ps -aq "$1" 2>/dev/null | head -1)"
+  [ -n "$cid" ] || return 0
+  docker inspect -f '{{.Config.Hostname}}' "$cid" 2>/dev/null | tr -d '[:space:]'
+}
+
+# 그 **인스턴스가 자기 이름으로 claim 한** running job 수. worker_id 는
+# `ask-worker[<role>]-<hostname>-<pid>` 이고 hostname 은 컨테이너 hostname 이다.
+# 조회 불가는 0 이 아니라 unknown — 여기서 0 으로 읽으면 "다 끝났다" 는 거짓 안심이 된다.
+ask_running_jobs_for_host() {  # $1 = hostname → 정수 | "unknown"
+  [ -n "$1" ] || { echo unknown; return 0; }
+  _ask_jobs_count "claimed_by LIKE '%-${1}-%'"
 }
 
 # surge/본체를 **완주 예산 안에서** 내린다. 컨테이너는 SIGTERM 을 받으면 신규 claim 을 멈추고
 # 자기 in-flight 만 마친 뒤 스스로 종료한다 — 정상 경로에서는 이 호출이 예산을 다 쓰지 않는다.
 # 예산을 다 쓰면 docker 가 SIGKILL 하므로, 그 사실을 **조용히 넘기지 않고 보고**한다.
-drain_stop_ask() {  # $1 = svc, $2 = 라벨 → 0 완주 종료 / 1 예산 초과(강제 종료됨)
-  local svc="$1" label="$2" before after t0 elapsed
+drain_stop_ask() {  # $1 = svc, $2 = 라벨 → 0 완주 종료 / 1 예산 초과 또는 잔존 run
+  local svc="$1" label="$2" host before after t0 elapsed
   [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] drain-stop $svc (예산 ${ASK_DRAIN_TIMEOUT}s)"; return 0; }
-  before="$(ask_container_running_jobs "$svc")"
+  # ⚠ hostname 을 **stop 전에** 확보한다. 초판은 stop 후에 컨테이너로 다시 조회했는데,
+  # `ps -q` 가 running 만 반환하므로 그 시점엔 빈 값이 나와 **`after` 가 항상 0** 이었다
+  # (라이브 자가 검증 2026-08-14에서 적발). 그러면 "보유 N→0 — 끊긴 run 없음" 이 관측이 아니라
+  # 상수가 된다 — 정확히 이 저장소가 반복해서 경계해 온 vacuous pass 다.
+  host="$(ask_container_hostname "$svc")"
+  before="$(ask_running_jobs_for_host "$host")"
   step "drain-stop: $label — 신규 claim 중지 후 진행 중 run 완주 대기(예산 ${ASK_DRAIN_TIMEOUT}s, 현재 보유 ${before})"
   t0=$SECONDS
   "${DC_SURGE_PROD[@]}" stop -t "$ASK_DRAIN_TIMEOUT" "$svc" >/dev/null 2>&1 || warn "$label stop 명령이 비정상 종료 — 상태로 판정한다."
   elapsed=$(( SECONDS - t0 ))
-  after="$(ask_container_running_jobs "$svc")"
+  after="$(ask_running_jobs_for_host "$host")"
   if [ "$elapsed" -ge "$ASK_DRAIN_TIMEOUT" ]; then
     warn "$label: drain 예산(${ASK_DRAIN_TIMEOUT}s) 소진 — 남은 run 은 SIGKILL 됐고 lease 반납/role-reclaim 으로 재큐된다(사용자에겐 재실행)."
     QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=DRAIN-TIMEOUT(보유 ${before}→${after})"
     QUIESCE_FORCED=$(( QUIESCE_FORCED + 1 ))
     return 1
   fi
-  log "  $label: ${elapsed}s 만에 완주 종료(보유 ${before}→${after}) — 끊긴 run 없음."
-  QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=drained(${elapsed}s)"
-  return 0
+  # 정상 종료했는데도 그 인스턴스 소유 running 이 남아 있으면, 완주도 반납도 못 한 run 이다
+  # (SIGKILL 이나 lease 반납 실패). role-reclaim 이 곧 회수하지만 **사용자에겐 재실행**이므로
+  # "끊긴 run 없음" 으로 보고해서는 안 된다. `unknown` 도 조용함으로 읽지 않는다.
+  case "$after" in
+    0) log "  $label: ${elapsed}s 만에 완주 종료(보유 ${before}→0) — 끊긴 run 없음."
+       QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=drained(${elapsed}s)"
+       return 0 ;;
+    unknown)
+       warn "$label: ${elapsed}s 에 종료했으나 잔존 run 을 **관측하지 못했다**(보유 ${before}→unknown). 조용함으로 읽지 않는다."
+       QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=drained-unverified(${elapsed}s)"
+       return 1 ;;
+    *) warn "$label: ${elapsed}s 에 종료했으나 그 인스턴스 소유 running 이 ${after}건 남았다 — 완주도 반납도 못 한 run 이다(role-reclaim 이 회수하지만 사용자에겐 재실행)."
+       QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=CUT(보유 ${before}→${after})"
+       QUIESCE_FORCED=$(( QUIESCE_FORCED + 1 ))
+       return 1 ;;
+  esac
 }
 
 # 직전 배포가 정리 전에 죽었으면 surge 가 남아 **구 이미지로 사용자 job 을 계속 처리**한다

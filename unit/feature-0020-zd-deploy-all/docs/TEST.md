@@ -134,3 +134,16 @@ source_of_truth: true
   ② 이번 교체에서 내려간 본체는 **구 이미지(`4491ad80`)** 라 구 drain 시맨틱(60s)으로 동작했다.
      신 예산(1800s)은 이번 recreate 로 발효됐으므로 **다음 배포부터** 완전한 완주 보장이 적용된다.
   ③ `DRAIN-TIMEOUT` 보고 경로(예산 초과)는 유휴 배포라 미발화 — 단위 테스트로만 잠겨 있다.
+
+#### [자가 검증 2026-08-14] 적대 재검토 + 라이브 실측 + 뮤테이션
+- **라이브 가설 실측(핵심)**: `docker compose ps -q ask-worker-surge` — stop **전** cid 반환 /
+  stop **후 빈 값** / `ps -aq` 는 cid 반환. → `drain_stop_ask` 의 `after` 가 **항상 0** 이었음이
+  확정(D1). `ask_surge_cid` 도 같은 이유로 stopped leaked surge 를 놓침(D2). 둘 다 수정.
+- **surge 공존 실증(설계 전제)**: 본체 `1dde44659f40` / surge `e3317319e947` — **각자의**
+  `/tmp/ask-worker.alive` 보유, healthcheck 각각 exit 0(인스턴스 격리 성립), role reclaim
+  상호 탈취 로그 **0건**(살아 있는 형제 미탈취). 공존 후 정리(`rm -f`)까지 확인.
+- **뮤테이션 11/11 KILLED**: surge 순서 뒤집기 · 연쇄 차단 복귀 · 완결 판정 제거 · surge 핀 누락 ·
+  롤백 surge 잔존 · hostname 사후 캡처(D1) · `ps -q` 복귀(D2) · 잔존 run 은폐 · liveness 를
+  `_SHUTDOWN` 에 재결합 · healthcheck KV 우선 복귀 · stop_grace 70s 축소.
+- **회귀**: feature-0014+0020 **101 passed**(신규 4). `bash -n` OK.
+- **Pass/Fail: PASS**.

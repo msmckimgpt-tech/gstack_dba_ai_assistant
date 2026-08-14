@@ -222,8 +222,51 @@ def test_drain_timeout_is_reported_not_swallowed():
 
 def test_container_scoped_job_count_does_not_read_failure_as_zero():
     """조회 실패를 0 으로 읽으면 '다 끝났다' 는 거짓 안심이 된다(quiesce 의 vacuous pass 와 동형)."""
-    body = _fn("ask_container_running_jobs", "# surge/본체를 **완주 예산 안에서**")
+    body = _fn("ask_running_jobs_for_host", "# surge/본체를 **완주 예산 안에서**")
     assert "unknown" in body, "관측 실패가 0 과 구분되지 않는다"
+
+
+def test_drain_captures_hostname_before_stopping():
+    """자가 검증(2026-08-14)에서 적발한 결함의 봉인.
+
+    `docker compose ps -q` 는 **running 만** 반환한다(라이브 실측: stop 직후 빈 값, `ps -aq` 는 cid).
+    초판은 stop **후** 컨테이너로 job 수를 다시 조회했는데, 그 시점 cid 가 빈 값이라 조기 반환으로
+    **`after` 가 항상 0** 이었다. 그러면 "보유 N→0 — 끊긴 run 없음" 은 관측이 아니라 상수다.
+    """
+    body = _fn("drain_stop_ask", "# 직전 배포가 정리 전에 죽었으면")
+    host_capture = body.index('host="$(ask_container_hostname')
+    stop_call = body.index('stop -t "$ASK_DRAIN_TIMEOUT"')
+    after_read = body.index('after="$(ask_running_jobs_for_host')
+    assert host_capture < stop_call < after_read, \
+        "hostname 을 stop 전에 확보하지 않으면 drain 후 관측이 상수가 된다"
+    assert 'ask_running_jobs_for_host "$host"' in body, \
+        "stop 후 조회가 컨테이너에 다시 의존한다 — 정지된 컨테이너는 ps -q 로 안 보인다"
+
+
+def test_residual_running_after_drain_is_reported_as_cut():
+    """정상 종료했는데 그 인스턴스 소유 running 이 남았다면 완주도 반납도 못 한 run 이다.
+
+    role-reclaim 이 회수하지만 **사용자에겐 재실행**이므로 '끊긴 run 없음' 으로 보고하면 안 된다.
+    """
+    body = _fn("drain_stop_ask", "# 직전 배포가 정리 전에 죽었으면")
+    assert "=CUT(" in body, "잔존 run 이 끊긴 것으로 보고되지 않는다"
+    assert "drained-unverified" in body, "관측 실패(unknown)를 조용함으로 읽는다"
+    # 0 분기에서만 성공(0) 을 반환해야 한다.
+    zero_branch = body[body.index("case \"$after\" in"):]
+    assert zero_branch.index("return 0") < zero_branch.index("return 1"), \
+        "0 이 아닌 잔존에도 성공을 반환한다"
+
+
+def test_surge_presence_check_includes_stopped_containers():
+    """leaked surge 는 대개 'stop 은 됐는데 rm 이 실패한' 형태로 남는다.
+
+    `ps -q` 로 찾으면 정확히 그 형태를 놓치고, 그 컨테이너는 다음 `up -d` 로 되살아나
+    큐에서 다시 일한다(라이브 실측 2026-08-14: stop 직후 `ps -q`=빈 값, `ps -aq`=cid).
+    """
+    body = _fn("ask_surge_cid", "ask_surge_health() {")
+    assert "ps -aq" in body, "surge 존재 확인이 running 상태에만 의존한다 — stopped leaked 를 놓친다"
+    host_body = _fn("ask_container_hostname", "# 그 **인스턴스가 자기 이름으로")
+    assert "ps -aq" in host_body, "정지된 컨테이너의 hostname 을 못 읽는다"
 
 
 # ══════════════════════════════════════════════════════════════════════

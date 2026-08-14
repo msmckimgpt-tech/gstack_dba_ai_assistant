@@ -294,3 +294,31 @@ source_of_truth: true
 - **정직**: 배포 시점 running=0(유휴)이라 **"바쁠 때 기다리지 않고 완결한다" 는 핵심 주장은
   아직 궤적으로 미관측**이다. 이번 실증 범위는 "경로가 설계대로 돈다" 까지. 또 이번에 내려간
   본체는 구 이미지라 구 drain 시맨틱(60s)으로 동작했고, 신 예산은 다음 배포부터 적용된다.
+
+## CHG-20260814T133000 자가 검증 적발 — drain 관측이 상수였던 결함 + stopped leaked surge 미감지
+- **Trigger**: 사용자 요청 "자가 검증도 진행" (2026-08-14). 선행 cycle `CHG-20260814T120000` 의
+  surge 경로를 적대적으로 재검토하고 라이브에서 가설을 실측.
+- **적발 D1 — drain 보고가 관측이 아니라 상수였다**: `drain_stop_ask` 가 stop **후** 컨테이너로
+  job 수를 다시 조회했는데, `docker compose ps -q` 는 **running 만** 반환한다(라이브 실측:
+  stop 직후 `ps -q`=빈 값, `ps -aq`=cid). 그래서 조회가 조기 반환으로 빠져 **`after` 가 항상 0**
+  이었다 — "보유 N→0 · 끊긴 run 없음" 이 어떤 상황에서도 출력되는 문장이 된다. 유휴 배포에서는
+  before 도 0 이라 우연히 맞았지만, **바쁜 배포에서는 정확히 거짓 안심**이다(이 저장소가 반복해서
+  경계해 온 vacuous pass — `web_active_streams_total` 초판과 같은 부류).
+  → hostname 을 **stop 전에** 확보해 그 값으로 before/after 를 조회한다. 컨테이너 상태와 무관해진다.
+- **적발 D2 — stopped leaked surge 미감지**: `ask_surge_cid` 도 `ps -q` 였다. leaked surge 는 대개
+  "stop 은 됐는데 rm 이 실패한" 형태로 남는데, 그 형태를 **정확히 놓친다**. 그 컨테이너는 다음
+  `up -d` 로 되살아나 큐에서 다시 일한다. → `ps -aq`.
+- **부수 강화 — 잔존 run 을 성공으로 보고하지 않는다**: 정상 종료했는데 그 인스턴스 소유 running 이
+  남았다면 완주도 반납도 못 한 run 이다(SIGKILL·반납 실패). role-reclaim 이 회수하지만 사용자에겐
+  재실행이므로 `=CUT` 으로 기록하고 강행 카운터를 올린다. 관측 실패(`unknown`)는
+  `drained-unverified` 로 남기고 성공으로 읽지 않는다.
+- **라이브 실증(surge 공존, 이미지 동일 `73c02c71`)**: 본체/surge 가 **각자의 alive 파일**을 갖고
+  (hostname `1dde44659f40` vs `e3317319e947`) healthcheck 각각 exit 0 — liveness 인스턴스 격리 확인.
+  role reclaim 상호 탈취 **0건**(살아 있는 형제를 뺏지 않는다). 공존 종료 후 정리까지 확인.
+- **뮤테이션 11/11 KILLED**: surge 순서 뒤집기 · 연쇄 차단 복귀 · 완결 판정 제거 · surge 핀 누락 ·
+  롤백 surge 잔존 · **hostname 사후 캡처(D1 재도입)** · **`ps -q` 복귀(D2 재도입)** · 잔존 run 은폐 ·
+  liveness 를 `_SHUTDOWN` 에 재결합 · healthcheck KV 우선 복귀 · stop_grace 70s 축소.
+- **위험등급**: Major(배포 판정의 정직성). 런타임 서빙 코드 변경 0 — `bin/deploy-web.sh` 만.
+- Files: `bin/deploy-web.sh` · `unit/feature-0020-zd-deploy-all/tests/test_ask_surge_rollout.py` · docs.
+- Rollback Notes: `ps -aq`→`ps -q`, hostname 선캡처 제거로 원복. 그 순간부터 drain 보고가 다시
+  상수가 되고 stopped leaked surge 를 놓친다.
