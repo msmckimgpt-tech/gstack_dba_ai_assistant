@@ -8,8 +8,13 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-early-return-kv-never-finalized — fixed:undeployed (L4↔L7 경계; run 이 KV 를 마감하지 못하면 프런트는 영원히 기다린다)
 
-- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 26 + 회귀 56 = **82 PASS**, verify-completion
-  **18/18**, ruff clean, §18.8 codex [P1] 6건 중 4건 수정·2건 근거 기록). **배포 전** → 라이브 실측 미수행.
+- **status**: `fixed:deployed:unverified-live` — PR #1303 merge(main `6cd45761`) → `deploy-web` **전체
+  롤아웃 완료**(2026-08-14 16:5x). **6서비스 GIT_COMMIT=`6cd45761` healthy**(web-a·web-b·ask-worker·
+  insight-worker·ops-scheduler·ext-tool-mcp) · edge `/healthz` `status=ok·mysql_ok·pg_ok` ·
+  **무중단 실측 `no upstreams available` 0** · surge 잔존 0 · ask-worker quiesce drained(346s,
+  진행 중 사용자 run 무절단). 코드/테스트 82 PASS · verify-completion 18/18 · ruff clean ·
+  §18.8 codex [P1] 6건 중 4건 수정·2건 근거 기록 · CI 회귀 2건 추가 수정(PR #1303).
+  **라이브 대화 재현 실측은 미수행** → `unverified-live`.
 - **source**: 사용자 명시 호출(2026-08-14) — "`새 대화` 대화가 5분이 지났는데도 **시작 자체가 진행되지
   않는** 상황(첨부 2종 추가·쿼리 리뷰 요청). 근본적인 원인을 분석하여 개선해주세요."
 - **modality**: 1:1 동기(`is_group=f`) · **conv(마스킹)**: `…bcc2bfa0` · **account(마스킹)**: A-10 ·
@@ -56,9 +61,26 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   (소비 지점 `feature-0003-agent-web-ui` 는 cross-ref) / `REV-20260814T160000-ask-kv-terminal-seal`
 - **rc_ids**: RC-1(워커 KV 마감 3갈래 전제 붕괴) · RC-2(ask_result KV 단일 소스 비대칭) ·
   RC-3(조기 종료가 사용자 질문 유실) · **batch-id**: B-20260814T160000-ask-kv-terminal-seal
-- **라이브 실측 필요분(§정직)**: 코드/테스트는 "마감 계약이 동작함" 까지만 증명한다. **"실제 대화의
-  무한 폴링 소멸"** 은 배포 후 실측분(미수행) → 다음 audit 이 corroboration(조기 종료 job 의 KV
-  terminal 도달률 · `enqpre-` 고착 대화 수) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+- **POST-DEPLOY 실증 (2026-08-14, 정직 기록)**
+  - **배포본 런타임 실증(ask-worker)**: `_ensure_kv_terminal(cid, run_id, result, raised, conn, job_id)`
+    적재 · sentinel prefix `enqpre-` · terminal 집합 `('done','error','canceled')` ·
+    `latest_terminal_job_for_conversation` / `has_other_active_job_for_conversation` 적재 ·
+    활성 집합에 `claimed` 포함(3곳) · `_persist_early_exit`(product 컨텍스트 포함 10인자) ·
+    `_run_agent_core` 내 **호출부 4곳** 연결.
+  - **배포본 실증(web-a)**: `routers/conversations.py`·`routers/_conv_store.py`·`app.py` 3파일에
+    `_latest_ask_job_terminal` 적재 · backstop 이 `to_thread` 경유 · `run_id` 대조 · 10초 주기.
+  - **라이브 UI 재현은 수행하지 못했다(정직)**: 재현 조건은 갖춰져 있었다 —
+    **product P-121 의 primary(`mysql-kr-an1-auth`)가 지금도 `down/circuit_open`** 이라 같은
+    조기 종료가 그대로 재현되는 상태다. 그러나 로그인 자격증명(`.env`) 접근이 도구 권한으로
+    차단되어 PB-0008 로그인 단계에서 멈췄다. **미검증을 검증으로 보고하지 않는다.**
+- **다음 audit 관측 지표(라이브 실측 대체)**:
+  1. 워커 로그 시그니처 `ask-worker: KV terminal 미기록 run 을 .* 로 마감` — **봉인 A 발동 횟수**
+     (배포 시점 기준선 **0건**). 발동이 관측되면 그 대화의 KV 가 terminal 인지 대조.
+  2. `enqpre-` 고착 대화 수: `SELECT count(*) FROM kv k1 JOIN kv k2 USING(conversation_id)
+     WHERE k1.key='last_status' AND k1.value='processing' AND k2.key='last_status_run_id'
+     AND k2.value LIKE 'enqpre-%'` — **기대 0**(배포 전 1건 = 사고 대화).
+  3. 조기 종료 job(0.x초 · `answer=""` · `steps=[]`)의 **KV terminal 도달률** — 기대 100%.
+  감소·100% 도달 시 `verified`, 재증가 시 `regressed`(fix 무효화 → 재진단).
 
 ## OBS-attach-chain-multiple-live-heads — 관측 항목 (수정 안 함, 발생 시 승격)
 

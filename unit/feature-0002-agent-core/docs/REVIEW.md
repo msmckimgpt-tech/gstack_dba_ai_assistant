@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260814T175000-ask-kv-seal-postdeploy [SKIPPED:non-policy-doc] (TASK-20260814T160000)
+- **Trigger**: §18.8 dispatch 표 첫 행 — 비정책 doc-only(배포 실증 기록 · 원장 status 갱신) +
+  저장소 위생(`web` 심링크 제거 · `.gitignore` 1줄). **코드 변경 0**, 스키마·RBAC·엔드포인트·
+  프롬프트 무변경이라 새 패널을 돌리지 않는다.
+- 본 cycle 이 기록하는 변경 자체의 적대 검증은 선행 `REV-20260814T160000-ask-kv-terminal-seal`
+  (codex backend+qa · [P1] 6건 중 4건 수정)과 `REV-20260814T170000-ask-kv-seal-ci-regression`
+  에서 이미 수행했다. 여기서는 **배포 실증 수치와 미검증 사실만** 옮긴다.
+- **심링크 제거의 안전성 근거**: `unit/feature-0002-agent-core/src/Dockerfile` 은 명시 경로만
+  COPY 하고(`web` 루트 심링크는 COPY 대상 아님) `.dockerignore` 도 없다 → 이미지·배포 영향 0.
+  CI 는 테스트 스텝에서 이 심링크를 **매 실행 스스로 생성**하므로 커밋본이 필요 없다.
+
 ## REV-20260814T170000-ask-kv-seal-ci-regression [SKIPPED:no-new-contract] (TASK-20260814T160000)
 - **Trigger**: §18.8 dispatch — 선행 `REV-20260814T160000-ask-kv-terminal-seal`(codex backend+qa)이
   본 changeset 의 계약을 이미 적대 검증했다. 본 후속은 **그 계약을 바꾸지 않고**, CI 가 잡은 회귀

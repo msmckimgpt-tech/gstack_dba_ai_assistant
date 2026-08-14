@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260814T175000-ask-kv-seal-postdeploy (배포 실증 + 원장 환류 + 심링크 오염 정리, doc+hygiene)
+
+- **배포 실증(2026-08-14)**: PR #1303 merge main `6cd45761` → `deploy-web` 전체 롤아웃.
+  **6서비스 GIT_COMMIT=`6cd45761` healthy** · edge `/healthz` ok(mysql_ok·pg_ok) ·
+  **무중단 실측 `no upstreams available` 0** · surge 잔존 0 · ask-worker quiesce drained 346s.
+  배포본 런타임 실증: 봉인 A/B/C 심볼·배선 전부 적재(ask-worker 6인자 시그니처 · `claimed`
+  포함 3곳 · `_persist_early_exit` 호출부 4곳 · web 3파일 `_latest_ask_job_terminal` ·
+  `to_thread` 경유 · run_id 대조 · 10초 주기).
+- **라이브 UI 재현은 미수행(정직)**: 재현 조건(product P-121 primary `mysql-kr-an1-auth` 가
+  `down/circuit_open`)은 갖춰져 있었으나 로그인 자격증명 접근이 도구 권한으로 차단돼 PB-0008
+  로그인 단계에서 멈췄다. 원장 `fixed:deployed:unverified-live` + 관측 지표 3종 기록.
+- **`web` 심링크 오염 정리(hygiene)**: `CHG-20260814T170000` 커밋 시, 컨테이너에서 CI 와 동형
+  경로를 만들려고 생성한 심링크 `web -> unit/feature-0003-agent-web-ui/src` 가 `git add -A` 에
+  함께 잡혀 **의도치 않게 main 에 들어갔다**. 이미지 빌드는 Dockerfile 이 명시 경로만 COPY 하므로
+  **영향 0**(배포 전 확인)이나 저장소 오염이라 제거하고 `.gitignore` 에 `/web` 을 추가해 재발을
+  막는다. CI 는 매 실행 이 심링크를 스스로 만든다(커밋될 필요가 없다).
+- `docs/improvements/conversation-audit/FRICTION_LEDGER.md`: `FR-early-return-kv-never-finalized`
+  status 갱신 + POST-DEPLOY 실증 + 다음 audit 관측 지표(봉인 A 발동 로그 · `enqpre-` 고착 대화 수 ·
+  조기 종료 job 의 KV terminal 도달률).
+- 코드 변경 0.
+
 ## CHG-20260814T170000-ask-kv-seal-ci-regression (조기 종료 말풍선의 제품 귀속 각인 복구, Major 후속)
 
 `CHG-20260814T160000-ask-kv-terminal-seal` 의 **CI 회귀 2건 수정**. 적대 패널(codex)은 통과했으나

@@ -59,3 +59,6 @@ artifacts/
 
 # PB-0008 브라우저 하네스 런타임 서빙 디렉토리 (tests/pb0008_*.py 가 생성)
 unit/*/tests/.pb0008-serve/
+
+# CI/로컬 pytest 가 컨테이너와 동형 경로를 만들려고 생성하는 심링크 — 커밋 대상 아님
+/web
