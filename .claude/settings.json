@@ -6,7 +6,14 @@
       "Grep(~/.claude/projects/**/*.jsonl)",
       "Read(~/.claude/projects/**/tool-results/**)",
       "Glob(~/.claude/projects/**/tool-results/**)",
-      "Grep(~/.claude/projects/**/tool-results/**)"
+      "Grep(~/.claude/projects/**/tool-results/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(./secrets/**)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)"
     ]
   }
 }
