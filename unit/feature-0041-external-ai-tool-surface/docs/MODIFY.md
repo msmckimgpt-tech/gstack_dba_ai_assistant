@@ -428,3 +428,12 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/static/admin/exttasks.js` (`detailHtml`)
 - Impact: 표시 문구만. 데이터·권한·저장 경로 무변경.
 - Rollback Notes: 문구 원복.
+
+## CHG-20260814-0028
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface (AC-7)
+- Summary: CHG-0027(문구 정합) 배포 반영 실측 기록. **문서 전용(코드 0).**
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md` + `docs/test-runs.d/evidence/` (PB-0008 캡처) ·
+  `unit/feature-0041-.../docs/{TASK,REPORT}.md`
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).
