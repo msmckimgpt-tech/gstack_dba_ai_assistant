@@ -2124,6 +2124,19 @@
 .profile-usage-metric { flex: 1; min-width: 84px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
 .profile-usage-metric span { font-size: 11px; color: var(--text-muted); letter-spacing: .04em; }
 .profile-usage-metric strong { font-size: 17px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+/* usage-metric-charts(2026-08-13): 프로필 요약 카드 = 차트 지표 선택기. 관리 콘솔과 같은 상호작용·
+   같은 전환 곡선을 쓴다(두 화면의 같은 동작이 다르게 느껴지지 않게). */
+.profile-usage-metric--pick { text-align: left; font: inherit; color: inherit; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s; }
+.profile-usage-metric--pick:hover { border-color: var(--accent); }
+.profile-usage-metric--pick.is-active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.profile-usage-metric--pick.is-active span { color: var(--accent); }
+.profile-usage-metric--pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.profile-usage-metric-note { margin: -6px 0 12px; font-size: 12px; color: var(--text-muted); }
+.profile-usage-bar { transition: y .42s cubic-bezier(.4, 0, .2, 1), height .42s cubic-bezier(.4, 0, .2, 1), opacity .2s; }
+.profile-usage-arc { transition: stroke-dasharray .42s cubic-bezier(.4, 0, .2, 1), stroke-dashoffset .42s cubic-bezier(.4, 0, .2, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .profile-usage-bar, .profile-usage-arc { transition: none; }
+}
 .profile-usage-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px; margin-bottom: 12px; }
 .profile-usage-h { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
 .profile-usage-caption { font-size: 11px; font-weight: 400; color: var(--text-muted); }

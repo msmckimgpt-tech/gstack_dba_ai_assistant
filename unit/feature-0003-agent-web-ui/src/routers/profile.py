@@ -88,17 +88,22 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
             "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
             f"WHERE u.created_at >= {win} AND c.owner_account_id = %s"
         )
+        # usage-metric-charts: 캐시 축(0056). 첫 질의에서 컬럼 실재를 판정해 나머지 질의가 공유한다
+        #   — 관리 화면(admin_usage)과 같은 규약이라 두 화면의 지표 구성이 어긋나지 않는다.
+        _cr, _cw = app._usage_cache_exprs("u")
         with pg.cursor() as cur:
-            cur.execute(
+            if not app._usage_cache_exec(cur, pg, lambda cr, cw: (
                 "SELECT COALESCE(count(*),0), COALESCE(sum(u.prompt_tokens),0), "
                 "COALESCE(sum(u.completion_tokens),0), COALESCE(sum(u.total_tokens),0), "
-                f"COALESCE(count(distinct u.run_id),0) {base}",
-                (aid,),
-            )
-            t = cur.fetchone() or (0, 0, 0, 0, 0)
+                f"COALESCE(count(distinct u.run_id),0), "
+                f"COALESCE(sum({cr}),0), COALESCE(sum({cw}),0) {base}"
+            ), (aid,), alias="u"):
+                _cr, _cw = "0", "0"
+            t = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0)
             totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
                       "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
-                      "requests": int(t[4])}
+                      "requests": int(t[4]),
+                      "cache_read_tokens": int(t[5] or 0), "cache_write_tokens": int(t[6] or 0)}
             # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(hover 표시). 본인 범위라 owner enrich 불요.
             # usage-model-canonical: 실 서빙 모델을 canonical family 로 접어 개인 사용량 도넛의 중복 분점
             # 해소 + admin 과 동일 규칙. model==resolved_model==canonical 로 채워 드릴다운 필터
@@ -107,14 +112,14 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
             # usage-metric-charts(2026-08-13): 캐시 인지 비용 — 관리 화면과 **같은 식**이어야 개인
             #   사용량과 전체 집계가 어긋나지 않는다. 0056 미적용 DB 는 리터럴 0 표현식으로 폴백.
             _cr, _cw = app._usage_cache_exprs("u")
-            if not app._usage_cache_exec(cur, pg, lambda cr, cw: (
+            cur.execute(
                 f"SELECT {_canon_u} AS m, count(*), "
                 f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens), "
-                f"sum({cr}), sum({cw}) {base} "
+                f"sum({_cr}), sum({_cw}) {base} "
                 f"GROUP BY {_canon_u} "
-                "ORDER BY 3 DESC NULLS LAST LIMIT 50"
-            ), (aid,), alias="u"):
-                _cr, _cw = "0", "0"
+                "ORDER BY 3 DESC NULLS LAST LIMIT 50",
+                (aid,),
+            )
             by_model = [{"model": r[0], "resolved_model": r[0], "calls": int(r[1]),
                          "total_tokens": int(r[2] or 0), "requests": int(r[3] or 0),
                          "cache_read_tokens": int(r[6] or 0), "cache_write_tokens": int(r[7] or 0),
@@ -122,20 +127,30 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
                                                                 int(r[6] or 0), int(r[7] or 0))}
                         for r in (cur.fetchall() or [])]
             cur.execute(
-                f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
+                f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens), "
+                f"sum(u.prompt_tokens), sum(u.completion_tokens), count(distinct u.run_id), "
+                f"sum({_cr}), sum({_cw}) {base} "
                 f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}",
                 (aid,),
             )
-            by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)}
+            # usage-metric-charts: requests 는 모델로 나눌 수 없어(한 요청이 모델 횡단) 버킷 총계를
+            #   따로 싣는다 — 프론트가 그 지표에서만 단일 막대로 그린다(관리 화면과 동일 규약).
+            by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0),
+                       "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0),
+                       "requests": int(r[5] or 0),
+                       "cache_read_tokens": int(r[6] or 0), "cache_write_tokens": int(r[7] or 0)}
                       for r in (cur.fetchall() or [])]
             cur.execute(
                 f"SELECT {bucket_expr} AS b, {_canon_u}, sum(u.total_tokens), "
-                f"sum(u.prompt_tokens), sum(u.completion_tokens), sum({_cr}), sum({_cw}) "
+                f"sum(u.prompt_tokens), sum(u.completion_tokens), sum({_cr}), sum({_cw}), count(*) "
                 f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
                 f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",
                 (aid, aid),
             )
             by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
+                             "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0),
+                             "cache_read_tokens": int(r[5] or 0), "cache_write_tokens": int(r[6] or 0),
+                             "calls": int(r[7] or 0),
                              "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0),
                                                                     int(r[5] or 0), int(r[6] or 0))}
                             for r in (cur.fetchall() or [])]

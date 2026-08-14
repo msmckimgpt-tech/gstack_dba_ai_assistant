@@ -10629,6 +10629,9 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 ### 9. Requested Scope
 
+
+### 9. Requested Scope
+
 - "'요청' ↔ 다른 요소 전환 시 부드러운 애니메이션이 적용되지 않는 이슈 수정" — ✓ (양방향 모두
   노드 유지 전환으로 복구. 같은 뿌리였던 **모델 칩 토글 점프**도 함께 해소)
 ## 20260813T1640-usage-metric-solo-anim — '요청' 경계 전환 애니메이션 복구 (Minor §12.3, frontend-only)
@@ -10649,6 +10652,9 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 - "'요청' ↔ 다른 요소 전환 시 부드러운 애니메이션이 적용되지 않는 이슈 수정" — ✓ (양방향 모두
   노드 유지 전환으로 복구. 같은 뿌리였던 **모델 칩 토글 점프**도 함께 해소)
+
+- [x] 3차: 신규 세그먼트 첫 등장 전환(라이브 전용 축) — 강제 reflow 로 시작 스타일 확정. 검사는
+      추가하되 헤드리스 판별력 없음을 TEST.md 에 명시(vacuous 표기), 판별은 라이브 실측
 ## 20260814T0100-attach-version-branching — 첨부 버전 계보를 작성 주체별로 분기 (Major §12.3, 사용자 결정)
 
 - **출처**: 사용자 요청(2026-08-13) — "첨부파일의 버전 관리 또한 사용자별로 트리 형태로 구분되도록
@@ -10718,3 +10724,19 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - **이번 범위 밖(정직)**: 프론트 버전 모달의 **기준 토글 UI**. API 축은 실었으나 `attach-diff.js`
   는 아직 계보 내 축만 그린다. 목록에서는 기존 `AI 수정` 배지로 계보가 구분돼 보인다 —
   트리 시각화·토글은 후속 cycle.
+
+## 20260813T1900-usage-metric-profile — 프로필 '사용 내역' 차트 정합 반영 (Minor §12.3)
+
+사용자 요청(2026-08-13): "[사용자 프로필 > 계정 > 사용 내역] 으로 나타나는 차트에도 정합하게 반영".
+
+- [x] 지표 정의를 `static/usage-metrics.js` **정본**으로 추출 — 관리 콘솔의 복제 제거, 두 화면 공유
+- [x] 프로필 요약 카드 4종 → 지표 8종 선택기(캐시 읽기·쓰기 포함)
+- [x] 프로필 stacked·donut 을 지표 인자화 + 관리 화면과 **동일 전환 규칙** 이식
+- [x] `/api/profile/usage` 에 지표 축 전량(totals 캐시 2종 · by_day requests 포함 8축 · by_day_model)
+- [x] 신규 하네스 15 PASS · 관리 하네스 37 PASS 유지 · pytest 4,441 passed
+- [ ] POST-DEPLOY 라이브 실측(프로필 드로어 카드 클릭 전환)
+
+### 9. Requested Scope
+
+- "[사용자 프로필 > 계정 > 사용 내역] 차트에도 정합하게 반영" — ✓ (지표 정의를 정본 1개로 통일해
+  두 화면이 구조적으로 어긋날 수 없게 만들고, 카드 8종·전환 규칙·안내 문구·캐시 항목을 동일하게 적용)

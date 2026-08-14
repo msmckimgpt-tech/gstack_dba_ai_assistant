@@ -4058,6 +4058,12 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - `src/static/css/admin.css` — `.admin-usage-hseg` 에 `background` 전환 추가(단일 색 ↔ 모델 색).
 - `tests/headless/test_usage_metric_switch.js` — 양방향 경계 전환 회귀 잠금 5건 + 기존 검사 3건을
   새 설계(0 높이 노드 유지)에 맞춰 "보이는 막대" 기준으로 정정. 32 PASS · 뮤테이션 역검증 5/5.
+
+## CHG-20260813T1810-ai-claude-corp-usage-metric-first-appear — 신규 세그먼트 첫 등장 전환 (라이브 전용 축)
+
+`usage.js` — 새로 삽입되는 막대/세그먼트에 목표값을 주기 전 강제 reflow 로 시작 스타일을 확정
+(세로·가로 양쪽). rAF 한 번은 라이브 Chrome 에서 시작 스타일 확정 전에 목표값이 들어가 transition
+이 미발동했다(헤드리스는 발동 — 환경차). 하네스에 검사 1건 추가(**헤드리스 판별력 없음** 명시).
 ## CHG-20260814T010000-ai-claude-feature-0003-attach-version-branching — 첨부 버전 계보를 작성 주체별로 분기
 
 - 사유: 사용자 요청 "첨부파일의 버전 관리 또한 사용자별로 트리 형태로 구분(assistant 또한 독자적인
@@ -4107,6 +4113,21 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   으로 갈라 적는다.
 - 회귀 고정: 위 4축 전부 테스트 추가(재업로드 역할 스코프 · root dedupe · 동명 모호성 · 소유자 표기).
 
+## CHG-20260813T1900-ai-claude-corp-usage-metric-profile — 프로필 '사용 내역' 차트에 같은 지표 체계 반영 (Minor §12.3)
+
+사용자 요청: "[사용자 프로필 > 계정 > 사용 내역] 차트에도 정합하게 반영".
+
+- `src/static/usage-metrics.js` (**신규**) — 지표 정의 정본(목록·라벨·가산성·안내문·보조지표 규칙).
+  관리 콘솔과 프로필이 공유한다. `admin/usage.js` 의 복제 정의를 제거하고 이 모듈 소비자로 전환.
+- `src/static/app/profile.js` — 요약 카드를 지표 8종 선택기로(`button`+`aria-pressed`), stacked·
+  donut 을 지표 인자화 + 관리 화면과 동일한 전환 규칙(일자 집합 signature · 접기/자라기 · 강제
+  reflow · 폭 좌표 재배치 · 0 값 arc 유지). 지표 전환은 마지막 응답 재사용(재조회 X).
+- `src/static/index.html` — 안내 1줄 자리(`#profileUsageMetricNote`) + 차트 제목 고정어 "토큰" 제거.
+- `src/static/css/admin.css` — 프로필 선택 카드 상태 + 막대/도넛 전환(관리 화면과 같은 곡선·시간).
+- `src/routers/profile.py` — totals 캐시 2축, `by_day` 에 requests 포함 8축, `by_day_model` 지표 축
+  전량. 캐시 컬럼 자가치유는 공용 `_usage_cache_exec`.
+- `tests/headless/test_profile_usage_metric.js` (**신규 15건**) — 정본 대조(순서·라벨 동일) + 전환
+  규칙 + 비-가산 처리 + 캐시 도넛. 하네스는 지표 정의를 **정본 소스 주입**으로 쓴다(stub 금지).
 ## CHG-20260814T023000-ai-claude-feature-0003-attach-branch-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
 
 - 사유: 선행 cycle `20260814T0100-attach-version-branching` 의 배포(main `6fbccbc7`) 후 실측 종결.
