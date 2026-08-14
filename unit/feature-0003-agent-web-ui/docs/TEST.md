@@ -2989,22 +2989,6 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
   + 잔여 흡수)을 바꿔야 해 이번 범위 밖으로 남긴다(REPORT 이월). 브라우저 콘솔 에러는 별도 수집
   채널을 태우지 않아 **확인하지 않았다**(미확인을 무결로 보고하지 않음).
 
-<<<<<<< HEAD
-### Run (2026-08-14) — profile-usage-sort-page: 프로필 사용 내역 표 정렬·페이지네이션 — **Environment: Windows-browser (PB-0008 배포 후 실측 예정 — 프로필 사용 내역은 로그인 세션 + 본인 라이브 집계가 있어야 열리고, sticky 열 머리·페이저는 레이아웃 산물이라 jsdom 으로 대체 불가. 다만 이번엔 레이아웃 축을 **실 Chromium 하네스로 선행 계측**했다: `tests/headless/verify_usage_pager_layout.py` 12 PASS, 뮤턴트로 검출력 확인. visual_verification_scope: always)**
-
-- 대상: `src/static/app/profile.js`(모달 정렬·페이징) · `src/static/admin/usage.js`(esc 강화) ·
-  `src/static/css/search-audit.css`(스크롤러 단일화 · 페이저 줄바꿈).
-- **동작 — `tests/verify_profile_usage_sort_page.mjs` 45 PASS**: 기본 상태 8 · 정렬 6 ·
-  페이지네이션 10(1건 경계 포함) · 키보드 4 · 기존 동작 회귀 8(deep-link 같은 탭·차단 배지·
-  이스케이프·빈 목록엔 페이저 없음) · **관리 콘솔 판과의 규칙 정합 8**(기본 축·방향·페이지 크기·
-  선택지·첫 클릭 방향·1페이지 복귀·포커스 복원·CSS 공유).
-- **레이아웃 — `tests/headless/verify_usage_pager_layout.py` 12 PASS**(실 Chromium, 두 화면 ×):
-  L1 스크롤해도 열 머리가 남는다 · L1b 제자리 고정 · L2 320/480/640px 넘침 없음 · L3 첫 화면
-  페이저 가시성. **뮤턴트 검증** — tablewrap 을 `overflow-x:auto` 로 되돌리면 L1/L1b 가 4건 FAIL.
-  ⚠ L2 는 줄바꿈을 제거한 뮤턴트도 통과했다 = **현재 검출력 없음**(회귀 가드로만 유지).
-- **구조 — `tests/test_usage_records_sort_page.py` 16 PASS** · admin 하네스 50 PASS 무회귀 ·
-  feature-0003 전체 스위트 회귀 0.
-=======
 ## 20260813T2130-usage-card-overflow — 요약 카드 넘침 (CSS 전용, Minor §12.3)
 
 넘침은 **픽셀로만 드러나는** 부류라 DOM 검사로는 못 잡는다(§16.6 evidence 분기). 폭을 스윕하며
@@ -3027,4 +3011,18 @@ Chromium 에서 정량 측정한다.
 - **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(자산 배포 후 드로어 폭을 실제로
   줄여가며 재실측). CSS 전용이라 `docker cp` 프리뷰가 가능한 부류지만, 같은 cycle 의 JS 변경이
   없으므로 배포 후 확인이 더 정확하다.
->>>>>>> origin/main
+
+### Run (2026-08-14) — profile-usage-sort-page: 프로필 사용 내역 표 정렬·페이지네이션 — **Environment: Windows-browser (PB-0008 배포 후 실측 예정 — 프로필 사용 내역은 로그인 세션 + 본인 라이브 집계가 있어야 열리고, sticky 열 머리·페이저는 레이아웃 산물이라 jsdom 으로 대체 불가. 다만 이번엔 레이아웃 축을 **실 Chromium 하네스로 선행 계측**했다: `tests/headless/verify_usage_pager_layout.py` 12 PASS, 뮤턴트로 검출력 확인. visual_verification_scope: always)**
+
+- 대상: `src/static/app/profile.js`(모달 정렬·페이징) · `src/static/admin/usage.js`(esc 강화) ·
+  `src/static/css/search-audit.css`(스크롤러 단일화 · 페이저 줄바꿈).
+- **동작 — `tests/verify_profile_usage_sort_page.mjs` 45 PASS**: 기본 상태 8 · 정렬 6 ·
+  페이지네이션 10(1건 경계 포함) · 키보드 4 · 기존 동작 회귀 8(deep-link 같은 탭·차단 배지·
+  이스케이프·빈 목록엔 페이저 없음) · **관리 콘솔 판과의 규칙 정합 8**(기본 축·방향·페이지 크기·
+  선택지·첫 클릭 방향·1페이지 복귀·포커스 복원·CSS 공유).
+- **레이아웃 — `tests/headless/verify_usage_pager_layout.py` 12 PASS**(실 Chromium, 두 화면 ×):
+  L1 스크롤해도 열 머리가 남는다 · L1b 제자리 고정 · L2 320/480/640px 넘침 없음 · L3 첫 화면
+  페이저 가시성. **뮤턴트 검증** — tablewrap 을 `overflow-x:auto` 로 되돌리면 L1/L1b 가 4건 FAIL.
+  ⚠ L2 는 줄바꿈을 제거한 뮤턴트도 통과했다 = **현재 검출력 없음**(회귀 가드로만 유지).
+- **구조 — `tests/test_usage_records_sort_page.py` 16 PASS** · admin 하네스 50 PASS 무회귀 ·
+  feature-0003 전체 스위트 회귀 0.
