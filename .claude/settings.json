@@ -1,9 +1,12 @@
 {
   "permissions": {
     "deny": [
-      "Read(~/.claude/projects/**)",
-      "Glob(~/.claude/projects/**)",
-      "Grep(~/.claude/projects/**)"
+      "Read(~/.claude/projects/**/*.jsonl)",
+      "Glob(~/.claude/projects/**/*.jsonl)",
+      "Grep(~/.claude/projects/**/*.jsonl)",
+      "Read(~/.claude/projects/**/tool-results/**)",
+      "Glob(~/.claude/projects/**/tool-results/**)",
+      "Grep(~/.claude/projects/**/tool-results/**)"
     ]
   }
 }
