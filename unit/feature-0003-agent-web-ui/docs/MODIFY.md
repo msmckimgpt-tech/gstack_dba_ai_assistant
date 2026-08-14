@@ -4193,7 +4193,6 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/REPORT.md`(이월: 열 폭 재계산 ≤4% · profile 판 미적용) · `docs/TASK.md` · `docs/REVIEW.md` ·
   `docs/evidence/pb0008-usage-pager-sticky-20260814.png`(첫 화면 페이저 시각 증거).
 - 코드 무변경.
-
 ## CHG-20260814T110000 프로필 사용 내역 표에 정렬·페이지네이션 이식 + 이식 중 적발 결함 (REV-20260814T110000-profile-usage-sort-page)
 
 - 대상: `src/static/app/profile.js` `showProfileUsageConvModal` — 열 정의(5축) · 표시값 기준 정렬 키 ·
@@ -4217,3 +4216,11 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - 테스트: `tests/verify_profile_usage_sort_page.mjs` **신규 45**(관리 콘솔 판과의 규칙 정합 8축 포함) ·
   `tests/headless/verify_usage_pager_layout.py` **신규 12**(실 Chromium, 두 화면 × sticky/폭/가시성) ·
   `tests/test_usage_records_sort_page.py` **+7 → 16**.
+## CHG-20260813T2130-ai-claude-corp-usage-card-overflow — 사용량 요약 카드 넘침 수정 (Minor §12.3, CSS 전용)
+
+- `src/static/css/admin.css` — `.profile-usage-summary` 를 flex → **grid auto-fit
+  minmax(min(150px,100%),1fr)**, `.profile-usage-metric` 에 `min-width:0`, 숫자 15px + `nowrap`,
+  라벨은 ellipsis 허용. 최소 트랙 150px 은 320px 폭에서 12자 값을 수용하도록 실측으로 결정.
+- `tests/headless/test_usage_card_overflow.js` (**신규 4건**) — 폭 9단계 스윕 × (카드가 컨테이너를
+  벗어남 / 텍스트가 카드를 벗어남) 정량 측정 + 값 길이 증가(9자·12자) + 관리 콘솔 축.
+  뮤테이션: 구 flex 복원 시 3건 FAIL(사용자 보고 상태 재현), clamp 제거는 **생존** → clamp 미채택.

@@ -2989,6 +2989,7 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
   + 잔여 흡수)을 바꿔야 해 이번 범위 밖으로 남긴다(REPORT 이월). 브라우저 콘솔 에러는 별도 수집
   채널을 태우지 않아 **확인하지 않았다**(미확인을 무결로 보고하지 않음).
 
+<<<<<<< HEAD
 ### Run (2026-08-14) — profile-usage-sort-page: 프로필 사용 내역 표 정렬·페이지네이션 — **Environment: Windows-browser (PB-0008 배포 후 실측 예정 — 프로필 사용 내역은 로그인 세션 + 본인 라이브 집계가 있어야 열리고, sticky 열 머리·페이저는 레이아웃 산물이라 jsdom 으로 대체 불가. 다만 이번엔 레이아웃 축을 **실 Chromium 하네스로 선행 계측**했다: `tests/headless/verify_usage_pager_layout.py` 12 PASS, 뮤턴트로 검출력 확인. visual_verification_scope: always)**
 
 - 대상: `src/static/app/profile.js`(모달 정렬·페이징) · `src/static/admin/usage.js`(esc 강화) ·
@@ -3003,3 +3004,27 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
   ⚠ L2 는 줄바꿈을 제거한 뮤턴트도 통과했다 = **현재 검출력 없음**(회귀 가드로만 유지).
 - **구조 — `tests/test_usage_records_sort_page.py` 16 PASS** · admin 하네스 50 PASS 무회귀 ·
   feature-0003 전체 스위트 회귀 0.
+=======
+## 20260813T2130-usage-card-overflow — 요약 카드 넘침 (CSS 전용, Minor §12.3)
+
+넘침은 **픽셀로만 드러나는** 부류라 DOM 검사로는 못 잡는다(§16.6 evidence 분기). 폭을 스윕하며
+① 카드가 컨테이너를 벗어나는지 ② 텍스트가 카드를 벗어나는지(`scrollWidth > clientWidth`)를 실
+Chromium 에서 정량 측정한다.
+
+| # | 케이스 | 결과 |
+|---|---|---|
+| 1 | 폭 320~900px 9단계 × 라이브 실제 값 | 넘침 **0** |
+| 2 | 값 9자리(`123,456,789`) @340px | 넘침 **0** |
+| 3 | 현실 상한 12자(`999,999,999,999`) @320px | 넘침 **0** |
+| 4 | 관리 콘솔 카드 420~1400px | 넘침 **0**(기존 `minmax(160px)` 로 이미 안전 — 변경 없음) |
+
+**수정 전 실측(결함 재현)**: 320px 4건 · 340px 4건 · 420px 6건 · **900px 6건** — 좁은 화면만의
+문제가 아니라 8장 균등 분배 구조 자체의 문제였다.
+
+**뮤테이션 2종**: ① 구 flex 복원 → 3건 FAIL(사용자 보고 상태 재현) ✓ ② `clamp` 제거 → **생존**
+→ 그 방어를 채택하지 않고 제거(검증되지 않는 복잡도).
+
+- **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 이월(자산 배포 후 드로어 폭을 실제로
+  줄여가며 재실측). CSS 전용이라 `docker cp` 프리뷰가 가능한 부류지만, 같은 cycle 의 JS 변경이
+  없으므로 배포 후 확인이 더 정확하다.
+>>>>>>> origin/main
