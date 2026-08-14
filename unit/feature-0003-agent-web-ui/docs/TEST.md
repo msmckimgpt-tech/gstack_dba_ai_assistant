@@ -3046,6 +3046,21 @@ Chromium 에서 정량 측정한다.
 - **구조 — `tests/test_usage_records_sort_page.py` 16 PASS** · admin 하네스 50 PASS 무회귀 ·
   feature-0003 전체 스위트 회귀 0.
 
+### Run 2026-08-13 — Environment: Windows-browser (PB-0008) · POST-DEPLOY 종결
+
+`main 3af15fc2` 배포(무중단 0건 · 파리티) 후 실 Chrome/150 에서 드로어 폭을 실제로 줄여가며 실측.
+
+| 드로어 폭 | 요약 컨테이너 | 넘침 | 열 |
+|---|---|---|---|
+| 700px | 636px | **0** | 4 |
+| 520px | 456px | **0** | 3 |
+| 420px | 356px | **0** | 2 |
+| **370px**(보고 상태) | 306px | **0** | **2** |
+| 340px | 276px | **0** | 1 |
+| 320px | 256px | **0** | 1 |
+
+보고된 폭(≈370px)에서 **넘침 0 + 2열 유지** — 종전처럼 읽히면서 값이 온전히 보인다. 340px 이하는
+1열로 떨어지지만 카드가 넓어져 값은 그대로 다 보인다(의도된 거동).
 ### POST-DEPLOY 결과 (2026-08-14, 배포 ac1403c4, deploy-web-only) — **Environment: Windows-browser** — PASS (프로필 판 전 축 + 관리 콘솔 판 재확인)
 
 - 방법: PB-0008 — `bin/win-browser.py` relay 실 Windows Chrome/150.0.7871.128, 하드 리로드 후

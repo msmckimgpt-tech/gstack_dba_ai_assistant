@@ -10809,6 +10809,18 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
 - [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
 - [x] 트랙·폰트를 뮤테이션으로 확정(138px·15px) + 하네스 패딩을 라이브 실측으로 정정
+- [x] POST-DEPLOY 라이브 드로어 폭 축소 실측 — 700~320px 전 구간 넘침 0 · 370px 2열 유지
+
+### 9. Requested Scope
+
+
+- [x] 결함 재현 하네스 — 폭 9단계 스윕 정량 측정(수정 전 320px 4건 … **900px 6건**)
+- [x] `flex:1 + min-width:84px` → `grid auto-fit minmax(min(150px,100%),1fr)` + `min-width:0`
+- [x] 최소 트랙 150px 을 실측으로 결정(320px 에서 12자 값 수용 — 128px 은 2열 유지로 실패)
+- [x] 값은 자르지 않음(라벨만 ellipsis) · 숫자 15px
+- [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
+- [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
+- [x] 트랙·폰트를 뮤테이션으로 확정(138px·15px) + 하네스 패딩을 라이브 실측으로 정정
 - [ ] POST-DEPLOY 라이브 드로어 폭 축소 실측
 
 ### 9. Requested Scope
@@ -10841,7 +10853,7 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] 값은 자르지 않음(라벨만 ellipsis) · 숫자 15px
 - [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
 - [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
-- [ ] POST-DEPLOY 라이브 드로어 폭 축소 실측
+- [x] POST-DEPLOY 라이브 드로어 폭 축소 실측 — 700~320px 전 구간 넘침 0 · 370px 2열 유지
 
 ### 9. Requested Scope
 
