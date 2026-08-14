@@ -5149,6 +5149,26 @@ CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
 
 ## REV-20260813T221000-ai-claude-corp-usage-card-overflow-tune [SKIPPED:non-policy-doc] — 트랙·폰트 확정
 
+
+- **보고보다 넓은 범위였다** — "좁은 공간" 으로 보고됐지만 실측하니 **900px 에서도 6건** 넘쳤다.
+  원인이 폭이 아니라 `flex:1` 균등 분배(8장)였기 때문이다. 보고된 조건만 고쳤다면 넓은 화면의
+  넘침은 남았을 것이다. 스윕 측정이 범위를 바로잡았다.
+- **자르지 않고 줄을 나눈다** — ellipsis 는 공간 문제를 즉시 없애지만 토큰 수·금액은 뒷자리가
+  잘리면 값의 의미가 바뀐다. 라벨(짧고 반복)만 ellipsis 를 허용하고 숫자는 전부 노출한다.
+- **150px 은 계산이 아니라 실측** — 128px 로 두면 320px 폭에서 2열이 유지되며 12자 값(130px)이
+  가용폭(114px)을 넘었다. 150px 이면 그 폭에서 1열로 떨어져 카드가 넓어진다.
+- **검증되지 않은 방어는 제거했다** — container query 폰트 축소는 그럴듯했지만 트랙을 150px 로
+  올린 뒤 **어떤 케이스도 판별하지 못했다**(뮤턴트 생존). 남겨두면 "방어가 있다" 는 착각만 준다.
+- **관리 콘솔은 손대지 않았다** — 같은 압박(8장)을 받지만 `minmax(160px)` 로 이미 안전함을 실측
+  확인했다(420~1400px 넘침 0). 하네스에 축만 남겨 미래 회귀를 잡는다(§8.1 — 제안은 기록만).
+
+### 잔여
+
+- 드로어를 320px 미만으로 줄이면 1열에서도 라벨이 ellipsis 될 수 있다. 그 폭은 드로어 리사이즈
+  하한 밖이라 검사에 넣지 않았다.
+
+## REV-20260813T221000-ai-claude-corp-usage-card-overflow-tune [SKIPPED:non-policy-doc] — 트랙·폰트 확정
+
 ### 이번에 배운 것 — 하네스가 라이브보다 관대하면 결정을 검증하지 못한다
 
 선행 커밋에서 트랙 150px·폰트 14px 을 골랐고 검사는 전부 green 이었다. 그런데 뮤테이션을 돌리니
@@ -5232,3 +5252,7 @@ CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
 ## REV-20260813T225000-ai-claude-corp-usage-card-overflow-postdeploy [SKIPPED:non-policy-doc] — 실측 기록
 
 doc-only. 라이브 드로어 폭 6단계 실측으로 선행 두 커밋의 이월을 종결한다. 근거는 실 Chrome 관측이다.
+## REV-20260814T120000-profile-sort-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+- Related TASK: feature-0003-agent-web-ui
+- Reason: changed paths are docs + evidence image only (no code, no policy doc)
+- Timestamp: 2026-08-14T12:00:00+09:00

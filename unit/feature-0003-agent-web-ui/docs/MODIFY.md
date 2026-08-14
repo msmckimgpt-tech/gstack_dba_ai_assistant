@@ -4283,3 +4283,7 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 
 `main 3af15fc2` 배포 후 드로어 폭 6단계(700→320px) 실측 — 전 구간 넘침 0, 보고 폭(370px)에서 2열
 유지 확인. 코드 변경 0.
+## CHG-20260814T120000 프로필 판 정렬·페이지네이션 POST-DEPLOY 실측 기록 (docs-only)
+
+- 대상: `docs/TEST.md`(POST-DEPLOY Run — 두 화면) · `docs/REPORT.md` · `docs/TASK.md` ·
+  `docs/REVIEW.md` · `docs/evidence/pb0008-profile-usage-sort-20260814.png`. 코드 무변경.

@@ -10813,6 +10813,18 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 ### 9. Requested Scope
 
+
+- [x] 결함 재현 하네스 — 폭 9단계 스윕 정량 측정(수정 전 320px 4건 … **900px 6건**)
+- [x] `flex:1 + min-width:84px` → `grid auto-fit minmax(min(150px,100%),1fr)` + `min-width:0`
+- [x] 최소 트랙 150px 을 실측으로 결정(320px 에서 12자 값 수용 — 128px 은 2열 유지로 실패)
+- [x] 값은 자르지 않음(라벨만 ellipsis) · 숫자 15px
+- [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
+- [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
+- [x] 트랙·폰트를 뮤테이션으로 확정(138px·15px) + 하네스 패딩을 라이브 실측으로 정정
+- [ ] POST-DEPLOY 라이브 드로어 폭 축소 실측
+
+### 9. Requested Scope
+
 - "좁은 공간에서 요소 내 텍스트가 내부 범위를 벗어나는 이슈 수정" — ✓ (구조를 grid 로 바꿔 모든
   측정 폭에서 넘침 0. 원인이 좁은 화면이 아니라 8장 균등 분배였음을 실측으로 밝혀 함께 해소)
 ## TASK-20260814T110000-profile-usage-sort-page — 프로필 사용 내역 표 정렬·페이지네이션 (Minor §12.3)
@@ -10901,3 +10913,9 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - 첨부 시간축 왜곡 해소 — ✓ (기록 UTC 전환 + Id 상한 1회 백필 + PG 미러 동반 + 재실행 방지).
 - 이번 범위 밖(정직): **다른 테이블의 동일 패턴**은 건드리지 않았다(`DEFAULT CURRENT_TIMESTAMP` 를
   쓰는 컬럼이 더 있을 수 있으나, 첨부 밖으로 스코프를 넓히면 회귀 검증 범위가 급격히 커진다).
+
+## TASK-20260814T120000-profile-sort-postdeploy — POST-DEPLOY 라이브 실측 기록 (docs-only)
+
+- [x] 프로필 판 PB-0008 실측(정렬·페이지·키보드·sticky 열 머리·페이저 가시성) + 시각 증거 첨부.
+- [x] 관리 콘솔 판 재확인 — 스크롤러 단일화 영향(sticky 유지) + 가로 넘침 무회귀.
+- [x] 미검증 명시(콘솔 에러 미수집 · 좁은 폭은 헤드리스 계측으로 갈음).

@@ -136,48 +136,142 @@ class _FakeTools:
         self.reset_calls += 1
         self.current = None
 
+    # 2026-08-14: 스코프는 라우터뿐 아니라 **스키마 allowlist** 까지다.
+    def set_active_schema_allowlist(self, schemas):
+        self.allowlist = list(schemas) if schemas is not None else None
+        self.allow_calls = getattr(self, "allow_calls", 0) + 1
+
+    def clear_active_schema_allowlist(self):
+        self.allowlist = "cleared"
+        self.clear_calls = getattr(self, "clear_calls", 0) + 1
+
 
 class _FakeCore:
-    def __init__(self, ds_list):
+    def __init__(self, ds_list, single=None):
         self._ds_list = ds_list
+        self._single = single if single is not None else {"key": "ds-single"}
 
     def _resolve_product_datasources(self, mem_conn, product_id):
         return self._ds_list
 
     def connect_with_retry(self, **kwargs):
-        return object()
+        return _FakeConn()
+
+    def _resolve_product_datasource(self, mem_conn, product_id):
+        return self._single
+
+
+class _FakeConn:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeScopeApp:
+    """scoped_execution 이 쓰는 seam(제품 → 허용 스키마)만 흉내낸다.
+    위 `_FakeApp`(제품 필터)과 다른 축이라 이름을 나눈다 — 같은 이름으로 덮으면
+    앞의 테스트가 통째로 죽는다."""
+
+    def __init__(self, allowed):
+        self._allowed = allowed
+
+    def _product_allowed_schemas(self, mem_conn, product_id):
+        return self._allowed
 
 
 def test_scoped_execution_resets_contextvar_on_success():
     tools, core = _FakeTools(), _FakeCore([{"_label": "a"}, {"_label": "b"}])
-    with az.scoped_execution(core, tools, None, 1) as router:
-        assert tools.current is router is not None
+    with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp(["s1"])) as ds_conn:
+        assert ds_conn is None, "라우터 경로는 연결을 라우터가 소유하므로 None 을 준다"
+        assert tools.current is not None
+        assert tools.allowlist == ["s1"], "스키마 allowlist 가 안 걸렸다"
     assert tools.current is None and tools.reset_calls == 1
+    assert tools.allowlist == "cleared", "allowlist 가 누수됐다 — 다음 요청이 이 스코프로 돈다"
 
 
 def test_scoped_execution_resets_contextvar_on_exception():
     """★ 누수하면 다음 요청이 이전 요청 스코프로 tool 을 돈다 — 교차 계정 유출."""
     tools, core = _FakeTools(), _FakeCore([{"_label": "a"}, {"_label": "b"}])
     with pytest.raises(RuntimeError):
-        with az.scoped_execution(core, tools, None, 1):
+        with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp(["s1"])):
             raise RuntimeError("handler blew up")
     assert tools.current is None and tools.reset_calls == 1
+    assert tools.allowlist == "cleared"
 
 
 def test_scoped_execution_closes_router_connections():
     tools, core = _FakeTools(), _FakeCore([{"_label": "a"}, {"_label": "b"}])
-    with az.scoped_execution(core, tools, None, 1) as router:
-        captured = router
+    with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp(["s1"])):
+        captured = tools.current
     assert captured.closed is True
 
 
-def test_scoped_execution_single_datasource_yields_none():
-    tools, core = _FakeTools(), _FakeCore([])
-    with az.scoped_execution(core, tools, None, 1) as router:
-        assert router is None
-    assert tools.reset_calls == 0        # 걸지 않았으면 되돌릴 것도 없다
+def test_scoped_execution_single_datasource_connects_to_the_product_datasource():
+    """★ 2026-08-14 — 이전엔 여기서 `None` 을 돌려주고 "호출측이 알아서" 로 넘겼다.
+    호출측은 **메모리 DB 연결**을 그대로 넘겼고, 구조 조회가 내부 서버를 향해
+    다른 대화의 첨부 샌드박스(`agent_attachment_*`)까지 목록에 나왔다.
+    대부분의 제품이 단일 바인딩이라 이건 예외가 아니라 기본 경로였다."""
+    tools, core = _FakeTools(), _FakeCore([], single={"key": "mssql-dk-dev"})
+    with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp(["dbauth"])) as ds_conn:
+        assert ds_conn is not None, "메모리 DB 연결로 폴백하면 내부 스키마가 노출된다"
+        assert isinstance(ds_conn, _FakeConn)
+        assert tools.allowlist == ["dbauth"], "단일 경로에 allowlist 가 안 걸린다"
+        captured = ds_conn
+    assert captured.closed is True, "datasource 연결이 새고 있다"
+    assert tools.allowlist == "cleared"
+
+
+def test_scoped_execution_refuses_when_product_has_no_datasource():
+    """★ 바인딩이 없으면 **데이터에 닿을 수 없다.** memory DB 로 폴백하면 그게 곧 유출이다."""
+    tools, core = _FakeTools(), _FakeCore([], single=None)
+    core._single = None
+    with pytest.raises(az.ScopeDenied) as exc:
+        with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp([])):
+            pass
+    assert exc.value.code == "datasource_unbound"
+    assert tools.allowlist == "cleared", "거절 경로에서도 allowlist 를 되돌려야 한다"
+
+
+def test_allowlist_is_never_none_even_when_resolution_fails():
+    """★ `set_active_schema_allowlist(None)` 은 tools 에서 **무제한**으로 읽힌다.
+    해석 실패를 None 으로 흘리면 fail-open 이 된다."""
+    class _BrokenApp:
+        def _product_allowed_schemas(self, mem_conn, product_id):
+            raise RuntimeError("메모리 DB 조회 실패")
+
+    tools, core = _FakeTools(), _FakeCore([], single={"key": "x"})
+    with az.scoped_execution(core, tools, None, 1, app_mod=_BrokenApp()):
+        assert tools.allowlist == [], "해석 실패가 무제한으로 흘렀다"
 
 
 def test_allowed_datasource_labels_lowercases_and_skips_blank():
     core = _FakeCore([{"_label": "KR_Live"}, {"_label": ""}, {"nope": 1}])
     assert az.allowed_datasource_labels(core, None, 1) == ["kr_live"]
+
+
+def test_active_datasource_contextvar_is_actually_reset():
+    """★ `set_active_datasource` 는 **토큰을 반환하지 않는다**(setter). 반환값을 token 으로
+    받아 `if token is not None` 으로 되돌리면 **절대 되돌아가지 않는다** — ContextVar 가
+    스레드에 남아 다음 요청이 이전 datasource 스코프로 돈다(교차 스코프 유출).
+    실제로 무관한 테스트가 깨지며 드러났다."""
+    from shared import config as cfg
+
+    before = cfg.get_active_datasource()
+    tools, core = _FakeTools(), _FakeCore([], single={"key": "ds-x", "scope_key": "mysql-abc",
+                                                      "engine": "mysql"})
+    with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp(["s"])):
+        assert cfg.get_active_datasource() == "mysql-abc", "스코프 안에서 안 걸렸다"
+    assert cfg.get_active_datasource() == before, "ContextVar 가 누수됐다"
+
+
+def test_active_datasource_is_reset_on_exception_too():
+    from shared import config as cfg
+
+    before = cfg.get_active_datasource()
+    tools, core = _FakeTools(), _FakeCore([], single={"key": "ds-x", "scope_key": "mysql-abc"})
+    with pytest.raises(RuntimeError):
+        with az.scoped_execution(core, tools, None, 1, app_mod=_FakeScopeApp(["s"])):
+            raise RuntimeError("boom")
+    assert cfg.get_active_datasource() == before

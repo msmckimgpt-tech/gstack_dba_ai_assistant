@@ -236,7 +236,12 @@ def test_public_bind_requires_explicit_optin():
         _load(2, EXT_TOOL_HTTP_BIND="0.0.0.0")
 
 
-def test_all_nine_tools_are_registered_at_import():
+def test_all_tools_are_registered_at_import():
     """등록 자체가 import 부수효과다 — 데코레이터가 깨지면 도구 0개로 조용히 뜬다."""
     mod = _load(2)
-    assert len(mod.mcp.tools) == 9, sorted(mod.mcp.tools)
+    assert sorted(mod.mcp.tools) == sorted([
+        "open_task", "get_task_context", "submit_answer",
+        "list_schemas", "describe_schema", "describe_table", "search_tables",
+        "get_foreign_keys", "get_table_indexes",
+        "execute_sql",   # P1 (2026-08-14)
+    ]), sorted(mod.mcp.tools)

@@ -2904,7 +2904,19 @@ def _tool_execute_sql(conn, args: dict) -> str:
                         csv_rows.append(list(row))
                     else:
                         csv_rows.append([row])
-            csv_paths.append(save_csv(f"resultset{idx}", [str(col) for col in columns], csv_rows))
+            # feature-0041: 외부 표면은 CSV 를 **만들지 않는다**. 응답에서 경로만 지우면
+            # 파일은 계속 쌓이고(디스크), 소유 대화와 무관한 전체 결과가 서버에 남으며,
+            # 저장 실패 시 절대경로가 예외 문구로 새어 나간다(codex P2 ×2). 애초에 안 만든다.
+            if not args.get("_suppress_csv"):
+                csv_paths.append(save_csv(f"resultset{idx}",
+                                          [str(col) for col in columns], csv_rows))
+        # feature-0041: 호출자가 `_stats_out` 에 dict 를 심어 두면 **실제 행수·CSV 경로**를 돌려준다.
+        # 렌더된 문자열에서 역파싱하면(“전체 N행” 문구) 절단이 없을 때 값이 없고 문구가 바뀌면
+        # 조용히 틀린다 — 외부 표면의 시간당 행 상한이 그 숫자에 걸려 있으므로 추정이면 안 된다.
+        _sink = args.get("_stats_out")
+        if isinstance(_sink, dict):
+            _sink["total_rows"] = int(total_row_count)
+            _sink["csv_paths"] = list(csv_paths)
         # LLM에게 미리보기만 전달(기본 50행; 소형 결과는 char-budget 내 전부), 전체 결과는 CSV 참조.
         # conv-audit FR-partial-evidence-false-verification: 절단 시 epistemic 안내(미열람 행 단정
         # 금지 + 좁혀 재조회 유도 + CSV 는 모델이 읽을 수 없음)를 함께 돌려 자기교정을 유도한다.
