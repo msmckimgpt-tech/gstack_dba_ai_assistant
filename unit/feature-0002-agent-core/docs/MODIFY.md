@@ -2120,3 +2120,39 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - Files: `docs/TASK.md` · `docs/REVIEW.md` · `docs/MODIFY.md` · `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/LEARNINGS.md`(공용).
 - Rollback Notes: 문서 되돌림만으로 원복(런타임 영향 없음). 되돌리면 배포 사실과 다음 audit 의
   비교 기준선이 사라진다.
+
+## CHG-20260814T173000-ledger-status-label-sync — 원장 헤딩 status 라벨 정합 (doc-only)
+
+- **왜**: `FR-llm-attempt-cap-inside-latency-tail` 의 본문 status 는 배포 후
+  `fixed:deployed:unverified-live` 로 전이했는데 **헤딩 라벨이 `fixed:undeployed` 로 남았다**.
+  원장 헤딩은 다음 audit 의 **재진단 회피 1차 게이트**(Phase 0 이 status 로 걸러낸다)이므로,
+  라벨 불일치는 곧 같은 근본의 중복 진단 위험이다.
+- **무엇을**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md` 해당 항목 헤딩 라벨만
+  본문과 일치시켰다(내용 무변경, 코드 변경 0).
+- **동반 정정(정직)**: 초판 문서가 라이브 실측 수단으로 `llm_stream_done` 로그를 적었으나
+  **운영 로그 레벨이 WARNING** 이라 `logger.info` 는 라이브에 남지 않는다 — 배포본 실증에서 그
+  로그를 본 것은 probe 가 `basicConfig(INFO)` 를 켠 결과이고, **실측 조건을 운영 조건으로 오인**한
+  것이다. 정상 완료를 warning 으로 올리면 LLM 호출마다 한 줄이 쌓여 로그가 오염되므로 레벨은
+  유지하고, 관측을 **DB 로 이전**한다(진행 표시 발동 = `steps.work_text LIKE '%경과, 응답을 계속
+  받고 있습니다%'`). 이상 신호는 이미 warning 이라 그대로 남는다(`llm_transient_retry` ·
+  `llm_stream_usage_missing`). 코드 변경 없음 — 문서의 관측 계획만 실현 가능한 것으로 교체.
+- **위험등급**: Minor(문서 전용).
+- Files: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/TASK.md`.
+- Rollback Notes: 라벨 되돌림만으로 원복. 되돌리면 위 오판 위험이 되살아난다.
+
+## CHG-20260814T174000-observability-plan-correction — 라이브 관측 수단 정정 (doc-only)
+
+- **왜**: 직전 문서가 라이브 실측 수단으로 `llm_stream_done` 로그를 지정했으나 **운영 로그 레벨이
+  WARNING** 이라 `logger.info` 는 라이브에 남지 않는다. 배포본 실증에서 그 로그를 본 것은 probe 가
+  `basicConfig(INFO)` 를 켠 결과이며, **실측 조건을 운영 조건으로 오인**한 것이다. 그대로 두면
+  다음 audit 이 존재하지 않는 로그를 찾는다(= 관측 계획이 공수만 쓰고 실패한다).
+- **무엇을**(코드 변경 0): 원장 `FR-llm-attempt-cap-inside-latency-tail` 의 "라이브 실측 필요분" 과
+  `docs/TASK.md` 의 재측정 항목에서 관측 수단을 **DB 기반으로 교체** —
+  진행 표시 발동 = `steps.work_text LIKE '%경과, 응답을 계속 받고 있습니다%'`(120초 주기가 긴
+  스트림에서 열렸다는 직접 증거) · 실패 = `llm_transient_retry`·`llm_stream_usage_missing`
+  (둘 다 warning 이라 운영 로그에 남는다). 정정 사실과 오인 원인을 함께 남겼다.
+- **왜 로그 레벨을 올리지 않았나**: 정상 완료를 warning 으로 찍으면 모든 LLM 호출마다 한 줄이 쌓여
+  로그가 오염된다. 관측 가치가 있는 **이상** 신호는 이미 warning 이다.
+- **위험등급**: Minor(문서 전용, 런타임 무영향).
+- Files: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/TASK.md`.
+- Rollback Notes: 되돌리면 다음 audit 이 남지 않는 로그를 관측 근거로 삼는다.
