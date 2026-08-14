@@ -11,6 +11,20 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260814T160000-ask-result-job-backstop (cross-ref — conv-audit 봉인 B)
+
+feature-0002 마찰 `FR-early-return-kv-never-finalized` → **코드 거주 primary 는
+`feature-0002-agent-core`**(`CHG-20260814T160000-ask-kv-terminal-seal`, verify 도 그쪽). 본
+feature 는 그 봉인의 **소비 지점**만 바뀐다:
+
+- `src/routers/conversations.py::ask_result`: terminal 판정이 KV `last_status` **단일 소스**라,
+  run 이 KV 를 마감하지 못하고 끝나면 45초 폴링이 무한 반복됐다(실측 15분+, stale 임계 18분까지).
+  KV 판정 실패 시 `ask_jobs` terminal 을 **권위 backstop**으로 확인해 long-poll 을 푼다
+  (5초 주기 — 매 tick 조회는 PG 연결 낭비). 활성 job 이 있으면 헬퍼가 `None` 을 주므로 진행 중
+  답변을 끊지 않는다. 내부 attach 루프가 `job_id` 로 갖던 보증을 재접속 폴백 경로에 대칭 부여.
+- `src/routers/_conv_store.py`: `_latest_ask_job_terminal()` 래퍼 신설(실패·미가용 시 `None` →
+  종전 KV 판정만 사용, 회귀 0). `src/app.py`: 재수출 1줄.
+
 ## CHG-20260812T220000-attach-md-render-post — 배포본 실측 기록 (doc-only, 코드 변경 0)
 - 배포본 `105fa2b7` 의 **실제 모듈**을 라이브에서 import 해 신규 배선 9축 도달을 단정(어긋나면 throw).
 - 배포 품질: web-a/web-b 동일 SHA · 엣지 `no upstreams available` 0건(실 무중단).

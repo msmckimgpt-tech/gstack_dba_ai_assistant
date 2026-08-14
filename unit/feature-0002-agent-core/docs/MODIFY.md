@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260814T160000-ask-kv-terminal-seal (조기 종료 run 의 KV terminal 봉인, Major)
+
+conv-audit `FR-early-return-kv-never-finalized`. 사용자 보고 "5분이 지나도 시작 자체가 진행되지
+않음"(SQL 첨부 2건 + 쿼리 리뷰 요청). 실제로는 job 이 0.12초 만에 `error` 로 끝났는데 KV 만
+`processing` + `enqpre-` sentinel 로 고착해 `/api/ask_result` 가 45초 주기로 15분 넘게 무한 폴링.
+
+**근본**: `run_agent` 는 KV 를 실제 run_id 로 인계하기 **전**에 `result["error"]` 만 채우고 예외
+없이 정상 return 하는 조기 종료 경로가 12곳인데, 워커 KV 마감은 `raised` / `_deferred_terminal` /
+resume-giveup 세 갈래뿐이라 전부 놓쳤다. 재발경로 = **코드 구조**(권위선으로 봉인).
+
+- `src/modules/ask.py`: `_ensure_kv_terminal()` 신설 — `finish_ask_job` **앞**에서 KV terminal 을
+  무조건 보장(long-poll 1차 판정 소스가 KV 이므로 job 전이보다 먼저 풀어야 대기가 즉시 끝난다).
+  이미 terminal 이면 no-op · 다른 실제 run 이 인계했으면 skip(TASK-0241 supersede 존중) ·
+  `enqpre-` sentinel 은 "아직 아무 run 도 인계 못 함" 이므로 마감 대상 · 답변이 있는데 KV 만
+  못 쓴 run 은 `done` 으로 마감(성공 턴을 실패로 날조하지 않는다) · 판정 실패 시 무write.
+- `src/modules/ask_jobs.py`: `latest_terminal_job_for_conversation()` 신설 — 활성(pending/running)
+  job 이 없는 대화의 마지막 terminal job(status/run_id/error). 활성 job 이 있으면 `None`(진행 중
+  답변을 끊지 않는 안전 조건).
+- `src/agent_core.py`: `_persist_early_exit()` 신설 + datasource 계열 조기 return **4곳**에 연결
+  (eval / 멀티 primary / 해석 오류 / 단일). 사용자 질문 + 오류 안내를 대화에 남기고 KV 를 마감한다.
+  재시도 중복 저장은 기존 `_user_message_already_persisted` 근거로 억제. 기록 실패해도 KV 마감은 수행.
+- `tests/test_ask_kv_terminal_seal.py`: 신규 17건(봉인 A 8 · B 4 · C 5). 회귀 재현
+  (`processing` + `enqpre-` 고착 → error 마감) 포함.
+
+**cross-ref**: 봉인 B 의 소비 지점은 `feature-0003-agent-web-ui`
+(`routers/conversations.py::ask_result` + `routers/_conv_store.py::_latest_ask_job_terminal` +
+`app.py` 재수출) — 코드 거주 primary 는 본 feature(큐/워커 계약), verify 도 본 feature 로 수행.
+
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
 ## CHG-20260807T160000-redteam-abortable-postdeploy (배포 실증 + 원장/학습 환류, doc-only)

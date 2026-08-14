@@ -3670,6 +3670,7 @@ from routers._conv_store import (  # noqa: E402
     _inline_tmp_dir,
     _ask_worker_ready,
     _get_ask_job_status,
+    _latest_ask_job_terminal,
     _runtime_backend_is_pg,
     _meta_json_to_dict,
     _member_visibility_window,

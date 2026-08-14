@@ -478,6 +478,82 @@ def has_active_job_for_conversation(conn, conversation_id: str) -> bool:
         return cur.fetchone() is not None
 
 
+def has_other_active_job_for_conversation(
+    conn, conversation_id: str, exclude_job_id: int
+) -> bool:
+    """이 job 을 **제외한** 활성(pending/claimed/running) job 이 같은 대화에 있는지.
+
+    conv-audit FR-early-return-kv-never-finalized(봉인 A 의 sentinel race 가드, §18.8 codex [P1]).
+    종료하는 run 이 KV 의 `enqpre-` sentinel 을 보고 마감할 때, 그 sentinel 이 **자기 것이 아니라
+    방금 들어온 새 요청의 것**일 수 있다(취소→즉시 재요청 등). 그 상태를 덮으면 새 요청이 시작도
+    전에 error 로 표시된다. 자기 외 활성 job 이 있으면 sentinel 은 그쪽 소유로 보고 건드리지 않는다.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM agent_runtime.ask_jobs "
+            "WHERE conversation_id = %(cid)s AND id <> %(jid)s "
+            "  AND status IN ('pending','claimed','running') LIMIT 1",
+            {"cid": conversation_id, "jid": int(exclude_job_id)},
+        )
+        return cur.fetchone() is not None
+
+
+def latest_terminal_job_for_conversation(
+    conn, conversation_id: str
+) -> Optional[dict[str, Any]]:
+    """활성 job 이 **없는** 대화의 마지막 terminal job(status/run_id/error) 조회.
+
+    conv-audit FR-early-return-kv-never-finalized(봉인 B). `/api/ask_result` 는 terminal
+    판정을 KV `last_status` **단일 소스**로 했다. 그런데 KV 는 run 이 남기는 값이라, run 이
+    KV 를 마감하지 못하고 끝나면(조기 종료·프로세스 소실) 프런트가 45초 주기로 무한 폴링한다.
+    `ask_jobs` 에는 그때도 `status='error'` 라는 **더 권위적인 종료 사실**이 이미 있으므로,
+    KV 가 비-terminal 이어도 이쪽을 backstop 으로 읽는다(내부 attach 루프가 job_id 로 하는
+    것과 동일한 보증을 재접속 폴백 경로에도 대칭으로 준다).
+
+    **활성(pending/running) job 이 하나라도 있으면 None** — 새 요청이 막 시작된 대화에서
+    직전 run 의 terminal 을 보고 "끝났다" 고 오판하면 진행 중 답변을 놓치기 때문이다.
+    이 가드가 backstop 의 안전 조건이다.
+    """
+    with conn.cursor() as cur:
+        # `claimed` 포함이 계약이다(§18.8 codex [P1]) — claim~running 사이 상태를 활성에서
+        # 빠뜨리면 그 창에 들어온 backstop 이 **직전 run 의 terminal** 을 돌려주어 진행 중
+        # 답변을 끊는다. 테이블 CHECK 제약과 sweep 의 활성 집합도 셋을 함께 본다.
+        cur.execute(
+            "SELECT 1 FROM agent_runtime.ask_jobs "
+            "WHERE conversation_id = %(cid)s "
+            "  AND status IN ('pending','claimed','running') LIMIT 1",
+            {"cid": conversation_id},
+        )
+        if cur.fetchone() is not None:
+            return None
+        cur.execute(
+            "SELECT id, run_id, status, result_json, finished_at "
+            "FROM agent_runtime.ask_jobs "
+            "WHERE conversation_id = %(cid)s AND status IN ('done','error','canceled') "
+            "ORDER BY id DESC LIMIT 1",
+            {"cid": conversation_id},
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    result_json = row[3]
+    if isinstance(result_json, (str, bytes, bytearray)):
+        try:
+            result_json = json.loads(result_json)
+        except Exception:
+            result_json = None
+    err = ""
+    if isinstance(result_json, dict):
+        err = str(result_json.get("error") or "").strip()
+    return {
+        "id": int(row[0]),
+        "run_id": row[1] or "",
+        "status": row[2],
+        "error": err,
+        "finished_at": row[4],
+    }
+
+
 def active_inline_paths(conn) -> set[str]:
     """비-terminal(pending/claimed/running) job 의 payload 내 inline temp 파일 경로 집합.
 

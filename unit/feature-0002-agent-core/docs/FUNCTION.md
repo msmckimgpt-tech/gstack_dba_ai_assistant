@@ -509,6 +509,40 @@ source_of_truth: true
 - 큐 상태기계는 기존 전이(`pending` + `lease_epoch++` fencing)만 사용하고 `attempts` 는 claim 시점 증가분을 그대로 둔다(cap 이중 소모 방지). 보안 경계·RBAC·가드 무변경.
 - **C 판정 SQL 의 파라미터 캐스트는 계약의 일부**(TASK-20260730T172000, POST-DEPLOY 실측): `%(mirror_sender)s::text` · `%(sender_account_id)s::bigint`. 캐스트가 없으면 PostgreSQL 이 타입을 추론하지 못해 **쿼리 자체를 거부**하고, `_read_runtime_pg` 가 그 예외를 흡수해 호출부가 fail-open 으로 저장 → 중복 억제가 조용히 전면 무력화된다(라이브 재현). fail-open 정책 자체는 유지(중복 1행 < 요청문 유실)하되, 그것이 무력화를 은폐하지 않도록 캐스트를 회귀로 고정한다.
 
+## (TASK-20260814T160000) 조기 종료 run 의 KV terminal 봉인 계약
+
+`/api/ask`·`/api/ask_result` long-poll 의 **1차 terminal 판정 소스는 KV `last_status`** 다. 그래서
+run 이 KV terminal 을 남기지 못하고 끝나면 프런트가 무기한 대기한다(라이브 실측: 45초 폴링 ×
+23분, 사용자가 결국 수동 취소). 종전 워커의 KV 마감은 `raised` / `_deferred_terminal` /
+resume-giveup **3갈래뿐**이었고 그 전제("run_agent 는 정상 종료 시 KV 를 이미 기록했다")는
+거짓이었다 — `_run_agent_core` 에는 KV 를 실제 run_id 로 인계하기 **전**에 `result["error"]` 만
+채우고 예외 없이 정상 return 하는 조기 종료 경로가 12곳 있다(60일 실측 22 job / 20 대화).
+
+- **A. 워커의 KV terminal 무조건 보장**: `modules/ask.py::_ensure_kv_terminal` 이 `finish_ask_job`
+  **앞**에서(long-poll 이 KV 를 먼저 보므로 job 전이보다 앞서야 대기가 즉시 끝난다) 결과와 무관하게
+  KV terminal 을 보장한다. ① 이미 terminal 이면 no-op(정상 경로의 done 을 덮지 않는다) ② KV
+  `last_status_run_id` 가 **다른 실제 run** 이면 skip(TASK-0241 supersede 존중) ③ `enqpre-`
+  sentinel 은 "아직 아무 run 도 인계하지 못했다" 는 표시라 **마감 대상**(이 예외가 봉인의 성립
+  조건 — 조기 종료가 정확히 이 상태를 남긴다) ④ `error` 문구가 있거나 `answer` 가 비었을 때만
+  `error`, 답변이 있는데 KV 만 못 쓴 run 은 `done`(성공 턴을 실패로 날조하지 않는다) ⑤ KV 조회
+  자체가 실패하면 **무write**(판정 없는 덮어쓰기 금지). 재개 재큐 경로는 그 앞에서 return 하므로
+  도달하지 않는다(terminal 미기록 유지 = 인계 계약 불변).
+- **B. `ask_jobs` terminal 권위 backstop**: `ask_jobs.latest_terminal_job_for_conversation` 은
+  **활성(pending/running) job 이 없는** 대화의 마지막 terminal job 만 돌려준다(활성이 있으면
+  `None` — 진행 중 답변을 끊지 않는 안전 조건). `/api/ask_result` 는 KV 판정이 성립하지 않을 때
+  이 값으로 long-poll 을 푼다(첫 tick 즉시 + 이후 10초 주기 — feature-0028 P1-A 가 줄인 호출당 PG
+  연결 수를 되돌리지 않는다). 내부 attach 루프가 `job_id` 로 갖던 보증을 **재접속 폴백 경로에
+  대칭 부여**하는 것이며, 미가용·실패 시 `None` → 종전 KV 판정만 사용(회귀 0).
+- **C. 조기 종료도 대화 흔적을 남긴다**: `agent_core._persist_early_exit` 가 datasource 계열 조기
+  return 4곳(eval / 멀티 primary / 해석 오류 / 단일)에서 **사용자 질문 1행 + 오류 1행 + KV
+  terminal** 을 남긴다. 종전엔 이 지점이 `_save_message(user)` 앞이라 **요청문이 통째로 유실**됐고
+  (새로고침하면 방금 쓴 질문이 사라진다) 사용자에게는 "시작조차 안 된" 것으로 보였다. 중복 저장은
+  기존 `_user_message_already_persisted`(A-C 재시도 억제)와 같은 근거 기반으로 막고, 대화 기록이
+  실패해도 **KV 마감은 반드시 수행**한다(기록 실패가 무한 폴링으로 되돌아가지 않게).
+- 큐 상태기계·lease fencing·보안 경계·RBAC 무변경. datasource 회로차단이 턴을 막는 동작 자체는
+  **의도된 가드**(원장 `FR-datasource-eager-connect-blocks-datasource-free-turn`, 2026-08-07 사용자
+  판단)라 그대로 두고, **그 사실이 사용자에게 전달되는 경로**만 복구한다.
+
 ## (TASK-20260617T095122) 계정 스코프 cross-conversation 인사이트 회상 (B′, INJECT enable-ready)
 새 대화 시작 시 같은 계정의 과거 대화에서 쌓은 인사이트가 사라지는 문제를 완화한다 — 특정 명칭이 아니라 문맥/인사이트를 어렴풋이 이월. 설계 정본 `docs/DESIGN-account-insight-recall.md` §10. outside-voice 2-lens 검증(REV-20260617T095122). **모든 flag default OFF → 라이브 동작 0 변경**; 활성=canary(EXTRACT→RECALL→INJECT).
 - **소스 입력(kv 보강, TASK-20260617T100524)**: 추출 입력은 `summary`(선택) + **kv 신호(origin_request/thread_goal/topic)**. summary 쓰기가 비어도(cutover 결함) kv 로 동작. 후보 쿼리 LEFT JOIN, summary+kv 합산 신호 게이트·fingerprint.

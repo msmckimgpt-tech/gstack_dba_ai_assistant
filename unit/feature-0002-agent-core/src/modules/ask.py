@@ -50,7 +50,7 @@ from shared.config import (
 )
 from .utils import utc_now_iso
 from . import ask_jobs
-from .memory import set_run_status, save_memory_kv, mark_cancel_requested
+from .memory import set_run_status, save_memory_kv, mark_cancel_requested, load_memory_kv
 
 log = logging.getLogger("agent_core.ask_worker")
 
@@ -491,6 +491,97 @@ def _cleanup_inline_paths(payload: dict[str, Any]) -> None:
             log.warning("ask-worker: inline temp 삭제 실패 %s: %s", p, exc)
 
 
+# KV terminal 로 인정하는 상태(web `_ASK_TERMINAL_STATUSES` 와 동형).
+_KV_TERMINAL_STATUSES = ("done", "error", "canceled")
+# enqueue~claim 갭 동안만 존재하는 가교 run_id 접두어(_conv_store 의 `enqpre-` sentinel).
+_ENQ_SENTINEL_PREFIX = "enqpre-"
+
+
+def _ensure_kv_terminal(cid: str, run_id: str, result: Optional[dict[str, Any]],
+                        raised: bool, conn=None, job_id: Optional[int] = None) -> None:
+    """run 이 KV terminal 을 남기지 않고 끝났으면 **여기서 반드시 남긴다** (최종 방어선).
+
+    conv-audit FR-early-return-kv-never-finalized: 이 워커의 KV 마감은 종전 세 갈래
+    (`raised` 예외 · `_deferred_terminal` · resume-giveup)뿐이었고, 그 전제는
+    "run_agent 는 정상 종료 시 KV last_status 를 이미 기록했다" 였다. 그런데 `run_agent`
+    에는 KV 를 실제 run_id 로 인계(`set_run_status(processing, run_id)`)하기 **전**에
+    `result["error"]` 만 채우고 **예외 없이 정상 return** 하는 조기 종료 경로가 여럿 있다
+    (datasource 선연결 실패·회로차단·해석 오류 등). 그 경로는 세 갈래 어디에도 안 걸려
+    KV 가 `processing` + enqueue sentinel 로 **영구 고착**했고, `/api/ask_result` 는 KV 를
+    terminal 판정 소스로 쓰므로 프런트가 45초 주기로 무한 폴링했다(실측: 조기 종료
+    22 job / 20 대화, 사용자 체감 dead-air 는 stale 임계 18분).
+
+    그래서 `finish_ask_job` 직전에 **결과가 무엇이든** KV terminal 을 보장한다. 이미
+    terminal 이면 no-op 이므로 정상 경로의 값(첨부 후처리 뒤 done 등)을 덮지 않는다.
+
+    supersede 안전: KV 의 `last_status_run_id` 가 **다른 실제 run** 을 가리키면 write 를
+    건너뛴다(그 run 이 대화 상태 슬롯을 인계했다는 뜻 — TASK-0241 가드와 동형). 다만
+    `enqpre-` sentinel 은 "아직 아무 run 도 인계하지 못했다" 는 표시라 마감 대상이다 —
+    조기 종료가 정확히 이 상태를 남기므로, 이걸 제외하면 봉인이 성립하지 않는다.
+    """
+    if not cid:
+        return
+    try:
+        cur_status = str(load_memory_kv(None, cid, "last_status") or "").strip().lower()
+    except Exception:
+        # 판정 불가 — 무조건 write 는 다른 run 의 상태를 덮을 위험이 있어 하지 않는다.
+        log.warning("ask-worker: KV terminal 보장 판정 실패 cid=%s run=%s", cid, run_id,
+                    exc_info=True)
+        return
+    if cur_status in _KV_TERMINAL_STATUSES:
+        return   # 정상 경로가 이미 마감함
+    try:
+        cur_rid = str(load_memory_kv(None, cid, "last_status_run_id") or "").strip()
+    except Exception:
+        cur_rid = ""
+    _rid = str(run_id or "").strip()
+    _is_sentinel = cur_rid.startswith(_ENQ_SENTINEL_PREFIX)
+    if cur_rid and cur_rid != _rid and not _is_sentinel:
+        return   # 다른 실제 run 이 인계 — supersede 가드 존중(no-op)
+    if _is_sentinel and cur_rid and conn is not None and job_id is not None:
+        # §18.8 codex [P1]: 이 sentinel 이 **내 enqueue 의 것이라는 보장이 없다**. 취소→즉시
+        # 재요청처럼 새 요청이 막 sentinel 을 심은 창이면, 그것을 내 terminal 로 덮는 순간
+        # 새 요청이 시작도 전에 실패로 표시된다. 자기 외 활성 job 이 있으면 그쪽 소유로 본다.
+        try:
+            if ask_jobs.has_other_active_job_for_conversation(conn, cid, job_id):
+                log.info(
+                    "ask-worker: KV sentinel 마감 보류 — 다른 활성 job 존재 cid=%s run=%s", cid, run_id
+                )
+                return
+        except Exception:
+            # 판정 불가면 보수적으로 보류한다(무한 폴링은 stale 창이 backstop 으로 받는다).
+            log.warning("ask-worker: sentinel 소유 판정 실패 cid=%s run=%s", cid, run_id,
+                        exc_info=True)
+            return
+    err = str((result or {}).get("error") or "").strip()
+    answer = str((result or {}).get("answer") or "").strip()
+    # 답변이 있는데 KV 마감만 실패한 run 을 error 로 적으면 **성공한 턴을 실패로 날조**한다.
+    # 오류 문구가 있거나 답변이 아예 없을 때만 error, 그 외에는 done 으로 마감한다.
+    # `raised`(run_agent 예외)면 answer 가 남아 있어도 성공이 아니다 — job 전이도 error 다.
+    if raised or err or not answer:
+        _status = "error"
+        err = err or ("요청을 완료하지 못했습니다." if raised
+                      else "요청이 시작되지 못한 채 종료되었습니다.")
+    else:
+        _status = "done"
+        err = ""
+    try:
+        # KV 가 이미 **내 run** 을 가리키면 supersede 가드를 켠다 — 판정~write 사이에 다른 run 이
+        # 인계하면 write 를 건너뛴다(§18.8 codex [P1] read-then-write race 창 축소). sentinel·빈 값
+        # 이면 가드가 곧 skip 을 뜻하므로(=봉인 무력화) 무조건 write 를 유지한다.
+        _guard = bool(cur_rid) and cur_rid == _rid
+        set_run_status(None, cid, _status, run_id=_rid, error=err,
+                       only_if_current_run=_guard)
+        log.warning(
+            "ask-worker: KV terminal 미기록 run 을 %s 로 마감 cid=%s run=%s prev_status=%s "
+            "prev_run=%s (조기 종료 경로 추정)", _status, cid, run_id, cur_status or "<empty>",
+            cur_rid or "<empty>",
+        )
+    except Exception:
+        log.warning("ask-worker: KV terminal 보장 기록 실패 cid=%s run=%s", cid, run_id,
+                    exc_info=True)
+
+
 def _resume_giveup_finalize(cid: str, run_id: str, result: Optional[dict[str, Any]]) -> None:
     """재개 재큐가 성립하지 않았을 때 **KV terminal 을 반드시 남긴다** (§18.8 패널 P1-3).
 
@@ -727,6 +818,14 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
             _postprocess_attachment_blocks(cid, account_id, result, run_id)
         finally:
             _finalize_deferred_terminal(cid, run_id, result)
+
+    # conv-audit FR-early-return-kv-never-finalized: KV terminal 최종 보장 — 위 세 갈래
+    # (raised / _deferred_terminal / resume-giveup) 중 어디에도 걸리지 않은 조기 종료 run 을
+    # 여기서 마감한다. `finish_ask_job` **앞**에 둔다 — web long-poll(`/api/ask`·
+    # `/api/ask_result`)의 1차 terminal 판정 소스가 KV 이므로, job 전이보다 먼저 풀어야
+    # 사용자 대기가 즉시 끝난다. 이미 terminal 이면 no-op(정상 경로 무영향).
+    # 재개 재큐 경로는 위에서 `return` 하므로 여기 도달하지 않는다(terminal 미기록 유지).
+    _ensure_kv_terminal(cid, run_id, result, raised, conn=conn, job_id=job_id)
 
     # ask_jobs terminal 전이(ops view + result_json). lease 박탈 시 no-op(fencing).
     err = str((result or {}).get("error") or "").strip()
