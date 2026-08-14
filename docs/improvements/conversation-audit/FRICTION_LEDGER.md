@@ -6,6 +6,29 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## OBS-attach-chain-multiple-live-heads — 관측 항목 (수정 안 함, 발생 시 승격)
+
+- **status**: `report-only` — **라이브 발생 0건**(2026-08-14 실측)이라 고치지 않고 **관측만** 둔다.
+- **출처**: `attach-version-branching` 적대 리뷰 [P1] — 업로드 경로가 새 row 를 commit 한 뒤
+  supersede 하고 그 실패를 삼켜, 같은 체인에 live head 가 둘 남을 수 있다는 지적.
+- **왜 지금 고치지 않나(정직)**:
+  1. **자가 정정이 이미 있다** — supersede 가 `WHERE VersionNumber < new` 라, 한 번 실패해도
+     다음 업로드가 더 옛 버전을 전부 끈다.
+  2. **라이브 실측 0건** — 활성 head **808** 중 같은 root 에 head 2개인 체인 **0**.
+  3. **오인 표시는 이미 방어됨** — `_load_filename_lineage_heads` 가 root 당 1건으로 접어,
+     이 상태가 발생해도 "계보 2개" 로 잘못 보이지는 않는다.
+  4. 트랜잭션으로 묶으려면 MinIO put ↔ INSERT ↔ supersede 순서를 바꿔야 해 업로드 경로 전체의
+     회귀 검증이 따른다 — **발생 0인 결함에 치르기엔 큰 비용**이다.
+- **관측 지표(다음 audit 에서 재측정)**:
+  ```sql
+  SELECT COUNT(*) FROM (
+    SELECT COALESCE(RootAttachmentId, Id) AS root, COUNT(*) c
+    FROM WebConversationAttachments
+    WHERE SupersededAt IS NULL AND DeletedAt IS NULL AND DeletePending = 0
+    GROUP BY root HAVING c > 1) t;   -- 기대 0
+  ```
+- **승격 조건**: 위 값이 0 이 아니면 `fix-now` 로 승격(자가 정정이 따라잡지 못한다는 증거).
+
 ## FR-group-attach-sender-scope-blocks-members — fixed:deployed:verified (L4↔L1; 열람 경계와 주입 경계의 비대칭)
 
 - **status**: `fixed:deployed:verified` — PR #1260 merge(main `db15bfcb`) → 전체 롤아웃
