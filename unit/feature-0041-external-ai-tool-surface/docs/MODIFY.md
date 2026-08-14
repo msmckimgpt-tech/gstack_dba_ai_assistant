@@ -249,3 +249,11 @@ source_of_truth: true
 - Impact: 익명 차단 목적은 유지(익명은 web 으로, 인증된 요청만 `ext-tool-mcp`). 인증된 MCP
   스트림 경로 무변경. 앱에 `/api/ai/mcp` 라우트가 생겨 **web 직접 호출 시**에도 401+단서를 준다.
 - Rollback Notes: Caddyfile 블록 원복 + 라우트 삭제.
+
+## CHG-20260814-0017
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: POST-DEPLOY 기록. 문서 전용(코드 0).
+- Files: `docs/TEST.md` (14차 Run) · `docs/TASK.md`
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

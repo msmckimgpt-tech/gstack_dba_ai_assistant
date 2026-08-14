@@ -16,6 +16,7 @@ const path = require("path");
 const STATIC = path.join(__dirname, "..", "..", "src", "static");
 const USAGE_JS = path.join(STATIC, "admin", "usage.js");
 const ADMIN_CSS = path.join(STATIC, "css", "admin.css");
+const METRICS_JS = path.join(STATIC, "usage-metrics.js");   // 지표 정의 정본(두 화면 공유)
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -29,7 +30,10 @@ function moduleSource() {
   let src = fs.readFileSync(USAGE_JS, "utf8");
   src = src.replace(/^import\s[\s\S]*?from\s+"[^"]+";\s*$/gm, "");
   src = src.replace(/^export\s*\{[^}]*\};\s*$/gm, "");
-  return src;
+  // 지표 정의는 **정본 소스 자체**를 주입한다(stub 을 두면 목록·라벨·가산성 검사가 vacuous 해진다
+  // — `esm-classic-inject.hangulQwertyClassicSource` 와 같은 규약).
+  const metrics = fs.readFileSync(METRICS_JS, "utf8").replace(/^export\s+/gm, "");
+  return metrics + "\n" + src;
 }
 
 // 결정론 픽스처 — 지표마다 **다른 비율**을 갖도록 만든다(전환이 실제로 값을 따라가는지 보려면
@@ -339,6 +343,28 @@ __USAGE_SRC__
   check("축·막대가 새 폭 안에 다시 배치된다",
     widthCase.axisX2 !== null && widthCase.axisX2 < 640 && widthCase.barX.every((x) => x < 640), widthCase);
   await page.evaluate(() => { document.getElementById("usageDayChart").parentElement.style.width = "760px"; });
+
+  // ── 13) '그 지표에서 처음 생기는 막대'의 첫 등장도 애니메이션인가 ─────────────────────
+  //   기존 검사는 노드가 이미 남아 있는 2회차 이후를 봤다. 차트를 새로 그린 직후(=`|__all__`
+  //   노드가 아직 없는 상태)의 **첫 전환**을 측정해야 신규 삽입 경로가 검증된다.
+  const firstAppear = await page.evaluate(async () => {
+    const el = document.getElementById("usageDayChart");
+    el._sig = "";                       // 강제 재생성 → __all__ 노드 없는 상태로 되돌림
+    document.querySelector('[data-metric="total_tokens"]').click();
+    await new Promise((r) => setTimeout(r, 800));
+    const had = !!el.querySelector('rect[data-seg$="|__all__"]');
+    document.querySelector('[data-metric="requests"]').click();
+    await new Promise((r) => setTimeout(r, 110));
+    const n = el.querySelector('rect[data-seg$="|__all__"]');
+    const mid = n ? parseFloat(getComputedStyle(n).height) : null;
+    const running = n ? n.getAnimations().map((a) => a.transitionProperty) : [];
+    await new Promise((r) => setTimeout(r, 900));
+    const end = n ? parseFloat(getComputedStyle(n).height) : null;
+    return { hadNodeBefore: had, mid, end, running };
+  });
+  check("신규 막대의 첫 등장도 0 에서 자란다(점프 아님)",
+    firstAppear.hadNodeBefore === false && firstAppear.mid !== null
+    && firstAppear.mid > 0.3 && firstAppear.mid < firstAppear.end - 0.5, firstAppear);
 
   await page.screenshot({ path: path.join(__dirname, "usage-metric-switch.png"), fullPage: false });
   await browser.close();

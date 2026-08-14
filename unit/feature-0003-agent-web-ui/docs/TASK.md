@@ -10629,6 +10629,9 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 ### 9. Requested Scope
 
+
+### 9. Requested Scope
+
 - "'요청' ↔ 다른 요소 전환 시 부드러운 애니메이션이 적용되지 않는 이슈 수정" — ✓ (양방향 모두
   노드 유지 전환으로 복구. 같은 뿌리였던 **모델 칩 토글 점프**도 함께 해소)
 ## 20260813T1640-usage-metric-solo-anim — '요청' 경계 전환 애니메이션 복구 (Minor §12.3, frontend-only)
@@ -10649,6 +10652,9 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 - "'요청' ↔ 다른 요소 전환 시 부드러운 애니메이션이 적용되지 않는 이슈 수정" — ✓ (양방향 모두
   노드 유지 전환으로 복구. 같은 뿌리였던 **모델 칩 토글 점프**도 함께 해소)
+
+- [x] 3차: 신규 세그먼트 첫 등장 전환(라이브 전용 축) — 강제 reflow 로 시작 스타일 확정. 검사는
+      추가하되 헤드리스 판별력 없음을 TEST.md 에 명시(vacuous 표기), 판별은 라이브 실측
 ## 20260814T0100-attach-version-branching — 첨부 버전 계보를 작성 주체별로 분기 (Major §12.3, 사용자 결정)
 
 - **출처**: 사용자 요청(2026-08-13) — "첨부파일의 버전 관리 또한 사용자별로 트리 형태로 구분되도록
@@ -10698,7 +10704,16 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       ③ 같은 root 의 live head 2개를 두 계보로 오인 → **root 당 1건** dedupe
       ④ 타 멤버 소유 AI 계보를 "by you" 로 오표기 → 소유자 반영(READ-ONLY 표기).
 - [x] 관련 스위트 **61 PASS** · 전체 스위트 회귀 실패 0(잔여는 선재 환경 의존 파일 1개).
-- [ ] verify-completion · 배포 후 라이브 실측(분기 INSERT/supersede 실동작).
+- [x] verify-completion **18/18 PASS**.
+- [x] 배포 후 라이브 실측(2026-08-14, READ-ONLY) — PR #1265 merge(main `6fbccbc7`) → 전체 롤아웃
+      (web-a/web-b/ask-worker `GIT_COMMIT=6fbccbc7` · 무중단 `no upstreams available` **0**).
+      배포본에서 `_load_filename_lineage_heads` 직접 호출 → 예외 없이 동작. 대화 `…46763d6e` 의
+      동명 파일에서 **계정 10 계보 / 계정 50 계보가 각각 head 1건**으로 분리 반환(사람끼리의 분리가
+      이미 성립함을 라이브로 재확인, root dedupe 정상).
+- [ ] **미실측(정직)**: 분기 INSERT/supersede 의 실동작과 프롬프트 계보 블록의 실제 렌더는
+      assistant 가 첨부를 실제로 수정해야 발생한다 — 그것은 라이브 대화에 write 를 유발하므로
+      (conversation_audit 불변제약: 대화 데이터 불변) 수행하지 않았다. 단위 테스트(구조 잠금 포함)
+      로만 증명된 상태이며, 다음 실사용 수정본이 생길 때 계보 분리를 확인하면 된다.
 
 ### 9. Requested Scope
 
@@ -10710,6 +10725,32 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
   는 아직 계보 내 축만 그린다. 목록에서는 기존 `AI 수정` 배지로 계보가 구분돼 보인다 —
   트리 시각화·토글은 후속 cycle.
 
+## 20260813T1900-usage-metric-profile — 프로필 '사용 내역' 차트 정합 반영 (Minor §12.3)
+
+사용자 요청(2026-08-13): "[사용자 프로필 > 계정 > 사용 내역] 으로 나타나는 차트에도 정합하게 반영".
+
+- [x] 지표 정의를 `static/usage-metrics.js` **정본**으로 추출 — 관리 콘솔의 복제 제거, 두 화면 공유
+- [x] 프로필 요약 카드 4종 → 지표 8종 선택기(캐시 읽기·쓰기 포함)
+- [x] 프로필 stacked·donut 을 지표 인자화 + 관리 화면과 **동일 전환 규칙** 이식
+- [x] `/api/profile/usage` 에 지표 축 전량(totals 캐시 2종 · by_day requests 포함 8축 · by_day_model)
+- [x] 신규 하네스 15 PASS · 관리 하네스 37 PASS 유지 · pytest 4,441 passed
+- [ ] POST-DEPLOY 라이브 실측(프로필 드로어 카드 클릭 전환)
+
+### 9. Requested Scope
+
+- "[사용자 프로필 > 계정 > 사용 내역] 차트에도 정합하게 반영" — ✓ (지표 정의를 정본 1개로 통일해
+  두 화면이 구조적으로 어긋날 수 없게 만들고, 카드 8종·전환 규칙·안내 문구·캐시 항목을 동일하게 적용)
+
+## 20260813T2000-usage-metric-final-postdeploy — 양 화면 POST-DEPLOY 실측 종결 (doc-only)
+
+- [x] 관리 콘솔 3기전 해소 라이브 확인(양방향 `sameSvg:true` + 중간값 + 새 막대 0→목표)
+- [x] 프로필 사용 내역 동일 거동 확인(카드 8종 · 전환 · 비-가산 단일 막대 · 안내 문구 일치)
+- [x] 프로필 캐시 0 의 사유 확인(본인 대화에 캐시 기록 없음 — 다른 계정 2곳에 존재)
+- [x] 검증 함정 2건 기록(측정 API · display:none 조상)
+
+### 9. Requested Scope
+
+- 선행 두 cycle 의 POST-DEPLOY 이월 종결 — ✓ (양 화면 라이브 실측 PASS)
 ## TASK-20260814T090000-usage-records-sort-page — '사용 기록' 표 열 정렬 + 페이지네이션 (Minor §12.3)
 
 요청(사용자, `/_template:entry` arg-given): "[관리 콘솔 > AI 운영 현황 > LLM 사용량 > 사용 기록 표]를
