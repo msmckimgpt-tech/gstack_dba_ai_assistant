@@ -4278,3 +4278,8 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   갱신(파서는 `new Date()` 라 `Z` 가 붙으면 자동 정합 — 별도 보정을 넣으면 이중 변환).
 - 회귀 고정: 위 4축 전부 테스트(선점 원자성 · 2차 replica 무작업 · 반납 · 상한 선확정 · 서버 오프셋 ·
   저장소별 마커 · 전송 `Z` 표기).
+
+## CHG-20260814T120000 프로필 판 정렬·페이지네이션 POST-DEPLOY 실측 기록 (docs-only)
+
+- 대상: `docs/TEST.md`(POST-DEPLOY Run — 두 화면) · `docs/REPORT.md` · `docs/TASK.md` ·
+  `docs/REVIEW.md` · `docs/evidence/pb0008-profile-usage-sort-20260814.png`. 코드 무변경.

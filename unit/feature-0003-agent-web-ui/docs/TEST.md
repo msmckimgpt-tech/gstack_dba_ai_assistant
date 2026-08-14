@@ -3045,3 +3045,25 @@ Chromium 에서 정량 측정한다.
   ⚠ L2 는 줄바꿈을 제거한 뮤턴트도 통과했다 = **현재 검출력 없음**(회귀 가드로만 유지).
 - **구조 — `tests/test_usage_records_sort_page.py` 16 PASS** · admin 하네스 50 PASS 무회귀 ·
   feature-0003 전체 스위트 회귀 0.
+
+### POST-DEPLOY 결과 (2026-08-14, 배포 ac1403c4, deploy-web-only) — **Environment: Windows-browser** — PASS (프로필 판 전 축 + 관리 콘솔 판 재확인)
+
+- 방법: PB-0008 — `bin/win-browser.py` relay 실 Windows Chrome/150.0.7871.128, 하드 리로드 후
+  ① `https://localhost/` 작업 화면 → 프로필 → 계정 → **사용 내역** → 모델 막대 클릭,
+  ② `https://localhost/admin` → AI 운영 현황 → LLM 사용량 → 막대 클릭(스크롤러 변경 영향 재확인).
+  배포 확증 — `/livez git_commit=ac1403c4`, 서빙 `app/profile.js` 의 `data-usage-sort` 4건,
+  서빙 `search-audit.css` 의 `overflow: visible` 2건. Caddy `no upstreams available` **0**.
+- **프로필 판 — 정렬 PASS**: 열 머리 클릭으로 '호출' 내림차순(44/43/43) ↔ 오름차순(2/3/3) 전환,
+  `aria-sort` 가 그 열만 `ascending`(나머지 `none`). '대화' 열은 텍스트 오름차순으로 시작.
+- **프로필 판 — 페이지네이션 PASS**: 라이브 30건에서 페이지당 25행 전환 → `총 30건 중 1–25 @1/2`
+  (25행), '다음' → `26–30`(5행) + '다음' 비활성·'이전' 활성. 기본은 `1–30 @1/1`.
+- **프로필 판 — 첫 화면 무회귀 PASS**: 모달 개시 시 `토큰 ▼` 내림차순, 페이저가 **열자마자 보인다**
+  (`position: sticky`). 시각 증거 `docs/evidence/pb0008-profile-usage-sort-20260814.png`.
+- **프로필 판 — 키보드 PASS**: 정렬 버튼 활성화 후에도 포커스가 그 열 머리(`total_tokens`)에 남는다.
+- **프로필 판 — sticky 열 머리 PASS**(이번 cycle 수정의 핵심): 목록 끝까지 스크롤해도 열 머리 top 이
+  151 → 151 로 고정되고 뷰 안에 남는다. 수정 전이라면 목록과 함께 사라졌을 축이다.
+- **관리 콘솔 판 재확인 PASS**(스크롤러 단일화의 영향면): 204건 목록에서 스크롤 후에도 열 머리 top
+  142 → 142 고정 + 뷰 유지, 페이저 가시. **가로 넘침 회귀 없음** — 표 폭 1185 = 본문 폭 1185,
+  `.usage-conv-body`/`.usage-conv-tablewrap` 양쪽 가로 스크롤 0(overflow 를 옮긴 뒤에도 잘림 없음).
+- **미검증(정직)**: 브라우저 콘솔 에러는 별도 수집 채널을 태우지 않아 **확인하지 않았다**.
+  좁은 폭(모바일) 실측은 실 Windows 창 리사이즈 대신 헤드리스 320/480/640px 계측으로 갈음했다.
