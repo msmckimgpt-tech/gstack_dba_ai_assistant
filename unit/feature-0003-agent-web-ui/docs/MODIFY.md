@@ -4278,3 +4278,8 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   갱신(파서는 `new Date()` 라 `Z` 가 붙으면 자동 정합 — 별도 보정을 넣으면 이중 변환).
 - 회귀 고정: 위 4축 전부 테스트(선점 원자성 · 2차 replica 무작업 · 반납 · 상한 선확정 · 서버 오프셋 ·
   저장소별 마커 · 전송 `Z` 표기).
+
+## CHG-20260813T2250-ai-claude-corp-usage-card-overflow-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+`main 3af15fc2` 배포 후 드로어 폭 6단계(700→320px) 실측 — 전 구간 넘침 0, 보고 폭(370px)에서 2열
+유지 확인. 코드 변경 0.
