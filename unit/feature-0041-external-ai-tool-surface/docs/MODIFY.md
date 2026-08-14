@@ -274,3 +274,11 @@ source_of_truth: true
 - Impact: 구조 도구 3종의 **인자 이름이 바뀐다**(`table` → `schema_name`+`table`) — 기존 호출은
   어차피 전부 실패하던 것이라 깨질 사용처가 없다. `datasource` 인자가 이제 정상 통과한다.
 - Rollback Notes: 각 파일 원복. 스키마 변경 없음.
+
+## CHG-20260814-0019
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: POST-DEPLOY 기록. 문서 전용(코드 0).
+- Files: `docs/TEST.md` (16차 Run) · `docs/TASK.md`
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

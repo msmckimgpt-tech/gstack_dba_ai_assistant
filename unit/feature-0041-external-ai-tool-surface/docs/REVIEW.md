@@ -399,3 +399,11 @@ source_of_truth: true
   이름만 넣었기 때문이다. 외부 클라이언트가 보내는 값은 예측 대상이 아니라 **관측 대상**이다.
 - 뮤테이션: 5건 전부 되돌려 KILL 확인.
 - Human Approval Needed: 아니오.
+
+## REV-20260814-0019 [SKIPPED:post-deploy-record] — 제보 결함 배포 검증 (코드 0)
+
+- Related Change: CHG-20260814-0019
+- Reason: 배포 결과 기록. 코드 0.
+- 요지: 실제 클라이언트 이름 3종이 DCR 201 로 통과(이전 400 — 자동 연결 차단의 직접 원인),
+  인가 완료 화면 3분기 200, 가이드 반영 확인. 검증 probe client 는 revoke.
+- Human Approval Needed: 아니오.
