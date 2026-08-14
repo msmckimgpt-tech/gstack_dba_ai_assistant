@@ -74,12 +74,17 @@ def _mock_docker(tmp_path: Path, *, caddy_running: bool = True, ps_fail: bool = 
     binroot = tmp_path / "mockbin"
     binroot.mkdir(exist_ok=True)
     ps_out = "fake-caddy-cid" if caddy_running else ""
+    # f-string 표현식 안에 백슬래시를 두면 **Python 3.11 에서 SyntaxError** 다(PEP 701 은 3.12).
+    # CI 러너와 agent 이미지가 모두 3.11 이라, 이 한 줄 때문에 파일 전체가 collection 단계에서
+    # 죽어 있었다 — testpaths 에 등재해도, CI 경로에 추가해도 아무것도 지키지 못하는 상태였다
+    # (feature-0020, 2026-08-14 발견). 개행을 미리 결합해 f-string 밖으로 뺀다.
+    ps_echo = "printf '" + ps_out + "\\n'"
     (binroot / "docker").write_text(
         textwrap.dedent(
             f"""\
             #!/bin/sh
             case "$*" in
-              *"ps -q caddy"*) {"exit 1" if ps_fail else f"printf '{ps_out}\\n'"} ;;
+              *"ps -q caddy"*) {"exit 1" if ps_fail else ps_echo} ;;
               *"cat /etc/caddy/Caddyfile"*) printf '%s' "$FAKE_LIVE_CADDYFILE" ;;
               *livez*) {"exit 1" if False else 'exit ${FAKE_PEER_LIVE_RC:-0}'} ;;
               *reverse_proxy/upstreams*)
@@ -193,8 +198,13 @@ def test_g1b2_no_replica_recreate_outside_the_gated_helper():
     본다 — recreate 계열 명령이 어느 함수 안에 있는지 확인하고 allowlist 와 대조한다.
     """
     src = SCRIPT.read_text(encoding="utf-8")
+    # feature-0020 zd-ask-rollout: ask-worker surge 교대 3함수 추가. 이들은 **web replica 를
+    # 만지지 않는다**(대상은 ask-worker/ask-worker-surge 뿐) — 즉 이 테스트가 지키는 엣지 게이트의
+    # 관할 밖이다. 대신 자기 층의 게이트를 갖는다: surge healthy 확인 → 본체 drain(완주 대기) →
+    # 본체 교체. 그 순서는 `test_ask_surge_rollout.py` 가 잠근다.
     allowed = {"recreate_replica", "deploy_workers", "rollback_workers", "deploy_gateway_reconcile",
-               "reconcile_caddy", "sweep_leaked_surge"}
+               "reconcile_caddy", "sweep_leaked_surge",
+               "rollout_ask_worker_via_surge", "drain_stop_ask", "sweep_leaked_ask_surge"}
     # main 은 통째로 허용하지 않는다 — 초기 dual-start(양 replica 부재 시 동시 기동, 그때는
     # 내릴 상대가 없어 게이트가 무의미) **한 줄만** 예외로 인정한다(적대 검증 P2).
     initial_dual_start = "up -d --no-deps --no-build web-a web-b"

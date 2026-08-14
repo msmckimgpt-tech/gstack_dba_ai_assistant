@@ -29,10 +29,19 @@
 #  - migrate-lint hard gate(expand/contract) → migrate(expand) → swap 순서
 #  - build-once(image pin by SHA) + last-good 유지 → 빠른 롤백(재빌드 없음)
 #  - one-at-a-time + pre-drain(상대 ready 확인 + 대상 active_streams==0 대기) + /readyz 게이트
-#  - quiesce 게이트(CHG-20260812T140000): ask-worker·gateway 교체 **직전**에 진행 중 사용자 run
+#  - quiesce 게이트(CHG-20260812T140000): gateway 교체 **직전**에 진행 중 사용자 run
 #    (ask_jobs running + web active_streams)이 0 이 되기를 기다린다. 종전엔 실제 상태를 보지 않고
 #    stop_grace 타이머로 죽였는데 실측 run 의 66%가 그 예산보다 길었다. web 의 pre-drain 과 같은
 #    fail-closed 자세 — 못 기다리면 강행이 아니라 **중단**(구버전이 계속 서빙 = 무중단 유지).
+#  - ask-worker surge 교대(CHG-20260814T120000): ask-worker 는 위 게이트를 **쓰지 않는다**.
+#    전역 정적을 기다리는 방식은 바쁜 시간대에 창이 열리지 않아 배포가 완결되지 못했고(실측:
+#    유입 7~10분 간격 + run p95 691s → 상한 900s 안에 정적 창 없음), 순차 롤아웃이라 뒤 워커까지
+#    연쇄로 묶였다. ask-worker 는 HTTP 소켓이 아니라 **PG 큐 소비자**라 신규 job 을 받는 쪽을
+#    먼저 세울 수 있다 — surge 기동 → 본체는 자기 in-flight 만 완주 → 본체 교체 → surge 정리.
+#    "조용해지기를 기다린다" 가 아니라 "받는 쪽을 먼저 세운다".
+#  - 워커 실패 격리 + 완결 판정: 한 워커의 미교체가 무관한 워커를 막지 않는다. 대신 배포 말미에
+#    **컨테이너에서 GIT_COMMIT 을 다시 읽어** 전부 도달했을 때만 완결로 기록한다(부분 완료를
+#    완료로 보고하지 않는다 — 그것이 다음 배포의 멱등 skip 을 오염시킨다).
 #  - post-cutover soak(RestartCount/edge 감시) + 자동 롤백; bad-image vs dependency-down 구분
 #  - web 롤링 자체는 web-a/web-b 만 지정(--no-deps). 워커 롤아웃은 soak 통과 후
 #    별도 phase 에서 수행(feature-0020 — 구 "worker 미접촉 + WARN-only" 를 대체)
@@ -42,7 +51,8 @@
 #   sudo -E bin/deploy-web.sh --web-only      # web(+caddy reconcile)만 — 기존 feature-0014 범위
 #   sudo -E bin/deploy-web.sh --workers-only  # 워커+gateway 만 (마이그 없는 워커 코드/설정 변경 전용)
 #   sudo -E bin/deploy-web.sh --force-gateway # gateway 드리프트 무관 surge 교체 강제
-#   sudo -E bin/deploy-web.sh --force-busy    # quiesce 미달성에도 강행(진행 중 요청이 끊길 수 있음)
+#   sudo -E bin/deploy-web.sh --force-busy    # gateway quiesce 미달성에도 강행(진행 중 요청이 끊길 수 있음)
+#                                             # ask-worker 는 surge 교대라 이 플래그와 무관하다.
 #   sudo -E bin/deploy-web.sh --rollback      # last-good 이미지로 롤백(web + 워커)
 #   sudo -E bin/deploy-web.sh --dry-run       # 명령만 출력(상태 변경 없음)
 #   sudo -E bin/deploy-web.sh --help
@@ -89,6 +99,14 @@ AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask/ops 워커 공용
 #   롤아웃 대상에서 빠지면 이미지만 새로 빌드되고 이 컨테이너는 **구코드로 계속 도는**
 #   드리프트가 생긴다(서비스별 GIT_COMMIT 불일치 — 배포 완료 판정의 근거가 흔들린다).
 WORKERS=(insight-worker ask-worker ops-scheduler ext-tool-mcp)
+# feature-0020 zd-ask-rollout: ask-worker 는 큐 소비자라 surge 교대가 성립한다(상세는
+# rollout_ask_worker_via_surge 헤더). 전역 정적(quiesce) 대기를 대체한다.
+ASK_WORKER_SERVICE="ask-worker"
+ASK_WORKER_SURGE="ask-worker-surge"
+# 본체/surge 를 내릴 때 주는 **완주 예산**. compose stop_grace_period(1830s)보다 작아야
+# 반납 로직이 SIGKILL 전에 끝난다. 실측 run max 2,024s 를 전부 덮지는 않는다 — 덮지 못한
+# 꼬리는 종전과 동일하게 재큐되고, 그 사실은 배포 말미에 보고된다(조용히 넘기지 않는다).
+ASK_DRAIN_TIMEOUT="${DEPLOY_ASK_DRAIN_TIMEOUT:-1800}"
 AGENT_LASTGOOD_FILE="$STATE_DIR/deploy-agent.last-good"
 WORKER_READY_TIMEOUT="${DEPLOY_WORKER_READY_TIMEOUT:-300}"    # insight 최악 unhealthy 확정(start 60s+60s×3=240s)보다 여유(리뷰 m-3 — 경계 동률 false-fail 방지)
 GATEWAY_READY_TIMEOUT="${DEPLOY_GATEWAY_READY_TIMEOUT:-180}"
@@ -130,7 +148,7 @@ run() {  # dry-run 인지 명령 실행 래퍼
   "$@"
 }
 
-usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,62p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -336,12 +354,19 @@ write_pin_overlay() {  # $1 = web image ref, $2 = agent image ref ("" 또는 생
     printf '  web-a:\n    image: %s\n  web-b:\n    image: %s\n' "$web_img" "$web_img"
     if [ -n "$agent_img" ]; then
       local w; for w in "${WORKERS[@]}"; do printf '  %s:\n    image: %s\n' "$w" "$agent_img"; done
+      # surge 도 **같은 핀**을 받아야 한다 — 안 그러면 compose 가 build 정의로 되돌아가
+      # surge 만 다른(대개 stale) 이미지로 떠서, 교체 창 동안 신규 job 이 구 코드로 처리된다.
+      printf '  %s:\n    image: %s\n' "$ASK_WORKER_SURGE" "$agent_img"
     fi
   } > "$PIN_FILE"
 }
 
-DC_PROD=()  # base + pin overlay
-set_dc_prod() { DC_PROD=(docker compose -f docker-compose.yml -f "$PIN_FILE"); }
+DC_PROD=()        # base + pin overlay
+DC_SURGE_PROD=()  # base + pin overlay + surge profile (ask-worker surge 조작 전용)
+set_dc_prod() {
+  DC_PROD=(docker compose -f docker-compose.yml -f "$PIN_FILE")
+  DC_SURGE_PROD=(docker compose -f docker-compose.yml -f "$PIN_FILE" --profile deploy-surge)
+}
 
 rotate_lastgood() {  # $1=image repo, $2=직전 배포 sha(빈 값 허용 — 첫 배포), $3=last-good 기록 파일
   local repo="$1" prev="$2" f="$3"
@@ -877,9 +902,142 @@ wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 
   return 1
 }
 
+# ── ask-worker surge 롤아웃 (feature-0020 zd-ask-rollout) ─────────────────────
+# **왜 ask-worker 만 다른가**: 종전엔 본체 교체 전에 전역 quiesce(진행 중 사용자 run 이
+# 시스템 전체에서 0)를 기다렸다. 그 설계의 근거는 gateway 와 같았다 — "붙어 있는 것을 옮길 수
+# 없으니 붙어 있는 게 없을 때 바꾼다". 그런데 그 전제는 ask-worker 에 **성립하지 않는다**:
+#   - gateway 는 HTTP 소켓에 in-flight 가 붙어 있어 프로세스 간 이전이 불가능하다.
+#   - ask-worker 는 **PG 큐 소비자**다. 신규 job 은 소켓이 아니라 `ask_jobs` 에서 오고, claim 은
+#     `FOR UPDATE SKIP LOCKED` + lease_epoch fencing 이라 다중 인스턴스가 exactly-once 다.
+# 즉 "신규는 surge 가 받고 본체는 자기 in-flight 만 완주" 가 성립한다. 그러면 정적 창을 기다릴
+# 이유 자체가 사라진다.
+#
+# 그 차이가 실제로 얼마나 컸는가(2026-08-14 라이브 실측 — 본 변경의 계기):
+#   유입 7~10분 간격 · run p50 81s/p95 691s → 상한 900s 안에 전역 정적 창이 **생기지 않는다**.
+#   ask-worker 가 배포되지 못했고, 순차 롤아웃이라 그 **뒤 워커(ops-scheduler·ext-tool-mcp)까지
+#   연쇄로** 구버전에 묶였다. 배포가 부분 완료로 끝나고 재실행해도 같은 자리에서 다시 막혔다.
+#   설계 문서는 "조용한 시간에 재실행" 을 전제했지만, 그것은 사람이 창을 노려야 한다는 뜻이고
+#   그 사이 보안 게이트 같은 시급한 변경이 라이브에 도달하지 못한다.
+#
+# 반환 규약(호출자가 롤백 여부를 가른다 — 이 구분이 없으면 무관한 실패에 멀쩡한 워커를 되돌린다):
+#   0 = 교체 완료 / 1 = **신 이미지 결함**(본체가 신 이미지로 못 뜸 → 워커군 롤백 대상)
+#   2 = 본체 무접촉 중단(surge 준비 실패 등 — 구 워커가 계속 서빙, 롤백 불필요)
+ask_surge_cid() { "${DC_SURGE_PROD[@]}" ps -q "$ASK_WORKER_SURGE" 2>/dev/null | head -1; }
+
+ask_surge_health() {
+  local cid; cid="$(ask_surge_cid)"
+  [ -n "$cid" ] || { echo none; return 0; }
+  docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo none
+}
+
+wait_ask_surge_healthy() {  # $1 = timeout_s → 0 성공
+  local deadline=$(( SECONDS + $1 )) st none_streak=0
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    st="$(ask_surge_health)"
+    [ "$st" = "healthy" ] && return 0
+    case "$st" in
+      exited|dead) err "$ASK_WORKER_SURGE 상태=$st — 기동 실패."; dump_service_logs "$ASK_WORKER_SURGE"; return 1 ;;
+      none)
+        none_streak=$(( none_streak + 1 ))
+        [ "$none_streak" -ge 5 ] && { err "$ASK_WORKER_SURGE 컨테이너 미검출 연속 ${none_streak}회 — 기동 즉사 판정."; dump_service_logs "$ASK_WORKER_SURGE"; return 1; } ;;
+      *) none_streak=0 ;;
+    esac
+    sleep 3
+  done
+  err "$ASK_WORKER_SURGE 가 ${1}s 내 healthy 도달 실패(최종=$(ask_surge_health))."
+  dump_service_logs "$ASK_WORKER_SURGE"
+  return 1
+}
+
+# 그 컨테이너가 **자기 이름으로 claim 한** running job 수. worker_id 는
+# `ask-worker[<role>]-<hostname>-<pid>` 이고 hostname 은 컨테이너 hostname 이다.
+# 조회 불가는 0 이 아니라 unknown — 여기서 0 으로 읽으면 "다 끝났다" 는 거짓 안심이 된다.
+ask_container_running_jobs() {  # $1 = svc → 정수 | "unknown"
+  local cid host
+  cid="$("${DC_SURGE_PROD[@]}" ps -q "$1" 2>/dev/null | head -1)"
+  [ -n "$cid" ] || { echo 0; return 0; }   # 컨테이너가 없으면 그 이름으로 도는 것도 없다
+  host="$(docker inspect -f '{{.Config.Hostname}}' "$cid" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$host" ] || { echo unknown; return 0; }
+  _ask_jobs_count "claimed_by LIKE '%-${host}-%'"
+}
+
+# surge/본체를 **완주 예산 안에서** 내린다. 컨테이너는 SIGTERM 을 받으면 신규 claim 을 멈추고
+# 자기 in-flight 만 마친 뒤 스스로 종료한다 — 정상 경로에서는 이 호출이 예산을 다 쓰지 않는다.
+# 예산을 다 쓰면 docker 가 SIGKILL 하므로, 그 사실을 **조용히 넘기지 않고 보고**한다.
+drain_stop_ask() {  # $1 = svc, $2 = 라벨 → 0 완주 종료 / 1 예산 초과(강제 종료됨)
+  local svc="$1" label="$2" before after t0 elapsed
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] drain-stop $svc (예산 ${ASK_DRAIN_TIMEOUT}s)"; return 0; }
+  before="$(ask_container_running_jobs "$svc")"
+  step "drain-stop: $label — 신규 claim 중지 후 진행 중 run 완주 대기(예산 ${ASK_DRAIN_TIMEOUT}s, 현재 보유 ${before})"
+  t0=$SECONDS
+  "${DC_SURGE_PROD[@]}" stop -t "$ASK_DRAIN_TIMEOUT" "$svc" >/dev/null 2>&1 || warn "$label stop 명령이 비정상 종료 — 상태로 판정한다."
+  elapsed=$(( SECONDS - t0 ))
+  after="$(ask_container_running_jobs "$svc")"
+  if [ "$elapsed" -ge "$ASK_DRAIN_TIMEOUT" ]; then
+    warn "$label: drain 예산(${ASK_DRAIN_TIMEOUT}s) 소진 — 남은 run 은 SIGKILL 됐고 lease 반납/role-reclaim 으로 재큐된다(사용자에겐 재실행)."
+    QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=DRAIN-TIMEOUT(보유 ${before}→${after})"
+    QUIESCE_FORCED=$(( QUIESCE_FORCED + 1 ))
+    return 1
+  fi
+  log "  $label: ${elapsed}s 만에 완주 종료(보유 ${before}→${after}) — 끊긴 run 없음."
+  QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }${label}=drained(${elapsed}s)"
+  return 0
+}
+
+# 직전 배포가 정리 전에 죽었으면 surge 가 남아 **구 이미지로 사용자 job 을 계속 처리**한다
+# (gateway 의 leaked surge 와 같은 부류이나, 이쪽은 DNS 가 아니라 큐라 더 조용히 지속된다).
+sweep_leaked_ask_surge() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local leaked; leaked="$(ask_surge_cid)"
+  [ -n "$leaked" ] || return 0
+  warn "leaked ask-worker surge 감지(직전 배포 잔존) — 본체 healthy 확인 후 drain 정리."
+  if [ "$(container_health "$ASK_WORKER_SERVICE")" = "healthy" ]; then
+    drain_stop_ask "$ASK_WORKER_SURGE" "leaked ask surge" || true
+    run "${DC_SURGE_PROD[@]}" rm -f "$ASK_WORKER_SURGE" || true
+    log "leaked ask surge 정리 완료."
+  else
+    warn "본체 비정상 — leaked surge 유지(유일 처리 주체 가능성). 수동 확인 필요."
+  fi
+}
+
+rollout_ask_worker_via_surge() {  # $1 = 대상 sha → 0 성공 / 1 이미지 결함 / 2 본체 무접촉 중단
+  local sha="$1"
+  step "ask-worker 무중단 롤아웃 (surge 교대 — 전역 정적 대기 없음)"
+  # 1) surge 기동(신 이미지 핀) + healthy. 실패 시 **본체 무접촉** — 구 워커가 계속 처리한다.
+  if ! run "${DC_SURGE_PROD[@]}" up -d --no-deps --no-build "$ASK_WORKER_SURGE" \
+     || ! wait_ask_surge_healthy "$WORKER_READY_TIMEOUT"; then
+    run "${DC_SURGE_PROD[@]}" rm -sf "$ASK_WORKER_SURGE" || true
+    err "surge 기동 실패 — 본체 무접촉 유지(구 ask-worker 가 계속 처리). 새 이미지 점검 후 재실행(멱등)."
+    return 2
+  fi
+  stamp_sanctioned_recreate "$ASK_WORKER_SURGE"
+  log "surge healthy — 이 시점부터 신규 job 은 surge(신 코드)가 가져간다."
+  # 2) 본체 drain — 신규는 surge 가 받으므로 본체는 자기 in-flight 만 마치면 된다.
+  #    예산 초과(강제 종료)는 배포를 중단시키지 않는다: 그 run 들은 lease 반납/role-reclaim 으로
+  #    재큐되고 surge 가 이어받는다(= 종전 동작과 동일한 최악값). 다만 보고에는 남긴다.
+  drain_stop_ask "$ASK_WORKER_SERVICE" "ask-worker 본체" || true
+  # 3) 본체를 신 이미지로 재생성.
+  log "recreate $ASK_WORKER_SERVICE → $AGENT_IMAGE_REPO:$sha"
+  if ! run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$ASK_WORKER_SERVICE" \
+     || ! wait_worker_healthy "$ASK_WORKER_SERVICE" "$WORKER_READY_TIMEOUT" "$sha"; then
+    err "ask-worker 본체가 신 이미지로 기동 실패 — surge 가 임시로 처리 중(의도적 유지)."
+    err "  주의: surge 는 restart:no 라 호스트 재부팅 시 소멸한다. 롤백 후 정리가 필요하다."
+    return 1
+  fi
+  stamp_sanctioned_recreate "$ASK_WORKER_SERVICE"
+  # 4) surge 정리 — 교체 창에 surge 로 들어간 run 도 같은 완주 예산을 받는다(대칭).
+  drain_stop_ask "$ASK_WORKER_SURGE" "ask-worker surge" || true
+  run "${DC_SURGE_PROD[@]}" rm -f "$ASK_WORKER_SURGE" || warn "surge rm 문제 — 다음 배포의 leaked sweep 이 정리한다."
+  log "ask-worker 무중단 교체 완료(진행 중 run 을 기다린 것이 아니라, 받는 쪽을 먼저 세웠다)."
+  return 0
+}
+
 deploy_workers() {  # $1 = 대상 sha, $2 = pin overlay 의 web image ref(롤백 시 유지) → 0 성공.
-  local sha="$1" web_img="$2" svc st got
-  step "워커 롤아웃 (${WORKERS[*]} — one-at-a-time, graceful stop_grace 존중)"
+  local sha="$1" web_img="$2" svc st got rc
+  local -a deferred=()        # 본체 무접촉으로 미교체된 서비스(롤백 대상 아님)
+  step "워커 롤아웃 (${WORKERS[*]} — one-at-a-time, ask-worker 는 surge 교대)"
+  sweep_leaked_ask_surge
   for svc in "${WORKERS[@]}"; do
     # 멱등 skip: 이미 대상 sha + healthy 면 무접촉(인터럽트된 배포 재개 지원).
     if [ "$DRY_RUN" -ne 1 ]; then
@@ -888,17 +1046,22 @@ deploy_workers() {  # $1 = 대상 sha, $2 = pin overlay 의 web image ref(롤백
         log "$svc 이미 $sha + healthy — skip(멱등)."; continue
       fi
     fi
-    # CHG-20260812T140000: ask-worker 는 **사용자 run 을 들고 있는 유일한 워커**다. 종전엔
-    # SIGTERM 후 고정 60초(drain)만 주고 죽였는데 실측 run 의 66%가 그보다 길다 — 매 배포가
-    # 진행 중 답변을 3분의 2 확률로 죽이고 사용자는 재큐→전량 재실행(dead air)을 겪었다.
-    # 조용한 순간까지 기다렸다가 교체한다(fail-closed — 못 기다리면 강행이 아니라 중단).
-    # insight-worker/ops-scheduler 는 배경 작업(실패=degraded 기록 후 다음 cadence 재시도)이라
-    # 대상이 아니다 — 여기 넣으면 유휴 대기만 늘고 얻는 게 없다.
-    if [ "$svc" = "ask-worker" ]; then
-      quiesce_gate "ask-worker recreate" || {
-        err "ask-worker 교체 중단 — 현 워커가 계속 서빙(무중단 유지). web 은 이미 $sha."
-        return 1
-      }
+    if [ "$svc" = "$ASK_WORKER_SERVICE" ]; then
+      rc=0; rollout_ask_worker_via_surge "$sha" || rc=$?
+      case "$rc" in
+        0) : ;;
+        2)
+          # ⚠ **연쇄 차단을 끊는다**(2026-08-14 실측 결함): 종전엔 여기서 return 1 이라
+          # ask-worker 하나가 못 바뀌면 그 뒤 ops-scheduler·ext-tool-mcp 까지 구버전에 묶였다.
+          # 그 서비스들은 사용자 run 과 무관하고 ask-worker 와 의존 관계도 없다 — 같이 막을
+          # 이유가 없다. 미교체 사실은 아래 완결 판정이 **끝까지 들고 가서** 보고한다.
+          warn "$svc 미교체(본체 무접촉) — 나머지 워커는 계속 롤아웃한다."
+          deferred+=("$svc"); continue ;;
+        *)
+          err "$svc 롤아웃 실패(신 이미지 결함 의심) — 워커군 last-good 롤백. (web 은 기존 서빙 유지 — expand/contract 게이트가 혼합 버전 안전을 보장. CONVENTIONS §12)"
+          rollback_workers "$web_img"; return 1 ;;
+      esac
+      continue
     fi
     log "recreate $svc → $AGENT_IMAGE_REPO:$sha"
     if ! run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" \
@@ -909,8 +1072,36 @@ deploy_workers() {  # $1 = 대상 sha, $2 = pin overlay 의 web image ref(롤백
     fi
     stamp_sanctioned_recreate "$svc"
   done
+  # ── 완결 판정 (feature-0020 zd-ask-rollout) ────────────────────────────────
+  # `agent_current` 는 "워커가 이 sha 로 돌고 있다" 는 주장이다. 부분 롤아웃에서 그것을 기록하면
+  # 다음 배포의 멱등 skip(build_agent_image)이 **그 주장을 믿고 빌드를 건너뛴다** — 미교체
+  # 컨테이너가 조용히 영구 stale 이 되는 경로다. 실제로 이 결함은 라이브에 있었다(2026-08-14:
+  # insight 만 e545796f 인데 state 는 95f5ea0f). 그래서 **실제 컨테이너를 다시 읽어** 판정한다.
+  if ! verify_workers_at_sha "$sha"; then
+    err "워커 롤아웃 **부분 완료** — 아래 미도달 서비스가 남았다. agent_current 를 기록하지 않는다(다음 배포가 멱등하게 이어서 완료한다)."
+    [ "${#deferred[@]}" -gt 0 ] && err "  미교체(무접촉): ${deferred[*]} — 원인 해소 후 재실행하면 이어서 완료된다."
+    return 1
+  fi
   state_set agent_current "$sha"
   log "워커 롤아웃 완료 — ${WORKERS[*]} = $AGENT_IMAGE_REPO:$sha"
+}
+
+# 모든 워커가 실제로 대상 sha 로 healthy 한지 **컨테이너에서 직접** 확인. state 파일이나
+# 스크립트 진행 상황이 아니라 라이브 상태가 완결의 근거다("성공 보고 ≠ 실제 배포" — LRN-20260811T1557).
+verify_workers_at_sha() {  # $1 = sha → 0 전부 도달
+  local sha="$1" svc st got ok=0
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  step "워커 완결 판정 (서비스별 GIT_COMMIT 실측)"
+  for svc in "${WORKERS[@]}"; do
+    st="$(container_health "$svc")"; got="$(worker_commit "$svc")"
+    if [ "$st" = "healthy" ] && [ "$got" = "$sha" ]; then
+      log "  $svc = $sha (healthy)"
+    else
+      err "  $svc = ${got:-?} (상태=$st) — 기대 $sha"
+      ok=1
+    fi
+  done
+  return "$ok"
 }
 
 rollback_workers() {  # $1 = pin overlay 에 유지할 web image ref
@@ -922,6 +1113,13 @@ rollback_workers() {  # $1 = pin overlay 에 유지할 web image ref
     return 1
   fi
   write_pin_overlay "$web_img" "$AGENT_IMAGE_REPO:last-good"; set_dc_prod
+  # ⚠ surge 를 **먼저** 없앤다 — 롤백은 "신 코드를 라이브에서 뺀다" 는 뜻인데, surge 가 남아
+  # 있으면 큐에서 신 코드가 계속 job 을 가져간다(DNS 가 아니라 큐라 겉보기로는 조용하다).
+  # 롤백 경로이므로 완주를 기다리지 않는다(복구 우선 — rollback_workers 의 기존 비대칭과 동일).
+  if [ "$DRY_RUN" -ne 1 ] && [ -n "$(ask_surge_cid)" ]; then
+    warn "롤백: ask-worker surge 제거(신 코드 격리 우선 — surge 가 들고 있던 run 은 재큐된다)."
+    run "${DC_SURGE_PROD[@]}" rm -sf "$ASK_WORKER_SURGE" || true
+  fi
   # §18.8 패널 P1-5(부분 수용): 롤백에는 quiesce **게이트를 걸지 않는다** — 롤백은 복구 경로이고
   # 여기서 막으면 결함 있는 배포가 그대로 남는다(feature-0014 가 엣지 게이트를 롤백 경로에서
   # 비차단으로 둔 것과 같은 근거: "롤백은 완주가 우선"). 다만 **침묵하지는 않는다** — 무엇을
@@ -1109,6 +1307,13 @@ post_deploy_checklist() {
      "사용자 테스트 가능"으로 알리지 않는다 (merge ≠ 배포 완료 — 그 사이 창은 구코드).
  [2] 워커 롤아웃: 위 '워커 롤아웃 완료' 로그 확인(스파인이 자동 수행 — feature-0020).
      '--web-only' 로 돌렸다면 워커 코드 변경 여부를 판단해 전체 스코프로 재실행한다.
+     ⚠ '부분 완료' 로 끝났다면 그것은 배포가 아니다 — 미도달 서비스가 로그에 나열된다.
+       docker compose -f docker-compose.yml ps --format '{{.Service}}\t{{.Image}}'
+     서비스별 이미지 태그가 모두 같은 SHA 인지 눈으로 확인한다(state 파일이 아니라 실물).
+ [2b] surge 잔존 확인(feature-0020 zd-ask-rollout): 교체가 끝나면 surge 는 없어야 한다.
+       docker compose -f docker-compose.yml --profile deploy-surge ps -q ask-worker-surge
+     비어 있지 않으면 정리에 실패한 것 — 그 컨테이너가 큐에서 계속 job 을 가져간다(조용하다).
+     다음 배포의 leaked sweep 이 정리하지만, 그때까지 두 인스턴스가 함께 도는 상태다.
  [3] 캐시 무효화: 서빙 HTML 의 ?v= 스탬프가 바뀌었는가(위 asset 스탬프 OK). 사용자에게
      하드 리프레시(Ctrl+F5) 안내 — stale JS 로 구 동작이 관측되는 것을 방지.
  [4] 실 사용자 표면 검증: 백엔드 API 뿐 아니라 사용자가 실제 쓰는 경로(UI 업로드/클릭 등)를

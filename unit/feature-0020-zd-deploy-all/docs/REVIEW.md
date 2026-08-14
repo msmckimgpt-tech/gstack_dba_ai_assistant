@@ -140,3 +140,44 @@ source_of_truth: true
   각 건에 회귀 테스트를 세우고 **뮤테이션 7/7 KILLED** 로 판별력을 확인했다.
 - `docs/CODE_REVIEW.md` 위험 축 대조: 무음 절단 0 · fail-open 게이트 0(모든 신규 경로 fail-closed +
   명시 탈출구) · 멱등성(재실행 안전) · 격리 경계 무변경(신규 write 는 append-only 스탬프 로그 1개).
+
+## REV-20260814T120000-ask-surge-rollout [SKIPPED:session-policy-no-subagent] — PASS
+- **Trigger**: 배포 스파인 + 워커 종료 시맨틱 변경(Major). §18.8 상으로는 backend+qa 패널 대상.
+- **왜 SKIPPED 인가(정직)**: 본 세션은 호스트 정책으로 **subagent(Agent tool) 호출이 금지**돼
+  있어 패널 채널 자체를 열 수 없었다. 감춰서 통과시키지 않고 사유를 명시해 남긴다.
+  **후속 권장**: `/review-panel` 또는 `/codex` 로 backend+qa 관점 적대 검증을 별도 실행할 것.
+  특히 ③(pin overlay)·⑤(liveness 공유 키) 축은 라이브에서만 드러나는 부류다.
+- **대체 검증 1 — 구현 중 자체 적발(전부 설계 결함, 코드 작성과 동시에 봉인)**:
+  ① **healthcheck 공유 키** — 종전 판정 소스가 role 전역 KV 단일 키였다. surge 공존 창에서
+     두 컨테이너가 같은 값을 갱신하므로 *죽은 쪽도 healthy*(false-pass)이고, 반대로 drain 중
+     본체는 갱신 주체가 아니라 *살아 있는데 unhealthy*(false-fail)다. 배포 스파인이 이 신호로
+     롤백을 판정하므로 단순 오탐이 아니다 → 컨테이너-local alive 파일 + 전용 liveness 스레드.
+  ② **liveness 가 메인 루프에 묶여 있었다** — drain 은 루프를 의도적으로 멈추는 정상 상태인데,
+     그 상태가 곧 unhealthy 로 보였다(완주가 길수록 확실해진다: 최악 run 2,024s vs 임계 60s).
+  ③ **pin overlay 에 surge 누락** — compose 가 build 정의로 되돌아가 surge 만 다른(대개 stale)
+     이미지로 뜬다. 무중단은 유지되지만 **교체 창의 신규 job 이 구 코드로 처리**돼 배포가 거짓이
+     된다 → overlay 에 surge 포함 + 회귀 테스트.
+  ④ **롤백 시 surge 잔존** — 롤백은 "신 코드를 라이브에서 뺀다" 인데 surge 가 남으면 큐에서
+     계속 일한다(DNS 가 아니라 큐라 겉보기로 조용하다) → 롤백 경로에서 선제거.
+  ⑤ **실패 종류 미구분** — "본체 무접촉 중단" 과 "신 이미지 결함" 을 같은 코드로 반환하면
+     무관한 실패에 멀쩡한 워커까지 롤백된다 → rc 1/2 분리.
+- **대체 검증 2 — 기존 계약과의 충돌 검사**: feature-0014 의 `test_g1b2_no_replica_recreate_
+  outside_the_gated_helper` 가 신규 3함수를 offender 로 적발했다. allowlist 를 넓히되 **그 확장의
+  전제(web replica 미접촉)를 별도 테스트로 잠갔다** — allowlist 확장이 테스트를 약화시키지
+  않도록. `test_quiesce_gate.py` 는 ask-worker 조항을 "이 게이트를 쓰지 않는다" 로 반전시켜
+  회귀(전역 정적 대기 복귀)를 잠근다.
+- **대체 검증 3 — 하네스 자체의 결함 적발(가장 큰 발견)**: 위 테스트들을 CI 에 넣으려다
+  **CI 가 feature-0014/0020 을 한 번도 실행한 적 없음**을 확인했다. `testpaths` 등재는 있었지만
+  `ci.yml`·`Makefile test` 가 경로를 명시해 무시됐고, 게다가 `test_edge_rolling_gate.py` 는
+  f-string 백슬래시(PEP 701, 3.12+)로 **CI 파이썬 3.11 에서 collection 자체가 불가**했다.
+  "무중단 불변식을 잠근다" 던 파일이 초록 CI 아래에서 한 줄도 안 돌고 있었다 —
+  feature-0014 가 남긴 교훈("testpaths 밖 테스트는 아무것도 지키지 못한다")의 **두 번째 형태**다.
+  등재만으로는 부족하고 **실행 경로**와 **런타임 문법 호환**까지 확인해야 한다.
+- **검증**: feature-0014+0020 **98 PASS**(신규 26) — py3.11 컨테이너 · py3.12 로컬 양쪽.
+  전체 스위트 귀책 실패 0(pre-existing 1건 `chattr` 미설치, main 기준선 동일 재현).
+- **docs/CODE_REVIEW.md 위험 축 대조**: 무음 절단 0(drain 예산 초과는 요약에 `DRAIN-TIMEOUT`)
+  · fail-open 0(surge 실패=본체 무접촉 ABORT, 관측 실패=`unknown`으로 0 과 분리)
+  · 멱등성 유지(재실행 시 `skip(멱등)` + leaked sweep) · 신규 write 없음(스탬프 append 만).
+- **정직 — 남는 것**: ① drain 예산 1800s < 실측 max 2,024s(초과분 재큐·보고됨)
+  ② `safe-recreate.sh` ask-worker 경로는 여전히 전역 정적 대기(surge 인프라 부재 — 헤더에 명시)
+  ③ leaked surge 는 다음 배포 sweep 까지 공존(gateway surge 와 동일 수준).
