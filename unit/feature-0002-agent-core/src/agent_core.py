@@ -4045,7 +4045,8 @@ def _ensure_web_conversation_metadata(conn, conversation_id: str, topic: str = P
 def _persist_early_exit(mem_conn, cid: str, run_id: str, error_text: str,
                         user_message: str, account_id=None,
                         sender_username: str = "",
-                        dedup_user_message_since=None) -> None:
+                        dedup_user_message_since=None,
+                        product_id=None, product_mode: str = "pinned") -> None:
     """run 이 **시작 단계에서** 끝날 때 대화에 흔적을 남기고 KV 를 마감한다.
 
     conv-audit FR-early-return-kv-never-finalized(봉인 C). datasource 선연결 실패처럼
@@ -4095,10 +4096,19 @@ def _persist_early_exit(mem_conn, cid: str, run_id: str, error_text: str,
             if _err:
                 # 정상 error 종료(아래 `elif result["error"]`)와 같은 형식 — 원인을 대화에 남겨
                 # 사용자가 토스트를 놓쳐도 화면에서 확인할 수 있게 한다.
+                # **제품 귀속 각인 필수**(msg-speaker-attribution 계약): 각인이 빠진 말풍선은 FE 가
+                # 대화 바인딩으로 폴백해 표시하고, 제품을 바꾸면 그 말풍선만 사후 변경된다. 정규
+                # 계산 지점(`_answer_product_attribution` 호출)은 datasource 연결 **뒤**라 이 시점엔
+                # 아직 없으므로 여기서 직접 산출한다.
+                try:
+                    _answer_product_meta = _answer_product_attribution(
+                        mem_conn, product_id, product_mode)
+                except Exception:
+                    _answer_product_meta = {}
                 _error_text = f"오류: {_err}"
                 _save_message(mem_conn, cid, "assistant", content=_error_text)
                 _mirror_message(mem_conn, cid, "assistant", _error_text, run_id,
-                                meta={"internal": False})
+                                meta={"internal": False, **_answer_product_meta})
     except Exception:
         logger.warning("early-exit 대화 기록 실패 conv=%s run=%s", cid, run_id, exc_info=True)
     try:
@@ -6316,7 +6326,8 @@ def _run_agent_core(
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
-                                account_id, sender_username, dedup_user_message_since)
+                                account_id, sender_username, dedup_user_message_since,
+                                product_id, product_mode)
             return result
         _init_detail["dataplane_connect_ms"] = round((time.perf_counter() - _dp_t0) * 1000.0, 1)
         import modules.tools as _tools_mod
@@ -6343,7 +6354,8 @@ def _run_agent_core(
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
-                                account_id, sender_username, dedup_user_message_since)
+                                account_id, sender_username, dedup_user_message_since,
+                                product_id, product_mode)
             return result
         # primary datasource 를 run-wide 기본 컨텍스트로(grounding·첫 tool 기본값).
         _ds = _multi_ds_list[0]
@@ -6373,7 +6385,8 @@ def _run_agent_core(
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
-                                account_id, sender_username, dedup_user_message_since)
+                                account_id, sender_username, dedup_user_message_since,
+                                product_id, product_mode)
             return result
         _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
         def _reconnect_dataplane():   # noqa: E306 — 원 연결과 동일 좌표 클로저(폴백 없음)
@@ -6400,7 +6413,8 @@ def _run_agent_core(
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
                 _persist_early_exit(mem_conn, cid, run_id, result["error"], user_message,
-                                    account_id, sender_username, dedup_user_message_since)
+                                    account_id, sender_username, dedup_user_message_since,
+                                    product_id, product_mode)
                 return result
         # initpro: 성공·폴백 어느 쪽이든 여기 도달 — 연결 확립에 쓴 총 시간을 기록한다.
         # (실패해서 return 하는 경로는 답변이 없어 breakdown 자체가 안 남는다.)

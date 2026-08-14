@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260814T170000-ask-kv-seal-ci-regression [SKIPPED:no-new-contract] (TASK-20260814T160000)
+- **Trigger**: §18.8 dispatch — 선행 `REV-20260814T160000-ask-kv-terminal-seal`(codex backend+qa)이
+  본 changeset 의 계약을 이미 적대 검증했다. 본 후속은 **그 계약을 바꾸지 않고**, CI 가 잡은 회귀
+  2건을 계약에 맞추는 수정이라 새 패널을 돌리지 않는다(코드 동작 계약 변경 0).
+- **정직 기록 — 적대 패널이 통과시킨 것을 CI 가 잡았다**:
+  1. 조기 종료 오류 말풍선의 **제품 귀속 각인 누락**(`test_msg_speaker_attribution` 구조 단언).
+     각인이 없으면 FE 가 대화 바인딩으로 폴백해 표시하고 제품 전환 시 그 말풍선만 사후 변경된다.
+     `_answer_product_attribution` 을 함수 내부에서 산출하고 호출부 4곳에 제품 컨텍스트를 전달해
+     **계약을 충족**했다(단언 완화·우회 아님).
+  2. `test_web_perf_p1::test_ask_result_polls_in_worker_thread` 의 **고정 6,000자 창** 취약점.
+     잠그려는 계약(`asyncio.to_thread` 경유)은 지켜지고 있었고 창만 부족했다 → 함수 경계 기반으로
+     교체. 단언 자체는 불변.
+- **왜 놓쳤나(재발 방지)**: 로컬 검증을 **신규 + ask 계열 테스트로 좁게** 잡아 두 파일이 실행되지
+  않았다. 구조 단언 테스트는 "내가 만진 모듈" 이 아니라 **소스 전체를 스캔**하므로 변경 파일 기준
+  선별이 통하지 않는다 → 이후 CI 와 동일 범위(5 unit) 재실행으로 확인.
+- **검증**: 실패했던 2건 포함 **52 PASS**, CI 동일 범위 5 unit 전체 통과(`chattr` 미설치 1건은
+  컨테이너 환경 제약 · pre-existing · CI runner 에선 통과), ruff clean.
+
 ## REV-20260814T160000-ask-kv-terminal-seal [CODEX:backend+qa] — [P1] 6건 중 4건 수정·2건 근거 기록, [P2] 7건 판정 (TASK-20260814T160000)
 - **Trigger**: §18.8 dispatch — `schema/query/마이그레이션`(ask_jobs SQL 계약) + 동시성(worker lease·
   KV 상태 슬롯) 신호 → **backend, qa**. §18.8.2 제약-없는-채널 우선에 따라 `codex`(gpt-5.6-luna,

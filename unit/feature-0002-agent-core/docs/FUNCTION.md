@@ -539,6 +539,10 @@ resume-giveup **3갈래뿐**이었고 그 전제("run_agent 는 정상 종료 �
   (새로고침하면 방금 쓴 질문이 사라진다) 사용자에게는 "시작조차 안 된" 것으로 보였다. 중복 저장은
   기존 `_user_message_already_persisted`(A-C 재시도 억제)와 같은 근거 기반으로 막고, 대화 기록이
   실패해도 **KV 마감은 반드시 수행**한다(기록 실패가 무한 폴링으로 되돌아가지 않게).
+- **C 가 남기는 오류 말풍선도 제품 귀속을 각인한다**(msg-speaker-attribution 계약): 정규 계산
+  지점은 datasource 연결 뒤라 조기 종료 시점엔 없으므로 `_answer_product_attribution` 을 그
+  자리에서 산출해 미러 meta 에 싣는다. 각인이 빠지면 FE 가 대화 바인딩으로 폴백해 표시하고,
+  제품을 바꾸면 그 말풍선만 사후 변경된다(CI 구조 단언이 이를 잠근다).
 - 큐 상태기계·lease fencing·보안 경계·RBAC 무변경. datasource 회로차단이 턴을 막는 동작 자체는
   **의도된 가드**(원장 `FR-datasource-eager-connect-blocks-datasource-free-turn`, 2026-08-07 사용자
   판단)라 그대로 두고, **그 사실이 사용자에게 전달되는 경로**만 복구한다.

@@ -32,6 +32,9 @@ source_of_truth: true
 - [x] 봉인 C — `agent_core._persist_early_exit`: 조기 종료도 사용자 질문 + 오류 안내를 대화에
       남기고 KV 를 마감한다(datasource 계열 조기 return 4곳에 연결).
 - [x] 테스트 17건 신규(`tests/test_ask_kv_terminal_seal.py`) — 회귀 재현(sentinel 고착) 포함.
+- [x] CI 회귀 2건 수정(`CHG-20260814T170000`) — 조기 종료 말풍선의 **제품 귀속 각인 복구**
+      (미각인 시 FE 가 대화 바인딩 폴백 → 제품 전환 때 사후 변경) + `test_web_perf_p1` 의 고정
+      6,000자 창을 함수 경계 기반으로 교체. 로컬 테스트 범위를 좁게 잡아 놓친 것이 원인.
 - [ ] 배포 후 라이브 실측 — 무한 폴링 소멸 확인 후 원장 `verified` 전이.
 
 ## TASK-20260807T130000-redteam-abortable-review — 자가 검증 대기 구간의 사용자 탈출구 복구 (Major §12.3)
