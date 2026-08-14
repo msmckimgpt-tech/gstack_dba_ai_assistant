@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (P0 + 잔여 3건 배포 완료 e1372f32 · 콘솔 탭·인증 e2e 만 남음)
-- Owner: AI (계획) / Human (승인)
+- State: in-progress (P0 9종 + P1 `execute_sql` 라이브 배포 `25637d1c` · **인증 e2e(AC-1) 만 남음**)
+- Owner: AI (계획) / Human (승인 · AC-1 인가 1회)
 - Priority: high
-- Last Updated: 2026-08-12
+- Last Updated: 2026-08-14
 
 ## 2. Implementation Plan
 
@@ -78,7 +78,8 @@ source_of_truth: true
 - [x] TASK-20260812T075301-oauth-as — 등록·인가·토큰·폐기 + 세션 결합/revoke 전파
 - [x] TASK-20260812T075301-tools-p0 — P0 도구 9종 REST + task 세션 계약
 - [x] TASK-20260812T075301-isolation — L1~L4 격리 + datamark 각인 3층
-- [x] TASK-20260812T075301-injection — 3단 판정 + 저장 시점 datamark
+- [~] TASK-20260812T075301-injection — 3단 판정 완료. **저장 시점 datamark 는 미구현**
+      (적재 자체가 없다 — AC-7)
 - [x] TASK-20260812T075301-mcp-adapters — stdio(i) + HTTP/SSE(ii) 어댑터
 - [x] TASK-20260812T075301-docs — SECURITY 신규 절·ARCHITECTURE·ROUTEMAP·발견 자료·0023 ANCHOR §1
 - [x] TASK-20260812T090000-catchup-guard — 부트스트랩 catchup 체인 보호(배포 전 발견)
@@ -88,8 +89,22 @@ source_of_truth: true
 - [x] TASK-20260812T190000-l4-asymmetry — 권한 비대칭 flag(자카드, 표시 전용) + open_task 배선
 - [x] TASK-20260812T190000-http-transport — HTTP/SSE MCP 서버(토큰 무보관·헤더 전달)
 - [x] TASK-20260812T190000-deploy-3 — 2차 배포(e1372f32) + POST-DEPLOY 8항 PASS
-- [ ] TASK-20260812T190000-console-tab — 콘솔 '외부 도구 한도' 탭 (사용자 결정: 별도 cycle)
-- [ ] TASK-20260812T190000-http-bringup — HTTP/SSE 전송 프로세스 라이브 기동 (포트·TLS 프록시 운영 결정 선행)
+- [x] TASK-20260812T190000-console-tab — **다른 수단으로 해소**(2026-08-13): bespoke `admin.js`
+      탭 대신 `runtime_settings` 슬라이스 + 전용 패널(`ext-tool-limits`). 프론트 수정 0 · PB-0008 재검증
+- [x] TASK-20260812T190000-http-bringup — HTTP/SSE 라이브 기동 완료(2026-08-13, `ext-tool-mcp`
+      서비스 + 엣지 `/api/ai/mcp`, 익명은 엣지 401)
+- [x] TASK-20260813T000000-auth-url — 인증을 URL 접속 방식으로(`5f20ee88`) — discovery 4경로 ·
+      동의 화면 + POST 결정 · `/ai/connect`
+- [x] TASK-20260814T000000-host-align — 엣지 401 호스트 고정 해소(`be7e5d00`), 공인 IP discovery 성립
+- [x] TASK-20260814T000000-field-reports — 실사용 제보 결함 5건 + 인가 완료 화면(`35c60a3f`)
+- [x] TASK-20260814T000000-p1-execute-sql — `execute_sql` 개방 + **실행 스코프 결함 수정**(`956ae5e1`)
+- [x] TASK-20260814T000000-gate-coaching — 부하 게이트 집계 코칭 정정(`25637d1c`)
+- [ ] TASK-20260814T120000-ac7-answer-persist — **AC-7 대화 적재 구현** (사용자 승인 2026-08-14,
+      ADR-002 · 별도 cycle). 원 질문·최종 답변 적재 + 저장 시점 datamark. 저장 대상(전용 컬럼 vs
+      `messages`)·소급 처리는 설계 확정 필요. 위험 등급 **Critical**(외부 입력 본문 영속화 =
+      신규 저장면) → §7.1 계획 승인 선행
+- [ ] TASK-20260812T190000-e2e-authorized — **인증 이후 구간 e2e (AC-1)** — 사람 브라우저 인가 1회.
+      설계상 자동화 불가(인가가 유일한 신원 생성점). 실행 후 TEST.md §3 에 Run 기록 → AC-1 종결
 
 ## 4. In Progress
 - 없음
@@ -107,11 +122,25 @@ source_of_truth: true
 다른 활성 브랜치 2개가 편집 중이라 충돌 위험이 컸고, 기존 설정 화면이 그룹을 자동 렌더하므로
 같은 결과를 프론트 수정 0 으로 얻는다. 역할별/계정별 override 는 미도입(전역 상한만).
 
+**해소됨(2026-08-14)**: 엣지 401 호스트 정합 · 실사용 제보 결함 5건 + 인가 완료 화면 ·
+**P1 `execute_sql` 개방** · 그 과정에서 발견한 **실행 스코프 격리 결함** · 부하 게이트 코칭 정정.
+
+P1 도구는 사용자 결정(2026-08-12)대로 원장 데이터를 보고 판단했고, 08-14 에 열었다
+(`956ae5e1`). 방어는 내부 경로 것을 재사용하고 외부가 추가로 지는 것은 CSV 미생성 · 실제
+행수 원장 기록 · 건당 행 상한 셋이다.
+
 남은 것:
-- **인증된 전 구간 e2e 실행** — 절차서·스크립트 완비. 인가에 사람 브라우저 로그인·동의가
-  필요(설계상 자동화 불가 — 그 지점이 신원 축의 생성점이다). 실행 후 TEST.md §3 에 Run 기록.
-- P1 이후 도구(`execute_sql` 등) — 사용자 결정(2026-08-12): **운영 데이터를 보고 판단**.
-  판단 근거는 `tool_call_usage` 원장(도구별 호출 분포 · 미제출률 · 한도 도달 빈도).
+- **AC-7 대화 적재 미구현** (2026-08-14 발견 · 사용자 결정 대기). 원 질문·최종 답변의
+  `messages` 적재와 저장 시점 datamark 가 구현돼 있지 않다. 현재 남는 것은 `WebAiTasks.Question`
+  과 원장의 `bytes_out` 뿐이라, **외부 AI 가 낸 답변 본문은 우리 쪽에 없다**(실측: 제출된 task
+  2건의 답변 6,351 / 8,125 바이트가 수치로만 존재). 2026-08-12 사용자 요구("외부 AI 세션의 대화
+  기록 또한 우리 쪽에 남겨야 합니다")의 답변 축이 미충족이며, 지연 인젝션 차단(저장 시점
+  datamark)의 전제도 함께 빈다. 구현 범위(테이블 확장 vs `messages` 적재 · 소급 불가)는
+  사용자 결정 필요
+- **인증 이후 구간 e2e 실행 (AC-1)** — 08-13 URL 방식 전환으로 절차가 짧아졌다:
+  클라이언트에 `https://<host>/api/ai/mcp` 등록 → 브라우저 로그인 → [허용] → `open_task` →
+  `describe_table` → `submit_answer`. 인가에 사람 브라우저 로그인·동의가 필요(설계상 자동화
+  불가 — 그 지점이 신원 축의 생성점이다). 실행 후 TEST.md §3 에 Run 기록.
 
 ## 6. Done
 - 요구사항 확정 (2026-08-12 대화 — 신원/비용 2축, 동시 다중 세션 허용, 검증 이관 범위,
@@ -130,11 +159,19 @@ source_of_truth: true
 - [x] 수정 후 PB-0008 재검증 — 전용 패널 4행 렌더 · 타임아웃 패널에서 분리 확인(증거 2장)
 
 ## 7. Next Action
-- 사람 1회 인가로 전 구간 e2e 확정(`docs/E2E_RUNBOOK.md`) → TEST.md §3 Run 기록 → AC-1 종결
-- 원장 데이터가 쌓이면 P1 도구(`execute_sql` + 행 예산) 도입 여부 판단
+- **사람 1회 브라우저 인가로 인증 이후 구간 e2e 확정** → TEST.md §3 Run 기록 → AC-1 종결.
+  절차는 §5.1 (URL 등록 → 로그인 → [허용] → 도구 → 제출). 개발자 회귀용 스크립트는
+  `docs/E2E_RUNBOOK.md` · `scripts/e2e-authorize.sh`
+- **AC-7 대화 적재 구현** — 사용자 승인 2026-08-14(ADR-002), **별도 cycle**. 저장 대상
+  (전용 컬럼 vs `messages`)·datamark 시점·소급 처리를 설계 단계에서 확정. 위험 등급 Critical
+  (신규 저장면 + 신뢰 밖 콘텐츠 영속화)이라 §7.1 계획 승인 선행
+- ~~`dbauth` task 정정 메모~~ — **하지 않기로 결정**(2026-08-14, ADR-003). 붙일 실체가 없다
+  (답변 본문 미저장 · 메모 컬럼 부재). 기록 삭제도 하지 않는다
 
 ## 8. Completion Checklist
-- [x] 모든 REQ의 AC가 구현되었다 (AC-1~11 — 단, AC-1·AC-2 의 **라이브** 확인은 배포 후, §5.1)
+- [ ] 모든 REQ의 AC가 구현되었다 — **AC-7 미구현**(2026-08-14 실측으로 하향).
+      원 질문·최종 답변의 `messages` 적재와 저장 시점 datamark 가 코드에 없다. AC-1 의
+      **라이브** 확인도 사람 인가 1회 대기(§5.1). 나머지 AC 는 구현·검증됨
 - [x] 단위 테스트(unit test)가 통과한다 — 신규 89건 + 기존 스위트 green
 - [x] 전체/통합 테스트(integration test): 컨테이너 e2e 미실시 — 사유·커버 계획 TEST.md §4
 - [x] FUNCTION.md가 현재 동작과 일치한다
@@ -171,8 +208,12 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
       Caddy `handle /api/ai/mcp*` · 배선: `test_bringup_and_limits.py` (경로 정합 · dbnet ·
       익명 401 선차단 · failover 조건). 사용자는 `https://<host>/api/ai/mcp` + access token 만
       등록하면 된다(설치물 0)
-- [x] `대화 기록 우리 쪽 보존` — 산출물: `WebAiTasks`(원 질문) + 원장(조회 이력) +
-      `submit_answer`(최종 답변) · 한계: 제출은 자발적(소프트 강제, FUNCTION §9 명시)
+- [ ] `대화 기록 우리 쪽 보존` — **부분 충족**(2026-08-14 실측으로 하향). 남는 것은
+      `WebAiTasks`(원 질문, 4000자 절단) + 원장(도구 호출 이력 · 답변 **바이트 수** ·
+      교차오염 판정) + 제출 사실(`Status`/`SubmittedAt`). **최종 답변 본문은 어디에도 저장되지
+      않는다** — `submit_answer` 는 상태만 갱신하고 `messages` 적재는 구현돼 있지 않다(AC-7).
+      기존 `[x]` 는 `submit_answer`(최종 답변) 을 산출물로 적었으나 코드가 그렇게 하지 않는다.
+      · 한계: 제출 자체도 자발적(소프트 강제, FUNCTION §9 명시)
 - [x] `세션 격리 (동시 다중 허용)` — 산출물: L1 tool 이름 라벨 접미 · L2 각인 · L3 대조 ·
       L4 권한 비대칭 flag(**원장 전용** — codex P1 반영) · 배선: 각 층 테스트
 - [x] `라이브 배포` — 산출물: TEST.md §3 Run 1~5 (3회 무중단 롤아웃, GIT_COMMIT 서비스별 일치)

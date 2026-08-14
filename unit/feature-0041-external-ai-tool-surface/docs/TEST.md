@@ -364,3 +364,20 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
   (`REFERENTIAL_CONSTRAINTS` 포함), 무관한 거부에는 빈 문자열.
 
 스위트: 0002 · 0003 · 0023 · 0041 전부 green.
+
+### Run 2026-08-14 (20차) — POST-DEPLOY (Environment: live · `25637d1c`)
+
+19차는 배포본 문구를 재현했을 뿐 **서비스별 커밋 일치를 기록하지 않았다**. 그 공백을 메운다.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | `web-a` GIT_COMMIT | `25637d1c` ✅ |
+| 2 | `web-b` GIT_COMMIT | `25637d1c` ✅ |
+| 3 | `ask-worker` GIT_COMMIT | `25637d1c` ✅ |
+| 4 | `insight-worker` GIT_COMMIT | `25637d1c` ✅ |
+| 5 | `ext-tool-mcp` GIT_COMMIT | `25637d1c` ✅ (외부 도구 전송 프로세스도 동일 커밋) |
+| 6 | `ops-scheduler` GIT_COMMIT | `25637d1c` ✅ |
+| 7 | `GET /healthz` | `status=ok` · `git_commit=25637d1c` · `mysql_ok=true` · `pg_ok=true` ✅ |
+| 8 | 엣지 익명 `POST /api/ai/mcp` | **401** ✅ (인증 없는 도달면 없음) |
+
+6개 서비스 전부 동일 커밋 — 부분 롤아웃 잔재 없음. 무중단, 사용자 영향 0건.
