@@ -72,14 +72,67 @@ source_of_truth: true
 <!-- 승인 근거: 2026-08-12 대화 — "네, 승인합니다. 구현 및 완수까지 진행해주세요." -->
 
 
+### 2.2 AC-7 대화 적재 구현 계획 (2026-08-14)
+
+**위험도: Critical** (§12.3 — 외부 통제 밖 콘텐츠를 **영속화**하는 신규 저장면).
+설계 분기는 ANCHOR §2.1 에서 Alt-F 채택.
+
+#### 영향받는 파일 · symbol
+
+| 경로 | symbol / 변경 | 비고 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/routers/_bootstrap_schema.py` | `WebAiTasks` 에 `Answer` · `AnswerBytes` · `AnswerVerdict` · `AnswerTruncated` · `SourceTasks` · `DatasourceKey` 컬럼 **멱등 추가** (전부 `ALGORITHM=INPLACE, LOCK=NONE` — CONVENTIONS §13.1) | 기존 `WebProductDatabases.DatasourceKey` idiom 복제 — `information_schema.COLUMNS` 선조회 후 `ALTER`, 실패는 **logging.error 로 가시화**(silent pass 금지) |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` | `submit_answer` — 저장 단계 신설 | 순서 고정: 인젝션 판정 → **각인** → UPDATE → 원장. 저장 실패 = 5xx(결과 미확정) |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` | `open_task` — `DatasourceKey` 기록 | ADR-003 관찰: "어느 DB 를 본 답변인가" 가 기록 자체에 남아야 `dbauth` 류 혼동이 구조적으로 예방된다 |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` | 열람 엔드포인트 신설 (`GET /api/ai/tasks`, `GET /api/ai/tasks/{task_id}`) | **관리 권한** 뒤. 외부 토큰이 아니라 **웹 세션** 인증 — 외부 AI 가 자기 기록 열람으로 타 task 를 읽는 경로를 만들지 않는다 |
+| `unit/feature-0003-agent-web-ui/static/*` (admin) | 외부 AI task 뷰 (목록 + 상세) | 질문·답변·도구 이력·datasource·판정. PB-0008 시각검증 대상 |
+| `unit/feature-0041-.../docs/FUNCTION.md` | §6 Outputs · §7 Main Flow 7 · AC-7 재정의 | `messages` → `WebAiTasks` 로 스펙을 구현에 맞춤 |
+
+#### 접근 방법
+
+1. **스키마 먼저** — 컬럼이 없으면 저장 경로를 켜지 않는다(부재 시 fail-closed).
+2. **각인 방향을 뒤집는다** — 나가는 도구 결과는 `session_guard.wrap_tool_output`(우리 데이터를
+   외부 AI 에게 비신뢰로 표시)이지만, **들어오는 답변은 `agent_core._datamark_untrusted`**
+   (외부 텍스트를 **우리 LLM 에게** 비신뢰로 표시)를 써야 한다. 이걸 반대로 쓰면 AC-7 의 본래
+   목적인 **지연 인젝션 차단**이 성립하지 않는다 — 저장된 답변은 이후 우리 컨텍스트로 들어올
+   수 있는 통제 밖 텍스트다.
+3. **fail-closed** — 원장의 `기록 실패 = 거절` 과 동형. 답변 저장 실패 시 5xx 이며
+   `recorded: true` 를 반환하지 않는다. "저장했다" 는 주장과 실제가 갈리는 것이 이 feature 의
+   반복 결함이므로 여기서 갈리지 않게 못박는다.
+4. **절단 금지** — 질문은 `[:4000]` 으로 자르지만 답변은 6~8KB 실측이다. `MEDIUMTEXT` 를 쓰고
+   상한 초과 시 **조용히 자르지 않고** 거절하거나 절단 사실을 컬럼에 남긴다.
+5. **열람은 웹 세션 권한** — 외부 토큰으로 도달 불가. 계정 스코프로 자기 것만.
+
+#### 완료 판정 기준 (항목별)
+
+- 저장: `submit_answer` 1회 → `WebAiTasks.Answer` 에 각인된 본문 · `AnswerBytes` 는 **원문**
+  바이트 · `SubmittedAt` 갱신. 각인 sentinel 이 본문에 실재함을 단정.
+- 각인 방향: 저장본이 `_datamark_untrusted` 형태(`⟦UNTRUSTED-DATA⟧`)임을 단정. 위조 close
+  마커를 담은 답변을 넣어도 구획이 깨지지 않음(strip 확인).
+- fail-closed: 저장 실패를 주입하면 **5xx 이고 `recorded: true` 가 반환되지 않는다**.
+- 절단: 상한 초과 답변이 **조용히 잘리지 않는다**(거절 또는 절단 플래그).
+- 인젝션: 고신뢰 패턴 답변은 **400 거절**되고 페이로드는 저장되지 않되, `AnswerVerdict` 는
+  task 행에 남는다(거절 시도의 존재가 콘솔에서 보여야 한다).
+- 확정 불변: 이미 제출된 task 에 재제출하면 **409** 이고 기존 답변·판정·근거선언이 보존된다
+  (조건은 SQL `WHERE` 안 — TOCTOU 금지).
+- 열람: `console.aiops.read` 미보유 403 / 전역은 `audit.read.any` / **외부 access token 도달 불가**.
+- online DDL: `bin/mysql-ddl-lint.sh` PASS.
+- 무회귀: 0002/0003/0023/0041 전체 스위트 green. 기존 `submit_answer` 계약(교차오염 대조·
+  원장 기록·반환 스키마) 무변경.
+- PB-0008: 관리 콘솔 외부 AI task 뷰가 실제 Windows 브라우저에 렌더(§15.4.1 · scope always).
+
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-08-14 -->
+<!-- 승인 근거: 2026-08-14 대화 — "승인하겠습니다. cycle을 진행해주세요." + 설계 분기 2건 확정
+     (저장 위치 = WebAiTasks 전용 컬럼 / 열람 경로 = 이번 cycle 포함) -->
+
 ## 3. Task Queue
 - [x] TASK-20260812T075301-schema-ledger — `tool_call_usage` alembic + OAuth 테이블 부트스트랩
 - [x] TASK-20260812T075301-authz-seam — 도구 스코프 ContextVar → 명시 인자 승격(내부 무회귀)
 - [x] TASK-20260812T075301-oauth-as — 등록·인가·토큰·폐기 + 세션 결합/revoke 전파
 - [x] TASK-20260812T075301-tools-p0 — P0 도구 9종 REST + task 세션 계약
 - [x] TASK-20260812T075301-isolation — L1~L4 격리 + datamark 각인 3층
-- [~] TASK-20260812T075301-injection — 3단 판정 완료. **저장 시점 datamark 는 미구현**
-      (적재 자체가 없다 — AC-7)
+- [x] TASK-20260812T075301-injection — 3단 판정 + **저장 시점 datamark**(2026-08-14 완결 —
+      적재가 생기며 각인 시점도 함께 생겼다)
 - [x] TASK-20260812T075301-mcp-adapters — stdio(i) + HTTP/SSE(ii) 어댑터
 - [x] TASK-20260812T075301-docs — SECURITY 신규 절·ARCHITECTURE·ROUTEMAP·발견 자료·0023 ANCHOR §1
 - [x] TASK-20260812T090000-catchup-guard — 부트스트랩 catchup 체인 보호(배포 전 발견)
@@ -99,10 +152,10 @@ source_of_truth: true
 - [x] TASK-20260814T000000-field-reports — 실사용 제보 결함 5건 + 인가 완료 화면(`35c60a3f`)
 - [x] TASK-20260814T000000-p1-execute-sql — `execute_sql` 개방 + **실행 스코프 결함 수정**(`956ae5e1`)
 - [x] TASK-20260814T000000-gate-coaching — 부하 게이트 집계 코칭 정정(`25637d1c`)
-- [ ] TASK-20260814T120000-ac7-answer-persist — **AC-7 대화 적재 구현** (사용자 승인 2026-08-14,
-      ADR-002 · 별도 cycle). 원 질문·최종 답변 적재 + 저장 시점 datamark. 저장 대상(전용 컬럼 vs
-      `messages`)·소급 처리는 설계 확정 필요. 위험 등급 **Critical**(외부 입력 본문 영속화 =
-      신규 저장면) → §7.1 계획 승인 선행
+- [x] TASK-20260814T120000-ac7-answer-persist — **AC-7 대화 적재 구현 완료**(2026-08-14,
+      ADR-002 · PLAN-APPROVED). `WebAiTasks` 전용 컬럼 6종 + 저장 시점 각인
+      (`wrap_external_answer` — 수신 방향) + fail-closed + 고신뢰 인젝션 400 거절 +
+      열람 REST 2종·콘솔 서브탭(도구 이력 합류). codex P2×5·P3×1 전건 수정
 - [ ] TASK-20260812T190000-e2e-authorized — **인증 이후 구간 e2e (AC-1)** — 사람 브라우저 인가 1회.
       설계상 자동화 불가(인가가 유일한 신원 생성점). 실행 후 TEST.md §3 에 Run 기록 → AC-1 종결
 
@@ -169,9 +222,9 @@ P1 도구는 사용자 결정(2026-08-12)대로 원장 데이터를 보고 판�
   (답변 본문 미저장 · 메모 컬럼 부재). 기록 삭제도 하지 않는다
 
 ## 8. Completion Checklist
-- [ ] 모든 REQ의 AC가 구현되었다 — **AC-7 미구현**(2026-08-14 실측으로 하향).
-      원 질문·최종 답변의 `messages` 적재와 저장 시점 datamark 가 코드에 없다. AC-1 의
-      **라이브** 확인도 사람 인가 1회 대기(§5.1). 나머지 AC 는 구현·검증됨
+- [x] 모든 REQ의 AC가 구현되었다 — AC-7 은 2026-08-14 에 미구현이 드러나 하향했다가 같은 날
+      구현했다(ADR-002 · 저장 위치는 `messages` 대신 `WebAiTasks` 전용 컬럼 — ANCHOR §2.1).
+      AC-1 의 **라이브** 확인만 사람 인가 1회 대기(§5.1)
 - [x] 단위 테스트(unit test)가 통과한다 — 신규 89건 + 기존 스위트 green
 - [x] 전체/통합 테스트(integration test): 컨테이너 e2e 미실시 — 사유·커버 계획 TEST.md §4
 - [x] FUNCTION.md가 현재 동작과 일치한다
@@ -208,12 +261,11 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
       Caddy `handle /api/ai/mcp*` · 배선: `test_bringup_and_limits.py` (경로 정합 · dbnet ·
       익명 401 선차단 · failover 조건). 사용자는 `https://<host>/api/ai/mcp` + access token 만
       등록하면 된다(설치물 0)
-- [ ] `대화 기록 우리 쪽 보존` — **부분 충족**(2026-08-14 실측으로 하향). 남는 것은
-      `WebAiTasks`(원 질문, 4000자 절단) + 원장(도구 호출 이력 · 답변 **바이트 수** ·
-      교차오염 판정) + 제출 사실(`Status`/`SubmittedAt`). **최종 답변 본문은 어디에도 저장되지
-      않는다** — `submit_answer` 는 상태만 갱신하고 `messages` 적재는 구현돼 있지 않다(AC-7).
-      기존 `[x]` 는 `submit_answer`(최종 답변) 을 산출물로 적었으나 코드가 그렇게 하지 않는다.
-      · 한계: 제출 자체도 자발적(소프트 강제, FUNCTION §9 명시)
+- [x] `대화 기록 우리 쪽 보존` — 산출물: `WebAiTasks`(원 질문 + **각인된 최종 답변**
+      `Answer`/`AnswerBytes`/`AnswerVerdict`/`AnswerTruncated`/`SourceTasks`/`DatasourceKey`)
+      + 원장(도구 호출 이력) + 열람 경로(REST 2종 · 콘솔 '외부 AI 작업' 서브탭) ·
+      배선: `test_answer_persistence.py` 24건(저장·각인 방향·fail-closed·절단·권한 경계)
+      · 한계: 제출 자체는 자발적(소프트 강제, FUNCTION §9) · 2026-08-14 이전 제출분은 소급 불가
 - [x] `세션 격리 (동시 다중 허용)` — 산출물: L1 tool 이름 라벨 접미 · L2 각인 · L3 대조 ·
       L4 권한 비대칭 flag(**원장 전용** — codex P1 반영) · 배선: 각 층 테스트
 - [x] `라이브 배포` — 산출물: TEST.md §3 Run 1~5 (3회 무중단 롤아웃, GIT_COMMIT 서비스별 일치)
