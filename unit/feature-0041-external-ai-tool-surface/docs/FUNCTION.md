@@ -50,6 +50,7 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
   (allow / neutralize+flag / reject) + **저장 시점** datamark
 - **부하 원장**: `tool_call_usage` 신설 + 토큰·계정·client 단위 rate/동시성/누적 행수 게이트
 - **대화 기록**: 원 질문(`open_task`)·조회 원장·최종 답변(`submit_answer`)을 서비스 측에 적재
+  — ⚠ 답변 축 **미구현**(AC-7 주석)
 - **전송 2종**: REST 정본 + stdio MCP 어댑터(i) + HTTP/SSE MCP(ii)
 - **발견 자료**: 익명 static contract에 등록·인가 흐름 가이드 추가(인스턴스 데이터 0 유지)
 
@@ -75,7 +76,8 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 
 - 도구 결과: datamark 각인된 데이터 블록(`account`·`conversation`·`task`·`source` 라벨 포함)
 - `tool_call_usage` 원장 행 (계정·client·task·도구·대상·행수·바이트·추정 스캔행·지연·판정)
-- `messages` 적재 (원 질문 / 최종 답변, `meta_json.source='external_ai'`)
+- ⚠ `messages` 적재 (원 질문 / 최종 답변, `meta_json.source='external_ai'`) — **미구현**(AC-7 주석
+  참조). 실제 적재는 `WebAiTasks.Question` 뿐이며 답변 본문은 어디에도 저장되지 않는다
 - 교차오염·인젝션·미제출 이벤트 플래그
 - MCP 서버 `instructions` (세션 규범 전문, 연결당 1회)
 
@@ -88,7 +90,8 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 4. `open_task(question)` → `task_id` 발급 + 원 질문 적재
 5. `get_task_context(task_id)` → grounding 번들 조립(조회만, LLM 0) → datamark 각인 후 반환
 6. 구조 조회 도구 호출 → 스코프 교차검증 → 각인 → 원장 기록
-7. `submit_answer(task_id, answer, source_tasks)` → 선언 vs 원장 대조 → 대화 적재 → 판정 반환
+7. `submit_answer(task_id, answer, source_tasks)` → 선언 vs 원장 대조 → ⚠ ~~대화 적재~~(미구현,
+   AC-7) → 상태 갱신 + 원장 기록 → 판정 반환
 
 ## 8. Edge Cases
 
@@ -155,6 +158,13 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
   토큰·계정·client 단위 rate/동시성/누적 행수 상한 초과 시 429가 된다.
 - AC-20260812T075301-external-ai-tool-surface-7: `open_task` 의 원 질문과 `submit_answer` 의
   최종 답변이 서비스 측 대화에 적재되며, **저장 시점에** datamark가 입혀진다(지연 인젝션 차단).
+  > ⚠ **미구현 (2026-08-14 실측 확인)**. 현재 적재되는 것은 `WebAiTasks.Question`(원 질문,
+  > 4000자 절단) 뿐이고 **`messages` 적재·최종 답변 저장·저장 시점 datamark 는 없다**.
+  > `submit_answer` 는 `Status='submitted'` + `SubmittedAt` 만 갱신하며, 답변 본문은 원장에
+  > `bytes_out`(바이트 수)으로만 남는다. `ai_tools.py` 의 `INSERT INTO` 는 `WebAiTasks` 1건이
+  > 전부이고 `external_ai` 문자열은 코드베이스 전역 0건이다. 라이브 `agent_memory.WebAiTasks`
+  > 에 Answer 계열 컬럼이 없음도 확인했다. **AC-7 은 열린 결함으로 되돌린다** — 사용자 요구
+  > (2026-08-12 "외부 AI 세션의 대화 기록 또한 우리 쪽에 남겨야 합니다")의 답변 축 미충족.
 - AC-20260812T075301-external-ai-tool-surface-8: 고신뢰 인젝션 패턴은 400으로 거절되고,
   저·중신뢰 패턴은 통과하되 flag가 남는다(오탐으로 정상 질의가 막히지 않는다).
 - AC-20260812T075301-external-ai-tool-surface-9: feature-0023 `ask` 경로의 기존 동작·scope·
