@@ -1853,3 +1853,15 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 - Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(원장 헤딩 라벨 1줄 + TASK 기록) → skip.
 - 검증: 갱신 후 헤딩 라벨과 본문 `status` 가 동일 문자열임을 확인. 원장 항목 내용·수치 무변경.
 - Human Approval Needed: 아니오 (doc-only, 직전 cycle 의 사후 정합).
+
+## REV-20260814T174000-observability-plan-correction [SKIPPED:doc-only] — 관측 수단 정정
+
+- Related Change: `CHG-20260814T174000-observability-plan-correction`
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(원장·TASK 의 관측 계획 문구) → 패널 skip.
+- 검증: 운영 컨테이너에서 직접 확인한 사실에 기반한다 — `agent_core` 로거
+  `effective_level=WARNING` · `isEnabledFor(INFO)=False` · 40분 창 워커 로그의 INFO 급 **0건**.
+  즉 `llm_stream_done`(info)은 라이브에 남지 않는다.
+- **자기 정정 기록**: 이 오류는 "배포본에서 로그를 봤다" 는 관측을 운영 조건으로 일반화한
+  것이다(probe 가 INFO 를 켰다). 계측을 설계할 때는 **그 계측이 운영 설정에서 실제로 도달하는지**
+  까지 확인해야 한다 — `LRN-20260812-verify-the-measurement-not-just-the-code` 와 같은 부류다.
+- Human Approval Needed: 아니오 (doc-only).

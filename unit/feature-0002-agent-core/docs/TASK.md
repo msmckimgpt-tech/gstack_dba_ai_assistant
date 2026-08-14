@@ -98,6 +98,12 @@ source_of_truth: true
 - [x] **원장 헤딩 status 라벨 정합**(2026-08-14) — 본문 status 는 `fixed:deployed:unverified-live`
       인데 헤딩 라벨이 `fixed:undeployed` 로 남아 있었다. 다음 audit 이 헤딩만 읽으면 **미배포로
       오판해 중복 진단**하므로(원장의 재진단 회피 근거가 곧 헤딩) 두 곳을 일치시켰다.
+- [x] **관측 수단 정정(정직)** — 초판 문서는 라이브 실측 수단으로 `llm_stream_done` 로그를 적었으나
+      **운영 로그 레벨이 WARNING** 이라 `logger.info` 는 라이브에 남지 않는다(배포본 실증에서 보인
+      것은 probe 가 `basicConfig(INFO)` 를 켠 결과 — 실측 조건을 운영 조건으로 오인했다). 정상
+      완료를 warning 으로 올리면 모든 LLM 호출마다 한 줄이 쌓이므로 레벨은 유지하고 관측을 **DB 로
+      이전**: 진행 표시 발동 = `steps.work_text LIKE '%경과, 응답을 계속 받고 있습니다%'`,
+      실패 = `llm_transient_retry`·`llm_stream_usage_missing`(둘 다 warning, 이미 남음).
 - [ ] **다음 audit 의 corroboration 재측정**(배포 전 기준선 대비): 재시도 activity 30일 11건/3
       대화 · 900초 정확 timeout 2 run/2 conv · 5분+ 무변화 54건/15 대화 → 감소하면 `verified`,
       재증가면 `regressed`. 취소·'즉시 답변' 반응성은 실사용 대화에서 확인.

@@ -117,9 +117,16 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   작업이 필요하다. ④ red-team 경로는 abort 만 배선하고 진행 표시는 미배선 — 그쪽 대기 표면은
   `FR-redteam-first-pass-unabortable` 봉인이 이미 담당한다(중복 표시 회피).
 - **라이브 실측 필요분(§정직)**: 코드/테스트는 "스트리밍 수집 계약이 동작함" 까지만 증명한다.
-  ① 배포 후 실사용 대화에서 **900초 timeout 소멸**(`llm_transient_retry … timeout_class=True`
-  건수) ② 5분+ 무변화 건수 감소(위 54건/15대화 재측정) ③ `llm_stream_done` 로그로 무거운 추론이
-  실제 chunk 를 흘렸는지(상한이 chunk-간에 걸린다는 전제의 라이브 확인) ④ 취소 반응성.
+  ① 배포 후 실사용 대화에서 **900초 timeout 소멸** — `llm_transient_retry … timeout_class=True`
+  는 **warning 이라 운영 로그에 남는다** ② 5분+ 표면 무변화 건수 감소(위 54건/15대화 재측정)
+  ③ **진행 표시가 실제로 발동했는지** — `steps` 에서 `work_text LIKE '%경과, 응답을 계속 받고
+  있습니다%'` 의 건수·대화수(긴 스트림에서 120초 주기가 열렸다는 직접 증거) ④ 취소·'즉시 답변'
+  반응성.
+  ⚠ **관측 수단 정정(정직)**: 초판은 `llm_stream_done` 로그를 실측 수단으로 적었으나 **운영 로그
+  레벨이 WARNING** 이라 `logger.info` 는 라이브에 남지 않는다(배포본 실증에서 보인 것은 probe 가
+  `basicConfig(INFO)` 를 켠 결과 — **실측 조건을 운영 조건으로 오인**했다). 정상 완료를 warning 으로
+  올리면 모든 LLM 호출마다 한 줄이 쌓여 로그가 오염되므로 레벨은 유지하고 **관측을 DB(steps ·
+  llm_usage)로 옮긴다**. 이상 신호(`llm_stream_usage_missing`)는 이미 warning 이라 그대로 남는다.
 ## FR-early-return-kv-never-finalized — fixed:undeployed (L4↔L7 경계; run 이 KV 를 마감하지 못하면 프런트는 영원히 기다린다)
 
 - **status**: `fixed:deployed:unverified-live` — PR #1303 merge(main `6cd45761`) → `deploy-web` **전체
