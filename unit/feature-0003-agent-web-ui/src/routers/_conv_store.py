@@ -2958,6 +2958,32 @@ def _fork_conversation_impl(
                 _att_id, exc_info=True,
             )
 
+    # feature-0022 scratch-fork-carryover: assistant 의 PG 작업공간(scratch) 이월.
+    # fork 는 문맥(core_messages)을 복사하므로 assistant 는 "테이블 a·b 를 반입해 JOIN 했다"는
+    # 자기 기록을 그대로 읽는다 — 작업공간만 비어 있으면 없는 테이블을 참조하다 실패한다(보고된
+    # 결함). 첨부와 같은 "조상 공유 금지 → 독립 복사" 원칙으로 분기본 전용 사본을 만든다.
+    # 교차계정(공유 링크 fork)·부분 구간 분기도 이월한다 — 사용자 결정(2026-08-14): 공유 링크
+    # 생성 자체가 소유자의 능동적 권한 위임이며 이월 책임도 소유자에게 있다. 이월 사실은 아래
+    # 반환값(payload["scratch_cloned"]) 을 통해 share fork audit 에 기록된다.
+    # 작업공간은 보조물이라 fail-open — 이월 실패가 대화/문맥 fork 를 막지 않는다.
+    scratch_cloned = 0
+    scratch_truncated = False
+    try:
+        from modules import scratch as _scratch_mod  # feature-0002 unified ns
+        _sc = _scratch_mod.clone_workspace(source_id, new_cid)
+        scratch_cloned = int(_sc.get("cloned") or 0)
+        scratch_truncated = bool(_sc.get("truncated"))
+        if not _sc.get("ok"):
+            logging.getLogger(__name__).warning(
+                "_fork_conversation_impl: scratch 이월 실패 (new_cid=%s source=%s reason=%s)",
+                new_cid, source_id, _sc.get("error"),
+            )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_fork_conversation_impl: scratch 이월 단계 실패 (new_cid=%s source=%s)",
+            new_cid, source_id, exc_info=True,
+        )
+
     try:
         app._set_account_current_conversation(conn, int(account["id"]), new_cid)
     except Exception:
@@ -2973,6 +2999,8 @@ def _fork_conversation_impl(
             "copied": copied,
             "core_copied": core_copied,
             "attachments_copied": att_copied,
+            "scratch_cloned": scratch_cloned,
+            "scratch_truncated": scratch_truncated,
             "from_message_id": int(from_id) if from_id is not None else None,
             "topic": new_topic,
         },

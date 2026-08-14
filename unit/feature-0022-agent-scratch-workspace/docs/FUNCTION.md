@@ -38,6 +38,12 @@ source_of_truth: true
   사용**하도록, scratch 활성 대화에 `_SCRATCH_WORKSPACE_GUIDANCE`(agent_core 시스템 프롬프트,
   4 도구 사용법 + cross-source JOIN 트리거 신호)를 조건부 주입한다. ask-worker 도 동일
   `_run_agent_core` 경로라 양쪽 모두 지침을 받는다. 비활성 시 미주입(프롬프트 무증가).
+- REQ-20260814-scratch-fork-carryover: **대화를 분기해도 작업공간이 보존된다.** 분기 3 경로
+  (사본 만들기·앵커 분기·공유 링크 복제)가 원본 대화의 작업공간 테이블을 분기본 스키마로 독립
+  복사한다. 교차계정·부분 구간 분기도 이월한다(사용자 결정 — 공유 링크 생성 = 소유자의 능동적
+  권한 위임, 이월 건수는 감사 기록). 이월과 무관하게 **작업공간의 실제 상태(실재 테이블 목록)를
+  매 턴 프롬프트에 사실로 주입**해, 문맥에만 남은 유령 테이블 참조를 차단한다(TTL 만료로 작업공간이
+  사라진 대화 재개에도 동일 적용). ADR-SCRATCH-0005.
 
 ## 3. In Scope
 - 전용 PG DB(`agent_scratch`) + 전용 login role(`agent_scratch_rw`) bootstrap
@@ -80,11 +86,19 @@ source_of_truth: true
   격리를 강제(feature-0021 적대 리뷰 BLOCK 대응). 향후 대화별 전용 role 승격 여지.
 - **TTL 자동 삭제**: last_used 기준 TTL 초과 스키마 DROP(런타임 조정 가능).
 - **폭주 방지 캡**: 반입 행수·대화당 테이블 수·전역 스키마 수·문당 timeout 캡.
+- **분기 이월은 독립 사본**: 분기본은 원본 스키마를 공유하지 않는다 — 이후 원본의 변경·TTL DROP 에
+  영향받지 않는다. 이월은 fail-soft(실패해도 분기 자체는 성공) + 캡(테이블 수·총 행수·시간 예산)
+  적용, 초과·실패는 결과에 드러낸다(조용한 절단 금지).
+- **작업공간 상태는 문맥보다 우선**: 매 턴 주입되는 실재 테이블 목록이 권위 있는 사실이다. 조회
+  실패 시엔 상태를 주장하지 않는다(빈 문자열) — "모름" 을 "비어 있음" 으로 오도하지 않는다.
 
 ## 8. 코드 거주 (cross-cut)
-- feature-0002: `src/modules/scratch.py`(코어), `src/modules/tools.py`(도구 schema·handler),
-  `src/agent_core.py`(대화 ContextVar·도구 노출), `src/modules/ask.py`(reaper 훅),
+- feature-0002: `src/modules/scratch.py`(코어 + `clone_workspace` 분기 이월),
+  `src/modules/tools.py`(도구 schema·handler), `src/agent_core.py`(대화 ContextVar·도구 노출 +
+  `_scratch_workspace_state_note` 상태 주입), `src/modules/ask.py`(reaper 훅),
   `src/scripts/agent_scratch_schema.sql`.
+- feature-0003: `src/routers/_conv_store.py`(`_fork_conversation_impl` 이월 훅 — 분기 3 경로 공통),
+  `src/routers/share.py`(교차계정 fork 이월 건수 감사 기록).
 - shared: `config.py`(AGENT_SCRATCH_* + active conversation ContextVar), `db.py`
   (`_pg_connect_scratch`), `runtime_settings.py`(AGENT_SCRATCH_* 스펙).
 - repo-level: `bin/scratch-pg-bootstrap.sh`.

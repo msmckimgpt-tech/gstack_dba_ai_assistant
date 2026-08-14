@@ -65,3 +65,56 @@ source_of_truth: true
   scratch 로 자율 수행(scratch_import×2 + scratch_sql). 검증 후 임시 테스트 제품·잔재 정리.
 - [x] TASK-0022: 사용자 피드백 — scratch_sql 결과셋 출력을 execute_sql 동일 표(_format_result_sets)
   형식으로 통일(plain-text ` | ` 나열 → Markdown 표). 죽은 _fmt_scratch_rows 제거·회귀 테스트.
+
+## 20260814T0304-scratch-fork-carryover
+
+사용자 보고: "대화를 분기하면 기존 대화에서 보존되던 assistant 개인 작업 공간(scratch)을 더 이상
+참조할 수 없다 — 답변 품질·맥락 보존을 위해 구조적으로 개선". 근본 원인은 분기가 문맥은 복사하면서
+작업공간은 이월하지 않아 **문맥에만 존재하는 유령 테이블**이 생기는 것(ADR-SCRATCH-0005).
+
+- [x] TASK-20260814T0304-clone: `scratch.clone_workspace(src, dst)` — 원본 스키마 테이블을
+  분기본으로 CTAS 독립 복사. 캡(테이블 수·총 행수·문당 timeout·전체 시간 예산) + 부분 성공 보고
+  (`cloned`/`skipped_detail`/`truncated`) + fail-soft(예외 미전파).
+- [x] TASK-20260814T0304-hook: `_fork_conversation_impl` 에 이월 훅 — 분기 3 경로(사본 만들기·
+  앵커 분기·공유 링크 복제) 공통 적용. 응답에 `scratch_cloned`/`scratch_truncated` 노출.
+- [x] TASK-20260814T0304-audit: `share.fork` 감사 기록에 `scratch_tables_copied`(건수만) 추가 —
+  교차계정 이월의 forensics(사용자 결정으로 이월 허용, 추적성 보완).
+- [x] TASK-20260814T0304-state: `agent_core._scratch_workspace_state_note` — 매 턴 실재 테이블
+  목록을 "문맥보다 우선하는 사실" 로 주입. 빈 작업공간은 EMPTY + 재반입 유도, 조회 실패는 침묵.
+  TTL 만료로 작업공간이 사라진 대화 재개에도 동일 적용(같은 결함의 두 번째 발현 경로).
+- [x] TASK-20260814T0304-settings: 런타임 설정 3종 추가 — `AGENT_SCRATCH_FORK_CARRYOVER`(기본 1),
+  `AGENT_SCRATCH_MAX_CLONE_ROWS`(기본 200000), `AGENT_SCRATCH_FORK_BUDGET_MS`(기본 10000).
+- [x] TASK-20260814T0304-test: 단위 테스트 13건 추가(이월 캡·부분 실패·fail-soft·방향·상태 주입).
+- [ ] TASK-20260814T0304-live: 라이브 검증 — 작업공간이 있는 대화를 분기해 이월 확인 + 분기본에서
+  이월 테이블 조회 + 상태 주입 문구 반영 확인.
+
+## 9. Requested Scope (요청 범위 자기-열거) — 20260814T0304-scratch-fork-carryover
+
+원 요청: "프로젝트 내 서비스에서 대화를 분기 시, 기존의 대화에서 보존되었던 assistant 의 개인 작업
+공간(scratch)이 더 이상 참조할 수 없는 것으로 확인. assistant 의 답변 품질 및 맥락의 보존을 위해
+해당 구조적 이슈를 개선."
+
+- [x] `대화 분기 시 작업공간을 참조할 수 없는 구조 결함 해소` — 산출물:
+  `modules/scratch.py:clone_workspace` + `routers/_conv_store.py:_fork_conversation_impl` 이월 훅 ·
+  배선 확인: 분기 3 경로(사본 만들기 `conversations.py:834` · 앵커 분기 `conversations.py:3068` ·
+  공유 fork `share.py:477`)가 모두 이 impl 단일 경로를 타는 것을 호출부 grep 으로 확인 — 훅 1곳이
+  전 경로를 덮는다. 단위 테스트가 복사 방향(원본→분기본)·캡·부분 실패 계속을 고정.
+- [x] `답변 품질·맥락 보존` — 산출물: `agent_core._scratch_workspace_state_note` 매-턴 주입 ·
+  배선 확인: scratch 활성 대화의 시스템 프롬프트 조립부(`_SCRATCH_WORKSPACE_GUIDANCE` 직후)에 연결,
+  빈 작업공간/조회 실패/실재 목록 3 분기를 단위 테스트로 고정. 이월 상한 초과·이월 실패·**TTL 만료**
+  까지 포함해 "문맥엔 있는데 실물은 없는" 어긋남 일반을 차단한다.
+- [ ] `라이브 실증` — 산출물: TEST.md §5.3 시나리오 · 배선 확인: 배포 후 수행(TASK-...-live).
+
+**주장 affordance 실측 (G3)**: 분기 응답이 새로 주장하는 값 `scratch_cloned`/`scratch_truncated` 는
+`clone_workspace` 반환값에서 직접 유도되며 단위 테스트가 값 계약(행수 합산·부분 실패 시 개수)을
+고정한다. 사용자 대면 UI 문구 추가는 없다(백엔드·프롬프트 변경만).
+
+**경계변수 양측 검증 (G4)**:
+- `AGENT_SCRATCH_MAX_TABLES_PER_CONV`(테이블 수 캡) → 이하: 전건 이월(`test_clone_copies_source_
+  tables`) / 초과: 초과분 skip + `truncated=True`(`test_clone_respects_table_cap`).
+- `AGENT_SCRATCH_MAX_CLONE_ROWS`(행 예산) → 예산 내: 전건 이월 / 소진: 남은 테이블 skip + 남은
+  예산이 `LIMIT` 로 SQL 에 반영(`test_clone_respects_row_budget`).
+- `AGENT_SCRATCH_FORK_CARRYOVER`(운영자 스위치) → 1: 이월 수행 / 0: DB 미접근 no-op
+  (`test_clone_noop_when_carryover_disabled`).
+- 작업공간 테이블 수 0 vs ≥1 (상태 주입 분기) → 0: EMPTY 선언 + 재반입 유도 / ≥1: 실재 목록 표기
+  (`test_workspace_state_note_declares_empty` / `..._lists_existing_tables`).

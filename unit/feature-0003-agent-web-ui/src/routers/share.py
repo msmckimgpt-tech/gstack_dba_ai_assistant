@@ -496,6 +496,10 @@ def public_share_fork(token: str, request: Request, account=Depends(app.require_
             # 복제하는 보안민감 이벤트의 forensics — 건수만 기록(파일명/바이트 비노출, D12).
             "attachments_copied": int(payload.get("attachments_copied") or 0) if isinstance(payload, dict) else 0,
             "core_messages_copied": int(payload.get("core_copied") or 0) if isinstance(payload, dict) else 0,
+            # feature-0022 scratch-fork-carryover: 교차계정 fork 는 원본 대화 소유자의 datasource
+            # 권한으로 반입된 작업공간 데이터까지 forker 계정으로 복제한다(사용자 결정 — 공유 링크
+            # 생성 = 소유자의 능동적 권한 위임). 같은 forensics 원칙으로 **건수만** 기록한다.
+            "scratch_tables_copied": int(payload.get("scratch_cloned") or 0) if isinstance(payload, dict) else 0,
         },
     )
     return JSONResponse(payload)

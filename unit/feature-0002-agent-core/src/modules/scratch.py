@@ -46,6 +46,9 @@ _DEFAULTS = {
     "AGENT_SCRATCH_QUERY_PREVIEW_ROWS": 200,  # (레거시) scratch_sql SELECT 미리보기 행수 — 표시는 이제
                                               # tools 핸들러의 _TOOL_PREVIEW_ROWS 가 담당(execute_sql parity).
     "AGENT_SCRATCH_MAX_RESULT_ROWS": 100000,  # scratch_sql SELECT 결과 CSV export 상한(F-5 대량 회수용).
+    "AGENT_SCRATCH_FORK_CARRYOVER": 1,        # 대화 분기(fork) 시 작업공간 이월 on/off.
+    "AGENT_SCRATCH_MAX_CLONE_ROWS": 200000,   # 1회 이월 총 행수 상한(분기 폭주 방지).
+    "AGENT_SCRATCH_FORK_BUDGET_MS": 10000,    # 이월 전체 wall-clock 예산(fork 응답 지연 상한).
 }
 
 _ADMIN_SCHEMA = "_scratch_admin"
@@ -494,6 +497,128 @@ def reset(conversation_id: Any) -> dict[str, Any]:
         return {"ok": True, "schema": schema, "message": "작업공간을 비웠습니다."}
     except Exception as exc:
         return {"ok": False, "error": f"reset 실패: {exc}"}
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ── 분기(fork) 이월 ──────────────────────────────────────────────────────────
+def clone_workspace(source_conversation_id: Any, dest_conversation_id: Any) -> dict[str, Any]:
+    """대화 분기(fork) 시 원본 대화 작업공간의 테이블을 분기본 스키마로 **독립 복사**한다.
+
+    배경(구조 결함): fork 는 표시 메시지·LLM 문맥(core_messages)·첨부까지 이월하지만 scratch
+    작업공간은 이월 대상이 아니었다. 스키마 키가 `s_<sha1(conversation_id)>` 라 새 대화 id 를
+    받는 순간 작업공간이 비고, 그런데 문맥에는 "테이블 a·b 를 반입해 JOIN 했다"는 assistant
+    자신의 기록이 그대로 남아 **존재하지 않는 테이블을 참조**하다 실패한다(답변 품질 저하).
+
+    설계:
+    - **독립 복사**(조상 스키마 공유 안 함) — 첨부 fork 가 채택한 "조상 sandbox 공유 금지"와
+      동형. 원본 대화가 이후 작업공간을 바꾸거나 TTL 로 사라져도 분기본은 영향받지 않는다.
+    - **전 분기 경로 이월**(사용자 결정 2026-08-14): 공유 링크 fork(교차계정)·부분 구간 분기도
+      이월한다. 근거 — 공유 링크 생성 자체가 대화 소유자의 능동적 권한 위임이며, 이월 여부의
+      책임은 링크를 만든 소유자에게 있다. 이월 사실은 fork 응답·감사 로그에 남겨 추적 가능하게
+      한다(`AGENT_SCRATCH_FORK_CARRYOVER=0` 으로 운영자가 전역 비활성 가능).
+    - **fail-soft**: 어떤 실패도 예외를 올리지 않는다. 작업공간은 보조물이라 이월 실패가 분기
+      자체(대화·문맥·첨부)를 막아선 안 된다 — 첨부 복사의 fail-open 정책과 동일.
+    - **캡**: 테이블 수(대화당 캡)·총 행수(`MAX_CLONE_ROWS`)·문당 timeout·전체 wall-clock 예산
+      (`FORK_BUDGET_MS`). 예산 초과분은 조용히 버리지 않고 반환값에 `truncated`/`skipped` 로
+      드러낸다.
+
+    반환: {ok, reason, schema, source_schema, cloned, skipped, rows, truncated, tables}
+    """
+    if _rt("AGENT_SCRATCH_FORK_CARRYOVER") != 1:
+        return {"ok": True, "cloned": 0, "reason": "carryover-disabled"}
+    if not enabled():
+        return {"ok": True, "cloned": 0, "reason": "disabled"}
+
+    src_schema = schema_for(source_conversation_id)
+    dst_schema = schema_for(dest_conversation_id)
+    if not src_schema or not dst_schema:
+        return {"ok": True, "cloned": 0, "reason": "missing-conversation-id"}
+    if src_schema == dst_schema:
+        return {"ok": True, "cloned": 0, "reason": "same-workspace"}
+
+    from psycopg import sql as _sql
+
+    row_budget = _rt("AGENT_SCRATCH_MAX_CLONE_ROWS")
+    table_cap = _rt("AGENT_SCRATCH_MAX_TABLES_PER_CONV")
+    deadline = time.monotonic() + max(1, _rt("AGENT_SCRATCH_FORK_BUDGET_MS")) / 1000.0
+
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            # 원본 테이블 열거 — 스키마 부재(미사용 대화·TTL 만료 후 분기)면 자연히 0행.
+            cur.execute(
+                """SELECT c.relname
+                   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = %s AND c.relkind = 'r' ORDER BY c.relname""",
+                (src_schema,),
+            )
+            src_tables = [str(r[0]) for r in cur.fetchall()]
+        if not src_tables:
+            return {"ok": True, "cloned": 0, "reason": "source-empty",
+                    "source_schema": src_schema, "schema": dst_schema}
+
+        # 이월 대상이 확인된 뒤에야 분기본 스키마를 만든다(빈 이월로 전역 캡을 소모하지 않음).
+        ensure_schema(conn, dest_conversation_id)
+
+        cloned: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        total_rows = 0
+        truncated = False
+        with conn.cursor() as cur:
+            cur.execute(_statement_timeout_sql())
+            for name in src_tables:
+                if len(cloned) >= table_cap:
+                    skipped.append({"table": name, "reason": "table-cap"})
+                    truncated = True
+                    continue
+                if time.monotonic() >= deadline:
+                    skipped.append({"table": name, "reason": "time-budget"})
+                    truncated = True
+                    continue
+                remaining = row_budget - total_rows
+                if remaining <= 0:
+                    skipped.append({"table": name, "reason": "row-budget"})
+                    truncated = True
+                    continue
+                try:
+                    # CTAS + LIMIT — 인덱스/제약은 옮기지 않는다(작업공간 테이블은 분석용 중간
+                    # 산출물이고, 제약 재현 실패가 이월 전체를 깨뜨리는 편이 더 나쁘다).
+                    cur.execute(
+                        _sql.SQL("CREATE TABLE IF NOT EXISTS {}.{} AS SELECT * FROM {}.{} LIMIT {}").format(
+                            _sql.Identifier(dst_schema), _sql.Identifier(name),
+                            _sql.Identifier(src_schema), _sql.Identifier(name),
+                            _sql.Literal(int(remaining)),
+                        )
+                    )
+                    n = int(cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0)
+                    total_rows += n
+                    if n >= remaining:
+                        truncated = True  # LIMIT 에 걸림 — 원본 행 일부만 이월됐을 수 있다.
+                    cloned.append({"table": name, "rows": n})
+                except Exception as exc:
+                    # 테이블 1개 실패가 나머지 이월을 막지 않는다.
+                    skipped.append({"table": name, "reason": f"error: {exc}"})
+        _touch(conn, dst_schema)
+        return {
+            "ok": True,
+            "reason": "cloned" if cloned else "nothing-cloned",
+            "schema": dst_schema,
+            "source_schema": src_schema,
+            "cloned": len(cloned),
+            "skipped": len(skipped),
+            "skipped_detail": skipped,
+            "rows": total_rows,
+            "truncated": truncated,
+            "tables": [c["table"] for c in cloned],
+        }
+    except Exception as exc:
+        return {"ok": False, "cloned": 0, "error": f"작업공간 이월 실패: {exc}"}
     finally:
         if conn:
             try:

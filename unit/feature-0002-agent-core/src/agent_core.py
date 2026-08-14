@@ -423,6 +423,55 @@ persists across conversations.
 """
 
 
+def _scratch_workspace_state_note(conversation_id: Any) -> str:
+    """feature-0022 scratch-fork-carryover: 작업공간의 **실제** 현재 상태를 프롬프트 조각으로.
+
+    결함의 기전: 대화 문맥(core_messages)은 분기 시 복사되고 대화 재개 시 그대로 로드되지만,
+    작업공간은 (a) 분기 = 새 대화 id → 새 스키마, (b) TTL 만료 → DROP 로 **문맥과 독립적으로**
+    사라진다. 그래서 assistant 는 "테이블 a·b 를 만들었다"는 자기 기록을 믿고 없는 테이블을
+    참조하다 실패한다. 이월(clone_workspace)이 (a) 를 줄이지만 (b) 와 이월 상한/실패는 남으므로,
+    **매 턴 실제 상태를 권위 있는 사실로 주입**하는 것이 근본 해소다 (문맥 기록보다 우선한다고
+    명시). 조회 실패 시 빈 문자열 — 상태를 모를 때 단정하지 않는다(fail-soft).
+    """
+    try:
+        from modules import scratch as _scratch_mod
+        info = _scratch_mod.list_workspace(conversation_id)
+    except Exception:
+        return ""
+    if not isinstance(info, dict) or not info.get("ok"):
+        return ""
+    tables = info.get("tables") or []
+    header = (
+        "\n### CURRENT WORKSPACE STATE (authoritative — trust this over the conversation history)\n"
+    )
+    if not tables:
+        return header + (
+            "The workspace is **EMPTY** right now. Any workspace table mentioned earlier in this "
+            "conversation no longer exists — it was cleared on schedule, or was not carried over "
+            "when this conversation was branched from another one. Re-import what you need with "
+            "`scratch_import` before querying; never reference a table from earlier turns without "
+            "it appearing in this list.\n"
+        )
+    parts: list[str] = []
+    for t in tables:
+        name = str(t.get("table") or "").strip()
+        if not name:
+            continue
+        # reltuples 는 ANALYZE 전(방금 이월된 테이블 등)에 음수/0 이 나온다 — 그때는 행수를 말하지
+        # 않는다(추정치를 사실처럼 제시하면 assistant 가 그 수를 답변에 인용한다).
+        try:
+            approx = int(t.get("approx_rows") or 0)
+        except Exception:
+            approx = 0
+        parts.append(f"`{name}`" + (f" (~{approx:,} rows)" if approx > 0 else ""))
+    if not parts:
+        return ""
+    return header + (
+        "Tables that actually exist right now: " + ", ".join(parts) + ". "
+        "Anything else mentioned earlier is gone — re-import it before use.\n"
+    )
+
+
 # gc-assistant-dialect-context (RC-2): 그룹대화일 때만 덧붙이는 **다자-특화** 맥락 지침(발신자 라벨·
 # 사람-사람 대화 해석). 능동 해석·추정·스키마 발견·데이터소스 일관성 등 modality 무관 지침은
 # _ACTIVE_INTERPRETATION_GUIDANCE(위, 모든 대화 주입)로 분리됨. 1:1(None)은 본 블록 무회귀.
@@ -6665,6 +6714,10 @@ def _run_agent_core(
         from modules import scratch as _scratch_mod
         if _scratch_mod.enabled():
             system_content += _SCRATCH_WORKSPACE_GUIDANCE
+            # scratch-fork-carryover: 지침 바로 뒤에 **실제** 작업공간 상태를 붙인다. 분기 이월
+            # 상한/실패와 TTL 만료로 문맥의 테이블 기록과 실물이 어긋날 수 있어, 무엇이 실재하는지를
+            # 매 턴 사실로 못박는다(없는 테이블 참조 → 실패 → 재작업 루프 차단).
+            system_content += _scratch_workspace_state_note(cid)
     except Exception:
         pass
     messages: list[dict[str, Any]] = [

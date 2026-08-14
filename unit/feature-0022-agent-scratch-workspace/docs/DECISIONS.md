@@ -52,3 +52,42 @@ source_of_truth: true
   쓰기 경로가 병합·배포만으로 활성화되지 않도록 하는 안전 기본값(feature-0010 scaffold 패턴).
 - **대안**: 대화 종료 감지 시 즉시 삭제(감지 로직 추가 필요·idle 정의 모호) — 시간 TTL 우선, 필요 시
   후속으로 종료-트리거 추가.
+
+## ADR-SCRATCH-0005 — 대화 분기(fork) 시 작업공간 이월 + 실제 상태 프롬프트 주입 (2026-08-14)
+- **문제**: 대화 분기 3 경로(사본 만들기 `POST /api/conversations/{cid}/duplicate` · 앵커 분기
+  `POST /api/fork_conversation` · 공유 링크 복제 `share.fork`)는 모두 `_fork_conversation_impl`
+  을 타며 표시 메시지·**LLM 문맥(core_messages)**·첨부(blob 독립 복사 + sandbox 재적재)까지
+  이월했으나 **scratch 작업공간만 이월 대상이 아니었다**. 스키마 키가 `s_<sha1(conversation_id)>`
+  라 새 대화 id 를 받는 순간 작업공간이 빈다. 그런데 문맥은 복사되므로 assistant 는 "테이블
+  a·b 를 반입해 JOIN 했다"는 **자기 기록을 그대로 읽고 없는 테이블을 참조**하다 실패 →
+  재작업·답변 품질 저하(사용자 보고, 2026-08-14).
+- **결정 (1) 이월 = 독립 복사**: `scratch.clone_workspace(src_cid, dst_cid)` 가 원본 스키마의
+  테이블을 분기본 스키마로 `CREATE TABLE ... AS SELECT ... LIMIT n` 복사한다. 조상 스키마를
+  **공유하지 않는다** — 첨부 fork 가 이미 채택한 "조상 sandbox 공유 금지" 원칙과 동형이며,
+  공유 시 원본의 이후 변경·TTL DROP 이 분기본을 깨뜨린다. 인덱스·제약은 옮기지 않는다(작업공간
+  테이블은 분석용 중간 산출물이고, 제약 재현 실패가 이월 전체를 깨는 편이 더 나쁘다).
+- **결정 (2) 전 분기 경로 이월 (사용자 결정)**: 교차계정(공유 링크 fork)·부분 구간 분기도
+  이월한다. AI 초안은 "동일계정 + 전체 분기" 로 제한(교차계정은 원본 소유자 datasource 권한으로
+  반입된 데이터라 권한 상승 소지)하는 fail-closed 안이었으나, 사용자가 **"공유 링크 기능 자체가
+  사실상 권한의 수동적 상승과 유사하며 이는 링크를 생성한 대화 소유자의 책임"** 으로 판단해
+  전 경로 이월로 결정했다. 추적성 보완: 교차계정 fork 의 이월 **건수**를 `share.fork` 감사
+  기록(`scratch_tables_copied`)에 남긴다(기존 `attachments_copied`·`core_messages_copied` 와
+  동일한 forensics 원칙 — 건수만, 내용 비노출). 운영자 전역 차단 스위치
+  `AGENT_SCRATCH_FORK_CARRYOVER=0` 을 남겨 정책 변경 여지를 보존한다.
+- **결정 (3) 실제 상태 주입이 근본 해소**: 이월만으로는 부족하다 — 이월 상한 초과분, 이월 실패,
+  그리고 **TTL 만료**(24h 뒤 같은 대화 재개 시 작업공간만 사라짐)에서 같은 "문맥엔 있는데 실물은
+  없는" 어긋남이 재현되기 때문이다. 그래서 scratch 활성 대화의 매 턴 시스템 프롬프트에
+  `_scratch_workspace_state_note(cid)` 로 **실재하는 테이블 목록**을 "문맥 기록보다 우선하는
+  사실" 로 주입한다. 비었으면 "EMPTY + 재반입하라" 를 명시한다. 조회 실패 시에는 아무 말도 하지
+  않는다(빈 문자열) — 조회 실패를 "비어 있음" 으로 오도하면 assistant 가 멀쩡한 테이블을 버리고
+  다시 반입한다.
+- **캡·fail-soft**: 이월은 테이블 수(`MAX_TABLES_PER_CONV`)·총 행수(`MAX_CLONE_ROWS`, 기본 20만)·
+  문당 timeout·전체 wall-clock 예산(`FORK_BUDGET_MS`, 기본 10s)으로 제한하고, 초과·실패는
+  `truncated`/`skipped_detail` 로 드러낸다(조용한 절단 금지). 이월 실패는 **예외를 올리지 않는다**
+  — 작업공간은 보조물이라 이월 실패가 분기 자체(대화·문맥·첨부)를 막아선 안 된다(첨부 복사의
+  fail-open 정책과 동일).
+- **대안**: (a) 조상 스키마 read 공유 — 격리가 `scratch_guard` allowlist 에 의존하는 현 구조에서
+  cross-schema 참조를 열어야 해 ADR-SCRATCH-0001 격리 경계를 훼손. 불채택. (b) 이월 없이 신호만 —
+  "맥락 보존" 요구를 절반만 충족(직전 작업 결과가 사라짐). 불채택. (c) lazy clone-on-first-use —
+  비용은 낮으나 분기 시점의 권한 컨텍스트를 agent 측에 넘길 마커 인프라(스키마 변경)가 필요해
+  복잡도 대비 이득이 적다. 불채택.
