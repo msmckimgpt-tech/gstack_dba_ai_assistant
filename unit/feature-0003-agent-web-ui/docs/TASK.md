@@ -11014,9 +11014,14 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       dead-code 경로·방어 코드 수용으로 기록만.
 - [x] `tests/verify_step_result_scroll_preserve.mjs` **29 PASS**(같은 렌더러 수정 — 스크롤
       보존 무회귀) · app.js ESM 구문 PASS(node --check).
-- [ ] 배포 후 PB-0008 Windows-browser: 우측 정렬 위치·좁은 패널 줄바꿈(충돌 없음)·라이브
+- [x] 배포 후 PB-0008 Windows-browser: 우측 정렬 위치·좁은 패널 줄바꿈(충돌 없음)·라이브
       run 진행 중 표기 갱신 실측 (visual_verification_scope: always — JS 는 asset-stamp
       미주입 docker cp QA 불가 → POST-DEPLOY 실측, 확립 패턴).
+      → **라이브 `ee4eb08d` 에서 4축 전건 PASS** (TEST.md POST-DEPLOY Run):
+      ① 우측 정렬 13/13 편차 0.00px · ② 최소 폭 300px 클램프에서 겹침·가로스크롤 0 ·
+      ②-b 폭 부족 시 겹침 대신 줄바꿈(top 2→25px) · ③ 라이브 run 폴링 재렌더가 재오픈 없이
+      3→4단계로 갱신(`19:26:39 · +7.4초 · 누적 8.1초`) · ④ 과거 대화 13단계 소급 표기.
+      시나리오 2종(`src/scenario.step-panel-timing{,-live}.json`) + 판독 가능한 확대 캡처 4종.
 
 ### 9. Requested Scope
 

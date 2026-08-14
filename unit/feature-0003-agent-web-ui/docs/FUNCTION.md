@@ -4234,3 +4234,12 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
   우측 정렬(margin-left:auto) + 헤더 flex-wrap 으로 최소 폭(300px)에서 겹침 대신 줄바꿈.
   폴링 재렌더 흔들림 방지 tabular-nums. 라이브 run·완료 조회·히스토리 3경로 동일 렌더러라
   동일 표기.
+- AC-20260814T183000-step-panel-timing-5 (POST-DEPLOY 검증 계약, 2026-08-14 추가): 위 AC 4건은
+  라이브 배포본에서 **재실행 가능한 게이트**로 확인한다 — `src/scenario.step-panel-timing.json`
+  (과거 대화 소급 표기 · 헤더 우측 정렬 편차 0 · 리사이저 실제 드래그로 도달한 최소 폭 300px 에서
+  겹침/가로스크롤 0 · 폭 부족 시 겹침 대신 줄바꿈) 과 `src/scenario.step-panel-timing-live.json`
+  (라이브 run 진행 중 패널 재오픈 없이 폴링 재렌더로 새 단계 표기 갱신 · 누적 단조). 두 시나리오는
+  표기 정규식 · 기하(우변 편차/넘침/겹침) · computed CSS 계약을 step 안에서 assert 하므로 사람 눈
+  판정에 의존하지 않는다. 라이브 축은 **참여자가 본인뿐인 새 대화**에서만 질의하여 공유방·타
+  세션을 건드리지 않는다(공유방에 보내면 AI ask 가 아니라 그룹 채팅 메시지로 나가 단계가 생기지
+  않는다). 근거 캡처는 `docs/test-runs.d/evidence/steptiming-*.png`, 실측 기록은 `TEST.md`.
