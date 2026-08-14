@@ -2575,7 +2575,11 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
          막는 쪽은 그 동안 1:1 사용자까지 차단하므로 창 길이(web 선롤링)와 교환해 현행 유지.
 - [x] `tests/test_vision_provenance.py` **11** + `test_attach_provenance_gate.py` **12** = 23 PASS ·
       전체 스위트 회귀 0(잔여는 선재 환경 의존 파일 1개).
-- [ ] verify-completion · 배포 후 실측.
+- [x] verify-completion **18/18 PASS**.
+- [x] **배포 후 실측(2026-08-14, READ-ONLY)** — PR #1293 merge(main `4491ad80`) → web-a/web-b/
+      ask-worker 전부 `4491ad80` · 무중단 `no upstreams available` **0**. 배포본 ask-worker 에서
+      인라인 로더 직접 호출: **타 멤버 이미지 → 신호 True**(종전엔 서지 않던 축) ·
+      **본인 이미지 → 신호 False**(과차단 없음).
 
 ### 9. Requested Scope
 

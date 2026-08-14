@@ -1686,3 +1686,16 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   초기화하므로 대화 간 기능적 누출 없음 · MySQL dict 와 PG alias 가 **같은 `AccountId` 키** 반환.
 - 검증: `test_vision_provenance.py` **11** + `test_attach_provenance_gate.py` **12** = 23 PASS ·
   전체 스위트 회귀 0(잔여는 선재 환경 의존 파일 1개).
+
+## REV-20260814T113000-vision-provenance-postdeploy [SKIPPED:doc-only] — POST-DEPLOY + 관측 항목
+
+- Related Change: `CHG-20260814T113000-ai-claude-feature-0002-vision-provenance-postdeploy`
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(TASK/REPORT/MODIFY/원장 문서만) → 패널 skip.
+  선행 cycle 의 코드 변경은 `REV-20260814T100000-vision-provenance`
+  ([CODEX:adversarial-coverage], P1 2·P2 2 처리)에서 집행됐다.
+- 검증: 기록된 수치는 전부 실행 결과다 — 4서비스 `GIT_COMMIT` · caddy 0 · 배포본 로더 직접 호출 ·
+  라이브 SQL 집계(활성 head 808 / 중복 head 체인 0).
+- **판단 기록**: "발생 0인 결함을 구조 변경으로 고치지 않고 관측으로 전환" 은 스코프 축소가 아니라
+  **근거 기반 우선순위 조정**이다. 승격 조건(지표 ≠ 0)을 원장에 함께 박아, 다음 audit 이 자동으로
+  재측정하게 했다.
+- Human Approval Needed: 아니오 (doc-only, 사용자 지시 "우선순위에 따라 진행" 범위 내).

@@ -1946,3 +1946,15 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   부분 통제이며, 히스토리 축은 프롬프트 계약(발신자 라벨·datamark)이 담당한다.
 - **owner 키 부재 과도기**(P2): 구 web 이 만든 payload 를 신 worker 가 읽는 짧은 창에서 fail-open.
   막는 쪽으로 두면 그 동안 1:1 사용자까지 막힌다 — 창의 길이(web 선롤링)와 교환해 현행 유지.
+
+## CHG-20260814T113000-ai-claude-feature-0002-vision-provenance-postdeploy — POST-DEPLOY + 관측 항목 등재 (doc-only)
+
+- 사유: 선행 cycle `20260814T1000-vision-provenance` 배포(main `4491ad80`) 후 실측 종결 +
+  우선순위 재평가 결과 기록. **코드 변경 0**.
+- 실측: 4서비스 전부 `4491ad80` · 무중단 0 · 배포본에서 타 멤버 이미지 → 신호 True /
+  본인 이미지 → False.
+- **우선순위 재평가(정직)**: "업로드 INSERT↔supersede 비원자성" 은 **라이브 발생 0건**
+  (활성 head 808 중 같은 root 에 head 2개인 체인 0)이라 고치지 않고 원장에 **관측 항목**
+  (`OBS-attach-chain-multiple-live-heads`)으로 등재했다 — 자가 정정(`WHERE VersionNumber < new`)이
+  작동 중이고, 오인 표시는 root 단위 dedupe 로 이미 막혀 있으며, 트랜잭션 재구성은 업로드 경로
+  전체 회귀를 부른다. 값이 0 이 아니게 되면 승격한다.
