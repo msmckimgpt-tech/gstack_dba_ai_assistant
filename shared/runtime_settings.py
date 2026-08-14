@@ -1393,6 +1393,40 @@ _EXT_TOOL_SPECS: tuple[dict[str, Any], ...] = (
         "maximum": 1000,
         "apply_mode": "live",
     },
+    {
+        # feature-0041 P1: 데이터 추출 축이라 구조 조회와 별개로 끌 수 있어야 한다.
+        # 소비처는 `routers/ai_tools.py` 의 P1 게이트 — 소비처 없는 knob 은 두지 않는다.
+        "key": "AGENT_EXT_TOOL_SQL_ENABLED",
+        "category": "외부 AI 도구",
+        "label": "자유 SELECT(execute_sql) 허용",
+        "description": "외부 AI 가 직접 SELECT 를 실행할 수 있게 할지. 0 이면 구조 조회 도구만 남고 "
+                       "execute_sql 은 403 이 됩니다. 구조 정보만으로는 관계·행수를 데이터로 검증할 수 "
+                       "없어 기본은 허용이며, SQL 은 AST 가드(단일 SELECT/CTE)·제품 스키마 allowlist·"
+                       "무거운 쿼리 게이트를 그대로 통과해야 합니다. 반환 행수는 원장에 실제 값으로 "
+                       "기록되어 시간당 행 상한에 함께 걸립니다.",
+        "unit": "0=끔 / 1=허용",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        # feature-0041: 시간당 상한은 **실행 전 누적 확인**이라 원자적 hard cap 이 아니다
+        # (상한 직전 대형 쿼리 1회, 동시 요청이 같은 잔여를 봄 — codex P1). 건당 상한으로
+        # 그 초과분을 유계로 만든다. 초과 결과는 **반환하지 않고** 원장에는 기록한다.
+        "key": "AGENT_EXT_TOOL_SQL_MAX_ROWS",
+        "category": "외부 AI 도구",
+        "label": "쿼리 1건 반환 행수 상한",
+        "description": "execute_sql 한 번이 반환할 수 있는 최대 행수. 초과하면 결과를 돌려주지 않고 "
+                       "범위를 좁히라고 응답합니다(부하는 이미 발생했으므로 원장에는 기록됩니다). "
+                       "시간당 상한은 실행 전 누적 확인이라 한 번의 대형 쿼리를 막지 못하는데, "
+                       "이 값이 그 초과분을 유계로 만듭니다. 0 이하면 무제한.",
+        "unit": "행",
+        "default": 10000,
+        "minimum": 0,
+        "maximum": 10000000,
+        "apply_mode": "live",
+    },
 )
 
 

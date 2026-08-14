@@ -90,10 +90,10 @@ def test_all_tools_registered_through_name_helper():
     source = _source()
     tools = ["open_task", "get_task_context", "submit_answer", "list_schemas",
              "describe_schema", "describe_table", "search_tables",
-             "get_foreign_keys", "get_table_indexes"]
+             "get_foreign_keys", "get_table_indexes", "execute_sql"]
     for t in tools:
         assert f'_register("{t}"' in source, f"{t} 가 _register 를 안 거친다"
-    assert source.count("_register(") == len(tools) + 1   # 정의 1 + 호출 9
+    assert source.count("_register(") == len(tools) + 1   # 정의 1 + 호출 N
 
 
 def test_instructions_carry_session_boundary():
@@ -131,5 +131,5 @@ def test_http_errors_preserve_status_code():
 
 def test_every_tool_posts_and_carries_bearer():
     source = _source()
-    assert source.count("_post(") == 1 + 9        # 정의 1 + 호출 9
+    assert source.count("_post(") == 1 + 10       # 정의 1 + 호출 10 (P0 9 + P1 execute_sql)
     assert 'Authorization": f"Bearer {_TOKEN}"' in source
