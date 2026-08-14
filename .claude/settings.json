@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(~/.claude/projects/**)",
+      "Glob(~/.claude/projects/**)",
+      "Grep(~/.claude/projects/**)"
+    ]
+  }
+}

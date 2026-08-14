@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.46.0
+template_version: v3.47.0
 domain: [product, scope]
 ai_read_priority: 2
 ---
@@ -110,3 +110,13 @@ GitHub Actions 기반 자동화 (`ai-*` 워크플로, `policy-contract`, `selfho
 - 내부 병렬 브랜치: `ai/<agent-id>/<issue-number>/<slice>` (로컬/worktree 전용)
 - 커밋 형식: `type(scope): summary (#issue-number)`
 - 자세한 내용은 `../CONTRIBUTING.md`를 따른다.
+
+## 세션 정지 감지 임계 (§13.2.11)
+
+<!-- AGENTS.md §13.2.11 의 stalled 판정 임계를 기록한다. 기록 칸이 없으면 조정은 일어나지 않는다. -->
+
+- 임계: <TBD: 기본 20분 — 「이 프로젝트의 최장 단일 도구 호출 × 2」로 산출>
+- 산출 근거 (§16.7 G4 경계 양측):
+  - 직하 (정상 장기 도구 호출 최대 지속): <TBD>
+  - 직상 (문제로 판정해야 할 무신호): <TBD: 실증 84분 / 11분 27초>
+- 관측자 배치: <TBD: 인프라 레벨 단일 관측자 / 프로젝트 전용 — 등록 경로 목록 위치>
