@@ -1631,3 +1631,30 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   초판 테스트 중 2건이 약해 강화했다 — ① 임시파일 정리 검사가 예외 핸들러의 호출로 대신
   통과해 "정상 fall-through 누수" 뮤턴트가 살아남았고(범위를 `except` 앞까지로 좁힘)
   ② finalize 순서 검사가 문자열 위치만 봐 재큐 블록 이동을 놓칠 수 있었다.
+
+## REV-20260814T080000-attach-provenance-gate [CODEX:adversarial-bypass] — 도구 provenance 게이트
+
+- Related Change: `CHG-20260814T080000-ai-claude-feature-0002-attach-provenance-gate`
+  (REQ-20260814-attach-provenance-gate, 위험등급 **Critical §12.3** — 도구 실행 경계).
+- Trigger (§18.8 dispatch): `auth/credential/세션`(권한 경계) + 도구 실행 경로 → **security + backend**.
+  세션 지시로 Agent 도구 미사용 → §18.9 대체 채널 **codex CLI**.
+- 집행: staged diff 를 codex 가 직접 읽고 5축(우회 경로·contextvar 전파·과차단·거부문 무기화·
+  게이트 순서) 적대 검증. **[P1] 2 · [P2] 1** → 전건 반영.
+- **가장 중요한 적발 — 게이트를 무력화하는 우회를 재현까지 했다**:
+  `read_attachment` 는 프롬프트 조립 **이후**에 본문을 끌어온다. 인라인 경로에서만 신호를 세운
+  초판은, 타 멤버 파일을 인라인 상한 밖에 두고 이 도구로 읽는 것만으로 통째로 우회됐다
+  (`body_rendered=True` · `flag_after_read=False` · `scratch_sql` 실행 성공). 게이트를 만들 때
+  **"신호를 세우는 곳" 과 "본문이 도달하는 곳" 이 다를 수 있다**는 것을 놓쳤다.
+- **두 번째 적발**: AI 생성본을 provenance 판정에서 통째로 제외해, 다른 계정의 요청으로 만들어진
+  AI 파일이 우회 경로가 됐다. 표시 라벨(사람 파일만)과 소유 사실(AI 포함)을 분리해 해소.
+- **세 번째 — 설계 자체에 대한 지적**: 공유 대화는 최근 첨부를 매 턴 인라인하므로 초판 대상
+  (`update_attachment` 포함)은 **사용자가 빠져나갈 수 없는 상시 차단**이 됐고, 거부 안내가
+  성립하지 않는 해결책을 제시했다. 대상을 scratch 3종으로 좁히고 안내를 사실대로 고쳤다.
+- 무결 확인(codex): contextvar 가 inprocess·worker·red-team 재도출 경로에서 동일 컨텍스트로 전파 ·
+  게이트가 `_DATASOURCE_FREE_TOOLS`·라우터보다 먼저 실행 · 외부 AI router 는 쓰기 도구 미노출 ·
+  거부 문자열 자체의 정보 누출 없음.
+- 검증: `tests/test_attach_provenance_gate.py` **12 PASS**(대상 동결 · `execute_sql`/`update_attachment`
+  제외가 의도임을 고정 · 목록만으로는 미발동 · 본문이면 발동 · run 경계 리셋 · 신호 실패 시 차단 ·
+  helper fail-closed · 거부문 5요소 · dispatch 선행).
+- 한계(정직): **vision(이미지) 경로 미적용** — 이미지는 소유자 판정 없이 프롬프트에 붙어 이 게이트가
+  막지 못한다(REPORT §잔여 이월). 게이트는 턴 단위이며 도구 인자의 출처를 추적하지 않는다.
