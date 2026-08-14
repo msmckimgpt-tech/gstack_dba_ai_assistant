@@ -49,8 +49,8 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 - **인젝션 처리**: 나가는 데이터 datamark 각인(3층) + 들어오는 텍스트 3단 판정
   (allow / neutralize+flag / reject) + **저장 시점** datamark
 - **부하 원장**: `tool_call_usage` 신설 + 토큰·계정·client 단위 rate/동시성/누적 행수 게이트
-- **대화 기록**: 원 질문(`open_task`)·조회 원장·최종 답변(`submit_answer`)을 서비스 측에 적재
-  — ⚠ 답변 축 **미구현**(AC-7 주석)
+- **대화 기록**: 원 질문(`open_task`)·조회 원장·최종 답변(`submit_answer`)을 `WebAiTasks` 에
+  보존 + 사람 운영자용 열람 경로(REST·콘솔). 답변은 저장 시점 각인·fail-closed
 - **전송 2종**: REST 정본 + stdio MCP 어댑터(i) + HTTP/SSE MCP(ii)
 - **발견 자료**: 익명 static contract에 등록·인가 흐름 가이드 추가(인스턴스 데이터 0 유지)
 
@@ -76,8 +76,14 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 
 - 도구 결과: datamark 각인된 데이터 블록(`account`·`conversation`·`task`·`source` 라벨 포함)
 - `tool_call_usage` 원장 행 (계정·client·task·도구·대상·행수·바이트·추정 스캔행·지연·판정)
-- ⚠ `messages` 적재 (원 질문 / 최종 답변, `meta_json.source='external_ai'`) — **미구현**(AC-7 주석
-  참조). 실제 적재는 `WebAiTasks.Question` 뿐이며 답변 본문은 어디에도 저장되지 않는다
+- `WebAiTasks` 행 — 원 질문 · **각인된 최종 답변**(`Answer`) · 원문 바이트(`AnswerBytes`) ·
+  답변 인젝션 판정(`AnswerVerdict`) · 절단 플래그(`AnswerTruncated`) · 선언 근거
+  (`SourceTasks`) · 개설 시점 `DatasourceKey`
+- 열람 REST — `GET /api/ai/tasks`(목록, 답변 본문 미포함) · `GET /api/ai/tasks/{task_id}`(상세).
+  **웹 로그인 세션 전용** — 외부 access token 으로는 도달하지 않는다(자기 기록 열람을 주면
+  그 엔드포인트가 task 열거면이 되고, `client_id` 를 공유하는 무관한 사용자에게 타 계정 task 의
+  존재가 드러날 여지가 생긴다 — L4 codex P1 과 같은 구조). 기본 스코프는 자기 계정이며
+  `admin.console.access` 보유 시 전체
 - 교차오염·인젝션·미제출 이벤트 플래그
 - MCP 서버 `instructions` (세션 규범 전문, 연결당 1회)
 
@@ -90,8 +96,9 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 4. `open_task(question)` → `task_id` 발급 + 원 질문 적재
 5. `get_task_context(task_id)` → grounding 번들 조립(조회만, LLM 0) → datamark 각인 후 반환
 6. 구조 조회 도구 호출 → 스코프 교차검증 → 각인 → 원장 기록
-7. `submit_answer(task_id, answer, source_tasks)` → 선언 vs 원장 대조 → ⚠ ~~대화 적재~~(미구현,
-   AC-7) → 상태 갱신 + 원장 기록 → 판정 반환
+7. `submit_answer(task_id, answer, source_tasks)` → 선언 vs 원장 대조 → 인젝션 판정 → **저장
+   시점 각인** → `WebAiTasks` 보존(실패 시 503, 제출 미확정) → 원장 기록 → 판정 반환
+8. 사람 운영자가 `GET /api/ai/tasks` · 관리 콘솔 뷰로 질문·답변·도구 이력을 열람
 
 ## 8. Edge Cases
 
@@ -157,14 +164,18 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 - AC-20260812T075301-external-ai-tool-surface-6: 모든 도구 호출이 `tool_call_usage`에 기록되고,
   토큰·계정·client 단위 rate/동시성/누적 행수 상한 초과 시 429가 된다.
 - AC-20260812T075301-external-ai-tool-surface-7: `open_task` 의 원 질문과 `submit_answer` 의
-  최종 답변이 서비스 측 대화에 적재되며, **저장 시점에** datamark가 입혀진다(지연 인젝션 차단).
-  > ⚠ **미구현 (2026-08-14 실측 확인)**. 현재 적재되는 것은 `WebAiTasks.Question`(원 질문,
-  > 4000자 절단) 뿐이고 **`messages` 적재·최종 답변 저장·저장 시점 datamark 는 없다**.
-  > `submit_answer` 는 `Status='submitted'` + `SubmittedAt` 만 갱신하며, 답변 본문은 원장에
-  > `bytes_out`(바이트 수)으로만 남는다. `ai_tools.py` 의 `INSERT INTO` 는 `WebAiTasks` 1건이
-  > 전부이고 `external_ai` 문자열은 코드베이스 전역 0건이다. 라이브 `agent_memory.WebAiTasks`
-  > 에 Answer 계열 컬럼이 없음도 확인했다. **AC-7 은 열린 결함으로 되돌린다** — 사용자 요구
-  > (2026-08-12 "외부 AI 세션의 대화 기록 또한 우리 쪽에 남겨야 합니다")의 답변 축 미충족.
+  최종 답변이 **`WebAiTasks` 행에 보존**되며, 답변은 **저장 시점에** datamark 가 입혀진다
+  (지연 인젝션 차단). 저장에 실패하면 제출이 **거절**된다(fail-closed — `recorded: true` 를
+  반환하지 않는다). 답변은 조용히 잘리지 않는다(초과 시 `AnswerTruncated` 로 표시).
+  각 task 는 개설 시점의 `DatasourceKey` 를 함께 남겨, 이후 제품 바인딩이 교체돼도 그 답변이
+  어느 DB 를 본 것인지 기록 자체로 자명하다.
+  > **설계 변경 이력 (2026-08-14)**: 원안은 `agent_runtime.messages` 적재였으나, 그 테이블은
+  > `core_conversations` 에 FK 로 묶여 있어 task 마다 대화 행을 만들어야 하고 그 테이블을 읽는
+  > 47개 경로의 취급을 전부 재정의해야 한다. 보존 요구를 위해 Critical 표면을 넓히는 교환이라
+  > `WebAiTasks` 전용 컬럼으로 확정했다(ANCHOR §2.1 Alt-F · 사용자 결정). 열람은 §6 의 전용
+  > REST + 관리 콘솔 뷰가 담당한다.
+  > 이 AC 는 2026-08-14 에 **미구현임이 실측으로 드러나** 열린 결함으로 되돌렸다가
+  > (CHG-20260814-0024) 같은 날 구현했다 — 그전까지 `[x]` 였다.
 - AC-20260812T075301-external-ai-tool-surface-8: 고신뢰 인젝션 패턴은 400으로 거절되고,
   저·중신뢰 패턴은 통과하되 flag가 남는다(오탐으로 정상 질의가 막히지 않는다).
 - AC-20260812T075301-external-ai-tool-surface-9: feature-0023 `ask` 경로의 기존 동작·scope·

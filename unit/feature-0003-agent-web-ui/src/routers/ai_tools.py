@@ -68,6 +68,11 @@ EXPOSED_TOOLS = P0_TOOLS | P1_TOOLS
 _SQL_ENABLED_KEY = "AGENT_EXT_TOOL_SQL_ENABLED"
 _SQL_MAX_ROWS_KEY = "AGENT_EXT_TOOL_SQL_MAX_ROWS"
 
+# AC-7 — 보존하는 답변 본문의 문자 상한. `MEDIUMTEXT`(16MB)에 한참 못 미치는 값으로 잡는다:
+# 상한의 목적은 저장 용량이 아니라 **한 task 가 원장을 지배하지 못하게** 하는 것이다.
+# 실측 답변은 6~8KB 라 여유가 크다. 초과분은 조용히 잘리지 않고 `AnswerTruncated` 로 남는다.
+_ANSWER_MAX_CHARS = 262_144
+
 
 def _sql_max_rows() -> int:
     """건당 반환 행수 상한. 0 이하 = 무제한.
@@ -235,14 +240,27 @@ async def open_task(request: Request, ctx=Depends(require_ai_token),
         _safe_record(account, ctx, tool="open_task", outcome="denied", detail=exc.code)
         return _json_err(403, exc.message)
 
+    # ADR-003 — 이 task 가 어느 datasource 를 보는지 **여는 시점에** 새긴다. 제품의 바인딩은
+    # 교체될 수 있고 실제로 2026-08-14 에 교체됐다(메모리 DB MySQL → MSSQL). 그때 이전 답변이
+    # 어느 DB 를 본 것인지 알 방법이 기록 밖 문맥밖에 없어 혼동이 생겼다. 해석 실패는 NULL 로
+    # 두고 task 개설 자체를 막지 않는다 — 이 값은 감사 보조지 접근 통제가 아니다(통제는 authz).
+    datasource_key = None
+    try:
+        import agent_core as _core
+        _labels = _authz.allowed_datasource_labels(_core, conn, int(product.get("id") or 0))
+        if _labels:
+            datasource_key = ",".join(_labels)[:128]
+    except Exception:
+        datasource_key = None
+
     task_id = "t_" + secrets.token_urlsafe(12)
     cur = conn.cursor()
     try:
         cur.execute(
             "INSERT INTO WebAiTasks (TaskId, AccountId, ClientId, ProductId, Question, "
-            "Status, InjectionVerdict) VALUES (%s,%s,%s,%s,%s,'open',%s)",
+            "Status, InjectionVerdict, DatasourceKey) VALUES (%s,%s,%s,%s,%s,'open',%s,%s)",
             (task_id, int(account.get("id") or 0), ctx.get("client_id"),
-             int(product.get("id") or 0), question[:4000], verdict["verdict"]))
+             int(product.get("id") or 0), question[:4000], verdict["verdict"], datasource_key))
         conn.commit()
     finally:
         cur.close()
@@ -381,11 +399,64 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         foreign_tasks=[f["task_id"] for f in foreign],
         foreign_accounts=[str(account.get("username") or "")])
 
+    # AC-7 — 답변 본문을 **저장 시점에 각인해서** 보존한다. 2026-08-14 까지 이 자리는 Status 만
+    # 갱신했고 답변은 원장에 바이트 수로만 남았다(요구 미충족을 정본이 `[x]` 로 주장했다).
+    #
+    # 각인 방향 주의: 나가는 도구 결과는 `wrap_tool_output` 이지만 여기는 **들어오는** 외부
+    # 텍스트라 `wrap_external_answer` 다. 저장본은 이후 우리 컨텍스트로 되돌아올 수 있다.
+    answer_verdict = _guard.classify_injection(answer)
+    if answer_verdict["verdict"] == "reject":
+        # codex REV-0026 P2 — 고신뢰 인젝션은 `open_task` 와 **같은 계약**으로 거절한다(AC-8).
+        # 처음엔 판정만 컬럼에 남기고 그대로 저장했는데, 그러면 (a) 400 거절 계약이 답변 축에서만
+        # 조용히 깨지고 (b) 운영자가 읽는 영속 기록에 공격 페이로드가 '정상 답변' 으로 앉는다.
+        #
+        # 단 **판정은 task 행에 남긴다**(codex 2차 P2): 원장에만 남기면 그 원장이 다른 저장소라
+        # 콘솔에서 task 를 볼 때 "거절된 제출 시도가 있었다" 는 사실이 보이지 않는다. 페이로드는
+        # 보존하지 않고 판정만 남기는 것이 AC-7(보존)과 AC-8(거절)을 동시에 만족하는 배치다.
+        _mark_answer_verdict(conn, task_id, "reject")
+        _safe_record(account, ctx, tool="submit_answer", outcome="denied", task_id=task_id,
+                     detail=f"injection:{','.join(answer_verdict['matched'])[:180]}")
+        return _json_err(400, "답변에 지시 전복 시도로 판정된 문구가 있어 거절했습니다. "
+                              "해당 문구를 제거하고 다시 제출하세요.")
+    stored_body = answer_verdict["text"]
+    truncated = 0
+    if len(stored_body) > _ANSWER_MAX_CHARS:
+        # 조용히 자르지 않는다 — 잘렸다는 사실 자체가 기록의 일부다.
+        stored_body = stored_body[:_ANSWER_MAX_CHARS]
+        truncated = 1
+    stored = _guard.wrap_external_answer(
+        stored_body, account=str(account.get("username") or ""), task_id=task_id,
+        datasource_key=task.get("datasource_key"))
+
     cur = conn.cursor()
     try:
-        cur.execute("UPDATE WebAiTasks SET Status = 'submitted', SubmittedAt = NOW() "
-                    "WHERE TaskId = %s", (task_id,))
+        # `SubmittedAt IS NULL` 가드 (codex 2차 P2) — 무조건 UPDATE 면 타임아웃 후 재시도나
+        # 동시 제출이 **이미 보존된 답변·판정·근거선언을 덮어쓴다.** 최종 답변은 감사 기록이므로
+        # 한 번 확정되면 파괴할 수 없어야 한다. 조건을 SQL 에 둬야 TOCTOU 없이 원자적이다
+        # (`_load_task` 로 미리 읽고 분기하면 두 요청이 같은 'open' 을 보고 둘 다 통과한다).
+        cur.execute(
+            "UPDATE WebAiTasks SET Status = 'submitted', SubmittedAt = NOW(), Answer = %s, "
+            "AnswerBytes = %s, AnswerVerdict = %s, AnswerTruncated = %s, SourceTasks = %s "
+            "WHERE TaskId = %s AND SubmittedAt IS NULL",
+            (stored, len(answer.encode("utf-8")), answer_verdict["verdict"], truncated,
+             ",".join(str(d) for d in declared)[:4000], task_id))
+        affected = cur.rowcount
         conn.commit()
+        if not affected:
+            # 이미 제출된 task. 원 기록을 보존한 채 거절한다.
+            _safe_record(account, ctx, tool="submit_answer", outcome="denied", task_id=task_id,
+                         detail="already_submitted")
+            return _json_err(409, "이미 답변이 제출된 task 입니다. 최종 답변은 한 번만 "
+                                  "확정되며 덮어쓸 수 없습니다.")
+    except Exception as exc:
+        # fail-closed — 원장의 `기록 실패 = 거절` 과 동형. 저장이 안 됐는데 recorded:true 를
+        # 돌려주면 "보존되고 있다" 는 주장과 실제가 갈린다(이 feature 의 반복 결함).
+        # 컬럼 미추가(부트스트랩 ALTER 실패)도 여기로 떨어진다.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return _json_err(503, f"답변을 보존할 수 없어 제출을 중단했습니다: {exc}")
     finally:
         cur.close()
 
@@ -533,7 +604,7 @@ def _load_task(conn, task_id: str, account: dict[str, Any]) -> dict[str, Any] | 
         return None
     cur = conn.cursor()
     try:
-        cur.execute("SELECT TaskId, ConversationId, ProductId, Question, Status "
+        cur.execute("SELECT TaskId, ConversationId, ProductId, Question, Status, DatasourceKey "
                     "FROM WebAiTasks WHERE TaskId = %s AND AccountId = %s LIMIT 1",
                     (task_id, int(account.get("id") or 0)))
         row = cur.fetchone()
@@ -542,7 +613,7 @@ def _load_task(conn, task_id: str, account: dict[str, Any]) -> dict[str, Any] | 
     if not row:
         return None
     return {"task_id": row[0], "conversation_id": row[1], "product_id": row[2],
-            "question": row[3], "status": row[4]}
+            "question": row[3], "status": row[4], "datasource_key": row[5]}
 
 
 def _sibling_tasks(conn, account: dict[str, Any], client_id: str | None,
@@ -639,3 +710,202 @@ def _safe_record(account: dict[str, Any], ctx: dict[str, Any], **kwargs) -> None
                        client_id=ctx.get("client_id"), **kwargs)
     except Exception:
         pass
+
+
+# ── AC-7 열람 (웹 세션 전용) ──────────────────────────────────────────────────
+#
+# ⚠ **외부 access token 으로는 도달하지 않는다.** 이 라우트들은 `require_ai_token` 이 아니라
+# `app._require_account`(웹 로그인 세션)를 쓴다. 외부 AI 에게 "자기 기록 열람" 을 주면 그
+# 엔드포인트가 곧 task 열거면이 되고, 같은 `client_id` 를 공유하는 무관한 사용자들(DCR 은 앱
+# 식별자를 누구에게나 준다 — L4 의 codex P1 과 같은 구조)에게 타 계정 task 의 존재가 드러날
+# 여지가 생긴다. 보존의 수혜자는 **사람 운영자**이지 외부 런타임이 아니다.
+
+_TASKS_PAGE_MAX = 100
+
+# 열람 권한. 콘솔 서브탭의 표시 게이트와 **같은 키**를 쓴다 — 표시와 집행이 갈리면 화면에
+# 없는 것을 REST 로 읽거나 그 반대가 된다.
+#
+# ⚠ codex REV-0026 P2: 처음에는 `admin.console.access` 를 썼는데 **그런 권한 키가 없다**.
+# `_account_has_permission` 은 미정의 키에 항상 False 를 돌려주므로, 관리자도 전역 조회를
+# 받지 못한 채 조용히 자기 것만 보게 된다 — "존재하지 않는 방어" 의 거울상(존재하지 않는
+# 권한으로 게이트한 탓에 기능이 조용히 죽는 형태)이다. 실재 키로 바로잡는다.
+_TASKS_READ_PERM = "console.aiops.read"
+# 전역(타 계정 포함) 조회. 감사 축의 기존 키를 그대로 쓴다.
+_TASKS_READ_ANY_PERM = "audit.read.any"
+
+
+def _require_task_reader(account: dict[str, Any]):
+    """열람 자격. 미보유면 403 — 로그인만으로는 이 원장에 닿지 않는다.
+
+    보존의 수혜자는 **사람 운영자**다. 로그인 계정 전체에 열어 두면 이 엔드포인트가 곧
+    외부 AI 활동 열거면이 된다.
+    """
+    if not app._account_has_permission(account, _TASKS_READ_PERM):
+        return _json_err(403, "외부 AI 작업 원장을 조회할 권한이 없습니다.")
+    return None
+
+
+def _task_scope_clause(account: dict[str, Any]) -> tuple[str, list[Any]]:
+    """조회 범위. 전역 권한이 있을 때만 타 계정 task 까지 본다.
+
+    프론트 게이트가 아니라 **여기가 집행면**이다(프론트 `can()` 은 표시-관대라 판정에 쓰지
+    않는다 — 이 저장소의 기존 회귀 사례).
+    """
+    if app._account_has_permission(account, _TASKS_READ_ANY_PERM):
+        return "", []
+    return " AND AccountId = %s", [int(account.get("id") or 0)]
+
+
+@router.get("/api/ai/tasks")
+def list_ai_tasks(request: Request) -> JSONResponse:
+    """외부 AI task 목록. 답변 **본문은 싣지 않는다**(목록에서 각인 블록을 흘리지 않는다)."""
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        denied = _require_task_reader(account)
+        if denied:
+            return denied
+        try:
+            limit = max(1, min(_TASKS_PAGE_MAX, int(request.query_params.get("limit") or 50)))
+            offset = max(0, int(request.query_params.get("offset") or 0))
+        except (TypeError, ValueError):
+            return _json_err(400, "limit/offset 이 올바르지 않습니다.")
+
+        where, params = _task_scope_clause(account)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT TaskId, AccountId, ClientId, ProductId, Question, Status, "
+                "InjectionVerdict, AnswerVerdict, AnswerBytes, AnswerTruncated, DatasourceKey, "
+                "CreatedAt, SubmittedAt, (Answer IS NOT NULL) AS HasAnswer "
+                f"FROM WebAiTasks WHERE 1=1{where} ORDER BY Id DESC LIMIT %s OFFSET %s",
+                (*params, limit, offset))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    items = [{
+        "task_id": r[0], "account_id": r[1], "client_id": r[2], "product_id": r[3],
+        "question": r[4], "status": r[5], "injection_verdict": r[6],
+        "answer_verdict": r[7], "answer_bytes": r[8], "answer_truncated": bool(r[9]),
+        "datasource_key": r[10],
+        "created_at": str(r[11]) if r[11] else None,
+        "submitted_at": str(r[12]) if r[12] else None,
+        "has_answer": bool(r[13]),
+    } for r in rows]
+    return JSONResponse({"items": items, "limit": limit, "offset": offset})
+
+
+@router.get("/api/ai/tasks/{task_id}")
+def get_ai_task(task_id: str, request: Request) -> JSONResponse:
+    """task 상세 — 보존된 답변 본문 포함.
+
+    본문은 저장 시점에 각인된 형태 그대로 돌려준다. 각인을 벗겨서 주면 이 블록이 다시 어떤
+    LLM 컨텍스트로 들어갔을 때 "외부가 쓴 텍스트" 라는 사실이 사라진다(AC-7 의 목적).
+    """
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        denied = _require_task_reader(account)
+        if denied:
+            return denied
+        where, params = _task_scope_clause(account)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT TaskId, AccountId, ClientId, ProductId, Question, Status, "
+                "InjectionVerdict, Answer, AnswerVerdict, AnswerBytes, AnswerTruncated, "
+                "SourceTasks, DatasourceKey, CreatedAt, SubmittedAt "
+                f"FROM WebAiTasks WHERE TaskId = %s{where} LIMIT 1",
+                (task_id, *params))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    if not row:
+        # 존재 여부를 권한으로 갈라 알려주지 않는다 — 스코프 밖은 '없음' 과 구분 불가해야 한다.
+        return _json_err(404, "task 를 찾을 수 없습니다.")
+    return JSONResponse({
+        "task_id": row[0], "account_id": row[1], "client_id": row[2], "product_id": row[3],
+        "question": row[4], "status": row[5], "injection_verdict": row[6],
+        "answer": row[7], "answer_verdict": row[8], "answer_bytes": row[9],
+        "answer_truncated": bool(row[10]),
+        "source_tasks": [s for s in str(row[11] or "").split(",") if s],
+        "datasource_key": row[12],
+        "created_at": str(row[13]) if row[13] else None,
+        "submitted_at": str(row[14]) if row[14] else None,
+        "tool_calls": _task_tool_calls(str(row[0])),
+    })
+
+
+def _mark_answer_verdict(conn, task_id: str, verdict: str) -> None:
+    """거절된 제출 시도의 **판정만** task 행에 남긴다 (페이로드는 저장하지 않는다).
+
+    원장에만 남기면 저장소가 달라(task=MySQL · 원장=PG) 콘솔에서 task 를 볼 때 "거절된 제출
+    시도가 있었다" 는 사실이 보이지 않는다. 이미 확정된 답변은 건드리지 않는다
+    (`SubmittedAt IS NULL` 가드 — 확정 뒤의 거절 시도가 기존 판정을 덮지 않게).
+
+    여기서 실패해도 거절 자체는 유지한다 — 이 기록은 감사 보조이지 거절의 근거가 아니다.
+    """
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("UPDATE WebAiTasks SET AnswerVerdict = %s "
+                        "WHERE TaskId = %s AND SubmittedAt IS NULL", (verdict, task_id))
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def _task_tool_calls(task_id: str) -> list[dict[str, Any]]:
+    """이 task 가 실제로 돌린 도구 이력(원장).
+
+    질문·답변만 보여 주면 "무엇을 근거로 그 답이 나왔는가" 를 감사할 수 없다 — 답변은 외부
+    런타임의 **주장**이고, 그 주장을 검증할 사실은 어느 도구로 어느 datasource 를 얼마나 읽었나
+    이다. 두 원장이 저장소가 다르므로(task=MySQL · 도구=PG) 여기서 합류시킨다.
+
+    원장 조회 실패는 상세 전체를 죽이지 않는다 — 보존된 질문·답변을 보여 주는 것이 1차 목적이고,
+    이 목록은 보강이다(fail-soft. 저장 경로의 fail-closed 와 목적이 다르다).
+    """
+    try:
+        pg = _pg()
+        if pg is None:
+            return []
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT tool, datasource_key, schema_name, rows_returned, bytes_out, "
+                "       est_scanned_rows, latency_ms, outcome, detail, created_at "
+                "FROM agent_runtime.tool_call_usage WHERE task_id = %s "
+                "ORDER BY created_at ASC LIMIT 500", (task_id,))
+            rows = cur.fetchall() or []
+    except Exception:
+        return []
+    return [{"tool": r[0], "datasource_key": r[1], "schema_name": r[2],
+             "rows_returned": r[3], "bytes_out": r[4], "est_scanned_rows": r[5],
+             "latency_ms": r[6], "outcome": r[7], "detail": r[8],
+             "created_at": str(r[9]) if r[9] else None} for r in rows]

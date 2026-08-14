@@ -436,6 +436,8 @@
           <button type="button" class="admin-subtab is-active" data-ai-subtab="usage" role="tab">LLM 사용량</button>
           <button type="button" class="admin-subtab" data-ai-subtab="ops" role="tab">운영 현황</button>
           <button type="button" class="admin-subtab" data-ai-subtab="reasoning" role="tab">추론</button>
+          <!-- feature-0041 AC-7: 외부 AI 가 우리 도구로 수행한 작업의 질문·답변 원장. -->
+          <button type="button" class="admin-subtab" data-ai-subtab="exttasks" role="tab">외부 AI 작업</button>
         </div>
       <div class="admin-subpane is-active" data-ai-subpane="usage">
         <header class="admin-pane-head">
@@ -570,6 +572,29 @@
           </div>
         </header>
         <div id="reasoningBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </div>
+
+      <!-- feature-0041 AC-7 (2026-08-14): 외부 AI 작업 원장.
+           보존의 수혜자는 **사람 운영자**다 — 외부 AI 에게는 이 화면도 REST 도 열려 있지 않다.
+           답변 본문은 저장 시점에 각인(⟦UNTRUSTED-DATA⟧)된 형태 그대로 보여 준다: 벗겨서
+           보여 주면 화면에서 복사해 붙인 텍스트가 '외부가 쓴 것' 이라는 사실을 잃는다. -->
+      <div class="admin-subpane" data-ai-subpane="exttasks" hidden>
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">External AI</div>
+            <h2>외부 AI 작업</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="extTasksRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <p class="admin-pane-hint">
+          외부 AI 런타임이 자기 계정 LLM 으로 추론하며 우리 도구를 쓴 작업입니다.
+          원 질문과 제출된 답변이 보존되며, 답변은 저장 시점에 <strong>비신뢰 데이터로 각인</strong>됩니다.
+        </p>
+        <div id="extTasksBody">
           <div class="admin-detail-empty">불러오는 중…</div>
         </div>
       </div>
