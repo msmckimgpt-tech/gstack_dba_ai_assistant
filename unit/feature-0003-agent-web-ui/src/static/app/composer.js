@@ -1587,12 +1587,13 @@ function _openAttachDownloadDialog() {
 
 // attach-date-compact: 첨부 시각을 목록·버전 이력에 compact 하게 표기한다.
 //
-// ⚠️ 시간대 — 서버 `created_at` 은 **오프셋 없는 로컬(KST) naive** 문자열이다
-// (`WebConversationAttachments.CreatedAt` 이 MySQL `NOW()` 기반이며 컨테이너 TZ=Asia/Seoul.
-//  실측 2026-08-06: 18:50 업로드 → `2026-08-06T18:50:29`). 오프셋 없는 ISO date-time 을
-// `new Date()` 가 **로컬로** 해석하므로 그대로 넘기면 정합한다 — 여기에 `Z` 를 붙이면
-// 9시간 어긋난다(선행 cycle 의 `restorable_until` 이 정확히 그 반대 케이스였다: 그 필드는
-// UTC 라 `Z` 보정이 필요했다. 필드마다 다르므로 값을 실측하고 쓴다).
+// ⚠️ 시간대 — 서버 `created_at` 은 이제 **UTC(`…Z`)** 다.
+// REQ-20260814-attach-createdat-utc(2026-08-14): 종전에는 `WebConversationAttachments.CreatedAt`
+// 이 MySQL `NOW()`(컨테이너 TZ=Asia/Seoul) 기반이라 **오프셋 없는 로컬 naive** 였고, 그래서
+// 여기서는 그대로 넘기는 것이 정합이었다(`Z` 를 붙이면 9시간 어긋났다). 저장을 UTC 로 옮기면서
+// 서버가 `Z` 를 붙여 보내도록 전송 계약도 함께 옮겼으므로, `new Date()` 가 UTC 로 읽고 로컬로
+// 표시한다 — 이 함수는 그대로 두는 것이 맞다(여기서 별도 보정을 넣으면 이중 변환이 된다).
+// 교훈: 시각 필드는 **저장 축과 전송 표기를 같이** 옮겨야 한다. 필드마다 다르므로 값을 실측하고 쓴다.
 function _attachWhenDate(iso) {
   if (!iso) return null;
   const d = new Date(String(iso));

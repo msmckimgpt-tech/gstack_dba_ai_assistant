@@ -3930,7 +3930,10 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
         "size_bucket": str(row.get("SizeBucket") or ""),
         "sha256": str(row.get("Sha256") or ""),
         "status": str(row.get("UploadStatus") or ""),
-        "created_at": row.get("CreatedAt").isoformat() if hasattr(row.get("CreatedAt"), "isoformat") else None,
+        # REQ-20260814-attach-createdat-utc: CreatedAt 은 이제 **UTC** 다(종전 로컬 KST).
+        # 오프셋 없는 문자열로 내보내면 `new Date()` 가 로컬로 해석해 9시간 이르게 표시된다 —
+        # 저장 축을 바꾼 만큼 **전송 계약도 UTC 임을 명시**해야 소비자가 정확히 변환한다.
+        "created_at": _iso_utc_z(row.get("CreatedAt")),
         "delete_pending": bool(row.get("DeletePending") or 0),
         "delete_reason": str(row.get("DeleteReason") or "") or None,
     }
@@ -6760,6 +6763,23 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
         return dict(row) if row else None
     finally:
         cur.close()
+
+def _iso_utc_z(value) -> str | None:
+    """naive UTC datetime → `…Z` ISO 문자열. 오프셋이 이미 있으면 그대로 ISO 로.
+
+    REQ-20260814-attach-createdat-utc: 첨부 시각의 저장 축을 로컬(KST)에서 UTC 로 옮기면서,
+    전송 계약도 함께 옮긴다. 오프셋 없는 문자열은 브라우저 `new Date()` 가 **로컬**로 읽어
+    9시간 이르게 표시된다 — 저장만 고치고 계약을 그대로 두면 화면이 조용히 틀어진다.
+    """
+    if value is None or not hasattr(value, "isoformat"):
+        return None
+    try:
+        if getattr(value, "tzinfo", None) is not None:
+            return value.isoformat()
+        return value.isoformat() + "Z"
+    except Exception:  # noqa: BLE001
+        return None
+
 
 def _load_filename_lineage_heads(
     conn, conversation_id: str, filename: str, *, limit: int = 20

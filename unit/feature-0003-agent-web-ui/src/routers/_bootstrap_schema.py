@@ -2547,6 +2547,15 @@ def _ensure_attachment_version_schema(conn) -> None:
             "ALTER TABLE WebConversationAttachments ADD COLUMN SupersededAt DATETIME(6) NULL",
             # 버전 체인 (root, version) 유일성. NULL root(원본)는 중복 허용 — 기존 데이터 무충돌.
             "ALTER TABLE WebConversationAttachments ADD UNIQUE KEY UQ_WCA_VersionChain (RootAttachmentId, VersionNumber)",
+            # REQ-20260814-attach-createdat-utc: CreatedAt 을 **UTC** 로 기록한다.
+            #   종전 DEFAULT `CURRENT_TIMESTAMP(6)` 는 서버 세션 TZ(이 배포는 `time_zone=SYSTEM` =
+            #   KST)를 따라 **로컬 시각**을 넣었다. 반면 같은 테이블의 SupersededAt/DeletedAt 은
+            #   코드가 `UTC_TIMESTAMP(6)` 로 넣고, 메시지 저장도 UTC 다 — 한 테이블 안에서 축이
+            #   갈려 "생성이 삭제보다 나중" 인 모순 행이 실제로 쌓였다(라이브 실측 234건).
+            #   INSERT 경로가 CreatedAt 을 명시하지 않으므로 DEFAULT 를 바꾸면 전 경로가 정합해지고
+            #   앞으로 추가될 경로도 자동으로 안전하다. `ALTER COLUMN ... SET DEFAULT` 는 메타데이터
+            #   전용이라 테이블 rebuild 가 없고 반복 실행에도 멱등이다(MySQL 8.0.13+ 표현식 DEFAULT).
+            "ALTER TABLE WebConversationAttachments ALTER COLUMN CreatedAt SET DEFAULT (UTC_TIMESTAMP(6))",
         ):
             try:
                 cur.execute(ddl)

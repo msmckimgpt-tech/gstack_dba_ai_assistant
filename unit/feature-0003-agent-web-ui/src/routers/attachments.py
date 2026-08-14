@@ -245,9 +245,8 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
                     "created_by_role": str(h.get("CreatedByRole") or "user"),
                     "is_assistant_generated": str(h.get("CreatedByRole") or "user") == "assistant",
                     "account_id": int(h.get("AccountId") or 0),
-                    "created_at": (
-                        h["CreatedAt"].isoformat() if hasattr(h.get("CreatedAt"), "isoformat")
-                        else (str(h.get("CreatedAt")) if h.get("CreatedAt") else None)),
+                    # 첨부 시각은 UTC 저장 — 전송도 UTC 임을 명시한다(같은 계약 공유).
+                    "created_at": app._iso_utc_z(h.get("CreatedAt")),
                     "branched_from_attachment_id": int(_meta.get("branch_of_attachment_id") or 0) or None,
                     "is_current_lineage": _h_root == root_id,
                 })
