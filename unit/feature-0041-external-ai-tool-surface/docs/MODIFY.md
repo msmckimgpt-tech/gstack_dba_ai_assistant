@@ -371,3 +371,15 @@ source_of_truth: true
   답변 축이 미충족이고, 지연 인젝션 차단(저장 시점 datamark)의 전제도 비어 있다.
   이미 제출된 2건의 답변 본문은 **소급 복구 불가**.
 - Rollback Notes: 해당 없음(사실 기록). 구현은 별 cycle — 사용자 결정 대기.
+
+## CHG-20260814-0025
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: CHG-0024 가 올린 미결 2건에 대한 **사용자 결정을 정본에 확정**. ADR-002(AC-7 대화
+  적재를 구현한다 — 별도 cycle) · ADR-003(`dbauth` task 정정 메모를 붙이지 않는다). 코드 0.
+- Files:
+  - `unit/feature-0041-.../docs/DECISIONS.md` (ADR-002 · ADR-003 신규)
+  - `unit/feature-0041-.../docs/TASK.md` (§7 미결 2건 → 결정 반영)
+- Impact: 코드 0 · 런타임 무영향. AC-7 은 승인된 후속 cycle 로 이월되며 Critical 등급이라
+  §7.1 계획 승인이 선행한다.
+- Rollback Notes: 해당 없음(결정 기록).
