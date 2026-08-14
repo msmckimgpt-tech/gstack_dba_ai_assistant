@@ -4141,3 +4141,34 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 
 `docs/TEST.md` 에 관리·프로필 라이브 Run + 검증 함정 2건(`getBoundingClientRect` 미반영 ·
 `display:none` 조상에서 transition 미발동) 기록. 코드 변경 0.
+## CHG-20260814T090000 '사용 기록' 표 열 정렬 + 페이지네이션 (REV-20260814T090000-usage-records-sort-page)
+
+- 대상: `src/static/admin/usage.js` `showUsageConvModal`
+  - 열 정의(`cols`) 신설 — 표 머리와 정렬 키 계산이 같은 목록을 보는 SSOT. `type: num|text` 가
+    첫 클릭 방향을 가른다.
+  - 행마다 정렬 키를 1회 선계산(`sortKeysOf`) — **화면 표시값 기준**(주체 = 번역 라벨, 구분 =
+    배지 문구). 동률 tiebreak 는 토큰 내림차순 → 원래 순서(안정 정렬).
+  - 렌더를 `headHtml`/`rowHtml`/`pagerHtml`/`renderTable` 로 분리. 정렬·페이지 변경 시 모달을
+    재생성하지 않고 thead/tbody/페이저만 교체한다(스크롤·포커스 보존, keydown 리스너 재바인딩 없음).
+  - 상호작용은 overlay 한 곳에 위임(`data-usage-sort` · `data-usage-page` · `.usage-rec-page-size`
+    change) — tbody 가 통째로 교체되므로 행별 리스너는 매 렌더 재바인딩이 되어 쓰지 않는다.
+  - **nav 조회를 불변 색인(`rowsByIdx`)으로 전환**: 종전 `navByIdx.push` 는 재렌더마다 누적됐고,
+    정렬은 `merged` 의 **순서를 바꾸므로** `merged[idx]` 로 되짚으면 다른 행의 화면으로 이동한다.
+    (하네스 E4 가 구현 중 이 결함을 실제로 적발 → 수정.)
+  - 절단 안내 문구를 "상위 N건만 표시" → "서버가 상위 N건까지 실어 줍니다" 로 정정 — 이제 표시
+    건수는 페이저가 말하므로, 이 문구는 **서버 절단**만 가리켜야 한다.
+- 대상: `src/static/css/search-audit.css` — 열 머리 정렬 버튼(`.usage-rec-sort`, sticky th 안에서
+  링크처럼 보이되 포커스 링 유지) · 방향 표식 자리 고정(`min-width` — 정렬 전환 시 열 폭 흔들림
+  방지) · 페이저(`.usage-rec-pager*`). 색은 기존 admin 토큰만 사용.
+- 무변경: 백엔드 엔드포인트·응답 스키마·집계 쿼리·RBAC·상한(`_USAGE_*_LIMIT`) · 행 내용/링크
+  규약 · profile(self) 판 독립 모달(`app/profile.js`).
+- 테스트: `tests/verify_usage_records_sort_page.mjs` **신규 46** · `tests/test_usage_records_sort_page.py`
+  **신규 8**.
+
+### CHG-20260814T093000 적대 리뷰 반영 (REV-20260814T093000-usage-records-sort-page [CODEX:adversarial-frontend-state])
+
+- **[P2] 재렌더가 포커스를 삼킴** — 정렬/페이지 조작 시 thead·tbody·페이저를 `innerHTML` 로
+  교체하면서 방금 누른 컨트롤 노드가 사라져 포커스가 `body` 로 빠졌다. 키보드로는 방향 토글도
+  연속 페이지 이동도 불가. → `focusToken()`/`restoreFocus()` 로 같은 컨트롤에 포커스 복원,
+  경계에서 비활성이 되면 페이저의 활성 컨트롤로 대체 이동.
+- 회귀 고정: 하네스 G1~G4 (뮤턴트로 4건 FAIL 확인 — 검출력 있음). 총 50 PASS.

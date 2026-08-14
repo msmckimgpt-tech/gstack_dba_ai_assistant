@@ -10751,3 +10751,29 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 ### 9. Requested Scope
 
 - 선행 두 cycle 의 POST-DEPLOY 이월 종결 — ✓ (양 화면 라이브 실측 PASS)
+## TASK-20260814T090000-usage-records-sort-page — '사용 기록' 표 열 정렬 + 페이지네이션 (Minor §12.3)
+
+요청(사용자, `/_template:entry` arg-given): "[관리 콘솔 > AI 운영 현황 > LLM 사용량 > 사용 기록 표]를
+출력할 때, 집계된 결과셋의 column 에 따라 정렬할 수 있도록 구성해주세요. 페이지네이션 또한
+구성해주세요."
+
+- [x] `src/static/admin/usage.js` — 열 정의 SSOT · 표시값 기준 정렬 키 · thead 정렬 버튼(aria-sort) ·
+      페이지 슬라이스 렌더 · 페이저(구간·이동·페이지당 행 수) · 상호작용 위임.
+- [x] `src/static/css/search-audit.css` — 정렬 버튼/방향 표식/페이저 규칙(기존 토큰만 사용).
+- [x] 기본 화면 무회귀 — 토큰 내림차순 · 1페이지 · 50행.
+- [x] **하네스가 실제 결함을 잡았다**: 정렬이 `merged` 순서를 바꾸는데 nav 를 그 배열 인덱스로
+      되짚어, 정렬 후 시스템 행이 엉뚱한 화면으로 이동했다 → 불변 색인(`rowsByIdx`)으로 수정 +
+      구조 잠금 테스트 추가.
+- [x] `tests/verify_usage_records_sort_page.mjs` **신규 50 PASS** (정본 모듈을 jsdom 위에서 실행).
+- [x] **적대 리뷰 `[CODEX:adversarial-frontend-state]`** — [P1] 0 · [P2] 1 반영: 재렌더가 포커스를
+      삼켜 키보드로 정렬 토글·연속 페이지 이동이 불가하던 결함 → 포커스 복원 + G1~G4 회귀 고정
+      (뮤턴트로 검출력 확인).
+- [x] `tests/test_usage_records_sort_page.py` **신규 8 PASS** (CI 정적 구조 가드).
+- [x] feature-0003 전체 스위트 회귀 실패 0.
+- [ ] verify-completion → commit/push → PR 머지 → 배포 → **PB-0008 Windows-browser 라이브 실측**
+      (`visual_verification_scope: always` — 정렬 클릭·페이지 이동·열 폭 안정성·콘솔 에러 0).
+
+### Requested Scope
+
+- 집계 결과셋의 column 별 정렬 — ✓ (7개 열 전부, 방향 토글, 키보드·aria 포함).
+- 페이지네이션 — ✓ (25/50/100/전체, 처음·이전·다음·마지막, 구간·페이지 표기, 경계 비활성).

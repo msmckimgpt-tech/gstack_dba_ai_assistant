@@ -835,8 +835,217 @@ function showUsageConvModal(state) {
   overlay.className = "admin-modal-overlay";
   const title = esc(state.title || "사용 기록");
   const isAdmin = (state.scope === "admin");
-  // 시스템 행의 클릭 이동에 필요한 nav 서술자 — 인덱스로 참조(HTML 에 JSON 을 심지 않는다).
-  const navByIdx = [];
+  // 시스템 행의 클릭 이동에 필요한 nav 서술자 — merged 인덱스로 참조(HTML 에 JSON 을 심지 않는다).
+  //   usage-records-sort-page: 정렬·페이지 이동마다 tbody 를 다시 그리므로, nav 를 렌더 때마다
+  //   push 하는 배열에 담으면 재렌더마다 누적된다(같은 행이 여러 인덱스를 갖는 상태). 행의
+  //   정체성인 **merged 인덱스**에 고정해, 어떤 정렬·어떤 페이지에서 눌러도 같은 nav 로 간다.
+  let merged = [];
+  // ⚠ `merged` 는 정렬할 때마다 **순서가 바뀐다** — 그래서 nav 조회를 `merged[idx]` 로 하면
+  //   정렬 뒤에 엉뚱한 행의 화면으로 이동한다(하네스 E4 가 잡은 결함). 정렬과 무관한
+  //   불변 색인을 따로 들고, 마크업의 data-usage-nav 는 항상 이쪽을 가리킨다.
+  const rowsByIdx = [];
+  // 정렬·페이지 상태(모달 로컬). 기본 = 토큰 내림차순 — 종전 고정 정렬과 첫 화면이 동일하다.
+  const view = { sortKey: "total_tokens", sortDir: "desc", page: 1, pageSize: 50 };
+  const PAGE_SIZES = [25, 50, 100, 0];   // 0 = 전체(페이지 나누지 않음)
+
+  // ── usage-records-sort-page: 열 정의(SSOT) · 정렬 · 행/머리/페이저 렌더 ─────────────────
+  // 열 정의를 한 곳에 두는 이유: thead 의 정렬 버튼과 정렬 키 계산이 **같은 목록**을 보게 해,
+  // 열을 추가할 때 한쪽만 고쳐 정렬이 죽는 회귀를 구조적으로 막는다.
+  //   type="num"(수치·일시) 은 첫 클릭을 내림차순으로, "text" 는 오름차순으로 시작한다 —
+  //   "큰 것부터 보고 싶은 열"과 "가나다로 찾고 싶은 열"의 기대가 서로 반대이기 때문.
+  const cols = [
+    { key: "kind", label: "구분", type: "text", cls: "usage-rec-kind" },
+    { key: "what", label: isAdmin ? "대화 / 작업 · 대상" : "대화", type: "text" },
+  ].concat(isAdmin ? [{ key: "who", label: "주체", type: "text", cls: "usage-conv-owner" }] : [])
+    .concat([
+      { key: "calls", label: "호출", type: "num", cls: "num" },
+      { key: "total_tokens", label: "토큰", type: "num", cls: "num" },
+      { key: "cost_usd", label: "추정 비용", type: "num", cls: "num" },
+      { key: "last_used", label: "최근 사용", type: "num", cls: "usage-conv-when" },
+    ]);
+  const colByKey = {};
+  cols.forEach((c) => { colByKey[c.key] = c; });
+
+  // 정렬 키는 **화면에 보이는 값** 기준으로 만든다 — 주체 열은 raw actor sentinel 이 아니라
+  // 번역된 라벨("인사이트 워커"), 구분 열은 배지 문구로 정렬해야 표시-정렬 괴리가 없다.
+  const sortKeysOf = (row) => {
+    const it = row.it;
+    const ts = Date.parse(it.last_used_at || it.updated_at || "");
+    const actorRaw = String(it.actor || "");
+    let who;
+    if (row.kind === "conv") {
+      who = String(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)));
+    } else if (it.conversation_id) {
+      who = "대화 (소유자 없음)";
+    } else if (actorRaw && actorRaw.slice(0, 2) !== "__") {
+      who = "삭제된 대화";
+    } else {
+      who = _usageActorLabel(actorRaw);
+    }
+    return {
+      kind: row.kind === "conv" ? "대화" : "시스템",
+      what: row.kind === "conv"
+        ? String(it.topic || "(제목 없음)")
+        : (String(it.task_label || it.task || "(미상 작업)") + " " + String(it.target || "")).trim(),
+      who: who,
+      calls: Number(it.calls) || 0,
+      total_tokens: Number(it.total_tokens) || 0,
+      cost_usd: Number(it.cost_usd) || 0,
+      last_used: isNaN(ts) ? 0 : ts,
+    };
+  };
+
+  // 동률 tiebreak 는 토큰 내림차순 → 원래 순서. 안정적(같은 입력 = 같은 화면)이고, 어떤 축으로
+  // 정렬하든 같은 값 안에서는 기여가 큰 행이 위로 온다.
+  const sortRows = () => {
+    const key = view.sortKey;
+    const dir = view.sortDir === "asc" ? 1 : -1;
+    const isNum = ((colByKey[key] || {}).type === "num");
+    merged.sort((a, b) => {
+      const av = a.sort[key]; const bv = b.sort[key];
+      const c = isNum ? (Number(av) - Number(bv)) : String(av).localeCompare(String(bv), "ko");
+      if (c) return c * dir;
+      return (b.sort.total_tokens - a.sort.total_tokens) || (a.idx - b.idx);
+    });
+  };
+
+  const headHtml = () => "<tr>" + cols.map((c) => {
+    const active = (view.sortKey === c.key);
+    const ind = active ? (view.sortDir === "asc" ? "▲" : "▼") : "";
+    const aria = active ? (view.sortDir === "asc" ? "ascending" : "descending") : "none";
+    return `<th class='${c.cls || ""}' aria-sort='${aria}'>`
+      + `<button type='button' class='usage-rec-sort${active ? " is-active" : ""}' data-usage-sort='${c.key}'`
+      + ` title='${esc(c.label)} 기준 정렬'>${esc(c.label)}<span class='usage-rec-sort-ind' aria-hidden='true'>${ind}</span></button>`
+      + `</th>`;
+  }).join("") + "</tr>";
+
+  const rowHtml = (row) => {
+    const it = row.it;
+    let kindCell;
+    let whatCell;
+    let whoCell;
+    if (row.kind === "conv") {
+      const topic = esc(it.topic || "(제목 없음)");
+      const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
+      kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--conv'>대화</span></td>`;
+      whatCell = `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='${topic}'>${topic}</a>${blocked}</td>`;
+      whoCell = isAdmin
+        ? `<td class='usage-conv-owner'>${esc(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)))}${it.owner_role ? " · " + esc(it.owner_role) : ""}</td>`
+        : "";
+    } else {
+      // 시스템 행: "무슨 작업"(task_label) + "어떤 객체"(target) 를 한 셀에 명시.
+      const nav = it.nav || null;
+      const label = esc(it.task_label || it.task || "(미상 작업)");
+      const tgt = it.target ? `<span class='usage-rec-target'>${esc(it.target)}</span>` : "";
+      const navable = !!(nav && nav.screen);
+      // 이동 안내는 **행에 두 번째 줄로 찍지 않고 hover 툴팁으로만** 전달한다(사용자 결정
+      //   2026-07-28) — 200행 목록에서 매 행 보조문구는 밀도만 떨어뜨리고, 이동 가능 여부는
+      //   링크 스타일로 이미 드러난다. 데이터소스 모호(이동이 화면까지만 됨)도 같은 툴팁에
+      //   합쳐 정직 표기를 유지한다.
+      //   `nav.path_label` 은 raw 텍스트이므로 여기서 **한 번만** esc 한다(이전 이중 escape 로
+      //   툴팁에 `&gt;` 가 그대로 보이던 결함 동반 수정).
+      const where = (nav && nav.path_label) || "관리 화면";
+      const ambigTip = (nav && nav.scope_ambiguous) ? " (데이터소스 여럿 — 화면까지 이동)" : "";
+      const navTitle = esc(where + " 화면으로 이동" + ambigTip);
+      kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--sys'>시스템</span></td>`;
+      whatCell = `<td class='usage-conv-topic usage-rec-what'>`
+        + (navable
+          ? `<button type="button" class="usage-rec-link" data-usage-nav="${row.idx}" title="${navTitle}"><b>${label}</b>${tgt ? " · " + tgt : ""}</button>`
+          : `<span><b>${label}</b>${tgt ? " · " + tgt : ""}</span>`)
+        + `</td>`;
+      // 주체 3분기(전부 raw hex 노출 회피):
+      //   ① 실재하는 대화(소유 계정만 없음) → 대화 링크
+      //   ② 비-sentinel 인데 실재하지 않음  → '삭제된 대화'(원 id 는 title 로만; 깨진 링크 금지)
+      //   ③ 예약 sentinel                  → 사람이 읽는 워커명
+      const actorRaw = String(it.actor || "");
+      let whoHtml;
+      if (it.conversation_id) {
+        whoHtml = `<a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='소유 계정이 없는 대화 — 새 탭에서 열기'>대화 (소유자 없음)</a>`;
+      } else if (actorRaw && actorRaw.slice(0, 2) !== "__") {
+        whoHtml = `<span title='${esc(actorRaw)}'>삭제된 대화</span>`;
+      } else {
+        whoHtml = esc(_usageActorLabel(actorRaw));
+      }
+      whoCell = isAdmin ? `<td class='usage-conv-owner'>${whoHtml}</td>` : "";
+    }
+    return `<tr>` + kindCell + whatCell + whoCell
+      + `<td class='num'>${num(it.calls)}</td>`
+      + `<td class='num'>${num(it.total_tokens)}</td>`
+      + `<td class='num'>${it.cost_usd > 0 ? usd(it.cost_usd) : "—"}</td>`
+      + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
+      + `</tr>`;
+  };
+
+  const pageCount = () => (view.pageSize > 0 ? Math.max(1, Math.ceil(merged.length / view.pageSize)) : 1);
+  const pageSlice = () => (view.pageSize > 0
+    ? merged.slice((view.page - 1) * view.pageSize, view.page * view.pageSize)
+    : merged.slice());
+
+  const pagerHtml = () => {
+    const total = merged.length;
+    const pages = pageCount();
+    const from = total ? (view.pageSize > 0 ? (view.page - 1) * view.pageSize + 1 : 1) : 0;
+    const to = view.pageSize > 0 ? Math.min(total, view.page * view.pageSize) : total;
+    const btn = (act, label, disabled, title) =>
+      `<button type='button' class='usage-rec-page-btn' data-usage-page='${act}'${disabled ? " disabled" : ""}`
+      + ` title='${title}' aria-label='${title}'>${label}</button>`;
+    const sizeOpts = PAGE_SIZES.map((n) =>
+      `<option value='${n}'${n === view.pageSize ? " selected" : ""}>${n > 0 ? n + "행" : "전체"}</option>`).join("");
+    return `<span class='usage-rec-pager-info'>총 ${num(total)}건 중 ${num(from)}–${num(to)}</span>`
+      + `<span class='usage-rec-pager-ctl'>`
+      + btn("first", "«", view.page <= 1, "첫 페이지")
+      + btn("prev", "‹", view.page <= 1, "이전 페이지")
+      + `<span class='usage-rec-pager-pos'>${num(view.page)} / ${num(pages)}</span>`
+      + btn("next", "›", view.page >= pages, "다음 페이지")
+      + btn("last", "»", view.page >= pages, "마지막 페이지")
+      + `<label class='usage-rec-pager-size'>페이지당 <select class='usage-rec-page-size' aria-label='페이지당 행 수'>${sizeOpts}</select></label>`
+      + `</span>`;
+  };
+
+  // 정렬·페이지가 바뀌면 표 머리 / tbody / 페이저만 다시 그린다(모달 전체 재생성 아님) —
+  // 재생성하면 열려 있던 스크롤 위치·포커스가 날아가고 keydown 리스너 재바인딩 위험이 생긴다.
+  // 재렌더는 컨트롤 노드를 **교체**하므로, 방금 누른 버튼에 있던 포커스가 body 로 빠진다 —
+  // 키보드 사용자는 정렬 방향을 토글하거나 페이지를 연속으로 넘길 수 없게 된다(적대 리뷰 [P2]).
+  // 어떤 컨트롤이었는지를 선택자로 기억했다가 같은 컨트롤에 되돌려 준다.
+  const focusToken = () => {
+    const a = overlay.ownerDocument && overlay.ownerDocument.activeElement;
+    if (!a || !overlay.contains(a)) return null;
+    if (a.hasAttribute && a.hasAttribute("data-usage-sort")) return `[data-usage-sort="${a.getAttribute("data-usage-sort")}"]`;
+    if (a.hasAttribute && a.hasAttribute("data-usage-page")) return `[data-usage-page="${a.getAttribute("data-usage-page")}"]`;
+    if (a.classList && a.classList.contains("usage-rec-page-size")) return ".usage-rec-page-size";
+    return null;
+  };
+  const restoreFocus = (token) => {
+    if (!token) return;
+    const el = overlay.querySelector(token);
+    if (el && !el.disabled) { el.focus(); return; }
+    // 경계로 이동해 그 버튼이 비활성이 됐으면(마지막 페이지의 '다음' 등) 페이저 안의 활성
+    // 컨트롤로 옮긴다 — 포커스를 문서 최상단으로 떨어뜨리지 않는다.
+    const alt = overlay.querySelector(".usage-rec-pager .usage-rec-page-btn:not([disabled])");
+    if (alt) alt.focus();
+  };
+
+  const renderTable = (opts) => {
+    const headEl = overlay.querySelector(".usage-rec-head");
+    const bodyEl = overlay.querySelector(".usage-rec-body");
+    const pagerEl = overlay.querySelector(".usage-rec-pager");
+    if (!headEl || !bodyEl) return;
+    const focusBack = focusToken();
+    const pages = pageCount();
+    if (view.page > pages) view.page = pages;
+    if (view.page < 1) view.page = 1;
+    headEl.innerHTML = headHtml();
+    bodyEl.innerHTML = pageSlice().map(rowHtml).join("");
+    if (pagerEl) pagerEl.innerHTML = pagerHtml();
+    restoreFocus(focusBack);
+    // 페이지·정렬을 바꿨으면 목록 맨 위부터 보게 한다(하단에서 다음 페이지를 누른 뒤 그대로
+    // 중간을 보고 있으면 "안 바뀐 것처럼" 읽힌다).
+    if (opts && opts.scrollTop) {
+      const scroller = overlay.querySelector(".usage-conv-body");
+      if (scroller) scroller.scrollTop = 0;
+    }
+  };
+
   let bodyHtml;
   if (state.loading) {
     bodyHtml = "<p class='admin-modal-note'>사용 기록을 불러오는 중…</p>";
@@ -851,76 +1060,27 @@ function showUsageConvModal(state) {
     if (!items.length && !sysItems.length) {
       bodyHtml = "<p class='admin-modal-note'>이 집계에 해당하는 사용 기록이 없습니다.</p>";
     } else {
-      // 대화·시스템을 한 표로 합쳐 토큰 큰 순 — 어느 쪽이 이 막대를 끌었는지 한눈에 보이게.
-      const merged = items.map((it) => ({ kind: "conv", it }))
-        .concat(sysItems.map((it) => ({ kind: "sys", it })))
-        .sort((a, b) => (Number(b.it.total_tokens) || 0) - (Number(a.it.total_tokens) || 0));
-      const rows = merged.map((row) => {
-        const it = row.it;
-        let kindCell;
-        let whatCell;
-        let whoCell;
-        if (row.kind === "conv") {
-          const topic = esc(it.topic || "(제목 없음)");
-          const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
-          kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--conv'>대화</span></td>`;
-          whatCell = `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='${topic}'>${topic}</a>${blocked}</td>`;
-          whoCell = isAdmin
-            ? `<td class='usage-conv-owner'>${esc(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)))}${it.owner_role ? " · " + esc(it.owner_role) : ""}</td>`
-            : "";
-        } else {
-          // 시스템 행: "무슨 작업"(task_label) + "어떤 객체"(target) 를 한 셀에 명시.
-          const nav = it.nav || null;
-          const idx = navByIdx.push(nav) - 1;
-          const label = esc(it.task_label || it.task || "(미상 작업)");
-          const tgt = it.target ? `<span class='usage-rec-target'>${esc(it.target)}</span>` : "";
-          const navable = !!(nav && nav.screen);
-          // 이동 안내는 **행에 두 번째 줄로 찍지 않고 hover 툴팁으로만** 전달한다(사용자 결정
-          //   2026-07-28) — 200행 목록에서 매 행 보조문구는 밀도만 떨어뜨리고, 이동 가능 여부는
-          //   링크 스타일로 이미 드러난다. 데이터소스 모호(이동이 화면까지만 됨)도 같은 툴팁에
-          //   합쳐 정직 표기를 유지한다.
-          //   `nav.path_label` 은 raw 텍스트이므로 여기서 **한 번만** esc 한다(이전 이중 escape 로
-          //   툴팁에 `&gt;` 가 그대로 보이던 결함 동반 수정).
-          const where = (nav && nav.path_label) || "관리 화면";
-          const ambigTip = (nav && nav.scope_ambiguous) ? " (데이터소스 여럿 — 화면까지 이동)" : "";
-          const navTitle = esc(where + " 화면으로 이동" + ambigTip);
-          kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--sys'>시스템</span></td>`;
-          whatCell = `<td class='usage-conv-topic usage-rec-what'>`
-            + (navable
-              ? `<button type="button" class="usage-rec-link" data-usage-nav="${idx}" title="${navTitle}"><b>${label}</b>${tgt ? " · " + tgt : ""}</button>`
-              : `<span><b>${label}</b>${tgt ? " · " + tgt : ""}</span>`)
-            + `</td>`;
-          // 주체 3분기(전부 raw hex 노출 회피):
-          //   ① 실재하는 대화(소유 계정만 없음) → 대화 링크
-          //   ② 비-sentinel 인데 실재하지 않음  → '삭제된 대화'(원 id 는 title 로만; 깨진 링크 금지)
-          //   ③ 예약 sentinel                  → 사람이 읽는 워커명
-          const actorRaw = String(it.actor || "");
-          let whoHtml;
-          if (it.conversation_id) {
-            whoHtml = `<a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='소유 계정이 없는 대화 — 새 탭에서 열기'>대화 (소유자 없음)</a>`;
-          } else if (actorRaw && actorRaw.slice(0, 2) !== "__") {
-            whoHtml = `<span title='${esc(actorRaw)}'>삭제된 대화</span>`;
-          } else {
-            whoHtml = esc(_usageActorLabel(actorRaw));
-          }
-          whoCell = isAdmin ? `<td class='usage-conv-owner'>${whoHtml}</td>` : "";
-        }
-        return `<tr>` + kindCell + whatCell + whoCell
-          + `<td class='num'>${num(it.calls)}</td>`
-          + `<td class='num'>${num(it.total_tokens)}</td>`
-          + `<td class='num'>${it.cost_usd > 0 ? usd(it.cost_usd) : "—"}</td>`
-          + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
-          + `</tr>`;
-      }).join("");
-      const ownerHead = isAdmin ? "<th>주체</th>" : "";
+      // 대화·시스템을 한 표로 합친다 — 어느 쪽이 이 막대를 끌었는지 한눈에 보이게.
+      //   usage-records-sort-page: 종전엔 여기서 토큰 내림차순으로 **고정** 정렬한 전체 행을
+      //   한 번에 렌더했다. 이제 정렬 축은 열 머리로 고르고(기본은 종전과 같은 토큰 내림차순)
+      //   행은 페이지 단위로 그린다. 정렬·페이징은 **이미 받은 결과셋 안에서** 클라이언트가
+      //   처리한다 — 백엔드가 상한(_USAGE_*_LIMIT)까지만 실어 주므로 그 안에서 완결되고,
+      //   열마다 API 파라미터를 늘리면 표시-질의 두 곳을 동기화해야 하는 실패 지점이 생긴다.
+      merged = items.map((it) => ({ kind: "conv", it }))
+        .concat(sysItems.map((it) => ({ kind: "sys", it })));
+      // 정렬 키는 행마다 1회만 계산(매 정렬마다 재계산 방지). idx 는 행의 정체성 —
+      // nav 참조와 동률 tiebreak 가 이 값을 쓴다.
+      merged.forEach((row, i) => { row.idx = i; row.sort = sortKeysOf(row); rowsByIdx[i] = row; });
+      sortRows();
       const truncNote = (truncated || sysTruncated)
-        ? `<p class='admin-modal-note usage-conv-trunc'>상위 ${num(merged.length)}건만 표시합니다(기간내 토큰 큰 순). 기간을 좁혀 보세요.</p>` : "";
+        ? `<p class='admin-modal-note usage-conv-trunc'>서버가 상위 ${num(merged.length)}건까지 실어 줍니다(기간내 토큰 큰 순 절단). 그 밖의 기록도 보려면 기간을 좁혀 보세요.</p>` : "";
       const hint = isAdmin
-        ? `<p class='admin-modal-note usage-conv-hint'>대화 행은 새 탭에서 해당 대화로, <b>시스템</b> 행은 그 작업이 다룬 객체의 관리 화면으로 이동합니다.</p>`
-        : `<p class='admin-modal-note usage-conv-hint'>대화 제목을 클릭하면 새 탭에서 해당 대화로 이동합니다.</p>`;
+        ? `<p class='admin-modal-note usage-conv-hint'>열 머리를 누르면 그 열 기준으로 정렬합니다. 대화 행은 새 탭에서 해당 대화로, <b>시스템</b> 행은 그 작업이 다룬 객체의 관리 화면으로 이동합니다.</p>`
+        : `<p class='admin-modal-note usage-conv-hint'>열 머리를 누르면 그 열 기준으로 정렬합니다. 대화 제목을 클릭하면 새 탭에서 해당 대화로 이동합니다.</p>`;
+      // thead/tbody/페이저는 비워 두고 renderTable() 이 채운다(정렬·페이지 이동 시 같은 경로).
       bodyHtml = `<div class='usage-conv-tablewrap'><table class='admin-usage-table usage-conv-table'>`
-        + `<thead><tr><th>구분</th><th>${isAdmin ? "대화 / 작업 · 대상" : "대화"}</th>${ownerHead}<th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
-        + `<tbody>${rows}</tbody></table></div>`
+        + `<thead class='usage-rec-head'></thead><tbody class='usage-rec-body'></tbody></table></div>`
+        + `<div class='usage-rec-pager'></div>`
         + truncNote + hint;
     }
   }
@@ -940,13 +1100,60 @@ function showUsageConvModal(state) {
   const closeBtn = document.getElementById("usageConvModalClose");
   if (closeBtn) closeBtn.addEventListener("click", close);
   document.addEventListener("keydown", onEsc);
-  // 시스템 행 클릭 → 콘솔 내 화면 이동. 이동에 성공하면 모달을 닫아 목적 화면이 가려지지 않게 한다.
+  // 표 상호작용은 overlay 한 곳에 위임한다 — tbody 는 정렬·페이지마다 통째로 교체되므로
+  // 행마다 리스너를 붙이면 매 재렌더에서 재바인딩(누수 위험)해야 한다.
   overlay.addEventListener("click", (e) => {
-    const btn = e.target.closest ? e.target.closest("[data-usage-nav]") : null;
-    if (!btn) return;
-    const nav = navByIdx[Number(btn.getAttribute("data-usage-nav"))];
-    if (applyUsageNav(nav)) close();   // close() 가 ESC 리스너까지 해제 — 중복 해제 불요.
+    const t = e.target;
+    const closest = (sel) => (t && t.closest ? t.closest(sel) : null);
+    // ① 열 머리 정렬 — 같은 열 재클릭은 방향 토글, 다른 열은 그 열의 기본 방향으로 시작.
+    const sortBtn = closest("[data-usage-sort]");
+    if (sortBtn) {
+      const key = sortBtn.getAttribute("data-usage-sort");
+      if (!colByKey[key]) return;
+      if (view.sortKey === key) {
+        view.sortDir = (view.sortDir === "asc" ? "desc" : "asc");
+      } else {
+        view.sortKey = key;
+        view.sortDir = (colByKey[key].type === "num" ? "desc" : "asc");
+      }
+      view.page = 1;   // 정렬이 바뀌면 1페이지부터 — 3페이지에 머물면 "정렬됐나?" 가 안 보인다.
+      sortRows();
+      renderTable({ scrollTop: true });
+      return;
+    }
+    // ② 페이지 이동.
+    const pageBtn = closest("[data-usage-page]");
+    if (pageBtn) {
+      if (pageBtn.disabled) return;
+      const act = pageBtn.getAttribute("data-usage-page");
+      const pages = pageCount();
+      if (act === "first") view.page = 1;
+      else if (act === "prev") view.page = Math.max(1, view.page - 1);
+      else if (act === "next") view.page = Math.min(pages, view.page + 1);
+      else if (act === "last") view.page = pages;
+      renderTable({ scrollTop: true });
+      return;
+    }
+    // ③ 시스템 행 클릭 → 콘솔 내 화면 이동. 이동에 성공하면 모달을 닫아 목적 화면이 가려지지
+    //    않게 한다. nav 는 불변 색인(rowsByIdx)으로 조회 — 정렬·페이지와 무관하게 같은 행이다.
+    const navBtn = closest("[data-usage-nav]");
+    if (navBtn) {
+      const row = rowsByIdx[Number(navBtn.getAttribute("data-usage-nav"))];
+      const nav = row && row.it ? (row.it.nav || null) : null;
+      if (applyUsageNav(nav)) close();   // close() 가 ESC 리스너까지 해제 — 중복 해제 불요.
+    }
   });
+  // 페이지당 행 수 — select 는 click 이 아니라 change 로 받는다.
+  overlay.addEventListener("change", (e) => {
+    const sel = e.target && e.target.closest ? e.target.closest(".usage-rec-page-size") : null;
+    if (!sel) return;
+    const n = Number(sel.value);
+    view.pageSize = (PAGE_SIZES.indexOf(n) >= 0 ? n : 50);
+    view.page = 1;
+    renderTable({ scrollTop: true });
+  });
+  // 첫 렌더(정렬은 이미 적용된 상태) — 스크롤은 건드리지 않는다(막 열린 모달은 이미 최상단).
+  if (merged.length) renderTable();
 }
 
 // 시스템 사용분의 '주체' 라벨 — llm_usage.conversation_id 예약 sentinel(전부 "__" 접두)을
