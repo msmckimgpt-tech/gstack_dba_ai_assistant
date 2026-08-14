@@ -282,3 +282,216 @@ def test_tool_defs_shown_when_enabled(monkeypatch):
     base = [{"type": "function", "function": {"name": "execute_sql"}}]
     combined = tools.with_scratch_tools(base)
     assert len(combined) == len(base) + len(defs)
+
+
+# ── 분기(fork) 이월 — clone_workspace ────────────────────────────────────────
+# 배경: fork 는 표시 메시지·LLM 문맥·첨부를 이월하면서 작업공간만 빼놓아, assistant 가 복사된
+# 문맥에 남은 자기 기록("테이블 a·b 를 만들었다")을 믿고 없는 테이블을 참조하다 실패했다.
+# 아래 테스트는 라이브 PG 없이 fake connection 으로 이월의 **캡·부분성공·fail-soft** 계약을 고정한다.
+
+def _sql_text(q):
+    """psycopg.sql.Composed | str → 검증용 문자열."""
+    try:
+        return q.as_string(None)
+    except Exception:
+        return str(q)
+
+
+class _FakeCursor:
+    def __init__(self, owner):
+        self.owner = owner
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def close(self):
+        pass
+
+    @property
+    def rowcount(self):
+        return self.owner.rowcount
+
+    def execute(self, q, params=None):
+        s = _sql_text(q)
+        self.owner.executed.append(s)
+        if "CREATE TABLE" in s:
+            idx = self.owner.ctas_count
+            self.owner.ctas_count += 1
+            if idx in self.owner.fail_at:
+                raise RuntimeError("boom")
+            self.owner.rowcount = (
+                self.owner.rowcounts[idx] if idx < len(self.owner.rowcounts) else 0
+            )
+
+    def fetchall(self):
+        return [(t,) for t in self.owner.tables]
+
+    def fetchone(self):
+        return None
+
+
+class _FakeConn:
+    def __init__(self, tables, rowcounts=(), fail_at=()):
+        self.tables = list(tables)
+        self.rowcounts = list(rowcounts)
+        self.fail_at = set(fail_at)
+        self.executed: list[str] = []
+        self.ctas_count = 0
+        self.rowcount = -1
+        self.closed = False
+
+    def cursor(self):
+        return _FakeCursor(self)
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_clone(monkeypatch, conn, **rt):
+    """clone_workspace 를 fake conn 위에서 돌리기 위한 공통 monkeypatch."""
+    monkeypatch.setattr(scratch, "enabled", lambda: True)
+    monkeypatch.setattr(scratch, "_connect", lambda: conn)
+    monkeypatch.setattr(scratch, "ensure_schema", lambda c, cid: scratch.schema_for(cid))
+    monkeypatch.setattr(scratch, "_touch", lambda c, s: None)
+    defaults = dict(scratch._DEFAULTS)
+    defaults.update(rt)
+    monkeypatch.setattr(scratch, "_rt", lambda key: int(defaults.get(key, 0)))
+
+
+def test_clone_copies_source_tables(monkeypatch):
+    conn = _FakeConn(["orders", "users"], rowcounts=[10, 5])
+    _patch_clone(monkeypatch, conn)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["ok"] is True
+    assert res["cloned"] == 2 and res["rows"] == 15
+    assert res["truncated"] is False
+    assert set(res["tables"]) == {"orders", "users"}
+    # 원본 → 분기본 스키마로의 복사여야 한다(방향 회귀 방지).
+    ctas = [s for s in conn.executed if "CREATE TABLE" in s]
+    assert len(ctas) == 2
+    src, dst = scratch.schema_for("conv-src"), scratch.schema_for("conv-dst")
+    for s in ctas:
+        assert f'"{dst}"' in s and f'"{src}"' in s
+        assert s.index(f'"{dst}"') < s.index(f'"{src}"')   # CREATE 대상이 분기본
+
+
+def test_clone_noop_when_carryover_disabled(monkeypatch):
+    conn = _FakeConn(["orders"])
+    _patch_clone(monkeypatch, conn, AGENT_SCRATCH_FORK_CARRYOVER=0)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["cloned"] == 0 and res["reason"] == "carryover-disabled"
+    assert conn.executed == []          # 운영자 스위치 OFF 면 DB 를 건드리지 않는다
+
+
+def test_clone_noop_same_conversation(monkeypatch):
+    conn = _FakeConn(["orders"])
+    _patch_clone(monkeypatch, conn)
+    res = scratch.clone_workspace("conv-x", "conv-x")
+    assert res["cloned"] == 0 and res["reason"] == "same-workspace"
+    assert conn.executed == []
+
+
+def test_clone_source_empty_does_not_create_dest_schema(monkeypatch):
+    # 원본이 비었으면(미사용 대화·TTL 만료 후 분기) 분기본 스키마를 만들지 않는다 —
+    # 빈 이월이 전역 스키마 캡(AGENT_SCRATCH_MAX_SCHEMAS)을 소모하면 안 된다.
+    conn = _FakeConn([])
+    created: list[str] = []
+    _patch_clone(monkeypatch, conn)
+    monkeypatch.setattr(scratch, "ensure_schema", lambda c, cid: created.append(cid) or scratch.schema_for(cid))
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["cloned"] == 0 and res["reason"] == "source-empty"
+    assert created == []
+
+
+def test_clone_respects_table_cap(monkeypatch):
+    conn = _FakeConn(["a", "b", "c"], rowcounts=[1, 1, 1])
+    _patch_clone(monkeypatch, conn, AGENT_SCRATCH_MAX_TABLES_PER_CONV=2)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["cloned"] == 2 and res["skipped"] == 1
+    assert res["truncated"] is True                       # 잘렸다는 사실을 숨기지 않는다
+    assert res["skipped_detail"][0]["reason"] == "table-cap"
+
+
+def test_clone_respects_row_budget(monkeypatch):
+    # 첫 테이블이 예산을 전부 먹으면 나머지는 이월하지 않고 그 사실을 보고한다.
+    conn = _FakeConn(["big", "rest"], rowcounts=[100, 0])
+    _patch_clone(monkeypatch, conn, AGENT_SCRATCH_MAX_CLONE_ROWS=100)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["cloned"] == 1 and res["rows"] == 100
+    assert res["truncated"] is True
+    assert res["skipped_detail"][0] == {"table": "rest", "reason": "row-budget"}
+    # 남은 예산이 LIMIT 로 SQL 에 반영돼야 한다(무제한 복사 회귀 방지).
+    assert "LIMIT 100" in [s for s in conn.executed if "CREATE TABLE" in s][0]
+
+
+def test_clone_partial_failure_continues(monkeypatch):
+    # 테이블 1개가 실패해도 나머지 이월은 계속된다(전부-아니면-전무 회귀 방지).
+    conn = _FakeConn(["a", "b", "c"], rowcounts=[3, 0, 4], fail_at=[1])
+    _patch_clone(monkeypatch, conn)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["ok"] is True
+    assert res["cloned"] == 2 and res["rows"] == 7
+    assert res["skipped"] == 1 and res["skipped_detail"][0]["table"] == "b"
+
+
+def test_clone_is_fail_soft_on_connection_error(monkeypatch):
+    # 이월 실패가 분기(대화·문맥·첨부 복사) 자체를 깨선 안 된다 — 예외를 올리지 않는다.
+    monkeypatch.setattr(scratch, "enabled", lambda: True)
+    monkeypatch.setattr(scratch, "_rt", lambda key: int(scratch._DEFAULTS.get(key, 0)))
+
+    def _boom():
+        raise RuntimeError("pg down")
+
+    monkeypatch.setattr(scratch, "_connect", _boom)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["ok"] is False and res["cloned"] == 0 and "error" in res
+
+
+def test_clone_noop_when_scratch_disabled(monkeypatch):
+    monkeypatch.setattr(scratch, "_rt", lambda key: int(scratch._DEFAULTS.get(key, 0)))
+    monkeypatch.setattr(scratch, "enabled", lambda: False)
+    res = scratch.clone_workspace("conv-src", "conv-dst")
+    assert res["ok"] is True and res["cloned"] == 0 and res["reason"] == "disabled"
+
+
+# ── 작업공간 실제 상태 주입 (fork 이월 상한 + TTL 만료 공통 해소) ─────────────
+def test_workspace_state_note_lists_existing_tables(monkeypatch):
+    import agent_core
+    monkeypatch.setattr(
+        scratch, "list_workspace",
+        lambda cid: {"ok": True, "schema": "s_x", "tables": [
+            {"table": "orders", "approx_rows": 1234},
+            {"table": "fresh", "approx_rows": -1},     # ANALYZE 전 = 행수 불명
+        ]},
+    )
+    note = agent_core._scratch_workspace_state_note("conv-x")
+    assert "`orders` (~1,234 rows)" in note
+    assert "`fresh`" in note and "-1" not in note      # 음수 추정치를 사실처럼 제시하지 않는다
+    assert "EMPTY" not in note
+
+
+def test_workspace_state_note_declares_empty(monkeypatch):
+    # 핵심 회귀: 작업공간이 비었는데 문맥엔 테이블 기록이 남은 상태(분기 미이월·TTL 만료)에서
+    # assistant 가 없는 테이블을 참조하지 않도록 "비어 있음" 을 사실로 못박는다.
+    import agent_core
+    monkeypatch.setattr(scratch, "list_workspace", lambda cid: {"ok": True, "tables": []})
+    note = agent_core._scratch_workspace_state_note("conv-x")
+    assert "EMPTY" in note
+    assert "scratch_import" in note                     # 재반입 유도
+
+
+def test_workspace_state_note_silent_on_lookup_failure(monkeypatch):
+    # 상태를 모를 때는 단정하지 않는다(빈 문자열) — 조회 실패를 "비어 있음" 으로 오도하면
+    # assistant 가 멀쩡한 테이블을 지우고 다시 반입한다.
+    import agent_core
+    monkeypatch.setattr(scratch, "list_workspace", lambda cid: {"ok": False, "error": "x"})
+    assert agent_core._scratch_workspace_state_note("conv-x") == ""
+
+    def _boom(cid):
+        raise RuntimeError("pg down")
+
+    monkeypatch.setattr(scratch, "list_workspace", _boom)
+    assert agent_core._scratch_workspace_state_note("conv-x") == ""

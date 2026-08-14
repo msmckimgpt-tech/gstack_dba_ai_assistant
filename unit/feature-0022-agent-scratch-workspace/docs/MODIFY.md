@@ -58,3 +58,23 @@ source_of_truth: true
   `_format_result_sets`**(Markdown 표: `| col |` + 구분선 + 행수 footer)로 출력하도록 변경. 죽은
   `_fmt_scratch_rows` 제거. 미리보기 캡·절단 안내는 execute_sql 파라미터(_TOOL_PREVIEW_*)와 동일.
 - `test_scratch.py`: scratch_sql 출력이 Markdown 표(헤더·구분선·데이터행)인지 회귀 테스트 추가(총 23건).
+
+## CHG-20260814T0304-fork-carryover — 대화 분기 시 작업공간 이월 + 실제 상태 프롬프트 주입 (사용자 보고)
+- `scratch.py`: `clone_workspace(src_cid, dst_cid)` 신규 — 원본 대화 스키마의 테이블을 분기본
+  스키마로 `CREATE TABLE ... AS SELECT ... LIMIT n` 독립 복사. 캡 3종(대화당 테이블 수·이월 총
+  행수 `MAX_CLONE_ROWS`·전체 wall-clock 예산 `FORK_BUDGET_MS`) + 문당 statement_timeout, 부분
+  성공 보고(`cloned`/`skipped_detail`/`truncated`), 전 경로 fail-soft(예외 미전파). 원본이 비면
+  분기본 스키마를 만들지 않아 전역 스키마 캡을 소모하지 않는다. 런타임 기본값 3종 추가.
+- `_conv_store.py`: `_fork_conversation_impl` 에 이월 훅(첨부 복사 뒤) — 분기 3 경로(사본 만들기·
+  앵커 분기·공유 링크 복제)가 이 impl 공통이라 한 곳에서 전 경로가 이월된다. 응답에
+  `scratch_cloned`/`scratch_truncated` 추가. 이월 실패는 warning 로그 + 분기는 성공(fail-open).
+- `share.py`: `share.fork` 감사 기록에 `scratch_tables_copied`(건수만) 추가 — 교차계정 이월의
+  forensics(기존 `attachments_copied`·`core_messages_copied` 와 동일 원칙, 내용 비노출).
+- `agent_core.py`: `_scratch_workspace_state_note(cid)` 신규 + scratch 지침 뒤 주입. 매 턴 실재
+  테이블 목록을 "문맥 기록보다 우선하는 사실" 로 제시하고, 빈 작업공간은 EMPTY + 재반입 유도,
+  조회 실패는 침묵(모름을 비어있음으로 오도 금지). ANALYZE 전 음수 추정 행수는 표기하지 않는다.
+- `shared/runtime_settings.py`: `AGENT_SCRATCH_FORK_CARRYOVER`(기본 1) ·
+  `AGENT_SCRATCH_MAX_CLONE_ROWS`(기본 200000) · `AGENT_SCRATCH_FORK_BUDGET_MS`(기본 10000) 스펙 추가.
+- `test_scratch.py`: 이월·상태 주입 단위 테스트 13건 추가(총 38건) — fake connection 으로 복사
+  방향·캡·부분 실패 계속·fail-soft·no-op 조건·상태 문구 계약 고정.
+- 근거·대안 검토: `DECISIONS.md` ADR-SCRATCH-0005.

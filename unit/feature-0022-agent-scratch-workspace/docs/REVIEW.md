@@ -71,3 +71,33 @@ unix 소켓 trust 연결).
 동일 포매터 재사용이라 절단/미리보기 캡 정책도 execute_sql 과 자동 일치.
 **검증**: test_scratch.py 23건 PASS(표 마크다운 회귀 포함), 샘플 출력 육안 확인(`| col |`+구분선+footer),
 배포 후 라이브 재확인.
+
+## REV-20260814T031500-scratch-fork-carryover [SKIPPED:session-policy-no-subagent] — Verdict: PASS
+**Scope**: 대화 분기 시 assistant 작업공간(scratch) 유실 구조 결함 해소 — 분기 3 경로 공통 이월
+(`clone_workspace`, 독립 CTAS 복사) + 작업공간 실제 상태의 매-턴 프롬프트 주입. ADR-SCRATCH-0005.
+**왜 SKIPPED**: 본 세션은 사용자 환경 지침으로 subagent(Agent tool) 호출이 금지되어 §18.8 검증
+패널을 돌릴 수 없다. 대신 아래를 인간 검토 가능한 형태로 남긴다.
+**보안 경계 자기 검토 (패널 대체)**:
+- **이월 범위**: 교차계정(공유 링크 fork)·부분 구간 분기 포함 **전 경로 이월**. 이는 AI 판단이
+  아니라 **사용자 결정**이다 — AI 초안은 "동일계정 + 전체 분기" fail-closed 안이었고, 원본 소유자
+  datasource 권한으로 반입된 데이터가 forker 계정으로 넘어가는 권한 상승 소지를 우려로 제시했다.
+  사용자는 "공유 링크 기능 자체가 사실상 권한의 수동적 상승이며 링크를 생성한 대화 소유자의 책임"
+  으로 판단해 전 경로 이월을 지시했다(2026-08-14). 이 결정의 잔여 위험은 **수용된 위험**이다:
+  공유 링크를 만든 소유자가 자기 작업공간 데이터까지 위임한 것으로 간주된다.
+- **완화**: (a) `share.fork` 감사에 이월 **건수** 기록(추적성, 내용 비노출) (b) 운영자 전역 차단
+  스위치 `AGENT_SCRATCH_FORK_CARRYOVER=0` (c) 이월은 governed 반입으로 이미 작업공간에 있던
+  데이터만 대상 — 새 datasource 도달 경로는 생기지 않는다(scratch role 은 여전히 `agent_scratch`
+  DB 밖 무-grant, ADR-SCRATCH-0001 격리 불변).
+- **격리 불변 확인**: 이월은 `scratch_guard` 를 우회하지 않는다 — guard 는 assistant 가 부르는
+  `scratch_sql` 의 검문소이고, 이월은 서버 코드가 고정 식별자(`sql.Identifier`)로 수행하는
+  스키마-간 복사다. 사용자 입력이 SQL 로 들어가는 지점이 없다(테이블명은 PG 카탈로그에서 읽은 값).
+  복사 방향(원본→분기본)을 단위 테스트가 고정해 역방향(원본 오염) 회귀를 차단한다.
+- **폭주/DoS**: 이월은 캡 3종(테이블 수·총 행수 20만·시간 예산 10s)과 문당 timeout 아래 동작하고,
+  초과분은 조용히 버리지 않고 `truncated`/`skipped_detail` 로 드러낸다. 분기 응답 지연 상한이
+  시간 예산으로 고정된다.
+- **fail-soft 방향성**: 이월 실패는 분기를 깨지 않는다(첨부 복사와 동일 fail-open). 실패 시 분기본은
+  빈 작업공간으로 시작하고, 주입되는 상태 문구가 assistant 에게 재반입을 지시하므로 **조용한 오답이
+  아니라 정직한 재작업**으로 수렴한다.
+**검증**: test_scratch.py 38건 PASS(신규 13건 — 복사 방향·캡·부분 실패·fail-soft·상태 문구),
+feature-0003 전체 회귀 RC=0, feature-0002 전체는 pre-existing 환경 실패 3건(`chattr` 부재)만 —
+main 체크아웃 동일 이미지 실행으로 귀책 판별 완료. 라이브 분기 e2e 는 배포 후(TASK-...-live).
