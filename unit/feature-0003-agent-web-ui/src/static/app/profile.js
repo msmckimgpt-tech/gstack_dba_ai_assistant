@@ -226,7 +226,11 @@ const PROFILE_USAGE_SOLO_COLOR = "#6366f1";
 
 const _pUsageNum = (v) => (Number(v) || 0).toLocaleString();
 const _pUsageUsd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const _pUsageEsc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+// ⚠ 따옴표까지 이스케이프한다. 이 값은 본문 텍스트뿐 아니라 **작은따옴표 속성**(`title='…'`)
+// 안에도 들어가므로, `'` 를 남기면 대화 제목만으로 속성을 탈출해 이벤트 핸들러를 심을 수 있다
+// (적대 리뷰 [P2] — `x' onmouseover='alert(1)`). 관리 콘솔 판과 같은 규칙(admin/usage.js).
+const _pUsageEsc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // TASK-0263: 프로필 사용량 차트 클릭 → 본인 기여 대화목록 모달.
 //   차트 요소에 data-usage-model/data-usage-day 후크가 있으면 위임 클릭으로 모달을 연다.
@@ -268,6 +272,12 @@ async function openProfileUsageConversations(opts) {
 
 // 본인 사용량 기여 대화 모달. admin 판(admin/usage.js showUsageConvModal)의 self 전용 축약 —
 // 소유자 컬럼 없음, 대화 클릭 시 같은 탭에서 deep-link 로 이동(작업 화면 내부이므로).
+//
+// profile-usage-sort-page(2026-08-14): 관리 콘솔 '사용 기록' 표와 **같은 조작**을 준다 —
+// 열 머리 정렬 + 페이지네이션. 사용자 요청("사용자 프로필 화면에서도 정합하게"). 두 모달은
+// 독립 구현이라(작업 화면은 admin-modal 클래스를 공유하지 않는다) 로직을 옮겨 심되, 조작 규칙
+// (첫 클릭 방향·기본 정렬·페이저 표기·포커스 복원)은 한 글자도 다르지 않게 맞춘다 — 화면마다
+// 표가 다르게 반응하면 그게 곧 학습 비용이다.
 function showProfileUsageConvModal(st) {
   const num = (v) => (Number(v) || 0).toLocaleString();
   const fmtDt = (s) => { if (!s) return "—"; try { const d = new Date(s); return isNaN(d.getTime()) ? _pUsageEsc(s) : d.toLocaleString(); } catch (_) { return _pUsageEsc(s); } };
@@ -280,6 +290,125 @@ function showProfileUsageConvModal(st) {
   overlay.id = "profileUsageConvOverlay";
   overlay.className = "usage-conv-overlay";
   const title = _pUsageEsc(st.title || "대화 목록");
+
+  // ── 정렬·페이지 상태 + 렌더 (admin 판과 동일 규칙) ────────────────────────────
+  let rowsAll = [];
+  const view = { sortKey: "total_tokens", sortDir: "desc", page: 1, pageSize: 50 };
+  const PAGE_SIZES = [25, 50, 100, 0];   // 0 = 전체
+  // type="num"(수치·일시) 은 첫 클릭 내림차순, "text" 는 오름차순 — 기대가 반대인 두 부류.
+  const cols = [
+    { key: "what", label: "대화", type: "text" },
+    { key: "calls", label: "호출", type: "num", cls: "num" },
+    { key: "total_tokens", label: "토큰", type: "num", cls: "num" },
+    { key: "cost_usd", label: "추정 비용", type: "num", cls: "num" },
+    { key: "last_used", label: "최근 사용", type: "num", cls: "usage-conv-when" },
+  ];
+  const colByKey = {};
+  cols.forEach((c) => { colByKey[c.key] = c; });
+  // 정렬 키는 **화면에 보이는 값** 기준(제목 없는 대화도 표시 문구로 정렬).
+  const sortKeysOf = (it) => {
+    const ts = Date.parse(it.last_used_at || it.updated_at || "");
+    return {
+      what: String(it.topic || "(제목 없음)"),
+      calls: Number(it.calls) || 0,
+      total_tokens: Number(it.total_tokens) || 0,
+      cost_usd: Number(it.cost_usd) || 0,
+      last_used: isNaN(ts) ? 0 : ts,
+    };
+  };
+  const sortRows = () => {
+    const key = view.sortKey;
+    const dir = view.sortDir === "asc" ? 1 : -1;
+    const isNum = ((colByKey[key] || {}).type === "num");
+    rowsAll.sort((a, b) => {
+      const av = a.sort[key]; const bv = b.sort[key];
+      const c = isNum ? (Number(av) - Number(bv)) : String(av).localeCompare(String(bv), "ko");
+      if (c) return c * dir;
+      // 동률 tiebreak — 토큰 내림차순 → 원래 순서(안정 정렬).
+      return (b.sort.total_tokens - a.sort.total_tokens) || (a.idx - b.idx);
+    });
+  };
+  const headHtml = () => "<tr>" + cols.map((c) => {
+    const active = (view.sortKey === c.key);
+    const ind = active ? (view.sortDir === "asc" ? "▲" : "▼") : "";
+    const aria = active ? (view.sortDir === "asc" ? "ascending" : "descending") : "none";
+    return `<th class='${c.cls || ""}' aria-sort='${aria}'>`
+      + `<button type='button' class='usage-rec-sort${active ? " is-active" : ""}' data-usage-sort='${c.key}'`
+      + ` title='${_pUsageEsc(c.label)} 기준 정렬'>${_pUsageEsc(c.label)}`
+      + `<span class='usage-rec-sort-ind' aria-hidden='true'>${ind}</span></button></th>`;
+  }).join("") + "</tr>";
+  const rowHtml = (row) => {
+    const it = row.it;
+    const topic = _pUsageEsc(it.topic || "(제목 없음)");
+    const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
+    return `<tr>`
+      + `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' title='${topic}'>${topic}</a>${blocked}</td>`
+      + `<td class='num'>${num(it.calls)}</td>`
+      + `<td class='num'>${num(it.total_tokens)}</td>`
+      + `<td class='num'>${it.cost_usd > 0 ? _pUsageUsd(it.cost_usd) : "—"}</td>`
+      + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
+      + `</tr>`;
+  };
+  const pageCount = () => (view.pageSize > 0 ? Math.max(1, Math.ceil(rowsAll.length / view.pageSize)) : 1);
+  const pageSlice = () => (view.pageSize > 0
+    ? rowsAll.slice((view.page - 1) * view.pageSize, view.page * view.pageSize)
+    : rowsAll.slice());
+  const pagerHtml = () => {
+    const total = rowsAll.length;
+    const pages = pageCount();
+    const from = total ? (view.pageSize > 0 ? (view.page - 1) * view.pageSize + 1 : 1) : 0;
+    const to = view.pageSize > 0 ? Math.min(total, view.page * view.pageSize) : total;
+    const btn = (act, label, disabled, t) =>
+      `<button type='button' class='usage-rec-page-btn' data-usage-page='${act}'${disabled ? " disabled" : ""}`
+      + ` title='${t}' aria-label='${t}'>${label}</button>`;
+    const sizeOpts = PAGE_SIZES.map((n) =>
+      `<option value='${n}'${n === view.pageSize ? " selected" : ""}>${n > 0 ? n + "행" : "전체"}</option>`).join("");
+    return `<span class='usage-rec-pager-info'>총 ${num(total)}건 중 ${num(from)}–${num(to)}</span>`
+      + `<span class='usage-rec-pager-ctl'>`
+      + btn("first", "«", view.page <= 1, "첫 페이지")
+      + btn("prev", "‹", view.page <= 1, "이전 페이지")
+      + `<span class='usage-rec-pager-pos'>${num(view.page)} / ${num(pages)}</span>`
+      + btn("next", "›", view.page >= pages, "다음 페이지")
+      + btn("last", "»", view.page >= pages, "마지막 페이지")
+      + `<label class='usage-rec-pager-size'>페이지당 <select class='usage-rec-page-size' aria-label='페이지당 행 수'>${sizeOpts}</select></label>`
+      + `</span>`;
+  };
+  // 재렌더는 컨트롤 노드를 교체하므로 방금 누른 버튼의 포커스가 body 로 빠진다 — 키보드로
+  // 방향 토글·연속 페이지 이동이 안 되는 결함(admin 판 적대 리뷰 [P2] 와 동일). 되돌려 준다.
+  const focusToken = () => {
+    const a = document.activeElement;
+    if (!a || !overlay.contains(a)) return null;
+    if (a.hasAttribute && a.hasAttribute("data-usage-sort")) return `[data-usage-sort="${a.getAttribute("data-usage-sort")}"]`;
+    if (a.hasAttribute && a.hasAttribute("data-usage-page")) return `[data-usage-page="${a.getAttribute("data-usage-page")}"]`;
+    if (a.classList && a.classList.contains("usage-rec-page-size")) return ".usage-rec-page-size";
+    return null;
+  };
+  const restoreFocus = (token) => {
+    if (!token) return;
+    const el = overlay.querySelector(token);
+    if (el && !el.disabled) { el.focus(); return; }
+    const alt = overlay.querySelector(".usage-rec-pager .usage-rec-page-btn:not([disabled])");
+    if (alt) alt.focus();
+  };
+  const renderTable = (opts) => {
+    const headEl = overlay.querySelector(".usage-rec-head");
+    const bodyEl = overlay.querySelector(".usage-rec-body");
+    const pagerEl = overlay.querySelector(".usage-rec-pager");
+    if (!headEl || !bodyEl) return;
+    const focusBack = focusToken();
+    const pages = pageCount();
+    if (view.page > pages) view.page = pages;
+    if (view.page < 1) view.page = 1;
+    headEl.innerHTML = headHtml();
+    bodyEl.innerHTML = pageSlice().map(rowHtml).join("");
+    if (pagerEl) pagerEl.innerHTML = pagerHtml();
+    restoreFocus(focusBack);
+    if (opts && opts.scrollTop) {
+      const scroller = overlay.querySelector(".usage-conv-content");
+      if (scroller) scroller.scrollTop = 0;
+    }
+  };
+
   let body;
   if (st.loading) {
     body = "<p class='usage-conv-note'>대화목록을 불러오는 중…</p>";
@@ -291,22 +420,16 @@ function showProfileUsageConvModal(st) {
     if (!items.length) {
       body = "<p class='usage-conv-note'>이 집계에 해당하는 대화가 없습니다.</p>";
     } else {
-      const rows = items.map((it) => {
-        const topic = _pUsageEsc(it.topic || "(제목 없음)");
-        const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
-        return `<tr>`
-          + `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' title='${topic}'>${topic}</a>${blocked}</td>`
-          + `<td class='num'>${num(it.calls)}</td>`
-          + `<td class='num'>${num(it.total_tokens)}</td>`
-          + `<td class='num'>${it.cost_usd > 0 ? _pUsageUsd(it.cost_usd) : "—"}</td>`
-          + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
-          + `</tr>`;
-      }).join("");
+      // 정렬 키는 행마다 1회 선계산. idx 는 동률 tiebreak 용 원래 순서.
+      rowsAll = items.map((it, i) => ({ it, idx: i, sort: sortKeysOf(it) }));
+      sortRows();
+      // thead/tbody/페이저는 renderTable() 이 채운다(정렬·페이지 이동과 같은 경로).
+      // 페이저는 **마지막** — 스크롤 컨테이너 바닥에 sticky 로 붙으므로 안내 문구를 덮지 않는다.
       body = `<div class='usage-conv-tablewrap'><table class='usage-conv-table'>`
-        + `<thead><tr><th>대화</th><th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
-        + `<tbody>${rows}</tbody></table></div>`
-        + (truncated ? `<p class='usage-conv-note usage-conv-trunc'>상위 ${num(items.length)}건만 표시합니다(기간내 토큰 큰 순).</p>` : "")
-        + `<p class='usage-conv-note usage-conv-hint'>대화 제목을 클릭하면 해당 대화로 이동합니다.</p>`;
+        + `<thead class='usage-rec-head'></thead><tbody class='usage-rec-body'></tbody></table></div>`
+        + (truncated ? `<p class='usage-conv-note usage-conv-trunc'>서버가 상위 ${num(items.length)}건까지 실어 줍니다(기간내 토큰 큰 순 절단).</p>` : "")
+        + `<p class='usage-conv-note usage-conv-hint'>열 머리를 누르면 그 열 기준으로 정렬합니다. 대화 제목을 클릭하면 해당 대화로 이동합니다.</p>`
+        + `<div class='usage-rec-pager'></div>`;
     }
   }
   overlay.innerHTML =
@@ -327,6 +450,48 @@ function showProfileUsageConvModal(st) {
   const cb = document.getElementById("profileUsageConvClose");
   if (cb) cb.addEventListener("click", close);
   document.addEventListener("keydown", onEsc);
+  // 표 상호작용은 overlay 한 곳에 위임한다 — tbody 는 정렬·페이지마다 통째로 교체되므로
+  // 행별 리스너는 매 재렌더 재바인딩(누수 위험)이 된다.
+  overlay.addEventListener("click", (e) => {
+    const t = e.target;
+    const closest = (sel) => (t && t.closest ? t.closest(sel) : null);
+    const sortBtn = closest("[data-usage-sort]");
+    if (sortBtn) {
+      const key = sortBtn.getAttribute("data-usage-sort");
+      if (!colByKey[key]) return;
+      if (view.sortKey === key) {
+        view.sortDir = (view.sortDir === "asc" ? "desc" : "asc");
+      } else {
+        view.sortKey = key;
+        view.sortDir = (colByKey[key].type === "num" ? "desc" : "asc");
+      }
+      view.page = 1;   // 정렬이 바뀌면 1페이지부터 — 뒤 페이지에 머물면 바뀐 게 안 보인다.
+      sortRows();
+      renderTable({ scrollTop: true });
+      return;
+    }
+    const pageBtn = closest("[data-usage-page]");
+    if (pageBtn) {
+      if (pageBtn.disabled) return;
+      const act = pageBtn.getAttribute("data-usage-page");
+      const pages = pageCount();
+      if (act === "first") view.page = 1;
+      else if (act === "prev") view.page = Math.max(1, view.page - 1);
+      else if (act === "next") view.page = Math.min(pages, view.page + 1);
+      else if (act === "last") view.page = pages;
+      renderTable({ scrollTop: true });
+    }
+  });
+  overlay.addEventListener("change", (e) => {
+    const sel = e.target && e.target.closest ? e.target.closest(".usage-rec-page-size") : null;
+    if (!sel) return;
+    const n = Number(sel.value);
+    view.pageSize = (PAGE_SIZES.indexOf(n) >= 0 ? n : 50);
+    view.page = 1;
+    renderTable({ scrollTop: true });
+  });
+  // 첫 렌더(정렬은 이미 적용됨) — 막 열린 모달은 최상단이라 스크롤은 건드리지 않는다.
+  if (rowsAll.length) renderTable();
 }
 
 function profileUsageColorMap(models) {

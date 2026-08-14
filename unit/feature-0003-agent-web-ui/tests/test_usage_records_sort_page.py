@@ -121,3 +121,63 @@ def test_l9_pager_sticks_to_scroll_bottom():
     body = USAGE_JS[USAGE_JS.index("bodyHtml = `<div class='usage-conv-tablewrap'>"):]
     body = body[:body.index("}")]
     assert body.index("truncNote") < body.index("usage-rec-pager"), "페이저가 안내 문구보다 앞에 있다"
+
+
+# ── profile(self) 판 — 관리 콘솔 판과 같은 조작을 준다(사용자 요청 2026-08-14) ──────────
+PROFILE_JS = _read_static("app", "profile.js")
+
+
+def test_p1_profile_modal_has_sort_and_pager():
+    for token in ("data-usage-sort", "usage-rec-head", "usage-rec-body", "usage-rec-pager",
+                  "data-usage-page", "usage-rec-page-size", "aria-sort"):
+        assert token in PROFILE_JS, f"프로필 판 구성 누락: {token}"
+
+
+def test_p2_profile_rules_match_admin_console():
+    """두 모달은 독립 구현 — 규칙이 갈라지면 화면마다 표가 다르게 반응한다."""
+    def pick(src, pattern):
+        m = re.search(pattern, src)
+        assert m, f"패턴 미발견: {pattern}"
+        return m.group(1)
+
+    for pattern in (r'sortKey:\s*"([a-z_]+)"', r'sortDir:\s*"([a-z]+)"', r"pageSize:\s*(\d+)",
+                    r"PAGE_SIZES\s*=\s*(\[[^\]]*\])"):
+        assert pick(PROFILE_JS, pattern) == pick(USAGE_JS, pattern), f"규칙 불일치: {pattern}"
+    # 첫 클릭 방향 규칙 + 정렬 시 1페이지 복귀 + 포커스 복원.
+    for token in (r'colByKey\[key\]\.type === "num" \? "desc" : "asc"',
+                  r"restoreFocus\(focusBack\)"):
+        assert re.search(token, PROFILE_JS) and re.search(token, USAGE_JS), f"규칙 불일치: {token}"
+
+
+def test_p3_profile_reuses_shared_css():
+    """프로필 전용 정렬/페이저 CSS 를 새로 만들지 않는다(두 화면이 갈라지는 첫 단추)."""
+    assert not re.search(r"\.usage-conv-dialog\s+\.usage-rec-(sort|pager)", CSS)
+
+
+def test_p4_profile_behavior_harness_present():
+    assert os.path.exists(os.path.join(TESTS_DIR, "verify_profile_usage_sort_page.mjs"))
+
+
+def test_p5_single_scroll_container_for_sticky():
+    """sticky 열 머리·페이저가 서려면 스크롤러가 하나여야 한다.
+
+    `.usage-conv-tablewrap` 에 overflow 를 주면 그 박스가 sticky 의 containing scroll box 가
+    되는데, 세로로 스크롤하지 않으므로 머리가 붙을 곳이 없다(실 Chromium 실측으로 확인 —
+    `tests/headless/verify_usage_pager_layout.py`, 되돌리면 4건 FAIL).
+    """
+    assert re.search(r"\.usage-conv-tablewrap\s*\{\s*overflow:\s*visible", CSS), \
+        "tablewrap 이 다시 스크롤 박스가 되면 sticky 열 머리가 죽는다"
+    assert re.search(r"\.usage-conv-body,\s*\.usage-conv-content\s*\{[^}]*overflow-x:\s*auto", CSS), \
+        "가로 넘침을 세로 스크롤러가 맡아야 한다(두 화면 모두)"
+
+
+def test_p6_attribute_escape_covers_quotes():
+    """제목은 작은따옴표 속성(title='…')에 들어간다 — `'` 를 남기면 속성 탈출이 된다."""
+    for src, name in ((PROFILE_JS, "profile.js"), (USAGE_JS, "usage.js")):
+        m = re.search(r"replace\(/\[([^\]]+)\]/g", src)
+        assert m, f"{name}: 이스케이프 문자군 미발견"
+        assert "'" in m.group(1) and '"' in m.group(1), f"{name}: 따옴표 미이스케이프 ({m.group(1)})"
+
+
+def test_p7_layout_harness_present():
+    assert os.path.exists(os.path.join(TESTS_DIR, "headless", "verify_usage_pager_layout.py"))

@@ -755,7 +755,13 @@
 .usage-conv-modal .admin-modal-close:hover,
 .usage-conv-dialog .usage-conv-close:hover { background: var(--bg, #f3f4f6); color: var(--text, #111827); }
 .usage-conv-body { max-height: 60vh; overflow-y: auto; }
-.usage-conv-tablewrap { overflow-x: auto; }
+/* ⚠ 여기에 `overflow-x: auto` 를 두면 이 박스가 sticky 열 머리의 containing scroll box 가 된다.
+   그런데 이 박스는 세로로 스크롤하지 않으므로(높이 자동) 머리가 붙을 곳이 없어, 목록을 내리면
+   머리가 함께 사라진다 — 정렬 버튼을 다시 누르려면 맨 위로 돌아가야 한다(적대 리뷰 [P2]).
+   가로 넘침 처리는 **세로 스크롤을 담당하는 바깥 박스**(.usage-conv-body / .usage-conv-content)
+   에 맡겨, 스크롤러를 하나로 만든다 — 그래야 열 머리(top)와 페이저(bottom) sticky 가 함께 선다. */
+.usage-conv-tablewrap { overflow: visible; }
+.usage-conv-body, .usage-conv-content { overflow-x: auto; }
 .usage-conv-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .usage-conv-table th, .usage-conv-table td {
   text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle, #eef2f7); vertical-align: top;
@@ -850,7 +856,9 @@
   border-top: 1px solid var(--border-subtle, #e5e7eb);
   padding: 8px 0 6px;
 }
-.usage-rec-pager-ctl { display: inline-flex; align-items: center; gap: 4px; }
+/* 좁은 폭(작업 화면 프로필 다이얼로그는 max-width 640px, 모바일은 그보다 더 좁다)에서 컨트롤이
+   한 줄로 고정되면 다이얼로그를 넘쳐 잘린다 — 줄바꿈을 허용한다(적대 리뷰 [P2]). */
+.usage-rec-pager-ctl { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .usage-rec-page-btn {
   appearance: none; cursor: pointer; font: inherit; line-height: 1;
   min-width: 26px; padding: 4px 7px; border-radius: var(--r-sm, 4px);
@@ -861,6 +869,9 @@
 .usage-rec-page-btn:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 1px; }
 .usage-rec-pager-pos { padding: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-rec-pager-size { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; white-space: nowrap; }
+/* 페이저 자체도 최소 폭에서 두 줄로 접히도록(정보 ↔ 컨트롤). */
+.usage-rec-pager { min-width: 0; }
+.usage-rec-pager-info { min-width: 0; }
 .usage-rec-pager-size select {
   font: inherit; padding: 3px 6px; border-radius: var(--r-sm, 4px);
   border: 1px solid var(--border-subtle, #e5e7eb); background: var(--surface-1, #fff); color: var(--text, #111827);
