@@ -296,3 +296,20 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 3 | 토큰 헤더 有 → `initialize` | **200** ✅ (인증 경로는 여전히 `ext-tool-mcp` 도달) |
 | 4 | IP 경유 discovery 자기정합 | `resource=https://112.185.196.20/api/ai/mcp` · `AS=https://112.185.196.20` ✅ |
 | 5 | `no upstreams available` | **0건** ✅ |
+
+### Run 2026-08-14 (15차) — 실사용 제보 결함 (Environment: local pytest + 라이브 데이터)
+
+스위트 **271건 PASS**, 신규 회귀 20건.
+
+| 뮤테이션(제보된 결함을 되돌림) | 결과 |
+|---|---|
+| DCR 정규식을 원래대로 좁힘 | **KILLED** |
+| `describe_table` 이 다시 `table` 을 보냄 | **KILLED** |
+| 단일 바인딩 라벨 경로 제거 | **KILLED** |
+| grounding 이 다시 라벨을 scope 로 사용 | **KILLED** |
+| `focus` 인자 제거 | **KILLED** |
+
+라이브 데이터 실측(격리 컨테이너 + 운영 DB 읽기):
+- `product=109` → `labels=['mssql-dk-dev']` · `scope_key=mssql-ba175631e9fc` (전엔 둘 다 빈 값)
+- 질문에 테이블명 없음 → grounding 0자(**설계상 정상** — 이제 사유와 `focus` 안내를 반환)
+- 질문에 테이블명 포함 → grounding **223자** + 도메인 개요

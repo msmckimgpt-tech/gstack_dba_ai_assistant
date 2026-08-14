@@ -1,6 +1,6 @@
 {
-  "total_routes": 247,
-  "api_routes": 246,
+  "total_routes": 248,
+  "api_routes": 247,
   "ordered": [
     {
       "path": "/static",
@@ -30,6 +30,13 @@
     },
     {
       "path": "/ai/connect",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/ai/oauth/callback",
       "methods": [
         "GET"
       ],

@@ -96,12 +96,49 @@ def allowed_datasource_labels(agent_core_mod: Any, mem_conn, product_id: int) ->
     """확정 제품에 바인딩된 datasource 라벨 목록(라우터가 받아들일 값의 정본).
 
     외부 AI 가 넘긴 `datasource` 인자를 검증할 때 이 목록과 대조한다.
+
+    ⚠ `_resolve_product_datasources`(복수형)는 **바인딩이 2개 이상일 때만** 값을 준다
+    (`len(keys) < 2 → []`, 단일은 `_resolve_product_datasource` 단일 경로가 처리). 그래서
+    그것만 쓰면 **대부분의 제품에서 빈 목록**이 되고, 그 결과 (a) 정당한 `datasource` 인자가
+    전부 거부되고 (b) 라벨을 scope 로 쓰는 grounding 이 통째로 비어 버린다(라이브 제보로 발견).
+    라벨의 정본은 바인딩 키 자체이므로 `_product_datasource_keys` 를 1차로 쓴다.
     """
+    keys: list[str] = []
+    try:
+        keys = [str(k).strip().lower() for k in
+                (agent_core_mod._product_datasource_keys(mem_conn, int(product_id)) or []) if k]
+    except Exception:
+        keys = []
+    if keys:
+        return keys
+    # 폴백: 다중 바인딩 해석 결과의 런타임 라벨(키 조회가 막힌 환경 대비).
     try:
         rows = agent_core_mod._resolve_product_datasources(mem_conn, int(product_id)) or []
     except Exception:
         rows = []
     return [str(r.get("_label") or "").strip().lower() for r in rows if r.get("_label")]
+
+
+def datasource_scope_keys(agent_core_mod: Any, mem_conn, product_id: int) -> list[str]:
+    """grounding 조회용 **scope_key** 목록. 라벨과 다른 값이라는 점이 핵심이다.
+
+    `cluster_summaries.scope_key` 는 엔드포인트 해시(`mssql-ba175631e9fc`)이지 바인딩 라벨
+    (`mssql-dk-dev`)이 아니다. 라벨을 그대로 scope 로 넘기면 **항상 0건**이 되고, 그러면
+    grounding 이 조용히 비어 호출자는 "요약이 없다" 로 오해한다(라이브 제보).
+    """
+    try:
+        from shared import datasources as _ds
+    except Exception:
+        return []
+    out: list[str] = []
+    for key in allowed_datasource_labels(agent_core_mod, mem_conn, product_id):
+        try:
+            sk = _ds.scope_key(_ds.resolve(mem_conn, key))
+        except Exception:
+            sk = None
+        if sk and sk not in out:
+            out.append(str(sk))
+    return out
 
 
 def assert_datasource_allowed(requested: Any, labels: list[str]) -> None:

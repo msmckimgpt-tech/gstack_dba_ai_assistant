@@ -312,9 +312,12 @@ def open_task(ctx: McpContext, question: str, product_id: int | None = None) -> 
                  {"question": question, "product_id": product_id}, ctx)
 
 
-@mcp.tool(description="이 task 의 grounding 번들(도메인 개요·클러스터 요약·증거). 먼저 호출하라.")
-def get_task_context(ctx: McpContext, task_id: str) -> str:
-    return _post("/api/ai/tools/get_task_context", {"task_id": task_id}, ctx)
+@mcp.tool(description="이 task 의 grounding 번들(테이블 묶음 요약·도메인 개요). 먼저 호출하고, "
+                      "구조 조회로 테이블 이름을 알아낸 뒤 focus 에 그 이름들을 넣어 다시 부르면 "
+                      "해당 묶음의 요약을 받는다.")
+def get_task_context(ctx: McpContext, task_id: str, focus: str | None = None) -> str:
+    return _post("/api/ai/tools/get_task_context",
+                 {"task_id": task_id, "focus": focus}, ctx)
 
 
 @mcp.tool(description="최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수).")
@@ -337,10 +340,17 @@ def describe_schema(ctx: McpContext, task_id: str, schema_name: str, datasource:
                   "arguments": {"schema_name": schema_name, "datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="테이블의 컬럼·타입·키.")
-def describe_table(ctx: McpContext, task_id: str, table: str, datasource: str | None = None) -> str:
+# ⚠ 인자 이름은 **백엔드(`modules/tools.py`)가 읽는 이름**이어야 한다. `table` 로 보내면
+#   백엔드는 `table_name` 을 찾다 못 찾고 "schema_name과 table_name은 필수" 만 돌려준다 —
+#   무엇을 넣어도 성공할 수 없는 도구가 된다(라이브 제보로 발견). 도구 존재만 검사하던
+#   테스트가 이걸 놓쳤다. 이제 계약 대조 테스트가 두 이름을 맞춘다.
+@mcp.tool(description="테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다.")
+def describe_table(ctx: McpContext, task_id: str, schema_name: str, table: str,
+                   datasource: str | None = None) -> str:
     return _post("/api/ai/tools/describe_table",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
+                                                    "table_name": table,
+                                                    "datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="키워드로 관련 테이블 검색.")
@@ -349,16 +359,22 @@ def search_tables(ctx: McpContext, task_id: str, keyword: str, datasource: str |
                  {"task_id": task_id, "arguments": {"keyword": keyword, "datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="테이블의 외래키 관계.")
-def get_foreign_keys(ctx: McpContext, task_id: str, table: str, datasource: str | None = None) -> str:
+@mcp.tool(description="테이블의 외래키 관계. schema_name·table 둘 다 필요하다.")
+def get_foreign_keys(ctx: McpContext, task_id: str, schema_name: str, table: str,
+                     datasource: str | None = None) -> str:
     return _post("/api/ai/tools/get_foreign_keys",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
+                                                    "table_name": table,
+                                                    "datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="테이블의 인덱스.")
-def get_table_indexes(ctx: McpContext, task_id: str, table: str, datasource: str | None = None) -> str:
+@mcp.tool(description="테이블의 인덱스. schema_name·table 둘 다 필요하다.")
+def get_table_indexes(ctx: McpContext, task_id: str, schema_name: str, table: str,
+                      datasource: str | None = None) -> str:
     return _post("/api/ai/tools/get_table_indexes",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
+                                                    "table_name": table,
+                                                    "datasource": datasource}}, ctx)
 
 
 if __name__ == "__main__":

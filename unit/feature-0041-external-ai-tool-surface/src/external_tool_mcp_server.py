@@ -199,8 +199,10 @@ def open_task(question: str, product_id: int | None = None) -> str:
                  {"question": question, "product_id": product_id})
 
 
-def get_task_context(task_id: str) -> str:
-    return _post("/api/ai/tools/get_task_context", {"task_id": task_id})
+def get_task_context(task_id: str, focus: str | None = None) -> str:
+    # focus: 구조 조회로 테이블 이름을 알아낸 뒤 다시 부를 때 그 이름들을 넣는다.
+    # 이 층은 질문에 테이블 이름이 있을 때만 매칭되므로, 탐색 전 첫 호출은 대개 비어 있다.
+    return _post("/api/ai/tools/get_task_context", {"task_id": task_id, "focus": focus})
 
 
 def submit_answer(task_id: str, answer: str, source_tasks: list[str]) -> str:
@@ -219,9 +221,14 @@ def describe_schema(task_id: str, schema_name: str, datasource: str | None = Non
                   "arguments": {"schema_name": schema_name, "datasource": datasource}})
 
 
-def describe_table(task_id: str, table: str, datasource: str | None = None) -> str:
+def describe_table(task_id: str, schema_name: str, table: str,
+                  datasource: str | None = None) -> str:
+    # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
+    # 어떤 값을 넣어도 "schema_name과 table_name은 필수" 만 돌아온다(라이브 제보).
     return _post("/api/ai/tools/describe_table",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
+                                                    "table_name": table,
+                                                    "datasource": datasource}})
 
 
 def search_tables(task_id: str, keyword: str, datasource: str | None = None) -> str:
@@ -229,28 +236,39 @@ def search_tables(task_id: str, keyword: str, datasource: str | None = None) -> 
                  {"task_id": task_id, "arguments": {"keyword": keyword, "datasource": datasource}})
 
 
-def get_foreign_keys(task_id: str, table: str, datasource: str | None = None) -> str:
+def get_foreign_keys(task_id: str, schema_name: str, table: str,
+                    datasource: str | None = None) -> str:
+    # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
+    # 어떤 값을 넣어도 "schema_name과 table_name은 필수" 만 돌아온다(라이브 제보).
     return _post("/api/ai/tools/get_foreign_keys",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
+                                                    "table_name": table,
+                                                    "datasource": datasource}})
 
 
-def get_table_indexes(task_id: str, table: str, datasource: str | None = None) -> str:
+def get_table_indexes(task_id: str, schema_name: str, table: str,
+                     datasource: str | None = None) -> str:
+    # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
+    # 어떤 값을 넣어도 "schema_name과 table_name은 필수" 만 돌아온다(라이브 제보).
     return _post("/api/ai/tools/get_table_indexes",
-                 {"task_id": task_id, "arguments": {"table": table, "datasource": datasource}})
+                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
+                                                    "table_name": table,
+                                                    "datasource": datasource}})
 
 
 _register("open_task", open_task,
           "작업을 열고 원 질문을 서비스에 기록한다. 반환된 task_id 를 이후 모든 호출에 쓴다.")
 _register("get_task_context", get_task_context,
-          "이 task 의 grounding 번들(관련 스키마 요약·도메인 개요·증거). 먼저 호출하라.")
+          "이 task 의 grounding 번들(테이블 묶음 요약·도메인 개요). 먼저 호출하고, 구조 조회로 "
+          "테이블 이름을 알아낸 뒤 focus 에 그 이름들을 넣어 다시 부르면 해당 묶음 요약을 받는다.")
 _register("submit_answer", submit_answer,
           "최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수).")
 _register("list_schemas", list_schemas, "접근 가능한 스키마(DB) 목록.")
 _register("describe_schema", describe_schema, "스키마의 테이블 목록과 개요.")
-_register("describe_table", describe_table, "테이블의 컬럼·타입·키.")
+_register("describe_table", describe_table, "테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다.")
 _register("search_tables", search_tables, "키워드로 관련 테이블 검색.")
-_register("get_foreign_keys", get_foreign_keys, "테이블의 외래키 관계.")
-_register("get_table_indexes", get_table_indexes, "테이블의 인덱스.")
+_register("get_foreign_keys", get_foreign_keys, "테이블의 외래키 관계. schema_name·table 둘 다 필요하다.")
+_register("get_table_indexes", get_table_indexes, "테이블의 인덱스. schema_name·table 둘 다 필요하다.")
 
 
 if __name__ == "__main__":
