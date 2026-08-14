@@ -554,6 +554,23 @@ _INLINE_TEXT_PATH_CTX: "contextvars.ContextVar[str | None]" = contextvars.Contex
 _ATTACHMENT_TURN_FACTS_CTX: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "attachment_turn_facts_ctx", default=None
 )
+# conv-audit FR-attach-change-signal-client-only (2026-08-14): 서버가 스스로 판정한 "이번 턴에
+# 새로 도착한 첨부" id 집합의 run 단위 캐시. 클라이언트 신호(`_NEW_ATTACHMENT_IDS_CTX`)가 유실돼도
+# 변경-인지 경로(★신규 라벨 · FILE UPDATES diff · ATTACHMENT SET 사실 · 리뷰어 digest)가 꺼지지
+# 않게 하는 코드-권위선이다. `_load_new_attachment_ids()` 가 run 당 한 번 계산해 여기 담고, 이후
+# 호출은 재조회 없이 같은 값을 본다 — 소비자마다 DB 를 다시 읽으면 부분 실패 시 서로 다른 집합을
+# 말하게 되어 "단일 사실" 전제가 깨진다(_ATTACHMENT_TURN_FACTS_CTX 와 동일 규율).
+# `None` = 미계산, `frozenset()` = 계산했고 파생 없음(재계산 금지).
+_SERVER_NEW_ATTACHMENT_IDS_CTX: "contextvars.ContextVar[frozenset | None]" = contextvars.ContextVar(
+    "server_new_attachment_ids_ctx", default=None
+)
+# 위 파생의 기준선(직전 턴)을 찾으려면 **현재** turn 의 ask job 을 식별해야 한다. 워커는 그 행을
+# claim 하며 id 를 이미 알고 있으므로 그 값을 그대로 받는다 — 런타임 읽기로 자기 행을 되찾지
+# 않는다(§18.8 codex [P1]: 그 읽기는 RO 경로라 방금 만든 자기 행이 아직 안 보이면 기준선을 잃고
+# 봉인이 조용히 꺼진다). 값이 없으면(web inproc·CLI·테스트) 파생을 건너뛴다 — 종전 동작.
+_ASK_JOB_ID_CTX: "contextvars.ContextVar[int | None]" = contextvars.ContextVar(
+    "ask_job_id_ctx", default=None
+)
 # FR-attach-delivery-truncated-by-output-cap (conversation_audit 2026-08-06): `update_attachment`
 # 도구가 첨부 새 버전을 만들려면 **요청 계정**이 필요하다(materialize 의 소유권 가드가 AccountId 기준).
 # 첨부 id 채널과 동일하게 run 경계 contextvar 로 전달한다 — 도구는 프로세스 전역 상태를 읽지 않는다
@@ -1116,23 +1133,105 @@ def update_attachment_content(
     }
 
 
+def _derive_server_new_attachment_ids() -> frozenset[int]:
+    """이번 턴에 새로 도착한 첨부를 **서버 기록만으로** 판정한다 (클라이언트 신호 유실 봉인).
+
+    conv-audit FR-attach-change-signal-client-only (2026-08-14, 라이브 실측): 변경-인지 경로 4종이
+    전부 `new_attachment_ids` 하나에 걸려 있는데 그 값은 브라우저 in-memory pill 상태에서 나온다.
+    대화 전환·첨부 패널 조작·새로고침이면 목록이 서버에서 재수화되며 표식이 `source:"session"` 으로
+    덮이고(composer.js), 비-브라우저 호출은 애초에 비어 있다. 그 순간 방금 v2 로 갱신한 파일이
+    "◆세션(이전 세션에서 첨부)" 로 **오라벨**되고, 서버가 이미 계산해 저장해 둔 v1→v2 unified diff 가
+    프롬프트에서 통째로 빠진다(60일 실측: 이번-턴 업로드가 있는데 신호가 빈 job 14건 / 14 대화).
+
+    판정식 — 스코프 안 첨부 중 다음을 모두 만족:
+      (a) id 가 **직전 턴 전달분의 최대 id** 보다 크다. 첨부 id 는 단조 증가라 "직전 턴 이후 생성"과
+          동치이며, 저장 **시각**을 쓰지 않으므로 시간축 왜곡(FR-attachment-created-at-tz-skew-9h)에
+          영향받지 않는다. 공유창이 넓어져 **예전** 파일이 이제 보이게 된 경우는 id 가 낮아 자동
+          제외된다 — 그건 "이번에 올라왔다" 가 아니라 "이제 보인다" 이므로 신규라 말하면 거짓이다.
+      (b) 업로더가 사용자다. assistant 수정본은 사용자 재업로드가 아니다(🔄 표식이 그 축을 따로 말한다).
+
+    **스코프를 넓히지 않는다** — `_load_scoped_attachment_rows()` 가 이미 공유창·발신자 게이트를
+    통과시킨 행만 돌려주므로 이 함수는 그 부분집합에 라벨을 붙일 뿐이다(보안 경계 불변).
+    판정 근거가 없으면(첫 턴·job 행 부재·PG 미가용) 빈 집합 — 종전 동작(클라이언트 신호 단독)이다.
+    """
+    from modules.runtime_backend import _read_ask_queue_pg
+
+    job_id = _ASK_JOB_ID_CTX.get() or 0
+    if not job_id:
+        return frozenset()
+    # 기준선은 **같은 계정의** 직전 턴이어야 한다 — 첨부 스코프가 계정별로 해소되므로 다른
+    # 멤버의 스코프와 id 최대값을 비교하면 내가 아무것도 올리지 않은 턴에도 내 옛 파일이
+    # 신규가 된다(§18.8 codex [P1]). 계정을 모르면 파생하지 않는다(fail-soft).
+    account_id = active_account_id()
+    if not account_id:
+        return frozenset()
+    try:
+        import shared.config as _cfg
+        conversation_id = str(_cfg.get_active_conversation_id() or "")
+    except Exception:
+        conversation_id = ""
+    if not conversation_id:
+        return frozenset()
+
+    # 큐 조회는 히스토리 읽기 백엔드 토글과 분리한다 — 그 토글로 봉인이 꺼지면 안 된다.
+    prev_ids = _read_ask_queue_pg(
+        "load_prev_turn_attachment_ids", conversation_id=conversation_id,
+        job_id=int(job_id), account_id=int(account_id),
+    )
+    # None = 판정 근거 없음(첫 턴 / legacy payload / 읽기 실패) → 파생하지 않는다.
+    # []   = 직전 턴은 있었고 그때 첨부가 0건 → 이번 턴 스코프의 사용자 첨부는 전부 신규다.
+    if prev_ids is None:
+        return frozenset()
+    prev_max = max((int(i) for i in prev_ids), default=0)
+
+    derived: set[int] = set()
+    try:
+        for row in _load_scoped_attachment_rows():
+            aid = int(row.get("id") or 0)
+            if aid <= prev_max:
+                continue
+            if str(row.get("created_by_role") or "user") != "user":
+                continue
+            derived.add(aid)
+    except Exception:
+        return frozenset()
+    return frozenset(derived)
+
+
 def _load_new_attachment_ids() -> set[int]:
-    """env NEW_ATTACHMENT_IDS (comma-separated) 를 읽어 이번 요청에 새로 첨부된 파일 ID set 반환.
+    """이번 요청에 새로 첨부/갱신된 파일 ID set.
+
+    두 원천의 **합집합**이다:
+      ① 클라이언트 신호(`NEW_ATTACHMENT_IDS`) — 프론트가 이번 턴에 올린 것으로 표시한 pill.
+      ② 서버 파생(`_derive_server_new_attachment_ids`) — 직전 턴 전달 스코프 대비 새로 나타난 첨부.
+    ①은 유실될 수 있고(대화 전환·새로고침·비-브라우저 호출) ②는 판정 근거가 없을 수 있어(첫 턴),
+    한쪽이 비어도 다른 쪽이 사실을 지킨다. 둘 다 비면 **빈 set** 이고, 그때 소비자들은 종전대로
+    침묵한다 — 빈 값을 "첨부 없음" 으로 단정하지 않는 계약은 그대로다(§18.8 backend/qa [P1]).
 
     agent_core 가 LLM 컨텍스트에서 신규 vs 세션 파일을 구분 라벨링할 때 사용.
     부재 / parse 실패 → 빈 set (graceful failure).
     """
-    raw = _ctx_or_env(_NEW_ATTACHMENT_IDS_CTX, "NEW_ATTACHMENT_IDS").strip()
-    if not raw:
-        return set()
     result: set[int] = set()
-    for x in raw.split(","):
-        x = x.strip()
-        if x.lstrip("-").isdigit():
-            v = int(x)
-            if v > 0:
-                result.add(v)
-    return result
+    raw = _ctx_or_env(_NEW_ATTACHMENT_IDS_CTX, "NEW_ATTACHMENT_IDS").strip()
+    if raw:
+        for x in raw.split(","):
+            x = x.strip()
+            if x.lstrip("-").isdigit():
+                v = int(x)
+                if v > 0:
+                    result.add(v)
+    # 서버 파생은 run 당 1회만 계산해 캐시한다(소비자 3곳이 같은 집합을 봐야 한다).
+    cached = _SERVER_NEW_ATTACHMENT_IDS_CTX.get()
+    if cached is None:
+        try:
+            cached = _derive_server_new_attachment_ids()
+        except Exception:
+            cached = frozenset()
+        try:
+            _SERVER_NEW_ATTACHMENT_IDS_CTX.set(cached)
+        except Exception:
+            pass
+    return result | set(cached)
 
 
 def _load_attachment_inline_images() -> list[dict[str, Any]]:
@@ -6265,6 +6364,7 @@ def run_agent(
     dedup_user_message_since=None,
     resume_allowed: bool = False,
     resume_hint: bool = False,
+    ask_job_id: int | None = None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
@@ -6318,6 +6418,11 @@ def run_agent(
         _ATTACHMENT_UPDATES_DONE_CTX.set(0),
         _LLM_LAST_FINISH_REASON_CTX.set(None),
         _ATTACHMENT_DELIVERED_IDS_CTX.set(()),
+        # FR-attach-change-signal-client-only: 서버 파생의 기준선 식별자와 그 결과 캐시.
+        # 캐시는 run 마다 None(미계산)에서 시작해야 한다 — 워커 스레드가 재사용될 때 이전 run 의
+        # 파생 집합이 남으면 **다른 대화의 첨부를 '이번 턴 신규'로** 라벨하게 된다.
+        _ASK_JOB_ID_CTX.set(int(ask_job_id) if ask_job_id else None),
+        _SERVER_NEW_ATTACHMENT_IDS_CTX.set(None),
     )
     try:
         return _run_agent_core(
@@ -6367,6 +6472,8 @@ def run_agent(
         _ATTACHMENT_UPDATES_DONE_CTX.reset(_att_tokens[6])
         _LLM_LAST_FINISH_REASON_CTX.reset(_att_tokens[7])
         _ATTACHMENT_DELIVERED_IDS_CTX.reset(_att_tokens[8])
+        _ASK_JOB_ID_CTX.reset(_att_tokens[9])
+        _SERVER_NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[10])
 
 
 # owner-answer recall/display 봉인 sentinel: recall 하한 무제한(전체 문맥) 답변을 어떤 floor 보다

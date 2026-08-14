@@ -323,8 +323,11 @@ def test_execute_job_passes_dedup_since_only_on_retry(monkeypatch):
 
     import sys
     monkeypatch.setitem(sys.modules, "agent_core", _FakeAgentCore)
+    # `**_` — 이 더블은 seam 의 **반환 계약**만 고정한다. 인자를 고정 arity 로 받으면 호출부에
+    # 인자가 하나 늘 때마다(예: conv-audit `ask_job_id`) 이 테스트가 그 변화와 무관한 이유로
+    # TypeError 를 낸다 — 더블이 계약이 아니라 서명을 잠그는 셈이라 무관한 회귀 신호가 된다.
     monkeypatch.setattr(ask, "_payload_to_kwargs",
-                        lambda payload, account_id, run_id: {"user_message": "q"})
+                        lambda payload, account_id, run_id, **_: {"user_message": "q"})
     monkeypatch.setattr(ask, "_cleanup_inline_paths", lambda payload: None)
     monkeypatch.setattr(ask, "_postprocess_attachment_blocks",
                         lambda cid, aid, result, run_id: None)

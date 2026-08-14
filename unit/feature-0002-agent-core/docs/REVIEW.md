@@ -1922,3 +1922,82 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   것이다(probe 가 INFO 를 켰다). 계측을 설계할 때는 **그 계측이 운영 설정에서 실제로 도달하는지**
   까지 확인해야 한다 — `LRN-20260812-verify-the-measurement-not-just-the-code` 와 같은 부류다.
 - Human Approval Needed: 아니오 (doc-only).
+
+## REV-20260814T183000-attach-change-signal-server-authority [CODEX:adversarial-backend-qa-security] — 첨부 변경-인지 신호의 서버 권위 봉인
+
+- Related TASK: `feature-0002-agent-core` / TASK-20260814T183000 (conv-audit `FR-attach-change-signal-client-only`)
+- Trigger: §18.8 dispatch 표 — `query`/`쿼리`(신규 PG 조회) + `schema`(payload 계약) → **backend, qa**.
+  코어 LLM 프롬프트 합성 경로 + 공유창/발신자 스코프 인접이라 **security** 추가. 세션 지침이
+  Agent tool 사용을 요청 없이 금지하므로 §18.8.2 의 **제약 없는 채널 우선** 규칙에 따라
+  `codex review --uncommitted`(§18.8.1 대안 경로, check #9 accepted)로 집행.
+- Timestamp: 2026-08-14T19:55:00+09:00
+- Verdict: **PASS** (최종 라운드 P1 0건)
+- Artifact: 본 entry (codex CLI 비대화 실행 — 출력 전문은 세션 로그)
+- Human Approval Needed: 아니오 (구현 범위는 2026-08-14 AskUserQuestion 으로 이미 승인 —
+  "서버 + 프론트 표식 보존". PR·배포는 Major 라 별도 confirm)
+
+### 라운드별 적발 · 처리 (총 7 라운드 · P1 5 · P2 7 → **최종 라운드 P1 0**)
+
+- **R1 [P1] 기준선을 primary 에서 읽어라** — 현재 job 을 `run_id` 로 되찾는 초안은 `_read_runtime_pg`
+  (RO·비동기 replica 가능) 경로라 방금 claim 한 자기 행이 안 보이면 기준선을 잃고 **봉인이 조용히
+  꺼진다**. 봉인이 가장 필요한 순간에 무력화되는 구조. → 워커가 이미 아는 job id 를 직접 전달
+  (`ask.py::_payload_to_kwargs(ask_job_id=…)` → `_ASK_JOB_ID_CTX`). **수정**
+- **R1 [P2] unknown 을 known-empty 로 뭉개지 마라** — `COALESCE(payload->'attachment_ids','[]')` 가
+  legacy·부분 payload 의 **부재**를 "직전 턴 첨부 0건" 이라는 양성 증거로 승격 → `prev_max=0` →
+  전량 신규 오라벨. → `COALESCE` 제거, unknown 은 `None`. **수정**
+- **R1 [P2] `run_id` 조회는 인덱스가 없다** — 완료 job 이 보존되는 테이블에서 매 턴 seq scan 누적.
+  → 대화 인덱스 + PK 범위 조회. **수정**
+- **R2 [P1] lazy-create 첨부가 강등되지 않는다** — 새 대화의 staged 첨부는 early-cid 버킷으로 옮겨
+  가는데 강등이 sentinel 키만 봐서 그 파일이 `new` 로 남는다. 종전엔 재수화가 전부 `session` 으로
+  덮어 가려졌지만, 이번 보존과 겹치면 **영구 ★신규**(매 턴 재전송 + 낡은 diff 재주입). → 강등 키를
+  서버가 응답한 `payload.conversation_id` 로. **수정** (보존 P1 과 강등 P2 는 *같은 키* 위에서만 쌍)
+- **R3 [P1] 그룹에서 발신자별 기준선은 비교 불가** — 첨부 스코프는 계정별로 해소되는데 직전 job 이
+  다른 멤버의 것이면 그 스코프와 내 스코프를 id 최대값으로 대조하게 된다. 내 옛 파일 id 가 그 멤버
+  최대 id 보다 크기만 하면 **내가 아무것도 올리지 않은 턴에도** 그 파일이 신규가 되어 낡은 diff 가
+  턴마다 재주입. → 기준선을 같은 `account_id` 로 좁히고, 없으면 파생 생략. **수정**
+- **R4 [P1] 응답 시점의 활성 대화를 강등하지 마라** — 내가 R2 수정에 넣은 `state.activeConversationId`
+  가 역회귀였다: A 의 응답을 기다리는 사이 B 로 옮겨 올린 파일의 ★신규를 A 의 응답이 지운다.
+  → 이 요청에 **고정된** 키만(`payload.conversation_id`/`askKey`/`targetConvId`). **수정**
+- **R4 [P2] 완료되지 않은 턴을 기준선으로 쓰지 마라** — `error`/진행 중 job 의 payload 는 "그 첨부가
+  전달됐다" 는 증거가 아니다. 기준선이 되면 그 id 들이 다음 턴에서 제외돼 마찰이 재현. →
+  `status = 'done'` 제한. **수정**
+- **R5 [P1] 전송 스냅샷의 id 만 강등하라** — 버킷의 `new` 를 통째로 내리면 응답 대기 중 같은 대화에
+  새로 올린(=아직 안 보낸) 파일까지 강등돼 그 파일에서 마찰이 되살아난다. → `askBody.
+  new_attachment_ids` 에 실린 id 로 한정. **수정**
+- **R6 [P1] 기준선 조회를 읽기-백엔드 토글에서 분리하라** — `_read_runtime_pg` 는
+  `AGENT_RUNTIME_READ_BACKEND != "postgres"` 면 연결 전에 `None` 을 돌려준다. ask 큐는 **PG 에만**
+  있는데(MySQL 대응물 없음) 그 토글에 매달려 있어, *대화 히스토리* 읽기 경로를 MySQL 로 돌리는
+  설정 변경 하나로 이 봉인이 조용히 꺼진다. → 토글을 보지 않는 `_read_ask_queue_pg` 로 분리. **수정**
+  *(라이브 실측: web·ask-worker 모두 `AGENT_RUNTIME_READ_BACKEND=postgres` 라 현재 동작 차이는 없다
+  — 이 수정은 설정이 정확성 봉인을 끄지 못하게 하는 잠금이다. 지적 그대로 "기본값이 mysql 이라
+  라이브에서 이미 꺼져 있다" 는 아니었고, 그 부분은 실측으로 반증했다.)*
+- **R7 — P1 0건.** 남은 지적은 이미 문서화한 공유창 잔여 오차 재지적(수렴 신호) → §18.8.1 게이트 통과.
+
+### 수용하되 고치지 않은 지적 (근거)
+
+- **R5 [P2] 서버 파생을 "현재 계정이 올린 행" 으로 제한하라** — **채택하지 않음**. 그룹에서 팀원이
+  방금 올린 갱신본은 이번 턴 컨텍스트에 실제로 새로 도착한 것이고, 그 diff 를 보여주는 것이 이
+  봉인의 목적(변경 미인지 해소)이다. 제한하면 "팀원이 올린 수정본 리뷰해줘" 가 정확히 봉인 대상
+  마찰로 되돌아간다. 기준선은 이미 R3 로 같은 계정으로 좁혀 **비교 가능성**은 확보돼 있고, 파생
+  대상은 `_load_scoped_attachment_rows()` 가 게이트를 통과시킨 행의 부분집합이라 보안 경계는 불변.
+- **R5 [P2] payload 에 스코프 계약 버전 마커를 넣어라** — **채택하지 않음**(범위 확대). 계약 도입
+  이전 대화의 마지막 done job 이 `[]` 면 첫 턴에 기존 첨부가 과표시될 수 있으나, ① 방향이 **과표시**
+  (봉인 대상인 미표시보다 덜 해롭다) ② 한 턴 뒤 자기 치유 ③ payload 스키마 변경은 이 cycle 승인
+  범위 밖. FUNCTION.md 한계로 명시하고 다음 audit 이 측정한다.
+- **R3 [P2] 공유창 확대로 이제 보이는 옛 파일** — id 단조 판정의 잔여 오차로 **수용**. 시각으로
+  교정하려면 두 DB(첨부=agent memory / job=runtime PG) 타임스탬프를 비교해야 하고 그것이 정확히
+  `FR-attachment-created-at-tz-skew-9h` 가 물린 축이다. tz 비의존을 지키고 오차 방향(과표시)을
+  수용했다 — FUNCTION.md AC-2 에 명시.
+
+### 검증 (수치는 전부 실행 결과)
+
+- 신규/갱신 테스트 **24 PASS**(서버 17 · 프론트 구조 가드 7) · 전체 스위트 **4,696 passed / 1 failed
+  / 4 skipped (4,701)** — 잔여 1건은 `test_oauth_exhaustion_gate` 의 `chattr` 부재로, pristine main
+  에서도 동일 재현되는 **환경 산물**(변경 귀책 아님) · ruff clean.
+- **뮤테이션 역검증**: 강등 키에서 effective 키를 제거 → 구조 가드 **KILLED**.
+- **PB-0008 라이브**(격리 컨테이너, 라이브 무접촉): 1턴 `[1203]` → 2턴 `[]` → 전환 왕복 후 `[1204]`.
+  기록: `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260814T183000-attach-change-signal.md`.
+- **정직 표기**: 실측 중 "강등이 아예 안 된다" 고 한 번 **오독**했다 — 직전 턴 완료 전에 다음 턴을
+  보낸 타이밍 탓이었고, 완료 대기 후 재측정해 정정했다. 그 함정을 코드 주석·TEST 기록에 남겼다.
+- 코드/테스트가 증명하는 것은 "봉인이 의도대로 동작한다" 까지다. **실제 대화에서 변경 미인지가
+  사라졌는지**는 배포 후 다음 audit 의 corroboration 재측정 대상이다(§11b).

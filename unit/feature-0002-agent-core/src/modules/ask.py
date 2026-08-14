@@ -221,7 +221,9 @@ def _install_signal_handlers(worker_id: str = "", drain_sec: int = 0) -> None:
 # ──────────────────────────────────────────────────────────────────────────
 # payload → run_agent kwargs
 # ──────────────────────────────────────────────────────────────────────────
-def _payload_to_kwargs(payload: dict[str, Any], account_id: int, run_id: str) -> dict[str, Any]:
+def _payload_to_kwargs(
+    payload: dict[str, Any], account_id: int, run_id: str, ask_job_id: int | None = None,
+) -> dict[str, Any]:
     """ask_jobs.payload(jsonb) 를 run_agent kwargs 로 복원. conv_file 은 account_id 에서
     재계산, output_mode 는 'json' 고정, temperature 는 루프가 내부 재계산(미전달)."""
     return {
@@ -241,6 +243,10 @@ def _payload_to_kwargs(payload: dict[str, Any], account_id: int, run_id: str) ->
         "text_inline_path": payload.get("text_inline_path"),
         "reasoning_level": payload.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
         "run_id": run_id,
+        # conv-audit FR-attach-change-signal-client-only: 첨부 "이번 턴 신규" 판정의 기준선(직전 turn)
+        # 을 찾으려면 현재 job 을 식별해야 한다. 워커는 claim 하며 id 를 이미 알고 있으므로 그대로
+        # 넘긴다 — agent_core 가 런타임 읽기로 자기 행을 되찾으면 RO 지연에서 기준선을 잃는다.
+        "ask_job_id": ask_job_id,
         # conv-audit 2차: `resume_hint` 는 **재큐된 job 에만** 심겨 있다 — 재개 run 이 누적 도구
         # 결과를 이어쓰도록 지시받는다. `resume_allowed` 는 attempts 여유에 달렸으므로 호출측
         # (_process_job)이 주입한다.
@@ -728,7 +734,7 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
     result: Optional[dict[str, Any]] = None
     raised = False
     try:
-        kwargs = _payload_to_kwargs(payload, account_id, run_id)
+        kwargs = _payload_to_kwargs(payload, account_id, run_id, ask_job_id=job_id)
         kwargs["queued_ms_seed"] = queued_ms
         # 재시도(requeue 후 재claim)면 이전 attempt 가 이미 사용자 메시지를 저장했을 수 있다.
         # job.created_at 이후 구간만 대조해 중복 저장을 막는다(conv-audit RC-2). 첫 attempt 는
