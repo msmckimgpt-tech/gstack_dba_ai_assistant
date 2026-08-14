@@ -465,17 +465,36 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
     except Exception as exc:
         return app._json_error(f"storage 모듈 import 실패: {exc}", 500)
 
-    raw_from = (request.query_params.get("from_version") or "").strip()
-    raw_to = (request.query_params.get("to_version") or "").strip()
-    if not raw_from or not raw_to:
-        return app._json_error("from_version / to_version 이 필요합니다.", 400)
-    try:
-        from_version = int(raw_from)
-        to_version = int(raw_to)
-    except (TypeError, ValueError):
-        return app._json_error("from_version / to_version 은 정수여야 합니다.", 400)
-    if from_version == to_version:
-        return app._json_error("서로 다른 두 버전을 지정해야 합니다.", 400)
+    # REQ-20260814-attach-version-tree-ui: 비교 축이 둘이다.
+    #   ① **계보 내** — `from_version`/`to_version`(같은 체인의 버전 번호, 종전 계약).
+    #   ② **계보 간(시간순)** — `from_attachment_id`/`to_attachment_id`. 작성 주체별로 계보가
+    #      갈린 뒤로는 "사람이 올린 최신" 과 "AI 가 만든 최신" 이 **서로 다른 체인**에 있어,
+    #      버전 번호만으로는 지목할 수 없다(양쪽 다 v1 일 수 있다).
+    raw_from_id = (request.query_params.get("from_attachment_id") or "").strip()
+    raw_to_id = (request.query_params.get("to_attachment_id") or "").strip()
+    cross_lineage = bool(raw_from_id and raw_to_id)
+    from_version = to_version = 0
+    from_att_id = to_att_id = 0
+    if cross_lineage:
+        try:
+            from_att_id = int(raw_from_id)
+            to_att_id = int(raw_to_id)
+        except (TypeError, ValueError):
+            return app._json_error("from_attachment_id / to_attachment_id 는 정수여야 합니다.", 400)
+        if from_att_id == to_att_id:
+            return app._json_error("서로 다른 두 첨부를 지정해야 합니다.", 400)
+    else:
+        raw_from = (request.query_params.get("from_version") or "").strip()
+        raw_to = (request.query_params.get("to_version") or "").strip()
+        if not raw_from or not raw_to:
+            return app._json_error("from_version / to_version 이 필요합니다.", 400)
+        try:
+            from_version = int(raw_from)
+            to_version = int(raw_to)
+        except (TypeError, ValueError):
+            return app._json_error("from_version / to_version 은 정수여야 합니다.", 400)
+        if from_version == to_version:
+            return app._json_error("서로 다른 두 버전을 지정해야 합니다.", 400)
 
     raw_ctx = (request.query_params.get("context") or "").strip().lower()
     if raw_ctx in ("full", "all"):
@@ -508,12 +527,39 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
             return app._json_error("승인 대기 계정은 첨부 본문을 비교할 수 없습니다.", 403)
 
         root_id = int(base.get("RootAttachmentId") or 0) or int(base.get("Id") or 0)
-        chain = app._load_attachment_version_chain(conn, root_id, scope_row=base)
-        by_version = {int(r.get("VersionNumber") or 1): r for r in chain}
-        left = by_version.get(from_version)
-        right = by_version.get(to_version)
+        if cross_lineage:
+            # 계보 간 비교 — 체인 밖의 첨부를 지목하므로 **각각을 독립으로 인가**한다.
+            # 기준 첨부의 게이트를 통과했다는 사실이 다른 계보의 접근권을 함의하지 않는다.
+            left = app._load_attachment_row(conn, from_att_id)
+            right = app._load_attachment_row(conn, to_att_id)
+            for _side in (left, right):
+                if not app._account_can_access_attachment(
+                    conn, account, _side,
+                    "conversation.attachment.read.own",
+                    "conversation.attachment.read.any",
+                ):
+                    return app._json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+            # 같은 대화 안에서만. 대화가 다르면 이 화면이 비교할 대상이 아니고,
+            # 임의 첨부 두 개의 본문을 나란히 여는 범용 경로가 되어 버린다.
+            _base_conv = str(base.get("ConversationId") or "")
+            if (str(left.get("ConversationId") or "") != _base_conv
+                    or str(right.get("ConversationId") or "") != _base_conv):
+                return app._json_error("같은 대화의 첨부끼리만 비교할 수 있습니다.", 404)
+            # 같은 파일명(= 같은 논리 파일의 다른 계보)만. 다른 파일 비교는 이 화면의 의미가 아니다.
+            if str(left.get("OriginalFilename") or "") != str(right.get("OriginalFilename") or ""):
+                return app._json_error("같은 파일의 서로 다른 계보만 비교할 수 있습니다.", 400)
+        else:
+            chain = app._load_attachment_version_chain(conn, root_id, scope_row=base)
+            by_version = {int(r.get("VersionNumber") or 1): r for r in chain}
+            left = by_version.get(from_version)
+            right = by_version.get(to_version)
         if not left or not right:
             return app._json_error("지정한 버전을 찾을 수 없습니다.", 404)
+        # §18.8 적대 리뷰 [P2]: 계보 간 경로는 version 파라미터가 0 이라, 아래 diff 헤더 생성이
+        # 양쪽을 `v0` 로 찍는다. 실제 행의 VersionNumber 로 되돌려 헤더가 사실을 말하게 한다.
+        if cross_lineage:
+            from_version = int(left.get("VersionNumber") or 1)
+            to_version = int(right.get("VersionNumber") or 1)
 
         payload: dict[str, Any] = {
             "root_attachment_id": root_id,

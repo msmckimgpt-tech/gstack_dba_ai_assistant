@@ -2974,13 +2974,15 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   margin-left: auto;
   white-space: nowrap;
 }
-.attach-diff-viewtoggle {
+.attach-diff-viewtoggle,
+.attach-diff-axistoggle {
   display: inline-flex;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   overflow: hidden;
 }
-.attach-diff-mode {
+.attach-diff-mode,
+.attach-diff-axis {
   border: none;
   background: var(--surface);
   color: var(--text-2);
@@ -2989,9 +2991,14 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   font-size: 11.5px;
   padding: 4px 10px;
 }
-.attach-diff-mode + .attach-diff-mode { border-left: 1px solid var(--border); }
-.attach-diff-mode:hover { background: var(--surface-2); }
-.attach-diff-mode.is-active {
+.attach-diff-mode + .attach-diff-mode,
+.attach-diff-axis + .attach-diff-axis { border-left: 1px solid var(--border); }
+.attach-diff-mode:hover,
+.attach-diff-axis:hover { background: var(--surface-2); }
+/* REQ-20260814-attach-version-tree-ui: 비교 축 토글은 보기 방식 토글과 **같은 위젯**이다
+   (성격이 같은 배타 선택). 스타일을 따로 두면 같은 줄에 두 가지 관용구가 생긴다. */
+.attach-diff-mode.is-active,
+.attach-diff-axis.is-active {
   background: var(--primary-soft, #eff6ff);
   color: var(--primary-dark, #1d4ed8);
   font-weight: 600;

@@ -1135,7 +1135,7 @@ export async function _downloadAttachmentById(attId, filename, btn, opts = {}) {
 // REQ-20260806-attach-manage: 같은 행에 그 버전만 삭제하는 버튼(`scope=version`)도 둔다.
 // 두 기능이 같은 행을 공유하므로 행은 2줄 구조(head=이름 / foot=역할+액션)를 쓴다 —
 // 한 줄에 몰면 패널 최소 폭에서 파일명이 2자로 남는다(§18.8 design 실측).
-function _renderAttachmentVersionsBox(box, versions, attachmentId) {
+function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
   box.innerHTML = "";
   if (!Array.isArray(versions) || !versions.length) {
     box.innerHTML = `<div class="attach-list-versions-loading">버전 이력이 없습니다.</div>`;
@@ -1177,7 +1177,7 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
       : `v${oldestNum}(최초) ↔ v${latestNum}(최신) 비교 — 다른 쌍은 모달에서 고릅니다`;
     cmpBtn.addEventListener("click", () => openAttachmentDiffModal(
       attachmentId, versions,
-      oldestNum === latestNum ? undefined : { from: oldestNum, to: latestNum }));
+      oldestNum === latestNum ? undefined : { from: oldestNum, to: latestNum }, lineages));
     head.appendChild(cmpBtn);
     box.appendChild(head);
   }
@@ -1237,7 +1237,7 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
       cmp.setAttribute("aria-label", `v${vnum} 을 최신 버전과 비교`);
       cmp.textContent = "⇄";
       cmp.addEventListener("click", () =>
-        openAttachmentDiffModal(attachmentId, versions, { from: vnum, to: latestNum }));
+        openAttachmentDiffModal(attachmentId, versions, { from: vnum, to: latestNum }, lineages));
       acts.appendChild(cmp);
     }
     const dl = document.createElement("button");
@@ -1842,7 +1842,10 @@ async function _loadConversationAttachmentList(convId) {
           entry.appendChild(versionsBox);
           try {
             const vresp = await apiFetch(`/api/attachments/${encodeURIComponent(a.id)}/versions`);
-            _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : [], a.id);
+            // REQ-20260814-attach-version-tree-ui: 계보 목록도 함께 넘겨 버전 박스의 비교
+            // 버튼이 말풍선 칩 경로와 **같은 축 토글**을 갖게 한다(한쪽에만 있으면 비대칭).
+            _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : [], a.id,
+              Array.isArray(vresp?.lineages) ? vresp.lineages : []);
             verToggleBtn.textContent = `버전 ${verCount}개 ▴`;
           } catch (e) {
             versionsBox.innerHTML = `<div class="attach-list-versions-loading">버전 이력을 불러올 수 없습니다.</div>`;

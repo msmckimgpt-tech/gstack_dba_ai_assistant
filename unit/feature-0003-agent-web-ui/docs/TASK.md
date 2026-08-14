@@ -10906,7 +10906,18 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       ④ **표시 회귀**(사용자 가시) — 저장만 UTC 로 옮기면 화면 시각이 9시간 이르게 뜬다 →
          전송에 `Z` 명시(`_iso_utc_z`) + 프론트 시간대 주석을 새 계약으로 갱신.
 - [x] `tests/test_attach_createdat_utc.py` **12 PASS** · 전체 스위트 회귀 확인 · ESM 구문 검사 PASS.
-- [ ] verify-completion · 배포 후 실측(모순 234건 → 0 · MySQL↔PG 미러 일치).
+- [x] verify-completion **18/18 PASS**.
+- [x] **배포 후 실측(2026-08-14, main `ca95bae6`) — 4축 전부 확인**:
+      ① 모순 행 **234 → 0**(`CreatedAt>SupersededAt` 97→0 · `CreatedAt>DeletedAt` 137→0)
+      ② 차감 폭이 정확히 **9시간**(최대 생성시각 `08-13 18:23:53` → `09:23:53`) — **이중 차감 없음**.
+         적대 리뷰가 지적한 다중 replica 동시 startup 경쟁을 선점 로직이 실제로 막았다는 증거다
+         (이중 차감이었다면 18시간 밀렸을 것).
+      ③ **MySQL↔PG 미러 일치**(양쪽 `2026-08-13 09:23:53.277616`, PG 미래 행 0).
+      ④ 전송 계약 — 배포본 `_serialize_attachment_for_api` 실측 `'2026-08-13T09:23:53.277616Z'`.
+         DB `09:23:53 UTC` → 브라우저가 `Z` 를 읽어 KST 18:23 으로 표시 = 업로드 시각과 일치.
+      마커 2개(`attach-createdat-utc-v1`, `-pg`) 기록 · 컬럼 DEFAULT `utc_timestamp(6)` 확인.
+- [ ] **미실측(정직)**: 실브라우저 화면 칩(PB-0008). API 전송값이 정확하고 프론트 파서는
+      `new Date()` 단순 파싱이라 논리적으로 정합하나, 화면 캡처 실측은 하지 않았다.
 
 ### 9. Requested Scope
 
@@ -10919,3 +10930,52 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] 프로필 판 PB-0008 실측(정렬·페이지·키보드·sticky 열 머리·페이저 가시성) + 시각 증거 첨부.
 - [x] 관리 콘솔 판 재확인 — 스크롤러 단일화 영향(sticky 유지) + 가로 넘침 무회귀.
 - [x] 미검증 명시(콘솔 에러 미수집 · 좁은 폭은 헤드리스 계측으로 갈음).
+## 20260814T0600-attach-version-tree-ui — 버전 비교의 축 토글(계보 안 / 계보 간 시간순) (Major §12.3)
+
+- **출처**: 사용자 결정(2026-08-14) — 남은 판단 3건 중 ②. 선행 `20260814T0100-attach-version-branching`
+  에서 데이터·API 축은 실었고 화면만 남아 있었다.
+
+### 조치
+
+- [x] **백엔드** — `/api/attachments/{id}/diff` 가 `from_attachment_id`/`to_attachment_id` 를 받아
+      **계보 간 비교**를 지원한다. 계보가 갈린 뒤로는 "사람 최신" 과 "AI 최신" 이 서로 다른 체인에
+      있어 버전 번호로 지목할 수 없다(양쪽 다 v1 일 수 있다). 기존 `from_version`/`to_version`
+      축은 불변.
+      - **인가**: 체인 밖 첨부를 지목하므로 **양쪽을 각각** `_account_can_access_attachment` 로
+        검사한다(기준 첨부 통과가 다른 계보 접근권을 함의하지 않는다).
+      - **스코프**: 같은 대화 + 같은 파일명만. 없으면 임의 첨부 2개의 본문을 나란히 여는 범용
+        경로가 된다.
+- [x] **프론트** — 계보가 2개 이상일 때만 축 토글 노출(선택지 1개짜리 토글은 만들지 않는다).
+      축에 따라 `<select>` 값의 의미(version_number ↔ attachment_id)와 요청 파라미터가 **함께**
+      바뀌며, 그 결정은 `_diffParams` 한 곳에 모았다(세 갈래로 흩으면 축 추가 시 한 곳이 남는다).
+      축 전환 시 전체-펼침 캐시를 버린다(이전 축 결과 재사용 = 다른 쌍의 본문 표시).
+- [x] **경로 대칭** — 말풍선 칩(messages.js)과 첨부 목록 버전 박스(composer.js) **양쪽** 에
+      `lineages` 를 전달한다. 한쪽만 넘기면 같은 기능이 화면에 따라 있고 없다.
+- [x] **진입 조건 확장** — 계보가 2개면 이 체인의 버전이 하나뿐이어도 모달을 연다(종전에는 원문
+      모달로 빠져 "AI 수정본과 내 파일 비교" 경로를 잃었다).
+
+### 검증
+
+- [x] `tests/verify_attach_version_tree_ui.mjs` **신규 18 PASS**(jsdom, 정본 모듈 실행 — 로직
+      재구현 0): 토글 노출 조건 4 · 축 전환이 옵션 값 의미를 바꾸는지 6 · 요청 파라미터 동반 전환 2 ·
+      배선/구조 잠금 6.
+- [x] `tests/test_attach_version_branching.py` **+4**(계보 간 diff 인가·스코프·동일 첨부 거부·
+      기존 축 무회귀) → 파일 14 PASS.
+- [x] 적대 패널 `[CODEX:adversarial-ux-authz]` — **[P1] 1 · [P2] 4 전건 반영**:
+      ① **핵심 시나리오 진입점 부재** — 모달 진입 조건만 고치고 **버튼 노출 조건**을 놓쳐, 사용자 v1 ↔
+         AI v1(계보가 갈린 뒤의 대표 케이스)에서 비교 버튼이 아예 안 떴다. 하네스 18건이 전부
+         통과하는 상태였다 — 모달 **안쪽만** 검증했기 때문. → AI 수정본은 정의상 분기이므로
+         `verNum > 1 || is_assistant_generated` 로 확대.
+      ② 동일 선택 원문 분기가 축을 몰라 시간순에서 "원문을 찾지 못했습니다"
+      ③ 전체-펼침 캐시 키 충돌 + `expandGap` 의 응답 경쟁 → 키에 축 포함 + 응답 시 축 재확인
+      ④ 계보 간 diff 의 unified_diff 헤더가 `v0` → 실제 VersionNumber 로 정정
+      ⑤ versions 빈 배열 역참조 → 계보 head 파일명 폴백
+- [x] `verify_attach_version_tree_ui.mjs` **24 PASS**(E1~E6 이 위 5축 회귀 고정) ·
+      `test_attach_version_branching.py` **14 PASS** · 전체 스위트 회귀 확인 · ESM 구문 PASS.
+- [ ] verify-completion · 배포 후 PB-0008(토글 접힘·표 안정성·실제 v1↔v1 비교 완주).
+
+### 9. Requested Scope
+
+- 버전 트리 시각화(기준 토글 + 계보 표시) — ✓. **트리 그래프(가지 그림)는 만들지 않았다** —
+  계보가 둘일 때 필요한 것은 "어느 계보의 어느 버전인지" 를 고르는 일이고, 그건 라벨이 붙은
+  선택지로 충분하다. 가지 그림은 계보가 3개 이상 흔해지면 재검토할 대상이다(정직).

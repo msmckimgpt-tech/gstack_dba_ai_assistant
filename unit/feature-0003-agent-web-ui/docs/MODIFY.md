@@ -4287,3 +4287,36 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 
 - 대상: `docs/TEST.md`(POST-DEPLOY Run — 두 화면) · `docs/REPORT.md` · `docs/TASK.md` ·
   `docs/REVIEW.md` · `docs/evidence/pb0008-profile-usage-sort-20260814.png`. 코드 무변경.
+## CHG-20260814T060000-ai-claude-feature-0003-attach-version-tree-ui — 버전 비교 축 토글(계보 안/시간순)
+
+- 사유: 사용자 결정(2026-08-14) 남은 판단 ② — 선행 cycle 이 데이터·API 축을 실었고 화면만 남았다.
+  위험등급 **Major §12.3**(신규 비교 경로 = 본문 노출 인가 표면).
+- 대상:
+  - `src/routers/attachments.py` `get_attachment_version_diff`: `from_attachment_id`/`to_attachment_id`
+    축 추가(계보 간). **양쪽을 각각 인가** + 같은 대화·같은 파일명 스코프. 기존 version 축 불변.
+  - `src/static/app/attach-diff.js`: 축 토글 UI(계보 ≥2 일 때만) · `_fillSelects`(축별 옵션 세트) ·
+    `_diffParams`(요청 파라미터 단일 결정점) · 축 전환 시 전체-펼침 캐시 무효화.
+  - `src/static/app/messages.js` · `composer.js`: `lineages` 전달(양 경로 대칭) + 계보 2개면 버전
+    1개여도 모달 진입.
+  - `src/static/css/chat.css`: 축 토글이 보기방식 토글과 **같은 위젯 스타일** 공유(관용구 단일화).
+- 무변경: 기존 계보 내 비교 계약 · 권한 게이트 등급(D21 pending 차단 포함) · 첨부 스키마.
+- 테스트: `tests/verify_attach_version_tree_ui.mjs` **신규 18**(jsdom 정본 모듈 실행) ·
+  `test_attach_version_branching.py` **+4**(인가·스코프·동일첨부 거부·기존축 무회귀).
+
+### CHG-20260814T060000 적대 리뷰 반영 (REV-20260814T060000, [CODEX:adversarial-ux-authz])
+
+- **[P1] 핵심 시나리오의 진입점 부재** — 모달 진입 조건(`lineages>=2`)은 고쳤으나 **버튼 노출 조건**
+  (`verNum > 1` / `verCount > 1`)을 놓쳐, 정작 계보가 갈린 뒤의 대표 케이스인 **사용자 v1 ↔ AI v1**
+  에서 비교 버튼이 아예 뜨지 않았다. → **AI 수정본은 정의상 분기**(사람 계보에서 갈라져 나옴)라
+  v1 이어도 비교 대상이 반드시 있으므로 `verNum > 1 || is_assistant_generated` 로 확대.
+- **[P2] 동일 선택 원문 분기가 축을 모름** — 시간순 축의 `from` 은 이미 attachment_id 인데
+  version_number 로 체인을 뒤져 "원문을 찾지 못했습니다" 가 떴다(값은 멀쩡한데 화면만 실패).
+  → 축에 따라 id 해석.
+- **[P2] 전체-펼침 캐시 키 충돌·경쟁** — `pairKey` 가 `from->to` 뿐이라 축이 달라도 같은 키가 될 수
+  있고, `expandGap` 에는 `reqSeq` 검사가 없어 이전 축 응답이 캐시를 채울 수 있었다.
+  → 키에 축 포함 + 응답 시점 축·선택 재확인.
+- **[P2] 계보 간 diff 헤더가 `v0`** — cross-lineage 경로는 version 파라미터가 0 이라 unified_diff
+  헤더가 양쪽 v0 로 찍혔다. → 실제 행의 `VersionNumber` 로 되돌림.
+- **[P2] versions 빈 배열 역참조** — 계보만으로 진입하면 `list[last].original_filename` 에서 예외.
+  → 계보 head 파일명 폴백.
+- 회귀 고정: 위 5축 전부 하네스에 추가(E1~E6) → **24 PASS**.
