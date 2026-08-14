@@ -1846,3 +1846,10 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   `LRN-20260814T1710`(전송 방식 변경은 성공과 구별 안 되는 새 실패 상태를 만든다) ·
   `LRN-20260814T1715`(주장 범위는 메커니즘이 정한다 — 한계 채택의 3요소).
 - Human Approval Needed: 아니오 (doc-only, 사용자 승인 범위 "PR→머지→배포" 내 사후 기록).
+
+## REV-20260814T173000-ledger-status-label-sync [SKIPPED:doc-only] — 원장 라벨 정합
+
+- Related Change: `CHG-20260814T173000-ledger-status-label-sync`
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(원장 헤딩 라벨 1줄 + TASK 기록) → skip.
+- 검증: 갱신 후 헤딩 라벨과 본문 `status` 가 동일 문자열임을 확인. 원장 항목 내용·수치 무변경.
+- Human Approval Needed: 아니오 (doc-only, 직전 cycle 의 사후 정합).

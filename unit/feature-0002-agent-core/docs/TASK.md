@@ -95,6 +95,9 @@ source_of_truth: true
       reasoning_chars=52 tool_calls=0 elapsed=0.4s finish=stop usage=True`, 반환 `'2'`,
       finish ctx `stop`, truncated False → **수집·조립·회계·절단채널 라이브 동작**,
       thinking delta 는 답변 미혼입.
+- [x] **원장 헤딩 status 라벨 정합**(2026-08-14) — 본문 status 는 `fixed:deployed:unverified-live`
+      인데 헤딩 라벨이 `fixed:undeployed` 로 남아 있었다. 다음 audit 이 헤딩만 읽으면 **미배포로
+      오판해 중복 진단**하므로(원장의 재진단 회피 근거가 곧 헤딩) 두 곳을 일치시켰다.
 - [ ] **다음 audit 의 corroboration 재측정**(배포 전 기준선 대비): 재시도 activity 30일 11건/3
       대화 · 900초 정확 timeout 2 run/2 conv · 5분+ 무변화 54건/15 대화 → 감소하면 `verified`,
       재증가면 `regressed`. 취소·'즉시 답변' 반응성은 실사용 대화에서 확인.

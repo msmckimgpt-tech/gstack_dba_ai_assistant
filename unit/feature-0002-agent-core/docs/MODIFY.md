@@ -2120,3 +2120,15 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - Files: `docs/TASK.md` · `docs/REVIEW.md` · `docs/MODIFY.md` · `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/LEARNINGS.md`(공용).
 - Rollback Notes: 문서 되돌림만으로 원복(런타임 영향 없음). 되돌리면 배포 사실과 다음 audit 의
   비교 기준선이 사라진다.
+
+## CHG-20260814T173000-ledger-status-label-sync — 원장 헤딩 status 라벨 정합 (doc-only)
+
+- **왜**: `FR-llm-attempt-cap-inside-latency-tail` 의 본문 status 는 배포 후
+  `fixed:deployed:unverified-live` 로 전이했는데 **헤딩 라벨이 `fixed:undeployed` 로 남았다**.
+  원장 헤딩은 다음 audit 의 **재진단 회피 1차 게이트**(Phase 0 이 status 로 걸러낸다)이므로,
+  라벨 불일치는 곧 같은 근본의 중복 진단 위험이다.
+- **무엇을**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md` 해당 항목 헤딩 라벨만
+  본문과 일치시켰다(내용 무변경, 코드 변경 0).
+- **위험등급**: Minor(문서 전용).
+- Files: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/TASK.md`.
+- Rollback Notes: 라벨 되돌림만으로 원복. 되돌리면 위 오판 위험이 되살아난다.

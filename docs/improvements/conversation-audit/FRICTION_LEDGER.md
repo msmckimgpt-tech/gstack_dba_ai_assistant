@@ -6,7 +6,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-llm-attempt-cap-inside-latency-tail — fixed:undeployed (L6↔L7; per-attempt 상한이 성공 지연 분포의 꼬리 안쪽 → 정상 추론 전량 폐기 + 무진전 표면)
+## FR-llm-attempt-cap-inside-latency-tail — fixed:deployed:unverified-live (L6↔L7; per-attempt 상한이 성공 지연 분포의 꼬리 안쪽 → 정상 추론 전량 폐기 + 무진전 표면)
 
 - **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-14, PR #1307 merge main
   `f30a42bb` → 배포 대상 `8fe4ab39`). `deploy-web` **scope=all**: web-a/web-b 무중단 롤링 + soak
