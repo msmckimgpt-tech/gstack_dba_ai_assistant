@@ -4193,7 +4193,6 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `docs/REPORT.md`(이월: 열 폭 재계산 ≤4% · profile 판 미적용) · `docs/TASK.md` · `docs/REVIEW.md` ·
   `docs/evidence/pb0008-usage-pager-sticky-20260814.png`(첫 화면 페이저 시각 증거).
 - 코드 무변경.
-
 ## CHG-20260813T2130-ai-claude-corp-usage-card-overflow — 사용량 요약 카드 넘침 수정 (Minor §12.3, CSS 전용)
 
 - `src/static/css/admin.css` — `.profile-usage-summary` 를 flex → **grid auto-fit
@@ -4216,3 +4215,66 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   맞췄다. 종전 값은 하네스를 라이브보다 관대하게 만들어 **트랙 폭 결정을 판별하지 못했다**(150px
   뮤턴트가 생존했던 원인).
 - 검사 2건 추가·정정: 라이브 최대치(11자) @320px · 12자 @420px · "370px 이상 2열 유지".
+## CHG-20260814T110000 프로필 사용 내역 표에 정렬·페이지네이션 이식 + 이식 중 적발 결함 (REV-20260814T110000-profile-usage-sort-page)
+
+- 대상: `src/static/app/profile.js` `showProfileUsageConvModal` — 열 정의(5축) · 표시값 기준 정렬 키 ·
+  thead 정렬 버튼(aria-sort) · 페이지 슬라이스 렌더 · 페이저 · 상호작용 위임 · 포커스 복원.
+  관리 콘솔 판(`admin/usage.js`)과 상수·규칙을 동일하게 맞췄다(테스트가 두 소스를 대조해 잠근다).
+- **[P2] 속성 인젝션(적대 리뷰)** — `_pUsageEsc` / admin `esc` 가 `&<>` 만 이스케이프하는데 값이
+  `title='…'` 같은 **작은따옴표 속성**에 들어가, 대화 제목만으로 속성을 탈출해 이벤트 핸들러를
+  심을 수 있었다(`x' onmouseover='alert(1)`). 관리 콘솔은 **타인의 대화 제목**을 보므로 stored
+  경로가 실재한다. → 양 판 모두 `"`·`'` 포함으로 강화(`admin/usage.js` 차트 스코프 `esc` 도 함께 —
+  `data-metric='…'` 속성에 쓰인다).
+- **[P2] sticky 열 머리가 실제 스크롤러에 안 붙음(적대 리뷰)** — `.usage-conv-tablewrap` 의
+  `overflow-x:auto` 가 sticky 의 containing scroll box 가 되는데 그 박스는 세로로 스크롤하지 않아
+  머리가 붙을 곳이 없었다(목록을 내리면 머리가 사라져 정렬 버튼 재도달 불가). → 가로 넘침을
+  **세로 스크롤러**(`.usage-conv-body` / `.usage-conv-content`)로 옮겨 스크롤러를 하나로 만들었다.
+  관리 콘솔 판도 함께 고쳐진다.
+- **[P2→반증] 좁은 폭 페이저 넘침** — 실 Chromium 320/480/640px 실측에서 **재현되지 않았다**
+  (`.usage-rec-pager` 의 `flex-wrap: wrap` 이 이미 흡수). 지적을 그대로 수용하지 않고 계측으로
+  확인했다. 다만 컨트롤이 늘어날 때를 대비해 `.usage-rec-pager-ctl` 에도 줄바꿈을 허용해 뒀다
+  (방어적, 무해). **이 축은 회귀 가드일 뿐 결함 수정이 아니다** — 뮤턴트로 검출력이 없음을 확인.
+- 무변경: 백엔드 `/api/profile/usage/conversations`, 응답 스키마, 권한.
+- 테스트: `tests/verify_profile_usage_sort_page.mjs` **신규 45**(관리 콘솔 판과의 규칙 정합 8축 포함) ·
+  `tests/headless/verify_usage_pager_layout.py` **신규 12**(실 Chromium, 두 화면 × sticky/폭/가시성) ·
+  `tests/test_usage_records_sort_page.py` **+7 → 16**.
+## CHG-20260813T2130-ai-claude-corp-usage-card-overflow — 사용량 요약 카드 넘침 수정 (Minor §12.3, CSS 전용)
+
+- `src/static/css/admin.css` — `.profile-usage-summary` 를 flex → **grid auto-fit
+  minmax(min(150px,100%),1fr)**, `.profile-usage-metric` 에 `min-width:0`, 숫자 15px + `nowrap`,
+  라벨은 ellipsis 허용. 최소 트랙 150px 은 320px 폭에서 12자 값을 수용하도록 실측으로 결정.
+- `tests/headless/test_usage_card_overflow.js` (**신규 4건**) — 폭 9단계 스윕 × (카드가 컨테이너를
+  벗어남 / 텍스트가 카드를 벗어남) 정량 측정 + 값 길이 증가(9자·12자) + 관리 콘솔 축.
+  뮤테이션: 구 flex 복원 시 3건 FAIL(사용자 보고 상태 재현), clamp 제거는 **생존** → clamp 미채택.
+## CHG-20260814T040000-ai-claude-feature-0003-attach-createdat-utc — 첨부 CreatedAt 로컬→UTC 정정
+
+- 사유: 원장 `FR-attachment-created-at-timeaxis-skew`(report-only 이월분)의 해소. 사용자 결정
+  2026-08-14 "기록 UTC 전환 + 기존 행 백필". 위험등급 **Major §12.3**(데이터 마이그레이션).
+- 대상:
+  - `src/routers/_bootstrap_schema.py` `_ensure_attachment_version_schema`: 멱등 DDL 목록에
+    `ALTER COLUMN CreatedAt SET DEFAULT (UTC_TIMESTAMP(6))` 추가(fresh install 정합).
+  - `src/web_context.py`: `_ATTACH_CREATEDAT_UTC_MIGRATION_KEY` + `_backfill_attachment_created_at_utc_v1`
+    신규 + `_ensure_seed_roles` 배선. DEFAULT 전환을 함수 안에서 직접 보장(호출 순서 비의존),
+    오프셋은 서버 조회, 대상은 `Id <= MAX(Id)`, PG 미러 동반 보정, 마커 미확인 시 미수행.
+- 무변경: 첨부 스키마 컬럼 구성 · UNIQUE · RBAC · 첨부 경계 · 소비자 코드(보정 후 자동 정합).
+- 테스트: `tests/test_attach_createdat_utc.py` **신규 10**(1회성·대상 선정·순서 계약 전부 고정).
+
+### CHG-20260814T040000 적대 리뷰 반영 (REV-20260814T040000, [CODEX:adversarial-data-migration])
+
+- **[P1] 동시 startup 이중 차감** — "SELECT 로 없음 확인 → 작업 → INSERT IGNORE" 는 선점이 아니다.
+  web-a/web-b 가 동시에 '없음' 을 보면 **둘 다 차감**한 뒤 INSERT IGNORE 에 도달한다(두 번째가
+  무시돼도 차감은 이미 끝났다). → `_claim_migration_once`(INSERT 원자성으로 **선점 후 작업**) +
+  실패 시 `_release_migration_claim` 반납.
+- **[P1] 상한을 ALTER 뒤에 읽음** — DEFAULT 전환 후 `MAX(Id)` 를 읽으면 그 사이 들어온 **이미 UTC**
+  행이 상한에 들어와 또 차감된다. → 상한을 **ALTER 이전**에 확정. 남는 위험은 "그 창의 로컬 행이
+  미보정" 뿐이라 방향이 안전하다(미보정=원상태, 이중 차감=복구 곤란).
+- **[P1] 저장소별 완료 상태 부재** — MySQL/PG 는 한 트랜잭션이 아니다. 단일 마커로는 "MySQL 성공 +
+  PG 실패" 를 표현할 수 없어 PG 영구 미보정이거나 MySQL 재차감이 된다. 게다가 미러 upsert 는
+  `created_at` 을 갱신하지 않아 "다음 갱신이 정정" 은 **사실이 아니었다**(초판 주석 오류 정정).
+  → 마커 2개(`attach-createdat-utc-v1` / `-pg`)로 분리, 각각 선점·반납.
+- **[P2] 표시 회귀(사용자 가시)** — API 가 오프셋 없는 문자열을 주고 프론트가 로컬로 파싱하는 계약
+  이라, 저장만 UTC 로 옮기면 화면의 첨부 시각이 **9시간 이르게** 표시된다. → `_iso_utc_z` 로 전송에
+  `Z` 명시(`_serialize_attachment_for_api` · `lineages`) + `composer.js` 의 시간대 주석을 새 계약으로
+  갱신(파서는 `new Date()` 라 `Z` 가 붙으면 자동 정합 — 별도 보정을 넣으면 이중 변환).
+- 회귀 고정: 위 4축 전부 테스트(선점 원자성 · 2차 replica 무작업 · 반납 · 상한 선확정 · 서버 오프셋 ·
+  저장소별 마커 · 전송 `Z` 표기).

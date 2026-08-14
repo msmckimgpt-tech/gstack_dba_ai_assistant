@@ -10797,7 +10797,6 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       가시성 전 축 실측 → TEST.md POST-DEPLOY Run 기록(시각 증거 `docs/evidence/` 첨부).
 - [x] 미검증 항목 명시 — 열 폭 재계산(≤4%, 이월) · 브라우저 콘솔 에러 미수집.
 - [x] REPORT.md 이월 항목 정리.
-
 ## 20260813T2130-usage-card-overflow — 요약 카드가 좁은 폭에서 내부 범위를 벗어나는 이슈 (Minor §12.3)
 
 사용자 보고: "프로필 화면을 조정했을 때, 좁은 공간으로 인해 요소 내 텍스트 길이에 따라 내부 범위를
@@ -10816,3 +10815,89 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 - "좁은 공간에서 요소 내 텍스트가 내부 범위를 벗어나는 이슈 수정" — ✓ (구조를 grid 로 바꿔 모든
   측정 폭에서 넘침 0. 원인이 좁은 화면이 아니라 8장 균등 분배였음을 실측으로 밝혀 함께 해소)
+## TASK-20260814T110000-profile-usage-sort-page — 프로필 사용 내역 표 정렬·페이지네이션 (Minor §12.3)
+
+요청(사용자): "정상적으로 작동하는것을 확인했습니다. 사용자 프로필 화면에서도 정합하게 적용해주세요."
+
+- [x] `app/profile.js` 대화 목록 모달에 열 정렬 + 페이지네이션 이식(관리 콘솔 판과 규칙 동일).
+- [x] 적대 리뷰 [P2] 4건 처리 — 속성 인젝션 수정(양 판) · sticky 스크롤러 단일화(양 판) ·
+      좁은 폭 넘침은 **계측으로 반증** · 요청-응답 경합은 선재 구조라 이월(사유 REVIEW 기록).
+- [x] `tests/verify_profile_usage_sort_page.mjs` **45 PASS**(규칙 정합 8축 포함).
+- [x] `tests/headless/verify_usage_pager_layout.py` **12 PASS**(실 Chromium, 뮤턴트로 검출력 확인).
+- [x] `tests/test_usage_records_sort_page.py` **16 PASS** · feature-0003 전체 스위트 회귀 0.
+- [ ] 배포 후 PB-0008 — 프로필 판 실측 + **관리 콘솔 판 재확인**(스크롤러 변경 영향).
+
+### Requested Scope
+
+- 프로필 화면에도 정합하게 — ✓ (규칙 동일성을 테스트로 잠금).
+## 20260813T2130-usage-card-overflow — 요약 카드가 좁은 폭에서 내부 범위를 벗어나는 이슈 (Minor §12.3)
+
+사용자 보고: "프로필 화면을 조정했을 때, 좁은 공간으로 인해 요소 내 텍스트 길이에 따라 내부 범위를
+벗어나는 이슈".
+
+- [x] 결함 재현 하네스 — 폭 9단계 스윕 정량 측정(수정 전 320px 4건 … **900px 6건**)
+- [x] `flex:1 + min-width:84px` → `grid auto-fit minmax(min(150px,100%),1fr)` + `min-width:0`
+- [x] 최소 트랙 150px 을 실측으로 결정(320px 에서 12자 값 수용 — 128px 은 2열 유지로 실패)
+- [x] 값은 자르지 않음(라벨만 ellipsis) · 숫자 15px
+- [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
+- [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
+- [ ] POST-DEPLOY 라이브 드로어 폭 축소 실측
+
+### 9. Requested Scope
+
+- "좁은 공간에서 요소 내 텍스트가 내부 범위를 벗어나는 이슈 수정" — ✓ (구조를 grid 로 바꿔 모든
+  측정 폭에서 넘침 0. 원인이 좁은 화면이 아니라 8장 균등 분배였음을 실측으로 밝혀 함께 해소)
+## 20260814T0400-attach-createdat-utc — 첨부 CreatedAt 시간축 정정(로컬→UTC) (Major §12.3, 사용자 결정)
+
+- **출처**: 선행 cycle `20260813T1830-group-attach-scope-window` 진단 중 발견해 원장에
+  `FR-attachment-created-at-timeaxis-skew`(report-only)로 이월했던 결함. 사용자 결정(2026-08-14)
+  "기록 UTC 전환 + 기존 행 백필".
+
+### 근본원인 (실측)
+
+- [x] `WebConversationAttachments.CreatedAt DEFAULT CURRENT_TIMESTAMP(6)` + MySQL `time_zone=SYSTEM`
+      (컨테이너 TZ=KST) → **로컬 시각 저장**. 실측: `NOW()=09:05` vs `UTC_TIMESTAMP()=00:05`.
+- [x] 같은 테이블의 `SupersededAt`/`DeletedAt` 은 코드가 `UTC_TIMESTAMP(6)` 로 넣고, 메시지 저장도
+      UTC → **한 테이블 안에서 축이 갈림**. 라이브 모순 실측: `CreatedAt > SupersededAt` **97건**,
+      `CreatedAt > DeletedAt` **137건**.
+- [x] 오프셋 일관성 검증(월별 첨부↔인접 메시지 시각차 평균): 2026-05 **8.70h** / 06 **9.41h** /
+      07 **8.53h** / 08 **8.64h** — 전 구간 +9h 근처로 일정(KST 는 DST 없음) → 기계적 보정 안전.
+
+### 조치
+
+- [x] **기록 전환** — `ALTER TABLE … ALTER COLUMN CreatedAt SET DEFAULT (UTC_TIMESTAMP(6))`
+      (메타데이터 전용·멱등). INSERT 4경로가 모두 CreatedAt 을 명시하지 않으므로 DEFAULT 하나로
+      전 경로가 정합해지고 **앞으로 추가될 경로도 자동 안전**하다.
+- [x] **1회 백필** — `_backfill_attachment_created_at_utc_v1` + `WebSchemaMigrations` 마커
+      (`attach-createdat-utc-v1`). 오프셋은 `TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())` 로
+      **서버에서 구한다**(하드코딩 금지 — TZ 다른 배포에서 조용히 틀림). 대상은 **Id 상한 이하**
+      (실행 중 들어온 신규 UTC 행을 과거로 밀지 않기 위함). PG 미러도 같은 폭으로 보정.
+- [x] **순서 의존 제거** — backfill 이 DEFAULT 전환을 **직접 보장**한다. 스키마 함수와의 호출 순서에
+      의존하면(fast/slow path 진입점이 갈린다) 보정 직후 행이 다시 로컬로 기록될 수 있다.
+- [x] **재실행 방지 강화** — 이 backfill 의 재실행은 빼기가 누적돼 데이터를 더 망가뜨린다. 그래서
+      마커를 **확인하지 못하면 수행하지 않고**, DEFAULT 전환 실패 시에도 보정하지 않으며,
+      마커 기록 실패는 `error` 로그로 크게 남긴다(다른 backfill 의 "재시도 무해" 규약과 성격이 다름).
+- [x] **소비자 수정 불필요 확인** — 보정 후 첨부 시각이 UTC 가 되므로 fork 의
+      `_attachment_outside_window`(메시지 축과 비교)와 정렬·비교가 **자동 정합**한다.
+
+### 검증
+
+- [x] `tests/test_attach_createdat_utc.py` **신규 10** — 마커 존재 시 전량 skip · 마커 확인 실패 시
+      미수행 · 마커 기록 · **Id 상한** · **서버 오프셋 사용**(+05:30 배포 가정 포함) · UTC 서버는
+      UPDATE 없이 마커만 · 빈 테이블 · **DEFAULT 전환이 보정보다 먼저** · DEFAULT 실패 시 보정·마커
+      모두 skip · 스키마 DDL 정합.
+- [x] 적대 패널 `[CODEX:adversarial-data-migration]` — **[P1] 3 · [P2] 1 전건 반영**:
+      ① 다중 replica 동시 startup **이중 차감**(SELECT 확인은 선점이 아니다) → INSERT 원자 선점 + 반납
+      ② 상한을 ALTER 뒤에 읽어 **이미 UTC 인 신규 행까지 차감** → 상한을 ALTER 이전에 확정
+      ③ MySQL/PG 단일 마커 → **저장소별 마커 2개**(초판 주석 "다음 미러 갱신이 정정" 은 사실 오류였다 —
+         미러 upsert 가 `created_at` 을 갱신하지 않는다)
+      ④ **표시 회귀**(사용자 가시) — 저장만 UTC 로 옮기면 화면 시각이 9시간 이르게 뜬다 →
+         전송에 `Z` 명시(`_iso_utc_z`) + 프론트 시간대 주석을 새 계약으로 갱신.
+- [x] `tests/test_attach_createdat_utc.py` **12 PASS** · 전체 스위트 회귀 확인 · ESM 구문 검사 PASS.
+- [ ] verify-completion · 배포 후 실측(모순 234건 → 0 · MySQL↔PG 미러 일치).
+
+### 9. Requested Scope
+
+- 첨부 시간축 왜곡 해소 — ✓ (기록 UTC 전환 + Id 상한 1회 백필 + PG 미러 동반 + 재실행 방지).
+- 이번 범위 밖(정직): **다른 테이블의 동일 패턴**은 건드리지 않았다(`DEFAULT CURRENT_TIMESTAMP` 를
+  쓰는 컬럼이 더 있을 수 있으나, 첨부 밖으로 스코프를 넓히면 회귀 검증 범위가 급격히 커진다).

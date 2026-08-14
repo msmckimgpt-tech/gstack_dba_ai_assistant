@@ -1071,6 +1071,18 @@ _CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY = "console-category-access-v1"
 #   1회 규약 근거는 위와 동일 — 단, 묶음은 grid 숨김이라 분리 이후 신규 묶음 부여 경로가 없어
 #   재실행 위험 자체가 작다(방어적 1회 유지).
 _ATOMIC_PERM_SPLIT_MIGRATION_KEY = "atomic-perm-split-v1"
+
+# REQ-20260814-attach-createdat-utc: 첨부 CreatedAt 을 로컬(KST) → UTC 로 되돌리는 1회 backfill 마커.
+#   `_bootstrap_schema` 가 DEFAULT 를 `(UTC_TIMESTAMP(6))` 로 바꾸기 전까지 이 컬럼은 세션 TZ
+#   (`time_zone=SYSTEM` = KST)의 로컬 시각을 담았다. 같은 테이블의 SupersededAt/DeletedAt 과 메시지
+#   저장은 UTC 라, 한 테이블 안에서 "생성이 삭제보다 나중" 인 모순 행이 쌓였다(도입 시 실측 234건)
+#   — fork 의 첨부 window clip 처럼 첨부 시각을 메시지 축과 비교하는 경로도 같은 폭으로 어긋났다.
+#   **정확히 1회만** 수행한다: 재실행하면 이미 UTC 인 값을 또 빼 과거로 밀어버린다.
+#   마커는 **저장소별로 분리**한다. MySQL 정본과 PG 미러는 서로 다른 DB 라 한 트랜잭션으로 묶을 수
+#   없고, 하나의 마커로 둘을 대표하면 "MySQL 성공 + PG 실패" 가 (a) 마커를 남겨 PG 를 영영 미보정으로
+#   두거나 (b) 마커를 안 남겨 MySQL 을 재차감한다 — 둘 다 틀리다(§18.8 적대 리뷰 [P1]).
+_ATTACH_CREATEDAT_UTC_MIGRATION_KEY = "attach-createdat-utc-v1"          # MySQL 정본
+_ATTACH_CREATEDAT_UTC_PG_MIGRATION_KEY = "attach-createdat-utc-v1-pg"    # PG 미러
 # feature-0024-conversation-folders: 대화 폴더는 대화를 만들 수 있는 모든 역할이 개인 단위로
 # 쓰는 일반 기능이다(사용자 결정 2026-07-23). 도입 시 기존 배포의 conversation.create 보유
 # 역할에 folder.list.own/folder.manage.own 을 1회 backfill 로 부여한다.
@@ -2420,6 +2432,11 @@ VALUES (%s, %s)
     # perm-category-hier(Critical §12.3, 2026-07-14): 카테고리 접근 권한 5종 도입 시점의 기존 principal
     #   접근을 1회 backfill 로 보존(console.access + 카테고리 세부 권한 보유자에 접근 권한 자동 부여).
     _backfill_console_category_access_v1(conn)
+    # REQ-20260814-attach-createdat-utc(사용자 결정 2026-08-14): 첨부 CreatedAt 이 세션 TZ 의 로컬
+    #   시각으로 저장돼 같은 테이블의 SupersededAt/DeletedAt(UTC)·메시지 시각과 축이 갈렸다.
+    #   `_bootstrap_schema` 가 DEFAULT 를 UTC 로 바꾼 **뒤에** 옛 행만(Id 상한) 1회 보정한다 —
+    #   순서가 뒤집히면 이미 UTC 인 신규 행까지 과거로 밀린다.
+    _backfill_attachment_created_at_utc_v1(conn)
     # feature-0024-conversation-folders(사용자 결정 2026-07-23): conversation.create 보유 역할 전체에
     #   folder.list.own/folder.manage.own 을 1회 backfill 로 부여(폴더=대화 만드는 모두의 개인 기능).
     _backfill_folder_perms_v1(conn)
@@ -2908,6 +2925,149 @@ WHERE ao.PermissionId = %s
     except Exception:
         # 마커 기록 실패 — 다음 startup 재시도(INSERT IGNORE 라 backfill 재적용 무해).
         pass
+
+
+def _claim_migration_once(conn, key: str) -> bool:
+    """마커를 **원자적으로 선점**한다. 선점에 성공한 프로세스만 True.
+
+    §18.8 적대 리뷰 [P1]: "SELECT 로 없음을 확인 → 작업 → INSERT IGNORE" 는 선점이 아니다.
+    web-a/web-b 가 동시에 startup 하면 둘 다 '없음' 을 보고 **둘 다 작업을 실행**한다. 뒤늦은
+    INSERT IGNORE 가 무시돼도 두 번째 차감은 이미 끝난 뒤다. 되돌리기 어려운 1회성 데이터
+    마이그레이션에서는 INSERT 의 원자성으로 **먼저 자리를 잡고** 작업을 시작해야 한다.
+
+    실패 시에는 `_release_migration_claim` 으로 반납한다 — 반납하지 않으면 그 마이그레이션은
+    영영 재시도되지 않는다.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+    MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+    AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cur.execute(
+            "INSERT IGNORE INTO WebSchemaMigrations (MigrationKey) VALUES (%s)", (key,))
+        claimed = int(getattr(cur, "rowcount", 0) or 0) == 1
+        cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return claimed
+    except Exception:
+        # 선점 자체를 못 했으면 수행하지 않는다(확인 없는 실행 = 재차감 위험).
+        logging.getLogger(__name__).warning(
+            "migration claim 실패 (%s) — 이번 startup skip", key, exc_info=True)
+        return False
+
+
+def _release_migration_claim(conn, key: str) -> None:
+    """선점한 마커를 반납한다(작업 실패 시). 반납 실패는 로그만 — 수동 개입 신호."""
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM WebSchemaMigrations WHERE MigrationKey = %s", (key,))
+        cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception:
+        logging.getLogger(__name__).error(
+            "migration claim 반납 실패 (%s) — 이 마이그레이션은 재시도되지 않는다. "
+            "WebSchemaMigrations 에서 해당 행을 수동 삭제할 것.", key, exc_info=True)
+
+
+def _backfill_attachment_created_at_utc_v1(conn) -> None:
+    """REQ-20260814-attach-createdat-utc — 첨부 CreatedAt 을 로컬(KST)에서 UTC 로 되돌리는 1회 backfill.
+
+    `CreatedAt DEFAULT CURRENT_TIMESTAMP(6)` 은 세션 TZ(`time_zone=SYSTEM` = KST)의 **로컬 시각**을
+    넣는다. 같은 테이블의 SupersededAt/DeletedAt 과 메시지 저장은 UTC 라 축이 갈렸고, "생성이 삭제보다
+    나중" 인 모순 행이 쌓였다(도입 시 실측 234건). DEFAULT 를 UTC 로 바꾸고 그 이전 행만 보정한다.
+
+    **되돌리기 어려운 마이그레이션의 규율**(§18.8 적대 리뷰 [P1] 3건 반영):
+      - **선점 후 작업**: `_claim_migration_once` 로 마커를 원자적으로 잡은 프로세스만 실행한다.
+        SELECT 확인 방식은 다중 replica 동시 startup 에서 이중 차감을 막지 못한다.
+      - **상한을 DEFAULT 전환보다 먼저 확정**: `MAX(Id)` 를 ALTER 앞에서 읽는다. ALTER 뒤에 읽으면
+        그 사이 들어온 **이미 UTC 인** 행이 상한 안에 들어와 또 차감된다. 순서를 뒤집으면 남는 위험은
+        "그 창에 들어온 로컬 행이 미보정으로 남는 것" 뿐이라 방향이 안전하다(미래로 9h 어긋난 채
+        남는 것은 원상태이고 나중에 고칠 수 있다 — 과거로 두 번 밀린 값은 복구가 어렵다).
+      - **저장소별 마커**: MySQL 과 PG 미러는 한 트랜잭션이 아니다. 각각 따로 선점·기록해,
+        한쪽 실패가 다른 쪽을 재차감하거나 영구 미보정으로 만들지 않게 한다.
+        (미러의 upsert 는 `created_at` 을 갱신하지 않으므로 "다음 미러 갱신이 정정" 은 성립하지 않는다.)
+    """
+    # 상한을 **먼저** 확정한다(ALTER 이전 = 전부 로컬 시각인 구간).
+    offset_seconds = 0
+    max_id = 0
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())")
+        row = cur.fetchone()
+        offset_seconds = int((row[0] if row else 0) or 0)
+        cur.execute("SELECT COALESCE(MAX(Id), 0) FROM WebConversationAttachments")
+        row = cur.fetchone()
+        max_id = int((row[0] if row else 0) or 0)
+        cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "attach-createdat-utc: 오프셋/상한 조회 실패 — 이번 startup skip", exc_info=True)
+        return
+
+    # ── MySQL 정본 ────────────────────────────────────────────────────────
+    if _claim_migration_once(conn, _ATTACH_CREATEDAT_UTC_MIGRATION_KEY):
+        ok = True
+        try:
+            cur = conn.cursor()
+            # DEFAULT 전환은 이 함수가 직접 보장한다 — 스키마 함수와의 호출 순서에 의존하면
+            # 보정 직후 들어온 행이 다시 로컬로 기록된다. 메타데이터 전용이라 멱등.
+            cur.execute(
+                "ALTER TABLE WebConversationAttachments "
+                "ALTER COLUMN CreatedAt SET DEFAULT (UTC_TIMESTAMP(6))"
+            )
+            if offset_seconds and max_id:
+                cur.execute(
+                    "UPDATE WebConversationAttachments "
+                    "SET CreatedAt = CreatedAt - INTERVAL %s SECOND WHERE Id <= %s",
+                    (offset_seconds, max_id),
+                )
+                logging.getLogger(__name__).info(
+                    "attach-createdat-utc: MySQL %d행 보정(offset=%ds, max_id=%d)",
+                    int(getattr(cur, "rowcount", 0) or 0), offset_seconds, max_id)
+            cur.close()
+            try:
+                conn.commit()
+            except Exception:
+                pass
+        except Exception:
+            ok = False
+            logging.getLogger(__name__).warning(
+                "attach-createdat-utc: MySQL 보정 실패 — claim 반납 후 다음 startup 재시도", exc_info=True)
+        if not ok:
+            _release_migration_claim(conn, _ATTACH_CREATEDAT_UTC_MIGRATION_KEY)
+            return
+
+    # ── PG 미러 (별도 저장소 = 별도 마커) ─────────────────────────────────
+    if offset_seconds and max_id and _claim_migration_once(conn, _ATTACH_CREATEDAT_UTC_PG_MIGRATION_KEY):
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pcur:
+                    pcur.execute(
+                        "UPDATE agent_runtime.core_attachments "
+                        "SET created_at = created_at - make_interval(secs => %s) WHERE id <= %s",
+                        (offset_seconds, max_id),
+                    )
+                pg.commit()
+            finally:
+                pg.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "attach-createdat-utc: PG 미러 보정 실패 — claim 반납 후 다음 startup 재시도",
+                exc_info=True)
+            _release_migration_claim(conn, _ATTACH_CREATEDAT_UTC_PG_MIGRATION_KEY)
 
 
 def _cleanup_deprecated_role_permissions(conn) -> None:

@@ -2256,6 +2256,13 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-20260814T010000-attach-version-branching-4 (assistant 인지): 같은 파일명에 계보가 **2개 이상일 때만** 시스템 프롬프트에 `## FILE VERSION LINEAGES` 블록을 싣는다 — 계보별 소유자(그룹이면 표시명)·버전·생성시각 + **시간순 최신 마커** + 두 축의 정의 + "사용자가 계보를 지정하지 않고 '최신' 이라 하면 어느 계보인지 먼저 밝히고 행동" 계약. 첨부 SELECT 에 `CreatedAt` 을 append 한다(row[13], PG/MySQL 양쪽 — 기존 positional index 보존). 계보가 하나면 미주입(프롬프트 절약). `attachment-edit` 도구 지시는 "내 편집은 사용자 파일을 덮어쓰지 않고 내 계보를 만든다 · 상대 계보의 버전 번호를 내 것으로 주장하지 말 것" 을 명시한다.
 - AC-20260814T010000-attach-version-branching-5 (기존 데이터·범위 밖): 이미 역할이 섞인 체인(라이브 39건)은 **백필하지 않는다**(사용자 결정 — 사용자가 이미 본 버전 번호를 재배치하지 않는다). 같은 파일명이 목록에 둘 이상 보일 수 있으며 이는 의도된 결과로 기존 `AI 수정` 배지가 구분한다. 프론트 버전 모달의 **기준 토글 UI 는 이번 범위 밖**(API 축만 제공 — 후속 cycle).
 
+- REQ-20260814-attach-createdat-utc (원장 `FR-attachment-created-at-timeaxis-skew` 해소, 사용자 결정 2026-08-14 "기록 UTC 전환 + 기존 행 백필", **Major §12.3** — 되돌리기 어려운 데이터 마이그레이션): 첨부 `CreatedAt` 의 저장 축을 서버 로컬(KST)에서 **UTC** 로 옮기고, 전환 이전 행을 1회 보정한다. 종전에는 같은 테이블의 `SupersededAt`/`DeletedAt`(코드가 `UTC_TIMESTAMP(6)`)·메시지 시각(UTC)과 축이 갈려 "생성이 삭제보다 나중" 인 모순 행이 쌓였다(도입 시 실측 234건).
+- AC-20260814T040000-attach-createdat-utc-1 (기록 전환): `WebConversationAttachments.CreatedAt` 의 DEFAULT 가 `(UTC_TIMESTAMP(6))` 다. INSERT 4경로가 CreatedAt 을 명시하지 않으므로 DEFAULT 하나로 전 경로가 정합하며, 앞으로 추가될 경로도 자동으로 안전하다. 스키마 보장 경로(`_ensure_attachment_version_schema`)와 backfill 함수가 **각각** 이 DDL 을 보장한다(호출 순서 비의존 — 메타데이터 전용이라 멱등).
+- AC-20260814T040000-attach-createdat-utc-2 (1회성 보증): 보정은 `WebSchemaMigrations` 마커를 **INSERT 원자성으로 선점한** 프로세스만 수행한다(`_claim_migration_once`). SELECT 확인 방식은 다중 replica 동시 startup 에서 이중 차감을 막지 못한다(§18.8 [P1]). 작업 실패 시 선점을 반납해 다음 startup 이 재시도한다. 마커는 **저장소별로 분리**(MySQL 정본 / PG 미러) — 한 트랜잭션이 아니므로 한쪽 실패가 다른 쪽을 재차감하거나 영구 미보정으로 만들면 안 된다.
+- AC-20260814T040000-attach-createdat-utc-3 (보정 대상): 오프셋은 `TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())` 로 **서버에서 구하고**(하드코딩 금지 — TZ 다른 배포에서 조용히 틀린다), 대상은 **DEFAULT 전환 이전에 확정한 `MAX(Id)` 이하**다. 상한을 전환 뒤에 읽으면 그 사이 들어온 이미-UTC 행까지 차감된다. offset=0(이미 UTC 서버) 또는 빈 테이블이면 UPDATE 없이 DEFAULT 전환만 수행한다.
+- AC-20260814T040000-attach-createdat-utc-4 (전송 계약): 첨부 시각은 API 응답에서 **UTC 임을 명시**한다(`_iso_utc_z` → `…Z`; `_serialize_attachment_for_api` 와 versions 응답의 `lineages` 공유). 저장 축만 옮기고 전송을 오프셋 없는 문자열로 두면 브라우저 `new Date()` 가 로컬로 읽어 **화면 시각이 9시간 이르게** 표시된다(§18.8 [P2]). 프론트 파서(`_attachWhenDate` = `new Date()`)는 `Z` 가 붙으면 자동 정합하므로 변경하지 않는다 — 별도 보정을 넣으면 이중 변환이다.
+- AC-20260814T040000-attach-createdat-utc-5 (범위): 보정 후 첨부 시각이 UTC 가 되므로 fork 의 `_attachment_outside_window`(메시지 축과 비교)·정렬·비교는 **자동 정합**하며 소비자 코드를 바꾸지 않는다. 첨부 밖 다른 테이블의 동일 패턴(`DEFAULT CURRENT_TIMESTAMP`)은 이번 범위가 아니다.
+
 - REQ-20260729-attach-list-delete (선행 `REQ-20260729-attach-full-scope` 의 라이브 검증 산물, **Minor §12.3** — 프론트 전용, 백엔드·API·RBAC·스키마 무변경): 첨부 사이드패널의 참조범위 안내("필요 없는 파일은 × 로 삭제하세요")가 가리키는 컨트롤을 **목록 뷰에도** 둔다. 종전엔 pill 뷰(방금 첨부 직후)에만 ×가 있어, 같은 컨테이너를 공유하는 목록 뷰에서는 안내가 가리키는 대상이 화면에 없었다.
 - AC-20260729T152000-attach-list-delete-1 (컨트롤 실재): `.attach-list-item` 행에 `.attach-list-item-del`(×)이 있고, pill 의 ×와 **동일한 실삭제 경로**(`_deleteConversationAttachment` → confirm → `DELETE /api/attachments/{id}` → 토스트 → 목록 재동기화)를 쓴다. 클릭 중 disabled.
 - AC-20260729T152000-attach-list-delete-2 (상태 정합): 삭제 성공 시 서버뿐 아니라 **composer bucket 에서도** 해당 항목이 빠진다 — 빠뜨리면 삭제 후 다른 파일을 올리는 순간 재렌더로 지운 파일이 pill 로 부활한다. 권한 거부는 404(존재 은폐)로 오므로 403·404 를 같은 문구로 처리한다.
@@ -4162,6 +4169,10 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
 보장 범위도 실측으로 확정했다 — 라이브 도달 범위(11자, `163,261,652`)는 **320px(최소 드로어)까지**
 넘침 0, 그 위(12자·조 직전)는 **420px 이상**에서 넘침 0. 12자를 좁은 폭까지 담으려면 트랙을 157px
 로 키워야 하고 그러면 2열이 깨지므로, 도달 범위 밖의 값보다 **매일 보는 화면의 열 수**를 택했다.
+`grid` + `repeat(auto-fit, minmax(min(150px, 100%), 1fr))` 으로 바꿔 **카드를 최소 폭 아래로 누르지
+않고 줄을 나눈다**. 최소 트랙 150px 은 실측으로 정했다 — 320px(가장 좁은 드로어)에서 이 값이면
+2열이 성립하지 않아 1열로 떨어져 카드가 넓어지고, 128px 로 두면 2열이 유지되면서 12자리 값이
+가용폭을 넘겼다.
 
 값은 **자르지 않는다**. 토큰 수·금액은 뒷자리가 잘리면 값의 의미가 바뀌므로 ellipsis 로 감추는 대신
 줄을 늘려 전부 보여준다(라벨은 짧고 반복되므로 ellipsis 허용). 숫자 폰트는 카드가 8개인 점을 감안해
@@ -4171,3 +4182,27 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
 > 반응시키는 container query(`clamp(11px, 12cqw, 17px)`), 폰트 14px 로의 추가 축소. 검증되지 않는
 > 방어는 "방어가 있다"는 착각과 가독성 손실만 남긴다. 관리 콘솔은 이미 `minmax(160px)` 라 같은
 > 압박에서 안전함을 실측 확인했고, 불필요한 변경 대신 하네스에 관측 축만 추가해 미래 회귀를 잡는다.
+> 폰트를 카드 폭에 반응시키는 container query(`clamp(11px, 12cqw, 17px)`)도 시도했으나, 트랙 150px
+> 아래서는 **어떤 케이스도 판별하지 못해**(뮤턴트 생존) 제거했다 — 검증되지 않는 방어는 복잡도만
+> 남긴다. 관리 콘솔은 이미 `minmax(160px)` 라 같은 압박에서 안전함을 실측 확인했고, 불필요한 변경
+> 대신 하네스에 관측 축만 추가해 미래 회귀를 잡는다.
+## (profile-usage-sort-page, 2026-08-14) 작업 화면 프로필 사용 내역 — 열 정렬 + 페이지네이션 (web/UI, Minor §12.3)
+
+- REQ-20260814T110000-profile-usage-sort-page (사용자 요청, 관리 콘솔 판 라이브 확인 직후):
+  "정상적으로 작동하는것을 확인했습니다. 사용자 프로필 화면에서도 정합하게 적용해주세요."
+
+작업 화면 프로필 > 계정 > 사용 내역의 대화 목록 모달(`app/profile.js showProfileUsageConvModal`)에
+관리 콘솔 '사용 기록' 표와 **같은 조작**을 준다. 두 모달은 독립 구현이므로(작업 화면 판은
+`admin-modal` 클래스를 공유하지 않는다) 로직을 옮겨 심되, 조작 규칙은 동일하게 맞춘다 — 화면마다
+표가 다르게 반응하면 그 자체가 학습 비용이다.
+
+- AC-20260814T110000-profile-usage-sort-page-1: 5개 열(대화·호출·토큰·추정 비용·최근 사용) 머리
+  클릭으로 정렬, 재클릭 방향 토글. 수치·일시 열은 첫 클릭 내림차순, 텍스트 열은 오름차순.
+- AC-20260814T110000-profile-usage-sort-page-2: 페이지당 25/50/100/전체(기본 50), 처음·이전·
+  다음·마지막, "총 N건 중 A–B", 경계 비활성. 첫 화면은 종전과 같은 토큰 내림차순.
+- AC-20260814T110000-profile-usage-sort-page-3: 관리 콘솔 판과 **규칙이 같다** — 기본 정렬 축·
+  방향·페이지 크기·선택지·첫 클릭 방향·정렬 시 1페이지 복귀·포커스 복원.
+- AC-20260814T110000-profile-usage-sort-page-4: 기존 동작 보존 — 대화 deep-link(같은 탭)·차단
+  배지·이스케이프·ESC/close/배경 dismiss.
+- AC-20260814T110000-profile-usage-sort-page-5: 두 화면 모두에서 정렬 열 머리가 스크롤 중에도
+  남고(스크롤러 단일화), 페이저가 첫 화면에 보인다.

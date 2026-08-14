@@ -5124,7 +5124,6 @@ doc-only(코드 0). 기록의 근거는 라이브 DB 조회와 실 Chrome 관측
 - Related TASK: feature-0003-agent-web-ui
 - Reason: changed paths are docs + evidence image only (no code, no policy doc)
 - Timestamp: 2026-08-14T10:45:00+09:00
-
 ## REV-20260813T213000-ai-claude-corp-usage-card-overflow [SKIPPED:non-policy-doc] — 카드 넘침 수정
 
 CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
@@ -5167,3 +5166,65 @@ CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
 
 폰트 14px 도 같은 방식으로 걸러졌다 — 어떤 케이스도 더 통과시키지 못했으므로(뮤턴트 생존) 15px 로
 되돌렸다. 방어를 남기면 "이유가 있어 작게 했다" 는 잘못된 신호를 주고 가독성만 잃는다.
+## REV-20260814T110000-profile-usage-sort-page [CODEX:adversarial-frontend-port] — CONCERN (P1 0건 · P2 4건 → 3건 반영 · 1건 계측으로 반증)
+- Related TASK: feature-0003-agent-web-ui
+- Source: codex exec (staged diff 적대 리뷰 — 이식 누락/상태·재렌더/경계/회귀/CSS 5축)
+- Trigger: §18.8 dispatch 표가 UI 변경에 ux 패널을 요구하나 본 세션에는 subagent 금지 상위 지시가
+  있어 §18.8 "제약 없는 채널 우선"(1번)의 codex-review 를 택했다. 레이아웃 도메인은 **실 Chromium
+  하네스로 직접 계측**해 덮었고(미검증으로 남기지 않았다), 최종 시각은 PB-0008.
+- Timestamp: 2026-08-14T11:00:00+09:00
+- Verdict: CONCERN — [P1] 0. [P2] 4건 중
+  ① 속성 인젝션(`'` 미이스케이프) → **반영**. 관리 콘솔은 타인 제목을 보므로 stored 경로 실재.
+  ② sticky 열 머리가 스크롤러에 미부착 → **반영**(스크롤러 단일화). 뮤턴트로 4건 FAIL 확인.
+  ③ 좁은 폭 페이저 넘침 → **반증**. 320/480/640px 실측 통과, 뮤턴트(줄바꿈 제거)도 통과 =
+     이 축은 현재 검출력이 없다. 지적을 수용하는 대신 계측 결과를 기록하고, 방어적 줄바꿈만 유지.
+  ④ 오래된 응답이 현재 모달을 덮는 경합 → **이월**(아래 한계 참조).
+- **판단 기록 — ④를 이번에 고치지 않은 이유**: `openProfileUsageConversations` 의 요청-응답 경합은
+  이번 변경이 만든 것이 아니라 **선재 구조**이고, 관리 콘솔 판(`openUsageConversations`)에도 똑같이
+  있다. 한쪽만 고치면 "두 화면 규칙을 맞춘다"는 이번 cycle 의 목적과 어긋나고, 양쪽을 고치는 것은
+  요청 범위(정렬·페이지네이션 정합) 밖의 확장이다. REPORT 에 이월로 명시한다 — 숨기지 않는다.
+- 검증: node 45(profile) + 50(admin 무회귀) · 실 Chromium 12(두 화면 × sticky/폭/가시성, 뮤턴트
+  검출력 확인) · pytest 16 · feature-0003 전체 스위트 회귀 0.
+- 한계(정직): jsdom·헤드리스는 실 Windows 폰트·스크롤바 폭·DPI 를 반영하지 않는다. 배포 후
+  PB-0008 로 두 화면을 모두 재확인한다(관리 콘솔 판은 스크롤러 변경의 영향을 받는다).
+## REV-20260813T213000-ai-claude-corp-usage-card-overflow [SKIPPED:non-policy-doc] — 카드 넘침 수정
+
+CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
+
+### 판단 근거
+
+- **보고보다 넓은 범위였다** — "좁은 공간" 으로 보고됐지만 실측하니 **900px 에서도 6건** 넘쳤다.
+  원인이 폭이 아니라 `flex:1` 균등 분배(8장)였기 때문이다. 보고된 조건만 고쳤다면 넓은 화면의
+  넘침은 남았을 것이다. 스윕 측정이 범위를 바로잡았다.
+- **자르지 않고 줄을 나눈다** — ellipsis 는 공간 문제를 즉시 없애지만 토큰 수·금액은 뒷자리가
+  잘리면 값의 의미가 바뀐다. 라벨(짧고 반복)만 ellipsis 를 허용하고 숫자는 전부 노출한다.
+- **150px 은 계산이 아니라 실측** — 128px 로 두면 320px 폭에서 2열이 유지되며 12자 값(130px)이
+  가용폭(114px)을 넘었다. 150px 이면 그 폭에서 1열로 떨어져 카드가 넓어진다.
+- **검증되지 않은 방어는 제거했다** — container query 폰트 축소는 그럴듯했지만 트랙을 150px 로
+  올린 뒤 **어떤 케이스도 판별하지 못했다**(뮤턴트 생존). 남겨두면 "방어가 있다" 는 착각만 준다.
+- **관리 콘솔은 손대지 않았다** — 같은 압박(8장)을 받지만 `minmax(160px)` 로 이미 안전함을 실측
+  확인했다(420~1400px 넘침 0). 하네스에 축만 남겨 미래 회귀를 잡는다(§8.1 — 제안은 기록만).
+
+### 잔여
+
+- 드로어를 320px 미만으로 줄이면 1열에서도 라벨이 ellipsis 될 수 있다. 그 폭은 드로어 리사이즈
+  하한 밖이라 검사에 넣지 않았다.
+## REV-20260814T040000-attach-createdat-utc [CODEX:adversarial-data-migration] — 첨부 시각 UTC 정정
+
+- Related Change: `CHG-20260814T040000-ai-claude-feature-0003-attach-createdat-utc`
+  (REQ-20260814-attach-createdat-utc, 위험등급 **Major §12.3** — 되돌리기 어려운 데이터 마이그레이션).
+- Trigger (§18.8 dispatch): `schema/query/마이그레이션` → **backend + qa** 렌즈. 세션 지시로 Agent
+  도구 미사용 → §18.9 대체 채널 **codex CLI**.
+- 집행: staged diff 를 codex 가 직접 읽고 5축(이중 차감 가능성·상한 정확성·PG 산술과 부분 실패·
+  −9h 이동이 깨뜨리는 다른 소비자·offset0/max_id0 처리) 적대 검증. **[P1] 3 · [P2] 1** → 전건 반영.
+- **가장 중요한 적발**: 다중 replica 동시 startup 에서의 **이중 차감**. 이 배포는 web-a/web-b 롤링이라
+  실재하는 경로였고, 기존 backfill 들의 "SELECT 확인 → 작업" 관행을 그대로 따랐기 때문에 생겼다.
+  다른 backfill 은 `INSERT IGNORE` 라 재실행이 무해했지만 **이 작업은 차감이 누적**되어 성격이 다르다.
+- **초판 주석의 사실 오류 정정**: "PG 미러 실패는 다음 갱신에서 정정" 이라 적었으나, 미러 upsert 가
+  `created_at` 을 갱신하지 않아 성립하지 않는다(codex 가 `attachment_pg_mirror.py` 로 반증).
+- 무결 확인(codex): PG `timestamptz - make_interval` 산술 · 빈 테이블 마커 기록 · 보존(DeletedAt 기준)·
+  quota(크기 기준)·첨부 페이지 커서 부재 → 추가 결함 없음.
+- 검증: `tests/test_attach_createdat_utc.py` **12 PASS**(선점·반납·상한 선확정·서버 오프셋·저장소별
+  마커·전송 표기 전부 고정). 전체 스위트 회귀 확인.
+- 한계(정직): 실제 차감은 **배포 시 1회** 일어나므로 사전 실측이 불가능하다. 배포 후 모순 건수
+  (`CreatedAt > SupersededAt|DeletedAt`)가 **234 → 0** 인지, MySQL↔PG 미러가 일치하는지로 확인한다.
