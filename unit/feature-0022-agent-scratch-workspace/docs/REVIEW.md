@@ -101,3 +101,11 @@ unix 소켓 trust 연결).
 **검증**: test_scratch.py 38건 PASS(신규 13건 — 복사 방향·캡·부분 실패·fail-soft·상태 문구),
 feature-0003 전체 회귀 RC=0, feature-0002 전체는 pre-existing 환경 실패 3건(`chattr` 부재)만 —
 main 체크아웃 동일 이미지 실행으로 귀책 판별 완료. 라이브 분기 e2e 는 배포 후(TASK-...-live).
+
+## REV-20260814T033000-scratch-fork-carryover-live [SKIPPED:non-code-doc] — Verdict: PASS
+**Scope**: 직전 cycle(REV-20260814T031500)의 라이브 실증 결과 기록. 코드 변경 0 — TEST/TASK/
+REPORT/MODIFY 문서만.
+**왜 SKIPPED**: 실행 코드·설정·권한 변경 없음(문서 전용). 실증 자체가 검증이며, 기록은 그 결과의
+전사다.
+**검증**: 기록된 수치·응답은 라이브 세션 출력 원문에서 전사(응답 JSON `scratch_cloned=1`,
+`rows=7`, 무중단 실측 0건). 검증 잔재(분기본 대화·임시 스키마)는 역순 정리 완료.

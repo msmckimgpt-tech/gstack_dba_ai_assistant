@@ -78,3 +78,8 @@ source_of_truth: true
 - `test_scratch.py`: 이월·상태 주입 단위 테스트 13건 추가(총 38건) — fake connection 으로 복사
   방향·캡·부분 실패 계속·fail-soft·no-op 조건·상태 문구 계약 고정.
 - 근거·대안 검토: `DECISIONS.md` ADR-SCRATCH-0005.
+
+## CHG-20260814T0330-fork-carryover-live — 분기 이월 라이브 실증 기록 (문서 전용)
+- `TEST.md` §5.4: 배포 db5d469b 라이브 Run log — PG 실권한 이월(7행) · 실 사용자 `duplicate` API
+  `scratch_cloned=1` · 분기본 조회 성공 · 상태 주입 문구 2분기 · 잔재 정리 확인.
+- `TASK.md`/`REPORT.md`: 라이브 항목 완료 반영. 코드 변경 0(문서 전용) — 재배포 불필요.
