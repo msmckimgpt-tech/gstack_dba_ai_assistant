@@ -1828,3 +1828,21 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   "스트리밍까지 근본 전환" 을 명시 선택(2026-08-14). PR·배포는 override 없이 별도 확인 대상.
 - 검증: 전 testpath(feature-0002/0003/0023/0014/0020) 귀책 실패 **0**(선재 환경 1건 `chattr` 부재는
   pristine main 대조 동일) · ruff clean · 스트리밍 단위 **36**건 PASS.
+
+## REV-20260814T170000-llm-stream-progress-postdeploy [SKIPPED:doc-only] — POST-DEPLOY 실측 + 학습 환류
+
+- Related Change: `CHG-20260814T160000-llm-stream-progress` (배포 후 기록)
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(TASK/원장/LEARNINGS 문서만) → 패널 skip.
+  코드 변경에 대한 적대 검증은 선행 `REV-20260814T160000-llm-stream-progress`
+  (`[CODEX:adversarial-backend-qa-regression]`, P1 3 · QA P1 2 · P2 8 처리)에서 집행됐다.
+- 검증: 기록된 수치는 전부 실행 결과다 — 6서비스 `GIT_COMMIT=8fe4ab39` · edge `/healthz` ok ·
+  caddy `no upstreams available` **0** · surge 잔존 0 · 배포본 심볼 9종/상수/배선 3곳 실측 ·
+  실제 provider 스트림 `llm_stream_done chunks=6 … finish=stop usage=True`.
+- **정직 표기**: `verified` 로 닫지 않았다. 배포본이 동작함은 증명됐으나 **실사용자 대화 기준
+  마찰 소멸**(재시도 activity·900초 timeout·5분+ 무변화 건수 감소)은 다음 audit 의 corroboration
+  재측정 대상이며, 그 비교 기준선을 원장에 함께 박았다.
+- 학습 환류: `LRN-20260814T1700`(상한은 값보다 측정 대상이 먼저 — 성공 분포와 겹쳐 보라, 이
+  저장소 3회 재발) · `LRN-20260814T1705`(계약을 깨기 전에 전제를 반증하라 — 스스로 되돌린 사례) ·
+  `LRN-20260814T1710`(전송 방식 변경은 성공과 구별 안 되는 새 실패 상태를 만든다) ·
+  `LRN-20260814T1715`(주장 범위는 메커니즘이 정한다 — 한계 채택의 3요소).
+- Human Approval Needed: 아니오 (doc-only, 사용자 승인 범위 "PR→머지→배포" 내 사후 기록).

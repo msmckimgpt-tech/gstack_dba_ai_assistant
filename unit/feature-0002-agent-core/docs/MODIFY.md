@@ -2098,3 +2098,25 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - Rollback Notes: `AGENT_LLM_STREAM_ENABLED=false` 로 즉시 비스트리밍 복귀(코드 롤백 불필요 —
   킬 스위치 경로가 테스트로 잠겨 있다). 그 순간부터 per-attempt 상한은 다시 "완료까지" 를 재므로
   854초 근처 추론이 폐기되는 구조가 되살아난다.
+
+## CHG-20260814T170000-llm-stream-progress-postdeploy — POST-DEPLOY 실측 + 학습 환류 (doc-only)
+
+- **왜**: `CHG-20260814T160000-llm-stream-progress` 배포 후 실측을 정본에 남긴다. §16.3 의
+  deploy-backed 완료 기준 — PR merge 는 코드 완료이지 배포 완료가 아니고, 배포 완료도 "마찰 소멸"
+  과 다르다. 그 셋을 구분해 기록한다.
+- **무엇을**(코드 변경 0):
+  1. `docs/TASK.md` — 배포·라이브 실증 결과 체크 + 다음 audit 재측정 항목.
+  2. `docs/improvements/conversation-audit/FRICTION_LEDGER.md` — status
+     `fixed:undeployed` → **`fixed:deployed:unverified-live`** + 배포 실측 + **배포 전 기준선**
+     (다음 audit 의 비교 대상: 재시도 activity 30일 11건/3대화 · 900초 timeout 2 run/2 conv ·
+     5분+ 무변화 54건/15대화).
+  3. `docs/LEARNINGS.md` — LRN 4건(상한의 측정 대상 · 전제 반증 · 새 전송의 새 실패 모드 ·
+     주장 범위는 메커니즘이 정한다).
+  4. `docs/REVIEW.md` — `REV-20260814T170000-…-postdeploy [SKIPPED:doc-only]`.
+- **배포 실측 요지**: `8fe4ab39` scope=all · 6서비스 GIT_COMMIT 일치 · edge `/healthz` ok ·
+  무중단 `no upstreams available` **0** · surge 잔존 0 · quiesce drained(3s/2s) · 배포본 심볼
+  9종·상수·abort 배선 3곳 · 실제 provider 스트림 `chunks=6 … finish=stop usage=True`.
+- **위험등급**: Minor(문서 전용, 런타임 무영향).
+- Files: `docs/TASK.md` · `docs/REVIEW.md` · `docs/MODIFY.md` · `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/LEARNINGS.md`(공용).
+- Rollback Notes: 문서 되돌림만으로 원복(런타임 영향 없음). 되돌리면 배포 사실과 다음 audit 의
+  비교 기준선이 사라진다.
