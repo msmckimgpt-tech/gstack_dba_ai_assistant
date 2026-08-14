@@ -352,3 +352,15 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 4 | `execute_sql` 비허용 DB(`master`) | **차단** ✅ |
 | 5 | 응답 내 CSV 경로 | **없음** ✅ · 통계 `{'total_rows': 2, 'csv_paths': []}` |
 | 6 | `no upstreams available` | **0건** ✅ |
+
+### Run 2026-08-14 (19차) — 게이트 코칭 (Environment: local pytest + 라이브 재현)
+
+라이브 재현으로 관찰 4건을 분류했다(위 REVIEW 표). 확정 결함 1건 + 문구 개선 2건.
+
+- `_heavy_query_coach("SELECT COUNT(*) …", facts={})` → 이제 "전역 집계"·"approx_rows"·
+  "총 스캔량을 줄이지 않습니다" 를 포함하고, "서버측 집계(COUNT/SUM/GROUP BY)" 는 **빠진다**.
+- 계획 사실이 없을 때 "실행계획·접근형태·사용 인덱스·스캔 파티션" 을 **지어내지 않는다**(기존 계약 보존).
+- `_catalog_function_redirect("forbidden function: object_name")` → INFORMATION_SCHEMA 경로
+  (`REFERENTIAL_CONSTRAINTS` 포함), 무관한 거부에는 빈 문자열.
+
+스위트: 0002 · 0003 · 0023 · 0041 전부 green.
