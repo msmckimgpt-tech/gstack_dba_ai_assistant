@@ -883,7 +883,11 @@ function _buildMessageAttachChip(att) {
   // attach-diff.js 의 하이라이트 토글 노출 판정과 같은 원칙). AI 수정본으로 좁히지 않는 이유:
   // 같은 화면에서 사용자 재업로드 v2 칩에는 버튼이 없는 비대칭이 되고, 칩의 버전 배지는 이미
   // 두 경우 모두에 붙는다(위 `attach-chip-ver`).
-  if (att.id && verNum > 1) {
+  // REQ-20260814-attach-version-tree-ui(§18.8 적대 리뷰 [P1]): **AI 수정본은 v1 이어도 비교 대상이
+  // 반드시 있다** — 정의상 사람 계보에서 분기해 나온 것이기 때문이다. `verNum > 1` 만 보면 계보가
+  // 갈린 뒤의 핵심 시나리오(사용자 v1 ↔ AI v1)에서 진입점이 아예 사라진다.
+  const _isAiEdit = !!(att.is_assistant_generated || att.created_by_role === "assistant");
+  if (att.id && (verNum > 1 || _isAiEdit)) {
     const cmpBtn = document.createElement("button");
     cmpBtn.type = "button";
     cmpBtn.className = "attach-chip-cmp";
@@ -923,7 +927,11 @@ async function _openBubbleAttachDiff(att, attName, thisVer, btn) {
   try {
     const resp = await apiFetch(`/api/attachments/${encodeURIComponent(att.id)}/versions`);
     const versions = Array.isArray(resp?.versions) ? resp.versions : [];
-    if (versions.length < 2) {
+    // REQ-20260814-attach-version-tree-ui: 계보가 둘 이상이면 이 체인의 버전이 하나뿐이어도
+    // 비교할 짝이 있다(다른 계보의 head). 그 경우까지 원문 모달로 빠지면 사용자는 "AI 수정본과
+    // 내 파일을 비교" 하는 경로를 잃는다.
+    const lineages = Array.isArray(resp?.lineages) ? resp.lineages : [];
+    if (versions.length < 2 && lineages.length < 2) {
       // 구버전이 삭제된 체인(attach-manage soft-delete)에는 비교할 짝이 없다. 눌렀는데 아무
       // 일도 일어나지 않는 대신 그 버전의 **원문**을 열고 사유를 알린다 — 이 경로도 정본
       // 모달(`openAttachmentSourceModal`)이며, 사용자가 하려던 "내용 확인" 은 충족된다.
@@ -949,7 +957,7 @@ async function _openBubbleAttachDiff(att, attName, thisVer, btn) {
     // 같은 번호 두 개를 고르는 preselect 는 서버가 400 으로 막는 쌍이다(존재 oracle 방지 계약).
     // 그런 값을 넘기지 않고 모달 기본값(직전↔최신)에 맡긴다.
     if (preselect.from === preselect.to) preselect = undefined;
-    openAttachmentDiffModal(att.id, versions, preselect);
+    openAttachmentDiffModal(att.id, versions, preselect, lineages);
   } catch (e) {
     // apiFetch 는 non-2xx 를 throw 한다. 실패를 조용히 삼키지 않는다 — 버튼을 눌렀는데 아무
     // 반응이 없으면 고장으로 읽힌다. 단 **403 은 apiFetch 가 이미 공통 토스트를 냈으므로**

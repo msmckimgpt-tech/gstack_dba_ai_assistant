@@ -5256,3 +5256,21 @@ doc-only. 라이브 드로어 폭 6단계 실측으로 선행 두 커밋의 이�
 - Related TASK: feature-0003-agent-web-ui
 - Reason: changed paths are docs + evidence image only (no code, no policy doc)
 - Timestamp: 2026-08-14T12:00:00+09:00
+## REV-20260814T060000-attach-version-tree-ui [CODEX:adversarial-ux-authz] — 버전 비교 축 토글
+
+- Related Change: `CHG-20260814T060000-ai-claude-feature-0003-attach-version-tree-ui`
+  (REQ-20260814-attach-version-tree-ui, 위험등급 **Major §12.3**).
+- Trigger (§18.8 dispatch): UI/form → ux · 신규 비교 경로 = 본문 노출 인가 표면 → security+backend.
+  세션 지시로 Agent 도구 미사용 → §18.9 대체 채널 **codex CLI**.
+- 집행: staged diff 를 codex 가 직접 읽고 5축(인가·존재 oracle·축 전환 stale·select 값 타입 변경의
+  다른 소비자·진입 조건 완화의 안전성) 적대 검증. **[P1] 1 · [P2] 4** → 전건 반영.
+- **가장 중요한 적발**: 기능을 만들어 놓고 **거기에 도달하는 버튼을 열지 않았다**. 모달 진입 조건만
+  고치고 버튼 노출 조건을 그대로 둬, 이 변경이 겨냥한 대표 시나리오(사용자 v1 ↔ AI v1)가 화면에서
+  닿을 수 없었다. 하네스 18건이 전부 통과하는 상태였다 — **모달 안쪽만 검증했기 때문**이다.
+  진입점까지 테스트 범위에 넣지 않으면 "동작하지만 쓸 수 없는" 기능이 통과한다.
+- 무결 확인(codex): pending(D21) 차단이 side 조회 전에 적용 · `.own/.any` 헬퍼가 양쪽에 각각 호출 ·
+  타 대화 id 는 존재/권한과 무관하게 404 로 수렴(oracle 없음).
+- 검증: `verify_attach_version_tree_ui.mjs` **24 PASS**(A 노출조건 4 · B 축 전환 6 · C 요청 파라미터 2 ·
+  D 배선/구조 6 · **E 적대리뷰 반영 6**) · `test_attach_version_branching.py` 14 PASS.
+- 한계(정직): jsdom 은 레이아웃·픽셀을 보지 못한다. 토글이 좁은 폭에서 접히는지, 축 전환 시 표가
+  튀지 않는지는 **배포 후 PB-0008** 대상이다.

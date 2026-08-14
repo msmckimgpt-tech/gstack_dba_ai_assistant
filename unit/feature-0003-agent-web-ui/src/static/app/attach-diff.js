@@ -1290,14 +1290,29 @@ function _attachSplitHandle(wrap, scroller, opts) {
  * @param {Array<object>} versions     `/api/attachments/{id}/versions` 응답의 versions (ASC)
  * @param {object} [preselect]         {from, to} 초기 선택 VersionNumber
  */
-export function openAttachmentDiffModal(attachmentId, versions, preselect) {
+/**
+ * @param {Array<object>} lineages  `/versions` 응답의 `lineages`(같은 파일명의 계보 head, 시간순).
+ *   REQ-20260814-attach-version-tree-ui: 작성 주체별로 계보가 갈린 뒤로 "최신" 이 두 뜻이 됐다 —
+ *   **계보 내 최신**(이 체인의 최고 버전)과 **시간순 최신**(같은 파일의 모든 계보 중 가장 나중).
+ *   계보가 둘 이상이면 비교 기준을 고르는 토글을 띄운다. 하나뿐이면 종전과 동일한 화면이다.
+ */
+export function openAttachmentDiffModal(attachmentId, versions, preselect, lineages) {
   const list = Array.isArray(versions) ? [...versions] : [];
-  if (list.length < 2) {
+  // 계보 목록은 head 가 2개 이상일 때만 뜻이 있다(하나면 '시간순' 이 곧 '계보 내' 다).
+  const lins = (Array.isArray(lineages) ? lineages : [])
+    .filter((l) => Number(l?.head_attachment_id || 0) > 0);
+  const hasLineageAxis = lins.length > 1;
+  if (list.length < 2 && !hasLineageAxis) {
     showToast("비교할 버전이 2개 이상 필요합니다.", true);
     return;
   }
   list.sort((a, b) => Number(a.version_number || 1) - Number(b.version_number || 1));
-  const filename = String(list[list.length - 1].original_filename || "파일");
+  // §18.8 적대 리뷰 [P2]: 계보가 2개면 `list` 가 비어도 진입한다 — 마지막 원소를 무조건
+  // 역참조하면 그 경로에서 예외로 죽는다. 계보 head 를 폴백으로 쓴다.
+  const filename = String(
+    list[list.length - 1]?.original_filename
+    || lins[0]?.original_filename
+    || "파일");
 
   const backdrop = document.createElement("div");
   backdrop.className = "share-mgr-backdrop attach-diff-backdrop";
@@ -1311,6 +1326,14 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
     '  </div>' +
     '  <div class="attach-diff-controls">' +
+    // REQ-20260814-attach-version-tree-ui: 비교 축 토글. 계보가 하나뿐이면 숨긴다 —
+    // 선택지가 하나인 토글은 화면만 복잡하게 하고 사용자에게 "뭔가 더 있나" 를 묻게 만든다.
+    (hasLineageAxis
+      ? '    <div class="attach-diff-axistoggle" role="group" aria-label="비교 기준">' +
+        '      <button type="button" class="attach-diff-axis" data-axis="lineage">이 계보 안</button>' +
+        '      <button type="button" class="attach-diff-axis" data-axis="time">계보 간(시간순)</button>' +
+        '    </div>'
+      : '') +
     '    <label class="attach-diff-ctl"><span>기준</span><select class="attach-diff-from"></select></label>' +
     '    <button type="button" class="attach-diff-swap" title="기준과 비교 대상 맞바꾸기" aria-label="기준과 비교 대상 맞바꾸기">⇄</button>' +
     '    <label class="attach-diff-ctl"><span>비교</span><select class="attach-diff-to"></select></label>' +
@@ -1352,20 +1375,61 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   const ctxCb = backdrop.querySelector(".attach-diff-ctxfull");
   const modeBtns = Array.from(backdrop.querySelectorAll(".attach-diff-mode"));
 
-  for (const v of list) {
-    const n = Number(v.version_number || 1);
-    for (const sel of [fromSel, toSel]) {
-      const opt = document.createElement("option");
-      opt.value = String(n);
-      opt.textContent = _versionLabel(v);
-      sel.appendChild(opt);
+  // 비교 축: 'lineage' = 이 체인의 버전 번호 / 'time' = 같은 파일명 계보 head 들(시간순).
+  // 축에 따라 **`<select>` 값의 의미가 달라진다** — 전자는 version_number, 후자는 attachment_id.
+  // 요청 파라미터도 그에 맞춰 갈리므로(`from_version` vs `from_attachment_id`) 값 해석은
+  // `_diffParams` 한 곳으로 모은다(세 갈래로 흩으면 축을 바꿀 때 한 곳이 조용히 남는다).
+  let axis = "lineage";
+
+  const _lineageLabel = (l) => {
+    const who = l.is_assistant_generated ? "AI 수정본" : "사용자 업로드";
+    const v = Number(l.version_number || 1);
+    const mine = l.is_current_lineage ? " · 현재" : "";
+    return `${who} v${v}${mine}`;
+  };
+
+  const _fillSelects = () => {
+    for (const sel of [fromSel, toSel]) sel.innerHTML = "";
+    if (axis === "time") {
+      // 시간순: 오래된 것 → 최신 순으로 놓아 좌(기준)·우(비교) 가 자연스럽게 과거→현재가 된다.
+      // 서버는 최신 우선으로 주므로 뒤집는다.
+      for (const l of [...lins].reverse()) {
+        for (const sel of [fromSel, toSel]) {
+          const opt = document.createElement("option");
+          opt.value = String(l.head_attachment_id);
+          opt.textContent = _lineageLabel(l);
+          sel.appendChild(opt);
+        }
+      }
+      const ids = [...lins].reverse().map((l) => String(l.head_attachment_id));
+      fromSel.value = ids[ids.length - 2] ?? ids[0];
+      toSel.value = ids[ids.length - 1];
+      return;
     }
-  }
-  // 기본 선택 = 직전 ↔ 최신 (사용자가 가장 자주 보는 쌍). preselect 로 덮어쓸 수 있다.
-  const defFrom = Number(preselect?.from ?? list[list.length - 2].version_number ?? 1);
-  const defTo = Number(preselect?.to ?? list[list.length - 1].version_number ?? 1);
-  fromSel.value = String(defFrom);
-  toSel.value = String(defTo);
+    for (const v of list) {
+      const n = Number(v.version_number || 1);
+      for (const sel of [fromSel, toSel]) {
+        const opt = document.createElement("option");
+        opt.value = String(n);
+        opt.textContent = _versionLabel(v);
+        sel.appendChild(opt);
+      }
+    }
+    // 기본 선택 = 직전 ↔ 최신 (사용자가 가장 자주 보는 쌍). preselect 로 덮어쓸 수 있다.
+    const defFrom = Number(preselect?.from ?? list[list.length - 2]?.version_number ?? 1);
+    const defTo = Number(preselect?.to ?? list[list.length - 1]?.version_number ?? 1);
+    fromSel.value = String(defFrom);
+    toSel.value = String(defTo);
+  };
+
+  /** 현재 축에 맞는 diff 쿼리 파라미터. 축이 바뀌어도 요청 형식이 한 곳에서만 결정된다. */
+  const _diffParams = (fromVal, toVal) => (axis === "time"
+    ? { from_attachment_id: String(fromVal), to_attachment_id: String(toVal) }
+    : { from_version: String(fromVal), to_version: String(toVal) });
+
+  // 계보가 하나뿐이면 축 자체가 없으므로 `list` 가 2개 미만일 수 없다(위 guard).
+  if (hasLineageAxis && list.length < 2) axis = "time";
+  _fillSelects();
 
   let mode = _readViewMode();
   ctxCb.checked = _readContextFull();
@@ -1454,7 +1518,9 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   let fullRowsCache = null;
   let fullRowsKey = "";
 
-  const pairKey = () => `${fromSel.value}->${toSel.value}`;
+  // 축을 키에 넣는다 — 계보 안 v1↔v2 와 시간순 id1↔id2 가 우연히 같은 문자열이 될 수 있고,
+  // 그러면 축을 바꿔도 이전 축의 전체-펼침 캐시를 그대로 쓴다(§18.8 적대 리뷰 [P2]).
+  const pairKey = () => `${axis}:${fromSel.value}:${toSel.value}`;
 
   // 렌더 옵션 — rows 는 매 렌더 시점의 표시 행(전개 결과 포함).
   const renderOpts = () => ({
@@ -1503,10 +1569,14 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     if (btn) { btn.disabled = true; btn.textContent = "펼치는 중…"; }
     try {
       if (fullRowsCache === null || fullRowsKey !== key) {
+        const axisAtRequest = axis;
         const qs = new URLSearchParams({
-          from_version: fromSel.value, to_version: toSel.value, context: "full" });
+          ..._diffParams(fromSel.value, toSel.value), context: "full" });
         const full = await apiFetch(
           `/api/attachments/${encodeURIComponent(attachmentId)}/diff?${qs.toString()}`);
+        // §18.8 적대 리뷰 [P2]: 이 요청에는 `reqSeq` 가 없다. 축을 바꾸고 나서 이전 축의 응답이
+        // 도착하면 **다른 쌍의 본문**으로 캐시를 채운다. 응답 시점에 축·선택이 그대로인지 다시 본다.
+        if (axisAtRequest !== axis || key !== `${axis}:${fromSel.value}:${toSel.value}`) return;
         fullRowsCache = Array.isArray(full?.rows) ? full.rows : [];
         fullRowsKey = key;
       }
@@ -1554,8 +1624,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       // 모달이 쓰는 것과 같은 엔드포인트·같은 게이트).
       viewKind = "source";
       lastData = null;
-      const target = list.find((v) => Number(v.version_number || 1) === from);
-      const vid = Number(target?.id || 0);
+      // §18.8 적대 리뷰 [P2]: 축에 따라 `from` 의 **의미가 다르다**. 시간순 축에서는 그 값이 이미
+      // attachment_id 이므로 version_number 로 체인을 뒤지면 못 찾고 "원문을 찾지 못했습니다" 가
+      // 뜬다(값은 멀쩡한데 화면만 실패하는 종류).
+      const vid = axis === "time"
+        ? Number(from || 0)
+        : Number(list.find((v) => Number(v.version_number || 1) === from)?.id || 0);
       const seqSrc = ++reqSeq;
       if (!vid) {
         // 체인 payload 에 id 가 없는 경우(구버전 응답 형식) — 조용히 빈 화면을 주지 않는다.
@@ -1598,7 +1672,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     statsEl.textContent = "비교 중…";
     // 보존 요청이면 기존 표를 남겨 둔다 — 지우면 '불러오는 중' 사이에 화면이 튄다.
     if (!keepScroll) bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
-    const qs = new URLSearchParams({ from_version: String(from), to_version: String(to) });
+    const qs = new URLSearchParams(_diffParams(from, to));
     if (ctxCb.checked) qs.set("context", "full");
     try {
       const data = await apiFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/diff?${qs.toString()}`);
@@ -1628,6 +1702,26 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
 
   fromSel.addEventListener("change", load);
   toSel.addEventListener("change", load);
+
+  // REQ-20260814-attach-version-tree-ui: 축 전환. 옵션 세트와 요청 파라미터가 함께 바뀌므로
+  // 전환 시 **캐시를 버린다** — 이전 축의 전체-펼침 결과를 재사용하면 다른 쌍의 본문이 뜬다.
+  const axisBtns = Array.from(backdrop.querySelectorAll(".attach-diff-axis"));
+  const syncAxisButtons = () => {
+    for (const b of axisBtns) b.classList.toggle("is-active", b.dataset.axis === axis);
+  };
+  syncAxisButtons();
+  for (const b of axisBtns) {
+    b.addEventListener("click", () => {
+      const next = b.dataset.axis === "time" ? "time" : "lineage";
+      if (next === axis) return;
+      axis = next;
+      syncAxisButtons();
+      _fillSelects();
+      fullRowsCache = null;
+      fullRowsKey = "";
+      load();
+    });
+  }
   ctxCb.addEventListener("change", () => {
     _writeContextFull(ctxCb.checked);
     load({ keepScroll: true });   // 같은 비교의 표시 범위만 바뀐다 — 보던 위치를 유지

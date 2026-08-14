@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 
 import app
+from routers import attachments as _attachments_router
 
 
 class _CaptureCursor:
@@ -160,3 +161,38 @@ def test_lineage_heads_collapse_to_one_per_root():
     ]
     out = app._load_filename_lineage_heads(_CaptureConn([], rows), "conv-x", "r.sql")
     assert [r["Id"] for r in out] == [12, 20], "같은 root(10) 는 최신 1건만, AI 계보는 별개"
+
+
+# ── REQ-20260814-attach-version-tree-ui: 계보 간(시간순) diff 인가 계약 ──────
+
+def test_cross_lineage_diff_authorizes_each_side_independently():
+    """계보 간 비교는 **양쪽을 각각 인가**한다.
+
+    기준 첨부의 게이트를 통과했다는 사실이 체인 밖 다른 계보의 접근권을 함의하지 않는다.
+    여기서 기준 하나만 검사하면 임의 attachment_id 두 개의 본문을 나란히 여는 경로가 된다.
+    """
+    src = inspect.getsource(_attachments_router.get_attachment_version_diff)
+    seg = src.split("if cross_lineage:")[-1].split("        else:", 1)[0]
+    assert "for _side in (left, right)" in seg
+    assert "_account_can_access_attachment" in seg
+
+
+def test_cross_lineage_diff_is_scoped_to_same_conversation_and_filename():
+    """같은 대화·같은 파일명으로 스코프한다 — 범용 '아무 첨부 2개 비교' 경로가 되면 안 된다."""
+    src = inspect.getsource(_attachments_router.get_attachment_version_diff)
+    seg = src.split("if cross_lineage:")[-1].split("        else:", 1)[0]
+    assert "ConversationId" in seg and "같은 대화" in seg
+    assert "OriginalFilename" in seg and "같은 파일" in seg
+
+
+def test_cross_lineage_diff_rejects_same_attachment():
+    """같은 첨부 두 번은 비교가 아니다(계보 내 축의 '같은 버전' 거부와 동형)."""
+    src = inspect.getsource(_attachments_router.get_attachment_version_diff)
+    assert "from_att_id == to_att_id" in src
+
+
+def test_version_axis_contract_is_unchanged():
+    """기존 계보 내 축(from_version/to_version)은 그대로 — 무회귀."""
+    src = inspect.getsource(_attachments_router.get_attachment_version_diff)
+    assert "from_version" in src and "to_version" in src
+    assert "_load_attachment_version_chain" in src
