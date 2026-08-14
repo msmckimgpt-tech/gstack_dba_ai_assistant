@@ -313,3 +313,14 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 - `product=109` → `labels=['mssql-dk-dev']` · `scope_key=mssql-ba175631e9fc` (전엔 둘 다 빈 값)
 - 질문에 테이블명 없음 → grounding 0자(**설계상 정상** — 이제 사유와 `focus` 안내를 반환)
 - 질문에 테이블명 포함 → grounding **223자** + 도메인 개요
+
+### Run 2026-08-14 (16차) — POST-DEPLOY 제보 결함 (Environment: live · `35c60a3f` · 공인 IP)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 실제 클라이언트 이름 DCR — `Claude Code (mysql-ai)` · `Cursor/1.0` · `VS Code [MCP]` | 전부 **201** ✅ (이전 400) |
+| 2 | `/ai/oauth/callback` 3분기(code · error · 인자없음) | 전부 **200** ✅ |
+| 3 | 가이드에 `focus` · `schema_name` · `/ai/oauth/callback` 반영 | 전부 포함 ✅ |
+| 4 | `no upstreams available` | **0건** ✅ |
+
+검증용 probe client 3건은 revoke 했다.

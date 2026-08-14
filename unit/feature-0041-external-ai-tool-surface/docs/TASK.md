@@ -217,3 +217,4 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
 - [x] 단일 바인딩 제품의 datasource 라벨 해석 · grounding scope_key 해석
 - [x] `get_task_context` 빈 응답 3원인 해소 + `focus` 재호출 경로
 - [x] 인가 완료 화면(`/ai/oauth/callback`) — 자체 콜백 서버 없는 연동용
+- [x] POST-DEPLOY(`35c60a3f`) — 실 클라이언트 이름 DCR 201 · 콜백 화면 3분기 200
