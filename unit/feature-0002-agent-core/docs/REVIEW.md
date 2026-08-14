@@ -1667,3 +1667,22 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   ([CODEX:adversarial-bypass], P1 2·P2 1 전건 반영)에서 집행됐다.
 - 검증: 기록된 수치는 전부 배포본 실행 결과다(4서비스 `GIT_COMMIT` · caddy 0 · 게이트 직접 호출 3축).
 - Human Approval Needed: 아니오 (doc-only, 선행 cycle 승인 범위 내 사후 기록).
+
+## REV-20260814T100000-vision-provenance [CODEX:adversarial-coverage] — 이미지 provenance 신호
+
+- Related Change: `CHG-20260814T100000-ai-claude-feature-0002-vision-provenance`
+  (REQ-20260814-vision-provenance, 위험등급 **Critical §12.3**).
+- Trigger (§18.8): 도구 실행 경계 확장 → **security + backend**. Agent 도구 미사용 → codex CLI.
+- 결과 **[P1] 2 · [P2] 2** → 2건 반영, 1건은 **명시적 한계로 채택**(아래), 1건은 과도기 수용.
+- **반영**: ① sandbox csv/xlsx 축(샘플 행도 타 멤버 콘텐츠) ② 순서 테스트를 문자열 검사 →
+  **게이트 끝단 도달 검증**으로 교체.
+- **한계로 채택한 지적(히스토리 replay)**: 타 멤버 채팅·`read_attachment` 결과가 히스토리로 다음 턴에
+  다시 들어오지만 신호를 세우지 않는다. 여기까지 넓히면 **그룹 대화에서 scratch 상시 차단**이 되어
+  §47.4 가 피하려 한 과차단과 같아진다. 이 게이트의 정의를 **"이번 턴에 타 멤버 첨부 본문이 새로
+  실렸는가"** 로 못 박고, 히스토리 축은 프롬프트 계약(발신자 라벨·datamark)에 맡긴다.
+  — 이것이 이 게이트가 **부분 통제**라는 §47.4 서술의 실체다.
+- 무결 확인(codex): 실제 순서가 `compose reset → _call_llm 로더 → tool dispatch`(inprocess·ask-worker·
+  resume·red-team 재도출 모두 동일) · `asyncio.to_thread` 가 컨텍스트를 복사하고 다음 compose 가
+  초기화하므로 대화 간 기능적 누출 없음 · MySQL dict 와 PG alias 가 **같은 `AccountId` 키** 반환.
+- 검증: `test_vision_provenance.py` **11** + `test_attach_provenance_gate.py` **12** = 23 PASS ·
+  전체 스위트 회귀 0(잔여는 선재 환경 의존 파일 1개).

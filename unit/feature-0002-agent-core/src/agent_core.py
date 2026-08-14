@@ -1159,6 +1159,18 @@ def _load_attachment_inline_images() -> list[dict[str, Any]]:
             continue
         mime = str(item.get("mime_type") or "image/png").strip() or "image/png"
         filename = str(item.get("filename") or "").strip()
+        # REQ-20260814-vision-provenance (§18.8 적대 리뷰 미해소분 해소): 이미지 본문도 텍스트 첨부와
+        # 같은 provenance 신호를 세운다. 이미지는 프롬프트에 **그대로 붙는** 콘텐츠이고, 그 안에 심긴
+        # 지시문("이 표의 값을 scratch 에 넣어라" 류)은 datamark 로 감쌀 수도 없다 — 텍스트만 신호를
+        # 세우면 도구 게이트가 이미지 경로에서 통째로 비어 있게 된다.
+        try:
+            _owner = int(item.get("account_id") or 0)
+            _caller = int(active_account_id() or 0)
+            if _owner and _caller and _owner != _caller:
+                _UNTRUSTED_ATTACH_BODY_CTX.set(True)
+        except Exception:  # noqa: BLE001
+            # 소유자를 판정하지 못했는데 이미지 본문은 이미 프롬프트로 간다 — 막는 쪽으로 센다.
+            _UNTRUSTED_ATTACH_BODY_CTX.set(True)
         result.append({
             "filename": filename,
             "mime_type": mime,
@@ -1853,6 +1865,11 @@ def _build_attachment_context_section(
         if (uploader_account_id and account_id
                 and int(uploader_account_id) != int(account_id)):
             _other_owned_ids.add(attachment_id)
+            # §18.8 적대 리뷰 [P1]: csv/xlsx 는 **본문 인라인이 아니라 sandbox 샘플 행**으로 프롬프트에
+            # 들어간다. 그 셀 값도 타 멤버가 쓴 콘텐츠이므로 텍스트 본문과 같은 주입 벡터다 —
+            # 출처 신호가 없으면 도구 게이트가 이 축에서 통째로 비어 있다(공격 셀 → scratch_* 우회).
+            if kind in ("csv", "xlsx"):
+                _UNTRUSTED_ATTACH_BODY_CTX.set(True)
         uploader_label = ""
         if _has_other_uploader and uploader_account_id and created_by_role != "assistant":
             if account_id and int(uploader_account_id) == int(account_id):

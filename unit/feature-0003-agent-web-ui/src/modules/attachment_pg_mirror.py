@@ -441,7 +441,9 @@ def pg_select_vision_images(conversation_id, account_id, ids, cap: int) -> list[
             cur.execute(
                 "SELECT id AS \"Id\", object_key AS \"ObjectKey\", mime_type AS \"MimeType\", "
                 "original_filename AS \"OriginalFilename\", size_bytes AS \"SizeBytes\", "
-                "size_bucket AS \"SizeBucket\" "
+                # REQ-20260814-vision-provenance: 소유자도 함께 — MySQL 판과 같은 키(`AccountId`).
+                # 한쪽만 실으면 읽기 백엔드에 따라 provenance 신호가 사라진다.
+                "size_bucket AS \"SizeBucket\", account_id AS \"AccountId\" "
                 f"FROM agent_runtime.core_attachments WHERE id IN ({placeholders}) "
                 f"AND {scope_sql} AND kind = 'image' AND deleted_at IS NULL AND delete_pending = 0 "
                 # feature-0003 attach-full-scope: 최신 우선(MySQL 판과 동형) — 대화 전량 스코프에서
