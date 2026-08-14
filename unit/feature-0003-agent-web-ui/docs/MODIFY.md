@@ -4172,3 +4172,17 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   연속 페이지 이동도 불가. → `focusToken()`/`restoreFocus()` 로 같은 컨트롤에 포커스 복원,
   경계에서 비활성이 되면 페이저의 활성 컨트롤로 대체 이동.
 - 회귀 고정: 하네스 G1~G4 (뮤턴트로 4건 FAIL 확인 — 검출력 있음). 총 50 PASS.
+
+## CHG-20260814T101500 사용 기록 페이저를 스크롤 바닥에 고정 (REV-20260814T101500-usage-pager-sticky)
+
+- 근거: 직전 cycle(usage-records-sort-page) 의 **POST-DEPLOY PB-0008 라이브 실측**에서 첫 화면에
+  페이저가 보이지 않았다 — 기본 50행 아래에 놓여 페이지를 넘기려면 매번 목록 끝까지 스크롤해야
+  했다. 페이지네이션을 붙여 놓고 도달 비용을 남긴 셈이라 실효 완성이 아니다.
+- 대상: `src/static/css/search-audit.css` — `.usage-rec-pager` 를 스크롤 컨테이너
+  (`.usage-conv-body`) 바닥 sticky 로(배경·상단 경계선·`bottom:-1px` 로 서브픽셀 틈 차단).
+  표 머리 sticky(top) 와 짝을 이뤄 정렬·페이지 컨트롤이 항상 손에 닿는다.
+- 대상: `src/static/admin/usage.js` — 페이저 노드를 안내 문구 **뒤(마지막)** 로 이동. sticky 요소가
+  절단·이동 안내 문구를 덮지 않게 하려는 순서 결정.
+- 무변경: 정렬·페이징 로직, 백엔드, 행 렌더.
+- 테스트: `tests/test_usage_records_sort_page.py` L9 신규(sticky·배경·마크업 순서) — 9 PASS.
+  하네스 50 PASS 무회귀.

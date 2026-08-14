@@ -838,9 +838,17 @@
 /* 방향 표식은 비활성 열에서도 자리를 차지해야 정렬을 바꿀 때 열 폭이 흔들리지 않는다. */
 .usage-rec-sort-ind { display: inline-block; min-width: 0.9em; font-size: 9px; line-height: 1; }
 
+/* 페이저는 스크롤 컨테이너(.usage-conv-body) 바닥에 **붙는다**. 붙이지 않으면 기본 50행 아래에
+   놓여, 페이지를 넘기려면 매번 목록 끝까지 스크롤해야 한다 — 라이브 실측(PB-0008)에서 첫 화면에
+   페이저가 아예 보이지 않았다. 표 머리(sticky top)와 짝을 이뤄 정렬·페이지 컨트롤이 늘 손에 있게
+   한다. `bottom: -1px` 은 스크롤 끝에서 서브픽셀 틈으로 행이 비쳐 보이는 것을 막는다. */
 .usage-rec-pager {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
   margin-top: 8px; font-size: 12px; color: var(--text-2, #475569);
+  position: sticky; bottom: -1px; z-index: 2;
+  background: var(--surface-1, #fff);
+  border-top: 1px solid var(--border-subtle, #e5e7eb);
+  padding: 8px 0 6px;
 }
 .usage-rec-pager-ctl { display: inline-flex; align-items: center; gap: 4px; }
 .usage-rec-page-btn {

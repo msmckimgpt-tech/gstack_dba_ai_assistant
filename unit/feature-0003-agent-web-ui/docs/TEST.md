@@ -2945,3 +2945,15 @@ transition 이 걸려 결함 조건이 성립하지 않는다. 즉 이 검사는
    `drawer-pane:none` 아래에 있어 전환이 죽는다. 사용자 경로대로 **계정 탭 → 사용 내역** 순으로 열고
    `getClientRects().length > 0` 을 확인한 뒤 측정해야 한다. (부모 체인 덤프로 갈라냄:
    `drawer-pane hidden:none` → 탭 활성화 후 `drawer-pane:flex`.)
+
+### Run (2026-08-14) — usage-pager-sticky: 사용 기록 페이저 바닥 고정 — **Environment: Windows-browser (PB-0008 — 본 결함 자체가 직전 cycle 배포본의 실 Windows Chrome 실측에서 나왔다: 첫 화면에 페이저가 보이지 않아 페이지 이동에 매번 50행 스크롤이 필요했다. 수정 후 재실측은 배포 후 수행하며, 그 결과를 본 Run 에 이어 기록한다)**
+
+- 변경: `src/static/css/search-audit.css`(`.usage-rec-pager` sticky bottom + 배경/경계선) ·
+  `src/static/admin/usage.js`(페이저 노드를 안내 문구 뒤로).
+- PRE-COMMIT: `tests/test_usage_records_sort_page.py` **9 PASS**(L9 신규 — sticky·배경·마크업 순서) ·
+  `tests/verify_usage_records_sort_page.mjs` **50 PASS**(무회귀).
+- 직전 cycle 라이브 실측 요지(같은 표면, 배포 c5ac13ee): 총 298건/6페이지 · 기본 토큰 내림차순 ·
+  `aria-sort` 정확 · 정렬 클릭(호출 내림 2,198→701→680, 오름 1,1,1) · 페이지 이동/25행/전체 전환 ·
+  경계 버튼 비활성 · 키보드 포커스 유지 · 주체 열이 표시 라벨 기준 정렬(sentinel 미노출) ·
+  정렬 후 시스템 행 클릭이 그 행의 대상 화면으로 이동("그래프 노드 분석 · dbGame.Achievement" →
+  관계도 탭) · Caddy `no upstreams available` 0.
