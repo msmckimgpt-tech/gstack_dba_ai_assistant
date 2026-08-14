@@ -3179,7 +3179,9 @@ def _prepare_vision_inline_images(
                 params = tuple(int(i) for i in attachment_ids) + (_sc_val, int(app._VISION_IMAGE_COUNT_CAP))
                 cur.execute(
                     f"""
-                    SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
+                    -- REQ-20260814-vision-provenance: 소유자(AccountId)를 함께 읽는다 — 이미지
+                    -- 본문이 프롬프트에 붙을 때 "타 멤버 파일인가" 를 판정할 유일한 단서다.
+                    SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket, AccountId
                     FROM WebConversationAttachments
                     WHERE Id IN ({placeholders})
                       AND {_sc_col} = %s
@@ -3216,6 +3218,8 @@ def _prepare_vision_inline_images(
         size_bytes = int(row.get("SizeBytes") or 0)
         size_bucket = str(row.get("SizeBucket") or "").strip()
         attachment_id = int(row.get("Id") or 0)
+        # PG 미러(alias "AccountId")·MySQL 양쪽 같은 키. 없으면 0 → caller 가 "미상" 으로 다룬다.
+        row_account_id = int(row.get("AccountId") or 0)
         if not object_key or attachment_id <= 0:
             continue
         if size_bytes > app._VISION_IMAGE_SIZE_CAP_BYTES:
@@ -3228,6 +3232,10 @@ def _prepare_vision_inline_images(
             continue
         b64 = _b64.b64encode(data_bytes).decode("ascii")
         inline_entries.append({
+            # REQ-20260814-vision-provenance: 이미지도 텍스트 첨부와 같은 provenance 신호를 갖는다.
+            # 이 값이 없으면 agent_core 는 이미지가 누구 것인지 알 수 없고, 이미지 안에 심긴
+            # 지시문에 대해 도구 게이트가 무력해진다(§18.8 적대 리뷰가 지적한 미적용 축).
+            "account_id": int(row_account_id or 0),
             "filename": filename,  # caller (agent_core) 가 provider 미송신 — 로그용
             "mime_type": mime_type,
             "base64_data": b64,

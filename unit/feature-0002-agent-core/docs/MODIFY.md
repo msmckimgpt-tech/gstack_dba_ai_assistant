@@ -1911,3 +1911,38 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **배포 함정 기록**: 1차 배포는 quiesce 게이트로 ask-worker 교체가 중단돼 **web 만 신코드**였다.
   게이트는 ask-worker 에서 실행되므로 그 상태로는 기능이 라이브에 없었다 — 파이프 exit 이 아니라
   서비스별 `GIT_COMMIT` 으로 판정해 잡았고 재실행(멱등)으로 해소.
+
+## CHG-20260814T100000-ai-claude-feature-0002-vision-provenance — 이미지 첨부 provenance 신호
+
+- 사유: 선행 cycle 의 §18.8 적대 리뷰 **미해소분**(SECURITY §47.4 "vision 경로 미적용"). 사용자 지시
+  "우선순위에 따라 진행" 의 1순위 — 게이트의 한 경로가 비어 있으면 방어 인식만 주고 실제로는 뚫린다.
+  위험등급 **Critical §12.3**(도구 실행 경계).
+- 대상:
+  - `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py` `_prepare_vision_inline_images`:
+    MySQL 폴백 SELECT 에 `AccountId` + inline JSON 에 `account_id` 동봉.
+  - `unit/feature-0003-agent-web-ui/src/modules/attachment_pg_mirror.py` `pg_select_vision_images`:
+    PG 미러 SELECT 에 `account_id AS "AccountId"`(양 백엔드 동형 — 한쪽만 실으면 읽기 백엔드에 따라
+    방어가 사라진다).
+  - `unit/feature-0002-agent-core/src/agent_core.py` `_load_attachment_inline_images`: 소유자와
+    호출자를 비교해 다르면 `_UNTRUSTED_ATTACH_BODY_CTX` set. 로더 자신이 책임진다(호출측 비의존).
+    파싱 실패는 막는 쪽, 소유자 키 부재는 종전 동작(배포 혼합 창에서 1:1 사용자 미차단).
+- 순서 계약: 이 로더는 `_call_llm` 안에서 = `compose_system_prompt`(플래그 리셋) **이후**,
+  도구 실행 **이전**. 뒤집히면 신호가 지워진 채 도구가 실행된다.
+- 무변경: 이미지 전달 자체(차단이 아니라 신호) · vision 상한·정렬 · 첨부 스코프·인가.
+- 테스트: `tests/test_vision_provenance.py` **신규 9**.
+
+### CHG-20260814T100000 적대 리뷰 반영 (REV-20260814T100000, [CODEX:adversarial-coverage])
+
+- **[P1] sandbox csv/xlsx 축 누락** — csv/xlsx 는 본문 인라인이 아니라 **sandbox 샘플 행**으로
+  프롬프트에 들어간다. 그 셀 값도 타 멤버가 쓴 콘텐츠인데 신호가 없어 공격 셀 → `scratch_*` 우회가
+  남았다. → 타 멤버 소유 csv/xlsx 면 신호를 세운다.
+- **[P2] 순서 테스트가 약함** — "로더 안에 set 이 있다" 만 봐서 `compose 리셋 < 로더 < 도구 실행`
+  순서가 뒤집히는 회귀를 못 잡았다. → 리셋 직후 상태에서 신호를 세우고 **게이트 끝단까지** 도달하는지
+  검증하는 형태로 교체(+ 반대 축: 로더가 안 돌면 열려 있는지).
+- **미해소로 남기는 것(정직)** — **히스토리 replay 축**: 타 멤버의 채팅·`read_attachment` 결과는
+  히스토리에 남아 다음 턴에도 프롬프트에 들어가지만 신호를 세우지 않는다. 여기까지 넓히면
+  **그룹 대화에서 scratch 가 상시 차단**된다(타 멤버 발언은 그룹이면 항상 있다) — 그것은 §47.4 가
+  피하려 한 과차단 그대로다. 이 게이트는 **"이번 턴에 타 멤버 첨부 본문이 새로 실렸는가"** 를 보는
+  부분 통제이며, 히스토리 축은 프롬프트 계약(발신자 라벨·datamark)이 담당한다.
+- **owner 키 부재 과도기**(P2): 구 web 이 만든 payload 를 신 worker 가 읽는 짧은 창에서 fail-open.
+  막는 쪽으로 두면 그 동안 1:1 사용자까지 막힌다 — 창의 길이(web 선롤링)와 교환해 현행 유지.
