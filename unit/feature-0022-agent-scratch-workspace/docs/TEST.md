@@ -83,3 +83,23 @@ fake connection 으로 이월 계약을 고정한다:
   `scratch_list` 가 이월 테이블을 보여주고 `scratch_sql` 로 조회 가능.
 - 공유 링크 fork(교차계정) → 이월 + `share.fork` 감사에 `scratch_tables_copied` 기록 확인.
 - 작업공간 없는 대화 분기 → `scratch_cloned = 0`, 프롬프트에 EMPTY 상태 주입.
+
+### 5.4 Live Run log (배포 db5d469b, 2026-08-14)
+
+- Run 2026-08-14 | Environment: live (web-a/b + workers = `mysql-ai-agent:db5d469b`, 무중단 실측
+  `no upstreams available` 0건) | Result: **PASS**
+  1. **PG 실권한 이월** (ask-worker 컨테이너, 임시 대화 id): 원본 스키마에 7행 테이블 seed →
+     `clone_workspace` → `{cloned: 1, rows: 7, truncated: false}` · 분기본 `run_sql` 로
+     `count=7, min(label)='row1'` 조회 성공(도구가 쓰는 경로 그대로). `agent_scratch_rw` role 로
+     스키마-간 CTAS 가 실제 권한 아래 동작함을 확인 — 단위 테스트(fake conn)가 못 덮는 면.
+  2. **실 사용자 분기 경로**: admin 계정으로 `POST /api/conversations/{cid}/duplicate` →
+     응답 `{"copied":17,"core_copied":100,"attachments_copied":21,"scratch_cloned":1,
+     "scratch_truncated":false}` · 분기본 대화의 작업공간에서 이월 테이블 조회 성공(5행).
+  3. **상태 주입 문구**: 테이블 있는 대화 → "Tables that actually exist right now: `probe_fork`"
+     (ANALYZE 전 `reltuples=-1` 은 행수 미표기 — 음수 추정치 노출 없음). 미사용 대화 →
+     "The workspace is **EMPTY** right now ... Re-import what you need with `scratch_import`".
+  4. **잔재 정리**: 분기본 대화 삭제(`POST /api/delete_conversation`, 목록에서 제거 확인) +
+     검증용 스키마 2개 DROP + 레지스트리 행 삭제. 원본 대화는 검증 전 작업공간이 없던 상태
+     (`PRE_EXISTED: False`)라 스키마째 제거로 원상 복구. 무관한 사용자 작업공간 2건은 무접촉.
+- **Environment: 백엔드/무-UI** — 본 cycle 도 web static/template/html/js/css 변경 0 (문서만)
+  이므로 Windows-browser 시각검증 대상 아님(N/A).

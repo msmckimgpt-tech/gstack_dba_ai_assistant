@@ -85,7 +85,7 @@ source_of_truth: true
 - [x] TASK-20260814T0304-settings: 런타임 설정 3종 추가 — `AGENT_SCRATCH_FORK_CARRYOVER`(기본 1),
   `AGENT_SCRATCH_MAX_CLONE_ROWS`(기본 200000), `AGENT_SCRATCH_FORK_BUDGET_MS`(기본 10000).
 - [x] TASK-20260814T0304-test: 단위 테스트 13건 추가(이월 캡·부분 실패·fail-soft·방향·상태 주입).
-- [ ] TASK-20260814T0304-live: 라이브 검증 — 작업공간이 있는 대화를 분기해 이월 확인 + 분기본에서
+- [x] TASK-20260814T0304-live: 라이브 검증 — 작업공간이 있는 대화를 분기해 이월 확인 + 분기본에서
   이월 테이블 조회 + 상태 주입 문구 반영 확인.
 
 ## 9. Requested Scope (요청 범위 자기-열거) — 20260814T0304-scratch-fork-carryover
@@ -103,7 +103,7 @@ source_of_truth: true
   배선 확인: scratch 활성 대화의 시스템 프롬프트 조립부(`_SCRATCH_WORKSPACE_GUIDANCE` 직후)에 연결,
   빈 작업공간/조회 실패/실재 목록 3 분기를 단위 테스트로 고정. 이월 상한 초과·이월 실패·**TTL 만료**
   까지 포함해 "문맥엔 있는데 실물은 없는" 어긋남 일반을 차단한다.
-- [ ] `라이브 실증` — 산출물: TEST.md §5.3 시나리오 · 배선 확인: 배포 후 수행(TASK-...-live).
+- [x] `라이브 실증` — 산출물: TEST.md §5.4 Live Run log · 배선 확인: 배포 db5d469b 에서 PG 실권한 이월(7행) + 실 사용자 `duplicate` API `scratch_cloned=1` + 분기본 조회 성공 + 상태 주입 문구 2분기 확인, 검증 잔재 전량 정리.
 
 **주장 affordance 실측 (G3)**: 분기 응답이 새로 주장하는 값 `scratch_cloned`/`scratch_truncated` 는
 `clone_workspace` 반환값에서 직접 유도되며 단위 테스트가 값 계약(행수 합산·부분 실패 시 개수)을
