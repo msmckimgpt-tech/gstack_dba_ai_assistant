@@ -168,6 +168,9 @@ __all__ = [
     "AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX_SEC",
     "AGENT_LLM_TRANSIENT_RETRY_CHEAP_BUDGET_SEC",
     "AGENT_ASK_RESUME_ON_TRANSIENT",
+    "AGENT_LLM_STREAM_ENABLED",
+    "AGENT_LLM_STREAM_PROGRESS_SEC",
+    "AGENT_LLM_STREAM_CANCEL_POLL_SEC",
     "AGENT_OUT_DIR",
     "AGENT_PLAN_MODEL",
     "AGENT_PLAN_TIMEOUT_MIN_SEC",
@@ -1259,6 +1262,44 @@ AGENT_ASK_RESUME_ON_TRANSIENT = (
     os.getenv("AGENT_ASK_RESUME_ON_TRANSIENT", "true").strip().lower()
     not in ("false", "0", "no", "off")
 )
+# ── 대화 LLM 호출 스트리밍 (conv-audit FR-llm-attempt-cap-inside-latency-tail) ──
+# 사고(2026-08-14): per-attempt 상한(콘솔 `AGENT_TIMEOUT_SEC` live=900s)이 **성공 지연 분포의
+# 꼬리 안쪽**에 있었다 — 30일 대화 라운드 1,271건의 실측 p50 12.5s · p95 238.5s · **max 854s**
+# (700s+ 3건 · 480s+ 7건). 비스트리밍 단일 호출에서 그 상한은 "응답 완료까지" 를 재므로,
+# 정상적으로 진행 중인 무거운 추론(추론강도 max · completion 48K~100K tok)이 상한에 걸려
+# **그때까지의 추론이 전량 폐기**되고 재시도가 같은 비용을 처음부터 다시 태웠다(실측 사용자
+# 대기 23분: 900s 폐기 + 481s 재시도 성공). 게다가 그 15분 동안 chunk 가 하나도 없어
+# 진행 표시가 갱신되지 않아, 실제로는 살아 있는 run 이 **멈춘 것으로 보였다**(30일 5분+
+# 표면 무변화 54건/15 대화 · 그중 94%가 "추론 중" 표시 직후).
+#
+# 스트리밍으로 바꾸면 같은 상한이 **chunk 간 무응답 간격**에 걸린다(라이브 실측: ttft 2.16s,
+# `reasoning_content` delta 가 사고 중에도 도착). 즉 854초짜리 정상 추론은 더 이상 상한에
+# 걸리지 않고, chunk 도착 자체가 진행 신호가 되어 두 결함(전량 폐기 · 표면 무변화)이 한
+# 메커니즘으로 봉인된다. 킬 스위치를 남겨 회귀 시 즉시 비스트리밍으로 되돌린다.
+AGENT_LLM_STREAM_ENABLED = (
+    os.getenv("AGENT_LLM_STREAM_ENABLED", "true").strip().lower()
+    not in ("false", "0", "no", "off")
+)
+# 진행 표시(activity) 갱신 주기. 15분 무응답 구간이 이 주기로 쪼개져 사용자가 "진행 중" 을
+# 본다. 0 이면 갱신 안 함(종전 동작). **0 이 아니면 하한 10초로 clamp** — §18.8 패널 [P2]:
+# 음수만 막으면 운영자가 0.001 을 넣어 chunk 수에 비례한 activity write 폭주를 만들 수 있다
+# (한 라운드가 수천 chunk 다). 진행 표시는 분 단위 신호이므로 하한이 기능을 해치지 않는다.
+_AGENT_LLM_STREAM_PROGRESS_MIN_SEC = 10.0
+AGENT_LLM_STREAM_PROGRESS_SEC = (
+    lambda _v: 0.0 if _v <= 0.0 else max(_AGENT_LLM_STREAM_PROGRESS_MIN_SEC, _v)
+)(float(os.getenv("AGENT_LLM_STREAM_PROGRESS_SEC", "120")))
+# 스트림 수신 중 탈출구(취소·'즉시 답변') 확인 주기. 종전에는 per-attempt 전체(최대 15분)가
+# 단일 블로킹 호출이라 그 사이 사용자의 신호가 반영되지 않았다 — chunk 루프가 생겼으므로 그
+# 창을 닫는다. 진행 주기와 같은 이유로 0 이 아니면 하한을 둔다(§18.8 패널 [P2] — 15분 스트림에
+# 이미 ~90회 런타임 조회이므로 이보다 짧아지면 동시 장기 요청에서 부하가 증폭된다).
+_AGENT_LLM_STREAM_ABORT_MIN_SEC = 2.0
+AGENT_LLM_STREAM_CANCEL_POLL_SEC = (
+    lambda _v: 0.0 if _v <= 0.0 else max(_AGENT_LLM_STREAM_ABORT_MIN_SEC, _v)
+)(float(os.getenv("AGENT_LLM_STREAM_CANCEL_POLL_SEC", "10")))
+# 참고(실측 근거): gateway 로 보내는 body `timeout` 은 **바꾸지 않는다**. 스트리밍에서 그 값이
+# 전체 스트림 상한으로 적용될 것이라 보고 run 예산 배수로 키우려 했으나, 라이브 실측이 그
+# 가정을 반증했다 — body timeout=3s 로 6.5초 스트림을 요청해도 절단되지 않았다. 따라서
+# feature-0007 의 "콘솔 값이 곧 per-attempt upstream 상한" 계약은 그대로 보존된다.
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))
 AGENT_CSV_PREVIEW_ROWS = int(os.getenv("AGENT_CSV_PREVIEW_ROWS", "20"))
 AGENT_CSV_ANALYZE_MAX_ROWS = int(os.getenv("AGENT_CSV_ANALYZE_MAX_ROWS", "200000"))

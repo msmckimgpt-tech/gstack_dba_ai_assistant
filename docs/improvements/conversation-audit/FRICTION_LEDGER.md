@@ -6,6 +6,102 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-llm-attempt-cap-inside-latency-tail — fixed:undeployed (L6↔L7; per-attempt 상한이 성공 지연 분포의 꼬리 안쪽 → 정상 추론 전량 폐기 + 무진전 표면)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **24** · 기존 더블 3파일 두-모드 전환 ·
+  CI 전 testpath 귀책 실패 **0** · ruff clean). 배포 전.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-14) — "`새 대화` —
+  「LLM 연결이 일시적으로 끊겨 재연결하는 중 …」 이라는 단계와 함께 진전이 없는것으로 확인되어
+  대응이 필요합니다."
+- **last_seen**: 2026-08-14 · **seen_count**: 1 · **seen_distinct_conv**: 15 (30일 무진전 축)
+- **modality**: 1:1 · **conv(마스킹)**: `…f72f26ef`(topic 빈 값 → UI "새 대화") · job 682 ·
+  run `…1ac86377` · 추론강도 **max** · 첨부 4건 · `claude-sonnet-4`
+- **symptom_confidence**: high (사용자 명시 보고 + steps/로그 실측)
+  · **rootcause_confidence**: high (`steps` + `llm_usage` + ask-worker 로그 + gateway access 로그
+  + 코드 file:line **5중 삼각측량**, 900.1s 실패와 481.3s 재시도 성공이 초 단위로 정합)
+- **suspected_layers**: **L6**(전송/디코딩 상한) ↔ **L7**(진행 표면). 인프라 아님 — upstream 은
+  854초까지 정상 응답한다.
+
+- **증상(signal)**: `E-USR` 명시 보고 + `I-SIL`/`I-FALSE` 후보(살아 있는 run 을 정지로 오인).
+  **결정적 정직 정정**: 그 run 은 **멈추지 않았다** — 사용자 보고 시점 이후 회복해 13회차 추론과
+  red-team 검증까지 진행했다. 사용자가 본 것은 정지가 아니라 **무진전 구간**이었다.
+- **라이브 타임라인(실측)**: 14:52:07 1라운드 호출 → **900초 무응답 timeout**
+  (`llm_transient_retry … timeout_class=True attempt_elapsed=900.1s`) → 15:07:07 재시도 표시 →
+  **15:15:10 재시도 성공**(481.3s · prompt 51,191 / completion **48,221** tok) → 15:23~15:33
+  4·5회차 → 15:33:39 "한도 근접" → **15:41:14 사용자가 연장 승인** → 7~13회차 → 16:16:51
+  red-team → 16:17:13 결함 수정. 즉 **08-12 재시도 봉인이 발동해 run 을 구했다**(그 봉인은 유효).
+- **confirmed_root_cause** (2중):
+  1. **RC-1 — 상한의 측정 대상이 틀렸다.** per-attempt 상한은 콘솔 live `AGENT_TIMEOUT_SEC`(=900)
+     인데, 비스트리밍 단일 호출에서 그 값은 "**응답 완료까지**" 를 잰다. 30일 성공 라운드
+     **1,271건 / 121 대화**의 실측 지연은 p50 12.5s · p95 238.5s · **max 854s**(700s+ **3건** ·
+     480s+ **7건**) — 상한이 **정상 분포의 꼬리 안쪽**이다. 걸리면 비스트리밍이라 부분 산출이
+     없어 전량 폐기되고 재시도가 같은 비용을 처음부터 다시 태운다.
+     → `FR-llm-transient-failure-kills-run` 의 gateway grace 120s(실측 분포 안쪽)와 **동형 반복**.
+     같은 부류가 **상한 층을 바꿔 재발**했다.
+  2. **RC-2 — 그 구간에 표면 신호가 없다.** 30일 5분+ 무변화 **54건 / 15 대화**, 그중
+     **51건(94%)이 activity 직후**·40건이 "추론" 라벨 직후 = 단일 LLM 호출 대기가 지배 원인.
+     경과 타이머는 이미 있으나(`app.js:3262`) 그 시간이 정상 범위인지 알려주지 않는다.
+     **연장 승인 구간에서 더 나쁘다** — 같은 대화에서 15:51:38 → 16:08:06 = **16.5분 무변화**
+     (연장이 per-attempt 를 키운다).
+  재발경로 = **model limit(비결정 지연) + 설정 구조** → 코드가 권위선.
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님(15분 추론 폐기 + 23분 대기) — 단 "영구 hang" 은
+  아니다(정직 구분). **F2** 사용자 입력 오류 아님(추론강도 max 는 정당한 선택). **F3** 기수정
+  아님 — 재시도 봉인은 **작동했고** 남은 층이 다르다(폐기 자체 + 인지). **F4** 의도된 동작 아님
+  (상한 존재는 의도지만 성공 분포 안쪽에 놓인 것은 의도 아님). **F5** ANCHOR 충돌 없음
+  (feature-0002 §1~§3 은 소유권·구조 축). **F6** 외부 기인 아님 — upstream 은 854초까지 정상.
+- **corroboration**: **structural** — 무진전 축 54건/15 대화(30일, 전체 run 의 7.3%)는 구조적이고,
+  900초 정확 timeout 은 30일 **2 run / 2 conv**(저빈도)이나 상한 근접(700s+ 3 · max 854s)이
+  이어져 **재발이 확정된 구조**다. Phase 7.4 "명백한 구조결함" 분기 충족.
+- **triage**: S=4 · F=3 · L=4 · C=5 · R=3 → **24**, disposition=**fix-now**.
+  위험등급 **Major**(§12.3 코어 LLM 전달 경로) → attended. 사용자가 봉인 범위
+  **"스트리밍까지 근본 전환"** 을 AskUserQuestion 으로 명시 선택(2026-08-14).
+- **전제 실측(설계 성패 축, 라이브)**: gateway 스트리밍에서 `reasoning_content` delta 가 **사고
+  중에도 도착**(ttft 2.16s · chunks 5 · `kinds={'reason':1,'content':4}` · finish=stop) ·
+  `stream_options={"include_usage":True}` 로 **usage 정상**(prompt 36 / completion 40).
+  → 스트리밍에서 같은 상한이 **chunk 간 간격**에 걸리므로 854초 정상 추론은 살아남고, chunk
+  도착 자체가 진행 신호가 되어 **RC-1·RC-2 가 한 메커니즘으로 봉인**된다.
+- **초판 가정을 실측이 반증 → 되돌림(정직)**: body `timeout` 을 run 예산 배수로 키우려 했으나
+  (gateway 가 전체 스트림을 자를 것이라 가정), **body timeout=3s 로 6.5초 스트림이 절단되지
+  않았다**. litellm 은 스트리밍에서 그 값을 전체 스트림 상한으로 적용하지 않는다 → 근거 없이
+  feature-0007 계약("콘솔 값 = per-attempt upstream 상한")을 깨지 않는다. knob 제거,
+  변경 표면 축소, `test_body_timeout_synced_with_console_agent_timeout` 무회귀.
+- **봉인**: ① `_call_llm` 스트리밍 전환 + **반환 계약(message-like) 유지** → 소비처 3곳 무변경
+  (blast radius 를 가두는 축) ② per-request 클라이언트 timeout 을 chunk-간 상한으로 재해석
+  ③ **120초 주기 진행 표시**(15분 구간 최소 7회 · 관측된 16.5분 구간 8회로 쪼갬) ④ 스트림 중
+  **10초 주기 취소 폴링** + 전용 예외 `_LLMStreamCanceled`(재시도 오분류 차단) ⑤ **킬 스위치**
+  `AGENT_LLM_STREAM_ENABLED`(테스트로 잠금) ⑥ reasoning delta 는 답변에 미혼입·분량만 계수
+  ⑦ `stream_options` 폴백 판정을 **좁게**(일반 장애를 폴백으로 삼키면 대기 배가를 자기재현).
+  ⑧ 부분 스트림은 답변으로 승격하지 않음(절단 답변·불완전 arguments 를 사실로 만들지 않는다).
+- **fix**: `CHG-20260814T160000-llm-stream-progress`(TASK-20260814T160000) /
+  **코드 거주 `feature-0002-agent-core`** + `shared/config.py`(공용) /
+  `REV-20260814T160000-llm-stream-progress`
+- **rc_ids**: RC-1(상한 측정 대상) · RC-2(무진전 표면) — 한 메커니즘으로 병합 ·
+  **batch-id**: B-20260814T160000-llm-stream-progress
+- **§18.8 패널 흡수(`[CODEX:adversarial-backend-qa-regression]`, P1 3 · QA P1 2 · P2 8)**:
+  가장 중요한 흡수는 **'즉시 답변' 이 스트림 중 탈출구가 아니었다**는 것 — 초판은 취소만 봐서
+  사용자가 버튼을 눌러도 호출이 끝날 때까지(tool_calls 가 오면 도구 실행까지) 무시됐다. 취소는
+  반영하는데 즉시답변은 무시하는 비대칭을 abort 신호 분리로 닫았다. 그 밖에 red-team 2경로 abort
+  배선(리뷰어 재생성이 상한까지 신호 무시) · **메인 wiring 제거 뮤턴트가 전 스위트를 통과**하던
+  공백(배선 테스트) · usage 부재 warning · `TypeError` 폴백 좁힘 · abort 시 `close()` · 주기 하한
+  clamp · 진행 표시 호출 횟수 상한 · `finish_reason` ContextVar 소비 검증.
+  **자체 적발이 패널보다 앞섰다** — 불완전 스트림(조용한 EOF) P1 은 자체 검토에서 먼저 잡아
+  수정했고 codex 가 독립 확인했다.
+- **한계(패널 [P1] 근거 있는 채택 — 주장 범위 축소)**: 주기 게이트는 `for chunk in stream` 안에
+  있어 **다음 chunk 를 받은 뒤에만** 열린다. 따라서 **upstream 완전 무응답 구간에는 진행 표시도
+  abort 확인도 없다**(종전과 동일 — 악화 아님). 이 봉인이 실제로 개선하는 것은 **chunk 가 흐르는
+  구간**(정상적으로 오래 걸리는 추론 — 라이브 ttft 2.16s 후 delta 연속 도착)이다. 그래서
+  "무응답 구간 검출" 을 이 cycle 의 성과로 주장하지 않는다. watchdog 스레드로 덮으려면 진행
+  표시가 런타임 DB 커넥션을 메인 스레드와 공유해야 해 위험이 이득을 넘는다 → 별 항목 이월.
+- **범위 밖(deferred/watch)**: ① **부분 산출 이월**(절단된 추론을 답변 초안으로 재사용)은 하지
+  않는다 — 허위 완료 위험(`FR-partial-evidence-false-verification` 계열). ② 연장 승인 시
+  per-attempt 확장이 무진전 구간을 더 키우는 축은 진행 표시로 완화했을 뿐 상한 자체는 그대로다.
+  ③ **무응답 구간 표면화(watchdog)** — 위 한계. 진행 표시를 스레드-안전 경로로 분리하는 선행
+  작업이 필요하다. ④ red-team 경로는 abort 만 배선하고 진행 표시는 미배선 — 그쪽 대기 표면은
+  `FR-redteam-first-pass-unabortable` 봉인이 이미 담당한다(중복 표시 회피).
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "스트리밍 수집 계약이 동작함" 까지만 증명한다.
+  ① 배포 후 실사용 대화에서 **900초 timeout 소멸**(`llm_transient_retry … timeout_class=True`
+  건수) ② 5분+ 무변화 건수 감소(위 54건/15대화 재측정) ③ `llm_stream_done` 로그로 무거운 추론이
+  실제 chunk 를 흘렸는지(상한이 chunk-간에 걸린다는 전제의 라이브 확인) ④ 취소 반응성.
 ## FR-early-return-kv-never-finalized — fixed:undeployed (L4↔L7 경계; run 이 KV 를 마감하지 못하면 프런트는 영원히 기다린다)
 
 - **status**: `fixed:deployed:unverified-live` — PR #1303 merge(main `6cd45761`) → `deploy-web` **전체
@@ -196,8 +292,17 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-llm-transient-exhaustion-discards-run — fixed:undeployed (L6↔인프라 경계; 재시도 예산이 인프라 교체 공백보다 짧아 소진 = 전량 폐기)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **23** + 선행 cycle 계약 테스트 1건 갱신 ·
-  **뮤테이션 12/12 KILLED** · 전 testpaths 회귀 실패 0[선재 1건] · ruff clean). 배포 전.
+- **status**: `fixed:deployed:unverified-live` — **배포 확인(2026-08-14 재측정)**: 봉인 커밋
+  `f0147fcc` 가 라이브 `GIT_COMMIT=73c02c71` 의 조상이고, 배포본 ask-worker 에 심볼
+  `requeue_ask_job_for_resume`·`resume_hint` 적재 확인. 종전 기록 `fixed:undeployed` 는 **stale**
+  이었다(그 후 여러 배포가 함께 실어 보냈다). 라이브 대화 실측(재개 완주 관측)은 여전히 미수행.
+  코드/테스트(신규 **23** + 선행 cycle 계약 테스트 1건 갱신 ·
+  **뮤테이션 12/12 KILLED** · 전 testpaths 회귀 실패 0[선재 1건] · ruff clean).
+- **재측정(2026-08-14, `FR-llm-attempt-cap-inside-latency-tail` audit)**: 이 봉인의 **1차 축은
+  라이브에서 실제로 발동해 run 을 구했다** — 대화 `…f72f26ef` 에서 900초 timeout 뒤 같은 라운드
+  재시도가 481초로 성공했고(누적 도구·추론 무손실) 재개 재큐까지 갈 필요가 없었다. 남은 마찰은
+  "예산 소진" 이 아니라 **상한 자체가 정상 분포 안쪽** 이었던 축이며, 그것은 별 항목으로 분리
+  했다(위 `FR-llm-attempt-cap-inside-latency-tail`).
 - **source**: 사용자 명시 호출(2026-08-12) — 첨부 6건(`20260709_[MV] Log_v2 이슈 대응_*.sql`)
   대화가 `오류: AWS Bedrock 서비스가 일시적으로 응답하지 않습니다` 로 종료. 요청 문구:
   "**작업 내역을 보존한 채 다시 추론을 재개**할 수 있도록 구성해주세요."
@@ -258,7 +363,13 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-llm-transient-failure-kills-run — fixed:deployed:unverified-live (L6↔L2 구조; 일시 전송 실패 1회가 run 전체와 누적 도구 작업을 폐기)
 
-- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-12, PR #1217 merge main
+- **status**: `fixed:deployed:verified` — **corroboration 재측정으로 전이(2026-08-14)**: 전송층
+  실패 원문 노출(`Connection error.` / `Request timed out.`)이 **봉인 전 18건 / 16 대화**
+  (2026-07-10 ~ 08-12) → **봉인 후 0건**(08-12 12:00 이후, `core_messages` role=assistant 집계).
+  ⚠ **기간 한계(정직)**: 관측 창이 2일이라 잠정이며, 다음 audit 이 재측정한다. 같은 날 관측된
+  마찰(`FR-llm-attempt-cap-inside-latency-tail`)은 **다른 근본**(상한이 분포 안쪽)이고 이 봉인의
+  재시도는 그 사고에서 **정상 발동해 run 을 구했다** — 회귀가 아니다.
+  — **배포 완료**(2026-08-12, PR #1217 merge main
   `65baf50b` → 최종 롤아웃 `7c2918a8`, 5서비스 healthy, edge `/healthz` ok). 배포 층 후속 봉인은
   PR #1219(`7c2918a8`)로 함께 출하됐고 **2단계 배포 실측에서 게이트가 두 번 다 `=quiet`** 였다.
   **배포본 런타임 실증**: 출하 상수 5종 · `Connection error.` → transient/한국어 안내/글로벌 배너

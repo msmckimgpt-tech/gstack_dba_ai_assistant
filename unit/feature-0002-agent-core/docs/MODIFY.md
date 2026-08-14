@@ -2061,3 +2061,40 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - Files: `src/modules/ask.py` · `src/scripts/healthcheck_ask_worker.py` · `shared/config.py`(공용).
 - Rollback Notes: healthcheck 를 KV 단독 판정으로 되돌리고 liveness 스레드를 제거하면 원복.
   그 순간부터 surge 공존 창의 배포 판정이 다시 두 컨테이너를 구분하지 못한다.
+
+## CHG-20260814T160000-llm-stream-progress — 대화 LLM 호출 스트리밍 전환 (Major)
+
+- **왜**: `/_dqa:conversation_audit` 라이브 진단 `FR-llm-attempt-cap-inside-latency-tail`
+  (TASK-20260814T160000). per-attempt 상한이 **성공 지연 분포의 꼬리 안쪽**이었다 — 콘솔 live
+  `AGENT_TIMEOUT_SEC`=900 vs 30일 실측 라운드 1,271건의 max **854s**(700s+ 3 · 480s+ 7). 비스트리밍
+  단일 호출에서 그 상한은 "응답 완료까지" 를 재므로 정상 진행 중인 무거운 추론(추론강도 max ·
+  completion 48,221 tok)이 걸려 **전량 폐기**되고 재시도가 같은 비용을 다시 태웠다(실측 사용자
+  대기 23분). 그 15분 동안 chunk 가 없어 진행 표시도 갱신되지 않아 **살아 있는 run 이 멈춘 것으로
+  보였다**(30일 5분+ 무변화 54건/15 대화, 94%가 "추론 중" 표시 직후).
+- **무엇을**:
+  1. `src/agent_core.py` — `_call_llm` 을 `stream=True` + `stream_options={"include_usage":True}`
+     로 전환. 신설 `_collect_llm_stream`(chunk 누적) · `_merge_tool_call_deltas`(index 별 조립,
+     name 첫 값 · arguments 누적) · `_StreamedMessage`/`_StreamedToolCall`/`_StreamedFunction`
+     (비스트리밍 message 와 **같은 표면**) · `_StreamedResponseShim`(`_record_llm_usage` 계약) ·
+     `_LLMStreamCanceled`(취소 전용 예외) · `_LLMStreamIncomplete`(완결 신호 부재 = 실패) ·
+     `_stream_options_rejected`(좁은 폴백 판정).
+     per-request 클라이언트 `timeout` 을 chunk-간 무응답 상한으로 재해석. 메인 라운드에만 진행
+     콜백(`_stream_progress_cb`)과 취소 콜백(`_stream_cancel_cb`)을 배선 — red-team 두 경로는
+     자체 취소 게이트가 있어 무회귀. `llm_stream_done` 관측 로그 1줄.
+  2. `shared/config.py` — `AGENT_LLM_STREAM_ENABLED`(킬 스위치, 기본 on) ·
+     `AGENT_LLM_STREAM_PROGRESS_SEC`(120) · `AGENT_LLM_STREAM_CANCEL_POLL_SEC`(10) 신설 + 공개
+     목록 등재. **body `timeout` 은 미변경** — 초판이 키우려 했으나 라이브 실측(body timeout=3s
+     에서 6.5초 스트림 무절단)이 전제를 반증해 feature-0007 계약을 보존했다.
+- **반환 계약 불변**: 소비처 3곳(`_run_agent_core` 메인 라운드 · `_rt_generate` · `_rt_rederive`)은
+  `.content`/`.tool_calls[i].function.{name,arguments}` 만 읽으므로 **무변경**이다. 이것이 이 전환의
+  blast radius 를 가두는 축이다.
+- **검증**: 신규 24건(`tests/test_llm_stream_collect.py` 23 + 킬 스위치 1) · 기존 더블 3파일을
+  두 모드 지원으로 전환(`test_call_llm_records_agent_task` · `test_conversation_answer_no_edge_alias` ·
+  `test_reasoning_effort`) · CI 전 testpath 귀책 실패 0 · ruff clean.
+- **위험등급**: Major(코어 LLM 전달 경로). 사용자가 봉인 범위 "스트리밍까지 근본 전환" 명시 선택.
+- Files: `src/agent_core.py` · `shared/config.py`(공용) · `tests/test_llm_stream_collect.py`(신규) ·
+  `tests/test_call_llm_records_agent_task.py` · `tests/test_conversation_answer_no_edge_alias.py` ·
+  `tests/test_reasoning_effort.py`.
+- Rollback Notes: `AGENT_LLM_STREAM_ENABLED=false` 로 즉시 비스트리밍 복귀(코드 롤백 불필요 —
+  킬 스위치 경로가 테스트로 잠겨 있다). 그 순간부터 per-attempt 상한은 다시 "완료까지" 를 재므로
+  854초 근처 추론이 폐기되는 구조가 되살아난다.

@@ -8,6 +8,83 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260814T160000-llm-stream-progress — 대화 LLM 호출 스트리밍 전환: per-attempt 상한을 지연 분포 밖으로 + 무진전 표면 해소 (Major §12.3)
+
+`/_dqa:conversation_audit` 라이브 진단(FR-llm-attempt-cap-inside-latency-tail). 사용자 호출
+(2026-08-14): "`새 대화` — 「LLM 연결이 일시적으로 끊겨 재연결하는 중 …」 이라는 단계와 함께
+진전이 없는것으로 확인되어 대응이 필요합니다."
+
+- [x] **라이브 실측 — 그 run 은 멈추지 않았다**. 대화 `…f72f26ef`(topic 빈 값 → UI "새 대화",
+      1:1, 추론강도 **max**, 첨부 4건, `claude-sonnet-4`) job 682: 14:52:07 1라운드 호출 →
+      **900초 무응답 timeout**(`llm_transient_retry … timeout_class=True attempt_elapsed=900.1s`)
+      → 15:07:07 재시도 표시 → **15:15:10 재시도 성공**(481초 · prompt 51,191 / completion
+      **48,221** tok) → 15:23 4회차 추론까지 정상 진행. 즉 08-12 재시도 봉인이 발동해 run 을
+      구했고, 남은 마찰은 **23분 대기 + 그 사이 진행 표시 2회뿐**이었다.
+- [x] 근본 확정(RC-1) — 상한의 **측정 대상**이 틀렸다. per-attempt 상한은 콘솔 live
+      `AGENT_TIMEOUT_SEC`(=900) 인데 비스트리밍 단일 호출에서 그 값은 "응답 완료까지" 를 잰다.
+      30일 성공 라운드 **1,271건 / 121 대화**의 실측 지연은 p50 12.5s · p95 238.5s ·
+      **max 854s**(700s+ 3건 · 480s+ 7건) — **상한이 정상 분포의 꼬리 안쪽**이었다. 걸리면
+      비스트리밍이라 부분 산출이 없어 전량 폐기되고 재시도가 같은 비용을 처음부터 다시 태운다.
+      원장 `FR-llm-transient-failure-kills-run` 의 gateway grace 120s(분포 안쪽)와 **동형 반복**.
+- [x] 근본 확정(RC-2) — 그 구간 표면 무변화. 30일 5분+ 무변화 **54건 / 15 대화**, 그중
+      **51건(94%)이 activity 직후**·40건이 "추론" 라벨 직후 = 단일 LLM 호출 대기가 지배 원인.
+      경과 타이머는 이미 있으나(app.js:3262) 그 시간이 정상인지 알려주지 않는다.
+- [x] 거짓양성 기각 — F1 무해 아님(15분 추론 폐기) · F2 사용자 입력 오류 아님(max 는 정당한
+      선택) · **F3 기수정 아님**(재시도 봉인은 작동했고 남은 층이 다르다) · F4 의도된 동작
+      아님(상한이 분포 안쪽인 것은 의도 아님) · F5 ANCHOR 충돌 없음 · F6 외부 기인 아님.
+- [x] triage S=4 · F=3 · L=4 · C=5 · R=3 → **24, fix-now**. 위험등급 **Major**(코어 LLM 경로)
+      → 사용자가 봉인 범위 **"스트리밍까지 근본 전환"** 을 명시 선택(AskUserQuestion, 2026-08-14).
+- [x] **전제 실측(설계 성패 축)** — gateway 스트리밍에서 `reasoning_content` delta 가 **사고 중에도
+      도착**한다(ttft 2.16s · chunks 5 · `kinds={'reason':1,'content':4}` · finish=stop) ·
+      `stream_options={"include_usage":True}` 로 **usage 정상 전달**(prompt 36 / completion 40) ·
+      **`finish_reason` 2종 실측** — `stop`(정상) 과 **`length`**(haiku, content 6,566자·122 chunk).
+      length 가 살아 있어야 `FR-attach-delivery-truncated-by-output-cap` 의 절단 감지 봉인이
+      스트리밍에서 무력화되지 않는다(그 봉인이 이 값에만 의존한다).
+      → 스트리밍에서 같은 상한이 **chunk 간 무응답 간격**에 걸리므로 854초짜리 정상 추론은
+      살아남고 진짜 hang 만 잡힌다. chunk 도착 자체가 진행 신호라 RC-1·RC-2 가 **한 메커니즘**으로
+      봉인된다.
+- [x] **초판 가정을 실측이 반증 → 되돌림(정직)**: body `timeout` 을 run 예산 배수로 키우려 했으나
+      (gateway 가 전체 스트림을 자를 것이라 가정), body timeout=3s 로 **6.5초 스트림이 절단되지
+      않았다**. litellm 은 스트리밍에서 그 값을 전체 스트림 상한으로 적용하지 않는다 → 근거 없이
+      feature-0007 계약("콘솔 값 = per-attempt upstream 상한")을 깨지 않는다. knob 제거,
+      `test_body_timeout_synced_with_console_agent_timeout` 무회귀. 변경 표면도 줄었다.
+- [x] 봉인 — ① `_call_llm` 스트리밍 전환 + **반환 계약(message-like) 유지** → 소비처 3곳(메인
+      라운드 · red-team 재생성 · red-team 재추론) 무변경 ② per-request 클라이언트 timeout 을
+      chunk-간 상한으로 재해석 ③ chunk 수신 중 **120초 주기 진행 표시**(15분 구간이 최소 7회
+      갱신) ④ 스트림 중 **취소 폴링**(10초) + 전용 예외 `_LLMStreamCanceled` 로 재시도 오분류
+      차단 ⑤ **킬 스위치** `AGENT_LLM_STREAM_ENABLED` ⑥ reasoning delta 는 답변에 섞지 않고
+      분량만 계수(CoT 미노출 정책 유지) ⑦ `stream_options` 폴백 판정을 **좁게**(일반 장애를
+      폴백으로 삼켜 한 번 더 태우면 이 봉인이 없애려는 대기 배가를 스스로 재현).
+- [x] **자체 적대 적발(P1) — 스트리밍이 만든 새 실패 모드**: 소켓이 중간에 조용히 닫히면
+      (프록시 EOF·게이트웨이 교체) 이터레이터가 `StopIteration` 으로 끝나 **정상 종료와 구별되지
+      않는다** → 절단된 답변이 완전한 답변으로, 불완전 JSON `arguments` 가 완전한 도구 호출로
+      하류에 전달된다. 비스트리밍에는 없던 입구다(HTTP 응답 전체 파싱이라 '부분 응답' 이 없다).
+      → `finish_reason` 부재를 `_LLMStreamIncomplete` 로 올려 재시도에 맡긴다. 별도 분기 불필요 —
+      `classify_agent_llm_failure` 가 미분류 예외를 transient 로 보내고 `_slow` 판정이 오래 태운
+      실패를 값싼 예산에서 자동 격상한다. 테스트 4건 추가(절단 텍스트·절단 tool_calls·빈 스트림·
+      분류 계약).
+- [x] 테스트 — 신규 **28**건(`test_llm_stream_collect.py` 27 + 킬 스위치 계약 1) + 기존 더블
+      **3파일을 두 모드 지원으로 전환**(스트리밍 기본 + 킬 스위치 off 양쪽이 같은 더블로 검증).
+      CI 전 testpath(feature-0002/0003/0023/0014/0020) **귀책 실패 0** · ruff clean.
+      선재 환경 실패 1건(`chattr` 부재, 원장 기록된 기존 항목)은 그대로.
+- [x] **§18.8 적대 패널 `[CODEX:adversarial-backend-qa-regression]` — 출하 보류(P1 3 · QA P1 2 ·
+      P2 8) → 처리 완료**(상세 `REV-20260814T160000-llm-stream-progress`).
+      **흡수 9건**: ① **'즉시 답변' 이 스트림 중 탈출구가 아니었다**(취소만 봄 — 비대칭) →
+      abort 를 `cancel`/`finalize` 로 분리 + 전용 예외 + 도구-없는 마무리 라운드로 defer
+      ② **red-team 2경로 abort 미배선**(리뷰어 재생성이 상한까지 신호 무시) → 배선 +
+      `_rt_generate` 예외 보강 ③ **메인 wiring 제거 뮤턴트가 전 스위트 통과** → 배선 테스트
+      ④ usage 부재 warning ⑤ `TypeError` 폴백 좁힘 ⑥ abort 시 `close()` 보장 ⑦ 주기 하한 clamp
+      ⑧ 진행 표시 호출 횟수 상한 테스트 ⑨ `finish_reason` ContextVar 소비까지 검증.
+      **스냅샷 시차 1건**: 불완전 스트림 P1 은 자체 적발로 이미 수정됨 — codex 가 **독립 확인**.
+      **한계 채택 1건(주장 범위 축소)**: 주기 게이트는 다음 chunk 를 받은 뒤에만 열리므로
+      **진짜 무응답 구간에는 작동하지 않는다**(악화는 아님 — 종전엔 호출 전체가 그랬다).
+      watchdog 스레드는 런타임 DB 커넥션을 메인 스레드와 공유해야 해 이 cycle 의 이득을 넘는다
+      → 코드·FUNCTION·원장에 한계 명시, "무응답 구간 검출" 을 성과로 주장하지 않고 별 항목 이월.
+- [x] 테스트 최종 — 스트리밍 단위 **36**건 PASS · 전 testpath 귀책 실패 **0**(선재 `chattr` 1건) ·
+      ruff clean. 기존 계약 테스트 1건은 의도적 갱신(`'즉시 답변'` 확인 지점 2→**3곳**: 스트림
+      중 축 추가 — 개수를 세는 테스트라 계약 변경이 곧 실패로 드러났다).
+- [ ] verify-completion → PR → 배포(영향 서비스 전부) → 라이브 실측
+      (900초 timeout 소멸 · 5분+ 무변화 건수 감소 · `llm_stream_done` 로그로 chunk 흐름 확인)
 ## TASK-20260814T160000-ask-kv-terminal-seal — 조기 종료 run 의 KV terminal 봉인 (Major §12.3)
 
 `/_dqa:conversation_audit` 라이브 진단(FR-early-return-kv-never-finalized). 사용자가 SQL 첨부

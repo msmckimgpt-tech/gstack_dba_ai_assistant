@@ -1101,3 +1101,66 @@ MSSQL 은 루틴이 압도적이다(`atum2_db_1`: 라벨 달린 루틴 865 vs �
 - AC-20260814T100000-vision-provenance-3 (순서 불변식): 신호는 `compose_system_prompt` 의 리셋 **이후**, 도구 실행 **이전**에 세워져야 한다(이미지 로더는 `_call_llm` 안에서 돈다). 검증은 문자열 존재가 아니라 **리셋 직후 상태에서 게이트 끝단까지 도달하는지**로 한다.
 - AC-20260814T100000-vision-provenance-4 (실패 방향·과도기): 소유자를 숫자로 읽지 못하면 막는 쪽으로 센다. 소유자 **키 자체가 없으면**(구 web 이 만든 payload 를 신 worker 가 읽는 짧은 창) 종전 동작을 유지한다 — 막는 쪽으로 두면 그 동안 1:1 사용자까지 도구가 막힌다.
 - AC-20260814T100000-vision-provenance-5 (게이트의 정의·한계): 이 게이트는 **"이번 턴에 타 멤버 첨부 본문이 새로 실렸는가"** 를 본다. 히스토리로 다시 들어오는 타 멤버 채팅·`read_attachment` 결과는 대상이 아니다 — 거기까지 넓히면 그룹 대화에서 `scratch_*` 가 상시 차단되어 §47.4 가 피하려 한 과차단과 같아진다. 히스토리 축은 프롬프트 계약(발신자 라벨·datamark)이 담당한다.
+
+## (llm-stream-progress, 2026-08-14) 대화 LLM 호출은 스트리밍이며, 상한은 "완료까지"가 아니라 "다음 chunk 까지" 다 (Major §12.3, TASK-20260814T160000)
+
+`/_dqa:conversation_audit` 라이브 진단 `FR-llm-attempt-cap-inside-latency-tail`. 콘솔
+`AGENT_TIMEOUT_SEC`(live 900s)이 **성공 지연 분포의 꼬리 안쪽**이었다 — 30일 대화 라운드 1,271건
+p50 12.5s · p95 238.5s · **max 854s**. 비스트리밍에서 그 상한은 응답 완료까지를 재므로 정상 진행 중인
+무거운 추론이 걸려 전량 폐기되고 재시도가 같은 비용을 다시 태웠다(실측 대기 23분). 같은 대화의
+연장 승인 구간에서는 **단일 호출 무변화가 16.5분**까지 관측됐다(연장이 per-attempt 를 키운다).
+
+- AC-20260814T160000-llm-stream-1 (상한의 의미): 대화 경로 LLM 호출은 `stream=True` 로 나간다.
+  per-request 클라이언트 `timeout` 은 **chunk 간 무응답** 상한이므로, chunk 가 계속 도착하는 한
+  854초짜리 정상 추론은 상한에 걸리지 않고 **진짜 hang 만** 잡힌다. gateway 로 보내는 body
+  `timeout` 은 **바꾸지 않는다** — 스트리밍에서 그 값이 전체 스트림을 자를 것이라는 가정은 라이브
+  실측(body timeout=3s 에서 6.5초 스트림 무절단)이 반증했고, feature-0007 의 "콘솔 값 =
+  per-attempt upstream 상한" 계약을 근거 없이 깨지 않는다.
+- AC-20260814T160000-llm-stream-2 (반환 계약 불변): 수집기가 돌려주는 message-like 는 비스트리밍
+  `response.choices[0].message` 와 **같은 표면**(`.content` · `.tool_calls[i].id` ·
+  `.function.name` · `.function.arguments`)만 노출한다. 그래서 소비처 3곳(메인 라운드 ·
+  red-team 재생성 · red-team 재추론)이 무변경이다 — 이것이 이 전환의 blast radius 를 가두는 축이다.
+  `tool_calls` 는 index 별로 조립하며 `name` 은 첫 값만, `arguments` 는 순서대로 이어붙인다
+  (litellm 의 Anthropic 변환이 name 을 반복 실어도 중복되지 않게). **이름 없는 tool_call 은 버린다**
+  (호출 불가).
+- AC-20260814T160000-llm-stream-3 (진행 표면화): chunk 수신 중 `AGENT_LLM_STREAM_PROGRESS_SEC`
+  (120s) 주기로 진행 표시를 갱신한다 — 15분 무응답 구간이 최소 7회, 관측된 16.5분 구간이 8회
+  쪼개진다. 종전에는 그 구간 내내 표시가 하나로 멈춰 **살아 있는 run 이 멈춘 것으로 보였다**
+  (30일 5분+ 무변화 54건/15 대화, 94%가 "추론 중" 표시 직후). 주기 갱신은 `activity` step 이므로
+  주기를 너무 짧게 두면 steps 가 폭증한다 — 분 단위가 하한이다.
+- AC-20260814T160000-llm-stream-4 (탈출구): 스트림 수신 중
+  `AGENT_LLM_STREAM_CANCEL_POLL_SEC`(10s) 주기로 탈출구를 확인하고, **취소와 '즉시 답변' 을
+  구분해서** 신호를 돌려준다(`""|"cancel"|"finalize"`). 종전에는 per-attempt 전체(최대 15분,
+  연장 시 그 이상)가 단일 블로킹 호출이라 그 사이 눌린 신호가 반영되지 않았다. 두 신호는 하류
+  처리가 다르므로 한 bool 로 합치지 않는다(§18.8 패널 [P1]) — 취소는 `_LLMStreamCanceled` 로
+  run 을 끝내고, finalize 는 `_LLMStreamFinalizeRequested` 로 **바깥 루프의 도구-없는 마무리
+  라운드**로 넘긴다(도구를 켠 원래 라운드를 다시 부르는 회귀가 아니다). 취소를 일시 실패로
+  분류하면 사용자가 중단한 요청을 재시도가 계속 태운다(`FR-llm-transient-*` 의 "탈출구를
+  재시도가 삼키지 않는다" 원칙). 판정 실패는 **fail-open**(오중단 금지). red-team 재생성·재추론
+  **2경로도 같은 콜백을 받는다** — 그쪽은 자체 진행 표시는 있으나 abort 를 호출 **사이**에서만
+  보므로, 스트림 중 탈출구는 이 배선으로만 열린다. abort 로 빠질 때 응답을 `close()` 한다.
+  **한계(§18.8 [P1] 근거 있는 채택)**: 주기 게이트는 `for chunk in stream` 안에 있어 **다음
+  chunk 를 받은 뒤에만** 열린다 → upstream 이 완전 무응답인 구간에서는 진행 표시도 abort 확인도
+  없이 상한까지 블로킹한다(종전과 동일 — 악화 아님). 이 봉인이 개선하는 것은 **chunk 가 흐르는
+  구간**이다. watchdog 스레드로 덮으려면 진행 표시가 런타임 DB 커넥션을 메인 스레드와 공유해야
+  해 위험이 이득을 넘는다 — 별 항목으로 이월.
+- AC-20260814T160000-llm-stream-5 (실패·폴백 방향): `stream_options`(include_usage) 폴백 판정은
+  **좁다** — 인자 미지원(TypeError)이나 그 파라미터를 지목한 400 만 재시도 대상이고, 일반 장애
+  (500 · 연결 절단 · timeout · 429)는 그대로 올린다. 넓게 잡으면 실제 장애를 한 번 더 태워 이
+  봉인이 없애려는 **대기 배가**를 스스로 재현한다. 부분 스트림은 답변으로 승격시키지 않는다
+  (절단된 답변·불완전 arguments 를 사실로 만들지 않는다 — `FR-partial-evidence-false-verification`
+  계열 교훈). reasoning/thinking delta 는 답변에 섞지 않고 분량만 계수한다(CoT 미노출 정책).
+- AC-20260814T160000-llm-stream-6 (롤백 수단): `AGENT_LLM_STREAM_ENABLED=false` 면 종전 비스트리밍
+  경로로 **정확히** 되돌아간다(반환값 = `response.choices[0].message`). 킬 스위치 경로 자체가
+  테스트로 잠겨 있어야 한다 — 잠기지 않으면 회귀 시 되돌릴 손잡이가 없다.
+- AC-20260814T160000-llm-stream-7 (완결 신호 = 스트리밍이 새로 만든 실패 모드): 스트림이
+  `finish_reason` 없이 끝나면 **실패**(`_LLMStreamIncomplete`)로 올린다. 비스트리밍에는 이 상태가
+  존재하지 않았다 — HTTP 응답 전체를 파싱하므로 "부분 응답" 이 없다. 스트리밍은 중간에 소켓이
+  조용히 닫히면(프록시 EOF·게이트웨이 교체) 이터레이터가 `StopIteration` 으로 끝나 **정상 종료와
+  구별되지 않으며**, 그대로 두면 절단된 답변이 완전한 답변으로·불완전 JSON `arguments` 가 완전한
+  도구 호출로 하류에 전달된다(`FR-attach-delivery-truncated-by-output-cap` ·
+  `FR-partial-evidence-false-verification` 이 막으려던 부류의 **새 입구**). 별도 재시도 분기는
+  두지 않는다 — `classify_agent_llm_failure` 가 미분류 예외를 transient 로 보내 같은 라운드
+  재호출로 흡수되고(누적 `messages` 무손실), 이미 오래 태운 실패면 `_llm_retry_allowed` 의
+  `_slow` 판정이 값싼 예산에서 자동으로 빼낸다. chunk 0개(빈 스트림)도 "빈 답변" 이 아니라
+  이 실패로 다룬다 — 빈 답변 재요청 루프로 새면 원인이 가려진다.

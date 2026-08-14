@@ -28,8 +28,39 @@ class _Resp:
         self.model = "edge-real-model"
 
 
+# conv-audit FR-llm-attempt-cap-inside-latency-tail: 대화 경로는 이제 stream=True 로 나간다.
+# 더블은 **두 모드를 다 지원**한다 — 스트리밍(기본)과 킬 스위치 off(종전 경로) 양쪽이 같은
+# 더블로 검증되므로, 한쪽만 살아 있는 상태를 테스트가 통과시키지 않는다.
+class _Delta:
+    def __init__(self, content=None):
+        self.content = content
+        self.tool_calls = None
+        self.reasoning_content = None
+
+
+class _StreamChoice:
+    def __init__(self, content=None, finish_reason=None):
+        self.delta = _Delta(content)
+        self.finish_reason = finish_reason
+
+
+class _StreamChunk:
+    def __init__(self, choices=None, usage=None, model=None):
+        self.choices = choices
+        self.usage = usage
+        self.model = model
+
+
+def _final_message_stream():
+    yield _StreamChunk(choices=[_StreamChoice(content="FINAL_MESSAGE")], model="edge-real-model")
+    yield _StreamChunk(choices=[_StreamChoice(finish_reason="stop")], model="edge-real-model")
+    yield _StreamChunk(choices=[], usage=_Usage(), model="edge-real-model")
+
+
 class _Completions:
     def create(self, **kwargs):
+        if kwargs.get("stream"):
+            return _final_message_stream()
         return _Resp()
 
 
@@ -65,7 +96,8 @@ def test_call_llm_records_with_agent_task(monkeypatch):
         conversation_id="conv-X", run_id="run-X", step_gap_ms=1300,
     )
 
-    assert out == "FINAL_MESSAGE"
+    # conv-audit: 스트리밍 경로의 반환은 누적된 message-like 다(계약: `.content`).
+    assert out.content == "FINAL_MESSAGE"
     assert len(calls) == 1
     model, task, resp, conv, run, latency_ms, step_gap_ms = calls[0]
     assert model == "auto"
@@ -91,4 +123,21 @@ def test_call_llm_record_failure_does_not_break(monkeypatch):
 
     # 회계 실패가 메인 추론 응답을 깨면 안 됨.
     out = agent_core._call_llm(_Client(), [{"role": "user", "content": "hi"}], "auto")
-    assert out == "FINAL_MESSAGE"
+    assert out.content == "FINAL_MESSAGE"
+
+
+def test_call_llm_kill_switch_restores_non_streaming_contract(monkeypatch):
+    """`AGENT_LLM_STREAM_ENABLED=false` 면 종전 비스트리밍 경로로 정확히 되돌아간다.
+
+    킬 스위치는 회귀 시 운영자가 즉시 되돌릴 수 있는 유일한 손잡이다 — 그것이 실제로
+    동작하지 않으면(예: 스트림 분기가 무조건 타면) 롤백 수단이 없다.
+    """
+    monkeypatch.setattr(agent_core.cfg, "AGENT_LLM_STREAM_ENABLED", False)
+    monkeypatch.setattr(agent_core, "_record_llm_usage", lambda *a, **k: None)
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_images", lambda: None)
+    monkeypatch.setattr(agent_core, "messages_for_provider", lambda messages, **kw: messages)
+    monkeypatch.setattr(agent_core, "model_supports_vision", lambda m: False)
+    monkeypatch.setattr(agent_core, "max_tokens_for_model", lambda m, t: None)
+
+    out = agent_core._call_llm(_Client(), [{"role": "user", "content": "hi"}], "auto")
+    assert out == "FINAL_MESSAGE"   # 종전 계약: `response.choices[0].message` 그대로

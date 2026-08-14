@@ -46,6 +46,20 @@ class _Resp:
         self.model = "claude-haiku-4-5"
 
 
+def _capture_stream():
+    """conv-audit: 대화 경로는 stream=True 로 나간다 — 더블도 chunk 를 내놓는다."""
+    yield type("C", (), {
+        "choices": [type("Ch", (), {
+            "delta": type("D", (), {"content": "FINAL_MESSAGE",
+                                    "tool_calls": None, "reasoning_content": None})(),
+            "finish_reason": "stop",
+        })()],
+        "usage": None,
+        "model": "claude-haiku-4-5",
+    })()
+    yield type("C", (), {"choices": [], "usage": _Usage(), "model": "claude-haiku-4-5"})()
+
+
 class _CaptureCompletions:
     def __init__(self, sink):
         self._sink = sink
@@ -57,6 +71,10 @@ class _CaptureCompletions:
         self._sink["max_tokens"] = kwargs.get("max_tokens")
         self._sink["extra_body"] = kwargs.get("extra_body")
         self._sink["messages"] = kwargs.get("messages")
+        self._sink["stream"] = kwargs.get("stream")
+        self._sink["timeout"] = kwargs.get("timeout")
+        if kwargs.get("stream"):
+            return _capture_stream()
         return _Resp()
 
 
@@ -132,7 +150,12 @@ def test_call_llm_routes_haiku_to_edge_free_chat_alias(monkeypatch):
         conversation_id="conv-X", run_id="run-X",
     )
 
-    assert out == "FINAL_MESSAGE"
+    # conv-audit: 스트리밍 경로의 반환은 누적된 message-like 다(계약: `.content`).
+    assert out.content == "FINAL_MESSAGE"
+    # 같은 호출이 스트리밍으로 나갔고, per-request read 상한(chunk 간 무응답)이 실렸는지 —
+    # 이 두 값이 빠지면 "완료까지" 를 재던 종전 의미로 조용히 되돌아간다.
+    assert sink["stream"] is True
+    assert isinstance(sink["timeout"], int) and sink["timeout"] > 0
     # G3: litellm 에는 edge-free 대화 alias 가 나간다(gemma 폴백 원천 차단).
     assert sink["model"] == "claude-haiku-4-chat"
     # G4: 기록/표시 model 은 원본 유지(집계 정합).

@@ -292,13 +292,24 @@ def test_retry_loop_defers_to_outer_loop_on_immediate_answer():
     block = src[src.index("_llm_defer_to_outer = False"):src.index("if _llm_defer_to_outer:")]
     assert "_clear_finalize_request" not in block, \
         "재시도 루프가 finalize 를 소비하면 바깥 루프가 마무리 경로로 전환하지 못한다"
-    # 확인 지점은 **두 곳** 이어야 한다: ① 재시도를 결정하기 전 ② backoff 대기가 끝난 뒤.
-    # 하나만 있으면 나머지 창에서 버튼이 먹히지 않는다(둘 중 아무거나 지워도 통과하던 초판 결함).
+    # 확인 지점은 **세 곳** 이어야 한다: ① 스트림 수신 중(conv-audit
+    # `FR-llm-attempt-cap-inside-latency-tail` 이 추가한 축 — 종전에는 LLM 호출 자체가 최대
+    # 15분 블로킹이라 그 창에서 버튼이 전혀 먹지 않았다) ② 재시도를 결정하기 전 ③ backoff 대기가
+    # 끝난 뒤. 하나만 있으면 나머지 창에서 버튼이 먹히지 않는다(어느 하나를 지워도 통과하던
+    # 초판 결함).
     checks = [m.start() for m in re.finditer(re.escape("_finalize_requested(mem_conn, cid, run_id)"), block)]
-    assert len(checks) == 2, f"'즉시 답변' 확인 지점이 {len(checks)}곳 — 재시도 전/backoff 후 둘 다 필요"
+    assert len(checks) == 3, (
+        f"'즉시 답변' 확인 지점이 {len(checks)}곳 — 스트림 중/재시도 전/backoff 후 셋 다 필요"
+    )
     commit = block.index("_llm_retry_n += 1")
-    assert checks[0] < commit, "재시도를 확정한 뒤에 확인하면 이미 긴 호출이 시작된다"
-    assert checks[1] > commit, "backoff 대기 뒤 확인이 없다"
+    # 스트림 중 확인과 재시도 결정 전 확인은 둘 다 재시도 확정 **앞** 에 있어야 한다.
+    assert checks[0] < commit and checks[1] < commit, \
+        "재시도를 확정한 뒤에 확인하면 이미 긴 호출이 시작된다"
+    assert checks[2] > commit, "backoff 대기 뒤 확인이 없다"
+    # 스트림 중 확인은 취소와 **구분해서** 신호를 돌려줘야 한다 — 합치면 '즉시 답변' 이 취소로
+    # 처리되어 사용자가 원한 부분 답변조차 못 받는다.
+    assert '"finalize"' in block and '"cancel"' in block, \
+        "스트림 abort 판정이 취소와 즉시답변을 구분하지 않는다"
 
 
 def test_retry_rechecks_cancel_after_backoff():

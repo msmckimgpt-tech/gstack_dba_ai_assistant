@@ -1764,3 +1764,67 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   **근거 기반 우선순위 조정**이다. 승격 조건(지표 ≠ 0)을 원장에 함께 박아, 다음 audit 이 자동으로
   재측정하게 했다.
 - Human Approval Needed: 아니오 (doc-only, 사용자 지시 "우선순위에 따라 진행" 범위 내).
+
+## REV-20260814T160000-llm-stream-progress [CODEX:adversarial-backend-qa-regression] — 대화 LLM 스트리밍 전환 (TASK-20260814T160000)
+
+- Related Change: `CHG-20260814T160000-llm-stream-progress`
+- Trigger: §18.8 dispatch — 변경이 **L6(모델·디코딩: 전송 방식·타임아웃 의미·재시도 상호작용)**
+  이고 **비결정 행동을 바꾼다** → backend + qa + **회귀** 3렌즈. 표 키워드(`schema/query/auth/UI`)
+  0건이나 code change 이므로 축소하지 않았다.
+- 채널: codex CLI(read-only). **첫 두 시도는 결과를 못 냈다** — codex 가 stdin 을 기다리며 hang
+  (exit 143/144). `< /dev/null` + 파일 탐색 최소화(diff 직접 전달)로 3회차에 완주.
+  미검증을 검증으로 보고하지 않기 위해 이 실패 경로도 남긴다.
+- 판정: **출하 보류(P1 3 · QA P1 2 · P2 8)** → 아래처럼 처리한 뒤 재검증.
+
+**흡수(코드·테스트 반영)**
+
+1. **[회귀 P1] '즉시 답변' 이 스트림 중 탈출구가 아니었다** — 초판은 취소만 봤다. 사용자가 버튼을
+   눌러도 현재 호출이 끝날 때까지, tool_calls 가 오면 도구 실행까지 진행됐다(취소는 반영하는데
+   즉시답변은 무시하는 **비대칭**). → abort 판정을 `""|"cancel"|"finalize"` 로 분리하고
+   `_LLMStreamFinalizeRequested` 전용 예외 신설. run 을 끝내지 않고 바깥 루프의 **도구 없는**
+   마무리 라운드로 넘긴다 — 패널이 과거 경계한 "도구를 켠 원래 라운드를 다시 부르는" 회귀가 아니다.
+2. **[회귀 P1] red-team 경로가 콜백 없이 장시간 블로킹** — `_rt_abort` 는 호출 **사이**에서만
+   평가되므로 리뷰어 재생성 한 번이 per-attempt 상한까지 사용자 신호를 무시했다. → 재생성·재추론
+   **2경로 모두** abort 배선. `_rt_generate` 에는 예외 처리가 없어 함께 보강(abort → 초안 유지,
+   기존 fail-open 과 동일하게 run 을 깨지 않는다).
+3. **[QA P1] 메인 루프 wiring 제거 뮤턴트가 전 스위트를 통과** — 수집기 테스트는 콜백을 직접
+   주입하므로 루프가 인자를 빼먹어도 통과했다(진행 표시·탈출구가 조용히 사라짐). → 배선 테스트
+   추가(주석 제외 소스 검사, 메인 1 + red-team 2 = 3곳 + 신호 분리 확인). 한계는 docstring 에 명시.
+4. **[P2] `stream_options` 폴백 시 토큰 회계 소실** → usage 부재를 `llm_stream_usage_missing`
+   warning 으로 남긴다(집계 공백의 원인을 사후 추적 가능하게).
+5. **[P2] `TypeError` 판정이 과도하게 넓음** → 인자 이름(`stream_options`/`include_usage`)을 지목한
+   TypeError 만 폴백. SDK 내부 변환 오류·잘못된 tool schema 가 두 번째 provider 호출로 새지 않는다.
+6. **[P2] abort 시 stream close 미보장** → `try/finally` 로 정상·예외 양 경로에서 `close()`
+   (미지원 더블은 no-op). 테스트로 두 경로 모두 확인.
+7. **[P2] 진행/폴링 주기에 하한 없음**(0.001 허용 → activity write 폭주) → 0=비활성 유지하되
+   0 이 아니면 진행 10s · abort 2s 하한 clamp + reload 테스트.
+8. **[QA P2] `last_progress = now` 제거 뮤턴트** → chunk 60개에 진행 표시가 1/4 이하로 억제되는지
+   상한으로 잠금("최소 1회" 만 보던 초판은 chunk 마다 emit 해도 통과).
+9. **[QA P2] `finish_reason` ContextVar 미검증** → `_call_llm` 을 실제로 통과시켜
+   `last_answer_was_truncated()` 가 True 가 되는지 확인(절단 안전망의 소비까지).
+
+**이미 해소돼 있던 지적(스냅샷 시차)**
+
+- **[Backend P1] 불완전 스트림이 성공 응답으로 누출** — codex 가 읽은 스냅샷은 수정 전이었다.
+  이 결함은 **자체 적대 검토에서 먼저 적발해 수정·테스트 완료**(`_LLMStreamIncomplete`, 테스트
+  4건)했고, codex 가 **독립적으로 같은 P1 을 지목**한 것은 그 판단의 교차 확인으로 남긴다.
+  같은 축의 [QA P1](EOF·빈 스트림·부분 arguments 테스트 부재)도 그 4건으로 충족된다.
+
+**근거 있는 한계 채택(수정하지 않음 — 주장 범위를 좁혔다)**
+
+- **[Backend P1] 주기 게이트가 진짜 무응답 구간에는 작동하지 않는다.** 콜백은 `for chunk in
+  stream` 안에 있어 **다음 chunk 를 받은 뒤에만** 열린다. upstream 이 완전 무응답이면 진행 표시도
+  abort 확인도 없이 종전처럼 상한까지 블로킹한다. **이 지적은 정확하다.** 다만 (a) 악화가 아니다
+  — 종전엔 호출 전체가 그랬다 (b) 이 봉인이 겨냥한 실측 마찰은 **chunk 가 흐르는 구간**, 즉
+  정상적으로 오래 걸리는 추론이다(라이브: ttft 2.16s 이후 reasoning delta 연속 도착) (c) 덮으려면
+  watchdog 스레드가 필요하고, 그 스레드가 진행 표시를 쓰려면 **런타임 DB 커넥션을 메인 스레드와
+  공유**해야 해(`_emit_activity` → `save_memory_step`) 동시 사용 위험이 이 cycle 의 이득을 넘는다.
+  → 코드 docstring · FUNCTION AC-3 · 원장에 **한계를 명시**하고 "무응답 구간 검출" 을 이 cycle 의
+  성과로 주장하지 않는다. 별 항목으로 이월(원장 `범위 밖`).
+- **[P2] 장시간 스트림의 abort 폴링 비용**(15분에 ~90회) — 기존 재시도 대기 폴링이 1초 주기였던
+  것에 비하면 낮고, 하한 2s 로 더 짧아지는 것을 막았다. 기본 10s 유지.
+
+- Human Approval Needed: **예** — 위험등급 Major(§12.3 코어 LLM 전달 경로). 사용자가 봉인 범위
+  "스트리밍까지 근본 전환" 을 명시 선택(2026-08-14). PR·배포는 override 없이 별도 확인 대상.
+- 검증: 전 testpath(feature-0002/0003/0023/0014/0020) 귀책 실패 **0**(선재 환경 1건 `chattr` 부재는
+  pristine main 대조 동일) · ruff clean · 스트리밍 단위 **36**건 PASS.
