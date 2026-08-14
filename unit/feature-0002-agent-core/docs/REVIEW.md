@@ -1658,3 +1658,12 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   helper fail-closed · 거부문 5요소 · dispatch 선행).
 - 한계(정직): **vision(이미지) 경로 미적용** — 이미지는 소유자 판정 없이 프롬프트에 붙어 이 게이트가
   막지 못한다(REPORT §잔여 이월). 게이트는 턴 단위이며 도구 인자의 출처를 추적하지 않는다.
+
+## REV-20260814T093000-provenance-gate-postdeploy [SKIPPED:doc-only] — POST-DEPLOY 실측 기록
+
+- Related Change: `CHG-20260814T093000-ai-claude-feature-0002-provenance-gate-postdeploy`
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(TASK/MODIFY 문서만) → 패널 skip.
+  선행 cycle 의 코드 변경은 `REV-20260814T080000-attach-provenance-gate`
+  ([CODEX:adversarial-bypass], P1 2·P2 1 전건 반영)에서 집행됐다.
+- 검증: 기록된 수치는 전부 배포본 실행 결과다(4서비스 `GIT_COMMIT` · caddy 0 · 게이트 직접 호출 3축).
+- Human Approval Needed: 아니오 (doc-only, 선행 cycle 승인 범위 내 사후 기록).

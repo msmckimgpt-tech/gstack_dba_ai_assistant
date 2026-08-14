@@ -1901,3 +1901,13 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **미해소(정직)**: **vision(이미지) 경로**에는 provenance 검사가 없다(codex 지적). 이미지 첨부는
   `_call_llm` 이 직접 붙이며 소유자 판정을 거치지 않는다 — 이미지 안의 지시문은 이 게이트가 막지
   못한다. 별도 작업으로 이월한다(REPORT §잔여).
+
+## CHG-20260814T093000-ai-claude-feature-0002-provenance-gate-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- 사유: 선행 cycle `20260814T0800-attach-provenance-gate` 의 배포(main `e545796f`) 후 실측 종결.
+  **코드 변경 0**.
+- 결과: 4서비스 전부 `e545796f` · 무중단 0 · 배포본 게이트 호출 **3/3 PASS**(정상 턴 과차단 0 ·
+  타 멤버 본문 턴 scratch 3종 차단 · 조회/첨부갱신 허용).
+- **배포 함정 기록**: 1차 배포는 quiesce 게이트로 ask-worker 교체가 중단돼 **web 만 신코드**였다.
+  게이트는 ask-worker 에서 실행되므로 그 상태로는 기능이 라이브에 없었다 — 파이프 exit 이 아니라
+  서비스별 `GIT_COMMIT` 으로 판정해 잡았고 재실행(멱등)으로 해소.
