@@ -218,3 +218,68 @@ source_of_truth: true
   `bin/deploy-web.sh` · `Makefile` · 본 문서 · `docs/{TASK,FUNCTION,TEST,REVIEW}.md` · tests.
 - Rollback Notes: `deploy-web.sh` 의 source 를 되돌리고 신규 3파일을 제거하면 원복. 그 순간부터
   배포 밖 재생성이 다시 무경보로 대화를 끊는다.
+
+## CHG-20260814T120000 ask-worker surge 교대 — 바쁜 시간대에도 배포가 완결된다
+- **Trigger**: 사용자 요청 "배포 및 서비스가 중단되는 이슈가 없도록 환경을 개선"(2026-08-14).
+  직전 배포가 **부분 완료**로 끝났다 — web-a/web-b 는 신 커밋, ask-worker·ops-scheduler·
+  ext-tool-mcp 는 구버전. 재실행해도 같은 자리에서 다시 막혔다.
+- **근본원인(실측)**: `quiesce_gate` 는 **전역 정적**(진행 중 사용자 run 이 시스템 전체에서 0)을
+  요구한다. 라이브 유입은 7~10분 간격이고 run 은 p50 81s·p95 691s — 낮 시간대에는 상한 900s 안에
+  그런 창이 **생기지 않는다**. 즉 *사용자가 쓸수록 배포가 안 되는* 구조였다. 여기에 순차 롤아웃의
+  `return 1` 이 겹쳐 ask-worker 뒤의 워커들까지 연쇄로 묶였고, 그 워커들은 사용자 run 과 무관하다.
+  설계 문서(§8)는 "조용한 시간에 재실행" 을 전제했는데, 그것은 사람이 창을 노려야 한다는 뜻이고
+  그 사이 보안 게이트 같은 시급한 변경이 라이브에 도달하지 못한다(이번이 정확히 그 경우였다).
+- **판정의 전환**: 종전 근거는 "붙어 있는 것은 옮길 수 없으니 붙어 있는 게 없을 때 바꾼다" 였다.
+  그 전제는 gateway(HTTP 소켓)에는 맞지만 **ask-worker 에는 성립하지 않는다** — ask-worker 는
+  PG 큐 소비자이고, claim 이 `FOR UPDATE SKIP LOCKED` + `lease_epoch` fencing 이라 다중 인스턴스가
+  exactly-once 다(이미 `_ask_conc` 로 스레드 다중화를 하는 것과 같은 계약). 그래서 **받는 쪽을
+  먼저 세우면** 기다릴 이유 자체가 사라진다: surge 가 신규 job 을 가져가고, 본체는 자기 in-flight
+  만 완주한다.
+- **변경**:
+  1. `docker-compose.yml` — `ask-worker-surge`(profile `deploy-surge`, `restart: "no"`, 본체와
+     **대칭** stop_grace) 신설. 평시 리소스 증가 0. gateway surge 와 달리 **DNS alias 가 불필요**
+     하다(큐에서 스스로 pull 한다). 본체 drain 예산 60s→1800s, stop_grace 70s→1830s —
+     종전 값은 실측 run 의 66%를 못 덮어 배포마다 답변을 재큐시키던 창이다.
+  2. `bin/deploy-web.sh` — `rollout_ask_worker_via_surge`(surge healthy → 본체 drain → 본체 교체
+     → surge 정리), `drain_stop_ask`(완주 대기 + **예산 초과를 보고**), `sweep_leaked_ask_surge`,
+     `DC_SURGE_PROD`, pin overlay 에 surge 포함(빠지면 교체 창에 신규 job 이 구 코드로 간다),
+     롤백 시 surge 선제거(안 하면 신 코드가 큐에서 계속 일한다).
+  3. **실패 격리** — ask-worker 의 "본체 무접촉 중단"(rc 2)은 나머지 워커를 막지 않는다.
+     이미지 결함(rc 1)만 워커군 롤백을 부른다. 두 실패를 구분하지 않으면 무관한 실패에
+     멀쩡한 워커를 되돌린다.
+  4. **완결 판정** — `verify_workers_at_sha` 가 컨테이너에서 `GIT_COMMIT` 을 재판독해 전부
+     도달했을 때만 `agent_current` 를 기록한다. 종전엔 부분 롤아웃에서도 기록돼, 다음 배포의
+     멱등 skip 이 그 주장을 믿고 빌드를 건너뛰었다(라이브 실재: state=95f5ea0f인데 insight 는
+     e545796f 로 가동 중).
+  5. **liveness 계층 분리**(`ask.py` + `healthcheck_ask_worker.py`) — 종전 healthcheck 는
+     **role 전역 KV 단일 키**를 봤다. surge 공존 창에서는 두 컨테이너가 같은 값을 갱신해
+     ① 죽은 쪽도 healthy 로 보이고(false-pass) ② drain 중인 본체는 unhealthy 로 보인다
+     (false-fail — 배포 스파인이 이 신호로 판정하므로 잘못된 롤백이 된다). 컨테이너-local
+     alive 파일 + **메인 루프와 분리된** liveness 스레드로 둘을 구조적으로 갈랐다.
+     부수 효과로 PG blip 이 워커를 unhealthy 로 만들던 결합도 끊겼다.
+- **부수 발견 — CI 가 배포 테스트를 한 번도 돌리지 않았다**: `pytest.ini` 의 `testpaths` 에
+  feature-0014/0020 이 등재돼 있었지만, `ci.yml` 과 `Makefile test` 가 **경로를 명시**해
+  testpaths 가 무시됐다. 게다가 `test_edge_rolling_gate.py` 는 f-string 안 백슬래시(PEP 701,
+  3.12+) 때문에 **CI 파이썬 3.11 에서 collection 자체가 불가**했다. 즉 "무중단 불변식을 잠근다"
+  던 테스트들이 초록 CI 아래에서 한 줄도 실행되지 않았다. 경로 추가 + 3.11 호환 수정 +
+  `PyYAML` 개발 의존 명시로 해소.
+- **검증**: feature-0014+0020 **98 PASS**(신규 26) — py3.11 컨테이너/py3.12 로컬 양쪽.
+  전체 스위트 귀책 실패 0(pre-existing 1건: `chattr` 미설치 환경 의존, main 기준선 동일 재현).
+  `bash -n` 3파일 · compose YAML 구조 단정.
+- **위험등급**: Major(배포 절차 + 워커 종료 시맨틱). 답변 생성 로직 무변경.
+- **정직 — 남는 것**:
+  ① drain 예산 1800s 는 실측 max(2,024s)를 **다 덮지 않는다**. 초과분은 종전과 동일하게 재큐되고,
+     그 사실은 배포 말미 요약에 `DRAIN-TIMEOUT` 으로 남는다(조용히 넘기지 않는다).
+  ② `bin/safe-recreate.sh` 의 ask-worker 경로는 **여전히 전역 정적을 기다린다**. 그 경로엔 surge
+     인프라가 없다 — 코드 반영이 목적이면 `make deploy-workers` 를 쓰라고 헤더에 명시했다.
+  ③ surge 정리 실패 시 leaked surge 는 다음 배포의 sweep 이 정리한다(gateway surge 와 동일 수준).
+     그 사이 두 인스턴스가 함께 돈다 — post-deploy 체크리스트 [2b] 로 노출.
+- Files: `docker-compose.yml` · `bin/deploy-web.sh` · `bin/safe-recreate.sh`(주석) ·
+  `unit/feature-0002-agent-core/src/modules/ask.py` ·
+  `unit/feature-0002-agent-core/src/scripts/healthcheck_ask_worker.py` · `shared/config.py` ·
+  `.github/workflows/ci.yml` · `Makefile` · `requirements-dev.txt` ·
+  `unit/feature-0014-zero-downtime-deploy/tests/test_edge_rolling_gate.py` ·
+  `unit/feature-0020-zd-deploy-all/tests/{test_ask_surge_rollout.py,test_quiesce_gate.py}` · 본 문서 · docs.
+- Rollback Notes: `rollout_ask_worker_via_surge` 호출을 종전 `quiesce_gate "ask-worker recreate"`
+  로 되돌리고 compose 의 surge 서비스·drain 예산을 원복하면 복귀한다. 그 순간부터 바쁜 시간대
+  배포는 다시 ask-worker 에서 멈추고 뒤 워커까지 연쇄로 묶인다.

@@ -470,16 +470,69 @@ services:
       # anchor 의 PG_REQUIRED 가 environment override 시 상속 안 되므로 명시(TASK-0130 패턴).
       AGENT_RUNTIME_PG_REQUIRED: "1"
       AGENT_ASK_WORKER_ENABLED: "1"
+      # feature-0020 surge drain: SIGTERM 후 **진행 중 run 을 끝까지 완주**시키는 예산.
+      # 종전 60s 는 실측 run 의 66%(p50 81s · p95 691s · max 2,024s)를 커버하지 못해 매 배포가
+      # 진행 중 답변을 재큐시켰다(= 사용자에겐 처음부터 다시). surge 가 신규 job 을 받는 동안
+      # 본체는 자기 job 만 마치면 되므로, 이 예산을 늘리는 데 드는 사용자 비용이 0 이 됐다.
+      AGENT_ASK_WORKER_DRAIN_SEC: "${AGENT_ASK_WORKER_DRAIN_SEC:-1800}"
     entrypoint: ["python", "/app/agent_core.py", "--ask-worker"]
     networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped
-    # SIGTERM 후 현재 실행 중 run 이 step 을 마칠 시간을 준다(기본 10s 면 mid-LLM-call
-    # SIGKILL → stale → requeue). 한 step 예산(LLM timeout 60s + 여유) 보다 크게.
-    stop_grace_period: 70s
+    # SIGTERM 후 현재 실행 중 run 이 **완주**할 시간(drain 예산 + 반납 여유). 종전 70s 는
+    # "한 step 예산" 기준이었고 그것이 곧 배포마다 run 을 죽이던 창이다(feature-0020).
+    # 정상 경로는 완주 즉시 프로세스가 스스로 종료하므로 이 값이 배포 시간을 늘리지 않는다 —
+    # hang 된 워커의 안전 상한일 뿐이다. 배포 스파인은 자체 stop timeout 으로 별도 제어한다.
+    stop_grace_period: 1830s
     healthcheck:
       test: ["CMD", "python", "/app/scripts/healthcheck_ask_worker.py"]
       interval: 30s
       # feature-0020: 10s → 30s (insight-worker 와 동일 근거 — 부하 시 timeout 오탐 억제).
+      timeout: 30s
+      retries: 3
+      start_period: 40s
+
+  # ── ask-worker 배포 surge replica (feature-0020 zd-ask-rollout) ───────────────
+  # 목적: **바쁜 시간대에도 배포가 완결되게** 한다. 종전엔 본체를 교체하기 전에 전역 quiesce
+  # (진행 중 사용자 run 이 시스템 전체에서 0)를 기다렸는데, 실측 유입(7~10분 간격)과 run 길이
+  # (p95 691s) 조합에서 낮 시간대에는 상한 900s 안에 그런 정적 창이 생기지 않는다. 그래서
+  # ask-worker 가 영구 미배포로 남고, 순차 롤아웃이라 그 **뒤 워커들까지 연쇄로** 구버전에
+  # 묶였다(2026-08-14 라이브 실측 — 본 서비스 도입 계기).
+  #
+  # gateway surge 와 결정적으로 다른 점: ask-worker 는 HTTP 소켓이 아니라 **PG 큐 소비자**다.
+  # 신규 job 은 소켓이 아니라 `ask_jobs` 에서 오고, claim 은 `FOR UPDATE SKIP LOCKED` +
+  # lease_epoch fencing 이라 다중 인스턴스가 exactly-once 로 안전하다(이미 `_ask_conc` 로
+  # 스레드 다중화를 하는 것과 같은 계약). 따라서 "신규는 surge 가 받고, 본체는 자기 in-flight
+  # 만 완주" 가 성립하고 — gateway 에선 불가능한 — **전역 정적 대기 자체가 불필요해진다**.
+  #
+  # 평시엔 기동하지 않는다(profile deploy-surge — steady-state 리소스 증가 0).
+  # DNS alias 가 필요 없다(큐에서 스스로 pull 한다). role prefix 는 본체와 같아야 role-scoped
+  # 고아 회수가 계속 성립하고, 서로를 뺏지 않는 근거는 heartbeat 신선도다(살아 있는 형제는
+  # `reclaim_role_orphan_jobs` 의 self/heartbeat 술어에서 제외된다).
+  ask-worker-surge:
+    <<: *agent-common
+    profiles: ["deploy-surge"]
+    environment:
+      TZ: ${TZ}
+      LANG: ${APP_LANG}
+      LANGUAGE: ${APP_LANGUAGE}
+      LC_ALL: ${APP_LC_ALL}
+      PYTHONIOENCODING: utf-8
+      AGENT_SESSION: ask_worker
+      AGENT_CONVERSATION_ID: __ask_worker__
+      AGENT_RUNTIME_PG_REQUIRED: "1"
+      AGENT_ASK_WORKER_ENABLED: "1"
+      AGENT_ASK_WORKER_DRAIN_SEC: "${AGENT_ASK_WORKER_DRAIN_SEC:-1800}"
+    entrypoint: ["python", "/app/agent_core.py", "--ask-worker"]
+    networks: [dbnet, llm-shared, replica-net]
+    # 배포 스파인이 생성·정리를 소유한다. 재시작 정책이 있으면 정리 실패 시 유령이 남는다.
+    restart: "no"
+    # 본체와 **대칭** — surge 는 본체가 healthy 해진 뒤 stop 되는데, 그 시점 surge 가 들고 있는
+    # run 은 교체 창에 들어온 것들이다. 여기만 짧게 두면 본체 쪽 구멍을 막고 surge 쪽에 같은
+    # 구멍을 남기는 셈이다(gateway surge 가 330s 대칭을 택한 것과 같은 근거).
+    stop_grace_period: 1830s
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_ask_worker.py"]
+      interval: 30s
       timeout: 30s
       retries: 3
       start_period: 40s

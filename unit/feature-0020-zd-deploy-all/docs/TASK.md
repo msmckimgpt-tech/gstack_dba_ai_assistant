@@ -127,3 +127,59 @@ source_of_truth: true
       거쳐 통과(`mode=worker`, `sample=0|0|unknown` → `quiet`). 감사 도구도 라이브 판독 확인.
 - [x] 테스트 34 PASS(신규 8) · **뮤테이션 7/7 KILLED** · ruff/bash -n OK
 - [ ] 배포 + POST-DEPLOY(스탬프 생성 확인 → 감사 `ok` 전이)
+
+## TASK-20260814T120000 ask-worker surge 교대 (바쁜 시간대 배포 완결 + 연쇄 차단 해소)
+
+### 9. Requested Scope (요청 범위)
+사용자 요청(2026-08-14): "서비스 내 배포를 모두 무중단으로 진행" 요청이 **부분 완료**로 끝났고
+(web=신 커밋 / ask-worker·ops-scheduler·ext-tool-mcp=구버전), "배포 및 서비스가 중단되는 이슈가
+없도록 환경을 개선" 하라는 후속 요청.
+
+- [x] R1 바쁜 시간대에도 ask-worker 배포가 **완결**된다(전역 정적 창 비의존) — 산출물:
+      `rollout_ask_worker_via_surge` + `ask-worker-surge` 서비스, `test_ask_surge_rollout.py` 순서 계약
+- [x] R2 진행 중 사용자 run 이 배포로 끊기지 않는다(기존 무중단 유지) — 산출물: drain-to-completion
+      (예산 60s→1800s, stop_grace 1830s) + `drain_stop_ask` 완주 관측·초과 보고
+- [x] R3 한 워커의 미교체가 무관한 워커 배포를 **연쇄 차단하지 않는다** — 산출물: rc 1/2 분리 +
+      `deferred` 누적 후 계속 롤아웃, `test_ask_worker_deferral_does_not_block_unrelated_workers`
+- [x] R4 부분 완료를 "배포 완료" 로 보고하지 않는다 — 산출물: `verify_workers_at_sha`(컨테이너
+      GIT_COMMIT 실측) 통과 후에만 `agent_current` 기록, post-deploy 체크리스트 [2]·[2b]
+
+### Task Queue
+- [x] T1 근본원인 확정 — 라이브 실측으로 quiesce 게이트의 전제 붕괴 입증: 유입 7~10분 간격
+      (11:08·11:18·11:25·11:27·11:30·11:41) + run p95 691s → 상한 900s 안에 전역 정적 창 없음.
+      `deploy_workers` 의 `return 1` 이 ask-worker 뒤 워커까지 연쇄 차단(실측: insight 만 신 sha).
+      state 오염도 확인 — `agent_current=95f5ea0f` 인데 insight-worker 는 `e545796f` 로 가동 중.
+- [x] T2 설계 판정 — ask-worker 는 gateway 와 **다르다**: HTTP 소켓이 아니라 PG 큐 소비자이고
+      claim 이 `FOR UPDATE SKIP LOCKED`+lease fencing 이라 다중 인스턴스 exactly-once 다.
+      따라서 "조용해지기를 기다린다" 가 아니라 **"받는 쪽을 먼저 세운다"** 가 성립한다.
+- [x] T3 `docker-compose.yml` — `ask-worker-surge`(profile deploy-surge·restart no·본체 대칭
+      stop_grace) 신설 + 본체 drain 예산 60s→1800s / stop_grace 70s→1830s.
+- [x] T4 `bin/deploy-web.sh` — `rollout_ask_worker_via_surge`(surge healthy → 본체 drain →
+      본체 교체 → surge 정리) · `drain_stop_ask` · `sweep_leaked_ask_surge` · `DC_SURGE_PROD` ·
+      pin overlay 에 surge 포함 · 롤백 경로의 surge 선제거.
+- [x] T5 실패 격리 + 완결 판정 — rc 2(본체 무접촉)는 나머지 워커를 계속 롤아웃하고,
+      `verify_workers_at_sha` 가 **컨테이너에서 GIT_COMMIT 을 재판독**해 전부 도달했을 때만
+      `agent_current` 를 기록한다(부분 완료 ≠ 완료).
+- [x] T6 liveness 계층 분리 — `ask.py` 전용 데몬 스레드 + 인스턴스-local alive 파일,
+      `healthcheck_ask_worker.py` 가 그 파일을 우선 판독(KV 는 구 이미지 폴백).
+      **surge 공존 창에서 공유 KV 가 false-pass/false-fail 을 만드는** 결함 선제 차단.
+- [x] T7 테스트 — `test_ask_surge_rollout.py` 신설(26건) + `test_quiesce_gate.py` 범위 정정.
+      feature-0014 allowlist 확장의 전제(web replica 미접촉)를 별도 테스트로 잠금.
+- [x] T8 **CI 갭 수정(부수 발견)** — `.github/workflows/ci.yml` · `Makefile test` 가 경로를
+      명시해 `testpaths` 의 feature-0014/0020 이 **한 번도 실행되지 않았다**. 경로 추가 +
+      `test_edge_rolling_gate.py` 의 f-string 백슬래시(py3.11 SyntaxError) 수정 —
+      그 파일은 CI 파이썬에서 **collection 자체가 불가**했다. `PyYAML` 개발 의존 명시.
+- [x] T9 전체 스위트 실행 — 귀책 실패 0. pre-existing 1건(`chattr` 미설치 환경 의존,
+      main 기준선에서 동일 재현).
+- [ ] T10 verify-completion → commit → PR → 머지
+- [ ] T11 라이브 배포 + POST-DEPLOY 검증(surge 생성→본체 drain→surge 소멸 궤적 실측)
+
+### Completion Checklist
+- [x] R1~R4 가 구현되었다
+- [x] 자동 테스트가 통과한다 (feature-0014+0020 98건, 전체 스위트 귀책 실패 0)
+- [x] 웹/UI 변경 없음 — Windows-browser 검증 N/A (배포 스파인·워커 런타임만)
+- [x] FUNCTION.md 가 현재 동작과 일치한다
+- [x] MODIFY.md / REVIEW.md / TEST.md 기록
+- [ ] verify-completion --pre-commit PASS
+- [ ] Git 커밋 + 원격 동기화
+- [ ] (deploy-backed) 라이브 재배포 검증

@@ -306,15 +306,23 @@ def test_gate_without_force_aborts():
 #  3) 배선 — 게이트가 recreate 앞에 있는가
 # ══════════════════════════════════════════════════════════════════════
 
-def test_worker_gate_precedes_ask_worker_recreate():
-    """게이트가 recreate 뒤에 있으면 이미 죽인 뒤다 — 순서가 곧 계약이다."""
+def test_ask_worker_no_longer_waits_for_global_quiesce():
+    """ask-worker 는 이 게이트를 **쓰지 않는다** (CHG-20260814T120000, 이 파일의 범위 축소).
+
+    전역 정적을 기다리는 방식은 ask-worker 에서 배포를 완결시키지 못했다 — 실측 유입(7~10분
+    간격) + run p95(691s) 조합에서 낮 시간대에는 상한 900s 안에 정적 창이 생기지 않는다.
+    ask-worker 는 HTTP 소켓이 아니라 **PG 큐 소비자**라 받는 쪽(surge)을 먼저 세울 수 있고,
+    그러면 기다릴 이유 자체가 사라진다. 계약은 `test_ask_surge_rollout.py` 가 소유한다.
+
+    게이트 자체는 **gateway 에 그대로 남는다** — 거기서는 in-flight 이 소켓에 붙어 있어
+    이전이 불가능하고, 그 전제가 이 파일 나머지 테스트의 근거다.
+    """
     s = _script_text()
-    body = s[s.index("deploy_workers() {"):s.index("rollback_workers() {")]
-    gate = body.index('quiesce_gate "ask-worker recreate"')
-    recreate = body.index("up -d --no-deps --no-build --force-recreate")
-    assert gate < recreate, "quiesce 게이트가 ask-worker recreate 뒤에 있다"
-    assert 'if [ "$svc" = "ask-worker" ]' in body, \
-        "배경 워커(insight/ops)까지 게이트를 걸면 유휴 대기만 늘고 얻는 게 없다"
+    workers = s[s.index("deploy_workers() {"):s.index("# 모든 워커가 실제로 대상 sha")]
+    assert 'quiesce_gate "ask-worker recreate"' not in workers, \
+        "ask-worker 가 다시 전역 정적을 기다린다 — 바쁜 시간대 미배포 회귀"
+    assert 'quiesce_gate "gateway recreate"' in s, \
+        "gateway 게이트까지 사라지면 소켓 in-flight 를 지키는 축이 없다"
 
 
 def test_gateway_gate_between_surge_healthy_and_main_recreate():

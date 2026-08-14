@@ -131,6 +131,8 @@ __all__ = [
     "AGENT_ASK_WORKER_ROLE_STALE_SEC",
     "AGENT_ASK_WORKER_CONVERSATION_ID",
     "AGENT_ASK_WORKER_HEARTBEAT_KEY",
+    "AGENT_ASK_WORKER_ALIVE_FILE",
+    "AGENT_ASK_WORKER_LIVENESS_SEC",
     "AGENT_KB_ALLOWED_SOURCE_TYPES",
     "AGENT_KB_FACT_LIMIT",
     "AGENT_KB_INSIGHT",
@@ -1961,6 +1963,19 @@ AGENT_ASK_WORKER_ROLE_STALE_SEC = int(
 AGENT_ASK_WORKER_CONVERSATION_ID = "__ask_worker__"
 # worker 생존 heartbeat KV 키(healthcheck + /api/ask readiness gate 가 신선도 검사).
 AGENT_ASK_WORKER_HEARTBEAT_KEY = "ask_worker_last_cycle_at"
+# ── 인스턴스-local liveness (feature-0020 surge drain) ───────────────────────
+# 위 KV 키는 **role 전역**이라 배포 surge 창(본체+surge 동시 가동)에서 두 컨테이너가 같은
+# 값을 갱신한다 — 한쪽이 죽어도 다른 쪽 덕에 healthy 로 보이고(false-pass), drain 중인
+# 본체는 갱신 주체가 아니면 unhealthy 로 보인다(false-fail). 컨테이너 로컬 파일은 그 둘을
+# 구조적으로 분리한다. KV 는 role-level 표시(web UI)용으로 그대로 유지한다.
+AGENT_ASK_WORKER_ALIVE_FILE = (
+    os.getenv("AGENT_ASK_WORKER_ALIVE_FILE", "/tmp/ask-worker.alive") or "/tmp/ask-worker.alive"
+).strip()
+# liveness 갱신 주기(sec). healthcheck 임계(ASK_WORKER_HEARTBEAT_MAX_AGE_SEC, 기본 60s)보다
+# 충분히 짧아야 한 번의 blip 이 곧 unhealthy 가 되지 않는다.
+AGENT_ASK_WORKER_LIVENESS_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_LIVENESS_SEC", "10") or "10").strip()
+)
 
 MCP_URL = os.getenv("MCP_URL", "http://mcp:5000/mcp")
 MCP_TIMEOUT_SEC = _startup_int("MCP_TIMEOUT_SEC", int(os.getenv("MCP_TIMEOUT_SEC", "20")))

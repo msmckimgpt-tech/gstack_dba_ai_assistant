@@ -79,4 +79,12 @@ jobs:
           # `import web.app` 을 직접 호출한다. bare-runner 에선 repo 루트에 `web` 네임스페이스가 없어
           # collection 이 실패하므로, web → feature-0003 src 심링크로 컨테이너와 동형 경로를 만든다.
           ln -sfn unit/feature-0003-agent-web-ui/src web
-          pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests
+          # feature-0020 (2026-08-14): 배포 스파인 테스트 디렉토리를 **실제로 실행**한다.
+          # pytest.ini 의 testpaths 에는 feature-0014/0020 이 등재돼 있었지만, 이 스텝이 경로를
+          # 명시하면 testpaths 는 무시된다 — 그래서 "무중단 불변식을 잠그는 테스트가 CI 에서
+          # 한 번도 돈 적 없는" 상태였다(등재 주석이 경계한 바로 그 함정을, 등재 자체는 못 막았다).
+          # feature-0023 도 같은 이유로 누락돼 있었다(Makefile `test` 에는 있고 CI 에는 없었다).
+          pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests \
+                    unit/feature-0023-conversation-api-access/tests \
+                    unit/feature-0014-zero-downtime-deploy/tests \
+                    unit/feature-0020-zd-deploy-all/tests

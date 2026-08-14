@@ -44,6 +44,8 @@ from shared.config import (
     AGENT_ASK_WORKER_DRAIN_SEC,
     AGENT_ASK_WORKER_ROLE_STALE_SEC,
     AGENT_ASK_WORKER_HEARTBEAT_KEY,
+    AGENT_ASK_WORKER_ALIVE_FILE,
+    AGENT_ASK_WORKER_LIVENESS_SEC,
     GLOBAL_CONVERSATION_ID,
 )
 from .utils import utc_now_iso
@@ -54,6 +56,10 @@ log = logging.getLogger("agent_core.ask_worker")
 
 # SIGTERM/SIGINT → graceful: 현재 job 을 마저 끝내고(stop_grace_period 내) 루프 종료.
 _SHUTDOWN = threading.Event()
+
+# liveness 갱신 스레드 종료 신호 — `_SHUTDOWN` 과 **별개**여야 한다. drain 중에도 컨테이너는
+# 살아서 run 을 마치는 중이고, 그 사실을 healthcheck 에 계속 알려야 하기 때문이다(feature-0020).
+_LIVENESS_STOP = threading.Event()
 
 # /shared 볼륨(web·worker 공통 마운트) 상의 첨부 inline temp 파일 디렉토리.
 # web 이 worker mode 에서 여기에 쓰고, worker 가 읽은 뒤 terminal 시 정리한다(M6).
@@ -760,6 +766,47 @@ def _write_worker_heartbeat() -> None:
         log.warning("ask-worker: liveness heartbeat 기록 실패: %s", exc)
 
 
+# ── 인스턴스-local liveness (feature-0020 surge drain) ──────────────────────
+# KV heartbeat 는 **role 전역 단일 키**다. 그것으로 "이 role 이 살아 있나" 는 답할 수 있지만
+# (web UI 의 워커 생존 표시가 그 용도다) "**이 컨테이너**가 살아 있나" 는 답할 수 없다.
+# surge 교대 창에서는 본체와 surge 가 동시에 뛰므로 그 구분이 곧 배포 판정의 근거가 된다:
+#   - 공유 키만 보면 한쪽이 죽어도 다른 쪽이 갱신해 **양쪽 다 healthy 로 보인다**(false-pass).
+#   - 반대로 drain 중인 본체는 신규 claim 을 멈춘 상태라 메인 루프가 돌지 않는데, 그 사이
+#     공유 키 갱신이 끊기면 **살아서 run 을 마치는 중인 컨테이너가 unhealthy 로 보인다**
+#     (false-fail — 배포 스파인이 이 신호로 롤백을 판정하므로 그냥 오탐이 아니다).
+# 그래서 컨테이너 로컬 파일에 인스턴스 전용 스탬프를 남기고 healthcheck 가 그것을 본다.
+# PG 왕복도 사라져 DB blip 이 워커를 unhealthy 로 만들던 결합도 함께 끊긴다.
+def _touch_alive_file() -> None:
+    try:
+        tmp = f"{AGENT_ASK_WORKER_ALIVE_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(utc_now_iso())
+        os.replace(tmp, AGENT_ASK_WORKER_ALIVE_FILE)   # 원자 교체 — 판독측이 반쪽 파일을 보지 않는다
+    except Exception as exc:
+        log.warning("ask-worker: alive 파일 기록 실패(%s): %s", AGENT_ASK_WORKER_ALIVE_FILE, exc)
+
+
+def _start_liveness_thread(interval_sec: int) -> threading.Thread:
+    """liveness 갱신을 메인 루프에서 **떼어낸** 데몬 스레드.
+
+    종전엔 `_run_maintenance` 안에서만 갱신했다 — 즉 "루프가 돌고 있다" 가 곧 liveness 였다.
+    drain(`_SHUTDOWN` set)에 들어가면 루프는 의도적으로 멈추고 실행 중 job 만 마치는데,
+    그 상태는 **정상**이지 죽은 게 아니다. 갱신이 루프에 묶여 있으면 그 정상 상태가
+    unhealthy 로 보이고, 완주에 걸리는 시간이 길수록 오탐이 확실해진다(최악 실측 run 2,024s
+    vs healthcheck 임계 60s). 그래서 프로세스가 살아 있는 동안은 무조건 뛰게 한다.
+    """
+    def _loop() -> None:
+        while True:
+            _touch_alive_file()
+            _write_worker_heartbeat()
+            if _LIVENESS_STOP.wait(interval_sec):
+                return
+
+    th = threading.Thread(target=_loop, name="ask-liveness", daemon=True)
+    th.start()
+    return th
+
+
 def _do_sweep(conn) -> None:
     try:
         swept = ask_jobs.sweep_stale_jobs(
@@ -833,6 +880,11 @@ def run_ask_worker_loop() -> None:
     drain_sec = max(1, int(AGENT_ASK_WORKER_DRAIN_SEC))
     _LEASE_RELEASED.clear()
     _install_signal_handlers(worker_id, drain_sec)
+    # liveness 는 메인 루프보다 **먼저** 뛰기 시작한다 — 부팅 중(role reclaim·warm-up)과
+    # drain 중(루프 정지, run 완주 대기) 양쪽 다 컨테이너는 살아 있고, healthcheck 는 그
+    # 사실을 알아야 한다(feature-0020 surge drain).
+    _LIVENESS_STOP.clear()
+    _start_liveness_thread(max(1, int(AGENT_ASK_WORKER_LIVENESS_SEC)))
     _warm_attachment_postprocess_deps()
     tick_sec = max(1, int(AGENT_ASK_WORKER_TICK_SEC))
     # TASK-0289: 유휴(claim 대기) 폴링 주기를 reconnect backoff(tick_sec)와 분리. 단일 직렬
@@ -1040,6 +1092,14 @@ def run_ask_worker_loop() -> None:
             _LEASE_RELEASED.set()
 
     log.info("ask-worker 종료: %s", worker_id)
+    # liveness 중단은 **여기까지 와서** 한다 — drain 을 마친 뒤가 진짜 종료 시점이다.
+    # alive 파일도 지워 "프로세스는 죽었는데 컨테이너만 남은" 상태가 임계(60s)를 기다리지 않고
+    # 즉시 unhealthy 로 드러나게 한다(배포 게이트가 그만큼 빨리 판정한다).
+    _LIVENESS_STOP.set()
+    try:
+        os.unlink(AGENT_ASK_WORKER_ALIVE_FILE)
+    except Exception:
+        pass
     try:
         from shared import conn_health
         conn_health.stop_monitor()

@@ -1901,7 +1901,6 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **미해소(정직)**: **vision(이미지) 경로**에는 provenance 검사가 없다(codex 지적). 이미지 첨부는
   `_call_llm` 이 직접 붙이며 소유자 판정을 거치지 않는다 — 이미지 안의 지시문은 이 게이트가 막지
   못한다. 별도 작업으로 이월한다(REPORT §잔여).
-
 ## CHG-20260814T093000-ai-claude-feature-0002-provenance-gate-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
 
 - 사유: 선행 cycle `20260814T0800-attach-provenance-gate` 의 배포(main `e545796f`) 후 실측 종결.
@@ -1958,3 +1957,35 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   (`OBS-attach-chain-multiple-live-heads`)으로 등재했다 — 자가 정정(`WHERE VersionNumber < new`)이
   작동 중이고, 오인 표시는 root 단위 dedupe 로 이미 막혀 있으며, 트랜잭션 재구성은 업로드 경로
   전체 회귀를 부른다. 값이 0 이 아니게 되면 승격한다.
+
+## CHG-20260814T120500 ask-worker liveness 계층 분리 (배포 surge 교대 전제)
+- **Trigger**: feature-0020 `CHG-20260814T120000`(ask-worker surge 교대). 배포가 본체와 surge 를
+  잠시 **공존**시키는데, 그 창에서 종전 healthcheck 는 두 컨테이너를 구분하지 못했다.
+- **문제**: `healthcheck_ask_worker.py` 는 `agent_runtime.kv` 의 `ask_worker_last_cycle_at` —
+  **role 전역 단일 키** — 신선도로 생존을 판정했다. 두 인스턴스가 같은 값을 갱신하므로
+  ① 한쪽이 죽어도 다른 쪽 덕에 **죽은 쪽도 healthy**(false-pass) ② drain 중(신규 claim 중지 후
+  in-flight 완주 대기) 본체는 갱신 주체가 아니라 **살아 있는데 unhealthy**(false-fail)가 된다.
+  배포 스파인이 이 신호로 교체 성공/롤백을 판정하므로 단순 오탐이 아니다.
+  liveness 갱신이 `_run_maintenance`(메인 루프) 안에만 있었던 것이 ②의 직접 원인이다 —
+  "루프가 돈다" 를 liveness 로 삼으면, 루프를 의도적으로 멈추는 drain 이 죽음으로 읽힌다.
+- **변경**:
+  1. `modules/ask.py` — `_touch_alive_file()`(원자 교체) + `_start_liveness_thread()` 신설.
+     메인 루프와 **분리된 데몬 스레드**가 프로세스 생존 동안 계속 뛴다(부팅 중·drain 중 포함).
+     종료 신호는 `_SHUTDOWN` 이 아니라 전용 `_LIVENESS_STOP` — drain 은 죽어가는 중이 아니라
+     run 을 마치는 중이다. 종료 시 alive 파일 제거(프로세스만 죽은 상태를 임계 대기 없이 노출).
+     KV heartbeat 는 **그대로 유지** — role-level 표시(web UI 의 워커 생존 배지)의 소비자가 있다.
+  2. `scripts/healthcheck_ask_worker.py` — 컨테이너-local alive 파일 우선 판정, 없을 때만 KV 폴백
+     (구 이미지 호환). 파일이 있으면 KV 를 보지 않는다 — 공유 키가 다시 판정에 끼어들면 위
+     false-pass 가 되살아난다. 부수 효과로 **PG 왕복이 사라져** DB blip 이 워커를 unhealthy 로
+     만들던 결합도 끊겼다.
+  3. `shared/config.py` — `AGENT_ASK_WORKER_ALIVE_FILE`(기본 `/tmp/ask-worker.alive`) ·
+     `AGENT_ASK_WORKER_LIVENESS_SEC`(기본 10s) 신설 + 공개 목록 등재.
+  4. `docker-compose.yml`(feature-0020 소유) — `AGENT_ASK_WORKER_DRAIN_SEC` 60s→1800s ·
+     `stop_grace_period` 70s→1830s. 종전 값은 실측 run 의 66%를 못 덮어 배포마다 진행 중 답변을
+     재큐시켰다. surge 가 신규를 받으므로 예산을 늘리는 사용자 비용이 0 이 됐다.
+- **검증**: `test_ask_surge_rollout.py` liveness 축 6건 + 기존 `test_ask_redeploy_handoff.py` ·
+  `test_ask_jobs.py` 45건 무회귀. 전체 스위트 귀책 실패 0.
+- **위험등급**: Major(워커 종료·생존 판정). 답변 생성 로직 무변경.
+- Files: `src/modules/ask.py` · `src/scripts/healthcheck_ask_worker.py` · `shared/config.py`(공용).
+- Rollback Notes: healthcheck 를 KV 단독 판정으로 되돌리고 liveness 스레드를 제거하면 원복.
+  그 순간부터 surge 공존 창의 배포 판정이 다시 두 컨테이너를 구분하지 못한다.
