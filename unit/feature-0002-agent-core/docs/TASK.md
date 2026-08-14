@@ -83,8 +83,21 @@ source_of_truth: true
 - [x] 테스트 최종 — 스트리밍 단위 **36**건 PASS · 전 testpath 귀책 실패 **0**(선재 `chattr` 1건) ·
       ruff clean. 기존 계약 테스트 1건은 의도적 갱신(`'즉시 답변'` 확인 지점 2→**3곳**: 스트림
       중 축 추가 — 개수를 세는 테스트라 계약 변경이 곧 실패로 드러났다).
-- [ ] verify-completion → PR → 배포(영향 서비스 전부) → 라이브 실측
-      (900초 timeout 소멸 · 5분+ 무변화 건수 감소 · `llm_stream_done` 로그로 chunk 흐름 확인)
+- [x] verify-completion **18/18 PASS** → PR **#1307** (CI `test` PASS 3m28s) → main `f30a42bb`
+      머지 → **배포 완료 `8fe4ab39`**(`deploy-web` scope=all: web 무중단 롤링 + soak + 워커 4종
+      롤아웃 + gateway reconcile). **6서비스 `GIT_COMMIT=8fe4ab39`** · edge `/healthz` ok ·
+      **무중단 실측 `no upstreams available` 0** · surge 잔존 0 · quiesce drained(3s/2s)로 진행 중
+      사용자 run 무손상. 병합 충돌 2건(문서 append 위치)은 **병렬 세션의 별개 근본**
+      (`FR-early-return-kv-never-finalized`)과 양쪽 보존으로 해소하고 병합 후 전 testpath 재검증.
+- [x] **배포본 라이브 실증** — 봉인 심볼 9종 · 상수(STREAM_ENABLED True · progress 120.0 ·
+      abort 10.0 · UPSTREAM_MULT 제거) · abort 배선 **3곳**(메인+red-team 2) · 신호 분리 확인.
+      실제 provider 스트림 end-to-end: `llm_stream_done chunks=6 content_chars=1
+      reasoning_chars=52 tool_calls=0 elapsed=0.4s finish=stop usage=True`, 반환 `'2'`,
+      finish ctx `stop`, truncated False → **수집·조립·회계·절단채널 라이브 동작**,
+      thinking delta 는 답변 미혼입.
+- [ ] **다음 audit 의 corroboration 재측정**(배포 전 기준선 대비): 재시도 activity 30일 11건/3
+      대화 · 900초 정확 timeout 2 run/2 conv · 5분+ 무변화 54건/15 대화 → 감소하면 `verified`,
+      재증가면 `regressed`. 취소·'즉시 답변' 반응성은 실사용 대화에서 확인.
 ## TASK-20260814T160000-ask-kv-terminal-seal — 조기 종료 run 의 KV terminal 봉인 (Major §12.3)
 
 `/_dqa:conversation_audit` 라이브 진단(FR-early-return-kv-never-finalized). 사용자가 SQL 첨부

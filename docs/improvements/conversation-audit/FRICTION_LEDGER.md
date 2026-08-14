@@ -8,8 +8,26 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-llm-attempt-cap-inside-latency-tail — fixed:undeployed (L6↔L7; per-attempt 상한이 성공 지연 분포의 꼬리 안쪽 → 정상 추론 전량 폐기 + 무진전 표면)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **24** · 기존 더블 3파일 두-모드 전환 ·
-  CI 전 testpath 귀책 실패 **0** · ruff clean). 배포 전.
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-14, PR #1307 merge main
+  `f30a42bb` → 배포 대상 `8fe4ab39`). `deploy-web` **scope=all**: web-a/web-b 무중단 롤링 + soak
+  + 워커(ask/insight/ops-scheduler/ext-tool-mcp) 롤아웃 + gateway reconcile(드리프트 없음·blip 0).
+  **6서비스 `GIT_COMMIT=8fe4ab39`** · edge `/healthz` ok(mysql_ok·pg_ok) · **무중단 실측
+  `no upstreams available` 0** · surge 잔존 0 · quiesce: 본체 drained(3s)·surge drained(2s)로
+  **진행 중 사용자 run 을 끊지 않았다**.
+  **배포본 런타임 실증**: 봉인 심볼 9종 적재 · 상수(`STREAM_ENABLED=True` · progress 120.0 ·
+  abort 10.0 · `UPSTREAM_MULT` 제거) · **abort 배선 3곳**(메인 + red-team 2) · progress 배선 ·
+  신호 분리(`cancel`/`finalize`) 확인.
+  **실제 provider 스트림 end-to-end**: 배포본 `_call_llm` 직접 호출 →
+  `llm_stream_done chunks=6 content_chars=1 reasoning_chars=52 tool_calls=0 elapsed=0.4s
+  finish=stop usage=True`, 반환 content `'2'`, `finish_reason` ctx `stop`,
+  `last_answer_was_truncated()=False`. 즉 **수집·조립·회계·절단채널이 라이브에서 동작**하고
+  thinking delta 는 답변에 섞이지 않는다.
+  `verified` 로 닫지 **않는** 이유(§C5): 실사용자 대화 기준 corroboration 재측정이 남았다 —
+  아래 "라이브 실측 필요분". 코드/테스트(신규 **36** · 기존 더블 3파일 두-모드 전환 · 계약
+  테스트 1건 의도적 갱신 · CI 전 testpath 귀책 실패 **0** · ruff clean · verify 18/18).
+- **배포 전 기준선(다음 audit 이 이 값과 비교)**: 재시도 activity(`%재연결하는 중%`) 30일
+  **11건 / 3 대화** · 900초 정확 timeout 30일 **2 run / 2 conv** · 5분+ 표면 무변화 30일
+  **54건 / 15 대화**.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-14) — "`새 대화` —
   「LLM 연결이 일시적으로 끊겨 재연결하는 중 …」 이라는 단계와 함께 진전이 없는것으로 확인되어
   대응이 필요합니다."
