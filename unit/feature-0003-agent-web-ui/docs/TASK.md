@@ -10797,3 +10797,21 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       가시성 전 축 실측 → TEST.md POST-DEPLOY Run 기록(시각 증거 `docs/evidence/` 첨부).
 - [x] 미검증 항목 명시 — 열 폭 재계산(≤4%, 이월) · 브라우저 콘솔 에러 미수집.
 - [x] REPORT.md 이월 항목 정리.
+
+## 20260813T2130-usage-card-overflow — 요약 카드가 좁은 폭에서 내부 범위를 벗어나는 이슈 (Minor §12.3)
+
+사용자 보고: "프로필 화면을 조정했을 때, 좁은 공간으로 인해 요소 내 텍스트 길이에 따라 내부 범위를
+벗어나는 이슈".
+
+- [x] 결함 재현 하네스 — 폭 9단계 스윕 정량 측정(수정 전 320px 4건 … **900px 6건**)
+- [x] `flex:1 + min-width:84px` → `grid auto-fit minmax(min(150px,100%),1fr)` + `min-width:0`
+- [x] 최소 트랙 150px 을 실측으로 결정(320px 에서 12자 값 수용 — 128px 은 2열 유지로 실패)
+- [x] 값은 자르지 않음(라벨만 ellipsis) · 숫자 15px
+- [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
+- [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
+- [ ] POST-DEPLOY 라이브 드로어 폭 축소 실측
+
+### 9. Requested Scope
+
+- "좁은 공간에서 요소 내 텍스트가 내부 범위를 벗어나는 이슈 수정" — ✓ (구조를 grid 로 바꿔 모든
+  측정 폭에서 넘침 0. 원인이 좁은 화면이 아니라 8장 균등 분배였음을 실측으로 밝혀 함께 해소)
