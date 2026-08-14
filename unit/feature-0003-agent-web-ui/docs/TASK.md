@@ -10740,3 +10740,14 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 
 - "[사용자 프로필 > 계정 > 사용 내역] 차트에도 정합하게 반영" — ✓ (지표 정의를 정본 1개로 통일해
   두 화면이 구조적으로 어긋날 수 없게 만들고, 카드 8종·전환 규칙·안내 문구·캐시 항목을 동일하게 적용)
+
+## 20260813T2000-usage-metric-final-postdeploy — 양 화면 POST-DEPLOY 실측 종결 (doc-only)
+
+- [x] 관리 콘솔 3기전 해소 라이브 확인(양방향 `sameSvg:true` + 중간값 + 새 막대 0→목표)
+- [x] 프로필 사용 내역 동일 거동 확인(카드 8종 · 전환 · 비-가산 단일 막대 · 안내 문구 일치)
+- [x] 프로필 캐시 0 의 사유 확인(본인 대화에 캐시 기록 없음 — 다른 계정 2곳에 존재)
+- [x] 검증 함정 2건 기록(측정 API · display:none 조상)
+
+### 9. Requested Scope
+
+- 선행 두 cycle 의 POST-DEPLOY 이월 종결 — ✓ (양 화면 라이브 실측 PASS)
