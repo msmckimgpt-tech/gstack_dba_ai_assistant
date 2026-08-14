@@ -2559,12 +2559,25 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   display: flex;
   align-items: center;
   gap: 6px;
+  /* step-panel-timing: 우측 시간 표기가 좁은 패널(최소 300px)에서 번호·도구 배지와
+     겹치지 않도록 줄바꿈 허용 — 넘치면 자기 줄로 내려가 기존 텍스트와 충돌하지 않는다. */
+  flex-wrap: wrap;
 }
 .step-side-panel-num {
   font-size: 10px;
   font-weight: 700;
   color: var(--text-muted);
   min-width: 16px;
+}
+/* step-panel-timing: 단계 기록 시각 · 직전 단계와의 간격 · 누적 경과 (헤더 우측 정렬).
+   숫자 폭 고정(tabular-nums)으로 폴링 재렌더 시 흔들림을 막는다. */
+.step-side-panel-time {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 대화 첨부파일 목록 아이템 (다운로드 포함) */

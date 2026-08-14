@@ -4334,3 +4334,28 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - **[P2] versions 빈 배열 역참조** — 계보만으로 진입하면 `list[last].original_filename` 에서 예외.
   → 계보 head 파일명 폴백.
 - 회귀 고정: 위 5축 전부 하네스에 추가(E1~E6) → **24 PASS**.
+
+## CHG-20260814T183000-ai-claude-corp-feature-0003-step-panel-timing — 실행 단계 패널 단계별 시각·간격·누적 표기
+
+- **요청**: assistant 답변 진행의 투명화 — 실행 단계 패널 각 단계에 timestamp·단계별 소요·누적
+  소요 표기, 기존 텍스트와 충돌 없이 단계 카드 헤더 우측(사용자 스크린샷 형광 위치)에 배치.
+- `src/static/app.js` — `_renderStepSidePanelBody` 에 `.step-side-panel-time`(시각 · +간격 ·
+  누적) 부착 + 헬퍼 3종(`_parseStepTs`: ISO "T"/psycopg 공백 두 표기 파싱, `_fmtStepDur`:
+  60초 미만 소수1자리·이상 m분s초·음수 clamp, `_fmtStepClock`: 로컬 HH:MM:SS).
+  데이터는 기존 `step.created_at`(PG timestamptz) 재사용 — backend 무변경, 과거 대화 소급 표기.
+  created_at 부재(레거시/서버 합성 step)는 표기 생략(fail-soft).
+- `src/static/css/chat.css` — `.step-side-panel-time` 우측 정렬(margin-left:auto)·nowrap·
+  tabular-nums + `.step-side-panel-item-header` flex-wrap(좁은 패널에서 겹침 대신 줄바꿈).
+- `tests/verify_step_panel_timing.mjs` 신규 30 PASS · 기존 scroll-preserve 29 PASS 무회귀.
+
+### CHG-20260814T183000 적대 리뷰 반영 (REV-20260814T183000, [SUBAGENT:ux+frontend])
+
+- **[P2-1] 테스트 검출력 갭** — fixture 의 레거시(created_at 부재) 단계가 항상 마지막이라,
+  "NaN 뒤에 유효 단계" 시퀀스가 미실행 → prev 직전-인덱스 직참조·anchor 첫-인덱스 직참조
+  뮤턴트가 30 PASS 전체 통과(생존). → [8] NaN 혼재(선두·중간 레거시) 케이스 추가, 3종 뮤턴트
+  전부 사멸 실증. 34 PASS.
+- **[P3-4] Intl 포매터 매 호출 생성(~90μs/단계)** → 모듈 상수 `_STEP_CLOCK_FMT` 1회 생성.
+- **[P3-7] 첫 단계 툴팁 과잉(3요소 고정 문구)** → parts 수 조건화("기록 시각"만).
+- 기록만(수용): P3-1 60초 경계 "+60초"/"1분 0초" 이음새(기존 formatDurationBreakdown 선례와
+  동일) · P3-3 MySQL naive datetime 로컬 오해석(ADR-0028 로 dead-code 경로) · P3-6 시계 역행
+  clamp 의 누적 비단조(서버 정렬·append-only 병합으로 실현 경로 부재, 방어 코드).
