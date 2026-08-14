@@ -16,7 +16,15 @@ from typing import Any
 _log = logging.getLogger("agent_core.tools")
 
 from shared.config import AGENT_TOP_N, AGENT_MAX_SHOW
-from shared.db import execute_sql as _raw_execute_sql, DatasourceCircuitOpen
+from shared.db import (
+    execute_sql as _raw_execute_sql,
+    DatasourceCircuitOpen,
+    # ds-connect-network-guidance: 연결 제한 안내 정본(머신 네트워크·VPN). 문구 복제 금지.
+    datasource_connect_error_message as _ds_connect_error_message,
+    datasource_access_guidance as _db_access_guidance,
+    is_datasource_reachability_error as _db_is_reachability_error,
+    _sanitize_inline as _db_sanitize_inline,
+)
 from .render import save_csv
 from . import dialects as _dialects  # Stage 2 P5: engine 별 introspection/sample SQL
 
@@ -366,16 +374,129 @@ def _note_conn_outcome(conn, outcome) -> None:
         _mark_conn_used(conn)
 
 
+# ds-connect-network-guidance: 도구 경로에서 datasource 에 닿지 못했을 때의 tool-result 정본.
+#
+# **REV-20260814T190000 [CODEX] P1-1 — 초판 설계는 틀렸다.** 초판은 "그대로 전달하라" 는 지시를
+# tool 결과 문자열 안에 함께 실었는데, agent_core 는 모든 tool 결과를 `_datamark_untrusted` 로
+# `⟦UNTRUSTED-DATA⟧ … ⟦/UNTRUSTED-DATA⟧` 안에 감싸고 시스템 프롬프트(`_INJECTION_GUARD_NOTICE`)는
+# **그 구간의 지시를 결코 따르지 말라**고 못박는다. 즉 초판의 지시문은 무시되도록 설계된 자리에
+# 놓였고, 심지어 인젝션 방어가 거부하도록 훈련된 모양 그대로였다.
+#
+# 그래서 계약을 둘로 쪼갠다:
+#   · tool 결과 문자열 = **사용자 전달용 안내 블록만**(= 데이터. 비신뢰 구획에 들어가도 무해).
+#   · 모델 행동 지시 = ContextVar 로 agent_core 에 신호하고, agent_core 가 **비신뢰 구획 밖**
+#     (닫는 sentinel 뒤)에 코드-권위 문장으로 덧붙인다.
+# 신호를 문자열 sentinel 이 아니라 ContextVar 로 두는 이유: 문자열이면 DB 값·첨부 본문이 그
+# 토큰을 흉내 내 지시를 유도할 수 있다. ContextVar 는 **코드만** 쓴다.
+_DS_RESTRICTION_NOTICE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "ds_restriction_notice", default=False)
+
+
+def take_datasource_restriction_notice() -> bool:
+    """직전 `execute_tool` 이 datasource 연결 제한으로 끝났는지 소비(읽고 지운다).
+
+    agent_core 가 tool 결과를 메시지로 만들 때 호출한다 — True 면 비신뢰 구획 **밖**에
+    코드-권위 전달 지시를 덧붙인다."""
+    v = bool(_DS_RESTRICTION_NOTICE.get())
+    _DS_RESTRICTION_NOTICE.set(False)
+    return v
+
+
+def _ds_unreachable_tool_result(user_block: str) -> str:
+    """사용자 전달용 안내 블록을 tool-result 로 돌려주고, 전달 지시 신호를 세운다."""
+    _DS_RESTRICTION_NOTICE.set(True)
+    return user_block
+
+
+# REV-20260814T190000 [CODEX] P1-2: 초판은 **연결 수립 단계**만 안내를 붙였다. 그런데 VPN 이
+# 끊기는 흔한 시점은 연결을 이미 잡은 **쿼리 도중**이고, 그 경로는 `_dataplane_error_text` 의
+# "다시 시도하세요" 로만 끝나 요청된 안내가 사용자에게 도달하지 않았다.
+#
+# 두 축으로 닫는다.
+#  (a) **죽은 연결(2006/2013 유휴 종료)** — 1회차는 종전 프레이밍 유지가 옳다(다음 호출이
+#      자동 재연결하므로 실제로 재시도로 풀린다). 그러나 **같은 run 에서 반복**되면 유휴 종료가
+#      아니라 회선이 끊긴 것이다 → 2회차부터 네트워크·VPN 안내를 덧붙인다.
+#  (b) **도달성 오류(timeout·no route·connection refused 등)** — 재시도로 풀리지 않으므로
+#      1회차부터 곧바로 안내.
+_DEAD_CONN_STREAK: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "dataplane_dead_conn_streak", default=0)
+# 반복 판정 임계 — 1회는 유휴 종료로 보고 재시도를 권하고, 그 다음부터 회선 의심.
+_DEAD_CONN_GUIDANCE_AFTER = 1
+
+
+def note_dataplane_outcome_for_guidance(failed: bool) -> None:
+    """run 내 연속 죽은-연결 횟수 추적(성공하면 0 으로 리셋)."""
+    _DEAD_CONN_STREAK.set((_DEAD_CONN_STREAK.get() + 1) if failed else 0)
+
+
 def _dataplane_error_text(exc) -> str:
     """죽은 연결 오류를 원인·다음 행동이 담긴 문구로. 그 외 오류는 원문 유지(진단 정보 보존)."""
-    if not is_dead_conn_error(exc):
-        return str(exc)
-    return (
-        "데이터베이스 연결이 끊겨 이 조회를 완료하지 못했습니다 "
-        "(유휴 시간 초과 또는 직전 쿼리 타임아웃으로 세션이 종료됨). 서버가 내려간 것도, 권한 문제도 "
-        "아닙니다 — 다음 도구 호출에서 자동으로 재연결되므로 **같은 조회를 그대로 다시 시도**하세요. "
-        "쿼리를 좁히거나 대상을 바꿀 필요 없습니다. 이 실패로 객체의 존재/부재를 단정하지 마세요."
-    )
+    if is_dead_conn_error(exc):
+        note_dataplane_outcome_for_guidance(True)
+        base = (
+            "데이터베이스 연결이 끊겨 이 조회를 완료하지 못했습니다 "
+            "(유휴 시간 초과 또는 직전 쿼리 타임아웃으로 세션이 종료됨). 서버가 내려간 것도, 권한 문제도 "
+            "아닙니다 — 다음 도구 호출에서 자동으로 재연결되므로 **같은 조회를 그대로 다시 시도**하세요. "
+            "쿼리를 좁히거나 대상을 바꿀 필요 없습니다. 이 실패로 객체의 존재/부재를 단정하지 마세요."
+        )
+        if _DEAD_CONN_STREAK.get() > _DEAD_CONN_GUIDANCE_AFTER:
+            # 반복 = 유휴 종료가 아니라 회선 단절. 여기서부터 사용자 확인 안내를 싣는다.
+            _DS_RESTRICTION_NOTICE.set(True)
+            return (
+                "데이터베이스 연결이 반복해서 끊기고 있습니다(재연결 후에도 같은 증상). "
+                "네트워크 경로가 불안정할 때 나타나는 형태입니다.\n\n"
+                + _db_access_guidance(None)
+            )
+        return base
+    if _db_is_reachability_error(exc):
+        # 도달성 실패는 재시도로 풀리지 않는다 — 1회차부터 안내.
+        note_dataplane_outcome_for_guidance(True)
+        _DS_RESTRICTION_NOTICE.set(True)
+        return _ds_connect_error_message(None, exc)
+    note_dataplane_outcome_for_guidance(False)
+    return str(exc)
+
+
+# 핸들러가 예외를 **삼키고 오류 문구로** 돌려주는 경로(`execute_sql` 의 `SQL 실행 오류: …` 등)도
+# 같은 계약을 받아야 한다(REV-20260814T190000 [CODEX] P1-2). 다만 결과 **본문**을 훑으면
+# 데이터 값에 "timeout" 같은 단어가 있을 때 오탐한다 — 그래서 **오류 접두어로 시작하는 출력만**
+# 검사한다(이 저장소의 오류 반환 문구는 전부 접두어로 시작한다).
+_TOOL_ERROR_PREFIXES = ("SQL 실행 오류", "도구 실행 오류", "오류:", "쿼리 실행 오류")
+
+
+def _holder_label(holder) -> "str | None":
+    """holder 의 datasource key 를 사용자 표기용 라벨로. 레거시 단일 바인딩의 `default` 는
+    사용자에게 뜻 없는 내부 이름이라 라벨 없이 '데이터소스' 로 표기한다."""
+    v = str(getattr(holder, "_label", "") or "").strip()
+    return v if v and v != "default" else None
+
+
+def _ds_delayed_label_prefix(label: "str | None") -> str:
+    """회로차단 안내 앞에 붙일 대상 표기. '실패' 프레이밍 없이 **어느** 데이터소스인지만 알린다
+    (REV-20260814T190000 [CODEX] P2-6). 라벨이 없으면 빈 문자열 — 종전 문구 그대로."""
+    s = _db_sanitize_inline(label, 64)
+    return f"데이터소스 '{s}' — " if s else ""
+
+
+def _augment_output_for_connectivity(out) -> str:
+    """도구 출력이 연결 단절 신호면 안내를 덧붙이고 전달 지시 신호를 세운다."""
+    text = str(out or "")
+    if not text.startswith(_TOOL_ERROR_PREFIXES):
+        note_dataplane_outcome_for_guidance(False)   # 정상 결과 = 연속 실패 끊김
+        return text
+    probe = text[:400]
+    if is_dead_conn_error(probe):
+        note_dataplane_outcome_for_guidance(True)
+        if _DEAD_CONN_STREAK.get() > _DEAD_CONN_GUIDANCE_AFTER:
+            _DS_RESTRICTION_NOTICE.set(True)
+            return (f"{text}\n\n연결이 반복해서 끊기고 있습니다(재연결 후에도 같은 증상).\n\n"
+                    + _db_access_guidance(None))
+        return text
+    if _db_is_reachability_error(Exception(probe)):
+        note_dataplane_outcome_for_guidance(True)
+        _DS_RESTRICTION_NOTICE.set(True)
+        return f"{text}\n\n" + _db_access_guidance(None)
+    return text
 
 
 def set_active_dataplane_conn(holder: "_DataplaneConn | None"):
@@ -4314,6 +4435,9 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
     선택해 **그 datasource 의 연결·allowlist·engine** 으로 실행한다. 인자 미지정이면 primary 로 폴백.
     단일 바인딩(라우터 None)이면 종전과 동일하게 인자로 받은 conn 으로 실행(동작 0 변경).
     """
+    # 이 호출의 연결-제한 신호를 초기화한다 — 직전 호출의 신호가 남아 다음 결과에 전달 지시를
+    # 잘못 붙이는 일이 없게(agent_core 가 호출마다 take_* 로 소비하지만 이중 방어).
+    _DS_RESTRICTION_NOTICE.set(False)
     handler = _TOOL_HANDLERS.get(tool_name)
     if handler is None:
         return f"알 수 없는 도구: {tool_name}"
@@ -4345,12 +4469,19 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
             ds_conn = router.conn_for(label)
         except DatasourceCircuitOpen as e:
             # 회로차단(연결 격리)은 일시 지연·자동복구 — "연결 실패" 프레이밍 회피(신뢰 보호,
-            # 보고 2026-06-25). label 접두어도 생략하고 안내형 문구만 LLM/사용자에게 전달.
-            return e.user_message()
+            # 보고 2026-06-25). 실패 프레이밍은 여전히 쓰지 않되, 멀티 datasource 에서는 **어느**
+            # 데이터소스가 지연 중인지 알려준다(REV-20260814T190000 [CODEX] P2-6 — 라벨 없이는
+            # 여러 바인딩 중 무엇을 확인해야 하는지 알 수 없다).
+            return _ds_unreachable_tool_result(_ds_delayed_label_prefix(label) + e.user_message())
         except Exception as e:
-            return f"데이터소스 '{label}' 연결 실패: {e}"
+            # ds-connect-network-guidance: 드라이버 원문만 돌려주던 자리 — 머신 네트워크·VPN
+            # 확인 안내를 정본에서 받는다(전달 지시는 agent_core 가 비신뢰 구획 밖에서 붙인다).
+            return _ds_unreachable_tool_result(
+                _ds_connect_error_message(label, e))
         if ds_conn is None:
-            return f"데이터소스 '{label}' 를 사용할 수 없습니다."
+            # 라우터가 라벨을 알지만 연결 객체를 못 준 상태 — 사용자 관점에선 동일한 "연결 제한".
+            return _ds_unreachable_tool_result(
+                _ds_connect_error_message(label, None))
         # FR-schema-name-case-drift: 활성화 전에 이 datasource 의 allowlist display 를 서버 실제 case 로
         # 정규화(grounding·DISPLAY 가 저장 case 편차 없이 실제 case 노출). refresh 후 activate 가 전파.
         router.refresh_case(label, ds_conn)
@@ -4368,7 +4499,7 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
             # 핸들러가 예외를 삼키고 오류 **문구**로 돌려주는 경로도 있다(per-DB graceful 등) —
             # 문구까지 봐야 끊김을 놓치지 않는다.
             _note_conn_outcome(ds_conn, out)
-            return out
+            return _augment_output_for_connectivity(out)
         except Exception as e:
             _note_conn_outcome(ds_conn, e)
             return f"도구 실행 오류 ({tool_name} @ {label}): {_dataplane_error_text(e)}"
@@ -4390,9 +4521,12 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
         try:
             conn = _holder.conn()
         except DatasourceCircuitOpen as e:
-            return e.user_message()
+            return _ds_unreachable_tool_result(
+                _ds_delayed_label_prefix(_holder_label(_holder)) + e.user_message())
         except Exception as e:
-            return f"데이터 소스 연결 실패: {e}"
+            # ds-connect-network-guidance: 단일 경로 재연결 실패도 라우터 경로와 동일 문구.
+            return _ds_unreachable_tool_result(
+                _ds_connect_error_message(_holder_label(_holder), e))
     try:
         if str(_dialects.active().name).lower() != "mssql":
             _canonicalize_schema_args_mysql(conn, arguments)
@@ -4403,7 +4537,7 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
     try:
         out = handler(conn, arguments)
         _note_conn_outcome(conn, out)
-        return out
+        return _augment_output_for_connectivity(out)
     except Exception as e:
         _note_conn_outcome(conn, e)
         return f"도구 실행 오류 ({tool_name}): {_dataplane_error_text(e)}"

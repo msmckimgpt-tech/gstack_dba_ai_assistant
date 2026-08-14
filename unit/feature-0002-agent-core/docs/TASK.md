@@ -8,6 +8,52 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260814T190000-ds-connect-network-guidance — 데이터소스 연결 제한 시 '머신의 네트워크 이슈'·'VPN 연결 이슈' 명시 안내 (Minor §12.3)
+
+사용자 요청(2026-08-14): "프로젝트 내 서비스에서 assistant 에게 요청했을 때, 요청된 각
+데이터소스에 연결이 제한될 경우 '머신의 네트워크 이슈' 및 'VPN 연결 이슈' 라는 부분을
+확인해달라고 명시적으로 error message 및 가이드를 출력해주세요."
+
+- [x] **현행 실측 — 무엇이 나가고 있었나**. 연결 제한 surface 5갈래를 코드에서 전수 확인:
+      (a) `agent_core` run-start 멀티 primary `DB 연결 실패(멀티 datasource primary): {e}`
+      (b) 같은 자리 단일 경로 `DB 연결 실패: {e}` (c) `tools.execute_tool` 라우터 경로
+      `데이터소스 '{label}' 연결 실패: {e}` (d) 같은 자리 `conn is None` (e) 단일 holder 재연결
+      실패 `데이터 소스 연결 실패: {e}`. 전부 **드라이버 원문만** 노출해 사용자가 자기 쪽에서
+      무엇을 확인해야 하는지 알 수 없었다(`2003 (HY000): Can't connect to MySQL server on …`).
+      회로차단(`DatasourceCircuitOpen.user_message`)은 지연·자동복구만 알리고 확인 항목이 없었다.
+- [x] **완료 판정 기준(다의어 고지, §7.1)**: "assistant 에게 물었는데 데이터소스가 안 붙는다"
+      → 사용자가 받는 문구에 **'머신의 네트워크 이슈'와 'VPN 연결 이슈' 문자열이 그대로** 있고,
+      각 항목에 무엇을 하라는 행동(다른 시스템 접속 확인 / VPN 재접속)이 붙는다.
+      입력→기대 출력 예: 라우터 `conn_for` 가 `2003 Can't connect` 로 raise → tool 결과 문자열에
+      두 항목 + "그대로 전달" 지시가 포함된다.
+- [x] 안내 **정본 1곳**(`shared/db.py`) 신설 — `datasource_access_guidance` /
+      `datasource_connect_error_message` / `is_datasource_auth_error`. surface 가 5갈래라 문구를
+      각 자리에 복제하면 그 복제가 곧 drift 기전이 된다.
+- [x] surface 5갈래 전부 정본 경유로 전환(위 a~e) + `DatasourceCircuitOpen.user_message` 에
+      "반복되면 확인" 조건절로 같은 체크리스트 부착.
+- [x] **인증 거부는 제외**(오도 방지) — 1044/1045/18456/`password authentication failed` 는
+      네트워크·VPN 이 이미 도달했다는 증거라 자격증명 안내로 분기. 분류 불가는 네트워크·VPN
+      안내로 폴백(요청된 안내가 누락되는 쪽이 더 나쁘다).
+- [x] **LLM 전달 지시 동봉**(`tools._ds_unreachable_tool_result`) — tool 결과는 사용자 화면이
+      아니라 모델 입력이라, 안내만 돌려주면 모델이 요약하며 행동 지침을 떨구거나 다른 스키마로
+      우회하다 끝난다. 안내 블록(`───` 구간)과 행동 지시를 분리해 싣고 "그대로 전달" 을 못박았다.
+- [x] **범위 밖 명시(회귀 방지)**: 유휴 세션 종료(`_dataplane_error_text`)는 연결 '제한' 이 아니라
+      자동 재연결 대상이라 기존 "같은 조회를 다시 시도" 문구 유지 · 미바인딩 라벨(`이 제품에
+      바인딩된 데이터소스가 아닙니다`)은 설정 오류라 네트워크 안내 미부착 · `str(e)` 기술 문구는
+      `insight.scan_outcome` 분류·로그 계약이라 불변.
+- [x] 신규 **46 pytest**(`test_ds_connect_network_guidance.py`) — 정본·원인분류(도달성 우선)·
+      회로차단·연결수립 4갈래·연결이후 단절·전달 보장(구획 밖)·주입 표면·AST census.
+- [x] **§18.8 적대 리뷰(codex backend+qa+security) [P1] 3 · [P2] 5 전건 반영** — 상세 REVIEW.md
+      `REV-20260814T190000`. 핵심 3건: ① **전달 지시가 무력화되도록 설계된 자리에 있었다** —
+      tool 결과는 `_datamark_untrusted` 로 비신뢰 구획에 들어가고 시스템 프롬프트가 그 안의
+      지시를 따르지 말라고 못박으므로, 지시를 ContextVar 신호 + `agent_core` 의 구획-밖
+      코드-권위 문장으로 이관 ② **연결 이후 단절 경로 누락** — 반복 죽은연결 에스컬레이션 +
+      도달성 오류 즉시 안내 + 핸들러 삼킨 오류문구 흡수(오탐 가드 포함) ③ **라벨·원인이 구획을
+      위조** — `_sanitize_inline`(개행·괘선·sentinel 제거 + 길이 상한).
+- [x] 부수 적발(자체) — 초판 테스트가 헬퍼 직접 호출만 해서 `execute_tool` 배선을 지워도
+      green 이던 blind spot 을 실제 도구 실행 테스트로 봉인. 최종 **뮤테이션 10종 전건 KILLED**.
+- [ ] POST-DEPLOY 라이브 실증 — 배포 후 실제 연결 제한 발생 시 문구 도달 확인(이월).
+
 ## TASK-20260814T160000-llm-stream-progress — 대화 LLM 호출 스트리밍 전환: per-attempt 상한을 지연 분포 밖으로 + 무진전 표면 해소 (Major §12.3)
 
 `/_dqa:conversation_audit` 라이브 진단(FR-llm-attempt-cap-inside-latency-tail). 사용자 호출
