@@ -159,18 +159,47 @@ def assert_datasource_allowed(requested: Any, labels: list[str]) -> None:
 
 @contextlib.contextmanager
 def scoped_execution(agent_core_mod: Any, tools_mod: Any, mem_conn,
-                     product_id: int) -> Iterator[Any]:
-    """확정 제품의 datasource 라우터를 ContextVar 에 걸고, 블록을 벗어나면 반드시 되돌린다.
+                     product_id: int, app_mod: Any = None) -> Iterator[Any]:
+    """확정 제품의 **실행 스코프 전체**(datasource 연결 + 스키마 allowlist)를 세우고, 블록을
+    벗어나면 반드시 되돌린다.
 
-    yield 값은 라우터(`_DatasourceRouter | None`). None 이면 단일-datasource 제품이라
-    호출측이 `_resolve_product_datasource` 단일 경로로 연결을 잡아야 한다.
+    yield 값은 **도구에 넘길 연결**이다(`None` = 라우터가 연결을 소유하므로 호출측은 None 을
+    그대로 넘긴다).
+
+    ## ⚠ 왜 여기서 연결까지 잡는가 (2026-08-14 수정)
+
+    이전 구현은 다중 바인딩일 때만 라우터를 세우고, **단일 바인딩이면 `None` 을 돌려주며
+    "호출측이 단일 경로로 연결을 잡아야 한다" 고만 적어 놨다.** 호출측(외부 도구 라우터)은
+    그렇게 하지 않고 memory DB 연결을 그대로 넘겼고, 그 결과:
+
+      - 구조 조회가 **제품 datasource 가 아닌 메모리 DB 서버**를 향했고,
+      - 스키마 allowlist 가 **아예 설정되지 않아**(그 설정도 라우터 경로에만 있었다)
+        `agent_attachment_*`(다른 대화의 첨부 샌드박스)·`account_db` 까지 목록에 나왔다.
+
+    대부분의 제품이 단일 바인딩이므로 이건 예외가 아니라 **기본 경로**였다. 계약을 문서로
+    미루지 않고 여기서 닫는다 — 스코프를 세우는 곳이 스코프의 모든 축을 책임진다.
 
     **반드시 finally 로 reset** 한다 — 웹 프로세스는 요청 간 스레드를 재사용하므로, 누수되면
     다음 요청이 **이전 요청의 스코프**로 tool 을 돌린다(교차 계정 유출).
     """
     router = None
     token = None
+    single_conn = None
+    allow_set = False
+    cfg_set = False
     try:
+        # ① 스키마 allowlist — 두 경로 공통. 해석 실패는 fail-closed(빈 목록 = 접근 0)로 간다.
+        #    None 을 넣으면 tools 가 "무제한" 으로 읽으므로 절대 None 을 넘기지 않는다.
+        allowed: list[str] = []
+        try:
+            if app_mod is not None:
+                allowed = list(app_mod._product_allowed_schemas(mem_conn, int(product_id)) or [])
+        except Exception:
+            allowed = []
+        tools_mod.set_active_schema_allowlist(allowed)
+        allow_set = True
+
+        # ② 연결/라우터
         ds_list = agent_core_mod._resolve_product_datasources(mem_conn, int(product_id)) or []
         if ds_list:
             def _connect_ds(ds_dict):
@@ -178,7 +207,33 @@ def scoped_execution(agent_core_mod: Any, tools_mod: Any, mem_conn,
                     database=None, autocommit=True, datasource=ds_dict)
             router = tools_mod._DatasourceRouter(ds_list, _connect_ds)
             token = tools_mod.set_active_ds_router(router)
-        yield router
+            yield None            # 라우터가 연결 소유 — 도구에는 None 을 넘긴다
+        else:
+            ds = agent_core_mod._resolve_product_datasource(mem_conn, int(product_id))
+            if ds is None:
+                # 바인딩이 없으면 **데이터에 닿을 수 없다.** memory DB 연결로 폴백하면
+                # 내부 스키마가 그대로 노출된다 — 그것이 이번에 고친 결함이다.
+                raise ScopeDenied(
+                    "이 제품에 연결된 datasource 가 없습니다. 운영자에게 문의하세요.",
+                    code="datasource_unbound")
+            # ⚠ 연결만 바꾸면 **방언·기본DB 컨텍스트**가 이전 값(기본 MySQL)으로 남아,
+            #   MSSQL datasource 에 MySQL 문법이 나간다(라이브 실측: `Invalid column name
+            #   'TABLE_ROWS'`). 라우터 경로의 `activate()` 가 하는 일을 여기서도 한다.
+            # ⚠ `set_active_datasource` 는 **토큰을 반환하지 않는다**(그냥 setter). 반환값을
+            #   token 으로 받아 `if token is not None` 로 되돌리면 **절대 되돌아가지 않는다** —
+            #   ContextVar 가 스레드에 남아 다음 요청이 이전 datasource 스코프로 돈다.
+            #   (테스트 스위트에서 무관한 테스트가 깨지며 드러났다.) 플래그로 표시한다.
+            try:
+                import shared.config as _cfg
+                _cfg.set_active_datasource(
+                    (ds.get("scope_key") or ds.get("key")),
+                    engine=ds.get("engine"), default_db=ds.get("default_db"))
+                cfg_set = True
+            except Exception:
+                cfg_set = False
+            single_conn = agent_core_mod.connect_with_retry(
+                database=None, autocommit=True, datasource=ds)
+            yield single_conn
     finally:
         if token is not None:
             try:
@@ -188,6 +243,22 @@ def scoped_execution(agent_core_mod: Any, tools_mod: Any, mem_conn,
         if router is not None:
             try:
                 router.close_all()
+            except Exception:
+                pass
+        if single_conn is not None:
+            try:
+                single_conn.close()
+            except Exception:
+                pass
+        if allow_set:
+            try:
+                tools_mod.clear_active_schema_allowlist()
+            except Exception:
+                pass
+        if cfg_set:
+            try:
+                import shared.config as _cfg
+                _cfg.set_active_datasource(None)
             except Exception:
                 pass
 

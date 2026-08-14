@@ -282,3 +282,22 @@ source_of_truth: true
 - Files: `docs/TEST.md` (16차 Run) · `docs/TASK.md`
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260814-0020
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **P1 `execute_sql` 개방** + 그 과정에서 드러난 **스코프 결함 수정**. 실사용 제보
+  ("FK 0건 스키마에서 관계 주장을 데이터로 검증할 수 없다")로 P1 을 열었고, codex 리뷰가
+  이 표면의 **실행 스코프가 처음부터 잘못 세워져 있었음**을 드러냈다.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/tool_authz.py` (`scoped_execution` 이 연결·allowlist·
+    방언까지 책임 · 미바인딩 fail-closed · finally 전 축 복원)
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` (`P1_TOOLS`·운영 스위치·건당 행
+    상한·CSV 미생성·실제 행수 원장·예약키 필터·datasource 사전 포착)
+  - `unit/feature-0002-agent-core/src/modules/tools.py` (`_stats_out` sink · `_suppress_csv`)
+  - `shared/runtime_settings.py` (knob 2종) · `admin/settings.js` (미러)
+  - 어댑터 2종 · `static/ai-api-guide.md` · 테스트 4파일 + 신규 2
+- Impact: **구조 조회의 대상 서버가 바뀐다** — 단일 바인딩 제품에서 지금까지 메모리 DB 를
+  향하던 것이 제품 datasource 로 간다(그게 원래 의도였다). datasource 미바인딩 제품은 이제
+  403 이다(전엔 내부 DB 를 보여줬다). `execute_sql` 신규 노출.
+- Rollback Notes: `P1_TOOLS` 를 비우면 SQL 만 닫힌다. 스코프 수정은 되돌리면 안 된다(결함).

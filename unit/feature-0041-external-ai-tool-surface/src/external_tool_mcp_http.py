@@ -368,6 +368,15 @@ def get_foreign_keys(ctx: McpContext, task_id: str, schema_name: str, table: str
                                                     "datasource": datasource}}, ctx)
 
 
+@mcp.tool(description="단일 SELECT/CTE 를 실행한다. 구조로는 확인할 수 없는 것(실제 행수·"
+                      "고아행·뷰 정의·값 분포)을 검증할 때 쓴다. 쓰기·다중문·잠금은 거부된다. "
+                      "반환 행수가 시간당 상한에 함께 걸리니 범위를 좁혀 물어라.")
+def execute_sql(ctx: McpContext, task_id: str, sql: str,
+                datasource: str | None = None) -> str:
+    return _post("/api/ai/tools/execute_sql",
+                 {"task_id": task_id, "arguments": {"sql": sql, "datasource": datasource}}, ctx)
+
+
 @mcp.tool(description="테이블의 인덱스. schema_name·table 둘 다 필요하다.")
 def get_table_indexes(ctx: McpContext, task_id: str, schema_name: str, table: str,
                       datasource: str | None = None) -> str:

@@ -407,3 +407,57 @@ source_of_truth: true
 - 요지: 실제 클라이언트 이름 3종이 DCR 201 로 통과(이전 400 — 자동 연결 차단의 직접 원인),
   인가 완료 화면 3분기 200, 가이드 반영 확인. 검증 probe client 는 revoke.
 - Human Approval Needed: 아니오.
+
+## REV-20260814-0020 [CODEX:P1x3,P2x3] — execute_sql 개방과 스코프 결함
+
+- Related Change: CHG-20260814-0020
+
+### 이 cycle 이 드러낸 것 — 스코프가 처음부터 잘못 세워져 있었다
+
+`execute_sql` 을 열려고 실행 경로를 다시 읽다가, **8/12 부터 라이브였던 구조 조회 자체가
+잘못된 연결로 돌고 있었음**을 확인했다.
+
+`scoped_execution` 은 다중 바인딩일 때만 라우터를 세우고, 단일 바인딩이면 `None` 을 돌려주며
+docstring 에 "호출측이 단일 경로로 연결을 잡아야 한다" 고 적어 뒀다. **호출측(내 라우터)은
+그렇게 하지 않고 memory DB 연결을 그대로 넘겼다.** 그리고 스키마 allowlist 설정도 라우터
+경로에만 있었다. 결과(라이브 실측):
+
+```
+list_schemas → __invalid_default_db__ | account_db | agent_attachment_5fdcf3f9… |
+               agent_attachment_a6429d… | dbauth | dbgame | dblog | …
+```
+
+**다른 대화의 첨부 샌드박스**와 `account_db` 가 목록에 나왔다. 대부분의 제품이 단일 바인딩이라
+이건 예외가 아니라 **기본 경로**였다. 인증된 사용자에 한정되고 현재 사용자는 운영자 본인뿐이라
+실제 피해는 없었지만, 제품 스코프 격리가 성립하지 않은 상태였다.
+
+**교훈**: 계약을 docstring 으로 호출측에 미루면 지켜지지 않는다. 스코프를 세우는 함수가
+스코프의 **모든 축**(연결·allowlist·방언)을 책임지도록 옮겼다.
+
+### codex 지적과 처리 (P1×3 · P2×3 전건)
+
+1. **[P1] 단일 datasource 에서 memory DB 연결** → 위. `scoped_execution` 이 연결까지 잡고,
+   미바인딩이면 `ScopeDenied`(403) 로 **fail-closed**.
+2. **[P1] 운영자 스위치가 항상 무력화** — `get_int(key, default)` 는 **TypeError**(인자 1개).
+   except 가 True 를 돌려줘 스위치가 늘 켜진 상태였다. **문자열만 보던 내 테스트가 통과시켰다.**
+   → 올바른 호출 + fail-**closed** + 실제 호출 테스트(옛 형태가 TypeError 임을 단정).
+3. **[P1] 시간당 상한이 hard cap 이 아니다** — 실행 전 누적 확인이라 상한 직전 대형 쿼리 1회,
+   동시 요청이 같은 잔여를 본다. → **건당 행 상한**(`AGENT_EXT_TOOL_SQL_MAX_ROWS`, 기본 10,000)
+   으로 초과분을 유계로. 초과 결과는 **반환하지 않고 원장에는 기록**한다(부하는 발생했다).
+   ⚠ 여전히 원자적 hard cap 이 아니다 — "초과분이 유계" 라고만 주장한다.
+4. **[P2] 외부 호출도 CSV 를 생성** → `_suppress_csv` 로 **애초에 안 만든다**(디스크·잔존
+   데이터·저장 실패 시 절대경로 유출 3건 동시 해소).
+5. **[P2] CSV 저장 실패 시 경로 유출** → 위와 동일 해소.
+6. **[P2] `datasource_key` 원장이 항상 빈 값** — `execute_tool` 이 `arguments` 에서 pop 한 뒤
+   읽고 있었다 → 실행 **전에** 포착.
+
+### 자체 발견 (테스트 스위트가 잡음)
+
+`set_active_datasource` 는 **토큰을 반환하지 않는다**(setter). 반환값을 token 으로 받아
+`if token is not None` 으로 복원하면 **절대 복원되지 않는다** — ContextVar 가 스레드에 남아
+다음 요청이 이전 datasource 스코프로 돈다. 무관한 테스트(`test_ai_ops`)가 깨지며 드러났다.
+단독 실행은 통과하고 스위트에서만 실패하는 형태였다.
+
+- 뮤테이션: 7종 전부 KILL(스위치 옛 형태 · 메모리 연결 반환 · allowlist 미설정 · 미바인딩
+  fail-open · 건당 상한 해제 · CSV 재생성 · datasource 사후 읽기).
+- Human Approval Needed: 아니오 (`deploy_scope: included`).

@@ -246,6 +246,11 @@ def get_foreign_keys(task_id: str, schema_name: str, table: str,
                                                     "datasource": datasource}})
 
 
+def execute_sql(task_id: str, sql: str, datasource: str | None = None) -> str:
+    return _post("/api/ai/tools/execute_sql",
+                 {"task_id": task_id, "arguments": {"sql": sql, "datasource": datasource}})
+
+
 def get_table_indexes(task_id: str, schema_name: str, table: str,
                      datasource: str | None = None) -> str:
     # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
@@ -269,6 +274,9 @@ _register("describe_table", describe_table, "테이블의 컬럼·타입·키. s
 _register("search_tables", search_tables, "키워드로 관련 테이블 검색.")
 _register("get_foreign_keys", get_foreign_keys, "테이블의 외래키 관계. schema_name·table 둘 다 필요하다.")
 _register("get_table_indexes", get_table_indexes, "테이블의 인덱스. schema_name·table 둘 다 필요하다.")
+_register("execute_sql", execute_sql,
+          "단일 SELECT/CTE 실행. 구조로는 확인할 수 없는 것(실제 행수·고아행·뷰 정의·값 분포)을 "
+          "검증할 때 쓴다. 쓰기·다중문·잠금은 거부된다. 반환 행수가 시간당 상한에 함께 걸린다.")
 
 
 if __name__ == "__main__":

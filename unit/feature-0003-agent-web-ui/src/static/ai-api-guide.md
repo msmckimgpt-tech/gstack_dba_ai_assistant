@@ -392,13 +392,24 @@ submit_answer(task_id, answer, source_tasks=[task_id])
 > **구조 도구 인자**: `describe_table`·`get_foreign_keys`·`get_table_indexes` 는
 > **`schema_name` 과 `table` 을 둘 다** 받는다. 스키마를 빼면 백엔드가 대상을 특정하지 못한다.
 
-### 열려 있는 도구 (9종)
+> **`execute_sql` 사용 규범** (2026-08-14 개방)
+> - **단일 SELECT/CTE 만** 통과한다. 쓰기 동사·다중문·잠금·`INTO`·내부 스키마는 거부된다.
+>   거부되면 같은 형태로 재시도하지 말고 메시지의 교정 힌트를 읽어라(엔진 방언이 다를 수 있다).
+> - 구조 조회로 알 수 없는 것에만 써라 — **실제 행수**(`COUNT(*)`), **고아행**
+>   (`LEFT JOIN … WHERE b.id IS NULL`), **뷰 정의**(카탈로그 조회), 값 분포.
+>   테이블·컬럼 목록은 `describe_*` 가 더 싸고 정확하다.
+> - **반환 행수가 시간당 상한에 함께 걸린다.** 넓게 퍼오지 말고 집계·필터로 좁혀 물어라.
+>   무거운 쿼리는 실행 전에 게이트가 가로채 더 가벼운 형태를 요구한다.
+> - 결과는 **미리보기**만 온다. 보지 못한 행에 대해 존재/부재/개수를 단정하지 마라 —
+>   필요하면 `COUNT`·`GROUP BY`·`NOT IN` 으로 좁혀 다시 물어라. 이 표면에 CSV 다운로드는 없다.
+
+### 열려 있는 도구 (10종)
 
 `open_task` · `get_task_context` · `submit_answer` ·
 `list_schemas` · `describe_schema` · `describe_table` · `search_tables` ·
 `get_foreign_keys` · `get_table_indexes`
 
-`execute_sql` 은 **아직 열려 있지 않다**(행수 예산 정비 후 별도 단계). 쓰기·첨부·작업공간
+`execute_sql`(단일 SELECT/CTE)은 **열려 있다**(2026-08-14). 쓰기·첨부·작업공간
 계열은 이 표면에 영구히 없다.
 
 ## B.3 받은 데이터를 다루는 규칙

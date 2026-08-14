@@ -53,6 +53,66 @@ P0_TOOLS = frozenset({
     "search_tables", "get_foreign_keys", "get_table_indexes",
 })
 
+# P1 (2026-08-14): 자유 SELECT. 구조만으로는 **관계 주장을 데이터로 검증할 수 없다**는 실사용
+# 제보로 열었다(FK 0건 스키마에서 뷰 정의·실제 행수·고아행 확인이 전부 막혀 있었다).
+#
+# 방어는 새로 만들지 않고 내부 경로의 것을 그대로 쓴다 — sqlglot AST 가드(단일 SELECT/CTE ·
+# write verb·다중문·lock·INTO·금지스키마 거부) · 제품 스키마 allowlist · 무거운 쿼리 사전 게이트 ·
+# per-query 시간 cap. 외부 표면이 **추가로** 지는 것은 둘이다:
+#   ① 서버 CSV 경로를 응답에서 제거한다(경로 유출 + 외부 호출자에겐 없는 다운로드 약속).
+#   ② 원장에 **실제 행수**를 기록한다(렌더 문자열의 줄 수로 세면 시간당 행 상한이 장식이 된다).
+P1_TOOLS = frozenset({"execute_sql"})
+EXPOSED_TOOLS = P0_TOOLS | P1_TOOLS
+
+# 운영자 스위치. 데이터 추출 축이라 구조 조회와 별개로 끌 수 있어야 한다.
+_SQL_ENABLED_KEY = "AGENT_EXT_TOOL_SQL_ENABLED"
+_SQL_MAX_ROWS_KEY = "AGENT_EXT_TOOL_SQL_MAX_ROWS"
+
+
+def _sql_max_rows() -> int:
+    """건당 반환 행수 상한. 0 이하 = 무제한.
+
+    시간당 상한은 **실행 전 누적 확인**이라 원자적이지 않다 — 상한 직전의 대형 쿼리 한 번,
+    또는 같은 잔여량을 본 동시 요청들이 모두 통과한다(codex P1). 이 값이 그 초과분을
+    유계로 만든다. hard cap 이라고 부르지 않는다 — **초과분이 유계**라고 부른다.
+    """
+    try:
+        from shared import runtime_settings as _rs
+        return int(_rs.get_int(_SQL_MAX_ROWS_KEY))
+    except Exception:
+        return 10000
+
+
+def _sql_enabled() -> bool:
+    """★ `get_int(key)` 는 **인자를 하나만** 받는다. 기본값까지 넘기면 TypeError 가 나고
+    except 가 True 를 돌려줘 **스위치가 항상 켜진 상태**가 된다(codex 가 실제 호출로 재현).
+    문자열 존재만 보던 테스트는 이걸 통과시켰다 — 이제 실제로 호출해 본다."""
+    try:
+        from shared import runtime_settings as _rs
+        return int(_rs.get_int(_SQL_ENABLED_KEY)) > 0
+    except Exception:
+        # 설정을 못 읽는 상태에서 데이터 추출을 여는 것보다 닫는 편이 안전하다(fail-closed).
+        return False
+
+
+def _sanitize_sql_output(text: str, csv_paths: list[str]) -> str:
+    """서버 파일 경로와 '다운로드 버튼' 안내를 걷어낸다.
+
+    내부 경로는 결과 CSV 를 저장하고 web UI 가 다운로드로 준다. 외부 호출자에겐 그 UI 도,
+    그 파일을 읽을 방법도 없다 — 경로만 새고 지키지 못할 약속이 남는다.
+    """
+    out = str(text or "")
+    for path in csv_paths or []:
+        out = out.replace(f"CSV 저장: {path}\n", "").replace(f"CSV 저장: {path}", "")
+    marker = "(저장된 CSV 는 사용자에게 다운로드 버튼으로 자동 제공됩니다"
+    idx = out.find(marker)
+    if idx >= 0:
+        end = out.find(")", idx)
+        out = (out[:idx] + out[end + 1:]) if end >= 0 else out[:idx]
+    out = out.replace("CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다.",
+                      "이 표면에는 CSV 다운로드가 없습니다 — 필요한 범위를 SQL 로 좁혀 다시 조회하세요.")
+    return out.strip()
+
 
 # ── 인증 ──────────────────────────────────────────────────────────────────────
 
@@ -351,8 +411,10 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     """P0 구조 조회. 내부 에이전트와 **같은** `tools.execute_tool` 을 탄다 — SQL 신뢰경계·
     부하 게이트·allowlist 를 재구현하지 않는다(재구현은 곧 두 벌 관리이고, 갈리는 순간 약한
     쪽이 실질 경계가 된다)."""
-    if tool_name not in P0_TOOLS:
+    if tool_name not in EXPOSED_TOOLS:
         return _json_err(404, f"'{tool_name}' 는 이 표면에 노출된 도구가 아닙니다.")
+    if tool_name in P1_TOOLS and not _sql_enabled():
+        return _json_err(403, f"'{tool_name}' 는 현재 비활성화되어 있습니다(운영 설정).")
 
     body = await _json(request)
     account = ctx["account"]
@@ -372,7 +434,17 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"상한을 확인할 수 없어 요청을 중단했습니다: {exc}")
 
-    arguments = dict(body.get("arguments") or {})
+    # 밑줄 시작 키는 **예약**이다(`_stats_out` 등 내부 out-param). 호출자가 심어 보내는 것을
+    # 그대로 넘기면 내부 규약과 충돌한다 — 입구에서 걷어낸다.
+    arguments = {k: v for k, v in dict(body.get("arguments") or {}).items()
+                 if not str(k).startswith("_")}
+    # `execute_tool` 이 `arguments` 에서 `datasource` 를 pop 한다 — 실행 뒤에 읽으면 항상 빈 값이
+    # 되어 추출 원장의 datasource 추적이 통째로 죽는다(codex P2). 실행 전에 붙잡는다.
+    requested_ds = str(arguments.get("datasource") or "") or None
+    sql_stats: dict[str, Any] = {}
+    if tool_name in P1_TOOLS:
+        arguments["_stats_out"] = sql_stats
+        arguments["_suppress_csv"] = True   # 외부 표면엔 다운로드가 없다 — 파일 자체를 안 만든다
     product_id = int(task.get("product_id") or 0)
 
     import agent_core as _core
@@ -388,23 +460,50 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
 
     t0 = time.perf_counter()
     try:
-        with _authz.scoped_execution(_core, _tools, conn, product_id) as _router:
-            out = _tools.execute_tool(None if _router else conn, tool_name, arguments)
+        # ⚠ yield 값이 **도구에 넘길 연결**이다. 예전엔 라우터를 받아 `None if _router else conn`
+        #   으로 넘겼는데, 단일 바인딩 제품(대부분)에서 그 `conn` 이 **메모리 DB** 라
+        #   구조 조회가 내부 서버를 향했다(다른 대화의 첨부 샌드박스까지 노출).
+        with _authz.scoped_execution(_core, _tools, conn, product_id, app_mod=app) as _ds_conn:
+            out = _tools.execute_tool(_ds_conn, tool_name, arguments)
+    except _authz.ScopeDenied as exc:
+        # 바인딩 없음 등 — 스코프를 세울 수 없으면 실행하지 않는다(fail-closed).
+        _safe_record(account, ctx, tool=tool_name, outcome="denied", detail=exc.code,
+                     task_id=task_id)
+        return _json_err(403, exc.message)
     except Exception as exc:  # noqa: BLE001
         _safe_record(account, ctx, tool=tool_name, outcome="error", detail=str(exc)[:200],
                      task_id=task_id)
         return _json_err(500, f"도구 실행 오류: {exc}")
 
+    rendered = str(out or "")
+    if tool_name in P1_TOOLS:
+        rendered = _sanitize_sql_output(rendered, sql_stats.get("csv_paths") or [])
+        cap = _sql_max_rows()
+        got = int(sql_stats.get("total_rows") or 0)
+        if cap > 0 and got > cap:
+            # 부하는 이미 발생했으므로 **원장에는 기록하고** 결과만 돌려주지 않는다.
+            _safe_record(account, ctx, tool=tool_name, outcome="gated",
+                         detail=f"rows>{cap}", task_id=task_id, rows_returned=got)
+            return JSONResponse(
+                {"error": f"이 쿼리는 {got:,}행을 반환합니다(건당 상한 {cap:,}행). "
+                          f"결과를 돌려주지 않았습니다 — 집계(COUNT/GROUP BY)·기간·WHERE 로 "
+                          f"범위를 좁혀 다시 물어보세요. 이 호출의 부하는 원장에 기록됐습니다.",
+                 "rows": got, "limit": cap},
+                status_code=413)
     marked = _guard.wrap_tool_output(
-        str(out or ""), account=str(account.get("username") or account.get("id")),
+        rendered, account=str(account.get("username") or account.get("id")),
         conversation_id=task.get("conversation_id"), task_id=task_id, source=tool_name)
 
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool=tool_name,
                        client_id=ctx.get("client_id"), task_id=task_id,
-                       datasource_key=str(arguments.get("datasource") or "") or None,
+                       datasource_key=requested_ds,
                        schema_name=str(arguments.get("schema_name") or "") or None,
-                       rows_returned=str(out or "").count("\n"),
+                       # execute_sql 은 백엔드가 알려준 **실제 행수**를 쓴다. 렌더 줄 수로 세면
+                       # 미리보기 50행만 잡혀 시간당 행 상한이 사실상 걸리지 않는다.
+                       rows_returned=(int(sql_stats["total_rows"])
+                                      if "total_rows" in sql_stats
+                                      else rendered.count("\n")),
                        bytes_out=len(marked.encode("utf-8")),
                        latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
     except _ledger.LedgerUnavailable as exc:

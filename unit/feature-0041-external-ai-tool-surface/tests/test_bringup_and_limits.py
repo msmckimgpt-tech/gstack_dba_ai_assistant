@@ -11,6 +11,9 @@ import sys
 
 import pytest
 
+sys.path.insert(0, os.path.dirname(__file__))
+from _srcutil import code_only  # noqa: E402
+
 _HERE = os.path.dirname(__file__)
 _REPO = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
 sys.path.insert(0, _REPO)
@@ -30,7 +33,19 @@ def _read(*parts: str) -> str:
 def test_all_ledger_limits_are_console_editable():
     """★ 코드 기본값만 있고 콘솔에 없으면 운영자가 급할 때 손댈 방법이 없다."""
     keys = {s["key"] for s in rs.list_specs() if s.get("group") == "external_tool_surface"}
-    assert set(tl.DEFAULTS) == keys, f"콘솔 노출 누락/초과: {set(tl.DEFAULTS) ^ keys}"
+    missing = set(tl.DEFAULTS) - keys
+    assert not missing, f"원장 상한인데 콘솔에 없음: {sorted(missing)}"
+
+
+def test_every_console_knob_has_a_consumer():
+    """★ 콘솔에 올린 knob 은 그 자체로 "이 방어가 존재한다" 는 주장이다.
+    원장 상한이 아닌 knob(예: 기능 스위치)도 **읽는 코드가 실재**해야 한다 —
+    소비처 없는 knob 을 노출했다가 이미 한 번 적발됐다(REV-20260813-0009 #4)."""
+    keys = {s["key"] for s in rs.list_specs() if s.get("group") == "external_tool_surface"}
+    router = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
+    ledger = _read("unit", "feature-0003-agent-web-ui", "src", "tool_ledger.py")
+    for key in sorted(keys - set(tl.DEFAULTS)):
+        assert key in router or key in ledger, f"{key} 를 읽는 코드가 없다"
 
 
 def test_spec_defaults_match_code_defaults():
@@ -155,7 +170,7 @@ def test_caddy_blocks_anonymous_mcp_connections(codex_p2=True):
     cf = _read("unit", "feature-0006-lan-proxy-access", "src", "caddy", "Caddyfile")
     block = cf[cf.index("handle /api/ai/mcp*"):]
     block = block[:block.index("\n\thandle {")]
-    directives = "\n".join(ln for ln in block.splitlines() if not ln.strip().startswith("#"))
+    directives = code_only(block)
     assert "@noauth not header Authorization *" in directives
     assert directives.index("web-a:8000") < directives.index("ext-tool-mcp:8971"), \
         "익명 경로가 ext-tool-mcp 뒤면 익명 요청이 MCP 세션을 연다"

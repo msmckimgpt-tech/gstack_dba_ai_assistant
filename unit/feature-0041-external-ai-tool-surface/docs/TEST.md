@@ -324,3 +324,20 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 4 | `no upstreams available` | **0건** ✅ |
 
 검증용 probe client 3건은 revoke 했다.
+
+### Run 2026-08-14 (17차) — execute_sql + 스코프 (Environment: local pytest + 라이브 데이터)
+
+라이브 데이터로 실행 경로를 직접 태워 확인:
+
+| # | 항목 | 수정 전 | 수정 후 |
+|---|---|---|---|
+| 1 | `list_schemas` 대상 서버(제품 109, 단일 바인딩) | **메모리 DB** — `agent_attachment_*`·`account_db` 노출 | 제품 MSSQL — `dbo` 등 |
+| 2 | 스키마 allowlist | **미설정**(무제한) | `_product_allowed_schemas` 11개 |
+| 3 | 방언 | MySQL 고정 → `Invalid column name 'TABLE_ROWS'` | 엔진 따라감 |
+| 4 | `execute_sql` 허용 DB | — | 통과(3행) |
+| 5 | `execute_sql` 비허용 DB(`master`) | — | **차단** |
+| 6 | 쓰기 / 다중문 / 내부 스키마 | — | **전부 차단** |
+| 7 | CSV 파일 생성 · 응답 내 경로 | — | **미생성** · 경로 0 |
+| 8 | 원장 실제 행수 | — | `{'total_rows': 3, 'csv_paths': []}` |
+
+뮤테이션 **7종 전부 KILL**. 스위트 전체 green(0003·0023·0041).
