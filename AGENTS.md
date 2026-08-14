@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.47.1
+template_version: v3.47.2
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -4386,7 +4386,6 @@ pointer 강제변경 등)를 인코딩할 때 **두 메커니즘을 혼동하지
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
-
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
       "Read(~/.claude/projects/**/*.jsonl)",
@@ -4418,6 +4417,17 @@ pointer 강제변경 등)를 인코딩할 때 **두 메커니즘을 혼동하지
 > 「비밀을 막았다」로 읽히는 것이 이 조항의 실패 모드다.
 > `Read` 만 막고 `Glob`/`Grep` 을 빼면 열거·검색으로 그대로 뚫린다 — 세 도구를 함께 막는다.
 >
+> ⚠️ **선언한 13항목을 런타임에 전부 넣는다 (v3.47.2).** 이 목록은 오랫동안 문서에만 있었고
+> 런타임 적용은 0 이었다. 적용하면서 실측한 부수 비용을 함께 기록한다:
+> `Read(./.env.*)` 는 **`.env.example` 류도 함께 막는다** — 비밀이 아닌 템플릿 파일이다.
+> 그럼에도 유지하는 근거는 실측이다: 한 소비자에 실제 비밀 파일이 `.env`·`.env.secret`·
+> `.env.llm`·`.env.minio`·`.env.mysql`·`.env.postgres`·`.env.bedrock` 과 `.env.bak-*` 백업까지
+> **8개 이상** 있고, glob 은 「`.env.*` 중 `*.example` 만 빼기」를 표현하지 못하며 deny 가
+> allow 를 이겨 예외도 못 뚫는다. 막는 쪽 오류가 훨씬 싸다. `.example` 이 필요하면 `Bash` 로
+> 읽는다(도구 축 deny 는 Bash 를 덮지 않는다 — 아래 문단 참조).
+> ⚠️ `Bash(git push --force*)` 는 `--force-with-lease` **도 함께 막는다** (prefix 매칭).
+> 이 저장소의 워크플로에는 force-with-lease 사용처가 없어(실측 0건) 감수한다.
+
 > ⚠️ **패턴은 `**` 가 아니라 «열거된 하위 표면» 이다 (v3.47.1, 실측).**
 > `~/.claude/projects/<encoded>/` 아래에는 전사만 있는 것이 아니라 **`memory/` 자동 메모리**와
 > 머신-로컬 운영 인프라가 함께 산다. `**` 로 걸면 그것들까지 막혀 메모리 시스템과 운영 도구가
