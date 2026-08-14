@@ -2511,7 +2511,17 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
          (`update_attachment` 제외 — 쓰기 대상이 구조적으로 본인 파일뿐) 안내를 사실대로 정정.
 - [x] `tests/test_attach_provenance_gate.py` **12 PASS** · 전체 스위트 회귀 0(잔여는 선재 환경 의존
       파일 1개) · SECURITY §47.4 를 "수용 위험" → **부분 통제 + 남는 한계**로 갱신.
-- [ ] verify-completion · 배포 후 실측.
+- [x] verify-completion **18/18 PASS**.
+- [x] **배포 후 실측(2026-08-14, READ-ONLY) — 3/3 PASS**: PR #1288 merge(main `e545796f`) →
+      web-a/web-b/ask-worker/insight-worker **전부 `e545796f`** · 무중단 `no upstreams available` **0**.
+      배포본(ask-worker)에서 게이트를 직접 호출:
+      ① **정상 턴 과차단 없음** — 타 멤버 본문이 없으면 차단되는 도구 0개.
+      ② **타 멤버 본문 턴에 scratch 3종 차단** — `scratch_sql`·`scratch_import`·`scratch_reset`.
+      ③ **조회·첨부갱신은 계속 허용** — `execute_sql`·`update_attachment`·`read_attachment`·`describe_table`.
+- [x] **배포 함정 실측 기록**: 1차 배포는 **부분 완료**였다 — quiesce 게이트가 진행 중 사용자 run 을
+      보호하려 ask-worker 교체를 중단해, web 만 신코드이고 **게이트가 실행되는 ask-worker 는 구버전**
+      이었다(`95f5ea0f`). 파이프 종료가 아니라 **서비스별 GIT_COMMIT** 으로 판정했기에 잡혔고,
+      재실행(멱등)으로 해소했다.
 
 ### 9. Requested Scope
 
