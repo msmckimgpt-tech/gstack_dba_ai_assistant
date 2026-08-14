@@ -628,3 +628,15 @@ approx_rows 였다 — 정답이 손에 있었는데 안내하지 않았다.
   뿐 "둘이 같은 말을 하는가" 를 묻지 않았다. 이 feature 가 반복해 낸 결함(문서·화면이 사실과
   다르게 말함)의 화면 내부 버전이라, 발견 즉시 고쳤다.
 - Human Approval Needed: 아니오.
+
+## REV-20260814-0028 [SKIPPED:post-deploy-record] — 문구 정합 배포 검증 (코드 0)
+
+- Related Change: CHG-20260814-0028
+- Reason: 배포 결과 기록. 코드 0.
+- 요지: 목록 `보존 안 됨` 과 상세 문구가 일치함을 라이브(`6cd45761`)에서 실측했고, 구 문구
+  (`답변이 제출되지 않았습니다`) 부재를 eval 로 단정했다. 무중단 `no upstreams available` 0건.
+- 남긴 교훈: **"배포 명령이 끝났다" 와 "롤아웃이 끝났다" 는 다르다.** 1차 배포가 실행측
+  `timeout` 에 걸려(exit 143) 워커 3종이 구버전으로 남았는데, `/healthz` 는 그 상태에서도
+  `status: ok` 였다 — 엣지가 web 만 보기 때문이다. 서비스별 `GIT_COMMIT` 을 직접 세는 것이
+  유일한 확인 방법이고, 그래서 이 feature 의 POST-DEPLOY Run 은 매번 그 표를 남긴다.
+- Human Approval Needed: 아니오.

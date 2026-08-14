@@ -10,8 +10,8 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
-**in-progress — 라이브 배포 `25637d1c` · P0 도구 9종 + P1 `execute_sql` 개방 ·
-POST-DEPLOY 8회 전건 PASS.**
+**in-progress — 라이브 배포 `6cd45761` · P0 도구 9종 + P1 `execute_sql` + **AC-7 답변 보존·열람** ·
+POST-DEPLOY 10회 전건 PASS.**
 
 남은 것은 **사람 1회 브라우저 인가가 필요한 인증 이후 구간 e2e(AC-1)** 하나다.
 2026-08-14 에 발견한 AC-7(대화 적재) 미구현은 같은 날 **구현·출하했다**(§3.6 · ADR-002).

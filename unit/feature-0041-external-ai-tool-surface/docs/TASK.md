@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (P0 9종 + P1 `execute_sql` 라이브 배포 `25637d1c` · **인증 e2e(AC-1) 만 남음**)
+- State: in-progress (P0 9종 + P1 `execute_sql` + **AC-7 답변 보존·열람** 라이브 배포 `6cd45761` · **인증 e2e(AC-1) 만 남음**)
 - Owner: AI (계획) / Human (승인 · AC-1 인가 1회)
 - Priority: high
 - Last Updated: 2026-08-14
@@ -156,6 +156,8 @@ source_of_truth: true
       ADR-002 · PLAN-APPROVED). `WebAiTasks` 전용 컬럼 6종 + 저장 시점 각인
       (`wrap_external_answer` — 수신 방향) + fail-closed + 고신뢰 인젝션 400 거절 +
       열람 REST 2종·콘솔 서브탭(도구 이력 합류). codex P2×5·P3×1 전건 수정
+- [x] TASK-20260814T170000-exttasks-postfix — 문구 정합 배포 반영 실측(`6cd45761`) + 무중단 0건.
+      배포 완주 확인은 서비스별 `GIT_COMMIT` 표로만 성립한다(healthz 는 web 만 본다)
 - [x] TASK-20260814T160000-exttasks-postdeploy — AC-7 POST-DEPLOY(`6a858599`) + **PB-0008 실측**.
       서브탭·목록·상세·도구 이력 34행 확인, 원장 `bytes_out` 대조 일치. 화면 문구 불일치
       1건 적발·수정(목록 '보존 안 됨' vs 상세 '미제출' — CHG-0027)
