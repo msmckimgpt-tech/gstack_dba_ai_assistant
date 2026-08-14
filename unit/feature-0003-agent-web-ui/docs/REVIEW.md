@@ -5124,7 +5124,6 @@ doc-only(코드 0). 기록의 근거는 라이브 DB 조회와 실 Chrome 관측
 - Related TASK: feature-0003-agent-web-ui
 - Reason: changed paths are docs + evidence image only (no code, no policy doc)
 - Timestamp: 2026-08-14T10:45:00+09:00
-
 ## REV-20260813T213000-ai-claude-corp-usage-card-overflow [SKIPPED:non-policy-doc] — 카드 넘침 수정
 
 CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
@@ -5147,3 +5146,22 @@ CSS 1블록 + 신규 하네스. 신규 권한·스키마·JS 0.
 
 - 드로어를 320px 미만으로 줄이면 1열에서도 라벨이 ellipsis 될 수 있다. 그 폭은 드로어 리사이즈
   하한 밖이라 검사에 넣지 않았다.
+## REV-20260814T040000-attach-createdat-utc [CODEX:adversarial-data-migration] — 첨부 시각 UTC 정정
+
+- Related Change: `CHG-20260814T040000-ai-claude-feature-0003-attach-createdat-utc`
+  (REQ-20260814-attach-createdat-utc, 위험등급 **Major §12.3** — 되돌리기 어려운 데이터 마이그레이션).
+- Trigger (§18.8 dispatch): `schema/query/마이그레이션` → **backend + qa** 렌즈. 세션 지시로 Agent
+  도구 미사용 → §18.9 대체 채널 **codex CLI**.
+- 집행: staged diff 를 codex 가 직접 읽고 5축(이중 차감 가능성·상한 정확성·PG 산술과 부분 실패·
+  −9h 이동이 깨뜨리는 다른 소비자·offset0/max_id0 처리) 적대 검증. **[P1] 3 · [P2] 1** → 전건 반영.
+- **가장 중요한 적발**: 다중 replica 동시 startup 에서의 **이중 차감**. 이 배포는 web-a/web-b 롤링이라
+  실재하는 경로였고, 기존 backfill 들의 "SELECT 확인 → 작업" 관행을 그대로 따랐기 때문에 생겼다.
+  다른 backfill 은 `INSERT IGNORE` 라 재실행이 무해했지만 **이 작업은 차감이 누적**되어 성격이 다르다.
+- **초판 주석의 사실 오류 정정**: "PG 미러 실패는 다음 갱신에서 정정" 이라 적었으나, 미러 upsert 가
+  `created_at` 을 갱신하지 않아 성립하지 않는다(codex 가 `attachment_pg_mirror.py` 로 반증).
+- 무결 확인(codex): PG `timestamptz - make_interval` 산술 · 빈 테이블 마커 기록 · 보존(DeletedAt 기준)·
+  quota(크기 기준)·첨부 페이지 커서 부재 → 추가 결함 없음.
+- 검증: `tests/test_attach_createdat_utc.py` **12 PASS**(선점·반납·상한 선확정·서버 오프셋·저장소별
+  마커·전송 표기 전부 고정). 전체 스위트 회귀 확인.
+- 한계(정직): 실제 차감은 **배포 시 1회** 일어나므로 사전 실측이 불가능하다. 배포 후 모순 건수
+  (`CreatedAt > SupersededAt|DeletedAt`)가 **234 → 0** 인지, MySQL↔PG 미러가 일치하는지로 확인한다.
