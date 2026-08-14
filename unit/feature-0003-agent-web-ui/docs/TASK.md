@@ -10979,3 +10979,48 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - 버전 트리 시각화(기준 토글 + 계보 표시) — ✓. **트리 그래프(가지 그림)는 만들지 않았다** —
   계보가 둘일 때 필요한 것은 "어느 계보의 어느 버전인지" 를 고르는 일이고, 그건 라벨이 붙은
   선택지로 충분하다. 가지 그림은 계보가 3개 이상 흔해지면 재검토할 대상이다(정직).
+
+## 20260814T1830-step-panel-timing — 실행 단계 패널 단계별 시각·간격·누적 경과 표기 (Minor §12.3)
+
+요청: "assistant 답변 진행 시 각 실행 단계의 진행 현황을 투명하게 공개하기 위해 timestamp 및
+단계별 소요시간, 누적 소요시간을 표기. 기존 텍스트 위치와 충돌 없이, (스크린샷의) 초록색
+형광 표시 위치(각 단계 카드 헤더 우측)에 구성."
+
+### 조치
+
+- [x] 데이터 조사 — `step.created_at`(PG `agent_runtime.steps.created_at timestamptz DEFAULT
+      now()`)이 라이브 폴링(`_load_steps_for_run`)·완료 조회·히스토리(`_load_steps_for_message`)
+      **전 경로에 이미 노출**됨을 확인. backend 무변경 — 과거 대화 데이터도 소급 표기된다.
+- [x] `app.js` — `_renderStepSidePanelBody` 에 단계 헤더 우측 `.step-side-panel-time` 부착:
+      `HH:MM:SS · +간격 · 누적 경과`. 헬퍼 3종(`_parseStepTs`/`_fmtStepDur`/`_fmtStepClock`).
+      - created_at 이 경로에 따라 ISO "T" 표기(`_assemble_steps` isoformat)와 psycopg str
+        "공백" 표기(`_load_steps_for_run`) 두 가지로 도착 — 공백→"T" 치환 폴백으로 양쪽 파싱.
+      - 첫 단계는 시각만(간격·누적 없음 — 기준점 자신), 이후 단계는 직전 기록과의 간격 +
+        첫 단계 기준 누적. 시각 파싱 불가(레거시) 단계는 표기 자체 생략(fail-soft).
+- [x] `chat.css` — `.step-side-panel-time`(margin-left:auto 우측 정렬 · tabular-nums ·
+      nowrap) + 헤더 `flex-wrap: wrap`(좁은 패널에서 겹침 대신 줄바꿈 — 요청의 "기존 텍스트
+      위치와 충돌 없이" 를 CSS 계약으로 보장).
+
+### 검증
+
+- [x] `tests/verify_step_panel_timing.mjs` **신규 34 PASS**(jsdom, 정본 렌더러 추출 실행):
+      두 timestamp 표기 파싱 4 · 소요시간 포맷 경계(소수/정수/분·음수 clamp) 4 · 렌더 통합
+      (첫 단계/간격/누적/레거시 생략/기존 헤더 보존) 9 · NaN 혼재(선두·중간 레거시) 4 ·
+      정적 배선·CSS 계약 잠금 등.
+- [x] 적대 패널 `[SUBAGENT:ux+frontend]` (REV-20260814T183000) — **P1 0 · P2 1 · P3 6**.
+      P2-1(fixture 의 레거시 단계가 항상 마지막이라 NaN-skip 스캔·anchor-find 뮤턴트 2종 생존)
+      → [8] NaN 혼재 케이스 추가, 뮤턴트 사멸 실증(각 1 FAIL). P3-4(Intl 포매터 매 호출 생성
+      ~90μs) → 모듈 상수 hoist. P3-7(첫 단계 툴팁 과잉) → 조건화. 나머지 P3 은 선례 일치·
+      dead-code 경로·방어 코드 수용으로 기록만.
+- [x] `tests/verify_step_result_scroll_preserve.mjs` **29 PASS**(같은 렌더러 수정 — 스크롤
+      보존 무회귀) · app.js ESM 구문 PASS(node --check).
+- [ ] 배포 후 PB-0008 Windows-browser: 우측 정렬 위치·좁은 패널 줄바꿈(충돌 없음)·라이브
+      run 진행 중 표기 갱신 실측 (visual_verification_scope: always — JS 는 asset-stamp
+      미주입 docker cp QA 불가 → POST-DEPLOY 실측, 확립 패턴).
+
+### 9. Requested Scope
+
+- 실행 단계 패널 timestamp·단계별·누적 소요시간 — ✓ (헤더 우측 = 스크린샷 형광 위치).
+- 인라인 progress 카드(`renderProgress`)·말풍선 내 "쿼리 결과" 접이판은 **건드리지 않았다** —
+  요청이 지목한 화면은 실행 단계 사이드 패널이고, 다른 표면은 각자 레이아웃 계약이 달라
+  별도 판단 대상이다(요청 범위 준수).

@@ -3738,6 +3738,39 @@ export function _scheduleStepPanelScroll(container, resultScroll, atBottom, prev
   }
 }
 
+// step-panel-timing: step.created_at → epoch ms. PG timestamptz 가 경로에 따라 두 표기로
+// 도착한다 — _assemble_steps 는 isoformat("T" 구분자), _load_steps_for_run 은 str(psycopg
+// datetime)("공백" 구분자) — 공백 표기는 일부 엔진이 못 읽으므로 "T" 치환 폴백을 둔다.
+// 파싱 불가(레거시/부재)는 NaN — 호출부가 시간 표기 자체를 생략한다(fail-soft).
+function _parseStepTs(value) {
+  const s = String(value || "").trim();
+  if (!s) return NaN;
+  let t = Date.parse(s);
+  if (Number.isNaN(t)) t = Date.parse(s.replace(" ", "T"));
+  return t;
+}
+
+// step-panel-timing: 단계 간격/누적 표기 — 60초 미만은 체감 정밀도를 위해 소수 1자리
+// (10초 이상은 정수), 60초 이상은 formatElapsed("m분 s초") 재사용. 음수(시계 역행)는 0 clamp.
+function _fmtStepDur(ms) {
+  const v = Math.max(0, Number(ms) || 0);
+  if (v < 60000) {
+    const s = v / 1000;
+    return `${s < 10 ? s.toFixed(1) : String(Math.round(s))}초`;
+  }
+  return formatElapsed(v);
+}
+
+// step-panel-timing: 단계 기록 시각(뷰어 로컬 시간, HH:MM:SS). Intl 포매터는 생성 비용이
+// 커서(§18.8 패널 P3-4 실측 ~90μs/호출) 모듈 상수로 1회만 만든다 — 폴링 재렌더마다 전 단계에
+// 호출되는 경로다.
+const _STEP_CLOCK_FMT = new Intl.DateTimeFormat("ko-KR", {
+  hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+function _fmtStepClock(ts) {
+  return _STEP_CLOCK_FMT.format(new Date(ts));
+}
+
 function _renderStepSidePanelBody(pending) {
   const body = document.getElementById("stepSidePanelBody");
   const badge = document.getElementById("stepSidePanelBadge");
@@ -3758,6 +3791,12 @@ function _renderStepSidePanelBody(pending) {
     body.appendChild(empty);
     return;
   }
+  // step-panel-timing: 진행 투명화 — 각 단계 헤더 우측에 기록 시각·직전 단계와의 간격·
+  // 첫 단계 기준 누적 경과를 표기한다. 기준(anchor)=목록에서 시각이 있는 첫 단계.
+  // created_at 은 "단계가 기록된 시각"(activity=착수 시점, tool=결과 확보 시점)이므로
+  // 간격은 '직전 기록 → 이 기록 사이 경과'라는 사실 기반 표기다(작업별 순수 소요 단정 아님).
+  const stepTsList = steps.map((s) => _parseStepTs(s && s.created_at));
+  const anchorTs = stepTsList.find((t) => Number.isFinite(t));
   steps.forEach((step, idx) => {
     const item = document.createElement("div");
     item.className = "step-side-panel-item";
@@ -3774,6 +3813,26 @@ function _renderStepSidePanelBody(pending) {
       badge.className = "step-tool-badge";
       badge.textContent = toolLabel(step.tool);
       itemHeader.appendChild(badge);
+    }
+    const ts = stepTsList[idx];
+    if (Number.isFinite(ts)) {
+      let prevTs = NaN;
+      for (let p = idx - 1; p >= 0; p--) {
+        if (Number.isFinite(stepTsList[p])) { prevTs = stepTsList[p]; break; }
+      }
+      const parts = [_fmtStepClock(ts)];
+      if (Number.isFinite(prevTs)) parts.push(`+${_fmtStepDur(ts - prevTs)}`);
+      if (Number.isFinite(anchorTs) && Number.isFinite(prevTs)) {
+        parts.push(`누적 ${_fmtStepDur(ts - anchorTs)}`);
+      }
+      const timeEl = document.createElement("span");
+      timeEl.className = "step-side-panel-time";
+      timeEl.textContent = parts.join(" · ");
+      // 첫(기준) 단계는 시각만 표시하므로 툴팁도 그에 맞춘다(§18.8 패널 P3-7).
+      timeEl.title = parts.length > 1
+        ? "기록 시각 · 직전 단계와의 간격 · 첫 단계부터 누적 경과"
+        : "기록 시각";
+      itemHeader.appendChild(timeEl);
     }
     item.appendChild(itemHeader);
     item.appendChild(buildStepDetailEl(step, idx, { compact: false }));

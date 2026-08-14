@@ -3148,3 +3148,25 @@ CHG-0027 수정 반영 확인. Evidence: `docs/test-runs.d/evidence/REV-20260814
 `deploy-web-only` 로 반영했다(라이브 `6cd45761` — 그 사이 머지된 #1303 을 포함).
 **"배포 명령이 끝났다" 와 "롤아웃이 끝났다" 는 다르다** — 서비스별 GIT_COMMIT 을 직접 세는
 것이 유일한 확인 방법이다.
+
+## 20260814T1830-step-panel-timing 실행 단계 패널 단계별 시각·간격·누적 표기 (Minor §12.3, 2026-08-14) — **Environment: Windows-browser (PB-0008 배포 후 실측 — 아래 사유)**
+
+JS(app.js ESM 서브트리) 변경은 asset-stamp 미주입 docker cp QA 불가(모듈 캐시로 구버전 실행
+— 확립된 제약)라 **배포 후 라이브 PB-0008 로 실측**한다. 사전 게이트는 jsdom 정본 렌더러 추출
+실행 + CSS 계약 정적 잠금으로 커버(아래 Run). POST-DEPLOY 확인 축: ① 우측 정렬 위치(스크린샷
+형광 위치와 일치) ② 최소 폭(300px) 패널에서 겹침 없이 줄바꿈 ③ 라이브 run 진행 중 폴링
+재렌더에서 새 단계에 시각 표기 갱신 ④ 과거 대화(단계 보기) 소급 표기.
+
+### Run 2026-08-14 — step-panel-timing PRE-COMMIT (Environment: jsdom/Node18) — PASS
+
+- `tests/verify_step_panel_timing.mjs` **34 PASS / 0 FAIL** — ISO "T"·psycopg 공백 두 표기
+  파싱, 간격/누적 산출(2.3초·60초 경계·음수 clamp), 첫 단계 시각만, 레거시(created_at 부재)
+  표기 생략, NaN 혼재(선두·중간 레거시 — anchor=첫 유효·간격 NaN skip), 기존 헤더 요소
+  (번호·도구 배지) 보존, CSS 계약(margin-left:auto·flex-wrap·tabular-nums) 정적 잠금.
+- 뮤턴트 사멸 실증(§18.8 패널 P2-1 반영): 누적 anchor→prev 치환 · prev 직전-인덱스 직참조 ·
+  anchor 첫-인덱스 직참조 3종 모두 **FAIL 로 검출**(사멸).
+- `tests/verify_step_result_scroll_preserve.mjs` **29 PASS**(같은 렌더러 수정 무회귀).
+- app.js ESM 구문 PASS(`node --check`, .mjs 사본).
+- §18.8 적대 패널 `[SUBAGENT:ux+frontend]`: P1 0. 무결 확인 — V8 파싱 12변형 전부 정상 ·
+  headless Chromium 300px 실렌더 5케이스 겹침 0/overflow 0/우측 정렬 유지(flex-wrap 하강 후
+  포함) · 스크롤 보존/펼침 영속화 키 불변 · 3 조회 경로 created_at 동반 확인.

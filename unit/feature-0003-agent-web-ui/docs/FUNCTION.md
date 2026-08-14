@@ -4213,3 +4213,24 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
   배지·이스케이프·ESC/close/배경 dismiss.
 - AC-20260814T110000-profile-usage-sort-page-5: 두 화면 모두에서 정렬 열 머리가 스크롤 중에도
   남고(스크롤러 단일화), 페이저가 첫 화면에 보인다.
+
+- REQ-20260814T183000-step-panel-timing (**Minor §12.3** — 실행 단계 패널 단계별 시각·간격·누적
+  경과 표기, frontend-only): assistant 답변 진행의 투명화를 위해 실행 단계 사이드 패널
+  (`#stepSidePanel`) 각 단계 카드 헤더 **우측**(사용자 스크린샷 형광 지정 위치)에 시간 정보를
+  표기한다. 데이터는 기존 `step.created_at`(PG `agent_runtime.steps.created_at` timestamptz)
+  재사용 — backend/RBAC/스키마/엔드포인트 무변경, 과거 대화 단계도 소급 표기.
+  REV-20260814T183000-step-panel-timing [SUBAGENT:ux+frontend].
+
+- AC-20260814T183000-step-panel-timing-1: 각 단계 헤더 우측 `.step-side-panel-time` 에
+  `HH:MM:SS(뷰어 로컬) · +직전 간격 · 누적 경과` 표기. 첫(기준) 단계는 시각만. 60초 미만
+  간격은 소수 1자리(10초 이상 정수), 60초 이상은 "m분 s초".
+- AC-20260814T183000-step-panel-timing-2: 간격의 의미는 "직전 기록→이 기록 사이 경과"(사실
+  기반 — activity=착수 시점, tool=결과 확보 시점 기록이므로 작업별 순수 소요 단정 아님).
+  hover 툴팁으로 의미 명시. 누적 기준(anchor)=목록의 첫 유효 시각 단계.
+- AC-20260814T183000-step-panel-timing-3: created_at 두 도달 표기(ISO "T" isoformat ·
+  psycopg str 공백 구분자) 모두 파싱. 파싱 불가(레거시/서버 합성 step)는 해당 단계 표기만
+  생략(fail-soft) — 패널 렌더·다른 단계 표기는 유지.
+- AC-20260814T183000-step-panel-timing-4: 기존 텍스트(번호·도구 배지)와 충돌하지 않는다 —
+  우측 정렬(margin-left:auto) + 헤더 flex-wrap 으로 최소 폭(300px)에서 겹침 대신 줄바꿈.
+  폴링 재렌더 흔들림 방지 tabular-nums. 라이브 run·완료 조회·히스토리 3경로 동일 렌더러라
+  동일 표기.

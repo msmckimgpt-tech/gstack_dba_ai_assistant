@@ -5274,3 +5274,26 @@ doc-only. 라이브 드로어 폭 6단계 실측으로 선행 두 커밋의 이�
   D 배선/구조 6 · **E 적대리뷰 반영 6**) · `test_attach_version_branching.py` 14 PASS.
 - 한계(정직): jsdom 은 레이아웃·픽셀을 보지 못한다. 토글이 좁은 폭에서 접히는지, 축 전환 시 표가
   튀지 않는지는 **배포 후 PB-0008** 대상이다.
+
+## REV-20260814T183000-step-panel-timing [SUBAGENT:ux+frontend] — 실행 단계 패널 시간 표기
+
+- Related Change: `CHG-20260814T183000-ai-claude-corp-feature-0003-step-panel-timing`
+  (실행 단계 패널 단계별 시각·간격·누적 표기, 위험등급 **Minor §12.3**).
+- Trigger (§18.8 dispatch): UI/layout/화면 표기 → ux · 프론트 렌더러/폴링 재렌더 경로 → frontend.
+  Agent 도구 가용 → 표준 SUBAGENT 채널(6렌즈: 정확성·파싱·레이아웃·회귀·성능·테스트 검출력).
+- 집행: staged diff + 정본 소스를 subagent 가 직접 읽고 **실측 기반** 검증 — V8 로 파싱 12변형
+  실행, headless Chromium 300px 실 CSS 렌더 계측(겹침 0·overflow 0·flex-wrap 하강 후 우측
+  정렬 유지), 뮤턴트 3종 실제 실행. **P1 0 · P2 1 · P3 6**.
+- **가장 중요한 적발(P2-1)**: 기존 fixture 는 레거시 단계가 항상 마지막이라 "NaN 뒤 유효 단계"
+  분기(NaN-skip 스캔·anchor-find)가 한 번도 실행되지 않았고, 그 분기를 제거한 뮤턴트 2종이
+  30 PASS 전체를 통과했다 — **분기를 지키는 시나리오가 fixture 에 없으면 테스트는 그 분기의
+  부재를 감지하지 못한다**. → NaN 혼재 케이스 추가, 3종 뮤턴트 사멸 실증(각 1 FAIL). 34 PASS.
+- 반영: P2-1(fixture 보강) · P3-4(Intl 포매터 모듈 상수 hoist — 폴링 재렌더 경로 ~90μs/단계
+  실측) · P3-7(첫 단계 툴팁 조건화). 수용 기록: P3-1(60초 이음새 — 기존 선례 일치) ·
+  P3-3(MySQL naive datetime — ADR-0028 dead-code) · P3-5(muted 대비 3.84:1 — 인접 기존 토큰
+  동일 · LIGHT-ONLY 확인) · P3-6(시계 역행 — 실현 경로 부재, 방어 코드).
+- 무결 확인: 파싱(마이크로초 6자리·오프셋 변형 "+00"/"Z"/초단위 전부 정상, NaN 전파 없음 —
+  전 산출 Number.isFinite 게이트) · 회귀(스크롤 보존 29 PASS 재실행 · 펼침 영속화 키 불변 ·
+  compact 경로 분리) · 성능(prevTs 스캔 amortized O(n) — 각 NaN 칸은 정확히 1회 방문).
+- 한계(정직): jsdom·headless 는 실제 폴링 갱신 리듬과 라이브 run 을 보지 못한다 — 라이브 run
+  진행 중 표기 갱신·과거 대화 소급 표기는 **배포 후 PB-0008** 대상(TEST.md 확인 축 ①~④).
