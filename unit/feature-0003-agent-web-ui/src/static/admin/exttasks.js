@@ -102,9 +102,16 @@ function toolCallsHtml(calls) {
 }
 
 function detailHtml(d) {
+  // 목록 칸과 **같은 3-상태**를 쓴다. PB-0008 실측에서 목록은 '보존 안 됨' 인데 상세는
+  // '답변이 제출되지 않았습니다' 라고 말해 서로 어긋났다 — 같은 사실을 두 화면이 다르게
+  // 말하면 어느 쪽을 믿을지 알 수 없고, 이 feature 가 반복해 낸 결함이 정확히 그 부류다.
   const marked = d.answer
     ? `<pre style="${_PRE};margin:6px 0 0;max-height:420px">${esc(d.answer)}</pre>`
-    : `<div class="admin-detail-empty">답변이 제출되지 않았습니다.</div>`;
+    : (d.status === "submitted"
+        ? `<div class="admin-detail-empty">제출은 기록됐으나 <b>본문이 보존되지 않았습니다</b>`
+          + ` — 롤링 배포 창에서 구버전 인스턴스가 처리했거나, 답변 보존 도입(2026-08-14) 이전에`
+          + ` 제출된 건입니다. 아래 도구 호출 이력은 그대로 남아 있습니다.</div>`
+        : `<div class="admin-detail-empty">답변이 제출되지 않았습니다.</div>`);
   const sources = (d.source_tasks || []).length
     ? (d.source_tasks || []).map((s) => `<code>${esc(s)}</code>`).join(", ")
     : `<span style="color:var(--text-2)">선언 없음</span>`;

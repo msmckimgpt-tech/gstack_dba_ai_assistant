@@ -417,3 +417,14 @@ source_of_truth: true
 - Rollback Notes: 컬럼은 additive(expand, CONVENTIONS §12.1)라 코드 revert 만으로 안전
   (데이터는 남고 읽는 코드만 사라진다). revert 시 보존이 다시 멈추므로 AC-7 은 열린 결함으로
   되돌아간다.
+
+## CHG-20260814-0027
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface (AC-7)
+- Summary: **PB-0008 실측이 잡은 화면 불일치 수정**. 목록 답변 칸은 '보존 안 됨' 인데 상세는
+  '답변이 제출되지 않았습니다' 라고 말해, 같은 사실을 두 화면이 다르게 서술했다. 상세도 목록과
+  같은 3-상태(본문 있음 / 미제출 / **보존 안 됨**)를 쓰도록 맞추고, 보존 안 된 경우 사유
+  (롤링 창 구버전 처리 · 보존 도입 이전 제출)와 "도구 이력은 남아 있다" 를 함께 안내한다.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin/exttasks.js` (`detailHtml`)
+- Impact: 표시 문구만. 데이터·권한·저장 경로 무변경.
+- Rollback Notes: 문구 원복.

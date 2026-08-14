@@ -156,6 +156,9 @@ source_of_truth: true
       ADR-002 · PLAN-APPROVED). `WebAiTasks` 전용 컬럼 6종 + 저장 시점 각인
       (`wrap_external_answer` — 수신 방향) + fail-closed + 고신뢰 인젝션 400 거절 +
       열람 REST 2종·콘솔 서브탭(도구 이력 합류). codex P2×5·P3×1 전건 수정
+- [x] TASK-20260814T160000-exttasks-postdeploy — AC-7 POST-DEPLOY(`6a858599`) + **PB-0008 실측**.
+      서브탭·목록·상세·도구 이력 34행 확인, 원장 `bytes_out` 대조 일치. 화면 문구 불일치
+      1건 적발·수정(목록 '보존 안 됨' vs 상세 '미제출' — CHG-0027)
 - [ ] TASK-20260812T190000-e2e-authorized — **인증 이후 구간 e2e (AC-1)** — 사람 브라우저 인가 1회.
       설계상 자동화 불가(인가가 유일한 신원 생성점). 실행 후 TEST.md §3 에 Run 기록 → AC-1 종결
 
