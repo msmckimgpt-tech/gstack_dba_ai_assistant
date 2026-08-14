@@ -10809,6 +10809,7 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] 값은 자르지 않음(라벨만 ellipsis) · 숫자 15px
 - [x] container query 방어는 판별 불가로 **미채택**(뮤턴트 생존 → 제거)
 - [x] 관리 콘솔은 이미 안전함을 실측 확인 — 변경 없이 관측 축만 추가
+- [x] 트랙·폰트를 뮤테이션으로 확정(138px·15px) + 하네스 패딩을 라이브 실측으로 정정
 - [ ] POST-DEPLOY 라이브 드로어 폭 축소 실측
 
 ### 9. Requested Scope
