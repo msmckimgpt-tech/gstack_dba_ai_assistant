@@ -501,3 +501,20 @@ approx_rows 였다 — 정답이 손에 있었는데 안내하지 않았다.
 - Risks: 이 코칭은 **사내 assistant 대화 경로가 같이 쓴다.** 문구만 바뀌고 차단 기준은
   그대로라 회귀 위험은 낮지만, 골든 계약 테스트를 하나 고쳤다(계약 자체가 틀렸던 사례).
 - Human Approval Needed: 아니오 (사용자가 두 결정을 직접 선택).
+
+## REV-20260814-0023 [SKIPPED:non-policy-doc] — 정본 docs 를 라이브 상태로 정합
+
+- Related Change: CHG-20260814-0023
+- Reason: §18.8 dispatch 표의 "비정책 doc-only" 행 → panel SKIP. 변경 집합이 feature 소유
+  `REPORT/TASK/TEST` + `docs/STATUS.md` 행뿐이고 코드·정책 doc 변경이 0 이다.
+- Trigger: 코드 변경 0건 · 정책 doc(`AGENTS.md`/`CLAUDE.md`/`_template/`/`SECURITY.md` 등) 0건.
+- 판단 근거 — **왜 문서 정합을 별 cycle 로 냈는가**: 이 feature 에서 "문서가 사실을 앞지른"
+  사례가 이미 세 번 기록돼 있다(콘솔 섹션 부재 · 컨테이너 미기동 · `/login` 404). 이번은 그
+  **역방향** — 사실이 문서를 앞질러 정본이 뒤처진 경우다. 특히 §1 의 "도달면 0" 은 보안 표면에
+  대한 **반대 진술**이라 후행 독자가 위험을 과소평가할 수 있어, 다음 cycle 로 미루지 않았다.
+- 검증: `25637d1c` 배포 상태를 주장으로 옮기지 않고 **직접 실측**했다 — 6개 서비스 GIT_COMMIT
+  일치 · `/healthz` ok · 엣지 익명 `/api/ai/mcp` 401 (TEST.md Run 20차). 머지 PR 19건은
+  `gh pr list` 로 카운트했다.
+- Human Approval Needed: 아니오. 다만 TASK §7 에 **사용자 결정 대기 1건**을 명시적으로 옮겨
+  적었다(`dbauth` 분석 task 의 정정 메모 부착 여부) — 직전 세션의 마지막 질문이 대화에만
+  남아 있어 정본에서 유실될 위험이 있었다.

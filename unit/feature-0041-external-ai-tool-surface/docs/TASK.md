@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (P0 + 잔여 3건 배포 완료 e1372f32 · 콘솔 탭·인증 e2e 만 남음)
-- Owner: AI (계획) / Human (승인)
+- State: in-progress (P0 9종 + P1 `execute_sql` 라이브 배포 `25637d1c` · **인증 e2e(AC-1) 만 남음**)
+- Owner: AI (계획) / Human (승인 · AC-1 인가 1회)
 - Priority: high
-- Last Updated: 2026-08-12
+- Last Updated: 2026-08-14
 
 ## 2. Implementation Plan
 
@@ -88,8 +88,18 @@ source_of_truth: true
 - [x] TASK-20260812T190000-l4-asymmetry — 권한 비대칭 flag(자카드, 표시 전용) + open_task 배선
 - [x] TASK-20260812T190000-http-transport — HTTP/SSE MCP 서버(토큰 무보관·헤더 전달)
 - [x] TASK-20260812T190000-deploy-3 — 2차 배포(e1372f32) + POST-DEPLOY 8항 PASS
-- [ ] TASK-20260812T190000-console-tab — 콘솔 '외부 도구 한도' 탭 (사용자 결정: 별도 cycle)
-- [ ] TASK-20260812T190000-http-bringup — HTTP/SSE 전송 프로세스 라이브 기동 (포트·TLS 프록시 운영 결정 선행)
+- [x] TASK-20260812T190000-console-tab — **다른 수단으로 해소**(2026-08-13): bespoke `admin.js`
+      탭 대신 `runtime_settings` 슬라이스 + 전용 패널(`ext-tool-limits`). 프론트 수정 0 · PB-0008 재검증
+- [x] TASK-20260812T190000-http-bringup — HTTP/SSE 라이브 기동 완료(2026-08-13, `ext-tool-mcp`
+      서비스 + 엣지 `/api/ai/mcp`, 익명은 엣지 401)
+- [x] TASK-20260813T000000-auth-url — 인증을 URL 접속 방식으로(`5f20ee88`) — discovery 4경로 ·
+      동의 화면 + POST 결정 · `/ai/connect`
+- [x] TASK-20260814T000000-host-align — 엣지 401 호스트 고정 해소(`be7e5d00`), 공인 IP discovery 성립
+- [x] TASK-20260814T000000-field-reports — 실사용 제보 결함 5건 + 인가 완료 화면(`35c60a3f`)
+- [x] TASK-20260814T000000-p1-execute-sql — `execute_sql` 개방 + **실행 스코프 결함 수정**(`956ae5e1`)
+- [x] TASK-20260814T000000-gate-coaching — 부하 게이트 집계 코칭 정정(`25637d1c`)
+- [ ] TASK-20260812T190000-e2e-authorized — **인증 이후 구간 e2e (AC-1)** — 사람 브라우저 인가 1회.
+      설계상 자동화 불가(인가가 유일한 신원 생성점). 실행 후 TEST.md §3 에 Run 기록 → AC-1 종결
 
 ## 4. In Progress
 - 없음
@@ -107,11 +117,18 @@ source_of_truth: true
 다른 활성 브랜치 2개가 편집 중이라 충돌 위험이 컸고, 기존 설정 화면이 그룹을 자동 렌더하므로
 같은 결과를 프론트 수정 0 으로 얻는다. 역할별/계정별 override 는 미도입(전역 상한만).
 
+**해소됨(2026-08-14)**: 엣지 401 호스트 정합 · 실사용 제보 결함 5건 + 인가 완료 화면 ·
+**P1 `execute_sql` 개방** · 그 과정에서 발견한 **실행 스코프 격리 결함** · 부하 게이트 코칭 정정.
+
+P1 도구는 사용자 결정(2026-08-12)대로 원장 데이터를 보고 판단했고, 08-14 에 열었다
+(`956ae5e1`). 방어는 내부 경로 것을 재사용하고 외부가 추가로 지는 것은 CSV 미생성 · 실제
+행수 원장 기록 · 건당 행 상한 셋이다.
+
 남은 것:
-- **인증된 전 구간 e2e 실행** — 절차서·스크립트 완비. 인가에 사람 브라우저 로그인·동의가
-  필요(설계상 자동화 불가 — 그 지점이 신원 축의 생성점이다). 실행 후 TEST.md §3 에 Run 기록.
-- P1 이후 도구(`execute_sql` 등) — 사용자 결정(2026-08-12): **운영 데이터를 보고 판단**.
-  판단 근거는 `tool_call_usage` 원장(도구별 호출 분포 · 미제출률 · 한도 도달 빈도).
+- **인증 이후 구간 e2e 실행 (AC-1)** — 유일한 잔여. 08-13 URL 방식 전환으로 절차가 짧아졌다:
+  클라이언트에 `https://<host>/api/ai/mcp` 등록 → 브라우저 로그인 → [허용] → `open_task` →
+  `describe_table` → `submit_answer`. 인가에 사람 브라우저 로그인·동의가 필요(설계상 자동화
+  불가 — 그 지점이 신원 축의 생성점이다). 실행 후 TEST.md §3 에 Run 기록.
 
 ## 6. Done
 - 요구사항 확정 (2026-08-12 대화 — 신원/비용 2축, 동시 다중 세션 허용, 검증 이관 범위,
@@ -130,8 +147,12 @@ source_of_truth: true
 - [x] 수정 후 PB-0008 재검증 — 전용 패널 4행 렌더 · 타임아웃 패널에서 분리 확인(증거 2장)
 
 ## 7. Next Action
-- 사람 1회 인가로 전 구간 e2e 확정(`docs/E2E_RUNBOOK.md`) → TEST.md §3 Run 기록 → AC-1 종결
-- 원장 데이터가 쌓이면 P1 도구(`execute_sql` + 행 예산) 도입 여부 판단
+- **사람 1회 브라우저 인가로 인증 이후 구간 e2e 확정** → TEST.md §3 Run 기록 → AC-1 종결.
+  절차는 §5.1 (URL 등록 → 로그인 → [허용] → 도구 → 제출). 개발자 회귀용 스크립트는
+  `docs/E2E_RUNBOOK.md` · `scripts/e2e-authorize.sh`
+- (미결 결정) 08-12~13 에 제출된 `dbauth` 분석 task 의 **정정 메모** 부착 여부 — 08-14 스코프
+  결함 수정으로 같은 제품의 datasource 가 MSSQL 로 교체되어 그 답변의 대상 DB 가 현재 스코프에서
+  도달 불가. 기록 삭제는 부적절(그 시점의 사실)하나 방치 시 후행 독자가 오해. 사용자 결정 대기
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다 (AC-1~11 — 단, AC-1·AC-2 의 **라이브** 확인은 배포 후, §5.1)

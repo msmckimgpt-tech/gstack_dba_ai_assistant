@@ -324,3 +324,23 @@ source_of_truth: true
 - Impact: **문구만 변경** — 차단 여부·임계·denylist 동일. 사내 assistant 대화 경로도 같은
   코칭을 받으므로 함께 개선된다.
 - Rollback Notes: 문구 원복.
+
+## CHG-20260814-0023
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **정본 docs 가 08-13 상태에 멈춰 있던 것을 실제 라이브 상태로 정합**. 08-14 의 네
+  cycle(`be7e5d00`·`35c60a3f`·`956ae5e1`·`25637d1c`)이 코드는 머지·배포됐으나 `REPORT.md` 는
+  08-13 이후 갱신되지 않았다. 가장 무거운 오기는 §1 의 **"라이브에 배포되지 않았으므로 현재
+  도달면은 0 이다"** — 외부 도구 표면이 열려 있고 `execute_sql` 까지 개방된 상태에서 이 문장은
+  보안 표면에 대해 사실과 **반대**를 말한다. 함께 `modules/tools.py` 무수정 주장(08-14 에 두 번
+  수정됨), 완결된 Task Queue 2건의 미체크, 해소된 P1 판단 항목, 옛 §16.5 보류 사유를 정정했다.
+  또한 `25637d1c` 배포의 **서비스별 커밋 일치 기록 공백**을 실측으로 메웠다(Run 20차).
+- Files:
+  - `unit/feature-0041-.../docs/REPORT.md` (§1 현재 상태 · §4 잔여 · §6 Git · §3.5 신설)
+  - `unit/feature-0041-.../docs/TASK.md` (§1 · §3 Task Queue · §5.1 · §7 Next Action)
+  - `unit/feature-0041-.../docs/TEST.md` (Run 2026-08-14 20차 — POST-DEPLOY `25637d1c`)
+  - `docs/STATUS.md` (feature-0041 행 — main 머지 기준 상태 갱신)
+- Impact: **코드 0 · 런타임 무영향**(문서 전용). 브랜치는 `origin/main` 으로 재정렬했다 —
+  직전 cycle 의 `ea4f8134` 는 `#1289` 로 squash-merge 되어 touched 파일 전부가 main 과 동일함을
+  파일 단위 diff 로 확인한 뒤 reset 했으므로 유실 없음.
+- Rollback Notes: 해당 없음(기록 정합). revert 시 문서가 08-13 상태로 되돌아갈 뿐.
