@@ -111,3 +111,26 @@ source_of_truth: true
 - **정적 검증**: `bash -n` (deploy-web.sh · safe-recreate.sh) · `py_compile` (ask.py · healthcheck · config.py) · compose YAML 구조 단정 · `--help` 출력 정합(usage sed 범위 갱신 반영).
 - **Pass/Fail: PASS** (단위 + 정적).
 - **라이브 실측 필요분(POST-DEPLOY)**: ① surge 컨테이너 생성 → 본체 drain(완주 로그) → 본체 신 sha healthy → surge 소멸 궤적 ② 그 창에 사용자 run 이 끊기지 않음 ③ 전 워커 GIT_COMMIT 일치(완결 판정 `ok`) ④ `?v=` 자산/엣지 무관(웹 미접촉 배포 시).
+
+#### [POST-DEPLOY 2026-08-14] surge 교대 라이브 실증 (main `73c02c71`, exit 0)
+- **교대 궤적(로그 실측)**: `ask-worker-surge-1 Created → Started` → `surge healthy — 이 시점부터
+  신규 job 은 surge(신 코드)가 가져간다` → `drain-stop: 본체(예산 1800s, 보유 0)` → `3s 만에 완주
+  종료(보유 0→0) — 끊긴 run 없음` → `recreate ask-worker → 73c02c71` → `healthy(GIT_COMMIT=73c02c71)`
+  → `drain-stop: surge` → `Removed`. **설계한 순서 그대로 작동**.
+- **완결 판정 발효**: `워커 완결 판정 (서비스별 GIT_COMMIT 실측)` 통과 후 `워커 롤아웃 완료`.
+  실물 대조 — web-a/web-b/insight-worker/ask-worker/ops-scheduler/ext-tool-mcp **6서비스 전부
+  `73c02c71`**. 종전 배포에서 발생하던 "web 만 신 코드" 혼합이 재현되지 않았다.
+- **surge 잔존 0**: `--profile deploy-surge ps -q ask-worker-surge` 빈 출력(체크리스트 [2b]).
+- **엣지 무중단**: `no upstreams available` **0건**(15분 창).
+- **quiesce 요약**: `ask-worker 본체=drained(3s) · ask-worker surge=drained(3s) — 진행 중 사용자
+  run 을 끊지 않았다.` 강행 카운터 0.
+- **신 liveness 계층 실증(배포본 런타임)**: `/tmp/ask-worker.alive` 존재(내용 `2026-08-14T03:47:48+00:00`,
+  age 6s — 갱신 주기 10s 정상) · `healthcheck_ask_worker.py` **exit 0**(파일 기반 판정 경로) ·
+  `AGENT_ASK_WORKER_DRAIN_SEC=1800` 발효(compose 값이 recreate 로 반영됨을 확인).
+- **정직 — 이번에 실증되지 **않은** 축**:
+  ① 배포 시점 `ask_jobs` running = **0**(유휴)이었다. 따라서 "바쁠 때 **기다리지 않고** 완결한다"
+     는 핵심 주장은 **아직 궤적으로 관측되지 않았다** — 이번 실증은 "경로가 설계대로 돈다" 까지다.
+     그 축은 다음 바쁜 시간대 배포에서 `보유 N→0` 과 3s 를 넘는 완주 시간으로 확인된다.
+  ② 이번 교체에서 내려간 본체는 **구 이미지(`4491ad80`)** 라 구 drain 시맨틱(60s)으로 동작했다.
+     신 예산(1800s)은 이번 recreate 로 발효됐으므로 **다음 배포부터** 완전한 완주 보장이 적용된다.
+  ③ `DRAIN-TIMEOUT` 보고 경로(예산 초과)는 유휴 배포라 미발화 — 단위 테스트로만 잠겨 있다.

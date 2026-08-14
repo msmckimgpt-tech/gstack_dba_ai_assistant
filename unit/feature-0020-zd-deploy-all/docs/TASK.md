@@ -171,8 +171,8 @@ source_of_truth: true
       그 파일은 CI 파이썬에서 **collection 자체가 불가**했다. `PyYAML` 개발 의존 명시.
 - [x] T9 전체 스위트 실행 — 귀책 실패 0. pre-existing 1건(`chattr` 미설치 환경 의존,
       main 기준선에서 동일 재현).
-- [ ] T10 verify-completion → commit → PR → 머지
-- [ ] T11 라이브 배포 + POST-DEPLOY 검증(surge 생성→본체 drain→surge 소멸 궤적 실측)
+- [x] T10 verify-completion → commit → PR #1295 → 머지(73c02c71)
+- [x] T11 라이브 배포 + POST-DEPLOY 검증 — exit 0 · 6서비스 전부 73c02c71 · surge 잔존 0 · 엣지 503 0건 · alive 파일/healthcheck/drain 예산 실증 (TEST.md POST-DEPLOY 기록)
 
 ### Completion Checklist
 - [x] R1~R4 가 구현되었다
@@ -180,6 +180,6 @@ source_of_truth: true
 - [x] 웹/UI 변경 없음 — Windows-browser 검증 N/A (배포 스파인·워커 런타임만)
 - [x] FUNCTION.md 가 현재 동작과 일치한다
 - [x] MODIFY.md / REVIEW.md / TEST.md 기록
-- [ ] verify-completion --pre-commit PASS
-- [ ] Git 커밋 + 원격 동기화
-- [ ] (deploy-backed) 라이브 재배포 검증
+- [x] verify-completion --pre-commit PASS
+- [x] Git 커밋 + 원격 동기화 (PR #1295 머지 73c02c71)
+- [x] (deploy-backed) 라이브 재배포 검증 — exit 0 + 전 서비스 SHA 일치 + 엣지 무중단 실측

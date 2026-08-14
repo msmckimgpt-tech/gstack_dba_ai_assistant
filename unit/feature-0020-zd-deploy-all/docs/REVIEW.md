@@ -181,3 +181,9 @@ source_of_truth: true
 - **정직 — 남는 것**: ① drain 예산 1800s < 실측 max 2,024s(초과분 재큐·보고됨)
   ② `safe-recreate.sh` ask-worker 경로는 여전히 전역 정적 대기(surge 인프라 부재 — 헤더에 명시)
   ③ leaked surge 는 다음 배포 sweep 까지 공존(gateway surge 와 동일 수준).
+
+## REV-20260814T124800-ask-surge-postdeploy [SKIPPED:non-policy-doc] — PASS
+- **Trigger**: 문서만(배포 실측 기록 + TASK 체크박스 전이). 코드 변경 0 → §18.8 dispatch 표
+  "비정책 doc-only" 행. 선행 코드 cycle 의 검증 기록은 `REV-20260814T120000-ask-surge-rollout`.
+- 기록에 **관측되지 않은 축을 함께 남겼다** — 유휴 배포라 "바쁠 때 기다리지 않고 완결" 궤적과
+  `DRAIN-TIMEOUT` 보고 경로는 미발화다(과장 금지).
