@@ -5038,3 +5038,11 @@ rAF 한 번으로도 transition 이 걸려 결함 조건 자체가 성립하지 
 
 - 프로필은 모델 필터 칩이 없어 '요청' 지표의 부분 선택 충돌(관리 화면의 카드 비활성)이 성립하지
   않는다 — 그 분기를 프로필에 넣지 않았다(없는 상태를 방어하는 죽은 코드가 된다).
+## REV-20260814T023000-attach-branch-postdeploy [SKIPPED:doc-only] — POST-DEPLOY 실측 기록
+
+- Related Change: `CHG-20260814T023000-ai-claude-feature-0003-attach-branch-postdeploy`
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(TASK 문서만) → 패널 skip. 선행 cycle 의
+  코드 변경은 `REV-20260814T010000-attach-version-branching`([CODEX:adversarial-data-integrity],
+  P1 3·P2 1 전건 반영)에서 집행됐다.
+- 검증: 기록된 수치는 전부 배포본 실행 결과다(GIT_COMMIT 3서비스 · caddy 0 · 계보 조회 직접 호출).
+- Human Approval Needed: 아니오 (doc-only, 선행 cycle 승인 범위 내 사후 기록).

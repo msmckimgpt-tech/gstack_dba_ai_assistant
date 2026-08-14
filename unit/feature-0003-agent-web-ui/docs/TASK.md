@@ -10704,7 +10704,16 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
       ③ 같은 root 의 live head 2개를 두 계보로 오인 → **root 당 1건** dedupe
       ④ 타 멤버 소유 AI 계보를 "by you" 로 오표기 → 소유자 반영(READ-ONLY 표기).
 - [x] 관련 스위트 **61 PASS** · 전체 스위트 회귀 실패 0(잔여는 선재 환경 의존 파일 1개).
-- [ ] verify-completion · 배포 후 라이브 실측(분기 INSERT/supersede 실동작).
+- [x] verify-completion **18/18 PASS**.
+- [x] 배포 후 라이브 실측(2026-08-14, READ-ONLY) — PR #1265 merge(main `6fbccbc7`) → 전체 롤아웃
+      (web-a/web-b/ask-worker `GIT_COMMIT=6fbccbc7` · 무중단 `no upstreams available` **0**).
+      배포본에서 `_load_filename_lineage_heads` 직접 호출 → 예외 없이 동작. 대화 `…46763d6e` 의
+      동명 파일에서 **계정 10 계보 / 계정 50 계보가 각각 head 1건**으로 분리 반환(사람끼리의 분리가
+      이미 성립함을 라이브로 재확인, root dedupe 정상).
+- [ ] **미실측(정직)**: 분기 INSERT/supersede 의 실동작과 프롬프트 계보 블록의 실제 렌더는
+      assistant 가 첨부를 실제로 수정해야 발생한다 — 그것은 라이브 대화에 write 를 유발하므로
+      (conversation_audit 불변제약: 대화 데이터 불변) 수행하지 않았다. 단위 테스트(구조 잠금 포함)
+      로만 증명된 상태이며, 다음 실사용 수정본이 생길 때 계보 분리를 확인하면 된다.
 
 ### 9. Requested Scope
 
