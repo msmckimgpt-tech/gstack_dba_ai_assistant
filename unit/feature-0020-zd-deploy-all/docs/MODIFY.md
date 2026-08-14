@@ -283,3 +283,14 @@ source_of_truth: true
 - Rollback Notes: `rollout_ask_worker_via_surge` 호출을 종전 `quiesce_gate "ask-worker recreate"`
   로 되돌리고 compose 의 surge 서비스·drain 예산을 원복하면 복귀한다. 그 순간부터 바쁜 시간대
   배포는 다시 ask-worker 에서 멈추고 뒤 워커까지 연쇄로 묶인다.
+
+## CHG-20260814T124800 surge 교대 POST-DEPLOY 실측 기록 (doc-only)
+- 사유: 선행 cycle `CHG-20260814T120000` 배포(main `73c02c71`) 후 §16.3 deploy-backed 완료 근거
+  기록. **코드 변경 0**.
+- 실측: 교대 궤적이 설계 순서대로 관측(surge Created→healthy→본체 drain 3s→본체 recreate
+  healthy→surge drain→Removed) · 6서비스 전부 `73c02c71`(혼합 버전 미재현) · surge 잔존 0 ·
+  엣지 `no upstreams available` 0건 · 배포본에서 `/tmp/ask-worker.alive`(age 6s) +
+  healthcheck exit 0 + `AGENT_ASK_WORKER_DRAIN_SEC=1800` 발효.
+- **정직**: 배포 시점 running=0(유휴)이라 **"바쁠 때 기다리지 않고 완결한다" 는 핵심 주장은
+  아직 궤적으로 미관측**이다. 이번 실증 범위는 "경로가 설계대로 돈다" 까지. 또 이번에 내려간
+  본체는 구 이미지라 구 drain 시맨틱(60s)으로 동작했고, 신 예산은 다음 배포부터 적용된다.
