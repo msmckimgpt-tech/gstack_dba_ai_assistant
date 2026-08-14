@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.47.0
+template_version: v3.47.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1513,7 +1513,7 @@ push / PR merge 는 코드 완료이지 배포 완료가 아니다.
   충돌하는 것은 파싱 여부가 아니라 **누가 파싱하는가**다.
 - ⚠️ **§22.6 `permissions.deny` 는 유지가 전제다 (MUST).** deny 정본은 AGENTS.md 의 예시
   블록이 아니라 **소비자의 `.claude/settings.json`** 이며, 거기서 `Read`/`Glob`/`Grep`
-  (`~/.claude/projects/**`) 를 차단한다. **감지를 켜기 위해 그것을 완화하지 않는다 (MUST NOT)** —
+  (`~/.claude/projects/**/*.jsonl`) 를 차단한다. **감지를 켜기 위해 그것을 완화하지 않는다 (MUST NOT)** —
   관측자는 하네스 밖이라 애초에 그 deny 의 적용 대상이 아니다. 완화하는 순간 §18.8 적대
   패널을 포함한 모든 세션·모든 subagent 에게 전 프로젝트 대화가 열린다.
 - ⚠️ **mtime 은 비인증 liveness 힌트다 (MUST).** `touch` 로 임의 설정 가능하고, 백업·인덱서·
@@ -4389,9 +4389,12 @@ pointer 강제변경 등)를 인코딩할 때 **두 메커니즘을 혼동하지
 
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
-      "Read(~/.claude/projects/**)",
-      "Glob(~/.claude/projects/**)",
-      "Grep(~/.claude/projects/**)",
+      "Read(~/.claude/projects/**/*.jsonl)",
+      "Glob(~/.claude/projects/**/*.jsonl)",
+      "Grep(~/.claude/projects/**/*.jsonl)",
+      "Read(~/.claude/projects/**/tool-results/**)",
+      "Glob(~/.claude/projects/**/tool-results/**)",
+      "Grep(~/.claude/projects/**/tool-results/**)",
       "Bash(git push --force*)",
       "Bash(git push -f*)"
     ]
@@ -4408,12 +4411,30 @@ pointer 강제변경 등)를 인코딩할 때 **두 메커니즘을 혼동하지
 >
 > ⚠️ **`./` 패턴만으로는 작업 디렉터리 **밖**을 막지 못한다 (v3.45.0).** subagent 에게
 > `Grep`/`Glob` 을 주면 작업 디렉터리 전역 열거 권한이 생기는데(§22.3 «스폰 시 도구
-> 화이트리스트»), additional working directory 에 홈·설정·**전사 저장소**(`~/.claude/projects/**`)가
+> 화이트리스트»), additional working directory 에 홈·설정·**전사 저장소**(`~/.claude/projects/**/*.jsonl`)가
 > 걸려 있으면 프로젝트 내부만 deny 한 설정은 그 표면을 전혀 덮지 않는다. 위 3줄
 > (`~/.ssh` · `~/.aws` · `~/.claude/projects`)이 그 최소 세트이며, 소비자 환경에서
 > 실제로 열려 있는 경로를 **실측해 추가**한다 — 「프로젝트 내부를 막았다」가
 > 「비밀을 막았다」로 읽히는 것이 이 조항의 실패 모드다.
 > `Read` 만 막고 `Glob`/`Grep` 을 빼면 열거·검색으로 그대로 뚫린다 — 세 도구를 함께 막는다.
+>
+> ⚠️ **패턴은 `**` 가 아니라 «열거된 하위 표면» 이다 (v3.47.1, 실측).**
+> `~/.claude/projects/<encoded>/` 아래에는 전사만 있는 것이 아니라 **`memory/` 자동 메모리**와
+> 머신-로컬 운영 인프라가 함께 산다. `**` 로 걸면 그것들까지 막혀 메모리 시스템과 운영 도구가
+> 죽는다 — v3.47.0 을 이 저장소에 적용한 직후 실제로 그렇게 됐다. 그렇다고 `.jsonl` 만 막으면
+> **부족하다**: 하네스는 큰 도구 출력을 `<session-id>/tool-results/*.txt` 사이드카로 흘리고,
+> 실측 100개·16MB 안에 **타 프로젝트 사용자 발화와 `sid=` 식별자**가 그대로 들어 있다.
+> 그래서 전사(`**/*.jsonl`)와 사이드카(`**/tool-results/**`)를 **함께** 막는다.
+>
+> ⚠️ **이 통제는 구조가 아니라 «열거» 이고, 따라서 fail-open 한다.** 하네스가 새 사이드카
+> 형식을 추가하면 그 표면은 **조용히 열린다** — 이 절이 mtime 에 대해 경고한 바로 그 성질이다.
+> 하네스 업그레이드 후 `find ~/.claude/projects -type f ! -name '*.jsonl'` 로 **재실측**하고
+> 새 형식이 나오면 deny 를 늘린다. 실측 시점 non-`.jsonl` 파일은 1,182개였다(대부분 운영 인프라).
+> ⚠️ 「넓게 deny 하고 `memory/` 만 allow 로 뚫는다」는 **불가능하다** — 이 하네스에서 deny 가
+> allow 를 이긴다. 예외는 allow 가 아니라 **더 좁은 deny 집합**으로만 표현된다.
+> ⚠️ 축소의 또 다른 대가: `**` 는 **Bash 의 파일 접근까지** 디렉토리 단위로 막았지만(실측)
+> 열거형 패턴은 도구 축(`Read`/`Glob`/`Grep`)만 막고 Bash 는 통과한다(실측). 그 잔여 축은
+> 아래 문단이 다루는 알려진 갭이며, 결정적 차단이 필요하면 `PreToolUse` hook 을 쓴다.
 >
 > ⚠️ **`Bash` 축을 deny 로 인코딩하지 않는 이유 (기록).** `Bash(...)` 는 명령 **문자열
 > prefix 매칭**이라 `cd ~/.claude/projects && cat …` · glob 축약 · `$HOME` 우회로 간단히
