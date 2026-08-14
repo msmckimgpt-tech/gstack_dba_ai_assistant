@@ -538,3 +538,134 @@ def test_every_db_touching_route_branches_on_a_missing_connection():
     tools = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
     body = tools[tools.index("def require_ai_token("):tools.index("def _pg(")]
     assert "conn is None" in body and "503" in body
+
+
+# ── ⑥ 라이브 사용 제보로 드러난 결함 (2026-08-14) ───────────────────────────
+#
+# 다른 세션이 실제로 붙어 보고 알려준 것들. 전부 **테스트가 있었는데도** 통과했던 형태다 —
+# 도구 "존재" 만 보고 계약을 안 봤기 때문이다.
+
+@pytest.mark.parametrize("name", [
+    "Claude Code (mysql-ai)",   # ★ 실제로 이것 때문에 자동 연결이 전부 실패했다
+    "Claude Code", "Cursor/1.0", "VS Code [MCP]", "Zed · MCP",
+    "클로드 코드", "agent@host", "my-agent_v2",
+])
+def test_dcr_accepts_real_client_names(name):
+    """★ DCR 이 400 이면 클라이언트는 거기서 죽고 **브라우저 오픈까지 가지도 못한다.**
+    클라이언트 이름은 우리가 예측할 수 없으므로 허용목록이 아니라 금지목록으로 판정한다."""
+    assert _store._valid_client_name(name), f"{name!r} 를 거절한다 — 자동 연결 불가"
+
+
+@pytest.mark.parametrize("name", [
+    "a<script>alert(1)</script>", 'quote"name', "back`tick", "back\\slash",
+    "line\nbreak", "tab\there", "nul\x00byte", "", "x" * 129,
+])
+def test_dcr_still_rejects_display_poisoning(name):
+    """이름은 동의 화면에 그대로 보인다 — 제어문자·태그·따옴표는 계속 막는다."""
+    assert not _store._valid_client_name(name)
+
+
+_ARG_CONTRACT = {
+    # MCP 도구가 보내는 인자 ↔ 백엔드(`modules/tools.py`)가 읽는 인자
+    "describe_table": {"schema_name", "table_name"},
+    "get_foreign_keys": {"schema_name", "table_name"},
+    "get_table_indexes": {"schema_name", "table_name"},
+    "describe_schema": {"schema_name"},
+    "search_tables": {"keyword"},
+}
+
+
+@pytest.mark.parametrize("adapter", ["external_tool_mcp_server.py", "external_tool_mcp_http.py"])
+@pytest.mark.parametrize("tool,required", sorted(_ARG_CONTRACT.items()))
+def test_adapter_sends_the_argument_names_the_backend_reads(adapter, tool, required):
+    """★ 어댑터가 `table` 을 보내는데 백엔드는 `table_name` 을 읽으면, **무엇을 넣어도**
+    "schema_name과 table_name은 필수" 만 돌아온다 — 성공할 수 없는 도구가 된다.
+    도구 존재만 검사하던 기존 테스트가 이걸 3개월치 놓쳤다(라이브 제보로 발견)."""
+    import re
+    src = _read("unit", "feature-0041-external-ai-tool-surface", "src", adapter)
+    body = src[src.index(f"def {tool}("):]
+    body = body[:body.index("\n\n\n")] if "\n\n\n" in body else body[:1200]
+    sent = set(re.findall(r'"([a-z_]+)":', body.split("arguments")[1] if "arguments" in body else ""))
+    missing = required - sent
+    assert not missing, f"{adapter}:{tool} 이 백엔드가 읽는 인자를 안 보낸다: {sorted(missing)}"
+
+
+def test_backend_argument_names_are_read_from_the_source_of_truth():
+    """계약의 정본은 `modules/tools.py` 다 — 위 표가 그것과 어긋나면 이 테스트가 먼저 깨진다."""
+    import re
+    tools = _read("unit", "feature-0002-agent-core", "src", "modules", "tools.py")
+    for tool, required in _ARG_CONTRACT.items():
+        m = re.search(rf"def _tool_{tool}\(", tools)
+        assert m, f"백엔드에 _tool_{tool} 이 없다"
+        body = tools[m.start():m.start() + 1600]
+        reads = set(re.findall(r'args\.get\("([a-z_]+)"', body))
+        # `args` 를 통째로 넘기는 헬퍼(예: `_mssql_resolve_catalog(args)`)가 읽는 것도 계약이다
+        # — 직접 `args.get` 만 세면 describe_table 의 schema_name 을 놓친다.
+        for helper in set(re.findall(r"(_[a-z_]+)\(args\)", body)):
+            hm = re.search(rf"def {helper}\(", tools)
+            if hm:
+                reads |= set(re.findall(r'args\.get\("([a-z_]+)"',
+                                        tools[hm.start():hm.start() + 1600]))
+        assert required <= reads, \
+            f"{tool}: 표({sorted(required)})가 백엔드가 읽는 것({sorted(reads)})의 부분집합이 아니다"
+
+
+def test_datasource_labels_work_for_single_binding_products():
+    """★ `_resolve_product_datasources`(복수형)는 **바인딩 2개 이상에서만** 값을 준다.
+    그것만 쓰면 대부분의 제품에서 빈 목록이 되어 (a) 정당한 `datasource` 인자가 전부 거부되고
+    (b) grounding scope 가 통째로 비어 버린다(라이브 제보)."""
+    import tool_authz as az
+
+    class _Core:
+        def _product_datasource_keys(self, conn, pid): return ["MSSQL-DK-Dev"]
+        def _resolve_product_datasources(self, conn, pid): return []   # 단일 바인딩 = 빈 목록
+
+    labels = az.allowed_datasource_labels(_Core(), None, 109)
+    assert labels == ["mssql-dk-dev"], labels
+    az.assert_datasource_allowed("mssql-dk-dev", labels)   # 정당한 인자가 통과해야 한다
+
+
+def test_grounding_uses_scope_key_not_the_label():
+    """★ `cluster_summaries.scope_key` 는 엔드포인트 해시이지 바인딩 라벨이 아니다.
+    라벨을 넘기면 **항상 0건**이라 grounding 이 조용히 빈다."""
+    import tool_authz as az
+    src = _read("unit", "feature-0003-agent-web-ui", "src", "tool_authz.py")
+    assert "def datasource_scope_keys(" in src and "_ds.scope_key(" in src
+    router = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
+    body = router[router.index("async def get_task_context("):router.index("async def submit_answer(")]
+    assert "datasource_scope_keys" in body, "라우터가 라벨을 scope 로 쓰고 있다"
+    assert "allowed_datasource_labels" not in body
+
+
+def test_task_context_can_be_refocused_after_discovery():
+    """★ 이 층은 질문에 테이블 이름이 있을 때만 매칭된다. 외부 AI 는 탐색 *전에* 한 번
+    부르므로 첫 호출은 대개 빈다 — 탐색 후 다시 부를 수단이 없으면 그냥 죽은 도구다."""
+    router = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
+    body = router[router.index("async def get_task_context("):router.index("async def submit_answer(")]
+    assert 'body.get("focus")' in body
+    assert "focus or (task.get(" in body
+    for adapter in ("external_tool_mcp_server.py", "external_tool_mcp_http.py"):
+        src = _read("unit", "feature-0041-external-ai-tool-surface", "src", adapter)
+        assert "focus" in src[src.index("def get_task_context("):][:600], f"{adapter} 에 focus 없음"
+
+
+def test_empty_grounding_explains_itself():
+    """빈 번들을 '(관련 요약 없음)' 한 줄로 돌려주면 호출자는 **정상인지 고장인지** 모른다.
+    실제로 라이브에서 그 상태였고, 제보자는 '도메인 개요 없이 구조만으로 판단' 했다."""
+    router = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
+    body = router[router.index("async def get_task_context("):router.index("async def submit_answer(")]
+    assert "notes" in body and "grounding 번들 없음" in body
+    assert "focus" in body.split("grounding 번들 없음")[0], "다음 행동을 알려주지 않는다"
+    # 예외를 조용히 삼키던 것이 이 결함을 오래 숨겼다.
+    assert "except Exception as exc:" in body and "type(exc).__name__" in body
+
+
+def test_hosted_callback_page_exists_for_clients_without_a_listener():
+    """자체 콜백 서버가 없는 연동은 브라우저 오류 화면이나 손으로 만든 평문 페이지를 본다."""
+    pages = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "static_pages.py")
+    assert '@router.get("/ai/oauth/callback")' in pages
+    html = _read(*_STATIC, "oauth-callback.html")
+    for needle in ("연결이 승인되었습니다", "60초", "1회용", "복사하지 말고"):
+        assert needle in html, f"콜백 화면에 '{needle}' 안내가 없다"
+    js = _read(*_STATIC, "oauth-callback.js")
+    assert 'params.get("code")' in js and 'params.get("error")' in js, "거부/오류 분기가 없다"

@@ -130,7 +130,19 @@ def _utcnow() -> datetime:
 
 # ── DCR ───────────────────────────────────────────────────────────────────────
 
-_CLIENT_NAME_RE = re.compile(r"^[\w .\-]{1,128}$", re.UNICODE)
+# client_name 은 **동의 화면에 그대로 보여 주는 표시용 문자열**이다. 검증의 목적은 그 화면을
+# 오염시킬 수 있는 것(제어문자·개행·태그·따옴표)을 막는 것이지, 이름 모양을 좁히는 것이 아니다.
+#
+# ⚠ 처음엔 `[\w .\-]` 로 좁혀 두었는데, **Claude Code 가 보내는 `Claude Code (mysql-ai)` 가
+#   괄호 때문에 400** 이 났다. DCR 이 실패하면 클라이언트는 거기서 죽고 브라우저 오픈까지
+#   가지도 못한다 — 즉 **표준 MCP 클라이언트가 이 표면에 자동 연결할 수 없었다**(라이브 제보).
+#   그래서 "허용 목록" 이 아니라 "금지 목록" 으로 뒤집는다. 실제 클라이언트 이름은
+#   `Cursor/1.0`·`VS Code [MCP]`·`Claude Code (host)` 처럼 우리가 예측할 수 없다.
+_CLIENT_NAME_FORBIDDEN_RE = re.compile(r"""[\x00-\x1f\x7f<>"'`\\]""")
+
+
+def _valid_client_name(name: str) -> bool:
+    return bool(name) and len(name) <= 128 and not _CLIENT_NAME_FORBIDDEN_RE.search(name)
 
 
 def register_client(cur, *, client_name: str, redirect_uris: list[str],
@@ -140,8 +152,9 @@ def register_client(cur, *, client_name: str, redirect_uris: list[str],
     실제 권한은 authorize 단계의 사람 로그인·동의에서만 생긴다.
     """
     name = str(client_name or "").strip() or "external-ai-client"
-    if not _CLIENT_NAME_RE.match(name):
-        raise OAuthError("invalid_client_metadata", "client_name 형식이 올바르지 않습니다.")
+    if not _valid_client_name(name):
+        raise OAuthError("invalid_client_metadata",
+                         "client_name 에 제어문자나 <>\"'`\\ 를 쓸 수 없습니다(최대 128자).")
     if not redirect_uris:
         raise OAuthError("invalid_redirect_uri", "redirect_uris 가 필요합니다.")
     if len(redirect_uris) > 5:

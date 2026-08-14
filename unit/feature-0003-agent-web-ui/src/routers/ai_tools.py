@@ -233,17 +233,49 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
 
     t0 = time.perf_counter()
     sections: list[str] = []
+    notes: list[str] = []
+    # ⚠ 이 블록은 두 가지 이유로 **항상 비어 있었다**(라이브 제보 — "(관련 요약 없음)" 만 반환).
+    #   ① `load_cluster_summary_context` 는 **조립된 문자열**을 돌려주는데 rows 로 착각해
+    #      `_cc.render(...)` 를 다시 불렀다 → 예외 → 아래 bare except 가 삼켰다.
+    #   ② scope 를 안 넘기면 `get_active_datasource()` 로 도출하는데, API 요청 컨텍스트에는
+    #      활성 datasource 가 없어 후보가 **빈 목록**이 된다 → 즉시 "" 반환.
+    #   그래서 task 의 제품에 바인딩된 datasource 라벨을 **명시적으로** 넘긴다.
+    scopes: list[str] = []
+    try:
+        import agent_core as _core   # 지연 import — 라우터 import 시점 순환 회피(다른 핸들러와 동형)
+        scopes = _authz.datasource_scope_keys(_core, conn, int(task.get("product_id") or 0))
+    except Exception:
+        scopes = []
     try:
         from modules import cluster_context as _cc
         if _cc.enabled():
-            rows = _cc.load_cluster_summary_context(task.get("question") or "", conn=None)
-            rendered = _cc.render(rows) if rows else ""
-            if rendered:
-                sections.append(rendered)
-    except Exception:
-        pass   # grounding 부재는 degrade — 도구 자체를 막지 않는다
+            # ⚠ 이 층은 **질문에 테이블 이름이 등장할 때만** 매칭된다(내부 대화 경로는 매 턴
+            #   호출하므로 자연히 이름이 섞인다). 외부 AI 는 탐색 *전에* 한 번 부르므로 그
+            #   질문엔 이름이 없다 — 그래서 `focus` 로 **탐색 후 다시** 부를 수 있게 한다.
+            focus = str(body.get("focus") or "").strip()
+            question = focus or (task.get("question") or "")
+            for scope in (scopes or [None]):
+                rendered = _cc.load_cluster_summary_context(question, scope_key=scope, conn=None)
+                if rendered:
+                    sections.append(rendered)
+                    break
+    except Exception as exc:   # grounding 부재는 degrade — 도구 자체를 막지 않는다
+        # 다만 **왜** 비었는지는 남긴다. 조용히 삼키는 바람에 이 결함이 오래 보이지 않았다.
+        notes.append(f"grounding 로드 실패: {type(exc).__name__}")
+    if not sections and not notes:
+        notes.append(
+            "질문에 테이블 이름이 없어 매칭된 묶음이 없습니다 — 구조 조회로 테이블을 찾은 뒤 "
+            "`focus` 에 그 이름들을 넣어 다시 부르면 해당 묶음의 요약을 받습니다"
+            if scopes else "이 task 의 제품에 바인딩된 datasource 를 찾지 못했습니다")
 
-    payload = "\n\n".join(s for s in sections if s) or "(관련 요약 없음 — 구조 조회 도구로 탐색하세요)"
+    payload = "\n\n".join(s for s in sections if s)
+    if not payload:
+        # 빈 번들을 "(관련 요약 없음)" 한 줄로만 돌려주면 호출자는 **이게 정상인지 고장인지**
+        # 구분할 수 없다(라이브에서 실제로 그 상태였다). 사유와 다음 행동을 함께 준다.
+        payload = ("(grounding 번들 없음 — " + " / ".join(notes) + ")\n"
+                   "구조 조회 도구(list_schemas → describe_schema → describe_table)로 "
+                   "직접 탐색하세요. 이 경우 도메인 맥락 없이 구조만 보게 되므로, 답변에 "
+                   "그 한계를 밝히세요.")
     marked = _guard.wrap_tool_output(
         f"{_guard.session_canary(task_id)}\n{payload}",
         account=str(account.get("username") or account.get("id")),

@@ -211,6 +211,20 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 knob 은 두지 않는다(`AGENT_EXT_TOOL_CONCURRENCY` 를 이 사유로 삭제 — REV-20260812-0009 #4).
 `DEFAULTS` ↔ 콘솔 스펙 키 일치를 테스트가 검사한다.
 
+**클라이언트 이름 검증**: `client_name` 은 동의 화면 표시용이므로 **허용목록이 아니라
+금지목록**(제어문자·`<>"\'`\\)으로 판정한다. 좁은 정규식(`[\w .\-]`)이 실제 클라이언트가 보내는
+`Claude Code (mysql-ai)` 를 400 으로 거절해 **표준 MCP 클라이언트의 자동 연결이 전 구간
+불가능**했다(라이브 제보). 외부 클라이언트가 보내는 값은 예측 대상이 아니라 관측 대상이다.
+
+**구조 도구 인자**: `describe_table`·`get_foreign_keys`·`get_table_indexes` 는 `schema_name` +
+`table_name` 을 **둘 다** 보낸다. 어댑터가 `table` 로 보내면 백엔드는 대상을 특정하지 못해
+어떤 값으로도 성공할 수 없다 — 계약 대조 테스트가 정본(`modules/tools.py`)과 맞춘다.
+
+**grounding(`get_task_context`)은 두 번 부르는 도구다**: 클러스터 요약은 질문에 테이블 이름이
+등장할 때만 매칭된다(내부 대화 경로는 매 턴 호출하므로 자연히 섞인다). 외부 AI 는 탐색 *전에*
+한 번 부르므로 첫 호출은 구조적으로 빈다 → `focus` 로 **탐색 후 재호출**. scope 는 라벨이
+아니라 **엔드포인트 해시**(`datasource_scope_keys`)다.
+
 **SDK 세대**: `mcp` 파이썬 SDK 2.0 이 `mcp.server.fastmcp` 를 제거하고
 `mcp.server.mcpserver.MCPServer` 로 갈았다. 가이드가 안내하는 `pip install mcp` 는 2.x 를 주므로
 **두 세대를 모두 받는다.** v2 엔 전역 `get_context()` 가 없어 헤더는 도구가 받은 ctx 로 읽는다
@@ -268,6 +282,14 @@ knob 은 두지 않는다(`AGENT_EXT_TOOL_CONCURRENCY` 를 이 사유로 삭제 
 지원 집합은 `data.read` 뿐이고, 그 밖은 **발급 전 거절**(`invalid_scope`)한다. 조용히 무시하면
 사용자는 넓게 승인했다고 믿고 클라이언트는 좁은 토큰을 받는다. 집행은
 `ai_tools.require_ai_token` 이 하며 없으면 **403**.
+
+### 15.4-1 인가 완료 화면 (`/ai/oauth/callback`)
+
+자체 콜백 서버가 없는 연동(스크립트·수동)이 `redirect_uri` 로 등록할 수 있는 자리다. 등록하지
+않으면 사용자는 **브라우저 연결 오류**나 손으로 만든 평문 페이지를 본다(라이브 제보). 서버는
+여기서 아무 상태도 만들지 않는다 — 코드는 URL 에만 있고 정적 자산만 서빙한다. 코드는 PKCE
+때문에 `code_verifier` 없이 교환할 수 없으나, **사람이 남에게 넘기는** 경로는 남으므로 화면이
+그 경고를 진다.
 
 ### 15.5 콘솔 토큰
 

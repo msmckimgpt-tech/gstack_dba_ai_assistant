@@ -54,6 +54,15 @@ def ai_connect_page() -> FileResponse:
     return app.FileResponse(app.STATIC_DIR / "ai-connect.html", headers=app._HTML_NO_CACHE)
 
 
+# feature-0041: 인가 완료 화면. 자체 콜백 서버가 없는 클라이언트(스크립트·수동 연동)가
+# `redirect_uri` 로 등록할 수 있는 자리다 — 등록하지 않으면 사용자는 브라우저 연결 오류나
+# 손으로 만든 평문 페이지를 보게 된다. 서버는 여기서 아무것도 하지 않는다(코드는 URL 에만
+# 있고 정적 파일만 서빙). 익명 접근 가능 — 코드는 PKCE 없이는 교환할 수 없다.
+@router.get("/ai/oauth/callback")
+def ai_oauth_callback_page() -> FileResponse:
+    return app.FileResponse(app.STATIC_DIR / "oauth-callback.html", headers=app._HTML_NO_CACHE)
+
+
 @router.get("/healthz")
 def healthz() -> JSONResponse:
     """TASK-0126 (#5 split-brain / #4 워커 가시성): 배포 provenance + readiness probe.

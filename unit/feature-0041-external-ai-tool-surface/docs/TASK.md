@@ -209,3 +209,11 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
 - [x] 가이드 배포 반영 실측(`86d89b60`) — 이 cycle 종료
 - [x] 엣지 401 호스트 고정 해소 — 공인 IP 접속에서도 자동 discovery 성립(Host 3종 실측)
 - [x] POST-DEPLOY(`be7e5d00`) — 공인 IP 경로 자동 discovery 성립 실측
+
+### 실사용 제보 반영 (2026-08-14)
+
+- [x] DCR client_name 거절로 **표준 MCP 클라이언트 자동 연결 불가**하던 것 해소
+- [x] 구조 도구 3종의 인자 계약 정합(`schema_name`+`table_name`) + 정본 대조 테스트
+- [x] 단일 바인딩 제품의 datasource 라벨 해석 · grounding scope_key 해석
+- [x] `get_task_context` 빈 응답 3원인 해소 + `focus` 재호출 경로
+- [x] 인가 완료 화면(`/ai/oauth/callback`) — 자체 콜백 서버 없는 연동용

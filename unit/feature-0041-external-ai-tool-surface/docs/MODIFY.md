@@ -257,3 +257,20 @@ source_of_truth: true
 - Files: `docs/TEST.md` (14차 Run) · `docs/TASK.md`
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260814-0018
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **라이브 사용 제보로 드러난 결함 5건 수정** + 인가 완료 화면 신설. 실제 외부 세션이
+  붙어 본 결과 (a) 표준 MCP 클라이언트가 **자동 연결 불가** (b) 구조 도구 3종이 **항상 실패**
+  (c) grounding 이 **항상 빈 응답** 이었다.
+- Files:
+  - `oauth_store.py` (`client_name` 검증을 허용목록 → 금지목록)
+  - `external_tool_mcp_{server,http}.py` (구조 도구 3종 인자명·시그니처 정합 + `focus`)
+  - `tool_authz.py` (`allowed_datasource_labels` 단일 바인딩 · `datasource_scope_keys` 신설)
+  - `routers/ai_tools.py` (grounding scope·`render` 오용·`focus`·빈 응답 사유)
+  - `routers/static_pages.py` + `static/oauth-callback.{html,js}` (인가 완료 화면)
+  - `static/ai-api-guide.md` · 회귀 테스트 20건
+- Impact: 구조 도구 3종의 **인자 이름이 바뀐다**(`table` → `schema_name`+`table`) — 기존 호출은
+  어차피 전부 실패하던 것이라 깨질 사용처가 없다. `datasource` 인자가 이제 정상 통과한다.
+- Rollback Notes: 각 파일 원복. 스키마 변경 없음.
