@@ -461,3 +461,11 @@ list_schemas → __invalid_default_db__ | account_db | agent_attachment_5fdcf3f9
 - 뮤테이션: 7종 전부 KILL(스위치 옛 형태 · 메모리 연결 반환 · allowlist 미설정 · 미바인딩
   fail-open · 건당 상한 해제 · CSV 재생성 · datasource 사후 읽기).
 - Human Approval Needed: 아니오 (`deploy_scope: included`).
+
+## REV-20260814-0021 [SKIPPED:post-deploy-record] — 스코프 복구 배포 검증 (코드 0)
+
+- Related Change: CHG-20260814-0021
+- Reason: 배포 결과 기록. 코드 0.
+- 요지: 구조 조회가 제품 datasource 를 향하고 **첨부 샌드박스 노출 0건**, `execute_sql` 은
+  허용 DB 통과·비허용 DB 차단, CSV 경로 없음, 원장에 실제 행수 기록.
+- Human Approval Needed: 아니오.

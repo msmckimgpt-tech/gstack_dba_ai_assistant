@@ -301,3 +301,11 @@ source_of_truth: true
   향하던 것이 제품 datasource 로 간다(그게 원래 의도였다). datasource 미바인딩 제품은 이제
   403 이다(전엔 내부 DB 를 보여줬다). `execute_sql` 신규 노출.
 - Rollback Notes: `P1_TOOLS` 를 비우면 SQL 만 닫힌다. 스코프 수정은 되돌리면 안 된다(결함).
+
+## CHG-20260814-0021
+- Date: 2026-08-14
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: POST-DEPLOY 기록. 문서 전용(코드 0).
+- Files: `docs/TEST.md` (18차 Run) · `docs/TASK.md`
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

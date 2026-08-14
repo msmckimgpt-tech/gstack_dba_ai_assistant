@@ -341,3 +341,14 @@ codex 2차 P2 반영으로 문자열 검사를 **실행 검사**로 교체했다
 | 8 | 원장 실제 행수 | — | `{'total_rows': 3, 'csv_paths': []}` |
 
 뮤테이션 **7종 전부 KILL**. 스위트 전체 green(0003·0023·0041).
+
+### Run 2026-08-14 (18차) — POST-DEPLOY (Environment: live · `956ae5e1`)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | `list_schemas` 대상 — 제품 datasource | `['dbo', 'DBZONE\\vaiorezzodz']` ✅ |
+| 2 | **첨부 샌드박스 노출** | **0건** ✅ (수정 전엔 목록에 나왔다) |
+| 3 | `execute_sql` 허용 DB | 통과 ✅ |
+| 4 | `execute_sql` 비허용 DB(`master`) | **차단** ✅ |
+| 5 | 응답 내 CSV 경로 | **없음** ✅ · 통계 `{'total_rows': 2, 'csv_paths': []}` |
+| 6 | `no upstreams available` | **0건** ✅ |

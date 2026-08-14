@@ -225,3 +225,4 @@ LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 
 - [x] 운영자 스위치 2종(`SQL_ENABLED`·`SQL_MAX_ROWS`) 콘솔 노출 + 실제 소비
 - [x] **스코프 결함 수정** — 단일 바인딩에서 memory DB 로 돌던 것을 제품 datasource 로
 - [x] codex P1×3·P2×3 + 자체 발견(ContextVar 누수) 전건 수정, 뮤테이션 7종 KILL
+- [x] POST-DEPLOY(`956ae5e1`) — 스코프 격리 복구·execute_sql 가드 6항 실측
