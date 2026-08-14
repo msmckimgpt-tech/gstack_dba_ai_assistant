@@ -10790,3 +10790,10 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 ### Requested Scope
 
 - 페이지네이션이 실제로 손에 닿는가 — ✓ (직전 cycle 이 남긴 도달 비용 해소).
+
+## TASK-20260814T104500-usage-sort-postdeploy — POST-DEPLOY 라이브 실측 기록 (docs-only)
+
+- [x] PB-0008 실 Windows Chrome 로 정렬 · 페이지네이션 · nav 정체성 · 키보드 포커스 · 페이저
+      가시성 전 축 실측 → TEST.md POST-DEPLOY Run 기록(시각 증거 `docs/evidence/` 첨부).
+- [x] 미검증 항목 명시 — 열 폭 재계산(≤4%, 이월) · 브라우저 콘솔 에러 미수집.
+- [x] REPORT.md 이월 항목 정리.

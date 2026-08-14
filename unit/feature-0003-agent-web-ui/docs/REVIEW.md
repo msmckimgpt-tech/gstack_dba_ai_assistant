@@ -5119,3 +5119,8 @@ doc-only(코드 0). 기록의 근거는 라이브 DB 조회와 실 Chrome 관측
   배경·경계선 부여와 마크업 순서로 처리하고 구조 테스트(L9)로 잠갔다.
 - 한계(정직): 실제 겹침·틈은 실 브라우저에서만 보인다. 배포 후 PB-0008 로 첫 화면 페이저 가시성과
   스크롤 끝 겹침을 재확인한다.
+
+## REV-20260814T104500-usage-sort-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+- Related TASK: feature-0003-agent-web-ui
+- Reason: changed paths are docs + evidence image only (no code, no policy doc)
+- Timestamp: 2026-08-14T10:45:00+09:00

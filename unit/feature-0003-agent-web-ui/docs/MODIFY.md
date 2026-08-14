@@ -4186,3 +4186,10 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - 무변경: 정렬·페이징 로직, 백엔드, 행 렌더.
 - 테스트: `tests/test_usage_records_sort_page.py` L9 신규(sticky·배경·마크업 순서) — 9 PASS.
   하네스 50 PASS 무회귀.
+
+## CHG-20260814T104500 사용 기록 정렬·페이지네이션 POST-DEPLOY 실측 기록 (docs-only)
+
+- 대상: `docs/TEST.md`(POST-DEPLOY Run — 정렬/페이지/nav/키보드/페이저 가시성 전 축 + 미검증 명시) ·
+  `docs/REPORT.md`(이월: 열 폭 재계산 ≤4% · profile 판 미적용) · `docs/TASK.md` · `docs/REVIEW.md` ·
+  `docs/evidence/pb0008-usage-pager-sticky-20260814.png`(첫 화면 페이저 시각 증거).
+- 코드 무변경.
