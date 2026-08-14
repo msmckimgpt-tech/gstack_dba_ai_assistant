@@ -2156,3 +2156,73 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Minor(문서 전용, 런타임 무영향).
 - Files: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) · `docs/TASK.md`.
 - Rollback Notes: 되돌리면 다음 audit 이 남지 않는 로그를 관측 근거로 삼는다.
+
+## CHG-20260814T183000-attach-change-signal-server-authority — 첨부 변경-인지 신호의 서버 권위 봉인
+
+- **왜**: `/_dqa:conversation_audit` 라이브 진단 `FR-attach-change-signal-client-only`. 선행 봉인
+  (`CHG-20260805T160000-attach-change-false-absence`)이 세운 변경-인지 4축이 전부 **하나의
+  클라이언트 신호**(`new_attachment_ids`)에 걸려 있었다. 그 값은 브라우저 in-memory pill 상태에서
+  나오므로 대화 전환·첨부 패널 조작·새로고침이면 사라지고, 비-브라우저 호출은 애초에 비어 있다.
+  그 순간 ★신규 라벨·FILE UPDATES diff·ATTACHMENT SET 권위 사실·리뷰어 digest 가 **동시에** 꺼지고
+  방금 v2 로 갱신한 파일이 오히려 `◆세션`(이전 세션에서 첨부)으로 **오라벨**된다 — 서버가 그
+  v1→v2 unified diff 를 이미 계산해 저장해 둔 채로. 60일 실측 **14 job / 14 대화**(버전 갱신 축
+  5/37), 1:1·그룹 양쪽(공유대화 전환은 판별자 아님 — rate 대조로 기각).
+- **무엇을**:
+  - `modules/runtime_backend.py` — `_PG_LOAD_PREV_TURN_ATTACHMENTS` + `PgRuntimeBackend.
+    load_prev_turn_attachment_ids()`. 직전 turn 이 전달받은 **서버 해소 스코프**를 기준선으로 준다.
+    현재 turn 은 **호출자가 준 job id** 로 식별하고(아래 `ask.py` 축), 직전 job 은 `conversation_id`
+    + `id < job_id` 의 최신 1건이다. `None`(기준선 없음: 첫 턴·job id 부재·스코프 키 없는 legacy
+    payload)과 `[]`(직전 턴 첨부 0건)을 구분한다 — 합치면 fork 로 복사된 첨부까지 "이번에 새로
+    왔다" 가 된다.
+  - `modules/ask.py` — 워커가 claim 한 job id 를 `_payload_to_kwargs(..., ask_job_id=job_id)` 로
+    실어 `run_agent` 까지 전달. agent_core 가 런타임 읽기로 자기 job 행을 되찾지 않게 하는 축이다.
+  - `agent_core.py` — `_derive_server_new_attachment_ids()` 신설, `_load_new_attachment_ids()` 를
+    **클라이언트 신호 ∪ 서버 파생**으로. 판정은 **첨부 id 단조성**(직전 턴 최대 id 초과) + 업로더가
+    사용자. 저장 시각을 쓰지 않아 시간축 왜곡에 비의존이고, 공유창 확대로 이제 보이게 된 옛 파일은
+    id 가 낮아 자동 제외된다. run 당 1회 계산 캐시(`_SERVER_NEW_ATTACHMENT_IDS_CTX`) + 현재 turn
+    식별자(`_ASK_JOB_ID_CTX`)를 run 경계에서 set/reset(워커 스레드 재사용 시 교차-대화 오라벨 차단).
+  - `unit/feature-0003-agent-web-ui/src/static/app/composer.js`(cross-ref) — 재수화가 **미전송**
+    신규 표식을 보존. 전송 성공 시 `new → session` 강등은 그대로라 보존 범위는 업로드~다음 전송으로
+    한정된다(영구 ★신규 과표시 없음).
+- **소비자 무변경**: 4축은 같은 함수를 호출할 뿐이라 렌더·사실 계산·리뷰어 경로에 diff 가 없다.
+  이것이 이 변경의 blast radius 를 가두는 축이다.
+- **보안 회귀 0**: 파생은 `_load_scoped_attachment_rows()` 가 이미 게이트를 통과시킨 행의
+  **부분집합에 라벨만** 붙인다 — 스코프 확대 없음, IDOR·share window·provenance 게이트 무변경.
+  침묵 계약(빈 값을 "첨부 없음" 으로 단정하지 않음)도 그대로다.
+- **사전 검증(구현 전, 60일 재생)**: 복구 6 job / 5 대화 · 기존 합치 43 · 침묵 유지 299 · 오탐 0.
+- **위험등급**: **Major §12.3**(코어 LLM 프롬프트 합성 경로) — 사용자 승인 후 구현
+  (AskUserQuestion 2026-08-14: "서버 + 프론트 표식 보존").
+- **적대 검증 교정(§18.8 codex 5+2 라운드, P1 5 · P2 7 전건 처리 → 최종 P1 0)**:
+  ① [P1] 초안은 현재 job 행을 `run_id` 로 되찾았는데 그 읽기는 RO 경로(비동기 replica 가능)라 방금
+  claim 된 자기 행이 안 보이면 기준선을 잃고 **봉인이 조용히 꺼진다** — 가장 필요한 순간에 무력화되는
+  구조. → 워커가 이미 아는 job id 직접 전달(`ask.py::_payload_to_kwargs(ask_job_id=…)`).
+  ② [P2] `COALESCE(payload->'attachment_ids','[]')` 가 **모르는 것(legacy·부분 payload)을 "직전 턴
+  첨부 0건" 이라는 양성 증거로** 승격시켜 `prev_max=0` → 전체 신규 오라벨. → `COALESCE` 제거.
+  ③ [P2] `run_id` 조회는 인덱스가 없어(완료 job 보존) 매 턴 seq scan 누적. → 대화 인덱스 + PK 범위.
+  ④ [P1] **그룹의 발신자별 스코프는 비교 불가** — 직전 job 이 다른 멤버의 것이면 그 `attachment_ids`
+  는 그 멤버의 스코프라, 내 옛 파일 id 가 그 멤버 최대 id 보다 크기만 하면 내가 아무것도 올리지 않은
+  턴에도 신규가 된다. → 기준선을 같은 `account_id` 로 한정, 없으면 파생 생략.
+  ⑤ [P2] `error`/진행 중 job 은 "그 첨부가 전달됐다" 는 증거가 아니다 → `status='done'` 제한.
+  ⑥ [P1] lazy-create 첨부가 early-cid 버킷으로 옮겨 가는데 강등이 sentinel 키만 봐서 **영구 ★신규**
+  가 된다(보존과 겹쳐 매 턴 재전송) → 강등 키를 **서버가 응답한 `payload.conversation_id`** 로.
+  ⑦ [P1] ⑥ 수정에 넣은 `state.activeConversationId` 가 **자기 회귀**였다 — A 의 응답을 기다리는 사이
+  B 로 옮겨 올린 파일의 ★신규를 A 의 응답이 지운다. → 이 요청에 고정된 키만.
+  ⑧ [P1] 버킷의 `new` 를 통째로 강등하면 응답 대기 중 올린(아직 안 보낸) 파일까지 잃는다 →
+  `askBody.new_attachment_ids` 에 실린 id 로만 강등.
+  ⑨ [P1] 큐 조회를 `AGENT_RUNTIME_READ_BACKEND`(히스토리 읽기 스위치)에 매달면 그 설정 하나로 봉인이
+  꺼진다 — ask 큐는 PG 에만 있다 → `_read_ask_queue_pg` 로 **토글과 분리**(라이브는 이미 postgres 라
+  동작 차이 없음; 설정 변경이 정확성 봉인을 끄지 못하게 하는 잠금).
+  **채택하지 않은 지적 2건**(근거는 REVIEW.md): 서버 파생을 '내 계정이 올린 행' 으로 제한(팀원의
+  갱신본 diff 를 감춰 봉인 목적에 반함) · payload 계약 버전 마커 도입(범위 확대, 오차 방향은 과표시).
+- Files: `unit/feature-0002-agent-core/src/agent_core.py` ·
+  `unit/feature-0002-agent-core/src/modules/runtime_backend.py` ·
+  `unit/feature-0002-agent-core/src/modules/ask.py` ·
+  `unit/feature-0002-agent-core/tests/test_attach_change_signal_server_authority.py`(신규 13) ·
+  `unit/feature-0002-agent-core/tests/test_ask_redeploy_handoff.py`(더블 arity 완화) ·
+  `unit/feature-0003-agent-web-ui/src/static/app/composer.js` ·
+  `unit/feature-0003-agent-web-ui/tests/test_attach_new_marker_survives_rehydration.py`(신규 3) ·
+  `unit/feature-0002-agent-core/docs/{TASK,FUNCTION,MODIFY,REVIEW}.md` ·
+  `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용).
+- Rollback Notes: `_load_new_attachment_ids()` 의 합집합 한 줄을 되돌리면 종전 동작으로 복귀한다
+  (파생 함수는 호출되지 않아 무해). 되돌리면 클라이언트 신호가 유실된 턴에서 갱신 파일이 다시
+  `◆세션` 으로 오라벨되고 서버가 가진 diff 가 프롬프트에서 빠진다.

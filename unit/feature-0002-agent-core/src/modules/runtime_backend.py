@@ -41,6 +41,7 @@ Method 그룹 매핑 (caller 위치 → ABC method):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -278,6 +279,51 @@ _PG_LOAD_BRANCH_STATE = """
 SELECT has_branches, active_leaf_message_id
 FROM agent_runtime.core_conversations
 WHERE conversation_id = %(conversation_id)s
+LIMIT 1
+"""
+
+# conv-audit FR-attach-change-signal-client-only: 직전 턴이 실제로 전달받은 첨부 스코프.
+# 이번 턴의 "새로 온 첨부" 판정을 **서버 기록만으로** 하기 위한 기준선이다. 기존 신호
+# (`new_attachment_ids`)는 브라우저 in-memory pill 상태(`source:"new"`)에서 나오는데, 대화 전환·
+# 첨부 패널 조작·새로고침이면 서버 목록으로 재수화되며 전부 `source:"session"` 으로 덮이고
+# (composer.js `_loadConversationAttachments`) 비-브라우저 호출은 애초에 비어 있다. 그 순간
+# ★신규 라벨·`## FILE UPDATES` diff·ATTACHMENT SET 사실 블록·리뷰어 digest 가 **한꺼번에** 꺼져,
+# 방금 v2 로 갱신된 파일이 오히려 "◆세션(이전 세션에서 첨부)" 로 오라벨된다.
+# `payload.attachment_ids` 는 web 이 **서버에서 해소한** 스코프라 클라이언트 상태에 의존하지 않는다.
+#
+# 현재 turn 은 **호출자가 준 job id** 로 식별한다(§18.8 codex [P1]). 종전 초안은 `run_id` 로 현재
+# job 행을 되찾았는데, 이 읽기는 RO 경로(비동기 replica 가능)라 방금 claim 된 자기 행이 아직 안
+# 보이면 기준선을 통째로 잃고 **봉인이 조용히 꺼졌다** — 정확히 이 마찰이 재발하는 경로다.
+# 직전 job 은 최소 한 턴 전에 만들어져 replica 지연과 무관하고, 조회도 `ix_ask_jobs_conv` +
+# PK 범위라 `run_id` 순차 스캔(codex [P2])이 없다.
+#
+# `COALESCE` 를 쓰지 않는다(codex [P2]): 키가 없거나 null 인 legacy/부분 payload 를 `[]` 로 바꾸면
+# 로더가 그것을 "직전 턴에 첨부가 0건이었다" 는 **양성 증거**로 읽어 이번 턴 스코프의 사용자 첨부를
+# 전부 신규로 라벨한다. 모르는 것은 모른다고 돌려준다(→ 파생 안 함).
+#
+# **직전 턴은 같은 발신자의 것이어야 한다**(§18.8 codex [P1]). 첨부 스코프는 요청 계정별로
+# 해소된다(공유창 [from,to] + 발신자 게이트) — 그룹에서 직전 job 이 다른 멤버의 것이면 그
+# `attachment_ids` 는 **그 멤버의** 스코프이고, 이번 행은 **내** 스코프다. 두 집합은 애초에
+# 비교 가능한 축이 아니라, 내가 오래전에 올려 둔 파일 id 가 그 멤버의 최대 id 보다 크기만 하면
+# (예: 내 5000 vs 그 멤버 4000) 내가 아무것도 올리지 않은 턴에도 그 파일이 "이번 턴 신규" 가
+# 된다 — 낡은 diff 와 ★신규 사실이 턴마다 재주입된다. 그래서 기준선은 **같은 account 의 직전
+# job** 으로 좁히고, 그런 job 이 없으면(그룹에서 내가 처음 묻는 턴) 비교 가능한 기준선이 없는
+# 것이므로 `None` 을 돌려 파생을 건너뛴다 — 클라이언트 신호 단독으로 종전 동작.
+#
+# **완료된 턴만 기준선이 된다**(§18.8 codex round4 [P2]). `error` 로 끝났거나 아직 진행 중인 job 의
+# payload 는 "그 첨부가 실제로 모델에 전달됐다" 는 증거가 아니다. 그걸 기준선으로 삼으면 그 id 들이
+# `prev_max` 이하로 들어가 **다음 턴에서 제외**되고, 프론트 표식마저 그 응답에서 강등됐으면 ★신규와
+# FILE UPDATES 가 다시 통째로 빠진다 — 봉인하려던 마찰이 실패 턴 뒤에 그대로 재현된다. 전달되지
+# 않은 턴을 건너뛰면 기준선이 한 턴 더 과거가 되어 이미 전달된 첨부가 한 번 더 ★신규로 잡힐 수는
+# 있으나, 그 방향(과표시)은 봉인 대상(미표시)보다 훨씬 덜 해롭다.
+_PG_LOAD_PREV_TURN_ATTACHMENTS = """
+SELECT payload->'attachment_ids'
+FROM agent_runtime.ask_jobs
+WHERE conversation_id = %(conversation_id)s
+  AND account_id = %(account_id)s
+  AND status = 'done'
+  AND id < %(job_id)s
+ORDER BY id DESC
 LIMIT 1
 """
 
@@ -849,6 +895,62 @@ class PgRuntimeBackend:
             return {"has_branches": False, "active_leaf_id": None}
         return {"has_branches": bool(row[0]), "active_leaf_id": row[1]}
 
+    def load_prev_turn_attachment_ids(
+        self, conn: Any, *, conversation_id: str, job_id: int, account_id: int,
+    ) -> list | None:
+        """**같은 발신자의** 직전 턴이 전달받은 첨부 id 목록(서버 해소본).
+
+        `job_id` = **현재** turn 의 ask job id. `account_id` = 현재 요청 계정 — 첨부 스코프가
+        계정별로 해소되므로 기준선도 같은 계정의 것이어야 비교 가능하다(§18.8 codex [P1]).
+
+        반환:
+          - `list[int]` — 같은 계정의 직전 턴이 있고 그 스코프를 읽었다.
+          - `None`      — **판정 근거 없음**: 이 계정의 첫 턴(그룹에서 내가 처음 묻는 턴 포함)
+                          이거나, 현재 job id·account 를 모르거나(web inproc·CLI·테스트),
+                          직전 payload 에 스코프 키가 없다(legacy). 호출측은 이때 파생하지
+                          않고 클라이언트 신호만 쓴다.
+
+        `None` 과 `[]` 는 다른 뜻이다 — `[]` 는 "직전 턴은 있었고 그때 첨부가 0건이었다" 라서
+        이번 턴 첨부가 전부 신규라는 **양성 정보**다. 둘을 합치면 첫 턴(fork 포함)에서 복사된
+        히스토리의 첨부까지, 또는 legacy payload 뒤의 모든 첨부까지 "이번에 새로 왔다" 고 말한다.
+        """
+        try:
+            job_id_int = int(job_id or 0)
+            account_id_int = int(account_id or 0)
+        except (TypeError, ValueError):
+            return None
+        if not conversation_id or job_id_int <= 0 or account_id_int <= 0:
+            return None
+        with conn.cursor() as cur:
+            cur.execute(
+                _PG_LOAD_PREV_TURN_ATTACHMENTS,
+                {
+                    "conversation_id": str(conversation_id),
+                    "job_id": job_id_int,
+                    "account_id": account_id_int,
+                },
+            )
+            row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        raw = row[0]
+        if isinstance(raw, str):  # jsonb auto-parse 미적용 드라이버 대비
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                return None
+        if not isinstance(raw, list):
+            return None
+        out: list[int] = []
+        for v in raw:
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                continue
+            if iv > 0:
+                out.append(iv)
+        return out
+
     def set_active_leaf(self, conn: Any, *, conversation_id: str, leaf_id: int) -> None:
         """feature-0019: 정상 append 후 활성 브랜치 leaf 를 전진(has_branches 대화만 호출)."""
         with conn.cursor() as cur:
@@ -1126,6 +1228,45 @@ def _read_runtime_pg(method_name: str, **kwargs):
         logger.warning(
             "runtime_read_pg_fallback: method=%s error=%s",
             method_name, str(exc)[:200],
+        )
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _read_ask_queue_pg(method_name: str, **kwargs):
+    """`agent_runtime.ask_jobs`(작업 큐) 전용 PG read — **읽기 백엔드 토글과 무관**.
+
+    `AGENT_RUNTIME_READ_BACKEND` 는 *대화 히스토리*(messages/summary/kv)를 MySQL 에서 읽을지
+    PG 에서 읽을지를 고르는 스위치다. 그런데 ask 큐는 **PG 에만 있고 MySQL 대응물이 없다** —
+    워커가 job 을 claim 하는 그 테이블이다. 그래서 큐 조회를 그 토글에 매달면, 히스토리 읽기
+    경로를 MySQL 로 돌리는 순간 첨부 변경-인지 봉인이 **조용히 꺼진다**(§18.8 codex round6 [P1]).
+    "봉인이 소리 없이 무력화되는 경로를 만들지 않는다" 는 이 cycle 의 R1 교정과 같은 원칙이라,
+    큐 읽기는 토글을 보지 않고 PG 연결 가용성만 본다. 연결이 없으면 fail-soft(`None`).
+
+    (2026-08-14 라이브는 web·ask-worker 모두 `AGENT_RUNTIME_READ_BACKEND=postgres` 라 현재
+     동작 차이는 없다 — 이 분리는 설정 변경이 정확성 봉인을 끄지 못하게 하는 잠금이다.)
+    """
+    conn = _get_pg_runtime_conn_ro()
+    if conn is None:
+        return None
+    backend = _get_pg_runtime_backend()
+    method = getattr(backend, method_name, None)
+    if method is None:
+        logger.error("_read_ask_queue_pg: unknown method %s", method_name)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
+    try:
+        return method(conn, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "ask_queue_read_pg_fallback: method=%s error=%s", method_name, str(exc)[:200],
         )
         return None
     finally:

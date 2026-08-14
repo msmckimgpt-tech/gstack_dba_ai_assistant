@@ -566,3 +566,40 @@ SECURITY §47.4 가 수용 위험으로 남긴 confused-deputy 경로를 **실�
   **"이번 턴에 타 멤버 첨부 본문이 새로 실렸는가"** 이며 히스토리 축은 프롬프트 계약이 담당한다.
 - **owner 키 부재 과도기**: 구 web payload 를 신 worker 가 읽는 짧은 창에서 fail-open. web 선롤링
   으로 창이 짧고, 막는 쪽은 그 동안 1:1 사용자까지 차단하므로 현행 유지.
+
+## 20260814T183000-attach-change-signal-server-authority — 첨부 변경-인지 신호의 서버 권위 봉인 (Major §12.3)
+
+`/_dqa:conversation_audit` 라이브 진단 `FR-attach-change-signal-client-only`. 변경-인지 4축이 전부
+브라우저 in-memory pill 에서 나오는 **단일 클라이언트 신호**에 걸려 있어, 대화 전환·첨부 패널 조작·
+새로고침이면 4축이 동시에 꺼지고 방금 v2 로 갱신한 파일이 오히려 `◆세션` 으로 오라벨됐다(60일
+**14 job / 14 대화**). 이제 판정은 **클라이언트 신호 ∪ 서버 파생**이고, 어느 한쪽의 유실이 사실을
+지우지 못한다. 프론트는 재수화가 미전송 신규 표식을 보존한다(cross-ref feature-0003).
+
+- 정본 계약·AC: `FUNCTION.md` (attach-change-signal-server-authority, AC-1~7)
+- 변경 이력: `CHG-20260814T183000-attach-change-signal-server-authority`
+- 적대 검증: `REV-20260814T183000-attach-change-signal-server-authority`
+  (`[CODEX:adversarial-backend-qa-security]`, 5+2 라운드 · P1 5 · P2 7 → 최종 P1 0)
+- 마찰 원장: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`
+  → `FR-attach-change-signal-client-only` = `fixed:undeployed`
+
+### Git 동기화 결과
+
+- 커밋: `<pending>` (`ai/claude/feature-0002-agent-core`)
+- verify-completion: PASS (재시도 0회)
+- Push: 완료
+- main 병합: **보류 — Major(§12.3) 라 PR 생성·머지·배포가 사람 승인 대상**(conversation_audit
+  불변 제약: Major/Critical 은 `deploy_scope: included` override 와 무관하게 confirm)
+- 충돌 해결: 없음
+
+### 잔여 (§8.1 — 기록만)
+
+- **공유창 확대로 이제 보이는 옛 파일의 과표시**: id 단조 판정의 잔여 오차. 시각으로 교정하려면
+  두 DB(첨부=agent memory / job=runtime PG) 타임스탬프를 비교해야 하고 그것이 정확히
+  `FR-attachment-created-at-tz-skew-9h` 가 물린 축이라, tz 비의존을 지키고 오차 방향(과표시 —
+  봉인 대상인 미표시보다 덜 해롭다)을 수용했다. FUNCTION.md AC-2 에 명시.
+- **계약 이전 대화의 legacy `[]` 기준선**: 배포 후 첫 턴에 기존 첨부가 과표시될 수 있으나 한 턴 뒤
+  자기 치유. payload 스키마 버전 마커 도입은 범위 확대라 채택하지 않았다(REVIEW.md 근거).
+- **업로드→삭제→복구 사이의 표식 유실**: 선재 갭이며 이번 변경의 회귀가 아니다. 같은 계정 직전
+  턴이 있으면 서버 파생이 덮고, 없는 경우(첫 턴)만 남는다.
+- **라이브 실측 미수행**: 코드/테스트/PB-0008 은 "봉인이 의도대로 동작한다" 까지만 증명한다.
+  실제 대화에서 변경 미인지가 사라졌는지는 배포 후 다음 audit 의 corroboration 재측정 대상.

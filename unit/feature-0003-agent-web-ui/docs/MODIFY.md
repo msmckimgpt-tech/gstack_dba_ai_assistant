@@ -4334,3 +4334,23 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - **[P2] versions 빈 배열 역참조** — 계보만으로 진입하면 `list[last].original_filename` 에서 예외.
   → 계보 head 파일명 폴백.
 - 회귀 고정: 위 5축 전부 하네스에 추가(E1~E6) → **24 PASS**.
+
+## CHG-20260814T183000-attach-new-marker-rehydration (cross-ref) — 재수화가 미전송 신규 표식을 보존
+
+- feature-0002 의 `CHG-20260814T183000-attach-change-signal-server-authority`(conv-audit
+  `FR-attach-change-signal-client-only`, Major §12.3)의 프론트 축. `composer.js::
+  _loadConversationAttachments` 가 버킷을 서버 목록으로 재구성할 때 전 항목을 `source:"session"`
+  으로 덮어, 방금 올린 파일의 ★신규 표식이 사라지고 다음 전송의 `new_attachment_ids` 가 비었다
+  (그 결과 프롬프트에서 갱신 파일이 "◆세션" 으로 오라벨). 이제 **아직 전송하지 않은** 신규 표식만
+  보존한다 — 전송 성공 시 `new → session` 강등(:2836)은 그대로라 과표시로 뒤집히지 않는다.
+- **전송 강등도 같은 cycle 에서 교정**(§18.8 codex, P1 3건): 강등 대상 키는 **서버가 응답한
+  `payload.conversation_id`**(+ `askKey`/`targetConvId`)이고, 강등 범위는 **이 요청이 실제로 실어
+  보낸 id**(`askBody.new_attachment_ids`)뿐이다. sentinel 키만 보면 lazy-create 첨부가 영구 ★신규가
+  되고, 응답 시점의 `state.activeConversationId` 를 쓰면 **다른 대화의** 미전송 표식을 지우며,
+  버킷 전체를 내리면 응답 대기 중 올린 파일을 잃는다 — 보존(P1)과 강등(P2)은 같은 키·같은 스냅샷
+  위에서만 쌍으로 성립한다.
+- 정본 계약·AC 는 feature-0002 `FUNCTION.md` (attach-change-signal-server-authority)
+  AC-20260814T183000-attach-signal-6. 구조 가드:
+  `unit/feature-0003-agent-web-ui/tests/test_attach_new_marker_survives_rehydration.py`(**7 PASS**,
+  뮤테이션 KILLED). PB-0008 라이브: `docs/test-runs.d/REV-20260814T183000-attach-change-signal.md`.
+- Files: `src/static/app/composer.js` · `tests/test_attach_new_marker_survives_rehydration.py`.

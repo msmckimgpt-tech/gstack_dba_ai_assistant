@@ -5274,3 +5274,16 @@ doc-only. 라이브 드로어 폭 6단계 실측으로 선행 두 커밋의 이�
   D 배선/구조 6 · **E 적대리뷰 반영 6**) · `test_attach_version_branching.py` 14 PASS.
 - 한계(정직): jsdom 은 레이아웃·픽셀을 보지 못한다. 토글이 좁은 폭에서 접히는지, 축 전환 시 표가
   튀지 않는지는 **배포 후 PB-0008** 대상이다.
+
+## REV-20260814T183000-attach-new-marker-rehydration [CODEX:cross-ref] — 재수화 보존 + 전송 강등 (프론트 축)
+
+- Related Change: `CHG-20260814T183000-attach-new-marker-rehydration`(cross-ref) — 정본 판정·라운드
+  전문은 feature-0002 `REV-20260814T183000-attach-change-signal-server-authority`.
+- Trigger: §18.8 — 프론트 축이 같은 changeset 에 포함(`composer.js`). 적대 검증은 changeset 전체를
+  대상으로 codex 5 라운드로 집행했고, 그중 프론트 지적 4건(R2 [P1] lazy-create 강등 누락 · R4 [P1]
+  응답 시점 활성 대화 오강등 · R5 [P1] 전송 스냅샷 밖 id 강등 · R1 계열 없음)을 전건 수정했다.
+- Verdict: **PASS** · Timestamp: 2026-08-14T19:55:00+09:00
+- 검증: 구조 가드 **7 PASS**(뮤테이션 KILLED) + **PB-0008 라이브**
+  (`docs/test-runs.d/REV-20260814T183000-attach-change-signal.md`) — 1턴 `[1203]` → 2턴 `[]` →
+  대화 전환 왕복 후 `[1204]`. 라이브 서비스 무접촉(격리 컨테이너), 검증 대화·첨부는 삭제 완료.
+- Human Approval Needed: 아니오 (구현 범위 승인 완료 · PR/배포는 feature-0002 cycle 에서 confirm).

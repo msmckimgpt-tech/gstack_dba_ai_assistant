@@ -1012,6 +1012,18 @@ async function _loadConversationAttachments(convId) {
     const bucket = _ensureComposerBucket(String(convId));
     // Backend 의 ready 첨부만 default selected. uploading/failed 등 client-only pill 은 보존 (다른 컨텍스트에서 들어왔을 가능성 낮음).
     const serverIds = new Set(arr.map((a) => Number(a.id)));
+    // conv-audit FR-attach-change-signal-client-only: **아직 전송하지 않은** 신규 표식은 보존한다.
+    // 이 함수는 서버 목록으로 버킷을 통째 재구성하는데, 종전엔 전부 source:"session" 으로 덮어
+    // 방금 올린 파일의 ★신규 표식이 사라졌다 — 대화를 잠깐 옮겼다 돌아오거나 첨부 패널에서
+    // 삭제·복구만 해도 그렇다. 그러면 다음 전송의 new_attachment_ids 가 비고, 갱신된 파일이
+    // 프롬프트에서 "◆세션(이전 세션 첨부)" 로 오라벨돼 assistant 가 변경을 놓친다.
+    // (서버측에도 독립 봉인이 있다 — agent_core `_derive_server_new_attachment_ids`. 여기서는
+    //  같은 페이지 세션 안의 유실만 막는다. 새로고침으로 버킷 자체가 사라지는 경우는 서버가 덮는다.)
+    const keepNewIds = new Set(
+      (bucket.items || [])
+        .filter((it) => Number(it.id) > 0 && it.source !== "session")
+        .map((it) => Number(it.id)),
+    );
     bucket.items = bucket.items.filter((it) => Number(it.id) <= 0); // local optimistic 만 보존
     for (const a of arr) {
       bucket.items.push({
@@ -1021,7 +1033,7 @@ async function _loadConversationAttachments(convId) {
         size: Number(a.size || 0),
         status: String(a.status || "ready") === "deleted" ? "failed" : "ready",
         selected: true,
-        source: "session",
+        source: keepNewIds.has(Number(a.id)) ? "new" : "session",
       });
     }
     _renderAttachmentPills();
@@ -2816,12 +2828,39 @@ async function sendPrompt() {
     // 처리 중 사용자가 새로 친 텍스트를 응답 도착 시 삭제하지 않도록).
     // UX-COMPACT: 전송 성공 시 new → session 전환 (버킷 유지 — 세션 컨텍스트 보존).
     // 파일은 삭제하지 않고 source 만 변경해 다음 요청에도 LLM 이 참조 가능하게 한다.
-    const _clearKey = isLazyCreate
-      ? (busyKey ? String(busyKey) : "")
-      : String(targetConvId || "");
-    if (_clearKey && state.composerAttachments.byConv[_clearKey]) {
-      state.composerAttachments.byConv[_clearKey].items.forEach((it) => {
-        if (it.source !== "session") it.source = "session";
+    // 강등 대상의 **정본은 서버가 응답한 conversation_id** 다 — 이 요청이 실제로 어느 대화로
+    // 갔는지는 서버만 확정한다. 종전엔 lazy-create 에서 sentinel 키만 강등했는데, 첨부는 그
+    // 사이에 발급된 early-cid 버킷으로 옮겨 가 있다(업로드 시점 발급 = `_uploadAttachment`,
+    // 전송 시점 발급 = `_flushStagedAttachmentsToCid` — **두 경로 모두**). 그래서 실제 파일이 든
+    // 버킷이 `new` 로 남는다. 종전엔 재수화가 전 항목을 `session` 으로 덮어 이 누락이 가려졌지만,
+    // 재수화 보존(FR-attach-change-signal-client-only 프론트 축)을 넣는 순간 그 파일이
+    // **영구 ★신규**가 되어 이후 **모든** 턴에 `new_attachment_ids` 로 재전송되고 ★신규 라벨과
+    // 낡은 FILE UPDATES diff 가 매 턴 재주입된다 — 보존(P1)과 강등(P2)은 **쌍으로만** 성립하며,
+    // 그 쌍은 *같은 키* 위에서만 성립한다. 이 결함은 코드 판독(§18.8 codex [P1]→[P2])으로
+    // 잡혔고, 수정본은 PB-0008 라이브(2026-08-14, lazy-create 경로)에서 1턴 `[1202]` →
+    // **2턴 `[]`** + pill `session` 강등으로 확인했다.
+    // (abort controller 도 같은 이유로 askKey 를 쓴다 — MEDIUM-1.)
+    // ⚠ 강등은 `/api/ask` **응답 시점**에 일어난다 — 직전 턴이 끝나기 전에 다음 턴을 보내면
+    //   같은 id 가 다시 실리는 것이 정상이다(그 시점엔 아직 전송 성공이 아니다). 이 타이밍을
+    //   결함으로 오독하지 말 것(실측 중 실제로 한 번 오독했다).
+    // ⚠ 키는 **이 요청에 고정된 것만** 쓴다 — `state.activeConversationId` 를 넣으면, A 의 응답을
+    //   기다리는 동안 사용자가 B 로 옮겨 파일을 올린 경우 A 의 응답이 **B 의 미전송 ★신규를**
+    //   강등해 바로 이 봉인이 막으려던 미인지를 되살린다(§18.8 codex round4 [P1]).
+    //   업로드 시점에 early-cid 가 발급된 경로는 `payload.conversation_id` 가 이미 덮는다.
+    const _clearKeys = [
+      String(payload.conversation_id || ""),      // 정본: 서버가 확정한 이 요청의 대화
+      askKey ? String(askKey) : "",               // early-cid 가 전송 시점에 활성화된 경로
+      isLazyCreate ? (busyKey ? String(busyKey) : "") : String(targetConvId || ""),
+    ];
+    // 강등 대상은 **이 요청이 실제로 실어 보낸 id** 뿐이다(§18.8 codex round5 [P1]). 버킷의
+    // `new` 를 통째로 내리면, 응답을 기다리는 사이 같은 대화에 새로 올린 파일까지 "전송됨" 으로
+    // 강등돼 그 파일의 ★신규가 다음 요청에서 사라진다 — 재수화 보존도 `session` 을 그대로
+    // 유지하므로 봉인하려던 미인지가 그 파일에서 되살아난다.
+    const _sentNewIds = new Set((askBody.new_attachment_ids || []).map(Number));
+    for (const _k of new Set(_clearKeys)) {
+      if (!_k || !state.composerAttachments.byConv[_k]) continue;
+      state.composerAttachments.byConv[_k].items.forEach((it) => {
+        if (it.source !== "session" && _sentNewIds.has(Number(it.id))) it.source = "session";
       });
     }
     _renderAttachmentPills();
