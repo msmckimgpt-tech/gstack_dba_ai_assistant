@@ -1745,3 +1745,52 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
     PG 가 쿼리를 거부 → `_read_runtime_pg` 예외 흡수 → fail-open 저장. FakeConn 테스트가 실 SQL 을
     실행하지 않아 못 잡았다(적대 리뷰 P2 로 이미 지적됐던 공백). 수정
     `CHG-20260730T172000-dedup-param-cast`(`::text`/`::bigint` 캐스트 + 실 PG 5케이스 검증).
+
+## FR-attach-change-signal-client-only — fixed:undeployed (L1↔L7; 변경-인지 4축이 단일 클라이언트 신호에 걸려 갱신 파일이 "이전 세션 첨부" 로 오라벨)
+
+- **status**: `fixed:undeployed` — 코드/테스트/적대검증/PB-0008 완료, **배포 전**(Major → PR·deploy
+  사람 승인 대기).
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-14) — "`수정된 랭킹 쿼리 코드
+  재검토` — assistant 가 첨부파일의 변경사항을 제대로 인지하지 못하는 현상이 간헐적으로 나타난다.
+  특이사항: 추론 실행 중 해당 대화를 공유대화로 전환했다."
+- **last_seen**: 2026-08-14 · **seen_count**: 1 · **seen_distinct_conv**: 14 (60일 구조 축)
+- **modality**: 1:1 · **conv(마스킹)**: `…f72f26ef` 2차 turn · job 685
+- **symptom_confidence**: high (사용자 보고 + 라이브 DB 실측)
+  · **rootcause_confidence**: high (코드 file:line + 라이브 DB + 60일 전사 **삼각측량**)
+- **suspected_layers**: **L1**(프롬프트 사실 조립) ↔ **L7**(클라이언트 상태 표면). 인프라 아님.
+- **근본(RC-1)**: 변경-인지 4축(★신규 라벨 · `## FILE UPDATES` diff · ATTACHMENT SET 권위 사실 ·
+  red-team digest)이 전부 `agent_core._load_new_attachment_ids()` 하나에 걸려 있고, 그 값은 브라우저
+  in-memory pill(`source:"new"`)에서 온다. 대화 전환·첨부 패널 조작·새로고침이면 서버 목록 재수화로
+  사라지고(비-브라우저 호출은 애초에 빔) 4축이 **동시에** 꺼진다. 그 순간 방금 v2 로 갱신한 파일이
+  오히려 `◆세션`(이전 세션에서 첨부)으로 **오라벨**된다 — 서버가 그 v1→v2 unified diff 를 이미
+  계산·저장해 둔 채로(관측 job: 1013 / 1992 / 480자).
+- **corroboration**: **structural** — 60일 이번-턴 업로드가 있는데 신호가 빈 job **14건 / 14 대화**,
+  버전 갱신 축 **5/37 = 13.5%**. 1:1 6.8% vs 그룹 15%.
+- **거짓양성 기각(refuted)**: ① "업로드가 스코프에 안 들어갔다" → 해당 15개 첨부 전부
+  `payload.attachment_ids` 에 실려 있었다(라벨만 빠짐). ② **"공유대화 전환이 원인"** → 사용자가 지목한
+  축이지만 1:1·그룹 **양쪽에서 발생**해 판별자가 아니다(rate 대조로 기각). ③ "08-05 봉인이 이미
+  덮는다" → 그 봉인은 신호가 **있을 때** 동작하며 빈 신호에서는 설계상 침묵한다(그 침묵 자체는 옳다).
+  즉 회귀가 아니라 선행 봉인의 **미도달 구멍**.
+- **정직**: affected set 의 최종 답변에서 **명시적 부재 단정은 0건**이다 — 관측 대화에서도 모델이
+  `read_attachment` 4회로 복구했다(22분 소요, diff 를 스스로 재구성). 확정된 오답이 아니라
+  **입력 저하 + 봉인 미도달**로 기록한다. 그 시각 클라이언트 wipe 트리거는 웹 컨테이너 재시작
+  (16:49)으로 액세스 로그가 소실돼 직접 관측하지 못했다(경로는 코드로 확정).
+- **사전 검증(구현 전, 60일 재생)**: 복구 6 job / 5 대화 · 기존 합치 43 · 침묵 유지 299 · 오탐 0.
+  관측 turn 에서 정확히 `{1187,1188,1189}` 복원.
+- **disposition 근거**: Major(§12.3 코어 LLM 프롬프트 합성) → attended plan → 사용자가
+  **"서버 + 프론트 표식 보존"** 명시 선택(AskUserQuestion 2026-08-14).
+- **fix**: `CHG-20260814T183000-attach-change-signal-server-authority`(TASK-20260814T183000) /
+  **코드 거주 `feature-0002-agent-core`**(+ `feature-0003-agent-web-ui` cross-ref) /
+  `REV-20260814T183000-attach-change-signal-server-authority`
+  (§18.8.2 제약-없는-채널 우선 → codex 적대 **5 라운드**, P1 4 · P2 7 → 최종 P1 0건).
+- **rc_ids**: RC-1(단일 클라이언트 신호 의존) · **batch-id**: B-20260814T183000-attach-change-signal
+- **범위 밖(수용·deferred)**: ① 공유창 확대로 이제 보이는 옛 파일의 과표시 — id 단조 판정의 잔여
+  오차, tz 비의존을 지키려 수용(FUNCTION.md AC-2 명시). ② 계약 도입 이전 대화의 legacy `[]` 기준선 —
+  첫 턴 과표시 가능, 한 턴 뒤 자기 치유. ③ 업로드→삭제→복구 사이의 표식 유실 — 선재 갭이며 이번
+  변경의 회귀가 아니다(같은 계정 직전 턴이 있으면 서버 파생이 덮는다).
+- **라이브 실측 필요분(§정직)**: 코드/테스트/PB-0008 은 "봉인이 의도대로 동작한다" 까지만 증명한다.
+  **"실제 대화에서 변경 미인지가 사라졌는지"** 는 배포 후 실측분(미수행) → 다음 audit 이
+  corroboration(이번-턴 업로드가 있는데 신호가 빈 job 비율 = 배포 전 기준선 **14건/14 대화**,
+  버전 갱신 축 **5/37**)을 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+- **필요한 사람 액션(1줄)**: **PR 생성·머지·배포 승인**(Major 는 override 불가 — §12.3). 배포 후
+  `/_dqa:doc_sync` 권유.
