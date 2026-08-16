@@ -3206,3 +3206,9 @@ POST-DEPLOY 확인 축 4건 — 전부 실측:
 대화를 재사용했다가 그 대화가 **공유방**이라 질의가 AI ask 가 아니라 그룹 채팅 메시지로 나간
 함정을 만났고(단계 0 → 축 ③ 검증 불가), 그때 남은 깨진 문장은 같은 세션에서 정정했다.
 ①②④ 는 읽기 전용(기존 대화 열람)이라 데이터 변경 0.
+
+## TASK-20260817T010301-doc-sync-rn-0817 — 릴리즈노트 2026-08-16 · 2026-08-14 블록 신규 prepend(18항목) (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`)의 **배열 앞단 블록 추가 + `generated` 문자열 교체**만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다(신규 블록은 기존 블록과 동일 스키마라 렌더 경로가 종전과 같고, 그룹 렌더·접힘·필터는 데이터 개수에서 파생된다). 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(블록 48→50 · 신규 head 2블록 date/items · 기존 48 블록 **바이트 동일** · type/area enum 위반 0 · 스키마 외 키 0 · `generated`==head.date) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 동일 = 회귀 0, jsdom 이 실제 DOM 출력·그룹 수·접힘 기본값·필터 카운트·XSS 이스케이프를 검증한다).
+- `node --check src/static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(이 env 에서 편집 전·후 두 번 실측). 구조: `releases` 48→50, `generated`=="2026-08-16"==`releases[0].date`, `releases[0]`(2026-08-16) items 1(work 1), `releases[1]`(2026-08-14) items 17(work 11 · admin 3 · common 3), 기존 48 블록 바이트 동일, type/area enum 위반 0, 스키마 외 키 0, date 내림차순 정상(말미 `label` 블록은 설계상 정상), 내부용어 누출 0(19축 정규식).
+- 라이브 파리티 실측(배포 게이트 확증): 편집 **전** 서빙 static(`https://localhost/static/release-notes-data.js`)이 브랜치 blob 과 sha 정확 일치, 라이브 컨테이너 6종(web-a·web-b·ask-worker·insight-worker·ops-scheduler·ext-tool-mcp) 전부 `:6c7413cf`(= HEAD = origin/main), `/healthz` 200, 서빙 index.html 의 캐시버스터 `?v=7e6a0de6e2c6`(빌드 주입 해시 — 소스 placeholder `?v=dev` 유지).
+- **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).

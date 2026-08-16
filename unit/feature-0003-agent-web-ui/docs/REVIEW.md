@@ -5328,3 +5328,24 @@ P3 6 중 3 반영). 선례: `REV-20260814T120000-profile-sort-postdeploy [SKIPPE
   (`docs/test-runs.d/REV-20260814T183000-attach-change-signal.md`) — 1턴 `[1203]` → 2턴 `[]` →
   대화 전환 왕복 후 `[1204]`. 라이브 서비스 무접촉(격리 컨테이너), 검증 대화·첨부는 삭제 완료.
 - Human Approval Needed: 아니오 (구현 범위 승인 완료 · PR/배포는 feature-0002 cycle 에서 confirm).
+
+## REV-20260817T010301-doc-sync-rn-0817 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-08-16 · 2026-08-14 블록 신규 prepend(18항목) doc_sync 정합
+
+- Related TASK: feature-0003-agent-web-ui / `20260817T010301-doc-sync-rn-0817`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + 그 companion 문서).
+- Timestamp: 2026-08-17T01:03:01+09:00
+- Human Approval Needed: no
+
+- **타깃별 실질 검증**: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 34/0 동일 = 회귀 0) · 구조 단언(블록 48→50 · `releases[0].date`=="2026-08-16" items 1 · `releases[1].date`=="2026-08-14" items 17 · `generated`==`releases[0].date` · 기존 48 블록 **바이트 동일**(편집 전 파일과 `date: "2026-08-13"` 이후 tail 정확 일치) · type/area enum 위반 0 · 스키마 외 키 0 · date 내림차순 정상 — 말미 `label` 블록은 선재 설계상 정상).
+- **블록 date 판정**: 델타 창(`6d4fdd87`..HEAD) 어떤 커밋도 `release-notes-data.js` 를 건드리지 않아 편집 전 top 블록이 `date: "2026-08-13"` · `generated: "2026-08-13"` 이었다 → 직전 run 이 적용한 "owning feature self-add 블록에 append" 규칙은 성립하지 않고 **신규 블록**이다. 배포일이 08-14(담당 55커밋)·08-16(`a639272c`·`65c34fff`) 둘이므로 블록도 2개로 갈랐다. `a639272c` 는 author-date 08-14 이나 committer-date·머지(PR #1315 → main `0f784df3`)·배포가 모두 08-16 이라 정본 `unit/feature-0002-agent-core/docs/REPORT.md` 의 배포 기록으로 교차확인해 **rnDate=2026-08-16** 으로 확정했다.
+- **배포 게이트 = 물리 실측으로 판정**(정본 문면이 아니라 라이브): 컨테이너 6종 전부 `:6c7413cf` = HEAD = origin/main 이므로 18항목의 근거 커밋 전건이 배포본에 포함. 서빙 static sha 파리티 정확 일치 · `/healthz` 200 → **유보 항목 0**.
+- **정본 재확인으로 걸러 낸 허위 위험 3건**(누락이 허위보다 낫다):
+  - 정본이 **서로 다른 두 사건에 동일한 '23분'** 을 기록한다 — `unit/feature-0002-agent-core/docs/FUNCTION.md:575`(조기 종료: 45초 폴링 × 23분, 사용자 수동 취소) 와 `:1176`(상한 초과 폐기 후 재시도 성공까지 23분). 두 항목에 같은 수치를 실으면 같은 사건의 중복 서술로 읽히므로 스트리밍 항목에만 남기고 조기 종료 항목은 수치 없이 "직접 취소하실 때까지" 로 적었다.
+  - **첨부 `CreatedAt` 로컬→UTC 전환(`7ed68803`)은 사용자향 항목에서 제외**. 정본 TASK 의 적대 리뷰 ④ 가 "저장만 UTC 로 옮기면 화면 시각이 9시간 이르게 뜬다 → 전송 계약도 함께 이동" 을 같은 커밋에서 처리했으므로 **화면 표시 시각은 수정 전후가 동일**하다. 해소된 것은 라이브 모순 행 234건 등 내부 정합이고 사용자 보고도 없다.
+  - **surge 교대 배포(`d1501b68` 계열)의 '배포 중 진행 중이던 답변이 완주한다'** 는 정본 POST-DEPLOY 가 "배포 시점 running=0(유휴)이라 그 궤적은 아직 미관측 · 내려간 본체는 구 이미지라 구 drain 시맨틱으로 동작" 이라고 **미관측을 명시**했다. 라이브 실증되지 않은 체감 주장이라 제외.
+- **선행 블록과의 중복 회피**: ⑨(타 멤버 첨부 본문 턴의 작업공간 쓰기 제한)는 2026-08-13 블록의 "다른 사람이 올린 파일의 내용은 지시가 아니라 자료로만 다루도록 못박았습니다" 와 **다른 층**(프롬프트 계약 vs 도구 실행 차단)이므로 별도 항목으로 두되 그 문면을 재서술하지 않았다. 이미지·csv/xlsx 축 확장(`582001db`/`88ad8619`)은 같은 게이트의 커버리지 확장이라 별도 항목이 아니라 ⑨ 의 한 문장으로 흡수했다. 08-16 항목은 2026-08-05 블록의 "이어받은 대화에서 새로 올린 첨부 파일을 '변경된 것이 없다'고 답하던 문제" 의 **후속 층**(그 봉인의 4축이 전부 클라이언트 신호 하나에 걸려 있었다)이므로 증상 조건(대화 전환·패널 조작·새로고침)을 명시해 갈랐다. 부하 게이트 코칭 정정(`25637d1c`)은 2026-07-24 블록의 동일 영역 항목과 겹치고 모델 입력 축이라 제외.
+- **한계·정직 표기를 사용자 문면에 남긴 항목**: 08-16 항목에 수용 한계 2건(공유창 확대 시 옛 파일 과표시 · 계약 도입 이전 대화의 첫 차례 과표시 후 자기 치유)을, ⑪ 에 "상대 쪽에서 아무것도 보내오지 않는 구간은 종전과 같이 정해진 시간까지 기다린다"(정본 AC-4 채택 한계)를, ⑫ 에 "데이터베이스에 연결할 수 없을 때 진행을 멈추는 것 자체는 종전의 안전 장치"(2026-08-07 사용자 판단 불변)를, ②·③ 에 범위 밖 명시(가지 그림 미제작 · 인라인 진행 카드 무접촉)를 실었다.
+- **포함/제외 판정**: 델타 창 non-merge 57 커밋 중 사용자 체감 변화 18항목 채택(근거 커밋 44건). 제외는 문서 정합(`6d79e60c`)·조사/검증 판정(`63808675`/`47b5c891`, 런타임 코드 0)·템플릿 5 hop·LEARNINGS(`3b4ff365`)·POST-DEPLOY 증적 전용 커밋 다수.
+- **테스트 env**: 무인 cron(WSL2 컨테이너 호스트). `verify_release_notes.mjs` 는 `unit/feature-0003-agent-web-ui` 에서 실행(jsdom `/tmp/node_modules`). PB-0008 은 TEST.md 에 미수행 사유·대체 검증 명시.
+- **cache-buster**: 수기 bump 없음. 소스 `?v=dev` placeholder 고정 + Dockerfile `inject_asset_stamp.py` 빌드 주입 + `bin/deploy-web.sh:1320` 이 placeholder 잔존 시 배포 ABORT(2026-07-12 ITEM-09). 라이브 실측 토큰 `?v=7e6a0de6e2c6`. `index.html`/`admin.html` 편집 0.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.

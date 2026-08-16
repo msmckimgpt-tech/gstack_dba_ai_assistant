@@ -4396,3 +4396,17 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
   `unit/feature-0003-agent-web-ui/tests/test_attach_new_marker_survives_rehydration.py`(**7 PASS**,
   뮤테이션 KILLED). PB-0008 라이브: `docs/test-runs.d/REV-20260814T183000-attach-change-signal.md`.
 - Files: `src/static/app/composer.js` · `tests/test_attach_new_marker_survives_rehydration.py`.
+
+## CHG-20260817T010301-doc-sync-rn-0817 (2026-08-16 · 2026-08-14 블록 신규 prepend) 릴리즈노트 콘텐츠 — 18항목 신규
+
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 `releases` 맨 앞에 **신규 블록 2개 prepend**: `2026-08-16`(1항목 — 첨부 변경-인지 서버 권위 봉인) · `2026-08-14`(17항목 — 프로필 사용 내역 지표 8종 · 버전 비교 계보 축 토글 · 실행 단계 시각·소요 표기 · 프로필 대화 목록 정렬·페이징 · 사용 기록 표 정렬·페이징 · 외부 AI 답변 보존·열람 · 외부 AI 데이터 직접 조회 + 스코프 격리 정정 · 첨부 버전 계보 작성주체별 분기 · 타 멤버 첨부 본문 턴의 작업공간 쓰기 제한 · 데이터소스 연결 제한 안내 · LLM 스트리밍 전환 · 조기 종료 run 무한 대기 봉인 · 분기 시 작업공간 이월 · 요약 카드 넘침 · 사용량 차트 '요청' 경계 전환 · 엣지 401 호스트 정합 · 외부 AI 실사용 제보 결함 5건 + 인가 완료 화면). `generated` "2026-08-13"→**"2026-08-16"**(top-block date 규약) · `releases` 48→50 · **08-13 이하 48 블록 바이트 단위 무변경**.
+- 델타 창(`6d4fdd87`..HEAD) 어떤 커밋도 릴리즈노트를 self-add 하지 않았으므로(편집 전 top 블록 `date: "2026-08-13"`) 직전 run 의 **기존 블록 append** 규칙은 성립하지 않는다 — 배포일이 08-14·08-16 둘이라 신규 블록도 2개다.
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수/파일명·테이블명·내부 설정키·ADR·PB-0008·인프라 용어(replica/gateway/worker/quiesce/OAuth/SSE/MCP/SSOT/alembic/KV/컨테이너)·픽셀 값·API 경로·SQL 키워드 누출 **0**(19축 정규식 기계 검증).
+- 정본 모순 방지 3건: ① 정본이 서로 다른 두 사건에 같은 '23분' 을 기록해(조기 종료 수동취소 / 상한 초과 폐기 후 재시도) 그 수치를 스트리밍 항목에만 남겼다 ② 첨부 `CreatedAt` UTC 전환은 전송 계약을 같은 커밋에서 함께 옮겨 **화면 표시 무변화**라 사용자향 항목에서 제외 ③ surge 교대 배포의 '바쁠 때 완결' 궤적은 정본이 미관측으로 명시해 제외(허위 방지).
+- **배포 게이트 = 물리 실측**: 라이브 컨테이너 6종 전부 `:6c7413cf`(= HEAD = origin/main) · 서빙 static sha 파리티 정확 일치 · `/healthz` 200 → 18항목 전건 배포 완료(유보 0).
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09 · `deploy-web.sh` 가 placeholder 잔존 시 ABORT). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 동일) · 블록 48→50 · `releases[0].date`=="2026-08-16"(items 1) · `releases[1].date`=="2026-08-14"(items 17: work 11 · admin 3 · common 3) · `generated`==head.date · 기존 48 블록 바이트 동일 · enum·스키마 외 키 0 · date 내림차순 정상.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-17T01:03:01+09:00
