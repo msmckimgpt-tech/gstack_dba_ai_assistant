@@ -2001,3 +2001,18 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   보낸 타이밍 탓이었고, 완료 대기 후 재측정해 정정했다. 그 함정을 코드 주석·TEST 기록에 남겼다.
 - 코드/테스트가 증명하는 것은 "봉인이 의도대로 동작한다" 까지다. **실제 대화에서 변경 미인지가
   사라졌는지**는 배포 후 다음 audit 의 corroboration 재측정 대상이다(§11b).
+
+## REV-20260816T090000-attach-change-signal-postdeploy [SKIPPED:doc-only] — POST-DEPLOY 실측 기록
+
+- Related Change: `CHG-20260814T183000-attach-change-signal-server-authority` (배포 후 기록)
+- Trigger: §18.8 dispatch 표 키워드 0건 + **코드 변경 0**(마찰 원장 status·REPORT Git 동기화 결과만)
+  → 패널 skip. 코드에 대한 적대 검증은 선행 `REV-20260814T183000-attach-change-signal-server-authority`
+  (`[CODEX:adversarial-backend-qa-security]`, 7 라운드 · 최종 P1 0)에서 집행됐다.
+- 검증: 기록한 수치는 전부 실행 결과다 — PR #1315 merge main `0f784df3` · 6서비스
+  `GIT_COMMIT=0f784df3` · edge `/healthz` ok(mysql_ok·pg_ok) · caddy `no upstreams available` **0** ·
+  surge 잔존 0 · 배포본 ask-worker 에서 봉인 심볼 3종 + 기준선 SQL 술어(`account_id =`,
+  `status = 'done'`, `COALESCE` 부재) + 합집합 배선 직접 확인 · 서빙 자산 프론트 축 도달.
+- **정직 표기**: `verified` 로 닫지 않았다. 배포본이 동작함은 증명됐으나 **실사용자 대화 기준 마찰
+  소멸**(이번-턴 업로드가 있는데 신호가 빈 job 비율 — 배포 전 기준선 14건/14 대화 · 버전 갱신 축
+  5/37)은 다음 audit 의 corroboration 재측정 대상이며, 그 비교 기준선을 원장에 함께 박았다.
+- Human Approval Needed: 아니오 (doc-only, 승인 범위 "PR→머지→배포" 내 사후 기록).

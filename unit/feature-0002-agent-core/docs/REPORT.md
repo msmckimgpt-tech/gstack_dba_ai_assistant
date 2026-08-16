@@ -588,12 +588,15 @@ SECURITY §47.4 가 수용 위험으로 남긴 confused-deputy 경로를 **실�
 
 ### Git 동기화 결과
 
-- 커밋: `<pending>` (`ai/claude/feature-0002-agent-core`)
-- verify-completion: PASS (재시도 0회)
-- Push: 완료
-- main 병합: **보류 — Major(§12.3) 라 PR 생성·머지·배포가 사람 승인 대상**(conversation_audit
-  불변 제약: Major/Critical 은 `deploy_scope: included` override 와 무관하게 confirm)
-- 충돌 해결: 없음
+- 커밋: `a639272c` (`ai/claude/attach-change-signal-server-authority`, main rebase 후)
+- verify-completion: PASS (재시도 0회) · CI `test` SUCCESS
+- Push: 완료 · **PR #1315 → main 병합 `0f784df3`**(사용자 승인 2026-08-16 — Major 라 PR·머지·배포
+  모두 명시 승인 대상, §12.3 override 불가)
+- 충돌 해결: AI 자율 해결 3건 — 병렬 세션 머지(#1313·#1314)로 base 가 4→2커밋 드리프트.
+  `TASK.md`·feature-0003 `MODIFY.md`/`REVIEW.md` 가 전부 **말미 append 충돌**이라 union 으로
+  해소(형제 세션 항목 보존 확인). force-push 불가 환경이라 rebase 결과를 새 브랜치로 올렸다.
+- 배포: **완료** — deploy-web scope=all, 6서비스 `0f784df3` · healthz ok · 무중단 실측 blip 0 ·
+  배포본 심볼/SQL/배선 직접 확인.
 
 ### 잔여 (§8.1 — 기록만)
 
