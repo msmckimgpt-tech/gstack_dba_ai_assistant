@@ -3170,3 +3170,39 @@ JS(app.js ESM 서브트리) 변경은 asset-stamp 미주입 docker cp QA 불가(
 - §18.8 적대 패널 `[SUBAGENT:ux+frontend]`: P1 0. 무결 확인 — V8 파싱 12변형 전부 정상 ·
   headless Chromium 300px 실렌더 5케이스 겹침 0/overflow 0/우측 정렬 유지(flex-wrap 하강 후
   포함) · 스크롤 보존/펼침 영속화 키 불변 · 3 조회 경로 created_at 동반 확인.
+
+### Run 2026-08-14 — step-panel-timing POST-DEPLOY (Environment: **Windows-browser**) — PASS
+
+- **Runner**: AI · **Bridge**: relay `http://172.26.144.1:9223` · **Browser**: 실 Windows Chrome/150.0.7871.128
+- **대상**: 라이브 배포본 — `web-a`/`web-b` 모두 `GIT_COMMIT=ee4eb08d` (PR #1312 머지본). 코드를
+  옮겨 심지 않고 **서빙 중인 `app.js`/`chat.css` 가 실 대화 데이터로 렌더한 결과만** 측정한다.
+- **시나리오**: `src/scenario.step-panel-timing.json` (13 step 전건 PASS) ·
+  `src/scenario.step-panel-timing-live.json` (13 step 전건 PASS)
+- **Evidence**: `test-runs.d/evidence/steptiming-panel-340-live.png` ·
+  `steptiming-panel-min300-zoom-live.png` · `steptiming-wrap-fallback-zoom-live.png` ·
+  `steptiming-live-run-zoom-live.png`
+  (패널은 뷰포트의 300~340px 조각이라 전체화면 캡처만으로 10.5px 표기가 판독 불가다 →
+  **라이브 패널 DOM 을 복제해 2.2× 확대**한 캡처를 함께 남긴다. 재렌더가 아닌 복제이므로
+  보이는 픽셀은 라이브 것과 같다. §16.6 '판독 가능한 캡처'.)
+
+POST-DEPLOY 확인 축 4건 — 전부 실측:
+
+| 축 | 실측 | 결과 |
+|---|---|---|
+| ① 우측 정렬 위치 | 대화 `20260814065452-7a187254`(13단계) 헤더 13건 전부 `헤더 content 우변 − 시간 우변 = 0.00px` · 넘침 0 · 형제(번호·도구 배지)와 겹침 0 | PASS |
+| ② 최소 폭 300px | 리사이저를 **실제로 끌어**(mousedown→mousemove→mouseup) 최소 폭까지 좁힘 → `panelW=300`(클램프 적용) · `localStorage=300` 영속 · 겹침 0 · 가로 스크롤 0 · 우측 정렬 유지 | PASS |
+| ②-b 폭 부족 시 줄바꿈 | 도구 배지를 길게 만들어 경계 강제 → 시간 표기가 **겹치는 대신** 자기 줄로 하강(top 2px→25px, 헤더 높이 19→40px) · 겹침 0 · 넘침 0 | PASS |
+| ③ 라이브 run 폴링 갱신 | 새 대화에서 실 질의 1건 → 라이브 패널을 연 뒤 **재오픈 없이** 8.0초 만에 3단계→4단계로 증가, 새 단계 라벨 `19:26:39 · +7.4초 · 누적 8.1초` · 누적 단조 증가 | PASS |
+| ④ 과거 대화 소급 표기 | backend 무변경(기존 `step.created_at` 재사용)이 실제로 성립 — 2026-08-14 완료 대화의 13단계 전부에 시각 표기(첫 단계는 시각만, 이후 `시각 · +간격 · 누적`) | PASS |
+
+표기 형식은 사람 눈이 아니라 시나리오가 판정한다 — 1번째는 `HH:MM:SS`, 이후는
+`HH:MM:SS · +<간격> · 누적 <경과>` 정규식에 전건 매칭해야 step 이 통과한다. CSS 계약
+(`margin-left:auto` 해소 · `white-space:nowrap` · `tabular-nums` · `flex-shrink:0` ·
+헤더 `flex-wrap:wrap`)도 computed style 로 함께 잠갔다.
+
+**라이브 데이터 영향(정직)**: ③ 은 합성으로 대체할 수 없어(폴링 갱신은 `state.stepSidePanelLive`
+게이트 뒤에 있고 진입점이 export 되어 있지 않다) **실 질의 1건**을 보냈다. 참여자가 나뿐인
+**새 대화**를 만들어 보냈으므로 타 세션·공유방 무접촉이다. 선행 시도에서 기존 "PB-0008 스모크"
+대화를 재사용했다가 그 대화가 **공유방**이라 질의가 AI ask 가 아니라 그룹 채팅 메시지로 나간
+함정을 만났고(단계 0 → 축 ③ 검증 불가), 그때 남은 깨진 문장은 같은 세션에서 정정했다.
+①②④ 는 읽기 전용(기존 대화 열람)이라 데이터 변경 0.
