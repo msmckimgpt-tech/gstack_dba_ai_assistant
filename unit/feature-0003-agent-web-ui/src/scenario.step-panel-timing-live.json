@@ -1,0 +1,65 @@
+{
+  "name": "step side panel timing (LIVE run polling) — PB-0008 POST-DEPLOY (feature-0003 / 20260814T1830-step-panel-timing)",
+  "base_url": "https://localhost",
+  "shot_dir": "/tmp/claude-0/-root-download-docker-mysql-ai-delegated-dev/ef1f438a-eff1-4073-90a4-815b0d47057a/scratchpad/pb0008-steptiming",
+  "steps": [
+    {
+      "action": "goto",
+      "url": "/"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#newConversationBtn",
+      "timeout_ms": 30000
+    },
+    {
+      "action": "click",
+      "selector": "#newConversationBtn"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#promptInput",
+      "timeout_ms": 30000
+    },
+    {
+      "action": "eval",
+      "script": "(() => new Promise((resolve, reject) => {\n  // 라이브 run 은 실제 데이터를 남긴다 — **새 1:1 대화**를 열어 가장 값싼 질문 하나만 보낸다.\n  //  (공유방에 보내면 AI ask 가 아니라 그룹 채팅 메시지로 나가고, 남의 방을 건드린다 —\n  //   선행 시도에서 실측한 함정. 여기서는 참여자가 나뿐인 새 대화만 쓴다.)\n  const t0 = Date.now();\n  const tick = () => {\n    const p = document.getElementById('promptInput');\n    const msgs = document.querySelectorAll('article.message').length;\n    const ro = [...document.querySelectorAll('.composer-hint, .composer-readonly, [class*=readonly]')]\n      .map((e) => (e.textContent || '').trim()).join(' ');\n    if (p && !p.disabled && !p.readOnly && msgs === 0) {\n      if (/읽기 전용/.test(ro)) return reject(new Error('PB0008 FAIL: 읽기 전용 대화'));\n      return resolve(JSON.stringify({ ready: true, msgs, href: location.href }));\n    }\n    if (Date.now() - t0 > 20000) return reject(new Error('PB0008 FAIL: 빈 새 대화 진입 실패 (msgs=' + msgs + ')'));\n    setTimeout(tick, 500);\n  };\n  tick();\n}))()"
+    },
+    {
+      "action": "fill",
+      "selector": "#promptInput",
+      "text": "1+1 은? 숫자만 답해줘. (PB-0008 POST-DEPLOY 단계 시각표기 스모크)"
+    },
+    {
+      "action": "click",
+      "selector": "#sendBtn"
+    },
+    {
+      "action": "wait_for",
+      "selector": ".pending-bubble-view-btn",
+      "timeout_ms": 120000
+    },
+    {
+      "action": "eval",
+      "script": "(() => new Promise((resolve, reject) => {\n  // 라이브 패널을 연 뒤 **재오픈 없이** 폴링 재렌더만으로 새 단계에 시각 표기가 붙는지 본다.\n  //  (openStepSidePanel(pending) → state.stepSidePanelLive=true → refreshStepSidePanel 이 갱신)\n  const btn = document.querySelector('.pending-bubble-view-btn');\n  if (!btn) return reject(new Error('PB0008 FAIL: 라이브 단계 보기 버튼 없음'));\n  btn.click();\n  const read = () => [...document.querySelectorAll('.step-side-panel-time')].map((t) => t.textContent.trim());\n  const first = read();\n  if (!first.length) return reject(new Error('PB0008 FAIL: 라이브 패널에 시각 표기 0'));\n  const CLOCK = /^\\d{2}:\\d{2}:\\d{2}$/;\n  const FULL = /^\\d{2}:\\d{2}:\\d{2} · \\+(?:\\d+(?:\\.\\d)?초|\\d+분 \\d+초) · 누적 (?:\\d+(?:\\.\\d)?초|\\d+분 \\d+초)$/;\n  const secs = (s) => {\n    const m = /누적 (?:(\\d+)분 )?(\\d+(?:\\.\\d)?)초$/.exec(s);\n    return m ? (parseInt(m[1] || '0', 10) * 60 + parseFloat(m[2])) : NaN;\n  };\n  const t0 = Date.now();\n  const tick = () => {\n    const now = read();\n    if (now.length > first.length) {\n      const added = now.slice(first.length);\n      const badFmt = added.filter((s) => !FULL.test(s));\n      const cum = now.filter((s) => FULL.test(s)).map(secs);\n      const monotonic = cum.every((v, i) => i === 0 || v >= cum[i - 1]);\n      const bad = [];\n      if (!CLOCK.test(now[0])) bad.push('firstNotClockOnly=' + now[0]);\n      if (badFmt.length) bad.push('addedBadFmt=' + JSON.stringify(badFmt));\n      if (!monotonic) bad.push('누적 비단조=' + JSON.stringify(cum));\n      // 재오픈 없이 갱신됐는지 — 패널이 계속 열려 있는 상태여야 한다.\n      if (document.getElementById('stepSidePanel').classList.contains('hidden')) bad.push('panelClosed');\n      if (bad.length) return reject(new Error('PB0008 ASSERT FAIL LIVE ' + JSON.stringify(bad)));\n      return resolve(JSON.stringify({\n        before: first.length, after: now.length, elapsedMs: Date.now() - t0,\n        addedSample: added.slice(0, 3), firstLabel: now[0], lastLabel: now[now.length - 1],\n        cumMonotonic: monotonic,\n      }));\n    }\n    if (Date.now() - t0 > 150000) {\n      return reject(new Error('PB0008 FAIL: 150초 내 폴링으로 새 단계가 추가되지 않음 (before=' + first.length + ')'));\n    }\n    setTimeout(tick, 1000);\n  };\n  setTimeout(tick, 1000);\n}))()"
+    },
+    {
+      "action": "screenshot",
+      "path": "05_live_run_panel.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  // 라이브 패널을 그대로 복제해 2.2× 확대 — 진행 중 화면의 시각 표기를 판독 가능하게 남긴다.\n  document.querySelectorAll('#pb-steptiming-zoom').forEach((n) => n.remove());\n  const panel = document.getElementById('stepSidePanel');\n  const host = document.createElement('div');\n  host.id = 'pb-steptiming-zoom';\n  host.setAttribute('data-marker', 'steptiming-live-pb0008-ef1f438a');\n  host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;overflow:auto';\n  const hd = document.createElement('div');\n  hd.style.cssText = 'font:600 13px/1.5 system-ui;padding:10px 20px;border-bottom:1px solid #e5e9f0;color:#26251e';\n  hd.textContent = 'PB-0008 · 라이브 run 진행 중 패널(폴링 재렌더) 2.2× 확대 · marker=steptiming-live-pb0008-ef1f438a';\n  host.appendChild(hd);\n  const stage = document.createElement('div');\n  stage.style.cssText = 'transform:scale(2.2);transform-origin:top left;width:' + Math.round(panel.getBoundingClientRect().width) + 'px';\n  const clone = panel.cloneNode(true);\n  clone.removeAttribute('id');\n  clone.style.cssText = 'position:static;width:100%;height:auto;max-height:none;box-shadow:none;border:1px solid #e5e9f0';\n  const body = clone.querySelector('#stepSidePanelBody');\n  if (body) { body.style.maxHeight = 'none'; body.style.overflow = 'visible'; }\n  stage.appendChild(clone);\n  host.appendChild(stage);\n  document.body.appendChild(host);\n  const n = host.querySelectorAll('.step-side-panel-time').length;\n  if (!n) throw new Error('PB0008 FAIL: 라이브 확대 복제에 시간 표기 0');\n  return JSON.stringify({ zoomedTimes: n });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "06_live_run_panel_zoom.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => { document.querySelectorAll('#pb-steptiming-zoom').forEach((n) => n.remove()); return 'restored'; })()"
+    }
+  ]
+}

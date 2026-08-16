@@ -1,0 +1,64 @@
+{
+  "name": "step side panel timing — PB-0008 POST-DEPLOY (feature-0003 / 20260814T1830-step-panel-timing)",
+  "base_url": "https://localhost",
+  "shot_dir": "/tmp/claude-0/-root-download-docker-mysql-ai-delegated-dev/ef1f438a-eff1-4073-90a4-815b0d47057a/scratchpad/pb0008-steptiming",
+  "steps": [
+    {
+      "action": "goto",
+      "url": "/?conversation=20260814065452-7a187254"
+    },
+    {
+      "action": "wait_for",
+      "selector": ".bubble-steps-btn",
+      "timeout_ms": 30000
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  // A. 과거 대화 소급 표기 + 헤더 우측 정렬 (기본 폭).\n  //    배포본이 서빙하는 실 app.js 가 실 대화 데이터(step.created_at)로 렌더한 결과만 본다 —\n  //    함수를 옮겨 심지 않는다(사본을 재는 것은 배포 검증이 아니다).\n  try { localStorage.setItem('web.stepSidePanel.width', '340'); } catch (e) {}\n  const btn = document.querySelector('.bubble-steps-btn');\n  if (!btn) throw new Error('PB0008 FAIL: 단계 보기 버튼 없음 (대상 대화에 meta.steps 부재)');\n  btn.click();\n  const panel = document.getElementById('stepSidePanel');\n  const hdrs = [...document.querySelectorAll('.step-side-panel-item-header')];\n  const times = [...document.querySelectorAll('.step-side-panel-time')];\n  if (!hdrs.length) throw new Error('PB0008 FAIL: 단계 항목 0');\n  // 시각 표기 형식 — 1번째는 기준점이라 시각만, 이후는 '시각 · +간격 · 누적 경과'.\n  const CLOCK = /^\\d{2}:\\d{2}:\\d{2}$/;\n  const FULL = /^\\d{2}:\\d{2}:\\d{2} · \\+(?:\\d+(?:\\.\\d)?초|\\d+분 \\d+초) · 누적 (?:\\d+(?:\\.\\d)?초|\\d+분 \\d+초)$/;\n  const texts = times.map((t) => t.textContent.trim());\n  const badFmt = texts.filter((s, i) => (i === 0 ? !CLOCK.test(s) : !FULL.test(s)));\n  // 기하 — 우측 정렬(헤더 content 우변과 시간 우변 일치) · 넘침 0 · 형제 요소와 겹침 0.\n  const geo = hdrs.map((h) => {\n    const t = h.querySelector('.step-side-panel-time');\n    if (!t) return null;\n    const hr = h.getBoundingClientRect(), tr = t.getBoundingClientRect();\n    const padR = parseFloat(getComputedStyle(h).paddingRight) || 0;\n    const sib = [...h.children].filter((c) => c !== t).map((c) => c.getBoundingClientRect());\n    return {\n      gapRight: +(hr.right - padR - tr.right).toFixed(2),\n      overflow: +(tr.right - hr.right).toFixed(2),\n      overlap: sib.some((o) => !(o.right <= tr.left || o.left >= tr.right || o.bottom <= tr.top || o.top >= tr.bottom)),\n    };\n  }).filter(Boolean);\n  const cs = getComputedStyle(times[0]);\n  const csH = getComputedStyle(hdrs[0]);\n  const m = {\n    panelW: Math.round(panel.getBoundingClientRect().width),\n    steps: hdrs.length,\n    timed: times.length,\n    badFmt: badFmt.length,\n    firstIsClockOnly: CLOCK.test(texts[0] || ''),\n    maxGapRight: Math.max(...geo.map((g) => g.gapRight)),\n    minGapRight: Math.min(...geo.map((g) => g.gapRight)),\n    maxOverflow: Math.max(...geo.map((g) => g.overflow)),\n    anyOverlap: geo.some((g) => g.overlap),\n    whiteSpace: cs.whiteSpace,\n    tabularNums: cs.fontVariantNumeric,\n    flexShrink: cs.flexShrink,\n    marginLeftResolved: parseFloat(cs.marginLeft) > 0,\n    headerFlexWrap: csH.flexWrap,\n    sample: texts.slice(0, 4),\n  };\n  // 판정을 사람 눈에 맡기지 않는다 — 어긋나면 이 step 이 실패한다.\n  const bad = [];\n  if (m.timed !== m.steps) bad.push('timed=' + m.timed + '/' + m.steps);\n  if (m.badFmt !== 0) bad.push('badFmt=' + JSON.stringify(badFmt));\n  if (!m.firstIsClockOnly) bad.push('firstIsClockOnly=false (' + texts[0] + ')');\n  if (m.maxGapRight !== 0 || m.minGapRight !== 0) bad.push('gapRight=' + m.minGapRight + '..' + m.maxGapRight);\n  if (m.maxOverflow > 0) bad.push('overflow=' + m.maxOverflow);\n  if (m.anyOverlap) bad.push('overlap=true');\n  if (m.whiteSpace !== 'nowrap') bad.push('whiteSpace=' + m.whiteSpace);\n  if (m.tabularNums !== 'tabular-nums') bad.push('tabularNums=' + m.tabularNums);\n  if (m.flexShrink !== '0') bad.push('flexShrink=' + m.flexShrink);\n  if (!m.marginLeftResolved) bad.push('marginLeft(auto) 미해소');\n  if (m.headerFlexWrap !== 'wrap') bad.push('headerFlexWrap=' + m.headerFlexWrap);\n  if (bad.length) throw new Error('PB0008 ASSERT FAIL A ' + JSON.stringify(bad));\n  return JSON.stringify(m);\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "01_panel_default_340.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  // 확대 캡처 — 패널이 뷰포트의 일부(300~340px)라 전체화면 캡처만으로는 10.5px 시간 표기가\n  // 판독 불가다(§16.6 '판독 가능한 캡처' 요구). 라이브 패널 DOM 을 **그대로 복제**해 2.2배로\n  // 확대한 오버레이를 얹는다 — 재렌더가 아니라 복제이므로 보이는 픽셀은 라이브 것과 동일하다.\n  const mk = (label) => {\n    document.querySelectorAll('#pb-steptiming-zoom').forEach((n) => n.remove());\n    const panel = document.getElementById('stepSidePanel');\n    const host = document.createElement('div');\n    host.id = 'pb-steptiming-zoom';\n    host.setAttribute('data-marker', 'steptiming-pb0008-ef1f438a');\n    host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;overflow:auto';\n    const hd = document.createElement('div');\n    hd.style.cssText = 'font:600 13px/1.5 system-ui;padding:10px 20px;border-bottom:1px solid #e5e9f0;color:#26251e';\n    hd.textContent = 'PB-0008 · 실행 단계 패널 시각/간격/누적 표기 (라이브 패널 DOM 복제 2.2× 확대) · ' + label + ' · marker=steptiming-pb0008-ef1f438a';\n    host.appendChild(hd);\n    const stage = document.createElement('div');\n    stage.style.cssText = 'transform:scale(2.2);transform-origin:top left;width:' + Math.round(panel.getBoundingClientRect().width) + 'px';\n    const clone = panel.cloneNode(true);\n    clone.removeAttribute('id');\n    clone.style.cssText = 'position:static;width:100%;height:auto;max-height:none;box-shadow:none;border:1px solid #e5e9f0';\n    const body = clone.querySelector('#stepSidePanelBody');\n    if (body) { body.style.maxHeight = 'none'; body.style.overflow = 'visible'; }\n    stage.appendChild(clone);\n    host.appendChild(stage);\n    document.body.appendChild(host);\n    return host.querySelectorAll('.step-side-panel-time').length;\n  };\n  const n = mk('폭 340px (기본)');\n  if (!n) throw new Error('PB0008 FAIL: 확대 복제에 시간 표기 0');\n  window.__pbZoom = mk;\n  return JSON.stringify({ zoomedTimes: n });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "02_panel_default_340_zoom.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  // B. 최소 폭(300px)에서 겹침 없음 — 리사이저를 **실제로 끌어** 최소 폭까지 좁힌다\n  //    (스타일 직접 주입이 아니라 운영 경로: mousedown → mousemove → mouseup + localStorage 영속).\n  document.querySelectorAll('#pb-steptiming-zoom').forEach((n) => n.remove());\n  const h = document.getElementById('stepSidePanelResizer');\n  const panel = document.getElementById('stepSidePanel');\n  if (!h) throw new Error('PB0008 FAIL: 리사이저 없음');\n  const r = h.getBoundingClientRect();\n  h.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 40 }));\n  // 최소 폭보다 더 좁게 끌어 클램프(STEP_PANEL_MIN_W=300)가 걸리는지까지 본다.\n  document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: window.innerWidth - 180, clientY: r.top + 40 }));\n  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));\n  const hdrs = [...document.querySelectorAll('.step-side-panel-item-header')];\n  const geo = hdrs.map((x) => {\n    const t = x.querySelector('.step-side-panel-time');\n    const xr = x.getBoundingClientRect(), tr = t.getBoundingClientRect();\n    const padR = parseFloat(getComputedStyle(x).paddingRight) || 0;\n    const sib = [...x.children].filter((c) => c !== t).map((c) => c.getBoundingClientRect());\n    return {\n      gapRight: +(xr.right - padR - tr.right).toFixed(2),\n      overflow: +(tr.right - xr.right).toFixed(2),\n      overlap: sib.some((o) => !(o.right <= tr.left || o.left >= tr.right || o.bottom <= tr.top || o.top >= tr.bottom)),\n    };\n  });\n  const bodyEl = document.getElementById('stepSidePanelBody');\n  const m = {\n    panelW: Math.round(panel.getBoundingClientRect().width),\n    savedW: (() => { try { return localStorage.getItem('web.stepSidePanel.width'); } catch (e) { return null; } })(),\n    anyOverlap: geo.some((g) => g.overlap),\n    maxOverflow: Math.max(...geo.map((g) => g.overflow)),\n    gapRights: [...new Set(geo.map((g) => g.gapRight))],\n    bodyHScroll: bodyEl.scrollWidth - bodyEl.clientWidth,\n  };\n  const bad = [];\n  if (m.panelW !== 300) bad.push('panelW=' + m.panelW + ' (min clamp 300 미적용)');\n  if (m.savedW !== '300') bad.push('savedW=' + m.savedW);\n  if (m.anyOverlap) bad.push('overlap=true');\n  if (m.maxOverflow > 0) bad.push('overflow=' + m.maxOverflow);\n  if (m.gapRights.length !== 1 || m.gapRights[0] !== 0) bad.push('gapRights=' + JSON.stringify(m.gapRights));\n  if (m.bodyHScroll > 0) bad.push('bodyHScroll=' + m.bodyHScroll);\n  if (bad.length) throw new Error('PB0008 ASSERT FAIL B ' + JSON.stringify(bad));\n  return JSON.stringify(m);\n})()"
+    },
+    {
+      "action": "eval",
+      "script": "(() => { const n = window.__pbZoom('폭 300px (최소 · 리사이저 클램프)'); if (!n) throw new Error('PB0008 FAIL: 확대 복제 실패'); return JSON.stringify({ zoomedTimes: n }); })()"
+    },
+    {
+      "action": "screenshot",
+      "path": "03_panel_min300_zoom.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  // C. 줄바꿈 폴백 — 300px 에서 실 데이터는 아직 한 줄에 들어간다. 그러나 요청의 계약은\n  //    \"기존 텍스트 위치와 충돌 없이\" 이므로, 폭이 모자란 최악의 경우에 **겹치는 대신 줄바꿈**\n  //    하는지를 확인해야 한다(flex-wrap). 도구 배지를 길게 만들어 그 경계를 강제한다.\n  document.querySelectorAll('#pb-steptiming-zoom').forEach((n) => n.remove());\n  const hdr = [...document.querySelectorAll('.step-side-panel-item-header')].find((x) => x.querySelector('.step-tool-badge'));\n  if (!hdr) throw new Error('PB0008 FAIL: 도구 배지가 있는 단계 없음');\n  const badge = hdr.querySelector('.step-tool-badge');\n  const t = hdr.querySelector('.step-side-panel-time');\n  const before = { top: +(t.getBoundingClientRect().top - hdr.getBoundingClientRect().top).toFixed(1), h: +hdr.getBoundingClientRect().height.toFixed(1) };\n  const orig = badge.textContent;\n  badge.textContent = '테이블 구조 조회 · 스키마 메타데이터';\n  const hr = hdr.getBoundingClientRect(), tr = t.getBoundingClientRect(), br = badge.getBoundingClientRect();\n  const m = {\n    beforeTop: before.top, beforeH: before.h,\n    afterTop: +(tr.top - hr.top).toFixed(1), afterH: +hr.height.toFixed(1),\n    badgeTop: +(br.top - hr.top).toFixed(1),\n    overlap: !(br.right <= tr.left || br.left >= tr.right || br.bottom <= tr.top || br.top >= tr.bottom),\n    overflow: +(tr.right - hr.right).toFixed(2),\n  };\n  window.__pbRestore = () => { badge.textContent = orig; };\n  const bad = [];\n  if (m.beforeTop > 2) bad.push('평상시에도 줄바꿈(beforeTop=' + m.beforeTop + ')');\n  if (m.afterTop <= 2) bad.push('폭 부족에도 줄바꿈 안 함(afterTop=' + m.afterTop + ')');\n  if (m.overlap) bad.push('overlap=true (겹침 발생 — 계약 위반)');\n  if (m.overflow > 0) bad.push('overflow=' + m.overflow);\n  if (bad.length) throw new Error('PB0008 ASSERT FAIL C ' + JSON.stringify(bad));\n  return JSON.stringify(m);\n})()"
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  const n = window.__pbZoom('폭 300px · 폭 부족 시 줄바꿈(겹침 0)');\n  if (!n) throw new Error('PB0008 FAIL: 확대 복제 실패');\n  // 줄바꿈이 일어난 단계(도구 배지가 긴 4번)가 캡처 안에 **보이도록** 스크롤한다 —\n  // 계약이 지켜졌다는 주장을 화면 밖에 두면 캡처가 근거가 되지 못한다(§16.6).\n  const host = document.getElementById('pb-steptiming-zoom');\n  const clone = host.querySelector('.step-side-panel-item:nth-of-type(4)') || host.querySelectorAll('.step-side-panel-item')[3];\n  if (clone) host.scrollTop = Math.max(0, clone.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop - 60);\n  return JSON.stringify({ zoomedTimes: n, scrollTop: Math.round(host.scrollTop) });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "04_wrap_fallback_zoom.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => { if (window.__pbRestore) window.__pbRestore(); document.querySelectorAll('#pb-steptiming-zoom').forEach((n) => n.remove()); try { localStorage.setItem('web.stepSidePanel.width', '340'); } catch (e) {} return 'restored'; })()"
+    }
+  ]
+}

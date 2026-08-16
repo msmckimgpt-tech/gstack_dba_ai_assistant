@@ -5296,6 +5296,26 @@ doc-only. 라이브 드로어 폭 6단계 실측으로 선행 두 커밋의 이�
   compact 경로 분리) · 성능(prevTs 스캔 amortized O(n) — 각 NaN 칸은 정확히 1회 방문).
 - 한계(정직): jsdom·headless 는 실제 폴링 갱신 리듬과 라이브 run 을 보지 못한다 — 라이브 run
   진행 중 표기 갱신·과거 대화 소급 표기는 **배포 후 PB-0008** 대상(TEST.md 확인 축 ①~④).
+
+## REV-20260814T192000-step-panel-timing-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 0 — 변경분은 PB-0008 검증 시나리오 2종(브라우저 검증 하네스 전용,
+사용자에게 서빙되지 않음)과 `TEST/TASK/MODIFY` 기록뿐이다. §18.8 dispatch 표의 "비정책 doc-only"
+행에 해당해 panel 을 SKIP 한다. 이 cycle 이 검증하는 **제품 코드 자체는 선행 cycle 에서 이미
+패널을 거쳤다** — `REV-20260814T183000-step-panel-timing [SUBAGENT:ux+frontend]` (P1 0 · P2 1 반영 ·
+P3 6 중 3 반영). 선례: `REV-20260814T120000-profile-sort-postdeploy [SKIPPED:non-policy-doc]`.
+
+**판단 근거(검증의 질)**: SKIP 이 "확인을 덜 했다" 가 되지 않도록, 이번 실측은 다음을 기계 판정으로
+잠갔다 — ① 시각 표기 형식 정규식(1번째 시각만 / 이후 `시각 · +간격 · 누적`) ② 기하(헤더 우변 대비
+편차·넘침·형제 겹침) ③ computed CSS 계약(`margin-left:auto` 해소·`nowrap`·`tabular-nums`·
+`flex-shrink:0`·헤더 `flex-wrap:wrap`) ④ 리사이저 실제 드래그로 최소 폭 클램프·영속 ⑤ 라이브
+폴링에서 누적 단조성. 시나리오 step 이 기대와 어긋나면 실패하므로 재실행 가능한 게이트다.
+
+**수용한 한계(정직)**: ② 최소 폭 300px 에서 실 데이터는 아직 한 줄에 들어가므로, 줄바꿈 계약은
+도구 배지를 길게 만들어 **경계를 강제**해 확인했다(겹침 0·넘침 0·top 2→25px 하강). 실사용 데이터로
+그 경계에 닿는 사례는 아직 관측되지 않았다 — 계약이 지켜진다는 것만 확인했고 "현재 겹치고 있다" 는
+주장은 하지 않는다.
+
 ## REV-20260814T183000-attach-new-marker-rehydration [CODEX:cross-ref] — 재수화 보존 + 전송 강등 (프론트 축)
 
 - Related Change: `CHG-20260814T183000-attach-new-marker-rehydration`(cross-ref) — 정본 판정·라운드

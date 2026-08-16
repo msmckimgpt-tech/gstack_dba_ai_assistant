@@ -4358,6 +4358,25 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - 기록만(수용): P3-1 60초 경계 "+60초"/"1분 0초" 이음새(기존 formatDurationBreakdown 선례와
   동일) · P3-3 MySQL naive datetime 로컬 오해석(ADR-0028 로 dead-code 경로) · P3-6 시계 역행
   clamp 의 누적 비단조(서버 정렬·append-only 병합으로 실현 경로 부재, 방어 코드).
+
+## CHG-20260814T192000-step-panel-timing-postdeploy — 단계 시각 표기 POST-DEPLOY 실측 (검증자산 + docs)
+
+선행 `CHG-20260814T183000-...-step-panel-timing` 이 배포 직전에 남긴 잔여 1건(PB-0008 라이브
+시각검증)을 라이브 `ee4eb08d` 에서 닫는다. **제품 코드 변경 0** — 검증 자산과 기록만 추가한다.
+
+- `src/scenario.step-panel-timing.json` (신규): 과거 대화 소급 표기 · 헤더 우측 정렬 ·
+  최소 폭 300px · 폭 부족 시 줄바꿈 4축을 실 배포본에서 재현하는 PB-0008 시나리오.
+  판정을 사람 눈에 맡기지 않는다 — 표기 정규식·기하(우변 편차/넘침/겹침)·computed CSS 계약을
+  step 안에서 assert 하고 어긋나면 실패한다. 패널이 뷰포트의 300~340px 조각이라 전체화면
+  캡처로는 10.5px 표기가 판독 불가이므로 **라이브 패널 DOM 복제 2.2× 확대** 오버레이를 함께 남긴다.
+- `src/scenario.step-panel-timing-live.json` (신규): 라이브 run 진행 중 폴링 재렌더가 새 단계에
+  시각 표기를 붙이는지 — 패널을 **재오픈하지 않고** 단계 수 증가와 새 라벨 형식·누적 단조성을 assert.
+  참여자가 나뿐인 **새 대화**를 만들어 질의 1건만 보낸다(공유방에 보내면 AI ask 가 아니라 그룹
+  채팅 메시지로 나가 단계가 생기지 않는다 — 선행 시도에서 실측한 함정).
+- `docs/TEST.md`: `Environment: Windows-browser` POST-DEPLOY Run 추가 (4축 실측표 + 라이브
+  데이터 영향 명시). `docs/test-runs.d/evidence/steptiming-*.png` 4종 첨부.
+- `docs/TASK.md`: 배포 후 PB-0008 항목 체크 + 실측 요지.
+
 ## CHG-20260814T183000-attach-new-marker-rehydration (cross-ref) — 재수화가 미전송 신규 표식을 보존
 
 - feature-0002 의 `CHG-20260814T183000-attach-change-signal-server-authority`(conv-audit
