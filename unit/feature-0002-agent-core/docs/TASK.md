@@ -108,6 +108,10 @@ source_of_truth: true
       기록: `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260814T183000-attach-change-signal.md`.
       **정직**: 실측 중 "강등이 안 된다" 고 한 번 오독했다(직전 턴 완료 전 전송 = 정상 동작) →
       완료 대기 후 재측정해 정정하고 그 함정을 코드 주석·TEST 기록에 남겼다.
+- [x] **출하(2026-08-16)** — PR #1315 → main `0f784df3` 머지 → deploy-web scope=all.
+      6서비스 전부 `GIT_COMMIT=0f784df3` · edge `/healthz` ok · **무중단 실측 blip 0** · surge 잔존 0.
+      배포본 ask-worker 에서 봉인 심볼·기준선 SQL 술어·합집합 배선 직접 확인, 서빙 자산 프론트 축 도달.
+      base 드리프트(병렬 머지 #1313·#1314)는 말미 append 충돌 3건을 union 으로 해소.
 - [ ] **라이브 실측(배포 후)** — 같은 시나리오(파일 v2 재업로드 후 대화 전환 → 재질문)에서 ★신규·
       FILE UPDATES 가 실리는지 + 다음 audit 이 corroboration(신호 빈 job 비율 — 배포 전 기준선
       **14건/14 대화**, 버전 갱신 축 **5/37**) 재측정.

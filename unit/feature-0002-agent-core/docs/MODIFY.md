@@ -2256,3 +2256,18 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - Rollback Notes: `_load_new_attachment_ids()` 의 합집합 한 줄을 되돌리면 종전 동작으로 복귀한다
   (파생 함수는 호출되지 않아 무해). 되돌리면 클라이언트 신호가 유실된 턴에서 갱신 파일이 다시
   `◆세션` 으로 오라벨되고 서버가 가진 diff 가 프롬프트에서 빠진다.
+
+## CHG-20260816T090000-attach-change-signal-postdeploy — 봉인 배포 + 원장 status 전이 (문서 전용)
+
+- **왜**: `CHG-20260814T183000-attach-change-signal-server-authority` 가 배포됐으므로 마찰 원장의
+  status 가 `fixed:undeployed` 로 stale 해졌고, REPORT 의 'Git 동기화 결과' 가 `<pending>` 인 채였다.
+  거짓 done 방지(§C5)는 status 가 **측정으로만** 전이하는 데 달려 있으므로 이 정합이 곧 계약이다.
+- **무엇을**: 원장 `FR-attach-change-signal-client-only` → `fixed:deployed:unverified-live`
+  (배포 실측 수치 동반) · REPORT 'Git 동기화 결과' 를 실제 커밋/PR/머지/충돌해소/배포 결과로 채움 ·
+  REVIEW 에 POST-DEPLOY entry.
+- **`verified` 로 닫지 않은 이유**: 배포본 동작은 증명됐으나 실사용자 대화 기준 마찰 소멸은
+  미측정이다. 다음 audit 이 corroboration 을 재측정한다(기준선을 원장에 박아 뒀다).
+- **위험등급**: Minor(문서 전용, 런타임 무영향).
+- Files: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) ·
+  `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REPORT,REVIEW}.md`.
+- Rollback Notes: 되돌리면 원장이 배포된 봉인을 미배포로 표기해 다음 audit 이 같은 마찰을 재진단한다.

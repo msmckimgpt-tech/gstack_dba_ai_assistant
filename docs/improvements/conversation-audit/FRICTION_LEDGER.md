@@ -1746,10 +1746,18 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
     실행하지 않아 못 잡았다(적대 리뷰 P2 로 이미 지적됐던 공백). 수정
     `CHG-20260730T172000-dedup-param-cast`(`::text`/`::bigint` 캐스트 + 실 PG 5케이스 검증).
 
-## FR-attach-change-signal-client-only — fixed:undeployed (L1↔L7; 변경-인지 4축이 단일 클라이언트 신호에 걸려 갱신 파일이 "이전 세션 첨부" 로 오라벨)
+## FR-attach-change-signal-client-only — fixed:deployed:unverified-live (L1↔L7; 변경-인지 4축이 단일 클라이언트 신호에 걸려 갱신 파일이 "이전 세션 첨부" 로 오라벨)
 
-- **status**: `fixed:undeployed` — 코드/테스트/적대검증/PB-0008 완료, **배포 전**(Major → PR·deploy
-  사람 승인 대기).
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-16, PR #1315 merge main
+  `0f784df3`). deploy-web **scope=all**: web-a/web-b 무중단 롤링 + soak + 워커 4종(ask/insight/
+  ops-scheduler/ext-tool-mcp) 롤아웃 + gateway reconcile(드리프트 없음). **6서비스 전부
+  `GIT_COMMIT=0f784df3`** · edge `/healthz` ok(mysql_ok·pg_ok) · **무중단 실측
+  `no upstreams available` 0** · surge 잔존 0 · quiesce 로 진행 중 사용자 run 미절단.
+  **배포본 런타임 실증**(ask-worker 컨테이너 직접 확인): `_derive_server_new_attachment_ids` 적재 ·
+  `_ASK_JOB_ID_CTX` 적재 · `_read_ask_queue_pg`(토글 분리) 적재 · 기준선 SQL 이 `account_id =` +
+  `status = 'done'` 포함하고 `COALESCE` 없음 · `_load_new_attachment_ids` 에 합집합 배선 확인.
+  서빙 자산에도 프론트 축 도달(`keepNewIds`/`_sentNewIds`).
+  `verified` 로 닫지 **않는** 이유(§C5): 실사용자 대화 기준 corroboration 재측정이 남았다.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-14) — "`수정된 랭킹 쿼리 코드
   재검토` — assistant 가 첨부파일의 변경사항을 제대로 인지하지 못하는 현상이 간헐적으로 나타난다.
   특이사항: 추론 실행 중 해당 대화를 공유대화로 전환했다."
