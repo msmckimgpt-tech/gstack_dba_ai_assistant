@@ -1,10 +1,21 @@
 ---
 doc_type: WIKI_FEATURE_CARD
-wiki_role: feature
-feature_id: feature-0040-db-object-explorer
+scope: feature
+status: active
+edit_policy: ai-maintained
 source_of_truth: false
-ai_read_priority: 8
-status: review
+template_version: v3.12.0
+domain: [feature, wiki]
+ai_read_priority: 7
+wiki_role: feature_card
+wiki_name: project
+confidence: high
+maturity: substantial
+ai_generated: true
+feature_id: feature-0040-db-object-explorer
+linked_unit: unit/feature-0040-db-object-explorer
+sources:
+  - ../../unit/feature-0040-db-object-explorer/docs/FUNCTION.md
 ---
 
 | 항목 | 값 |

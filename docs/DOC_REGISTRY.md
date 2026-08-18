@@ -62,7 +62,7 @@ sources: [<정본경로>...]          # 참조 문서
 - **stale leftover**(attach-cutover / conn-health / task0232 — 258~417 commit behind, 06-12~15 방치, ahead 0~1): 흡수 대상 아님 → 운영 잔재 정리에서 `bin/cycle-finalize.sh` 또는 `git worktree remove` 대상.
 
 ## 미해소 (잔여 Phase)
-- 🔴 tracked secret 백업 3건 — **P3 rotation(사용자) 선행 후** repo 위생. 런북: `docs/improvements/ssot-consolidation/SECRET-ROTATION-RUNBOOK.md`.
+- 🔴 tracked secret 백업 **4건**(`.env.bak-task0211` · `.env.bak-task0279` · `.env.bak-task0299-1781684676` · `.env.secret.bak-task0228` — `bin/ssot-lint.sh` 실측, ssot ROADMAP ITEM-P0 status 의 "lint 잔여 4건 = ITEM-P3 귀속" 과 동일 카운트) — **P3 rotation(사용자) 선행 후** repo 위생. 런북: `docs/improvements/ssot-consolidation/SECRET-ROTATION-RUNBOOK.md`(런북 머리말·§0 각주·§4 `git rm --cached` 목록이 3파일만 열거해 `.env.bak-task0299-1781684676` 를 빠뜨리고 있어 함께 보정 필요).
 - 거버넌스 포인터화(CONVENTIONS §3.1·§7 ↔ AGENTS §3.1 중복 흡수) — **P1c** (정책문서 → §18.8.1 codex 검토).
 - wiki mirrors/sources frontmatter 백필 + 동기화 메커니즘 — **P4** (sot:false 일관성은 이미 양호, lint 확인).
 - 제품 코드 재배치(shared dedup·feature-0009 cross-cut·Dockerfile) — **P5** (import 그래프 실측 + 결정 #4/#5 선행).

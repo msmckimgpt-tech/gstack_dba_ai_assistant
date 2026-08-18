@@ -1201,3 +1201,11 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - Artifact: 본 entry (프로젝트 META 규약 — `meta/reviews/` 디렉토리는 이 저장소에 없고 `meta/REVIEW.md` 인라인 entry 로 check #9 를 충족)
 - **[SKIPPED] 사유**: 색인·미러 additive 정합(정본 무변경 · 코드/스키마/권한 변경 0 · 새 구조 결정 0 — 이미 결정된 것의 색인만). **Human Approval Needed**: 아니오.
 - Timestamp: 2026-08-17T01:03:01+09:00
+
+## REV-20260819T010301-META-0060-doc-sync-0819 [SKIPPED:doc-sync-index-mirror-additive] — `74316049`(08-17 doc-sync, META-0059) 이후 **신규 머지 0건**(HEAD = 그 sync 커밋)이라 delta 전량이 prior-window drift · wiki 표 body 행 분리 2건(feature-0039↔0040 `||` 깨짐) + `overview.md` §2.1 feature-0042 행 + `Architecture/Overview.md` §2.4 feature-0008 의존 행 + stale 서사 5건 + `docs/{ARCHITECTURE,DOC_REGISTRY,SECURITY}.md` 정합 3건
+- 범위: 색인·미러·서사 정합만(additive/정정). 정본(`unit/*/docs/*`) 무변경 · 구조 결정 변경 0 · 코드 0 · 신규 ADR 본문 0.
+- 검증: 렌더 행 수 `Architecture/Overview.md` §2.3 41→**42** · `overview.md` §2.1 40→**42** = ground-truth `ls -d unit/feature-*` 42 · `||` 잔존 표 행 **0** · `gen-status.sh --check` rc=0(변경 없음) · `ssot-lint.sh` 4건 WARN-only(tracked `.env*.bak*` pre-existing baseline·불변) · 릴리즈노트 `node --check` PASS(블록 50 불변 · `generated` 2026-08-16 불변 · 08-14 items 17→18).
+- reconcile-first: 서빙 static 파리티 갭 0 — 라이브 `release-notes-data.js` 가 브랜치 blob 과 byte-identical(257,063B) · `/healthz` 200. 배포 수리 대상 아님.
+- 적대검증: ULTRACODE 워크플로 `wf_fea1dd76-a75` 23 에이전트/1.75M 토큰 · 47 findings 중 18건 적대 검증(1건 **refuted** = `DOC_REGISTRY.md` in-flight 스냅샷 — 적용 안 함) · 확정 14건은 오케스트레이터가 정본에서 독립 재검증 후 적용(검증자 교정본 4건 반영). **미검증 29건은 적용하지 않고 report-only 이월**(hot.md Active Threads 에 원장화).
+- panel skip 근거: 정책-doc 변경이지만 색인·미러·오타/행구분자 성격의 additive 정정이고, 사실관계는 정본 대조 + 기계 검증(행 수·카운트·문법)으로 커버됨. `[SKIPPED:doc-sync-index-mirror-additive]` 는 08-06 이후 doc_sync 의 일관 토큰.
+- landing/배포 소유 = wrapper(v3) → 본 run 은 **로컬 commit 까지**. 서빙 static(릴리즈노트)이 바뀌었으므로 wrapper 의 post-merge 배포가 **필수**.

@@ -819,6 +819,16 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
      `unit/feature-0003-agent-web-ui/docs/REPORT.md` §8 후속 제안 등재.
    - **현재 영향 범위**: bounded 멤버(= "여기부터 공유" 로 들어온 멤버)에 한정. 비-멤버는
      `_account_can_access_attachment` 가 이미 404 로 차단한다.
+   - **경로 집합 갱신(2026-08-14)**: 위 네 경로 열거는 그 뒤 두 축으로 넓어졌다 — ①
+     `get_attachment_version_diff` 가 `from_attachment_id`/`to_attachment_id` 로 **기준 체인 밖**
+     첨부 본문을 여는 축을 얻었고(attach-version-tree-ui — 인가는 양쪽 각각
+     `_account_can_access_attachment` + 같은 대화·같은 파일명 스코프이나 window clip 은 여전히
+     미적용), ② `get_attachment_versions` 응답의 신규 `lineages`
+     (`_conv_store._load_filename_lineage_heads`, attach-version-branching)가 같은 대화·같은
+     파일명의 **형제 계보 head 를 열거**한다(메타데이터만·본문 0). 봉인 시에는 위 네 경로와 함께
+     이 두 축(cross-chain diff 양쪽 · lineage head 열거)도 같은 헬퍼로 덮어야 한다. 정본 =
+     `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`
+     AC-20260814T010000-attach-version-branching-3 · TASK `20260814T0600-attach-version-tree-ui`.
 
 ### 21.6 share 목록 owner 게이트 — 윈도우 escape 봉인 (SEC-20260723 REV-share-window)
 

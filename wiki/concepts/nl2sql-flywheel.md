@@ -52,15 +52,17 @@ last_updated: 2026-06-30
 | **ITEM-11** | 메타데이터 거버넌스 포탈 (CRUD UI — 용어/ENUM + 테이블/컬럼 설명·주입·overlay·부트스트랩·샘플 admin, 용어 대화 자율등록) | 완료(출시, MVP-1 + Phase 2 마감, RBAC `kb.ingest.manual`/`kb.sample.curate`) |
 | **ITEM-09** | heavy-query plan+approve | reject(subsumed) — 기존 EXPLAIN gate 가 포섭 |
 
-> **측정 보류**: ITEM-02/04 의 효과 A/B(샘플 off/on)는 임베딩(titan-embed) 다운으로 보류 —
-> 복구 후 ITEM-01 harness 로 generation/retrieval metric 유의 상승 검증 예정.
+> **측정 보류**: ITEM-02/04 의 효과 A/B(샘플 off/on)는 아직 미측정 — 단 보류 사유가 바뀌었다.
+> **임베딩 차단은 2026-06-23 해소**(titan-embed → 로컬 Ollama bge-m3(1024), PR#385 e2e 검증)돼
+> 측정 자체는 가능해졌고, 남은 blocker 는 **라이브 운영 질의 로그 부재**다 — 합성 KB 가 포화돼
+> 측정 신호가 0 이다. 라이브 로그 확보 후 ITEM-01 harness 로 검증한다.
 
 ## 3. 핵심 메커니즘
 
 | 축 | 설계 |
 |---|---|
 | **평가 harness (ITEM-01)** | RAGAS + LLM-as-Judge 로 generation/retrieval metric 산출 — 개선 효과의 측정 게이트. |
-| **샘플쿼리 few-shot (ITEM-02)** | `sample_queries` 테이블(마이그 0014) + 임베딩 `vector(1536)`, `approved ∧ active ∧ weight` cosine 검색, `## EXAMPLE QUERIES` **예시-only 주입**(직접 실행 아님), datasource-scoped(교차오염 차단). |
+| **샘플쿼리 few-shot (ITEM-02)** | `sample_queries` 테이블(마이그 0014 + **0015 차원 정정 `vector(1024)`**, bge-m3), `approved ∧ active ∧ weight` cosine 검색, `## EXAMPLE QUERIES` **예시-only 주입**(직접 실행 아님), datasource-scoped(교차오염 차단). |
 | **feedback 환류 (ITEM-03)** | 답변 👍/👎 + "샘플로 등록" → 검수 큐 → 승인 시 `sample_queries`(approved) 승급, 👎=negative example. (PR-B/ITEM-11) |
 | **DS 비즈니스 컨텍스트 (ITEM-04)** | `WebDatasources.Description`/`DomainTags` → `describe()` → 멀티DS 그라운딩 주입(질문 의도 해석 보강). |
 | **self-reflection (ITEM-07)** | 답변 전 명시적 자가수정 루프 — 생성 SQL/결과를 스스로 한 번 더 점검. |
