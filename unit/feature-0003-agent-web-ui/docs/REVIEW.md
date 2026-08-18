@@ -5349,3 +5349,15 @@ P3 6 중 3 반영). 선례: `REV-20260814T120000-profile-sort-postdeploy [SKIPPE
 - **테스트 env**: 무인 cron(WSL2 컨테이너 호스트). `verify_release_notes.mjs` 는 `unit/feature-0003-agent-web-ui` 에서 실행(jsdom `/tmp/node_modules`). PB-0008 은 TEST.md 에 미수행 사유·대체 검증 명시.
 - **cache-buster**: 수기 bump 없음. 소스 `?v=dev` placeholder 고정 + Dockerfile `inject_asset_stamp.py` 빌드 주입 + `bin/deploy-web.sh:1320` 이 placeholder 잔존 시 배포 ABORT(2026-07-12 ITEM-09). 라이브 실측 토큰 `?v=7e6a0de6e2c6`. `index.html`/`admin.html` 편집 0.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.
+
+## REV-20260819T010301-doc-sync-rn-0819 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-08-14 블록 누락 1항목 append(17→18) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260819T010301-doc-sync-rn-0819`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + 그 companion 문서).
+- Timestamp: 2026-08-19T01:03:01+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · 구조 단언(`releases` 50 **불변** · `generated`=="2026-08-16"==`releases[0].date` · `releases` 내 `2026-08-14` 블록 items 17→**18**(area work 11 · admin 3 · common 4 / type new 7 · improved 3 · fixed 8) · 스키마 외 키 0 · **`date: "2026-08-13"` 이후 tail 바이트 정확 일치** · `generated` 이전 head 바이트 정확 일치 → 편집이 08-14 블록 내부로 완전 국소화) · 내부용어 누출 0(정규식 기계 검증).
+- **검증 한계 정직**: `tests/verify_release_notes.mjs` 는 스크립트 :21 이 `require("/tmp/node_modules/jsdom")` 를 하드코딩하고 이 환경에 그 경로가 없어 **실행 불가**(MODULE_NOT_FOUND). 직전 run 이 기록한 baseline 34 pass / 0 fail 은 **이 세션에서 재확인하지 못했다** — DOM 렌더·그룹 수·접힘 기본값·필터 카운트·XSS 이스케이프 축은 미검증이며, 대신 위 구조·문법·국소성 검증으로 대체했다. 스키마·필드 구성이 기존 항목과 동일하고 렌더 로직 델타가 0 이므로 렌더 경로 회귀 위험은 낮다고 판단했으나, 보증한다고 쓰지 않는다.
+- **date 내림차순 판정**: dated 블록 50개의 순서 검사는 `false` 로 나오지만 이는 **선재 조건**이다 — 말미 블록의 `date` 가 문자열 `"이전"` 인 설계상 label 블록이라 정렬 비교에서 뒤로 밀린다. 편집 전(HEAD) 파일에서 동일하게 `false` 이고 date 목록이 편집 전후 **완전 동일**(블록 추가 아님)임을 실측해 본 변경 무관을 확인했다.
+- **블록 귀속 판정**: 항목의 배포일이 08-14 이고 그 date 블록이 이미 존재하므로 doc_sync Phase 3 규약대로 **기존 블록 append**(신규 블록·`generated` 변경 금지). 직전 `doc-sync-rn-0817` 이 같은 창 18항목을 적재하며 이 1건을 놓친 prior-window 누락의 보충이다.
+- **cache-buster**: 수기 bump 없음. 소스 `?v=dev` placeholder 고정 + 빌드 `inject_asset_stamp.py` content-hash 주입 + `bin/deploy-web.sh` 가 placeholder 잔존 시 배포 ABORT(2026-07-12 ITEM-09). `index.html`/`admin.html` 편집 0.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**

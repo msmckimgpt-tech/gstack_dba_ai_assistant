@@ -4410,3 +4410,13 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-17T01:03:01+09:00
+
+## CHG-20260819T010301-doc-sync-rn-0819 (2026-08-14 블록 append) 릴리즈노트 콘텐츠 — 누락 1항목 보충(17→18)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 **기존 `2026-08-14` 블록**에 1항목 append(무거운 조회 차단 시 데이터베이스 종류에 따라 대체 안내가 빠지던 문제) + 같은 블록 `summary` 정합. `releases` 50 **불변** · `generated` "2026-08-16" **불변**(top-block date 규약) · `date: "2026-08-13"` 이후 tail **바이트 동일**.
+- 신규 블록을 만들지 않은 근거: 항목의 귀속 배포일이 08-14 이고 그 date 블록이 이미 존재한다 → doc_sync Phase 3 의 "기존 블록 append(신규 블록·publish-date 신설 금지)" 규약 적용. 직전 run 이 같은 창에서 18항목을 적재하며 놓친 **prior-window 누락**의 보충이다.
+- 평이화/비노출: 벤더명·내부 명칭·경로·SQL 키워드 노출 0. "데이터베이스 종류에 따라" 수준의 사용자 언어로만 서술.
+- Verification: `node --check` PASS · 블록 50 불변 · 08-14 items 17→18(work 11 · admin 3 · common 4) · 스키마 외 키 0 · head/tail 바이트 정합 · 내부용어 누출 0. `verify_release_notes.mjs` 는 jsdom 경로 부재로 **미실행**(TEST.md 에 사유·대체 검증 기록).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-19T01:03:01+09:00
