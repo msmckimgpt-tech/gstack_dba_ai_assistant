@@ -37,11 +37,34 @@ source_of_truth: true
   부재 포함), 리뷰어 `CONVERSATION REQUEST` 주입·미지정 무주입·프롬프트 규칙(과답변 오판 금지·
   삭제=REGRESSION), 첨부 digest(매니페스트·발췌·절단·예산 선점), 붕괴 가드(라이브 붕괴 재현 →
   미채택 `revise_collapsed` / 정상 축소는 통과), 누출 게이트(bounded 발신자 대화요청·첨부 억제).
+- TEST-20260819-unresolved-convergence-1..15: `tests/test_redteam.py`(13) +
+  `tests/test_redteam_attach_excerpt_anchoring.py`(2, 갱신 1 별도) — revise 무산출 재시도/연속실패/streak
+  리셋/aborted 정정, grounding rederive 승격(+ENABLED 게이트·retry 플래그 단위), digest
+  PROVIDED 클래스 분리·혼합 입력 격리·(prefix only), 프롬프트 규칙(PROVIDED 클래스 해석·
+  verify 부재-근거 WARN 강등·rederive read_attachment).
 - 기존 회귀: `test_runtime_settings_api.py`(레지스트리 확장 무회귀),
   `test_permission_dependency_map.py`(신규 권한 FE↔카탈로그 정합),
   `test_route_parity_p5b.py`(라우트 추가 정합), `test_call_llm_records_agent_task.py`(계측 무회귀).
 
 ## 3. Test Runs (append-only)
+
+### Run 2026-08-19 — unresolved-convergence (agent 이미지 + 격리 worktree)
+- Environment: CLI
+- Command: `docker run --entrypoint sh -v <worktree>:/work aa08dcc33c39 -c "python -m pytest -q
+  unit/feature-0002-agent-core/tests"` (PYTHONPATH=feature-0002/0003 src, PYTHONDONTWRITEBYTECODE=1)
+- Result: **PASS (본 변경 범위)** — redteam 4개 스위트(test_redteam / attach_excerpt_anchoring /
+  attachment_manifest / abort) 228건 전건 PASS. 신규 15건: revise 무산출 재시도(1회)·연속 2회
+  revise_failed·streak 리셋·abort 중 무산출 aborted 정정·grounding 2회차 rederive 승격·
+  REDERIVE_ENABLED=0 승격 차단·retry 게이트 단위·PROVIDED 클래스 분리·혼합 입력 클래스 격리·
+  (prefix only) 표기·프롬프트 규칙 2건(PROVIDED 클래스·verify 부재-근거 WARN 강등)·
+  rederive 지시 read_attachment 명시 + 적대 리뷰(REV-20260819T120000) 반영 3건(섹션 헤더 위조 본문/파일명 2채널 무력화·PROVIDED 대형화 시 ALSO ATTACHED 예산 생존). 기존 강등 계약 테스트 1건은 새 계약으로 갱신
+  (`test_files_that_do_not_fit_are_still_announced` — 강등처 ALSO ATTACHED → PROVIDED).
+- feature-0002 전체 스위트: 1 FAILED 는 **pre-existing 환경 의존 — 본 diff 무관** (교차 검증:
+  pristine main(repo/) 동일 컨테이너·동일 명령으로 동일 실패 재현 —
+  `test_oauth_exhaustion_gate.py::test_write_failure_after_successful_post_cannot_kill_slot_selection`,
+  subprocess FileNotFoundError).
+- Windows-browser: **미수행 — 웹 자산(static/template/html) 변경 없음** (backend
+  redteam.py + tests + docs 만. 콘솔 note 라벨 추가는 의도적으로 후속 이월 — REPORT §8).
 
 ### Run 2026-07-15 — 단위 (컨테이너 make test)
 - Environment: CLI

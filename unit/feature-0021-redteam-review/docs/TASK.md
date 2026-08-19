@@ -6,8 +6,8 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_updated: 2026-07-15
-feature_status_date: 2026-07-29
-feature_status_note: "답변 자가 적대 red-team 리뷰(초안→적대 리뷰→결함 수정→재검증→전달, 결함 해소까지 반복) + 원 요청 정합 교정(answer-origin-realign, 07-28) — 수정 지시가 trailing user turn 이라 답변이 원 요청 대신 직전 문맥(리뷰 결함 목록)에 응답하던 구조적 결함을 재앵커(지시 맨 끝 원 요청 블록 + 출력 계약, 추가 호출 0) + 메타 프레이밍 결정론 탐지 후 내용 보존 재서술 1회(콜백 내부 → verify 통과)로 교정. 폐기 가드(무산출·60% 미만 길이·메타 잔존)·연속 거절 2회 비용 가드·REDTEAM_ANSWER_REALIGN 스위치·bounded 발신자 thread_goal 억제. 신규 23건 PASS·전체 2814(baseline 2791) 회귀 0·마이그레이션 없음. (07-29) 그 재앵커가 다중 턴에서 역효과 — 리뷰어·재앵커가 현재 턴 발화('네 맞습니다')만 보고 실질 답변을 과답변/창작으로 오판, 14 라운드에 3,170자 리뷰가 152자 비-답변으로 붕괴(라이브 run #132). 4축 교정: 리뷰어에 CONVERSATION REQUEST+첨부 근거 제공·과답변 오판 금지, 앵커 2층(대화 요청/직전 발화)·계약을 addressing 전용, 붕괴 가드(초안 30% 미만 미채택, revise_collapsed). 신규 22건·전체 2857(baseline 2835) 회귀 0"
+feature_status_date: 2026-08-19
+feature_status_note: "(08-19) '재검증에서 해소되지 않은 지적' 잔존 전달의 비수렴 경로 3종 봉인(unresolved-convergence, 사용자 리포트) — 라이브 30일 실측(잔존 33건 중 revise_failed 25·미해소 축 grounding 47/71)으로 ① digest 예산 강등 본문-보유 첨부를 PROVIDED-TO-THE-ASSISTANT 클래스로 분리(ALSO ATTACHED 오표기 → 옳은 답변 BLOCK 하던 구조적 false positive 제거) ② 재작성 실패 판명(2회차+) grounding BLOCK 을 rederive(도구 재추론) 승격 — read_attachment/execute_sql 로 근거를 리뷰어 시야에 재생산 ③ 수정 무산출 1회 재시도(연속 2회면 revise_failed)·사용자 중단발 무산출은 aborted 정정 + verify 패스 '부재만이 근거' 지적 WARN 강등 프롬프트 규칙. 신규 테스트 15건(적대 리뷰 반영분 3건 포함)·redteam 스위트 228 PASS·기존 1 fail 은 pristine main 동일(선재) / 답변 자가 적대 red-team 리뷰(초안→적대 리뷰→결함 수정→재검증→전달, 결함 해소까지 반복) + 원 요청 정합 교정(answer-origin-realign, 07-28) — 수정 지시가 trailing user turn 이라 답변이 원 요청 대신 직전 문맥(리뷰 결함 목록)에 응답하던 구조적 결함을 재앵커(지시 맨 끝 원 요청 블록 + 출력 계약, 추가 호출 0) + 메타 프레이밍 결정론 탐지 후 내용 보존 재서술 1회(콜백 내부 → verify 통과)로 교정. 폐기 가드(무산출·60% 미만 길이·메타 잔존)·연속 거절 2회 비용 가드·REDTEAM_ANSWER_REALIGN 스위치·bounded 발신자 thread_goal 억제. 신규 23건 PASS·전체 2814(baseline 2791) 회귀 0·마이그레이션 없음. (07-29) 그 재앵커가 다중 턴에서 역효과 — 리뷰어·재앵커가 현재 턴 발화('네 맞습니다')만 보고 실질 답변을 과답변/창작으로 오판, 14 라운드에 3,170자 리뷰가 152자 비-답변으로 붕괴(라이브 run #132). 4축 교정: 리뷰어에 CONVERSATION REQUEST+첨부 근거 제공·과답변 오판 금지, 앵커 2층(대화 요청/직전 발화)·계약을 addressing 전용, 붕괴 가드(초안 30% 미만 미채택, revise_collapsed). 신규 22건·전체 2857(baseline 2835) 회귀 0"
 ---
 
 # Task
@@ -39,6 +39,27 @@ feature_status_note: "답변 자가 적대 red-team 리뷰(초안→적대 리�
 
 <!-- PLAN-APPROVED: entry persona arg-given dispatch (사용자 요청 명시 위임, 2026-07-15).
      plan 표면화 후 진행 — AGENTS.md §7.1 Major 절차. -->
+
+### 2.2 Plan — unresolved-convergence cycle (2026-08-19)
+
+- **영향받는 파일:** feature-0002 `src/modules/redteam.py`(`build_attachment_digest`·
+  `REDTEAM_REVIEW_PROMPT`·`_rederive_eligible_axes`/`_block_rederive_axes`·
+  `build_rederive_instruction`·`orchestrate_review` 수정-실패 분기), 동 feature
+  `tests/test_redteam.py`·`tests/test_redteam_attach_excerpt_anchoring.py`, 본 feature docs.
+- **접근 방법:** 라이브 30일 실측(redteam_reviews/rounds)으로 비수렴 경로 3종을 특정하고
+  각각을 원천에서 봉인 — digest 클래스 진실화(오탐 소거) / grounding rederive 승격(실질 해소
+  경로) / 무산출 재시도+aborted 정정(일시 실패 내성). 상세 FUNCTION.md §7.6.
+- **완료 판정 기준:** ① 5개 본문-보유 첨부 digest 에서 강등본이 `PROVIDED TO THE ASSISTANT`
+  에 나열되고 ALSO ATTACHED 미출현 ② grounding BLOCK 재발 라운드에서 rederive_fn 호출
+  (`meta.rederive_axis == "grounding"`) ③ revise_fn 1회 None → 최종 `stop_reason=resolved`,
+  2회 연속 None → `revise_failed`, abort 중 None → `aborted`.
+- **위험도:** Major 보수 취급 (답변 파이프라인 로직·리뷰어 프롬프트 변경. 인증/인가·스키마·
+  마이그레이션·UI 무변경, fail-open 불변. 비용: rederive 승격은 2회차+ grounding 한정 +
+  기존 REDTEAM_REDERIVE_ENABLED/MAX_TOOL_ROUNDS 게이트 재사용 — 오탐 소거·재시도로 총
+  라운드 수는 순감 예상)
+
+<!-- PLAN-APPROVED: entry persona arg-given dispatch (사용자 개선 요청 명시 위임, 2026-08-19).
+     plan 문서화 후 진행 — AGENTS.md §7.1 / §16.3 자율 진행 원칙. -->
 
 ## 3. Task Queue
 - [x] TASK-20260715T140100-console-panel: 관리 콘솔 "AI 추론" 탭 (admin_reasoning 라우터 +
@@ -80,6 +101,16 @@ feature_status_note: "답변 자가 적대 red-team 리뷰(초안→적대 리�
   (무산출·60% 미만 길이·메타 잔존) + 연속 거절 2회 비용 가드 + `REDTEAM_ANSWER_REALIGN`
   스위치 + bounded 발신자 thread_goal 억제(`_realign_thread_goal`). 신규 23건 PASS ·
   전체 2814 passed/0 failed · ruff clean · 마이그레이션 없음.
+
+- [x] TASK-20260819T103000-unresolved-convergence: 사용자 리포트("재검증에서 해소되지 않은
+  지적이 지속 노출 — 게으르게 동작하는 체감") 진단 → 라이브 30일 실측으로 비수렴 경로 3종
+  특정(잔존 전달 33건 중 revise_failed 25 · 미해소 축 grounding 47/71 · 동일 지적 6라운드
+  반복 #353). ① digest 예산 강등 본문-보유 첨부의 PROVIDED-TO-THE-ASSISTANT 클래스 분리
+  (ALSO ATTACHED 오표기 = 옳은 답변 BLOCK 의 구조적 false positive) ② 재작성 실패 판명
+  (2회차+) grounding BLOCK rederive 승격 ③ 수정 무산출 1회 재시도 + 사용자 중단발 무산출
+  aborted 정정 + verify '부재만이 근거' WARN 강등 프롬프트 규칙. 신규 테스트 15건(적대 리뷰 반영 3건 포함) ·
+  redteam 스위트 228 PASS · feature-0002 전체 1 fail 은 pristine main 동일 재현(선재,
+  test_oauth_exhaustion_gate — 환경 의존). 상세 FUNCTION.md §7.6 · MODIFY.md CHG-20260819-0001.
 
 ## 4. In Progress
 - 없음

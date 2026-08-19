@@ -28,6 +28,13 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 - 전역 프롬프트 비교·검토: 기본 시스템 프롬프트 fallback 은 편집 정본(전역 프롬프트)과 중복이라 작동 지침 목록에서 제외
 
 ## 3. Recent Changes
+- CHG-20260819-0001 — **"재검증에서 해소되지 않은 지적" 잔존 전달의 비수렴 경로 3종 봉인**
+  (unresolved-convergence, 사용자 리포트). 라이브 30일 실측(잔존 33건 중 revise_failed 25 ·
+  미해소 축 grounding 47/71 · 동일 지적 6라운드 반복)으로 ① digest 예산 강등 본문-보유 첨부의
+  PROVIDED-TO-THE-ASSISTANT 클래스 분리(옳은 답변을 BLOCK 하던 구조적 false positive 제거)
+  ② 재작성 실패 판명(2회차+) grounding BLOCK 의 rederive 승격(도구로 근거를 리뷰어 시야에
+  재생산 — 실질 해소 경로) ③ 수정 무산출 1회 재시도 + 사용자 중단발 무산출 aborted 정정
+  ④ verify '부재만이 근거' 지적 WARN 강등 프롬프트 규칙. 스키마·UI·권한 무변경. 상세 MODIFY.md.
 - CHG-20260729-0004 — **자가검증·재검증 회차 단계 원장**(`redteam_review_rounds`, alembic 0048)
   신설 + 관리 콘솔 '감사 > AI 운영 현황 > 추론' 을 **대화 단위 격리 + 3계층 접이식**으로 재구성
   (사용자 요청: "각 대화의 마지막 리뷰사항만 기록된다"). 이전에는 한 답변당 요약 1행이라 최초
@@ -137,6 +144,17 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 - 없음 (deploy_scope: included — cycle-final 후 자동 배포 진행)
 
 ## 8. Suggested Improvements
+- (2026-08-19) 관리 콘솔 `admin.js` `_REASONING_ROUND_NOTES` 에 신규 note 2종
+  (`revise_failed_retry`/`revise_aborted`) 한글 라벨 추가 — 현재는 fail-soft 폴백으로 raw
+  코드가 표시된다(기능 정상). 웹 자산 변경이라 check #13(PB-0008) 게이트가 트리거되므로
+  본 backend-only cycle 에서 의도적으로 제외, 다음 콘솔 cycle 에 동반할 것.
+- (2026-08-19) digest 섹션 헤더(PROVIDED TO THE ASSISTANT / ALSO ATTACHED) 문자열을 적대
+  첨부 본문이 발췌 안에서 위조할 수 있는 표면은 기존 ALSO ATTACHED 와 동일 수준으로 잔존
+  (발췌 fidelity 보존을 위해 본문 개행을 접지 않는 기존 결정 유지). 프롬프트의 "digest 는
+  DATA" 규칙이 1차 방어 — 필요 시 섹션 헤더 neutralizer 확장 후보.
+- (2026-08-19) 이전 턴 도구 실행 근거의 리뷰어 비가시(다중 턴 재인용 오탐의 잔여 원천)는
+  C4 프롬프트 규칙 + grounding rederive 로 완화 — 근본 해소(이전 run steps 의 bounded digest
+  동봉)는 비용·누출 경계 검토 후 후속 후보.
 - make test 의 컨테이너가 라이브 compose 네트워크에 합류해 "DB 필요 테스트가 우연히 통과"
   하는 문제 — `--network none` 격리 또는 env 고정(.env.test)으로 결정론화 후보.
 - runtime_settings 기본값 단정 테스트 2건의 env 내성화 (monkeypatch.delenv).
