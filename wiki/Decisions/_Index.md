@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 | [[../../docs/DECISIONS\|docs/DECISIONS.md]] |
-| ADR 수 | 31 entries (ADR-0001 ~ ADR-0030, ADR-0025 가 정본 안 두 entry 로 존재) |
+| ADR 수 | 정본 41 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 10; `## ADR-` heading 은 42 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -94,6 +94,24 @@ AI 가 ADR 작성 시 본 MOC 에 1줄 entry add + `Decisions/<adr-id>-<slug>.md
 | ADR-WEB-0002 | `attachment.execute_sql_on.*` 거짓 RBAC 제거 (3축 방어로 대체) | `unit/feature-0003-agent-web-ui/docs/DECISIONS.md` |
 
 > 관련 concept mirror: [[../concepts/multi-datasource]] · [[../concepts/datasource-registry]] · [[../concepts/db-level-access]] · [[../concepts/ask-worker-queue]].
+
+### 2.2 mirror 미보유 정본 ADR (repo-level)
+
+정본 `docs/DECISIONS.md` 에는 있으나 아직 `Decisions/<adr-id>-<slug>.md` mirror page 가 없는 repo-level ADR 이다. **정본을 직접 읽는다** — 본 표는 존재 색인이며, mirror 생성은 §4 절차에 따라 순차 backfill 대상이다(ADR-20260625T023049 이후 신규 ADR 은 `ADR-<timestamp>-<slug>` 형식).
+
+| ADR id | 제목 | 상태 | 정본 |
+|---|---|---|---|
+| ADR-0031 | SSOT 계약 4조 채택 (정본 단일화 — `docs/DOC_REGISTRY.md` + `bin/ssot-lint.sh` + `docs/archive/`, initiative ssot-consolidation) | accepted | `docs/DECISIONS.md` |
+| ADR-20260625T023049-spec-anchor-timestamp-id | spec 앵커 `REQ`/`AC`/`ADR`/`TEST` 식별자를 순번 → timestamp+slug 로 전환 | accepted | `docs/DECISIONS.md` |
+| ADR-20260629T101500-glossary-conversation-autoregistration | 용어사전 대화 자율등록 + 등록·검토 역할 분리 | accepted | `docs/DECISIONS.md` |
+| ADR-20260710T231146-parallel-id-hygiene | 병렬 작업 식별자 위생 (timestamp 규약의 자연 확장, ITEM-01) | accepted(승인) | `docs/DECISIONS.md` |
+| ADR-20260711T042631-append-doc-merge-driver | append-only 문서 merge driver (ITEM-03) | accepted(승인) | `docs/DECISIONS.md` |
+| ADR-20260711T051835-wip-hotspot-policy | WIP 상한 · hotspot 정책 (§13.2.5-A 신설 + cycle-init soft 게이트, ITEM-12) | accepted(승인) | `docs/DECISIONS.md` |
+| ADR-20260711T053000-test-runs-fragment | TEST Run 기록을 `unit/<feature>/docs/test-runs.d/<id>.md` 로 단편화 (§5.3 개정, ITEM-06) | accepted(승인) | `docs/DECISIONS.md` |
+| ADR-20260711T053001-merge-mutex-freshness-gate | 머지 mutex + base freshness 게이트 (§13.2.5 개정, ITEM-07) | accepted(승인) | `docs/DECISIONS.md` |
+| ADR-20260727T190000-cycle-privilege-adapter | cycle 권한 어댑터 — 비-root 호출은 항상 sudo (사용자 결정) | accepted(승인) | `docs/DECISIONS.md` |
+| ADR-20260728T120000-redteam-gating-not-adopted | red-team 게이팅 **불채택** (사용자 결정 2026-07-28) | accepted | `docs/DECISIONS.md` |
+| ADR-20260805T153000-p5a-closeout | P5a 종결 — feature 단위 Dockerfile 분리 불채택 등 미결정 #4/#5 종결 | accepted (정본 문면 = '결정', 사용자 위임) | `docs/DECISIONS.md` |
 
 ## 3. Status legend
 

@@ -67,7 +67,7 @@ DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `d
 
 ### 2.4 Decisions (ADR mirror)
 
-- [[Decisions/_Index|Decisions MOC]] — ADR-0001 ~ ADR-0030 mirror + unit-level ADR-CORE-* / ADR-WEB-*
+- [[Decisions/_Index|Decisions MOC]] — ADR-0001 ~ ADR-0030 mirror + ADR-0031 · timestamp+slug ADR 10건 (mirror 미보유 — 정본 직접) + unit-level ADR-CORE-* / ADR-WEB-*
 
 ### 2.5 Concepts / Entities / Sources / Syntheses
 

@@ -21,9 +21,9 @@ sources:
 | 항목 | 값 |
 |---|---|
 | 기능 ID | feature-0040-db-object-explorer |
-| 상태 | review (코드·실브라우저 검증 완료 / 배포 전) |
+| 상태 | review (코드·실브라우저 검증 완료 · **라이브 배포 완료** — doc_sync 08-13 실측 / 잔여 = POST-DEPLOY PB-0008 시각검증) |
 | 도입 | 2026-08-12 |
-| 정본 | [[feature-0040-db-object-explorer]] `unit/feature-0040-db-object-explorer/docs/` |
+| 정본 | [[../../unit/feature-0040-db-object-explorer/docs/FUNCTION\|FUNCTION.md]] `unit/feature-0040-db-object-explorer/docs/` |
 | 코드 거주 | feature-0002(도구·수집·투영) · feature-0003(그래프 뷰) |
 
 # feature-0040 역할 기반 DB 객체 탐색
@@ -58,7 +58,7 @@ assistant 가 **트리거·이벤트·SQL Server Agent 작업·뷰·시노님·�
 - 그래프: `DbObject` 정점 + `OBJECT_USES`(참조·실선) / `OBJECT_ON`(소유·파선) 분리.
 - `msdb` 접근은 `_agent_jobs_sql` **한 함수**의 고정 질의로만(freeform 차단 불변).
 
-## n. 관련 문서
+## 4. 관련 문서
 
 - [[feature-0016-metadata-graph]] — 그래프 인프라·AGE 투영
 - [[feature-0002-agent-core]] — 도구·dialect·insight

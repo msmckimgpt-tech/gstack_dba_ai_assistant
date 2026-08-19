@@ -1404,6 +1404,26 @@ red-team 리뷰어의 evidence digest 에 실리는 첨부 발췌가 `body[:1200
   이상, 첨부 본문이 그것을 담으면 **정확한 답변을 BLOCK 시키거나 틀린 답변을 통과시키는 레버**가
   된다. `_neutralize_digest_markers` 로 대괄호만 무력화한다(내용은 보존 — 지우면 리뷰어가 보는
   본문이 원본과 달라진다).
+- **면책 클래스 분리 + 섹션 헤더 위조 차단 (2026-08-19, unresolved-convergence) — 경계는 그대로,
+  틀렸던 문면을 고쳤다**: 위 ③의 전제("`ALSO ATTACHED` 는 **정의상** 본문이 프롬프트에 없다")가
+  실제로는 참이 아니었다. digest 예산의 2-pass 강등이 **본문-보유** 첨부를 `ALSO ATTACHED` 로
+  합쳐, 프롬프트에 본문이 실재했던 파일의 인용을 리뷰어가 "근거 없음"으로 BLOCK 했다 —
+  **옳은 답변을 막는** 구조적 false positive 이고, grounding 축은 재작성으로 근거를 만들 수 없어
+  해소 불가능한 BLOCK 이었다(라이브 30일 미해소 grounding 47건의 주 원천). 강등본은 이제
+  `PROVIDED TO THE ASSISTANT — EXCERPT OMITTED HERE FOR BUDGET`(상류 절단분은 `(prefix only)`)
+  별도 클래스로 가고, `ALSO ATTACHED` 에는 **진짜 미인라인**(content 부재)만 남는다 — ③의 면책
+  불성립 판단은 그 좁혀진 집합에서 그대로 유효하다. 두 섹션 공존 시 PROVIDED 의 선점은 매니페스트
+  예산의 절반으로 제한한다(독식하면 `ALSO ATTACHED` 헤더가 잘려 지시문이 반쪽이 된다).
+- **위조 차단이 평문 섹션 헤더까지 확장**: PROVIDED 헤더는 대괄호 마커보다 **강한 권한**(그 내용
+  인용에 `grounding`/`honesty` 보고 금지)을 평문으로 부여하므로, 첨부 본문이 그 문구로 가짜 섹션을
+  위조하면 날조 주장을 면책시킬 수 있다. `_DIGEST_SECTION_RE` 가 `PROVIDED TO THE ASSISTANT`·
+  `ALSO ATTACHED` 의 단어 사이 공백을 하이픈으로 바꿔 **정확-문구 매칭만** 깨고 내용은 보존한다
+  (`[`→`(` 와 동일 정신).
+- **경계 변화 없음(명시)**: 노출 집합(`_review_attachments()` 가 고르는 같은 파일들)·누출 게이트
+  (공유창 bounded 발신자 = 빈 목록)·권한 코드·스키마·UI 는 무변경이다. 이 cycle 이 바꾼 것은
+  리뷰어에게 **파일의 출처 클래스를 진실하게 말하는 것**뿐이다. 전체 설계·적대 검증 정본:
+  `unit/feature-0021-redteam-review/docs/FUNCTION.md` §7.6 ·
+  `REVIEW.md` REV-20260819T120000-unresolved-convergence.
 
 ## 42. OAuth 구독 토큰의 자동 회전 — 스크립트가 자격증명 저장소에 쓰는 첫 경로 (feature-0007-bedrock-llm-provider, 2026-08-11)
 

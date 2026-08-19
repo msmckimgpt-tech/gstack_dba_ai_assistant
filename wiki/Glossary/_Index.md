@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 (template 용어) | [[../../docs/CONVENTIONS\|docs/CONVENTIONS.md]] §9 |
-| Entry 수 | 24 (inline) |
+| Entry 수 | 26 (inline) |
 
 ## 목차
 
@@ -71,7 +71,7 @@ sources:
 ## 3. 분리 정책
 
 - entry 6 개 미만: 본 파일 표 inline
-- 6 개 이상: 각 용어 `Glossary/<term-slug>.md` 로 분리 (현재는 24 inline — 24 가 *project-specific* + *template-shared* 의 혼합이라 inline 유지)
+- 6 개 이상: 각 용어 `Glossary/<term-slug>.md` 로 분리 (현재는 26 inline — 26 이 *project-specific* + *template-shared* 의 혼합이라 inline 유지)
 
 ## 4. 관련 문서
 

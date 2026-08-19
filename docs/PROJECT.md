@@ -65,7 +65,9 @@ ai_read_priority: 2
 ### 8.1 언어 및 런타임
 - Python 3.11
 - Docker Compose
-- MySQL 8.0
+- MySQL 8.0 — `web*` control plane (RBAC/audit/auth)
+- PostgreSQL 16 + pgvector (`pgvector/pgvector:pg16`) — KB(`agent_kb`) · agent runtime(`agent_runtime` schema) · assistant 작업공간(`agent_scratch`) 정본 (ADR-0021 / ADR-0024 / ADR-0027 / ADR-0028)
+- pgbouncer (PG 연결 풀) · Caddy 2 (엣지 TLS·LAN 단일 진입) · MinIO (첨부 오브젝트 스토리지) · LiteLLM bedrock-gateway (LLM) · Ollama (KB 임베딩)
 - WSL Ubuntu
 
 ### 8.2 의존성 설치
@@ -87,8 +89,17 @@ make build
 ```
 
 ### 8.5 배포
-- AI 자율 배포: 불가 (사람 승인 필요)
-- 배포 절차: 별도 정의 필요
+- 배포 절차: 라이브 무중단(zero-downtime) 스파인 `make deploy-web` = `sudo -E bin/deploy-web.sh`
+  (web 롤링 + 워커 + gateway reconcile, `origin/main` HEAD 기준). 부분 범위 = `make deploy-web-only`
+  (web+caddy) · `make deploy-workers` (insight/ask+gateway), 되돌리기 = `make web-rollback`
+  (= `bin/deploy-web.sh --rollback`). `make deploy-all` 은 `deploy-web` 의 명시적 alias
+  (feature-0020 — 스파인이 전 배포 대상 커버).
+- 정본: feature-0014(무중단 스파인) · feature-0015(워커 graceful·백업 위생) · feature-0017(빌드 게이트) ·
+  feature-0020(전 대상 확장) · feature-0039(정기 잡 인-컨테이너). 완료 판정 기준은 `../AGENTS.md` §16
+  (§16.1 완료 기준 · §16.2 완료 선언 · §16.3 deploy-backed 소비자 완료 기준), 웹 UI 시각검증 기준은
+  §16.6 + 실 Windows 브라우저 PB-0008.
+- AI 자율 배포: 기본 불가 (사람 승인 필요). 예외 = `FIRST_REQUEST.md` / `unit/<id>/docs/FUNCTION.md`
+  `## Pre-approved Changes` 의 `deploy_scope: included` 선언 범위 (`../AGENTS.md` §12.2).
 
 ## 9. 빌드 자동화
 
@@ -99,7 +110,11 @@ make build
 
 ### 9.2 서비스 정의
 - **Docker Compose**: `../docker-compose.yml`로 서비스 오케스트레이션
-- 서비스: `mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`(선택)
+- 서비스 23개(2026-08-20 `docker-compose.yml` 실측) — 데이터: `mysql` · `postgres` · `pgbouncer` ·
+  `postgres-replica` · `postgres-replica-init` · `minio` · `minio-init` / 에이전트·워커: `agent` ·
+  `memory-init` · `insight-worker` · `ask-worker` · `ask-worker-surge` · `ops-scheduler` / 웹·엣지:
+  `web-a` · `web-b` · `caddy` / LLM: `bedrock-gateway` · `bedrock-gateway-surge` · `embed-ollama` /
+  도구·MCP: `mcp` · `gdrive-mcp` · `ext-tool-mcp` · `browser`
 - 상세 볼륨/포트 설정은 `../AGENTS.md` §Docker Compose 기준 참조.
 
 ## 10. CI/CD 및 자동화

@@ -23,7 +23,7 @@ tags: [postgres, pgvector, kb]
 |---|---|
 | 분류 | `#wiki/entity` |
 | 유형 | tool |
-| 본 프로젝트 사용 | KB 정본 + agent runtime state (`agent_kb` database) + Sprint 4 D RAG (`agent_drag`, 예정) |
+| 본 프로젝트 사용 | KB 정본 + agent runtime state (`agent_kb` database, `agent_runtime` schema) + assistant 자율 작업공간 (`agent_scratch` database — feature-0022, 2026-07-21 라이브) + Sprint 4 D RAG (`agent_drag` — ADR-0024 계획, **미실현**: 코드·compose 참조 0) |
 
 > **2026-05-27 변경**: `agent_runtime` schema 추가 — agent 대화·메시지·단계 state 가 MySQL `agent_memory` 에서 완전 이관. Postgres 가 KB + runtime 통합 storage.
 
