@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS agent_runtime.redteam_review_rounds (
     -- 원장 무결성 — 잘못된 INSERT 가 유효한 감사 이력처럼 남지 않게 한다. phase 는 코드가
     -- 쓰는 3종으로 고정하고, 카운트/인덱스는 음수를 거부한다. (review_id, round_index, phase)
     -- UNIQUE 는 걸지 않는다 — 한 라운드에 같은 phase 를 2회 기록하는 확장(예: 수정 재시도
-    -- 이력)을 막기 때문. 현 코드 경로는 라운드당 phase 1회다.
+    -- 이력)을 막기 때문. (2026-08-19 부터 실사용: 수정 무산출 재시도가 같은 round_index 에
+    -- phase='revise' 를 2회 기록한다 — note='revise_failed_retry' 행 + 채택/종료 행.)
     CONSTRAINT ck_redteam_rounds_phase
         CHECK (phase IN ('review', 'revise', 'verify')),
     CONSTRAINT ck_redteam_rounds_nonneg

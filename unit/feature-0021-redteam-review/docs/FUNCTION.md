@@ -57,6 +57,17 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   ② 재앵커를 [대화 요청 / 직전 발화] 2층으로 나누고, 계약을 **addressing 전용**(다룰 내용을
   좁히지 않음)으로 한정한다. ③ 수정본이 초안 대비 붕괴하면 채택하지 않는다
   (`stop_reason=revise_collapsed`). 근거: 라이브 회귀(§7.4).
+- REQ-20260819-unresolved-convergence: **"재검증에서 해소되지 않은 지적" 잔존 전달의 3대
+  비수렴 경로를 닫는다** (사용자 리포트: 미해소 지적 지속 노출 = "게으른" 체감. 라이브 30일
+  실측: 잔존 전달 33건 중 25건 `revise_failed`, 미해소 findings 축 grounding 47/71).
+  ① digest 예산으로 강등된 **본문-보유** 첨부를 ALSO ATTACHED(프롬프트에 없음)와 분리해
+  `PROVIDED TO THE ASSISTANT` 클래스로 진실하게 표기 — assistant 프롬프트에 본문이 실재했던
+  파일 인용을 리뷰어가 "근거 없는 창작"으로 BLOCK 하던 구조적 false positive 제거.
+  ② 재작성이 실패로 판명된 라운드(2회차+)부터 grounding BLOCK 을 도구 재추론(rederive)으로
+  승격 — read_attachment/execute_sql 로 근거를 이번 run 의 tool step 으로 재생산해 리뷰어
+  시야에 넣는 실질 해소 경로. ③ 수정 무산출 1회는 재시도(연속 2회면 종전대로 revise_failed),
+  사용자 중단('즉시 답변'/취소)발 무산출은 `aborted` 로 정정 기록. 부가: verify 패스에서
+  "부재만이 근거인 지적"의 BLOCK 재발급 금지(WARN 강등, permission 예외) 프롬프트 규칙.
 - REQ-20260727-reviewer-memory: 리뷰어가 **대화 내부 격리 환경에서 자기 리뷰 이력을 기억**한다 —
   자기가 직전에 지적한 항목과 그에 대해 assistant 가 내놓은 수정본을 이어받아, 해소 여부를
   먼저 판정하고 이미 고쳐진 항목을 다시 보고하지 않는다. 기억 범위는 (a) 현재 답변의 라운드
@@ -128,7 +139,7 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 | `aborted` | 사용자 '즉시 답변'/취소 | 가능 |
 | `no_progress` | 수정본이 직전과 실질 동일 (반복 무의미) | 가능 |
 | `revise_collapsed` | 수정본이 최초 초안의 30% 미만으로 축소 — 붕괴 방지로 미채택 (§7.4) | 가능 |
-| `revise_failed` | 수정 산출 실패 (fail-open) | 가능 |
+| `revise_failed` | 수정 산출 **연속 2회** 실패 (1회는 재시도 — §7.6; 사용자 중단발 무산출은 `aborted`) | 가능 |
 | `verify_error` | 재검증 호출 실패 (fail-open) | 미상 |
 | `unverified` | `REDTEAM_VERIFY_MIN_LEVEL` 로 재검증을 끈 강도 | 미상 |
 | `budget` | `REDTEAM_REVISE_UNTIL_RESOLVED=0` + 수정 상한 도달 | 가능 |
@@ -261,6 +272,25 @@ BLOCK). 리뷰어는 이전 턴을 보지 못하므로 구조적으로 알 수 �
   20건이며 초과분은 `capped` 로 표시한다. 각 리뷰에 회차 원장이 `rounds`(회차 asc)로 동봉되고,
   원장이 없는 이전 기록은 `rounds_available:false` 로 기존 요약 타임라인에 폴백한다.
 
+### 7.6 미해소 잔존의 비수렴 경로 봉인 (unresolved-convergence, 2026-08-19)
+
+**라이브 근거** (30일 실측): 결함 잔존 전달 33건 — `revise_failed` 25 · `revise_collapsed` 4 ·
+`no_progress` 2 · `aborted` 1 · `verify_error` 1. 미해소 findings 축: grounding 47 ·
+honesty 16 · completeness 7 · sql 1. 반복 사례 #353: 동일 grounding 지적(첨부 CSV 값 인용에
+"도구 실행 근거 없음")이 재작성 6라운드를 그대로 통과해 7회차 수정 무산출로 종료.
+
+| 축 | 내용 |
+|---|---|
+| **digest 진실화 (C1)** | `build_attachment_digest` 의 2-pass 예산 강등이 **본문-보유** 파일을 ALSO ATTACHED 로 합치던 것을 분리 — 강등본은 `PROVIDED TO THE ASSISTANT — EXCERPT OMITTED HERE FOR BUDGET` 섹션(상류 절단 파일은 `(prefix only)` 표기)으로 가고, ALSO ATTACHED 에는 **진짜 미인라인**(content 부재) 첨부만 남는다. 리뷰어 프롬프트가 두 클래스를 구분해 전자의 내용 인용에 grounding/honesty 보고를 금지한다. 근거: ALSO ATTACHED 규칙("tool run 없는 구체 주장 = 보고 대상")은 프롬프트-미탑재 파일에만 참인데, 강등본에 적용되면 digest 가 리뷰어에게 거짓을 말해 옳은 답변이 BLOCK 됐다. |
+| **grounding rederive 승격 (C2)** | 재작성이 채택된 뒤에도 재검증이 다시 BLOCK 을 낸 라운드(`revisions_done ≥ 1`)부터 grounding 축을 재도출 적격에 추가(`_REDERIVE_RETRY_AXES`). "근거 없음" 지적은 재작성으로 근거를 만들 수 없고(내용 삭제는 REGRESSION 규칙·붕괴 가드가 차단) 도구(read_attachment/execute_sql)로 근거를 이번 run 의 tool step 에 재생산하는 것이 유일한 해소 경로다. 첫 라운드는 재작성 유지(표현-수준 grounding 은 저비용 해소, 재도출은 도구 루프라 고비용). 기존 `REDTEAM_REDERIVE_ENABLED`/`REDTEAM_REDERIVE_MAX_TOOL_ROUNDS` 게이트 그대로 적용. |
+| **수정 무산출 내성 (C3)** | 무산출 시 ① abort 신호를 먼저 판별해 사용자 중단발이면 `stop_reason=aborted`(원장 note `revise_aborted`) — 스트림-중 취소가 콜백 None 으로 나와 `revise_failed` 로 오기록되던 것 정정. ② 아니면 **연속 1회 한도** 재시도(원장 note `revise_failed_retry`, 성공 시 카운터 리셋) — 일시 LLM 오류 1건이 상한 없는 수렴 루프 전체를 끝내던 것을 방지. 연속 2회 실패는 종전대로 `revise_failed` 종료(구조적 불능 신호). 재시도는 채택이 아니므로 `revision_rounds`·백스톱 카운트에 불산입. |
+| **verify 수렴 압력 (C4)** | 프롬프트 규칙 추가 — 지적의 **유일한 근거가 "이 digest 에 없음"**(tool run 부재·발췌 부재)인 경우 판정을 **순차화**: 첫 verify 재판정은 BLOCK 유지(→ C2 rederive 가 도구로 근거를 재생산할 기회), 같은 지적이 **그 뒤 verify 에서도** 근거 미생산으로 남아 있으면 BLOCK 재발급 중지·WARN 강등(permission 예외). 다중 턴에서 assistant 는 리뷰어가 못 보는 근거(이전 턴 도구 실행·프롬프트 주입 첨부)를 가질 수 있다 — 그 시점의 부재는 리뷰어 창의 속성이다. (적대 리뷰 P2 반영 — 첫 verify 강등은 C2 를 휴면시키고 진짜 날조가 1라운드 유지만으로 고지 없는 pass 를 얻는 창을 연다.) |
+
+**의도적 비변경**: 잔존 시 3중 표면화(기록/콘솔/답변 고지)는 유지 — 이 cycle 은 표면화를
+줄이는 것이 아니라 **표면화될 일 자체**(오탐 BLOCK·일시 실패 조기 종료)를 줄인다.
+결정론적 BLOCK→WARN 강등(오케스트레이터가 판정 자체를 조작)은 REQ-20260727 의 "결함 잔존
+은폐 금지"와 충돌해 채택하지 않았다 — 강등 판단은 리뷰어(C4 프롬프트)에 남긴다.
+
 ## 8. Edge Cases
 - 리뷰어가 findings 를 과잉 보고 → severity 게이트 (BLOCK 만 수정 유발) + 상한 5건 +
   over-engineering 경계 프롬프트.
@@ -339,6 +369,15 @@ BLOCK). 리뷰어는 이전 턴을 보지 못하므로 구조적으로 알 수 �
   에 포함되지 않으며 `rederive_applied=False` 다.
 - AC-20260727T174500-panel-4: rederive 근거가 라운드 간 누적되어 마지막 재검증이 이전 라운드
   근거까지 함께 본다.
+- AC-20260819-unresolved-convergence-1: 예산 강등된 본문-보유 첨부는 `PROVIDED TO THE
+  ASSISTANT` 섹션에 나열되고 ALSO ATTACHED 에 나타나지 않는다 (상류 절단 파일은
+  `(prefix only)` 표기). 진짜 미인라인 첨부는 종전대로 ALSO ATTACHED.
+- AC-20260819-unresolved-convergence-2: 재작성 채택 후 재검증이 grounding BLOCK 을 다시 내면
+  그 라운드는 rederive 로 승격된다 (`REDTEAM_REDERIVE_ENABLED=0` 이면 승격 없음, 첫 라운드는
+  재작성 유지).
+- AC-20260819-unresolved-convergence-3: 수정 무산출 1회는 재시도되고(원장 note
+  `revise_failed_retry`), 연속 2회면 `revise_failed` 종료, 무산출 시점에 abort 신호가 있으면
+  `stop_reason=aborted`(원장 note `revise_aborted`) 로 기록된다.
 
 ## 12. Observability
 - 리뷰 LLM 호출은 기존 `_record_llm_usage` 계측 (category=redteam) 으로 ai-ops 에 노출.

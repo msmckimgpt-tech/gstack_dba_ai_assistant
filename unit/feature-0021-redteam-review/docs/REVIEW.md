@@ -730,3 +730,39 @@ dispatch 가 중복 누적되는 결함을 3회 연속 실행 검증에서 잡�
 게이트는 conf 정규식이 특정한 패턴만 본다. 다른 화면(작업 화면 `index.html` 등)의 문장은
 현재 규칙 밖이며, 그 화면을 손대는 cycle 에서 규칙을 넓히면 된다. 정규식 백트래킹 시간 제한은
 파이썬 `re` 로 걸 수 없어 conf 작성자 책임으로 남겼다(예시는 non-greedy 한정).
+
+## REV-20260819T120000-unresolved-convergence [SUBAGENT:general-purpose-adversarial]
+- Related TASK: feature-0021-redteam-review (TASK-20260819T103000-unresolved-convergence)
+- Related Change: CHG-20260819-0001
+- Trigger: "재검증에서 해소되지 않은 지적" 잔존 전달 개선 cycle — 답변 파이프라인 로직·
+  리뷰어 프롬프트 변경(Major 보수 취급, §18.8 적대 검증).
+- Reviewer: Claude subagent (adversarial, 결함 적발 전용 프롬프트 — 보안/예산 회계/루프
+  건전성/원장 정합/프롬프트 모순/abort 소비 7표면 지정)
+- Timestamp: 2026-08-19T12:00:00+0900
+- Verdict: PASS (P2 3건 + P3 1건 → 전건 반영 후)
+- Human Approval Needed: no
+
+### 지적 및 반영
+1. **[P2/security] PROVIDED 섹션 헤더 위조 표면** — 신규 섹션의 "내용 인용 보고 금지" 는
+   bracket 마커보다 강한 권한인데 평문 헤더라, 적대 첨부 본문(발췌는 개행 보존)·diff·
+   파일명이 가짜 섹션을 위조해 날조 주장을 면책시킬 수 있음. → 반영: `_DIGEST_SECTION_RE`
+   신설, 본문·diff(`_neutralize_digest_markers` 확장)·파일명(digest 조립 시) 에서
+   PROVIDED/ALSO ATTACHED 문구를 하이픈 무력화. 역검증 테스트 2건(본문/파일명 채널).
+2. **[P2/budget] PROVIDED 의 manifest 예산 독식** — 강등 파일이 많으면 진짜 미인라인 첨부의
+   존재 고지(ALSO ATTACHED)가 생략 마커도 없이 증발(그 파일들이야말로 리뷰어가 달리 알 수
+   없는 존재 사실). → 반영: 양 섹션 공존 시 half-split 가드(리뷰 스냅샷 직후 선반영) +
+   12파일+binary 혼합 회귀 테스트.
+3. **[P2/semantics] verify WARN-강등 규칙과 grounding rederive 승격의 경합** — 초판 규칙은
+   첫 verify 부터 강등 가능 → rederive 경로 휴면 + 진짜 날조가 1라운드 유지만으로 고지 없는
+   pass 를 얻는 창. → 반영: 규칙을 순차화 — 첫 verify 재판정은 BLOCK 유지(rederive 가 근거를
+   재생산할 기회), REVIEW MEMORY 에 같은 지적이 2회 이상 보이는 이후 verify 에서만 강등.
+   (`downgraded` stop_reason 기록은 기존 코드가 유지 — 감사 관측 가능.)
+4. **[P3] 원장·주석 정합** — 0048 마이그레이션 "라운드당 phase 1회" 주석 stale → 정정.
+   콘솔 `_REASONING_ROUND_NOTES` 신규 note 2종 한글 라벨은 웹 자산(check #13 게이트) 회피
+   위해 의도적 후속 이월(REPORT §8, fail-soft raw 표시로 기능 정상).
+
+### 건전 판정 표면 (리뷰어 확인)
+abort_fn 이중 소비 없음(latch 정합) · 재시도의 backstop 우회 불가(streak 1 + 채택만
+revisions_done 증가) · tail 예산 회계 정확(정상 경로에서 최종 절단 미도달) · REGRESSION
+규칙과 무모순(완전성 BLOCK·붕괴 가드 독립) · permission 면책 제외 유지 · rederive 게이트
+정합 · read_attachment 도구 가용성 확인.

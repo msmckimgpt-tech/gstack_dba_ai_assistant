@@ -8,6 +8,53 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260819-0001-unresolved-convergence
+- Date: 2026-08-19
+- Related Requirement: REQ-20260819-unresolved-convergence
+- Summary: "재검증에서 해소되지 않은 지적" 잔존 전달(사용자 리포트 — 미해소 지적 지속 노출,
+  "게으른" 체감)의 비수렴 경로 3종 봉인. 라이브 30일 실측: 잔존 전달 33건 중 25건이
+  `revise_failed`(무산출 1회 즉시 종료), 미해소 findings 축 grounding 47/71 — 다수가
+  "첨부 파일 내용 인용에 도구 실행 근거 없음 / ALSO ATTACHED 목록뿐" 유형(#358·#353·#327),
+  동일 지적이 재작성 6라운드를 그대로 통과(#353).
+- 변경 (코드 거주 feature-0002 `src/modules/redteam.py`):
+  1. `build_attachment_digest` — 2-pass 예산 강등된 **본문-보유** 파일을 신규
+     `PROVIDED TO THE ASSISTANT — EXCERPT OMITTED HERE FOR BUDGET` 섹션으로 분리(상류 절단
+     파일 `(prefix only)` 표기), ALSO ATTACHED 에는 진짜 미인라인(content 부재) 첨부만 유지.
+     `REDTEAM_REVIEW_PROMPT` 에 클래스 해석 규칙 추가. 근거: assistant 프롬프트에 본문이
+     실재한 파일을 "프롬프트에 없음" 클래스로 표기해 리뷰어가 옳은 답변을 grounding BLOCK
+     하던 구조적 false positive — grounding 축은 재작성으로 근거를 만들 수 없어 이 BLOCK 은
+     해소 불가능했다.
+  2. `_rederive_eligible_axes`/`_block_rederive_axes` 에 `retry` 플래그 — 재작성이 채택된 뒤
+     재검증이 다시 BLOCK 을 낸 라운드(`revisions_done ≥ 1`)부터 grounding 을 rederive(도구
+     재추론) 적격에 추가(`_REDERIVE_RETRY_AXES`). `build_rederive_instruction` 이
+     read_attachment 를 해소 수단으로 명시. 기존 `REDTEAM_REDERIVE_ENABLED`·
+     `REDTEAM_REDERIVE_MAX_TOOL_ROUNDS` 게이트 재사용(신규 설정 없음).
+  3. `orchestrate_review` 수정-실패 분기 — 무산출 시 abort 신호 선판별(`aborted` + 원장 note
+     `revise_aborted` — 스트림-중 취소의 `revise_failed` 오기록 정정) → 아니면 연속 1회
+     한도 재시도(`_REVISE_FAIL_RETRY_LIMIT=1`, note `revise_failed_retry`, 성공 시 리셋).
+     재시도는 채택이 아니므로 `revision_rounds`·백스톱 카운트 불산입.
+  4. `REDTEAM_REVIEW_PROMPT` verify 수렴 압력 — "유일한 근거가 이 digest 부재"인 지적을
+     assistant 가 내용 유지로 응답한 뒤 BLOCK 재발급 금지(WARN 강등, permission 예외).
+- 의도적 비변경: 잔존 3중 표면화(기록/콘솔/고지) 유지 — 오케스트레이터의 결정론 BLOCK→WARN
+  강등은 REQ-20260727 "결함 잔존 은폐 금지"와 충돌해 불채택(FUNCTION.md §7.6).
+- 검증: 신규 테스트 15건(재시도/연속실패/streak 리셋/aborted 정정/rederive 승격/게이트/digest
+  클래스 분리/(prefix only)/프롬프트 규칙 + 적대 리뷰 반영 3건: 섹션 헤더 위조 2채널/
+  ALSO ATTACHED 예산 생존) + redteam 스위트 228 PASS. feature-0002 전체 1 fail
+  은 pristine main 동일 재현(선재 — `test_oauth_exhaustion_gate`, 환경 의존 FileNotFoundError).
+- 스키마·마이그레이션·UI·권한 변경 없음(0048 마이그레이션은 **주석만** 정정 — "라운드당
+  phase 1회" 가 재시도 도입으로 stale). 관측 계약: `redteam_review_rounds.note` 에
+  `revise_failed_retry`/`revise_aborted` 신규 값 + 같은 `(round_index, 'revise')` 가 재시도로
+  2행 가능(0048 이 UNIQUE 를 의도적으로 미설정한 확장 지점 — 콘솔은 note 를 그대로 표시,
+  소비자 무변경).
+- 적대 리뷰(§18.8, REV-20260819T120000) P2 3건 전건 반영: ① digest 섹션 헤더
+  (PROVIDED/ALSO ATTACHED) 문구를 비신뢰 본문·diff·파일명에서 하이픈 무력화
+  (`_DIGEST_SECTION_RE` — PROVIDED 규칙은 bracket 마커보다 강한 면책 권한이라 위조 시 날조
+  면책 레버가 됐다) ② PROVIDED 섹션의 manifest 예산 독식 방지 half-split 가드(양 섹션 공존
+  시 각 ≥ 절반 — 진짜 미인라인 첨부의 존재 고지가 무흔적 증발하던 회귀 경로) ③ verify
+  '부재만이 근거' 규칙을 순차화(첫 verify BLOCK 유지 → rederive 기회 → 이후 verify 강등 —
+  초판은 rederive 승격을 휴면시키고 진짜 날조의 조기 WARN 통과 창을 열었다). P3: 0048 주석
+  정정(콘솔 note 한글 라벨은 웹 자산 게이트로 후속 이월 — REPORT §8).
+
 ## CHG-20260807T130000-redteam-abortable-review (cross-ref — 코드 거주 feature-0002-agent-core)
 - Date: 2026-08-07 · **본 feature 파일 변경 없음**(기능 소유만 여기, 코드는 feature-0002 거주).
 - 자가 검증 대기 구간(최초 검증 패스·재검증 호출)이 취소·'즉시 답변'을 듣지 않고

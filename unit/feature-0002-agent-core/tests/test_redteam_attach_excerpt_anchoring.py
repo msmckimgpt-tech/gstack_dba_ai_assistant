@@ -233,13 +233,46 @@ def test_full_label_survives_total_budget_truncation():
 
 
 def test_files_that_do_not_fit_are_still_announced():
-    """예산 밖 파일을 통째로 감추면, 그 파일을 논한 답변이 다시 '창작'으로 오판된다."""
+    """예산 밖 파일을 통째로 감추면, 그 파일을 논한 답변이 다시 '창작'으로 오판된다.
+
+    (2026-08-19 계약 개정) 본문-보유 파일의 강등처는 ALSO ATTACHED 가 아니라
+    PROVIDED TO THE ASSISTANT 다 — assistant 프롬프트에 본문이 실재했던 파일을
+    "프롬프트에 없음" 클래스로 말하면 digest 가 리뷰어에게 거짓을 말하는 것이고,
+    그 거짓이 해소 불가능한 grounding BLOCK(미해소 잔존의 지배 축 47/71건)을 만들었다.
+    """
     tags = ("aa", "bb", "cc", "dd", "ee")
     atts = [{"filename": f"{t}.cnf", "content": _cnf(t), "truncated": False} for t in tags]
     digest = redteam.build_attachment_digest(atts, draft="확인했습니다.")
     for t in tags:
         assert f"{t}.cnf" in digest, f"{t}.cnf 가 digest 에서 증발했다"
-    assert "ALSO ATTACHED" in digest
+    assert "PROVIDED TO THE ASSISTANT" in digest
+    # 본문-보유 파일만 있으므로 "프롬프트에 없음" 클래스는 나타나면 안 된다.
+    assert "ALSO ATTACHED" not in digest
+
+
+def test_demoted_files_with_body_never_land_in_also_attached():
+    """강등본과 진짜 미인라인 파일이 각자 올바른 클래스에 나뉜다 — 혼합 입력."""
+    tags = ("aa", "bb", "cc", "dd", "ee")
+    atts = [{"filename": f"{t}.cnf", "content": _cnf(t), "truncated": False} for t in tags]
+    atts.append({"filename": "big.bin", "content": "", "truncated": False, "kind": "binary"})
+    digest = redteam.build_attachment_digest(atts, draft="확인했습니다.")
+    assert "PROVIDED TO THE ASSISTANT" in digest and "ALSO ATTACHED" in digest
+    provided = digest.split("PROVIDED TO THE ASSISTANT", 1)[1].split("ALSO ATTACHED", 1)[0]
+    also = digest.split("ALSO ATTACHED", 1)[1]
+    assert "big.bin" in also and "big.bin" not in provided
+    # 강등된 cnf 파일이 ALSO ATTACHED 로 새지 않는다.
+    assert ".cnf" not in also
+
+
+def test_provided_section_marks_prefix_only_for_truncated_source():
+    """상류가 앞부분만 인라인한 파일이 강등되면 '(prefix only)' 로 표기한다 —
+    전문 권위를 주면 반대 방향(뒷부분 인용을 정당화) 오판이 생긴다."""
+    tags = ("aa", "bb", "cc", "dd")
+    atts = [{"filename": f"{t}.cnf", "content": _cnf(t), "truncated": False} for t in tags]
+    atts.append({"filename": "zz.cnf", "content": _cnf("zz"), "truncated": True})
+    digest = redteam.build_attachment_digest(atts, draft="확인했습니다.")
+    provided = digest.split("PROVIDED TO THE ASSISTANT", 1)[1]
+    assert "zz.cnf (prefix only" in provided
 
 
 def test_no_half_written_coverage_sentence():
