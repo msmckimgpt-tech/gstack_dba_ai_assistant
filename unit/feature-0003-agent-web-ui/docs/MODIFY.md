@@ -4420,3 +4420,14 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-19T01:03:01+09:00
+
+## CHG-20260820T010301-doc-sync-rn-0820 (신규 2026-08-19 블록 prepend) 릴리즈노트 콘텐츠 — 답변 자체 점검 잔존 안내 정정 1항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-19` 블록**(items 1 + summary) prepend + `generated` "2026-08-16"→"2026-08-19". `releases` 50→**51**, 기존 50 블록 전건 보존(08-16 items 1 · 08-14 items 18 불변).
+- 신규 블록을 만든 근거: 대상 머지 `4af53e37`(merge `22423bd5`)의 배포일 08-19 에 해당하는 date 블록이 파일에 **없었다**(grep 0회) → doc_sync Phase 3 의 "블록 부재 시 신규 블록 prepend · `generated` 는 top-block date 연동" 규약. 라이브 이미지 tag == HEAD 라 배포 게이트 충족(유보 없음).
+- 평이화/비노출: feature-id·모듈/함수/테이블명·내부용어 노출 0. "답변을 내보내기 전 자체 점검" 수준의 사용자 언어로만 서술하고, 기존 RN 어휘(자체 점검·발췌·'즉시 답변')에 정합시켰다.
+- 정직성: 잔존 시 답변 말미 고지 규칙은 **무변경**(정본 FUNCTION.md §7.6 '의도적 비변경')이므로 "안내를 없앴다" 가 아니라 "안내가 붙을 일을 줄였다" 로 서술했다. 관리 콘솔 표면은 정본이 미추가를 등재해 항목화하지 않았다.
+- Verification: `node --check` PASS · 블록 51 · `generated`==top.date · top items 1 · 기존 블록 items 불변 · 스키마 외 키 0 · 내부용어 누출 0 · **`verify_release_notes.mjs` 34 pass/0 fail = 편집 전 baseline 동일(회귀 0)**.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-20T01:03:01+09:00

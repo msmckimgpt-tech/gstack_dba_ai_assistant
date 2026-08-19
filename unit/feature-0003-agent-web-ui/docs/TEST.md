@@ -3219,3 +3219,12 @@ POST-DEPLOY 확인 축 4건 — 전부 실측:
 - **`tests/verify_release_notes.mjs` 미실행(정직)**: 스크립트 :21 이 `require("/tmp/node_modules/jsdom")` 를 하드코딩하고 이 환경에 그 경로가 없어 MODULE_NOT_FOUND 로 즉시 종료한다. 따라서 직전 run 의 baseline **34 pass / 0 fail 을 이 세션에서 재확인하지 못했다**(DOM 렌더·그룹 수·접힘 기본값·필터 카운트·XSS 이스케이프 축 미검증). 회귀 0 을 주장하지 않고, 위 구조·문법·국소성 검증으로 대체했음을 명시한다.
 - reconcile-first 실측(편집 전): 서빙 static(`https://localhost/static/release-notes-data.js`)이 브랜치 blob 과 **byte-identical**(257,063B) · `/healthz` 200 → 파리티 갭 0.
 - **Pass/Fail: PASS**(대체 검증 기준). CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).
+
+## TASK-20260820T010301-doc-sync-rn-0820 — 릴리즈노트 신규 2026-08-19 블록 prepend(1항목) (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`)의 **`releases` 배열에 기존 스키마·기존 enum 값만 쓰는 date 블록 1개 prepend + `generated` 문자열 갱신**만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: 아래 렌더러 스위트 실측 + 문법·구조·국소성.
+- `node --check src/static/release-notes-data.js` PASS. 구조 실측: `releases` 50→**51**, `generated`=="2026-08-19"==`releases[0].date`, top items **1**, 2nd `2026-08-16` items 1(불변), 3rd `2026-08-14` items 18(불변), item 키 집합 `type,area,title,detail` 만(스키마 외 키 0), type/area 값이 기존 enum 집합(`new|improved|fixed` / `work|admin|common`) 내.
+- **`tests/verify_release_notes.mjs` 실행됨 — 편집 전 baseline 34 pass / 0 fail, 편집 후 34 pass / 0 fail → 회귀 0.** 직전 run 이 미실행(정직)으로 남긴 한계를 이 세션에서 해소했다: 스크립트 :21 이 `require("/tmp/node_modules/jsdom")` 를 하드코딩하는데 최신 jsdom 은 ESM-only 라 node 18 의 `require()` 에서 `ERR_REQUIRE_ESM` 로 죽는다 → **`npm install jsdom@24 --prefix /tmp`** 로 CJS 호환 버전을 핀 설치해 실행했다. DOM 렌더·전체/작업화면 그룹 수(데이터에서 동적 산출)·접힘 기본값·필터 칩 카운트·XSS 이스케이프·빈 상태 축 전건 PASS.
+- 내부용어 누출 0(정규식 기계 검증: feature-id·모듈/함수/파일명·테이블명·digest/rederive/grounding/BLOCK/revise_failed/리뷰어/프롬프트). 분량 컨벤션 준수(summary 285자 · detail 404자 — 기존 max 1019/714 이내).
+- reconcile-first 실측(편집 전): 서빙 static(`https://localhost/static/release-notes-data.js`)이 브랜치 blob 과 **byte-identical**(md5 `3f857ffa02487e9e10c5a9fb023727f3`, 258,749B) → 파리티 갭 0. 라이브 이미지 tag `22423bd5` == HEAD.
+- 캐시버스터: 수기 bump **없음**. `index.html`/`admin.html` 의 `release-notes-data.js?v=dev` placeholder 각 1회 잔존 실측(ITEM-09 — 빌드 `inject_asset_stamp.py` content-hash 주입 · `bin/deploy-web.sh:1320` 이 baked 이미지 placeholder 잔존 시 ABORT).
+- **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).

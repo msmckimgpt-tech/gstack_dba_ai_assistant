@@ -11047,3 +11047,14 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] 검증: `node --check` PASS · 구조 실측(블록 50 불변 · `generated`=="2026-08-16"==`releases[0].date` · 08-14 items 17→**18**(work 11 · admin 3 · common 4 / new 7 · improved 3 · fixed 8) · 스키마 외 키 0 · **`date: "2026-08-13"` 이후 tail 바이트 정확 일치** · `generated` 이전 head 바이트 정확 일치 · 내부용어 누출 0). `tests/verify_release_notes.mjs` 는 **이 환경에서 실행 불가**(스크립트가 `require("/tmp/node_modules/jsdom")` 를 요구하고 해당 경로 부재) — 대체로 위 구조·문법 검증 수행, 미실행 사실을 TEST.md 에 정직 기록.
 - [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 byte-identical(257,063B)·`/healthz` 200 → 파리티 갭 0 이었다. 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(소스 `?v=dev` 고정 + 빌드 content-hash 자동주입, ITEM-09) · `index.html`/`admin.html` 편집 0.
+
+## 20260820T010301-doc-sync-rn-0820 — 릴리즈노트 신규 2026-08-19 블록 prepend(1항목) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 의 `releases` head 에 **신규 `2026-08-19` date 블록 prepend**(items 1 + summary) + `generated` "2026-08-16"→**"2026-08-19"**(top-block date 규약). `releases` 50→**51**, 기존 50 블록 전건 보존(08-16 items 1 · 08-14 items 18 불변).
+- [x] 귀속 판정: 대상 머지 `4af53e37`(PR #1317, merge `22423bd5`)의 커밋일 = **2026-08-19** 이고 파일에 08-19 date 블록이 **부재**(grep 0회)이므로 §Phase 3 규약대로 **신규 블록 prepend**(기존 블록 append 아님). 오늘(08-20) 날짜 블록·publish-date 신설은 하지 않았다.
+- [x] 배포 게이트 충족: 라이브 이미지 tag `mysql-ai-agent:22423bd5`·`mysql-ai-web:22423bd5` == HEAD(= 그 머지) → 항목 내용이 **이미 서빙 중**이라 유보 없음.
+- [x] 항목 = "답변 맨 아래에 '내부 점검이 해소되지 않았다' 는 안내가 자꾸 붙던 문제" (type `fixed` / area `work`). 정본 3축(예산 강등 첨부 클래스 분리 · 재작성 실패 판명 후 도구 재추론 승격 · 무산출 1회 재시도 + 사용자중단 구분)을 사용자 체감으로만 번역.
+- [x] admin area 항목 **의도적 미작성** — 정본 REPORT.md §8 이 관리 콘솔 note 라벨 2종 미추가(현재 원시 코드 표시, 다음 콘솔 cycle)를 스스로 등재하므로 콘솔 표면을 주장하면 라이브와 어긋난다.
+- [x] 평이화/비노출 — feature-id·모듈/함수/파일명·테이블명·내부용어(digest/rederive/grounding/BLOCK/revise_failed/리뷰어/프롬프트) 누출 **0**(기계 정규식 검증). 분량도 컨벤션 준수(summary 285자 ≤ 기존 max 1019 · detail 404자 ≤ 기존 max 714).
+- [x] 검증: `node --check` PASS · 구조 실측(블록 51 · `generated`=="2026-08-19"==`releases[0].date` · top items 1 · 2nd 08-16 items 1 · 3rd 08-14 items 18 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0) · **`tests/verify_release_notes.mjs` 실행: 편집 전 baseline 34 pass/0 fail = 편집 후 34 pass/0 fail → 회귀 0**.
+- [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 byte-identical(md5 `3f857ffa02487e9e10c5a9fb023727f3`, 258,749B) → 파리티 갭 0. 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(소스 `?v=dev` 고정 + 빌드 `inject_asset_stamp.py` content-hash 자동주입 + `bin/deploy-web.sh:1320` placeholder 잔존 시 ABORT, ITEM-09) · `index.html`/`admin.html` 편집 0(각 `?v=dev` 1회 잔존 실측).

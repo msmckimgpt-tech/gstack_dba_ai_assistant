@@ -5361,3 +5361,16 @@ P3 6 중 3 반영). 선례: `REV-20260814T120000-profile-sort-postdeploy [SKIPPE
 - **블록 귀속 판정**: 항목의 배포일이 08-14 이고 그 date 블록이 이미 존재하므로 doc_sync Phase 3 규약대로 **기존 블록 append**(신규 블록·`generated` 변경 금지). 직전 `doc-sync-rn-0817` 이 같은 창 18항목을 적재하며 이 1건을 놓친 prior-window 누락의 보충이다.
 - **cache-buster**: 수기 bump 없음. 소스 `?v=dev` placeholder 고정 + 빌드 `inject_asset_stamp.py` content-hash 주입 + `bin/deploy-web.sh` 가 placeholder 잔존 시 배포 ABORT(2026-07-12 ITEM-09). `index.html`/`admin.html` 편집 0.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**
+
+## REV-20260820T010301-doc-sync-rn-0820 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-08-19 블록 prepend(1항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260820T010301-doc-sync-rn-0820`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + 그 companion 문서).
+- Timestamp: 2026-08-20T01:03:01+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · 구조 단언(`releases` 50→**51** · `generated`=="2026-08-19"==`releases[0].date` · top items 1 · 2nd 08-16 items 1 불변 · 3rd 08-14 items 18 불변 · 스키마 외 키 0 · type/area enum 기존 집합 내) · **`tests/verify_release_notes.mjs` 34 pass/0 fail = 편집 전 baseline 34/0 동일 → 회귀 0**(jsdom@24 핀 설치로 실행 — 직전 run 의 '미실행' 한계 해소) · 내부용어 누출 0(정규식 기계 검증).
+- **적대검증**: ULTRACODE 워크플로 `wf_50a93244-10c`(8 에이전트 / 974,736 토큰 / 354 tool-use) RN 축 confirmed=true. 검증자 MINOR 2건은 오케스트레이터가 정본에서 독립 재검증해 **전건 반영** — ① "이 안내가 붙은 답변 33건" 은 정본 FUNCTION.md §7.6 의 33(결함 잔존 전달 내역)을 '고지 부착 수' 로 오단정 → "짚인 것이 남은 채 전달된 답변 33건" 으로 정정, ② 고지 규칙 무변경 단정을 완화. 추가로 오케스트레이터가 **분량 초과를 자체 적발·축약**(제안 detail 851자 > 기존 max 714 → 404자, summary 574→285자).
+- **블록 귀속 판정**: 대상 머지 `4af53e37`(PR #1317 · merge `22423bd5`)의 커밋일 08-19 에 해당하는 date 블록이 파일에 **부재**(grep 0회)이므로 신규 블록 prepend + `generated` top-block 연동(기존 블록 append 아님). 오늘(08-20) 날짜 블록·publish-date 신설 금지 규약 준수.
+- **배포 게이트**: 라이브 이미지 `mysql-ai-agent:22423bd5`·`mysql-ai-web:22423bd5` == HEAD ⊃ 그 머지 → 항목 내용이 이미 서빙 중(유보 없음).
+- **RN 제외 판정(정직)**: 창 내 나머지 커밋은 전부 RN 비대상 — `7e30ef13`·`d4a73338`·`74316049`·`920e7974`(doc_sync 산출) · `65c34fff`(배포 기록 doc-only) · `a639272c`(첨부 변경-인지)는 **이미 08-16 블록 1항목에 반영됨**. backfill 누락 추가분 **0**.
+- **cache-buster**: 수기 bump 없음(ITEM-09 — 소스 `?v=dev` 고정 + 빌드 content-hash 주입 + 배포 ABORT 가드). `index.html`/`admin.html` 편집 0.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**

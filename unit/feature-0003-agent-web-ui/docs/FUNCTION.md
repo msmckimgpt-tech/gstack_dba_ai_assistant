@@ -4250,3 +4250,6 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
 
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0819, 2026-08-14 블록 누락 1항목 append)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 **기존 `2026-08-14` 블록** items 에 1항목 append(17→18, 무거운 조회 차단 시 데이터베이스 종류별 대체 안내 누락 정정) + 그 블록 `summary` 정합. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 50 **불변** · `generated` "2026-08-16" 불변 · `date: "2026-08-13"` 이후 tail 바이트 무변경).
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0820, 신규 2026-08-19 블록 prepend)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-19` 블록** prepend(items 1 — 답변 자체 점검 잔존 안내 정정) + `generated` top-block date 연동 갱신. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 50→51 · 기존 50 블록 바이트 보존 · 신규 항목은 기존 스키마/enum 값만 사용).
