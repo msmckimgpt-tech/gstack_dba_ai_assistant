@@ -66,7 +66,7 @@ ai_read_priority: 2
 - Python 3.11
 - Docker Compose
 - MySQL 8.0 — `web*` control plane (RBAC/audit/auth)
-- PostgreSQL 16 + pgvector (`pgvector/pgvector:pg16`) — KB(`agent_kb`) · agent runtime(`agent_runtime` schema) · assistant 작업공간(`agent_scratch`) 정본 (ADR-0021 / ADR-0024 / ADR-0027 / ADR-0028)
+- PostgreSQL 16 + pgvector + Apache AGE — KB(`agent_kb`) · agent runtime(`agent_runtime` schema) · assistant 작업공간(`agent_scratch`) 정본 (ADR-0021 / ADR-0024 / ADR-0027 / ADR-0028). 라이브 KB 이미지는 2026-06-30 AGE cutover(PR #477) 이후 AGE 포함 커스텀 `kb-pg-age:pg16` 이며, compose 는 `${KB_PG_IMAGE:-pgvector/pgvector:pg16}` + `KB_PG_PRELOAD`/`KB_PG_REPLICA_PRELOAD` 토글로 이미지·preload 를 선택한다(compose 기본값 자체는 여전히 `pgvector/pgvector:pg16`)
 - pgbouncer (PG 연결 풀) · Caddy 2 (엣지 TLS·LAN 단일 진입) · MinIO (첨부 오브젝트 스토리지) · LiteLLM bedrock-gateway (LLM) · Ollama (KB 임베딩)
 - WSL Ubuntu
 

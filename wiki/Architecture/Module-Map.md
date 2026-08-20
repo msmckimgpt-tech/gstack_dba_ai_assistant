@@ -86,7 +86,7 @@ sources:
 | `WIKI.md` | wiki vault 운용 정본 | 본 vault 전체 |
 | `CODEBASE_MAP.md` | 파일 구조 요약 | 본 노트 |
 | `LEARNINGS.md` | AI 학습 누적 (append-only) | (mirror 없음 — AI context 전용) |
-| `OBSERVATIONS.md` | 운영 관찰 | (mirror 없음) |
+| `DOC_REGISTRY.md` | 문서 정본 레지스트리 (SSOT 계약 ADR-0031) | (mirror 없음 — 정본 직접) |
 | `KB_PG_DIALECT_NOTES.md` | KB Postgres dialect 노트 | feature-0002 카드에서 cross-link |
 
 ### 2.4 artifacts/ 조직 (정본 §9)

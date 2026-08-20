@@ -58,7 +58,7 @@ timestamp+slug 형식으로 통일** (정본 AGENTS.md §6·§13.1, ADR-20260625
 - 테스트 결과는 `TEST.md` §3 Test Run History에 append-only로 기록한다.
 - 구조/기동 검증과 도메인 검증은 별도 항목으로 구분한다.
 
-### 6.1 테스트 종류 및 정합성 의무 (AGENTS.md §8.2 연동)
+### 6.1 테스트 종류 및 정합성 의무 (AGENTS.md §8 연동)
 
 각 작업자 AI는 코드 추가·수정 후 **단위 테스트 + 전체(통합) 테스트** 두 단계를 모두 완료해야 한다.
 
@@ -69,7 +69,7 @@ timestamp+slug 형식으로 통일** (정본 AGENTS.md §6·§13.1, ADR-20260625
 
 - 단위 테스트 FAIL 상태로 완료 선언하지 않는다.
 - 통합 테스트가 미작성인 영역은 `unit/<feature-id>/docs/TEST.md` §4 Untested Areas에 명시한다.
-- 상세 정책은 `../AGENTS.md §8.2`를 따른다.
+- 상세 정책은 `../AGENTS.md §8`(구현 정책)을 따른다.
 
 ## 7. AI 에이전트 매핑 규칙
 - 이 저장소의 정본 정책 파일은 `../AGENTS.md`이다.

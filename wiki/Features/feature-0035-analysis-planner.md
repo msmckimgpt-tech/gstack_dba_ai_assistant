@@ -39,7 +39,7 @@ sources:
 
 ## 2. 상태
 
-- **단계**: draft (구현·리뷰 완료 · 배포 검증 대기)
+- **단계**: draft (구현·리뷰 완료 · PR #1104 배포 + 라이브 선정 실측 완료 — `dblog` 최고점 27 로 `item`·`guild`·`register` 선정 · 실측에서 드러난 파티션 계열 퇴화 수정(`web_ranking` 719 → 계열 11) 반영 · 잔여 = 후속 verify/PR/배포 TASK-0009)
 - **마지막 갱신**: 2026-07-31
 - **AI 작업자**: claude (session e75e6c4c)
 

@@ -41,7 +41,7 @@ MCP 서버로 그 대화를 tool 화한다. scope 로 관리 콘솔은 원천 �
 
 ## 2. 상태
 
-- **단계**: 라이브 (Bearer 인증·MCP·발견 진입점 배포 완료 / 품질 조정 표면은 배포 대기)
+- **단계**: 라이브 (Bearer 인증·MCP·발견 진입점 + 대화 품질 조정 5축 표면 전건 배포 완료 — 품질 조정은 2026-07-28 PR #981 머지·배포 `ebedc256`·라이브 e2e PASS + capabilities `conversation.model` null 핫픽스 반영)
 - **마지막 갱신**: 2026-07-28
 - **AI 작업자**: claude (feature-0023 cycle · conversation-quality-controls)
 

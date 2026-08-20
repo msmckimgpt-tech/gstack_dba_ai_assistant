@@ -40,8 +40,8 @@ sources:
 
 ## 상태
 
-- 단계: review (코드·문서·라이브 e2e 완료 / 배포 + crontab 제거 잔여)
-- 마지막 갱신: 2026-08-04
+- 단계: review (코드·문서·라이브 e2e 완료 / 배포·cutover 완료 — 2026-08-05 실측: ops-scheduler healthy · 그래프 sync 증분 30분 주기 rc=0 · 호스트 root crontab 4줄 제거)
+- 마지막 갱신: 2026-08-05
 
 ## 책임 경계
 

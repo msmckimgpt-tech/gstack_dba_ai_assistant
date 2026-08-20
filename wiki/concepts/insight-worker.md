@@ -26,7 +26,7 @@ last_updated: 2026-06-23
 | 카테고리 | pattern |
 | 정본 | `unit/feature-0002-agent-core/docs/INSIGHTS.md` · `FUNCTION.md` |
 | 관련 TASK | TASK-0223 (완료율 UI) · TASK-0242 (DB별 파악내용 표면화, main 4afa120) |
-| 최종 갱신 | 2026-06-12 |
+| 최종 갱신 | 2026-06-23 (TASK-0305 — "제품 DB 파악 진전 없음" 병목 진단·수정: fingerprint casefold·force_scan backoff·실패사유 telemetry) |
 
 ## 1. 개요
 
@@ -56,7 +56,7 @@ last_updated: 2026-06-23
 
 - **livelock**: cutover 가 read-back 2경로(artifact verify + fingerprint KV)를 DROP 된 MySQL 에 남겨 무한 재생성 → ollama 코어 연속 점유 (TASK-0145/0146 수정).
 - `app.py _log` 는 일부 함수 로컬 import → 신규 함수는 `logging.getLogger` 선언 (F821 hotfix).
-- **"DB 파악 진전 없음" = 2축 (TASK-0305)**: ① **커버리지** — `insight_worker.log` cycle summary 의 `db_failed`(/`db_targets`)가 크면 등록 catalog DB 다수가 스캔 실패. **먼저 사유 분포를 확인한다** — `db_failed = perm + circuit + other`(RC5). **두 가지 다른 원인이며 조치가 다르다**: (a) `perm_failed`(MSSQL 18456/916) = RO 로그인 per-DB `GRANT` 누락 → **운영 GRANT**(`bin/datasource-mssql-ro-bootstrap-multidb.sql` 을 실패 DB 마다, 코드 아님). conn_health 서킷이 `engine:host:port` **엔드포인트 단위**라 host 가 살아있는 per-DB 권한실패는 격리 못 하고, 인증 에러는 서킷 피드백 제외라 영구 재시도. (b) `circuit_open`/`timeout` = **네트워크 도달 불가**(원격 서버 down·방화벽·터널 끊김) → **인프라/네트워크 복구**, GRANT 무효(접속 자체 불가). **둘 다 status=degraded 를 만들지만 GRANT 로 풀리는 건 perm 뿐.** ⚠ 실측 주의(TASK-0305 라이브 2026-06-23): 코드 주석/직관은 perm 을 "대개" 로 가리키나, **실제 배포에서는 `perm:0 / circuit:38` 로 100% 네트워크였다** — `db_failed_perm`/`datasource_health.last_scan_outcome` 를 보지 않고 GRANT 로 점프하면 오진. perm vs network 를 먼저 가를 것([[LRN-20260623-0002]]). ② **fingerprint churn** — `insight_route.log` 에 같은 schema 가 `reason=fingerprint_changed` 로 반복 재생성되고 테이블명이 대/소문자로 진동(TF_ErrorLog↔tf_errorlog)하면, MSSQL information_schema 케이스 불안정. TASK-0305 RC2 가 fingerprint 해시 VALUE 에 `casefold` 적용해 안정화(저장 키 불변). ③ **force_scan spin** — `pending_table_repairs`>0 이 영구 유지되며 cycle 이 매 8s tick 마다 도는데 `tables_generated=0` 이면, 무경계 detector 가 budget(15s) 못 닿는 미완성 tail 로 force_scan 을 영구 latch 한 것. TASK-0305 RC3 진전기반 backoff 가 pending-only 무진전 스캔을 backoff(미완성 tail 의 spin 차단, 건강한 처리량은 보존).
+- **"DB 파악 진전 없음" = 2축 (TASK-0305)**: ① **커버리지** — `insight_worker.log` cycle summary 의 `db_failed`(/`db_targets`)가 크면 등록 catalog DB 다수가 스캔 실패. **먼저 사유 분포를 확인한다** — `db_failed = perm + circuit + other`(RC5). **두 가지 다른 원인이며 조치가 다르다**: (a) `perm_failed`(MSSQL 18456/916) = RO 로그인 per-DB `GRANT` 누락 → **운영 GRANT**(`bin/datasource-mssql-ro-bootstrap-multidb.sql` 을 실패 DB 마다, 코드 아님). conn_health 서킷이 `engine:host:port` **엔드포인트 단위**라 host 가 살아있는 per-DB 권한실패는 격리 못 하고, 인증 에러는 서킷 피드백 제외라 영구 재시도. (b) `circuit_open`/`timeout` = **네트워크 도달 불가**(원격 서버 down·방화벽·터널 끊김) → **인프라/네트워크 복구**, GRANT 무효(접속 자체 불가). **둘 다 status=degraded 를 만들지만 GRANT 로 풀리는 건 perm 뿐.** ⚠ 실측 주의(TASK-0305 라이브 2026-06-23): 코드 주석/직관은 perm 을 "대개" 로 가리키나, **실제 배포에서는 `perm:0 / circuit:38` 로 100% 네트워크였다** — `db_failed_perm`/`datasource_health.last_scan_outcome` 를 보지 않고 GRANT 로 점프하면 오진. perm vs network 를 먼저 가를 것([[../../docs/LEARNINGS|LEARNINGS.md]] LRN-20260623-0002). ② **fingerprint churn** — `insight_route.log` 에 같은 schema 가 `reason=fingerprint_changed` 로 반복 재생성되고 테이블명이 대/소문자로 진동(TF_ErrorLog↔tf_errorlog)하면, MSSQL information_schema 케이스 불안정. TASK-0305 RC2 가 fingerprint 해시 VALUE 에 `casefold` 적용해 안정화(저장 키 불변). ③ **force_scan spin** — `pending_table_repairs`>0 이 영구 유지되며 cycle 이 매 8s tick 마다 도는데 `tables_generated=0` 이면, 무경계 detector 가 budget(15s) 못 닿는 미완성 tail 로 force_scan 을 영구 latch 한 것. TASK-0305 RC3 진전기반 backoff 가 pending-only 무진전 스캔을 backoff(미완성 tail 의 spin 차단, 건강한 처리량은 보존).
 
 ## 6. 인용 source
 

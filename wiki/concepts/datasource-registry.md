@@ -26,7 +26,7 @@ last_updated: 2026-06-16
 | 카테고리 | pattern |
 | 정본 설계 | [[../../unit/feature-0002-agent-core/docs/DESIGN-datasource-registry\|DESIGN-datasource-registry.md]] |
 | 관련 ADR | [[../Decisions/ADR-0030-ssrf-guard-toggle]] |
-| 최종 갱신 | 2026-06-12 (TASK-0205 배포·라이브 e2e 완료) |
+| 최종 갱신 | 2026-06-16 (TASK-0205 배포·라이브 e2e 완료 이후 TASK-0247/0255/0277/0282 반영) |
 
 ## 1. 개요
 

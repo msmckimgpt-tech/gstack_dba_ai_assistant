@@ -58,7 +58,7 @@ sources: [<정본경로>...]          # 참조 문서
 - **정책**: 미머지 worktree 의 작업 현황 정본 = 그 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md`.
   STATUS.md 인덱스는 **main 머지 기준** 상태를 반영하고, 미머지 활성 worktree 는 표 아래 note 로만 표기(예: feature-0010).
   머지 시 STATUS 행이 갱신된다. STATUS 인덱스는 셀 누적이 없어 worktree 머지 시 conflict 표면이 작다(인덱스화의 부수 효과).
-- **현 상태(2026-06-24)**: 충돌 위험 0 — 현행 worktree(feature-0002, gc-share-group-sync)는 `ahead=0`(작업 main 머지 완료). 미머지 in-flight 작업 없음.
+- **현 상태(2026-08-21 실측)**: 미머지 in-flight 작업 **있음** — `ahead > 0` 활성 worktree 가 존재한다. 목록·ahead 수치·실측 일자는 `docs/STATUS.md` 기능현황표 아래 note 를 **단일 표면**으로 삼고 여기서 재열거하지 않는다(SSOT 계약 2조 — 재서술 금지). 각 worktree 의 작업 현황 정본은 그 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 머지 시 STATUS 행이 갱신된다.
 - **stale leftover**(attach-cutover / conn-health / task0232 — 258~417 commit behind, 06-12~15 방치, ahead 0~1): 흡수 대상 아님 → 운영 잔재 정리에서 `bin/cycle-finalize.sh` 또는 `git worktree remove` 대상.
 
 ## 미해소 (잔여 Phase)
