@@ -9,7 +9,7 @@ created_at: 2026-06-24
 
 # Secret 노출 종료 런북 (Phase 3 / META-0004-secret-cleanup)
 
-> **노출 사실**: 아래 자격증명이 `.env.bak-task0211`·`.env.bak-task0279`·`.env.secret.bak-task0228` 에 담겨
+> **노출 사실**: 아래 자격증명이 `.env.bak-task0211`·`.env.bak-task0279`·`.env.bak-task0299-1781684676`·`.env.secret.bak-task0228` 에 담겨
 > 외부 GitHub `origin/main` + 다수 원격 브랜치 + 머지 PR(#231/#263)에 push 됨. `git rm` 으로 과거 blob 은
 > 제거되지 않으므로 **rotation 만이 노출을 무력화**한다. (적대 리뷰 BLOCKER #12)
 >
@@ -28,7 +28,7 @@ created_at: 2026-06-24
 | `LOCAL_LLM_API_KEY` | LLM 게이트웨이 | 게이트웨이에서 재발급 | 사용자 |
 | (AWS Bedrock) | AWS IAM | IAM 키 rotation | 사용자(외부 AWS) |
 
-> MinIO 키(`.env.minio`)는 위 .bak 3종에 미포함 — 별도로 `git ls-files | grep -i minio` 노출 여부 확인 권장.
+> MinIO 키(`.env.minio`)는 위 .bak 4종에 미포함 — 별도로 `git ls-files | grep -i minio` 노출 여부 확인 권장.
 
 ## 1. 로컬 DB 자격증명 rotation (스택 가동 필요)
 
@@ -61,7 +61,7 @@ docker compose up -d   # --no-build
 
 ## 4. 저장소 위생 (rotation 완료 후 — AI 가 직접 수행 가능)
 ```bash
-git rm --cached .env.bak-task0211 .env.bak-task0279 .env.secret.bak-task0228
+git rm --cached .env.bak-task0211 .env.bak-task0279 .env.bak-task0299-1781684676 .env.secret.bak-task0228
 # .gitignore 에 글롭 추가:  .env*.bak*   *.bak-task*   *.secret.bak*
 # 검증 (성공기준):
 git ls-files | grep -iE '\.env\..*(bak|secret)|\.bak-task' | grep -v '\.example$'   # → 0건

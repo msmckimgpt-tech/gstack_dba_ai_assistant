@@ -164,6 +164,8 @@ unit/feature-NNNN-<purpose>/
 
 ## 3. 특징
 
+> **범위 주의**: 아래 시대별 누적 목록은 **2026-07-01 까지**의 서사다. 07-02 이후(그래프 렌더러 교체·red-team·분석 오케스트레이션 L0~L3·프론트 모듈화·외부 AI 도구 표면·DB 객체 탐색 등)는 이 목록에 backfill 되지 않았으므로, **최신 기능 현황은 위 §2.3 기능 맵**(정본 `docs/ARCHITECTURE.md` §4 미러)과 [[../Features/_Index]] 를 보라.
+
 - **source of truth 원칙** (정본 §5): 동일 사실을 여러 문서에 중복 확정하지 않는다. FUNCTION/TASK/REPORT/MODIFY/REVIEW/DECISIONS/STATUS 의 각 책임이 분리됨.
 - **runtime artifacts 외부화**: 로그·세션·MySQL data 가 `../../artifacts/` 로 분리되어 git 추적 대상 아님.
 - **AI 위임 친화**: AI 가 작업 시 `AGENTS.md` 우선 read + 각 feature 의 `docs/` 자동 참조.

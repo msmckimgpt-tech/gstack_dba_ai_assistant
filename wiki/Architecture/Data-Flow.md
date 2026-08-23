@@ -35,7 +35,8 @@ sources:
      - [2.1 요청 처리 흐름](#21-요청-처리-흐름)
      - [2.2 신뢰 경계 (trust boundary)](#22-신뢰-경계-trust-boundary)
      - [2.3 audit 흐름 (ADR-0019)](#23-audit-흐름-adr-0019)
-     - [2.4 KB 마이그레이션 흐름 (TASK-0015, ADR-0021/0024/0025)](#24-kb-마이그레이션-흐름-task-0015-adr-002100240025)
+     - [2.4 Storage 이관 현황 (Phase 1 + Phase 2 완료, 2026-05-27)](#24-storage-이관-현황-phase-1--phase-2-완료-2026-05-27)
+     - [2.5 멀티 데이터소스 data plane + ask-worker (2026-06)](#25-멀티-데이터소스-data-plane--ask-worker-2026-06)
 3. [관련 문서](#3-관련-문서)
 4. [둘러보기](#4-둘러보기)
 5. [외부 link](#5-외부-link)
@@ -103,6 +104,7 @@ flowchart LR
 | agent → 데이터소스 (MySQL·MSSQL) | datasource registry 좌표(envelope 복호) + RO user, DB-단위 allowlist + 3축 SQL guard, fail-closed | [[../concepts/db-level-access]] · [[../concepts/datasource-registry]] |
 | datasource host | SSRF: 메타데이터 IP 하드차단 + DNS rebinding pin (사설망 경계는 env 토글) | [[../Decisions/ADR-0030-ssrf-guard-toggle]] |
 | sandbox schema | `attachment_writer` / `_reader` / `_maintainer` / `_cleanup` 4 user 분리 | ADR-0023 |
+| 외부 AI 도구 → MCP 전송 | `ext-tool-mcp`(HTTP/SSE)의 익명 스트림 차단을 Caddyfile `/api/ai/mcp` 라우트의 `Authorization` 존재 요구로 집행 — MCP 전송 계층에 verifier 가 없어 인가 경계 한 조각이 feature-0006 자산에 거주 | feature-0041 · feature-0006 ([[Overview]] §2.4 의존 행) |
 
 ### 2.3 audit 흐름 (ADR-0019)
 

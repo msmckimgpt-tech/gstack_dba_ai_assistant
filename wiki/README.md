@@ -49,6 +49,8 @@ ai_generated: false
 ```
 wiki/
 ├── Index.md                  # MOC — 입구점
+├── overview.md               # living synthesis (단일 페이지)
+├── hot.md                    # doc_sync hot cache (최근 사실 · Active Threads)
 ├── Log.md                    # append-only 변경 ledger
 ├── README.md                 # 이 파일
 ├── Architecture/             # 시스템 구조 graph 노트
@@ -62,6 +64,11 @@ wiki/
 │   └── _Index.md
 ├── Glossary/                 # 용어집
 │   └── _Index.md
+├── concepts/                 # 개념 노트 (+ _Index.md)
+├── entities/                 # 엔티티 노트 (+ _Index.md)
+├── sources/                  # 출처 노트
+├── syntheses/                # 합성 노트
+├── raw/                      # 원자료 (ingest 전)
 └── _templates/               # Obsidian Templater 노트 템플릿
     ├── feature-card.md
     └── adr-mirror.md

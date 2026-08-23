@@ -112,14 +112,14 @@ sources:
 | feature-0042-analysis-dedup | done | 2026-08-14 | [TASK](../unit/feature-0042-analysis-dedup/docs/TASK.md) | **조사·검증 cycle 완결 — 런타임 코드 변경 0건, 산출물은 판정이다.** 분석 워커 LLM 요청당 낭비(입력의 약 80%가 고정 시스템 프롬프트)를 회수할 수 있는지 실측 판정: batch 두 해석 전건 기각(Batches API — 전송경로 부재·구독형이라 할인가치 0·24h SLA 불일치 / 다건 묶기 — 출력 미절감으로 `max_tokens` 초과·per-job 상태기계 붕괴). 회수 후보 3개를 `docs/improvements/analysis-orchestration/ROADMAP.md` T4(ITEM-13/14/15)로 등재하고 **등재 직후 각 전제를 실측 재검사** — ITEM-13 형제 dedup **rejected**(등재 근거는 이름 중복률 69.3% 였으나 내용 distinct 99.6~100%, 261잡 → 260 distinct; 차이는 부모 테이블 맥락이라 상속은 정보 손실) · ITEM-14 prompt caching **done**(litellm passthrough 확인 + Haiku 4.5 최소 prefix 4,096 토큰 미만 **무음 실패** 재현(433 tok → cache_creation/read 0) + 경계 초과 4,463 tok → cache_creation 4,422 → 2회차 cache_read 4,422) · ITEM-15 는 '프롬프트 축소'→'**캐시 가능 형태로 재구성**' 방향 반전 후 `BLOCKED: verification-sample-insufficient`(verdicts 140건·증거 커버리지 1.3%·출력 계약 회귀 테스트 0건)이며 선행 안전망을 '출력 계약 회귀 테스트 신설' 로 확정(커버리지 확대는 워커가 시간을 두고 채우는 축이라 착수 시점 통제 불가). **구현은 별도 cycle**. 미확정 2건: 캐시 읽기 0.1× 의 구독 한도 회계(`usage`·헤더 미노출로 프로브 판정 불가) · `_record_llm_usage` 가 `cache_creation/read_input_tokens` 를 저장하지 않아 캐시 계측 부재. slug 의 `dedup` 은 기각된 1순위 후보 유래이며 **실제 범위 정본은 FUNCTION.md §1**(분석 요청 경제성 — batch 판정·캐싱 검증) |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
-> **미머지 활성 worktree**(2026-08-17 실측, `ahead > 0` 기준): `ai/claude/feature-0012-web-router-modularization` · `ai/claude-corp/feature-0016-node-role-viz` · `ai/root/perf-cycle-label-fix` · `ai/root/ssot-roadmap-refresh`. 이들의 작업 현황 정본은 각 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 위 표는 main 머지 기준 상태만 반영한다(머지 시 행 승격 — DOC_REGISTRY In-flight 정책). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
+> **미머지 활성 worktree**(2026-08-24 실측, `ahead > 0` 기준): `ai/claude/feature-0012-web-router-modularization`(ahead 3) · `ai/claude-corp/feature-0016-node-role-viz`(ahead 1) · `ai/root/perf-cycle-label-fix`(ahead 1) · `ai/root/ssot-roadmap-refresh`(ahead 1). 이들의 작업 현황 정본은 각 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 위 표는 main 머지 기준 상태만 반영한다(머지 시 행 승격 — DOC_REGISTRY In-flight 정책). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
 > 상세 TASK 이력을 셀에 누적하지 않는다(ADR-0031 §1) — 상세는 정본 링크의 unit TASK.md / 인덱스화 이전 분은 STATUS_ARCHIVE.md.
 
 ### 상태 값 정의
 `planned`(요구 정리) · `in-progress`(구현 중) · `blocked`(승인/불명확 차단) · `review`(검토) · `done`(완료) · `deprecated`(폐기)
 
 ## 2. 기능 간 의존성 요약
-[ARCHITECTURE.md](./ARCHITECTURE.md) §6 정본 참조. 요약:
+[ARCHITECTURE.md](./ARCHITECTURE.md) §6 정본 참조. 아래는 초기 코어(feature-0003~0011) 발췌이며, feature-0012~0042 를 포함한 전체 의존 관계는 §6 이 정본이다:
 - feature-0003 → feature-0002
 - feature-0004 → feature-0001
 - feature-0005 → feature-0001, feature-0002, feature-0004

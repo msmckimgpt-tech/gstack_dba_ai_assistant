@@ -29,7 +29,7 @@ ai_read_priority: 3
 | 의사결정(ADR) | `docs/DECISIONS.md` | ledger(append-only) | AGENTS.md §18(링크) · wiki/Decisions/*(mirror) | — |
 | 프로젝트 현황 | `unit/<feature>/docs/{TASK,REPORT}` | active(feature) | `docs/STATUS.md`(인덱스 only, P1) · wiki/Features/*(카드 mirror) | — |
 | 아키텍처 | `docs/ARCHITECTURE.md` | active(rewrite) | wiki/Architecture/*(mirror) · ~~wrapper Architecture/~~(삭제 P1) | — |
-| 코드 탐색 지도(AI navigation) | `docs/ROUTEMAP.md`(L0 generated)·`docs/CODE_NAVIGATION.md`(L1~L3 rewrite)·`docs/CODE_TASKS.md`(작업카드 rewrite)·`docs/CODEBASE_MAP.md`(L-1 파일지도 rewrite) — 각기 다른 탐색 계층의 **정본**(mirror 아님, `source_of_truth:true`) | active | AGENTS.md §21.11(참조→재정합 순환 정본 = §21.11.7). `ai_read_priority` 4·4·5·4 (조기 진입 read-set). | — |
+| 코드 탐색 지도(AI navigation) | `docs/ROUTEMAP.md`(L0 generated)·`docs/CODE_NAVIGATION.md`(L1~L3 rewrite)·`docs/CODE_TASKS.md`(작업카드 rewrite)·`docs/CODEBASE_MAP.md`(L-1 파일지도 rewrite) — 각기 다른 탐색 계층의 **정본**(mirror 아님, `source_of_truth:true`) | active | AGENTS.md §21.11(참조→재정합 순환 정본 = §21.11.7). `ai_read_priority` 4·4·5·미부여(`CODEBASE_MAP.md` frontmatter 에 필드 없음 — 2026-08-24 실측) (조기 진입 read-set). | — |
 | 보안 정책 | `docs/SECURITY.md` | active(rewrite) | — | — |
 | 코드 규약 | `docs/CONVENTIONS.md` | active(rewrite) | (AGENTS 중복 흡수 P1) | — |
 | 용어(Glossary) | `docs/CONVENTIONS.md §9` | active | wiki/Glossary/*(mirror) | — |
@@ -58,11 +58,11 @@ sources: [<정본경로>...]          # 참조 문서
 - **정책**: 미머지 worktree 의 작업 현황 정본 = 그 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md`.
   STATUS.md 인덱스는 **main 머지 기준** 상태를 반영하고, 미머지 활성 worktree 는 표 아래 note 로만 표기(예: feature-0010).
   머지 시 STATUS 행이 갱신된다. STATUS 인덱스는 셀 누적이 없어 worktree 머지 시 conflict 표면이 작다(인덱스화의 부수 효과).
-- **현 상태(2026-08-21 실측)**: 미머지 in-flight 작업 **있음** — `ahead > 0` 활성 worktree 가 존재한다. 목록·ahead 수치·실측 일자는 `docs/STATUS.md` 기능현황표 아래 note 를 **단일 표면**으로 삼고 여기서 재열거하지 않는다(SSOT 계약 2조 — 재서술 금지). 각 worktree 의 작업 현황 정본은 그 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 머지 시 STATUS 행이 갱신된다.
-- **stale leftover**(attach-cutover / conn-health / task0232 — 258~417 commit behind, 06-12~15 방치, ahead 0~1): 흡수 대상 아님 → 운영 잔재 정리에서 `bin/cycle-finalize.sh` 또는 `git worktree remove` 대상.
+- **현 상태(2026-08-24 실측)**: 미머지 in-flight 작업 **있음** — `ahead > 0` 활성 worktree 가 존재한다. 목록·ahead 수치·실측 일자는 `docs/STATUS.md` 기능현황표 아래 note 를 **단일 표면**으로 삼고 여기서 재열거하지 않는다(SSOT 계약 2조 — 재서술 금지). 각 worktree 의 작업 현황 정본은 그 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 머지 시 STATUS 행이 갱신된다.
+- **stale leftover**(2026-08-24 실측): ① 등록 worktree 중 `ahead == 0` 방치분 2건 — `ai/claude/feature-0007-llm-timeout-align`(816 behind, 07-24) · `ai/claude/feature-0041-external-ai-tool-surface`(30 behind, 08-14) → `bin/cycle-finalize.sh` 또는 `git worktree remove` 대상. ② worktree 등록 없이 `.worktrees/` 에 디렉토리만 남은 잔재 7건(`base-check` · `datasource-accessible-db` · `feature-0003-attach-version-diff` · `feature-0003-attach-diff-colgroup` · `feature-0016-cluster-label-target` · `task0215-insight-toggle` · `task0216-rag-ds-aware`) → `git worktree prune` + 디렉토리 삭제 대상. 구 지목분(attach-cutover / conn-health / task0232)은 정리 완료(등록·디스크 모두 부재). 어느 쪽도 흡수 대상 아님.
 
 ## 미해소 (잔여 Phase)
 - 🔴 tracked secret 백업 **4건**(`.env.bak-task0211` · `.env.bak-task0279` · `.env.bak-task0299-1781684676` · `.env.secret.bak-task0228` — `bin/ssot-lint.sh` 실측, ssot ROADMAP ITEM-P0 status 의 "lint 잔여 4건 = ITEM-P3 귀속" 과 동일 카운트) — **P3 rotation(사용자) 선행 후** repo 위생. 런북: `docs/improvements/ssot-consolidation/SECRET-ROTATION-RUNBOOK.md`(런북 머리말·§0 각주·§4 `git rm --cached` 목록이 3파일만 열거해 `.env.bak-task0299-1781684676` 를 빠뜨리고 있어 함께 보정 필요).
-- 거버넌스 포인터화(CONVENTIONS §3.1·§7 ↔ AGENTS §3.1 중복 흡수) — **P1c** (정책문서 → §18.8.1 codex 검토).
+- 거버넌스 포인터화(CONVENTIONS §7 ↔ AGENTS §3.1 중복 흡수) — **P1c** (정책문서 → §18.8.1 codex 검토).
 - wiki mirrors/sources frontmatter 백필 + 동기화 메커니즘 — **P4** (sot:false 일관성은 이미 양호, lint 확인).
 - 제품 코드 재배치(shared dedup·feature-0009 cross-cut·Dockerfile) — **P5** (import 그래프 실측 + 결정 #4/#5 선행).
