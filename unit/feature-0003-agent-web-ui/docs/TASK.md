@@ -11279,3 +11279,81 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [ ] **라이브 UI 실측(미수행 — 이월)**: stale 표면은 `processing` + 임계 초과 대화가 있어야
       렌더되고 그 상태 생성은 `kv`/`steps` write 를 요구해(감사 persona 읽기 전용 제약) 하지
       않았다. 사고 대화도 `done` 종결로 대상 소멸 → 원장 "다음 audit 관측 지표" 로 이월.
+
+## 20260824T1644-sidebar-reorder-anim — 명칭 변경 시 목록이 순간이동하던 재배치를 부드러운 전환으로 (Minor §12.3)
+
+**요청(사용자, 2026-08-24)**: "작업화면 좌측 대화목록 내 요소들의 명칭을 수정할 때 정렬 기준에
+따라 순식간에 재배치되어 사용자의 시야에서 사라지는 이슈" → "명칭을 수정했을 때 부드러운
+애니메이션으로 재배치되도록".
+
+`REQ-20260824-sidebar-reorder-anim` / `CHG-20260824T164437-sidebar-reorder-anim` /
+`REV-20260824T164437-sidebar-reorder-anim`.
+
+### 원인 (재배치를 만드는 두 경로 — 정렬 자체는 정상)
+
+- **대화 제목**: `PATCH /api/conversations/{id}/title` → `_conv_update_topic` 이
+  `updated_at = now()` 갱신. 목록 정렬 키는 `c.updated_at AS last_activity_at` desc
+  (`_conv_store.py`) → 그 대화가 최상단 + '오늘' 그룹으로 점프.
+- **폴더 이름**: `_folderChildren` 이 `sort_order` → `name` localeCompare 정렬 → 가나다 위치 이동.
+- 공통: `renderConversationList` 가 `innerHTML=""` 후 전량 재구성 → **요소가 교체되어 CSS
+  transition 이 걸리지 않는다**. 그래서 전환 없는 순간이동.
+
+### 구현
+
+- [x] FLIP 코디네이터(`app/sidebar.js`): `_beginSidebarReorder`(First) → 렌더 →
+      `_commitSidebarReorder`(Last-Invert-Play). 예약이 없으면 측정 자체를 건너뛴다(비용 0).
+- [x] `renderConversationList` 는 FLIP wrapper, DOM 렌더 본체는 `_renderConversationListDom(focusKey)`.
+- [x] 시야 유지 3축: 스크롤 복원 · 접힌 조상(날짜 그룹 / 폴더 체인) 펼침 · 대상 스크롤 추종
+      (보정분을 FLIP delta 가 흡수하도록 측정 사이에 적용 + 스크롤 범위 clamp).
+- [x] 예약 배선: 폴더 = `_commitFolderRename`(PATCH 성공 경로만), 대화 = `openConversationSettings`
+      의 `saveTitle`(PATCH 성공 후, `refreshWorkspace` 가 부르는 렌더를 대상으로).
+- [x] 모션 게이트는 `_prefersReducedMotion`(app.js) **단일 정의**를 export 해 공유.
+- [x] 강조 애니메이션 `is-reorder-flash`(`css/shell.css`) + CSS 차원 reduced-motion 차단.
+
+### 검증
+
+- [x] 전용 하네스 `tests/verify_sidebar_reorder_anim.mjs` — **73 PASS**(키 규약 · 예약 게이트/TTL/
+      1회 소비 · FLIP invert→play · 임계 상/하한 · 신규 행 제외 · 스크롤 복원/추종/불변 ·
+      reduced-motion 분기 · 접힌 조상 펼침(날짜·폴더·순환 방어) · 호출 배선 · CSS).
+- [x] **뮤테이션 역검증 5종 전건 KILL** — 예약 1회소비 제거(3 FAIL) · 조상 펼침 no-op(7) ·
+      시야 보정 제거(4) · 스크롤 복원 제거(1) · reduced-motion 게이트 무력화(1).
+- [x] 사이드바 관련 기존 하네스 회귀: `verify_new_conv_dedup`(21) · `verify_conv_entry_defaults`(20) ·
+      `verify_folder_dnd_shared_group`(31) · `verify_date_group_collapse`(23) ·
+      `verify_settings_archive_leave`(23) 전건 PASS. dedup 하네스는 렌더 본체 분리에 맞춰 배선 갱신.
+- [x] 컨테이너 `make test` — 무관 1건(`test_oauth_exhaustion_gate` : 컨테이너에 `chattr` 부재)만
+      실패하며 **main 에서도 동일 실패**(환경 결함, 본 변경과 무관). ruff clean.
+- [x] **PB-0008 Windows-browser 실측** — `docs/test-runs.d/REV-20260824T164437-sidebar-reorder-anim.md`.
+      대화 제목 경로 442px→233px 를 19프레임 트윈, 폴더 경로도 트윈 확인. 계측기 자산화:
+      `tests/pb0008_sidebar_reorder_measure.py`.
+
+### 적대 리뷰 반영 (§18.8 codex — [P1] 1 · [P2] 4, 전건 흡수)
+
+- [x] **[P1]** 예약이 "다음 아무 렌더" 에 소비되던 경로. PATCH → `refreshWorkspace` 왕복 중
+      데이터-무관 렌더(그룹 토글 등)가 끼면 그 렌더가 예약을 삼켜 정작 재배치 렌더는 순간이동.
+      → 예약을 **데이터 버전**(`state.sidebarDataVersion`)에 귀속. 버전이 오르지 않은 렌더는
+      예약을 남긴다. 버전 bump 지점 3곳(`loadConversations` · `loadFolders` · 주기 unread 동기화).
+- [x] **[P2]** 자동 접힘 해제가 `_saveCollapsedGroups()` 로 **영속**되어 사용자가 의도적으로
+      접어둔 그룹이 이후 접속에서도 펼쳐지던 문제 → 세션 상태로만 해제(영속은 명시 토글 전용).
+- [x] **[P2]** `transitionend` 가 자식에서 버블링해 FLIP 을 조기 종료(행이 최종 위치로 튐)
+      → `ev.target === el && propertyName === 'transform'` 만 인정 + 리스너 명시 해제.
+- [x] **[P2]** 정리 watchdog 이 `_playReorderMove`(rAF) 안에서만 설치돼, invert 직후 탭이
+      백그라운드로 가면 인라인 스타일이 영구 잔류 → **invert 시점에** 설치(`_armReorderCleanup`).
+- [x] **[P2]** 강조색 하드코딩 → `color-mix(in srgb, var(--accent) 22%, transparent)` 토큰 기반.
+- [x] 봉인 뮤테이션 역검증 4종 전건 KILL(데이터버전 게이트 제거 · 자동펼침 영속화 ·
+      transitionend 필터 제거 · watchdog invert-시점 제거) + 하네스 73 → **93 PASS**.
+
+### 라이브 실측이 잡은 회귀 (하네스가 놓쳤던 순서 계약)
+
+- [x] [P1] 수정 직후 폴더 경로의 애니메이션이 **조용히 사라졌다**. 원인: `_commitFolderRename`
+      이 `loadFolders()`(데이터 버전 bump) **뒤에** 예약해 자기 갱신을 이미 지나침 → 어떤 렌더도
+      소비하지 않음. 하네스는 "예약이 PATCH 성공 경로에 있다" 만 봤고 **순서**는 보지 않았다.
+      → 예약을 `loadFolders()` 앞으로 이동 + 하네스에 순서 계약 2건 추가(뮤테이션 KILL 확인).
+- [x] 계측기 자체 결함도 실측이 드러냈다: 샘플링 창 안에서 Playwright 스크린샷을 찍으면 렌더가
+      블로킹돼 rAF 가 멈추고, **정상 트윈을 "전환 없음" 으로 오보고**한다 → 캡처를 샘플링 창
+      밖으로 이동. (원시 프레임 추적으로 브라우저는 정상 트윈 중이었음을 확인한 뒤 수정.)
+- [x] 수정본 재실측: 폴더 146→117 **16프레임**(113~362ms) · 대화(8월 4일 그룹 → 오늘)
+      319→142 **18프레임**(306~602ms), 제목 원복 완료.
+
+### 남은 것
+
+- [ ] POST-DEPLOY: 라이브 배포본에서 서빙 자산 도달 확인(캐시버스터 갱신 + FLIP wrapper 존재).

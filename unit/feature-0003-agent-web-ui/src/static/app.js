@@ -1,5 +1,5 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
-import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, _scheduleSidebarCatchup, _maybeSyncConversationListUnread } from "./app/sidebar.js?v=dev";
+import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread } from "./app/sidebar.js?v=dev";
 import { _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
@@ -138,6 +138,12 @@ export const state = {
   folderMaxDepth: 4,
   pendingFolderUndo: null,  // 폴더 삭제 직후 6초 undo 상태 {ids, name}
   folderRenamingId: null,   // 사이드바 인라인 이름변경 중인 folder_id (라벨→텍스트박스)
+  // sidebar-reorder-anim: 명칭 변경처럼 "정렬 키를 바꾼" 조작이 예약하는 재배치 애니메이션
+  //   대상 {key, at, dataVersion}. 목록 **데이터가 갱신된** 다음 렌더 1회가 소비(FLIP + 시야
+  //   유지)하고 비운다 — 그 사이에 낀 데이터-무관 렌더(그룹 토글 등)는 예약을 남긴다.
+  sidebarReorderFocus: null,
+  //   대화·폴더 목록을 새로 받을 때마다 오르는 카운터(위 예약의 소비 기준).
+  sidebarDataVersion: 0,
   activeConversationId: "",
   messages: [],
   hasMoreHistory: false,
@@ -5178,6 +5184,9 @@ function _maybeExpandOrLoadOlder() {
 export async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
   const payload = await apiFetch("/api/conversations");
   state.conversations = Array.isArray(payload.items) ? payload.items : [];
+  // sidebar-reorder-anim: 목록 데이터가 갱신된 지점. 재배치 애니메이션 예약은 "다음 렌더" 가
+  //   아니라 이 갱신을 반영한 렌더에서 소비된다(중간에 낀 무관한 렌더가 예약을 삼키지 않게).
+  bumpSidebarDataVersion();
   // feature-0024-conversation-folders: 폴더 트리 병행 로드(folder.list.own 없으면 403 → 빈 목록, graceful).
   await loadFolders();
   // TASK-0059: pending 모드 race 가드. "새 대화" 버튼을 누른 직후 (state.activeConversationId="")
@@ -5311,7 +5320,8 @@ function _osPrefersReducedMotion() {
   catch (_) { return false; }
 }
 // 애니메이션을 '줄여야' 하는가? 'on'=항상 애니(줄임 안 함) / 'off'=항상 줄임 / 'os'=OS 신호.
-function _prefersReducedMotion() {
+// (export: app/sidebar.js 의 재배치 애니메이션이 같은 게이트를 공유 — 모션 정책 단일 정의.)
+export function _prefersReducedMotion() {
   const pref = getMotionPref();
   if (pref === "on") return false;
   if (pref === "off") return true;
@@ -6203,6 +6213,10 @@ async function openConversationSettings(cid) {
     }
     showToast("대화 제목을 변경했습니다.");
     close();
+    // sidebar-reorder-anim: 제목 변경은 서버에서 updated_at 을 갱신하고 목록 정렬 키가
+    //   last_activity_at(=updated_at) desc 라, 이 대화가 위로 올라가며 날짜 그룹까지 옮겨간다.
+    //   이어지는 refreshWorkspace → renderConversationList 를 FLIP + 시야 유지 대상으로 예약.
+    requestSidebarReorderAnimation(`conv:${conversation.id}`);
     refreshWorkspace(conversation.id).catch(() => {}); // best-effort 동기화(모달은 이미 닫힘).
   };
   titleSaveBtn.addEventListener("click", saveTitle);

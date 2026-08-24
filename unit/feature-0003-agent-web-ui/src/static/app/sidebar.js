@@ -12,6 +12,8 @@ import {
   closeConversationItemMenu, conversationListEl, formatDateTime,
   isGroupConversation, isOwnConversation, openConversationItemMenu,
   renderConversationBulkBar, renderConversationHeader, selectConversation,
+  // sidebar-reorder-anim: 모션 게이트(OS prefers-reduced-motion + 인앱 '애니메이션 효과' 설정).
+  _prefersReducedMotion,
 } from "../app.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
@@ -25,6 +27,7 @@ async function loadFolders() {
   } catch (_) {
     state.folders = [];  // 권한 없음/미부트스트랩 — 폴더 없이 정상 동작
   }
+  bumpSidebarDataVersion();  // sidebar-reorder-anim: 이 갱신을 반영한 렌더가 재배치 애니메이션 대상.
 }
 function _folderById(id) {
   return state.folders.find((f) => Number(f.folder_id) === Number(id)) || null;
@@ -103,6 +106,12 @@ async function _commitFolderRename(folderId, rawName) {
   if (!name || (folder && name === folder.name)) { renderConversationList(); return; }
   try {
     await apiFetch(`/api/folders/${folderId}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    // sidebar-reorder-anim: 폴더 정렬은 sort_order → name 이라 이름을 바꾸면 자리가 바뀐다.
+    //   예약은 **데이터를 다시 받기 전에** 걸어야 한다 — 예약이 기록하는 데이터 버전이 곧
+    //   "이 예약이 기다리는 갱신" 의 기준이라, loadFolders() 뒤에 걸면 자기 갱신을 이미 지나쳐
+    //   버려 어떤 렌더에서도 소비되지 않는다(라이브 실측으로 잡은 회귀).
+    //   실패 경로는 자리 변화가 없으므로 예약하지 않는다.
+    requestSidebarReorderAnimation(`folder:${folderId}`);
     await loadFolders();
   } catch (e) { showToast(e.message || "이름 변경에 실패했습니다.", true); }
   renderConversationList();
@@ -586,7 +595,241 @@ export function isFolderScopedConversation(item) {
   return Boolean(item) && (isOwnConversation(item) || Boolean(item.is_member));
 }
 
+// ═══ sidebar-reorder-anim: 이름 변경 후 재배치를 부드럽게 + 대상을 시야에 유지 ═══
+//
+// 좌측 대화목록의 두 명칭은 **바꾸는 즉시 정렬 순서를 바꾼다**:
+//   · 대화 제목 — `PATCH /api/conversations/{id}/title` 이 `updated_at` 을 갱신하고,
+//     목록 정렬 키가 `last_activity_at`(= `c.updated_at`) desc 라 그 대화가 위로 올라가며
+//     날짜 그룹(어제/지난 달 → 오늘)까지 옮겨간다.
+//   · 폴더 이름 — 폴더 정렬이 `sort_order` → `name` localeCompare 라 가나다 위치가 바뀐다.
+// 그런데 renderConversationList 는 innerHTML 을 비우고 전량 재구성하므로, 방금 이름을 바꾼
+// 항목이 아무 전환 없이 다른 자리로 순간이동해 사용자 시야에서 사라졌다(정렬 자체는 정상 동작).
+// 정렬을 바꾸지 않고 **전환을 보여주는** 방향으로 해소한다:
+//   ① FLIP(First-Last-Invert-Play) — 재배치 전/후 좌표를 비교해 각 행을 이전 자리에서 새
+//      자리로 미끄러뜨린다. 재구성으로 요소가 교체되므로 CSS transition 만으로는 불가능하다.
+//   ② 대상이 접힌 날짜 그룹/폴더로 옮겨갔으면 그 조상만 펼친다 — 대상이 DOM 에 없으면
+//      애니메이션할 것도 없이 정말로 사라진다(가장 심한 케이스).
+//   ③ 대상이 스크롤 밖이면 같은 전환 안에서 시야로 데려온다. 스크롤 보정은 FLIP 측정 사이에
+//      넣어 그 이동분까지 delta 에 흡수되므로 "스크롤 점프 + 재배치" 가 한 번의 이동으로 합쳐진다.
+// prefers-reduced-motion(인앱 '애니메이션 효과' 설정 포함)이면 ①의 트윈과 강조는 생략하되
+// **②③의 시야 유지는 그대로 수행한다** — 접근성 신호는 "모션을 줄여라"이지 "항목을 잃어도
+// 좋다"가 아니다. 예약이 없는 일반 렌더(주기 unread 동기화 등)는 측정도 하지 않아 비용 0.
+const REORDER_ANIM_MS = 320;
+const REORDER_FLASH_MS = 1100;
+const REORDER_REQUEST_TTL_MS = 4000;  // 예약 후 이 시간 안의 첫 렌더만 대상(지연 응답은 기존 동작)
+const REORDER_MIN_DELTA_PX = 2;       // 측정 노이즈 무시
+const REORDER_MAX_DELTA_PX = 2400;    // 화면 밖에서 날아오는 과장 연출 방지(그 행만 트윈 생략)
+const REORDER_VIEW_PAD_PX = 8;
+const REORDER_ROW_SELECTOR = ".conv-item, .conv-folder-header, .conv-date-group-header";
+
+/**
+ * 정렬 키를 바꾼 조작(이름 변경) 직후의 렌더를 재배치 애니메이션 대상으로 예약한다.
+ *
+ * 예약은 "다음 렌더" 가 아니라 **목록 데이터가 갱신된 다음 렌더** 에 귀속된다
+ * (`state.sidebarDataVersion` 스냅샷). 제목 변경은 PATCH → `refreshWorkspace` 왕복 동안
+ * 시간이 걸리는데, 그 사이 사용자의 그룹 접기/펼치기 같은 **데이터와 무관한 렌더**가 끼면
+ * 그 렌더가 예약을 소진해 정작 재배치가 일어나는 렌더는 전환 없이 순간이동한다
+ * (§18.8 codex [P1]). 데이터 버전이 오르지 않은 렌더는 예약을 그대로 남긴다.
+ */
+export function requestSidebarReorderAnimation(key) {
+  state.sidebarReorderFocus = key
+    ? { key: String(key), at: Date.now(), dataVersion: Number(state.sidebarDataVersion || 0) }
+    : null;
+}
+
+/** 사이드바 목록 데이터(대화·폴더)를 새로 받은 지점에서 호출 — 예약 소비 시점의 기준. */
+export function bumpSidebarDataVersion() {
+  state.sidebarDataVersion = Number(state.sidebarDataVersion || 0) + 1;
+}
+
+// 행 → 안정 키. 재구성 전/후의 같은 행을 잇는 유일 식별자(요소 자체는 교체되므로 키가 필수).
+function _reorderRowKey(el) {
+  const d = (el && el.dataset) || {};
+  if (d.conversationId) return `conv:${d.conversationId}`;
+  if (d.folderId) return `folder:${d.folderId}`;
+  if (d.dateKey) return `date:${d.dateKey}`;
+  return "";
+}
+
+// 키로 행 찾기 — attribute selector 문자열 조립(주입·escape 취급) 대신 순회 비교(행 수 ≤ 200).
+function _reorderRowByKey(key) {
+  if (!key || !conversationListEl) return null;
+  const rows = conversationListEl.querySelectorAll(REORDER_ROW_SELECTOR);
+  for (let i = 0; i < rows.length; i += 1) {
+    if (_reorderRowKey(rows[i]) === key) return rows[i];
+  }
+  return null;
+}
+
+// (First) 렌더 직전 스냅샷. 예약이 없으면 null → 기존 렌더 경로와 완전히 동일.
+function _beginSidebarReorder() {
+  const req = state.sidebarReorderFocus;
+  if (!req || !conversationListEl) return null;
+  if (Date.now() - Number(req.at || 0) > REORDER_REQUEST_TTL_MS) {
+    state.sidebarReorderFocus = null;  // 만료 — 정리(늦게 도착한 응답은 기존 동작).
+    return null;
+  }
+  // 데이터가 아직 갱신되지 않은 렌더(그룹 토글 등)는 재배치를 담고 있지 않다 — 예약을 남긴다.
+  if (Number(state.sidebarDataVersion || 0) === Number(req.dataVersion || 0)) return null;
+  state.sidebarReorderFocus = null;  // 1회 소비 — 뒤따르는 무관한 렌더로 새지 않게.
+  const snap = {
+    key: req.key,
+    scrollTop: conversationListEl.scrollTop,
+    before: _prefersReducedMotion() ? null : new Map(),
+  };
+  if (snap.before) {
+    conversationListEl.querySelectorAll(REORDER_ROW_SELECTOR).forEach((el) => {
+      const k = _reorderRowKey(el);
+      if (k) snap.before.set(k, el.getBoundingClientRect().top);
+    });
+  }
+  return snap;
+}
+
+// ② 대상을 담은 조상(날짜 그룹 / 폴더 체인)의 접힘을 해제한다. 렌더 **전에** 호출해야
+//    대상이 이번 재구성에서 실제로 그려진다. 자기 자신의 접힘은 건드리지 않는다(헤더는 보인다).
+function _expandAncestorsForReorderFocus(key, dateTree) {
+  if (!key) return;
+  let changed = false;
+  const drop = (k) => { if (state.collapsedDateGroups.delete(k)) changed = true; };
+  const expandFolderChain = (folderId) => {
+    let f = folderId != null ? _folderById(folderId) : null;
+    const seen = new Set();
+    while (f && !seen.has(Number(f.folder_id))) {
+      seen.add(Number(f.folder_id));
+      drop(`folder:${f.folder_id}`);
+      f = f.parent_folder_id != null ? _folderById(f.parent_folder_id) : null;
+    }
+  };
+
+  if (key.startsWith("folder:")) {
+    // 폴더 헤더 자체는 부모가 접혀 있으면 그려지지 않는다 — 부모 체인만 펼친다.
+    const self = _folderById(key.slice("folder:".length));
+    if (self && self.parent_folder_id != null) expandFolderChain(self.parent_folder_id);
+  } else if (key.startsWith("conv:")) {
+    const cid = key.slice("conv:".length);
+    const conv = state.conversations.find((c) => String(c.id) === cid);
+    // 폴더 배정 대화 → 조상 폴더 체인(자기 폴더 포함 — 접혀 있으면 대화가 안 그려진다).
+    if (conv && conv.folder_id != null) expandFolderChain(conv.folder_id);
+    // 미분류 대화 → 대상을 담은 날짜 leaf + 그 조상 branch(연>월).
+    const walk = (nodes, ancestors) => {
+      nodes.forEach((n) => {
+        if (n.kind === "branch") { walk(n.children, ancestors.concat(n.key)); return; }
+        if ((n.items || []).some((it) => String(it.id) === cid)) {
+          ancestors.concat(n.key).forEach(drop);
+        }
+      });
+    };
+    if (dateTree && Array.isArray(dateTree.nodes)) walk(dateTree.nodes, []);
+  }
+  // ★ 영속하지 않는다 (§18.8 codex [P2]). 이 펼침은 "지금 이 항목을 보여주기 위한" 세션 조치이지
+  //   사용자의 접힘 선호가 아니다. `_saveCollapsedGroups()` 를 부르면, 사용자가 의도적으로 접어둔
+  //   그룹(예: '오늘')이 오래된 대화의 이름을 한 번 바꿨다는 이유로 다음 접속에서도 펼쳐진다.
+  //   영속은 사용자의 명시적 토글(`toggleDateGroup`/`_toggleFolder`)만 수행한다.
+  void changed;
+}
+
+// ③ 대상이 스크롤 밖이면 시야로 끌어온다. 여기서의 스크롤 이동분은 뒤이은 FLIP delta 가
+//    흡수하므로(측정 사이에 위치) 사용자 눈에는 목록 전체가 한 번에 미끄러지는 것으로 보인다.
+function _scrollReorderFocusIntoView(el) {
+  const view = conversationListEl.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  let d = 0;
+  if (r.top < view.top + REORDER_VIEW_PAD_PX) d = r.top - (view.top + REORDER_VIEW_PAD_PX);
+  else if (r.bottom > view.bottom - REORDER_VIEW_PAD_PX) d = r.bottom - (view.bottom - REORDER_VIEW_PAD_PX);
+  if (!d) return;
+  // 스크롤 범위로 직접 clamp 한다. 브라우저도 어차피 clamp 하지만, 여기서 실제 반영값을
+  // 확정해두지 않으면 목록 최상단·최하단에서 "적용되지 않은 보정량" 이 FLIP delta 계산과
+  // 어긋나 첫/마지막 행이 어긋난 위치에서 출발한다.
+  const maxScroll = Math.max(0, conversationListEl.scrollHeight - conversationListEl.clientHeight);
+  conversationListEl.scrollTop = Math.max(0, Math.min(maxScroll, conversationListEl.scrollTop + d));
+}
+
+function _flashReorderFocus(el) {
+  if (_prefersReducedMotion()) return;
+  el.classList.remove("is-reorder-flash");
+  void el.offsetWidth;  // 연속 호출에서도 애니메이션이 다시 시작되게 리스타트
+  el.classList.add("is-reorder-flash");
+  window.setTimeout(() => { try { el.classList.remove("is-reorder-flash"); } catch (_) {} }, REORDER_FLASH_MS);
+}
+
+// invert 상태를 반드시 걷어내는 정리자. **invert 를 적용하는 시점에** 설치한다
+// (§18.8 codex [P2]) — play 는 rAF 에서 시작하는데 그 직후 탭이 백그라운드로 가면 rAF 가 멈춰
+// `transition:none` + `translateY(...)` 가 그대로 남는다. 정리자를 play 안에서만 만들면 그 상태를
+// 걷어낼 주체가 아무도 없다.
+function _armReorderCleanup(el) {
+  let done = false;
+  const clear = () => {
+    if (done) return;
+    done = true;
+    el.style.transition = "";
+    el.style.transform = "";
+    el.removeEventListener("transitionend", onEnd);
+  };
+  // transitionend 는 자식에서 버블링한다 (§18.8 codex [P2]) — 이동 중 포인터가 지나가며 메뉴
+  // 트리거의 opacity transition 이 끝나면 그 이벤트로 FLIP 이 조기 종료돼 행이 최종 위치로 튄다.
+  // 이 행 자신의 transform 전환만 인정한다.
+  function onEnd(ev) {
+    if (ev.target !== el || (ev.propertyName && ev.propertyName !== "transform")) return;
+    clear();
+  }
+  el.addEventListener("transitionend", onEnd);
+  window.setTimeout(clear, REORDER_ANIM_MS + 400);
+  return clear;
+}
+
+// (Play) invert 상태에서 원위치로 트윈. 정리는 위 watchdog 이 이미 보장한다.
+function _playReorderMove(el) {
+  el.style.transition = `transform ${REORDER_ANIM_MS}ms cubic-bezier(.22,.61,.36,1)`;
+  el.style.transform = "";
+}
+
+// (Last-Invert-Play) 렌더 직후: 스크롤 복원 → 시야 보정 → 좌표 비교 → 역이동 후 트윈.
+function _commitSidebarReorder(snap) {
+  if (!conversationListEl) return;
+  // 재구성 중 콘텐츠 높이가 0 이 되며 스크롤이 clamp 될 수 있다 — 먼저 원래 위치로 되돌린다.
+  if (typeof snap.scrollTop === "number" && conversationListEl.scrollTop !== snap.scrollTop) {
+    conversationListEl.scrollTop = snap.scrollTop;
+  }
+  const focusEl = _reorderRowByKey(snap.key);
+  if (focusEl) _scrollReorderFocusIntoView(focusEl);
+  if (!snap.before) return;  // reduced-motion: 시야 유지까지만(트윈·강조 없음).
+
+  // 읽기 phase → 쓰기 phase 분리(측정과 스타일 쓰기를 섞으면 행마다 강제 리플로우).
+  const moves = [];
+  conversationListEl.querySelectorAll(REORDER_ROW_SELECTOR).forEach((el) => {
+    const k = _reorderRowKey(el);
+    if (!k) return;
+    const prevTop = snap.before.get(k);
+    if (prevTop === undefined) return;  // 이번에 새로 나타난 행 — 이동이 아니다.
+    const delta = prevTop - el.getBoundingClientRect().top;
+    const abs = Math.abs(delta);
+    if (abs < REORDER_MIN_DELTA_PX || abs > REORDER_MAX_DELTA_PX) return;
+    moves.push([el, delta]);
+  });
+  moves.forEach(([el, delta]) => {
+    el.style.transition = "none";
+    el.style.transform = `translateY(${delta.toFixed(1)}px)`;
+    _armReorderCleanup(el);  // invert 시점부터 보장 — rAF 가 오지 않아도 잔류하지 않는다.
+  });
+  if (moves.length) {
+    void conversationListEl.offsetWidth;  // invert 상태를 커밋해 다음 프레임의 값 변화가 전환이 되게
+    requestAnimationFrame(() => moves.forEach(([el]) => _playReorderMove(el)));
+  }
+  if (focusEl) _flashReorderFocus(focusEl);
+}
+
+/**
+ * 대화 목록 렌더. 재배치 애니메이션이 예약된 렌더면 FLIP 으로 감싼다
+ * (예약 없으면 `_renderConversationListDom` 직행 — 기존 동작·비용 그대로).
+ */
 export function renderConversationList() {
+  const snap = _beginSidebarReorder();
+  _renderConversationListDom(snap ? snap.key : "");
+  if (snap) _commitSidebarReorder(snap);
+}
+
+function _renderConversationListDom(reorderFocusKey) {
   conversationListEl.innerHTML = "";
   const hasDraftPending = Boolean(state.pendingNewConversation) && !state.pendingConversationEntries.has(state.pendingSentinel);
   const hasInFlightPending = state.pendingConversationEntries.size > 0;
@@ -869,6 +1112,9 @@ export function renderConversationList() {
   _seedDateGroupsCollapsedOnce(dateTree.keys);
   // 집계(월/연) 노드는 최초 1회만 접힘 seed + 영속 — 이후 사용자 토글 존중(안정 키).
   _seedAggregateGroupsCollapsedOnce(dateTree.keys);
+  // sidebar-reorder-anim ②: 이름 변경으로 대상이 접힌 그룹/폴더로 옮겨갔으면 그 조상을
+  //   펼쳐 이번 재구성에 포함시킨다(seed 이후에 적용해야 seed 가 다시 접지 않는다).
+  _expandAncestorsForReorderFocus(reorderFocusKey, dateTree);
 
   // 그룹 접힘 토글 (일/월/연 공통) — 상태 영속 후 재렌더.
   const toggleDateGroup = (key) => {
@@ -1155,6 +1401,7 @@ async function _maybeSyncConversationListUnread() {
       if (it.id === activeId) { it.unread_count = 0; it.unread_mention_count = 0; }
     });
     state.conversations = payload.items;
+    bumpSidebarDataVersion();  // 목록 데이터 교체 — 재배치가 여기서 드러날 수 있다.
     renderConversationList();
   } catch (_e) { /* best-effort: 다음 주기 재시도 */ }
 }

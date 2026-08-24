@@ -4551,3 +4551,56 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   `FR-stale-threshold-below-llm-attempt-cap` → **`fixed:deployed:unverified-live`** +
   POST-DEPLOY 절 + 다음 audit 관측 지표 3종. 라이브 UI 실측 미수행 사유를 정직 기록
   (stale 표면 재현이 데이터 write 를 요구 — 감사 persona 읽기 전용 제약).
+
+## CHG-20260824T164437-sidebar-reorder-anim — 좌측 대화목록 명칭 변경 시 재배치를 부드러운 전환으로
+
+사용자 요청(2026-08-24): 대화목록 요소의 명칭을 수정하면 정렬 기준에 따라 순식간에 재배치되어
+시야에서 사라진다 → 부드러운 애니메이션으로 재배치. `REQ-20260824-sidebar-reorder-anim`.
+
+- `src/static/app/sidebar.js`
+  - **FLIP 재배치 코디네이터 추가**: `requestSidebarReorderAnimation`(예약, export) ·
+    `_beginSidebarReorder`(First 스냅샷) · `_commitSidebarReorder`(Last-Invert-Play) ·
+    `_expandAncestorsForReorderFocus`(접힌 날짜 그룹/폴더 체인 펼침) ·
+    `_scrollReorderFocusIntoView`(시야 추종 + 스크롤 범위 clamp) · `_flashReorderFocus` ·
+    `_playReorderMove` · `_reorderRowKey`/`_reorderRowByKey`(재구성 전후를 잇는 행 키) +
+    `REORDER_*` 임계 상수.
+  - `renderConversationList` → **FLIP wrapper**, 기존 DOM 렌더 본체는
+    `_renderConversationListDom(reorderFocusKey)` 로 분리(본문 로직 무변경, 접힘 해제 호출 1줄 추가).
+  - `_commitFolderRename`: PATCH 성공 경로에서만 `folder:<id>` 재배치 예약.
+  - app.js 에서 `_prefersReducedMotion` import(모션 게이트 단일 정의 공유).
+- `src/static/app.js`
+  - `_prefersReducedMotion` 을 **export** (기존 내부 함수 — 시그니처·동작 불변).
+  - `state.sidebarReorderFocus` 슬롯 추가(예약 {key, at}, 렌더 1회가 소비).
+  - `openConversationSettings` 의 `saveTitle`: 제목 PATCH 성공 후 `conv:<id>` 재배치 예약
+    (이어지는 `refreshWorkspace` → `renderConversationList` 가 대상).
+  - sidebar.js 에서 `requestSidebarReorderAnimation` import.
+- `src/static/css/shell.css`: `@keyframes convReorderFlash` + `.conv-item/.conv-folder-header`
+  `.is-reorder-flash` (1.1초 강조) + `prefers-reduced-motion` 시 정지.
+- `tests/verify_sidebar_reorder_anim.mjs` (신규 73건) · `tests/pb0008_sidebar_reorder_measure.py`
+  (신규 — PB-0008 궤적 계측기, folder/conv 2모드) · `tests/verify_new_conv_dedup.mjs`
+  (렌더 본체 분리에 맞춰 추출 대상·주입 배선 갱신, 단언 1건 추가).
+- 문서: `FUNCTION.md`(REQ + AC 4) · `TASK.md`(cycle) · `TEST.md`/`docs/test-runs.d/`(PB-0008 Run) ·
+  `REVIEW.md`(판단 근거) · `REPORT.md`(스냅샷).
+
+**동작 경계**: 예약이 없는 렌더는 좌표 측정도 하지 않아 기존 경로와 동일(주기 unread 동기화·
+그룹 토글·대화 선택 등 무영향). 정렬 규칙·API·서버 로직은 **일절 변경하지 않았다** — 재배치가
+일어나는 사실은 그대로 두고 그 전환만 보이게 한다.
+
+### §18.8 적대 리뷰(codex) 반영분 — 같은 CHG 안에서 흡수
+
+- `app/sidebar.js`: `bumpSidebarDataVersion()` 신설 + 예약에 `dataVersion` 기록,
+  `_beginSidebarReorder` 가 **데이터 버전이 오른 렌더에서만** 예약을 소비(그 전엔 예약 보존,
+  TTL 만료 시에만 정리) — [P1]. `_expandAncestorsForReorderFocus` 의 `_saveCollapsedGroups()`
+  제거(세션 해제만) — [P2]. `_armReorderCleanup` 분리로 정리자를 **invert 시점**에 설치 +
+  `transitionend` 를 `target === el && propertyName === 'transform'` 로 한정 — [P2] 2건.
+  `_commitFolderRename` 의 예약을 `loadFolders()` **앞으로** 이동(라이브 실측 회귀).
+  `loadFolders` · `_maybeSyncConversationListUnread` 에 버전 bump 추가.
+- `app.js`: `state.sidebarDataVersion` 슬롯 + `loadConversations` 의 데이터 반영 지점에 bump,
+  `bumpSidebarDataVersion` import.
+- `css/shell.css`: 강조색을 `color-mix(in srgb, var(--accent, #2563eb) 22%, transparent)` 로 — [P2].
+- `tests/verify_sidebar_reorder_anim.mjs`: 데이터-버전 귀속 · transitionend 버블링 필터 ·
+  invert-시점 watchdog · 자동펼침 비영속 · **예약↔데이터적재 순서** 계약 추가 (73 → 93 PASS).
+- `tests/verify_conv_entry_defaults.mjs`: `loadConversations` 본체의 새 의존(`bumpSidebarDataVersion`)
+  주입 배선 추가.
+- `tests/pb0008_sidebar_reorder_measure.py`: 샘플링 창 안의 스크린샷 제거(캡처가 rAF 를 멈춰
+  정상 트윈을 "전환 없음" 으로 오보고하던 계측기 자체 결함).

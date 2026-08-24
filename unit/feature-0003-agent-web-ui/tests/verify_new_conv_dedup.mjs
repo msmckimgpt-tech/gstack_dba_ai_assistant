@@ -114,9 +114,14 @@ ok("[A3] 첨부 경로 등재 title: \"(파일 첨부 중)\" 잔존 0", !appJs.i
 // 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
 ok("[A5] index.html app.js 가 asset-stamp placeholder(?v=dev)", /app\.js\?v=dev/.test(indexHtml));
 
-// ── [B] jsdom 행위 단언 — 실 renderConversationList ───────────────────────────
-const renderSrc = extractFn(appJs, "renderConversationList");
-ok("[B] renderConversationList 추출", Boolean(renderSrc));
+// ── [B] jsdom 행위 단언 — 실 렌더 본체 ───────────────────────────────────────
+// sidebar-reorder-anim: `renderConversationList` 는 재배치 FLIP wrapper 가 되고 DOM 을
+//   그리는 본체는 `_renderConversationListDom(reorderFocusKey)` 로 분리됐다. 본 하네스는
+//   렌더 산출물(중복 placeholder 여부)을 보므로 본체를 추출한다(wrapper 는 좌표 계산 전담 —
+//   전용 하네스 verify_sidebar_reorder_anim.mjs 가 검증).
+const renderSrc = extractFn(appJs, "_renderConversationListDom");
+ok("[B] 렌더 본체(_renderConversationListDom) 추출", Boolean(renderSrc));
+ok("[B] renderConversationList 는 FLIP wrapper", /export function renderConversationList\(\) \{\s*const snap = _beginSidebarReorder\(\);/.test(appJs));
 // conv-date-tree 후속: 날짜 트리 빌더는 실함수로 주입(keys 계약이 렌더 경로를 결정).
 const treeSrc = extractFn(appJs, "_buildOwnDateTree");
 const ymdSrc = extractFn(appJs, "_ymdKey");
@@ -141,9 +146,10 @@ function buildRender(conversationListEl) {
     "_syncNewFolderBtn", "_seedAggregateGroupsCollapsedOnce",  // conv-date-tree/newfolder-btn 후속 top-level 의존(no-op)
     "_folderChildren",  // 폴더 트리 루트 순회 — folders 빈 시나리오라 빈 배열 stub
     "_buildOwnDateTree", "_ymdKey",  // 날짜 트리 빌더 — 실함수 주입(아래 추출)
+    "_expandAncestorsForReorderFocus",  // sidebar-reorder-anim: 접힘 해제(no-op — 좌표 계약은 전용 하네스)
     "openConversationItemMenu", "closeConversationItemMenu",
     "_switchToPendingConversationContext", "selectConversation", "renderConversationBulkBar",
-    `${folderScopedSrc}\n${renderSrc}\n return renderConversationList;`,
+    `${folderScopedSrc}\n${renderSrc}\n return _renderConversationListDom;`,
   );
   return factory(
     conversationListEl,
@@ -162,6 +168,7 @@ function buildRender(conversationListEl) {
     () => [],          // _folderChildren — folders:[] 시나리오
     buildOwnDateTree,  // _buildOwnDateTree — 실함수(날짜 트리 keys 계약 유지)
     ymdKey,            // _ymdKey
+    noop,              // _expandAncestorsForReorderFocus
     noop, noop, noop, noop, noop,
   );
 }
