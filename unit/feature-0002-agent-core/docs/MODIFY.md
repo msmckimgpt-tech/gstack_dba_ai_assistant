@@ -2292,7 +2292,52 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - 스키마·마이그레이션 변경 **0**(`result_summary_json` 기존 컬럼 재사용).
 - `tests/test_step_elapsed_attribution.py` 신규 7 PASS · `tests/test_inference_detail.py`
   소스-패턴 계약 정합화(의미 보존).
+## CHG-20260824T0733-attach-original-baseline — 첨부 비교 시 계보 최초 원본(_v0) 능동 주입
 
+- `src/agent_core.py`
+  - `_ORIGINAL_INLINE_COUNT_CAP`(5) · `_ORIGINAL_INLINE_CHAR_CAP`(40,000) 신설 — 라이브 실측
+    (구버전 text 243건 평균 3.0KB·최대 12.4KB)을 전부 덮고 이상치에서만 절단되는 값.
+  - `_original_v0_filename()` 신설 — `report.sql` → `report_v0.sql`(확장자 앞 삽입, 무확장자는 말미).
+  - `_load_original_versions()` 신설 — 버전>1 첨부의 계보 최초본을 체인당 1행 조회. 스코프 술어는
+    본 조회와 동일(ConversationId 우선·AccountId 폴백), `DeletedAt IS NULL AND DeletePending = 0`.
+    체인별 최소 `VersionNumber` 선택은 파이썬에서(윈도우 함수 미사용 — MySQL 5.7 호환).
+  - `_decode_attachment_text()` 신설 — utf-8 → cp949, `read_attachment_content` 와 동일 규약.
+  - `_load_ancestor_attachment_row()` 신설 — 같은 대화 · 스코프 첨부의 체인 집합에 속함 · 미삭제
+    3겹을 만족할 때만 조상 행 반환. 대화 컨텍스트 부재 시 fail-closed.
+  - `_build_attachment_context_section()` — 순회에서 `root_attachment_id`(row[9])와 버전>1 대상
+    수집, 순회 후 `## ORIGINAL VERSIONS (_v0)` 섹션 렌더(줄번호 + datamark + 현재본 대응 표기 +
+    미인라인 사유 목록 + INSTRUCTION). 타 계정 원본 본문 렌더 시 `_UNTRUSTED_ATTACH_BODY_CTX` 세움.
+  - `read_attachment_content()` — `attachment_id` 지정 경로에 조상 폴백 1줄 추가. `filename`
+    경로는 무변경(동명 되묻기 회귀 방지).
+  - `SYSTEM_PROMPT` — "COMPARING VERSIONS OF THE SAME ATTACHED FILE" 1항 추가: `_v0`(전 이력)와
+    `## FILE UPDATES`(마지막 한 걸음)의 **범위 차이**를 못박고, 원본을 현재 본문으로 서술하거나
+    "이전 버전이 없다" 고 단정하는 것을 금지.
+- `src/modules/tools.py`
+  - `read_attachment` 도구 description + `attachment_id` 파라미터 설명에 "이전 버전·최초 원본은
+    id 로 읽는다" 명시 — 안내와 실제 동작의 정합(도구가 열려 있는데 설명이 없으면 쓰이지 않는다).
+  - `_ORIGINAL_VERSIONS_CTX` 신설 + `compose_system_prompt` run 경계 리셋 — 이번 턴에 **렌더된**
+    원본 사본을 담아 `_review_attachments()` 가 red-team 리뷰어 ground truth 로 넘긴다.
+    근거: `FR-redteam-digest-lacks-prior-attachment-version`(라이브 2026-08-11)이 `## FILE UPDATES`
+    축에서 실증한 실패 모드 — 답변이 정당하게 가진 근거를 **리뷰어만 못 보면** 정확한 답변이
+    grounding BLOCK 을 맞는다. `_v0` 는 같은 축의 새 자료다. 렌더되지 않은 원본은 넘기지 않는다
+    (넘기면 "assistant 가 봤다" 는 거짓 전제).
+  - 현재본이 이번 턴에 인라인되지 않은 경우 "위 ATTACHED FILE CONTENTS 참조" 대신
+    `read_attachment(attachment_id=…)` 를 가리킨다 — 없는 증거를 가리키면 모델이 그것을 찾다 지어낸다.
+  - **상한이 밀어내는 대상 교정** — 원본 인라인 선택을 목록 순서(Id ASC)가 아니라
+    **이번 턴 신규(★) 우선 → 최신 id 우선**으로 정렬. 그대로 자르면 가장 오래된 파일의 원본이
+    남고 **방금 재업로드한 파일**의 원본이 밀린다(text 인라인에서 실측된 함정과 같은 축).
+  - **문자 상한은 온전한 줄까지만** — 조각난 마지막 줄에 줄번호가 붙으면 모델이 그것을 그 줄의
+    전체 내용으로 읽어 원본↔현재본 대조에서 **없는 차이**를 만든다
+    (`read_attachment_content` 가 확립한 규율의 적용면 확장).
+  - **§18.8 codex 흡수 4건**: ① provenance 조건을 `_o_owner and account_id` →
+    `_o_owner and (not account_id or _o_owner != account_id)` (caller 미상이면 막는 쪽) ②
+    `_load_ancestor_attachment_row` 앵커 조회를 `(chain, VersionNumber)` 로 바꿔 **대상 버전 <
+    스코프 버전** 을 요구하고 앵커에도 삭제 술어 부착(진짜 조상만) ③ `_original_v0_filename(name,
+    version)` — v1 이 아니면 `_v0` 대신 실제 버전(`q_v2.sql`) + "앞선 버전은 조회 불가" 헤더 명시
+    ④ 동명 계보로 원본 이름이 겹치면 구분 규칙 1줄 주입.
+- `tests/test_attach_original_baseline.py` 신규 45 PASS.
+- **web 측 변경 0** · 스키마·마이그레이션·신규 권한 코드 **0** · `_resolve_conversation_attachment_scope`
+  무변경.
 ## CHG-20260824T160000-live-cap-startup-drift — live 설정을 startup 스냅샷으로 파생하던 부정합 전수 정리 (Major §12.3)
 
 conv-audit `FR-live-cap-derived-from-startup-snapshot`. 선행 `feature-0003`

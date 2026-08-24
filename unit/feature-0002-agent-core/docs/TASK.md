@@ -2830,7 +2830,140 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 ### 9. Requested Scope
 
 - vision provenance 미적용 해소 — ✓. SECURITY §47.4 의 "이미지 경로 미적용" 문구를 갱신한다.
+## 20260824T0733-attach-original-baseline — 첨부 비교 시 최초 원본(_v0) 능동 주입 (Major §12.3)
 
+- **출처**: 사용자 요청(2026-08-24) — "assistant 가 첨부된 파일을 비교하는 작업을 수행할 경우,
+  초창기 원본 데이터를 조회할 수 있었다면 `_v0` 형태로 가장 이전의 버전으로 능동적으로 포함하도록
+  구성해주세요."
+- **사용자 결정(2026-08-24)**: ① 포함 방식 = **항상 본문 인라인** ② `read_attachment` 도구를
+  **계보 조상까지 열기**.
+
+### 배경 — assistant 는 원본에 도달할 수단이 아예 없다
+
+첨부 버전 체인의 구버전 행은 DB·MinIO 에 그대로 보존되지만(`SupersededAt` 스탬프만, `DeletedAt IS
+NULL`), assistant 가 그것을 볼 경로는 **한 곳도 없다**:
+
+- LLM 첨부 스코프 `_resolve_conversation_attachment_scope` 가 `SupersededAt IS NULL` — 최신본만.
+- `read_attachment` 도 같은 스코프(`_attachment_scope_ids`)라 구버전 id 를 거부한다.
+- `## FILE UPDATES` diff 는 **직전 버전 대비**(`MetaJson.version_diff`)이고, 재업로드가 일어난
+  **그 턴에만** 렌더된다. v1→v2 diff 는 v3 턴에 이미 사라진다.
+
+그래서 "처음 올린 것과 지금이 뭐가 다른가" 는 v3 이상 체인에서 **원리적으로 답할 수 없고**,
+모델은 답할 수 없다는 사실조차 모른 채 최신본만 보고 서술한다.
+
+**라이브 실측(2026-08-24)**: 첨부 1,088건 중 `VersionNumber>1` 245건(22.5%) · 다중버전 체인 171개
+(길이 2=130 · 3=29 · 4=3 · 5=5 · 6·7·8·11 각 1) · 구버전 행 245건 = text 243(평균 3.0KB, 최대
+12.4KB) + xlsx 2. **원본 본문 주입 비용이 작다** — 이 수치가 "항상 인라인" 결정의 근거다.
+
+### 구현 계획 (§7.1)
+
+| 파일 | 심볼 | 변경 |
+|---|---|---|
+| `unit/feature-0002-agent-core/src/agent_core.py` | `_ORIGINAL_INLINE_COUNT_CAP` · `_ORIGINAL_INLINE_CHAR_CAP` | 신설 상수 (건수 5 · 파일당 40,000자) |
+| 〃 | `_load_original_versions()` | 신설 — 스코프 첨부의 계보 최초본(v1) 행 조회 |
+| 〃 | `_build_attachment_context_section()` | `## ORIGINAL VERSIONS (_v0)` 섹션 렌더 추가 |
+| 〃 | `_load_ancestor_attachment_row()` | 신설 — `read_attachment` 의 계보 조상 허용 판정 |
+| 〃 | `read_attachment_content()` | `attachment_id` 지정 시 조상 폴백 |
+| 〃 | `SYSTEM_PROMPT` | 비교 요청 시 `_v0` 대조 의무 1항 |
+| `unit/feature-0002-agent-core/src/modules/tools.py` | `_ATTACHMENT_TOOL_DEFS` | `read_attachment` description 에 원본 조회 안내 |
+| `unit/feature-0002-agent-core/tests/test_attach_original_baseline.py` | (신규) | 회귀 잠금 |
+
+**접근 요약**
+
+1. 프롬프트 조립 순회에서 `VersionNumber > 1` 인 스코프 첨부의 `(id, root, version, filename)` 을
+   모은다. 순회 후 1회 조회로 각 체인의 **최소 VersionNumber 행**(= 최초 원본)을 얻는다.
+2. 그 원본 본문을 MinIO 에서 직접 읽어(`_load_attachment_bytes`, read_attachment 와 동일 디코드
+   규약) `## ORIGINAL VERSIONS (_v0)` 전용 섹션으로 렌더한다 — 파일명은 `<stem>_v0<ext>` 표기.
+3. `read_attachment(attachment_id=...)` 가 스코프 밖 id 를 받으면, 그 id 가 **스코프 첨부와 같은
+   계보의 조상**일 때만 허용한다.
+4. 비교·변경점 질문에서 `_v0` 를 근거로 삼도록 시스템 프롬프트에 1항 추가.
+
+**설계 판단**
+
+- **스코프(`_resolve_conversation_attachment_scope`)는 건드리지 않는다.** 거기에 원본 id 를 더하면
+  `ATTACHED FILES` 목록에 동명 파일이 2건 뜨고 `_lineages` 가 그것을 "계보 2개" 로 오인해
+  `## FILE VERSION LINEAGES` 가 거짓을 말한다. 또 `read_attachment(filename=…)` 이 동명 후보
+  다수로 판정해 매번 되묻게 된다(REQ-20260814 의 되묻기 규약과 충돌). **전용 섹션 + id 지정 폴백**
+  이 blast radius 가 가장 작다 — web 측 변경 0.
+- **`_v0` 는 표기 규약이고 저장 스키마가 아니다.** `VersionNumber` 는 1-base 그대로 두고 프롬프트
+  라벨만 `_v0` 로 적는다(사용자 표현). 웹 UI 의 버전 표기(v1·v2)는 무변경 — 요청 범위 밖.
+- **대상은 `kind='text'`.** 구버전 245건 중 243건이 text 이고, csv/xlsx 는 본문이 아니라 sandbox
+  테이블로 들어가는데 구버전 sandbox 는 이미 없다. 비-text 원본은 **존재 사실만** 적어 모델이
+  "원본이 없다" 고 단정하지 않게 한다.
+- **provenance 정합**: 원본 본문이 실제로 렌더되고 그 소유자가 호출자와 다르면
+  `_UNTRUSTED_ATTACH_BODY_CTX` 를 세운다 — 본문이 실린 순간에만 신호를 세우는 기존 규약
+  (REQ-20260814-attach-provenance-gate)과 동형. 이 자리가 빠지면 원본 인라인이 게이트 우회로가 된다.
+- **절단은 관측 가능하게**: 건수·문자 상한 초과분은 "N건 생략 — read_attachment 로 조회" 로
+  명시한다(무음 절단 금지, CODE_REVIEW §2.1).
+- **fail-soft**: 원본 조회·디코드 실패는 섹션에서 그 파일만 빠지고, 사유를 원인 단정 없이 적는다.
+  첨부 주입 전체를 죽이지 않는다.
+
+**위험도: Major** (§12.3) — 프롬프트 토큰 증가(외부 비용) + 첨부 참조 경계 확장. 인가 확대는
+아니다(같은 대화·같은 계보·미삭제 행만, 열람권은 이미 동일).
+
+**완료 판정 기준**
+
+- v3 이상 체인의 대화에서 프롬프트에 `## ORIGINAL VERSIONS (_v0)` 가 렌더되고 그 안에 v1 본문이
+  들어간다 — 구체 예시: `init_query.sql` v1→v2→v3 체인이면 섹션에 `init_query_v0.sql (원본 v1,
+  attachment_id=<v1 id>)` 헤더와 v1 본문이 나오고, 현재본 v3 은 종전대로 `ATTACHED FILE CONTENTS`
+  에 남는다.
+- `read_attachment(attachment_id=<v1 id>)` 가 성공하고, **다른 대화**의 첨부 id 는 계속 거부된다.
+- 단일 버전(v1) 첨부만 있는 대화는 섹션이 렌더되지 않는다(프롬프트 무변화).
+- `make test` 회귀 0.
+
+### 조치 (완료)
+
+- [x] `_load_original_versions()` — 버전>1 첨부의 계보 최초본을 체인당 1행 조회. **현재본과 같은
+      스코프 술어**(ConversationId 우선·AccountId 폴백) + 삭제·삭제대기 제외. 조회 실패는 빈 dict
+      (원본 섹션만 빠지고 첨부 주입은 살아 있다).
+- [x] `## ORIGINAL VERSIONS (_v0)` 섹션 — `<stem>_v0<ext>` 표기 + 현재본 대응(파일명·id·버전) +
+      줄번호 prefix + datamark sentinel. 트리거는 **버전 사실**이지 질문 키워드가 아니다.
+- [x] **미인라인은 목록으로 남긴다** — 비-text·판독 실패·상한 초과를 사유와 함께 나열하고
+      `read_attachment` 경로를 함께 준다. 섹션이 "완전한 목록" 으로 오인되면 "원본이 없다" 는
+      반대 방향 단정이 나온다(이 cycle 이 없애려는 것과 같은 종류의 결함).
+- [x] **provenance 를 본문 렌더 자리에** — 타 계정 원본의 본문이 실제로 실린 순간에만
+      `_UNTRUSTED_ATTACH_BODY_CTX` 를 세운다(REQ-20260814 [P1] 재현 방지). 목록만이면 세우지 않는다.
+- [x] `_load_ancestor_attachment_row()` + `read_attachment_content` 폴백 — 같은 대화 · 스코프 첨부의
+      체인 집합 · 미삭제 3겹. `filename` 경로는 **무변경**(동명 되묻기 회귀 방지).
+- [x] `SYSTEM_PROMPT` — `_v0`(전 이력)와 `## FILE UPDATES`(v{n-1}→v{n})의 **범위 차이**를 못박고,
+      섹션이 없을 때는 이전 버전을 현재 본문으로 서술하지 말고 `미확인` 을 쓰게 했다.
+- [x] `tools.py` `read_attachment` description·`attachment_id` 설명에 이전 버전 조회 명시 —
+      도구가 열려 있는데 설명이 없으면 쓰이지 않는다.
+- [x] **리뷰어 ground truth 정합** — 렌더된 원본을 `_review_attachments()` 가 red-team digest 로
+      넘긴다(`_ORIGINAL_VERSIONS_CTX`, run 경계 리셋). 이 배선이 없으면 "처음과 비교하면 …" 이라는
+      **옳은 답변**이 리뷰어에게 근거 없이 보여 grounding BLOCK 이 난다 —
+      `FR-redteam-digest-lacks-prior-attachment-version`(2026-08-11)이 `## FILE UPDATES` 축에서
+      라이브로 실증한 실패 모드의 재발 지점이다. bounded 발신자에겐 기존 게이트대로 빈 목록.
+- [x] **없는 증거를 가리키지 않는다** — 현재본이 이번 턴에 인라인되지 않았으면 "위 본문 참조" 대신
+      `read_attachment(attachment_id=…)` 로 안내한다.
+- [x] **상한이 무엇을 밀어내는가** — 이번 턴 신규(★) 우선 → 최신 id 우선 정렬. 목록 순서대로
+      자르면 방금 재업로드한 파일의 원본이 밀린다(선례: text 인라인 cap 초과 시 "방금 올린 파일이
+      조용히 누락" 사용자 불만 → `ORDER BY Id DESC` 교정).
+- [x] **문자 상한은 줄 경계까지** — 조각난 줄에 줄번호가 붙으면 대조에서 없는 차이가 생긴다.
+- [x] **§18.8 적대 리뷰(codex) 6건 전건 반영** — P1 provenance fail-open(caller 미상) ·
+      P2 조상 술어에 버전 비교·삭제 술어 부재 · P2 삭제된 v1 대신 v2 를 "최초 원본" 으로 허위 표기 ·
+      P2 동명 계보 원본 이름 충돌 · P2/P3 2건은 자체 검토분과 동일 진단(이미 수정). 잔여 P1 0.
+- [x] `tests/test_attach_original_baseline.py` 신규 **45 PASS**. 하네스는 SQL 라우팅
+      (`_SqlRoutingConn`) — 기존 `_RowsConn` 은 모든 쿼리에 같은 rows 를 줘 원본 경로가 vacuous.
+- [x] 문서: FUNCTION §2 REQ · MODIFY CHG · REVIEW REV · SECURITY §48(참조 경계 확장) ·
+      test-runs.d fragment.
+- [x] **무관 실패 1건 정정**: `test_oauth_exhaustion_gate` 의 `chattr` 가드가 바이너리 부재 시
+      예외로 터져 skip 대신 FAIL 이 됐다(main HEAD 에서도 재현 — 본 cycle 무관). `try/except OSError
+      → skip` 으로 가드를 예외까지 덮게 했다. 검증 대상 로직 무변경.
+
+### 잔여 (후속 후보)
+
+- 계보 **중간 버전**(v2 …)은 자동 주입 대상이 아니다 — 도구로는 읽히나 프롬프트가 id 를 나열하지
+  않는다. 필요가 관측되면 후속 cycle.
+- 구버전 csv/xlsx 는 sandbox 테이블 부재로 데이터 대조 불가(원본 텍스트 읽기만 가능).
+- 원본 조회가 체인당 MinIO 1회 왕복을 더한다(상한 5회). **지연 실측은 배포 후 대화 경로에서 재확인**.
+
+### Requested Scope
+
+- 첨부 비교 시 **초창기 원본을 능동 포함** — ✓ 완료 (`## ORIGINAL VERSIONS (_v0)` 항상 인라인).
+- **`_v0` 형태 표기** — ✓ 완료 (`<stem>_v0<ext>`, 저장 스키마·웹 UI 버전 표기는 불변).
+- **"조회할 수 있었다면" 조건** — ✓ 완료 (미삭제 원본만 · 조회/판독 실패는 fail-soft + 사유 명시).
+- 원본 조회 경로를 도구에도 개방 (사용자 결정) — ✓ 완료 (`read_attachment(attachment_id=…)`).
 ## 20260824T1600-live-cap-startup-drift — "live 설정을 startup 스냅샷으로 파생" 부정합 전수 점검·수정 (Major §12.3)
 
 **사용자 요청(2026-08-24)**: "임계값이 부정합한 부분이 없도록, 유사한 이슈에 대응하기 위해 동일한
