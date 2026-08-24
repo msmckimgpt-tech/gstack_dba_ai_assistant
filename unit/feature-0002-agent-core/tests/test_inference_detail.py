@@ -132,9 +132,16 @@ def test_main_loop_wires_both_accumulators():
     # 도구 누산은 `execute_tool` 호출을 감싼 **try/finally 안**에 있어야 한다 — 예외로 빠져나가도
     # 소요를 잃지 않기 위해서다(실패한 SQL 도 시간을 쓴다). `re.S` 로 느슨히 보면
     # `if True:/if False:` 로 바꿔치기해도 통과하므로 두 줄을 **인접 블록으로** 고정한다.
+    #
+    # step-timing-attribution(2026-08-24): finally 안에서 같은 측정을 `_tool_elapsed_ms` 에도
+    # 담아 step payload 로 보낸다(표시층이 추론/도구 시간을 가르는 근거). 그 대입이 누산보다
+    # 먼저 오므로 사이 줄을 허용하되, **여전히 같은 finally 블록 안**이어야 통과한다 —
+    # 잠그려는 계약(예외 경로 소요 유실 금지)은 그대로다.
     m = re.search(
         r"\n(\s+)try:\n\s+tool_result = execute_tool\(db_conn, tool_name, tool_args\)\n"
-        r"\1finally:\n(?:\s*#.*\n)*\s+try:\n\s+_inf_add_tool\(tool_name,",
+        r"\1finally:\n(?:\s*#.*\n)*\s+try:\n"
+        r"(?:\s+_tool_elapsed_ms = \(time\.perf_counter_ns\(\) - _inf_tool_t0\) / 1_000_000\.0\n)?"
+        r"\s+_inf_add_tool\(tool_name,",
         _SRC)
     assert m, "도구 누산이 execute_tool 의 try/finally 밖으로 나갔다(예외 경로 소요 유실)"
 

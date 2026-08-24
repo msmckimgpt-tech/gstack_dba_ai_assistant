@@ -11058,3 +11058,80 @@ feature-0024-conversation-folders(REQ-20260813-folder-dnd-shared-group).
 - [x] 검증: `node --check` PASS · 구조 실측(블록 51 · `generated`=="2026-08-19"==`releases[0].date` · top items 1 · 2nd 08-16 items 1 · 3rd 08-14 items 18 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0) · **`tests/verify_release_notes.mjs` 실행: 편집 전 baseline 34 pass/0 fail = 편집 후 34 pass/0 fail → 회귀 0**.
 - [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 byte-identical(md5 `3f857ffa02487e9e10c5a9fb023727f3`, 258,749B) → 파리티 갭 0. 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(소스 `?v=dev` 고정 + 빌드 `inject_asset_stamp.py` content-hash 자동주입 + `bin/deploy-web.sh:1320` placeholder 잔존 시 ABORT, ITEM-09) · `index.html`/`admin.html` 편집 0(각 `?v=dev` 1회 잔존 실측).
+
+## 20260824T1150-step-timing-attribution — 실행 단계 시간이 **한 칸씩 밀려** 표기되던 오귀속 해소 (Major §12.3)
+
+**사용자 보고(2026-08-24)**: "각 실행 단계가, 실제로 해당 동작이 진행되며 가산된 시간이 아닌,
+직전의 step 에 대한 실행시간이 더해지는 것으로 확인됩니다."
+
+### 진단 (추정 아님 — 라이브 실증)
+
+`20260814T1830-step-panel-timing` 이 넣은 `+직전 간격` 표기는 **구조적으로 한 칸 밀린다**.
+step 은 종류마다 기록 시점이 **반대**이기 때문이다:
+
+- `_emit_activity()` (`agent_core.py`) 는 LLM 호출 **직전** 기록 → 내부 동작 = **착수 시각**
+- `_mirror_step()` 은 도구 실행이 **끝난 뒤** 기록 → 도구 = **종료 시각**
+
+라이브 run `20260824021929-c71393cf` 원본 `created_at` 실측:
+
+| # | 종류 | 기록 시각 | 초판 표시 | 그 시간이 실제로 간 곳 |
+|---|---|---|---|---|
+| 18 | activity(추론 5회차) | 11:27:00.774 | `+0.0초` | 추론 ~82초 |
+| 19 | execute_sql | 11:28:22.806 | `+1분 22초` | 18번 추론 + 이 SQL |
+| 22 | activity(추론 6회차) | 11:28:24.473 | `+0.0초` | 추론 ~123초 |
+| 23 | execute_sql | 11:30:28.319 | `+2분 3초` | 22번 추론 + 이 SQL |
+| 24 | execute_sql | 11:30:28.748 | `+0.4초` | 이 SQL 자체(도구→도구는 정확) |
+
+즉 **도구→도구 간격만 정확**했고, `activity→도구` 간격은 추론 시간을 도구 쪽에 통째로
+얹었으며, activity 자신은 항상 `+0.0초` 로 보였다. 1초짜리 SQL 이 "2분 3초" 로 읽혀
+DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** 결함이다.
+
+### 조치
+
+- [x] 백엔드(cross-feature, feature-0002): 도구 실행 시간을 **이미 재고 있던**
+      (`_inf_add_tool` duration_breakdown 계측) 값을 `_tool_elapsed_ms` 로 받아
+      `result_summary.elapsed_ms` 로 실어 보낸다. **스키마·마이그레이션·웹 쿼리 변경 0** —
+      `result_summary` 는 이미 표시층 부가정보 모음이고 PG/MySQL 두 백엔드와 3개 조회 경로를
+      전부 통과한다. 측정은 `finally` 안이라 도구가 예외로 끝나도 소요가 남는다.
+- [x] 프론트: `_computeStepTimings(steps)` 신규(순수 함수·export) — 간격을 **그 동안 실제로
+      돌고 있던 단계**에 귀속한다. 도구=자기 실측, 내부동작=`t다음 − t자신 − 다음도구실측`.
+      표기도 `기록시각 · +간격 · 누적` → **`시작시각 · 이 단계 소요 · 누적`** 으로 바꿨다.
+- [x] **모르는 값을 지어내지 않는다** — 실측이 없는 과거 대화에서 `activity→도구` 구간은
+      분리 불가능하므로 도구의 소요를 **비우고**(툴팁이 사유 명시), activity 소요는 도구
+      실행분이 섞인 근사임을 `~` 로 표시한다. `도구→도구`·`activity→activity` 는 실측 없이도
+      정확하므로 그대로 표시한다.
+- [x] 누적은 각 단계의 **종료 시점** 기준으로 재정의(단조 증가 보장). 첫 단계는 소요와
+      같은 값이라 누적 표기를 생략한다.
+
+### 검증
+
+- [x] `tests/verify_step_panel_timing.mjs` **70 PASS**(전면 재작성) — 귀속 규칙 4갈래(A 실측
+      정확 / B 과거 대화 폴백 / C activity→activity / D 마지막 activity 진행중) · 시계 역행
+      0 clamp · NaN 혼재 anchor·next 탐색 · 사용자 보고 화면 재현 회귀([H] "SQL 소요 칸 =
+      0.4초, 초판은 이 칸이 +2분 3초") · 근사 표식과 툴팁 문구.
+- [x] 프론트 뮤턴트 **10종 전건 사멸**: 초판 회귀(간격 그대로) · 도구 실측 무시 · 미지 소요를
+      0 으로 지어냄 · approx 항상 false · 누적을 기록시각 기준 + codex 반영분 5종(`Number()`
+      강제변환 복귀 · 누적 단조 제거 · 시작시각 clamp 제거 · 건너뛴 단계 근사표식 제거 ·
+      레거시 도구→도구 정확 복귀).
+- [x] **codex 적대 리뷰 [P1] 0 · [P2] 5 전건 반영**(REV-20260824T115000 `[CODEX:...]`):
+      ① 시각 없는 중간 단계를 건너뛰고 정확한 척 → 근사 표시 ② 레거시 `도구→도구` 를 "정확"
+      으로 확정 → 상한이므로 근사 ③ 시계 역행 시 누적 감소·시작시각 역전 → 단조 보장 + clamp
+      ④ `Number(null)===0` 이라 값 없음이 "0.0초" 로 둔갑 → 숫자 타입 검사 ⑤ 백엔드 주석·테스트가
+      "예외로 끝난 도구도 step 소요 보존" 이라는 **성립하지 않는 주장** → 주석·테스트·문서 정정
+      (finally 가 지키는 건 duration_breakdown 누산이고, 예외 시 step 기록 자체가 없다).
+- [x] 백엔드 `tests/test_step_elapsed_attribution.py` **7 PASS** — payload 도달 · 미전달 시
+      레거시 형태 보존 · 빈 result_summary 에도 소요 보존 · clamp/반올림 · `_mirror_step` 전달 ·
+      **AST 로 호출부가 실제로 넘기는지**(헬퍼 테스트만 두면 미도달이 전건 통과하는 사각) ·
+      측정이 `finally` 안인지. 백엔드 뮤턴트 **2종 사멸**.
+- [x] 회귀 0: `verify_step_result_scroll_preserve.mjs` 29 PASS · agent-core 스위트
+      **3093 passed / 8 failed** — 8건은 전부 사전 baseline(`psycopg` 미설치 등, pristine
+      `agent_core.py` 로도 동일 실패 확인). `test_inference_detail` 의 소스-패턴 계약은
+      **의미를 보존한 채** 정합화(측정 대입 한 줄 허용, finally 밖으로 나가면 여전히 FAIL).
+- [ ] 배포 후 PB-0008 Windows-browser: 새 run 에서 추론 단계가 자기 소요를 갖고 SQL 이
+      1초 미만으로 표시되는지 + 과거 대화 폴백(근사 `~`·소요 비움) 실측.
+
+### 9. Requested Scope
+
+- "직전 step 의 실행시간이 더해지는" 오귀속 해소 — ✓ (귀속 재정의 + 백엔드 실측 도입).
+- 인라인 progress 카드·말풍선 접이판은 **건드리지 않았다** — 보고가 지목한 화면은 실행 단계
+  사이드 패널이고, 다른 표면은 레이아웃 계약이 달라 별도 판단 대상이다(요청 범위 준수).

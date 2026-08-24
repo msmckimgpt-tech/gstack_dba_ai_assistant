@@ -3228,3 +3228,36 @@ POST-DEPLOY 확인 축 4건 — 전부 실측:
 - reconcile-first 실측(편집 전): 서빙 static(`https://localhost/static/release-notes-data.js`)이 브랜치 blob 과 **byte-identical**(md5 `3f857ffa02487e9e10c5a9fb023727f3`, 258,749B) → 파리티 갭 0. 라이브 이미지 tag `22423bd5` == HEAD.
 - 캐시버스터: 수기 bump **없음**. `index.html`/`admin.html` 의 `release-notes-data.js?v=dev` placeholder 각 1회 잔존 실측(ITEM-09 — 빌드 `inject_asset_stamp.py` content-hash 주입 · `bin/deploy-web.sh:1320` 이 baked 이미지 placeholder 잔존 시 ABORT).
 - **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).
+
+## 20260824T1150-step-timing-attribution 단계 시간 귀속 재정의 (Major §12.3, 2026-08-24) — **Environment: Windows-browser (PB-0008 배포 후 실측 — 아래 사유)**
+
+JS(app.js ESM 서브트리) 변경은 asset-stamp 미주입 docker cp QA 불가(모듈 캐시로 구버전 실행
+— 확립된 제약)라 **배포 후 라이브 PB-0008 로 실측**한다. 또 이번 변경의 핵심 축(도구 실측
+`elapsed_ms`)은 **배포 이후 새로 도는 run 부터** 생기므로, 라이브 신규 run 없이는 정확 경로를
+관측할 수 없다. 사전 게이트는 아래 jsdom/pytest Run 이 커버한다. POST-DEPLOY 확인 축:
+① 신규 run 에서 추론 단계가 자기 소요를 갖는가(초판은 `+0.0초`) ② 같은 run 의 SQL 단계가
+1초 미만으로 표시되는가(초판은 `+2분 3초`) ③ 과거 대화가 근사 `~` 와 소요 비움으로 정직하게
+표시되는가 ④ 누적이 단조 증가하는가.
+
+### Run 2026-08-24 — step-timing-attribution PRE-COMMIT (Environment: jsdom/Node18 + CLI/pytest) — PASS
+
+- `tests/verify_step_panel_timing.mjs` **70 PASS / 0 FAIL**(전면 재작성) — 귀속 규칙 4갈래
+  (A 실측 정확 / B 과거 대화 폴백 / C activity→activity / D 마지막 activity 진행 중) ·
+  시계 출처 불일치 0 clamp · NaN 혼재에서 anchor·next 탐색 · **사용자 보고 화면 재현 회귀**
+  ([H] 라이브 run 20260824021929-c71393cf 축약: 추론 소요 칸 `2분 3초`, SQL 소요 칸 `0.4초`
+  — 초판은 이 두 칸이 각각 `+0.0초`/`+2분 3초` 였다) · 근사 표식 `~` 와 툴팁 문구 · 빈/비배열 방어.
+- 프론트 뮤턴트 **10종 전건 사멸**: ① 초판 회귀(activity 도 간격 그대로) ② 도구 실측 무시
+  ③ activity 직후 도구의 미지 소요를 0 으로 지어냄 ④ `approx` 항상 false ⑤ 누적을 종료 대신
+  기록 시각 기준 — 여기에 codex 반영분 ⑥ `Number()` 강제변환 복귀(null→0) ⑦ 누적 단조 보장
+  제거 ⑧ 시작 시각 clamp 제거 ⑨ 건너뛴 단계 근사표식 제거 ⑩ 레거시 도구→도구 "정확" 복귀.
+  각각 1~5건 FAIL 로 검출된다.
+- **codex 적대 리뷰**(`[CODEX:step-timing-attribution]`, REV-20260824T115000): **[P1] 0 · [P2] 5**,
+  전건 반영. 그중 2건은 **테스트가 vacuous 하던 사각**을 잡았다 — `Number(null)===0` 경로와
+  "아무 finally 에 변수명만 있으면 통과" 하던 AST 축. 반영 후 새 축을 추가해 뮤턴트로 재검증했다.
+- `tests/verify_step_result_scroll_preserve.mjs` **29 PASS**(같은 렌더러 수정 무회귀) ·
+  app.js ESM 구문 PASS(`node --check`, .mjs 사본).
+- cross-feature 백엔드: `feature-0002` `tests/test_step_elapsed_attribution.py` 7 PASS +
+  뮤턴트 2종 사멸 (해당 feature TEST.md 참조).
+- ⚠️ jsdom 은 이 환경에 미설치 상태였다 — `npm i --prefix /tmp jsdom@24` 로 설치해 실행했다.
+  최신 jsdom(27.x)은 **ESM 전용이라 Node 18 의 `require` 에서 `ERR_REQUIRE_ESM`** 로 죽고,
+  하네스의 로더가 그 예외를 삼켜 "jsdom 미설치" 로만 보인다(다음 사람이 같은 벽에 서지 않게 기록).

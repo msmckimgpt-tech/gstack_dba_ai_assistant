@@ -3771,6 +3771,114 @@ function _fmtStepClock(ts) {
   return _STEP_CLOCK_FMT.format(new Date(ts));
 }
 
+// step-timing-attribution: 도구 step 이 **자기 실행에 쓴 시간**(ms). 백엔드가 이미 재고 있던
+// 값을 `result_summary.elapsed_ms` 로 실어 보낸다. 이 값이 없는 과거 대화는 NaN.
+function _stepToolElapsedMs(step) {
+  const rs = step && step.result_summary;
+  if (!rs || typeof rs !== "object" || Array.isArray(rs)) return NaN;
+  // ⚠️ `Number(...)` 로 먼저 변환하면 `null`·`""`·`false` 가 전부 **0** 이 되어, 값이 없다는
+  // 사실이 "0.0초 로 측정됨" 으로 둔갑한다(codex 적대 리뷰 [P2]). 숫자 타입만 받는다 —
+  // 이 값의 유일한 생산자는 백엔드 JSON 이고 거기서는 언제나 int 다.
+  const v = rs.elapsed_ms;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : NaN;
+}
+
+function _isActivityStep(step) {
+  return String((step && step.action) || "") === "activity";
+}
+
+// step-timing-attribution: 각 단계의 [시작 시각 · 자기 소요 · 누적] 을 산출한다.
+//
+// **왜 단순한 '직전 기록과의 간격' 이 틀렸나** (라이브 실측 run 20260824021929-c71393cf):
+// step 은 종류마다 기록 시점이 **반대**다 — activity 는 LLM 호출 *직전*(착수 시각), tool 은
+// 결과를 받은 *뒤*(종료 시각). 그래서 `activity(추론 시작) → tool(도구 종료)` 간격에는
+// **추론 시간과 도구 시간이 함께** 들어 있는데 이것을 통째로 도구 쪽에 붙이면, 0.4초짜리
+// SQL 이 "+2분 3초" 로 보이고 정작 2분을 쓴 추론 단계는 "+0.0초" 로 보인다. 각 단계의 소요가
+// 한 칸씩 뒤로 밀리는 구조적 오귀속이다(사용자 보고 2026-08-24).
+//
+// **규칙** — 간격을 "그 동안 실제로 돌고 있던 단계" 에 귀속한다:
+//   · tool : elapsed_ms 가 있으면 그 값(정확). 없으면 직전도 tool 일 때만 `t − t직전`(정확 —
+//            도구→도구 간격은 뒤 도구의 실행 그 자체다). 직전이 activity 면 **모른다**(미표시).
+//   · activity : `t다음 − t자신`. 다음이 elapsed_ms 를 가진 tool 이면 그만큼 빼서 **정확**,
+//            아니면 도구 실행분이 섞인 **근사**(`~` 접두로 표시).
+//   · 마지막 단계는 다음 기록이 없어 activity 소요를 모른다(진행 중) → 미표시.
+// 모르는 값을 지어내지 않는다 — 분리 불가능한 구간은 숫자를 비운다.
+//
+// 반환: steps 와 같은 길이의 배열. { startTs, selfMs, cumulativeMs, approx } (모르면 NaN/false)
+export function _computeStepTimings(steps) {
+  const list = Array.isArray(steps) ? steps : [];
+  const ts = list.map((s) => _parseStepTs(s && s.created_at));
+  const toolMs = list.map((s) => (_isActivityStep(s) ? NaN : _stepToolElapsedMs(s)));
+  const anchorTs = ts.find((t) => Number.isFinite(t));
+  const prevIdx = (i) => {
+    for (let p = i - 1; p >= 0; p--) if (Number.isFinite(ts[p])) return p;
+    return -1;
+  };
+  const nextIdx = (i) => {
+    for (let n = i + 1; n < list.length; n++) if (Number.isFinite(ts[n])) return n;
+    return -1;
+  };
+  // 앞에서 뒤로 한 번에 훑는다 — 누적 단조성과 시작 시각 순서를 직전 단계의 종료로 잠그기
+  // 위해서다(시계 역행·이상값이 타임라인을 거꾸로 만들지 않게. codex 적대 리뷰 [P2]).
+  const result = [];
+  let prevEndTs = NaN;   // 시각을 아는 직전 단계의 종료 시각
+  let prevCum = NaN;     // 직전 단계의 누적(단조 보장용)
+  for (let i = 0; i < list.length; i++) {
+    const out = { startTs: NaN, selfMs: NaN, cumulativeMs: NaN, approx: false };
+    if (!Number.isFinite(ts[i])) { result.push(out); continue; }  // 레거시/파싱 불가 — 표기 생략
+    let endTs = ts[i];
+    if (_isActivityStep(list[i])) {
+      out.startTs = ts[i];
+      const n = nextIdx(i);
+      if (n >= 0) {
+        const gap = ts[n] - ts[i];
+        const nextTool = toolMs[n];
+        if (Number.isFinite(nextTool)) {
+          // 다음이 실측을 가진 도구 → 그 도구 시간을 덜어내면 이 단계의 순수 소요다.
+          // 음수는 시계 출처가 다를 때(DB now() vs 앱 perf clock) 나올 수 있어 0 으로 막는다.
+          out.selfMs = Math.max(0, gap - nextTool);
+        } else {
+          out.selfMs = Math.max(0, gap);
+        }
+        // 근사가 되는 사유는 둘이다:
+        //  ① 다음이 **실측 없는 도구** — 그 도구 실행분이 이 값에 섞여 있다(과거 대화).
+        //  ② 사이에 **시각 없는 단계**가 있었다 — 그 단계가 쓴 몫을 가를 수 없다
+        //     (codex 적대 리뷰 [P2]: 건너뛰고서 정확한 척하면 안 된다).
+        out.approx = (!Number.isFinite(nextTool) && !_isActivityStep(list[n])) || n !== i + 1;
+        endTs = ts[i] + out.selfMs;
+      }
+    } else {
+      // 도구: 기록 시각이 곧 종료 시각이다.
+      endTs = ts[i];
+      if (Number.isFinite(toolMs[i])) {
+        out.selfMs = toolMs[i];
+      } else {
+        const p = prevIdx(i);
+        if (p >= 0 && !_isActivityStep(list[p])) {
+          out.selfMs = Math.max(0, ts[i] - ts[p]);
+          // 두 기록 시각의 차이에는 step 저장·로깅·다음 호출 준비 같은 **도구 밖 시간**이
+          // 섞인다 — 실행시간의 상한이지 실행시간 자체가 아니다(codex 적대 리뷰 [P2]).
+          // 건너뛴 단계가 있으면 더더욱 그렇다.
+          out.approx = true;
+        }
+      }
+      out.startTs = Number.isFinite(out.selfMs) ? ts[i] - out.selfMs : ts[i];
+      // 실측이 기록 간격보다 크면(시계 출처 불일치) 시작 시각이 직전 단계 종료보다 과거가 되어
+      // 타임라인이 거꾸로 읽힌다 — 직전 종료로 막는다.
+      if (Number.isFinite(prevEndTs) && out.startTs < prevEndTs) out.startTs = prevEndTs;
+    }
+    if (Number.isFinite(anchorTs)) {
+      const cum = Math.max(0, endTs - anchorTs);
+      // 기록 시각이 뒤로 가는 데이터(0 → 10초 → 5초)에서도 누적은 줄지 않는다.
+      out.cumulativeMs = Number.isFinite(prevCum) ? Math.max(prevCum, cum) : cum;
+      prevCum = out.cumulativeMs;
+    }
+    prevEndTs = Number.isFinite(prevEndTs) ? Math.max(prevEndTs, endTs) : endTs;
+    result.push(out);
+  }
+  return result;
+}
+
 function _renderStepSidePanelBody(pending) {
   const body = document.getElementById("stepSidePanelBody");
   const badge = document.getElementById("stepSidePanelBadge");
@@ -3791,12 +3899,11 @@ function _renderStepSidePanelBody(pending) {
     body.appendChild(empty);
     return;
   }
-  // step-panel-timing: 진행 투명화 — 각 단계 헤더 우측에 기록 시각·직전 단계와의 간격·
-  // 첫 단계 기준 누적 경과를 표기한다. 기준(anchor)=목록에서 시각이 있는 첫 단계.
-  // created_at 은 "단계가 기록된 시각"(activity=착수 시점, tool=결과 확보 시점)이므로
-  // 간격은 '직전 기록 → 이 기록 사이 경과'라는 사실 기반 표기다(작업별 순수 소요 단정 아님).
-  const stepTsList = steps.map((s) => _parseStepTs(s && s.created_at));
-  const anchorTs = stepTsList.find((t) => Number.isFinite(t));
+  // step-timing-attribution: 진행 투명화 — 각 단계 헤더 우측에 **시작 시각 · 이 단계 소요 ·
+  // 누적 경과**를 표기한다. 소요는 "직전 기록과의 간격" 이 아니라 `_computeStepTimings` 가
+  // 갈라 낸 **그 단계가 실제로 돌던 시간**이다(초판의 한 칸 밀림 오귀속 해소 — 그 함수의
+  // 주석에 기전과 실측 근거가 있다). 모르는 구간은 숫자를 비운다.
+  const timings = _computeStepTimings(steps);
   steps.forEach((step, idx) => {
     const item = document.createElement("div");
     item.className = "step-side-panel-item";
@@ -3814,24 +3921,25 @@ function _renderStepSidePanelBody(pending) {
       badge.textContent = toolLabel(step.tool);
       itemHeader.appendChild(badge);
     }
-    const ts = stepTsList[idx];
-    if (Number.isFinite(ts)) {
-      let prevTs = NaN;
-      for (let p = idx - 1; p >= 0; p--) {
-        if (Number.isFinite(stepTsList[p])) { prevTs = stepTsList[p]; break; }
+    const tm = timings[idx] || {};
+    if (Number.isFinite(tm.startTs)) {
+      const parts = [_fmtStepClock(tm.startTs)];
+      if (Number.isFinite(tm.selfMs)) {
+        parts.push(`${tm.approx ? "~" : ""}${_fmtStepDur(tm.selfMs)}`);
       }
-      const parts = [_fmtStepClock(ts)];
-      if (Number.isFinite(prevTs)) parts.push(`+${_fmtStepDur(ts - prevTs)}`);
-      if (Number.isFinite(anchorTs) && Number.isFinite(prevTs)) {
-        parts.push(`누적 ${_fmtStepDur(ts - anchorTs)}`);
+      // 누적은 첫 단계에서 소요와 같은 값이라 중복이다 — 둘째 단계부터 표시한다.
+      if (Number.isFinite(tm.cumulativeMs) && idx > 0) {
+        parts.push(`누적 ${_fmtStepDur(tm.cumulativeMs)}`);
       }
       const timeEl = document.createElement("span");
       timeEl.className = "step-side-panel-time";
       timeEl.textContent = parts.join(" · ");
-      // 첫(기준) 단계는 시각만 표시하므로 툴팁도 그에 맞춘다(§18.8 패널 P3-7).
-      timeEl.title = parts.length > 1
-        ? "기록 시각 · 직전 단계와의 간격 · 첫 단계부터 누적 경과"
-        : "기록 시각";
+      // 툴팁은 실제로 표시된 것만 설명한다 — 소요를 못 구한 단계에 "소요" 라고 적으면 거짓말이다.
+      timeEl.title = !Number.isFinite(tm.selfMs)
+        ? "시작 시각 (이 단계의 소요는 기록만으로 분리할 수 없어 표시하지 않습니다)"
+        : (tm.approx
+          ? "시작 시각 · 이 단계 소요(도구 실행 시간이 섞인 근사 — 이 대화는 도구 실측 이전 기록입니다) · 처음부터 누적"
+          : "시작 시각 · 이 단계 소요 · 처음부터 누적");
       itemHeader.appendChild(timeEl);
     }
     item.appendChild(itemHeader);

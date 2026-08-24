@@ -4253,3 +4253,28 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
 
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0820, 신규 2026-08-19 블록 prepend)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-19` 블록** prepend(items 1 — 답변 자체 점검 잔존 안내 정정) + `generated` top-block date 연동 갱신. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 50→51 · 기존 50 블록 바이트 보존 · 신규 항목은 기존 스키마/enum 값만 사용).
+
+- REQ-20260824T115000-step-timing-attribution (**Major §12.3** — 실행 단계 패널의 시간 표기가
+  각 단계의 **자기 소요**를 나타낸다. 프론트 `static/app.js` + cross-feature `feature-0002`
+  `agent_core.py`. 스키마·마이그레이션·웹 쿼리 변경 0). 선행
+  REQ-20260814T183000-step-panel-timing 의 `+직전 간격` 표기가 구조적으로 한 칸 밀려
+  (activity=착수 시각 기록 / tool=종료 시각 기록) 추론 시간이 그 뒤 도구에 얹히던 것을 해소.
+  판단 근거·라이브 실측: REV-20260824T115000-step-timing-attribution.
+
+- AC-20260824T115000-step-timing-attribution-1: 도구 step 은 자기 실행 시간을
+  `result_summary.elapsed_ms`(ms) 로 갖는다. 측정은 `agent_core` 의 도구 루프 `finally` 에서
+  이뤄져 도구가 예외로 끝나도 유실되지 않는다. 기존 `duration_breakdown` 계측 재사용.
+- AC-20260824T115000-step-timing-attribution-2: `_computeStepTimings(steps)` 가 각 단계의
+  `{startTs, selfMs, cumulativeMs, approx}` 를 산출한다 — 도구는 자기 실측(없으면 직전도
+  도구일 때만 `t − t직전`), 내부 동작은 `t다음 − t자신 − 다음도구실측`. 누적은 각 단계의
+  **종료 시점** 기준이라 단조 증가한다.
+- AC-20260824T115000-step-timing-attribution-3: **분리 불가능한 구간은 숫자를 비운다.**
+  실측이 없는 과거 대화에서 `내부동작→도구` 구간은 두 단계 시간이 섞여 있으므로 도구의 소요
+  칸을 생략하고(툴팁이 "기록만으로 분리할 수 없어" 를 명시), 내부 동작 소요는 도구 실행분이
+  섞인 근사임을 `~` 접두로 표시한다. `도구→도구` 간격도 값은 주되 **근사**다 — 두 기록 시각의
+  차이에는 step 저장·로깅 같은 도구 밖 시간이 섞여 실행시간의 상한이기 때문이다. 사이에 시각
+  없는 단계가 끼어 있으면 그 몫을 가를 수 없으므로 그 경우도 근사로 표시한다.
+  `내부동작→내부동작`(인접)만 실측 없이도 정확하다.
+- AC-20260824T115000-step-timing-attribution-4: 표기는 `시작 시각 · 이 단계 소요 · 누적 경과`
+  이며 `+`(간격) 접두는 쓰지 않는다. 첫 단계는 누적이 소요와 같은 값이라 생략한다. 마지막
+  내부 동작(진행 중)은 다음 기록이 없어 소요를 모르므로 시각만 표시한다.

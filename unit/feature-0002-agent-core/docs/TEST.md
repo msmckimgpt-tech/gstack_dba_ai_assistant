@@ -231,3 +231,23 @@ source_of_truth: true
 - **라이브 배포본 실측(진단 단계 — 재개의 전제 확인)**: 배포본에서 사고 대화에 `_load_conversation_messages` 를 직접 호출해 **`user → assistant(tool_calls) → tool ×3 → assistant("오류: …")`** 재생을 확인했다. 즉 (a) 누적 작업은 **이미 보존되고 있었다**(재개의 전제 충족) (b) **오류 turn 이 LLM recall 로 들어간다**(오염 — 이 cycle 이 차단). ask-worker 로그로 1차 봉인의 재시도 발화(`attempt=1/2`, `attempt_elapsed=0.0s`)와 게이트웨이 부재 창(`created 17:30:05` → `started 17:30:53`, `restarts=0`)을 교차 확인.
 - **Pass/Fail: PASS**(단위 + 뮤테이션 + 회귀 + 라이브 진단 실측).
 - **라이브 실측 필요분(POST-DEPLOY, append 예정)**: ① 실제 장애에서 `ask_resume_pending` → 재claim → **답변 완주** 관측 ② 재개 run 이 같은 도구를 **재조회하지 않는지**(동일 tool 2회 미출현) ③ 재개 구간 동안 프런트 스피너 유지 ④ 원장 corroboration 재측정.
+
+## 20260824T1150-step-elapsed-in-payload 도구 자기 소요 전달 (Major §12.3, 2026-08-24) — Environment: CLI
+
+### Run 2026-08-24 — PRE-COMMIT (Environment: CLI/pytest) — PASS
+
+- `tests/test_step_elapsed_attribution.py` **7 PASS** — payload 도달 · 미전달 시 레거시 형태
+  보존(키 없음) · 빈 `result_summary` 에도 소요 보존 · 음수 0 clamp·반올림 · `_mirror_step`
+  전달 · **AST 로 도구 루프가 실제로 `_tool_elapsed_ms` 를 양쪽에 넘기는지** · 측정이
+  `finally` 안인지.
+- 뮤턴트 **3종 사멸**: ① 호출부가 실측을 안 넘김 → `test_tool_loop_actually_passes_measured_elapsed`
+  FAIL ② 측정을 `finally` 밖 try 본문으로 → `test_tool_elapsed_is_measured_in_the_execute_tool_finally`
+  FAIL ③ **무관한 다른 finally 에 같은 변수명만 두기** → 같은 테스트 FAIL(codex 적대 리뷰 [P2]:
+  초판은 "아무 finally" 면 통과해 회귀를 못 잡았다 → `execute_tool` 을 본문에 가진 try 로 한정).
+  (헬퍼 단위 테스트만 두면 호출부 미도달이 전건 통과하는 사각을 이 축들이 막는다.)
+- **범위 정정(codex 적대 리뷰 [P2])**: `finally` 배치가 보장하는 것은 duration_breakdown 누산이지
+  "예외로 끝난 도구의 step 소요" 가 아니다 — 예외는 그대로 전파돼 step 기록 자체가 생기지 않는다.
+  주석·테스트 docstring·본 기록을 모두 그 사실에 맞췄다.
+- 회귀: agent-core 스위트 **3093 passed / 8 failed** — 8건 전부 사전 baseline(`psycopg`
+  미설치 등). pristine `agent_core.py` 로 되돌려 같은 8건이 실패함을 대조 확인했다.
+  `test_inference_detail` 은 소스-패턴 계약을 의미 보존한 채 정합화 후 **16 PASS**.
