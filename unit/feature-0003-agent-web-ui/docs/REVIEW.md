@@ -5591,3 +5591,14 @@ watchdog/강조/TTL · 경계 이탈 · 겹침 · 하네스 실효)을 실었다
   easeInOutBack.
 - **포인터 차단 420ms**: 사용자가 방금 이름을 바꾼 직후라 즉시 클릭할 확률이 낮고, 겹침 구간의
   오클릭이 더 나쁘다. 정착·watchdog 양쪽에서 복원해 잠금이 남지 않게 했다.
+
+## REV-20260824T190000-easing-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 **0** — `TASK.md` POST-DEPLOY 절과 `MODIFY.md` 기록뿐이라 §18.8
+dispatch 표의 "비정책 doc-only" 행. 대상 코드는 직전 cycle 에서 codex 적대 리뷰를 거쳤다
+(`REV-20260824T180000-reorder-easing`, [P1] 0 · [P2] 2 전건 흡수).
+
+**확정한 것**: 검증 컨테이너가 아니라 **엣지가 실제로 서빙하는 자산**(`?v=9ca76406f562`)에서
+같은 조작을 반복해 오버슈트 궤적(back-in +3 → 오버슈트 -3)을 재확인했다. easing 은 상수 하나가
+번들에 실렸는지로 끝나지 않고 **화면에서 곡선이 그대로 나오는지**가 계약이라, 서빙본 궤적을
+정본 증거로 남긴다.
