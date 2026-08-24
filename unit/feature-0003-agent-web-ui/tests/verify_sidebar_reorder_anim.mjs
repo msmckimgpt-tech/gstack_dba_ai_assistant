@@ -53,6 +53,7 @@ ok("[추출] REORDER_* 상수 블록", CONST_BLOCK.includes("REORDER_ROW_SELECTO
 const FN_NAMES = [
   "requestSidebarReorderAnimation", "bumpSidebarDataVersion", "_reorderRowKey", "_reorderRowByKey",
   "_beginSidebarReorder", "_expandAncestorsForReorderFocus",
+  "_reorderEasingFor", "_reorderOvershootPx",
   "_scrollReorderFocusIntoView", "_flashReorderFocus", "_armReorderCleanup", "_playReorderMove",
   "_commitSidebarReorder",
 ];
@@ -104,6 +105,7 @@ function makeEnv({ rows = [], scrollTop = 0, viewTop = 0, viewH = 400, reduced =
     timers,
     rafs,
     saveCollapsedCalls: () => saveCollapsedCalls,
+    timerDelays: () => timers.map(([, ms]) => ms),
     flushRaf: () => { const q = rafs.splice(0); q.forEach((fn) => fn()); },
     flushTimers: () => { const q = timers.splice(0); q.forEach(([fn]) => fn()); },
   };
@@ -238,7 +240,38 @@ console.log("\n[3] FLIP(Invert→Play) — 이동한 행만 이전 자리에서 
   env.flushRaf();
   ok("play: transform 해제", rb.style.transform === "" && ra.style.transform === "");
   ok("play: transform transition 부여", /transform \d+ms/.test(rb.style.transition), rb.style.transition);
-  ok("play duration = REORDER_ANIM_MS", rb.style.transition.includes(`${/const REORDER_ANIM_MS = (\d+)/.exec(CONST_BLOCK)[1]}ms`));
+  // ★ 기대값은 **소스에서 뽑지 않고 여기 고정**한다 (§18.8 codex [P2]) — 소스에서 추출해 다시
+  //   소스와 비교하면 값이 무엇으로 바뀌어도 통과하는 토톨로지가 된다. 사용자가 요청한 곡선
+  //   (easeInOutBack)과 그것을 담기 위해 정한 재생 시간이 계약이므로, 바뀌면 여기가 red 여야 한다.
+  const EXPECT = {
+    durationMs: 420,
+    easing: "cubic-bezier(.68,-.6,.32,1.6)",   // easeInOutBack (easings.net) CSS 근사
+    easingLong: "cubic-bezier(.22,.61,.36,1)", // 아주 긴 이동용 ease-out(오버슈트 없음)
+    backMaxDeltaPx: 600,
+    overshootRatio: 0.105,
+    watchdogMs: 820,                            // = duration + 400
+    flashMs: 1100,
+    requestTtlMs: 4000,
+  };
+  ok("[계약] play duration = 420ms (독립 기대값)", rb.style.transition.includes(`${EXPECT.durationMs}ms`), rb.style.transition);
+  ok("[계약] play easing = easeInOutBack (독립 기대값, 네 제어점 정확 일치)",
+    rb.style.transition.includes(EXPECT.easing), rb.style.transition);
+  // 소스 상수도 같은 값이어야 한다(코드가 리터럴을 인라인해 상수와 갈라지는 것 차단).
+  ok("[계약] 소스 REORDER_EASING == 기대 곡선",
+    (/const REORDER_EASING = "([^"]+)"/.exec(CONST_BLOCK) || [])[1] === EXPECT.easing);
+  ok("[계약] 소스 REORDER_ANIM_MS == 420",
+    Number((/const REORDER_ANIM_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.durationMs);
+  ok("[계약] 소스 REORDER_EASING_LONG == ease-out",
+    (/const REORDER_EASING_LONG = "([^"]+)"/.exec(CONST_BLOCK) || [])[1] === EXPECT.easingLong);
+  ok("[계약] 소스 REORDER_BACK_MAX_DELTA_PX == 600",
+    Number((/const REORDER_BACK_MAX_DELTA_PX = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.backMaxDeltaPx);
+  ok("[계약] 소스 REORDER_FLASH_MS == 1100",
+    Number((/const REORDER_FLASH_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.flashMs);
+  ok("[계약] 소스 REORDER_REQUEST_TTL_MS == 4000",
+    Number((/const REORDER_REQUEST_TTL_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.requestTtlMs);
+  // 타이머는 "실행됐다" 가 아니라 **언제 발화하도록 걸렸는지**를 본다.
+  ok("[계약] 정리 watchdog 지연 = 820ms", env.timerDelays().includes(EXPECT.watchdogMs), JSON.stringify(env.timerDelays()));
+  globalThis.__REORDER_EXPECT = EXPECT;
 
   // transitionend 로 인라인 스타일이 정리되어 다음 렌더에 잔류하지 않는다.
   rb.fire("transitionend");
@@ -294,6 +327,50 @@ console.log("\n[3] FLIP(Invert→Play) — 이동한 행만 이전 자리에서 
   const env = makeEnv({ rows });
   env.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map() });
   ok("신규 행 → transform 미적용", rows[0].style.transform === undefined);
+}
+
+console.log("\n[3b] 오버슈트 곡선의 부작용 봉인 (§18.8 codex [P2])");
+{
+  const E = globalThis.__REORDER_EXPECT;
+  // (1) 아주 긴 이동은 오버슈트를 끈다 — 곡선 편차가 이동에 비례해 수십~수백 px 로 커진다.
+  const shortRows = [makeRow({ conversationId: "s" }, 0)];
+  const envS = makeEnv({ rows: shortRows, scrollHeight: 4000 });
+  envS.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:s", 200]]) });
+  envS.flushRaf();
+  ok("짧은 이동(200px) → easeInOutBack", shortRows[0].style.transition.includes(E.easing), shortRows[0].style.transition);
+
+  const longRows = [makeRow({ conversationId: "l" }, 0)];
+  const envL = makeEnv({ rows: longRows, scrollHeight: 4000 });
+  envL.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:l", 900]]) });
+  envL.flushRaf();
+  ok("긴 이동(900px > 600px) → 오버슈트 없는 ease-out 으로 강등",
+    longRows[0].style.transition.includes(E.easingLong) && !longRows[0].style.transition.includes(E.easing),
+    longRows[0].style.transition);
+
+  // (2) 트윈 중에는 포인터를 받지 않는다(교차 구간에 클릭이 다른 행으로 가는 창 제거).
+  const pr = [makeRow({ conversationId: "p" }, 0)];
+  const envP = makeEnv({ rows: pr });
+  envP.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:p", 60]]) });
+  ok("트윈 중 pointer-events 차단", pr[0].style.pointerEvents === "none");
+  pr[0].fire("transitionend");
+  ok("정착 후 pointer-events 복원", pr[0].style.pointerEvents === "");
+  const pr2 = [makeRow({ conversationId: "q" }, 0)];
+  const envQ = makeEnv({ rows: pr2 });
+  envQ.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:q", 60]]) });
+  envQ.flushTimers();  // transitionend 가 오지 않아도 watchdog 이 되돌린다
+  ok("watchdog 경로에서도 pointer-events 복원", pr2[0].style.pointerEvents === "");
+}
+{
+  const E = globalThis.__REORDER_EXPECT;
+  // (3) 시야 보정 패딩이 오버슈트 폭을 반영한다 — 정착 위치만 보고 여유를 잡으면 "지나가는
+  //     순간엔 잘리는" 상태가 된다. 목록 하단 경계에 막 걸친 대상 + 큰 delta 로 확인.
+  const rows = [makeRow({ conversationId: "a" }, 480, 30)];  // 뷰 0~400, 스크롤 0 → 아래로 벗어남
+  const env = makeEnv({ rows, scrollTop: 0, viewH: 400, scrollHeight: 2000 });
+  env.api._commitSidebarReorder({ key: "conv:a", scrollTop: 0, before: new Map([["conv:a", 780]]) });
+  const r = rows[0].getBoundingClientRect();
+  const expectPad = 8 + Math.round(300 * E.overshootRatio);  // delta=300 → 오버슈트 ≈31px
+  ok("오버슈트 폭만큼 여유를 두고 시야로 끌어온다",
+    r.bottom <= 400 - expectPad + 1, `bottom=${r.bottom} expectPad=${expectPad}`);
 }
 
 console.log("\n[4] 시야 유지 — 스크롤 복원 + 대상 추종");
