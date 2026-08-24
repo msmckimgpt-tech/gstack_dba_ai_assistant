@@ -1599,7 +1599,11 @@ def llm_enum_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
             ],
             **_max_tokens_kwargs(_model, "summary"),
             **_temperature_kwargs(_model),
-            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+            # conv-audit FR-live-cap-derived-from-startup-snapshot: 인자 생략 → live fallback.
+            # 종전에는 이 한 곳만 startup 상수(`AGENT_TIMEOUT_SEC`)를 **명시 전달**해, 같은 파일의
+            # 다른 호출(모두 인자 생략 = 콘솔 live 반영)과 어긋났다. feature-0018 live 전환에서
+            # 누락된 잔재이고 의도된 비대칭이 아니다.
+            timeout=_openai_request_timeout(),
         )
         _record_llm_usage(_model, "enum_suggest", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)
         text = (resp.choices[0].message.content or "").strip()

@@ -2830,3 +2830,106 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 ### 9. Requested Scope
 
 - vision provenance 미적용 해소 — ✓. SECURITY §47.4 의 "이미지 경로 미적용" 문구를 갱신한다.
+
+## 20260824T1600-live-cap-startup-drift — "live 설정을 startup 스냅샷으로 파생" 부정합 전수 점검·수정 (Major §12.3)
+
+**사용자 요청(2026-08-24)**: "임계값이 부정합한 부분이 없도록, 유사한 이슈에 대응하기 위해 동일한
+참조를 사용하는 구조를 코드 전반적인 부분에서 탐색하여 수정해주세요. 또한, LLM에 대한 추론
+timeout 은 처리하지 않습니다. (무한으로 설정)"
+
+선행: `feature-0003` `TASK-20260824T1420-stale-threshold-attempt-cap`(표시 임계 1건 수정). 같은
+**부류**가 코드 전반에 몇 건 더 있는지가 이번 범위다.
+
+### 전수 탐색 방법(재현 가능)
+
+`runtime_settings` 스펙의 `apply_mode` 와 `shared/config.py` 의 `_startup_int()` 호출을 교차한다 —
+**live 스펙을 startup 으로 읽는 키가 곧 drift 후보**다. 결과: 스펙 **97**(live **76**) ×
+`_startup_int` **19키** → 교집합 **정확히 2건**(`AGENT_TIMEOUT_SEC`·`MCP_TIMEOUT_SEC`),
+나머지 17건은 `restart` 라 구조적으로 정합. 추측이 아니라 **집합 연산으로 상한을 확정**했다.
+
+### 발견·처리
+
+- [x] **A(최고) — 회수 임계가 run 예산과 다른 소스**: `AGENT_ASK_WORKER_STALE_SEC` 는
+      `max(cfg.AGENT_TIMEOUT_SEC*3, EARLY_FINALIZE)+180`(**startup 스냅샷**)인데, 정작 run 예산을
+      정하는 `agent_core.run_timeout_sec` 은 `_rts.get_int("AGENT_TIMEOUT_SEC")*3`(**live**).
+      `AGENT_TIMEOUT_SEC` 은 `apply_mode=live` 라 **콘솔에서 상한을 올리면 run 예산만 커지고 회수
+      임계는 재기동까지 옛 값** → sweeper 가 **살아있는 정상 run 을 회수**한다(종전 주석이
+      경계한 BLOCKER/E 가 이 경로로 되살아남).
+      **수정**: 공식·값은 보존하고 **소스만 일치** — `effective_ask_worker_stale_sec()` 가 소비
+      시점에 live 상한으로 재계산. 판정 경로 전부 전환(`modules/ask.py` sweeper + 시작 로그,
+      web `_conv_store.py` `stale_seconds` 3곳 + attach long-poll `max_wait`). 상수는 하위호환용
+      스냅샷으로 남기고 판정에는 쓰지 않는다(테스트가 소스로 잠금).
+      **채택하지 않은 대안(정직)**: heartbeat 배수로 재정의(5,580s → 600s). heartbeat 는 시간 기반
+      스레드라 run 길이 무관이 이론적으로 옳지만 ① 이 값이 web long-poll `max_wait` 으로도
+      재사용돼 정상 run 의 long-poll 을 끊고 ② heartbeat 스레드가 예외로 죽는 경우의 이중 방어가
+      사라진다. heartbeat 배수는 **하한(floor 600s)** 으로만 채택했다.
+- [x] **B(낮음) — live 전환 누락 잔재**: `modules/llm.py::llm_enum_suggest` 가
+      `_openai_request_timeout(AGENT_TIMEOUT_SEC)` 로 **startup 상수를 명시 전달**(같은 파일의 다른
+      호출은 전부 인자 생략 = live fallback). feature-0018 전환에서 빠진 자리 → 인자 생략으로 정합.
+- [x] **D(정보) — 죽은 상수 기록**: `MCP_TIMEOUT_SEC` 은 live 스펙인데 `_startup_int` 로 읽히지만
+      **실소비처 0**(유일 사용처 `mcp_client.py` 가 live 직접 조회). 제거는 `__all__`/외부 import
+      표면을 건드리는 별건이라 **주석으로 근거를 남겨** 다음 추적자가 재조사하지 않게 했다.
+- [x] **E(이월) — 개념 부적절 파생 1건**: `run_timeout_sec = live×3`. 스트리밍 전환 후
+      per-attempt 상한의 의미가 **chunk 간 무응답 간격**이라 "무응답 3배" 는 루프 예산과 개념적으로
+      무관하다. 올바른 형태는 독립 knob(`AGENT_RUN_BUDGET_SEC`)이지만 신규 runtime_settings knob 은
+      스펙·payload 버킷·콘솔 패널 **3곳 계약**을 동반하고 실효값(5,400s)을 바꾸면 진행 중 사용자
+      run 의 종료 시점이 달라진다 → 별 항목. **소스 비대칭은 아니다**(여기도 live).
+
+### LLM 추론 timeout — "무한" 요청의 처리 (정직한 정정)
+
+사용자 확인(AskUserQuestion): **"진행 기반 무한"** 선택.
+
+**이미 그 상태였다.** 코드가 라이브 실측으로 그 사실을 기록해두고 있다(`_call_llm` 주석):
+body `timeout` 을 3s 로 주고 6.5초 스트림을 요청해도 **절단되지 않는다** — litellm 은 스트리밍
+요청에서 그 값을 전체 스트림 상한으로 적용하지 않는다. 유효한 층은 httpx per-request timeout
+하나이고, 스트리밍에서 그것은 "완료까지" 가 아니라 **chunk 간 무응답 간격**이다.
+→ **추론이 몇 시간이든 응답이 흐르는 동안에는 끊기지 않는다.** 1800초는 "추론 상한" 이 아니라
+"연결이 죽었거나 상대가 멈춘 것" 을 판정하는 값이다(오늘 사고의 1800초가 정확히 그 경우).
+
+그래서 body timeout 을 **제거하지 않았다** — 이미 무효인 값을 지우면서 feature-0007 운영자 계약
+("콘솔 값이 곧 per-attempt upstream 상한")만 깨진다. 대신 **오해의 원인을 고쳤다**:
+
+- [x] 콘솔 스펙 문구(`runtime_settings.py`): label `에이전트/쿼리 실행 타임아웃` →
+      **`무응답 대기 상한 (에이전트/쿼리)`**, description 첫 문장을 **"이 값은 AI 추론 시간을
+      제한하지 않습니다"** 로. 운영자가 "추론 시간 제한" 으로 읽고 값을 키우던 것이 오늘 사고의
+      배경이었다(1800 = 30분 무응답 대기).
+- [x] `shared/config.AGENT_TIMEOUT_SEC` 정의부에 **의미**(추론 상한 아님 · 스트리밍에서 chunk 간)와
+      **읽는 층**(판정은 live 조회, 상수는 재배포 무해 경로만) 2축을 주석으로 고정.
+- [ ] **범위 밖(미변경)**: 루프 전체 예산 `run_timeout_sec`(현 5,400s)은 남는다 — 사용자 요청은
+      "LLM 추론 timeout" 이고 루프 예산은 별 정책(feature-0030 연장 UI 가 사용자 승인으로 늘린다).
+      비스트리밍 킬 스위치(`AGENT_LLM_STREAM_ENABLED=false`) 경로에서만 종전처럼 "완료까지" 상한.
+
+### 검증
+
+- [x] 신규 `tests/test_live_setting_startup_drift_guard.py` **6 PASS** — **패턴 자체를 잠근다**:
+      T1 config.py 모듈 레벨에서 live-스펙 startup 상수를 참조해 다른 상수를 만드는 대입 **금지**
+      (AST — 문자열 grep 아님) · T2 live×startup 교집합은 근거 기록된 allowlist 안에만 ·
+      T3 회수 임계가 live 상한과 함께 커지고 cap 60~3600 전 구간에서 run 예산보다 큼 ·
+      floor·fail-open · T4 판정 경로가 상수 대신 live 함수를 씀(ask.py·web 양쪽 소스 잠금) ·
+      llm.py 에 startup 명시 전달 0.
+- [x] 기존 계약 무회귀: `test_ask_worker`(STALE > run_timeout) · `test_ask_redeploy_handoff`
+      (ROLE_STALE < STALE) 포함 관련 3파일 **37 PASS**.
+- [x] 값 보존 실측: 라이브 상한 1800 → 회수 임계 **5,580s(종전과 동일)** · 로컬(상한 60) →
+      floor **600s**. blast radius 0.
+
+### Requested Scope
+
+- "동일한 참조 구조 전반 탐색·수정" → ✓ 집합 연산으로 후보를 2건으로 확정하고 A·B 수정, D 기록,
+  E 이월. 재발은 AST 가드가 막는다.
+- "LLM 추론 timeout 무한" → ✓ 이미 그 상태임을 실측 근거로 확인하고, **오해를 만든 표면**(콘솔
+  문구·상수 주석)을 고쳤다. 무효인 body timeout 제거는 하지 않았다(계약만 깨진다).
+
+### §18.8 적대 리뷰 흡수 (2026-08-24, codex — REV-20260824T160000)
+
+- [x] **[P1]** 소스를 맞춰도 남는 **하락 방향** drift(큰 예산으로 시작된 run 이 낮아진 임계로 조기
+      회수) → `_ask_stale_high_water`(상승 즉시·하락은 재기동 경계). 표시 임계와 같은 원칙.
+      완전해("예산·임계를 job 에 고정")는 `ask_jobs` 스키마·claim 경로 변경이라 미채택(REVIEW 기록).
+- [x] **[P1]** env override 가 `-1`/`0` 을 그대로 통과시켜 SQL cutoff 를 미래로 만들던 **선재 결함**
+      → 비양수·비수치는 파생 폴백, 양수는 `heartbeat*3` 하한 적용. 실측 6케이스 확인.
+- [x] **[P2]** AST 가드를 함수 본문(`Assign`/`Return`)까지 확장 + `except` 폴백 제외 +
+      `# drift-ok:` 명시 예외. web 검사의 파일-부재 조용한 통과 → `assert` 로.
+- [x] **[P2]** env override 테스트가 실제 override 를 검사하지 않고 환경 의존 flake 였던 것 →
+      autouse fixture 격리 + parametrize 실검사(비양수 3 · 비수치 3 · 양수 2).
+- [x] **[P2]** "값 보존" 문구 정정 — 라이브 실효값(5,580s)은 동일하되 저-cap 환경은 floor 로 상향
+      (360→600, web max_wait 390→630). 정상 run 을 덜 끊는 방향이라 채택.
+- [x] 흡수 후: 가드 6 → **12 케이스** · 관련 3파일 재실행 · 전체 스위트 귀책 실패 0 · ruff clean.
