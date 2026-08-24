@@ -83,28 +83,31 @@ def test_last_step_at_for_run_passes_through_naive(monkeypatch):
 # ── T2: stale 가드 — 수정 후 정상 동작 ──────────────────────────────────────
 def test_compute_display_status_marks_old_processing_stale(monkeypatch):
     now = datetime.utcnow()
-    old = now - timedelta(seconds=app.WEB_PROGRESS_STALE_TIMEOUT_SECONDS + 120)
+    old = now - timedelta(seconds=app._effective_stale_timeout_seconds() + 120)
     monkeypatch.setattr(app, "_last_step_at_for_run", lambda *a, **k: old)
-    status, is_stale = app._compute_display_status(
+    status, is_stale, last_active = app._compute_display_status(
         None, "cid", "processing", old.isoformat(), "rid"
     )
     assert (status, is_stale) == ("stale_error", True)
+    # 봉인 B: 판정이 본 마지막 활동 시각을 함께 돌려준다(표면이 요청 시각 대신 이 값을 쓴다).
+    assert last_active is not None and abs((last_active - old).total_seconds()) < 2
 
 
 def test_compute_display_status_keeps_recent_processing_live(monkeypatch):
     now = datetime.utcnow()
     recent = now - timedelta(seconds=30)
     monkeypatch.setattr(app, "_last_step_at_for_run", lambda *a, **k: recent)
-    status, is_stale = app._compute_display_status(
+    status, is_stale, last_active = app._compute_display_status(
         None, "cid", "processing", recent.isoformat(), "rid"
     )
     assert (status, is_stale) == ("processing", False)
+    assert last_active is not None
 
 
 def test_compute_display_status_terminal_passthrough():
     """processing 이 아닌 상태는 그대로 통과 (stale 판정 대상 아님)."""
-    assert app._compute_display_status(None, "cid", "done", "", "rid") == ("done", False)
-    assert app._compute_display_status(None, "cid", "error", "", "rid") == ("error", False)
+    assert app._compute_display_status(None, "cid", "done", "", "rid") == ("done", False, None)
+    assert app._compute_display_status(None, "cid", "error", "", "rid") == ("error", False, None)
 
 
 # ── T3: startup reconciliation boot-guard 시맨틱 ────────────────────────────

@@ -3288,3 +3288,29 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 **라이브 데이터 영향(정직)**: A 축은 도구 실측이 배포 이후 run 에만 생기므로 합성으로 대체할 수
 없어 **새 대화에 질의 1건**(테이블 목록 5개)을 보냈다. 참여자가 나뿐인 새 대화라 타 세션·공유방
 무접촉. B 축은 읽기 전용.
+
+- TEST-0130 (REQ-20260824-0335 / AC-0630~0632, `tests/test_stale_threshold_derives_from_attempt_cap.py`):
+  stale 임계가 per-attempt 상한 안쪽으로 다시 밀리지 않도록 불변식을 고정한다. **19 PASS**
+  (초판 12 + §18.8 codex 흡수분 7). high-water 는 프로세스 전역 상태라 autouse fixture 로
+  저장·리셋·복원한다 — 없으면 실행 순서 의존 flake 가 된다.
+  - 불변식: 상한 5·60·300·900·1800·3600 전 구간에서 `_effective_stale_timeout_seconds() > cap`.
+    상한이 하한을 넘으면 정확히 `cap + WEB_PROGRESS_STALE_MARGIN_SECONDS`.
+  - 운영자 의도 보존: 상한이 작으면(60) 임계는 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` 그대로.
+  - fail-open 2종: `get_int` 예외 / 비양수(0) → 종전 상수.
+  - **사고 재현 입력**: 상한 1800 · 마지막 활동 1300초 전 `processing` → `('processing', False)`
+    (종전 코드에서는 정확히 `stale_error` 였다). 목록 경로(`_compute_display_status`)와 스냅샷 번들
+    경로(`_display_status_from_step_at`)가 **같은 판정**임을 함께 단언 — 갈리면 목록과 long-poll 이
+    어긋난다.
+  - 가드 무력화 아님: 마지막 활동이 `상한 + margin + 60`초 전이면 여전히 `('stale_error', True)`.
+  - 봉인 B: `_iso_or_empty(naive)` 가 `+00:00` 접미를 붙인다(로컬 오해 차단) · 비-datetime 은 빈 문자열
+    · `last_active` 는 status_at 과 step 시각 중 **나중** 것.
+  - 프런트 소스 잠금 2종: 부제와 사이드바 툴팁이 **둘 다** `last_activity_effective_at` 우선 참조
+    (한쪽만 고치면 같은 화면에 서로 다른 "마지막 활동" 이 보인다) · 부제 상태 칸에 원시 enum
+    `${conversation.status}` 가 남아 있지 않다.
+  - §18.8 codex 흡수분: 상한 **하락 시 임계 무축소**(high-water) · 조회 실패 시 high-water 유지 ·
+    비정상 상한(10^9) clamp → `_STALE_CAP_CLAMP_MAX + margin` · clamp/margin 경계 bound ·
+    `_parse_kv_timestamp` offset→UTC 4케이스(`+09:00`/`+00:00`/`Z`/naive) + 실패 2케이스 ·
+    terminal 도 `last_active` 반환(그 경로가 step 을 조회하면 **테스트가 실패**하도록 잠금) ·
+    인자형 terminal 은 status_at/step 의 max.
+  - 기존 계약 갱신: `test_orphan_run_stale_recovery.py`(3-튜플 + `last_active` 단언) ·
+    `test_web_perf_p1.py`(임계 상수 → 파생 함수). 관련 3파일 합계 **42 PASS**.

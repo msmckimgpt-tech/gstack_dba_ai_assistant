@@ -989,7 +989,7 @@ GROUP BY m.conversation_id
             raw_status = info.get("last_status") or ""
             status_at = info.get("last_status_at") or ""
             run_id = run_id_map.get(item["id"], "")
-            display_status, is_stale = app._compute_display_status(
+            display_status, is_stale, last_active = app._compute_display_status(
                 mysql_conn, item["id"], raw_status, status_at, run_id
             )
             item["status"] = display_status
@@ -997,6 +997,7 @@ GROUP BY m.conversation_id
             item["display_status"] = display_status
             item["is_stale"] = is_stale
             item["status_at"] = status_at
+            item["last_activity_effective_at"] = _iso_or_empty(last_active)
             try:
                 item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
             except Exception:
@@ -1385,7 +1386,7 @@ WHERE ConversationId IN ({placeholders2})
             raw_status = info.get("last_status") or ""
             status_at = info.get("last_status_at") or ""
             run_id = run_id_map.get(item["id"], "")
-            display_status, is_stale = app._compute_display_status(
+            display_status, is_stale, last_active = app._compute_display_status(
                 conn, item["id"], raw_status, status_at, run_id
             )
             item["status"] = display_status
@@ -1393,6 +1394,7 @@ WHERE ConversationId IN ({placeholders2})
             item["display_status"] = display_status
             item["is_stale"] = is_stale
             item["status_at"] = status_at
+            item["last_activity_effective_at"] = _iso_or_empty(last_active)
             try:
                 item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
             except Exception:
@@ -3909,14 +3911,29 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
 
 def _parse_kv_timestamp(value: str) -> app.datetime | None:
     """AgentMemoryKv 의 ISO timestamp (`YYYY-MM-DD HH:MM:SS[.f]`) 를 datetime 으로 변환.
-    실패 시 None 반환. UTC naive 로 가정 (KV 작성 시 동일 가정)."""
+    실패 시 None 반환. 반환은 **UTC naive** (KV 작성 시 동일 가정).
+
+    §18.8 codex [P2]: 종전에는 offset 이 실린 값(`…T12:00:00+09:00`)을 UTC 로 **변환하지 않고**
+    `replace(tzinfo=None)` 로 tzinfo 만 떼어, KST wall-clock 을 UTC 로 오인했다 — 그러면
+    `datetime.utcnow()` 비교에서 9시간 미래가 되어 stale 판정이 그만큼 지연되고, 이 값을 표면에
+    "UTC" 로 명시 직렬화하면 사용자에게도 9시간 틀린 시각이 보인다. `_last_step_at_for_run` 의
+    CHG-20260527-0001 회귀와 **같은 부류**(그때는 step 축, 이번은 KV 축)이므로 같은 방식으로
+    봉인한다. 라이브 KV 는 현재 `+00:00` 으로 저장돼 실동작 변화는 없다(실측) — 저장 형식이
+    바뀌어도 깨지지 않게 하는 방어다.
+    """
     text = str(value or "").strip()
     if not text:
         return None
+
+    def _to_utc_naive(dt: "app.datetime | None") -> "app.datetime | None":
+        if dt is None:
+            return None
+        if dt.tzinfo is not None:
+            return dt.astimezone(app.timezone.utc).replace(tzinfo=None)
+        return dt
+
     try:
-        if "T" in text:
-            return app.datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
-        return app.datetime.fromisoformat(text)
+        return _to_utc_naive(app.datetime.fromisoformat(text.replace("Z", "+00:00")))
     except Exception:
         try:
             return app.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
@@ -5391,7 +5408,7 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
             status_at = kv.get("last_status_at", "")
             run_id = kv.get("last_status_run_id", "")
             step_count = int(bundle.get("step_count") or 0)
-            display_status, is_stale = app._display_status_from_step_at(
+            display_status, is_stale, _last_active = app._display_status_from_step_at(
                 status, status_at, bundle.get("last_step_at")
             )
             latest_assistant = app._latest_assistant_from_rows(
@@ -5410,7 +5427,7 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
         run_id = kv.get("last_status_run_id", "")
         step_count = app._load_step_count_for_run(conn, conversation_id, run_id) if run_id else 0
         # TASK-0061 Phase 3 (REQ-20260515-0005): stale 처리는 attach/resume long-poll 무한 대기 방지에 중요.
-        display_status, is_stale = app._compute_display_status(conn, conversation_id, status, status_at, run_id)
+        display_status, is_stale, _last_active = app._compute_display_status(conn, conversation_id, status, status_at, run_id)
         latest_assistant = app._load_latest_assistant_message(conn, conversation_id) or {}
     try:
         duration_ms = int(kv.get("last_duration_ms", "0") or 0)
@@ -5720,31 +5737,61 @@ def _normalize_product_mode(value: Any, default: str = "pinned") -> str:
     text = str(value or "").strip().lower()
     return text if text in app._VALID_PRODUCT_MODES else default
 
+def _iso_or_empty(dt: "Any | None") -> str:
+    """판정 계층의 UTC naive datetime → **타임존을 명시한** ISO8601 문자열. 그 외는 빈 문자열.
+
+    conv-audit FR-stale-threshold-below-llm-attempt-cap 봉인 B: stale 판정의 시간축은 UTC naive
+    (`datetime.utcnow()` 비교)인데, 이를 그대로 직렬화해 내려보내면 프런트 `formatDateTime` 의
+    `new Date(value)` 가 **로컬 타임존으로 해석**해 KST 환경에서 9 시간 미래로 표시된다
+    (`_last_step_at_for_run` 의 CHG-20260527-0001 tz 회귀와 같은 부류의 입구). 직렬화 시점에
+    UTC 를 명시해 그 경로를 봉인한다.
+    """
+    if not isinstance(dt, app.datetime):
+        return ""
+    try:
+        aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=app.timezone.utc)
+        return aware.astimezone(app.timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
 def _compute_display_status(
     conn,
     conversation_id: str,
     last_status: str,
     last_status_at: str,
     last_status_run_id: str,
-) -> tuple[str, bool]:
-    """processing 대화가 만료 시간 동안 step/status 갱신이 없으면 (display_status, is_stale) = (stale_error, True) 를 반환.
-    그 외에는 (last_status, False)."""
+) -> tuple[str, bool, "Any | None"]:
+    """processing 대화가 만료 시간 동안 step/status 갱신이 없으면 (stale_error, True, last_active) 를 반환.
+    그 외에는 (last_status, False, last_active).
+
+    세 번째 값 `last_active` = **실제로 관측된 마지막 활동 시각**(UTC naive datetime, 없으면
+    None). conv-audit FR-stale-threshold-below-llm-attempt-cap 봉인 B: 종전에는 이 값을 내부에서
+    계산해 판정에만 쓰고 버려, 표면(사이드바 stale 툴팁)은 대신 `updated_at`(요청 접수 시각)을
+    "마지막 활동" 으로 보여줬다. 그 둘은 run 이 진행되는 동안 계속 벌어진다 — 사고 대화에서
+    실제 마지막 활동 12:02 vs 표시 11:19 로 **43 분 어긋나** 사용자가 "요청 직후부터 아무것도
+    진행되지 않았다" 고 오인했다.
+    """
     raw_status = str(last_status or "").strip().lower()
     if raw_status != "processing":
-        return raw_status, False
+        # §18.8 codex [P2]: terminal 도 `last_status_at`(= 마감 시각)을 돌려준다. None 을 주면
+        # 완료·오류·취소 대화의 `last_activity_effective_at` 이 항상 비어 표면이 요청 접수 시각으로
+        # 폴백했다 — "실제 마지막 활동" 계약이 processing 에서만 성립하던 비대칭. step 조회는 하지
+        # 않는다(terminal 은 마감 시각이 곧 마지막 활동이고, 여기서 PG 왕복을 늘릴 이유가 없다).
+        return raw_status, False, app._parse_kv_timestamp(last_status_at)
     status_dt = app._parse_kv_timestamp(last_status_at)
     step_dt = app._last_step_at_for_run(conn, conversation_id, last_status_run_id)
     last_active = max(filter(None, [status_dt, step_dt]), default=None)
     if last_active is None:
         # 시각 정보 자체가 없으면 보수적으로 stale 처리하지 않는다 — 첫 step 등록 전 race 가능성.
-        return raw_status, False
+        return raw_status, False, None
     elapsed = (app.datetime.utcnow() - last_active).total_seconds()
-    if elapsed > app.WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
-        return "stale_error", True
-    return raw_status, False
+    if elapsed > app._effective_stale_timeout_seconds():
+        return "stale_error", True, last_active
+    return raw_status, False, last_active
 
-def _display_status_from_step_at(last_status: str, last_status_at: str, step_at) -> tuple[str, bool]:
-    """이미 조회한 last-step 시각으로 (display_status, is_stale) 판정 (feature-0028 P1-A).
+def _display_status_from_step_at(last_status: str, last_status_at: str, step_at) -> tuple[str, bool, "Any | None"]:
+    """이미 조회한 last-step 시각으로 (display_status, is_stale, last_active) 판정 (feature-0028 P1-A).
 
     `_compute_display_status` 와 동일 규칙이되 step 시각을 **인자로** 받아 추가 PG 왕복을
     하지 않는다(스냅샷 번들 경로 전용). tz-aware timestamptz 는 UTC naive 로 정규화 —
@@ -5753,7 +5800,17 @@ def _display_status_from_step_at(last_status: str, last_status_at: str, step_at)
     """
     raw_status = str(last_status or "").strip().lower()
     if raw_status != "processing":
-        return raw_status, False
+        # §18.8 codex [P2]: terminal 도 마지막 활동을 돌려준다. 이 경로는 step 시각을 **이미 인자로**
+        # 받았으므로 추가 조회 없이 둘의 max 를 쓴다(마감 write 와 마지막 step 중 나중 것).
+        _terminal_status_dt = app._parse_kv_timestamp(last_status_at)
+        _terminal_step_dt = step_at if isinstance(step_at, app.datetime) else (
+            app._parse_kv_timestamp(str(step_at)) if step_at else None
+        )
+        if isinstance(_terminal_step_dt, app.datetime) and _terminal_step_dt.tzinfo is not None:
+            _terminal_step_dt = _terminal_step_dt.astimezone(app.timezone.utc).replace(tzinfo=None)
+        return raw_status, False, max(
+            filter(None, [_terminal_status_dt, _terminal_step_dt]), default=None
+        )
     status_dt = app._parse_kv_timestamp(last_status_at)
     step_dt = None
     if isinstance(step_at, app.datetime):
@@ -5767,11 +5824,11 @@ def _display_status_from_step_at(last_status: str, last_status_at: str, step_at)
         step_dt = app._parse_kv_timestamp(str(step_at))
     last_active = max(filter(None, [status_dt, step_dt]), default=None)
     if last_active is None:
-        return raw_status, False
+        return raw_status, False, None
     elapsed = (app.datetime.utcnow() - last_active).total_seconds()
-    if elapsed > app.WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
-        return "stale_error", True
-    return raw_status, False
+    if elapsed > app._effective_stale_timeout_seconds():
+        return "stale_error", True, last_active
+    return raw_status, False, last_active
 
 
 def _escape_like_for_search(s: str) -> str:
