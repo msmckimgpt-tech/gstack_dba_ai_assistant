@@ -2271,3 +2271,24 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - Files: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(공용) ·
   `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REPORT,REVIEW}.md`.
 - Rollback Notes: 되돌리면 원장이 배포된 봉인을 미배포로 표기해 다음 audit 이 같은 마찰을 재진단한다.
+
+## CHG-20260824T115000-step-elapsed-in-payload — 도구 자기 소요를 step payload 로 전달 (primary: feature-0003)
+
+표시층 결함(실행 단계 패널의 시간이 한 칸씩 밀려 표기)의 **데이터 측 해소**. 정본 cycle 과
+판단 근거는 `feature-0003-agent-web-ui`(CHG-20260824T115000-step-timing-attribution).
+
+- `src/agent_core.py`
+  - `_build_step_payload(..., elapsed_ms: float | None = None)` — `result_summary.elapsed_ms`
+    (ms, 0 clamp·반올림)를 싣는다. 결과가 비어 요약이 `None` 이던 도구도 dict 를 만들어
+    소요를 남긴다(그 도구만 시간이 사라지면 표시층이 다시 추정에 기댄다).
+  - `_mirror_step(..., elapsed_ms=None)` → payload 로 전달.
+  - 도구 루프: `_tool_elapsed_ms` 를 **`finally` 안에서** 채운다. 새로 재지 않고 기존
+    `_inf_add_tool` 계측을 재사용한다.
+    ⚠️ **범위 정정(codex 적대 리뷰 [P2])**: finally 배치가 지키는 것은 `_inf_add_tool` 누산
+    (duration_breakdown)이다. `execute_tool` 이 raise 하면 예외가 그대로 전파돼
+    `_build_step_payload`/`_mirror_step` 에 닿지 않으므로 **그 도구는 step 기록 자체가 없다**
+    (이 변경 이전부터의 동작). 초판 주석·테스트는 이 둘을 뭉뚱그려 "예외로 끝난 도구도 step
+    소요 보존" 이라는 성립하지 않는 주장을 했고, 주석·테스트·문서를 함께 정정했다.
+- 스키마·마이그레이션 변경 **0**(`result_summary_json` 기존 컬럼 재사용).
+- `tests/test_step_elapsed_attribution.py` 신규 7 PASS · `tests/test_inference_detail.py`
+  소스-패턴 계약 정합화(의미 보존).

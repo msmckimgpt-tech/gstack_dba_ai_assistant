@@ -3392,8 +3392,33 @@ def _build_step_payload(
     reason_text: str = "",
     reason_source: str = "",
     error: str = "",
+    elapsed_ms: float | None = None,
 ) -> dict[str, Any]:
     payload_args = args if isinstance(args, dict) else {}
+    # step-timing-attribution: 이 도구가 **자기 실행에 쓴 시간**(ms). 호출부가 이미 재고 있던
+    # 값(`_inf_add_tool` 의 duration_breakdown 계측)을 그대로 실어 보낸다 — 새로 재지 않는다.
+    #
+    # 왜 필요한가: step 은 종류마다 기록 시점이 반대다 — activity 는 **착수 시각**(LLM 호출 직전),
+    # tool 은 **종료 시각**(결과 확보 후). 그래서 "직전 기록→이 기록" 간격만으로는 activity 의
+    # 추론 시간이 그 뒤 도구 쪽에 통째로 얹혀, 1초짜리 SQL 이 "2분 3초" 로 보였다(라이브 실측:
+    # run 20260824021929-c71393cf 의 23번 execute_sql 간격 123.85초 중 대부분이 6회차 추론).
+    # 도구의 자기 소요를 알면 표시층이 그 구간을 정확히 갈라 낼 수 있다(추론 = 간격 − 도구 소요).
+    #
+    # 저장 위치가 `result_summary` 인 이유: 이 dict 는 이미 표시층 전용 부가정보 모음이고
+    # (`preview_truncated`·`result_chars`·`result_capped_for_model`·`csv_paths`·`preview_table`),
+    # **PG·MySQL 두 백엔드와 3개 조회 경로(_assemble_steps · _load_steps_for_run ·
+    # _load_steps_for_message)를 이미 전부 통과**한다. 새 컬럼을 두면 그 네 곳의 SELECT 와
+    # 마이그레이션이 따라붙는데, 얻는 것이 없다.
+    result_summary = _build_step_result_summary(tool_name, tool_result)
+    if elapsed_ms is not None:
+        try:
+            # 결과 요약이 비어 None 인 도구(빈 결과)도 소요는 남긴다 — 그 단계만 시간이 사라지면
+            # 표시층이 다시 추정에 기대게 된다.
+            if not isinstance(result_summary, dict):
+                result_summary = {}
+            result_summary["elapsed_ms"] = max(0, int(round(float(elapsed_ms))))
+        except Exception:
+            pass
     return {
         "step_index": int(step_index or 0),
         "action": "step",
@@ -3405,7 +3430,7 @@ def _build_step_payload(
         "reason_source": str(reason_source or "").strip(),
         "args": payload_args,
         "sql": str(payload_args.get("sql", "") or ""),
-        "result_summary": _build_step_result_summary(tool_name, tool_result),
+        "result_summary": result_summary,
         "error": str(error or ""),
         "run_id": str(run_id or ""),
     }
@@ -5245,6 +5270,7 @@ def _mirror_step(
     reason_text: str = "",
     reason_source: str = "",
     error: str = "",
+    elapsed_ms: float | None = None,
 ) -> None:
     entry = _build_step_payload(
         run_id=run_id,
@@ -5258,6 +5284,7 @@ def _mirror_step(
         reason_text=reason_text,
         reason_source=reason_source,
         error=error,
+        elapsed_ms=elapsed_ms,
     )
     try:
         save_memory_step(conn, conversation_id, run_id, entry)
@@ -8309,13 +8336,24 @@ def _run_agent_core(
 
             # 도구 실행
             _inf_tool_t0 = time.perf_counter_ns()
+            # step-timing-attribution: 이 도구가 자기 실행에 쓴 시간. 아래 finally 에서 채워
+            # step payload 로 실어 보낸다 — 표시층이 "추론 시간"과 "도구 시간"을 가르는 근거다.
+            #
+            # ⚠️ **범위 주의**(codex 적대 리뷰 [P2] 정정): finally 는 예외 경로에서도 돌지만,
+            # `execute_tool` 이 raise 하면 예외가 그대로 전파돼 아래 `_build_step_payload`·
+            # `_mirror_step` 에 **도달하지 못한다** — 즉 그 도구는 애초에 step 기록 자체가 없다
+            # (이 변경 이전부터의 동작). finally 배치가 지키는 것은 `_inf_add_tool` 누산
+            # (duration_breakdown)이지 "예외로 끝난 도구의 step 소요" 가 아니다. 초판 주석은
+            # 그 둘을 뭉뚱그려 성립하지 않는 주장을 했고, 여기서 정정한다.
+            _tool_elapsed_ms: float | None = None
             try:
                 tool_result = execute_tool(db_conn, tool_name, tool_args)
             finally:
                 # infdetail: 예외로 빠져나가도 소요를 잃지 않는다(실패한 SQL 도 시간을 쓴다).
                 # §18.8 패널 MINOR-2: finally 안에서 raise 하면 **원래 예외를 대체**하므로 감싼다.
                 try:
-                    _inf_add_tool(tool_name, (time.perf_counter_ns() - _inf_tool_t0) / 1_000_000.0)
+                    _tool_elapsed_ms = (time.perf_counter_ns() - _inf_tool_t0) / 1_000_000.0
+                    _inf_add_tool(tool_name, _tool_elapsed_ms)
                 except Exception:
                     pass
 
@@ -8409,6 +8447,7 @@ def _run_agent_core(
                 work_source=work_source,
                 reason_text=reason_text,
                 reason_source=reason_source,
+                elapsed_ms=_tool_elapsed_ms,
             )
             step_info["result_length"] = len(tool_result)
             step_info["result_preview"] = tool_result[:300]
@@ -8427,6 +8466,7 @@ def _run_agent_core(
                     work_source=work_source,
                     reason_text=reason_text,
                     reason_source=reason_source,
+                    elapsed_ms=_tool_elapsed_ms,
                 )
 
             _log("tool_call", {

@@ -4431,3 +4431,34 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-20T01:03:01+09:00
+
+## CHG-20260824T115000-step-timing-attribution — 단계 시간 귀속 재정의 (cross-feature: feature-0002)
+
+- `src/static/app.js`
+  - `_stepToolElapsedMs`/`_isActivityStep` 신규(판독 헬퍼).
+  - **`_computeStepTimings(steps)` 신규 · export** — 각 단계의 `{startTs, selfMs, cumulativeMs,
+    approx}` 산출. 간격을 "그 동안 실제로 돌던 단계" 에 귀속한다. 순수 함수라 렌더링 없이
+    단위 검증 가능(초판은 렌더러 안에 인라인이라 규칙만 따로 시험할 수 없었다).
+  - `_renderStepSidePanelBody`: `stepTsList`/`anchorTs` 인라인 계산 제거 → `timings` 소비.
+    표기 `기록시각 · +간격 · 누적` → **`시작시각 · 이 단계 소요 · 누적`**, 근사는 `~` 접두,
+    소요 미지 단계는 칸 자체를 비우고 툴팁이 사유를 밝힌다. 첫 단계 누적 생략(중복).
+- `tests/verify_step_panel_timing.mjs`: 전면 재작성(**70 PASS**) — 귀속 4갈래·폴백·회귀·툴팁 +
+  codex 적대 리뷰 반영분(`elapsed_ms` 강제변환 함정 · 시계 역행 누적 단조 · 시작 시각 clamp).
+- **codex 적대 리뷰 [P2] 5건 전건 반영**(REV-20260824T115000): ① 시각 없는 중간 단계를 건너뛰고
+  정확한 척하던 것 → 근사 표시 ② 레거시 `도구→도구` 를 "정확" 으로 확정하던 것 → 상한이므로
+  근사 표시 ③ 시계 역행 시 누적 감소·시작 시각 역전 → 단조 보장 + 직전 종료 clamp
+  ④ `Number(null)===0` 이라 값 없음이 "0.0초" 로 둔갑 → 숫자 타입 검사 ⑤ 백엔드 주석·테스트의
+  과잉 주장 정정(아래).
+- **cross-feature** `unit/feature-0002-agent-core/src/agent_core.py`
+  - `_build_step_payload(..., elapsed_ms=None)` — 도구 실측을 `result_summary.elapsed_ms` 로
+    싣는다(결과 요약이 비어 `None` 이던 도구도 dict 를 만들어 소요를 보존). 새 컬럼을 두지
+    않은 이유: `result_summary` 는 이미 표시층 부가정보 모음이고 PG/MySQL 두 백엔드와
+    3개 조회 경로(`_assemble_steps`·`_load_steps_for_run`·`_load_steps_for_message`)를 이미
+    전부 통과한다 — 컬럼을 늘리면 그 네 곳의 SELECT 와 마이그레이션이 따라붙는데 얻는 게 없다.
+  - `_mirror_step(..., elapsed_ms=None)` 전달. 도구 루프는 `finally` 에서 `_tool_elapsed_ms`
+    를 채워 `_build_step_payload`/`_mirror_step` 양쪽에 넘긴다(예외 경로에서도 소요 보존).
+  - `tests/test_step_elapsed_attribution.py` 신규 7 PASS(AST 로 호출부 도달까지 잠금).
+  - `tests/test_inference_detail.py`: 소스-패턴 계약을 **의미 보존**한 채 정합화 —
+    측정 대입 한 줄을 허용하되 `finally` 밖으로 나가면 여전히 FAIL.
+- 웹 백엔드 변경 **0** — `result_summary` 가 `_resolve_step_display` 를 포함해 손대지 않고
+  통과함을 소스로 확인했다.

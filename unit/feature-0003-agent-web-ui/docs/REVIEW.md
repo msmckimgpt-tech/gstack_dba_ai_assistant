@@ -5374,3 +5374,35 @@ P3 6 중 3 반영). 선례: `REV-20260814T120000-profile-sort-postdeploy [SKIPPE
 - **RN 제외 판정(정직)**: 창 내 나머지 커밋은 전부 RN 비대상 — `7e30ef13`·`d4a73338`·`74316049`·`920e7974`(doc_sync 산출) · `65c34fff`(배포 기록 doc-only) · `a639272c`(첨부 변경-인지)는 **이미 08-16 블록 1항목에 반영됨**. backfill 누락 추가분 **0**.
 - **cache-buster**: 수기 bump 없음(ITEM-09 — 소스 `?v=dev` 고정 + 빌드 content-hash 주입 + 배포 ABORT 가드). `index.html`/`admin.html` 편집 0.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유(이중 landing/배포 racing 방지). **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**
+
+## REV-20260824T115000-step-timing-attribution [CODEX:adversarial-timing-attribution] — 단계 시간 귀속 재정의
+
+**Trigger**: Code change — dispatch 키워드 `UI/화면/layout`(실행 단계 패널 렌더) + `performance/성능`
+(시간 계측). §18.8.1 대체 경로인 codex 적대 리뷰로 수행(세션에 "요청 없이 Agent 호출 금지"
+지시가 있어 채널을 사용자에게 1회 확인 후 선택 — 자체 SKIP 하지 않았다).
+
+**결과: [P1] 0 · [P2] 5 — 전건 반영.**
+
+1. **시각 없는 중간 단계를 건너뛰고 정확한 척** — `activity → (created_at 없는 단계) → tool` 에서
+   그 중간 단계가 쓴 몫을 알 수 없는데 `gap − nextTool` 전부를 activity 에 귀속했다. 테스트 F 도
+   그 값을 정답으로 고정하고 있었다. → 건너뛴 기록이 있으면 `approx=true`. 테스트에 축 추가.
+2. **레거시 `도구→도구` 를 "정확" 으로 확정** — 두 기록 시각의 차이에는 step 저장·로깅·다음 호출
+   준비 같은 도구 밖 시간이 섞인다(실행시간의 **상한**). → `approx=true` 로 정직화.
+3. **시계 역행 시 누적 감소 · 시작 시각 역전** — `0 → 10초 → 5초` 같은 입력에서 누적이 줄고,
+   `elapsed_ms > 기록 간격` 이면 도구 시작이 직전 단계 종료보다 과거가 됐다. 단조성 테스트가
+   정상 시계만 봐서 놓쳤다. → 누적 running-max + 시작 시각을 직전 종료로 clamp. 축 2개 추가.
+4. **`Number(null) === 0`** — `elapsed_ms` 가 `null`/`""`/`false` 면 값 없음이 "0.0초 로 측정됨"
+   으로 둔갑했다. 기존 테스트는 키 부재와 음수만 봤다. → 숫자 타입 검사. `0` 은 살리고 `"430"`
+   문자열은 거른다(생산자가 언제나 int 이므로 관대할 이유가 없다). 축 2개 추가.
+5. **성립하지 않는 주장** — 주석·테스트·문서가 "예외로 끝난 도구도 step 소요 보존" 이라 했으나,
+   `execute_tool` 이 raise 하면 예외가 전파돼 `_build_step_payload`/`_mirror_step` 에 닿지 않아
+   **step 기록 자체가 없다**. `finally` 가 지키는 것은 `_inf_add_tool` 누산(duration_breakdown)뿐.
+   또 AST 테스트가 **아무 finally** 에 변수명만 있으면 통과했다. → 주장 정정(주석·docstring·
+   MODIFY·FUNCTION·TEST) + AST 검사를 `execute_tool` 을 본문에 가진 try 로 한정. 뮤턴트로 재검증.
+
+**반영 후 재검증**: 프론트 70 PASS(+5 축) · 백엔드 23 PASS · 프론트 뮤턴트 **10종**·백엔드 **3종**
+전건 사멸 · `verify_step_result_scroll_preserve` 29 PASS 무회귀.
+
+**남긴 판단(정직)**: 5번은 "예외 도구도 step 을 남기게" 고칠 수도 있었지만 하지 않았다 — 그것은
+run 의 기록 의미를 바꾸는 별건이고(이 변경 이전부터의 동작), 이번 요청은 시간 **표시**의 오귀속
+해소다. 사실과 어긋나던 **주장** 쪽을 고쳤다.

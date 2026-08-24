@@ -1293,3 +1293,12 @@ diff · ATTACHMENT SET 권위 사실 · 리뷰어 digest)이 **전부 하나의 
   (`_loadConversationAttachments`)는 **아직 전송하지 않은** 신규 표식을 보존한다. 전송 성공 시
   `new → session` 강등은 그대로여야 한다 — 강등이 없으면 보존이 같은 파일을 매 턴 ★신규 로 만들어
   "이번 턴에 올라왔다" 는 거짓 사실을 반복한다. 두 계약은 **쌍으로만** 성립한다.
+
+- AC-20260824T115000-step-elapsed-in-payload: `_build_step_payload` 는 `elapsed_ms` 를 받으면
+  `result_summary.elapsed_ms`(ms, 0 clamp·정수 반올림)로 싣는다. 미전달이면 키를 만들지
+  않는다 — 표시층의 "모름" 분기가 살아 있어야 과거 대화에서 없는 숫자를 지어내지 않는다.
+  결과가 비어 요약이 `None` 이던 도구도 dict 를 만들어 소요를 보존한다. 도구 루프의 측정은
+  `finally` 안이라 도구가 예외로 끝나도 `_inf_add_tool` 누산(duration_breakdown)은 남는다 —
+  단 그 경우 예외가 전파돼 step 기록 자체가 생기지 않으므로 "예외 도구의 step 소요" 는
+  보장 대상이 아니다(범위 주의). 소비처는 feature-0003 실행 단계 패널
+  (AC-20260824T115000-step-timing-attribution-2) — 표시층이 추론/도구 시간을 가르는 근거다.
