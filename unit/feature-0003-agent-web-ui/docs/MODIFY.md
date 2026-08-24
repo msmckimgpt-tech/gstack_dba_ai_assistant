@@ -4774,3 +4774,14 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - `docs/test-runs.d/REV-20260824T173000-sidebar-rename-focus.md`: POST-DEPLOY 절(D-4) 추가 —
   서비스별 `GIT_COMMIT` `27d99bb2` · 무중단 0건 · 캐시버스터 `?v=6ac119f76533` ·
   라이브 A/B/C 전건 통과 · 계측기 결함 기록.
+
+## CHG-20260825T010305-doc-sync-rn-0825 (신규 2026-08-24 블록 prepend) 릴리즈노트 콘텐츠 — 08-24 사용자향 8항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-24` 블록**(items 8 + summary) prepend + `generated` "2026-08-19"→"2026-08-24". `releases` 51→**52**, 기존 51 블록 전건 보존.
+- 신규 블록 근거: 델타 창 커밋일이 전부 08-24 이고 그 date 블록이 파일에 없었다(grep 0회) → doc_sync Phase 3 "블록 부재 시 신규 prepend · `generated` top-block 연동" 규약.
+- 항목: 대화 인라인 이름 변경 신설 / 재배치 연출·도착 표식 / 첨부 계보 최초 원본 동반 / 콘솔 라벨 '무응답 대기 상한' / 인라인 rename 오확정 봉인 / 실행 단계 시간 오귀속 / stale 오표시·최근갱신 / SQL 오류 답변경로.
+- 정직성: 정본이 `미검증(이월)` 로 등재한 "콘솔 값 변경 시 임계 동반 이동" 은 단정하지 않고 파생 계약 사실만 서술.
+- Verification: `node --check` PASS · 블록 52 · `generated`==top.date · top items 8 · 2nd 블록 items 불변 · 스키마 외 키 0 · 내부용어 누출 0 · **`verify_release_notes.mjs` 34 pass/0 fail = 편집 전 baseline 동일(회귀 0)**.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-25T01:03:05+09:00

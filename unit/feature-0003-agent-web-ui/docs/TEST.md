@@ -3372,3 +3372,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
     인자형 terminal 은 status_at/step 의 max.
   - 기존 계약 갱신: `test_orphan_run_stale_recovery.py`(3-튜플 + `last_active` 단언) ·
     `test_web_perf_p1.py`(임계 상수 → 파생 함수). 관련 3파일 합계 **42 PASS**.
+
+## TASK-20260825T010305-doc-sync-rn-0825 — 릴리즈노트 신규 2026-08-24 블록 prepend 검증
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
+- `node --check static/release-notes-data.js` → PASS.
+- `node tests/verify_release_notes.mjs` → **ALL PASS 34 / 0**. 편집 **전** 동일 스크립트를 cycle 초반에 실행해 34/0 을 측정했으므로 **회귀 0** 을 실증한다(jsdom@24 를 `/tmp` 에 핀 설치 — 스크립트가 `require("/tmp/node_modules/jsdom")` 를 하드코딩하므로 미설치 세션에서는 실행 불가).
+- 구조 단언: `releases` 51→**52** · `generated`=="2026-08-24"==`releases[0].date` · 신규 블록 items **8** · 직전 블록(`2026-08-19`) items 1 불변 · `type`/`area` 값이 기존 enum 집합 내 · 스키마 외 키 0 · date 중복 0 · reverse-chron 유지.
+- 누출 스캔: feature-id / TASK-·REV-·CHG- id / §번호 / 파일명 / 함수·테이블·컬럼명 / 내부 코드값 = **0건**.
+- reconcile-first 실측(편집 전): 서빙 `https://localhost/static/release-notes-data.js` 200 · `?v=` 정규화 후 브랜치 blob 과 `cmp` 일치(260,695B) → 파리티 갭 0(3창 연속 갭은 08-24 19:00 종결).
+- **Pass/Fail: PASS**.

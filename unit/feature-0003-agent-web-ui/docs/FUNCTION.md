@@ -4406,3 +4406,6 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
     않는다), `transitionend` 는 **이 행 자신의 `transform` 전환만** 인정한다 — 자식 요소의
     다른 전환(예: 이동 중 포인터가 지나가며 끝나는 메뉴 트리거 opacity)이 버블링해 FLIP 을 조기
     종료시키면 행이 최종 위치로 튄다 (§18.8 codex [P2] 2건).
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0825, 신규 2026-08-24 블록 prepend)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-24` 블록** prepend(items 8 — new 1 / improved 3 / fixed 4, area work 7 / admin 1) + `generated` top-block date 연동 갱신. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 51→52 · 기존 51 블록 보존 · 신규 항목은 기존 스키마/enum 값만 사용).

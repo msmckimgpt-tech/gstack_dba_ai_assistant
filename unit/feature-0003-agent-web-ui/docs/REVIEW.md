@@ -5787,3 +5787,16 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
 제품에서 찾기 전에 **계측이 무엇을 실행하고 있는지** 먼저 확인한 것이 이 건의 유일한 분기점이었다
 (직전 cycle 의 "캡처가 rAF 를 멈춰 정상 트윈을 0프레임으로 보고" 와 같은 클래스 — 계측기는
 자기 자신도 검증 대상이다).
+
+## REV-20260825T010305-doc-sync-rn-0825 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-08-24 블록 prepend(8항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260825T010305-doc-sync-rn-0825`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + companion 문서).
+- Timestamp: 2026-08-25T01:03:05+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · 구조 단언(`releases` 51→**52** · `generated`=="2026-08-24"==`releases[0].date` · top items 8 · 2nd 블록 items 1 불변 · 스키마 외 키 0 · enum 기존 집합 내) · **`tests/verify_release_notes.mjs` 34 pass/0 fail = 편집 전 baseline 34/0 동일 → 회귀 0** · 내부용어 누출 0(기계 스캔).
+- **적대검증**: ULTRACODE 워크플로 `wf_97297b9a-f3a` — 6 에이전트 / 988,185 토큰 / 300 tool-use. 4축 병렬 스윕(릴리즈노트·wiki·정책문서·cross-surface) → 축 교차 2조 refute-first 검증(29 CONFIRMED · 5 REVISE · 7 newFindings · **오케스트레이터 전제 반증 2건**). RN 축에 대한 **P1 적발 1건을 반영**: 초안이 "콘솔에서 값을 바꾸면 재기동 없이 판정 기준이 함께 반영된다" 를 2곳에서 단정했는데 정본 `unit/feature-0002-agent-core/docs/TASK.md`:3081 이 그 시나리오를 `- [ ] **미검증(이월)**` 로 등재 → 두 문장에서 콘솔-변경 주장을 제거(없는 검증을 약속하지 않는다). 검증자의 용어-선례 카운트 3건(Esc·배지·묶음)은 실측과 달라 **커밋 문면에 인용하지 않았다**(방향은 동일 — 선례는 실재).
+- **블록 귀속 판정**: 델타 19 커밋의 git-date 가 전부 2026-08-24 이고 그 date 블록이 부재(grep 0회) → 신규 블록 prepend + `generated` top-block 연동. 오늘(08-25) 날짜 블록·publish-date 신설 금지 규약 준수.
+- **배포 게이트**: `deploy-web.state` `current=abc1a1a9`(08-24 19:21) · 라이브 `mysql-ai-web:abc1a1a9` ⊇ 8항목 소유 커밋 전건 → 이미 서빙 중. 자체 POST-DEPLOY 실증 커밋이 있는 6 cycle(`a1c5ccfe`·`788e2b0b`·`5ffc31d9`·`09efce70`·`4ebb9cba`·`85ef0174`·`e24be5f5`)과 없는 3건(`f0935560`·`a07d9b3d`·`a87e4331`)을 구분해 판정했고, 후자도 배포 이미지에 baked 되어 있어 '미배포' 가 아니다.
+- **RN 제외 판정(정직)**: `b5654b69`(template v3.48.0 업그레이드)·`697fdefe`(cron belt 결함 종결)·POST-DEPLOY 문서 커밋 7건은 사용자 체감 표면 0 → 제외(개발자향·내부 운영). backfill 누락 추가분 0.
+- **cache-buster**: 수기 bump 없음. `docs/CONVENTIONS.md`:568 이 "`?v=dev` 고정 · 빌드 `inject_asset_stamp.py` content-hash 주입 · **수기 bump 금지**" 를 명문화하고 `bin/deploy-web.sh` 가 placeholder 잔존 시 ABORT 한다. `index.html`/`admin.html` 편집 0.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**

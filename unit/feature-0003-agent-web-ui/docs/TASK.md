@@ -11690,3 +11690,14 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 ### 남은 것
 
 - 없음.
+
+## 20260825T010305-doc-sync-rn-0825 — 릴리즈노트 신규 2026-08-24 블록 prepend(8항목) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 의 `releases` head 에 **신규 `2026-08-24` date 블록 prepend**(items 8 + summary) + `generated` "2026-08-19"→**"2026-08-24"**(top-block date 규약). `releases` 51→**52**, 기존 51 블록 전건 보존.
+- [x] 귀속 판정: 델타 창(`ab06c802..e24be5f5`, 19 non-merge)의 커밋일이 전부 **2026-08-24** 이고 파일에 08-24 date 블록이 **부재**(grep 0회)이므로 신규 블록 prepend(기존 블록 append 아님). 오늘(08-25) 날짜 블록·publish-date 신설 안 함.
+- [x] 배포 게이트 충족: `artifacts/deploy/deploy-web.state` `current=abc1a1a9`(mtime 08-24 19:21) · 라이브 `repo-web-a/b = mysql-ai-web:abc1a1a9` · 8항목의 소유 커밋 전건이 그 이미지의 조상 → **이미 서빙 중**(유보 없음). 유일 후행 커밋 `e24be5f5` 는 문서/테스트 전용.
+- [x] 항목 구성: new 1 / improved 3 / fixed 4 · area work 7 / admin 1. 사이드바 재배치 연출 4 cycle(`013bef96`·`c48a0876`·`cf5b9737`·`f0935560`)은 사용자 관점에서 하나의 변화라 **1항목으로 병합**.
+- [x] **정본 미검증 항목 단정 회피(적대검증 P1 반영)**: 초안이 "콘솔에서 값을 바꾸면 재기동 없이 판정 기준이 함께 반영된다" 를 2곳에서 단정했으나 정본 `unit/feature-0002-agent-core/docs/TASK.md`:3081 이 그 시나리오를 `- [ ] **미검증(이월)**` 로 명시 등재 → 두 문장에서 콘솔-변경 주장을 제거하고 **파생 계약 사실만** 남겼다.
+- [x] 평이화/비노출 — feature-id·모듈/함수/파일명·테이블·컬럼명·§번호·내부용어 누출 **0**(기계 스캔). ASCII 런은 스키마 키와 `Enter`/`Esc` 뿐. 실 UI 라벨 용어 연속성 유지('이동됨'·'작업 중단 감지'·'최근 갱신'·'실행 단계').
+- [x] 검증: `node --check` PASS · 구조 실측(블록 52 · `generated`=="2026-08-24"==`releases[0].date` · top items 8 · 2nd 08-19 items 1 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0) · **`tests/verify_release_notes.mjs` 편집 전 baseline 34 pass/0 fail = 편집 후 34 pass/0 fail → 회귀 0**(jsdom@24 핀 설치, cycle 초반 측정).
+- [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 `?v=` 정규화 후 `cmp` 일치(260,695B · `generated: "2026-08-19"`) → **3창 연속(08-20·08-21·08-24) 파리티 갭은 08-24 19:00 에 종결**(`697fdefe` + wrapper `restore_redundant_landable_dirt()`). 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(`docs/CONVENTIONS.md`:568 '`?v=dev` 고정 · 빌드 `inject_asset_stamp.py` content-hash 주입 · 수기 bump 금지') · `index.html`/`admin.html` 편집 0.
