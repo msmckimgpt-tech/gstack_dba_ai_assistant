@@ -282,3 +282,17 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - **docs 적용 25건**: 코드 탐색 지도 3종(`CODEBASE_MAP`·`CODE_TASKS`·`CODE_NAVIGATION`)의 `routers/` 카운트가 28·29 로 갈려 있었으나 실측은 **35**(route-module 29 + `_` 접두 5 + `__init__`)이고 공유헬퍼 열거에 `_folder_store.py` 가 빠져 있었다 · `app.py` 3,722→**3,925**줄 · `web_context.py` 2,281→**3,751**줄 · `DOC_REGISTRY` 의 in-flight 실측일·stale leftover 목록·`ai_read_priority` 4번째 값(CODEBASE_MAP 은 필드 미부여)·dangling `CONVENTIONS §3.1` · `STATUS` worktree note 실측일+ahead 수치 및 §2 의존 요약 범위 명시 · secret rotation 런북이 노출 백업을 3건만 열거해 `.env.bak-task0299-1781684676` 를 빠뜨린 것 보정(DOC_REGISTRY 가 명시 지목한 항목).
 - **noChange 정직**: 릴리즈노트(신규 머지 0 · 51블록/369항목 누락 0) · `SECURITY` · `DECISIONS` · wiki feature 카운트 **42**(5파일 8참조 전건 이미 정합) · `Log`/`hot` 이월 thread 보존.
 
+
+## [2026-08-24] feature | 첨부 비교의 시간 기준선 — 계보 최초 원본(_v0) 능동 주입 (feature-0002, Major)
+
+- 버전>1 첨부의 **계보 최초본**을 `## ORIGINAL VERSIONS (_v0)` 로 프롬프트에 능동 주입하고,
+  `read_attachment(attachment_id=…)` 이 같은 대화·같은 체인·미삭제 조상을 읽는다. 종전에는 원본에
+  도달할 경로가 **한 곳도 없어**(스코프·도구 모두 최신본만, `FILE UPDATES` diff 는 직전 버전 대비 +
+  그 턴 한정) v3 이상 체인에서 "처음과 지금의 차이" 가 원리적으로 답 불가였다.
+- 결정 근거는 라이브 실측: 첨부 1,088건 중 버전>1 **245건(22.5%)** · 다중버전 체인 **171개**(최장 11) ·
+  구버전 text 243건 **평균 3.0KB**(최대 12.4KB) → "항상 인라인" 이 감당 가능.
+- 같은 근거를 red-team 리뷰어에게도 넘겼다 — `FR-redteam-digest-lacks-prior-attachment-version`
+  (2026-08-11)이 `FILE UPDATES` 축에서 실증한 "답변만 가진 근거는 리뷰어에게 창작으로 보인다" 의
+  재발 지점이기 때문. **렌더된 원본만** 넘긴다(렌더 안 된 것을 넘기면 거짓 전제).
+- 스코프 해소(`_resolve_conversation_attachment_scope`)·웹 UI 버전 표기·스키마·권한은 **무변경**.
+  `_v0` 는 프롬프트 표기 규약이다. 보안 정합: `docs/SECURITY.md §48`.

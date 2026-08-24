@@ -1258,7 +1258,14 @@ def test_write_failure_after_successful_post_cannot_kill_slot_selection(env):
     """
     _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
     f = env["cred_root"] / "claude-corp" / ".credentials.json"
-    if subprocess.run(["chattr", "+i", str(f)], capture_output=True).returncode != 0:
+    # 환경 게이팅은 **예외까지** 덮어야 한다: 테스트 이미지에 `chattr` 바이너리가 아예 없으면
+    # `subprocess.run` 이 FileNotFoundError 를 던져 아래 returncode 검사에 도달하지 못하고,
+    # skip 하려던 케이스가 FAIL 로 뜬다(main 에서도 재현 — 코드 결함이 아니라 러너 차이).
+    try:
+        _chattr_rc = subprocess.run(["chattr", "+i", str(f)], capture_output=True).returncode
+    except OSError:
+        pytest.skip("chattr 미설치 — 쓰기 실패를 재현할 수 없다")
+    if _chattr_rc != 0:
         pytest.skip("chattr +i 미지원 파일시스템 — 쓰기 실패를 재현할 수 없다")
     try:
         _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})

@@ -1607,6 +1607,11 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
                 "**max_lines 를 임의로 작게 지정하지 말 것**(부분만 읽고 전체를 판단하게 된다). "
                 "결과가 절단되면(남은 줄 수가 헤더에 표시된다) 그 파일 전체를 근거로 삼는 판단 전에 "
                 "start_line 을 올려 **반드시 이어 읽는다**. "
+                "**이 대화에 있는 파일의 이전 버전(구버전·최초 원본)도 읽을 수 있다** — "
+                "`## ORIGINAL VERSIONS (_v0)` 섹션이나 버전 안내에 적힌 원본 attachment_id 를 "
+                "`attachment_id` 로 지정하면 된다(이때는 filename 이 아니라 attachment_id 를 쓴다). "
+                "버전 비교·'처음과 뭐가 달라졌나' 질문에서 원본 본문이 아직 프롬프트에 없으면 "
+                "이 도구로 먼저 읽고 답한다. "
                 "csv/xlsx 의 데이터 분석은 sandbox 테이블을 execute_sql 로 조회하는 편이 낫고, "
                 "이 도구는 원본 텍스트(헤더·서식 확인 등) 용도다. 이미지 파일은 읽을 수 없다."
             ),
@@ -1619,7 +1624,11 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
                     },
                     "attachment_id": {
                         "type": "integer",
-                        "description": "파일 이름 대신 쓸 첨부 내부 id(목록의 attachment_id). 동명 파일 구분이 필요할 때만.",
+                        "description": (
+                            "파일 이름 대신 쓸 첨부 내부 id(목록의 attachment_id). 동명 파일 구분이 "
+                            "필요할 때, 그리고 **이전 버전·최초 원본을 읽을 때** 쓴다(구버전은 "
+                            "filename 으로는 찾을 수 없고 id 로만 지정된다)."
+                        ),
                     },
                     "start_line": {
                         "type": "integer",
