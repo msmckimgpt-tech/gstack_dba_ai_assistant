@@ -4679,6 +4679,32 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - 계측 경로: `win-browser.py` 의 `win_host` 감지(resolv.conf nameserver)가 `8.8.8.8` 로 바뀌어
   브리지가 불가로 보였으나 실제 relay(`172.26.144.1:9223`)는 정상 — playwright 직접 연결 +
   전용 탭으로 검증했다.
+
+## CHG-20260824T203000-dnd-reorder-affordance — 드래그&드롭 이동에도 재배치 연출 적용
+
+사용자 요청(2026-08-24): drag&drop 이동에도 같은 연출.
+
+- `src/static/app/sidebar.js`
+  - `moveConversationToFolder`: PATCH 성공 직후 `requestSidebarReorderAnimation(conv:<cid>)` +
+    `item.folder_id` 갱신 뒤 `bumpSidebarDataVersion()` (폴더 배정 변경 = 목록 데이터 변경).
+  - `moveFolderTo`: PATCH 성공 직후 `requestSidebarReorderAnimation(folder:<id>)` — `loadFolders()`
+    **앞**에 둔다(뒤에 걸면 자기 갱신을 지나쳐 소비되지 않는다).
+  - 드래그·'···' 메뉴 이동·root 드롭(`#newFolderBtn`)이 모두 이 두 함수로 수렴하므로 전 경로 커버.
+- `tests/verify_sidebar_reorder_anim.mjs`: DnD 배선·순서 계약 6건 추가 (145 → 151 PASS).
+- 제품 동작 변경은 **연출 적용뿐** — 이동 API·정렬 규칙·폴더 트리 로직은 불변.
+
+### §18.8 적대 리뷰(codex) 반영분 — 같은 CHG 안에서 흡수 ([P1] 3 · [P2] 2)
+
+- `app/sidebar.js`
+  - `moveConversationToFolder`: 낙관적 로컬 반영 + 즉시 렌더 **제거** → 예약 후 `loadConversations`
+    의 **한 번의 렌더**로 이동(트윈 절단 해소). 제자리 드롭 조기 반환 추가.
+  - `moveFolderTo`: 제자리 드롭 조기 반환 추가.
+  - `_maybeSyncConversationListUnread`: 진입 가드에 `state.dqaDrag`(드래그 중 재렌더가 drop 을
+    씹는 경로)와 `state.sidebarReorderFocus`(대기 중 예약을 가로채는 경로) 추가.
+  - `_sameFolderRef` 헬퍼 신설(null=최상위와 숫자/문자 id 혼재 정규화).
+- `tests/verify_sidebar_reorder_anim.mjs`: DnD 계약을 **실행형**으로 교체 — 실 함수 구동 +
+  스텁 호출 순서 기록(선-렌더 부재 · PATCH 실패 시 예약 없음 · 예약 시점 데이터 버전 ·
+  제자리 드롭 무동작) + 동기화 가드 계약 (151 → 160 PASS).
 ## CHG-20260824T173000-sidebar-rename-focus — 인라인 이름 변경 오확정 봉인 + 대화 '이름 변경' 메뉴
 
 배경 재렌더(주기 unread 동기화 7s · 전환 catchup 1.2s · AI 응답 진행 중 갱신)가 편집 중인

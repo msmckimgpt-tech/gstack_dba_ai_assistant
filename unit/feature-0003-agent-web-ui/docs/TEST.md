@@ -116,6 +116,16 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260824T2030-dnd-reorder-affordance 드래그&드롭 이동에도 재배치 연출 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T203000-dnd-reorder-affordance.md`)**
+
+- **실측**: 최상위 대화를 폴더로 **드래그&드롭**(합성 `dragstart/dragover/drop` + DataTransfer —
+  앱이 실제 구독하는 경로) → 화면 y **175 → 145**, **7프레임 트윈**(59~158ms, 감속·오버슈트 0),
+  도착 그룹 `🗂zz-dnd-임시`, **rail + "이동됨" 배지 부여**. root 드롭으로 원복 + 임시 폴더 정리 200.
+- **de-risk(하네스)**: 151 PASS — DnD 배선 6건(두 이동 함수의 예약 · 예약↔데이터 반영 **순서** ·
+  데이터 버전 bump · 실패 경로 제외). **뮤테이션 3종 전건 KILL**.
+- **구조**: 드래그·'···' 메뉴 이동·root 드롭이 모두 `moveConversationToFolder`/`moveFolderTo` 로
+  수렴 → 두 곳에 예약만 걸면 전 경로가 같은 코디네이터를 탄다(연출이 갈라질 여지 없음).
+
 ### 20260824T1900-reorder-affordance 재배치 연출 재설계 — 오버슈트 제거 + 도착 표식 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T190000-reorder-affordance.md`)**
 
 - **모션**: 폴더 29px 이동 → 8프레임(112~226ms), offset 최소 **+1** = 목표를 지나치는 구간 없음
