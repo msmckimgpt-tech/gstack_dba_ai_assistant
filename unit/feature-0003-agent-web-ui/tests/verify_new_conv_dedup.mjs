@@ -147,6 +147,7 @@ function buildRender(conversationListEl) {
     "_folderChildren",  // 폴더 트리 루트 순회 — folders 빈 시나리오라 빈 배열 stub
     "_buildOwnDateTree", "_ymdKey",  // 날짜 트리 빌더 — 실함수 주입(아래 추출)
     "_expandAncestorsForReorderFocus",  // sidebar-reorder-anim: 접힘 해제(no-op — 좌표 계약은 전용 하네스)
+    "_decorateReorderAnchor",           // sidebar-reorder-anim: 행 생성 시 도착 표식 부여(no-op)
     "openConversationItemMenu", "closeConversationItemMenu",
     "_switchToPendingConversationContext", "selectConversation", "renderConversationBulkBar",
     `${folderScopedSrc}\n${renderSrc}\n return _renderConversationListDom;`,
@@ -169,6 +170,7 @@ function buildRender(conversationListEl) {
     buildOwnDateTree,  // _buildOwnDateTree — 실함수(날짜 트리 keys 계약 유지)
     ymdKey,            // _ymdKey
     noop,              // _expandAncestorsForReorderFocus
+    noop,              // _decorateReorderAnchor
     noop, noop, noop, noop, noop,
   );
 }

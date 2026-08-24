@@ -357,12 +357,45 @@
   100% { background: transparent; }
 }
 .conv-item.is-reorder-flash,
-.conv-folder-header.is-reorder-flash {
-  animation: convReorderFlash 1100ms ease-out;
+.conv-folder-header.is-reorder-flash,
+.conv-date-group-header.is-reorder-flash {
+  animation: convReorderFlash 900ms ease-out;
 }
+/* 앵커 rail — **형태** 신호라 hover/active 의 배경 변화와 의미가 겹치지 않는다(배경만으로
+   구분하면 "선택됨" 과 "방금 이동함" 이 같은 언어를 쓰게 된다). */
+.conv-item.is-reorder-anchor,
+.conv-folder-header.is-reorder-anchor {
+  box-shadow: inset 3px 0 0 var(--accent, #2563eb);
+  transition: box-shadow .35s ease;
+}
+/* 폴더 헤더는 배지의 absolute 기준이 필요하다(.conv-item 은 이미 relative). */
+.conv-folder-header { position: relative; }
+/* "이동됨" 배지 — 색이 아니라 **언어**로 상태를 말한다. absolute 라 행 레이아웃을 흔들지 않고,
+   hover 시엔 날짜 tip 에 자리를 내준다. */
+.conv-reorder-badge {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--accent, #2563eb);
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, var(--surface, #fff));
+  border-radius: 8px;
+  padding: 2px 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.conv-item:hover .conv-reorder-badge,
+.conv-folder-header:hover .conv-reorder-badge { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .conv-item.is-reorder-flash,
-  .conv-folder-header.is-reorder-flash { animation: none; }
+  .conv-folder-header.is-reorder-flash,
+  .conv-date-group-header.is-reorder-flash { animation: none; }
+  /* rail·배지는 정지 표식이라 그대로 둔다 — 모션이 줄수록 이 신호의 몫이 커진다. */
+  .conv-item.is-reorder-anchor,
+  .conv-folder-header.is-reorder-anchor { transition: none; }
 }
 
 /* folder-ux 개선6: 드래그&드롭 시각 피드백 */

@@ -144,6 +144,10 @@ export const state = {
   sidebarReorderFocus: null,
   //   대화·폴더 목록을 새로 받을 때마다 오르는 카운터(위 예약의 소비 기준).
   sidebarDataVersion: 0,
+  // sidebar-reorder-anim: 재배치가 끝난 뒤에도 남는 **도착 표식** {key, until}. 모션은 그 순간
+  //   화면을 봐야만 정보를 주지만 표식은 남아서, 눈을 뗐다 돌아온 사용자도 "방금 옮겨진 항목" 을
+  //   찾을 수 있다. 행 요소는 매 렌더 교체되므로 상태로 들고 행 생성 시 다시 부여한다.
+  sidebarReorderAnchor: null,
   activeConversationId: "",
   messages: [],
   hasMoreHistory: false,

@@ -614,25 +614,22 @@ export function isFolderScopedConversation(item) {
 // prefers-reduced-motion(인앱 '애니메이션 효과' 설정 포함)이면 ①의 트윈과 강조는 생략하되
 // **②③의 시야 유지는 그대로 수행한다** — 접근성 신호는 "모션을 줄여라"이지 "항목을 잃어도
 // 좋다"가 아니다. 예약이 없는 일반 렌더(주기 unread 동기화 등)는 측정도 하지 않아 비용 0.
-const REORDER_ANIM_MS = 420;
-// easeInOutBack (easings.net) 의 CSS 근사. 시작에서 진행 방향의 **반대로 살짝 당겼다가**
-// 끝에서 목표를 조금 지나쳐 되돌아오는 탄성 곡선이라, 항목이 "밀려나는" 것이 아니라 "자리를
-// 잡는" 느낌을 준다(사용자 요청 2026-08-24). 오버슈트가 있으므로 종전 ease-out 보다 재생
-// 시간을 늘려(320→420ms) 되돌아오는 구간이 눈에 뭉개지지 않게 한다.
-//   ⚠ 이 곡선은 제어점이 [0,1] 밖(-0.6 / 1.6)이라 트윈 도중 행이 **원래 자리보다 더 뒤/
-//   목표보다 더 앞** 으로 나간다. 이동 거리에 비례하므로(≈ delta × 0.1) 긴 이동에서는
-//   수십 px 까지 벌어진다 — 상한(REORDER_MAX_DELTA_PX)이 그 과장을 막는 안전판이다.
-const REORDER_EASING = "cubic-bezier(.68,-.6,.32,1.6)";
-// 오버슈트는 **이동 거리에 비례**한다(이 곡선의 최대 편차 ≈ 10.5%). 짧은 이동에서는 탄력이지만
-// 수백 px 이동에서는 수십 px 을 더 나가 스크롤 경계 밖으로 잘리거나 반대 방향 행과 교차하는
-// 시간이 길어진다 (§18.8 codex [P2]). 그래서:
-//   · 아주 긴 이동은 오버슈트 없는 곡선으로 내려 과장을 끊고,
-//   · 시야 보정은 오버슈트 폭만큼 여유를 더 확보하며,
-//   · 트윈 중에는 포인터 입력을 받지 않는다(보이는 위치와 눌리는 행이 어긋나는 창 제거).
-const REORDER_EASING_LONG = "cubic-bezier(.22,.61,.36,1)";  // ease-out (오버슈트 없음)
-const REORDER_BACK_MAX_DELTA_PX = 600;
-const REORDER_OVERSHOOT_RATIO = 0.105;
-const REORDER_FLASH_MS = 1100;
+// 곡선·길이·표식은 **정보 전달** 기준으로 고른다(2026-08-24 디자인 재검토). 직전 cycle 의
+// easeInOutBack(오버슈트, 420ms)은 되돌린다 — 근거:
+//   · 오버슈트/바운스는 단일 요소의 진입·강조 같은 **장식적** 순간의 곡선이고, 여러 행이 동시에
+//     움직이는 **기능적 재정렬**에서는 목록 전체가 출렁여 "무엇이 어디로 갔는지" 를 오히려 흐린다.
+//   · 420ms 는 "큰 화면 전환 전용" 대역(≈400ms 상한)이라 사이드바 한 행의 이동에는 길고, 그동안
+//     행이 입력을 받지 않는 시간도 함께 늘어난다.
+// 그래서 이동은 **거리에 맞춘 짧은 감속**으로 연속성만 제공하고, "어디로 갔는가" 는 아래
+// 도착 표식이 **모션이 끝난 뒤에도** 말해준다 — 모션은 그 순간 화면을 보고 있어야만 정보를
+// 주지만, 표식은 남아 있어서 눈을 뗐다 돌아온 사용자에게도 위치를 알려준다.
+const REORDER_ANIM_MIN_MS = 160;         // 한 칸 옆으로 가는 이동
+const REORDER_ANIM_MAX_MS = 280;         // 화면을 가로지르는 이동
+const REORDER_ANIM_FULL_DELTA_PX = 600;  // 이 거리 이상은 최대 길이로 포화
+const REORDER_EASING = "cubic-bezier(.22,.61,.36,1)";  // ease-out (감속, 오버슈트 없음)
+const REORDER_FLASH_MS = 900;            // 도착 순간의 배경 펄스(모션을 보고 있던 사용자용)
+const REORDER_ANCHOR_MS = 3500;          // 좌측 rail + 배지 유지(눈을 뗐다 돌아온 사용자용)
+const REORDER_BADGE_TEXT = "이동됨";
 const REORDER_REQUEST_TTL_MS = 4000;  // 예약 후 이 시간 안의 첫 렌더만 대상(지연 응답은 기존 동작)
 const REORDER_MIN_DELTA_PX = 2;       // 측정 노이즈 무시
 const REORDER_MAX_DELTA_PX = 2400;    // 화면 밖에서 날아오는 과장 연출 방지(그 행만 트윈 생략)
@@ -748,12 +745,12 @@ function _expandAncestorsForReorderFocus(key, dateTree) {
 
 // ③ 대상이 스크롤 밖이면 시야로 끌어온다. 여기서의 스크롤 이동분은 뒤이은 FLIP delta 가
 //    흡수하므로(측정 사이에 위치) 사용자 눈에는 목록 전체가 한 번에 미끄러지는 것으로 보인다.
-function _scrollReorderFocusIntoView(el, expectedDelta) {
+function _scrollReorderFocusIntoView(el) {
   const view = conversationListEl.getBoundingClientRect();
   const r = el.getBoundingClientRect();
-  // 오버슈트 곡선은 목표를 지나쳤다가 돌아온다 — 그 폭만큼 여유를 더 확보하지 않으면 대상이
-  // "정착 위치는 시야 안인데 지나가는 순간엔 잘리는" 상태가 된다 (§18.8 codex [P2]).
-  const pad = REORDER_VIEW_PAD_PX + _reorderOvershootPx(expectedDelta);
+  // 감속 곡선은 목표를 지나치지 않으므로 고정 여백이면 충분하다(오버슈트 곡선일 때 필요했던
+  // 가산을 곡선과 함께 걷어냈다).
+  const pad = REORDER_VIEW_PAD_PX;
   let d = 0;
   if (r.top < view.top + pad) d = r.top - (view.top + pad);
   else if (r.bottom > view.bottom - pad) d = r.bottom - (view.bottom - pad);
@@ -765,12 +762,94 @@ function _scrollReorderFocusIntoView(el, expectedDelta) {
   conversationListEl.scrollTop = Math.max(0, Math.min(maxScroll, conversationListEl.scrollTop + d));
 }
 
-function _flashReorderFocus(el) {
-  if (_prefersReducedMotion()) return;
+/**
+ * 앵커 표식 부착 — 좌측 rail(클래스) + **"이동됨" 배지**(요소).
+ * 배지는 색이 아니라 **언어**로 상태를 말한다: 색 변화만으로는 hover/active 배경과 의미가
+ * 충돌하고(같은 언어로 "선택됨" 과 "방금 이동함" 을 말하게 된다), 색각 특성에 따라 신호가 약해진다.
+ * 배지는 absolute 라 행 레이아웃을 흔들지 않고, hover 시엔 날짜 tip 에 자리를 내준다(CSS).
+ */
+function _attachReorderAnchor(el) {
+  el.classList.add("is-reorder-anchor");
+  if (el.querySelector(".conv-reorder-badge")) return;  // 매 렌더 부여되므로 중복 방지
+  const badge = document.createElement("span");
+  badge.className = "conv-reorder-badge";
+  badge.textContent = REORDER_BADGE_TEXT;
+  badge.setAttribute("aria-label", "방금 이 위치로 이동한 항목");
+  el.appendChild(badge);
+}
+
+function _detachReorderAnchor(el) {
+  if (!el) return;
+  el.classList.remove("is-reorder-anchor");
+  const b = el.querySelector(".conv-reorder-badge");
+  if (b && b.parentNode) b.parentNode.removeChild(b);
+}
+
+/**
+ * 행을 **만드는 순간** 살아 있는 앵커를 부여한다(지속성의 실제 구현).
+ * 렌더가 끝난 뒤 되붙이는 후처리 방식은 렌더 횟수·순서에 취약했다 — 이름 변경 직후 이어지는
+ * 두 번째 렌더에서 표식이 조용히 사라지는 것을 라이브에서 관측했다. 행 생성 경로에 두면
+ * 어떤 렌더 경로(그룹 토글·주기 동기화·목록 재적재)든 자연히 포함된다.
+ */
+function _decorateReorderAnchor(el) {
+  const a = state.sidebarReorderAnchor;
+  if (!a || !el) return;
+  if (Date.now() > Number(a.until || 0)) return;
+  if (_reorderRowKey(el) === a.key) _attachReorderAnchor(el);
+}
+
+/**
+ * 렌더 말미 보강 — 만료된 앵커 상태를 정리하고, 행 생성 경로를 타지 않은 행을 메운다.
+ * 주 경로는 `_decorateReorderAnchor`(행 생성 시 부여)이고 이쪽은 안전망이다.
+ */
+function _applyReorderAnchor() {
+  const a = state.sidebarReorderAnchor;
+  if (!a) return;
+  if (Date.now() > Number(a.until || 0)) { state.sidebarReorderAnchor = null; return; }
+  const el = _reorderRowByKey(a.key);
+  if (el) _attachReorderAnchor(el);
+}
+
+/**
+ * 도착 표식. 두 층으로 나뉘고 **수명이 다르다**:
+ *   · `is-reorder-flash` — 도착 순간의 배경 펄스(짧다).
+ *   · `is-reorder-anchor` + 배지 — 수 초 남고, 재렌더에도 복원된다.
+ * 도착한 날짜 그룹/폴더 헤더도 함께 펄스해 **어느 묶음으로 갔는지**를 위치로 알린다.
+ * reduced-motion 에서도 **표식은 유지**한다 — 모션을 줄일수록 정적 신호의 몫이 커진다
+ * (펄스 애니메이션 자체는 CSS 에서 정지된다).
+ */
+function _markReorderArrival(el, key) {
   el.classList.remove("is-reorder-flash");
   void el.offsetWidth;  // 연속 호출에서도 애니메이션이 다시 시작되게 리스타트
   el.classList.add("is-reorder-flash");
+  _attachReorderAnchor(el);
   window.setTimeout(() => { try { el.classList.remove("is-reorder-flash"); } catch (_) {} }, REORDER_FLASH_MS);
+
+  if (key) {
+    // 만료 타이머는 **자기 세대만** 거둔다. 같은 행을 연달아 이동시키면(폴더를 잇달아 만들고
+    // 이름을 바꾸는 흐름) 오래된 타이머가 살아 있는 최신 표식을 지워, 표식이 수명보다 일찍
+    // 사라진다 — 라이브 실측으로 잡은 결함이다. 토큰 동일성으로 세대를 가른다.
+    const token = { key: String(key), until: Date.now() + REORDER_ANCHOR_MS };
+    state.sidebarReorderAnchor = token;
+    window.setTimeout(() => {
+      if (state.sidebarReorderAnchor !== token) return;  // 더 최신 표식이 들어섰다 — 남의 것을 건드리지 않는다
+      state.sidebarReorderAnchor = null;
+      try { _detachReorderAnchor(_reorderRowByKey(String(key))); } catch (_) {}
+    }, REORDER_ANCHOR_MS);
+  }
+
+  let n = el.previousElementSibling;
+  while (n) {
+    if (n.classList && (n.classList.contains("conv-date-group-header") || n.classList.contains("conv-folder-header"))) {
+      const hdr = n;
+      hdr.classList.remove("is-reorder-flash");
+      void hdr.offsetWidth;
+      hdr.classList.add("is-reorder-flash");
+      window.setTimeout(() => { try { hdr.classList.remove("is-reorder-flash"); } catch (_) {} }, REORDER_FLASH_MS);
+      break;
+    }
+    n = n.previousElementSibling;
+  }
 }
 
 // invert 상태를 반드시 걷어내는 정리자. **invert 를 적용하는 시점에** 설치한다
@@ -795,25 +874,20 @@ function _armReorderCleanup(el) {
     clear();
   }
   el.addEventListener("transitionend", onEnd);
-  window.setTimeout(clear, REORDER_ANIM_MS + 400);
+  window.setTimeout(clear, REORDER_ANIM_MAX_MS + 400);
   return clear;
 }
 
-/** 이 이동에 실제로 쓸 곡선 — 아주 긴 이동은 오버슈트를 끄고 ease-out 으로 내린다. */
-function _reorderEasingFor(delta) {
-  return Math.abs(delta) > REORDER_BACK_MAX_DELTA_PX ? REORDER_EASING_LONG : REORDER_EASING;
-}
-
-/** 이 이동에서 트윈이 목표를 지나칠 최대 폭(px). ease-out 구간이면 0. */
-function _reorderOvershootPx(delta) {
-  const d = Math.abs(Number(delta) || 0);
-  if (!d || d > REORDER_BACK_MAX_DELTA_PX) return 0;
-  return Math.round(d * REORDER_OVERSHOOT_RATIO);
+/** 이동 거리에 비례한 재생 시간 — 짧은 이동은 굼뜨지 않게, 먼 이동은 급하지 않게. */
+function _reorderDurationFor(delta) {
+  const d = Math.min(Math.abs(Number(delta) || 0), REORDER_ANIM_FULL_DELTA_PX);
+  const span = REORDER_ANIM_MAX_MS - REORDER_ANIM_MIN_MS;
+  return Math.round(REORDER_ANIM_MIN_MS + span * (d / REORDER_ANIM_FULL_DELTA_PX));
 }
 
 // (Play) invert 상태에서 원위치로 트윈. 정리는 위 watchdog 이 이미 보장한다.
 function _playReorderMove(el, delta) {
-  el.style.transition = `transform ${REORDER_ANIM_MS}ms ${_reorderEasingFor(delta)}`;
+  el.style.transition = `transform ${_reorderDurationFor(delta)}ms ${REORDER_EASING}`;
   el.style.transform = "";
 }
 
@@ -825,13 +899,13 @@ function _commitSidebarReorder(snap) {
     conversationListEl.scrollTop = snap.scrollTop;
   }
   const focusEl = _reorderRowByKey(snap.key);
-  if (focusEl) {
-    // 대상이 이번에 얼마나 움직이는지를 먼저 알아야 오버슈트 여유를 실은 패딩을 계산할 수 있다.
-    const focusPrevTop = snap.before ? snap.before.get(snap.key) : undefined;
-    const focusDelta = focusPrevTop === undefined ? 0 : focusPrevTop - focusEl.getBoundingClientRect().top;
-    _scrollReorderFocusIntoView(focusEl, focusDelta);
+  if (focusEl) _scrollReorderFocusIntoView(focusEl);
+  if (!snap.before) {
+    // reduced-motion: 트윈은 생략하되 **도착 표식은 남긴다**. 모션이 없을수록 "어디로 갔는가" 를
+    // 알려주는 정적 신호가 유일한 단서가 된다.
+    if (focusEl) _markReorderArrival(focusEl, snap.key);
+    return;
   }
-  if (!snap.before) return;  // reduced-motion: 시야 유지까지만(트윈·강조 없음).
 
   // 읽기 phase → 쓰기 phase 분리(측정과 스타일 쓰기를 섞으면 행마다 강제 리플로우).
   const moves = [];
@@ -858,7 +932,7 @@ function _commitSidebarReorder(snap) {
     void conversationListEl.offsetWidth;  // invert 상태를 커밋해 다음 프레임의 값 변화가 전환이 되게
     requestAnimationFrame(() => moves.forEach(([el, delta]) => _playReorderMove(el, delta)));
   }
-  if (focusEl) _flashReorderFocus(focusEl);
+  if (focusEl) _markReorderArrival(focusEl, snap.key);
 }
 
 /**
@@ -869,6 +943,7 @@ export function renderConversationList() {
   const snap = _beginSidebarReorder();
   _renderConversationListDom(snap ? snap.key : "");
   if (snap) _commitSidebarReorder(snap);
+  _applyReorderAnchor();  // 만료 정리 + 행 생성 경로를 타지 않은 경우의 보강
 }
 
 function _renderConversationListDom(reorderFocusKey) {
@@ -1105,6 +1180,7 @@ function _renderConversationListDom(reorderFocusKey) {
         document.querySelectorAll(".folder-drop-hover").forEach((n) => n.classList.remove("folder-drop-hover"));
       });
     }
+    _decorateReorderAnchor(button);  // 살아 있는 도착 표식이 이 행의 것이면 여기서 부여
     return button;
   };
 
@@ -1262,6 +1338,7 @@ function _renderConversationListDom(reorderFocusKey) {
       });
       inp.addEventListener("click", (ev) => ev.stopPropagation());
       header.append(chevron, icon, inp);
+      _decorateReorderAnchor(header);
       conversationListEl.appendChild(header);
       _appendFolderChildren(folder, depth, isCollapsed);
       return;
@@ -1315,6 +1392,7 @@ function _renderConversationListDom(reorderFocusKey) {
       else if (d.type === "folder" && Number(d.id) !== Number(folder.folder_id)) await moveFolderTo(Number(d.id), folder.folder_id);
     });
 
+    _decorateReorderAnchor(header);
     conversationListEl.appendChild(header);
     _appendFolderChildren(folder, depth, isCollapsed);
   };

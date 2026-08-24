@@ -116,6 +116,20 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260824T1900-reorder-affordance 재배치 연출 재설계 — 오버슈트 제거 + 도착 표식 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T190000-reorder-affordance.md`)**
+
+- **모션**: 폴더 29px 이동 → 8프레임(112~226ms), offset 최소 **+1** = 목표를 지나치는 구간 없음
+  (오버슈트 곡선이면 음수 구간이 나온다). 거리 적응형 하한(160ms) 대역.
+- **도착 표식(핵심)**: 이동 직후 rail `inset 3px accent` + "이동됨" 배지(`aria-label`, absolute) →
+  **무관한 재렌더(그룹 접기/펼치기) 후에도 유지** → 3.5초 뒤 자연 소멸(잔류 0).
+- **de-risk(하네스)**: 145 PASS — 거리 적응형 대역 · 오버슈트 금지(제어점 y ∈ [0,1]) · 독립
+  기대값(소스 추출 금지) · 타이머 지연값 · 표식 2층 수명 · **행 생성 시 부여 배선** ·
+  **연속 이동 세대** · reduced-motion 표식 유지 · CSS 계약. **뮤테이션 7종 전건 KILL**.
+- **실측이 잡은 결함 2건**(하네스 통과 상태): 후처리 복원이 두 번째 렌더에서 소실 / 오래된 만료
+  타이머가 최신 표식 제거. 각각 구조 변경·세대 토큰으로 봉인 후 계약 추가.
+- **계측 함정**: 정적 자산 `?v=dev` 캐시(→ CDP `Network.setCacheDisabled`), worktree 재생성 시
+  컨테이너가 잡은 옛 디렉터리 inode(→ 컨테이너 재생성, `docker exec grep` 로 판정).
+
 ### 20260824T1800-reorder-easing 재배치 전환 easing → easeInOutBack (Minor §12.3, 2026-08-24, feature-0003 프론트 상수 1개 + duration) — **Environment: Windows-browser (PASS — 실측 기록 `docs/test-runs.d/REV-20260824T180000-reorder-easing.md`)**
 
 - **정본 실측**: easing 검증은 정지 스크린샷으로 불가능하다(되돌아왔는지 볼 수 없다) — rAF 궤적의
