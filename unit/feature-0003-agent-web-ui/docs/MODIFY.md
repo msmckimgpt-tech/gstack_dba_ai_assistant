@@ -4462,3 +4462,16 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
     측정 대입 한 줄을 허용하되 `finally` 밖으로 나가면 여전히 FAIL.
 - 웹 백엔드 변경 **0** — `result_summary` 가 `_resolve_step_display` 를 포함해 손대지 않고
   통과함을 소스로 확인했다.
+
+## CHG-20260824T130000-step-timing-attribution-postdeploy — 귀속 재정의 POST-DEPLOY 실측 (검증자산 + docs)
+
+`CHG-20260824T115000-step-timing-attribution` 이 배포 직전에 남긴 잔여 1건(PB-0008 라이브 실측)을
+라이브 `07755e05` 에서 닫는다. **제품 코드 변경 0** — 검증 자산과 기록만 추가한다.
+
+- `src/scenario.step-timing-attribution.json` (신규): 두 축을 실 배포본에서 재현하는 PB-0008
+  시나리오. A) 신규 run(도구 실측 있음)에서 추론/도구가 각자 자기 소요를 갖는지 —
+  도구 소요가 3초를 넘거나(추론 흡수 흔적) 추론이 소요를 못 가지면 실패한다.
+  B) 과거 대화에서 분리 불가능한 자리가 **비어 있는지** — 숫자가 있으면 실패한다.
+- `docs/TEST.md`: `Environment: Windows-browser` POST-DEPLOY Run + 확대 캡처 2종 첨부.
+  확대 오버레이 미부착(`document.body.appendChild` 누락) 함정도 함께 기록 — detached 노드는
+  개수 단언을 통과시키면서 캡처에는 나오지 않아, 부착 여부를 단언에 넣어 잠갔다.

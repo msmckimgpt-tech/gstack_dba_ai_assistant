@@ -3261,3 +3261,30 @@ JS(app.js ESM 서브트리) 변경은 asset-stamp 미주입 docker cp QA 불가(
 - ⚠️ jsdom 은 이 환경에 미설치 상태였다 — `npm i --prefix /tmp jsdom@24` 로 설치해 실행했다.
   최신 jsdom(27.x)은 **ESM 전용이라 Node 18 의 `require` 에서 `ERR_REQUIRE_ESM`** 로 죽고,
   하네스의 로더가 그 예외를 삼켜 "jsdom 미설치" 로만 보인다(다음 사람이 같은 벽에 서지 않게 기록).
+
+### Run 2026-08-24 — step-timing-attribution POST-DEPLOY (Environment: **Windows-browser**) — PASS
+
+- **Runner**: AI · **Bridge**: relay `http://172.26.144.1:9223` · **Browser**: 실 Windows Chrome/151.0.7922.170
+- **대상**: 라이브 배포본 — `web-a`/`web-b`/`ask-worker`/`insight-worker` **4개 서비스 전부
+  `GIT_COMMIT=07755e05`**(PR #1318 머지본). 서빙 `app.js` 에 `_computeStepTimings` 도달 확인.
+- **시나리오**: `src/scenario.step-timing-attribution.json` (12 step 전건 PASS)
+- **Evidence**: `test-runs.d/evidence/steptiming-attr-new-run-exact-live.png` ·
+  `steptiming-attr-legacy-fallback-live.png`
+
+| 축 | 실측 | 결과 |
+|---|---|---|
+| A. 신규 run(도구 실측 있음) = **정확** | 새 대화 `20260824035636-1633201e`(9단계·도구 2). 추론 단계 `12:56:39 · **11초**`, 그 직후 SQL `12:56:51 · **0.8초**`. 근사 표식 0 · `+` 접두 0 · 누적 단조 · 첫 단계 누적 생략 | PASS |
+| B. 과거 대화(실측 없음) = **정직한 폴백** | `20260814065452-7a187254`(13단계). 추론 `~11초`(근사 표식), **직후 도구는 소요 칸 자체가 비어 있고** 툴팁이 "기록만으로 분리할 수 없어 표시하지 않습니다", 도구→도구는 `~0.1초` | PASS |
+| C. 오귀속 해소(회귀) | 같은 자리 초판 표시는 추론 `+0.0초` / 도구 `+11초` 였다. 이제 시간이 **돌던 단계**에 붙는다 | PASS |
+
+판정은 사람 눈이 아니라 시나리오가 한다 — 도구 소요가 3초를 넘으면(추론 흡수 흔적) · 추론이
+자기 소요를 못 가지면 · 신규 run 에 근사 표식이 있으면 · `+` 접두가 남아 있으면 · 누적이
+비단조면 · 폴백 자리에 숫자가 있으면 step 이 실패한다.
+
+⚠️ **캡처 함정(기록)**: 확대 오버레이 초판은 `document.body.appendChild(host)` 가 빠져 있었다.
+detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로 **단언은 통과하는데 스크린샷에는
+오버레이가 없었다** — 캡처가 근거가 되지 못하는 상태. 부착 여부를 단언에 넣어 잠갔다.
+
+**라이브 데이터 영향(정직)**: A 축은 도구 실측이 배포 이후 run 에만 생기므로 합성으로 대체할 수
+없어 **새 대화에 질의 1건**(테이블 목록 5개)을 보냈다. 참여자가 나뿐인 새 대화라 타 세션·공유방
+무접촉. B 축은 읽기 전용.
