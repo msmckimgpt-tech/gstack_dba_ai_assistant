@@ -101,9 +101,37 @@ PR 생성 시점에 `origin/main` 이 12 commit 앞서 있어 rebase 했다(병�
 - 라이브 재실측: 편집 중 재렌더 2회 → PATCH **0건**, 값·커서(4)·포커스 유지 ·
   편집 중 16초 폴링 **0건** → 확정 PATCH 1건 → 종료 후 16초 **1건** · 임시 폴더 `DELETE` 200.
 
+## D-4. POST-DEPLOY 라이브 실증 (배포본 `27d99bb2`)
+
+PR #1336 머지 → `make deploy-web-only`(web+caddy — 변경이 본 feature 정적 자산에 한정, 워커 코드
+변경 0). 반영 판정은 파이프 exit 이 아니라 **서비스별 `GIT_COMMIT`**:
+
+| 항목 | 값 |
+|---|---|
+| web-a / web-b `GIT_COMMIT` | `27d99bb2` / `27d99bb2` |
+| 엣지 `/healthz` | `ok · 27d99bb2 · mysql_ok · pg_ok` |
+| 무중단 실측 | 배포 창 caddy 로그 `no upstreams available` **0건** |
+| 서빙 자산 도달 | 캐시버스터 `?v=6ac119f76533` · 서빙 `sidebar.js` 에 신규 심볼 14 매치 · `app.js` 에 `make("이름 변경", { action: "conversation.rename" …})` 1건 |
+| 라이브 A (편집 중 재렌더 2회) | 값 `검증중인 폴더이름` · 커서 4 · 포커스 유지 · `PATCH` **0건** |
+| 라이브 B (편집 중 16초) | `/api/conversations` **0건** → Enter 확정 `PATCH` 1건 → 종료 후 16초 **1건** |
+| 라이브 C (우클릭 메뉴) | `["이름 변경","공유","이동","설정"]` · 모달 **0** · 인라인 전환 · 확정 `PATCH` 1건 · 제목 원복 200 |
+| 정리 | 임시 폴더 id 96·97 `DELETE` 200 |
+
+### ⚠️ 계측기 자체 결함이 정상 코드를 거짓 FAIL 시켰다
+
+라이브 1차 실행에서 A 가 **FAIL**(재렌더 후 input 소멸 + `PATCH` 1건)로 나왔다. 원인은 제품이
+아니라 계측이었다 — 계측기가 `import('/static/app/sidebar.js?v=dev')` 로 모듈을 불러왔는데,
+**배포본의 실제 URL 은 content-hash 스탬프가 붙은 `?v=6ac119f76533`** 이다. ESM 은 URL 이 다르면
+별개 모듈 인스턴스를 만들고, 그 인스턴스의 `state` 는 편집을 모르는 채 목록을 재구성해 편집
+input 을 지운다 → 원 인스턴스의 blur 핸들러가 확정을 발사한다. bind-mount 검증에서는 소스가
+`?v=dev` placeholder 여서 우연히 같은 인스턴스였기에 드러나지 않았다.
+
+계측기를 **페이지가 실제 로드한 URL**(`performance.getEntriesByType('resource')`)로 import 하도록
+고쳤다. 교훈은 직전 cycle 과 같다 — **측정값이 이상하면 대상보다 계측을 먼저 의심한다.**
+
 ## E. 잔류물 (§16.6 (f))
 
-- 검증이 만든 임시 폴더(id 64·65·90·91·92·95)는 모두 `DELETE` 200 으로 제거했다.
+- 검증이 만든 임시 폴더(id 64·65·90·91·92·95·96·97)는 모두 `DELETE` 200 으로 제거했다.
 - 대화 1건(`20260807035225-9cb592cb`)의 제목을 변경했다가 **원 제목으로 원복**(200)했다(2회 — 리뷰 반영 전후).
   그 대화의 `updated_at` 은 두 번 갱신되어 목록 정렬상 상단으로 올라온다(내용 변경 없음).
 - 검증 컨테이너 `web-verify-rename` 은 검증 종료 후 제거한다. 라이브 web-a/web-b·caddy 무접촉.
