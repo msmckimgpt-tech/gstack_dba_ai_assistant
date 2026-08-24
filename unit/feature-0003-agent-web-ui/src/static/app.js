@@ -157,6 +157,9 @@ export const state = {
   //   화면을 봐야만 정보를 주지만 표식은 남아서, 눈을 뗐다 돌아온 사용자도 "방금 옮겨진 항목" 을
   //   찾을 수 있다. 행 요소는 매 렌더 교체되므로 상태로 들고 행 생성 시 다시 부여한다.
   sidebarReorderAnchor: null,
+  // sidebar-reorder-anim: 재배치 트윈이 도는 창(epoch ms). 이 동안의 목록 재렌더는 미뤄진다 —
+  //   재구성이 트윈 중인 DOM 을 교체해 애니메이션을 끊기 때문(라이브 실측으로 잡은 절단).
+  sidebarTweenUntil: 0,
   activeConversationId: "",
   messages: [],
   hasMoreHistory: false,

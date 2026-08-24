@@ -890,6 +890,11 @@ const REORDER_EASING = "cubic-bezier(.22,.61,.36,1)";  // ease-out (감속, 오�
 const REORDER_FLASH_MS = 900;            // 도착 순간의 배경 펄스(모션을 보고 있던 사용자용)
 const REORDER_ANCHOR_MS = 3500;          // 좌측 rail + 배지 유지(눈을 뗐다 돌아온 사용자용)
 const REORDER_BADGE_TEXT = "이동됨";
+// 트윈이 끝난 뒤 재렌더를 허용하기까지의 여유(마지막 프레임이 커밋될 시간).
+const REORDER_TWEEN_GRACE_MS = 60;
+// 트윈 보류 타이머 — 핸들과 마감 시각을 함께 들고 세대를 가른다(오래된 타이머가 새 창을 지우지 않게).
+let _tweenDeferTimer = null;
+let _tweenDeferDeadline = 0;
 const REORDER_REQUEST_TTL_MS = 4000;  // 예약 후 이 시간 안의 첫 렌더만 대상(지연 응답은 기존 동작)
 const REORDER_MIN_DELTA_PX = 2;       // 측정 노이즈 무시
 const REORDER_MAX_DELTA_PX = 2400;    // 화면 밖에서 날아오는 과장 연출 방지(그 행만 트윈 생략)
@@ -1147,7 +1152,13 @@ function _reorderDurationFor(delta) {
 
 // (Play) invert 상태에서 원위치로 트윈. 정리는 위 watchdog 이 이미 보장한다.
 function _playReorderMove(el, delta) {
-  el.style.transition = `transform ${_reorderDurationFor(delta)}ms ${REORDER_EASING}`;
+  const dur = _reorderDurationFor(delta);
+  // 보호 창을 **실제 트윈이 시작된 시점** 기준으로 다시 잡는다 (§18.8 codex [P1]). commit 시각으로
+  // 잡으면 rAF 가 지연될수록 창이 먼저 끝나 같은 절단이 재현된다(commit→rAF 200ms 지연이면
+  // 280ms 트윈은 480ms 에 끝나는데 창은 340ms 에 닫힌다). 연장만 하고 줄이지는 않는다.
+  const until = Date.now() + dur + REORDER_TWEEN_GRACE_MS;
+  if (until > Number(state.sidebarTweenUntil || 0)) state.sidebarTweenUntil = until;
+  el.style.transition = `transform ${dur}ms ${REORDER_EASING}`;
   el.style.transform = "";
 }
 
@@ -1189,6 +1200,11 @@ function _commitSidebarReorder(snap) {
     _armReorderCleanup(el);  // invert 시점부터 보장 — rAF 가 오지 않아도 잔류하지 않는다.
   });
   if (moves.length) {
+    // 트윈이 도는 창을 기록한다 — 이 동안의 재렌더는 아래 wrapper 가 보류한다. 이동 직후에는
+    // 읽음 처리·히스토리 로드 같은 **후속 갱신 렌더가 줄줄이 따라오고**, 재구성이 트윈 중인 DOM 을
+    // 교체해 애니메이션이 중간에 끊긴다(라이브 실측: 트윈 시작 173ms → 241ms 에 절단).
+    const longest = moves.reduce((mx, [, d]) => Math.max(mx, Math.abs(d)), 0);
+    state.sidebarTweenUntil = Date.now() + _reorderDurationFor(longest) + REORDER_TWEEN_GRACE_MS;
     void conversationListEl.offsetWidth;  // invert 상태를 커밋해 다음 프레임의 값 변화가 전환이 되게
     requestAnimationFrame(() => moves.forEach(([el, delta]) => _playReorderMove(el, delta)));
   }
@@ -1204,6 +1220,32 @@ export function renderConversationList() {
   //   세션은 노드에 묶여 있어 교체하면 끊기고, 그 뒤 Enter 가 미완성 문자열을 확정할 수 있다.
   //   compositionend(또는 편집 종료)가 보류분을 flush 한다.
   if (_inlineRenameComposing()) { _pendingListRender = true; return; }
+  // sidebar-reorder-anim: 재배치 트윈이 도는 동안에도 같은 이유로 재구성을 **미룬다** — 진행 중인
+  //   transform 이 요소 교체와 함께 사라져 애니메이션이 끊긴다. 경로마다 막는 대신(이동 직후엔
+  //   읽음 처리·히스토리 로드 등 후속 렌더가 여럿 따라온다) 여기 한 곳에서 보류하고, 트윈이 끝나면
+  //   보류분을 1회로 합쳐 실행한다(IME 보류와 같은 `_pendingListRender` 경로를 공유).
+  // 편집(인라인 이름 변경) 세션이 살아 있으면 보류하지 않는다 (§18.8 codex [P2]) — 편집 진입은
+  //   "렌더 직후 rAF 에서 input 을 포커스" 하는 동기 계약이라, 렌더를 미루면 포커스를 영구히 잃는다.
+  //   연출보다 입력 반응성이 우선이다.
+  const tweenUntil = Number(state.sidebarTweenUntil || 0);
+  if (tweenUntil > Date.now() && !isSidebarRenaming()) {
+    _pendingListRender = true;
+    // 타이머는 **자기 deadline 토큰**으로 세대를 가른다 (§18.8 codex [P1]). IME flush 와 플래그를
+    //   공유하므로 같은 창에 복수 타이머가 생길 수 있고, 오래된 타이머가 뒤늦게 깨어 **새 트윈의
+    //   보호 창을 0 으로 지우는** 경합이 있었다.
+    if (_tweenDeferTimer === null || tweenUntil > _tweenDeferDeadline) {
+      if (_tweenDeferTimer !== null) { try { window.clearTimeout(_tweenDeferTimer); } catch (_) {} }
+      _tweenDeferDeadline = tweenUntil;
+      _tweenDeferTimer = window.setTimeout(() => {
+        _tweenDeferTimer = null;
+        if (_tweenDeferDeadline !== tweenUntil) return;                   // 더 늦은 창이 들어섰다
+        if (Number(state.sidebarTweenUntil || 0) > Date.now()) return;    // 창이 연장됐다(play 기준 재설정)
+        state.sidebarTweenUntil = 0;
+        _flushPendingListRender();
+      }, Math.max(16, tweenUntil - Date.now()));
+    }
+    return;
+  }
   const snap = _beginSidebarReorder();
   // sidebar-inline-rename ②③: 편집 중이면 입력 상태를 스냅샷하고, 재구성 구간의 detach blur 를
   //   확정으로 오인하지 않도록 표시한다. 편집이 없으면 두 줄 모두 no-op(기존 경로·비용 그대로).

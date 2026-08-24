@@ -4761,3 +4761,22 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   저장/재조회 분리). 뮤테이션 8종 전건 KILL.
 - `tests/verify_sidebar_reorder_anim.mjs` · `tests/verify_new_conv_dedup.mjs`: 구조 변경으로 깨진
   텍스트 단언 2건을 **계약을 유지한 채** 갱신(예약의 실패-경로 도달 불가 / wrapper 본문 계약).
+
+## CHG-20260824T220000-tween-render-defer — 트윈 중 재렌더 보류(직전 [P1] 완결)
+
+- `src/static/app/sidebar.js`
+  - `REORDER_TWEEN_GRACE_MS` 신설. `_commitSidebarReorder` 가 트윈 시작 시
+    `state.sidebarTweenUntil` 기록(가장 먼 이동의 재생 시간 + 여유).
+  - `renderConversationList` wrapper: 트윈 창 동안 재구성을 보류하고 종료 후 1회 flush.
+    **IME 조합 보류와 같은 `_pendingListRender` 경로 공유**(중복 메커니즘 회피).
+- `src/static/app.js`: `state.sidebarTweenUntil` 슬롯.
+- `tests/verify_sidebar_reorder_anim.mjs`: 보류 계약 7건 (160 → 167 PASS).
+- 실측 대조: 트윈이 241ms 절단 → **123ms 완주**(vy 30 → 1) 후 t=308 에 보류분 렌더.
+
+### §18.8 적대 리뷰(codex) 반영분 — 같은 CHG 안에서 흡수 ([P1] 2 · [P2] 2)
+
+- `app/sidebar.js`: `_playReorderMove` 가 **실제 트윈 시작 시점 기준으로 보호 창 연장**(rAF 지연
+  흡수). 보류 타이머를 전용 핸들 + **deadline 토큰**으로 세대 분리 + 창 연장 확인(이중 방어).
+  **편집(인라인 이름 변경) 중에는 보류하지 않는다**(포커스 계약이 동기 렌더에 의존).
+- `tests/verify_sidebar_reorder_anim.mjs`: 보류 계약을 **wrapper 실행형**으로 교체(가상 시간·타이머)
+  + 이중 방어 존재 계약 (167 → 175 PASS).

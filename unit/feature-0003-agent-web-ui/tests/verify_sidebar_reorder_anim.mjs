@@ -693,6 +693,119 @@ console.log("\n[6] 호출 배선 — 두 명칭 변경 경로가 실제로 예�
       ok("[DnD] 폴더 제자리 드롭 → 예약 없음", st.sidebarReorderFocus === null);
     }
   }
+  // ★ 트윈 중 재렌더 보류 — **wrapper 를 실제로 구동**해 잠근다 (§18.8 codex [P2]).
+  //   문자열 검사만 하면 rAF 지연·다중 후속 렌더·타이머 세대 경합·편집 예외를 전부 놓친다.
+  {
+    const wrapSrc = extractFn(SIDEBAR, "renderConversationList");
+    ok("[트윈보류] wrapper 추출", Boolean(wrapSrc));
+
+    // 가상 시간 + 가상 타이머로 wrapper 만 구동한다(렌더 본체·FLIP 은 스텁 — 여기서 보는 것은
+    // "언제 그리고 언제 미루는가" 뿐이다).
+    const buildWrap = ({ renaming = false } = {}) => {
+      const st = { sidebarTweenUntil: 0 };
+      const log = [];
+      let now = 1000;
+      const timers = [];
+      const env = {
+        st, log,
+        tick(ms) {
+          now += ms;
+          const due = timers.filter((t) => !t.done && t.at <= now);
+          due.forEach((t) => { t.done = true; t.fn(); });
+        },
+        get now() { return now; },
+      };
+      const factory = new Function(
+        "state", "nowFn", "window", "isSidebarRenaming", "_inlineRenameComposing",
+        "_renderConversationListDom", "_beginSidebarReorder", "_commitSidebarReorder",
+        "_applyReorderAnchor", "_captureInlineRenameEdit", "_restoreInlineRenameEdit", "log",
+        `let _pendingListRender = false;
+         let _inlineRenameDetaching = false;
+         let _tweenDeferTimer = null;
+         let _tweenDeferDeadline = 0;
+         const Date = { now: nowFn };
+         function _flushPendingListRender() {
+           if (!_pendingListRender) return;
+           _pendingListRender = false;
+           renderConversationList();
+         }
+         ${wrapSrc.replace(/^export /, "")}
+         return { renderConversationList, flush: _flushPendingListRender,
+                  pending: () => _pendingListRender, timerHandle: () => _tweenDeferTimer };`
+      );
+      const api = factory(
+        st, () => now,
+        { setTimeout: (fn, ms) => { timers.push({ fn, at: now + ms, done: false }); return timers.length; },
+          clearTimeout: (h) => { const t = timers[h - 1]; if (t) t.done = true; } },
+        () => renaming, () => false,
+        () => log.push("render"),
+        () => null, () => {}, () => {}, () => null, () => {},
+        log,
+      );
+      return { api, env };
+    };
+
+    // (1) 트윈 창 안의 렌더는 **실행되지 않고** 보류된다.
+    {
+      const { api, env } = buildWrap();
+      env.st.sidebarTweenUntil = env.now + 200;
+      api.renderConversationList();
+      ok("[트윈보류] 창 안의 렌더는 미실행", env.log.length === 0, JSON.stringify(env.log));
+      ok("[트윈보류] 보류 플래그 설정", api.pending() === true);
+    }
+    // (2) 창 안에서 여러 번 들어와도 **한 번으로 합쳐** 실행된다(후속 갱신 렌더가 줄줄이 따라온다).
+    {
+      const { api, env } = buildWrap();
+      env.st.sidebarTweenUntil = env.now + 200;
+      api.renderConversationList();
+      api.renderConversationList();
+      api.renderConversationList();
+      env.tick(260);
+      ok("[트윈보류] 다중 보류 → flush 1회", env.log.filter((x) => x === "render").length === 1, JSON.stringify(env.log));
+      ok("[트윈보류] flush 후 창 해제", env.st.sidebarTweenUntil === 0);
+    }
+    // (3) ★ rAF 지연으로 창이 **연장**되면(play 시점 기준 재설정) 타이머는 flush 하지 않는다.
+    {
+      const { api, env } = buildWrap();
+      env.st.sidebarTweenUntil = env.now + 100;
+      api.renderConversationList();
+      env.st.sidebarTweenUntil = env.now + 400;   // play 가 뒤늦게 시작해 창을 연장
+      env.tick(160);                              // 첫 타이머 만기
+      ok("[트윈보류] 창 연장 시 조기 flush 안 함", env.log.length === 0, JSON.stringify(env.log));
+      ok("[트윈보류] 연장된 창이 유지됨", env.st.sidebarTweenUntil > env.now);
+    }
+    // (4) ★ 세대 경합: 오래된 타이머가 새 창을 지우지 않는다.
+    {
+      const { api, env } = buildWrap();
+      env.st.sidebarTweenUntil = env.now + 100;
+      api.renderConversationList();               // T1 예약(마감 = now+100)
+      env.st.sidebarTweenUntil = env.now + 500;   // 새 트윈이 더 늦은 창을 연다
+      api.flush();                                // IME 등에서 flush → 재진입하며 T2 예약
+      env.tick(150);                              // T1 만기 — 자기 세대가 아니므로 무시해야 한다
+      ok("[트윈보류] 오래된 타이머가 새 창을 지우지 않음", env.st.sidebarTweenUntil > env.now,
+        `until=${env.st.sidebarTweenUntil} now=${env.now}`);
+      ok("[트윈보류] 오래된 타이머가 조기 렌더하지 않음", env.log.length === 0, JSON.stringify(env.log));
+    }
+    // (5) 편집(인라인 이름 변경) 중에는 보류하지 않는다 — 포커스 계약이 동기 렌더에 의존한다.
+    {
+      const { api, env } = buildWrap({ renaming: true });
+      env.st.sidebarTweenUntil = env.now + 300;
+      api.renderConversationList();
+      ok("[트윈보류] 편집 중에는 즉시 렌더(포커스 유실 방지)", env.log.filter((x) => x === "render").length === 1);
+    }
+    // 창 기록은 commit·play 양쪽에 있어야 한다(commit 은 하한, play 가 실제 기준).
+    const commit = extractFn(SIDEBAR, "_commitSidebarReorder") || "";
+    const play = extractFn(SIDEBAR, "_playReorderMove") || "";
+    ok("[트윈보류] commit 이 창을 기록", commit.includes("state.sidebarTweenUntil = Date.now()"));
+    ok("[트윈보류] play 가 실제 시작 기준으로 창을 연장", /if \(until > Number\(state\.sidebarTweenUntil \|\| 0\)\) state\.sidebarTweenUntil = until;/.test(play));
+    ok("[트윈보류] state 슬롯 존재", /sidebarTweenUntil: 0/.test(APPJS));
+    // 오래된 타이머의 오작동은 **두 가드가 이중으로** 막는다(세대 토큰 · 창 연장 확인).
+    //   하나만 남아도 동작은 지켜지므로 위 실행 테스트는 개별 제거를 잡지 못한다 — 둘 다
+    //   존재하는지를 여기서 명시적으로 요구한다(둘 다 빠지면 실행 테스트가 red).
+    ok("[트윈보류] 타이머 세대 토큰 가드 존재", /_tweenDeferDeadline !== tweenUntil/.test(wrapSrc || ""));
+    ok("[트윈보류] 창 연장 확인 가드 존재",
+      /if \(Number\(state\.sidebarTweenUntil \|\| 0\) > Date\.now\(\)\) return;/.test(wrapSrc || ""));
+  }
   // 주기 unread 동기화가 대기 중 예약을 가로채거나 드래그를 깨지 않는다 (§18.8 codex [P1]).
   {
     const syncSrc = extractFn(SIDEBAR, "_maybeSyncConversationListUnread") || "";

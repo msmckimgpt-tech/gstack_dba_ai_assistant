@@ -116,6 +116,17 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260824T2200-tween-render-defer 트윈 중 재렌더 보류 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T220000-tween-render-defer.md`)**
+
+- **수정 전/후 대조**(같은 조작, 30px 이동): 전 = `t=173 invert → vy 30→14 → t=241 재렌더로 절단` /
+  후 = `t=73 invert → vy 30→…→1 (123ms 완주) → t=308 보류분 렌더 1회`.
+- **계측 설계**: `MutationObserver(childList)` 로 **렌더 시각**을, rAF 로 computed transform 을 함께
+  기록해 "언제·무엇이 트윈을 끊었는가" 를 대조했다(궤적만 봐서는 절단 원인이 드러나지 않는다).
+- **de-risk(하네스)**: 167 PASS — 보류 계약 7건(창 확인 · 보류 시 렌더 미실행 · IME 와 flush 경로
+  공유 · 중복 예약 방지 · 창 기록 · 창 길이 산식 · state 슬롯). **뮤테이션 2종 전건 KILL**.
+- **회귀 0**: `verify_sidebar_inline_rename`(73) · `verify_new_conv_dedup`(21) ·
+  `verify_folder_dnd_shared_group`(31).
+
 ### 20260824T2030-dnd-reorder-affordance 드래그&드롭 이동에도 재배치 연출 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T203000-dnd-reorder-affordance.md`)**
 
 - **실측**: 최상위 대화를 폴더로 **드래그&드롭**(합성 `dragstart/dragover/drop` + DataTransfer —
