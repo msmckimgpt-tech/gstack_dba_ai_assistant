@@ -1261,3 +1261,48 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - **[SKIPPED] 사유**: 색인·미러 additive 정합(정본 무변경 · 코드/스키마/권한 변경 0 · 새 구조 결정 0). **Human Approval Needed**: 예 — 단 doc_sync changeset 자체가 아니라 **위 report-only ①(`repo/` 정리 + `make deploy-web`)** 에 한해. 3창 연속 미해소이며 사람만 풀 수 있다.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 **로컬 commit 까지만**. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. 본 changeset 은 pure-META 라 서빙 static 을 바꾸지 않으므로 **재배포 불요(서빙 산출물 없음)** — 단 위 파리티 갭은 그와 별개로 열려 있고 `repo/` 정리 없이는 wrapper 배포로도 치유되지 않는다.
 - Timestamp: 2026-08-24T01:03:01+09:00
+
+## REV-20260824T190000-docsync-belt-scope-closeout [SKIPPED:non-policy-doc] — META-0063 report-only ①② 종결 (cron wrapper belt 범위 결함 수정)
+
+**무엇을 닫는가**: `REV-20260824T010301-META-0063-doc-sync-0824` 가 report-only 로 이월한
+① 서빙 파리티 갭(사람 액션 1줄) · ② **wrapper self-heal 구조 결함**. 3창 연속(08-20·08-21·08-24)
+미해소였고 사람만 풀 수 있는 항목으로 표기돼 있었다.
+
+**근본원인(로그로 확정)**: `artifacts/doc-sync-cron/20260820-010301.log:80-101` 이 결정적이다 —
+belt 가 `docs/`·`meta/`·`wiki/` **17파일은 되돌렸는데** `unit/feature-0003-agent-web-ui/` 의
+**6파일은 WARN 만 남기고 방치**했다. 이유: belt 의 분류기 `is_leak_doc_path()` 는
+`bin/verify-completion.sh is_meta_path()` 의 **1:1 사본**(META 경로)인데, doc_sync 가 실제로
+편집하는 범위 `is_landable_path()` 는 `unit/<f>/docs/*` 와 릴리즈노트 static 까지 포함한다.
+**belt 범위 ⊂ skill 쓰기 범위** — 그 차집합이 매 run 남았다. 남은 dirty 가
+`deploy_via_canonical` 의 `merge --ff-only origin/main` 을 막고, post-merge 배포와
+self-heal catch-up 이 **같은 ff 를 공유**하므로 마커가 영구 잔존했다(자가치유 불가).
+
+**조치 (wrapper, 저장소 밖)**: `/home/claude-corp/.local/bin/dqa-doc-sync-cron.sh` 에
+`restore_redundant_landable_dirt()` 신설 + 2개 지점 배선 —
+(a) `deploy_via_canonical` 의 ff-merge **직전**, (b) 종료 belt 직후.
+**무손실 게이트**: 워킹트리 내용이 이미 `origin/main` blob 과 **동일한**(hash-object 대조)
+파일만 되돌린다. 그 내용은 ff 가 어차피 다시 가져오므로 잃는 것이 0 이다. 내용이 다르면
+손대지 않고 `keep:` 로 보존 로그만 남긴다 — belt 보다 범위가 넓으므로 사람·타 세션의 고유
+작업을 자동으로 지우지 않기 위해 '같은 내용' 을 하드 게이트로 뒀다. 되돌리기 전 기존
+`belt_snapshot`(headdiff+content)을 그대로 태운다.
+
+**검증(격리 저장소 실측)**: `bash -n` PASS + 3축 —
+① origin/main 과 동일한 `unit/*/docs/*` → **restore** ② 고유 내용의 릴리즈노트 static →
+**보존**(ff 도 정당하게 계속 차단) ③ `unit/*/src/static/app.js`(landable 아님) → **무접촉**.
+08-20 사고 재현(6파일 전부 중복)에서 수정 전 `ff BLOCKED` → 수정 후 `ff OK` 이고
+ff 이후 `git diff origin/main` **0줄(무손실)**.
+
+**①(파리티 갭) 종결**: 6파일 복원(백업 선행 — 43개 추가 라인 전건이 origin/main 에 이미 존재하고
+`release-notes-data.js` 는 byte-identical 임을 확인) → `bin/deploy-web.sh` 전체 롤아웃 →
+web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측. stale
+`DEPLOY_FAILED-20260820-010301.marker` 는 `landed_main(774c7326)` 이 배포본의 조상임을 확인 후 제거.
+
+**남는 한계(정직)**: ⓐ **누출 자체의 발생원은 못 닫았다** — 무엇이 repo/ 에 썼는지는 이번
+조사 범위 밖이고, belt 는 어디까지나 backstop 이다. ⓑ wrapper 는 **저장소에 tracked 되지
+않는다**(`/home/claude-corp/.local/bin/`) — 그래서 이 entry 가 유일한 저장소 측 기록이다.
+백업: 세션 scratchpad `dqa-doc-sync-cron.sh.bak-20260824`(md5 `df80e252…`).
+ⓒ ②가 재발하지 않는지는 다음 cron run(01:03) 로그의 `restore(origin/main 과 동일)` 유무로 확인한다.
+
+- **[SKIPPED] 사유**: 저장소 코드/정책 변경 0 — 본 changeset 은 `meta/REVIEW.md` 1파일 기록.
+  실제 수정 대상은 저장소 밖 ops 스크립트이고, 그 변경은 격리 저장소 3축 실측으로 검증했다.
+- Timestamp: 2026-08-24T19:00:00+09:00
