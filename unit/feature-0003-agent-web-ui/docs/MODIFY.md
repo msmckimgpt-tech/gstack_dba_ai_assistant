@@ -4636,3 +4636,11 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - `tests/verify_sidebar_reorder_anim.mjs`: 기대값을 소스 추출이 아닌 **독립 고정**으로 전환
   (토톨로지 제거) + 타이머 지연값 검사 + 긴 이동 강등 · 포인터 차단 · 오버슈트 패딩 계약 추가
   (98 → 109 PASS).
+
+## CHG-20260824T190000-easing-postdeploy — easeInOutBack POST-DEPLOY 실증 기록
+
+`CHG-20260824T180000-reorder-easing`(PR #1328, main `de940c70`) 배포 후 실증. **제품 코드 변경 0.**
+
+- 서비스별 `GIT_COMMIT` = `de940c70` · 무중단 `no upstreams available` 0건 ·
+  캐시버스터 `?v=9ca76406f562` · 서빙본 `REORDER_EASING`/`REORDER_ANIM_MS` 도달 확인.
+- 라이브 궤적: 폴더 29px 이동에서 back-in +3px → 오버슈트 -3px → 정착(26프레임/136~541ms).

@@ -11417,6 +11417,16 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [x] 수정본 재실측: 폴더 29px → back-in +3 / 오버슈트 -3(25프레임) · 대화 174px(8월 11일 →
       오늘) → back-in +18 / 오버슈트 -18, 10%(22프레임). 기존 하네스 5종 회귀 0.
 
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `de940c70`)
+
+- [x] 배포: PR #1328 merge → `make deploy-web-only`. web-a/web-b 무중단 롤링.
+- [x] 서비스별 `GIT_COMMIT` = `de940c70`(web-a·web-b·엣지 healthz) · **무중단 실측
+      `no upstreams available` 0건** · 캐시버스터 `?v=9ca76406f562`.
+- [x] 라이브 서빙본에 곡선 도달: `REORDER_EASING = "cubic-bezier(.68,-.6,.32,1.6)"` ·
+      `REORDER_ANIM_MS = 420`.
+- [x] **라이브 PB-0008 궤적 재확인**: 폴더 이름 변경(29px) → back-in **+3px**(반대 방향) →
+      오버슈트 **-3px**(목표 초과) → 정착. 26 프레임(136~541ms). 임시 폴더 정리 200.
+
 ### 남은 것
 
-- [ ] POST-DEPLOY: 라이브 서빙본에서 easing 도달 + 궤적 재확인.
+- 없음.
