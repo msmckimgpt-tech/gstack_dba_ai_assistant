@@ -4644,3 +4644,26 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - 서비스별 `GIT_COMMIT` = `de940c70` · 무중단 `no upstreams available` 0건 ·
   캐시버스터 `?v=9ca76406f562` · 서빙본 `REORDER_EASING`/`REORDER_ANIM_MS` 도달 확인.
 - 라이브 궤적: 폴더 29px 이동에서 back-in +3px → 오버슈트 -3px → 정착(26프레임/136~541ms).
+
+## CHG-20260824T190000-reorder-affordance — 재배치 연출 재설계(오버슈트 제거 + 도착 표식)
+
+사용자 요청(2026-08-24): 애니메이션보다 더 나은 **명시적** 효과가 있는지 공격적 검토 후 반영.
+
+- `src/static/app/sidebar.js`
+  - 곡선 `easeInOutBack` → **ease-out**, 길이 420ms 고정 → **거리 적응형 160~280ms**
+    (`REORDER_ANIM_MIN_MS`/`MAX_MS`/`FULL_DELTA_PX`, `_reorderDurationFor`). 오버슈트 전용
+    상수·헬퍼(`REORDER_EASING_LONG`·`BACK_MAX_DELTA_PX`·`OVERSHOOT_RATIO`·`_reorderEasingFor`·
+    `_reorderOvershootPx`)와 시야 보정의 오버슈트 가산 제거.
+  - `_flashReorderFocus` → **`_markReorderArrival`**: 펄스(0.9초) + **지속 앵커**(rail + 배지,
+    3.5초) + **도착 묶음 헤더 동반 펄스**. `_attachReorderAnchor`/`_detachReorderAnchor`/
+    `_decorateReorderAnchor`(행 생성 시 부여)/`_applyReorderAnchor`(렌더 말미 보강) 신설.
+  - 만료 타이머에 **세대 토큰** 도입 — 오래된 타이머가 최신 표식을 지우던 결함 봉인.
+  - reduced-motion 경로에서도 도착 표식 부여(트윈만 생략).
+  - `buildCompactItem`·`renderFolderNode`(일반·이름변경 두 경로)에 `_decorateReorderAnchor` 배선.
+- `src/static/app.js`: `state.sidebarReorderAnchor` 슬롯 추가.
+- `src/static/css/shell.css`: 펄스 0.9초 + 날짜 그룹 헤더 펄스 대상 추가 · `.is-reorder-anchor`
+  rail(`inset 3px accent`) · `.conv-reorder-badge`(absolute, accent 칩) · `.conv-folder-header`
+  `position: relative` · reduced-motion 시 펄스만 정지(rail·배지 유지).
+- `tests/verify_sidebar_reorder_anim.mjs`: 기대값 전환(거리 적응형·표식) + 도착 표식 계약 블록 +
+  **행 생성 배선 계약** + **연속 이동 세대 계약** + 스텁 확장(다중 클래스·형제·자식 요소·document)
+  (109 → **145 PASS**).

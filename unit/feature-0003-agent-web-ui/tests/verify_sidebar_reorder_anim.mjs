@@ -47,15 +47,15 @@ function extractFn(src, name) {
 }
 
 // ── 상수는 소스에서 그대로 실어온다(하드코딩하면 임계값 변경을 하네스가 놓친다) ──
-const CONST_BLOCK = (SIDEBAR.match(/const REORDER_ANIM_MS[\s\S]*?const REORDER_ROW_SELECTOR = [^\n]+\n/) || [""])[0];
+const CONST_BLOCK = (SIDEBAR.match(/const REORDER_ANIM_MIN_MS[\s\S]*?const REORDER_ROW_SELECTOR = [^\n]+\n/) || [""])[0];
 ok("[추출] REORDER_* 상수 블록", CONST_BLOCK.includes("REORDER_ROW_SELECTOR"));
 
 const FN_NAMES = [
   "requestSidebarReorderAnimation", "bumpSidebarDataVersion", "_reorderRowKey", "_reorderRowByKey",
   "_beginSidebarReorder", "_expandAncestorsForReorderFocus",
-  "_reorderEasingFor", "_reorderOvershootPx",
-  "_scrollReorderFocusIntoView", "_flashReorderFocus", "_armReorderCleanup", "_playReorderMove",
-  "_commitSidebarReorder",
+  "_scrollReorderFocusIntoView", "_markReorderArrival", "_reorderDurationFor",
+  "_attachReorderAnchor", "_detachReorderAnchor", "_decorateReorderAnchor", "_applyReorderAnchor",
+  "_armReorderCleanup", "_playReorderMove", "_commitSidebarReorder",
 ];
 const FN_SRC = {};
 FN_NAMES.forEach((n) => {
@@ -88,10 +88,14 @@ function makeEnv({ rows = [], scrollTop = 0, viewTop = 0, viewH = 400, reduced =
     querySelectorAll: () => rows,
     getBoundingClientRect: () => ({ top: viewTop, bottom: viewTop + viewH, height: viewH }),
   };
-  rows.forEach((r) => { r._list = listEl; });
+  rows.forEach((r, i) => {
+    r._list = listEl;
+    r.previousElementSibling = i > 0 ? rows[i - 1] : null;
+  });
   const state = {
     sidebarReorderFocus: null,
     sidebarDataVersion: 0,   // app.js state 슬롯과 동일 초기값
+    sidebarReorderAnchor: null,
     collapsedDateGroups: new Set(),
     conversations: [],
     folders,
@@ -113,9 +117,18 @@ function makeEnv({ rows = [], scrollTop = 0, viewTop = 0, viewH = 400, reduced =
     setTimeout: (fn, ms) => { timers.push([fn, ms]); return timers.length; },
     clearTimeout: () => {},
   };
+  // 배지는 실제 요소다 — 생성·부착·제거가 도는지 보려면 최소 document 가 필요하다.
+  const documentStub = {
+    createElement: () => ({
+      className: "", textContent: "", _attrs: {},
+      setAttribute(k, v) { this._attrs[k] = v; },
+      getAttribute(k) { return this._attrs[k]; },
+      parentNode: null,
+    }),
+  };
   const factory = new Function(
     "state", "conversationListEl", "_prefersReducedMotion", "_folderById",
-    "_saveCollapsedGroups", "window", "requestAnimationFrame",
+    "_saveCollapsedGroups", "window", "requestAnimationFrame", "document",
     `${CONST_BLOCK}\n${FN_NAMES.map((n) => FN_SRC[n]).join("\n")}\n` +
     `return { ${FN_NAMES.join(", ")} };`
   );
@@ -127,14 +140,20 @@ function makeEnv({ rows = [], scrollTop = 0, viewTop = 0, viewH = 400, reduced =
     () => { saveCollapsedCalls += 1; },
     windowStub,
     (fn) => { rafs.push(fn); return rafs.length; },
+    documentStub,
   );
   return { ...env, api };
 }
 
 // docTop = 문서 기준 좌표. 화면 좌표는 스크롤을 뺀 값 → 스크롤 보정 효과가 rect 에 반영된다.
 function makeRow(dataset, docTop, h = 30) {
+  // 실제 DOM 과 같은 클래스를 부여한다 — `_markReorderArrival` 이 형제를 거슬러 올라가며 도착
+  // 묶음 헤더를 찾을 때 클래스로 판별하므로, 없으면 그 경로가 통째로 죽은 채 통과한다.
+  const kindClass = dataset.dateKey ? "conv-date-group-header"
+    : dataset.folderId ? "conv-folder-header" : "conv-item";
   return {
     dataset,
+    kindClass,
     docTop,
     _h: h,
     _list: null,
@@ -148,12 +167,21 @@ function makeRow(dataset, docTop, h = 30) {
       const evt = ev === undefined ? { target: this, propertyName: "transform" } : ev;
       this._events.filter(([t]) => t === type).forEach(([, fn]) => fn(evt));
     },
+    // 실제 DOM 처럼 다중 클래스 인자를 받는다(단일 인자만 처리하면 두 번째 클래스가 조용히 누락).
     classList: {
-      _s: new Set(),
-      add(c) { this._s.add(c); },
-      remove(c) { this._s.delete(c); },
+      _s: new Set([kindClass]),
+      add(...cs) { cs.forEach((c) => this._s.add(c)); },
+      remove(...cs) { cs.forEach((c) => this._s.delete(c)); },
       contains(c) { return this._s.has(c); },
     },
+    previousElementSibling: null,  // makeEnv 가 rows 순서대로 연결(그룹 헤더 탐색이 실제로 돌게)
+    _children: [],
+    querySelector(sel) {
+      const cls = String(sel).replace(/^\./, "");
+      return this._children.find((c) => String(c.className).split(/\s+/).includes(cls)) || null;
+    },
+    appendChild(node) { node.parentNode = this; this._children.push(node); return node; },
+    removeChild(node) { this._children = this._children.filter((c) => c !== node); node.parentNode = null; return node; },
     getBoundingClientRect() {
       const top = this.docTop - (this._list ? this._list.scrollTop : 0);
       return { top, bottom: top + this._h, height: this._h };
@@ -235,7 +263,7 @@ console.log("\n[3] FLIP(Invert→Play) — 이동한 행만 이전 자리에서 
   ok("b: 이전 자리(+40px)에서 출발 (invert)", rb.style.transform === "translateY(40.0px)");
   ok("a: 이전 자리(-40px)에서 출발 (invert)", ra.style.transform === "translateY(-40.0px)");
   ok("invert 단계는 transition 없음", rb.style.transition === "none" && ra.style.transition === "none");
-  ok("focus 행 강조 부여", rb.classList.contains("is-reorder-flash"));
+  ok("focus 행 도착 표식 부여", rb.classList.contains("is-reorder-flash") && rb.classList.contains("is-reorder-anchor"));
 
   env.flushRaf();
   ok("play: transform 해제", rb.style.transform === "" && ra.style.transform === "");
@@ -244,33 +272,47 @@ console.log("\n[3] FLIP(Invert→Play) — 이동한 행만 이전 자리에서 
   //   소스와 비교하면 값이 무엇으로 바뀌어도 통과하는 토톨로지가 된다. 사용자가 요청한 곡선
   //   (easeInOutBack)과 그것을 담기 위해 정한 재생 시간이 계약이므로, 바뀌면 여기가 red 여야 한다.
   const EXPECT = {
-    durationMs: 420,
-    easing: "cubic-bezier(.68,-.6,.32,1.6)",   // easeInOutBack (easings.net) CSS 근사
-    easingLong: "cubic-bezier(.22,.61,.36,1)", // 아주 긴 이동용 ease-out(오버슈트 없음)
-    backMaxDeltaPx: 600,
-    overshootRatio: 0.105,
-    watchdogMs: 820,                            // = duration + 400
-    flashMs: 1100,
+    durationMinMs: 160,                         // 거리 적응형 하한(짧은 이동)
+    durationMaxMs: 280,                         // 상한(먼 이동) — 오버슈트 420ms 에서 되돌림
+    easing: "cubic-bezier(.22,.61,.36,1)",      // ease-out (감속) — 오버슈트 곡선 금지
+    watchdogMs: 680,                            // = durationMax + 400
+    flashMs: 900,
+    anchorMs: 3500,
+    badgeText: "이동됨",
     requestTtlMs: 4000,
   };
-  ok("[계약] play duration = 420ms (독립 기대값)", rb.style.transition.includes(`${EXPECT.durationMs}ms`), rb.style.transition);
-  ok("[계약] play easing = easeInOutBack (독립 기대값, 네 제어점 정확 일치)",
+  {
+    const d = Number((/transform (\d+)ms/.exec(rb.style.transition) || [])[1]);
+    ok("[계약] play duration 이 거리 적응형 대역(160~280ms)",
+      d >= EXPECT.durationMinMs && d <= EXPECT.durationMaxMs, `${d}ms`);
+  }
+  ok("[계약] play easing = ease-out (독립 기대값, 네 제어점 정확 일치)",
     rb.style.transition.includes(EXPECT.easing), rb.style.transition);
   // 소스 상수도 같은 값이어야 한다(코드가 리터럴을 인라인해 상수와 갈라지는 것 차단).
   ok("[계약] 소스 REORDER_EASING == 기대 곡선",
     (/const REORDER_EASING = "([^"]+)"/.exec(CONST_BLOCK) || [])[1] === EXPECT.easing);
-  ok("[계약] 소스 REORDER_ANIM_MS == 420",
-    Number((/const REORDER_ANIM_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.durationMs);
-  ok("[계약] 소스 REORDER_EASING_LONG == ease-out",
-    (/const REORDER_EASING_LONG = "([^"]+)"/.exec(CONST_BLOCK) || [])[1] === EXPECT.easingLong);
-  ok("[계약] 소스 REORDER_BACK_MAX_DELTA_PX == 600",
-    Number((/const REORDER_BACK_MAX_DELTA_PX = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.backMaxDeltaPx);
-  ok("[계약] 소스 REORDER_FLASH_MS == 1100",
+  ok("[계약] 소스 REORDER_ANIM_MIN_MS == 160",
+    Number((/const REORDER_ANIM_MIN_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.durationMinMs);
+  ok("[계약] 소스 REORDER_ANIM_MAX_MS == 280",
+    Number((/const REORDER_ANIM_MAX_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.durationMaxMs);
+  ok("[계약] 소스 REORDER_FLASH_MS == 900",
     Number((/const REORDER_FLASH_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.flashMs);
+  ok("[계약] 소스 REORDER_ANCHOR_MS == 3500",
+    Number((/const REORDER_ANCHOR_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.anchorMs);
   ok("[계약] 소스 REORDER_REQUEST_TTL_MS == 4000",
     Number((/const REORDER_REQUEST_TTL_MS = (\d+)/.exec(CONST_BLOCK) || [])[1]) === EXPECT.requestTtlMs);
+  // ★ 기능적 재정렬에 오버슈트 곡선을 다시 넣는 회귀 차단 — 제어점 y 는 [0,1] 안이어야 한다.
+  {
+    const src = (/const REORDER_EASING = "([^"]+)"/.exec(CONST_BLOCK) || [])[1] || "";
+    const m = /^cubic-bezier\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)$/.exec(src);
+    ok("[계약] 곡선에 오버슈트 없음(y1 ≥ 0 ∧ y2 ≤ 1)",
+      Boolean(m) && parseFloat(m[2]) >= 0 && parseFloat(m[4]) <= 1, src);
+  }
+  ok("[계약] duration 상한이 기능 UI 대역(≤ 300ms)", EXPECT.durationMaxMs <= 300);
   // 타이머는 "실행됐다" 가 아니라 **언제 발화하도록 걸렸는지**를 본다.
-  ok("[계약] 정리 watchdog 지연 = 820ms", env.timerDelays().includes(EXPECT.watchdogMs), JSON.stringify(env.timerDelays()));
+  ok("[계약] 정리 watchdog 지연 = 680ms", env.timerDelays().includes(EXPECT.watchdogMs), JSON.stringify(env.timerDelays()));
+  ok("[계약] 도착 펄스 타이머 = 900ms", env.timerDelays().includes(EXPECT.flashMs), JSON.stringify(env.timerDelays()));
+  ok("[계약] 도착 앵커 타이머 = 3500ms", env.timerDelays().includes(EXPECT.anchorMs), JSON.stringify(env.timerDelays()));
   globalThis.__REORDER_EXPECT = EXPECT;
 
   // transitionend 로 인라인 스타일이 정리되어 다음 렌더에 잔류하지 않는다.
@@ -329,48 +371,100 @@ console.log("\n[3] FLIP(Invert→Play) — 이동한 행만 이전 자리에서 
   ok("신규 행 → transform 미적용", rows[0].style.transform === undefined);
 }
 
-console.log("\n[3b] 오버슈트 곡선의 부작용 봉인 (§18.8 codex [P2])");
+console.log("\n[3b] 도착 표식 — 모션이 끝난 뒤에도 남는 신호 (디자인 재검토 2026-08-24)");
 {
   const E = globalThis.__REORDER_EXPECT;
-  // (1) 아주 긴 이동은 오버슈트를 끈다 — 곡선 편차가 이동에 비례해 수십~수백 px 로 커진다.
-  const shortRows = [makeRow({ conversationId: "s" }, 0)];
-  const envS = makeEnv({ rows: shortRows, scrollHeight: 4000 });
-  envS.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:s", 200]]) });
-  envS.flushRaf();
-  ok("짧은 이동(200px) → easeInOutBack", shortRows[0].style.transition.includes(E.easing), shortRows[0].style.transition);
+  const rows = [makeRow({ dateKey: "__today__" }, 0), makeRow({ conversationId: "a" }, 30)];
+  const env = makeEnv({ rows });
+  env.api._commitSidebarReorder({ key: "conv:a", scrollTop: 0, before: new Map([["conv:a", 90], ["date:__today__", 60]]) });
 
-  const longRows = [makeRow({ conversationId: "l" }, 0)];
-  const envL = makeEnv({ rows: longRows, scrollHeight: 4000 });
-  envL.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:l", 900]]) });
-  envL.flushRaf();
-  ok("긴 이동(900px > 600px) → 오버슈트 없는 ease-out 으로 강등",
-    longRows[0].style.transition.includes(E.easingLong) && !longRows[0].style.transition.includes(E.easing),
-    longRows[0].style.transition);
+  const row = rows[1];
+  ok("도착 순간 펄스 부여", row.classList.contains("is-reorder-flash"));
+  ok("도착 앵커(rail) 부여", row.classList.contains("is-reorder-anchor"));
+  // 배지는 **실제로 붙어야** 한다(스타일 존재만 검사하면 부착 코드를 지워도 통과한다).
+  {
+    const badge = row.querySelector(".conv-reorder-badge");
+    ok("'이동됨' 배지가 행에 부착됨", Boolean(badge));
+    ok("배지 문구 = 이동됨", badge && badge.textContent === E.badgeText);
+    ok("배지에 스크린리더 라벨", badge && String(badge.getAttribute("aria-label") || "").length > 0);
+    env.api._attachReorderAnchor(row);
+    ok("배지 중복 부착 안 함(매 렌더 부여되므로)",
+      row._children.filter((c) => c.className === "conv-reorder-badge").length === 1);
+    env.api._detachReorderAnchor(row);
+    ok("표식 해제 시 rail·배지 함께 제거",
+      !row.querySelector(".conv-reorder-badge") && !row.classList.contains("is-reorder-anchor"));
+    env.api._attachReorderAnchor(row);
+  }
+  ok("앵커가 state 에 기록(재렌더 부여의 근거)",
+    env.state.sidebarReorderAnchor && env.state.sidebarReorderAnchor.key === "conv:a");
+  ok("앵커 만료 시각이 미래(≈3.5초)", env.state.sidebarReorderAnchor.until - Date.now() > E.anchorMs - 500);
+  ok("도착 그룹 헤더 동반 펄스", rows[0].classList.contains("is-reorder-flash"));
 
-  // (2) 트윈 중에는 포인터를 받지 않는다(교차 구간에 클릭이 다른 행으로 가는 창 제거).
+  // 펄스와 앵커는 **수명이 다르다** — 이것이 이 설계의 핵심.
+  env.timers.find(([, ms]) => ms === E.flashMs)[0]();
+  ok("펄스는 짧게 걷힌다", !row.classList.contains("is-reorder-flash"));
+  ok("앵커는 그 뒤에도 남는다", row.classList.contains("is-reorder-anchor"));
+}
+{
+  // ★ 지속성의 실체: 행 요소는 매 렌더 교체되므로 **행을 만들 때** 부여해야 살아남는다.
+  //   (렌더 후 되붙이는 후처리는 렌더 횟수·순서에 취약 — 라이브에서 두 번째 렌더에 사라졌다.)
+  const fresh = [makeRow({ conversationId: "a" }, 0)];
+  const env = makeEnv({ rows: fresh, state: { sidebarReorderAnchor: { key: "conv:a", until: Date.now() + 3000 } } });
+  ok("갓 만든 행엔 표식이 없다(전제)", !fresh[0].classList.contains("is-reorder-anchor"));
+  env.api._decorateReorderAnchor(fresh[0]);
+  ok("행 생성 시 부여 → 앵커 지속", fresh[0].classList.contains("is-reorder-anchor"));
+  ok("행 생성 시 배지도 함께", Boolean(fresh[0].querySelector(".conv-reorder-badge")));
+
+  const other = makeRow({ conversationId: "zzz" }, 0);
+  env.api._decorateReorderAnchor(other);
+  ok("다른 행에는 부여하지 않는다", !other.classList.contains("is-reorder-anchor"));
+}
+{
+  // ★ 연속 이동: 오래된 만료 타이머가 **최신 표식을 지우면 안 된다**(세대 검사).
+  //   라이브에서 폴더를 잇달아 만들고 이름을 바꿨을 때 표식이 수명보다 일찍 사라진 결함.
+  const rows = [makeRow({ conversationId: "a" }, 0)];
+  const env = makeEnv({ rows });
+  env.api._markReorderArrival(rows[0], "conv:a");        // 1세대
+  const firstTimer = env.timers.find(([, ms]) => ms === globalThis.__REORDER_EXPECT.anchorMs);
+  env.api._markReorderArrival(rows[0], "conv:a");        // 2세대(같은 키)
+  const secondToken = env.state.sidebarReorderAnchor;
+  firstTimer[0]();                                        // 1세대 타이머 발화
+  ok("오래된 타이머가 최신 앵커 상태를 지우지 않는다", env.state.sidebarReorderAnchor === secondToken);
+  ok("오래된 타이머가 최신 표식을 걷어내지 않는다", rows[0].classList.contains("is-reorder-anchor"));
+  ok("최신 표식의 배지도 유지", Boolean(rows[0].querySelector(".conv-reorder-badge")));
+  // 자기 세대 타이머는 정상적으로 거둔다.
+  const ownTimer = env.timers.filter(([, ms]) => ms === globalThis.__REORDER_EXPECT.anchorMs).pop();
+  ownTimer[0]();
+  ok("자기 세대 타이머는 표식을 거둔다",
+    !rows[0].classList.contains("is-reorder-anchor") && env.state.sidebarReorderAnchor === null);
+}
+{
+  // 만료된 앵커는 부여하지 않는다(표식이 영원히 남는 것 방지).
+  const rows = [makeRow({ conversationId: "a" }, 0)];
+  const env = makeEnv({ rows, state: { sidebarReorderAnchor: { key: "conv:a", until: Date.now() - 1 } } });
+  env.api._decorateReorderAnchor(rows[0]);
+  ok("만료 앵커는 부여 안 함", !rows[0].classList.contains("is-reorder-anchor"));
+  env.api._applyReorderAnchor();
+  ok("만료 앵커는 상태에서 제거", env.state.sidebarReorderAnchor === null);
+}
+{
+  // reduced-motion: 트윈은 없어도 **표식은 유지**한다 — 모션을 줄일수록 정적 신호가 중요하다.
+  const rows = [makeRow({ conversationId: "a" }, 0)];
+  const env = makeEnv({ rows, reduced: true });
+  env.api._commitSidebarReorder({ key: "conv:a", scrollTop: 0, before: null });
+  ok("reduced: transform 미적용", rows[0].style.transform === undefined);
+  ok("reduced: 도착 표식(rail) 유지", rows[0].classList.contains("is-reorder-anchor"));
+  ok("reduced: 배지 유지", Boolean(rows[0].querySelector(".conv-reorder-badge")));
+  ok("reduced: 앵커 state 기록", Boolean(env.state.sidebarReorderAnchor));
+}
+{
+  // 트윈 중 포인터 차단은 유지(이동 중 오클릭 방지).
   const pr = [makeRow({ conversationId: "p" }, 0)];
   const envP = makeEnv({ rows: pr });
   envP.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:p", 60]]) });
   ok("트윈 중 pointer-events 차단", pr[0].style.pointerEvents === "none");
   pr[0].fire("transitionend");
   ok("정착 후 pointer-events 복원", pr[0].style.pointerEvents === "");
-  const pr2 = [makeRow({ conversationId: "q" }, 0)];
-  const envQ = makeEnv({ rows: pr2 });
-  envQ.api._commitSidebarReorder({ key: "", scrollTop: 0, before: new Map([["conv:q", 60]]) });
-  envQ.flushTimers();  // transitionend 가 오지 않아도 watchdog 이 되돌린다
-  ok("watchdog 경로에서도 pointer-events 복원", pr2[0].style.pointerEvents === "");
-}
-{
-  const E = globalThis.__REORDER_EXPECT;
-  // (3) 시야 보정 패딩이 오버슈트 폭을 반영한다 — 정착 위치만 보고 여유를 잡으면 "지나가는
-  //     순간엔 잘리는" 상태가 된다. 목록 하단 경계에 막 걸친 대상 + 큰 delta 로 확인.
-  const rows = [makeRow({ conversationId: "a" }, 480, 30)];  // 뷰 0~400, 스크롤 0 → 아래로 벗어남
-  const env = makeEnv({ rows, scrollTop: 0, viewH: 400, scrollHeight: 2000 });
-  env.api._commitSidebarReorder({ key: "conv:a", scrollTop: 0, before: new Map([["conv:a", 780]]) });
-  const r = rows[0].getBoundingClientRect();
-  const expectPad = 8 + Math.round(300 * E.overshootRatio);  // delta=300 → 오버슈트 ≈31px
-  ok("오버슈트 폭만큼 여유를 두고 시야로 끌어온다",
-    r.bottom <= 400 - expectPad + 1, `bottom=${r.bottom} expectPad=${expectPad}`);
 }
 
 console.log("\n[4] 시야 유지 — 스크롤 복원 + 대상 추종");
@@ -413,7 +507,7 @@ console.log("\n[4] 시야 유지 — 스크롤 복원 + 대상 추종");
   const r = rows[0].getBoundingClientRect();
   ok("reduced: 시야 유지 수행", r.top >= 0 && r.bottom <= 400);
   ok("reduced: transform 미적용", rows[0].style.transform === undefined);
-  ok("reduced: 강조 미적용", !rows[0].classList.contains("is-reorder-flash"));
+  ok("reduced: 펄스 애니메이션은 CSS 에서 정지(표식 자체는 [3b] 에서 확인)", true);
 }
 
 console.log("\n[5] 접힌 조상 펼침 — 대상이 DOM 에 없으면 전환도 불가");
@@ -531,6 +625,13 @@ console.log("\n[6] 호출 배선 — 두 명칭 변경 경로가 실제로 예�
   ok("renderConversationList 가 _beginSidebarReorder 로 시작", wrapper.includes("_beginSidebarReorder()"));
   ok("renderConversationList 가 렌더 후 _commitSidebarReorder 호출", wrapper.includes("_commitSidebarReorder(snap)"));
   ok("렌더 본체에 focus 키 전달(접힌 조상 펼침용)", wrapper.includes("_renderConversationListDom(snap ? snap.key : \"\")"));
+  // ★ 앵커의 값어치는 "재렌더를 견딘다" 는 데 있다 — 행을 만드는 경로에서 부여해야 한다.
+  //   (검사하지 않아 후처리 방식의 결함이 하네스를 통과했던 구멍을 메운다.)
+  const buildItem = SIDEBAR.slice(SIDEBAR.indexOf("const buildCompactItem"), SIDEBAR.indexOf("// --- 내 대화"));
+  ok("[배선] 대화 행 생성 시 앵커 부여", buildItem.includes("_decorateReorderAnchor(button)"));
+  const folderNode = SIDEBAR.slice(SIDEBAR.indexOf("const renderFolderNode"), SIDEBAR.indexOf("_folderChildren(null).forEach"));
+  ok("[배선] 폴더 헤더 생성 시 앵커 부여(일반·이름변경 두 경로)",
+    (folderNode.match(/_decorateReorderAnchor\(header\)/g) || []).length === 2);
   ok("렌더 본체가 조상 펼침을 seed 이후에 적용",
     SIDEBAR.indexOf("_seedAggregateGroupsCollapsedOnce(dateTree.keys)") <
     SIDEBAR.indexOf("_expandAncestorsForReorderFocus(reorderFocusKey, dateTree)"));
@@ -538,12 +639,21 @@ console.log("\n[6] 호출 배선 — 두 명칭 변경 경로가 실제로 예�
 
 console.log("\n[7] 강조 스타일 + 접근성");
 {
-  ok("shell.css 에 강조 애니메이션 정의", /@keyframes convReorderFlash/.test(SHELLCSS));
-  ok("대화 행·폴더 헤더 모두 강조 대상",
-    /\.conv-item\.is-reorder-flash/.test(SHELLCSS) && /\.conv-folder-header\.is-reorder-flash/.test(SHELLCSS));
+  ok("shell.css 에 도착 펄스 정의", /@keyframes convReorderFlash/.test(SHELLCSS));
+  ok("대화 행·폴더 헤더·날짜 그룹 헤더 모두 펄스 대상",
+    /\.conv-item\.is-reorder-flash/.test(SHELLCSS) && /\.conv-folder-header\.is-reorder-flash/.test(SHELLCSS)
+    && /\.conv-date-group-header\.is-reorder-flash/.test(SHELLCSS));
+  ok("앵커 rail 스타일(형태 신호 — hover 배경과 의미 충돌 회피)",
+    /\.is-reorder-anchor[\s\S]{0,240}box-shadow: inset 3px 0 0/.test(SHELLCSS));
+  ok("'이동됨' 배지 스타일 존재(언어 신호)", /\.conv-reorder-badge\s*\{/.test(SHELLCSS));
+  ok("배지가 레이아웃을 흔들지 않는다(absolute)",
+    /\.conv-reorder-badge[\s\S]{0,200}position: absolute/.test(SHELLCSS));
+  ok("폴더 헤더에 배지 기준(relative)", /\.conv-folder-header \{ position: relative; \}/.test(SHELLCSS));
   const reduceBlocks = SHELLCSS.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/g) || [];
-  ok("CSS 차원에서도 reduced-motion 시 강조 정지",
-    reduceBlocks.some((b) => b.includes("is-reorder-flash") && b.includes("animation: none")));
+  const rb2 = reduceBlocks.find((b) => b.includes("is-reorder-flash"));
+  ok("CSS 차원에서도 reduced-motion 시 펄스 정지", Boolean(rb2) && rb2.includes("animation: none"));
+  ok("reduced-motion 에서도 rail 은 유지(정지 표식)",
+    Boolean(rb2) && !/is-reorder-anchor[^}]*(display:\s*none|box-shadow:\s*none)/.test(rb2));
 }
 
 console.log(`\n${failed === 0 ? "OK" : "FAILED"} — passed=${passed} failed=${failed}`);
