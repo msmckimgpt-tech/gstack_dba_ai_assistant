@@ -7418,6 +7418,16 @@ def _run_agent_core(
         inference_acc_tool(_inf_detail, _inf_tool_ms, _inf_tool_n, name, ms)
     # feature-0007 timeout-console-sync: 에이전트 루프 전체(run) 예산도 콘솔 live 값 기반으로 산출한다
     # (per-request 타임아웃의 3배 = 다단계 루프 여유). 정적 AGENT_TIMEOUT_SEC 를 쓰면 콘솔 변경과 어긋난다.
+    #
+    # conv-audit `FR-live-cap-derived-from-startup-snapshot` 전수 점검(2026-08-24) — **잔여 부정합
+    # 1건을 여기 기록하고 이월한다(정직)**: 이 배수(×3)는 per-attempt 상한이 "추론 완료까지" 를
+    # 재던 시절의 관계다. 스트리밍 전환 이후 그 값의 의미는 **chunk 간 무응답 간격**이라
+    # (`_call_llm` 주석 · `shared/config.AGENT_TIMEOUT_SEC` 주석) 루프 전체 예산과 **개념적으로
+    # 무관**하다 — "무응답 3배" 는 아무 것도 뜻하지 않는다. 올바른 형태는 독립 knob
+    # (`AGENT_RUN_BUDGET_SEC`)이지만, 신규 runtime_settings knob 은 스펙·payload 버킷·콘솔 패널
+    # 3곳 계약을 동반하고 실효값(현 5,400s)을 바꾸면 진행 중 사용자 run 의 종료 시점이 달라진다
+    # → 별 항목으로 분리한다. **소스 비대칭은 아니다**(여기도 live 를 읽는다) — 회수 임계가
+    # 갖고 있던 startup/live 어긋남은 이번 cycle 에서 제거했다.
     run_timeout_sec = max(
         max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))) * 3,
         max(1, int(cfg.AGENT_EARLY_FINALIZE_MS / 1000)),

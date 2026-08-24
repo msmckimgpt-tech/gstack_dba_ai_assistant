@@ -1919,3 +1919,63 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   불변식 유지·오표시 소멸 확인 시 `verified`, 재발 시 `regressed`(fix 무효화 → 재진단).
 - **필요한 사람 액션(1줄)**: 없음 — 코드·PR·머지·배포·배포본 실증 완료. 다음 audit 이 위 관측
   지표로 `verified` 판정. 문서 정합은 `/_dqa:doc_sync` 권유.
+
+## FR-live-cap-derived-from-startup-snapshot — fixed:undeployed (구조류; live 설정을 기동 스냅샷으로 파생해 판정이 조용히 어긋나는 부류)
+
+- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 가드 12케이스 · 관련 3파일 재실행 ·
+  verify-completion 전 게이트 PASS · ruff clean). 배포 전.
+- **source**: 사용자 직접 요청(2026-08-24) — "임계값이 부정합한 부분이 없도록, 유사한 이슈에
+  대응하기 위해 **동일한 참조를 사용하는 구조를 코드 전반적인 부분에서 탐색**하여 수정해주세요.
+  또한, LLM에 대한 추론 timeout 은 처리하지 않습니다. (무한으로 설정)"
+  → 선행 `FR-stale-threshold-below-llm-attempt-cap`(개별 1건)의 **부류 일반화** 요청이다.
+- **last_seen**: 2026-08-24 · **seen_count**: 1 · **seen_distinct_conv**: n/a(코드 구조 감사)
+- **suspected_layers**: **L6↔L7 경계 + 설정 계층** — 판정 임계와 그 임계가 감시하는 상한.
+
+- **탐색 방법(재현 가능 — 다음 audit 이 그대로 재실행)**: `runtime_settings` 스펙의 `apply_mode` 와
+  `shared/config.py` 의 `_startup_int()` 호출을 **교차**한다. live 스펙을 startup 으로 읽는 키가
+  곧 drift 후보다. 실측: 스펙 **97**(live **76**) × startup **19키** → 교집합 **정확히 2건**
+  (`AGENT_TIMEOUT_SEC`·`MCP_TIMEOUT_SEC`), 나머지 17건은 `restart` 라 구조적으로 정합.
+  **추측이 아니라 집합 연산으로 상한을 확정**했다 — "전반적으로 탐색" 요청에 대한 완전성 근거.
+- **confirmed_root_cause** (4건 분류):
+  1. **A(최고, 수정)** — `AGENT_ASK_WORKER_STALE_SEC` = `max(cfg.AGENT_TIMEOUT_SEC*3, EARLY_FINALIZE)
+     +180`(**startup 스냅샷**) vs `agent_core.run_timeout_sec` = `_rts.get_int(...)*3`(**live**).
+     같은 공식을 두 소스로 계산 → 콘솔 상향 시 run 예산만 커지고 회수 임계는 재기동까지 옛 값 →
+     **sweeper 가 살아있는 정상 run 을 회수**(종전 주석이 경계한 BLOCKER/E 의 부활 경로).
+  2. **B(낮음, 수정)** — `modules/llm.py::llm_enum_suggest` 가 startup 상수를 per-request timeout
+     으로 **명시 전달**(같은 파일 다른 호출은 전부 인자 생략 = live). feature-0018 전환 누락 잔재.
+  3. **D(정보, 기록)** — `MCP_TIMEOUT_SEC` 은 live 스펙이나 **실소비처 0**(유일 사용처가 live 직접
+     조회). 제거는 `__all__` 표면 별건 → 주석으로 근거를 남겨 재조사 방지.
+  4. **E(이월)** — `run_timeout_sec = live×3`. 스트리밍 이후 per-attempt 상한의 의미가 **chunk 간
+     무응답 간격**이라 "무응답 3배" 는 루프 예산과 개념 무관. 독립 knob 이 정답이나 신규
+     runtime_settings knob 은 3곳 계약 + 실효값 변경(5,400s)이 진행 중 run 의 종료 시점을 바꾼다.
+  재발경로 = **코드 구조**(같은 형태를 다음 사람이 또 쓴다) → 가드로 봉인.
+- **봉인**: (A) `effective_ask_worker_stale_sec()` — 공식 보존, **소스만 일치**(소비 시점 live 산출)
+  + `_ask_stale_high_water`(하락 미추종, 표시 임계와 같은 원칙) + env 비양수 거부·`heartbeat*3` 하한
+  + heartbeat×60 floor. 판정 경로 전부 전환(worker sweeper·시작로그, web `stale_seconds` 3곳 +
+  attach long-poll `max_wait`). (B) 인자 생략. (D) 주석. (E) 주석 이월.
+  **핵심 봉인은 가드**: `test_live_setting_startup_drift_guard.py` 가 **패턴 자체**를 잠근다 —
+  AST 로 live-스펙 startup 상수의 파생 참조를 금지(함수 본문 포함, `except` 폴백 제외,
+  `# drift-ok:` 명시 예외), live×startup 교집합 allowlist 강제, 판정 자리의 함수 사용 소스 잠금.
+- **"LLM 추론 timeout 무한" 요청 처리 (정직한 정정)**: 사용자가 AskUserQuestion 으로 **"진행 기반
+  무한"** 선택 → **이미 그 상태였다**. 코드가 라이브 실측으로 기록해둔 사실(`_call_llm` 주석):
+  body `timeout=3s` 로 6.5초 스트림을 요청해도 절단되지 않는다(litellm 은 스트리밍에서 그 값을
+  전체 스트림 상한으로 적용하지 않음). 유효 층은 httpx per-request 하나이고 스트리밍에서 그것은
+  **chunk 간 무응답 간격**이다 → **추론이 몇 시간이든 응답이 흐르면 끊기지 않는다**.
+  그래서 body timeout 을 **제거하지 않았다**(이미 무효인 값을 지우며 feature-0007 운영자 계약만
+  깨진다). 대신 **오해의 원인**을 고쳤다 — 콘솔 스펙 label `에이전트/쿼리 실행 타임아웃` →
+  `무응답 대기 상한 (에이전트/쿼리)`, description 첫 문장 "이 값은 AI 추론 시간을 제한하지 않습니다".
+  운영자가 추론 상한으로 읽고 1800(30분)까지 올린 것이 선행 사고의 배경이었다.
+- **triage**: S=4(살아있는 run 회수는 답변 유실) · F=2(구조·저빈도) · L=5(가드가 부류 전체를 덮음)
+  · C=5 · R=3 → **19**, disposition=**fix-now**. 위험등급 **Major**(§12.3 워커 lifecycle·설정 계층).
+  사용자가 PR·머지·배포 자율 진행을 명시 승인(직전 요청).
+- **fix**: `CHG-20260824T160000-live-cap-startup-drift` / **코드 거주 `feature-0002-agent-core`**
+  (verify 정본; web `_conv_store.py` 는 소비 지점 cross-ref) /
+  `REV-20260824T160000-live-cap-startup-drift` (§18.8.2 codex 적대 — **[P1] 2 · [P2] 3 전건 흡수** →
+  반영 후 P1 0. P1 은 ① 하락 방향 잔여 drift ② env `-1/0` 이 SQL cutoff 를 미래로 만드는 선재 결함).
+- **rc_ids**: RC-1(소스 비대칭) · RC-2(live 전환 누락) · RC-3(의미 오해를 낳는 콘솔 문구) ·
+  **batch-id**: B-20260824T160000-live-cap-startup-drift
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "판정이 같은 소스를 본다" 까지만 증명한다. **"콘솔에서
+  상한을 실제로 올렸을 때 회수 임계가 함께 커지는지"** 는 배포 후 실측분(미수행) → 다음 audit 이
+  ask-worker 시작 로그의 `stale=` 값과 그 시점 live 상한을 대조. 또한 **저-cap 환경에서 floor 로
+  임계가 오르는 변경**(360→600, web max_wait 390→630)이 라이브(cap 1800)에는 영향 없음을 재확인.
+- **필요한 사람 액션(1줄)**: 없음(사용자가 PR·머지·배포 자율 승인). 다음 audit 이 위 지표로 판정.

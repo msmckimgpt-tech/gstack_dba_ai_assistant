@@ -251,3 +251,21 @@ source_of_truth: true
 - 회귀: agent-core 스위트 **3093 passed / 8 failed** — 8건 전부 사전 baseline(`psycopg`
   미설치 등). pristine `agent_core.py` 로 되돌려 같은 8건이 실패함을 대조 확인했다.
   `test_inference_detail` 은 소스-패턴 계약을 의미 보존한 채 정합화 후 **16 PASS**.
+
+- TEST-20260824T1600-live-cap-drift (`tests/test_live_setting_startup_drift_guard.py`, **6 PASS**):
+  "live 설정을 startup 스냅샷으로 읽어 파생" 하는 부류를 **패턴 수준에서** 잠근다. 개별 수정만으로는
+  다음 사람이 같은 형태를 또 쓰기 때문이다.
+  - **T1(AST)** `shared/config.py` 모듈 레벨에서 live-스펙 startup 상수를 참조해 **다른** 상수를
+    만드는 대입이 없다. 문자열 grep 이 아니라 `ast.walk` 로 실제 참조를 본다. 자기 정의부
+    (`X = _startup_int("X", …)`)는 제외. **전제 붕괴 감지**: live×startup 교집합이 비면
+    `assert suspects` 가 먼저 실패해 가드가 vacuous 로 통과하지 않는다.
+  - **T2** 그 교집합은 근거가 기록된 allowlist(`AGENT_TIMEOUT_SEC`·`MCP_TIMEOUT_SEC`) 안에만 있다.
+    신규 키가 들어오면 실패하며 "live 조회로 바꾸거나 근거와 함께 등재" 를 지시한다.
+  - **T3** `effective_ask_worker_stale_sec()` 가 live 상한과 함께 커진다(60→1800 단조) + cap
+    60·300·900·1800·3600 **전 구간에서 run 예산(live×3)보다 큼** = 살아있는 run 회수 불가.
+    floor(heartbeat×60) 보장 + 조회 실패 fail-open.
+  - **T4(소스 잠금)** 판정 자리(`stale_seconds=`·`max_wait`)가 상수 대신 live 함수를 쓴다 —
+    `modules/ask.py` 와 web `_conv_store.py` **양쪽**. 로그 표시 같은 비-판정 용도는 허용.
+    `modules/llm.py` 에 `_openai_request_timeout(AGENT_TIMEOUT_SEC)` 명시 전달 0.
+  - 기존 계약 무회귀 동반 확인: `test_ask_worker`(STALE > run_timeout) ·
+    `test_ask_redeploy_handoff`(ROLE_STALE < STALE) → 관련 3파일 합계 **37 PASS**.

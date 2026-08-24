@@ -1302,3 +1302,29 @@ diff · ATTACHMENT SET 권위 사실 · 리뷰어 digest)이 **전부 하나의 
   단 그 경우 예외가 전파돼 step 기록 자체가 생기지 않으므로 "예외 도구의 step 소요" 는
   보장 대상이 아니다(범위 주의). 소비처는 feature-0003 실행 단계 패널
   (AC-20260824T115000-step-timing-attribution-2) — 표시층이 추론/도구 시간을 가르는 근거다.
+
+- REQ-20260824-1680 (conv-audit `FR-live-cap-derived-from-startup-snapshot`, **Major** §12.3):
+  `apply_mode="live"` 인 런타임 설정은 **판정에 쓰이는 모든 곳에서 소비 시점 live 값**으로 읽힌다.
+  그 값의 **기동 시점 스냅샷**(`config._startup_int`)을 다른 임계의 파생 소스로 쓰지 않는다 —
+  소비처가 live 를 읽는 순간 두 값이 조용히 갈라지고, 그 갈라짐은 어디서도 에러를 내지 않는다.
+  근거(실사고 2건): 회수 임계가 startup 파생이라 콘솔 상향 시 **살아있는 run 을 sweeper 가 회수**
+  할 수 있었고, 표시 임계가 상수라 정상 대기를 "작업 중단" 으로 오표시했다
+  (`FR-stale-threshold-below-llm-attempt-cap`).
+  - AC-0606: `config.effective_ask_worker_stale_sec()` 가 회수 임계의 **정본**이다. 소비 시점에
+    `runtime_settings.get_int("AGENT_TIMEOUT_SEC")`(live)로 `max(cap*3, EARLY_FINALIZE) + 180` 을
+    산출하고 `max(floor, …)` 를 취한다(floor = `AGENT_ASK_WORKER_HEARTBEAT_SEC * 60`, 최소 600).
+    env `AGENT_ASK_WORKER_STALE_SEC` 가 명시되면 그 값을 그대로 쓴다(운영자 의도 보존). live 조회
+    예외는 기동 스냅샷으로 fail-open. 스펙 범위(5~3600)의 어떤 상한에서도 반환값 > run 예산
+    (`live*3`)이 성립한다 — 그래야 정상 장기 run 이 false-positive 회수되지 않는다.
+  - AC-0607: 상수 `config.AGENT_ASK_WORKER_STALE_SEC` 는 AC-0606 의 **기동 스냅샷**이며 로그·표시
+    같은 비-판정 용도로만 쓴다. 판정 자리(`sweep_stale_jobs(stale_seconds=…)` ·
+    `find_active_dup_ask_job(stale_seconds=…)` · `enqueue_ask_job(stale_seconds=…)` · web attach
+    long-poll `max_wait`)는 AC-0606 함수를 호출한다.
+  - AC-0608: `AGENT_TIMEOUT_SEC` 는 대화 LLM 경로에서 **추론 시간을 제한하지 않는다**. 스트리밍
+    (`AGENT_LLM_STREAM_ENABLED`, 기본 on)에서 유효한 층은 httpx per-request timeout 하나이고 그것은
+    "완료까지" 가 아니라 **chunk 간 무응답 간격**이다(요청 body 의 `timeout` 은 litellm 이 스트림
+    상한으로 적용하지 않음 — 라이브 실측 반증). 따라서 이 값은 "연결이 죽었거나 상대가 멈췄다" 의
+    판정값이며, 관리 콘솔 스펙의 label·description 이 그 의미를 명시한다(추론 상한으로 오해해
+    값을 키우던 것이 선행 사고의 배경). 비스트리밍 폴백에서만 종전처럼 "완료까지" 상한이 된다.
+  - AC-0609: `modules/llm.py` 의 per-request timeout 은 인자를 생략해 live 로 폴백한다 — startup
+    상수를 명시 전달하는 자리를 두지 않는다(feature-0018 계약).
