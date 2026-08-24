@@ -110,9 +110,10 @@ function buildLoadConversations(state, payload) {
   const factory = new Function(
     "apiFetch", "state", "renderConversationList", "renderConversationHeader", "renderComposer",
     "loadFolders",  // 폴더 기능 후속: loadConversations 가 await loadFolders() 선행.
+    "bumpSidebarDataVersion",  // sidebar-reorder-anim: 목록 데이터 갱신 지점 표식(재배치 예약 귀속).
     `${loadConvSrc}\n return loadConversations;`
   );
-  return factory(apiFetch, state, noop, noop, noop, async () => {});
+  return factory(apiFetch, state, noop, noop, noop, async () => {}, noop);
 }
 
 const PAYLOAD = { items: [{ id: "A" }, { id: "B" }, { id: "C9" }], current: "C9" };

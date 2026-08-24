@@ -37,6 +37,7 @@ from shared.config import (
     AGENT_ASK_WORKER_IDLE_POLL_SEC,
     AGENT_ASK_WORKER_HEARTBEAT_SEC,
     AGENT_ASK_WORKER_STALE_SEC,
+    effective_ask_worker_stale_sec,
     AGENT_ASK_WORKER_SWEEP_EVERY_SEC,
     AGENT_ASK_WORKER_ATTEMPTS_CAP,
     AGENT_ASK_RESUME_ON_TRANSIENT,
@@ -916,7 +917,9 @@ def _do_sweep(conn) -> None:
     try:
         swept = ask_jobs.sweep_stale_jobs(
             conn,
-            stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+            # conv-audit FR-live-cap-derived-from-startup-snapshot: 판정은 소비 시점 live 산출.
+            # import 시점 상수를 쓰면 콘솔 상향 시 run 예산만 커져 살아있는 run 을 회수한다.
+            stale_seconds=int(effective_ask_worker_stale_sec()),
             attempts_cap=int(AGENT_ASK_WORKER_ATTEMPTS_CAP),
         )
     except Exception as exc:
@@ -1030,7 +1033,7 @@ def run_ask_worker_loop() -> None:
     _do_role_reclaim(conn, worker_id)
 
     log.info("ask-worker 시작: %s (tick=%ds stale=%ds role_stale=%ds drain=%ds heartbeat=%ds)",
-             worker_id, tick_sec, AGENT_ASK_WORKER_STALE_SEC,
+             worker_id, tick_sec, effective_ask_worker_stale_sec(),
              AGENT_ASK_WORKER_ROLE_STALE_SEC, drain_sec, AGENT_ASK_WORKER_HEARTBEAT_SEC)
 
     # conn-health-monitor: 직렬 ask-worker 가 1차 수혜 — 불안정 datasource 를 백그라운드로

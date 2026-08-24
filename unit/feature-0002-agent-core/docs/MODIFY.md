@@ -2292,7 +2292,6 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - 스키마·마이그레이션 변경 **0**(`result_summary_json` 기존 컬럼 재사용).
 - `tests/test_step_elapsed_attribution.py` 신규 7 PASS · `tests/test_inference_detail.py`
   소스-패턴 계약 정합화(의미 보존).
-
 ## CHG-20260824T0733-attach-original-baseline — 첨부 비교 시 계보 최초 원본(_v0) 능동 주입
 
 - `src/agent_core.py`
@@ -2339,3 +2338,85 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - `tests/test_attach_original_baseline.py` 신규 45 PASS.
 - **web 측 변경 0** · 스키마·마이그레이션·신규 권한 코드 **0** · `_resolve_conversation_attachment_scope`
   무변경.
+## CHG-20260824T160000-live-cap-startup-drift — live 설정을 startup 스냅샷으로 파생하던 부정합 전수 정리 (Major §12.3)
+
+conv-audit `FR-live-cap-derived-from-startup-snapshot`. 선행 `feature-0003`
+`CHG-20260824T142000-stale-threshold-attempt-cap` 이 표시 임계 1건을 고쳤고, 이번은 **같은 부류를
+코드 전반에서 확정**한다(사용자 요청).
+
+**탐색 방법(재현 가능)**: `runtime_settings` 스펙 `apply_mode` × `config.py` `_startup_int()` 교차 —
+live 스펙을 startup 으로 읽는 키가 drift 후보. 스펙 97(live 76) × startup 19키 → **교집합 2건**
+(`AGENT_TIMEOUT_SEC`·`MCP_TIMEOUT_SEC`), 나머지 17건은 `restart` 라 정합.
+
+- `shared/config.py`
+  - `AGENT_TIMEOUT_SEC` 정의부 주석 신설 — **의미**(대화 LLM 경로에서 추론 시간을 제한하지 않는다;
+    스트리밍에서 httpx read = **chunk 간 무응답** 간격이고 body timeout 은 스트림을 자르지 않는다 —
+    라이브 실측 반증) + **읽는 층**(판정은 `runtime_settings.get_int`, 이 상수는 재배포 반영이 무해한
+    저수준 DB 연결 경로만).
+  - `effective_ask_worker_stale_sec()` 신설 + `AGENT_ASK_WORKER_STALE_SEC` 를 그 스냅샷으로 격하.
+    **공식·값 보존, 소스만 일치** — 소비 시점에 live 상한으로 재계산하므로 콘솔 상향 시 run 예산과
+    회수 임계가 함께 커진다. env 명시 override 존중 · 조회 실패 fail-open · heartbeat×60(600s) floor.
+    종전: `max(cfg.AGENT_TIMEOUT_SEC*3, EARLY_FINALIZE)+180`(startup) vs `run_timeout_sec`
+    = live×3 → 콘솔 상향 시 **살아있는 run 을 sweeper 가 회수**.
+  - `MCP_TIMEOUT_SEC` 주석 — live 스펙이지만 실소비처 0(유일 사용처가 live 직접 조회). 새 소비처를
+    만들 때 이 상수를 쓰지 말라는 경고를 남긴다(제거는 `__all__` 표면 건드리는 별건).
+- `shared/runtime_settings.py` — `AGENT_TIMEOUT_SEC` 스펙 문구 교정. label
+  `에이전트/쿼리 실행 타임아웃` → `무응답 대기 상한 (에이전트/쿼리)`, description 을 **"이 값은 AI
+  추론 시간을 제한하지 않습니다"** 로 시작. 운영자가 추론 상한으로 읽고 1800 까지 올린 것이
+  `FR-stale-threshold-below-llm-attempt-cap` 사고의 배경이었다.
+- `unit/feature-0002-agent-core/src/modules/ask.py` — sweeper `stale_seconds` 판정 + 시작 로그를
+  live 함수로. `unit/feature-0002-agent-core/src/agent_core.py` — `run_timeout_sec` 의 ×3 배수가
+  스트리밍 이후 개념적으로 무관하다는 잔여 부정합을 주석으로 기록·이월(소스 비대칭은 아님).
+- `unit/feature-0002-agent-core/src/modules/llm.py` — `llm_enum_suggest` 의
+  `_openai_request_timeout(AGENT_TIMEOUT_SEC)` → 인자 생략(live). 같은 파일 다른 호출과의 비대칭 해소.
+- `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py`(cross-ref, primary 아님) —
+  `stale_seconds` 3곳 + attach long-poll `max_wait` 을 live 함수로. 상수 참조 0.
+- `tests/test_live_setting_startup_drift_guard.py`(신규 6) — AST 로 **패턴 자체**를 잠근다.
+
+**건드리지 않은 것**: body `timeout` 전달(이미 스트림을 자르지 않는 무효 값 — 제거하면 feature-0007
+운영자 계약만 깨진다) · `run_timeout_sec` 실효값 · 회수 임계 실효값(라이브 5,580s 동일) ·
+`ROLE_STALE_SEC` · 보안 경계 · RBAC · 큐 상태기계.
+
+## CHG-20260824T170000-live-cap-startup-drift-postdeploy — 부정합 정리 POST-DEPLOY 실측 (doc-only, 코드 변경 0)
+
+`CHG-20260824T160000-live-cap-startup-drift`(PR #1322, main `14ab6b94`) 배포 후 실증.
+**제품 코드 변경 0** — 원장 status 전환과 기록만.
+
+- 배포본에서 봉인이 실제로 서 있음을 단정: `cap_live=1800` → 회수 임계 **5,580s**(값 보존) ·
+  `run_est=5,400` → **임계 > 예산 True**. 소스 비대칭이 사라져 두 값이 같은 live 상한을 본다.
+- `deploy-web` scope=all — 6서비스 전부 `14ab6b94`(워커 포함, 이 봉인의 실행 주체가 워커다) ·
+  무중단 0건.
+- 콘솔 스펙 문구 도달 확인(추론 상한 오해 교정).
+- 원장 `FR-live-cap-derived-from-startup-snapshot` → **`fixed:deployed:unverified-live`** +
+  POST-DEPLOY 절 + 관측 지표 3종. 콘솔 실변경 시나리오는 미검증으로 정직 기록.
+
+## CHG-20260824T183000-sql-selfheal — SQL 실행 오류의 표적 자가수정 + 오귀인 차단
+
+- `src/modules/sql_error_hints.py` **신규**: 엔진이 지목한 실패 지점 추출(`extract_error_focus`),
+  MySQL 8.0 / T-SQL 예약어 셋과 인용·개명 처방(`reserved_identifier_note`), 동일 실패 반복 판정용
+  시그니처(`error_signature`), 결합 처방(`targeted_hint`). 순수 함수 모듈(DB·LLM·config 무의존).
+- `src/agent_core.py`
+  - `_classify_sql_error` → `sql_error_hints.classify_error` 위임(동작 동일 + MSSQL 문구 인식).
+  - `_sql_reflection_nudge` 확장: 실패 지점 지목 · 예약어 처방 · `repeated=` 격상 문구 ·
+    상한 소진 문단을 **정직성 계약**(검증 안 한 엔진 제약 단정 금지)으로 교체. 기존 4-positional
+    시그니처 하위호환.
+  - `_sql_error_signature` · `_active_sql_dialect_name` 신규 헬퍼.
+  - 메인 루프: `reflection_last_sig` 로 직전 실패 시그니처 추적 → 동일하면 `repeated=True`.
+  - `_SQL_FAILURE_DIRECTIVE` 신규 + `compose_system_prompt` 의 코드-주입 `parts` 에 추가
+    (운영자 `WebSystemPrompts` global row 가 base 를 대체해도 도달 — §16.7 G8-b).
+- `tests/test_sql_error_selfheal.py` **신규** 25건 — 실측 오류 원문 기반 봉인.
+
+근거: 라이브 대화 `20260824085807-a761f842`(TASK.md `20260824T1830-sql-selfheal` 참조).
+
+## CHG-20260824T193000-sql-selfheal-review-fixes — 자체 적대 리뷰 P1 2건 수정
+
+- `src/modules/sql_error_hints.py`: `_sanitize_focus` 추가 — focus 는 비신뢰 경로(DB 오류 원문)로
+  들어오는데 넛지는 datamark 구획 **밖**에 붙으므로, 첫 공백 전까지 + 식별자 문자 + 64자 상한으로
+  정제해 임의 문장의 코드-권위 승격을 차단. `Unknown column`/`Table` 경로에 적용
+  (near 경로의 기호 fallback 은 지목 대상이 기호라 미적용, 12자·무공백 제한 유지).
+- `src/agent_core.py`: `_active_sql_dialect_name` 이 존재하지 않는 전역 `_dialects` 를 참조해
+  NameError 가 `except` 에 삼켜지며 **항상 ""** 를 반환하던 dead code 수정 → 함수 내부 import.
+  MSSQL 의 T-SQL 예약어 처방이 무력화되던 fail-open 해소.
+- `tests/test_sql_error_selfheal.py`: 회귀 3건 추가(정제·정상 식별자 보존·dialect resolver 생존).
+
+근거: `REVIEW.md` `REV-20260824T193000-…` [P1-1]/[P1-2].

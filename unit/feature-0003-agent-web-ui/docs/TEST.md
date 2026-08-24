@@ -116,6 +116,54 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260824T1900-reorder-affordance 재배치 연출 재설계 — 오버슈트 제거 + 도착 표식 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T190000-reorder-affordance.md`)**
+
+- **모션**: 폴더 29px 이동 → 8프레임(112~226ms), offset 최소 **+1** = 목표를 지나치는 구간 없음
+  (오버슈트 곡선이면 음수 구간이 나온다). 거리 적응형 하한(160ms) 대역.
+- **도착 표식(핵심)**: 이동 직후 rail `inset 3px accent` + "이동됨" 배지(`aria-label`, absolute) →
+  **무관한 재렌더(그룹 접기/펼치기) 후에도 유지** → 3.5초 뒤 자연 소멸(잔류 0).
+- **de-risk(하네스)**: 145 PASS — 거리 적응형 대역 · 오버슈트 금지(제어점 y ∈ [0,1]) · 독립
+  기대값(소스 추출 금지) · 타이머 지연값 · 표식 2층 수명 · **행 생성 시 부여 배선** ·
+  **연속 이동 세대** · reduced-motion 표식 유지 · CSS 계약. **뮤테이션 7종 전건 KILL**.
+- **실측이 잡은 결함 2건**(하네스 통과 상태): 후처리 복원이 두 번째 렌더에서 소실 / 오래된 만료
+  타이머가 최신 표식 제거. 각각 구조 변경·세대 토큰으로 봉인 후 계약 추가.
+- **계측 함정**: 정적 자산 `?v=dev` 캐시(→ CDP `Network.setCacheDisabled`), worktree 재생성 시
+  컨테이너가 잡은 옛 디렉터리 inode(→ 컨테이너 재생성, `docker exec grep` 로 판정).
+
+### 20260824T1800-reorder-easing 재배치 전환 easing → easeInOutBack (Minor §12.3, 2026-08-24, feature-0003 프론트 상수 1개 + duration) — **Environment: Windows-browser (PASS — 실측 기록 `docs/test-runs.d/REV-20260824T180000-reorder-easing.md`)**
+
+- **정본 실측**: easing 검증은 정지 스크린샷으로 불가능하다(되돌아왔는지 볼 수 없다) — rAF 궤적의
+  **offset 부호 반전**만이 오버슈트의 증거다. 폴더 29px 이동: 146 → **149**(반대로 3px) → 118 →
+  **114**(3px 지나침) → 117 정착(25프레임/178~577ms). 대화 176px 이동: 318 → **336**(+18) → 161 →
+  **124**(-18) → 142 정착(27프레임/317~748ms). 오버슈트 폭 = 이동 거리의 약 **10%** 로 스케일.
+- **de-risk(하네스)**: 98 PASS — easing 이 소스 상수(`REORDER_EASING`)를 그대로 싣는지 +
+  오버슈트 곡선 성질(제어점 y1 < 0 ∧ y2 > 1) 계약. 평범한 ease-in-out 으로 조용히 바뀌는 회귀 차단.
+- **경계 확인**: duration 420ms 가 정리 watchdog(820ms) · 강조(1100ms) · 예약 TTL(4000ms) 안.
+  오버슈트는 모든 이동 행에 같은 곡선이라 상대 간격 유지(겹침·클릭 타깃 흔들림 없음).
+
+### 20260824T1644-sidebar-reorder-anim 좌측 대화목록 명칭 변경 시 재배치 전환(FLIP + 시야 유지) (Minor §12.3, 2026-08-24, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — 실측 기록 `docs/test-runs.d/REV-20260824T164437-sidebar-reorder-anim.md`)**
+
+- **정본 실측**: 미머지 브랜치를 라이브 무접촉으로 보기 위해 라이브 web 이미지 + 본 worktree 의
+  `src/static` 디렉터리 bind-mount 컨테이너(`https://localhost:18099`)를 띄우고, 실 Windows Chrome
+  (CDP relay)에서 rAF 궤적을 계측했다. 정지 스크린샷으로는 순간이동/트윈을 가릴 수 없어 **프레임별
+  화면 y + computed transform 잔여 offset** 을 정본 증거로 둔다. 계측기 자산화:
+  `tests/pb0008_sidebar_reorder_measure.py --mode folder|conv`.
+  - 대화 제목 변경(6월 그룹 → 오늘 그룹): 화면 y **442 → 233**, **19 프레임 트윈**(324~621ms),
+    강조 324~1405ms, 잔류 인라인 스타일 0. 제목 원복 완료.
+  - 폴더 이름 변경: 화면 y **175 → 146** / 재현 실행 **146 → 117**, 트윈 16 / 4 프레임. 임시 폴더 정리 완료.
+  - 계측기 자체의 거짓 통과 방어 확인: 앵커 폴더 없이(이동이 실제로 없을 때) `verdict=instant-or-none`.
+  - ⚠ 창을 전면화하지 않으면 Chrome 이 rAF/타이머를 throttle 해 **애니메이션이 진행되지 않고
+    "전환 없음" 으로 거짓 판정**된다(실제 발생) — 계측기는 attach 직후 `bring_to_front()`.
+- **de-risk(하네스)**: `tests/verify_sidebar_reorder_anim.mjs` **73 PASS** — 행 키 규약 · 예약
+  게이트/TTL/1회 소비 · FLIP invert→play(duration 상수 일치) · 임계 상/하한 · 신규 행 제외 ·
+  스크롤 복원/추종/불변 · reduced-motion 분기 · 접힌 조상 펼침(날짜 leaf+branch · 폴더 체인 ·
+  순환 방어 · 무변경 시 미저장) · 호출 배선 · CSS 강조/접근성. **뮤테이션 5종 전건 KILL**.
+- **회귀**: 사이드바 관련 기존 하네스 5종(21/20/31/23/23) 전건 PASS, 컨테이너 `make test` 에서
+  본 변경 관련 실패 0(무관 1건 `test_oauth_exhaustion_gate` 은 컨테이너 `chattr` 부재로 **main 에서도
+  동일 실패**), ruff clean.
+- **미수행(사유 명시)**: 스크롤 밖 대상 추종은 검증 계정 목록이 한 화면에 들어와(`scrollHeight ==
+  clientHeight`) 라이브 재현 불가 — 하네스 좌표 계약으로만 잠갔다.
+
 ### 20260807T1700-gc-guide-esc-capture 안내 툴팁 Esc 양보 무효 수정 (Minor §12.3, 2026-08-07, feature-0003 프론트 1줄) — **Environment: Windows-browser (선행 cycle 의 PB-0008 실측 #8 이 이 결함을 적발했고, 수정 확인도 실 브라우저 핸들러 순서가 정본이라 headless 대체 불가 — de-risk=하네스가 capture→bubble 2단계 디스패치 + 경쟁 오버레이 핸들러를 주입해 **라이브 조건**을 재현, 68/68 PASS + 되돌림 뮤테이션 6 red + `node --check` PASS + mjs 전수 49 suite exit 0, 정적 자산 web 이미지 baked → 라이브 재실측은 배포 후 잔여, visual_verification_scope: always)**
 - 증상(PB-0008 라이브 실측 2026-08-07, 배포본 `f81c5bcb`): 멘션 자동완성이 열린 상태에서 Esc → 사용자는 목록만 닫으려 했는데 안내 툴팁도 함께 닫힘.
 - 근본원인: 로직이 아니라 **핸들러 실행 순서** — 버블 단계라 먼저 등록된 멘션 AC 핸들러가 AC 를 닫은 뒤 우리 핸들러가 돌아 "열려 있지 않다" 로 오판.

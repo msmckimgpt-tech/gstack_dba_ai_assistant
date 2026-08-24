@@ -1172,6 +1172,25 @@ AGENT_TOP_N = int(os.getenv("AGENT_TOP_N", "200"))
 AGENT_MAX_SHOW = int(os.getenv("AGENT_MAX_SHOW", "10"))
 AGENT_TABLE_MAX_COLS = int(os.getenv("AGENT_TABLE_MAX_COLS", "12"))
 AGENT_TABLE_MAX_COL_WIDTH = int(os.getenv("AGENT_TABLE_MAX_COL_WIDTH", "24"))
+# ⚠ 이 상수의 **의미**와 **읽는 층**을 혼동하지 말 것
+# (conv-audit `FR-live-cap-derived-from-startup-snapshot`, 2026-08-24 전수 점검).
+#
+# **의미** — 이름은 "실행 타임아웃" 이지만 대화 LLM 경로에서 **AI 추론 시간을 제한하지 않는다**.
+#   스트리밍(`AGENT_LLM_STREAM_ENABLED`, 기본 on)에서 이 값은 httpx read timeout 으로 걸리고,
+#   그것은 "완료까지" 가 아니라 **chunk 간 무응답 간격**이다. 요청 body 로도 실어 보내지만
+#   litellm 은 스트리밍에서 그것을 전체 스트림 상한으로 적용하지 않는다(라이브 실측 반증 —
+#   `agent_core._call_llm` 주석). 즉 **추론이 몇 시간이든 응답이 흐르면 끊기지 않고**, 이 값은
+#   "연결이 죽었거나 상대가 멈췄다" 를 판정한다. 비스트리밍 폴백(킬 스위치 on)에서만 종전처럼
+#   "완료까지" 상한이 된다.
+#
+# **읽는 층** — 스펙 `apply_mode=live` 다. 따라서 **런타임 판정에 쓸 값은 이 상수가 아니라
+#   `runtime_settings.get_int("AGENT_TIMEOUT_SEC")`** 여야 한다. 이 상수는 기동 시 1회 고정이라
+#   콘솔 변경을 추종하지 못한다. 이 상수를 파생 소스로 쓰면서 소비처가 live 를 쓰면 그 둘은
+#   반드시 어긋난다 — `AGENT_ASK_WORKER_STALE_SEC`(회수 임계)가 그 형태로 살아있는 run 을
+#   회수할 수 있었고(아래 정의부 참조), `WEB_PROGRESS_STALE_TIMEOUT_SECONDS`(표시 임계)가
+#   같은 부류로 살아있는 run 을 "작업 중단" 으로 오표시했다(`FR-stale-threshold-below-...`).
+#   저수준 DB 연결 설정(`utils.py`·`db.py`)처럼 재배포 경계에서 반영돼도 무해한 경로만
+#   이 상수를 쓴다.
 AGENT_TIMEOUT_SEC = _startup_int("AGENT_TIMEOUT_SEC", int(os.getenv("AGENT_TIMEOUT_SEC", "60")))
 
 # ── 무거운 쿼리 자가규제 (TASK-0172, DESIGN-self-interrupt §11) ──
@@ -1964,16 +1983,79 @@ AGENT_ASK_WORKER_HEARTBEAT_SEC = int(
     (os.getenv("AGENT_ASK_WORKER_HEARTBEAT_SEC", "10") or "10").strip()
 )
 # stale 임계(sec) — running job 의 heartbeat 가 이보다 오래 끊기면 죽은 worker 로 보고
-# 회수(requeue/error). 정상 장기 run 을 false-positive 로 회수하지 않으려면 run_timeout_sec
-# (= agent_core 의 max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)) 보다 충분히
-# 커야 한다(BLOCKER/E). 따라서 기본값을 그 추정치 + 180s margin 으로 동적 산출한다 —
-# AGENT_TIMEOUT_SEC 를 키운 배포(예: 300 → run_timeout 900)에서도 안전. heartbeat 는
-# 시간 기반(step 무관)이라 실제론 worker 프로세스 death 일 때만 트리거된다.
-_ask_run_timeout_est = max(int(AGENT_TIMEOUT_SEC) * 3, max(1, int(AGENT_EARLY_FINALIZE_MS / 1000)))
-_ask_stale_default = _ask_run_timeout_est + 180
-AGENT_ASK_WORKER_STALE_SEC = int(
-    (os.getenv("AGENT_ASK_WORKER_STALE_SEC", str(_ask_stale_default)) or str(_ask_stale_default)).strip()
-)
+# 회수(requeue/error).
+#
+# **왜 run 길이가 아니라 heartbeat 주기에서 파생하는가** (conv-audit
+# `FR-live-cap-derived-from-startup-snapshot`, 2026-08-24):
+#   종전 기본값은 `max(AGENT_TIMEOUT_SEC*3, EARLY_FINALIZE) + 180` = run 예산 추정치 파생이었다.
+#   그 공식은 두 가지로 깨진다.
+#   (1) **소스 비대칭** — 이 상수는 `AGENT_TIMEOUT_SEC` 의 **startup 스냅샷**을 읽는데, 정작
+#       run 예산을 정하는 `agent_core.py::_run_agent_core` 의 `run_timeout_sec` 은 **live**
+#       (`_rts.get_int`)를 읽는다. `AGENT_TIMEOUT_SEC` 은 `apply_mode=live` 라 관리 콘솔에서
+#       올리면 run 예산은 즉시 커지지만 이 회수 임계는 **재기동까지 옛 값**이다 →
+#       **살아있는 정상 run 을 sweeper 가 회수**한다(종전 주석이 경계한 BLOCKER/E 가 바로
+#       이 경로로 되살아난다). 같은 공식을 두 소스로 계산하면 언제든 어긋난다.
+#   (2) **정책 무의미** — 스트리밍(`AGENT_LLM_STREAM_ENABLED`, 기본 on)에서 per-attempt 상한은
+#       "추론 완료까지" 가 아니라 **chunk 간 무응답** 상한이다(라이브 실측: body timeout 은
+#       스트림을 자르지 않는다 — `agent_core._call_llm` 주석). 즉 **LLM 추론 시간에는 상한이
+#       없다**. 상한 없는 값의 배수로 회수 임계를 정할 수는 없다.
+#
+# **고친 방식** — 공식을 보존하고 **소스만 일치**시킨다. 파생을 import 시점에 굳히지 않고
+#   (§18.8 codex [P2] 정정: "값 보존" 은 **라이브 환경 한정**이다 — 라이브 상한 1800 에서 5,580s
+#    로 종전과 동일하지만, 저-cap 환경(기본 60)에서는 아래 floor 때문에 360s → 600s 로 **오른다**.
+#    web attach long-poll `max_wait` 도 390s → 630s. 정상 run 을 덜 끊는 방향이라 채택했다.)
+#   `effective_ask_worker_stale_sec()` 가 **소비 시점에 live 상한으로 재계산**한다. 그러면 콘솔에서
+#   상한을 올리는 순간 run 예산과 회수 임계가 **함께** 커져 어긋날 창이 없다.
+#   (heartbeat 배수로 재정의하는 안은 채택하지 않았다: 이 값은 web long-poll `max_wait` 으로도
+#    재사용되고 — `_conv_store.py` — heartbeat 스레드가 예외로 죽는 경우의 이중 방어도 함께
+#    사라진다. 값을 급격히 줄이는 대신 heartbeat 배수는 **하한(floor)** 으로만 둔다.)
+_ASK_STALE_FLOOR_SEC = max(600, int(AGENT_ASK_WORKER_HEARTBEAT_SEC) * 60)
+_ASK_STALE_ENV_OVERRIDE = (os.getenv("AGENT_ASK_WORKER_STALE_SEC", "") or "").strip()
+# §18.8 codex [P1]: 상한의 **하락**을 즉시 따라가면, 큰 예산으로 이미 시작된 run 이 갑자기 작아진
+# 임계로 조기 회수된다(cap 1800 에서 시작 → 예산 5,400s / cap 을 60 으로 내리면 임계 600s).
+# run 예산은 시작 시점에 고정되므로 회수 임계도 **프로세스 수명의 관측 최대치**를 유지한다 —
+# 상승은 즉시, 하락은 재기동 경계(그 시점엔 옛 예산으로 도는 run 도 없다). 표시 임계
+# (`feature-0003` `_effective_stale_timeout_seconds`)와 **같은 원칙**을 쓴다.
+_ask_stale_high_water = 0
+
+
+def effective_ask_worker_stale_sec() -> int:
+    """running job 회수 임계(초) — **소비 시점**에 live 상한으로 산출.
+
+    `AGENT_ASK_WORKER_STALE_SEC` 상수는 import 시점 스냅샷이라 콘솔 변경을 추종하지 못한다.
+    회수 임계를 판정에 쓰는 모든 경로(`modules/ask.py` sweeper · web attach long-poll · 중복
+    판정)는 이 함수를 쓴다.
+
+    env `AGENT_ASK_WORKER_STALE_SEC` 는 운영자 의도로 존중하되 **비양수는 거부**한다
+    (§18.8 codex [P1] 실측: `-1` 이 그대로 통과하면 SQL cutoff 가 미래가 되어 **정상 running job
+    전부를 즉시 stale 판정**한다. `0` 도 heartbeat 직후 회수한다. 종전 상수 경로부터 있던
+    선재 결함이며, 함수로 옮기면서 함께 봉인한다). 양수라도 heartbeat 주기의 3배 미만은
+    heartbeat 지연만으로 오회수되므로 그 하한까지 올린다.
+    """
+    global _ask_stale_high_water
+    _hb_min = max(3, int(AGENT_ASK_WORKER_HEARTBEAT_SEC) * 3)
+    if _ASK_STALE_ENV_OVERRIDE:
+        try:
+            _v = int(_ASK_STALE_ENV_OVERRIDE)
+        except Exception:
+            _v = 0
+        if _v > 0:
+            return max(_hb_min, _v)
+        # 비양수·비수치는 무시하고 아래 파생으로 폴백(설정 오타가 서비스를 깨지 않게).
+    try:
+        from shared import runtime_settings as _rts_local
+        cap = max(5, int(_rts_local.get_int("AGENT_TIMEOUT_SEC")))
+    except Exception:
+        cap = max(5, int(AGENT_TIMEOUT_SEC))   # fail-open: 기동 시 스냅샷
+    run_est = max(cap * 3, max(1, int(AGENT_EARLY_FINALIZE_MS / 1000)))
+    derived = max(_ASK_STALE_FLOOR_SEC, run_est + 180)
+    if derived > _ask_stale_high_water:
+        _ask_stale_high_water = derived
+    return _ask_stale_high_water
+
+
+# 하위호환 상수(기동 시 스냅샷) — 로그·표시 등 판정이 아닌 용도로만 쓴다. **판정에는 위 함수.**
+AGENT_ASK_WORKER_STALE_SEC = effective_ask_worker_stale_sec()
 # sweeper 실행 주기(sec) — stale job 회수 스캔 간격.
 AGENT_ASK_WORKER_SWEEP_EVERY_SEC = int(
     (os.getenv("AGENT_ASK_WORKER_SWEEP_EVERY_SEC", "30") or "30").strip()
@@ -2019,6 +2101,14 @@ AGENT_ASK_WORKER_LIVENESS_SEC = int(
 )
 
 MCP_URL = os.getenv("MCP_URL", "http://mcp:5000/mcp")
+# conv-audit FR-live-cap-derived-from-startup-snapshot 전수 점검(2026-08-24): 이 상수는
+# `apply_mode=live` 스펙인데 `_startup_int`(기동 시 1회 고정)로 읽는다 — `AGENT_TIMEOUT_SEC` 과
+# 같은 형태의 비대칭이다. 다만 **실제 소비처가 없다**: 유일한 사용처
+# `modules/mcp_client.py` 는 `_rts.get_int("MCP_TIMEOUT_SEC")` 로 live 를 직접 읽으므로
+# 콘솔 조정이 정상 반영된다. 즉 이 상수는 export 목록에만 남은 잔재이고, 값을 읽는 코드가
+# 생기면 그 순간 drift 가 된다 → **새 소비처를 만들 때는 이 상수가 아니라 live 조회를 쓸 것**.
+# (지금 제거하지 않는 이유: `config.__all__` 과 외부 import 표면을 건드리는 별건이고, 실사용
+#  0 이라 위험이 없다. 전수 점검 결과를 기록으로 남겨 다음 추적자가 재조사하지 않게 한다.)
 MCP_TIMEOUT_SEC = _startup_int("MCP_TIMEOUT_SEC", int(os.getenv("MCP_TIMEOUT_SEC", "20")))
 MCP_PROTOCOL = os.getenv("MCP_PROTOCOL", "jsonrpc").lower()
 MCP_SESSION_ID = None

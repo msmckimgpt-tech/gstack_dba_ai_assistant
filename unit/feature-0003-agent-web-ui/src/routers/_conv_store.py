@@ -3298,7 +3298,9 @@ def _prepare_vision_inline_images(
 async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, request=None) -> dict[str, Any]:
     from shared.db import _pg_connect
     from modules import ask_jobs as _aj
-    from shared.config import AGENT_ASK_WORKER_STALE_SEC
+    # conv-audit FR-live-cap-derived-from-startup-snapshot: 회수/대기 임계는 소비 시점 live 산출
+    # (import 시점 상수는 콘솔 변경을 추종하지 못해 run 예산과 어긋난다).
+    from shared.config import effective_ask_worker_stale_sec
 
     account_id = int(account["id"])
     if not conv_id:
@@ -3348,7 +3350,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
                 _dup = _aj.find_active_dup_ask_job(
                     pg, conversation_id=conv_id, account_id=account_id,
                     user_message=_user_message,
-                    stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                    stale_seconds=int(effective_ask_worker_stale_sec()),
                 )
             except Exception:
                 _dup = None
@@ -3375,7 +3377,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
             _jid = _aj.enqueue_ask_job(
                 pg, conversation_id=conv_id, run_id=None, account_id=account_id,
                 payload=payload, account_limit=app.WEB_PARALLEL_LIMIT,
-                stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                stale_seconds=int(effective_ask_worker_stale_sec()),
                 dedup_message=_user_message,
             )
             if _jid is not None:
@@ -3386,7 +3388,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
                 return _aj.find_active_dup_ask_job(
                     pg, conversation_id=conv_id, account_id=account_id,
                     user_message=_user_message,
-                    stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                    stale_seconds=int(effective_ask_worker_stale_sec()),
                 )
             except Exception:
                 return None
@@ -3407,7 +3409,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
 
     # 내부 attach: KV last_status 가 terminal 될 때까지 long-poll. run budget 보다 길게
     # 대기(stale + margin) — to_thread 가 full run 을 await 하던 것과 동일하게 동기 블록.
-    max_wait = int(AGENT_ASK_WORKER_STALE_SEC) + 30
+    max_wait = int(effective_ask_worker_stale_sec()) + 30
     loop = asyncio.get_event_loop()
     deadline = loop.time() + max_wait
     while loop.time() < deadline:

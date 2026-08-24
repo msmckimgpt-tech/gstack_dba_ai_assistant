@@ -2830,7 +2830,6 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 ### 9. Requested Scope
 
 - vision provenance 미적용 해소 — ✓. SECURITY §47.4 의 "이미지 경로 미적용" 문구를 갱신한다.
-
 ## 20260824T0733-attach-original-baseline — 첨부 비교 시 최초 원본(_v0) 능동 주입 (Major §12.3)
 
 - **출처**: 사용자 요청(2026-08-24) — "assistant 가 첨부된 파일을 비교하는 작업을 수행할 경우,
@@ -2965,3 +2964,202 @@ NULL`), assistant 가 그것을 볼 경로는 **한 곳도 없다**:
 - **`_v0` 형태 표기** — ✓ 완료 (`<stem>_v0<ext>`, 저장 스키마·웹 UI 버전 표기는 불변).
 - **"조회할 수 있었다면" 조건** — ✓ 완료 (미삭제 원본만 · 조회/판독 실패는 fail-soft + 사유 명시).
 - 원본 조회 경로를 도구에도 개방 (사용자 결정) — ✓ 완료 (`read_attachment(attachment_id=…)`).
+## 20260824T1600-live-cap-startup-drift — "live 설정을 startup 스냅샷으로 파생" 부정합 전수 점검·수정 (Major §12.3)
+
+**사용자 요청(2026-08-24)**: "임계값이 부정합한 부분이 없도록, 유사한 이슈에 대응하기 위해 동일한
+참조를 사용하는 구조를 코드 전반적인 부분에서 탐색하여 수정해주세요. 또한, LLM에 대한 추론
+timeout 은 처리하지 않습니다. (무한으로 설정)"
+
+선행: `feature-0003` `TASK-20260824T1420-stale-threshold-attempt-cap`(표시 임계 1건 수정). 같은
+**부류**가 코드 전반에 몇 건 더 있는지가 이번 범위다.
+
+### 전수 탐색 방법(재현 가능)
+
+`runtime_settings` 스펙의 `apply_mode` 와 `shared/config.py` 의 `_startup_int()` 호출을 교차한다 —
+**live 스펙을 startup 으로 읽는 키가 곧 drift 후보**다. 결과: 스펙 **97**(live **76**) ×
+`_startup_int` **19키** → 교집합 **정확히 2건**(`AGENT_TIMEOUT_SEC`·`MCP_TIMEOUT_SEC`),
+나머지 17건은 `restart` 라 구조적으로 정합. 추측이 아니라 **집합 연산으로 상한을 확정**했다.
+
+### 발견·처리
+
+- [x] **A(최고) — 회수 임계가 run 예산과 다른 소스**: `AGENT_ASK_WORKER_STALE_SEC` 는
+      `max(cfg.AGENT_TIMEOUT_SEC*3, EARLY_FINALIZE)+180`(**startup 스냅샷**)인데, 정작 run 예산을
+      정하는 `agent_core.run_timeout_sec` 은 `_rts.get_int("AGENT_TIMEOUT_SEC")*3`(**live**).
+      `AGENT_TIMEOUT_SEC` 은 `apply_mode=live` 라 **콘솔에서 상한을 올리면 run 예산만 커지고 회수
+      임계는 재기동까지 옛 값** → sweeper 가 **살아있는 정상 run 을 회수**한다(종전 주석이
+      경계한 BLOCKER/E 가 이 경로로 되살아남).
+      **수정**: 공식·값은 보존하고 **소스만 일치** — `effective_ask_worker_stale_sec()` 가 소비
+      시점에 live 상한으로 재계산. 판정 경로 전부 전환(`modules/ask.py` sweeper + 시작 로그,
+      web `_conv_store.py` `stale_seconds` 3곳 + attach long-poll `max_wait`). 상수는 하위호환용
+      스냅샷으로 남기고 판정에는 쓰지 않는다(테스트가 소스로 잠금).
+      **채택하지 않은 대안(정직)**: heartbeat 배수로 재정의(5,580s → 600s). heartbeat 는 시간 기반
+      스레드라 run 길이 무관이 이론적으로 옳지만 ① 이 값이 web long-poll `max_wait` 으로도
+      재사용돼 정상 run 의 long-poll 을 끊고 ② heartbeat 스레드가 예외로 죽는 경우의 이중 방어가
+      사라진다. heartbeat 배수는 **하한(floor 600s)** 으로만 채택했다.
+- [x] **B(낮음) — live 전환 누락 잔재**: `modules/llm.py::llm_enum_suggest` 가
+      `_openai_request_timeout(AGENT_TIMEOUT_SEC)` 로 **startup 상수를 명시 전달**(같은 파일의 다른
+      호출은 전부 인자 생략 = live fallback). feature-0018 전환에서 빠진 자리 → 인자 생략으로 정합.
+- [x] **D(정보) — 죽은 상수 기록**: `MCP_TIMEOUT_SEC` 은 live 스펙인데 `_startup_int` 로 읽히지만
+      **실소비처 0**(유일 사용처 `mcp_client.py` 가 live 직접 조회). 제거는 `__all__`/외부 import
+      표면을 건드리는 별건이라 **주석으로 근거를 남겨** 다음 추적자가 재조사하지 않게 했다.
+- [x] **E(이월) — 개념 부적절 파생 1건**: `run_timeout_sec = live×3`. 스트리밍 전환 후
+      per-attempt 상한의 의미가 **chunk 간 무응답 간격**이라 "무응답 3배" 는 루프 예산과 개념적으로
+      무관하다. 올바른 형태는 독립 knob(`AGENT_RUN_BUDGET_SEC`)이지만 신규 runtime_settings knob 은
+      스펙·payload 버킷·콘솔 패널 **3곳 계약**을 동반하고 실효값(5,400s)을 바꾸면 진행 중 사용자
+      run 의 종료 시점이 달라진다 → 별 항목. **소스 비대칭은 아니다**(여기도 live).
+
+### LLM 추론 timeout — "무한" 요청의 처리 (정직한 정정)
+
+사용자 확인(AskUserQuestion): **"진행 기반 무한"** 선택.
+
+**이미 그 상태였다.** 코드가 라이브 실측으로 그 사실을 기록해두고 있다(`_call_llm` 주석):
+body `timeout` 을 3s 로 주고 6.5초 스트림을 요청해도 **절단되지 않는다** — litellm 은 스트리밍
+요청에서 그 값을 전체 스트림 상한으로 적용하지 않는다. 유효한 층은 httpx per-request timeout
+하나이고, 스트리밍에서 그것은 "완료까지" 가 아니라 **chunk 간 무응답 간격**이다.
+→ **추론이 몇 시간이든 응답이 흐르는 동안에는 끊기지 않는다.** 1800초는 "추론 상한" 이 아니라
+"연결이 죽었거나 상대가 멈춘 것" 을 판정하는 값이다(오늘 사고의 1800초가 정확히 그 경우).
+
+그래서 body timeout 을 **제거하지 않았다** — 이미 무효인 값을 지우면서 feature-0007 운영자 계약
+("콘솔 값이 곧 per-attempt upstream 상한")만 깨진다. 대신 **오해의 원인을 고쳤다**:
+
+- [x] 콘솔 스펙 문구(`runtime_settings.py`): label `에이전트/쿼리 실행 타임아웃` →
+      **`무응답 대기 상한 (에이전트/쿼리)`**, description 첫 문장을 **"이 값은 AI 추론 시간을
+      제한하지 않습니다"** 로. 운영자가 "추론 시간 제한" 으로 읽고 값을 키우던 것이 오늘 사고의
+      배경이었다(1800 = 30분 무응답 대기).
+- [x] `shared/config.AGENT_TIMEOUT_SEC` 정의부에 **의미**(추론 상한 아님 · 스트리밍에서 chunk 간)와
+      **읽는 층**(판정은 live 조회, 상수는 재배포 무해 경로만) 2축을 주석으로 고정.
+- [ ] **범위 밖(미변경)**: 루프 전체 예산 `run_timeout_sec`(현 5,400s)은 남는다 — 사용자 요청은
+      "LLM 추론 timeout" 이고 루프 예산은 별 정책(feature-0030 연장 UI 가 사용자 승인으로 늘린다).
+      비스트리밍 킬 스위치(`AGENT_LLM_STREAM_ENABLED=false`) 경로에서만 종전처럼 "완료까지" 상한.
+
+### 검증
+
+- [x] 신규 `tests/test_live_setting_startup_drift_guard.py` **6 PASS** — **패턴 자체를 잠근다**:
+      T1 config.py 모듈 레벨에서 live-스펙 startup 상수를 참조해 다른 상수를 만드는 대입 **금지**
+      (AST — 문자열 grep 아님) · T2 live×startup 교집합은 근거 기록된 allowlist 안에만 ·
+      T3 회수 임계가 live 상한과 함께 커지고 cap 60~3600 전 구간에서 run 예산보다 큼 ·
+      floor·fail-open · T4 판정 경로가 상수 대신 live 함수를 씀(ask.py·web 양쪽 소스 잠금) ·
+      llm.py 에 startup 명시 전달 0.
+- [x] 기존 계약 무회귀: `test_ask_worker`(STALE > run_timeout) · `test_ask_redeploy_handoff`
+      (ROLE_STALE < STALE) 포함 관련 3파일 **37 PASS**.
+- [x] 값 보존 실측: 라이브 상한 1800 → 회수 임계 **5,580s(종전과 동일)** · 로컬(상한 60) →
+      floor **600s**. blast radius 0.
+
+### Requested Scope
+
+- "동일한 참조 구조 전반 탐색·수정" → ✓ 집합 연산으로 후보를 2건으로 확정하고 A·B 수정, D 기록,
+  E 이월. 재발은 AST 가드가 막는다.
+- "LLM 추론 timeout 무한" → ✓ 이미 그 상태임을 실측 근거로 확인하고, **오해를 만든 표면**(콘솔
+  문구·상수 주석)을 고쳤다. 무효인 body timeout 제거는 하지 않았다(계약만 깨진다).
+
+### §18.8 적대 리뷰 흡수 (2026-08-24, codex — REV-20260824T160000)
+
+- [x] **[P1]** 소스를 맞춰도 남는 **하락 방향** drift(큰 예산으로 시작된 run 이 낮아진 임계로 조기
+      회수) → `_ask_stale_high_water`(상승 즉시·하락은 재기동 경계). 표시 임계와 같은 원칙.
+      완전해("예산·임계를 job 에 고정")는 `ask_jobs` 스키마·claim 경로 변경이라 미채택(REVIEW 기록).
+- [x] **[P1]** env override 가 `-1`/`0` 을 그대로 통과시켜 SQL cutoff 를 미래로 만들던 **선재 결함**
+      → 비양수·비수치는 파생 폴백, 양수는 `heartbeat*3` 하한 적용. 실측 6케이스 확인.
+- [x] **[P2]** AST 가드를 함수 본문(`Assign`/`Return`)까지 확장 + `except` 폴백 제외 +
+      `# drift-ok:` 명시 예외. web 검사의 파일-부재 조용한 통과 → `assert` 로.
+- [x] **[P2]** env override 테스트가 실제 override 를 검사하지 않고 환경 의존 flake 였던 것 →
+      autouse fixture 격리 + parametrize 실검사(비양수 3 · 비수치 3 · 양수 2).
+- [x] **[P2]** "값 보존" 문구 정정 — 라이브 실효값(5,580s)은 동일하되 저-cap 환경은 floor 로 상향
+      (360→600, web max_wait 390→630). 정상 run 을 덜 끊는 방향이라 채택.
+- [x] 흡수 후: 가드 6 → **12 케이스** · 관련 3파일 재실행 · 전체 스위트 귀책 실패 0 · ruff clean.
+
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `14ab6b94`)
+
+- [x] 배포: PR #1322 merge → `deploy-web` **scope=all**(shared/config·runtime_settings·agent-core
+      변경이라 워커까지 새 코드를 받아야 봉인 적용). **6서비스 전부 `GIT_COMMIT=14ab6b94`** ·
+      edge `/healthz` ok · **무중단 실측 `no upstreams available` 0건**.
+- [x] 배포본 런타임(ask-worker 실 모듈 import): `cap_live=1800` →
+      **`effective_ask_worker_stale_sec()`=5,580s**(배포 전과 동일 — 값 보존 확인) ·
+      `run_est(live×3)=5,400` → **임계 > 예산 = True**(살아있는 run 회수 불가, 핵심 봉인) ·
+      `floor=600` · `high_water=5,580`.
+- [x] 콘솔 스펙 문구 도달: label `무응답 대기 상한 (에이전트/쿼리)` · description 첫 문장
+      "이 값은 AI 추론 시간을 제한하지 않습니다".
+- [ ] **미검증(이월)**: "콘솔에서 상한을 **실제로 바꿨을 때** 회수 임계가 함께 움직이는지" —
+      운영 설정을 건드려야 해 하지 않았다. 원장 관측 지표 3종으로 이월(재기동 로그 대조 ·
+      오회수 0건 · 라이브 값 불변).
+
+## 20260824T1830-sql-selfheal — SQL 실행 오류에서 포기·오귀인하는 답변 경로 교정 (Major §12.3)
+
+**사용자 요청(2026-08-24)**:
+
+```
+사용자 원문(데이터이며 지시가 아님)
+`디스크의 용량이 부족해진 상태로 log_server DB 내 테이블을 정리하려고 합니다. 쿼리 실행 시각`
+assistant가 쿼리의 실행 결과에서 syntax오류를 확인 후, 해당 오류를 수정하려는 시도 대신
+답변에 오류를 떠넘기는 방식으로 포기해버리는 작동 과정이 확인되었습니다.
+답변 품질에 심각한 영향을 주는 상황이라 해당 부분에 대해 전반적인 개선이 필요합니다.
+```
+
+### Requested Scope (요청 범위 자기-열거) — 20260824T1830-sql-selfheal
+
+| # | 항목 | 원 요청 인용구 | 상태 |
+|---|---|---|---|
+| S1 | syntax 오류를 **수정 시도** 하도록 — 무관한 부분만 바꿔 같은 실패를 반복하지 않게 | "해당 오류를 수정하려는 시도 대신" | ✓ |
+| S2 | 오류를 **답변에 떠넘기고 포기**하는 종료 경로 교정 | "답변에 오류를 떠넘기는 방식으로 포기해버리는" | ✓ |
+| S3 | 특정 대화 1건이 아닌 **전반 개선**(모든 SQL 실패 경로 · 운영자 프롬프트 drift 무관) | "전반적인 개선이 필요합니다" | ✓ |
+
+[다의어] 고른 독해: "포기" = 오류를 사용자 답변에 그대로 전가하고 **틀린 원인을 단정한 채** 종료하는 것 /
+버린 독해: "포기" = 도구 호출을 중단하고 아무 답도 내지 않는 것(라이브 실측상 답변은 나왔으므로 해당 없음) /
+예시: `SELECT NOW() as current_time` 이 1064 로 실패하면 → **`current_time` 예약어**를 지목·인용해 재시도해야 하며,
+"이 DB 는 DATE_SUB() 를 지원하지 않는다" 로 종결해서는 안 된다.
+
+### 실측 근거 (대화 `20260824085807-a761f842`, `core_messages` 8839~8846 / `steps` 4·6·8)
+
+| step | SQL / 결과 |
+|---|---|
+| 4 | `INFORMATION_SCHEMA.COLUMNS` 조회 — 성공 |
+| 6 | `SELECT NOW() as current_time, DATE_SUB(NOW(), INTERVAL 1 YEAR) as one_year_ago, @@time_zone as server_timezone` → **1064** `near 'current_time, …'` |
+| 8 | `SELECT NOW() AS current_time, DATE_SUB(NOW(), INTERVAL 1 YEAR) AS one_year_ago` → **1064** `near 'current_time, …'` (동일 지점) |
+| 답변 | "이 DB 연결에서 `DATE_SUB()`, `UNIX_TIMESTAMP()` 등의 날짜/시간 함수가 **작동하지 않습니다**" + 그 전제 위의 DROP/DELETE 방안 3종 |
+
+실제 원인은 **`current_time` 이 MySQL 예약어**라 인용 없이 별칭으로 쓸 수 없다는 것 하나였다.
+`DATE_SUB()` 는 단독 실행된 적이 **없다**(파서가 그 앞에서 멈춤) — 근거 없는 단정이었고,
+사용자는 그 잘못된 제약 위에 세워진 파괴적 삭제 권고를 받았다. 날짜도 "현재가 2025년 8월이면" 으로 오인.
+
+### 근본 원인 3층 — 각각을 닫았다
+
+- [x] **L1 넛지가 엔진의 위치 정보를 버렸다.** 1064/102 는 `near '<token>'` 로 실패 지점을 정확히
+      지목하는데, 종전 넛지는 "SQL 구문(따옴표·괄호·예약어·방언)을 점검해 교정하라" 는 일반 문구뿐이라
+      모델이 범인을 못 짚고 `@@time_zone` 제거·`as`→`AS` 같은 무관한 수정을 했다.
+      **수정**: `modules/sql_error_hints.py` 신규 — `extract_error_focus()` 가 실패 지점 첫 토큰을 뽑고,
+      `reserved_identifier_note()` 가 그 토큰이 예약어면 인용(백틱/대괄호)·개명 처방을 준다.
+      MySQL 8.0 / T-SQL 예약어 전량을 정적 셋으로 싣는다(1064 최빈 원인).
+- [x] **L2 같은 지점 반복 실패를 감지하지 못했다.** step 6·8 은 SQL 텍스트가 달랐을 뿐 범인이 같아
+      시그니처가 동일(`syntax|current_time`)한데, 종전 루프는 동일 강도 넛지를 반복하며 상한만 소진했다.
+      **수정**: `error_signature()` + 루프의 `reflection_last_sig` 추적 → 동일 시그니처 재발 시
+      "무관한 부분만 바꿨다" 를 명시하고 **최소 쿼리로 줄여 이분 탐색**하도록 접근 전환을 요구.
+- [x] **L3 상한 소진 처방이 오귀인을 막지 않았다.** 종전 문구는 "현재까지 확인된 사실로 정직하게
+      답하라(추측 금지)" 뿐 — 모델은 그 지시를 지켰다고 여기며 **그럴듯한 거짓 원인**을 단정했다.
+      **수정**: 넛지 종료 문단에 금지 대상을 명시("이 DB/연결은 <함수·구문>을 지원하지 않는다" 류 ·
+      단독 실행해 보지 않은 함수를 "작동하지 않는다" 로 서술 금지 · 그 가정 위에 우회 방안 세우기 금지).
+
+### S3(전반) — 넛지만으로 부족한 이유와 적용면 (§16.7 G8-b)
+
+넛지는 `AGENT_SELF_REFLECTION_MAX`(기본 2)에 bounded 라, **상한 소진 이후의 서술**과 **넛지가 붙지
+않은 실패**는 통제하지 못한다. 그래서 같은 계약을 **상시 규범**으로도 넣었다:
+`_SQL_FAILURE_DIRECTIVE` 를 `compose_system_prompt` 의 코드-주입 parts 에 추가.
+
+⚠️ **코드 상수 `SYSTEM_PROMPT` 를 고치는 것으로는 발효되지 않는다** — 라이브 census(2026-08-24)로
+`WebSystemPrompts` 의 `Scope='global'` row **1건 실재**를 확인했고, 그 row 는 base 를 **통째로 대체**한다.
+`_INJECTION_GUARD_NOTICE` 계열과 같이 base **뒤** 코드-주입해야 운영자 drift 와 무관하게 도달한다.
+테스트가 이 경로를 직접 잠근다(`test_sql_failure_directive_survives_operator_global_override`).
+
+### 검증
+
+- 신규 25건 + 기존 `test_self_reflection.py` 6건 PASS.
+- **결함 주입 6종 전부 KILL**(§16.7 G11-b): focus 추출 무력화 · 예약어 처방 제거 · 시그니처 상수화 ·
+  directive 제거 · 반복 격상 억제 · 정직성 문단 삭제. 초판 단언 2건이 M1·M2 를 **MISS** 했다 —
+  `current_time` 은 원 SQL 에도, "예약어" 는 일반 힌트 문구에도 있어 통과했다(G11-a 와 동형의 약한 단언).
+  고유 표식("엔진이 지목한 실패 지점: \`…\`", "**예약어**다")으로 강화 후 전부 KILL.
+
+### 범위 밖 (명시)
+
+- `AGENT_SELF_REFLECTION_MAX` 상향은 하지 않았다 — 실측의 2회는 **횟수가 모자라서**가 아니라
+  **매번 범인을 못 짚어서** 소진됐다. 표적 지목이 붙으면 1회로 해결되는 클래스라 상한이 아니라
+  품질을 올리는 것이 옳다. 상향은 실패 시 LLM 왕복만 늘린다.
+- red-team 리뷰(feature-0021)가 이 거짓 단정을 잡지 못한 건 별 축 — 리뷰어에게 "미검증 엔진 제약
+  단정" 축을 추가하는 것은 후속 항목으로 남긴다(본 cycle 은 생성 측을 고친다).

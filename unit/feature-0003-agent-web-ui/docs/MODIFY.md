@@ -4551,3 +4551,132 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   `FR-stale-threshold-below-llm-attempt-cap` → **`fixed:deployed:unverified-live`** +
   POST-DEPLOY 절 + 다음 audit 관측 지표 3종. 라이브 UI 실측 미수행 사유를 정직 기록
   (stale 표면 재현이 데이터 write 를 요구 — 감사 persona 읽기 전용 제약).
+
+## CHG-20260824T164437-sidebar-reorder-anim — 좌측 대화목록 명칭 변경 시 재배치를 부드러운 전환으로
+
+사용자 요청(2026-08-24): 대화목록 요소의 명칭을 수정하면 정렬 기준에 따라 순식간에 재배치되어
+시야에서 사라진다 → 부드러운 애니메이션으로 재배치. `REQ-20260824-sidebar-reorder-anim`.
+
+- `src/static/app/sidebar.js`
+  - **FLIP 재배치 코디네이터 추가**: `requestSidebarReorderAnimation`(예약, export) ·
+    `_beginSidebarReorder`(First 스냅샷) · `_commitSidebarReorder`(Last-Invert-Play) ·
+    `_expandAncestorsForReorderFocus`(접힌 날짜 그룹/폴더 체인 펼침) ·
+    `_scrollReorderFocusIntoView`(시야 추종 + 스크롤 범위 clamp) · `_flashReorderFocus` ·
+    `_playReorderMove` · `_reorderRowKey`/`_reorderRowByKey`(재구성 전후를 잇는 행 키) +
+    `REORDER_*` 임계 상수.
+  - `renderConversationList` → **FLIP wrapper**, 기존 DOM 렌더 본체는
+    `_renderConversationListDom(reorderFocusKey)` 로 분리(본문 로직 무변경, 접힘 해제 호출 1줄 추가).
+  - `_commitFolderRename`: PATCH 성공 경로에서만 `folder:<id>` 재배치 예약.
+  - app.js 에서 `_prefersReducedMotion` import(모션 게이트 단일 정의 공유).
+- `src/static/app.js`
+  - `_prefersReducedMotion` 을 **export** (기존 내부 함수 — 시그니처·동작 불변).
+  - `state.sidebarReorderFocus` 슬롯 추가(예약 {key, at}, 렌더 1회가 소비).
+  - `openConversationSettings` 의 `saveTitle`: 제목 PATCH 성공 후 `conv:<id>` 재배치 예약
+    (이어지는 `refreshWorkspace` → `renderConversationList` 가 대상).
+  - sidebar.js 에서 `requestSidebarReorderAnimation` import.
+- `src/static/css/shell.css`: `@keyframes convReorderFlash` + `.conv-item/.conv-folder-header`
+  `.is-reorder-flash` (1.1초 강조) + `prefers-reduced-motion` 시 정지.
+- `tests/verify_sidebar_reorder_anim.mjs` (신규 73건) · `tests/pb0008_sidebar_reorder_measure.py`
+  (신규 — PB-0008 궤적 계측기, folder/conv 2모드) · `tests/verify_new_conv_dedup.mjs`
+  (렌더 본체 분리에 맞춰 추출 대상·주입 배선 갱신, 단언 1건 추가).
+- 문서: `FUNCTION.md`(REQ + AC 4) · `TASK.md`(cycle) · `TEST.md`/`docs/test-runs.d/`(PB-0008 Run) ·
+  `REVIEW.md`(판단 근거) · `REPORT.md`(스냅샷).
+
+**동작 경계**: 예약이 없는 렌더는 좌표 측정도 하지 않아 기존 경로와 동일(주기 unread 동기화·
+그룹 토글·대화 선택 등 무영향). 정렬 규칙·API·서버 로직은 **일절 변경하지 않았다** — 재배치가
+일어나는 사실은 그대로 두고 그 전환만 보이게 한다.
+
+### §18.8 적대 리뷰(codex) 반영분 — 같은 CHG 안에서 흡수
+
+- `app/sidebar.js`: `bumpSidebarDataVersion()` 신설 + 예약에 `dataVersion` 기록,
+  `_beginSidebarReorder` 가 **데이터 버전이 오른 렌더에서만** 예약을 소비(그 전엔 예약 보존,
+  TTL 만료 시에만 정리) — [P1]. `_expandAncestorsForReorderFocus` 의 `_saveCollapsedGroups()`
+  제거(세션 해제만) — [P2]. `_armReorderCleanup` 분리로 정리자를 **invert 시점**에 설치 +
+  `transitionend` 를 `target === el && propertyName === 'transform'` 로 한정 — [P2] 2건.
+  `_commitFolderRename` 의 예약을 `loadFolders()` **앞으로** 이동(라이브 실측 회귀).
+  `loadFolders` · `_maybeSyncConversationListUnread` 에 버전 bump 추가.
+- `app.js`: `state.sidebarDataVersion` 슬롯 + `loadConversations` 의 데이터 반영 지점에 bump,
+  `bumpSidebarDataVersion` import.
+- `css/shell.css`: 강조색을 `color-mix(in srgb, var(--accent, #2563eb) 22%, transparent)` 로 — [P2].
+- `tests/verify_sidebar_reorder_anim.mjs`: 데이터-버전 귀속 · transitionend 버블링 필터 ·
+  invert-시점 watchdog · 자동펼침 비영속 · **예약↔데이터적재 순서** 계약 추가 (73 → 93 PASS).
+- `tests/verify_conv_entry_defaults.mjs`: `loadConversations` 본체의 새 의존(`bumpSidebarDataVersion`)
+  주입 배선 추가.
+- `tests/pb0008_sidebar_reorder_measure.py`: 샘플링 창 안의 스크린샷 제거(캡처가 rAF 를 멈춰
+  정상 트윈을 "전환 없음" 으로 오보고하던 계측기 자체 결함).
+
+## CHG-20260824T173000-sidebar-reorder-postdeploy — 재배치 전환 POST-DEPLOY 실증 기록
+
+`CHG-20260824T164437-sidebar-reorder-anim`(PR #1324, main `f0a9d4f9`) 배포 후 실증.
+**제품 코드 변경 0** — TASK.md 의 POST-DEPLOY 절과 본 기록만 추가한다.
+
+- 서비스별 `GIT_COMMIT` = `f0a9d4f9`(web-a·web-b·엣지 healthz) · 무중단 실측
+  `no upstreams available` **0건** · 캐시버스터 `?v=977b70eee5ae` 갱신.
+- 라이브 **서빙본**에서 PB-0008 재실측: 폴더 이름 변경 146 → 117, **16 프레임 트윈**
+  (122~362ms), 강조 1.1초, 잔류 인라인 스타일 0, 임시 폴더 정리 200.
+
+## CHG-20260824T180000-reorder-easing — 재배치 전환 easing 을 easeInOutBack 으로
+
+사용자 요청(2026-08-24): 재배치 애니메이션에 `easeInOutBack` easing 적용.
+
+- `src/static/app/sidebar.js`: `REORDER_EASING` 상수 신설
+  (`cubic-bezier(.68,-.6,.32,1.6)` — easeInOutBack CSS 근사) + `_playReorderMove` 가 참조,
+  `REORDER_ANIM_MS` 320 → 420ms(오버슈트 구간 가독).
+- `tests/verify_sidebar_reorder_anim.mjs`: easing 이 소스 상수와 일치하는지 + 오버슈트 곡선
+  성질(y1 < 0 ∧ y2 > 1) 계약 5건 추가 (93 → 98 PASS).
+- 구조·좌표 계약·시야 유지 로직 변경 **0** — 연출 곡선만 교체.
+
+### §18.8 적대 리뷰(codex) 반영분 — 같은 CHG 안에서 흡수 ([P1] 0 · [P2] 2)
+
+- `app/sidebar.js`: `REORDER_EASING_LONG`(ease-out) · `REORDER_BACK_MAX_DELTA_PX = 600` ·
+  `REORDER_OVERSHOOT_RATIO = 0.105` 신설. `_reorderEasingFor(delta)` 가 긴 이동을 오버슈트 없는
+  곡선으로 강등하고, `_reorderOvershootPx(delta)` 가 시야 보정 패딩에 오버슈트 폭을 더한다
+  (`_scrollReorderFocusIntoView(el, expectedDelta)`). 트윈 중 `pointer-events: none` 부여 →
+  `_armReorderCleanup` 의 `clear()` 가 정착·watchdog 양 경로에서 복원.
+- `tests/verify_sidebar_reorder_anim.mjs`: 기대값을 소스 추출이 아닌 **독립 고정**으로 전환
+  (토톨로지 제거) + 타이머 지연값 검사 + 긴 이동 강등 · 포인터 차단 · 오버슈트 패딩 계약 추가
+  (98 → 109 PASS).
+
+## CHG-20260824T190000-easing-postdeploy — easeInOutBack POST-DEPLOY 실증 기록
+
+`CHG-20260824T180000-reorder-easing`(PR #1328, main `de940c70`) 배포 후 실증. **제품 코드 변경 0.**
+
+- 서비스별 `GIT_COMMIT` = `de940c70` · 무중단 `no upstreams available` 0건 ·
+  캐시버스터 `?v=9ca76406f562` · 서빙본 `REORDER_EASING`/`REORDER_ANIM_MS` 도달 확인.
+- 라이브 궤적: 폴더 29px 이동에서 back-in +3px → 오버슈트 -3px → 정착(26프레임/136~541ms).
+
+## CHG-20260824T190000-reorder-affordance — 재배치 연출 재설계(오버슈트 제거 + 도착 표식)
+
+사용자 요청(2026-08-24): 애니메이션보다 더 나은 **명시적** 효과가 있는지 공격적 검토 후 반영.
+
+- `src/static/app/sidebar.js`
+  - 곡선 `easeInOutBack` → **ease-out**, 길이 420ms 고정 → **거리 적응형 160~280ms**
+    (`REORDER_ANIM_MIN_MS`/`MAX_MS`/`FULL_DELTA_PX`, `_reorderDurationFor`). 오버슈트 전용
+    상수·헬퍼(`REORDER_EASING_LONG`·`BACK_MAX_DELTA_PX`·`OVERSHOOT_RATIO`·`_reorderEasingFor`·
+    `_reorderOvershootPx`)와 시야 보정의 오버슈트 가산 제거.
+  - `_flashReorderFocus` → **`_markReorderArrival`**: 펄스(0.9초) + **지속 앵커**(rail + 배지,
+    3.5초) + **도착 묶음 헤더 동반 펄스**. `_attachReorderAnchor`/`_detachReorderAnchor`/
+    `_decorateReorderAnchor`(행 생성 시 부여)/`_applyReorderAnchor`(렌더 말미 보강) 신설.
+  - 만료 타이머에 **세대 토큰** 도입 — 오래된 타이머가 최신 표식을 지우던 결함 봉인.
+  - reduced-motion 경로에서도 도착 표식 부여(트윈만 생략).
+  - `buildCompactItem`·`renderFolderNode`(일반·이름변경 두 경로)에 `_decorateReorderAnchor` 배선.
+- `src/static/app.js`: `state.sidebarReorderAnchor` 슬롯 추가.
+- `src/static/css/shell.css`: 펄스 0.9초 + 날짜 그룹 헤더 펄스 대상 추가 · `.is-reorder-anchor`
+  rail(`inset 3px accent`) · `.conv-reorder-badge`(absolute, accent 칩) · `.conv-folder-header`
+  `position: relative` · reduced-motion 시 펄스만 정지(rail·배지 유지).
+- `tests/verify_sidebar_reorder_anim.mjs`: 기대값 전환(거리 적응형·표식) + 도착 표식 계약 블록 +
+  **행 생성 배선 계약** + **연속 이동 세대 계약** + 스텁 확장(다중 클래스·형제·자식 요소·document)
+  (109 → **145 PASS**).
+
+## CHG-20260824T200000-affordance-postdeploy — 재배치 연출 재설계 POST-DEPLOY 실증
+
+`CHG-20260824T190000-reorder-affordance`(PR #1330, main `5638b880`) 배포 후 실증.
+**제품 코드 변경 0.**
+
+- 서비스별 `GIT_COMMIT` = `5638b880` · 무중단 `no upstreams available` **0건** ·
+  캐시버스터 `?v=f18b8028608a` · 서빙본에 표식 심볼 10개 도달.
+- 라이브 서빙본 실측: rail(`3px inset accent`) + "이동됨" 배지 부여 → **재렌더 후에도 유지**
+  → 3.5초 뒤 자연 소멸. 임시 폴더 정리 200.
+- 계측 경로: `win-browser.py` 의 `win_host` 감지(resolv.conf nameserver)가 `8.8.8.8` 로 바뀌어
+  브리지가 불가로 보였으나 실제 relay(`172.26.144.1:9223`)는 정상 — playwright 직접 연결 +
+  전용 탭으로 검증했다.

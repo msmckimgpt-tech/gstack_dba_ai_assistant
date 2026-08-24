@@ -11279,3 +11279,220 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [ ] **라이브 UI 실측(미수행 — 이월)**: stale 표면은 `processing` + 임계 초과 대화가 있어야
       렌더되고 그 상태 생성은 `kv`/`steps` write 를 요구해(감사 persona 읽기 전용 제약) 하지
       않았다. 사고 대화도 `done` 종결로 대상 소멸 → 원장 "다음 audit 관측 지표" 로 이월.
+
+## 20260824T1644-sidebar-reorder-anim — 명칭 변경 시 목록이 순간이동하던 재배치를 부드러운 전환으로 (Minor §12.3)
+
+**요청(사용자, 2026-08-24)**: "작업화면 좌측 대화목록 내 요소들의 명칭을 수정할 때 정렬 기준에
+따라 순식간에 재배치되어 사용자의 시야에서 사라지는 이슈" → "명칭을 수정했을 때 부드러운
+애니메이션으로 재배치되도록".
+
+`REQ-20260824-sidebar-reorder-anim` / `CHG-20260824T164437-sidebar-reorder-anim` /
+`REV-20260824T164437-sidebar-reorder-anim`.
+
+### 원인 (재배치를 만드는 두 경로 — 정렬 자체는 정상)
+
+- **대화 제목**: `PATCH /api/conversations/{id}/title` → `_conv_update_topic` 이
+  `updated_at = now()` 갱신. 목록 정렬 키는 `c.updated_at AS last_activity_at` desc
+  (`_conv_store.py`) → 그 대화가 최상단 + '오늘' 그룹으로 점프.
+- **폴더 이름**: `_folderChildren` 이 `sort_order` → `name` localeCompare 정렬 → 가나다 위치 이동.
+- 공통: `renderConversationList` 가 `innerHTML=""` 후 전량 재구성 → **요소가 교체되어 CSS
+  transition 이 걸리지 않는다**. 그래서 전환 없는 순간이동.
+
+### 구현
+
+- [x] FLIP 코디네이터(`app/sidebar.js`): `_beginSidebarReorder`(First) → 렌더 →
+      `_commitSidebarReorder`(Last-Invert-Play). 예약이 없으면 측정 자체를 건너뛴다(비용 0).
+- [x] `renderConversationList` 는 FLIP wrapper, DOM 렌더 본체는 `_renderConversationListDom(focusKey)`.
+- [x] 시야 유지 3축: 스크롤 복원 · 접힌 조상(날짜 그룹 / 폴더 체인) 펼침 · 대상 스크롤 추종
+      (보정분을 FLIP delta 가 흡수하도록 측정 사이에 적용 + 스크롤 범위 clamp).
+- [x] 예약 배선: 폴더 = `_commitFolderRename`(PATCH 성공 경로만), 대화 = `openConversationSettings`
+      의 `saveTitle`(PATCH 성공 후, `refreshWorkspace` 가 부르는 렌더를 대상으로).
+- [x] 모션 게이트는 `_prefersReducedMotion`(app.js) **단일 정의**를 export 해 공유.
+- [x] 강조 애니메이션 `is-reorder-flash`(`css/shell.css`) + CSS 차원 reduced-motion 차단.
+
+### 검증
+
+- [x] 전용 하네스 `tests/verify_sidebar_reorder_anim.mjs` — **73 PASS**(키 규약 · 예약 게이트/TTL/
+      1회 소비 · FLIP invert→play · 임계 상/하한 · 신규 행 제외 · 스크롤 복원/추종/불변 ·
+      reduced-motion 분기 · 접힌 조상 펼침(날짜·폴더·순환 방어) · 호출 배선 · CSS).
+- [x] **뮤테이션 역검증 5종 전건 KILL** — 예약 1회소비 제거(3 FAIL) · 조상 펼침 no-op(7) ·
+      시야 보정 제거(4) · 스크롤 복원 제거(1) · reduced-motion 게이트 무력화(1).
+- [x] 사이드바 관련 기존 하네스 회귀: `verify_new_conv_dedup`(21) · `verify_conv_entry_defaults`(20) ·
+      `verify_folder_dnd_shared_group`(31) · `verify_date_group_collapse`(23) ·
+      `verify_settings_archive_leave`(23) 전건 PASS. dedup 하네스는 렌더 본체 분리에 맞춰 배선 갱신.
+- [x] 컨테이너 `make test` — 무관 1건(`test_oauth_exhaustion_gate` : 컨테이너에 `chattr` 부재)만
+      실패하며 **main 에서도 동일 실패**(환경 결함, 본 변경과 무관). ruff clean.
+- [x] **PB-0008 Windows-browser 실측** — `docs/test-runs.d/REV-20260824T164437-sidebar-reorder-anim.md`.
+      대화 제목 경로 442px→233px 를 19프레임 트윈, 폴더 경로도 트윈 확인. 계측기 자산화:
+      `tests/pb0008_sidebar_reorder_measure.py`.
+
+### 적대 리뷰 반영 (§18.8 codex — [P1] 1 · [P2] 4, 전건 흡수)
+
+- [x] **[P1]** 예약이 "다음 아무 렌더" 에 소비되던 경로. PATCH → `refreshWorkspace` 왕복 중
+      데이터-무관 렌더(그룹 토글 등)가 끼면 그 렌더가 예약을 삼켜 정작 재배치 렌더는 순간이동.
+      → 예약을 **데이터 버전**(`state.sidebarDataVersion`)에 귀속. 버전이 오르지 않은 렌더는
+      예약을 남긴다. 버전 bump 지점 3곳(`loadConversations` · `loadFolders` · 주기 unread 동기화).
+- [x] **[P2]** 자동 접힘 해제가 `_saveCollapsedGroups()` 로 **영속**되어 사용자가 의도적으로
+      접어둔 그룹이 이후 접속에서도 펼쳐지던 문제 → 세션 상태로만 해제(영속은 명시 토글 전용).
+- [x] **[P2]** `transitionend` 가 자식에서 버블링해 FLIP 을 조기 종료(행이 최종 위치로 튐)
+      → `ev.target === el && propertyName === 'transform'` 만 인정 + 리스너 명시 해제.
+- [x] **[P2]** 정리 watchdog 이 `_playReorderMove`(rAF) 안에서만 설치돼, invert 직후 탭이
+      백그라운드로 가면 인라인 스타일이 영구 잔류 → **invert 시점에** 설치(`_armReorderCleanup`).
+- [x] **[P2]** 강조색 하드코딩 → `color-mix(in srgb, var(--accent) 22%, transparent)` 토큰 기반.
+- [x] 봉인 뮤테이션 역검증 4종 전건 KILL(데이터버전 게이트 제거 · 자동펼침 영속화 ·
+      transitionend 필터 제거 · watchdog invert-시점 제거) + 하네스 73 → **93 PASS**.
+
+### 라이브 실측이 잡은 회귀 (하네스가 놓쳤던 순서 계약)
+
+- [x] [P1] 수정 직후 폴더 경로의 애니메이션이 **조용히 사라졌다**. 원인: `_commitFolderRename`
+      이 `loadFolders()`(데이터 버전 bump) **뒤에** 예약해 자기 갱신을 이미 지나침 → 어떤 렌더도
+      소비하지 않음. 하네스는 "예약이 PATCH 성공 경로에 있다" 만 봤고 **순서**는 보지 않았다.
+      → 예약을 `loadFolders()` 앞으로 이동 + 하네스에 순서 계약 2건 추가(뮤테이션 KILL 확인).
+- [x] 계측기 자체 결함도 실측이 드러냈다: 샘플링 창 안에서 Playwright 스크린샷을 찍으면 렌더가
+      블로킹돼 rAF 가 멈추고, **정상 트윈을 "전환 없음" 으로 오보고**한다 → 캡처를 샘플링 창
+      밖으로 이동. (원시 프레임 추적으로 브라우저는 정상 트윈 중이었음을 확인한 뒤 수정.)
+- [x] 수정본 재실측: 폴더 146→117 **16프레임**(113~362ms) · 대화(8월 4일 그룹 → 오늘)
+      319→142 **18프레임**(306~602ms), 제목 원복 완료.
+
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `f0a9d4f9`)
+
+- [x] 배포: PR #1324 merge → `make deploy-web-only`(scope=web+caddy — 변경이 본 feature 정적
+      자산에 한정, 워커 코드 변경 0). web-a/web-b one-at-a-time 무중단 롤링.
+- [x] 반영 판정은 파이프 exit 이 아니라 **서비스별 `GIT_COMMIT`**: web-a·web-b `f0a9d4f9` ·
+      엣지 `/healthz` `ok·f0a9d4f9·mysql_ok·pg_ok`.
+- [x] **무중단 실측**: 배포 창의 caddy 로그에서 `no upstreams available` **0건**.
+- [x] 서빙 자산 도달: 캐시버스터 `?v=977b70eee5ae`, 라이브 엣지가 서빙하는 `app/sidebar.js` 에
+      FLIP wrapper 실물 확인(`renderConversationList` → `_beginSidebarReorder()` /
+      `_commitSidebarReorder(snap)`), 신규 심볼 매칭 8건.
+- [x] **라이브 배포본 PB-0008 실측**(bind-mount 검증본이 아니라 실제 서빙본): 폴더 이름 변경이
+      화면 y **146 → 117** 로 **16 프레임 트윈**(122~362ms), 강조 122~1229ms, 잔류 인라인 스타일
+      0, 임시 폴더 `DELETE` 200 정리 완료. (라이브 데이터 변경은 임시 폴더 생성·삭제뿐.)
+
+### 남은 것
+
+- 없음.
+
+## 20260824T1800-reorder-easing — 재배치 전환 easing 을 easeInOutBack 으로 (Minor §12.3)
+
+**요청(사용자, 2026-08-24)**: "정상적으로 애니메이션이 연출되는 부분을 확인했습니다. 혹시,
+애니메이션에 `easeInOutBack` easing 함수를 적용해볼 수 있을까요?"
+
+`CHG-20260824T180000-reorder-easing` / `REV-20260824T180000-reorder-easing`.
+직전 cycle `20260824T1644-sidebar-reorder-anim` 의 후속(연출 조정만 — 구조·계약 변경 0).
+
+### 구현
+
+- [x] `REORDER_EASING = "cubic-bezier(.68,-.6,.32,1.6)"` 상수 신설(easeInOutBack CSS 근사),
+      `_playReorderMove` 가 그 상수를 싣는다(곡선 교체가 한 곳에서 끝나게).
+- [x] `REORDER_ANIM_MS` 320 → **420ms**. 오버슈트 구간(양끝)이 있어 종전 길이로는 되돌아오는
+      움직임이 눈에 뭉개진다. 정리 watchdog(`+400ms`) · 강조(1100ms) · 예약 TTL(4000ms)과
+      여전히 정합.
+
+### 검증
+
+- [x] 하네스 93 → **98 PASS** — easing 이 소스 상수를 그대로 싣는지 + **오버슈트 곡선 성질**
+      (제어점 y1 < 0, y2 > 1)을 계약으로 잠갔다(평범한 ease-in-out 으로 조용히 바뀌는 것 차단).
+- [x] **PB-0008 실측** (bind-mount 검증 컨테이너, 실 Windows Chrome):
+      - 폴더 이름 변경(29px 이동): 146 → **149**(반대로 3px 당김) → 118 → **114**(3px 지나침)
+        → 117 정착. 25 프레임, 178~577ms.
+      - 대화 제목 변경(176px 이동, 8월 5일 → 오늘): 318 → **336**(+18px back-in) → 124
+        (**-18px 오버슈트**) → 142 정착. 27 프레임, 317~748ms. 제목 원복 완료.
+      - 오버슈트 폭은 이동 거리의 약 **10%** 로 일정(29px→±3, 176px→±18).
+- [x] 사이드바 관련 기존 하네스 5종 회귀 0.
+
+### 적대 리뷰 반영 (§18.8 codex — [P1] 0 · [P2] 2, 전건 흡수)
+
+- [x] **[P2]** 오버슈트가 **이동 거리에 비례**(곡선 최대 편차 ≈10.5%)해 긴 이동에서 수십~수백 px
+      을 더 나간다 — 스크롤 경계 밖 잘림 · 반대 방향 행과의 교차 시간 확대 · 그 사이 클릭이 다른
+      행으로 전달될 창. `REORDER_MAX_DELTA_PX = 2400` 은 이 과장을 막는 안전판이 못 된다는 지적.
+      → 3중 완화: ① 이동 > **600px** 이면 오버슈트 없는 ease-out 으로 강등(`_reorderEasingFor`),
+      ② 시야 보정 패딩에 **오버슈트 폭**(`_reorderOvershootPx`)을 더해 "지나가는 순간 잘림" 차단,
+      ③ 트윈 중 `pointer-events: none`(정착·watchdog 양쪽 경로에서 복원).
+- [x] **[P2]** 하네스가 duration·easing 을 **소스에서 추출해 소스와 비교**해 사실상 토톨로지였다
+      (값이 무엇으로 바뀌어도 통과). → 기대값을 하네스에 **독립 고정**(420ms · 네 제어점 정확
+      일치 · ease-out 폴백 · 600px · 1100ms · 4000ms)하고, 타이머는 실행 여부가 아니라 **지연값
+      820ms** 를 검사한다.
+- [x] 봉인 뮤테이션 5종 전건 KILL(곡선 바꿔치기 · duration 되돌리기 · 긴 이동 강등 제거 ·
+      포인터 차단 제거 · 오버슈트 패딩 제거). 하네스 98 → **109 PASS**.
+- [x] 수정본 재실측: 폴더 29px → back-in +3 / 오버슈트 -3(25프레임) · 대화 174px(8월 11일 →
+      오늘) → back-in +18 / 오버슈트 -18, 10%(22프레임). 기존 하네스 5종 회귀 0.
+
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `de940c70`)
+
+- [x] 배포: PR #1328 merge → `make deploy-web-only`. web-a/web-b 무중단 롤링.
+- [x] 서비스별 `GIT_COMMIT` = `de940c70`(web-a·web-b·엣지 healthz) · **무중단 실측
+      `no upstreams available` 0건** · 캐시버스터 `?v=9ca76406f562`.
+- [x] 라이브 서빙본에 곡선 도달: `REORDER_EASING = "cubic-bezier(.68,-.6,.32,1.6)"` ·
+      `REORDER_ANIM_MS = 420`.
+- [x] **라이브 PB-0008 궤적 재확인**: 폴더 이름 변경(29px) → back-in **+3px**(반대 방향) →
+      오버슈트 **-3px**(목표 초과) → 정착. 26 프레임(136~541ms). 임시 폴더 정리 200.
+
+### 남은 것
+
+- 없음.
+
+## 20260824T1900-reorder-affordance — 재배치 연출 재설계: 오버슈트 제거 + 도착 표식 (Minor §12.3)
+
+**요청(사용자, 2026-08-24)**: "디자인적인 관점으로 바라보았을 때, 해당 애니메이션을 넣는것보다
+더 나은 명시적인 효과가 있을지 공격적으로 검토해주세요. 타당하다면, 해당 방향으로 수정해주세요."
+
+`CHG-20260824T190000-reorder-affordance` / `REV-20260824T190000-reorder-affordance`.
+
+### 검토 결론 (근거 있는 되돌림)
+
+- **오버슈트(easeInOutBack)는 이 맥락에 부적합**하다. 업계 모션 가이드 공통 권고는 "bounce·
+  overshoot 는 장식적 순간에, 기능적 UI 는 감속 곡선" 이고, 여러 행이 동시에 움직이는 재정렬에서
+  오버슈트는 목록 전체를 출렁이게 해 정작 알려야 할 "무엇이 어디로" 를 흐린다. 420ms 는
+  NN/G 기준 "큰 화면 전환 전용(≈400ms 상한)" 대역이라 사이드바 한 행 이동에는 길다.
+- **모션은 본질적으로 암묵 신호다** — 그 순간 화면을 보고 있어야만 정보를 준다. 사용자가 요청한
+  "더 명시적인 효과" 의 답은 모션을 더 꾸미는 것이 아니라 **모션이 끝난 뒤에도 남는 표식**이다.
+
+### 구현
+
+- [x] 곡선 `ease-out(cubic-bezier(.22,.61,.36,1))`, 길이 **거리 적응형 160~280ms**
+      (한 칸 이동은 굼뜨지 않게, 먼 이동은 급하지 않게). 오버슈트 전용 코드(강등·패딩 가산) 제거.
+- [x] **도착 표식 2층**: ① 배경 펄스 0.9초(이동한 행 + **도착한 묶음 헤더** 동반) ②
+      좌측 accent **rail** + **"이동됨" 배지** 3.5초 — rail 은 형태, 배지는 언어 신호라
+      hover/active 배경과 의미가 겹치지 않는다. 배지는 absolute + `aria-label`.
+- [x] 표식은 `state.sidebarReorderAnchor` 로 들고 **행 생성 시** 부여 → 재렌더를 견딘다.
+- [x] reduced-motion 에서도 **표식 유지**(펄스만 CSS 정지) — 모션이 없을수록 정적 신호가 중요.
+
+### 검증
+
+- [x] 하네스 109 → **145 PASS**. 뮤테이션 **7종 전건 KILL**(오버슈트 복귀 · 상한 480ms ·
+      행 생성 시 부여 제거 · 배지 부착 제거 · 배지 제거 로직 무력화 · reduced-motion 표식 제거 ·
+      **세대 검사 제거**).
+- [x] **PB-0008 실측**: 폴더 29px 이동 → 8프레임(112~226ms), **오버슈트 0**(offset min +1).
+      도착 표식 = rail `inset 3px accent` + 배지("이동됨", `aria-label`, absolute) ·
+      **재렌더(그룹 접기/펼치기) 후에도 유지** · 3.5초 뒤 자연 소멸 · 임시 폴더 정리 200.
+
+### 라이브 실측이 잡은 결함 2건 (하네스가 놓쳤던 것)
+
+- [x] **후처리 복원의 취약성**: 렌더 후 표식을 되붙이는 방식은 렌더 횟수·순서에 의존해, 이름
+      변경 직후 이어지는 두 번째 렌더에서 표식이 조용히 사라졌다 → **행 생성 경로에서 부여**로
+      구조 변경(+ 배선 계약을 하네스에 추가).
+- [x] **세대 없는 만료 타이머**: 같은 행을 연달아 이동시키면(폴더를 잇달아 만들고 이름 변경)
+      오래된 타이머가 살아 있는 최신 표식을 지워 수명(3.5초)보다 일찍 사라졌다 → 토큰 동일성으로
+      **자기 세대만 거두게** 봉인(+ 연속 이동 계약 추가).
+
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `5638b880`)
+
+- [x] 배포: PR #1330 merge → `make deploy-web-only`. 서비스별 `GIT_COMMIT` = `5638b880`
+      (web-a·web-b·엣지 healthz) · **무중단 실측 `no upstreams available` 0건** ·
+      캐시버스터 `?v=f18b8028608a` · 서빙본 표식 심볼 10개 도달.
+- [x] **라이브 서빙본 실측**(bind-mount 검증본이 아니라 엣지가 서빙하는 자산):
+      폴더 이름 변경 → rail `rgb(37,99,235) 3px inset` + 배지("이동됨", `aria-label`,
+      `position: absolute`) 부여 → **무관한 재렌더(그룹 접기/펼치기) 후에도 유지** →
+      3.5초 뒤 자연 소멸(잔류 0). 임시 폴더 정리 200.
+- [x] 계측 경로 메모: `bin/win-browser.py` 의 `win_host` 감지가 `/etc/resolv.conf` nameserver
+      를 쓰는데 그 값이 `8.8.8.8` 로 바뀌어 브리지가 `bridge_unreachable` 로 보였다. 실제 relay
+      (`172.26.144.1:9223`)는 살아 있었고, playwright 로 직접 붙어 **전용 탭**을 열어 검증했다
+      (타 세션 탭 하이재킹도 함께 회피).
+
+### 남은 것 / 별도 과제 제안
+- [ ] **(제안, 별도 cycle)** 근본 해법 — **정렬 키와 `updated_at` 분리**. "제목을 고쳤다" 는
+      최근 활동이 아닌데 현재는 PG 트리거(`trg_core_conv_updated_at`)가 모든 UPDATE 에서
+      `updated_at` 을 갱신하고 목록이 그것으로 정렬돼, 어제 대화의 이름만 바꿔도 '오늘' 로
+      올라온다. `last_message_at`(또는 `last_content_activity_at`)을 두고 목록 정렬을 그것으로
+      옮기면 **재배치 자체가 사라져** 이 연출이 필요 없어진다. 스키마·백필·정렬/검색/커서 쿼리
+      동반 변경이라 이 cycle 범위를 넘어 제안으로 남긴다(§8.1).
