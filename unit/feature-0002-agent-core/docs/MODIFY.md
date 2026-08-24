@@ -2344,3 +2344,34 @@ live 스펙을 startup 으로 읽는 키가 drift 후보. 스펙 97(live 76) × 
 - 콘솔 스펙 문구 도달 확인(추론 상한 오해 교정).
 - 원장 `FR-live-cap-derived-from-startup-snapshot` → **`fixed:deployed:unverified-live`** +
   POST-DEPLOY 절 + 관측 지표 3종. 콘솔 실변경 시나리오는 미검증으로 정직 기록.
+
+## CHG-20260824T183000-sql-selfheal — SQL 실행 오류의 표적 자가수정 + 오귀인 차단
+
+- `src/modules/sql_error_hints.py` **신규**: 엔진이 지목한 실패 지점 추출(`extract_error_focus`),
+  MySQL 8.0 / T-SQL 예약어 셋과 인용·개명 처방(`reserved_identifier_note`), 동일 실패 반복 판정용
+  시그니처(`error_signature`), 결합 처방(`targeted_hint`). 순수 함수 모듈(DB·LLM·config 무의존).
+- `src/agent_core.py`
+  - `_classify_sql_error` → `sql_error_hints.classify_error` 위임(동작 동일 + MSSQL 문구 인식).
+  - `_sql_reflection_nudge` 확장: 실패 지점 지목 · 예약어 처방 · `repeated=` 격상 문구 ·
+    상한 소진 문단을 **정직성 계약**(검증 안 한 엔진 제약 단정 금지)으로 교체. 기존 4-positional
+    시그니처 하위호환.
+  - `_sql_error_signature` · `_active_sql_dialect_name` 신규 헬퍼.
+  - 메인 루프: `reflection_last_sig` 로 직전 실패 시그니처 추적 → 동일하면 `repeated=True`.
+  - `_SQL_FAILURE_DIRECTIVE` 신규 + `compose_system_prompt` 의 코드-주입 `parts` 에 추가
+    (운영자 `WebSystemPrompts` global row 가 base 를 대체해도 도달 — §16.7 G8-b).
+- `tests/test_sql_error_selfheal.py` **신규** 25건 — 실측 오류 원문 기반 봉인.
+
+근거: 라이브 대화 `20260824085807-a761f842`(TASK.md `20260824T1830-sql-selfheal` 참조).
+
+## CHG-20260824T193000-sql-selfheal-review-fixes — 자체 적대 리뷰 P1 2건 수정
+
+- `src/modules/sql_error_hints.py`: `_sanitize_focus` 추가 — focus 는 비신뢰 경로(DB 오류 원문)로
+  들어오는데 넛지는 datamark 구획 **밖**에 붙으므로, 첫 공백 전까지 + 식별자 문자 + 64자 상한으로
+  정제해 임의 문장의 코드-권위 승격을 차단. `Unknown column`/`Table` 경로에 적용
+  (near 경로의 기호 fallback 은 지목 대상이 기호라 미적용, 12자·무공백 제한 유지).
+- `src/agent_core.py`: `_active_sql_dialect_name` 이 존재하지 않는 전역 `_dialects` 를 참조해
+  NameError 가 `except` 에 삼켜지며 **항상 ""** 를 반환하던 dead code 수정 → 함수 내부 import.
+  MSSQL 의 T-SQL 예약어 처방이 무력화되던 fail-open 해소.
+- `tests/test_sql_error_selfheal.py`: 회귀 3건 추가(정제·정상 식별자 보존·dialect resolver 생존).
+
+근거: `REVIEW.md` `REV-20260824T193000-…` [P1-1]/[P1-2].

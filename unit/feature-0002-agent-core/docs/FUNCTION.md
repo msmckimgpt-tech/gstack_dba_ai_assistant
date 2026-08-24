@@ -1328,3 +1328,38 @@ diff · ATTACHMENT SET 권위 사실 · 리뷰어 digest)이 **전부 하나의 
     값을 키우던 것이 선행 사고의 배경). 비스트리밍 폴백에서만 종전처럼 "완료까지" 상한이 된다.
   - AC-0609: `modules/llm.py` 의 per-request timeout 은 인자를 생략해 live 로 폴백한다 — startup
     상수를 명시 전달하는 자리를 두지 않는다(feature-0018 계약).
+
+## (sql-selfheal, 2026-08-24) SQL 실행 실패는 **엔진이 지목한 지점**을 고치고, 원인을 지어내지 않는다 (Major §12.3, TASK 20260824T1830-sql-selfheal)
+
+REQ-20260824-sql-selfheal / AC-20260824T183000-sql-selfheal-1..3 — REQ-20260623-1670(ITEM-07
+자가수정 넛지)의 **품질·종료 계약 확장**. 넛지의 존재·게이팅·cap 은 그대로이고, 그 *내용* 과
+*상한 소진 이후의 서술* 을 규정한다.
+
+**AC-1 (표적 지목)**: `execute_sql` 이 수정 가능한 오류를 내면 넛지는 엔진이 준 실패 지점을
+**추출해 지목**한다. MySQL 1064 / SQL Server 102 의 `near '<token>'` 잔여 텍스트 선두 토큰,
+없으면 `Unknown column`/`Table … doesn't exist`/`Invalid object name` 의 이름이 focus 다.
+focus 가 **예약어**(MySQL 8.0 / T-SQL 전량 셋)면 인용(백틱/대괄호)·개명 처방을 함께 준다 —
+1064 의 최빈 원인이다. 정본: `modules/sql_error_hints.{extract_error_focus,
+reserved_identifier_note,targeted_hint}`.
+
+**AC-2 (반복 감지)**: 실패는 `분류|실패지점` 시그니처로 식별한다. 직전 실패와 시그니처가 같으면
+— SQL 텍스트가 달라도 — "무관한 부분만 바꿨다" 로 판정해 넛지를 격상하고, 실행되는 최소 쿼리로
+줄인 뒤 한 조각씩 되붙이는 **이분 탐색**을 요구한다. 정본: `modules/sql_error_hints.error_signature`
++ `agent_core` 루프의 `reflection_last_sig`.
+
+**AC-3 (정직성 계약, load-bearing)**: cap 소진 시 처방은 "정직하게 답하라" 로 끝나지 않는다.
+다음을 **명시 금지**한다 — ① "이 DB/연결은 <함수·구문>을 지원하지 않는다" 류 미검증 엔진 제약을
+사실로 서술, ② 단독 실행해 보지 않은 함수를 "작동하지 않는다" 로 서술, ③ 그 가정 위에 우회
+방안 수립. 대신 실패 SQL·오류 원문을 사용자에게 제시하고 확인된 것만 답하며 나머지는 **미확인**
+으로 표기한다.
+
+**적용면 (§16.7 G8-b)**: AC-3 의 계약은 bounded 넛지뿐 아니라 `_SQL_FAILURE_DIRECTIVE` 로
+**상시** 주입된다. 이 directive 는 `compose_system_prompt` 에서 base **뒤** 코드-주입되므로
+운영자 `WebSystemPrompts` `Scope='global'` row 가 base 를 통째로 대체해도 도달한다 —
+코드 상수 `SYSTEM_PROMPT` 만 수정하는 방식은 **라이브에 발효되지 않는다**(census 로 global row
+실재 확인, 2026-08-24). 회귀 잠금:
+`tests/test_sql_error_selfheal.py::test_sql_failure_directive_survives_operator_global_override`.
+
+**불변 (회귀 금지)**: 보안 가드 차단(`보안 정책상 차단` 등)은 여전히 자가수정 대상 밖이다 —
+우회 유도 금지. `AGENT_SELF_REFLECTION_{ENABLED,MAX}` 의 의미·기본값(ON / 2) 무변경.
+`_sql_reflection_nudge` 의 4-positional 시그니처 하위호환.

@@ -1317,6 +1317,41 @@ _DS_RESTRICTION_RELAY_DIRECTIVE = (
 )
 
 
+# FR-sql-selfheal-honesty: SQL 실행 실패의 **대응 규범**. base 뒤 코드-주입이라 운영자
+# WebSystemPrompts `global` row 가 base 를 통째로 대체해도 도달한다(§16.7 G8-b — 라이브 census
+# 로 global row 1건 실재 확인 2026-08-24; 코드 상수 SYSTEM_PROMPT 만 고치면 발효되지 않는다).
+#
+# 실측 근거 (대화 `20260824085807-a761f842`): `SELECT NOW() as current_time, ...` 가 MySQL 1064
+# 로 실패(원인=`current_time` 예약어 별칭). 모델은 두 재시도에서 무관한 부분만 바꿔 같은 지점에서
+# 재실패했고, 최종 답변에 "이 DB 연결에서 DATE_SUB(), UNIX_TIMESTAMP() 등의 날짜/시간 함수가
+# 작동하지 않습니다" 라는 **한 번도 시험하지 않은 제약**을 사실로 단정한 뒤 그 위에 DROP/DELETE
+# 방안 3종을 세웠다. 자가수정 넛지(bounded)만으로는 상한 소진 이후의 서술을 통제하지 못한다.
+_SQL_FAILURE_DIRECTIVE = (
+    "\n\n## SQL EXECUTION FAILURE — FIX THE QUERY, NEVER INVENT AN ENGINE LIMITATION\n"
+    "When `execute_sql` fails, the engine tells you **where** it broke. Use that, and do not give up "
+    "on the query silently.\n"
+    "- MySQL error 1064 and SQL Server error 102 both report `near '<token>'`. Parsing stopped **at "
+    "that token** — fix that spot. Editing unrelated parts of the statement (dropping another "
+    "column, changing `as` to `AS`, reformatting) is not a fix and will fail identically.\n"
+    "- The single most common cause is a **reserved word used as an alias or identifier** "
+    "(`current_time`, `rank`, `groups`, `system`, `interval`, `order`, `key`, …). Quote it — MySQL "
+    "backticks `` `current_time` `` / T-SQL brackets `[current_time]` — or rename it "
+    "(`current_time_val`). Check this FIRST on any 1064/102.\n"
+    "- If the same spot fails twice, stop editing the big statement: shrink it to the smallest form "
+    "that runs (e.g. `SELECT NOW()`), confirm that, then add one piece at a time until it breaks. "
+    "That bisection finds the culprit in two or three cheap calls.\n"
+    "**Never state an unverified engine limitation as fact.** Do not write that this DB, connection, "
+    "or datasource \"does not support\" / \"does not allow\" / \"작동하지 않는다\" for a function, "
+    "keyword, or syntax unless you ran **that construct alone** and it failed. A syntax error "
+    "somewhere in a statement is NOT evidence that a function inside it is unsupported — the parser "
+    "never reached it. This matters because the user acts on what you assert: an invented constraint "
+    "makes you recommend an unnecessary and often destructive workaround.\n"
+    "If you genuinely cannot get a query to run, say so plainly: show the failing SQL and the raw "
+    "error, state what you did verify, and mark the rest 미확인. An honest 미확인 is correct; a "
+    "confident wrong cause is a defect.\n"
+)
+
+
 def _tools_mod_for_notice():
     import modules.tools as _t
     return _t
@@ -2518,7 +2553,8 @@ def compose_system_prompt(
     # 운영자 global row 대체와 무관하게 도달한다(AUTH-1a).
     parts: list[str] = [base_prompt, _INJECTION_GUARD_NOTICE, _ATTACHMENT_DELIVERY_DIRECTIVE,
                         _ATTACHMENT_NEW_DELIVERY_DIRECTIVE,
-                        _ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE]
+                        _ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE,
+                        _SQL_FAILURE_DIRECTIVE]
     if is_auto:
         parts.append(
             "\n\n[AUTO MODE] No product is pinned to this conversation. "
@@ -6299,31 +6335,72 @@ def _is_fixable_sql_error(result: "str | None") -> bool:
 
 
 def _classify_sql_error(result: "str | None") -> str:
-    r = (result or "").lower()
-    if "syntax" in r or "구문" in r:               # syntax 우선(REV N2: 'near table' 오분류 방지)
-        return "syntax"
-    if "unknown column" in r or "컬럼" in r or "column" in r:
-        return "unknown-column"
-    if "doesn't exist" in r or "unknown table" in r or "테이블" in r or "table" in r:
-        return "unknown-table"
-    return "execution"
+    # 정본 구현은 modules/sql_error_hints.classify_error (순수 함수 — 라이브 없이 테스트 가능).
+    from modules.sql_error_hints import classify_error
+    return classify_error(result)
 
 
-def _sql_reflection_nudge(result: str, last_sql: "str | None", n: int, cap: int) -> str:
-    """SQL 실패에 대한 구조화된 자가수정 지침(에러 분류 + 원 SQL + 표적 힌트). bounded(n/cap)."""
+def _sql_error_signature(result: "str | None") -> str:
+    """동일 실패 반복 판정용 시그니처 (분류 + 엔진이 지목한 실패 지점)."""
+    from modules.sql_error_hints import error_signature
+    return error_signature(result)
+
+
+def _active_sql_dialect_name() -> str:
+    """활성 datasource 방언 이름(mysql|tsql). 해석 실패 시 "" — 힌트는 MySQL 기본으로 낸다.
+
+    ⚠️ `dialects` 는 이 모듈의 전역 이름이 **아니다**(tools.py 만 `_dialects` 로 import 한다).
+    전역 참조로 쓰면 NameError 가 except 에 삼켜져 **항상 ""** 를 반환하고, MSSQL 에서 T-SQL
+    예약어 처방이 조용히 죽는다 — 게이트 뒤 숨은 호출이 fail-open 으로 무력화되는 전형이다.
+    함수 내부 import 로 실제 값을 해석한다.
+    """
+    try:
+        from modules import dialects as _d
+        return str(getattr(_d.active(), "sqlglot", "") or "")
+    except Exception:
+        return ""
+
+
+def _sql_reflection_nudge(result: str, last_sql: "str | None", n: int, cap: int,
+                          *, repeated: bool = False, dialect: "str | None" = None) -> str:
+    """SQL 실패에 대한 구조화된 자가수정 지침. bounded(n/cap).
+
+    구성: 분류 + 원 SQL + **엔진이 지목한 실패 지점(focus)** + 표적 처방(+예약어 인용) +
+    동일 실패 반복 시 접근 전환 요구 + 상한 소진 시 **정직성 계약**.
+
+    ⚠️ 마지막 문단(정직성 계약)이 이 함수의 load-bearing 부분이다. 라이브 실측
+    (2026-08-24 `20260824085807-a761f842`)에서 모델은 상한 소진 후 "이 DB 연결에서
+    DATE_SUB(), UNIX_TIMESTAMP() 등의 날짜/시간 함수가 작동하지 않습니다" 라는
+    **한 번도 검증하지 않은 엔진 제약**을 사실로 단정하고 그 위에 삭제 방안을 세웠다.
+    실제 원인은 `current_time` 예약어 별칭이었다. 종료 지점의 처방이 "정직하게 답하라"
+    뿐이면 이런 **그럴듯한 오귀인**을 막지 못한다 — 금지 대상을 명시한다.
+    """
+    from modules.sql_error_hints import extract_error_focus, targeted_hint
+
     kind = _classify_sql_error(result)
-    hint = {
-        "unknown-column": "describe_table 로 정확한 컬럼명을 확인한 뒤 컬럼을 교정하라.",
-        "unknown-table": "search_tables/describe_table 로 정확한 테이블/스키마명을 확인한 뒤 교정하라.",
-        "syntax": "SQL 구문(따옴표·괄호·예약어·방언)을 점검해 교정하라.",
-        "execution": "에러 메시지를 읽고 원인을 교정하라.",
-    }.get(kind, "에러 메시지를 읽고 원인을 교정하라.")
-    return (
-        f"[자가수정 {n}/{cap}] 직전 execute_sql 이 실패했다(분류: {kind}). "
-        f"원 SQL: {str(last_sql or '')[:400]} — {hint} "
-        f"**같은 SQL 을 그대로 재실행하지 말 것**(다르게 교정). {n}회째 시도이며 {cap}회 후엔 "
-        f"현재까지 확인된 사실로 정직하게 답하라(추측 금지)."
+    focus = extract_error_focus(result)
+    hint = targeted_hint(kind, focus, dialect)
+
+    lines = [
+        f"[자가수정 {n}/{cap}] 직전 execute_sql 이 실패했다(분류: {kind}).",
+        f"원 SQL: {str(last_sql or '')[:400]}",
+        hint,
+    ]
+    if repeated:
+        lines.append(
+            "⚠ 직전 시도와 **같은 지점에서 같은 오류**가 반복됐다 — 무관한 부분만 바꾼 것이다. "
+            "지목된 지점 자체를 인용·개명·제거하거나, 쿼리를 실행되는 최소 형태"
+            "(예: `SELECT NOW()`)로 줄인 뒤 한 조각씩 되붙여 실패 지점을 이분 탐색하라."
+        )
+    lines.append("**같은 SQL 을 그대로 재실행하지 말 것** — 지목된 지점을 실제로 바꿔라.")
+    lines.append(
+        f"{n}회째 시도이며 {cap}회 후에도 실패하면, 실패한 SQL 과 오류 원문을 사용자에게 그대로 "
+        "제시하고 **확인된 사실만** 답하라. 이때 **실패 원인을 단정하지 말 것** — 특히 "
+        "\"이 DB/연결은 <함수·구문>을 지원하지 않는다\" 처럼 검증하지 않은 엔진 제약을 사실로 "
+        "쓰는 것을 금지한다(구문 오류는 대개 쿼리 자체의 식별자·인용 문제다). 단독으로 실행해 "
+        "보지 않은 함수를 \"작동하지 않는다\"고 서술하지 말고, 그 가정 위에 우회 방안을 세우지도 말라."
     )
+    return " ".join(lines)
 
 
 def _format_multi_ds_grounding(ds_desc: "list[dict]") -> str:
@@ -7485,6 +7562,9 @@ def _run_agent_core(
     # 그 단계의 abort 판정에 반영한다(dict = closure 재바인딩 회피).
     _finalize_seen: dict[str, bool] = {"hit": False}
     reflection_count = 0  # ITEM-07: run 당 SQL 자가수정 넛지 횟수(cap=AGENT_SELF_REFLECTION_MAX)
+    # FR-sql-selfheal-repeat: 직전 실패의 시그니처(분류|실패지점). 같은 지점에서 또 실패하면
+    # 모델이 무관한 부분만 바꾼 것이므로 넛지 강도를 격상한다(라이브 실측 20260824085807).
+    reflection_last_sig = ""
     llm_round = 0  # TASK-0289: LLM 추론 호출 회차(activity 노출용)
     # TASK-20260703-aiops-ttft-latency (정의 A): 직전 라운드 LLM 호출 종료 시각(perf_counter_ns).
     #   다음 라운드 호출 직전 gap(도구 실행 + 오케스트레이션 = '단계 간 간격')을 산출해 계측한다.
@@ -8426,8 +8506,14 @@ def _run_agent_core(
                     and _is_fixable_sql_error(tool_result)
                     and reflection_count < cfg.AGENT_SELF_REFLECTION_MAX):
                 reflection_count += 1
+                # 같은 지점(분류|focus)에서 반복 실패면 접근 전환을 요구한다 — SQL 텍스트가
+                # 달라도 범인 토큰이 그대로면 "다르게 교정" 이 아니다(실측 step 6·8).
+                _sig = _sql_error_signature(tool_result)
+                _repeated = bool(_sig) and _sig == reflection_last_sig
+                reflection_last_sig = _sig
                 _tool_content += "\n\n" + _sql_reflection_nudge(
-                    tool_result, last_sql, reflection_count, cfg.AGENT_SELF_REFLECTION_MAX)
+                    tool_result, last_sql, reflection_count, cfg.AGENT_SELF_REFLECTION_MAX,
+                    repeated=_repeated, dialect=_active_sql_dialect_name())
             tool_msg = {
                 "role": "tool",
                 "content": _tool_content,
