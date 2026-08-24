@@ -614,7 +614,24 @@ export function isFolderScopedConversation(item) {
 // prefers-reduced-motion(인앱 '애니메이션 효과' 설정 포함)이면 ①의 트윈과 강조는 생략하되
 // **②③의 시야 유지는 그대로 수행한다** — 접근성 신호는 "모션을 줄여라"이지 "항목을 잃어도
 // 좋다"가 아니다. 예약이 없는 일반 렌더(주기 unread 동기화 등)는 측정도 하지 않아 비용 0.
-const REORDER_ANIM_MS = 320;
+const REORDER_ANIM_MS = 420;
+// easeInOutBack (easings.net) 의 CSS 근사. 시작에서 진행 방향의 **반대로 살짝 당겼다가**
+// 끝에서 목표를 조금 지나쳐 되돌아오는 탄성 곡선이라, 항목이 "밀려나는" 것이 아니라 "자리를
+// 잡는" 느낌을 준다(사용자 요청 2026-08-24). 오버슈트가 있으므로 종전 ease-out 보다 재생
+// 시간을 늘려(320→420ms) 되돌아오는 구간이 눈에 뭉개지지 않게 한다.
+//   ⚠ 이 곡선은 제어점이 [0,1] 밖(-0.6 / 1.6)이라 트윈 도중 행이 **원래 자리보다 더 뒤/
+//   목표보다 더 앞** 으로 나간다. 이동 거리에 비례하므로(≈ delta × 0.1) 긴 이동에서는
+//   수십 px 까지 벌어진다 — 상한(REORDER_MAX_DELTA_PX)이 그 과장을 막는 안전판이다.
+const REORDER_EASING = "cubic-bezier(.68,-.6,.32,1.6)";
+// 오버슈트는 **이동 거리에 비례**한다(이 곡선의 최대 편차 ≈ 10.5%). 짧은 이동에서는 탄력이지만
+// 수백 px 이동에서는 수십 px 을 더 나가 스크롤 경계 밖으로 잘리거나 반대 방향 행과 교차하는
+// 시간이 길어진다 (§18.8 codex [P2]). 그래서:
+//   · 아주 긴 이동은 오버슈트 없는 곡선으로 내려 과장을 끊고,
+//   · 시야 보정은 오버슈트 폭만큼 여유를 더 확보하며,
+//   · 트윈 중에는 포인터 입력을 받지 않는다(보이는 위치와 눌리는 행이 어긋나는 창 제거).
+const REORDER_EASING_LONG = "cubic-bezier(.22,.61,.36,1)";  // ease-out (오버슈트 없음)
+const REORDER_BACK_MAX_DELTA_PX = 600;
+const REORDER_OVERSHOOT_RATIO = 0.105;
 const REORDER_FLASH_MS = 1100;
 const REORDER_REQUEST_TTL_MS = 4000;  // 예약 후 이 시간 안의 첫 렌더만 대상(지연 응답은 기존 동작)
 const REORDER_MIN_DELTA_PX = 2;       // 측정 노이즈 무시
@@ -731,12 +748,15 @@ function _expandAncestorsForReorderFocus(key, dateTree) {
 
 // ③ 대상이 스크롤 밖이면 시야로 끌어온다. 여기서의 스크롤 이동분은 뒤이은 FLIP delta 가
 //    흡수하므로(측정 사이에 위치) 사용자 눈에는 목록 전체가 한 번에 미끄러지는 것으로 보인다.
-function _scrollReorderFocusIntoView(el) {
+function _scrollReorderFocusIntoView(el, expectedDelta) {
   const view = conversationListEl.getBoundingClientRect();
   const r = el.getBoundingClientRect();
+  // 오버슈트 곡선은 목표를 지나쳤다가 돌아온다 — 그 폭만큼 여유를 더 확보하지 않으면 대상이
+  // "정착 위치는 시야 안인데 지나가는 순간엔 잘리는" 상태가 된다 (§18.8 codex [P2]).
+  const pad = REORDER_VIEW_PAD_PX + _reorderOvershootPx(expectedDelta);
   let d = 0;
-  if (r.top < view.top + REORDER_VIEW_PAD_PX) d = r.top - (view.top + REORDER_VIEW_PAD_PX);
-  else if (r.bottom > view.bottom - REORDER_VIEW_PAD_PX) d = r.bottom - (view.bottom - REORDER_VIEW_PAD_PX);
+  if (r.top < view.top + pad) d = r.top - (view.top + pad);
+  else if (r.bottom > view.bottom - pad) d = r.bottom - (view.bottom - pad);
   if (!d) return;
   // 스크롤 범위로 직접 clamp 한다. 브라우저도 어차피 clamp 하지만, 여기서 실제 반영값을
   // 확정해두지 않으면 목록 최상단·최하단에서 "적용되지 않은 보정량" 이 FLIP delta 계산과
@@ -764,6 +784,7 @@ function _armReorderCleanup(el) {
     done = true;
     el.style.transition = "";
     el.style.transform = "";
+    el.style.pointerEvents = "";  // 트윈 중 차단한 입력을 되돌린다(아래 참조).
     el.removeEventListener("transitionend", onEnd);
   };
   // transitionend 는 자식에서 버블링한다 (§18.8 codex [P2]) — 이동 중 포인터가 지나가며 메뉴
@@ -778,9 +799,21 @@ function _armReorderCleanup(el) {
   return clear;
 }
 
+/** 이 이동에 실제로 쓸 곡선 — 아주 긴 이동은 오버슈트를 끄고 ease-out 으로 내린다. */
+function _reorderEasingFor(delta) {
+  return Math.abs(delta) > REORDER_BACK_MAX_DELTA_PX ? REORDER_EASING_LONG : REORDER_EASING;
+}
+
+/** 이 이동에서 트윈이 목표를 지나칠 최대 폭(px). ease-out 구간이면 0. */
+function _reorderOvershootPx(delta) {
+  const d = Math.abs(Number(delta) || 0);
+  if (!d || d > REORDER_BACK_MAX_DELTA_PX) return 0;
+  return Math.round(d * REORDER_OVERSHOOT_RATIO);
+}
+
 // (Play) invert 상태에서 원위치로 트윈. 정리는 위 watchdog 이 이미 보장한다.
-function _playReorderMove(el) {
-  el.style.transition = `transform ${REORDER_ANIM_MS}ms cubic-bezier(.22,.61,.36,1)`;
+function _playReorderMove(el, delta) {
+  el.style.transition = `transform ${REORDER_ANIM_MS}ms ${_reorderEasingFor(delta)}`;
   el.style.transform = "";
 }
 
@@ -792,7 +825,12 @@ function _commitSidebarReorder(snap) {
     conversationListEl.scrollTop = snap.scrollTop;
   }
   const focusEl = _reorderRowByKey(snap.key);
-  if (focusEl) _scrollReorderFocusIntoView(focusEl);
+  if (focusEl) {
+    // 대상이 이번에 얼마나 움직이는지를 먼저 알아야 오버슈트 여유를 실은 패딩을 계산할 수 있다.
+    const focusPrevTop = snap.before ? snap.before.get(snap.key) : undefined;
+    const focusDelta = focusPrevTop === undefined ? 0 : focusPrevTop - focusEl.getBoundingClientRect().top;
+    _scrollReorderFocusIntoView(focusEl, focusDelta);
+  }
   if (!snap.before) return;  // reduced-motion: 시야 유지까지만(트윈·강조 없음).
 
   // 읽기 phase → 쓰기 phase 분리(측정과 스타일 쓰기를 섞으면 행마다 강제 리플로우).
@@ -810,11 +848,15 @@ function _commitSidebarReorder(snap) {
   moves.forEach(([el, delta]) => {
     el.style.transition = "none";
     el.style.transform = `translateY(${delta.toFixed(1)}px)`;
+    // 트윈 중에는 이 행이 포인터를 받지 않는다 (§18.8 codex [P2]). 오버슈트 곡선은 목표를
+    // 지나쳤다 돌아오므로 반대 방향 행과 교차하는 구간이 생기는데, 그 사이 클릭이 "보고 있던
+    // 행" 이 아닌 다른 행으로 전달될 수 있다. 이동이 끝나면(clear) 즉시 되돌린다.
+    el.style.pointerEvents = "none";
     _armReorderCleanup(el);  // invert 시점부터 보장 — rAF 가 오지 않아도 잔류하지 않는다.
   });
   if (moves.length) {
     void conversationListEl.offsetWidth;  // invert 상태를 커밋해 다음 프레임의 값 변화가 전환이 되게
-    requestAnimationFrame(() => moves.forEach(([el]) => _playReorderMove(el)));
+    requestAnimationFrame(() => moves.forEach(([el, delta]) => _playReorderMove(el, delta)));
   }
   if (focusEl) _flashReorderFocus(focusEl);
 }

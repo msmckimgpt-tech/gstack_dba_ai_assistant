@@ -116,6 +116,17 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260824T1800-reorder-easing 재배치 전환 easing → easeInOutBack (Minor §12.3, 2026-08-24, feature-0003 프론트 상수 1개 + duration) — **Environment: Windows-browser (PASS — 실측 기록 `docs/test-runs.d/REV-20260824T180000-reorder-easing.md`)**
+
+- **정본 실측**: easing 검증은 정지 스크린샷으로 불가능하다(되돌아왔는지 볼 수 없다) — rAF 궤적의
+  **offset 부호 반전**만이 오버슈트의 증거다. 폴더 29px 이동: 146 → **149**(반대로 3px) → 118 →
+  **114**(3px 지나침) → 117 정착(25프레임/178~577ms). 대화 176px 이동: 318 → **336**(+18) → 161 →
+  **124**(-18) → 142 정착(27프레임/317~748ms). 오버슈트 폭 = 이동 거리의 약 **10%** 로 스케일.
+- **de-risk(하네스)**: 98 PASS — easing 이 소스 상수(`REORDER_EASING`)를 그대로 싣는지 +
+  오버슈트 곡선 성질(제어점 y1 < 0 ∧ y2 > 1) 계약. 평범한 ease-in-out 으로 조용히 바뀌는 회귀 차단.
+- **경계 확인**: duration 420ms 가 정리 watchdog(820ms) · 강조(1100ms) · 예약 TTL(4000ms) 안.
+  오버슈트는 모든 이동 행에 같은 곡선이라 상대 간격 유지(겹침·클릭 타깃 흔들림 없음).
+
 ### 20260824T1644-sidebar-reorder-anim 좌측 대화목록 명칭 변경 시 재배치 전환(FLIP + 시야 유지) (Minor §12.3, 2026-08-24, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — 실측 기록 `docs/test-runs.d/REV-20260824T164437-sidebar-reorder-anim.md`)**
 
 - **정본 실측**: 미머지 브랜치를 라이브 무접촉으로 보기 위해 라이브 web 이미지 + 본 worktree 의

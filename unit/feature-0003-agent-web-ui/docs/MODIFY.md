@@ -4614,3 +4614,25 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   `no upstreams available` **0건** · 캐시버스터 `?v=977b70eee5ae` 갱신.
 - 라이브 **서빙본**에서 PB-0008 재실측: 폴더 이름 변경 146 → 117, **16 프레임 트윈**
   (122~362ms), 강조 1.1초, 잔류 인라인 스타일 0, 임시 폴더 정리 200.
+
+## CHG-20260824T180000-reorder-easing — 재배치 전환 easing 을 easeInOutBack 으로
+
+사용자 요청(2026-08-24): 재배치 애니메이션에 `easeInOutBack` easing 적용.
+
+- `src/static/app/sidebar.js`: `REORDER_EASING` 상수 신설
+  (`cubic-bezier(.68,-.6,.32,1.6)` — easeInOutBack CSS 근사) + `_playReorderMove` 가 참조,
+  `REORDER_ANIM_MS` 320 → 420ms(오버슈트 구간 가독).
+- `tests/verify_sidebar_reorder_anim.mjs`: easing 이 소스 상수와 일치하는지 + 오버슈트 곡선
+  성질(y1 < 0 ∧ y2 > 1) 계약 5건 추가 (93 → 98 PASS).
+- 구조·좌표 계약·시야 유지 로직 변경 **0** — 연출 곡선만 교체.
+
+### §18.8 적대 리뷰(codex) 반영분 — 같은 CHG 안에서 흡수 ([P1] 0 · [P2] 2)
+
+- `app/sidebar.js`: `REORDER_EASING_LONG`(ease-out) · `REORDER_BACK_MAX_DELTA_PX = 600` ·
+  `REORDER_OVERSHOOT_RATIO = 0.105` 신설. `_reorderEasingFor(delta)` 가 긴 이동을 오버슈트 없는
+  곡선으로 강등하고, `_reorderOvershootPx(delta)` 가 시야 보정 패딩에 오버슈트 폭을 더한다
+  (`_scrollReorderFocusIntoView(el, expectedDelta)`). 트윈 중 `pointer-events: none` 부여 →
+  `_armReorderCleanup` 의 `clear()` 가 정착·watchdog 양 경로에서 복원.
+- `tests/verify_sidebar_reorder_anim.mjs`: 기대값을 소스 추출이 아닌 **독립 고정**으로 전환
+  (토톨로지 제거) + 타이머 지연값 검사 + 긴 이동 강등 · 포인터 차단 · 오버슈트 패딩 계약 추가
+  (98 → 109 PASS).
