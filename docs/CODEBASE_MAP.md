@@ -14,7 +14,7 @@ source_of_truth: true
 기능 추가/삭제, 파일 구조 변경 시 갱신한다.
 
 > **Freshness**: feature-0012 (web-router-modularization) 완결 반영 — `app.py` 19,650→3,722줄(-81%),
-> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 로 추출됨 — **35개 파일**(route-module 29 + `_` 접두 공유헬퍼 5 + `__init__` registrar, 2026-08-24 실측). (분할 완결 시점 HEAD `f7ad45d7`, 2026-07-13 = 당시 28개)
+> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 로 추출됨 — **35개 파일**(route-module 29 + `_` 접두 공유헬퍼 5 + `__init__` registrar, 2026-08-25 실측). (분할 완결 시점 HEAD `f7ad45d7`, 2026-07-13 = 당시 28개)
 
 > **AI 탐색 진입점 (재귀 4계층)**: 바꾸려는 것이 route/handler 라면 아래 순서로 좁혀 내려간다.
 > **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 200 route). ·
@@ -159,13 +159,13 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 
 | 계층 | 파일 | 책임 (1줄) |
 |------|------|-----------|
-| 조립 루트 | `src/app.py` (3,925줄, 2026-08-24 실측) | DI seam(`get_conn`/`get_current_account`/`require_permission`)·인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)·audit(`record_audit_event`, setattr 패치-단일점)·보안게이트(`_ssrf_check_host`/`_enforce_audit_prod_gate`)·lifecycle(`@app.on_event` startup/shutdown)·FastAPI app+미들웨어·config 상수·꼬리 rebind 블록·`register_all(app)` |
+| 조립 루트 | `src/app.py` (4,000줄, 2026-08-25 실측) | DI seam(`get_conn`/`get_current_account`/`require_permission`)·인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)·audit(`record_audit_event`, setattr 패치-단일점)·보안게이트(`_ssrf_check_host`/`_enforce_audit_prod_gate`)·lifecycle(`@app.on_event` startup/shutdown)·FastAPI app+미들웨어·config 상수·꼬리 rebind 블록·`register_all(app)` |
 | 도메인 router (29) | `src/routers/<domain>.py` | 각 파일이 `router = APIRouter()` + `@router.<method>` 핸들러 보유. 도메인 = static_pages·auth·conversations·share·system·profile·integrations·attachments·media·keywords·ai_ops + admin_*(console·usage·conversations·quotas·sample_feedback·metadata·audits·accounts·roles·datasources·products·settings·reasoning·perf — perf=HTTP 성능 스냅샷 조회(feature-0026)). 정확한 목록·INCLUDE_ORDER → ROUTEMAP.md |
-| leaf helper | `src/web_context.py` (3,751줄, 2026-08-24 실측) | app-internal 의존이 전혀 없는 순수 컨텍스트 조립 조각. **단방향 추출**(app→web_context 만, 역참조 없음). routers(auth·share 등)와 app 이 소비 |
+| leaf helper | `src/web_context.py` (3,751줄, 2026-08-25 실측) | app-internal 의존이 전혀 없는 순수 컨텍스트 조립 조각. **단방향 추출**(app→web_context 만, 역참조 없음). routers(auth·share 등)와 app 이 소비 |
 | 공유 헬퍼 (5, `_` 접두) | `src/routers/_audit_infra.py`·`_bootstrap_schema.py`·`_conv_store.py`·`_folder_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유)·`_folder_store`=대화 폴더 PG 스토어(feature-0024) |
 | 등록기 | `src/routers/__init__.py` | `register_all(app)` — non-`_`·`router` 보유 모듈 자동발견 후 `(INCLUDE_ORDER, name)` 순 include. 신규 라우터 = `router` 심볼 가진 파일 추가만(꼬리 배선 편집 불필요) |
 
-> 파일 수 = 29 route-module + `__init__.py` + 5 `_` 접두 공유헬퍼 = **35 파일** (2026-08-24 실측) (task 표기 "6 공유모듈" = `__init__` + 5 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가.
+> 파일 수 = 29 route-module + `__init__.py` + 5 `_` 접두 공유헬퍼 = **35 파일** (2026-08-25 실측) (task 표기 "6 공유모듈" = `__init__` + 5 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가.
 
 ### 배선 규약 (7)
 
