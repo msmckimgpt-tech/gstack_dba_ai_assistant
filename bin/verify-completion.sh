@@ -1445,6 +1445,170 @@ check_17_ui_copy_budget() {
   esac
 }
 
+check_18_secret_scan() {
+  # $1 = mode (pre-commit|post-commit|shared-pre-commit).
+  # 완료 게이트의 시크릿 축 (§16.6 인접, inbox: T3-20260817T0735-001).
+  # 근거 (실측 2026-08-14, mysql_conf_tuner 세션 75ec83f1): "완료 게이트 PASS" 59초 뒤
+  # 실인증토큰 2개(.gstack/browse.json, terminal-internal-token)가 커밋·push 됐다.
+  # .gitignore 보완(#43)은 알려진 경로만 막는다 — 게이트가 없으면 다음번엔 다른 도구의
+  # 다른 경로가 같은 방식으로 통과한다.
+  #
+  # 판정 축 2개 — 둘 다 «이 커밋에 새로 들어오는 것»만 본다 (기존 코드베이스 전수 스캔 아님):
+  #   축1 파일명: 알려진 시크릿 부산물 경로가 changeset 에 존재 (내용 무관)
+  #   축2 내용: 추가된 라인의 알려진 토큰 prefix / 개인키 헤더 / JWT / 장문 대입값
+  # fail-closed (§16.7 G9-c: 검사 불능도 FAIL) — 탈출구 3계층:
+  #   (a) 라인 마커 `verify-secret-allow` (정당한 예시 1줄 단위)
+  #   (b) `*.example` / `*.sample` / `*.template` 파일은 스캔 제외 (예시 파일 관례)
+  #   (c) 긴급 GSTACK_SKIP_SECRET_SCAN=1 → WARN 강등
+  local mode="${1:-pre-commit}"
+
+  if [ "${GSTACK_SKIP_SECRET_SCAN:-0}" = "1" ]; then
+    # 영속 선언 감지 — 긴급 1회용 hatch 를 settings 로 영구 비활성화하면 게이트가 죽은
+    # 채 WARN 만 반복된다 (security P2: 감시 주체 = 우회 주체인 무인 환경의 자기승인 경로).
+    local _persist=""
+    if grep -q 'GSTACK_SKIP_SECRET_SCAN' .claude/settings.json .claude/settings.local.json 2>/dev/null; then
+      _persist=" — ⚠️ settings 에 영속 선언 감지: 1회용 hatch 를 영구 비활성화로 쓰지 말 것"
+    fi
+    log_check 18 WARN "secret scan" "SKIP (escape hatch: GSTACK_SKIP_SECRET_SCAN=1)${_persist}"
+    return 0
+  fi
+
+  # diff 플래그 근거는 check #14 와 동일 (--no-color: ANSI 로 `^+` 빗나감 방지 /
+  # --no-ext-diff: 외부 diff 의 빈 결과 fail-open 방지 / post-commit 은 1st-parent,
+  # root commit 만 git show 폴백). 추가로 `-c core.quotepath=off` — 비ASCII 경로가
+  # 8진 이스케이프+따옴표로 감싸이면 파일명 축 정규식과 `+++` 헤더 파싱이 전부 빗나가
+  # 한글 디렉토리 아래 .env 가 조용히 PASS 한다 (qa P1 실측 재현, fail-open).
+  _c18_diff() {
+    case "$mode" in
+      post-commit)
+        git -c core.quotepath=off diff --no-color --no-ext-diff --unified=0 HEAD^ HEAD 2>/dev/null \
+          || git -c core.quotepath=off show --no-color --no-ext-diff --format= --unified=0 HEAD 2>/dev/null
+        ;;
+      *)
+        git -c core.quotepath=off diff --no-color --no-ext-diff --cached --unified=0 2>/dev/null
+        ;;
+    esac
+  }
+  _c18_files() {
+    case "$mode" in
+      post-commit)
+        git -c core.quotepath=off diff --no-color --no-ext-diff --name-only HEAD^ HEAD 2>/dev/null \
+          || git -c core.quotepath=off show --no-color --no-ext-diff --format= --name-only HEAD 2>/dev/null
+        ;;
+      *) git -c core.quotepath=off diff --no-color --no-ext-diff --cached --name-only 2>/dev/null ;;
+    esac
+  }
+
+  local diff_body files
+  if ! diff_body=$(_c18_diff); then
+    log_check 18 FAIL "secret scan" \
+      "git diff 실행 실패 — 시크릿을 검사하지 못했다(미검증, fail-closed). git 설정을 확인할 것"
+    return 1
+  fi
+  if ! files=$(_c18_files); then
+    log_check 18 FAIL "secret scan" \
+      "git 파일 목록 실패 — 파일명 축을 검사하지 못했다(미검증, fail-closed). git 설정을 확인할 것"
+    return 1
+  fi
+
+  # 축1 — 파일명 (allowlist 접미사 제외). 게이트의 파일명 집합은 .gitignore 의 gstack
+  # 토큰 5패턴과 같은 면을 덮는다 — .gitignore 는 `git add -f`/부재 시 무력하므로
+  # 이 축이 그 fallback 이다 (security P2: 두 집합의 불일치는 armed 상태를 남긴다).
+  # `.gstack/browse*`·`terminal-*` 는 하위 디렉토리 파일까지 매치한다 (`(/|$)` —
+  # security R2: `.gstack/terminal-<id>/token` 형태가 `$` 앵커를 관통했다).
+  local name_hits
+  name_hits=$(printf '%s\n' "$files" \
+    | grep -E '(^|/)\.gstack/(browse[^/]*|terminal-[^/]*)(/|$)|(^|/)\.gstack/claude-available\.json$|(^|/)terminal-internal-token$|(^|/)\.env(\.[A-Za-z0-9_.-]+)?$|(^|/)id_(rsa|ed25519|ecdsa|dsa)$|\.(pem|p12|pfx)$|(^|/)\.netrc$' \
+    | grep -vE '\.(example|sample|template)$' || true)
+
+  # 축2 — 추가 라인을 «경로:행:내용» 으로 수집. 경로·행은 FAIL 위치 보고용 — 내용은
+  # 에코하지 않는다 (전사·로그에 시크릿 재기록 금지).
+  # ⚠️ 헤더 인식은 상태기계로 게이트한다 — `+++` 를 무조건 헤더로 읽으면 소스에 `++ …`
+  # 로 시작하는 추가 라인 1줄(diff 렌더 `+++ …`)로 그 파일의 스캔이 무음 비활성화된다
+  # (qa R2 P1 실측). 진짜 헤더는 `diff --git` 직후에만 온다 — 콘텐츠 라인은 열 0 에서
+  # `diff --git` 를 스푸핑할 수 없다 (`+` 접두로 렌더되므로).
+  # ⚠️ example/sample/template 면제는 축1(파일명)에만 있다 — 축2(내용)는 example 파일도
+  # 스캔한다 (ux R2 P1: 파일 단위 무료 면제가 라인 단위 사유-강제 마커보다 넓은 역전
+  # 구조라, «*.example 로 개명» 이 실토큰 커밋의 승인 경로가 됐다. 정당한 예시 값은
+  # placeholder 어휘로 어차피 통과하고, 실토큰 모양 값은 마커로 사유를 남겨야 통과한다).
+  local added
+  added=$(printf '%s\n' "$diff_body" | awk '
+    BEGIN { f = ""; ln = 0; hdr = 0 }
+    /^diff --git / { hdr = 1; next }
+    hdr && /^\+\+\+ / { f = $0; sub(/^\+\+\+ /, "", f); sub(/\t$/, "", f)
+                        gsub(/^"|"$/, "", f); sub(/^b\//, "", f)
+                        hdr = 0; next }
+    hdr { next }
+    /^@@ /     { split($0, a, "+"); split(a[2], b, /[ ,]/); ln = b[1] - 1; next }
+    /^\+/      { ln++; printf "%s:%d:%s\n", f, ln, $0; next }
+    { next }')
+
+  # allowlist 라인 마커 — 사유 필수 (`verify-secret-allow: <사유>`). bare 마커는 자기승인
+  # 남용 경로라 인정하지 않는다 (security P2).
+  local marker_re='verify-secret-allow:[[:space:]]*[^[:space:]]'
+  local token_hits assign_hits
+  token_hits=$(printf '%s\n' "$added" \
+    | grep -vE "$marker_re" \
+    | grep -E 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[ousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{40,}|sk_live_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{30,}|npm_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}' \
+    || true)
+  # 대입형 — 값 ≥ 20자 + placeholder 어휘 제외. 키가 따옴표로 감싸인 JSON/quoted-key
+  # (`"token": "…"`) 도 매치해야 한다 (security P1: 동기 사건 파일이 JSON 이었다).
+  # known-limitation (security R2 실측, 의도적 미탐 — 오탐율과의 절충): ① 무따옴표 값
+  # (`export API_TOKEN=<opaque>` — 벤더 prefix 축이 부분 백스톱) ② escaped-JSON 내장
+  # 문자열 (`\"token\": \"…\"`) ③ bracket 표기 (`cfg["secret"] = "…"`).
+  local assign_re='(api[_-]?key|secret|token|passwd|password)["'\'']?[[:space:]]*[:=][[:space:]]*["'\''][A-Za-z0-9_/+=.-]{20,}["'\'']'
+  # placeholder 제외는 **내용 부분에만** 적용한다 — «경로:행:내용» 전체에 걸면 경로의
+  # "example"(.env.example, examples/ 디렉토리)이 내용 스캔을 무음 면제한다 (ux R3 P1
+  # 실측: 개명 우회가 대입형 값에 대해 잔존했다).
+  assign_hits=$(printf '%s\n' "$added" \
+    | grep -vE "$marker_re" \
+    | grep -iE "$assign_re" \
+    | awk '{ c = $0; sub(/^[^:]*:[0-9]+:/, "", c)
+             if (tolower(c) !~ /example|placeholder|changeme|dummy|your[_-]|<[a-z_%-]+>|[$][{]|[{][{]|xxxx/) print }' \
+    || true)
+
+  # 내용 축은 라인(경로:행) 단위로 dedupe 한다 — 한 라인이 토큰패턴·대입형에 동시
+  # 매치되면 이중 계수 + 샘플 슬롯 중복 점유가 된다 (ux R2 P2).
+  local content_locs n_name n_content total
+  content_locs=$(printf '%s\n%s\n' "$token_hits" "$assign_hits" | grep . | cut -d: -f1,2 | sort -u || true)
+  n_name=$(printf '%s' "$name_hits" | grep -c . || true)
+  n_content=$(printf '%s' "$content_locs" | grep -c . || true)
+  total=$((n_name + n_content))
+
+  if [ "$total" -eq 0 ]; then
+    log_check 18 PASS "secret scan"
+    return 0
+  fi
+
+  # FAIL 안내는 축별 + 모드별로 분기한다 (ux R1/R2):
+  # - 파일명 축의 첫 안내는 unstage·회전이다 — «*.example 개명» 을 첫 remedy 로 주면
+  #   동기 사건 동형(내용이 실토큰인 크리덴셜 파일)이 개명만으로 통과한다 (축2 가
+  #   example 도 스캔하도록 바뀌었으나, opaque 토큰은 축2 패턴 밖일 수 있다).
+  # - post-commit 은 unstage 가 실행 불능 시점이다 — reset/amend + push 금지 안내.
+  # - 내용 축은 경로:행만 출력한다 (값 에코 금지 — 게이트가 유출을 재생산하지 않는다).
+  local name_sample loc_sample hint="" fix_name fix_content
+  if [ "$mode" = "post-commit" ]; then
+    fix_name="push 금지 — git reset --soft HEAD^ (또는 amend) 로 커밋에서 제거하고, 실크리덴셜이면 즉시 회전(rotate)"
+    fix_content="push 금지 — reset/amend 후 실토큰이면 즉시 회전, 정당한 예시면 그 라인에 'verify-secret-allow: <사유>' 마커를 달아 재커밋"
+  else
+    fix_name="unstage(+.gitignore 등재)하고 실크리덴셜이면 즉시 회전(rotate) — 내용을 placeholder 로 스크럽한 예시일 때만 *.example 개명"
+    fix_content="실토큰이면 커밋 중단 후 즉시 회전(rotate), 정당한 예시면 그 라인에 'verify-secret-allow: <사유>' 마커"
+  fi
+  if [ "$n_name" -gt 0 ]; then
+    name_sample=$(printf '%s\n' "$name_hits" | head -3 | tr '\n' ' ')
+    name_sample="${name_sample% }"
+    hint="파일명 축 ${n_name}건 (${name_sample}) → ${fix_name}. "
+  fi
+  if [ "$n_content" -gt 0 ]; then
+    loc_sample=$(printf '%s\n' "$content_locs" | head -3 | tr '\n' ' ')
+    loc_sample="${loc_sample% }"
+    hint="${hint}내용 축 ${n_content}건 @ ${loc_sample} → ${fix_content}. "
+  fi
+  log_check 18 FAIL "secret scan" \
+    "시크릿 의심 ${total}건 — ${hint}placeholder 값(example/changeme/<...>/\${...})은 자동 통과한다. 긴급 1회: GSTACK_SKIP_SECRET_SCAN=1"
+  return 1
+}
+
 main() {
   [ $# -ge 1 ] || usage
 
@@ -1490,6 +1654,13 @@ main() {
   local check17_status=0
   if ! check_17_ui_copy_budget "$mode"; then
     check17_status=1
+  fi
+
+  # Check #18 (§16.6 인접, v3.48.0) — unconditional. 시크릿 유출은 changeset
+  # 종류와 무관한 staged-diff fact 다 (inbox: T3-20260817T0735-001).
+  local check18_status=0
+  if ! check_18_secret_scan "$mode"; then
+    check18_status=1
   fi
 
   # Check #13 (PB-0008 visual verification) — unconditional, META/shared 모드보다 먼저 실행 (M3).
@@ -1542,7 +1713,7 @@ main() {
 
   if [ "$meta_mode" = "1" ]; then
     printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11, #13, #14 always run.\n' >&2
-    local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status))
+    local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status + check18_status))
     case "$mode" in
       post-commit) check_9_review_entry post-commit "" || failed=$((failed + 1)) ;;
       *) check_9_review_entry pre-commit "" || failed=$((failed + 1)) ;;
@@ -1558,7 +1729,7 @@ main() {
 
   # Shared mode uses its own minimal check set + check #9 + check #10 + check #11 + check #13.
   if [ "$mode" = "shared-pre-commit" ]; then
-    local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status))
+    local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status + check18_status))
     check_shared_modify pre-commit || failed=$((failed + 1))
     check_8_unstaged_residual pre-commit || failed=$((failed + 1))
     check_9_review_entry shared-pre-commit "" || failed=$((failed + 1))
@@ -1570,7 +1741,7 @@ main() {
   fdir=$(feature_dir "$feature_id")
 
   # check13/14_status: #13(visual)·#14(conflict-marker) 는 META short-circuit 앞에서 이미 실행됨.
-  local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status))
+  local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status + check18_status))
   local effective_mode
   effective_mode="${mode}"
 
