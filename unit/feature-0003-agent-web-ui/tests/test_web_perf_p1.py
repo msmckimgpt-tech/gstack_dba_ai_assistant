@@ -77,15 +77,20 @@ def test_snapshot_bundle_returns_none_without_pg(monkeypatch):
 
 
 def test_display_status_from_step_at_matches_rules():
-    """stale 판정 규칙 동치 + tz-aware 정규화(KST wall-clock 오인 회귀 차단)."""
+    """stale 판정 규칙 동치 + tz-aware 정규화(KST wall-clock 오인 회귀 차단).
+
+    conv-audit FR-stale-threshold-below-llm-attempt-cap: 임계는 상수가 아니라
+    `_effective_stale_timeout_seconds()`(per-attempt 상한 파생)이고 반환은 3-튜플이다.
+    """
+    limit = webapp._effective_stale_timeout_seconds()
     fresh = datetime.utcnow() - timedelta(seconds=5)
-    old = datetime.utcnow() - timedelta(seconds=webapp.WEB_PROGRESS_STALE_TIMEOUT_SECONDS + 60)
-    assert webapp._display_status_from_step_at("done", "", None) == ("done", False)
-    assert webapp._display_status_from_step_at("processing", "", fresh) == ("processing", False)
-    assert webapp._display_status_from_step_at("processing", "", old) == ("stale_error", True)
+    old = datetime.utcnow() - timedelta(seconds=limit + 60)
+    assert webapp._display_status_from_step_at("done", "", None) == ("done", False, None)
+    assert webapp._display_status_from_step_at("processing", "", fresh)[:2] == ("processing", False)
+    assert webapp._display_status_from_step_at("processing", "", old)[:2] == ("stale_error", True)
     # tz-aware(예: KST) 입력도 UTC 로 정규화돼 fresh 로 판정돼야 한다.
     aware = datetime.now(timezone(timedelta(hours=9))) - timedelta(seconds=5)
-    assert webapp._display_status_from_step_at("processing", "", aware) == ("processing", False)
+    assert webapp._display_status_from_step_at("processing", "", aware)[:2] == ("processing", False)
 
 
 def test_ask_result_polls_in_worker_thread():
@@ -307,7 +312,7 @@ def test_snapshot_bundle_equals_legacy_processing_fresh(monkeypatch):
 
 
 def test_snapshot_bundle_equals_legacy_processing_stale(monkeypatch):
-    old = datetime.utcnow() - timedelta(seconds=webapp.WEB_PROGRESS_STALE_TIMEOUT_SECONDS + 120)
+    old = datetime.utcnow() - timedelta(seconds=webapp._effective_stale_timeout_seconds() + 120)
     b, l = _snapshot_both_paths(monkeypatch, _state(status="processing", step_at=old))
     assert b == l and b["is_stale"] is True and b["status"] == "stale_error"
 

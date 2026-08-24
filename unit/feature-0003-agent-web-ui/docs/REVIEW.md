@@ -5419,3 +5419,52 @@ run 의 기록 의미를 바꾸는 별건이고(이 변경 이전부터의 동�
 **단언은 통과하는데 스크린샷에는 오버레이가 없던** 상태를 발견해 고쳤다. detached 노드에서도
 `querySelectorAll` 이 개수를 맞게 돌려주는 탓이다 — "캡처를 남겼다" 와 "캡처가 근거가 된다" 는
 다르다는 사례로 TEST.md 에 남겼다.
+
+## REV-20260824T142000-stale-threshold-attempt-cap [CODEX:backend+ux-adversarial] — stale 임계 파생 + 마지막 활동 정직화
+
+**Trigger**: `UI/화면` (사이드바 stale 툴팁·대화 부제 표시) + `API/응답 스키마`
+(`/api/conversations` payload 신규 필드 `last_activity_effective_at`, `/api/progress` 판정 호출부)
+키워드 매칭 → dedupe 시 backend+security+qa+ux+design = **full panel** 대상. 본 세션은 AgentTool
+사용이 금지돼 subagent 5인 dispatch 가 불가하므로, §18.8.1 이 check #9 **accepted review** 로
+인정하는 **codex 채널**로 대체했다(§18.8.2 제약-없는-채널 우선. 선례:
+`REV-20260730T160000-ask-redeploy-handoff`, `REV-20260824T115000-step-timing-attribution`).
+scope: `git diff --cached` 전량, `model_reasoning_effort=high`, read-only sandbox.
+
+**결과**: **[P1] 1건 · [P2] 3건 → 전건 흡수**(반영 후 [P1] 0). 2값 언패킹 잔존 0 · 구 payload
+필드 부재는 JS 폴백으로 처리됨 · `pendingStatusLabel` 호출 위치 유효 — 세 축은 지적 없음.
+
+1. **[P1] 판정이 상한의 *하락*을 즉시 따라간다** — 1800초로 시작한 호출이 대기하는 중 운영자가
+   상한을 60초로 낮추거나 스냅샷 조회가 실패하면 임계가 1200초로 돌아가, **봉인하려던 그 사고가
+   그대로 재현**된다. 진행 중 호출은 시작 시점 상한으로 대기하기 때문이다(그 값이
+   `_TIER_CLIENT_CACHE` 의 client timeout 에 박혀 있다).
+   → **흡수**: 프로세스 수명의 **high-water mark**(`_STALE_CAP_HIGH_WATER`)를 기준으로 삼는다.
+   상승은 즉시 반영, **하락은 재기동 경계에서** 반영(그 시점엔 옛 상한으로 대기 중인 호출도 없다).
+   조회 실패도 high-water 를 유지해 fail-open 이 오표시를 만들지 않는다.
+   **채택하지 않은 대안**: codex 가 제안한 "attempt 시작 시 cap/deadline 을 run 메타에 저장" 이
+   더 정확하지만 KV 스키마와 워커 쓰기 경로를 건드려 이 cycle 의 응집 한계를 넘는다. high-water 는
+   같은 오표시 창을 표시 계층 안에서 덮는다(정확도-비용 트레이드오프를 기록으로 남긴다).
+2. **[P2] clamp 부재** — 콘솔 override 는 스펙 [5,3600] 으로 clamp 되지만 **배포 env baseline 은
+   clamp 되지 않는다** → 비정상적으로 큰 `AGENT_TIMEOUT_SEC` 이면 임계가 수년으로 늘어 stale 이
+   사실상 영구 미보고(가드 무력화). → **흡수**: `_STALE_CAP_CLAMP_MAX`(스펙 maximum 을 권위로,
+   조회 실패 시 3600) 로 clamp + `WEB_PROGRESS_STALE_MARGIN_SECONDS` 도 상한 clamp.
+3. **[P2] terminal 상태에서 `last_active=None`** — 완료·오류·취소 대화는 신규 필드가 항상 비어
+   표면이 다시 요청 접수 시각으로 폴백 → "실제 마지막 활동" 계약이 processing 에서만 성립하는
+   비대칭. → **흡수**: terminal 도 `last_status_at`(마감 시각)을 돌려준다. `_compute_display_status`
+   의 terminal 경로는 **step 조회를 하지 않는다**(PG 왕복 불변 — 테스트가 조회 시 실패로 잠금).
+   인자형 경로는 step 시각을 이미 받았으므로 둘의 max.
+4. **[P2] `_parse_kv_timestamp` 가 offset 을 UTC 변환 없이 strip** — `…T12:00:00+09:00` 을
+   `12:00Z` 로 오인해 9시간 미래가 된다. stale 판정이 그만큼 지연되고, 내 신규 직렬화가 그 값을
+   "UTC" 로 명시해 내려보내면 **사용자에게도 9시간 틀린 시각**이 보인다. `_last_step_at_for_run`
+   의 CHG-20260527-0001 회귀와 같은 부류(그때 step 축, 이번 KV 축). → **흡수**: aware 는
+   `astimezone(utc)` 후 naive 화. 라이브 KV 는 현재 `+00:00` 저장이라 실동작 변화 0(실측 확인) —
+   저장 형식이 바뀌어도 깨지지 않게 하는 방어다.
+
+**반영 후 재검증**: 관련 3파일 **42 PASS**(신규 19 · 흡수분 6종 테스트 추가 — 하락 무반응 ·
+실패 시 high-water 유지 · 비정상 cap clamp · 경계 bound · offset→UTC 4케이스 · terminal 반환
+2경로) · 전체 스위트 회귀 확인 · ruff clean.
+
+**남긴 판단(정직)**: high-water 는 **프로세스 전역 상태**라 테스트가 오염되면 실행 순서 의존
+flake 가 된다 → 신규 테스트에 autouse fixture 로 저장·리셋·복원을 걸었다. 그리고 상한을 한 번
+크게 올렸다 내리면 재기동까지 임계가 보수적으로 남는다 — 표시 판정이므로 수용하고, 진짜 죽은
+run 은 `ask_jobs` terminal backstop(`FR-early-return-kv-never-finalized` 봉인 B)과 워커 stale
+sweeper 가 별도로 잡는다.

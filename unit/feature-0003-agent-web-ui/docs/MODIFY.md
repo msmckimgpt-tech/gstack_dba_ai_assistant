@@ -4475,3 +4475,65 @@ POST-DEPLOY 종결 체크리스트 append. 코드 변경 0.
 - `docs/TEST.md`: `Environment: Windows-browser` POST-DEPLOY Run + 확대 캡처 2종 첨부.
   확대 오버레이 미부착(`document.body.appendChild` 누락) 함정도 함께 기록 — detached 노드는
   개수 단언을 통과시키면서 캡처에는 나오지 않아, 부착 여부를 단언에 넣어 잠갔다.
+
+## CHG-20260824T142000-stale-threshold-attempt-cap — stale 표시 임계를 per-attempt 상한에서 파생 + 마지막 활동 시각 정직화 (Major §12.3)
+
+conv-audit `FR-stale-threshold-below-llm-attempt-cap`(2026-08-24 사용자 명시 호출). 코드 거주
+primary = **본 feature**(verify 대상). 라이브 사고 실측은 `docs/TASK.md`
+`20260824T1420-stale-threshold-attempt-cap` 블록 참조.
+
+**무엇이 틀렸나**: stale 판정은 step/status 무갱신 시간으로 run 사망을 추정하는데, 그 무갱신
+구간의 정상 최대치는 단일 LLM 호출의 per-attempt 상한(`AGENT_TIMEOUT_SEC`)이다. 그 상한은
+관리 콘솔에서 **live 로 1800초**까지 올라가 있는데 판정 임계는 코드 상수 **1200초**에 고정돼
+있었다 → 상한을 다 쓰는 정상 대기가 **반드시** `stale_error`("작업 중단 감지")로 표시된다.
+사고 run 은 그 표시 상태로 10분을 보낸 뒤 재개해 정상 완료(`done`)했다. 데이터 값을 고치면
+콘솔 조정으로 곧 되살아나는 drift 이므로 **코드가 불변식(임계 > 상한)을 강제**한다.
+
+- `src/app.py`
+  - `_effective_stale_timeout_seconds()` 신설 — `max(WEB_PROGRESS_STALE_TIMEOUT_SECONDS,
+    _runtime_settings.get_int("AGENT_TIMEOUT_SEC") + WEB_PROGRESS_STALE_MARGIN_SECONDS)`.
+    상수는 **하한**으로 격하(운영자가 env 로 크게 준 의도 보존). 조회 실패·비양수는
+    fail-open(종전 상수) — 표시 판정이 런타임 설정 가용성에 종속되지 않게.
+  - `WEB_PROGRESS_STALE_MARGIN_SECONDS`(기본 180) 신설. 근거는 라이브 실측 재큐 지연 ~3초 +
+    워커 busy 여유. 상한 소진 직후의 재큐→재claim→첫 step 창을 덮는다.
+- `src/routers/_conv_store.py`
+  - `_compute_display_status` / `_display_status_from_step_at` → 임계를 파생 함수에서 읽고
+    `(status, is_stale, **last_active**)` **3-튜플** 반환. 종전에는 판정에 쓴 마지막 활동 시각을
+    내부에서 버려, 표면이 대신 `updated_at`(요청 접수 시각)을 "마지막 활동" 으로 보여줬다
+    (사고 대화: 실제 12:02 vs 표시 11:19 = 43분). 두 함수 규칙 동치는 유지 — 갈리면 목록과
+    long-poll 판정이 어긋난다.
+  - `_iso_or_empty()` 신설 — 판정 계층의 UTC naive datetime 을 **tz 명시** ISO8601 로 직렬화.
+    naive 를 그대로 내보내면 프런트 `new Date()` 가 로컬(KST)로 읽어 9시간 미래로 표시된다
+    (`_last_step_at_for_run` CHG-20260527-0001 tz 회귀와 같은 부류의 입구).
+  - 목록 두 경로가 item 에 `last_activity_effective_at` 부착.
+- `src/routers/conversations.py` — `/api/progress` 의 판정 호출 3-튜플 정합(1줄).
+- `src/static/app.js` — 부제 `최근 갱신` 이 `last_activity_effective_at` 우선(폴백 종전 필드).
+  상태 칸은 내부 enum 대신 `pendingStatusLabel()` 경유 한국어 표시.
+- `src/static/app/sidebar.js` — stale 툴팁 "마지막 활동" 이 같은 필드 우선.
+- `tests/test_stale_threshold_derives_from_attempt_cap.py`(신규) + 기존 2파일 계약 갱신.
+
+**건드리지 않은 것**: 판정 규칙 자체(processing 만 대상 · `max(status_at, step_at)` 기준 ·
+terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 워커 stale sweeper 창
+(`AGENT_ASK_WORKER_STALE_SEC`) · 보안 경계·RBAC. LLM 무응답 구간 자체를 줄이는 watchdog 은
+`agent_core.py::_collect_llm_stream` 주석이 이미 이월한 별 항목으로 남긴다.
+
+### CHG-20260824T142000 §18.8 적대 리뷰 흡수 (codex, [P1] 1 · [P2] 3 → 전건)
+
+`REV-20260824T142000-stale-threshold-attempt-cap` 의 지적을 같은 cycle 안에서 반영했다.
+
+- **[P1] 상한 하락 추종 → high-water mark**: `_STALE_CAP_HIGH_WATER`(프로세스 전역). 상승 즉시
+  반영·**하락 미반영**(재기동 경계까지). 진행 중 호출은 시작 시점 상한으로 대기하므로(그 값이
+  `_TIER_CLIENT_CACHE` client timeout 에 고정) 판정이 낮아진 값을 따라가면 이 CHG 가 없애려던
+  오표시가 그대로 재현된다. 조회 실패도 high-water 유지 → fail-open 이 오표시를 만들지 않는다.
+- **[P2] clamp**: `_STALE_CAP_CLAMP_MAX`(runtime_settings 스펙 maximum 을 권위로, 조회 실패 시
+  3600) + margin 상한 clamp. env baseline 은 스펙 clamp 를 거치지 않아, 비정상 값이 임계를 수년으로
+  늘려 stale 을 사실상 영구 미보고로 만들 수 있었다.
+- **[P2] terminal `last_active`**: terminal 도 `last_status_at`(마감 시각)을 반환. 종전 `None` 이라
+  완료 대화의 `last_activity_effective_at` 이 비어 표면이 요청 시각으로 폴백했다. terminal 경로는
+  **step 조회 없음**(테스트가 조회 시 실패로 잠금) · 인자형 경로는 둘의 max.
+- **[P2] `_parse_kv_timestamp` tz**: offset 이 실린 값을 `astimezone(utc)` 후 naive 화. 종전엔
+  tzinfo 만 strip 해 `+09:00` 을 UTC 로 오인(9시간 미래) — `_last_step_at_for_run` 의
+  CHG-20260527-0001 회귀와 같은 부류를 KV 축에서 봉인. 라이브 KV 는 `+00:00` 저장이라 실동작
+  변화 0(실측).
+- 흡수분 테스트 6종 추가(하락 무반응 · 실패 시 high-water 유지 · 비정상 cap clamp · 경계 bound ·
+  offset→UTC 4케이스 · terminal 반환 2경로). 신규 파일 **19 PASS**, 관련 3파일 **42 PASS**.

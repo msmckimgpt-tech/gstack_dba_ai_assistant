@@ -382,11 +382,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0077: lazy-create 가 네트워크/타임아웃으로 실패한 경우 pending bubble 은 빨간 오류 영역으로 전환되고 (`is-error`) "다시 시도하거나 사이드바를 새로고침해 주세요" 메시지를 노출한다 (AC-0029 와 정합). attach/resume 다이얼로그(AC-0018) 는 활성화하지 않는다.
 
 - REQ-20260515-0005 (TASK-0061 Phase 3, **Major** §12.3): 실제 진행이 끊긴 `processing` 대화의 만료를 backend 에서 판정해 stale_error 상태로 표시한다. conversation list / `/api/progress` / `/api/ask_status` / `/api/ask_result` 가 일관되게 stale 을 반환한다.
-  - AC-0078: backend helper `_compute_display_status(conn, conversation_id, last_status, last_status_at, last_status_run_id)` 가 `last_status='processing'` 이고 `now() - max(last_status_at, last step CreatedAt) > WEB_PROGRESS_STALE_TIMEOUT_SECONDS` 이면 `stale_error` 를 반환한다. 그 외에는 원본 `last_status` 그대로.
-  - AC-0079: 환경변수 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` (기본값 `1200` = 20 분) 로 만료 기준을 설정한다. `.env.example` 의 Web 섹션에 키와 설명이 추가된다.
+  - AC-0078: backend helper `_compute_display_status(conn, conversation_id, last_status, last_status_at, last_status_run_id)` 가 `last_status='processing'` 이고 `now() - max(last_status_at, last step CreatedAt) > _effective_stale_timeout_seconds()` 이면 `stale_error` 를 반환한다. 그 외에는 원본 `last_status` 그대로. (**REQ-20260824-0335 로 갱신** — 임계는 상수가 아니라 per-attempt 상한 파생값이다. 반환은 `(status, is_stale, last_active)` 3-튜플.)
+  - AC-0079: 환경변수 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` (기본값 `1200` = 20 분) 는 만료 기준의 **하한(floor)** 이다 — 실제 판정 임계는 AC-0630 의 파생값. `.env.example` 의 Web 섹션에 키와 설명이 추가된다.
   - AC-0080: `_list_conversations()` 가 채우는 conversation list payload 의 `status` (또는 신규 `display_status`) 필드는 `_compute_display_status()` 결과를 우선 사용한다. 원본 `last_status` 는 `raw_status` 로 보존되어 디버깅 가능하다.
   - AC-0081: `/api/progress` / `/api/ask_status` / `/api/ask_result` 는 stale 판정 시 `status="stale_error"`, `is_processing=false`, `is_stale=true` 를 일관되게 반환한다. attach/resume long-poll 이 stale 대화에 대해 무한 대기하지 않고 즉시 terminal 처리한다.
-  - AC-0082: frontend `renderConversationList()` 의 dot 은 `display_status="stale_error"` 일 때 `.conv-dot.is-stale-error` (붉은색 토큰 `--color-danger`) 로 표시되고, hover tooltip 은 "작업이 중단된 것으로 보입니다 — 마지막 활동: {timestamp}" 형식이다. status === `processing` 이면 기존 주황색 `.is-processing` 유지.
+  - AC-0082: frontend `renderConversationList()` 의 dot 은 `display_status="stale_error"` 일 때 `.conv-dot.is-stale-error` (붉은색 토큰 `--color-danger`) 로 표시되고, hover tooltip 은 "작업이 중단된 것으로 보입니다 — 마지막 활동: {timestamp}" 형식이다. status === `processing` 이면 기존 주황색 `.is-processing` 유지. ({timestamp} 의 출처는 **AC-0631** 로 갱신 — `updated_at` 이 아니라 판정이 본 실제 마지막 활동.)
   - AC-0083: stale 대화를 사용자가 열면 답변 bubble 영역 / `#progressCard` 상단에 "작업 중단 감지" 안내 + `[취소 / 삭제]` 액션 제안 toast 가 1 회 노출된다. stale 판정은 실제 run 을 자동 취소·삭제하지 않는다 — UI 표시 + 사용자 안내가 1 차 목적.
 
 - REQ-20260608-0159 (TASK-0159, **Major** §12.3 — 고아 run 무한 폴링 수정): `/api/ask` 의 in-process(`asyncio.to_thread`) 실행 모델상 web 재배포/재시작이 in-flight run 을 죽이면 `set_run_status("done")` 미도달로 KV `last_status='processing'` 가 영구 고착돼 프런트엔드가 무한 폴링하고 신규 질의가 409 로 막히던 결함을 수정한다. (1) AC-0078 의 stale 자동복구를 실제로 작동시키고, (2) 부팅 시 고아 run 을 즉시 정리한다.
@@ -4285,3 +4285,50 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
   `내부동작→도구` 자리의 소요 칸이 **비어 있는지**(숫자가 있으면 지어낸 것이므로 실패) + 근사
   표식 `~` 이 실제로 붙는지. 두 축 모두 `+` 간격 접두 잔재 0 · 누적 단조 · 첫 단계 누적 생략을
   함께 잠근다. 근거 캡처는 `docs/test-runs.d/evidence/steptiming-attr-*.png`, 실측 기록은 `TEST.md`.
+
+- REQ-20260824-0335 (conv-audit `FR-stale-threshold-below-llm-attempt-cap`, **Major** §12.3): stale 표시
+  판정 임계는 그 판정이 감시하는 **단일 LLM 호출 per-attempt 상한보다 항상 크다**. 상한
+  (`AGENT_TIMEOUT_SEC`) 은 관리 콘솔에서 live 로 조정되는데 임계가 코드 상수 1200초에 고정돼 있어,
+  상한을 다 쓰는 정상 대기가 반드시 "작업 중단 감지" 로 오표시됐다(라이브 사고 2026-08-24: 상한 1800
+  · run 은 살아서 21회차 추론 중 · 10분간 중단 표시 후 재개해 정상 완료). 임계 하한만 데이터로 두고
+  **불변식은 코드가 강제**한다(config drift 봉인).
+  - AC-0630: `app._effective_stale_timeout_seconds()` 는 `max(WEB_PROGRESS_STALE_TIMEOUT_SECONDS,
+    cap + WEB_PROGRESS_STALE_MARGIN_SECONDS)` 를 반환한다. 여기서 `cap` 은
+    `runtime_settings.get_int("AGENT_TIMEOUT_SEC")` 를 `_STALE_CAP_CLAMP_MAX`(스펙 maximum, 조회 실패 시
+    3600)로 clamp 한 뒤 **프로세스 수명의 high-water mark**(`_STALE_CAP_HIGH_WATER`)를 취한 값이다.
+    스펙 범위의 어떤 상한에서도 반환값 > 상한 이 성립한다. `WEB_PROGRESS_STALE_MARGIN_SECONDS`
+    (env, 기본 180, 상한 clamp)는 상한 소진 → 재큐 → 재claim → 첫 step 기록 창을 덮는 여유다.
+    - AC-0630a (§18.8 codex [P1]): 상한의 **상승은 즉시** 반영하고 **하락은 반영하지 않는다**
+      (재기동 경계까지 high-water 유지). 진행 중인 LLM 호출은 시작 시점 상한으로 대기하므로
+      (그 값이 `_TIER_CLIENT_CACHE` 의 client timeout 에 고정), 판정이 낮아진 값을 따라가면 그
+      호출이 다시 `stale_error` 로 오표시된다 — 이 REQ 가 없애려는 사고의 재현. 상한 조회가
+      예외이거나 비양수여도 high-water 를 유지하고, high-water 가 없으면(0)
+      `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` 로 fail-open 한다(표시 판정이 런타임 설정 가용성에
+      종속되지 않는다).
+    - AC-0630b (§18.8 codex [P2]): 관리 콘솔 override 는 스펙으로 clamp 되지만 배포 env baseline 은
+      clamp 되지 않으므로, 파생은 상한과 margin **둘 다** 명시적으로 clamp 한다. clamp 부재 시
+      비정상 값이 임계를 수년으로 늘려 stale 이 사실상 영구 미보고된다(가드 무력화).
+  - AC-0631: `_compute_display_status` / `_display_status_from_step_at` 는
+    `(display_status, is_stale, last_active)` 3-튜플을 반환한다. `last_active` =
+    `max(last_status_at, last step at)`(UTC naive) 또는 시각 정보가 없으면 `None`. 대화 목록 payload 는
+    이 값을 `_iso_or_empty()` 로 **타임존을 명시한** ISO8601 문자열로 직렬화해
+    `last_activity_effective_at` 필드에 싣는다(naive 직렬화 시 프런트 `new Date()` 가 로컬로 해석해
+    9시간 어긋나는 경로 차단).
+    - AC-0631a (§18.8 codex [P2]): **terminal 상태도** `last_active` 를 돌려준다(`last_status_at`
+      = 마감 시각). `None` 을 주면 완료·오류·취소 대화의 신규 필드가 항상 비어 표면이 다시 요청
+      접수 시각으로 폴백해, 계약이 `processing` 에서만 성립하는 비대칭이 된다. 단
+      `_compute_display_status` 의 terminal 경로는 **step 을 조회하지 않는다**(마감 시각이 곧 마지막
+      활동이고, 여기서 PG 왕복을 늘릴 이유가 없다). step 시각을 인자로 받는
+      `_display_status_from_step_at` 는 둘의 max 를 쓴다.
+  - AC-0633 (§18.8 codex [P2]): `_parse_kv_timestamp` 는 offset 이 실린 값을
+    `astimezone(timezone.utc)` 로 **변환한 뒤** naive 화해 반환한다. offset 을 변환 없이 strip 하면
+    KST wall-clock 이 UTC 로 오인돼 `datetime.utcnow()` 비교에서 9시간 미래가 되고, stale 판정이
+    그만큼 지연되며 AC-0631 의 직렬화가 사용자에게도 9시간 틀린 시각을 보여준다. AC-0311
+    (`_last_step_at_for_run`, step 축)과 **같은 계약을 KV 축에 대칭 적용**한다. 라이브 KV 는 현재
+    `+00:00` 로 저장돼 실동작 변화는 없다(저장 형식 변경에 대한 방어).
+  - AC-0632: frontend 는 "마지막 활동/최근 갱신" 표시에 `last_activity_effective_at` 를 우선 사용하고
+    부재 시 `last_activity_at` → `created_at` 으로 폴백한다(대화 부제 `최근 갱신` + 사이드바 stale
+    툴팁 **양쪽**). `last_activity_at`(= `core_conversations.updated_at`)은 run 진행 중 갱신되지 않아
+    요청 접수 시각에 멈춰 있으므로, 단독 사용 시 "마지막 활동" 이라는 라벨과 값이 어긋난다(사고 대화
+    실측 43분 차이). 대화 부제의 상태 칸은 내부 enum 이 아니라 `pendingStatusLabel()` 의 한국어 표시를
+    쓴다.

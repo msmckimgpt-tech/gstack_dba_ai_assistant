@@ -11139,3 +11139,124 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - "직전 step 의 실행시간이 더해지는" 오귀속 해소 — ✓ (귀속 재정의 + 백엔드 실측 도입).
 - 인라인 progress 카드·말풍선 접이판은 **건드리지 않았다** — 보고가 지목한 화면은 실행 단계
   사이드 패널이고, 다른 표면은 레이아웃 계약이 달라 별도 판단 대상이다(요청 범위 준수).
+
+## 20260824T1420-stale-threshold-attempt-cap — 살아있는 run 을 "작업 중단" 으로 오표시하던 임계 역전 해소 (Major §12.3)
+
+**사용자 보고(2026-08-24, `/_dqa:conversation_audit`)**: "`최근 갱신 2026. 08. 24. 오전 11:19 ·
+메시지 1 · 소유자 admin · 상태 stale_error` — assistant 에게 요청을 보내고 해당 작업이
+중단되었습니다. 근본적인 원인을 파악하고 수정해주세요."
+
+### 진단 (추정 아님 — 라이브 4중 삼각측량: PG `agent_runtime` · ask-worker 로그 · 컨테이너 타임스탬프 · 코드)
+
+대상 대화 `…816ab7f3`(1:1, product P-119 마스킹), job 715, run `…c71393cf`.
+
+| 시각(KST) | 실측 사실 |
+|---|---|
+| 11:19:29 | 요청 접수(job 715 claim), user 메시지 1건 저장 |
+| 11:19:30~12:02:23 | **run 정상 진행** — step 73건, LLM 라운드 20회, 도구 42회 |
+| 12:01:51~12:02:01 | round 20 에서 `llm_transient_retry … tag=unavailable` ×4 |
+| **12:02:06** | `bedrock-gateway` 컨테이너 **재생성**(`RestartCount=0`·`StartedAt` 갱신 = 재시작 아닌 recreate) |
+| 12:02:22 | round 20 성공(`llm_usage` prompt 104,415 tok · latency 8.7s) |
+| 12:02:23 | round 21 LLM 호출 시작 — 이후 **step 0건** |
+| **12:22:23** | ← 이 시점부터 UI 가 `stale_error`("작업 중단 감지") 표시 |
+| 12:32:23 | **정확히 1800초** 후 `llm_transient_exhausted … attempts=0 waited_total=0.0s tag=unavailable → resumable` → 재큐 |
+| 12:32:23~12:52:00 | 새 run 이 **누적 도구 결과를 보존한 채 재개 → `done`**(표시 메시지 2건) |
+
+즉 **사용자가 "중단" 을 본 10분 동안 그 run 은 살아 있었고, 이후 정상적으로 답변을 완성했다**
+(총 93분). 정지가 아니라 **무진전 구간의 오라벨**이다.
+
+**RC-1 (L7↔L6 경계) — 두 임계의 역전**: stale 판정은 step/status 무갱신 시간으로 "죽었나" 를
+추정한다. 그 무갱신 구간의 **정상 최대치**는 단일 LLM 호출의 per-attempt 상한이다 — upstream
+무응답 동안에는 step 이 하나도 생기지 않는다(스트리밍 progress 게이트도 chunk 가 와야 열린다:
+`agent_core.py::_collect_llm_stream` 이 문서화한 한계). 그런데
+
+- 판정 임계 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` = **1200초 하드코딩**(`src/app.py`, env 미설정)
+- 감시 대상 상한 `AGENT_TIMEOUT_SEC` = **1800초 live**(runtime_settings, `apply_mode=live`,
+  관리 콘솔에서 조정 — web-a 에서도 1800 으로 읽힘을 실측 확인)
+
+임계가 상한보다 **600초 짧다** → 상한을 다 쓰는 호출은 **반드시** 중단으로 표시된다. 운영자가
+콘솔에서 상한만 올리면 표시 임계는 따라오지 않는 **config drift**(스펙 maximum 3600 → 최악 2400초
+어긋남).
+
+**RC-2 (L7 정직성) — "마지막 활동" 이 요청 시각**: 부제 `최근 갱신` 과 stale 툴팁이 쓰는
+`last_activity_at` 은 `core_conversations.updated_at` 이고, 이 컬럼은 run 진행 중 갱신되지 않는다
+(메시지 INSERT 는 갱신원이 아니며 트리거는 UPDATE 에만 걸린다). 실제 마지막 활동 12:02 vs 표시
+11:19 = **43분 어긋남** → 사용자가 "요청 직후부터 아무것도 진행되지 않았다" 고 믿게 된다.
+판정 함수는 정확한 `max(status_at, last step at)` 을 이미 계산해놓고 **버리고 있었다**.
+
+### 거짓양성 기각 (`refuted`)
+
+- **F1 "메시지 1" 은 결함 아님** — 표시 카운트는 `role IN ('user','assistant') AND tool_calls IS
+  NULL AND content <> ''` 필터라 도구 호출 중간 assistant 를 의도적으로 제외한다. 당시 최종 답변이
+  없었으므로 1 이 정확하다(완료 후 2 로 실측 확인).
+- **F3 기수정 아님** — 원장 `FR-llm-attempt-cap-inside-latency-tail` 은 **상한 자체**(스트리밍 전환)를
+  다뤘고 그 봉인은 chunk 가 흐르는 구간만 덮는다. **표시 임계와 상한의 정합**은 다룬 적이 없다.
+- **F4 의도된 동작 아님** — 코드 주석이 "장시간 SQL/LLM 작업을 고려해 20분" 이라 선언하는데
+  정작 그 작업의 상한(30분)을 고려하지 못한다. 선언과 구현의 불일치.
+- **F6 외부 기인으로 넘기지 않음** — gateway recreate 자체는 인프라 사건이지만, **그 결과로 진행 중
+  run 이 무응답에 빠지고 UI 가 중단으로 표시하는 것**은 코드가 방어 가능한 경로이며 재생성은 배포마다
+  상시 발생한다(우리 통제 안).
+- **F5 ANCHOR 충돌 없음** — feature-0003 §1~§3 은 소유권·layering 축(System Prompt 3계층 조립).
+
+### corroboration (정직)
+
+**idiosyncratic** — 30일 389 run / 107 대화 중 step gap ≥ 1200초는 **이 1건**(최대 1800초).
+빈도 게이트는 미달이나 Phase 7.4 "명백한 구조결함" 분기 충족: 근본이 코드 file:line 까지
+`confirmed`(high) · 재발경로 = config drift + ux contract · 사용자 명시 보고.
+
+### 수정 (사용자가 AskUserQuestion 으로 **A+B** 범위 선택)
+
+- [x] **봉인 A — 임계를 상한에서 파생(코드 권위선)**: `src/app.py`
+      `_effective_stale_timeout_seconds()` 신설. `max(설정 하한, AGENT_TIMEOUT_SEC(live) +
+      WEB_PROGRESS_STALE_MARGIN_SECONDS)`. 상수 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` 는 **하한**
+      으로 격하(운영자가 크게 준 값은 보존). 파생 실패는 fail-open(종전 상수) — 표시 판정이
+      런타임 설정 가용성에 종속되지 않는다. margin 180초 근거: 상한 소진 12:32:23.48 → 재큐
+      12:32:23.58 → 새 run 첫 step 12:32:26.2 = ~3초 실측에 워커 busy 여유를 더한 보수값.
+- [x] **봉인 B — 마지막 활동 시각 정직화**: 판정 두 함수(`_compute_display_status`,
+      `_display_status_from_step_at`)가 `(status, is_stale, **last_active**)` 3-튜플 반환.
+      목록 item 에 `last_activity_effective_at`(tz 명시 ISO8601) 부착 → 부제 `최근 갱신` 과
+      사이드바 stale 툴팁이 이 값을 우선 사용(없으면 종전 필드 폴백 = 동작 무변경).
+      직렬화는 `_iso_or_empty()` 로 **UTC 를 명시** — naive 를 그대로 내보내면 프런트
+      `new Date()` 가 로컬로 읽어 9시간 어긋난다(`_last_step_at_for_run` tz 회귀와 같은 입구).
+- [x] 부제 상태 칸이 내부 enum `stale_error` 를 그대로 노출하던 것을 `pendingStatusLabel()`
+      경유 한국어 표시로 교정(같은 줄의 다른 항목은 모두 한국어였다).
+- [x] 호출처 5곳 3-튜플 정합: `_conv_store.py` 4곳 + `conversations.py`(`/api/progress`) 1곳.
+- [x] **범위 밖(정직)** — upstream 완전 무응답 구간에 진행 표시·abort 게이트를 여는 **watchdog**
+      은 넣지 않았다. `_collect_llm_stream` 주석이 이미 별 항목으로 이월한 사안이고, 진행 표시
+      스레드가 런타임 DB 커넥션을 메인 스레드와 공유해야 해 동시성 위험이 본 cycle 이득을 넘는다.
+      본 수정은 **그 구간을 중단으로 오표시하지 않게** 만들고, 구간 자체의 단축은 이월한다.
+
+### 검증
+
+- [x] 신규 `tests/test_stale_threshold_derives_from_attempt_cap.py` — 불변식(상한 5~3600 전 구간에서
+      임계 > 상한) · 운영자 하한 보존 · fail-open 2종 · **사고 재현 입력**(상한 1800 · 마지막 활동
+      1300초 전 → stale 아님; 종전 코드에서는 정확히 `stale_error`) · 진짜 죽은 run 은 여전히 stale ·
+      UTC 명시 직렬화 · 두 경로(목록/스냅샷 번들) 판정 일치 · 프런트 소스 잠금 2종.
+- [x] 회귀: 관련 3파일 **35 PASS**(신규 + `test_orphan_run_stale_recovery` + `test_web_perf_p1`
+      3-튜플·파생 임계로 갱신) · ruff `All checks passed` · py_compile · ESM `node --check`.
+- [x] 전-스위트 실패 **1건은 무관 환경 결함**으로 확인 —
+      `feature-0002/test_oauth_exhaustion_gate.py::test_write_failure_after_successful_post_cannot_kill_slot_selection`
+      가 `FileNotFoundError: [Errno 2] … 'chattr'`(테스트 이미지에 e2fsprogs 바이너리 부재).
+      본 변경과 인과 없음(feature-0003 미참조 경로).
+- [ ] 배포 후 라이브 실측: 같은 조건(상한 1800 · 20~30분 무진전)에서 `stale_error` 가 뜨지 않고
+      "최근 갱신" 이 실제 마지막 활동을 가리키는지. **코드/테스트는 "판정이 의도대로 동작함" 까지만
+      증명한다**(§Phase 11b 분리).
+
+### Requested Scope
+
+- "작업이 중단되었다 — 근본 원인 파악·수정" → ✓ 중단이 **아니었음을 실증**하고(93분 후 정상 완료),
+  그렇게 보이게 만든 임계 역전과 시각 오표시를 봉인.
+- LLM 무응답 구간 자체의 단축(watchdog·상한 재산정)은 **건드리지 않았다** — 별 항목(위 참조).
+
+### §18.8 적대 리뷰 흡수 (2026-08-24, codex — REV-20260824T142000)
+
+- [x] **[P1]** 판정이 상한의 *하락*을 따라가 오표시가 재현되는 경로 → high-water mark 로 봉인
+      (상승 즉시·하락은 재기동 경계). 조회 실패도 high-water 유지.
+      **채택하지 않은 대안(정직)**: "attempt 시작 시 cap/deadline 을 run 메타에 저장" 이 더 정확하나
+      KV 스키마·워커 쓰기 경로를 건드려 응집 한계를 넘는다 — 트레이드오프를 REVIEW 에 기록.
+- [x] **[P2]** 상한·margin clamp(스펙 maximum 권위) — 비정상 값이 stale 을 영구 미보고로 만드는 경로 차단.
+- [x] **[P2]** terminal 상태도 `last_active` 반환(계약이 processing 에서만 성립하던 비대칭 해소).
+      terminal 경로의 step 무조회를 테스트로 잠금.
+- [x] **[P2]** `_parse_kv_timestamp` 가 offset 을 UTC 변환 후 naive 화(AC-0311 의 KV 축 대칭).
+      라이브 KV 는 `+00:00` 저장이라 실동작 변화 0 — 저장 형식 변경 방어.
+- [x] 흡수 후 재검증: 신규 19 PASS · 관련 3파일 42 PASS · 전체 스위트 회귀 · ruff clean.

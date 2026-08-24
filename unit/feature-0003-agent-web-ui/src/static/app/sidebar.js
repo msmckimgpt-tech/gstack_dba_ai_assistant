@@ -699,7 +699,10 @@ export function renderConversationList() {
     const dot = document.createElement("span");
     dot.className = `conv-dot${normalizedStatus ? ` is-${normalizedStatus}` : ""}`;
     if (normalizedStatus === "stale_error") {
-      const lastActivity = item.last_activity_at || item.created_at || "";
+      // conv-audit FR-stale-threshold-below-llm-attempt-cap 봉인 B: 판정이 실제로 본 마지막
+      // 활동 시각을 우선 표시한다(없으면 종전 필드 폴백). last_activity_at 은 요청 접수 시각에
+      // 멈춰 있어, 툴팁이 "마지막 활동" 이라며 수십 분 과거를 가리키는 거짓 정보였다.
+      const lastActivity = item.last_activity_effective_at || item.last_activity_at || item.created_at || "";
       dot.title = lastActivity
         ? `작업이 중단된 것으로 보입니다 — 마지막 활동: ${formatDateTime(lastActivity)}`
         : "작업이 중단된 것으로 보입니다";

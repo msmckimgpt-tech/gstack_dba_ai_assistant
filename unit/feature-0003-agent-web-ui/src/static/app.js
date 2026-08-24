@@ -2431,15 +2431,23 @@ export function renderConversationHeader() {
   if (conversation.blocked) {
     subtitleParts.push("🚫 차단됨 (참조 제품 삭제)");
   }
+  // conv-audit FR-stale-threshold-below-llm-attempt-cap 봉인 B: "최근 갱신" 은 서버가 판정에
+  // 실제로 쓴 마지막 활동 시각(last_activity_effective_at = max(status_at, last step at))을
+  // 우선 쓴다. last_activity_at(=conversations.updated_at)은 **요청 접수 시각에 멈춰 있어**
+  // run 이 진행될수록 벌어진다(사고 대화: 실제 12:02 vs 표시 11:19, 43 분 차이) → 사용자가
+  // "요청 직후부터 아무것도 진행되지 않았다" 고 오인하는 입구였다. 서버가 값을 못 실으면
+  // 종전 필드로 폴백(동작 무변경).
   subtitleParts.push(
-    `최근 갱신 ${formatDateTime(conversation.last_activity_at || conversation.created_at)}`,
+    `최근 갱신 ${formatDateTime(conversation.last_activity_effective_at || conversation.last_activity_at || conversation.created_at)}`,
     `메시지 ${Number(conversation.message_count || 0)}`,
   );
   if (conversation.owner_username) {
     subtitleParts.push(`소유자 ${conversation.owner_username}`);
   }
   if (conversation.status) {
-    subtitleParts.push(`상태 ${conversation.status}`);
+    // 상태는 내부 코드(stale_error 등)가 아니라 사용자 언어로 표시한다 — 같은 부제의 다른
+    // 항목이 모두 한국어인데 이 칸만 원시 enum 이 노출되고 있었다.
+    subtitleParts.push(`상태 ${pendingStatusLabel(conversation.status)}`);
   }
   conversationSubtitleEl.textContent = subtitleParts.join(" · ");
 }

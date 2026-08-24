@@ -606,7 +606,82 @@ def _finalize_inflight_runs_on_shutdown() -> None:
 WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
 # TASK-0061 Phase 3 (REQ-20260515-0005): processing 상태가 만료 시간 동안 step/status 갱신 없이
 # 멈춰 있으면 stale_error 로 표시한다. 장시간 SQL/LLM 작업을 고려해 기본 20 분 (1200 sec).
+# **이 값은 하한(floor)일 뿐 실제 판정 임계가 아니다** — 유효 임계는 아래
+# `_effective_stale_timeout_seconds()` 가 per-attempt 상한에서 파생한다.
 WEB_PROGRESS_STALE_TIMEOUT_SECONDS = max(60, int(os.getenv("WEB_PROGRESS_STALE_TIMEOUT_SECONDS", "1200")))
+# conv-audit FR-stale-threshold-below-llm-attempt-cap: 상한 소진 후 앱 층이 실패를 분류하고
+# 재큐 → 새 워커 claim → 첫 step 기록까지 도달하는 데 필요한 여유. 라이브 실측(2026-08-24
+# 사고 run)에서 상한 소진 12:32:23.48 → 재큐 12:32:23.58 → 새 run 첫 step 12:32:26.2 = ~3초.
+# 워커가 busy 여서 재claim 이 밀리는 경우까지 덮도록 보수적으로 180 초(코드베이스가 stale 창
+# 산정에 쓰는 관용 여유값과 동일).
+WEB_PROGRESS_STALE_MARGIN_SECONDS = max(0, min(3600, int(os.getenv("WEB_PROGRESS_STALE_MARGIN_SECONDS", "180"))))
+
+
+def _stale_cap_clamp_max() -> int:
+    """파생에 채택할 per-attempt 상한의 허용 최대치.
+
+    §18.8 codex [P2]: 관리 콘솔 override 는 스펙 [minimum, maximum] 으로 clamp 되지만
+    **배포 env baseline 은 clamp 되지 않는다** — 비정상적으로 큰 `AGENT_TIMEOUT_SEC` 이 들어오면
+    파생 임계가 수년으로 늘어나 stale 이 사실상 영구 미보고된다(가드 무력화). 스펙의 maximum 을
+    권위로 삼아 그 경로를 막는다(스펙 조회 실패 시 보수적 상수).
+    """
+    try:
+        spec = _runtime_settings.spec_for("AGENT_TIMEOUT_SEC")
+        raw = spec.get("maximum") if isinstance(spec, dict) else getattr(spec, "maximum", None)
+        val = int(raw)
+        return val if val > 0 else 3600
+    except Exception:
+        return 3600
+
+
+_STALE_CAP_CLAMP_MAX = _stale_cap_clamp_max()
+# §18.8 codex [P1]: 판정은 상한의 **하락**을 즉시 따라가면 안 된다. 진행 중인 LLM 호출은
+# 시작 시점의 상한으로 대기하고(그 값이 `_TIER_CLIENT_CACHE` 의 client timeout 에 박혀 있다),
+# 판정이 새로 낮아진 값을 쓰면 그 호출이 다시 "중단" 으로 오표시된다 — 봉인하려던 사고의 재현.
+# 그래서 프로세스 수명 동안 **관측된 최대 상한**을 기준으로 삼는다(high-water mark). 하락은
+# 재기동 경계에서 반영된다(그 시점엔 옛 상한으로 대기 중인 호출도 없다). 조회 실패 시에도
+# 이 값이 남아 임계가 종전 상수로 급락하지 않는다.
+_STALE_CAP_HIGH_WATER = 0
+
+
+def _effective_stale_timeout_seconds() -> int:
+    """stale 표시 판정에 **실제로** 쓰는 임계(초).
+
+    왜 파생하는가 (conv-audit FR-stale-threshold-below-llm-attempt-cap, 2026-08-24 라이브 사고):
+    stale 판정은 "이 run 이 죽었나" 를 step/status 무갱신 시간으로 추정한다. 그런데 그 무갱신
+    구간의 **정상 최대치**는 단일 LLM 호출의 per-attempt 상한(`AGENT_TIMEOUT_SEC`)이다 —
+    upstream 이 무응답인 동안에는 step 이 하나도 생기지 않기 때문이다(스트리밍 progress 게이트도
+    chunk 가 와야 열린다: agent_core `_collect_llm_stream` 의 문서화된 한계).
+
+    그래서 임계가 상한보다 작으면 **정상 대기 중인 살아있는 run 이 반드시 "작업 중단 감지" 로
+    오표시**된다. 실제로 상한은 관리 콘솔(runtime_settings, apply_mode=live)에서 1800 초로
+    올라가 있었는데 표시 임계는 코드 상수 1200 초에 고정돼, 사고 run 은 12:22 부터 10 분간
+    중단으로 표시되는 동안 살아서 21 회차 추론을 진행 중이었다(사용자는 중단으로 믿고 이탈).
+
+    운영자가 콘솔에서 상한만 올리면 표시 임계는 따라오지 않는 **config drift** 이므로, 데이터
+    쪽 값을 고치는 대신 **코드가 불변식(임계 > 상한)을 강제**한다.
+
+    - 상한은 스펙 maximum 으로 **clamp** 하고 프로세스 수명의 **high-water mark** 를 쓴다
+      (`_STALE_CAP_CLAMP_MAX` · `_STALE_CAP_HIGH_WATER` 주석 참조 — §18.8 codex [P1]/[P2]).
+    - 파생 실패(스냅샷 부재·파싱 오류 등)는 fail-open — high-water(없으면 종전 상수)로
+      되돌아간다. 표시 판정이 런타임 설정 가용성에 종속되지 않고, 실패가 임계를 급락시켜
+      살아있는 run 을 오표시하는 경로도 없다.
+    - env `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` 를 상한보다 크게 준 운영자 의도는 보존한다
+      (파생값과 max 를 취하므로 명시 설정이 하한 역할).
+    """
+    global _STALE_CAP_HIGH_WATER
+    base = WEB_PROGRESS_STALE_TIMEOUT_SECONDS
+    try:
+        cap = int(_runtime_settings.get_int("AGENT_TIMEOUT_SEC"))
+    except Exception:
+        cap = 0
+    cap = max(0, min(cap, _STALE_CAP_CLAMP_MAX))
+    if cap > _STALE_CAP_HIGH_WATER:
+        _STALE_CAP_HIGH_WATER = cap
+    cap = _STALE_CAP_HIGH_WATER
+    if cap <= 0:
+        return base
+    return max(base, cap + WEB_PROGRESS_STALE_MARGIN_SECONDS)
 _ACTIVE_REQUESTS: dict[str, int] = {}
 _ACTIVE_REQUESTS_LOCK = threading.Lock()
 

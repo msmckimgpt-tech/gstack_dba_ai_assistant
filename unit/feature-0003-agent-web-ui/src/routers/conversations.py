@@ -3129,7 +3129,7 @@ def progress(
         if fallback_status:
             display_status, is_stale = fallback_status, False
         else:
-            display_status, is_stale = app._compute_display_status(conn, cid, status, status_at, run_id)
+            display_status, is_stale, _last_active = app._compute_display_status(conn, cid, status, status_at, run_id)
         # feature-0030: 연장 확인 상태를 진행 폴링에 실어 보낸다 — 프론트가 이미 처리 중
         # 내내 도는 채널이라 새 폴링 경로를 만들지 않는다. 처리 중이 아니면 조회 생략.
         timeout_extension = {"prompted": False, "granted": False, "deadline_at": "", "run_id": ""}

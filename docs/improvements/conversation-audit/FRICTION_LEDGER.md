@@ -1802,3 +1802,85 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   버전 갱신 축 **5/37**)을 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
 - **필요한 사람 액션(1줄)**: **PR 생성·머지·배포 승인**(Major 는 override 불가 — §12.3). 배포 후
   `/_dqa:doc_sync` 권유.
+
+## FR-stale-threshold-below-llm-attempt-cap — fixed:undeployed (L7↔L6 경계; 표시 임계가 감시 대상 상한 안쪽이라 살아있는 run 이 "중단" 으로 오표시)
+
+- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 19 · 관련 3파일 42 PASS · ruff clean ·
+  verify-completion 게이트). **PR·머지·배포 미수행** — Major 는 사람 승인 필수(§12.3, override 불가).
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-24) — "`최근 갱신 2026. 08. 24.
+  오전 11:19 · 메시지 1 · 소유자 admin · 상태 stale_error` — assistant 에게 요청을 보내고 해당 작업이
+  중단되었습니다. 근본적인 원인을 파악하고 수정해주세요."
+- **last_seen**: 2026-08-24 · **seen_count**: 1 · **seen_distinct_conv**: 1 (30일 gap≥1200s 기준)
+- **modality**: 1:1(`is_group=f`) · **conv(마스킹)**: `…816ab7f3`(topic 빈 값 → UI "새 대화") ·
+  **account(마스킹)**: A-10 · **product(마스킹)**: P-119 · job 715 · run `…c71393cf` → 재개 `…cf551f4f`
+  · 추론강도 max · `claude-sonnet-4`
+- **symptom_confidence**: high (사용자 명시 보고 + 라이브 완전 재현)
+  · **rootcause_confidence**: high (코드 file:line + PG `agent_runtime`(kv·steps·ask_jobs·llm_usage)
+  + ask-worker 로그 + 컨테이너 `StartedAt`/`RestartCount` **4중 삼각측량**, 1800초가 초 단위로 정합)
+- **suspected_layers**: **L7↔L6 경계** — 표시 판정(웹)과 그 판정이 감시하는 전송 상한(워커).
+  인프라 아님(gateway recreate 는 방아쇠일 뿐 — 아래 F6).
+
+- **증상(signal)**: `E-USR` 명시 보고 + `I-FALSE`(살아 있는 run 을 정지로 오인).
+  **결정적 정직 정정**: 그 run 은 **중단되지 않았다** — 12:32:23 에 누적 도구 결과를 보존한 채 재개해
+  **12:52:00 `done`** 으로 답변을 완성했다(표시 메시지 2건). 총 11:19:29→12:52:00 = 93분.
+  사용자가 본 것은 중단이 아니라 **무진전 구간의 오라벨**이다.
+- **라이브 타임라인(실측)**: 11:19:29 요청(job 715 claim) → 11:19:30~12:02:23 정상 진행(step **73**,
+  LLM 20라운드, 도구 42회) → 12:01:51~12:02:01 round 20 `llm_transient_retry tag=unavailable` ×4 →
+  **12:02:06 bedrock-gateway 컨테이너 재생성**(`RestartCount=0` = 재시작 아닌 recreate) →
+  12:02:22 round 20 성공(prompt 104,415 tok · latency 8.7s) → 12:02:23 round 21 시작(이후 step 0) →
+  **12:22:23 부터 UI `stale_error`** → **12:32:23 정확히 1800초 후** `llm_transient_exhausted
+  attempts=0 waited_total=0.0s tag=unavailable → resumable` 재큐 → 12:52:00 `done`.
+- **confirmed_root_cause** (2중):
+  1. **RC-1 — 두 임계의 역전.** stale 판정은 step/status 무갱신 시간으로 run 사망을 추정하는데,
+     그 무갱신 구간의 **정상 최대치는 단일 LLM 호출의 per-attempt 상한**이다(upstream 무응답 동안
+     step 이 하나도 생기지 않는다 — 스트리밍 progress 게이트도 chunk 가 와야 열린다:
+     `agent_core.py::_collect_llm_stream` 이 문서화한 한계). 그런데 판정 임계
+     `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` = **1200초 하드코딩**(`app.py`, env 미설정) vs 상한
+     `AGENT_TIMEOUT_SEC` = **1800초 live**(runtime_settings `apply_mode=live`, web-a 에서도 1800 실측).
+     **600초 짧다** → 상한을 다 쓰는 호출은 **반드시** 중단으로 표시된다. 스펙 maximum 3600 이면
+     최악 2400초 어긋남. → `FR-llm-attempt-cap-inside-latency-tail` 과 **같은 부류가 층을 바꿔 재발**
+     (그건 "상한이 성공 분포 꼬리 안쪽", 이번은 "**표시 임계가 상한 안쪽**").
+  2. **RC-2 — "마지막 활동" 이 요청 접수 시각.** 부제 `최근 갱신` 과 stale 툴팁이 쓰는
+     `last_activity_at` = `core_conversations.updated_at` 은 run 진행 중 갱신되지 않는다(메시지
+     INSERT 는 갱신원이 아니고 트리거는 UPDATE 에만 걸린다) → 실제 마지막 활동 12:02 vs 표시 11:19
+     = **43분 어긋남**. 판정 함수는 정확한 `max(status_at, last step at)` 을 이미 계산해놓고 **버렸다**.
+  재발경로 = **config drift**(콘솔에서 상한만 올리면 임계는 안 따라온다) + **ux contract** → 코드가 권위선.
+- **거짓양성 기각(`refuted`)**: **F1** "메시지 1" 은 결함 아님 — 표시 카운트가
+  `role IN ('user','assistant') AND tool_calls IS NULL AND content<>''` 필터라 도구 호출 중간 assistant
+  를 의도적으로 제외한다(완료 후 2 로 실측). **F3** 기수정 아님 —
+  `FR-llm-attempt-cap-inside-latency-tail` 의 스트리밍 봉인은 chunk 가 흐르는 구간만 덮고, 임계-상한
+  정합은 다룬 적 없다. **F4** 의도된 동작 아님 — 주석이 "장시간 SQL/LLM 작업을 고려해 20분" 이라
+  선언하는데 그 작업의 상한(30분)을 고려하지 못한다(선언·구현 불일치). **F5** ANCHOR 충돌 없음.
+  **F6** 외부 기인으로 넘기지 않음 — gateway recreate 자체는 인프라 사건이나, 그 결과로 진행 중 run 이
+  무응답에 빠지고 UI 가 중단으로 표시하는 것은 **코드가 방어 가능**하고 재생성은 배포마다 상시 발생한다.
+- **corroboration**: **idiosyncratic**(정직) — 30일 389 run / 107 대화 중 step gap ≥ 1200초는
+  **1건 / 1 대화**(최대 1800초). 빈도 게이트 미달이나 **Phase 7.4 "명백한 구조결함" 분기 충족**:
+  근본이 코드 file:line 까지 `confirmed`(high) · 재발경로 = config drift + ux · 사용자 명시 보고.
+  전역 행동 변경이 아니라 **봉인적 수정**(임계 불변식 + 시각 정직화)만 했다.
+- **triage**: S=4 · F=1 · L=3 · C=5 · R=3 → **15**, disposition=**fix-now**(구조결함 분기).
+  위험등급 **Major**(§12.3 — 진행 판정이 long-poll terminal 처리에도 쓰인다) → attended.
+  사용자가 AskUserQuestion 으로 봉인 범위 **A+B** 명시 선택(2026-08-24).
+- **봉인**: (A) 표시 임계를 per-attempt 상한에서 **파생**(`_effective_stale_timeout_seconds`) —
+  상수는 하한으로 격하, 스펙 maximum clamp, 프로세스 high-water(상승 즉시·하락은 재기동 경계),
+  조회 실패는 high-water 유지 fail-open. (B) 판정이 본 **실제 마지막 활동**을 3-튜플로 반환해
+  tz 명시 ISO 로 표면에 싣고(`last_activity_effective_at`) 부제·툴팁 **양쪽**이 우선 사용 +
+  `_parse_kv_timestamp` 의 offset→UTC 변환(AC-0311 의 KV 축 대칭). 부제 상태 칸의 원시 enum 노출도 교정.
+  **판정 규칙 자체·terminal 계약·워커 stale sweeper 창·보안 경계·RBAC 무변경.**
+- **fix**: `CHG-20260824T142000-stale-threshold-attempt-cap` / **코드 거주 `feature-0003-agent-web-ui`**
+  (verify 정본) / `REV-20260824T142000-stale-threshold-attempt-cap`
+  (§18.8.2 제약-없는-채널 → codex 적대, **[P1] 1 · [P2] 3 → 전건 흡수**, 반영 후 [P1] 0)
+- **rc_ids**: RC-1(임계 역전) · RC-2(마지막 활동 오표시) ·
+  **batch-id**: B-20260824T142000-stale-threshold-attempt-cap
+- **범위 밖(이월·정직)**: upstream **완전 무응답 구간 자체**를 줄이는 watchdog — `_collect_llm_stream`
+  주석이 이미 별 항목으로 이월했고, 진행 표시 스레드가 런타임 DB 커넥션을 메인 스레드와 공유해야 해
+  동시성 위험이 이 cycle 이득을 넘는다. 본 수정은 **그 구간을 중단으로 오표시하지 않게** 만들고
+  구간 단축은 이월한다. 또한 codex 가 제안한 "attempt 시작 시 cap 을 run 메타에 저장"(더 정확한 P1
+  해법)도 KV 스키마·워커 쓰기 경로를 건드려 응집 한계 밖 — high-water 로 같은 창을 덮었다.
+- **배포 전 기준선(다음 audit 이 이 값과 비교)**: 30일 step gap ≥1200s **1건 / 1 대화**(max 1800s) ·
+  gap ≥1750s **1건 / 1 대화** · 전체 389 run / 107 대화.
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "판정이 의도대로 동작한다" 까지만 증명한다.
+  **"같은 조건에서 stale 오표시가 사라졌는지"** 는 배포 후 실측분(미수행) → 다음 audit 이
+  corroboration 재측정(gap ≥1200s 구간에서 `stale_error` 표시 여부 · "최근 갱신" 이 실제 마지막 활동을
+  가리키는지) → 확인 시 `verified`, 재발 시 `regressed`.
+- **필요한 사람 액션(1줄)**: **PR 생성·머지·배포 승인**(Major 는 override 불가 — §12.3). 배포 후
+  `/_dqa:doc_sync` 권유.
