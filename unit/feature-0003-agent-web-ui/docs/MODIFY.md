@@ -4537,3 +4537,17 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   변화 0(실측).
 - 흡수분 테스트 6종 추가(하락 무반응 · 실패 시 high-water 유지 · 비정상 cap clamp · 경계 bound ·
   offset→UTC 4케이스 · terminal 반환 2경로). 신규 파일 **19 PASS**, 관련 3파일 **42 PASS**.
+
+## CHG-20260824T152000-stale-threshold-postdeploy — 임계 파생 봉인 POST-DEPLOY 실측 (doc-only, 코드 변경 0)
+
+`CHG-20260824T142000-stale-threshold-attempt-cap`(PR #1320, main `596a722a`) 배포 후 실증 기록.
+**제품 코드 변경 0** — 원장 status 전환과 기록만 추가한다.
+
+- 배포본에서 봉인이 실제로 서 있음을 단정: **`threshold_live=1980` > `cap_live=1800`**
+  (사고 당시 1200 < 1800). `clamp_max=3600`(스펙 maximum) · `high_water=1800` ·
+  판정 3-튜플 + terminal `last_active` · `+09:00`→UTC 변환 · ISO `+00:00` 명시.
+- 서빙 자산에 프론트 축 도달(effective 필드 참조 3곳 · 원시 enum 잔존 0 · 캐시버스터 갱신).
+- `docs/improvements/conversation-audit/FRICTION_LEDGER.md`:
+  `FR-stale-threshold-below-llm-attempt-cap` → **`fixed:deployed:unverified-live`** +
+  POST-DEPLOY 절 + 다음 audit 관측 지표 3종. 라이브 UI 실측 미수행 사유를 정직 기록
+  (stale 표면 재현이 데이터 write 를 요구 — 감사 persona 읽기 전용 제약).

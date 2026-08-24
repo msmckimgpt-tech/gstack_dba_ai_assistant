@@ -1803,10 +1803,19 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **필요한 사람 액션(1줄)**: **PR 생성·머지·배포 승인**(Major 는 override 불가 — §12.3). 배포 후
   `/_dqa:doc_sync` 권유.
 
-## FR-stale-threshold-below-llm-attempt-cap — fixed:undeployed (L7↔L6 경계; 표시 임계가 감시 대상 상한 안쪽이라 살아있는 run 이 "중단" 으로 오표시)
+## FR-stale-threshold-below-llm-attempt-cap — fixed:deployed:unverified-live (L7↔L6 경계; 표시 임계가 감시 대상 상한 안쪽이라 살아있는 run 이 "중단" 으로 오표시)
 
-- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 19 · 관련 3파일 42 PASS · ruff clean ·
-  verify-completion 게이트). **PR·머지·배포 미수행** — Major 는 사람 승인 필수(§12.3, override 불가).
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-24, PR #1320 merge main
+  `596a722a`). 사용자가 PR·머지·배포 자율 진행을 명시 승인(§12.3 Major 사람 승인 충족).
+  `deploy-web-only`(scope=web — 변경이 `feature-0003` 자산에 한정되고 워커 코드 변경 0 이라
+  워커 재생성으로 진행 중 사용자 run 을 quiesce 대기시키지 않았다): web-a/web-b 무중단 롤링
+  one-at-a-time + caddy reconcile. **web-a·web-b `GIT_COMMIT=596a722a` healthy** · edge
+  `/healthz` `status=ok·git_commit=596a722a·mysql_ok·pg_ok` · **무중단 실측
+  `no upstreams available` 0건**. ask-worker 는 `07755e05` 유지(정상 — 이번 변경 미참조).
+  코드/테스트: 신규 19 · 관련 3파일 42 PASS · 전체 스위트 신규 실패 0 · ruff clean ·
+  verify-completion pre/post 전 게이트 PASS.
+  `verified` 로 닫지 **않는** 이유(§C5): 실사용자 대화 기준 corroboration 재측정이 남았다 —
+  아래 "라이브 실측 필요분".
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-24) — "`최근 갱신 2026. 08. 24.
   오전 11:19 · 메시지 1 · 소유자 admin · 상태 stale_error` — assistant 에게 요청을 보내고 해당 작업이
   중단되었습니다. 근본적인 원인을 파악하고 수정해주세요."
@@ -1882,5 +1891,31 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   **"같은 조건에서 stale 오표시가 사라졌는지"** 는 배포 후 실측분(미수행) → 다음 audit 이
   corroboration 재측정(gap ≥1200s 구간에서 `stale_error` 표시 여부 · "최근 갱신" 이 실제 마지막 활동을
   가리키는지) → 확인 시 `verified`, 재발 시 `regressed`.
-- **필요한 사람 액션(1줄)**: **PR 생성·머지·배포 승인**(Major 는 override 불가 — §12.3). 배포 후
-  `/_dqa:doc_sync` 권유.
+- **POST-DEPLOY 실증 (2026-08-24, 정직 기록)**
+  - **배포본 런타임(web-a 컨테이너에서 실 모듈 import)**: `threshold_live = **1980**`
+    (= cap 1800 + margin 180) · `floor(const)=1200` · `clamp_max=3600`(스펙 maximum) ·
+    `high_water=1800` · `cap_live=1800`. **임계 1980 > 상한 1800** — 사고를 낳은 역전이
+    라이브에서 해소됐다(사고 당시 1200 < 1800).
+  - 판정 계약: `_compute_display_status(..., 'done', '…T03:52:00+00:00', …)` →
+    `('done', False, datetime(2026,8,24,3,52))` — **3-튜플 + terminal 도 `last_active` 반환**
+    (§18.8 [P2] 흡수분이 배포본에 도달).
+  - tz 축: `_parse_kv_timestamp('2026-08-24T12:00:00+09:00')` → `2026-08-24 03:00:00`
+    (**offset→UTC 변환**, 종전엔 `12:00` 으로 오인) · `_iso_or_empty(naive)` →
+    `2026-08-24T03:02:23+00:00`(**UTC 명시**).
+  - 서빙 프론트 자산: `app.js` `last_activity_effective_at` 참조 2 · `sidebar.js` 1 ·
+    부제 `pendingStatusLabel(conversation.status)` 1 · **원시 enum 잔존 0** · 캐시버스터
+    `52e9a3f5d923 → **ef7ad7026e39**`(브라우저가 새 JS 를 받는다).
+  - **라이브 UI 실측은 수행하지 못했다(정직)**: stale 표면은 `processing` + 임계 초과 대화가
+    있어야 렌더되고, 그 상태를 인위 생성하려면 `kv`/`steps` **write** 가 필요하다(본 persona 의
+    읽기 전용 불변 제약). 사고 대화도 12:52:00 `done` 으로 종결돼 대상이 사라졌다. **미검증을
+    검증으로 보고하지 않는다** — 아래 관측 지표로 이월.
+- **다음 audit 관측 지표(라이브 실측 대체)**:
+  1. `_effective_stale_timeout_seconds()` 실측값 > 그 시점 `AGENT_TIMEOUT_SEC` live (불변식 유지).
+     콘솔에서 상한을 올린 뒤에도 성립해야 한다(drift 재발 여부).
+  2. step gap ≥ 임계 구간에 들어간 `processing` 대화가 `stale_error` 로 표시되는지 —
+     **기대: 표시되지 않음**(배포 전 기준선 1건/1 대화가 그 구간에서 표시됐다).
+  3. stale 이 정당하게 뜬 대화의 툴팁 "마지막 활동" 이 `steps` 최종 시각과 일치하는지
+     (요청 접수 시각이 아닌지) — 봉인 B.
+  불변식 유지·오표시 소멸 확인 시 `verified`, 재발 시 `regressed`(fix 무효화 → 재진단).
+- **필요한 사람 액션(1줄)**: 없음 — 코드·PR·머지·배포·배포본 실증 완료. 다음 audit 이 위 관측
+  지표로 `verified` 판정. 문서 정합은 `/_dqa:doc_sync` 권유.

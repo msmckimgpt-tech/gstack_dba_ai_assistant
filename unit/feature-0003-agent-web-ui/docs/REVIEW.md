@@ -5468,3 +5468,17 @@ flake 가 된다 → 신규 테스트에 autouse fixture 로 저장·리셋·복
 크게 올렸다 내리면 재기동까지 임계가 보수적으로 남는다 — 표시 판정이므로 수용하고, 진짜 죽은
 run 은 `ask_jobs` terminal backstop(`FR-early-return-kv-never-finalized` 봉인 B)과 워커 stale
 sweeper 가 별도로 잡는다.
+
+## REV-20260824T152000-stale-threshold-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 **0** — 변경분은 원장 status 전환과 `TASK/MODIFY` 기록뿐이다.
+§18.8 dispatch 표의 "비정책 doc-only" 행에 해당해 panel 을 SKIP 한다. 검증 대상 제품 코드는
+직전 cycle 에서 codex 적대 리뷰를 거쳤다(`REV-20260824T142000-stale-threshold-attempt-cap`
+`[CODEX:backend+ux-adversarial]`, [P1] 1 · [P2] 3 전건 흡수 → 반영 후 [P1] 0).
+선례: `REV-20260824T130000-step-timing-attribution-postdeploy`.
+
+**이번 실증이 새로 확정한 것**: 봉인이 "코드에 있다" 와 "라이브에서 선다" 는 다르다 —
+배포본 web-a 에서 실 모듈을 import 해 **`threshold_live=1980` > `cap_live=1800`** 을 직접
+읽었다(사고 당시 1200 < 1800). 임계는 상수가 아니라 live 설정 파생이므로, 이 한 줄이
+"배포됐다" 보다 강한 증거다. 반대로 **라이브 UI 실측은 못 했다**(stale 표면 재현이 데이터
+write 를 요구) — 미검증을 검증으로 적지 않고 원장 관측 지표로 이월했다.

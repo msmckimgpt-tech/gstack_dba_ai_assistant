@@ -11260,3 +11260,22 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [x] **[P2]** `_parse_kv_timestamp` 가 offset 을 UTC 변환 후 naive 화(AC-0311 의 KV 축 대칭).
       라이브 KV 는 `+00:00` 저장이라 실동작 변화 0 — 저장 형식 변경 방어.
 - [x] 흡수 후 재검증: 신규 19 PASS · 관련 3파일 42 PASS · 전체 스위트 회귀 · ruff clean.
+
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `596a722a`)
+
+- [x] 배포: PR #1320 merge → `deploy-web-only`(scope=web — 변경이 본 feature 자산에 한정,
+      워커 코드 변경 0 이라 워커 재생성으로 진행 중 사용자 run 을 quiesce 대기시키지 않았다).
+      web-a/web-b one-at-a-time 무중단 롤링 + caddy reconcile.
+- [x] 반영 판정은 파이프 exit 이 아니라 **서비스별 `GIT_COMMIT`**: web-a·web-b `596a722a` healthy ·
+      edge `/healthz` `ok·596a722a·mysql_ok·pg_ok` · **무중단 실측 `no upstreams available` 0건** ·
+      ask-worker `07755e05` 유지(정상 — 이번 변경 미참조).
+- [x] 배포본 런타임 실증(web-a 에서 실 모듈 import): **`threshold_live=1980` > `cap_live=1800`** —
+      사고를 낳은 역전(1200 < 1800)이 라이브에서 해소. `floor=1200` · `margin=180` ·
+      `clamp_max=3600` · `high_water=1800`. 판정은 3-튜플이고 terminal 도 `last_active` 반환.
+      `_parse_kv_timestamp('…T12:00:00+09:00')` → `03:00:00`(offset→UTC) ·
+      `_iso_or_empty(naive)` → `…+00:00`(UTC 명시).
+- [x] 서빙 프론트 자산 도달: `app.js` effective 참조 2 · `sidebar.js` 1 · 부제 한국어화 1 ·
+      **원시 enum 잔존 0** · 캐시버스터 `52e9a3f5d923 → ef7ad7026e39`.
+- [ ] **라이브 UI 실측(미수행 — 이월)**: stale 표면은 `processing` + 임계 초과 대화가 있어야
+      렌더되고 그 상태 생성은 `kv`/`steps` write 를 요구해(감사 persona 읽기 전용 제약) 하지
+      않았다. 사고 대화도 `done` 종결로 대상 소멸 → 원장 "다음 audit 관측 지표" 로 이월.
