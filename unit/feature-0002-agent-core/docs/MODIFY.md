@@ -2331,3 +2331,16 @@ live 스펙을 startup 으로 읽는 키가 drift 후보. 스펙 97(live 76) × 
 **건드리지 않은 것**: body `timeout` 전달(이미 스트림을 자르지 않는 무효 값 — 제거하면 feature-0007
 운영자 계약만 깨진다) · `run_timeout_sec` 실효값 · 회수 임계 실효값(라이브 5,580s 동일) ·
 `ROLE_STALE_SEC` · 보안 경계 · RBAC · 큐 상태기계.
+
+## CHG-20260824T170000-live-cap-startup-drift-postdeploy — 부정합 정리 POST-DEPLOY 실측 (doc-only, 코드 변경 0)
+
+`CHG-20260824T160000-live-cap-startup-drift`(PR #1322, main `14ab6b94`) 배포 후 실증.
+**제품 코드 변경 0** — 원장 status 전환과 기록만.
+
+- 배포본에서 봉인이 실제로 서 있음을 단정: `cap_live=1800` → 회수 임계 **5,580s**(값 보존) ·
+  `run_est=5,400` → **임계 > 예산 True**. 소스 비대칭이 사라져 두 값이 같은 live 상한을 본다.
+- `deploy-web` scope=all — 6서비스 전부 `14ab6b94`(워커 포함, 이 봉인의 실행 주체가 워커다) ·
+  무중단 0건.
+- 콘솔 스펙 문구 도달 확인(추론 상한 오해 교정).
+- 원장 `FR-live-cap-derived-from-startup-snapshot` → **`fixed:deployed:unverified-live`** +
+  POST-DEPLOY 절 + 관측 지표 3종. 콘솔 실변경 시나리오는 미검증으로 정직 기록.

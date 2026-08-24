@@ -2933,3 +2933,18 @@ body `timeout` 을 3s 로 주고 6.5초 스트림을 요청해도 **절단되지
 - [x] **[P2]** "값 보존" 문구 정정 — 라이브 실효값(5,580s)은 동일하되 저-cap 환경은 floor 로 상향
       (360→600, web max_wait 390→630). 정상 run 을 덜 끊는 방향이라 채택.
 - [x] 흡수 후: 가드 6 → **12 케이스** · 관련 3파일 재실행 · 전체 스위트 귀책 실패 0 · ruff clean.
+
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `14ab6b94`)
+
+- [x] 배포: PR #1322 merge → `deploy-web` **scope=all**(shared/config·runtime_settings·agent-core
+      변경이라 워커까지 새 코드를 받아야 봉인 적용). **6서비스 전부 `GIT_COMMIT=14ab6b94`** ·
+      edge `/healthz` ok · **무중단 실측 `no upstreams available` 0건**.
+- [x] 배포본 런타임(ask-worker 실 모듈 import): `cap_live=1800` →
+      **`effective_ask_worker_stale_sec()`=5,580s**(배포 전과 동일 — 값 보존 확인) ·
+      `run_est(live×3)=5,400` → **임계 > 예산 = True**(살아있는 run 회수 불가, 핵심 봉인) ·
+      `floor=600` · `high_water=5,580`.
+- [x] 콘솔 스펙 문구 도달: label `무응답 대기 상한 (에이전트/쿼리)` · description 첫 문장
+      "이 값은 AI 추론 시간을 제한하지 않습니다".
+- [ ] **미검증(이월)**: "콘솔에서 상한을 **실제로 바꿨을 때** 회수 임계가 함께 움직이는지" —
+      운영 설정을 건드려야 해 하지 않았다. 원장 관측 지표 3종으로 이월(재기동 로그 대조 ·
+      오회수 0건 · 라이브 값 불변).

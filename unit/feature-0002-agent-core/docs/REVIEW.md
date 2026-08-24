@@ -2071,3 +2071,16 @@ threshold-attempt-cap`, `REV-20260730T160000-ask-redeploy-handoff`). scope: `git
 보수적으로 남는다 — 회수가 늦어지는 방향이므로 수용하고, 죽은 워커는 `ROLE_STALE_SEC`(60s, 같은
 role backstop)과 drain 반납이 별도로 잡는다. codex 가 지적한 web↔worker 간 TTL 창(≤10s)도 같은
 이유로 수용한다(그 창에서 값이 큰 쪽으로 어긋나면 회수가 늦고, 작은 쪽은 high-water 가 막는다).
+
+## REV-20260824T170000-live-cap-startup-drift-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 **0** — 원장 status 전환과 `TASK/MODIFY` 기록뿐이다. §18.8 dispatch 표의
+"비정책 doc-only" 행 → panel SKIP. 대상 제품 코드는 직전 cycle 에서 codex 적대 리뷰를 거쳤다
+(`REV-20260824T160000-live-cap-startup-drift` `[CODEX:backend+qa-adversarial]`, [P1] 2 · [P2] 3
+전건 흡수 → 반영 후 [P1] 0). 선례: `REV-20260824T130000-step-timing-attribution-postdeploy`.
+
+**이번 실증이 확정한 것**: 이 봉인은 "임계가 크다" 가 아니라 **"두 값이 같은 소스를 본다"** 가
+핵심이라, 배포본에서 `임계(5,580) > 예산(5,400)` 을 **같은 live 상한으로 계산해** 확인하는 것이
+유일하게 의미 있는 증거다. 값만 보면 배포 전과 똑같아 보인다(의도된 결과 — 값 보존). 반대로
+**콘솔 실변경 시나리오는 검증하지 못했다**(운영 설정 변경 필요) — 미검증을 검증으로 적지 않고
+관측 지표로 이월했다.

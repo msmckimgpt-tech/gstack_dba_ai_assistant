@@ -1920,10 +1920,16 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **필요한 사람 액션(1줄)**: 없음 — 코드·PR·머지·배포·배포본 실증 완료. 다음 audit 이 위 관측
   지표로 `verified` 판정. 문서 정합은 `/_dqa:doc_sync` 권유.
 
-## FR-live-cap-derived-from-startup-snapshot — fixed:undeployed (구조류; live 설정을 기동 스냅샷으로 파생해 판정이 조용히 어긋나는 부류)
+## FR-live-cap-derived-from-startup-snapshot — fixed:deployed:unverified-live (구조류; live 설정을 기동 스냅샷으로 파생해 판정이 조용히 어긋나는 부류)
 
-- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 가드 12케이스 · 관련 3파일 재실행 ·
-  verify-completion 전 게이트 PASS · ruff clean). 배포 전.
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-24, PR #1322 merge main
+  `14ab6b94`). `deploy-web` **scope=all**(shared/config·runtime_settings·agent-core 변경이라 워커까지
+  새 코드를 받아야 봉인이 적용된다): web-a/web-b 무중단 롤링 + 워커 4종 + gateway reconcile.
+  **6서비스 전부 `GIT_COMMIT=14ab6b94`**(web-a·web-b·ask-worker·insight-worker·ops-scheduler·
+  ext-tool-mcp) · edge `/healthz` `ok·14ab6b94·mysql_ok·pg_ok` · **무중단 실측
+  `no upstreams available` 0건**.
+  코드/테스트: 신규 가드 12케이스 · 관련 3파일 재실행 · 전체 스위트 귀책 실패 0 · ruff clean ·
+  verify-completion pre/post 전 게이트 PASS.
 - **source**: 사용자 직접 요청(2026-08-24) — "임계값이 부정합한 부분이 없도록, 유사한 이슈에
   대응하기 위해 **동일한 참조를 사용하는 구조를 코드 전반적인 부분에서 탐색**하여 수정해주세요.
   또한, LLM에 대한 추론 timeout 은 처리하지 않습니다. (무한으로 설정)"
@@ -1978,4 +1984,21 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   상한을 실제로 올렸을 때 회수 임계가 함께 커지는지"** 는 배포 후 실측분(미수행) → 다음 audit 이
   ask-worker 시작 로그의 `stale=` 값과 그 시점 live 상한을 대조. 또한 **저-cap 환경에서 floor 로
   임계가 오르는 변경**(360→600, web max_wait 390→630)이 라이브(cap 1800)에는 영향 없음을 재확인.
+- **POST-DEPLOY 실증 (2026-08-24, 정직 기록)** — ask-worker 컨테이너에서 실 모듈 import:
+  - `cap_live=1800` → **`effective_ask_worker_stale_sec()`=5,580s** = 배포 전과 **동일**(값 보존 확인).
+  - `run_est(live×3)=5,400` → **임계 5,580 > 예산 5,400 = True** — 살아있는 정상 run 이 회수되지
+    않는 불변식이 라이브에서 성립한다(이 cycle 의 핵심 봉인).
+  - `floor=600` · `high_water=5,580`(하락 미추종 상태 적재).
+  - 콘솔 스펙 문구 도달: label **`무응답 대기 상한 (에이전트/쿼리)`** · description 첫 문장
+    **"이 값은 AI 추론 시간을 제한하지 않습니다"** — 운영자 오해(추론 상한으로 읽고 1800 으로
+    상향)를 낳던 표면이 교정됐다.
+  - **미검증(정직)**: "콘솔에서 상한을 **실제로 바꿨을 때** 두 값이 함께 움직이는지" 는 운영 설정을
+    건드려야 해 하지 않았다. 아래 관측 지표로 이월.
+- **다음 audit 관측 지표(라이브 실측 대체)**:
+  1. ask-worker 시작 로그의 `stale=<n>` 과 그 시점 `AGENT_TIMEOUT_SEC` live 값 대조 →
+     `stale > cap*3` 이 항상 성립하는지(재기동마다 확인 가능).
+  2. `attempts>1` 재큐 중 **heartbeat 가 살아있는데 회수된 건**(=오회수) 0 건인지.
+  3. 저-cap 환경 변경 영향: 라이브(cap 1800)는 5,580s 불변 — 값이 달라졌으면 floor 경로가
+     의도치 않게 탄 것이다.
 - **필요한 사람 액션(1줄)**: 없음(사용자가 PR·머지·배포 자율 승인). 다음 audit 이 위 지표로 판정.
+  문서 정합은 `/_dqa:doc_sync` 권유.
