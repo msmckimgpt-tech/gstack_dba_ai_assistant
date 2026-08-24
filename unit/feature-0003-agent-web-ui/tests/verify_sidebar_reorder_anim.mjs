@@ -608,6 +608,99 @@ console.log("\n[6] 호출 배선 — 두 명칭 변경 경로가 실제로 예�
     commitRename.indexOf("requestSidebarReorderAnimation") < commitRename.indexOf("await loadFolders()"),
     `req@${commitRename.indexOf("requestSidebarReorderAnimation")} load@${commitRename.indexOf("await loadFolders()")}`);
 
+  // ★ 드래그&드롭 이동 — **문자열이 아니라 실행**으로 잠근다 (§18.8 codex [P2]).
+  //   인덱스 비교만 하면 예약을 PATCH 앞으로 옮겨도 통과하고, 실패 경로도 못 본다.
+  {
+    const moveConvSrc = extractFn(SIDEBAR, "moveConversationToFolder");
+    const moveFolderSrc = extractFn(SIDEBAR, "moveFolderTo");
+    const sameRefSrc = extractFn(SIDEBAR, "_sameFolderRef");
+    const reqSrc = extractFn(SIDEBAR, "requestSidebarReorderAnimation");
+    const bumpSrc = extractFn(SIDEBAR, "bumpSidebarDataVersion");
+    ok("[DnD] 이동 함수 추출", Boolean(moveConvSrc) && Boolean(moveFolderSrc) && Boolean(sameRefSrc));
+
+    // 실 함수를 구동한다 — apiFetch/loadConversations/loadFolders 는 호출 **순서를 기록**하는 스텁.
+    const buildMove = ({ patchRejects = false } = {}) => {
+      const calls = [];
+      const st = { conversations: [{ id: "c1", folder_id: null }], folders: [{ folder_id: 7, parent_folder_id: null }],
+                   sidebarReorderFocus: null, sidebarDataVersion: 0 };
+      const factory = new Function(
+        "state", "apiFetch", "showToast", "loadConversations", "loadHistory", "loadFolders",
+        "renderConversationList", "calls",
+        `${sameRefSrc}\n${reqSrc}\n${bumpSrc}\n` +
+        `function _folderById(id) { return state.folders.find((f) => Number(f.folder_id) === Number(id)) || null; }\n` +
+        `${moveConvSrc}\n${moveFolderSrc}\n` +
+        `return { moveConversationToFolder, moveFolderTo };`
+      );
+      const api = factory(
+        st,
+        async (...a) => { calls.push(`patch:${a[0]}`); if (patchRejects) throw new Error("boom"); return {}; },
+        (m) => calls.push(`toast:${String(m).slice(0, 10)}`),
+        async () => { calls.push("loadConversations"); st.sidebarDataVersion += 1; calls.push("render"); },
+        async () => { calls.push("loadHistory"); },
+        async () => { calls.push("loadFolders"); st.sidebarDataVersion += 1; },
+        () => calls.push("render"),
+        calls,
+      );
+      // 예약 호출을 순서 기록에 남기려면 wrapper 로 감싼다(원 함수는 위 클로저 안에서 그대로 쓰인다).
+      return { api, st, calls };
+    };
+
+    // (1) 대화 이동: 예약이 서고, 그것을 소비할 렌더가 **데이터 버전이 오른 뒤** 온다.
+    {
+      const { api, st, calls } = buildMove();
+      await api.moveConversationToFolder("c1", 7);
+      ok("[DnD] 대화 이동이 재배치를 예약", st.sidebarReorderFocus !== null || calls.includes("render"));
+      const iPatch = calls.findIndex((c) => c.startsWith("patch:"));
+      const iLoad = calls.indexOf("loadConversations");
+      ok("[DnD] 대화 이동: PATCH → 서버 반영 순서", iPatch >= 0 && iLoad > iPatch, calls.join(" > "));
+      // ★ 트윈을 끊던 "즉시 렌더" 가 없어야 한다 — 서버 반영 전 렌더가 있으면 그 렌더가 트윈을
+      //   시작하고 곧바로 두 번째 렌더가 DOM 을 갈아엎는다.
+      const rendersBeforeLoad = calls.slice(0, iLoad).filter((c) => c === "render").length;
+      ok("[DnD] 대화 이동: 서버 반영 전 선-렌더 없음(트윈 절단 방지)", rendersBeforeLoad === 0, calls.join(" > "));
+    }
+    // (2) PATCH 실패 시 예약이 남지 않는다(무관한 렌더를 강조하지 않게).
+    {
+      const { api, st } = buildMove({ patchRejects: true });
+      await api.moveConversationToFolder("c1", 7);
+      ok("[DnD] 대화 이동 실패 → 예약 없음", st.sidebarReorderFocus === null);
+    }
+    {
+      const { api, st } = buildMove({ patchRejects: true });
+      await api.moveFolderTo(7, 3);
+      ok("[DnD] 폴더 이동 실패 → 예약 없음", st.sidebarReorderFocus === null);
+    }
+    // (3) 폴더 이동: 예약이 loadFolders(=데이터 버전 상승) **앞**에 선다.
+    {
+      const { api, st, calls } = buildMove();
+      await api.moveFolderTo(7, 3);
+      ok("[DnD] 폴더 이동이 재배치를 예약", st.sidebarReorderFocus !== null);
+      ok("[DnD] 폴더 이동: 예약 시점의 데이터 버전이 loadFolders 이전 값",
+        st.sidebarReorderFocus && st.sidebarReorderFocus.dataVersion === 0 && st.sidebarDataVersion === 1,
+        `focus=${JSON.stringify(st.sidebarReorderFocus)} ver=${st.sidebarDataVersion}`);
+      ok("[DnD] 폴더 이동: PATCH → loadFolders → render", calls.join(" > ").includes("loadFolders > render"), calls.join(" > "));
+    }
+    // (4) 제자리 드롭은 이동이 아니다 — 서버 왕복도 예약도 없다.
+    {
+      const { api, st, calls } = buildMove();
+      await api.moveConversationToFolder("c1", null);   // 이미 folder_id === null
+      ok("[DnD] 대화 제자리 드롭 → PATCH 없음", !calls.some((c) => c.startsWith("patch:")), calls.join(" > "));
+      ok("[DnD] 대화 제자리 드롭 → 예약 없음(거짓 '이동됨' 표식 차단)", st.sidebarReorderFocus === null);
+    }
+    {
+      const { api, st, calls } = buildMove();
+      await api.moveFolderTo(7, null);                  // 이미 parent_folder_id === null
+      ok("[DnD] 폴더 제자리 드롭 → PATCH 없음", !calls.some((c) => c.startsWith("patch:")), calls.join(" > "));
+      ok("[DnD] 폴더 제자리 드롭 → 예약 없음", st.sidebarReorderFocus === null);
+    }
+  }
+  // 주기 unread 동기화가 대기 중 예약을 가로채거나 드래그를 깨지 않는다 (§18.8 codex [P1]).
+  {
+    const syncSrc = extractFn(SIDEBAR, "_maybeSyncConversationListUnread") || "";
+    const guardHead = syncSrc.slice(0, syncSrc.indexOf("_lastSidebarUnreadSyncAt = now"));
+    ok("[DnD] 주기 동기화: 드래그 중이면 skip", /if \(state\.dqaDrag\) return;/.test(guardHead));
+    ok("[DnD] 주기 동기화: 대기 중 재배치 예약이 있으면 skip", /if \(state\.sidebarReorderFocus\) return;/.test(guardHead));
+  }
+
   const settings = extractFn(APPJS, "openConversationSettings") || "";
   ok("대화 제목 변경이 재배치 예약", /requestSidebarReorderAnimation\(`conv:\$\{conversation\.id\}`\)/.test(settings));
   ok("대화: 예약이 refreshWorkspace() 보다 먼저",

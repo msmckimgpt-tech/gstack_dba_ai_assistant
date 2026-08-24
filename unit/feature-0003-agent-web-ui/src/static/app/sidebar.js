@@ -41,6 +41,13 @@ function _folderChildren(parentId) {
 }
 function _folderDepthCap() { return Number(state.folderMaxDepth) || 4; }
 
+/** 폴더 참조 동일성 — `null`(최상위)과 숫자/문자 id 가 섞여 오므로 한 곳에서 정규화한다. */
+function _sameFolderRef(a, b) {
+  const na = a == null ? null : Number(a);
+  const nb = b == null ? null : Number(b);
+  return na === nb;
+}
+
 // feature-0024 newfolder-btn: 헤더 '새 폴더' 아이콘 버튼 노출/활성 동기화(권한 기준).
 //   folder.list.own 없으면 숨김, folder.manage.own 없으면 비활성(생성 불가).
 function _syncNewFolderBtn() {
@@ -574,13 +581,21 @@ async function undoFolderDelete() {
 }
 
 async function moveConversationToFolder(cid, folderId) {
+  // 제자리 드롭은 이동이 아니다 (§18.8 codex [P2]) — 서버 왕복도, "이동됨" 표식도 만들지 않는다.
+  const cur = state.conversations.find((c) => String(c.id) === String(cid));
+  if (cur && _sameFolderRef(cur.folder_id, folderId)) return;
   try {
     await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/folder`, {
       method: "PATCH", body: JSON.stringify({ folder_id: folderId }),
     });
-    const item = state.conversations.find((c) => String(c.id) === String(cid));
-    if (item) item.folder_id = folderId;
-    renderConversationList();
+    // sidebar-reorder-anim: 폴더 이동도 항목이 자리를 옮기는 조작이다 — 이름 변경과 같은 연출
+    //   (FLIP + 도착 표식 + 시야 유지)을 적용한다. 드래그·'···' 메뉴 이동·root 드롭이 모두 이
+    //   함수로 수렴하므로 여기 한 곳이면 전 경로가 덮인다.
+    //   ★ 이동은 **한 번의 렌더**로 수행한다 (§18.8 codex [P1]). 종전처럼 로컬 반영 후 즉시
+    //   렌더하면 그 렌더가 트윈을 시작하는데, 곧바로 이어지는 `loadConversations` 의 렌더가
+    //   트윈 중인 DOM 을 통째로 갈아엎어 애니메이션이 중간에 끊긴다(실측 궤적이 계약 길이의
+    //   60% 에서 잘렸다). 예약만 걸어두고 **서버 반영 렌더**가 그것을 소비하게 둔다.
+    requestSidebarReorderAnimation(`conv:${cid}`);
     await loadConversations(state.activeConversationId);
     // feature-0003 model-persist (2R 적대 리뷰 C-A): loadConversations 는 서버의 current 로
     // activeConversationId 를 재지정할 수 있는데(랜딩 상태에서 특히), 여기엔 loadHistory 가 없어
@@ -597,10 +612,15 @@ async function createFolderAndMove(cid) {
 }
 
 async function moveFolderTo(folderId, newParentId) {
+  const self = _folderById(folderId);
+  if (self && _sameFolderRef(self.parent_folder_id, newParentId)) return;  // 제자리 드롭
   try {
     await apiFetch(`/api/folders/${folderId}`, {
       method: "PATCH", body: JSON.stringify({ parent_folder_id: newParentId }),
     });
+    // sidebar-reorder-anim: 폴더를 다른 폴더/최상위로 옮기는 것도 같은 연출 대상.
+    //   loadFolders() 가 데이터 버전을 올리므로 예약은 그 **앞**에 건다.
+    requestSidebarReorderAnimation(`folder:${folderId}`);
     await loadFolders();
     renderConversationList();
   } catch (e) { showToast(e.message || "폴더 이동에 실패했습니다.", true); }
@@ -1788,6 +1808,11 @@ async function _maybeSyncConversationListUnread() {
   if (document.hidden) return;
   if (state.pendingNewConversation) return;
   if (state.searchModal && state.searchModal.open) return;
+  // 드래그 진행 중 전량 재렌더는 native drag source/target 을 제거해 drop 을 씹는다 (§18.8 codex [P1]).
+  if (state.dqaDrag) return;
+  // 재배치 예약이 대기 중이면 이 갱신이 그 예약을 **가로채** 이동 전 상태에서 소비해버린다
+  //   (그러면 정작 이동이 드러나는 렌더는 전환 없이 순간이동한다) — 예약이 소비될 때까지 미룬다.
+  if (state.sidebarReorderFocus) return;
   // 열린 좌측 메뉴(대화 ··· / 폴더 ···)가 있으면 재렌더로 trigger 가 떨어져 나가지 않게 skip.
   if (document.getElementById("convItemMenu") || document.getElementById("folderMenu")) return;
   // sidebar-inline-rename ①: 인라인 이름 변경 중에도 skip — 전량 재구성이 편집 중인 텍스트박스를
