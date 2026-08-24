@@ -4604,3 +4604,13 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   주입 배선 추가.
 - `tests/pb0008_sidebar_reorder_measure.py`: 샘플링 창 안의 스크린샷 제거(캡처가 rAF 를 멈춰
   정상 트윈을 "전환 없음" 으로 오보고하던 계측기 자체 결함).
+
+## CHG-20260824T173000-sidebar-reorder-postdeploy — 재배치 전환 POST-DEPLOY 실증 기록
+
+`CHG-20260824T164437-sidebar-reorder-anim`(PR #1324, main `f0a9d4f9`) 배포 후 실증.
+**제품 코드 변경 0** — TASK.md 의 POST-DEPLOY 절과 본 기록만 추가한다.
+
+- 서비스별 `GIT_COMMIT` = `f0a9d4f9`(web-a·web-b·엣지 healthz) · 무중단 실측
+  `no upstreams available` **0건** · 캐시버스터 `?v=977b70eee5ae` 갱신.
+- 라이브 **서빙본**에서 PB-0008 재실측: 폴더 이름 변경 146 → 117, **16 프레임 트윈**
+  (122~362ms), 강조 1.1초, 잔류 인라인 스타일 0, 임시 폴더 정리 200.

@@ -11354,6 +11354,20 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [x] 수정본 재실측: 폴더 146→117 **16프레임**(113~362ms) · 대화(8월 4일 그룹 → 오늘)
       319→142 **18프레임**(306~602ms), 제목 원복 완료.
 
+### POST-DEPLOY 실증 (2026-08-24, 라이브 `f0a9d4f9`)
+
+- [x] 배포: PR #1324 merge → `make deploy-web-only`(scope=web+caddy — 변경이 본 feature 정적
+      자산에 한정, 워커 코드 변경 0). web-a/web-b one-at-a-time 무중단 롤링.
+- [x] 반영 판정은 파이프 exit 이 아니라 **서비스별 `GIT_COMMIT`**: web-a·web-b `f0a9d4f9` ·
+      엣지 `/healthz` `ok·f0a9d4f9·mysql_ok·pg_ok`.
+- [x] **무중단 실측**: 배포 창의 caddy 로그에서 `no upstreams available` **0건**.
+- [x] 서빙 자산 도달: 캐시버스터 `?v=977b70eee5ae`, 라이브 엣지가 서빙하는 `app/sidebar.js` 에
+      FLIP wrapper 실물 확인(`renderConversationList` → `_beginSidebarReorder()` /
+      `_commitSidebarReorder(snap)`), 신규 심볼 매칭 8건.
+- [x] **라이브 배포본 PB-0008 실측**(bind-mount 검증본이 아니라 실제 서빙본): 폴더 이름 변경이
+      화면 y **146 → 117** 로 **16 프레임 트윈**(122~362ms), 강조 122~1229ms, 잔류 인라인 스타일
+      0, 임시 폴더 `DELETE` 200 정리 완료. (라이브 데이터 변경은 임시 폴더 생성·삭제뿐.)
+
 ### 남은 것
 
-- [ ] POST-DEPLOY: 라이브 배포본에서 서빙 자산 도달 확인(캐시버스터 갱신 + FLIP wrapper 존재).
+- 없음.
