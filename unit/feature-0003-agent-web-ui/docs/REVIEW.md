@@ -5650,3 +5650,16 @@ dispatch 표의 "비정책 doc-only" 행. 대상 코드는 직전 cycle 에서 c
 표식 제거)를 라이브에서 잡았다. 둘 다 **하네스는 green** 이었다 — 단일 이동·단일 렌더만 재현했기
 때문. 각각 구조 변경(행 생성 시 부여)과 세대 토큰으로 봉인하고 계약을 추가했다. 교훈:
 **"상태를 렌더 뒤에 덧칠하는" 설계는 렌더 횟수에 의존하고, 수명 있는 표식은 세대를 가져야 한다.**
+
+## REV-20260824T200000-affordance-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 **0**(TASK/MODIFY 기록뿐) → §18.8 표의 "비정책 doc-only" 행.
+대상 코드는 직전 cycle 에서 codex 디자인 비평을 거쳤다(`REV-20260824T190000-reorder-affordance`).
+
+**확정한 것**: 직전 cycle 의 검증은 bind-mount 컨테이너였다 — "이 코드가 이렇게 동작한다" 는
+증거이지 "라이브가 그 코드를 서빙한다" 는 증거가 아니다. 엣지가 실제로 서빙하는 자산으로 같은
+조작을 반복해 **rail + 배지가 재렌더를 견디고 수명 뒤 스스로 사라지는 것**을 다시 확인했다.
+
+**남긴 운영 메모**: `win-browser.py` 의 브리지 host 감지가 `/etc/resolv.conf` nameserver 에
+의존해, DNS 가 바뀌면 relay 가 살아 있어도 `bridge_unreachable` 로 보인다. 이때는 default
+gateway(`ip route`)로 relay 주소를 확인하고 playwright 로 직접 붙으면 된다.

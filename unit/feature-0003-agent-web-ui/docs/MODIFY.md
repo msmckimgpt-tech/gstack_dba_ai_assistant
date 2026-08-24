@@ -4667,3 +4667,16 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - `tests/verify_sidebar_reorder_anim.mjs`: 기대값 전환(거리 적응형·표식) + 도착 표식 계약 블록 +
   **행 생성 배선 계약** + **연속 이동 세대 계약** + 스텁 확장(다중 클래스·형제·자식 요소·document)
   (109 → **145 PASS**).
+
+## CHG-20260824T200000-affordance-postdeploy — 재배치 연출 재설계 POST-DEPLOY 실증
+
+`CHG-20260824T190000-reorder-affordance`(PR #1330, main `5638b880`) 배포 후 실증.
+**제품 코드 변경 0.**
+
+- 서비스별 `GIT_COMMIT` = `5638b880` · 무중단 `no upstreams available` **0건** ·
+  캐시버스터 `?v=f18b8028608a` · 서빙본에 표식 심볼 10개 도달.
+- 라이브 서빙본 실측: rail(`3px inset accent`) + "이동됨" 배지 부여 → **재렌더 후에도 유지**
+  → 3.5초 뒤 자연 소멸. 임시 폴더 정리 200.
+- 계측 경로: `win-browser.py` 의 `win_host` 감지(resolv.conf nameserver)가 `8.8.8.8` 로 바뀌어
+  브리지가 불가로 보였으나 실제 relay(`172.26.144.1:9223`)는 정상 — playwright 직접 연결 +
+  전용 탭으로 검증했다.
