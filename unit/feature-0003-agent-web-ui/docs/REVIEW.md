@@ -5547,3 +5547,16 @@ write 를 요구) — 미검증을 검증으로 적지 않고 원장 관측 지�
 - **라이브 데이터 취급**: 검증은 라이브 무접촉 bind-mount 컨테이너에서 했고, 폴더는 생성→삭제로
   정리, 대화 제목은 변경 후 **원복**했다. 다만 `updated_at` 은 되돌릴 수 없어 해당 대화 1건이
   '오늘' 그룹으로 올라간다 — 데이터 손실은 없으나 정직하게 남긴다.
+
+## REV-20260824T173000-sidebar-reorder-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 **0** — 변경분은 `TASK.md` POST-DEPLOY 절과 `MODIFY.md` 기록뿐이다.
+§18.8 dispatch 표의 "비정책 doc-only" 행에 해당해 panel 을 SKIP 한다. 검증 대상 제품 코드는
+직전 cycle 에서 codex 적대 리뷰를 거쳤다(`REV-20260824T164437-sidebar-reorder-anim`
+`[CODEX:frontend-adversarial]`, [P1] 1 · [P2] 4 전건 흡수 → 재실행 [P1] 0).
+
+**이번 실증이 새로 확정한 것**: 직전 cycle 의 시각검증은 라이브 web 이미지 + 변경 자산을
+bind-mount 한 **검증용 컨테이너**에서 수행했다(미머지 코드를 라이브 무접촉으로 보기 위함).
+그것은 "이 코드가 이렇게 동작한다" 는 증거이지 "라이브가 그 코드를 서빙한다" 는 증거가 아니다.
+여기서는 엣지가 실제로 서빙하는 자산(`?v=977b70eee5ae`)으로 같은 조작을 반복해 **16 프레임
+트윈**을 다시 관측했고, 서비스별 `GIT_COMMIT`(`f0a9d4f9`)과 무중단 0건을 함께 확인했다.
