@@ -117,8 +117,17 @@ def _run_ab(pg, args, out, since):
 
         mark = time.time()
         # 억제할 수 없는 경로의 대표 — 목록 전량 재구성을 직접 유발한다.
-        pg.evaluate("async () => { const m = await import('/static/app/sidebar.js?v=dev');"
-                    " m.renderConversationList(); m.renderConversationList(); }")
+        #   ⚠ **페이지가 실제 로드한 모듈 URL 로 import 해야 한다.** 배포본은 정적 자산에
+        #   content-hash 스탬프(`?v=<hash>`)를 붙이므로 `?v=dev` 로 import 하면 ESM 이 **별개
+        #   모듈 인스턴스**를 만든다 — 그 인스턴스의 `state` 는 편집을 모르는 채 목록을 재구성해
+        #   편집 input 을 지우고, 원 인스턴스의 blur 핸들러가 확정을 발사한다. 즉 계측이
+        #   **정상 코드를 거짓 FAIL** 시킨다(라이브 실측에서 실제로 겪었다).
+        pg.evaluate("""async () => {
+          const url = performance.getEntriesByType('resource').map((e) => e.name)
+            .find((n) => n.includes('/static/app/sidebar.js')) || '/static/app/sidebar.js?v=dev';
+          const m = await import(url);
+          m.renderConversationList(); m.renderConversationList();
+        }""")
         pg.wait_for_timeout(500)
         st2 = pg.evaluate(READ_EDIT)
         out["A_after_rerender"] = st2

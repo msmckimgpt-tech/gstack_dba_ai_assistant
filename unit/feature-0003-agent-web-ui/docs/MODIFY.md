@@ -4761,3 +4761,16 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   저장/재조회 분리). 뮤테이션 8종 전건 KILL.
 - `tests/verify_sidebar_reorder_anim.mjs` · `tests/verify_new_conv_dedup.mjs`: 구조 변경으로 깨진
   텍스트 단언 2건을 **계약을 유지한 채** 갱신(예약의 실패-경로 도달 불가 / wrapper 본문 계약).
+
+## CHG-20260824T193000-sidebar-rename-postdeploy — 배포본 실증 + 계측기 스탬프 결함 수정
+
+`CHG-20260824T173000-sidebar-rename-focus`(PR #1336, main `27d99bb2`) 배포 후 실증.
+**제품 코드 변경 0** — 계측기 1줄과 Run 기록만 바뀐다.
+
+- `tests/pb0008_sidebar_rename_focus.py`: 배경 재렌더 유발 시 모듈을 `?v=dev` 고정 URL 이 아니라
+  **페이지가 실제 로드한 URL**(`performance.getEntriesByType('resource')`)로 import 한다.
+  배포본은 content-hash 스탬프를 쓰므로 고정 URL 은 **별개 ESM 인스턴스**를 만들고, 그 인스턴스가
+  편집을 모르는 채 목록을 재구성해 **정상 코드를 거짓 FAIL** 시켰다(라이브 1차 실행에서 실제 발생).
+- `docs/test-runs.d/REV-20260824T173000-sidebar-rename-focus.md`: POST-DEPLOY 절(D-4) 추가 —
+  서비스별 `GIT_COMMIT` `27d99bb2` · 무중단 0건 · 캐시버스터 `?v=6ac119f76533` ·
+  라이브 A/B/C 전건 통과 · 계측기 결함 기록.
