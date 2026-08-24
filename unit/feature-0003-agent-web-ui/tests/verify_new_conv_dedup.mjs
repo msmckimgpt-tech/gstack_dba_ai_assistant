@@ -121,7 +121,14 @@ ok("[A5] index.html app.js 가 asset-stamp placeholder(?v=dev)", /app\.js\?v=dev
 //   전용 하네스 verify_sidebar_reorder_anim.mjs 가 검증).
 const renderSrc = extractFn(appJs, "_renderConversationListDom");
 ok("[B] 렌더 본체(_renderConversationListDom) 추출", Boolean(renderSrc));
-ok("[B] renderConversationList 는 FLIP wrapper", /export function renderConversationList\(\) \{\s*const snap = _beginSidebarReorder\(\);/.test(appJs));
+// sidebar-inline-rename: wrapper 선두에 IME 조합-보류 가드가 추가됐다(조합 중에는 재구성을
+//   미룬다). wrapper 임을 보는 계약은 그대로이므로 "_beginSidebarReorder 로 시작하는가" 대신
+//   "wrapper 본문이 FLIP 스냅샷을 잡고 본체를 부르는가" 로 본다.
+{
+  const wrapperSrc = extractFn(appJs, "renderConversationList") || "";
+  ok("[B] renderConversationList 는 FLIP wrapper",
+    /const snap = _beginSidebarReorder\(\);/.test(wrapperSrc) && /_renderConversationListDom\(/.test(wrapperSrc));
+}
 // conv-date-tree 후속: 날짜 트리 빌더는 실함수로 주입(keys 계약이 렌더 경로를 결정).
 const treeSrc = extractFn(appJs, "_buildOwnDateTree");
 const ymdSrc = extractFn(appJs, "_ymdKey");

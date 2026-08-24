@@ -340,7 +340,10 @@
 .conv-folder-menu-trigger.is-open,
 .conv-folder-menu-trigger:focus-visible { opacity: 1; }
 .conv-folder-menu-trigger:hover { color: var(--text-1); }
-/* folder-ux 개선3: 인라인 이름변경 텍스트박스(라벨 자리) */
+/* folder-ux 개선3: 인라인 이름변경 텍스트박스(라벨 자리)
+   sidebar-inline-rename: 대화 제목도 같은 인라인 편집을 쓰므로 공용 클래스
+   `.conv-inline-rename-input` 로 스타일을 단일화한다(폴더 전용 클래스는 하위호환 유지). */
+.conv-inline-rename-input,
 .conv-folder-rename-input {
   flex: 1 1 auto; min-width: 0;
   font-size: 11.5px; font-weight: 600; color: var(--text-1);
@@ -349,6 +352,13 @@
   border-radius: var(--r-sm); padding: 2px 6px; margin: -2px 0;
   outline: none;
 }
+/* sidebar-inline-rename: 편집 중인 대화 행 — 호스트가 <button> 이 아닌 <div> 라
+   커서/hover 를 편집 맥락에 맞춘다(항목 선택이 아니라 입력 중인 상태). */
+.conv-item.is-renaming { cursor: default; }
+.conv-item.is-renaming:hover { background: transparent; }
+.conv-item.is-renaming.is-active { background: rgba(37,99,235,.12); }
+/* 대화 행의 편집 입력은 목록 제목과 같은 굵기로(폴더 헤더보다 가볍다). */
+.conv-item.is-renaming .conv-inline-rename-input { font-weight: 500; }
 /* sidebar-reorder-anim: 이름 변경으로 자리가 바뀐 행을 잠깐 강조해 눈이 따라가게 한다.
    (이동 자체의 트윈은 app/sidebar.js 의 FLIP 이 인라인 transform/transition 으로 수행 —
    행 요소가 매 렌더 교체되므로 CSS transition 만으로는 재배치를 잡을 수 없다.) */
