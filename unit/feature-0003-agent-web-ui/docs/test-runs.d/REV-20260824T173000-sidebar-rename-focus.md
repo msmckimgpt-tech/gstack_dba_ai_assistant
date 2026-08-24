@@ -90,9 +90,20 @@ verdict: PASS (Environment: Windows-browser)
 > 1건**이었다(주기 5s 루프 + 7s throttle 의 실효 간격). 9초 창은 억제/해제를 가르지 못하므로
 > 창을 16초로 늘려 다시 쟀다 — 짧은 창의 "1건" 은 해제의 증거가 아니었다.
 
+## D-3. main 리베이스 후 재확인 (base drift 12 commit)
+
+PR 생성 시점에 `origin/main` 이 12 commit 앞서 있어 rebase 했다(병렬 세션 머지 — `TASK.md` ·
+`REVIEW.md` · `MODIFY.md` 는 append-doc merge driver 가 블록 병존으로 자동 병합). 병합된 main 이
+`renderConversationList` 말미에 `_applyReorderAnchor()` 를 추가했으므로 **공존 확인**을 다시 했다:
+
+- 신규 하네스 73 PASS(병합분 심볼 스텁 주입 후) · `verify_sidebar_reorder_anim` **145 PASS** ·
+  `verify_new_conv_dedup` 21 · `verify_folder_dnd_shared_group` 31.
+- 라이브 재실측: 편집 중 재렌더 2회 → PATCH **0건**, 값·커서(4)·포커스 유지 ·
+  편집 중 16초 폴링 **0건** → 확정 PATCH 1건 → 종료 후 16초 **1건** · 임시 폴더 `DELETE` 200.
+
 ## E. 잔류물 (§16.6 (f))
 
-- 검증이 만든 임시 폴더(id 64·65·90·91·92)는 모두 `DELETE` 200 으로 제거했다.
+- 검증이 만든 임시 폴더(id 64·65·90·91·92·95)는 모두 `DELETE` 200 으로 제거했다.
 - 대화 1건(`20260807035225-9cb592cb`)의 제목을 변경했다가 **원 제목으로 원복**(200)했다(2회 — 리뷰 반영 전후).
   그 대화의 `updated_at` 은 두 번 갱신되어 목록 정렬상 상단으로 올라온다(내용 변경 없음).
 - 검증 컨테이너 `web-verify-rename` 은 검증 종료 후 제거한다. 라이브 web-a/web-b·caddy 무접촉.

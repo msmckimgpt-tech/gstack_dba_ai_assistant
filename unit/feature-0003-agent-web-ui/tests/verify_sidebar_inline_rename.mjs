@@ -150,7 +150,8 @@ function makeEnv({ stateOverride = {}, conversations = [], canRename = true, api
     "state", "conversationListEl", "document", "requestAnimationFrame", "apiFetch", "showToast",
     "canRenameConversation", "showPermissionDeniedToast", "loadConversations", "renderConversationHeader",
     "requestSidebarReorderAnimation", "bumpSidebarDataVersion", "_beginSidebarReorder",
-    "_commitSidebarReorder", "_renderConversationListDom", "setTimeout", "clearTimeout", "Date",
+    "_commitSidebarReorder", "_renderConversationListDom", "_applyReorderAnchor",
+    "setTimeout", "clearTimeout", "Date",
     `${DECLS.join("")}\n${SIDEBAR_FNS.map((n) => FN_SRC[n]).join("\n")}\n` +
     `return { ${SIDEBAR_FNS.join(", ")}, _peekDetaching: () => _inlineRenameDetaching, ` +
     `_peekPendingRender: () => _pendingListRender, _suppressMaxMs: () => RENAME_SUPPRESS_MAX_MS, ` +
@@ -178,6 +179,7 @@ function makeEnv({ stateOverride = {}, conversations = [], canRename = true, api
     () => null,          // _beginSidebarReorder — 예약 없음(FLIP 비대상)
     () => {},            // _commitSidebarReorder
     (...a) => renderDom(...a),
+    () => {},            // _applyReorderAnchor (main 병합분 — 좌표 보강, 본 계약과 무관)
     (fn, ms) => { env.timers.push([fn, ms]); return env.timers.length; },
     () => {},
     Date,
