@@ -349,6 +349,22 @@
   border-radius: var(--r-sm); padding: 2px 6px; margin: -2px 0;
   outline: none;
 }
+/* sidebar-reorder-anim: 이름 변경으로 자리가 바뀐 행을 잠깐 강조해 눈이 따라가게 한다.
+   (이동 자체의 트윈은 app/sidebar.js 의 FLIP 이 인라인 transform/transition 으로 수행 —
+   행 요소가 매 렌더 교체되므로 CSS transition 만으로는 재배치를 잡을 수 없다.) */
+@keyframes convReorderFlash {
+  0%   { background: color-mix(in srgb, var(--accent, #2563eb) 22%, transparent); }
+  100% { background: transparent; }
+}
+.conv-item.is-reorder-flash,
+.conv-folder-header.is-reorder-flash {
+  animation: convReorderFlash 1100ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .conv-item.is-reorder-flash,
+  .conv-folder-header.is-reorder-flash { animation: none; }
+}
+
 /* folder-ux 개선6: 드래그&드롭 시각 피드백 */
 .conv-item.is-dragging, .conv-folder-header.is-dragging { opacity: .45; }
 .conv-folder-header.folder-drop-hover {

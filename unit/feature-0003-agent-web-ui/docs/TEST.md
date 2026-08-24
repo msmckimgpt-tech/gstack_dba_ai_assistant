@@ -116,6 +116,29 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260824T1644-sidebar-reorder-anim 좌측 대화목록 명칭 변경 시 재배치 전환(FLIP + 시야 유지) (Minor §12.3, 2026-08-24, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — 실측 기록 `docs/test-runs.d/REV-20260824T164437-sidebar-reorder-anim.md`)**
+
+- **정본 실측**: 미머지 브랜치를 라이브 무접촉으로 보기 위해 라이브 web 이미지 + 본 worktree 의
+  `src/static` 디렉터리 bind-mount 컨테이너(`https://localhost:18099`)를 띄우고, 실 Windows Chrome
+  (CDP relay)에서 rAF 궤적을 계측했다. 정지 스크린샷으로는 순간이동/트윈을 가릴 수 없어 **프레임별
+  화면 y + computed transform 잔여 offset** 을 정본 증거로 둔다. 계측기 자산화:
+  `tests/pb0008_sidebar_reorder_measure.py --mode folder|conv`.
+  - 대화 제목 변경(6월 그룹 → 오늘 그룹): 화면 y **442 → 233**, **19 프레임 트윈**(324~621ms),
+    강조 324~1405ms, 잔류 인라인 스타일 0. 제목 원복 완료.
+  - 폴더 이름 변경: 화면 y **175 → 146** / 재현 실행 **146 → 117**, 트윈 16 / 4 프레임. 임시 폴더 정리 완료.
+  - 계측기 자체의 거짓 통과 방어 확인: 앵커 폴더 없이(이동이 실제로 없을 때) `verdict=instant-or-none`.
+  - ⚠ 창을 전면화하지 않으면 Chrome 이 rAF/타이머를 throttle 해 **애니메이션이 진행되지 않고
+    "전환 없음" 으로 거짓 판정**된다(실제 발생) — 계측기는 attach 직후 `bring_to_front()`.
+- **de-risk(하네스)**: `tests/verify_sidebar_reorder_anim.mjs` **73 PASS** — 행 키 규약 · 예약
+  게이트/TTL/1회 소비 · FLIP invert→play(duration 상수 일치) · 임계 상/하한 · 신규 행 제외 ·
+  스크롤 복원/추종/불변 · reduced-motion 분기 · 접힌 조상 펼침(날짜 leaf+branch · 폴더 체인 ·
+  순환 방어 · 무변경 시 미저장) · 호출 배선 · CSS 강조/접근성. **뮤테이션 5종 전건 KILL**.
+- **회귀**: 사이드바 관련 기존 하네스 5종(21/20/31/23/23) 전건 PASS, 컨테이너 `make test` 에서
+  본 변경 관련 실패 0(무관 1건 `test_oauth_exhaustion_gate` 은 컨테이너 `chattr` 부재로 **main 에서도
+  동일 실패**), ruff clean.
+- **미수행(사유 명시)**: 스크롤 밖 대상 추종은 검증 계정 목록이 한 화면에 들어와(`scrollHeight ==
+  clientHeight`) 라이브 재현 불가 — 하네스 좌표 계약으로만 잠갔다.
+
 ### 20260807T1700-gc-guide-esc-capture 안내 툴팁 Esc 양보 무효 수정 (Minor §12.3, 2026-08-07, feature-0003 프론트 1줄) — **Environment: Windows-browser (선행 cycle 의 PB-0008 실측 #8 이 이 결함을 적발했고, 수정 확인도 실 브라우저 핸들러 순서가 정본이라 headless 대체 불가 — de-risk=하네스가 capture→bubble 2단계 디스패치 + 경쟁 오버레이 핸들러를 주입해 **라이브 조건**을 재현, 68/68 PASS + 되돌림 뮤테이션 6 red + `node --check` PASS + mjs 전수 49 suite exit 0, 정적 자산 web 이미지 baked → 라이브 재실측은 배포 후 잔여, visual_verification_scope: always)**
 - 증상(PB-0008 라이브 실측 2026-08-07, 배포본 `f81c5bcb`): 멘션 자동완성이 열린 상태에서 Esc → 사용자는 목록만 닫으려 했는데 안내 툴팁도 함께 닫힘.
 - 근본원인: 로직이 아니라 **핸들러 실행 순서** — 버블 단계라 먼저 등록된 멘션 AC 핸들러가 AC 를 닫은 뒤 우리 핸들러가 돌아 "열려 있지 않다" 로 오판.
