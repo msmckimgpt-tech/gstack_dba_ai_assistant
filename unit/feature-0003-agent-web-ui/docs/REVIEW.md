@@ -5406,3 +5406,16 @@ P3 6 중 3 반영). 선례: `REV-20260814T120000-profile-sort-postdeploy [SKIPPE
 **남긴 판단(정직)**: 5번은 "예외 도구도 step 을 남기게" 고칠 수도 있었지만 하지 않았다 — 그것은
 run 의 기록 의미를 바꾸는 별건이고(이 변경 이전부터의 동작), 이번 요청은 시간 **표시**의 오귀속
 해소다. 사실과 어긋나던 **주장** 쪽을 고쳤다.
+
+## REV-20260824T130000-step-timing-attribution-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+**Trigger**: 제품 코드 변경 0 — 변경분은 PB-0008 검증 시나리오 1종(브라우저 검증 하네스 전용,
+사용자에게 서빙되지 않음)과 `TEST/TASK/MODIFY` 기록뿐이다. §18.8 dispatch 표의 "비정책 doc-only"
+행에 해당해 panel 을 SKIP 한다. 검증 대상 제품 코드는 선행 cycle 에서 codex 적대 리뷰를 거쳤다
+(`REV-20260824T115000-step-timing-attribution [CODEX:...]`, [P1] 0 · [P2] 5 전건 반영).
+선례: `REV-20260814T120000-profile-sort-postdeploy`.
+
+**이번 실측이 새로 잡은 것(정직)**: 확대 캡처 오버레이가 `document.body` 에 붙지 않아
+**단언은 통과하는데 스크린샷에는 오버레이가 없던** 상태를 발견해 고쳤다. detached 노드에서도
+`querySelectorAll` 이 개수를 맞게 돌려주는 탓이다 — "캡처를 남겼다" 와 "캡처가 근거가 된다" 는
+다르다는 사례로 TEST.md 에 남겼다.

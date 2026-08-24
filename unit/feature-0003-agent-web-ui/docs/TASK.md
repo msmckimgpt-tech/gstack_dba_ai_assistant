@@ -11127,8 +11127,12 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
       **3093 passed / 8 failed** — 8건은 전부 사전 baseline(`psycopg` 미설치 등, pristine
       `agent_core.py` 로도 동일 실패 확인). `test_inference_detail` 의 소스-패턴 계약은
       **의미를 보존한 채** 정합화(측정 대입 한 줄 허용, finally 밖으로 나가면 여전히 FAIL).
-- [ ] 배포 후 PB-0008 Windows-browser: 새 run 에서 추론 단계가 자기 소요를 갖고 SQL 이
+- [x] 배포 후 PB-0008 Windows-browser: 새 run 에서 추론 단계가 자기 소요를 갖고 SQL 이
       1초 미만으로 표시되는지 + 과거 대화 폴백(근사 `~`·소요 비움) 실측.
+      → **라이브 `07755e05`(4개 서비스 전부)에서 전건 PASS** (TEST.md POST-DEPLOY Run):
+      신규 run 은 추론 `11초` / 직후 SQL `0.8초`(정확, 근사표식 0), 과거 대화는 추론 `~11초` ·
+      **직후 도구 소요 칸 비움**(툴팁이 사유 명시) · 도구→도구 `~0.1초`. 시나리오
+      `src/scenario.step-timing-attribution.json` 12 step + 판독 가능한 확대 캡처 2종.
 
 ### 9. Requested Scope
 
