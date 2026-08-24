@@ -4614,7 +4614,6 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   `no upstreams available` **0건** · 캐시버스터 `?v=977b70eee5ae` 갱신.
 - 라이브 **서빙본**에서 PB-0008 재실측: 폴더 이름 변경 146 → 117, **16 프레임 트윈**
   (122~362ms), 강조 1.1초, 잔류 인라인 스타일 0, 임시 폴더 정리 200.
-
 ## CHG-20260824T180000-reorder-easing — 재배치 전환 easing 을 easeInOutBack 으로
 
 사용자 요청(2026-08-24): 재배치 애니메이션에 `easeInOutBack` easing 적용.
@@ -4680,3 +4679,59 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - 계측 경로: `win-browser.py` 의 `win_host` 감지(resolv.conf nameserver)가 `8.8.8.8` 로 바뀌어
   브리지가 불가로 보였으나 실제 relay(`172.26.144.1:9223`)는 정상 — playwright 직접 연결 +
   전용 탭으로 검증했다.
+## CHG-20260824T173000-sidebar-rename-focus — 인라인 이름 변경 오확정 봉인 + 대화 '이름 변경' 메뉴
+
+배경 재렌더(주기 unread 동기화 7s · 전환 catchup 1.2s · AI 응답 진행 중 갱신)가 편집 중인
+텍스트박스를 떼어내면서 발생시킨 `blur` 를 종전 핸들러가 **확정**으로 처리해, 입력이 끝나기 전의
+문자열이 저장되던 결함을 봉인한다. 같은 사이클에서 대화 제목도 폴더와 동일한 인라인 편집으로
+바꿀 수 있게 한다(요청 ②).
+
+- `src/static/app/sidebar.js`
+  - 신규 공용 편집 세션 코어: `INLINE_RENAME_INPUT_SELECTOR` · `_inlineRenameDetaching` ·
+    `_inlineRenameKey` · `isSidebarRenaming`(export) · `_captureInlineRenameEdit` ·
+    `_restoreInlineRenameEdit` · `_buildInlineRenameInput` · `_focusInlineRenameInput`.
+    확정/취소 규칙을 **단일 정의**로 모아 폴더·대화 두 경로의 분기를 제거.
+  - `renderConversationList`: capture → (detach 플래그 on) 렌더 → 플래그 off → restore 로 감쌈.
+    편집이 없으면 두 호출 모두 no-op(기존 경로·비용 그대로).
+  - `_maybeSyncConversationListUnread`: `isSidebarRenaming()` skip 가드 추가(throttle 갱신 전 반환).
+  - `_scheduleSidebarCatchup`: 편집 중이면 같은 지연으로 재예약.
+  - 폴더 rename 이관: `_startFolderRename` 이 대화 편집·draft 를 정리(상호 배타),
+    `_focusFolderRenameInput` 은 공용 포커스 헬퍼 위임, 렌더는 공용 빌더 사용.
+  - 신규 대화 rename: `_startConversationRename` · `_cancelConversationRename` ·
+    `_commitConversationRename`(권한 2차 검사 → `PATCH …/title` → 재배치 예약 → 목록·헤더 정합) ·
+    `renameConversationFlow`(export).
+  - `buildCompactItem`: 편집 중 행을 `<div class="conv-item is-renaming">` 로 렌더(button 안
+    input 중첩 회피), `data-conversation-id` 유지로 FLIP 행 매칭 보존.
+- `src/static/app.js`
+  - `state.conversationRenamingId` · `state.sidebarRenameDraft` 추가.
+  - `canRenameConversation` export(사이드바 확정 경로의 2차 권한 검사용).
+  - `openConversationItemMenu`: 첫 항목으로 `이름 변경`(추상 action `conversation.rename`) 추가 —
+    최종 순서 `이름 변경 · 공유 · 이동 · 설정`. 우클릭 진입(`_CTX_MENU_TARGETS`)은 같은 트리거를
+    재발화하므로 자동 반영.
+- `src/static/css/shell.css`
+  - `.conv-inline-rename-input` 공용 스타일(폴더 전용 클래스는 하위호환 유지) +
+    `.conv-item.is-renaming` 편집 행 규칙(커서·hover·글꼴 무게).
+- `tests/verify_sidebar_inline_rename.mjs` (신규): 확정/보존 계약 동작 하네스 51 PASS.
+
+## CHG-20260824T190500-sidebar-rename-review-fixes — 적대 리뷰 [P1]·[P2] 흡수
+
+`CHG-20260824T173000-sidebar-rename-focus` 에 대한 §18.8 codex 적대 리뷰([P1] 1 · [P2] 3) 반영.
+
+- `src/static/app/sidebar.js`
+  - **[P1] IME 조합 중 재구성 보류**: `_pendingListRender` + `_inlineRenameComposing()`.
+    `renderConversationList` 선두에서 조합 중이면 보류 후 반환하고, `compositionend` 가
+    `_flushPendingListRender()` 로 1회 수행한다(조합 세션은 노드에 묶여 있어 값 복사로 보존 불가).
+  - **[P2] 조합 중 blur 보류·결론**: blur 는 `dataset.pendingBlurCommit` 로 미루고
+    `compositionend` 가 확정한다(무시만 하면 편집이 열린 채 남아 억제가 무기한).
+  - **[P2] 고아 세션 회수 + 억제 상한**: `_restoreInlineRenameEdit` 이 대상 input 부재 시
+    `_endInlineRenameSession()`. `shouldSuppressSidebarRefresh()`(상한 `RENAME_SUPPRESS_MAX_MS`
+    60s)를 억제 게이트로 사용 — `isSidebarRenaming()` 은 보존·복원 판정에만 쓴다.
+    세션 진입/종료를 `_beginInlineRenameSession`/`_endInlineRenameSession` 로 단일화하고
+    `createFolderFlow` 의 직접 id 세팅도 그 계약을 따르게 했다.
+  - **[P2] 저장/재조회 분리**: `_commitConversationRename`·`_commitFolderRename` 에서 PATCH 실패만
+    실패 토스트로 알리고, 후속 `loadConversations`/`loadFolders` 는 best-effort 로 감쌌다.
+- `src/static/app.js`: `state.sidebarRenameStartedAt`(억제 상한 기준) 추가.
+- `tests/verify_sidebar_inline_rename.mjs`: 63 → 73 PASS(IME 3축 재정의 · 고아 회수 · 억제 상한 ·
+  저장/재조회 분리). 뮤테이션 8종 전건 KILL.
+- `tests/verify_sidebar_reorder_anim.mjs` · `tests/verify_new_conv_dedup.mjs`: 구조 변경으로 깨진
+  텍스트 단언 2건을 **계약을 유지한 채** 갱신(예약의 실패-경로 도달 불가 / wrapper 본문 계약).

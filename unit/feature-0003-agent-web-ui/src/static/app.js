@@ -1,5 +1,5 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
-import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread } from "./app/sidebar.js?v=dev";
+import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
@@ -138,6 +138,15 @@ export const state = {
   folderMaxDepth: 4,
   pendingFolderUndo: null,  // 폴더 삭제 직후 6초 undo 상태 {ids, name}
   folderRenamingId: null,   // 사이드바 인라인 이름변경 중인 folder_id (라벨→텍스트박스)
+  // sidebar-inline-rename: 대화 제목도 폴더와 같은 인라인 편집을 쓴다(우클릭/··· → '이름 변경').
+  //   두 편집은 상호 배타(하나만 열림)이며, draft 는 **사용자 조작과 무관한 재렌더**(주기 unread
+  //   동기화·catchup 등)가 편집 중 입력을 지우지 않도록 값·커서·포커스를 실어 나른다.
+  conversationRenamingId: null,  // 사이드바 인라인 이름변경 중인 conversation id
+  sidebarRenameDraft: null,      // { key, value, selStart, selEnd, focused } — 재렌더 간 편집 상태
+  //   편집 시작 시각(ms). 배경 갱신 억제의 상한 기준 — 편집을 열어둔 채 방치해도 목록이
+  //   무기한 낡지 않게 한다(shouldSuppressSidebarRefresh).
+  sidebarRenameStartedAt: 0,
+
   // sidebar-reorder-anim: 명칭 변경처럼 "정렬 키를 바꾼" 조작이 예약하는 재배치 애니메이션
   //   대상 {key, at, dataVersion}. 목록 **데이터가 갱신된** 다음 렌더 1회가 소비(FLIP + 시야
   //   유지)하고 비운다 — 그 사이에 낀 데이터-무관 렌더(그룹 토글 등)는 예약을 남긴다.
@@ -1239,7 +1248,7 @@ export function canAskInConversation(conversation = currentConversation()) {
   return isOwnScopeConversation(conversation);
 }
 
-function canRenameConversation(conversation = currentConversation()) {
+export function canRenameConversation(conversation = currentConversation()) {
   if (!conversation) return false;
   return can("conversation.rename.any") || (isOwnConversation(conversation) && can("conversation.rename.own"));
 }
@@ -6539,8 +6548,13 @@ export function openConversationItemMenu(cid, triggerEl) {
     // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
     // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
     // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
-    // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 이동 | 설정.
+    // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합.
+    // 최종 순서: 이름 변경 | 공유 | 이동 | 설정 (sidebar-inline-rename — 폴더 메뉴와 대칭).
     buildItems: (menu, make) => {
+      // sidebar-inline-rename: 폴더 메뉴('이름 변경')와 대칭 — 제목 변경이 '설정' 팝업 안에만
+      //   있어 같은 목록의 두 요소가 서로 다른 조작을 요구하던 비대칭을 해소한다. 선택 시 그
+      //   자리에서 인라인 편집(폴더와 동일 UX). 서버 경로·권한은 설정 팝업과 동일.
+      menu.appendChild(make("이름 변경", { action: "conversation.rename", conversation, onSelect: () => renameConversationFlow(cid) }));
       menu.appendChild(make("공유", { action: "conversation.share", conversation, onSelect: () => openShareDialog(cid) }));
       // 개선5: 폴더 '이동' — 별도 팝업(검색·정렬·새 폴더·빼기)에서 수행(folder.manage.own 보유 시).
       if (can("folder.manage.own")) {

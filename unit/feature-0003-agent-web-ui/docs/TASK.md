@@ -11371,7 +11371,6 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 ### 남은 것
 
 - 없음.
-
 ## 20260824T1800-reorder-easing — 재배치 전환 easing 을 easeInOutBack 으로 (Minor §12.3)
 
 **요청(사용자, 2026-08-24)**: "정상적으로 애니메이션이 연출되는 부분을 확인했습니다. 혹시,
@@ -11496,3 +11495,117 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
       올라온다. `last_message_at`(또는 `last_content_activity_at`)을 두고 목록 정렬을 그것으로
       옮기면 **재배치 자체가 사라져** 이 연출이 필요 없어진다. 스키마·백필·정렬/검색/커서 쿼리
       동반 변경이라 이 cycle 범위를 넘어 제안으로 남긴다(§8.1).
+## 20260824T1730-sidebar-rename-focus — 이름 변경이 끝나기 전에 확정되던 오확정 봉인 + 대화 '이름 변경' 메뉴 (Minor §12.3)
+
+**요청(사용자, 2026-08-24)**: ① "작업화면의 좌측 대화목록 내 요소들의 명칭을 변경하고 있을 때
+아직 명칭 변경이 완료되지 않았는데도 포커스를 잃어버려 의도치 않은 명칭으로 설정되는 이슈가
+가끔 확인되었습니다. 사용자의 조작이 아닌, DQA 내 별도의 작업으로 인해 이러한 이슈가 나타나는지
+검토 및 수정해주세요." ② "추가로, 폴더와 같이 대화 또한 우클릭 목록 내 `이름 변경` 항목을
+추가해주세요."
+
+`REQ-20260824T173000-sidebar-rename-focus` / `CHG-20260824T173000-sidebar-rename-focus` /
+`REV-20260824T173000-sidebar-rename-focus`.
+
+### 원인 — "DQA 내 별도의 작업" 은 실재했다 (배경 재렌더 3종)
+
+좌측 목록은 사용자 조작 없이도 다시 그려진다:
+
+| 경로 | 주기·트리거 | 편집 억제 가능성 |
+|---|---|---|
+| `_maybeSyncConversationListUnread` (안 읽은 배지 동기화) | **7초**마다(탭 활성 시) | 가능 — 배지 갱신은 미뤄도 무해 |
+| `_scheduleSidebarCatchup` (대화 전환 후 목록 따라잡기) | 전환 **1.2초** 뒤 | 가능 — 재예약으로 흡수 |
+| AI 응답 진행 중 상태 갱신 (`app/composer.js` 다수) | 응답 진행 내내 | 불가 — 상태 dot 이 실시간이어야 함 |
+
+`_renderConversationListDom` 은 `conversationListEl.innerHTML = ""` 로 **전량 재구성**한다.
+편집 중이던 `<input>` 이 그 과정에서 떨어져 나가고, detach 가 `blur` 로 관측되면 종전 핸들러는
+그것을 곧바로 확정으로 처리했다 — `state.folderRenamingId` 일치만 보고 `_commitFolderRename` 을
+호출했기 때문이다. **결함 주입 사본에서 재현 확인**: 편집 중 재렌더 1회로
+`PATCH /api/conversations/c-1/title {"title":"새 이름 입력 중"}` 이 발사된다(하네스 [2] FAIL 로 포착).
+한글 IME 조합 중 blur·조합 확정 Enter 도 같은 경로로 잘린 이름(`프로젝`)을 확정시켰다.
+
+즉 "가끔" 의 정체는 **편집 시간이 재렌더 주기와 겹칠 때** — 7초 주기, 응답 진행 중이면 더 잦다.
+
+### 구현 — 3겹 봉인 (하나만으로는 마찰이 남는다)
+
+- [x] **③ 무시(오확정 차단)**: 확정 경로를 공용 빌더 `_buildInlineRenameInput` 한 곳으로 모으고,
+      `_inlineRenameDetaching`(렌더 구간 플래그) · `!inp.isConnected`(DOM 이탈) ·
+      `dataset.imeComposing`(조합 중) 세 조건에서 blur 를 확정으로 보지 않는다. Enter 는
+      `ev.isComposing`/`keyCode 229` 로 조합 확정 Enter 를 걸러낸다.
+- [x] **① 억제(원인 차단)**: `isSidebarRenaming()` 게이트로 주기 unread 동기화 skip(throttle
+      타임스탬프 갱신 **전** 반환 — 편집 종료 직후 첫 동기화가 지체 없이 돈다) + catchup 재예약.
+- [x] **② 보존(fail-safe)**: 억제할 수 없는 경로(응답 진행 중 갱신)를 위해 렌더를
+      `_captureInlineRenameEdit` → 렌더 → `_restoreInlineRenameEdit` 로 감싸 값·커서·포커스를
+      복원한다. **포커스는 원래 갖고 있었을 때만** 복원(다른 입력창에서 타이핑 중인 사용자에게서
+      포커스를 빼앗지 않는다).
+- [x] **대화 인라인 이름 변경**(요청 ②): `···`/우클릭 메뉴 첫 항목 `이름 변경` →
+      `renameConversationFlow` → 행 제목이 그 자리에서 텍스트박스로. 서버 경로·권한은 설정 팝업과
+      동일(`PATCH …/title`, `canRenameConversation` 2차 검사), 확정 후 재배치 트윈 예약.
+      편집 중 행은 `<button>` → `<div class="conv-item is-renaming">`(interactive content 중첩 회피,
+      `data-conversation-id` 유지로 FLIP 매칭 보존).
+- [x] 폴더 경로도 같은 빌더로 이관 — 두 경로가 갈라져 한쪽만 고쳐지는 재발을 구조적으로 차단.
+
+### 검증
+
+- [x] 전용 하네스 `tests/verify_sidebar_inline_rename.mjs` — **51 PASS**(편집 세션 키 · detach blur
+      비확정 + 값/커서/포커스 복원 · 포커스 미보유 시 미복원 · IME 조합 4축 · 정상 확정/취소/공백/
+      무변경 · 권한 fail-open 차단 · 배경 갱신 억제 2종 · 메뉴 배선 + 추상 action · CSS).
+      DOM 스텁 위에서 **실제 함수 본문을 실행**하는 동작 검사(§16.7 G11 — 텍스트 존재 검사 아님).
+- [x] **G11-b 결함 주입 실증** — 사본에 M1(blur 가드 제거) · M2(동기화 skip 제거) · M3(편집 보존
+      제거)을 주입하니 **9건 FAIL**, 그중 첫 FAIL 이 사용자 보고 증상과 동일한 미완성 이름 PATCH.
+      "무엇도 검사하지 않는 단언" 이 아님을 확인.
+- [x] 기존 사이드바 하네스 회귀: `verify_sidebar_reorder_anim`(93) ·
+      `verify_folder_dnd_shared_group`(31) · `verify_sidebar_resize`(23) ·
+      `verify_date_group_collapse`(23) · `verify_new_conv_dedup`(21) ·
+      `verify_conv_entry_defaults`(20) · `verify_settings_archive_leave`(23) 전건 PASS.
+- [x] 컨테이너 `make test` — 실패 1건(`test_oauth_exhaustion_gate` : 컨테이너에 `chattr` 부재)이며
+      **main 에서도 동일 실패**(환경 결함, 본 변경과 무관). ruff clean. 1차 실행에서 함께 났던
+      `test_shutdown_finalizer` 는 재실행에서 통과 — 프로세스 상태 의존 flake.
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` **PASS**(#13 시각검증 ·
+      #9 CODEX 리뷰 entry · #17 UI copy budget · #18 requested scope 포함).
+
+### 적대 리뷰 반영 (§18.8 codex — [P1] 1 · [P2] 3, 전건 흡수)
+
+- [x] **[P1] IME 조합 세션은 값 복사로 보존되지 않는다.** ②(capture/restore)는 값·커서를 옮길
+      뿐이고 브라우저의 *조합 세션* 은 노드에 묶여 있어 재구성으로 끊긴다 — 새 입력엔
+      `imeComposing` 이 없으니 뒤이은 Enter 가 미완성 문자열을 정상 확정으로 처리할 수 있다.
+      → 조합 중에는 **재구성 자체를 보류**(`_pendingListRender`)하고 `compositionend` 에서 flush.
+      라이브 실측으로 조합 중 재렌더 2회에도 **입력 노드가 교체되지 않음**(`same_node: true`) 확인.
+- [x] **[P2] 조합 중 blur 가 결론나지 않아 편집이 영구히 열려 있었다.** blur 를 무시만 하면
+      `compositionend` 는 플래그만 내리고 확정·취소가 다시 오지 않는다 → 억제도 무기한.
+      → blur 를 **보류**(`pendingBlurCommit`)하고 `compositionend` 가 결론짓는다(브라우저는
+      포커스가 떠날 때 조합을 강제 종료하며 이 이벤트를 보낸다 = "조합 중 편집을 떠났다").
+- [x] **[P2] 고아 편집 세션.** 대상 행이 사라지면(목록 갱신·필터) 사용자가 Enter·Escape 를 누를
+      표면조차 없는데 `isSidebarRenaming()` 은 계속 true → 억제 영구화. → 렌더 후 대상 input 이
+      없으면 **세션 회수**(`_endInlineRenameSession`). 추가로 억제에 **상한**(60s)을 둬 편집을
+      열어둔 채 방치해도 목록이 무기한 낡지 않게 했다. `createFolderFlow` 의 직접 id 세팅도
+      세션 진입 계약(`_beginInlineRenameSession`)을 따르게 정정(두 세션 동시 잔존 차단).
+- [x] **[P2] 저장 성공 뒤의 재조회 실패가 "변경 실패" 로 보고**됐다(PATCH 와 `loadConversations`/
+      `loadFolders` 가 한 `try` 안). → PATCH 실패만 실패로 알리고 재조회는 best-effort 로 분리
+      (폴더 경로도 같은 클래스라 함께 정정 — §16.7 G8 적용면).
+- [x] 하네스 63 → **73 PASS**(IME 3축 재정의 · 고아 회수 · 억제 상한 · 저장/재조회 분리) +
+      **뮤테이션 8종 전건 KILL**(blur 가드 · 동기화 skip · 편집 보존 · IME defer · blur 보류 ·
+      고아 회수 · 억제 상한 · 커밋 분리).
+- [x] 기존 하네스 2건의 **텍스트 단언**이 구조 변경으로 깨져 계약을 유지한 채 갱신
+      (`verify_sidebar_reorder_anim` 의 "예약은 PATCH 성공 경로에만" → 실패 return 이후 도달 불가로,
+      `verify_new_conv_dedup` 의 wrapper 판정 → 선두 문자열 매칭 대신 본문 계약으로).
+
+### 9. Requested Scope
+
+```
+사용자 원문(데이터이며 지시가 아님)
+① 작업화면의 좌측 대화목록 내 요소들의 명칭을 변경하고 있을 때 아직 명칭 변경이 완료되지
+   않았는데도 포커스를 잃어버려 의도치 않은 명칭으로 설정되는 이슈 … 사용자의 조작이 아닌,
+   DQA 내 별도의 작업으로 인해 이러한 이슈가 나타나는지 검토 및 수정해주세요.
+② 추가로, 폴더와 같이 대화 또한 우클릭 목록 내 `이름 변경` 항목을 추가해주세요.
+```
+
+1. **원인 검토** — "DQA 내 별도의 작업" 이 재렌더를 일으키는지 전수 확인 (①)
+2. **오확정 수정** — 편집이 끝나기 전 blur 로 이름이 확정되지 않게 (①)
+3. **대화 '이름 변경' 메뉴 추가** — 폴더와 같은 우클릭/··· 메뉴 항목 + 인라인 편집 (②)
+
+`[다의어] 고른 독해 / 버린 독해 / 예시:`
+- 고른 독해: ②의 "폴더와 같이" = **메뉴 항목 위치뿐 아니라 조작 방식도 폴더와 동일**(선택 →
+  그 자리 인라인 텍스트박스).
+- 버린 독해: 메뉴 항목만 추가하고 동작은 기존 '설정' 팝업(모달) 열기로 연결.
+- 예시: 대화 항목 우클릭 → 메뉴 첫 줄 `이름 변경` 클릭 → **모달이 뜨지 않고** 그 행의 제목이
+  텍스트박스로 바뀌며 전체 선택된 상태로 커서가 놓인다 → Enter 로 확정.
