@@ -12,6 +12,8 @@ import {
   closeConversationItemMenu, conversationListEl, formatDateTime,
   isGroupConversation, isOwnConversation, openConversationItemMenu,
   renderConversationBulkBar, renderConversationHeader, selectConversation,
+  // sidebar-inline-rename: 대화 제목 인라인 편집의 권한 게이트(설정 팝업과 동일 경로).
+  canRenameConversation, showPermissionDeniedToast,
   // sidebar-reorder-anim: 모션 게이트(OS prefers-reduced-motion + 인앱 '애니메이션 효과' 설정).
   _prefersReducedMotion,
 } from "../app.js?v=dev";
@@ -77,7 +79,13 @@ async function createFolderFlow(parentFolderId = null, { autoRename = true } = {
     const newId = res && res.folder ? Number(res.folder.folder_id) : null;
     await loadFolders();
     if (parentFolderId != null) state.collapsedDateGroups.delete(`folder:${parentFolderId}`);  // 상위 펼침
-    if (newId != null && autoRename) state.folderRenamingId = newId;
+    if (newId != null && autoRename) {
+      // 편집 세션 진입은 _startFolderRename 과 같은 계약을 따른다 — 직접 id 만 세팅하면
+      // 대화 편집·draft·시작시각이 남아 두 세션이 겹친다(codex 적대 리뷰 [P2]).
+      state.folderRenamingId = newId;
+      state.conversationRenamingId = null;
+      _beginInlineRenameSession();
+    }
     renderConversationList();
     if (newId != null && autoRename) _focusFolderRenameInput(newId);
     return newId;
@@ -87,41 +95,273 @@ async function createFolderFlow(parentFolderId = null, { autoRename = true } = {
   }
 }
 
+// ── sidebar-inline-rename: 폴더·대화 공용 인라인 이름변경 세션 ─────────────────
+// 좌측 목록의 이름변경은 라벨을 그 자리에서 텍스트박스로 바꾸는 인라인 편집이다. 그런데 이
+// 목록은 **사용자 조작과 무관하게** 다시 그려진다 — 주기 unread 동기화
+// (`_maybeSyncConversationListUnread`, 7s) · 대화 전환 후 catchup(`_scheduleSidebarCatchup`) ·
+// AI 응답 진행 중 상태 갱신 등. `_renderConversationListDom` 은 innerHTML 을 비우고 전량
+// 재구성하므로 편집 중이던 <input> 이 통째로 떨어져 나가고, 그 detach 가 blur 로 관측되면
+// **아직 입력이 끝나지 않은 문자열이 그대로 확정 저장**됐다(사용자 보고: "명칭 변경이 완료되지
+// 않았는데 포커스를 잃어 의도치 않은 명칭으로 설정됨"). 세 겹으로 봉인한다:
+//   ① 억제 — 편집 중에는 배경 자동 갱신(주기 unread 동기화 · catchup)을 미룬다.
+//   ② 보존 — 그래도 재렌더가 일어나면(억제 대상이 아닌 경로) 입력 중 값·커서·포커스를 복원한다.
+//   ③ 무시 — 재렌더 detach 로 인한 blur 와 IME 조합 중 blur 는 **확정으로 보지 않는다**.
+//     확정은 (a) 연결된 상태에서의 사용자 포커스 이동 (b) Enter, 취소는 Escape 뿐이다.
+// ③ 이 단독으로도 오확정을 막지만 ①② 가 없으면 "입력이 조용히 사라지는" 마찰이 남는다.
+//
+// **IME 조합 구간은 ②로도 덮이지 않는다 (codex 적대 리뷰 [P1])**: 값·커서를 복사해도 브라우저의
+// *조합 세션* 은 노드에 묶여 있어 재구성으로 끊긴다. 새 input 은 `imeComposing` 상태가 없으므로
+// 뒤이은 Enter 가 미완성 문자열을 정상 확정으로 처리할 수 있다. 그래서 조합 중에는 아예
+// **재구성을 미루고**(`_pendingListRender`) `compositionend` 에서 한 번에 flush 한다 — 조합은
+// 수 초 단위라 갱신 지연이 사실상 없고, 조합 세션이 살아 있으므로 값·커서 복사도 필요 없다.
+//
+// **억제(①)는 무기한이 아니다**: 편집을 열어둔 채 방치하면 배지·목록이 영원히 낡는다.
+// `RENAME_SUPPRESS_MAX_MS` 를 넘기면 억제를 풀고 배경 갱신을 재개한다(그 뒤에는 ②③ 이 편집을
+// 지킨다). 고아 편집 세션(대상 행이 사라져 입력조차 없는 상태)은 렌더 후 자동 회수한다.
+const INLINE_RENAME_INPUT_SELECTOR = ".conv-inline-rename-input";
+// 재렌더가 편집 input 을 떼어내는 구간 — 이 구간에 관측되는 blur 는 사용자의 확정 의사가 아니다.
+let _inlineRenameDetaching = false;
+// IME 조합 중 보류된 목록 재구성 — compositionend 에서 1회 flush.
+let _pendingListRender = false;
+// 편집 중 배경 갱신 억제의 상한(ms). 초과하면 억제를 풀어 목록이 무기한 낡는 것을 막는다.
+const RENAME_SUPPRESS_MAX_MS = 60000;
+
+/** 현재 인라인 편집 중인 대상 키(`folder:<id>` / `conv:<id>`). 없으면 "". */
+function _inlineRenameKey() {
+  if (state.folderRenamingId != null) return `folder:${state.folderRenamingId}`;
+  if (state.conversationRenamingId) return `conv:${state.conversationRenamingId}`;
+  return "";
+}
+/** 인라인 편집 세션이 열려 있는가(보존·복원 로직의 기준). */
+export function isSidebarRenaming() { return Boolean(_inlineRenameKey()); }
+/** 현재 편집 input(있으면). */
+function _inlineRenameInputEl() {
+  return conversationListEl ? conversationListEl.querySelector(INLINE_RENAME_INPUT_SELECTOR) : null;
+}
+/** 편집 input 이 IME 조합 중인가. */
+function _inlineRenameComposing() {
+  const inp = _inlineRenameInputEl();
+  return Boolean(inp && inp.dataset.imeComposing === "1");
+}
+/**
+ * 배경 자동 갱신(주기 동기화·catchup)을 미룰지(①). 편집 중이라도 상한을 넘기면 false —
+ * 억제가 무기한이 되어 배지·목록이 영원히 낡는 것을 막는다(codex 적대 리뷰 [P2]).
+ */
+export function shouldSuppressSidebarRefresh() {
+  if (!isSidebarRenaming()) return false;
+  const startedAt = Number(state.sidebarRenameStartedAt || 0);
+  if (!startedAt) return true;
+  return (Date.now() - startedAt) < RENAME_SUPPRESS_MAX_MS;
+}
+/** 편집 세션 시작·종료 표시(억제 상한 계산 + 상호 배타 정리). */
+function _beginInlineRenameSession() {
+  state.sidebarRenameDraft = null;
+  state.sidebarRenameStartedAt = Date.now();
+}
+function _endInlineRenameSession() {
+  state.folderRenamingId = null;
+  state.conversationRenamingId = null;
+  state.sidebarRenameDraft = null;
+  state.sidebarRenameStartedAt = 0;
+}
+
+/** 렌더 직전 편집 상태(값·선택범위·포커스 보유) 스냅샷 — 재구성 후 그대로 되살린다(②). */
+function _captureInlineRenameEdit() {
+  const key = _inlineRenameKey();
+  if (!key) { state.sidebarRenameDraft = null; return null; }
+  const inp = _inlineRenameInputEl();
+  // 아직 그려지지 않은 첫 렌더(진입 직후)면 기존 draft(있으면)를 그대로 유지한다.
+  if (!inp || inp.dataset.renameKey !== key) return state.sidebarRenameDraft;
+  state.sidebarRenameDraft = {
+    key,
+    value: inp.value,
+    selStart: inp.selectionStart,
+    selEnd: inp.selectionEnd,
+    focused: document.activeElement === inp,
+  };
+  return state.sidebarRenameDraft;
+}
+
+/**
+ * 재구성된 input 에 편집 상태를 되돌린다. 포커스는 **원래 갖고 있었을 때만** 복원(②).
+ * 재구성 결과에 대상 input 이 아예 없으면(대상 행이 사라졌거나 접힌 조상 안으로 들어갔다)
+ * 사용자가 Enter·Escape 를 누를 표면조차 없으므로 **편집 세션을 회수**한다 — 그러지 않으면
+ * `isSidebarRenaming()` 이 영원히 true 로 남아 억제가 풀리지 않는다(codex 적대 리뷰 [P2]).
+ */
+function _restoreInlineRenameEdit() {
+  const key = _inlineRenameKey();
+  if (!key) return;
+  const inp = _inlineRenameInputEl();
+  if (!inp || inp.dataset.renameKey !== key) { _endInlineRenameSession(); return; }
+  const draft = state.sidebarRenameDraft;
+  if (!draft || draft.key !== key) return;
+  inp.value = draft.value;
+  // 포커스를 갖고 있지 않았다면 복원하지 않는다 — 다른 입력창(프롬프트 등)에서 타이핑 중인
+  // 사용자에게서 포커스를 빼앗지 않기 위함.
+  if (!draft.focused) return;
+  try {
+    inp.focus();
+    inp.setSelectionRange(Number(draft.selStart) || 0, Number(draft.selEnd) || 0);
+  } catch (_e) { /* 구형 브라우저/detached: 값 복원만으로 충분 */ }
+}
+
+/**
+ * 인라인 이름변경 텍스트박스 빌더(폴더·대화 공용).
+ * 확정/취소 규칙은 위 ③ — detach·IME 조합 중 blur 는 확정이 아니다.
+ */
+function _buildInlineRenameInput({ key, value, ariaLabel, extraClass = "", dataset = {}, onCommit, onCancel }) {
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.className = `conv-inline-rename-input${extraClass ? ` ${extraClass}` : ""}`;
+  inp.dataset.renameKey = key;
+  Object.keys(dataset).forEach((k) => { inp.dataset[k] = dataset[k]; });
+  inp.value = value || "";
+  inp.setAttribute("aria-label", ariaLabel);
+  // IME(한글 등) 조합 중 여부 — 조합 확정용 Enter/강제 blur 를 이름 확정으로 오인하지 않게.
+  inp.addEventListener("compositionstart", () => { inp.dataset.imeComposing = "1"; });
+  inp.addEventListener("compositionend", () => {
+    inp.dataset.imeComposing = "0";
+    // 조합 중 무시했던 blur 는 여기서 결론짓는다 — 그러지 않으면 편집이 열린 채 남아
+    // 확정도 취소도 되지 않고 배경 갱신 억제만 계속된다(codex 적대 리뷰 [P2]).
+    // (브라우저는 포커스가 떠날 때 조합을 강제 종료하며 compositionend 를 보낸다 —
+    //  즉 이 경로의 의미는 "사용자가 조합 도중 편집을 떠났다" 이고, 그 값으로 확정한다.)
+    if (inp.dataset.pendingBlurCommit === "1") {
+      inp.dataset.pendingBlurCommit = "0";
+      _pendingListRender = false;  // 이어지는 확정이 렌더를 부른다(보류분이 이중 실행되지 않게).
+      if (_inlineRenameKey() === key) { onCommit(inp.value); return; }
+    }
+    // 조합 때문에 미뤄 둔 목록 재구성을 flush(위 [P1] — 조합 세션 보존).
+    _flushPendingListRender();
+  });
+  inp.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    // 조합 중 Enter 는 "조합 확정" 이지 "이름 확정" 이 아니다(keyCode 229 = 구형 IME 폴백).
+    if (ev.isComposing || ev.keyCode === 229) return;
+    if (ev.key === "Enter") { ev.preventDefault(); onCommit(inp.value); }
+    else if (ev.key === "Escape") { ev.preventDefault(); onCancel(); }
+  });
+  inp.addEventListener("blur", () => {
+    // ③ 재렌더가 떼어낸 blur / 이미 DOM 밖이면 확정하지 않는다.
+    if (_inlineRenameDetaching) return;
+    if (!inp.isConnected) return;
+    if (_inlineRenameKey() !== key) return;  // 다른 대상으로 편집이 옮겨갔거나 이미 종료됨
+    // 조합 중 blur 는 지금 확정하지 않고 **보류** — compositionend 가 결론짓는다.
+    if (inp.dataset.imeComposing === "1") { inp.dataset.pendingBlurCommit = "1"; return; }
+    onCommit(inp.value);
+  });
+  inp.addEventListener("click", (ev) => ev.stopPropagation());
+  return inp;
+}
+
+/** 조합 때문에 보류했던 목록 재구성을 1회 수행. */
+function _flushPendingListRender() {
+  if (!_pendingListRender) return;
+  _pendingListRender = false;
+  renderConversationList();
+}
+
+/** 편집 진입 직후 1회 포커스(+전체 선택). 이후 렌더의 포커스 유지는 ②가 담당한다. */
+function _focusInlineRenameInput(key) {
+  requestAnimationFrame(() => {
+    const inp = conversationListEl ? conversationListEl.querySelector(INLINE_RENAME_INPUT_SELECTOR) : null;
+    if (inp && inp.dataset.renameKey === key) { inp.focus(); inp.select(); }
+  });
+}
+
 // 인라인 이름변경 — 라벨을 텍스트박스로 전환(브라우저 prompt 대체). state.folderRenamingId 로 렌더 분기.
 function _startFolderRename(folderId) {
   state.folderRenamingId = Number(folderId);
+  state.conversationRenamingId = null;  // 편집 세션은 하나만 — 두 입력이 동시에 열려 값이 섞이지 않게.
+  _beginInlineRenameSession();
   renderConversationList();
   _focusFolderRenameInput(folderId);
 }
 function _focusFolderRenameInput(folderId) {
-  requestAnimationFrame(() => {
-    const inp = document.querySelector(`.conv-folder-rename-input[data-folder-id="${folderId}"]`);
-    if (inp) { inp.focus(); inp.select(); }
-  });
+  _focusInlineRenameInput(`folder:${folderId}`);
 }
 async function _commitFolderRename(folderId, rawName) {
   const name = String(rawName || "").trim();
   const folder = _folderById(folderId);
-  state.folderRenamingId = null;
+  _endInlineRenameSession();
   if (!name || (folder && name === folder.name)) { renderConversationList(); return; }
   try {
     await apiFetch(`/api/folders/${folderId}`, { method: "PATCH", body: JSON.stringify({ name }) });
-    // sidebar-reorder-anim: 폴더 정렬은 sort_order → name 이라 이름을 바꾸면 자리가 바뀐다.
-    //   예약은 **데이터를 다시 받기 전에** 걸어야 한다 — 예약이 기록하는 데이터 버전이 곧
-    //   "이 예약이 기다리는 갱신" 의 기준이라, loadFolders() 뒤에 걸면 자기 갱신을 이미 지나쳐
-    //   버려 어떤 렌더에서도 소비되지 않는다(라이브 실측으로 잡은 회귀).
-    //   실패 경로는 자리 변화가 없으므로 예약하지 않는다.
-    requestSidebarReorderAnimation(`folder:${folderId}`);
-    await loadFolders();
-  } catch (e) { showToast(e.message || "이름 변경에 실패했습니다.", true); }
+  } catch (e) {
+    // 이름 변경 자체가 실패한 경우만 실패로 알린다 — 아래 목록 재조회 실패까지 같은 catch 로
+    // 묶으면 **저장은 됐는데 "실패했습니다"** 가 뜬다(codex 적대 리뷰 [P2]).
+    showToast(e.message || "이름 변경에 실패했습니다.", true);
+    renderConversationList();
+    return;
+  }
+  // sidebar-reorder-anim: 폴더 정렬은 sort_order → name 이라 이름을 바꾸면 자리가 바뀐다.
+  //   예약은 **데이터를 다시 받기 전에** 걸어야 한다 — 예약이 기록하는 데이터 버전이 곧
+  //   "이 예약이 기다리는 갱신" 의 기준이라, loadFolders() 뒤에 걸면 자기 갱신을 이미 지나쳐
+  //   버려 어떤 렌더에서도 소비되지 않는다(라이브 실측으로 잡은 회귀).
+  requestSidebarReorderAnimation(`folder:${folderId}`);
+  try {
+    await loadFolders();  // best-effort — 실패해도 이름은 이미 저장됐고 다음 갱신이 따라잡는다.
+  } catch (_e) { /* 네트워크 blip: 다음 주기 동기화가 정정 */ }
   renderConversationList();
 }
 function _cancelFolderRename() {
-  state.folderRenamingId = null;
+  _endInlineRenameSession();
   renderConversationList();
 }
 async function renameFolderFlow(folder) {
   _startFolderRename(folder.folder_id);
+}
+
+// ── sidebar-inline-rename: 대화 제목 인라인 이름변경(폴더와 동형) ───────────────
+// 대화 제목 변경은 '설정' 팝업 안에만 있어 폴더(우클릭 → '이름 변경' → 그 자리 편집)와
+// 조작이 엇갈렸다. 좌측 목록의 두 요소가 같은 방식으로 이름을 바꾸도록 대화에도 같은
+// 인라인 편집을 부여한다. 서버 경로·권한은 설정 팝업과 동일
+// (`PATCH /api/conversations/{cid}/title` · canRenameConversation).
+function _startConversationRename(cid) {
+  state.conversationRenamingId = String(cid);
+  state.folderRenamingId = null;  // 편집 세션은 하나만(폴더와 상호 배타).
+  _beginInlineRenameSession();
+  renderConversationList();
+  _focusInlineRenameInput(`conv:${cid}`);
+}
+function _cancelConversationRename() {
+  _endInlineRenameSession();
+  renderConversationList();
+}
+async function _commitConversationRename(cid, rawName) {
+  const name = String(rawName || "").trim();
+  const conv = state.conversations.find((c) => String(c.id) === String(cid)) || null;
+  _endInlineRenameSession();
+  // 빈 제목은 확정하지 않는다(서버도 거부) — 편집만 닫고 원래 제목을 유지한다.
+  if (!name || (conv && name === String(conv.topic || ""))) { renderConversationList(); return; }
+  if (!canRenameConversation(conv)) {
+    showPermissionDeniedToast("conversation.rename", conv);
+    renderConversationList();
+    return;
+  }
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/title`, {
+      method: "PATCH", body: JSON.stringify({ title: name }),
+    });
+  } catch (e) {
+    // 제목 변경 자체의 실패만 알린다 — 아래 목록 재조회 실패를 같은 catch 로 묶으면
+    // **저장은 됐는데 "실패했습니다"** 가 뜬다(codex 적대 리뷰 [P2], 폴더 경로와 동일 처리).
+    showToast(e.message || "제목 변경에 실패했습니다.", true);
+    renderConversationList();
+    return;
+  }
+  // sidebar-reorder-anim: 제목 변경은 서버가 updated_at 을 갱신하고 목록 정렬 키가
+  //   last_activity_at(=updated_at) desc 라 이 대화가 위로 올라가며 날짜 그룹까지 옮겨간다.
+  //   폴더와 동일하게 **목록 데이터를 다시 받기 전에** 예약해야 그 갱신 렌더가 소비한다.
+  requestSidebarReorderAnimation(`conv:${cid}`);
+  if (conv) conv.topic = name;  // optimistic — 아래 loadConversations 가 서버값으로 정정.
+  try {
+    await loadConversations(state.activeConversationId);  // best-effort — 제목은 이미 저장됐다.
+  } catch (_e) { /* 네트워크 blip: 다음 주기 동기화가 정정 */ }
+  renderConversationList();
+  renderConversationHeader();  // 활성 대화면 상단 제목도 함께 정합.
+}
+async function renameConversationFlow(cid) {
+  _startConversationRename(cid);
 }
 
 // 폴더 설정 모달 — 지침(멀티라인 textarea) + 삭제. 브라우저 prompt/confirm 대체.
@@ -940,8 +1180,23 @@ function _commitSidebarReorder(snap) {
  * (예약 없으면 `_renderConversationListDom` 직행 — 기존 동작·비용 그대로).
  */
 export function renderConversationList() {
+  // sidebar-inline-rename [P1]: IME 조합 중에는 재구성을 **미룬다**. 값·커서를 복사해도 조합
+  //   세션은 노드에 묶여 있어 교체하면 끊기고, 그 뒤 Enter 가 미완성 문자열을 확정할 수 있다.
+  //   compositionend(또는 편집 종료)가 보류분을 flush 한다.
+  if (_inlineRenameComposing()) { _pendingListRender = true; return; }
   const snap = _beginSidebarReorder();
-  _renderConversationListDom(snap ? snap.key : "");
+  // sidebar-inline-rename ②③: 편집 중이면 입력 상태를 스냅샷하고, 재구성 구간의 detach blur 를
+  //   확정으로 오인하지 않도록 표시한다. 편집이 없으면 두 줄 모두 no-op(기존 경로·비용 그대로).
+  const editing = _captureInlineRenameEdit();
+  _inlineRenameDetaching = Boolean(editing);
+  try {
+    _renderConversationListDom(snap ? snap.key : "");
+  } finally {
+    _inlineRenameDetaching = false;
+  }
+  // 편집 세션이 살아 있으면 항상 복원 경로를 탄다 — draft 가 없어도 "대상 input 이 사라졌는가"
+  //   (고아 세션 회수)를 여기서 판정해야 억제가 무기한이 되지 않는다.
+  if (isSidebarRenaming()) _restoreInlineRenameEdit();
   if (snap) _commitSidebarReorder(snap);
   _applyReorderAnchor();  // 만료 정리 + 행 생성 경로를 타지 않은 경우의 보강
 }
@@ -1020,6 +1275,32 @@ function _renderConversationListDom(reorderFocusKey) {
   const ownVisibleIds = own.map((it) => String(it.id));
   const buildCompactItem = (item, visibleIdx, ownIds) => {
     const mine = isOwnConversation(item);
+
+    // sidebar-inline-rename: 이 대화가 인라인 이름변경 중이면 제목 자리를 텍스트박스로 바꾼 행을
+    //   그린다. 호스트는 <button> 이 아니라 <div> 다 — <button> 안의 <input> 은 HTML 상 허용되지
+    //   않는 interactive content 중첩이라 클릭·포커스가 브라우저마다 어긋난다(폴더 헤더도 div).
+    //   `.conv-item` + `data-conversation-id` 는 유지해 FLIP 행 매칭(_reorderRowKey)과 스타일이
+    //   그대로 걸린다. '···' 트리거는 두지 않으므로 이 행 위 우클릭은 브라우저 기본 메뉴다.
+    if (String(state.conversationRenamingId || "") === String(item.id)) {
+      const row = document.createElement("div");
+      const rowClasses = ["conv-item", mine ? "is-own" : "is-other", "is-renaming"];
+      if (item.id === state.activeConversationId) rowClasses.push("is-active");
+      row.className = rowClasses.join(" ");
+      row.dataset.conversationId = String(item.id);
+      const dotEl = document.createElement("span");
+      const st = String(item.display_status || item.status || "").trim().toLowerCase();
+      dotEl.className = `conv-dot${st ? ` is-${st}` : ""}`;
+      row.append(dotEl, _buildInlineRenameInput({
+        key: `conv:${item.id}`,
+        value: item.topic || "",
+        ariaLabel: "대화 제목",
+        dataset: { conversationId: String(item.id) },
+        onCommit: (v) => _commitConversationRename(item.id, v),
+        onCancel: () => _cancelConversationRename(),
+      }));
+      return row;
+    }
+
     const button = document.createElement("button");
     button.type = "button";
     const classes = ["conv-item", mine ? "is-own" : "is-other"];
@@ -1321,22 +1602,18 @@ function _renderConversationListDom(reorderFocusKey) {
     icon.textContent = "🗂";
 
     // 개선3: 인라인 이름변경 — 라벨을 그대로 텍스트박스로 전환(브라우저 prompt 대체).
+    //   확정/취소 규칙은 _buildInlineRenameInput 이 단일 정의(sidebar-inline-rename ③) —
+    //   재렌더 detach·IME 조합 중 blur 는 확정이 아니다.
     if (isRenaming) {
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.className = "conv-folder-rename-input";
-      inp.dataset.folderId = String(folder.folder_id);
-      inp.value = folder.name || "";
-      inp.setAttribute("aria-label", "폴더 이름");
-      inp.addEventListener("keydown", (ev) => {
-        ev.stopPropagation();
-        if (ev.key === "Enter") { ev.preventDefault(); _commitFolderRename(folder.folder_id, inp.value); }
-        else if (ev.key === "Escape") { ev.preventDefault(); _cancelFolderRename(); }
+      const inp = _buildInlineRenameInput({
+        key: `folder:${folder.folder_id}`,
+        value: folder.name || "",
+        ariaLabel: "폴더 이름",
+        extraClass: "conv-folder-rename-input",
+        dataset: { folderId: String(folder.folder_id) },
+        onCommit: (v) => _commitFolderRename(folder.folder_id, v),
+        onCancel: () => _cancelFolderRename(),
       });
-      inp.addEventListener("blur", () => {
-        if (Number(state.folderRenamingId) === Number(folder.folder_id)) _commitFolderRename(folder.folder_id, inp.value);
-      });
-      inp.addEventListener("click", (ev) => ev.stopPropagation());
       header.append(chevron, icon, inp);
       _decorateReorderAnchor(header);
       conversationListEl.appendChild(header);
@@ -1491,6 +1768,9 @@ function _scheduleSidebarCatchup(cid) {
   if (state.sidebarCatchupTimer) clearTimeout(state.sidebarCatchupTimer);
   state.sidebarCatchupTimer = setTimeout(() => {
     state.sidebarCatchupTimer = null;
+    // sidebar-inline-rename ①: 인라인 이름 변경 중이면 목록 재구성을 미룬다(편집이 끝난 뒤 따라잡음).
+    //   상한(RENAME_SUPPRESS_MAX_MS)을 넘기면 억제를 풀어 목록이 무기한 낡지 않게 한다.
+    if (shouldSuppressSidebarRefresh()) { _scheduleSidebarCatchup(cid); return; }
     loadConversations(cid)
       .then(() => { try { renderConversationHeader(); } catch (_e) {} })
       .catch(() => { /* network blip: 다음 갱신이 따라잡는다 */ });
@@ -1510,6 +1790,11 @@ async function _maybeSyncConversationListUnread() {
   if (state.searchModal && state.searchModal.open) return;
   // 열린 좌측 메뉴(대화 ··· / 폴더 ···)가 있으면 재렌더로 trigger 가 떨어져 나가지 않게 skip.
   if (document.getElementById("convItemMenu") || document.getElementById("folderMenu")) return;
+  // sidebar-inline-rename ①: 인라인 이름 변경 중에도 skip — 전량 재구성이 편집 중인 텍스트박스를
+  //   떼어내 입력을 지우고(②로 복원되긴 하나), 그 detach 가 미완성 이름의 확정으로 관측됐다.
+  //   throttle 타임스탬프 갱신 **전**에 반환해, 편집이 끝나면 지체 없이 첫 동기화가 돈다.
+  //   억제는 무기한이 아니다 — 상한을 넘긴 편집은 배경 갱신을 다시 허용한다(②③ 이 편집을 지킨다).
+  if (shouldSuppressSidebarRefresh()) return;
   const now = Date.now();
   if (now - _lastSidebarUnreadSyncAt < SIDEBAR_UNREAD_SYNC_MS) return;
   _lastSidebarUnreadSyncAt = now;
@@ -1526,5 +1811,9 @@ async function _maybeSyncConversationListUnread() {
   } catch (_e) { /* best-effort: 다음 주기 재시도 */ }
 }
 
-export { _scheduleSidebarCatchup, _maybeSyncConversationListUnread,  // renderConversationList·_saveCollapsedGroups 는 인라인 export
-  loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo };
+export { _scheduleSidebarCatchup, _maybeSyncConversationListUnread,  // renderConversationList·isSidebarRenaming·_saveCollapsedGroups 는 인라인 export
+  loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo,
+  // sidebar-inline-rename: 대화 제목 인라인 편집(폴더와 동형) + 편집 상태 유틸.
+  renameConversationFlow, _startConversationRename, _commitConversationRename, _cancelConversationRename,
+  _buildInlineRenameInput, _captureInlineRenameEdit, _restoreInlineRenameEdit, _focusInlineRenameInput,
+  _inlineRenameComposing, _flushPendingListRender, _beginInlineRenameSession, _endInlineRenameSession };

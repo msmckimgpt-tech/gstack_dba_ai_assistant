@@ -593,8 +593,14 @@ console.log("\n[6] 호출 배선 — 두 명칭 변경 경로가 실제로 예�
   const commitRename = extractFn(SIDEBAR, "_commitFolderRename") || "";
   ok("폴더 이름 변경이 재배치 예약", /requestSidebarReorderAnimation\(`folder:\$\{folderId\}`\)/.test(commitRename));
   // 실패 경로(자리 변화 없음)에서는 예약하지 않는다 — PATCH 성공 뒤에만 있어야 한다.
-  const beforeCatch = commitRename.split("catch")[0];
-  ok("예약은 PATCH 성공 경로에만", beforeCatch.includes("requestSidebarReorderAnimation"));
+  //   sidebar-inline-rename 이후 커밋은 "PATCH try/catch → (실패면 return) → 예약 → 재조회"
+  //   구조다(저장 성공 뒤의 재조회 실패를 '변경 실패' 로 보고하지 않기 위한 분리). 따라서
+  //   "첫 catch 이전" 이 아니라 **실패 return 이후에 예약이 있고, 그 return 이 예약보다 앞선다**
+  //   를 본다(실패 경로에서는 예약에 도달할 수 없다).
+  const failReturnIdx = commitRename.search(/showToast\([^)]*이름 변경에 실패[\s\S]*?return;/);
+  const reserveIdx = commitRename.indexOf("requestSidebarReorderAnimation");
+  ok("예약은 PATCH 실패 경로에서 도달 불가", failReturnIdx >= 0 && reserveIdx > failReturnIdx,
+    `failReturn=${failReturnIdx} reserve=${reserveIdx}`);
   // ★ 순서 계약 (라이브 실측으로 잡은 회귀): 예약이 기록하는 데이터 버전이 "이 예약이 기다리는
   //   갱신" 의 기준이다. 데이터 재적재(loadFolders) **뒤에** 예약하면 자기 갱신을 이미 지나쳐
   //   어떤 렌더에서도 소비되지 않는다 — 애니메이션이 조용히 사라진다.
