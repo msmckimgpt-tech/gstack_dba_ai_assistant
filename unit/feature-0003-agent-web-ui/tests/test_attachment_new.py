@@ -350,9 +350,12 @@ def test_pr1_prompt_has_attachment_new_guidance():
     assert "NEW SCRIPT/QUERY AS A DOWNLOADABLE ATTACHMENT" in src
     # 코드-권위 directive 존재 + compose 주입.
     assert "attachment-new" in agent_core._ATTACHMENT_NEW_DELIVERY_DIRECTIVE
-    import inspect
-    compose_src = inspect.getsource(agent_core.compose_system_prompt)
-    assert "_ATTACHMENT_NEW_DELIVERY_DIRECTIVE" in compose_src
+    # ⚠️ 2026-08-25: 종전에는 `inspect.getsource(compose_system_prompt)` 에 상수 **이름**이
+    # 있는지로 검사했다. 조립부가 헬퍼로 빠지자(조기 return 도 directive 를 거치게 하는 [P1]
+    # 수정) 이름이 본문에서 사라져 깨졌다 — 주입은 오히려 더 견고해졌다. 계약을 유지한 채
+    # 실행 기반으로 격상한다 (§16.7 G11).
+    assert agent_core._ATTACHMENT_NEW_DELIVERY_DIRECTIVE in agent_core._code_directive_parts("BASE")
+    assert "attachment-new" in agent_core.compose_system_prompt(None)
 
 
 class _FakeCur:
