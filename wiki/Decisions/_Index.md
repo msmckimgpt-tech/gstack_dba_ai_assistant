@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 | [[../../docs/DECISIONS\|docs/DECISIONS.md]] |
-| ADR 수 | 정본 41 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 10; `## ADR-` heading 은 42 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
+| ADR 수 | 정본 42 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 11; `## ADR-` heading 은 43 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -112,6 +112,7 @@ AI 가 ADR 작성 시 본 MOC 에 1줄 entry add + `Decisions/<adr-id>-<slug>.md
 | ADR-20260727T190000-cycle-privilege-adapter | cycle 권한 어댑터 — 비-root 호출은 항상 sudo (사용자 결정) | accepted(승인) | `docs/DECISIONS.md` |
 | ADR-20260728T120000-redteam-gating-not-adopted | red-team 게이팅 **불채택** (사용자 결정 2026-07-28) | accepted | `docs/DECISIONS.md` |
 | ADR-20260805T153000-p5a-closeout | P5a 종결 — feature 단위 Dockerfile 분리 불채택 등 미결정 #4/#5 종결 | accepted (정본 문면 = '결정', 사용자 위임) | `docs/DECISIONS.md` |
+| ADR-20260825T170000-cc-identity-chokepoint | OAuth frontier identity 주입을 provider 전송 직전 **단일 관문**(`prepare_provider_messages`)으로 봉인 — 호출측 산재 금지 + AST 배선 강제 (2026-07-24 최초 봉인 → 2026-08-25 동일 장애 재발이 계기, 정책 정본 `AGENTS.md §15.2.1`) | accepted | `docs/DECISIONS.md` |
 
 ## 3. Status legend
 

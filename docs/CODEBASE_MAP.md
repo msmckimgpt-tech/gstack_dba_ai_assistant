@@ -52,15 +52,15 @@ repo/
     ├── feature-0002-agent-core/
     ├── feature-0003-agent-web-ui/
     │   └── src/
-    │       ├── app.py           # 3,722줄 (feature-0012 후 -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
+    │       ├── app.py           # 4,000줄 (feature-0012 P5b 완결 시점 3,722 · -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
     │       ├── web_context.py   # leaf helper (app-internal 의존 0인 순수 컨텍스트 조각, 단방향 추출)
-    │       ├── routers/         # 도메인 APIRouter 패키지 — 28 파일 (§4a 참조)
+    │       ├── routers/         # 도메인 APIRouter 패키지 — 35 파일 (§4a 참조)
     │       │   ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include
-    │       │   ├── <23 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
-    │       │   └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_prompt_context (register_all 제외)
+    │       │   ├── <29 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
+    │       │   └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_folder_store·_prompt_context (register_all 제외)
     │       └── static/          # 프론트 자산 — ?v= 는 전부 `?v=dev` placeholder(빌드가 content-hash 주입, §13.1)
-    │           ├── admin.js     # 관리 콘솔(12,520줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
-    │           ├── app.js       # 작업 화면(8,082줄) · css/ 7분할 · share.js/css · index/admin/share.html
+    │           ├── admin.js     # 관리 콘솔(4,831줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
+    │           ├── app.js       # 작업 화면(8,562줄) · css/ 7분할 · share.js/css · index/admin/share.html
     │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress
     │           │               #   + attach-diff = 첨부 버전 diff 비교 모달, 2026-08-06)
     │           ├── admin/      # 관리 콘솔 도메인 모듈 9
@@ -129,7 +129,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 |---------|------|-----------|
 | `feature-0001-platform-runtime` | 플랫폼 런타임/공통 자산 | (scaffold — `src/README.md`, `tests/README.md`) |
 | `feature-0002-agent-core` | Agent 핵심 로직 | `src/agent_core.py` (라이브 진입점 = in-process tool-calling 루프), `src/modules/*` (config/llm/knowledge/sql_ops 등), `tests/test_llm_api.py` |
-| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (3,722줄 조립 루트) + `src/routers/*` (28 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
+| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (4,000줄 조립 루트, 2026-08-25 실측) + `src/routers/*` (35 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
 | `feature-0004-browser-automation` | 브라우저 자동화 | `src/app.py`, `src/ctl.py` |
 | `feature-0005-qa-mcp` | QA 및 MCP 테스트 | `src/mcp_tests.py` |
 | `feature-0006-lan-proxy-access` | LAN/프록시 접근 | (scaffold — `src/README.md`, `tests/README.md`) |

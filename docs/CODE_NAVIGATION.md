@@ -181,7 +181,7 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 3. `?v=` 는 소스에서 `?v=dev` 고정(HTML + ES import specifier) — 빌드가 content-hash 주입(§13.1). **수기 bump 금지**(이중 인스턴스화 유발).
 4. G6/mermaid 는 UMD 전역 bridge(`const G6 = window.G6;`) — 필요 모듈 상단에 개별 선언.
 
-**admin.js(12,520줄)** — 13 pane 도메인 동거. pane 경계 = admin.html `data-admin-pane` 속성이 자연 색인: `grep -n 'data-admin-pane' admin.html`. 공유 코어(`adminState`·`apiFetch`·`can`·`showToast`·pending 스테이징)는 상단 밴드. 전면 분할은 C-12 defer(충돌 실측 트리거). **pane → entry 함수 표**(블라인드 내비게이션 실측 2026-07-13 — "파일:함수" 확정까지 문서로 커버):
+**admin.js(4,831줄)** — 13 pane 도메인 동거. pane 경계 = admin.html `data-admin-pane` 속성이 자연 색인: `grep -n 'data-admin-pane' admin.html`. 공유 코어(`adminState`·`apiFetch`·`can`·`showToast`·pending 스테이징)는 상단 밴드. 전면 분할은 C-12 defer(충돌 실측 트리거). **pane → entry 함수 표**(블라인드 내비게이션 실측 2026-07-13 — "파일:함수" 확정까지 문서로 커버):
 
 | pane (`data-admin-pane`) | entry 함수 (`grep -n "function <이름>" admin.js` 정본) |
 |---|---|
@@ -197,4 +197,4 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | graph | `_metaShowGraph`(barrel — 위 표) · 스코프 드롭다운은 **admin.js** `_metaPopulateScopeSelect`(graph/ 아님 주의) |
 | settings | `renderRuntimeTimeouts` · `renderModelThinkingBudgets` |
 
-**app.js(10,464줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일. fetch 라인에서 엔클로징 함수 역산: `awk 'NR<=<라인>' app.js | grep -n "^function\|^async function" | tail -1`.
+**app.js(8,562줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일. fetch 라인에서 엔클로징 함수 역산: `awk 'NR<=<라인>' app.js | grep -n "^function\|^async function" | tail -1`.

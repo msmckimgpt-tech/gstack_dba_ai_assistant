@@ -2003,7 +2003,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **필요한 사람 액션(1줄)**: 없음(사용자가 PR·머지·배포 자율 승인). 다음 audit 이 위 지표로 판정.
   문서 정합은 `/_dqa:doc_sync` 권유.
 
-## FR-oauth-frontier-identity-scattered-injection — fixed:undeployed (L6↔L1 경계; provider 계약 주입이 호출측에 산재해 경로가 늘 때마다 누락 → **2회째 동일 장애**)
+## FR-oauth-frontier-identity-scattered-injection — fixed:deployed:verified(경로 축) (L6↔L1 경계; provider 계약 주입이 호출측에 산재해 경로가 늘 때마다 누락 → **2회째 동일 장애**)
 
 - **status**: `fixed:deployed:verified(경로 축)` — 코드/테스트(신규 **24** PASS · identity 관련 기존
   **137** PASS · 뮤테이션 7종 중 6종 KILL, M3 는 동치 뮤턴트로 판정) + §18.8 적대 리뷰 **3라운드**
