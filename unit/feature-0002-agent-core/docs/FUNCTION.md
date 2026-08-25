@@ -1389,3 +1389,30 @@ REQ-20260825-sql-selfheal-p1 — 위 `sql-selfheal` 의 적대 리뷰 후속. �
 를 호출하며, 그 **결과를** `_sql_reflection_nudge` 의 `repeated`·`dialect` 인자로 넘긴다.
 AST 단언이 호출 존재와 인자 출처를 함께 검사한다(상수 하드코딩 금지) — 단위 테스트가
 `run_agent` 를 실행하지 않아 생기는 배선 사각을 메운다.
+
+## LLM provider 요청 조립 — 단일 관문 (cc-identity-chokepoint, 2026-08-25)
+
+**AC-1 (관문 경유 의무)**: provider 로 나가는 messages 는 `modules.llm.prepare_provider_messages(messages, model)`
+를 거친다. 이 관문이 두 정규화를 **함께** 적용한다 — ① OAuth frontier identity 주입
+(`shared.model_catalog.ensure_oauth_frontier_identity`) ② 프롬프트 캐시 브레이크포인트
+(`_apply_prompt_cache`). 신규 LLM 호출 경로는 이 함수만 부르면 계약을 자동 충족한다.
+
+**AC-2 (identity 게이트 계약)**: frontier 모델(Sonnet 5 · Opus 5 — `model_thinking_style == "adaptive"`)
+은 OAuth 구독 토큰으로 나갈 때 **system 첫 블록이 정확히 `OAUTH_FRONTIER_IDENTITY`** 여야 Anthropic
+이 허용한다. 없으면 429 `rate_limit_error`(단 `anthropic-ratelimit-*` 헤더 부재 → 실제 한도와 구분).
+identity 는 **별도 system 메시지**여야 하며 제품 프롬프트와 한 문자열로 이어붙이면 통과하지 못한다.
+budget 계열(Haiku)·로컬 LLM 은 미요구 — 관문이 원본을 그대로 돌려준다.
+
+**AC-3 (멱등·무오염)**: `ensure_oauth_frontier_identity` 는 이미 주입된 배열을 **동일 객체로** 반환한다
+(호출측 잔존 주입과 관문이 겹쳐도 중복 없음). 주입할 때만 얕은 복사해 호출측 배열을 in-place 로
+바꾸지 않는다 — 같은 messages 를 재사용하는 재시도 경로가 안전하다.
+
+**적용 순서는 결과에 영향 없음(실측)**: identity 는 맨 앞, 캐시는 마지막 system 에 붙어 서로 간섭하지
+않는다. 순서 역전 뮤턴트는 동치 뮤턴트로 생존한다. 계약의 요점은 순서가 아니라 **둘 다 누락 없이
+적용되는가** 다.
+
+**배선 불변식 (테스트로 강제)**: `_apply_prompt_cache` 직접 호출은 관문 내부 1회만 허용한다.
+`tests/test_cc_identity_chokepoint.py` 가 AST 로 ① 관문 밖 `_apply_prompt_cache` 호출 부재
+② 대화 답변 경로(`agent_core`)의 관문 호출 ③ 보조 chokepoint(`_openai_chat_completion_with_deadline`)
+의 관문 호출을 단언한다. 이 배선 검사가 없으면 헬퍼 단위 테스트는 전부 통과하면서 라이브만 429 가
+되는 사각이 남는다(2026-07-24 봉인이 2026-08-25 에 그 형태로 재발했다). 정책 정본: `AGENTS.md §15.2.1`.

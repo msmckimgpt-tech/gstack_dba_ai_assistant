@@ -2306,3 +2306,74 @@ P1 추이 1 → 0 → 0 (단조 감소, (b) 비단조 신호 없음). 수정 라
 — `repeated` 인자가 `ast.Constant` 가 아니고 `dialect` 인자가 `_nudge_dialect_for_last_sql()`
 호출인지까지 단언한다. 그 검사기가 하드코딩 소스에서 FAIL 함을 합성 소스로 실증(G11-b)했고,
 codex 가 제시한 두 mutation 을 실제 소스에 주입해 **둘 다 감지**됨을 확인했다.
+
+## REV-20260825T190000-cc-identity-chokepoint [CODEX:3-lens] backend + security + qa
+
+Verdict: **PASS** (R3 최종 [P1] 0). 대상: `CHG-20260825T170000-cc-identity-chokepoint`
+(OAuth frontier identity 주입을 provider 전송 직전 단일 관문으로 재배치).
+Trigger: §18.8 키워드 — 프롬프트·맥락 조립 + LLM 라우팅(코어 경로) → full-panel 상당 3렌즈.
+Agent tool 미사용(세션 지시) → `[CODEX:*]` 경로로 수행.
+
+### R1 (초기) — **출하 차단**: [P1] 2 · [P2] 1
+
+| # | 등급 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1/backend | "단일 관문" 이라 선언했으나 `llm.py` 직접 provider 호출 **16곳 중 15곳이 우회**. `OPENAI_MODEL` 코드 기본값이 frontier(`claude-sonnet-4`)라 가정이 아닌 실제 위험 | **흡수** — AST 위치 기반으로 15곳 전수 래핑, 16/16 관문 경유 |
+| 2 | P1/qa | AST 배선 테스트가 `_apply_prompt_cache` 호출만 검사 → 애초에 캐시를 안 쓰던 직접 호출 15곳을 못 봄. 관문을 부르고 **결과를 버려도** 통과 | **흡수** — 판정 기준을 provider 호출 **전수**로 교체 + 반환값 소비 검사 추가 |
+| 3 | P2/backend | 판정이 OAuth 여부가 아니라 모델 스타일(adaptive)만 봄 → Bedrock 전환 시 불필요 주입 | **근거 수용**(아래 미해결) |
+
+security 렌즈: 취약점 없음 — 주입값은 고정 상수, 사용자 입력 미보간, 기존 system 미삭제·미수정.
+
+### R2 (수정 후 확인) — **미통과**: [P1] 2 · [P2] 2
+
+| # | 등급 | 지적 | 처리 |
+|---|---|---|---|
+| 4 | P1/backend | web-ui 잔여 우회 — `_prompt_context.py` role/account 2곳, `admin_metadata.py` 1곳 | **흡수** — 3곳 관문 봉인 |
+| 5 | P1/qa | `**kwargs` 전개형은 검사가 건너뜀. `create_kwargs["messages"] = messages` 되돌리기와 **관문 결과 덮어쓰기**가 통과 | **흡수** — `messages` sink 전수 검사(dict 리터럴 + 첨자 대입) + 덮어쓰기 검출 추가 |
+| 6 | P2 | provider health probe 가 수동 주입 유지(동작은 정상이나 단일 정본 정책과 불일치) | **흡수** — 관문으로 통일 |
+| 7 | P2 | **거버넌스 문서가 사실보다 앞섬** — ADR 이 "모든 경로 관문 사용" 선언, 테스트 수 12 vs 실제 14 | **흡수** — ADR·MODIFY·원장 수치/표현 정정, 정적 검사 한계 명시 |
+
+### 뮤테이션 역검증 (7종)
+
+| 뮤턴트 | 결과 |
+|---|---|
+| M1 대화 경로 관문 우회(재발 패턴 재현) | KILL 2건 |
+| M2 멱등 체크 제거 | KILL 1건 |
+| M3 identity↔캐시 순서 역전 | **생존 — 동치 뮤턴트** |
+| M4 provider 호출 1곳 우회 | KILL 2건 |
+| M5 관문 결과 버림 | KILL 2건 |
+| M6 관문 결과 덮어쓰기(R2 #5) | KILL 1건 |
+| M7 첨자 대입으로 관문 되돌리기(R2 #5) | KILL 1건 |
+
+### 미해결·한계 (정직 표기)
+
+- **M3 생존은 결함이 아니다**: identity 는 맨 앞, 캐시는 마지막 system 에 붙어 서로 간섭하지 않으므로
+  두 순서의 결과가 같다. 초판 docstring 의 "순서 역전 금지" 는 근거 없는 과장이라 사실대로 정정했고,
+  잡히지 않는 순서를 억지 단언으로 덮지 않았다.
+- **정적 검사의 한계**: 값이 여러 함수·자료구조를 건너 흐르는 정교한 우회는 AST 로 잡히지 않는다
+  (적대 리뷰가 실증). 완벽하다고 주장하지 않으며, 최종 안전망은 **배포 후 라이브 실측**이다.
+  다만 실제 재발 2회는 전부 이 검사가 잡는 단순 누락이었다.
+- **R1 #3(P2) 미해소**: identity 요구 판정이 `model_thinking_style == "adaptive"` 뿐이라, 같은 alias 를
+  Bedrock 으로 전환하면 불필요하게 주입된다. 현재 배포는 OAuth 경로라 실害 없고, 주입돼도 제품
+  프롬프트가 동작을 지배함이 실증됐다. provider/auth capability 축 도입은 별 트랙으로 이월.
+- **라이브 미검증**: 배포본 end-to-end(실제 대화에서 frontier 답변 성사)는 배포 후 확인 대상.
+  게이트웨이 경유 실측으로 "identity 없으면 429 / 있으면 200" 은 확인했다(2026-08-25).
+
+### R3 (최종 확인) — **통과**: [P1] **0**
+
+- [P1-A] **닫힘** — product/role/account 조립 3곳 + metadata 경로 전부 관문 경유. codex 가 production
+  전역 `chat.completions.create` 를 역추적해 "요청 조립부의 관문 미경유 없음" 확인.
+- [P1-B] **닫힘** — R2 가 지목한 두 우회(첨자 대입 되돌리기 · 관문 결과 덮어쓰기)를 합성 AST 로
+  재현해 **각각 검출**됨을 확인. 신규 테스트 24/24 PASS.
+- [P2] 2건 반영 확인(probe 관문 통일 · 문서 수치·한계 정정). 부수 지적이던 probe 미사용 import
+  잔존도 이 라운드에서 정리했다.
+- 회귀 없음: `--check` 통과 · 변경 Python 7개 compile · ruff 통과 · provider-health 41 PASS ·
+  web-ui role/account 조립 4 PASS.
+
+**비차단 잔여(출하 차단 아님, codex 판정)**: `kwargs.update(messages=…)` · `prepared[:] = …` 같은
+문법 변형 우회는 현재 검사가 잡지 못한다. production 코드에 해당 형태가 없고 문서가 정적 검사의
+한계를 명시하므로 차단 사유로 보지 않는다 — 필요해지면 검사기를 넓히는 쪽으로 후속한다.
+
+P1 추이: R1 **2** → R2 **2**(신규 발견) → R3 **0**. R2 의 증가는 검사 범위가 llm.py 밖(web-ui)으로
+넓어지며 드러난 것으로, 같은 근본의 미발견분이었다. R3 에서 0 으로 수렴했고 수정 라운드를 종결
+근거로 쓰지 않았다.

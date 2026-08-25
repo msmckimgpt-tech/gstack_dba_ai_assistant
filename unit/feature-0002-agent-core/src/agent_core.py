@@ -74,9 +74,9 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import OAUTH_FRONTIER_IDENTITY, conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, requires_oauth_frontier_identity, thinking_budget_for_level
+from shared.model_catalog import conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, thinking_budget_for_level
 from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
-from modules.llm import _apply_prompt_cache, _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
+from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider, prepare_provider_messages
 # FR-summary-writer-disconnected: 답변 후 큐레이션에서 대화 요약을 갱신한다(alias 로 노출해
 # 테스트가 agent_core 심볼 하나만 patch 하면 되도록 — 다른 큐레이션 호출과 동일 패턴).
 from modules.llm import refresh_conversation_summary as _refresh_conversation_summary
@@ -6185,18 +6185,17 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         image_attachments=image_attachments or None,
         vision_model=model_supports_vision(model),
     )
-    # cc-identity-inject(2026-07-24): OAuth 구독 토큰으로 나가는 frontier 모델(Sonnet 5)은 system 의 첫
-    # 블록이 Claude Code identity 여야 Anthropic 이 허용한다(없으면 429 — 라이브 실증). 제품 system 프롬프트
-    # 앞에 **별도 system 메시지**로 주입하면 litellm 이 Anthropic system 의 첫 블록으로 매핑한다(단일 문자열
-    # 연결은 게이트 미통과 → 반드시 분리). 실 동작은 뒤따르는 제품 프롬프트가 지배(라이브 검증). budget 계열
-    # (haiku)은 미요구라 미주입(working 경로 무영향).
-    if requires_oauth_frontier_identity(model):
-        effective_messages = [{"role": "system", "content": OAUTH_FRONTIER_IDENTITY}, *effective_messages]
-    # usage-metric-charts(2026-08-13): 프롬프트 캐시 브레이크포인트를 **identity 주입 뒤**에 건다.
-    # 캐시 접두는 "이 지점까지 전부" 라, 마지막 system 에 부착하면 identity + 제품 프롬프트 + 도구
-    # 스펙이 한 덩어리로 캐시된다. 대화는 같은 접두를 라운드마다 재전송하므로 적중률이 가장 높은 지점.
-    # 임계 미만·로컬 LLM 은 helper 가 원본을 그대로 돌려준다(무회귀).
-    effective_messages = _apply_prompt_cache(effective_messages, model)
+    # cc-identity-chokepoint(2026-08-25): identity 주입 + 프롬프트 캐시를 **단일 관문**으로 통일한다.
+    # cc-identity-inject(2026-07-24): OAuth 구독 토큰으로 나가는 frontier 모델(Sonnet 5·Opus 5)은 system 의
+    #   첫 블록이 Claude Code identity 여야 Anthropic 이 허용한다(없으면 429 — 라이브 실증). 제품 system
+    #   프롬프트 앞에 **별도 system 메시지**로 주입해야 litellm 이 Anthropic system 첫 블록으로 매핑한다
+    #   (단일 문자열 연결은 게이트 미통과 → 분리 필수). 실 동작은 뒤따르는 제품 프롬프트가 지배.
+    # usage-metric-charts(2026-08-13): 캐시 브레이크포인트는 **identity 주입 뒤**라야 접두(identity + 제품
+    #   프롬프트 + 도구 스펙)가 한 덩어리로 캐시된다. 이 순서 계약을 관문이 보증한다.
+    # 종전에는 위 두 정규화가 여기 인라인으로 있어, 같은 계약이 필요한 다른 경로(보조 LLM 호출·노드 분석)
+    # 가 누락된 채로 남았고 2026-08-25 재발의 구조적 원인이 됐다. budget 계열(haiku)·로컬 LLM 은 관문이
+    # 원본을 그대로 돌려준다(무회귀).
+    effective_messages = prepare_provider_messages(effective_messages, model)
     # FR-edge-fallback-conversation-context-loss (2026-07-07): 이 함수는 정의상 사용자 대면 assistant
     # 답변(task='agent') 경로다. edge(gemma) 폴백이 걸린 alias(claude-haiku-4)는 litellm 호출 시 edge-free
     # 대화 전용 alias(claude-haiku-4-chat)로 치환해, 두 claude 계정 완전 장애 시 gemma 로 강등되지 않고

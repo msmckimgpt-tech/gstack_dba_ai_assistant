@@ -1673,6 +1673,35 @@ last-run 시각**을 함께 표면화하고, **검사 파일 수 0 은 후보 0 
 - 사용자 데이터를 로그에 평문으로 기록하지 않는다
 ```
 
+#### §15.2.1 LLM provider 요청 조립 — 관문 우회 금지 (본 프로젝트 실제 금지사항, 필수)
+
+> **이 규칙은 같은 장애가 두 번 발생한 뒤 세워졌다** (2026-07-24 최초 봉인 → 2026-08-25 재발).
+> 위반의 대가는 즉시 드러나지 않고 **라이브 대화 전면 실패**로 나타나며, 증상이 rate limit 으로
+> 위장되어 진단이 사용량·계정 축으로 잘못 흘러간다(재발 시 실제로 그렇게 오진됐다).
+
+**배경(라이브 실증 2회)**: 운영 LLM 이 OAuth 구독 토큰(`sk-ant-oat…`)으로 나갈 때, frontier 모델
+(Sonnet 5 · Opus 5)은 **system 의 첫 블록이 정확히 Claude Code identity 문자열**이어야 Anthropic 이
+허용한다. 없으면 **429 `rate_limit_error`** 로 거부되는데 — 이 429 에는 `anthropic-ratelimit-*`
+헤더가 **하나도 실리지 않아** 진짜 한도 초과와 구분된다. Haiku 등 budget 계열은 미요구라 정상
+동작하므로, "보조 호출은 되는데 대화 답변만 죽는" 형태로 나타난다.
+
+- **LLM provider 로 나가는 messages 는 반드시 `modules.llm.prepare_provider_messages()` 를 거친다.**
+  이 관문이 identity 주입(`shared.model_catalog.ensure_oauth_frontier_identity`)과 프롬프트 캐시
+  브레이크포인트를 함께 적용한다. 신규 LLM 호출 경로를 추가할 때 **다른 조립 방식을 쓰지 않는다**.
+- **`_apply_prompt_cache()` 를 직접 호출하지 않는다** (관문 내부 1회만 허용). 캐시만 단독으로 거는
+  코드는 곧 identity 를 빠뜨린 코드이며, 이것이 2026-08-25 재발의 정확한 형태였다.
+- **identity 주입을 호출측에 새로 흩뿌리지 않는다.** 개별 주입은 경로가 늘 때마다 누락되어 재발한다
+  (최초 봉인이 그 방식이었고 그래서 재발했다). 주입 규칙의 정본은 관문 하나다.
+- **`OAUTH_FRONTIER_IDENTITY` 문자열을 수정·재작성·번역하지 않는다.** 게이트는 정확 일치를 본다.
+- **identity 와 제품 프롬프트를 한 문자열로 이어붙이지 않는다.** 반드시 별도 system 메시지여야 한다
+  (단일 문자열 결합은 게이트 미통과 — 2회 모두 실측 확인).
+- **429 를 봤다고 사용량 소진으로 단정하지 않는다.** 먼저 `anthropic-ratelimit-unified-*` 헤더 유무로
+  갈라라 — 헤더가 없으면 identity 게이트, 있으면 실제 한도다. 같은 토큰으로 Haiku 가 200 이면
+  사용량 축은 그 자리에서 기각된다.
+
+배선은 `unit/feature-0002-agent-core/tests/test_cc_identity_chokepoint.py` 가 AST 로 강제한다
+(관문 우회 시 테스트 실패). 상세 근거는 `docs/DECISIONS.md` ADR-0043.
+
 ### §15.3 도메인별 환경변수 정책
 `.env.example`에서 관리하는 변수의 카테고리와 변경 규칙을 정의한다.
 

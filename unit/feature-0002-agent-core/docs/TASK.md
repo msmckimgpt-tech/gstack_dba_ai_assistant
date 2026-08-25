@@ -3237,3 +3237,29 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
   identifier 상한 제거.
 - 전체 스위트: main baseline 13 FAIL = 브랜치 13 FAIL, **동일 집합** → 회귀 0
   (중간에 3건 증가를 관측하고 위 격상으로 해소한 뒤 재대조).
+
+## TASK-20260825T170000-cc-identity-chokepoint — OAuth frontier identity 관문 봉인
+
+`/_dqa:conversation_audit` 라이브 진단에서 확인된 **2회째 동일 장애**(2026-07-24 최초 봉인 → 08-25
+재발)를 구조적으로 봉인한다. 원장: `FR-oauth-frontier-identity-scattered-injection`.
+
+- [x] 근본원인 확정 — frontier 모델 OAuth identity 게이트(429, ratelimit 헤더 부재로 한도와 구분).
+      사용량·계정 한도·User-Agent 가설은 2계정 교차검증(사용률 44% 계정도 동일 429)으로 기각.
+- [x] 재발 기전 확정 — 주입이 호출측 3곳에 산재, `llm.py` 호출 지점 18곳에 주입 0건.
+- [x] `ensure_oauth_frontier_identity` 신설(멱등·무오염) — 주입 규칙 단일 정본.
+- [x] `prepare_provider_messages` 관문 신설 — identity + 프롬프트 캐시 동시 적용.
+- [x] 대화 답변 경로 · 보조 호출 chokepoint · 노드 분석 직접 호출을 관문 경유로 통일.
+- [x] AST 배선 테스트로 관문 우회 차단(`_apply_prompt_cache` 직접 호출 금지).
+- [x] 뮤테이션 역검증 3종(M1·M2 KILL / M3 동치 뮤턴트로 판정·정직 표기).
+- [x] 정책 문서 기입 — `AGENTS.md §15.2.1` + `docs/DECISIONS.md ADR-20260825T170000-…`.
+- [ ] **배포 후 라이브 실측** — 실제 대화에서 frontier 답변 성사 확인(배포 confirm 후 수행).
+
+### 이번 cycle 에서 다루지 않은 것 (원장 분리)
+
+같은 대화에서 발견됐으나 별개 뿌리라 분리했다(응집 한계):
+
+- LLM 실패 분류가 용량성·결정적 실패를 `transient` 로 취급해 18회 재시도(5분)를 태우는 결함.
+- LLM 실패로 끝난 run 의 최종 표면 문구가 `DatasourceCircuitOpen`(데이터소스·VPN 안내)이라
+  사용자를 무관한 조치로 유도하는 결함.
+- 폴백 체인이 동일 등급(sonnet→sonnet-root) 안에서만 돌아, 상위 등급이 막히면 가용한 budget
+  등급으로 내려가지 못하는 구성.
