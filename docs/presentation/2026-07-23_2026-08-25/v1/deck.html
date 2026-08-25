@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="doc_type" content="PRESENTATION_DECK" />
+<title>DBA AI Assistant 개발 진척 보고 · 2026-07-23 ~ 2026-08-25 (v1)</title>
+<meta name="description" content="2026-07-23~08-25 DBA AI Assistant 개발 진척 상부보고 — 실사용이 드러낸 마찰을 구조로 봉인하고, 파일 다루기·대화 정리·밖의 AI 연결로 제품 표면을 넓힌 5주. 사용자에게 전달된 변화 138건, 배포 중 접속 중단 13초→0초. 검증된 성과와 발전 과제를 구분." />
+<style>
+/* =========================================================================
+   DBA AI Assistant 개발 진척 보고 덱 (2026-07-23 ~ 2026-08-25) v1 — 자기완결(offline).
+   디자인 언어는 서비스/이전 보고덱(docs/presentation/index.html)의 :root 토큰 상속.
+   2026 트렌드 반영(3중 필터 통과분만): color-mix 파생(hex 폴백 동반) · container query 로
+   카드 내부 조판 · clamp fluid 타입(최소값 rem) · 명시 다단계 breakpoint(auto-fit 미사용) ·
+   24px 최소 타깃 · focus-visible · 절제 모션(opacity+2~4px, 180~220ms).
+   외부 CDN/폰트/이미지/JS 0 — 전부 인라인. 접근성: 색+라벨+형태 3중, keep-all, reduced-motion.
+   ========================================================================= */
+:root{
+  /* 봉투 상속 */
+  --bg:#f7f7f4; --surface:#ffffff; --surface-2:#fafaf7;
+  --border:#e6e5e0; --border-subtle:#f0efea;
+  --text:#26251e; --text-2:#5a5852; --text-muted:#807d72;
+  --primary:#2563eb; --primary-dark:#1d4ed8; --primary-soft:#eff6ff;
+  --success:#16a34a; --warning:#d97706; --danger:#dc2626;
+  --code-bg:#1a1b26; --code-fg:#c0caf5;
+  --font:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;
+  --mono:"D2Coding","Cascadia Code","SFMono-Regular",Consolas,"Noto Sans Mono CJK KR",ui-monospace,Menlo,monospace;
+  --r-sm:6px; --r-md:10px; --r-lg:14px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 14px rgba(0,0,0,.10);
+  --shadow-lg:0 10px 32px rgba(0,0,0,.14);
+  /* 파생(얇게 신규) — 대비 실측 기준 통과분만 */
+  --text-3:#6b6960; --accent-soft:#eef4ff;
+  --ok-ink:#15803d; --ok-bg:#f0f8f2; --ok-bd:#bfe3c8;
+  --warn-ink:#b45309; --warn-bg:#fdf6ec; --warn-bd:#f0d9b0;
+  --new-bg:#eef4ff; --new-bd:#cfe0ff; --new-ink:#1d4ed8;
+  --carry-bg:#f2f1ec; --carry-bd:#dedcd4; --carry-ink:#5a5852;
+  --done-bg:#f0f8f2; --done-bd:#bfe3c8; --done-ink:#15803d;
+  /* 전/후 도식 — 대비 실측 통과값(before-ink 4.7:1 텍스트 · mute2 3.5:1 non-text, 배경 #f4f3ef 기준) */
+  --before-bg:#f4f3ef; --before-bd:#d5d2c9; --before-ink:#6f6c63;
+  --after-bg:#eff5ff; --after-bd:#cfe0ff;
+  --mute1:#cdcac1; --mute2:#85827a;
+  --acc2:#93b4f5;
+  --dur:.2s; --ease:cubic-bezier(.22,.61,.36,1);
+  /* 유동 척도 */
+  --pad-y:clamp(3.5rem,7vh,4.5rem); --pad-x:clamp(1rem,4vw,3.75rem); --pad-b:clamp(2.5rem,5vh,3.4rem);
+  --gap:clamp(.62rem,1.4vw,.88rem);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--font); color:var(--text);
+  word-break:keep-all; overflow-wrap:anywhere; hyphens:none; line-break:strict;
+  background:
+    radial-gradient(1100px 560px at 85% -12%, #eef4ff 0%, transparent 55%),
+    radial-gradient(820px 460px at -8% 112%, #f3f0ff 0%, transparent 52%),
+    var(--bg);
+  -webkit-font-smoothing:antialiased; line-height:1.62;
+}
+h1,h2,h3{text-wrap:balance;line-height:1.22;letter-spacing:-.01em}
+p,li,.lead,.rowlab{text-wrap:pretty}
+.mono{font-family:var(--mono)}
+
+/* 상단 크롬 */
+.topbar{position:fixed;top:0;left:0;right:0;z-index:60;pointer-events:none}
+.progress{height:3px;background:linear-gradient(90deg,var(--primary),#7aa2ff);width:0;transition:width var(--dur) var(--ease)}
+.chrome{position:fixed;top:11px;left:12px;right:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;z-index:61;flex-wrap:wrap}
+.pill{pointer-events:auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;box-shadow:var(--shadow-sm);font-size:.78rem;font-weight:650;color:var(--text-2)}
+button.pill{cursor:pointer;font-family:inherit;transition:color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.menu-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;min-height:1.5rem}
+.menu-btn:hover{color:var(--primary);border-color:#cdd9f5}
+.menu-btn .bars{display:inline-flex;flex-direction:column;gap:2.6px}
+.menu-btn .bars i{width:14px;height:2px;background:currentColor;border-radius:2px}
+.brand{display:flex;align-items:center;gap:8px;padding:6px 13px;font-weight:750;color:var(--text)}
+.brand .mk{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--primary),#60a5fa);display:grid;place-items:center;color:#fff;font-size:.62rem;font-weight:800}
+.brand .rng{font-size:.66rem;font-weight:700;color:var(--primary-dark);background:var(--primary-soft);border:1px solid #dbe6ff;border-radius:999px;padding:1px 8px}
+.counter{padding:7px 13px;font-variant-numeric:tabular-nums;font-size:.75rem;color:var(--text-3)}
+
+/* 슬라이드 스테이지 — 유동. 콘텐츠가 길면 세로 스크롤(클리핑 금지) */
+.deck{position:fixed;inset:0;overflow:hidden}
+.slide{position:absolute;inset:0;display:none;overflow-y:auto;overflow-x:hidden;padding:var(--pad-y) var(--pad-x) var(--pad-b);-webkit-overflow-scrolling:touch}
+.slide.is-active{display:flex;flex-direction:column;animation:fade var(--dur) var(--ease) both}
+@keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.wrap{width:100%;max-width:min(72rem,94vw);margin:auto;display:flex;flex-direction:column}
+.kicker{display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap;align-self:flex-start;font-size:.72rem;font-weight:750;letter-spacing:.02em;color:var(--primary-dark);background:var(--primary-soft);border:1px solid #dbe6ff;padding:5px 11px;border-radius:999px;margin-bottom:13px;line-height:1.5}
+.kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--primary);flex:0 0 auto}
+h1.title{font-size:clamp(1.45rem,3.4vw,2.5rem);font-weight:820}
+h2.title{font-size:clamp(1.2rem,2.6vw,1.85rem);font-weight:800}
+.lead{font-size:clamp(.88rem,1.5vw,1.03rem);color:var(--text-2);margin-top:12px;max-width:64ch}
+.muted{color:var(--text-3)}
+
+/* 클릭 넘김(시맨틱 button, 최소 타깃 확보) */
+.zone{position:fixed;top:0;bottom:0;width:9%;min-width:2.75rem;z-index:40;border:0;background:transparent;cursor:pointer;padding:0}
+.zone.l{left:0} .zone.r{right:0}
+.zone:focus-visible{outline:3px solid var(--primary);outline-offset:-6px;background:#eef4ff;background:color-mix(in oklch,var(--primary) 5%,transparent)}
+
+/* 배지: 색 + 라벨 + 형태(SVG) */
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:.69rem;font-weight:750;border-radius:999px;padding:2px 9px;border:1px solid;white-space:nowrap}
+.badge svg{width:11px;height:11px;flex:0 0 auto}
+.b-new{background:var(--new-bg);border-color:var(--new-bd);color:var(--new-ink)}
+.b-carry{background:var(--carry-bg);border-color:var(--carry-bd);color:var(--carry-ink)}
+.b-done{background:var(--done-bg);border-color:var(--done-bd);color:var(--done-ink)}
+.b-ok{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok-ink)}
+.b-warn{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-ink)}
+.b-hold{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-ink)}
+
+/* 카드 / grid */
+.grid{display:grid;gap:var(--gap);margin-top:18px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px 16px;box-shadow:var(--shadow-sm)}
+.card h3{font-size:.9rem;font-weight:750;margin-bottom:9px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card p{font-size:.81rem;color:var(--text-2)}
+.card.good{border-color:var(--ok-bd);background:linear-gradient(180deg,#f6fbf7,var(--surface))}
+.cap{font-size:.69rem;font-weight:750;letter-spacing:.03em;color:var(--text-3);text-transform:uppercase}
+
+/* 의미 단위 줄바꿈 불릿 — 한 줄=한 생각 */
+.pts{list-style:none;margin:3px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.pts li{position:relative;padding-left:15px;font-size:.8rem;color:var(--text-2);line-height:1.52}
+.pts li::before{content:"";position:absolute;left:2px;top:.5em;width:5px;height:5px;border-radius:1.5px;background:var(--acc2)}
+.pts li strong{color:var(--text);font-weight:700}
+.card .pts li{font-size:.81rem}
+.pts.big li{font-size:.86rem}
+
+/* 기능 5블록 bento — 명시 breakpoint 리플로우(auto-fit 미사용) */
+.bento{display:grid;gap:var(--gap);margin-top:16px;grid-template-columns:1.1fr 1fr 1fr;
+  grid-template-areas:"bg flow flow" "cmp cmp cmp" "why why effect";}
+.bento .blk{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;box-shadow:var(--shadow-sm);container-type:inline-size}
+.blk.bg{grid-area:bg} .blk.flow{grid-area:flow} .blk.cmp{grid-area:cmp}
+.blk.why{grid-area:why} .blk.effect{grid-area:effect}
+.blk .lab{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:.69rem;font-weight:800;color:var(--text-3);letter-spacing:.03em;margin-bottom:7px}
+.blk .lab .n{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;background:var(--primary-soft);color:var(--primary-dark);font-size:.62rem;font-weight:800;flex:0 0 auto}
+.blk .lab .badge{margin-left:auto}
+.blk p{font-size:.79rem;color:var(--text-2)}
+.blk strong{color:var(--text);font-weight:700}
+
+/* 전/후 시각 도식 밴드 */
+.bav{display:grid;grid-template-columns:1fr auto 1fr;gap:var(--gap);align-items:stretch;margin-top:2px}
+.mock{border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 10px 8px;min-width:0}
+.mock.before{background:var(--before-bg);border-color:var(--before-bd)}
+.mock.after{background:var(--after-bg);border-color:var(--after-bd)}
+.mock figcaption{font-size:.6rem;font-weight:800;letter-spacing:.05em;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.mock.before figcaption{color:var(--before-ink)} .mock.after figcaption{color:var(--primary-dark)}
+.mock figcaption .d{width:6px;height:6px;flex:0 0 auto}
+.mock.before figcaption .d{background:var(--mute2);border-radius:50%}
+.mock.after figcaption .d{background:var(--primary);border-radius:1px}
+.mock svg{width:100%;height:auto;display:block}
+.mock .cc{font-size:.69rem;margin-top:6px}
+.mock.before .cc{color:var(--before-ink)} .mock.after .cc{color:var(--text)}
+.baArrow{display:grid;place-items:center;color:var(--primary)}
+.delta{display:inline-flex;align-items:center;gap:5px;font-size:.66rem;font-weight:800;color:var(--primary-dark);background:var(--surface);border:1px solid var(--after-bd);border-radius:999px;padding:2px 9px;margin-top:6px}
+.schem{font-size:.63rem;color:var(--text-3);margin-top:7px;display:inline-flex;gap:5px;align-items:flex-start;line-height:1.5}
+.schem svg{flex:0 0 auto;margin-top:2px}
+
+/* KPI 타일 */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--gap);margin-top:18px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:13px 15px;box-shadow:var(--shadow-sm)}
+.kpi .v{font-size:clamp(1.25rem,2.4vw,1.72rem);font-weight:820;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.15}
+.kpi .v .u{font-size:.86rem;font-weight:700;color:var(--primary-dark);margin-left:2px}
+.kpi .k{font-size:.75rem;color:var(--text-2);margin-top:4px;line-height:1.45}
+.kpi .src{font-size:.66rem;color:var(--text-3);margin-top:7px;display:inline-flex;align-items:flex-start;gap:4px;line-height:1.45}
+.kpi .src svg{width:10px;height:10px;color:var(--success);flex:0 0 auto;margin-top:.28em}
+.kpi .src.agg svg{color:var(--text-3)}
+
+/* 흐름도 */
+.flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.node{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 10px;font-size:.72rem;font-weight:650;color:var(--text)}
+.node.on{border-color:#cfe0ff;background:var(--accent-soft);color:var(--primary-dark)}
+.arrowc{color:var(--text-3);display:grid;place-items:center;font-size:.75rem}
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+@container (max-width:22rem){.mgrid{grid-template-columns:1fr}}
+.mitem{display:flex;align-items:flex-start;gap:7px;font-size:.72rem;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 9px;line-height:1.45}
+.mitem svg{width:13px;height:13px;flex:0 0 auto;color:var(--primary);margin-top:.15em}
+.fnote{font-size:.72rem;margin-top:9px;color:var(--text-3)}
+
+/* agenda */
+.agenda{display:grid;gap:7px;margin-top:14px}
+.ag{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:9px 15px;box-shadow:var(--shadow-sm)}
+.ag .num{font-variant-numeric:tabular-nums;font-weight:820;color:var(--primary-dark);font-size:.92rem;min-width:20px}
+.ag .t{font-weight:720;font-size:.83rem} .ag .d{font-size:.72rem;color:var(--text-2);margin-top:2px;line-height:1.45}
+.ag .badge{justify-self:end}
+
+/* 콜아웃 */
+.callout{margin-top:16px;border-left:3px solid var(--primary);background:var(--primary-soft);border-radius:0 var(--r-md) var(--r-md) 0;padding:12px 16px}
+.callout .pts li{font-size:.83rem;color:var(--text)}
+.callout.warn{border-left-color:var(--warning);background:var(--warn-bg)}
+.callout.warn .pts li::before{background:#d8b070}
+
+/* 표 */
+.tablewrap{overflow-x:auto;margin-top:8px}
+table.cmp{width:100%;border-collapse:collapse;font-size:.78rem;min-width:34rem}
+table.cmp th,table.cmp td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+table.cmp th{background:var(--surface-2);font-weight:750;color:var(--text);font-size:.72rem}
+table.cmp td.b{background:var(--before-bg);color:var(--text-2)}
+table.cmp td.a{background:var(--after-bg);color:var(--text)}
+.rowlab{font-weight:700;color:var(--text);background:var(--surface-2)!important}
+
+/* 목차 오버레이 */
+.idx{position:fixed;inset:0;z-index:80;background:rgba(20,20,18,.62);display:none;opacity:0;transition:opacity var(--dur) var(--ease)}
+.idx.open{display:block;opacity:1}
+.idx-panel{position:absolute;top:0;left:0;bottom:0;width:min(27rem,90vw);background:var(--surface);box-shadow:var(--shadow-md);padding:24px 18px;transform:translateX(-104%);transition:transform var(--dur) var(--ease);overflow:auto}
+.idx.open .idx-panel{transform:none}
+.idx-title{font-size:.75rem;font-weight:750;color:var(--text-3);letter-spacing:.05em;margin-bottom:12px}
+.idx-item{display:flex;gap:12px;align-items:flex-start;padding:9px 11px;min-height:1.5rem;border-radius:var(--r-md);cursor:pointer;width:100%;text-align:left;border:0;background:transparent;font-family:inherit;transition:background var(--dur) var(--ease)}
+.idx-item:hover{background:var(--primary-soft)}
+.idx-item.active{background:var(--primary-soft);box-shadow:inset 3px 0 0 var(--primary)}
+.idx-num{font-variant-numeric:tabular-nums;font-weight:820;color:var(--primary-dark);font-size:.83rem;min-width:20px}
+.idx-name{font-weight:720;font-size:.83rem;color:var(--text)}
+.idx-sub{font-size:.69rem;color:var(--text-3);margin-top:2px;line-height:1.45}
+.idx-hint{margin-top:14px;font-size:.69rem;color:var(--text-3);line-height:1.7;border-top:1px solid var(--border-subtle);padding-top:12px}
+kbd{font-family:var(--mono);font-size:.65rem;background:var(--bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--text-2)}
+
+/* cover */
+.cover .big{font-size:clamp(1.7rem,4.8vw,3.25rem);font-weight:840;letter-spacing:-.025em;line-height:1.1;margin-top:6px}
+.cover .tag{font-size:clamp(.92rem,1.9vw,1.18rem);color:var(--text-2);margin-top:14px;max-width:48ch}
+.cover .meta{margin-top:24px;display:flex;flex-wrap:wrap;gap:9px}
+.chip{font-size:.78rem;font-weight:650;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 13px;box-shadow:var(--shadow-sm)}
+.chip b{color:var(--text);font-weight:800}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+
+/* focus-visible */
+a:focus-visible,button:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:4px}
+@media (forced-colors:active){a:focus-visible,button:focus-visible,.zone:focus-visible{outline:2px solid CanvasText}}
+
+/* =========================================================================
+   반응형 — 명시적 다단계 breakpoint(auto-fit 미사용, DOM 순서=위계 보존)
+   ========================================================================= */
+@media (max-width:1080px){
+  .bento{grid-template-columns:1fr 1fr;grid-template-areas:"bg flow" "cmp cmp" "why effect"}
+}
+@media (max-width:920px){
+  .kpis{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr}
+}
+@media (max-width:720px){
+  .g2,.g3,.kpis{grid-template-columns:1fr}
+  .bento{grid-template-columns:1fr;grid-template-areas:"bg" "flow" "cmp" "why" "effect"}
+  .bav{grid-template-columns:1fr}
+  .baArrow{transform:rotate(90deg);padding:2px 0}
+  .zone{display:none}
+  .wrap{max-width:100%}
+  .ag{grid-template-columns:auto 1fr;row-gap:6px}
+  .ag .badge{grid-column:2;justify-self:start}
+}
+@media (max-width:480px){
+  :root{--pad-y:clamp(3.25rem,6vh,3.75rem)}
+  .chrome{gap:6px}
+  .brand .rng{display:none}
+}
+@media (max-height:560px){ .wrap{margin-top:0} }
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001s!important;transition-duration:.06s!important;scroll-behavior:auto!important}}
+
+/* 인쇄/PDF 핸드오프 */
+@media print{
+  .zone,.chrome,.topbar,.idx{display:none!important}
+  .deck{position:static;overflow:visible}
+  .slide{position:static;display:block;overflow:visible;min-height:auto;page-break-after:always;padding:24px}
+  .slide.is-active{animation:none}
+  .wrap{max-width:100%}
+  body{background:#fff}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar"><div class="progress" id="prog"></div></div>
+<div class="chrome">
+  <button class="pill menu-btn" id="menuBtn" aria-label="목차 열기" aria-haspopup="true"><span class="bars"><i></i><i></i><i></i></span>목차</button>
+  <span class="pill brand"><span class="mk">DQA</span>개발 진척 보고<span class="rng">7/23–8/25</span></span>
+  <span class="pill counter" id="counter" role="status" aria-live="polite">1 / 17</span>
+</div>
+
+<button class="zone l" id="zoneL" aria-label="이전 슬라이드"></button>
+<button class="zone r" id="zoneR" aria-label="다음 슬라이드"></button>
+
+<main class="deck" id="deck">
+
+<!-- 0 · 표지 -->
+<section class="slide cover is-active" data-key="cover" aria-label="표지">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>개발 진척 보고 · 상부보고용</span>
+    <div class="big">DBA AI Assistant<br/>개발 진척 보고</div>
+    <div class="tag">자연어로 데이터베이스에 묻고, 안전하게 검증된 조회 결과를 받는 사내 AI 어시스턴트.<br/>약 5주간(7/23~8/25)의 진척을 정리합니다 — <strong>쓰면서 드러난 문제를 구조로 막고, 쓰임새를 넓힌 기간</strong>입니다.</div>
+    <div class="meta">
+      <span class="chip">기간 <b>2026-07-23 ~ 2026-08-25</b></span>
+      <span class="chip">직전 대비 <b>2026-06-17 ~ 2026-07-22</b></span>
+      <span class="chip">작성 <b>2026-08-25</b></span>
+      <span class="chip">대상 <b>기획·운영·관리·개발</b></span>
+    </div>
+    <div class="legend" aria-label="배지 범례">
+      <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span>
+      <span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span>
+      <span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료</span>
+      <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨</span>
+      <span class="badge b-hold"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3h2v6H3zM7 3h2v6H7z" fill="currentColor" stroke="none"/></svg>결정 대기</span>
+      <span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V3M3 6l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>발전 예정</span>
+    </div>
+  </div>
+</section>
+
+<!-- 1 · 핵심 요약(BLUF) -->
+<section class="slide" data-key="summary" aria-label="핵심 요약">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>핵심 요약 · 먼저 결론</span>
+    <h1 class="title">"만드는 기간"에서 "쓰면서 다듬는 기간"으로</h1>
+    <ul class="pts big" style="margin-top:14px;max-width:66ch">
+      <li>직전 기간이 <strong>기능을 갖추는</strong> 시기였다면, 이번 5주는 <strong>실제로 쓰이면서 드러난 문제를 구조로 막는</strong> 시기였습니다.</li>
+      <li>사용자에게 전달된 변화가 <strong>138건</strong> — 새 기능 29 · 개선 51 · 수정 58.</li>
+      <li>동시에 <strong>세 갈래로 쓰임새를 넓혔습니다</strong> — <strong>파일 다루기</strong>(버전·비교), <strong>대화 정리</strong>(폴더), <strong>밖의 AI 연결</strong>.</li>
+      <li>가장 큰 성과는 <strong>배포할 때마다 있던 접속 끊김을 없앤 것</strong>입니다(13초 → 0초).</li>
+    </ul>
+    <div class="kpis">
+      <div class="kpi"><div class="v">138<span class="u">건</span></div><div class="k">사용자에게 전달된 변화</div><div class="src"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨 · 제품 내 안내 실측</div></div>
+      <div class="kpi"><div class="v">13→0<span class="u">초</span></div><div class="k">배포 중 전면 접속 중단</div><div class="src"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨 · 배포 창 전후 실측</div></div>
+      <div class="kpi"><div class="v">-25~35<span class="u">초</span></div><div class="k">답변 체감 대기 시간</div><div class="src"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>서버측 측정 · 평균 141초 분해 기준</div></div>
+      <div class="kpi"><div class="v">34<span class="u">건</span></div><div class="k">실사용에서 찾아내 기록한 불편</div><div class="src agg"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M6 4v4" stroke="currentColor" stroke-width="1.4"/></svg>개발 이력 집계 · 적발 건수(해소 건수 아님)</div></div>
+    </div>
+    <div class="callout">
+      <ul class="pts">
+        <li><strong>이 기간의 성격</strong> — 서비스는 이미 쓰이고 있었고, 이번 기간은 <strong>그 사용이 드러낸 문제를 잡은 기간</strong>입니다.</li>
+        <li>직전 보고에서 <strong>결정을 기다린다고 말씀드린 세 가지는 여전히 결정 대기</strong>입니다(뒤 '범위와 여건'에서 정리).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 2 · 개발 배경(SCQA) -->
+<section class="slide" data-key="background" aria-label="개발 배경">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>개발 배경 · 왜 이 5주를 이렇게 썼나</span>
+    <h2 class="title">"기능은 있는데 믿고 맡기기 어렵다" — 그 간극을 메우는 기간</h2>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card"><h3><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>지금까지</span>상황</h3>
+        <ul class="pts">
+          <li>질문·답변, 그룹 대화, 데이터 지도, 무중단 배포까지 <strong>기능은 갖춰졌습니다</strong>.</li>
+          <li>실제 업무에 쓰이기 시작했고, <strong>쓰는 사람이 늘수록 문제가 드러났습니다</strong>.</li>
+        </ul>
+      </div>
+      <div class="card"><h3><span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>문제</span>무엇이 걸렸나</h3>
+        <ul class="pts">
+          <li><strong>답을 기다리다 그냥 멈춘다</strong> — 화면은 '진행 중'인데 실은 이미 실패해 있었습니다.</li>
+          <li><strong>배포할 때마다 서비스가 잠깐 멈춘다</strong> — "느낌"이 아니라 실제 전면 장애였습니다.</li>
+          <li><strong>올린 파일을 AI가 놓친다</strong> — "전부 고쳤다"면서 일부만 고치기도 했습니다.</li>
+          <li><strong>대화가 쌓이면 못 찾는다</strong> — 정리할 수단이 없었습니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="grid g2" style="margin-top:var(--gap)">
+      <div class="card"><h3><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>질문</span>그래서 무엇을 해야 하나</h3>
+        <ul class="pts">
+          <li>새 기능을 더 얹을 것인가, <strong>쓰는 데 걸리는 것부터 없앨 것인가</strong>.</li>
+          <li>불편을 <strong>그때그때 막을 것인가, 다시 안 생기게 구조로 막을 것인가</strong>.</li>
+        </ul>
+      </div>
+      <div class="card"><h3><span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>답</span>이번 기간 목표</h3>
+        <ul class="pts">
+          <li><strong>실사용에서 나온 불편을 원인까지 파고들어 봉인</strong>한다.</li>
+          <li>업무에 꼭 필요한 <strong>세 가지 쓰임새를 넓힌다</strong> — 파일·대화 정리·밖의 AI 연결.</li>
+          <li>고칠 대상은 <strong>추측이 아니라 측정으로 고른다</strong>.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout">
+      <ul class="pts">
+        <li><strong>이번 기간을 관통한 원칙</strong> — "고쳤다"고 말하기 전에 <strong>정말 고쳐졌는지 실제 환경에서 확인</strong>하고, 확인하지 못한 것은 <strong>확인하지 못했다고 적었습니다</strong>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 3 · 이번 기간 개요 -->
+<section class="slide" data-key="agenda" aria-label="이번 기간 개요">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>이번 기간 개요 · 화면을 만나는 순서로</span>
+    <h2 class="title">사용자가 화면을 쓰는 순서로 본 아홉 갈래</h2>
+    <div class="agenda">
+      <div class="ag"><span class="num">1</span><span><span class="t">대화 정리·찾기</span><span class="d">폴더로 묶고, 날짜로 접고, 오른쪽 클릭으로 바로 다루고, 오타 검색까지</span></span><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span></div>
+      <div class="ag"><span class="num">2</span><span><span class="t">파일 다루기</span><span class="d">지우고 되살리고, 버전을 나란히 견주고, 처음 올린 원본까지 대조</span></span><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span></div>
+      <div class="ag"><span class="num">3</span><span><span class="t">기다림 관리</span><span class="d">지금 무엇을 하는 중인지 보이고, 오래 걸리면 계속할지 물어봄</span></span><span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료</span></div>
+      <div class="ag"><span class="num">4</span><span><span class="t">답변 신뢰</span><span class="d">지적이 사라질 때까지 스스로 고치고, 확인 못 한 것은 '미확인'이라 말함</span></span><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></div>
+      <div class="ag"><span class="num">5</span><span><span class="t">함께 쓰기</span><span class="d">그룹 대화에서 동료가 올린 파일도 AI가 읽고, 공유 화면을 정비</span></span><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></div>
+      <div class="ag"><span class="num">6</span><span><span class="t">운영·관리 콘솔</span><span class="d">사용 기록을 한 화면으로, 그리고 역할별로 쓸 수 있는 AI 모델 제한</span></span><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span></div>
+      <div class="ag"><span class="num">7</span><span><span class="t">데이터 지도</span><span class="d">연결선을 읽을 수 있게 다시 그리고, AI 분석을 실제 데이터와 대조</span></span><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></div>
+      <div class="ag"><span class="num">8</span><span><span class="t">밖의 AI 연결</span><span class="d">외부 AI 도구가 자기 비용으로 우리 데이터를 안전하게 조회</span></span><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span></div>
+      <div class="ag"><span class="num">9</span><span><span class="t">끊김 없는 기반</span><span class="d">배포해도 안 끊기고, 장애가 나도 하던 일이 사라지지 않게</span></span><span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료</span></div>
+    </div>
+    <p class="lead">앞의 다섯은 <strong>업무 담당자가 직접 만나는 화면</strong>, 6~7은 <strong>관리자 화면</strong>, 8~9는 <strong>바깥 연결과 서비스 기반</strong>입니다.</p>
+  </div>
+</section>
+
+<!-- 4 · 기능 1 — 대화 정리 -->
+<section class="slide" data-key="feat-folders" aria-label="대화 정리와 찾기">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>1. 대화를 정리하고 찾는다 <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규·완료</span></span>
+    <h2 class="title">쌓인 대화를 폴더로 묶고, 폴더마다 AI에게 줄 지침을 걸어 둡니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>대화가 쌓일수록 <strong>목록이 한 줄로만 길어져</strong> 찾기 어려웠습니다.</li>
+          <li>비슷한 업무를 할 때마다 <strong>같은 배경 설명을 매번 다시</strong> 써야 했습니다.</li>
+          <li>이름 바꾸기·삭제는 <strong>브라우저 기본 팝업</strong>이라 어색했습니다.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">왼쪽 대화 목록</span><span class="arrowc">›</span><span class="node on">폴더 만들기</span><span class="arrowc">›</span><span class="node">끌어다 넣기</span><span class="arrowc">›</span><span class="node on">폴더 지침 설정</span><span class="arrowc">›</span><span class="node">그 폴더의 대화는 지침 적용</span></div>
+        <div class="mgrid">
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3h4l1 1h5v6H1z" stroke="currentColor" stroke-width="1" fill="none"/></svg>폴더·하위 폴더로 묶기</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2h8v8H2z" stroke="currentColor" stroke-width="1" fill="none"/><path d="M2 5h8" stroke="currentColor" stroke-width="1"/></svg>지난 날짜는 월·연으로 접기</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2h6v8H2z" stroke="currentColor" stroke-width="1" fill="none"/><path d="M9 4h2M9 6h2M9 8h2" stroke="currentColor" stroke-width="1"/></svg>오른쪽 클릭으로 바로 메뉴</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3.2" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M7.5 7.5L11 11" stroke="currentColor" stroke-width="1.4"/></svg>한/영 오타 검색·첨부 이름 검색</span>
+        </div>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 평평한 한 줄 목록</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 왼쪽 대화 목록이 구분 없는 같은 모양의 줄로만 길게 이어져 있고, 정리 수단이 없어 원하는 대화를 찾기 어렵다">
+              <rect x="14" y="8" width="120" height="10" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="14" y="24" width="120" height="10" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="14" y="40" width="120" height="10" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="14" y="56" width="120" height="10" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="14" y="72" width="120" height="10" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <g stroke="var(--mute2)" stroke-width="1.3" fill="none"><circle cx="166" cy="34" r="10"/><path d="M173 41l7 7"/></g>
+              <text x="166" y="66" font-size="7" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">찾기 어려움</text>
+            </svg>
+            <div class="cc">구분 없음 · 매번 배경 설명 반복</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 폴더 + 날짜 묶음 + 지침</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 대화가 폴더로 묶이고 폴더에 지침 표식이 붙으며, 지난 날짜는 월 단위로 접혀 목록이 짧아졌다">
+              <path d="M14 10h10l3 3h20v9H14z" fill="var(--accent-soft)" stroke="var(--primary)" stroke-width="1.1"/>
+              <text x="52" y="19" font-size="7" fill="var(--primary-dark)" font-family="var(--font)">운영 점검</text>
+              <rect x="100" y="11" width="34" height="10" rx="5" fill="#fff" stroke="var(--primary)"/><text x="117" y="18.5" font-size="6" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">지침 있음</text>
+              <rect x="26" y="26" width="108" height="9" rx="3" fill="#fff" stroke="var(--acc2)"/>
+              <rect x="26" y="39" width="108" height="9" rx="3" fill="#fff" stroke="var(--acc2)"/>
+              <path d="M14 56h10l3 3h20v9H14z" fill="var(--accent-soft)" stroke="var(--primary)" stroke-width="1.1"/>
+              <text x="52" y="65" font-size="7" fill="var(--primary-dark)" font-family="var(--font)">쿼리 리뷰</text>
+              <g><rect x="14" y="74" width="120" height="10" rx="3" fill="var(--surface-2)" stroke="var(--mute1)"/>
+                 <path d="M20 79l3 3 3-3" stroke="var(--text-3)" stroke-width="1.2" fill="none"/>
+                 <text x="34" y="82" font-size="6.5" fill="var(--text-3)" font-family="var(--font)">7월 · 접힘</text></g>
+              <g stroke="var(--primary)" stroke-width="1.3" fill="none"><circle cx="166" cy="30" r="10"/><path d="M173 37l7 7"/></g>
+              <text x="166" y="62" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">오타 검색도</text>
+              <text x="166" y="72" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">결과 제공</text>
+            </svg>
+            <div class="cc"><strong>폴더 지침으로 배경 설명 자동 적용</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>폴더를 <strong>철저히 개인 것</strong>으로 정의 — 관리자라도 남의 폴더를 볼 수 없습니다.</li>
+          <li>대화 생성이 가능한 <strong>모든 역할에 폴더를 열되, 부여는 한 번만</strong> — 매번 다시 주면 관리자가 회수한 권한이 되살아나기 때문입니다.</li>
+          <li>브라우저 기본 팝업을 <strong>전면 제거</strong>하고 화면 안에서 처리(되돌리기 6초 포함).</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·배포 후 확인</span></div>
+        <ul class="pts">
+          <li>반복 업무의 <strong>배경 설명 재작성이 사라집니다</strong>.</li>
+          <li>공개 도중 <strong>관리자끼리 서로 폴더가 보이던 결함을 사용자 신고로 발견해 즉시 봉인</strong>했습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 · 기능 2 — 파일 다루기 -->
+<section class="slide" data-key="feat-files" aria-label="파일 다루기">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>2. 파일을 다룬다 <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규·이번 기간 최대</span></span>
+    <h2 class="title">"파일을 올린다"에서 "고쳐진 파일의 이력을 추적하고 견준다"로</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>이어지는 질문에서 <strong>앞서 올린 파일에 접근하지 못했습니다</strong>.</li>
+          <li>AI가 고쳐 준 파일을 다시 올리면 <strong>이력이 갈라져</strong> 원본을 잃었습니다.</li>
+          <li><strong>"전부 갱신했다"면서 실제로는 일부만</strong> 고친 경우가 있었습니다.</li>
+          <li>무엇이 바뀌었는지 <strong>눈으로 견줄 화면이 없었습니다</strong>.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">파일 첨부(여러 개)</span><span class="arrowc">›</span><span class="node on">AI가 수정본 생성</span><span class="arrowc">›</span><span class="node">파일명 클릭 → 원문</span><span class="arrowc">›</span><span class="node on">두 버전 나란히 비교</span><span class="arrowc">›</span><span class="node">지우기 · 되살리기 · 한 번에 내려받기</span></div>
+        <div class="mgrid">
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1h4l3 3v7H3z" stroke="currentColor" stroke-width="1" fill="none"/></svg>줄 안의 바뀐 구간까지 표시</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M6 2v8" stroke="currentColor" stroke-width="1.3"/></svg>어느 기준으로 견줄지 선택</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="3" cy="6" r="2" stroke="currentColor" stroke-width="1" fill="none"/><circle cx="9" cy="3" r="2" stroke="currentColor" stroke-width="1" fill="none"/><circle cx="9" cy="9" r="2" stroke="currentColor" stroke-width="1" fill="none"/><path d="M5 5.4L7 3.6M5 6.6L7 8.4" stroke="currentColor" stroke-width="1"/></svg>AI 수정본은 별도 갈래로</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2h8v8H2z" stroke="currentColor" stroke-width="1" fill="none"/><path d="M4 5h4M4 7h3" stroke="currentColor" stroke-width="1"/></svg>마크다운은 서식 그대로</span>
+        </div>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 이력이 끊김</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 파일이 낱개로 존재하고 AI 수정본이 원본과 이어지지 않아 이력이 점선으로 끊겨 있으며, 무엇이 바뀌었는지 볼 방법이 없다">
+              <rect x="16" y="16" width="46" height="26" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="39" y="32" font-size="7" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">원본</text>
+              <path d="M66 29h22" stroke="var(--mute2)" stroke-width="1.4" stroke-dasharray="3 3" fill="none"/>
+              <text x="77" y="24" font-size="6" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">?</text>
+              <rect x="92" y="16" width="46" height="26" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="115" y="32" font-size="7" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">수정본</text>
+              <rect x="16" y="54" width="122" height="26" rx="4" fill="var(--surface-2)" stroke="var(--mute1)"/>
+              <text x="77" y="70" font-size="7" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">무엇이 달라졌는지 볼 화면 없음</text>
+              <g stroke="var(--mute2)" stroke-width="1.4" fill="none"><circle cx="168" cy="29" r="9"/><path d="M163 29h10" stroke-width="2"/></g>
+              <text x="168" y="52" font-size="6.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">지우기 불가</text>
+            </svg>
+            <div class="cc">이력 단절 · 비교 불가 · 삭제 불가</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 이력 + 갈래 + 비교</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 원본에서 버전이 v1 v2 v3로 이어지고 AI 수정본은 별도 갈래로 갈라지며, 두 버전을 나란히 놓고 바뀐 부분을 강조해 보여 준다">
+              <g font-family="var(--font)">
+                <rect x="10" y="10" width="30" height="16" rx="4" fill="#fff" stroke="var(--primary)"/><text x="25" y="21" font-size="7" fill="var(--primary-dark)" text-anchor="middle">v1</text>
+                <path d="M40 18h12" stroke="var(--primary)" stroke-width="1.4"/>
+                <rect x="52" y="10" width="30" height="16" rx="4" fill="#fff" stroke="var(--primary)"/><text x="67" y="21" font-size="7" fill="var(--primary-dark)" text-anchor="middle">v2</text>
+                <path d="M82 18h12" stroke="var(--primary)" stroke-width="1.4"/>
+                <rect x="94" y="10" width="30" height="16" rx="4" fill="var(--primary-soft)" stroke="var(--primary)"/><text x="109" y="21" font-size="7" fill="var(--primary-dark)" text-anchor="middle">v3</text>
+                <path d="M67 26v8h30" stroke="var(--acc2)" stroke-width="1.3" fill="none"/>
+                <rect x="97" y="28" width="46" height="14" rx="4" fill="#fff" stroke="var(--acc2)" stroke-dasharray="3 2"/><text x="120" y="38" font-size="6.2" fill="var(--text-2)" text-anchor="middle">AI 수정본 갈래</text>
+                <rect x="10" y="50" width="62" height="34" rx="4" fill="#fff" stroke="var(--acc2)"/>
+                <rect x="14" y="56" width="40" height="4" rx="2" fill="var(--mute1)"/><rect x="14" y="64" width="46" height="4" rx="2" fill="var(--mute1)"/><rect x="14" y="72" width="30" height="4" rx="2" fill="var(--mute1)"/>
+                <rect x="78" y="50" width="62" height="34" rx="4" fill="var(--primary-soft)" stroke="var(--primary)"/>
+                <rect x="82" y="56" width="40" height="4" rx="2" fill="var(--acc2)"/><rect x="82" y="64" width="52" height="4" rx="2" fill="var(--primary)"/><rect x="82" y="72" width="24" height="4" rx="2" fill="var(--acc2)"/>
+                <path d="M75 52v30" stroke="var(--primary)" stroke-width="1" stroke-dasharray="2 2"/>
+                <text x="168" y="20" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle">최초 원본</text>
+                <text x="168" y="30" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle">까지 대조</text>
+                <text x="168" y="60" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle">지우고</text>
+                <text x="168" y="70" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle">되살리기</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>줄 안 변경까지 강조 · 일괄 내려받기</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>어떤 파일을 참조할지 정하는 주체를 <strong>화면(브라우저)에서 서버로 옮겼습니다</strong> — 화면 쪽만 고치면 새 진입 경로가 생길 때마다 재발하기 때문입니다.</li>
+          <li>모든 파일 내용을 통째로 넣으면 분량 한계에 다시 걸리므로, <strong>목록은 전량 · 본문은 필요할 때만</strong> 읽는 방식을 택했습니다.</li>
+          <li>AI 수정본을 <strong>사용자 원본의 다음 버전으로 섞지 않고 갈래를 분리</strong> — "내가 올린 최신"을 잃지 않게.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·배포 후 확인</span></div>
+        <ul class="pts">
+          <li>스크립트·문서 검토 업무에서 <strong>"무엇이 어떻게 바뀌었나"를 화면에서 바로 확인</strong>합니다.</li>
+          <li>"전부 고쳤다"는 잘못된 보고가 구조적으로 차단됩니다.</li>
+          <li><strong>실제 재발이 줄었는지는 다음 주기에 측정</strong>합니다(아직 수치 없음).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · 기능 3 — 기다림 관리 -->
+<section class="slide" data-key="feat-wait" aria-label="기다림 관리">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>3. 기다리는 시간을 관리한다 <span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료</span></span>
+    <h2 class="title">지금 무엇을 하는 중인지 보이고, 오래 걸리면 계속할지 물어봅니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>요청 직후 말풍선이 <strong>'시작 중…'에 박제</strong>되고, 다른 대화에 갔다 와야 살아났습니다.</li>
+          <li>어떤 요청은 <strong>응답도 오류 안내도 없이 계속 '진행 중'</strong>이었습니다.</li>
+          <li>한도에 걸리면 <strong>그때까지 한 추론이 통째로 버려졌습니다</strong>.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">질문 전송</span><span class="arrowc">›</span><span class="node on">실행 단계 패널</span><span class="arrowc">›</span><span class="node">단계별 시작 시각·소요</span><span class="arrowc">›</span><span class="node on">한도 80% → "계속 추론?"</span><span class="arrowc">›</span><span class="node">즉시 답변 · 중단 가능</span></div>
+        <p class="fnote">한도 안내는 <strong>화면을 막지 않고</strong> 입력창 옆 배너로 나오며, 승인은 <strong>그 요청 한 번에만</strong> 적용됩니다.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 멈춘 것처럼 보임</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 화면에는 진행 중이라는 표시 하나만 떠 있고 시간이 흘러도 아무 변화가 없어 사용자는 멈췄는지 살았는지 알 수 없다">
+              <rect x="20" y="18" width="112" height="18" rx="9" fill="#fff" stroke="var(--mute2)"/>
+              <circle cx="34" cy="27" r="4" fill="none" stroke="var(--mute2)" stroke-width="1.4"/>
+              <text x="76" y="31" font-size="7.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">진행 중…</text>
+              <g stroke="var(--mute2)" stroke-width="1.3" fill="none"><circle cx="166" cy="27" r="12"/><path d="M166 20v8l5 3"/></g>
+              <text x="76" y="58" font-size="7" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">단계 표시 없음 · 남은 시간 모름</text>
+              <text x="76" y="74" font-size="7" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">한도 도달 시 추론 통째로 폐기</text>
+              <text x="166" y="52" font-size="6.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">23분 대기</text>
+              <text x="166" y="62" font-size="6.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">사례 있음</text>
+            </svg>
+            <div class="cc">살았는지 죽었는지 알 수 없음</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 단계·시간·선택</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 실행 단계가 목록으로 보이고 각 단계에 시작 시각과 걸린 시간이 붙으며, 한도에 가까워지면 계속할지 즉시 답변받을지 고르는 배너가 나온다">
+              <g font-family="var(--font)">
+                <rect x="10" y="8" width="130" height="13" rx="3" fill="#fff" stroke="var(--acc2)"/>
+                <circle cx="18" cy="14.5" r="3" fill="var(--primary)"/><text x="26" y="17" font-size="6.4" fill="var(--text)">구조 조회</text><text x="134" y="17" font-size="6.2" fill="var(--text-3)" text-anchor="end">0.8초</text>
+                <rect x="10" y="24" width="130" height="13" rx="3" fill="#fff" stroke="var(--acc2)"/>
+                <circle cx="18" cy="30.5" r="3" fill="var(--primary)"/><text x="26" y="33" font-size="6.4" fill="var(--text)">데이터 조회</text><text x="134" y="33" font-size="6.2" fill="var(--text-3)" text-anchor="end">12.4초</text>
+                <rect x="10" y="40" width="130" height="13" rx="3" fill="var(--primary-soft)" stroke="var(--primary)"/>
+                <circle cx="18" cy="46.5" r="3" fill="none" stroke="var(--primary)" stroke-width="1.4"/><text x="26" y="49" font-size="6.4" fill="var(--primary-dark)">답변 작성 중</text><text x="134" y="49" font-size="6.2" fill="var(--primary-dark)" text-anchor="end">진행</text>
+                <rect x="10" y="60" width="130" height="24" rx="5" fill="#fff" stroke="var(--primary)"/>
+                <text x="17" y="71" font-size="6.4" fill="var(--text)">한도에 가까워졌습니다</text>
+                <rect x="17" y="74" width="44" height="8" rx="4" fill="var(--primary)"/><text x="39" y="80" font-size="5.6" fill="#fff" text-anchor="middle">계속 추론</text>
+                <rect x="65" y="74" width="44" height="8" rx="4" fill="#fff" stroke="var(--primary)"/><text x="87" y="80" font-size="5.6" fill="var(--primary-dark)" text-anchor="middle">즉시 답변</text>
+                <text x="170" y="30" font-size="6.4" fill="var(--primary-dark)" text-anchor="middle">누적 경과</text>
+                <text x="170" y="42" font-size="6.4" fill="var(--primary-dark)" text-anchor="middle">함께 표기</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>기다릴지 지금 받을지 사용자가 선택</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>'진행 중' 무한 대기의 원인은 <strong>끝나는 길은 12갈래인데 그 사실을 화면에 알리는 길은 3갈래</strong>였던 비대칭이었습니다 — 알림 경로를 맞췄습니다.</li>
+          <li>"재연결 중"에서 진전이 없던 것은 <strong>한 번의 시도에 준 시간이 정상 응답 시간보다 짧았기</strong> 때문 — 전송 방식을 바꿔 <strong>기준을 '완료까지'에서 '무응답 간격'으로</strong> 옮겼습니다.</li>
+          <li><strong>중요한 시행착오</strong>: 연장 기능 초판이 개별 호출 상한까지 풀어 <strong>'중단'과 '즉시 답변'이 듣지 않게</strong> 만들었습니다 — 연장은 전체 예산만 풀도록 정정했습니다.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·배포 후 확인</span></div>
+        <ul class="pts">
+          <li>기다리는 동안 <strong>무슨 일이 벌어지는지 보이고</strong>, 오래 걸려도 하던 일이 버려지지 않습니다.</li>
+          <li><strong>모집단 전체에서 실제로 줄었는지는 다음 주기에 측정</strong>합니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 · 기능 4 — 답변 신뢰 -->
+<section class="slide" data-key="feat-trust" aria-label="답변 신뢰">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>4. 답변을 믿을 수 있게 한다 <span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음·확장</span></span>
+    <h2 class="title">지적이 사라질 때까지 스스로 고치고, 확인 못 한 것은 '미확인'이라 말합니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>자체 점검이 <strong>한 번만 돌고, 지적이 남아도 그대로 답변이 나갔습니다</strong>.</li>
+          <li>조회 결과가 안 나오면 <strong>"그런 건 없다"고 단정</strong>하는 경우가 있었습니다.</li>
+          <li>조회가 막히면 <strong>왜 막혔는지·어떻게 바꿔야 하는지</strong> 알려 주지 않았습니다.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">답변 초안</span><span class="arrowc">›</span><span class="node on">분리된 검토자가 지적</span><span class="arrowc">›</span><span class="node">고쳐서 다시 점검</span><span class="arrowc">›</span><span class="node on">지적 없음까지 반복</span><span class="arrowc">›</span><span class="node">전달 (남으면 하단 고지)</span></div>
+        <p class="fnote">기다리기 어려우면 <strong>'즉시 답변'</strong>으로 그 시점 답변을 받을 수 있고, 관리 콘솔에서 <strong>몇 회 돌았고 무엇이 남았는지</strong> 확인합니다.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 1회 점검 후 통과</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 답변 초안이 검토를 한 번만 거치고 지적이 남은 채로 그대로 사용자에게 전달된다">
+              <g font-family="var(--font)">
+                <rect x="12" y="30" width="42" height="22" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="33" y="44" font-size="6.6" fill="var(--before-ink)" text-anchor="middle">초안</text>
+                <path d="M56 41h16" stroke="var(--mute2)" stroke-width="1.4"/><path d="M68 37l5 4-5 4" stroke="var(--mute2)" stroke-width="1.4" fill="none"/>
+                <rect x="74" y="30" width="46" height="22" rx="4" fill="var(--surface-2)" stroke="var(--mute2)"/><text x="97" y="44" font-size="6.6" fill="var(--before-ink)" text-anchor="middle">1회 점검</text>
+                <path d="M122 41h16" stroke="var(--mute2)" stroke-width="1.4"/><path d="M134 37l5 4-5 4" stroke="var(--mute2)" stroke-width="1.4" fill="none"/>
+                <rect x="140" y="30" width="48" height="22" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="164" y="44" font-size="6.6" fill="var(--before-ink)" text-anchor="middle">그대로 전달</text>
+                <path d="M97 56v8" stroke="var(--mute2)" stroke-width="1.2" stroke-dasharray="2 2"/>
+                <text x="97" y="74" font-size="6.6" fill="var(--before-ink)" text-anchor="middle">지적이 남아도 종료</text>
+                <text x="97" y="86" font-size="6.6" fill="var(--before-ink)" text-anchor="middle">확인 안 한 것도 '없다'고 단정</text>
+              </g>
+            </svg>
+            <div class="cc">되돌아가는 길 없음</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 지적이 사라질 때까지</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 초안이 검토와 수정을 오가며 지적이 사라질 때까지 반복되고, 사용자는 언제든 즉시 답변으로 빠져나올 수 있으며 지적이 남으면 답변 하단에 고지된다">
+              <g font-family="var(--font)">
+                <rect x="12" y="26" width="40" height="20" rx="4" fill="#fff" stroke="var(--primary)"/><text x="32" y="39" font-size="6.6" fill="var(--primary-dark)" text-anchor="middle">초안</text>
+                <path d="M54 36h14" stroke="var(--primary)" stroke-width="1.4"/><path d="M64 32l5 4-5 4" stroke="var(--primary)" stroke-width="1.4" fill="none"/>
+                <rect x="70" y="26" width="46" height="20" rx="4" fill="var(--primary-soft)" stroke="var(--primary)"/><text x="93" y="39" font-size="6.6" fill="var(--primary-dark)" text-anchor="middle">검토·수정</text>
+                <path d="M93 48c-22 10-22 -20 0 -12" stroke="var(--acc2)" stroke-width="1.4" fill="none"/>
+                <text x="60" y="60" font-size="6" fill="var(--text-2)" text-anchor="middle">반복 수렴</text>
+                <path d="M118 36h14" stroke="var(--primary)" stroke-width="1.4"/><path d="M128 32l5 4-5 4" stroke="var(--primary)" stroke-width="1.4" fill="none"/>
+                <rect x="134" y="26" width="54" height="20" rx="4" fill="#fff" stroke="var(--primary)"/><text x="161" y="39" font-size="6.6" fill="var(--primary-dark)" text-anchor="middle">전달</text>
+                <rect x="112" y="68" width="76" height="16" rx="4" fill="#fff" stroke="var(--acc2)"/><text x="150" y="79" font-size="6" fill="var(--text-2)" text-anchor="middle">남으면 하단에 고지</text>
+                <rect x="12" y="68" width="76" height="16" rx="8" fill="var(--primary)"/><text x="50" y="79" font-size="6" fill="#fff" text-anchor="middle">즉시 답변 (탈출구)</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>품질은 시스템이, 시간은 사용자가 결정</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li><strong>속도보다 품질을 택한 결정</strong> — 자체 점검이 답변 시간의 33%(평균 46.4초)를 쓴다는 것을 측정으로 확인했고, 설정 한 줄로 없앨 수 있었지만 <strong>없애지 않기로 했습니다</strong>.</li>
+          <li>근거는 <strong>7일 실측에서 89건 중 21건(24%)이 실제로 답변을 고치게 만들었다</strong>는 것 — 24%의 품질을 시간과 바꾸지 않았습니다.</li>
+          <li>대신 <strong>'즉시 답변'이라는 개인 선택지</strong>를 뒀습니다. 시스템이 일괄로 품질을 낮추는 대신 개인이 고르게.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V3M3 6l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>효과 측정은 다음 주기</span></div>
+        <ul class="pts">
+          <li>확인 못 한 것을 <strong>'미확인'으로 표시</strong>하고, 막힌 조회는 <strong>대안까지 안내</strong>합니다.</li>
+          <li><strong>정직하게 말씀드리면</strong> — 검토가 실제로 결함을 잘 잡는지, 잘못된 답이 줄었는지는 <strong>아직 측정 전</strong>입니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · 기능 5 — 함께 쓰기 -->
+<section class="slide" data-key="feat-share" aria-label="함께 쓰기">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>5. 함께 쓴다 (그룹·공유) <span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></span>
+    <h2 class="title">화면에는 보이는데 AI만 못 읽던 동료의 파일, 이제 함께 봅니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>그룹 대화에서 <strong>동료가 올린 파일이 화면에는 보이는데 AI만 읽지 못했습니다</strong>.</li>
+          <li>초대받은 멤버에게 <strong>'나가기'가 보이지 않았습니다</strong>.</li>
+          <li>공유 링크에서 질문한 사람이 <strong>전원 '사용자'로만</strong> 표시됐습니다.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">그룹 대화 초대</span><span class="arrowc">›</span><span class="node on">첫 사용 안내 툴팁</span><span class="arrowc">›</span><span class="node">동료가 파일 첨부</span><span class="arrowc">›</span><span class="node on">AI가 출처 라벨과 함께 참조</span><span class="arrowc">›</span><span class="node">공유 · 나가기</span></div>
+        <p class="fnote">공유 화면도 함께 정비 — 버튼을 하단 바로 모으고, 조회수를 위로, 링크를 열면 <strong>가장 최근 메시지부터</strong> 보입니다.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 보이지만 읽지 못함</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 그룹 대화 화면에는 동료가 올린 파일이 보이지만 AI 쪽에는 차단선이 있어 읽지 못하고 자기가 올린 파일만 참조한다">
+              <g font-family="var(--font)">
+                <rect x="12" y="14" width="80" height="60" rx="5" fill="#fff" stroke="var(--mute2)"/>
+                <text x="52" y="26" font-size="6.6" fill="var(--before-ink)" text-anchor="middle">그룹 대화 화면</text>
+                <rect x="20" y="32" width="64" height="10" rx="3" fill="var(--surface-2)" stroke="var(--mute1)"/><text x="52" y="39.5" font-size="5.8" fill="var(--before-ink)" text-anchor="middle">내 파일</text>
+                <rect x="20" y="46" width="64" height="10" rx="3" fill="var(--surface-2)" stroke="var(--mute1)"/><text x="52" y="53.5" font-size="5.8" fill="var(--before-ink)" text-anchor="middle">동료 파일 (보임)</text>
+                <path d="M100 44h22" stroke="var(--mute2)" stroke-width="1.4"/>
+                <path d="M106 36l12 16M118 36l-12 16" stroke="var(--mute2)" stroke-width="1.8"/>
+                <rect x="128" y="30" width="60" height="28" rx="5" fill="var(--surface-2)" stroke="var(--mute2)"/>
+                <text x="158" y="41" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">AI는 내 파일만</text>
+                <text x="158" y="51" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">읽을 수 있음</text>
+                <text x="100" y="86" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">우회는 가능했고 — 정직한 사용자만 막혔습니다</text>
+              </g>
+            </svg>
+            <div class="cc">화면과 AI의 시야가 어긋남</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 대화 범위 + 공유창 게이트</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: AI가 대화 범위의 파일을 읽되 공유 범위 게이트를 통과한 것만 보며 동료 파일에는 올린 사람 라벨이 붙는다">
+              <g font-family="var(--font)">
+                <rect x="12" y="14" width="80" height="60" rx="5" fill="#fff" stroke="var(--primary)"/>
+                <text x="52" y="26" font-size="6.6" fill="var(--primary-dark)" text-anchor="middle">그룹 대화 화면</text>
+                <rect x="20" y="32" width="64" height="10" rx="3" fill="var(--primary-soft)" stroke="var(--acc2)"/><text x="52" y="39.5" font-size="5.8" fill="var(--primary-dark)" text-anchor="middle">내 파일</text>
+                <rect x="20" y="46" width="64" height="10" rx="3" fill="var(--primary-soft)" stroke="var(--acc2)"/><text x="52" y="53.5" font-size="5.6" fill="var(--primary-dark)" text-anchor="middle">동료 파일 · 올린이 표시</text>
+                <path d="M100 44h10" stroke="var(--primary)" stroke-width="1.4"/>
+                <path d="M112 30v28M112 30h8M112 58h8" stroke="var(--primary)" stroke-width="1.3" fill="none"/>
+                <text x="116" y="24" font-size="5.6" fill="var(--primary-dark)" text-anchor="middle">공유 범위 게이트</text>
+                <path d="M120 44h8" stroke="var(--primary)" stroke-width="1.4"/><path d="M124 40l5 4-5 4" stroke="var(--primary)" stroke-width="1.4" fill="none"/>
+                <rect x="132" y="30" width="56" height="28" rx="5" fill="var(--primary-soft)" stroke="var(--primary)"/>
+                <text x="160" y="41" font-size="6.4" fill="var(--primary-dark)" text-anchor="middle">AI가 함께 읽음</text>
+                <text x="160" y="51" font-size="6.4" fill="var(--primary-dark)" text-anchor="middle">(출처 라벨 부착)</text>
+                <text x="100" y="86" font-size="6.4" fill="var(--primary-dark)" text-anchor="middle">읽기만 넓혔습니다 — 파일을 고칠 권한은 그대로</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>가릴 구간은 여전히 물리적으로 제외</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>종전 제한은 <strong>내려받아 다시 올리면 우회할 수 있어</strong>, 악의는 막지 못하고 정직한 사용자만 막았습니다.</li>
+          <li>라이브에서 <strong>파일이 오간 그룹 대화 6곳 모두에서 이 불편이 관측</strong>됐습니다.</li>
+          <li><strong>읽기를 넓힌 것이지 쓰기를 넓힌 것이 아닙니다</strong> — 새 권한·새 저장 구조 추가 없음.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·배포 후 확인</span></div>
+        <ul class="pts">
+          <li>팀 단위 검토에서 <strong>파일을 각자 다시 올릴 필요가 없습니다</strong>.</li>
+          <li>공유 화면 진입·참여·나가기 경로가 <strong>모두 정상화</strong>됐습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 · 기능 6 — 관리 콘솔 -->
+<section class="slide" data-key="feat-console" aria-label="운영 관리 콘솔">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>6. 운영을 들여다보고 통제한다 <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규·완료</span></span>
+    <h2 class="title">사용 기록을 한 화면으로, 그리고 역할별로 쓸 수 있는 AI 모델을 제한합니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>AI 사용 기록이 <strong>여러 화면에 흩어져</strong> 있어 한눈에 못 봤습니다.</li>
+          <li>표를 <strong>정렬하거나 쪽수로 나눌 수 없어</strong> 기록이 쌓일수록 쓰기 어려웠습니다.</li>
+          <li>누가 <strong>어떤 등급의 AI 모델을 쓸지 통제할 수단이 없었습니다</strong>(비용·권한 모두).</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">관리 콘솔</span><span class="arrowc">›</span><span class="node on">AI 사용량</span><span class="arrowc">›</span><span class="node">요약 카드 클릭 → 차트 전환</span><span class="arrowc">›</span><span class="node on">사용 기록 정렬·쪽수</span><span class="arrowc">›</span><span class="node">역할별 모델 제한</span></div>
+        <div class="mgrid">
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 9h10M3 9V5M6 9V3M9 9V6" stroke="currentColor" stroke-width="1.2"/></svg>같은 화면 구성을 개인 프로필에도</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3h8v6H2z" stroke="currentColor" stroke-width="1" fill="none"/><path d="M4 5h4" stroke="currentColor" stroke-width="1"/></svg>캐시 사용분까지 계측·표시</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 5V4a3 3 0 016 0v1M2 5h8v5H2z" stroke="currentColor" stroke-width="1" fill="none"/></svg>역할별 모델 접근 제한</span>
+          <span class="mitem"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.1" fill="none"/><path d="M6 3.5V6l2 1.2" stroke="currentColor" stroke-width="1.1" fill="none"/></svg>'무응답 대기 상한'으로 용어 정정</span>
+        </div>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 흩어진 기록</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 사용 기록이 여러 화면 조각으로 흩어져 있고 정렬이나 쪽수 나누기가 없으며 모델 사용에 자물쇠가 없다">
+              <g font-family="var(--font)">
+                <rect x="14" y="14" width="52" height="26" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="40" y="30" font-size="6.2" fill="var(--before-ink)" text-anchor="middle">기록 A</text>
+                <rect x="74" y="20" width="52" height="26" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="100" y="36" font-size="6.2" fill="var(--before-ink)" text-anchor="middle">기록 B</text>
+                <rect x="134" y="12" width="52" height="26" rx="4" fill="#fff" stroke="var(--mute2)"/><text x="160" y="28" font-size="6.2" fill="var(--before-ink)" text-anchor="middle">기록 C</text>
+                <rect x="14" y="54" width="120" height="28" rx="4" fill="var(--surface-2)" stroke="var(--mute1)"/>
+                <text x="74" y="66" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">정렬·쪽수 없음</text>
+                <text x="74" y="77" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">쌓일수록 못 씀</text>
+                <g stroke="var(--mute2)" stroke-width="1.3" fill="none"><path d="M156 62v-3a6 6 0 0112 0v3"/><rect x="152" y="62" width="20" height="14" rx="2"/></g>
+                <text x="162" y="88" font-size="6" fill="var(--before-ink)" text-anchor="middle">모델 통제 없음</text>
+              </g>
+            </svg>
+            <div class="cc">누가 무엇을 얼마나 썼는지 파악 곤란</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 한 화면 + 통제</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 사용 기록이 한 화면 표로 모이고 열 제목 정렬과 쪽수 나누기가 붙었으며 역할별 모델 접근을 잠글 수 있다">
+              <g font-family="var(--font)">
+                <rect x="12" y="12" width="120" height="12" rx="3" fill="var(--primary-soft)" stroke="var(--primary)"/>
+                <text x="20" y="20.5" font-size="5.8" fill="var(--primary-dark)">계정</text><text x="56" y="20.5" font-size="5.8" fill="var(--primary-dark)">모델</text><text x="92" y="20.5" font-size="5.8" fill="var(--primary-dark)">사용량 ▾</text>
+                <rect x="12" y="26" width="120" height="10" rx="2" fill="#fff" stroke="var(--acc2)"/>
+                <rect x="12" y="38" width="120" height="10" rx="2" fill="#fff" stroke="var(--acc2)"/>
+                <rect x="12" y="50" width="120" height="10" rx="2" fill="#fff" stroke="var(--acc2)"/>
+                <g><rect x="12" y="64" width="14" height="9" rx="2" fill="var(--primary)"/><text x="19" y="70.5" font-size="5.4" fill="#fff" text-anchor="middle">1</text>
+                   <rect x="29" y="64" width="14" height="9" rx="2" fill="#fff" stroke="var(--acc2)"/><text x="36" y="70.5" font-size="5.4" fill="var(--text-2)" text-anchor="middle">2</text>
+                   <rect x="46" y="64" width="14" height="9" rx="2" fill="#fff" stroke="var(--acc2)"/><text x="53" y="70.5" font-size="5.4" fill="var(--text-2)" text-anchor="middle">3</text></g>
+                <g stroke="var(--primary)" stroke-width="1.3" fill="none"><path d="M154 60v-3a6 6 0 0112 0v3"/><rect x="150" y="60" width="20" height="14" rx="2" fill="var(--primary-soft)"/></g>
+                <path d="M160 65v4" stroke="var(--primary)" stroke-width="1.4"/>
+                <text x="160" y="22" font-size="6.2" fill="var(--primary-dark)" text-anchor="middle">역할별</text>
+                <text x="160" y="32" font-size="6.2" fill="var(--primary-dark)" text-anchor="middle">모델 제한</text>
+                <text x="160" y="86" font-size="5.8" fill="var(--primary-dark)" text-anchor="middle">해제는 유지됩니다</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>정렬 · 쪽수 · 지표 전환 · 모델 통제</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>모델 제한은 <strong>"기본은 모두 허용, 필요하면 해제"</strong> 방식 — 도입 시점에 아무도 못 쓰게 되는 일이 없도록.</li>
+          <li>권한 부여는 <strong>항목이 처음 생길 때 한 번만</strong> 합니다. 매번 다시 주면 <strong>관리자가 일부러 해제한 것을 재시작이 되살려</strong> 통제가 무력화되기 때문입니다.</li>
+          <li>관리 콘솔에 넣은 화면 구성을 <strong>개인 프로필에도 그대로</strong> 적용해 배우는 비용을 줄였습니다.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·배포 후 확인</span></div>
+        <ul class="pts">
+          <li>비용이 <strong>어디서 얼마나 발생하는지</strong> 한 화면에서 추적됩니다.</li>
+          <li>고성능 모델 사용을 <strong>역할 단위로 통제</strong>할 수 있습니다.</li>
+          <li><strong>주의</strong> — 관리자가 자신을 잠글 수 있는 경로가 있어 <strong>복구 절차 정비가 후속 과제</strong>입니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 · 기능 7 — 데이터 지도 -->
+<section class="slide" data-key="feat-graph" aria-label="데이터 지도">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>7. 데이터 구조를 지도로 읽는다 <span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음·확장</span></span>
+    <h2 class="title">연결선을 "읽을 수 있게" 다시 그리고, AI 설명을 실제 데이터와 대조합니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>연결선이 <strong>직선 다발</strong>이라 어느 방향으로 데이터가 흐르는지 못 읽었습니다.</li>
+          <li>축소하면 <strong>글자가 깨지고 선이 화면을 덮었습니다</strong>.</li>
+          <li>상세 목록이 <strong>"…외 N건"으로 잘려</strong> 실제로 정보가 누락됐습니다.</li>
+          <li>AI가 쓴 설명이 <strong>맞는지 아무도 확인하지 않았습니다</strong>.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">관리 콘솔 › 지도</span><span class="arrowc">›</span><span class="node on">묶음(카테고리) 선택</span><span class="arrowc">›</span><span class="node">표 펼치기</span><span class="arrowc">›</span><span class="node on">상세 패널 전량 표시</span><span class="arrowc">›</span><span class="node">AI 설명 + 대조 판정 배지</span></div>
+        <p class="fnote">읽기·쓰기 관계를 <strong>서로 다른 곡선</strong>으로 나누고, 겹칠수록 진해지게 해 <strong>중요도가 밀도로 드러나게</strong> 했습니다.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 직선 다발 · 잘린 목록</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 표 사이 연결선이 굵은 직선 다발로 엉켜 방향을 읽을 수 없고 상세 목록은 외 N건으로 잘려 있다">
+              <g font-family="var(--font)">
+                <rect x="14" y="18" width="30" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+                <rect x="14" y="42" width="30" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+                <rect x="14" y="66" width="30" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+                <rect x="92" y="30" width="30" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+                <rect x="92" y="56" width="30" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+                <g stroke="var(--mute2)" stroke-width="2.4" opacity=".85">
+                  <path d="M44 25L92 37M44 25L92 63M44 49L92 37M44 49L92 63M44 73L92 37M44 73L92 63"/>
+                </g>
+                <rect x="134" y="18" width="52" height="34" rx="4" fill="var(--surface-2)" stroke="var(--mute1)"/>
+                <text x="160" y="31" font-size="6" fill="var(--before-ink)" text-anchor="middle">관련 항목</text>
+                <text x="160" y="43" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">…외 42건</text>
+                <text x="100" y="90" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">방향 불명 · 축소 시 붕괴 · 정보 누락</text>
+              </g>
+            </svg>
+            <div class="cc">굵기가 정보를 담지 않음</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 방향 곡선 · 전량 표시</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 연결선이 방향성 곡선으로 바뀌어 읽기와 쓰기가 구분되고 겹칠수록 진해지며 상세 목록은 잘리지 않고 전량 표시되고 AI 설명에 대조 판정 배지가 붙는다">
+              <g font-family="var(--font)">
+                <rect x="14" y="18" width="30" height="14" rx="3" fill="#fff" stroke="var(--primary)"/>
+                <rect x="14" y="42" width="30" height="14" rx="3" fill="#fff" stroke="var(--primary)"/>
+                <rect x="14" y="66" width="30" height="14" rx="3" fill="#fff" stroke="var(--primary)"/>
+                <rect x="92" y="30" width="30" height="14" rx="3" fill="var(--primary-soft)" stroke="var(--primary)"/>
+                <rect x="92" y="56" width="30" height="14" rx="3" fill="#fff" stroke="var(--primary)"/>
+                <g fill="none" stroke="var(--primary)">
+                  <path d="M44 25C64 25 72 37 92 37" stroke-width="2.6" opacity=".75"/>
+                  <path d="M44 49C64 49 72 39 92 37" stroke-width="1.6" opacity=".5"/>
+                  <path d="M44 73C64 73 72 65 92 63" stroke-width="1" opacity=".38"/>
+                </g>
+                <g fill="none" stroke="var(--acc2)" stroke-dasharray="3 2">
+                  <path d="M44 31C64 33 72 57 92 61" stroke-width="1.2"/>
+                </g>
+                <path d="M86 36l6 1-6 2" fill="var(--primary)"/>
+                <rect x="134" y="14" width="52" height="42" rx="4" fill="#fff" stroke="var(--primary)"/>
+                <text x="160" y="26" font-size="6" fill="var(--primary-dark)" text-anchor="middle">관련 항목</text>
+                <rect x="140" y="30" width="40" height="4" rx="2" fill="var(--acc2)"/>
+                <rect x="140" y="37" width="40" height="4" rx="2" fill="var(--acc2)"/>
+                <rect x="140" y="44" width="28" height="4" rx="2" fill="var(--acc2)"/>
+                <text x="160" y="54" font-size="5.6" fill="var(--primary-dark)" text-anchor="middle">전량 표시</text>
+                <rect x="128" y="62" width="58" height="13" rx="6" fill="var(--ok-bg)" stroke="var(--ok-bd)"/>
+                <path d="M136 68.5l2.5 2.5 4-5" stroke="var(--ok-ink)" stroke-width="1.6" fill="none"/>
+                <text x="162" y="71" font-size="5.6" fill="var(--ok-ink)" text-anchor="middle">데이터와 대조됨</text>
+                <text x="100" y="90" font-size="6.2" fill="var(--primary-dark)" text-anchor="middle">굵기=건수 · 진하기=신뢰도 · 점선=추정</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>펼쳐도 방금 누른 항목을 놓치지 않음</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>느린 이유를 <strong>추측하지 않고 측정으로 세 곳에 귀속</strong>한 뒤 동시에 고쳤습니다.</li>
+          <li>AI 설명 검증의 핵심 원칙은 <strong>"판정에 실패한 것은 '검증됨'이 아니다"</strong> — 오류·시간초과는 기록을 남기지 않습니다. 잘못 찍힌 확인 도장은 아래층 오류를 위로 전파시키기 때문입니다.</li>
+          <li>분석 대상을 <strong>중요도 순으로 자동 선정</strong> — 종전에는 완료율 11.9%였고 그마저 "우연히 눌린 것"이라 중요도와 무관했습니다.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V3M3 6l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>일부 효과는 관측 대기</span></div>
+        <ul class="pts">
+          <li>구조를 모르는 담당자도 <strong>관계를 눈으로 따라갈 수 있습니다</strong>.</li>
+          <li><strong>정직하게 말씀드리면</strong> — 묶음이 실제로 덜 잘게 쪼개졌는지는 <strong>다음 재계산 후에야 확인</strong>됩니다. 대규모 화면의 부드러움도 측정 수단 한계로 미확인입니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 · 기능 8 — 밖의 AI 연결 -->
+<section class="slide" data-key="feat-extai" aria-label="밖의 AI 연결">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>8. 밖의 AI가 우리 데이터를 쓴다 <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규·새 제품면</span></span>
+    <h2 class="title">외부 AI 도구가 <em>자기 비용으로</em> 우리 데이터를 안전하게 조회합니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>담당자들이 <strong>이미 각자 다른 AI 도구를 쓰고 있는데</strong>, 그 도구가 우리 데이터를 볼 방법이 없었습니다.</li>
+          <li>우리가 대신 추론해 주면 <strong>비용이 전부 우리 계정에 쌓이고</strong>, 계정 한도가 차면 전체가 멈춥니다.</li>
+          <li>실제로 <strong>계정 한도 소진 사건</strong>이 있었습니다.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">외부 AI 도구</span><span class="arrowc">›</span><span class="node on">주소만 등록</span><span class="arrowc">›</span><span class="node">우리 화면에서 로그인·동의</span><span class="arrowc">›</span><span class="node on">도구 9종 + 조회 실행</span><span class="arrowc">›</span><span class="node">답변은 우리 콘솔에 보존</span></div>
+        <p class="fnote">설치할 것이 없습니다 — <strong>주소를 등록하면 표준 절차로 인증이 성립</strong>하고, <strong>로그아웃하면 연결도 함께 끊깁니다</strong>.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 우리가 대신 추론</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 외부 AI 도구는 우리 데이터에 닿을 수 없고 모든 추론을 우리 계정이 수행해 비용이 우리에게 쌓이며 한도가 차면 전체가 멈춘다">
+              <g font-family="var(--font)">
+                <rect x="12" y="34" width="44" height="24" rx="5" fill="#fff" stroke="var(--mute2)"/><text x="34" y="49" font-size="6.2" fill="var(--before-ink)" text-anchor="middle">외부 AI</text>
+                <path d="M60 46h20" stroke="var(--mute2)" stroke-width="1.4" stroke-dasharray="3 3"/>
+                <path d="M64 40l10 12M74 40l-10 12" stroke="var(--mute2)" stroke-width="1.8"/>
+                <rect x="86" y="26" width="52" height="40" rx="5" fill="var(--surface-2)" stroke="var(--mute2)"/>
+                <text x="112" y="41" font-size="6.2" fill="var(--before-ink)" text-anchor="middle">우리 계정이</text>
+                <text x="112" y="52" font-size="6.2" fill="var(--before-ink)" text-anchor="middle">전부 추론</text>
+                <rect x="150" y="34" width="38" height="24" rx="4" fill="#fff" stroke="var(--mute2)"/>
+                <text x="169" y="43" font-size="5.8" fill="var(--before-ink)" text-anchor="middle">한도 소진</text>
+                <text x="169" y="53" font-size="5.8" fill="var(--before-ink)" text-anchor="middle">= 전체 정지</text>
+                <text x="100" y="82" font-size="6.4" fill="var(--before-ink)" text-anchor="middle">비용이 한곳에 몰리고, 접근 경로는 없음</text>
+              </g>
+            </svg>
+            <div class="cc">단일 계정 의존 · 외부 도구 차단</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 추론 주체가 바깥으로</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 외부 AI가 자기 계정으로 추론하고 우리는 신원 확인과 조회 창구만 제공하며 비용은 호출자에게 귀속되고 우리 계정 한도와 무관해진다">
+              <g font-family="var(--font)">
+                <rect x="10" y="30" width="48" height="30" rx="5" fill="var(--primary-soft)" stroke="var(--primary)"/>
+                <text x="34" y="42" font-size="6.2" fill="var(--primary-dark)" text-anchor="middle">외부 AI</text>
+                <text x="34" y="52" font-size="5.8" fill="var(--primary-dark)" text-anchor="middle">자기 계정 추론</text>
+                <path d="M60 45h12" stroke="var(--primary)" stroke-width="1.4"/><path d="M68 41l5 4-5 4" stroke="var(--primary)" stroke-width="1.4" fill="none"/>
+                <rect x="76" y="24" width="18" height="42" rx="3" fill="#fff" stroke="var(--primary)"/>
+                <text x="85" y="18" font-size="5.6" fill="var(--primary-dark)" text-anchor="middle">창구</text>
+                <path d="M81 34h8M81 42h8M81 50h8M81 58h8" stroke="var(--acc2)" stroke-width="1.4"/>
+                <path d="M96 45h10" stroke="var(--primary)" stroke-width="1.4"/><path d="M102 41l5 4-5 4" stroke="var(--primary)" stroke-width="1.4" fill="none"/>
+                <rect x="110" y="30" width="46" height="30" rx="5" fill="#fff" stroke="var(--primary)"/>
+                <text x="133" y="42" font-size="6" fill="var(--primary-dark)" text-anchor="middle">우리 데이터</text>
+                <text x="133" y="52" font-size="5.8" fill="var(--primary-dark)" text-anchor="middle">조회 전용</text>
+                <rect x="162" y="30" width="30" height="30" rx="4" fill="var(--ok-bg)" stroke="var(--ok-bd)"/>
+                <text x="177" y="42" font-size="5.6" fill="var(--ok-ink)" text-anchor="middle">비용</text>
+                <text x="177" y="52" font-size="5.6" fill="var(--ok-ink)" text-anchor="middle">호출자</text>
+                <text x="100" y="82" font-size="6.2" fill="var(--primary-dark)" text-anchor="middle">신원은 우리 로그인 · 비용은 호출한 쪽 · 자격증명 미보관</text>
+              </g>
+            </svg>
+            <div class="cc"><strong>우리 계정 한도가 이 창구를 멈추지 않습니다</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>대안 4가지를 검토했고, <strong>우리가 외부 자격증명을 보관하는 방식은 배제</strong>했습니다.</li>
+          <li>위협의 방향이 <strong>뒤집힌 표면</strong>입니다 — 종전엔 "우리 AI가 남의 데이터를 읽는다"였다면 여기선 <strong>"우리가 통제하지 않는 AI에게 데이터를 내보낸다"</strong>. 그래서 통제를 지침이 아니라 <strong>연결 규격 자체</strong>에 넣었습니다.</li>
+          <li>사용량 기록이 <strong>실패하면 결과를 돌려주지 않습니다</strong>(기록 없는 사용 금지).</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V3M3 6l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>1건 검증 잔여</span></div>
+        <ul class="pts">
+          <li>담당자가 <strong>쓰던 AI 도구를 그대로 쓰면서</strong> 우리 데이터를 조회합니다.</li>
+          <li><strong>LLM 비용이 사용자 쪽으로 분산</strong>되어 우리 계정 한도 리스크가 줄어듭니다.</li>
+          <li><strong>남은 검증</strong> — 사람이 브라우저에서 한 번 로그인·동의해야 하는 구간의 전 과정 확인 1건(설계상 자동화 불가).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 · 기능 9 — 끊김 없는 기반 -->
+<section class="slide" data-key="feat-infra" aria-label="끊김 없는 기반">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>9. 끊기지 않게 한다 <span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·헤드라인</span></span>
+    <h2 class="title">"배포할 때마다 서비스가 멈춘다" — 느낌이 아니라 실제였고, 없앴습니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div>
+        <ul class="pts">
+          <li>사용자 신고를 계측해 보니 <strong>배포 1회마다 12~17초 전면 오류</strong>, 하루 6회 발생.</li>
+          <li>그런데 <strong>배포 절차는 매번 "성공"으로 보고</strong>하고 있었습니다.</li>
+          <li>배포 중 <strong>진행 중이던 답변이 통째로 폐기</strong>되기도 했습니다.</li>
+          <li>업데이트 후에도 <strong>예전 화면이 계속 보이는</strong> 문제가 오래 있었습니다.</li>
+        </ul>
+      </div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>처리 순서</div>
+        <div class="flow"><span class="node">새 버전 준비</span><span class="arrowc">›</span><span class="node on">임시 인스턴스 투입</span><span class="arrowc">›</span><span class="node">진행 중 작업 0 확인</span><span class="arrowc">›</span><span class="node on">한 대씩 교대</span><span class="arrowc">›</span><span class="node">바깥에서 복귀 확인 후 다음</span></div>
+        <p class="fnote">종전 게이트는 <strong>앱이 떴는지까지만</strong> 확인했습니다. 바깥(접속 관문)이 그 인스턴스를 다시 쓰는지는 아무도 보지 않았습니다.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>실측</span></div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 13초 전면 중단</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 배포 중 두 인스턴스가 동시에 후보에서 빠져 접속이 13초 동안 전면 중단되고 111건 요청 중 9건이 오류가 났다">
+              <g font-family="var(--font)">
+                <text x="14" y="18" font-size="6.2" fill="var(--before-ink)">서버 A</text>
+                <rect x="46" y="11" width="60" height="9" rx="2" fill="var(--mute1)"/>
+                <rect x="106" y="11" width="34" height="9" rx="2" fill="#fff" stroke="var(--mute2)" stroke-dasharray="3 2"/>
+                <rect x="140" y="11" width="46" height="9" rx="2" fill="var(--mute1)"/>
+                <text x="14" y="36" font-size="6.2" fill="var(--before-ink)">서버 B</text>
+                <rect x="46" y="29" width="34" height="9" rx="2" fill="var(--mute1)"/>
+                <rect x="80" y="29" width="40" height="9" rx="2" fill="#fff" stroke="var(--mute2)" stroke-dasharray="3 2"/>
+                <rect x="120" y="29" width="66" height="9" rx="2" fill="var(--mute1)"/>
+                <rect x="106" y="44" width="14" height="22" fill="var(--danger)" opacity=".22"/>
+                <path d="M106 44v22M120 44v22" stroke="var(--danger)" stroke-width="1.2"/>
+                <text x="113" y="74" font-size="6.4" fill="var(--danger)" text-anchor="middle" font-weight="700">13초 전면 중단</text>
+                <text x="10" y="52" font-size="5.6" fill="var(--before-ink)">둘 다 후보에서 빠지는 구간</text>
+                <text x="10" y="62" font-size="5.6" fill="var(--before-ink)">111건 중 오류 9건</text>
+              </g>
+            </svg>
+            <div class="cc">앱만 보고 바깥은 안 봄</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 중단 0초</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 한 서버가 바깥에서 복귀한 것을 확인한 뒤 다음 서버를 교체해 겹치는 중단 구간이 없고 172건 요청이 전부 정상 처리됐다">
+              <g font-family="var(--font)">
+                <text x="14" y="18" font-size="6.2" fill="var(--primary-dark)">서버 A</text>
+                <rect x="46" y="11" width="52" height="9" rx="2" fill="var(--acc2)"/>
+                <rect x="98" y="11" width="26" height="9" rx="2" fill="#fff" stroke="var(--primary)" stroke-dasharray="3 2"/>
+                <rect x="124" y="11" width="62" height="9" rx="2" fill="var(--acc2)"/>
+                <text x="14" y="36" font-size="6.2" fill="var(--primary-dark)">서버 B</text>
+                <rect x="46" y="29" width="94" height="9" rx="2" fill="var(--acc2)"/>
+                <rect x="140" y="29" width="26" height="9" rx="2" fill="#fff" stroke="var(--primary)" stroke-dasharray="3 2"/>
+                <rect x="166" y="29" width="20" height="9" rx="2" fill="var(--acc2)"/>
+                <path d="M124 20v6M124 26h16v3" stroke="var(--primary)" stroke-width="1.1" fill="none"/>
+                <text x="150" y="25" font-size="5.4" fill="var(--primary-dark)">복귀 확인 후</text>
+                <rect x="46" y="48" width="140" height="10" rx="3" fill="var(--ok-bg)" stroke="var(--ok-bd)"/>
+                <path d="M54 53l2.5 2.5 4-5" stroke="var(--ok-ink)" stroke-width="1.6" fill="none"/>
+                <text x="122" y="55.5" font-size="6" fill="var(--ok-ink)" text-anchor="middle">172건 전부 정상 · 중단 0초</text>
+                <text x="116" y="74" font-size="6" fill="var(--primary-dark)" text-anchor="middle">바쁜 시간엔 임시 인스턴스를 띄워 교대</text>
+              </g>
+            </svg>
+            <div class="delta"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M3 5l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>중단 13초 → 0초</div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식 · 수치는 배포 창 접속 로그 실측</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div>
+        <ul class="pts">
+          <li>첫 안은 <strong>격리 시간을 30초에서 3초로 낮추는 것</strong>이었으나, 자체 검토가 "그러면 문제 있는 서버가 3초마다 다시 투입된다"고 지적해 <strong>값은 되돌리고 게이트가 복귀를 확인하는 쪽</strong>으로 바꿨습니다.</li>
+          <li>다음 문제는 <strong>"사용자가 쓸수록 배포가 안 되는" 구조</strong>였습니다 — 유입이 7~10분 간격이라 조용한 창이 안 생겨 시급한 변경이 도달하지 못했습니다. 그래서 <strong>기다리는 방식에서 교대하는 방식으로</strong> 전환.</li>
+          <li>작업 종료 유예도 측정으로 정했습니다 — <strong>실제 작업의 66%가 종전 유예(60초)를 초과</strong>하고 있었습니다.</li>
+        </ul>
+      </div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨</span></div>
+        <ul class="pts">
+          <li><strong>업무 시간에도 배포할 수 있습니다</strong> — 보안 수정처럼 급한 변경이 밤을 기다리지 않습니다.</li>
+          <li>배포·장애 중에도 <strong>하던 작업이 보존</strong>되고, <strong>업데이트가 화면에 즉시 반영</strong>됩니다.</li>
+          <li><strong>정직하게 말씀드리면</strong> — "정말 바쁠 때 기다렸다가 통과하는" 장면은 <strong>아직 관측되지 않았습니다</strong>.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 13 · 범위와 여건 -->
+<section class="slide" data-key="scope" aria-label="범위와 여건">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>범위와 여건 · 정직하게 구분</span>
+    <h2 class="title">어디까지 했고, 무엇이 여전히 결정을 기다리고 있는가</h2>
+    <div class="tablewrap">
+      <table class="cmp">
+        <caption class="cap" style="text-align:left;padding-bottom:6px">직전 보고에서 '결정 대기'로 말씀드린 세 가지 — 이번 기간에도 변동 없음</caption>
+        <thead><tr><th style="width:22%">항목</th><th style="width:39%">직전 보고 시점</th><th style="width:39%">지금</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlab">구글 드라이브 연동</td><td class="b">기능 토대만 구축 · 서비스 미통합</td><td class="a"><strong>변동 없음</strong> — 사내 계정 접근 허용 여부 결정 대기</td></tr>
+          <tr><td class="rowlab">DB 복제본 부하분산</td><td class="b">환경 제약으로 미구성</td><td class="a"><strong>변동 없음</strong> — 환경 확보 대기</td></tr>
+          <tr><td class="rowlab">운영 DB 접근 범위</td><td class="b">접근 범위 결정 대기</td><td class="a"><strong>변동 없음</strong> — 연결 대상 데이터가 제한적인 상태 유지</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid g2" style="margin-top:var(--gap)">
+      <div class="card"><h3><span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>이번 기간에 한 것</span>사내 확대 도입 준비</h3>
+        <ul class="pts">
+          <li>접속할 때 뜨던 <strong>"안전하지 않은 연결" 경고를 해소</strong>하는 자동 설정 페이지를 만들었습니다 — 담당 PC를 하나하나 손볼 필요가 없습니다.</li>
+          <li><strong>정식 주소(도메인) 발급을 위해 사내 인프라·웹 담당에 요청할 내용</strong>을 비기술 담당자도 읽을 수 있는 형태로 정리했습니다.</li>
+        </ul>
+      </div>
+      <div class="card"><h3><span class="badge b-hold"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3h2v6H3zM7 3h2v6H7z" fill="currentColor" stroke="none"/></svg>기다리는 것</span>확대 도입 자체</h3>
+        <ul class="pts">
+          <li>정식 주소 발급은 <strong>사내 인프라·웹 담당의 처리</strong>가 필요합니다.</li>
+          <li>발급되면 접속 경로를 전환하고 <strong>대상 확대 안내</strong>로 넘어갑니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn">
+      <ul class="pts">
+        <li><strong>측정에 대해 미리 밝혀둘 것</strong> — '13초 → 0초'는 <strong>서버 접속 기록</strong> 기준, '−25~35초'는 <strong>서버 처리 경로</strong> 기준입니다.</li>
+        <li><strong>브라우저에서 체감하는 속도</strong>와 <strong>대규모 화면의 부드러움</strong>은 측정 수단의 한계로 <strong>아직 수치가 없습니다</strong>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 14 · 기대 효과 -->
+<section class="slide" data-key="impact" aria-label="기대 효과">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>기대 효과 · 확인된 것과 아직인 것</span>
+    <h2 class="title">확인된 성과와, 아직 수치로 말할 수 없는 것</h2>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card good"><h3><span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>확인된 성과</span></h3>
+        <ul class="pts">
+          <li><strong>배포 중 접속 중단이 사라졌습니다</strong> — 13초 → 0초, 배포 창 요청 172건 전부 정상.</li>
+          <li><strong>답변 대기가 25~35초 짧아졌습니다</strong> — 평균 141초를 구간별로 쪼개 측정한 뒤 정리작업을 응답 경로 밖으로 뺐습니다.</li>
+          <li><strong>사용자에게 138건의 변화</strong>가 안내와 함께 전달됐습니다.</li>
+          <li><strong>업무 시간에도 배포 가능</strong>해져 시급한 수정이 밤을 기다리지 않습니다.</li>
+          <li><strong>외부 AI 연결로 비용 구조가 분산</strong>됐습니다 — 우리 계정 한도가 그 경로를 멈추지 않습니다.</li>
+        </ul>
+      </div>
+      <div class="card"><h3><span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V3M3 6l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>아직 수치로 말할 수 없는 것</span></h3>
+        <ul class="pts">
+          <li><strong>답변 품질이 실제로 얼마나 좋아졌는지</strong> — 자체 점검이 결함을 잘 잡는지, 잘못된 답이 줄었는지는 다음 주기 측정 과제입니다.</li>
+          <li><strong>불편이 실제로 줄었는지</strong> — 배포 전 기준선은 확보해 뒀고, 같은 지표로 다시 재는 일이 남았습니다.</li>
+          <li><strong>지도 묶음이 실제로 정돈됐는지</strong> — 다음 재계산 후 확인됩니다.</li>
+          <li><strong>업무 시간이 얼마나 절약됐는지</strong> — 사용자 쪽 정량 지표가 아직 없습니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout">
+      <ul class="pts">
+        <li><strong>이번 기간에 자리 잡은 태도</strong> — "고쳤다"고 보고하기 전에 <strong>실제로 고쳐졌는지 서비스에서 직접 확인</strong>했습니다.</li>
+        <li>그 과정에서 <strong>완료로 표기됐지만 실제로는 구현되지 않은 항목</strong>, <strong>운영자가 조여도 아무 일이 없던 설정</strong>, <strong>늘 0으로 보고하던 점검</strong>을 스스로 찾아내 고쳤습니다.</li>
+        <li>이 세 건은 모두 <strong>정상으로 보이던 것들</strong>이었습니다 — 그래서 확인 습관이 성과입니다.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 15 · 발전 과제 -->
+<section class="slide" data-key="risk" aria-label="발전 과제">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>발전 과제 · 다음 기간 방향</span>
+    <h2 class="title">더 키울 과제와, 결정이 필요한 것</h2>
+    <div class="tablewrap">
+      <table class="cmp">
+        <thead><tr><th style="width:26%">과제</th><th style="width:37%">현재 수준</th><th style="width:37%">다음 단계</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlab">답변 품질의 실측</td><td class="b">기능 완료·배포 · <strong>효과는 미측정</strong></td><td class="a">배포 전 기준선과 같은 지표로 재측정</td></tr>
+          <tr><td class="rowlab">사용자 체감 지표</td><td class="b">서버측 지표만 존재</td><td class="a">만족도·작업 시간 표본 측정 도입</td></tr>
+          <tr><td class="rowlab">지도 묶음 효과</td><td class="b">재설계 완료 · <strong>효과 관측 대기</strong></td><td class="a">재계산 후 묶음 수·구성 재집계</td></tr>
+          <tr><td class="rowlab">밖의 AI 연결</td><td class="b">출하 완료 · <strong>사람 인가 1회 구간 미검증</strong></td><td class="a">담당자 인가 1회로 전 과정 종결</td></tr>
+          <tr><td class="rowlab">운영자 설정과 코드 규칙</td><td class="b">문제 축은 봉인 · <strong>구조 방침은 미정</strong></td><td class="a">전역 지침의 권한 범위를 정책으로 확정</td></tr>
+          <tr><td class="rowlab">관리자 자기 잠금</td><td class="b">가능 경로 존재를 인지·기록</td><td class="a">방지 가드 또는 복구 절차 정비</td></tr>
+          <tr><td class="rowlab">사내 확대 도입</td><td class="b">준비 완료 · <strong>주소 발급 대기</strong></td><td class="a">인프라·웹 담당 처리 후 경로 전환</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <ul class="pts">
+        <li><strong>의사결정을 요청드립니다</strong> — 아래 세 가지는 개발로 풀 수 있는 과제가 아니라 <strong>결정과 여건이 필요한 사안</strong>입니다.</li>
+        <li><strong>① 구글 드라이브</strong> — 사내 계정으로 드라이브 문서를 답변 근거로 쓰도록 허용할지.</li>
+        <li><strong>② 운영 DB 접근 범위</strong> — 어디까지의 데이터에 연결할지.</li>
+        <li><strong>③ 복제본 환경</strong> — 부하 분산용 복제본을 확보할지.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 16 · 마무리 -->
+<section class="slide" data-key="outro" aria-label="마무리">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>마무리</span>
+    <h2 class="title">정리하면 — 쓰이면서 드러난 문제를 구조로 막고, 쓰임새를 넓힌 5주</h2>
+    <ul class="pts big" style="margin-top:14px;max-width:66ch">
+      <li><strong>가장 큰 성과</strong>는 배포할 때마다 있던 <strong>접속 끊김을 없앤 것</strong>입니다 — 이제 업무 시간에도 배포합니다.</li>
+      <li><strong>쓰임새는 세 갈래로</strong> 넓어졌습니다 — 파일의 이력을 추적·비교하고, 대화를 폴더로 정리하고, 밖의 AI가 자기 비용으로 우리 데이터를 조회합니다.</li>
+      <li><strong>고칠 대상은 측정으로 골랐습니다</strong> — "느낌"으로 보고된 문제가 실제 장애였음을 계측으로 확정했고, 반대로 <strong>측정 결과가 전제를 뒤집어 착수를 취소한 항목</strong>도 있습니다.</li>
+      <li><strong>속도보다 품질을 택한 결정</strong>을 기록으로 남겼습니다 — 답변 시간의 33%를 없앨 수 있었지만, 그 검토가 24%의 답변을 실제로 고치고 있었기에 유지하고 <strong>개인이 고를 탈출구</strong>를 뒀습니다.</li>
+    </ul>
+    <div class="grid g3" style="margin-top:18px">
+      <div class="card"><h3>다음 기간에 할 것</h3>
+        <ul class="pts">
+          <li>이번에 고친 것들의 <strong>효과를 같은 지표로 재측정</strong>.</li>
+          <li><strong>사용자 체감 지표</strong> 도입.</li>
+          <li>남은 검증 <strong>1건 종결</strong>.</li>
+        </ul>
+      </div>
+      <div class="card"><h3>요청드리는 것</h3>
+        <ul class="pts">
+          <li>드라이브 접근 · 운영 DB 범위 · 복제본 환경 <strong>세 가지 결정</strong>.</li>
+          <li>정식 주소 발급을 위한 <strong>사내 협조</strong>.</li>
+        </ul>
+      </div>
+      <div class="card"><h3>기대하는 것</h3>
+        <ul class="pts">
+          <li>확대 도입 시 <strong>더 많은 실사용 신호</strong>가 다음 개선을 이끕니다.</li>
+          <li>이번 기간이 그 <strong>준비를 마친 기간</strong>입니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- 목차 -->
+<div class="idx" id="idx" role="dialog" aria-modal="true" aria-label="목차">
+  <div class="idx-panel">
+    <div class="idx-title">목차</div>
+    <div id="idxList"></div>
+    <div class="idx-hint"><kbd>→</kbd> <kbd>Space</kbd> 다음 · <kbd>←</kbd> 이전 · <kbd>Esc</kbd> 목차 열기/닫기</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var titles = [
+    ['표지','DBA AI Assistant 개발 진척 보고'],
+    ['핵심 요약','먼저 결론 — 쓰면서 다듬은 5주'],
+    ['개발 배경','기능은 있는데 믿고 맡기기 어렵다'],
+    ['이번 기간 개요','화면을 쓰는 순서로 아홉 갈래'],
+    ['1. 대화 정리·찾기','폴더 · 날짜 묶음 · 오타 검색'],
+    ['2. 파일 다루기','버전 이력 · 비교 · 되살리기'],
+    ['3. 기다림 관리','실행 단계 표시 · 계속할지 선택'],
+    ['4. 답변 신뢰','지적이 사라질 때까지 · 미확인 표기'],
+    ['5. 함께 쓰기','그룹 파일 참조 · 공유 화면 정비'],
+    ['6. 운영·관리 콘솔','사용 기록 단일화 · 모델 제한'],
+    ['7. 데이터 지도','연결선 재설계 · 설명 사실 대조'],
+    ['8. 밖의 AI 연결','외부 AI가 자기 비용으로 조회'],
+    ['9. 끊김 없는 기반','배포 중단 13초 → 0초'],
+    ['범위와 여건','결정 대기 3건 · 확대 도입 준비'],
+    ['기대 효과','확인된 성과 + 측정 예정'],
+    ['발전 과제','다음 단계와 의사결정 요청'],
+    ['마무리','다음 기간 예고']
+  ];
+  var cur = 0, N = slides.length;
+  var prog = document.getElementById('prog');
+  var counter = document.getElementById('counter');
+  var idx = document.getElementById('idx');
+  var idxList = document.getElementById('idxList');
+
+  slides.forEach(function(s, i){
+    var b = document.createElement('button');
+    b.className = 'idx-item'; b.type = 'button'; b.setAttribute('data-i', i);
+    var t = titles[i] || [s.getAttribute('data-key')||('슬라이드 '+(i+1)),''];
+    b.innerHTML = '<span class="idx-num">'+(i+1)+'</span><span><span class="idx-name">'+t[0]+'</span><span class="idx-sub">'+(t[1]||'')+'</span></span>';
+    b.addEventListener('click', function(){ go(i); closeIdx(); });
+    idxList.appendChild(b);
+  });
+  var idxItems = Array.prototype.slice.call(idxList.querySelectorAll('.idx-item'));
+
+  function render(){
+    slides.forEach(function(s, i){ s.classList.toggle('is-active', i===cur); });
+    prog.style.width = (N>1 ? (cur/(N-1))*100 : 100) + '%';
+    counter.textContent = (cur+1) + ' / ' + N;
+    idxItems.forEach(function(b, i){ b.classList.toggle('active', i===cur); });
+    var key = slides[cur].getAttribute('data-key');
+    if (key && ('#'+key) !== location.hash) history.replaceState(null,'','#'+key);
+    var act = slides[cur]; act.setAttribute('tabindex','-1'); act.scrollTop = 0;
+  }
+  function go(i){ cur = Math.max(0, Math.min(N-1, i)); render(); }
+  function next(){ go(cur+1); } function prev(){ go(cur-1); }
+  function openIdx(){ idx.classList.add('open'); var a=idxList.querySelector('.idx-item.active'); if(a) a.focus(); }
+  function closeIdx(){ idx.classList.remove('open'); }
+  function toggleIdx(){ idx.classList.contains('open') ? closeIdx() : openIdx(); }
+
+  document.getElementById('zoneL').addEventListener('click', prev);
+  document.getElementById('zoneR').addEventListener('click', next);
+  document.getElementById('menuBtn').addEventListener('click', toggleIdx);
+  idx.addEventListener('click', function(e){ if(e.target===idx) closeIdx(); });
+  document.addEventListener('keydown', function(e){
+    if (e.key==='Escape'){ toggleIdx(); return; }
+    if (idx.classList.contains('open')) return;
+    if (e.key==='ArrowRight' || e.key===' ' || e.key==='PageDown'){ e.preventDefault(); next(); }
+    else if (e.key==='ArrowLeft' || e.key==='PageUp'){ e.preventDefault(); prev(); }
+    else if (e.key==='Home'){ go(0); } else if (e.key==='End'){ go(N-1); }
+  });
+  (function(){
+    var h = (location.hash||'').replace('#','');
+    if (h){ for (var i=0;i<slides.length;i++){ if (slides[i].getAttribute('data-key')===h){ cur=i; break; } } }
+    render();
+  })();
+})();
+</script>
+</body>
+</html>
