@@ -641,16 +641,23 @@ function openFolderMenu(folder, triggerEl) {
     id: "folderMenu",
     className: "conv-item-menu",
     dataset: { folderId: String(folder.folder_id) },
+    // ctxmenu-order-parity: 좌측 목록의 두 요소(폴더·대화)는 **같은 순서 규칙**을 쓴다 —
+    //   `[이름 변경] → [고유 액션] → [이동 류] → [설정]`. 종전에는 폴더가
+    //   `하위 폴더 추가 · 이름 변경 · 설정 · 최상위로 꺼내기`, 대화가 `이름 변경 · 공유 · 이동 · 설정`
+    //   이라 **공통 항목 두 개가 서로 다른 자리**에 있었다(이름 변경 2번째↔1번째, 설정 3번째↔끝).
+    //   같은 목록에서 같은 조작을 하려는데 커서를 옮기는 위치가 달라지는 것이 마찰이므로,
+    //   양쪽 끝(첫=이름 변경 / 끝=설정)을 고정하고 그 사이에만 각자의 고유 액션을 둔다.
+    //   조건부 항목(depth cap · 최상위 여부)이 빠져도 남은 항목의 상대 순서는 규칙을 지킨다.
     buildItems: (menu, make) => {
+      menu.appendChild(make("이름 변경", { onSelect: () => renameFolderFlow(folder) }));
       if (Number(folder.depth) + 1 <= _folderDepthCap()) {
         menu.appendChild(make("하위 폴더 추가", { onSelect: () => createFolderFlow(folder.folder_id) }));
       }
-      menu.appendChild(make("이름 변경", { onSelect: () => renameFolderFlow(folder) }));
-      // 설정: 지침(멀티라인 모달) + 삭제. (지침/삭제는 팝업 안에서 수행 — prompt/confirm 제거.)
-      menu.appendChild(make("설정", { onSelect: () => openFolderSettings(folder) }));
       if (folder.parent_folder_id != null) {
         menu.appendChild(make("최상위로 꺼내기", { onSelect: () => moveFolderTo(folder.folder_id, null) }));
       }
+      // 설정: 지침(멀티라인 모달) + 삭제. (지침/삭제는 팝업 안에서 수행 — prompt/confirm 제거.)
+      menu.appendChild(make("설정", { onSelect: () => openFolderSettings(folder) }));
     },
   });
 }
