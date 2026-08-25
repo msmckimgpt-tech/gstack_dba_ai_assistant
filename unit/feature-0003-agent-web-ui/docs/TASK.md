@@ -11759,3 +11759,13 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - 버린 독해: '이름 변경' 한 항목만 같은 순번으로 옮기고 나머지는 그대로 둔다.
 - 예시: 폴더 우클릭 → `이름 변경 · 하위 폴더 추가 · 최상위로 꺼내기 · 설정`,
   대화 우클릭 → `이름 변경 · 공유 · 이동 · 설정` — **첫 줄과 마지막 줄이 양쪽 같다.**
+## 20260826T010305-doc-sync-rn-0826 — 릴리즈노트 신규 2026-08-25 블록 prepend(3항목) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 의 `releases` head 에 **신규 `2026-08-25` date 블록 prepend**(items 3 + summary) + `generated` "2026-08-24"→**"2026-08-25"**(top-block date 규약). `releases` 51→**52**, 기존 51 블록 전건 보존.
+- [x] 귀속 판정: 델타 창(`9f4a82e4..8d64e2cf`, 5 non-merge)의 커밋일이 전부 **2026-08-25** 이고 파일에 08-25 date 블록이 **부재**(grep 0회)이므로 신규 블록 prepend(기존 08-24 블록 append 아님). 오늘(08-26) 날짜 블록·publish-date 신설 안 함.
+- [x] 배포 게이트 충족: `artifacts/deploy/deploy-web.state` `current=4c7bd6c0`(mtime 08-25 18:38) · 라이브 `repo-web-a/b = mysql-ai-web:4c7bd6c0`(StartedAt 2026-08-25T09:34Z = KST 18:34, healthy) · 3항목의 소유 커밋(`0f14fa3d`·`93680ba3`·`65c515d8`) 전건이 그 이미지의 조상 → **이미 서빙 중**(유보 없음). 유일 후행 커밋 `2092df81` 은 문서 전용(배포·라이브 실측 기록).
+- [x] 항목 구성: improved 1 / fixed 2 · area work 3(이번 창에 관리 콘솔 표면 변경 없어 admin 0). 사용자 표면이 0 인 `2fd86696`(상부보고 발표자료)·`2092df81`(배포 실측 기록)은 제외.
+- [x] **미확인 약속 문장 제거(오케스트레이터 판정)**: 스윕 초안이 세 번째 항목 말미에 "안내 문구를 더 알맞게 다듬는 일과 … 이어서 손보고 있습니다" 를 넣었으나, 그 두 축의 후속 작업이 정본(`FRICTION_LEDGER` open FR · `65c515d8` TASK 슬라이스의 범위밖/후속 절)에 **등재돼 있지 않음**을 확인 → 사용자에게 약속이 되는 문장이라 삭제했다(정본에 없는 내용은 릴리즈노트에 쓰지 않는다).
+- [x] 평이화/비노출 — feature-id·모듈/함수/파일명·테이블·컬럼명·§번호·내부상수 누출 **0**(기계 스캔 7패턴). ASCII 런은 스키마 키와 `claude-sonnet`/`claude-opus`/`claude-haiku` 뿐이며, 후자는 사용자가 화면에서 고르는 모델 이름이고 기존 블록에 선례가 있다(haiku 3 · opus 3 · sonnet 1).
+- [x] 검증: `node --check` PASS · 구조 실측(블록 52 · `generated`=="2026-08-25"==`releases[0].date` · top items 3 · 2nd 08-24 블록 items 8 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0) · **`tests/verify_release_notes.mjs` 편집 전 baseline 34 pass/0 fail = 편집 후 34 pass/0 fail → 회귀 0**(jsdom@24 `/tmp` 핀 설치본 사용).
+- [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 **md5 동일**(`b6ab4c47…` · 272,061B · `generated: "2026-08-24"`) · `index.html` 도 `?v=` 정규화 후 byte 동일(서빙 스탬프 `?v=4df5be4545dc`) → 08-24 19:00 에 종결된 서빙 파리티가 **2창 연속 유지**. 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(`docs/CONVENTIONS.md` §14.1 '`?v=dev` 고정 · 빌드 `inject_asset_stamp` content-hash 주입 · 수기 bump 금지') · `index.html`/`admin.html` 편집 0.

@@ -4798,3 +4798,13 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   명시로 갱신(다음 항목 추가 때 규칙이 보이도록).
 - `tests/verify_sidebar_inline_rename.mjs`: §9b 신설 — 두 `buildItems` 실행 후 라벨 순서 대조 +
   공통 항목 첫/끝 고정 + 조건부 항목 3케이스. 73 → 80 PASS, 뮤테이션 2종 KILL.
+## CHG-20260826T010305-doc-sync-rn-0826 (신규 2026-08-25 블록 prepend) 릴리즈노트 콘텐츠 — 08-25 사용자향 3항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-25` 블록**(items 3 + summary) prepend + `generated` "2026-08-24"→"2026-08-25". `releases` 51→**52**, 기존 51 블록 전건 보존.
+- 신규 블록 근거: 델타 창 커밋일이 전부 08-25 이고 그 date 블록이 파일에 없었다(grep 0회) → doc_sync Phase 3 "블록 부재 시 신규 prepend · `generated` top-block 연동" 규약.
+- 항목: 폴더·대화 우클릭 메뉴 순서 통일(improved) / 조회 실패 시 재시도 안내 정확도(fixed) / 상위 성능 모델 선택 시 여러 차례 재시도 끝 실패(fixed).
+- 정직성: 정본에 등재되지 않은 후속 작업 약속 1문장을 초안에서 제거했다(없는 계획을 사용자에게 약속하지 않는다).
+- Verification: `node --check` PASS · 블록 52 · `generated`==top.date · top items 3 · 2nd 블록 items 8 불변 · 스키마 외 키 0 · 내부용어 누출 0(7패턴 스캔) · **`verify_release_notes.mjs` 34 pass/0 fail = 편집 전 baseline 동일(회귀 0)**.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-26T01:03:05+09:00

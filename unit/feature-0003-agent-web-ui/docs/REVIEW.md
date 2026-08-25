@@ -5820,3 +5820,16 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
 **규칙을 주석으로 남긴 이유**: 순서는 코드로 강제되지 않는 계약이라, 다음에 항목을 추가하는
 사람이 규칙을 모르면 다시 어긋난다. 양쪽 `buildItems` 위에 같은 규칙을 적고 구조 테스트가
 그것을 지키게 했다(§16.7 G10 — 재발 클래스를 점수정으로 끝내지 않는다).
+## REV-20260826T010305-doc-sync-rn-0826 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-08-25 블록 prepend(3항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260826T010305-doc-sync-rn-0826`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + companion 문서).
+- Timestamp: 2026-08-26T01:03:05+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · 구조 단언(`releases` 51→**52** · `generated`=="2026-08-25"==`releases[0].date` · top items 3 · 2nd 블록 items 8 불변 · 스키마 외 키 0 · enum 기존 집합 내) · **`tests/verify_release_notes.mjs` 34 pass/0 fail = 편집 전 baseline 34/0 동일 → 회귀 0** · 내부용어 누출 0(7패턴 기계 스캔).
+- **적대검증**: ULTRACODE 워크플로 `wf_46129373-398` — 6 에이전트 / 924,479 토큰 / 310 tool-use / 28분. 4축 병렬 스윕(릴리즈노트·wiki·정책문서·cross-surface, 38 finding) → 2조 교차검증(정본대조 렌즈 · 적용안전성 렌즈). RN 축 3 finding 은 양 렌즈 전건 CONFIRMED(oldString `count==1` 실측 · 적용 후 `node --check` 통과 구조 확인 · `generated == releases[0].date` 불변식을 git 이력으로 독립 검증).
+- **오케스트레이터 추가 판정 1건**: 검증 두 렌즈가 모두 통과시킨 초안 문장 중 "안내 문구를 다듬는 일 … 이어서 손보고 있습니다" 를 **정본 근거 부재로 삭제**했다(원장 open FR·정본 TASK 후속 절 어디에도 그 두 축이 등재돼 있지 않음). 두 렌즈는 '사실 정확성'과 '적용 안전성'을 봤을 뿐 **미래 약속의 근거**를 축으로 갖지 않았다 — 릴리즈노트 고유 위험이라 오케스트레이터가 닫았다.
+- **블록 귀속 판정**: 델타 5 커밋의 git-date 가 전부 2026-08-25 이고 그 date 블록이 부재(grep 0회) → 신규 블록 prepend + `generated` top-block 연동. 오늘(08-26) 날짜 블록·publish-date 신설 금지 규약 준수.
+- **배포 게이트**: `deploy-web.state` `current=4c7bd6c0`(08-25 18:38) · 라이브 `mysql-ai-web:4c7bd6c0`(StartedAt KST 18:34, healthy) ⊇ 3항목 소유 커밋 전건(`0f14fa3d`·`93680ba3`·`65c515d8`) → 이미 서빙 중. 후행 `2092df81` 은 그 배포의 라이브 실측을 기록한 문서 전용 커밋이라 사용자 표면 0.
+- **RN 제외 판정(정직)**: `2fd86696`(2026-07-23~08-25 상부보고 발표자료 v1)·`2092df81`(배포·라이브 실측 기록) = 사용자 체감 표면 0 → 제외. `65c515d8` 의 `AGENTS.md` §15.2.1·ADR 추가분도 개발자향 정책이라 제외(사용자 체감 축인 '답변 실패' 만 항목화). backfill 누락 추가분 0.
+- **cache-buster**: 수기 bump 없음. `docs/CONVENTIONS.md` §14.1 이 "`?v=dev` 고정 · 빌드 `inject_asset_stamp` content-hash 주입 · **수기 bump 금지**" 를 명문화한다(cron wrapper 지시문의 '캐시버스터 bump 를 같은 커밋에 포함' 지시는 이 규약보다 오래된 stale — 따르면 배포 스크립트의 placeholder ABORT 가드를 깬다). `index.html`/`admin.html` 편집 0.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**
