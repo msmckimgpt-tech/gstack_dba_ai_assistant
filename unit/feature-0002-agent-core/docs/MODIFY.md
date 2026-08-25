@@ -2500,3 +2500,16 @@ identity** 여야 Anthropic 이 허용한다. 없으면 429 `rate_limit_error` �
 - **라이브 미검증분(정직 표기)**: 배포 후 실제 대화에서 frontier 답변이 성사되는지는 미측정.
   게이트웨이 경유 실측으로 "identity 없으면 429 / 있으면 200" 은 확인했으나(2026-08-25), 배포본
   end-to-end 는 배포 후 확인 대상이다.
+
+## CHG-20260825T200000-cc-identity-deploy-record
+
+`CHG-20260825T170000-cc-identity-chokepoint` 의 **배포·라이브 실측 기록**(문서 전용, 코드 변경 없음).
+
+- **배포 완료**(2026-08-25): PR #1342 merge main `4c7bd6c0` → `make deploy-web` 전체 스코프.
+  6서비스 실물 이미지 `4c7bd6c0` healthy(web-a·web-b·ask-worker·insight-worker·ops-scheduler·
+  ext-tool-mcp) · ask-worker surge 잔존 0 · caddy `no upstreams available` **0건**(무중단 실측).
+- **라이브 실측**: 배포본 ask-worker 런타임에서 실제 코드 경로로 frontier 호출 → **200 성공**
+  (`served_model=claude-sonnet-4-chat`). 관문 통과 후 첫 메시지가 Claude Code identity 임을 배포본에서
+  확인. 앞서 "코드/테스트로 증명됨 vs 배포 후 실측 필요" 로 분리 표기했던 후자가 이로써 닫혔다.
+- **여전히 미측정**: 실사용자 대화에서의 재발 빈도 감소(corroboration 시계열) — 표본이 쌓여야 한다.
+  그래서 원장 status 는 `fixed:deployed:verified(경로 축)` 로 축을 한정했다.
