@@ -1365,3 +1365,27 @@ reserved_identifier_note,targeted_hint}`.
 **불변 (회귀 금지)**: 보안 가드 차단(`보안 정책상 차단` 등)은 여전히 자가수정 대상 밖이다 —
 우회 유도 금지. `AGENT_SELF_REFLECTION_{ENABLED,MAX}` 의 의미·기본값(ON / 2) 무변경.
 `_sql_reflection_nudge` 의 4-positional 시그니처 하위호환.
+
+## (sql-selfheal-p1, 2026-08-25) 코드-권위 블록은 **모든 반환 경로**에서 주입된다 (Major §12.3, TASK 20260825T0300-sql-selfheal-p1)
+
+REQ-20260825-sql-selfheal-p1 — 위 `sql-selfheal` 의 적대 리뷰 후속. 계약 3건을 추가·강화한다.
+
+**AC-1 (directive 도달 불변식)**: `compose_system_prompt` 은 정상 경로든 조기 return
+(`mem_conn is None`, 두 번째 `cursor()` 실패)이든 **동일한 코드-권위 블록**을 base 뒤에 붙여
+반환한다. 정본 조립기는 `_code_directive_parts()` 하나이며, 새 directive 추가 시 여기만 고치면
+모든 경로가 따라온다. 종전에는 조기 return 이 injection guard 를 포함한 전 블록을 건너뛰었다.
+
+**AC-2 (방언은 실행 시점 스냅샷)**: 자가수정 넛지의 방언은 `get_last_execute_sql_context()`
+의 `engine` 을 정본으로 한다. 활성 ContextVar 는 1:N 라우터가 tool 종료 시 primary 로 복원한
+뒤라, 라우팅된 MSSQL 실패에 MySQL(백틱) 처방을 붙인다.
+
+**AC-3 (반복 판정의 성립 조건)**: 반복은 **지목 가능한 실패 지점이 있을 때만** 판정한다
+(`error_signature` 가 focus 없으면 빈 문자열). 성공한 SQL 또는 다른 도구가 끼면 상태를 비운다.
+처방은 stop token 을 원인으로 **단정하지 않는다** — 파서는 문제 지점에서 멈추므로 원인이 그 앞
+(닫히지 않은 괄호·따옴표)일 수 있음을 함께 지시한다.
+
+**배선 불변식 (테스트로 강제)**: `_run_agent_core` 는 위 판정을 인라인하지 않고
+`_sql_reflection_repeat_state` · `_sql_reflection_continuity_broken` · `_nudge_dialect_for_last_sql`
+를 호출하며, 그 **결과를** `_sql_reflection_nudge` 의 `repeated`·`dialect` 인자로 넘긴다.
+AST 단언이 호출 존재와 인자 출처를 함께 검사한다(상수 하드코딩 금지) — 단위 테스트가
+`run_agent` 를 실행하지 않아 생기는 배선 사각을 메운다.

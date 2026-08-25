@@ -2420,3 +2420,31 @@ live 스펙을 startup 으로 읽는 키가 drift 후보. 스펙 97(live 76) × 
 - `tests/test_sql_error_selfheal.py`: 회귀 3건 추가(정제·정상 식별자 보존·dialect resolver 생존).
 
 근거: `REVIEW.md` `REV-20260824T193000-…` [P1-1]/[P1-2].
+
+## CHG-20260825T030000-sql-selfheal-p1 — codex 적대 리뷰 P1 1건 + P2 5건 수정
+
+- `src/agent_core.py`
+  - `_code_directive_parts()` / `_with_code_directives()` 신규 — base 뒤 코드-권위 블록의 **단일
+    조립기**. `compose_system_prompt` 의 정상 경로와 조기 return 2곳(`mem_conn is None`,
+    cursor 실패)이 모두 이것을 경유한다 ([P1] — 종전엔 조기 return 이 injection guard 를 포함한
+    전 블록을 건너뛰었다).
+  - `_nudge_dialect_for_last_sql()` 신규 — 방언을 `get_last_execute_sql_context()["engine"]`
+    (실행 시점 스냅샷)에서 읽고 활성값 폴백. 라우터가 primary 로 복원한 뒤라 활성 ContextVar 는
+    라우팅된 MSSQL 을 MySQL 로 오판한다 ([P2-1]).
+  - `_sql_reflection_repeat_state()` · `_sql_reflection_continuity_broken()` 신규 — 루프 인라인
+    판정을 헬퍼로 분리해 단위 테스트가 배선을 잡게 한다 ([P2-5]). 성공·타 도구가 끼면 상태 초기화 ([P2-2]).
+- `src/modules/sql_error_hints.py`
+  - `error_signature`: focus 가 없으면 시그니처를 만들지 않는다 — 위치 없는 서로 다른 오류가
+    `syntax|` 로 뭉쳐 반복 오판되던 결함 ([P2-2]).
+  - `reserved_identifier_note`: 단정 → **후보 진단**. stop token 이 정상 키워드이고 원인이 앞의
+    괄호·따옴표일 수 있음을 함께 지시 ([P2-3]).
+  - `_NEAR_RE`: quote 다중 소비 — `near ''abc' …'` 에서 매칭 자체가 실패해 focus 가 사라지던 것 해소.
+  - near 경로 identifier 에 64자 상한 ([P2-4]).
+  - `targeted_hint`: "엔진이 지목한 실패 지점" → "엔진이 멈춘 지점 … 그 직전 구문을 함께 보라".
+- `tests/test_sql_error_selfheal.py`: 후속 봉인 11건(조기 return 2경로·조립기 단일성·배선 헬퍼·
+  focus 없는 충돌·연속성·방언 스냅샷·후보 진단·길이 상한·인용 리터럴 near·AST 배선 단언·G11-b 역검증).
+- `tests/test_prompt_injection_defense.py` · `tests/test_grounding_authority_directive.py` ·
+  `unit/feature-0003-agent-web-ui/tests/test_attachment_new.py`: 소스-텍스트 단언 3건을
+  **실행 기반으로 격상**(계약 불변, 리팩터링 견고 — §16.7 G11).
+
+근거: `REVIEW.md` `REV-20260825T030000-…`.

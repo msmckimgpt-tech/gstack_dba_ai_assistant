@@ -80,7 +80,10 @@ UNPIVOT UPDATE UPDATETEXT USE USER VALUES VARYING VIEW WAITFOR WHEN WHERE WHILE 
 # 엔진이 지목한 실패 지점. MySQL 1064: "... right syntax to use near 'current_time, ...' at line 1"
 # MSSQL 102: "Incorrect syntax near 'current_time'." — 두 형태 모두 near 뒤 인용구가 **잔여 텍스트의
 # 시작점**이라 그 첫 토큰이 범인이다.
-_NEAR_RE = re.compile(r"near\s+['\"`]([^'\"`]{1,400})", re.IGNORECASE)
+# quote 를 **1개 이상** 소비한다. `near ''abc' AND …'` 처럼 잔여 SQL 이 인용 리터럴로 시작하면
+# quote 1개만 소비하는 패턴은 캡처가 최소 1자를 못 채워 **매칭 자체가 실패**하고 focus 가
+# 통째로 사라진다 (codex 적대 리뷰 [P2-3] 후단).
+_NEAR_RE = re.compile(r"near\s+['\"`]+([^'\"`]{1,400})", re.IGNORECASE)
 _LEADING_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*")
 _UNKNOWN_COL_RE = re.compile(
     r"Unknown column\s+['\"`]([^'\"`]+)['\"`]|Invalid column name\s+['\"`]([^'\"`]+)['\"`]",
@@ -137,13 +140,18 @@ def extract_error_focus(result: "str | None") -> str:
     m = _NEAR_RE.search(text)
     if m:
         frag = m.group(1).lstrip()
+        # 인용 리터럴로 시작하는 경우(`near ''abc' ...'`) 선두 따옴표를 벗겨 식별자를 찾는다 —
+        # 벗기지 않으면 focus 가 통째로 비어 지목이 사라진다 (codex [P2-3] 후단).
+        frag = frag.lstrip("'\"`")
         if frag:
             im = _LEADING_IDENT_RE.match(frag)
             if im:
-                return im.group(0)
-            # 기호류(`)` `,` 등) — 공백 전까지만, 과도한 길이 방지. 정제는 적용하지 않는다:
-            # 기호 자체가 지목 대상이라 식별자 필터로 지우면 정보가 사라진다. 대신 12자 상한과
-            # 공백 없음이 문장 삽입을 막는다.
+                # ⚠️ identifier 라고 안전한 것이 아니다 — `IGNORE_PREVIOUS_INSTRUCTIONS_AND_...`
+                # 처럼 underscore 만으로 문장을 만들 수 있고, near 캡처는 400자까지 허용한다.
+                # "공백이 없으니 문장 삽입 불가" 는 성립하지 않는다 (codex [P2-4]). 상한을 건다.
+                return im.group(0)[:_FOCUS_MAX_CHARS]
+            # 기호류(`)` `,` 등) — 공백 전까지만, 과도한 길이 방지. 식별자 필터는 적용하지
+            # 않는다: 기호 자체가 지목 대상이라 지우면 정보가 사라진다.
             return (frag.split()[0][:12] if frag.split() else frag[:12])
     for rx in (_UNKNOWN_COL_RE, _UNKNOWN_TBL_RE):
         m2 = rx.search(text)
@@ -162,10 +170,18 @@ def error_signature(result: "str | None") -> str:
     실측 사례의 step 6·8 은 SQL 텍스트가 달랐지만(`@@time_zone` 유무, `as`/`AS`) 시그니처는
     둘 다 `syntax|current_time` 이다 — SQL 을 바꾼 것이 아니라 **범인을 안 바꾼** 상태이며,
     이 동일성이 곧 "무관한 부분만 고쳤다" 는 신호다.
+
+    ⚠️ **focus 가 없으면 시그니처를 만들지 않는다**(빈 문자열). 엔진이 위치를 주지 않은 서로
+    다른 오류(`syntax error at line 1` vs `syntax error: unmatched parenthesis`)가 모두
+    `syntax|` 로 뭉쳐 "같은 지점 반복" 으로 오판되던 결함을 막는다 (codex [P2-2]).
+    반복 판정은 **지목 가능한 실패 지점이 있을 때만** 의미가 있다.
     """
     if not (result or "").strip():
         return ""
-    return f"{classify_error(result)}|{extract_error_focus(result).lower()}"
+    focus = extract_error_focus(result).lower()
+    if not focus:
+        return ""
+    return f"{classify_error(result)}|{focus}"
 
 
 def reserved_words_for(dialect: "str | None") -> frozenset:
@@ -183,10 +199,16 @@ def reserved_identifier_note(focus: str, dialect: "str | None" = None) -> str:
     is_tsql = str(dialect or "").lower() in ("tsql", "mssql")
     engine = "SQL Server(T-SQL)" if is_tsql else "MySQL"
     quoted = f"[{token}]" if is_tsql else f"`{token}`"
+    # ⚠️ 단정하지 않는다. `near '<token>'` 은 파서가 **멈춘 위치**이지 항상 잘못된 토큰이
+    # 아니다 — `SELECT (1 + 2 FROM t` 는 `near 'FROM …'` 을 내지만 진짜 원인은 앞의 닫히지
+    # 않은 괄호다. 그런데 `FROM` 도 예약어라, 단정형 처방은 "FROM 을 인용하라" 는 **오도**가
+    # 된다 (codex [P2-3]). 후보 진단으로 낮추고 선행 구문 점검을 함께 지시한다.
     return (
-        f"`{token}` 은(는) {engine} **예약어**다 — 별칭·컬럼명·테이블명으로 쓰려면 "
-        f"{quoted} 로 인용하거나 예약어가 아닌 이름({token}_val 등)으로 바꿔라. "
-        f"이것이 이 오류의 가장 흔한 원인이다."
+        f"`{token}` 은(는) {engine} **예약어**다. 별칭·컬럼명·테이블명으로 쓰고 있다면 "
+        f"{quoted} 로 인용하거나 예약어가 아닌 이름({token}_val 등)으로 바꿔라 — 이 오류의 "
+        f"가장 흔한 원인이다. **다만 단정하지 말 것**: 파서는 문제 지점에서 멈추므로 "
+        f"`{token}` 이 정상 위치의 키워드이고 진짜 원인이 그 **앞**(닫히지 않은 괄호·따옴표, "
+        f"빠진 쉼표·연산자)일 수 있다. 두 가능성을 모두 확인하라."
     )
 
 
@@ -194,7 +216,10 @@ def targeted_hint(kind: str, focus: str, dialect: "str | None" = None) -> str:
     """분류 + 실패 지점을 결합한 표적 처방 1~2문장."""
     parts: list[str] = []
     if focus:
-        parts.append(f"엔진이 지목한 실패 지점: `{focus}` — **이 지점부터** 파싱/해석이 깨졌다. 여기를 고쳐라.")
+        parts.append(
+            f"엔진이 멈춘 지점: `{focus}` — 파서/실행기가 **여기서** 중단했다. "
+            f"이 지점과 **그 직전 구문**을 함께 보라(원인이 앞에 있고 여기서 드러나는 경우가 있다)."
+        )
     reserved = reserved_identifier_note(focus, dialect)
     if reserved:
         parts.append(reserved)

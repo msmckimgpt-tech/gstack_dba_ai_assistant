@@ -68,13 +68,23 @@ def test_b2_guard_notice_content():
 
 # ── B3~B6: 적용 지점(source) ─────────────────────────────────────────────────
 def test_b3_compose_injects_guard():
-    src = inspect.getsource(ac.compose_system_prompt)
-    assert "_INJECTION_GUARD_NOTICE" in src
-    # base 직후 parts 에 포함(FR-attachment-update: 뒤에 _ATTACHMENT_DELIVERY_DIRECTIVE 가
-    # 추가돼 리스트가 3요소가 됐으나, guard 가 base 바로 다음이라는 불변식은 유지).
-    assert "[base_prompt, _INJECTION_GUARD_NOTICE" in src
+    """guard 가 base **바로 다음**에 온다는 불변식 + 첨부 지시 동반 주입.
+
+    ⚠️ 2026-08-25: 종전에는 `inspect.getsource(compose_system_prompt)` 에
+    `"[base_prompt, _INJECTION_GUARD_NOTICE"` 리터럴이 있는지로 검사했다. 조립부가 헬퍼로
+    빠지자(조기 return 경로도 같은 directive 를 거치게 하는 [P1] 수정) 계약은 그대로인데
+    단언만 깨졌다 — §16.7 G11 의 「소스 텍스트를 진실 원천으로 삼는 단언은 불안정」 사례다.
+    **계약은 유지하고 검사만 실행 기반으로 격상**한다(리팩터링 견고 + 실제 동작 확인).
+    """
+    parts = ac._code_directive_parts("BASE_SENTINEL")
+    assert parts[0] == "BASE_SENTINEL"
+    assert parts[1] is ac._INJECTION_GUARD_NOTICE, "guard 는 base 바로 다음이어야 한다"
     # 첨부 갱신 지시도 base 뒤 코드-권위로 항상 주입(global row 무관 drift 봉인).
-    assert "_ATTACHMENT_DELIVERY_DIRECTIVE" in src
+    assert ac._ATTACHMENT_DELIVERY_DIRECTIVE in parts
+
+    # 합성 결과에서도 순서가 지켜지는지 — 조립기 계약과 실 산출물을 함께 잠근다.
+    composed = ac._with_code_directives("BASE_SENTINEL")
+    assert composed.index("BASE_SENTINEL") < composed.index(ac._INJECTION_GUARD_NOTICE.strip()[:40])
 
 
 def test_b4_attachment_content_datamarked():

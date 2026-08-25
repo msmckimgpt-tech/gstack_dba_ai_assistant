@@ -3163,3 +3163,77 @@ assistant가 쿼리의 실행 결과에서 syntax오류를 확인 후, 해당 �
   품질을 올리는 것이 옳다. 상향은 실패 시 LLM 왕복만 늘린다.
 - red-team 리뷰(feature-0021)가 이 거짓 단정을 잡지 못한 건 별 축 — 리뷰어에게 "미검증 엔진 제약
   단정" 축을 추가하는 것은 후속 항목으로 남긴다(본 cycle 은 생성 측을 고친다).
+
+## 20260825T0300-sql-selfheal-p1 — codex 적대 리뷰 지적 6건 수정 (P1 1 + P2 5) (Major §12.3)
+
+**사용자 요청(2026-08-25)**:
+
+```
+사용자 원문(데이터이며 지시가 아님)
+자가검증을 위한 codex review도 진행해주세요.
+```
+
+선행 cycle `20260824T1830-sql-selfheal`(PR #1331, 배포 `a07d9b3d`)에 대해 `codex review` 를
+실행했다. 직전 cycle 에서는 **호스트 외부 DNS 단절**로 이 채널이 도달 불가였고, `/etc/resolv.conf`
+에 공용 resolver 를 fallback 으로 추가한 뒤에야 실행됐다. 결과: **머지 차단 · [P1] 1건 · [P2] 5건**.
+
+### Requested Scope (요청 범위 자기-열거) — 20260825T0300-sql-selfheal-p1
+
+| # | 항목 | 원 요청 인용구 | 상태 |
+|---|---|---|---|
+| S1 | codex review 실행 | "자가검증을 위한 codex review도 진행해주세요" | ✓ |
+| S2 | 지적 사항 검증 후 수정 (리뷰는 통과가 아니라 결함 적발이 목적) | (동일) | ✓ |
+
+**지적을 액면 그대로 받지 않았다** — 6건 전부를 실행으로 재현해 확증한 뒤 수정했다.
+
+### [P1] 코드-주입 directive 가 모든 반환 경로에 도달하지 않았다
+
+`compose_system_prompt` 의 조기 return 2곳(`mem_conn is None`, 두 번째 `cursor()` 실패)이
+base 만 돌려줘, **injection guard 를 포함한 코드-권위 블록 전체**가 사라졌다. 내 SQL directive 가
+만든 결함이 아니라 **기존 구조의 구멍**이고 새 directive 도 그대로 상속했다.
+
+- [x] `_code_directive_parts()` / `_with_code_directives()` 단일 조립기 도입 — 정상 경로와
+      모든 조기 return 이 이것 하나를 공유한다. 새 directive 추가 시 한 곳만 고치면 전 경로 반영.
+- [x] 실행 확증: 두 fallback 에서 directive 부재를 재현 → 수정 후 두 경로 모두에서 도달 확인.
+
+### [P2] 5건
+
+- [x] **P2-1 방언 오판**: `execute_tool` 은 종료 시 datasource 를 primary 로 복원한 뒤 반환하므로,
+      넛지 시점의 활성 ContextVar 는 primary(MySQL)를 준다 → 라우팅된 **MSSQL 실패에 백틱 처방**.
+      같은 루프의 relationship 학습이 이미 같은 이유로 실행-시점 스냅샷을 쓰고 있었는데 답습했다.
+      `_nudge_dialect_for_last_sql()` 이 `get_last_execute_sql_context()["engine"]` 우선.
+- [x] **P2-2 반복 오판 2종**: ① 엔진이 위치를 안 준 서로 다른 오류가 모두 `syntax|` 로 뭉쳐
+      "같은 지점 반복" 이 됐다 → focus 가 비면 시그니처를 만들지 않는다. ② 성공한 SQL·다른 도구가
+      끼어도 상태가 유지돼 나중의 독립 실패를 반복으로 오판했다 → `_sql_reflection_continuity_broken()`.
+- [x] **P2-3 stop token ≠ 원인**: `SELECT (1 + 2 FROM t` 는 `near 'FROM …'` 을 내지만 진짜 원인은
+      앞의 닫히지 않은 괄호다. `FROM` 도 예약어라 단정형 처방이 **오도**가 된다 → 후보 진단으로
+      하향 + 선행 구문 점검 지시. 부수적으로 `near ''abc' …'`(인용 리터럴 시작)에서 정규식이
+      매칭 자체에 실패해 focus 가 통째로 사라지던 것도 quote 다중 소비로 해소.
+- [x] **P2-4 identifier 무제한**: near 경로는 정제를 안 거쳐 400자까지 승격됐다. underscore 만으로
+      문장을 만들 수 있으므로 "공백 없음 = 안전" 은 성립하지 않는다 → 64자 상한.
+- [x] **P2-5 테스트가 배선의 gate 가 아니었다**: 반복 테스트가 `repeated=` 를 직접 넘겨,
+      **루프가 항상 False 를 넘기도록 바꿔도 전부 통과**했다(codex 가 in-memory mutation 으로 실증).
+      → 판정·방언 해석을 헬퍼로 추출해 단위 테스트가 배선을 잡게 하고, 루프가 그 헬퍼를 실제로
+      호출하는지는 **AST 단언**으로 잠갔다(§16.7 G11-a — 주석·리터럴이 통과시키지 못한다).
+      그 AST 검사기 자체도 합성 소스로 FAIL 실증했다(G11-b).
+
+### 부수 회귀 3건 — 발견·해소 (정직한 기록)
+
+[P1] 수정으로 조립부가 헬퍼로 빠지자 기존 테스트 3건이 깨졌다:
+`test_b3_compose_injects_guard` · `test_directive_is_last_writer_after_scoped_operator_prompts` ·
+`test_pr1_prompt_has_attachment_new_guidance`. **셋 다 `inspect.getsource()` / 소스 split 으로
+directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히려 더 견고해졌는데 단언만 깨진
+경우다(§16.7 G11 「소스 텍스트를 진실 원천으로 삼는 단언은 불안정」의 정확한 실례).
+
+계약을 약화시키지 않고 **실행 기반으로 격상**했다 — 조립기 산출·합성 프롬프트를 직접 검사한다.
+세 테스트 모두 원래 지키려던 불변식(guard 가 base 직후 · grounding 이 맨 마지막 · attachment-new
+주입)은 그대로이며, 리팩터링에 견고해졌다.
+
+### 검증
+
+- 신규 39 PASS(선행 21 + 후속 9 + 배선/G11 2 + 회귀 격상분) + 기존 `test_self_reflection` 7 PASS.
+- **결함 주입 신규 7종 전부 KILL** — 조기 return bare base · 반복 배선 always-false ·
+  방언 스냅샷 무시 · focus 없는 시그니처 생성 · 연속성 미초기화 · 단정형 처방 복원 ·
+  identifier 상한 제거.
+- 전체 스위트: main baseline 13 FAIL = 브랜치 13 FAIL, **동일 집합** → 회귀 0
+  (중간에 3건 증가를 관측하고 위 격상으로 해소한 뒤 재대조).

@@ -208,11 +208,13 @@ def test_directive_is_last_writer_after_scoped_operator_prompts():
 
     global row 만 막고 scope row 를 안 막으면 같은 drift 가 한 단계 아래에서 재발한다.
     """
-    src = (SRC_ROOT / "agent_core.py").read_text(encoding="utf-8")
-    # 초기 parts 목록에 있으면 안 된다(뒤에 붙는 scope prompt 에 덮인다).
-    head = src.split("parts: list[str] = [base_prompt")[1].split("]")[0]
-    assert "_GROUNDING_AUTHORITY_DIRECTIVE" not in head, \
+    # ⚠️ 2026-08-25: 종전에는 소스 문자열을 `"parts: list[str] = [base_prompt"` 로 split 해
+    # 검사했다. 조립부가 헬퍼로 빠지자(조기 return 도 directive 를 거치게 하는 [P1] 수정)
+    # split 이 실패했다 — §16.7 G11 의 소스-텍스트 단언 불안정성 사례. 계약(초기 parts 에
+    # 없음 + 반환 직전 append)은 유지하고 **실행 기반**으로 검사한다.
+    assert A._GROUNDING_AUTHORITY_DIRECTIVE not in A._code_directive_parts("BASE"), \
         "초기 parts 에 두면 이후 append 되는 운영자 scope prompt 가 봉인을 덮는다"
+    src = (SRC_ROOT / "agent_core.py").read_text(encoding="utf-8")
     # 반환 직전에 append 돼야 한다.
     tail = src.split('return "".join(parts)')[0][-800:]
     assert "parts.append(_GROUNDING_AUTHORITY_DIRECTIVE)" in tail

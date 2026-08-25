@@ -1470,6 +1470,30 @@ _SQL_FAILURE_DIRECTIVE = (
 )
 
 
+def _code_directive_parts(base_prompt: str, is_auto: bool = False) -> "list[str]":
+    """base 뒤에 붙는 **코드-권위 블록**의 단일 정본 순서.
+
+    `compose_system_prompt` 의 정상 경로와 모든 조기 return 이 이 하나를 공유한다 —
+    예전에는 정상 경로만 directive 를 조립하고 조기 return 은 base 만 돌려줘, DB 없는
+    경로에서 injection guard 를 포함한 코드-주입이 통째로 사라졌다 (codex 적대 리뷰 [P1]).
+    새 directive 를 추가할 때도 **여기 한 곳만** 고치면 모든 경로가 따라온다.
+    """
+    parts = [base_prompt, _INJECTION_GUARD_NOTICE, _ATTACHMENT_DELIVERY_DIRECTIVE,
+             _ATTACHMENT_NEW_DELIVERY_DIRECTIVE, _ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE,
+             _SQL_FAILURE_DIRECTIVE]
+    if is_auto:
+        parts.append(
+            "\n\n[AUTO MODE] No product is pinned to this conversation. "
+            "Answer generally; if product-specific data is required, ask the user to pick a 제품 first.\n"
+        )
+    return parts
+
+
+def _with_code_directives(base_prompt: str, is_auto: bool = False) -> str:
+    """조기 return 용 — base + 코드-권위 블록을 조립해 돌려준다."""
+    return "".join(_code_directive_parts(base_prompt, is_auto))
+
+
 def _tools_mod_for_notice():
     import modules.tools as _t
     return _t
@@ -2974,9 +2998,13 @@ def compose_system_prompt(
     _UNTRUSTED_ATTACH_BODY_CTX.set(False)
     # 원본(_v0) 사본도 같은 규율 — 남으면 **다른 대화**의 원본이 리뷰어 ground truth 로 실린다.
     _ORIGINAL_VERSIONS_CTX.set(None)
-    if mem_conn is None:
-        return SYSTEM_PROMPT
     is_auto = str(product_mode or "pinned").lower() == "auto"
+    if mem_conn is None:
+        # ⚠️ 조기 return 도 **코드-권위 directive 를 반드시 거친다**. 예전에는 여기서 base 만
+        # 돌려줘, DB 없는 경로(부트스트랩·연결 실패·in-process 호출)에서 injection guard 를
+        # 포함한 코드-주입 블록이 통째로 사라졌다 — 운영자 override 와 무관한 **구조적 구멍**
+        # 이었다 (codex 적대 리뷰 [P1], 2026-08-25).
+        return _with_code_directives(SYSTEM_PROMPT, is_auto)
 
     # TASK-0095 (Major §12.3): GLOBAL scope 가 최상위. WebSystemPrompts 의
     # scope='global' 단일 row (Product/Role/Account 모두 NULL) 가 truth, 부재/예외 시
@@ -3006,19 +3034,12 @@ def compose_system_prompt(
     # spotlighting 규칙이 effective. (datamarking 은 콘텐츠 측에서 sentinel 로 구획.)
     # 순서 = 검증(무엇을 확인해야 하나) → 해석(확인한 차이를 어떻게 분류하나). 둘 다 base 뒤라
     # 운영자 global row 대체와 무관하게 도달한다(AUTH-1a).
-    parts: list[str] = [base_prompt, _INJECTION_GUARD_NOTICE, _ATTACHMENT_DELIVERY_DIRECTIVE,
-                        _ATTACHMENT_NEW_DELIVERY_DIRECTIVE,
-                        _ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE,
-                        _SQL_FAILURE_DIRECTIVE]
-    if is_auto:
-        parts.append(
-            "\n\n[AUTO MODE] No product is pinned to this conversation. "
-            "Answer generally; if product-specific data is required, ask the user to pick a 제품 first.\n"
-        )
+    parts: list[str] = list(_code_directive_parts(base_prompt, is_auto))
     try:
         cur = mem_conn.cursor()
     except Exception:
-        return base_prompt
+        # 조기 return 도 directive 를 거친다 (위 mem_conn None 경로와 동일 계약 — [P1]).
+        return _with_code_directives(base_prompt, is_auto)
 
     def _fetch(
         scope: str,
@@ -6834,6 +6855,50 @@ def _active_sql_dialect_name() -> str:
         return ""
 
 
+def _nudge_dialect_for_last_sql() -> str:
+    """방금 실행된 execute_sql 의 **실제** 방언 (mysql|tsql). 스냅샷 우선, 활성값 폴백.
+
+    ⚠️ 활성 ContextVar 를 직접 읽으면 **틀린다**. 1:N 라우터는 tool 종료 시 datasource 를
+    primary 로 되돌리고 반환하므로, primary=MySQL·라우팅 대상=MSSQL 인 실행에서 넛지 시점의
+    활성값은 MySQL 이다 → MSSQL 실패에 백틱 처방이 붙는다 (codex 적대 리뷰 [P2-1]).
+    같은 루프의 relationship 학습이 이미 같은 이유로 `get_last_execute_sql_context()` 를
+    쓰고 있었는데 본 넛지가 그 교훈을 답습했다. 실행 시점 스냅샷을 정본으로 삼는다.
+    """
+    try:
+        from modules.tools import get_last_execute_sql_context
+        engine = str((get_last_execute_sql_context() or {}).get("engine") or "").strip()
+        if engine:
+            return "tsql" if engine.lower() in ("tsql", "mssql") else engine.lower()
+    except Exception:
+        pass
+    return _active_sql_dialect_name()
+
+
+def _sql_reflection_repeat_state(prev_sig: str, tool_result: str) -> "tuple[str, bool]":
+    """직전 실패 시그니처와 대조해 `(새 시그니처, 같은 지점 반복인가)` 를 돌려준다.
+
+    루프의 인라인 판정을 헬퍼로 분리한 것 — 인라인이면 `run_agent` 전체를 돌리지 않는 한
+    테스트가 배선을 잡지 못한다. 실제로 초판 테스트는 `repeated=` 를 직접 넘겨 검증해서
+    **루프가 항상 False 를 넘기도록 바꿔도 전부 통과**했다 (codex 적대 리뷰 [P2-5]).
+
+    `error_signature` 가 빈 문자열이면(=엔진이 실패 지점을 주지 않음) 반복 판정을 하지
+    않는다 — 지목할 지점이 없으면 "같은 지점" 이라는 말 자체가 성립하지 않는다.
+    """
+    sig = _sql_error_signature(tool_result)
+    repeated = bool(sig) and sig == (prev_sig or "")
+    return sig, repeated
+
+
+def _sql_reflection_continuity_broken(tool_name: str, tool_result: str) -> bool:
+    """직전 실패와의 **연속성이 끊겼는가** (성공한 SQL 또는 다른 도구가 사이에 끼었는가).
+
+    끊겼으면 호출측이 `reflection_last_sig` 를 비워야 한다. 그러지 않으면 사이에 성공이나
+    다른 도구가 있었어도 stale 시그니처가 남아, 나중의 **독립적인** 실패가 "직전과 같은
+    오류" 로 오판된다 (codex 적대 리뷰 [P2-2]).
+    """
+    return tool_name != "execute_sql" or not _is_fixable_sql_error(tool_result)
+
+
 def _sql_reflection_nudge(result: str, last_sql: "str | None", n: int, cap: int,
                           *, repeated: bool = False, dialect: "str | None" = None) -> str:
     """SQL 실패에 대한 구조화된 자가수정 지침. bounded(n/cap).
@@ -8975,18 +9040,21 @@ def _run_agent_core(
             # ITEM-07: execute_sql 의 **수정 가능한** 실패에 명시 bounded 자가수정 넛지를 결과에
             # 동봉(cap=AGENT_SELF_REFLECTION_MAX). 보안 가드 차단은 대상 아님(우회 유도 금지).
             # cap·max_steps·circuit-breaker 중첩으로 폭주 차단. 기존 LLM 자율 경로·similar-retry 공존.
+            # 실패 연속이 끊기면(성공한 SQL 또는 다른 도구) 반복 판정 상태를 비운다 — [P2-2].
+            if _sql_reflection_continuity_broken(tool_name, tool_result):
+                reflection_last_sig = ""
             if (cfg.AGENT_SELF_REFLECTION_ENABLED and tool_name == "execute_sql"
                     and _is_fixable_sql_error(tool_result)
                     and reflection_count < cfg.AGENT_SELF_REFLECTION_MAX):
                 reflection_count += 1
                 # 같은 지점(분류|focus)에서 반복 실패면 접근 전환을 요구한다 — SQL 텍스트가
                 # 달라도 범인 토큰이 그대로면 "다르게 교정" 이 아니다(실측 step 6·8).
-                _sig = _sql_error_signature(tool_result)
-                _repeated = bool(_sig) and _sig == reflection_last_sig
-                reflection_last_sig = _sig
+                # 판정·방언 해석은 헬퍼가 정본 (테스트가 배선을 잡을 수 있게 — [P2-5]).
+                reflection_last_sig, _repeated = _sql_reflection_repeat_state(
+                    reflection_last_sig, tool_result)
                 _tool_content += "\n\n" + _sql_reflection_nudge(
                     tool_result, last_sql, reflection_count, cfg.AGENT_SELF_REFLECTION_MAX,
-                    repeated=_repeated, dialect=_active_sql_dialect_name())
+                    repeated=_repeated, dialect=_nudge_dialect_for_last_sql())
             tool_msg = {
                 "role": "tool",
                 "content": _tool_content,
