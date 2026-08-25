@@ -477,6 +477,69 @@ console.log("\n[9] 대화 ··· / 우클릭 메뉴에 '이름 변경' 이 배�
   ok("선택 시 인라인 rename 진입(대화 id 전달)", items.some((i) => i._renameCalledWith === "c-1"));
 }
 
+console.log("\n[9b] 우클릭 메뉴 순서 정합 — 폴더·대화가 같은 규칙을 쓴다");
+{
+  // ctxmenu-order-parity: 같은 목록의 두 요소가 같은 조작을 서로 다른 자리에 두면, 사용자는
+  //   매번 어느 쪽인지 확인하고 커서를 옮겨야 한다. 규칙은
+  //   `[이름 변경] → [고유 액션] → [이동 류] → [설정]` — 공통 항목이 양쪽 끝에 고정된다.
+  //   문자열 검사가 아니라 **두 buildItems 를 실제로 실행해** 라벨 순서를 수집한다.
+  const folderMenuLabels = (folder) => {
+    const SRC = extractFn(SIDEBAR, "openFolderMenu");
+    const items = [];
+    const factory = new Function(
+      "document", "closeFloatingMenus", "openFloatingMenu", "_folderDepthCap",
+      "createFolderFlow", "renameFolderFlow", "openFolderSettings", "moveFolderTo",
+      `${SRC}\nreturn openFolderMenu;`);
+    const fn = factory(
+      { getElementById: () => null },
+      () => {},
+      (_trig, { buildItems }) => {
+        buildItems({ appendChild: (it) => items.push(it) }, (label, opts = {}) => ({ label, ...opts }));
+      },
+      () => 4, () => {}, () => {}, () => {}, () => {});
+    fn(folder, {});
+    return items.map((i) => i.label);
+  };
+  const convMenuLabels = ({ canFolder = true } = {}) => {
+    const SRC = extractFn(APPJS, "openConversationItemMenu");
+    const items = [];
+    const factory = new Function(
+      "state", "openFloatingMenu", "can", "openShareDialog", "openMoveConversationDialog",
+      "openConversationSettings", "renameConversationFlow",
+      `${SRC}\nreturn openConversationItemMenu;`);
+    const fn = factory(
+      { conversations: [{ id: "c-1", topic: "t" }] },
+      (_trig, { buildItems }) => {
+        buildItems({ appendChild: (it) => items.push(it) }, (label, opts = {}) => ({ label, ...opts }));
+      },
+      () => canFolder, () => {}, () => {}, () => {}, () => {});
+    fn("c-1", {});
+    return items.map((i) => i.label);
+  };
+
+  const nested = folderMenuLabels({ folder_id: 7, depth: 1, parent_folder_id: 3 });
+  const conv = convMenuLabels();
+  ok("폴더 메뉴 순서", JSON.stringify(nested) === JSON.stringify(["이름 변경", "하위 폴더 추가", "최상위로 꺼내기", "설정"]), nested.join(" | "));
+  ok("대화 메뉴 순서", JSON.stringify(conv) === JSON.stringify(["이름 변경", "공유", "이동", "설정"]), conv.join(" | "));
+
+  // 핵심 계약 — 공통 항목이 양쪽에서 같은 자리에 온다(부정합 재발 차단).
+  ok("공통 '이름 변경' 은 양쪽 모두 첫 항목", nested[0] === "이름 변경" && conv[0] === "이름 변경");
+  ok("공통 '설정' 은 양쪽 모두 마지막 항목",
+    nested[nested.length - 1] === "설정" && conv[conv.length - 1] === "설정");
+
+  // 조건부 항목이 빠져도 규칙은 유지된다 — 최상위 폴더(꺼내기 없음) · depth cap 도달(하위 추가 없음).
+  const root = folderMenuLabels({ folder_id: 7, depth: 0, parent_folder_id: null });
+  ok("최상위 폴더: '최상위로 꺼내기' 없이도 첫/끝 고정",
+    root[0] === "이름 변경" && root[root.length - 1] === "설정" && !root.includes("최상위로 꺼내기"), root.join(" | "));
+  const capped = folderMenuLabels({ folder_id: 7, depth: 4, parent_folder_id: 3 });
+  ok("깊이 상한 폴더: '하위 폴더 추가' 없이도 첫/끝 고정",
+    capped[0] === "이름 변경" && capped[capped.length - 1] === "설정" && !capped.includes("하위 폴더 추가"), capped.join(" | "));
+  const noFolderPerm = convMenuLabels({ canFolder: false });
+  ok("폴더 권한 없는 대화: '이동' 없이도 첫/끝 고정",
+    noFolderPerm[0] === "이름 변경" && noFolderPerm[noFolderPerm.length - 1] === "설정"
+    && !noFolderPerm.includes("이동"), noFolderPerm.join(" | "));
+}
+
 console.log("\n[10] 스타일 — 공용 입력 클래스와 편집 행 규칙이 존재한다");
 {
   ok("공용 입력 클래스 스타일", /\.conv-inline-rename-input[\s\S]{0,120}\{/.test(SHELLCSS));

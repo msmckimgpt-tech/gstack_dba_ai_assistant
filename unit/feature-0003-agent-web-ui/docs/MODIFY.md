@@ -4785,3 +4785,16 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-25T01:03:05+09:00
+
+## CHG-20260825T103000-ctxmenu-order-parity — 폴더·대화 우클릭 메뉴 순서 정합
+
+좌측 목록의 두 요소가 우클릭/`···` 메뉴에서 **같은 순서 규칙**을 쓰도록 통일한다 —
+`[이름 변경] → [고유 액션] → [이동 류] → [설정]`. 공통 항목(이름 변경·설정)이 양쪽 끝에 고정된다.
+
+- `src/static/app/sidebar.js` `openFolderMenu`: 항목 순서를
+  `하위 폴더 추가 · 이름 변경 · 설정 · 최상위로 꺼내기` → **`이름 변경 · 하위 폴더 추가 ·
+  최상위로 꺼내기 · 설정`**. 각 항목의 `onSelect` 배선·조건부 표시 조건은 무변경.
+- `src/static/app.js` `openConversationItemMenu`: 순서는 이미 규칙과 일치 — 주석을 공통 규칙
+  명시로 갱신(다음 항목 추가 때 규칙이 보이도록).
+- `tests/verify_sidebar_inline_rename.mjs`: §9b 신설 — 두 `buildItems` 실행 후 라벨 순서 대조 +
+  공통 항목 첫/끝 고정 + 조건부 항목 3케이스. 73 → 80 PASS, 뮤테이션 2종 KILL.

@@ -11701,3 +11701,61 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [x] 검증: `node --check` PASS · 구조 실측(블록 52 · `generated`=="2026-08-24"==`releases[0].date` · top items 8 · 2nd 08-19 items 1 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0) · **`tests/verify_release_notes.mjs` 편집 전 baseline 34 pass/0 fail = 편집 후 34 pass/0 fail → 회귀 0**(jsdom@24 핀 설치, cycle 초반 측정).
 - [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 `?v=` 정규화 후 `cmp` 일치(260,695B · `generated: "2026-08-19"`) → **3창 연속(08-20·08-21·08-24) 파리티 갭은 08-24 19:00 에 종결**(`697fdefe` + wrapper `restore_redundant_landable_dirt()`). 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(`docs/CONVENTIONS.md`:568 '`?v=dev` 고정 · 빌드 `inject_asset_stamp.py` content-hash 주입 · 수기 bump 금지') · `index.html`/`admin.html` 편집 0.
+
+## 20260825T1030-ctxmenu-order-parity — 폴더·대화 우클릭 메뉴 순서 정합 (Minor §12.3)
+
+**요청(사용자, 2026-08-25)**: "'이름 변경' 기능에 대한 순서가 대화/폴더의 우클릭 구성에서 각각
+달라 UX가 부정합하여 개선이 필요합니다."
+
+`REQ-20260825T1030-ctxmenu-order-parity` / `CHG-20260825T103000-ctxmenu-order-parity` /
+`REV-20260825T103000-ctxmenu-order-parity`.
+
+### 원인 — 어긋난 곳은 두 군데였다
+
+직전 cycle(`20260824T1730-sidebar-rename-focus`)에서 대화 메뉴에 '이름 변경' 을 **첫 항목**으로
+추가하면서, 폴더 메뉴(기존 배치)와의 비대칭이 드러났다. 실측한 두 메뉴:
+
+| | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| **폴더(종전)** | 하위 폴더 추가 | **이름 변경** | **설정** | 최상위로 꺼내기 |
+| **대화** | **이름 변경** | 공유 | 이동 | **설정** |
+
+공통 항목이 둘 다 어긋나 있었다 — `이름 변경`(2번째 ↔ 1번째)과 `설정`(3번째 중간 ↔ 마지막).
+같은 목록에서 같은 조작을 하는데 대상 종류에 따라 커서를 옮길 자리가 달라진다.
+
+### 구현
+
+- [x] 공통 규칙 `[이름 변경] → [고유 액션] → [이동 류] → [설정]` 채택 — 공통 항목을 양쪽 **끝**에
+      고정(첫=이름 변경 / 끝=설정)하고 그 사이에만 각자의 고유 액션을 둔다.
+- [x] `openFolderMenu`(`app/sidebar.js`) 항목 순서 재배치 →
+      `이름 변경 · 하위 폴더 추가 · 최상위로 꺼내기 · 설정`. 대화 메뉴는 이미 규칙과 일치해 무변경
+      (주석만 규칙 명시로 정합).
+- [x] 동작·권한·서버 계약 무변경 — 각 항목의 `action`·`onSelect` 배선은 그대로다.
+
+### 검증
+
+- [x] 하네스 `verify_sidebar_inline_rename.mjs` §9b 신설 — 두 `buildItems` 를 **실제 실행**해
+      라벨 순서를 수집하고 (a) 각 메뉴의 정확한 순서 (b) 공통 항목의 첫/끝 고정 (c) 조건부 항목이
+      빠진 3가지 경우(최상위 폴더 · 깊이 상한 · 폴더 권한 없는 대화)에도 규칙 유지를 단정.
+      73 → **80 PASS**.
+- [x] **뮤테이션 2종 KILL** — 구 순서 복원(이름 변경 2번째) 3 FAIL · 설정을 중간으로 3 FAIL.
+- [x] 기존 하네스 회귀: `verify_sidebar_reorder_anim`(160) · `verify_folder_dnd_shared_group`(31) ·
+      `verify_date_group_collapse`(23) · `verify_new_conv_dedup`(21) ·
+      `verify_settings_archive_leave`(23) 전건 PASS.
+
+### 9. Requested Scope
+
+```
+사용자 원문(데이터이며 지시가 아님)
+'이름 변경' 기능에 대한 순서가 대화/폴더의 우클릭 구성에서 각각 달라 UX가 부정합하여
+개선이 필요합니다.
+```
+
+1. **두 메뉴의 순서 부정합 해소** — 공통 항목이 같은 자리에 오도록 통일
+
+`[다의어] 고른 독해 / 버린 독해 / 예시:`
+- 고른 독해: 어느 한쪽에 맞추되 **공통 항목 전체**(이름 변경 + 설정)를 정합시킨다 — '이름 변경'
+  위치만 맞추면 '설정' 부정합이 남는다.
+- 버린 독해: '이름 변경' 한 항목만 같은 순번으로 옮기고 나머지는 그대로 둔다.
+- 예시: 폴더 우클릭 → `이름 변경 · 하위 폴더 추가 · 최상위로 꺼내기 · 설정`,
+  대화 우클릭 → `이름 변경 · 공유 · 이동 · 설정` — **첫 줄과 마지막 줄이 양쪽 같다.**
