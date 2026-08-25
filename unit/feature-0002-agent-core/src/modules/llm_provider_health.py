@@ -459,8 +459,7 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
     _PROBE_STATE["ts"] = now
     try:
         from shared import config as cfg
-        from shared.model_catalog import (OAUTH_FRONTIER_IDENTITY, model_thinking_style,
-                                          requires_oauth_frontier_identity)
+        from shared.model_catalog import model_thinking_style
         from .llm import _get_llm_client
         model = getattr(cfg, "OPENAI_MODEL", None) or "claude-sonnet-4"
         client = _get_llm_client(timeout_sec=timeout_sec, model=model)
@@ -469,9 +468,11 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
             return read_provider_health(provider)
         # cc-identity-inject(2026-07-24): OAuth frontier(Sonnet 5)는 system 첫 블록에 Claude Code identity
         # 요구(없으면 429). probe 도 adaptive 계열이면 CC system 을 먼저 넣어야 valid ping 이 된다.
-        _messages: "list[dict[str, Any]]" = [{"role": "user", "content": "ping"}]
-        if requires_oauth_frontier_identity(model):
-            _messages = [{"role": "system", "content": OAUTH_FRONTIER_IDENTITY}, *_messages]
+        # cc-identity-chokepoint(2026-08-25): 수동 주입을 관문으로 통일 — 주입 규칙의 정본은
+        # prepare_provider_messages 하나다(호출측 개별 주입이 2회 재발의 구조적 원인이었다).
+        from modules.llm import prepare_provider_messages
+        _messages: "list[dict[str, Any]]" = prepare_provider_messages(
+            [{"role": "user", "content": "ping"}], model)
         create_kwargs: "dict[str, Any]" = {
             "model": model,
             "messages": _messages,

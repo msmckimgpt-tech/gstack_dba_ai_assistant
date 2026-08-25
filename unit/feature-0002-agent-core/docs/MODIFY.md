@@ -2448,3 +2448,55 @@ live 스펙을 startup 으로 읽는 키가 drift 후보. 스펙 97(live 76) × 
   **실행 기반으로 격상**(계약 불변, 리팩터링 견고 — §16.7 G11).
 
 근거: `REVIEW.md` `REV-20260825T030000-…`.
+
+## CHG-20260825T170000-cc-identity-chokepoint
+
+OAuth frontier identity 주입을 **호출측 산재 → provider 전송 직전 단일 관문**으로 재배치했다.
+(`/_dqa:conversation_audit` 라이브 진단 — 대화 `2026-08-24 SQL 스크립트 리뷰 피드백` 마찰,
+`FR-oauth-frontier-identity-scattered-injection` 원장 항목.)
+
+### 왜 (재발 이력)
+
+frontier 모델(Sonnet 5 · Opus 5)은 OAuth 구독 토큰으로 나갈 때 **system 첫 블록이 Claude Code
+identity** 여야 Anthropic 이 허용한다. 없으면 429 `rate_limit_error` — 단 이 429 에는
+`anthropic-ratelimit-*` 헤더가 실리지 않아 실제 한도 초과와 구분된다(라이브 실측).
+
+- 2026-07-24 최초 봉인: 주입을 **호출측 3곳**(대화 답변 · redteam 리뷰어 · provider health probe)에
+  개별 배치 → 그 밖의 경로는 무방비로 남음.
+- 2026-08-25 **재발**: 라이브 대화가 18회 재시도(5분) 끝에 실패, 사용자에게는 원인과 무관한
+  데이터소스·VPN 안내가 전달됨. `llm.py` 의 LLM 호출 지점 18곳에 주입 0건이었다.
+
+### 변경
+
+- `shared/model_catalog.py`: `ensure_oauth_frontier_identity(messages, model)` 신설 — 주입 규칙 단일
+  정본. **멱등**(이미 주입돼 있으면 동일 객체 반환)이라 호출측 잔존 주입과 겹쳐도 중복되지 않고,
+  주입 시에만 얕은 복사해 호출측 배열을 오염시키지 않는다(재시도 경로 안전).
+- `modules/llm.py`: `prepare_provider_messages(messages, model)` 신설 — identity 주입 +
+  `_apply_prompt_cache` 를 함께 적용하는 관문. `_openai_chat_completion_with_deadline`(보조 호출
+  chokepoint)과 `llm_node_analysis`(직접 호출)를 관문 경유로 교체.
+- `agent_core.py`: 대화 답변 경로의 인라인 주입 2줄 + 캐시 호출을 관문 1줄로 통일. 미사용이 된
+  `OAUTH_FRONTIER_IDENTITY` · `requires_oauth_frontier_identity` import 정리.
+- `tests/test_cc_identity_chokepoint.py`(신규 **24**): identity 문자열 정확 일치 · 판정 분기 · 주입/
+  멱등/무오염/pass-through · 관문 결과 계약 + **AST 배선 강제** — provider 호출 **전수** 관문 경유,
+  `messages` sink(dict 리터럴 + 첨자 대입) 전수, 관문 결과 버림·덮어쓰기 금지, `_apply_prompt_cache`
+  직접 호출 금지. 검사 대상은 provider 요청을 조립하는 5개 파일(`_WIRED_FILES`).
+- **적대 리뷰(codex 3렌즈) 흡수**: 초판은 `llm.py` 직접 호출 16곳 중 **15곳이 관문 우회**였고
+  배선 테스트가 그것을 못 잡았다([P1] 2건, 출하 차단). 확인 라운드에서 web-ui 3곳
+  (`_prompt_context.py` role/account · `admin_metadata.py`)과 probe 1곳이 추가 적발돼 전부 봉인했다.
+  최종 상태: provider 요청을 조립하는 지점 **전수 관문 경유**.
+- `AGENTS.md §15.2.1`(신설) · `docs/DECISIONS.md ADR-20260825T170000-cc-identity-chokepoint`.
+
+### 검증
+
+- 신규 **24** PASS. identity 관련 기존 스위트 137 PASS(회귀 0).
+- **뮤테이션 역검증 7종**: M1(대화 경로 관문 우회) 2건 KILL · M2(멱등 체크 제거) 1건 KILL ·
+  M4(provider 호출 1곳 우회) 2건 KILL · M5(관문 결과 버림) 2건 KILL · M6(관문 결과 덮어쓰기) 1건 KILL ·
+  M7(첨자 대입으로 관문 되돌리기) 1건 KILL. **M3(identity↔캐시 순서 역전) → 생존**.
+- M3 생존은 **동치 뮤턴트**로 판정했다 — identity 는 맨 앞, 캐시는 마지막 system 에 붙어 서로
+  간섭하지 않으므로 두 순서의 결과가 같다. 애초 docstring 에 쓴 "순서 역전 금지" 는 근거 없는
+  과장이라 사실대로 정정했고, 잡히지 않는 순서를 억지 단언으로 덮지 않았다(§정직).
+- 전체 스위트: main baseline 8 FAIL = 브랜치 8 FAIL, **동일 집합**(전부 `psycopg` 미설치 환경 의존)
+  → 회귀 0. main(repo) 에서 동일 테스트 재실행으로 baseline 대조.
+- **라이브 미검증분(정직 표기)**: 배포 후 실제 대화에서 frontier 답변이 성사되는지는 미측정.
+  게이트웨이 경유 실측으로 "identity 없으면 429 / 있으면 200" 은 확인했으나(2026-08-25), 배포본
+  end-to-end 는 배포 후 확인 대상이다.

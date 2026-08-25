@@ -640,7 +640,11 @@ async def _metadata_llm_complete(messages: list, *, task: str = "summary", tempe
     client = _get_llm_client(model=llm_model)
     if client is None:
         return None, None, app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
-    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 60}
+    # cc-identity-chokepoint(2026-08-25): provider 전송 직전 관문(feature-0002 CHG-20260825T170000).
+    from modules.llm import prepare_provider_messages
+    create_kwargs: dict = {"model": llm_model,
+                           "messages": prepare_provider_messages(messages, llm_model),
+                           "timeout": 60}
     mt = app.max_tokens_for_model(llm_model, task)
     if mt is not None:
         create_kwargs["max_tokens"] = mt

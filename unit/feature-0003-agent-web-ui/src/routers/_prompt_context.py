@@ -723,9 +723,14 @@ def _assemble_product_prompt_llm_request(product_id: int):
     # "summary" cap(Claude 7000 / 로컬 512) 으로는 본문이 중간에 잘렸다. 긴 본문 전용
     # "prompt_gen" cap(Claude 20000 / 로컬 3072) 을 사용한다.
     _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
+    # cc-identity-chokepoint(2026-08-25, feature-0002 CHG-20260825T170000): provider 전송 직전 관문.
+    # 이 경로는 세션 기본 모델을 그대로 쓰므로 frontier(Sonnet 5·Opus 5)로 해소될 수 있고, 그때
+    # Claude Code identity 가 없으면 Anthropic 이 429 로 거부한다(=프롬프트 자동작성 전면 실패).
+    # 관문이 identity 주입 + 프롬프트 캐시를 함께 적용한다(budget 계열·로컬 LLM 은 원본 그대로).
+    from modules.llm import prepare_provider_messages
     create_kwargs: dict = {
         "model": llm_model,
-        "messages": messages,
+        "messages": prepare_provider_messages(messages, llm_model),
         "timeout": 90,
     }
     if _mt is not None:
@@ -928,7 +933,11 @@ def _assemble_role_prompt_llm_request(role_id: int):
         return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
 
     _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
-    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 90}
+    # cc-identity-chokepoint(2026-08-25): provider 전송 직전 관문(feature-0002 CHG-20260825T170000).
+    from modules.llm import prepare_provider_messages
+    create_kwargs: dict = {"model": llm_model,
+                           "messages": prepare_provider_messages(messages, llm_model),
+                           "timeout": 90}
     if _mt is not None:
         create_kwargs["max_tokens"] = _mt
     if app.model_supports_temperature(llm_model):
@@ -1040,7 +1049,11 @@ def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_
         return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
 
     _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
-    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 90}
+    # cc-identity-chokepoint(2026-08-25): provider 전송 직전 관문(feature-0002 CHG-20260825T170000).
+    from modules.llm import prepare_provider_messages
+    create_kwargs: dict = {"model": llm_model,
+                           "messages": prepare_provider_messages(messages, llm_model),
+                           "timeout": 90}
     if _mt is not None:
         create_kwargs["max_tokens"] = _mt
     if app.model_supports_temperature(llm_model):

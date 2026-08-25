@@ -26,6 +26,7 @@ __all__ = [
     "effort_for_reasoning_level",
     "OAUTH_FRONTIER_IDENTITY",
     "requires_oauth_frontier_identity",
+    "ensure_oauth_frontier_identity",
     "normalize_reasoning_level",
     "thinking_budget_for_level",
     "canonical_usage_model",
@@ -509,6 +510,38 @@ def requires_oauth_frontier_identity(model: str | None) -> bool:
     로 판정한다 (opus5-model 2026-07-27 라이브 재실증 — Opus 5 도 CC identity 없으면 429).
     """
     return model_thinking_style(model) == "adaptive"
+
+
+def ensure_oauth_frontier_identity(
+    messages: "list[dict[str, Any]] | None", model: str | None
+) -> "list[dict[str, Any]] | None":
+    """frontier 모델 요청의 **첫 메시지**가 Claude Code identity system 이도록 보장한다.
+
+    cc-identity-chokepoint(2026-08-25 재발 대응): 종전에는 이 주입이 호출측 3곳
+    (agent_core 대화 · redteam 리뷰어 · provider health probe)에 **개별 산재**해 있었다.
+    그래서 frontier 모델을 쓰는 경로가 하나라도 새로 생기면 주입 없이 나가 429(identity
+    게이트)로 죽는 구조였고, 실제로 재발했다. 주입 규칙을 이 함수 하나로 접고, provider
+    전송 직전 관문(`llm.prepare_provider_messages`)이 전 경로에서 이 함수를 부르게 한다.
+
+    멱등: 이미 첫 메시지가 identity system 이면 **원본 리스트를 그대로**(동일 객체) 돌려준다
+    — 호출측 개별 주입과 관문 주입이 겹쳐도 중복되지 않는다. 주입할 때만 얕은 복사본을 만들어
+    호출측 배열을 in-place 오염시키지 않는다(같은 messages 를 재사용하는 재시도 경로 안전).
+
+    미요구 모델(budget 계열 Haiku 등)·빈 messages 는 원본 그대로 — working 경로 무영향.
+
+    ⚠ 주입은 반드시 **별도 메시지**여야 한다. identity 와 제품 프롬프트를 한 문자열로
+    이어붙이면 게이트를 통과하지 못한다(라이브 실증 2026-07-24 / 2026-08-25 재확인).
+    """
+    if not messages or not requires_oauth_frontier_identity(model):
+        return messages
+    first = messages[0]
+    if (
+        isinstance(first, dict)
+        and first.get("role") == "system"
+        and first.get("content") == OAUTH_FRONTIER_IDENTITY
+    ):
+        return messages
+    return [{"role": "system", "content": OAUTH_FRONTIER_IDENTITY}, *messages]
 
 
 # ── AI 활동 taxonomy (AI 운영 관제 패널 — 확장 레지스트리, TASK-AIOPS) ────────────

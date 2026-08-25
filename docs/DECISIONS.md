@@ -981,3 +981,37 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   기존 판정("별개 worker·보존")을 뒤집을 신규 근거 부재로 불채택. #5 분리 강행 — 선행(shared/)은
   충족했으나 6주간의 스파인 안정화 실적을 리스크로 되돌릴 실익 부재로 불채택.
 - **영향**: ssot ROADMAP ITEM-P5a 종결(§4 미결정 #4·#5 해소), feature-0011 TASK Step 6 불채택 종결.
+
+## ADR-20260825T170000-cc-identity-chokepoint
+- Status: accepted
+- Date: 2026-08-25
+- Context: OAuth 구독 토큰(`sk-ant-oat…`)으로 나가는 frontier 모델(Sonnet 5 · Opus 5)은 Anthropic 이
+  **system 첫 블록에 Claude Code identity 문자열**을 요구하며, 없으면 429 `rate_limit_error` 로
+  거부한다. 이 429 에는 `anthropic-ratelimit-*` 헤더가 실리지 않아 실제 한도 초과와 형태가 다르다.
+  2026-07-24 최초 봉인(ADR 없이 코드만)은 주입을 **호출측 3곳**(대화 답변·redteam 리뷰어·provider
+  health probe)에 개별 배치했다. 2026-08-25 **동일 장애가 재발** — 개별 주입이라 그 3곳 밖의 경로는
+  무방비였고, 라이브 대화가 18회 재시도(5분) 끝에 실패한 뒤 사용자에게는 원인과 무관한
+  데이터소스·VPN 안내가 나갔다. 진단도 오도되어 사용량 소진·계정 한도로 두 차례 오판했다
+  (동일 토큰으로 Haiku 200 / 상위 4개 모델 429, 사용률 44% 계정도 동일 → 사용량 축 기각으로 확정).
+- Decision: identity 주입을 **provider 전송 직전 단일 관문**으로 접는다.
+  1. `shared.model_catalog.ensure_oauth_frontier_identity(messages, model)` — 주입 규칙의 단일 정본.
+     멱등(이미 주입돼 있으면 동일 객체 반환)이라 호출측 잔존 주입과 겹쳐도 중복되지 않는다.
+  2. `modules.llm.prepare_provider_messages(messages, model)` — identity 주입 + 프롬프트 캐시
+     브레이크포인트를 함께 적용하는 관문. **provider 로 나가는 모든 경로가 이 함수를 쓴다.**
+  3. `_apply_prompt_cache()` 직접 호출 금지(관문 내부 1회만) — 캐시만 단독으로 거는 코드가 곧
+     identity 를 빠뜨린 코드이며 재발의 정확한 형태였다. `test_cc_identity_chokepoint.py` 가 AST 로 강제.
+  4. 정책 정본: `AGENTS.md §15.2.1`(도메인 절대 금지사항).
+- Consequences:
+  - 신규 LLM 호출 경로는 관문만 쓰면 identity 계약을 자동 충족한다.
+  - 배선 검사가 **흔한 누락 형태**를 배포 전에 잡는다 — 관문 미경유·반환값 버림·관문 뒤 덮어쓰기·
+    첨자 대입 되돌리기(뮤테이션 6종으로 역검증, 전부 KILL). 다만 **정적 검사의 한계는 명시해 둔다**:
+    값이 여러 함수·자료구조를 건너 흐르는 정교한 우회까지 잡지는 못한다(적대 리뷰가 실증). 최종
+    안전망은 배포 후 라이브 실측이며, 실제 재발 2회는 모두 이 검사가 잡는 단순 누락이었다.
+  - 적용 **순서**(identity↔캐시)는 결과에 영향이 없음을 실측 확인했다(뮤턴트 M3 생존 = 동치 뮤턴트).
+    잠근 것은 순서가 아니라 **둘 다 누락 없이 적용되는가** 다 — 인위적 순서 단언은 만들지 않았다.
+  - 남은 위험: identity 게이트는 Anthropic 측 정책이라 문자열·적용 대상이 예고 없이 바뀔 수 있다.
+    변경 시 증상은 다시 429 이므로, `AGENTS.md §15.2.1` 의 진단 순서(ratelimit 헤더 유무 → Haiku 대조)
+    를 먼저 따른다.
+- 대안: (a) 정식 API 키(`sk-ant-api03…`) 전환 — identity 요구가 사라져 구조적으로 가장 깨끗하나
+  과금이 구독→종량제로 바뀌어 운영 결정 필요, 별도 트랙으로 이월. (b) 대화 답변을 budget 계열로 상시
+  강등 — 게이트를 우회하지만 품질 저하가 상시화되어 불채택.

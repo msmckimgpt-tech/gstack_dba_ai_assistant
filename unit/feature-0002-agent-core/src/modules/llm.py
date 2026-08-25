@@ -23,6 +23,7 @@ __all__ = [
     "VALIDATION_PROMPT",
     "_build_summary_payload",
     "_apply_prompt_cache",
+    "prepare_provider_messages",
     "_compute_plan_timeout_sec",
     "_find_tool_name",
     "_generate_topic_from_request",
@@ -52,7 +53,7 @@ __all__ = [
 from shared.config import *
 from shared import config as cfg
 from shared import runtime_settings as _rts  # feature-0018: live-mode 실행 타임아웃(관리 콘솔 조정) 즉시 반영
-from shared.model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model
+from shared.model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model, ensure_oauth_frontier_identity
 from .utils import append_log_line
 import json, os, time
 from typing import Any
@@ -782,6 +783,32 @@ def _apply_prompt_cache(messages: "list[dict[str, Any]] | None", model: str | No
         return messages
 
 
+def prepare_provider_messages(
+    messages: "list[dict[str, Any]] | None", model: str | None
+) -> "list[dict[str, Any]] | None":
+    """provider 전송 직전 messages 최종 정규화 — **모든 LLM 호출 경로의 단일 관문**.
+
+    cc-identity-chokepoint(2026-08-25): 두 정규화가 반드시 **함께** 일어나야 한다.
+
+      1. `ensure_oauth_frontier_identity` — frontier 모델(Sonnet 5 · Opus 5)은 system 첫 블록이
+         Claude Code identity 여야 Anthropic 이 허용한다. 없으면 429(rate_limit 로 위장된 게이트).
+      2. `_apply_prompt_cache` — 마지막 system 에 캐시 브레이크포인트를 건다.
+
+    두 정규화는 서로 간섭하지 않는다 — identity 는 **맨 앞**에 들어가고 캐시는 **마지막 system**
+    에 붙으므로, 적용 순서를 바꿔도 결과가 같다(뮤테이션 M3 로 실측 확인: 순서 역전 뮤턴트는
+    동치 뮤턴트라 생존한다. 순서를 지키는 테스트를 억지로 만들지 않았다). 여기서 중요한 것은
+    순서가 아니라 **누락 없이 둘 다 적용되는 것** 이며, identity 가 항상 0번이라 캐시 접두
+    (identity + 제품 프롬프트 + 도구 스펙)에 identity 가 포함되는 성질도 순서와 무관하게 성립한다.
+
+    왜 관문인가 — 재발 이력: identity 주입이 호출측에 산재해 있던 동안, frontier 모델을 쓰는
+    경로가 새로 생길 때마다 주입이 누락돼 429 가 재발했다(2026-07-24 최초 봉인, 2026-08-25 재발).
+    `_apply_prompt_cache` 를 부르는 지점 = provider 로 나가는 지점이므로, 그 자리를 이 관문으로
+    통일하면 커버리지가 구조적으로 일치한다. 신규 경로는 이 함수만 부르면 된다.
+    (배선은 테스트가 AST 로 강제한다 — `_apply_prompt_cache` 직접 호출 금지.)
+    """
+    return _apply_prompt_cache(ensure_oauth_frontier_identity(messages, model), model)
+
+
 def _record_llm_usage(
     model: str, task: str, resp,
     conversation_id: str | None = None, run_id: str | None = None,
@@ -933,7 +960,10 @@ def _openai_chat_completion_with_deadline(
         # usage-metric-charts(2026-08-13): 안정 접두(system)에 프롬프트 캐시 브레이크포인트 부착.
         #   비대화 경로(검증·요약·인사이트 등)도 같은 system 을 반복 전송하는 호출이 많다.
         #   임계 미만·로컬 LLM 은 helper 가 원본을 그대로 돌려주므로 종전 동작 무변경.
-        "messages": _apply_prompt_cache(messages, model),
+        # cc-identity-chokepoint(2026-08-25): 관문으로 교체 — 이 chokepoint 를 경유하는 보조
+        #   호출(검증·요약·주제·SQL 수정 등)이 frontier 모델로 라우팅돼도 identity 가 자동 주입된다.
+        #   종전에는 여기 주입이 없어, 모델 설정이 바뀌는 순간 이 경로 전체가 429 로 죽었다.
+        "messages": prepare_provider_messages(messages, model),
         "timeout": _openai_request_timeout(timeout_sec),
     }
     # feature-0021: 호출 단위 max_tokens override — 양수면 task 별 카탈로그 cap 대신 사용
@@ -1351,10 +1381,10 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_validation_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": VALIDATION_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _validation_model),
             **_max_tokens_kwargs(_validation_model, "validate"),
             **_temperature_kwargs(_validation_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
@@ -1378,10 +1408,10 @@ def llm_update_summary(payload: dict[str, Any]) -> str | None:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_summary_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": SUMMARY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _summary_model),
             **_max_tokens_kwargs(_summary_model, "summary"),
             **_temperature_kwargs(_summary_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
@@ -1457,10 +1487,10 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_classify_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": ORIGIN_SHIFT_CLASSIFY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _classify_model),
             **_max_tokens_kwargs(_classify_model, "summary"),
             **_temperature_kwargs(_classify_model),
             timeout=_openai_request_timeout(_classify_timeout),
@@ -1505,10 +1535,10 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_topic_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": TOPIC_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _topic_model),
             **_max_tokens_kwargs(_topic_model, "summary"),
             **_temperature_kwargs(_topic_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
@@ -1542,10 +1572,10 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": GLOSSARY_SUGGEST_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "summary"),
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
@@ -1593,10 +1623,10 @@ def llm_enum_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": ENUM_SUGGEST_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "summary"),
             **_temperature_kwargs(_model),
             # conv-audit FR-live-cap-derived-from-startup-snapshot: 인자 생략 → live fallback.
@@ -1647,10 +1677,10 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_fix_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": SQL_FIX_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _fix_model),
             **_max_tokens_kwargs(_fix_model, "sql_fix"),
             **_temperature_kwargs(_fix_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
@@ -1714,10 +1744,10 @@ def llm_schema_insight(payload: dict[str, Any], *, scope_key: str | None = None)
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": SCHEMA_INSIGHT_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _insight_model),
             **_max_tokens_kwargs(_insight_model, "insight"),
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -1757,10 +1787,10 @@ def llm_table_insight(payload: dict[str, Any], *, scope_key: str | None = None) 
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": TABLE_INSIGHT_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _insight_model),
             **_max_tokens_kwargs(_insight_model, "insight"),
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -1806,10 +1836,10 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": ACCOUNT_INSIGHT_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _insight_model),
             **_max_tokens_kwargs(_insight_model, "insight"),
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -1981,7 +2011,9 @@ def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None,
             model=_insight_model,
             # usage-metric-charts: 이 경로는 **노드마다** 같은 9k자 system 을 재전송하므로 캐시 이득이
             #   가장 크다. deadline chokepoint 를 경유하지 않는 직접 호출이라 여기서 명시 적용한다.
-            messages=_apply_prompt_cache([
+            # cc-identity-chokepoint(2026-08-25): 관문으로 교체 — 노드 분석 모델이 frontier 로
+            #   바뀌면 identity 없이 나가 429 가 된다(이 경로는 배경 워커라 실패가 조용히 쌓인다).
+            messages=prepare_provider_messages([
                 {"role": "system", "content": NODE_ANALYSIS_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ], _insight_model),
@@ -2208,10 +2240,10 @@ def llm_product_classify(payload: dict[str, Any], *, scope_key: str | None = Non
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": PRODUCT_CLASSIFY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "insight"),
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -2365,10 +2397,10 @@ def llm_domain_summary(payload: dict[str, Any], *, scope_key: str | None = None)
         _lat_t0 = time.perf_counter_ns()
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": DOMAIN_SUMMARY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "insight"),
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -2406,10 +2438,10 @@ def llm_verify_analysis(payload: dict[str, Any], *, scope_key: str | None = None
         _lat_t0 = time.perf_counter_ns()
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": ANALYSIS_VERIFY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "insight"),
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -2447,10 +2479,10 @@ def llm_cluster_summary(payload: dict[str, Any], *, scope_key: str | None = None
         _lat_t0 = time.perf_counter_ns()
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": CLUSTER_SUMMARY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "insight"),
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
@@ -2487,10 +2519,10 @@ def llm_cluster_label(payload: dict[str, Any], *, scope_key: str | None = None) 
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
-            messages=[
+            messages=prepare_provider_messages([
                 {"role": "system", "content": CLUSTER_LABEL_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            ], _model),
             **_max_tokens_kwargs(_model, "insight"),
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),

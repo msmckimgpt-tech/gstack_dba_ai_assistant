@@ -2002,3 +2002,63 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
      의도치 않게 탄 것이다.
 - **필요한 사람 액션(1줄)**: 없음(사용자가 PR·머지·배포 자율 승인). 다음 audit 이 위 지표로 판정.
   문서 정합은 `/_dqa:doc_sync` 권유.
+
+## FR-oauth-frontier-identity-scattered-injection — fixed:undeployed (L6↔L1 경계; provider 계약 주입이 호출측에 산재해 경로가 늘 때마다 누락 → **2회째 동일 장애**)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **24** PASS · identity 관련 기존 **137** PASS ·
+  뮤테이션 7종 중 6종 KILL, M3 는 동치 뮤턴트로 판정) + §18.8 적대 리뷰 2라운드([P1] 4건 흡수) +
+  정책 문서 기입 완료. **배포 전** — 배포 후 라이브 실측(실제 대화에서 frontier 답변 성사)은 미수행.
+- **source**: 사용자 지목 대화 `20260824021847-816ab7f3`("SQL 스크립트 리뷰 피드백 — friend 테이블
+  보존 정책 적용", 그룹). 2026-08-25 13:32 사용자 질문 2회 → 각각 5분 03초 / 3분 27초 만에 오류 종결,
+  대화 이탈. `ask_jobs` 737·738 = `status=error`, `attempts=3`, `llm_usage` 기록 **0건**(호출 미성사).
+- **신호**: E-SYS(오류 반복 2회) + I-SIL(오류 직후 대화 종료) + E-USR(재시도 `@assistant` 1회).
+- **근본원인(삼각측량)**:
+  - 코드: `llm.py` 의 LLM 호출 지점 **18곳에 identity 주입 0건**. 주입은 호출측 3곳(대화 답변
+    `agent_core` · redteam 리뷰어 · provider health probe)에만 산재.
+  - 라이브: OAuth 구독 토큰(`sk-ant-oat…`)으로 frontier 모델(Sonnet 5 · Opus 5) 호출 시 **system 첫
+    블록이 Claude Code identity 여야 200**. 없으면 **429 `rate_limit_error`** — 단 이 429 에는
+    `anthropic-ratelimit-*` 헤더가 **부재**해 실제 한도와 구분된다. 게이트웨이 우회 직접 호출로 확증
+    (identity 없음 429 / 있음 200 · UA·stream·adaptive-thinking 축은 전부 무관으로 기각).
+  - 전사: 최종 사용자 표면은 LLM 과 무관한 데이터소스·VPN 안내였다(별 항목, 아래 분리).
+- **기각된 가설(데이터로 refuted — 재추적 방지)**:
+  - *계정 quota 소진* → **기각**. 동일 시각 haiku 200 + `unified-5h-utilization=0.65`,
+    `unified-7d=0.44`, `status=allowed`.
+  - *상위 모델 등급 한도 소진* → **기각**. 두 번째 계정(`ANTHROPIC_API_KEY_ROOT`, 사용률 **0.44**)도
+    동일하게 sonnet 429 / haiku 200. 사용률이 21%p 다른 독립 계정 2개가 같은 결과 → 사용량 축 아님.
+  - *클라이언트 식별(User-Agent `claude-cli` · `x-app`)* → **기각**(붙여도 429).
+  - *litellm 1.98.0 의 `client_side_timeout` body 오염(400)* → **부수 현상**. 400 은 로그상 예외 없이
+    fallback 문맥에서만 발생 = 1차 실패(identity 429) 후 폴백이 죽는 2차 증상. 근본 아님.
+- **confirmed_root_cause.location**: `unit/feature-0002-agent-core/src/modules/llm.py` LLM 호출 지점
+  전반 + `agent_core.py` 인라인 주입(주입 규칙이 단일 정본을 갖지 못한 구조).
+- **재발경로 분류**: `data/config drift` 아님 — **구조적 커버리지 결함**. 주입이 호출측에 산재하면
+  경로가 늘 때마다 누락된다(2026-07-24 최초 봉인이 그 방식이었고 그래서 2026-08-25 재발).
+- **fix**: `CHG-20260825T170000-cc-identity-chokepoint`(feature-0002-agent-core).
+  `ensure_oauth_frontier_identity`(멱등 단일 정본) + `prepare_provider_messages`(provider 전송 직전
+  관문) 신설, 전 경로를 관문 경유로 통일. **AST 배선 테스트**로 관문 우회(`_apply_prompt_cache` 직접
+  호출) 차단 — 헬퍼 단위 테스트만으로는 잡히지 않던 사각을 덮는다.
+- **정책 봉인**: `AGENTS.md §15.2.1`(도메인 절대 금지사항 — 관문 우회 금지·identity 문자열 수정 금지·
+  429 를 사용량으로 단정 금지) + `docs/DECISIONS.md ADR-20260825T170000-cc-identity-chokepoint`.
+- **seen_count**: 2 (2026-07-24 최초, 2026-08-25 재발) · **seen_distinct_conv**: 1(재발분 실측 기준)
+- **잔여/다음 audit 측정 대상**: 배포 후 frontier 답변 성사율. identity 게이트는 Anthropic 측 정책이라
+  문자열·대상 모델이 예고 없이 바뀔 수 있다 — 증상은 다시 429 이므로 §15.2.1 진단 순서를 따른다.
+
+## FR-capacity-failure-classified-transient — triaged (L2; 결정적·용량성 실패를 재시도로 태워 5분 소모)
+
+- **status**: `triaged` — 위 batch 와 **별개 뿌리**라 분리(응집 한계). 수정 미착수.
+- **관측**: 429/400 이 `classify_agent_llm_failure` 에서 `kind=transient tag=unavailable` 로 분류돼
+  6회 × 3 attempts = **18회 재시도**, `waited_total=76.5s` × 3. 각 시도는 **0.6초 만에 즉시 거부**라
+  재시도로 풀릴 수 없는 형태였다. 사용자는 5분을 기다린 뒤 실패를 받았다.
+- **location**: `unit/feature-0002-agent-core/src/modules/llm.py` `classify_agent_llm_failure`
+  (`_AGENT_LLM_PERMANENT_KINDS` 에 용량성 실패 부재).
+- **주의**: 단순히 permanent 로 옮기면 진짜 일시 장애의 자동 회복을 잃는다 — 재시도 가치가 있는
+  transient 와 즉시-거부를 **응답 형태(0.6초 즉답·ratelimit 헤더 유무)로** 가르는 설계가 필요하다.
+
+## FR-llm-failure-surfaced-as-datasource-guidance — triaged (L7↔L2; 원인과 무관한 조치로 사용자 유도)
+
+- **status**: `triaged` — 별개 뿌리로 분리. 수정 미착수.
+- **관측**: LLM 실패로 끝난 run 의 최종 사용자 표면이 `DatasourceCircuitOpen.user_message()`
+  (`shared/db.py`) — "데이터소스 응답 지연 · **네트워크/VPN 확인** · 관리자에게 **데이터소스 점검
+  요청**". 실제 원인은 LLM identity 게이트였고, 사용자는 전혀 무관한 조치로 유도됐다.
+- **부수 관측**: 폴백 체인이 동일 등급 안에서만 돈다(`claude-sonnet-4-chat` → `-chat-root`, 둘 다
+  frontier). 이번 장애 내내 **haiku 는 200 으로 살아 있었으므로**, 등급 교차 폴백이 있었다면 품질
+  강등으로 서비스가 지속됐을 것이다. 조치는 운영 결정 필요(별 트랙).
