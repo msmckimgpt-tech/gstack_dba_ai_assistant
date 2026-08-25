@@ -3252,7 +3252,11 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
 - [x] AST 배선 테스트로 관문 우회 차단(`_apply_prompt_cache` 직접 호출 금지).
 - [x] 뮤테이션 역검증 3종(M1·M2 KILL / M3 동치 뮤턴트로 판정·정직 표기).
 - [x] 정책 문서 기입 — `AGENTS.md §15.2.1` + `docs/DECISIONS.md ADR-20260825T170000-…`.
-- [ ] **배포 후 라이브 실측** — 실제 대화에서 frontier 답변 성사 확인(배포 confirm 후 수행).
+- [x] **배포 후 라이브 실측** — PR #1342 merge(main `4c7bd6c0`) → `make deploy-web` 전체 스코프,
+      6서비스 실물 이미지 4c7bd6c0 healthy · surge 0 · caddy blip **0**. 배포본 ask-worker 에서
+      실제 코드 경로(`prepare_provider_messages` → `_openai_chat_completion_with_deadline`)로
+      frontier 호출 **200 성공**(`served_model=claude-sonnet-4-chat`). 실사용자 대화 corroboration
+      시계열은 다음 audit 측정 대상(원장 축 한정 표기).
 
 ### 이번 cycle 에서 다루지 않은 것 (원장 분리)
 

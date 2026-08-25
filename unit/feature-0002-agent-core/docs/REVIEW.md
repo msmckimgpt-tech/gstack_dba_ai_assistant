@@ -2377,3 +2377,16 @@ security 렌즈: 취약점 없음 — 주입값은 고정 상수, 사용자 입�
 P1 추이: R1 **2** → R2 **2**(신규 발견) → R3 **0**. R2 의 증가는 검사 범위가 llm.py 밖(web-ui)으로
 넓어지며 드러난 것으로, 같은 근본의 미발견분이었다. R3 에서 0 으로 수렴했고 수정 라운드를 종결
 근거로 쓰지 않았다.
+
+## REV-20260825T200000-cc-identity-deploy-record [SKIPPED:docs-only]
+
+Verdict: **SKIPPED** — 패널 미실시. 사유: 코드 변경 0(문서 전용). 본 cycle 의 변경은
+`CHG-20260825T170000-cc-identity-chokepoint` 의 **배포 결과·라이브 실측을 사실 그대로 기록**한 것뿐이다
+(원장 status 전이 · TASK 체크박스 종결 · MODIFY 배포 기록 · LEARNINGS 2건).
+선행 cycle 의 코드 변경은 `REV-20260825T190000-cc-identity-chokepoint`([CODEX:3-lens], R1→R3 P1 2→2→0)
+에서 이미 적대 리뷰를 마쳤고, 그 이후 코드는 한 줄도 바뀌지 않았다(`git diff --stat` 상 `*.py` 0건).
+
+기록된 사실의 근거: 6서비스 실물 이미지 `4c7bd6c0` healthy · surge 잔존 0 · caddy
+`no upstreams available` 0건 · 배포본 ask-worker 런타임에서 frontier 호출 200
+(`served_model=claude-sonnet-4-chat`). 미측정분(실사용자 corroboration 시계열)은 원장에 축 한정으로
+정직 표기했다.

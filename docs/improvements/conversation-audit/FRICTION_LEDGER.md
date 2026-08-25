@@ -2005,9 +2005,18 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-oauth-frontier-identity-scattered-injection — fixed:undeployed (L6↔L1 경계; provider 계약 주입이 호출측에 산재해 경로가 늘 때마다 누락 → **2회째 동일 장애**)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **24** PASS · identity 관련 기존 **137** PASS ·
-  뮤테이션 7종 중 6종 KILL, M3 는 동치 뮤턴트로 판정) + §18.8 적대 리뷰 2라운드([P1] 4건 흡수) +
-  정책 문서 기입 완료. **배포 전** — 배포 후 라이브 실측(실제 대화에서 frontier 답변 성사)은 미수행.
+- **status**: `fixed:deployed:verified(경로 축)` — 코드/테스트(신규 **24** PASS · identity 관련 기존
+  **137** PASS · 뮤테이션 7종 중 6종 KILL, M3 는 동치 뮤턴트로 판정) + §18.8 적대 리뷰 **3라운드**
+  ([P1] 2→2→**0**, 총 4건 흡수) + 정책 문서 기입 + **배포 완료**(2026-08-25, PR #1342 merge main
+  `4c7bd6c0` → `make deploy-web` 전체 스코프. **6서비스 실물 이미지 = 4c7bd6c0**: web-a·web-b·
+  ask-worker·insight-worker·ops-scheduler·ext-tool-mcp 전부 healthy, surge 잔존 0,
+  caddy `no upstreams available` **0건**(무중단 실측)).
+- **라이브 실측(2026-08-25, 배포본 런타임)**: ask-worker 배포본에서 실제 코드 경로
+  (`prepare_provider_messages` → `_openai_chat_completion_with_deadline`)로 frontier 호출 →
+  **200 성공**(`served_model=claude-sonnet-4-chat`, 정상 응답). 관문 통과 후 첫 메시지가
+  Claude Code identity 임을 배포본에서 확인. 즉 **429 identity 게이트는 해소됐다**.
+  **축 한정 표기 이유**: 실사용자 대화에서의 재발 빈도 감소(corroboration 시계열)는 아직 표본이
+  없다 — 다음 audit 이 측정해 무조건 `verified` 로 닫을지 판단한다.
 - **source**: 사용자 지목 대화 `20260824021847-816ab7f3`("SQL 스크립트 리뷰 피드백 — friend 테이블
   보존 정책 적용", 그룹). 2026-08-25 13:32 사용자 질문 2회 → 각각 5분 03초 / 3분 27초 만에 오류 종결,
   대화 이탈. `ask_jobs` 737·738 = `status=error`, `attempts=3`, `llm_usage` 기록 **0건**(호출 미성사).
