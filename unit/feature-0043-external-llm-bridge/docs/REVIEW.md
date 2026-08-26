@@ -181,3 +181,39 @@ ERROR: You've hit your usage limit. … try again at 1:21 AM.
 - 기존 `matk_` 토큰의 **런타임 동작은 이 slice 에서 바꾸지 않았다**. `/api/ask` 를 그 토큰으로
   부르면 브리지 대기 안내가 온다 — 게이트가 이미 그렇게 동작하지만, 그 경로를 겨냥한
   통합 테스트는 없다.
+
+## REV-20260827T090000-ai-root-feature-0043 [CODEX:staged-diff] — CHANGES-REQUESTED → 조치 완료
+
+`git diff --cached` 전량 적대 리뷰. **P1 1건 + P2 6건** 지적, 전부 실재로 확인하고 조치했다.
+
+### [P1] insight 게이트가 heartbeat 와 비-LLM 방어까지 함께 껐다
+
+cycle 진입부 early-return 이 `finally` **앞**이라 `insight_worker_last_cycle_at` 이 갱신되지
+않았다 → 180초 뒤 healthcheck exit 1 → **차단 모드에서 컨테이너 상시 unhealthy**. LLM 무관
+정비(role backfill · enum self-heal · datasource health · auth cooldown prune)도 함께 정지.
+
+낭비를 줄이려던 최적화가 그 경로에 얹혀 있던 방어를 껐다. **cycle 전체 게이트를 철회**하고
+순수 LLM 작업(`node_analysis.process_pending`)만 좁게 막았다. 남은 낭비는 작다 — 스캔 안의 LLM
+호출은 `_get_llm_client()` 에서 즉시 None 을 받고 되돌아온다(로그는 caller 별 60초 throttle).
+
+### [P2] 6건
+
+| 지적 | 조치 |
+|---|---|
+| 첨부 읽기가 `ClaimedBy` 만 검사(client·lease·상태 누락) | `submit_answer` 와 **동일 경계**로 통일 |
+| 원장 상한 우회(사후 record 만) | 읽기 **전** `check_limits()` — 첨부 본문이 가장 큰 payload |
+| provenance ContextVar 미복원 | 플래그·사유·계정 3종 set/reset **역순** 복원 |
+| 대화 재진입 시 폴링 미복구 | sessionStorage registry + `resumeBridgePolling` 배선 + 중복 폴링 가드 |
+| 관제 화면이 마스킹된 `ok` 를 읽음 | `_read_llm_provider_status_admin()` seam 분리(원본 + 차단 표기) |
+| (호출부 3곳 배선은 정상 확인) | — |
+
+### 이 리뷰에서 얻은 것
+
+**같은 실수를 두 번 했다**: "차단 중이니 하지 말자" 는 판단(insight skip · provider 마스킹)을
+**대화 UI 기준으로 세우고 전역에 적용**했다. 교정은 둘 다 **소비자별 seam 분리**였다 —
+대화 UI 는 마스킹, 관제는 원본; cycle 은 유지, LLM 작업만 차단.
+
+codex 의 마지막 지적도 그대로 받는다: *"현재 테스트는 배선 문자열과 조기 반환만 확인해 위
+실패 상태를 잡지 못한다."* 조치와 함께 회귀 8건을 더했으나 이들 역시 소스 층이다. **런타임
+경계(만료 lease 로 첨부 읽기 → 409 등)는 배포 후 e2e 에서 실측한다** — 미검증을 검증으로
+적지 않는다.

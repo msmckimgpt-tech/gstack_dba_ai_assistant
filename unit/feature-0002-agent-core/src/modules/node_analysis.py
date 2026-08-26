@@ -892,6 +892,13 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
     """
     if not _cfg_enabled():
         return {"ok": False, "reason": "disabled"}
+    # feature-0043 사용감 패리티: 분석문 생성은 서버 계정 LLM 이 한다. 차단 중에 큐에 넣으면
+    # 잡마다 재시도 상한(max_attempts)을 태우고 `failed` 로 끝난다 — 사용자에게는 "시작됐다가
+    # 한참 뒤 알 수 없는 이유로 실패" 로 보인다. 시작 전에 사유를 말하고 멈추는 쪽이 정직하다.
+    from shared.llm_gate import feature_blocked_message, server_llm_enabled
+
+    if not server_llm_enabled():
+        return {"ok": False, "reason": feature_blocked_message("그래프 뷰 AI 능동 분석")}
     if not node_key:
         return {"ok": False, "reason": "node_key 필수"}
     depth_budget = _clamp(depth_budget if depth_budget is not None else _cfg.AGENT_NODE_ANALYSIS_DEFAULT_DEPTH,
@@ -982,6 +989,13 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
     진행 중 run(root=schema_key) 존재 시 재사용(reused) — 노드 분석과 동일 dedup 규약."""
     if not _cfg_enabled():
         return {"ok": False, "reason": "disabled"}
+    # feature-0043 사용감 패리티: 분석문 생성은 서버 계정 LLM 이 한다. 차단 중에 큐에 넣으면
+    # 잡마다 재시도 상한(max_attempts)을 태우고 `failed` 로 끝난다 — 사용자에게는 "시작됐다가
+    # 한참 뒤 알 수 없는 이유로 실패" 로 보인다. 시작 전에 사유를 말하고 멈추는 쪽이 정직하다.
+    from shared.llm_gate import feature_blocked_message, server_llm_enabled
+
+    if not server_llm_enabled():
+        return {"ok": False, "reason": feature_blocked_message("그래프 뷰 AI 능동 분석")}
     if not schema_key or ":" not in str(schema_key):
         return {"ok": False, "reason": "schema_key 필수"}
     sk = (scope_key or str(schema_key).split(":", 1)[0] or "common")[:96]

@@ -220,6 +220,14 @@ def claim_request(task_id: str) -> str:
     return _post("/api/ai/tools/claim_request", {"task_id": task_id})
 
 
+def read_task_attachment(task_id: str, attachment_id: int | None = None,
+                         filename: str | None = None, start_line: int = 1,
+                         max_lines: int | None = None) -> str:
+    return _post("/api/ai/tools/read_task_attachment",
+                 {"task_id": task_id, "attachment_id": attachment_id, "filename": filename,
+                  "start_line": start_line, "max_lines": max_lines})
+
+
 def list_schemas(task_id: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/list_schemas",
                  {"task_id": task_id, "arguments": {"datasource": datasource}})
@@ -284,6 +292,10 @@ _register("list_open_requests", list_open_requests,
 _register("claim_request", claim_request,
           "대기 질문 1건을 점유하고 전문과 이전 대화 문맥을 받는다. 점유는 1회만 성공한다"
           "(이미 가져간 질문은 409). 조사 후 submit_answer 로 제출하라.")
+_register("read_task_attachment", read_task_attachment,
+          "점유한 웹 질문에 딸린 **첨부 파일의 본문**을 읽는다. claim_request 응답의 "
+          "`attachments` 에 목록이 있다. 첨부가 있는 질문은 본문을 읽고 나서 답하라 — 읽지 않고 "
+          "추측하면 웹 화면에서 보이는 파일과 다른 답을 하게 된다.")
 _register("list_schemas", list_schemas, "접근 가능한 스키마(DB) 목록.")
 _register("describe_schema", describe_schema, "스키마의 테이블 목록과 개요.")
 _register("describe_table", describe_table, "테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다.")

@@ -344,6 +344,17 @@ def claim_request(ctx: McpContext, task_id: str) -> str:
     return _post("/api/ai/tools/claim_request", {"task_id": task_id}, ctx)
 
 
+@mcp.tool(description="점유한 웹 질문에 딸린 **첨부 파일의 본문**을 읽는다. claim_request 응답의 "
+                      "`attachments` 에 목록이 있다. 첨부가 있는 질문은 본문을 읽고 나서 답하라 — "
+                      "읽지 않고 추측하면 웹 화면에서 보이는 파일과 다른 답을 하게 된다.")
+def read_task_attachment(ctx: McpContext, task_id: str, attachment_id: int | None = None,
+                         filename: str | None = None, start_line: int = 1,
+                         max_lines: int | None = None) -> str:
+    return _post("/api/ai/tools/read_task_attachment",
+                 {"task_id": task_id, "attachment_id": attachment_id, "filename": filename,
+                  "start_line": start_line, "max_lines": max_lines}, ctx)
+
+
 @mcp.tool(description="접근 가능한 스키마(DB) 목록.")
 def list_schemas(ctx: McpContext, task_id: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/list_schemas",

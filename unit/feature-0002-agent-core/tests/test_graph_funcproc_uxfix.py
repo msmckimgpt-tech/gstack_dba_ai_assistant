@@ -18,6 +18,19 @@ from modules import routines as rt
 from modules import metadata_graph as mg
 
 
+# feature-0043 — 이 **모듈 전체**에 서버 LLM 게이트를 열어 둔다(autouse 는 파일 전역이다).
+#
+# 여기서 검사하는 것은 게이트 뒤의 적재 계약(user_prompt 저장·재사용 progress·마이그 창 폴백)
+# 이다. 게이트가 닫힌 채 두면 enqueue 가 "차단됨" 한 줄에서 반환해 그 계약을 아무도 검사하지
+# 않게 된다(vacuous pass — 전환을 되돌리는 날 방어가 사라진 것을 그때 알게 된다).
+# 게이트 자체의 계약은 `test_routine_dbanalysis.py::test_enqueue_refuses_while_server_llm_blocked`
+# 가 **반환값으로** 본다(소스 검사만으로는 조건 반전을 못 잡는다).
+@pytest.fixture(autouse=True)
+def _open_server_llm_gate(monkeypatch):
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
+
+
+
 # ── fakes ─────────────────────────────────────────────────────────────────────
 class FakeCur:
     """execute 를 (sql, params) 로 기록하고, marker 매칭 행을 돌려주는 범용 fake cursor."""

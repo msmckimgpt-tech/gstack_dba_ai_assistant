@@ -42,8 +42,16 @@ _SEV_LABEL = {"ok": "정상", "unknown": "부분 가시", "degraded": "저하", 
 # ── 상태 축 ─────────────────────────────────────────────────────────────────────
 def _provider_axis() -> dict:
     """LLM provider 외부요인 제한 상태(PG agent_runtime.llm_provider_health cheap read)."""
+    # feature-0043(codex 리뷰 P2): **관리자 관제는 마스킹된 값을 보면 안 된다.**
+    # 대화 UI 는 차단 중 provider 상태를 non-restricted 로 덮는다(전송에 영향이 없고, 복구 ping
+    # 이 불가능해 배너가 영구 고착되므로). 그 마스킹이 이 화면까지 오면 운영자는 "정상" 만 보고,
+    # 게이트를 되돌리는 순간 숨어 있던 제한이 되살아난다 — 전환 전 위험 확인이 불가능해진다.
+    # 그래서 여기서는 **원본**을 읽고, 차단 사실은 별도 필드로 함께 싣는다.
+    blocked = False
     try:
-        st = str((app._read_llm_provider_status() or {}).get("state") or "unknown").lower()
+        raw = app._read_llm_provider_status_admin() or {}
+        blocked = bool(raw.get("server_llm_blocked"))
+        st = str(raw.get("state") or "unknown").lower()
     except Exception:
         st = "unknown"
     if st == "ok":
@@ -54,7 +62,13 @@ def _provider_axis() -> dict:
         state = "unknown"
     else:  # restricted / throttled / credential_expired 등
         state = "degraded"
-    return {"key": "provider", "label": "LLM 제공자", "state": state, "detail": f"state={st}"}
+    detail = f"state={st}"
+    if blocked:
+        # 차단 중임을 **관제에는 명시**한다. 이걸 빼면 운영자는 degraded 를 보고 "왜 아무도
+        # 영향을 안 받지?" 를, 반대로 ok 를 보고 "정말 괜찮은가?" 를 판단할 근거가 없다.
+        detail += " · 서버 계정 LLM 차단(외부 AI 브리지) — 대화 전송에는 영향 없음"
+    return {"key": "provider", "label": "LLM 제공자", "state": state, "detail": detail,
+            "server_llm_blocked": blocked}
 
 
 def _ask_worker_axis(conn) -> dict:

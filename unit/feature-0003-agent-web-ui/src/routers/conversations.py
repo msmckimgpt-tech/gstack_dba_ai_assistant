@@ -55,8 +55,79 @@ def _delete_bridge_task(conn, task_id: str) -> None:
             "[bridge] 적재 취소 실패 task=%s — 고아 task 가 남는다: %r", task_id, exc)
 
 
+def _bridge_attachment_csv(attachment_ids: Any) -> str | None:
+    """첨부 id 목록 → 저장용 CSV. 비었으면 NULL(컬럼에 빈 문자열을 남기지 않는다)."""
+    if not attachment_ids:
+        return None
+    out: list[int] = []
+    for raw in attachment_ids:
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if val > 0 and val not in out:
+            out.append(val)
+    if not out:
+        return None
+    return ",".join(str(v) for v in out)[:4000]
+
+
+def _bridge_user_message_meta(account: Any, sender_username: str) -> dict[str, Any]:
+    """브리지가 저장하는 **질문 말풍선**의 귀속 meta — 기존 경로와 같은 모양으로 만든다.
+
+    원본은 `agent_core._persist_early_exit` 의 `_meta` 조립이다. 브리지는 `agent_core` 를
+    타지 않으므로 여기서 같은 계약을 다시 세운다. 각인 키가 갈리면 FE 는 한쪽만 그린다.
+
+    - `sender_account_id` — 항상.
+    - `sender_username`   — 그룹은 호출부가 넘긴 발신자, 1:1 은 계정명으로 조회.
+    - `group_chat`        — 그룹에서만 True(발신자 뱃지 표시 분기).
+    """
+    account_id = int((account or {}).get("id") or 0)
+    if not account_id:
+        return {}
+    meta: dict[str, Any] = {"sender_account_id": account_id}
+    uname = str(sender_username or "").strip()
+    if uname:
+        meta["sender_username"] = uname
+        meta["group_chat"] = True
+        return meta
+    # 그룹이 아니면 계정명을 각인한다 — 없으면 공유창에서 발신자가 "참여자" 로 뭉개진다.
+    fallback = str((account or {}).get("username") or "").strip()
+    if fallback:
+        meta["sender_username"] = fallback
+    return meta
+
+
+def _bridge_save_core_message(conn, conv_id: str, role: str, content: str,
+                              sender_account_id: int | None = None) -> None:
+    """회수 store(`agent_runtime.core_messages`)에도 같은 turn 을 남긴다.
+
+    표시 store(`agent_runtime.messages`)만 쓰면 화면에는 대화가 남지만 **회수 store 에는
+    구멍**이 생긴다. 그 store 는 대화 복제·분기(`_conv_copy_core_messages`)와 LLM 문맥
+    조립이 읽는 곳이라, 브리지로 오간 turn 만 복제본에서 통째로 사라진다.
+
+    실패는 흡수한다 — 표시 저장은 이미 끝났고, 여기서 예외를 올리면 사용자에게는 답변이
+    사라진 것으로 보인다. 대신 로그로 남겨 구멍이 조용히 생기지 않게 한다.
+    """
+    text = str(content or "").strip()
+    if not conv_id or not text:
+        return
+    try:
+        import agent_core as _core  # 지연 import — 라우터 로드 시점 순환 회피(기존 핸들러와 동형)
+
+        _core._save_message(conn, str(conv_id), role, content=text,
+                            sender_account_id=sender_account_id)
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "[bridge] core store 기록 실패 conv=%s role=%s — 표시본만 남는다: %r",
+            conv_id, role, exc)
+
+
 def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
-                             message: str, product_id: Any) -> dict[str, Any]:
+                             message: str, product_id: Any,
+                             product_mode: str = "pinned",
+                             sender_username: str = "",
+                             attachment_ids: Any = None) -> dict[str, Any]:
     """feature-0043 — 웹 대화 질문을 개인 머신 AI 가 가져갈 **대기 작업**으로 적재한다.
 
     반환 shape 은 `_dispatch_ask_run` 의 `agent_result` 와 호환된다(동기 응답 계약 유지) —
@@ -100,9 +171,15 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         try:
             cur.execute(
                 "INSERT INTO WebAiTasks (TaskId, AccountId, ConversationId, ProductId, "
-                "Question, Status, Origin) VALUES (%s,%s,%s,%s,%s,'open','web')",
+                "Question, Status, Origin, ProductMode, SenderUsername, AttachmentIds) "
+                "VALUES (%s,%s,%s,%s,%s,'open','web',%s,%s,%s)",
                 (task_id, account_id, conv_id or None,
-                 int(product_id) if product_id else None, question[:4000]))
+                 int(product_id) if product_id else None, question[:4000],
+                 # 답변 각인·발신자 표시·첨부 인지를 위해 **질문과 함께** 굳힌다. 나중에 대화
+                 # 설정에서 되짚으면 그 사이 제품을 바꾼 사용자에게 다른 값이 각인된다.
+                 ("auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"),
+                 (str(sender_username or "").strip()[:128] or None),
+                 _bridge_attachment_csv(attachment_ids)))
             conn.commit()
         finally:
             cur.close()
@@ -115,7 +192,12 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             from modules.memory import save_memory_message as _save_msg
 
             # 반환 0 = 저장 실패(이 함수는 PG 쓰기 실패를 내부에서 삼킨다) — 반드시 확인한다.
-            saved = int(_save_msg(conn, str(conv_id), "user", question) or 0)
+            #
+            # meta 를 함께 각인한다(사용감 패리티): 그룹 대화의 질문 말풍선은 `sender_username`
+            # 으로 발신자를 그린다. 각인 없이 저장하면 그룹에서 **누가 물었는지가 사라진다**.
+            saved = int(_save_msg(conn, str(conv_id), "user", question,
+                                  _bridge_user_message_meta(account, sender_username)
+                                  or None) or 0)
             conn.commit()
         except Exception as exc:
             log.error("[bridge] 사용자 메시지 저장 실패 conv=%s: %r", conv_id, exc)
@@ -125,6 +207,10 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             return _fail(
                 "사용자 메시지를 대화에 저장하지 못해 요청을 취소했다",
                 RuntimeError("save_memory_message returned 0"))
+        # 표시 store 가 확정된 뒤에만 회수 store 에 남긴다 — 순서가 반대면 표시 실패로 요청을
+        # 취소했을 때 회수 store 에만 유령 turn 이 남는다.
+        _bridge_save_core_message(conn, str(conv_id), "user", question,
+                                  sender_account_id=account_id or None)
 
     log.info("[bridge] 웹 질문 적재 task=%s conv=%s account=%s", task_id, conv_id, account_id)
     return {
@@ -4147,6 +4233,11 @@ async def ask(request: Request) -> JSONResponse:
             agent_result = _enqueue_web_bridge_task(
                 conn=conn, account=account, conv_id=conv_id, message=message,
                 product_id=product_id_for_run,
+                # 아래 셋은 기존 dispatch 가 `run_kwargs` 로 넘기던 것과 **같은 값**이다. 브리지가
+                # 이걸 빼고 적재하면 답변 각인·발신자 표시·첨부 인지가 브리지에서만 사라진다.
+                product_mode=product_mode_for_run,
+                sender_username=_sender_username_for_run or "",
+                attachment_ids=attachment_ids_clean,
             )
         else:
             # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
