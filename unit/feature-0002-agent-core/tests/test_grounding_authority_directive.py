@@ -341,6 +341,10 @@ REQUIRED_LIVE_SEALS = {
     "적용될 변경 = 미래 상태 (FR-review-frames-live-db-as-spec)": "REVIEWING A PROPOSED CHANGE",
     "첨부 갱신 전달 (FR-attachment-update-pasted-not-versioned)": "FILE UPDATE REQUESTS",
     "신규 스크립트 첨부 (FR-brandnew-script-attachment-delivery-gap)": "NEW SCRIPT/QUERY",
+    # FR-attachment-version-bump-forks-new-root (2026-08-26): 계보 계약이 SYSTEM_PROMPT **본문에만**
+    # 있어(REQ-20260814-attach-version-branching) 운영자 row 대체 조건에서 통째로 미도달했다.
+    # 그 결과 "네가 만든 파일" 의 버전 상향을 claim 하는 권위 지침이 attachment-new 뿐이었다.
+    "첨부 버전 계보 (FR-attachment-version-bump-forks-new-root)": "VERSION LINEAGES",
 }
 
 
@@ -381,6 +385,11 @@ SEAL_OPERATIVE_CLAUSES = {
     "첨부 갱신: attachment-edit 강제": "attachment-edit` block",
     "첨부 갱신: 본문 붙여넣기 금지": "that is a failed delivery",
     "신규 스크립트: attachment-new 강제": "attachment-new` block",
+    # FR-attachment-version-bump-forks-new-root — 제목만 남고 아래 3 조항이 빠지면 라이브 동작은
+    # 봉인 이전으로 돌아간다(모델이 다시 동명 v1 을 찍는다).
+    "계보: 내가 만든 파일은 내 체인 연장": "CONTINUES your chain",
+    "계보: 동명 attachment-new 는 버전 상향이 아님": "does NOT raise anything",
+    "계보: attachment-new 는 미존재 파일 전용": "ONLY for a file that does not exist",
 }
 
 

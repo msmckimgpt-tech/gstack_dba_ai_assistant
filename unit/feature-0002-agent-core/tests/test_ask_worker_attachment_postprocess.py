@@ -35,9 +35,9 @@ class _FakeConn:
 
 
 def _install_fake_web(monkeypatch, *, latest_content, latest_id=77, account=None,
-                      edits=None, news=None, raise_on=None):
+                      edits=None, news=None, raise_on=None, skip_reasons=None, bound=None):
     """sys.modules 에 fake `web.app` 주입 — _postprocess_attachment_blocks 의 지연 import 대상."""
-    calls: dict = {"edits": [], "new": [], "strip_edit": 0, "strip_new": 0, "update": []}
+    calls: dict = {"edits": [], "new": [], "strip_edit": 0, "strip_new": 0, "update": [], "bind": []}
     conn = _FakeConn()
 
     web_app = types.ModuleType("web.app")
@@ -50,10 +50,15 @@ def _install_fake_web(monkeypatch, *, latest_content, latest_id=77, account=None
         {"id": latest_id, "content": latest_content}
     )
 
-    def _mat_edits(c, *, account, conversation_id, answer, message_id, request):
-        calls["edits"].append({"answer": answer, "message_id": message_id, "request": request})
+    def _mat_edits(c, *, account, conversation_id, answer, message_id, request, skipped=None):
+        calls["edits"].append({"answer": answer, "message_id": message_id, "request": request,
+                               "skipped_passed": skipped is not None})
         if raise_on == "edits":
             raise RuntimeError("boom-edits")
+        # FR-failed-attachment-edit-silently-stripped: 저장 가드가 거부한 블록의 사유를
+        # 호출측이 실제로 받아 쓰는지 재현한다.
+        if skipped is not None:
+            skipped.extend(list(skip_reasons or []))
         return list(edits or [])
 
     def _mat_new(c, *, account, conversation_id, answer, message_id, request, remaining_count):
@@ -78,6 +83,14 @@ def _install_fake_web(monkeypatch, *, latest_content, latest_id=77, account=None
     web_app._materialize_assistant_attachment_new = _mat_new
     web_app._strip_attachment_edit_blocks = _strip_edit
     web_app._strip_attachment_new_blocks = _strip_new
+    def _bind(c, *, conversation_id, account_id, attachment_ids, message_id):
+        # codex R8 [P2]: 이 함수가 fake 에 **없으면** 후처리가 항상 예외 경로를 타서, 도구 전달분이
+        # `edited` 에 실제로 합쳐지는 상황이 재현되지 않는다 — 그러면 `_block_edited_n` 을 되돌려도
+        # 테스트가 통과한다(vacuous). 성공 경로를 재현한다.
+        calls["bind"].append({"ids": list(attachment_ids), "message_id": message_id})
+        return list(bound if bound is not None else [{"id": i} for i in attachment_ids])
+
+    web_app._bind_tool_delivered_attachments = _bind
     web_app._update_assistant_message_content = _update
 
     web_pkg = types.ModuleType("web")
@@ -301,3 +314,161 @@ def test_w8_slim_result_keeps_attachment_keys():
     assert slim["edited_attachments"] == [{"id": 1}]
     assert slim["new_attachments"] == [{"id": 2}]
     assert "dropped_field" not in slim
+
+
+# ── FR-failed-attachment-edit-silently-stripped (conversation_audit 2026-08-26) ──────────
+#
+# 저장 가드(소유권·kind·용량)가 거부한 `attachment-edit` 블록은 **사유 없이** 답변에서 제거돼
+# 왔다. 본문에 이미 쓰인 "갱신했습니다" 문장은 남아, 사용자는 파일을 못 받았는데 성공으로 읽는다.
+# materialize 는 이미 `skipped` 로 사람이 읽을 수 있는 사유를 돌려주는데 이 경로가 버리고 있었다.
+
+
+def test_skipped_reasons_are_passed_and_surfaced(monkeypatch):
+    """거부 사유를 받아 **답변에 명시**한다 — strip 은 유지하되 침묵하지 않는다."""
+    calls, conn = _install_fake_web(
+        monkeypatch,
+        latest_content="파일을 갱신했습니다.\n```attachment-edit\n{\"source_attachment_id\": 9}\nx\n```",
+        edits=[], skip_reasons=["attachment_id=9: 이 대화에서 당신이 갱신할 수 있는 첨부가 아닙니다."],
+    )
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": "파일을 갱신했습니다."}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+
+    assert calls["edits"] and calls["edits"][0]["skipped_passed"] is True, "skipped 를 넘겨야 사유를 얻는다"
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" in saved
+    assert "갱신할 수 있는 첨부가 아닙니다" in saved
+    assert "갱신했다는 서술이 있어도" in saved, "본문의 거짓 성공 주장을 정정해야 한다"
+
+
+def test_no_note_when_nothing_was_skipped(monkeypatch):
+    """정상 전달에는 경고 문단이 붙지 않는다(과잉 노이즈 0)."""
+    calls, conn = _install_fake_web(
+        monkeypatch,
+        latest_content="갱신본입니다.\n```attachment-edit\n{\"source_attachment_id\": 9}\nx\n```",
+        edits=[{"id": 1}], skip_reasons=[],
+    )
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": "갱신본입니다."}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" not in saved
+
+
+def test_undelivered_blocks_without_reason_are_still_surfaced(monkeypatch):
+    """§18.8 codex 라운드 6 [P1] — `skipped` 에 안 남는 실패도 거짓 성공으로 끝나면 안 된다.
+
+    materialize 는 저장 가드 거부만 `skipped` 로 남긴다. 파싱 실패(malformed header)·개수 캡 초과·
+    storage import 실패는 기록 없이 사라지는데 strip 은 fence 를 **전부** 지운다. 그래서 사유 장부를
+    믿지 않고 **결과를 직접 센다** — 블록 수 대비 실제 생성 수.
+    """
+    body = ("두 파일 모두 갱신했습니다.\n"
+            "```attachment-edit\n{\"source_attachment_id\": 1}\na\n```\n"
+            "```attachment-edit\n{\"source_attachment_id\": 2}\nb\n```")
+    calls, conn = _install_fake_web(
+        monkeypatch, latest_content=body,
+        edits=[{"id": 11}],          # 2개 블록 중 1개만 생성 — 나머지는 사유 없이 사라짐
+        skip_reasons=[],
+    )
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": body}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" in saved
+    assert "사유 미상 1건" in saved
+    assert "갱신했다는 서술이 있어도" in saved
+
+
+def test_undelivered_attachment_new_blocks_are_surfaced(monkeypatch):
+    """`attachment-new` 축도 같은 방식으로 덮인다(편집 경로 전용 장부에 의존하지 않는다)."""
+    body = "파일을 만들었습니다.\n```attachment-new\n{\"filename\": \"a.sql\"}\nx\n```"
+    calls, conn = _install_fake_web(monkeypatch, latest_content=body, news=[], skip_reasons=[])
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": body}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" in saved and "사유 미상 1건" in saved
+
+
+def test_quoted_fence_example_does_not_trigger_false_failure(monkeypatch):
+    """거짓 양성 축 ① — 답변이 **예시로 인용한** fence 는 블록이 아니다.
+
+    단순 substring 카운트면 정상 전달에도 "첨부 전달 실패" 가 붙는다(사용자를 헷갈리게 하는
+    오정보). 줄머리 fence 만 센다.
+    """
+    body = ("형식은 다음과 같습니다:\n"
+            "    ```attachment-edit\n"
+            "    {\"source_attachment_id\": 1}\n"
+            "    ```\n"
+            "실제 전달은 도구로 했습니다.")
+    calls, conn = _install_fake_web(monkeypatch, latest_content=body,
+                                    edits=[], news=[], skip_reasons=[])
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": body}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" not in saved
+
+
+def test_failed_run_does_not_add_delivery_failure_note(monkeypatch):
+    """거짓 양성 축 ② — 실패/취소 run 은 materialize 를 건너뛰도록 설계돼 있고 오류가 이미 표면화된다."""
+    body = "갱신했습니다.\n```attachment-edit\n{\"source_attachment_id\": 1}\na\n```"
+    calls, conn = _install_fake_web(monkeypatch, latest_content=body, edits=[], skip_reasons=[])
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": body, "error": "cancelled"}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" not in saved
+    # codex R7 [P2]: 경고 부재만 보면 취소 경로 회귀를 못 잡는다 — 설계 계약 전부를 단언한다.
+    assert calls["edits"] == [] and calls["new"] == [], "실패 run 은 materialize 를 건너뛴다"
+    assert "```attachment-edit" not in saved, "실패 run 이라도 strip 은 수행한다(본문 노출 방지)"
+
+
+def test_tool_delivery_does_not_mask_a_failed_block(monkeypatch):
+    """codex R7 [P1] — 도구 전달분이 블록 실패를 **상쇄**하면 안 된다.
+
+    `edited` 에는 도구 전달분이 합쳐진다. 그 합본으로 fence 대비 미전달을 계산하면
+    "도구로 1건 전달 + 블록 1건 실패" 가 0 으로 상쇄돼 경고가 사라진다.
+    """
+    body = "갱신했습니다.\n```attachment-edit\n{\"source_attachment_id\": 1}\na\n```"
+    calls, conn = _install_fake_web(monkeypatch, latest_content=body,
+                                    edits=[], skip_reasons=[])   # 블록 경로는 0건 생성
+    from modules.ask import _postprocess_attachment_blocks
+    # 도구로 1건 전달됨 → _bind_tool_delivered_attachments 가 1건을 돌려준다
+    result = {"answer": body, "tool_delivered_attachment_ids": [55]}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    assert calls["bind"] and calls["bind"][0]["ids"] == [55], "도구 전달분이 실제로 합쳐지는 경로여야 함"
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" in saved, "도구 전달분이 블록 실패를 가리면 안 된다"
+    assert "사유 미상 1건" in saved
+
+
+def test_fence_inside_outer_markdown_fence_is_not_counted(monkeypatch):
+    """codex R7 [P2] — 바깥 fence 안에서 **열 0** 으로 인용한 fence 도 블록이 아니다."""
+    body = ("형식 예시:\n"
+            "```markdown\n"
+            "```attachment-edit\n"
+            "{\"source_attachment_id\": 1}\n"
+            "```\n"
+            "```\n"
+            "실제 전달은 없었습니다.")
+    calls, conn = _install_fake_web(monkeypatch, latest_content=body,
+                                    edits=[], news=[], skip_reasons=[])
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": body}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" not in saved
+
+
+def test_tilde_and_wide_fences_are_tracked(monkeypatch):
+    """codex R8 [P2] C — `~~~` 과 4-backtick fence 안의 인용도 블록이 아니다."""
+    body = ("~~~markdown\n```attachment-edit\n{\"source_attachment_id\": 1}\n```\n~~~\n"
+            "````text\n```attachment-new\n{\"filename\": \"a.sql\"}\n```\n````\n실제 전달 없음.")
+    calls, conn = _install_fake_web(monkeypatch, latest_content=body,
+                                    edits=[], news=[], skip_reasons=[])
+    from modules.ask import _postprocess_attachment_blocks
+    result = {"answer": body}
+    _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
+    saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
+    assert "첨부 전달 실패" not in saved

@@ -2149,3 +2149,142 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **정직 표기**: 이 스모크는 **LLM 왕복 성립** 한 점만 본다. HTTP 인증·라우팅, 워커 큐(claim/lease),
   프런트는 각각 edge soak·워커 healthcheck·PB-0008 이 담당한다. 또한 보조 chokepoint 를 부르는
   방식으로는 부족하다 — 2026-08-25 에 그 방식으로 200 을 받고 오판했다.
+
+## FR-attachment-version-bump-forks-new-root — fixed:undeployed (L1↔L2; 버전 상향 계약이 drift 로 미도달 → 유일하게 claim 하는 지침이 `attachment-new`)
+
+- **status**: `fixed:undeployed` — 코드/테스트 + §18.8 적대 리뷰 1라운드([P1] 1건 in-cycle 흡수)
+  완료, 배포 전. 배포 후 원 대화 동일 입력 재현으로 assistant 계보 v2 생성 관측 시
+  `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정 시 `verified`.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-26) — "`파일 버전 상향 요청` —
+  assistant 의 첨부파일 버전 관리 기능이 정상적으로 작동하지 않는것으로 확인되어 수정이 필요합니다."
+- **last_seen**: 2026-08-26 · **seen_count**: 1 · **seen_distinct_conv**: 2 (동명 root 중복 시그니처)
+- **modality**: 1:1 · **conv(마스킹)**: `…945b2aca` · job 750/751 · `claude-haiku-4` · 추론강도 max
+- **symptom_confidence**: high (사용자 명시 보고 + DB 실측 재현)
+  · **rootcause_confidence**: high (코드 file:line + 라이브 MySQL/PG + 전사 **삼각측량**)
+- **suspected_layers**: **L1**(프롬프트 합성 — 계약이 drift 가능 표면에만 존재) ↔ **L2**(도구 정의 —
+  대상 프레이밍이 좁음). capability gap 아님.
+
+- **증상(signal)**: `E-USR@…945b2aca#8958` 명시 재지시("v0 에서 동일한 명칭으로 버전만 상승시켜
+  첨부파일을 전달") · `E-AST@…945b2aca#8961` 동일 실수 반복(2턴 연속 `attachment-new`) ·
+  `I-FALSE@…945b2aca#8961` 거짓 성공(답변은 "버전 번호를 상향하여 제공하겠습니다" 라고 선언) ·
+  `I-SIL` 이후 사용자 무응답(대화 종료 후 audit 호출로 이탈).
+- **라이브 실측(DB)**: 12:18 첨부 1239/1240 · 13:35 첨부 1241/1242 — **4건 모두**
+  `root_attachment_id=NULL · version_number=1 · created_by_role=assistant`. 동명 파일 2쌍이 전부
+  live head 로 잔존 → 사용자가 요청한 diff 비교가 구조적으로 불가능.
+- **거짓양성 기각(refuted)**: ① **capability gap** → 기각. 스코프 정상(job 751
+  `attachment_ids=[1240,1239]`) · MySQL mirror 4행 정상(`kind=text`·`uploaded`·미-supersede) ·
+  `_materialize_assistant_attachment_edits` 는 `CreatedByRole=='assistant'` 이면 **같은 체인 v+1 연장**
+  을 이미 지원(REQ-20260814). 즉 도구를 불렀다면 v2 가 생성됐다. ② **모델 능력 한계** → 기각.
+  모델은 규칙을 어긴 게 아니라 **규칙대로** 행동했다(아래 근본).
+- **confirmed_root_cause**: **버전 상향 경로를 규정하는 모든 drift-내성 표면이 "사용자가 첨부한
+  파일" 로만 프레이밍돼, assistant 전달본의 버전 상향을 아무 규칙도 claim 하지 않았다.**
+  계보 계약("네가 만든 파일 편집 = 네 계보 v+1 연장")은 `SYSTEM_PROMPT` **본문**
+  (`agent_core.py` `## DELIVERING THE EDITED FILE` Hard rules)에만 있었고,
+  `compose_system_prompt`(`agent_core.py`)은 운영자 `WebSystemPrompts` scope='global' row 가 있으면
+  **base 를 통째 대체**한다. 라이브 row 실측 **9,294자 / UpdatedAt 2026-08-03**(코드 상수 23,060자) —
+  `continues YOUR chain` · `FILE VERSION LINEAGES` · `attachment-new` **전부 부재**, 첨부 절은 구판
+  사본(폐기된 `"filename": "report_v2.csv"` 지시 포함). 프로덕션에 남은 권위 표면은
+  `_ATTACHMENT_DELIVERY_DIRECTIVE`("a file **they attached**") ·
+  `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE`("To UPDATE a file **the user attached**") ·
+  `update_attachment` description("**사용자가 첨부한** 텍스트/CSV 파일") 뿐인데 셋 다 좁다. 그래서
+  "내가 만든 파일을 첨부로 전달" 을 넓게 claim 하는 `attachment-new` 가 그 공백을 흡수했다.
+  또한 표시 축도 비어 있었다 — 계보 라벨은 `version>1` 에서만, `## FILE VERSION LINEAGES` 블록은
+  동명 계보 2개 이상에서만 렌더돼 **갓 만든 v1 전달본은 무표식**이었다.
+  재발경로 = **`data/config drift`** → 코드 권위선(AUTH-1a) 봉인.
+  선행 `FR-operator-global-prompt-shadows-code-seals`(needs-human)의 **구체 발현** — cross-ref.
+- **corroboration**: **idiosyncratic**(정밀 프록시 = 동일 대화·동명 assistant root 중복 **3 그룹 /
+  2 대화**). 그러나 Phase 7 **"명백한 구조결함"** 조항 충족 — 근본이 코드 file:line 으로 confirmed
+  (high) · 재발경로 data/config drift · 보안 회귀 0 → fix-now 자격. 위험등급 **Major**(코어 LLM
+  프롬프트 경로)라 disposition 은 human-decision → **AskUserQuestion PLAN-APPROVED(2026-08-26,
+  Scope C + 배포까지 자율)**.
+- **배포 전 기준선(다음 audit 이 이 값과 비교)**: `attachment-new` 기원 assistant root **17건 /
+  10 대화**, 그중 v≥2 로 연장된 root **2건**. 동명 root 중복 파일명그룹 **3 / 2 대화**.
+- **봉인**: (A) `_ATTACHMENT_DELIVERY_DIRECTIVE` 발동 조건 확장(사용자 첨부 **OR** 내가 전달한 것)
+  + `VERSION LINEAGES` 절로 계보 계약을 **코드 권위선에 이식**(AUTH-1a) — 동명 `attachment-new` 는
+  버전 상향이 아니며 무관한 v1 을 fork 한다고 명시. (B) `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` 자기
+  경계 명시(미존재 파일 전용). (C) `update_attachment` description·인자 설명 교정. (D)
+  `_build_attachment_context_section` 이 assistant 전달본에 **v1 이어도** 계보 라벨 + 진입점 표기,
+  소유 판정은 저장 경로와 같은 술어이며 **확인 불가 시 fail-closed**. (E) **census 등록** —
+  계보 계약을 다시 본문에만 넣으면 CI FAIL(이번 결함의 기전 자체를 봉인).
+  **보안 회귀 0**(프롬프트/도구 설명 문자열 + 표시 라벨 한정 · 스코프·소유권·kind·용량·확장자 가드 불변).
+- **§18.8 적대 리뷰 2라운드 흡수**: 1라운드(자체) — 라벨 판정이 저장 경로 `AccountId` 가드보다 넓어
+  소유 미상 행에 진입점을 권함 → fail-closed. 2라운드(**codex 독립 채널**, §18.8.2 제약-없는 채널
+  1순위) [P1]1·[P2]2 **전건 반영**: ① 소유권 판정을 **단일 정본 `_assistant_lineage_ownership`**
+  으로 통합 — 파일 라인을 fail-closed 로 고쳐도 `## FILE VERSION LINEAGES` 요약이 `not uploader`
+  로 같은 행을 "you can extend it" 으로 되돌리던 **술어 불일치**가 진짜 결함이었다 ② 지침·도구의
+  대상 규정을 **소유 라벨에 위임**(그룹 타 계정 파일 과잉 주장 제거) ③ `attachment-new` **발동 조건
+  자체**를 좁혀 자기모순 제거(종전엔 경계가 절 끝에만 있어 넓은 쪽이 이겼다) ④ 갱신 방법을 행마다
+  반복하던 것을 범례 1회로 — 첨부 200건 기준 ~33,000자 → ~5,450자(**84% 감소**).
+- **fix**: `CHG-20260826T140000-attachment-version-bump-forks-new-root`
+  (`TASK-20260826T140000-attachment-version-bump-forks-new-root`) / **코드 거주 primary
+  `feature-0002-agent-core`**(단일 feature — cross-ref 없음) /
+  `REV-20260826T140000-attach-version-bump-lineage`.
+- **§18.8 3라운드(자체 확인)**: codex [P1] 교정에 쓴 **allowlist 문구가 과잉 차단**을 만들었다 —
+  `👤uploaded-by=you` 는 그룹에서만 렌더되므로 **1:1(라이브 348/383 = 91%)에는 소유 표식이 없어**
+  사용자 자신의 파일도 대상 밖으로 읽힌다. → **denylist**(명시적 `READ-ONLY`/`(OTHER MEMBER)` 만
+  제외, 표식 없으면 갱신 가능)로 교정 + 그 전제를 테스트로 고정. 소유 미상 행 라이브 **0/1,101**.
+- **검증**: 타깃 **48 PASS** · 뮤테이션 역검증 **6/6 KILL** · worktree `make test` **RC=0 · 실패 0**
+  · ruff clean.
+- **rc_ids**: RC-1(계약 미도달 + 프레이밍 공백) · **batch-id**: B-20260826T140000-attach-version-bump
+- **라이브 실측 필요분(§정직)**: 코드/테스트/census 는 "계약·라벨이 drift-내성 표면에서 의도대로
+  조립된다" 까지만 증명한다. **"실제 대화에서 버전이 오르는가"** 는 배포 후 실측분 → 원 대화 동일
+  입력 재현 + 다음 audit corroboration(위 기준선 대비 v≥2 연장 비율↑ · 동명 root 중복↓) 재측정 →
+  개선 시 `verified`, 재증가 시 `regressed`.
+- **범위 밖(deferred/watch)**: ① 운영자 global row 자체의 stale 사본(2026-08-03 · 폐기된 `filename`
+  지시 포함)은 **데이터 축**이라 이 cycle 에서 고치지 않았다 — row 수정은 drift 로 되살아나므로
+  `FR-operator-global-prompt-shadows-code-seals`(needs-human) 에서 사람 결정으로 다룬다.
+  ② 이번 대화에 남은 동명 v1 4건은 데이터 정리 대상이 아니다(읽기 전용 원칙 — 사용자가 직접 정리).
+
+## FR-unknown-owner-attachment-trusted-by-provenance-gate — fixed:undeployed (부분 축; L5 신뢰 경계)
+
+- **status**: `triaged` — **이 cycle 범위 밖으로 분리**(FR-attachment-version-bump-forks-new-root
+  적대 리뷰 5라운드에서 codex 가 적발). 보안 게이트 확대는 §12.3 상 별도 승인·검증 범위다.
+- **source**: `FR-attachment-version-bump-forks-new-root` cycle 의 §18.8 codex 확인 라운드(2026-08-26)
+- **증상(잠재)**: `AccountId` 가 NULL/0 인 첨부(소유 미상)가 provenance 신뢰 게이트에서 **신뢰된다** —
+  `uploader_account_id` 가 falsy 면 "타 계정" 조건이 성립하지 않아 `_UNTRUSTED_ATTACH_BODY_CTX` 가
+  서지 않는다. 그 본문 안의 지시가 scratch 쓰기 도구 게이트를 통과할 수 있다. 같은 갭이
+  **온디맨드 읽기 경로와 이미지 경로**에도 존재해, 목록 렌더 지점만 고치면 반쪽이다.
+- **corroboration**: **라이브 발생 0** — 첨부 1,101건 중 `account_id` NULL/0 **0건**(2026-08-26 실측).
+- **왜 지금 고치지 않나(정직)**: ① 위 cycle 의 마찰(첨부 버전 상향)과 근본이 다르다 ② 한 차례
+  fail-closed 로 넓혔다가 **되돌렸다** — 넓힌 판이 unknown-owner CSV 를 과차단하면서 거부 사유를
+  "다른 멤버가 올린 본문" 으로 **사실과 다르게** 전달했다(사용자 대면 오정보) ③ 세 경로(목록·온디맨드·
+  이미지)를 함께 고쳐야 하며 그건 신뢰 경계 변경이라 전용 검증이 필요하다.
+- **현재 동작 고정**: `test_provenance_gate_unknown_owner_gap_is_documented_not_silently_widened` —
+  선재 동작을 사실대로 단언해, 나중에 넓힐 때 그것이 **의도된 변경**임이 드러나게 했다.
+- **승격 조건**: 소유 미상 첨부가 라이브에 1건이라도 생기면 fix-now 로 승격.
+- **필요한 사람 액션(1줄)**: 세 경로 일괄 fail-closed + 거부 사유 문구 정정을 별도 cycle 로 승인.
+
+## FR-failed-attachment-edit-silently-stripped — fixed:undeployed (L2 실패 피드백 부재)
+
+- **status**: `triaged` — 이 cycle 범위 밖으로 분리(같은 codex 확인 라운드 적발).
+- **증상(잠재)**: 저장 가드(소유권·kind·용량)가 거부한 `attachment-edit` 블록이 답변에서 **사유 없이
+  제거**된다. 본문에 이미 쓰인 "갱신했습니다" 문장은 남아, 사용자는 파일을 못 받았는데 성공으로 읽는다.
+  도구 경로(`update_attachment`)는 사유를 반환해 모델이 자기교정하지만, **블록 폴백 경로에는 그 채널이
+  없다**(`skipped` 를 모델에 되돌리는 지점 부재).
+- **관계**: `FR-attach-delivery-truncated-by-output-cap` 이 도구 경로를 도입한 이유와 **같은 계열**
+  (거짓 성공 주장)이며, 블록 폴백에 남은 잔여면이다.
+- **봉인 방향(제안)**: materialize 의 `skipped` 사유를 답변 후처리에서 사용자 가시 note 로 부착하거나,
+  다음 턴 컨텍스트에 실패 사실로 주입해 모델이 정정하게 한다(L2 자기교정 채널 신설).
+- **필요한 사람 액션(1줄)**: 별도 cycle 승인(코어 답변 후처리 경로 — Major).
+
+
+### 후속 (2026-08-26) — 사용자 승인으로 같은 cycle 에서 봉인
+
+`FR-attachment-version-bump-forks-new-root` 적대 리뷰 5라운드가 이 둘을 적발했고, 잔여 P1 을
+표면화한 뒤 **사용자가 "선재 P1 2건도 이번에 함께" 를 선택**(AskUserQuestion 2026-08-26)해 범위를
+확장했다. 봉인 내용은 `CHG-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback`.
+
+- **`FR-unknown-owner-attachment-trusted-by-provenance-gate` = `fixed:undeployed` (부분 축)**:
+  텍스트 본문 · sandbox 샘플 · 온디맨드 `read_attachment` · 원본 `_v0` 는 정본 판정으로 fail-closed.
+  **이미지 경로는 의도적으로 제외** — 소유자 키 없는 구 JSON(배포 혼합 창)을 막으면 그 창 동안
+  1:1 사용자까지 도구가 막힌다는 선행 결정(`REQ-20260814-vision-provenance` ·
+  `test_missing_owner_keeps_previous_behavior`)을 조용히 뒤집지 않았다. **이 잔여면은 열려 있다** —
+  닫으려면 inline JSON 형식 마이그레이션이 선행돼야 하며 별도 사람 결정 대상이다.
+  근거·재개봉 조건은 `ADR-20260826T220000-vision-ownerless-inline-image-stays-open` 에 영구화했다
+  (§18.8 「의도된 구성은 ADR 로」 — 매 라운드 재상정 억제, 지적 자체를 무르게 하지는 않는다).
+  과차단 방지 2축(호출자 신원 부재 시 무단정 · 샘플 실제 적재 시에만 신호)도 함께 고정했다.
+- **`FR-failed-attachment-edit-silently-stripped` = `fixed:undeployed`**: 워커 후처리가 `skipped`
+  사유를 받아 답변에 명시한다(거짓 성공 정정 문장 포함). `attachment-new` 경로는 `skipped` 채널이
+  없어(feature-0003 시그니처) **미적용** — 별도 cycle.
+- 검증: 신규 12 테스트 · 뮤테이션 12/12 KILL · `make test` RC=0 · 4,948 PASS.
+- **라이브 실측 필요분**: 두 항목 모두 배포 후 실측 전까지 `fixed:undeployed`.

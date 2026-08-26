@@ -350,11 +350,22 @@ def _postprocess_attachment_blocks(cid: str, account_id: Any,
         # 'assistant' + MetaJson 이 provenance 를 남기고, 아래 로그가 워커 경로를 기록한다.
         edited: list = []
         created: list = []
+        # codex R7 [P1]: 아래에서 `edited` 에 **도구 전달분**을 합치므로, fence 대비 미전달 판정에
+        # 그 합본을 쓰면 "도구로 1건 전달 + 블록 1건 실패" 가 상쇄돼 경고가 사라진다. 블록 경로가
+        # 실제로 만든 수를 **합병 전에** 따로 보관한다.
+        _block_edited_n = 0
+        # FR-failed-attachment-edit-silently-stripped (conversation_audit 2026-08-26):
+        # 저장 가드(소유권·kind·용량)가 거부한 `attachment-edit` 블록은 **사유 없이** 답변에서
+        # 제거돼 왔다. 본문에 이미 쓰인 "갱신했습니다" 문장은 그대로 남아, 사용자는 파일을 받지
+        # 못했는데 성공으로 읽는다(거짓 성공). materialize 는 이미 `skipped` 로 사람이 읽을 수 있는
+        # 사유를 돌려주지만 이 경로가 그것을 버리고 있었다 — 받아서 답변에 명시한다.
+        _skipped: list[str] = []
         if not _failed:
             edited = _web._materialize_assistant_attachment_edits(
                 conn, account=account, conversation_id=cid, answer=content,
-                message_id=message_id, request=None,
+                message_id=message_id, request=None, skipped=_skipped,
             ) or []
+            _block_edited_n = len(edited)
             remaining = max(0, int(_web._ASSISTANT_EDIT_COUNT_CAP) - len(edited))
             created = _web._materialize_assistant_attachment_new(
                 conn, account=account, conversation_id=cid, answer=content,
@@ -382,6 +393,72 @@ def _postprocess_attachment_blocks(cid: str, account_id: Any,
 
         stripped = _web._strip_attachment_edit_blocks(content, edited)
         stripped = _web._strip_attachment_new_blocks(stripped, created)
+        # FR-failed-attachment-edit-silently-stripped: 거부된 블록의 사유를 **답변에 남긴다**.
+        # strip 은 유지한다(파일 전문이 채팅에 쏟아지는 것을 막는 원 정책) — 대신 왜 전달되지
+        # 않았는지를 사용자가 볼 수 있게 한다. 답변 본문의 "갱신했습니다" 를 우리가 고쳐 쓸 수는
+        # 없지만, 바로 아래 붙는 이 문단이 그 주장을 정정한다.
+        # **`skipped` 에 의존하지 않는 완전 검출**(§18.8 codex 라운드 6 [P1]): materialize 는 저장
+        # 가드 거부만 `skipped` 로 남긴다 — 파싱 실패(malformed header) · storage import 실패 ·
+        # 개수 캡 초과분은 기록 없이 사라진다. 그런데 strip 은 fence 를 **전부** 지우므로, 그 경로들은
+        # 여전히 "갱신했습니다" 만 남는 거짓 성공으로 끝났다. 다른 계층의 장부를 신뢰하는 대신
+        # **결과를 직접 센다** — 답변에 있던 블록 수 대비 실제 생성 수. 이 방식은 실패 사유를 모르는
+        # 경로까지 덮는다(사유를 아는 만큼만 덧붙인다).
+        # 거짓 양성 2축을 조인다:
+        #  ① **줄머리 fence 만** 센다 — 답변이 예시로 인용한 ```` ```attachment-edit ```` 는 들여쓰기
+        #     되거나 다른 fence 안에 있어 블록으로 열리지 않는다. 단순 substring 카운트는 그것까지
+        #     세어 정상 전달에도 실패 문단을 붙인다.
+        #  ② **실패/취소 run 은 제외** — 그 경로는 애초에 materialize 를 건너뛰도록 설계돼 있고
+        #     (위 `_failed`), 사용자에겐 이미 오류가 표면화된다. 거기에 실패 문단까지 겹치면
+        #     같은 사실을 두 번 다르게 말하게 된다.
+        #  ③ **바깥 fence 안의 인용은 제외** — ```markdown 같은 fence 안에서 열 0 으로 적은
+        #     ```attachment-edit 는 블록이 아니라 예시다. 열림/닫힘 상태를 추적한다.
+        def _count_block_fences(text: str) -> tuple[int, int]:
+            edit_n = new_n = 0
+            open_tag: str | None = None
+            for _ln in text.splitlines():
+                # ```` 이상 backtick 과 `~~~` 도 fence 다(codex R8 [P2]) — 추적하지 않으면 그 안의
+                # 인용을 실제 블록으로 오계수한다.
+                if _ln.startswith("```"):
+                    _n = len(_ln) - len(_ln.lstrip("`"))
+                elif _ln.startswith("~~~"):
+                    _n = len(_ln) - len(_ln.lstrip("~"))
+                else:
+                    continue
+                _tag = _ln[_n:].strip()
+                if open_tag is None:
+                    if _tag.startswith("attachment-edit"):
+                        edit_n += 1
+                    elif _tag.startswith("attachment-new"):
+                        new_n += 1
+                    open_tag = _tag or ""          # 여는 fence(언어 표기 유무 무관)
+                elif not _tag:
+                    open_tag = None                # 닫는 fence
+            return edit_n, new_n
+
+        _edit_fences, _new_fences = _count_block_fences(content)
+        _undelivered = (max(0, _edit_fences - _block_edited_n)
+                        + max(0, _new_fences - len(created)))
+        if not _failed and (_skipped or _undelivered):
+            _uniq: list[str] = []
+            for _r in _skipped:
+                _r = str(_r).strip()
+                if _r and _r not in _uniq:
+                    _uniq.append(_r)
+            _note = "\n\n> ⚠️ **첨부 전달 실패** — 아래 파일은 새 버전으로 저장되지 않았습니다.\n"
+            if _uniq:
+                _note += "".join(f">   · {_r}\n" for _r in _uniq[:5])
+                if len(_uniq) > 5:
+                    _note += f">   · … 외 {len(_uniq) - 5}건\n"
+            # 사유가 없는 미전달분(파싱 실패·캡 초과·저장 계층 오류)도 **건수는** 정확히 밝힌다.
+            _unexplained = max(0, _undelivered - len(_uniq))
+            if _unexplained:
+                _note += (f">   · 사유 미상 {_unexplained}건 — 블록 형식 오류이거나 한 답변의 첨부 "
+                          f"개수 상한을 넘었을 수 있습니다.\n")
+            _note += "> 위 답변에 갱신했다는 서술이 있어도 이 파일들은 전달되지 않았습니다."
+            stripped = stripped.rstrip() + _note
+            log.warning("ask-worker: 첨부 전달 실패 cid=%s — 사유있음 %d · 사유미상 %d (블록 edit=%d/new=%d, "
+                        "생성 edit=%d/new=%d)", cid, len(_uniq), _unexplained,
+                        _edit_fences, _new_fences, len(edited), len(created))
         if stripped != content:
             # 영속 성공 시에만 result.answer 를 교체한다(§18.8 MINOR): UPDATE 가 실패했는데
             # result_json 만 stripped 로 두면 ops view 와 실제 저장 메시지가 어긋난다.

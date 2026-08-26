@@ -1015,3 +1015,31 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - 대안: (a) 정식 API 키(`sk-ant-api03…`) 전환 — identity 요구가 사라져 구조적으로 가장 깨끗하나
   과금이 구독→종량제로 바뀌어 운영 결정 필요, 별도 트랙으로 이월. (b) 대화 답변을 budget 계열로 상시
   강등 — 게이트를 우회하지만 품질 저하가 상시화되어 불채택.
+
+## ADR-20260826T220000-vision-ownerless-inline-image-stays-open
+
+- Status: accepted (재확인 — 선행 결정 `REQ-20260814-vision-provenance` 유지)
+- Context: `/_dqa:conversation_audit`(2026-08-26) 의 §18.8 적대 리뷰가 **여러 라운드에 걸쳐 반복해서**
+  같은 지적을 올렸다 — "소유자 키가 없는 inline image 는 본문이 프롬프트에 들어가는데 provenance
+  신호를 세우지 않으므로, 이미지 안의 지시가 `scratch_*` 쓰기 게이트를 우회할 수 있다"([P1]).
+  같은 cycle 에서 텍스트 본문 · sandbox 샘플 · 온디맨드 `read_attachment` · 원본 `_v0` 축은 전부
+  fail-closed 로 닫았다(`FR-unknown-owner-attachment-trusted-by-provenance-gate`).
+- Decision: **이미지 경로의 owner-less 항목은 계속 신호를 세우지 않는다**(열어 둔다).
+  - 근거: inline image JSON 은 **web 이 쓰고 worker 가 읽는 파일 계약**이다. 롤링 배포 중에는 구
+    형식(소유자 키 없음)과 신 형식이 공존하는 창이 생기고, 그 창에서 owner-less 를 막으면
+    **1:1 사용자까지** 쓰기 도구가 통째로 막힌다 — 공유 대화와 무관한 대다수 사용자가 영향받는다.
+    `REQ-20260814-vision-provenance` 가 이 가용성 비용을 재고 내린 결정이며
+    `test_missing_owner_keeps_previous_behavior` 가 계약으로 고정하고 있다.
+  - 텍스트/csv 축에는 같은 비용이 없다: 그 소유자는 **DB 행**(`AccountId`)에서 오고 배포 형식과
+    무관하다(라이브 실측 NULL/0 **0 / 1,101**). 그래서 거기만 닫았다 — 비대칭은 의도된 것이다.
+- Consequences:
+  - 잔여 위험은 **명시적으로 열려 있다**: owner-less inline image 본문이 쓰기 게이트를 통과한다.
+    실현 조건은 (a) 롤링 배포 혼합 창 또는 (b) 소유자 키를 잃은 경로가 새로 생기는 것.
+  - 닫으려면 **inline JSON 형식 마이그레이션이 선행**돼야 한다(구 형식 소멸 확인 후 fail-closed 전환).
+    그것은 배포 순서 의존이 있는 별도 작업이며 사람 결정 대상이다.
+  - 이 ADR 의 목적은 §18.8 「의도된 구성은 ADR 로 영구화한다」에 따른 **억제**다 — 근거 없이
+    같은 지적이 매 라운드 재상정되는 것을 막되, 지적 자체를 무르게 만들지 않는다. 위 실현 조건이
+    관측되면 즉시 재개봉한다.
+- 대안: (a) 즉시 fail-closed — 배포 창 동안 1:1 사용자 쓰기 도구 차단, 불채택. (b) owner-less 이미지를
+  **주입하지 않음** — 이미지 첨부 기능이 배포 창 동안 사실상 정지, 불채택. (c) 형식 마이그레이션 후
+  전환 — **채택 예정**(별 트랙).

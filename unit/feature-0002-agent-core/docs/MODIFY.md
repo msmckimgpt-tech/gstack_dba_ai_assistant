@@ -2586,3 +2586,183 @@ identity** 여야 Anthropic 이 허용한다. 없으면 429 `rate_limit_error` �
 - **검증 방식의 교훈**: 2026-08-25 에는 배포본 함수를 직접 호출해 "해소" 로 오판했다. 그 경로는
   request option 만 쓰므로 이 결함(본문 timeout)을 건드리지 않아 200 이 나온다. 이번에는 **실제
   대화 경로**로 검증했다 — `FUNCTION.md` 「검증 경로 주의」에 계약으로 명시.
+
+## CHG-20260826T140000-attachment-version-bump-forks-new-root
+
+`/_dqa:conversation_audit` (2026-08-26) — 원장 `FR-attachment-version-bump-forks-new-root`.
+대화 `…945b2aca`("파일 버전 상향 요청")에서 **명시적 버전 상향 요청이 두 번 연속 새 root(v1)로
+갈라진** 마찰의 근본 수정. TASK: `TASK-20260826T140000-attachment-version-bump-forks-new-root`.
+
+### 무엇을 · 왜
+
+능력은 이미 있었다 — `_materialize_assistant_attachment_edits` 는 source 가 assistant 계보면
+그 체인을 v+1 로 연장한다(REQ-20260814-attach-version-branching). 문제는 **모델이 그 경로를
+고를 근거가 프로덕션 프롬프트에 없었다**는 것이다.
+
+계보 계약("네가 만든 파일을 편집하면 네 계보가 연장된다")은 `SYSTEM_PROMPT` **본문**에만 있었고,
+`compose_system_prompt` 은 운영자 `WebSystemPrompts` global row 가 있으면 본문을 **통째로 대체**한다.
+라이브 row 실측: **9,294자 / UpdatedAt 2026-08-03**(코드 상수 23,060자) — `continues YOUR chain`,
+`FILE VERSION LINEAGES`, `attachment-new` 전부 부재. 그 결과 프로덕션에서 첨부 전달을 규정하는
+권위 표면은 코드-append 지침 2종 + 도구 설명뿐인데, **셋 다 "the user attached" 프레이밍**이라
+assistant 전달본의 버전 상향을 아무도 claim 하지 않았다. 유일하게 그 상황을 claim 하는 지침이
+`attachment-new`("네가 만든 파일을 첨부로 전달")여서, 모델은 규칙대로 새 root 를 찍었다.
+
+재발경로 = `data/config drift` → **코드 권위선(AUTH-1a)으로 이식**한다. 데이터 row(운영자 프롬프트)를
+고치는 표층 수정은 다음 drift 에 되살아나므로 택하지 않았다.
+
+### 변경
+
+- `agent_core.py` `_ATTACHMENT_DELIVERY_DIRECTIVE` — 발동 조건을 "사용자가 첨부한 파일" →
+  "이 대화에 이미 존재하는 파일(사용자 첨부 **OR** 내가 전달한 것)" 로 확장하고, `VERSION LINEAGES`
+  절로 계보 계약을 이식. 동명 `attachment-new` 가 버전 상향이 **아님**을 명시.
+- `agent_core.py` `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` — 자기 경계 명시(미존재 파일 전용).
+- `agent_core.py` `_build_attachment_context_section` — assistant 전달본에 **v1 이어도** 계보 라벨 +
+  `update_attachment(attachment_id=N)` 진입점. 종전엔 version>1 에서만 표식이 붙고 계보 요약 블록도
+  동명 계보 2개 이상에서만 렌더돼, 갓 만든 v1 전달본이 무표식이었다. 소유 계정 불일치 시엔 진입점을
+  권하지 않고 `READ-ONLY` 표기 — 저장 경로의 `AccountId` 일치 가드와 **같은 술어**(권하면 조용한
+  거부 뒤 "갱신했다" 만 남는다).
+- `modules/tools.py` `update_attachment` — description·`filename`·`attachment_id` 인자 설명을
+  assistant 전달본 포함으로 교정.
+
+### 검증
+
+- 신규 타깃 7 + census 4항 등록. `test_attach_version_lineage_prompt` + `test_grounding_authority_directive`
+  **39 PASS**. 첨부/프롬프트/도구 서브셋 611건 회귀 0(사전 존재 환경성 실패 2건은 main 에서도 동일).
+- **뮤테이션 역검증 3/3 KILL**: ① 계보 계약 조항 제거 → census + 타깃 2건 FAIL ② 라벨 배선 차단 →
+  3건 FAIL ③ 소유권 가드 무력화 → READ-ONLY 축 FAIL.
+- **라이브 미검증분**: "실제 대화에서 버전이 오르는가" 는 배포 후 실측분. 원 대화 동일 입력 재현으로
+  확인한다(코드/테스트는 "지침·라벨이 의도대로 조립된다" 까지만 증명한다).
+
+### 보안
+
+보안 회귀 0 — 프롬프트/도구 **설명 문자열**과 컨텍스트 **표시 라벨**만 바뀐다. 스코프 해소·소유권·
+kind·용량·확장자 가드는 불변이며, 라벨의 갱신-가능 판정은 저장 경로 가드보다 **넓어지지 않는다**
+(같은 `AccountId` 술어를 쓴다).
+
+### 적대 리뷰 흡수 (§18.8, 1라운드)
+
+- **[P1] 라벨이 저장 경로 가드보다 넓었다 (fix in-cycle)**: 초판 `_own_lineage` 판정이
+  `not uploader_account_id or not account_id or 일치` 라 **소유 확인 불가 행(legacy AccountId NULL·
+  계정 컨텍스트 부재)까지 "YOUR lineage + update_attachment 진입점"** 으로 권했다. 저장 경로는
+  `int(src.AccountId or 0) != account_id` 로 그 행을 **거부**하므로, 이번 봉인이 겨냥한 실패 모드
+  (조용한 거부 뒤 "갱신했다" 만 남음 — 선행 §18.8 [P2] 가 못박은 것)를 **다시 열었다**.
+  → **fail-closed 3분기**로 교정: 소유 일치 시에만 진입점, 불일치는 `READ-ONLY`, **확인 불가는
+  `lineage owner unverified — confirm before updating`**(경로 단정 없음). 라벨은 이제 가드보다
+  넓어지지 않는다. 회귀 테스트 `test_unverified_owner_assistant_row_is_fail_closed` + 뮤테이션
+  MUT-4(fail-open 복원) **KILL**.
+- 검증 갱신: 타깃 **40 PASS** · 뮤테이션 **4/4 KILL**.
+
+### 적대 리뷰 흡수 (§18.8, 2라운드 — codex 독립 채널)
+
+`/codex exec` 적대 리뷰(제약-없는 채널, §18.8.2 1순위)가 **[P1] 1 · [P2] 2** 를 제기했고 **전건 반영**했다.
+
+- **[P1] 갱신-가능 판정이 저장 경로 가드보다 넓다 — 3 갈래 전부 교정**
+  1. 전역 지침이 "모든 AI 전달본" 을 대상으로 규정 → 그룹 대화의 **타 계정 소유** 파일까지 포함됐다.
+     → `WHICH files you may update` 절 신설: 대상 판정을 **ATTACHED FILES 의 소유 라벨에 위임**
+     (`(yours)` 만 갱신 가능 · `READ-ONLY` 는 불가 사실을 사용자에게 말하도록 명시).
+  2. `update_attachment` 설명이 "이 대화에서 참조 가능한 첨부" 로 과잉 주장 → 같은 방식으로 좁힘.
+  3. **파일 라인은 fail-closed 로 고쳤는데 `## FILE VERSION LINEAGES` 요약이 `not e.get("uploader")`
+     라 같은 행을 다시 "your lineage — you can extend it" 으로 되돌렸다**(두 표시면의 술어 불일치).
+     → 소유권 판정을 **단일 정본 `_assistant_lineage_ownership(uploader, account_id) →
+     own|other|unknown`** 으로 통합하고 두 소비자가 그것만 쓰게 했다. 확인 불가는 `unknown`(fail-closed).
+- **[P2] `attachment-new` 지침 자기모순** — 발동 조건은 무조건("네가 만든 파일을 첨부로")이고 경계는
+  절 끝에만 있어, "네가 만든 **기존** 파일의 버전을 올려 첨부로" 요청이 양쪽을 모두 만족했다(넓은 쪽이
+  이긴다). → **발동 조건 자체**를 `that is NOT already listed in ATTACHED FILES` 로 좁혔다.
+- **[P2] 턴당 토큰 과다** — 행마다 갱신 방법을 반복해 첨부 상한(200건)에서 ~33KB. → 행은 라벨만
+  (`🤖AI-owned v{n} (yours)` ~25자), 방법은 **라벨이 실제 붙은 턴에만 1회** 범례로. 200건 기준
+  ~33,000자 → ~5,450자(**84% 감소**). assistant 첨부가 없으면 0.
+
+- **검증 갱신**: 타깃 **47 PASS** · 뮤테이션 **6/6 KILL**(계약 조항 제거 / 라벨 배선 차단 / 소유권 가드
+  무력화 / 소유 미상 fail-open / **계보 요약 fail-open 복원** / **범례를 행마다 반복**).
+- **잔여 상시 토큰**: 지침 2종 합계 2,996 → 4,623자(+1,627 ≈ +406 tok/턴). 계약 밀도상 수용.
+
+### 자체 확인 라운드 적발 (§18.8 수렴 계약 (a) — 3라운드)
+
+codex [P1] 을 고치며 넣은 **allowlist 문구가 반대 방향으로 넘어갔다.** "갱신 대상 = ATTACHED FILES 가
+네 것으로 표시한 것만" 인데, `👤uploaded-by=you` 는 `_has_other_uploader`(타 업로더 존재) 조건에서만
+렌더된다 — **1:1 대화에는 소유 표식이 하나도 붙지 않는다**(라이브 1:1 **348 / 전체 383 = 91%**).
+즉 사용자 자신의 파일조차 "표시되지 않았으니 대상 아님" 으로 읽힐 수 있었다. 과잉 주장을 고치다
+**과잉 차단**을 만든 전형적 2차 결함.
+
+- **교정**: allowlist → **denylist** — "ATTACHED FILES 의 텍스트/CSV 첨부 전부, **단 `READ-ONLY` 또는
+  `(OTHER MEMBER)` 로 명시 표시된 것만 제외**. 표식이 없으면 갱신 가능." 지침·도구 설명 양쪽 동일.
+  이 형태가 저장 경로 가드와 정합한다(가드가 거부하는 두 부류에만 표식이 붙는다).
+- **전제 고정**: `test_one_to_one_user_upload_has_no_ownership_marker` — 1:1 에 업로더 라벨이 붙지
+  않는다는 **사실 자체**를 테스트로 못박았다. 이 전제가 바뀌면 문구도 재검토해야 한다.
+- **소유 미상 행 실측**: 라이브 첨부 1,101건 중 `account_id` NULL/0 = **0건** → denylist 로 인한
+  잔여 노출(표식 없는 타 소유 행)은 현재 데이터에 존재하지 않는다. 존재하더라도 저장 경로가 거부하고
+  그 사유가 모델에 반환돼(`_skip`) 자기교정된다(L2).
+- **검증 갱신**: 타깃 **48 PASS**.
+
+## CHG-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback
+
+`/_dqa:conversation_audit` 적대 리뷰 5라운드가 적발한 **선재 결함 2건**을 사용자 승인(2026-08-26,
+AskUserQuestion "선재 P1 2건도 이번에 함께")으로 같은 cycle 에서 봉인한다. 원장:
+`FR-unknown-owner-attachment-trusted-by-provenance-gate` · `FR-failed-attachment-edit-silently-stripped`.
+
+### P1-1 — 소유 미상 첨부가 신뢰 게이트에서 열려 있었다
+
+본문이 맥락에 들어가는 지점들이 각자 `owner and caller and owner != caller` 를 써서, `AccountId` 가
+**NULL/0(소유 미상)** 이면 조건이 성립하지 않아 신호가 서지 않았다 — **확인 불가를 신뢰로 처리**(방향
+반대). 판정을 정본 `mark_untrusted_attachment_body()` 로 통일했다(표시 축의 `_assistant_lineage_ownership`
+과 같은 술어). 적용: 목록 렌더(텍스트 본문·sandbox 샘플) + 온디맨드 `read_attachment` + 원본 `_v0`.
+
+- **과차단 방지 2축을 함께 고정**: ① 호출자 신원 자체가 없으면 아무것도 단정하지 않는다(전 행
+  untrusted 로 올리면 정상 대화의 쓰기 도구가 통째로 닫힌다) ② csv/xlsx 는 sandbox 샘플이 **실제로
+  적재되는 지점**에서만 신호를 세운다(메타 없는 csv 는 본문이 안 실리는데 목록 시점에 세우면 과차단
+  — codex [P2]). 텍스트 축이 "실제 렌더 시점" 에 세우는 것과 같은 규율.
+- **이미지 경로는 의도적으로 제외**: 소유자 키가 없는 항목(배포 혼합 창의 구 JSON)을 막으면 그 창
+  동안 **1:1 사용자까지** 도구가 막힌다 — `REQ-20260814-vision-provenance` 가 그 가용성 비용을 재고
+  내린 결정이고 `test_missing_owner_keeps_previous_behavior` 가 계약으로 고정하고 있다. 선행 결정을
+  조용히 뒤집지 않고 잔여면으로 원장에 남긴다. 텍스트/csv 축은 DB 행에서 와서(AccountId 상시 존재,
+  라이브 NULL **0/1,101**) 같은 과도기 비용이 없으므로 거기만 닫았다.
+
+### P1-1b — 차단 사유가 사실과 달랐다
+
+차단 문구가 사유를 "다른 멤버가 올린 첨부" 로 **단정**했다. 소유를 확인하지 못한 경우에도 같은 문장이
+나가고, 모델은 그것을 사용자에게 그대로 전달한다(§16.3 정직성 위반). 사유를 `_UNTRUSTED_ATTACH_BODY_
+REASON_CTX`(`other-member` | `owner-unverified`)로 남기고 문구를 분기했다. 구체 사유가 이미 서 있으면
+덮어쓰지 않는다.
+
+### P1-2 — 거부된 `attachment-edit` 가 무음으로 사라졌다
+
+저장 가드(소유권·kind·용량)가 거부한 블록은 **사유 없이** 답변에서 제거됐다. 본문에 이미 쓰인
+"갱신했습니다" 는 남아 사용자는 파일을 못 받고도 성공으로 읽는다. materialize 는 이미 `skipped` 로
+사람이 읽을 수 있는 사유를 돌려주는데 워커 후처리가 그것을 **버리고 있었다**. 이제 받아서, strip 은
+유지한 채(전문 노출 방지 원 정책) 답변 끝에 실패 문단을 붙인다 — 최대 5건 + 초과 건수, 그리고
+"위 답변에 갱신했다는 서술이 있어도 이 파일들은 전달되지 않았습니다" 정정 문장.
+
+### 검증
+
+- 신규 `test_attach_provenance_unknown_owner.py` **10** + 후처리 실패 피드백 **2** + 행위 단언 전환 1.
+- **뮤테이션 12/12 KILL** — 이번 추가분: 정본 helper 를 종전(미상=신뢰)으로 · csv 신호를 목록 시점으로
+  되돌림(과차단 복원) · 차단 사유를 다시 "다른 멤버" 로 단정 · 실패 사유 노트 제거(무음 복원).
+- `make test` **RC=0 · 4,948 passed / 7 skipped / 실패 0** · ruff clean.
+- **선행 계약 2건 전환(정직)**: ① `test_sandbox_csv_of_other_member_raises_signal` 을 **실제 조건**
+  (sandbox 메타 존재)으로 옮겼다 — 종전 fixture 는 하네스 편의로 메타를 비워 뒀고, 그 조건에서는
+  본문이 실리지 않아 신호가 서는 것이 오히려 과차단이다. ② `inspect.getsource` 문자열 단언을 **행위
+  단언**으로 대체했다(리팩터에 깨지면서 정작 배선은 증명 못 하던 단언 — LRN-20260825T0305).
+
+### 적대 리뷰 라운드 6 흡수 (codex)
+
+- **[P1] 실패 문단을 우회하는 결정적 경로** — 내 초판은 `skipped` 가 있을 때만 정정문을 붙였는데,
+  materialize 는 **저장 가드 거부만** 기록한다: 파싱 실패(malformed header) · storage import 실패 ·
+  개수 캡 초과분은 장부에 안 남고, strip 은 fence 를 **전부** 지운다 → 그 경로들은 계속 거짓 성공.
+  → **다른 계층의 장부를 믿지 않고 결과를 직접 센다**: 답변의 `attachment-edit`/`attachment-new`
+  fence 수 대비 실제 생성 수. 사유를 아는 만큼 덧붙이고, 나머지는 **"사유 미상 N건"** 으로 건수를
+  정확히 밝힌다. (이 방식은 `attachment-new` 축도 함께 덮는다 — 편집 전용 장부에 의존하지 않는다.)
+- **[P2] csv 신호가 "샘플 실제 렌더" 가 아니라 메타 등록 시점** — 컬럼 조회 실패·빈 테이블이면 셀이
+  프롬프트에 안 들어가는데 신호는 이미 true 였다(과차단). → `sandbox_table_specs` 를 4-tuple 로 만들어
+  `attachment_id` 를 운반하고, **샘플 행이 실제로 append 되는 지점**에서 신호를 세운다.
+- **[P2] provenance 판정이 단일 정본이 아님 + 사유 오분류** — 텍스트/`_v0` 가 ContextVar 를 직접 세웠고,
+  사유를 **업로더 라벨 유무**로 추정해 라벨이 안 붙는 조건(1:1 · assistant 행)에서 소유가 **확인된**
+  타 계정 본문까지 `owner-unverified` 로 오분류됐다. → per-id 소유 판정 맵(`_owner_kind_of`) + 판정
+  결과를 직접 받는 `mark_untrusted_attachment_body_kind()` 로 통일(합성 id 우회 제거).
+- **[P2] 허용 집합 복제 잔존 주장** — 재설계가 금지한 것은 **소유 집합 재현**(allowlist/denylist)이고,
+  kind 사실("바이너리는 애초에 버전이 없다") 진술은 그 대상이 아니다. 테스트 서술이 이를 혼동시켜
+  정정했다(문구는 유지 — 없으면 모델이 헛시도한다).
+- **[P2] 이미지 순서 테스트** — 로더 행위 테스트를 추가했으나 compose-reset 뒤 배선 회귀까지는 못 잡는다.
+  **미해소로 명시**(잔여 위험).
+
+- **검증 갱신**: 뮤테이션 **13/13 KILL**(추가: 결과-측정 검출 제거 → 사유 없는 미전달 2건 FAIL) ·
+  `make test` **RC=0 · 4,951 passed / 7 skipped / 실패 0** · ruff clean.
