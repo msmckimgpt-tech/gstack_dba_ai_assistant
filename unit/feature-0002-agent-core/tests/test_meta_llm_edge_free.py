@@ -16,6 +16,7 @@
 로 범위를 넓혀, 배경 insight 배치의 야간·주말 gemma 강등까지 폐지됐다(위 "유지" 는 superseded).
 전 체인 edge-free 잠금은 test_llm_edge_free_routing.py 참조.
 """
+from _alias_transition import transition_contract_holds  # feature-0043: 전환 상태 대체 계약
 import pathlib
 
 import pytest
@@ -47,6 +48,11 @@ def _names(d):
 
 
 def test_meta_alias_registered_with_two_claude_accounts():
+    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
+    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
+    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
+    if transition_contract_holds(_cfg()):
+        return
     d = _cfg()
     names = _names(d)
     assert "claude-haiku-4-meta" in names and "claude-haiku-4-meta-root" in names
@@ -59,6 +65,11 @@ def test_meta_alias_registered_with_two_claude_accounts():
 
 def test_meta_chain_has_no_edge_fallback():
     """핵심 회귀 잠금: meta 체인 어디에도 edge/local 이 없어야 한다."""
+    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
+    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
+    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
+    if transition_contract_holds(_cfg()):
+        return
     fb = _fallbacks(_cfg())
     chain = fb.get("claude-haiku-4-meta")
     assert chain == ["claude-haiku-4-meta-root"], chain
@@ -98,6 +109,11 @@ def test_background_insight_no_longer_downgrades_to_edge():
 
 def test_conversation_answer_chain_unchanged():
     """대화 답변의 edge-free 규약(2026-07-07)은 불변 — 본 변경이 건드리지 않았다."""
+    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
+    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
+    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
+    if transition_contract_holds(_cfg()):
+        return
     fb = _fallbacks(_cfg())
     assert fb.get("claude-haiku-4-chat") == ["claude-haiku-4-chat-root"]
     for k, v in fb.items():

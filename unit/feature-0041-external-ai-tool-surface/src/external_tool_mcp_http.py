@@ -327,6 +327,23 @@ def submit_answer(ctx: McpContext, task_id: str, answer: str,
                  {"task_id": task_id, "answer": answer, "source_tasks": source_tasks}, ctx)
 
 
+# ── feature-0043 (external-llm-bridge) — 웹 대화 pull 브리지 ────────────────────
+# 웹 화면에서 사용자가 던진 질문이 여기로 흘러온다. **이 두 도구가 어댑터에 없으면
+# `/api/ai/mcp` 로 붙은 클라이언트는 대기 질문의 존재조차 알 수 없다** — REST 만 추가하고
+# 어댑터를 빼먹은 것이 codex 리뷰 P1-1 이었다(무설치 주 경로가 통째로 죽는다).
+
+@mcp.tool(description="웹 대화 화면에서 들어온 내 계정의 **대기 질문** 목록. 아직 아무도 "
+                      "가져가지 않은 것만 반환한다. 처리하려면 claim_request 로 점유하라.")
+def list_open_requests(ctx: McpContext, limit: int = 20) -> str:
+    return _post("/api/ai/tools/list_open_requests", {"limit": limit}, ctx)
+
+
+@mcp.tool(description="대기 질문 1건을 점유하고 전문과 이전 대화 문맥을 받는다. 점유는 1회만 "
+                      "성공한다(이미 가져간 질문은 409). 조사 후 submit_answer 로 제출하라.")
+def claim_request(ctx: McpContext, task_id: str) -> str:
+    return _post("/api/ai/tools/claim_request", {"task_id": task_id}, ctx)
+
+
 @mcp.tool(description="접근 가능한 스키마(DB) 목록.")
 def list_schemas(ctx: McpContext, task_id: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/list_schemas",
