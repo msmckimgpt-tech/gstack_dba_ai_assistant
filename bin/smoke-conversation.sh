@@ -72,6 +72,27 @@ except Exception as exc:  # import 실패도 배포 결함이다 — 조용히 �
     print(f"SMOKE_FAIL import: {type(exc).__name__}: {exc}")
     sys.exit(1)
 
+# feature-0043 (external-llm-bridge): 서버 계정 LLM 이 잠긴 배포에서는 **이 스모크의 전제가
+# 성립하지 않는다.** 여기가 검사하는 것은 "배포본에서 우리 LLM 이 대화 답변을 만드는가" 인데,
+# 전환 후 그 경로는 의도적으로 차단돼 있고 답변은 사용자의 개인 머신 AI 가 만든다.
+#
+# 전제가 사라졌다고 검사를 없애지는 않는다 — **다른 계약으로 바꾼다**: 차단이 실제로 걸려
+# 있는지(게이트가 열린 채 배포되지 않았는지)를 단정한다. 그래야 "전환했다고 믿는데 실은
+# 계정이 계속 쓰이는" 상태를 이 게이트가 계속 잡는다.
+try:
+    from shared.llm_gate import server_llm_enabled
+except Exception as exc:
+    print(f"SMOKE_FAIL import: llm_gate 부재 — {type(exc).__name__}: {exc}")
+    sys.exit(1)
+
+if not server_llm_enabled():
+    if _get_llm_client(model="claude-haiku-4-chat") is not None:
+        print("SMOKE_FAIL gate: 게이트가 차단 상태인데 클라이언트가 생성됐다(차단선 누수)")
+        sys.exit(1)
+    print("SMOKE_OK gate: 서버 계정 LLM 차단 확인 — 대화 답변은 사용자 개인 AI 가 생성한다")
+    print("SMOKE_OK (feature-0043 전환 모드 — 서버 LLM 왕복 검사 비적용)")
+    sys.exit(0)
+
 # 대화 기본 모델을 alias 해소해 사용한다(`conversation_answer_model(None)` 은 빈 값이라 쓰면 안 된다).
 # 교체 전 후보(surge) 검증: base_url 을 override 해 **그 컨테이너를 직접** 태운다.
 # (DNS alias 는 본체와 surge 를 함께 가리켜 대상을 지정할 수 없다.)
