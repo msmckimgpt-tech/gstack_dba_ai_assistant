@@ -2053,7 +2053,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-capacity-failure-classified-transient — triaged (L2; 결정적·용량성 실패를 재시도로 태워 5분 소모)
 
-- **status**: `triaged` — 위 batch 와 **별개 뿌리**라 분리(응집 한계). 수정 미착수.
+- **status**: `rejected` — 사용자 판단(2026-08-26): "재시도를 진행해도 근본적인 의미가 없었으며"
+  → 재시도 자체가 무의미했다는 **사실은 확인**되나, 재시도 분류를 손보는 것은 근본 조치가 아니라
+  실패를 더 빨리 보여주는 증상 관리라 **수정 대상에서 제외**한다. 근본은 "왜 실패했나" 축이며
+  그쪽은 `FR-body-timeout-poisons-provider-request` 로 해소됐고, 재발 감지는 배포 스모크 게이트
+  (`CHG-20260826T030000-deploy-conversation-smoke`)가 담당한다.
 - **관측**: 429/400 이 `classify_agent_llm_failure` 에서 `kind=transient tag=unavailable` 로 분류돼
   6회 × 3 attempts = **18회 재시도**, `waited_total=76.5s` × 3. 각 시도는 **0.6초 만에 즉시 거부**라
   재시도로 풀릴 수 없는 형태였다. 사용자는 5분을 기다린 뒤 실패를 받았다.
@@ -2062,13 +2066,21 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **주의**: 단순히 permanent 로 옮기면 진짜 일시 장애의 자동 회복을 잃는다 — 재시도 가치가 있는
   transient 와 즉시-거부를 **응답 형태(0.6초 즉답·ratelimit 헤더 유무)로** 가르는 설계가 필요하다.
 
-## FR-llm-failure-surfaced-as-datasource-guidance — triaged (L7↔L2; 원인과 무관한 조치로 사용자 유도)
+## FR-llm-failure-surfaced-as-datasource-guidance — rejected (사실 오인 — 2026-08-26 사용자 지적으로 정정)
 
-- **status**: `triaged` — 별개 뿌리로 분리. 수정 미착수.
+- **status**: `rejected` — **내 사실 오인이었다**(2026-08-26 사용자 지적 수용).
+  - 이번 장애에서 사용자에게 전달된 문구는 "오류: AWS Bedrock 서비스가 일시적으로 응답하지
+    않습니다" 로, **LLM 오류를 정확히 가리킨다**. 오도가 아니다.
+  - VPN·DBA 안내 문구가 나온 것은 08-24 `ask_jobs` 738 **한 건**인데, 그 시점 워커 로그에
+    `conn_health down scope=mysql-… via=probe-tcp err=timeout` 이 있고 `datasource_health` 도
+    `unstable` 이었다 — **실제 데이터소스 회로차단**이었지 LLM 실패의 오분류 표면이 아니다.
+  - 즉 두 사건(LLM 실패 / DS 회로차단)을 하나로 묶어 "오도 문구 결함" 이라 기록한 것이 오류다.
 - **관측**: LLM 실패로 끝난 run 의 최종 사용자 표면이 `DatasourceCircuitOpen.user_message()`
   (`shared/db.py`) — "데이터소스 응답 지연 · **네트워크/VPN 확인** · 관리자에게 **데이터소스 점검
   요청**". 실제 원인은 LLM identity 게이트였고, 사용자는 전혀 무관한 조치로 유도됐다.
-- **부수 관측**: 폴백 체인이 동일 등급 안에서만 돈다(`claude-sonnet-4-chat` → `-chat-root`, 둘 다
+- **부수 관측(불채택 확정 2026-08-26)**: 사용자 판단 — "교차 폴백은 답변 품질에 따라 고려할
+  대상이 아니다". 등급 강등 폴백은 **품질 저하를 조용히 은폐**해 사용자가 열화된 답변을 정상으로
+  믿게 만들고, 원인(상위 등급이 왜 막혔는지)도 가린다. 추진하지 않는다. 원 관측: 폴백 체인이 동일 등급 안에서만 돈다(`claude-sonnet-4-chat` → `-chat-root`, 둘 다
   frontier). 이번 장애 내내 **haiku 는 200 으로 살아 있었으므로**, 등급 교차 폴백이 있었다면 품질
   강등으로 서비스가 지속됐을 것이다. 조치는 운영 결정 필요(별 트랙).
 
@@ -2107,8 +2119,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-gateway-static-timeout-ceiling-breaks-extension — triaged (L6↔인프라; 앱 상한을 올려도 게이트웨이가 300s 에서 끊는다)
 
-- **status**: `triaged` — `FR-body-timeout-poisons-provider-request` 수정의 **부작용으로 드러난 별개 뿌리**.
-  수정 미착수(게이트웨이 config 축 = feature-0007, 이번 cycle 응집 범위 밖).
+- **status**: `fixed:undeployed` — 사용자 결정(2026-08-26 AskUserQuestion): **"960 + gateway
+  stop_grace 상향"**. `request_timeout` 300→**960**(앱 연장 per-call 900 보다 크게 두어 항상 앱이
+  먼저 판단) + bedrock-gateway/surge `stop_grace_period` 330s→**990s**(ceiling 보다 크게 — 교체 창에
+  걸린 연장 호출이 SIGKILL 되지 않도록). 대가: gateway 교체가 최대 ~16분 대기할 수 있다.
+  적대 리뷰가 330s drain 계약과의 충돌을 [P1] 로 잡아 두 층을 함께 올리는 것으로 해소했다.
 - **관측**: body timeout 제거로 게이트웨이는 정적 `request_timeout: 300`(`litellm_config.yaml`)을 따른다.
   따라서 콘솔 `AGENT_TIMEOUT_SEC` 를 450 으로 올리거나 **연장 승인으로 900** 을 주어도 게이트웨이가
   300초에서 먼저 끊을 수 있다 — 연장 기능의 실효가 300s 로 잘린다.
@@ -2118,3 +2133,19 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   긴 ceiling 적용 (b) 연장 승인 시에만 별도 model alias/deployment 로 라우팅 (c) 현행 유지(연장 상한을
   300s 로 명시). 운영 판단 필요.
 - **주의**: body timeout 재도입은 **선택지가 아니다** — 그것이 전면 장애의 원인이었다.
+
+
+## FR-conversation-failure-undetected-by-deploy-gate — fixed:undeployed (관측 공백; 대화가 죽어도 healthz·soak 는 green)
+
+- **status**: `fixed:undeployed` — 배포 게이트에 대화 스모크 추가. 배포 전.
+- **관측(2026-08-26 실사례)**: 게이트웨이 의존성 갱신으로 **모든 대화가 실패**했는데 배포는 성공했고
+  `/healthz` 는 ok, post-cutover soak 도 통과했다. 시스템이 자기 고장을 몰랐고 **사용자 신고로만**
+  발견됐다(약 20시간). healthz·soak 는 "프로세스가 살아 있는가" 만 보고 "대화가 되는가" 는 보지 않는다.
+- **근본 성격**: 증상이 아니라 **관측 공백**이다. 이 공백을 두면 다음 의존성 갱신에 같은 일이 반복된다
+  (사용자 지적: 증상 축 조치는 실제 원인을 가린다 → 근본 축으로 재구성).
+- **fix**: `CHG-20260826T030000-deploy-conversation-smoke` — `bin/smoke-conversation.sh` 신설,
+  `bin/deploy-web.sh` 가 배포 완료 선언 **전에** 호출해 실패 시 exit 1. 대화 답변 경로의 실제 함수
+  (`agent_core._call_llm`, `reasoning_level=max`)를 1회 태워 요청 조립·게이트웨이 계약을 함께 검증한다.
+- **정직 표기**: 이 스모크는 **LLM 왕복 성립** 한 점만 본다. HTTP 인증·라우팅, 워커 큐(claim/lease),
+  프런트는 각각 edge soak·워커 healthcheck·PB-0008 이 담당한다. 또한 보조 chokepoint 를 부르는
+  방식으로는 부족하다 — 2026-08-25 에 그 방식으로 200 을 받고 오판했다.

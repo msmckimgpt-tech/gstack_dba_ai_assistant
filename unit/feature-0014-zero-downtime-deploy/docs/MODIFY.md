@@ -143,3 +143,63 @@ source_of_truth: true
 - 부수 확인: 이번 배포는 Caddyfile 변경으로 `reconcile_caddy` 가 caddy 를 recreate 했는데(단일 edge)
   그 구간에서도 5xx 0. 전 서비스 `GIT_COMMIT=8cad9cd7`.
 - Files: TASK.md · REPORT.md · test-runs.d/20260811T1557-edge-rolling-gate.md (기록만).
+
+## CHG-20260826T030000-deploy-conversation-smoke
+
+배포 게이트에 **대화 경로 스모크**를 추가하고, 게이트웨이 상류 ceiling 을 앱 연장 상한과 정합시켰다.
+
+### 왜 (2026-08-26 라이브 장애)
+
+게이트웨이 의존성(litellm)이 갱신되며 요청 조립 계약이 깨져 **모든 대화가 실패**했다. 그런데
+배포는 성공했고 `/healthz` 는 ok, post-cutover soak 도 통과했다 — **시스템이 자기 고장을 몰랐고
+사용자 신고로만 발견됐다(약 20시간)**. healthz·soak 는 "프로세스가 살아 있는가" 만 본다.
+
+사용자 지적(2026-08-26): 증상 축 조치(문구 교정·재시도 분류·등급 폴백)는 **실제 원인을 가리는
+임시조치**다. 특히 등급 교차 폴백은 품질 저하를 은폐해 열화된 답변을 정상으로 믿게 만든다.
+그래서 근본 축 — **"깨져도 감지되지 않는다"** 는 관측 공백 — 을 메운다.
+
+### 변경
+
+- `bin/smoke-conversation.sh`(신설): ask-worker 컨테이너에서 **대화 답변 경로의 실제 함수**
+  `agent_core._call_llm` 을 `reasoning_level=max` 로 1회 호출해 답변 생성을 확인한다. 요청 조립
+  (extra_body·thinking·identity 주입·모델 alias 해소)을 전부 타므로 조립 결함과 게이트웨이 계약
+  변화가 여기서 드러난다. 답변이 비면 exit 1.
+- `bin/deploy-web.sh` — **2단 배치**(적대 리뷰 [P1] 수용으로 재설계):
+  1. **교체 전 후보 검증**(`deploy_gateway_reconcile` 1b): surge 가 healthy 해진 직후, **본체를
+     recreate 하기 전에** surge 를 `--gateway-url http://bedrock-gateway-surge:8080/v1` 로 직접
+     스모크한다. 실패하면 surge 를 정리하고 **교체를 아예 하지 않는다** → 구 gateway 가 계속
+     서빙하므로 **무장애**. 초판은 교체·surge 제거 후에야 검사해 "발견했지만 이미 장애" 였다.
+  2. **최종 확인**(`conversation_smoke_or_fail`, 배포 완료 선언 직전): web/워커 이미지에서 비롯된
+     잔여 결함을 잡는다. 실패 시 `exit 1`.
+- **멱등성 봉인**(적대 리뷰 [P1]): 스모크 결과를 `conv_smoke_sha` 로 state 에 기록하고 **no-op 판정에
+  포함**한다. 종전엔 `current`/`agent_current` 만 봐서 스모크 실패 SHA 를 재실행하면 no-op 분기에서
+  `exit 0` — 결함이 그대로인데 "재시도하니 green" 이 되는 거짓 신호였다.
+- **fail-closed**(적대 리뷰 [P2]): 스크립트 부재는 skip 이 아니라 배포 실패로 처리한다(실행 비트는
+  보지 않는다 — `bash` 로 호출하므로 WSL filemode 차이에 게이트가 조용히 빠지지 않게).
+- `scope=web` 은 ask-worker 미롤아웃이라 skip하되 `conv_smoke_sha=skipped-scope-web` 을 남기고
+  **"대화 동작 미검증"** 을 경고로 표면화한다(완료 문구가 통과를 함의하지 않도록).
+- `DEPLOY_WEB_SKIP_CONV_SMOKE=1` break-glass 유지(해제 시 경고).
+- 배포 검증 체크리스트에 `[1b] 대화 스모크` 항목 추가.
+- `litellm_config.yaml`: `request_timeout` **300 → 960** + `docker-compose.yml` 의 bedrock-gateway ·
+  bedrock-gateway-surge `stop_grace_period` **330s → 990s**(사용자 결정 2026-08-26 AskUserQuestion:
+  "960 + gateway stop_grace 상향"). 본문 timeout 제거로 정적 ceiling 이 상류 상한의 유일한 근거가
+  됐으므로 앱 연장 per-call(900s)보다 크게 두고, **drain 이 ceiling 을 덮도록** stop_grace 를 그보다
+  또 크게 둔다. 적대 리뷰가 "960 은 330s drain 계약을 깬다"([P1])를 잡아 두 층을 함께 올렸다.
+  **대가**: gateway 교체가 최대 ~16분 대기할 수 있다. cross-ref: feature-0007.
+
+### 검증
+
+- 라이브 배포본에서 스모크 실행 → **PASS**(`model=claude-haiku-4-chat len=58`).
+- fail-closed 확인: 모델 해소가 빈 값이던 초판에서 스크립트가 정확히 FAIL 을 냈다(조용한 통과 없음).
+- `bash -n` 문법 검사 통과 · `litellm_config.yaml` YAML 파싱 검증(모델 16개 유지).
+
+### 한계 (정직 표기 — 적대 리뷰 지적으로 정정)
+
+- **기본 모델 1개만** 검증한다. 기본이 budget 계열(Haiku)이면 adaptive 계열(Sonnet 5·Opus 5) 전용
+  경로 — OAuth frontier identity 주입, `output_config.effort`, 그 alias 해소 — 는 **검증되지 않는다**.
+  초판 주석의 "identity 주입까지 전부 탄다" 는 틀린 주장이라 철회했다.
+- HTTP 대화 진입점(`/api/ask` 인증·라우팅), 워커 큐 claim/lease, system/tool payload, 프런트는
+  범위 밖이다. 초판은 "edge soak 가 담당" 이라 썼으나 **edge soak 는 `/healthz` 200 만 본다** —
+  대화 API 인증·라우팅을 대신 검증하지 않는다. 이 주장도 철회했다.
+- 보조 chokepoint(`_openai_chat_completion_with_deadline`)를 부르는 방식으로는 부족하다 —
+  2026-08-25 에 그 방식으로 200 을 받고 "해소" 로 오판했다. **대화 경로 함수를 직접 불러야 한다.**
