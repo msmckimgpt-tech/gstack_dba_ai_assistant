@@ -125,8 +125,21 @@ def test_signal_survives_compose_reset_and_reaches_the_gate():
 
     # 4) 로더는 `_call_llm` 안에서 돈다 = 조립 이후·도구 실행 이전.
     assert "_load_attachment_inline_images()" in inspect.getsource(agent_core._call_llm)
-    assert "_UNTRUSTED_ATTACH_BODY_CTX.set(True)" in inspect.getsource(
-        agent_core._load_attachment_inline_images)
+
+
+def test_loader_itself_raises_the_signal_after_reset(tmp_path):
+    """로더가 **실제로** 신호를 세우는지 행위로 확인한다.
+
+    종전에는 `inspect.getsource(...)` 에 `_UNTRUSTED_ATTACH_BODY_CTX.set(True)` 문자열이 있는지
+    봤다 — 리팩터(정본 helper 경유)만으로 깨지면서 정작 배선은 증명하지 못하는 단언이었다
+    (LRN-20260825T0305). compose 리셋 직후 상태에서 로더를 돌려 신호가 서는지를 본다.
+    """
+    from modules import tools
+
+    agent_core._UNTRUSTED_ATTACH_BODY_CTX.set(False)      # compose 리셋 직후
+    _, flagged = _load(tmp_path, [_entry(account_id=50)], caller=10)
+    assert flagged is True
+    assert tools._provenance_gate("scratch_sql"), "로더가 세운 신호가 게이트까지 도달해야 한다"
 
 
 def test_sandbox_csv_of_other_member_raises_signal(monkeypatch):
@@ -138,16 +151,26 @@ def test_sandbox_csv_of_other_member_raises_signal(monkeypatch):
 
     rows = [(
         1150, "conv-x", "theirs.csv", "csv", "text/csv", 100, "small", "ingested",
-        _json.dumps({}),  # sandbox 메타 없이 — 신호는 kind 기반이며, 메타가 있으면 fake conn 이
-                          # sandbox 컬럼 조회까지 태워 하네스가 그 경로에서 깨진다(검증 대상 아님).
+        # FR-unknown-owner-…(2026-08-26): 신호 트리거가 **kind 기반 → 샘플 실제 렌더 시점**으로
+        # 바뀌었다(메타 없는 csv 는 본문이 안 실리므로 세우면 과차단 — codex [P2]). 그래서 이
+        # 계약을 **실제 조건**(sandbox 메타 존재)으로 옮긴다. 하네스는 아래에서 컬럼 조회를 견딘다.
+        _json.dumps({"sandbox_schema_name": "sbx", "sandbox_table_name": "t1", "rows_inserted": 3}),
         None, 1, "user", 50, None,
     )]
 
     class _RowsConn:
         def cursor(self, *a, **k):
             class _C:
-                def execute(self, *a, **k): pass
-                def fetchall(self): return rows
+                def execute(self, *a, **k):
+                    self._sql = a[0] if a else ""
+                def fetchall(self):
+                    # 샘플 셀이 **실제로 프롬프트에 들어가는** 조건을 재현한다(신호의 정확한 시점).
+                    _q = getattr(self, "_sql", "")
+                    if "information_schema" in _q:
+                        return [("c1", "varchar(10)")]
+                    if _q.strip().upper().startswith("SELECT * FROM"):
+                        return [("cell-value",)]
+                    return rows
                 def close(self): pass
             return _C()
 

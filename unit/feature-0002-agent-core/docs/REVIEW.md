@@ -2431,3 +2431,188 @@ Verdict: **SKIPPED** — 패널 미실시. 사유: 코드 변경 0(문서 전용
 
 기록된 사실의 근거: 6서비스 실물 이미지 `d3c2373a` healthy · caddy blip 0 · 실제 ask 파이프라인
 job 745 `done`(attempts=1, answer 1,316자) · 게이트웨이 `client_side_timeout` 0건.
+
+## REV-20260826T140000-attach-version-bump-lineage [CODEX:adversarial-diff]
+
+Trigger: **dispatch 키워드 0건 + code change → full panel default**(§18.8). 채널 선택은 §18.8.2 —
+세션에 "요청 없이 Agent tool 금지" 라는 **상위 우선순위 하네스 제약**이 걸려 있어 carve-out 이 적용된다:
+subagent panel 을 호출하지 않고 **제약-없는 채널**(codex 독립 적대 리뷰 + 기계적 소비자 전수 조사)로
+수행했다. 미덮인 도메인은 아래 「미검증 범위」에 명시한다(미검증을 완료로 오인 보고하지 않는다).
+
+대상: `CHG-20260826T140000-attachment-version-bump-forks-new-root`
+(assistant 전달본의 **버전 상향** 요청이 `attachment-new` 로 새 root(v1)를 찍던 마찰의 봉인 —
+프롬프트 지침 2종 · `update_attachment` 도구 설명 · ATTACHED FILES 소유 라벨 · drift census).
+
+### 라운드 1 — 자체 적대 리뷰 (staged diff)
+
+| # | 등급/렌즈 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1/security | 라벨의 갱신-가능 판정이 저장 경로 가드(`_materialize_assistant_attachment_edits` 의 `AccountId` 일치)보다 **넓다** — 소유 미상(legacy) 행에 진입점을 권해, 이번 봉인이 겨냥한 "조용한 거부 뒤 '갱신했다'" 를 다시 연다 | **흡수** — fail-closed 분기 + 회귀 테스트 + 뮤테이션 KILL |
+
+### 라운드 2 — codex 독립 적대 리뷰 (`codex exec -s read-only`, reasoning=high)
+
+| # | 등급/렌즈 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1/security+backend | 갱신-가능 주장이 **여전히** 가드보다 넓다. 3 갈래 — ① 전역 지침이 "모든 AI 전달본" ② 도구 설명이 "참조 가능한 첨부 전부"(그룹 타 계정 포함) ③ **파일 라인을 fail-closed 로 고쳐도 `## FILE VERSION LINEAGES` 요약이 `not e.get("uploader")` 로 같은 행을 "your lineage — you can extend it" 으로 되돌린다**(두 표시면의 술어 불일치) | **전건 흡수** — 소유권 판정을 **단일 정본** `_assistant_lineage_ownership() → own\|other\|unknown` 으로 통합해 두 소비자가 그것만 쓰게 함. 지침·도구는 대상 판정을 소유 라벨에 위임 |
+| 2 | P2/backend | `attachment-new` 지침 **자기모순** — 발동 조건은 무조건, 경계는 절 끝에만. "네가 만든 **기존** 파일의 버전을 올려 첨부로" 는 양쪽을 만족하고 넓은 쪽이 이긴다. 현재 테스트는 문구 존재만 봐서 이 모순을 통과시킨다 | **흡수** — **발동 조건 자체**를 `that is NOT already listed in ATTACHED FILES` 로 좁힘 + 상단 조건을 검사하는 테스트 추가 |
+| 3 | P2/perf | 턴당 프롬프트 과다 — 상시 지침 +1,265자에 더해 소유 첨부마다 162~172자 반복, 첨부 상한 200건에서 **~32KB** | **흡수** — 행은 라벨만(~25자), 갱신 방법은 **라벨이 붙은 턴에만 1회** 범례. 200건 기준 ~33,000 → ~5,450자(**84%↓**) |
+
+codex 판정: "보안 가드 자체의 staged 변경은 없습니다. kind·크기·확장자·소유권 검사는 유지됩니다."
+
+### 라운드 3 — 자체 확인 라운드 (§18.8 수렴 계약 (a))
+
+소유권 **소비자 전수 조사**(grep 기반)로 라운드 2 수정의 2차 결함을 적발했다.
+
+| # | 등급/렌즈 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1/backend | 라운드 2 의 **allowlist 문구가 반대 방향으로 넘어갔다** — "네 것으로 표시된 것만" 인데 `👤uploaded-by=you` 는 `_has_other_uploader` 에서만 렌더된다. **1:1 대화(라이브 348/383 = 91%)에는 소유 표식이 하나도 없어** 사용자 자신의 파일도 대상 밖으로 읽힌다(과잉 차단) | **흡수** — **denylist** 로 전환(`READ-ONLY`/`(OTHER MEMBER)` 만 제외, 표식 없으면 갱신 가능) + 그 전제(`1:1 에는 업로더 라벨 없음`)를 테스트로 고정 |
+
+**잔여 P1: 0**(라운드 3 수정분에 대한 codex 확인 라운드는 아래 「미검증 범위」 참조).
+
+### 검증
+
+- 타깃 **48 PASS**(`test_attach_version_lineage_prompt` + `test_grounding_authority_directive`).
+- **뮤테이션 역검증 6/6 KILL**: ① 계보 계약 조항 제거 ② 라벨 배선 차단 ③ 소유권 가드 무력화
+  ④ 소유 미상 fail-open ⑤ **계보 요약 fail-open 복원**(codex P1 ③) ⑥ **범례를 행마다 반복**(codex P2).
+- worktree `make test` **RC=0 · 실패 0** · ruff clean.
+- **운영자 override 조건 실증**: base 를 통째 대체한 상태를 재현해 `VERSION LINEAGES` ·
+  `CONTINUES your chain` · `does NOT raise anything` · `attachment-new` 경계 **4개 조항 전부 도달**,
+  본문 전용 marker 부재로 "대체" 자체도 증명. 이 결함의 정확한 조건에서 봉인이 작동한다.
+- 라이브 사실 확인: 소유 미상 첨부 **0 / 1,101** · 1:1 **348 / 383**.
+
+### 보안
+
+신규 취약점 **없음**. 변경은 프롬프트/도구 **설명 문자열**과 컨텍스트 **표시 라벨**에 한정되며,
+스코프 해소·소유권·kind·용량·확장자 가드는 **불변**. 라벨의 갱신-가능 판정은 저장 경로 가드와
+**같은 술어**를 쓰고 확인 불가는 fail-closed 라, 라벨이 가드보다 넓어지지 않는다.
+
+### 미검증 범위 (정직 표기)
+
+- `[SKIPPED:tool-restricted:ux,design]` — 세션 하네스 제약(§18.8.2 carve-out)으로 subagent panel 을
+  호출하지 않았다. 다만 이 changeset 에 사용자 대면 UI 자산 변경은 **0** 이라 해당 렌즈의 실질
+  적용 대상이 없다(모델 컨텍스트 문자열만 변경).
+- **라운드 3 수정에 대한 codex 확인 라운드는 미완**(외부 채널 사용량 한도 — 재개 20:19).
+  §18.8 수렴 계약 (a) 에 따라 그 결과 전에는 완료 선언·출하를 하지 않는다. 라운드 3 수정은
+  자체 전수 조사 + 뮤테이션 + 전제 테스트로만 검증된 상태다.
+- **라이브 실측 미수행** — 코드/테스트/census 는 "계약·라벨이 drift-내성 표면에서 의도대로 조립된다"
+  까지만 증명한다. "실제 대화에서 버전이 오르는가" 는 배포 후 원 대화 동일 입력 재현으로 확인한다.
+
+### 라운드 4~5 — codex 확인 라운드 · §18.8 수렴 계약 (b) 재설계 · 범위 조임
+
+**라운드 4(codex 확인)** 가 [P1] 잔여 + 신규 [P1] 1 · [P2] 2 를 냈다. P1 이 **4라운드 연속 비감소** →
+수렴 계약 (b)("수정이 결함을 만들고 있다 — 라운드를 더 돌리지 말고 접근을 재설계") 발동.
+
+**재설계**: 반복된 뿌리는 하나였다 — **표시 계층이 저장 가드의 술어(소유권 × kind)를 복제하려 했고
+복제할 때마다 틀렸다**(넓으면 조용한 거부, 좁으면 정상 갱신 과잉 차단). 그래서 복제를 **없앴다**:
+라벨은 갱신 가능성을 주장하지 않고 **사실만**(`(yours)`/`(another member's)`/`(owner unverified)`),
+규칙은 지침·범례가 **한 번** 말하며, 최종 권위는 **도구의 거부 사유**(L2 자기교정)다.
+`attachment-new` 에는 "**Not listed ≠ does not exist**" 우선순위 조항을 추가했다.
+
+**라운드 5(codex 확인)** 결과와 처리 — 지적의 성격이 바뀌었다. 남은 [P1] 은 **이 변경이 만든 것이
+아니라 인접한 선재 결함**이다.
+
+| 지적 | 판정 | 처리 |
+|---|---|---|
+| [P2] 도구 설명이 허용 집합을 여전히 열거 | **타당(내 텍스트)** | **흡수** — 열거 제거, "허용 집합을 미리 추측하지 말고 호출하라 + 사유 전달" 계약으로 |
+| [P2] 범례가 kind 무관하게 진입점 주장 | **타당(내 텍스트)** | **흡수** — 범례 진입점에 `for a text/csv file` 조건 + 바이너리 불가 1줄 |
+| [P2] provenance gate 확대가 unknown-owner CSV 과차단 + 거부 사유가 사실과 다름 | **타당 — 내 변경의 회귀** | **되돌림**(아래) |
+| [P1] `_read_attachment` 온디맨드·이미지 경로가 unknown-owner 를 신뢰 | **타당하나 선재** | **범위 밖** — 원장 분리 |
+| [P1] 실패한 `attachment-edit` 가 사유 없이 제거돼 "갱신했다" 문장만 남을 수 있음 | **타당하나 선재** | **범위 밖** — 원장 분리 |
+| [P2] 계보 요약이 `you can extend it`/`READ-ONLY` 를 유지 | 타당하나 **선행 cycle 의 계약**(REQ-20260814, 전용 테스트 2건이 그 문구를 고정) | **범위 밖** — 원장 분리 |
+
+**되돌린 것(중요)**: provenance gate 를 "소유 미상 = untrusted" 로 넓혔다가 **원복**했다. 이유 —
+① 이 마찰의 근본이 아니다 ② **보안 게이트 확대**는 §12.3 상 별도 승인·검증 범위다 ③ 넓힌 판이
+unknown-owner CSV 를 과차단하면서 거부 사유를 "다른 멤버가 올린 본문" 으로 **사실과 다르게** 전달했다
+④ 같은 갭이 온디맨드·이미지 경로에도 있어 한 곳만 고치면 반쪽이다. 라이브 소유 미상 첨부는
+**0 / 1,101** 이라 현재 노출은 없다. 현재 동작을 사실대로 고정하는 테스트를 남겨, 나중에 넓힐 때
+그것이 **의도된 변경**임이 드러나게 했다.
+
+### 검증 (최종)
+
+- 타깃 **53 PASS** · **뮤테이션 8/8 KILL** · worktree `make test` **RC=0 · 4,937 passed / 7 skipped /
+  실패 0** · ruff clean · verify-completion **17/17**(재실행 예정).
+- 운영자 override 재현 조건에서 계약 조항 전부 도달(이 결함의 정확한 조건).
+
+### 잔여 위험 — §18.8 수렴 계약 (c) 에 따른 **완료 선언 차단**
+
+선언한 라운드 상한(기본 3)을 넘겨 **5라운드**를 돌렸고, 마지막 라운드에 **[P1] 2건이 남아 있다**.
+둘 다 **이 changeset 밖의 선재 결함**이지만, 계약 (c) 는 "라운드 소진은 종결 사유가 아니다 —
+잔여 P1/위험을 명시하고 완료 선언을 차단한다" 고 규정한다. 따라서 **본 cycle 은 자율 출하하지 않고
+사람 판단을 받는다**(사용자가 배포 자율을 승인했더라도, 그 승인은 이 잔여 위험을 알지 못한 시점의 것이다).
+
+잔여 P1(선재, 별도 cycle 대상):
+1. `FR-unknown-owner-attachment-trusted-by-provenance-gate` — 소유 미상 첨부가 온디맨드 읽기·이미지
+   경로의 신뢰 게이트에서 열린다. 라이브 발생 0 / 1,101.
+2. `FR-failed-attachment-edit-silently-stripped` — 저장 가드가 거부한 `attachment-edit` 블록이 사유
+   없이 답변에서 제거돼, 본문의 "갱신했습니다" 문장만 남을 수 있다.
+
+## REV-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback [CODEX:adversarial-diff]
+
+Trigger: `REV-20260826T140000-attach-version-bump-lineage` 5라운드에서 codex 가 적발한 **선재 P1 2건**
+을 사용자 승인(AskUserQuestion 2026-08-26)으로 같은 cycle 에 포함. 채널은 동일(§18.8.2 carve-out —
+하네스 제약으로 subagent panel 대신 codex 독립 채널 + 기계적 소비자 전수 조사).
+
+대상: `CHG-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback`.
+
+### 흡수한 지적 (codex 라운드 5)
+
+| 지적 | 처리 |
+|---|---|
+| [P1] 소유 미상 첨부가 온디맨드·이미지 경로에서 신뢰됨 | **부분 흡수** — 텍스트/샘플/온디맨드/`_v0` 는 정본 판정으로 fail-closed. **이미지는 선행 결정 존중**(아래) |
+| [P1] 거부된 `attachment-edit` 가 사유 없이 제거돼 "갱신했다" 만 남음 | **흡수** — `skipped` 를 받아 답변에 실패 문단 + 거짓 성공 정정 문장 |
+| [P2] 허용 집합이 도구 설명에 여전히 복제 | **흡수** — 열거 제거, "추측하지 말고 호출 + 사유 전달" |
+| [P2] 범례가 kind 무관 진입점 주장 | **흡수** — `for a text/csv file` 조건 + 바이너리 불가 1줄 |
+| [P2] unknown-owner CSV 과차단 + 거부 사유 오정보 | **흡수** — 샘플 실제 적재 시에만 신호 + 사유 분기 |
+| [P2] 테스트가 불일치를 허용 | **흡수** — 전용 파일 10 + 후처리 2, 뮤테이션 4건 추가 KILL |
+
+### 선행 결정 존중 (기각이 아니라 by-design 확인)
+
+codex 는 이미지 경로의 unknown-owner 신뢰를 P1 로 봤지만, 그 동작은 **의도된 구성**이다 —
+`REQ-20260814-vision-provenance` 가 "소유자 키 없는 구 JSON(배포 혼합 창)을 막으면 그 창 동안 1:1
+사용자까지 쓰기 도구가 막힌다" 는 가용성 비용을 재고 내린 결정이며,
+`test_missing_owner_keeps_previous_behavior` 가 계약으로 고정하고 있다. reviewer 는 그 환경 전제를
+모른다(§18.8 「의도된 구성은 리뷰 입력에 넣는다」). 조용히 뒤집지 않고 **잔여면으로 원장에 명시**했다.
+닫으려면 inline JSON 형식 마이그레이션이 선행돼야 하며 별도 사람 결정 대상이다.
+
+### 검증
+
+- 타깃 신규 **12** + 전환 1 · **뮤테이션 12/12 KILL**(누적) · `make test` **RC=0 · 4,948 passed /
+  7 skipped / 실패 0** · ruff clean.
+- **선행 계약 2건 전환(정직 표기)**: ① csv 신호 계약을 실제 조건(sandbox 메타 존재)으로 이동 — 종전
+  fixture 는 하네스 편의로 메타를 비워 뒀고 그 조건에선 본문이 안 실려 신호가 서는 것이 과차단이다.
+  ② `inspect.getsource` 문자열 단언 → 행위 단언(LRN-20260825T0305).
+
+### 잔여 위험 (정직 표기)
+
+- **이미지 경로 unknown-owner 는 여전히 열려 있다** — 위 by-design 사유. 원장 항목에 명시.
+- **`attachment-new` 의 무음 skip 은 미적용** — `_materialize_assistant_attachment_new` 에 `skipped`
+  채널이 없다(feature-0003 시그니처 변경 필요 → 단일-feature verify 원칙상 별 cycle).
+- 라이브 실측은 배포 후.
+
+### 라운드 7~8 — 수렴 (마지막 라운드 **P1 0**)
+
+| 라운드 | 지적 | 처리 |
+|---|---|---|
+| 7 | **[P1]** 도구 전달분을 `edited` 에 합친 뒤 fence 수에서 빼서 **블록 실패가 상쇄**됨(도구 1건 + 블록 실패 1건 → 경고 0) | **흡수** — 블록 경로 생성 수를 합병 **전에** 별도 보관(`_block_edited_n`) |
+| 7 | **[P1]** owner-less inline image 잔여면 | **knowingly-open** — `ADR-20260826T220000-vision-ownerless-inline-image-stays-open` 로 영구화(§18.8 「의도된 구성은 ADR 로」) |
+| 7 | [P2] fence 검출이 markdown 상태 미추적 → 바깥 fence 안 열-0 인용 오계수 | **흡수** — 열림/닫힘 추적 |
+| 7 | [P2] 취소 경로 테스트가 경고 부재만 단언 | **흡수** — materialize 미호출 + strip 수행까지 단언 |
+| 8 | [P2] **위 [P1] 수정의 테스트가 vacuous** — fake 에 `_bind_tool_delivered_attachments` 가 없어 항상 예외 경로를 타서, 되돌려도 통과 | **흡수** — fake 에 성공 경로 추가 + 바인딩 실경유 단언, **뮤테이션 MUT-14 로 실증** |
+| 8 | [P2] `~~~` · 4-backtick fence 미추적 | **흡수** — 스캐너 확장 + MUT-15 |
+
+**라운드 8 판정: 새 [P1] 0 · 새 보안 회귀 0** → §18.8 수렴 계약 (a) 충족(마지막 라운드 P1 0).
+knowingly-open 1건(이미지)은 ADR 로 근거·재개봉 조건이 고정돼 있다.
+
+### 최종 검증
+
+- 뮤테이션 **15/15 KILL**. 그중 MUT-14/15 는 **codex 가 vacuous 라고 지목한 축**을 실측으로 되메운 것이다.
+- `make test` **RC=0 · 4,956 passed / 7 skipped / 실패 0** · ruff clean · verify-completion **17/17**.
+- 운영자 override 재현 조건에서 계약 조항 전부 도달(이 마찰의 정확한 발생 조건).
+
+### 잔여 위험 (배포 전 최종)
+
+1. **owner-less inline image** — ADR 로 수용·추적(위).
+2. **`attachment-new` 의 `skipped` 채널 부재** — `_materialize_assistant_attachment_new` 시그니처가
+   feature-0003 라 단일-feature verify 원칙상 별 cycle. 단, **결과-측정 검출**이 이 축의 미전달을
+   건수로는 이미 덮는다(사유만 "미상" 으로 표기).
+3. **라이브 실측 미수행** — 배포 후 원 대화 동일 입력 재현으로 확인.

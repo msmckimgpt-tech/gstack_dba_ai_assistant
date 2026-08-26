@@ -3282,3 +3282,65 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
       스코프(6서비스 `d3c2373a` healthy · caddy blip 0). **실제 ask 파이프라인**으로 동일 조건
       (`reasoning_level=max`) 요청 → HTTP 200 · 42초 · job 745 `done`, attempts=1, answer 1,316자.
       게이트웨이 `client_side_timeout` 0건. 직전 실패(job 744 error/attempts=3/answer 0)와 대조 완료.
+
+## TASK-20260826T140000-attachment-version-bump-forks-new-root — assistant 전달본 버전 상향 봉인
+
+`/_dqa:conversation_audit` 라이브 대화 진단(대화 `…945b2aca` — "파일 버전 상향 요청").
+원장: `FR-attachment-version-bump-forks-new-root`.
+
+- [x] 증상 확정 — 사용자 명시 요청("v0 에서 동일한 명칭으로 버전만 상승")에 assistant 가
+      `attachment-new` 를 재emit → `root=NULL·v1` 독립 첨부 생성. 동명 v1 **4건** 잔존.
+      답변은 "버전 번호를 상향하여 제공하겠습니다" 라고 **선언**(거짓 성공 `I-FALSE`).
+- [x] capability 축 기각(refuted) — 스코프 정상(job 751 `attachment_ids=[1240,1239]`) ·
+      MySQL mirror 4행 정상 · `_materialize_assistant_attachment_edits` 는 assistant 계보
+      v+1 연장을 이미 지원. 즉 도구를 불렀다면 v2 가 생성됐다.
+- [x] 근본 확정(L1↔L2, 삼각측량 high) — 계보 계약이 `SYSTEM_PROMPT` **본문에만** 존재
+      (REQ-20260814-attach-version-branching)해 운영자 `WebSystemPrompts` global row 대체
+      조건에서 미도달. 라이브 row 실측 **9,294자 / UpdatedAt 2026-08-03**(코드 상수 23,060자),
+      `continues YOUR chain`·`FILE VERSION LINEAGES`·`attachment-new` 전부 **부재**.
+      코드-권위 지침 2종 + 도구 설명은 모두 "the user attached" 프레이밍이라 assistant
+      전달본의 버전 상향을 **아무도 claim 하지 않았고**, 유일하게 claim 하는 지침이
+      `attachment-new` 였다. 재발경로 = `data/config drift`.
+- [x] 봉인 A — `_ATTACHMENT_DELIVERY_DIRECTIVE` 발동 조건 확장(사용자 첨부 **OR** 내가 전달한
+      파일) + 계보 계약 이식(`VERSION LINEAGES` 절, AUTH-1a 코드 권위선).
+- [x] 봉인 B — `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` 자기 경계 명시(미존재 파일 전용,
+      동명 재emit 은 무관한 v1 fork).
+- [x] 봉인 C — `update_attachment` 도구 설명·인자 설명 교정(대상 = 사용자 업로드 + assistant
+      전달본, "버전만 올려줘" → 이 도구).
+- [x] 봉인 D — ATTACHED FILES 가 assistant 전달본에 **v1 이어도** 계보·진입점 표기.
+      소유 계정 불일치 시엔 `READ-ONLY` 로 표기(저장 경로 AccountId 가드와 동일 술어).
+- [x] 봉인 E — census 등록(`REQUIRED_LIVE_SEALS` + `SEAL_OPERATIVE_CLAUSES`) — 계보 계약을
+      다시 `SYSTEM_PROMPT` 본문에만 넣으면 CI 가 FAIL 한다(이번 결함의 기전 자체를 봉인).
+- [x] 뮤테이션 역검증 4종 전부 KILL(계약 조항 제거 / 라벨 배선 차단 / 소유권 가드 무력화 /
+      소유 확인 불가 행 fail-open 복원).
+- [x] §18.8 적대 리뷰 1라운드(자체) — 라벨의 갱신-가능 판정이 저장 경로 `AccountId` 가드보다
+      넓어 legacy(소유 미상) 행에 진입점을 권하던 것을 **fail-closed** 로 교정.
+- [x] §18.8 적대 리뷰 2라운드(codex 독립 채널) [P1]1·[P2]2 **전건 반영** — ① 소유권 판정을
+      단일 정본 `_assistant_lineage_ownership` 으로 통합(파일 라인 ↔ 계보 요약 술어 불일치 해소)
+      ② 지침·도구 대상을 소유 라벨에 위임(그룹 타 계정 과잉 주장 제거) ③ `attachment-new`
+      발동 조건 자체를 좁혀 자기모순 제거 ④ 범례 1회 주입으로 토큰 84% 감소.
+- [x] §18.8 적대 리뷰 **5라운드** 완주 — P1 비단조 → 계약 (b) 재설계 발동: 표시 계층이 저장
+      가드 술어를 복제하던 구조를 제거(라벨=사실만 · 규칙 1회 진술 · 판정은 도구 거부 사유).
+- [x] 범위 조임 — provenance gate 확대는 **되돌림**(선재 갭 + 과차단 + 사실과 다른 거부 사유).
+      선재 P1 2건은 원장 별도 항목으로 분리(`FR-unknown-owner-attachment-trusted-by-provenance-gate`,
+      `FR-failed-attachment-edit-silently-stripped`).
+- [x] **잔여 P1 표면화 → 사용자 결정**(AskUserQuestion 2026-08-26): 선재 P1 2건도 이번 cycle 에
+      포함하기로 승인받음.
+
+## TASK-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback — 선재 P1 2건 봉인
+
+원장: `FR-unknown-owner-attachment-trusted-by-provenance-gate` ·
+`FR-failed-attachment-edit-silently-stripped`. 사용자 승인으로 범위 확장.
+
+- [x] 소유 미상 첨부를 신뢰하던 판정을 정본 `mark_untrusted_attachment_body()` 로 통일
+      (목록 렌더 · 온디맨드 `read_attachment` · 원본 `_v0`).
+- [x] 과차단 방지 2축 고정 — 호출자 신원 부재 시 무단정 · csv/xlsx 는 sandbox 샘플이 **실제
+      적재되는 지점**에서만 신호(메타 없는 csv 로 쓰기 도구가 막히지 않게).
+- [x] 이미지 경로는 **선행 결정 존중**(REQ-20260814-vision-provenance: 배포 혼합 창에 1:1
+      사용자까지 막히는 가용성 비용) — 잔여면을 원장에 명시.
+- [x] 차단 사유를 사실에 맞게 분기(`other-member` vs `owner-unverified`) — 종전엔 소유 미상에도
+      "다른 멤버가 올린" 이라 단정해 사용자에게 오정보가 전달됐다.
+- [x] 거부된 `attachment-edit` 의 `skipped` 사유를 답변에 명시(거짓 성공 정정 문장 포함).
+- [x] 뮤테이션 12/12 KILL · `make test` RC=0 · 4,948 PASS · ruff clean.
+- [ ] **배포 후 라이브 실측** — 원 대화 동일 입력 재현으로 assistant 계보 v2 생성 관측.
+- [ ] **배포 후 라이브 실측** — 원 대화 동일 입력 재현으로 assistant 계보 v2 생성 관측.
