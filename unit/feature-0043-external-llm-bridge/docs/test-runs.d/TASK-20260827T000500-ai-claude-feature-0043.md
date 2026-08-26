@@ -43,3 +43,33 @@ save 반환값 확인, 취소의 스코프, 폴러의 4xx 분기).
 
 - **PB-0008 실 Windows 브라우저 시각검증** — 웹 자산(`composer.js`) 변경 cycle 이므로 필수.
 - **도달성 1-probe** (`reachability_scope: included`).
+
+---
+
+## POST-DEPLOY 실측 (라이브 `0b2b4435`, 2026-08-27)
+
+| 항목 | 결과 |
+|---|---|
+| 서비스별 GIT_COMMIT | `web-a`·`web-b`·`ask-worker`·`insight-worker`·`ext-tool-mcp` = **0b2b4435** |
+| 게이트 차단 (ask-worker 런타임) | `server_llm_enabled()=False` · 전 alias `client=None` · 사유 로그 정상 |
+| MCP 주 경로 도구 노출 | **12종** — `list_open_requests`·`claim_request` 포함 |
+| 스키마 마이그레이션 | `Origin`·`ClaimedBy`·`ClaimedAt`·`ClaimedClient`·`Delivered` + `IX_WebAiTasks_Bridge` |
+| 라우트 도달성 | 신규 3종 전부 도달(401/405 — catch-all 404 아님) · 엣지 `/` 200 · 무토큰 `/api/ai/mcp` 401 |
+
+### 배포 중 발견한 결함 (조치 완료)
+
+gateway reconcile 이 대화 스모크 FAIL 로 **안전 중단**됐다. FAIL 사유는 게이트가 정상 작동한
+것(`_get_llm_client` 가 `None`)이었고, 스모크의 전제("우리 LLM 이 대화 답변을 만든다")가 이번
+전환으로 낡은 것이었다. `deploy-web.sh` 가 스모크 실패 시 교체하지 않는 설계라 **라이브 장애 0**.
+
+→ `bin/smoke-conversation.sh` 를 전환 모드 인지형으로 수정(PR #1352): 게이트 차단 시
+"차단이 실제로 걸려 있는가" 를 단정하고, 게이트가 열리면 종전 LLM 왕복 검사로 자동 복귀.
+
+**교훈**: 계획 단계의 blast-radius 목록에 **배포 게이트**가 빠져 있었다 — "LLM 을 쓰는 곳"을
+셀 때 검증 스크립트를 세지 않았다.
+
+### PB-0008
+
+브리지 setup 불가로 **미수행**(사유·해소조건은
+`unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260827T000500-bridge-poll-ui.md`).
+화면 렌더·폴링 자동갱신은 여전히 미검증이며, 위 실측은 "부품이 제자리에 있다" 까지만 보인다.

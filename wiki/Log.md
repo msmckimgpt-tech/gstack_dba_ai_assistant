@@ -330,3 +330,12 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - 부수 이득 1건: feature-0043 의 서버측 LLM fail-closed 차단 덕에 **QA 머신에 Claude 계정 자격증명을 배치하지 않아도 전 기능 QA 가 가능**하다(KB 임베딩은 로컬 bge-m3 라 계정 무관). 시크릿 표면이 실질적으로 줄어든다.
 - 명시한 위험 3건: 마스킹 없는 복제본 → **QA 머신이 운영 등급 자산**(이름으로 등급을 정하지 않는다) · 이중 원격(GitHub/GitLab)의 정본 혼선 → QA deploy key **read-only** 로 구조적 차단 · MCP 역연결의 도달성은 VPN DNS·사내 CA 라는 **외부 조건**에 달려 있고 개인 머신 러너의 배포·버전 호환도 CI/CD 범위에 포함된다.
 - 미결정 7건(CICD_DESIGN §6)은 숨기지 않고 남겼다 — GitLab 아웃바운드 · 사내 registry · PyPI/apt 미러 · VPN DNS · 사내 CA · 데이터 반출 승인 주체 · QA 머신 스펙. 인프라 협의는 리드타임이 있어 승인 즉시 병렬 착수를 권했다. (feature-0044-qa-staging-pipeline) [[feature-0044-qa-staging-pipeline]] · [[feature-0014-zero-downtime-deploy]] · [[feature-0041-external-ai-tool-surface]] · `feature-0043-external-llm-bridge`(미머지 worktree — 카드 미생성)
+
+## [2026-08-27] feature | feature-0043 서버 계정 LLM 전면 차단 + 웹 대화 pull 브리지 — 라이브 배포 `0b2b4435`
+
+- 서비스 보유 Claude 계정(`claude-corp`/`root`)으로 나가는 chat 호출을 **fail-closed 게이트**로 차단하고, 웹 대화 질문을 **각 사용자의 개인 머신 AI 런타임**이 자기 계정 LLM 으로 처리하는 pull 브리지를 출하했다. 배경은 2026-08-07 claude-corp 7일 쿼터 100% 소진으로 인한 서비스 정지 — 계정을 늘리는 대신 **추론 주체를 뒤집었다**.
+- **차단은 두 겹이고 코드가 정본이다.** `shared/llm_gate.py` 의 기본값이 차단이고 env 로만 열린다. `.env` 는 gitignore, `config/` 는 미배포라 설정을 정본으로 삼으면 "설정이 안 실린 환경에서 잠금이 풀리는" 뒤집힌 안전성이 생긴다. `litellm_config.yaml` alias 14종·fallbacks 주석이 두 번째 자물쇠이고, 되돌리려면 **둘 다** 풀어야 한다. 로컬 임베딩(`titan-embed`/bge-m3)은 계정 무관이라 의도적으로 살렸다.
+- **push 가 아니라 pull 인 이유**: MCP `sampling` 은 프로토콜 2026-07-28 에서 폐기됐고(SEP-2577 — "New implementations SHOULD NOT adopt it") Claude Code 가 미지원이다(anthropics/claude-code#1785). 오늘 동작하지 않고 내일 제거될 기능 위에 제품 주경로를 얹지 않았다.
+- **codex 독립 리뷰 2라운드에서 P1 11건·P2 6건**이 나왔고 전건 조치했다. 대부분이 **배선·상태 전이** 결함이다: MCP 어댑터 미등록으로 무설치 주 경로가 죽고 · 브리지가 LLM 토큰 쿼터에 막혀 쿼터 탈출이 그 쿼터에 막히고 · 폴링이 `selectConversation()` 을 써서 활성 대화에서 no-op 이라 **답변이 화면에 영영 안 나타나고** · claim/submit 시점 대화 권한 미재검증으로 **퇴출된 계정이 최신 문맥을 읽고 답변을 쓸 수 있었다**. 회귀는 배선 25 + 상태/장애/권한 17 로 잠갔다.
+- **배포가 자기 검증 스크립트의 전제를 깼다.** gateway reconcile 이 대화 스모크 FAIL 로 안전 중단됐는데, FAIL 사유가 게이트의 정상 작동이었다("우리 LLM 이 답변을 만드는가" 라는 전제가 낡음). `deploy-web.sh` 가 실패 시 교체하지 않는 설계라 라이브 장애는 0. 스모크를 모드 인지형으로 고쳤다(차단 상태면 "차단이 실제로 걸려 있는가" 를 단정). 교훈: blast-radius 를 셀 때 **검증 스크립트를 세지 않았다**.
+- 라이브 실측: 전 alias `client=None` · `/api/ai/mcp` 도구 12종(브리지 2종 포함) · `WebAiTasks` 5컬럼+복합인덱스 · 신규 라우트 401/405 도달. **PB-0008 화면 시각검증은 브리지 setup 불가로 미수행**(사유 명시 — 대체 실측은 "부품이 제자리에 있다" 까지만 보인다). [[feature-0043-external-llm-bridge]] · [[feature-0041-external-ai-tool-surface]] · [[feature-0023-conversation-api-access]]
