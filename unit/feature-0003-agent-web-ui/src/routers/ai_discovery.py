@@ -188,15 +188,24 @@ def _manifest(request: Request) -> dict:
                            "외부 AI/에이전트가 아래 Conversation API 로 이 assistant 와 대화할 수 있다.",
         },
         "ai_api": {
-            "purpose": "외부 AI 가 '작업 화면 대화'(/api/ask 등)를 프로그램으로 구동한다.",
+            "purpose": ("외부 AI 가 이 서비스의 데이터·컨텍스트에 접근한다. **추론은 호출자(당신)의 "
+                        "런타임에서 일어난다** — 이 서비스는 답변을 생성하지 않는다(feature-0043)."),
             "base_url": origin,
             "auth": {
                 "scheme": "Bearer",
                 "header": "Authorization: Bearer <token>",
-                "token_format_hint": "matk_… (원문 미저장, 발급 시 1회만 표시)",
-                "how_to_obtain": "서비스 운영자에게 요청 → 운영자가 `bin/api-token-issue.sh "
-                                 "--account <저권한 서비스계정> --label \"<용도>\"` 로 발급. "
-                                 "관리 콘솔이 아닌 CLI 발급이다. self-serve 발급 엔드포인트는 없다.",
+                # feature-0043 (2026-08-27, 사용자 결정): 인증은 `mat_` 하나로 통일한다.
+                # 구 `matk_`(대화 API 토큰)는 `/api/ask` 축 전용이었는데 그 축은 서버 LLM 차단으로
+                # 더 이상 답변을 만들지 않는다 — 죽은 경로의 토큰을 안내하지 않는다.
+                "token_format_hint": "mat_… (원문 미저장, 발급 시 1회만 표시)",
+                "how_to_obtain": (
+                    "브라우저로 로그인한 뒤 `/ai/connect` 에서 직접 발급한다(self-serve). "
+                    "MCP 클라이언트를 쓴다면 발급조차 필요 없다 — `/api/ai/mcp` 를 URL 로 등록하면 "
+                    "표준 OAuth(DCR + Authorization Code + PKCE S256)로 자동 연결되고, 사람이 "
+                    "브라우저에서 한 번 동의하면 끝난다."),
+                "deprecated_scheme": (
+                    "`matk_`(대화 API 토큰, `bin/api-token-issue.sh`)는 **더 이상 사용하지 않는다**. "
+                    "그 축(`/api/ask`)은 서버 계정 LLM 으로 답변을 만들던 경로이고, 그 LLM 은 차단됐다."),
                 "contact": _TOKEN_CONTACT,
                 "scope_model": "토큰은 `conversation.*` + `product.access.*` + `folder.*`(own) 스코프만 "
                                "가진다. 관리 콘솔(`/api/admin/*`)·교차계정 데이터는 scope allowlist + 절대 "
@@ -376,9 +385,11 @@ def _openapi_spec(request: Request) -> dict:
             "title": "mysql_ai Conversation API (AI-facing, curated)",
             "version": "1.0",
             "description": "외부 AI 용 큐레이션 스펙 — `conversation.*` 엔드포인트만. 관리 콘솔(`/api/admin/*`)은 "
-                           "의도적으로 제외된다. 인증=Bearer(matk_). `/api/ask` 는 동기. "
-                           "대화 품질(모델·추론 강도·제품·폴더 지침·첨부)을 조정하려면 먼저 "
-                           "`GET /api/ai/capabilities` 로 이 토큰이 쓸 수 있는 값을 조회한다.",
+                           "의도적으로 제외된다. 인증=Bearer(**mat_**, `/ai/connect` 발급). "
+                           "⚠ **`/api/ask` 는 더 이상 답변을 생성하지 않는다**(feature-0043) — 서버 계정 LLM 이 "
+                           "차단됐고, 질문은 대기 작업이 되어 **당신의 AI 런타임**이 "
+                           "`list_open_requests`→`claim_request`→`submit_answer` 로 처리한다. "
+                           "새 통합은 `/api/ai/mcp`(MCP) 또는 `/api/ai/tools/*`(REST)를 쓴다.",
         },
         "servers": [{"url": origin}],
         "security": [{"bearerAuth": []}],

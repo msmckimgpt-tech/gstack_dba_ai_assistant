@@ -32,6 +32,37 @@
 
 set -euo pipefail
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚠ DEPRECATED — feature-0043 (2026-08-27, 사용자 결정 "모든 인증 및 사용은 mat_ 로")
+#
+# 이 스크립트가 발급하는 `matk_` 는 **대화 API(`/api/ask`) 축 전용** 토큰이다. 그 축은 서버 보유
+# 계정 LLM 으로 답변을 만들던 경로이고, 그 LLM 은 `shared/llm_gate.py` 로 차단됐다. 따라서
+# `matk_` 를 새로 발급해도 **답변이 생성되지 않는다** — 죽은 경로의 자격증명이다.
+#
+# 지금의 유일한 인증 축은 `mat_`(OAuth access token)이다:
+#   · MCP 클라이언트: `https://<host>/api/ai/mcp` 를 URL 로 등록 → 표준 OAuth 자동 연결(발급 불요)
+#   · 그 외:          브라우저 로그인 후 `/ai/connect` 에서 self-serve 발급
+#
+# **기존에 발급된 `matk_` 토큰은 계속 인증된다**(무회귀) — 막는 것은 신규 발급뿐이다.
+# 정말 필요하면 `ALLOW_DEPRECATED_MATK=1` 로 강행할 수 있으나, 그 토큰으로 대화 답변을 받을 수는 없다.
+# ══════════════════════════════════════════════════════════════════════════════
+if [ "${ALLOW_DEPRECATED_MATK:-0}" != "1" ] && [ "${1:-}" != "--revoke" ]; then
+  cat >&2 <<'DEPRECATED'
+[api-token-issue] ⚠ 신규 `matk_` 발급은 중단됐습니다 (feature-0043).
+
+  이 토큰은 `/api/ask` 축 전용이고, 그 축은 서버 계정 LLM 차단으로 답변을 만들지 않습니다.
+  발급해도 아무것도 완결되지 않습니다.
+
+  대신 사용하세요:
+    · MCP 클라이언트 → https://<host>/api/ai/mcp 를 URL 로 등록 (발급 불요, 표준 OAuth)
+    · 그 외          → 브라우저 로그인 후 /ai/connect 에서 self-serve 발급 (`mat_`)
+
+  기존 `matk_` 토큰은 계속 인증됩니다. 폐기는 `--revoke <token>` 으로 가능합니다.
+  강행이 꼭 필요하면 ALLOW_DEPRECATED_MATK=1 을 붙이세요(대화 답변은 받을 수 없습니다).
+DEPRECATED
+  exit 3
+fi
+
 MODE="issue"
 ACCOUNT=""
 LABEL=""
