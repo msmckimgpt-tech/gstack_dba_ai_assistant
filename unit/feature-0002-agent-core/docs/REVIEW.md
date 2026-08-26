@@ -2616,3 +2616,12 @@ knowingly-open 1건(이미지)은 ADR 로 근거·재개봉 조건이 고정돼 
    feature-0003 라 단일-feature verify 원칙상 별 cycle. 단, **결과-측정 검출**이 이 축의 미전달을
    건수로는 이미 덮는다(사유만 "미상" 으로 표기).
 3. **라이브 실측 미수행** — 배포 후 원 대화 동일 입력 재현으로 확인.
+
+## REV-20260827T000000-attach-version-bump-deploy-record [SKIPPED:non-policy-doc]
+
+Verdict: **SKIPPED** — 패널 미실시. 사유: 코드 변경 **0**(배포 결과·실증 기록 전용). 선행 cycle 의
+코드 변경은 `REV-20260826T140000-attach-version-bump-lineage`(적대 8라운드, 마지막 라운드 P1 0)과
+`REV-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback` 에서 리뷰를 마쳤고 이후 코드 불변.
+
+기록된 사실의 근거: 6서비스 실물 이미지 `ded1812d` · caddy blip 0 · surge 0 · 배포본 런타임 심볼·문구
+적재 확인 · 원 마찰 첨부 1239/1240 에 대한 렌더 실측.

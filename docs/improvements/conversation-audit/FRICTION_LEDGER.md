@@ -2150,11 +2150,23 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   프런트는 각각 edge soak·워커 healthcheck·PB-0008 이 담당한다. 또한 보조 chokepoint 를 부르는
   방식으로는 부족하다 — 2026-08-25 에 그 방식으로 200 을 받고 오판했다.
 
-## FR-attachment-version-bump-forks-new-root — fixed:undeployed (L1↔L2; 버전 상향 계약이 drift 로 미도달 → 유일하게 claim 하는 지침이 `attachment-new`)
+## FR-attachment-version-bump-forks-new-root — fixed:deployed:unverified-live (L1↔L2; 버전 상향 계약이 drift 로 미도달 → 유일하게 claim 하는 지침이 `attachment-new`)
 
-- **status**: `fixed:undeployed` — 코드/테스트 + §18.8 적대 리뷰 1라운드([P1] 1건 in-cycle 흡수)
-  완료, 배포 전. 배포 후 원 대화 동일 입력 재현으로 assistant 계보 v2 생성 관측 시
-  `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정 시 `verified`.
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-26, PR #1348 merge main
+  `ded1812d`). `make deploy-web` **전체 스코프**: web-a/web-b 무중단 롤링 + soak + 대화 경로 스모크
+  + 워커 4종 롤아웃. **6서비스 전부 `GIT_COMMIT=ded1812d`** · edge `/healthz` ok(mysql_ok·pg_ok) ·
+  caddy `no upstreams available` **0** · surge 잔존 **0** · quiesce 로 진행 중 사용자 run 미절단.
+  **배포본 런타임 실증**(ask-worker 컨테이너): `VERSION LINEAGES` 절 · `CONTINUES your chain` ·
+  `does NOT raise anything` · "판정은 도구가 한다" · `attachment-new` 발동조건 축소 ·
+  "Not listed ≠ does not exist" · 도구 설명 허용집합 미재현 · `_assistant_lineage_ownership`/
+  `mark_untrusted_attachment_body` 적재(소유 미상 → fail-closed, 사유 `owner-unverified`) ·
+  결과-측정 검출(`_count_block_fences`/`_block_edited_n`) · 실패 정정 문장 — **전부 확인**.
+  **원 마찰 데이터 실측(읽기 전용)**: 실패했던 첨부 1239/1240 에 대해 배포본이 이제
+  `🤖AI-owned v1 (yours)` 라벨 + `update_attachment(attachment_id=…)` 진입점 +
+  "NEVER emit an attachment-new block with a filename already listed here" 를 렌더한다.
+  provenance 신호는 본인 파일이라 정상적으로 미발화(과차단 0).
+  `verified` 로 닫지 **않는** 이유(§C5): **모델이 실제로 그 경로를 고르는지**는 실제 LLM 턴이
+  필요하다 — 다음 audit corroboration(아래 기준선 대비) 재측정 대상.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-26) — "`파일 버전 상향 요청` —
   assistant 의 첨부파일 버전 관리 기능이 정상적으로 작동하지 않는것으로 확인되어 수정이 필요합니다."
 - **last_seen**: 2026-08-26 · **seen_count**: 1 · **seen_distinct_conv**: 2 (동명 root 중복 시그니처)
