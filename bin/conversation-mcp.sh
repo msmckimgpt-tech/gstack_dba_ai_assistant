@@ -18,7 +18,12 @@
 #   2) .env.conversation-mcp (gitignored) 에 아래 값 주입:
 #        CONVERSATION_MCP_ENABLED=1
 #        CONVERSATION_API_BASE_URL=https://mysql-ai.company.local   # 또는 http://localhost:8000
-#        CONVERSATION_API_TOKEN=matk_...                            # 1)에서 발급한 원문
+#        CONVERSATION_API_TOKEN=mat_...                             # `/ai/connect` 발급 (구 matk_ 아님)
+#
+# ⚠ DEPRECATED (feature-0043, 2026-08-27): 이 런처는 `/api/ask` 축(서버 계정 LLM)이 살아
+#   있을 때의 것이다. 그 LLM 은 차단됐으므로 이 구성으로는 답변이 오지 않는다.
+#   권장 경로는 `https://<host>/api/ai/mcp` 를 AI 클라이언트에 URL 로 등록하는 것이다
+#   (설치물·토큰 발급 모두 불요 — 표준 OAuth 로 자동 연결).
 #        # CONVERSATION_API_VERIFY_TLS=0     # 사내 self-signed 시
 #        # CONVERSATION_API_DEFAULT_MODEL=... # 선택
 #   3) .mcp.json 의 conversation-api 서버로 등록되어 있으므로 MCP 클라이언트가 자동 기동.

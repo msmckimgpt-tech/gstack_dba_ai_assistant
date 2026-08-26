@@ -54,7 +54,8 @@ def _hash_session_token(token: str) -> str:
 def _sanitize_api_token(value: str) -> str:
     """API 토큰 정규화. url-safe 문자([A-Za-z0-9_-])만 허용, 128자 상한.
 
-    발급 CLI 는 `matk_` + secrets.token_urlsafe(...) 로 이 charset 만 생성하므로
+    발급 경로(`mat_` = `/ai/connect`·OAuth, 구 `matk_` = 발급 중단된 CLI)는 모두
+    `<prefix>` + secrets.token_urlsafe(...) 로 이 charset 만 생성하므로
     정상 토큰에는 no-op 이고, garbage/injection 입력만 걸러낸다(세션 쿠키
     `_sanitize_session_id` 와 동형 — 단 API 토큰은 더 길어 128자 허용)."""
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "", value or "")

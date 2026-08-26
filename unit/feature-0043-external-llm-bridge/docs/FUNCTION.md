@@ -46,6 +46,21 @@ feature-0041(외부 AI 도구 표면)의 인증·도구·원장·각인 인프�
 - `/api/ask` 분기: 게이트가 차단 상태면 LLM 실행 대신 브리지 task 적재 + 대기 상태 반환.
 - 웹 프론트: 대기 말풍선 · 답변 폴링 · `/ai/connect` 연결 안내.
 
+### P0-D. 인증 축 통일 — `mat_` 하나로 (사용자 결정 2026-08-27)
+
+**모든 인증 및 사용은 `mat_`(OAuth access token) 를 통해서만** 이루어진다.
+
+| 접두 | 축 | 상태 |
+|---|---|---|
+| `mat_` | OAuth access token — `/api/ai/tools/*` · `/api/ai/mcp` | **유일 축**. `/ai/connect` self-serve 발급, MCP 는 표준 OAuth 로 발급조차 불요 |
+| `matk_` | 대화 API 토큰 — `/api/ask` | **신규 발급 중단**. 기존 토큰 인증은 유지(무회귀) |
+
+`matk_` 축은 서버 계정 LLM 으로 답변을 만들던 경로다. 그 LLM 이 차단된 지금 그 토큰으로는
+아무것도 완결되지 않으므로, **발급도 안내도 하지 않는다**. 폐기 *설명* 은 남긴다 — 사라지면
+옛 토큰 보유자가 왜 안 되는지 알 수 없다.
+
+도구 표면은 `WebOAuthTokens`(mat_)만 참조하고 `WebApiTokens`(matk_)를 보지 않는다(축 분리 불변식).
+
 ### P0-C. 개인 머신 접속 — **무설치 계약** (사용자 결정 2026-08-26)
 개인 머신에 **어떤 패키지도 설치하지 않고** 동작해야 한다. 세 경로 모두 이 제약을 지킨다.
 - **주 경로 (설치 0)**: `https://<host>/api/ai/mcp` — HTTP/SSE MCP 를 **서버가 호스팅**하므로
@@ -103,6 +118,13 @@ feature-0041(외부 AI 도구 표면)의 인증·도구·원장·각인 인프�
 - AC-20260826T135206-external-llm-bridge-7: KB 임베딩(로컬 bge-m3)은 게이트 활성 상태에서도 정상 동작한다.
 - AC-20260826T135206-external-llm-bridge-8: 차단된 호출은 무음 실패하지 않고 사유 문자열을 남긴다
   (로그 + 사용자 대면 안내).
+
+- AC-20260827T030000-external-llm-bridge-10: 발견 자료·사용자 가이드의 토큰 힌트가 `mat_` 이고,
+  발급 안내가 self-serve(`/ai/connect`)·MCP 자동 연결을 가리킨다. 중단된 CLI 를 따라 하도록
+  안내하지 않는다(폐기 설명에서의 언급은 허용).
+- AC-20260827T030000-external-llm-bridge-11: `bin/api-token-issue.sh` 가 신규 `matk_` 발급을
+  거절한다(exit 3). `--revoke` 는 통과한다 — 폐기 경로까지 막으면 기존 토큰을 거둘 수 없다.
+- AC-20260827T030000-external-llm-bridge-12: 도구 표면이 `WebApiTokens` 를 참조하지 않는다(축 분리).
 
 ## 9. Constraints / Risks
 

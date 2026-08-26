@@ -27,17 +27,17 @@
 Authorization: Bearer <token>
 ```
 
-- 토큰 형식: `matk_…` (URL-safe). 원문은 **발급 시 1회만** 노출되며 서버는 SHA-256 해시만 저장한다.
-- **토큰 취득 (self-serve 없음)**: API 로는 토큰을 발급받을 수 없다 — 서비스 **운영자에게 요청**해야
-  한다. 운영자는 관리 콘솔이 아닌 CLI 로 발급한다:
-  ```
-  bin/api-token-issue.sh --account <저권한 서비스계정> --label "<통합 용도>"
-  # 옵션: --scopes "conversation.,product.access."  --expires-days 90
-  ```
-  발급된 토큰 원문을 안전한 곳(비밀 관리자, MCP `.env`)에 보관한다. 분실 시 재발급.
-  - **누구에게 요청하나**: 매니페스트(`/api/ai/manifest`)의 `ai_api.auth.contact` 필드를 보라 —
-    이 배포의 운영자 연락처가 들어 있다(운영자가 `AI_API_TOKEN_CONTACT` env 로 설정). 외부 AI 는
-    토큰이 없으면 여기서 멈추고 그 연락처로 발급을 요청해야 한다.
+- 토큰 형식: **`mat_…`** (URL-safe). 원문은 **발급 시 1회만** 노출되며 서버는 SHA-256 해시만 저장한다.
+- **토큰 취득 (self-serve)**: 브라우저로 로그인한 뒤 **`/ai/connect`** 에서 직접 발급한다.
+  토큰은 그 **로그인 세션에 결합**되므로 로그아웃하면 함께 죽는다(신원 = 로그인 세션).
+- **MCP 클라이언트라면 발급조차 필요 없다**: `https://<host>/api/ai/mcp` 를 URL 로 등록하면
+  표준 OAuth(DCR + Authorization Code + **PKCE S256**)로 자동 연결되고, 사람이 브라우저에서
+  한 번 동의하면 끝난다. 설치물도 없다.
+
+> ⚠ **구 `matk_` 토큰은 더 이상 사용하지 않는다** (feature-0043, 2026-08-27).
+> 그 토큰은 `/api/ask` 축 전용이었고, 그 축은 **서버 계정 LLM 으로 답변을 만들던 경로**다.
+> 그 LLM 은 차단됐으므로 `matk_` 로는 아무것도 완결되지 않는다.
+> **모든 인증은 `mat_` 하나로 통일한다.**
 - 세션 쿠키(사람 로그인)와 별개 경로다. 토큰이 있으면 쿠키 없이 API 를 쓸 수 있다.
 - **폐기**: 운영자가 `bin/api-token-issue.sh --revoke <token-id|prefix>`. 또는 서비스 계정을
   비활성화/삭제하면 그 토큰은 즉시 무효가 된다.
@@ -264,10 +264,12 @@ curl -sk -H "Authorization: Bearer $TOKEN" \
 HTTP 직접 호출 대신 MCP tool 로 쓰려면, 이 API 를 감싼 MCP 서버를 사용한다:
 
 ```
-# 운영자: 토큰 발급 후 .env.conversation-mcp 에 주입
+# ⚠ DEPRECATED (feature-0043) — 이 런처는 `/api/ask` 축(서버 LLM)이 살아 있을 때의 것이다.
+#    그 축은 차단됐으므로 아래 구성으로는 답변이 오지 않는다.
+#    지금은 `/api/ai/mcp` 를 클라이언트에 URL 로 등록하는 것이 유일한 권장 경로다.
 CONVERSATION_MCP_ENABLED=1
 CONVERSATION_API_BASE_URL=https://mysql-ai.company.local
-CONVERSATION_API_TOKEN=matk_...
+CONVERSATION_API_TOKEN=mat_...    # `/ai/connect` 발급 (구 matk_ 아님)
 # 실행: bin/conversation-mcp.sh  (.mcp.json 의 conversation-api 서버로 등록됨)
 ```
 
