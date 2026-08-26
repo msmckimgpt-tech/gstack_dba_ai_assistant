@@ -350,3 +350,16 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - **권장 스펙을 실측 근거로 산출**(§6): 현행 호스트 20 vCPU / 39GB RAM / GTX 1660 SUPER 6GB / 데이터 90GB(`mysql-data` 65G · `backups` 12G · KB PG 4.6G · ollama 4.6G · replica 4.2G) / compose `mem_limit` 명시 14개 합 17.5GB. QA·라이브 권장 = **16 vCPU / 48GB / 500GB NVMe / GPU 6~8GB**(최소 8 vCPU / 32GB / 300GB). 빌드 서버는 8 vCPU / 16GB / 300GB, GPU 불요.
 - **라이브 이전은 무중단이 아니다**(ADR-20260827T090100): 데이터 90GB 이전이 포함되므로 전환 창이 발생한다. 순서는 **QA 먼저**(같은 절차를 라이브에 적용하기 전 실증) → 라이브 머신 구축 → 이전 리허설로 복원 소요 실측 → 전환 창 공지 → DNS 전환 → 현행 호스트 1주 보존(즉시 되돌림).
 - 남은 미확인은 **사내 PyPI/apt 미러 유무 1건**뿐이며, Dockerfile 을 `ARG` 로 양쪽 지원하게 두면 확인 전에도 Phase 1 착수가 가능하다. (feature-0044-qa-staging-pipeline) [[feature-0044-qa-staging-pipeline]] · [[feature-0014-zero-downtime-deploy]] · [[feature-0041-external-ai-tool-surface]] · [[feature-0043-external-llm-bridge]]
+
+## [2026-08-27] feature | QA CI/CD 설계 rev.3 — 로컬 LLM 실측으로 GPU 요구 소거 (feature-0044, Major)
+
+[2026-08-27T01:20:00+09:00] update | feature_card | Features/feature-0044-qa-staging-pipeline.md | rev.3 반영
+
+- rev.2 가 남긴 결정 2건을 물었더니 **GPU 문항의 답이 선택지가 아니라 전제 변경**이었다 — "로컬 LLM 은 더 이상 사용되지 않아야 하며 임베딩도 전용 계정으로 사내 MCP 를 호출하는 방식으로 이관한다". 사용자가 "직접 확인해 달라" 고 명시해 코드로 실태를 조사했고, 그 결과가 스펙 축을 바꿨다.
+- **실측 결론: 로컬 LLM 은 임베딩 한 축만 남았고 그것이 유일한 GPU 소비자다.** 대화·보조 chat(gemma/`edge-fallback`)은 2026-07-30 edge-free 결정으로 litellm `fallbacks` 참조가 전량 제거됐고 feature-0043 이 서버측 chat 호출 자체를 fail-closed 로 막았다. 남은 것은 `embed-ollama`(GPU 패스스루 · `OLLAMA_KEEP_ALIVE: -1`)와 `litellm_config.yaml` 의 `titan-embed` → `ollama/bge-m3` alias 뿐이며, `shared/llm_gate.py` 도 이를 "비차단: KB 임베딩(로컬 bge-m3/ollama)" 로 명시한다.
+- **이관이 쉬운 이유와 어려운 이유를 함께 적었다.** 소비처 3경로(`kb_embedding_worker`·`kb_retrieval`·`sample_queries`)가 전부 `client.embeddings.create(model=AGENT_KB_EMBEDDING_MODEL)` 로 **alias 이름만 참조**하므로 새 엔드포인트가 OpenAI 호환 `/v1/embeddings` 면 **앱 무변경**으로 alias 한 줄 교체다. 반면 ⓐ 벡터 차원 **1024 유지 필수**(`AGENT_KB_EMBEDDING_DIM` · `texts.embedding vector(1024)` — 다르면 스키마 마이그레이션 + 전량 재임베딩) ⓑ 순수 MCP 도구 호출이면 litellm 이 임베딩 provider 로 MCP 를 지원하지 않아 **어댑터 필요**(litellm 앞단 OpenAI 호환 프록시 권장)라는 두 제약이 공수를 크게 가른다.
+- **스펙 하향**: GPU 불요 → QA·라이브 각 **8~12 vCPU / 32GB / 400GB NVMe**(rev.2 의 16/48/500/GPU 대비). `embed-ollama` 제거로 서비스 23→22 · RAM −2GB · 디스크 −4.6GB · 상시 최대 CPU 소비원 소거. ⚠ **구매 요청은 rev.3 기준으로** — rev.2 스펙은 폐기.
+- **순서 제약을 명시했다**(§9.4): 이관을 QA 세팅보다 먼저 끝내면 GPU 없이 산정·구매할 수 있고 타임아웃 재조정과 그 되돌림이 불필요하다. 이관이 늦어 QA 를 먼저 세워야 한다면 ① GPU 투입 또는 ② CPU 기준 타임아웃 재조정 + "성능 QA 무효" 명시 중 택일이며, 어느 쪽이든 이관 후 되돌려야 해 총 공수가 는다.
+- **새 위험 2건**: 사내 임베딩 MCP 가 **KB 검색·분석·샘플의 SPOF** 가 된다(가용성·타임아웃·degrade 동작을 이관 시 함께 정해야 "검색 품질이 조용히 나빠지는" 실패를 막는다) · feature-0043 이 세운 "LLM 자격증명을 어느 대상에도 두지 않는다" 원칙에 **임베딩 전용 계정 예외**가 생긴다(범위를 명시하고 SOPS 에 포함).
+- SVN 용량 정책은 **안 A 확정** — 매니페스트·시크릿 암호문·스크립트(텍스트)만 SVN 에 두고 이미지 tar 는 사내 파일서버에 두며 매니페스트가 `url`+`sha256` 로 잇는다. SVN 은 삭제해도 이력 blob 이 남아 tar 를 커밋하면 저장소가 단조 증가하기 때문이다. 파일서버는 최근 5세대 유지하되 **롤백 대상 last-good 세대는 반드시 남긴다**(보관 세대 수 = 무재빌드 롤백 가능 범위).
+- 남은 미확인은 여전히 **사내 PyPI/apt 미러 유무 1건**. (feature-0044-qa-staging-pipeline) [[feature-0044-qa-staging-pipeline]] · [[feature-0043-external-llm-bridge]] · [[feature-0007-bedrock-llm-provider]]
