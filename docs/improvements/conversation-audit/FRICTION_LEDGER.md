@@ -2074,8 +2074,16 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-body-timeout-poisons-provider-request — fixed:undeployed (L6↔인프라 경계; 전송 계층 값을 요청 본문에 실어 게이트웨이 방어 로직을 트리거)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **12** PASS · 계약 전환 29 PASS · 뮤테이션 5건 KILL).
-  **배포 전.**
+- **status**: `fixed:deployed:verified` — 코드/테스트(신규 **12** PASS · 계약 전환 5곳 · 뮤테이션 5건
+  KILL) + §18.8 적대 리뷰([P1] 2·[P2] 2 흡수) + **배포 완료**(2026-08-26, PR #1344 merge main
+  `d3c2373a` → `make deploy-web` 전체 스코프. 6서비스 실물 이미지 `d3c2373a` healthy · caddy
+  `no upstreams available` **0건**) + **라이브 검증 완료**.
+- **라이브 검증(2026-08-26, 실제 ask 파이프라인 — 사용자와 같은 진입점)**: 동일 조건
+  (`reasoning_level=max`)으로 요청 → **HTTP 200 · 42초 · job 745 `status=done`, attempts=**1**,
+  answer 1,316자**(실제 DB 조회 결과를 담은 정상 답변). 검증 구간 게이트웨이 `client_side_timeout`
+  **0건**, chat 요청 5건 전부 200.
+  **직전 실패와의 대조**: job 744 `error`/attempts=3/answer **0** → job 745 `done`/attempts=1/1,316자.
+  이번에는 배포본 함수 직접 호출이 아니라 **실제 대화 경로**로 검증했다(그 차이가 2026-08-25 오판의 원인).
 - **source**: 사용자 스크린샷(2026-08-25 19:15 "오류: AWS Bedrock 서비스가 일시적으로 응답하지
   않습니다") + 2026-08-26 웹 실증 요청. 실제 ask 파이프라인 호출로 **재현 확정**(job 744
   `status=error`, attempts=3, answer 길이 0).

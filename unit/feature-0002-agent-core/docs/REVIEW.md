@@ -2421,3 +2421,13 @@ security 렌즈: **없음**(인증·인가·비밀·입력 실행 경계 신규 
   **모든 대화가 400 으로 실패**하기 때문이다.
 - 정적 AST 검사는 동적 조립까지 잡지 못한다. 최종 안전망은 **실제 ask 파이프라인 라이브 검증**이며,
   배포본 함수 직접 호출로는 이 결함이 드러나지 않는다(2026-08-25 오판 선례).
+
+## REV-20260826T020000-body-timeout-deploy-record [SKIPPED:docs-only]
+
+Verdict: **SKIPPED** — 패널 미실시. 사유: 코드 변경 0(문서 전용). 본 cycle 은
+`CHG-20260826T010000-body-timeout-poisons-provider-request` 의 **배포 결과·라이브 검증을 사실 그대로
+기록**한 것뿐이다(원장 status 전이 · TASK 체크박스 종결 · MODIFY 배포 기록). 선행 cycle 의 코드 변경은
+`REV-20260826T012000-…`([CODEX:3-lens], [P1] 2·[P2] 2 흡수)에서 적대 리뷰를 마쳤고 이후 코드는 불변.
+
+기록된 사실의 근거: 6서비스 실물 이미지 `d3c2373a` healthy · caddy blip 0 · 실제 ask 파이프라인
+job 745 `done`(attempts=1, answer 1,316자) · 게이트웨이 `client_side_timeout` 0건.
