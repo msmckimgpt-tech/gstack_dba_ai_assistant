@@ -2766,3 +2766,18 @@ REASON_CTX`(`other-member` | `owner-unverified`)로 남기고 문구를 분기�
 
 - **검증 갱신**: 뮤테이션 **13/13 KILL**(추가: 결과-측정 검출 제거 → 사유 없는 미전달 2건 FAIL) ·
   `make test` **RC=0 · 4,951 passed / 7 skipped / 실패 0** · ruff clean.
+
+## CHG-20260827T000000-attach-version-bump-deploy-record
+
+`CHG-20260826T140000-…` + `CHG-20260826T210000-…` 의 **배포·실증 기록**(문서 전용, 코드 변경 0).
+
+- **배포 완료**: PR #1348 merge main `ded1812d` → `make deploy-web` **전체 스코프**.
+  6서비스 실물 `GIT_COMMIT=ded1812d` · edge `/healthz` ok · caddy `no upstreams available` **0** ·
+  surge 잔존 0 · quiesce 로 진행 중 run 미절단 · 대화 경로 스모크 PASS.
+- **배포본 런타임 실증**(ask-worker): 지침·도구설명·소유판정 정본·결과-측정 검출 **전부 적재 확인**.
+- **원 마찰 데이터 실측(읽기 전용)**: 실패했던 첨부 1239/1240 에 대해 배포본이 계보 라벨
+  `🤖AI-owned v1 (yours)` + 진입점 `update_attachment(attachment_id=…)` + 동명 `attachment-new`
+  금지 문구를 렌더한다. provenance 신호는 본인 파일이라 미발화(과차단 0).
+- **남은 것(정직)**: **모델이 실제로 그 경로를 고르는지**는 실제 LLM 턴이 필요하다. 코드·프롬프트는
+  "보여준다" 까지만 증명하며, 행동 변화는 다음 audit 의 corroboration(동명 root 중복 3그룹/2대화 ·
+  `attachment-new` 기원 root 17건 중 v≥2 연장 2건 기준선) 재측정으로 판정한다.
