@@ -787,7 +787,11 @@ services:
     # 가 DNS alias 로 흡수하므로 사용자 무중단은 유지된다(아래 bedrock-gateway-surge 참조).
     # 이 값을 넘겨 죽는 호출(연장 승인 run 등)은 앱 층 일시 실패 재시도가 흡수한다
     # (shared/config.py AGENT_LLM_TRANSIENT_RETRY_* — 두 층이 함께여야 봉인이 닫힌다).
-    stop_grace_period: 330s
+    # cc-body-timeout(2026-08-26): gateway request_timeout 이 960s 로 올라가(연장 승인
+    #   per-call 900s 보존) 330s 로는 교체 창에 걸린 연장 호출이 SIGKILL 된다. ceiling 보다
+    #   크게(990s) 두어 drain 이 상류 상한을 덮게 한다 — 대신 gateway 교체가 최대 ~16분
+    #   대기할 수 있다(사용자 결정 2026-08-26: 연장 호출 보존 우선).
+    stop_grace_period: 990s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
       interval: 10s
@@ -828,7 +832,11 @@ services:
     # healthy 해진 뒤 stop 되는데, 그 시점에도 surge 에 붙은 in-flight LLM 호출이 남아 있을 수
     # 있다(교체 창에 들어온 요청이 곧 surge 로 갔으므로 오히려 젊은 요청들이다). 여기만 120s 로
     # 두면 본체 쪽 구멍을 막고 surge 쪽에 같은 구멍을 남기는 셈이다.
-    stop_grace_period: 330s
+    # cc-body-timeout(2026-08-26): gateway request_timeout 이 960s 로 올라가(연장 승인
+    #   per-call 900s 보존) 330s 로는 교체 창에 걸린 연장 호출이 SIGKILL 된다. ceiling 보다
+    #   크게(990s) 두어 drain 이 상류 상한을 덮게 한다 — 대신 gateway 교체가 최대 ~16분
+    #   대기할 수 있다(사용자 결정 2026-08-26: 연장 호출 보존 우선).
+    stop_grace_period: 990s
     networks:
       dbnet:
         aliases: [bedrock-gateway]

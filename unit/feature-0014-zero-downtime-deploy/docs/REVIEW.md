@@ -241,3 +241,35 @@ source_of_truth: true
 - Timestamp: 2026-08-11T08:35:00Z
 - 결과: 게이트 실효 **PASS** — 배포 창 `no upstreams available` 0건 / 172요청 전부 200
   (수정 전 동일 규모 창: 111요청 중 503×8, 전면 503 13초).
+
+## REV-20260826T040000-deploy-conversation-smoke [CODEX:2-lens] backend/devops + qa
+
+Verdict: **PASS(수정 후)** — R1 [P1] 3 · [P2] 5 전부 흡수. 대상:
+`CHG-20260826T030000-deploy-conversation-smoke`. Agent tool 미사용(세션 지시) → `[CODEX:*]`.
+
+| # | 등급 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1/devops | 스모크가 게이트가 아니라 **사후 경보** — gateway 교체·surge 제거 후 실행이라 실패해도 장애 지속(`--rollback` 은 web/worker 만 복구) | **재설계**(사용자 결정) — surge healthy 직후·본체 recreate **전에** 후보 검증. 실패 시 교체 안 함 = 무장애 |
+| 2 | P1/devops | **멱등성 결함** — 스모크 실패 후 같은 SHA 재실행이 no-op 분기에서 exit 0 → 거짓 green | **흡수** — `conv_smoke_sha` state 기록 + no-op 판정에 포함 |
+| 3 | P1/devops | `request_timeout: 960` 이 gateway `stop_grace_period: 330s` 와 충돌(연장 호출이 교체 창에 SIGKILL) | **흡수**(사용자 결정) — stop_grace 330s→990s 로 두 층 함께 상향 |
+| 4 | P2 | `--timeout` 이 표시만 되고 미적용 | **흡수** — `timeout(1)` 로 실제 wall-clock 상한, 124 를 초과로 구분 |
+| 5 | P2 | `-x` 검사로 파일 이상 시 자동 skip | **흡수** — fail-closed(`-f` 검사, 부재는 배포 실패) |
+| 6 | P2 | `scope=web` skip 인데 완료 문구는 통과처럼 보임 | **흡수** — `skipped-scope-web` 기록 + 경고로 "미검증" 표면화 |
+| 7 | P2/qa | "identity 주입까지 전부 탄다" 는 **틀린 주장**(기본 Haiku 만 호출, adaptive 계열 사각) | **철회·정정** — 모델별 사각을 한계에 명시 |
+| 8 | P2/qa | "HTTP 인증·라우팅은 edge soak 담당" 은 **부정확**(edge soak 는 `/healthz` 만) | **철회·정정** — 실제 미검증 범위 열거 |
+| 9 | P2 | litellm_config 가 같은 파일에서 body-timeout 계약과 그 폐기를 동시 주장 · 원장 ceiling 항목 `triaged` 잔존 | **흡수** — 앞 주석 SUPERSEDED 표기, 원장 `fixed:undeployed` 전이 |
+
+qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립한 `extra_body.timeout` 에서 발생했고
+스모크가 `reasoning_level=max` 로 그 함수를 직접 호출하므로 provider 400 → 비정상 종료가 된다.
+
+### 검증
+
+- 라이브 배포본에서 스모크 **PASS**(`model=claude-haiku-4-chat len=58`).
+- fail-closed 실측: 모델 해소 빈 값·worktree `.env` 부재 두 경우 모두 정확히 FAIL(조용한 통과 없음).
+- `bash -n`(2개 스크립트) · `docker-compose.yml`/`litellm_config.yaml` YAML 파싱 통과.
+
+### 미해결 (정직 표기)
+
+- 후보 검증은 **gateway 드리프트가 있을 때만** 돈다(reconcile 이 드리프트 없으면 무접촉). 드리프트
+  없는 배포에서는 최종 확인 1단만 작동한다 — 그 경우 실패는 여전히 "발견 후 수동 조치" 다.
+- 스모크가 보는 것은 기본 모델의 LLM 왕복 한 점이다(위 한계 참조).

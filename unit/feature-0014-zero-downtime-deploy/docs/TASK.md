@@ -175,3 +175,18 @@ source_of_truth: true
 - [x] 검증: `bash -n` · 신규 **39 PASS** · **뮤테이션 17종 전건 KILLED** · 라이브 Caddy admin 응답 파싱 실측 · 라이브 Caddy→web-a `/livez` 200 실측(peer probe 경로 확인)
 - [x] POST-DEPLOY 라이브 실측 **완료** — 배포 창 `no upstreams available` = **0**(수정 전 12~17초 전면 503 → 0),
       요청 172건 전부 200. 4서비스 GIT_COMMIT=8cad9cd7 확인(web-a/web-b/ask-worker/insight-worker/ops-scheduler).
+
+## TASK-20260826T030000-deploy-conversation-smoke — 배포 게이트 대화 스모크
+
+2026-08-26 라이브 장애에서 드러난 **관측 공백**(대화가 죽어도 healthz·soak 는 green)을 메운다.
+사용자 결정: 증상 축(문구·재시도·폴백)이 아니라 근본 축으로 진행. 원장:
+`FR-conversation-failure-undetected-by-deploy-gate`.
+
+- [x] `bin/smoke-conversation.sh` 신설 — 대화 답변 경로 실제 함수 1회 호출·답변 생성 확인.
+- [x] `bin/deploy-web.sh` **2단 배치** — ① 교체 전 후보(surge) 검증(실패 시 교체 안 함 = 무장애)
+      ② 배포 완료 직전 최종 확인. 실패 시 exit 1(조용한 성공 금지).
+- [x] 멱등성 봉인 — `conv_smoke_sha` 기록 + no-op 판정 포함(스모크 실패 SHA 재실행이 green 이 되던 결함).
+- [x] fail-closed — 스크립트 부재는 skip 아닌 배포 실패.
+- [x] 게이트웨이 `request_timeout` 300 → 960 **+ stop_grace 330s → 990s**(층 간 정합, 사용자 결정).
+- [x] 라이브 배포본에서 스모크 PASS 확인 + fail-closed 동작 확인.
+- [ ] **배포로 게이트 실동작 확인** — 다음 배포에서 `대화 경로 스모크 … PASS` 로그가 찍히는지.

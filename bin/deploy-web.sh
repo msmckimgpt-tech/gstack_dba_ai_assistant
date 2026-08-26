@@ -1282,6 +1282,31 @@ deploy_gateway_reconcile() {
     err "surge replica healthy 실패 — 본체 무접촉 유지(기존 gateway 가 계속 서빙). 새 이미지/설정 점검."
     return 1
   fi
+  # 1b) **교체 전 후보 검증**(2026-08-26 신설, 적대 리뷰 [P1] 수용): surge 가 healthy 하다고
+  #     대화가 되는 것은 아니다 — /health/liveliness 는 프로세스 생존만 본다. 구 gateway 를 지우기
+  #     전에 **새 gateway 를 직접 태워** 대화 왕복을 확인한다. 실패하면 교체를 아예 하지 않으므로
+  #     구 gateway 가 계속 서빙한다(= 무장애). 종전 설계는 교체·surge 제거 후에야 검사해서
+  #     "발견했지만 이미 장애" 였다.
+  #     대상 지정은 DNS alias 가 아니라 **surge 서비스명 직접 호출**로 한다(alias 는 본체와 surge 를
+  #     함께 가리켜 어느 쪽이 응답했는지 보장할 수 없다).
+  if [ "${DEPLOY_WEB_SKIP_CONV_SMOKE:-0}" != "1" ] && [ "$DRY_RUN" -ne 1 ]; then
+    local smoke_bin="$REPO_ROOT/bin/smoke-conversation.sh"
+    if [ ! -f "$smoke_bin" ]; then
+      run "${DC_SURGE[@]}" rm -sf "$GATEWAY_SURGE" || true
+      err "대화 스모크 스크립트 없음($smoke_bin) — 후보 검증 불가. 본체 무접촉 유지(구 gateway 서빙). ABORT."
+      return 1
+    fi
+    step "gateway 후보(surge) 대화 스모크 — 통과해야 본체를 교체한다"
+    if ! bash "$smoke_bin" --service ask-worker --gateway-url "http://${GATEWAY_SURGE}:8080/v1"; then
+      run "${DC_SURGE[@]}" stop "$GATEWAY_SURGE" || true
+      run "${DC_SURGE[@]}" rm -f "$GATEWAY_SURGE" || true
+      err "후보 gateway 에서 대화가 성립하지 않는다 — **교체하지 않고 중단**한다(구 gateway 가 계속 서빙 = 무장애)."
+      err "  새 이미지/설정이 대화 요청 계약을 깼을 가능성이 크다: docker compose logs $GATEWAY_SURGE --tail 80"
+      return 1
+    fi
+    log "후보 gateway 대화 스모크 PASS — 본체 교체를 진행한다."
+  fi
+
   # 2) 본체 recreate — 신규 요청은 DNS alias 로 surge 가 흡수한다. 하지만 **이미 본체 소켓에
   #    붙어 있는 in-flight 호출은 surge 로 옮길 수 없다** — HTTP 요청은 프로세스 간 이전이
   #    불가능하다. 종전엔 그 사실을 stop_grace 타이머로 덮었고(만료 시 SIGKILL), 그게 2026-08-12
@@ -1324,6 +1349,52 @@ asset_stamp_verify() {  # $1 = sha
   log "OK — baked 자산 스탬프 주입 확인(*.html/*.js 내 ?v=dev 잔존 0)."
 }
 
+# ── 대화 경로 스모크 (2026-08-26 신설 — healthz/soak 가 못 보는 공백) ─────────
+# 왜: 게이트웨이 의존성 갱신으로 요청 조립 계약이 깨져 **모든 대화가 실패**했는데, 배포는 성공했고
+#   /healthz 는 ok, soak 도 통과했다. 시스템이 자기 고장을 몰랐고 사용자 신고로만 발견됐다(≈20시간).
+#   healthz/soak 는 "프로세스가 살아 있는가" 만 본다 — "대화가 되는가" 는 이 스모크가 본다.
+# 이 함수는 **최종 확인**이다. gateway 의존성 결함은 앞단의 **교체 전 후보(surge) 스모크**가
+#   이미 막는다(deploy_gateway_reconcile 1b) — 그쪽이 실패하면 교체 자체를 하지 않아 무장애다.
+#   여기서 잡히는 것은 web/워커 이미지에서 비롯된 결함처럼 그 뒤에 남는 부류다.
+# 판정: 실패면 **배포를 실패로 종결**한다(exit 1). 이미 web/워커는 새 SHA 를 서빙하므로 자동
+#   롤백은 하지 않는다 — 사람이 로그를 보고 롤백/수정을 판단하도록 크게 표면화한다(조용한 성공 금지).
+#   실패는 `conv_smoke_sha=failed-<sha>` 로 남아 **다음 실행이 no-op 으로 빠지지 않는다**.
+# scope=web 은 ask-worker 를 롤아웃하지 않으므로 스킵한다(검증 대상 컨테이너가 이번 배포분이 아님).
+conversation_smoke_or_fail() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  if [ "$SCOPE" = "web" ]; then
+    # 정직 표기(적대 리뷰 [P2]): 이 경로는 대화 왕복을 **검증하지 않았다**. 완료 문구가 스모크
+    # 통과를 함의하지 않도록 상태를 남긴다(web 변경이 HTTP 대화 라우팅을 깼다면 여기서 안 잡힌다).
+    state_set conv_smoke_sha "skipped-scope-web"
+    warn "대화 스모크 skip — scope=web (ask-worker 미롤아웃). **대화 동작 미검증 상태로 종료된다.**"
+    return 0
+  fi
+  if [ "${DEPLOY_WEB_SKIP_CONV_SMOKE:-0}" = "1" ]; then
+    warn "대화 스모크 skip — DEPLOY_WEB_SKIP_CONV_SMOKE=1 (사람이 명시 해제. 대화 동작 미검증 상태로 종료)."
+    return 0
+  fi
+  # 파일 이상은 **배포 결함**이므로 fail-closed(적대 리뷰 [P2]). 실행 비트는 보지 않는다 —
+  # `bash "$smoke"` 로 호출하므로 읽기만 되면 되고, WSL/filemode 차이로 게이트가 조용히 빠지는 것을 막는다.
+  local smoke="$REPO_ROOT/bin/smoke-conversation.sh"
+  if [ ! -f "$smoke" ]; then
+    err "대화 스모크 스크립트 없음: $smoke — 게이트를 건너뛰지 않는다(배포 결함으로 본다)."
+    exit 1
+  fi
+  step "대화 경로 스모크 (배포본에서 실제 답변 1회 생성 확인)"
+  if bash "$smoke" --service ask-worker; then
+    # 적대 리뷰 [P1]: 스모크 성공을 별도로 기록한다. 이게 없으면 스모크 실패 후 같은 SHA 재실행이
+    # no-op 분기(current/agent_current 일치)에서 exit 0 으로 **거짓 green** 이 된다.
+    state_set conv_smoke_sha "$TARGET_SHA"
+    return 0
+  fi
+  state_set conv_smoke_sha "failed-$TARGET_SHA"
+  err "대화 스모크 FAIL — 배포본에서 답변이 생성되지 않는다. web/워커는 $TARGET_SHA 를 서빙 중이며"
+  err "  healthz/soak 는 통과했으므로 **자동 감지되지 않는 장애**다(2026-08-26 실사례)."
+  err "  조치: docker compose logs bedrock-gateway --tail 80 으로 provider 응답을 먼저 확인하고,"
+  err "        원인이 이번 배포분이면 bin/deploy-web.sh 로 직전 last-good SHA 를 재배포한다."
+  exit 1
+}
+
 # ── 배포 검증 체크리스트 (사용자 인수 전 — RUNBOOK §10) ──────────────────────
 # "merge ≠ 배포 완료 / 백엔드 통과 ≠ 사용자 경로 통과" 마찰(2026-07-13
 # attach-user-version 회고)을 매 배포마다 상시 표면화한다. output-only —
@@ -1340,6 +1411,9 @@ post_deploy_checklist() {
      ⚠ '부분 완료' 로 끝났다면 그것은 배포가 아니다 — 미도달 서비스가 로그에 나열된다.
        docker compose -f docker-compose.yml ps --format '{{.Service}}\t{{.Image}}'
      서비스별 이미지 태그가 모두 같은 SHA 인지 눈으로 확인한다(state 파일이 아니라 실물).
+ [1b] 대화 스모크: 위 '대화 경로 스모크' PASS 로그 확인(2026-08-26 신설). 이 게이트가 없던
+     시절, 게이트웨이 의존성 갱신으로 모든 대화가 죽었는데 healthz/soak 는 전부 green 이었고
+     사용자 신고까지 약 20시간이 걸렸다. FAIL 이면 배포는 exit 1 로 끝난다(조용한 성공 없음).
  [2b] surge 잔존 확인(feature-0020 zd-ask-rollout): 교체가 끝나면 surge 는 없어야 한다.
        docker compose -f docker-compose.yml --profile deploy-surge ps -q ask-worker-surge
      비어 있지 않으면 정리에 실패한 것 — 그 컨테이너가 큐에서 계속 job 을 가져간다(조용하다).
@@ -1395,9 +1469,16 @@ main() {
 
   resolve_target_sha
   # coalesce no-op: 이미 배포된 것이 origin/main HEAD 면 재배포 불필요(멱등).
-  local web_current agent_current
+  local web_current agent_current conv_smoke
   web_current="$(current_deployed_sha)"; agent_current="$(state_get agent_current)"
-  if [ "$FORCE_GATEWAY" -eq 0 ] && edge_ok; then
+  conv_smoke="$(state_get conv_smoke_sha)"
+  # 적대 리뷰 [P1](2026-08-26): no-op 판정에 **대화 스모크 통과 여부**를 포함한다. 종전엔
+  # current/agent_current 만 봐서, 스모크가 실패한 SHA 를 재실행하면 여기서 exit 0 이 나
+  # "재시도하니 green" 이라는 거짓 신호가 됐다(결함은 그대로인데 배포는 성공으로 보임).
+  if [ "$SCOPE" != "web" ] && [ "$conv_smoke" != "$TARGET_SHA" ] \
+     && { [ "$web_current" = "$TARGET_SHA" ] || [ "$agent_current" = "$TARGET_SHA" ]; }; then
+    log "이미 $TARGET_SHA 가 배포돼 있으나 **대화 스모크 미통과**(기록=${conv_smoke:-없음}) → no-op 하지 않고 검증까지 진행한다."
+  elif [ "$FORCE_GATEWAY" -eq 0 ] && edge_ok; then
     case "$SCOPE" in
       all)     if [ "$web_current" = "$TARGET_SHA" ] && [ "$agent_current" = "$TARGET_SHA" ]; then
                  log "이미 web+워커 $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등). (gateway/caddy 의 이미지-only 드리프트(re-pull)는 no-op 에서 미검사 — 필요 시 --force-gateway 또는 커밋 동반 배포.)"; normalize_ownership; exit 0; fi ;;
@@ -1488,7 +1569,8 @@ main() {
   fi
 
   normalize_ownership
-  step "배포 완료: $TARGET_SHA (scope=$SCOPE — web 롤링·워커·gateway reconcile + soak 통과)"
+  conversation_smoke_or_fail
+  step "배포 완료: $TARGET_SHA (scope=$SCOPE — web 롤링·워커·gateway reconcile + soak + 대화 스모크 통과)"
   quiesce_summary
   post_deploy_checklist
 }

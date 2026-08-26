@@ -284,11 +284,22 @@ general_settings:
 #   요청 body 의 timeout 으로 실어 보낸다 — litellm 이 이를 per-attempt upstream 타임아웃으로 존중
 #   (라이브 검증: body timeout=5→408, =200→200). 따라서 콘솔에서 값을 바꾸면 gateway 재기동/재배포
 #   없이 즉시 반영된다(별도 프로세스인 gateway 를 정적 config 로 동기화할 수 없는 drift 해소). 아래
+#   ⚠ **SUPERSEDED (2026-08-26, FR-body-timeout-poisons-provider-request)**: 위 body-timeout
+#     동기화 계약은 **폐기**됐다 — 요청 본문의 timeout 이 게이트웨이 내부 마커를 트리거해
+#     provider 400 을 만들었다(라이브 대화 전면 실패). 앱은 더 이상 body timeout 을 싣지 않으며,
+#     상류 상한은 아래 정적 `request_timeout: 960` 이 유일한 근거다(콘솔 live 추종 없음).
 #   request_timeout: 300 은 body timeout 을 싣지 않는 경로(외부 소비자 등)의 **정적 fallback ceiling**
 #   으로만 남으며, 앱 대화·probe 경로에서는 body timeout(live)이 이를 override 한다.
 litellm_settings:
   drop_params: true
-  request_timeout: 300
+  # cc-body-timeout(2026-08-26, FR-body-timeout-poisons-provider-request): 앱이 요청 **본문**에
+  #   timeout 을 싣던 경로가 provider 400(`client_side_timeout: Extra inputs are not permitted`)을
+  #   유발해 제거됐다. 그 결과 이 정적 값이 상류 ceiling 의 유일한 근거가 됐으므로, 앱의 연장 승인
+  #   per-call 상한(`_EXTENSION_PER_CALL_TIMEOUT_SEC` = 900s)보다 **크게** 둔다 — 항상 앱이 먼저
+  #   판단하고 게이트웨이는 안전망으로만 동작한다(같게 두면 어느 쪽이 끊었는지 진단이 어렵다).
+  #   trade-off: 모든 경로에 긴 ceiling 이 걸려 상류 무응답 감지가 그만큼 늦다 — 앱이 자체 상한
+  #   (기본 300s / 연장 900s)을 갖고 있어 사용자 대면 지연은 앱 상한이 지배한다.
+  request_timeout: 960
   # insight-llm-fallback(2026-07-03): claude-haiku-4(claude-corp) 실패(429 rate-limit 등) 시 순서 폴백 —
   # claude-haiku-4-root(root Max 5x). 한 계정의 RPM/TPM 을 넘겨 429 가 나도 다음 계정으로 즉시 우회해
   # 생성이 끊기지 않는다. num_retries=1 로 동일 deployment 1회 재시도 후 폴백(빠른 전환).
