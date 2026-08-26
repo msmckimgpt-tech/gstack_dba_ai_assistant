@@ -2071,3 +2071,42 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **부수 관측**: 폴백 체인이 동일 등급 안에서만 돈다(`claude-sonnet-4-chat` → `-chat-root`, 둘 다
   frontier). 이번 장애 내내 **haiku 는 200 으로 살아 있었으므로**, 등급 교차 폴백이 있었다면 품질
   강등으로 서비스가 지속됐을 것이다. 조치는 운영 결정 필요(별 트랙).
+
+## FR-body-timeout-poisons-provider-request — fixed:undeployed (L6↔인프라 경계; 전송 계층 값을 요청 본문에 실어 게이트웨이 방어 로직을 트리거)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **12** PASS · 계약 전환 29 PASS · 뮤테이션 5건 KILL).
+  **배포 전.**
+- **source**: 사용자 스크린샷(2026-08-25 19:15 "오류: AWS Bedrock 서비스가 일시적으로 응답하지
+  않습니다") + 2026-08-26 웹 실증 요청. 실제 ask 파이프라인 호출로 **재현 확정**(job 744
+  `status=error`, attempts=3, answer 길이 0).
+- **근본원인**: `agent_core._call_llm` 이 per-attempt 상한을 `extra_body={"timeout": …}` 로 요청
+  **본문**에 실었다. litellm 1.98.0(게이트웨이 갱신)은 요청에 timeout 이 있으면 내부 마커
+  `client_side_timeout` 을 심고, 그것이 Anthropic body 로 새어 **400 `Extra inputs are not
+  permitted`**. 1차·폴백 동일 body → 전 경로 사망.
+- **결정적 대조(동일 모델·동일 시각)**: `extra_body={"timeout":300}` → 400 /
+  `+thinking` → 400 / `extra_body` 없음 → **200**. request option 만 쓴 요청은 전부 200.
+- **기각된 가설**: 동시성(내 probe 의 `max_tokens<budget` 오독) · adaptive thinking · stream ·
+  tools · 긴 system · UA · 사용량/한도 — 전부 200 으로 기각.
+- **이 결함이 늦게 잡힌 이유(교훈)**: 2026-08-25 배포 후 "라이브 실측 성공" 이라 보고했으나, 그
+  검증은 **배포본 함수 직접 호출**이었다. 그 경로는 request option 만 쓰므로 200 이 나오고 결함을
+  드러내지 못한다. **검증은 사용자와 같은 진입점(ask 파이프라인)으로 해야 한다.**
+- **선행 항목과의 관계**: `FR-oauth-frontier-identity-scattered-injection`(identity 게이트)은 **다른
+  축**이며 그 수정은 유효하다(sonnet 200 실측). 다만 스크린샷의 실패는 identity 축이 아니라 이
+  항목이었다 — haiku 는 identity 미요구.
+- **fix**: `CHG-20260826T010000-body-timeout-poisons-provider-request`.
+- **잔여**: 배포 후 실제 대화 성사 확인. 게이트웨이→provider 구간 상한이 litellm config 기본값을
+  따르게 된 점은 운영 관찰 대상(실효 per-attempt 상한은 request option 이 유지).
+
+## FR-gateway-static-timeout-ceiling-breaks-extension — triaged (L6↔인프라; 앱 상한을 올려도 게이트웨이가 300s 에서 끊는다)
+
+- **status**: `triaged` — `FR-body-timeout-poisons-provider-request` 수정의 **부작용으로 드러난 별개 뿌리**.
+  수정 미착수(게이트웨이 config 축 = feature-0007, 이번 cycle 응집 범위 밖).
+- **관측**: body timeout 제거로 게이트웨이는 정적 `request_timeout: 300`(`litellm_config.yaml`)을 따른다.
+  따라서 콘솔 `AGENT_TIMEOUT_SEC` 를 450 으로 올리거나 **연장 승인으로 900** 을 주어도 게이트웨이가
+  300초에서 먼저 끊을 수 있다 — 연장 기능의 실효가 300s 로 잘린다.
+- **경위(정직)**: 적대 리뷰(codex, 2026-08-26)가 [P1] 로 지적해 발견했다. 초판 문서에 "실효 상한 보존" 이라
+  쓴 것은 **거짓**이었고 정정했다.
+- **선택지**: (a) 게이트웨이 `request_timeout` 을 최대 허용값(연장 상한)과 정합 — 단순하나 모든 경로에
+  긴 ceiling 적용 (b) 연장 승인 시에만 별도 model alias/deployment 로 라우팅 (c) 현행 유지(연장 상한을
+  300s 로 명시). 운영 판단 필요.
+- **주의**: body timeout 재도입은 **선택지가 아니다** — 그것이 전면 장애의 원인이었다.

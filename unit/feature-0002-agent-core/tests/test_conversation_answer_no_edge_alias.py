@@ -401,11 +401,12 @@ def test_call_llm_sonnet_adaptive_no_budget_tokens(monkeypatch):
     assert budget_calls == ["claude-sonnet-4"]
     assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] == 40000
     # 핵심(sonnet5-upgrade): adaptive 이므로 '일반'에서 budget_tokens/thinking override 를 주입하지 않는다
-    # (Sonnet 5 는 thinking budget_tokens 를 400 으로 거부). feature-0007 timeout-console-sync 이후
-    # extra_body 에는 항상 body timeout(live AGENT_TIMEOUT_SEC)이 실리므로 None 이 아니라, thinking/
-    # output_config 가 **없음**을 확인한다(timeout 은 존재하되 추론 override 는 누출 없음).
+    # (Sonnet 5 는 thinking budget_tokens 를 400 으로 거부).
+    # conv-audit FR-body-timeout-poisons-provider-request(2026-08-26): **본문 timeout 금지**로 계약
+    # 전환 — extra_body 는 비어 있고, 상한은 request option 으로 전달된다.
     _eb = sink["extra_body"] or {}
-    assert isinstance(_eb.get("timeout"), int) and _eb["timeout"] >= 5, f"body timeout 누락: {_eb}"
+    assert "timeout" not in _eb, f"요청 본문에 timeout 이 실렸다(provider 400 유발): {_eb}"
+    assert isinstance(sink.get("timeout"), int) and sink["timeout"] >= 5, "상한이 request option 으로 전달되지 않았다"
     assert "thinking" not in _eb and "output_config" not in _eb, f"adaptive sonnet 에 override 누출: {_eb}"
     # 기록/표시는 원본 유지.
     assert recorded == [("claude-sonnet-4", "agent")]
@@ -492,8 +493,10 @@ def test_call_llm_opus_adaptive_with_cc_identity(monkeypatch):
     assert budget_calls == ["claude-opus-5"]                # 예산 키는 원본 alias(usage/override 정합)
     assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] == 40000
     # (a) adaptive — '일반'에서 thinking/output_config override 미주입(budget_tokens 400 방지).
+    # 본문 timeout 금지(FR-body-timeout-poisons-provider-request) — 상한은 request option 으로.
     _eb = sink["extra_body"] or {}
-    assert isinstance(_eb.get("timeout"), int) and _eb["timeout"] >= 5, f"body timeout 누락: {_eb}"
+    assert "timeout" not in _eb, f"요청 본문에 timeout 이 실렸다(provider 400 유발): {_eb}"
+    assert isinstance(sink.get("timeout"), int) and sink["timeout"] >= 5, "상한이 request option 으로 전달되지 않았다"
     assert "thinking" not in _eb and "output_config" not in _eb, f"adaptive opus 에 override 누출: {_eb}"
     # (b) CC identity 가 **첫 메시지**로, 제품 프롬프트와 분리된 별도 system 블록으로 주입돼야 한다
     #     (단일 문자열 연결은 게이트 미통과 — sonnet cc-identity-inject 와 동일 규약).

@@ -146,16 +146,25 @@ def _call(monkeypatch, model, reasoning_level):
     assert out.content == "FINAL"
     assert len(sink) == 1
     kw = sink[0]
-    # feature-0007 timeout-console-sync: _call_llm 은 모델·레벨 무관하게 항상 live
-    # AGENT_TIMEOUT_SEC 를 body timeout 으로 싣는다(gateway upstream 타임아웃 동기화).
-    _tmo = (kw.get("extra_body") or {}).get("timeout")
-    assert isinstance(_tmo, int) and _tmo >= 5, f"body timeout 누락/무효: {kw.get('extra_body')}"
+    # conv-audit FR-body-timeout-poisons-provider-request(2026-08-26): **body timeout 금지**.
+    # 종전 계약(feature-0007 timeout-console-sync)은 `extra_body["timeout"]` 로 콘솔 값을 요청
+    # 본문에 실었다. 구 게이트웨이는 이를 무시해 무해했으나, litellm 1.98.0 은 요청에 timeout 이
+    # 있으면 내부 마커 `client_side_timeout` 을 심고 그것이 Anthropic body 로 새어 **400**
+    # (`Extra inputs are not permitted`)을 만든다 — 1차·폴백 동일 body 라 대화가 전면 실패했다
+    # (라이브 실측 2026-08-26). 그래서 단언을 뒤집는다: 본문에 timeout 이 **없어야** 한다.
+    # per-attempt 상한의 실효는 request option(`_stream_kwargs["timeout"]`, 본문 아님)이 유지한다.
+    assert "timeout" not in (kw.get("extra_body") or {}), (
+        f"요청 본문에 timeout 이 실렸다 — 게이트웨이가 client_side_timeout 마커를 심어 "
+        f"provider 400 을 유발한다: {kw.get('extra_body')}"
+    )
     return kw
 
 
 def _xb(kwargs):
-    """extra_body 에서 feature-0007 항상-주입 timeout 을 제외한 thinking/effort 부분만 반환.
-    기존 회귀 가드(thinking/output_config 정확 매칭)를 timeout 주입과 독립적으로 유지한다."""
+    """extra_body 의 thinking/effort 부분(= 전체). timeout 은 더 이상 실리지 않는다.
+
+    종전에는 항상-주입되던 timeout 을 걷어내는 헬퍼였다. 계약이 "본문 timeout 금지" 로 바뀐 뒤에도
+    호출부를 그대로 두기 위해 형태만 유지한다(방어적 pop — 회귀 시 위 단언이 먼저 잡는다)."""
     eb = dict(kwargs.get("extra_body") or {})
     eb.pop("timeout", None)
     return eb
@@ -366,26 +375,34 @@ def test_budget_clamped_to_total_minus_headroom(monkeypatch, tmp_path):
 
 # ── 2e. feature-0007 timeout-console-sync: body timeout 이 콘솔 AGENT_TIMEOUT_SEC(live)를 추종 ──
 
-def test_body_timeout_synced_with_console_agent_timeout(monkeypatch, tmp_path):
-    # 관리 콘솔 '설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC, apply_mode=live)
-    # 을 450 으로 올리면, _call_llm 이 요청 body 의 timeout 으로 그 값을 실어 gateway upstream
-    # 타임아웃과 요청 단위로 동기화한다(litellm 이 per-attempt timeout 으로 존중 — 라이브 검증).
+def test_console_timeout_reaches_request_option_not_body(monkeypatch, tmp_path):
+    """콘솔 타임아웃은 **request option** 으로만 전달된다 — 요청 **본문**에는 절대 싣지 않는다.
+
+    conv-audit FR-body-timeout-poisons-provider-request(2026-08-26): 종전에는 같은 값을
+    `extra_body["timeout"]`(= 요청 본문)에도 실었다. litellm 1.98.0 은 요청에 timeout 이 있으면
+    내부 마커 `client_side_timeout` 을 심고 그것이 Anthropic body 로 새어 400 을 만든다
+    (라이브 실측: 대화 전면 실패). 실효 per-attempt 상한은 request option 이 그대로 유지하므로,
+    이 테스트가 잠그는 것은 **"상한은 살아 있되 본문은 오염되지 않는다"** 는 두 축이다.
+    """
     _stage_snapshot(tmp_path, monkeypatch, {"AGENT_TIMEOUT_SEC": 450})
-    # '일반' sonnet: thinking/effort 는 미주입이지만 timeout 은 항상 실린다.
     kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
-    assert kwargs["extra_body"]["timeout"] == 450
-    assert _xb(kwargs) == {}  # timeout 외 override 없음(B1 무회귀)
-    # budget 계열(haiku)에도 동일하게 timeout 이 실린다(thinking 과 병존).
+    # (1) 본문 무오염 — _call 안의 단언이 1차 방어, 여기서 명시적으로 한 번 더.
+    assert "timeout" not in kwargs["extra_body"]
+    assert _xb(kwargs) == {}  # '일반' sonnet 은 thinking/effort override 없음(B1 무회귀)
+    # (2) 실효 상한 보존 — 콘솔 값이 per-request 클라이언트 timeout 으로 도달한다.
+    assert kwargs["timeout"] == 450, "콘솔 타임아웃이 request option 으로 전달되지 않았다"
+    # budget 계열(haiku)도 동일: 본문에는 thinking 만, timeout 은 request option.
     kh = _call(monkeypatch, "claude-haiku-4", "high")
-    assert kh["extra_body"]["timeout"] == 450
+    assert "timeout" not in kh["extra_body"]
+    assert kh["timeout"] == 450
     assert kh["extra_body"]["thinking"]["budget_tokens"] == 10000
 
 
-def test_body_timeout_default_when_no_console_override(monkeypatch):
-    # override 없으면 runtime_settings 기본값(>=5)이 실린다 — 항상 유효한 양의 정수.
+def test_request_option_timeout_default_when_no_console_override(monkeypatch):
+    # override 없으면 runtime_settings 기본값(>=5)이 request option 으로 전달된다.
     kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
-    assert isinstance(kwargs["extra_body"]["timeout"], int)
-    assert kwargs["extra_body"]["timeout"] >= 5
+    assert "timeout" not in kwargs["extra_body"]
+    assert isinstance(kwargs["timeout"], int) and kwargs["timeout"] >= 5
 
 
 # ── 3. worker 경로 패리티 (_payload_to_kwargs) ───────────────────────────────

@@ -193,7 +193,11 @@ def test_grace_window_is_short_and_positive():
 # ── _call_llm timeout override ───────────────────────────────────────────────
 
 def test_call_llm_timeout_override_precedence():
-    """override 가 있으면 콘솔 값 대신 그 값이 per-attempt body timeout 이 된다."""
+    """override 가 있으면 콘솔 값 대신 그 값이 per-attempt 상한이 된다.
+
+    (2026-08-26 계약 전환: 이 값은 요청 **본문**이 아니라 request option 으로 전달된다 —
+    FR-body-timeout-poisons-provider-request. 아래는 값 해소 규칙만 검증하는 순수 함수 테스트다.)
+    """
     def _resolve(timeout_override, console_value):
         return (
             int(timeout_override) if timeout_override and int(timeout_override) > 0
