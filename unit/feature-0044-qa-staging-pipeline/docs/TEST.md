@@ -38,10 +38,28 @@ source_of_truth: true
 - Expected Result: 전 서비스 이미지 빌드 성공. 외부 도메인 접속 시도 0건. 실패 시 QA 에서도 실패한다.
 
 ### TEST-20260826T140000-digest-identity-2
-- Purpose: dev·QA·live 가 동일 바이트를 쓰는가 — 이미지 다이제스트 등가성
-- Preconditions: Phase 2·3 완료 (매니페스트 발행 + registry push)
-- Steps: 매니페스트의 다이제스트와 QA·라이브에서 실제 실행 중인 컨테이너의 이미지 다이제스트를 대조
-- Expected Result: 3자 모두 동일. 하나라도 다르면 build-once 계약이 깨진 것이다.
+- Purpose: 빌드·QA·라이브가 동일 바이트를 쓰는가 — **tar 릴레이의 신원 등가성**(레지스트리 부재)
+- Preconditions: Phase 2 완료 (매니페스트 발행 + save/load 경로)
+- Steps: ① 전송된 tar 의 sha256 을 매니페스트와 대조 ② `docker load` 후
+  `docker image inspect --format '{{.Id}}'` 를 매니페스트 `image_id` 와 대조
+  ③ 실행 중인 컨테이너의 이미지 ID 를 다시 대조 (QA·라이브 각각)
+- Expected Result: 3지점 모두 일치. 하나라도 다르면 build-once 계약이 깨진 것이며,
+  **재시도하지 않고 중단**한다(신원 불일치는 재시도로 낫지 않는다).
+
+### TEST-20260827T090000-build-host-parity-8
+- Purpose: 빌드 주체를 개발 머신 → 사내 빌드 서버로 옮겨도 같은 커밋이 등가 산출물을 내는가 (AC-9)
+- Preconditions: Phase 7 (빌드 서버 구축 완료)
+- Steps: 같은 릴리즈 태그를 두 머신에서 각각 빌드 → `image_id` 및 주요 레이어 digest 비교
+- Expected Result: 등가. 불일치 시 원인(베이스 이미지 버전·의존성 소스·빌드 인자)을 규명하고
+  매니페스트 `built_by` 로 추적 가능한 상태를 유지한다.
+
+### TEST-20260827T090100-embedding-latency-boundary-9
+- Purpose: GPU 미탑재 환경에서 임베딩 타임아웃이 경계 양측에서 어떻게 동작하는가 (§6.3 위험)
+- Preconditions: GPU 선택이 B 또는 C 인 경우에만 해당 (A 면 skip)
+- Steps: 대표 입력 길이별로 임베딩 소요를 실측 → 현행 타임아웃 값의 **경계 이하/초과** 양측에서
+  동작 확인 (완료 직전 폐기 → 재시도 폭주가 발생하는지)
+- Expected Result: 타임아웃이 정상 지연 분포보다 충분히 위에 있어 cliff 가 발생하지 않음.
+  발생하면 CPU 환경용 override 값을 확정해 문서화한다.
 
 ### TEST-20260826T140000-preflight-fail-closed-3
 - Purpose: env 키 누락 시 배포가 시작되지 않는가 (fail-closed)
