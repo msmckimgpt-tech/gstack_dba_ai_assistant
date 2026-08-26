@@ -24,6 +24,7 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 """
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from typing import Any
@@ -428,21 +429,52 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         stored_body, account=str(account.get("username") or ""), task_id=task_id,
         datasource_key=task.get("datasource_key"))
 
+    # 대화 접근 권한 **재검증** — 아래에서 이 대화에 assistant 메시지를 **쓴다**. 질문 시점의
+    # 권한으로 지금의 대화에 글을 남기지 않도록, 쓰기 직전에 다시 확인한다(codex 재리뷰 P1).
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is not None:
+        _safe_record(account, ctx, tool="submit_answer", outcome="denied",
+                     detail="conversation_access_revoked", task_id=task_id)
+        return denied
+
     cur = conn.cursor()
     try:
         # `SubmittedAt IS NULL` 가드 (codex 2차 P2) — 무조건 UPDATE 면 타임아웃 후 재시도나
         # 동시 제출이 **이미 보존된 답변·판정·근거선언을 덮어쓴다.** 최종 답변은 감사 기록이므로
         # 한 번 확정되면 파괴할 수 없어야 한다. 조건을 SQL 에 둬야 TOCTOU 없이 원자적이다
         # (`_load_task` 로 미리 읽고 분기하면 두 요청이 같은 'open' 을 보고 둘 다 통과한다).
+        #
+        # feature-0043 (codex 리뷰 P2-1): 웹 브리지 task 는 **점유자만** 제출할 수 있다.
+        # 이 조건이 없으면 같은 계정의 다른 세션이 `claim_request` 를 건너뛰고 먼저 제출할 수
+        # 있어, 원자적 claim 이 "처리 소유권" 으로 집행되지 않는다(점유는 목록에서만 사라지고
+        # 실제로는 아무 것도 막지 못하는 장식이 된다). 외부 AI 가 스스로 연 task
+        # (`Origin='external'`)에는 claim 개념이 없으므로 종전대로 통과시킨다.
         cur.execute(
             "UPDATE WebAiTasks SET Status = 'submitted', SubmittedAt = NOW(), Answer = %s, "
             "AnswerBytes = %s, AnswerVerdict = %s, AnswerTruncated = %s, SourceTasks = %s "
-            "WHERE TaskId = %s AND SubmittedAt IS NULL",
+            # `ClaimedClient` 까지 비교하는 이유(codex 재리뷰 P2): 계정 조건만으로는 같은
+            # 계정의 **다른 세션**이 claim 을 건너뛰고 제출할 수 있다. 컬럼 추가 이전에
+            # 점유된 행은 NULL 이므로 호환을 위해 통과시킨다.
+            "WHERE TaskId = %s AND SubmittedAt IS NULL "
+            "AND (Origin <> 'web' OR (ClaimedBy = %s "
+            "     AND (ClaimedClient IS NULL OR ClaimedClient = %s)))",
             (stored, len(answer.encode("utf-8")), answer_verdict["verdict"], truncated,
-             ",".join(str(d) for d in declared)[:4000], task_id))
+             ",".join(str(d) for d in declared)[:4000], task_id,
+             int(account.get("id") or 0), ctx.get("client_id")))
         affected = cur.rowcount
         conn.commit()
         if not affected:
+            # 두 사유가 같은 rowcount 0 으로 오므로 구분해서 안내한다 — 러너의 다음 행동이
+            # 다르다(이미 제출=건너뛰기 / 미점유=claim_request 먼저).
+            cur.execute(
+                "SELECT SubmittedAt, Origin, ClaimedBy FROM WebAiTasks WHERE TaskId=%s",
+                (task_id,))
+            _r = cur.fetchone()
+            if _r is not None and _r[0] is None and str(_r[1] or "") == "web":
+                _safe_record(account, ctx, tool="submit_answer", outcome="denied",
+                             task_id=task_id, detail="not_claimed")
+                return _json_err(409, "이 질문을 먼저 claim_request 로 가져와야 제출할 수 "
+                                      "있습니다(점유자만 답변을 확정합니다).")
             # 이미 제출된 task. 원 기록을 보존한 채 거절한다.
             _safe_record(account, ctx, tool="submit_answer", outcome="denied", task_id=task_id,
                          detail="already_submitted")
@@ -460,6 +492,15 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     finally:
         cur.close()
 
+    # feature-0043 — 웹 대화에서 온 질문이면 답변을 그 대화에 되돌려 붙인다.
+    # 이게 없으면 답변은 `WebAiTasks` 에만 남고 사용자가 물어본 화면에는 영원히 나타나지 않는다.
+    #
+    # **원장보다 먼저** 하는 이유(codex 재리뷰 P1): task 는 이미 `submitted` 로 확정됐고
+    # 재제출은 409 다. 원장 실패로 여기서 503 을 내면 답변은 확정됐는데 화면엔 없고 자동
+    # 복구 경로도 없는 상태가 굳는다. 전달을 앞에 두면 원장 장애가 사용자 대면 결과를
+    # 훼손하지 않는다(원장은 그 뒤에도 여전히 fail-closed 로 집행된다).
+    delivered = _deliver_web_bridge_answer(conn, task_id, account, answer)
+
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="submit_answer",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -471,10 +512,353 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
     return JSONResponse({"task_id": task_id, "recorded": True,
+                         "delivered_to_conversation": delivered,
                          "cross_session_findings": findings})
 
 
+def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str) -> bool:
+    """`Origin='web'` task 의 답변을 원 대화에 assistant 메시지로 저장한다.
+
+    **각인된 본문이 아니라 원문을 저장한다.** `WebAiTasks.Answer` 에는 각인본이 남아 지연
+    인젝션 방어가 유지되고(우리 LLM 컨텍스트로 되돌아올 수 있는 경로), 화면에는 사람이 읽을
+    본문이 필요하다 — 두 소비처의 요구가 달라 저장본을 나눈다.
+
+    실패는 **삼키지 않고 로그로 올리되 제출 자체는 성공으로 둔다**: 답변은 이미 `WebAiTasks`
+    에 확정 저장됐고(그 단계는 fail-closed), 여기서 5xx 를 돌려주면 러너가 재제출을 시도해
+    409 에 부딪힌다 — 이미 보존된 답변을 잃지 않으면서 전달 실패만 드러내는 쪽을 택한다.
+    """
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT ConversationId, Origin FROM WebAiTasks WHERE TaskId=%s", (task_id,))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if not row:
+            return False
+        conversation_id, origin = row[0], str(row[1] or "")
+        if origin != "web" or not conversation_id:
+            return False
+
+        # 지연 import — 라우터 import 시점 순환 회피(다른 핸들러의 `import agent_core` 와 동형).
+        from modules.memory import save_memory_message as _save_msg
+
+        message_id = _save_msg(conn, str(conversation_id), "assistant", answer,
+                               meta={"bridge": {"task_id": task_id, "origin": "web"}})
+        conn.commit()
+        # ⚠ `save_memory_message` 는 PG 쓰기 실패를 내부에서 삼키고 **0 을 반환**한다
+        #   (codex 재리뷰 P1). 반환값을 안 보면 저장이 실패해도 `delivered=true` 를 돌려주고,
+        #   상태 API 는 "답변 도착" 이라 말하는데 화면엔 아무것도 없는 상태가 굳는다.
+        if not message_id:
+            logging.getLogger(__name__).error(
+                "[bridge] 대화 저장이 0 을 반환했다 task=%s conv=%s — 전달 실패로 기록한다",
+                task_id, conversation_id)
+            return False
+
+        # 전달 성공을 task 에 새긴다. `Status='submitted'` 와 분리해야 "제출됐지만 화면에는
+        # 없다" 를 구분해 재전달·진단할 수 있다.
+        cur = conn.cursor()
+        try:
+            cur.execute("UPDATE WebAiTasks SET Delivered=1 WHERE TaskId=%s", (task_id,))
+            conn.commit()
+        finally:
+            cur.close()
+        return True
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "[bridge] 답변을 대화에 전달하지 못했다 task=%s — 답변은 WebAiTasks 에 보존됨: %r",
+            task_id, exc)
+        return False
+
+
 # ── 구조 조회 6종 ─────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# feature-0043 (external-llm-bridge) — 웹 대화 pull 브리지
+#
+# 서버가 보유 계정으로 답변을 만들지 않게 되면서(shared/llm_gate), 웹 대화창의 질문은
+# `WebAiTasks` 의 **대기 작업**(`Origin='web'`)이 된다. 사용자의 개인 머신 AI 런타임이
+# 아래 두 도구로 그것을 가져가 자기 계정 LLM 으로 답한 뒤 기존 `submit_answer` 로 제출한다.
+#
+# **왜 push(MCP sampling)가 아니라 pull 인가**: `sampling/createMessage` 는 프로토콜
+# 2026-07-28 에서 폐기됐고(SEP-2577 — "New implementations SHOULD NOT adopt it"),
+# Claude Code 가 미지원이다(anthropics/claude-code#1785). 표준 tools 로 당겨오면
+# 클라이언트 호환성 문제도, 폐기 기능 의존도 없다.
+#
+# **격리**: 웹 질문은 그것을 **연 계정 본인**만 가져갈 수 있다(사용자 결정 2026-08-26).
+# 아래 쿼리의 `AccountId=%s` 는 편의가 아니라 경계다 — 빼면 남의 질문과 그 답변이
+# 대리자 AI 의 컨텍스트로 들어간다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/api/ai/tools/list_open_requests")
+async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
+                             conn=Depends(app.get_conn)) -> JSONResponse:
+    """내 계정의 **웹 대화 대기 질문** 목록 (아직 아무도 집지 않은 것).
+
+    아직 점유되지 않은 것만 돌려준다 — 이미 집힌 작업을 목록에 남기면 러너가 매 주기
+    같은 것을 다시 집으려다 409 를 받는다.
+    """
+    body = await _json(request)
+    account = ctx["account"]
+    account_id = int(account.get("id") or 0)
+    try:
+        limit = int(body.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(50, limit))
+
+    t0 = time.perf_counter()
+    try:
+        _ledger.check_limits(_pg(), account_id=account_id, client_id=ctx.get("client_id"))
+    except _ledger.RateLimited as exc:
+        _safe_record(account, ctx, tool="list_open_requests", outcome="gated", detail=exc.limit)
+        return JSONResponse({"error": exc.message}, status_code=429,
+                            headers={"Retry-After": str(exc.retry_after)})
+    except _ledger.LedgerUnavailable as exc:
+        return _json_err(503, f"상한을 확인할 수 없어 요청을 중단했습니다: {exc}")
+
+    rows: list[dict[str, Any]] = []
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT TaskId, Question, CreatedAt FROM WebAiTasks "
+            "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
+            " ORDER BY CreatedAt ASC LIMIT %s",
+            (account_id, limit))
+        for r in cur.fetchall() or []:
+            rows.append({
+                "task_id": str(r[0]),
+                "question": str(r[1] or ""),
+                "asked_at": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2] or ""),
+            })
+    finally:
+        cur.close()
+
+    # 질문 본문은 우리 사용자가 쓴 텍스트지만 **외부 AI 의 컨텍스트로 나가는 데이터**이므로
+    # 나가는 다른 도구 결과와 같은 규약으로 각인한다(L2). 각인을 여기서만 빼면 그 구획이
+    # 뚫리는 자리가 된다.
+    listing = "\n\n".join(
+        f"[{i + 1}] task_id={r['task_id']}\n{r['question']}" for i, r in enumerate(rows)
+    ) or "(대기 중인 웹 질문 없음)"
+    marked = _guard.wrap_tool_output(
+        listing,
+        account=str(account.get("username") or account.get("id")),
+        conversation_id=None, task_id=None, source="open_requests")
+
+    try:
+        _ledger.record(_pg(), account_id=account_id, tool="list_open_requests",
+                       client_id=ctx.get("client_id"), rows=len(rows),
+                       bytes_out=len(marked.encode("utf-8")),
+                       latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
+    except _ledger.LedgerUnavailable as exc:
+        return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
+
+    return JSONResponse({
+        "count": len(rows),
+        "task_ids": [r["task_id"] for r in rows],
+        "requests": marked,
+    })
+
+
+@router.post("/api/ai/tools/claim_request")
+async def claim_request(request: Request, ctx=Depends(require_ai_token),
+                        conn=Depends(app.get_conn)) -> JSONResponse:
+    """대기 질문 1건을 **원자적으로 점유**하고 전문을 받는다.
+
+    점유는 `UPDATE ... WHERE ClaimedBy IS NULL` 한 문장 안에서 일어난다 — 선조회 후 UPDATE 는
+    두 러너가 같은 작업을 동시에 집는 TOCTOU 창을 만든다(0041 의 `submit_answer` 확정 불변과 동형).
+    """
+    body = await _json(request)
+    account = ctx["account"]
+    account_id = int(account.get("id") or 0)
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        return _json_err(400, "task_id 가 필요합니다.")
+
+    t0 = time.perf_counter()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAiTasks SET ClaimedBy=%s, ClaimedAt=NOW(), ClaimedClient=%s "
+            "WHERE TaskId=%s AND AccountId=%s AND Origin='web' AND Status='open' "
+            "AND " + _CLAIMABLE_SQL,
+            (account_id, ctx.get("client_id"), task_id, account_id))
+        claimed = int(cur.rowcount or 0)
+        conn.commit()
+        if claimed != 1:
+            # 왜 실패했는지 구분한다 — 남의 것/없는 것(404)과 이미 집힌 것(409)은 러너의
+            # 다음 행동이 다르다(전자는 목록 재조회, 후자는 그냥 건너뛰기).
+            cur.execute(
+                "SELECT ClaimedBy FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s",
+                (task_id, account_id))
+            row = cur.fetchone()
+            if row is None:
+                _safe_record(account, ctx, tool="claim_request", outcome="denied",
+                             detail="not_found_or_foreign", task_id=task_id)
+                return _json_err(404, "대기 중인 질문을 찾을 수 없습니다.")
+            _safe_record(account, ctx, tool="claim_request", outcome="denied",
+                         detail="already_claimed", task_id=task_id)
+            return _json_err(409, f"이미 다른 세션이 가져간 질문입니다"
+                                  f"(점유는 {_BRIDGE_CLAIM_LEASE_MIN}분 뒤 자동 해제됩니다).")
+
+        cur.execute(
+            "SELECT Question, ConversationId, ProductId, CreatedAt FROM WebAiTasks "
+            "WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
+        row = cur.fetchone() or ("", None, None, None)
+    finally:
+        cur.close()
+
+    question = str(row[0] or "")
+    conversation_id = row[1]
+
+    # 권한 **재검증** — 질문을 던진 시점과 지금 사이에 그룹 퇴출·권한 회수가 있었을 수 있다.
+    # 아래에서 이 대화의 **최신** 문맥을 읽으므로, 검증 없이 진행하면 질문 당시의 권한으로
+    # 지금의 대화를 읽는 창이 열린다(codex 재리뷰 P1). 점유는 되돌린다 — 못 읽을 작업을
+    # 붙들고 있으면 lease 만료까지 대기열에서도 사라진다.
+    denied = _conversation_access_denied(conn, account, conversation_id)
+    if denied is not None:
+        _release_claim(conn, task_id, account_id)
+        _safe_record(account, ctx, tool="claim_request", outcome="denied",
+                     detail="conversation_access_revoked", task_id=task_id)
+        return denied
+
+    marked = _guard.wrap_tool_output(
+        f"{_guard.session_canary(task_id)}\n{question}",
+        account=str(account.get("username") or account.get("id")),
+        conversation_id=conversation_id, task_id=task_id, source="web_request")
+
+    # 이전 대화 문맥 — 후속 질문("그럼 그건?")은 앞 turn 없이는 해석 불가다(codex 리뷰 P1-4).
+    # 방금 저장한 사용자 질문 자신은 제외한다(중복).
+    history = _recent_conversation_context(conn, conversation_id, exclude_text=question)
+    marked_history = ""
+    if history:
+        marked_history = _guard.wrap_tool_output(
+            history,
+            account=str(account.get("username") or account.get("id")),
+            conversation_id=conversation_id, task_id=task_id, source="conversation_history")
+
+    try:
+        _ledger.record(_pg(), account_id=account_id, tool="claim_request",
+                       client_id=ctx.get("client_id"), task_id=task_id,
+                       bytes_out=len((marked + marked_history).encode("utf-8")),
+                       latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
+    except _ledger.LedgerUnavailable as exc:
+        # 점유는 이미 커밋됐다. 여기서 그냥 503 을 돌려주면 `ClaimedBy` 가 박힌 채 목록에서
+        # 사라져 **일시적인 원장 장애 한 번이 질문을 영구 고착**시킨다(codex 리뷰 P1-5).
+        # 점유를 되돌려 다음 폴링에서 다시 보이게 한다.
+        _release_claim(conn, task_id, account_id)
+        return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다(점유 해제됨): {exc}")
+
+    return JSONResponse({
+        "task_id": task_id,
+        "question": marked,
+        "conversation_context": marked_history,
+        "product_id": int(row[2]) if row[2] is not None else None,
+        "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
+        "next": "조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 선언합니다.",
+    })
+
+
+def _release_claim(conn, task_id: str, account_id: int) -> None:
+    """점유 해제 — 실패 경로에서 작업을 대기열로 되돌린다.
+
+    `Status='open'` 인 것만 되돌린다: 이미 제출된(`submitted`) 작업을 되살리면 확정 불변이 깨진다.
+    """
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL "
+                "WHERE TaskId=%s AND AccountId=%s AND Status='open'",
+                (task_id, account_id))
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "[bridge] 점유 해제 실패 task=%s — 이 작업은 수동 개입 없이는 다시 잡히지 않는다: %r",
+            task_id, exc)
+
+
+#: `claim_request` 가 함께 넘기는 이전 대화 turn 수. 크게 잡으면 외부 AI 컨텍스트를 잠식하고
+#: 작게 잡으면 후속 질문이 해석되지 않는다. 대화형 후속질문 대부분이 직전 2~3 turn 안에서 닫힌다.
+_BRIDGE_HISTORY_TURNS = 6
+_BRIDGE_HISTORY_CHARS = 4000
+
+#: 점유 lease. 이 시간이 지나도록 제출되지 않은 작업은 **다시 대기열에 나타난다**.
+#:
+#: 왜 필요한가: 점유는 커밋되는데 그 뒤 어떤 이유로든(러너 강제 종료·머신 절전·`--exec` 타임아웃·
+#: 빈 답변으로 건너뜀·프로세스 크래시) 제출이 오지 않으면, lease 가 없는 한 그 질문은 목록에서
+#: 영원히 사라진다 — 사용자는 "AI 가 가져갔는데 답이 없다" 는 상태에 갇힌다(codex 재리뷰 P1).
+#: 원장 실패 한 경로만 롤백하는 것으로는 부족하다는 것이 그 지적의 요지다.
+#:
+#: 30분: 개인 머신 AI 가 어려운 질문을 붙들 수 있는 현실적 상한이면서, 사용자가 "잊혔나" 하고
+#: 다시 물어보기 전에 회수되는 길이.
+_BRIDGE_CLAIM_LEASE_MIN = 30
+
+#: 점유 가능 조건 — 미점유이거나 lease 가 만료된 것. `list_open_requests` 와 `claim_request` 가
+#: **같은 술어**를 써야 한다(목록에 보이는데 집으면 409 나는 불일치를 만들지 않는다).
+_CLAIMABLE_SQL = (
+    "(ClaimedBy IS NULL OR ClaimedAt IS NULL "
+    f"OR ClaimedAt < DATE_SUB(NOW(), INTERVAL {_BRIDGE_CLAIM_LEASE_MIN} MINUTE))"
+)
+
+
+def _conversation_access_denied(conn, account: dict[str, Any], conversation_id) -> JSONResponse | None:
+    """대화 접근 권한 **재검증**. 통과면 None, 아니면 403 응답.
+
+    task 를 연 계정이라는 사실만으로는 부족하다(codex 재리뷰 P1): 질문을 던진 뒤 그룹에서
+    퇴출되거나 권한이 회수될 수 있고, 그 사이 `claim_request` 는 **최신** 대화 문맥을 읽고
+    `submit_answer` 는 그 대화에 글을 쓴다. 두 시점 사이의 권한 변화를 반영하지 않으면
+    "질문 당시의 권한" 으로 지금의 대화를 읽고 쓰는 창이 열린다.
+
+    대화가 없는 task(외부 AI 가 스스로 연 것)는 검증 대상이 아니다 — 붙을 대화가 없다.
+    """
+    if not conversation_id:
+        return None
+    try:
+        allowed = app._account_can_access_conversation(
+            conn, account, str(conversation_id),
+            "conversation.read.own", "conversation.read.any")
+    except Exception as exc:
+        # 판정 불가는 거부한다(fail-closed) — 권한 확인이 안 되는 상태에서 대화를 열지 않는다.
+        logging.getLogger(__name__).error(
+            "[bridge] 대화 권한 판정 실패 conv=%s: %r", conversation_id, exc)
+        allowed = False
+    if allowed:
+        return None
+    return _json_err(403, "이 대화에 접근할 권한이 없습니다(권한이 변경되었을 수 있습니다).")
+
+
+def _recent_conversation_context(conn, conversation_id, exclude_text: str = "") -> str:
+    """대화의 최근 turn 을 렌더한 문자열. 조회 실패는 빈 문자열(도구를 막지 않는다)."""
+    if not conversation_id:
+        return ""
+    try:
+        rows = app._conv_load_messages_raw(conn, str(conversation_id), upto_id=None) or []
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 대화 문맥 로드 실패 conv=%s: %r", conversation_id, exc)
+        return ""
+
+    parts: list[str] = []
+    for _id, role, content, _created, _meta in rows[-_BRIDGE_HISTORY_TURNS:]:
+        text = str(content or "").strip()
+        if not text or text == exclude_text:
+            continue
+        speaker = "사용자" if str(role) == "user" else "assistant"
+        parts.append(f"[{speaker}] {text}")
+    if not parts:
+        return ""
+    rendered = "\n\n".join(parts)
+    if len(rendered) > _BRIDGE_HISTORY_CHARS:
+        # 조용히 자르지 않는다 — 잘렸다는 사실을 호출자가 알아야 "문맥이 다 왔다" 고 오해하지 않는다.
+        rendered = rendered[-_BRIDGE_HISTORY_CHARS:]
+        rendered = "(앞부분 생략 — 전체 기록은 웹 대화 화면 참조)\n\n" + rendered
+    return rendered
+
 
 @router.post("/api/ai/tools/{tool_name}")
 async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(require_ai_token),
@@ -754,6 +1138,60 @@ def _task_scope_clause(account: dict[str, Any]) -> tuple[str, list[Any]]:
     if app._account_has_permission(account, _TASKS_READ_ANY_PERM):
         return "", []
     return " AND AccountId = %s", [int(account.get("id") or 0)]
+
+
+@router.get("/api/ai/bridge_status")
+def bridge_status(request: Request) -> JSONResponse:
+    """feature-0043 — 웹 대화창이 폴링하는 브리지 진행 상태.
+
+    **웹 세션 인증**이다(외부 OAuth 토큰이 아니라). 자기 계정이 연 web task 만 보이며,
+    답변 **본문은 싣지 않는다** — 도착 사실만 알리고 화면은 대화를 다시 읽어 렌더한다.
+    본문을 여기로 흘리면 각인 블록이 두 경로(대화 저장본·상태 API)로 새어 규약이 갈린다.
+
+    `_require_task_reader` 같은 관리 권한을 요구하지 않는 이유: 이건 **자기가 방금 던진 질문의
+    진행 상태**이므로 대화 소유자면 충분하다. 스코프는 `AccountId` 로 닫는다.
+    """
+    task_id = str(request.query_params.get("task_id") or "").strip()
+    if not task_id:
+        return app._json_error("task_id 가 필요합니다.", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT Status, ClaimedBy, SubmittedAt, ConversationId, Delivered "
+                "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s AND Origin='web'",
+                (task_id, int(account.get("id") or 0)))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if row is None:
+            return app._json_error("task 를 찾을 수 없습니다.", 404)
+        status = str(row[0] or "")
+        submitted = bool(row[2]) or status == "submitted"
+        delivered = bool(row[4])
+        return JSONResponse({
+            "task_id": task_id,
+            "status": status,
+            "claimed": row[1] is not None,
+            # `answered` 는 **제출됐다** 는 뜻이고, `delivered` 는 **대화에 실렸다** 는 뜻이다.
+            # 둘을 합치면 저장 실패 시 화면엔 아무것도 없는데 "답변 도착" 이라 말하게 된다
+            # (codex 재리뷰 P1). 프런트는 delivered=false 면 그 사실을 사용자에게 알린다.
+            "answered": submitted,
+            "delivered": delivered,
+            "conversation_id": str(row[3] or ""),
+        })
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @router.get("/api/ai/tasks")

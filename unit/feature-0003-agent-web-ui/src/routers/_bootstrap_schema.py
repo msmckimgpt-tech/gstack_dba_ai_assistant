@@ -2480,10 +2480,25 @@ def _ensure_oauth_client_schema(conn) -> None:
                     InjectionVerdict VARCHAR(16) NULL,
                     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     SubmittedAt DATETIME NULL,
+                    -- feature-0043: 웹 브리지 축. 신규 설치는 여기서 만들어지므로 아래 멱등
+                    -- ALTER 루프가 돌지 않는다(ALTER 는 기존 설치의 1회성 마이그레이션 전용).
+                    Origin VARCHAR(16) NOT NULL DEFAULT 'external',
+                    ClaimedBy BIGINT NULL,
+                    ClaimedAt DATETIME NULL,
+                    -- 점유한 **세션**(OAuth client). 계정만으로는 같은 계정의 다른 세션이
+                    -- claim 없이 제출하는 것을 막지 못한다.
+                    ClaimedClient VARCHAR(64) NULL,
+                    -- 답변이 원 대화에 실제로 실렸는가. `Status='submitted'` 와 분리해야
+                    -- "제출은 됐는데 화면엔 없다" 를 구분해 재전달할 수 있다.
+                    Delivered TINYINT(1) NOT NULL DEFAULT 0,
                     UNIQUE KEY UQ_WebAiTasks_TaskId (TaskId),
                     KEY IX_WebAiTasks_Account (AccountId, CreatedAt),
                     KEY IX_WebAiTasks_Client (ClientId, CreatedAt),
-                    KEY IX_WebAiTasks_Open (Status, CreatedAt)
+                    KEY IX_WebAiTasks_Open (Status, CreatedAt),
+                    -- 브리지 폴링 전용. `(AccountId, CreatedAt)` 만으로는 그 계정의 과거
+                    -- external·submitted task 까지 전부 훑어, 상주 러너의 주기 조회가 대화가
+                    -- 쌓일수록 무거워진다(codex 리뷰 P2-3).
+                    KEY IX_WebAiTasks_Bridge (AccountId, Origin, Status, ClaimedBy, CreatedAt)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """
             )
@@ -2517,6 +2532,24 @@ def _ensure_oauth_client_schema(conn) -> None:
             # 바인딩이 교체돼도 "이 답변은 그때 그 DB 를 본 것" 이 자명해진다. 2026-08-14 의
             # `dbauth` 혼동이 정확히 이 정보의 부재에서 왔다.
             ("DatasourceKey", "ALTER TABLE WebAiTasks ADD COLUMN DatasourceKey VARCHAR(128) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # ── feature-0043 (external-llm-bridge, 2026-08-26) — 웹 대화 pull 브리지 ──
+            # 웹 대화창의 질문이 서버 LLM 대신 이 테이블의 **대기 작업**이 되고, 사용자의 개인 머신
+            # AI 가 MCP/REST 로 가져가 답한다. 기존 외부 AI 개설 task(`Origin='external'`)와 같은
+            # 테이블을 쓰되 출처로 구분한다 — 별도 테이블을 만들면 원장·각인·판정 경로가 두 벌이 된다.
+            #
+            # `ConversationId` 는 이미 위 CREATE TABLE 에 있다(외부 task 는 NULL). 웹 브리지 task 는
+            # 이 값으로 대화창에 답변을 되돌려 붙인다.
+            ("Origin", "ALTER TABLE WebAiTasks ADD COLUMN Origin VARCHAR(16) NOT NULL DEFAULT 'external', ALGORITHM=INPLACE, LOCK=NONE"),
+            # 점유자(계정). NULL = 아직 아무도 집지 않음. 점유는 SQL `WHERE ClaimedBy IS NULL` 안에서
+            # 원자적으로 일어나야 한다(애플리케이션 층 선조회 후 UPDATE 는 TOCTOU).
+            ("ClaimedBy", "ALTER TABLE WebAiTasks ADD COLUMN ClaimedBy BIGINT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            ("ClaimedAt", "ALTER TABLE WebAiTasks ADD COLUMN ClaimedAt DATETIME NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # 점유 세션(OAuth client). 계정 단위 조건만으로는 같은 계정의 다른 세션이
+            # claim 을 건너뛰고 제출할 수 있어 원자적 점유가 소유권으로 집행되지 않는다.
+            ("ClaimedClient", "ALTER TABLE WebAiTasks ADD COLUMN ClaimedClient VARCHAR(64) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # 대화 전달 성공 여부. `Status='submitted'` 만으로 "답변이 화면에 있다" 를 단정하면
+            # 저장 실패 시 사용자에게는 답이 없는데 시스템은 완료로 보는 상태가 굳는다.
+            ("Delivered", "ALTER TABLE WebAiTasks ADD COLUMN Delivered TINYINT(1) NOT NULL DEFAULT 0, ALGORITHM=INPLACE, LOCK=NONE"),
         ):
             try:
                 cur.execute(
@@ -2531,6 +2564,27 @@ def _ensure_oauth_client_schema(conn) -> None:
                     "(런타임 fail-closed: submit_answer 가 5xx). 운영자 수동 ALTER 필요: %r",
                     _col, _alter_exc,
                 )
+
+        # feature-0043 (codex 리뷰 P2-3) — 브리지 폴링 전용 복합 인덱스.
+        # 상주 러너가 주기적으로 `WHERE AccountId=? AND Origin='web' AND Status='open'
+        # AND ClaimedBy IS NULL ORDER BY CreatedAt` 를 돈다. 기존 `(AccountId, CreatedAt)` 로는
+        # 그 계정의 과거 external·submitted task 까지 전부 훑어, 대화가 쌓일수록 폴링이 무거워진다.
+        # 신규 설치는 위 CREATE TABLE 이 이미 만들었으므로 여기서는 skip 된다.
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() "
+                "AND TABLE_NAME='WebAiTasks' AND INDEX_NAME='IX_WebAiTasks_Bridge'")
+            if int((cur.fetchone() or [0])[0]) == 0:
+                cur.execute(
+                    "ALTER TABLE WebAiTasks ADD INDEX IX_WebAiTasks_Bridge "
+                    "(AccountId, Origin, Status, ClaimedBy, CreatedAt), "
+                    "ALGORITHM=INPLACE, LOCK=NONE")
+        except Exception as _idx_exc:
+            # 인덱스 부재는 기능을 막지 않는다(느려질 뿐) — fail-closed 대상이 아니다.
+            # 다만 조용히 넘기면 "왜 폴링이 무겁지" 를 추적할 단서가 사라진다.
+            logging.getLogger(__name__).error(
+                "[ai-task] WebAiTasks 브리지 인덱스 추가 실패 — 폴링이 full scan 으로 "
+                "떨어진다(기능은 유지). 운영자 수동 ALTER 권장: %r", _idx_exc)
     except Exception:
         # 커서 획득 실패 등 — 여기서 흡수한다(catchup 체인 보호, 위 docstring 참조).
         pass

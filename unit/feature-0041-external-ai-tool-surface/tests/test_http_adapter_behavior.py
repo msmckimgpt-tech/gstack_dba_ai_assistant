@@ -241,6 +241,9 @@ def test_all_tools_are_registered_at_import():
     mod = _load(2)
     assert sorted(mod.mcp.tools) == sorted([
         "open_task", "get_task_context", "submit_answer",
+        # feature-0043 (2026-08-26): 웹 대화 pull 브리지. 이 둘이 빠지면 무설치 주 경로
+        # (`/api/ai/mcp`)에서 대기 질문을 발견·점유할 수 없다(codex 리뷰 P1-1).
+        "list_open_requests", "claim_request",
         "list_schemas", "describe_schema", "describe_table", "search_tables",
         "get_foreign_keys", "get_table_indexes",
         "execute_sql",   # P1 (2026-08-14)

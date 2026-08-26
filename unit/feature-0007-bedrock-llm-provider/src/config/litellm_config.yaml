@@ -1,3 +1,26 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚠ feature-0043 (external-llm-bridge, 2026-08-26) — 서버 보유 계정 alias 전면 주석
+#
+# 사용자 결정: 서비스가 보유한 Claude 계정(`claude-corp` = ANTHROPIC_API_KEY,
+# `root` = ANTHROPIC_API_KEY_ROOT)으로는 더 이상 LLM 을 호출하지 않는다. 추론은 각 사용자의
+# 개인 머신 AI 런타임이 자기 계정으로 수행하고(feature-0041 도구 표면 + 0043 pull 브리지),
+# 서버는 도구·컨텍스트·데이터만 제공한다. 배경: 2026-08-07 claude-corp 7일 쿼터 100% 소진으로
+# 서비스 정지.
+#
+# 아래 chat alias 14종(`claude-opus-5*` · `claude-sonnet-4*` · `claude-haiku-4*`)과
+# `litellm_settings.fallbacks` 블록은 **전부 주석 처리**됐다. `titan-embed` 만 활성인데,
+# 그것은 로컬 `bge-m3`(ollama) 라 계정 자격증명과 무관하고 KB 검색이 여기에 의존하기 때문이다.
+#
+# **이 파일은 두 번째 자물쇠다.** 첫 번째는 `shared/llm_gate.py` 의 fail-closed 게이트이며
+# (코드 기본값 = 차단), 앱은 그 게이트에서 먼저 정직한 사유를 낸다. 설정만 주석하면 호출이
+# 401/404 로 지저분하게 죽으므로 순서가 중요하다.
+#
+# ── 되돌리기 ──
+#   1. env `AGENT_SERVER_LLM_ENABLED=1` (게이트 해제)
+#   2. 아래 `# ` 접두 제거 (alias + fallbacks 복원)
+#   둘 다 해야 열린다 — 한쪽만 풀면 여전히 차단이다(의도된 이중화).
+# ══════════════════════════════════════════════════════════════════════════════
+#
 # LiteLLM Proxy 설정 — AWS Bedrock (Seoul region `ap-northeast-2`) 라우팅
 #
 # 본 파일은 bedrock-gateway 컨테이너 (docker-compose `bedrock-gateway` 서비스) 가
@@ -25,24 +48,24 @@ model_list:
   #    ⚠ OAuth frontier identity 게이트: Opus 5 도 Sonnet 5 와 동일하게 system 첫 블록이 Claude Code
   #      identity 여야 200 이다(2026-07-27 claude-corp 토큰 직접 호출 실증 — 미주입 시 429). 주입은
   #      앱(agent_core._call_llm / probe)이 model_catalog.requires_oauth_frontier_identity 로 수행한다.
-  - model_name: claude-opus-5
-    litellm_params:
-      model: anthropic/claude-opus-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-      thinking:
-        type: "adaptive"
-  - model_name: claude-opus-5-chat
-    litellm_params:
-      model: anthropic/claude-opus-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-      thinking:
-        type: "adaptive"
-  - model_name: claude-opus-5-chat-root
-    litellm_params:
-      model: anthropic/claude-opus-5
-      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
-      thinking:
-        type: "adaptive"
+#   - model_name: claude-opus-5
+#     litellm_params:
+#       model: anthropic/claude-opus-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
+#       thinking:
+#         type: "adaptive"
+#   - model_name: claude-opus-5-chat
+#     litellm_params:
+#       model: anthropic/claude-opus-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
+#       thinking:
+#         type: "adaptive"
+#   - model_name: claude-opus-5-chat-root
+#     litellm_params:
+#       model: anthropic/claude-opus-5
+#       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+#       thinking:
+#         type: "adaptive"
 
   # ── Claude Sonnet 5 (frontier, ACTIVE) — sonnet5-upgrade 2026-07-24 ──
   #    alias 는 하위호환 위해 claude-sonnet-4 로 유지하되(저장 대화·node_analysis·probe·단가·
@@ -61,46 +84,46 @@ model_list:
   # Provisioned throughput 또는 별 provider 로 재검토. ADR-0022 보강 필요.
   # Thinking: Sonnet 5 는 adaptive thinking 만 지원(budget_tokens 400). effort 는 요청 단위
   # output_config.effort(agent_core)로 조절, 미지정 시 기본 high. temperature 는 미전달(Anthropic 고정 1).
-  - model_name: claude-sonnet-4
-    litellm_params:
+#   - model_name: claude-sonnet-4
+#     litellm_params:
       # ── 개발 단계 (2026-06-23): claude-corp OAuth 계정(masangsoft.com)으로 Anthropic
       #    direct 호출. ANTHROPIC_API_KEY 에 OAuth access token 주입 → litellm 이
       #    sk-ant-oat 토큰을 감지해 Authorization: Bearer + oauth-2025-04-20 로 전송.
       #    배포 시 아래 Bedrock 2줄(model/aws_region_name)로 주석 토글 복구. ──
-      model: anthropic/claude-sonnet-5   # sonnet5-upgrade(2026-07-24): claude-sonnet-4-6(폐기) → Sonnet 5
+#       model: anthropic/claude-sonnet-5   # sonnet5-upgrade(2026-07-24): claude-sonnet-4-6(폐기) → Sonnet 5
       # model: bedrock/global.anthropic.claude-sonnet-5   # 배포용 (Bedrock) — 복구 시 실 inference profile ID 확인
       # aws_region_name: ap-northeast-2                    # 배포용 (Bedrock)
       # sonnet5-upgrade(2026-07-24): Sonnet 5 는 budget_tokens 를 400 으로 거부한다(Anthropic 스펙 —
       # claude-api skill 확인). adaptive thinking + output_config.effort 로 전환. effort 기본 high.
-      thinking:
-        type: "adaptive"
+#       thinking:
+#         type: "adaptive"
 
   # ── Claude Haiku 4.5 (가성비, ACTIVE — global inference profile) ─────
   # Extended thinking 활성화 (budget_tokens=5000). Haiku 4.5 는 Claude 4 시리즈로
   # extended thinking 을 지원한다. thinking 활성화 시 temperature 는 1로 고정.
-  - model_name: claude-haiku-4
-    litellm_params:
+#   - model_name: claude-haiku-4
+#     litellm_params:
       # 개발 단계 (2026-06-23): claude-corp OAuth → Anthropic direct. 배포 시 Bedrock 복구.
       # insight-llm-fallback(2026-07-03): 1순위 = claude-corp OAuth. deployment 별 키 분리를 위해
       # api_key 명시(두 계정 병행). 429(burst rate-limit) 시 litellm fallbacks 가 root → edge 로 즉시 우회.
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
       # model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0   # 배포용 (Bedrock)
       # aws_region_name: ap-northeast-2                                   # 배포용 (Bedrock)
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
 
   # ── insight-llm-fallback(2026-07-03): claude-haiku-4 의 2순위 폴백 = root(개인 Max 5x) 계정 ──
   # refresh-claude-oauth-token.sh 가 root OAuth 토큰을 ANTHROPIC_API_KEY_ROOT 에 병행 주입.
   # 1순위(claude-corp)가 burst rate-limit(429)로 막혀도 root 로 즉시 우회(요청-레벨 fallback).
-  - model_name: claude-haiku-4-root
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
+#   - model_name: claude-haiku-4-root
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
 
   # ── interactive-llm(2026-07-04, llm-routing-interactive-split): 사람이 실시간 대기하는 호출 전용 ──
   # assistant 대화의 보조 단계 전체(계획·분류·객체해결·SQL 작성/리뷰/수정·요약·주제·채점).
@@ -113,20 +136,20 @@ model_list:
   #   AGENT_*_MODEL 10종)가 이 alias 를 가리키므로 blast radius 가 파이프라인 전체였다.
   #   대화 답변(`*-chat`, 2026-07-07)·개발용 메타데이터(`*-meta`, 2026-07-30 오전)와 **동일 규약**으로
   #   edge 를 배제한다 — 두 계정 모두 실패면 gemma 로 내려가지 않고 그대로 실패시킨다(정직한 실패).
-  - model_name: claude-haiku-4-interactive
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
-  - model_name: claude-haiku-4-interactive-root
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
+#   - model_name: claude-haiku-4-interactive
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
+#   - model_name: claude-haiku-4-interactive-root
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
 
   # ── meta-llm-edge-free(2026-07-30, 사용자 결정 재확인): **개발용 메타데이터 작업 전용 edge-free alias** ──
   #    사용자 결정: "로컬LLM은 특수목적으로만 사용하고(야간, 업무 외 탐색) 실제 개발용 작업은 계정으로
@@ -139,20 +162,20 @@ model_list:
   #    ⚠ (superseded 2026-07-30 저녁, llm-edge-free-routing) 위 문단이 "배경 insight 배치의 야간·주말 gemma
   #    강등은 유지" 로 남겨 뒀던 예외는 **같은 날 사용자 결정으로 폐지**됐다("더 이상 로컬 LLM 을 사용하지
   #    않는다"). 지금은 `claude-haiku-4` 체인에도 edge 가 없다 — 아래 fallbacks 참조.
-  - model_name: claude-haiku-4-meta
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
-  - model_name: claude-haiku-4-meta-root
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
+#   - model_name: claude-haiku-4-meta
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
+#   - model_name: claude-haiku-4-meta-root
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
 
   # ── conversation-answer(2026-07-07, FR-edge-fallback-conversation-context-loss): 사용자 대면 assistant
   #    답변(task='agent') 전용 alias. edge(gemma) 폴백을 **의도적으로 배제** — 사용자 결정 2026-07-07:
@@ -165,20 +188,20 @@ model_list:
   #    ※ 배경: 2026-07-04 interactive-split 은 대화를 gemma "무중단 안전망"으로 두려 했으나, 실측(conv …9e0883bb)
   #    결과 gemma(ctx 4096)가 ~30K 토큰 히스토리를 잘라 맥락을 파괴하고 자신 있게 틀린 답을 silent 로 냄 →
   #    "무중단"이 아니라 "조용한 파탄"이었다. 사용자가 대화 경로에 한해 그 결정을 override.
-  - model_name: claude-haiku-4-chat
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
-  - model_name: claude-haiku-4-chat-root
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
-      thinking:
-        type: "enabled"
-        budget_tokens: 5000
+#   - model_name: claude-haiku-4-chat
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
+#   - model_name: claude-haiku-4-chat-root
+#     litellm_params:
+#       model: anthropic/claude-haiku-4-5
+#       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+#       thinking:
+#         type: "enabled"
+#         budget_tokens: 5000
 
   # ── sonnet-chat-fallback(2026-07-24): claude-sonnet-4 대화 답변(task='agent') 전용 edge-free alias ──
   #    증상: 새 대화에서 사용자가 sonnet 을 고르면 "서비스 자체의 요청량 한도에 도달했습니다"로 실패(계정
@@ -189,22 +212,22 @@ model_list:
   #    (2026-07-07 사용자 결정)대로 **의도적 배제** — 두 계정 모두 실패면 429/401 을 그대로 raise 해 정직하게
   #    실패한다(맥락 파괴한 2B gemma 답변 원천 차단). bare claude-sonnet-4 는 probe/OPENAI_MODEL 기본값 등
   #    비대화 경로 전용으로 무변경(격리). thinking 은 bare claude-sonnet-4 와 동일한 adaptive.
-  - model_name: claude-sonnet-4-chat
-    litellm_params:
-      model: anthropic/claude-sonnet-5
-      api_key: os.environ/ANTHROPIC_API_KEY
+#   - model_name: claude-sonnet-4-chat
+#     litellm_params:
+#       model: anthropic/claude-sonnet-5
+#       api_key: os.environ/ANTHROPIC_API_KEY
       # sonnet5-upgrade(2026-07-24): Sonnet 5 는 budget_tokens 를 400 으로 거부한다(Anthropic 스펙 —
       # claude-api skill 확인). adaptive thinking + output_config.effort 로 전환. effort 기본 high.
-      thinking:
-        type: "adaptive"
-  - model_name: claude-sonnet-4-chat-root
-    litellm_params:
-      model: anthropic/claude-sonnet-5
-      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+#       thinking:
+#         type: "adaptive"
+#   - model_name: claude-sonnet-4-chat-root
+#     litellm_params:
+#       model: anthropic/claude-sonnet-5
+#       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
       # sonnet5-upgrade(2026-07-24): Sonnet 5 는 budget_tokens 를 400 으로 거부한다(Anthropic 스펙 —
       # claude-api skill 확인). adaptive thinking + output_config.effort 로 전환. effort 기본 high.
-      thinking:
-        type: "adaptive"
+#       thinking:
+#         type: "adaptive"
 
   # ── 로컬 gemma(edge) via local-llm-gateway — **현재 어떤 fallback 체인에도 등록되지 않음** ──
   # llm-edge-free-routing(2026-07-30, 사용자 결정 "로컬 LLM 미사용"): 아래 litellm_settings.fallbacks 에서
@@ -213,11 +236,11 @@ model_list:
   # ⚠ 다시 등록하려면 그것이 사용자 결정 override 임을 인지할 것(§12.3 외부 영향 — 산출물 품질 저하).
   # local-llm-gateway 는 OpenAI 호환 chat(gemma4:e2b) — thinking 미지원이라 litellm drop_params 가 제거.
   # api_key 는 비밀 아님(로컬 게이트웨이) — 리터럴.
-  - model_name: edge-fallback
-    litellm_params:
-      model: openai/gemma4:e2b
-      api_base: http://local-llm-gateway:8080/v1
-      api_key: "local-no-key"
+#   - model_name: edge-fallback
+#     litellm_params:
+#       model: openai/gemma4:e2b
+#       api_base: http://local-llm-gateway:8080/v1
+#       api_key: "local-no-key"
 
   # ── KB 임베딩 alias `titan-embed` (1024-dim) — TASK-0135 (#13) ────────
   # texts.embedding(vector(1024)) + sample_queries.embedding(vector(1024)) 백필
@@ -325,16 +348,16 @@ litellm_settings:
   #    sonnet-chat 과 동형 2계정 체인. 두 계정 모두 실패면 429/401 raise(정직 실패, gemma 강등 없음).
   #  · claude-opus-5-chat-root               → **fallback 미등록**(체인 종단).
   #  · bare claude-opus-5                    → **fallback 미등록**(격리 — 비대화 probe 경로가 root 로 새지 않게).
-  fallbacks:
+#   fallbacks:
     # llm-edge-free-routing(2026-07-30): 아래 어떤 체인에도 edge-fallback 이 등장하지 않는다.
     # 새 alias 를 추가할 때도 이 규약을 유지한다 — 회귀는 test_llm_edge_free_routing.py 가 차단한다.
-    - {"claude-haiku-4": ["claude-haiku-4-root"]}
-    - {"claude-haiku-4-interactive": ["claude-haiku-4-interactive-root"]}
+#     - {"claude-haiku-4": ["claude-haiku-4-root"]}
+#     - {"claude-haiku-4-interactive": ["claude-haiku-4-interactive-root"]}
     # meta-llm-edge-free(2026-07-30): 개발용 메타데이터 작업은 2계정까지만 — **edge 없음**(대화와 동일 규약).
-    - {"claude-haiku-4-meta": ["claude-haiku-4-meta-root"]}
-    - {"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}
-    - {"claude-sonnet-4-chat": ["claude-sonnet-4-chat-root"]}
-    - {"claude-opus-5-chat": ["claude-opus-5-chat-root"]}
+#     - {"claude-haiku-4-meta": ["claude-haiku-4-meta-root"]}
+#     - {"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}
+#     - {"claude-sonnet-4-chat": ["claude-sonnet-4-chat-root"]}
+#     - {"claude-opus-5-chat": ["claude-opus-5-chat-root"]}
 
 # ── 모니터링 (옵션) ───────────────────────────────────────────────────
 # LiteLLM 의 success/failure callback hook 으로 audit 확장 가능. 본 cycle 에서는

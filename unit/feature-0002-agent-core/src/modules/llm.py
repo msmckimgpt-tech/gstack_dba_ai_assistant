@@ -54,6 +54,7 @@ from shared.config import *
 from shared import config as cfg
 from shared import runtime_settings as _rts  # feature-0018: live-mode 실행 타임아웃(관리 콘솔 조정) 즉시 반영
 from shared.model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model, ensure_oauth_frontier_identity
+from shared.llm_gate import server_llm_enabled, note_server_llm_blocked  # feature-0043: 서버 계정 LLM fail-closed 게이트
 from .utils import append_log_line
 import json, os, time
 from typing import Any
@@ -640,6 +641,15 @@ def _get_llm_client(timeout_sec: int | None = None, model: str | None = None) ->
     # feature-0007: LLM 자격증명은 env 단일 소스. TASK-0129: model tier 로 endpoint 분기 + 캐시.
     # TASK-0237: 함수명 _get_openai_client → _get_llm_client (실제 provider 는 Bedrock Claude;
     # OpenAI 클래스는 OpenAI Chat Completions 규약 전송 클라이언트로만 사용). 구이름은 아래 alias 로 호환.
+    #
+    # feature-0043 (external-llm-bridge): 서버 보유 계정(claude-corp/root)으로 나가는 chat 호출의
+    # 단일 차단선. 여기가 모든 chat 클라이언트의 유일한 출구이며
+    # (`_openai_chat_completion_with_deadline` 도 내부에서 이 함수를 재호출한다), 차단은 기본값이다.
+    # 임베딩(로컬 bge-m3)은 `kb_embedding_worker` 가 자체 클라이언트를 만들어 이 경로를 타지 않으므로
+    # 영향받지 않는다 — 계정 자격증명과 무관한 경로까지 끄지 않기 위한 의도적 경계다.
+    if not server_llm_enabled():
+        note_server_llm_blocked("modules.llm._get_llm_client")
+        return None
     if OpenAI is None:
         return None
     base_url, api_key = _resolve_tier_endpoint(model)

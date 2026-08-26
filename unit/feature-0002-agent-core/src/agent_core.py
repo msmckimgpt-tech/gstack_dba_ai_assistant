@@ -76,6 +76,13 @@ from modules.memory import (
 )
 from shared.model_catalog import conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, thinking_budget_for_level
 from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
+# feature-0043: 서버 계정 LLM fail-closed 게이트. `_` 접두 alias 로 받는 이유는 이 모듈이
+# `from shared.config import *` 계열 와일드카드와 공존해 이름 충돌 표면을 넓히지 않기 위해서다.
+from shared.llm_gate import (
+    server_llm_enabled as _server_llm_enabled,
+    note_server_llm_blocked as _note_server_llm_blocked,
+    server_llm_blocked_message as _server_llm_blocked_message,
+)
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider, prepare_provider_messages
 # FR-summary-writer-disconnected: 답변 후 큐레이션에서 대화 요약을 갱신한다(alias 로 노출해
 # 테스트가 agent_core 심볼 하나만 patch 하면 되도록 — 다른 큐레이션 호출과 동일 패턴).
@@ -7342,6 +7349,19 @@ def _run_agent_core(
         return result
 
     # ── LLM 클라이언트 초기화 (feature-0007 단일 env 경로) ──
+    # feature-0043 (external-llm-bridge): 서버 보유 계정 LLM 차단선의 두 번째 지점.
+    # 아래 `OpenAI(...)` 는 `modules.llm._get_llm_client()` 를 타지 않는 **직접 생성 경로**라
+    # chokepoint 하나만으로는 이 함수가 새어 나간다. 웹 경로는 `/api/ask` 가 브리지 task 로
+    # 먼저 분기하므로 여기까지 오지 않는 것이 정상이며, 이 블록은 그 분기를 우회한 호출
+    # (워커 직접 호출·구 클라이언트·내부 스크립트)에 대한 backstop 이다.
+    if not _server_llm_enabled():
+        _note_server_llm_blocked("agent_core.run_agent")
+        result["error"] = _server_llm_blocked_message()
+        result["llm_restriction"] = {
+            "kind": "server_llm_disabled",
+            "message": result["error"],
+        }
+        return result
     if not OpenAI:
         result["error"] = "openai 패키지를 찾을 수 없습니다."
         return result

@@ -20,6 +20,10 @@ import hashlib
 import secrets
 import asyncio
 from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
+from shared.llm_gate import (  # feature-0043: 서버 계정 LLM 차단 시 pull 브리지로 분기
+    server_llm_enabled as _server_llm_enabled,
+    server_llm_blocked_message as _server_llm_blocked_message,
+)
 from pathlib import Path
 import json
 import threading
@@ -28,6 +32,118 @@ import app
 
 INCLUDE_ORDER = 90  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
+
+
+def _delete_bridge_task(conn, task_id: str) -> None:
+    """적재 취소 — 아직 아무도 집지 않은 web task 만 지운다.
+
+    `Status='open' AND ClaimedBy IS NULL` 로 좁히는 이유: 이 함수가 도는 사이 개인 AI 가
+    이미 가져갔다면(경합) 그 작업은 진행 중이므로 지우면 안 된다. 그 경우 질문 없이 답변만
+    남는 쪽이, 진행 중인 작업을 소멸시키는 것보다 낫다.
+    """
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "DELETE FROM WebAiTasks WHERE TaskId=%s AND Origin='web' "
+                "AND Status='open' AND ClaimedBy IS NULL", (task_id,))
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "[bridge] 적재 취소 실패 task=%s — 고아 task 가 남는다: %r", task_id, exc)
+
+
+def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
+                             message: str, product_id: Any) -> dict[str, Any]:
+    """feature-0043 — 웹 대화 질문을 개인 머신 AI 가 가져갈 **대기 작업**으로 적재한다.
+
+    반환 shape 은 `_dispatch_ask_run` 의 `agent_result` 와 호환된다(동기 응답 계약 유지) —
+    `answer` 자리에는 답변이 아니라 **대기 안내**가 들어가고, `bridge_pending` 플래그로
+    프론트가 폴링 모드로 전환한다.
+
+    적재 실패는 삼키지 않는다. 여기서 조용히 빈 답변을 돌려주면 사용자에게는 "AI 가 아무 말도
+    안 함" 으로 보이고, 질문은 어디에도 남지 않아 나중에 처리할 방법조차 없다 — 그래서
+    `_http_status: 500` 을 실어 dispatch 의 표준 에러 경로로 보낸다(codex 리뷰 P1-3).
+
+    **사용자 메시지는 여기서 직접 저장한다**(codex 리뷰 P1-4). 기존 경로에서는 `agent_core` 가
+    저장하는데 브리지는 그 경로를 타지 않으므로, 넣지 않으면 사용자의 질문이 대화 기록에서
+    통째로 사라지고 나중에 답변만 덩그러니 남는다.
+    """
+    account_id = int((account or {}).get("id") or 0)
+    task_id = "t_" + secrets.token_urlsafe(12)
+    question = (message or "").strip()
+    log = logging.getLogger(__name__)
+
+    def _fail(reason: str, exc: Exception) -> dict[str, Any]:
+        log.error("[bridge] %s conv=%s account=%s: %r", reason, conv_id, account_id, exc)
+        return {
+            "answer": "",
+            "conversation_id": conv_id or "",
+            "error": ("질문을 대기열에 넣지 못했습니다. 잠시 후 다시 시도해 주세요. "
+                      "(외부 AI 브리지 적재 실패 — 관리자 문의)"),
+            "bridge_pending": False,
+            # dispatch 의 표준 실패 경로로 보낸다. 없으면 INSERT 실패가 HTTP 200 으로 나가
+            # 프런트가 "정상 처리" 로 읽는다.
+            "_http_status": 500,
+        }
+
+    # ① 대기 작업 적재 → ② 사용자 질문 저장 → 저장 실패면 ①을 되돌린다.
+    #
+    # 이 순서인 이유(codex 재리뷰 P2): 저장을 먼저 하면 task INSERT 실패 시 사용자가 재시도할 때
+    # **같은 질문이 대화에 두 번** 쌓인다. 반대로 저장 실패를 무시하면 화면에 질문 없이 답변만
+    # 나타난다. 적재를 먼저 하고 저장 실패 시 적재를 취소하면, 어느 쪽으로 실패하든 "질문도
+    # 없고 답변도 없다"(= 재시도하면 되는 깨끗한 상태)로 수렴한다.
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO WebAiTasks (TaskId, AccountId, ConversationId, ProductId, "
+                "Question, Status, Origin) VALUES (%s,%s,%s,%s,%s,'open','web')",
+                (task_id, account_id, conv_id or None,
+                 int(product_id) if product_id else None, question[:4000]))
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception as exc:
+        return _fail("웹 질문 적재 실패 — 질문이 대기열에 들어가지 못했다", exc)
+
+    if conv_id:
+        saved = 0
+        try:
+            from modules.memory import save_memory_message as _save_msg
+
+            # 반환 0 = 저장 실패(이 함수는 PG 쓰기 실패를 내부에서 삼킨다) — 반드시 확인한다.
+            saved = int(_save_msg(conn, str(conv_id), "user", question) or 0)
+            conn.commit()
+        except Exception as exc:
+            log.error("[bridge] 사용자 메시지 저장 실패 conv=%s: %r", conv_id, exc)
+            saved = 0
+        if not saved:
+            _delete_bridge_task(conn, task_id)
+            return _fail(
+                "사용자 메시지를 대화에 저장하지 못해 요청을 취소했다",
+                RuntimeError("save_memory_message returned 0"))
+
+    log.info("[bridge] 웹 질문 적재 task=%s conv=%s account=%s", task_id, conv_id, account_id)
+    return {
+        "answer": (
+            "이 질문은 회원님의 AI(MCP 연결)가 처리합니다. 연결된 AI 가 가져가면 이 자리에 "
+            "답변이 표시됩니다.\n\n"
+            "· 아직 연결하지 않았다면 **외부 AI 연결**(`/ai/connect`) 에서 등록하세요.\n"
+            "· 연결된 AI 에게 “대기 중인 질문을 처리해줘” 라고 요청하면 즉시 가져갑니다."
+        ),
+        # 최종 JSON 조립이 `agent_result["conversation_id"]` 를 읽는다 — 비우면 프런트가
+        # 대화를 식별하지 못해 폴링 대상도 잃는다.
+        "conversation_id": conv_id or "",
+        "bridge_pending": True,
+        "bridge_task_id": task_id,
+        "bridge_notice": _server_llm_blocked_message(),
+        # 브리지는 사용자 메시지를 이 함수에서 이미 저장했다. 후처리 단계가 다시 저장하지
+        # 않도록 표시한다(중복 말풍선 방지).
+        "bridge_user_message_saved": bool(conv_id),
+    }
 
 
 def _model_kv_key(account: Any) -> str:
@@ -3455,10 +3571,19 @@ async def ask(request: Request) -> JSONResponse:
     # 보고 → user 에게 503 안내.
     # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 사전 게이트(역할 기본 + 계정 특수).
     # 무제한/미설정/인프라장애=통과(fail-open). 초과 시 429(slot 획득 전 조기 차단).
-    _quota_ok, _quota_msg = app._check_account_token_quota(conn, account)
-    if not _quota_ok:
-        conn.close()
-        return app._json_error(_quota_msg, 429)
+    #
+    # feature-0043 (external-llm-bridge): **서버 LLM 이 잠긴 상태에서는 이 게이트를 건너뛴다.**
+    # 이 한도는 *우리 계정의* 토큰 소비를 재는 것인데, 브리지 요청은 그 토큰을 한 개도 쓰지 않는다
+    # (추론이 사용자 개인 머신에서 일어난다). 그대로 두면 **계정 쿼터가 소진됐을 때 브리지 요청까지
+    # 429 로 막혀**, 쿼터 소진을 벗어나려고 만든 전환이 바로 그 쿼터에 막히는 모순이 된다
+    # (codex 리뷰 P1-2). 브리지 경로의 남용 방어는 외부 도구 표면의 자체 상한
+    # (`tool_ledger.check_limits` / `check_open_tasks`)이 `list_open_requests`·`claim_request`·
+    # `submit_answer` 에서 계정·client 단위로 집행한다 — 방어가 사라지는 것이 아니라 축이 바뀐다.
+    if _server_llm_enabled():
+        _quota_ok, _quota_msg = app._check_account_token_quota(conn, account)
+        if not _quota_ok:
+            conn.close()
+            return app._json_error(_quota_msg, 429)
     # feature-0009 gc-participant-product-select: 공유 대화 참가자의 per-message 제품 override.
     # 기존 대화 + 비-owner 멤버 분기에서만 채워진다(아래). owner·신규 대화 경로는 None 유지.
     _participant_product_override: dict[str, Any] | None = None
@@ -4012,35 +4137,47 @@ async def ask(request: Request) -> JSONResponse:
                     conv_id, exc_info=True,
                 )
 
-        # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
-        # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
-        agent_result = await app._dispatch_ask_run(
-            conn=conn,
-            account=account,
-            conv_id=conv_id,
-            request=request,  # TASK-0241: attach 루프의 client-disconnect 감지용(웹 슬롯 즉시 반납).
-            inproc_fn=_run_agent_core,
-            run_kwargs=dict(
-                user_message=message,
-                conversation_id=conv_id or None,
-                conv_file=app._account_conv_file(int(account["id"])),
-                model=model,
-                temperature=temp_value,
-                output_mode="json",
+        # feature-0043 (external-llm-bridge): 서버 계정 LLM 이 잠긴 상태에서는 여기서 추론하지
+        # 않는다. 질문을 `WebAiTasks` 의 **대기 작업**으로 적재하고, 사용자의 개인 머신 AI 가
+        # MCP/REST 로 가져가 답한다(`list_open_requests` → `claim_request` → `submit_answer`).
+        #
+        # dispatch **앞**에 두는 이유: 뒤에 두면 워커 enqueue·슬롯 점유·attach long-poll 이 이미
+        # 일어난 뒤라 되돌릴 것이 생긴다. 여기서 갈라지면 LLM 실행 경로를 통째로 타지 않는다.
+        if not _server_llm_enabled():
+            agent_result = _enqueue_web_bridge_task(
+                conn=conn, account=account, conv_id=conv_id, message=message,
                 product_id=product_id_for_run,
-                role_id=role_id_for_run,
-                account_id=int(account["id"]),
-                sender_username=_sender_username_for_run,  # gc-ask-sender-attrib: 그룹 한정 발신자 귀속
-                allowed_schemas=allowed_schemas_for_run,
-                product_mode=product_mode_for_run,
-                # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
-                attachment_ids=attachment_ids_clean,
-                new_attachment_ids=new_attachment_ids_clean,
-                image_inline_path=vision_inline_path,
-                text_inline_path=text_inline_path,
-                reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
-            ),
-        )
+            )
+        else:
+            # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
+            # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
+            agent_result = await app._dispatch_ask_run(
+                conn=conn,
+                account=account,
+                conv_id=conv_id,
+                request=request,  # TASK-0241: attach 루프의 client-disconnect 감지용(웹 슬롯 즉시 반납).
+                inproc_fn=_run_agent_core,
+                run_kwargs=dict(
+                    user_message=message,
+                    conversation_id=conv_id or None,
+                    conv_file=app._account_conv_file(int(account["id"])),
+                    model=model,
+                    temperature=temp_value,
+                    output_mode="json",
+                    product_id=product_id_for_run,
+                    role_id=role_id_for_run,
+                    account_id=int(account["id"]),
+                    sender_username=_sender_username_for_run,  # gc-ask-sender-attrib: 그룹 한정 발신자 귀속
+                    allowed_schemas=allowed_schemas_for_run,
+                    product_mode=product_mode_for_run,
+                    # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
+                    attachment_ids=attachment_ids_clean,
+                    new_attachment_ids=new_attachment_ids_clean,
+                    image_inline_path=vision_inline_path,
+                    text_inline_path=text_inline_path,
+                    reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
+                ),
+            )
         # worker mode 의 빠른 실패(readiness 503 / slot 429 / enqueue 500)는 표준 에러로 표면화.
         _dispatch_http_status = int(agent_result.get("_http_status") or 0)
         if _dispatch_http_status and _dispatch_http_status != 200:
@@ -4373,6 +4510,13 @@ async def ask(request: Request) -> JSONResponse:
             "error": agent_result.get("error", ""),
             "duration_ms": round((time.time() - start_ts) * 1000, 2),
         }
+        # feature-0043 (external-llm-bridge): 브리지 경로의 플래그를 응답에 실어 프런트가
+        # **폴링 모드**로 전환하게 한다. 여기서 떨어뜨리면 화면은 "답변이 왔다"(대기 안내를
+        # 최종 답변으로 오해)고 판단하고 실제 답변이 도착해도 갱신하지 않는다(codex 리뷰 P1-3).
+        if agent_result.get("bridge_pending"):
+            result["bridge_pending"] = True
+            result["bridge_task_id"] = str(agent_result.get("bridge_task_id") or "")
+            result["bridge_notice"] = str(agent_result.get("bridge_notice") or "")
         # worker 모드: 후처리는 워커가 수행했으므로 그 결과(첨부 목록)를 응답으로 전달(inproc 패리티
         # — 프런트 토스트/표면화). inproc 모드면 위에서 web 이 직접 materialize 한 목록을 쓴다.
         if not _attach_postprocess_here:
