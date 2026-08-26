@@ -1,6 +1,6 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
-import { _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
+import { handleBridgePending, resumeBridgePolling, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
@@ -2546,8 +2546,13 @@ async function _submitFixWithAi(message) {
         error_message: String(failedStep.error || ""),
       }),
     });
+    // feature-0043: 브리지 모드면 **아직 아무것도 추가되지 않았다** — 대기 안내만 들어갔다.
+    // 여기서 "추가했습니다" 를 띄우면 거짓 보고이고, 폴링도 안 걸려 답이 와도 화면이 그대로다.
+    const _bridged = handleBridgePending(payload, cid, "내 AI 가 고칠 요청으로 등록했습니다.");
     // 성공 응답(= /api/ask 와 동일 result dict)이 또 error 를 담을 수 있음(정정 실패) — 안내.
-    if (payload && String(payload.error || "").trim()) {
+    if (_bridged) {
+      /* 대기 안내·폴링은 헬퍼가 처리 */
+    } else if (payload && String(payload.error || "").trim()) {
       showToast(`수정에 실패했습니다: ${payload.error}`, true);
     } else {
       showToast("AI 가 수정한 결과를 추가했습니다.");
@@ -2639,7 +2644,13 @@ function _startInlineEdit(message, bubbleEl) {
     showToast(mode === "reanswer" ? "재답변 중…" : "메시지 수정 중…");
     try {
       const payload = await _submitMessageEdit(cid, message.id, mode, nc);
-      if (mode === "reanswer" && payload && String(payload.error || "").trim()) {
+      // feature-0043: 재답변도 `/api/ask` 를 재dispatch 하므로 브리지 대기가 될 수 있다.
+      // 단순 수정(mode='simple')은 LLM 을 타지 않으므로 해당 없음.
+      const _bridged = mode === "reanswer"
+        && handleBridgePending(payload, cid, "내 AI 가 재답변할 요청으로 등록했습니다.");
+      if (_bridged) {
+        /* 대기 안내·폴링은 헬퍼가 처리 */
+      } else if (mode === "reanswer" && payload && String(payload.error || "").trim()) {
         showToast(`재답변 실패: ${payload.error}`, true);
       } else {
         showToast(mode === "reanswer" ? "재답변을 추가했습니다." : "메시지를 수정했습니다.");
@@ -5483,6 +5494,10 @@ export async function selectConversation(conversationId) {
     // 예외: 목표를 못 불러와도 messageLog 가시성을 즉시 복원(고스트 제거 + opacity 1).
     // finally 는 예외를 삼키지 않으므로 에러는 기존 의미대로 호출부로 그대로 전파된다.
     try { _commitConversationCrossfade(); } catch (_) {}
+    // feature-0043(codex 리뷰 P2): 이 대화에 남아 있는 브리지 대기 질문의 폴링을 되살린다.
+    // 폴러는 대화를 떠나면 멈추는데(남의 화면을 갱신하지 않기 위해) 돌아와도 다시 시작되지
+    // 않아, 그 사이 개인 AI 가 답을 제출하면 수동 새로고침 전까지 화면이 그대로였다.
+    try { resumeBridgePolling(String(conversationId || "")); } catch (_) {}
   }
   // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
   try {

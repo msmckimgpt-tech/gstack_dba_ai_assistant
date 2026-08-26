@@ -99,6 +99,9 @@ def test_prune_auth_cooldown_removes_stale(monkeypatch):
 # 2. run_insight_cycle 순회 통합 테스트 (AC1/AC2/AC4 + HIGH-1/HIGH-2)
 # ──────────────────────────────────────────────────────────────────────────
 def _base_mocks(monkeypatch):
+    # feature-0043: 이 파일의 대상은 **cycle 안의 인증 쿨다운 순회**다. 게이트가 닫히면
+    # run_insight_cycle 이 첫 줄에서 skip 하여 순회 자체가 일어나지 않는다(vacuous pass).
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
     """공통 순회 의존성 mock (mem/db conn·lock·readback·telemetry·node_analysis)."""
     fake_conn = MagicMock(name="mem_or_db_conn")
     monkeypatch.setattr(insight, "connect_with_retry", lambda *a, **k: fake_conn)
@@ -220,3 +223,40 @@ def test_different_login_same_endpoint_not_chained(monkeypatch):
     assert "prod-b" in attempted, f"정상 계정 B 가 A 의 cooldown 에 연쇄 차단됨(attempted={attempted})"
     assert insight._ds_auth_cooldown_active("prod-a") is True   # A: 18456 → cooldown
     assert insight._ds_auth_cooldown_active("prod-b") is False  # B: 로그인실패 아님 → cooldown 없음
+
+
+def test_insight_cycle_keeps_heartbeat_while_blocked(monkeypatch):
+    """차단 중에도 cycle 은 **끝까지 돌고 heartbeat 를 남긴다** (codex 리뷰 P1).
+
+    첫 구현은 cycle 진입부에서 통째로 early-return 했다. 그 지점이 `finally` 앞이라
+    `insight_worker_last_cycle_at` 이 갱신되지 않았고, 180초 뒤 healthcheck 가 exit 1 →
+    **차단 모드에서 컨테이너가 상시 unhealthy** 가 됐다. LLM 과 무관한 정비(role backfill·
+    enum self-heal·datasource health·auth cooldown prune)도 함께 멈췄다.
+
+    "어차피 안 될 일을 하지 말자" 는 최적화가 그 경로에 얹혀 있던 방어를 껐다.
+    """
+    _base_mocks(monkeypatch)
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    kv = {}
+    monkeypatch.setattr(insight, "save_memory_kv",
+                        lambda conn, cid, k, v: kv.__setitem__(k, v))
+    out = insight.run_insight_cycle("test-blocked")
+    assert out.get("status") != "skipped", "cycle 을 통째로 건너뛰면 heartbeat 가 죽는다"
+    assert kv.get("insight_worker_last_cycle_at"), (
+        "heartbeat KV 가 갱신되지 않았다 — healthcheck 가 180초 뒤 unhealthy 로 뒤집힌다")
+
+
+def test_insight_skips_llm_job_processing_while_blocked(monkeypatch):
+    """차단 중 **순수 LLM 작업**(node_analysis 잡 처리)만 건너뛴다.
+
+    claim 한 잡은 재시도 상한을 태우고 `failed` 로 굳는다 — 차단 중에 집을 이유가 없다.
+    """
+    _base_mocks(monkeypatch)
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    called = []
+    fake_na = sys.modules.get("modules.node_analysis")
+    if fake_na is not None:
+        monkeypatch.setattr(fake_na, "process_pending",
+                            lambda *a, **k: called.append("claim") or {}, raising=False)
+    insight.run_insight_cycle("test-blocked-2")
+    assert called == [], "차단 중인데 LLM 잡을 claim 했다"

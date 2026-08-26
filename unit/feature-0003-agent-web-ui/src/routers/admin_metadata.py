@@ -639,6 +639,12 @@ async def _metadata_llm_complete(messages: list, *, task: str = "summary", tempe
     llm_model = app._resolve_session_default_model()
     client = _get_llm_client(model=llm_model)
     if client is None:
+        # feature-0043 사용감 패리티: 운영 결정에 의한 차단은 장애 문구로 말하지 않는다.
+        from shared.llm_gate import feature_blocked_message, server_llm_enabled
+
+        if not server_llm_enabled():
+            return None, None, app._json_error(
+                feature_blocked_message("메타데이터 AI 자동완성"), 503)
         return None, None, app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
     # cc-identity-chokepoint(2026-08-25): provider 전송 직전 관문(feature-0002 CHG-20260825T170000).
     from modules.llm import prepare_provider_messages

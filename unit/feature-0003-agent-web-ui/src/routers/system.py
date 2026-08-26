@@ -315,6 +315,26 @@ def _safe_shared_path(path: str) -> app.Path | None:
 
 # ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
 
+def _read_llm_provider_status_admin() -> "dict[str, Any]":
+    """**관리자 관제 전용** provider 상태 — feature-0043 차단 마스킹을 통과하지 않은 원본.
+
+    대화 UI 용 `_read_llm_provider_status()` 는 차단 중 상태를 non-restricted 로 덮는다(전송에
+    영향이 없고, 복구 ping 이 불가능해 배너가 영구 고착되므로). 그 마스킹이 관제까지 오면
+    운영자는 "정상" 만 보고, 게이트를 되돌리는 순간 숨어 있던 제한이 되살아난다.
+
+    `server_llm_blocked` 를 함께 실어 "왜 이 값을 그대로 믿으면 안 되는지" 를 남긴다.
+    """
+    try:
+        from modules.llm_provider_health import _read_provider_health_raw
+        from shared.llm_gate import server_llm_enabled
+
+        out = dict(_read_provider_health_raw() or {})
+        out["server_llm_blocked"] = not server_llm_enabled()
+        return out
+    except Exception:
+        return {"state": "unknown", "server_llm_blocked": False}
+
+
 def _read_llm_provider_status() -> "dict[str, Any]":
     """TASK-20260619T014034: LLM provider 외부요인 제한 상태(PG agent_runtime.llm_provider_health)
     를 읽어 web 표면(컴포저 배너·상태점·툴팁·실행단계 패널)에 싣는다. probe 없이 cheap PG read 만

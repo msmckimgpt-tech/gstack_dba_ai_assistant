@@ -6,6 +6,8 @@
   - routine_backfill: MySQL 시스템 스키마 제외, MSSQL 시스템 DB 제외, 복수 ROUTINE_SCHEMA 공유
     label 의 prune=False(§53 prune-safety), per-ds 오류 loud 리포트.
 """
+import pytest
+
 from modules import node_analysis as na
 from modules import routine_backfill as rb
 
@@ -55,6 +57,10 @@ def _routines(n):
 
 
 def _patch_common(monkeypatch, tables, done_keys=(), cursor=None, routines=None):
+    # feature-0043: 이 파일의 대상은 **게이트 뒤의 적재 로직**이다. 게이트가 닫힌 채로 두면
+    # 모든 테스트가 "차단됨" 한 줄에서 끝나 정작 검사하려던 계약을 아무도 보지 않게 된다
+    # (vacuous pass). 여기서 명시적으로 열고, 게이트 자체의 계약은 아래 전용 테스트가 본다.
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
     from modules import metadata_graph as mg
     monkeypatch.setattr(mg, "schema_table_keys", lambda scope, schema, limit=2000, conn=None: tables)
     # graph-navfilter(§54④): Routine 시드 열거 — 기본 [](테이블-only, 0034 미적용 저하와 동형).
@@ -233,6 +239,7 @@ def test_schema_analysis_dry_run_detects_running(monkeypatch):
 def test_schema_analysis_fail_loud_on_status_aggregation_failure(monkeypatch):
     """§18.8 MINOR 회귀 잠금: 상태 집계 실패(None) 시 done=∅ 로 전량 재시드(silent 중복
     LLM 비용)하지 않고 fail-loud."""
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")   # 대상은 게이트 뒤의 집계 계약
     from modules import metadata_graph as mg
     monkeypatch.setattr(mg, "schema_table_keys", lambda scope, schema, limit=2000, conn=None: _tables(5))
     monkeypatch.setattr(na, "get_scope_analysis_status", lambda scope: None)
@@ -425,3 +432,18 @@ def test_backfill_scope_filter_and_dry_run(monkeypatch):
     assert not calls   # dry-run 은 저장 없음
     assert list(rep["datasources"].keys()) == ["m1"]
     assert rep["datasources"]["m1"]["schemas"] == {"db1": "(dry-run)"}
+
+
+# ── feature-0043 게이트: 차단 중에는 **큐에 넣기 전에** 거절 ────────────────────
+# 소스 검사(test_ux_parity)와 별개로 **실제 반환값**을 본다. 배선만 맞고 조건이 뒤집혀 있으면
+# 소스 검사는 통과하고 운영에서만 터진다.
+@pytest.mark.parametrize("call", [
+    lambda: na.enqueue_analysis("ds1", "ds1:app.T0"),
+    lambda: na.enqueue_schema_analysis("ds1", "ds1:app"),
+])
+def test_enqueue_refuses_while_server_llm_blocked(monkeypatch, call):
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    res = call()
+    assert res["ok"] is False
+    # 이유가 "고장" 으로 읽히면 사용자는 무한히 재시도한다.
+    assert "고장이 아닙니다" in str(res.get("reason") or "")

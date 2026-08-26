@@ -344,8 +344,44 @@ def record_provider_ok(*, provider: "str | None" = None, source: str = "ask") ->
     record_provider_state(STATE_OK, provider=provider, kind=None, message=None, error_tag=None, source=source)
 
 
+def _gate_override(status: "dict[str, Any]") -> "dict[str, Any]":
+    """feature-0043 사용감 패리티 — 서버 계정 LLM 이 차단된 동안의 provider 상태 표면.
+
+    이 표면의 소비자는 **대화 화면**이다. `state='restricted'` 면 붉은 배너가 뜨고 전송 버튼에
+    "전송 시 즉시 실패할 수 있습니다" 가 붙는다. 그런데 차단 전환 이후 사용자의 전송은 그
+    provider 를 **타지 않는다**(개인 AI 브리지로 간다) — 그 경고는 거짓 경보다.
+
+    게다가 restricted 는 **영구 고착**된다: 복구 판정은 실제 ping 으로만 풀리는데 그 ping 이
+    게이트에 막힌다. 전환 직전에 restricted 였다면 배너가 영원히 남는다.
+
+    그래서 차단 중에는 non-restricted 로 표면화하되, **숨기지는 않는다** — `source='llm-gate'`
+    와 사유 문구를 실어 운영자가 "왜 ok 인지" 를 알 수 있게 한다. PG 의 원본 기록은 그대로 둔다
+    (전환을 되돌리면 마지막 상태에서 이어진다).
+    """
+    out = dict(status or {})
+    out["state"] = STATE_OK
+    out["kind"] = None
+    out["source"] = "llm-gate"
+    out["server_llm_blocked"] = True
+    out["message"] = ("서버 계정 AI 를 사용하지 않는 모드입니다(외부 AI 브리지). "
+                      "이 제공자의 상태는 대화 전송에 영향을 주지 않습니다.")
+    return out
+
+
 def read_provider_health(provider: "str | None" = None) -> "dict[str, Any]":
-    """web 표면용 health 읽기. 기록 없음 → state=ok(문제 신호 없음). 실패 → state=unknown."""
+    """web 표면용 health 읽기. 기록 없음 → state=ok(문제 신호 없음). 실패 → state=unknown.
+
+    서버 계정 LLM 이 차단된 동안에는 `_gate_override` 를 통과한다(거짓 경보·영구 고착 방지).
+    """
+    from shared.llm_gate import server_llm_enabled as _gate_open
+
+    if not _gate_open():
+        return _gate_override(_read_provider_health_raw(provider))
+    return _read_provider_health_raw(provider)
+
+
+def _read_provider_health_raw(provider: "str | None" = None) -> "dict[str, Any]":
+    """게이트를 보지 않는 원본 읽기 — 운영 진단·전환 되돌림 뒤의 정상 경로가 쓴다."""
     provider = provider or current_provider()
     conn = None
     try:
@@ -423,6 +459,13 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
     (로컬 gemma 등)은 max_tokens=1(최저 비용) 유지.
     """
     provider = current_provider()
+    # feature-0043: 차단 중에는 ping 자체를 시도하지 않는다. 시도해도 게이트에서 None 을 받아
+    # 어떤 상태도 기록하지 못하면서(분류 불가) 호출 비용과 로그만 남는다 — 그리고 그 실패가
+    # 곧 "복구 판정을 영영 못 한다" 는 뜻이라, 전환 직전의 restricted 가 고착된다.
+    from shared.llm_gate import server_llm_enabled as _gate_open
+
+    if not _gate_open():
+        return _gate_override(_read_provider_health_raw(provider))
     if not _probe_enabled():
         return read_provider_health(provider)
     now = time.monotonic()

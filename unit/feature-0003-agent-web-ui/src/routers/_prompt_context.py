@@ -715,8 +715,14 @@ def _assemble_product_prompt_llm_request(product_id: int):
     ]
 
     from modules.llm import _get_llm_client
+    from shared.llm_gate import feature_blocked_message, server_llm_enabled
+
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
+        # feature-0043 사용감 패리티: 차단(운영 결정)과 초기화 실패(장애)를 구분해 말한다.
+        # 한 문구로 뭉치면 "고장인가?" 하고 무한 재시도하게 된다 — 전환 전에 되던 기능이라 더욱.
+        if not server_llm_enabled():
+            return app._json_error(feature_blocked_message("시스템 프롬프트 자동작성"), 503), None
         return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
 
     # TASK-0232: 자동작성은 "완성된 시스템 프롬프트 본문" 을 생성하므로 짧은 요약용
@@ -928,8 +934,14 @@ def _assemble_role_prompt_llm_request(role_id: int):
     ]
 
     from modules.llm import _get_llm_client
+    from shared.llm_gate import feature_blocked_message, server_llm_enabled
+
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
+        # feature-0043 사용감 패리티: 차단(운영 결정)과 초기화 실패(장애)를 구분해 말한다.
+        # 한 문구로 뭉치면 "고장인가?" 하고 무한 재시도하게 된다 — 전환 전에 되던 기능이라 더욱.
+        if not server_llm_enabled():
+            return app._json_error(feature_blocked_message("시스템 프롬프트 자동작성"), 503), None
         return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
 
     _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
@@ -1044,8 +1056,14 @@ def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_
     ]
 
     from modules.llm import _get_llm_client
+    from shared.llm_gate import feature_blocked_message, server_llm_enabled
+
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
+        # feature-0043 사용감 패리티: 차단(운영 결정)과 초기화 실패(장애)를 구분해 말한다.
+        # 한 문구로 뭉치면 "고장인가?" 하고 무한 재시도하게 된다 — 전환 전에 되던 기능이라 더욱.
+        if not server_llm_enabled():
+            return app._json_error(feature_blocked_message("시스템 프롬프트 자동작성"), 503), None
         return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
 
     _mt = app.max_tokens_for_model(llm_model, "prompt_gen")

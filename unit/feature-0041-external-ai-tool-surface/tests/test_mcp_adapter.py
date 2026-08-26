@@ -92,6 +92,9 @@ def test_all_tools_registered_through_name_helper():
              # feature-0043 (2026-08-26): 웹 대화 pull 브리지. 어댑터에 없는 도구는
              # 클라이언트에게 존재하지 않는 것과 같다(codex 리뷰 P1-1).
              "list_open_requests", "claim_request",
+             # feature-0043 사용감 패리티(2026-08-27): 첨부 기반 질문(웹의 일상 사용)이
+             # 이 도구 없이는 조용히 오답이 된다 — 첨부를 못 읽고 없다고 전제한다.
+             "read_task_attachment",
              "list_schemas",
              "describe_schema", "describe_table", "search_tables",
              "get_foreign_keys", "get_table_indexes", "execute_sql"]
@@ -135,6 +138,6 @@ def test_http_errors_preserve_status_code():
 
 def test_every_tool_posts_and_carries_bearer():
     source = _source()
-    # 정의 1 + 호출 12 (P0 9 + P1 execute_sql + feature-0043 브리지 2)
-    assert source.count("_post(") == 1 + 12
+    # 정의 1 + 호출 13 (P0 9 + P1 execute_sql + feature-0043 브리지 2 + 첨부 읽기 1)
+    assert source.count("_post(") == 1 + 13
     assert 'Authorization": f"Bearer {_TOKEN}"' in source

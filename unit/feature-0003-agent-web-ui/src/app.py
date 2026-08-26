@@ -3962,6 +3962,7 @@ from routers.conversations import (  # noqa: E402
 )
 from routers.system import (  # noqa: E402
     _read_llm_provider_status,
+    _read_llm_provider_status_admin,
 )
 
 # ---- feature-0012 ITEM-10 p17 rebind: 이동 도메인 상수의 app.<name> 보존 ----

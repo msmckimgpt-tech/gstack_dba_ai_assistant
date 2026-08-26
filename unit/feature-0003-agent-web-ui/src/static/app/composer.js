@@ -393,8 +393,90 @@ const _BRIDGE_POLL_MS = 5000;
 //: 그 사실을 안내한 뒤 멈춘다(대화를 다시 열면 그 사이 도착한 답변은 그대로 보인다).
 const _BRIDGE_POLL_MAX_TICKS = 360;
 
+// feature-0043 사용감 패리티(2026-08-27) — **브리지 응답 처리의 단일 진입점**.
+//
+// 왜 헬퍼인가: 답변을 만드는 서버 경로는 `/api/ask` 하나지만, 그것을 **부르는 화면 동작은
+// 여럿**이다(전송 · 요청사항 수정(재답변) · AI 로 고치기). 전환 직후에는 전송 경로에만
+// 브리지 분기를 달아, 나머지 둘은 대기 안내를 받고도 "추가했습니다" 라는 **거짓 성공 토스트**
+// 를 띄우고 폴링도 걸지 않았다 — 사용자에게는 답변이 영영 오지 않는 것으로 보인다.
+//
+// 반환값 true = 이 응답은 브리지 대기다(호출부는 자기 성공 토스트를 띄우면 안 된다).
+export function handleBridgePending(payload, fallbackConvId, waitingToast) {
+  if (!payload || !payload.bridge_pending || !payload.bridge_task_id) return false;
+  showToast(waitingToast || "내 AI 가 처리할 질문으로 등록했습니다.");
+  const taskId = String(payload.bridge_task_id);
+  const convId = String(payload.conversation_id || fallbackConvId || "");
+  _rememberPendingBridgeTask(convId, taskId);
+  // await 하지 않는다 — 폴링이 화면 동작을 막으면 입력창이 30분 잠긴다.
+  _pollBridgeAnswer(taskId, convId);
+  return true;
+}
+
+// ── 대화 재진입 시 폴링 복구 ──────────────────────────────────────────────────
+//
+// 폴러는 사용자가 다른 대화로 옮기면 멈춘다(남의 화면을 갱신하지 않기 위해). 그런데 **돌아와도
+// 다시 시작되지 않았다** — A 에서 묻고 B 로 갔다가 A 로 돌아온 뒤 개인 AI 가 답을 제출하면,
+// 화면은 수동 새로고침 전까지 그대로다(codex 리뷰 P2). 대기 task 를 대화별로 기억해 두고
+// 재진입할 때 되살린다.
+//
+// 저장소는 `sessionStorage` — 탭을 닫으면 사라지는 것이 맞다(다른 탭·다음 세션의 폴링을
+// 되살리면 그쪽 화면이 남의 대화를 갱신하려 든다). 실패는 무시한다(폴링 복구는 편의이지
+// 정확성의 근거가 아니다 — 답변 자체는 서버에 저장돼 있다).
+const _BRIDGE_PENDING_KEY = "bridgePendingTasks";
+
+function _readPendingBridgeTasks() {
+  try {
+    return JSON.parse(sessionStorage.getItem(_BRIDGE_PENDING_KEY) || "{}") || {};
+  } catch (_) { return {}; }
+}
+
+function _writePendingBridgeTasks(map) {
+  try { sessionStorage.setItem(_BRIDGE_PENDING_KEY, JSON.stringify(map)); } catch (_) { /* 무시 */ }
+}
+
+function _rememberPendingBridgeTask(convId, taskId) {
+  if (!convId || !taskId) return;
+  const map = _readPendingBridgeTasks();
+  // 대화당 여러 질문이 대기할 수 있다(그룹에서 여러 멤버, 또는 연속 전송).
+  const list = Array.isArray(map[convId]) ? map[convId] : [];
+  if (!list.includes(taskId)) list.push(taskId);
+  map[convId] = list;
+  _writePendingBridgeTasks(map);
+}
+
+function _forgetPendingBridgeTask(convId, taskId) {
+  if (!convId || !taskId) return;
+  const map = _readPendingBridgeTasks();
+  const list = (Array.isArray(map[convId]) ? map[convId] : []).filter((t) => t !== taskId);
+  if (list.length) map[convId] = list; else delete map[convId];
+  _writePendingBridgeTasks(map);
+}
+
+//: 대화를 열 때 호출 — 그 대화에 남아 있는 대기 질문의 폴링을 되살린다.
+//: 이미 답이 도착해 있으면 첫 tick 에서 확인하고 화면을 갱신한 뒤 스스로 정리한다.
+export function resumeBridgePolling(convId) {
+  const cid = String(convId || "");
+  if (!cid) return;
+  for (const taskId of (_readPendingBridgeTasks()[cid] || [])) {
+    _pollBridgeAnswer(String(taskId), cid);
+  }
+}
+
 async function _pollBridgeAnswer(taskId, convId) {
   if (!taskId) return;
+  // 같은 task 를 두 번 돌리지 않는다 — 전송 직후 폴링과 재진입 복구가 겹칠 수 있다.
+  if (_activeBridgePolls.has(taskId)) return;
+  _activeBridgePolls.add(taskId);
+  try {
+    await _pollBridgeAnswerInner(taskId, convId);
+  } finally {
+    _activeBridgePolls.delete(taskId);
+  }
+}
+
+const _activeBridgePolls = new Set();
+
+async function _pollBridgeAnswerInner(taskId, convId) {
   for (let tick = 0; tick < _BRIDGE_POLL_MAX_TICKS; tick += 1) {
     await new Promise((resolve) => setTimeout(resolve, _BRIDGE_POLL_MS));
     // 사용자가 다른 대화로 옮겼으면 조용히 멈춘다 — 남의 화면을 갱신하지 않는다.
@@ -406,7 +488,7 @@ async function _pollBridgeAnswer(taskId, convId) {
       // 4xx 는 재시도해도 달라지지 않는다 — 세션 만료(401)·권한 상실(403)·삭제된 task(404)
       // 에서 30분간 계속 두드리면 요청만 쌓인다. 5xx·네트워크만 일시 장애로 보고 재시도한다.
       const code = Number(err && (err.status || err.statusCode || err.code)) || 0;
-      if (code >= 400 && code < 500) return;
+      if (code >= 400 && code < 500) { _forgetPendingBridgeTask(convId, taskId); return; }
       continue;
     }
     if (status && status.answered) {
@@ -422,6 +504,7 @@ async function _pollBridgeAnswer(taskId, convId) {
       showToast(status.delivered === false
         ? "답변이 도착했지만 대화에 반영하지 못했습니다. 새로고침해 주세요."
         : "내 AI 가 답변을 보냈습니다.");
+      _forgetPendingBridgeTask(convId, taskId);
       return;
     }
   }
@@ -2917,10 +3000,7 @@ async function sendPrompt() {
     // AI 가 제출하는 순간 대화에 저장된다 — 그때 화면을 갱신하려면 폴링이 필요하다.
     // 이 분기가 없으면 사용자는 "AI 가 대기 안내만 하고 영영 답이 없다" 고 보게 된다(대화를
     // 직접 다시 열기 전까지). 폴링은 await 하지 않는다 — 전송 흐름을 막지 않는다.
-    if (payload.bridge_pending && payload.bridge_task_id) {
-      showToast("내 AI 가 처리할 질문으로 등록했습니다.");
-      _pollBridgeAnswer(String(payload.bridge_task_id), String(payload.conversation_id || ""));
-    } else {
+    if (!handleBridgePending(payload, "")) {
       showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
     }
     // TASK-0274: assistant 가 첨부를 수정해 새 버전을 생성했으면 사용자에게 안내.

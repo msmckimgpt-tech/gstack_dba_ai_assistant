@@ -531,7 +531,8 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         cur = conn.cursor()
         try:
             cur.execute(
-                "SELECT ConversationId, Origin FROM WebAiTasks WHERE TaskId=%s", (task_id,))
+                "SELECT ConversationId, Origin, ProductId, ProductMode "
+                "FROM WebAiTasks WHERE TaskId=%s", (task_id,))
             row = cur.fetchone()
         finally:
             cur.close()
@@ -544,8 +545,21 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         # 지연 import — 라우터 import 시점 순환 회피(다른 핸들러의 `import agent_core` 와 동형).
         from modules.memory import save_memory_message as _save_msg
 
-        message_id = _save_msg(conn, str(conversation_id), "assistant", answer,
-                               meta={"bridge": {"task_id": task_id, "origin": "web"}})
+        # 답변 말풍선의 **제품 귀속 각인**(msg-speaker-attribution). 기존 경로가 답변마다 굳히는
+        # 값이고, 빠지면 FE 가 컴포저의 *현재* 제품 칩으로 폴백해 그린다 — 사용자가 제품을 바꾸는
+        # 순간 과거 답변의 발화자까지 소급 변경된다. 각인은 답변 시점에 확정되는 사실이다.
+        # 조회 실패는 fail-open(각인만 생략) — 각인이 답변 저장을 막게 두지 않는다.
+        _meta: dict[str, Any] = {"bridge": {"task_id": task_id, "origin": "web"}}
+        try:
+            import agent_core as _core
+
+            _meta.update(_core._answer_product_attribution(
+                conn, row[2], str(row[3] or "pinned")))
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "[bridge] 제품 귀속 각인 실패 task=%s — 각인 없이 저장한다: %r", task_id, exc)
+
+        message_id = _save_msg(conn, str(conversation_id), "assistant", answer, meta=_meta)
         conn.commit()
         # ⚠ `save_memory_message` 는 PG 쓰기 실패를 내부에서 삼키고 **0 을 반환**한다
         #   (codex 재리뷰 P1). 반환값을 안 보면 저장이 실패해도 `delivered=true` 를 돌려주고,
@@ -555,6 +569,17 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
                 "[bridge] 대화 저장이 0 을 반환했다 task=%s conv=%s — 전달 실패로 기록한다",
                 task_id, conversation_id)
             return False
+
+        # 회수 store(`agent_runtime.core_messages`)에도 답변을 남긴다 — 표시 store 만 쓰면 대화
+        # 복제·분기본에서 브리지 답변만 사라진다. 실패는 흡수(표시본은 이미 확정).
+        try:
+            import agent_core as _core
+
+            _core._save_message(conn, str(conversation_id), "assistant", content=answer)
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                "[bridge] core store 답변 기록 실패 task=%s conv=%s — 표시본만 남는다: %r",
+                task_id, conversation_id, exc)
 
         # 전달 성공을 task 에 새긴다. `Status='submitted'` 와 분리해야 "제출됐지만 화면에는
         # 없다" 를 구분해 재전달·진단할 수 있다.
@@ -704,9 +729,9 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                   f"(점유는 {_BRIDGE_CLAIM_LEASE_MIN}분 뒤 자동 해제됩니다).")
 
         cur.execute(
-            "SELECT Question, ConversationId, ProductId, CreatedAt FROM WebAiTasks "
-            "WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
-        row = cur.fetchone() or ("", None, None, None)
+            "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds "
+            "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
+        row = cur.fetchone() or ("", None, None, None, None)
     finally:
         cur.close()
 
@@ -751,13 +776,257 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         _release_claim(conn, task_id, account_id)
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다(점유 해제됨): {exc}")
 
+    # 첨부 목록 — **있다는 사실 자체**를 알려야 한다. 종전에는 첨부가 딸린 질문도 본문만
+    # 전달돼, 개인 머신 AI 가 "첨부가 없다" 고 전제하고 답했다(웹 대화 사용감과 어긋남).
+    attachments = _task_attachment_list(conn, row[4], conversation_id)
     return JSONResponse({
         "task_id": task_id,
         "question": marked,
         "conversation_context": marked_history,
         "product_id": int(row[2]) if row[2] is not None else None,
         "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
-        "next": "조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 선언합니다.",
+        "attachments": attachments,
+        "next": ("조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
+                 "선언합니다." + (
+                     f" 이 질문에는 첨부 {len(attachments)}건이 있습니다 — "
+                     f"read_task_attachment(task_id, attachment_id) 로 본문을 읽고 나서 답하세요."
+                     if attachments else "")),
+    })
+
+
+def _task_attachment_ids(raw: Any) -> list[int]:
+    """`WebAiTasks.AttachmentIds`(CSV) → id 목록. 값이 이 task 의 **권한 경계**다."""
+    out: list[int] = []
+    for tok in str(raw or "").split(","):
+        tok = tok.strip()
+        if not tok.isdigit():
+            continue
+        val = int(tok)
+        if val > 0 and val not in out:
+            out.append(val)
+    return out
+
+
+def _task_attachment_list(conn, raw_ids: Any, conversation_id: Any) -> list[dict[str, Any]]:
+    """이 task 에 딸린 첨부의 목록(본문 아님 — 존재·이름·종류만).
+
+    `ConversationId` 를 술어에 함께 건다: 저장된 id 가 어떤 이유로 오염돼도 **다른 대화의
+    첨부는 나오지 않는다**(내부 `_load_scoped_attachment_rows` 와 같은 다층 방어).
+    조회 실패는 빈 목록 — 첨부 조회 실패가 질문 점유 자체를 막게 두지 않는다.
+    """
+    ids = _task_attachment_ids(raw_ids)
+    if not ids or not conversation_id:
+        return []
+    try:
+        cur = conn.cursor()
+        try:
+            placeholders = ", ".join(["%s"] * len(ids))
+            cur.execute(
+                "SELECT Id, OriginalFilename, Kind, SizeBytes FROM WebConversationAttachments "
+                f"WHERE Id IN ({placeholders}) AND ConversationId=%s "
+                "AND DeletedAt IS NULL AND DeletePending=0 ORDER BY Id ASC",
+                tuple(ids) + (str(conversation_id),))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("[bridge] 첨부 목록 조회 실패: %r", exc)
+        return []
+    return [{"attachment_id": int(r[0] or 0), "filename": str(r[1] or ""),
+             "kind": str(r[2] or ""), "size_bytes": int(r[3] or 0) if r[3] is not None else None}
+            for r in rows]
+
+
+def _claim_lease_valid(claimed_at) -> bool:
+    """점유 lease 가 아직 유효한가. `_CLAIMABLE_SQL` 의 파이썬 쪽 대응.
+
+    같은 상수(`_BRIDGE_CLAIM_LEASE_MIN`)를 쓴다 — SQL 술어와 파이썬 판정이 다른 값을 보면
+    "목록에는 다시 뜨는데 읽기는 계속 되는" 어긋난 창이 생긴다.
+    `ClaimedAt` 이 NULL 이면 만료로 본다(점유 시각을 모르면 유효하다고 우길 근거가 없다).
+    """
+    if claimed_at is None:
+        return False
+    try:
+        from datetime import datetime, timedelta
+
+        if not isinstance(claimed_at, datetime):
+            return False
+        # DB 는 서버 로컬 NOW() 로 기록한다 — 같은 기준(naive local)으로 비교한다.
+        return (datetime.now() - claimed_at) < timedelta(minutes=_BRIDGE_CLAIM_LEASE_MIN)
+    except Exception:
+        return False
+
+
+@router.post("/api/ai/tools/read_task_attachment")
+async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
+                               conn=Depends(app.get_conn)) -> JSONResponse:
+    """점유한 웹 질문에 딸린 **첨부 본문**을 줄 범위로 읽는다.
+
+    웹 대화창에서는 첨부를 올리고 "이 파일 분석해줘" 라고 묻는 것이 일상 사용이다. 브리지가
+    본문을 못 읽으면 그 사용법만 조용히 죽는다 — 그래서 내부 에이전트가 쓰는
+    `read_attachment_content` 를 **task 범위로 못박아** 같은 경로로 연다.
+
+    경계는 넓히지 않는다. 읽을 수 있는 것은 다음을 **모두** 만족하는 첨부뿐이다:
+      1. 호출자 계정이 연 `Origin='web'` task 의 것 (남의 질문 불가)
+      2. 그 task 를 **호출자가 점유** 중 (집지 않고 훔쳐보기 불가)
+      3. 그 대화에 대한 접근 권한이 **지금도** 유효 (점유 후 그룹 퇴출 반영)
+      4. 적재 시점에 `_resolve_conversation_attachment_scope` 가 허용한 id 목록 안
+    """
+    body = await _json(request)
+    account = ctx["account"]
+    account_id = int(account.get("id") or 0)
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        return _json_err(400, "task_id 가 필요합니다.")
+    attachment_id = body.get("attachment_id")
+    filename = str(body.get("filename") or "").strip()
+    if not attachment_id and not filename:
+        return _json_err(400, "attachment_id 또는 filename 중 하나가 필요합니다.")
+
+    t0 = time.perf_counter()
+    # 원장 상한을 **호출 전에** 건다(codex 리뷰 P2). 사후 record 만 하면 이 도구 하나만 상한
+    # 밖에 놓여, 첨부 본문(가장 큰 payload)으로 시간당 bytes 상한을 우회할 수 있다.
+    try:
+        _ledger.check_limits(_pg(), account_id=account_id, client_id=ctx.get("client_id"))
+    except _ledger.RateLimited as exc:
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="gated",
+                     detail=exc.limit, task_id=task_id)
+        return JSONResponse({"error": exc.message}, status_code=429,
+                            headers={"Retry-After": str(getattr(exc, "retry_after", 60) or 60)})
+
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT ConversationId, AttachmentIds, ClaimedBy, ClaimedClient, ClaimedAt, "
+            "SubmittedAt, Status FROM WebAiTasks "
+            "WHERE TaskId=%s AND AccountId=%s AND Origin='web'", (task_id, account_id))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+    if row is None:
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="not_found_or_foreign", task_id=task_id)
+        return _json_err(404, "대기 중인 질문을 찾을 수 없습니다.")
+    conversation_id, raw_ids = row[0], row[1]
+    claimed_by, claimed_client, claimed_at, submitted_at, status = row[2], row[3], row[4], row[5], row[6]
+
+    # 점유 경계는 `submit_answer` 와 **같은 모양**이어야 한다(codex 리뷰 P2). 한쪽만 느슨하면
+    # 그 쪽이 실질 경계가 된다 — 읽기가 느슨하면 제출을 막아도 내용은 이미 새어 나간 뒤다.
+    #
+    #  · 점유자 계정 일치      — claim 없이 읽기 차단
+    #  · 점유 세션(client) 일치 — 같은 계정의 **다른 세션**이 남의 점유를 타고 읽는 것 차단
+    #                            (컬럼 추가 이전 점유 행은 NULL → 호환 통과, submit 과 동일 규약)
+    #  · lease 유효            — 만료된 점유는 남의 것이 될 수 있다(재claim 대상)
+    #  · 미제출 상태           — 끝난 task 를 계속 읽을 이유가 없다
+    if int(claimed_by or 0) != account_id:
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="not_claimed", task_id=task_id)
+        return _json_err(409, "먼저 claim_request 로 이 질문을 점유해야 첨부를 읽을 수 있습니다.")
+    if claimed_client is not None and str(claimed_client) != str(ctx.get("client_id") or ""):
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="foreign_client", task_id=task_id)
+        return _json_err(409, "이 질문은 다른 세션이 점유 중입니다. 해당 세션에서 처리하세요.")
+    if submitted_at is not None or str(status or "") != "open":
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="already_submitted", task_id=task_id)
+        return _json_err(409, "이미 답변이 제출된 질문입니다.")
+    if not _claim_lease_valid(claimed_at):
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="lease_expired", task_id=task_id)
+        return _json_err(409, f"점유가 만료됐습니다({_BRIDGE_CLAIM_LEASE_MIN}분). "
+                              "claim_request 로 다시 점유하세요.")
+
+    # claim 때와 같은 재검증 — 점유 이후 권한이 회수됐을 수 있다.
+    denied = _conversation_access_denied(conn, account, conversation_id)
+    if denied is not None:
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="conversation_access_revoked", task_id=task_id)
+        return denied
+
+    ids = _task_attachment_ids(raw_ids)
+    if not ids:
+        return _json_err(404, "이 질문에는 읽을 수 있는 첨부가 없습니다.")
+
+    try:
+        import agent_core as _core
+        import shared.config as _cfg
+    except Exception as exc:
+        logging.getLogger(__name__).error("[bridge] 첨부 읽기 모듈 로드 실패: %r", exc)
+        return _json_err(503, "첨부를 읽을 수 없습니다(내부 모듈 로드 실패).")
+
+    # 스코프는 **이 요청 동안만** 세운다. 되돌리지 않으면 같은 워커 스레드의 다음 요청이
+    # 남의 대화 스코프를 물려받는다 — 그래서 token 으로 반드시 복원한다.
+    # ⚠ 되돌려야 하는 것은 스코프 id 하나가 아니다(codex 리뷰 P2). `read_attachment_content` 는
+    # provenance 판정 결과(`_UNTRUSTED_ATTACH_BODY_CTX` 등)도 **쓴다** — 복원하지 않으면 같은
+    # Context 를 재사용하는 다음 호출이 남의 판정 결과를 물려받는다. 그리고 계정을 세우지 않으면
+    # 판정 자체가 실행되지 않아 "타 멤버 파일" 표시가 조용히 사라진다. 둘 다 세우고 둘 다 되돌린다.
+    _ctx_tokens: list = [_core._ATTACHMENT_IDS_CTX.set(",".join(str(i) for i in ids))]
+    for _name, _val in (("_ACTIVE_ACCOUNT_ID_CTX", account_id),
+                        ("_UNTRUSTED_ATTACH_BODY_CTX", False),
+                        ("_UNTRUSTED_ATTACH_BODY_REASON_CTX", "")):
+        _var = getattr(_core, _name, None)
+        if _var is not None:
+            try:
+                _ctx_tokens.append(_var.set(_val))
+            except Exception:
+                pass
+    prev_conv = None
+    try:
+        prev_conv = _cfg.get_active_conversation_id()
+    except Exception:
+        prev_conv = None
+    try:
+        _cfg.set_active_conversation_id(str(conversation_id or ""))
+        res = _core.read_attachment_content(
+            filename=filename or None,
+            attachment_id=int(attachment_id) if attachment_id else None,
+            start_line=int(body.get("start_line") or 1),
+            max_lines=(int(body["max_lines"]) if body.get("max_lines") else None),
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "[bridge] 첨부 읽기 실패 task=%s: %r", task_id, exc)
+        return _json_err(500, "첨부를 읽는 중 오류가 발생했습니다.")
+    finally:
+        # 역순 복원 — set 순서와 반대로 되돌려야 중첩 Context 가 어긋나지 않는다.
+        for _tok in reversed(_ctx_tokens):
+            try:
+                _tok.var.reset(_tok)
+            except Exception:
+                pass
+        try:
+            _cfg.set_active_conversation_id(prev_conv)
+        except Exception:
+            pass
+
+    if not res.get("ok"):
+        _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
+                     detail="out_of_scope", task_id=task_id)
+        return _json_err(404, str(res.get("error") or "첨부를 읽을 수 없습니다."))
+
+    # 첨부 본문은 **사용자가 올린 텍스트** — 지연 인젝션 방어 각인을 씌운다(질문 본문과 동형).
+    marked = _guard.wrap_tool_output(
+        str(res.get("text") or ""),
+        account=str(account.get("username") or account.get("id")),
+        conversation_id=conversation_id, task_id=task_id, source="attachment")
+    try:
+        _ledger.record(_pg(), account_id=account_id, tool="read_task_attachment",
+                       client_id=ctx.get("client_id"), task_id=task_id,
+                       bytes_out=len(marked.encode("utf-8")),
+                       latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
+    except _ledger.LedgerUnavailable as exc:
+        return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
+
+    return JSONResponse({
+        "task_id": task_id,
+        "attachment_id": int(res.get("attachment_id") or 0),
+        "filename": str(res.get("filename") or ""),
+        "kind": str(res.get("kind") or ""),
+        "text": marked,
+        "start_line": int(res.get("start_line") or 1),
+        "end_line": int(res.get("end_line") or 0),
+        "total_lines": int(res.get("total_lines") or 0),
+        "truncated": bool(res.get("truncated")),
     })
 
 

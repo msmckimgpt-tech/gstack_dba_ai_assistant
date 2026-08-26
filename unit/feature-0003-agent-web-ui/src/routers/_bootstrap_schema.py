@@ -2550,6 +2550,22 @@ def _ensure_oauth_client_schema(conn) -> None:
             # 대화 전달 성공 여부. `Status='submitted'` 만으로 "답변이 화면에 있다" 를 단정하면
             # 저장 실패 시 사용자에게는 답이 없는데 시스템은 완료로 보는 상태가 굳는다.
             ("Delivered", "ALTER TABLE WebAiTasks ADD COLUMN Delivered TINYINT(1) NOT NULL DEFAULT 0, ALGORITHM=INPLACE, LOCK=NONE"),
+            # ── 사용감 패리티(2026-08-27) — 브리지 답변이 기존 답변과 **같은 각인**을 갖게 하는 값들.
+            #
+            # `ProductMode`: 'auto' | 'pinned'. 답변 말풍선의 제품 귀속(msg-speaker-attribution)은
+            # `_answer_product_attribution(product_id, product_mode)` 로 각인되는데, mode 없이
+            # ProductId 만으로는 "제품 미고정 답변(auto)" 과 "고정 답변" 을 구분할 수 없다. 구분에
+            # 실패하면 각인이 빠지고, FE 는 컴포저의 **현재** 제품 칩으로 폴백해 그린다 — 제품을
+            # 바꾸는 순간 과거 답변의 발화자까지 소급 변경된다(기존 경로가 이미 고친 결함).
+            ("ProductMode", "ALTER TABLE WebAiTasks ADD COLUMN ProductMode VARCHAR(16) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `SenderUsername`: 그룹 대화 발신자 귀속(gc-ask-sender-attrib). 그룹에서는 여러 명이
+            # 같은 대화에 @assistant 를 부르므로, 질문 말풍선이 **누구 것인지** 각인돼야 한다
+            # (`app.js` 가 `meta.sender_username` 을 읽어 표시한다). 각인이 없으면 그룹 대화의
+            # 모든 질문이 발신자 없는 말풍선이 된다.
+            ("SenderUsername", "ALTER TABLE WebAiTasks ADD COLUMN SenderUsername VARCHAR(128) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `AttachmentIds`: 이 질문에 딸린 첨부 id 목록(CSV). 브리지 AI 가 "무엇이 첨부됐는지"
+            # 조차 모르면 첨부 기반 질문에 엉뚱하게 답한다 — 목록을 실어 최소한 인지시킨다.
+            ("AttachmentIds", "ALTER TABLE WebAiTasks ADD COLUMN AttachmentIds TEXT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
         ):
             try:
                 cur.execute(

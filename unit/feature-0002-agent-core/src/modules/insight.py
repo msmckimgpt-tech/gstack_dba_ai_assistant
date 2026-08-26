@@ -3011,6 +3011,19 @@ def _enum_self_heal(swept_scopes: set, *, mem_conn, engine, known_schemas, scann
 
 
 def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
+    # feature-0043 사용감 패리티 — 게이트는 **cycle 전체가 아니라 LLM 구간에만** 건다.
+    #
+    # 첫 시도는 cycle 진입부에서 통째로 early-return 했다. 그것이 `finally` 앞이라 worker
+    # heartbeat(`insight_worker_last_cycle_at`)가 갱신되지 않았고, 180초 뒤 healthcheck 가
+    # exit 1 → **차단 모드에서 컨테이너가 상시 unhealthy** 가 됐다(codex 리뷰 P1). 게다가 LLM 과
+    # 무관한 정비(role backfill · enum self-heal · datasource health · auth cooldown prune)까지
+    # 함께 멈췄다. "낭비를 줄이려는 최적화" 가 방어를 껐다 — 그래서 되돌리고 좁게 다시 건다.
+    #
+    # 남은 낭비는 작다: 스캔 안의 LLM 호출은 `_get_llm_client()` 게이트에서 즉시 None 을 받고
+    # (로그는 caller 별 60초 throttle) 되돌아온다. 연결·health 점검은 오히려 계속 도는 편이 낫다.
+    from shared.llm_gate import server_llm_enabled as _server_llm_open
+
+    _llm_open = _server_llm_open()
     cycle_run_id = str(run_id or "").strip() or _new_insight_worker_run_id()
     started = time.perf_counter()
     lock_name = str(AGENT_INSIGHT_WORKER_LOCK_NAME or "").strip() or "agent_insight_worker_scan"
@@ -3112,7 +3125,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         scan_report["domain_synthesis"] = _ds_rep
                 except Exception as _dse:
                     logging.getLogger("insight").debug("domain_synthesis_failed err=%r", _dse)
-            _na_rep = _node_analysis.process_pending()
+            # 잡 처리는 순수 LLM 작업이다 — 차단 중에는 claim 해서 실패시키지 않는다(claim 된
+            # 잡은 재시도 상한을 태우고 `failed` 로 굳는다). 적재 자체도 게이트로 막혀 있으므로
+            # 정상 운영에서 대기 잡은 생기지 않고, 전환 전에 남은 잡만 그대로 보존된다.
+            _na_rep = _node_analysis.process_pending() if _llm_open else {}
             if _na_rep.get("claimed"):
                 scan_report["node_analysis"] = _na_rep
             # node-role-viz: role 도입(0031) 이전 done Table 잡 역할 휴리스틱 백필 — 잔여 0 이면

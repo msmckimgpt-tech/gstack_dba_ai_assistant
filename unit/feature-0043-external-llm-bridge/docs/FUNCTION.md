@@ -46,6 +46,33 @@ feature-0041(외부 AI 도구 표면)의 인증·도구·원장·각인 인프�
 - `/api/ask` 분기: 게이트가 차단 상태면 LLM 실행 대신 브리지 task 적재 + 대기 상태 반환.
 - 웹 프론트: 대기 말풍선 · 답변 폴링 · `/ai/connect` 연결 안내.
 
+### P0-E. **사용감 패리티** — 전환이 기존 경험을 바꾸지 않는다 (사용자 결정 2026-08-27)
+
+> "기존의 LLM 작동에 관련된 기능들(DB 요청사항 수행, 대화 내역 보존, 그룹 대화 Assistant 호출 등)에
+> 대한 사용감은 동일하게 유지되어야 합니다." … "LLM 요청구조가 변경되면서 사용자 경험이 바뀐 부분이
+> 기존의 동작 및 경험과 정합하도록 전수적으로 상세하게 수정 및 검증해주세요."
+
+브리지는 `agent_core` 를 타지 않는다. 그래서 **기존 경로가 답변마다 하던 일을 브리지가 "그냥 안 하는"**
+구멍이 생긴다. 계산이 아니라 **연결**이 끊긴 형태라, 헬퍼 단위 테스트로는 전부 통과한다.
+
+| 축 | 계약 |
+|---|---|
+| 그룹 발신자 | 질문 meta 에 `sender_account_id`·`sender_username`·`group_chat` 각인 (기존 키와 동일) |
+| 제품 귀속 | 답변 meta 에 `_answer_product_attribution` 각인 (`ProductMode` 를 task 에 굳혀 auto/pinned 구분) |
+| 대화 내역 | 표시 store + **회수 store(`core_messages`)** 양쪽 기록. 순서는 표시 확정 → 회수 |
+| 첨부 | task 에 `AttachmentIds` 적재 → `claim_request` 가 목록 반환 → `read_task_attachment` 로 본문 |
+| 진입점 | `/api/ask` 를 재dispatch 하는 **모든 화면 동작**(전송·재답변·AI로 고치기)이 브리지를 처리 |
+| 차단 안내 | 대화용 문구와 **다른** `feature_blocked_message()` — "고장이 아니다" 를 말한다 |
+| 제한 배너 | 차단 중 provider health 는 non-restricted 로 표면화(거짓 경보·영구 고착 방지), 사유는 남긴다 |
+
+**의도적으로 복원하지 않은 것** (정직한 잔여):
+
+- `attachment-edit` / `attachment-new` 블록 → 다운로드 첨부 변환. 개인 AI 가 이 관례를 모르고,
+  외부 입력으로 첨부 버전을 만드는 것은 별도의 쓰기 경계 설계가 필요하다. 반쯤 만들면 "가끔 되는"
+  기능이 되므로 열지 않았다.
+- 답변의 실행 단계(`AI 추론` 탭)·결과 CSV. 브리지 답변은 서버 run 이 없어 단계가 존재하지 않는다.
+  없는 것을 있는 것처럼 그리지 않는다.
+
 ### P0-D. 인증 축 통일 — `mat_` 하나로 (사용자 결정 2026-08-27)
 
 **모든 인증 및 사용은 `mat_`(OAuth access token) 를 통해서만** 이루어진다.
@@ -125,6 +152,21 @@ feature-0041(외부 AI 도구 표면)의 인증·도구·원장·각인 인프�
 - AC-20260827T030000-external-llm-bridge-11: `bin/api-token-issue.sh` 가 신규 `matk_` 발급을
   거절한다(exit 3). `--revoke` 는 통과한다 — 폐기 경로까지 막으면 기존 토큰을 거둘 수 없다.
 - AC-20260827T030000-external-llm-bridge-12: 도구 표면이 `WebApiTokens` 를 참조하지 않는다(축 분리).
+
+- AC-20260827T090000-external-llm-bridge-13: 브리지 질문 meta 의 발신자 각인 키가 기존 경로와
+  동일하다(그룹 대화에서 발신자가 표시된다).
+- AC-20260827T090000-external-llm-bridge-14: 브리지 답변에 제품 귀속이 각인된다(제품 변경이 과거
+  답변을 소급 변경하지 않는다).
+- AC-20260827T090000-external-llm-bridge-15: 질문·답변이 회수 store 에도 기록된다(대화 복제·분기본에
+  구멍이 없다).
+- AC-20260827T090000-external-llm-bridge-16: 첨부가 task 에 실리고, 점유한 AI 만 `read_task_attachment`
+  로 본문을 읽을 수 있다(소유·점유·현재권한 3겹).
+- AC-20260827T090000-external-llm-bridge-17: 재답변·AI로 고치기가 브리지 대기를 인지한다(거짓 성공
+  토스트 없음, 폴링 걸림).
+- AC-20260827T090000-external-llm-bridge-18: 차단된 관리 콘솔 기능이 장애가 아니라 **운영 결정**임을
+  말한다. 게이트를 되돌리면 진짜 장애 문구가 복원된다.
+- AC-20260827T090000-external-llm-bridge-19: 차단 중 provider 제한 배너가 뜨지 않는다(전송 경로에
+  영향이 없으므로 거짓 경보이고, 복구 ping 불가로 영구 고착된다).
 
 ## 9. Constraints / Risks
 

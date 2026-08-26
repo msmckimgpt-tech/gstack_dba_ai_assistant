@@ -409,6 +409,9 @@ def test_datasource_axis_worst_of(monkeypatch):
 # ── 공용: 축 소스 monkeypatch (건강한 기본값) ────────────────────────────────
 def _patch_axes_healthy(monkeypatch, *, worker_mode=False):
     monkeypatch.setattr(app, "_read_llm_provider_status", lambda: {"state": "ok"})
+    # feature-0043: 관제는 **마스킹되지 않은** 원본 seam 을 읽는다(대화 UI 와 다른 지점).
+    monkeypatch.setattr(app, "_read_llm_provider_status_admin",
+                        lambda: {"state": "ok", "server_llm_blocked": False})
     monkeypatch.setattr(app, "_is_worker_mode", lambda: worker_mode)
     monkeypatch.setattr(app, "_ask_worker_age_sec", lambda conn: 5)
     monkeypatch.setattr(app, "_insight_worker_liveness", lambda conn: {"alive": True, "age_sec": 5, "status": "ok"})

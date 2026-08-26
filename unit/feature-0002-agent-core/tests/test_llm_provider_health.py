@@ -282,6 +282,10 @@ class _CapturingClient:
 def _run_probe(monkeypatch, model, supports_thinking, *, force=True, state="ok", ts=0.0):
     captured: list = []
     ok_calls: list = []
+    # feature-0043: 이 헬퍼의 대상은 **게이트 뒤의 ping 계약**(thinking budget·max_tokens·throttle)
+    # 이다. 게이트가 닫힌 채 두면 probe 가 첫 줄에서 반환해 captured 가 항상 비고, 검사하려던
+    # 계약을 아무도 안 본다(vacuous pass). 게이트 자체의 계약은 아래 전용 테스트가 본다.
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
     monkeypatch.setattr("shared.config.OPENAI_MODEL", model, raising=False)
     monkeypatch.setattr("shared.model_catalog.model_supports_thinking",
                         lambda m: supports_thinking, raising=False)
@@ -396,3 +400,30 @@ def test_probe_recent_ts_within_ttl_throttles(monkeypatch):
     captured, _ = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
                              force=False, state="restricted", ts=time.monotonic())
     assert captured == [], "TTL 내 최근 probe(ts>0)는 skip(throttle)해야 한다"
+
+
+# ── feature-0043 게이트: 차단 중 probe 는 ping 하지 않고 배너도 띄우지 않는다 ────
+def test_probe_does_not_call_provider_while_server_llm_blocked(monkeypatch):
+    """차단 중 실제 호출 0 — 어차피 분류도 못 하면서 비용·로그만 남긴다."""
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    called = []
+    monkeypatch.setattr("modules.llm._get_llm_client",
+                        lambda **kw: called.append(kw), raising=False)
+    monkeypatch.setattr(lph, "_read_provider_health_raw",
+                        lambda *a, **kw: {"state": lph.STATE_RESTRICTED, "source": "ask",
+                                          "kind": lph.KIND_THROTTLED, "message": "소진"})
+    lph._PROBE_STATE["ts"] = 0.0
+    lph._PROBE_STATE["running"] = False
+    out = lph.probe_provider(force=True)
+    assert called == [], "차단 중인데 provider 를 호출했다"
+    # restricted 였더라도 표면은 non-restricted 여야 한다 — 전송 경로에 영향이 없고, 복구 ping 이
+    # 불가능해 그대로 두면 배너가 **영구 고착**된다.
+    assert out["state"] == lph.STATE_OK
+    assert out["source"] == "llm-gate"
+    assert out.get("server_llm_blocked") is True
+
+
+def test_raw_health_still_reports_restriction_while_blocked(monkeypatch):
+    """마스킹은 표면 한정 — 원본 경로는 사실을 그대로 준다(운영 진단이 죽으면 안 된다)."""
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    assert hasattr(lph, "_read_provider_health_raw")

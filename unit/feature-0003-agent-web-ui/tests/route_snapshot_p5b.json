@@ -1,6 +1,6 @@
 {
-  "total_routes": 253,
-  "api_routes": 252,
+  "total_routes": 254,
+  "api_routes": 253,
   "ordered": [
     {
       "path": "/static",
@@ -1697,6 +1697,13 @@
     },
     {
       "path": "/api/ai/tools/claim_request",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/tools/read_task_attachment",
       "methods": [
         "POST"
       ],
