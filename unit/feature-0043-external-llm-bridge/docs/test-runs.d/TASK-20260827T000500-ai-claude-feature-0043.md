@@ -73,3 +73,38 @@ gateway reconcile 이 대화 스모크 FAIL 로 **안전 중단**됐다. FAIL �
 브리지 setup 불가로 **미수행**(사유·해소조건은
 `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260827T000500-bridge-poll-ui.md`).
 화면 렌더·폴링 자동갱신은 여전히 미검증이며, 위 실측은 "부품이 제자리에 있다" 까지만 보인다.
+
+---
+
+## 배포 완결 실측 (`11049643`, 2026-08-27)
+
+PR #1352(스모크 전제) 병합 후 `make deploy-web` 재실행 → **gateway reconcile 포함 전 단계 완료**.
+
+### 배포 체크리스트 (feature-0014 RUNBOOK §10)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | web-a·web-b 대상 SHA + soak | `mysql-ai-web:11049643` 양쪽 |
+| 2 | 워커 롤아웃 | `ask-worker`·`insight-worker`·`ops-scheduler`·`ext-tool-mcp` = `mysql-ai-agent:11049643` |
+| 1b | 대화 스모크 | **PASS** — "서버 계정 LLM 차단 확인(전환 모드)" |
+| 2b | surge 잔존 | **0** (정리 완료) |
+| 3 | 캐시 무효화 | asset 스탬프 갱신 OK |
+| 5 | 무중단 실측 | `no upstreams available` **0건** (15분 창) |
+
+### 두 자물쇠 모두 라이브 반영
+
+```
+# ① gateway config (두 번째 자물쇠)
+$ docker compose exec bedrock-gateway grep "^  - model_name" /app/config.yaml
+  - model_name: titan-embed        ← 계정 alias 14종 전부 비활성, 로컬 임베딩만
+
+# ② 앱 게이트 (정본)
+$ docker compose exec ask-worker python3 -c "..."
+server_llm_enabled(): False
+claude-opus-5-chat client: None
+```
+
+### 완결 판정
+
+사용자 요청의 **"root·claude-corp 계정을 LLM 으로 사용하는 부분을 모두 주석처리"** 는
+라이브에서 완결됐다 — 코드 게이트와 설정 주석 양쪽이 반영됐고, 어느 한쪽만 풀어서는 열리지 않는다.
