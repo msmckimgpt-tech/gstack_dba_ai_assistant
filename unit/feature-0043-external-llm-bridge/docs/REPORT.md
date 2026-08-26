@@ -10,7 +10,7 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
-**in-progress — 3 Step 구현 + codex 리뷰 **2라운드** 전건 조치(P1 11 · P2 6) + 프론트 폴링 완료 · feature-0043 스위트 71건 green · 컨테이너 `make test` 전체 통과 · 라이브 시각검증(PB-0008)과 도달성 probe 가 잔여.**
+**라이브 배포 완료 `0b2b4435` — 게이트·MCP 도구·스키마·라우트 도달성 전건 실측 PASS. PB-0008 화면 시각검증만 미수행(브리지 setup 불가 — 사유 명시).**
 
 서버 보유 계정(`claude-corp`/`root`)으로 나가는 chat 호출은 두 겹(코드 게이트 + 설정 주석)으로
 차단됐고, 웹 대화 질문은 `WebAiTasks` 의 대기 작업이 되어 개인 머신 AI 가 MCP/REST 로 가져갈 수 있다.
@@ -79,15 +79,19 @@ source_of_truth: true
 codex 의 자기 지적("회귀 테스트가 배선 검사라 상태 전이·장애·권한을 못 본다")을 받아
 **상태/장애/권한 축 17건**을 추가했다.
 
-## 5. 잔여 (BLOCKED 아님)
+## 5. 잔여
 
-1. **PB-0008 실 Windows 브라우저 시각검증** — `visual_verification_scope: always` 이고 이번에
-   웹 자산(`static/app/composer.js`)을 수정했으므로 필수. 대기 말풍선 → 폴링 → 답변 렌더 전 구간.
-2. **`reachability_scope: included` 도달성 1-probe** — 웹 질문 → 개인 AI 처리 → 답변 렌더 end-to-end.
-   컴포넌트 health 로 갈음하지 않는다.
-3. **`.env` 정리** — 이 세션에서 `.env` 는 권한 정책상 읽기·수정이 차단됐다. `AGENT_*_MODEL` 계열
-   변수는 **게이트가 이미 차단선을 쥐고 있으므로 기능상 무해**하지만, 위생을 위해 운영자가 직접
-   주석 처리하는 것이 좋다. (게이트가 정본이라 이 정리 없이도 계정은 사용되지 않는다.)
+1. **PB-0008 화면 시각검증** — `bin/win-browser.py` 브리지가 이 환경에서 성립하지 않는다
+   (`win_host` 를 DNS 주소 `8.8.8.8` 로 오판 · 무권한 relay 도 CDP 도달 실패). 해소는 관리자
+   PowerShell `netsh portproxy` 또는 `.wslconfig` mirrored + WSL 재시작이며 이 세션 범위 밖이다.
+   **대체 실측**(게이트 차단 · MCP 도구 12종 노출 · 스키마 5컬럼+인덱스 · 라우트 401/405 도달)은
+   전건 PASS 이나, 그것은 "부품이 제자리에 있다" 까지이고 **화면이 의도대로 움직이는지는 별개 주장**이다.
+   절차·해소조건: `unit/feature-0003-agent-web-ui/docs/test-runs.d/REV-20260827T000500-bridge-poll-ui.md`
+2. **gateway reconcile** — 대화 스모크의 전제가 낡아 안전 중단됐고, PR #1352 로 수정 중이다.
+   현재 gateway 는 구 config 로 서빙하지만 **앱 게이트가 정본**이라 계정은 사용되지 않는다
+   (라이브 실측으로 확인). 병합·재배포로 두 번째 자물쇠까지 정합해진다.
+3. **`.env` 정리** — 권한 정책상 이 세션에서 읽기·수정 불가. `AGENT_*_MODEL` 계열은 게이트가
+   차단선을 쥐고 있어 기능상 무해하나, 위생을 위해 운영자가 직접 주석 처리하는 것이 좋다.
 
 ## 6. 되돌리기
 
