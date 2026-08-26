@@ -6,7 +6,7 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: planned
 feature_status_date: 2026-08-27
-feature_status_note: QA·라이브 분리 CI/CD 설계 rev.2 확정 (전제 10축 중 9축 결정 반영 — SVN 산출물 저장소 + docker save tar 릴레이 + 빌드 서버 이관 경로 + 권장 스펙 산출). 구현 착수는 사용자 승인 대기
+feature_status_note: QA·라이브 분리 CI/CD 설계 rev.3 확정 (전제 13축 중 12축 결정 — SVN 안 A(매니페스트만)+파일서버 tar · docker save 릴레이 · 빌드 서버 이관 경로 · **로컬 LLM 전면 폐지로 GPU 불요**, 단 임베딩 사내 MCP 이관이 QA 세팅 선행 조건). 구현 착수는 사용자 승인 대기
 ---
 
 # Task
@@ -44,6 +44,8 @@ feature_status_note: QA·라이브 분리 CI/CD 설계 rev.2 확정 (전제 10�
 - [x] TASK-20260826T140000-qa-cicd-design 설계 제안 rev.1 (GitLab CI + Registry 전제)
 - [x] TASK-20260827T090000-qa-cicd-decisions 전제 10축 확정 → rev.2 전면 개정
       (SVN 산출물 저장소 · tar 릴레이 · 빌드 서버 이관 경로 · 라이브 분리 · 권장 스펙 실측 산출)
+- [x] TASK-20260827T100000-qa-cicd-rev3 전제 13축 확정 → rev.3
+      (SVN 안 A 확정 · **로컬 LLM 실태 코드 실측** · GPU 불요로 스펙 하향 · §9 임베딩 이관 신설)
 
 ### Phase 1 — 폐쇄망 빌드 재현성 (선행 필수)
 - [ ] TASK-P1-01 Dockerfile `FROM` 을 `${BASE_REGISTRY}` 파라미터화 + 베이스 이미지 tar 확보
@@ -68,13 +70,17 @@ feature_status_note: QA·라이브 분리 CI/CD 설계 rev.2 확정 (전제 10�
 - [ ] TASK-P3-04 `bin/release-promote.sh` + `promoted/current.json` 계약
 
 ### Phase 4 — QA 머신 구축 (인프라 확보 병렬)
-- [ ] TASK-P4-01 **하드웨어 확보** — CICD_DESIGN §6.2 권장 스펙 (16 vCPU / 48GB / 500GB NVMe / **GPU**)
-- [ ] TASK-P4-02 **GPU 선택 결정** — A(QA·라이브 모두 탑재, 권장) / B(라이브만) / C(둘 다 CPU)
+- [ ] TASK-P4-01 **하드웨어 확보** — CICD_DESIGN §6.2 권장 스펙
+      (**8~12 vCPU / 32GB / 400GB NVMe / GPU 불요** — 로컬 LLM 폐지 반영)
+- [ ] TASK-P4-02 **선행 확인: 임베딩 사내 MCP 이관 완료 여부** (CICD_DESIGN §9.4).
+      미완이면 ① QA 에 GPU 투입 또는 ② CPU 기준 타임아웃 재조정 + "성능 QA 무효" 명시 중 택일
 - [ ] TASK-P4-03 사내 CA 인증서 발급 + VPN DNS 레코드 등록
-- [ ] TASK-P4-04 오프라인 기반 설치 + read-only 자격증명 배치
-- [ ] TASK-P4-05 SOPS+age 시크릿 파이프라인 (LLM 자격증명 제외 — feature-0043 전제)
+- [ ] TASK-P4-04 오프라인 기반 설치 + read-only 자격증명 배치 (SVN + 파일서버 2종)
+- [ ] TASK-P4-05 SOPS+age 시크릿 파이프라인 — chat LLM 자격증명 제외(feature-0043 전제),
+      **임베딩 전용 계정은 예외로 포함**(최소 권한·범위 명시, CICD_DESIGN §9.5)
 - [ ] TASK-P4-06 라이브 백업 → QA 적재 + `bin/restore-rehearsal.sh` 검증 + 경유지 사본 삭제
 - [ ] TASK-P4-07 사내 PyPI/apt 미러 유무 확인 → Phase 1 안 A/B 확정
+- [ ] TASK-P4-08 사내 파일서버 경로 규약 + 보관 세대(권장 5) 정책 확정 (CICD_DESIGN §3.4)
 
 ### Phase 5 — 검증 게이트
 - [ ] TASK-P5-01 `bin/qa-smoke.sh` 6종 — health · 엣지 · **OAuth discovery 2종** ·
@@ -99,9 +105,12 @@ feature_status_note: QA·라이브 분리 CI/CD 설계 rev.2 확정 (전제 10�
 
 ## 5. Blocked
 - Phase 1~7 전체: BLOCKED: awaiting-human-approval — 본 cycle 은 설계 제안까지
-- TASK-P3-02: BLOCKED: clarification-needed — SVN 용량 정책 안 A/B 선택 (설계 판단 아닌 비용 결정)
-- TASK-P4-01/02: BLOCKED: awaiting-human-approval — 하드웨어 확보 + GPU 선택
+- TASK-P4-01: BLOCKED: awaiting-human-approval — 하드웨어 확보 (QA·라이브 2대, GPU 불요)
+- TASK-P4-02: BLOCKED: external-dependency — 임베딩 사내 MCP 이관은 **별도 작업**이며 그
+  완료 여부가 QA 스펙·일정에 영향 (CICD_DESIGN §9.4)
 - TASK-P4-07: BLOCKED: clarification-needed — 사내 PyPI/apt 미러 유무 (남은 유일한 미확인 전제)
+
+> rev.2 에서 BLOCKED 였던 TASK-P3-02(SVN 용량 정책)는 **안 A 확정**으로 해소됐다.
 
 ## 6. Done
 - TASK-20260826T140000-qa-cicd-design — 설계 제안 rev.1
@@ -111,6 +120,9 @@ feature_status_note: QA·라이브 분리 CI/CD 설계 rev.2 확정 (전제 10�
 사용자가 설계 방향을 승인하면 Phase 1(폐쇄망 빌드 재현성)부터 착수한다. Phase 4-01·4-03
 (하드웨어·사내 CA·DNS)은 리드타임이 있으므로 승인 즉시 병렬 요청을 넣는 것이 전체 일정에
 유리하며, TASK-P4-07(미러 확인)은 Phase 1 의 구현 방식을 확정하므로 가장 먼저 답이 필요하다.
+
+**순서 권고**: 임베딩 사내 MCP 이관(별도 작업)을 QA 세팅보다 **먼저** 끝내면 GPU 없이
+산정·구매할 수 있고 타임아웃 재조정과 그 되돌림이 불필요하다(CICD_DESIGN §9.4).
 
 ## 8. Requested Scope (요청 범위 자기-열거)
 
@@ -133,7 +145,12 @@ VPN 전용 접근, MCP 연결/역연결 사용)에서 사내 CI/CD 전 과정을
       라이브 분리)은 설계를 rev.2 로 전면 개정
 - [x] `권장 스펙 산출` — 산출물: §6 (현행 실측 + QA/라이브/빌드 머신 권장) ·
       배선 확인: `nproc`/`free`/`du`/compose `mem_limit` 실측 + GPU 상주 사실 확인
-- [x] `미결정 표면화` — 산출물: §8 (미러 1건 + 결정 요청 2건) + TASK §5 Blocked
+- [x] `미결정 표면화` — 산출물: §8 (미러 1건) + TASK §5 Blocked ·
+      배선 확인: rev.2 의 결정 요청 2건(SVN 정책·GPU)이 rev.3 에서 해소됨을 §8 에 명시
+- [x] `로컬 LLM 잔존 실태 직접 확인` (사용자 명시 요청) — 산출물: CICD_DESIGN §9.1~§9.3 ·
+      배선 확인: compose `embed-ollama` 정의 · `litellm_config.yaml` `titan-embed` alias ·
+      소비처 3경로(`kb_embedding_worker`·`kb_retrieval`·`sample_queries`) · 차원 고정 지점
+      (`AGENT_KB_EMBEDDING_DIM=1024`, `texts.embedding vector(1024)`) 를 코드로 실측
 
 **주장 affordance 실측 (G3)**: 해당 없음 — 본 cycle 산출물은 설계 문서이며 실행 가능한
 기능·UI 를 주장하지 않는다. 설계가 주장하는 것(폐쇄망 빌드 가능성·tar 신원 등가성)의 실측은

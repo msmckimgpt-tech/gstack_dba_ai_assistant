@@ -41,3 +41,24 @@ source_of_truth: true
 - Impact: 실행 표면 변경 0. 배포·런타임 무영향. 후속 구현 cycle 의 설계 근거가 rev.1 → rev.2 로 대체된다.
 - Rollback Notes: 문서 전용. revert 로 충분하며 런타임 영향이 없다. 다만 rev.1 로 되돌리면
   존재하지 않는 인프라(GitLab CI · Registry)를 전제한 설계로 회귀하므로 실익이 없다.
+
+## CHG-20260827-0002
+- Date: 2026-08-27
+- Related Requirement: REQ-20260826-qa-staging-pipeline
+- Summary: 잔여 결정 2건 확정 + 사용자 요청에 따른 **로컬 LLM 실태 코드 실측** 결과를 반영해
+  rev.3 로 개정. 코드 변경 없음. GPU 요구가 사라져 권장 스펙이 하향됐고, 임베딩 사내 MCP
+  이관이 QA 세팅의 **선행 조건**으로 추가됐다.
+- Files:
+  - `docs/CICD_DESIGN.md` — rev.3: §0.2 전제 10→13축 · §0.3.1 rev.2→rev.3 변경표 ·
+    §3.4 SVN 안 A 확정(매니페스트만 SVN + tar 는 파일서버, 보관 세대 정책) ·
+    §6.2 스펙 하향(16→8~12 vCPU · 48→32GB · 500→400GB · **GPU 불요**) ·
+    §6.3 GPU 결정변수 절을 "임베딩 이관이 스펙에 미치는 영향" 으로 대체 ·
+    §8 미결정 1건으로 축소 · **§9 신설**(로컬 LLM 폐지 현황·이관 제약·순서·함께 정할 것)
+  - `docs/FUNCTION.md` — 전제 11~13축 추가 · Out of Scope 에 임베딩 이관(별도 작업) 명시
+  - `docs/TASK.md` — frontmatter note · Phase 4 재편(GPU 항목 → 이관 선행 확인) ·
+    TASK-P4-08(파일서버 규약) 신설 · Blocked 갱신 · Requested Scope +1항 · Next Action 순서 권고
+  - `docs/DECISIONS.md` — ADR 2건 append (GPU-free by local LLM retirement / SVN 안 A)
+  - `docs/REPORT.md` · `docs/REVIEW.md` 갱신
+- Impact: 실행 표면 변경 0. 하드웨어 산정이 바뀌므로 **구매 요청 전 반드시 rev.3 기준**을 쓴다.
+- Rollback Notes: 문서 전용. revert 로 충분. rev.2 로 되돌리면 GPU 를 포함한 과잉 스펙으로
+  회귀하고, 실측으로 확인한 로컬 LLM 현황(§9)이 사라진다.
