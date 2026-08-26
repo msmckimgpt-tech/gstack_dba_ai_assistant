@@ -1,0 +1,126 @@
+---
+doc_type: REVIEW
+feature_id: feature-0043-external-llm-bridge
+status: active
+edit_policy: append-only
+source_of_truth: true
+---
+
+# Review
+
+## REV-20260826T142000-ai-claude-feature-0043 [CODEX:staged-diff] — CHANGES-REQUESTED
+
+- **일시**: 2026-08-26
+- **범위**: `git diff --cached` 37파일 (Step A·B·C 전체)
+- **모델**: gpt-5.6-sol (`codex exec -s read-only`, effort=high)
+- **판정**: **CHANGES-REQUESTED — P1 5건 · P2 3건**
+
+### 확인된 것 (통과)
+
+- 게이트 우회 경로 **없음** — chokepoint 2곳 외 직접 chat 클라이언트 생성은 의도적으로 제외한
+  임베딩 worker 뿐임을 codex 가 독립 확인.
+- `list_open_requests`·`claim_request` 의 `AccountId` 스코프와 `UPDATE ... ClaimedBy IS NULL`
+  원자성 자체는 올바름.
+- `git diff --cached --check` · MySQL DDL lint 통과.
+
+### P1 (치명 — 출하 전 수정 필수)
+
+| # | 발견 | 왜 치명적인가 |
+|---|---|---|
+| P1-1 | **HTTP MCP 어댑터에 신규 도구 2종 미등록** (`feature-0041/src/external_tool_mcp_http.py:309`) | REST 라우트만 추가돼 **주 접근 경로 `/api/ai/mcp` 에서 대기 질문을 발견·점유할 수 없다.** 사용자 요구("무설치 = URL+토큰 등록만")의 핵심을 정면으로 깬다 |
+| P1-2 | **브리지 분기가 LLM 토큰 쿼터 검사보다 뒤** (`conversations.py:4077` vs `:3514`) | 계정 토큰 한도가 소진되면 **서버 LLM 을 전혀 안 쓰는 브리지 요청도 429** 로 막힌다 — 쿼터 소진을 벗어나려는 전환 목적 자체가 무효화 |
+| P1-3 | **dispatch 반환 계약 미충족** (`conversations.py:4434`, `:65`) | `bridge_pending`·`bridge_task_id` 가 최종 JSON 조립에서 **버려지고** `conversation_id` 도 빈 값. 적재 실패 반환에 `_http_status` 가 없어 **DB INSERT 실패가 HTTP 200** 으로 나간다 |
+| P1-4 | **사용자 메시지가 대화에 저장되지 않음** (`conversations.py:55`) | 기존 agent 경로가 하던 user 메시지 저장이 누락. 대화 기록에서 질문이 사라지고, `claim_request` 도 현재 질문만 줘 **이전 문맥·첨부·role 을 개인 AI 에 전달하지 않는다** |
+| P1-5 | **claim 후 영구 점유** (`ai_tools.py:630`) | 점유를 먼저 커밋하고 원장을 뒤에 기록 → 원장 503 이나 AI 실행 실패 시 `ClaimedBy` 가 영구 유지돼 목록에서 사라진다. lease 만료·release 경로 없음 |
+
+### P2 (권고)
+
+| # | 발견 |
+|---|---|
+| P2-1 | `submit_answer` UPDATE 가 `ClaimedBy` 미검사 — 같은 계정 다른 세션이 claim 없이 먼저 제출 가능(원자적 claim 이 소유권으로 집행되지 않음) |
+| P2-2 | 신규 컬럼 3개를 **별도 ALTER 3회** — 단일 ALTER 로 묶고 신규 설치용 `CREATE TABLE` 에도 컬럼 포함 권장 |
+| P2-3 | 폴링 쿼리에 맞는 복합 인덱스 부재 — 현 `(AccountId, CreatedAt)` 는 과거 external/submitted task 까지 훑어 상시 폴링 부하 누적. `(AccountId, Origin, Status, ClaimedBy, CreatedAt)` 계열 필요 |
+
+### 조치
+
+**전건 미수정 상태로 이 cycle 을 마감하지 않는다.** P1 5건은 기능이 실제로 동작하지 않게 만들거나
+(P1-1·P1-3·P1-4) 전환 목적을 무효화하며(P1-2) 데이터를 고착시킨다(P1-5).
+
+수정 순서 (의존 고려):
+1. P1-2 — 브리지 분기를 쿼터 검사 **앞으로** 이동 (분기 위치 문제라 가장 먼저)
+2. P1-3 — 반환 계약 정합 (`bridge_*` 필드 전파 + 적재 실패에 `_http_status: 500`)
+3. P1-4 — user 메시지 저장 + `claim_request` 에 대화 문맥 포함
+4. P1-1 — HTTP/stdio MCP 어댑터 도구 등록 (주 경로 복구)
+5. P1-5 — claim lease(만료 시각) 또는 원장 실패 시 점유 롤백
+6. P2 3건
+
+### 메모
+
+codex 는 "신규 pytest 는 실행 환경에 사용 가능한 임시 디렉터리가 없어 시작되지 못했다" 고 보고했다 —
+샌드박스 제약이며, 본 세션에서 같은 스위트를 컨테이너 `make test` 로 전건 통과시켰다(`test-runs.d` 참조).
+
+---
+
+## REV-20260826T151500-ai-claude-feature-0043 [CODEX:remediation] — 조치 완료
+
+앞 리뷰(REV-20260826T142000)의 **P1 5건 · P2 3건 전건 수정**. 각 수정은 배선 회귀 테스트로 잠갔다
+(`tests/test_bridge_wiring.py` 25건) — 리뷰가 잡은 5건 중 4건이 "로직은 맞는데 호출되지 않거나
+잘못된 순서" 였으므로, 헬퍼 correctness 가 아니라 **배선**을 단정하는 층이 필요했다.
+
+| # | 조치 | 잠금 테스트 |
+|---|---|---|
+| P1-1 | HTTP·stdio MCP 어댑터 양쪽에 `list_open_requests`·`claim_request` 등록. stdio 는 정의만으로 부족해 `_register` 호출까지 단정 | `test_{http,stdio}_mcp_adapter_registers_bridge_tools` · `test_bridge_tools_registered_before_catchall` |
+| P1-2 | LLM 토큰 쿼터 게이트를 `if _server_llm_enabled():` 로 조건부화. 브리지는 우리 계정 토큰을 쓰지 않으므로 그 한도의 대상이 아니다. 남용 방어는 `tool_ledger` 상한으로 축이 이동(사라지지 않음) | `test_llm_quota_gate_is_conditional_on_server_llm` |
+| P1-3 | 반환에 `conversation_id` 추가 + 최종 JSON 조립에 `bridge_*` 전파 + 적재 실패에 `_http_status: 500` | `test_bridge_enqueue_returns_contract_fields` · `test_bridge_enqueue_failure_carries_http_status` · `test_ask_response_propagates_bridge_flags` |
+| P1-4 | 적재 **전에** 사용자 메시지 저장(task 적재가 실패해도 질문은 화면에 남는다) + `claim_request` 가 최근 6 turn 문맥을 각인해 함께 전달(4000자 상한, 절단 시 명시) | `test_bridge_saves_user_message` · `test_claim_request_includes_conversation_context` · `test_conversation_context_is_marked` |
+| P1-5 | 원장 실패 시 `_release_claim()` 으로 점유 롤백 — `Status='open'` 인 것만 되돌려 확정 불변 보존 | `test_claim_releases_on_ledger_failure` · `test_release_claim_preserves_submitted_tasks` |
+| P2-1 | `submit_answer` UPDATE 에 `AND (Origin <> 'web' OR ClaimedBy = %s)`. 미점유 제출은 409 로 사유 구분 안내 | `test_submit_answer_requires_claim_for_web_tasks` |
+| P2-2 | `CREATE TABLE` 에 3컬럼 포함 — 신규 설치는 ALTER 를 아예 돌지 않는다(기존 설치만 1회성 마이그레이션) | `test_create_table_includes_bridge_columns` |
+| P2-3 | `IX_WebAiTasks_Bridge (AccountId, Origin, Status, ClaimedBy, CreatedAt)` 을 CREATE TABLE·마이그레이션 양쪽에 추가(online DDL) | `test_bridge_polling_index_exists` · `test_bridge_ddl_is_online` |
+
+### 함께 완료한 것 (리뷰 밖)
+
+- **프론트 대기/폴링** — `payload.bridge_pending` 소비 → `_pollBridgeAnswer()`(5초 주기, 30분 상한).
+  답변 도착 시 `selectConversation()` 으로 대화 재로드. 사용자가 다른 대화로 옮기면 조용히 중단.
+  일시 네트워크 오류로 폴링이 죽지 않는다(다음 tick 재시도).
+- **`GET /api/ai/bridge_status`** 신설 — **웹 세션 인증**(외부 토큰 도달 불가) + 계정 스코프,
+  답변 **본문 미포함**(각인 블록이 두 경로로 새지 않게).
+
+### 남은 것
+
+- PB-0008 실 Windows 브라우저 시각검증 (웹 자산을 이번에 수정했으므로 필수)
+- 도달성 1-probe (`reachability_scope: included`)
+
+---
+
+## REV-20260827T000500-ai-claude-feature-0043 [CODEX:remediation-2] — 2차 조치 완료
+
+1차 조치분을 다시 리뷰시킨 결과 **P1 6건 · P2 3건**이 더 나왔다. 판정은 정확했다 — 특히 첫 번째는
+**기능 자체가 죽는 결함**이었고, 1차 조치가 "닫혔다" 고 본 것 중 일부는 절반만 닫혀 있었다.
+
+codex 의 자기 지적을 인용하면: *"핵심 회귀 테스트가 대부분 AST/문자열 배선 검사라 상태 전이·
+장애·권한 결함을 검출하지 못한다."* 이번 조치는 그 축을 겨냥한 테스트 17건을 함께 넣었다.
+
+### P1
+
+| # | 발견 | 왜 치명적인가 | 조치 |
+|---|---|---|---|
+| A | **폴링 성공 후 화면이 갱신되지 않음** — `selectConversation()` 은 이미 활성인 대화면 즉시 return(읽음처리만) | 폴링은 성공하고 토스트까지 뜨는데 **답변은 영영 안 보인다**. 브리지의 사용자 대면 결과가 통째로 사라진다 | `loadHistory({preserveScroll:true})` 로 교체 — 필요한 것은 대화 *전환*이 아니라 현재 대화 *재조회* |
+| B | `submitted` 와 대화 전달이 분리 — 원장 실패 시 확정됐는데 화면엔 없고 재제출은 409 | 복구 경로가 없는 상태가 굳는다 | 전달을 **원장보다 먼저** 수행. 원장 장애가 사용자 대면 결과를 훼손하지 않는다 |
+| C | `save_memory_message` 가 쓰기 실패를 삼키고 `0` 반환 — 호출부가 미확인 | 저장 실패에도 `delivered=true` 보고 | 반환값 확인 + `Delivered` 컬럼 기록 + 상태 API 가 `answered`/`delivered` 분리 보고 |
+| D | claim 이 원장 실패 **한 경로**에서만 해제 — 러너 종료·타임아웃·빈 답변은 점유 유지 | 질문이 목록에서 영구 소실 | **lease 30분** 도입. `list_open_requests`·`claim_request` 가 같은 술어(`_CLAIMABLE_SQL`) 공유 |
+| E | **공유 대화 권한이 claim/submit 시점에 재검증되지 않음** | 질문 후 그룹에서 퇴출된 계정이 최신 문맥을 읽고 그 대화에 답변을 쓴다 | `_conversation_access_denied()` 로 양 시점 재검증(fail-closed). 거부 시 점유 해제 |
+| F | 러너가 `conversation_context` 를 무시하고 `question` 만 전달 | P1-4 가 API 까지만 연결되고 러너에서 끊김 | `_compose_prompt()` 로 문맥+질문 조립 |
+
+### P2
+
+| # | 발견 | 조치 |
+|---|---|---|
+| A | 같은 계정의 **다른 세션**이 claim 없이 제출 가능 | `ClaimedClient` 컬럼 + submit 조건에 세션 비교(기존 행은 NULL 허용) |
+| B | user 메시지·task INSERT 별도 커밋 — 재시도 시 중복 / 저장 실패 미감지 | 순서를 **INSERT → 저장** 으로 뒤집고, 저장 실패 시 `_delete_bridge_task()` 로 적재 취소(미점유 open 만) |
+| C | 폴러가 401/403/404 도 30분 재시도 | 4xx 즉시 중단 |
+
+### 검증
+
+- feature-0043 스위트 **71건 green** (게이트 24 · 러너 5 · 배선 25 · **상태/장애/권한 17**)
+- 편집 Python 4파일 AST + `composer.js` ESM 구문 통과

@@ -210,6 +210,16 @@ def submit_answer(task_id: str, answer: str, source_tasks: list[str]) -> str:
                  {"task_id": task_id, "answer": answer, "source_tasks": source_tasks})
 
 
+# feature-0043 (external-llm-bridge) — 웹 대화 pull 브리지. HTTP 어댑터와 같은 이유로
+# 여기에도 등록해야 한다: 어댑터에 없는 도구는 클라이언트에게 존재하지 않는 것과 같다.
+def list_open_requests(limit: int = 20) -> str:
+    return _post("/api/ai/tools/list_open_requests", {"limit": limit})
+
+
+def claim_request(task_id: str) -> str:
+    return _post("/api/ai/tools/claim_request", {"task_id": task_id})
+
+
 def list_schemas(task_id: str, datasource: str | None = None) -> str:
     return _post("/api/ai/tools/list_schemas",
                  {"task_id": task_id, "arguments": {"datasource": datasource}})
@@ -268,6 +278,12 @@ _register("get_task_context", get_task_context,
           "테이블 이름을 알아낸 뒤 focus 에 그 이름들을 넣어 다시 부르면 해당 묶음 요약을 받는다.")
 _register("submit_answer", submit_answer,
           "최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수).")
+_register("list_open_requests", list_open_requests,
+          "웹 대화 화면에서 들어온 내 계정의 **대기 질문** 목록. 아직 아무도 가져가지 않은 "
+          "것만 반환한다. 처리하려면 claim_request 로 점유하라.")
+_register("claim_request", claim_request,
+          "대기 질문 1건을 점유하고 전문과 이전 대화 문맥을 받는다. 점유는 1회만 성공한다"
+          "(이미 가져간 질문은 409). 조사 후 submit_answer 로 제출하라.")
 _register("list_schemas", list_schemas, "접근 가능한 스키마(DB) 목록.")
 _register("describe_schema", describe_schema, "스키마의 테이블 목록과 개요.")
 _register("describe_table", describe_table, "테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다.")

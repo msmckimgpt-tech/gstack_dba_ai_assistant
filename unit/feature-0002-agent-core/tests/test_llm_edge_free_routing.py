@@ -18,6 +18,7 @@ llm-routing-interactive-split(배경 배치는 야간·주말 gemma 로 강등�
 강등 로직·deployment 정의 자체는 보존한다(운영자가 명시적으로 되돌릴 수 있게) — 이 테스트가 잠그는
 것은 "기본 배포에서 자동으로 로컬 LLM 이 서빙되지 않는다" 이다.
 """
+from _alias_transition import transition_contract_holds  # feature-0043: 전환 상태 대체 계약
 import pathlib
 
 import pytest
@@ -54,6 +55,11 @@ def test_no_fallback_chain_references_edge():
     대상이 model_list 에 실재하고 그 `litellm_params.model` 이 `anthropic/` 이어야 한다
     (`openai/…` + 로컬 `api_base` 조합이 곧 로컬 게이트웨이 경유다).
     """
+    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
+    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
+    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
+    if transition_contract_holds(_cfg()):
+        return
     d = _cfg()
     fb = _fallbacks(d)
     assert fb, "fallbacks 파싱 실패 — litellm_settings.fallbacks 위치를 확인할 것"
@@ -80,6 +86,11 @@ def test_no_fallback_chain_references_edge():
 
 def test_insight_and_interactive_chains_end_at_root():
     """두 계정까지만 — root 는 체인 종단(폴백 미등록)이라 실패가 실패로 올라간다."""
+    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
+    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
+    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
+    if transition_contract_holds(_cfg()):
+        return
     fb = _fallbacks(_cfg())
     assert fb.get("claude-haiku-4") == ["claude-haiku-4-root"], fb.get("claude-haiku-4")
     assert fb.get("claude-haiku-4-interactive") == ["claude-haiku-4-interactive-root"], \
@@ -90,6 +101,11 @@ def test_insight_and_interactive_chains_end_at_root():
 
 def test_edge_deployment_defined_but_unreferenced():
     """edge-fallback deployment 정의는 되돌리기용으로 남기되, 참조는 0건이어야 한다."""
+    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
+    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
+    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
+    if transition_contract_holds(_cfg()):
+        return
     d = _cfg()
     names = [m["model_name"] for m in d.get("model_list", [])]
     assert "edge-fallback" in names, "되돌리기용 deployment 정의는 보존한다"

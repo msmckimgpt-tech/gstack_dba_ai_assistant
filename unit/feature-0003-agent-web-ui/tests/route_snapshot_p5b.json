@@ -1,6 +1,6 @@
 {
-  "total_routes": 250,
-  "api_routes": 249,
+  "total_routes": 253,
+  "api_routes": 252,
   "ordered": [
     {
       "path": "/static",
@@ -1689,9 +1689,30 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/ai/tools/list_open_requests",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/tools/claim_request",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/ai/tools/{tool_name}",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/bridge_status",
+      "methods": [
+        "GET"
       ],
       "type": "APIRoute"
     },

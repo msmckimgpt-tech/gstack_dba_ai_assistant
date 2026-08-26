@@ -53,6 +53,7 @@ import {
   renderAccessNotice,
   renderConversationHeader,
   renderLlmRestrictionInlineNotice,
+  loadHistory,          // feature-0043: 브리지 답변 도착 시 현재 대화 history 재조회
   renderMessages,
   renderPendingAssistantBubble,
   renderProductChip,
@@ -378,6 +379,53 @@ function _detachShareRangeEsc() {
   if (!_shareRangeEscHandler) return;
   document.removeEventListener("keydown", _shareRangeEscHandler, true);
   _shareRangeEscHandler = null;
+}
+
+// ── feature-0043 (external-llm-bridge) — 브리지 답변 폴링 ──────────────────────
+// 서버 LLM 이 잠긴 상태에서 `/api/ask` 는 답변 대신 **대기 작업**을 만든다. 실제 답변은
+// 사용자의 개인 머신 AI 가 `submit_answer` 로 제출하는 순간 대화에 저장되므로, 화면은 그
+// 시점을 스스로 알아채야 한다.
+//
+// `/api/ask_result` long-poll 을 재사용하지 않는 이유: 그쪽은 서버 run(`run_id`) 의 진행
+// 단계를 읽는데, 브리지에는 run 자체가 없다. 상태의 출처가 다르므로 경로도 분리한다.
+const _BRIDGE_POLL_MS = 5000;
+//: 30분. 개인 AI 가 꺼져 있으면 답은 오지 않는다 — 무한 폴링으로 탭을 붙잡아 두지 않고,
+//: 그 사실을 안내한 뒤 멈춘다(대화를 다시 열면 그 사이 도착한 답변은 그대로 보인다).
+const _BRIDGE_POLL_MAX_TICKS = 360;
+
+async function _pollBridgeAnswer(taskId, convId) {
+  if (!taskId) return;
+  for (let tick = 0; tick < _BRIDGE_POLL_MAX_TICKS; tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, _BRIDGE_POLL_MS));
+    // 사용자가 다른 대화로 옮겼으면 조용히 멈춘다 — 남의 화면을 갱신하지 않는다.
+    if (convId && String(state.activeConversationId || "") !== String(convId)) return;
+    let status;
+    try {
+      status = await apiFetch(`/api/ai/bridge_status?task_id=${encodeURIComponent(taskId)}`);
+    } catch (err) {
+      // 4xx 는 재시도해도 달라지지 않는다 — 세션 만료(401)·권한 상실(403)·삭제된 task(404)
+      // 에서 30분간 계속 두드리면 요청만 쌓인다. 5xx·네트워크만 일시 장애로 보고 재시도한다.
+      const code = Number(err && (err.status || err.statusCode || err.code)) || 0;
+      if (code >= 400 && code < 500) return;
+      continue;
+    }
+    if (status && status.answered) {
+      // ⚠ `selectConversation()` 을 쓰면 안 된다 — **이미 활성인 대화면 즉시 return** 하도록
+      //   설계돼 있어(app.js, 읽음처리만 수행) history 를 다시 읽지 않는다. 그러면 폴링은
+      //   "성공" 하고 토스트까지 뜨는데 화면에는 답변이 영영 나타나지 않는다(codex 재리뷰 P1).
+      //   여기서 필요한 것은 대화 *전환* 이 아니라 현재 대화의 **재조회**다.
+      try {
+        await loadHistory({ preserveScroll: true });
+      } catch (err) {
+        // 재조회 실패는 치명이 아니다 — 답변은 저장돼 있고 사용자가 대화를 다시 열면 보인다.
+      }
+      showToast(status.delivered === false
+        ? "답변이 도착했지만 대화에 반영하지 못했습니다. 새로고침해 주세요."
+        : "내 AI 가 답변을 보냈습니다.");
+      return;
+    }
+  }
+  showToast("아직 답변이 오지 않았습니다. 내 AI(MCP 연결)가 켜져 있는지 확인해 주세요.");
 }
 
 // TASK-0041: /api/ask_result 를 long-poll 방식으로 반복 호출해
@@ -2864,7 +2912,17 @@ async function sendPrompt() {
       });
     }
     _renderAttachmentPills();
-    showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
+    // feature-0043 (external-llm-bridge): 서버가 답변을 만들지 않고 **대기 작업**으로 적재한
+    // 경우다. 화면에는 대기 안내가 이미 말풍선으로 들어갔고, 실제 답변은 사용자의 개인 머신
+    // AI 가 제출하는 순간 대화에 저장된다 — 그때 화면을 갱신하려면 폴링이 필요하다.
+    // 이 분기가 없으면 사용자는 "AI 가 대기 안내만 하고 영영 답이 없다" 고 보게 된다(대화를
+    // 직접 다시 열기 전까지). 폴링은 await 하지 않는다 — 전송 흐름을 막지 않는다.
+    if (payload.bridge_pending && payload.bridge_task_id) {
+      showToast("내 AI 가 처리할 질문으로 등록했습니다.");
+      _pollBridgeAnswer(String(payload.bridge_task_id), String(payload.conversation_id || ""));
+    } else {
+      showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
+    }
     // TASK-0274: assistant 가 첨부를 수정해 새 버전을 생성했으면 사용자에게 안내.
     if (Array.isArray(payload.edited_attachments) && payload.edited_attachments.length) {
       const names = payload.edited_attachments

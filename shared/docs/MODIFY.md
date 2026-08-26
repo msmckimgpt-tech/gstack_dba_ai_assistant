@@ -161,3 +161,11 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - 교차 참조 정본: `unit/feature-0003-agent-web-ui/docs/MODIFY.md`
   CHG-20260812T181700-ai-claude-hangul-qwerty-search · REVIEW.md REV-20260812T181700-… ·
   FUNCTION.md REQ-20260812-hangul-qwerty-search.
+
+## CHG-20260826T135206-external-llm-bridge
+- Date: 2026-08-26
+- Changed By: feature-0043-external-llm-bridge (AI) — 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0043-external-llm-bridge`
+- Summary: `shared/llm_gate.py` **신규** — 서버 보유 계정(claude-corp/root) LLM 호출의 fail-closed 게이트 단일 정본. `server_llm_enabled()`(기본 **False** = 차단; env `AGENT_SERVER_LLM_ENABLED` 로만 해제) · `note_server_llm_blocked(caller)`(caller별 60초 throttle 로그 — 무음 실패 금지) · `server_llm_blocked_message()`(내부 식별자 없는 사용자 대면 문구) · `reset_gate_cache_for_tests()`. **코드 기본값을 차단으로 둔 이유**: `.env` 는 gitignore, `config/` 는 미배포라 설정을 정본으로 삼으면 "설정이 안 실린 환경에서 잠금이 풀리는" 뒤집힌 안전성이 생긴다. 기존 shared 모듈은 무변경(additive).
+- Files: `shared/llm_gate.py` (신규)
+- Affected Features: feature-0002-agent-core(`modules/llm._get_llm_client`·`agent_core._run_agent_core` 에서 호출), feature-0003-agent-web-ui(`routers/conversations` 의 `/api/ask` 분기), feature-0007-bedrock-llm-provider(`litellm_config.yaml` 두 번째 자물쇠), feature-0041-external-ai-tool-surface(도구 표면이 브리지 수용부)
+- Cross-ref: `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` CHG-20260826T135206-ai-claude-feature-0043
