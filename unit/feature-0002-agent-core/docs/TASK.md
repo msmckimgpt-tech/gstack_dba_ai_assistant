@@ -3278,4 +3278,7 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
 - [x] `extra_body` 에서 timeout 제거(thinking/output_config 만 유지).
 - [x] 옛 계약 고정 테스트 3곳 전환(본문 금지 + request option 보존 2축 단언).
 - [x] 신규 전수 가드(6파일 AST, 3형태) + 뮤테이션 5건 KILL.
-- [ ] **배포 후 실제 대화로 재검증** — 배포본 함수 직접 호출은 이 결함을 못 드러낸다.
+- [x] **배포 후 실제 대화로 재검증** — PR #1344 merge(main `d3c2373a`) → `make deploy-web` 전체
+      스코프(6서비스 `d3c2373a` healthy · caddy blip 0). **실제 ask 파이프라인**으로 동일 조건
+      (`reasoning_level=max`) 요청 → HTTP 200 · 42초 · job 745 `done`, attempts=1, answer 1,316자.
+      게이트웨이 `client_side_timeout` 0건. 직전 실패(job 744 error/attempts=3/answer 0)와 대조 완료.

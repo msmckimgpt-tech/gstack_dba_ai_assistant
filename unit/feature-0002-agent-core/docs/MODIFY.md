@@ -2571,3 +2571,18 @@ identity** 여야 Anthropic 이 허용한다. 없으면 429 `rate_limit_error` �
 - **라이브 미검증분**: 배포 후 실제 대화 성사는 배포 뒤 확인 대상. 어제 같은 실수를 반복하지 않도록
   이번에는 **실제 대화 경로(ask 파이프라인)** 로 검증한다 — 배포본 함수 직접 호출은 이 결함을
   드러내지 못했다(request option 만 쓰므로 200 이 나온다).
+
+## CHG-20260826T020000-body-timeout-deploy-record
+
+`CHG-20260826T010000-body-timeout-poisons-provider-request` 의 **배포·라이브 검증 기록**(문서 전용, 코드 변경 없음).
+
+- **배포 완료**(2026-08-26): PR #1344 merge main `d3c2373a` → `make deploy-web` 전체 스코프.
+  6서비스 실물 이미지 `d3c2373a` healthy · caddy `no upstreams available` **0건**.
+- **라이브 검증(실제 ask 파이프라인)**: 사용자와 같은 진입점·같은 조건(`reasoning_level=max`)으로
+  요청 → **HTTP 200 · 42초 · job 745 `status=done`, attempts=1, answer 1,316자**(실제 DB 조회 결과를
+  담은 정상 답변). 검증 구간 게이트웨이 `client_side_timeout` **0건**, chat 요청 5건 전부 200.
+- **대조**: 수정 전 job 744 = `error`/attempts=3/answer **0**/사용자 표면 "AWS Bedrock 서비스가
+  일시적으로 응답하지 않습니다". 수정 후 job 745 = `done`/attempts=1/1,316자.
+- **검증 방식의 교훈**: 2026-08-25 에는 배포본 함수를 직접 호출해 "해소" 로 오판했다. 그 경로는
+  request option 만 쓰므로 이 결함(본문 timeout)을 건드리지 않아 200 이 나온다. 이번에는 **실제
+  대화 경로**로 검증했다 — `FUNCTION.md` 「검증 경로 주의」에 계약으로 명시.
