@@ -147,4 +147,10 @@ if [ "$RC" -ne 0 ] || ! printf '%s' "$OUT" | grep -q 'SMOKE_OK'; then
   exit 1
 fi
 
-echo "[smoke-conv] PASS — 배포본 대화 경로에서 답변 생성 확인."
+# 전환 모드와 종전 모드는 **다른 것을 확인했다**. 같은 문구로 뭉치면 "답변이 생성된다" 는
+# 주장이 차단 확인 위에 얹혀 로그를 읽는 사람을 오도한다(feature-0043).
+if printf '%s' "$OUT" | grep -q 'SMOKE_OK gate:'; then
+  echo "[smoke-conv] PASS — 서버 계정 LLM 차단 확인(전환 모드). 대화 답변은 사용자 개인 AI 가 생성한다."
+else
+  echo "[smoke-conv] PASS — 배포본 대화 경로에서 답변 생성 확인."
+fi
