@@ -399,6 +399,11 @@ source_of_truth: true
   자신 있게 틀린 답을 내는 것을 원천 차단). 표시·저장·usage `model` 컬럼·max_tokens·thinking·vision 판정은
   **원본** model(claude-haiku-4)을 유지하고 실제 서빙은 `resolved_model` 로 추적. insight 배치(`claude-haiku-4`)·
   분석(`claude-haiku-4-interactive`)의 gemma 강등은 무영향(alias 분리).
+- ~~LLM 타임아웃 콘솔 동기화 (CHG-20260724T054326-timeout-console-sync)~~ — **SUPERSEDED**
+  (2026-08-26, CHG-20260826T010000-body-timeout-poisons-provider-request). 아래 본문은 이력으로 남기되
+  **현행 계약이 아니다**: body `timeout` 주입은 게이트웨이가 provider 400 을 만들어 라이브 대화를 전면
+  중단시켰다. 현행 계약은 이 문서 하단 「provider 요청 본문 위생」 절이며, **콘솔 live 동기화 축은
+  상실**됐다(게이트웨이는 정적 `request_timeout: 300` 을 따른다). 원문:
 - LLM 타임아웃 콘솔 동기화 (CHG-20260724T054326-timeout-console-sync): 대화 LLM 호출의 upstream 타임아웃을
   관리 콘솔 **'설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃'**(`AGENT_TIMEOUT_SEC`, apply_mode=live)과
   **요청 단위로 실동기화**한다. gateway(bedrock-gateway=litellm)는 앱과 별도 프로세스라 정적 `litellm_config`
@@ -1416,3 +1421,32 @@ budget 계열(Haiku)·로컬 LLM 은 미요구 — 관문이 원본을 그대로
 ② 대화 답변 경로(`agent_core`)의 관문 호출 ③ 보조 chokepoint(`_openai_chat_completion_with_deadline`)
 의 관문 호출을 단언한다. 이 배선 검사가 없으면 헬퍼 단위 테스트는 전부 통과하면서 라이브만 429 가
 되는 사각이 남는다(2026-07-24 봉인이 2026-08-25 에 그 형태로 재발했다). 정책 정본: `AGENTS.md §15.2.1`.
+
+## provider 요청 본문 위생 — 전송 계층 파라미터 금지 (2026-08-26)
+
+**AC-1 (본문 금지)**: `extra_body`(= provider 요청 JSON 본문)에 전송 계층 키
+(`timeout` · `request_timeout` · `stream_timeout` · `client_side_timeout`)를 싣지 않는다.
+`extra_body` 는 provider 스펙 필드(`thinking` · `output_config`)만 운반한다.
+
+**AC-2 (상한은 request option 으로 — 다만 앱 층에 한정)**: per-attempt 상한은 OpenAI SDK 의
+request option(`create(timeout=…)`, 스트리밍은 `_stream_kwargs["timeout"]`)과 클라이언트 생성
+인자로만 전달한다. 콘솔 `AGENT_TIMEOUT_SEC` 값이 그 경로로 도달함을 테스트가 단언한다.
+
+⚠ **상실된 축(정직 표기 — 적대 리뷰 2026-08-26 지적)**: 이 request option 은 **앱의 HTTP
+클라이언트만** 제한한다. 게이트웨이(별도 litellm 프로세스)는 정적 `request_timeout: 300`
+(`litellm_config.yaml`)을 따르므로, 콘솔을 450 으로 올리거나 연장 승인으로 900 을 주어도
+**게이트웨이가 300초에서 먼저 끊을 수 있다**. 종전 "콘솔 값 = per-attempt upstream 상한"
+계약의 **게이트웨이 동기화 축은 깨졌다**. 300초를 넘기는 상한이 실제로 필요해지면 게이트웨이
+정적 ceiling 을 최대 허용값과 정합시켜야 한다(별 트랙 — 원장 후속 항목).
+
+**왜**: litellm 은 요청에 timeout 이 있으면(본문이든 헤더든) 내부 마커 `client_side_timeout` 을
+심고, 그 마커가 Anthropic 요청 body 로 새어 **400 `Extra inputs are not permitted`** 를 만든다.
+1차·폴백이 같은 body 를 쓰므로 전 경로가 죽는다(2026-08-26 라이브 대화 전면 실패). 헤더 전환은
+해법이 아니다 — 같은 마커를 심는다.
+
+**배선 불변식 (테스트로 강제)**: `tests/test_provider_request_body_hygiene.py` 가 provider 요청을
+조립하는 6개 파일 전수에 대해 dict 리터럴·변수 경유·사후 첨자 주입 3형태를 AST 로 검사한다.
+
+**검증 경로 주의(중요)**: 이 결함은 **배포본 함수를 직접 호출하는 검증으로는 드러나지 않는다** —
+그 경로는 request option 만 쓰므로 200 이 나온다. 반드시 **실제 ask 파이프라인**(대화 경로)으로
+검증해야 한다. 2026-08-25 에 함수 직접 호출로 "해소" 를 오판한 선례가 있다.

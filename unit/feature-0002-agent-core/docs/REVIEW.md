@@ -2390,3 +2390,34 @@ Verdict: **SKIPPED** — 패널 미실시. 사유: 코드 변경 0(문서 전용
 `no upstreams available` 0건 · 배포본 ask-worker 런타임에서 frontier 호출 200
 (`served_model=claude-sonnet-4-chat`). 미측정분(실사용자 corroboration 시계열)은 원장에 축 한정으로
 정직 표기했다.
+
+## REV-20260826T012000-body-timeout-poisons-provider-request [CODEX:3-lens] backend + qa + security
+
+Verdict: **PASS(수정 후)** — R1 [P1] 2 · [P2] 2 전부 흡수. 대상:
+`CHG-20260826T010000-body-timeout-poisons-provider-request`(요청 본문 timeout 제거).
+Trigger: §18.8 키워드 — LLM 요청 조립/라우팅(코어 경로). Agent tool 미사용(세션 지시) → `[CODEX:*]`.
+
+### R1 지적과 처리
+
+| # | 등급 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1/backend | "실효 per-attempt 상한 보존" 은 **거짓** — request option 은 앱 클라이언트만 제한하고, 게이트웨이는 정적 `request_timeout: 300` 을 따른다. 콘솔 450·연장 900 을 줘도 300s 에서 끊긴다 | **수용·정정** — MODIFY/FUNCTION 의 거짓 주장을 철회하고 상실된 축을 명시. 원장에 별도 항목(`FR-gateway-static-timeout-ceiling-breaks-extension`) 분리 |
+| 2 | P1/qa | 옛 계약을 고정하던 테스트가 **잔존**해 현재 스위트가 실패(`test_conversation_answer_no_edge_alias.py` 2곳) | **흡수** — 2곳을 "본문 금지 + request option 도달" 2축으로 전환. `test_timeout_extension` 주석도 정정 |
+| 3 | P2/qa | AST 가드가 `kwargs["extra_body"] = {...}` 와 `_extra_body.update({...})` 를 놓침 — "3형태 봉인" 은 과장 | **흡수** — 두 형태 검출 추가(합성 AST 로 검출 확인), docstring 을 4형태 + 정적 검사 한계 명시로 정정 |
+| 4 | P2/docs | 같은 FUNCTION.md 가 앞에서 body timeout 을 규정하고 뒤에서 금지 — 정면 충돌 | **흡수** — 앞 절에 SUPERSEDED 표기 + 현행 계약 절 참조 |
+
+security 렌즈: **없음**(인증·인가·비밀·입력 실행 경계 신규 취약점 없음).
+
+### 검증
+
+- 신규 12 PASS · `test_reasoning_effort` 29 · `no_edge_alias`·`timeout_extension` 포함 83 PASS.
+- 뮤테이션: body timeout 복원 → **5건 KILL**. codex 지목 우회 2형태 → 보강 후 **둘 다 검출**.
+- 전체 스위트 잔여 실패 8건은 `psycopg` 미설치 환경 baseline(main 동일, 회귀 0).
+
+### 미해결 (정직 표기)
+
+- **게이트웨이 상한 300s 제약**은 이번 cycle 에서 해소하지 않았다(원장 후속 항목). 연장 승인 900s 는
+  현재 게이트웨이에서 300s 로 잘린다. 그럼에도 이 변경을 택한 이유는 body timeout 유지 시
+  **모든 대화가 400 으로 실패**하기 때문이다.
+- 정적 AST 검사는 동적 조립까지 잡지 못한다. 최종 안전망은 **실제 ask 파이프라인 라이브 검증**이며,
+  배포본 함수 직접 호출로는 이 결함이 드러나지 않는다(2026-08-25 오판 선례).

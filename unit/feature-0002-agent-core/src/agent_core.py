@@ -6252,15 +6252,26 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         int(timeout_override) if timeout_override and int(timeout_override) > 0
         else max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC")))
     )
-    # conv-audit FR-llm-attempt-cap-inside-latency-tail: body `timeout` 은 **종전 그대로**
-    # 콘솔 값을 싣는다(feature-0007 계약 보존). 초판은 "스트리밍에서 gateway 가 전체 스트림을
-    # 이 값으로 자를 것" 이라 보고 run 예산 배수로 키웠으나, **라이브 실측이 그 가정을 반증**
-    # 했다 — body timeout=3s 로 6.5초 스트림을 요청해도 절단되지 않았다(litellm 은 스트리밍
-    # 요청에서 이 값을 전체 스트림 상한으로 적용하지 않는다). 근거 없이 운영자 계약("콘솔
-    # 값이 곧 per-attempt upstream 상한")을 깨지 않는다. 아래 per-request 클라이언트 timeout
-    # 만 의미가 바뀐다 — 스트리밍에서 그것은 "완료까지" 가 아니라 **chunk 간 무응답** 상한이다.
+    # conv-audit FR-body-timeout-poisons-provider-request(2026-08-26): **body `timeout` 을 싣지
+    # 않는다.** 종전에는 `_extra_body = {"timeout": _timeout_sec}` 로 요청 **본문**에 실었고
+    # (feature-0007 "콘솔 값 = per-attempt upstream 상한" 계약), 구 litellm 은 이 필드를 무시해
+    # 무해했다. 그러나 게이트웨이가 litellm 1.98.0 으로 갱신되면서 **요청에 timeout 이 있으면**
+    # 내부 마커 `data["client_side_timeout"]=True` 를 심고(`litellm_pre_call_utils.py`, 클라이언트가
+    # 짧은 timeout 으로 deployment cooldown 을 유발하는 것을 막는 방어), 그 마커가 Anthropic 요청
+    # body 에서 제거되지 않은 채 전달돼 **400 `client_side_timeout: Extra inputs are not permitted`**
+    # 이 된다. 1차·폴백이 같은 body 를 쓰므로 전 경로가 죽는다 — 라이브 대화 전면 실패(실측).
+    #
+    # 헤더 전환(`x-litellm-timeout`)은 해법이 **아니다**: litellm 은 body 든 헤더든
+    # (`header_timeout is not None or request_data.get("timeout") is not None`) 같은 마커를 심는다.
+    # 요청에 timeout 을 아예 싣지 않는 것이 유일한 회피다.
+    #
+    # 계약 영향(정직 표기): 게이트웨이→provider 구간 상한은 이제 litellm config 기본값을 따른다.
+    # 다만 종전 주석이 이미 인정했듯 body timeout 은 **스트리밍 전체 상한으로 적용되지 않음이
+    # 라이브로 반증**됐고(3s body timeout 으로 6.5초 스트림 무절단), per-attempt 상한의 실효는
+    # 아래 per-request 클라이언트 timeout(`_stream_kwargs["timeout"]`, request option — 본문 아님)이
+    # 그대로 유지한다. 즉 실효 상한은 보존되고 무해했던 중복 필드만 제거된다.
     _stream_on = bool(getattr(cfg, "AGENT_LLM_STREAM_ENABLED", True))
-    _extra_body: dict[str, Any] = {"timeout": _timeout_sec}
+    _extra_body: dict[str, Any] = {}
     _think_style = model_thinking_style(model)
     if _think_style == "budget":
         _think_budget = thinking_budget_for_level(reasoning_level)
@@ -6284,7 +6295,9 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         _effort = effort_for_reasoning_level(reasoning_level)
         if _effort is not None:
             _extra_body["output_config"] = {"effort": _effort}
-    # extra_body 는 timeout(항상)+thinking/output_config(해당 시)를 병합해 항상 전달한다.
+    # extra_body 는 thinking/output_config(해당 시)만 싣는다 — **timeout 은 넣지 않는다**
+    # (위 FR-body-timeout-poisons-provider-request: 요청 본문의 timeout 이 게이트웨이 마커를
+    # 트리거해 provider 400 을 만든다). 주입할 게 없으면 빈 dict 를 그대로 전달한다(종전 동작 유지).
     kwargs["extra_body"] = _extra_body
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     # ── conv-audit FR-llm-attempt-cap-inside-latency-tail: 스트리밍 수집 ──────────

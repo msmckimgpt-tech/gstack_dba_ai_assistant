@@ -3267,3 +3267,15 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
   사용자를 무관한 조치로 유도하는 결함.
 - 폴백 체인이 동일 등급(sonnet→sonnet-root) 안에서만 돌아, 상위 등급이 막히면 가용한 budget
   등급으로 내려가지 못하는 구성.
+
+## TASK-20260826T010000-body-timeout-poisons-provider-request — 요청 본문 timeout 제거
+
+라이브 대화 전면 실패(사용자 스크린샷 + 재현)의 직접 원인. 원장:
+`FR-body-timeout-poisons-provider-request`.
+
+- [x] 재현 확정 — 실제 ask 파이프라인 호출로 job 744 error(answer 0) 재현.
+- [x] 근본 격리 — `extra_body["timeout"]` 유무가 유일한 변수(동일 모델·시각 A/B, 400 vs 200).
+- [x] `extra_body` 에서 timeout 제거(thinking/output_config 만 유지).
+- [x] 옛 계약 고정 테스트 3곳 전환(본문 금지 + request option 보존 2축 단언).
+- [x] 신규 전수 가드(6파일 AST, 3형태) + 뮤테이션 5건 KILL.
+- [ ] **배포 후 실제 대화로 재검증** — 배포본 함수 직접 호출은 이 결함을 못 드러낸다.

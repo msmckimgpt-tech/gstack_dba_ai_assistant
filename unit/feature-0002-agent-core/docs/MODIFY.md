@@ -2513,3 +2513,61 @@ identity** 여야 Anthropic 이 허용한다. 없으면 429 `rate_limit_error` �
   확인. 앞서 "코드/테스트로 증명됨 vs 배포 후 실측 필요" 로 분리 표기했던 후자가 이로써 닫혔다.
 - **여전히 미측정**: 실사용자 대화에서의 재발 빈도 감소(corroboration 시계열) — 표본이 쌓여야 한다.
   그래서 원장 status 는 `fixed:deployed:verified(경로 축)` 로 축을 한정했다.
+
+## CHG-20260826T010000-body-timeout-poisons-provider-request
+
+대화 LLM 요청의 **본문**에서 `timeout` 을 제거했다. 라이브 대화 전면 실패의 직접 원인이다.
+
+### 왜
+
+`_call_llm` 은 per-attempt 상한을 `extra_body={"timeout": _timeout_sec}` 로 요청 **본문**에 실었다
+(feature-0007 "콘솔 값 = per-attempt upstream 상한" 계약). 구 게이트웨이는 이 필드를 무시해
+무해했으나, 게이트웨이가 **litellm 1.98.0** 으로 갱신되면서 동작이 바뀌었다 — 요청에 timeout 이
+있으면 내부 마커 `data["client_side_timeout"]=True` 를 심고(`litellm_pre_call_utils.py`, 클라이언트가
+짧은 timeout 으로 deployment cooldown 을 유발하는 것을 막는 방어), 그 마커가 Anthropic 요청 body
+에서 제거되지 않은 채 전달돼 **400 `client_side_timeout: Extra inputs are not permitted`** 가 된다.
+1차와 폴백이 같은 body 를 쓰므로 **전 경로가 죽는다**.
+
+### 라이브 실증 (2026-08-26)
+
+- 실제 ask 파이프라인 호출 → job 744 `status=error`, attempts=3, answer 길이 **0**,
+  사용자 표면 문구 "AWS Bedrock 서비스가 일시적으로 응답하지 않습니다"(스크린샷과 동일).
+- 게이트웨이 로그: 1차부터 400 `client_side_timeout`, `Cooldown Deployments=[]`.
+- **결정적 대조**(동일 모델·동일 시각): `extra_body={"timeout":300}` → **400** /
+  `extra_body={"timeout":300,"thinking":…}` → **400** / `extra_body` 없음 → **200**.
+  `create(timeout=…)`(request option)만 쓴 요청은 전부 200 — 본문 여부가 유일한 변수다.
+
+### 변경
+
+- `agent_core.py`: `_extra_body = {"timeout": _timeout_sec}` → `{}`. thinking/output_config 만 싣는다.
+- `tests/test_reasoning_effort.py`: 옛 계약(본문 timeout 필수)을 고정하던 단언 3곳을 **뒤집었다** —
+  본문에 timeout 이 **없어야** 하고, 실효 상한은 request option(`kwargs["timeout"]`)으로 도달해야 한다.
+- `tests/test_provider_request_body_hygiene.py`(신규 12): provider 요청을 조립하는 6개 파일 전수에
+  대해 `extra_body` 에 전송 계층 키(`timeout`/`request_timeout`/`stream_timeout`/`client_side_timeout`)가
+  없음을 AST 로 강제. dict 리터럴·변수 경유·사후 첨자 주입 3형태를 모두 본다.
+
+### 계약 영향 (정직 표기)
+
+**초판에 "실효 상한은 보존된다" 고 썼으나 그것은 거짓이었다**(적대 리뷰 지적, 수용·정정).
+
+- 앱 층: per-attempt 상한은 request option 이 그대로 유지한다(콘솔 값 도달을 테스트가 단언).
+- **게이트웨이 층: 상실**. 게이트웨이는 별도 litellm 프로세스이고 정적 `request_timeout: 300`
+  (`litellm_config.yaml`)을 따른다. 콘솔 450 이나 연장 승인 900 을 설정해도 **게이트웨이가 300초에서
+  먼저 끊을 수 있다**. 즉 CHG-20260724T054326-timeout-console-sync 의 "콘솔 live 값이 곧 upstream
+  상한" 계약은 **깨진다**. 300초 초과 상한이 실제로 필요하면 게이트웨이 정적 ceiling 을 최대
+  허용값과 정합시켜야 한다 — 원장 후속 항목으로 분리했다(이번 cycle 범위 밖: 게이트웨이 config 축).
+
+그럼에도 이 변경을 택한 이유: body timeout 을 유지하면 **모든 대화가 400 으로 실패**한다(전면 장애).
+상한 축의 부분 상실은 그보다 훨씬 작은 대가다. 또한 종전 주석이 이미 인정했듯 body timeout 은
+스트리밍 전체 상한으로 적용되지 않음이 라이브로 반증돼 있었다(3s body timeout 으로 6.5초 스트림
+무절단) — 상실된 축의 실효도 이미 부분적이었다.
+
+헤더 전환(`x-litellm-timeout`)은 해법이 아니다 — litellm 은 body 든 헤더든 같은 마커를 심는다(코드 확인).
+
+### 검증
+
+- 신규 12 PASS · `test_reasoning_effort` 29 PASS(계약 전환 반영) · 회귀 0.
+- **뮤테이션 역검증**: body timeout 복원 → **5건 KILL**(신규 가드 2 + 계약 테스트 3).
+- **라이브 미검증분**: 배포 후 실제 대화 성사는 배포 뒤 확인 대상. 어제 같은 실수를 반복하지 않도록
+  이번에는 **실제 대화 경로(ask 파이프라인)** 로 검증한다 — 배포본 함수 직접 호출은 이 결함을
+  드러내지 못했다(request option 만 쓰므로 200 이 나온다).
