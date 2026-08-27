@@ -1,6 +1,6 @@
 {
-  "total_routes": 255,
-  "api_routes": 254,
+  "total_routes": 256,
+  "api_routes": 255,
   "ordered": [
     {
       "path": "/static",
@@ -1720,6 +1720,13 @@
       "path": "/api/ai/tools/{tool_name}",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/bridge_stream",
+      "methods": [
+        "GET"
       ],
       "type": "APIRoute"
     },

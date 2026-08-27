@@ -1,0 +1,557 @@
+"""feature-0043 — 인터럽트 · 맥락 전환 · 진행 스트리밍 · 병렬의 **계약 회귀** (2026-08-28).
+
+## 이 스위트가 잠그는 것
+
+전환 이후 브리지 경로에는 기존 경로가 가지고 있던 런타임 조작면 3종이 통째로 빠져 있었다.
+빠진 방식이 특징적이다 — **계산이 아니라 연결이 끊긴 형태**라 헬퍼 단위 테스트로는 전부
+통과했다(P0-E 가 겪은 것과 같은 부류):
+
+- `/api/cancel` 은 멀쩡히 동작했다. 다만 `WebAiTasks` 를 **보지 않았다**.
+- 중단 버튼 로직도 멀쩡했다. 다만 브리지에서는 그 판정원(`myAskInFlight`)이 **즉시 비었다**.
+- 단계 이관 함수도 멀쩡했다. 다만 **제출 시점에만** 불렸다.
+
+그래서 여기서 단언하는 것은 "함수가 올바른가" 가 아니라 **"그 함수가 그 자리에 배선돼
+있는가"** 다. 라우터를 import 하지 않고 소스를 AST/텍스트로 보는 이유는 기존 스위트와 같다
+(feature-0002·0003 이 둘 다 최상위 `modules` 를 가져 한 프로세스에서 동시 import 불가).
+
+## 함께 보는 것: 술어 단일화
+
+취소는 도구 표면(ai_tools)과 웹 표면(conversations) **둘 다** 판정한다. 두 벌이 되는 순간
+"목록엔 없는데 취소는 안 되는" 어긋남이 생기고, 갈리는 쪽 중 **느슨한 쪽이 사용자가 보는
+진실**이 된다(P0-R 에서 이미 한 번 겪었다). 그 이중화 재발을 구조로 막는다.
+"""
+from __future__ import annotations
+
+import ast
+import pathlib
+
+import pytest
+
+_UNIT = pathlib.Path(__file__).resolve().parents[2]
+_REPO = _UNIT.parent
+
+WEB_SRC = _UNIT / "feature-0003-agent-web-ui" / "src"
+TOOLS_PY = WEB_SRC / "routers" / "ai_tools.py"
+CONV_PY = WEB_SRC / "routers" / "conversations.py"
+COMPOSER_JS = WEB_SRC / "static" / "app" / "composer.js"
+APP_JS = WEB_SRC / "static" / "app.js"
+SHARED_BRIDGE = _REPO / "shared" / "bridge_tasks.py"
+RUNNER = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py"
+
+
+def _src(path: pathlib.Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _pyfunc(path: pathlib.Path, name: str) -> str:
+    text = _src(path)
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return ast.get_source_segment(text, node) or ""
+    raise AssertionError(f"{name} 을 {path.name} 에서 찾지 못했다")
+
+
+def _jsfunc(text: str, name: str) -> str:
+    """JS 함수 본문 — 인자 목록을 건너뛴 뒤 중괄호 균형으로 자른다."""
+    start = text.index(name)
+    paren = text.index("(", start)
+    depth, i = 0, paren
+    while i < len(text):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    brace = text.index("{", i)
+    depth, i = 0, brace
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+        i += 1
+    raise AssertionError(f"{name} 의 끝을 찾지 못했다")
+
+
+# ── ① 취소가 한 곳에서만 판정된다 ────────────────────────────────────────────
+
+
+def test_cancel_has_a_single_source_of_truth():
+    """취소 술어가 `shared/bridge_tasks.py` 에만 있고, 소비처는 부르기만 한다."""
+    shared = _src(SHARED_BRIDGE)
+    assert "def cancel_bridge_tasks(" in shared, "취소 정본이 없다"
+
+    conv = _src(CONV_PY)
+    # 웹 축은 자기 DELETE/UPDATE 를 조립하지 않는다 — **적재 롤백 한 곳만** 예외다.
+    entry = _pyfunc(CONV_PY, "_cancel_bridge_tasks_for")
+    assert "cancel_bridge_tasks(" in entry, "웹 진입점이 정본을 부르지 않는다"
+    assert "DELETE FROM WebAiTasks" not in entry and "UPDATE WebAiTasks" not in entry, (
+        "웹 진입점이 SQL 을 자체 조립한다(술어 이중화)")
+    # 롤백 전용 경로는 남아 있어도 되지만, 그 하나뿐이어야 한다.
+    assert conv.count("DELETE FROM WebAiTasks") <= 1, (
+        "웹 라우터에 취소 SQL 이 여러 벌이다 — 어디서 취소했느냐로 결과가 갈린다")
+
+
+def test_cancel_splits_unclaimed_and_claimed():
+    """미점유는 삭제, 점유는 `canceled` 표시 — 두 갈래가 실제로 구현돼 있다.
+
+    점유된 것을 지우면 개인 AI 의 제출이 404 가 되어 *왜* 실패했는지 알 수 없다.
+    `canceled` 로 남겨야 409 + 사유를 돌려주고, 러너를 제출 전에 하차시킬 수 있다.
+    """
+    fn = _pyfunc(SHARED_BRIDGE, "cancel_bridge_tasks")
+    assert "DELETE FROM WebAiTasks" in fn, "미점유 삭제 갈래가 없다"
+    assert "STATUS_CANCELED" in fn and "UPDATE WebAiTasks" in fn, "점유 취소표시 갈래가 없다"
+    assert "claim_is_live(" in fn, "lease 판정 없이 갈래를 나눈다"
+    assert '"deleted"' in fn and '"canceled"' in fn, "무엇을 했는지 돌려주지 않는다"
+
+
+def test_cancel_scope_is_bounded():
+    """계정 스코프가 **경계**다 — 빼면 남의 대기 질문을 취소할 수 있다."""
+    fn = _pyfunc(SHARED_BRIDGE, "cancel_bridge_tasks")
+    assert "AccountId = %s" in fn, "계정 스코프가 없다 — 남의 task 를 취소할 수 있다"
+    assert "not conversation_id and not task_id" in fn, (
+        "대상 미지정 시 그 계정의 전 대기열을 지운다")
+
+
+def test_api_cancel_reaches_the_bridge_axis():
+    """`/api/cancel` 이 브리지 대기도 취소한다.
+
+    이것이 없으면 중단을 눌러도 개인 AI 는 계속 답을 만들고 그 답이 대화에 붙는다 —
+    전환 이후 인터럽트가 브리지에서만 무력했던 바로 그 결함이다.
+    """
+    fn = _pyfunc(CONV_PY, "cancel_request")
+    assert "_cancel_bridge_tasks_for(" in fn, "브리지 축을 취소하지 않는다"
+    assert "_mark_bridge_placeholders_canceled(" in fn, "대기 말풍선을 갱신하지 않는다"
+    # 서버 run 취소보다 **먼저** 해야 한다 — 그쪽은 예외를 500 으로 바꿔 반환하므로
+    # 뒤에 두면 KV 조회 한 번 실패가 브리지 취소까지 통째로 건너뛴다.
+    assert fn.index("_cancel_bridge_tasks_for(") < fn.index("mark_cancel_requested("), (
+        "브리지 취소가 서버 run 취소 뒤에 있다 — 그쪽 실패가 이쪽을 삼킨다")
+    assert "bridge_cancel_failed" in fn, "취소 실패를 응답으로 알리지 않는다"
+
+
+def test_cancel_failure_is_not_swallowed():
+    """취소 실패를 숨기면 화면은 '취소했습니다' 인데 잠시 뒤 답변이 나타난다."""
+    front = _jsfunc(_src(APP_JS), "async function cancelCurrentRun")
+    assert "bridge_cancel_failed" in front, "프런트가 취소 실패를 무시한다"
+    assert "abandonBridgeTasks(" in front, "취소된 task 의 감시를 끊지 않는다(404 누적)"
+
+
+# ── ② 맥락 전환(supersede) ───────────────────────────────────────────────────
+
+
+def test_new_question_supersedes_previous_pending():
+    """새 질문이 같은 대화의 이전 대기 질문을 대체한다.
+
+    그냥 두면 `CreatedAt ASC` 로 **옛 질문이 먼저** 처리되고, 늦게 집힌 옛 질문이 그 뒤
+    turn 까지 포함한 최신 문맥으로 답해져 대화 흐름과 어긋난다.
+    """
+    fn = _pyfunc(CONV_PY, "_enqueue_web_bridge_task")
+    assert "_cancel_bridge_tasks_for(" in fn, "이전 대기 질문을 대체하지 않는다"
+    assert "exclude_task_id=task_id" in fn, (
+        "자기 자신을 제외하지 않는다 — 새 질문이 태어나자마자 스스로를 지운다")
+    # 적재 **성공 뒤에** 대체한다. 먼저 취소하고 INSERT 가 실패하면 옛 질문도 새 질문도 없다.
+    assert fn.index("INSERT INTO WebAiTasks") < fn.index("_cancel_bridge_tasks_for("), (
+        "적재 전에 대체한다 — 적재 실패 시 이전 질문까지 잃는다")
+    assert "bridge_superseded" in fn, "대체 결과를 프런트에 알리지 않는다"
+
+
+def test_superseded_tasks_are_abandoned_by_the_frontend():
+    """프런트가 대체된 task 의 감시를 **새 폴러를 걸기 전에** 끊는다."""
+    fn = _jsfunc(_src(COMPOSER_JS), "export function handleBridgePending")
+    assert "bridge_superseded" in fn and "abandonBridgeTasks(" in fn
+    assert fn.index("abandonBridgeTasks(") < fn.index("_pollBridgeAnswer("), (
+        "새 감시를 먼저 걸고 옛 것을 끊는다 — 옛 폴러가 404 를 받아 새 안내까지 지운다")
+
+
+def test_supersede_notice_is_distinct_from_cancel():
+    """대체와 취소는 **다른 문구**다 — 사용자는 중단 버튼을 누른 적이 없다."""
+    conv = _src(CONV_PY)
+    assert "_BRIDGE_NOTICE_SUPERSEDED" in conv and "_BRIDGE_NOTICE_CANCELED" in conv
+    assert "새 질문" in conv, "대체를 '취소' 로만 말한다"
+
+
+def test_cancel_notice_admits_what_we_cannot_stop():
+    """"중단했습니다" 로 끝내지 않는다 — 이미 가져간 작업은 못 멈춘다.
+
+    숨기면 개인 계정 토큰이 조용히 타는 동안 사용자는 아무 일도 없다고 믿는다.
+    """
+    conv = _src(CONV_PY)
+    idx = conv.index("_BRIDGE_NOTICE_CANCELED = (")
+    body = conv[idx:idx + 500]
+    assert "반영되지" in body, "취소의 한계(이미 진행 중인 작업)를 말하지 않는다"
+
+
+# ── ③ 협조적 취소 채널 ───────────────────────────────────────────────────────
+
+
+def test_wait_returns_early_on_cancel():
+    """`wait_for_request` 가 **취소에도 즉시 반환**한다(새 질문과 같은 채널).
+
+    별도 도구를 만들면 러너가 채널을 하나 더 돌봐야 하고 그 주기가 사람마다 달라
+    **환경 차이**가 된다 — P0-J 가 폴링을 버린 이유와 같다.
+    """
+    fn = _pyfunc(TOOLS_PY, "wait_for_request")
+    assert "canceled_task_ids" in fn, "취소를 응답에 싣지 않는다"
+    assert "if found or canceled or" in fn, "취소로는 대기가 풀리지 않는다"
+    assert "ClaimedBy=%s" in fn, (
+        "점유자 스코프가 없다 — 남이 집은 작업의 취소로 내 워커가 하차한다")
+
+
+def test_cancel_channel_adds_no_new_tool():
+    """도구 **개수가 늘지 않는다** — 늘면 매니페스트·가이드·capabilities 가 동시에 어긋난다.
+
+    협조적 취소는 신규 도구가 아니라 기존 `wait_for_request` 응답의 필드로 전달된다.
+    도구를 하나 더하면 P0-I 계약 4곳(매니페스트·가이드 열거·가이드 수·capabilities)이
+    동시에 어긋날 입구가 열린다 — 라이브에서 이미 그 부류로 브리지 축이 통째로 끊긴 적이 있다.
+
+    여기서 세는 것은 **명시 라우트**다(구조 조회 6종은 `{tool_name}` catch-all 이 dispatch
+    하므로 이 수에 들어오지 않는다). 총 노출 수 대조는 `test_ux_parity` 의 가이드 수 테스트가 맡는다.
+    """
+    tools = _src(TOOLS_PY)
+    routes = [ln for ln in tools.split("\n") if '@router.post("/api/ai/tools/' in ln]
+    named = [r for r in routes if "{tool_name}" not in r]
+    assert len(named) == 7, (
+        f"명시 도구 라우트 수가 바뀌었다({len(named)}종) — 가이드 열거·수 대조·매니페스트도 "
+        "같은 cycle 에서 갱신해야 한다")
+    assert any("{tool_name}" in r for r in routes), "구조 조회 dispatch 라우트가 사라졌다"
+
+
+def test_submit_rejects_canceled_task():
+    """취소된 요청의 답변은 **저장·전달되지 않는다**(409).
+
+    러너는 `canceled_task_ids` 로 먼저 하차하지만 그 신호를 안 읽는 등록형 AI 도 있다.
+    인지(러너)와 집행(서버)은 층이 다르며, 두 겹이지 이중 정의가 아니다.
+    """
+    fn = _pyfunc(TOOLS_PY, "submit_answer")
+    assert "_STATUS_CANCELED" in fn, "취소 상태를 보지 않는다"
+    assert fn.index("_STATUS_CANCELED") < fn.index("_guard.classify_injection("), (
+        "취소 판정이 저장 준비 뒤에 있다 — 취소된 답변을 각인·보존하게 된다")
+    assert "409" in fn
+
+
+def test_submit_cancel_check_is_atomic_not_read_then_act():
+    """취소 집행이 **확정 UPDATE 안**에 있다 — 조기 반환만으로는 못 막는다.
+
+    ## 이 테스트가 잡는 실제 결함 (자체 리뷰 2026-08-28)
+
+    초판은 `_load_task` 로 읽은 상태를 보고 조기 반환하는 것이 전부였다. 그 값은 **과거**다 —
+    그 뒤로 인젝션 판정·형제 조회(여러 DB 왕복)가 이어지고, 그 사이 사용자가 중단하거나 새
+    질문으로 갈아타면 검사를 그냥 지나친다.
+
+    지나치면 어떻게 되나: 확정 UPDATE 에 Status 조건이 없으므로 `canceled` → `submitted` 로
+    덮이고 `_deliver_web_bridge_answer` 가 대화에 쓴다. 게다가 취소 말풍선은
+    `placeholder=false` 라 덮어쓰기 대상에서 빠져 **새 말풍선으로 append** 된다 —
+    "취소했습니다" 아래에 답변이 나타난다. 사용자 결정(409 거절 + 대화 미전달)의 정반대다.
+
+    같은 파일의 `SubmittedAt IS NULL` 가드가 정확히 같은 이유로 SQL 안에 있고, 그 주석이
+    "조건을 SQL 에 둬야 TOCTOU 없이 원자적이다" 라고 적어 두었다 — 초판은 그 교훈을 옆에
+    두고도 되풀이했다.
+    """
+    fn = _pyfunc(TOOLS_PY, "submit_answer")
+    upd = fn[fn.index("UPDATE WebAiTasks SET Status = 'submitted'"):]
+    upd = upd[:upd.index("affected = cur.rowcount")]
+    assert "Status <> %s" in upd, (
+        "확정 UPDATE 가 취소 상태를 보지 않는다 — 판정과 쓰기 사이에 취소되면 그대로 통과한다")
+    assert "_STATUS_CANCELED" in upd, "취소 상태값이 UPDATE 파라미터로 넘어가지 않는다"
+    # rowcount 0 의 사유를 구분해야 러너가 다음 행동을 정한다(취소=버리기 / 미점유=claim).
+    tail = fn[fn.index("if not affected:"):]
+    assert "task_canceled_race" in tail, "경합으로 막힌 경우를 '미점유' 로 오인해 안내한다"
+
+
+def test_cancel_write_reconfirms_the_condition_in_sql():
+    """취소의 DELETE/UPDATE 도 **쓰기 문장에서** 조건을 다시 확인한다.
+
+    `cancel_bridge_tasks` 는 SELECT 로 분류한 뒤 쓴다. 그 사이 개인 AI 가 집거나(claim) 답을
+    제출할 수 있다:
+
+    - DELETE 가 조건 없이 id 로만 지우면 → 방금 점유된 작업이 사라져 러너의 제출이 404 가 된다
+      (왜 실패했는지 모르는 에러).
+    - UPDATE 가 조건 없이 쓰면 → 방금 제출된 작업의 `submitted` 를 `canceled` 로 덮어,
+      **이미 화면에 실린 답변이 "취소됨" 으로 뒤집힌다.**
+    """
+    fn = _pyfunc(SHARED_BRIDGE, "cancel_bridge_tasks")
+    dele = fn[fn.index("DELETE FROM WebAiTasks"):]
+    dele = dele[:dele.index("if to_cancel:")]
+    assert "CLAIMABLE_SQL" in dele, "DELETE 가 점유 여부를 재확인하지 않는다"
+    assert "Status = %s" in dele, "DELETE 가 상태를 재확인하지 않는다"
+    upd = fn[fn.index("UPDATE WebAiTasks SET Status = %s"):]
+    upd = upd[:upd.index("conn.commit()")]
+    assert "Status = %s" in upd, "UPDATE 가 상태를 재확인하지 않는다(제출본을 덮어쓴다)"
+
+
+def test_cancel_sql_uses_parameters_for_values():
+    """상태값을 문자열 보간이 아니라 **파라미터**로 넘긴다.
+
+    지금은 모듈 상수라 주입 위험이 없지만, f-string 으로 값을 SQL 에 박는 습관이 남아 있으면
+    다음 사람이 변수를 같은 자리에 넣는다. 값은 파라미터로 간다.
+    """
+    fn = _pyfunc(SHARED_BRIDGE, "cancel_bridge_tasks")
+    assert "{STATUS_CANCELED}" not in fn, "상태값을 f-string 으로 SQL 에 박는다"
+    assert "{STATUS_OPEN}" not in fn, "상태값을 f-string 으로 SQL 에 박는다"
+
+
+# ── ④ 진행 스트리밍 ──────────────────────────────────────────────────────────
+
+
+def test_stream_is_counted_for_zero_downtime_deploy():
+    """SSE 가 `_counted_stream` 을 통과한다.
+
+    그것이 feature-0014 무중단 배포의 pre-drain 게이트(`/livez` 의 `active_streams`)가 세는
+    카운터다. 빼먹으면 배포가 이 스트림을 **못 보고** 그냥 끊는다.
+    """
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert "app._counted_stream(" in fn, "배포 pre-drain 이 이 스트림을 보지 못한다"
+    assert 'media_type="text/event-stream"' in fn
+    assert '"X-Accel-Buffering": "no"' in fn, "중간 단이 버퍼링하면 스트리밍이 무의미하다"
+
+
+def test_stream_has_a_server_fixed_bound():
+    """상한을 서버가 정하고, 배포 pre-drain(90초)보다 짧다.
+
+    30분짜리 스트림을 열어 두면 배포마다 replica 당 90초를 버리고 **그러고도 끊긴다**
+    (fetch/getReader 는 자동 재접속이 없다).
+    """
+    tools = _src(TOOLS_PY)
+    assert "_BRIDGE_STREAM_MAX_HOLD_SEC = 55.0" in tools, "상한이 없거나 값이 바뀌었다"
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert 'app._sse_pack("reconnect"' in fn, "상한 도달을 오류가 아닌 재접속으로 알리지 않는다"
+    # 클라이언트가 대기 시간을 정할 수 없다(환경 차이 금지).
+    assert "query_params.get(\"wait\")" not in fn
+
+
+def test_stream_authenticates_before_opening():
+    """인증·소유 확인을 **스트림을 열기 전에** 끝낸다.
+
+    제너레이터 안에서 하면 이미 200 + SSE 헤더가 나간 뒤라 401/403 을 돌려줄 수 없다.
+    """
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert fn.index("app._require_account(") < fn.index("async def event_stream("), (
+        "스트림을 연 뒤 인증한다 — 오류 상태코드를 돌려줄 수 없다")
+    assert "AccountId=%s" in fn, "계정 스코프가 없다"
+
+
+def test_stream_stops_when_client_disconnects():
+    """끊긴 클라이언트를 위해 DB 를 계속 두드리지 않는다."""
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert "request.is_disconnected()" in fn
+
+
+def test_live_steps_carry_only_observed_facts():
+    """진행 단계는 **관측한 사실**만 옮긴다 — LLM 사고 과정은 우리 밖이다.
+
+    지어내면 그 순간 이 패널 전체가 못 믿을 것이 된다(`_materialize_bridge_steps` 가 그은 선).
+    """
+    fn = _pyfunc(TOOLS_PY, "_bridge_live_steps")
+    assert "tool_call_usage" in fn, "관측 원장이 아니라 다른 곳에서 만든다"
+    assert "reason_text" not in fn, "사고 과정을 지어낸다"
+    assert "_BRIDGE_PROGRESS_TOOLS" in fn, "브리지 진행 도구를 조사 내역으로 섞는다"
+
+
+def test_step_filter_is_shared_between_live_and_final():
+    """진행 중 표시와 제출 시 이관이 **같은 필터**를 쓴다.
+
+    갈리면 제출 순간 단계 목록이 달라져 사용자가 "단계가 사라졌다" 고 본다.
+    """
+    tools = _src(TOOLS_PY)
+    assert tools.count("_BRIDGE_PROGRESS_TOOLS") >= 3, "필터가 공유되지 않는다"
+    final = _pyfunc(TOOLS_PY, "_materialize_bridge_steps")
+    assert "_BRIDGE_PROGRESS_TOOLS" in final
+    assert 'skip = {"wait_for_request"' not in final, "제출 경로가 자체 집합을 갖는다"
+
+
+def test_phase_is_decided_by_the_server_in_one_word():
+    """국면은 서버가 한 단어로 정한다 — 프런트가 조합하면 화면마다 갈린다.
+
+    **두 cycle 의 축이 합쳐진 자리다**(2026-08-28 병합): 형제 cycle 이 `listening`(러너가 떠
+    있는가)을, 이 cycle 이 `canceled` 를 더했다. 둘 중 하나라도 빠지면 그 cycle 이 고친 마찰이
+    되살아나므로 **6종 전부**를 단정한다.
+    """
+    fn = _pyfunc(TOOLS_PY, "_bridge_phase")
+    # `canceled` 가 맨 앞이어야 한다: 취소 뒤에도 ClaimedBy 는 남으므로 순서가 뒤면
+    # 같은 행이 계속 `working` 으로 읽혀 "처리 중" 이 영원히 표시된다.
+    assert fn.index('"canceled"') < fn.index('"working"'), (
+        "취소 판정이 점유 판정 뒤에 있다 — 취소된 작업이 영원히 '처리 중' 으로 보인다")
+    for phase in ("canceled", "done", "working", "waiting", "not_listening", "not_connected"):
+        assert f'"{phase}"' in fn, f"국면 {phase} 가 사라졌다(병합 중 한쪽 축 유실)"
+    # `connected` 와 `listening` 은 다른 사실이다 — 토큰은 DB 에, 러너는 프로세스에 있다.
+    assert "listening: bool" in fn, "러너 대기 축이 판정 인자에 없다"
+    # 관측 실패는 '있다' 쪽으로 — 없다고 단정하면 멀쩡한 사용자에게 매번 틀린 경고를 띄운다.
+    assert "listening: bool = True" in fn, "러너 축의 fail-open 기본값이 없다"
+
+
+def test_status_and_stream_agree():
+    """폴링과 스트리밍이 **같은 판정 함수**를 쓴다 — 폴백이 화면을 바꾸지 않게."""
+    for name in ("bridge_status", "_bridge_stream_snapshot"):
+        fn = _pyfunc(TOOLS_PY, name)
+        assert "_bridge_phase(" in fn, f"{name} 이 국면을 자체 조합한다"
+        assert "_bridge_live_steps(" in fn, f"{name} 이 단계를 싣지 않는다"
+
+
+def test_stream_transient_db_error_does_not_look_like_cancel():
+    """일시 DB 장애를 '취소됨' 으로 읽지 않는다.
+
+    `None` 은 "task 가 없다(=미점유 취소로 삭제됐다)" 는 뜻이다. 커넥션 실패에 그것을
+    돌려주면 DB 가 잠깐 흔들릴 때마다 사용자 화면이 "취소됨" 으로 확정된다.
+    """
+    fn = _pyfunc(TOOLS_PY, "_bridge_stream_snapshot")
+    connect_fail = fn[fn.index("except Exception:"):fn.index("try:", fn.index("except Exception:"))]
+    assert "return None" not in connect_fail, "DB 장애를 취소로 오인한다"
+
+
+# ── ⑤ 중단 버튼 노출 ─────────────────────────────────────────────────────────
+
+
+def test_stop_button_appears_while_bridge_pending():
+    """브리지 대기 중에도 중단 버튼이 뜬다.
+
+    `_myAskInFlightHere()` 는 `/api/ask` 왕복 수명을 재는데 브리지에서는 그 왕복이 즉시
+    끝난다 — 그래서 전환 이후 버튼이 한 번도 뜨지 않았고 인터럽트가 UI 에서 도달 불가였다.
+    """
+    composer = _src(COMPOSER_JS)
+    assert "export function _bridgePendingHere(" in composer, "브리지 대기 판정원이 없다"
+    render = _jsfunc(composer, "function renderComposer")
+    assert "_bridgePendingHere()" in render, "중단 버튼이 브리지 대기를 보지 않는다"
+
+
+def test_stop_button_and_click_handler_use_the_same_predicate():
+    """버튼 모드와 클릭 동작이 같은 술어를 쓴다.
+
+    갈리면 버튼은 '중단' 인데 눌러도 전송이 나가는(또는 그 반대) 상태가 된다.
+    """
+    app = _src(APP_JS)
+    assert "(_myAskInFlightHere() || _bridgePendingHere()) && !hasText" in app, (
+        "클릭 핸들러가 렌더와 다른 술어를 쓴다")
+
+
+def test_bridge_pending_is_not_mixed_into_ask_inflight():
+    """브리지 대기를 in-flight 집합에 **섞지 않는다**.
+
+    그 집합은 전송 경로의 R2/R3 분기도 본다. 섞으면 브리지 대기 중 새 질문이 "이전 요청
+    처리 중" 으로 막히거나, 취소 권한이 없는 사용자에게 전송이 거부된다 — 지금은 자유롭게
+    보낼 수 있고 대체는 서버가 한다.
+    """
+    fn = _jsfunc(_src(COMPOSER_JS), "export function _bridgePendingHere")
+    assert "myAskInFlight" not in fn, "브리지 대기를 ask in-flight 로 승격한다(전송이 막힌다)"
+    send = _jsfunc(_src(COMPOSER_JS), "async function sendPrompt")
+    assert "_bridgePendingHere()" not in send, (
+        "전송 경로가 브리지 대기로 분기한다 — 대기 중 새 질문이 막힌다")
+
+
+# ── ⑥ 병렬 러너 ─────────────────────────────────────────────────────────────
+
+
+def test_runner_is_parallel_by_default():
+    """기본이 동시 처리다 — 직렬이면 긴 조사 하나가 뒤따르는 짧은 질문을 통째로 막는다."""
+    src = _src(RUNNER)
+    assert "_DEFAULT_WORKERS = " in src and "--workers" in src
+    assert "threading.Semaphore(workers)" in src, "동시 처리 상한이 세마포어로 잡히지 않는다"
+
+
+def test_runner_cancel_registry_is_thread_safe():
+    """취소 원장이 락으로 보호된다.
+
+    대기 스레드와 워커가 함께 읽고 쓴다. 락 없이도 CPython 에서는 대개 동작하지만, "대개" 로
+    두면 취소가 가끔 안 먹는 버그가 되고 그건 재현이 거의 불가능하다.
+    """
+    src = _src(RUNNER)
+    assert "class CancelRegistry" in src
+    reg = src[src.index("class CancelRegistry"):src.index("# ── 내 AI 호출")]
+    assert "threading.Lock()" in reg, "공유 집합이 락 없이 쓰인다"
+    assert reg.count("with self._lock") >= 3, "일부 접근이 락 밖에 있다"
+
+
+def test_runner_once_waits_for_the_worker():
+    """`--once` 가 그 한 건이 **끝날 때까지** 기다린다.
+
+    바로 반환하면 daemon 스레드가 죽어 답이 제출되지 않는다 — `--once` 가 아무것도 하지
+    않는 것과 같아진다.
+    """
+    src = _src(RUNNER)
+    main = src[src.index("def main()"):]
+    assert "done_once.wait()" in main, "--once 가 워커를 기다리지 않는다"
+
+
+@pytest.mark.parametrize("needle,why", [
+    ("skip.add(task_id)", "점유 실패가 반복되면 같은 task 를 무한히 다시 시도한다"),
+    ("slots.release()", "실패 경로에서 워커 자리를 반납하지 않는다(영구 고갈)"),
+])
+def test_runner_wait_loop_cannot_spin(needle: str, why: str):
+    """대기 루프가 서버를 두드리는 tight loop 로 변하지 않는다."""
+    src = _src(RUNNER)
+    main = src[src.index("def main()"):]
+    assert needle in main, why
+
+
+def test_runner_skip_list_is_not_permanent():
+    """`skip` 이 영구 블랙리스트가 되지 않는다.
+
+    다른 러너가 집어 간 작업을 skip 에 넣었는데 그쪽이 죽어 lease 가 만료되면 그 작업은
+    대기열로 돌아온다. 그때도 계속 건너뛰면 **러너가 돌고 있는데 사용자는 답을 못 받는다.**
+
+    비우는 시점이 `timed_out` 인 것도 계약이다 — "남은 것이 전부 skip" 일 때 비우면
+    비움→재시도→실패→다시 전부 skip 이 **간격 없이** 돌아 tight loop 가 된다.
+    """
+    src = _src(RUNNER)
+    main = src[src.index("def main()"):]
+    assert "skip.clear()" in main, "skip 이 영구 블랙리스트다"
+    clear_at = main.index("skip.clear()")
+    window = main[max(0, clear_at - 200):clear_at]
+    assert 'res.get("timed_out")' in window, (
+        "skip 을 타임아웃이 아닌 시점에 비운다 — 실패 반복 시 tight loop 가 된다")
+
+
+def test_runner_fails_loudly_instead_of_spinning():
+    """대기 질문이 있는데 한 건도 처리 못 하는 상태가 이어지면 **크게 실패**한다.
+
+    그 상태로 `continue` 하면 `wait_for_request` 가 즉시 돌아와 간격 없이 서버를 두드린다 —
+    우리가 없애려던 폴링이 최악의 형태로 되살아난다. 조용히 도는 것보다 사용자가 원인을
+    알 수 있게 멈추는 편이 낫다.
+    """
+    src = _src(RUNNER)
+    assert "_MAX_STALLED_ROUNDS" in src, "spin 감지 상한이 없다"
+    main = src[src.index("def main()"):]
+    assert "stalled" in main and "return 4" in main, "spin 상태에서 종료하지 않는다"
+
+
+def test_stream_holds_one_connection_and_commits_each_tick():
+    """SSE 가 tick 마다 커넥션을 새로 열지 않는다 — 그리고 스냅샷을 커밋으로 푼다.
+
+    55초 스트림 하나가 커넥션을 55번 만들면 연결 비용이 조회 비용을 넘고, 동시 대화 수만큼
+    선형으로 붙는다. 반대로 하나를 오래 들고 있으면 **트랜잭션 스냅샷이 고정돼 상태 변화가
+    영영 안 보인다**(REPEATABLE READ) — `wait_for_request` 가 같은 이유로 매 확인마다 커밋한다.
+    둘 다 만족해야 한다.
+    """
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    inner = fn[fn.index("async def event_stream("):]
+    # 루프 **안**의 연결 시도는 `sconn is None` 가드 뒤에만 허용된다(일시 장애 복구).
+    # 가드 없이 매 tick 열면 그것이 곧 tick 당 커넥션이다.
+    loop_body = inner[inner.index("while True:"):]
+    for idx in range(len(loop_body)):
+        idx = loop_body.find("app._connect_memory()", idx)
+        if idx < 0:
+            break
+        preceding = loop_body[max(0, idx - 200):idx]
+        assert "if sconn is None:" in preceding, (
+            "루프 안에서 가드 없이 커넥션을 연다 — tick 마다 연결이 생긴다")
+        break
+    assert "sconn.close()" in inner, "스트림 종료 시 커넥션을 닫지 않는다(누수)"
+    snap = _pyfunc(TOOLS_PY, "_bridge_stream_snapshot")
+    assert "conn.commit()" in snap, "스냅샷을 풀지 않아 상태 변화가 안 보인다"
+
+
+def test_stream_skips_pointless_queries_before_claim():
+    """아직 아무도 안 집었으면 조사 내역을 뒤지지 않는다(있을 수 없다).
+
+    tick 마다 도는 조회라 값이 싸지 않다. 마찬가지로 연결 여부 판정도 `waiting` 국면에서만
+    의미가 있다 — 이미 집혔거나 끝난 뒤에는 `not_connected` 로 갈릴 일이 없다.
+    """
+    snap = _pyfunc(TOOLS_PY, "_bridge_stream_snapshot")
+    assert "if claimed_by is not None else []" in snap, (
+        "점유 전에도 매 tick 원장을 조회한다")
+    assert "if not submitted and claimed_by is None" in snap, (
+        "종결된 task 에도 매 tick 연결 여부를 조회한다")

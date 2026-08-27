@@ -34,6 +34,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+# feature-0043: 브리지 task 의 점유·취소 술어 **단일 정본**. 지역 별칭(`_CLAIMABLE_SQL` 등)은
+# 아래 "브리지 상태 술어" 절에서 붙인다 — 정의가 아니라 참조다.
+from shared.bridge_tasks import (
+    BRIDGE_CLAIM_LEASE_MIN as _BRIDGE_CLAIM_LEASE_MIN,
+    CLAIMABLE_SQL as _CLAIMABLE_SQL,
+    STATUS_CANCELED as _STATUS_CANCELED,
+    claim_is_live as _claim_is_live,
+)
+
 import app
 
 INCLUDE_ORDER = 9_450  # oauth_as(9_400) 다음, ai_discovery(9_500) 앞
@@ -403,6 +412,23 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     if task is None:
         return _json_err(404, "task 를 찾을 수 없습니다.")
 
+    # feature-0043(2026-08-28): 사용자가 **취소했거나 새 질문으로 갈아탄** 요청이다.
+    #
+    # 여기서 막지 않으면 취소 UX 가 거짓이 된다 — 화면은 "취소했습니다" 라고 말했는데 잠시 뒤
+    # 답변이 대화에 붙는다. 러너는 `wait_for_request` 의 `canceled_task_ids` 로 **제출 전에**
+    # 하차하지만, 그 신호를 읽지 않는 등록형 AI 도 있으므로 서버가 마지막에 집행한다.
+    # 인지(러너)와 집행(서버)은 층이 다르며, 두 겹이지 이중 정의가 아니다.
+    #
+    # 저장도 하지 않는다: 취소된 요청의 답변은 어디에도 표시되지 않으므로 보존할 소비처가 없고,
+    # 외부 텍스트를 이유 없이 붙들고 있지 않는다.
+    # ⚠ 이 조기 반환은 **빠른 길일 뿐 집행이 아니다.** `_load_task` 가 읽은 상태는 이미 과거이고,
+    # 아래 인젝션 판정·형제 조회 사이(여러 DB 왕복)에 사용자가 취소하면 이 검사를 그냥 지나친다.
+    # 실제 집행은 확정 UPDATE 의 `Status <> 'canceled'` 조건이 한다(같은 문장 안 = TOCTOU 없음).
+    if str(task.get("status") or "") == _STATUS_CANCELED:
+        _safe_record(account, ctx, tool="submit_answer", outcome="denied",
+                     detail="task_canceled", task_id=task_id)
+        return _json_err(409, _CANCELED_SUBMIT_MSG)
+
     foreign = _sibling_tasks(conn, account, ctx.get("client_id"), exclude=task_id)
     findings = _guard.detect_cross_session(
         answer, task_id=task_id, declared_tasks=[str(d) for d in declared],
@@ -464,21 +490,33 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
             # `ClaimedClient` 까지 비교하는 이유(codex 재리뷰 P2): 계정 조건만으로는 같은
             # 계정의 **다른 세션**이 claim 을 건너뛰고 제출할 수 있다. 컬럼 추가 이전에
             # 점유된 행은 NULL 이므로 호환을 위해 통과시킨다.
-            "WHERE TaskId = %s AND SubmittedAt IS NULL "
+            # feature-0043(2026-08-28): **취소 집행은 여기서** 한다.
+            #
+            # 위쪽 `_load_task` 기반 조기 반환만으로는 못 막는다 — 그 값은 인젝션 판정·형제
+            # 조회(여러 DB 왕복) 전의 과거 상태다. 그 사이 사용자가 중단하거나 새 질문으로
+            # 갈아타면 조기 검사를 지나쳐 **취소된 답변이 대화에 새 말풍선으로 붙는다**
+            # (취소 말풍선은 `placeholder=false` 라 덮어쓰기 대상에서도 빠져 append 로 떨어진다).
+            # 조건을 같은 UPDATE 안에 두면 그 창이 사라진다 — 바로 위 `SubmittedAt IS NULL`
+            # 가드가 같은 이유로 SQL 안에 있다.
+            "WHERE TaskId = %s AND SubmittedAt IS NULL AND Status <> %s "
             "AND (Origin <> 'web' OR (ClaimedBy = %s "
             "     AND (ClaimedClient IS NULL OR ClaimedClient = %s)))",
             (stored, len(answer.encode("utf-8")), answer_verdict["verdict"], truncated,
-             ",".join(str(d) for d in declared)[:4000], task_id,
+             ",".join(str(d) for d in declared)[:4000], task_id, _STATUS_CANCELED,
              int(account.get("id") or 0), ctx.get("client_id")))
         affected = cur.rowcount
         conn.commit()
         if not affected:
-            # 두 사유가 같은 rowcount 0 으로 오므로 구분해서 안내한다 — 러너의 다음 행동이
-            # 다르다(이미 제출=건너뛰기 / 미점유=claim_request 먼저).
+            # 세 사유가 같은 rowcount 0 으로 오므로 구분해서 안내한다 — 러너의 다음 행동이
+            # 다르다(취소=버리기 / 이미 제출=건너뛰기 / 미점유=claim_request 먼저).
             cur.execute(
-                "SELECT SubmittedAt, Origin, ClaimedBy FROM WebAiTasks WHERE TaskId=%s",
+                "SELECT SubmittedAt, Origin, ClaimedBy, Status FROM WebAiTasks WHERE TaskId=%s",
                 (task_id,))
             _r = cur.fetchone()
+            if _r is not None and str(_r[3] or "") == _STATUS_CANCELED:
+                _safe_record(account, ctx, tool="submit_answer", outcome="denied",
+                             task_id=task_id, detail="task_canceled_race")
+                return _json_err(409, _CANCELED_SUBMIT_MSG)
             if _r is not None and _r[0] is None and str(_r[1] or "") == "web":
                 _safe_record(account, ctx, tool="submit_answer", outcome="denied",
                              task_id=task_id, detail="not_claimed")
@@ -735,11 +773,12 @@ def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
                 "WHERE task_id = %s ORDER BY id ASC", (task_id,))
             rows = cur.fetchall() or []
             # 브리지 자체의 진행 도구는 조사 내역이 아니다 — 사용자에게는 소음이다.
-            skip = {"wait_for_request", "list_open_requests", "claim_request", "submit_answer"}
+            # 집합은 `_BRIDGE_PROGRESS_TOOLS` 정본을 쓴다: 진행 중 표시(`_bridge_live_steps`)와
+            # 갈리면 제출 순간 단계 목록이 바뀌어 사용자가 "단계가 사라졌다" 고 본다.
             n = 0
             for r in rows:
                 tool = str(r[0] or "")
-                if tool in skip:
+                if tool in _BRIDGE_PROGRESS_TOOLS:
                     continue
                 n += 1
                 summary = {"rows_returned": int(r[3] or 0), "bytes_out": int(r[4] or 0),
@@ -1089,6 +1128,7 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
     t0 = time.perf_counter()
     deadline = t0 + _WAIT_MAX_HOLD_SEC
     found: list[tuple] = []
+    canceled: list[str] = []
     while True:
         cur = conn.cursor()
         try:
@@ -1097,6 +1137,20 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
                 "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
                 " ORDER BY CreatedAt ASC LIMIT 20", (account_id,))
             found = list(cur.fetchall() or [])
+            # **내가 점유 중인데 취소된 작업** — 사용자가 중단을 눌렀거나 새 질문으로 갈아탔다.
+            #
+            # 왜 여기서 보는가(2026-08-28): 취소를 알릴 별도 도구를 만들면 러너가 채널을 하나 더
+            # 돌봐야 하고, 그 주기가 사람마다 달라 **환경 차이**가 된다(P0-J 가 폴링을 버린 이유와
+            # 같다). 이 루프는 이미 0.5초마다 재조회하므로, 취소를 그 **두 번째 조건**으로 넣으면
+            # 새 질문과 똑같이 즉시 인지된다 — 도구 개수도 늘지 않는다.
+            #
+            # 점유자 스코프(`ClaimedBy=%s`)로 좁힌다: 남이 집은 작업의 취소는 내 하차 사유가 아니다.
+            cur.execute(
+                "SELECT TaskId FROM WebAiTasks "
+                "WHERE AccountId=%s AND Origin='web' AND Status=%s AND ClaimedBy=%s "
+                "ORDER BY CreatedAt ASC LIMIT 20",
+                (account_id, _STATUS_CANCELED, account_id))
+            canceled = [str(r[0]) for r in (cur.fetchall() or [])]
         finally:
             cur.close()
         # ⚠ 커밋(또는 롤백)이 없으면 이 커넥션의 트랜잭션 스냅샷이 고정돼 **새로 들어온 행이
@@ -1105,11 +1159,12 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
             conn.commit()
         except Exception:
             pass
-        if found or time.perf_counter() >= deadline:
+        if found or canceled or time.perf_counter() >= deadline:
             break
         if await request.is_disconnected():
             # 이미 끊긴 클라이언트를 위해 계속 두드리지 않는다.
             return JSONResponse({"count": 0, "task_ids": [], "requests": "",
+                                 "canceled_task_ids": [],
                                  "timed_out": False, "disconnected": True})
         await asyncio.sleep(_WAIT_TICK_SEC)
 
@@ -1118,9 +1173,14 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
         # 빈 대기도 원장에 남긴다 — 남기지 않으면 "AI 가 붙어 있었는가" 를 사후에 알 수 없다.
         _safe_record(account, ctx, tool="wait_for_request", outcome="ok",
                      latency_ms=waited_ms, rows_returned=0)
+        # 새 질문은 없지만 **취소는 있을 수 있다** — 그 경우 `timed_out` 이 아니다(기다림이
+        # 끝난 이유가 시간이 아니라 사건이다). 러너는 이 목록을 보고 해당 작업을 하차시킨다.
         return JSONResponse({"count": 0, "task_ids": [], "requests": "",
-                             "timed_out": True, "waited_ms": waited_ms,
-                             "next": "곧바로 다시 wait_for_request 를 호출하면 된다(간격 불필요)."})
+                             "canceled_task_ids": canceled,
+                             "timed_out": not canceled, "waited_ms": waited_ms,
+                             "next": ("취소된 작업을 중단하세요(제출해도 409 로 거절됩니다)."
+                                      if canceled else
+                                      "곧바로 다시 wait_for_request 를 호출하면 된다(간격 불필요).")})
 
     lines = [f"- task_id={r[0]}  ({r[2]})\n  {str(r[1] or '')[:500]}" for r in found]
     marked = _guard.wrap_tool_output(
@@ -1137,8 +1197,12 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
 
     return JSONResponse({
         "count": len(found), "task_ids": [r[0] for r in found], "requests": marked,
+        # 새 질문과 취소가 같은 tick 에 걸릴 수 있다(사용자가 갈아탔을 때가 정확히 그렇다).
+        # 둘 다 실어야 러너가 "옛 것을 버리고 새 것을 집는" 한 번의 동작으로 처리한다.
+        "canceled_task_ids": canceled,
         "timed_out": False, "waited_ms": waited_ms,
-        "next": "claim_request 로 점유한 뒤 처리하세요.",
+        "next": "claim_request 로 점유한 뒤 처리하세요."
+                + (" 취소된 작업은 중단하세요." if canceled else ""),
     })
 
 
@@ -1495,23 +1559,15 @@ def _task_attachment_list(conn, raw_ids: Any, conversation_id: Any) -> list[dict
 
 
 def _claim_lease_valid(claimed_at) -> bool:
-    """점유 lease 가 아직 유효한가. `_CLAIMABLE_SQL` 의 파이썬 쪽 대응.
+    """점유 lease 가 아직 유효한가 — `shared.bridge_tasks.claim_is_live` 로 위임.
 
-    같은 상수(`_BRIDGE_CLAIM_LEASE_MIN`)를 쓴다 — SQL 술어와 파이썬 판정이 다른 값을 보면
-    "목록에는 다시 뜨는데 읽기는 계속 되는" 어긋난 창이 생긴다.
-    `ClaimedAt` 이 NULL 이면 만료로 본다(점유 시각을 모르면 유효하다고 우길 근거가 없다).
+    판정을 여기서 다시 쓰지 않는다: `_CLAIMABLE_SQL`(SQL 축)과 이 함수(파이썬 축)가 다른 값을
+    보면 "목록에는 다시 뜨는데 읽기는 계속 되는" 어긋난 창이 생기고, 취소 정본까지 세 벌이 된다.
+
+    호출측(`read_task_attachment`)은 이 시점에 `claimed_by` 를 이미 자기 계정과 대조했으므로
+    여기서는 점유 시각만 넘긴다 — `claimed_by=1` 은 "점유자가 있다" 는 뜻의 자리표시다.
     """
-    if claimed_at is None:
-        return False
-    try:
-        from datetime import datetime, timedelta
-
-        if not isinstance(claimed_at, datetime):
-            return False
-        # DB 는 서버 로컬 NOW() 로 기록한다 — 같은 기준(naive local)으로 비교한다.
-        return (datetime.now() - claimed_at) < timedelta(minutes=_BRIDGE_CLAIM_LEASE_MIN)
-    except Exception:
-        return False
+    return _claim_is_live(1, claimed_at)
 
 
 @router.post("/api/ai/tools/read_task_attachment")
@@ -1730,23 +1786,24 @@ def _release_claim(conn, task_id: str, account_id: int) -> None:
 _BRIDGE_HISTORY_TURNS = 6
 _BRIDGE_HISTORY_CHARS = 4000
 
-#: 점유 lease. 이 시간이 지나도록 제출되지 않은 작업은 **다시 대기열에 나타난다**.
-#:
-#: 왜 필요한가: 점유는 커밋되는데 그 뒤 어떤 이유로든(러너 강제 종료·머신 절전·`--exec` 타임아웃·
-#: 빈 답변으로 건너뜀·프로세스 크래시) 제출이 오지 않으면, lease 가 없는 한 그 질문은 목록에서
-#: 영원히 사라진다 — 사용자는 "AI 가 가져갔는데 답이 없다" 는 상태에 갇힌다(codex 재리뷰 P1).
-#: 원장 실패 한 경로만 롤백하는 것으로는 부족하다는 것이 그 지적의 요지다.
-#:
-#: 30분: 개인 머신 AI 가 어려운 질문을 붙들 수 있는 현실적 상한이면서, 사용자가 "잊혔나" 하고
-#: 다시 물어보기 전에 회수되는 길이.
-_BRIDGE_CLAIM_LEASE_MIN = 30
-
-#: 점유 가능 조건 — 미점유이거나 lease 가 만료된 것. `list_open_requests` 와 `claim_request` 가
-#: **같은 술어**를 써야 한다(목록에 보이는데 집으면 409 나는 불일치를 만들지 않는다).
-_CLAIMABLE_SQL = (
-    "(ClaimedBy IS NULL OR ClaimedAt IS NULL "
-    f"OR ClaimedAt < DATE_SUB(NOW(), INTERVAL {_BRIDGE_CLAIM_LEASE_MIN} MINUTE))"
+#: 취소된 요청의 제출을 거절할 때의 문구. 조기 반환과 확정 UPDATE 실패 **양쪽**이 같은 말을
+#: 해야 한다 — 러너 입장에서 두 경로는 구분할 수 없는 같은 사건(사용자가 취소했다)이다.
+_CANCELED_SUBMIT_MSG = (
+    "사용자가 취소한 요청입니다. 이 답변은 저장·전달되지 않습니다. "
+    "wait_for_request 의 canceled_task_ids 로 취소를 먼저 확인하면 "
+    "불필요한 작업을 줄일 수 있습니다."
 )
+
+
+# ── 브리지 상태 술어 ─────────────────────────────────────────────────────────
+#
+# `_BRIDGE_CLAIM_LEASE_MIN`(30분 lease) · `_CLAIMABLE_SQL`(미점유 or lease 만료) ·
+# `_STATUS_CANCELED` 는 파일 상단에서 `shared/bridge_tasks.py` 로부터 import 한다.
+#
+# 왜 여기서 정의하지 않는가(2026-08-28): 같은 술어를 `routers/conversations.py` 의 취소·
+# supersede 경로도 판정해야 한다. 두 라우터가 각자 조립하면 "목록엔 없는데 취소는 안 되는"
+# 류의 어긋남이 생기고, **갈리는 순간 느슨한 쪽이 사용자가 보는 진실**이 된다(P0-R 재발 방지).
+# 지역 별칭은 기존 호출부·계약 테스트가 참조하는 이름이며 값은 shared 정본과 동일하다.
 
 
 def _conversation_access_denied(conn, account: dict[str, Any], conversation_id) -> JSONResponse | None:
@@ -2101,6 +2158,317 @@ def _task_scope_clause(account: dict[str, Any]) -> tuple[str, list[Any]]:
     return " AND AccountId = %s", [int(account.get("id") or 0)]
 
 
+def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool,
+                  listening: bool = True) -> str:
+    """국면을 **한 단어**로 — 서버가 정한다(프런트가 조합하면 화면마다 갈린다).
+
+    | phase | 뜻 |
+    |---|---|
+    | `canceled` | 사용자가 중단했거나 새 질문으로 갈아탔다. **답변은 오지 않는다** |
+    | `done` | 제출됨 |
+    | `working` | 누군가 가져가 처리 중 |
+    | `waiting` | 연결도 있고 러너도 붙어 있다 — 곧 집힌다 |
+    | `not_listening` | 토큰은 살아 있는데 **대기 중인 러너가 없다**(재부팅 등) |
+    | `not_connected` | 연결된 AI 자체가 없다 — 기다리게 두지 않고 알린다 |
+
+    `connected` 와 `listening` 은 **다른 사실**이다(TASK-20260828T060000 형제 cycle) — 토큰은
+    DB 에 있고 러너는 프로세스에 있다. 머신을 재부팅하면 러너만 사라지는데, 그때 "대기 중" 이라
+    말하면 사용자는 영원히 오지 않을 답을 기다린다.
+
+    `canceled` 를 **맨 앞에** 둔다: 취소된 뒤에도 `ClaimedBy` 는 남아 있으므로 순서가 뒤면
+    같은 행이 계속 `working` 으로 읽혀 화면이 "처리 중" 을 영원히 보여준다.
+
+    `listening` 의 기본값이 True 인 이유: 관측하지 못했을 때 "러너가 없다" 고 단정하면 멀쩡히
+    붙어 있는 사용자에게 매번 틀린 경고를 띄운다(연결 판정의 fail-open 과 같은 방향).
+    """
+    if str(status or "") == _STATUS_CANCELED:
+        return "canceled"
+    if submitted or str(status or "") == "submitted":
+        return "done"
+    if claimed_by is not None:
+        return "working"
+    if not connected:
+        return "not_connected"
+    return "waiting" if listening else "not_listening"
+
+
+#: 브리지 **진행** 도구 — 조사 내역이 아니므로 단계 표시에서 걸러낸다.
+#:
+#: `_materialize_bridge_steps`(제출 시 이관)와 `_bridge_live_steps`(진행 중 표시)가 **같은
+#: 집합**을 써야 한다. 갈리면 제출 전후로 단계 목록이 달라져 사용자가 "단계가 사라졌다" 고 본다.
+_BRIDGE_PROGRESS_TOOLS = frozenset({
+    "wait_for_request", "list_open_requests", "claim_request", "submit_answer",
+})
+
+#: 진행 중 노출할 조사 단계 상한. 긴 조사에서 매 프레임 수백 행을 실어 나르지 않는다.
+_BRIDGE_LIVE_STEPS_MAX = 40
+
+
+def _bridge_live_steps(task_id: str) -> list[dict[str, Any]]:
+    """개인 AI 가 **지금까지 호출한 도구**를 요약해 돌려준다(진행 중에도).
+
+    종전에는 `_materialize_bridge_steps` 가 제출 시점에 일괄 이관해, 답변이 오기 전까지
+    'AI 추론' 탭이 비어 있었다 — 사용자에게는 30분 동안 아무 일도 일어나지 않는 화면이었다.
+    그런데 **그 AI 가 무엇을 조사했는지는 우리 안에 있다**(`tool_call_usage` 원장에 호출 즉시
+    남는다). 이미 관측한 사실을 늦게 보여줄 이유가 없다.
+
+    옮기는 것은 관측 사실뿐이다 — 어떤 도구를 · 어떤 스키마에 · 몇 행 · 얼마나 걸려.
+    LLM 사고 과정은 없다(우리 밖에서 일어났다). **지어내면 그 순간 이 패널 전체가 못 믿을
+    것이 된다** — `_materialize_bridge_steps` 가 그은 선을 여기서도 지킨다.
+
+    브리지 자체의 진행 도구(wait·claim·submit)는 조사 내역이 아니므로 걸러낸다.
+    실패는 흡수한다 — 단계 조회 실패가 상태 조회를 막지 않는다(없으면 빈 목록일 뿐이다).
+    """
+    if not task_id:
+        return []
+    try:
+        pg = _pg()
+        if pg is None:
+            return []
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT tool, datasource_key, schema_name, rows_returned, latency_ms, "
+                "       outcome, created_at "
+                "FROM agent_runtime.tool_call_usage "
+                "WHERE task_id = %s ORDER BY id ASC LIMIT %s",
+                (task_id, _BRIDGE_LIVE_STEPS_MAX + len(_BRIDGE_PROGRESS_TOOLS)))
+            rows = cur.fetchall() or []
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            tool = str(r[0] or "")
+            if tool in _BRIDGE_PROGRESS_TOOLS:
+                continue
+            out.append({
+                "tool": tool,
+                "datasource": str(r[1] or ""),
+                "schema": str(r[2] or ""),
+                "rows": int(r[3] or 0),
+                "latency_ms": int(r[4] or 0),
+                "outcome": str(r[5] or ""),
+                "at": r[6].isoformat() if hasattr(r[6], "isoformat") else "",
+            })
+        return out[:_BRIDGE_LIVE_STEPS_MAX]
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "[bridge] 진행 단계 조회 실패 task=%s: %r", task_id, exc)
+        return []
+
+
+#: SSE 를 붙들어 두는 **서버 고정** 상한(초).
+#:
+#: `_WAIT_MAX_HOLD_SEC`(55) 와 같은 값이지만 이유가 다르다. 저쪽은 프록시 타임아웃(60s)이고,
+#: 여기는 **배포**다: `bin/deploy-web.sh` 의 pre-drain 이 `/livez` 의 `active_streams` 가 0 이
+#: 되기를 최대 `DEPLOY_WEB_PREDRAIN_TIMEOUT`(기본 90s) 기다린 뒤 남은 스트림을 **끊는다**.
+#: 브리지 대기는 최대 30분이라, 그동안 스트림을 붙들면 배포마다 replica 당 90초를 버리고
+#: 그러고도 절단된다(fetch/getReader 는 자동 재접속이 없다). 55초로 끊고 프런트가 다시 붙으면
+#: 배포 대기가 그 안에 들어가고 절단도 사라진다.
+_BRIDGE_STREAM_MAX_HOLD_SEC = 55.0
+
+#: 서버 **내부** 확인 간격. 클라이언트에 노출되지 않으므로 환경 차이를 만들지 않는다.
+#: `_WAIT_TICK_SEC`(0.5) 보다 느슨하다 — 여기서 재는 것은 "질문 도착" 이 아니라 국면 전환이라
+#: 0.5초 해상도가 필요 없고, 대화당 여러 스트림이 열릴 수 있어 DB 부하를 아낀다.
+_BRIDGE_STREAM_TICK_SEC = 1.0
+
+
+@router.get("/api/ai/bridge_stream")
+async def bridge_stream(request: Request):
+    """feature-0043(2026-08-28) — 브리지 진행 상황 **SSE**.
+
+    ## 왜 폴링을 대체하는가
+
+    종전 `bridge_status` 5초 폴링은 (a) 국면 전환이 최대 5초 늦고, (b) 진행 중 조사 내역이
+    답변 전에는 보이지 않아 사용자에게는 "멈춘 화면" 이었다.
+
+    새 스트리밍 스택을 만들지 않는다 — `app._sse_pack` · `app._counted_stream` ·
+    `X-Accel-Buffering: no` 는 프롬프트 자동작성에서 이미 프로덕션 검증된 조합이다.
+    `_counted_stream` 을 반드시 통과시킨다: 그것이 feature-0014 무중단 배포의 pre-drain
+    게이트가 세는 카운터다. 빼먹으면 배포가 이 스트림을 **못 보고** 그냥 끊는다.
+
+    ## 계약
+
+    - **변한 것만** 보낸다(`phase` 전환 · 새 단계). 매 tick 전량을 보내면 클라이언트가
+      스크롤을 흔들고 대역만 먹는다.
+    - `_BRIDGE_STREAM_MAX_HOLD_SEC` 에 도달하면 `event: reconnect` 후 **정상 종료**한다 —
+      오류가 아니다. 프런트는 곧바로 다시 붙는다(그 사이 도착한 변화는 첫 프레임이 담는다).
+    - 종결 국면(`done` · `canceled`)에 도달하면 그 프레임을 보내고 닫는다.
+    - 클라이언트가 끊으면 즉시 그만둔다(끊긴 응답을 위해 DB 를 두드리지 않는다).
+
+    **웹 세션 인증**이다(외부 OAuth 토큰이 아니라) — 자기 계정이 연 web task 만 보인다.
+    답변 **본문은 싣지 않는다**: 도착 사실만 알리고 화면은 대화를 다시 읽어 렌더한다.
+    본문을 여기로 흘리면 각인 블록이 두 경로로 새어 규약이 갈린다(`bridge_status` 와 동일).
+    """
+    task_id = str(request.query_params.get("task_id") or "").strip()
+    if not task_id:
+        return app._json_error("task_id 가 필요합니다.", 400)
+
+    # 인증·소유 확인은 **스트림을 열기 전에** 끝낸다. 제너레이터 안에서 하면 이미 200 +
+    # SSE 헤더가 나간 뒤라 401/403 을 제대로 돌려줄 수 없다.
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        account_id = int(account.get("id") or 0)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT ConversationId FROM WebAiTasks "
+                "WHERE TaskId=%s AND AccountId=%s AND Origin='web'",
+                (task_id, account_id))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if row is None:
+            return app._json_error("task 를 찾을 수 없습니다.", 404)
+        conversation_id = str(row[0] or "")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    async def event_stream():
+        # 커넥션은 **스트림당 하나**를 유지하고 tick 마다 커밋해 스냅샷을 갱신한다.
+        #
+        # tick 마다 열고 닫으면 55초 스트림 하나가 커넥션을 55번 만든다 — 연결 비용이 조회
+        # 비용보다 크고, 동시 대화가 늘수록 그 비용이 선형으로 붙는다. 하나를 들고 있는 편이
+        # 총 부하가 낮다.
+        #
+        # ⚠ 대신 **커밋을 빠뜨리면 안 된다**: 커넥션을 오래 들고 있으면 트랜잭션 스냅샷이 고정돼
+        #   상태 변화가 영영 안 보인다(REPEATABLE READ). `wait_for_request` 루프가 같은 이유로
+        #   매 확인마다 커밋한다.
+        last_phase = ""
+        last_step_count = -1
+        deadline = time.perf_counter() + _BRIDGE_STREAM_MAX_HOLD_SEC
+        try:
+            sconn = app._connect_memory()
+        except Exception:
+            # 커넥션을 못 열어도 스트림은 연다 — 다음 tick 에 다시 시도한다. 여기서 죽으면
+            # 프런트는 SSE 불가로 판단해 폴링으로 내려가는데, 원인은 일시 장애일 뿐이다.
+            sconn = None
+        try:
+            while True:
+                if await request.is_disconnected():
+                    return
+                if sconn is None:
+                    try:
+                        sconn = app._connect_memory()
+                    except Exception:
+                        sconn = None
+                snap = _bridge_stream_snapshot(sconn, task_id, account_id)
+                if snap is None:
+                    # task 가 사라졌다 = 미점유 상태로 취소되어 삭제됐다(취소 정본의 DELETE 갈래).
+                    # 종결로 알리고 닫는다 — 없는 행을 계속 물으면 404 만 쌓인다.
+                    yield app._sse_pack("phase", {"task_id": task_id, "phase": "canceled",
+                                                  "conversation_id": conversation_id,
+                                                  "answered": False, "delivered": False})
+                    yield app._sse_pack("end", {"reason": "canceled"})
+                    return
+
+                if snap["phase"] != last_phase:
+                    last_phase = snap["phase"]
+                    yield app._sse_pack("phase", {**snap, "task_id": task_id,
+                                                  "conversation_id": conversation_id})
+                steps = snap["steps"]
+                if len(steps) != last_step_count:
+                    last_step_count = len(steps)
+                    yield app._sse_pack("steps", {"task_id": task_id, "steps": steps})
+
+                if snap["phase"] in ("done", "canceled"):
+                    yield app._sse_pack("end", {"reason": snap["phase"]})
+                    return
+                if time.perf_counter() >= deadline:
+                    # 오류가 아니다 — 배포 pre-drain 이 기다릴 수 있는 길이로 끊고, 프런트가 다시 붙는다.
+                    yield app._sse_pack("reconnect", {"after_ms": 0})
+                    return
+                await asyncio.sleep(_BRIDGE_STREAM_TICK_SEC)
+        finally:
+            if sconn is not None:
+                try:
+                    sconn.close()
+                except Exception:
+                    pass
+
+    return app.StreamingResponse(
+        app._counted_stream(event_stream()),  # feature-0014: 무중단 배포 pre-drain 용 스트림 카운트
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, Any] | None:
+    """SSE 한 tick 분의 상태. task 가 없으면 `None`(취소로 삭제된 것).
+
+    `bridge_status` 와 **같은 필드**를 만든다 — 두 경로가 다른 모양을 주면 프런트가 전송 방식에
+    따라 다르게 그리게 되고, 폴백(SSE 실패 → 폴링)이 화면을 바꿔 버린다.
+
+    커넥션은 호출측(스트림)이 들고 있는 것을 받는다. 여기서 열면 tick 마다 연결이 생긴다.
+    """
+    if conn is None:
+        # 일시 DB 장애로 스트림을 죽이지 않는다 — 다음 tick 에 다시 시도한다.
+        # ⚠ `None` 은 "task 없음(=취소 삭제)" 이라는 뜻이므로 여기서 돌려주면 안 된다.
+        #   돌려주면 DB 가 잠깐 흔들릴 때마다 사용자 화면이 "취소됨" 으로 확정된다.
+        return {"phase": "waiting", "answered": False, "delivered": False,
+                "connected": True, "listening": True, "steps": []}
+    try:
+        # 오래 들고 있는 커넥션의 트랜잭션 스냅샷을 푼다(없으면 새 상태가 영영 안 보인다).
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT Status, ClaimedBy, SubmittedAt, Delivered FROM WebAiTasks "
+                "WHERE TaskId=%s AND AccountId=%s AND Origin='web'",
+                (task_id, account_id))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if row is None:
+            return None
+        status = str(row[0] or "")
+        submitted = bool(row[2]) or status == "submitted"
+        claimed_by = row[1]
+        # 연결·러너 여부는 **아직 안 집힌 국면에서만** 의미가 있다(그 판정만
+        # `not_connected`/`not_listening` 으로 갈린다). 이미 누가 집었거나 끝난 뒤에는 물어볼
+        # 이유가 없다 — tick 마다 도는 조회라 값이 싸지 않다.
+        connected, listening = True, True
+        if not submitted and claimed_by is None and status != _STATUS_CANCELED:
+            try:
+                c2 = conn.cursor()
+                try:
+                    connected = _store.account_has_live_token(c2, account_id)
+                finally:
+                    c2.close()
+            except Exception:
+                connected = True   # 판정 실패는 '연결됨' 으로(틀렸을 때 덜 성가신 방향)
+            try:
+                # 러너 기동 여부(형제 cycle TASK-20260828T060000). `bridge_status` 와 **같은
+                # 함수**를 써야 폴링과 스트리밍이 같은 국면을 말한다.
+                listening = account_is_listening(account_id)
+            except Exception:
+                listening = True
+        return {
+            "phase": _bridge_phase(status, claimed_by, bool(row[2]), connected, listening),
+            "answered": submitted,
+            "delivered": bool(row[3]),
+            "connected": connected,
+            "listening": listening,
+            # 아직 아무도 안 집었으면 조사 내역이 있을 수 없다 — 매 tick 원장을 뒤지지 않는다.
+            "steps": _bridge_live_steps(task_id) if claimed_by is not None else [],
+        }
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "[bridge] 스트림 스냅샷 실패 task=%s: %r", task_id, exc)
+        return {"phase": "waiting", "answered": False, "delivered": False,
+                "connected": True, "listening": True, "steps": []}
+
+
+
 @router.get("/api/ai/bridge_status")
 def bridge_status(request: Request) -> JSONResponse:
     """feature-0043 — 웹 대화창이 폴링하는 브리지 진행 상태.
@@ -2154,21 +2522,21 @@ def bridge_status(request: Request) -> JSONResponse:
             "claimed": row[1] is not None,
             "claimed_at": row[5].isoformat() if hasattr(row[5], "isoformat") else None,
             "connected": connected,
-            # 화면이 한 단어로 말할 수 있게 서버가 국면을 정한다(프런트가 조합하면 갈린다).
-            "listening": listening,
             # 'connected' 와 'listening' 은 다른 사실이다 — 토큰은 DB 에, 러너는 프로세스에 있다.
             # 재부팅하면 러너만 사라지고, 그때 "대기 중" 이라 말하면 헛되이 기다리게 된다.
-            "phase": ("done" if (bool(row[2]) or status == "submitted")
-                      else "working" if row[1] is not None
-                      else "waiting" if (connected and listening)
-                      else "not_listening" if connected
-                      else "not_connected"),
+            "listening": listening,
+            # 화면이 한 단어로 말할 수 있게 서버가 국면을 정한다(프런트가 조합하면 갈린다).
+            # 판정은 `_bridge_phase` 한 곳 — 폴링(여기)과 스트리밍(`_bridge_stream_snapshot`)이
+            # 각자 조합하면 전송 방식에 따라 화면이 달라져 폴백이 곧 UX 회귀가 된다.
+            "phase": _bridge_phase(status, row[1], bool(row[2]), connected, listening),
             # `answered` 는 **제출됐다** 는 뜻이고, `delivered` 는 **대화에 실렸다** 는 뜻이다.
             # 둘을 합치면 저장 실패 시 화면엔 아무것도 없는데 "답변 도착" 이라 말하게 된다
             # (codex 재리뷰 P1). 프런트는 delivered=false 면 그 사실을 사용자에게 알린다.
             "answered": submitted,
             "delivered": delivered,
             "conversation_id": str(row[3] or ""),
+            # 진행 중인 조사 내역(2026-08-28). 답변 전에도 "무엇을 보고 있는지" 를 말한다.
+            "steps": _bridge_live_steps(task_id),
         })
     finally:
         try:

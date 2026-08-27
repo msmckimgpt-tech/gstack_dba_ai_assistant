@@ -24,6 +24,9 @@ CONV_PY = WEB_SRC / "routers" / "conversations.py"
 SCHEMA_PY = WEB_SRC / "routers" / "_bootstrap_schema.py"
 COMPOSER_JS = WEB_SRC / "static" / "app" / "composer.js"
 
+#: 브리지 상태 술어·취소 정본 (2026-08-28 이관). `_UNIT` 은 `repo/unit` 이므로 한 단계 위가 repo.
+SHARED_BRIDGE = _UNIT.parent / "shared" / "bridge_tasks.py"
+
 MCP_SRC = _UNIT / "feature-0041-external-ai-tool-surface" / "src"
 MCP_HTTP = MCP_SRC / "external_tool_mcp_http.py"
 MCP_STDIO = MCP_SRC / "external_tool_mcp_server.py"
@@ -257,49 +260,118 @@ def test_bridge_status_does_not_leak_answer_body():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_poll_uses_history_reload_not_select_conversation():
-    """폴링 성공 시 **현재 대화의 history 를 재조회**한다.
+def _js_func(text: str, name: str) -> str:
+    """JS 함수 본문을 중괄호 균형으로 잘라낸다.
+
+    고정 길이 윈도(`text[i:i+2500]`)로 자르던 방식은 **함수가 조금만 자라거나 분해되면**
+    계약이 조용히 검사 범위 밖으로 나간다(2026-08-28 실제로 그렇게 됐다). 경계를 문법으로
+    잡으면 리팩터링이 계약을 무르게 만들지 못한다.
+    """
+    start = text.index(name)
+    # ⚠ 본문 `{` 를 찾기 전에 **인자 목록을 먼저 건너뛴다**. 구조분해 인자
+    # (`function f(a, { x, y })`)의 `{` 를 본문으로 오인하면 함수가 한 줄에서 끝난 것처럼
+    # 잘려, 계약이 검사되지 않는데도 통과한다.
+    paren = text.index("(", start)
+    depth, i = 0, paren
+    while i < len(text):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    brace = text.index("{", i)
+    depth, i = 0, brace
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+        i += 1
+    raise AssertionError(f"{name} 의 끝을 찾지 못했다")
+
+
+def test_bridge_answer_uses_history_reload_not_select_conversation():
+    """답변 도착 시 **현재 대화의 history 를 재조회**한다.
 
     `selectConversation()` 은 이미 활성인 대화면 즉시 return 하도록 설계돼 있어(읽음처리만),
-    답변이 저장돼 있어도 화면이 갱신되지 않는다 — 폴링은 성공하고 토스트까지 뜨는데 답변은
+    답변이 저장돼 있어도 화면이 갱신되지 않는다 — 감시는 성공하고 토스트까지 뜨는데 답변은
     보이지 않는 상태가 된다.
+
+    2026-08-28: 전송 방식이 둘(SSE·폴링)이 되었으므로 **두 경로가 같은 함수**를 쓰는지까지
+    본다. 각자 구현하면 폴백이 곧 UX 회귀가 된다.
     """
     text = COMPOSER_JS.read_text(encoding="utf-8")
-    poll_start = text.index("async function _pollBridgeAnswer")
-    poll_body = text[poll_start:poll_start + 2500]
-    assert "loadHistory(" in poll_body, "폴링이 history 를 재조회하지 않는다"
-    # 주석 안의 설명(왜 쓰면 안 되는지)은 통과시키고 **실제 호출**만 잡는다.
-    calls = [ln for ln in poll_body.split("\n")
+    render = _js_func(text, "async function _renderBridgeAnswer")
+    assert "loadHistory(" in render, "답변 도착 시 history 를 재조회하지 않는다"
+    calls = [ln for ln in render.split("\n")
              if "selectConversation(" in ln and not ln.strip().startswith("//")]
     assert calls == [], (
-        "폴링이 selectConversation 을 호출한다 — 활성 대화에서 no-op 이라 화면이 갱신되지 않는다"
-    )
+        "selectConversation 을 호출한다 — 활성 대화에서 no-op 이라 화면이 갱신되지 않는다")
+
+    # 두 전송 경로가 **같은** 렌더 함수를 부른다.
+    for fn in ("async function _pollBridgeAnswerInner", "async function _consumeBridgeStream"):
+        body = _js_func(text, fn)
+        assert "_renderBridgeAnswer(" in body, f"{fn} 이 공용 렌더 경로를 쓰지 않는다"
 
 
 def test_poll_stops_on_4xx():
     """4xx 는 재시도 대상이 아니다 — 세션 만료·삭제된 task 에서 30분간 두드리지 않는다."""
     text = COMPOSER_JS.read_text(encoding="utf-8")
-    poll_start = text.index("async function _pollBridgeAnswer")
-    poll_body = text[poll_start:poll_start + 2500]
-    assert "code >= 400 && code < 500" in poll_body
+    body = _js_func(text, "async function _pollBridgeAnswerInner")
+    assert "code >= 400 && code < 500" in body
+    # 스트리밍 경로도 같은 판정을 한다(HTTP 상태를 직접 본다).
+    stream = _js_func(text, "async function _streamBridgeStatus")
+    assert "resp.status >= 400 && resp.status < 500" in stream, (
+        "스트리밍이 4xx 를 재시도한다 — 만료된 세션으로 30분간 재접속한다")
+
+
+def test_stream_falls_back_to_polling():
+    """SSE 가 불가한 환경에서 **폴링으로 폴백**한다.
+
+    전송 방식이 바뀌었다고 답변 도달성이 나빠지면 개선이 아니다 — SSE 를 막는 프록시·확장·
+    구브라우저에서 사용자는 그냥 "답이 안 온다" 로 겪는다.
+    """
+    text = COMPOSER_JS.read_text(encoding="utf-8")
+    body = _js_func(text, "async function _pollBridgeAnswer(")
+    assert "_streamBridgeStatus(" in body and "_pollBridgeAnswerInner(" in body, (
+        "스트리밍·폴링 두 경로가 한 진입점에 묶여 있지 않다")
+    assert "if (!streamed)" in body, "스트리밍 실패 시 폴백하지 않는다"
 
 
 def test_claim_lease_predicate_is_shared():
-    """`list_open_requests` 와 `claim_request` 가 **같은 점유가능 술어**를 쓴다.
+    """점유가능 술어가 **한 곳에만** 정의되고 모든 소비처가 그것을 쓴다.
 
     두 곳이 갈리면 "목록엔 보이는데 집으면 409" 또는 그 반대가 생긴다.
+
+    2026-08-28: 거주지가 `routers/ai_tools.py` 에서 `shared/bridge_tasks.py` 로 옮겨졌다.
+    소비처가 도구 표면(ai_tools)뿐 아니라 **웹 취소·supersede 경로**(conversations)까지
+    늘었기 때문이다. 라우터마다 조립하면 바로 그 이중화가 생긴다.
     """
+    shared = SHARED_BRIDGE.read_text(encoding="utf-8")
+    assert "CLAIMABLE_SQL = (" in shared, "술어 정의가 shared 정본에 없다"
+    assert "ClaimedAt < DATE_SUB(NOW(), INTERVAL" in shared, "lease 만료 조건이 없다"
+
     text = TOOLS_PY.read_text(encoding="utf-8")
-    assert "_CLAIMABLE_SQL" in text
-    # 정의 1 + 사용 2 이상
-    assert text.count("_CLAIMABLE_SQL") >= 3, "점유가능 술어가 공유되지 않는다"
-    assert "ClaimedAt < DATE_SUB(NOW(), INTERVAL" in text, "lease 만료 조건이 없다"
+    # 도구 표면은 **정의하지 않고 참조만** 한다 — 정의가 되살아나면 다시 두 벌이 된다.
+    assert "CLAIMABLE_SQL = (" not in text, "도구 표면이 술어를 자체 정의했다(이중화 재발)"
+    assert "from shared.bridge_tasks import" in text, "shared 정본을 참조하지 않는다"
+    # 사용처: list_open_requests · wait_for_request · claim_request 3곳 + import 1
+    assert text.count("_CLAIMABLE_SQL") >= 4, "점유가능 술어가 공유되지 않는다"
+
+    # 웹 축도 같은 정본을 쓴다(자체 SQL 을 조립하지 않는다).
+    conv = CONV_PY.read_text(encoding="utf-8")
+    assert "bridge_tasks" in conv, "웹 취소 경로가 shared 정본을 쓰지 않는다"
 
 
 def test_claim_lease_has_bounded_window():
     """lease 가 상수로 고정돼 있다 — 무한 점유가 아니다."""
-    text = TOOLS_PY.read_text(encoding="utf-8")
-    assert "_BRIDGE_CLAIM_LEASE_MIN" in text
+    shared = SHARED_BRIDGE.read_text(encoding="utf-8")
+    assert "BRIDGE_CLAIM_LEASE_MIN = " in shared
+    assert "_BRIDGE_CLAIM_LEASE_MIN" in TOOLS_PY.read_text(encoding="utf-8")
 
 
 def test_claim_revalidates_conversation_access():

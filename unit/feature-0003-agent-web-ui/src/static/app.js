@@ -1,7 +1,7 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState } from "./app/connect-modal.js?v=dev";
-import { handleBridgePending, resumeBridgePolling, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
+import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
@@ -3046,6 +3046,15 @@ export function renderMessages() {
       classes.push("is-mention-me");
     }
     row.className = classes.join(" ");
+    // feature-0043(2026-08-28): 브리지 대기 말풍선에 **앵커**를 남긴다.
+    //
+    // 진행 중 조사 내역(`_renderBridgeSteps`)은 이 앵커를 찾아 말풍선 안에 붙는다. 앵커 없이
+    // 이력을 재조회해 그리면 단계가 늘 때마다 전체 재렌더라 스크롤이 흔들리고 요청이 배로 뛴다.
+    // 답변으로 덮인 뒤에는 `placeholder=false` 가 되므로 앵커도 자연히 사라진다.
+    const _bridgeMeta = (message.meta && message.meta.bridge) || null;
+    if (_bridgeMeta && _bridgeMeta.task_id && _bridgeMeta.placeholder) {
+      row.dataset.bridgeTask = String(_bridgeMeta.task_id);
+    }
 
     const meta = document.createElement("div");
     meta.className = "message-meta";
@@ -6855,6 +6864,26 @@ async function cancelCurrentRun() {
     apiFetch("/api/cancel", {
       method: "POST",
       body: JSON.stringify({ conversation_id: cid }),
+    }).then((res) => {
+      // feature-0043(2026-08-28): 브리지 축의 결과를 반영한다.
+      //
+      // 응답을 **버리면 안 되는 이유**: 위 optimistic 해제는 서버 run 축(KV·큐)만 푼다.
+      // 브리지 대기는 `WebAiTasks` 행이고 그 감시자(SSE/폴러)는 여기서 끊지 않으면 계속 돌며,
+      // 삭제된 task 를 물어 404 를 쌓거나 — 더 나쁘게는 취소 직전에 제출된 답변을 받아
+      // "취소했습니다" 라고 말한 화면에 답변을 그린다.
+      if (!res) return;
+      const gone = [...(res.bridge_deleted || []), ...(res.bridge_canceled || [])];
+      if (gone.length) {
+        abandonBridgeTasks(cid, gone);
+        // 서버가 대기 말풍선을 취소 안내로 바꿔 두었다 — 그것을 보여준다.
+        loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
+      }
+      if (res.bridge_cancel_failed) {
+        // 위에서 이미 "취소했습니다" 를 띄웠는데 서버는 못 지웠다 — 정정한다.
+        // 숨기면 사용자는 취소된 줄 알고 있다가 잠시 뒤 답변이 나타나는 것을 본다.
+        showToast("대기 중인 AI 요청을 취소하지 못했습니다. 답변이 도착할 수 있습니다.", true);
+      }
+      renderComposer();  // 브리지 대기가 풀렸으므로 버튼이 '전송' 으로 복귀.
     }).catch((error) => {
       showToast(error.message || "취소 요청 전송에 실패했습니다.", true);
     });
@@ -7707,7 +7736,9 @@ async function initialize() {
     // composer-nonblock-interrupt R1: 빈 입력 + 내 run 처리 중 → "중단". 그 외엔 "전송"
     // (입력이 있으면 처리 중에도 전송 — sendPrompt 가 R2 그룹 가드 / R3 1:1 인터럽트로 라우팅).
     const hasText = Boolean(String((promptInputEl && promptInputEl.value) || "").trim());
-    if (_myAskInFlightHere() && !hasText) {
+    // feature-0043: 브리지 대기도 취소 대상이다 — `renderComposer` 의 `stopMode` 와 **같은
+    // 술어**를 써야 한다. 갈리면 버튼은 '중단' 인데 눌러도 전송이 나가는(또는 그 반대) 상태가 된다.
+    if ((_myAskInFlightHere() || _bridgePendingHere()) && !hasText) {
       cancelCurrentRun().catch((error) => {
         showToast(error.message || "취소 요청에 실패했습니다.", true);
       });
@@ -7745,7 +7776,8 @@ async function initialize() {
     sendBtn.addEventListener("mouseenter", () => {
       // composer-nonblock-interrupt: 버튼이 '중단' 모드(내 run + 빈 입력)일 때만 전송 모드 툴팁 숨김.
       // 타 멤버 run(글로벌 processing)으로는 숨기지 않는다(버튼은 여전히 '전송' 모드).
-      if (_myAskInFlightHere() && !String((promptInputEl && promptInputEl.value) || "").trim()) return;
+      if ((_myAskInFlightHere() || _bridgePendingHere())
+          && !String((promptInputEl && promptInputEl.value) || "").trim()) return;
       clearTimeout(_sendTipLeaveTimer);
       if (document.getElementById("sendModeTooltip")) return;
       const tip = document.createElement("div");
@@ -7830,7 +7862,7 @@ async function initialize() {
     this.style.height = Math.min(this.scrollHeight, 180) + "px";
     // composer-nonblock-interrupt R1: 내 run 처리 중에는 입력 유무로 전송↔중단 버튼이 바뀌므로,
     // 글자 입력/삭제 시 버튼 모드를 재동기화한다. (dataset.mode 변동 시에만 innerHTML 교체 → thrash 없음.)
-    if (_myAskInFlightHere()) renderComposer();
+    if (_myAskInFlightHere() || _bridgePendingHere()) renderComposer();
   });
 
   toggleAuthPane("login");
