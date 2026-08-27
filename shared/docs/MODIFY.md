@@ -169,3 +169,23 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - Files: `shared/llm_gate.py` (신규)
 - Affected Features: feature-0002-agent-core(`modules/llm._get_llm_client`·`agent_core._run_agent_core` 에서 호출), feature-0003-agent-web-ui(`routers/conversations` 의 `/api/ask` 분기), feature-0007-bedrock-llm-provider(`litellm_config.yaml` 두 번째 자물쇠), feature-0041-external-ai-tool-surface(도구 표면이 브리지 수용부)
 - Cross-ref: `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` CHG-20260826T135206-ai-claude-feature-0043
+
+## CHG-20260828T060000-bridge-tasks-cancel
+- Date: 2026-08-28
+- Changed By: feature-0043-external-llm-bridge (AI) — 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0043-bridge-stream-interrupt`
+- Summary: `shared/bridge_tasks.py` **신규** — 웹 브리지 대기 작업(`WebAiTasks`)의 **상태 술어·취소 정본**.
+  `BRIDGE_CLAIM_LEASE_MIN`(30분) · `CLAIMABLE_SQL`(미점유 or lease 만료) · `STATUS_OPEN|CANCELED|SUBMITTED` ·
+  `claim_is_live(claimed_by, claimed_at)`(SQL 술어의 파이썬 대응) · `cancel_bridge_tasks(...)`(미점유 DELETE /
+  점유 `Status='canceled'` 두 갈래 + `{"deleted": [...], "canceled": [...]}` 반환).
+  **왜 shared 인가**: 같은 술어를 도구 표면(`routers/ai_tools.py`)과 웹 표면(`routers/conversations.py` 의
+  `/api/cancel`·supersede)이 **둘 다** 판정한다. 라우터마다 조립하면 "목록엔 없는데 취소는 안 되는" 어긋남이
+  생기고, **갈리는 순간 느슨한 쪽이 사용자가 보는 진실**이 된다 — 이 feature 는 그 부류를 이미 한 번 겪었다
+  (P0-R: 연결 판정이 화면과 인증에서 두 벌이라 화면만 "연결 1건" 이라고 말했다).
+  종전 `ai_tools.py` 의 `_BRIDGE_CLAIM_LEASE_MIN`/`_CLAIMABLE_SQL`/`_claim_lease_valid` 는 **정의를 잃고
+  지역 별칭·위임**으로 남는다(기존 호출부·계약 테스트 이름 보존). 커넥션·트랜잭션은 여기서 열지 않는다 —
+  호출측이 이미 자기 커넥션을 들고 있고, 새로 열면 같은 요청 안에서 방금 쓴 행을 못 보는 창이 생긴다.
+- Files: `shared/bridge_tasks.py` (신규)
+- Affected Features: feature-0003-agent-web-ui(`routers/ai_tools.py` 술어 참조 + `routers/conversations.py`
+  취소·supersede 진입점), feature-0043-external-llm-bridge(정본 feature — 러너 취소 하차 계약의 서버측 상대)
+- Cross-ref: `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` CHG-20260828T060000-ai-claude-feature-0043 ·
+  FUNCTION.md P0-T · TASK.md TASK-20260828T060000

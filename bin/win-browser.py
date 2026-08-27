@@ -89,22 +89,60 @@ def emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
 
 
-def win_host_ip():
-    """WSL2 에서 Windows host 에 도달하는 IP (resolv.conf nameserver → 기본 게이트웨이)."""
+def _is_private_v4(ip: str) -> bool:
+    """RFC1918 / CGNAT 대역인가 — WSL2 의 Windows host 는 반드시 사설 IP 다."""
     try:
-        with open("/etc/resolv.conf", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("nameserver"):
-                    return line.split()[1].strip()
+        import ipaddress
+
+        addr = ipaddress.ip_address(ip)
+        return addr.version == 4 and (addr.is_private or addr.is_link_local)
     except Exception:
-        pass
+        return False
+
+
+def win_host_ip():
+    """WSL2 에서 Windows host 에 도달하는 IP.
+
+    ## 왜 기본 게이트웨이가 먼저인가 (2026-08-28 수정)
+
+    종전에는 `/etc/resolv.conf` 의 **첫 nameserver** 를 그대로 돌려줬다. WSL 이 resolv.conf 를
+    자동 생성하는 기본 구성에서는 그 값이 곧 Windows host 라 잘 맞았지만, 사용자가 공용 DNS
+    (`8.8.8.8`·`1.1.1.1`)를 직접 넣어 두면 **그 공용 IP 를 Windows host 로 오판**한다.
+
+    그러면 증상이 고약하다 — relay 는 "8.8.8.8:9223 로 기동됨" 이라고 **성공을 보고**하고,
+    실제 CDP 연결만 조용히 실패한다(`bridge_unreachable`). 이 저장소에서 PB-0008 시각검증이
+    여러 cycle 동안 "브리지 setup 불가" 로 기록된 원인이 이것이었다.
+
+    그래서 순서를 뒤집고 **사설 IP 만 받는다**:
+
+    1. 기본 게이트웨이(`ip route show default`) — WSL2 NAT 에서 이것이 Windows host 다.
+    2. resolv.conf 의 nameserver 중 **사설 대역인 것** — mirrored 모드 등 게이트웨이가 없는 구성.
+    3. `WIN_BROWSER_HOST` env — 위 둘이 모두 빗나가는 예외 환경의 탈출구.
+
+    공용 IP 를 돌려주느니 `None` 을 돌려주는 편이 낫다: `None` 은 "못 찾았다" 로 정직하게
+    실패하지만, 공용 IP 는 **성공한 것처럼 보이는 relay** 를 만들어 원인을 숨긴다.
+    """
+    override = (os.environ.get("WIN_BROWSER_HOST") or "").strip()
+    if override:
+        return override
     try:
         out = subprocess.run(
             ["ip", "route", "show", "default"], capture_output=True, text=True, timeout=4
         ).stdout
         parts = out.split()
         if "via" in parts:
-            return parts[parts.index("via") + 1]
+            gw = parts[parts.index("via") + 1]
+            if _is_private_v4(gw):
+                return gw
+    except Exception:
+        pass
+    try:
+        with open("/etc/resolv.conf", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("nameserver"):
+                    ns = line.split()[1].strip()
+                    if _is_private_v4(ns):
+                        return ns
     except Exception:
         pass
     return None

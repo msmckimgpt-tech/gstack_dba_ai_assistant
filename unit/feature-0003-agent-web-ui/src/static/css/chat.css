@@ -3386,3 +3386,47 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   .attach-diff-stats { margin-left: 0; }
 }
 
+
+/* ── feature-0043: 브리지 진행 중 조사 내역 (2026-08-28) ─────────────────────
+   개인 AI 가 답을 만드는 동안 **무엇을 조사하고 있는지**를 대기 말풍선 안에 붙인다.
+   답변이 도착하면 말풍선 자체가 답변으로 덮이므로 이 영역도 함께 사라진다.
+
+   조용한 톤을 쓰는 이유: 이건 답변이 아니라 진행 신호다. 본문과 같은 무게로 그리면
+   사용자가 "답이 왔다" 고 읽는다. `message-event-pill` 의 muted 계열을 따른다. */
+.bridge-live-steps {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, #f0efea);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bridge-live-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted, #807d72);
+}
+.bridge-live-step-tool {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* 도구명은 길이가 제각각이라 정렬 없이 두면 뒤 항목이 톱니처럼 흔들린다. */
+  flex: 0 0 auto;
+}
+.bridge-live-step-where {
+  /* 스키마·데이터소스가 길면 줄을 넘기지 않고 줄인다 — 진행 표시가 말풍선을 밀지 않게. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bridge-live-step-rows {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-color-scheme: dark) {
+  .bridge-live-steps { border-top-color: rgba(148, 163, 184, 0.18); }
+  .bridge-live-step { color: var(--text-muted, #94a3b8); }
+}

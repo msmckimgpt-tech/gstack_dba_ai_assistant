@@ -32,6 +32,27 @@ source_of_truth: true
 | TEST-20260826T135206-embedding-kept | `litellm_config.yaml` | `titan-embed` 활성 유지 (부수 피해 방지) | AC-7 |
 | TEST-20260826T135206-runner-stdlib | `bridge_runner.py` | AST import 전수 → `sys.stdlib_module_names` 밖 0건 · `mcp` 부재 · TLS 검증 무력화 스위치 부재 | AC-9 |
 | TEST-20260826T135206-alias-transition | 기존 alias 계약 3파일 | 전환 상태에서 대체 계약 단정, 되돌리면 원 계약 복원 | — |
+| TEST-20260828T060000-cancel-single-source | `shared/bridge_tasks.py` · 두 라우터 | 취소 술어가 shared 에만 정의 · 라우터는 참조만 · 웹 라우터에 취소 SQL ≤1벌 | AC-54 |
+| TEST-20260828T060000-cancel-two-branches | `cancel_bridge_tasks` | 미점유 DELETE / 점유 `canceled` · lease 판정 경유 · 계정 스코프 · 대상 미지정 시 no-op | AC-55 |
+| TEST-20260828T060000-cancel-wiring | `cancel_request` | 브리지 취소 호출 + 말풍선 갱신 + **서버 run 취소보다 앞**(그쪽 실패가 이쪽을 삼키지 않게) | AC-53 |
+| TEST-20260828T060000-cancel-failure-surfaced | `cancelCurrentRun` | `bridge_cancel_failed` 반영 + 감시 정리(`abandonBridgeTasks`) | AC-53 |
+| TEST-20260828T060000-supersede | `_enqueue_web_bridge_task` | 이전 대기 대체 · `exclude_task_id` · **적재 성공 뒤** 실행 · 결과 전파 | AC-57 |
+| TEST-20260828T060000-supersede-frontend | `handleBridgePending` | 대체 task 감시를 **새 폴러보다 먼저** 끊는다 | AC-57 |
+| TEST-20260828T060000-cancel-channel | `wait_for_request` | 취소로도 즉시 반환 · `canceled_task_ids` · 점유자 스코프 · **명시 도구 7종 불변** | AC-58 |
+| TEST-20260828T060000-submit-409 | `submit_answer` | 취소된 task 409 · 판정이 각인·저장 **앞** | AC-56 |
+| TEST-20260828T060000-stream-counted | `bridge_stream` | `_counted_stream` 경유(배포 pre-drain 계량) · SSE 헤더 · 버퍼링 차단 | AC-59 |
+| TEST-20260828T060000-stream-bounded | `bridge_stream` | 55초 서버 고정 상한 · `reconnect` 프레임 · 클라이언트가 대기시간 지정 불가 | AC-59 |
+| TEST-20260828T060000-stream-auth-first | `bridge_stream` | 인증·소유 확인이 스트림 오픈 **앞**(그 뒤면 401/403 불가) · 계정 스코프 · 끊김 감지 | AC-59 |
+| TEST-20260828T060000-stream-transient | `_bridge_stream_snapshot` | DB 장애를 '취소됨'(None)으로 오인하지 않는다 | AC-59 |
+| TEST-20260828T060000-live-steps | `_bridge_live_steps` | 원장 출처 · `reason_text` 부재(지어내지 않음) · 진행도구 필터 공유 | AC-59 |
+| TEST-20260828T060000-phase-order | `_bridge_phase` | `canceled` 가 `working` 보다 앞(아니면 취소가 영원히 '처리 중') · 5종 · 두 소비처 공용 | AC-59 |
+| TEST-20260828T060000-stop-button | `renderComposer` · sendBtn 핸들러 | 브리지 대기 중 중단 버튼 노출 · 렌더와 클릭이 **같은 술어** | AC-53 |
+| TEST-20260828T060000-no-send-block | `_bridgePendingHere` · `sendPrompt` | 브리지 대기를 in-flight 로 승격하지 않는다(대기 중 새 질문이 막히지 않게) | AC-53 |
+| TEST-20260828T060000-runner-parallel | `bridge_agent.py` | 기본 동시 처리 · 세마포어 상한 · **자리 확보가 서버 질의보다 앞**(tight loop 방지) | AC-60 |
+| TEST-20260828T060000-runner-cancel | `bridge_agent.py` | 취소 원장 락 보호 · `Popen`+kill · 실행 중·제출 직전 2회 확인 · 취소≠실패 구분 | AC-60 |
+| TEST-20260828T060000-runner-claim-site | `handle_one` | 점유는 대기 루프에서(워커로 미루면 같은 task 반복 수신) | AC-60 |
+| TEST-20260828T060000-runner-once | `main` | `--once` 가 워커 완료를 기다린다(daemon 스레드 조기 종료 방지) | AC-60 |
+| TEST-20260828T060000-fallback | `_pollBridgeAnswer` | SSE 실패 시 폴링 폴백 · 두 경로가 같은 렌더·4xx 판정 | AC-59 |
 
 ## 3. Run 기록
 
