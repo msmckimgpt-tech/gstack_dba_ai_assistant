@@ -518,6 +518,68 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                          "cross_session_findings": findings})
 
 
+def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
+    """개인 AI 가 **우리 도구를 호출한 내역**을 실행 단계로 옮긴다. 반환 = 기록한 단계 수.
+
+    ## 왜 이게 가능한가
+
+    브리지 답변에는 서버 run 이 없다. 그래서 처음엔 'AI 추론' 탭이 비었고, 나는 그것을
+    "없는 것을 있는 것처럼 그리지 않는다" 며 그대로 뒀다. 그러나 그건 절반만 맞았다 —
+    **답을 만든 추론은 우리 밖에 있지만, 그 AI 가 무엇을 조사했는지는 우리 안에 있다.**
+    도구 호출은 전부 원장(`tool_call_usage`)에 남는다.
+
+    그래서 여기서 옮기는 것은 추측이 아니라 **우리가 실제로 관측한 사실**이다: 어떤 도구를
+    어떤 스키마에 대해 언제 불렀고, 몇 행이 나갔고, 얼마나 걸렸는지.
+
+    ## 무엇을 옮기지 않는가
+
+    LLM 의 사고 과정(reason_text)은 없다. 그건 사용자의 AI 안에서 일어났고 우리는 못 봤다.
+    비워 둔다 — 지어내면 그 순간 이 패널 전체가 못 믿을 것이 된다.
+
+    실패는 흡수한다. 단계 기록은 답변 전달의 조건이 아니다(없으면 탭이 빌 뿐이다).
+    """
+    if not conversation_id or not task_id:
+        return 0
+    try:
+        pg = _pg()
+        if pg is None:
+            return 0
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT tool, datasource_key, schema_name, rows_returned, bytes_out, "
+                "       latency_ms, outcome, detail, created_at "
+                "FROM agent_runtime.tool_call_usage "
+                "WHERE task_id = %s ORDER BY id ASC", (task_id,))
+            rows = cur.fetchall() or []
+            # 브리지 자체의 진행 도구는 조사 내역이 아니다 — 사용자에게는 소음이다.
+            skip = {"wait_for_request", "list_open_requests", "claim_request", "submit_answer"}
+            n = 0
+            for r in rows:
+                tool = str(r[0] or "")
+                if tool in skip:
+                    continue
+                n += 1
+                summary = {"rows_returned": int(r[3] or 0), "bytes_out": int(r[4] or 0),
+                           "outcome": str(r[6] or "")}
+                args = {k: v for k, v in (("datasource", r[1]), ("schema_name", r[2])) if v}
+                cur.execute(
+                    "INSERT INTO agent_runtime.steps "
+                    "(conversation_id, run_id, step_index, action, tool, intent, "
+                    " work_source, reason_source, args_json, result_summary_json, "
+                    " error_text, created_at) "
+                    "VALUES (%s,%s,%s,'tool',%s,%s,'bridge-ledger','none',%s,%s,%s,%s)",
+                    (conversation_id, task_id, n, tool,
+                     f"{tool} 호출", json.dumps(args, ensure_ascii=False),
+                     json.dumps(summary, ensure_ascii=False),
+                     (str(r[7] or "") if str(r[6] or "") not in ("ok", "") else None), r[8]))
+        pg.commit()
+        return n
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 실행 단계 기록 실패 task=%s: %r", task_id, exc)
+        return 0
+
+
 def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
                                 answer: str, meta: dict[str, Any]) -> int:
     """대기 안내 말풍선을 **답변으로 덮어쓴다**. 성공 시 message id, 없으면 0.
@@ -594,7 +656,10 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         # 값이고, 빠지면 FE 가 컴포저의 *현재* 제품 칩으로 폴백해 그린다 — 사용자가 제품을 바꾸는
         # 순간 과거 답변의 발화자까지 소급 변경된다. 각인은 답변 시점에 확정되는 사실이다.
         # 조회 실패는 fail-open(각인만 생략) — 각인이 답변 저장을 막게 두지 않는다.
-        _meta: dict[str, Any] = {"bridge": {"task_id": task_id, "origin": "web"}}
+        # `run_id` 를 task_id 로 잡는다 — 프런트가 `meta.run_id` 로 단계를 조회하므로,
+        # 이 키가 없으면 단계를 기록해도 화면에서 찾지 못한다.
+        _meta: dict[str, Any] = {"bridge": {"task_id": task_id, "origin": "web"},
+                                 "run_id": task_id}
         try:
             import agent_core as _core
 
@@ -620,6 +685,12 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
                 "[bridge] 대화 저장이 0 을 반환했다 task=%s conv=%s — 전달 실패로 기록한다",
                 task_id, conversation_id)
             return False
+
+        # 개인 AI 의 조사 내역을 'AI 추론' 탭에 보이도록 단계로 옮긴다(사용자 제보 2026-08-27).
+        _steps = _materialize_bridge_steps(str(conversation_id), task_id)
+        if _steps:
+            logging.getLogger(__name__).info(
+                "[bridge] 실행 단계 %d건 기록 task=%s", _steps, task_id)
 
         # 회수 store(`agent_runtime.core_messages`)에도 답변을 남긴다 — 표시 store 만 쓰면 대화
         # 복제·분기본에서 브리지 답변만 사라진다. 실패는 흡수(표시본은 이미 확정).
@@ -891,9 +962,10 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                   f"(점유는 {_BRIDGE_CLAIM_LEASE_MIN}분 뒤 자동 해제됩니다).")
 
         cur.execute(
-            "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds "
+            "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds, "
+            "RequestedModel, ReasoningLevel "
             "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
-        row = cur.fetchone() or ("", None, None, None, None)
+        row = cur.fetchone() or ("", None, None, None, None, None, None)
     finally:
         cur.close()
 
@@ -941,6 +1013,11 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     # 첨부 목록 — **있다는 사실 자체**를 알려야 한다. 종전에는 첨부가 딸린 질문도 본문만
     # 전달돼, 개인 머신 AI 가 "첨부가 없다" 고 전제하고 답했다(웹 대화 사용감과 어긋남).
     attachments = _task_attachment_list(conn, row[4], conversation_id)
+
+    # 사용자가 웹에서 고른 **모델·추론 강도**. 서버가 강제할 수는 없지만(답은 네가 만든다)
+    # 요청의 일부이므로 전달한다 — 전달하지 않으면 화면의 선택지가 아무 효과 없는
+    # 거짓 조작면이 된다(사용자 제보 2026-08-27).
+    requested = _requested_quality(row[5], row[6])
     return JSONResponse({
         "task_id": task_id,
         "question": marked,
@@ -948,12 +1025,48 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         "product_id": int(row[2]) if row[2] is not None else None,
         "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
         "attachments": attachments,
-        "next": ("조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
+        "requested": requested,
+        "next": (requested.get("instruction", "") +
+                 "조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
                  "선언합니다." + (
                      f" 이 질문에는 첨부 {len(attachments)}건이 있습니다 — "
                      f"read_task_attachment(task_id, attachment_id) 로 본문을 읽고 나서 답하세요."
                      if attachments else "")),
     })
+
+
+#: 추론 강도 → 사람이 읽는 요구 수준. AI 마다 이름이 다르므로(thinking budget · reasoning
+#: effort · 없음) **값이 아니라 의도**를 전달한다 — 그래야 어느 런타임이든 해석할 수 있다.
+_REASONING_INTENT = {
+    "low": "빠르게 — 깊은 추론 없이 간결하게",
+    "normal": "보통 수준으로",
+    "high": "깊게 — 단계적으로 따져가며",
+    "max": "가능한 한 깊게 — 최대한 시간을 들여",
+}
+
+
+def _requested_quality(model: Any, level: Any) -> dict[str, Any]:
+    """사용자가 웹에서 고른 품질 설정을 AI 가 해석할 수 있는 형태로.
+
+    **강제가 아니라 요청**이다. 답을 만드는 것은 사용자의 AI 이고, 그쪽에 같은 모델이 없을 수도
+    있다. 그래서 지시문은 "따르라" 가 아니라 "가능하면 따르고, 못 하면 답변에 밝혀라" 다 —
+    조용히 무시하면 사용자는 자기 선택이 반영됐다고 착각한다.
+    """
+    m = str(model or "").strip()
+    lv = str(level or "").strip().lower()
+    out: dict[str, Any] = {"model": m or None, "reasoning_level": lv or None}
+    parts: list[str] = []
+    if m:
+        parts.append(f"모델 `{m}`")
+    if lv and lv in _REASONING_INTENT:
+        parts.append(f"추론 강도 '{lv}'({_REASONING_INTENT[lv]})")
+    if not parts:
+        return {**out, "instruction": ""}
+    out["instruction"] = (
+        "사용자가 이 질문에 " + " · ".join(parts) + " 를 요청했습니다. "
+        "가능하면 그에 맞춰 답하고, 맞출 수 없으면 **답변 안에 그 사실을 한 줄로 밝히세요** "
+        "(조용히 무시하면 사용자는 자기 선택이 반영된 줄 압니다). ")
+    return out
 
 
 def _task_attachment_ids(raw: Any) -> list[int]:
