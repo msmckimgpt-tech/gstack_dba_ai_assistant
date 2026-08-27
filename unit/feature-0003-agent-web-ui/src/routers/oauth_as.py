@@ -499,12 +499,27 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     origin = _origin(request)
     if not account:
         return JSONResponse({"logged_in": False, "endpoint": f"{origin}/api/ai/mcp"})
+    # 연결 여부를 함께 싣는다(사용자 제보 2026-08-27): 종전엔 **질문을 보내야만** 안내
+    # 말풍선으로 간접 확인됐다. "연결이 됐는지" 는 질문 전에 알아야 하는 사실이다.
+    #
+    # 판정은 인증과 **같은 함수**를 쓴다 — 따로 세면 로그아웃 뒤에도 '연결됨' 이 된다
+    # (실제로 그렇게 갈렸다).
+    connected = False
+    try:
+        cur = conn.cursor()
+        try:
+            connected = _store.account_has_live_token(cur, int(account.get("id") or 0))
+        finally:
+            cur.close()
+    except Exception:
+        connected = True   # 판정 실패는 '연결됨'(틀렸을 때 덜 성가신 방향)
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
         "display_name": account.get("display_name"),
         "endpoint": f"{origin}/api/ai/mcp",
         "guide": f"{origin}/api/ai/guide",
+        "connected": connected,
     })
 
 

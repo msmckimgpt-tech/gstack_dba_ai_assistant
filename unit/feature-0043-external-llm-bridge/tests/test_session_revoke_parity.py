@@ -153,3 +153,78 @@ def test_frontend_handles_the_not_queued_branch():
     js = (WEB_SRC / "static" / "app" / "composer.js").read_text(encoding="utf-8")
     assert "bridge_queued === false" in js, "미적재 응답을 '응답을 갱신했습니다' 로 오인한다"
     assert "if (!queued) return true;" in js, "없는 task 를 폴링한다"
+
+
+# ── 연결 상태 상시 표시 (사용자 제보 2026-08-27) ─────────────────────────────
+#
+# "웹브라우저 내 화면에서는 연결여부에 대한 메세지가 없어 연결이 1차적으로 완수되었는지
+# 확인되지 않습니다." — 종전엔 **질문을 보내야만** 안내 말풍선으로 간접 확인됐다.
+# 순서가 거꾸로다: 연결 여부는 **묻기 전에** 알아야 한다.
+
+MODAL_JS = WEB_SRC / "static" / "app" / "connect-modal.js"
+INDEX = WEB_SRC / "static" / "index.html"
+APP_JS = WEB_SRC / "static" / "app.js"
+OAUTH = WEB_SRC / "routers" / "oauth_as.py"
+
+
+def test_status_endpoint_reports_connection():
+    body = _func(OAUTH, "connect_status")
+    assert '"connected"' in body, "연결 여부를 알려주지 않는다"
+
+
+def test_status_uses_the_shared_predicate():
+    """표시와 인증이 또 갈리지 않게 — 같은 함수를 쓴다."""
+    body = _func(OAUTH, "connect_status")
+    assert "account_has_live_token(" in body, "따로 세면 로그아웃 뒤에도 '연결됨' 이 된다"
+
+
+def test_status_probe_fails_open():
+    body = _func(OAUTH, "connect_status")
+    tail = body[body.index("except Exception"):]
+    assert "connected = True" in tail, "조회 실패 시 '연결 없음' 으로 단정하면 거짓 경보"
+
+
+def test_indicator_exists_and_is_wired():
+    assert 'id="aiConnState"' in INDEX.read_text(encoding="utf-8"), "표시 요소가 없다"
+    app = APP_JS.read_text(encoding="utf-8")
+    assert "bindConnState()" in app, "표시가 배선되지 않았다(요소만 있고 안 그린다)"
+
+
+def test_indicator_shows_both_states():
+    js = MODAL_JS.read_text(encoding="utf-8")
+    assert "내 AI 연결됨" in js and "내 AI 연결 안 됨" in js, "한쪽 상태만 표시한다"
+
+
+def test_indicator_opens_the_modal():
+    """표시가 곧 조치 경로여야 한다 — '연결 안 됨' 만 보이고 방법이 없으면 소용없다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    seg = js[js.index("export function bindConnState("):]
+    assert "openConnectModal()" in seg
+
+
+def test_indicator_refreshes_after_connecting():
+    """방금 연결했는데 표시가 낡아 있으면 사용자는 실패한 줄 안다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    make = js[js.index("async function _make("):js.index("async function _copy(")]
+    assert "refreshConnState()" in make
+
+
+def test_indicator_refreshes_on_tab_return():
+    """다른 탭에서 연결하고 돌아오는 경로 — 낡은 표시를 남기지 않는다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    assert "visibilitychange" in js
+
+
+def test_indicator_does_not_poll():
+    """연결은 자주 바뀌지 않는다. 주기 폴링은 이 기능 전체의 원칙과도 어긋난다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    code = "\n".join(l for l in js.split("\n")
+                     if l.strip() and not l.strip().startswith("//"))
+    assert "setInterval" not in code, "연결 상태를 주기 폴링한다"
+
+
+def test_indicator_hides_rather_than_lying():
+    """조회 실패·미로그인은 **표시하지 않는다** — 틀린 상태를 보이느니 침묵이 낫다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    body = js[js.index("export async function refreshConnState("):js.index("export function bindConnState(")]
+    assert 'classList.add("hidden")' in body

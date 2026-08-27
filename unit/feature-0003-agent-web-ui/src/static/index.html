@@ -383,6 +383,10 @@
           <div class="composer-footer">
             <!-- TASK-20260619T014034: LLM provider 상태점(glanceable) — restricted 시 적색.
                  hover/focus 툴팁으로 원인·발생시각·조치 표시(indirect 표면). -->
+            <!-- feature-0043(2026-08-27 제보): 내 AI 연결 상태를 **질문 전에** 보인다.
+                 종전엔 질문을 보내야만 안내 말풍선으로 간접 확인됐다 — 연결이 됐는지는
+                 묻기 전에 알아야 하는 사실이다. 클릭하면 연결 모달이 열린다. -->
+            <button type="button" class="ai-conn hidden" id="aiConnState" title="내 AI 연결 상태"></button>
             <span class="llm-status-dot hidden" id="llmStatusDot" tabindex="0" role="img"></span>
             <span class="composer-status" id="composerTitle"></span>
             <span class="composer-hint" id="composerHint"></span>
