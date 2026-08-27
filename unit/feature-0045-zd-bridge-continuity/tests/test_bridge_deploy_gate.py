@@ -421,3 +421,33 @@ def test_quiesce_counts_only_live_bridge_claims():
     body = _extract_func("bridge_active_total", lib)
     assert '"claimed"' in body and '"stale"' in body, (
         "fresh/stale 을 구분하지 않는다 — 유령 점유가 배포를 막는다")
+
+
+def test_legacy_sweep_never_kills_the_deploy(tmp_path):
+    """정리 실패가 **배포를 죽이지 않는다** (라이브 실측 2026-08-27).
+
+    서비스가 compose 정의에서 사라졌으므로 `docker compose ps -aq <name>` 은
+    `no such service` + **exit 1** 이다. `set -euo pipefail` 하에서 그 명령 치환이 실패하면
+    스크립트가 그 자리에서 죽는다 — 첫 전환 배포가 정확히 그렇게 MCP 롤아웃 직후 중단됐고
+    워커·gateway 가 구 코드로 남았다. 정리는 best-effort 이지 게이트가 아니다.
+    """
+    script = tmp_path / "sweep.sh"
+    script.write_text("\n".join([
+        "set -euo pipefail",                      # 배포 스크립트와 **같은** 옵션으로 실행한다
+        "log()  { printf '[log] %s\\n' \"$*\" >&2; }",
+        "warn() { printf '[warn] %s\\n' \"$*\" >&2; }",
+        "run() { \"$@\"; }",
+        "DRY_RUN=0",
+        f'REPO_ROOT="{tmp_path}"',
+        'MCP_LEGACY_SERVICE="ext-tool-mcp"',
+        # compose 는 없는 서비스에 대해 실패한다(실측 재현), docker 는 빈 결과.
+        "DC_PROD=(sh -c 'echo \"no such service\" >&2; exit 1' --)",
+        "docker() { return 0; }",
+        _extract_func("sweep_legacy_ext_tool_mcp"),
+        "sweep_legacy_ext_tool_mcp",
+        "echo SURVIVED",
+    ]), encoding="utf-8")
+    proc = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=60)
+    assert "SURVIVED" in proc.stdout, (
+        f"정리 조회 실패가 배포를 죽였다 — rc={proc.returncode} stderr={proc.stderr[:300]!r}")
+    assert proc.returncode == 0

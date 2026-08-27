@@ -63,3 +63,37 @@ source_of_truth: true
   다음 replica 로 넘어가게), ② `submit_answer`·`read_task_attachment` 는 드레인 중에도 **200**.
 - Rollback Notes: CHG-0001 과 동일. 추가로 `EXT_TOOL_MCP_STATELESS=0` 이면 세션 모드로 돌아가되
   그때는 `lb_policy ip_hash` 가 친화성을 유지해 고장이 "느려짐" 수준에 머문다.
+
+## CHG-20260827-0003
+- Date: 2026-08-27
+- Related Requirement: REQ-20260827T073753-zd-bridge-continuity
+- Summary: **첫 라이브 배포가 MCP 롤아웃 직후 중단**됐다. `sweep_legacy_ext_tool_mcp` 의
+  `docker compose ps -aq ext-tool-mcp` 가 — 그 서비스를 compose 정의에서 **우리가 지웠으므로** —
+  `no such service` + exit 1 을 냈고, `set -euo pipefail` 하에서 그 명령 치환이 스크립트를
+  그 자리에서 죽였다. 결과: web·MCP 는 신 코드로 교체됐으나 워커·gateway 가 구 코드로 남았다.
+- Files: `bin/deploy-web.sh`(`sweep_legacy_ext_tool_mcp`) ·
+  `unit/feature-0045-zd-bridge-continuity/tests/test_bridge_deploy_gate.py`(회귀 가드)
+- Impact: 정리는 **best-effort** 로 격하 — 조회 실패를 흡수하고, compose 가 이름을 모르면
+  라벨(project+service)로 찾는다. 목적은 조회가 아니라 정리다.
+- Rollback Notes: 이 변경 자체는 되돌릴 이유가 없다(실패 흡수만 추가). 구 컨테이너가 남으면
+  `docker rm -f repo-ext-tool-mcp-1` 로 수동 정리.
+
+> **왜 적대 리뷰가 못 잡았나**: 리뷰어는 `docker compose -p repo ps -aq ext-tool-mcp` 를
+> 직접 실행해 "잔재 컨테이너가 있으면 id 를 반환(rc=0)" 을 확인했다. 그러나 배포 스파인은
+> **pin overlay 를 포함한 `DC_PROD`** 로 부르고, 그 조합에서는 `no such service` + exit 1 이다.
+> 같은 명령처럼 보여도 **호출 형태가 다르면 다른 사실**이다.
+>
+> **왜 테스트가 못 잡았나**: `test_mcp_rollout_precedes_the_edge_switch` 는 호출 **순서**만
+> 봤고 실행하지 않았다. 새 가드는 `set -euo pipefail` 로 원문을 실행해 "정리 실패가 배포를
+> 죽이지 않는가" 를 본다(뮤테이션 KILL 확인).
+
+## CHG-20260827-0004
+- Date: 2026-08-27
+- Related Requirement: REQ-20260827T073753-zd-bridge-continuity
+- Summary: 운영 주의 추가(REPORT §5) — **배포가 중단된 상태에서 구 컨테이너를 먼저 지우면
+  안 된다.** 스파인이 `rollout_mcp_phase` 에서 죽으면 `reconcile_caddy` 가 아직 안 돈 상태라
+  엣지가 구 upstream 을 가리킨다. 그때 구 컨테이너를 지우면 `/api/ai/mcp` 가 502 가 된다
+  (라이브에서 약 2분 발생, 사용자 대화 경로는 무영향).
+- Files: `unit/feature-0045-zd-bridge-continuity/docs/REPORT.md`
+- Impact: 문서만. 코드 동작 불변.
+- Rollback Notes: 해당 없음.

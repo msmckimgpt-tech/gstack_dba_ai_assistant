@@ -73,6 +73,17 @@ probe 는 `/livez` 가 아니라 전용 창구를 쓴다(드레인 중 `/livez` 
 - `stop_grace_period` 15s → **130s** (중계 상한 120s + 여유)
 - WORKERS 일괄 recreate 에서 분리, 완결 판정(`verify_workers_at_sha`)에는 포함
 
+### P0-D2. 구 서비스 정리는 **게이트가 아니다** (라이브 실측 2026-08-27)
+
+전환 배포는 구 `ext-tool-mcp` 컨테이너를 정리한다. 그런데 그 서비스는 **우리가 compose 정의에서
+지웠으므로** `docker compose ps -aq ext-tool-mcp` 는 `no such service` + **exit 1** 이다.
+`set -euo pipefail` 하에서 그 명령 치환이 실패하면 배포 스크립트가 그 자리에서 죽는다 —
+첫 배포가 정확히 그렇게 MCP 롤아웃 직후 중단됐고 워커·gateway 가 구 코드로 남았다.
+
+- 조회 실패를 **흡수**한다. 정리는 best-effort 이지 진행 조건이 아니다.
+- compose 가 이름을 모르면 **라벨**(`project` + `service`)로 찾는다 — 목적은 조회가 아니라 정리다.
+- 회귀 가드는 `set -euo pipefail` 로 **원문을 실행**한다(순서 검사만으로는 이 부류를 못 본다).
+
 ### P0-E. 점유 손실 0
 
 배포가 **강행했을 때만**(`PREDRAIN_FORCED > 0`) 끊겼을 수 있는 점유를 되돌린다.
@@ -159,6 +170,8 @@ gateway·워커 교체 게이트는 `ask_jobs` + `active_streams` 만 봤다. �
 - AC-20260827T073753-zd-bridge-continuity-11: quiesce 표본에 브리지 축이 포함되고,
   `unknown` 은 조용함으로 읽지 않는다. 서버 LLM 차단 운영에서 게이트가 영구 차단되지 않는다.
 - AC-20260827T073753-zd-bridge-continuity-12: `/internal/*` 은 loopback 전용이다.
+- AC-20260827T073753-zd-bridge-continuity-13: 구 서비스 정리 실패가 배포를 중단시키지 않는다
+  (`set -euo pipefail` 로 원문 실행해 확인 — 조회 실패 흡수 + 라벨 폴백).
 
 ## 9. Constraints / Risks
 

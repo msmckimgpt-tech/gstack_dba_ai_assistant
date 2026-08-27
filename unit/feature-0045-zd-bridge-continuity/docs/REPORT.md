@@ -24,6 +24,10 @@ source_of_truth: false
 
 ## 4. Open Issues
 
+- **첫 배포에서 실측된 결함 1건 — 수정 완료(CHG-0003)**: `sweep_legacy_ext_tool_mcp` 의 조회
+  실패가 `set -e` 로 배포를 중단시켰다. 그 배포에서 web·MCP 는 신 코드로 갔고 워커·gateway 만
+  구 코드로 남았다(혼합 버전은 expand/contract 로 안전). 재배포로 마무리한다.
+
 - **강행 경로는 남아 있다.** 상한(180s)을 넘기면 진행 중 왕복이 끊긴다. 그때 **작업**은 회수로
   보존되지만 이미 쓴 토큰·조사는 버려진다. 배포 보고가 그 사실을 숨기지 않는다.
 - **MCP 라우트에 active health 가 없다.** 이 전송은 GET 에 4xx 로 답하는 것이 정상이고 코드가
@@ -31,6 +35,29 @@ source_of_truth: false
 - 최초 전환 배포는 `ext-tool-mcp` → `ext-tool-mcp-a/b` 이므로 구 컨테이너 정리
   (`sweep_legacy_ext_tool_mcp`)가 한 번 돈다. 그 순간만 MCP 가 짧게 비므로, **이번 배포
   한 번은** 개인 AI 재연결이 필요할 수 있다(이후 배포부터 무중단).
+
+## 5. 운영 주의 — 배포가 중단된 상태에서의 수동 정리 순서
+
+**배포 스파인이 중간에 죽으면 "이미 한 일" 과 "아직 안 한 일" 의 경계가 로그에 드러나지
+않는다.** 실제로 2026-08-27 첫 배포에서 이런 일이 있었다:
+
+1. 배포가 `rollout_mcp_phase` 안에서 죽었다 → **`reconcile_caddy` 는 아직 안 돌았다**.
+2. 엣지는 여전히 구 upstream(`ext-tool-mcp:8971`)을 가리키고 있었다.
+3. 그 상태에서 구 컨테이너를 먼저 지웠고 → `/api/ai/mcp` 가 **약 2분간 502**.
+
+정리 순서는 **엣지가 무엇을 가리키는지 확인한 뒤**다:
+
+```bash
+# 1) 엣지가 보는 설정 확인 — 신 upstream 을 이미 가리키는가?
+docker exec repo-caddy-1 grep -c 'ext-tool-mcp-a' /etc/caddy/Caddyfile
+# 0 이면 아직 구 설정 → 먼저 caddy 를 재생성해 신 설정을 로드한다
+docker compose -f docker-compose.yml -f ../artifacts/deploy/docker-compose.deploy-pin.yml \
+  up -d --no-deps --force-recreate caddy
+# 2) 그 다음에야 구 컨테이너 정리
+docker rm -f repo-ext-tool-mcp-1
+```
+
+가장 안전한 것은 **손으로 정리하지 않고 배포를 재실행**하는 것이다(스파인은 멱등이다).
 
 ## 5. Test Status
 - 자동 테스트: `unit/feature-0045-zd-bridge-continuity/tests/` 46건 PASS
