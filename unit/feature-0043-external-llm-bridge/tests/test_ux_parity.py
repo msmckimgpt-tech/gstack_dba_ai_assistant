@@ -128,8 +128,10 @@ def test_core_write_comes_after_display_write():
     반대면, 표시 저장 실패로 요청을 취소했을 때 회수 store 에만 유령 turn 이 남는다.
     """
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
-    assert "if not saved:" in src
-    assert src.index("if not saved:") < src.index("_bridge_save_core_message("), (
+    # 이 계약은 **적재가 있는 연결 분기**의 것이다 — 미연결 분기는 되돌릴 적재가 없다.
+    connected = src[src.index("# ① 대기 작업 적재"):]
+    assert "if not saved:" in connected
+    assert connected.index("if not saved:") < connected.index("_bridge_save_core_message("), (
         "표시 저장 판정 전에 core 를 쓴다 — 취소된 요청이 회수 store 에 유령으로 남는다")
 
 
@@ -422,10 +424,26 @@ def test_wait_notice_not_written_to_core_store():
 
     넣으면 나중 LLM 문맥에 "AI 가 대기 안내를 했다" 는 가짜 turn 이 섞인다.
     """
-    src = _func_source(CONVS, "_enqueue_web_bridge_task")
-    tail = src[src.index('"assistant", notice_text'):]
-    assert "_bridge_save_core_message(" not in tail, (
-        "안내를 회수 store 에도 썼다 — LLM 문맥에 가짜 assistant turn 이 생긴다")
+    # ⚠ 문자열 슬라이스로 보지 않는다. 분기가 둘이 되자(연결/미연결) 앞 분기의 안내 뒤에
+    #   뒤 분기의 **질문** core 기록이 걸려 오탐이 났다. 호출의 **인자**를 직접 본다.
+    import ast
+
+    src = CONVS.read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+              and n.name == "_enqueue_web_bridge_task")
+    roles = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_bridge_save_core_message":
+            for a in node.args:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                    roles.append(a.value)
+                elif isinstance(a, ast.Name):
+                    roles.append(f"<{a.id}>")
+    assert roles, "회수 store 기록이 아예 없다"
+    assert "assistant" not in roles, (
+        "안내를 회수 store 에 썼다 — LLM 문맥에 가짜 assistant turn 이 생긴다")
+    assert "<notice_text>" not in roles
 
 
 def test_delivery_overwrites_placeholder_not_appends():
@@ -471,7 +489,10 @@ def test_unconnected_notice_leads_with_action_not_waiting():
     assert "[AI 연결하기](/ai/connect)" in body, (
         "누를 수 있는 링크가 없다 — 경로 문자열은 사용자가 어떻게 할 수 없다")
     # 질문이 사라지지 않았다는 사실을 반드시 말한다(설정하러 가는 동안 불안하지 않게).
-    assert "저장해 두었습니다" in body
+    # 연결이 없으면 **적재하지 않는다**(2026-08-27) — 그래서 "저장해 두었다" 가 아니라
+    # "다시 질문하라" 가 맞다. 큐에 없는데 저장했다고 말하면 사용자는 기다린다.
+    assert "다시 질문해" in body
+    assert "대기열에 저장" not in body
 
 
 def test_notice_avoids_builder_jargon():

@@ -367,7 +367,11 @@ def test_enqueue_rolls_back_task_when_user_message_fails():
     assert "_delete_bridge_task(" in src
     assert "saved" in src, "save 반환값을 확인하지 않는다"
     # 적재가 저장보다 먼저여야 재시도 시 사용자 메시지가 중복되지 않는다.
-    assert src.index("INSERT INTO WebAiTasks") < src.index("save_memory_message")
+    # ⚠ 함수 전체에서 index() 로 재면 안 된다. 미연결 분기(2026-08-27 신설)가 앞에 있고
+    #   그쪽은 적재 없이 저장만 하므로 순서가 뒤집힌 것처럼 보인다. 이 계약이 걸린 곳은
+    #   **연결 분기**(적재 → 저장 → 실패 시 되돌림)이므로 그 구간만 본다.
+    connected = src[src.index("# ① 대기 작업 적재"):]
+    assert connected.index("INSERT INTO WebAiTasks") < connected.index("save_memory_message")
 
 
 def test_delete_bridge_task_is_scoped():
