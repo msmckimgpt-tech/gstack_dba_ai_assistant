@@ -638,6 +638,41 @@
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
+  <!-- feature-0043(2026-08-27): AI 연결을 **대화 화면을 떠나지 않고** 끝낸다.
+       종전에는 안내 말풍선의 링크가 /ai/connect 로 **이동**시켜, 사용자가 질문을 두고 화면을
+       벗어났다. 연결은 대화의 곁가지이지 목적지가 아니다 — 그래서 모달로 띄운다.
+       (링크 자체는 남긴다: 새 탭·직접 방문·자바스크립트 실패 시의 경로다.) -->
+  <div class="connect-modal-overlay" id="connectModalOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="connectModalTitle">
+    <div class="connect-modal" id="connectModal">
+      <div class="connect-modal-header">
+        <h2 id="connectModalTitle" class="connect-modal-title">내 AI 연결하기</h2>
+        <button type="button" class="connect-modal-close" id="connectModalCloseBtn" aria-label="닫기 (Esc)" title="닫기 (Esc)">×</button>
+      </div>
+      <div class="connect-modal-body">
+        <p class="connect-modal-why">
+          아래에서 연결 정보를 만들어 쓰시는 AI에 붙여넣으면 됩니다.
+          연결 방식 선택과 인증은 AI가 알아서 합니다.
+        </p>
+        <div class="connect-modal-actions">
+          <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalMake">연결 정보 만들기</button>
+        </div>
+        <div id="connectModalResult" hidden>
+          <p class="connect-modal-hint">아래 내용을 AI에 그대로 붙여넣으세요.</p>
+          <pre class="connect-modal-code" id="connectModalText"></pre>
+          <div class="connect-modal-actions">
+            <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalCopy">복사</button>
+          </div>
+        </div>
+        <div class="connect-modal-note">
+          <p>연결 정보에는 <strong>토큰</strong>이 들어갑니다. 내 권한으로 데이터를 조회하므로
+             비밀번호처럼 다루고 남에게 주지 마세요.</p>
+          <p>로그아웃하면 무효가 되고, <strong>이 창을 닫으면 다시 볼 수 없습니다.</strong></p>
+        </div>
+        <p class="connect-modal-status" id="connectModalStatus" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+  </div>
+
   <!-- REQ-20260518-0010 (TASK-0072): Spotlight modal for cross-account conversation search. -->
   <div class="search-modal-overlay" id="searchModalOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="searchModalTitle">
     <div class="search-modal" id="searchModal">

@@ -1,6 +1,6 @@
 {
-  "total_routes": 254,
-  "api_routes": 253,
+  "total_routes": 255,
+  "api_routes": 254,
   "ordered": [
     {
       "path": "/static",
@@ -1690,6 +1690,13 @@
     },
     {
       "path": "/api/ai/tools/list_open_requests",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/tools/wait_for_request",
       "methods": [
         "POST"
       ],

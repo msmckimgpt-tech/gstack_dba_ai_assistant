@@ -404,11 +404,11 @@ submit_answer(task_id, answer, source_tasks=[task_id])
 > - 결과는 **미리보기**만 온다. 보지 못한 행에 대해 존재/부재/개수를 단정하지 마라 —
 >   필요하면 `COUNT`·`GROUP BY`·`NOT IN` 으로 좁혀 다시 물어라. 이 표면에 CSV 다운로드는 없다.
 
-### 열려 있는 도구 (13종)
+### 열려 있는 도구 (14종)
 
 작업 축 — `open_task` · `get_task_context` · `submit_answer`
 
-**웹 브리지 축** — `list_open_requests` · `claim_request` · `read_task_attachment`
+**웹 브리지 축** — `wait_for_request` · `list_open_requests` · `claim_request` · `read_task_attachment`
 (2026-08-27). 웹 대화 화면에서 들어온 질문을 가져와 처리하는 축이다. 이 서비스는 서버 계정으로
 답변을 만들지 않으므로, 웹 사용자의 질문은 여기 대기열에 쌓이고 **각 사용자의 AI 가 가져가 답한다.**
 
@@ -422,7 +422,9 @@ submit_answer(task_id, answer, source_tasks=[task_id])
 #### 웹 브리지 사용 순서
 
 ```
-list_open_requests {"limit": 20}      → 대기 질문 목록 (task_id 획득)
+wait_for_request   {}                 → 질문이 들어올 때까지 대기, 생기면 즉시 반환
+                                        (timed_out:true 로 끝나면 곧바로 다시 호출 — 간격 두지 말 것)
+list_open_requests {"limit": 20}      → 지금 있는 것만 즉시 조회(대기 안 함)
 claim_request      {"task_id": "…"}   → 원자적 점유 + 질문 전문·이전 문맥·첨부 목록
                                         (이미 점유된 것은 409, 점유는 30분 뒤 자동 해제)
 read_task_attachment {"task_id": "…", "attachment_id": N}   → 첨부 본문 (있을 때만)
@@ -432,6 +434,10 @@ submit_answer      {"task_id": "…", "answer": "…", "source_tasks": ["…"]}
 ```
 
 `claim_request` 없이 `submit_answer` 를 부르면 거부된다 — 점유가 소유권이다.
+
+**대기열을 지켜볼 때는 `list_open_requests` 를 반복하지 말고 `wait_for_request` 를 써라.**
+전자를 N 초마다 부르면 사용자 질문이 최대 N 초 늦게 인지되고, 그 N 이 사람마다 달라 환경 차이가
+된다. 후자는 호출이 한 번이고 응답이 **질문이 들어온 그 순간** 온다. 상한은 서버가 정한다.
 
 ## B.3 받은 데이터를 다루는 규칙
 

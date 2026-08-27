@@ -568,16 +568,45 @@ def test_connect_page_no_unexplained_mcp_in_visible_text():
     assert "MCP" not in visible, "화면 텍스트에 내부 용어가 남아 있다"
 
 
-@pytest.mark.parametrize("dom_id", [
-    "connectLead", "connectFlow", "makeHandoff", "handoffResult", "handoffText",
-    "copyHandoff", "copyEndpoint", "connectStatus", "connectLogin", "loginLink",
-])
-def test_connect_page_dom_contract_preserved(dom_id):
-    """문구를 고쳐도 **JS 가 잡는 id 는 그대로**여야 한다 — 하나라도 빠지면 버튼이 죽는다."""
+def test_connect_page_dom_contract_preserved():
+    """JS 가 `$("...")` 로 잡는 id 가 **전부** HTML 에 있는가 — 하나라도 빠지면 버튼이 죽는다.
+
+    ⚠ 이전 판은 고정 목록 + `if dom_id in js:` 였다. 그래서 id 를 **삭제하면 단언이 조용히
+    건너뛰어졌다**(vacuous pass — 실제로 `copyEndpoint` 제거 때 그렇게 통과했다).
+    이제 목록을 JS 에서 **추출**한다: JS 가 참조하는 것만 검사하되, 목록 자체가 코드에서 오므로
+    "검사 대상이 사라져서 통과" 가 성립하지 않는다.
+    """
+    import re
+
     html = CONNECT_HTML.read_text(encoding="utf-8")
     js = CONNECT_JS.read_text(encoding="utf-8")
-    if dom_id in js:
-        assert f'id="{dom_id}"' in html, f"{dom_id}: JS 가 참조하는데 HTML 에 없다"
+    referenced = set(re.findall(r'\$\("([A-Za-z0-9_]+)"\)', js))
+    assert referenced, "JS 에서 DOM 참조를 추출하지 못했다(추출 정규식이 코드와 어긋났다)"
+    missing = sorted(i for i in referenced if f'id="{i}"' not in html)
+    assert not missing, f"JS 가 참조하는데 HTML 에 없다: {missing}"
+
+
+def test_connect_page_has_exactly_one_copy_action():
+    """복사 버튼은 **하나**다(사용자 제보 2026-08-27).
+
+    둘이면 "어느 걸 복사하지?" 라는 선택이 다시 생긴다 — 방법 ①/② 를 통합한 이유와 같은 결함이다.
+    주소는 이미 지시문 본문에 들어 있다.
+    """
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert html.count("복사</button>") == 1, "복사 버튼이 하나가 아니다"
+    assert "주소만 복사" not in html
+
+
+def test_connect_page_does_not_send_humans_to_the_api_reference():
+    """사람에게 `/api/ai/guide`(API 레퍼런스)를 권하지 않는다(사용자 제보 2026-08-27).
+
+    그 문서가 필요한 쪽은 **AI** 이고, 지시문에 이미 URL 이 실려 있다. 사람이 눌러 가면
+    스펙 문서를 만난다.
+    """
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert "/api/ai/guide" not in html, "사람용 화면이 API 레퍼런스로 보낸다"
+    js = CONNECT_JS.read_text(encoding="utf-8")
+    assert "/api/ai/guide" in js, "지시문(AI 용)에서는 가이드 URL 이 빠지면 안 된다"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -661,9 +690,9 @@ def test_guide_lists_the_bridge_tools():
     가이드만 읽은 외부 AI 는 열거되지 않은 축의 **존재 자체를 모른다**(라이브 제보 ③).
     """
     guide = (WEB_SRC / "static" / "ai-api-guide.md").read_text(encoding="utf-8")
-    for tool in ("list_open_requests", "claim_request", "read_task_attachment"):
+    for tool in ("wait_for_request", "list_open_requests", "claim_request",
+                 "read_task_attachment"):
         assert tool in guide, f"가이드에 {tool} 이 없다 — 외부 AI 가 이 축을 못 찾는다"
-    assert "13종" in guide, "도구 수가 실제와 어긋난다"
 
 
 def test_guide_tool_count_matches_exposed_surface():
@@ -674,8 +703,115 @@ def test_guide_tool_count_matches_exposed_surface():
     p0 = re.search(r"P0_TOOLS = frozenset\(\{(.*?)\}\)", src, re.S).group(1)
     p1 = re.search(r"P1_TOOLS = frozenset\(\{(.*?)\}\)", src, re.S).group(1)
     structural = len(re.findall(r'"([a-z_]+)"', p0 + p1))
-    # 구조·SQL 도구 + 작업 3종(open_task/get_task_context/submit_answer) + 브리지 3종
-    expected = structural + 3 + 3
+    # 구조·SQL 도구 + 작업 3종(open_task/get_task_context/submit_answer)
+    # + 브리지 4종(wait_for_request/list_open_requests/claim_request/read_task_attachment)
+    expected = structural + 3 + 4
     guide = (WEB_SRC / "static" / "ai-api-guide.md").read_text(encoding="utf-8")
     assert f"({expected}종)" in guide, (
         f"가이드의 도구 수가 실제({expected}종)와 다르다")
+
+
+# ── 인증창 모달 (사용자 결정 2026-08-27) ──────────────────────────────────────
+#
+# 안내 말풍선의 링크가 페이지를 **이동**시키면 질문을 써 놓고 화면을 벗어난다.
+# 연결은 대화의 곁가지이지 목적지가 아니다.
+
+INDEX_HTML = WEB_SRC / "static" / "index.html"
+MODAL_JS = WEB_SRC / "static" / "app" / "connect-modal.js"
+
+
+def test_connect_modal_exists_and_is_wired():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="connectModalOverlay"' in html, "모달 마크업이 없다"
+    app = APP_JS.read_text(encoding="utf-8")
+    assert "bindConnectModal()" in app, "모달이 배선되지 않았다(마크업만 있고 열리지 않는다)"
+
+
+def test_modal_intercepts_the_notice_link():
+    """말풍선 링크를 **문서 수준 위임**으로 가로챈다 — 개별 앵커에 달면 재렌더마다 사라진다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    assert 'a[href="/ai/connect"]' in js
+    assert "document.addEventListener" in js, "문서 위임이 아니다"
+    assert "preventDefault()" in js
+
+
+def test_modal_respects_new_tab_intent():
+    """중클릭·수식키(새 탭 의도)는 가로채지 않는다 — 사용자가 원한 동작을 빼앗지 않는다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    for key in ("metaKey", "ctrlKey", "shiftKey", "ev.button !== 0"):
+        assert key in js, f"{key} 를 존중하지 않는다"
+
+
+def test_modal_uses_server_composed_handoff():
+    """지시문을 **서버에서 받는다** — 화면이 조립하면 단독 페이지와 문안이 갈린다."""
+    js = MODAL_JS.read_text(encoding="utf-8")
+    assert "body.handoff" in js, "지시문을 프런트가 만든다(두 벌 관리)"
+    assert "mcpServers" not in js, "모달이 설정 JSON 을 직접 조립한다"
+
+
+def test_modal_clears_token_from_dom_on_close():
+    """닫으면 본문을 비운다 — DOM 에 토큰을 남기지 않고, '다시 볼 수 없다' 를 참으로 만든다."""
+    close = MODAL_JS[:0] if False else None  # noqa: F841  (가독용 no-op)
+    js = MODAL_JS.read_text(encoding="utf-8")
+    body = js[js.index("export function closeConnectModal("):js.index("async function _make(")]
+    assert 'textContent = ""' in body, "닫을 때 토큰이 DOM 에 남는다"
+    opened = js[js.index("export function openConnectModal("):js.index("export function closeConnectModal(")]
+    assert 'textContent = ""' in opened, "열 때 이전 토큰이 남아 새것으로 오인된다"
+
+
+def test_standalone_page_still_exists():
+    """모달은 **가로채는 개선**이지 유일 경로가 아니다 — 직접 방문·새 탭·JS 실패 경로가 남아야 한다."""
+    assert CONNECT_HTML.exists()
+    js = MODAL_JS.read_text(encoding="utf-8")
+    assert "/ai/connect" in js
+
+
+# ── 블로킹 대기 (사용자 요구 2026-08-27: 즉시 인지 · 폴링 금지) ────────────────
+
+
+def test_wait_tool_holds_instead_of_polling():
+    src = _func_source(AI_TOOLS, "wait_for_request")
+    assert "asyncio.sleep" in src, "대기 루프가 없다"
+    assert "_WAIT_MAX_HOLD_SEC" in src, "보류 상한이 서버 상수가 아니다"
+    # 상한을 요청 본문에서 받으면 그게 곧 클라이언트 knob = 환경 차이다.
+    assert "body.get(\"timeout\")" not in src and "body.get('timeout')" not in src, (
+        "대기 시간을 클라이언트가 정한다 — 사람마다 다른 지연이 생긴다")
+
+
+def test_wait_tool_commits_between_checks():
+    """루프마다 커밋한다 — 없으면 트랜잭션 스냅샷이 고정돼 **새 행이 영원히 안 보인다**."""
+    src = _func_source(AI_TOOLS, "wait_for_request")
+    assert "conn.commit()" in src, "스냅샷 고정 함정(REPEATABLE READ)에 빠진다"
+
+
+def test_wait_tool_timeout_is_not_an_error():
+    """시간이 다 되면 200 + timed_out — 오류로 돌려주면 호출측이 재시도를 주저한다."""
+    src = _func_source(AI_TOOLS, "wait_for_request")
+    assert '"timed_out": True' in src
+    assert "간격" in src, "곧바로 다시 호출하면 된다는 안내가 없다"
+
+
+def test_wait_tool_stops_when_client_disconnects():
+    src = _func_source(AI_TOOLS, "wait_for_request")
+    assert "is_disconnected()" in src, "끊긴 클라이언트를 위해 DB 를 계속 두드린다"
+
+
+@pytest.mark.parametrize("path", [MCP_HTTP, MCP_STDIO])
+def test_wait_tool_registered_in_both_adapters(path):
+    assert "wait_for_request" in path.read_text(encoding="utf-8")
+
+
+def test_handoff_tells_ai_to_wait_not_poll():
+    """지시문이 폴링 대신 대기를 지시하는가."""
+    src = (WEB_SRC / "routers" / "oauth_as.py").read_text(encoding="utf-8")
+    body = _func_source(WEB_SRC / "routers" / "oauth_as.py", "compose_connect_handoff")
+    assert "wait_for_request" in body
+    assert "폴링" in body, "왜 반복 호출하면 안 되는지 말하지 않는다"
+
+
+def test_handoff_includes_self_install_of_the_runner():
+    """설치까지 AI 가 하도록 **명령을 그대로** 준다(사용자 요구 2026-08-27)."""
+    body = _func_source(WEB_SRC / "routers" / "oauth_as.py", "compose_connect_handoff")
+    assert "bridge_agent.py" in body, "러너 설치 안내가 없다"
+    assert "curl" in body and "--check" in body, "AI 가 실행할 수 있는 형태가 아니다"
+    assert "/trust/rootCA.crt" in body, "사설 CA 안내가 없다 — 여기서 대부분 막힌다"

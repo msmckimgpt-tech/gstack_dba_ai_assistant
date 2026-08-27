@@ -24,6 +24,7 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import secrets
@@ -738,6 +739,113 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
         "count": len(rows),
         "task_ids": [r["task_id"] for r in rows],
         "requests": marked,
+    })
+
+
+#: 대기 응답을 붙들어 두는 **서버 고정** 상한(초).
+#:
+#: 클라이언트가 정하지 않는다 — 간격이 knob 이 되는 순간 사람마다 다른 지연이 생기고, 그게
+#: 곧 "환경 차이" 다(사용자 요구 2026-08-27: 주기적 폴링 금지 · 환경 차이 금지).
+#: 55초로 잡은 이유: 흔한 프록시·클라이언트 기본 타임아웃(60s)보다 작아야 우리가 먼저 끝내고
+#: 정상 응답을 돌려줄 수 있다. 더 길면 중간 단이 먼저 끊어 "오류" 로 보인다.
+_WAIT_MAX_HOLD_SEC = 55.0
+
+#: 서버 **내부** 확인 간격. 클라이언트에 노출되지 않으므로 환경 차이를 만들지 않는다.
+#: (PG LISTEN/NOTIFY 로 바꾸면 이 값 자체가 사라진다 — 지금은 의존성을 늘리지 않는 쪽을 택했다.)
+_WAIT_TICK_SEC = 0.5
+
+
+@router.post("/api/ai/tools/wait_for_request")
+async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
+                           conn=Depends(app.get_conn)) -> JSONResponse:
+    """대기 질문이 **생길 때까지 응답을 보류**한다. 생기면 그 즉시 돌려준다.
+
+    ## 왜 이 도구인가
+
+    MCP 는 클라이언트→서버 단방향이라 서버가 AI 를 깨울 수 없다(`sampling` 은 폐기됐고
+    Claude Code 미지원). 그렇다고 AI 가 N 초마다 묻게 하면 두 가지가 나빠진다 — 사용자가
+    보낸 질문이 최대 N 초 늦게 인지되고, 그 N 이 사람마다 달라 **환경 차이**가 된다.
+
+    블로킹 대기는 둘 다 없앤다: 호출은 **한 번**이고, 응답은 **질문이 들어온 그 순간** 온다.
+    상한은 서버가 정하므로 모든 클라이언트가 동일하게 동작한다.
+
+    ## 계약
+
+    - 이미 대기 질문이 있으면 **즉시** 반환한다(기다리지 않는다).
+    - 없으면 최대 `_WAIT_MAX_HOLD_SEC` 까지 보류한다. 그동안 생기면 즉시 반환.
+    - 시간이 다 되면 `timed_out: true` 로 정상(200) 반환한다 — **오류가 아니다.**
+      호출측은 곧바로 다시 대기에 들어가면 된다(그것이 폴링이 아닌 이유: 간격이 없다).
+    - 클라이언트가 연결을 끊으면 즉시 그만둔다(끊긴 응답을 위해 DB 를 두드리지 않는다).
+
+    반환은 `list_open_requests` 와 **같은 모양**이다 — 호출측이 분기 없이 이어서 처리한다.
+    """
+    account = ctx["account"]
+    account_id = int(account.get("id") or 0)
+
+    # 상한은 **대기 시작 전에 한 번만** 본다. 보류 중 매 tick 마다 검사하면 상한 조회가
+    # 초당 두 번씩 원장을 두드린다 — 대기는 그 자체로 비용이 아니어야 한다.
+    try:
+        _ledger.check_limits(_pg(), account_id=account_id, client_id=ctx.get("client_id"))
+    except _ledger.RateLimited as exc:
+        _safe_record(account, ctx, tool="wait_for_request", outcome="gated", detail=exc.limit)
+        return JSONResponse({"error": exc.message}, status_code=429,
+                            headers={"Retry-After": str(exc.retry_after)})
+    except _ledger.LedgerUnavailable as exc:
+        return _json_err(503, f"상한을 확인할 수 없어 요청을 중단했습니다: {exc}")
+
+    t0 = time.perf_counter()
+    deadline = t0 + _WAIT_MAX_HOLD_SEC
+    found: list[tuple] = []
+    while True:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT TaskId, Question, CreatedAt FROM WebAiTasks "
+                "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
+                " ORDER BY CreatedAt ASC LIMIT 20", (account_id,))
+            found = list(cur.fetchall() or [])
+        finally:
+            cur.close()
+        # ⚠ 커밋(또는 롤백)이 없으면 이 커넥션의 트랜잭션 스냅샷이 고정돼 **새로 들어온 행이
+        #   영원히 안 보인다**(REPEATABLE READ). 대기 루프에서 가장 빠지기 쉬운 함정이다.
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        if found or time.perf_counter() >= deadline:
+            break
+        if await request.is_disconnected():
+            # 이미 끊긴 클라이언트를 위해 계속 두드리지 않는다.
+            return JSONResponse({"count": 0, "task_ids": [], "requests": "",
+                                 "timed_out": False, "disconnected": True})
+        await asyncio.sleep(_WAIT_TICK_SEC)
+
+    waited_ms = int((time.perf_counter() - t0) * 1000)
+    if not found:
+        # 빈 대기도 원장에 남긴다 — 남기지 않으면 "AI 가 붙어 있었는가" 를 사후에 알 수 없다.
+        _safe_record(account, ctx, tool="wait_for_request", outcome="ok",
+                     latency_ms=waited_ms, rows_returned=0)
+        return JSONResponse({"count": 0, "task_ids": [], "requests": "",
+                             "timed_out": True, "waited_ms": waited_ms,
+                             "next": "곧바로 다시 wait_for_request 를 호출하면 된다(간격 불필요)."})
+
+    lines = [f"- task_id={r[0]}  ({r[2]})\n  {str(r[1] or '')[:500]}" for r in found]
+    marked = _guard.wrap_tool_output(
+        "\n".join(lines),
+        account=str(account.get("username") or account.get("id")),
+        conversation_id=None, task_id=None, source="open_requests")
+    try:
+        _ledger.record(_pg(), account_id=account_id, tool="wait_for_request",
+                       client_id=ctx.get("client_id"), rows_returned=len(found),
+                       bytes_out=len(marked.encode("utf-8")),
+                       latency_ms=waited_ms, outcome="ok")
+    except _ledger.LedgerUnavailable as exc:
+        return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
+
+    return JSONResponse({
+        "count": len(found), "task_ids": [r[0] for r in found], "requests": marked,
+        "timed_out": False, "waited_ms": waited_ms,
+        "next": "claim_request 로 점유한 뒤 처리하세요.",
     })
 
 

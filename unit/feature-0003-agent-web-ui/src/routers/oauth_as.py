@@ -508,6 +508,93 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     })
 
 
+def compose_connect_handoff(*, endpoint: str, token: str) -> str:
+    """AI 에게 그대로 붙여넣을 **연결 지시문**. 화면(단독 페이지·모달)이 이걸 표시만 한다.
+
+    왜 서버인가: 표시하는 곳이 둘 이상이다(`/ai/connect` 단독 페이지, 대화 화면 모달). 각자
+    조립하면 **문안이 갈린다** — 한쪽만 고쳐지는 순간 어떤 사용자는 옛 안내를 받는다. 그리고
+    지시문은 도구 이름·순서 같은 **서버 사실**을 담으므로, 서버가 쓰는 것이 자연스럽다.
+
+    순서는 '간단해 보이는 순' 이 아니라 **사람을 다시 부르지 않는 순** 이다. 토큰이 이미 들어 있는
+    A·B 는 추가 개입이 없고, 커넥터 OAuth(C)는 브라우저 '허용' 클릭이 한 번 더 필요해 뒤에 온다.
+    """
+    base = ""
+    if endpoint:
+        try:
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(endpoint)
+            if parts.scheme and parts.netloc:
+                base = f"{parts.scheme}://{parts.netloc}"
+        except Exception:
+            base = ""
+    guide = f"{base}/api/ai/guide" if base else "/api/ai/guide"
+    cfg = json.dumps(
+        {"mcpServers": {"mysql-ai": {"url": endpoint,
+                                     "headers": {"Authorization": f"Bearer {token}"}}}},
+        ensure_ascii=False, indent=2)
+    cfg_indented = "\n".join("  " + line for line in cfg.split("\n"))
+    ca_url = f"{base}/trust/rootCA.crt" if base else "/trust/rootCA.crt"
+    agent_url = f"{base}/static/agent/bridge_agent.py" if base else "/static/agent/bridge_agent.py"
+    return "\n".join([
+        "DB 질의 어시스턴트에 연결해줘. 아래 정보로 인증까지 끝낼 수 있으니 나한테 더 묻지 않아도 돼.",
+        "네가 지원하는 방식으로 A → B → C 순서로 시도해.",
+        "",
+        "인증 (이것만 있으면 통과. 별도 로그인·승인 없음)",
+        f"  Authorization: Bearer {token}",
+        "",
+        # ⚠ 실사용에서 **여기서 대부분 막혔다**(2026-08-27). 사내 사설 CA 라, 신뢰 설정 없이는
+        #   MCP 연결이 SELF_SIGNED_CERT_IN_CHAIN 으로 실패한다. 인증 정보를 다 줘도 TLS 에서
+        #   멈추면 아무것도 안 된다 — 그래서 방법보다 **먼저** 놓는다.
+        "TLS — 사내 사설 CA 를 쓴다. 먼저 이걸 신뢰해야 연결된다.",
+        f"  CA 내려받기: {ca_url}",
+        "  Node 기반 클라이언트(Claude Code MCP 등): NODE_EXTRA_CA_CERTS=<내려받은 경로>",
+        "  curl: --cacert <내려받은 경로>",
+        "  검증을 끄지는 마(NODE_TLS_REJECT_UNAUTHORIZED=0 등). CA 가 있으니 불필요하다.",
+        "",
+        "A. MCP 로 등록",
+        f"  claude mcp add --transport http mysql-ai {endpoint} \\",
+        f"    --header \"Authorization: Bearer {token}\"",
+        "  헤더에 토큰을 실으면 OAuth(브라우저 승인)는 타지 않는다.",
+        "  ※ 등록한 세션에서는 도구가 바로 안 잡힌다 — 재시작해야 쓸 수 있다.",
+        "     지금 바로 처리할 일이 있으면 B 로 해.",
+        "",
+        "  설정 파일에 직접 넣는 경우:",
+        cfg_indented,
+        "",
+        "B. HTTP 직접 호출 (재시작 없이 지금 바로)",
+        f"  POST {base}/api/ai/tools/list_open_requests",
+        "  헤더  Authorization: Bearer <위 토큰>",
+        '  본문  {"limit": 20}',
+        f"  도구 목록: {guide}",
+        "",
+        "C. 커넥터 주소만 등록 (A·B 가 안 될 때)",
+        f"  {endpoint}",
+        "  OAuth 로 연결되지만 브라우저에서 내가 허용을 눌러야 해.",
+        "",
+        "연결되면 wait_for_request 로 대기해줘. 질문이 오면 그 즉시 돌아온다.",
+        "  (list_open_requests 를 반복해서 부르지 마 — 그게 폴링이고, 간격이 사람마다 달라진다.)",
+        "  timed_out:true 로 끝나면 간격을 두지 말고 곧바로 다시 wait_for_request 를 불러.",
+        "받은 질문은 claim_request 로 점유하고, 조사한 뒤 submit_answer 로 제출해줘.",
+        "submit_answer 의 source_tasks 는 필수 — 근거로 쓴 task_id 를 적어줘.",
+        "",
+        # 사용자 요구(2026-08-27): 설치까지 AI 가 스스로. 그래서 **명령을 그대로** 준다 —
+        # "러너를 설치하세요" 같은 문장은 사람에게 일을 되돌리는 말이다.
+        "── 내가 자리를 비워도 처리하게 하려면 (선택) ──",
+        "위 대기는 네가 켜져 있는 동안만 동작해. 내가 없을 때도 답하게 하려면 아래 상주 러너를",
+        "네가 직접 받아서 띄워줘. 파이썬 표준 라이브러리만 쓰고 설치할 패키지는 없어.",
+        "",
+        f"  curl -fsSL --cacert <위 CA> -o bridge_agent.py {agent_url}",
+        f"  python3 bridge_agent.py --base {base} \\",
+        f"    --token {token} --ca <위 CA> --check     # 연결 확인",
+        f"  python3 bridge_agent.py --base {base} \\",
+        f"    --token {token} --ca <위 CA> &           # 상주 시작",
+        "",
+        "러너는 네 머신의 AI(claude·codex·gemini·ollama)를 자동으로 찾아 쓴다.",
+        "고르려면 --ai claude, 직접 지정하려면 --cmd 'my-ai -p {prompt}'.",
+    ])
+
+
 @router.post("/api/ai/connect/token")
 def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONResponse:
     """현재 로그인 세션에 결합된 access token 1개를 발급한다(refresh 없음)."""
@@ -535,4 +622,10 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
     finally:
         cur.close()
     origin = _origin(request)
-    return JSONResponse({**issued, "endpoint": f"{origin}/api/ai/mcp"})
+    endpoint = f"{origin}/api/ai/mcp"
+    # 지시문을 **서버가** 실어 보낸다 — 표시하는 화면이 둘(단독 페이지·대화 모달)이라
+    # 각자 조립하면 문안이 갈린다.
+    return JSONResponse({**issued, "endpoint": endpoint,
+                         "handoff": compose_connect_handoff(
+                             endpoint=endpoint,
+                             token=str(issued.get("access_token") or ""))})

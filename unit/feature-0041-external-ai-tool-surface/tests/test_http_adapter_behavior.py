@@ -246,6 +246,7 @@ def test_all_tools_are_registered_at_import():
         "list_open_requests", "claim_request",
         # feature-0043 사용감 패리티(2026-08-27): 첨부 본문 읽기.
         "read_task_attachment",
+        "wait_for_request",
         "list_schemas", "describe_schema", "describe_table", "search_tables",
         "get_foreign_keys", "get_table_indexes",
         "execute_sql",   # P1 (2026-08-14)
