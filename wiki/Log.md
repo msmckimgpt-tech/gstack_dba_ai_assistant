@@ -363,3 +363,5 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - **새 위험 2건**: 사내 임베딩 MCP 가 **KB 검색·분석·샘플의 SPOF** 가 된다(가용성·타임아웃·degrade 동작을 이관 시 함께 정해야 "검색 품질이 조용히 나빠지는" 실패를 막는다) · feature-0043 이 세운 "LLM 자격증명을 어느 대상에도 두지 않는다" 원칙에 **임베딩 전용 계정 예외**가 생긴다(범위를 명시하고 SOPS 에 포함).
 - SVN 용량 정책은 **안 A 확정** — 매니페스트·시크릿 암호문·스크립트(텍스트)만 SVN 에 두고 이미지 tar 는 사내 파일서버에 두며 매니페스트가 `url`+`sha256` 로 잇는다. SVN 은 삭제해도 이력 blob 이 남아 tar 를 커밋하면 저장소가 단조 증가하기 때문이다. 파일서버는 최근 5세대 유지하되 **롤백 대상 last-good 세대는 반드시 남긴다**(보관 세대 수 = 무재빌드 롤백 가능 범위).
 - 남은 미확인은 여전히 **사내 PyPI/apt 미러 유무 1건**. (feature-0044-qa-staging-pipeline) [[feature-0044-qa-staging-pipeline]] · [[feature-0043-external-llm-bridge]] · [[feature-0007-bedrock-llm-provider]]
+
+## [2026-08-27] feature | feature-0045-zd-bridge-continuity 신규 — 브리지 배포 연속성(대기는 교대·작업은 완주 · MCP 2-replica · 점유 소유자 보존 회수) [[feature-0045-zd-bridge-continuity]]

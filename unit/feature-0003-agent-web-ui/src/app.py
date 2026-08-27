@@ -45,6 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+import bridge_drain  # feature-0045: 브리지 in-flight 관측 + lame-duck drain (배포 연속성)
 import perf_metrics  # feature-0026: HTTP per-route 타이밍 계측 (fail-open, in-process)
 import static_cache  # feature-0014: 정적 자산 캐시 무결성 (빌드 스탬프 일치 시에만 immutable)
 from shared import perf_counters as _perf_counters  # feature-0026: 요청당 DB conn 카운터
@@ -329,6 +330,12 @@ if WEB_ALLOWED_HOSTS:
 # feature-0026 (M1): HTTP per-route 타이밍 + 요청당 DB 커넥션 계측. 순수 ASGI·fail-open —
 # 계측 예외는 요청 처리에 전파되지 않는다. 조회는 GET /api/admin/perf/http (admin_perf 라우터).
 app.add_middleware(perf_metrics.PerfTimingMiddleware)
+
+# feature-0045: 브리지 도구 호출(`/api/ai/tools/*`)을 in-flight 로 계상한다. 무중단 롤링의
+# pre-drain 게이트가 이 값이 0 이 될 때까지 replica recreate 를 미룬다 — 개인 AI 가 조사
+# 중인 왕복을 배포가 끊지 않게. 대기(`wait_for_request`)는 여기서 세지 않는다(그것은 기다릴
+# 대상이 아니라 드레인 신호로 즉시 비우는 대상 — bridge_drain 모듈 docstring 참조).
+app.add_middleware(bridge_drain.BridgeInflightMiddleware)
 
 # feature-0014 asset-stamp-cache-integrity (2026-07-28): `/static` 은 StaticFiles 를 그대로
 # 쓰되 Cache-Control 만 래퍼가 결정한다 — "immutable 은 요청 `?v=` 가 **이 replica 의 빌드

@@ -122,6 +122,66 @@ sys.exit(3)   # 두 스킴 모두 실패 = "읽지 못했다"(0 아님)
 ' 2>/dev/null
 }
 
+# ── 브리지 축 진행 신호 (feature-0045) ───────────────────────────────────────
+# 위 두 신호(`ask_jobs` · `active_streams`)는 **브리지 전환 이후 사용자 작업을 대변하지
+# 않는다** — 서버 LLM 이 차단돼 `ask_jobs` 행이 생기지 않고, 개인 AI 의 왕복은 스트림
+# 카운터에 잡히지 않는다. 그래서 이 게이트는 사용자가 답을 기다리는 중에도 "조용함" 으로
+# 통과했다. 세 번째 축을 더해 그 구멍을 막는다.
+# ⚠ `claimed`(최근 점유 = 살아 있다고 볼 수 있는 것)만 센다. `stale`(오래 붙들려 있는 것)은
+#   세지 않는다 — 개인 머신 AI 는 **노트북을 닫는 것이 정상적인 실패 양상**이라, 유령 점유
+#   하나가 lease 만료(30분)까지 배포를 막으면 quiesce 상한(15분)으로는 구조적으로 성공할 수
+#   없는 대기가 된다. `ask_jobs` 축이 heartbeat 로 fresh/stale 을 나눈 것과 같은 자세다.
+#   stale 은 별도로 로그에 남긴다(제외가 아니라 구분 — 판단 근거를 지우지 않는다).
+bridge_active_total() {  # → 정수(살아 있는 브리지 점유) | "unknown"
+  local svc out
+  for svc in "${REPLICAS[@]}"; do
+    replica_cid "$svc" >/dev/null 2>&1 || continue
+    out="$("${DC_PROD[@]}" exec -T "$svc" python -c '
+import json,ssl,sys,urllib.request
+ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+for base in ("https://localhost:8000","http://localhost:8000"):
+    try:
+        r=urllib.request.urlopen(base+"/internal/bridge-activity",timeout=5,
+                                 context=ctx if base.startswith("https") else None)
+        d=json.loads(r.read().decode())
+        if int(d.get("stale",0)) > 0:
+            sys.stderr.write("stale bridge claims: %s\n" % d.get("stale"))
+        print(int(d.get("claimed",0))); sys.exit(0)
+    except Exception:
+        continue
+sys.exit(3)
+')" || continue
+    case "$out" in (''|*[!0-9]*) continue ;; esac
+    # 이 값은 **클러스터 전역**(DB 조회)이라 replica 하나만 읽으면 충분하다.
+    echo "$out"; return 0
+  done
+  echo "unknown"
+}
+
+# 서버 계정 LLM 이 차단돼 있는가(= 브리지가 주 경로인가). 코드 기본값이 **차단**이므로
+# env 미설정도 차단으로 읽는다(feature-0043: 설정 파일이 배포되지 않는 환경에서도 잠금이
+# 유효하도록 안전측 기본값을 코드에 뒀다 — 그 판정을 여기서 뒤집지 않는다).
+server_llm_blocked() {  # → "yes" | "no" | "unknown"
+  local svc out
+  for svc in "${REPLICAS[@]}"; do
+    replica_cid "$svc" >/dev/null 2>&1 || continue
+    # ⚠ `printenv NAME` 은 **미설정이면 exit 1 + 빈 출력**이다. 초판은 그 exit 1 을 "이 replica 로
+    #   못 읽었다" 로 읽어 `continue` 했고, 그 결과 함수가 **항상 unknown** 이었다(적대 리뷰가
+    #   실측). 이 프로젝트는 `AGENT_SERVER_LLM_ENABLED` 를 어디에도 설정하지 않는다 — 차단이
+    #   코드 기본값이기 때문이다(feature-0043). 즉 "정상 운영 = 미설정" 이라, 그 케이스를 관측
+    #   실패로 오독하면 아래 브리지 분기 전체가 죽은 코드가 된다.
+    #   그래서 **exec 성공 자체를 관측 성공**으로 삼고, 미설정을 sentinel 로 구분해 읽는다.
+    out="$("${DC_PROD[@]}" exec -T "$svc" sh -c 'printf "%s" "${AGENT_SERVER_LLM_ENABLED-__UNSET__}"' 2>/dev/null)" \
+      || continue   # exec 자체가 실패 = 이 replica 로는 못 읽었다
+    out="$(printf '%s' "$out" | tr -d '[:space:]' | tr 'A-Z' 'a-z')"
+    case "$out" in
+      1|true|yes|on) echo "no"; return 0 ;;      # 서버 LLM 허용 = 브리지가 주 경로가 아님
+      *) echo "yes"; return 0 ;;                 # 미설정(__unset__)·0·off 등 — 코드 기본값은 차단
+    esac
+  done
+  echo "unknown"
+}
+
 web_active_streams_total() {  # → 정수 | "unknown"
   local svc n total=0 seen=0 unread=0
   for svc in "${REPLICAS[@]}"; do
@@ -140,25 +200,46 @@ web_active_streams_total() {  # → 정수 | "unknown"
 # 중단하면 구버전이 계속 서빙해 무중단이 유지되지만, 강행하면 정확히 우리가 고치려는
 # "진행 중 사용자 요청이 죽는" 사고가 재현된다. 그래서 timeout·관측불가 모두 **중단**이고,
 # 강행은 `--force-busy` 로 사람이 명시할 때만 — 그때도 무엇을 끊는지 로그로 남긴다.
-# 한 번의 관측 → "fresh|stale|streams" (각각 정수 또는 unknown).
-quiesce_sample() { printf '%s|%s|%s' "$(running_ask_jobs)" "$(stale_running_ask_jobs)" "$(web_active_streams_total)"; }
+# 한 번의 관측 → "fresh|stale|streams|bridge" (각각 정수 또는 unknown).
+# feature-0045: 네 번째 축(브리지 점유 작업)을 더했다 — 앞의 셋만으로는 브리지 시대의 사용자
+# 작업이 전혀 보이지 않는다.
+quiesce_sample() {
+  printf '%s|%s|%s|%s' "$(running_ask_jobs)" "$(stale_running_ask_jobs)" \
+    "$(web_active_streams_total)" "$(bridge_active_total)"
+}
 
 # 표본이 "확실히 조용함" 인가 — **unknown 은 조용함이 아니다**(§18.8 패널 P1-2).
 # 초판은 한쪽이 관측되면 다른 쪽 unknown 을 0 으로 읽었는데, 두 신호는 서로 다른 차원을
-# 덮으므로(worker 큐 vs web 스트림) 한쪽으로 다른 쪽을 대신 증명할 수 없다.
-quiesce_sample_is_quiet() {  # $1 = "fresh|stale|streams" → 0 조용 / 1 아님(또는 미확인)
-  local f s w; IFS='|' read -r f s w <<<"$1"
-  case "$f|$s|$w" in (*unknown*) return 1 ;; esac
-  [ "$f" -eq 0 ] && [ "$s" -eq 0 ] && [ "$w" -eq 0 ]
+# 덮으므로(worker 큐 vs web 스트림 vs 브리지 점유) 한쪽으로 다른 쪽을 대신 증명할 수 없다.
+quiesce_sample_is_quiet() {  # $1 = "fresh|stale|streams|bridge" → 0 조용 / 1 아님(또는 미확인)
+  local f s w b; IFS='|' read -r f s w b <<<"$1"
+  case "$f|$s|$w|$b" in (*unknown*) return 1 ;; esac
+  [ "$f" -eq 0 ] && [ "$s" -eq 0 ] && [ "$w" -eq 0 ] && [ "$b" -eq 0 ]
 }
 
 quiesce_user_runs() {  # $1 = 대상 라벨 → 0 조용함(내려도 됨) / 1 아님(중단)
-  local label="$1" deadline=$(( SECONDS + QUIESCE_TIMEOUT )) smp f s w waited=0 last_report=0 mode
+  local label="$1" deadline=$(( SECONDS + QUIESCE_TIMEOUT )) smp f s w b waited=0 last_report=0 mode
   step "quiesce 게이트: 진행 중 사용자 run 이 끝나기를 대기 ($label, 상한 ${QUIESCE_TIMEOUT}s)"
   [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] quiesce skip"; return 0; }
   # 0) 실행 모드 게이트 — ask_jobs 가 정본인 모드인지 먼저 확인한다(패널 P1-1).
   mode="$(ask_execution_mode)"
-  if [ "$mode" != "worker" ]; then
+  # feature-0045: 서버 LLM 이 차단된 브리지 운영에서는 `ask_jobs` 축이 **원래 비어 있는 것이
+  # 정상**이다(질문은 `WebAiTasks` 로 간다). 그 상태에서 "worker 모드가 아니다" 를 이유로
+  # 무조건 중단하면 게이트가 배포를 영구 차단한다 — 종전 판정은 브리지 전환 이전의 세계를
+  # 전제로 쓰였다. 대신 **브리지 축이 실제로 관측되는지**를 확인한다. 그것마저 못 읽으면
+  # 아무것도 못 보는 것이므로 종전과 같이 중단한다(fail-closed 자세는 그대로).
+  local _blocked _bridge_probe
+  _blocked="$(server_llm_blocked)"
+  if [ "$mode" != "worker" ] && [ "$_blocked" = "yes" ]; then
+    _bridge_probe="$(bridge_active_total)"
+    if [ "$_bridge_probe" = "unknown" ]; then
+      err "$label: 서버 LLM 차단(브리지) 운영인데 브리지 축을 읽지 못했다 — 진행 중 작업을 볼 수 없다."
+      err "  진단: ${DC_PROD[*]} exec -T ${REPLICAS[0]} python -c \"import urllib.request;print(urllib.request.urlopen('http://localhost:8000/internal/bridge-activity').read())\""
+      err "  현 상태 유지 후 재실행(멱등). 인지한 상태에서 강행하려면 --force-busy."
+      return 1
+    fi
+    log "  $label: 브리지 운영(서버 LLM 차단) — ask_jobs 대신 브리지 점유를 정본 신호로 본다."
+  elif [ "$mode" != "worker" ]; then
     # ⚠ 백틱을 쓰지 않는다 — 큰따옴표 안의 `...` 는 **명령 치환**이라 메시지가 깨지고 엉뚱한
     # 명령이 실행된다(라이브 검증에서 `/livez` 실행 시도로 적발 — 초판의 실제 버그).
     err "$label: 실행 모드가 '$mode' 다 — 이 모드의 /api/ask 는 ask_jobs 행을 만들지 않고"
@@ -168,7 +249,7 @@ quiesce_user_runs() {  # $1 = 대상 라벨 → 0 조용함(내려도 됨) / 1 �
     return 1
   fi
   while :; do
-    smp="$(quiesce_sample)"; IFS='|' read -r f s w <<<"$smp"
+    smp="$(quiesce_sample)"; IFS='|' read -r f s w b <<<"$smp"
     if quiesce_sample_is_quiet "$smp"; then
       # 1) settle 재확인 — 한 장의 스냅샷은 "그 순간" 만 말한다. 곧바로 recreate 로 넘어가면
       #    그 사이 들어온 run 이 죽는다(패널 P1-3). 짧은 간격으로 한 번 더 보고 둘 다 조용할
@@ -180,12 +261,12 @@ quiesce_user_runs() {  # $1 = 대상 라벨 → 0 조용함(내려도 됨) / 1 �
         log "  $label: 진행 중 run 0 (settle ${QUIESCE_SETTLE}s 재확인, 대기 ${waited}s) — 교체 진행."
         return 0
       fi
-      IFS='|' read -r f s w <<<"$smp"
-      log "  $label: settle 재확인에서 신규 run 감지(fresh=$f stale=$s streams=$w) — 계속 대기."
+      IFS='|' read -r f s w b <<<"$smp"
+      log "  $label: settle 재확인에서 신규 run 감지(fresh=$f stale=$s streams=$w bridge=$b) — 계속 대기."
     fi
     if [ "$SECONDS" -ge "$deadline" ]; then
-      err "$label: quiesce timeout(${QUIESCE_TIMEOUT}s) — ask_jobs fresh=$f · stale=$s · web streams=$w."
-      case "$f|$s|$w" in (*unknown*)
+      err "$label: quiesce timeout(${QUIESCE_TIMEOUT}s) — ask_jobs fresh=$f · stale=$s · web streams=$w · 브리지 점유=$b."
+      case "$f|$s|$w|$b" in (*unknown*)
         err "  (unknown = 관측 실패. '조용한지 알 수 없다' 를 '조용하다' 로 읽지 않는다.)"
         err "  진단: ${DC[*]} exec -T $QUIESCE_PG_SERVICE sh -lc 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -tAc \"select 1\"'" ;;
       esac
@@ -195,7 +276,7 @@ quiesce_user_runs() {  # $1 = 대상 라벨 → 0 조용함(내려도 됨) / 1 �
     fi
     # 진행 상황을 30초마다 한 줄 — 조용히 오래 기다리면 '멈춘 배포'로 오인된다.
     if [ $(( waited - last_report )) -ge 30 ] || [ "$waited" -eq 0 ]; then
-      log "  $label: ask_jobs fresh=$f · stale=$s · web streams=$w — 대기 중(${waited}s/${QUIESCE_TIMEOUT}s)"
+      log "  $label: ask_jobs fresh=$f · stale=$s · web streams=$w · 브리지 점유=$b — 대기 중(${waited}s/${QUIESCE_TIMEOUT}s)"
       last_report="$waited"
     fi
     sleep "$QUIESCE_POLL"; waited=$(( waited + QUIESCE_POLL ))

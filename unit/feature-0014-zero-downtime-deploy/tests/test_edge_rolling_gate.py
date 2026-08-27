@@ -202,9 +202,14 @@ def test_g1b2_no_replica_recreate_outside_the_gated_helper():
     # 만지지 않는다**(대상은 ask-worker/ask-worker-surge 뿐) — 즉 이 테스트가 지키는 엣지 게이트의
     # 관할 밖이다. 대신 자기 층의 게이트를 갖는다: surge healthy 확인 → 본체 drain(완주 대기) →
     # 본체 교체. 그 순서는 `test_ask_surge_rollout.py` 가 잠근다.
+    # feature-0045 zd-bridge-continuity: 브리지 MCP 표면(`ext-tool-mcp-a/b`) 롤링 함수 추가.
+    # 같은 근거로 등재한다 — **web replica 를 만지지 않는다**(대상은 MCP_REPLICAS 뿐). 자기 층의
+    # 게이트는 "상대 replica 가 healthy 일 때만 이쪽을 내린다" 이고, 그 전제와 web 미참조는
+    # `unit/feature-0045-zd-bridge-continuity/tests/test_bridge_deploy_gate.py` 가 잠근다.
     allowed = {"recreate_replica", "deploy_workers", "rollback_workers", "deploy_gateway_reconcile",
                "reconcile_caddy", "sweep_leaked_surge",
-               "rollout_ask_worker_via_surge", "drain_stop_ask", "sweep_leaked_ask_surge"}
+               "rollout_ask_worker_via_surge", "drain_stop_ask", "sweep_leaked_ask_surge",
+               "rollout_mcp_replicas"}
     # main 은 통째로 허용하지 않는다 — 초기 dual-start(양 replica 부재 시 동시 기동, 그때는
     # 내릴 상대가 없어 게이트가 무의미) **한 줄만** 예외로 인정한다(적대 검증 P2).
     initial_dual_start = "up -d --no-deps --no-build web-a web-b"
@@ -248,6 +253,13 @@ def _run_predrain(tmp_path: Path, *, peer_cid="peer-cid", peer_ready="1", edge_o
             'replica_cid() { printf \'%s\' "$FAKE_PEER_CID"; }',
             'replica_readyz() { [ "$FAKE_PEER_READY" = "1" ]; }',
             "replica_active_streams() { echo 0; }",
+            # feature-0045: predrain 이 브리지 축을 함께 본다. 이 파일이 지키는 계약은
+            # **엣지 게이트 3단**(상대 존재·ready·후보 복귀)이므로, 브리지 축은 "조용함" 으로
+            # 고정해 그 3단만 남긴다(다른 축의 변화가 이 테스트의 의미를 흐리지 않게).
+            "PREDRAIN_FORCED=0", "PREDRAIN_UNVERIFIED=0", 'DRAINED_SVC=""',
+            'replica_drain_probe() { echo "0 0 0"; }',
+            "replica_active_streams_strict() { echo 0; }",
+            "replica_release_drain() { :; }",
             'wait_edge_available() { [ "$FAKE_EDGE_OK" = "1" ]; }',
             _extract_func("predrain"),
             "rc=0; predrain web-a web-b || rc=$?; echo RC=$rc",
@@ -592,6 +604,10 @@ def _run_recreate(tmp_path: Path, *, gate_rc="1"):
             "DC_PROD=(true)",
             "run() { \"$@\"; }",
             "wait_ready() { return 0; }",
+            # feature-0045: recreate 성공 시 드레인 추적 전역을 비운다(누수 차단). 이 하네스는
+            # 그 전역을 쓰지 않으므로 `set -u` 를 만족시킬 초기값만 준다.
+            'DRAINED_SVC=""',
+            "stamp_sanctioned_recreate() { :; }",
             f'wait_edge_available() {{ echo CALLED >> "{marker}"; return {gate_rc}; }}',
             _extract_func("recreate_replica"),
             "rc=0; recreate_replica web-a deadbeef || rc=$?; echo RC=$rc",
