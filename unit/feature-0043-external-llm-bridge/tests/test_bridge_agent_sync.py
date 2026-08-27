@@ -32,6 +32,9 @@ def test_runner_has_no_third_party_imports():
     tree = ast.parse(CANON.read_text(encoding="utf-8"))
     stdlib = {
         "argparse", "json", "os", "shlex", "ssl", "subprocess", "sys",
+        # 2026-08-28: 동시 처리 + 취소 시 자식 프로세스 종료. 둘 다 표준 라이브러리라
+        # 무설치 계약은 유지된다(`pip install` 이 필요한 것이 하나도 없다).
+        "threading",
         "urllib", "urllib.error", "urllib.parse", "urllib.request", "__future__",
     }
     external = []
@@ -55,6 +58,73 @@ def test_runner_does_not_poll():
     assert "wait_for_request" in code, "블로킹 대기 도구를 쓰지 않는다"
 
 
+def test_runner_waits_for_a_slot_before_asking_the_server():
+    """워커가 다 찼으면 **자리를 기다린 뒤** 서버에 묻는다(2026-08-28).
+
+    순서가 반대면 tight loop 가 된다: 열린 질문이 남아 있는 한 `wait_for_request` 는 즉시
+    응답하므로, 자리가 없는데 계속 물으면 초당 수십 번 서버를 두드린다. 세마포어는 블로킹이라
+    이 대기에도 sleep 이 필요 없다.
+    """
+    import ast
+
+    tree = ast.parse(CANON.read_text(encoding="utf-8"))
+    main = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    body = ast.get_source_segment(CANON.read_text(encoding="utf-8"), main) or ""
+    loop = body[body.index("while True:"):]
+    assert "slots.acquire()" in loop, "워커 자리를 기다리지 않는다"
+    assert loop.index("slots.acquire()") < loop.index('api.call("wait_for_request"'), (
+        "자리를 잡기 전에 서버에 묻는다 — 워커가 다 차면 tight loop 가 된다")
+
+
+def test_runner_claims_in_the_wait_loop_not_in_the_worker():
+    """점유는 대기 루프에서 한다 — 워커로 미루면 같은 task 를 반복해서 받는다.
+
+    점유해야 그 task 가 `wait_for_request` 결과에서 빠진다. 점유를 워커까지 미루면 그 사이
+    같은 id 가 계속 돌아오고, 그 반복이 곧 서버를 두드리는 loop 다.
+    """
+    src = CANON.read_text(encoding="utf-8")
+    handle = src[src.index("def handle_one("):]
+    handle = handle[:handle.index("\ndef ")]
+    assert 'api.call("claim_request"' not in handle, (
+        "워커가 점유한다 — 대기 루프에서 점유해야 중복 수신이 사라진다")
+    assert 'api.call("claim_request"' in src, "점유 경로 자체가 사라졌다"
+
+
+def test_runner_abandons_canceled_work_without_submitting():
+    """취소된 작업은 **제출하지 않는다**(2026-08-28 사용자 결정).
+
+    제출해도 서버가 409 로 거절하지만, 러너가 먼저 멈춰야 개인 계정 토큰이 덜 탄다.
+    실패(`제출한다`)와 취소(`제출하지 않는다`)가 **다른 값**으로 구분되는지도 함께 잠근다 —
+    같은 값이면 호출측이 둘 중 하나를 반드시 틀리게 처리한다.
+    """
+    src = CANON.read_text(encoding="utf-8")
+    assert "CANCELED = " in src, "취소를 실패와 구분하는 신호가 없다"
+    assert "canceled_task_ids" in src, "서버의 취소 통보를 읽지 않는다"
+    handle = src[src.index("def handle_one("):]
+    handle = handle[:handle.index("\ndef ")]
+    assert "if answer == CANCELED:" in handle, "취소를 실패와 같이 처리한다(=제출해 버린다)"
+    # 제출 **직전**에도 한 번 더 본다 — 답을 만드는 동안 취소됐을 수 있다.
+    assert handle.index("_canceled()") < handle.index('api.call("submit_answer"'), (
+        "제출 직전 취소 재확인이 없다")
+
+
+def test_runner_kills_the_child_on_cancel():
+    """취소되면 진행 중인 AI **프로세스를 죽인다**.
+
+    죽이지 않으면 아무도 볼 수 없는 답을 위해 최대 `_AI_TIMEOUT_SEC` 동안 개인 계정 토큰이
+    계속 탄다 — 취소의 실질 목적이 바로 그 낭비를 막는 것이다. `subprocess.run` 은 끝날
+    때까지 블로킹이라 이 계약을 만족할 수 없다.
+    """
+    src = CANON.read_text(encoding="utf-8")
+    assert "subprocess.Popen(" in src, "블로킹 실행이라 취소를 반영할 수 없다"
+    assert "def _kill(" in src and "proc.kill()" in src, "자식을 종료하지 않는다"
+    runner = src[src.index("def _run_cli_cancelable("):]
+    runner = runner[:runner.index("\ndef ")]
+    assert "cancel_check()" in runner, "실행 중 취소를 확인하지 않는다"
+    assert "pump.join(" in runner, "자식 대기가 블로킹이 아니다(sleep 루프 의심)"
+
+
 def test_runner_covers_every_runtime():
     """claude·codex·gemini·로컬 LLM 을 모두 다룬다(AI 종류에 무관해야 한다)."""
     src = CANON.read_text(encoding="utf-8")
@@ -67,7 +137,10 @@ def test_runner_passes_prompt_as_argv_not_shell():
     """프롬프트를 셸로 넘기지 않는다 — 질문 본문에 셸 메타문자가 섞이면 명령 주입이 된다."""
     src = CANON.read_text(encoding="utf-8")
     assert "shell=True" not in src, "셸을 거쳐 실행한다(명령 주입 경로)"
-    assert "capture_output=True" in src
+    # 2026-08-28: 취소 시 자식을 죽이려면 `Popen` 이어야 해서 `capture_output=True` 대신
+    # 파이프를 명시한다. 계약의 알맹이는 같다 — **출력을 잡아둔다**(터미널로 새지 않는다).
+    assert "stdout=subprocess.PIPE" in src and "stderr=subprocess.PIPE" in src, (
+        "출력을 캡처하지 않는다 — 답변을 회수할 수 없고 사용자 터미널로 샌다")
 
 
 def test_runner_submits_even_on_ai_failure():

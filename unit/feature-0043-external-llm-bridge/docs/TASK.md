@@ -104,6 +104,7 @@ source_of_truth: true
 | TASK-20260827T010000-ai-claude-feature-0043 | 배포 스모크 전제를 전환 모드에 맞춤 + 라이브 실측 기록(PR #1352) | [x] done |
 | TASK-20260827T030000-ai-claude-feature-0043 | 인증 축을 `mat_` 하나로 통일 — 발견자료·가이드·CLI·런처 전환 + 신규 `matk_` 발급 차단 + 회귀 14건 | [x] done |
 | TASK-20260826T151501-ai-claude-feature-0043 | **잔여** — PB-0008 화면 시각검증(브리지 setup 불가·사유 명시) · gateway reconcile(PR #1352 병합 후) | [ ] pending |
+| TASK-20260828T070000-ai-claude-feature-0043 | 진행 스트리밍(SSE 55초) · 인터럽트 · 맥락 전환 supersede · 병렬 러너 | [ ] in-progress |
 
 ## 4. Requested Scope (요청 범위)
 
@@ -261,3 +262,89 @@ source_of_truth: true
 - [x] 원장으로 대기 여부 관측 + 3상태 표시
 - [x] 러너 설정 저장(`--resume`)·토큰 미저장·401 복귀 안내
 - [ ] **라이브 확인** — 재시작 후 '대기 안 함' 표시, `--resume` 복귀(사용자 테스트)
+
+### TASK-20260828T070000 — 진행 스트리밍 · 인터럽트 · 맥락 전환 · 병렬
+
+**위험도: Major** (§12.3 — 사용자 대면 동작 다수 + 신규 SSE 라우트 + 취소 상태 전이.
+인증·인가 경계는 기존 계약 재사용이라 Critical 아님. 되돌리기 = 코드 revert + 재배포.)
+
+#### 사용자 결정 (2026-08-28)
+
+| 축 | 결정 |
+|---|---|
+| 범위 | 묶음 A(진행 스트리밍 + 인터럽트 + supersede) **+ 병렬 러너** |
+| 전송 | **SSE + 55초 상한 재접속** (무제한 SSE 아님 — 배포 pre-drain 90초와의 상호작용을 55초로 묶는다) |
+| 재요청 | 미점유 취소 + **점유는 협조적 취소 요청** |
+| 늦은 답변 | **409 거절 + 대화 미전달** |
+
+#### 다의어 고지 — "인터럽트가 되었다" 가 무엇으로 판정되는가 (§7.1 · §16.7 G1)
+
+> **입력**: 대기 말풍선이 떠 있는 상태에서 컴포저의 **중단** 버튼 클릭
+> **기대 출력**: (1) 말풍선이 즉시 '요청을 취소했습니다' 로 바뀌고 **새로고침해도 유지**,
+> (2) `WebAiTasks` 의 그 행이 미점유면 **삭제**·점유면 `Status='canceled'`,
+> (3) 그 뒤 개인 AI 가 `submit_answer` 하면 **409** 이고 대화에 답변이 **나타나지 않는다**.
+>
+> (3)이 판정 핵심이다 — 취소했는데 나중에 답변이 뜨면 "취소가 되었다" 가 거짓이 된다.
+
+#### 왜 신규 도구를 추가하지 않는가 (설계 결정)
+
+협조적 취소를 개인 AI 에게 알리려면 상태 조회 수단이 필요하다. 신규 도구(`check_task_state`)를
+더하는 안을 먼저 검토했으나 **`wait_for_request` 를 확장하는 쪽**을 택했다.
+
+- 러너는 이미 `wait_for_request` 에 상주한다. 그 응답에 `canceled_task_ids` 를 실으면 **채널이
+  하나 더 생기지 않는다.**
+- 대기 루프가 이미 0.5초마다 재조회하므로, 취소를 **그 루프의 두 번째 조건**으로 넣으면 새 질문과
+  똑같이 **즉시 인지**된다(P0-J 의 "환경 차이 금지" 가 취소에도 그대로 적용된다).
+- 도구 **개수가 불변**이라 P0-I 계약(매니페스트 · 가이드 열거 · `capabilities` · 도구 수 대조
+  테스트)이 흔들리지 않는다. 도구를 늘리면 그 4곳이 동시에 어긋날 입구가 열린다.
+
+등록형 AI(러너 미사용)는 이 신호를 안 읽을 수 있다 — 그쪽은 `submit_answer` 409 가 받는다.
+**두 겹이지 이중 정의가 아니다**: 인지(러너, 조기 하차)와 집행(서버, 409)은 층이 다르다.
+
+#### 영향받는 파일 · symbol
+
+| 경로 | symbol / 변경 | 비고 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` | `_BRIDGE_CANCELED` 상수 · `wait_for_request` 루프에 취소 조회 + `canceled_task_ids` · `submit_answer` 취소 409 · `bridge_status` phase `canceled` + `steps` · **신규 `GET /api/ai/bridge_stream`** | SSE 는 `app._sse_pack` + `app._counted_stream` 재사용(feature-0014 pre-drain 계량 유지) |
+| `unit/feature-0003-agent-web-ui/src/routers/conversations.py` | **신규 `_cancel_bridge_tasks`** (미점유 DELETE / 점유 UPDATE canceled) · `/api/cancel` 배선 · `_enqueue_web_bridge_task` 선행 supersede | `_delete_bridge_task` 는 이 함수로 흡수(술어 중복 제거) |
+| `unit/feature-0003-agent-web-ui/src/static/app/composer.js` | `_streamBridgeStatus`(SSE + 재접속) · 폴링 폴백 유지 · 브리지 대기 중 `myAskInFlight` 유지 → 중단 버튼 노출 | PB-0008 시각검증 대상 |
+| `unit/feature-0003-agent-web-ui/src/static/app/progress.js` | `_interruptCurrentRunForResend` 가 브리지 대기도 정리 | 기존 R3 경로에 브리지 축 합류 |
+| `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` | 워커 N개 동시 처리 · `canceled_task_ids` 확인 후 하차 | 배포본 `static/agent/bridge_agent.py` 와 **해시 일치** 유지 |
+| `unit/feature-0003-agent-web-ui/src/static/ai-api-guide.md` | `wait_for_request` 응답의 `canceled_task_ids` 설명 | 도구 **수는 불변** |
+| `docs/SECURITY.md` §49 · `docs/ARCHITECTURE.md` · `docs/STATUS.md` · `docs/ROUTEMAP.md` | 신규 라우트 · 취소 상태 전이 | `python3 bin/gen-routemap.py` 재생성 필수 |
+
+#### 접근 방법
+
+1. **취소 정본 먼저** — `_cancel_bridge_tasks` 하나를 만들고 `/api/cancel` · supersede · 중단
+   버튼이 **전부 그것을 부른다**. 술어가 두 벌이면 "어디서 취소했느냐" 에 따라 결과가 갈린다.
+2. **상태 전이를 서버가 한 단어로** — `phase` 에 `canceled` 를 더한다(기존 4종 + 1). 프런트가
+   조합하지 않는다(P0-O 와 동일 원칙).
+3. **SSE 는 기존 인프라 재사용** — 새 스트리밍 스택을 만들지 않는다. `_sse_pack`·`_counted_stream`·
+   `X-Accel-Buffering: no` 는 프롬프트 자동작성에서 이미 프로덕션 검증된 조합이다.
+4. **폴링을 지우지 않는다** — SSE 실패(프록시·구브라우저) 시 기존 `_pollBridgeAnswer` 로 폴백.
+   전송 방식이 바뀌었다고 답변 도달성이 나빠지면 개선이 아니다.
+5. **러너는 마지막** — 서버 계약(`canceled_task_ids`) 확정 후 붙인다.
+
+#### 완료 판정 기준 (FUNCTION.md §8 AC-53~60 과 1:1)
+
+- 중단 버튼이 브리지 대기 중 **뜬다**(현재는 안 뜸) · 누르면 말풍선이 취소로 바뀌고 새로고침 유지
+- 미점유 task 는 DELETE · 점유 task 는 `canceled` · 취소된 task 에 대한 `submit_answer` 는 409
+- 재전송 시 같은 대화의 이전 대기 task 가 supersede 되어 **FIFO 역전이 사라진다**
+- `bridge_stream` 이 55초 상한 후 정상 종료하고 프런트가 재접속 · `active_streams` 가 0 으로 복귀
+- 진행 중 도구 호출이 **답변 전에** 화면에 보인다
+- 러너가 워커 N개로 동시 처리하고, 취소된 task 는 제출 전에 하차한다
+
+- status: done (코드·문서·단위검증) / **잔여 = post-deploy PB-0008 실화면 검증**
+- risk: Major
+- [x] ① 취소 정본 — `shared/bridge_tasks.cancel_bridge_tasks` + `/api/cancel` 배선(서버 run 취소보다 **앞**)
+- [x] ② 재전송 supersede — 적재 성공 뒤 실행 + `exclude_task_id` + 프런트 감시 정리
+- [x] ③ `wait_for_request` 취소 즉시 인지(`canceled_task_ids`, **신규 도구 0**) + `submit_answer` 409
+- [x] ④ `GET /api/ai/bridge_stream` SSE(55초 상한 · `_counted_stream` · 인증 선행)
+- [x] ⑤ 프론트 SSE 수신·재접속 + **폴링 폴백 유지** + 중단 버튼 노출 + 진행 단계 렌더
+- [x] ⑥ 러너 병렬 워커(기본 2) + 취소 시 자식 프로세스 kill + spin 방지
+- [x] ⑦ 테스트(feature-0043 **243건** green · `make test` exit 0) · 문서 · ROUTEMAP · 라우트 골든
+- [x] ⑧ **자체 적대 리뷰** — P1 1건(취소 TOCTOU: 취소된 답변이 대화에 append 될 수 있었음) + P2 3건 조치
+- [x] ⑨ **PB-0008 브리지 근본원인 수정** — `win_host_ip()` 가 공용 DNS 를 Windows host 로 오판하던 것을 해소(여러 cycle 간 "setup 불가" 의 원인)
+- [ ] ⑩ **POST-DEPLOY 실화면 검증** — 중단 버튼 · 취소/대체 말풍선 · 진행 단계 · SSE 재접속
+      (대상 코드가 라이브에 없어 배포 전 관측 불가 — `deploy_scope: included` 로 배포 직후 수행)
+- [ ] ⑪ **codex 외부 리뷰 재시도** — 이번 cycle 은 계정 사용량 한도로 산출물 0(REVIEW.md 에 기록)
