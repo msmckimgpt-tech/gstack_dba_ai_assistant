@@ -1,7 +1,7 @@
 # mysql_ai Conversation API — 외부 AI 학습 가이드라인
 
-이 문서는 외부 AI/에이전트가 mysql_ai assistant 의 **작업 화면 대화**를 프로그램으로 정확히
-사용하기 위한 레퍼런스다. 사람용 관리 콘솔은 이 API 범위에서 **의도적으로 제외**된다.
+외부 AI/에이전트가 이 서비스의 대화를 프로그램으로 사용하기 위한 레퍼런스다.
+관리 콘솔은 이 API 범위에서 제외된다.
 
 - 기계판독 매니페스트: `/.well-known/ai-conversation-api.json` (또는 `/api/ai/manifest`)
 - 발견 진입점: `/llms.txt`
@@ -13,9 +13,10 @@
 자연어 메시지를 보내면, assistant 가 사내 데이터베이스를 대상으로 질의·분석해 답변(필요 시
 실행 SQL·결과 요약 포함)을 돌려준다. 하나의 "대화(conversation)" 안에서 맥락이 이어진다.
 
-**할 수 있는 것**: 대화 생성, 메시지 전송/답변 수신, 대화 이력 조회, 진행 상태 폴링, 취소.
-**할 수 없는 것(설계상)**: 관리 콘솔(`/api/admin/*`), 계정/권한/데이터소스 관리, **타 계정의
-대화 열람·조작**. 토큰 스코프와 서버측 인가가 이를 강제한다(§5).
+할 수 있는 것: 대화 생성, 메시지 전송/답변 수신, 이력 조회, 진행 상태 폴링, 취소.
+
+할 수 없는 것(설계상): 관리 콘솔(`/api/admin/*`), 계정·권한·데이터소스 관리, 타 계정 대화 접근.
+토큰 스코프와 서버측 인가가 강제한다(§5).
 
 ---
 
@@ -27,17 +28,15 @@
 Authorization: Bearer <token>
 ```
 
-- 토큰 형식: **`mat_…`** (URL-safe). 원문은 **발급 시 1회만** 노출되며 서버는 SHA-256 해시만 저장한다.
-- **토큰 취득 (self-serve)**: 브라우저로 로그인한 뒤 **`/ai/connect`** 에서 직접 발급한다.
-  토큰은 그 **로그인 세션에 결합**되므로 로그아웃하면 함께 죽는다(신원 = 로그인 세션).
-- **MCP 클라이언트라면 발급조차 필요 없다**: `https://<host>/api/ai/mcp` 를 URL 로 등록하면
-  표준 OAuth(DCR + Authorization Code + **PKCE S256**)로 자동 연결되고, 사람이 브라우저에서
-  한 번 동의하면 끝난다. 설치물도 없다.
+- 토큰 형식은 `mat_…` 이고, 원문은 발급 시 1회만 노출된다(서버는 SHA-256 해시만 저장).
+- 발급: 브라우저로 로그인한 뒤 `/ai/connect` 에서 직접 받는다. 토큰은 그 로그인 세션에
+  결합되므로 로그아웃하면 함께 죽는다.
+- MCP 클라이언트는 발급이 필요 없다. `https://<host>/api/ai/mcp` 를 URL 로 등록하면 표준
+  OAuth(DCR + Authorization Code + PKCE S256)로 연결된다.
 
-> ⚠ **구 `matk_` 토큰은 더 이상 사용하지 않는다** (feature-0043, 2026-08-27).
-> 그 토큰은 `/api/ask` 축 전용이었고, 그 축은 **서버 계정 LLM 으로 답변을 만들던 경로**다.
-> 그 LLM 은 차단됐으므로 `matk_` 로는 아무것도 완결되지 않는다.
-> **모든 인증은 `mat_` 하나로 통일한다.**
+> 구 `matk_` 토큰은 더 이상 발급하지 않는다(2026-08-27). 그 축(`/api/ask`)은 서버 계정 LLM 으로
+> 답변을 만들던 경로이고, 그 LLM 은 차단됐다. 기존 토큰의 인증은 유지되지만 답변은 생성되지 않는다.
+
 - 세션 쿠키(사람 로그인)와 별개 경로다. 토큰이 있으면 쿠키 없이 API 를 쓸 수 있다.
 - **폐기**: 운영자가 `bin/api-token-issue.sh --revoke <token-id|prefix>`. 또는 서비스 계정을
   비활성화/삭제하면 그 토큰은 즉시 무효가 된다.
@@ -405,14 +404,34 @@ submit_answer(task_id, answer, source_tasks=[task_id])
 > - 결과는 **미리보기**만 온다. 보지 못한 행에 대해 존재/부재/개수를 단정하지 마라 —
 >   필요하면 `COUNT`·`GROUP BY`·`NOT IN` 으로 좁혀 다시 물어라. 이 표면에 CSV 다운로드는 없다.
 
-### 열려 있는 도구 (10종)
+### 열려 있는 도구 (13종)
 
-`open_task` · `get_task_context` · `submit_answer` ·
-`list_schemas` · `describe_schema` · `describe_table` · `search_tables` ·
+작업 축 — `open_task` · `get_task_context` · `submit_answer`
+
+**웹 브리지 축** — `list_open_requests` · `claim_request` · `read_task_attachment`
+(2026-08-27). 웹 대화 화면에서 들어온 질문을 가져와 처리하는 축이다. 이 서비스는 서버 계정으로
+답변을 만들지 않으므로, 웹 사용자의 질문은 여기 대기열에 쌓이고 **각 사용자의 AI 가 가져가 답한다.**
+
+구조 조회 — `list_schemas` · `describe_schema` · `describe_table` · `search_tables` ·
 `get_foreign_keys` · `get_table_indexes`
 
-`execute_sql`(단일 SELECT/CTE)은 **열려 있다**(2026-08-14). 쓰기·첨부·작업공간
-계열은 이 표면에 영구히 없다.
+데이터 — `execute_sql` (단일 SELECT/CTE)
+
+쓰기·작업공간 계열은 이 표면에 영구히 없다. 첨부는 **읽기만**(`read_task_attachment`) 열린다.
+
+#### 웹 브리지 사용 순서
+
+```
+list_open_requests {"limit": 20}      → 대기 질문 목록 (task_id 획득)
+claim_request      {"task_id": "…"}   → 원자적 점유 + 질문 전문·이전 문맥·첨부 목록
+                                        (이미 점유된 것은 409, 점유는 30분 뒤 자동 해제)
+read_task_attachment {"task_id": "…", "attachment_id": N}   → 첨부 본문 (있을 때만)
+… 구조 조회·execute_sql 로 조사 …
+submit_answer      {"task_id": "…", "answer": "…", "source_tasks": ["…"]}
+                                      → 원 웹 대화에 답변이 표시된다
+```
+
+`claim_request` 없이 `submit_answer` 를 부르면 거부된다 — 점유가 소유권이다.
 
 ## B.3 받은 데이터를 다루는 규칙
 

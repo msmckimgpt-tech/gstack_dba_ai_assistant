@@ -326,12 +326,12 @@ def test_connect_page_hands_off_without_calling_the_human_back():
     """
     js = _read(*_STATIC, "ai-connect.js")
     body = js[js.index("function handoff("):js.index("function humanTtl(")]
-    a, b, c = body.index("방법 A"), body.index("방법 B"), body.index("방법 C")
+    a, b, c = body.index('"A. '), body.index('"B. '), body.index('"C. ')
     assert a < b < c, "지시문의 방법 순서가 A→B→C 가 아니다"
     # C(OAuth)가 사람을 다시 부른다는 사실을 AI 에게 알려야 그것을 뒤로 미룬다.
     assert "허용" in body[c:], "OAuth 경로에 사람 개입이 필요하다는 사실이 없다"
     # A·B 는 토큰만으로 통과한다 — 추가 승인 절차가 없다는 것을 명시한다.
-    assert "추가 로그인·승인 절차 없음" in body
+    assert "별도 로그인·승인 없음" in body
 
 
 @pytest.mark.parametrize("page", ["oauth-consent", "ai-connect"])

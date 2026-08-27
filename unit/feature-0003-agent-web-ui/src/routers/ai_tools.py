@@ -723,8 +723,12 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
         conversation_id=None, task_id=None, source="open_requests")
 
     try:
+        # ⚠ 인자명은 `rows_returned` 다(`rows` 아님). 잘못 쓰면 조회가 끝난 **뒤** 원장 기록
+        # 단계에서 TypeError 가 나 항상 500 이 된다 — 대기 질문이 있든 없든 100% 실패한다.
+        # 그리고 `claim_request` 는 이 도구가 주는 task_id 를 요구하므로, **웹 브리지 축 전체**가
+        # 끊긴다(라이브 제보 2026-08-27). 도구가 등록됐는지만 보는 테스트로는 잡히지 않았다.
         _ledger.record(_pg(), account_id=account_id, tool="list_open_requests",
-                       client_id=ctx.get("client_id"), rows=len(rows),
+                       client_id=ctx.get("client_id"), rows_returned=len(rows),
                        bytes_out=len(marked.encode("utf-8")),
                        latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
     except _ledger.LedgerUnavailable as exc:

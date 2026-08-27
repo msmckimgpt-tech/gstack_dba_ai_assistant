@@ -53,32 +53,27 @@
     }, null, 2);
 
     return [
-      "아래 'DB 질의 어시스턴트' 에 연결해줘.",
-      "인증에 필요한 것은 이 안에 다 들어 있으니 **나한테 더 물어보지 않아도 돼.**",
-      "네가 지원하는 방식으로 아래 중 되는 것을 시도해서 알아서 연결하면 돼.",
+      "DB 질의 어시스턴트에 연결해줘. 아래 정보로 인증까지 끝낼 수 있으니 나한테 더 묻지 않아도 돼.",
+      "네가 지원하는 방식으로 A → B → C 순서로 시도해.",
       "",
-      "■ 인증 (이것만 있으면 바로 통과 — 추가 로그인·승인 절차 없음)",
-      "    Authorization: Bearer " + token,
+      "인증 (이것만 있으면 통과. 별도 로그인·승인 없음)",
+      "  Authorization: Bearer " + token,
       "",
-      "■ 방법 A — MCP 설정에 추가 (헤더에 위 토큰)",
-      cfg.split("\n").map(function (l) { return "    " + l; }).join("\n"),
+      "A. MCP 설정에 추가",
+      cfg.split("\n").map(function (l) { return "  " + l; }).join("\n"),
       "",
-      "■ 방법 B — HTTP 로 직접 호출",
-      "    POST " + (base || "") + "/api/ai/tools/list_open_requests",
-      "    헤더: Authorization: Bearer <위 토큰>",
-      "    본문: {\"limit\": 20}",
-      "    도구 목록·사용법: " + guide,
+      "B. HTTP 직접 호출",
+      "  POST " + (base || "") + "/api/ai/tools/list_open_requests",
+      "  헤더  Authorization: Bearer <위 토큰>",
+      "  본문  {\"limit\": 20}",
+      "  도구 목록: " + guide,
       "",
-      "■ 방법 C — 커넥터 주소만 등록 (A·B 가 안 될 때만)",
-      "    URL: " + endpoint,
-      "    토큰 없이 표준 OAuth 로도 연결되지만, 브라우저에서 내가 '허용' 을 한 번 눌러야 해.",
-      "    A 나 B 가 되면 이건 쓸 필요 없어.",
+      "C. 커넥터 주소만 등록 (A·B 가 안 될 때)",
+      "  " + endpoint,
+      "  OAuth 로 연결되지만 브라우저에서 내가 허용을 눌러야 해.",
       "",
-      "연결되면 곧바로 이렇게 해줘:",
-      "  1) list_open_requests — 대기 중인 질문이 있는지 확인",
-      "  2) claim_request — 처리할 질문을 가져오기",
-      "  3) 필요한 조사(list_schemas / describe_table / execute_sql 등) 수행",
-      "  4) submit_answer — 답변 제출 (웹 대화 화면에 그대로 표시된다)",
+      "연결되면 list_open_requests 로 대기 중인 질문을 확인하고,",
+      "claim_request 로 가져가서 처리한 뒤 submit_answer 로 제출해줘.",
     ].join("\n");
   }
 
@@ -117,8 +112,7 @@
   }
 
   function showLoggedOut() {
-    $("connectLead").textContent =
-      "웹에서 보낸 질문을 회원님의 AI 가 대신 답하도록 연결합니다. 한 번만 하면 됩니다.";
+    $("connectLead").textContent = "웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
     $("connectLogin").classList.remove("aic-hidden");
     // 로그아웃 상태에서도 무엇을 하는 화면인지는 보여준다(설명만 — 만들기는 로그인 후).
     $("connectFlow").classList.remove("aic-hidden");
@@ -129,7 +123,7 @@
     endpoint = info.endpoint || "";
     if (!info.logged_in) { showLoggedOut(); return; }
     $("connectLead").textContent =
-      (info.display_name || info.username || "") + " 계정으로 내 AI 를 연결합니다.";
+      (info.display_name || info.username || "") + " 계정 · 웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
     $("connectFlow").classList.remove("aic-hidden");
   }
 
@@ -156,8 +150,8 @@
         endpoint = r.body.endpoint || endpoint;
         $("handoffText").textContent = handoff(issuedToken);
         $("handoffResult").classList.remove("aic-hidden");
-        say("만들었습니다 — 유효기간 " + humanTtl(r.body.expires_in) +
-            ", 로그아웃하면 그 전에도 즉시 무효입니다. 이 화면을 벗어나면 다시 볼 수 없습니다.", "ok");
+        say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
+            " · 로그아웃 시 즉시 무효.", "ok");
       })
       .catch(function (e) {
         $("makeHandoff").disabled = false;
@@ -166,7 +160,7 @@
   });
 
   $("copyHandoff").addEventListener("click", function () {
-    copy(handoff(issuedToken), "복사했습니다 — AI 에게 그대로 붙여넣으세요.");
+    copy(handoff(issuedToken), "복사했습니다. AI에 붙여넣으세요.");
   });
   $("copyEndpoint").addEventListener("click", function () {
     copy(endpoint, "주소를 복사했습니다.");
