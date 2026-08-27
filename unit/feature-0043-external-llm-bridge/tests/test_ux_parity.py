@@ -832,9 +832,14 @@ def test_wait_tool_commits_between_checks():
 
 
 def test_wait_tool_timeout_is_not_an_error():
-    """시간이 다 되면 200 + timed_out — 오류로 돌려주면 호출측이 재시도를 주저한다."""
+    """시간이 다 되면 200 + timed_out — 오류로 돌려주면 호출측이 재시도를 주저한다.
+
+    2026-08-28: 취소 통보가 같은 응답에 실리면서 `timed_out` 이 상수에서 **조건**이 되었다.
+    취소로 대기가 풀린 것은 시간이 다 된 것이 아니기 때문이다(기다림이 끝난 이유가 다르다).
+    """
     src = _func_source(AI_TOOLS, "wait_for_request")
-    assert '"timed_out": True' in src
+    assert '"timed_out": not canceled' in src, (
+        "취소로 풀린 대기까지 timed_out 으로 보고한다 — 호출측이 취소를 못 알아본다")
     assert "간격" in src, "곧바로 다시 호출하면 된다는 안내가 없다"
 
 
@@ -1053,11 +1058,19 @@ def test_steps_do_not_fabricate_reasoning():
 
 
 def test_steps_exclude_bridge_plumbing():
-    """대기·점유·제출은 조사 내역이 아니다 — 사용자에게는 소음이다."""
+    """대기·점유·제출은 조사 내역이 아니다 — 사용자에게는 소음이다.
+
+    2026-08-28: 필터가 `_BRIDGE_PROGRESS_TOOLS` 상수로 올라갔다. 진행 중 표시
+    (`_bridge_live_steps`)와 제출 시 이관이 **같은 집합**을 써야 하기 때문이다 —
+    갈리면 제출 순간 단계 목록이 달라져 사용자가 "단계가 사라졌다" 고 본다.
+    """
+    src = AI_TOOLS.read_text(encoding="utf-8")
+    idx = src.index("_BRIDGE_PROGRESS_TOOLS = frozenset({")
+    decl = src[idx:src.index("})", idx)]
+    for noise in ("wait_for_request", "claim_request", "submit_answer", "list_open_requests"):
+        assert noise in decl, f"{noise} 를 걸러내지 않는다"
     body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
-    for noise in ("wait_for_request", "claim_request", "submit_answer"):
-        assert noise in body, f"{noise} 를 걸러내지 않는다"
-    assert "skip" in body
+    assert "_BRIDGE_PROGRESS_TOOLS" in body, "제출 경로가 공용 필터를 쓰지 않는다"
 
 
 def test_step_recording_never_blocks_delivery():
@@ -1090,12 +1103,19 @@ def test_claim_marks_the_bubble_as_working():
 
 
 def test_status_reports_a_single_phase():
-    """국면을 **서버가 한 단어로** 정한다 — 프런트가 조합하면 화면마다 갈린다."""
-    src = _func_source(AI_TOOLS, "bridge_status")
-    assert '"phase"' in src
-    for ph in ("not_connected", "waiting", "working", "done"):
-        assert ph in src, f"국면 {ph} 가 없다"
-    assert "connected" in src, "연결 여부를 알리지 않으면 영원히 오지 않을 답을 기다린다"
+    """국면을 **서버가 한 단어로** 정한다 — 프런트가 조합하면 화면마다 갈린다.
+
+    2026-08-28: 판정이 `_bridge_phase` 로 올라갔다. 소비처가 폴링(`bridge_status`)과
+    스트리밍(`_bridge_stream_snapshot`) 둘이 되었기 때문이다 — 각자 조합하면 전송 방식에
+    따라 화면이 달라져 폴백이 곧 UX 회귀가 된다.
+    """
+    decide = _func_source(AI_TOOLS, "_bridge_phase")
+    for ph in ("not_connected", "waiting", "working", "done", "canceled"):
+        assert ph in decide, f"국면 {ph} 가 없다"
+    for consumer in ("bridge_status", "_bridge_stream_snapshot"):
+        src = _func_source(AI_TOOLS, consumer)
+        assert "_bridge_phase(" in src, f"{consumer} 이 국면을 자체 조합한다"
+        assert "connected" in src, "연결 여부를 알리지 않으면 영원히 오지 않을 답을 기다린다"
 
 
 def test_status_connection_probe_fails_open():
@@ -1105,12 +1125,20 @@ def test_status_connection_probe_fails_open():
 
 
 def test_frontend_reacts_to_phase_change_only():
-    """전환된 순간에만 다시 읽는다 — 매 tick 갱신은 스크롤을 흔들고 요청을 배로 만든다."""
+    """전환된 순간에만 다시 읽는다 — 매 tick 갱신은 스크롤을 흔들고 요청을 배로 만든다.
+
+    2026-08-28: 반응이 `_applyBridgePhase` 로 올라갔다(폴링·스트리밍 공용). 두 전송 경로가
+    각자 반응하면 폴백 시 사용자가 다른 화면을 본다.
+    """
     js = COMPOSER_JS.read_text(encoding="utf-8")
-    assert "_lastPhase" in js
-    assert 'status.phase !== _lastPhase' in js
-    assert 'status.phase === "working"' in js, "처리 중 전환을 화면에 반영하지 않는다"
-    assert 'not_connected' in js, "연결 없음을 사용자에게 알리지 않는다"
+    # 전환 감지: 폴링은 `_lastPhase`, 스트리밍은 `lastPhase` 로 직전 국면을 들고 비교한다.
+    assert 'status.phase !== _lastPhase' in js, "폴링이 매 tick 반응한다"
+    assert "phase === prev" in js, "스트리밍이 매 프레임 반응한다"
+    react = js[js.index("function _applyBridgePhase"):]
+    react = react[:react.index("\n}")]
+    assert 'phase === "working"' in react, "처리 중 전환을 화면에 반영하지 않는다"
+    assert 'phase === "not_connected"' in react, "연결 없음을 사용자에게 알리지 않는다"
+    assert 'phase === "canceled"' in react, "취소 전환을 화면에 반영하지 않는다"
 
 
 # ── ② 5단계 시스템 프롬프트 ──────────────────────────────────────────────────

@@ -267,7 +267,12 @@ function renderComposer() {
   // R1: 전송/중단 버튼 모드 — *내가 띄운* @assistant run 이 진행 중(myRun)이고 입력이 비어 있을 때만
   // "중단"(명시적 취소). 입력에 글자가 있으면 처리 중이라도 "전송"(R3 1:1 인터럽트 / R2 그룹 가드로
   // 라우팅). 타 멤버 run(글로벌 processing)으로는 중단 모드로 바뀌지 않는다(myRun 기준).
-  const myRun = _myAskInFlightHere();
+  // feature-0043(2026-08-28): 브리지 대기도 "내 요청 진행 중" 이다.
+  //
+  // `_myAskInFlightHere()` 는 `/api/ask` 왕복의 수명을 재는데, 브리지에서는 그 왕복이 **즉시**
+  // 끝난다(대기 작업만 만들고 반환) — 그래서 전환 이후 **중단 버튼이 한 번도 뜨지 않았고**
+  // 인터럽트가 UI 에서 도달 불가였다. 두 신호를 OR 로 합쳐 버튼 모드를 결정한다.
+  const myRun = _myAskInFlightHere() || _bridgePendingHere();
   const hasText = Boolean(String((promptInputEl && promptInputEl.value) || "").trim());
   const stopMode = myRun && !hasText;
   if (stopMode) {
@@ -393,6 +398,17 @@ const _BRIDGE_POLL_MS = 5000;
 //: 그 사실을 안내한 뒤 멈춘다(대화를 다시 열면 그 사이 도착한 답변은 그대로 보인다).
 const _BRIDGE_POLL_MAX_TICKS = 360;
 
+//: 같은 30분을 SSE 로 재는 상한. 서버가 55초마다 스트림을 닫으므로(배포 pre-drain 과의
+//: 상호작용 — `_BRIDGE_STREAM_MAX_HOLD_SEC` 주석 참조) 그만큼 재접속한다.
+const _BRIDGE_STREAM_MAX_ATTEMPTS = 33;
+//: 재접속 간격. 서버가 정상 종료(`reconnect`)했으면 0 에 가깝게 다시 붙고, 오류로 끊겼으면
+//: 이 값만큼 쉬었다 붙는다 — 서버가 죽었을 때 초당 재접속으로 두드리지 않기 위해.
+const _BRIDGE_STREAM_RETRY_MS = 3000;
+
+//: 취소·대체된 task 를 알리는 문구. 서버가 대화 본문을 이미 바꿔 두었으므로 토스트는
+//: "무슨 일이 일어났는지" 만 짧게 말한다.
+const _BRIDGE_CANCEL_TOAST = "요청을 취소했습니다.";
+
 // feature-0043 사용감 패리티(2026-08-27) — **브리지 응답 처리의 단일 진입점**.
 //
 // 왜 헬퍼인가: 답변을 만드는 서버 경로는 `/api/ask` 하나지만, 그것을 **부르는 화면 동작은
@@ -410,6 +426,14 @@ export function handleBridgePending(payload, fallbackConvId, waitingToast) {
   const queued = !!(payload.bridge_pending && payload.bridge_task_id);
   const notQueued = payload.bridge_queued === false;
   if (!queued && !notQueued) return false;
+
+  // 서버가 이전 대기 질문을 **대체**했으면(2026-08-28) 그 task 들의 감시를 먼저 끊는다.
+  // 새 폴러를 걸기 전에 해야 한다 — 순서가 반대면 옛 폴러가 한 tick 더 돌아 404 를 받고,
+  // 그 404 를 "내 task 가 사라졌다" 로 읽어 새 대기 안내까지 지운다.
+  if (Array.isArray(payload.bridge_superseded) && payload.bridge_superseded.length) {
+    abandonBridgeTasks(String(payload.conversation_id || fallbackConvId || ""),
+                       payload.bridge_superseded);
+  }
 
   // 토스트 문구는 **서버가 정한 것을 우선**한다(`bridge_toast`). 연결 여부 판정은 서버만
   // 할 수 있으므로(토큰·세션 조회) 프런트가 문구를 고정하면 틀린 말을 하게 된다.
@@ -478,11 +502,15 @@ export function resumeBridgePolling(convId) {
 
 async function _pollBridgeAnswer(taskId, convId) {
   if (!taskId) return;
-  // 같은 task 를 두 번 돌리지 않는다 — 전송 직후 폴링과 재진입 복구가 겹칠 수 있다.
+  // 같은 task 를 두 번 돌리지 않는다 — 전송 직후 감시와 재진입 복구가 겹칠 수 있다.
   if (_activeBridgePolls.has(taskId)) return;
   _activeBridgePolls.add(taskId);
   try {
-    await _pollBridgeAnswerInner(taskId, convId);
+    // 스트리밍 우선, 실패하면 폴링(2026-08-28). **폴링을 지우지 않는 이유**: 전송 방식이
+    // 바뀌었다고 답변 도달성이 나빠지면 개선이 아니다. SSE 를 막는 프록시·확장·구브라우저가
+    // 있으면 사용자는 그냥 "답이 안 온다" 로 겪는다.
+    const streamed = await _streamBridgeStatus(taskId, convId);
+    if (!streamed) await _pollBridgeAnswerInner(taskId, convId);
   } finally {
     _activeBridgePolls.delete(taskId);
   }
@@ -490,12 +518,229 @@ async function _pollBridgeAnswer(taskId, convId) {
 
 const _activeBridgePolls = new Set();
 
+//: 진행 중인 task 의 취소·대체를 감시 루프에 알리는 통로.
+//:
+//: 루프를 밖에서 멈추려면 신호가 필요하다. `AbortController` 만으로는 부족한데, 폴링 폴백은
+//: fetch 사이의 `setTimeout` 대기 중에도 멈춰야 하기 때문이다 — 그 구간엔 중단할 fetch 가 없다.
+const _abandonedBridgeTasks = new Set();
+
+/** 취소·대체된 task 의 감시를 멈추고 기억에서 지운다.
+ *
+ *  `/api/cancel` 응답과 `bridge_superseded` 가 모두 이 함수를 부른다 — 어느 경로로 사라졌든
+ *  화면이 죽은 task 를 계속 묻지 않게 하는 **단일 정리 지점**이다. 놓치면 없는 task 를
+ *  5초마다 물어 404 만 쌓인다. */
+export function abandonBridgeTasks(convId, taskIds) {
+  const list = Array.isArray(taskIds) ? taskIds : [taskIds];
+  for (const raw of list) {
+    const tid = String(raw || "");
+    if (!tid) continue;
+    _abandonedBridgeTasks.add(tid);
+    _forgetPendingBridgeTask(convId, tid);
+    const ctrl = _bridgeStreamAborts.get(tid);
+    if (ctrl) { try { ctrl.abort(); } catch (_e) { /* no-op */ } }
+  }
+}
+
+//: 진행 중 SSE 의 중단 핸들. 대화 이탈·취소 시 즉시 끊어 서버 스트림도 함께 풀어준다
+//: (서버는 `request.is_disconnected()` 로 이를 감지해 DB 두드리기를 멈춘다).
+const _bridgeStreamAborts = new Map();
+
+/** 이 대화에 아직 답을 기다리는 브리지 task 가 있는가.
+ *
+ *  **중단 버튼의 판정원**이다. 기존 `_myAskInFlightHere()` 는 `/api/ask` 의 왕복 수명을 재는데,
+ *  브리지에서는 그 왕복이 **즉시 끝난다**(대기 작업만 만들고 반환) — 그래서 전환 이후 중단
+ *  버튼이 한 번도 뜨지 않았고, 인터럽트가 UI 에서 도달 불가였다.
+ *
+ *  in-flight 집합에 브리지를 섞지 않고 **따로 두는 이유**: 그 집합은 전송 경로의 R2/R3 분기도
+ *  본다. 섞으면 브리지 대기 중 새 질문이 "이전 요청 처리 중" 으로 막히거나 취소 권한이 없는
+ *  사용자에게 전송이 거부된다 — 지금은 자유롭게 보낼 수 있고, 대체는 서버가 한다. */
+export function _bridgePendingHere() {
+  const cid = String(state.activeConversationId || "");
+  if (!cid) return false;
+  return (_readPendingBridgeTasks()[cid] || []).some(
+    (t) => !_abandonedBridgeTasks.has(String(t)));
+}
+
+/** SSE 로 브리지 진행을 감시한다. 정상 종결까지 갔으면 `true`, 스트리밍이 불가하면 `false`
+ *  (호출측이 폴링으로 폴백한다).
+ *
+ *  `EventSource` 를 쓰지 않는 이유: 쿠키 인증은 되지만 **오류 상태코드를 볼 수 없고**(401/404 가
+ *  브라우저 내부에서 무한 재접속으로 바뀐다) 중단 제어도 거칠다. `fetch` + `getReader` 는 이
+ *  저장소의 기존 SSE 소비 방식과도 같다(프롬프트 자동작성). */
+async function _streamBridgeStatus(taskId, convId) {
+  if (typeof window.fetch !== "function" || !window.ReadableStream) return false;
+  let sawAnyFrame = false;
+  let lastPhase = "";
+
+  for (let attempt = 0; attempt < _BRIDGE_STREAM_MAX_ATTEMPTS; attempt += 1) {
+    if (_abandonedBridgeTasks.has(String(taskId))) return true;
+    // 사용자가 다른 대화로 옮겼으면 조용히 멈춘다 — 남의 화면을 갱신하지 않는다.
+    if (convId && String(state.activeConversationId || "") !== String(convId)) return true;
+
+    const ctrl = new AbortController();
+    _bridgeStreamAborts.set(taskId, ctrl);
+    let resp;
+    try {
+      resp = await fetch(`/api/ai/bridge_stream?task_id=${encodeURIComponent(taskId)}`, {
+        credentials: "same-origin",
+        headers: { Accept: "text/event-stream" },
+        signal: ctrl.signal,
+      });
+    } catch (_err) {
+      _bridgeStreamAborts.delete(taskId);
+      if (ctrl.signal.aborted) return true;          // 취소·대화 이탈로 우리가 끊었다.
+      // 첫 시도부터 못 붙으면 이 환경에서 SSE 가 안 되는 것으로 보고 폴링에 넘긴다.
+      if (!sawAnyFrame) return false;
+      await new Promise((r) => setTimeout(r, _BRIDGE_STREAM_RETRY_MS));
+      continue;
+    }
+    if (!resp.ok || !resp.body) {
+      _bridgeStreamAborts.delete(taskId);
+      // 4xx 는 재시도해도 달라지지 않는다 — 세션 만료(401)·권한 상실(403)·삭제된 task(404).
+      if (resp.status >= 400 && resp.status < 500) {
+        _forgetPendingBridgeTask(convId, taskId);
+        return true;
+      }
+      if (!sawAnyFrame) return false;                // 스트리밍 자체가 안 되는 환경
+      await new Promise((r) => setTimeout(r, _BRIDGE_STREAM_RETRY_MS));
+      continue;
+    }
+
+    const outcome = await _consumeBridgeStream(resp, taskId, convId, {
+      onPhase: (phase) => {
+        const prev = lastPhase;
+        lastPhase = phase;
+        _applyBridgePhase(phase, prev, taskId, convId);
+      },
+      markFrame: () => { sawAnyFrame = true; },
+    });
+    _bridgeStreamAborts.delete(taskId);
+    if (outcome === "end" || outcome === "aborted") return true;
+    // "reconnect" 또는 예기치 않은 EOF → 곧바로 다시 붙는다(간격 없음 = 폴링 아님).
+  }
+  // 상한 도달 — 개인 AI 가 꺼져 있으면 답은 오지 않는다. 그 사실을 말하고 멈춘다.
+  showToast("아직 답변이 오지 않았습니다. 내 AI 연결이 켜져 있는지 확인해 주세요.");
+  return true;
+}
+
+/** SSE 프레임을 읽어 처리한다. 반환: "end" | "reconnect" | "aborted" | "eof". */
+async function _consumeBridgeStream(resp, taskId, convId, { onPhase, markFrame }) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return "eof";
+      buf += decoder.decode(value, { stream: true });
+      // SSE 프레임 경계는 빈 줄. 마지막 조각은 다음 chunk 와 이어 붙이려고 남긴다.
+      const frames = buf.split("\n\n");
+      buf = frames.pop() || "";
+      for (const frame of frames) {
+        let event = "message";
+        let dataRaw = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataRaw += line.slice(5).trim();
+        }
+        if (!dataRaw) continue;
+        let data;
+        try { data = JSON.parse(dataRaw); } catch (_e) { continue; }
+        markFrame();
+        if (event === "phase") {
+          onPhase(String(data.phase || ""));
+          if (data.answered) {
+            await _renderBridgeAnswer(taskId, convId, data.delivered !== false);
+            return "end";
+          }
+        } else if (event === "steps") {
+          _renderBridgeSteps(taskId, data.steps);
+        } else if (event === "reconnect") {
+          return "reconnect";
+        } else if (event === "end") {
+          if (String(data.reason || "") === "canceled") {
+            _forgetPendingBridgeTask(convId, taskId);
+            try { await loadHistory({ preserveScroll: true }); } catch (_e) { /* 치명 아님 */ }
+          }
+          return "end";
+        }
+      }
+    }
+  } catch (_err) {
+    return "aborted";
+  } finally {
+    try { reader.cancel(); } catch (_e) { /* no-op */ }
+  }
+}
+
+/** 국면 전환 시의 화면 반응 — 폴링 경로와 **같은 동작**을 쓴다(전송 방식이 화면을 바꾸지 않게). */
+function _applyBridgePhase(phase, prev, taskId, convId) {
+  if (!phase || phase === prev) return;
+  if (prev && phase === "working") {
+    // 서버가 대기 말풍선을 '처리 중' 으로 바꿔 두었다 — 보여주지 않으면 사용자는 여전히
+    // "가져가면 표시됩니다" 만 본다.
+    loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
+    showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
+  } else if (phase === "not_connected") {
+    showToast("연결된 AI 가 없습니다. 'AI 연결하기' 에서 연결해 주세요.", true);
+  } else if (phase === "canceled") {
+    _forgetPendingBridgeTask(convId, taskId);
+    loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
+  }
+}
+
+/** 답변 도착 처리 — 폴링·스트리밍 공용. */
+async function _renderBridgeAnswer(taskId, convId, delivered) {
+  // ⚠ `selectConversation()` 을 쓰면 안 된다 — **이미 활성인 대화면 즉시 return** 하도록
+  //   설계돼 있어(app.js) history 를 다시 읽지 않는다. 필요한 것은 대화 *전환* 이 아니라
+  //   현재 대화의 **재조회**다.
+  try {
+    await loadHistory({ preserveScroll: true });
+  } catch (_err) {
+    // 재조회 실패는 치명이 아니다 — 답변은 저장돼 있고 사용자가 대화를 다시 열면 보인다.
+  }
+  showToast(delivered
+    ? "내 AI 가 답변을 보냈습니다."
+    : "답변이 도착했지만 대화에 반영하지 못했습니다. 새로고침해 주세요.");
+  _forgetPendingBridgeTask(convId, taskId);
+}
+
+/** 진행 중 조사 내역을 대기 말풍선 아래에 붙인다.
+ *
+ *  대화를 다시 읽지 않는다 — 단계는 1초마다 늘 수 있고, 그때마다 이력을 재조회하면 스크롤이
+ *  흔들리고 요청이 배로 뛴다. 여기서 바꾸는 것은 **이 말풍선의 부속 영역**뿐이다.
+ *
+ *  요소가 없으면 조용히 지나간다(대기 말풍선이 아직 안 그려졌거나 이미 답변으로 덮인 경우). */
+function _renderBridgeSteps(taskId, steps) {
+  if (!Array.isArray(steps) || !steps.length) return;
+  const host = document.querySelector(`[data-bridge-task="${CSS.escape(String(taskId))}"]`);
+  if (!host) return;
+  let box = host.querySelector(".bridge-live-steps");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "bridge-live-steps";
+    host.appendChild(box);
+  }
+  // 관측한 사실만 적는다 — 어떤 도구를, 어디에, 몇 행. 사고 과정은 우리 밖이라 비운다.
+  box.innerHTML = steps.map((s) => {
+    const where = [s.datasource, s.schema].filter(Boolean).join(" · ");
+    const rows = Number(s.rows || 0);
+    return `<div class="bridge-live-step">`
+      + `<span class="bridge-live-step-tool">${escapeHtml(String(s.tool || ""))}</span>`
+      + (where ? `<span class="bridge-live-step-where">${escapeHtml(where)}</span>` : "")
+      + (rows ? `<span class="bridge-live-step-rows">${rows}행</span>` : "")
+      + `</div>`;
+  }).join("");
+}
+
 async function _pollBridgeAnswerInner(taskId, convId) {
   //: 직전 국면. 전환이 일어난 순간에만 화면을 갱신한다 — 매 tick 마다 다시 읽으면
   //: 스크롤이 흔들리고 요청도 5초마다 두 배가 된다.
   let _lastPhase = "";
   for (let tick = 0; tick < _BRIDGE_POLL_MAX_TICKS; tick += 1) {
     await new Promise((resolve) => setTimeout(resolve, _BRIDGE_POLL_MS));
+    // 취소·대체된 task 는 더 묻지 않는다 — 없는 행을 5초마다 물으면 404 만 쌓인다.
+    if (_abandonedBridgeTasks.has(String(taskId))) return;
     // 사용자가 다른 대화로 옮겼으면 조용히 멈춘다 — 남의 화면을 갱신하지 않는다.
     if (convId && String(state.activeConversationId || "") !== String(convId)) return;
     let status;
@@ -508,37 +753,21 @@ async function _pollBridgeAnswerInner(taskId, convId) {
       if (code >= 400 && code < 500) { _forgetPendingBridgeTask(convId, taskId); return; }
       continue;
     }
-    // 국면이 바뀌면 화면을 다시 읽는다 — 서버가 대기 말풍선을 '처리 중' 으로 바꿔 두었고,
-    // 그것을 보여주지 않으면 사용자는 여전히 "가져가면 표시됩니다" 만 본다(제보 2026-08-27).
+    // 국면 전환·단계 표시·답변 도착은 **스트리밍과 같은 함수**를 쓴다. 여기서 따로 구현하면
+    // 전송 방식(SSE / 폴링)에 따라 화면이 달라져, 폴백이 곧 UX 회귀가 된다.
     if (status && status.phase && status.phase !== _lastPhase) {
       const prev = _lastPhase;
       _lastPhase = status.phase;
-      if (prev && status.phase === "working") {
-        try { await loadHistory({ preserveScroll: true }); } catch (_) { /* 치명 아님 */ }
-        showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
-      } else if (status.phase === "not_connected") {
-        // 연결이 없으면 영원히 오지 않는다 — 기다리게 두지 않고 말해 준다.
-        showToast("연결된 AI 가 없습니다. 'AI 연결하기' 에서 연결해 주세요.", true);
-      }
+      _applyBridgePhase(status.phase, prev, taskId, convId);
+      if (status.phase === "canceled") return;
     }
+    if (status && Array.isArray(status.steps)) _renderBridgeSteps(taskId, status.steps);
     if (status && status.answered) {
-      // ⚠ `selectConversation()` 을 쓰면 안 된다 — **이미 활성인 대화면 즉시 return** 하도록
-      //   설계돼 있어(app.js, 읽음처리만 수행) history 를 다시 읽지 않는다. 그러면 폴링은
-      //   "성공" 하고 토스트까지 뜨는데 화면에는 답변이 영영 나타나지 않는다(codex 재리뷰 P1).
-      //   여기서 필요한 것은 대화 *전환* 이 아니라 현재 대화의 **재조회**다.
-      try {
-        await loadHistory({ preserveScroll: true });
-      } catch (err) {
-        // 재조회 실패는 치명이 아니다 — 답변은 저장돼 있고 사용자가 대화를 다시 열면 보인다.
-      }
-      showToast(status.delivered === false
-        ? "답변이 도착했지만 대화에 반영하지 못했습니다. 새로고침해 주세요."
-        : "내 AI 가 답변을 보냈습니다.");
-      _forgetPendingBridgeTask(convId, taskId);
+      await _renderBridgeAnswer(taskId, convId, status.delivered !== false);
       return;
     }
   }
-  showToast("아직 답변이 오지 않았습니다. 내 AI(MCP 연결)가 켜져 있는지 확인해 주세요.");
+  showToast("아직 답변이 오지 않았습니다. 내 AI 연결이 켜져 있는지 확인해 주세요.");
 }
 
 // TASK-0041: /api/ask_result 를 long-poll 방식으로 반복 호출해

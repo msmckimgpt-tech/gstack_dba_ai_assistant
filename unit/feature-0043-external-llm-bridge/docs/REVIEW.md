@@ -459,3 +459,75 @@ P2 2건은 사유를 적고 수용(REPORT §9).
 - **왜 러너인가를 지시문에 적었다** — 이유가 없으면 다음 사람이 되돌린다
 
 **미검증**: 재시작 후 표시가 '대기 안 함' 으로 바뀌는가, `--resume` 이 실제로 복귀시키는가.
+## REV-20260828T060000-ai-claude-feature-0043 [CODEX:staged-diff] — REJECTED(도구 한도) → 자체 적대 리뷰로 대체 · P1 1건 + P2 3건 조치
+
+### 패널 수행 경위 (정직 기록)
+
+§18.8 대체 경로인 `/codex` 를 두 번 시도했다.
+
+1. 전량 diff(26파일·2541줄) 리뷰 — **10분 제한 초과로 무응답 종료**.
+2. 고위험 4파일로 범위 축소 후 재시도 — **`ERROR: You've hit your usage limit`** (codex 계정
+   한도, 재개 예정 시각 21:04). 리뷰 산출물 0.
+
+즉 **외부 리뷰는 이번 cycle 에서 성립하지 않았다.** 그 사실을 "SKIPPED" 로 덮지 않고 남긴다.
+대신 codex 에게 물으려던 **바로 그 5개 질문**을 직접 감사했고, 그중 하나에서 P1 을 찾았다.
+
+| 감사 항목 | 결과 |
+|---|---|
+| ① 취소된 task 의 답변이 대화에 도달할 수 있는가 | **P1 — 가능했다.** 아래 |
+| ② supersede ↔ 동시 claim 경합 | **P2 — 쓰기에 조건 부재.** 아래 |
+| ③ 러너 세마포어 누수·기아·tight-loop·`--once` 수명 | 누수·수명 정상. **P2 — skip 영구화 + spin 창.** 아래 |
+| ④ `bridge_stream` tick 당 커넥션·인증 우회 | 인증 정상(오픈 전 검사). **P2 — tick 당 커넥션.** 아래 |
+| ⑤ `cancel_bridge_tasks` SQL 주입·스코프 이탈 | 주입 없음(모듈 상수). 스코프 정상. **위생 수정만** |
+
+### [P1] 취소된 요청의 답변이 대화에 새 말풍선으로 붙을 수 있었다
+
+`submit_answer` 의 취소 검사가 **`_load_task` 로 읽은 과거 상태**에만 걸려 있었다. 그 뒤로
+인젝션 판정·형제 조회(여러 DB 왕복)가 이어지고, 그 사이 사용자가 중단하거나 새 질문으로
+갈아타면 검사를 그냥 지나친다. 확정 UPDATE 에는 Status 조건이 없었으므로 `canceled` →
+`submitted` 로 덮이고 `_deliver_web_bridge_answer` 가 대화에 쓴다.
+
+그리고 그 결과가 특히 나쁘다 — 취소 말풍선은 `placeholder=false` 라 덮어쓰기 대상에서 빠져
+**"요청을 취소했습니다" 바로 아래에 답변이 새 말풍선으로 나타난다.** 사용자 결정
+(409 거절 + 대화 미전달)의 정반대다.
+
+**교훈이 뼈아프다**: 바로 위 `SubmittedAt IS NULL` 가드가 같은 이유로 SQL 안에 있고, 그 주석이
+*"조건을 SQL 에 둬야 TOCTOU 없이 원자적이다 — 미리 읽고 분기하면 두 요청이 같은 'open' 을
+보고 둘 다 통과한다"* 라고 적어 두었다. 그 문장을 옆에 두고 같은 실수를 되풀이했다.
+
+조치: 확정 UPDATE 에 `Status <> %s` 추가(같은 문장 = 원자적). 조기 반환은 **빠른 길**로 남기되
+주석에 "집행이 아니다" 를 명시. `rowcount 0` 사유를 3분기(취소 경합 / 미점유 / 이미 제출)로
+구분해 러너가 다음 행동을 정할 수 있게 했다.
+회귀: `test_submit_cancel_check_is_atomic_not_read_then_act`.
+
+### [P2] 3건
+
+- **취소 쓰기가 조건을 재확인하지 않았다** — `cancel_bridge_tasks` 는 SELECT 로 분류한 뒤 id
+  목록만으로 DELETE/UPDATE 했다. 그 사이 claim/submit 이 들어오면 (a) 방금 점유된 작업이 삭제돼
+  러너 제출이 404(원인 불명 에러)가 되거나, (b) 방금 제출된 `submitted` 를 `canceled` 로 덮어
+  **이미 화면에 실린 답변이 "취소됨" 으로 뒤집힌다.** → 두 쓰기 문장에 `Status`·`CLAIMABLE_SQL`
+  재확인 추가. 회귀: `test_cancel_write_reconfirms_the_condition_in_sql`.
+- **러너 `skip` 이 영구 블랙리스트였다** — 남이 집어 간 작업을 skip 에 넣었는데 그쪽이 죽어
+  lease 가 만료되면 작업은 대기열로 돌아오지만 이 러너는 영원히 건너뛴다(러너가 도는데 답이
+  안 온다). → `timed_out` 시 `skip.clear()`. **비우는 시점도 계약이다**: "남은 것이 전부 skip"
+  일 때 비우면 비움→재시도→실패→다시 전부 skip 이 간격 없이 돌아 tight loop 가 된다.
+  더해서 "대기 질문이 있는데 한 건도 처리 못 하는" spin 상태를 `_MAX_STALLED_ROUNDS` 로 잡아
+  **조용히 도는 대신 exit 4 로 크게 실패**시켰다.
+  회귀: `test_runner_skip_list_is_not_permanent` · `test_runner_fails_loudly_instead_of_spinning`.
+- **SSE 가 tick 마다 커넥션을 열었다** — 55초 스트림 하나가 커넥션을 55번 만들고, 동시 대화
+  수만큼 선형으로 붙는다. → 스트림당 1개 유지 + **tick 마다 커밋**(오래 든 커넥션은 스냅샷이
+  고정돼 상태 변화가 영영 안 보인다 — `wait_for_request` 가 같은 이유로 커밋한다). 겸해서
+  점유 전에는 원장 조회를, 종결 후에는 연결 여부 조회를 건너뛴다.
+  회귀: `test_stream_holds_one_connection_and_commits_each_tick` · `test_stream_skips_pointless_queries_before_claim`.
+
+### 위생
+
+`cancel_bridge_tasks` 의 상태값을 f-string 보간에서 **파라미터**로 옮겼다. 지금은 모듈 상수라
+주입 위험이 없지만, 값을 SQL 에 박는 습관이 남아 있으면 다음 사람이 같은 자리에 변수를 넣는다.
+회귀: `test_cancel_sql_uses_parameters_for_values`.
+
+### 남은 것
+
+외부(codex) 관점은 **여전히 미확보**다. 자체 감사는 같은 사람이 쓴 코드를 같은 사람이 본
+것이므로 대체가 아니라 **차선**이다. codex 한도 회복 후 이 diff 를 다시 태우는 것을 권한다
+(TASK.md 잔여에 기록).
