@@ -46,3 +46,24 @@ AI 가 WSL 에서 **실제 Windows 브라우저**를 CDP 자동 구동해 웹/UI
 - check #13 의 strict(MUST) 격상 (현재 v1 WARN-only) — 후속 cycle.
 - 세션 단위 ephemeral 브리지(시작 시 setup, 종료 시 `-Remove`) 자동화 래퍼.
 - feature-0003-agent-web-ui 의 주요 흐름 시나리오 세트를 src/ 에 비축.
+
+## 2026-08-28T11:20:00+09:00 — PB-0008 검증용 로그인 세션 (TASK-20260828T103000-verify-session)
+
+**상태: 완료** (BLOCKED 없음)
+
+- `bin/win-browser.py` 에 `session-check` / `session-login` / `session-logout` 추가.
+  `.env` 의 기존 `WEB_BOOTSTRAP_ADMIN_*` 재사용 — 새 비밀·새 계정 0.
+- 안전 계약: 비밀번호 미출력·미-argv · **무재시도**(계정 잠금 방지) · 멱등 · 자기 탭 ·
+  **origin 허용목록 fail-closed** · DEBUG 채널 fail-closed · 실패 사유 구분 보고.
+- 적대 리뷰(subagent) BLOCK 판정 → P1 2 · P2 8 전건 수정. 신규 40건 + 뮤테이션 8종 KILL.
+- **이 세션으로 직전 cycle 의 미수행 항목(로그인 후 스크롤 실측)을 닫았다** — 20초 관측
+  `scrollTop` 불변, `run_id: ""`, page error 0.
+- 배포 영향 없음 — `bin/`·`playbooks/`·문서·테스트만 변경(web 이미지 미포함).
+
+### 8. 개선 제안 (§8.1 — 기록만)
+
+- **검증 프로필의 자격증명 잔존**: 프로필이 영속이라 Chrome 이 비밀번호 관리자/자동완성에 상태를
+  남길 수 있다. 현재는 per-user `%LOCALAPPDATA%`(ACL) + "자격증명과 동급 취급" 문서화로 수용.
+  더 줄이려면 launch 시 비밀번호 저장 비활성 프로필 preference 를 심는 별도 cycle 이 필요하다.
+- **전용 검증 계정**: 지금은 admin 세션이 검증 프로필에 상주한다. 감사 로그에서 검증 트래픽과
+  실제 관리 작업이 섞이므로, 나중에 `/admin` 검증이 불필요해지면 최소권한 계정으로 낮출 여지가 있다.

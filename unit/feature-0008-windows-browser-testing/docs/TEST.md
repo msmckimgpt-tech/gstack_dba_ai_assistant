@@ -112,3 +112,41 @@ source_of_truth: true
 - 인증 성공 후 흐름(대화 생성/쿼리 실행) — 유효 자격증명 필요, 본 검증 범위 외(비파괴 원칙).
 - Edge(msedge) 경로, mirrored networking 모드(B), 영속 portproxy(A) — 본 cycle 은 무권한 relay(옵션 0)만 실 검증. A/B 는 코드/문서상 지원하나 미실측.
 - 다른 머신/계정에서의 Windows python 자동 탐지 견고성(여러 설치본/스토어 stub 혼재 시).
+
+## Run 2026-08-28T11:20:00+09:00 — 검증용 로그인 세션 (TASK-20260828T103000-verify-session)
+
+**Environment: pytest** — `unit/feature-0008-windows-browser-testing/tests/test_verify_session.py`
+**40 passed**. 가짜 page 더블로 `cmd_session_*` 를 실제 구동(제출 횟수·입력 대상·출력 스트림·
+exit code 단언). `make test` 전체 exit 0 (feature-0008 을 pytest 경로에 편입).
+
+**뮤테이션 역검증 — 8종 전건 KILL**
+
+| 뮤턴트 | 결과 |
+|---|---|
+| `eprint("dbg cred", user, pw)` (비밀번호 stderr 유출) | FAIL |
+| 대기 루프 **밖** 재제출 (`page.click` 1회 추가) | FAIL |
+| `_drive_new_page` exit code 를 `return 0` 고정 | FAIL |
+| 멱등 분기 사망 (`if False and st.get(...)`) | FAIL |
+| `HANDLERS["session-logout"] = cmd_session_login` | FAIL |
+| origin 허용목록 게이트 제거 | FAIL |
+| DEBUG 채널 게이트 제거 | FAIL |
+| `session-logout` 이 항상 `ok:True` | FAIL |
+
+> 앞 4종·5종은 **적대 리뷰가 초안 스위트를 무력화할 때 쓴 것과 동일**하다(당시 5종 동시 적용에도
+> 26건 전건 통과). 교체 후 전부 잡힌다.
+
+**Environment: Windows-browser** (Runner: AI, Bridge: relay `172.26.144.1:9223`,
+실 Windows Chrome 151.0.7922.170)
+
+- `session-logout` → `{"ok":true,"authenticated":false}`
+- `session-check --require-auth` (미인증) → `not_authenticated`, **exit 1**
+- `session-login` → `{"ok":true,"already":false,"authenticated":true,"username":"bootstrap_admin","role":"admin"}`, exit 0
+- `session-login` 재호출 → `{"already":true}` (멱등, 폼 미조작)
+- `session-check --require-auth` (인증) → exit 0
+- `session-login --origin https://attacker.example` → `origin_not_allowed`, **exit 1** (페이지 미개방)
+- **직전 cycle 미수행 항목 마감** — `?conversation=20260827061652-5ab532d1` 진입,
+  `messageLog.scrollTop=0` 으로 두고 20초 관측: 샘플 20/20 모두 `0`(불변),
+  클라이언트가 본 `/api/progress` = `{"run_id":"","raw_status":"","status":""}`, page error 0.
+  Evidence: `../../feature-0003-agent-web-ui/docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md`
+
+Pass/Fail: **PASS**

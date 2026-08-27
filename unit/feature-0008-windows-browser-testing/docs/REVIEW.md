@@ -59,3 +59,60 @@ source_of_truth: true
 - 검증: MCP 서버 JSON-RPC e2e 스모크 PASS — initialize(serverInfo Playwright) + browser_navigate →
   실제 Windows Chrome 가 https://localhost:18080 로드 + Page Title "DQA — Database Query Assistant" 반환.
 - Human Approval Needed: 아니오 (적용은 opt-in 승인 게이트, 사용자가 enable).
+
+## REV-20260828T112000-verify-session [SUBAGENT:general-purpose] — BLOCK → 전건 수정 후 PASS
+
+- Related TASK: feature-0008-windows-browser-testing / `TASK-20260828T103000-verify-session`
+- Risk: **Minor** (§12.3) — 기존 자격증명 재사용(새 비밀 0·계정 생성 0), 인증 서버 코드 변경 0,
+  검증 도구 한정. 단 **자격증명을 다루는 도구**라 보안 축을 Critical 수준으로 검토했다.
+- Human Approval Needed: no (범위 전환은 사용자 결정 2026-08-28 로 확보)
+- Timestamp: 2026-08-28T11:20:00+09:00
+
+### 무엇을 만들었나 — 그리고 왜 이 지점인가
+
+문제는 "PB-0008 이 로그인 화면 밖으로 못 나간다" 였다. 드라이버가 **전용 격리 프로필**로
+브라우저를 띄우는 것은 옳은 설계(사용자 개인 브라우저 무접촉)지만, 그 프로필에 세션이 없어
+검증이 도달 가능한 화면이 로그인 폼뿐이었다. 실측으로 두 cycle 연속(브리지 스크롤 수정,
+그 증적 cycle) 화면 실측을 "세션 부재" 사유로 미수행 처리했다 — 완료 게이트 check #13 이
+형식만 남는 상태였다.
+
+그래서 세션 발급을 드라이버의 1급 동작으로 올렸다. 계정은 `.env` 의 기존 `WEB_BOOTSTRAP_ADMIN_*`
+를 그대로 쓴다(사용자 결정) — 새 비밀·새 계정 없이 관리콘솔까지 한 세션으로 검증된다.
+
+### 채택하지 않은 대안
+
+- **전용 검증 계정 신설** — 최소권한·감사 분리는 낫지만 새 비밀 1건과 계정 생성(인증 인접)이
+  들고, operator 권한으로는 `/admin` 검증이 불가해 결국 admin 이 다시 필요하다. 사용자 결정으로 불채택.
+- **쿠키를 API 로 받아 주입** — 실제 로그인 폼을 타지 않아 로그인 화면 회귀를 못 본다.
+  폼 로그인이 사용자 경로와 같고 부수적으로 그 화면도 검증한다.
+- **사용자 개인 브라우저 프로필 재사용** — 격리 원칙을 깬다. FUNCTION §4 에 범위 밖으로 유지.
+
+### 적대 검증 (subagent 1회 — codex 사용량 한도로 대체, 사용자 승인)
+
+판정 **BLOCK**. 내가 못 본 것 두 가지가 결정적이었다.
+
+- **[P1] origin 무검증** — `--origin` 이 검사 없이 `page.fill("#loginPassword", pw)` 로 이어지고
+  브라우저는 `--ignore-certificate-errors` 로 뜬다. 이 저장소의 AI 는 대화·MCP 로 신뢰할 수 없는
+  입력을 읽으므로, 주입된 지시 하나면 관리자 비밀번호가 공격자 호스트의 같은 id 에 타이핑된다.
+  나는 "출력·argv 를 막았다" 로 계약 1을 다 지켰다고 봤는데, **목적지**를 잊고 있었다.
+  → loopback + `.env` 선언 host fail-closed 게이트, 확장은 `--allow-remote-origin` 명시.
+- **[P1] 내 테스트가 계약을 하나도 잠그지 않았다** — 리뷰가 뮤턴트 5종(`eprint(pw)` / 대기루프
+  **밖** 재제출 / exit 0 고정 / 멱등 분기 사망 / `session-logout`→login 오배선)을 **동시에**
+  적용하고도 26건 전건 통과시켰다. 내가 앞서 돌린 "뮤테이션 5종 KILL" 은 **내 테스트가 잡도록
+  생긴 모양의 뮤턴트만** 고른 자기충족이었다 — 문자열이 그 자리에 있는지는 동작이 그러한지와
+  다른 질문이다. → 가짜 page 더블로 명령을 실제 구동하는 스위트로 전면 교체(40건).
+- P2 8건(멱등 경로 플래그 누락 · `is_locked` vacuous · 거부/무응답 혼동 · check 프로브 실패 은폐 ·
+  logout 무효인데 ok · `.env` 인라인 주석 · 빈 탭 누수 · 플레이북 stale 진입점) 도 전건 수정.
+
+### 검증
+
+- 신규 **40건 PASS** · `make test` exit 0(전체 스위트, feature-0008 을 pytest 경로에 편입).
+- **뮤테이션 8종 전건 KILL** — 리뷰가 쓴 5종 전부 + 신규 가드 3종(origin·DEBUG·logout ok).
+  ⚠ 초안 검증에서 M4 가 "생존" 으로 보였으나 확인 결과 **치환이 적용되지 않은 것**이었다
+  (`diff` 0줄) — 뮤테이션은 적용 여부부터 확인해야 한다.
+- 라이브 실증(실 Windows Chrome 151, relay): `logout → check(--require-auth → exit 1) →
+  login → check(exit 0)` 왕복 · 허용목록 밖 origin 거부(exit 1) · 멱등 재호출(`already:true`).
+- **직전 cycle 의 미수행 항목을 이 세션으로 닫았다** — 브리지 대화에서 사용자가 최상단에 스크롤을
+  둔 채 20초 관측: `scrollTop` 20/20 샘플 0(불변), `/api/progress` 가 클라이언트에 보고한
+  `run_id: ""`(서버 수정 확증), page error 0. `/api/history` 4회는 무관한 `_liveSyncTick`
+  (스크롤 미이동) 으로 출처 확인.

@@ -54,6 +54,10 @@
 #   WIN_BROWSER_SHOT_DIR     스크린샷 출력 디렉토리 (default $TMPDIR/win-browser-shots)
 #   WIN_BROWSER_CDP_ENDPOINT 브리지 자동감지 무시하고 HTTP CDP endpoint 강제 지정
 #   WIN_BROWSER_TIMEOUT_MS   기본 동작 timeout (default 15000)
+#   WIN_BROWSER_ORIGIN       session-* 의 기본 검증 origin (default https://localhost)
+#   WIN_BROWSER_SESSION_ENV  session-login 이 자격증명을 읽을 .env 경로 (default <repo>/.env)
+#     ※ session-login 은 loopback + .env 의 WEB_ALLOWED_HOSTS/WEB_PUBLIC_HOST 에만 비밀번호를
+#       보낸다. 그 밖은 --allow-remote-origin 명시 필요 (주입으로 자격증명이 새는 것 차단).
 
 import argparse
 import json
@@ -657,6 +661,341 @@ def _drive(ep, fn):
         pw.stop()
 
 
+def _drive_new_page(ep, fn):
+    """`_drive` 와 같지만 **새 탭**을 열어 거기서만 동작하고 닫는다.
+
+    세션 격리(AGENTS.md §16.6): `_drive` 는 `ctx.pages[0]`(먼저 열려 있던 탭)을 쓰는데,
+    세션 부트스트랩은 앞선 검증 단계가 띄워 둔 화면을 빼앗으면 안 된다 — 내 탭만 열고 닫는다.
+    쿠키는 프로필에 남으므로 탭을 닫아도 세션은 유지된다.
+    """
+    pw, browser, base_page = _connect(ep)
+    ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+    # `_connect` 는 context 에 탭이 하나도 없으면 빈 탭을 만든다. 우리는 그 탭을 쓰지 않으므로
+    # 그대로 두면 호출마다 빈 탭이 쌓인다 — 내가 만들게 한 것도 내가 치운다(적대 리뷰 P2).
+    stray = base_page if len(ctx.pages) == 1 else None
+    page = ctx.new_page()
+    try:
+        result = fn(page)
+        out = {"ok": True}
+        if isinstance(result, dict):
+            out.update(result)
+        emit(out)
+        return 0 if out.get("ok") else 1
+    except Exception as e:
+        emit({"ok": False, "error": "action_failed", "detail": str(e)})
+        return 1
+    finally:
+        for _p in (page, stray):
+            if _p is None:
+                continue
+            try:
+                _p.close()
+            except Exception:
+                pass
+        try:
+            browser.close()  # CDP 연결만 해제 (실물 브라우저 유지)
+        except Exception:
+            pass
+        pw.stop()
+
+
+# ── 검증용 로그인 세션 (PB-0008 진입 조건) ───────────────────────────────────
+#
+# 왜 필요한가: 이 드라이버는 **전용 격리 프로필**(`win-browser-cdp`)로 브라우저를 띄운다.
+# 사용자의 개인 브라우저를 건드리지 않는다는 점에서 옳지만, 그 프로필에는 로그인 세션이
+# 없어서 PB-0008 이 도달할 수 있는 화면이 **로그인 폼뿐**이었다. 실측 2026-08-27~28:
+# 웹/UI cycle 두 건이 연속으로 "로그인 세션 부재" 를 사유로 화면 실측을 미수행 처리했다 —
+# 완료 게이트(check #13)가 형식적으로만 통과하고 실효를 잃는 상태다.
+#
+# 그래서 세션 발급을 **드라이버의 1급 동작**으로 만든다. 자격증명은 `.env` 의
+# `WEB_BOOTSTRAP_ADMIN_*` 를 그대로 쓴다(사용자 결정 2026-08-28) — 새 비밀·새 계정을 만들지
+# 않고, 관리콘솔(/admin)까지 한 세션으로 검증할 수 있다.
+#
+# 지키는 것:
+#   - 비밀번호는 **출력하지 않고 argv 로도 넘기지 않는다**(CDP 로 페이지에 fill).
+#   - 인증 실패 시 **재시도하지 않는다**. 서버는 연속 실패로 계정을 잠그고(IP throttle 도
+#     있다), 검증 도구가 관리자 계정을 잠그는 것은 도구가 할 수 있는 최악의 일이다.
+#   - 이미 로그인돼 있으면 폼을 건드리지 않는다(idempotent) — 매 PB-0008 앞단에서 호출 가능.
+
+SESSION_ENV_FILE = os.getenv("WIN_BROWSER_SESSION_ENV", "").strip()
+SESSION_ORIGIN = os.getenv("WIN_BROWSER_ORIGIN", "https://localhost").rstrip("/")
+
+_SESSION_STATE_JS = """async () => {
+  try {
+    const r = await fetch('/api/session', { credentials: 'same-origin' });
+    const j = await r.json();
+    // 계정 식별자는 `user` 안에 있다(최상위 username 은 없다) — 여기를 틀리면 성공 보고에
+    // username:null 이 실려 "로그인은 됐는데 누구인지 모른다" 로 읽힌다.
+    const u = j.user || {};
+    return { authenticated: !!j.authenticated, username: u.username || null,
+             // role 은 객체다 — 보고에는 key 만 싣는다(전체를 실으면 JSON 한 줄이 읽히지 않는다).
+             role: (u.role && u.role.key) || null,
+             // 로그인은 됐지만 화면이 모달에 갇히는 상태를 검증자가 알아야 한다.
+             // `is_locked` 는 싣지 않는다 — /api/session 의 user 는 **인증됐을 때만** 채워지므로
+             // 잠긴 계정에서는 구조적으로 false 다(항상 통과하는 가짜 신호, 적대 리뷰 P2).
+             // 잠금은 로그인 시도의 server_message 로만 정직하게 드러난다.
+             must_change_password: !!u.must_change_password,
+             totp_enabled: !!u.totp_enabled };
+  } catch (e) { return { authenticated: false, username: null, error: String(e) }; }
+}"""
+
+
+def _repo_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _session_env_path():
+    return SESSION_ENV_FILE or os.path.join(_repo_root(), ".env")
+
+
+def _read_env_keys(path, keys):
+    """.env 에서 지정 키만 읽는다. 값은 **반환만** 하고 로그·출력에 싣지 않는다.
+
+    읽기 실패(권한·인코딩)는 `None` 을 돌려 "키가 없음" 과 구분한다 — 둘을 뭉치면 진단이
+    `password_not_set` 으로 나가 "파일이 있고 키도 있는데 못 읽는" 상황을 가린다(적대 리뷰 P2).
+    """
+    want = set(keys)
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception:
+        return None
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip()
+        if k not in want:
+            continue
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            # 인용된 값은 **그대로** 쓴다 — 안에 `#` 가 있어도 비밀번호의 일부다.
+            v = v[1:-1]
+        else:
+            # 인용 없는 값의 ` #` 뒤는 주석이다(dotenv 관례). 이걸 안 떼면 주석까지 비밀번호로
+            # 보내 매 호출이 실패 1회로 기록되고 계정 잠금에 가까워진다(적대 리뷰 P2).
+            cut = v.find(" #")
+            if cut >= 0:
+                v = v[:cut].rstrip()
+        out[k] = v
+    return out
+
+
+def _session_credentials():
+    """(username, password, source_path, problem) — problem 이 있으면 나머지는 무의미."""
+    path = _session_env_path()
+    if not os.path.isfile(path):
+        return None, None, path, "env_file_missing"
+    env = _read_env_keys(path, ("WEB_BOOTSTRAP_ADMIN_USERNAME", "WEB_BOOTSTRAP_ADMIN_PASSWORD"))
+    if env is None:
+        return None, None, path, "env_file_unreadable"
+    user = (env.get("WEB_BOOTSTRAP_ADMIN_USERNAME") or "bootstrap_admin").strip()
+    pw = env.get("WEB_BOOTSTRAP_ADMIN_PASSWORD") or ""
+    if not pw:
+        return None, None, path, "password_not_set"
+    return user, pw, path, None
+
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
+def _origin_host(origin):
+    """origin 문자열에서 host 만 뽑는다(포트 제외). 파싱 불가면 빈 문자열."""
+    try:
+        from urllib.parse import urlparse
+
+        return (urlparse(origin).hostname or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _allowed_session_hosts():
+    """비밀번호를 입력해도 되는 host 집합.
+
+    loopback + `.env` 가 선언한 **이 서비스의 host** 만 허용한다.
+    """
+    hosts = set(_LOOPBACK_HOSTS)
+    env = _read_env_keys(_session_env_path(), ("WEB_ALLOWED_HOSTS", "WEB_PUBLIC_HOST",
+                                               "PUBLIC_BASE_URL")) or {}
+    for raw in (env.get("WEB_ALLOWED_HOSTS", ""), env.get("WEB_PUBLIC_HOST", "")):
+        for part in str(raw).replace(";", ",").split(","):
+            part = part.strip().lower()
+            if part:
+                hosts.add(part)
+    pub = _origin_host(env.get("PUBLIC_BASE_URL", ""))
+    if pub:
+        hosts.add(pub)
+    return hosts
+
+
+def _session_origin_denied(origin, allow_remote):
+    """비밀번호를 보내도 되는 origin 인가. 거부 사유(str) 또는 None.
+
+    **왜 fail-closed 인가 (적대 리뷰 [P1])**: `--origin` 은 검사 없이
+    `page.goto(origin)` → `page.fill("#loginPassword", pw)` 로 이어지고, 브라우저는
+    `--ignore-certificate-errors` 로 떠 있다. 이 저장소의 AI 는 대화·MCP 로 **신뢰할 수 없는
+    입력**을 읽으므로, 주입된 지시 하나로 관리자 비밀번호를 공격자 호스트의 동일한 id
+    (`#loginUsername`/`#loginPassword`)에 그대로 타이핑할 수 있다. 출력·argv 를 막는 것만으로는
+    **목적지**를 막지 못한다.
+
+    그래서 기본값은 loopback + `.env` 가 선언한 서비스 host 로 제한하고, 그 밖은
+    `--allow-remote-origin` 을 사람이 명시해야만 통과시킨다.
+    """
+    if not str(origin or "").startswith(("http://", "https://")):
+        return "origin 은 http(s) 스킴이어야 합니다."
+    host = _origin_host(origin)
+    if not host:
+        return "origin 에서 host 를 해석하지 못했습니다."
+    if allow_remote:
+        return None
+    allowed = _allowed_session_hosts()
+    if host in allowed:
+        return None
+    return ("비밀번호를 보낼 수 없는 origin 입니다 (허용: loopback + .env 의 "
+            f"WEB_ALLOWED_HOSTS/WEB_PUBLIC_HOST). host={host} — 의도한 것이면 "
+            "--allow-remote-origin 을 명시하세요.")
+
+
+def _debug_channel_leaks_password():
+    """playwright protocol 디버그가 켜져 있으면 `Input.insertText` 로 평문이 stderr 에 찍힌다."""
+    dbg = str(os.environ.get("DEBUG", "") or "")
+    return "pw:protocol" in dbg or dbg.strip() in ("*", "pw:*")
+
+
+def _session_state(page, origin):
+    """origin 을 열고 세션 상태를 읽는다. (state, load_error)."""
+    page.goto(origin + "/", wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+    page.wait_for_timeout(1200)
+    return page.evaluate(_SESSION_STATE_JS)
+
+
+def cmd_session_check(args):
+    origin = (args.origin or SESSION_ORIGIN).rstrip("/")
+    ep = _resolve_endpoint()
+    require = bool(getattr(args, "require_auth", False))
+
+    def fn(page):
+        st = _session_state(page, origin)
+        # `/api/session` 자체가 실패했으면(배포 중 502 등) "미로그인" 과 구분해 올린다 —
+        # 뭉치면 검증자가 세션 문제로 오진한다(적대 리뷰 P2).
+        if st.get("error"):
+            return {"ok": False, "error": "session_probe_failed", "origin": origin,
+                    "detail": st.get("error")}
+        if require and not st.get("authenticated"):
+            return {"ok": False, "error": "not_authenticated", "origin": origin,
+                    "hint": "session-login 으로 세션을 발급한 뒤 검증을 진행하세요."}
+        return {"origin": origin, "authenticated": bool(st.get("authenticated")),
+                "username": st.get("username"), "role": st.get("role"),
+                "must_change_password": bool(st.get("must_change_password")),
+                "totp_enabled": bool(st.get("totp_enabled")),
+                "state_error": st.get("error") or None}
+
+    return _drive_new_page(ep, fn)
+
+
+def cmd_session_login(args):
+    origin = (args.origin or SESSION_ORIGIN).rstrip("/")
+    denied = _session_origin_denied(origin, bool(getattr(args, "allow_remote_origin", False)))
+    if denied:
+        emit({"ok": False, "error": "origin_not_allowed", "origin": origin, "hint": denied})
+        return 1
+    if _debug_channel_leaks_password():
+        emit({"ok": False, "error": "debug_channel_would_leak_password",
+              "hint": "DEBUG 에 playwright protocol 추적이 켜져 있습니다 — 평문 비밀번호가 "
+                      "stderr 로 나갑니다. DEBUG 를 해제한 뒤 다시 실행하세요."})
+        return 1
+    user, pw, env_path, problem = _session_credentials()
+    if problem:
+        emit({"ok": False, "error": problem, "env_file": env_path,
+              "hint": "`.env` 에 WEB_BOOTSTRAP_ADMIN_USERNAME / WEB_BOOTSTRAP_ADMIN_PASSWORD 가 필요합니다."})
+        return 1
+    ep = _resolve_endpoint()
+
+    def fn(page):
+        st = _session_state(page, origin)
+        if st.get("authenticated"):
+            # 이미 세션이 있다 — 폼을 건드리지 않는다(실패 카운터를 건드릴 이유가 없다).
+            # 차단 플래그를 여기서도 싣는다 — 99% 의 호출이 이 경로로 끝나는데 첫 로그인
+            # 때만 보고하면, 강제 비밀번호 변경 모달에 갇힌 화면을 도구가 "정상" 이라 말한다
+            # (적대 리뷰 P2).
+            return {"origin": origin, "already": True, "authenticated": True,
+                    "username": st.get("username"), "role": st.get("role"),
+                    "must_change_password": bool(st.get("must_change_password")),
+                    "totp_enabled": bool(st.get("totp_enabled"))}
+        # 실제 로그인 폼을 채운다(사용자 경로 그대로 — 로그인 화면 회귀도 함께 드러난다).
+        try:
+            page.fill("#loginUsername", user, timeout=TIMEOUT_MS)
+            page.fill("#loginPassword", pw, timeout=TIMEOUT_MS)
+        except Exception as e:
+            return {"ok": False, "error": "login_form_not_found", "detail": str(e),
+                    "origin": origin,
+                    "hint": "로그인 폼 DOM(#loginUsername/#loginPassword)이 바뀌었는지 확인하세요."}
+        page.click("#loginForm button[type=submit]", timeout=TIMEOUT_MS)
+        # 성공/실패 중 하나가 확정될 때까지만 기다린다. **재시도는 하지 않는다** —
+        # 연속 실패는 계정 잠금(LOGIN_MAX_FAILED_ATTEMPTS)과 IP throttle 을 부른다.
+        deadline = time.time() + max(TIMEOUT_MS / 1000.0, 15)
+        err_text = ""
+        while time.time() < deadline:
+            page.wait_for_timeout(500)
+            st = page.evaluate(_SESSION_STATE_JS)
+            if st.get("authenticated"):
+                return {"origin": origin, "already": False, "authenticated": True,
+                        "username": st.get("username"), "role": st.get("role"),
+                        "must_change_password": bool(st.get("must_change_password"))}
+            # 2FA 계정은 비밀번호가 **맞아도** 세션이 안 난다(2단계 대기). 그 상태를 그냥
+            # 기다리면 "(응답 없음 — 타임아웃)" 으로 보고돼 자격증명 문제로 오인된다.
+            # 이 도구는 TOTP 코드를 만들 수 없으므로 그 사실을 정확히 말하고 끝낸다.
+            if page.evaluate("() => !!document.getElementById('totpLoginModal')"):
+                return {"ok": False, "error": "totp_required", "origin": origin,
+                        "hint": "2FA 활성 계정입니다 — 이 도구는 TOTP 코드를 제공할 수 없습니다. "
+                                "검증 전용 계정의 2FA 를 해제하거나 사람이 1회 로그인해 두세요."}
+            err_text = (page.evaluate(
+                "() => (document.getElementById('loginError')||{}).textContent || ''") or "").strip()
+            if err_text:
+                break
+        if err_text:
+            # 서버가 거부했다 — 이건 자격증명·잠금 문제이고, 다시 누르면 잠금에 가까워진다.
+            return {"ok": False, "error": "login_rejected", "origin": origin,
+                    "server_message": err_text,
+                    "hint": "재시도하지 않습니다 — 연속 실패는 계정 잠금을 유발합니다. "
+                            "server_message 를 읽고 자격증명·계정 상태(잠금/2FA)를 확인하세요."}
+        # 서버가 아무 말도 하지 않았다 = 제출 자체가 안 됐거나 응답이 느린 것이다.
+        # 이걸 login_rejected 와 뭉치면 "비밀번호를 다시 확인하라" 는 안내가 나가고, 그 안내가
+        # 정확히 no-retry 계약이 막으려던 재시도를 부른다(적대 리뷰 P2).
+        return {"ok": False, "error": "login_no_response", "origin": origin,
+                "server_message": "",
+                "hint": "서버 응답도 오류 표시도 없습니다 — 자격증명 문제가 아닐 가능성이 큽니다. "
+                        "웹 서비스 상태·네트워크·로그인 폼 배선을 먼저 확인하세요 "
+                        "(비밀번호 재입력으로 대응하지 마세요)."}
+
+    return _drive_new_page(ep, fn)
+
+
+def cmd_session_logout(args):
+    origin = (args.origin or SESSION_ORIGIN).rstrip("/")
+    ep = _resolve_endpoint()
+
+    def fn(page):
+        _session_state(page, origin)
+        page.evaluate(
+            "async () => { try { await fetch('/api/auth/logout', "
+            "{ method: 'POST', credentials: 'same-origin' }); } catch (e) {} }")
+        page.wait_for_timeout(500)
+        st = _session_state(page, origin)
+        still = bool(st.get("authenticated"))
+        # 해제되지 않았는데 ok:true 로 끝내면, "프로필을 비웠다" 고 믿고 다음 검증이 남은
+        # 관리자 세션 위에서 돈다(적대 리뷰 P2). host 가 다르면 쿠키가 애초에 없다.
+        return {"ok": not still, "origin": origin, "authenticated": still,
+                **({} if not still else
+                   {"error": "logout_ineffective",
+                    "hint": "세션이 남아 있습니다 — 발급한 origin 과 같은 host 인지 확인하세요 "
+                            "(쿠키는 host 에 묶입니다)."})}
+
+    return _drive_new_page(ep, fn)
+
+
 def _ensure_shot_dir():
     os.makedirs(SHOT_DIR, exist_ok=True)
 
@@ -848,6 +1187,22 @@ def build_parser():
     px = sub.add_parser("text"); px.add_argument("--selector", required=True)
     pss = sub.add_parser("screenshot"); pss.add_argument("--path", default=""); pss.add_argument("--full-page", dest="full_page", action="store_true")
     pr = sub.add_parser("run", help="시나리오 JSON 일괄 실행"); pr.add_argument("--scenario", required=True)
+    # 검증용 로그인 세션 — PB-0008 이 로그인 화면 너머를 검증할 수 있게 한다.
+    for name, helptext in (
+        ("session-check", "격리 프로필의 로그인 세션 상태 확인"),
+        ("session-login", ".env 의 WEB_BOOTSTRAP_ADMIN_* 로 세션 발급(idempotent, 재시도 없음)"),
+        ("session-logout", "세션 해제(프로필 초기화용)"),
+    ):
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("--origin", default="",
+                        help=f"검증 대상 origin (default {SESSION_ORIGIN} / WIN_BROWSER_ORIGIN)")
+        if name == "session-login":
+            # 비밀번호를 보낼 목적지를 넓히는 것은 **사람이 명시**해야 한다(주입 방어).
+            sp.add_argument("--allow-remote-origin", action="store_true",
+                            help="loopback·.env 선언 host 밖의 origin 에도 로그인 허용(위험)")
+        if name == "session-check":
+            sp.add_argument("--require-auth", action="store_true",
+                            help="미인증이면 exit 1 (검증 진입 게이트용)")
     return p
 
 
@@ -856,6 +1211,8 @@ HANDLERS = {
     "relay-start": cmd_relay_start, "relay-stop": cmd_relay_stop,
     "goto": cmd_goto, "click": cmd_click, "type": cmd_type, "eval": cmd_eval,
     "text": cmd_text, "screenshot": cmd_screenshot, "run": cmd_run,
+    "session-check": cmd_session_check, "session-login": cmd_session_login,
+    "session-logout": cmd_session_logout,
 }
 
 
