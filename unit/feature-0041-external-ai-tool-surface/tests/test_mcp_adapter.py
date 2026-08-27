@@ -116,12 +116,18 @@ def test_instructions_carry_session_boundary():
 
 
 def test_submit_answer_requires_source_tasks():
-    """선언을 옵션으로 두면 '인지 → 선언 → 대조' 3단이 무너진다."""
+    """선언을 옵션으로 두면 '인지 → 선언 → 대조' 3단이 무너진다.
+
+    필수 3인자는 **앞자리에 기본값 없이** 유지한다. 뒤에 기본값 있는 선택 인자가 붙는 것은
+    허용한다(feature-0043 의 `title` — 대화 제목 제안). 계약이 지키는 것은 인자 개수가 아니라
+    "source_tasks 를 생략할 수 없다" 이다.
+    """
     fn = _func(_tree(), "submit_answer")
     assert fn is not None
     args = [a.arg for a in fn.args.args]
-    assert args == ["task_id", "answer", "source_tasks"]
-    assert not fn.args.defaults, "source_tasks 에 기본값이 생기면 선언이 선택이 된다"
+    assert args[:3] == ["task_id", "answer", "source_tasks"]
+    required = args[:len(args) - len(fn.args.defaults or [])]
+    assert "source_tasks" in required, "source_tasks 에 기본값이 생기면 선언이 선택이 된다"
 
 
 def test_adapter_holds_no_authz_or_ledger_logic():

@@ -19,6 +19,117 @@ from fastapi import Request
 import app  # noqa: F401 — app.X 동적 참조(꼬리 rebind 시점 import — register_all 이후, 순환 안전)
 
 
+#: 아직 사람이 읽을 제목이 붙지 않은 대화의 표시값. 자동 제목은 **이 값 위에만** 얹는다 —
+#: 사용자가 손으로 붙인 제목을 자동 요약이 밀어내면 그건 기능이 아니라 사고다.
+_PLACEHOLDER_TOPICS = frozenset({"", "새 대화", "(미설정)", "(주제 없음)"})
+
+
+def _clean_auto_topic(text: Any, max_len: int = 60) -> str:
+    """자동 제목 후보를 한 줄로 정리한다. 쓸 수 없으면 "".
+
+    개행·중복 공백을 접고, 모델이 습관적으로 두르는 따옴표와 `제목:` 류 접두를 벗긴다
+    (그대로 두면 사이드바에 `"제목: ..."` 이 그대로 나간다).
+    """
+    raw = app.re.sub(r"\s+", " ", str(text or "")).strip()
+    if not raw:
+        return ""
+    raw = app.re.sub(r'^(?:제목|title)\s*[:：]\s*', "", raw, flags=app.re.IGNORECASE).strip()
+    raw = raw.strip("\"'`“”‘’ ").strip()
+    if not raw or raw in _PLACEHOLDER_TOPICS:
+        return ""
+    return raw[:max_len]
+
+
+def _conv_apply_auto_topic(conn, conversation_id: str, text: Any, *,
+                           max_len: int = 60, supersedes: Any = None) -> str:
+    """자동 제목을 적용하고 **실제 반영된 제목**을 돌려준다(미적용이면 "").
+
+    브리지(개인 AI) 경로가 쓰는 진입점이다. 서버 LLM 경로는 `agent_core._try_update_topic` 이
+    같은 일을 했는데 — 첫 메시지는 질문 앞머리로 즉시 붙이고, 이후 턴은 LLM 이 다시 뽑았다 —
+    브리지는 그 함수를 타지 않아 제목이 "새 대화" 로 굳었다(사용자 제보 2026-08-27).
+
+    **덮어쓰기 규칙**: 기본은 placeholder("새 대화" 등) 위에만 얹는다. `supersedes` 에 값을
+    주면 "현재 제목이 그 값을 정리한 결과와 같을 때" 도 갱신한다 — 즉 *우리가 앞서 붙인 자동
+    제목* 은 더 나은 제목으로 승급시키되, **사람이 손으로 바꾼 제목은 건드리지 않는다**.
+    (서버 LLM 경로는 매 턴 무조건 덮어썼다. 그 동작까지 재현하면 사용자의 rename 이 다음
+    답변에 지워진다 — 되살릴 값이 아니라고 판단해 여기서 끊는다.)
+
+    topic 은 두 곳에서 읽힌다(`core_conversations.topic` · kv `'topic'`) — 한쪽만 쓰면 목록과
+    상세가 서로 다른 제목을 말한다. 둘 다 쓰고, KV 실패는 흡수한다(표시 정본은 topic 컬럼).
+    """
+    cid = str(conversation_id or "").strip()
+    topic = _clean_auto_topic(text, max_len=max_len)
+    if not cid or not topic:
+        return ""
+    prior = _clean_auto_topic(supersedes) if supersedes is not None else ""
+    # 조건을 **UPDATE 문 안에** 둔다(codex REV-20260828T040000 P1). 읽고-판단-쓰기로 나누면
+    # 그 사이에 사용자가 제목을 바꿀 수 있고, 조회가 실패해 placeholder 로 오인되면 수동 제목이
+    # 지워진다. `WHERE` 로 옮기면 두 경우 모두 **행이 안 잡혀 아무 일도 일어나지 않는다**.
+    allowed = [t for t in _PLACEHOLDER_TOPICS if t]
+    if not _conv_update_topic_if_auto(conn, cid, topic, allowed, prior):
+        return ""
+    try:
+        from modules.memory import save_memory_kv as _save_kv
+
+        _save_kv(conn, cid, "topic", topic[:256])
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_conv_apply_auto_topic: kv topic 갱신 실패 (cid=%s)", cid, exc_info=True)
+    return topic
+
+
+def _conv_update_topic_if_auto(conn, conversation_id: str, topic: str,
+                               placeholders: list[str], prior: str) -> bool:
+    """제목이 **아직 자동 제목일 때만** 원자적으로 갱신한다. 갱신했으면 True.
+
+    조건: 현재 topic 이 비었거나 placeholder 목록에 있거나, `prior`(우리가 앞서 붙인 제목)와
+    같을 때. 같은 값으로의 무의미한 갱신은 `topic <> %s` 로 걸러 `updated_at` 을 흔들지 않는다
+    (대화 목록 정렬이 제목 재확인만으로 뒤바뀌지 않게).
+    """
+    conds = ["COALESCE(NULLIF(TRIM({col}), ''), '') = ''"]
+    params_tail: list[Any] = []
+    if placeholders:
+        conds.append("TRIM({col}) IN (" + ",".join(["%s"] * len(placeholders)) + ")")
+        params_tail.extend(placeholders)
+    if prior:
+        conds.append("TRIM({col}) = %s")
+        params_tail.append(prior)
+    try:
+        if app._runtime_backend_is_pg():
+            from shared.db import _pg_connect
+
+            where = " OR ".join(c.format(col="topic") for c in conds)
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET topic = %s, updated_at = now() "
+                        f"WHERE conversation_id = %s AND topic IS DISTINCT FROM %s AND ({where})",
+                        (topic, conversation_id, topic, *params_tail))
+                    changed = pgcur.rowcount
+                pg.commit()
+            finally:
+                pg.close()
+            return bool(changed)
+        where = " OR ".join(c.format(col="topic") for c in conds)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE AgentCoreConversations "
+                "SET topic = %s, updated_at = CURRENT_TIMESTAMP "
+                f"WHERE conversation_id = %s AND (topic IS NULL OR topic <> %s) AND ({where})",
+                (topic, conversation_id, topic, *params_tail))
+            changed = cur.rowcount
+        finally:
+            cur.close()
+        return bool(changed)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_conv_update_topic_if_auto: topic 갱신 실패 (cid=%s)", conversation_id, exc_info=True)
+        return False
+
+
 def _conv_load_topic(conn, conversation_id: str) -> str:
     """원본 대화 topic. core_conversations.topic 우선, kv 'topic' fallback. 실패 시 '새 대화'."""
     if app._runtime_backend_is_pg():

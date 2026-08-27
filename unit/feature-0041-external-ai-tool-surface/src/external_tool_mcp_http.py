@@ -306,6 +306,13 @@ def _defang(text: str) -> str:
     return out
 
 
+#: 조사 도구 설명에 공통으로 붙는 안내(stdio 어댑터와 같은 문구 — 두 경로의 계약은 하나다).
+#: 웹 대화에서 온 질문이면 이 값이 사용자 화면 「실행 단계」에 **어떤 이유로 → 어떤 작업**
+#: 형태로 표시된다. 안 보내면 서버가 도구·인자에서 사유를 파생한다(일반적 목적 문구).
+_REASON_HINT = (" reason 에 '지금 이걸 왜 조사하는지' 를 한 문장으로 함께 보내라 — "
+                "사용자 화면의 실행 단계에 그대로 표시된다.")
+
+
 @mcp.tool(description="작업을 열고 원 질문을 서비스에 기록한다. 반환된 task_id 를 이후 호출에 쓴다.")
 def open_task(ctx: McpContext, question: str, product_id: int | None = None) -> str:
     return _post("/api/ai/tools/open_task",
@@ -314,17 +321,23 @@ def open_task(ctx: McpContext, question: str, product_id: int | None = None) -> 
 
 @mcp.tool(description="이 task 의 grounding 번들(테이블 묶음 요약·도메인 개요). 먼저 호출하고, "
                       "구조 조회로 테이블 이름을 알아낸 뒤 focus 에 그 이름들을 넣어 다시 부르면 "
-                      "해당 묶음의 요약을 받는다.")
-def get_task_context(ctx: McpContext, task_id: str, focus: str | None = None) -> str:
+                      "해당 묶음의 요약을 받는다." + _REASON_HINT)
+def get_task_context(ctx: McpContext, task_id: str, focus: str | None = None,
+                     reason: str = "") -> str:
     return _post("/api/ai/tools/get_task_context",
-                 {"task_id": task_id, "focus": focus}, ctx)
+                 {"task_id": task_id, "focus": focus, "reason": reason}, ctx)
 
 
-@mcp.tool(description="최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수).")
+@mcp.tool(description="최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수). "
+                      "웹 대화에서 온 질문이면 title 에 **이 대화를 요약한 짧은 제목**"
+                      "(공백 포함 30자 안팎, 장식·따옴표 없이)을 함께 보내라 — 사이드바 대화 "
+                      "목록에 그대로 쓰인다. 사용자가 제목을 직접 바꿨다면 서버가 그 제목을 "
+                      "지키므로, 제안은 언제 보내도 안전하다.")
 def submit_answer(ctx: McpContext, task_id: str, answer: str,
-                  source_tasks: list[str]) -> str:
+                  source_tasks: list[str], title: str = "") -> str:
     return _post("/api/ai/tools/submit_answer",
-                 {"task_id": task_id, "answer": answer, "source_tasks": source_tasks}, ctx)
+                 {"task_id": task_id, "answer": answer, "source_tasks": source_tasks,
+                  "title": title}, ctx)
 
 
 # ── feature-0043 (external-llm-bridge) — 웹 대화 pull 브리지 ────────────────────
@@ -351,25 +364,29 @@ def claim_request(ctx: McpContext, task_id: str) -> str:
 
 @mcp.tool(description="점유한 웹 질문에 딸린 **첨부 파일의 본문**을 읽는다. claim_request 응답의 "
                       "`attachments` 에 목록이 있다. 첨부가 있는 질문은 본문을 읽고 나서 답하라 — "
-                      "읽지 않고 추측하면 웹 화면에서 보이는 파일과 다른 답을 하게 된다.")
+                      "읽지 않고 추측하면 웹 화면에서 보이는 파일과 다른 답을 하게 된다."
+                      + _REASON_HINT)
 def read_task_attachment(ctx: McpContext, task_id: str, attachment_id: int | None = None,
                          filename: str | None = None, start_line: int = 1,
-                         max_lines: int | None = None) -> str:
+                         max_lines: int | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/read_task_attachment",
                  {"task_id": task_id, "attachment_id": attachment_id, "filename": filename,
-                  "start_line": start_line, "max_lines": max_lines}, ctx)
+                  "start_line": start_line, "max_lines": max_lines, "reason": reason}, ctx)
 
 
-@mcp.tool(description="접근 가능한 스키마(DB) 목록.")
-def list_schemas(ctx: McpContext, task_id: str, datasource: str | None = None) -> str:
+@mcp.tool(description="접근 가능한 스키마(DB) 목록." + _REASON_HINT)
+def list_schemas(ctx: McpContext, task_id: str, datasource: str | None = None,
+                 reason: str = "") -> str:
     return _post("/api/ai/tools/list_schemas",
-                 {"task_id": task_id, "arguments": {"datasource": datasource}}, ctx)
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="스키마의 테이블 목록과 개요.")
-def describe_schema(ctx: McpContext, task_id: str, schema_name: str, datasource: str | None = None) -> str:
+@mcp.tool(description="스키마의 테이블 목록과 개요." + _REASON_HINT)
+def describe_schema(ctx: McpContext, task_id: str, schema_name: str,
+                    datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/describe_schema",
-                 {"task_id": task_id,
+                 {"task_id": task_id, "reason": reason,
                   "arguments": {"schema_name": schema_name, "datasource": datasource}}, ctx)
 
 
@@ -377,46 +394,52 @@ def describe_schema(ctx: McpContext, task_id: str, schema_name: str, datasource:
 #   백엔드는 `table_name` 을 찾다 못 찾고 "schema_name과 table_name은 필수" 만 돌려준다 —
 #   무엇을 넣어도 성공할 수 없는 도구가 된다(라이브 제보로 발견). 도구 존재만 검사하던
 #   테스트가 이걸 놓쳤다. 이제 계약 대조 테스트가 두 이름을 맞춘다.
-@mcp.tool(description="테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다.")
+@mcp.tool(description="테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다." + _REASON_HINT)
 def describe_table(ctx: McpContext, task_id: str, schema_name: str, table: str,
-                   datasource: str | None = None) -> str:
+                   datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/describe_table",
-                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
-                                                    "table_name": table,
-                                                    "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"schema_name": schema_name,
+                                "table_name": table,
+                                "datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="키워드로 관련 테이블 검색.")
-def search_tables(ctx: McpContext, task_id: str, keyword: str, datasource: str | None = None) -> str:
+@mcp.tool(description="키워드로 관련 테이블 검색." + _REASON_HINT)
+def search_tables(ctx: McpContext, task_id: str, keyword: str,
+                  datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/search_tables",
-                 {"task_id": task_id, "arguments": {"keyword": keyword, "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"keyword": keyword, "datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="테이블의 외래키 관계. schema_name·table 둘 다 필요하다.")
+@mcp.tool(description="테이블의 외래키 관계. schema_name·table 둘 다 필요하다." + _REASON_HINT)
 def get_foreign_keys(ctx: McpContext, task_id: str, schema_name: str, table: str,
-                     datasource: str | None = None) -> str:
+                     datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/get_foreign_keys",
-                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
-                                                    "table_name": table,
-                                                    "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"schema_name": schema_name,
+                                "table_name": table,
+                                "datasource": datasource}}, ctx)
 
 
 @mcp.tool(description="단일 SELECT/CTE 를 실행한다. 구조로는 확인할 수 없는 것(실제 행수·"
                       "고아행·뷰 정의·값 분포)을 검증할 때 쓴다. 쓰기·다중문·잠금은 거부된다. "
-                      "반환 행수가 시간당 상한에 함께 걸리니 범위를 좁혀 물어라.")
+                      "반환 행수가 시간당 상한에 함께 걸리니 범위를 좁혀 물어라." + _REASON_HINT)
 def execute_sql(ctx: McpContext, task_id: str, sql: str,
-                datasource: str | None = None) -> str:
+                datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/execute_sql",
-                 {"task_id": task_id, "arguments": {"sql": sql, "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"sql": sql, "datasource": datasource}}, ctx)
 
 
-@mcp.tool(description="테이블의 인덱스. schema_name·table 둘 다 필요하다.")
+@mcp.tool(description="테이블의 인덱스. schema_name·table 둘 다 필요하다." + _REASON_HINT)
 def get_table_indexes(ctx: McpContext, task_id: str, schema_name: str, table: str,
-                      datasource: str | None = None) -> str:
+                      datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/get_table_indexes",
-                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
-                                                    "table_name": table,
-                                                    "datasource": datasource}}, ctx)
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"schema_name": schema_name,
+                                "table_name": table,
+                                "datasource": datasource}}, ctx)
 
 
 if __name__ == "__main__":
