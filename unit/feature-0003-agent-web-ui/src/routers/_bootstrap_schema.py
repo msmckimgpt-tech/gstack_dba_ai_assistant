@@ -2566,6 +2566,17 @@ def _ensure_oauth_client_schema(conn) -> None:
             # `AttachmentIds`: 이 질문에 딸린 첨부 id 목록(CSV). 브리지 AI 가 "무엇이 첨부됐는지"
             # 조차 모르면 첨부 기반 질문에 엉뚱하게 답한다 — 목록을 실어 최소한 인지시킨다.
             ("AttachmentIds", "ALTER TABLE WebAiTasks ADD COLUMN AttachmentIds TEXT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # ── 요청 품질 설정(2026-08-27 사용자 제보) ───────────────────────────────
+            #
+            # 웹 컴포저의 **모델**·**추론 강도** 선택은 기존 경로에서 그 요청의 LLM 호출을
+            # 지배한다. 브리지는 그 둘을 통째로 버려, 사용자가 무엇을 고르든 답변이 달라지지
+            # 않았다 — 화면은 선택지를 주는데 실제로는 아무 효과가 없는 **거짓 조작면**이다.
+            #
+            # 답은 개인 AI 가 만들므로 서버가 강제할 수는 없다. 대신 **요청 시점의 의도를
+            # 굳혀** AI 에게 전달한다(각인과 같은 이유 — 나중에 대화 설정을 바꿔도 이 요청에
+            # 대해 무엇이 요구됐는지가 변하지 않는다).
+            ("RequestedModel", "ALTER TABLE WebAiTasks ADD COLUMN RequestedModel VARCHAR(64) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            ("ReasoningLevel", "ALTER TABLE WebAiTasks ADD COLUMN ReasoningLevel VARCHAR(16) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
         ):
             try:
                 cur.execute(

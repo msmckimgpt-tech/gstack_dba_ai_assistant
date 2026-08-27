@@ -188,7 +188,9 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
                              message: str, product_id: Any,
                              product_mode: str = "pinned",
                              sender_username: str = "",
-                             attachment_ids: Any = None) -> dict[str, Any]:
+                             attachment_ids: Any = None,
+                             requested_model: str = "",
+                             reasoning_level: str = "") -> dict[str, Any]:
     """feature-0043 — 웹 대화 질문을 개인 머신 AI 가 가져갈 **대기 작업**으로 적재한다.
 
     반환 shape 은 `_dispatch_ask_run` 의 `agent_result` 와 호환된다(동기 응답 계약 유지) —
@@ -236,15 +238,20 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         try:
             cur.execute(
                 "INSERT INTO WebAiTasks (TaskId, AccountId, ConversationId, ProductId, "
-                "Question, Status, Origin, ProductMode, SenderUsername, AttachmentIds) "
-                "VALUES (%s,%s,%s,%s,%s,'open','web',%s,%s,%s)",
+                "Question, Status, Origin, ProductMode, SenderUsername, AttachmentIds, "
+                "RequestedModel, ReasoningLevel) "
+                "VALUES (%s,%s,%s,%s,%s,'open','web',%s,%s,%s,%s,%s)",
                 (task_id, account_id, conv_id or None,
                  int(product_id) if product_id else None, question[:4000],
                  # 답변 각인·발신자 표시·첨부 인지를 위해 **질문과 함께** 굳힌다. 나중에 대화
                  # 설정에서 되짚으면 그 사이 제품을 바꾼 사용자에게 다른 값이 각인된다.
                  ("auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"),
                  (str(sender_username or "").strip()[:128] or None),
-                 _bridge_attachment_csv(attachment_ids)))
+                 _bridge_attachment_csv(attachment_ids),
+                 # 요청 시점의 **의도**를 굳힌다. 개인 AI 가 그대로 따를 수 있는지는 그쪽
+                 # 사정이지만, 무엇이 요구됐는지는 흔들리지 않아야 한다.
+                 (str(requested_model or "").strip()[:64] or None),
+                 (str(reasoning_level or "").strip()[:16] or None)))
             conn.commit()
         finally:
             cur.close()
@@ -4326,6 +4333,10 @@ async def ask(request: Request) -> JSONResponse:
                 product_mode=product_mode_for_run,
                 sender_username=_sender_username_for_run or "",
                 attachment_ids=attachment_ids_clean,
+                # 웹 컴포저의 모델·추론 강도 선택(사용자 제보 2026-08-27). 이걸 빼면 화면의
+                # 선택지가 아무 효과 없는 거짓 조작면이 된다.
+                requested_model=model,
+                reasoning_level=reasoning_level,
             )
         else:
             # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +

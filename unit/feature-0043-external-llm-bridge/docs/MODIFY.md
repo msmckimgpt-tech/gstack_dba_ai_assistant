@@ -369,3 +369,26 @@ AST 로 `_ledger.record` 호출 8곳을 전수 대조 → **정확히 1건**. �
 | `index.html`·`connect-modal.js`·CSS | 인증 모달 — 문서 위임 가로채기, 새 탭 의도 존중, 닫으면 토큰 제거 |
 | 가이드 | 14종 + "폴링 말고 `wait_for_request`" |
 | 테스트 | 대기 계약 5 · 러너 6 · 모달 6 · 지시문 2 |
+
+## CHG-20260827T220000 — 모델·추론 정합 + 실행 단계 복원 (TASK-20260827T220000)
+
+**사용자 제보 2건** (다른 세션 테스트 중):
+① 웹↔AI 요청에서 사용 모델·추론 수준이 부정합 ② 각 추론 step 이 노출되지 않음
+
+### ① 모델·추론 강도
+
+dispatch 는 `model`·`reasoning_level` 을 `run_kwargs` 로 넘기는데 **브리지는 둘 다 버렸다.**
+화면의 선택지가 아무 효과 없는 거짓 조작면이었다.
+
+- 스키마 `RequestedModel`·`ReasoningLevel`(온라인 DDL) — 요청 시점 의도를 굳힌다
+- `claim_request` 가 `requested` 로 전달 + "못 맞추면 밝혀라" 지시
+- 러너가 `_MODEL_FLAG` 로 **실제 CLI 인자화**, 실패 시 기본 모델 폴백 + 사실 고지
+- 추론 강도는 값이 아니라 **의도**로 전달(런타임마다 이름이 다르다)
+
+### ② 실행 단계
+
+`_materialize_bridge_steps` — 제출 시 `tool_call_usage` 의 도구 호출을 `agent_runtime.steps` 로
+옮기고 답변 meta 에 `run_id`(=task_id) 각인(프런트 조회 키).
+
+관측 사실만 옮긴다. LLM 사고 과정은 비워 둔다 — 지어내면 패널 전체가 못 믿을 것이 된다.
+브리지 진행 도구(wait·claim·submit)는 걸러낸다. 기록 실패는 전달을 막지 않는다.

@@ -101,6 +101,15 @@ _CLI_ADAPTERS: list[tuple[str, list[str]]] = [
 ]
 
 
+#: 런타임별 **모델 지정 방법**. 웹에서 고른 모델을 여기로 옮긴다 — 전달만 받고 쓰지 않으면
+#: 사용자 선택은 여전히 무효다. 지원하지 않는 런타임은 빈 목록(요청은 프롬프트로만 전달된다).
+_MODEL_FLAG: dict[str, list[str]] = {
+    "claude": ["--model"],
+    "codex": ["--model"],
+    "gemini": ["-m"],
+}
+
+
 def _which(name: str) -> str | None:
     for d in os.environ.get("PATH", "").split(os.pathsep):
         p = os.path.join(d, name)
@@ -118,13 +127,19 @@ def detect_ai() -> tuple[str, list[str]] | None:
     return None
 
 
-def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None) -> tuple[bool, str]:
-    """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)"""
+def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
+                 want_model: str = "") -> tuple[bool, str]:
+    """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
+
+    `want_model` 은 사용자가 웹에서 고른 모델이다. 이 런타임이 모델 지정을 지원하면 인자로
+    옮기고, 아니면 프롬프트의 요청 문구에만 남는다(그 경우 AI 가 답변에 못 맞춘 사실을 밝힌다).
+    """
     if custom:
         argv = shlex.split(custom)
         kind = "custom"
     if kind == "ollama":
-        model = os.environ.get("BRIDGE_OLLAMA_MODEL", "llama3")
+        # 웹에서 고른 모델이 로컬에 있을 수도 있다 — 있으면 그것을 쓴다.
+        model = want_model or os.environ.get("BRIDGE_OLLAMA_MODEL", "llama3")
         req = urllib.request.Request(
             os.environ.get("BRIDGE_OLLAMA_URL", "http://127.0.0.1:11434/api/generate"),
             data=json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8"),
@@ -138,6 +153,10 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None) ->
     # 프롬프트는 **인자로** 넘긴다(셸을 거치지 않는다) — 질문 본문에 셸 메타문자가 섞여도
     # 그대로 전달되고, 명령 주입 경로가 생기지 않는다.
     cmd = [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv]
+    flag = _MODEL_FLAG.get(kind) or []
+    if want_model and flag:
+        # 실행 파일 바로 뒤에 끼운다 — 프롬프트 뒤에 붙이면 위치 인자로 먹히는 CLI 가 있다.
+        cmd = cmd[:1] + flag + [want_model] + cmd[1:]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=_AI_TIMEOUT_SEC)
     except subprocess.TimeoutExpired:
@@ -156,6 +175,7 @@ def compose_prompt(api: Api, task: dict) -> str:
     """내 AI 에게 줄 프롬프트. **조사 도구 사용법을 함께 준다** — 그래야 DB 를 실제로 본다."""
     q = str(task.get("question") or "")
     ctxt = str(task.get("conversation_context") or "")
+    want = str((task.get("requested") or {}).get("instruction") or "")
     atts = task.get("attachments") or []
     parts = [
         "너는 사내 DB 질의 어시스턴트다. 아래 사용자 질문에 답하라.",
@@ -180,6 +200,8 @@ def compose_prompt(api: Api, task: dict) -> str:
                   f"  본문 읽기: POST {api.base}/api/ai/tools/read_task_attachment "
                   f"{{\"task_id\":\"{task.get('task_id')}\",\"attachment_id\":<id>}}",
                   "  첨부가 있는 질문은 반드시 본문을 읽고 답하라."]
+    if want:
+        parts += ["", "── 사용자 요청 품질 ──", want]
     parts += ["", "── 질문 ──", q]
     return "\n".join(parts)
 
@@ -197,8 +219,20 @@ def handle_one(api: Api, task_id: str, kind: str, argv: list[str], custom: str |
         return False
 
     prompt = compose_prompt(api, {**claimed, "task_id": task_id})
-    _log(f"{task_id}: 내 AI({kind})에게 전달")
-    ok, answer = ask_local_ai(kind, argv, prompt, custom)
+    req = claimed.get("requested") or {}
+    want_model = str(req.get("model") or "")
+    _log(f"{task_id}: 내 AI({kind})에게 전달"
+         + (f" · 요청 모델 {want_model}" if want_model else "")
+         + (f" · 추론 {req.get('reasoning_level')}" if req.get("reasoning_level") else ""))
+    ok, answer = ask_local_ai(kind, argv, prompt, custom, want_model)
+    if not ok and want_model and kind in _MODEL_FLAG:
+        # 요청 모델이 이 런타임에 없을 수 있다. 그 하나 때문에 답을 아예 못 주는 것보다는
+        # 기본 모델로 답하고 **그 사실을 밝히는** 편이 낫다.
+        _log(f"{task_id}: 요청 모델로 실패 — 기본 모델로 재시도")
+        ok, answer = ask_local_ai(kind, argv, prompt, custom, "")
+        if ok:
+            answer += (f"\n\n(요청하신 모델 `{want_model}` 을 이 환경에서 쓸 수 없어 "
+                       f"기본 모델로 답했습니다.)")
     if not ok or not answer.strip():
         # 실패해도 **답을 제출한다** — 제출하지 않으면 사용자 화면은 30분간 대기 말풍선인 채로
         # 남고, 무엇이 잘못됐는지 아무도 모른다. 실패를 말하는 것이 침묵보다 낫다.

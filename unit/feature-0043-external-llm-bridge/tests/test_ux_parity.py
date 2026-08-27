@@ -815,3 +815,118 @@ def test_handoff_includes_self_install_of_the_runner():
     assert "bridge_agent.py" in body, "러너 설치 안내가 없다"
     assert "curl" in body and "--check" in body, "AI 가 실행할 수 있는 형태가 아니다"
     assert "/trust/rootCA.crt" in body, "사설 CA 안내가 없다 — 여기서 대부분 막힌다"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 모델·추론 강도 정합 (사용자 제보 2026-08-27)
+#
+# 웹 컴포저의 모델·추론 강도 선택은 기존 경로에서 그 요청의 LLM 호출을 지배한다.
+# 브리지는 둘을 통째로 버려, 무엇을 고르든 답변이 달라지지 않았다 — 화면은 선택지를 주는데
+# 실제로는 아무 효과가 없는 **거짓 조작면**이었다.
+#
+# 답은 개인 AI 가 만들므로 서버가 강제할 수 없다. 그래서 계약은 "강제" 가 아니라
+# **"전달 + 못 맞추면 밝히기"** 다. 조용히 무시하는 것만 막는다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_task_persists_requested_model_and_reasoning():
+    """요청 시점의 선택을 task 에 굳힌다 — 나중에 대화 설정을 바꿔도 이 요청의 요구는 안 변한다."""
+    src = BOOTSTRAP.read_text(encoding="utf-8")
+    for col in ("RequestedModel", "ReasoningLevel"):
+        assert f'("{col}", "ALTER TABLE WebAiTasks ADD COLUMN {col}' in src, f"{col} 컬럼 미추가"
+    enq = _func_source(CONVS, "_enqueue_web_bridge_task")
+    assert "RequestedModel, ReasoningLevel" in enq, "적재 SQL 이 두 값을 쓰지 않는다"
+
+
+def test_ask_handler_forwards_model_and_reasoning():
+    """핸들러가 **이미 계산해 둔** 값을 브리지에 넘긴다(dispatch 경로와 동형)."""
+    src = CONVS.read_text(encoding="utf-8")
+    call = src[src.index("agent_result = _enqueue_web_bridge_task("):]
+    call = call[:call.index(")\n")]
+    assert "requested_model=model" in call, "모델 선택이 버려진다"
+    assert "reasoning_level=reasoning_level" in call, "추론 강도 선택이 버려진다"
+
+
+def test_claim_returns_requested_quality():
+    """점유 응답이 품질 요청을 전달한다 — 전달하지 않으면 AI 가 알 방법이 없다."""
+    src = _func_source(AI_TOOLS, "claim_request")
+    assert "_requested_quality(" in src
+    assert '"requested": requested' in src
+
+
+def test_requested_quality_asks_to_disclose_when_unmet():
+    """맞출 수 없으면 **답변에 밝히라**고 지시한다.
+
+    강제할 수 없는 것을 강제하는 척하면 안 된다. 하지만 조용히 무시하면 사용자는 자기 선택이
+    반영된 줄 안다 — 그 착각만은 막아야 한다.
+    """
+    body = _func_source(AI_TOOLS, "_requested_quality")
+    assert "밝히세요" in body or "밝혀" in body, "못 맞췄을 때 알릴 의무가 없다"
+    assert "조용히 무시" in body, "왜 밝혀야 하는지가 없다(다음 사람이 지운다)"
+    # 추론 강도는 런타임마다 이름이 달라 **값이 아니라 의도**로 전달해야 한다.
+    assert "_REASONING_INTENT" in AI_TOOLS.read_text(encoding="utf-8")
+
+
+def test_runner_actually_applies_the_requested_model():
+    """러너가 받은 모델을 **실제 CLI 인자로 옮긴다** — 전달만 받고 안 쓰면 반쪽이다."""
+    src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
+        encoding="utf-8")
+    assert "_MODEL_FLAG" in src, "런타임별 모델 지정 방법이 없다"
+    for rt in ("claude", "codex", "gemini"):
+        assert f'"{rt}": [' in src, f"{rt} 모델 플래그가 없다"
+    assert "want_model" in src
+    ask = src[src.index("def ask_local_ai("):src.index("# ── 프롬프트")]
+    assert "cmd[:1] + flag" in ask, "모델 인자를 프롬프트 뒤에 붙이면 위치 인자로 먹힌다"
+
+
+def test_runner_falls_back_when_model_unavailable():
+    """요청 모델이 없으면 기본 모델로 답하되 **그 사실을 밝힌다**.
+
+    모델 하나 때문에 답을 아예 못 주는 것보다 낫고, 조용히 바꾸는 것보다 낫다.
+    """
+    src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
+        encoding="utf-8")
+    assert "기본 모델로 재시도" in src
+    assert "기본 모델로 답했습니다" in src, "모델이 바뀐 사실을 사용자에게 알리지 않는다"
+
+
+# ── 실행 단계 노출 (사용자 제보 2026-08-27) ───────────────────────────────────
+#
+# 브리지 답변에는 서버 run 이 없어 'AI 추론' 탭이 비었다. 나는 그걸 "없는 것을 그리지 않는다"
+# 며 그대로 뒀는데, 절반만 맞았다 — **답을 만든 추론은 우리 밖이지만, 그 AI 가 무엇을
+# 조사했는지는 우리 안에 있다**(원장). 추측이 아니라 관측한 사실을 옮긴다.
+
+
+def test_bridge_answer_carries_run_id():
+    """`meta.run_id` 가 없으면 단계를 기록해도 화면이 찾지 못한다(프런트 조회 키)."""
+    src = _func_source(AI_TOOLS, "_deliver_web_bridge_answer")
+    assert '"run_id": task_id' in src, "단계 조회 키가 각인되지 않는다"
+
+
+def test_steps_are_materialized_from_the_ledger():
+    src = _func_source(AI_TOOLS, "_deliver_web_bridge_answer")
+    assert "_materialize_bridge_steps(" in src
+    body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
+    assert "tool_call_usage" in body, "관측 기록이 아니라 다른 곳에서 만들어낸다"
+    assert "INSERT INTO agent_runtime.steps" in body
+
+
+def test_steps_do_not_fabricate_reasoning():
+    """LLM 사고 과정은 **비워 둔다** — 지어내면 이 패널 전체가 못 믿을 것이 된다."""
+    body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
+    assert "'none'" in body, "reason_source 가 'none' 이 아니다(없는 사고를 있다고 표시)"
+    assert "reason_text" not in body.split('"""')[2], "존재하지 않는 추론 텍스트를 채운다"
+
+
+def test_steps_exclude_bridge_plumbing():
+    """대기·점유·제출은 조사 내역이 아니다 — 사용자에게는 소음이다."""
+    body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
+    for noise in ("wait_for_request", "claim_request", "submit_answer"):
+        assert noise in body, f"{noise} 를 걸러내지 않는다"
+    assert "skip" in body
+
+
+def test_step_recording_never_blocks_delivery():
+    """단계 기록 실패가 답변 전달을 막지 않는다 — 없으면 탭이 빌 뿐이다."""
+    body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
+    assert "except Exception" in body and "return 0" in body
