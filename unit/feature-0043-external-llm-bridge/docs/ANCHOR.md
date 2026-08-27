@@ -68,4 +68,4 @@ DBA 팀 김 과장이 아침에 자기 PC 에서 Claude Code 를 켜고 브리�
 
 <!-- source: human:<name> · timestamp: ISO8601 · body ≥ 200자. AI 는 §4 writer 아님(§18.2). -->
 
-(아직 엔트리 없음)
+(엔트리 없음)
