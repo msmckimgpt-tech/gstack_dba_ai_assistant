@@ -136,6 +136,14 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 	# 그 사이에 무인증 클라이언트가 initialize/세션/스트림을 열어 프로세스 메모리를 소모할 수
 	# 있으므로, 엣지에서 **Authorization 헤더 존재 자체**를 요구해 익명 연결을 아예 차단한다.
 	# (유효성 검사는 여전히 upstream 의 몫 — 여기서 하는 것은 익명 차단뿐이다.)
+	# feature-0045: 배포 제어 창구(`/internal/*`)는 **엣지 밖으로 나가지 않는다.**
+	# 드레인은 replica 를 LB 후보에서 빼는 조작이라, 외부에서 부를 수 있으면 그 자체가 서비스
+	# 거부다. 앱도 loopback 을 직접 판정하지만(그쪽이 정본 — 엣지 설정이 바뀌어도 남아야 한다)
+	# 엣지에서 한 겹 더 끊는다. `handle` 이므로 이 블록이 기본 web 라우트보다 **앞**에 있어야 한다.
+	handle /internal/* {
+		respond 404
+	}
+
 	handle /api/ai/mcp* {
 		# ⚠ 이 검사는 **handle 블록 안**에 있어야 한다. 밖에 두면 adapt 결과에서 이 라우트가
 		#   `handle` 뒤로 밀려 익명 요청이 먼저 프록시로 나간다(무력화). 블록 안에서는
@@ -170,7 +178,26 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 			}
 		}
 
-		reverse_proxy ext-tool-mcp:8971 {
+		# feature-0045 (브리지 배포 연속성): 단일 upstream → 2-replica LB.
+		# 개인 AI 가 이 경로로 붙어 있는데 단일 컨테이너면 배포마다 그 연결이 끊긴다.
+		# web-a/web-b 와 같은 형태로 두고 스파인이 한 번에 하나씩 교체한다.
+		#
+		# active health 를 두지 않는 이유: 이 전송은 GET 에 **4xx(406/400/405)** 로 답하는 것이
+		# 정상이라(SDK 버전마다 코드가 다르다) 단일 `health_status` 로 고정하면 버전이 바뀌는
+		# 순간 양 replica 가 동시에 down 으로 읽힌다. 그래서 passive 격리 + 재시도로 간다 —
+		# 내려간 replica 로의 dial 실패는 `lb_try_duration` 안에서 살아 있는 쪽으로 넘어간다.
+		# `fail_duration` 은 web(30s)보다 짧게 둔다: 여기는 롤링 간격이 짧고(2 replica 를
+		# 연속 교체), 격리가 길면 두 replica 가 동시에 후보 밖이 되는 창이 열린다.
+		reverse_proxy ext-tool-mcp-a:8971 ext-tool-mcp-b:8971 {
+			# stateless 로 띄우므로 친화성이 **정확성에는** 필요 없다. 그래도 `ip_hash` 를 두는
+			# 이유는 방어다 — SDK 업그레이드로 stateless 배선이 깨지면(생성자/run 인자 자리가
+			# 또 바뀌면) 세션이 프로세스에 묶이고, 그때 무작위 분산은 요청 절반을 404 로 만든다.
+			# 같은 클라이언트가 같은 replica 로 가면 그 고장이 "느려짐" 수준에 머문다.
+			lb_policy ip_hash
+			lb_try_duration 5s
+			lb_try_interval 250ms
+			fail_duration 5s
+			max_fails 1
 			flush_interval -1
 			transport http {
 				read_timeout 300s

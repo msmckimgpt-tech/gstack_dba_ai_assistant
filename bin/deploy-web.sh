@@ -82,7 +82,11 @@ REPLICAS=(web-a web-b)
 BASE_BRANCH="origin/main"
 LOCK_WAIT_SECONDS="${DEPLOY_WEB_LOCK_WAIT:-600}"
 READY_TIMEOUT="${DEPLOY_WEB_READY_TIMEOUT:-120}"
-PREDRAIN_TIMEOUT="${DEPLOY_WEB_PREDRAIN_TIMEOUT:-90}"
+# feature-0045: 90 → 180. 종전 값은 SSE/CSV 스트림만 기다리던 시절의 예산이다. 이제 개인 AI 의
+# 도구 호출 왕복(MCP→web `EXT_TOOL_TIMEOUT_SEC=120`)까지 기다리므로, 상한이 그보다 작으면
+# **가장 오래 걸리는 조사가 항상 잘리는** 예산이 된다. in-flight 가 0 이면 즉시 통과하므로
+# 유휴 시 배포 시간에는 영향이 없다(실측: 시스템은 대부분 조용하다).
+PREDRAIN_TIMEOUT="${DEPLOY_WEB_PREDRAIN_TIMEOUT:-180}"
 SOAK_SECONDS="${DEPLOY_WEB_SOAK:-90}"
 EDGE_FLAP_MAX="${DEPLOY_WEB_EDGE_FLAP_MAX:-4}"   # soak 창 내 비연속 edge 실패 누적 임계(하드닝 2026-07-11, 패널 MINOR-1)
 IMAGE_KEEP="${DEPLOY_WEB_IMAGE_KEEP:-3}"
@@ -98,7 +102,14 @@ AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask/ops 워커 공용
 # feature-0041: ext-tool-mcp(외부 AI 도구 표면 MCP HTTP 전송) 도 같은 agent 이미지를 쓴다.
 #   롤아웃 대상에서 빠지면 이미지만 새로 빌드되고 이 컨테이너는 **구코드로 계속 도는**
 #   드리프트가 생긴다(서비스별 GIT_COMMIT 불일치 — 배포 완료 판정의 근거가 흔들린다).
-WORKERS=(insight-worker ask-worker ops-scheduler ext-tool-mcp)
+# feature-0045: 그 MCP 표면을 WORKERS 에서 **분리**한다. 워커 롤아웃은 `up -d --force-recreate`
+#   한 방이라 단일 컨테이너였던 이 서비스는 배포마다 통째로 끊겼다 — 개인 AI 가 붙어 있는
+#   바로 그 연결이다. 이제 web 과 같은 2 replica 구조라 one-at-a-time 롤링을 따로 받는다.
+WORKERS=(insight-worker ask-worker ops-scheduler)
+# 브리지 MCP 표면 replica. Caddy LB(`/api/ai/mcp`) 뒤에서 한 번에 하나씩 교체한다.
+MCP_REPLICAS=(ext-tool-mcp-a ext-tool-mcp-b)
+# 구 단일 서비스명 — compose 에서 사라졌으므로 남은 컨테이너를 배포가 정리한다.
+MCP_LEGACY_SERVICE="ext-tool-mcp"
 # feature-0020 zd-ask-rollout: ask-worker 는 큐 소비자라 surge 교대가 성립한다(상세는
 # rollout_ask_worker_via_surge 헤더). 전역 정적(quiesce) 대기를 대체한다.
 ASK_WORKER_SERVICE="ask-worker"
@@ -131,6 +142,16 @@ FORCE_GATEWAY=0
 FORCE_BUSY=0    # --force-busy: quiesce 미달성에도 강행(진행 중 run 이 끊길 수 있음)
 QUIESCE_REPORT=""   # 게이트별 결과(quiet|FORCED|ABORTED) — 배포 말미 정직 보고용
 QUIESCE_FORCED=0    # 강행 횟수(>0 이면 이 배포는 무중단이 아니다)
+# feature-0045: pre-drain 이 상한 안에 조용해지지 못해 **진행 중인 브리지 왕복을 끊고** 간 횟수.
+# >0 이면 배포 말미에 점유 회수(`reclaim_bridge_claims`)를 돌린다 — 평상시엔 돌지 않는다.
+PREDRAIN_FORCED=0
+# 배포 창의 시작(epoch). 점유 회수는 **이 시각 이후에 점유된 것만** 되돌린다 — 상한만 두면
+# 배포와 무관하게 오래 조사 중이던 작업까지 대기열로 되돌려, 다른 세션이 재점유하는 순간
+# 원 소유자의 제출이 거절된다(끊기지도 않은 작업을 배포가 버리는 셈).
+DEPLOY_WINDOW_START="$(date +%s)"
+# 드레인을 **걸지 못한 채** 진행한 횟수(probe 실패 → 기존 게이트로 대체). 끊김이 없었다고
+# 단정할 수 없는 상태이므로 보고에 남긴다 — "무중단이었다" 를 기본값으로 두지 않는다.
+PREDRAIN_UNVERIFIED=0
 
 # base file-set ONLY — dev override(override.yml)/self-TLS/호스트포트를 머지하지 않는다.
 DC=(docker compose -f docker-compose.yml)
@@ -353,7 +374,11 @@ write_pin_overlay() {  # $1 = web image ref, $2 = agent image ref ("" 또는 생
     echo "services:"
     printf '  web-a:\n    image: %s\n  web-b:\n    image: %s\n' "$web_img" "$web_img"
     if [ -n "$agent_img" ]; then
-      local w; for w in "${WORKERS[@]}"; do printf '  %s:\n    image: %s\n' "$w" "$agent_img"; done
+      # feature-0045: `MCP_REPLICAS` 도 같은 agent 이미지를 쓴다. 여기서 빠지면 그 서비스는
+      # compose 정의에 `image:` 가 없어(anchor 는 `build:` 만 갖는다) **참조할 이미지 자체가
+      # 없다** — `--no-build` 기동이 pull 을 시도해 실패하거나 stale 로컬 이미지로 떠서
+      # GIT_COMMIT 불일치로 완결 판정에 걸린다. 그 결과 모든 배포가 워커 단계에서 실패한다.
+      local w; for w in "${WORKERS[@]}" "${MCP_REPLICAS[@]}"; do printf '  %s:\n    image: %s\n' "$w" "$agent_img"; done
       # surge 도 **같은 핀**을 받아야 한다 — 안 그러면 compose 가 build 정의로 되돌아가
       # surge 만 다른(대개 stale) 이미지로 떠서, 교체 창 동안 신규 job 이 구 코드로 처리된다.
       printf '  %s:\n    image: %s\n' "$ASK_WORKER_SURGE" "$agent_img"
@@ -482,6 +507,47 @@ print(0); sys.exit(0)
 ' 2>/dev/null || echo 0
 }
 
+# ── 브리지 축 드레인 probe (feature-0045) ─────────────────────────────────────
+# 대상 replica 를 **lame-duck** 으로 만들고 현재 in-flight 를 돌려준다. 멱등이므로 폴링하며
+# 반복 호출한다. 출력: "<active_streams> <bridge_inflight> <bridge_waiters>" (성공) | 비-0 종료.
+#
+# ⚠ `/livez` 를 쓰지 않는다 — 드레인 중 `/livez` 는 **503** 이다(그게 Caddy 를 후보에서
+#   빼는 수단이다). 같은 창구로 카운터를 읽으면 게이트가 자기가 만든 503 에 걸려 조회 실패로
+#   읽는다. 그래서 드레인 제어·관측은 전용 창구(`/internal/bridge-drain`, loopback 전용)로 분리했다.
+replica_drain_probe() {  # $1 = svc, $2 = "release"(선택) → 위 3-정수 | 비-0
+  local q=""; [ "${2:-}" = "release" ] && q="?release=1"
+  "${DC_PROD[@]}" exec -T "$1" python -c '
+import json,ssl,sys,urllib.request
+q=sys.argv[1] if len(sys.argv)>1 else ""
+ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+for base in ("https://localhost:8000","http://localhost:8000"):
+    try:
+        req=urllib.request.Request(base+"/internal/bridge-drain"+q, data=b"", method="POST")
+        r=urllib.request.urlopen(req,timeout=5,context=ctx if base.startswith("https") else None)
+        d=json.loads(r.read().decode())
+        print(int(d.get("active_streams",0)), int(d.get("bridge_inflight",0)),
+              int(d.get("bridge_waiters",0)))
+        sys.exit(0)
+    except Exception:
+        continue
+sys.exit(1)
+' "$q" 2>/dev/null
+}
+
+# 현재 드레인을 건 replica(있으면). 비정상 종료(INT/TERM/크래시) 시 EXIT trap 이 이것을 보고
+# 되돌린다 — 드레인된 replica 가 문이 닫힌 채 남으면 실질 용량이 절반이 되는데, `/readyz` ·
+# `/healthz` · `container_health` 어느 신호도 그것을 말하지 않아 **무증상으로 오래 간다**.
+DRAINED_SVC=""
+
+# 드레인을 되돌린다. **배포가 replica 를 못 내리고 중단하는 모든 경로**에서 불러야 한다 —
+# 안 그러면 그 replica 는 문이 닫힌 채(LB 후보 밖) 계속 살아 있고, 다음 배포가 상대를
+# 내리는 순간 available upstream 이 0 이 된다. 실패해도 배포 판단을 바꾸지 않는다(경고만).
+replica_release_drain() {  # $1 = svc
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  replica_drain_probe "$1" release >/dev/null 2>&1 \
+    || warn "$1 드레인 해제 실패 — 이 replica 는 LB 후보 밖일 수 있다. 확인: docker compose -f docker-compose.yml exec -T $1 python -c \"import urllib.request;print(urllib.request.urlopen('http://localhost:8000/livez').status)\""
+}
+
 # quiesce 게이트 적재 — 위 log/warn/err/step · DC/DC_PROD/REPLICAS · replica_cid 정의 **뒤**에서
 # source 해야 라이브러리가 그것들을 그대로 쓴다(라이브러리는 미정의분만 기본값으로 채운다).
 # shellcheck source=lib/quiesce.sh
@@ -531,14 +597,118 @@ predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc �
     err "  현재 상태 유지(=$target 이 계속 서빙) 후 원인 해결하고 재실행(멱등)."
     return 1
   fi
-  # 대상의 진행 중 SSE/CSV 스트림이 끝날 때까지 대기(fetch/getReader 는 자동재접속 없음).
+  # ── 드레인 + 진행 중 작업 대기 (feature-0045 로 브리지 축까지 확장) ────────────
+  # 종전에는 `active_streams`(SSE 프롬프트 자동작성 + CSV export)만 봤다. 그 카운터는
+  # **브리지 축을 세지 않는다** — 개인 AI 가 붙들고 있는 55초 블로킹 대기도, 그 AI 가
+  # 조사 중인 도구 호출도. 그래서 브리지로 요청을 주고받는 바로 그 중에도 이 게이트는
+  # "조용함(0)" 으로 읽고 replica 를 내렸다.
+  #
+  # 이제 두 가지를 순서대로 한다:
+  #   1) **문을 닫는다**(드레인). `/livez` 가 503 → Caddy active health(2s)가 이 replica 를
+  #      후보에서 뺀다 → 신규 유입 정지. 대기 중이던 롱폴은 즉시 정상 반환하고 남은
+  #      replica 로 다시 붙는다(오류가 아니므로 러너의 백오프 경로를 타지 않는다).
+  #   2) **진행 중인 것만 기다린다**. `active_streams`(SSE/CSV) + `bridge_inflight`
+  #      (개인 AI 의 도구 호출 왕복). 대기(`bridge_waiters`)는 1) 로 즉시 비므로 기다리지 않는다.
+  local probe as bi bw
   while [ "$SECONDS" -lt "$deadline" ]; do
-    n="$(replica_active_streams "$target")"
-    [ "${n:-0}" -eq 0 ] 2>/dev/null && { log "  $target active_streams=0 — recreate 진행"; return 0; }
-    log "  $target active_streams=$n — 종료 대기"
+    if ! probe="$(replica_drain_probe "$target")"; then
+      # 조회 실패를 "조용함" 으로 읽지 않는다(vacuous pass 방지).
+      # ⚠ 대체 게이트로 `replica_active_streams` 를 쓰면 안 된다 — 그 헬퍼는 **조회 실패도 0**
+      #   으로 돌려주고(`|| echo 0` + 내부 fallback), 드레인 중 `/livez` 는 우리가 만든 503 이라
+      #   항상 실패한다. 즉 "드레인을 걸고 나면 대체 게이트가 항상 통과" 라는 최악의 조합이다.
+      #   strict probe(실패를 비-0 종료로 구분)를 쓰고, 못 읽으면 **기다린다**.
+      if n="$(replica_active_streams_strict "$target")" && [ "${n:-1}" -eq 0 ] 2>/dev/null; then
+        warn "  $target 드레인 probe 실패 — 기존 게이트로 대체(active_streams=0). 브리지 축은 미확인."
+        PREDRAIN_UNVERIFIED=$(( PREDRAIN_UNVERIFIED + 1 ))
+        return 0
+      fi
+      warn "  $target 드레인 probe 실패 + active_streams 미확인/비-0 — 대기(조용한지 알 수 없다)."
+      sleep 3; continue
+    fi
+    read -r as bi bw <<<"$probe"
+    DRAINED_SVC="$target"   # 이 시점부터 EXIT trap 의 회수 대상이다
+    if [ "${as:-0}" -eq 0 ] 2>/dev/null && [ "${bi:-0}" -eq 0 ] 2>/dev/null; then
+      log "  $target 조용함(active_streams=0 bridge_inflight=0, 드레인된 대기=$bw) — recreate 진행"
+      return 0
+    fi
+    log "  $target active_streams=${as:-?} bridge_inflight=${bi:-?} (대기 $bw 는 드레인됨) — 종료 대기"
     sleep 3
   done
-  warn "$target pre-drain timeout(${PREDRAIN_TIMEOUT}s) — 진행 스트림이 남았지만 계속 진행(해당 스트림은 끊김)."
+  warn "$target pre-drain timeout(${PREDRAIN_TIMEOUT}s) — 진행 중인 작업이 남았지만 계속 진행."
+  warn "  끊긴 브리지 작업은 점유 lease 가 만료되어 대기열로 돌아간다(배포 말미 reclaim_bridge_claims)."
+  PREDRAIN_FORCED=$(( PREDRAIN_FORCED + 1 ))
+}
+
+# ── 끊긴 브리지 점유 회수 (feature-0045) ──────────────────────────────────────
+# **pre-drain 이 강행했을 때만** 돈다. 진행 중이던 왕복이 끊겼다면 그 질문은 "가져갔는데 답이
+# 없는" 상태로 최대 30분(lease) 갇힌다 — 사용자에게는 배포가 질문을 삼킨 것으로 보인다.
+# 회수는 `ClaimedBy` 를 지우지 않고 lease 만 만료시킨다(살아남은 러너의 제출은 그대로 성공).
+# 상세 근거는 `/internal/bridge-reclaim` docstring.
+reclaim_bridge_claims() {
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] reclaim_bridge_claims skip"; return 0; }
+  # 강행했거나(끊었다) 드레인을 확인하지 못한 채 진행했으면(끊었을 수 있다) 회수한다.
+  [ "$PREDRAIN_FORCED" -gt 0 ] || [ "$PREDRAIN_UNVERIFIED" -gt 0 ] || return 0
+  step "브리지 점유 회수 (강행 ${PREDRAIN_FORCED}회 · 미확인 ${PREDRAIN_UNVERIFIED}회 — 끊겼을 수 있는 작업을 대기열로)"
+  local svc out
+  for svc in "${REPLICAS[@]}"; do
+    [ -n "$(replica_cid "$svc" 2>/dev/null)" ] || continue
+    out="$("${DC_PROD[@]}" exec -T "$svc" python -c '
+import json,ssl,sys,urllib.request
+ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+for base in ("https://localhost:8000","http://localhost:8000"):
+    try:
+        req=urllib.request.Request(base+"/internal/bridge-reclaim?grace_sec=60&since_epoch="+sys.argv[1],
+                                   data=b"", method="POST")
+        r=urllib.request.urlopen(req,timeout=10,context=ctx if base.startswith("https") else None)
+        print(json.loads(r.read().decode()).get("released",0)); sys.exit(0)
+    except Exception:
+        continue
+sys.exit(1)
+' "$DEPLOY_WINDOW_START" 2>/dev/null)" && { log "  점유 회수 ${out}건 — 대기열로 되돌렸다(원 소유자가 살아 있으면 그대로 제출된다)."; return 0; }
+  done
+  warn "  점유 회수 호출 실패 — 끊긴 작업은 lease(30분) 만료로 자연 회수된다."
+}
+
+# 종료 시 정리 — 소유권 정규화 + **드레인 회수**. 어느 경로로 끝나든(성공·die·INT/TERM) 실행된다.
+on_exit_cleanup() {
+  local rc=$?
+  normalize_ownership
+  if [ -n "$DRAINED_SVC" ]; then
+    warn "드레인된 replica 가 남아 있다($DRAINED_SVC) — 회수한다. 그대로 두면 LB 후보가 절반이 된다."
+    replica_release_drain "$DRAINED_SVC"
+    DRAINED_SVC=""
+  fi
+  return "$rc"
+}
+
+# 배포가 브리지 축에 무엇을 했는지 **정직하게** 보고한다(quiesce_summary 와 같은 자세).
+# "무중단이었다" 를 기본값으로 두지 않는다 — 강행이 있었으면 그 사실이 로그에 남아야 한다.
+bridge_continuity_summary() {
+  if [ "$PREDRAIN_UNVERIFIED" -gt 0 ]; then
+    warn "브리지 연속성: 드레인을 걸지 못한 채 진행 ${PREDRAIN_UNVERIFIED}회 — 그 replica 의 브리지"
+    warn "  in-flight 를 **확인하지 못했다**. 끊김이 없었다고 단정할 수 없다(구 이미지 replica 이거나"
+    warn "  /internal/bridge-drain 이 응답하지 않았다). 배포 후 대기 말풍선이 남아 있는지 확인한다."
+  fi
+  if [ "$PREDRAIN_FORCED" -gt 0 ]; then
+    warn "브리지 연속성: pre-drain 강행 ${PREDRAIN_FORCED}회 — 진행 중이던 개인 AI 왕복이 끊겼을 수 있다."
+    warn "  끊긴 작업의 점유는 회수되어 대기열로 돌아갔다(중복 처리는 '먼저 끝내는 쪽이 이긴다')."
+    warn "  반복되면 DEPLOY_WEB_PREDRAIN_TIMEOUT(현재 ${PREDRAIN_TIMEOUT}s)을 늘리거나 유입이 적은 시각으로 옮긴다."
+  else
+    log "브리지 연속성: 대기는 드레인으로 교대했고 진행 중 왕복은 완주했다(끊김 0)."
+  fi
+}
+
+# 이전 배포가 중단되며 남긴 드레인을 청소한다(feature-0045). 드레인은 프로세스 로컬이라
+# recreate 되면 사라지지만, **내려가지 못한 replica** 는 문이 닫힌 채로 계속 살아 있다.
+# 그 상태에서 상대를 내리면 available upstream 이 0 이다 — 롤링 시작 전에 반드시 확인한다.
+clear_stale_drain() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local svc
+  for svc in "${REPLICAS[@]}"; do
+    [ -n "$(replica_cid "$svc" 2>/dev/null)" ] || continue
+    replica_drain_probe "$svc" release >/dev/null 2>&1 \
+      || warn "$svc 드레인 상태 확인 실패(구버전 이미지면 정상 — 이 엔드포인트가 없다)."
+  done
 }
 
 # ── 엣지(Caddy) 후보 복귀 게이트 (2026-08-11 — `no upstreams available` 503 근본수정) ──
@@ -704,6 +874,9 @@ recreate_replica() {  # $1 = svc, $2 = expected sha
   # 있고, 위험한 것은 "다음 replica 를 내리는 것" 이라 그 판단은 predrain 이 fail-closed 로 한다
   # (롤백 경로도 이 함수를 타므로 여기서 끊으면 롤백이 중단된다).
   wait_edge_available "$svc" || warn "$svc 엣지 복귀 미확인 — 다음 replica 를 내리기 전 predrain 이 재확인한다."
+  # feature-0045: 새 프로세스는 드레인이 꺼진 상태로 떴다 — 추적 대상에서 뺀다(EXIT trap 이
+  # 이미 교체된 replica 에 불필요한 해제 호출을 하지 않도록).
+  [ "$DRAINED_SVC" = "$svc" ] && DRAINED_SVC=""
   return 0
 }
 
@@ -1102,6 +1275,9 @@ deploy_workers() {  # $1 = 대상 sha, $2 = pin overlay 의 web image ref(롤백
     fi
     stamp_sanctioned_recreate "$svc"
   done
+  # feature-0045: 브리지 MCP 표면은 여기서 다루지 않는다 — **엣지 전환보다 먼저** 세워야
+  # 하므로 web 롤링 직후(reconcile_caddy 앞)로 옮겼다(main 참조). 완결 판정에는 포함된다.
+
   # ── 완결 판정 (feature-0020 zd-ask-rollout) ────────────────────────────────
   # `agent_current` 는 "워커가 이 sha 로 돌고 있다" 는 주장이다. 부분 롤아웃에서 그것을 기록하면
   # 다음 배포의 멱등 skip(build_agent_image)이 **그 주장을 믿고 빌드를 건너뛴다** — 미교체
@@ -1122,7 +1298,9 @@ verify_workers_at_sha() {  # $1 = sha → 0 전부 도달
   local sha="$1" svc st got ok=0
   [ "$DRY_RUN" -eq 1 ] && return 0
   step "워커 완결 판정 (서비스별 GIT_COMMIT 실측)"
-  for svc in "${WORKERS[@]}"; do
+  # feature-0045: MCP replica 도 같은 agent 이미지를 쓰므로 완결 판정에 포함한다. 빠지면
+  # "배포는 됐는데 개인 AI 가 붙는 표면만 구코드" 가 조용히 지나간다.
+  for svc in "${WORKERS[@]}" "${MCP_REPLICAS[@]}"; do
     st="$(container_health "$svc")"; got="$(worker_commit "$svc")"
     if [ "$st" = "healthy" ] && [ "$got" = "$sha" ]; then
       log "  $svc = $sha (healthy)"
@@ -1132,6 +1310,95 @@ verify_workers_at_sha() {  # $1 = sha → 0 전부 도달
     fi
   done
   return "$ok"
+}
+
+# ── 브리지 MCP 표면 롤링 (feature-0045) ───────────────────────────────────────
+# 개인 AI 가 붙어 있는 `/api/ai/mcp` 의 upstream 을 **한 번에 하나씩** 교체한다. 종전에는 이
+# 서비스가 WORKERS 안에 있어 `up -d --force-recreate` 한 방으로 통째로 끊겼다.
+#
+# web 롤링과 다른 점 두 가지:
+#  · 앱 드레인이 없다. 이 프로세스는 상태를 들지 않고(stateless) 요청을 web 으로 중계할 뿐이라,
+#    문을 닫는 대신 **stop_grace(130s)** 로 진행 중 중계가 완주하게 한다.
+#  · 엣지 후보 복귀를 admin API 로 확인하지 않는다. 이 라우트는 passive 격리만 쓰므로
+#    컨테이너 healthy 가 곧 후보 자격이다(Caddyfile `/api/ai/mcp` 블록 주석 참조).
+rollout_mcp_replicas() {  # $1 = 대상 sha → 0 성공 / 1 실패
+  local sha="$1" svc other st got
+  step "브리지 MCP 표면 롤링 (${MCP_REPLICAS[*]} — one-at-a-time, 항상 ≥1 후보)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    for svc in "${MCP_REPLICAS[@]}"; do log "[dry-run] recreate $svc → $AGENT_IMAGE_REPO:$sha"; done
+    return 0
+  fi
+  # 최초 전환(구 단일 서비스에서 올라오는 배포)이면 두 replica 가 아예 없다 — 동시에 올린다.
+  local missing=0
+  for svc in "${MCP_REPLICAS[@]}"; do
+    [ -n "$("${DC_PROD[@]}" ps -q "$svc" 2>/dev/null)" ] || missing=$(( missing + 1 ))
+  done
+  if [ "$missing" -eq "${#MCP_REPLICAS[@]}" ]; then
+    log "MCP replica 부재(최초 전환) — ${MCP_REPLICAS[*]} 동시 기동."
+    run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "${MCP_REPLICAS[@]}" \
+      || { err "MCP replica 초기 기동 실패."; return 1; }
+    for svc in "${MCP_REPLICAS[@]}"; do
+      wait_worker_healthy "$svc" "$WORKER_READY_TIMEOUT" "$sha" || return 1
+    done
+    return 0
+  fi
+  for svc in "${MCP_REPLICAS[@]}"; do
+    st="$(container_health "$svc")"; got="$(worker_commit "$svc")"
+    if [ "$st" = "healthy" ] && [ "$got" = "$sha" ]; then
+      log "$svc 이미 $sha + healthy — skip(멱등)."; continue
+    fi
+    # fail-closed: 상대가 healthy 가 아니면 이쪽을 내리지 않는다(내리면 MCP 전면 단절).
+    other=""
+    local cand; for cand in "${MCP_REPLICAS[@]}"; do [ "$cand" != "$svc" ] && other="$cand"; done
+    # ⚠ `ps -q` 는 **running 만** 돌려준다 — 상대가 exited/crash 면 빈 문자열이라 가드가 통째로
+    #   건너뛰어진다. 즉 "상대가 죽어 있을 때" 라는 **가장 위험한 경우에만** 보호가 사라진다.
+    #   `ps -aq` 로 존재를 보고, 존재하는데 healthy 가 아니면 중단한다(predrain 과 같은 자세).
+    if [ -n "$other" ] && [ -n "$("${DC_PROD[@]}" ps -aq "$other" 2>/dev/null)" ]; then
+      if [ "$(container_health "$other")" != "healthy" ]; then
+        err "$other 가 healthy 아님(상태=$(container_health "$other")) — $svc 를 내리면 MCP 후보가 0 이 된다(개인 AI 연결 전면 단절). 중단."
+        err "  복구: docker compose -f docker-compose.yml up -d --no-deps $other  → healthy 확인 후 재실행(멱등)."
+        return 1
+      fi
+    fi
+    log "recreate $svc → $AGENT_IMAGE_REPO:$sha (상대 $other 가 서빙)"
+    if ! run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" \
+       || ! wait_worker_healthy "$svc" "$WORKER_READY_TIMEOUT" "$sha"; then
+      err "$svc 롤아웃 실패 — 상대 replica 가 계속 서빙 중(MCP 연결 유지). 원인 해결 후 재실행(멱등)."
+      return 1
+    fi
+    stamp_sanctioned_recreate "$svc"
+  done
+  log "MCP 표면 롤링 완료 — ${MCP_REPLICAS[*]} = $AGENT_IMAGE_REPO:$sha"
+}
+
+# 구 단일 서비스(`ext-tool-mcp`)의 잔존 컨테이너를 정리한다. compose 정의에서 사라졌으므로
+# `up -d` 는 이 컨테이너를 건드리지 않는다 — 그대로 두면 **두 세대가 동시에 도는** 상태로
+# 남고(포트는 안 겹치지만 구코드가 계속 web 을 두드린다), 다음 배포도 알아채지 못한다.
+sweep_legacy_ext_tool_mcp() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local cid
+  cid="$("${DC_PROD[@]}" ps -aq "$MCP_LEGACY_SERVICE" 2>/dev/null | head -1)"
+  [ -n "$cid" ] || return 0
+  log "구 $MCP_LEGACY_SERVICE 컨테이너 정리(2-replica 로 대체됨)."
+  run docker rm -f "$cid" >/dev/null 2>&1 || warn "구 $MCP_LEGACY_SERVICE 제거 실패 — 수동 확인 필요."
+}
+
+# ── MCP 표면 롤아웃 단계 (feature-0045) ───────────────────────────────────────
+# **엣지 전환(`reconcile_caddy`)보다 먼저** 돌아야 한다. Caddyfile 이 `ext-tool-mcp-a/b` 를
+# 가리키도록 바뀌는데 그 컨테이너가 아직 없으면, 리로드 직후부터 DNS 미해석 → 502 다. 그 창은
+# soak(90s) + 워커 롤아웃 전체로 이어진다 — "배포마다 AI 연결이 끊긴다" 를 고치는 배포가 바로
+# 그 연결을 가장 길게 끊는 셈이 된다.
+#
+# 구 컨테이너 정리는 **신규가 healthy 해진 뒤**에 한다. 파괴를 생성보다 먼저 하면, 기동 실패가
+# 곧 "구세대도 없고 신세대도 없는" 상태가 된다.
+rollout_mcp_phase() {
+  [ "$SCOPE" = "web" ] && { log "scope=web — MCP 표면 롤아웃 skip(agent 이미지 미빌드)."; return 0; }
+  if ! rollout_mcp_replicas "$TARGET_SHA"; then
+    err "MCP 표면 롤아웃 실패 — 엣지 전환을 하지 않는다(현 라우팅 유지)."
+    err "  web 은 $TARGET_SHA 서빙 중이다(부분 완료). 원인 해결 후 재실행하면 이어서 완료된다(멱등)."
+    exit 1
+  fi
+  sweep_legacy_ext_tool_mcp
 }
 
 rollback_workers() {  # $1 = pin overlay 에 유지할 web image ref
@@ -1442,7 +1709,10 @@ main() {
   if ! flock -w "$LOCK_WAIT_SECONDS" 9; then
     die "flock timeout(${LOCK_WAIT_SECONDS}s) — 다른 배포가 진행 중. (loser 비-0 종료 — coalesce 로 winner 가 origin/main HEAD 를 배포하므로 본 커밋이 이미 포함됐다면 안전)"
   fi
-  trap 'normalize_ownership' EXIT
+  # feature-0045: 드레인 누수 차단. `predrain` 은 이제 최대 180s 를 기다리므로 그 사이 중단될
+  # 창이 넓다. EXIT 은 정상 종료도 타지만 `DRAINED_SVC` 는 recreate 성공 시 비워지므로 no-op 다.
+  trap 'on_exit_cleanup' EXIT
+  trap 'err "중단 신호 — 드레인 회수 후 종료한다."; exit 130' INT TERM
 
   if [ "$MODE" = "rollback" ]; then
     resolve_target_sha
@@ -1501,6 +1771,12 @@ main() {
   write_pin_overlay "$web_img" "$AGENT_IMAGE_REPO:$TARGET_SHA"
   set_dc_prod
 
+  # feature-0045: **web_skip 판정보다 먼저** 잔존 드레인을 청소한다. 직전 배포가 중단되며
+  # 남긴 lame-duck 은 `/readyz` 200 · `/healthz` 200 · `container_health=healthy` 라 어느
+  # 신호에도 안 잡히고, 같은 sha 재배포는 `web_skip=1` 로 롤링을 통째로 건너뛴다 — 그러면
+  # 그 replica 는 **다음 새 sha 가 나올 때까지 무기한 LB 밖**이다(실질 용량 절반, 무증상).
+  clear_stale_drain
+
   # web 이 이미 대상 SHA + 양 replica ready 면 web 단계 skip(인터럽트된 배포 재개 멱등성).
   local web_skip=0
   if [ "$SCOPE" = "workers" ]; then
@@ -1542,14 +1818,20 @@ main() {
       # predrain 은 fail-closed 게이트다(상대가 엣지 후보로 복귀했는가) — 실패 시 어떤 replica 도
       # 내리지 않고 중단한다. 현 상태(구버전 2 replica)가 그대로 서빙되므로 사용자 영향 0.
       predrain web-a web-b || die "web-a 를 내릴 수 없다(상대 web-b 가 엣지 후보 아님) — 배포 중단, 현 상태 유지."
-      recreate_replica web-a "$TARGET_SHA" || die "web-a 배포 실패 — web-b(OLD) 가 계속 서빙 중. 수동 확인."
+      # feature-0045: recreate 가 실패하면 **구 프로세스가 드레인된 채로 살아남는다**(문이 닫힌
+      # replica). 그대로 두면 다음 배포가 상대를 내리는 순간 available upstream 이 0 이 된다.
+      recreate_replica web-a "$TARGET_SHA" || { replica_release_drain web-a; die "web-a 배포 실패 — web-b(OLD) 가 계속 서빙 중. 수동 확인."; }
       predrain web-b web-a || die "web-b 를 내릴 수 없다(상대 web-a 가 엣지 후보 아님) — 배포 중단. web-a 는 이미 $TARGET_SHA, web-b 는 구버전으로 **혼합 서빙 중**(expand/contract 로 안전, CONVENTIONS §12). 원인 해결 후 재실행(멱등)."
-      recreate_replica web-b "$TARGET_SHA" || { err "web-b 배포 실패 — web-a(NEW) 가 서빙 중. web-b 만 롤백/재시도 권장."; auto_rollback "$TARGET_SHA"; exit 1; }
+      recreate_replica web-b "$TARGET_SHA" || { replica_release_drain web-b; err "web-b 배포 실패 — web-a(NEW) 가 서빙 중. web-b 만 롤백/재시도 권장."; auto_rollback "$TARGET_SHA"; exit 1; }
     fi
 
     state_set current "$TARGET_SHA"
+    rollout_mcp_phase
     reconcile_caddy   # feature-0016: Caddyfile 변경 시에만 caddy recreate(inode-stale 대응) + 0020: 이미지 드리프트
     soak_or_rollback "$TARGET_SHA" || exit 1
+    # feature-0045: web 롤링이 끝난 지점 = 브리지 축 손상이 확정되는 지점. 배포 꼬리까지
+    # 미루면 이후 단계(워커·gateway·스모크)가 실패했을 때 끊긴 작업이 회수되지 않는다.
+    reclaim_bridge_claims
   else
     if [ "$SCOPE" != "web" ]; then
       build_agent_image "$TARGET_SHA"
@@ -1557,6 +1839,7 @@ main() {
       # migrate 게이트+적용. expand 는 구 web 코드에도 안전(CONVENTIONS §12 전제)이라 적용이 옳다.
       migrate_phase "$AGENT_IMAGE_REPO:$TARGET_SHA"
     fi
+    rollout_mcp_phase
     reconcile_caddy
   fi
 
@@ -1572,6 +1855,7 @@ main() {
   conversation_smoke_or_fail
   step "배포 완료: $TARGET_SHA (scope=$SCOPE — web 롤링·워커·gateway reconcile + soak + 대화 스모크 통과)"
   quiesce_summary
+  bridge_continuity_summary
   post_deploy_checklist
 }
 

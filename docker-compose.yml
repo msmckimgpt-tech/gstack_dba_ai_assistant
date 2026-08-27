@@ -73,6 +73,59 @@ x-agent-common: &agent-common
     minio:
       condition: service_started
 
+# feature-0045: 외부 AI 도구 표면 MCP 의 공통 정의. `ext-tool-mcp-a` / `ext-tool-mcp-b` 가
+# 이것을 공유한다(web-a/web-b 와 같은 형태) — Caddy LB 뒤에서 한 번에 하나씩 교체하기 위해.
+x-ext-mcp-common: &ext-mcp-common
+  <<: *agent-common
+  # feature-0045: `agent-common` 에는 restart 정책이 없다(워커는 배포가 관리한다). 그러나 이
+  # 서비스는 **사용자 진입점**이고 2 replica 의 의미는 "한쪽이 죽어도 다른 쪽이 받는다" 이다 —
+  # 죽은 쪽이 스스로 돌아오지 않으면 그 상태로 단일화되고, 다음 배포의 fail-closed 가드가
+  # (정당하게) 롤아웃을 막는다. web replica 와 같은 정책을 준다.
+  restart: unless-stopped
+  environment:
+    TZ: ${TZ}
+    LANG: ${APP_LANG}
+    PYTHONIOENCODING: utf-8
+    # codex P2: 단일 replica 고정은 그 replica 의 롤링 재시작마다 MCP 를 끊는다.
+    #   콤마 목록으로 주고 어댑터가 **연결 실패에만** 다음 후보로 넘어간다(HTTP 오류는 전달).
+    EXT_TOOL_API_BASE_URL: ${EXT_TOOL_API_BASE_URL:-https://web-a:8000,https://web-b:8000}
+    EXT_TOOL_UPSTREAM_TLS_SERVER_NAME: ${WEB_PUBLIC_HOST}
+    EXT_TOOL_UPSTREAM_HOST_HEADER: ${WEB_PUBLIC_HOST}
+    EXT_TOOL_CA_BUNDLE: /certs/rootCA.pem
+    EXT_TOOL_HTTP_BIND: 0.0.0.0              # Caddy 가 도달해야 함
+    EXT_TOOL_HTTP_ALLOW_PUBLIC_BIND: "1"     # 평문 수신 명시 동의 — TLS 는 Caddy 가 종단
+    EXT_TOOL_HTTP_PORT: "8971"
+    EXT_TOOL_TIMEOUT_SEC: "120"
+    # feature-0045: replica 가 둘이 되는 순간 **세션 친화성**이 문제가 된다 — MCP
+    # streamable-http 의 기본 모드는 세션 상태를 프로세스에 들고 있어서, 다음 요청이 다른
+    # replica 로 가면 그 세션을 모른다. 이 표면은 매 호출이 Bearer 토큰으로 독립 인증되므로
+    # 세션에 실을 상태가 없다 → stateless 로 띄워 replica 간 이동을 무해하게 만든다.
+    EXT_TOOL_MCP_STATELESS: "${EXT_TOOL_MCP_STATELESS:-1}"
+  # agent-common 의 volumes 를 덮어쓰므로 /shared 도 함께 적는다(빠지면 조용히 사라진다).
+  volumes:
+    - ../artifacts/shared:/shared
+    - ../artifacts/certs:/certs:ro
+  # codex P1: `<<: *agent-common` 만으로는 이 서비스가 네트워크에 붙지 않아 caddy·web 을
+  #   해석하지 못한다(전 경로 502). dbnet 이 caddy·web 과 공유하는 망이다.
+  networks: [dbnet]
+  entrypoint: ["python", "-u",
+               "/app/ext_tools/external_tool_mcp_http.py"]
+  # codex P2: TCP 연결만 보면 upstream 이 죽어도 healthy 로 읽힌다. MCP 엔드포인트가 실제로
+  #   HTTP 를 응답하는지까지 본다(GET 은 이 전송의 정상 메서드가 아니라 406 이 정상 응답).
+  # codex P1(2차): **모든** HTTPError 를 성공으로 읽으면 경로 불일치(404)·SDK 내부 오류(5xx)가
+  #   healthy 로 통과한다 — 바로 그 404 가 이번 cycle 의 실제 결함이었다. 허용 코드를 고정한다.
+  #   (400/405 는 SDK 버전에 따른 같은 의미의 응답이라 함께 받는다.)
+  healthcheck:
+    test: ["CMD-SHELL", "python -c \"import urllib.request,urllib.error,sys;\nreq=urllib.request.Request('http://127.0.0.1:8971/api/ai/mcp');\ntry:\n    urllib.request.urlopen(req,timeout=5); sys.exit(0)\nexcept urllib.error.HTTPError as e:\n    sys.exit(0 if e.code in (400,405,406) else 1)\nexcept Exception:\n    sys.exit(1)\""]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 20s
+  # feature-0045: 15s → 130s. 이 프로세스는 개인 AI 의 요청을 web 으로 **중계 중**일 수 있고,
+  # 그 왕복 상한이 `EXT_TOOL_TIMEOUT_SEC=120` 이다. 15s 로는 진행 중인 조사가 SIGKILL 로
+  # 잘렸다 — 조용해지면 즉시 종료되므로 유휴 시 배포 시간에는 영향이 없다.
+  stop_grace_period: 130s
+
 # feature-0014 (P0b/P1): web 무중단 롤링 배포용 공통 정의. web-a/web-b 두 replica 가
 # 동일 이미지/cert/healthcheck 로 떠서 Caddy LB 뒤에서 한 번에 하나씩 재시작된다.
 # 시퀀스 merge `<<: [*web-extra, *agent-common]` — web-extra 가 먼저라 volumes(certs 포함)
@@ -371,43 +424,15 @@ services:
   #   (`tls_server_name` + `header_up Host` ↔ EXT_TOOL_UPSTREAM_TLS_SERVER_NAME/HOST_HEADER).
   #   `ENABLE_WEB_TLS=0` 환경이라면 EXT_TOOL_API_BASE_URL 을 http:// 로 두고
   #   EXT_TOOL_ALLOW_PLAINTEXT_UPSTREAM=1 을 주면 된다.
-  ext-tool-mcp:
-    <<: *agent-common
-    environment:
-      TZ: ${TZ}
-      LANG: ${APP_LANG}
-      PYTHONIOENCODING: utf-8
-      # codex P2: 단일 replica 고정은 그 replica 의 롤링 재시작마다 MCP 를 끊는다.
-      #   콤마 목록으로 주고 어댑터가 **연결 실패에만** 다음 후보로 넘어간다(HTTP 오류는 전달).
-      EXT_TOOL_API_BASE_URL: ${EXT_TOOL_API_BASE_URL:-https://web-a:8000,https://web-b:8000}
-      EXT_TOOL_UPSTREAM_TLS_SERVER_NAME: ${WEB_PUBLIC_HOST}
-      EXT_TOOL_UPSTREAM_HOST_HEADER: ${WEB_PUBLIC_HOST}
-      EXT_TOOL_CA_BUNDLE: /certs/rootCA.pem
-      EXT_TOOL_HTTP_BIND: 0.0.0.0              # Caddy 가 도달해야 함
-      EXT_TOOL_HTTP_ALLOW_PUBLIC_BIND: "1"     # 평문 수신 명시 동의 — TLS 는 Caddy 가 종단
-      EXT_TOOL_HTTP_PORT: "8971"
-      EXT_TOOL_TIMEOUT_SEC: "120"
-    # agent-common 의 volumes 를 덮어쓰므로 /shared 도 함께 적는다(빠지면 조용히 사라진다).
-    volumes:
-      - ../artifacts/shared:/shared
-      - ../artifacts/certs:/certs:ro
-    # codex P1: `<<: *agent-common` 만으로는 이 서비스가 네트워크에 붙지 않아 caddy·web 을
-    #   해석하지 못한다(전 경로 502). dbnet 이 caddy·web 과 공유하는 망이다.
-    networks: [dbnet]
-    entrypoint: ["python", "-u",
-                 "/app/ext_tools/external_tool_mcp_http.py"]
-    # codex P2: TCP 연결만 보면 upstream 이 죽어도 healthy 로 읽힌다. MCP 엔드포인트가 실제로
-    #   HTTP 를 응답하는지까지 본다(GET 은 이 전송의 정상 메서드가 아니라 406 이 정상 응답).
-    # codex P1(2차): **모든** HTTPError 를 성공으로 읽으면 경로 불일치(404)·SDK 내부 오류(5xx)가
-    #   healthy 로 통과한다 — 바로 그 404 가 이번 cycle 의 실제 결함이었다. 허용 코드를 고정한다.
-    #   (400/405 는 SDK 버전에 따른 같은 의미의 응답이라 함께 받는다.)
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,urllib.error,sys;\nreq=urllib.request.Request('http://127.0.0.1:8971/api/ai/mcp');\ntry:\n    urllib.request.urlopen(req,timeout=5); sys.exit(0)\nexcept urllib.error.HTTPError as e:\n    sys.exit(0 if e.code in (400,405,406) else 1)\nexcept Exception:\n    sys.exit(1)\""]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-    stop_grace_period: 15s
+  # feature-0045 (브리지 배포 연속성): 단일 컨테이너였던 MCP 표면을 **2 replica** 로 나눈다.
+  # 개인 AI 는 여기에 붙어 있는데, 배포마다 이 컨테이너가 통째로 recreate 되면 그 연결이
+  # 끊겼다(surge 도 드레인도 없었고 stop_grace 는 15s 였다). web-a/web-b 와 같은 구조를 주면
+  # Caddy 뒤에서 한 번에 하나씩 교체할 수 있어 항상 ≥1 후보가 남는다. 상시 컨테이너가 1개
+  # 늘지만, 그 대가로 "배포하면 AI 연결이 끊긴다" 가 사라진다.
+  ext-tool-mcp-a:
+    <<: *ext-mcp-common
+  ext-tool-mcp-b:
+    <<: *ext-mcp-common
 
   insight-worker:
     <<: *agent-common

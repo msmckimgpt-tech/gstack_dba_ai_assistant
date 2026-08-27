@@ -1,6 +1,6 @@
 {
-  "total_routes": 256,
-  "api_routes": 255,
+  "total_routes": 259,
+  "api_routes": 258,
   "ordered": [
     {
       "path": "/static",
@@ -186,6 +186,27 @@
       "path": "/readyz",
       "methods": [
         "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/internal/bridge-drain",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/internal/bridge-activity",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/internal/bridge-reclaim",
+      "methods": [
+        "POST"
       ],
       "type": "APIRoute"
     },

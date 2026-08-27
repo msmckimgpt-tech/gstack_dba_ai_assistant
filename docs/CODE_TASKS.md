@@ -370,6 +370,38 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 
 ---
 
+## TASK 10 — 배포 중 브리지(개인 AI) 연결이 끊긴다 / 드레인·게이트 변경
+
+**Match keywords**: 배포하면 AI 연결이 끊긴다·`wait_for_request` 가 끊긴다·드레인·lame-duck·
+`bridge_inflight`·`X-Bridge-Draining`·pre-drain 이 안 기다린다·MCP replica·점유가 안 풀린다.
+
+**Entry region**: 관측·드레인 판정의 정본은 `unit/feature-0003-agent-web-ui/src/bridge_drain.py`
+(대기 `waiting()` / 작업 `tool_call()` 를 **따로** 세고, `BridgeInflightMiddleware` 가 드레인 중
+신규 도구 호출을 `503 X-Bridge-Draining` 으로 돌려보낸다 — 단 제출·첨부 읽기는 `DRAIN_EXEMPT_PATHS`
+로 면제). 배선은 `src/app.py` 의 `app.add_middleware(bridge_drain.BridgeInflightMiddleware)`.
+제어 창구는 `src/routers/system.py` 의 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용).
+
+**Reference regions (ordered)**:
+1. 설계 근거(대기는 비우고 작업은 기다린다): `src/bridge_drain.py` 모듈 docstring + 미들웨어 docstring.
+2. 게이트: `bin/deploy-web.sh` 의 `predrain`(브리지 축 대기) · `replica_drain_probe` ·
+   `replica_release_drain` · `clear_stale_drain` · `on_exit_cleanup`(드레인 누수 차단) ·
+   `rollout_mcp_phase`/`rollout_mcp_replicas`(엣지 전환 **앞**) · `reclaim_bridge_claims`.
+3. 워커·gateway 축: `bin/lib/quiesce.sh` 의 `bridge_active_total`(fresh 만) · `server_llm_blocked`.
+4. 엣지 계약: `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` — `/api/ai/mcp*` 2 upstream
+   LB(`lb_policy ip_hash`, active health 없음) + `/internal/*` 404.
+5. 근거 기록: `unit/feature-0045-zd-bridge-continuity/docs/{FUNCTION,ANCHOR,DECISIONS}.md`.
+
+**Recurse via (literal grep)**:
+- 드레인 소비자: `grep -rn "bridge_drain\|_drain\." unit/feature-0003-agent-web-ui/src/`
+- 스파인 seam: `grep -n "PREDRAIN_\|DRAINED_SVC\|MCP_REPLICAS\|bridge" bin/deploy-web.sh`
+- 러너 쪽: `grep -n "draining\|_RECONNECT_BACKOFF\|_DRAINING_RETRY_FLOOR" unit/feature-0043-external-llm-bridge/src/bridge_agent.py`
+
+**Verify**: `unit/feature-0045-zd-bridge-continuity/tests/`(60건 — 드레인 상태기계·게이트 실행·
+토폴로지·내부 창구) · `caddy validate --adapter caddyfile` · 배포 로그의 `bridge_continuity_summary`
+("끊김 0" 또는 강행/미확인 사유).
+
+---
+
 ## 부록 — grep 쿡북 (durable anchors)
 
 라인 번호는 app.py 재생성마다 drift 하므로 **grep 문자열이 정본 anchor**다.

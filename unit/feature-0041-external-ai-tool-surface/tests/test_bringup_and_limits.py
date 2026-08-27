@@ -101,8 +101,10 @@ def test_upstream_tls_is_verified_not_disabled():
     """★ web replica 는 TLS 로 듣지만 인증서 SAN 에 컨테이너 이름이 없다. 여기서 검증을 끄면
     Bearer token 이 사내망 MITM 에 노출된다 — Caddy 처럼 **검증 대상 이름만 고정**한다."""
     compose = _read("docker-compose.yml")
-    block = compose[compose.index("  ext-tool-mcp:"):]
-    block = block[:block.index("\n  insight-worker:")]
+    # feature-0045: 단일 서비스 → `ext-tool-mcp-a/b` 2 replica. 공통 정의는 `x-ext-mcp-common`
+    # anchor 에 있으므로 그 블록을 본다(두 replica 가 같은 정의를 공유한다는 사실도 함께 잠근다).
+    block = compose[compose.index("x-ext-mcp-common: &ext-mcp-common"):]
+    block = block[:block.index("\nx-web-extra:")]
     assert "EXT_TOOL_CA_BUNDLE: /certs/rootCA.pem" in block
     assert "EXT_TOOL_UPSTREAM_TLS_SERVER_NAME" in block and "EXT_TOOL_UPSTREAM_HOST_HEADER" in block
     assert "EXT_TOOL_VERIFY_TLS" not in block, "검증을 끄는 설정이 들어갔다"  # compose 엔 주석 형태 없음
@@ -172,7 +174,7 @@ def test_caddy_blocks_anonymous_mcp_connections(codex_p2=True):
     block = block[:block.index("\n\thandle {")]
     directives = code_only(block)
     assert "@noauth not header Authorization *" in directives
-    assert directives.index("web-a:8000") < directives.index("ext-tool-mcp:8971"), \
+    assert directives.index("web-a:8000") < directives.index("ext-tool-mcp-a:8971"), \
         "익명 경로가 ext-tool-mcp 뒤면 익명 요청이 MCP 세션을 연다"
 
 
@@ -215,8 +217,14 @@ def test_effective_limits_falls_back_to_defaults_when_settings_unavailable():
 def test_compose_declares_ext_tool_mcp_service():
     import yaml
     d = yaml.safe_load(_read("docker-compose.yml"))
-    svc = d["services"].get("ext-tool-mcp")
-    assert svc, "compose 에 ext-tool-mcp 서비스가 없다"
+    # feature-0045: 배포마다 MCP 연결이 끊기지 않도록 2 replica 로 나눴다. **둘 다** 있어야 하고
+    # 같은 정의(anchor)를 공유해야 한다 — 하나만 두면 그 replica 교체가 곧 전면 단절이다.
+    a = d["services"].get("ext-tool-mcp-a")
+    b = d["services"].get("ext-tool-mcp-b")
+    assert a and b, "compose 에 ext-tool-mcp-a/b 가 없다(2-replica 무중단 전제)"
+    assert a == b, "두 MCP replica 의 정의가 다르다 — 롤링 중 동작이 갈린다"
+    assert "ext-tool-mcp" not in d["services"], "구 단일 서비스가 남아 있다(두 세대 동시 기동)"
+    svc = a
     env = svc["environment"]
     # 기본값은 https — web replica 가 TLS 로 듣기 때문이다(`ENABLE_WEB_TLS=1`).
     # 평문 배포를 쓰는 환경은 EXT_TOOL_API_BASE_URL 로 덮어쓴다.
@@ -237,7 +245,10 @@ def test_dockerfile_copies_the_http_adapter():
 
 def test_deploy_spine_rolls_out_the_new_service():
     """롤아웃 대상에서 빠지면 이미지만 새로 빌드되고 컨테이너는 구코드로 계속 돈다."""
-    assert "ext-tool-mcp" in _read("bin", "deploy-web.sh")
+    spine = _read("bin", "deploy-web.sh")
+    # feature-0045: WORKERS 일괄 recreate 에서 **전용 one-at-a-time 롤링**으로 분리됐다.
+    assert "MCP_REPLICAS=(ext-tool-mcp-a ext-tool-mcp-b)" in spine
+    assert "rollout_mcp_replicas" in spine
 
 
 def test_caddy_routes_mcp_before_the_catchall():
@@ -246,7 +257,8 @@ def test_caddy_routes_mcp_before_the_catchall():
     mcp = cf.index("handle /api/ai/mcp*")
     catchall = cf.index("reverse_proxy web-a:8000 web-b:8000")
     assert mcp < catchall, "MCP 라우트가 기본 handle 뒤에 있다"
-    assert "ext-tool-mcp:8971" in cf
+    # feature-0045: 두 upstream 을 나열해야 롤링 중 한쪽이 내려가도 후보가 남는다.
+    assert "reverse_proxy ext-tool-mcp-a:8971 ext-tool-mcp-b:8971" in cf
 
 
 def test_plaintext_upstream_requires_explicit_optin():

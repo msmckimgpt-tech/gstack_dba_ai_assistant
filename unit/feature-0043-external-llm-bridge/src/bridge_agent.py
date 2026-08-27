@@ -71,6 +71,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -124,6 +125,19 @@ def load_conf() -> dict:
             return json.load(f) or {}
     except Exception:
         return {}
+
+#: 연결이 **끊겼을 때만** 쓰는 복구 간격(feature-0045). 서버가 배포로 교체되는 몇 초 동안
+#: 연결이 실패하는데, 그때 쉬지 않고 재시도하면 초당 수천 번을 두드려 사용자 머신의 CPU 를
+#: 태운다. 대기(`wait_for_request`)에는 여전히 sleep 이 없다 — 이건 대기가 아니라 재연결이다.
+#: 상한을 15초로 둔 이유: 롤링 배포 한 replica 의 교체가 보통 그 안에 끝나므로, 복구가
+#: 지연되어 질문 인지가 늦어지는 일이 없다.
+_RECONNECT_BACKOFF_START = 1.0
+_RECONNECT_BACKOFF_MAX = 15.0
+
+#: 서버가 "배포 교대 중" 이라고 답했을 때의 **하한**. 백오프가 아니라 고정값이다 — 자라지
+#: 않으므로 인지가 늦어지지 않고, 엣지가 그 인스턴스를 후보에서 빼는 짧은 창(2s)에 호출이
+#: 폭주해 계정 호출 상한을 태우는 것만 막는다.
+_DRAINING_RETRY_FLOOR_SEC = 0.5
 
 
 def _log(msg: str) -> None:
@@ -553,6 +567,9 @@ def main() -> int:
     stalled = 0
     done_once = threading.Event()
 
+    #: 연결이 끊겼을 때의 복구 간격(feature-0045). 대기가 아니라 재연결이므로 sleep 이 있다.
+    backoff = 0.0
+
     _log(f"대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. (동시 {workers}건, Ctrl+C 로 종료)")
     while True:
         slots.acquire()
@@ -567,8 +584,27 @@ def main() -> int:
             _log(f"  2) python3 {os.path.basename(__file__)} --resume --token <새 토큰>")
             return 3
         if code:
-            _log(f"대기 실패 {code}: {res.get('error')} — 다시 대기합니다.")
+            # feature-0045: 서버가 배포로 교체되는 동안은 **연결 자체가 실패**한다(`_http == 0`).
+            # 종전에는 곧바로 `continue` 였는데, 그러면 서버가 없는 몇 초 동안 초당 수천 번을
+            # 재시도해 사용자 머신의 CPU 를 태운다(대기에 sleep 이 없다는 설계가, 실패 경로에서는
+            # 정확히 반대로 작용했다). **대기에는 여전히 sleep 이 없다** — 여기서 쉬는 것은 대기가
+            # 아니라 **연결 복구**다. 두 가지는 다른 일이고, 다르게 다뤄야 한다.
+            backoff = min(_RECONNECT_BACKOFF_MAX, (backoff * 2) or _RECONNECT_BACKOFF_START)
+            _log(f"대기 실패 {code}: {res.get('error')} — {backoff:.0f}초 뒤 다시 연결합니다.")
             slots.release()
+            time.sleep(backoff)
+            continue
+        backoff = 0.0
+        if res.get("draining"):
+            # feature-0045: 배포 교대다. **오류가 아니므로 백오프하지 않는다** — 곧바로 다시
+            # 부르면 남은 인스턴스가 받는다. 다만 이 응답은 **즉시** 오고, 엣지가 그 인스턴스를
+            # 후보에서 빼기까지 짧은 창(health_interval 2s)이 있다. 그 창에서 sleep 0 으로
+            # 재호출하면 초당 수십~수백 회가 되어 계정 시간당 호출 상한을 태우고 429 락아웃을
+            # 만든다 — 실패 경로에서 없앤 hot loop 를 성공 경로에 다시 만드는 셈이다.
+            # 인지 지연이 무시할 만큼 짧은 하한만 둔다(백오프가 아니다 — 자라지 않는다).
+            _log("서버 인스턴스 교대 중 — 곧바로 다시 대기합니다.")
+            slots.release()
+            time.sleep(_DRAINING_RETRY_FLOOR_SEC)
             continue
 
         # 취소는 **새 질문과 같은 응답**으로 온다(별도 채널이 아니다 — P0-J 의 즉시 인지가
