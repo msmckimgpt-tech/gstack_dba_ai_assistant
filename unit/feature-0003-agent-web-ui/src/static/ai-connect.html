@@ -4,18 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>외부 AI 연결</title>
+  <title>내 AI 연결하기</title>
   <link rel="stylesheet" href="/static/ai-connect.css?v=dev" />
 </head>
 <body class="aic-body">
   <main class="aic-card">
     <p class="aic-brand">Database Query Assistant</p>
-    <h1>외부 AI 연결</h1>
+    <h1>내 AI 연결하기</h1>
     <p class="aic-lead" id="connectLead">확인하는 중…</p>
 
     <!-- ① MCP 를 지원하는 클라이언트: 주소만 넣으면 나머지는 클라이언트가 한다 -->
     <section id="connectAuto" class="aic-hidden">
-      <p><strong>1) MCP 를 지원하는 AI 도구</strong> — 아래 주소만 등록하면 브라우저가 저절로 열리고, 로그인·허용만 하면 끝입니다.</p>
+      <p class="aic-why">
+        이 서비스는 답변을 직접 만들지 않습니다. 회원님이 쓰시는 <strong>AI 프로그램</strong>을
+        여기에 한 번 연결해 두면, 웹에서 보낸 질문을 그 AI 가 가져가 답해 줍니다.
+      </p>
+
+      <h2 class="aic-step">방법 ① 주소 등록 &mdash; 대부분 이 방법으로 됩니다</h2>
+      <p>
+        <strong>Claude Desktop, Claude Code</strong> 처럼 외부 서비스 연결을 지원하는 AI 프로그램이라면,
+        그 프로그램의 <em>연결/커넥터 추가</em> 설정에 아래 주소를 붙여넣기만 하면 됩니다.
+        나머지는 자동입니다 &mdash; 브라우저가 저절로 열리고, 로그인 후 <em>허용</em>만 누르면 끝입니다.
+      </p>
       <div class="aic-code" id="connectEndpoint">…</div>
       <div class="aic-actions" style="justify-content:flex-start;margin-bottom:22px">
         <button type="button" class="aic-btn" id="copyEndpoint">주소 복사</button>
@@ -24,10 +34,15 @@
 
     <!-- ② 그 외 클라이언트: 토큰을 손으로 넣는다 -->
     <section id="connectManual" class="aic-hidden">
-      <p><strong>2) 그 외 도구 · 수동 설정</strong> — 아래 버튼으로 토큰을 발급해 설정에 붙여넣으세요.</p>
+      <h2 class="aic-step">방법 ② 연결 토큰 직접 넣기 &mdash; ①이 안 될 때만</h2>
+      <p>
+        쓰시는 프로그램이 위 주소 등록을 지원하지 않으면, 대신 <strong>연결 토큰</strong>을 발급해
+        그 프로그램의 설정에 붙여넣습니다. 토큰은 <em>이 서비스에 들어올 수 있는 비밀 문자열</em>로,
+        AI 프로그램 설정에서 보통 <code>token</code> 또는 <code>API key</code> 라고 적힌 칸에 넣습니다.
+      </p>
       <div class="aic-note">
-        <p>발급된 토큰은 <strong>내 계정 권한</strong>으로 데이터를 조회합니다. 사람과 공유하지 마세요.</p>
-        <p><strong>로그아웃하면 즉시 무효</strong>가 됩니다. 화면을 벗어나면 다시 볼 수 없으니 그 자리에서 붙여넣으세요.</p>
+        <p>이 토큰은 <strong>회원님 권한 그대로</strong> 데이터를 봅니다 &mdash; 비밀번호처럼 다루시고 다른 사람에게 주지 마세요.</p>
+        <p><strong>로그아웃하면 바로 무효</strong>가 됩니다. 그리고 <strong>이 화면을 벗어나면 다시 볼 수 없으니</strong>, 발급하면 그 자리에서 붙여넣으세요.</p>
       </div>
       <div class="aic-actions" style="justify-content:flex-start">
         <button type="button" class="aic-btn aic-btn--primary" id="issueToken">연결 토큰 발급</button>
@@ -44,13 +59,13 @@
     <p class="aic-status" id="connectStatus"></p>
 
     <section id="connectLogin" class="aic-hidden">
-      <p>연결을 만들려면 먼저 로그인해야 합니다.</p>
+      <p>연결하려면 먼저 로그인해야 합니다.</p>
       <div class="aic-actions" style="justify-content:flex-start">
         <a class="aic-btn aic-btn--primary" id="loginLink" href="/?next=%2Fai%2Fconnect">로그인하러 가기</a>
       </div>
     </section>
 
-    <p class="aic-foot">도구 목록·사용법은 <a href="/api/ai/guide" target="_blank" rel="noopener">연동 가이드</a>를 보세요.</p>
+    <p class="aic-foot">잘 안 되시나요? <a href="/api/ai/guide" target="_blank" rel="noopener">자세한 연동 가이드</a>에 도구별 설정 방법과 문제 해결이 있습니다.</p>
   </main>
   <script src="/static/ai-connect.js?v=dev"></script>
 </body>

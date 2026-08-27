@@ -63,7 +63,7 @@
   }
 
   function showLoggedOut() {
-    $("connectLead").textContent = "이 서비스의 데이터를 외부 AI 에 연결합니다.";
+    $("connectLead").textContent = "웹에서 보낸 질문을 회원님의 AI 가 대신 답하도록 연결합니다. 한 번만 하면 됩니다.";
     $("connectLogin").classList.remove("aic-hidden");
     $("connectAuto").classList.remove("aic-hidden");
   }
