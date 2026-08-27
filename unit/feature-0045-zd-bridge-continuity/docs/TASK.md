@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: implemented (적대 검증 반영 완료, 출하 대기)
+- State: shipped — 라이브 배포 `e7d54f70` · 끊김 0 실측
 - Owner: AI
 - Priority: high
 - Last Updated: 2026-08-27
@@ -64,7 +64,7 @@ source_of_truth: true
 - [x] TASK-20260827T073753-014 라이브 배포 1차 — web·MCP 전환 성공, `/livez` 가 실제
   `bridge_waiters=1`(개인 AI 대기 중)을 노출해 **종전 게이트의 사각지대를 라이브로 실증**
 - [x] TASK-20260827T073753-015 배포 중단 결함 수정(CHG-0003 — 정리 조회가 배포를 죽임)
-- [ ] TASK-20260827T073753-016 재배포로 워커·gateway 마무리 + `bridge_continuity_summary` 확인
+- [x] TASK-20260827T073753-016 재배포 완료 — 전 서비스 `e7d54f70` · `bridge_continuity_summary`="끊김 0" · 엣지 no-upstreams 0건
 
 ## 4. In Progress
 - 없음
@@ -99,8 +99,7 @@ source_of_truth: true
   `SubmittedAt IS NULL` 로 제출본을 건드리지 않음
 - [x] `배포가 브리지 작업을 인지한다(게이트 정직성)` — 산출물: quiesce 4번째 축 ·
   배선 확인: `quiesce_sample_is_quiet "0|0|0|unknown"` → NOTQUIET 실행 검증
-- [ ] `라이브에서 실제로 안 끊긴다` — 산출물: 배포 로그의 `bridge_continuity_summary` ·
-  배선 확인: **미실측**(배포 시점에 확인)
+- [x] `라이브에서 실제로 안 끊긴다` — 산출물: 배포 로그 · 배선 확인: **실측 PASS** — `"대기는 드레인으로 교대했고 진행 중 왕복은 완주했다(끊김 0)"` · MCP 교체 중 엣지 400 유지 · no-upstreams 0건 (TEST.md §3)
 
 **주장 affordance 실측 (G3)**: 이 cycle 은 사용자 대면 UI 를 추가하지 않는다(배포 절차와
 서버 내부 창구만 바꾼다). 사용자 화면의 말풍선 상태 전이는 feature-0043 의 기존 배선이
