@@ -1,7 +1,7 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState } from "./app/connect-modal.js?v=dev";
-import { handleBridgePending, resumeBridgePolling, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
+import { handleBridgePending, resumeBridgePolling, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
@@ -2600,7 +2600,9 @@ async function _submitMessageEdit(cid, mid, mode, newContent) {
   // API_DEFAULT_MODEL(claude-haiku-4) + 모델 config 기본 추론으로 폴백해, 사용자가 고른
   // sonnet + 매우높음 선택이 haiku + 일반으로 무시되던 회귀 해소. (simple 수정은 재답변이
   // 없으므로 model/reasoning 무관 — 미포함 유지.)
-  if (mode === "reanswer") {
+  // feature-0043 bridge-model-selector: 조작면이 숨겨진 상태(서버 계정 LLM 차단)에서는 화면이
+  // 보여주지도 않은 값을 재답변에 실어 보내지 않는다 — sendPrompt 와 같은 계약.
+  if (mode === "reanswer" && !_composerModelSelectorHidden()) {
     body.model = _composerCurrentModel();
     body.reasoning_level = _composerCurrentReasoningLevel();
   }

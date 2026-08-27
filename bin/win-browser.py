@@ -89,15 +89,7 @@ def emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
 
 
-def win_host_ip():
-    """WSL2 에서 Windows host 에 도달하는 IP (resolv.conf nameserver → 기본 게이트웨이)."""
-    try:
-        with open("/etc/resolv.conf", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("nameserver"):
-                    return line.split()[1].strip()
-    except Exception:
-        pass
+def _default_gateway_ip():
     try:
         out = subprocess.run(
             ["ip", "route", "show", "default"], capture_output=True, text=True, timeout=4
@@ -108,6 +100,51 @@ def win_host_ip():
     except Exception:
         pass
     return None
+
+
+def _is_private_ipv4(ip):
+    """RFC1918 사설 대역인가 — WSL2 의 Windows host 는 항상 사설 IP 다."""
+    try:
+        a, b = (int(x) for x in str(ip).split(".")[:2])
+    except Exception:
+        return False
+    return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
+def win_host_ip():
+    """WSL2 에서 Windows host 에 도달하는 IP.
+
+    **첫 nameserver 를 무조건 쓰지 않는다.** 이 호스트처럼 `/etc/resolv.conf` 가 공용 DNS
+    (`8.8.8.8`)를 먼저 나열하도록 커스터마이즈된 환경에서는 그 값이 win_host 로 잡혀 relay 가
+    바인딩조차 못 한다 — `relay started (8.8.8.8:9223 -> ...)` 로 시작해 놓고 CDP 도달에 실패하고,
+    진단은 "브리지 미구성" 을 가리켜 원인을 엉뚱한 곳(portproxy·mirrored 설정)에서 찾게 만든다
+    (feature-0043 두 cycle 연속 PB-0008 미수행의 실제 원인, 2026-08-28).
+
+    순서: env override → **기본 게이트웨이** → 사설 대역 nameserver → (마지막) 첫 nameserver.
+
+    게이트웨이를 nameserver 보다 **먼저** 본다. WSL2 의 NAT 게이트웨이가 곧 Windows host 이고,
+    사설 nameserver 는 그게 아닐 수 있다 — 사내 DNS(예: `10.x.x.x`)를 쓰는 환경에서 사설 대역만
+    보고 고르면 relay 가 **자기 것이 아닌 원격 IP** 에 바인딩하려다 실패한다. 즉 이 함수가 고치려던
+    바로 그 종류의 환경에서 같은 증상이 재현된다(codex 리뷰 P2).
+    """
+    override = str(os.environ.get("WIN_BROWSER_HOST", "") or "").strip()
+    if override:
+        return override
+    gw = _default_gateway_ip()
+    if gw:
+        return gw
+    names = []
+    try:
+        with open("/etc/resolv.conf", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("nameserver"):
+                    names.append(line.split()[1].strip())
+    except Exception:
+        pass
+    for ip in names:
+        if _is_private_ipv4(ip):
+            return ip
+    return names[0] if names else None
 
 
 import re as _re
@@ -483,6 +520,17 @@ def cmd_launch(args):
     # 전용 격리 프로필 + 로컬 대상이므로 허용; 비활성은 WIN_BROWSER_IGNORE_CERT=0.
     if os.getenv("WIN_BROWSER_IGNORE_CERT", "1").strip().lower() not in ("0", "false", "no"):
         flags.append("--ignore-certificate-errors")
+    # WSL 안에서만 이름이 풀리는 사설 호스트(`*.company.local` 등)를 Windows Chrome 이 열 수
+    # 있게 한다. Windows hosts 파일을 건드리려면 관리자 권한 + 시스템 영구 변경이 필요하지만,
+    # 이 플래그는 **이 브라우저 인스턴스에만** 적용된다(전용 격리 프로필).
+    #   WIN_BROWSER_HOST_MAP="mysql-ai.company.local=172.26.154.233"  (콤마로 여러 개)
+    host_map = str(os.environ.get("WIN_BROWSER_HOST_MAP", "") or "").strip()
+    if host_map:
+        rules = ", ".join(f"MAP {h.strip()} {ip.strip()}"
+                          for h, _, ip in (p.partition("=") for p in host_map.split(","))
+                          if h.strip() and ip.strip())
+        if rules:
+            flags.append(f"--host-resolver-rules={rules}")
     flags.append(args.url or "about:blank")
 
     logf = open(os.path.join(tempfile.gettempdir(), "win-browser-launch.log"), "ab")

@@ -2329,9 +2329,41 @@ function _composerModelLabelFor(value) {
   return value;
 }
 
+// feature-0043 bridge-model-selector: 이 화면에서 모델·추론 강도를 **지정할 수 없는 운영 상태**인가.
+//
+// 서버 계정 LLM 이 차단된 동안 답변은 연결된 개인 AI 가 만든다. 그 런타임이 claude 인지 codex·
+// gemini·ollama 인지 서버는 알 수 없고(MCP 어댑터가 별도 컨테이너라 clientInfo 가 오지 않는다),
+// 화면에서 고른 내부 alias(`claude-haiku-4`)는 그쪽 CLI 가 알지 못해 실패 후 기본 모델로 폴백한다
+// — 즉 **무엇을 골라도 답변이 달라지지 않는 조작면**이었다(사용자 제보 2026-08-27).
+//
+// 판정은 서버가 실어 준 명시 값(`model_selector`)만 본다. 카탈로그 로드 실패(null)로는 숨기지
+// 않는다 — 일시적 네트워크 실패가 조작면을 지우면, 사용자는 기능이 사라진 것으로 읽는다.
+function _composerModelSelectorHidden() {
+  const catalog = state.modelCatalog || state.apiVaultOptions;
+  return String(catalog?.model_selector || "") === "hidden";
+}
+
+// 숨김 상태를 DOM 에 반영한다 — 항목 자체를 감춘다(비활성 회색 줄을 남기지 않는다).
+function _applyComposerSelectorVisibility() {
+  const hidden = _composerModelSelectorHidden();
+  ["composerActionsModelItem", "composerActionsReasoningItem"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("hidden", hidden);
+  });
+  if (hidden) {
+    // 열려 있던 secondary 팝업이 부모만 사라진 채 떠 있지 않게 함께 닫는다.
+    ["composerModelMenu", "composerReasoningMenu"].forEach((id) => {
+      const menu = document.getElementById(id);
+      if (menu) menu.classList.add("hidden");
+    });
+  }
+  return hidden;
+}
+
 function _updateComposerModelLabel() {
+  const hidden = _applyComposerSelectorVisibility();
   const labelEl = document.getElementById("composerActionsModelLabel");
-  if (labelEl) labelEl.textContent = _composerModelLabelFor(_composerCurrentModel());
+  if (labelEl && !hidden) labelEl.textContent = _composerModelLabelFor(_composerCurrentModel());
   // 모델이 바뀌면 추론 강도 항목의 활성/라벨도 함께 최신화(thinking 미지원 모델이면 비활성).
   _updateComposerReasoningLabel();
 }
@@ -2369,6 +2401,9 @@ function _composerCurrentReasoningLevel() {
 function _updateComposerReasoningLabel() {
   const labelEl = document.getElementById("composerActionsReasoningLabel");
   const item = document.getElementById("composerActionsReasoningItem");
+  // 브리지 모드에서는 항목이 이미 숨겨졌다(사용자 결정 2026-08-28) — 라벨·활성 계산은 무의미하고,
+  // 여기서 `is-disabled` 를 얹으면 숨김이 풀리는 순간 회색 줄이 남는다.
+  if (_composerModelSelectorHidden()) return;
   const supported = _composerModelSupportsThinking();
   if (labelEl) {
     labelEl.textContent = supported ? _reasoningLevelLabel(_composerCurrentReasoningLevel()) : "미지원";
@@ -2415,6 +2450,8 @@ function _openComposerReasoningMenu() {
   const reasoningItem = document.getElementById("composerActionsReasoningItem");
   const primary = document.getElementById("composerActionsMenu");
   if (!menu || !reasoningItem) return;
+  // 숨김 상태에서는 열지 않는다 — 키보드 포커스·직접 호출로 우회해 무효한 조작면이 뜨지 않게.
+  if (_composerModelSelectorHidden()) return;
   // 다른 secondary(모델) 팝업은 닫는다(동시 표시 방지).
   const modelMenu = document.getElementById("composerModelMenu");
   const modelItem = document.getElementById("composerActionsModelItem");
@@ -2504,6 +2541,8 @@ function _openComposerModelMenu() {
   const modelItem = document.getElementById("composerActionsModelItem");
   const primary = document.getElementById("composerActionsMenu");
   if (!menu || !modelItem) return;
+  // 숨김 상태에서는 열지 않는다(추론 메뉴와 동일 계약).
+  if (_composerModelSelectorHidden()) return;
   // 추론 강도 secondary 팝업은 닫는다(동시 표시 방지).
   const reasoningMenu = document.getElementById("composerReasoningMenu");
   const reasoningItem = document.getElementById("composerActionsReasoningItem");
@@ -2797,16 +2836,24 @@ async function sendPrompt() {
   // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
   // feature-0008 (composer-model-selector): model 결정은 `_composerCurrentModel()` 단일 정의를 따른다
   // (selectedModel → session.default_model → catalog default → 최종 안전망).
+  // feature-0043 bridge-model-selector: 조작면이 숨겨진 상태(서버 계정 LLM 차단)에서는 화면이
+  // 보여주지도 않은 값을 실어 보내지 않는다. 싣는 순간 그 값이 대화 KV 에 저장되고, 나중에
+  // 게이트를 되돌렸을 때 **사용자가 고른 적 없는 모델**이 그 대화의 설정으로 되살아난다.
+  const _selectorHidden = _composerModelSelectorHidden();
   const askBody = {
     message,
     conversation_id: targetConvId || "",
+  };
+  if (!_selectorHidden) {
     // feature-0003 reasoning-effort-selector: 사용자가 고른 추론 강도. backend 가 정규화·검증하고
     // thinking 지원 모델일 때만 요청 단위 budget 으로 주입(미지원 모델이면 무시).
-    reasoning_level: _composerCurrentReasoningLevel(),
-  };
+    askBody.reasoning_level = _composerCurrentReasoningLevel();
+  }
   // feature-0003 model-persist (2R 적대 리뷰 C-A): model 은 그 대화의 저장값을 덮어쓰므로,
   // hydration 되지 않은 대화로는 싣지 않는다(그 경우 서버가 기존 저장값을 보존).
-  if (_shouldSendModelField(state, targetConvId, isLazyCreate)) {
+  if (_selectorHidden) {
+    // 숨김 상태 — 모델 동봉·경고 토스트 모두 성립하지 않는다(고를 수 없었으므로 강등도 없다).
+  } else if (_shouldSendModelField(state, targetConvId, isLazyCreate)) {
     askBody.model = _composerCurrentModel();
   } else if (_modelSelectionSilentlyDropped(state, targetConvId, isLazyCreate)) {
     // model-persist(conversation_audit 2026-07-28): 화면은 사용자 선택 모델을 보여주는데 그 값이
@@ -3343,6 +3390,7 @@ export {  // 인라인 export(_downloadAttachmentById) 제외
   _closeMentionAC,
   _composerCurrentModel,
   _composerCurrentReasoningLevel,
+  _composerModelSelectorHidden,   // feature-0043: 재답변 경로(app.js)도 같은 판정을 쓴다
   _detachShareRangeEsc,
   _ensureMentionMembers,
   _loadConversationAttachments,

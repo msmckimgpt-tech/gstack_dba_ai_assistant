@@ -36,6 +36,13 @@ AI 는 자동 감지한다(claude → codex → gemini → ollama 순). 고정�
     --ai claude            # 또는 codex / gemini / ollama
     --cmd 'my-ai -p {prompt}'   # 완전 수동. {prompt} 자리에 질문이 들어간다
 
+**모델은 웹에서 고르지 않는다** — 이 머신의 AI 설정이 정한다. 특정 모델로 고정하려면 자기 런타임의
+실제 모델 이름으로 명령을 직접 준다:
+
+    --cmd 'claude --model opus -p {prompt}'
+
+(서비스가 아는 모델 이름과 각 CLI 가 아는 모델 이름은 다르다. 그 이름을 아는 것은 사용자다.)
+
 한 번만 처리하고 끝내려면 `--once`. 연결만 확인하려면 `--check`.
 """
 from __future__ import annotations
@@ -134,13 +141,16 @@ _CLI_ADAPTERS: list[tuple[str, list[str]]] = [
 ]
 
 
-#: 런타임별 **모델 지정 방법**. 웹에서 고른 모델을 여기로 옮긴다 — 전달만 받고 쓰지 않으면
-#: 사용자 선택은 여전히 무효다. 지원하지 않는 런타임은 빈 목록(요청은 프롬프트로만 전달된다).
-_MODEL_FLAG: dict[str, list[str]] = {
-    "claude": ["--model"],
-    "codex": ["--model"],
-    "gemini": ["-m"],
-}
+#: 모델·추론 강도는 **웹에서 지정하지 않는다** (P0-T, 사용자 결정 2026-08-28).
+#:
+#: 종전에는 웹 컴포저에서 고른 값을 여기로 옮겨 `--model` 인자로 넘겼다. 그런데 그 값은 서비스
+#: 내부의 litellm alias(`claude-haiku-4` 등)라 어느 CLI 도 알지 못했고 — 기본값이 haiku 이므로
+#: 사실상 **모든** 요청이 모델 지정 실패 → 기본 모델 재시도 경로를 탔다. 요청은 반영되지 않으면서
+#: "못 맞췄다" 는 고지만 매번 붙는, 있으나 마나 한 왕복이었다.
+#:
+#: 이제 서버는 모델·추론 요구를 보내지 않는다. 어떤 모델로 답할지는 **이 머신의 AI 설정**이 정한다
+#: — 특정 모델로 고정하고 싶으면 `--cmd 'claude --model opus -p {prompt}'` 처럼 자기 런타임의
+#: 실제 모델 이름으로 지정한다(그 이름을 아는 것은 서버가 아니라 사용자다).
 
 
 def _which(name: str) -> str | None:
@@ -160,19 +170,17 @@ def detect_ai() -> tuple[str, list[str]] | None:
     return None
 
 
-def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
-                 want_model: str = "") -> tuple[bool, str]:
+def ask_local_ai(kind: str, argv: list[str], prompt: str,
+                 custom: str | None) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
-    `want_model` 은 사용자가 웹에서 고른 모델이다. 이 런타임이 모델 지정을 지원하면 인자로
-    옮기고, 아니면 프롬프트의 요청 문구에만 남는다(그 경우 AI 가 답변에 못 맞춘 사실을 밝힌다).
+    모델은 이 머신의 AI 설정이 정한다 — 서버는 모델을 요구하지 않는다(위 상수 자리 주석).
     """
     if custom:
         argv = shlex.split(custom)
         kind = "custom"
     if kind == "ollama":
-        # 웹에서 고른 모델이 로컬에 있을 수도 있다 — 있으면 그것을 쓴다.
-        model = want_model or os.environ.get("BRIDGE_OLLAMA_MODEL", "llama3")
+        model = os.environ.get("BRIDGE_OLLAMA_MODEL", "llama3")
         req = urllib.request.Request(
             os.environ.get("BRIDGE_OLLAMA_URL", "http://127.0.0.1:11434/api/generate"),
             data=json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8"),
@@ -186,10 +194,6 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     # 프롬프트는 **인자로** 넘긴다(셸을 거치지 않는다) — 질문 본문에 셸 메타문자가 섞여도
     # 그대로 전달되고, 명령 주입 경로가 생기지 않는다.
     cmd = [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv]
-    flag = _MODEL_FLAG.get(kind) or []
-    if want_model and flag:
-        # 실행 파일 바로 뒤에 끼운다 — 프롬프트 뒤에 붙이면 위치 인자로 먹히는 CLI 가 있다.
-        cmd = cmd[:1] + flag + [want_model] + cmd[1:]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=_AI_TIMEOUT_SEC)
     except subprocess.TimeoutExpired:
@@ -208,7 +212,6 @@ def compose_prompt(api: Api, task: dict) -> str:
     """내 AI 에게 줄 프롬프트. **조사 도구 사용법을 함께 준다** — 그래야 DB 를 실제로 본다."""
     q = str(task.get("question") or "")
     ctxt = str(task.get("conversation_context") or "")
-    want = str((task.get("requested") or {}).get("instruction") or "")
     sysp = str(task.get("system_prompt") or "")
     scope = task.get("scope") or {}
     atts = task.get("attachments") or []
@@ -268,8 +271,6 @@ def compose_prompt(api: Api, task: dict) -> str:
                   f"  본문 읽기: POST {api.base}/api/ai/tools/read_task_attachment "
                   f"{{\"task_id\":\"{task.get('task_id')}\",\"attachment_id\":<id>}}",
                   "  첨부가 있는 질문은 반드시 본문을 읽고 답하라."]
-    if want:
-        parts += ["", "── 사용자 요청 품질 ──", want]
     parts += ["", "── 질문 ──", q]
     return "\n".join(parts)
 
@@ -312,20 +313,8 @@ def handle_one(api: Api, task_id: str, kind: str, argv: list[str], custom: str |
         return False
 
     prompt = compose_prompt(api, {**claimed, "task_id": task_id})
-    req = claimed.get("requested") or {}
-    want_model = str(req.get("model") or "")
-    _log(f"{task_id}: 내 AI({kind})에게 전달"
-         + (f" · 요청 모델 {want_model}" if want_model else "")
-         + (f" · 추론 {req.get('reasoning_level')}" if req.get("reasoning_level") else ""))
-    ok, answer = ask_local_ai(kind, argv, prompt, custom, want_model)
-    if not ok and want_model and kind in _MODEL_FLAG:
-        # 요청 모델이 이 런타임에 없을 수 있다. 그 하나 때문에 답을 아예 못 주는 것보다는
-        # 기본 모델로 답하고 **그 사실을 밝히는** 편이 낫다.
-        _log(f"{task_id}: 요청 모델로 실패 — 기본 모델로 재시도")
-        ok, answer = ask_local_ai(kind, argv, prompt, custom, "")
-        if ok:
-            answer += (f"\n\n(요청하신 모델 `{want_model}` 을 이 환경에서 쓸 수 없어 "
-                       f"기본 모델로 답했습니다.)")
+    _log(f"{task_id}: 내 AI({kind})에게 전달")
+    ok, answer = ask_local_ai(kind, argv, prompt, custom)
     if not ok or not answer.strip():
         # 실패해도 **답을 제출한다** — 제출하지 않으면 사용자 화면은 30분간 대기 말풍선인 채로
         # 남고, 무엇이 잘못됐는지 아무도 모른다. 실패를 말하는 것이 침묵보다 낫다.
