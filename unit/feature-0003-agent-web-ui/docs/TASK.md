@@ -11858,3 +11858,19 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] 배포본 직접 호출로 `_load_latest_run_id_from_steps` = `('', False)` 실측(web-a/web-b)
 - [x] PB-0008 실 Windows 브라우저 Run 기록(도달성·서빙 baked PASS)
 - [ ] 로그인 후 대화 화면 스크롤 안정성 실측 — **미수행**(검증용 세션·자격증명 부재, 사유 기록)
+
+## 20260828T010305-doc-sync-rn-0828 — 릴리즈노트 신규 2026-08-26·08-27·08-28 블록 prepend(19항목) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+
+### Requested Scope (요청 범위)
+- [x] 델타 창 `440ee173..a5f10aa4`(49 non-merge / 26 merge · PR #1344~#1393)의 **사용자 체감 변화**를 릴리즈노트에 반영 — 산출물: `static/release-notes-data.js` 신규 3 date 블록
+- [x] `generated` 를 top-block date 로 연동 — 산출물: `generated` "2026-08-25"→"2026-08-28"
+- [x] 사용자향 평이화·내부동작 비노출 검증 — 산출물: 7패턴 누출 스캔 0건
+- [x] 회귀 0 실증 — 산출물: `verify_release_notes.mjs` 34/0(편집 전 baseline 동일)
+
+- [x] **직전 창 미착륙 회수**: 08-27 doc_sync 의 RN 커밋 `88150ddd`(08-26 블록 2항목)가 origin/main 에 **미착륙**(`git merge-base --is-ancestor` 로 확인 · origin 에 브랜치 ref 없음)이라 그 창의 사용자향 delta 가 미해소로 이월됐다. 이번 창이 그것을 superset 으로 포함하므로 08-26 블록을 **재작성**해 함께 적재했다(초안을 그대로 믿지 않고 정본 재검증 — 초안이 '브리지 분기로 미발현' 을 사유로 제외했던 첨부 버전 상향 항목은, 브리지 경로도 같은 조립 함수를 부르는 것이 실측돼 제외 사유가 성립하지 않아 hedge 를 붙여 포함).
+- [x] 블록 귀속: **작업 커밋의 달력 날짜** 기준(선례 `e33cb73b` 08-26 커밋→08-25 블록 / `ff02f2c7` 08-25 커밋→08-24 블록). git-date 분포 08-26(5) / 08-27(41) / 08-28(3) → 3블록.
+- [x] 항목 구성: 08-26 fixed 2 / 08-27 new·improved·fixed 13 / 08-28 fixed 4 — 전건 area `work`(창에 관리 콘솔 표면 변경 없음).
+- [x] **정직성 3건(적대검증 수용)**: ① 08-27 summary 가 '각 항목에 검증 상태를 적었다' 고 단정했으나 13항목 중 명시한 것은 일부라 문면을 낮췄다(MISS-02) ② 화면 리터럴 2곳 오인용 정정 — 실제 문구는 '답변할 AI 가 연결되어 있지 않습니다'(MISS-01·검증조 REVISE) ③ 08-25 블록이 '확인했습니다' 로 단정한 증상이 정본상 오판이라(`unit/feature-0002-agent-core/docs/MODIFY.md`) 08-26 블록에 '그때의 확인 방법이 이 원인을 지나치는 경로여서' 1문장을 넣어 두 블록 연속 렌더 시의 모순을 제거했다.
+- [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 53→**56** · `generated`=="2026-08-28"==`releases[0].date` · 신규 3블록 items 4/13/2 · 직전 08-25 블록 items 3 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**(유일 ASCII/고유명 히트는 사용자가 화면에서 그대로 본 오류 문구 'AWS Bedrock 서비스가 일시적으로 응답하지 않습니다' 인용 1건 — 의도적 보존)
+- [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 md5 동일(`79d362ce…` · 276,572B) → 파리티 갭 0. **커밋 직전 재측정**에서도 서빙 md5 = HEAD blob 동일(아직 미배포 상태의 정상값 — 이 커밋의 새 내용은 wrapper 의 post-merge 배포로 서빙된다).
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(`docs/CONVENTIONS.md`:568 `?v=dev` 고정·빌드 `inject_asset_stamp` content-hash 주입·수기 bump 금지 — `bin/deploy-web.sh`:1627 이 baked 이미지의 `?v=dev` 잔존을 ABORT 하므로 수기 bump 는 배포를 죽인다. cron wrapper 지시문의 'bump 포함' 은 stale).

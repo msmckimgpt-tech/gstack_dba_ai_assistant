@@ -3389,3 +3389,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 누출 스캔: feature-id / TASK-·REV-·CHG-·ADR- id / §번호 / 파일명 / 함수·테이블·컬럼명 / 내부상수 = **0건**(7패턴). ASCII 런은 스키마 키 + 사용자 선택 모델명 3종뿐(기존 블록 선례 있음).
 - reconcile-first 실측(편집 전): 서빙 `https://localhost/static/release-notes-data.js` 200 · 브랜치 blob 과 **md5 동일**(`b6ab4c47…` · 272,061B) · `index.html` 도 `?v=` 정규화 후 byte 동일 → 파리티 갭 0(08-24 19:00 종결분이 2창 연속 유지).
 - **Pass/Fail: PASS**.
+
+## TASK-20260828T010305-doc-sync-rn-0828 — 릴리즈노트 신규 2026-08-26·08-27·08-28 블록 prepend 검증
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면에 새 내용이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
+- `node --check static/release-notes-data.js` → PASS.
+- `node tests/verify_release_notes.mjs` → **ALL PASS 34 / 0**. 편집 **전** 동일 스크립트를 cycle 초반에 실행해 34/0 을 측정했으므로 **회귀 0** 을 실증한다(jsdom@24 를 `/tmp` 에 핀 설치 — 스크립트가 `require("/tmp/node_modules/jsdom")` 를 하드코딩하므로 미설치 세션에서는 실행 불가).
+- 구조 단언: `releases` 53→**56** · `generated`=="2026-08-28"==`releases[0].date` · 신규 블록 items **4 / 13 / 2** · 직전 블록(`2026-08-25`) items 3 불변 · `type`/`area` 값이 기존 enum 집합 내 · 스키마 외 키 0 · date 중복 0.
+- 누출 스캔(7패턴 — feature-id / TASK·REV·CHG·ADR id / §번호 / 파일확장자 / 내부용어 / 경로 / 커밋해시): **0건**. 유일 고유명 히트는 사용자가 화면에서 그대로 본 오류 문구 인용 1건으로 의도적 보존.
+- reconcile-first 실측: 편집 전 서빙 `https://localhost/static/release-notes-data.js` 200 · 브랜치 blob 과 **md5 동일**(`79d362ce…` · 276,572B) → 파리티 갭 0. 커밋 직전 재측정도 동일.
+- **Pass/Fail: PASS**.

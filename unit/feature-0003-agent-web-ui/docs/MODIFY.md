@@ -4852,3 +4852,14 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - `docs/REVIEW.md`: `REV-20260827T175500-bridge-scroll-evidence [SKIPPED:non-policy-doc]`.
 - 코드·스키마·권한 변경 0.
 - Timestamp: 2026-08-27T17:55:00+09:00
+
+## CHG-20260828T010305-doc-sync-rn-0828 (신규 2026-08-26·08-27·08-28 블록 prepend) 릴리즈노트 콘텐츠 — 75커밋 창 사용자향 19항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 `releases` head 에 **신규 3 블록**(items 2+13+4 + summary 3) prepend + `generated` "2026-08-25"→"2026-08-28". `releases` 53→**56**, 기존 53 블록 바이트 불변.
+- 항목 골자: 답변 주체가 사용자 연결 AI 로 전환 · 연결 화면 단일 흐름 · 연결 상태 상시 표시 · 중단/대체·보관 이어받기 · 진행 표시 · 제목 자동 설정 · 기존 동작 복원 · 전 모델 답변 실패 수정 · 같은 이름 파일 버전 상향 수정 · 취소 후 답변 유실·버튼 고착 수정.
+- 정직성 3건: summary 단정 완화(MISS-02) · 화면 리터럴 2곳 정정(MISS-01) · 직전 08-25 블록 오판 명시(재발 고지).
+- 제외(사용자 표면 0 또는 미검증): 설계 제안(feature-0044 rev.1~3, 코드 0) · 배포·실측 기록 커밋 · 색인 재생성(`6b5dfa4d`) · 템플릿 업그레이드(`e51119aa`) · 검증용 로그인 세션(`91f32c29`, 내부 도구).
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 53→**56** · `generated`=="2026-08-28"==`releases[0].date` · 신규 3블록 items 4/13/2 · 직전 08-25 블록 items 3 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**(유일 ASCII/고유명 히트는 사용자가 화면에서 그대로 본 오류 문구 'AWS Bedrock 서비스가 일시적으로 응답하지 않습니다' 인용 1건 — 의도적 보존)
+- Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+- landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-28T01:03:05+09:00

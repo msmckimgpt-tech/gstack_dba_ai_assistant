@@ -4457,3 +4457,6 @@ fallback 으로 읽는다("최근 3분 내 step = 진행 중"). 이 fallback 의
   "이력 없음" 으로 읽혀 재로드가 일어나지 않는다. 또한 위임한 `loadHistory` 가 throw 하면 그
   국면 각인을 **원복**해 다시 시도할 수 있게 둔다(네트워크 blip 1회가 동기화를 영구 봉인하지
   않는다).
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0828, 신규 2026-08-26·08-27·08-28 블록 prepend)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 3 date 블록**(08-28 items 4 / 08-27 items 13 / 08-26 items 2 · 전건 area work) prepend + `generated` top-block date 연동. 기능 계약·렌더 로직 변경 없음(콘텐츠 데이터 전용).

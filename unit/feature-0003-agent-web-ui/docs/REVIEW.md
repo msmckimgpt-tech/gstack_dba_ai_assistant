@@ -5916,3 +5916,15 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
   명시) + `bin/win-browser.py` Windows host 오탐 발견을 §8.1 개선 제안으로 기록.
 - 정직성: 로그인 후 대화 화면의 스크롤 안정성은 **측정하지 않았다** — 서버측 실측·하네스로
   대체 주장하지 않고 미수행으로 표기했다.
+
+## REV-20260828T010305-doc-sync-rn-0828 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 3블록 prepend(19항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260828T010305-doc-sync-rn-0828`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + companion 문서).
+- Timestamp: 2026-08-28T01:03:05+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 53→**56** · `generated`=="2026-08-28"==`releases[0].date` · 신규 3블록 items 4/13/2 · 직전 08-25 블록 items 3 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**(유일 ASCII/고유명 히트는 사용자가 화면에서 그대로 본 오류 문구 'AWS Bedrock 서비스가 일시적으로 응답하지 않습니다' 인용 1건 — 의도적 보존)
+- **적대검증**: ULTRACODE 워크플로 `wf_f4ff80dd-6cd` — 7 에이전트 / 1,250,673 토큰 / 469 tool-use / 42분. 4축 병렬 스윕(릴리즈노트·wiki·정책문서·미착륙 prior-window) → 2조 교차검증(서로 다른 축을 적대적으로 반증 + MISS 탐지) → 완결성 비평. 98 findings / 87 verdict(CONFIRMED 81 · REVISE 6 · REFUTED 0) · 신규 MISS 11건.
+- **수용한 검증조 지적 3건(전부 사용자향 정직성)**: ① MISS-01 화면 리터럴 오인용 — 실제 문구는 '아직' 없는 '답변할 AI 가 연결되어 있지 않습니다' ② MISS-02 summary 가 '각 항목에 검증 상태를 적었다' 를 단정 → 완화 ③ 직전 08-25 블록의 '확인했습니다' 단정이 정본상 오판이라 08-26 블록에 재발 경위 1문장 삽입.
+- **미착륙 prior-window 회수**: 08-27 doc_sync RN 커밋 `88150ddd` 가 origin/main 미착륙이라 그 창의 사용자향 delta 를 이번 창에 흡수 재작성했다. 초안의 제외 판정 1건(첨부 버전 상향)은 정본 재검증에서 사유 불성립으로 뒤집혀 hedge 포함으로 채택.
+- **cache-buster**: 수기 bump 없음. `docs/CONVENTIONS.md`:568 이 `?v=dev` 고정·빌드 `inject_asset_stamp` content-hash 주입·**수기 bump 금지**를 명문화하고 `bin/deploy-web.sh`:1627 이 baked 이미지의 placeholder 잔존을 ABORT 한다 — cron wrapper 지시문의 'bump 포함' 은 stale.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**.
