@@ -236,7 +236,11 @@ class Api:
             # 호출측이 서로 다르게 대응해야 하는 신호다.
             return {"_http": e.code, "error": detail}
         except Exception as e:  # noqa: BLE001
-            return {"_http": 0, "error": str(e)[:300]}
+            # ⚠ `_http: 0` = **연결 자체가 안 됐다**(TLS·DNS·거부). 0 은 falsy 라
+            #   `if not r.get("_http")` / `if code:` 같은 진위 검사에서 **성공으로 읽힌다** —
+            #   실제로 `--check` 가 사설 CA 미지정 상태에서 "연결 정상" 을 출력했다(라이브 실측
+            #   2026-08-28). 호출측이 실수하지 않도록 명시 플래그를 함께 싣는다.
+            return {"_http": 0, "_failed": True, "error": str(e)[:300]}
 
 
 # ── 취소 원장 ────────────────────────────────────────────────────────────────
@@ -620,8 +624,17 @@ def main() -> int:
         _log("FATAL: 토큰이 무효합니다(발급자가 로그아웃했거나 만료). 재발급이 필요합니다.")
         return 3
     if args.check:
-        _log("연결 정상." if not probe.get("_http") else f"연결 실패: {probe.get('error')}")
-        return 0 if not probe.get("_http") else 1
+        # ⚠ `not probe.get("_http")` 만 보면 **연결 실패(0)를 성공으로 읽는다** — 실제로
+        #   사설 CA 미지정 상태에서 "연결 정상." 을 출력했다(라이브 실측 2026-08-28).
+        #   `--check` 가 거짓 안심을 주면 사용자는 러너가 왜 아무 일도 안 하는지 알 수 없다.
+        failed = bool(probe.get("_http")) or bool(probe.get("_failed"))
+        if failed:
+            _log(f"연결 실패: {probe.get('error')}")
+            if probe.get("_failed"):
+                _log("  사설 CA 를 쓰는 서버라면 --ca <rootCA.pem> 을 지정하세요.")
+            return 1
+        _log("연결 정상.")
+        return 0
 
     cancels = CancelRegistry()
     #: 빈 워커 자리. **`wait_for_request` 를 부르기 전에** 하나를 잡는다 — 자리가 없는데
@@ -650,7 +663,11 @@ def main() -> int:
             _log("  1) 웹 대화 화면에서 'AI 연결하기' → [연결 정보 만들기] → 토큰 복사")
             _log(f"  2) python3 {os.path.basename(__file__)} --resume --token <새 토큰>")
             return 3
-        if code:
+        # ⚠ `if code:` 로 쓰면 안 된다 — 연결 실패의 `_http` 는 **0** 이고 0 은 falsy 라
+        #   바로 이 블록(백오프)을 건너뛴다. 아래 주석이 설명하는 동작이 정작 코드에는 없었다
+        #   (라이브 실측 2026-08-28: 사설 CA 미지정 → 매 호출 실패인데 성공 경로로 흘러 빈
+        #   응답을 정상 처리하다 spin 가드로 사망). 실패는 `_failed` 로 명시 판정한다.
+        if code or res.get("_failed"):
             # feature-0045: 서버가 배포로 교체되는 동안은 **연결 자체가 실패**한다(`_http == 0`).
             # 종전에는 곧바로 `continue` 였는데, 그러면 서버가 없는 몇 초 동안 초당 수천 번을
             # 재시도해 사용자 머신의 CPU 를 태운다(대기에 sleep 이 없다는 설계가, 실패 경로에서는
@@ -702,7 +719,13 @@ def main() -> int:
             # 정상 상황에서는 오래가지 않는다(남이 집은 작업은 점유 즉시 목록에서 빠진다).
             # 오래간다는 것은 claim 이 계속 실패한다는 뜻이고, 그건 러너가 제 일을 못 하고 있다는
             # 뜻이다 — 조용히 도는 것보다 **크게 실패하는 편이 낫다**(사용자가 원인을 알 수 있다).
-            if not res.get("timed_out"):
+            # **서버가 open task 를 실제로 보고했을 때만** 집계한다(2026-08-28 라이브 실측).
+            #
+            # 종전에는 `timed_out` 이 아니기만 하면 셌다. 그런데 `timed_out` 은 취소 통보로도
+            # False 가 되고, 그때 `task_ids` 는 비어 있다 — 즉 **처리할 것이 없는데 "처리 못 했다"
+            # 고 세어** 20라운드 만에 러너를 죽였다. 그 바람에 다른 워커가 진행 중이던 답변까지
+            # 유실됐다(실측). 셀 대상이 없으면 stall 도 없다.
+            if res.get("task_ids"):
                 stalled += 1
                 if stalled >= _MAX_STALLED_ROUNDS:
                     _log(f"FATAL: 대기 질문이 {len(res.get('task_ids') or [])}건 있는데 "

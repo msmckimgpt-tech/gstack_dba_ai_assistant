@@ -7864,7 +7864,12 @@ async function initialize() {
     this.style.height = Math.min(this.scrollHeight, 180) + "px";
     // composer-nonblock-interrupt R1: 내 run 처리 중에는 입력 유무로 전송↔중단 버튼이 바뀌므로,
     // 글자 입력/삭제 시 버튼 모드를 재동기화한다. (dataset.mode 변동 시에만 innerHTML 교체 → thrash 없음.)
-    if (_myAskInFlightHere() || _bridgePendingHere()) renderComposer();
+    // 세 번째 조건이 **backstop** 이다(라이브 실측 2026-08-28): 앞의 두 술어는 "지금 진행
+    // 중인가" 를 묻는데, 버튼이 잘못 굳는 것은 **막 진행이 끝났을 때**다. 그 순간 두 술어는
+    // 이미 false 라 재렌더가 걸리지 않고, 버튼은 '중단' 인 채로 남는다. 상태를 바꾼 쪽이
+    // 렌더를 책임지는 것이 정본이고(그렇게 고쳤다), 이 줄은 새는 경로를 위한 그물이다.
+    if (_myAskInFlightHere() || _bridgePendingHere()
+        || (sendBtn && sendBtn.dataset.mode === "stop")) renderComposer();
   });
 
   toggleAuthPane("login");

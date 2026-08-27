@@ -1251,6 +1251,25 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
                     "ORDER BY CreatedAt ASC LIMIT 20",
                     (account_id, _STATUS_CANCELED, account_id))
                 canceled = [str(r[0]) for r in (cur.fetchall() or [])]
+                if canceled:
+                    # **한 번만 알린다** — 알린 뒤 점유를 놓는다(2026-08-28 라이브 실측 P1).
+                    #
+                    # 놓지 않으면 이 SELECT 가 같은 행을 **영원히** 다시 집는다. 그러면
+                    # `timed_out = not canceled` 가 항상 False → 대기가 즉시 반환 → 호출측이
+                    # 간격 없이 다시 부른다. 그것이 정확히 P0-J 가 없애려던 tight loop 이고,
+                    # 이번엔 **우리 서버를 향한** 것이다.
+                    #
+                    # 실측(라이브): 취소 1건이 남은 상태에서 러너가 초당 수십 회 재호출 →
+                    # 20라운드 만에 spin 가드로 사망 → **그 사이 처리 중이던 다른 질문의 답변이
+                    # 통째로 유실**됐다. 조용한 낭비가 아니라 사용자 대면 손실이었다.
+                    #
+                    # `Status='canceled'` 는 **그대로 둔다** — `submit_answer` 409 집행과
+                    # 화면의 `canceled` 국면이 그 값에 걸려 있다. 놓는 것은 점유뿐이다.
+                    marks = ",".join(["%s"] * len(canceled))
+                    cur.execute(
+                        f"UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedClient=NULL "
+                        f"WHERE AccountId=%s AND Status=%s AND TaskId IN ({marks})",
+                        (account_id, _STATUS_CANCELED, *canceled))
             finally:
                 cur.close()
             # ⚠ 커밋(또는 롤백)이 없으면 이 커넥션의 트랜잭션 스냅샷이 고정돼 **새로 들어온 행이
