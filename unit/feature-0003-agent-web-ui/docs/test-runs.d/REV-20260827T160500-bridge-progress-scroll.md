@@ -2,7 +2,7 @@
 run_at: 2026-08-27T16:05:00+09:00
 session: ai/root/feature-0043-bridge-progress-scroll
 scope: 브리지 답변 직후 스크롤 최하단 고착 — /api/progress steps-fallback 원장 제외 + 감지기 위임 수렴 (Minor §12.3)
-verdict: 사전 PASS(코드/단위/라이브-데이터 범위) — PB-0008 Windows-browser 는 POST-DEPLOY
+verdict: PASS(코드/단위/라이브 서버 실측 + 실 브라우저 서빙 확인) — 로그인 화면 실측은 세션 부재로 미수행(사유 명시)
 ---
 
 # Run — TASK-20260827T160500-bridge-progress-scroll
@@ -62,3 +62,55 @@ verdict: 사전 PASS(코드/단위/라이브-데이터 범위) — PB-0008 Windo
   `('', False)` 인지 재확인 ② 실 Windows Chrome(`bin/win-browser.py` relay)으로 로그인 →
   브리지 대화 진입 → 15초 관찰 동안 `messageLog.scrollTop` 불변 + `/api/history` 반복 호출 0
   + 스크린샷. 결과를 본 fragment 에 append 한다.
+
+---
+
+## 5. POST-DEPLOY 라이브 검증 — 2026-08-27 (배포본 `eb6412ad`)
+
+배포: `make deploy-web`(무중단 스파인) exit 0. 서비스별 이미지·`GIT_COMMIT` 전건 `eb6412ad`
+(web-a / web-b / ask-worker / insight-worker), 배포 창 15분간 caddy `no upstreams available`
+**0회**(무중단 실측).
+
+### 5.1 서버 — 결함의 발원지가 실제로 사라졌는가 (PASS)
+
+배포본 컨테이너에서 직접 호출(`cwd=/app`, `PYTHONPATH=/app/web`):
+
+| | `_load_latest_run_id_from_steps('20260827061652-5ab532d1')` |
+|---|---|
+| 배포 전 (`bf32b373` 이전) | `('t_LBtWKW0f1sBBfGK-', False)` ← 끝난 브리지 답변이 "최신 run" |
+| 배포 후 web-a | **`('', False)`** |
+| 배포 후 web-b | **`('', False)`** |
+
+즉 `/api/progress` 가 브리지 대화에 대해 더 이상 run 을 보고하지 않는다 → 프런트 감지기가
+재로드를 위임할 트리거 자체가 없어졌다. **원장은 그대로 보존**(`work_source='bridge-ledger'`
+19행 불변) — 'AI 추론' 표면은 영향 없음.
+
+### 5.2 실 Windows 브라우저 (Environment: Windows-browser)
+
+- Runner: AI. Bridge: **relay** — 실 Windows Chrome **151.0.7922.170**, CDP `172.26.144.1:9223`.
+- 세션 격리(§16.6 v3.44.0): 사용자의 기존 탭은 건드리지 않고 **내가 연 탭에서만** 조작 후 닫음.
+- **라이브 도달성 PASS** — `https://mysql-ai.company.local/` 렌더, `/livez` = `{"status":"ok",
+  "git_commit":"eb6412ad"}`.
+- **서빙 자산 baked 확인 PASS** — 브라우저가 실제로 받은 `/static/app.js`(383,685 bytes)에
+  `_detectHandoffSeenFor` ×2 · `detectHandoffSeen` ×7 · `_phaseMoved` ×3, 중간 설계의
+  `detectHandoffKey` **0회** → 최종 설계가 그대로 서빙 중.
+- Evidence: `evidence/pb0008-20260827-bridge-scroll-live-shell.png`
+
+### 5.3 미수행 — 로그인 후 대화 화면 실측 (사유)
+
+브라우저 프로파일에 **로그인 세션이 없다**(쿠키 = `weblb` 뿐, `/api/session` →
+`authenticated:false`; 사용자의 기존 탭도 동일). 자격증명을 보유하지 않아 대화 화면에 진입하지
+못했다 — 따라서 "브리지 대화를 열고 20초간 `messageLog.scrollTop` 불변 + `/api/history` 반복
+호출 0" 은 **측정하지 않았다**. 위 5.1/5.2 를 그 측정으로 대체 주장하지 않는다.
+
+대신 확보한 근거: ① 발원지(서버 응답)가 라이브에서 사라진 것을 배포본 직접 호출로 실측 ②
+설계상 순환의 남은 절반(프런트 수렴)은 하네스 57/0 + 뮤테이션 3종 KILL 로 잠금.
+
+### 5.4 도구 결함 발견 (별건 — §8.1 기록)
+
+`bin/win-browser.py` 의 `win_host_ip()` 가 `/etc/resolv.conf` **첫 nameserver** 를 Windows host
+로 간주한다. 이 머신은 첫 nameserver 가 `8.8.8.8`(공용 DNS)이라 relay 를 8.8.8.8 로 겨냥해
+`launch` 가 `bridge_unreachable` 로 실패한다 — 실제 WSL 게이트웨이는 `172.26.144.1` 이고 그
+주소로는 CDP 가 정상 응답한다(본 Run 이 그 경로로 수행됨). 첫 nameserver 가 기본 게이트웨이와
+다른 서브넷이면 `ip route show default` 로 폴백하는 보정이 필요하다. **본 cycle 범위 밖 —
+사용자 판단 대기.**

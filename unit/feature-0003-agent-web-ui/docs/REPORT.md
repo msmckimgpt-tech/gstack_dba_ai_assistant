@@ -2752,3 +2752,28 @@ psycopg 공백 표기 두 가지로 도착하는 것을 파싱 폴백으로 흡�
   (`docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md`).
 - **남은 리스크**: 없음(비파괴·읽기 경로). 브리지 원장 자체는 보존되며 말풍선 '단계 보기' 는
   `_load_steps_for_message`(메시지 `meta.run_id`) 경로라 영향 없음.
+
+## 2026-08-27T17:55:00+09:00 — 위 cycle 라이브 배포 검증 완료 (TASK-20260827T160500-bridge-progress-scroll)
+
+**상태: 완료** (BLOCKED 없음)
+
+- 배포: `make deploy-web` exit 0 · 전 서비스 `GIT_COMMIT=eb6412ad` · 배포 창 caddy
+  `no upstreams available` **0회**(무중단 실측).
+- 라이브 실측(배포본 직접 호출): `_load_latest_run_id_from_steps('20260827061652-5ab532d1')`
+  `('t_LBtWKW0f1sBBfGK-', False)` → **`('', False)`** (web-a/web-b 동일). 브리지 원장 19행은
+  그대로 보존 — 'AI 추론' 표면 영향 0.
+- PB-0008(실 Windows Chrome 151, relay): 라이브 도달성 PASS · 서빙 `app.js` 에 최종 설계 baked
+  확인 PASS. **로그인 후 대화 화면 실측은 미수행** — 브라우저 프로파일에 세션이 없고 자격증명
+  미보유(사유는 `docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md` §5.3).
+
+### 8. 개선 제안 (§8.1 — 기록만, 사용자 지시 없이 실행 안 함)
+
+- **`bin/win-browser.py` 의 Windows host 오탐**: `win_host_ip()` 가 `/etc/resolv.conf` 의 **첫
+  nameserver** 를 Windows host 로 쓴다. 이 머신은 첫 nameserver 가 `8.8.8.8`(공용 DNS)이라
+  relay 를 엉뚱한 주소로 겨냥해 `launch` 가 `bridge_unreachable` 로 실패한다. 실제 WSL
+  게이트웨이 `172.26.144.1` 로는 CDP 가 정상 응답하므로, 첫 nameserver 가 기본 게이트웨이와
+  다른 서브넷이면 `ip route show default` 로 폴백하도록 보정하면 PB-0008 진입 마찰이 사라진다.
+  (본 Run 은 그 우회 경로로 수행했다.)
+- **PB-0008 로그인 세션 부재**: 검증용 브라우저 프로파일에 세션이 없어 로그인 후 화면 실측이
+  구조적으로 막힌다. 전용 검증 계정 또는 세션 부트스트랩 절차가 있으면 웹/UI cycle 의 완료
+  게이트가 실효를 갖는다.

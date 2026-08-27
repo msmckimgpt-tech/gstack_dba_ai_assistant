@@ -4841,3 +4841,14 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md`,
   `../../docs/STATUS.md`.
 - Timestamp: 2026-08-27T16:05:00+09:00
+
+## CHG-20260827T175500-bridge-scroll-evidence — 라이브 배포 검증 증적 기록 (문서 전용)
+
+- `docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md`: §5 POST-DEPLOY 추가 —
+  배포본 `eb6412ad` 라이브 실측 전/후 대조, PB-0008 실 Windows Chrome 151 Run(도달성·서빙
+  baked PASS · 로그인 화면 실측 미수행 사유), `bin/win-browser.py` host 오탐 발견.
+- `docs/test-runs.d/evidence/pb0008-20260827-bridge-scroll-live-shell.png`: 실 브라우저 스크린샷.
+- `docs/REPORT.md`: 배포 검증 완료 + §8.1 개선 제안 2건(win-browser host 오탐 · 검증 세션 부재).
+- `docs/REVIEW.md`: `REV-20260827T175500-bridge-scroll-evidence [SKIPPED:non-policy-doc]`.
+- 코드·스키마·권한 변경 0.
+- Timestamp: 2026-08-27T17:55:00+09:00
