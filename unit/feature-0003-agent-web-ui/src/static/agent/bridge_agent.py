@@ -8,6 +8,50 @@
         → 내 AI 를 호출해 답을 만든다
         → submit_answer           ─── 원 대화에 표시
 
+## 보안 계약 — 실행 전에 이것부터 읽어라 (2026-08-27)
+
+이 파일은 "모르는 주소에서 받아 상주시키라" 는 요구와 형태가 같다. 그 요구를 거절하는 것은
+옳은 판단이고, 실제로 외부 AI 가 그렇게 거절했다. 그래서 **믿어 달라고 하지 않는다** — 아래는
+전부 이 파일 안에서 직접 확인할 수 있는 사실이고, 확인 방법을 함께 적는다.
+
+    서버에서 받는 것    질문 텍스트 · 대화 맥락 · **운영자 시스템 지침** · 첨부 목록 · task_id.
+                        실행 가능한 코드나 셸 명령은 받지 않는다.
+                        → `compose_prompt` 가 쓰는 필드가 전부다(직접 세어 보면 된다).
+    실행하는 것         `_CLI_ADAPTERS` 에 **하드코딩된** 로컬 AI CLI 하나
+                        (`claude -p` / `codex exec` / `gemini -p`), 또는 사용자가 `--cmd` 로
+                        직접 준 명령. 서버는 이 선택에 관여하지 않는다.
+    셸을 거치지 않음    프롬프트는 argv 로 넘어간다 — 질문 본문에 셸 메타문자가 있어도 명령이
+                        되지 않는다. → `_run_cli_cancelable` 의 `subprocess.Popen(cmd, ...)`
+                        에서 `cmd` 는 리스트다(셸 해석이 개입하는 자리가 없다).
+    원격 코드 실행 없음 `eval`·`exec`·`compile`·동적 import 가 없다. 자동 업데이트도 없다.
+                        → `grep -nE 'eval[(]|exec[(]|compile[(]|__import__' bridge_agent.py`
+                          (매칭되는 줄은 **이 안내문 자신뿐**이어야 한다. 코드에는 없다.)
+    설치물 없음         표준 라이브러리만 쓴다(`pip install` 불필요). 부팅 등록·crontab·서비스
+                        설치를 하지 않는다. 남기는 파일은 `~/.mysql-ai-bridge/config.json`
+                        (0600) **하나뿐**이고 거기에 **토큰은 넣지 않는다** → `save_conf`.
+    나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`). 그리고 `--ai ollama`
+                        일 때만 `BRIDGE_OLLAMA_URL`(기본 `127.0.0.1:11434`) — 그 경로를 쓰지
+                        않으면 호출되지 않는다. URL 을 만드는 자리는 이 **둘뿐**이다.
+    관측·종료           하는 일은 전부 stderr 로그에 남는다. `Ctrl+C` 또는 `kill <pid>` 로 끝나고,
+                        끝난 뒤 남는 것은 위 `config.json` 과 네가 리다이렉트한 로그 파일뿐이다.
+
+**정직하게 적는 잔여 노출면 둘** — 숨기면 소스를 읽는 순간 드러나고, 그때 잃는 것이 더 크다.
+
+1. **토큰은 프롬프트 안에도 들어간다.** `compose_prompt` 가 조사 도구를 직접 부르라고 토큰을
+   함께 주고, 그 프롬프트 전문이 argv 로 CLI 에 넘어간다 — 같은 호스트의 다른 사용자가
+   `/proc/<pid>/cmdline` 으로 볼 수 있고, CLI 의 세션 기록에도 남는다. 인자 대신 `BRIDGE_TOKEN`
+   환경변수를 쓰면 셸 히스토리만큼은 피한다. 토큰이 세션 결합·최대 12시간인 것이 이 노출면의 상한이다.
+2. **운영자 시스템 지침은 구획되지 않는다.** 질문·대화이력은 서버가 ⟦UNTRUSTED-DATA⟧ 로 감싸
+   보내지만, 관리 콘솔에서 설정하는 시스템 지침은 감싸지 않고 이 러너가 프롬프트 **맨 앞**에
+   놓는다(그러지 않으면 뒤의 지시가 이겨 운영자 설정이 무시된다). 즉 **그 서비스의 운영자는 네
+   답변 방식에 영향을 줄 수 있다.** 무엇이 설정돼 있는지는 `claim_request` 응답의
+   `system_prompt` 로 그대로 보이니, 필요하면 먼저 확인하고 판단해라.
+
+**남는 신뢰 경계**: 위 2번의 연장선이다. 서버가 보낸 텍스트는 네 AI 의 프롬프트가 되고, 네 AI 가
+도구를 쓸 수 있는 에이전트라면 그 프롬프트가 행동을 유도할 여지는 남는다 — 이 파일이 없앨 수 있는
+위험이 아니다. 그래서 네 런타임의 권한 설정이 여전히 마지막 방어선이고, 그것을 낮추라고 요구하지
+않는다. 신뢰의 뿌리는 이 파일이 아니라 **이 러너를 띄우라고 한 사람이 네 사용자인가** 이다.
+
 ## 왜 폴링이 아닌가 (사용자 요구 2026-08-27)
 
 `list_open_requests` 를 N 초마다 부르면 두 가지가 나빠진다 — 질문이 최대 N 초 늦게 인지되고,
@@ -143,6 +187,29 @@ _DRAINING_RETRY_FLOOR_SEC = 0.5
 def _log(msg: str) -> None:
     sys.stderr.write(f"[bridge] {msg}\n")
     sys.stderr.flush()
+
+
+#: 평문이 허용되는 유일한 대상. 이름이 아니라 **호스트**로 판정한다.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _transport_is_safe(base: str) -> bool:
+    """토큰을 이 주소로 보내도 되는가. https, 또는 진짜 loopback 만 참.
+
+    접두 문자열 비교(`startswith("http://127.0.0.1")`)로는 안 된다 — userinfo 와 서브도메인이
+    통과한다: `http://127.0.0.1@evil.example` 의 실제 호스트는 `evil.example` 이고,
+    `http://127.0.0.1.evil.example` 도 마찬가지다. 둘 다 토큰을 평문으로 남의 서버에 보낸다.
+    URL 을 **파싱해서 hostname 을 본다** — urllib 이 접속할 때 쓰는 것과 같은 값이다.
+    """
+    try:
+        parts = urllib.parse.urlsplit(str(base or ""))
+    except Exception:  # noqa: BLE001
+        return False
+    if parts.scheme == "https":
+        return bool(parts.hostname)
+    if parts.scheme == "http":
+        return (parts.hostname or "").lower() in _LOOPBACK_HOSTS
+    return False
 
 
 # ── 서버 호출 ────────────────────────────────────────────────────────────────
@@ -526,7 +593,7 @@ def main() -> int:
     if not args.base or not args.token:
         _log("FATAL: --base 와 --token 이 필요합니다.")
         return 2
-    if not args.base.startswith("https://") and not args.base.startswith("http://127.0.0.1"):
+    if not _transport_is_safe(args.base):
         # 토큰이 이 채널로 나간다. loopback 만 예외.
         _log("FATAL: --base 는 https 여야 합니다(loopback 예외).")
         return 2

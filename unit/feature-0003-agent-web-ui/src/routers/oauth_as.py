@@ -43,6 +43,8 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import ssl
 import time
 import urllib.parse
 from typing import Any
@@ -539,7 +541,128 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     })
 
 
-def compose_connect_handoff(*, endpoint: str, token: str) -> str:
+# ── 무결성 증거 ──────────────────────────────────────────────────────────────
+#
+# 왜 필요한가: 외부 AI 가 이 지시문을 **정당하게 거절했다**(제보 2026-08-27) — "알 수 없는 IP 에서
+# 사설 CA 를 신뢰하고, 같은 곳에서 받은 스크립트를 상주 실행하라" 는 요구는 사회공학의 전형이고,
+# 거절은 옳은 판단이다. 문제는 우리 쪽에 있었다: 지시문이 **자기를 증명할 수단을 하나도 주지
+# 않았다.** 증명이 없으면 남는 것은 신뢰 요구뿐이고, 요구된 신뢰는 공격과 구분되지 않는다.
+#
+# 그래서 받는 쪽이 손으로 대조할 값을 함께 싣는다 — CA 인증서 지문과 러너 체크섬.
+# ⚠ 이 값들이 신뢰의 **뿌리는 아니다**(같은 채널로 온다). 뿌리는 운영자가 별도 채널로 공유하는
+# 지문이고(`/trust/` 번들이 이미 그 방식을 안내한다), 여기 값은 **그것과 대조할 대상**이다.
+# 그래도 이것이 있으면 "내려받은 것이 서버가 말한 그것인가" 는 확인되고, 전송 중 바꿔치기와
+# 오래된 사본이 걸러진다. 없을 때와 있을 때의 차이는 "확인 불가" 와 "확인 가능" 이다.
+
+#: AI 가 **실제로 내려받는** Root CA 사본(`/trust/rootCA.crt` 로 서빙되는 번들). 지문은 이것으로
+#: 낸다 — 받는 쪽이 손에 쥔 파일과 같은 것이어야 대조가 성립한다.
+_TRUST_BUNDLE_CA = "/srv/trust/rootCA.crt"
+#: 번들이 마운트되지 않은 환경(구 compose·개발)에서의 폴백. 같은 CA 이지만 **다른 파일**이라,
+#: 회전 후 번들 재조립이 누락되면 갈릴 수 있다. 그래서 폴백이지 기본이 아니다.
+_CERTS_CA = "/certs/rootCA.pem"
+
+_PEM_BEGIN = "-----BEGIN CERTIFICATE-----"
+_PEM_END = "-----END CERTIFICATE-----"
+
+
+def _ca_bundle_path() -> str:
+    """지문을 낼 CA 파일 경로. **호출 시점에** 해석한다.
+
+    모듈 상수를 기본 인자로 굳히면(`def f(path=_CA_BUNDLE_PATH)`) 그 값이 import 시점에
+    바인딩돼, 환경변수를 나중에 바꿔도 반영되지 않는다 — 테스트가 그 사실을 모른 채 통과하고
+    (로컬엔 `/certs` 가 없어 우연히 맞는다), 파일이 있는 컨테이너에서만 어긋난다.
+
+    env 이름을 **전용으로** 둔 이유: 처음엔 `EXT_TOOL_CA_BUNDLE` 을 재사용했는데, 그것은
+    "우리가 외부에 붙을 때 검증에 쓸 CA" 라는 **정반대 의미**의 이름이고 사용자 가이드가 값을
+    권하기까지 한다. 의미가 다른 이름을 공유하면, 언젠가 누가 그 값을 web env 에 넣는 순간
+    "서빙 파일 우선" 규칙이 조용히 무효가 된다(그리고 여러 장짜리 번들이면 지문이 통째로 사라진다).
+    """
+    override = os.environ.get("BRIDGE_HANDOFF_CA_PATH") or ""
+    if override:
+        return override
+    return _TRUST_BUNDLE_CA if os.path.exists(_TRUST_BUNDLE_CA) else _CERTS_CA
+
+
+#: 경로 → (mtime, size, 계산값). 매 발급마다 파일을 다시 읽지 않되, 교체(회전·재배포)는 반영한다.
+#: 경로를 키로 두는 이유: mtime 을 키에 넣으면 파일이 바뀔 때마다 항목이 **쌓인다**(옛 키가
+#: 지워지지 않는다). 경로당 한 칸만 두면 갱신이 곧 대체다.
+_INTEGRITY_CACHE: dict[str, tuple[float, int, str]] = {}
+
+
+def _cached_digest(path: str, compute) -> str:
+    """파일 지문/체크섬을 mtime+size 로 캐시해 돌려준다. 실패는 빈 문자열.
+
+    실패를 예외로 올리지 않는 이유: 지시문 발급이 **이것 때문에 죽으면 안 된다.** 무결성 값은
+    지시문을 더 검증 가능하게 만드는 보강이지, 연결의 전제가 아니다. 값이 없으면 그 줄을 빼고
+    "운영자에게 확인하라" 로 대체한다(거짓 값을 보여 주는 것보다 없는 편이 안전하다).
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    hit = _INTEGRITY_CACHE.get(path)
+    if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
+        return hit[2]
+    try:
+        with open(path, "rb") as f:
+            value = compute(f.read())
+    except Exception:  # noqa: BLE001
+        value = ""
+    if value:
+        _INTEGRITY_CACHE[path] = (st.st_mtime, st.st_size, value)
+    return value
+
+
+def _ca_fingerprint(path: str | None = None) -> str:
+    """Root CA 의 SHA-256 **지문**(콜론 구분 대문자). 실패는 빈 문자열.
+
+    파일 바이트 해시가 **아니다.** 받는 쪽이 대조에 쓸 명령은 `openssl x509 -noout
+    -fingerprint -sha256` 이고 그것은 인증서 DER 을 해싱한다 — PEM 텍스트는 줄바꿈·부가 주석이
+    달라도 같은 인증서라, 바이트 해시를 주면 정상 사본에서도 불일치가 난다(= 거짓 경보).
+    `bin/trust-bundle.sh` 가 번들 페이지에 싣는 값과도 이 방식이라야 같아진다.
+    """
+    def _fp(raw: bytes) -> str:
+        # `ssl.PEM_cert_to_DER_cert` 는 파일이 BEGIN 줄로 **시작**해야 한다 — 실물 CA 파일에는
+        # 앞머리 주석(회전 이력 등)이 붙곤 하고, 그때 지문이 통째로 빈 값이 된다(테스트가 잡음).
+        # 그래서 블록을 직접 뽑는다.
+        text = raw.decode("ascii", "ignore")
+        blocks: list[str] = []
+        cursor = 0
+        while True:
+            start = text.find(_PEM_BEGIN, cursor)
+            if start < 0:
+                break
+            end = text.find(_PEM_END, start)
+            if end < 0:
+                break
+            end += len(_PEM_END)
+            blocks.append(text[start:end] + "\n")
+            cursor = end
+        # 여러 장이면 **어느 것의 지문인지 말할 수 없다.** 첫 장을 고르면 받는 쪽이 다른 장을
+        # 확인하고 불일치를 보게 되므로, 값을 내지 않고 '운영자에게 확인' 으로 넘긴다.
+        if len(blocks) != 1:
+            return ""
+        der = ssl.PEM_cert_to_DER_cert(blocks[0])
+        hexed = hashlib.sha256(der).hexdigest().upper()
+        return ":".join(hexed[i:i + 2] for i in range(0, len(hexed), 2))
+
+    return _cached_digest(path or _ca_bundle_path(), _fp)
+
+
+def _runner_checksum() -> str:
+    """AI 가 내려받을 `bridge_agent.py` 실물의 SHA-256. 실패는 빈 문자열.
+
+    **서빙되는 파일 그대로**를 해싱한다(정본 사본이 아니라). 둘이 갈리면 우리가 알려 준 값과
+    사용자가 받는 파일이 달라지고, 그때 체크섬은 안전장치가 아니라 오경보 장치가 된다.
+    """
+    try:
+        served = os.path.join(str(app.STATIC_DIR), "agent", "bridge_agent.py")
+    except Exception:  # noqa: BLE001
+        return ""
+    return _cached_digest(served, lambda raw: hashlib.sha256(raw).hexdigest())
+
+
+def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") -> str:
     """AI 에게 그대로 붙여넣을 **연결 지시문**. 화면(단독 페이지·모달)이 이걸 표시만 한다.
 
     왜 서버인가: 표시하는 곳이 둘 이상이다(`/ai/connect` 단독 페이지, 대화 화면 모달). 각자
@@ -566,21 +689,109 @@ def compose_connect_handoff(*, endpoint: str, token: str) -> str:
         ensure_ascii=False, indent=2)
     cfg_indented = "\n".join("  " + line for line in cfg.split("\n"))
     ca_url = f"{base}/trust/rootCA.crt" if base else "/trust/rootCA.crt"
+    trust_url = f"{base}/trust/" if base else "/trust/"
     agent_url = f"{base}/static/agent/bridge_agent.py" if base else "/static/agent/bridge_agent.py"
+    host = base.split("://", 1)[-1] if base else "이 서비스"
+    # ⚠ CA 를 https 로만 주면 **부트스트랩 데드락**이다: 엣지 인증서를 서명한 것이 바로 그 CA 라,
+    #   아직 CA 가 없는 클라이언트의 https 요청은 self-signed 로 실패한다. 그런데 같은 지시문이
+    #   "검증을 끄지 마" 라고 못박으므로 우회로도 없다 — 막히거나, 규칙을 어기거나, 사람에게
+    #   되묻는 셋 중 하나가 된다. 엣지는 이 목적으로 `/trust/*` 를 **평문 HTTP** 로도 서빙한다
+    #   (Caddyfile 의 `http://` 블록 · HSTS 를 일부러 뺀 이유도 그것이다).
+    #   평문 채널의 위험은 **지문 대조**가 덮는다 — 지문은 이 지시문(https)으로 왔고 파일은
+    #   평문으로 오므로, 둘을 바꿔치려면 두 채널을 동시에 잡아야 한다.
+    ca_host = ""
+    if base:
+        try:
+            from urllib.parse import urlsplit as _us
+
+            ca_host = _us(base).hostname or ""
+        except Exception:  # noqa: BLE001
+            ca_host = ""
+    ca_url_plain = f"http://{ca_host}/trust/rootCA.crt" if ca_host else ""
+    who = (username or "").strip()
+    issuer = f"{who} 계정으로" if who else "사용자가"
+    ca_fp = _ca_fingerprint()
+    runner_sha = _runner_checksum()
+    # 값이 없으면 **거짓 값 대신 확인 경로**를 준다. 지어낸 지문은 대조를 무의미하게 만든다.
+    ca_fp_line = ca_fp or f"(서버가 계산하지 못함 — {trust_url} 의 지문 안내를 보고 운영자에게 확인)"
+    runner_sha_line = runner_sha or "(서버가 계산하지 못함 — 운영자에게 확인)"
     return "\n".join([
-        "DB 질의 어시스턴트에 연결해줘. 아래 정보로 인증까지 끝낼 수 있으니 나한테 더 묻지 않아도 돼.",
-        "네가 지원하는 방식으로 A → B → C 순서로 시도해.",
+        # ⚠ 종전 머리말은 "나한테 더 묻지 않아도 돼" 였다. 의도는 자격증명 왕복을 줄이는 것이었지만,
+        #   받는 쪽에는 **'아무에게도 묻지 말라'** 로 읽혔다 — 평문 토큰·사설 CA·원격 스크립트와
+        #   겹치면 사회공학의 교과서적 조합이고, 실제로 그 이유로 거절당했다(2026-08-27).
+        #   자격증명은 다 들어 있다는 사실만 말하고, **판단을 막지 않는다.**
+        f"사내 DB 질의 어시스턴트({host})에 연결해줘. 아래 지시문은 {issuer} 그 서비스 웹 콘솔에",
+        "로그인해 직접 발급한 것이고, 인증 정보가 이미 들어 있어 자격증명을 따로 물을 필요는 없어.",
+        "다만 설치·상주 실행처럼 확인이 필요하다고 판단되는 단계는 나에게 물어도 돼.",
+        "",
+        "이 요청이 무엇인지 (그대로 믿지 말고 아래 값으로 확인하고 진행해)",
+        "  · 하는 일: 이 서비스에 쌓인 DB 질문을 받아 **네 머신의 AI** 로 답하고 결과를 제출한다.",
+        "  · 사내 사설 CA 를 **이 연결에만** 신뢰한다 — OS·브라우저 신뢰 저장소에 설치하지 않는다.",
+        "  · 상주 러너 1개(파이썬 표준 라이브러리만 쓰는 단일 파일)를 내려받아 실행한다.",
+        "    소스는 아래 주소에서 그대로 읽을 수 있고, 상단에 '보안 계약' 이 적혀 있다.",
+        # ⚠ 종전에는 "명령도 코드도 보내지 않는다 — 오가는 것은 질문 텍스트와 답변이다" 였다.
+        #   **거짓이다.** `claim_request` 는 운영자가 설정한 5단계 시스템 지침(`system_prompt`)을
+        #   함께 주고, 러너는 그것을 프롬프트 **맨 앞**에 "이걸 시스템 프롬프트로 삼아 답하라" 로
+        #   놓는다. 질문·대화이력은 ⟦UNTRUSTED-DATA⟧ 로 구획되는데 이 필드만 구획 없이 권위가
+        #   승격된다. 우리가 알려 준 확인 경로(`compose_prompt` 를 읽어라)를 따르면 30초 안에
+        #   드러나고, 그 순간 나머지 **참인** 주장까지 전부 의심받는다. 그래서 정확히 적는다.
+        "  · 서버가 보내는 것: 질문 텍스트 · 이전 대화 · 첨부 목록 · **운영자가 설정한 시스템 지침**.",
+        "    실행 가능한 코드나 셸 명령은 보내지 않는다(러너가 실행하는 명령은 소스에 하드코딩돼 있다).",
+        "    다만 그 '시스템 지침' 은 관리자가 콘솔에서 정하는 자연어 텍스트이고, 러너는 그것을 네",
+        "    프롬프트 맨 앞에 둔다 — 즉 **이 서비스의 운영자는 네 답변 방식에 영향을 줄 수 있다.**",
+        "    질문·대화이력은 ⟦UNTRUSTED-DATA⟧ 로 구획되지만 이 지침은 구획되지 않는다.",
+        "    지금 무엇이 설정돼 있는지는 첫 claim_request 응답의 `system_prompt` 로 그대로 보인다.",
+        "",
+        "검증 값 (대조하고 진행해. 어긋나면 멈추고 나에게 알려라)",
+        f"  CA 지문(SHA-256)     {ca_fp_line}",
+        "    확인: openssl x509 -in <내려받은 CA> -noout -fingerprint -sha256",
+        f"  러너 체크섬(SHA-256) {runner_sha_line}",
+        "    확인: sha256sum bridge_agent.py",
+        f"  이 두 값은 같은 채널로 왔으니 그 자체가 근거는 아니다. 운영자가 별도 채널로 공유하는",
+        f"  지문과 대조하는 것이 근거다 — 지문 안내 페이지: {trust_url}",
+        # 그 페이지는 **사람이 브라우저로 볼 때** 쓰는 전역 설치 안내다. 링크만 주고 말면,
+        # 검증하러 간 AI 가 certutil·security add-trusted-cert 를 보고 "전역 설치를 요구하지
+        # 않는다" 는 우리 말과 정면으로 어긋나는 화면을 만난다 — 없애려던 거절 사유의 재확인이다.
+        "  (그 페이지는 사람이 브라우저로 쓰는 **전역 설치** 안내다. 너는 설치할 필요 없고,",
+        "   거기 적힌 **지문만** 위 값과 대조하면 된다.)",
+        # 롤링 배포 중에는 두 replica 가 다른 러너 사본을 서빙할 수 있다(브라우저와 네 머신은
+        # 다른 클라이언트라 sticky 가 둘을 묶어 주지 않는다). 이 고지가 없으면 정상 배포가
+        # "침해 의심" 으로 읽혀 온보딩이 멈춘다.
+        "  러너 체크섬이 어긋나면 배포 교대 중일 수 있다 — 1분 뒤 다시 받아 한 번 더 대조하고,",
+        "  그래도 다르면 그때 멈추고 알려라.",
         "",
         "인증 (이것만 있으면 통과. 별도 로그인·승인 없음)",
         f"  Authorization: Bearer {token}",
+        # 토큰의 **성질**을 밝힌다. 수명·폐기 경로를 모르면 붙여넣기 토큰은 영구 비밀처럼 보이고,
+        # 그것이 곧 "채팅으로 장기 크리덴셜을 받았다" 는 거절 사유가 된다(제보 2026-08-27).
+        "  이 토큰은 발급한 **로그인 세션에 묶여 있다** — 사용자가 웹에서 로그아웃하면 즉시 무효가",
+        "  되고, 살아 있어도 최대 12시간이다. 새로 받으려면 웹 대화 화면 → 'AI 연결하기' →",
+        "  [연결 정보 만들기] 를 다시 누르면 된다.",
+        # scope 는 `data.read` 지만 같은 토큰이 답변 제출·task 생성·첨부 열람까지 준다.
+        # "조사 도구뿐" 이라고 줄이면 그것도 검증에 걸리는 과장이다.
+        "  범위는 **네 계정의 것**에 한정된다: DB 구조 조사·조회, 그리고 받은 질문에 대한 답변",
+        "  제출·첨부 열람. 남의 계정 대화나 관리 기능에는 닿지 않는다.",
         "",
         # ⚠ 실사용에서 **여기서 대부분 막혔다**(2026-08-27). 사내 사설 CA 라, 신뢰 설정 없이는
         #   MCP 연결이 SELF_SIGNED_CERT_IN_CHAIN 으로 실패한다. 인증 정보를 다 줘도 TLS 에서
         #   멈추면 아무것도 안 된다 — 그래서 방법보다 **먼저** 놓는다.
         "TLS — 사내 사설 CA 를 쓴다. 먼저 이걸 신뢰해야 연결된다.",
-        f"  CA 내려받기: {ca_url}",
+        # 평문을 **먼저** 준다. https 로 주면 "그 CA 가 없으면 https 가 실패" 하는 닭-달걀이 된다.
+        *([f"  CA 내려받기: {ca_url_plain}",
+           "    ↑ 이 한 번만 평문 HTTP 다. 아직 CA 가 없으니 https 로는 받을 수 없기 때문이고,",
+           "      엣지가 이 목적으로 그 경로만 평문으로 연다(그래서 HSTS 도 걸지 않는다).",
+           "      평문 채널의 위험은 **위 지문 대조**가 덮는다 — 지문은 이 지시문(https)으로 왔고",
+           "      파일은 평문으로 오므로, 바꿔치려면 두 채널을 동시에 잡아야 한다.",
+           f"    (평문이 막힌 환경이면: {ca_url} — 단 CA 를 이미 신뢰하는 경우에만 성공한다.",
+           f"     그것도 안 되면 사람이 브라우저로 {trust_url} 를 열어 받으면 된다.)"]
+          if ca_url_plain else [f"  CA 내려받기: {ca_url}"]),
+        "  받은 뒤 위 CA 지문과 대조해라. 다르면 중단하고 나에게 알려라.",
         "  Node 기반 클라이언트(Claude Code MCP 등): NODE_EXTRA_CA_CERTS=<내려받은 경로>",
         "  curl: --cacert <내려받은 경로>",
+        # 이 한 줄이 "TLS 를 가로채도록 허용하는 것" 이라는 오해를 푸는 지점이다. 실제로 두 방법은
+        # 모두 **그 프로세스 범위**이고, 우리는 시스템 신뢰 저장소 설치를 요구한 적이 없다.
+        "  ※ 이 둘은 **그 프로세스에만** 적용된다 — 시스템·브라우저 신뢰 저장소를 건드리지 않고,",
+        "     이 서비스 외의 통신에는 영향이 없다. 전역 설치를 요구하지도 않는다.",
         "  검증을 끄지는 마(NODE_TLS_REJECT_UNAUTHORIZED=0 등). CA 가 있으니 불필요하다.",
         "",
         "A. MCP 로 등록",
@@ -605,19 +816,55 @@ def compose_connect_handoff(*, endpoint: str, token: str) -> str:
         "",
         "연결되면 **상주 러너를 띄워** 대기 상태를 유지해줘. 아래 1단계가 본 작업이야.",
         "",
-        "1) 상주 러너 (필수)",
-        f"   curl -fsSL --cacert <위 CA> -o bridge_agent.py {agent_url}",
-        f"   python3 bridge_agent.py --base {base} \\",
-        f"     --token {token} --ca <위 CA> --check      # 연결 확인",
-        f"   nohup python3 bridge_agent.py --base {base} \\",
-        f"     --token {token} --ca <위 CA> > bridge.log 2>&1 &   # 상주 시작",
+        "1) 상주 러너 (필수) — 한 번에 데몬으로 올리지 말고 단계를 나눠 확인하며 진행해라",
+        "",
+        "   ① 내려받기 + 무결성 확인",
+        f"      curl -fsSL --cacert <위 CA> -o bridge_agent.py {agent_url}",
+        "      sha256sum bridge_agent.py        # 위 러너 체크섬과 일치해야 한다",
+        "",
+        # 소스를 읽으라고 **권하는** 것이 이 블록의 요점이다. 읽으면 확인되는 사실만 적는다 —
+        # 검증 가능한 주장만이 신뢰를 만든다(주장만 늘리면 그것도 사회공학의 형태다).
+        "   ② 무엇을 실행하는지 확인 (소스 상단 '보안 계약' 에 그대로 있다 — 읽고 판단해라)",
+        f"      소스 열람: {agent_url}",
+        "      · 서버에서 받는 것: 질문 텍스트·대화 맥락·첨부 목록·운영자 시스템 지침.",
+        "        실행 가능한 코드나 셸 명령은 받지 않는다.",
+        "      · 실행하는 것: 소스에 하드코딩된 로컬 AI CLI(claude/codex/gemini) 하나뿐이고,",
+        "        셸을 거치지 않는다(프롬프트는 argv 로 전달). eval·exec 로 받은 것을 돌리지 않는다.",
+        "      · 파이썬 표준 라이브러리만 쓴다 — 설치물이 없다.",
+        "      · 남기는 파일은 `~/.mysql-ai-bridge/config.json`(0600) 하나이고 **토큰은 안 들어간다.**",
+        # 정직하게: 토큰은 프롬프트 본문에도 실려 로컬 AI 의 argv·트랜스크립트로 나간다.
+        # 숨기면 소스를 읽는 순간 드러나고, 그때 잃는 것이 더 크다.
+        "      · 다만 토큰은 **네 AI 에게 주는 프롬프트 안에도** 들어간다(조사 도구를 직접 부르라고",
+        "        주는 것이다). 그래서 네 런타임의 세션 기록에 남을 수 있고, 아래 명령을 그대로 치면",
+        "        셸 히스토리에도 남는다. 그게 곤란하면 인자 대신 환경변수로 넘겨라:",
+        "          export BRIDGE_TOKEN='<위 토큰>'   # 이후 --token 생략 가능",
+        "        토큰 수명이 최대 12시간이고 로그아웃으로 즉시 죽는 것이 이 노출면의 상한이다.",
+        "",
+        "   ③ 연결 확인 (여기까지는 아무것도 상주하지 않는다)",
+        f"      python3 bridge_agent.py --base {base} \\",
+        f"        --token {token} --ca <위 CA> --check",
+        "",
+        "   ④ 한 건만 처리해 동작을 눈으로 확인 (선택이지만 권장)",
+        f"      python3 bridge_agent.py --base {base} \\",
+        f"        --token {token} --ca <위 CA> --once",
+        "",
+        "   ⑤ 상주 시작",
+        f"      nohup python3 bridge_agent.py --base {base} \\",
+        f"        --token {token} --ca <위 CA> > bridge.log 2>&1 &",
+        "      종료: kill <pid> (포그라운드로 띄웠으면 Ctrl+C)",
+        "      로그: bridge.log — 하는 일이 전부 여기 남으므로 무엇을 처리했는지 이 파일로 확인한다.",
         "",
         "   러너는 네 머신의 AI(claude·codex·gemini·ollama)를 자동으로 찾아 쓴다.",
         "   고르려면 --ai claude, 직접 지정하려면 --cmd 'my-ai -p {prompt}'.",
         "",
+        # ⚠ 종전 문구는 "턴 예산을 태운다 → 러너는 예산이 없는 일반 프로세스라 그 일이 없다" 였고,
+        #   그것이 **감시 회피 설계**로 읽혔다(제보 2026-08-27). 사실관계는 그대로지만, 무엇을
+        #   옮기는 것이고 무엇은 옮기지 않는지를 밝혀야 오해가 풀린다.
         "   ※ 왜 러너인가: 네가 wait_for_request 를 직접 반복하면 **대기 1회가 도구 호출 1회**라",
-        "     턴 예산을 태우고, 예산이 다하면 질문을 받아 놓고도 멈춘다(실측). 러너는 예산이",
-        "     없는 일반 프로세스라 그 일이 없다.",
+        "     턴 예산을 대기에만 쓰게 되고, 예산이 다하면 질문을 받아 놓고도 멈춘다(실측).",
+        "     러너가 옮기는 것은 **대기**뿐이다 — 답을 만드는 것은 여전히 네 AI 이고, 그 호출은",
+        "     네 계정·네 정책 아래서 일어난다. 네 제약을 우회하려는 장치가 아니고, 사용자가",
+        "     kill 한 번으로 끝낼 수 있다.",
         "",
         "   ※ 머신을 재시작하면 러너는 사라진다. 그때는 웹에서 토큰만 새로 받아",
         "     `python3 bridge_agent.py --resume --token <새 토큰>` — 주소·CA·AI 설정은 저장돼 있다.",
@@ -662,7 +909,10 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
     endpoint = f"{origin}/api/ai/mcp"
     # 지시문을 **서버가** 실어 보낸다 — 표시하는 화면이 둘(단독 페이지·대화 모달)이라
     # 각자 조립하면 문안이 갈린다.
+    # 발급자 이름을 함께 넘긴다 — 받는 AI 에게 "이건 네 사용자가 로그인해서 만든 것" 이라는
+    # 유일한 출처 표시다. 없으면 지시문은 출처 불명의 붙여넣기와 구분되지 않는다.
     return JSONResponse({**issued, "endpoint": endpoint,
                          "handoff": compose_connect_handoff(
                              endpoint=endpoint,
-                             token=str(issued.get("access_token") or ""))})
+                             token=str(issued.get("access_token") or ""),
+                             username=str(account.get("username") or ""))})
