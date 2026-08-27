@@ -2,7 +2,7 @@
 run_at: 2026-08-28T06:50:00+09:00
 session: ai/claude/feature-0043-bridge-stream-interrupt
 scope: 브리지 인터럽트·맥락 전환·진행 스트리밍의 웹 UI 변경 (composer.js · app.js · chat.css)
-verdict: 브리지 **복구 PASS** / 이번 UI 변경은 **post-deploy 검증 예정**(대상 코드가 아직 라이브에 없음)
+verdict: 브리지 복구 PASS · 배포 도달 PASS · **앱 내부 동작은 미검증**(로그인 자격증명 부재)
 ---
 
 # Run — 인터럽트·진행 스트리밍 UI
@@ -67,3 +67,45 @@ $ python3 bin/win-browser.py launch --url https://mysql-ai.company.local/
 그것은 배포로 해소된다.
 
 Cross-ref: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260828T070000-ai-claude-feature-0043.md`
+
+
+---
+
+# POST-DEPLOY 실측 (2026-08-28, `e8465ccb` 배포 후)
+
+배포가 끝난 뒤 같은 브리지로 라이브를 다시 확인했다.
+
+## PASS — 배포가 사용자에게 도달했다
+
+| 항목 | 결과 |
+|---|---|
+| 브라우저 브리지 | Chrome/151.0.7922.170 · CDP relay 정상 |
+| 라이브 진입 | `https://mysql-ai.company.local/` → **200** · `DQA — Database Query Assistant` |
+| **서빙 자산에 신규 코드 도달** | 캐시 스탬프 `642756f9181f` 의 `composer.js` 에서 `_bridgePendingHere` · `_streamBridgeStatus` · `abandonBridgeTasks` · `bridge-live-steps` · `/api/ai/bridge_stream` **전 5종 확인** |
+| **신규 SSE 라우트 존재 + 인증 선행** | `GET /api/ai/bridge_stream?task_id=…` → **401** 이고 `content-type: application/json`(SSE 아님) |
+| 전 서비스 이미지 SHA | `web-a/web-b`=`mysql-ai-web:e8465ccb` · `ask/insight-worker·ops-scheduler·ext-tool-mcp`=`mysql-ai-agent:e8465ccb` |
+| 대화 경로 스모크 | PASS(전환 모드 — 서버 계정 LLM 차단 확인) |
+| surge 잔존 | 0 |
+| 엣지 무중단 | `no upstreams available` **0건**(배포 창 12분) |
+
+**401 + `application/json` 은 우연이 아니라 계약 확인이다.** 인증을 스트림 오픈 **뒤**에 했다면
+이미 200 + SSE 헤더가 나간 뒤라 401 을 돌려줄 수 없고 `content-type` 도 `text/event-stream`
+이었을 것이다. 코드에 그렇게 써 두었고(`test_stream_authenticates_before_opening`), 라이브가
+그대로 동작한다.
+
+## 미검증 — 앱 내부 동작 (자격증명 필요)
+
+브라우저 세션이 **로그인되어 있지 않다**(`authOverlay` 표시 · `/api/session` 의 `user: null`).
+컴포저 DOM 은 존재하지만 오버레이 뒤에 있어, 다음 5개는 **관측하지 못했다**:
+
+1. 대기 중 **중단 버튼 노출**
+2. 중단 → 말풍선이 취소 안내로 변경 → 새로고침 유지
+3. 재전송 → 이전 말풍선 '대체됨'
+4. 점유 중 **조사 단계가 답변 전에** 표시
+5. 55초 후 SSE 재접속 · `active_streams` 0 복귀
+
+자격증명을 추측하거나 우회하지 않았다. 이 5개는 **사용자 로그인 세션에서 수행해야 한다** —
+로그인 후 같은 브리지(`bin/win-browser.py`)로 즉시 검증 가능하다(브리지는 이제 동작한다).
+
+> 정직 표기: 위 PASS 항목들은 "부품이 제자리에 있고 배포가 도달했다" 까지다.
+> **"화면이 의도대로 움직인다" 는 별개 주장이며 아직 하지 않았다.**
