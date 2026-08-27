@@ -194,10 +194,24 @@ class _DispatchReached(Exception):
     """KV 저장 직후 지점 도달 신호 — 실 LLM/worker dispatch 는 실행하지 않는다."""
 
 
-def _run_ask_capture(monkeypatch, body):
-    """ask() 를 KV 저장 지점까지 실행하고 save_memory_kv 호출을 캡처한다."""
+def _run_ask_capture(monkeypatch, body, *, server_llm: bool = True):
+    """ask() 를 KV 저장 지점까지 실행하고 save_memory_kv 호출을 캡처한다.
+
+    **이중 계약 (feature-0043 P0-T, 2026-08-28)** — `shared/llm_gate.py` §이중 계약:
+    모델 검증·RBAC·KV 저장은 전부 **게이트 뒤 로직**이다. 서버 계정 LLM 이 차단된 상태(코드
+    기본값)에서는 `/api/ask` 가 브리지로 갈라져 그 지점들에 도달하지 않으므로, 이 하네스는
+    게이트를 **명시적으로 연다**(`server_llm=True`). 열지 않으면 아래 A1/A1b/A1c 는 "브리지로
+    갔으니 저장이 없다" 를 확인하는 vacuous pass 가 된다.
+
+    `server_llm=False` 는 그 반대편 계약(브리지 모드에서는 저장하지도 400 을 내지도 않는다)을
+    같은 하네스로 재는 데 쓴다 — 두 세계를 한 파일에서 대조한다.
+    """
     saved: list[tuple[str, str, str]] = []
 
+    if server_llm:
+        monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
+    else:
+        monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda req, c: (_ACCOUNT, None))
     # NOTE(적대 리뷰 C4): `_is_safe_model_name` / `_is_allowed_api_model` 은 **의도적으로 patch 하지
@@ -261,6 +275,42 @@ def test_a1c_ask_rejects_disallowed_model_before_persisting(monkeypatch):
     })
     assert resp is not None and resp.status_code == 400
     assert not [s for s in saved if s[1] == _KEY], "거부된 모델은 저장되지 않는다"
+
+
+# ── A1-bridge: 서버 LLM 차단 시의 반대편 계약 (feature-0043 P0-T) ────────────────
+#
+# 화면에서 모델을 고를 수 없게 된 상태다. 여기 도달하는 model 값은 구 프론트 캐시나 직접 API
+# 호출뿐이므로 (a) 저장하지 않고 (b) 서버 모델 게이트로 막지도 않는다. (b)가 중요하다 —
+# 막으면 `model` 이 항상 `API_DEFAULT_MODEL` 로 채워지는 탓에 **haiku 권한만 없는 계정은 개인
+# AI 처리와 무관하게 질문 자체가 403** 이 된다(codex 리뷰 P1).
+
+
+def test_a1d_bridge_mode_does_not_persist_model(monkeypatch):
+    """차단 상태에서는 클라이언트가 model 을 실어도 대화 KV 에 저장하지 않는다.
+
+    저장하면 사용자가 이번에 고른 적 없는 설정이 그 대화에 굳어, 게이트를 되돌린 뒤 되살아난다.
+    """
+    saved, _ = _run_ask_capture(monkeypatch, {
+        "message": "안녕", "conversation_id": "conv-1", "model": "claude-sonnet-4",
+    }, server_llm=False)
+    assert not [s for s in saved if s[1] == _KEY], (
+        "브리지 모드인데 모델이 대화 KV 에 저장됐다"
+    )
+
+
+def test_a1e_bridge_mode_does_not_reject_on_model_gates(monkeypatch):
+    """차단 상태에서는 allowlist 밖 model 이 와도 400/403 으로 막지 않는다(브리지로 간다).
+
+    이 게이트들은 *서버가 그 모델로 호출해도 되는가* 를 묻는데, 브리지 요청은 서버 모델을
+    하나도 쓰지 않는다. 막으면 개인 AI 가 답할 수 있는 질문을 서버 권한으로 거절하게 된다.
+    """
+    _saved, resp = _run_ask_capture(monkeypatch, {
+        "message": "안녕", "conversation_id": "conv-1", "model": "auto",  # allowlist 밖
+    }, server_llm=False)
+    status = getattr(resp, "status_code", None)
+    assert status not in (400, 403), (
+        f"브리지 모드인데 서버 모델 게이트가 요청을 {status} 로 거절했다"
+    )
 
 
 # ── A2: model 미지정 내부 재dispatch → KV 미변경(기존 선택 보존) ─────────────────

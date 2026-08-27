@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 
 from shared.model_catalog import API_DEFAULT_MODEL
 from shared.model_catalog import PUBLIC_API_MODEL_OPTIONS
+from shared.llm_gate import server_llm_enabled
 import logging
 import os
 from typing import Any
@@ -238,6 +239,21 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     인증 요청의 응답은 불변 — `model.access.<value>` 권한 필터도 그대로다. 권한 판정 실패(DB 미가용
     등)는 필터 전 목록으로 graceful — 집행은 ask() 게이트가 담당한다(display-permissive ·
     backend-enforced).
+
+    bridge-model-selector (feature-0043, 2026-08-28): **서버 계정 LLM 이 차단된 동안 이 카탈로그는
+    서버가 부를 수 없는 모델들의 목록**이다. 답변은 사용자의 개인 AI 가 만들고, 그 런타임이
+    claude 일지 codex·gemini·ollama 일지 서버는 알 방법이 없다(MCP 어댑터가 별도 컨테이너라
+    `clientInfo` 가 여기까지 오지 않는다). 그러므로 이 상태의 모델 선택기는 **무엇을 골라도
+    답변이 달라지지 않는 조작면**이고, 고른 값(`claude-haiku-4` 같은 내부 alias)은 개인 AI 의
+    CLI 가 알지 못해 실패 후 기본 모델로 폴백한다.
+
+    사용자 결정(2026-08-28): 제어할 수 없으면 **보여주지 않는다**. `model_selector: "hidden"` 을
+    실어 프론트가 항목 자체를 숨기게 하고, 목록은 비운다(빈 목록만으로는 "로딩 중" 과 구분되지
+    않는다 — 그래서 상태를 값으로 말한다). 게이트를 되돌리면(`AGENT_SERVER_LLM_ENABLED=1`)
+    같은 코드가 원래 카탈로그를 그대로 반환한다.
+
+    이 분기는 **인증 확인 뒤**에 둔다 — 미인증 응답은 종전대로 빈 카탈로그이고, 게이트 상태라는
+    운영 사실조차 익명에게 싣지 않는다(위 api-exposure-hardening 과 같은 방향).
     """
     models: list = []
     authenticated = False
@@ -263,10 +279,24 @@ def get_api_vault_options(request: Request) -> JSONResponse:
                 pass
     if not authenticated:
         return JSONResponse({"default_model": None, "models": []})
+    if not server_llm_enabled():
+        # 브리지 모드 — 서버가 부를 수 없는 모델 목록을 주지 않는다(위 docstring).
+        return JSONResponse({
+            "default_model": None,
+            "models": [],
+            "server_llm_enabled": False,
+            # 프론트 계약: "hidden" 이면 모델·추론 강도 조작면을 DOM 에서 감춘다.
+            "model_selector": "hidden",
+            "model_selector_reason": (
+                "답변은 연결된 본인 AI 가 생성하므로 이 화면에서 모델을 지정할 수 없습니다."
+            ),
+        })
     return JSONResponse(
         {
             "default_model": API_DEFAULT_MODEL,
             "models": models,
+            "server_llm_enabled": True,
+            "model_selector": "visible",
             "public_host": app.WEB_PUBLIC_HOST,
             "public_url": app.WEB_PUBLIC_URL,
             "provider": "bedrock-gateway",

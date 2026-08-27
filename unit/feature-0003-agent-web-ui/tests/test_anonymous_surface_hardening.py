@@ -141,9 +141,16 @@ def test_api_vault_options_db_failure_does_not_leak_catalog(client, monkeypatch)
 
 
 def test_api_vault_options_authenticated_response_unchanged(client, monkeypatch):
-    """인증 응답의 키 집합과 권한 필터는 불변."""
+    """인증 응답의 키 집합과 권한 필터는 불변.
+
+    feature-0043 P0-T (2026-08-28): 이 계약은 **서버 계정 LLM 이 열려 있을 때**의 응답에 대한
+    것이다. 차단 상태에서는 카탈로그가 의도적으로 축소된다(빈 목록 + `model_selector: hidden`
+    — `test_model_catalog_bridge_mode.py`). 그러므로 여기서는 게이트를 명시적으로 연다 —
+    `pytest.skip` 이 아니라 **이중 계약**이다(`shared/llm_gate.py` §이중 계약).
+    """
     from shared.model_catalog import API_DEFAULT_MODEL
 
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
     filtered = [{"value": "claude-haiku-4", "label": "claude-haiku", "group": "Claude"}]
     monkeypatch.setattr(appmod, "_connect_memory", lambda: _FakeConn())
     monkeypatch.setattr(
@@ -157,4 +164,5 @@ def test_api_vault_options_authenticated_response_unchanged(client, monkeypatch)
 
     assert body["models"] == filtered, "권한 필터 결과가 그대로 실려야 한다"
     assert body["default_model"] == API_DEFAULT_MODEL
-    assert set(body) == {"default_model", "models", "public_host", "public_url", "provider"}
+    assert set(body) == {"default_model", "models", "public_host", "public_url", "provider",
+                         "server_llm_enabled", "model_selector"}

@@ -961,11 +961,14 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             return _json_err(409, f"이미 다른 세션이 가져간 질문입니다"
                                   f"(점유는 {_BRIDGE_CLAIM_LEASE_MIN}분 뒤 자동 해제됩니다).")
 
+        # `RequestedModel`·`ReasoningLevel` 은 **읽지 않는다** (P0-T, 사용자 결정 2026-08-28) —
+        # 웹에서 그 값을 고를 수 없게 됐고, 과거 행에 남은 값을 지금 전달하면 사용자가 이번에
+        # 고르지도 않은 요구가 답변에 반영된 척하게 된다. 컬럼은 이력으로 남긴다.
         cur.execute(
             "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds, "
-            "RequestedModel, ReasoningLevel, RoleId, ProductMode "
+            "RoleId, ProductMode "
             "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
-        row = cur.fetchone() or ("", None, None, None, None, None, None, None, None)
+        row = cur.fetchone() or ("", None, None, None, None, None, None)
     finally:
         cur.close()
 
@@ -1014,15 +1017,11 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     # 전달돼, 개인 머신 AI 가 "첨부가 없다" 고 전제하고 답했다(웹 대화 사용감과 어긋남).
     attachments = _task_attachment_list(conn, row[4], conversation_id)
 
-    # 사용자가 웹에서 고른 **모델·추론 강도**. 서버가 강제할 수는 없지만(답은 네가 만든다)
-    # 요청의 일부이므로 전달한다 — 전달하지 않으면 화면의 선택지가 아무 효과 없는
-    # 거짓 조작면이 된다(사용자 제보 2026-08-27).
-    requested = _requested_quality(row[5], row[6])
     # 운영자가 설정한 5단계 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
     # 둘 다 빠져 있어서, 브리지 답변만 다른 규칙으로·어디를 보는지 모른 채 만들어졌다.
     system_prompt = _bridge_system_prompt(
-        conn, product_id=row[2], role_id=row[7], account_id=account_id,
-        product_mode=str(row[8] or "pinned"), conversation_id=conversation_id)
+        conn, product_id=row[2], role_id=row[5], account_id=account_id,
+        product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
     scope = _bridge_product_scope(conn, row[2])
     # 사용자에게 "지금 처리 중" 을 보인다(제보 2026-08-27 — 상황을 알 방법이 없었다).
     _mark_bridge_working(conn, task_id, conversation_id)
@@ -1033,12 +1032,10 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         "product_id": int(row[2]) if row[2] is not None else None,
         "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
         "attachments": attachments,
-        "requested": requested,
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
-        "next": (requested.get("instruction", "") +
-                 "조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
+        "next": ("조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
                  "선언합니다." + (
                      f" 이 질문에는 첨부 {len(attachments)}건이 있습니다 — "
                      f"read_task_attachment(task_id, attachment_id) 로 본문을 읽고 나서 답하세요."
@@ -1046,14 +1043,10 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     })
 
 
-#: 추론 강도 → 사람이 읽는 요구 수준. AI 마다 이름이 다르므로(thinking budget · reasoning
-#: effort · 없음) **값이 아니라 의도**를 전달한다 — 그래야 어느 런타임이든 해석할 수 있다.
-_REASONING_INTENT = {
-    "low": "빠르게 — 깊은 추론 없이 간결하게",
-    "normal": "보통 수준으로",
-    "high": "깊게 — 단계적으로 따져가며",
-    "max": "가능한 한 깊게 — 최대한 시간을 들여",
-}
+# (P0-T, 2026-08-28) `_REASONING_INTENT` 와 `_requested_quality()` 는 제거됐다.
+# 웹에서 모델·추론 강도를 고를 수 없게 됐으므로 전달할 요구 자체가 없다 — 남겨 두면 "언젠가
+# 쓰이는 것처럼" 보이는 죽은 계약이 되고, 다음 사람이 그것을 근거로 조작면을 되살린다.
+# 되돌리는 방법은 git 이력이지 주석 처리된 코드가 아니다.
 
 
 def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
@@ -1163,30 +1156,6 @@ def _bridge_product_scope(conn, product_id) -> dict[str, Any]:
         out["datasources"] = list(_authz.allowed_datasource_labels(_core, conn, pid) or [])
     except Exception as exc:
         logging.getLogger(__name__).warning("[bridge] 데이터소스 조회 실패 id=%s: %r", pid, exc)
-    return out
-
-
-def _requested_quality(model: Any, level: Any) -> dict[str, Any]:
-    """사용자가 웹에서 고른 품질 설정을 AI 가 해석할 수 있는 형태로.
-
-    **강제가 아니라 요청**이다. 답을 만드는 것은 사용자의 AI 이고, 그쪽에 같은 모델이 없을 수도
-    있다. 그래서 지시문은 "따르라" 가 아니라 "가능하면 따르고, 못 하면 답변에 밝혀라" 다 —
-    조용히 무시하면 사용자는 자기 선택이 반영됐다고 착각한다.
-    """
-    m = str(model or "").strip()
-    lv = str(level or "").strip().lower()
-    out: dict[str, Any] = {"model": m or None, "reasoning_level": lv or None}
-    parts: list[str] = []
-    if m:
-        parts.append(f"모델 `{m}`")
-    if lv and lv in _REASONING_INTENT:
-        parts.append(f"추론 강도 '{lv}'({_REASONING_INTENT[lv]})")
-    if not parts:
-        return {**out, "instruction": ""}
-    out["instruction"] = (
-        "사용자가 이 질문에 " + " · ".join(parts) + " 를 요청했습니다. "
-        "가능하면 그에 맞춰 답하고, 맞출 수 없으면 **답변 안에 그 사실을 한 줄로 밝히세요** "
-        "(조용히 무시하면 사용자는 자기 선택이 반영된 줄 압니다). ")
     return out
 
 
