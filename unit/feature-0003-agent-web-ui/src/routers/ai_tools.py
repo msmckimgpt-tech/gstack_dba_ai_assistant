@@ -24,6 +24,7 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 """
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import time
@@ -516,6 +517,49 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                          "cross_session_findings": findings})
 
 
+def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
+                                answer: str, meta: dict[str, Any]) -> int:
+    """대기 안내 말풍선을 **답변으로 덮어쓴다**. 성공 시 message id, 없으면 0.
+
+    왜 append 가 아니라 덮어쓰기인가: 기존 경로의 UX 는 "대기 말풍선 하나가 답변으로 바뀌는"
+    모양이다. 새로 붙이면 안내와 답변이 **둘 다** 남아, 대화를 다시 열 때마다 "처리 중입니다"
+    가 답변 위에 영구히 붙어 있다.
+
+    placeholder 를 못 찾으면 0 을 돌려 호출측이 append 로 폴백한다 — 이 기능 이전에 적재된
+    task(안내 말풍선이 없는 task)도 답변을 받아야 한다.
+    """
+    if not conversation_id or not task_id:
+        return 0
+    try:
+        if not app._runtime_backend_is_pg():
+            return 0
+        from shared.db import _pg_connect
+
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    # 이 task 의 placeholder 만 고른다 — 같은 대화의 다른 질문·과거 답변을
+                    # 건드리면 남의 말풍선을 덮어쓴다.
+                    "UPDATE agent_runtime.messages "
+                    "SET content = %s, meta_json = %s::jsonb "
+                    "WHERE conversation_id = %s AND role = 'assistant' "
+                    "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
+                    "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
+                    "RETURNING id",
+                    (answer, json.dumps(meta, ensure_ascii=False), str(conversation_id),
+                     str(task_id)))
+                row = cur.fetchone()
+            pg.commit()
+            return int(row[0]) if row else 0
+        finally:
+            pg.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 대기 말풍선 덮어쓰기 실패 task=%s — append 로 폴백: %r", task_id, exc)
+        return 0
+
+
 def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str) -> bool:
     """`Origin='web'` task 의 답변을 원 대화에 assistant 메시지로 저장한다.
 
@@ -559,7 +603,13 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
             logging.getLogger(__name__).warning(
                 "[bridge] 제품 귀속 각인 실패 task=%s — 각인 없이 저장한다: %r", task_id, exc)
 
-        message_id = _save_msg(conn, str(conversation_id), "assistant", answer, meta=_meta)
+        # placeholder 각인은 지운다 — 남겨두면 이 답변이 다음 전달의 덮어쓰기 대상이 된다.
+        _meta["bridge"]["placeholder"] = False
+        # 대기 안내 자리에 덮어쓴다. 없으면(구 task) 종전대로 새 말풍선으로 붙인다.
+        message_id = _replace_bridge_placeholder(
+            conn, str(conversation_id), task_id, answer, _meta)
+        if not message_id:
+            message_id = _save_msg(conn, str(conversation_id), "assistant", answer, meta=_meta)
         conn.commit()
         # ⚠ `save_memory_message` 는 PG 쓰기 실패를 내부에서 삼키고 **0 을 반환**한다
         #   (codex 재리뷰 P1). 반환값을 안 보면 저장이 실패해도 `delivered=true` 를 돌려주고,

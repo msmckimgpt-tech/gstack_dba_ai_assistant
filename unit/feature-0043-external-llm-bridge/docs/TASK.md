@@ -141,3 +141,12 @@ source_of_truth: true
 - risk: Major (사용자 대면 동작 다수 · 온라인 DDL 3컬럼 · 신규 외부 도구 1)
 - scope: 브리지 각인(발신자·제품) · core store · 첨부 도달 · 2차 진입점 배선 · 차단 안내 정합 · 제한 배너
 - verify: feature-0043 112 green · 컨테이너 make test 전체 · golden/ROUTEMAP 재생성
+
+### TASK-20260827T120000 — 대기 안내 미저장 결함 (라이브 제보)
+- status: done
+- risk: Major (사용자 대면 — 전송이 무반응으로 보임)
+- [x] 대기 안내를 assistant 말풍선으로 저장(placeholder 각인)
+- [x] 답변 도착 시 그 자리에 덮어쓰기 + append 폴백
+- [x] 회수 store 오염 방지(안내 제외)
+- [x] 회귀 5건
+- [ ] **라이브 재현 확인** — 배포 후 웹에서 전송해 안내 말풍선이 보이는지(사용자 확인 필요)

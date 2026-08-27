@@ -386,3 +386,60 @@ def test_bridge_polling_is_not_duplicated():
     """전송 직후 폴링과 재진입 복구가 겹쳐도 같은 task 를 두 번 돌리지 않는다."""
     comp = COMPOSER_JS.read_text(encoding="utf-8")
     assert "_activeBridgePolls" in comp, "중복 폴링 가드 없음 — 토스트가 두 번 뜨고 요청이 2배가 된다"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 라이브 제보(2026-08-27): "대화를 전송했지만 답변 진행 or 가이드라인이 제공되지 않았습니다"
+#
+# task 는 정상 적재됐고 질문도 각인과 함께 저장됐다. 빠진 것은 **대기 안내를 대화에 남기는
+# 것**이었다 — 응답 payload 로만 돌려주고 저장하지 않으니, 이력을 그리는 프런트에는 질문만
+# 남았다(토스트는 몇 초 뒤 사라져 근거가 되지 못한다).
+#
+# 교훈: 브리지가 `agent_core` 를 우회한다는 것은 "답변을 만들지 않는다" 만이 아니라
+# **"답변을 저장하지도 않는다"** 는 뜻이다. 그 저장은 누군가 다시 해야 한다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_bridge_persists_wait_notice_as_assistant_message():
+    """대기 안내가 **대화에 저장**된다 — 저장하지 않으면 화면에 질문만 남는다."""
+    src = _func_source(CONVS, "_enqueue_web_bridge_task")
+    assert '"assistant", _BRIDGE_WAIT_NOTICE' in src, (
+        "대기 안내를 assistant 말풍선으로 저장하지 않는다 — 사용자에겐 '아무 일도 안 일어난' 것으로 보인다")
+    assert '"placeholder": True' in src, (
+        "placeholder 각인이 없으면 답변 도착 시 덮어쓸 대상을 찾을 수 없다")
+
+
+def test_wait_notice_is_single_source():
+    """저장 본문과 응답 `answer` 가 **같은 상수** — 갈리면 화면과 응답이 다른 말을 한다."""
+    src = CONVS.read_text(encoding="utf-8")
+    assert "_BRIDGE_WAIT_NOTICE = (" in src
+    assert '"answer": _BRIDGE_WAIT_NOTICE,' in src, "응답이 상수를 쓰지 않는다(문구 두 벌)"
+
+
+def test_wait_notice_not_written_to_core_store():
+    """안내는 **회수 store 에 넣지 않는다** — 시스템 안내이지 대화 내용이 아니다.
+
+    넣으면 나중 LLM 문맥에 "AI 가 대기 안내를 했다" 는 가짜 turn 이 섞인다.
+    """
+    src = _func_source(CONVS, "_enqueue_web_bridge_task")
+    notice_pos = src.index("_BRIDGE_WAIT_NOTICE,\n")
+    tail = src[notice_pos:]
+    assert "_bridge_save_core_message(" not in tail, (
+        "안내를 회수 store 에도 썼다 — LLM 문맥에 가짜 assistant turn 이 생긴다")
+
+
+def test_delivery_overwrites_placeholder_not_appends():
+    """답변은 대기 말풍선 **자리에 덮어쓴다** — append 면 안내가 답변 위에 영구히 남는다."""
+    src = _func_source(AI_TOOLS, "_deliver_web_bridge_answer")
+    assert "_replace_bridge_placeholder(" in src
+    assert "if not message_id:" in src, "덮어쓰기 실패 시 append 폴백이 없다(구 task 가 답변을 못 받는다)"
+    assert '_meta["bridge"]["placeholder"] = False' in src, (
+        "placeholder 각인을 지우지 않으면 이 답변이 다음 전달의 덮어쓰기 대상이 된다")
+
+
+def test_placeholder_replace_is_scoped_to_one_task():
+    """덮어쓰기가 **이 task 의 placeholder** 만 고른다 — 아니면 남의 말풍선을 덮는다."""
+    src = _func_source(AI_TOOLS, "_replace_bridge_placeholder")
+    assert "task_id" in src and "'placeholder'" in src
+    assert "role = 'assistant'" in src, "역할 제한 없이 갱신하면 사용자 질문까지 덮어쓸 수 있다"
+    assert "conversation_id = %s" in src, "대화 경계 없이 갱신한다"
