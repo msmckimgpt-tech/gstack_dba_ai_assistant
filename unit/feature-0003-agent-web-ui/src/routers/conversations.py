@@ -188,8 +188,6 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
                              product_mode: str = "pinned",
                              sender_username: str = "",
                              attachment_ids: Any = None,
-                             requested_model: str = "",
-                             reasoning_level: str = "",
                              role_id: Any = None) -> dict[str, Any]:
     """feature-0043 — 웹 대화 질문을 개인 머신 AI 가 가져갈 **대기 작업**으로 적재한다.
 
@@ -281,11 +279,13 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
     try:
         cur = conn.cursor()
         try:
+            # `RequestedModel`·`ReasoningLevel` 은 **쓰지 않는다** (P0-T, 사용자 결정 2026-08-28).
+            # 컬럼은 남긴다 — 과거 행의 값은 그때의 사실이고, 지우면 이력이 거짓이 된다.
             cur.execute(
                 "INSERT INTO WebAiTasks (TaskId, AccountId, ConversationId, ProductId, "
                 "Question, Status, Origin, ProductMode, SenderUsername, AttachmentIds, "
-                "RequestedModel, ReasoningLevel, RoleId) "
-                "VALUES (%s,%s,%s,%s,%s,'open','web',%s,%s,%s,%s,%s,%s)",
+                "RoleId) "
+                "VALUES (%s,%s,%s,%s,%s,'open','web',%s,%s,%s,%s)",
                 (task_id, account_id, conv_id or None,
                  int(product_id) if product_id else None, question[:4000],
                  # 답변 각인·발신자 표시·첨부 인지를 위해 **질문과 함께** 굳힌다. 나중에 대화
@@ -293,10 +293,6 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
                  ("auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"),
                  (str(sender_username or "").strip()[:128] or None),
                  _bridge_attachment_csv(attachment_ids),
-                 # 요청 시점의 **의도**를 굳힌다. 개인 AI 가 그대로 따를 수 있는지는 그쪽
-                 # 사정이지만, 무엇이 요구됐는지는 흔들리지 않아야 한다.
-                 (str(requested_model or "").strip()[:64] or None),
-                 (str(reasoning_level or "").strip()[:16] or None),
                  (int(role_id) if role_id else None)))
             conn.commit()
         finally:
@@ -3790,7 +3786,7 @@ async def ask(request: Request) -> JSONResponse:
     elif not app._is_safe_model_name(model):
         conn.close()
         return app._json_error("모델 이름 형식이 올바르지 않습니다.", 400)
-    elif not app._is_allowed_api_model(model):
+    elif _server_llm_enabled() and not app._is_allowed_api_model(model):
         conn.close()
         return app._json_error("허용되지 않은 모델입니다.", 400)
     # model-access-rbac(2026-07-28, Critical §12.3): 계정/역할별 모델 사용 권한 게이트.
@@ -3798,7 +3794,14 @@ async def ask(request: Request) -> JSONResponse:
     # `ask()` 를 다시 타므로 여기 한 곳이 클라이언트 지정 model 의 전 진입면을 덮는다
     # (`_is_allowed_api_model` 이 카탈로그 allowlist=400, 본 게이트가 계정 인가=403 — 축 분리).
     # 표시(모델 선택기)는 `/api/session` 의 `_filter_models_for_account_access` 가 함께 닫는다.
-    elif not app._account_has_model_access(account, model, conn=conn):
+    #
+    # feature-0043 P0-T (codex 리뷰 P1, 2026-08-28): **브리지 모드에서는 두 게이트를 건너뛴다.**
+    # 이 게이트들은 *서버가 그 모델로 호출해도 되는가* 를 묻는데, 브리지 요청은 서버 모델을 하나도
+    # 쓰지 않는다(추론이 사용자 개인 AI 에서 일어난다). 게다가 화면에서 모델을 고를 수 없게 되면서
+    # `model` 은 항상 `API_DEFAULT_MODEL`(haiku)로 채워지므로, **haiku 권한만 없는 계정은 개인 AI
+    # 처리와 무관하게 질문 자체가 403** 이 된다 — 바로 위 토큰 쿼터 게이트를 조건부화한 것과 같은
+    # 형태의 모순이다. 게이트 해제 시 두 검사 모두 원래대로 복원된다.
+    elif _server_llm_enabled() and not app._account_has_model_access(account, model, conn=conn):
         conn.close()
         return app._json_error("이 모델을 사용할 권한이 없습니다. 관리자에게 문의하세요.", 403)
     # 자격증명 검증은 backend 단일 env 소스로 이동 (config.py 의 LLM_API_KEY).
@@ -4333,7 +4336,11 @@ async def ask(request: Request) -> JSONResponse:
         # product 의 turn-단위 캡처 패턴과 정합 — 저장은 '다음 로드'용이고, 이번 run 은 run_kwargs
         # 로 캡처한 값으로 끝까지 실행된다(in-flight 영향 0). best-effort: 저장 실패는 답변을 막지 않음.
         # 명시 레벨(reasoning_level 이 진리값)일 때만 저장 — 부재(None)면 기존 저장값·모델 기본을 보존.
-        if conv_id and reasoning_level:
+        #
+        # feature-0043 P0-T: **브리지 모드에서는 저장하지 않는다.** 화면이 두 조작면을 감췄으므로
+        # 여기 도달하는 값은 구 프론트 캐시나 직접 API 호출뿐이고, 저장하면 사용자가 이번에 고른 적
+        # 없는 설정이 그 대화에 굳어 게이트 해제 후 되살아난다(codex 리뷰 P1).
+        if conv_id and reasoning_level and _server_llm_enabled():
             try:
                 app.save_memory_kv(conn, conv_id, "reasoning_level", reasoning_level)
             except Exception:
@@ -4355,8 +4362,10 @@ async def ask(request: Request) -> JSONResponse:
         # 저장하면 모든 대화가 "첫 전송 시점의 기본값"에 영구 고정되어 이후 운영이 기본 모델을 올려도
         # 기존 대화에는 영원히 반영되지 않는다. 기본값과 같을 때 지우면 복원 결과(=기본값)는 동일하면서
         # 기본값 변경이 자연히 따라온다. 사용자가 명시로 기본값을 다시 고른 경우에도 같은 경로로 해제된다.
+        #
+        # feature-0043 P0-T: 위 reasoning_level 과 같은 이유로 **브리지 모드에서는 저장하지 않는다**.
         _model_save_key = _model_kv_key(account)  # "" = 계정 식별 불가 → 저장 skip(fail-closed)
-        if conv_id and model_explicit and _model_save_key:
+        if conv_id and model_explicit and _model_save_key and _server_llm_enabled():
             try:
                 _default_model = app._resolve_session_default_model()
             except Exception:
@@ -4387,10 +4396,15 @@ async def ask(request: Request) -> JSONResponse:
                 product_mode=product_mode_for_run,
                 sender_username=_sender_username_for_run or "",
                 attachment_ids=attachment_ids_clean,
-                # 웹 컴포저의 모델·추론 강도 선택(사용자 제보 2026-08-27). 이걸 빼면 화면의
-                # 선택지가 아무 효과 없는 거짓 조작면이 된다.
-                requested_model=model,
-                reasoning_level=reasoning_level,
+                # 모델·추론 강도는 **넘기지 않는다** (사용자 결정 2026-08-28, P0-T).
+                #
+                # 종전(P0-M)에는 "전달하고 못 맞추면 밝히기" 로 두었으나, 실제로는 화면 값이
+                # 서버 내부 alias(`claude-haiku-4`)라 개인 AI 의 CLI 가 알지 못했고 — 기본값이
+                # haiku 이므로 사실상 **모든** 브리지 요청이 모델 지정 실패 → 기본 모델 폴백
+                # 경로를 탔다. 요청이 반영되지도 않으면서 "못 맞췄다" 는 고지만 매번 붙었다.
+                # 서버는 연결된 런타임의 종류조차 알 수 없다 — MCP 어댑터가 별도 컨테이너라
+                # clientInfo 가 오지 않는다. 맞는 값으로 번역할 방법도 없으므로, 조작면과 함께
+                # 전달 경로도 닫는다.
                 # 시스템 프롬프트 5단계 조립에 필요(역할별 지침).
                 role_id=role_id_for_run,
             )
