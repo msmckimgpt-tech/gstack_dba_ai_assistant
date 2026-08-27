@@ -1,12 +1,12 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-08-27
+last_updated: 2026-08-28
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-08-27
+2026-08-28
 
 ## Key Recent Facts
 - **feature-0043 라이브 전환 완료(`0b2b4435`)** — 서버 보유 Claude 계정(claude-corp/root)으로는 더 이상 추론하지 않는다. 차단은 두 겹이고 **코드(`shared/llm_gate.py`)가 정본**(기본값=차단), `litellm_config.yaml` alias 주석이 두 번째 자물쇠. 되돌리려면 둘 다 푼다. 로컬 임베딩(bge-m3)만 살아 있다.
@@ -20,4 +20,4 @@ last_updated: 2026-08-27
 
 ## Active Threads
 - PR #1352(스모크 전제) 병합 → gateway reconcile 완결. 현재도 앱 게이트가 정본이라 계정 미사용.
-- **PB-0008 화면 시각검증 미수행** — win-browser 브리지가 이 환경에서 불가(`win_host` 오판). 해소 후 대기 말풍선→폴링→답변 렌더 확인 필요.
+- **PB-0008 실화면 검증 — 브리지 복구 후 통과.** `win_host_ip()` 가 공용 DNS 를 Windows host 로 오판하던 근본원인이 해소돼(TASK 큐 ⑨) 실 Windows Chrome + CDP relay 로 실측했다. 08-27 `/ai/connect` 문안 도달 2차 PASS(785자 → 5,664자 · CA 지문·러너 체크섬 실값) · 08-28 재실측에서 대기 말풍선 → 중단 버튼 → 답변 렌더 · 러너 생존(FATAL 0) · 다른 질문 답변 도달 · 버튼 `send` 복귀 확인. **미검증 잔여**: 취소 후 제출 409 · 진행 단계 표시 — 둘 다 도구를 실제로 호출하는 AI 가 있어야 검증된다.

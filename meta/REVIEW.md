@@ -1372,3 +1372,28 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **[SKIPPED] 사유**: 증적 기록 전용(문서 + png). 새 로직·표면·권한 0 이고, 기록하는 사실 자체가 라이브 실측이다. **Human Approval Needed**: 아니오.
 - 배포: 불요 — 서빙 산출물 무변경(문서·증적만).
 - Timestamp: 2026-08-28T14:00:00+09:00
+
+## REV-20260828T010305-META-0066-doc-sync-0828 [SKIPPED:doc-sync-index-mirror-additive] — `440ee173`(08-26 doc-sync, META-0065) 이후 **신규 머지 75 커밋** 창의 색인·미러 정합 + **직전 창(08-27) 미착륙 doc_sync 의 prior-window drift 수렴**
+
+- Meta-Cycle: `doc-sync-0828`
+- Timestamp: 2026-08-28T01:03:05+09:00
+- Human Approval Needed: no
+- Reason: changed paths = `docs/**` + `wiki/**` (META path, `is_meta_path()`) — 코드·스키마·권한 변경 0. 정본(`unit/*/docs/*`·`docs/DECISIONS.md`) 무수정, 그 색인·미러·서사만 전진.
+
+**창**: `440ee173..a5f10aa4` = 49 non-merge / 26 merge (PR #1344~#1393 · git-date 2026-08-26 10:28 ~ 2026-08-28 00:29). 신규 feature 3개(feature-0043 external-llm-bridge · feature-0044 qa-staging-pipeline · feature-0045 zd-bridge-continuity)로 42→**45**.
+
+**직전 창 미착륙(이번 run 의 제1 발견)**: 08-27 doc_sync run 의 커밋 2건(`2ccd762a` META-0066 초안 · `88150ddd` RN 08-26 블록)이 **origin/main 에 미착륙**이다 — `git merge-base --is-ancestor` 로 둘 다 NOT ancestor 확인, origin 에 그 브랜치 ref 자체가 없다(wrapper 의 push 단계가 조용히 실패). 서빙 파리티는 정상이었으므로 이는 배포 갭이 아니라 **landing 갭**이고, 그 창의 drift 는 미해소로 이월됐다. 이번 창이 그것을 superset 으로 포함하므로 초안을 **참고자료로만** 회수해 전건 현재 main 기준 재검증했다(초안의 feature 카운트 44 는 지금 45 로 다시 어긋나 있었다). META 번호 0066 은 그 커밋이 main 에 없으므로 충돌 없이 재사용한다.
+
+**reconcile-first**: 서빙 `https://localhost/static/release-notes-data.js` md5 `79d362ce…` = origin/main blob = HEAD blob(276,572B) · 서빙 캐시토큰 `?v=0238aaf164c8`(빌드 주입 정상) → **파리티 갭 0**(5창 연속). 배포 소유권은 wrapper 라 자가수리 배포는 detect-and-report 대상이었으나 갭 자체가 없다.
+
+**정합 내역(적용 60건)**: feature 카운트 전 표면 42/43→45(`wiki/Index.md` 2곳 · `Features/_Index.md` 머리표+§1 개요 · `Architecture/Overview.md` 머리표 · `Architecture/Module-Map.md` §2.2 · `overview.md` §1·§3) · Features MOC 에 feature-0043 행 신설 + feature-0045 상태 `implemented`→정본 `shipped` · `overview.md` §2.1 에 feature-0043/0044/0045 3행 backfill(표 45행 = ground truth) · `Architecture/Overview.md` §2.3 기능맵·§2.4 의존맵 3행 backfill · `docs/ARCHITECTURE.md` §4 기능맵·§6 의존맵 3행 backfill · `docs/STATUS.md` §5 전체 진행률(등록 41/디렉토리 42 → 44/45)·§2 의존성 범위(0042→0045)·feature-0045 행의 뒤집힌 '잔여: 라이브 배포 중 실측' 정정 · ADR 색인 3표면(정본 heading 44 · timestamp+slug 12 · 고유 43)과 Decisions MOC §2 의 `ADR-20260826T220000` 행 추가 · `docs/SECURITY.md` §44.9·§44.10 의 단일 `ext-tool-mcp` 전제를 feature-0045 2-replica 로 정정 + §47.4 소유 미상 축 갱신 · chat 차단 미반영 미러 정정(`wiki/Index.md`·`entities/aws-bedrock.md`·`entities/litellm.md`·`Features/feature-0007` 카드·`Architecture/Data-Flow.md` §2.1/§2.2) · `entities/caddy.md` 현행 Caddyfile 정합 · feature-0043 카드의 폐기된 폴링 흐름도→상주 러너/SSE 정정 · feature-0044 카드 설계정본 rev.2→rev.3 · `wiki/hot.md` 갱신(PB-0008 해소 반영, 잔존 actionable thread 보존) · `wiki/Log.md` EOF append-only entry 1건 · `docs/DOC_REGISTRY.md` behind 수치 갱신 · `wiki/README.md` sources 백필 수치 정정.
+
+**적대검증**: ULTRACODE 워크플로 `wf_f4ff80dd-6cd` — 7 에이전트(4축 병렬 sweep + 2조 cross-verify + 완결성 비평) / 1,250,673 토큰 / 469 tool-use / 42분. 98 findings / 87 verdict(**CONFIRMED 81 · REVISE 6 · REFUTED 0**) · 신규 **MISS 11건**. 검증조가 축 4개를 서로 교차 배정해 자기 findings 를 검증하지 않게 했고, MISS-01/02(RN 화면 리터럴·summary 단정)와 MISS-04(STATUS feature-0002 행의 미이스케이프 파이프) 등 축이 못 본 정면 모순을 획득했다. 완결성 비평이 4축이 한 번도 열지 않은 표면(`wiki/Architecture/Data-Flow.md`·`entities/aws-bedrock.md`)을 적발해 5건을 추가 반영했다.
+
+**report-only 로 남긴 것(정본 소관 — doc_sync 는 정본을 쓰지 않는다)**: ① feature-0043 정본 TASK/REPORT/FUNCTION 의 내부모순 3건(§1 State vs 체크박스 · PB-0008 서술 · P0-J 폴링 금지 이전 서술 잔존) ② feature-0044 정본의 설계 rev 번호 3표면 불일치(rev.2 vs rev.3) ③ feature-0045 REPORT §1 의 '남은 것은 라이브 배포 중 실측' vs 같은 파일의 실측 완료 기록 ④ `docs/STATUS.md` 의 셀 상세 누적(ADR-0031 §1 SSOT 계약 위반)과 `implemented` 가 STATUS 자신의 상태 enum 밖인 점, `:73` glued `||`(gen-status 생성물의 선재 baseline) ⑤ `docs/RELEASE_NOTES.md` 가 2026-07-13 이후 dormant 인데 AGENTS.md:662 는 여전히 `release_notes_scope: included` 경로로 지목(feature-0014 만 선언) ⑥ `wiki/Features/_Index.md` §2 의 feature-0042 정렬 이탈, `Module-Map` 머리표 디렉토리 수 8 vs 실측 10 ⑦ `wiki/Log.md` 직전 feature-0045 entry 가 제목만 있고 본문 0줄(append-only 라 치환 대신 이번 entry 에 병기).
+
+**검증**: `bin/gen-status.sh --check` rc=0(frontmatter 20 · passthrough 25 · 신규 0 — 표는 생성물이므로 frontmatter-driven 행 직접편집 0, passthrough 행만 수정) · `bin/ssot-lint.sh` **4건 = baseline**(전부 tracked `.env*.bak-task*`, doc_sync 범위 밖) · `bin/wiki-lint.sh` **total 22 / broken 1 = baseline 불변** · 전 wiki glued `||` 표 행 **0건** · 신규 Log entry 의 wikilink 3건 전건 실재 파일 · `wiki/Log.md` append-only 준수(EOF H2 1건, 기존 entry 무수정) · `wiki/overview.md` §2.1 표 45행 = `ls -d unit/feature-*` 45 = `ls wiki/Features/feature-*.md` 45.
+
+**한계 정직**: verify-completion 의 check #1·#5 는 v1.1 deferred 라 STATUS·wiki 정합을 보증하지 않는다 — 위 타깃별 기계 검증으로 대체했다. `docs/STATUS.md` §5 prose 는 `gen-status --check` 가 보증하지 않는 영역이라 수기 대조로 갱신했다.
+
+**landing/배포**: 무인 cron wrapper v3 소유 — 본 skill 은 로컬 commit 까지만(push/merge/deploy 는 wrapper). 본 META changeset 은 서빙 산출물이 없어 **재배포 불요**이나, 같은 run 의 operational 커밋(`7e4f7bbe`)이 릴리즈노트 static 을 바꾸므로 wrapper 의 post-merge 배포는 **필수**다.

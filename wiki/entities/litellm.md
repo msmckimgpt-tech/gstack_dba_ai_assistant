@@ -23,7 +23,7 @@ tags: [litellm, gateway, openai-compat]
 |---|---|
 | 분류 | `#wiki/entity` |
 | 유형 | tool (OSS) |
-| 본 프로젝트 사용 | `bedrock-gateway` 컨테이너 — OpenAI-compatible → Bedrock InvokeModel 변환 |
+| 본 프로젝트 사용 | `bedrock-gateway` 컨테이너 — OpenAI-compatible → Bedrock InvokeModel 변환. **2026-08-26(feature-0043) 이후 chat alias 14종과 `fallbacks` 가 전량 주석 처리**돼 활성 `model_name` 은 `titan-embed`(→ `ollama/bge-m3`) 1종뿐이며, 현재 이 컨테이너를 통해 나가는 Bedrock chat 요청은 없다 |
 
 ## 1. 개요
 
@@ -40,7 +40,7 @@ OpenAI Chat Completions API 호환 게이트웨이. 본 프로젝트는 `bedrock
 ### 2.2 본 프로젝트 config
 
 - `litellm_config.yaml` — Claude alias ↔ Bedrock model ID 매핑 정본
-- `claude-sonnet-4` / `claude-haiku-4` alias
+- `claude-sonnet-4` / `claude-haiku-4` 등 chat alias 14종 — **전량 주석 처리됨**(feature-0043, 2026-08-26). 활성은 `titan-embed` → `ollama/bge-m3`(`http://embed-ollama:11434`) 하나뿐
 - AWS credential 은 본 컨테이너 env 만
 
 ### 2.3 본 프로젝트와의 관계

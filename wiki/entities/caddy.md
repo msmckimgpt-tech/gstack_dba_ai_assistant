@@ -34,7 +34,9 @@ Go 기반 HTTPS server / reverse proxy. 본 프로젝트의 외부 LAN 노출 en
 ### 2.1 본 프로젝트 사용
 
 - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile`
-- `reverse_proxy web:8000` + `header_up X-Forwarded-For {client_ip}` directive (AC-0004)
+- `reverse_proxy web-a:8000 web-b:8000` (feature-0014 무중단 롤링 LB · active health) + `header_up X-Forwarded-For {client_ip}` directive (AC-0004)
+- `/api/ai/mcp*` 는 `ext-tool-mcp-a:8971 ext-tool-mcp-b:8971` 2 upstream (`lb_policy ip_hash` · passive 격리 `fail_duration 5s` — 이 전송은 GET 에 4xx 로 답하는 것이 정상이라 active health 를 두지 않는다, feature-0045) + `Authorization` 헤더 **존재** 요구로 익명 스트림 개설 차단 (feature-0041)
+- `/internal/*` 는 엣지에서 `respond 404` — 배포 드레인 제어 창구가 외부로 나가면 그 자체가 서비스 거부다(앱의 loopback 판정이 정본, 엣지는 한 겹 더, feature-0045)
 - 인증서 = `artifacts/certs/` (volume mount)
 
 ### 2.2 X-Forwarded-For trust 강제

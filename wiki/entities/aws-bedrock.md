@@ -27,14 +27,14 @@ tags: [aws, bedrock, llm, claude]
 
 ## 1. 개요
 
-본 프로젝트의 단일 service-managed LLM provider — feature-0007 의 ADR-0026 으로 OpenAI direct path 를 폐기하고 채택. region 시도 `ap-northeast-2` (Seoul) → ACTIVE Sonnet region-pinned 부재로 `global.*` inference profile 채택.
+본 프로젝트의 service-managed LLM provider (2026-08-27 이후 **임베딩 전용** — 대화 chat 은 fail-closed 차단되고 사용자 개인 AI 가 답한다: feature-0043) — feature-0007 의 ADR-0026 으로 OpenAI direct path 를 폐기하고 채택. region 시도 `ap-northeast-2` (Seoul) → ACTIVE Sonnet region-pinned 부재로 `global.*` inference profile 채택.
 
 ## 2. 상세
 
 ### 2.1 활성 모델 (Phase E 검증)
 
-- `claude-sonnet-4` → `bedrock/global.anthropic.claude-sonnet-4-6` (ACTIVE, frontier)
-- `claude-haiku-4` → `bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0` (ACTIVE)
+- `claude-sonnet-4` → `bedrock/global.anthropic.claude-sonnet-4-6` (2026-08-26 이후 주석 처리 — feature-0043 두 번째 자물쇠)
+- `claude-haiku-4` → `bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0` (2026-08-26 이후 주석 처리 — feature-0043 두 번째 자물쇠)
 
 ### 2.2 trust 모델
 

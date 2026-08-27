@@ -1533,7 +1533,7 @@ REST 가 정본이고 MCP 어댑터는 얇은 래퍼라는 원칙은 유지되�
 - **리다이렉트 추종 금지**: urllib 기본 opener 는 리다이렉트를 자동 추종하며 `Authorization` 헤더를 **새 호스트로 넘긴다**. 두 어댑터 모두 추종을 금지한다.
 - **TLS 검증 완화의 범위**: `EXT_TOOL_VERIFY_TLS=0` 은 **loopback upstream 에서만** 허용한다(그 외 기동 거부) — 이 채널로 Bearer 토큰이 나가기 때문.
 - **L1 부재의 정직 고지**: HTTP 전송에는 §44.6 의 L1(세션별 별도 연결 + 도구 이름 라벨 접미)이 없다. 그 사실을 서버 `instructions` 에 고지해 유도층이 있는 것처럼 보이지 않게 한다.
-- **운영 상태(2026-08-13 갱신)**: **라이브 기동됨**(`ext-tool-mcp` compose 서비스 + Caddy `handle /api/ai/mcp*`). 위 전제가 실 구성에서 어떻게 충족되는지는 §44.10 참조.
+- **운영 상태(2026-08-27 갱신)**: **라이브 기동됨**(`ext-tool-mcp-a`/`ext-tool-mcp-b` compose 서비스 2 replica + Caddy `handle /api/ai/mcp*` 2-upstream LB — feature-0045 브리지 배포 연속성). 위 전제가 실 구성에서 어떻게 충족되는지는 §44.10 참조.
 
 **발견 자료의 불변식** — 매니페스트·큐레이션 OpenAPI·가이드 부록은 익명으로 도달한다. 따라서 **익명 = static contract, 인스턴스 데이터 0** 이다(계정·데이터소스·제품 실체를 담지 않는다). 발급물 패턴 정규식으로 테스트에 고정돼 있다.
 
@@ -1541,8 +1541,9 @@ REST 가 정본이고 MCP 어댑터는 얇은 래퍼라는 원칙은 유지되�
 
 ### 44.10 HTTP 전송의 라이브 구성 — 무엇이 이 소켓을 지키는가 (2026-08-13 3차 출하)
 
-§44.9 가 "코드 전제" 였다면 여기는 **실제 배치**다. `ext-tool-mcp` 컨테이너는 `dbnet` 안에서
-평문 `:8971` 로 듣고, **공개 포트가 없다** — 유일한 도달 경로가 Caddy 의 `/api/ai/mcp*` 다.
+§44.9 가 "코드 전제" 였다면 여기는 **실제 배치**다. `ext-tool-mcp-a`/`ext-tool-mcp-b` 컨테이너는
+(feature-0045 로 2 replica) `dbnet` 안에서 평문 `:8971` 로 듣고, **공개 포트가 없다** — 유일한
+도달 경로가 Caddy 의 `/api/ai/mcp*` 다.
 그래서 TLS 종단은 엣지가 지고, 평문 구간은 컨테이너 네트워크 내부로 한정된다
 (`EXT_TOOL_HTTP_ALLOW_PUBLIC_BIND=1` 은 이 전제 위에서만 정당하다 — compose 외부에 노출하는
 순간 근거가 사라진다).
@@ -1676,7 +1677,7 @@ fail-closed 로 고치고 문자열만 보던 테스트를 교정했다.
 `WEB_PUBLIC_HOST` 로 고정돼 공인 IP 접속자가 해석되지 않는 이름을 따라갔다. 엣지에서 `{host}` 를
 되비추는 방식은 사이트 블록이 `:443` catch-all 이라 **검증 없는 반사**가 되므로 배제하고, 앱이
 `request.base_url` 로 단서를 만들게 했다(TrustedHost 가 그 호스트를 이미 검증한다). §44.10 의
-목적 — **익명은 web 까지, 인증된 요청만 `ext-tool-mcp`** — 은 그대로다. 신규 공개 라우트
+목적 — **익명은 web 까지, 인증된 요청만 `ext-tool-mcp-a`/`ext-tool-mcp-b`** — 은 그대로다. 신규 공개 라우트
 `/ai/oauth/callback`(인가 완료 화면)은 서버 상태를 만들지 않는다 — 코드는 URL 에만 있고 정적
 자산만 서빙하며, PKCE 때문에 `code_verifier` 없이는 교환되지 않되 **사람이 남에게 넘기는** 경로가
 남으므로 화면이 그 경고를 진다.
@@ -1819,6 +1820,21 @@ RBAC·datasource 바인딩·pending 계정 본문 차단(D21)은 전부 불변�
   신호가 유일한 통제다. 소유자 정보가 없는 구 형식 payload(배포 혼합 창)는 종전 동작으로 둔다 —
   막는 쪽으로 두면 그 동안 1:1 사용자까지 도구가 막힌다.
 - 게이트는 **턴 단위** 신호이며 도구 인자의 출처를 추적하지 않는다.
+- **소유 미상(`owner-unverified`) 항목 — 2026-08-26 부분 폐쇄**(feature-0002-agent-core · conv-audit
+  `FR-unknown-owner-attachment-trusted-by-provenance-gate`): 판정이 `owner and caller and owner != caller`
+  였던 탓에 `AccountId` 가 NULL/0 이면 조건이 성립하지 않아 **확인 불가를 신뢰로 처리**하고 있었다(방향
+  반대). 정본 판정 `mark_untrusted_attachment_body()`(적대 라운드 6 이후 per-id 판정을 직접 받는
+  `mark_untrusted_attachment_body_kind()`)로 통일해 **텍스트 본문 · sandbox 샘플 · 온디맨드
+  `read_attachment` · 원본 `_v0`(§48)** 축을 fail-closed 로 닫았다. 과차단 방지 2축을 함께 고정한다 —
+  호출자 신원 자체가 없으면 아무것도 단정하지 않고(전 행 untrusted 로 올리면 정상 대화의 쓰기 도구가
+  통째로 닫힌다), csv/xlsx 는 sandbox 샘플이 **실제로 적재되는 지점**에서만 신호를 세운다(메타 없는
+  csv 는 본문이 안 실리는데 목록 시점에 세우면 과차단). **이미지 축은 위 bullet 대로 열린 채 남는다** —
+  비대칭은 의도된 것이고(텍스트/csv 의 소유자는 DB 행에서 오고 배포 형식과 무관: 라이브 NULL/0
+  **0 / 1,101**), 잔여 위험과 재개봉 조건은 `docs/DECISIONS.md`
+  `ADR-20260826T220000-vision-ownerless-inline-image-stays-open` 에 명시했다. 차단 사유도
+  `other-member` / `owner-unverified` 로 분기해, 소유 미상에도 "다른 멤버가 올린 첨부" 라 단정해
+  사용자에게 오정보가 전달되던 것을 없앴다. 정본 = `unit/feature-0002-agent-core/docs/MODIFY.md`
+  `CHG-20260826T210000-unknown-owner-provenance-and-failed-edit-feedback`.
 
 ## 48. 첨부 참조 경계의 계보-조상 확장 — 최초 원본(_v0) 주입 (feature-0002-agent-core · REQ-20260824-attach-original-baseline, 2026-08-24)
 

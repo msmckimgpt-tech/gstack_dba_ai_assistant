@@ -53,12 +53,12 @@ sources:
 
 ### 2.3 모델 catalog (`litellm_config.yaml`, ADR-0026 addendum)
 
-- `claude-sonnet-4` → `bedrock/global.anthropic.claude-sonnet-4-6` (ACTIVE, frontier)
-- `claude-haiku-4` → `bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0` (ACTIVE)
+- `claude-sonnet-4` → `bedrock/global.anthropic.claude-sonnet-4-6` (2026-08-26 이후 주석 처리 — feature-0043 두 번째 자물쇠)
+- `claude-haiku-4` → `bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0` (2026-08-26 이후 주석 처리 — feature-0043 두 번째 자물쇠)
 
 Seoul region 의 ACTIVE Sonnet region-pinned ID 부재 → `global.*` inference profile 채택 (사용자 reanchor 2026-05-21).
 
-> **참고**: 실 운영 배치는 OAuth 계정 기반(claude-corp/root) 2계정 체인으로 위 Bedrock alias 표보다 넓다 — 아래 §2.4·정본(FUNCTION/REPORT) 참조. **2026-07-30 이후 자동으로 로컬 gemma(edge)가 서빙되는 경로는 없다**(ADR-003).
+> **참고**: 실 운영 배치는 OAuth 계정 기반(claude-corp/root) 2계정 체인으로 위 Bedrock alias 표보다 넓었다 — **2026-08-26 feature-0043 이후 그 두 계정의 chat 호출은 fail-closed 게이트로 전면 차단**됐고 alias 도 전량 주석 처리됐다 — 아래 §2.4·정본(FUNCTION/REPORT) 참조. **2026-07-30 이후 자동으로 로컬 gemma(edge)가 서빙되는 경로는 없다**(ADR-003).
 
 ### 2.4 요청-레벨 fallback + 용도별 라우팅 (2026-07-03~04 · 07-30 edge 제거, 정본 REPORT §3·ADR-002/ADR-003 feature-local)
 

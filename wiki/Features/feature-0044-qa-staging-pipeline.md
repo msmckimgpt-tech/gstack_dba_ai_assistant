@@ -22,7 +22,7 @@ sources:
 # Feature — QA 스테이징 파이프라인 (격리망 CI/CD)
 
 > Feature 의 *사람용 입구*. 정본은 [[../../unit/feature-0044-qa-staging-pipeline/docs/FUNCTION|unit/feature-0044-qa-staging-pipeline/docs/FUNCTION.md]],
-> 전 과정 설계는 [[../../unit/feature-0044-qa-staging-pipeline/docs/CICD_DESIGN|CICD_DESIGN.md]] (rev.2).
+> 전 과정 설계는 [[../../unit/feature-0044-qa-staging-pipeline/docs/CICD_DESIGN|CICD_DESIGN.md]] (rev.3).
 
 ## 목차
 

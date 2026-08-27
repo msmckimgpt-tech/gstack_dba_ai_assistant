@@ -18,6 +18,7 @@ sources:
   - ../../unit/feature-0002-agent-core/docs/FUNCTION.md
   - ../../unit/feature-0003-agent-web-ui/docs/FUNCTION.md
   - ../../unit/feature-0007-bedrock-llm-provider/docs/FUNCTION.md
+  - ../../unit/feature-0043-external-llm-bridge/docs/FUNCTION.md
 ---
 
 # Architecture — Data Flow
@@ -49,6 +50,8 @@ sources:
 > **2026-05-27 아키텍처 변경**: `agent_memory` DB 의 `agent*` 10 테이블 (runtime state) 이 Postgres `agent_runtime` schema 로 완전 이관. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존.
 >
 > **2026-06 멀티 데이터소스**: data plane 이 단일 MySQL replica → **N 개 데이터소스 (MySQL·MSSQL)** 로 일반화 (§2.5). 자격증명은 envelope 암호화 저장, 접근은 DB-단위 allowlist. agent 실행은 **ask-worker out-of-process 큐**로 cutover.
+>
+> **2026-08-27 외부 LLM 브리지 전환**: 서버 보유 계정으로 나가는 **chat** 호출이 fail-closed 로 전면 차단됐다(코드 게이트 + `litellm_config.yaml` 계정 alias 14종 주석, 활성 model_list = `titan-embed` 1건). 따라서 아래 §2.1 의 `agent → bedrock-gateway → AWS Bedrock` 경로와 §2.2 의 `agent → Bedrock` 신뢰 경계는 **임베딩 전용으로 축소**됐다. 웹 대화 질문은 `_enqueue_web_bridge_task()` 가 `/api/ask` dispatch **앞에서** 가로채 `WebAiTasks` 대기 작업으로 적재하고, 사용자 개인 머신의 AI 가 MCP/REST(`list_open_requests` · `claim_request` · `submit_answer`)로 가져가 답변한다(pull 브리지). 정본: [[../Features/feature-0043-external-llm-bridge]].
 
 ## 2. 상세
 
@@ -92,6 +95,8 @@ flowchart LR
 ```
 
 > `web` 의 in-process 실행 (`AGENT_ASK_EXECUTION_MODE=inprocess`) 도 롤백 옵션으로 잔존하나, 운영은 ask-worker 큐 (`=worker`) 가 라이브.
+>
+> **2026-08-26(feature-0043) 이후**: 위 그림의 `agent → bedrock-gateway → Bedrock Claude` 구간은 **대화 답변 경로에서 fail-closed 로 차단**됐다(`shared/llm_gate.py` 코드 기본값 = 차단 · `litellm_config.yaml` chat alias 14종 주석). 웹 대화 질문은 `/api/ask` 가 dispatch 앞에서 `WebAiTasks`(`Origin='web'`) 대기작업으로 분기하고, 각 사용자의 **개인 머신 AI 런타임**이 `/api/ai/mcp`(엣지 → `ext-tool-mcp-a/b` 2 replica LB, feature-0045)로 붙어 `wait_for_request`(블로킹 대기)→`claim_request`→`submit_answer` 로 처리한 답변이 원 대화에 실린다. 게이트웨이로 남은 활성 경로는 로컬 임베딩(`titan-embed` → `ollama/bge-m3`) 하나뿐이다.
 
 ### 2.2 신뢰 경계 (trust boundary)
 
@@ -100,11 +105,11 @@ flowchart LR
 | 외부 → Caddy | Caddy 에서 TLS 종단 + `header_up X-Forwarded-For {client_ip}` 강제 | feature-0006 AC-0004 (ADR-0017 cascade) |
 | Caddy → web | web 의 `_get_client_ip()` 가 `X-Forwarded-For` last hop 만 신뢰 | feature-0003 AC-0205~0207 |
 | web → agent | `/api/ask` RBAC (`conversation.ask` / `console.manage` / `audit.*`) | ADR-0019 + feature-0003 audit hook |
-| agent → Bedrock | `BEDROCK_GATEWAY_API_KEY` token 만 web/agent 가 인지, AWS credential 은 bedrock-gateway 컨테이너 env 만 | ADR-0026 + `.env.bedrock` 분리 |
+| agent → Bedrock (2026-08-27 이후 **임베딩 전용** — chat 은 fail-closed 차단) | `BEDROCK_GATEWAY_API_KEY` token 만 web/agent 가 인지, AWS credential 은 bedrock-gateway 컨테이너 env 만 | ADR-0026 + `.env.bedrock` 분리 · feature-0043 게이트 |
 | agent → 데이터소스 (MySQL·MSSQL) | datasource registry 좌표(envelope 복호) + RO user, DB-단위 allowlist + 3축 SQL guard, fail-closed | [[../concepts/db-level-access]] · [[../concepts/datasource-registry]] |
 | datasource host | SSRF: 메타데이터 IP 하드차단 + DNS rebinding pin (사설망 경계는 env 토글) | [[../Decisions/ADR-0030-ssrf-guard-toggle]] |
 | sandbox schema | `attachment_writer` / `_reader` / `_maintainer` / `_cleanup` 4 user 분리 | ADR-0023 |
-| 외부 AI 도구 → MCP 전송 | `ext-tool-mcp`(HTTP/SSE)의 익명 스트림 차단을 Caddyfile `/api/ai/mcp` 라우트의 `Authorization` 존재 요구로 집행 — MCP 전송 계층에 verifier 가 없어 인가 경계 한 조각이 feature-0006 자산에 거주 | feature-0041 · feature-0006 ([[Overview]] §2.4 의존 행) |
+| 외부 AI 도구 → MCP 전송 | `ext-tool-mcp-a/b`(HTTP/SSE 2 replica · Caddy `ip_hash` LB · stateless, feature-0045)의 익명 스트림 차단을 Caddyfile `/api/ai/mcp` 라우트의 `Authorization` 존재 요구로 집행 — MCP 전송 계층에 verifier 가 없어 인가 경계 한 조각이 feature-0006 자산에 거주 | feature-0041 · feature-0006 ([[Overview]] §2.4 의존 행) |
 
 ### 2.3 audit 흐름 (ADR-0019)
 

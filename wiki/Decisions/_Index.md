@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 | [[../../docs/DECISIONS\|docs/DECISIONS.md]] |
-| ADR 수 | 정본 42 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 11; `## ADR-` heading 은 43 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
+| ADR 수 | 정본 43 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 12; `## ADR-` heading 은 44 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -113,6 +113,9 @@ AI 가 ADR 작성 시 본 MOC 에 1줄 entry add + `Decisions/<adr-id>-<slug>.md
 | ADR-20260728T120000-redteam-gating-not-adopted | red-team 게이팅 **불채택** (사용자 결정 2026-07-28) | accepted | `docs/DECISIONS.md` |
 | ADR-20260805T153000-p5a-closeout | P5a 종결 — feature 단위 Dockerfile 분리 불채택 등 미결정 #4/#5 종결 | accepted (정본 문면 = '결정', 사용자 위임) | `docs/DECISIONS.md` |
 | ADR-20260825T170000-cc-identity-chokepoint | OAuth frontier identity 주입을 provider 전송 직전 **단일 관문**(`prepare_provider_messages`)으로 봉인 — 호출측 산재 금지 + AST 배선 강제 (2026-07-24 최초 봉인 → 2026-08-25 동일 장애 재발이 계기, 정책 정본 `AGENTS.md §15.2.1`) | accepted | `docs/DECISIONS.md` |
+| ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키가 없는 inline image 는 본문 노출을 **유지**한다(차단하지 않음) — 선행 결정 `REQ-20260814-vision-provenance` 의 재확인. 롤링 배포 중 구·신 inline JSON 형식이 공존하는 창에서 owner-less 를 막으면 공유 대화와 무관한 1:1 사용자까지 쓰기 도구가 통째로 막히기 때문이며, 소유자가 DB 행(`AccountId`)에서 오는 텍스트·csv 축은 같은 비용이 없어 거기만 fail-closed 로 닫았다(비대칭은 의도). 잔여 위험은 명시적으로 열어 두고 inline JSON 형식 마이그레이션 후 재개봉 | accepted (재확인) | `docs/DECISIONS.md` |
+| ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키가 없는 inline image 는 **본문 노출을 유지**(차단하지 않음) — 텍스트·csv·`read_attachment`·`_v0` 축만 fail-closed 로 닫고 이미지 축의 비대칭은 의도로 확정 (2026-08-26 conversation_audit 적대 리뷰 반복 지적에 대한 판정) | accepted (재확인 — 선행 결정 `REQ-20260814-vision-provenance` 유지) | `docs/DECISIONS.md` |
+| ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키 없는 inline image 는 provenance 신호를 세우지 않고 **열어 둔다**(재확인) — inline image JSON 은 web 이 쓰고 worker 가 읽는 파일 계약이라 롤링 배포 중 구·신 형식 공존 창에서 owner-less 를 막으면 1:1 사용자까지 쓰기 도구가 막힌다 (`REQ-20260814-vision-provenance` 유지) | accepted (재확인) | `docs/DECISIONS.md` |
 
 ## 3. Status legend
 

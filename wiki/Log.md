@@ -365,3 +365,22 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - 남은 미확인은 여전히 **사내 PyPI/apt 미러 유무 1건**. (feature-0044-qa-staging-pipeline) [[feature-0044-qa-staging-pipeline]] · [[feature-0043-external-llm-bridge]] · [[feature-0007-bedrock-llm-provider]]
 
 ## [2026-08-27] feature | feature-0045-zd-bridge-continuity 신규 — 브리지 배포 연속성(대기는 교대·작업은 완주 · MCP 2-replica · 점유 소유자 보존 회수) [[feature-0045-zd-bridge-continuity]]
+
+## [2026-08-27] feature | feature-0045-zd-bridge-continuity 신규 — 브리지 배포 연속성(대기는 교대·작업은 완주 · MCP 2-replica · 점유 소유자 보존 회수) [[feature-0045-zd-bridge-continuity]]
+
+## [2026-08-28] wiki-ingest
+
+
+## [2026-08-28] wiki-ingest
+
+- **doc_sync 08-28(META-0066)** — `440ee173`(08-26 sync, META-0065) 이후 델타 **49 non-merge / 26 merge**(PR #1344~#1393 · git-date 2026-08-26 10:28 ~ 2026-08-28 00:29) · **신규 feature 3개**로 42→**45**(`ls -d unit/feature-*` = 45 = `ls wiki/Features/feature-*.md` = 45). 직전 창(08-27) doc_sync 커밋 2건이 origin/main 에 미착륙이라 그 창의 drift 가 이월됐고, 이번 창이 그것을 포함하는 superset 으로 전건 재검증했다 — 그 초안이 본 42→44 는 지금 기준으로 **45** 다.
+- **Features MOC 에 feature-0043 행이 통째로 없었다.** 정본 디렉토리·wiki 카드·`docs/STATUS.md` 행은 다 있는데 MOC 만 빠져 렌더 행이 44 ≠ 정본 45 였다. 행 신설 + 카운트 **8참조/5파일** 전건 42·43 → **45**(`Index` §2.1·§2.3 · `Architecture/Overview`:28 · `Architecture/Module-Map`:64 · `Features/_Index`:26·§1 · `overview`:53·§2.2). `Architecture/Overview`:28 은 self-add 로 43(0044 만 반영)이던 세 번째 어긋남이었고, 그 머리표가 지목한 0044 행이 정작 같은 파일 §2.3 본문에는 없어 자기모순이었다.
+- **기능 맵·의존성·핵심 영역 표 3종에 신규 3행씩 backfill** — `Architecture/Overview` §2.3(42→45)·§2.4(41→44) · `overview` §2.1(42→45). `overview` §1 타임라인에 **(71) 2026-08-26~08-28** 항목 신설(feature-0043 추론 주체 반전 + feature-0045 무중단 재구성 + feature-0044 설계 rev.3).
+- **ADR 색인 3표면 정정** — 정본 `docs/DECISIONS.md` 실측은 `## ADR-` heading **44** · 고유 **43** · timestamp+slug **12** 인데 미러는 43/42/11 이었다. `Decisions/_Index`:25 수치 + `Index`:70 건수 정정 + §2.2 에 `ADR-20260826T220000-vision-ownerless-inline-image-stays-open` 행 신설(같은 파일 §1 이 MOC entry 를 의무로 규정한다).
+- **이미 해소된 한계 서술 제거 — PB-0008 은 열렸다.** `hot.md` 가 "PB-0008 화면 시각검증 미수행 — win-browser 브리지가 이 환경에서 불가(`win_host` 오판)" 을 능동 스레드로 붙들고 있었으나, 정본은 그 오판(첫 nameserver 무조건 채택 → `8.8.8.8`)을 고쳐 두 cycle 연속 막혀 있던 브리지를 열었고 실 브라우저 검증 2회 중 1차가 "배포는 됐는데 문안이 화면에 도달하지 않음" 을 적발해 수정 배포 뒤 **2차 PASS** 했다(785자 옛 문안 → 5,664자). hot.md 를 전면 재작성해 잔존 actionable 만 남겼다 — 409 집행·진행 단계 실시간 표시 미검증 · `.env` 위생 · feature-0044 승인 대기 · feature-0045 강행 경로.
+- **feature-0043 카드가 08-26 초판에 멈춰 있었다.** 창에서 19 cycle·26 CHG 를 거치며 **주기 폴링이 폐기**되고(`wait_for_request` 블로킹 대기 — 폴링은 인지 지연이 사람마다 달라 '환경 차이' 가 된다) 상주 러너 `bridge_agent.py` 가 기본 경로가 됐는데, 카드 흐름도는 여전히 "MCP/REST 로 폴링 → `list_open_requests`" 였다. 흐름도·요점 정정 + frontmatter 를 카드 표준형으로 정규화했다(45장 중 이 카드만 `sources:` 부재였다).
+- **feature-0044 MOC 행이 반증된 rev.1 을 서술**하고 있었다 — "사내 GitLab CI + 레지스트리 다이제스트 pull + `promote/<tag>` 태그 이동" 은 rev.2 에서 전제가 뒤집혀 폐기됐고 정본 rev.3 은 SVN 매니페스트 + `docker save` tar 릴레이 + `promoted/current.json` 표식이다. 카드 머리말의 `CICD_DESIGN.md (rev.2)` 도 rev.3 으로 정정.
+- **feature-0045 상태 전진** — 정본 TASK 는 `shipped — 라이브 배포 e7d54f70 · 끊김 0 실측` 인데 카드·MOC 는 `implemented (라이브 실측 대기)` 였다. 첫 전환 배포에서 구 MCP 컨테이너 정리 실패가 `set -e` 로 배포를 중단시킨 결함과 "구 서비스 정리는 게이트가 아니다" 계약화도 함께 반영.
+- **entities/litellm.md 가 폐기된 alias 를 정본으로 서술** — 실측상 `litellm_config.yaml` 의 활성 `model_name` 은 `titan-embed`(→ `ollama/bge-m3`) 1종뿐이고 chat alias 14종과 `fallbacks` 는 전량 주석이다(활성 1 · 주석 16). `Architecture/Data-Flow` §2.1 의 `agent → bedrock-gateway → Claude` 그림에도 차단·브리지 경로 주석을 병기하고 §2.2 의 `ext-tool-mcp` 단수 서술을 2 replica 로 전진시켰다.
+- **report-only 이월** — ⓐ 정본 내부모순 2건: feature-0043 `REPORT.md` §1 이 아직 "PB-0008 화면 시각검증만 미수행" 이라 같은 파일 §4-A·§5.1 및 `MODIFY.md` 의 2차 PASS 기록과 충돌하고, feature-0045 `REPORT.md` §1 "남은 것은 라이브 배포 중 실측" 이 같은 파일 §2 "라이브 실측 완료" 와 충돌한다. ⓑ `docs/ARCHITECTURE.md` §4·§6 에 feature-0044·0045 행이 없다(0043 만 self-add). ⓒ 이 파일의 직전 entry 는 **제목만 있고 본문이 없다**(feature 커밋 self-add) — append-only 라 고치지 않고 여기서 서사를 대신 남긴다: 배포 게이트가 브리지 대기·왕복을 세지 못해 AI 가 조사 중인 순간에도 0 으로 읽고 replica 를 내리던 것을 비대칭 드레인(대기는 즉시 교대·왕복은 완주 대기 180s)으로 고치고, 단일 컨테이너였던 `ext-tool-mcp` 를 2 replica + Caddy LB + stateless + 전용 롤링으로 바꿨다. ⓓ `Architecture/Module-Map`:27 의 "top-level 8" 은 실측 10 디렉토리와 어긋난다(선재).
+- **검증**: 렌더 행 수 실측 — `Features/_Index` feature 행 44→45 · `Architecture/Overview` §2.3 42→45 · §2.4 41→44 · `overview` §2.1 42→45 · `Decisions/_Index` repo-level ADR 42→43. glued `||` 표 행 **0건**(전 wiki grep `^|.*||`) · 신규 서사의 wikilink 는 실재 파일만 · wiki-lint total 22 = baseline(broken 1 은 선재). [[feature-0043-external-llm-bridge]] · [[feature-0044-qa-staging-pipeline]] · [[feature-0045-zd-bridge-continuity]]
