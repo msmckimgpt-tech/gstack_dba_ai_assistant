@@ -324,8 +324,12 @@ def test_connect_page_hands_off_without_calling_the_human_back():
 
     이 순서가 뒤집히면 "복사만 하면 끝" 이라는 약속이 깨진다.
     """
-    js = _read(*_STATIC, "ai-connect.js")
-    body = js[js.index("function handoff("):js.index("function humanTtl(")]
+    # 2026-08-28: 지시문이 **서버로 이동**했다(`compose_connect_handoff`). 종전에는 이 계약을
+    # `ai-connect.js` 안의 자체 조립본에서 검사했는데, 그 사본이 서버 문안과 갈려 라이브 화면이
+    # 몇 세대 뒤처진 안내를 내보내고 있었다(PB-0008 발각). 사본을 없앴으므로 **계약도 정본을
+    # 따라간다** — 검사를 지우지 않고 대상을 옮긴다(계약은 여전히 유효하다).
+    body = _read(*_OAUTH_AS)
+    body = body[body.index("def compose_connect_handoff("):body.index("@router.post(\"/api/ai/connect/token\")")]
     a, b, c = body.index('"A. '), body.index('"B. '), body.index('"C. ')
     assert a < b < c, "지시문의 방법 순서가 A→B→C 가 아니다"
     # C(OAuth)가 사람을 다시 부른다는 사실을 AI 에게 알려야 그것을 뒤로 미룬다.
