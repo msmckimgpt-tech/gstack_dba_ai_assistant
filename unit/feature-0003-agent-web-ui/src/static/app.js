@@ -225,6 +225,19 @@ export const state = {
   // 폴링이 서버의 현재 run_id 로 확정한다. 이후 서버 run_id 가 이 값과 달라지면 새 run(진행
   // 중 또는 방금 완료)으로 보고 loadHistory 로 전체 동기화한다.
   detectBaselineRunId: null,
+  // bridge-progress-scroll-loop: 감지기가 이미 재로드를 위임한 **서버 국면들**과, 그 집합이
+  // 속한 `(대화|run)` 범위.
+  //
+  // baseline 은 loadHistory 재무장마다 null 로 리셋되므로 "같은 상태를 다시 위임하지 않는다" 를
+  // 혼자 보장하지 못한다 — 서버가 유휴/진행을 서로 다르게 답하는 창(브리지 원장·KV 분기 등)에서는
+  // 위임→재무장→위임이 지연 0ms 로 돌며 매 회 화면을 맨 아래로 끌어내렸다.
+  //
+  // **왜 마지막 국면 하나가 아니라 집합인가 (codex 적대 리뷰 [P2])**: 하나만 기억하면
+  // `processing → 완료 → processing` 처럼 국면이 흔들릴 때 매번 "새 국면" 으로 읽혀 순환이
+  // 되살아난다. 본 집합은 한 run 에서 실제로 나타나는 국면 수(한 자릿수)로 자연히 유계이고,
+  // run 또는 대화가 바뀌면 통째로 비운다.
+  detectHandoffScope: "",
+  detectHandoffSeen: null,
   toastTimer: null,
   // TASK-0047: 제품 컨텍스트 (대화 단위) state.
   // - productMode: 사용자 의도. 'auto' = 일반 대화, 'pinned' = 특정 제품 고정.
@@ -4742,13 +4755,36 @@ export function clearRunDetectTimer() {
 
 // (ITEM-P5b B3) startRunDetectPolling — app/progress.js 로 이동.
 
+// bridge-progress-scroll-loop: 위임 이력을 담는 seen 집합을 현재 `(대화|run)` 범위로 맞춘다.
+// 범위가 바뀌면(대화 전환·새 run) 비운다 — 새 대상은 처음부터 다시 반영해야 하고, 집합이
+// 무한히 자라지도 않는다. 반환값 = 그 범위의 seen 집합.
+function _detectHandoffSeenFor(runId) {
+  // run 을 모르는 응답(일시적 빈 응답·오류 폴백)은 **범위를 건드리지 않는다**. 여기서
+  // 비우면 그 사이 쌓인 위임 이력이 사라져, 뒤이어 오는 같은 run 의 완료 전이가 "처음 보는
+  // 국면" 이 아니라 "이력 없음" 으로 읽혀 재로드가 일어나지 않는다 → 최종 답변 고착
+  // (codex 적대 리뷰 3R [P1]). 빈 run 으로는 어차피 위임하지 않으므로 읽기 전용으로 돌려준다.
+  if (!runId) return state.detectHandoffSeen || new Set();
+  const scope = `${String(state.activeConversationId || "")}|${String(runId || "")}`;
+  if (state.detectHandoffScope !== scope || !state.detectHandoffSeen) {
+    state.detectHandoffScope = scope;
+    state.detectHandoffSeen = new Set();
+  }
+  return state.detectHandoffSeen;
+}
+
 // 감지 → loadHistory 위임. 성공 시 loadHistory 가 감지기 상태를 관장한다(유휴 분기=재무장,
 // processing 분기=정지). loadHistory 가 throw(예: /api/history 네트워크 blip)하면 감지기가
 // 영구 disarm 되지 않도록 여기서 재무장한다(seq 유효할 때만 — pollProgress 의 error backoff 와 동형).
-async function _detectHandoffReload(seq) {
+//
+// bridge-progress-scroll-loop: 위임 사실을 **호출 전에** 새긴다(재진입 창을 남기지 않기 위해).
+// 다만 재로드가 실패했으면 위임은 일어나지 않은 것이므로 표식을 되돌린다 — 그러지 않으면
+// 네트워크 blip 1회가 그 run 의 동기화를 영구히 봉인한다.
+async function _detectHandoffReload(seq, seen = null, phase = "") {
+  if (seen) seen.add(phase);
   try {
     await loadHistory();
   } catch (_e) {
+    if (seen) seen.delete(phase);
     if (seq === state.runDetectSeq) scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
   }
 }
@@ -4808,6 +4844,18 @@ export async function detectNewRun(seq = state.runDetectSeq) {
     if (state.progressPoller || state.progressPollInFlight) return;
     const runId = String(payload.run_id || "").trim();
     const rawStatus = String(payload.raw_status || payload.status || "").trim().toLowerCase();
+    // bridge-progress-scroll-loop: 이 run 의 이 국면으로는 이미 재로드를 위임했는가.
+    // 위임은 `loadHistory()`(preserveScroll 없음 = 맨 아래로 이동)라 반복되면 사용자가
+    // 스크롤을 붙잡을 수 없다. 이미 본 국면을 다시 읽어도 화면이 달라지지 않으므로 끌어내리지
+    // 않는다 — 그 run 의 진행 세부는 활성 폴러(pollProgress)가 담당한다.
+    const _seen = _detectHandoffSeenFor(runId);
+    const _alreadyHandedOff = Boolean(runId) && _seen.has(rawStatus);
+    // 같은 run 인데 **아직 안 본 국면**인가(예: processing → 완료). baseline 은 run_id 만
+    // 보므로 이 전이를 혼자서는 못 본다 — 첫 위임의 loadHistory 가 마침 유휴를 봐 활성
+    // 폴러가 서지 못했다면, 여기서 잡지 않으면 그 run 의 최종 답변이 수동 새로고침 전까지
+    // 화면에 영영 나타나지 않는다(codex 적대 리뷰 [P1]). 흔들려 되돌아온 국면은 집합에
+    // 이미 있으므로 통과하지 않는다(같은 리뷰 [P2] — 순환 재발 차단).
+    const _phaseMoved = Boolean(runId) && _seen.size > 0 && !_alreadyHandedOff;
     if (state.detectBaselineRunId === null) {
       // 무장 후 첫 폴링: 현재 서버 run 을 baseline 으로 확정.
       state.detectBaselineRunId = runId;
@@ -4818,16 +4866,19 @@ export async function detectNewRun(seq = state.runDetectSeq) {
       // 종전의 `runId !== state.progressRunId` 조건은 ②를 배제했다(죽은 폴러의 progressRunId 가
       // 같은 run 이므로) — 그래서 회복이 일어나지 못했다. 폴러 생존 가드가 중복 진입을 이미
       // 막으므로 이 비교는 불필요하다.
-      if (rawStatus === "processing" && runId) {
+      if (runId && !_alreadyHandedOff && (rawStatus === "processing" || _phaseMoved)) {
         reschedule = false;
-        await _detectHandoffReload(seq);
+        await _detectHandoffReload(seq, _seen, rawStatus);
       }
-    } else if (runId && runId !== state.detectBaselineRunId) {
-      // 새 run(진행 중 또는 방금 완료) 감지 → 전체 동기화. loadHistory 가 processing 이면
-      // 활성 폴링을 시작(감지기 dormant), 완료면 최종 메시지를 화면에 반영하고 감지기 재무장.
+    } else if (runId && (runId !== state.detectBaselineRunId || _phaseMoved)) {
+      // 새 run(진행 중 또는 방금 완료) 감지, 또는 추적 중이던 run 의 국면 전이 → 전체 동기화.
+      // loadHistory 가 processing 이면 활성 폴링을 시작(감지기 dormant), 완료면 최종 메시지를
+      // 화면에 반영하고 감지기 재무장.
       state.detectBaselineRunId = runId;
-      reschedule = false;
-      await _detectHandoffReload(seq);
+      if (!_alreadyHandedOff) {
+        reschedule = false;
+        await _detectHandoffReload(seq, _seen, rawStatus);
+      }
     }
   } catch (_error) {
     // 네트워크 blip / abort: 다음 주기에 재시도(감지는 비긴급이라 error backoff 불필요).

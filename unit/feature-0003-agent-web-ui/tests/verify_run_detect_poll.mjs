@@ -57,6 +57,8 @@ const NAMES = [
   "stopRunDetectPolling",
   "scheduleRunDetectPolling",
   "startRunDetectPolling",
+  // bridge-progress-scroll-loop: 위임 이력 seen 집합 스코핑.
+  "_detectHandoffSeenFor",
   "_detectHandoffReload",
   "detectNewRun",
 ];
@@ -87,7 +89,8 @@ const factory = new Function(
   "AbortController", "URLSearchParams",
   "PROGRESS_FETCH_TIMEOUT_MS", "RUN_DETECT_POLL_MS", "RUN_DETECT_POLL_HIDDEN_MS",
   `${srcs.clearRunDetectTimer}\n${srcs.stopRunDetectPolling}\n${srcs.scheduleRunDetectPolling}\n` +
-  `${srcs.startRunDetectPolling}\n${srcs._detectHandoffReload}\n${srcs.detectNewRun}\n` +
+  `${srcs.startRunDetectPolling}\n${srcs._detectHandoffSeenFor}\n${srcs._detectHandoffReload}\n` +
+  `${srcs.detectNewRun}\n` +
   `return { detectNewRun, scheduleRunDetectPolling, startRunDetectPolling, stopRunDetectPolling };`
 );
 
@@ -102,6 +105,9 @@ function makeState(over = {}) {
     runDetectInFlight: false,
     runDetectSeq: 0,
     detectBaselineRunId: null,
+    // bridge-progress-scroll-loop: 위임 이력 seen 집합과 그 범위(대화|run).
+    detectHandoffScope: "",
+    detectHandoffSeen: null,
     ...over,
   };
 }
@@ -242,6 +248,154 @@ function makeHarness(payload, over = {}, opts = {}) {
   await h.api.detectNewRun(0);
   ok("S8 runDetectInFlight=true → dormant(fetch 안 함)", h.calls.apiFetch === 0);
   ok("S8 runDetectInFlight=true → 재스케줄", h.state.runDetectPoller !== null);
+}
+
+// ── bridge-progress-scroll-loop 회귀 가드 (2026-08-27) ────────────────────────
+// 배경: 개인 AI 브리지 대화는 서버 run 이 없어 KV(last_status*)가 비고, `/api/progress` 는
+// steps fallback 을 탄다. 답변 전달 직후 심기는 브리지 원장 step 때문에 서버가
+// "processing" 을 답하는데 `/api/history` 는 유휴를 답했다. 그 불일치에서 프런트가
+//   위임(loadHistory = 맨 아래로) → 유휴 재무장(baseline=null) → 다시 위임 …
+// 을 지연 0ms 로 반복해, 사용자가 답변을 받은 직후 스크롤을 붙잡을 수 없었다.
+// 서버측은 원장 step 을 fallback 에서 제외해 고쳤고(정본 수정), 여기서는 **불일치가 어떤
+// 이유로 다시 생겨도 프런트가 스스로 수렴한다**는 계약을 잠근다.
+
+// Scenario 9: 같은 (대화, run) 으로는 위임이 1회뿐이다 — baseline 이 매번 null 로
+// 리셋돼도(= loadHistory 재무장) 두 번째부터는 재로드하지 않는다.
+{
+  const h = makeHarness({ run_id: "R1", raw_status: "processing" });
+  await h.api.detectNewRun(0);
+  ok("S9 1회차 위임", h.calls.loadHistory === 1);
+  ok("S9 위임 국면 각인", h.state.detectHandoffScope === "c1|R1"
+     && [...h.state.detectHandoffSeen].join(",") === "processing");
+  for (let i = 0; i < 5; i++) {
+    h.state.detectBaselineRunId = null;   // loadHistory 유휴 분기의 재무장을 모사
+    await h.api.detectNewRun(0);
+  }
+  ok("S9 서버가 계속 processing 이어도 재위임 없음(스크롤 강탈 차단)", h.calls.loadHistory === 1);
+  ok("S9 수렴 후에도 감지기는 살아 있음(재스케줄)", h.state.runDetectPoller !== null);
+}
+
+// Scenario 10: 대화가 바뀌면 같은 run_id 라도 다시 반영한다 — 키에 대화가 묶여 있어
+// 별도 리셋 훅 없이 무효화된다(다른 대화의 화면을 낡은 채로 두지 않는다).
+{
+  const h = makeHarness({ run_id: "R1", raw_status: "processing" });
+  await h.api.detectNewRun(0);
+  h.state.activeConversationId = "c2";
+  h.state.detectBaselineRunId = null;
+  await h.api.detectNewRun(0);
+  ok("S10 대화 전환 후 같은 run 은 재위임됨", h.calls.loadHistory === 2);
+  ok("S10 seen 범위가 새 대화로 갱신(이전 이력 폐기)", h.state.detectHandoffScope === "c2|R1"
+     && [...h.state.detectHandoffSeen].join(",") === "processing");
+}
+
+// Scenario 11: 위임이 throw 하면 키를 되돌린다 — 네트워크 blip 1회가 그 run 의 동기화를
+// 영구히 봉인하면 안 된다(S7 의 재무장 계약과 짝).
+{
+  const h = makeHarness(
+    { run_id: "R1", raw_status: "processing" },
+    {},
+    { loadHistoryThrows: true },
+  );
+  await h.api.detectNewRun(0);
+  ok("S11 위임 실패 시 국면 각인 원복(다음 기회에 재시도 가능)",
+     h.state.detectHandoffSeen.size === 0);
+  h.state.detectBaselineRunId = null;
+  await h.api.detectNewRun(0);
+  ok("S11 실패 후에는 같은 run 도 재시도됨", h.calls.loadHistory === 2);
+}
+
+// Scenario 12 (codex 적대 리뷰 [P1] 회귀 가드): 같은 run 이라도 **국면이 바뀌면** 다시
+// 위임한다. run 만으로 묶으면, 첫 위임의 loadHistory 가 마침 유휴를 본 경우(KV 선기록 전
+// race) 활성 폴러가 서지 않는데 그 run 의 **완료**까지 차단돼 최종 답변이 수동 새로고침
+// 전까지 화면에 나오지 않는다. 막아야 하는 것은 "같은 국면의 반복" 이지 "그 run 전체" 가 아니다.
+{
+  const h = makeHarness({ run_id: "R1", raw_status: "processing" });
+  await h.api.detectNewRun(0);
+  ok("S12 processing 1회 위임", h.calls.loadHistory === 1);
+
+  // 같은 국면 반복 → 차단
+  h.state.detectBaselineRunId = null;
+  await h.api.detectNewRun(0);
+  ok("S12 같은 국면 반복은 차단", h.calls.loadHistory === 1);
+
+  // 차단된 뒤 baseline 은 그 run 으로 고정된다(= 순환 없음). 이 상태에서 같은 run 이
+  // **완료**로 전이하면 재위임돼야 한다 — 그러지 않으면 최종 답변이 화면에 안 나온다.
+  ok("S12 차단 후 baseline 은 그 run 으로 고정", h.state.detectBaselineRunId === "R1");
+  const h2 = makeHarness({ run_id: "R1", raw_status: "done" }, {
+    detectBaselineRunId: "R1",                          // 차단 경로가 남긴 상태 그대로
+    detectHandoffScope: h.state.detectHandoffScope,     // 직전 processing 위임 이력 승계
+    detectHandoffSeen: new Set(h.state.detectHandoffSeen),
+  });
+  await h2.api.detectNewRun(0);
+  ok("S12 processing → 완료 전이는 재위임(답변 고착 방지)", h2.calls.loadHistory === 1);
+  ok("S12 전이 후 두 국면 모두 각인",
+    [...h2.state.detectHandoffSeen].sort().join(",") === "done,processing");
+
+  // 완료 국면도 반복되면 다시 차단된다(전이 1회만 통과 — 재순환 방지).
+  const h3 = makeHarness({ run_id: "R1", raw_status: "done" }, {
+    detectBaselineRunId: "R1",
+    detectHandoffScope: "c1|R1",
+    detectHandoffSeen: new Set(["processing", "done"]),
+  });
+  await h3.api.detectNewRun(0);
+  ok("S12 완료 국면 반복은 다시 차단", h3.calls.loadHistory === 0);
+}
+
+// Scenario 13 (codex 2차 [P2] 회귀 가드): 국면이 **흔들려도**(processing → 완료 →
+// processing) 순환이 되살아나지 않는다. 마지막 국면 하나만 기억하면 매 전환이 "새 국면" 이
+// 되어 위임이 무한 반복된다 — seen 집합은 되돌아온 국면을 이미 알고 있다.
+{
+  const seen = new Set();
+  let total = 0;
+  for (const phase of ["processing", "done", "processing", "done", "processing", "done"]) {
+    const h = makeHarness({ run_id: "R1", raw_status: phase }, {
+      detectBaselineRunId: null,          // loadHistory 재무장 모사(최악 조건)
+      detectHandoffScope: "c1|R1",
+      detectHandoffSeen: seen,
+    });
+    await h.api.detectNewRun(0);
+    total += h.calls.loadHistory;
+  }
+  ok("S13 국면 흔들림 6회에도 위임은 국면 종류 수(2)로 유계", total === 2);
+  ok("S13 seen 집합은 국면 종류만큼만 자란다(무한 성장 없음)", seen.size === 2);
+}
+
+// Scenario 14: run 이 바뀌면 seen 이 비워져 새 run 은 처음부터 반영된다.
+{
+  const h = makeHarness({ run_id: "R2", raw_status: "processing" }, {
+    detectBaselineRunId: "R1",
+    detectHandoffScope: "c1|R1",
+    detectHandoffSeen: new Set(["processing", "done"]),
+  });
+  await h.api.detectNewRun(0);
+  ok("S14 새 run 은 위임됨", h.calls.loadHistory === 1);
+  ok("S14 seen 범위가 새 run 으로 교체", h.state.detectHandoffScope === "c1|R2"
+     && [...h.state.detectHandoffSeen].join(",") === "processing");
+}
+
+// Scenario 15 (codex 3차 [P2→P1] 회귀 가드): `/api/progress` 가 일시적으로 **run 을 모르는
+// 응답**(빈 run_id — 오류 폴백)을 돌려줘도 위임 이력이 사라지지 않는다. 빈 응답에서 범위를
+// 갈아치우면 seen 이 비워지고, 뒤이어 도착하는 같은 run 의 완료 전이가 "이력 없음" 으로 읽혀
+// 재로드가 일어나지 않는다 → 최종 답변이 화면에 영영 안 나온다.
+{
+  const seen = new Set(["processing"]);
+  const hEmpty = makeHarness({ run_id: "", raw_status: "" }, {
+    detectBaselineRunId: "R1",
+    detectHandoffScope: "c1|R1",
+    detectHandoffSeen: seen,
+  });
+  await hEmpty.api.detectNewRun(0);
+  ok("S15 빈 응답은 위임하지 않음", hEmpty.calls.loadHistory === 0);
+  ok("S15 빈 응답이 위임 이력을 지우지 않음",
+    hEmpty.state.detectHandoffScope === "c1|R1" && hEmpty.state.detectHandoffSeen.has("processing"));
+
+  const hDone = makeHarness({ run_id: "R1", raw_status: "done" }, {
+    detectBaselineRunId: hEmpty.state.detectBaselineRunId,
+    detectHandoffScope: hEmpty.state.detectHandoffScope,
+    detectHandoffSeen: hEmpty.state.detectHandoffSeen,
+  });
+  await hDone.api.detectNewRun(0);
+  ok("S15 빈 응답을 거쳐 온 완료 전이도 재위임(답변 고착 방지)", hDone.calls.loadHistory === 1);
 }
 
 // ── 결과 ────────────────────────────────────────────────────────────────────────
