@@ -391,7 +391,8 @@ source_of_truth: true
       **남는 신뢰 경계 정직 기술**(프롬프트가 상대 에이전트를 구동하는 여지는 남는다)
 - [x] ⑦ 계약 테스트 20건(`test_handoff_trust.py`) — 문안 회귀 · DER 지문 정확성 ·
       다중 인증서 fail-closed · 캐시 신선도 · fail-open · 배선
-- [ ] ⑧ **POST-DEPLOY** — 라이브 `/ai/connect` 지시문에 실제 지문·체크섬이 실렸는지 육안 확인
+- [x] ⑧ **POST-DEPLOY** — 2회 수행. 1차에서 **문안이 화면에 도달하지 않음**을 발견(→ TASK-20260828T120000),
+      수정·재배포 후 2차 PASS(5,664자 · 지문·체크섬 실렌더 · 레이아웃 잘림 없음)
 
 ### TASK-20260828T120000 — 지시문이 화면에 도달하지 않았다 (라이브 PB-0008 발각)
 
@@ -415,4 +416,6 @@ source_of_truth: true
 - [x] ③ 계약을 **표시하는 화면 전부**로 확장 — `test_every_surface_uses_the_server_composed_handoff`
       (모달 + 단독 페이지 parametrize). 자체 조립 지문(`mcpServers`·인증 줄 연결·옛 마무리 문장)도 금지
 - [x] ④ 회귀 역검증 — 단독 페이지를 자체 조립으로 되돌리는 뮤턴트 → KILL 확인
-- [ ] ⑤ **POST-DEPLOY** — `/ai/connect` 실화면에서 지문·체크섬 실렌더 + 모달 레이아웃 재확인
+- [x] ⑤ **POST-DEPLOY** — 재배포(`369b40b1`) 후 실화면 PASS: 785자 옛 문안 → **5,664자** 새 문안,
+      지문·체크섬 실렌더, 평문 CA 우선, 발급자·운영자지침·토큰노출면 고지 전건 확인.
+      레이아웃 `overflow-y:auto` 스크롤 정상·잘림 없음, [복사]는 전문
