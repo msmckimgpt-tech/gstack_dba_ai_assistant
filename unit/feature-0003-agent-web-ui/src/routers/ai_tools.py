@@ -963,9 +963,9 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
         cur.execute(
             "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds, "
-            "RequestedModel, ReasoningLevel "
+            "RequestedModel, ReasoningLevel, RoleId, ProductMode "
             "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
-        row = cur.fetchone() or ("", None, None, None, None, None, None)
+        row = cur.fetchone() or ("", None, None, None, None, None, None, None, None)
     finally:
         cur.close()
 
@@ -1018,6 +1018,14 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     # 요청의 일부이므로 전달한다 — 전달하지 않으면 화면의 선택지가 아무 효과 없는
     # 거짓 조작면이 된다(사용자 제보 2026-08-27).
     requested = _requested_quality(row[5], row[6])
+    # 운영자가 설정한 5단계 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
+    # 둘 다 빠져 있어서, 브리지 답변만 다른 규칙으로·어디를 보는지 모른 채 만들어졌다.
+    system_prompt = _bridge_system_prompt(
+        conn, product_id=row[2], role_id=row[7], account_id=account_id,
+        product_mode=str(row[8] or "pinned"), conversation_id=conversation_id)
+    scope = _bridge_product_scope(conn, row[2])
+    # 사용자에게 "지금 처리 중" 을 보인다(제보 2026-08-27 — 상황을 알 방법이 없었다).
+    _mark_bridge_working(conn, task_id, conversation_id)
     return JSONResponse({
         "task_id": task_id,
         "question": marked,
@@ -1026,6 +1034,9 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
         "attachments": attachments,
         "requested": requested,
+        # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
+        "system_prompt": system_prompt,
+        "scope": scope,
         "next": (requested.get("instruction", "") +
                  "조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
                  "선언합니다." + (
@@ -1043,6 +1054,116 @@ _REASONING_INTENT = {
     "high": "깊게 — 단계적으로 따져가며",
     "max": "가능한 한 깊게 — 최대한 시간을 들여",
 }
+
+
+def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
+    """대기 말풍선을 **'처리 중'** 으로 바꾼다. 점유 직후 1회.
+
+    사용자 제보(2026-08-27): "AI 가 연결이 완수되었는지, 답변을 진행중인건지 알 방법이 없다."
+    맞다 — 전송 직후의 안내는 "가져가면 표시됩니다" 에서 멈춰 있었고, 실제로 누가 가져갔는지는
+    화면에 아무 흔적이 없었다.
+
+    토스트가 아니라 **말풍선 본문을 바꾼다**: 토스트는 몇 초 뒤 사라지고 새로고침하면 없다.
+    사용자가 알고 싶은 것은 "지금 어떤 상태인가" 이고, 그건 화면에 남아 있어야 한다.
+
+    실패는 흡수한다 — 진행 표시는 편의이지 점유의 조건이 아니다.
+    """
+    if not conversation_id or not task_id:
+        return False
+    try:
+        if not app._runtime_backend_is_pg():
+            return False
+        from shared.db import _pg_connect
+
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "UPDATE agent_runtime.messages "
+                    "SET content = %s "
+                    "WHERE conversation_id = %s AND role = 'assistant' "
+                    "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
+                    "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
+                    "RETURNING id",
+                    ("연결된 AI 가 이 질문을 가져갔습니다. 조사·작성 중입니다.\n\n"
+                     "완료되면 이 자리에 답변이 표시됩니다.",
+                     str(conversation_id), str(task_id)))
+                hit = cur.fetchone() is not None
+            pg.commit()
+            return hit
+        finally:
+            pg.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 진행 표시 갱신 실패 task=%s: %r", task_id, exc)
+        return False
+
+
+def _bridge_system_prompt(conn, *, product_id, role_id, account_id,
+                          product_mode: str, conversation_id) -> str:
+    """이 요청에 적용될 **5단계 시스템 프롬프트**(전역·제품·역할·계정·개인).
+
+    브리지는 `agent_core` 를 타지 않으므로 이 프롬프트가 통째로 빠져 있었다 — 운영자가 제품별·
+    역할별로 설정한 지침이 브리지 답변에서만 사라졌고, 같은 질문이 경로에 따라 다른 규칙으로
+    답해졌다(사용자 제보 2026-08-27).
+
+    **서버가 조립해서 넘긴다.** 개인 AI 가 우리 프롬프트 체계를 알 리 없고, 안다 해도 DB 를 읽을
+    수 없다. 그리고 조립 로직을 여기서 다시 쓰면 두 벌이 되어 갈린다 — 내부 경로와 **같은 함수**
+    (`agent_core.compose_system_prompt`)를 부른다.
+
+    실패는 빈 문자열. 프롬프트를 못 만들었다고 답변 자체를 막지는 않는다(막으면 운영자 설정
+    하나가 서비스 전체를 세운다). 다만 로그로 남겨 조용히 사라지지 않게 한다.
+    """
+    try:
+        import agent_core as _core
+
+        return str(_core.compose_system_prompt(
+            conn,
+            product_id=int(product_id) if product_id else None,
+            role_id=int(role_id) if role_id else None,
+            account_id=int(account_id) if account_id else None,
+            product_mode=str(product_mode or "pinned"),
+            conversation_id=str(conversation_id or "") or None,
+        ) or "")
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "[bridge] 시스템 프롬프트 조립 실패 conv=%s product=%s role=%s: %r",
+            conversation_id, product_id, role_id, exc)
+        return ""
+
+
+def _bridge_product_scope(conn, product_id) -> dict[str, Any]:
+    """이 요청이 바라보는 **제품과 데이터소스**. AI 가 무엇을 조사하는지 알아야 한다.
+
+    도구 호출은 이미 `scoped_execution` 이 제품 경계로 묶는다(그건 집행). 여기서 주는 것은
+    **인지**다 — 어떤 제품·어떤 DB 를 보고 있는지 모르면 AI 는 엉뚱한 스키마를 찾아 헤맨다.
+    """
+    out: dict[str, Any] = {"product_id": None, "product_key": None,
+                           "product_name": None, "datasources": []}
+    if not product_id:
+        return out
+    pid = int(product_id)
+    out["product_id"] = pid
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT ProductKey, Name FROM WebProducts WHERE Id=%s LIMIT 1", (pid,))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if row:
+            out["product_key"] = str(row[0] or "") or None
+            out["product_name"] = str(row[1] or "") or None
+    except Exception as exc:
+        logging.getLogger(__name__).warning("[bridge] 제품 조회 실패 id=%s: %r", pid, exc)
+    try:
+        # `_core` 는 모듈 전역이 아니다(순환 회피로 함수 지역 import 규약) — 여기서도 지역으로.
+        import agent_core as _core
+
+        out["datasources"] = list(_authz.allowed_datasource_labels(_core, conn, pid) or [])
+    except Exception as exc:
+        logging.getLogger(__name__).warning("[bridge] 데이터소스 조회 실패 id=%s: %r", pid, exc)
+    return out
 
 
 def _requested_quality(model: Any, level: Any) -> dict[str, Any]:
@@ -1709,7 +1830,7 @@ def bridge_status(request: Request) -> JSONResponse:
         cur = conn.cursor()
         try:
             cur.execute(
-                "SELECT Status, ClaimedBy, SubmittedAt, ConversationId, Delivered "
+                "SELECT Status, ClaimedBy, SubmittedAt, ConversationId, Delivered, ClaimedAt "
                 "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s AND Origin='web'",
                 (task_id, int(account.get("id") or 0)))
             row = cur.fetchone()
@@ -1720,10 +1841,30 @@ def bridge_status(request: Request) -> JSONResponse:
         status = str(row[0] or "")
         submitted = bool(row[2]) or status == "submitted"
         delivered = bool(row[4])
+        # 연결된 AI 가 **있는가** — 없으면 사용자는 영원히 오지 않을 답을 기다린다.
+        connected = False
+        try:
+            c2 = conn.cursor()
+            try:
+                c2.execute(
+                    "SELECT 1 FROM WebOAuthTokens WHERE AccountId=%s AND TokenType='access' "
+                    "AND RevokedAt IS NULL AND (ExpiresAt IS NULL OR ExpiresAt > NOW()) LIMIT 1",
+                    (int(account.get("id") or 0),))
+                connected = c2.fetchone() is not None
+            finally:
+                c2.close()
+        except Exception:
+            connected = True   # 판정 실패는 '연결됨' 으로(틀렸을 때 덜 성가신 방향)
         return JSONResponse({
             "task_id": task_id,
             "status": status,
             "claimed": row[1] is not None,
+            "claimed_at": row[5].isoformat() if hasattr(row[5], "isoformat") else None,
+            "connected": connected,
+            # 화면이 한 단어로 말할 수 있게 서버가 국면을 정한다(프런트가 조합하면 갈린다).
+            "phase": ("done" if (bool(row[2]) or status == "submitted")
+                      else "working" if row[1] is not None
+                      else "waiting" if connected else "not_connected"),
             # `answered` 는 **제출됐다** 는 뜻이고, `delivered` 는 **대화에 실렸다** 는 뜻이다.
             # 둘을 합치면 저장 실패 시 화면엔 아무것도 없는데 "답변 도착" 이라 말하게 된다
             # (codex 재리뷰 P1). 프런트는 delivered=false 면 그 사실을 사용자에게 알린다.

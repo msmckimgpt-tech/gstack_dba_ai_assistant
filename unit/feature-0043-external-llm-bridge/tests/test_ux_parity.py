@@ -930,3 +930,136 @@ def test_step_recording_never_blocks_delivery():
     """단계 기록 실패가 답변 전달을 막지 않는다 — 없으면 탭이 빌 뿐이다."""
     body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
     assert "except Exception" in body and "return 0" in body
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 사용자 제보 4건 (2026-08-27, 다른 세션 테스트 중)
+#   ① 진행 상황을 알 방법이 없다  ② 5단계 시스템 프롬프트 미적용
+#   ③ 첨부 배선 검토           ④ 제품 데이터소스 인지·표시
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── ① 진행 상황 ──────────────────────────────────────────────────────────────
+
+
+def test_claim_marks_the_bubble_as_working():
+    """점유하면 대기 말풍선이 **'처리 중'** 으로 바뀐다.
+
+    토스트가 아니라 말풍선 본문을 바꾼다 — 토스트는 사라지고 새로고침하면 없다. 사용자가 알고
+    싶은 것은 "지금 어떤 상태인가" 이고, 그건 화면에 남아 있어야 한다.
+    """
+    src = _func_source(AI_TOOLS, "claim_request")
+    assert "_mark_bridge_working(" in src, "점유해도 화면에 아무 변화가 없다"
+    body = _func_source(AI_TOOLS, "_mark_bridge_working")
+    assert "UPDATE agent_runtime.messages" in body
+    assert "'placeholder') = 'true'" in body, "대기 말풍선만 바꾸는 술어가 없다(남의 답변을 덮는다)"
+
+
+def test_status_reports_a_single_phase():
+    """국면을 **서버가 한 단어로** 정한다 — 프런트가 조합하면 화면마다 갈린다."""
+    src = _func_source(AI_TOOLS, "bridge_status")
+    assert '"phase"' in src
+    for ph in ("not_connected", "waiting", "working", "done"):
+        assert ph in src, f"국면 {ph} 가 없다"
+    assert "connected" in src, "연결 여부를 알리지 않으면 영원히 오지 않을 답을 기다린다"
+
+
+def test_status_connection_probe_fails_open():
+    src = _func_source(AI_TOOLS, "bridge_status")
+    tail = src[src.index("except Exception"):]
+    assert "connected = True" in tail, "판정 실패 시 '연결 없음' 으로 단정하면 거짓 경보가 된다"
+
+
+def test_frontend_reacts_to_phase_change_only():
+    """전환된 순간에만 다시 읽는다 — 매 tick 갱신은 스크롤을 흔들고 요청을 배로 만든다."""
+    js = COMPOSER_JS.read_text(encoding="utf-8")
+    assert "_lastPhase" in js
+    assert 'status.phase !== _lastPhase' in js
+    assert 'status.phase === "working"' in js, "처리 중 전환을 화면에 반영하지 않는다"
+    assert 'not_connected' in js, "연결 없음을 사용자에게 알리지 않는다"
+
+
+# ── ② 5단계 시스템 프롬프트 ──────────────────────────────────────────────────
+
+
+def test_claim_composes_the_layered_system_prompt():
+    """전역·제품·역할·계정·개인 지침이 브리지 답변에도 적용된다.
+
+    브리지는 `agent_core` 를 타지 않아 이 프롬프트가 통째로 빠져 있었다 — 같은 질문이 경로에
+    따라 다른 규칙으로 답해졌다.
+    """
+    src = _func_source(AI_TOOLS, "claim_request")
+    assert "_bridge_system_prompt(" in src
+    assert '"system_prompt": system_prompt' in src, "조립하고도 AI 에게 주지 않는다"
+
+
+def test_system_prompt_uses_the_same_composer_as_internal_path():
+    """조립 로직을 다시 쓰지 않는다 — 두 벌이면 갈리고, 갈리면 한쪽이 낡는다."""
+    body = _func_source(AI_TOOLS, "_bridge_system_prompt")
+    assert "compose_system_prompt(" in body, "내부 경로와 다른 방식으로 조립한다"
+    assert "role_id" in body and "account_id" in body and "product_id" in body
+
+
+def test_task_persists_role_for_prompt_composition():
+    """역할이 남아 있어야 역할별 지침을 조립할 수 있다."""
+    src = BOOTSTRAP.read_text(encoding="utf-8")
+    assert '("RoleId", "ALTER TABLE WebAiTasks ADD COLUMN RoleId' in src
+    call = CONVS.read_text(encoding="utf-8")
+    call = call[call.index("agent_result = _enqueue_web_bridge_task("):]
+    assert "role_id=role_id_for_run" in call[:call.index(")\n")], "역할을 넘기지 않는다"
+
+
+def test_runner_puts_system_prompt_first():
+    """지침을 **맨 앞**에 둔다 — 뒤에 두면 앞의 지시가 이기고 운영자 설정이 무시된다."""
+    src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
+        encoding="utf-8")
+    body = src[src.index("def compose_prompt("):src.index("# ── 한 건 처리")]
+    assert "system_prompt" in body
+    assert body.index("시스템 프롬프트로 삼아") < body.index("너는 사내 DB 질의 어시스턴트다"), (
+        "운영자 지침이 기본 지시보다 뒤에 온다")
+
+
+def test_prompt_failure_does_not_block_the_answer():
+    """프롬프트 조립 실패가 답변을 막지 않는다 — 막으면 설정 하나가 서비스를 세운다."""
+    body = _func_source(AI_TOOLS, "_bridge_system_prompt")
+    assert 'return ""' in body and "logging" in body, "조용히 실패하거나, 실패로 답변을 막는다"
+
+
+# ── ③ 첨부 ───────────────────────────────────────────────────────────────────
+
+
+def test_attachment_wiring_is_end_to_end():
+    """적재 → 목록 → 본문 읽기 → 프롬프트 고지까지 끊긴 데가 없는가."""
+    enq = _func_source(CONVS, "_enqueue_web_bridge_task")
+    assert "AttachmentIds" in enq, "적재에서 끊긴다"
+    claim = _func_source(AI_TOOLS, "claim_request")
+    assert "_task_attachment_list(" in claim and '"attachments"' in claim, "목록에서 끊긴다"
+    runner = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
+        encoding="utf-8")
+    assert "read_task_attachment" in runner, "러너가 본문 읽는 법을 알려주지 않는다"
+    assert "반드시 본문을 읽고 답하라" in runner, "첨부를 읽지 않고 답할 여지를 남긴다"
+
+
+# ── ④ 제품·데이터소스 ────────────────────────────────────────────────────────
+
+
+def test_claim_tells_which_product_and_datasource():
+    """도구 경계는 이미 제품으로 묶인다(집행). 여기서 주는 것은 **인지**다 —
+    무엇을 보고 있는지 모르면 엉뚱한 스키마를 찾아 헤맨다."""
+    src = _func_source(AI_TOOLS, "claim_request")
+    assert "_bridge_product_scope(" in src and '"scope": scope' in src
+    body = _func_source(AI_TOOLS, "_bridge_product_scope")
+    assert "WebProducts" in body, "제품 이름을 주지 않는다"
+    assert "allowed_datasource_labels" in body, "데이터소스를 주지 않는다"
+
+
+def test_runner_states_the_target_product():
+    src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
+        encoding="utf-8")
+    assert "대상 제품" in src, "프롬프트에 대상 제품이 없다"
+
+
+def test_answer_keeps_product_attribution_for_the_web_view():
+    """웹 화면이 '어느 제품이 답했는지' 를 보이려면 각인이 있어야 한다(이미 세운 계약의 유지)."""
+    src = _func_source(AI_TOOLS, "_deliver_web_bridge_answer")
+    assert "_answer_product_attribution(" in src

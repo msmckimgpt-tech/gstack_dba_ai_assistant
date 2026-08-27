@@ -2577,6 +2577,11 @@ def _ensure_oauth_client_schema(conn) -> None:
             # 대해 무엇이 요구됐는지가 변하지 않는다).
             ("RequestedModel", "ALTER TABLE WebAiTasks ADD COLUMN RequestedModel VARCHAR(64) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
             ("ReasoningLevel", "ALTER TABLE WebAiTasks ADD COLUMN ReasoningLevel VARCHAR(16) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `RoleId`: 시스템 프롬프트 5단계(전역·제품·역할·계정·개인) 조립에 필요하다.
+            # 브리지는 `agent_core.compose_system_prompt` 를 타지 않으므로, 그 프롬프트를 서버가
+            # 대신 조립해 AI 에게 넘겨야 한다 — 그러려면 요청 시점의 역할이 남아 있어야 한다.
+            # 없으면 운영자가 설정한 역할별 지침이 브리지 답변에서만 통째로 사라진다.
+            ("RoleId", "ALTER TABLE WebAiTasks ADD COLUMN RoleId BIGINT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
         ):
             try:
                 cur.execute(
