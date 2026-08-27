@@ -683,7 +683,10 @@ function _applyBridgePhase(phase, prev, taskId, convId) {
     showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
   } else if (phase === "not_connected") {
     showToast("연결된 AI 가 없습니다. 'AI 연결하기' 에서 연결해 주세요.", true);
-  } else if (phase === "canceled") {
+  } else if (phase === "canceled" || phase === "expired") {
+    // `expired` 도 **종결**이다 — 연결 후 최근 1건만 승격되어 이 질문은 밀렸다. 종결로 다루지
+    // 않으면 폴러가 계속 돌고 화면은 "대기 중" 을 그린다(서버는 이미 끝났다고 말하는데).
+    // 말풍선 본문은 서버가 '처리되지 않음' 으로 바꿔 두었으므로 이력만 다시 읽으면 된다.
     _forgetPendingBridgeTask(convId, taskId);
     loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
   }

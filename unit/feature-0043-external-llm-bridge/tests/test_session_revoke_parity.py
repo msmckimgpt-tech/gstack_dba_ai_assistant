@@ -117,36 +117,49 @@ def test_predicate_matches_the_auth_path():
 # 나중에 연결하면 **밀린 것이 한꺼번에** 처리된다 — 사용자가 원하는 것은 '지금 묻는 것' 이다.
 
 
-def test_no_enqueue_when_disconnected():
+def test_unconnected_question_is_deferred_not_dropped():
+    """⚠ 계약이 바뀌었다(사용자 결정 2026-08-28).
+
+    종전엔 **적재하지 않았다** — 밀린 질문이 한꺼번에 처리되는 것을 막기 위해서였다. 그 대가로
+    사용자는 연결이 끊긴 줄 모르고 보낸 질문을 매번 다시 입력해야 했고(라이브 실측: 로그아웃
+    직후 창), 그것을 "LLM 이 막혔다" 로 겪었다.
+
+    지금은 **보관한다**(`Status='deferred'`). 폭주 방지는 적재를 막는 대신 **승격을 1건으로
+    제한**해서 얻는다 — 같은 것을 지키면서 재입력만 없앤다.
+    """
     body = _func(CONVS, "_enqueue_web_bridge_task")
-    assert "if not connected:" in body, "연결 여부와 무관하게 적재한다"
-    head = body[:body.index("if not connected:")]
-    assert "INSERT INTO WebAiTasks" not in head, "적재가 판정보다 먼저 일어난다"
+    assert '"open" if connected else "deferred"' in body, "연결 여부로 상태를 가르지 않는다"
+    assert "INSERT INTO WebAiTasks" in body, "미연결 질문이 적재되지 않는다"
+    # 적재를 통째로 건너뛰던 옛 분기가 남아 있으면 두 경로가 공존해 언젠가 갈린다.
+    assert "if not connected:" not in body, "미연결 조기 반환 분기가 남아 있다"
 
 
 def test_disconnected_path_still_keeps_the_conversation():
-    """질문은 사라지지 않는다 — 다음 요청 때 **이전 문맥으로 함께** 간다."""
+    """질문은 사라지지 않는다 — 대화·회수 store·안내 말풍선이 모두 남는다."""
     body = _func(CONVS, "_enqueue_web_bridge_task")
-    seg = body[body.index("if not connected:"):body.index("# ① 대기 작업 적재")]
-    assert '"user", question' in seg, "사용자 질문을 대화에 남기지 않는다"
-    assert "_bridge_save_core_message(" in seg, "회수 store 에 남기지 않아 다음 문맥에서 빠진다"
-    assert '"assistant", notice_text' in seg, "안내 말풍선이 없어 화면이 무반응으로 보인다"
+    assert '"user", question' in body, "사용자 질문을 대화에 남기지 않는다"
+    assert "_bridge_save_core_message(" in body, "회수 store 에 남기지 않아 다음 문맥에서 빠진다"
+    assert '"assistant", notice_text' in body, "안내 말풍선이 없어 화면이 무반응으로 보인다"
 
 
 def test_disconnected_path_does_not_ask_for_polling():
-    """없는 task 를 폴링하면 404 만 쌓인다."""
+    """보류 질문은 언제 승격될지 모른다 — 폴링하면 연결 안 한 브라우저가 종일 빈 요청을 보낸다."""
     body = _func(CONVS, "_enqueue_web_bridge_task")
-    seg = body[body.index("if not connected:"):body.index("# ① 대기 작업 적재")]
-    assert '"bridge_pending": False' in seg
-    assert '"bridge_queued": False' in seg
+    assert '"bridge_pending": connected' in body, (
+        "미연결에서도 폴링을 켠다(또는 연결 상태에서 폴링이 꺼졌다)")
 
 
-def test_notice_tells_user_to_ask_again():
-    """'저장해 두었습니다' 는 이제 거짓이다 — 큐에 없으므로 **다시 물어야** 한다."""
+def test_notice_promises_the_question_is_carried_over():
+    """⚠ 계약이 바뀌었다: '다시 물어야 한다' → '연결하면 이 질문부터 처리한다'.
+
+    안내가 옛 문구로 남으면, 고친 동작을 사용자가 알 방법이 없다(그리고 실제로는 이어받는데
+    다시 입력하게 만든다).
+    """
     src = CONVS.read_text(encoding="utf-8")
-    body = src[src.index("_BRIDGE_NOTICE_NOT_CONNECTED = ("):src.index("#: 이미 연결한 계정")]
-    assert "다시 질문해" in body, "재요청이 필요하다는 사실을 말하지 않는다"
-    assert "대기열에 저장" not in body, "큐에 넣지 않는데 넣었다고 말한다"
+    body = src[src.index("_BRIDGE_NOTICE_NOT_CONNECTED = ("):src.index("#: 승격 경쟁에서 밀렸거나")]
+    assert "이 질문부터" in body, "이어받는다는 사실을 말하지 않는다"
+    assert "다시 질문해" not in body, "재입력을 요구하는 옛 문구가 남아 있다"
+    assert "마지막 질문 1건" in body, "여러 번 물었을 때의 규칙을 밝히지 않는다"
 
 
 def test_frontend_handles_the_not_queued_branch():
