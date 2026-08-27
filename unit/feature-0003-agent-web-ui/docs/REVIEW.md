@@ -5833,3 +5833,74 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
 - **RN 제외 판정(정직)**: `2fd86696`(2026-07-23~08-25 상부보고 발표자료 v1)·`2092df81`(배포·라이브 실측 기록) = 사용자 체감 표면 0 → 제외. `65c515d8` 의 `AGENTS.md` §15.2.1·ADR 추가분도 개발자향 정책이라 제외(사용자 체감 축인 '답변 실패' 만 항목화). backfill 누락 추가분 0.
 - **cache-buster**: 수기 bump 없음. `docs/CONVENTIONS.md` §14.1 이 "`?v=dev` 고정 · 빌드 `inject_asset_stamp` content-hash 주입 · **수기 bump 금지**" 를 명문화한다(cron wrapper 지시문의 '캐시버스터 bump 를 같은 커밋에 포함' 지시는 이 규약보다 오래된 stale — 따르면 배포 스크립트의 placeholder ABORT 가드를 깬다). `index.html`/`admin.html` 편집 0.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수다.**
+
+## REV-20260827T160500-bridge-progress-scroll [CODEX:feature-0003-web] — PASS (P1 0 잔여) · 브리지 답변 직후 스크롤 최하단 고착
+
+- Related TASK: feature-0003-agent-web-ui / `TASK-20260827T160500-bridge-progress-scroll`
+- Risk: **Minor** (§12.3) — 비파괴 · 읽기 경로 1곳 + 프런트 분기 1곳. 인증/인가·데이터·외부계약 무관.
+- Human Approval Needed: no
+- Timestamp: 2026-08-27T16:05:00+09:00
+
+### 무엇을 고쳤나 — 그리고 왜 그 지점인가
+
+증상은 "답변 직후 스크롤이 계속 맨 아래로 끌려감" 이었지만, 스크롤 코드에는 아무 문제가 없었다.
+`renderMessages()` 가 맨 아래로 보내는 것은 채팅 UI 의 정상 계약이고, 브리지 답변 경로는 이미
+`loadHistory({ preserveScroll: true })` 로 사용자의 위치를 지키고 있었다. **진짜 원인은 그 뒤에서
+아무도 요청하지 않은 재로드가 반복된 것**이다.
+
+서버가 같은 대화를 두 엔드포인트에서 다르게 답한 것이 발단이다 — `/api/progress` 는 "진행 중",
+`/api/history` 는 "유휴". 브리지 대화에는 서버 run 이 없어 KV 가 비고(라이브 확인), `/api/progress`
+는 steps fallback 을 타는데, 답변 전달 직후 심기는 **사후 원장**(`work_source='bridge-ledger'`)을
+"방금 생긴 step = 진행 중" 으로 읽었기 때문이다. 프런트 감지기는 그 불일치를 "화면이 뒤처졌다" 로
+해석해 `loadHistory()`(preserveScroll 없음)를 위임했고, 그 재로드가 감지기를 다시 무장시켜
+**지연 0ms 순환**이 됐다. 원장이 3분을 넘겨 늙어야 멈춘다 — 제보된 지속 시간과 일치한다.
+
+그래서 두 층을 함께 고쳤다.
+
+1. **서버(정본 수정)** — 끝난 원장을 진행 중이라 말하지 않는다. fallback 집계에서 원장 행을
+   제외한다. 제외를 **WHERE 절**에 둔 것이 요점이다: `ORDER BY … LIMIT 1` 이 원장 run 만 뽑아오므로
+   가져온 뒤 걸러면 같은 대화의 실 서버 run 을 통째로 잃는다.
+2. **프런트(수렴 보장)** — 불일치가 *다른 이유로* 재발해도 화면은 흔들리지 않아야 한다. 감지기는
+   한 `(대화, run)` 안에서 이미 본 국면으로는 재로드를 위임하지 않는다.
+
+### 왜 프런트 가드까지 넣었나 (서버만 고쳐도 증상은 사라지는데)
+
+서버 하나만 고치면 이번 증상은 사라진다. 그러나 "유휴/진행이 갈리면 화면이 0ms 로 무한 재로드된다"
+는 **구조는 그대로 남는다** — KV 분기·복제 지연·엔드포인트 추가 같은 다른 원인으로 언제든 같은
+증상이 재현된다. §16.7 G10(재발 클래스를 점수정으로 종결하지 않는다)에 따라 순환 자체를 잠갔다.
+
+### 채택하지 않은 대안
+
+- **원장 step 을 아예 기록하지 않는다** — 'AI 추론' 탭이 다시 비게 된다. 원장은 사용자에게 가치가
+  있고, 잘못은 기록이 아니라 그것을 진행 신호로 읽은 쪽에 있다.
+- **가져온 뒤 파이썬에서 필터** — 위 1번의 이유로 오답(실 run 유실).
+- **감지기의 재로드를 `preserveScroll: true` 로 바꾼다** — 증상만 가린다. 새 답변이 왔을 때 맨
+  아래로 가는 것은 옳은 동작이고, 문제는 "아무것도 안 바뀐 재로드가 반복되는 것" 이다.
+- **`_engageRailBottomPin` 완화** — 원인이 아니다. pin 은 8초 상한·사용자 제스처 해제가 이미 있다.
+
+### 적대 검증 (codex 5 라운드 — P1 3 · P2 3, 전건 수정)
+
+라운드마다 실제 결함이 나왔다. 특히 **내 수정이 다른 것을 조용히 깨뜨린** 두 건이 중요하다:
+
+- **3R P1 — 빈 `run_id` 응답이 위임 이력을 초기화**: 일시적 빈 응답 뒤에 오는 같은 run 의 완료
+  전이가 "이력 없음" 으로 읽혀 **최종 답변이 영구 미표시**가 될 수 있었다. 빈 run 은 범위를
+  건드리지 않도록 바꾸고 S15 로 잠갔다.
+- **4R P1 — 형제 하네스 파손**: `verify_progress_poll_resilience.mjs` 가 `detectNewRun` 만 추출해
+  실행하는데, 신규 helper 를 주입하지 않아 `ReferenceError` 가 **`detectNewRun` 자신의 `catch` 에
+  삼켜져** 40/5 로 조용히 죽어 있었다. 내 하네스(57/0)만 보고 있었으면 못 봤다. helper 주입 +
+  추출 fail-loud 단언으로 복구(46/0).
+- 1R P1(완료 전이 영구 차단) · 1R P2(SQL 뒤집기 미검출) · 2R P2(국면 흔들림 순환 재발) · 2R P2(문서
+  stale) 도 전건 수정. 5R 잔여 지적 0.
+
+### 검증
+
+- `make test` exit 0 (FAILED/ERROR 0건), ruff PASS.
+- 하네스 `verify_run_detect_poll.mjs` **57/0**(S9~S15 신규) · `verify_progress_poll_resilience.mjs`
+  **46/0**(복구) · main baseline 대비 `verify_*.mjs` 전건 exit-code 동일 → **신규 회귀 0**.
+- **뮤테이션 역검증 3종 전건 KILL** — 위임 가드 제거→S9/S12/S13 FAIL · 빈-응답 가드 제거→S15 FAIL ·
+  SQL `<>`→`=`→`test_fallback_query_excludes_bridge_ledger` FAIL.
+- 라이브 근거(배포 전): 해당 브리지 대화의 KV 에 `last_status*` 부재(키=`created_at`/`model:10`/
+  `reasoning_level`/`topic`) · `agent_runtime.steps` 에 `work_source='bridge-ledger'` 19행
+  (`run_id=t_LBtWKW0f1sBBfGK-`) · 배포본 `_load_latest_run_id_from_steps('20260827061652-5ab532d1')`
+  = `('t_LBtWKW0f1sBBfGK-', False)` → **끝난 브리지 답변이 "최신 run" 으로 읽히고 있음**을 실측.
+- 배포 후 같은 호출이 `('', False)` 가 되는 것을 라이브에서 재확인(§16.3 deploy-backed 완료 기준).

@@ -4673,10 +4673,32 @@ def _resolve_copy_window(conn, source_id: str, account_id: int, *, share_floor_i
         return ("empty", None, None)
     return ("ok", lower_id, upper_id)
 
+#: feature-0043 브리지 답변이 남기는 사후 원장(`_materialize_bridge_steps`)의 표식.
+#: 이 값의 step 은 **끝난 답변의 기록**이지 진행 중인 run 이 아니다 — 아래 fallback 의
+#: "최근 step = 진행 중" 추론에서 반드시 제외한다.
+_BRIDGE_LEDGER_WORK_SOURCE = "bridge-ledger"
+
+
 def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
     """agent_runtime.steps 에서 가장 최근 run_id 와 활성 여부를 반환.
     KV 에 status 가 없을 때 fallback 으로 사용. (최근 3분 내 step 이 있으면 processing)
     Returns (run_id, is_recent) — run_id 없으면 ("", False).
+
+    **브리지 원장 step 은 세지 않는다 (feature-0043 회귀, 2026-08-27).**
+    개인 AI 브리지 대화에는 서버 run 이 없어 KV(`last_status*`)가 아예 비고, 그래서
+    `/api/progress` 가 이 fallback 을 탄다. 그런데 답변 전달 직후 `_materialize_bridge_steps`
+    가 `run_id = task_id` 로 원장 step 을 심으므로, 이 함수가 "3분 내 step 이 있다 =
+    processing" 으로 오판했다. 그 결과 `/api/progress` 는 processing 을, `/api/history` 는
+    (KV 가 비었으므로) 유휴를 보고했고 — 이 불일치가 프런트에서 다음 순환을 만들었다:
+
+        loadHistory(유휴) → startRunDetectPolling(baseline=null) → detectNewRun 이
+        processing 을 보고 loadHistory() 재위임(= preserveScroll 없음 → **맨 아래로 점프**)
+        → 다시 유휴 → baseline=null … (지연 0ms, step 이 3분 지나 늙을 때까지 반복)
+
+    사용자에게는 "답변을 받은 직후 스크롤이 계속 최하단으로 끌려간다" 로 보인다.
+    원장은 답변이 **끝난 뒤** 기록되므로 진행 중 신호가 될 수 없다 — 여기서 제외한다.
+    (원장 자체는 그대로 남는다. 말풍선의 '단계 보기' 는 `_load_steps_for_message` 가
+    메시지의 `meta.run_id` 로 따로 읽으므로 이 제외에 영향받지 않는다.)
     """
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
         return "", False
@@ -4689,11 +4711,12 @@ def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
 SELECT run_id, MAX(created_at) AS last_step_at
 FROM agent_runtime.steps
 WHERE conversation_id = %s
+  AND COALESCE(work_source, '') <> %s
 GROUP BY run_id
 ORDER BY last_step_at DESC
 LIMIT 1
                 """,
-                (conversation_id,),
+                (conversation_id, _BRIDGE_LEDGER_WORK_SOURCE),
             )
             row = pgcur.fetchone()
         pg.close()

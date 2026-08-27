@@ -2734,3 +2734,21 @@ psycopg 공백 표기 두 가지로 도착하는 것을 파싱 폴백으로 흡�
 - Push: 완료
 - main 병합: PR 로 진행
 - 충돌 해결: 없음
+
+## 2026-08-27T16:05:00+09:00 — 브리지 답변 직후 스크롤 최하단 고착 해소 (TASK-20260827T160500-bridge-progress-scroll)
+
+**상태: 코드 완료 · 라이브 배포 검증 대기** (BLOCKED 없음)
+
+- **증상**: 개인 AI 연결 상태에서 질문→답변 직후 화면이 반복해서 맨 아래로 끌려가 스크롤을 붙잡을
+  수 없다(약 3분 지속).
+- **원인**: 브리지 답변 전달 직후 심기는 사후 원장 step(`work_source='bridge-ledger'`)을
+  `/api/progress` 의 steps fallback 이 "진행 중" 으로 오독 → `/api/history`(유휴)와 갈림 →
+  프런트 감지기가 `loadHistory()`(preserveScroll 없음)를 지연 0ms 로 반복 위임.
+- **수정**: ① fallback 집계에서 원장 제외(WHERE 절) ② 감지기의 재로드 위임을 `(대화, run)` 안에서
+  **이미 본 국면당 1회**로 수렴(국면 전이는 통과, 국면 흔들림·빈 응답에도 안전).
+- **검증**: `make test` exit 0 · 하네스 57/0 + 46/0 · main baseline 대비 mjs 회귀 0 ·
+  뮤테이션 3종 KILL · codex 적대 리뷰 5R(P1 3·P2 3 전건 수정, 잔여 0).
+- **잔여**: 배포 후 라이브 재확인 + PB-0008 실 Windows 브라우저 Run 기록
+  (`docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md`).
+- **남은 리스크**: 없음(비파괴·읽기 경로). 브리지 원장 자체는 보존되며 말풍선 '단계 보기' 는
+  `_load_steps_for_message`(메시지 `meta.run_id`) 경로라 영향 없음.

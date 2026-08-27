@@ -4808,3 +4808,36 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-26T01:03:05+09:00
+
+## CHG-20260827T160500-bridge-progress-scroll — 브리지 답변 직후 스크롤 최하단 고착 해소
+
+- `src/routers/_conv_store.py`: `_BRIDGE_LEDGER_WORK_SOURCE` 상수 신설 +
+  `_load_latest_run_id_from_steps` 의 fallback 쿼리에 `AND COALESCE(work_source,'') <> %s`
+  추가. 브리지 원장 step 이 "진행 중 run" 으로 읽히던 오판 제거. docstring 에 사고 경위 기록.
+- `src/static/app.js`: `state.detectHandoffScope`/`detectHandoffSeen` 추가 ·
+  `_detectHandoffSeenFor()` 신설(빈 run 은 범위 미변경 · 범위 변경 시 집합 폐기) ·
+  `_detectHandoffReload(seq, seen, phase)` 로 시그니처 확장(실패 시 국면 각인 원복) ·
+  `detectNewRun` 의 두 위임 분기에 `!_alreadyHandedOff` 가드 + `_phaseMoved`(미관측 국면) 전이
+  통과. 같은 국면의 위임 순환은 1회로 수렴, 국면 전이는 그대로 반영.
+- `tests/verify_run_detect_poll.mjs`: S9(같은 국면 반복 → 위임 1회) · S10(대화 전환 시 재위임) ·
+  S11(위임 실패 시 각인 원복) · S12(processing → 완료 전이 통과) · S13(국면 흔들림 6회에도
+  위임 2회로 유계) · S14(새 run 은 이력 초기화) · S15(빈 응답을 거친 완료 전이) 추가.
+  38 → **57 PASS**.
+- `tests/verify_progress_poll_resilience.mjs`: `detectNewRun` 의 신규 의존 helper
+  (`_detectHandoffSeenFor`)를 factory 에 주입 + 추출 fail-loud 단언. 미주입 시 `ReferenceError`
+  가 `detectNewRun` 자기 `catch` 에 삼켜져 **40/5 로 조용히 파손**됐다(codex 4R P1). → 46/0.
+- `tests/test_bridge_progress_fallback.py` (신규 8건): 쿼리 WHERE 제외 · 원장 전용 대화 =
+  run 없음 · 실 run 회귀(최근/노후/naive tz) · 비-PG skip · **생산자(ai_tools)와 표식 문자열
+  일치** · 빈 conversation_id fail-safe.
+- Verification: `make test` exit 0 (FAILED/ERROR 0건), ruff PASS · 하네스 57/0 + 46/0 ·
+  main baseline 대비 `verify_*.mjs` 전건 exit-code 동일(신규 회귀 0) ·
+  뮤테이션 역검증 3종 KILL(위임 가드 제거→S9/S12/S13 · 빈-응답 가드 제거→S15 · SQL `<>`→`=`) ·
+  codex 적대 리뷰 5R(P1 3 · P2 3 전건 수정, 5R 잔여 0) ·
+  라이브 배포 전/후 `app._load_latest_run_id_from_steps('20260827061652-5ab532d1')`
+  `('t_LBtWKW0f1sBBfGK-', False)` → `('', False)`.
+- Files: `src/routers/_conv_store.py`, `src/static/app.js`,
+  `tests/verify_run_detect_poll.mjs`, `tests/verify_progress_poll_resilience.mjs`,
+  `tests/test_bridge_progress_fallback.py`,
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md`,
+  `../../docs/STATUS.md`.
+- Timestamp: 2026-08-27T16:05:00+09:00

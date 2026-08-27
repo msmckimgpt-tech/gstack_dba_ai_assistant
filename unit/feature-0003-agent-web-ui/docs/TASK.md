@@ -11769,3 +11769,85 @@ DB 가 느린 것처럼 오인시키는, **표시가 사실을 왜곡하던** �
 - [x] 검증: `node --check` PASS · 구조 실측(블록 52 · `generated`=="2026-08-25"==`releases[0].date` · top items 3 · 2nd 08-24 블록 items 8 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0) · **`tests/verify_release_notes.mjs` 편집 전 baseline 34 pass/0 fail = 편집 후 34 pass/0 fail → 회귀 0**(jsdom@24 `/tmp` 핀 설치본 사용).
 - [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 **md5 동일**(`b6ab4c47…` · 272,061B · `generated: "2026-08-24"`) · `index.html` 도 `?v=` 정규화 후 byte 동일(서빙 스탬프 `?v=4df5be4545dc`) → 08-24 19:00 에 종결된 서빙 파리티가 **2창 연속 유지**. 이 커밋이 서빙 static 을 바꾸므로 wrapper 의 post-merge 배포가 필수다.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(`docs/CONVENTIONS.md` §14.1 '`?v=dev` 고정 · 빌드 `inject_asset_stamp` content-hash 주입 · 수기 bump 금지') · `index.html`/`admin.html` 편집 0.
+
+## TASK-20260827T160500-bridge-progress-scroll — 브리지 답변 직후 스크롤이 계속 최하단으로 끌려가는 현상 제거
+
+**증상 (사용자 제보 2026-08-27)**: 웹 대화창에 개인 AI 가 연결된 상태에서 질문을 보내고
+답변을 받으면, 그 직후부터 화면이 **반복해서 맨 아래로 끌려가** 사용자가 스크롤을 붙잡을 수
+없다. 답변이 도착한 뒤 약 3분간 이어진다.
+
+**근본 원인 (라이브 증거 확보)**: 브리지 대화에는 서버 run 이 없어 `agent_runtime.kv` 의
+`last_status*` 가 비어 있고(라이브 확인: 해당 대화 KV 키 = `created_at`/`model:10`/
+`reasoning_level`/`topic` 뿐), 그래서 `/api/progress` 는 steps fallback
+(`_load_latest_run_id_from_steps` — "최근 3분 내 step 이 있으면 processing")을 탄다.
+그런데 답변 전달 직후 `_materialize_bridge_steps` 가 개인 AI 의 도구 호출 원장을
+`run_id = task_id`, `work_source='bridge-ledger'` 로 `agent_runtime.steps` 에 심는다.
+fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중" 으로 읽어,
+
+- `/api/progress` → `raw_status='processing'`, `run_id=<task_id>`
+- `/api/history`  → `last_status=''` (KV 가 비었으므로 유휴)
+
+두 응답이 갈렸다. 프런트는 그 불일치에서 다음을 **지연 0ms** 로 반복했다:
+
+    loadHistory(유휴) → startRunDetectPolling(baseline=null)
+      → detectNewRun 이 processing 을 보고 loadHistory() 재위임
+         (preserveScroll 없음 → renderMessages 가 scrollTop=scrollHeight)
+      → 다시 유휴 → baseline=null → …
+
+원장 step 이 3분을 넘겨 늙어야 멈춘다 = 제보된 지속 시간과 일치.
+
+### 2.1 Implementation Plan
+
+- 위험도: **Minor** (비파괴 · 읽기 경로 1곳 + 프런트 분기 1곳 · 인증/데이터/외부계약 무관)
+- 영향 파일·심볼
+  - `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py`
+    `_load_latest_run_id_from_steps` — fallback 집계에서 `work_source='bridge-ledger'` 제외
+    (`_BRIDGE_LEDGER_WORK_SOURCE` 상수 신설). **WHERE 절**에 둔다 — `ORDER BY … LIMIT 1` 이
+    이미 원장 run 만 뽑아오므로 사후 필터로는 함께 있던 실 run 을 못 본다.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`
+    `state.detectHandoffScope`/`state.detectHandoffSeen` 신설 · `_detectHandoffSeenFor()` 신설 ·
+    `_detectHandoffReload(seq, seen, phase)` · `detectNewRun` — 한 `(대화, run)` 안에서
+    **이미 본 서버 국면으로는 재로드를 위임하지 않는다**. 서버 불일치가 다른 이유로 재발해도
+    화면이 흔들리지 않으면서, 국면 전이(processing → 완료)는 그대로 통과한다.
+  - `unit/feature-0003-agent-web-ui/tests/verify_run_detect_poll.mjs` — S9~S15 추가
+  - `unit/feature-0003-agent-web-ui/tests/verify_progress_poll_resilience.mjs` — 형제 하네스에
+    신규 helper 주입(미주입 시 `ReferenceError` 가 `detectNewRun` 자기 catch 에 삼켜져 분기가
+    조용히 전멸한다 — 추출을 fail-loud 로 단언)
+  - `unit/feature-0003-agent-web-ui/tests/test_bridge_progress_fallback.py` — 신규
+- 완료 판정 기준 (구체 예시 — §7.1 다의어 고지)
+  1. 브리지 원장 step만 있는 대화에서 `app._load_latest_run_id_from_steps(<conv>)` 가
+     **`('', False)`** 를 반환한다 (배포 전 라이브 실측: `('t_LBtWKW0f1sBBfGK-', False)`).
+  2. 실 서버 run 의 최근 step 은 여전히 `('<run>', True)` 로 읽힌다(회귀 0).
+  3. `detectNewRun` 을 같은 (대화, run)·processing 으로 6회 연속 구동해도
+     `loadHistory` 호출은 **정확히 1회**다(하네스 S9). 국면이 6회 흔들려도
+     (`processing↔done`) 위임은 국면 종류 수인 **2회로 유계**다(S13).
+  4. `make test` 전건 green · 뮤테이션 역검증 3종 KILL —
+     가드 제거→S9/S12/S13 FAIL · 빈-응답 가드 제거→S15 FAIL · SQL `<>`→`=`→pytest FAIL.
+
+### 7. Completion Checklist
+- [x] 모든 REQ의 AC가 구현되었다
+- [x] 자동 테스트가 통과한다 (`make test` 5491 passed / 0 failed / 17 skipped, ruff PASS)
+- [x] 웹/UI 변경 시 실제 Windows 브라우저 검증 — `docs/test-runs.d/REV-20260827T160500-bridge-progress-scroll.md` 기록
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md/test-runs.d 에 테스트 결과가 기록되었다
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] ANCHOR.md §1~§3이 채워져 있다
+
+### 2.2 적대 리뷰 (codex, 5 라운드)
+
+정본 검토는 `/codex review` 5회. **라운드마다 실제 결함이 나왔고 전건 수정**했다 —
+특히 3·4라운드 결함은 "고치는 코드가 다른 것을 조용히 깨뜨린" 부류라 테스트만으로는 안 잡혔다.
+
+| R | 등급 | 무엇이 틀렸나 | 조치 |
+|---|---|---|---|
+| 1 | P1 | 위임 키가 `(대화, run)` 이라, 첫 위임의 `loadHistory` 가 마침 유휴를 보면 그 run 의 **완료 전이까지 영구 차단** → 최종 답변 고착 | 키에 서버 국면 추가 + `_phaseMoved` 전이 통과 |
+| 1 | P2 | SQL 테스트가 컬럼·파라미터 존재만 확인 → `<>`→`=` 뒤집기를 통과시킴 | WHERE 절 **부정 비교** 정규식 단언(뮤테이션 KILL 확인) |
+| 2 | P2 | 마지막 국면 하나만 기억 → `processing↔done` 흔들림에서 순환 재발 | 국면 **seen 집합**(범위=`대화\|run`, 범위 변경 시 폐기) |
+| 2 | P2 | 문서가 `(대화, run)` 1회로 stale | TASK/FUNCTION/MODIFY 정정(본 갱신) |
+| 3 | P1 | 빈 `run_id` 응답이 seen 집합을 초기화 → 뒤이은 완료 전이 영구 누락 | 빈 run 은 범위 미변경(읽기 전용 반환) + S15 |
+| 4 | P1 | 형제 하네스(`verify_progress_poll_resilience.mjs`)에 신규 helper 미주입 → `ReferenceError` 가 `detectNewRun` catch 에 삼켜져 **40/5 로 조용히 파손** | helper 추출·주입 + 추출 fail-loud 단언 → 46/0 |
+| 5 | — | 잔여 지적 없음 | — |

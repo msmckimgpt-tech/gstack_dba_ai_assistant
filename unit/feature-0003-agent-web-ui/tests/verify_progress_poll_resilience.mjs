@@ -169,12 +169,17 @@ function buildPollProgress(state, { fetchImpl, hidden = false, scheduleLog }) {
 // ── detectNewRun(watchdog) 행동 검증 ──────────────────────────────────────────
 const detectSrc = extractFn(appJs, "detectNewRun");
 ok("[추출] detectNewRun", Boolean(detectSrc));
+// bridge-progress-scroll-loop: detectNewRun 이 새로 의존하는 helper. 주입하지 않으면
+// ReferenceError 가 detectNewRun 자신의 catch 에 삼켜져 **모든 분기가 조용히 죽는다**
+// (증상: handoff/baseline 단언만 무더기 FAIL). 그래서 추출 자체를 fail-loud 로 단언한다.
+const seenSrc = extractFn(appJs, "_detectHandoffSeenFor");
+ok("[추출] _detectHandoffSeenFor (detectNewRun 의존성)", Boolean(seenSrc));
 
 function buildDetectNewRun(state, { payload, handoffLog, scheduleLog, fetchLog = [], repollLog = [] }) {
   const factory = new Function(
     "state", "apiFetch", "scheduleRunDetectPolling", "_detectHandoffReload", "startProgressPolling",
     "window", "AbortController", "URLSearchParams", "RUN_DETECT_POLL_MS", "PROGRESS_FETCH_TIMEOUT_MS",
-    `${detectSrc}\n return detectNewRun;`,
+    `${seenSrc}\n${detectSrc}\n return detectNewRun;`,
   );
   return factory(
     state,

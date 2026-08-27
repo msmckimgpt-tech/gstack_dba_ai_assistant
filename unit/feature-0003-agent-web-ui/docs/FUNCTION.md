@@ -4415,3 +4415,45 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-24` 블록** prepend(items 8 — new 1 / improved 3 / fixed 4, area work 7 / admin 1) + `generated` top-block date 연동 갱신. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 51→52 · 기존 51 블록 보존 · 신규 항목은 기존 스키마/enum 값만 사용).
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0826, 신규 2026-08-25 블록 prepend)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 `2026-08-25` 블록** prepend(items 3 — improved 1 / fixed 2, area work 3) + `generated` top-block date 연동 갱신. 기능 계약·렌더러 동작 변경 없음(데이터 전용 · `releases` 51→52 · 기존 51 블록 보존 · 신규 항목은 기존 스키마/enum 값만 사용).
+
+### 진행 상태 fallback — 브리지 원장 제외 (REQ-20260827-bridge-progress-scroll)
+
+`/api/progress` 는 대화 KV(`last_status*`)가 비었을 때만 `agent_runtime.steps` 의 최신 run 을
+fallback 으로 읽는다("최근 3분 내 step = 진행 중"). 이 fallback 의 집계 대상에서 **개인 AI
+브리지 원장 step**(`work_source='bridge-ledger'`, feature-0043 `_materialize_bridge_steps`)은
+제외된다.
+
+- AC-20260827T160500-bridge-progress-scroll-1: 브리지 원장 step 만 존재하는 대화의
+  `_load_latest_run_id_from_steps()` 는 `("", False)` 를 반환한다 — 즉 `/api/progress` 가
+  `run_id=""`·`status=""`(진행 중 run 없음)를 보고한다. 원장은 답변이 **끝난 뒤** 기록되므로
+  진행 신호가 될 수 없다.
+- AC-20260827T160500-bridge-progress-scroll-2: 제외는 **쿼리 WHERE 절**에서 이뤄진다.
+  `ORDER BY last_step_at DESC LIMIT 1` 이 원장 run 만 선택해 오므로, 가져온 뒤 거르면 같은
+  대화의 실 서버 run 을 잃는다(실 run 이 함께 있는 대화에서 진행 표시가 사라짐).
+- AC-20260827T160500-bridge-progress-scroll-3: 실 서버 run 의 판정은 무변경 —
+  3분 이내 step 이면 `("<run_id>", True)`, 초과면 `("<run_id>", False)`, 비-PG 런타임은
+  fallback 자체를 타지 않는다.
+- AC-20260827T160500-bridge-progress-scroll-4: 원장은 **삭제하지 않는다**. 말풍선의
+  '단계 보기'/'AI 추론' 은 메시지의 `meta.run_id` 로 `_load_steps_for_message` 가 따로 읽으므로
+  이 제외의 영향을 받지 않는다.
+
+### 유휴 run 감지기 — 재로드 위임의 1회 수렴 (REQ-20260827-bridge-progress-scroll)
+
+- AC-20260827T160500-bridge-progress-scroll-5: 감지기(`detectNewRun`)는 한 `(활성 대화,
+  run_id)` 안에서 **이미 위임했던 서버 국면(`raw_status`)으로는 다시 위임하지 않는다**
+  (`state.detectHandoffSeen`). 위임은 `preserveScroll` 없는 재로드라 반복되면 사용자가 스크롤을
+  잡을 수 없다 — 서버가 계속 processing 을 답해도 두 번째부터는 위임하지 않고 감지기만
+  재스케줄한다. 그 run 의 실제 진행 추적은 활성 폴러(`pollProgress`)가 담당한다.
+- AC-20260827T160500-bridge-progress-scroll-6: **아직 보지 않은 국면**은 통과한다 — 같은 run 이
+  `processing → 완료` 로 전이하면 1회 위임해 최종 답변을 화면에 반영한다. 첫 위임의
+  `loadHistory` 가 마침 유휴를 봐 활성 폴러가 서지 못한 경우, 이 전이를 막으면 답변이 수동
+  새로고침 전까지 나타나지 않는다.
+- AC-20260827T160500-bridge-progress-scroll-7: 이력은 **마지막 국면 하나가 아니라 집합**이다.
+  국면이 `processing ↔ 완료` 로 흔들려도 되돌아온 국면은 이미 집합에 있어 순환이 되살아나지
+  않는다(위임 횟수는 그 run 의 국면 종류 수로 유계). 집합은 `(대화\|run)` 범위에 묶여 범위가
+  바뀔 때 폐기되므로 무한히 자라지 않는다.
+- AC-20260827T160500-bridge-progress-scroll-8: `run_id` 를 모르는 응답(일시적 빈 응답·오류
+  폴백)은 **범위와 이력을 건드리지 않는다**. 여기서 비우면 뒤이어 오는 같은 run 의 완료 전이가
+  "이력 없음" 으로 읽혀 재로드가 일어나지 않는다. 또한 위임한 `loadHistory` 가 throw 하면 그
+  국면 각인을 **원복**해 다시 시도할 수 있게 둔다(네트워크 blip 1회가 동기화를 영구 봉인하지
+  않는다).
