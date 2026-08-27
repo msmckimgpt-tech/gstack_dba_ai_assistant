@@ -79,9 +79,10 @@ def test_enqueue_sets_topic_from_question():
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
     assert "_conv_apply_auto_topic" in src, (
         "브리지 적재 경로가 자동 제목을 붙이지 않는다 — 대화 제목이 '새 대화' 로 굳는다")
-    # 연결이 없어 적재를 건너뛰는 분기에서도 질문은 저장된다 → 제목도 붙어야 한다.
-    assert src.count("_conv_apply_auto_topic") >= 2, (
-        "AI 미연결 분기에 제목 적용이 없다 — 질문만 쌓이고 목록에서 구분되지 않는다")
+    # 미연결도 같은 경로를 탄다(2026-08-28 보류 적재로 통합) — 그래서 호출은 한 자리면 된다.
+    # 통합 전에는 분기가 둘이라 두 곳에 각각 필요했고, 한쪽을 빼먹으면 그 경로만 "새 대화" 였다.
+    assert "if not connected:" not in src, (
+        "미연결 분기가 되살아났다 — 제목 적용이 한쪽 경로에서만 도는 구조로 돌아간다")
 
 
 def test_submit_answer_forwards_title_to_delivery():

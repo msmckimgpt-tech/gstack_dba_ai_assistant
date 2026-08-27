@@ -278,7 +278,9 @@ def test_cancel_write_reconfirms_the_condition_in_sql():
     dele = fn[fn.index("DELETE FROM WebAiTasks"):]
     dele = dele[:dele.index("if to_cancel:")]
     assert "CLAIMABLE_SQL" in dele, "DELETE 가 점유 여부를 재확인하지 않는다"
-    assert "Status = %s" in dele, "DELETE 가 상태를 재확인하지 않는다"
+    # 상태 재확인은 `Status IN (...)` 로 바뀌었다 — 취소 대상이 open 하나가 아니라
+    # open·deferred 둘이기 때문(2026-08-28 보류 질문 도입). 재확인한다는 계약은 그대로다.
+    assert "Status IN (" in dele, "DELETE 가 상태를 재확인하지 않는다"
     upd = fn[fn.index("UPDATE WebAiTasks SET Status = %s"):]
     upd = upd[:upd.index("conn.commit()")]
     assert "Status = %s" in upd, "UPDATE 가 상태를 재확인하지 않는다(제출본을 덮어쓴다)"

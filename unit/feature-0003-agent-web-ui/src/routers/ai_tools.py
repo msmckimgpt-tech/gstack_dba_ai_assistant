@@ -39,8 +39,12 @@ from fastapi.responses import JSONResponse
 from shared.bridge_tasks import (
     BRIDGE_CLAIM_LEASE_MIN as _BRIDGE_CLAIM_LEASE_MIN,
     CLAIMABLE_SQL as _CLAIMABLE_SQL,
+    DEFERRED_MAX_AGE_HOURS as _DEFERRED_MAX_AGE_HOURS,
     STATUS_CANCELED as _STATUS_CANCELED,
+    STATUS_DEFERRED as _STATUS_DEFERRED,
+    STATUS_EXPIRED as _STATUS_EXPIRED,
     claim_is_live as _claim_is_live,
+    promote_latest_deferred as _promote_latest_deferred,
 )
 
 import app
@@ -575,6 +579,89 @@ _BRIDGE_ONLY_NARRATION: dict[str, tuple[str, str]] = {
 }
 
 
+def _promote_deferred_for(conn, account_id: int) -> str:
+    """연결이 성립한 이 계정의 **보류 질문 1건을 대기열에 올린다**. 반환 = 승격된 task_id.
+
+    호출 지점이 `list_open_requests` · `wait_for_request` 인 이유: 개인 AI 가 "가져갈 질문
+    있나" 를 묻는 그 순간이 **연결이 실제로 성립했다는 유일한 증거**다. 토큰 발급 시점에
+    올리면, 발급만 받고 한 번도 오지 않는 클라이언트 때문에 질문이 대기열에서 늙는다.
+
+    밀린 것을 한꺼번에 처리하지 않는다 — 정본(`promote_latest_deferred`)이 최근 1건만 올리고
+    나머지는 만료시킨다. 만료된 질문의 대기 말풍선은 여기서 '처리되지 않음' 으로 정정한다:
+    상태만 바꾸고 화면을 그대로 두면 "연결하면 이 질문부터 처리합니다" 가 영원히 박제된다.
+    """
+    promoted, expired = _promote_latest_deferred(conn, account_id=int(account_id or 0))
+    # 방금 만료시킨 것 + **이미 만료됐지만 말풍선이 아직 안 고쳐진 것**을 함께 정정한다.
+    #
+    # 상태(MySQL)와 말풍선(PG)은 다른 저장소라 한 번에 확정할 수 없다. 정정이 한 번 실패하면
+    # 그 task 는 두 번 다시 조회되지 않아, 화면에 "연결하면 이 질문부터 처리합니다" 가 영구히
+    # 남는다(codex REV-20260828T070000 P1). 정정은 idempotent 하므로(placeholder=true 인 것만
+    # 바꾼다) 매 연결마다 다시 시도해도 안전하다 — 일시 장애는 다음 연결에서 자동 복구된다.
+    _settle_expired_deferred(conn, expired + _recent_unsettled_expired(conn, account_id, expired))
+    return promoted
+
+
+def _recent_unsettled_expired(conn, account_id: int, exclude: list[str]) -> list[str]:
+    """최근 만료된 보류 질문 중 **아직 정정되지 않았을 수 있는** task id.
+
+    범위를 최근으로 좁히는 이유: 정정은 idempotent 라 여러 번 시도해도 무해하지만, 계정의
+    만료 이력 전체를 매 연결마다 훑으면 오래된 행이 영원히 조회 대상으로 남는다. 보류의 유효
+    기간과 같은 창(`DEFERRED_MAX_AGE_HOURS`)이면 "이번 작업 흐름" 을 덮는다.
+    """
+    if not account_id:
+        return []
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT TaskId FROM WebAiTasks "
+                "WHERE AccountId = %s AND Origin = 'web' AND Status = %s "
+                f"  AND CreatedAt > DATE_SUB(NOW(), INTERVAL {_DEFERRED_MAX_AGE_HOURS} HOUR) "
+                "ORDER BY CreatedAt DESC LIMIT 20",
+                (int(account_id), _STATUS_EXPIRED))
+            seen = set(exclude or [])
+            return [str(r[0]) for r in (cur.fetchall() or []) if str(r[0]) not in seen]
+        finally:
+            cur.close()
+    except Exception:
+        return []
+
+
+def _settle_expired_deferred(conn, task_ids: list[str]) -> None:
+    """만료된 보류 질문의 대기 말풍선을 '처리되지 않음' 안내로 바꾼다.
+
+    말풍선 정정 SQL 은 웹 쪽 정본(`conversations._mark_bridge_placeholders_canceled`)을 그대로
+    쓴다 — 취소와 만료는 "종결된 안내로 바꾸고 덮어쓰기 대상에서 뺀다" 는 같은 처리이고,
+    여기서 SQL 을 다시 쓰면 두 벌이 되어 언젠가 갈린다(이 feature 가 반복해 겪은 결함).
+    """
+    if not task_ids:
+        return
+    log = logging.getLogger(__name__)
+    try:
+        # 지연 import — 라우터 로드 시점 순환 회피(다른 핸들러의 `import agent_core` 와 동형).
+        import routers.conversations as _convs
+
+        cur = conn.cursor()
+        try:
+            marks = ",".join(["%s"] * len(task_ids))
+            cur.execute(
+                f"SELECT TaskId, ConversationId FROM WebAiTasks WHERE TaskId IN ({marks})",
+                tuple(task_ids))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        by_conv: dict[str, list[str]] = {}
+        for tid, cid in rows:
+            if cid:
+                by_conv.setdefault(str(cid), []).append(str(tid))
+        for cid, tids in by_conv.items():
+            _convs._mark_bridge_placeholders_canceled(
+                conn, cid, tids, _convs._BRIDGE_NOTICE_DEFERRED_EXPIRED)
+    except Exception as exc:
+        # 말풍선 정정 실패가 승격 자체를 무르지 않는다 — 승격된 질문은 이미 대기열에 있다.
+        log.warning("[bridge] 만료 보류 질문 말풍선 정정 실패 (%d건): %r", len(task_ids), exc)
+
+
 def _bridge_derived_narration(tool_name: str, args: dict[str, Any] | None) -> tuple[str, str]:
     """도구·인자에서 (무엇을, 왜) 를 파생한다 — 내부 경로와 **같은 헬퍼**를 쓴다.
 
@@ -1028,6 +1115,9 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"상한을 확인할 수 없어 요청을 중단했습니다: {exc}")
 
+    # 연결이 끊겼던 동안 보관된 질문을 지금 대기열에 올린다(최근 1건).
+    _promote_deferred_for(conn, account_id)
+
     rows: list[dict[str, Any]] = []
     cur = conn.cursor()
     try:
@@ -1131,6 +1221,10 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
     found: list[tuple] = []
     canceled: list[str] = []
     drained = False
+    # 대기에 들어가기 **전에** 보류 질문을 올린다(최근 1건). 루프 안에 두면 매 0.5초마다
+    # 같은 판정을 반복하고, 승격은 연결 성립 시점에 한 번이면 충분하다 — 대기 중 새로
+    # 생기는 질문은 이미 연결된 상태이므로 처음부터 `open` 으로 들어온다.
+    _promote_deferred_for(conn, account_id)
     # feature-0045: 이 대기를 **관측 가능**하게 만든다. 종전엔 무중단 스파인의 pre-drain
     # 게이트가 이 대기를 전혀 보지 못해, 개인 AI 가 붙어 있는 replica 를 "조용하다"고 읽고
     # 그대로 내렸다. 다만 대기는 **기다릴 대상이 아니라 비울 대상**이다(아래 드레인 분기).
@@ -2156,8 +2250,10 @@ def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool
     | phase | 뜻 |
     |---|---|
     | `canceled` | 사용자가 중단했거나 새 질문으로 갈아탔다. **답변은 오지 않는다** |
+    | `expired` | 연결 후 최근 1건만 승격돼 이 질문은 밀렸다. **답변은 오지 않는다** |
     | `done` | 제출됨 |
     | `working` | 누군가 가져가 처리 중 |
+    | `deferred` | 아직 연결이 없어 보관 중 — 연결하면 이 질문부터 올라간다 |
     | `waiting` | 연결도 있고 러너도 붙어 있다 — 곧 집힌다 |
     | `not_listening` | 토큰은 살아 있는데 **대기 중인 러너가 없다**(재부팅 등) |
     | `not_connected` | 연결된 AI 자체가 없다 — 기다리게 두지 않고 알린다 |
@@ -2174,10 +2270,18 @@ def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool
     """
     if str(status or "") == _STATUS_CANCELED:
         return "canceled"
+    # 만료도 **종결**이다 — 답변은 오지 않는다. 여기서 안 걸러내면 토큰·러너가 살아 있다는
+    # 이유로 `waiting` 이 반환되어, DB 는 끝났다는데 화면은 영원히 "대기 중" 을 그린다
+    # (codex REV-20260828T070000 P2).
+    if str(status or "") == _STATUS_EXPIRED:
+        return "expired"
     if submitted or str(status or "") == "submitted":
         return "done"
     if claimed_by is not None:
         return "working"
+    # 보류는 "연결이 없다" 와 같은 뜻이되, 질문이 **보관돼 있다**는 사실이 더 있다.
+    if str(status or "") == _STATUS_DEFERRED:
+        return "deferred"
     if not connected:
         return "not_connected"
     return "waiting" if listening else "not_listening"

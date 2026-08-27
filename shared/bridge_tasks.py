@@ -29,11 +29,16 @@ from typing import Any
 __all__ = [
     "BRIDGE_CLAIM_LEASE_MIN",
     "CLAIMABLE_SQL",
+    "DEFERRED_MAX_AGE_HOURS",
     "STATUS_OPEN",
     "STATUS_CANCELED",
+    "STATUS_DEFERRED",
+    "STATUS_EXPIRED",
     "STATUS_SUBMITTED",
+    "CANCELABLE_STATUSES",
     "cancel_bridge_tasks",
     "claim_is_live",
+    "promote_latest_deferred",
 ]
 
 #: 점유 lease. 이 시간이 지나도록 제출되지 않은 작업은 **다시 대기열에 나타난다**.
@@ -46,10 +51,29 @@ __all__ = [
 #: 다시 물어보기 전에 회수되는 길이.
 BRIDGE_CLAIM_LEASE_MIN = 30
 
-#: 상태값. `WebAiTasks.Status` 는 VARCHAR(16) 이라 아래 셋이 모두 들어간다(스키마 변경 불요).
+#: 상태값. `WebAiTasks.Status` 는 VARCHAR(16) 이라 아래 다섯이 모두 들어간다(스키마 변경 불요).
 STATUS_OPEN = "open"
 STATUS_CANCELED = "canceled"
 STATUS_SUBMITTED = "submitted"
+
+#: AI 가 연결되지 않은 상태에서 들어온 질문. **대기열에는 보이지 않는다** — 도구 표면은
+#: `Status='open'` 만 보므로, 연결 없는 동안 쌓여도 나중에 한꺼번에 처리되지 않는다.
+#: 연결이 성립하면 `promote_latest_deferred` 가 가장 최근 1건만 `open` 으로 올린다.
+STATUS_DEFERRED = "deferred"
+
+#: 승격 경쟁에서 밀린 보류 질문(또는 너무 오래된 것). 되살아나지 않는다.
+STATUS_EXPIRED = "expired"
+
+#: 사용자 취소·supersede 의 대상 상태. 보류 질문도 포함해야 한다 — 빼면 새 질문을 보내도
+#: 이전 보류 질문이 남아, 연결되는 순간 **엉뚱한 옛 질문**이 승격된다.
+CANCELABLE_STATUSES = (STATUS_OPEN, STATUS_DEFERRED)
+
+#: 보류 질문의 유효 기간. 이보다 오래된 것은 승격하지 않고 만료시킨다.
+#:
+#: 왜 상한이 필요한가: 사용자가 사흘 전에 던져 두고 잊은 질문이 오늘 연결하는 순간 답변으로
+#: 되돌아오면, 그것은 "이어받기" 가 아니라 **기억에 없는 응답**이다. 24시간은 "같은 작업 흐름
+#: 안" 이라고 볼 수 있는 현실적 경계다(로그아웃→재로그인 창은 분 단위라 넉넉히 덮인다).
+DEFERRED_MAX_AGE_HOURS = 24
 
 #: 점유 가능 조건 — 미점유이거나 lease 가 만료된 것.
 #:
@@ -132,8 +156,11 @@ def cancel_bridge_tasks(conn, *, account_id: int, conversation_id: str | None = 
 
     # 값은 **파라미터로** 넘긴다. 지금은 모듈 상수라 주입 위험이 없지만, 값을 f-string 으로
     # SQL 에 박는 습관이 남아 있으면 다음 사람이 같은 자리에 변수를 넣는다.
-    where = ["AccountId = %s", "Origin = 'web'", "Status = %s"]
-    params: list[Any] = [int(account_id), STATUS_OPEN]
+    # 보류(`deferred`) 도 취소 대상이다 — 빼면 새 질문을 보내도 옛 보류 질문이 남아,
+    # 연결되는 순간 그쪽이 승격된다(사용자가 방금 고쳐 물은 질문 대신).
+    where = ["AccountId = %s", "Origin = 'web'",
+             "Status IN (" + ",".join(["%s"] * len(CANCELABLE_STATUSES)) + ")"]
+    params: list[Any] = [int(account_id), *CANCELABLE_STATUSES]
     if conversation_id:
         where.append("ConversationId = %s")
         params.append(str(conversation_id))
@@ -169,10 +196,12 @@ def cancel_bridge_tasks(conn, *, account_id: int, conversation_id: str | None = 
             #   `to_delete`/`to_cancel` 분류는 파이썬이 하되 **집행은 SQL 이 확인**한다.
             if to_delete:
                 marks = ",".join(["%s"] * len(to_delete))
+                status_marks = ",".join(["%s"] * len(CANCELABLE_STATUSES))
+                # 보류 질문도 지운다(점유될 수 없으므로 항상 이 갈래로 온다).
                 cur.execute(
                     f"DELETE FROM WebAiTasks WHERE AccountId = %s AND TaskId IN ({marks}) "
-                    f"AND Status = %s AND {CLAIMABLE_SQL}",
-                    (int(account_id), *to_delete, STATUS_OPEN))
+                    f"AND Status IN ({status_marks}) AND {CLAIMABLE_SQL}",
+                    (int(account_id), *to_delete, *CANCELABLE_STATUSES))
             if to_cancel:
                 marks = ",".join(["%s"] * len(to_cancel))
                 cur.execute(
@@ -193,3 +222,81 @@ def cancel_bridge_tasks(conn, *, account_id: int, conversation_id: str | None = 
         log.info("[bridge] 대기 작업 취소 account=%s conv=%s — 삭제 %d · 취소표시 %d",
                  account_id, conversation_id, len(to_delete), len(to_cancel))
     return {"deleted": to_delete, "canceled": to_cancel}
+
+
+def promote_latest_deferred(conn, *, account_id: int) -> tuple[str, list[str]]:
+    """연결이 성립한 계정의 **보류 질문 중 가장 최근 1건만** 대기열에 올린다.
+
+    반환: `(승격된 task_id 또는 "", 만료시킨 task_id 목록)`.
+
+    ## 왜 1건인가 (사용자 결정 2026-08-28)
+
+    연결이 끊긴 줄 모르고 보낸 질문을 매번 다시 입력하게 두는 것은 마찰이다. 그렇다고 쌓인 것을
+    전부 처리하면 예전 결함으로 되돌아간다 — 연결하는 순간 밀린 질문이 한꺼번에 답을 쏟아낸다
+    (실측: 같은 질문 5건 누적). 사용자가 그 순간 원하는 것은 **마지막으로 물은 것**이다.
+
+    나머지는 지우지 않고 `expired` 로 남긴다. 지우면 그 질문의 대기 말풍선이 무엇을 가리키는지
+    영영 알 수 없어, 화면에 "연결하면 처리합니다" 가 박제된 채 남는다. 상태로 남겨야 호출측이
+    그 말풍선을 "처리되지 않음" 으로 정정할 수 있다.
+
+    ## 경계
+
+    - `account_id` 는 편의가 아니라 경계다. 없으면 아무것도 하지 않는다.
+    - 승격은 `Status='deferred'` 조건을 **UPDATE 문 안에** 두어 원자적이다 — 두 세션이 동시에
+      연결해도 한 번만 승격된다(두 번 승격되면 같은 질문이 두 번 답변된다).
+    - 실패는 삼킨다. 승격은 편의 기능이고, 여기서 예외를 올리면 **도구 호출 자체가 실패**한다.
+    """
+    log = logging.getLogger(__name__)
+    if not account_id:
+        return "", []
+    try:
+        cur = conn.cursor()
+        try:
+            # 오래된 것은 승격 후보에서 먼저 제외한다 — "기억에 없는 응답" 방지.
+            cur.execute(
+                "SELECT TaskId, CreatedAt FROM WebAiTasks "
+                "WHERE AccountId = %s AND Origin = 'web' AND Status = %s "
+                f"  AND CreatedAt > DATE_SUB(NOW(), INTERVAL {DEFERRED_MAX_AGE_HOURS} HOUR) "
+                "ORDER BY CreatedAt DESC, Id DESC LIMIT 1",
+                (int(account_id), STATUS_DEFERRED))
+            row = cur.fetchone()
+            target = str(row[0]) if row else ""
+
+            # 만료 대상을 **미리 읽어 둔다** — 아래 UPDATE 가 상태를 바꾸고 나면 "무엇이
+            # 만료됐는지" 를 되물을 수 없다(호출측이 그 말풍선을 정정해야 한다).
+            cur.execute(
+                "SELECT TaskId FROM WebAiTasks "
+                "WHERE AccountId = %s AND Origin = 'web' AND Status = %s AND TaskId <> %s",
+                (int(account_id), STATUS_DEFERRED, target))
+            candidates = [str(r[0]) for r in (cur.fetchall() or [])]
+
+            # ★ 승격과 만료를 **한 문장**으로 처리한다(codex REV-20260828T070000 P1).
+            #
+            # 나눠 쓰면 요청 커넥션이 autocommit 이라 각 문장이 즉시 확정되고, 두 세션이 동시에
+            # 연결할 때 **서로 다른 행을 각자 승격**할 수 있다(A 는 T2 를, B 는 T1 을) — 그러면
+            # "최근 1건" 약속이 깨져 두 질문이 모두 답변된다.
+            #
+            # 이 문장은 그 계정의 보류 **전부**를 한 번에 소진한다. 먼저 커밋한 쪽이 전부
+            # 가져가므로, 뒤이은 실행은 `Status = deferred` 에 걸리는 행이 0 이라 아무 일도
+            # 일어나지 않는다(중복 승격 없음).
+            cur.execute(
+                "UPDATE WebAiTasks "
+                "SET Status = CASE WHEN TaskId = %s THEN %s ELSE %s END "
+                "WHERE AccountId = %s AND Origin = 'web' AND Status = %s",
+                (target, STATUS_OPEN, STATUS_EXPIRED,
+                 int(account_id), STATUS_DEFERRED))
+            changed = int(cur.rowcount or 0)
+            conn.commit()
+            # 이 실행이 실제로 바꾼 것이 없으면(=경쟁에서 졌으면) 승격도 만료도 내 것이 아니다.
+            promoted = target if (changed and target) else ""
+            expired = candidates if changed else []
+        finally:
+            cur.close()
+    except Exception as exc:
+        log.warning("[bridge] 보류 질문 승격 실패 account=%s: %r", account_id, exc)
+        return "", []
+
+    if promoted or expired:
+        log.info("[bridge] 보류 질문 승격 account=%s — 승격 %s · 만료 %d",
+                 account_id, promoted or "(없음)", len(expired))
+    return promoted, expired

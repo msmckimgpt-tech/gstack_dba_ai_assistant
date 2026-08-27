@@ -348,3 +348,18 @@ source_of_truth: true
 - [ ] ⑩ **POST-DEPLOY 실화면 검증** — 중단 버튼 · 취소/대체 말풍선 · 진행 단계 · SSE 재접속
       (대상 코드가 라이브에 없어 배포 전 관측 불가 — `deploy_scope: included` 로 배포 직후 수행)
 - [ ] ⑪ **codex 외부 리뷰 재시도** — 이번 cycle 은 계정 사용량 한도로 산출물 0(REVIEW.md 에 기록)
+
+### TASK-20260828T080000 — 미연결 질문 보관·이어받기 (사용자 결정)
+- status: done
+- risk: Minor (신규 상태값 2종 — 스키마 변경 없음 · 기존 적재 경로 재사용)
+- 결정(사용자, AskUserQuestion 2026-08-28): 연결 수명 = **현행 유지**(로그아웃 시 AI 연결 해제) ·
+  미연결 질문 = **마지막 1건만 이어받기**
+- [x] 미연결도 적재하되 `Status='deferred'`(대기열 비가시) — 적재 경로 통합
+- [x] 승격: 연결 후 첫 도구 호출에서 최근 1건만 `open`, 나머지 `expired` (단일 CASE UPDATE)
+- [x] 24시간 상한 — 기억에 없는 응답 방지
+- [x] 만료 말풍선 정정 + 실패 시 다음 연결에서 재시도(idempotent)
+- [x] 미연결 응답을 프런트까지 전달(`bridge_deferred`·`bridge_queued`) — 완료 토스트 오표시 해소
+- [x] `expired` 를 terminal phase 로(서버·프런트 양쪽)
+- [x] codex P1 5건 중 3건 수정 + P2 3건 중 2건 수정, 2건은 한계 기록
+- [x] `make test` 전량 green · 기존 계약 테스트 6건 갱신
+- [ ] **라이브 확인** — 미연결 질문 후 연결 시 그 질문이 자동 처리되는지(사용자 테스트)
