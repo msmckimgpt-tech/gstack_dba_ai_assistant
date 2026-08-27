@@ -2518,3 +2518,24 @@ select.admin-meta-input {
   .connect-modal-why { background: rgba(255, 255, 255, .06); border-left-color: rgba(255, 255, 255, .22); }
   .connect-modal-btn { border-color: rgba(255, 255, 255, .22); }
 }
+
+/* feature-0043 — 내 AI 연결 상태 상시 표시(2026-08-27 제보). 질문 전에 알 수 있어야 한다. */
+.ai-conn {
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 2px 10px; font-size: .78rem; line-height: 1.6;
+  cursor: pointer; background: transparent; font-family: inherit;
+}
+.ai-conn.hidden { display: none; }
+.ai-conn[data-state="on"] {
+  color: #15803d; border-color: rgba(21, 128, 61, .35); background: rgba(21, 128, 61, .08);
+}
+.ai-conn[data-state="off"] {
+  color: #b45309; border-color: rgba(180, 83, 9, .38); background: rgba(180, 83, 9, .10);
+}
+.ai-conn[data-state="on"]::before { content: "● "; }
+.ai-conn[data-state="off"]::before { content: "○ "; }
+.ai-conn:hover { filter: brightness(.95); }
+@media (prefers-color-scheme: dark) {
+  .ai-conn[data-state="on"] { color: #4ade80; background: rgba(74, 222, 128, .12); }
+  .ai-conn[data-state="off"] { color: #fbbf24; background: rgba(251, 191, 36, .14); }
+}

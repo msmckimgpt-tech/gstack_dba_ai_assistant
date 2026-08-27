@@ -420,3 +420,18 @@ dispatch 는 `model`·`reasoning_level` 을 `run_kwargs` 로 넘기는데 **브�
 **테스트 작성 교훈**: 분기가 하나 늘자 `src.index("A") < src.index("B")` 식 순서 계약 4건이
 연쇄 오탐. `index()` 는 첫 등장을 찾으므로 새 분기가 앞에 끼면 다른 곳을 잰다. 순서 계약은
 **해당 구간으로 범위를 좁혀** 재고, 구조 계약은 **AST 로 호출 인자를 직접** 본다.
+
+## CHG-20260828T040000 — 연결 상태 상시 표시 (TASK-20260828T040000)
+
+**제보**: 웹 화면에 연결 여부 메시지가 없어 1차 연결 완수를 확인할 수 없다.
+
+| 대상 | 변경 |
+|---|---|
+| `oauth_as.connect_status` | `connected` 추가 — 판정은 `account_has_live_token`(인증과 동일) |
+| `index.html` | 컴포저 하단 `#aiConnState` |
+| `connect-modal.js` | `refreshConnState`·`bindConnState` — 로드·발급 직후·탭 복귀 3시점, 폴링 없음 |
+| CSS | 연결됨(초록 ●) / 안 됨(주황 ○) |
+
+**함께 실측한 것** (별건 확인): `wait_for_request` 는 엣지·공인 IP 양쪽에서 **55초 보류** 정상,
+새 질문 도착 시 **2.27초 반환**. 다른 세션이 본 `elapsed=12s` 는 **배포 롤링 재시작**이 붙들린
+연결을 끊은 것 — 긴 대기 요청이 정확히 그 대상이다.

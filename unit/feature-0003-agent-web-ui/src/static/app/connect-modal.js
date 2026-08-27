@@ -84,6 +84,8 @@ async function _make() {
   $("connectModalText").textContent = text;
   $("connectModalResult").hidden = false;
   _status("만들었습니다. 이 창을 닫으면 다시 볼 수 없습니다.", "ok");
+  // 방금 연결이 생겼다 — 표시를 즉시 맞춘다(다음 조회를 기다리게 하지 않는다).
+  try { refreshConnState(); } catch (_) { /* 표시 실패는 흐름을 막지 않는다 */ }
 }
 
 async function _copy() {
@@ -124,4 +126,55 @@ export function bindConnectModal() {
     if (a.target === "_blank") return;
     if (openConnectModal()) ev.preventDefault();
   }, true);
+}
+
+// ── 연결 상태 상시 표시 (사용자 제보 2026-08-27) ─────────────────────────────
+//
+// 종전엔 **질문을 보내야만** 안내 말풍선으로 연결 여부를 알 수 있었다. 그건 순서가 거꾸로다 —
+// 연결이 됐는지는 **묻기 전에** 알아야 한다.
+//
+// 갱신 시점은 셋: 페이지 로드 · 모달에서 연결 정보를 만든 직후 · 창이 다시 보일 때(다른 탭에서
+// 연결하고 돌아오는 경로). 주기 폴링은 하지 않는다 — 연결은 자주 바뀌는 값이 아니고, 이 화면의
+// 다른 축(브리지 대기)도 폴링을 쓰지 않는 것과 같은 이유다.
+
+let _connKnown = null;
+
+function _paintConn(connected) {
+  const el = $("aiConnState");
+  if (!el) return;
+  _connKnown = connected;
+  el.classList.remove("hidden");
+  el.dataset.state = connected ? "on" : "off";
+  el.textContent = connected ? "내 AI 연결됨" : "내 AI 연결 안 됨";
+  el.title = connected
+    ? "웹에서 보낸 질문을 연결된 AI 가 가져갑니다. 눌러서 다시 연결하거나 다른 AI 를 추가할 수 있습니다."
+    : "답변할 AI 가 없습니다. 눌러서 연결하세요.";
+}
+
+export async function refreshConnState() {
+  try {
+    const r = await fetch("/api/ai/connect/status", { credentials: "same-origin" });
+    const b = await r.json();
+    if (!b || b.logged_in === false) {
+      const el = $("aiConnState");
+      if (el) el.classList.add("hidden");   // 로그인 전에는 말할 것이 없다
+      return;
+    }
+    _paintConn(!!b.connected);
+  } catch (_) {
+    // 조회 실패는 **표시하지 않는다** — 틀린 상태를 보이느니 아무 말도 안 하는 편이 낫다.
+    const el = $("aiConnState");
+    if (el && _connKnown === null) el.classList.add("hidden");
+  }
+}
+
+export function bindConnState() {
+  const el = $("aiConnState");
+  if (!el) return;
+  el.addEventListener("click", () => { openConnectModal(); });
+  // 다른 탭에서 연결하고 돌아오는 경로 — 돌아왔을 때 낡은 표시를 남기지 않는다.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshConnState();
+  });
+  refreshConnState();
 }
