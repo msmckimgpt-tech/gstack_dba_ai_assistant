@@ -20,6 +20,7 @@ import hashlib
 import secrets
 import asyncio
 from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
+import shared.bridge_tasks as _bridge_tasks  # feature-0043: 브리지 취소·점유 술어 단일 정본
 from shared.llm_gate import (  # feature-0043: 서버 계정 LLM 차단 시 pull 브리지로 분기
     server_llm_enabled as _server_llm_enabled,
     server_llm_blocked_message as _server_llm_blocked_message,
@@ -35,11 +36,16 @@ router = APIRouter()
 
 
 def _delete_bridge_task(conn, task_id: str) -> None:
-    """적재 취소 — 아직 아무도 집지 않은 web task 만 지운다.
+    """**적재 롤백** — 방금 만든 task 를 없던 일로 되돌린다.
 
     `Status='open' AND ClaimedBy IS NULL` 로 좁히는 이유: 이 함수가 도는 사이 개인 AI 가
     이미 가져갔다면(경합) 그 작업은 진행 중이므로 지우면 안 된다. 그 경우 질문 없이 답변만
     남는 쪽이, 진행 중인 작업을 소멸시키는 것보다 낫다.
+
+    ⚠ 이것은 **사용자 취소가 아니다.** 사용자가 중단하거나 새 질문으로 갈아탈 때는
+    `_cancel_bridge_tasks` 를 쓴다 — 그쪽은 점유된 작업을 `canceled` 로 **남겨** 개인 AI 에게
+    사유를 돌려줄 수 있게 한다. 여기서 지우는 대상은 사용자가 본 적조차 없는(=저장이 실패해
+    화면에 뜨지도 않은) 행이므로 남길 이유가 없다.
     """
     try:
         cur = conn.cursor()
@@ -53,6 +59,73 @@ def _delete_bridge_task(conn, task_id: str) -> None:
     except Exception as exc:
         logging.getLogger(__name__).error(
             "[bridge] 적재 취소 실패 task=%s — 고아 task 가 남는다: %r", task_id, exc)
+
+
+def _cancel_bridge_tasks_for(conn, account: Any, *, conversation_id: str | None = None,
+                             exclude_task_id: str | None = None) -> dict[str, list[str]]:
+    """사용자 취소·supersede 의 **웹 쪽 진입점** — 판정은 `shared.bridge_tasks` 정본이 한다.
+
+    여기서 SQL 을 다시 쓰지 않는다: 같은 술어를 `routers/ai_tools.py` 의 도구 표면도 보므로,
+    두 벌이 되는 순간 "목록엔 없는데 취소는 안 되는" 어긋남이 생긴다.
+
+    실패는 **삼키지 않고 False 를 돌려주지도 않는다** — 호출측이 사용자에게 "취소했습니다" 를
+    말하기 전에 알아야 한다. 취소가 조용히 실패하면 화면은 취소됐다고 하는데 개인 AI 는 계속
+    답을 만들고, 그 답이 나중에 대화에 붙는다.
+    """
+    return _bridge_tasks.cancel_bridge_tasks(
+        conn,
+        account_id=int((account or {}).get("id") or 0),
+        conversation_id=conversation_id,
+        exclude_task_id=exclude_task_id,
+    )
+
+
+def _mark_bridge_placeholders_canceled(conn, conversation_id: str, task_ids: list[str],
+                                       notice: str = "") -> int:
+    """취소된 task 의 **대기 말풍선을 취소 안내로 바꾼다**. 반환 = 바뀐 말풍선 수.
+
+    토스트로만 알리면 몇 초 뒤 사라지고 새로고침하면 없다 — 사용자가 알고 싶은 것은 "지금 어떤
+    상태인가" 이고 그건 **화면에 남아 있어야** 한다(P0-O 와 같은 원칙).
+
+    범위는 3겹으로 좁힌다 — 이 대화 · `role='assistant'` · **이 task 들의** placeholder.
+    넓으면 남의 말풍선을 덮는다.
+
+    `placeholder` 각인은 **지우지 않는다**: 취소 뒤에도 이 자리는 여전히 "답변이 오면 덮어쓸
+    자리" 가 아니라 종결된 안내다. 그래서 `canceled: true` 를 함께 새겨, 혹시 도착하는 답변이
+    있어도(=취소 전에 이미 제출 중이던 경우) 덮어쓰기 대상에서 빠지게 한다.
+    """
+    if not conversation_id or not task_ids:
+        return 0
+    try:
+        from shared.db import _pg_connect
+
+        pg = _pg_connect()
+        try:
+            changed = 0
+            with pg.cursor() as cur:
+                for tid in task_ids:
+                    cur.execute(
+                        "UPDATE agent_runtime.messages "
+                        "SET content = %s, "
+                        "    meta_json = jsonb_set("
+                        "        jsonb_set(meta_json, '{bridge,canceled}', 'true'::jsonb, true),"
+                        "        '{bridge,placeholder}', 'false'::jsonb, true) "
+                        "WHERE conversation_id = %s AND role = 'assistant' "
+                        "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
+                        "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true'",
+                        (notice or _BRIDGE_NOTICE_CANCELED, str(conversation_id), str(tid)))
+                    changed += int(cur.rowcount or 0)
+            pg.commit()
+            return changed
+        finally:
+            pg.close()
+    except Exception as exc:
+        # 말풍선 갱신 실패가 취소 자체를 무르지 않는다 — task 는 이미 확정 취소됐다.
+        # 다만 화면이 옛 안내를 그대로 보이므로 로그로 남긴다.
+        logging.getLogger(__name__).warning(
+            "[bridge] 취소 말풍선 갱신 실패 conv=%s tasks=%s: %r",
+            conversation_id, task_ids, exc)
+        return 0
 
 
 # ── 브리지 대기 안내 ──────────────────────────────────────────────────────────
@@ -86,6 +159,31 @@ _BRIDGE_NOTICE_NOT_CONNECTED = (
 _BRIDGE_NOTICE_CONNECTED = (
     "연결된 AI 가 가져가면 여기에 답변이 표시됩니다.\n\n"
     "답변이 오지 않으면 AI 에게 “대기 중인 질문을 처리해줘” 라고 말해 보세요."
+)
+
+#: 사용자가 중단했거나 새 질문으로 갈아탄 요청 — 말풍선 본문이 이것으로 바뀐다.
+#:
+#: **"중단했습니다" 로 끝내지 않는다.** 이미 AI 가 가져간 요청은 그 사람의 머신에서 계속 돌고
+#: 있고 우리에겐 멈출 권한이 없다 — 그 사실을 숨기면 개인 계정 토큰이 조용히 타는 동안
+#: 사용자는 아무 일도 일어나지 않는다고 믿는다. 대신 **결과는 오지 않는다**는 것을 분명히 한다
+#: (`submit_answer` 가 409 로 거절하므로 이건 약속이 아니라 집행된 사실이다).
+_BRIDGE_NOTICE_CANCELED = (
+    "요청을 취소했습니다. 이 질문의 답변은 표시되지 않습니다.\n\n"
+    "이미 AI 가 가져간 뒤였다면 그쪽 작업이 잠시 더 이어질 수 있지만, 그 결과가 "
+    "이 대화에 반영되지는 않습니다."
+)
+
+#: 답변을 기다리는 중에 사용자가 **새 질문을 보내** 대체된 요청.
+#:
+#: 취소와 문구를 나누는 이유: 사용자는 중단 버튼을 누른 적이 없다. "취소했습니다" 라고 하면
+#: 자기가 하지 않은 일을 했다고 읽힌다. 무슨 일이 일어났는지 그대로 적는다.
+#:
+#: 왜 대체하는가(사용자 결정 2026-08-28): 그냥 두면 대기열에 둘 다 남고 `CreatedAt ASC` 로
+#: **옛 질문이 먼저** 처리된다. 게다가 `claim_request` 는 점유 시점의 최신 대화 문맥을 읽으므로,
+#: 늦게 집힌 옛 질문이 그 뒤 turn 까지 포함한 맥락으로 답해져 대화 흐름과 어긋난다.
+_BRIDGE_NOTICE_SUPERSEDED = (
+    "새 질문을 보내셔서 이 요청은 대체되었습니다. 답변은 새 질문에 표시됩니다.\n\n"
+    "이 대화 내용은 그대로 남아 새 질문에 함께 전달됩니다."
 )
 
 
@@ -350,9 +448,38 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             log.warning("[bridge] 대기 안내 말풍선이 저장되지 않았다 task=%s — 화면에 질문만 남는다",
                         task_id)
 
+    # ── 이전 대기 질문 **대체**(supersede, 사용자 결정 2026-08-28) ─────────────
+    #
+    # 새 질문을 보냈다는 것은 앞 질문의 답을 더 기다리지 않겠다는 뜻이다(기존 1:1 경로의
+    # 인터럽트 재요청 R3 와 같은 의미). 그냥 두면 둘 다 대기열에 남고 `CreatedAt ASC` 로
+    # **옛 질문이 먼저** 처리되어, 방금 정정한 질문이 뒤로 밀린다.
+    #
+    # **적재 성공 뒤에** 하는 이유: 먼저 취소하고 INSERT 가 실패하면 옛 질문도 새 질문도 없는
+    # 상태가 된다. 이 순서면 취소가 실패해도 최악이 "둘 다 대기"(=종전 동작)라 잃는 것이 없다.
+    #
+    # `exclude_task_id` 로 방금 만든 자기 자신을 제외한다 — 빼먹으면 새 질문이 태어나자마자
+    # 스스로를 지운다.
+    superseded: dict[str, list[str]] = {"deleted": [], "canceled": []}
+    if conv_id:
+        try:
+            superseded = _cancel_bridge_tasks_for(
+                conn, account, conversation_id=str(conv_id), exclude_task_id=task_id)
+            _sids = superseded["deleted"] + superseded["canceled"]
+            if _sids:
+                _mark_bridge_placeholders_canceled(
+                    conn, str(conv_id), _sids, _BRIDGE_NOTICE_SUPERSEDED)
+                log.info("[bridge] 이전 대기 질문 대체 conv=%s — 삭제 %d · 취소표시 %d",
+                         conv_id, len(superseded["deleted"]), len(superseded["canceled"]))
+        except Exception as exc:
+            # 대체 실패는 새 질문의 적재를 무르지 않는다 — 최악이 종전 동작(둘 다 대기)이다.
+            log.error("[bridge] 이전 대기 질문 대체 실패 conv=%s: %r", conv_id, exc)
+
     log.info("[bridge] 웹 질문 적재 task=%s conv=%s account=%s", task_id, conv_id, account_id)
     return {
         "answer": notice_text,
+        # 프런트가 대체된 task 의 폴러·스트림을 정리하고 이력을 다시 읽도록 알린다.
+        # 알리지 않으면 죽은 task 를 계속 물어 404 만 쌓인다.
+        "bridge_superseded": superseded["deleted"] + superseded["canceled"],
         # 최종 JSON 조립이 `agent_result["conversation_id"]` 를 읽는다 — 비우면 프런트가
         # 대화를 식별하지 못해 폴링 대상도 잃는다.
         "conversation_id": conv_id or "",
@@ -880,6 +1007,29 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
     # agent_core 가 이 run 의 부분 추론을 메시지로 보존(가시 + 다음 run 맥락). 명시 '중단' 버튼(미지정)
     # 은 기존대로 폐기 — 동작 무변경.
     _preserve_reasoning = bool(data.get("preserve_reasoning"))
+
+    # feature-0043: **브리지 대기 취소** — 서버 LLM 이 잠긴 동안 이 대화의 "진행 중" 은 서버 run
+    # 이 아니라 `WebAiTasks` 의 대기 작업이다. 아래 KV/큐 취소는 그 축을 전혀 건드리지 않으므로,
+    # 여기서 처리하지 않으면 **중단을 눌러도 개인 AI 는 계속 답을 만들고 그 답이 대화에 붙는다**
+    # (전환 이후 인터럽트가 브리지에서만 무력했던 원인).
+    #
+    # 서버 run 취소보다 **먼저** 한다: 아래 경로는 예외를 500 으로 바꿔 반환하므로, 뒤에 두면
+    # KV 조회 한 번 실패가 브리지 취소까지 통째로 건너뛴다.
+    bridge_canceled: dict[str, list[str]] = {"deleted": [], "canceled": []}
+    bridge_cancel_failed = False
+    try:
+        bridge_canceled = _cancel_bridge_tasks_for(
+            conn, account, conversation_id=conversation_id)
+        _all_ids = bridge_canceled["deleted"] + bridge_canceled["canceled"]
+        if _all_ids:
+            _mark_bridge_placeholders_canceled(conn, conversation_id, _all_ids)
+    except Exception:
+        # 취소 실패를 숨기지 않는다 — 응답에 실어 프런트가 "취소했습니다" 라고 말하지 않게 한다.
+        # 그래도 아래 서버 run 취소는 계속 시도한다(두 축은 독립이다).
+        bridge_cancel_failed = True
+        logging.getLogger(__name__).error(
+            "[bridge] /api/cancel 브리지 취소 실패 conv=%s", conversation_id, exc_info=True)
+
     try:
         run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         # running run 은 KV cancel_requested 플래그를 run_agent 가 폴링해 처리(§2.6 무변경).
@@ -911,7 +1061,16 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
             pass
     except Exception:
         return app._json_error("cancel failed", 500)
-    return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "요청 취소를 진행합니다."})
+    return JSONResponse({
+        "conversation_id": conversation_id, "run_id": run_id,
+        "output": "요청 취소를 진행합니다.",
+        # feature-0043: 브리지 축의 결과. 프런트는 이 값으로 (a) 대화를 다시 읽을지,
+        # (b) "취소했습니다" 대신 실패를 말할지 판단한다. 개수만 주면 "몇 건" 은 알아도
+        # "어느 것" 을 몰라 폴러·스트림 정리 대상을 특정하지 못한다.
+        "bridge_deleted": bridge_canceled["deleted"],
+        "bridge_canceled": bridge_canceled["canceled"],
+        "bridge_cancel_failed": bridge_cancel_failed,
+    })
 
 
 @router.post("/api/finalize")
@@ -4755,6 +4914,12 @@ async def ask(request: Request) -> JSONResponse:
             result["bridge_connected"] = bool(agent_result.get("bridge_connected"))
             result["bridge_queued"] = bool(agent_result.get("bridge_queued", True))
             result["bridge_toast"] = str(agent_result.get("bridge_toast") or "")
+            # 대체된 이전 대기 질문(2026-08-28). 프런트가 그 task 의 폴러·스트림을 정리하도록
+            # **id 목록**을 넘긴다 — 개수만 주면 어느 폴러를 멈출지 특정하지 못하고, 죽은 task 를
+            # 계속 물어 404 만 쌓인다.
+            _sup = agent_result.get("bridge_superseded")
+            if isinstance(_sup, list) and _sup:
+                result["bridge_superseded"] = [str(t) for t in _sup]
         # worker 모드: 후처리는 워커가 수행했으므로 그 결과(첨부 목록)를 응답으로 전달(inproc 패리티
         # — 프런트 토스트/표면화). inproc 모드면 위에서 web 이 직접 materialize 한 목록을 쓴다.
         if not _attach_postprocess_here:

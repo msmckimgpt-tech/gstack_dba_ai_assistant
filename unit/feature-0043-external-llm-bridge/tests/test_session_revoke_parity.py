@@ -265,8 +265,20 @@ def test_status_exposes_listening_separately():
 
 
 def test_phase_distinguishes_connected_but_idle():
-    body = _func(AI_TOOLS_P, "bridge_status")
-    assert "not_listening" in body, "'연결됐지만 아무도 안 듣는' 국면이 없다"
+    """'연결됐지만 아무도 안 듣는' 국면이 존재하고, **모든 소비처가 같은 판정**을 쓴다.
+
+    2026-08-28 병합: 국면 판정이 `bridge_status` 본문에서 `_bridge_phase` 로 올라갔다.
+    소비처가 폴링(`bridge_status`)과 스트리밍(`_bridge_stream_snapshot`) 둘이 되었기 때문이다 —
+    각자 조합하면 전송 방식에 따라 화면이 달라져 SSE→폴링 폴백이 곧 UX 회귀가 된다.
+    그래서 여기서는 **판정의 존재**와 **두 소비처의 위임**을 함께 단정한다.
+    """
+    decide = _func(AI_TOOLS_P, "_bridge_phase")
+    assert "not_listening" in decide, "'연결됐지만 아무도 안 듣는' 국면이 없다"
+    assert "not_connected" in decide, "연결 자체가 없는 국면과 구분되지 않는다"
+    for consumer in ("bridge_status", "_bridge_stream_snapshot"):
+        body = _func(AI_TOOLS_P, consumer)
+        assert "_bridge_phase(" in body, f"{consumer} 이 국면을 자체 조합한다"
+        assert "listening" in body, f"{consumer} 이 대기 여부를 판정에 넘기지 않는다"
 
 
 def test_indicator_has_three_states():
