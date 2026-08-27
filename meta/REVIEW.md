@@ -1355,3 +1355,14 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **[SUBAGENT] 판정**: 조치 완료. **Human Approval Needed**: 아니오 — 인증·인가 로직 무변경(토큰 발급·검증 경로 손대지 않음), 변경은 온보딩 문안 + 무결성 값 노출 + 전송계층 가드 강화 방향. 되돌리기 = revert + 재배포.
 - 배포: `deploy_scope` 활성(§16.5.1) — 지시문은 web 서빙 산출물이므로 재배포 필요. 배포 후 라이브 `/ai/connect` 에서 지문·체크섬 실재 확인이 잔여 항목(TASK ⑧).
 - Timestamp: 2026-08-28T10:00:00+09:00
+## REV-20260828T120000-connect-page-handoff [SKIPPED:live-verified-copy-removal] — 지시문이 화면에 도달하지 않았다 (TASK-20260828T120000 · feature-0043)
+- 범위: `unit/feature-0003-agent-web-ui/src/static/ai-connect.js`(자체 조립 사본 제거 → 서버 `body.handoff` 사용, dead code 정리) · 계약 테스트 2건의 **검사 대상 이동**(프런트 사본 → 정본 서버 함수) + 화면 목록 parametrize · feature TASK/MODIFY/FUNCTION.
+- **발견 경위 — 이 cycle 은 라이브 검증이 만들었다**: 직전 cycle(REV-20260828T100000)이 지시문을 전면 개정하고 배포까지 정상 완료했는데(전 서비스 `54e84874` · 컨테이너에서 CA 지문·러너 체크섬 계산 정상 · 마운트 정상), `bin/win-browser.py` 로 `/ai/connect` 를 실제로 열어 보니 **785자 옛 문안**이 나왔다 — 러너·TLS·검증 값 전무, 거절 사유였던 "나한테 더 묻지 않아도 돼" 포함. `ai-connect.js` 가 서버의 `body.handoff` 를 버리고 자체 조립하고 있었다.
+- **왜 못 잡았나**: 계약(`지시문은 서버가 조립한다`)은 서버 함수 docstring 에 적혀 있었고 테스트도 있었다 — 다만 `test_modal_uses_server_composed_handoff` 라는 이름 그대로 **모달에만** 걸려 있었다. 단독 페이지는 검사 대상 목록에 없었다. **계약이 틀린 것이 아니라 적용 범위가 좁았고, 그 좁음은 green 으로 보이지 않는다.** 같은 cycle 의 뮤테이션 리뷰가 발급 엔드포인트에서 정확히 같은 형태(C2 — 헬퍼는 맞는데 호출부 배선 미검사)를 보였는데, 이번엔 배선이 아니라 **소비자 하나가 계약 밖**이었다.
+- 조치: ⓐ 자체 조립 `handoff()` 제거 → `body.handoff` 를 표시·복사 양쪽에서 사용 ⓑ dead code(`baseOf` = 조립 전용 · `issuedToken` = 화면이 자격증명을 붙들 이유 없음) 제거 ⓒ 계약을 `test_every_surface_uses_the_server_composed_handoff` 로 확장 — 표시 화면 **전부** parametrize + 자체 조립 지문(`mcpServers`·인증 줄 연결·옛 마무리 문장) 금지.
+- **깨진 기존 테스트 2건은 skip 하지 않고 대상을 옮겼다**(`test_connect_page_hands_off_without_calling_the_human_back` · `test_connect_page_does_not_send_humans_to_the_api_reference`). 둘 다 "지시문이 `ai-connect.js` 안에 있다" 는 전제로 쓰였는데, 지시문이 서버로 이동했으므로 **계약도 정본을 따라간다**(A→B→C 순서·"허용"·"별도 로그인·승인 없음"·가이드 URL 은 여전히 유효한 계약이다). 후자에는 역방향 단정도 덧붙였다 — 프런트에 가이드 URL 이 다시 나타나면 그것이 곧 **사본 부활 신호**다.
+- 검증: `make test` **exit 0 / FAILED 0** · 회귀 역검증(단독 페이지를 자체 조립으로 되돌리는 뮤턴트 → **KILL**) · `node --check`.
+- **[SKIPPED] 사유**: 변경이 **중복 사본 제거**(코드 순감소)이고 새 로직·새 표면·권한 변경이 0 이다. 그리고 이 cycle 을 만든 것이 이미 **라이브 실측**(PB-0008)이며, 회귀 방어는 뮤턴트 재적용으로 확인했다 — 패널이 추가로 볼 표면이 없다. 직전 cycle 의 적대 패널 2인 결과는 REV-20260828T100000 에 있다. **Human Approval Needed**: 아니오.
+- 배포: `deploy_scope` 활성 — 프런트 자산 변경이므로 재배포 필요. 배포 후 `/ai/connect` 실화면에서 **새 문안 도달**을 확인하는 것이 이 cycle 의 완료 조건이다(TASK ⑤).
+- **교훈**: 소스층이 전부 green 이어도 화면은 죽어 있을 수 있다. 이번에 값을 만든 것은 단위 테스트가 아니라 실제 브라우저였다 — 배포 후 화면을 열어 보는 절차가 없었다면, 보안 우려를 해소한 지시문은 아무에게도 도달하지 않은 채 완료로 기록됐을 것이다.
+- Timestamp: 2026-08-28T12:00:00+09:00

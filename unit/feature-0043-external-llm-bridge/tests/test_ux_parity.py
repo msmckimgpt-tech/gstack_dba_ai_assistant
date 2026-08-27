@@ -658,8 +658,13 @@ def test_connect_page_does_not_send_humans_to_the_api_reference():
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
     assert "/api/ai/guide" not in html, "사람용 화면이 API 레퍼런스로 보낸다"
-    js = CONNECT_JS.read_text(encoding="utf-8")
-    assert "/api/ai/guide" in js, "지시문(AI 용)에서는 가이드 URL 이 빠지면 안 된다"
+    # 2026-08-28: 지시문이 서버로 이동했다(프런트 사본이 서버 문안과 갈려 라이브에서 옛 안내가
+    # 나갔다 — PB-0008). 계약의 뒷절(“AI 용 지시문에는 남아 있어야 한다”)은 그대로 유효하므로
+    # **대상만** 정본으로 옮긴다. 프런트에는 이제 그 URL 이 없는 것이 정상이다.
+    handoff = _func_source(WEB_SRC / "routers" / "oauth_as.py", "compose_connect_handoff")
+    assert "/api/ai/guide" in handoff, "지시문(AI 용)에서는 가이드 URL 이 빠지면 안 된다"
+    assert "/api/ai/guide" not in CONNECT_JS.read_text(encoding="utf-8"), (
+        "프런트에 가이드 URL 이 남아 있다 — 지시문 사본이 되살아났다는 신호다")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -795,11 +800,31 @@ def test_modal_respects_new_tab_intent():
         assert key in js, f"{key} 를 존중하지 않는다"
 
 
-def test_modal_uses_server_composed_handoff():
-    """지시문을 **서버에서 받는다** — 화면이 조립하면 단독 페이지와 문안이 갈린다."""
-    js = MODAL_JS.read_text(encoding="utf-8")
-    assert "body.handoff" in js, "지시문을 프런트가 만든다(두 벌 관리)"
-    assert "mcpServers" not in js, "모달이 설정 JSON 을 직접 조립한다"
+#: 지시문을 표시하는 화면 **전부**. 하나라도 빠지면 그 화면만 옛 문안을 내보낸다.
+_HANDOFF_SURFACES = [
+    ("대화 화면 모달", MODAL_JS),
+    ("단독 페이지 /ai/connect", WEB_SRC / "static" / "ai-connect.js"),
+]
+
+
+@pytest.mark.parametrize("label,path", _HANDOFF_SURFACES, ids=lambda v: getattr(v, "name", v))
+def test_every_surface_uses_the_server_composed_handoff(label, path):
+    """지시문을 **서버에서 받는다** — 화면이 조립하면 문안이 갈린다.
+
+    종전 이 계약은 **모달에만** 걸려 있었고, 그동안 `/ai/connect` 단독 페이지는 자체 조립본을
+    내보내고 있었다. 서버 문안이 CA 지문·러너 체크섬·상주 러너 절차·TLS 신뢰 범위를 담도록
+    여러 차례 개정되는 사이 그 사본은 **몇 세대 뒤처진 문안**(러너·TLS·검증 값 전무 +
+    거절 사유였던 '나한테 더 묻지 않아도 돼')을 그대로 보여줬다.
+
+    소스 테스트는 전부 green 이었다 — **검사 대상 목록에 그 화면이 없었기** 때문이다.
+    라이브 PB-0008 이 화면을 열어 보고서야 드러났다(2026-08-28). 그래서 계약을 화면 하나가
+    아니라 **표시하는 곳 전부**에 건다.
+    """
+    js = path.read_text(encoding="utf-8")
+    assert "body.handoff" in js, f"{label}: 지시문을 프런트가 만든다(두 벌 관리)"
+    # 자체 조립의 지문 — 이 조각이 있으면 서버 문안과 별개의 사본이 산다.
+    for token in ("mcpServers", "Authorization: Bearer \" +", "list_open_requests 로"):
+        assert token not in js, f"{label}: 지시문 조각을 직접 조립한다({token!r})"
 
 
 def test_modal_clears_token_from_dom_on_close():

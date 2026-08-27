@@ -5,7 +5,7 @@
  * 판정할 수 없다** — "MCP 를 지원하는 도구인가?" 는 만든 사람이나 답할 수 있는 질문이다.
  *
  * 그래서 선택을 사람에게서 걷어내 **AI 에게 넘긴다.** 이 화면은 연결에 필요한 모든 것을
- * — 토큰까지 포함해 — `AI 가 읽을 지시문 한 덩어리`로 만들어 준다. 어느 방법이 되는지는
+ * — 토큰까지 포함해 — `AI 가 읽을 지시문 한 덩어리`로 **서버에서 받아** 보여준다. 어느 방법이 되는지는
  * AI 가 직접 시도해 판단한다. 사람이 할 일은 [만들기] → [복사] → [붙여넣기] 세 번뿐이고,
  * **그 뒤의 인증은 AI 가 끝낸다**(사용자 요구 2026-08-27).
  *
@@ -19,7 +19,6 @@
   var $ = function (id) { return document.getElementById(id); };
   var statusEl = $("connectStatus");
   var endpoint = "";
-  var issuedToken = "";
 
   function say(msg, kind) {
     statusEl.textContent = msg || "";
@@ -27,55 +26,19 @@
     else { statusEl.removeAttribute("data-kind"); }
   }
 
-  function baseOf(url) {
-    // `https://host/api/ai/mcp` → `https://host`. 실패하면 빈 문자열(지시문은 절대 URL 이
-    // 없어도 성립한다 — 상대 경로 안내만 조금 덜 친절해진다).
-    try { var u = new URL(url); return u.origin; } catch (_e) { return ""; }
-  }
-
-  /** AI 에게 그대로 붙여넣을 지시문.
+  /** 지시문은 **서버가 조립한다** — 이 화면은 표시만 한다.
    *
-   * 설계 기준(사용자 결정 2026-08-27): **사람은 복사·붙여넣기까지만 하고, 나머지 인증은 AI 가
-   * 끝낸다.** 그래서 토큰이 이미 이 안에 들어 있는 경로(A·B)를 먼저 놓는다 — 그 둘은 추가로
-   * 사람이 누를 것이 없다. 커넥터 OAuth(C)는 브라우저 '허용' 클릭이 한 번 더 필요하므로
-   * **뒤로** 뺐다(가장 간단해 보여도 사람을 다시 부르는 방법이다).
+   * 왜 여기서 만들지 않는가: 같은 지시문을 보여주는 곳이 둘이다(이 단독 페이지, 대화 화면
+   * 모달). 각자 조립하면 **문안이 갈리고**, 한쪽만 고쳐지는 순간 어떤 사용자는 옛 안내를
+   * 받는다. 실제로 그렇게 됐다 — 서버(`compose_connect_handoff`)가 CA 지문·러너 체크섬·
+   * 상주 러너 절차·TLS 신뢰 범위를 담도록 여러 차례 개정되는 동안, 이 파일의 사본은
+   * **몇 세대 뒤처진 문안**을 계속 내보내고 있었다(라이브 PB-0008 에서 발각, 2026-08-28).
+   * 서버가 실어 보내는 `handoff` 를 그대로 쓴다.
    *
-   * 어느 것을 쓸지는 고르게 하지 않는다 — "네가 지원하는 방식으로 되는 것을 시도하라" 고
-   * 맡긴다. 사용자는 자기 AI 가 무엇을 지원하는지 판정할 수 없기 때문이다.
+   * 그리고 지시문은 도구 이름·발급자·무결성 값 같은 **서버 사실**을 담는다 — 브라우저는
+   * 그 값들을 알지 못하므로, 여기서 조립하는 한 그것들은 영원히 빠진다.
    */
-  function handoff(token) {
-    var base = baseOf(endpoint);
-    var guide = base ? base + "/api/ai/guide" : "/api/ai/guide";
-    var cfg = JSON.stringify({
-      mcpServers: {
-        "mysql-ai": { url: endpoint, headers: { Authorization: "Bearer " + token } },
-      },
-    }, null, 2);
-
-    return [
-      "DB 질의 어시스턴트에 연결해줘. 아래 정보로 인증까지 끝낼 수 있으니 나한테 더 묻지 않아도 돼.",
-      "네가 지원하는 방식으로 A → B → C 순서로 시도해.",
-      "",
-      "인증 (이것만 있으면 통과. 별도 로그인·승인 없음)",
-      "  Authorization: Bearer " + token,
-      "",
-      "A. MCP 설정에 추가",
-      cfg.split("\n").map(function (l) { return "  " + l; }).join("\n"),
-      "",
-      "B. HTTP 직접 호출",
-      "  POST " + (base || "") + "/api/ai/tools/list_open_requests",
-      "  헤더  Authorization: Bearer <위 토큰>",
-      "  본문  {\"limit\": 20}",
-      "  도구 목록: " + guide,
-      "",
-      "C. 커넥터 주소만 등록 (A·B 가 안 될 때)",
-      "  " + endpoint,
-      "  OAuth 로 연결되지만 브라우저에서 내가 허용을 눌러야 해.",
-      "",
-      "연결되면 list_open_requests 로 대기 중인 질문을 확인하고,",
-      "claim_request 로 가져가서 처리한 뒤 submit_answer 로 제출해줘.",
-    ].join("\n");
-  }
+  var handoffText = "";
 
   function humanTtl(seconds) {
     // access TTL 은 1시간 미만이다. 시간 단위로 반올림하면 "약 0시간" 이 되어 아무 정보도
@@ -146,9 +109,9 @@
           if (r.body && r.body.error === "unauthorized") { showLoggedOut(); }
           return;
         }
-        issuedToken = r.body.access_token || "";
         endpoint = r.body.endpoint || endpoint;
-        $("handoffText").textContent = handoff(issuedToken);
+        handoffText = r.body.handoff || "";
+        $("handoffText").textContent = handoffText;
         $("handoffResult").classList.remove("aic-hidden");
         say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
             " · 로그아웃 시 즉시 무효.", "ok");
@@ -160,6 +123,6 @@
   });
 
   $("copyHandoff").addEventListener("click", function () {
-    copy(handoff(issuedToken), "복사했습니다. AI에 붙여넣으세요.");
+    copy(handoffText, "복사했습니다. AI에 붙여넣으세요.");
   });
 })();

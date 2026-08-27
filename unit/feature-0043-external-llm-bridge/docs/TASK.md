@@ -392,3 +392,27 @@ source_of_truth: true
 - [x] ⑦ 계약 테스트 20건(`test_handoff_trust.py`) — 문안 회귀 · DER 지문 정확성 ·
       다중 인증서 fail-closed · 캐시 신선도 · fail-open · 배선
 - [ ] ⑧ **POST-DEPLOY** — 라이브 `/ai/connect` 지시문에 실제 지문·체크섬이 실렸는지 육안 확인
+
+### TASK-20260828T120000 — 지시문이 화면에 도달하지 않았다 (라이브 PB-0008 발각)
+
+**위험도: Minor** (§12.3 — 프런트 1파일에서 중복 사본 제거, 서버 값 사용. 인증·인가 무변경.)
+
+**무엇이 있었나**: TASK-20260828T100000 배포 후 `/ai/connect` 를 실제 브라우저로 열어 보니
+**옛 문안**이 나왔다(785자 · 러너·TLS·검증 값 전무 · 거절 사유였던 "나한테 더 묻지 않아도 돼"
+포함). 배포는 정상이었다(전 서비스 `54e84874`) — `ai-connect.js` 가 서버가 실어 보낸
+`body.handoff` 를 쓰지 않고 **자체 조립**하고 있었다.
+
+`compose_connect_handoff` 의 docstring 이 정확히 이 상황을 경계하고 있었다("표시하는 곳이
+둘이라 각자 조립하면 문안이 갈린다 — 한쪽만 고쳐지는 순간 어떤 사용자는 옛 안내를 받는다").
+계약은 적혀 있었는데 **모달에만 걸려 있었다**(`test_modal_uses_server_composed_handoff`).
+소스 테스트는 전부 green — 검사 대상 목록에 그 화면이 없었기 때문이다.
+
+- status: done (코드·문서·단위검증) / 잔여 = 재배포 후 실화면 재확인
+- risk: Minor
+- [x] ① `ai-connect.js` 자체 조립 제거 → `body.handoff` 사용(표시·복사 양쪽)
+- [x] ② dead code 정리 — `baseOf`(자체 조립 전용) · `issuedToken`(화면이 자격증명을 변수로
+      들고 있을 이유가 없다)
+- [x] ③ 계약을 **표시하는 화면 전부**로 확장 — `test_every_surface_uses_the_server_composed_handoff`
+      (모달 + 단독 페이지 parametrize). 자체 조립 지문(`mcpServers`·인증 줄 연결·옛 마무리 문장)도 금지
+- [x] ④ 회귀 역검증 — 단독 페이지를 자체 조립으로 되돌리는 뮤턴트 → KILL 확인
+- [ ] ⑤ **POST-DEPLOY** — `/ai/connect` 실화면에서 지문·체크섬 실렌더 + 모달 레이아웃 재확인
