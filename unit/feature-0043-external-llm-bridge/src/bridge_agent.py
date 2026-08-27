@@ -176,8 +176,23 @@ def compose_prompt(api: Api, task: dict) -> str:
     q = str(task.get("question") or "")
     ctxt = str(task.get("conversation_context") or "")
     want = str((task.get("requested") or {}).get("instruction") or "")
+    sysp = str(task.get("system_prompt") or "")
+    scope = task.get("scope") or {}
     atts = task.get("attachments") or []
-    parts = [
+    parts: list[str] = []
+    if sysp:
+        # 운영자가 설정한 5단계 지침(전역·제품·역할·계정·개인). **맨 앞**에 둔다 — 뒤에 두면
+        # 앞의 지시가 이기고, 그러면 운영자 설정이 사실상 무시된다.
+        parts += ["── 아래 지침을 시스템 프롬프트로 삼아 답하라 ──", sysp,
+                  "── 지침 끝 ──", ""]
+    if scope.get("product_name") or scope.get("datasources"):
+        # 어떤 제품·어떤 DB 를 보고 있는지 모르면 엉뚱한 스키마를 찾아 헤맨다.
+        who = scope.get("product_name") or ""
+        key = scope.get("product_key") or ""
+        ds = ", ".join(str(d) for d in (scope.get("datasources") or []))
+        parts += [f"대상 제품: {who}" + (f" ({key})" if key else "")
+                  + (f" · 데이터소스: {ds}" if ds else ""), ""]
+    parts += [
         "너는 사내 DB 질의 어시스턴트다. 아래 사용자 질문에 답하라.",
         "",
         "필요하면 이 도구들을 HTTP 로 직접 호출해 실제 DB 를 조사하라"

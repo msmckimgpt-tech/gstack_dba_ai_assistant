@@ -481,6 +481,9 @@ async function _pollBridgeAnswer(taskId, convId) {
 const _activeBridgePolls = new Set();
 
 async function _pollBridgeAnswerInner(taskId, convId) {
+  //: 직전 국면. 전환이 일어난 순간에만 화면을 갱신한다 — 매 tick 마다 다시 읽으면
+  //: 스크롤이 흔들리고 요청도 5초마다 두 배가 된다.
+  let _lastPhase = "";
   for (let tick = 0; tick < _BRIDGE_POLL_MAX_TICKS; tick += 1) {
     await new Promise((resolve) => setTimeout(resolve, _BRIDGE_POLL_MS));
     // 사용자가 다른 대화로 옮겼으면 조용히 멈춘다 — 남의 화면을 갱신하지 않는다.
@@ -494,6 +497,19 @@ async function _pollBridgeAnswerInner(taskId, convId) {
       const code = Number(err && (err.status || err.statusCode || err.code)) || 0;
       if (code >= 400 && code < 500) { _forgetPendingBridgeTask(convId, taskId); return; }
       continue;
+    }
+    // 국면이 바뀌면 화면을 다시 읽는다 — 서버가 대기 말풍선을 '처리 중' 으로 바꿔 두었고,
+    // 그것을 보여주지 않으면 사용자는 여전히 "가져가면 표시됩니다" 만 본다(제보 2026-08-27).
+    if (status && status.phase && status.phase !== _lastPhase) {
+      const prev = _lastPhase;
+      _lastPhase = status.phase;
+      if (prev && status.phase === "working") {
+        try { await loadHistory({ preserveScroll: true }); } catch (_) { /* 치명 아님 */ }
+        showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
+      } else if (status.phase === "not_connected") {
+        // 연결이 없으면 영원히 오지 않는다 — 기다리게 두지 않고 말해 준다.
+        showToast("연결된 AI 가 없습니다. 'AI 연결하기' 에서 연결해 주세요.", true);
+      }
     }
     if (status && status.answered) {
       // ⚠ `selectConversation()` 을 쓰면 안 된다 — **이미 활성인 대화면 즉시 return** 하도록
