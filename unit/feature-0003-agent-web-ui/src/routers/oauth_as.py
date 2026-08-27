@@ -491,6 +491,19 @@ def wk_protected_resource_scoped(rest: str, request: Request) -> JSONResponse:
 # "특정 URL 접속 → 로그인 → 버튼 → 복사" 경로. MCP OAuth 를 도는 클라이언트라면 이 페이지가
 # 필요 없다(위 discovery 로 자동). 그렇지 않은 도구·스크립트·수동 설정을 위한 우회로다.
 
+def _listening(account_id: int) -> bool:
+    """AI 가 지금 대기 중인가(원장의 `wait_for_request` 최근성). 실패는 False.
+
+    판정은 도구 표면과 **같은 함수**를 쓴다 — 따로 세면 화면마다 다른 답을 하게 된다.
+    """
+    try:
+        from routers.ai_tools import account_is_listening
+
+        return bool(account_is_listening(account_id))
+    except Exception:
+        return False
+
+
 @router.get("/api/ai/connect/status")
 def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse:
     if conn is None:
@@ -520,6 +533,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "endpoint": f"{origin}/api/ai/mcp",
         "guide": f"{origin}/api/ai/guide",
         "connected": connected,
+        # 토큰이 있는 것과 **지금 듣고 있는 것**은 다르다. 재부팅하면 러너만 사라지고 토큰은
+        # 남아, "연결됨" 만 보이면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
+        "listening": _listening(int(account.get("id") or 0)),
     })
 
 
@@ -587,26 +603,32 @@ def compose_connect_handoff(*, endpoint: str, token: str) -> str:
         f"  {endpoint}",
         "  OAuth 로 연결되지만 브라우저에서 내가 허용을 눌러야 해.",
         "",
-        "연결되면 wait_for_request 로 대기해줘. 질문이 오면 그 즉시 돌아온다.",
-        "  (list_open_requests 를 반복해서 부르지 마 — 그게 폴링이고, 간격이 사람마다 달라진다.)",
-        "  timed_out:true 로 끝나면 간격을 두지 말고 곧바로 다시 wait_for_request 를 불러.",
-        "받은 질문은 claim_request 로 점유하고, 조사한 뒤 submit_answer 로 제출해줘.",
-        "submit_answer 의 source_tasks 는 필수 — 근거로 쓴 task_id 를 적어줘.",
+        "연결되면 **상주 러너를 띄워** 대기 상태를 유지해줘. 아래 1단계가 본 작업이야.",
         "",
-        # 사용자 요구(2026-08-27): 설치까지 AI 가 스스로. 그래서 **명령을 그대로** 준다 —
-        # "러너를 설치하세요" 같은 문장은 사람에게 일을 되돌리는 말이다.
-        "── 내가 자리를 비워도 처리하게 하려면 (선택) ──",
-        "위 대기는 네가 켜져 있는 동안만 동작해. 내가 없을 때도 답하게 하려면 아래 상주 러너를",
-        "네가 직접 받아서 띄워줘. 파이썬 표준 라이브러리만 쓰고 설치할 패키지는 없어.",
+        "1) 상주 러너 (필수)",
+        f"   curl -fsSL --cacert <위 CA> -o bridge_agent.py {agent_url}",
+        f"   python3 bridge_agent.py --base {base} \\",
+        f"     --token {token} --ca <위 CA> --check      # 연결 확인",
+        f"   nohup python3 bridge_agent.py --base {base} \\",
+        f"     --token {token} --ca <위 CA> > bridge.log 2>&1 &   # 상주 시작",
         "",
-        f"  curl -fsSL --cacert <위 CA> -o bridge_agent.py {agent_url}",
-        f"  python3 bridge_agent.py --base {base} \\",
-        f"    --token {token} --ca <위 CA> --check     # 연결 확인",
-        f"  python3 bridge_agent.py --base {base} \\",
-        f"    --token {token} --ca <위 CA> &           # 상주 시작",
+        "   러너는 네 머신의 AI(claude·codex·gemini·ollama)를 자동으로 찾아 쓴다.",
+        "   고르려면 --ai claude, 직접 지정하려면 --cmd 'my-ai -p {prompt}'.",
         "",
-        "러너는 네 머신의 AI(claude·codex·gemini·ollama)를 자동으로 찾아 쓴다.",
-        "고르려면 --ai claude, 직접 지정하려면 --cmd 'my-ai -p {prompt}'.",
+        "   ※ 왜 러너인가: 네가 wait_for_request 를 직접 반복하면 **대기 1회가 도구 호출 1회**라",
+        "     턴 예산을 태우고, 예산이 다하면 질문을 받아 놓고도 멈춘다(실측). 러너는 예산이",
+        "     없는 일반 프로세스라 그 일이 없다.",
+        "",
+        "   ※ 머신을 재시작하면 러너는 사라진다. 그때는 웹에서 토큰만 새로 받아",
+        "     `python3 bridge_agent.py --resume --token <새 토큰>` — 주소·CA·AI 설정은 저장돼 있다.",
+        "",
+        "2) 지금 당장 확인만 하고 싶다면 (선택)",
+        "   wait_for_request 를 직접 불러도 된다. 질문이 오면 즉시 돌아온다.",
+        "   받으면 **곧바로 claim_request 로 점유**해라 — 받아 놓고 멈추면 그 질문은 방치된다.",
+        "   list_open_requests 를 반복하지 마(그게 폴링이고, 간격이 사람마다 달라진다).",
+        "",
+        "받은 질문은 claim_request 로 점유하고, 조사한 뒤 submit_answer 로 제출한다.",
+        "submit_answer 의 source_tasks 는 필수 — 근거로 쓴 task_id 를 적어라.",
     ])
 
 

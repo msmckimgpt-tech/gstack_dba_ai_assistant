@@ -59,6 +59,35 @@ _WAIT_TIMEOUT_SEC = 90.0
 _AI_TIMEOUT_SEC = 900.0
 
 
+#: 재시작 대비 설정 파일. **토큰은 넣지 않는다** — 비밀이고, 어차피 세션과 함께 죽는다.
+#: 저장하는 것은 다시 물어보기 번거로운 것들(주소·CA 경로·AI 선택)뿐이다.
+_CONF_DIR = os.path.join(os.path.expanduser("~"), ".mysql-ai-bridge")
+_CONF_PATH = os.path.join(_CONF_DIR, "config.json")
+
+
+def save_conf(base: str, ca: str | None, ai: str, cmd: str | None) -> None:
+    """다음 실행이 `--resume` 한 줄로 끝나게 한다.
+
+    머신을 재시작하면 이 프로세스는 사라진다(사용자 지적 2026-08-27). 그때 사용자가 다시
+    챙겨야 하는 것이 많을수록 **아무도 다시 띄우지 않는다.** 토큰만 새로 받으면 되게 한다.
+    """
+    try:
+        os.makedirs(_CONF_DIR, exist_ok=True)
+        with open(_CONF_PATH, "w", encoding="utf-8") as f:
+            json.dump({"base": base, "ca": ca, "ai": ai, "cmd": cmd}, f, ensure_ascii=False)
+        os.chmod(_CONF_PATH, 0o600)
+    except Exception as e:  # noqa: BLE001
+        _log(f"설정 저장 실패(무시): {e}")
+
+
+def load_conf() -> dict:
+    try:
+        with open(_CONF_PATH, encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
 def _log(msg: str) -> None:
     sys.stderr.write(f"[bridge] {msg}\n")
     sys.stderr.flush()
@@ -277,7 +306,20 @@ def main() -> int:
                     help="직접 지정할 AI 명령. {prompt} 자리에 질문이 들어간다")
     ap.add_argument("--once", action="store_true", help="한 건만 처리하고 종료")
     ap.add_argument("--check", action="store_true", help="연결만 확인하고 종료")
+    ap.add_argument("--resume", action="store_true",
+                    help="지난 설정을 불러온다(주소·CA·AI). 토큰만 새로 주면 된다")
     args = ap.parse_args()
+
+    # 재시작 후 복귀 경로 — 명시 인자가 우선이고, 빈 것만 지난 설정으로 채운다.
+    if args.resume:
+        conf = load_conf()
+        args.base = args.base or conf.get("base") or ""
+        args.ca = args.ca or conf.get("ca")
+        args.ai = args.ai or conf.get("ai") or ""
+        args.cmd = args.cmd or conf.get("cmd")
+        if not args.token:
+            _log("토큰이 필요합니다 — 웹에서 '연결 정보 만들기' 로 새로 받아 --token 에 주세요.")
+            return 2
 
     if not args.base or not args.token:
         _log("FATAL: --base 와 --token 이 필요합니다.")
@@ -302,6 +344,7 @@ def main() -> int:
             return 2
         kind, argv = picked
     _log(f"AI = {kind}" + (f" ({args.cmd})" if args.cmd else ""))
+    save_conf(args.base, args.ca, kind, args.cmd)
 
     probe = api.call("wait_for_request", {}, timeout=10.0)
     if probe.get("_http") == 401:
@@ -317,7 +360,11 @@ def main() -> int:
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
         if code == 401:
-            _log("토큰이 무효해졌습니다(로그아웃/만료). 재발급 후 다시 실행하세요.")
+            # 여기서 조용히 죽으면 사용자는 "왜 답이 안 오지" 만 남는다. 다시 띄우는 **정확한
+            # 명령**을 준다 — 설정은 이미 저장돼 있으므로 토큰만 새로 받으면 된다.
+            _log("토큰이 무효해졌습니다(로그아웃 또는 만료).")
+            _log("  1) 웹 대화 화면에서 'AI 연결하기' → [연결 정보 만들기] → 토큰 복사")
+            _log(f"  2) python3 {os.path.basename(__file__)} --resume --token <새 토큰>")
             return 3
         if code:
             _log(f"대기 실패 {code}: {res.get('error')} — 다시 대기합니다.")

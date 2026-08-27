@@ -435,3 +435,19 @@ dispatch 는 `model`·`reasoning_level` 을 `run_kwargs` 로 넘기는데 **브�
 **함께 실측한 것** (별건 확인): `wait_for_request` 는 엣지·공인 IP 양쪽에서 **55초 보류** 정상,
 새 질문 도착 시 **2.27초 반환**. 다른 세션이 본 `elapsed=12s` 는 **배포 롤링 재시작**이 붙들린
 연결을 끊은 것 — 긴 대기 요청이 정확히 그 대상이다.
+
+## CHG-20260828T060000 — 상주 러너 기본화 · 대기 여부 관측 (TASK-20260828T060000)
+
+**실측된 한계**: AI 가 대기 루프를 10분 돌다 질문을 **받은 직후** 멈췄다(claim 없음 → task 방치).
+대기 1회 = 도구 호출 1회라 턴 예산을 태운다.
+
+| 대상 | 변경 |
+|---|---|
+| `oauth_as.compose_connect_handoff` | 러너를 **필수 1단계**로 · 이유(턴 예산) · `--resume` 복귀 |
+| `ai_tools.account_is_listening` | 원장 `wait_for_request` 최근성(150s)으로 **대기 여부 관측** |
+| `bridge_status` · `connect_status` | `listening` + `not_listening` 국면 |
+| `connect-modal.js` · CSS | 표시 3상태(대기 중 / 대기 안 함 / 연결 안 됨) |
+| `bridge_agent.py` | 설정 저장(토큰 제외·0600) · `--resume` · 401 시 복귀 명령 출력 |
+
+**설계 판단**: 판정 실패 방향을 반대로. 연결→fail-open(과잉 경고 방지),
+대기→fail-closed(헛된 기다림 방지).
