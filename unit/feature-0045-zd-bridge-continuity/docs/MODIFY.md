@@ -86,3 +86,14 @@ source_of_truth: true
 > **왜 테스트가 못 잡았나**: `test_mcp_rollout_precedes_the_edge_switch` 는 호출 **순서**만
 > 봤고 실행하지 않았다. 새 가드는 `set -euo pipefail` 로 원문을 실행해 "정리 실패가 배포를
 > 죽이지 않는가" 를 본다(뮤테이션 KILL 확인).
+
+## CHG-20260827-0004
+- Date: 2026-08-27
+- Related Requirement: REQ-20260827T073753-zd-bridge-continuity
+- Summary: 운영 주의 추가(REPORT §5) — **배포가 중단된 상태에서 구 컨테이너를 먼저 지우면
+  안 된다.** 스파인이 `rollout_mcp_phase` 에서 죽으면 `reconcile_caddy` 가 아직 안 돈 상태라
+  엣지가 구 upstream 을 가리킨다. 그때 구 컨테이너를 지우면 `/api/ai/mcp` 가 502 가 된다
+  (라이브에서 약 2분 발생, 사용자 대화 경로는 무영향).
+- Files: `unit/feature-0045-zd-bridge-continuity/docs/REPORT.md`
+- Impact: 문서만. 코드 동작 불변.
+- Rollback Notes: 해당 없음.
