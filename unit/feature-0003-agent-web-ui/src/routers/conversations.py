@@ -55,6 +55,20 @@ def _delete_bridge_task(conn, task_id: str) -> None:
             "[bridge] 적재 취소 실패 task=%s — 고아 task 가 남는다: %r", task_id, exc)
 
 
+#: 브리지 대기 안내 — **대화에 저장되는 본문**이자 동기 응답의 `answer` 다.
+#:
+#: 라이브 제보(2026-08-27): 전송해도 화면에 아무것도 나타나지 않았다. 원인은 이 안내를
+#: 응답 payload 로만 돌려주고 **대화에 저장하지 않은 것**이다. 기존 경로에서는 `agent_core`
+#: 가 답변을 저장하는데 브리지는 그 경로를 타지 않는다 — 프런트는 저장된 이력을 그리므로,
+#: 저장하지 않으면 질문만 덩그러니 남는다(토스트는 몇 초 뒤 사라져 근거가 남지 않는다).
+_BRIDGE_WAIT_NOTICE = (
+    "이 질문은 회원님의 AI(MCP 연결)가 처리합니다. 연결된 AI 가 가져가면 이 자리에 "
+    "답변이 표시됩니다.\n\n"
+    "· 아직 연결하지 않았다면 **외부 AI 연결**(`/ai/connect`) 에서 등록하세요.\n"
+    "· 연결된 AI 에게 “대기 중인 질문을 처리해줘” 라고 요청하면 즉시 가져갑니다."
+)
+
+
 def _bridge_attachment_csv(attachment_ids: Any) -> str | None:
     """첨부 id 목록 → 저장용 CSV. 비었으면 NULL(컬럼에 빈 문자열을 남기지 않는다)."""
     if not attachment_ids:
@@ -212,14 +226,32 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         _bridge_save_core_message(conn, str(conv_id), "user", question,
                                   sender_account_id=account_id or None)
 
+        # **대기 안내를 assistant 말풍선으로 남긴다**(라이브 제보 2026-08-27).
+        #
+        # 이걸 저장하지 않으면 화면에는 질문만 남고 아무 안내도 없다 — 사용자는 "전송했는데
+        # 아무 일도 안 일어난다" 고 본다(토스트는 사라지고, 새로고침하면 그마저 없다).
+        # `placeholder: True` 로 각인해 답변 도착 시 **이 자리에 덮어쓴다**(말풍선 2개가 아니라
+        # 하나가 대기→답변으로 바뀌는 기존 UX 와 같은 모양).
+        #
+        # 회수 store 에는 넣지 않는다 — 이건 시스템 안내이지 대화 내용이 아니다. 넣으면 나중에
+        # LLM 문맥에 "AI 가 대기 안내를 했다" 는 가짜 turn 이 섞인다.
+        try:
+            notice_id = int(_save_msg(
+                conn, str(conv_id), "assistant", _BRIDGE_WAIT_NOTICE,
+                {"bridge": {"task_id": task_id, "origin": "web", "placeholder": True}}) or 0)
+            conn.commit()
+        except Exception as exc:
+            # 안내 저장 실패는 요청을 취소할 사유가 아니다 — 질문은 이미 적재됐고 개인 AI 가
+            # 가져갈 수 있다. 다만 화면 안내가 없으므로 로그로 남긴다.
+            log.error("[bridge] 대기 안내 저장 실패 conv=%s task=%s: %r", conv_id, task_id, exc)
+            notice_id = 0
+        if not notice_id:
+            log.warning("[bridge] 대기 안내 말풍선이 저장되지 않았다 task=%s — 화면에 질문만 남는다",
+                        task_id)
+
     log.info("[bridge] 웹 질문 적재 task=%s conv=%s account=%s", task_id, conv_id, account_id)
     return {
-        "answer": (
-            "이 질문은 회원님의 AI(MCP 연결)가 처리합니다. 연결된 AI 가 가져가면 이 자리에 "
-            "답변이 표시됩니다.\n\n"
-            "· 아직 연결하지 않았다면 **외부 AI 연결**(`/ai/connect`) 에서 등록하세요.\n"
-            "· 연결된 AI 에게 “대기 중인 질문을 처리해줘” 라고 요청하면 즉시 가져갑니다."
-        ),
+        "answer": _BRIDGE_WAIT_NOTICE,
         # 최종 JSON 조립이 `agent_result["conversation_id"]` 를 읽는다 — 비우면 프런트가
         # 대화를 식별하지 못해 폴링 대상도 잃는다.
         "conversation_id": conv_id or "",
