@@ -46,13 +46,19 @@ def _delete_bridge_task(conn, task_id: str) -> None:
     `_cancel_bridge_tasks` 를 쓴다 — 그쪽은 점유된 작업을 `canceled` 로 **남겨** 개인 AI 에게
     사유를 돌려줄 수 있게 한다. 여기서 지우는 대상은 사용자가 본 적조차 없는(=저장이 실패해
     화면에 뜨지도 않은) 행이므로 남길 이유가 없다.
+
+    ⚠ **보류(`deferred`) 도 지운다**(codex REV-20260828T070000 P1). 상태를 `open` 으로 고정해
+    두면 미연결 적재의 롤백이 조용히 실패하고, 그 행은 나중에 승격되어 **화면에 존재하지 않는
+    질문**이 개인 AI 에게 전달된다.
     """
     try:
         cur = conn.cursor()
         try:
+            status_marks = ",".join(["%s"] * len(_bridge_tasks.CANCELABLE_STATUSES))
             cur.execute(
                 "DELETE FROM WebAiTasks WHERE TaskId=%s AND Origin='web' "
-                "AND Status='open' AND ClaimedBy IS NULL", (task_id,))
+                f"AND Status IN ({status_marks}) AND ClaimedBy IS NULL",
+                (task_id, *_bridge_tasks.CANCELABLE_STATUSES))
             conn.commit()
         finally:
             cur.close()
@@ -151,8 +157,18 @@ def _mark_bridge_placeholders_canceled(conn, conversation_id: str, task_ids: lis
 #: 되는지**를 알러 왔다. 초기 문구는 서비스 구조를 4문단으로 설명했고, 사용자 제보로 걷어냈다.
 _BRIDGE_NOTICE_NOT_CONNECTED = (
     "답변할 AI 가 연결되어 있지 않습니다.\n\n"
-    "[AI 연결하기](/ai/connect)에서 연결한 뒤 **다시 질문해 주세요.** "
-    "이 대화 내용은 그대로 남아 있어 다음 질문에 함께 전달됩니다."
+    "[AI 연결하기](/ai/connect)에서 연결하면 **이 질문부터 바로 처리합니다** — 다시 입력하지 "
+    "않으셔도 됩니다. (연결 없이 여러 번 물으신 경우 **마지막 질문 1건**만 처리됩니다.)"
+)
+
+#: 승격 경쟁에서 밀렸거나 너무 오래된 보류 질문 — 말풍선 본문이 이것으로 바뀐다.
+#:
+#: 만료를 화면에 남기지 않으면 "연결하면 이 질문부터 처리합니다" 가 영원히 박제된다.
+#: 처리되지 않았다는 사실은 사용자가 알아야 하고, 그건 토스트가 아니라 **화면에 남아야** 한다.
+_BRIDGE_NOTICE_DEFERRED_EXPIRED = (
+    "이 질문은 처리되지 않았습니다.\n\n"
+    "AI 연결 후에는 **마지막 질문 1건**만 자동으로 처리됩니다. 이 질문의 답이 필요하시면 "
+    "다시 보내 주세요 — 대화 내용은 그대로 남아 함께 전달됩니다."
 )
 
 #: 이미 연결한 계정 — 설정은 끝났고, 남은 것은 그 AI 가 가져가는 일이다.
@@ -323,50 +339,18 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             "_http_status": 500,
         }
 
-    # ── 연결이 없으면 **적재하지 않는다** (사용자 결정 2026-08-27) ──────────────
+    # ── 연결이 없으면 **보류 적재**(`deferred`) 한다 (사용자 결정 2026-08-27 → 2026-08-28) ──
     #
-    # 종전엔 연결 여부와 무관하게 큐에 넣었다. 그러면 아무도 가져갈 수 없는 질문이 쌓이고,
-    # 나중에 연결하는 순간 **밀린 것이 한꺼번에** 처리된다(실측: 같은 질문 5건 누적).
-    # 사용자가 그때 원하는 것은 "그동안 쌓인 것 전부" 가 아니라 **지금 묻는 것** 이다.
+    # 처음엔 아예 적재하지 않았다. 아무도 가져갈 수 없는 질문이 쌓이고, 나중에 연결하는 순간
+    # **밀린 것이 한꺼번에** 처리되기 때문이다(실측: 같은 질문 5건 누적). 그런데 그 대가로
+    # 사용자는 **연결이 끊긴 줄 모르고 보낸 질문을 매번 다시 입력**해야 했다 — 로그아웃이 AI
+    # 연결을 함께 끊으므로(§P0-R), 재로그인 직후가 정확히 그 창이다(라이브 실측 2026-08-27:
+    # 19:07:58 로그아웃 → 19:08 질문 → 19:09 재연결).
     #
-    # 대화에는 남긴다 — 질문은 사라지지 않고, 연결 후 다시 물으면 **이전 문맥으로 함께** 간다
-    # (`_recent_conversation_context`). 그러니 버려지는 것은 '대기 항목' 이지 '내용' 이 아니다.
-    if not connected:
-        saved_ok = True
-        if conv_id:
-            try:
-                from modules.memory import save_memory_message as _save_msg0
-
-                saved_ok = bool(int(_save_msg0(
-                    conn, str(conv_id), "user", question,
-                    _bridge_user_message_meta(account, sender_username) or None) or 0))
-                conn.commit()
-            except Exception as exc:
-                log.error("[bridge] 미연결 질문 저장 실패 conv=%s: %r", conv_id, exc)
-                saved_ok = False
-            if saved_ok:
-                _bridge_save_core_message(conn, str(conv_id), "user", question,
-                                          sender_account_id=account_id or None)
-                # 연결이 없어 답변은 없어도 **질문은 남는다** — 제목도 함께 붙인다.
-                # 안 붙이면 사이드바에 "새 대화" 만 여러 줄 쌓여 서로 구분되지 않는다.
-                app._conv_apply_auto_topic(conn, str(conv_id), question)
-                try:
-                    _save_msg0(conn, str(conv_id), "assistant", notice_text,
-                               {"bridge": {"origin": "web", "queued": False}})
-                    conn.commit()
-                except Exception as exc:
-                    log.error("[bridge] 미연결 안내 저장 실패 conv=%s: %r", conv_id, exc)
-        log.info("[bridge] 연결 없음 — 적재하지 않음 conv=%s account=%s", conv_id, account_id)
-        return {
-            "answer": notice_text,
-            "conversation_id": conv_id or "",
-            # 대기 작업이 없으므로 **폴링하지 않는다** — 없는 task 를 5초마다 물으면 404 만 쌓인다.
-            "bridge_pending": False,
-            "bridge_connected": False,
-            "bridge_queued": False,
-            "bridge_toast": "AI 연결이 필요합니다. 연결 후 다시 질문해 주세요.",
-            "bridge_user_message_saved": bool(conv_id),
-        }
+    # 지금은 **적재하되 대기열에는 보이지 않게** 둔다(`Status='deferred'`). 연결이 성립하면
+    # `_promote_latest_deferred` 가 **가장 최근 1건만** `open` 으로 올리고 나머지는 만료시킨다 —
+    # 재입력은 없애면서 "밀린 것이 한꺼번에" 도 그대로 막는다.
+    status = "open" if connected else "deferred"
 
     # ① 대기 작업 적재 → ② 사용자 질문 저장 → 저장 실패면 ①을 되돌린다.
     #
@@ -383,9 +367,9 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
                 "INSERT INTO WebAiTasks (TaskId, AccountId, ConversationId, ProductId, "
                 "Question, Status, Origin, ProductMode, SenderUsername, AttachmentIds, "
                 "RoleId) "
-                "VALUES (%s,%s,%s,%s,%s,'open','web',%s,%s,%s,%s)",
+                "VALUES (%s,%s,%s,%s,%s,%s,'web',%s,%s,%s,%s)",
                 (task_id, account_id, conv_id or None,
-                 int(product_id) if product_id else None, question[:4000],
+                 int(product_id) if product_id else None, question[:4000], status,
                  # 답변 각인·발신자 표시·첨부 인지를 위해 **질문과 함께** 굳힌다. 나중에 대화
                  # 설정에서 되짚으면 그 사이 제품을 바꾼 사용자에게 다른 값이 각인된다.
                  ("auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"),
@@ -490,14 +474,23 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         # 최종 JSON 조립이 `agent_result["conversation_id"]` 를 읽는다 — 비우면 프런트가
         # 대화를 식별하지 못해 폴링 대상도 잃는다.
         "conversation_id": conv_id or "",
-        "bridge_pending": True,
+        # **폴링은 연결됐을 때만** 한다. 보류 질문은 언제 승격될지 모르는데 5초마다 물으면
+        # 연결하지 않은 사용자의 브라우저가 종일 빈 요청을 보낸다. 승격된 답변은 다음 이력
+        # 조회(연결 표시 갱신·탭 복귀·새로고침)에서 말풍선이 답변으로 바뀐 채 나타난다.
+        "bridge_pending": connected,
+        # 보류 적재(미연결)임을 **명시**한다. `bridge_pending` 하나로는 "적재 실패" 와
+        # "보관됨" 이 구분되지 않고, 응답 조립이 이 플래그를 보고 프런트에 상태를 실어 준다.
+        "bridge_deferred": not connected,
+        # 대기열에 **보이는가** — 보류는 아직 아니다. 프런트는 이 값으로 폴링 여부와 토스트
+        # 강조를 가른다(없으면 "응답을 갱신했습니다" 같은 완료 토스트가 뜬다).
+        "bridge_queued": connected,
         "bridge_task_id": task_id,
         "bridge_notice": _server_llm_blocked_message(),
         # 프런트 토스트 문구를 **서버가 정한다**. 연결이 없는 사용자에게 "내 AI 가 처리할
         # 질문으로 등록했습니다" 는 사실이 아니다 — 가져갈 AI 가 없다.
         "bridge_connected": connected,
         "bridge_toast": ("내 AI 에게 보냈습니다." if connected else
-                         "질문을 저장했습니다. AI 연결이 필요합니다."),
+                         "질문을 보관했습니다. AI 를 연결하면 이 질문부터 처리합니다."),
         # 브리지는 사용자 메시지를 이 함수에서 이미 저장했다. 후처리 단계가 다시 저장하지
         # 않도록 표시한다(중복 말풍선 방지).
         "bridge_user_message_saved": bool(conv_id),
@@ -4932,8 +4925,13 @@ async def ask(request: Request) -> JSONResponse:
         # feature-0043 (external-llm-bridge): 브리지 경로의 플래그를 응답에 실어 프런트가
         # **폴링 모드**로 전환하게 한다. 여기서 떨어뜨리면 화면은 "답변이 왔다"(대기 안내를
         # 최종 답변으로 오해)고 판단하고 실제 답변이 도착해도 갱신하지 않는다(codex 리뷰 P1-3).
-        if agent_result.get("bridge_pending"):
-            result["bridge_pending"] = True
+        #
+        # **보류 적재(미연결)도 여기로 온다**(codex REV-20260828T070000 P2). `bridge_pending`
+        # 하나로 조건을 걸면 미연결 응답이 이 블록을 통째로 건너뛰어, 프런트가 task·연결 상태·
+        # 서버 토스트를 전부 잃고 "응답을 갱신했습니다" 같은 **완료 토스트**를 띄운다.
+        if agent_result.get("bridge_pending") or agent_result.get("bridge_deferred"):
+            result["bridge_pending"] = bool(agent_result.get("bridge_pending"))
+            result["bridge_deferred"] = bool(agent_result.get("bridge_deferred"))
             result["bridge_task_id"] = str(agent_result.get("bridge_task_id") or "")
             result["bridge_notice"] = str(agent_result.get("bridge_notice") or "")
             result["bridge_connected"] = bool(agent_result.get("bridge_connected"))

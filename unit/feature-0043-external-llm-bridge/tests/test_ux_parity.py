@@ -510,15 +510,18 @@ def test_notice_has_two_states():
 def test_unconnected_notice_leads_with_action_not_waiting():
     """연결이 없으면 첫 줄이 **'기다리세요' 가 아니라 '설정이 필요하다'** 여야 한다."""
     src = CONVS.read_text(encoding="utf-8")
-    body = src[src.index("_BRIDGE_NOTICE_NOT_CONNECTED = ("):src.index("#: 이미 연결한 계정")]
+    body = src[src.index("_BRIDGE_NOTICE_NOT_CONNECTED = ("):src.index("#: 승격 경쟁에서 밀렸거나")]
     assert "연결되어 있지 않습니다" in body
     assert "[AI 연결하기](/ai/connect)" in body, (
         "누를 수 있는 링크가 없다 — 경로 문자열은 사용자가 어떻게 할 수 없다")
     # 질문이 사라지지 않았다는 사실을 반드시 말한다(설정하러 가는 동안 불안하지 않게).
-    # 연결이 없으면 **적재하지 않는다**(2026-08-27) — 그래서 "저장해 두었다" 가 아니라
-    # "다시 질문하라" 가 맞다. 큐에 없는데 저장했다고 말하면 사용자는 기다린다.
-    assert "다시 질문해" in body
-    assert "대기열에 저장" not in body
+    #
+    # ⚠ 2026-08-28 계약 변경: 이제 **보관**한다(`deferred`) — 연결하면 그 질문부터 처리한다.
+    # 그래서 "다시 질문하라" 가 아니라 "다시 입력하지 않아도 된다" 가 맞다. 다만 여러 번 물은
+    # 경우 1건만 처리되므로 **그 규칙까지** 말해야 기대가 어긋나지 않는다.
+    assert "이 질문부터" in body
+    assert "다시 입력하지" in body
+    assert "마지막 질문 1건" in body
 
 
 def test_notice_avoids_builder_jargon():
@@ -549,7 +552,10 @@ def test_toast_text_comes_from_server():
     """토스트도 상태에 따라 달라진다 — 판정은 서버만 할 수 있다(토큰 조회)."""
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
     assert '"bridge_toast"' in src
-    assert "AI 연결이 필요합니다" in src, "연결 없는 사용자에게도 '내 AI 가 처리' 라고 말한다"
+    # 연결 없는 사용자에게 "내 AI 에게 보냈습니다" 는 거짓이다 — 가져갈 AI 가 없다.
+    # 대신 보관 사실과 다음 행동(연결)을 말한다.
+    assert "AI 를 연결하면" in src, "연결 없는 사용자에게도 '내 AI 가 처리' 라고 말한다"
+    assert "보관했습니다" in src, "질문이 보관됐다는 사실을 알리지 않는다"
     comp = COMPOSER_JS.read_text(encoding="utf-8")
     assert "payload.bridge_toast" in comp, "프런트가 서버 문구를 무시하고 고정 문구를 쓴다"
 

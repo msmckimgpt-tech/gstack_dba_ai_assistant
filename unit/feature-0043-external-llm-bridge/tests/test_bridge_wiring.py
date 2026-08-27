@@ -139,9 +139,16 @@ def test_bridge_enqueue_failure_carries_http_status():
 
 
 def test_ask_response_propagates_bridge_flags():
-    """최종 JSON 조립이 브리지 플래그를 응답에 싣는다 — 떨어뜨리면 프런트가 폴링하지 않는다."""
+    """최종 JSON 조립이 브리지 플래그를 응답에 싣는다 — 떨어뜨리면 프런트가 폴링하지 않는다.
+
+    ⚠ 2026-08-28: 플래그가 상수 `True` 에서 **실제 상태**로 바뀌었다(보류 적재 도입). 미연결
+    응답도 이 블록을 타야 하므로 조건이 `pending or deferred` 로 넓어졌고, `bridge_pending`
+    은 연결 여부를 그대로 싣는다. 계약의 뜻("조립이 브리지 상태를 프런트에 전달한다")은 같다.
+    """
     text = CONV_PY.read_text(encoding="utf-8")
-    assert 'result["bridge_pending"] = True' in text
+    assert 'result["bridge_pending"] = bool(agent_result.get("bridge_pending"))' in text
+    assert 'agent_result.get("bridge_pending") or agent_result.get("bridge_deferred")' in text, (
+        "미연결(보류) 응답이 조립에서 빠져 프런트가 상태를 잃는다")
     assert 'result["bridge_task_id"]' in text
 
 
