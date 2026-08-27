@@ -189,6 +189,13 @@ def _defang(text: str) -> str:
     return out
 
 
+#: 조사 도구 설명에 공통으로 붙는 안내. 웹 대화(브리지)에서 온 질문은 이 값이 사용자 화면의
+#: 「실행 단계」에 **어떤 이유로 → 어떤 작업** 형태로 그대로 보인다. 안 보내면 서버가 도구·인자
+#: 에서 사유를 파생하지만, 그건 도구의 일반적 목적이지 *이 질문에서의* 이유가 아니다.
+_REASON_HINT = (" reason 에 '지금 이걸 왜 조사하는지' 를 한 문장으로 함께 보내라 — "
+                "사용자 화면의 실행 단계에 그대로 표시된다.")
+
+
 def _register(base: str, fn, description: str) -> None:
     fn.__doc__ = description
     mcp.add_tool(fn, name=_name(base), description=description)
@@ -199,15 +206,18 @@ def open_task(question: str, product_id: int | None = None) -> str:
                  {"question": question, "product_id": product_id})
 
 
-def get_task_context(task_id: str, focus: str | None = None) -> str:
+def get_task_context(task_id: str, focus: str | None = None, reason: str = "") -> str:
     # focus: 구조 조회로 테이블 이름을 알아낸 뒤 다시 부를 때 그 이름들을 넣는다.
     # 이 층은 질문에 테이블 이름이 있을 때만 매칭되므로, 탐색 전 첫 호출은 대개 비어 있다.
-    return _post("/api/ai/tools/get_task_context", {"task_id": task_id, "focus": focus})
+    return _post("/api/ai/tools/get_task_context",
+                 {"task_id": task_id, "focus": focus, "reason": reason})
 
 
-def submit_answer(task_id: str, answer: str, source_tasks: list[str]) -> str:
+def submit_answer(task_id: str, answer: str, source_tasks: list[str],
+                  title: str = "") -> str:
     return _post("/api/ai/tools/submit_answer",
-                 {"task_id": task_id, "answer": answer, "source_tasks": source_tasks})
+                 {"task_id": task_id, "answer": answer, "source_tasks": source_tasks,
+                  "title": title})
 
 
 # feature-0043 (external-llm-bridge) — 웹 대화 pull 브리지. HTTP 어댑터와 같은 이유로
@@ -226,70 +236,83 @@ def wait_for_request() -> str:
 
 def read_task_attachment(task_id: str, attachment_id: int | None = None,
                          filename: str | None = None, start_line: int = 1,
-                         max_lines: int | None = None) -> str:
+                         max_lines: int | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/read_task_attachment",
                  {"task_id": task_id, "attachment_id": attachment_id, "filename": filename,
-                  "start_line": start_line, "max_lines": max_lines})
+                  "start_line": start_line, "max_lines": max_lines, "reason": reason})
 
 
-def list_schemas(task_id: str, datasource: str | None = None) -> str:
+def list_schemas(task_id: str, datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/list_schemas",
-                 {"task_id": task_id, "arguments": {"datasource": datasource}})
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"datasource": datasource}})
 
 
-def describe_schema(task_id: str, schema_name: str, datasource: str | None = None) -> str:
+def describe_schema(task_id: str, schema_name: str, datasource: str | None = None,
+                    reason: str = "") -> str:
     return _post("/api/ai/tools/describe_schema",
-                 {"task_id": task_id,
+                 {"task_id": task_id, "reason": reason,
                   "arguments": {"schema_name": schema_name, "datasource": datasource}})
 
 
 def describe_table(task_id: str, schema_name: str, table: str,
-                  datasource: str | None = None) -> str:
+                  datasource: str | None = None, reason: str = "") -> str:
     # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
     # 어떤 값을 넣어도 "schema_name과 table_name은 필수" 만 돌아온다(라이브 제보).
     return _post("/api/ai/tools/describe_table",
-                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
-                                                    "table_name": table,
-                                                    "datasource": datasource}})
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"schema_name": schema_name,
+                                "table_name": table,
+                                "datasource": datasource}})
 
 
-def search_tables(task_id: str, keyword: str, datasource: str | None = None) -> str:
+def search_tables(task_id: str, keyword: str, datasource: str | None = None,
+                  reason: str = "") -> str:
     return _post("/api/ai/tools/search_tables",
-                 {"task_id": task_id, "arguments": {"keyword": keyword, "datasource": datasource}})
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"keyword": keyword, "datasource": datasource}})
 
 
 def get_foreign_keys(task_id: str, schema_name: str, table: str,
-                    datasource: str | None = None) -> str:
+                    datasource: str | None = None, reason: str = "") -> str:
     # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
     # 어떤 값을 넣어도 "schema_name과 table_name은 필수" 만 돌아온다(라이브 제보).
     return _post("/api/ai/tools/get_foreign_keys",
-                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
-                                                    "table_name": table,
-                                                    "datasource": datasource}})
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"schema_name": schema_name,
+                                "table_name": table,
+                                "datasource": datasource}})
 
 
-def execute_sql(task_id: str, sql: str, datasource: str | None = None) -> str:
+def execute_sql(task_id: str, sql: str, datasource: str | None = None,
+                reason: str = "") -> str:
     return _post("/api/ai/tools/execute_sql",
-                 {"task_id": task_id, "arguments": {"sql": sql, "datasource": datasource}})
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"sql": sql, "datasource": datasource}})
 
 
 def get_table_indexes(task_id: str, schema_name: str, table: str,
-                     datasource: str | None = None) -> str:
+                     datasource: str | None = None, reason: str = "") -> str:
     # 인자 이름은 백엔드(`modules/tools.py`)가 읽는 이름이어야 한다 — `table` 로 보내면
     # 어떤 값을 넣어도 "schema_name과 table_name은 필수" 만 돌아온다(라이브 제보).
     return _post("/api/ai/tools/get_table_indexes",
-                 {"task_id": task_id, "arguments": {"schema_name": schema_name,
-                                                    "table_name": table,
-                                                    "datasource": datasource}})
+                 {"task_id": task_id, "reason": reason,
+                  "arguments": {"schema_name": schema_name,
+                                "table_name": table,
+                                "datasource": datasource}})
 
 
 _register("open_task", open_task,
           "작업을 열고 원 질문을 서비스에 기록한다. 반환된 task_id 를 이후 모든 호출에 쓴다.")
 _register("get_task_context", get_task_context,
           "이 task 의 grounding 번들(테이블 묶음 요약·도메인 개요). 먼저 호출하고, 구조 조회로 "
-          "테이블 이름을 알아낸 뒤 focus 에 그 이름들을 넣어 다시 부르면 해당 묶음 요약을 받는다.")
+          "테이블 이름을 알아낸 뒤 focus 에 그 이름들을 넣어 다시 부르면 해당 묶음 요약을 받는다."
+          + _REASON_HINT)
 _register("submit_answer", submit_answer,
-          "최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수).")
+          "최종 답변 제출. source_tasks 에 근거로 쓴 task id 를 선언한다(필수). "
+          "웹 대화에서 온 질문이면 title 에 **이 대화를 요약한 짧은 제목**(공백 포함 30자 안팎, "
+          "장식·따옴표 없이)을 함께 보내라 — 사이드바 대화 목록에 그대로 쓰인다. 사용자가 제목을 "
+          "직접 바꿨다면 서버가 그 제목을 지키므로, 제안은 언제 보내도 안전하다.")
 _register("list_open_requests", list_open_requests,
           "웹 대화 화면에서 들어온 내 계정의 **대기 질문** 목록. 아직 아무도 가져가지 않은 "
           "것만 반환한다. 처리하려면 claim_request 로 점유하라.")
@@ -301,16 +324,20 @@ _register("wait_for_request", wait_for_request,
 _register("read_task_attachment", read_task_attachment,
           "점유한 웹 질문에 딸린 **첨부 파일의 본문**을 읽는다. claim_request 응답의 "
           "`attachments` 에 목록이 있다. 첨부가 있는 질문은 본문을 읽고 나서 답하라 — 읽지 않고 "
-          "추측하면 웹 화면에서 보이는 파일과 다른 답을 하게 된다.")
-_register("list_schemas", list_schemas, "접근 가능한 스키마(DB) 목록.")
-_register("describe_schema", describe_schema, "스키마의 테이블 목록과 개요.")
-_register("describe_table", describe_table, "테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다.")
-_register("search_tables", search_tables, "키워드로 관련 테이블 검색.")
-_register("get_foreign_keys", get_foreign_keys, "테이블의 외래키 관계. schema_name·table 둘 다 필요하다.")
-_register("get_table_indexes", get_table_indexes, "테이블의 인덱스. schema_name·table 둘 다 필요하다.")
+          "추측하면 웹 화면에서 보이는 파일과 다른 답을 하게 된다." + _REASON_HINT)
+_register("list_schemas", list_schemas, "접근 가능한 스키마(DB) 목록." + _REASON_HINT)
+_register("describe_schema", describe_schema, "스키마의 테이블 목록과 개요." + _REASON_HINT)
+_register("describe_table", describe_table,
+          "테이블의 컬럼·타입·키. schema_name·table 둘 다 필요하다." + _REASON_HINT)
+_register("search_tables", search_tables, "키워드로 관련 테이블 검색." + _REASON_HINT)
+_register("get_foreign_keys", get_foreign_keys,
+          "테이블의 외래키 관계. schema_name·table 둘 다 필요하다." + _REASON_HINT)
+_register("get_table_indexes", get_table_indexes,
+          "테이블의 인덱스. schema_name·table 둘 다 필요하다." + _REASON_HINT)
 _register("execute_sql", execute_sql,
           "단일 SELECT/CTE 실행. 구조로는 확인할 수 없는 것(실제 행수·고아행·뷰 정의·값 분포)을 "
-          "검증할 때 쓴다. 쓰기·다중문·잠금은 거부된다. 반환 행수가 시간당 상한에 함께 걸린다.")
+          "검증할 때 쓴다. 쓰기·다중문·잠금은 거부된다. 반환 행수가 시간당 상한에 함께 걸린다."
+          + _REASON_HINT)
 
 
 if __name__ == "__main__":

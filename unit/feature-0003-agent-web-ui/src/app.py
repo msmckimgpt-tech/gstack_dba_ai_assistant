@@ -3428,6 +3428,10 @@ from routers._prompt_context import (  # noqa: E402
 # ITEM-10 routers-p4: 라우터(share/conversations)·테스트·app 내부 호출자 참조 보존.
 from routers._conv_store import (  # noqa: E402
     _conv_load_topic,
+    # feature-0043: 브리지(개인 AI) 경로의 자동 대화 제목 — 서버 LLM 경로의
+    # `agent_core._try_update_topic` 에 대응하는 진입점.
+    _clean_auto_topic,
+    _conv_apply_auto_topic,
     _conv_load_product,
     _conv_load_messages_raw,
     _conv_message_exists,
