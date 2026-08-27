@@ -933,10 +933,26 @@ def test_steps_are_materialized_from_the_ledger():
 
 
 def test_steps_do_not_fabricate_reasoning():
-    """LLM 사고 과정은 **비워 둔다** — 지어내면 이 패널 전체가 못 믿을 것이 된다."""
+    """LLM 사고 과정을 **관측한 것처럼 표시하지 않는다** — 그러면 패널 전체가 못 믿을 것이 된다.
+
+    ⚠ 계약이 한 번 바뀌었다(2026-08-27, 사용자 제보 "실행 단계에 「어떤 이유로 어떤 작업」
+    구조가 없다"). 처음엔 사유 칸을 통째로 비웠는데, 그 결과 화면에는 `SQL을 실행한다` 만
+    남아 **왜 그 단계가 있었는지 읽을 수 없었다**.
+
+    지금은 사유를 채우되 **출처를 구분한다**:
+      - `external-ai` — 개인 AI 가 도구 호출에 실어 보낸 진짜 사유
+      - `derived`     — 도구의 목적에서 서버가 파생한 문구(내부 LLM 경로가 쓰던 것과 같은 헬퍼)
+    즉 금지되는 것은 "사유를 쓰는 것" 이 아니라 **파생 문구를 AI 의 사고인 양 각인하는 것**이다.
+    """
     body = _func_source(AI_TOOLS, "_materialize_bridge_steps")
-    assert "'none'" in body, "reason_source 가 'none' 이 아니다(없는 사고를 있다고 표시)"
-    assert "reason_text" not in body.split('"""')[2], "존재하지 않는 추론 텍스트를 채운다"
+    assert "'derived'" in body, "이관 경로가 사유 출처를 표시하지 않는다"
+    assert "'llm'" not in body and "'external-ai'" not in body, (
+        "원장 이관에는 AI 의 사고가 없다 — 그 출처로 각인하면 관측하지 않은 것을 관측했다고 말한다")
+
+    # 호출 시점 기록도 같은 규칙: AI 가 실제로 보냈을 때만 external-ai.
+    live = _func_source(AI_TOOLS, "_record_bridge_step")
+    assert '"external-ai" if reason else "derived"' in live, (
+        "사유 출처가 실제 제공 여부와 무관하게 각인된다")
 
 
 def test_steps_exclude_bridge_plumbing():

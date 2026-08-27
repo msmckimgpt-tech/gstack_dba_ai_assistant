@@ -370,6 +370,13 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
+    _ctx_work, _ctx_reason = _bridge_step_narration(body, {})
+    _record_bridge_step(
+        conn, task, "get_task_context",
+        {k: v for k, v in (("focus", str(body.get("focus") or "").strip()),) if v},
+        payload, work=_ctx_work, reason=_ctx_reason,
+        elapsed_ms=(time.perf_counter() - t0) * 1000)
+
     return JSONResponse({"task_id": task_id, "context": marked})
 
 
@@ -501,7 +508,8 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     # 재제출은 409 다. 원장 실패로 여기서 503 을 내면 답변은 확정됐는데 화면엔 없고 자동
     # 복구 경로도 없는 상태가 굳는다. 전달을 앞에 두면 원장 장애가 사용자 대면 결과를
     # 훼손하지 않는다(원장은 그 뒤에도 여전히 fail-closed 로 집행된다).
-    delivered = _deliver_web_bridge_answer(conn, task_id, account, answer)
+    delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
+                                           title=str(body.get("title") or ""))
 
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="submit_answer",
@@ -518,6 +526,168 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                          "cross_session_findings": findings})
 
 
+#: 브리지에만 있는 도구의 (무엇을, 왜). 내부 경로에는 대응 도구가 없어 `_derive_step_*` 이
+#: 모르는 이름들이다 — 여기서 채우지 않으면 사용자에게 "단계를 수행한다" 로만 보인다.
+_BRIDGE_ONLY_NARRATION: dict[str, tuple[str, str]] = {
+    "get_task_context": ("이 질문의 도메인 맥락 번들을 확인한다",
+                         "질문이 어느 업무 영역인지 먼저 파악해 조사 범위를 좁히기 위해"),
+    "read_task_attachment": ("첨부 파일의 내용을 읽는다",
+                             "질문에 딸린 첨부의 실제 내용을 확인하기 위해"),
+}
+
+
+def _bridge_derived_narration(tool_name: str, args: dict[str, Any] | None) -> tuple[str, str]:
+    """도구·인자에서 (무엇을, 왜) 를 파생한다 — 내부 경로와 **같은 헬퍼**를 쓴다.
+
+    `agent_core._derive_step_work` / `_derive_step_reason` 은 서버 LLM 경로가 narration 을
+    받지 못했을 때 쓰던 fallback 이다. 브리지에서 문구를 새로 지으면 같은 도구가 경로에 따라
+    다르게 표현되고, 그때부터 둘 중 하나는 반드시 낡는다. 브리지 전용 도구(내부에 대응이 없는
+    이름)만 위 표로 보완한다.
+    """
+    payload = args if isinstance(args, dict) else {}
+    tool = str(tool_name or "").strip().lower()
+    if tool in _BRIDGE_ONLY_NARRATION:
+        work, reason = _BRIDGE_ONLY_NARRATION[tool]
+        name = str(payload.get("filename") or "").strip()
+        if tool == "read_task_attachment" and name:
+            work = f'첨부 파일 "{name}" 의 내용을 읽는다'
+        return work, reason
+    try:
+        import agent_core as _core
+
+        work = str(_core._derive_step_work(tool, payload) or "").strip()
+        reason = str(_core._derive_step_reason(tool, payload) or "").strip()
+        # 내부 헬퍼가 모르는 도구는 "단계를 수행한다" 로 떨어진다 — 도구 이름이라도 남긴다.
+        if tool and work in ("", "단계를 수행한다"):
+            work = f"`{tool}` 도구를 실행한다"
+        return work, reason
+    except Exception:
+        # 파생 실패가 단계 기록 자체를 막지는 않는다(빈 문구로라도 단계는 남는다).
+        return (f"`{tool}` 도구를 실행한다" if tool else ""), ""
+
+
+def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any]) -> tuple[str, str]:
+    """개인 AI 가 함께 보낸 단계 narration `(work, reason)` 을 꺼내고 **인자에서 제거**한다.
+
+    내부 경로(`agent_core`)는 LLM 이 도구 호출 인자에 실어 보낸 `work`/`reason` 을 pop 해서
+    쓴다(TASK-0178). 브리지도 같은 계약을 쓴다 — 다만 MCP 어댑터가 최상위로 보낼 수도,
+    클라이언트가 `arguments` 안에 넣을 수도 있어 양쪽을 모두 받는다.
+
+    **제거가 핵심이다.** 남겨두면 `execute_tool` 이 알 수 없는 인자를 받는다(도구에 따라
+    거절되거나 조용히 무시되는데, 어느 쪽이든 narration 때문에 조사가 실패하면 안 된다).
+    """
+    out: list[str] = []
+    for key in ("work", "reason"):
+        inline = arguments.pop(key, None)
+        raw = body.get(key)
+        picked = raw if raw not in (None, "") else inline
+        out.append(str(picked or "").strip()[:500])
+    return out[0], out[1]
+
+
+def _insert_bridge_step(conversation_id: str, run_id: str, entry: dict[str, Any]) -> int:
+    """단계 1건을 **번호 채번과 같은 트랜잭션에서** 적재한다. 반환 = 부여된 step_index(실패 0).
+
+    번호를 따로 조회한 뒤 다른 연결로 INSERT 하면 경합에 안전하지 않다(codex
+    REV-20260828T040000 P1): 개인 AI 가 도구 두 개를 동시에 부르면 둘 다 `MAX=0` 을 읽어
+    같은 번호로 저장되고, 증분 폴링(`step_index > after_step`)이 뒤늦게 커밋된 행을 **영구히**
+    건너뛴다. advisory lock 을 잡고 `INSERT ... SELECT MAX+1` 을 한 문장으로 실행해 run 단위로
+    직렬화한다(락은 커밋과 함께 풀린다 — 채번과 적재가 갈리지 않는다).
+
+    저장 형태는 내부 경로와 같다: payload 는 `agent_core._build_step_payload` 가 만든 것을
+    그대로 펼친다(컬럼이 갈리면 표시층이 두 벌을 다루게 된다).
+    """
+    pg = _pg()
+    if pg is None:
+        return 0
+    try:
+        args_json = json.dumps(entry.get("args") or {}, ensure_ascii=False)
+        summary = entry.get("result_summary")
+        summary_json = json.dumps(summary, ensure_ascii=False) if summary is not None else None
+        with pg.cursor() as cur:
+            # run 단위 직렬화. 트랜잭션 락이라 아래 INSERT 커밋 시점에 자동 해제된다.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                        (f"{conversation_id}|{run_id}",))
+            cur.execute(
+                "INSERT INTO agent_runtime.steps "
+                "(conversation_id, run_id, step_index, action, tool, intent, "
+                " work_text, work_source, reason_text, reason_source, args_json, sql_text, "
+                " result_summary_json, error_text) "
+                "SELECT %s, %s, COALESCE(MAX(s.step_index), 0) + 1, %s, %s, %s, "
+                "       %s, %s, %s, %s, %s, %s, %s, %s "
+                "FROM agent_runtime.steps s "
+                "WHERE s.conversation_id = %s AND s.run_id = %s "
+                "RETURNING step_index",
+                (conversation_id, run_id,
+                 str(entry.get("action") or "step"), str(entry.get("tool") or ""),
+                 str(entry.get("intent") or "")[:255],
+                 str(entry.get("work") or "") or None, str(entry.get("work_source") or "") or None,
+                 str(entry.get("reason") or "") or None,
+                 str(entry.get("reason_source") or "") or None,
+                 args_json, str(entry.get("sql") or "") or None,
+                 summary_json, str(entry.get("error") or "") or None,
+                 conversation_id, run_id))
+            row = cur.fetchone()
+        pg.commit()
+        return int(row[0]) if row else 0
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning(
+            "[bridge] 단계 적재 실패 conv=%s run=%s: %r", conversation_id, run_id, exc)
+        return 0
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
+def _record_bridge_step(conn, task: dict[str, Any], tool_name: str, args: dict[str, Any],
+                        tool_result: str, *, work: str = "", reason: str = "",
+                        elapsed_ms: float | None = None, error: str = "") -> None:
+    """도구 호출 **그 시점에** 실행 단계를 남긴다 — 「어떤 이유로 → 어떤 작업」 구조 그대로.
+
+    원장 이관(`_materialize_bridge_steps`)만 있던 때는 사유 칸이 비고 작업 문구도 인자가 없어
+    `SQL을 실행한다` 로 뭉뚱그려졌다(사용자 제보 2026-08-27). 여기서 기록하면 **인자와 사유를
+    둘 다 갖고 있는 유일한 시점**이라 내부 경로와 같은 밀도의 단계가 남는다.
+
+    부수 효과가 하나 더 있다: 답변을 기다리는 동안 단계가 실시간으로 쌓인다(내부 경로의 진행
+    표시와 같은 모양). 이관은 제출 시점이라 그때까지 화면이 비어 있었다.
+
+    payload 는 내부 경로와 **같은 빌더**(`agent_core._build_step_payload`)로 만든다 — 결과 요약·
+    미리보기·소요 형태가 한 벌로 유지된다. 적재만 브리지 전용(`_insert_bridge_step`)인데,
+    번호 채번과 INSERT 를 한 트랜잭션으로 묶어야 하기 때문이다. 실패는 흡수한다: 단계 기록이
+    조사 결과 반환을 막지 않는다.
+    """
+    conversation_id = str(task.get("conversation_id") or "")
+    task_id = str(task.get("task_id") or "")
+    if not conversation_id or not task_id:
+        return  # 외부 AI 가 스스로 연 task(웹 대화 없음) — 그릴 화면이 없다.
+    try:
+        import agent_core as _core
+
+        derived_work, derived_reason = _bridge_derived_narration(tool_name, args)
+        work_text = work or derived_work
+        reason_text = reason or derived_reason
+        # intent 는 도구 기반으로 고정한다. 내부 경로는 첫 단계에 원 질문을 쓰지만, 여기서는
+        # 번호가 INSERT 시점에 정해져 "내가 첫 단계인가" 를 미리 알 수 없다(그걸 알려고 미리
+        # 조회하면 방금 없앤 경합이 되돌아온다). 질문은 이미 말풍선에 있다.
+        intent = f"{tool_name}: {work_text or tool_name}"
+        entry = _core._build_step_payload(
+            run_id=task_id, step_index=0, tool_name=tool_name, intent=intent,
+            args=args, tool_result=tool_result,
+            work_text=work_text, work_source=("external-ai" if work else "derived"),
+            reason_text=reason_text, reason_source=("external-ai" if reason else "derived"),
+            error=error, elapsed_ms=elapsed_ms)
+        _insert_bridge_step(conversation_id, task_id, entry)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 실행 단계 기록 실패 task=%s tool=%s: %r", task_id, tool_name, exc)
+
+
 def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
     """개인 AI 가 **우리 도구를 호출한 내역**을 실행 단계로 옮긴다. 반환 = 기록한 단계 수.
 
@@ -531,20 +701,33 @@ def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
     그래서 여기서 옮기는 것은 추측이 아니라 **우리가 실제로 관측한 사실**이다: 어떤 도구를
     어떤 스키마에 대해 언제 불렀고, 몇 행이 나갔고, 얼마나 걸렸는지.
 
-    ## 무엇을 옮기지 않는가
+    ## 이제는 **fallback** 이다 (2026-08-27, 사용자 제보)
 
-    LLM 의 사고 과정(reason_text)은 없다. 그건 사용자의 AI 안에서 일어났고 우리는 못 봤다.
-    비워 둔다 — 지어내면 그 순간 이 패널 전체가 못 믿을 것이 된다.
+    원장에는 인자가 남지 않는다(`datasource_key`·`schema_name` 뿐). 그래서 여기서 만든 단계는
+    표시층 fallback 을 타 `SQL을 실행한다`·`테이블 구조를 확인한다` 처럼 **어느 테이블을 왜**
+    가 빠진 문구가 됐고, 사유 칸은 통째로 비었다 — "어떤 이유로 어떤 작업을 했다" 라는 구조가
+    사라진 것이다.
+
+    지금은 도구 호출 **그 시점에** `_record_bridge_step` 이 인자·사유까지 담아 기록한다. 이
+    함수는 그 경로가 하나도 남기지 못했을 때만 돈다(구 task, 단계 기록 실패). 이미 단계가 있으면
+    **아무것도 하지 않는다** — 같은 조사가 두 벌로 보이면 그것대로 못 믿을 화면이 된다.
 
     실패는 흡수한다. 단계 기록은 답변 전달의 조건이 아니다(없으면 탭이 빌 뿐이다).
     """
     if not conversation_id or not task_id:
         return 0
+    pg = _pg()
+    if pg is None:
+        return 0
     try:
-        pg = _pg()
-        if pg is None:
-            return 0
         with pg.cursor() as cur:
+            # 호출 시점 기록이 이미 있으면 이관하지 않는다(중복 방지).
+            cur.execute(
+                "SELECT 1 FROM agent_runtime.steps "
+                "WHERE conversation_id = %s AND run_id = %s LIMIT 1",
+                (conversation_id, task_id))
+            if cur.fetchone():
+                return 0
             cur.execute(
                 "SELECT tool, datasource_key, schema_name, rows_returned, bytes_out, "
                 "       latency_ms, outcome, detail, created_at "
@@ -562,14 +745,25 @@ def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
                 summary = {"rows_returned": int(r[3] or 0), "bytes_out": int(r[4] or 0),
                            "outcome": str(r[6] or "")}
                 args = {k: v for k, v in (("datasource", r[1]), ("schema_name", r[2])) if v}
+                # 원장에는 인자가 거의 없어 문구가 뭉뚱그려지지만, **사유 칸까지 비우지는
+                # 않는다** — 도구의 목적에서 파생한 근거라도 있어야 "왜 이 단계가 있었나" 가
+                # 읽힌다. 출처를 'derived' 로 남겨 LLM 이 말한 사유와 구분된다.
+                #
+                # ⚠ `work_source` 는 **`'bridge-ledger'` 여야 한다**(문자열 그대로).
+                #   `_conv_store._BRIDGE_LEDGER_WORK_SOURCE` 가 이 값을 "끝난 답변의 사후
+                #   기록" 표식으로 소비해, 진행 중 run 추론에서 제외한다. 여기를 다른 값으로
+                #   바꾸면 제외가 조용히 무효가 되어 **끝난 답변이 '진행 중' 으로 보인다**.
+                #   (호출 시점 기록은 external-ai/derived 라 그 추론에 정상 포함된다.)
+                work_text, reason_text = _bridge_derived_narration(tool, args)
                 cur.execute(
                     "INSERT INTO agent_runtime.steps "
                     "(conversation_id, run_id, step_index, action, tool, intent, "
-                    " work_source, reason_source, args_json, result_summary_json, "
-                    " error_text, created_at) "
-                    "VALUES (%s,%s,%s,'tool',%s,%s,'bridge-ledger','none',%s,%s,%s,%s)",
+                    " work_text, work_source, reason_text, reason_source, args_json, "
+                    " result_summary_json, error_text, created_at) "
+                    "VALUES (%s,%s,%s,'tool',%s,%s,%s,'bridge-ledger',%s,'derived',%s,%s,%s,%s)",
                     (conversation_id, task_id, n, tool,
-                     f"{tool} 호출", json.dumps(args, ensure_ascii=False),
+                     f"{tool}: {work_text or tool}"[:255], work_text or None, reason_text or None,
+                     json.dumps(args, ensure_ascii=False),
                      json.dumps(summary, ensure_ascii=False),
                      (str(r[7] or "") if str(r[6] or "") not in ("ok", "") else None), r[8]))
         pg.commit()
@@ -578,6 +772,11 @@ def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
         logging.getLogger(__name__).warning(
             "[bridge] 실행 단계 기록 실패 task=%s: %r", task_id, exc)
         return 0
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
 
 
 def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
@@ -623,7 +822,8 @@ def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
         return 0
 
 
-def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str) -> bool:
+def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str,
+                               *, title: str = "") -> bool:
     """`Origin='web'` task 의 답변을 원 대화에 assistant 메시지로 저장한다.
 
     **각인된 본문이 아니라 원문을 저장한다.** `WebAiTasks.Answer` 에는 각인본이 남아 지연
@@ -638,7 +838,7 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         cur = conn.cursor()
         try:
             cur.execute(
-                "SELECT ConversationId, Origin, ProductId, ProductMode "
+                "SELECT ConversationId, Origin, ProductId, ProductMode, Question "
                 "FROM WebAiTasks WHERE TaskId=%s", (task_id,))
             row = cur.fetchone()
         finally:
@@ -648,6 +848,7 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         conversation_id, origin = row[0], str(row[1] or "")
         if origin != "web" or not conversation_id:
             return False
+        question = row[4]
 
         # 지연 import — 라우터 import 시점 순환 회피(다른 핸들러의 `import agent_core` 와 동형).
         from modules.memory import save_memory_message as _save_msg
@@ -685,6 +886,27 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
                 "[bridge] 대화 저장이 0 을 반환했다 task=%s conv=%s — 전달 실패로 기록한다",
                 task_id, conversation_id)
             return False
+
+        # 개인 AI 가 맥락 제목을 제안했으면 승급시킨다(대화 제목 2단 중 두 번째 축).
+        #
+        # **답변이 실제로 화면에 앉은 뒤에** 한다(codex REV-20260828T040000 P2): 앞에 두면
+        # 저장이 실패했을 때 대기 말풍선은 그대로인데 사이드바 제목만 바뀌어, 답변이 도착한
+        # 것처럼 보이는 부분 상태가 굳는다(재제출은 409 라 스스로 풀리지도 않는다).
+        #
+        # `supersedes` 에 원 질문을 넘겨 **우리가 붙인 질문 기반 제목**만 갱신 대상이 되게 한다 —
+        # 사용자가 손으로 바꾼 제목은 답변이 도착해도 그대로 둔다.
+        if str(title or "").strip():
+            try:
+                applied = app._conv_apply_auto_topic(
+                    conn, str(conversation_id), title, max_len=256, supersedes=question)
+                if applied:
+                    logging.getLogger(__name__).info(
+                        "[bridge] 대화 제목 갱신 task=%s conv=%s title=%r",
+                        task_id, conversation_id, applied)
+            except Exception as exc:
+                # 제목은 부가 정보다 — 실패가 답변 전달을 막지 않는다.
+                logging.getLogger(__name__).warning(
+                    "[bridge] 대화 제목 갱신 실패 task=%s: %r", task_id, exc)
 
         # 개인 AI 의 조사 내역을 'AI 추론' 탭에 보이도록 단계로 옮긴다(사용자 제보 2026-08-27).
         _steps = _materialize_bridge_steps(str(conversation_id), task_id)
@@ -1421,6 +1643,14 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
     except Exception as exc:
         logging.getLogger(__name__).error(
             "[bridge] 첨부 읽기 실패 task=%s: %r", task_id, exc)
+        # 실패한 시도도 단계로 남긴다 — 감추면 "첨부를 봤는가" 가 화면에서 판정 불가가 된다.
+        _fw, _fr = _bridge_step_narration(body, {})
+        _record_bridge_step(
+            conn, {"conversation_id": conversation_id, "task_id": task_id},
+            "read_task_attachment",
+            {k: v for k, v in (("filename", filename), ("attachment_id", attachment_id)) if v},
+            "", work=_fw, reason=_fr, error=str(exc)[:500],
+            elapsed_ms=(time.perf_counter() - t0) * 1000)
         return _json_err(500, "첨부를 읽는 중 오류가 발생했습니다.")
     finally:
         # 역순 복원 — set 순서와 반대로 되돌려야 중첩 Context 가 어긋나지 않는다.
@@ -1451,6 +1681,15 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
                        latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
+
+    _att_work, _att_reason = _bridge_step_narration(body, {})
+    _record_bridge_step(
+        conn, {"conversation_id": conversation_id, "task_id": task_id},
+        "read_task_attachment",
+        {k: v for k, v in (("filename", str(res.get("filename") or "")),
+                           ("attachment_id", int(res.get("attachment_id") or 0))) if v},
+        str(res.get("text") or ""), work=_att_work, reason=_att_reason,
+        elapsed_ms=(time.perf_counter() - t0) * 1000)
 
     return JSONResponse({
         "task_id": task_id,
@@ -1597,9 +1836,14 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     # 그대로 넘기면 내부 규약과 충돌한다 — 입구에서 걷어낸다.
     arguments = {k: v for k, v in dict(body.get("arguments") or {}).items()
                  if not str(k).startswith("_")}
+    # 단계 narration(무엇을·왜)은 조사 인자가 아니다 — 실행 전에 걷어낸다(내부 경로와 동형).
+    narr_work, narr_reason = _bridge_step_narration(body, arguments)
     # `execute_tool` 이 `arguments` 에서 `datasource` 를 pop 한다 — 실행 뒤에 읽으면 항상 빈 값이
     # 되어 추출 원장의 datasource 추적이 통째로 죽는다(codex P2). 실행 전에 붙잡는다.
     requested_ds = str(arguments.get("datasource") or "") or None
+    # 단계에 남길 인자 사본. 실행이 `datasource` 를 pop 하고 내부 out-param(`_stats_out`)을
+    # 심으므로, **실행 전 사용자 인자**를 그대로 굳혀야 화면 문구가 조사 대상과 일치한다.
+    step_args = dict(arguments)
     sql_stats: dict[str, Any] = {}
     if tool_name in P1_TOOLS:
         arguments["_stats_out"] = sql_stats
@@ -1632,6 +1876,10 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     except Exception as exc:  # noqa: BLE001
         _safe_record(account, ctx, tool=tool_name, outcome="error", detail=str(exc)[:200],
                      task_id=task_id)
+        # 실패한 조사도 단계다 — 감추면 "왜 답이 늦었나/왜 이 결론인가" 가 화면에서 사라진다.
+        _record_bridge_step(conn, task, tool_name, step_args, "", work=narr_work,
+                            reason=narr_reason, error=str(exc)[:500],
+                            elapsed_ms=(time.perf_counter() - t0) * 1000)
         return _json_err(500, f"도구 실행 오류: {exc}")
 
     rendered = str(out or "")
@@ -1643,6 +1891,10 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
             # 부하는 이미 발생했으므로 **원장에는 기록하고** 결과만 돌려주지 않는다.
             _safe_record(account, ctx, tool=tool_name, outcome="gated",
                          detail=f"rows>{cap}", task_id=task_id, rows_returned=got)
+            _record_bridge_step(
+                conn, task, tool_name, step_args, "", work=narr_work, reason=narr_reason,
+                error=f"반환 행수 {got:,}행이 건당 상한 {cap:,}행을 넘어 결과를 돌려주지 않았습니다.",
+                elapsed_ms=(time.perf_counter() - t0) * 1000)
             return JSONResponse(
                 {"error": f"이 쿼리는 {got:,}행을 반환합니다(건당 상한 {cap:,}행). "
                           f"결과를 돌려주지 않았습니다 — 집계(COUNT/GROUP BY)·기간·WHERE 로 "
@@ -1668,6 +1920,11 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     except _ledger.LedgerUnavailable as exc:
         # ★ 결과를 반환하지 않는다 — 기록 없는 호출은 상한 우회다(codex P1).
         return _json_err(503, f"원장을 기록할 수 없어 결과를 반환하지 않습니다: {exc}")
+
+    # 웹 대화에서 온 질문이면 이 조사를 '실행 단계' 로 남긴다(화면의 「AI 추론」 탭).
+    # 각인본(`marked`)이 아니라 `rendered` 를 넘긴다 — 단계 미리보기는 사람이 읽는 자리다.
+    _record_bridge_step(conn, task, tool_name, step_args, rendered, work=narr_work,
+                        reason=narr_reason, elapsed_ms=(time.perf_counter() - t0) * 1000)
 
     return JSONResponse({"task_id": task_id, "tool": tool_name, "result": marked})
 
