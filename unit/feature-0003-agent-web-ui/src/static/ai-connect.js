@@ -162,7 +162,4 @@
   $("copyHandoff").addEventListener("click", function () {
     copy(handoff(issuedToken), "복사했습니다. AI에 붙여넣으세요.");
   });
-  $("copyEndpoint").addEventListener("click", function () {
-    copy(endpoint, "주소를 복사했습니다.");
-  });
 })();

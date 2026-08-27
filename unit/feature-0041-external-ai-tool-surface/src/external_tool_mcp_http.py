@@ -338,6 +338,11 @@ def list_open_requests(ctx: McpContext, limit: int = 20) -> str:
     return _post("/api/ai/tools/list_open_requests", {"limit": limit}, ctx)
 
 
+@mcp.tool(description="웹 대화 화면에서 **새 질문이 들어올 때까지 기다린다**. 질문이 생기면 그 즉시 돌아온다. 이미 대기 중인 것이 있으면 기다리지 않고 바로 반환한다. 시간이 다 되면 timed_out=true 로 정상 반환되니 **곧바로 다시 호출**하면 된다 — 간격을 두지 마라(그것이 폴링이다). 대기열을 지켜볼 때는 list_open_requests 를 반복하지 말고 이 도구를 써라.")
+def wait_for_request(ctx: McpContext) -> str:
+    return _post("/api/ai/tools/wait_for_request", {}, ctx)
+
+
 @mcp.tool(description="대기 질문 1건을 점유하고 전문과 이전 대화 문맥을 받는다. 점유는 1회만 "
                       "성공한다(이미 가져간 질문은 409). 조사 후 submit_answer 로 제출하라.")
 def claim_request(ctx: McpContext, task_id: str) -> str:

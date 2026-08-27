@@ -95,6 +95,9 @@ def test_all_tools_registered_through_name_helper():
              # feature-0043 사용감 패리티(2026-08-27): 첨부 기반 질문(웹의 일상 사용)이
              # 이 도구 없이는 조용히 오답이 된다 — 첨부를 못 읽고 없다고 전제한다.
              "read_task_attachment",
+             # feature-0043(2026-08-27): 블로킹 대기. 폴링 없이 "즉시" 를 만드는 유일한 축이라
+             # 어댑터에 없으면 그 클라이언트는 주기 폴링으로 되돌아간다.
+             "wait_for_request",
              "list_schemas",
              "describe_schema", "describe_table", "search_tables",
              "get_foreign_keys", "get_table_indexes", "execute_sql"]
@@ -138,6 +141,6 @@ def test_http_errors_preserve_status_code():
 
 def test_every_tool_posts_and_carries_bearer():
     source = _source()
-    # 정의 1 + 호출 13 (P0 9 + P1 execute_sql + feature-0043 브리지 2 + 첨부 읽기 1)
-    assert source.count("_post(") == 1 + 13
+    # 정의 1 + 호출 14 (P0 9 + P1 execute_sql + 브리지 2 + 첨부 1 + 대기 1)
+    assert source.count("_post(") == 1 + 14
     assert 'Authorization": f"Bearer {_TOKEN}"' in source

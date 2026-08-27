@@ -1,5 +1,6 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
+import { bindConnectModal } from "./app/connect-modal.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
@@ -7472,6 +7473,10 @@ async function initialize() {
   openProfileBtn.addEventListener("click", () => openProfile("prompt"));
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
+
+  // feature-0043: 안내 말풍선의 'AI 연결하기' 를 모달로 가로챈다(대화 화면 이탈 방지).
+  // 페이지 1회 배선 — 문서 수준 위임이라 메시지 재렌더와 무관하게 유지된다.
+  bindConnectModal();
 
   // 좌측 대화 사이드바 너비 조절 핸들 배선 + 저장 너비 복원 (페이지 1회).
   setupSidebarResize();
