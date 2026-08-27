@@ -76,3 +76,45 @@ source_of_truth: true
 - [x] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+
+## TASK-20260828T103000-verify-session — PB-0008 검증용 로그인 세션
+
+**배경**: 드라이버가 전용 격리 프로필로 브라우저를 띄우는데 그 프로필에 세션이 없어, PB-0008 이
+도달할 수 있는 화면이 **로그인 폼뿐**이었다. 웹/UI cycle 두 건(feature-0043 브리지 스크롤,
+그 증적 cycle)이 연속으로 "로그인 세션 부재" 를 사유로 화면 실측을 미수행 처리했다 —
+완료 게이트 check #13 이 형식만 남는 상태.
+
+**위험도**: Minor (§12.3) — 기존 자격증명 재사용, 계정·권한·인증 코드 변경 0, 검증 도구 한정.
+
+### 2.1 Implementation Plan
+- `bin/win-browser.py`: `session-check` / `session-login` / `session-logout` 3 서브커맨드 +
+  `_drive_new_page`(자기 탭 전용) + `_read_env_keys`/`_session_credentials`(비밀 미출력).
+- `playbooks/PB-0008-…md`: Prerequisites + Step 3.5 + Validation 체크 추가.
+- `Makefile`: `feature-0008` tests 를 pytest 경로에 편입(그 전까지 CI 미실행이라 새 계약이
+  회귀 감지 대상이 아니었다).
+- 완료 판정: 라이브에서 `session-login` → `session-check` 가
+  `authenticated:true, username:bootstrap_admin` 이고, 그 세션으로 직전 cycle 이 남긴
+  **미수행 항목(로그인 후 스크롤 실측)을 실제로 닫는다**.
+
+### 7. Completion Checklist
+- [x] AC 6건 구현
+- [x] 자동 테스트 통과 (신규 14건 + 뮤테이션 5종 KILL)
+- [x] 라이브 실증 — 세션 발급·멱등 재호출·로그인 후 화면 실측
+- [x] FUNCTION.md §4 범위 전환 명시
+- [x] MODIFY.md / REVIEW.md / REPORT.md / TEST.md 기록
+- [x] PB-0008 플레이북 갱신
+- [x] BLOCKED 없음
+
+## 9. Requested Scope (요청 범위) — TASK-20260828T103000-verify-session
+
+사용자 요청: "검증용 로그인 세션을 이어서 진행해주세요" (2026-08-28)
+
+- [x] 검증용 로그인 세션 확보 — 산출물: `win-browser.py session-login` (라이브 발급·멱등 확인)
+- [x] 세션 상태 확인 수단 — 산출물: `session-check` (`--require-auth` exit code 게이트)
+- [x] 세션 해제 수단 — 산출물: `session-logout` (미해제 시 `logout_ineffective` + exit 1)
+- [x] 계정은 `bootstrap_admin` 재사용(사용자 결정) — 산출물: `.env` 기존 키 사용, 새 비밀·계정 0
+- [x] PB-0008 절차에 편입 — 산출물: 플레이북 Prerequisites · Step 3.5 · Validation
+- [x] win-browser host 오탐 보정(사용자가 함께 처리 선택) — 산출물: 병렬 세션이 main 에 선반영,
+      중복 구현 없이 `doctor ok:true` 실측으로 확인
+- [x] (부수) 직전 cycle 이 세션 부재로 미수행 처리한 로그인 후 스크롤 실측 — 산출물:
+      feature-0003 `test-runs.d/REV-20260827T160500-…md` §6 (scrollTop 20/20 불변)

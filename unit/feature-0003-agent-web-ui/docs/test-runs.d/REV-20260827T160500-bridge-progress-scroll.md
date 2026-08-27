@@ -2,7 +2,7 @@
 run_at: 2026-08-27T16:05:00+09:00
 session: ai/root/feature-0043-bridge-progress-scroll
 scope: 브리지 답변 직후 스크롤 최하단 고착 — /api/progress steps-fallback 원장 제외 + 감지기 위임 수렴 (Minor §12.3)
-verdict: PASS(코드/단위/라이브 서버 실측 + 실 브라우저 서빙 확인) — 로그인 화면 실측은 세션 부재로 미수행(사유 명시)
+verdict: PASS — 2026-08-28 로그인 세션 확보 후 화면 실측까지 완료(§6)
 ---
 
 # Run — TASK-20260827T160500-bridge-progress-scroll
@@ -114,3 +114,29 @@ verdict: PASS(코드/단위/라이브 서버 실측 + 실 브라우저 서빙 �
 주소로는 CDP 가 정상 응답한다(본 Run 이 그 경로로 수행됨). 첫 nameserver 가 기본 게이트웨이와
 다른 서브넷이면 `ip route show default` 로 폴백하는 보정이 필요하다. **본 cycle 범위 밖 —
 사용자 판단 대기.**
+
+---
+
+## 6. 미수행 항목 마감 — 로그인 후 화면 실측 (2026-08-28)
+
+§5.3 에서 "브라우저 프로파일에 로그인 세션이 없어 미수행" 으로 남겼던 항목을 닫는다.
+`bin/win-browser.py` 에 검증용 세션 발급(`session-login`)이 추가되어(feature-0008 /
+TASK-20260828T103000-verify-session) 로그인 뒤 화면에 도달할 수 있게 됐다.
+
+**Environment: Windows-browser** — 실 Windows Chrome 151.0.7922.170, relay `172.26.144.1:9223`,
+`bootstrap_admin` 세션, 대상 `https://mysql-ai.company.local/?conversation=20260827061652-5ab532d1`.
+세션 격리(§16.6): 내가 연 탭에서만 조작 후 닫음.
+
+| 관측 | 값 |
+|---|---|
+| 로그인 상태 | `authenticated: true` (bootstrap_admin) |
+| 대화 렌더 | 메시지 4건, `scrollHeight` 2156 |
+| 클라이언트가 본 `/api/progress` | `{"run_id":"", "raw_status":"", "status":""}` — **서버 수정 확증** |
+| 스크롤 (최상단에 두고 20초) | `scrollTop` 샘플 **20/20 모두 0** — 끌려가지 않음 |
+| page error / unhandledrejection | **0** |
+
+`/api/history` 가 20초 동안 4회 호출됐으나 스택 추적 결과 **`_liveSyncTick`**(무관한 주기 동기화,
+`limit=20`)이며 스크롤을 움직이지 않는다 — 이번 수정 대상이던 감지기 재로드 경로가 아니다.
+
+Evidence: `evidence/pb0008-20260827-bridge-scroll-logged-in.png`
+Pass/Fail: **PASS**
