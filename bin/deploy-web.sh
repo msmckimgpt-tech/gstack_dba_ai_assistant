@@ -1376,11 +1376,26 @@ rollout_mcp_replicas() {  # $1 = 대상 sha → 0 성공 / 1 실패
 # 남고(포트는 안 겹치지만 구코드가 계속 web 을 두드린다), 다음 배포도 알아채지 못한다.
 sweep_legacy_ext_tool_mcp() {
   [ "$DRY_RUN" -eq 1 ] && return 0
-  local cid
-  cid="$("${DC_PROD[@]}" ps -aq "$MCP_LEGACY_SERVICE" 2>/dev/null | head -1)"
+  local cid=""
+  # ⚠ **이 조회는 실패한다.** 서비스가 compose 정의에서 사라졌으므로 `ps -aq <name>` 은
+  #   `no such service` + **exit 1** 이다(라이브 실측 2026-08-27). `set -euo pipefail` 하에서
+  #   그 명령 치환이 실패하면 배포 스크립트가 **그 자리에서 죽는다** — 실제로 첫 전환 배포가
+  #   MCP 롤아웃 직후 중단됐고 워커·gateway 가 구 코드로 남았다(그리고 호출측 파이프가 그
+  #   exit 을 가려 '성공' 으로 보였다). 정리는 best-effort 이므로 실패를 흡수한다.
+  cid="$("${DC_PROD[@]}" ps -aq "$MCP_LEGACY_SERVICE" 2>/dev/null | head -1 || true)"
+  if [ -z "$cid" ]; then
+    # compose 가 이름을 모르면 **라벨로** 찾는다 — 목적은 조회가 아니라 정리다. 프로젝트
+    # 스코프를 함께 걸어 다른 compose 프로젝트의 동명 컨테이너를 건드리지 않는다.
+    local proj; proj="$(basename "$REPO_ROOT")"
+    cid="$(docker ps -aq \
+             --filter "label=com.docker.compose.project=$proj" \
+             --filter "label=com.docker.compose.service=$MCP_LEGACY_SERVICE" \
+             2>/dev/null | head -1 || true)"
+  fi
   [ -n "$cid" ] || return 0
   log "구 $MCP_LEGACY_SERVICE 컨테이너 정리(2-replica 로 대체됨)."
   run docker rm -f "$cid" >/dev/null 2>&1 || warn "구 $MCP_LEGACY_SERVICE 제거 실패 — 수동 확인 필요."
+  return 0
 }
 
 # ── MCP 표면 롤아웃 단계 (feature-0045) ───────────────────────────────────────
