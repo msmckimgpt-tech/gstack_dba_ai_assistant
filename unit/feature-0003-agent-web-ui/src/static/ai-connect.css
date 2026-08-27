@@ -184,3 +184,16 @@ body.aic-body {
   .aic-why { background: rgba(255, 255, 255, .06); border-left-color: rgba(255, 255, 255, .22); }
   .aic-step { border-bottom-color: rgba(255, 255, 255, .14); }
 }
+
+/* 단일 흐름(2026-08-27) — 3단계 안내 + AI 전달용 지시문 블록. */
+.aic-howto { margin: 0 0 20px; padding-left: 22px; line-height: 1.75; }
+.aic-howto li { margin-bottom: 4px; }
+.aic-handoff-hint { margin: 0 0 8px; font-size: .92rem; opacity: .85; }
+.aic-code--block {
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 340px;
+  overflow-y: auto;
+  text-align: left;
+  line-height: 1.55;
+}

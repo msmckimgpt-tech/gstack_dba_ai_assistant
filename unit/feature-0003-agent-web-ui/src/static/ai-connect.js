@@ -1,10 +1,17 @@
-/* feature-0041 — 외부 AI 연결 페이지.
+/* feature-0041 — 내 AI 연결 페이지.
  *
- * 두 경로를 한 화면에 둔다:
- *   ① MCP 를 지원하는 클라이언트 → **주소만** 넣으면 discovery(RFC 9728/8414)로 클라이언트가
- *      스스로 인증한다. 사람이 할 일은 로그인·허용 클릭뿐이다.
- *   ② 그 외 → 토큰을 손으로 넣는다. 이 경로는 secret 을 화면에 띄우므로 1회 노출·세션 결합을
- *      명시하고, 발급 결과를 서버에 다시 묻지 않는다(다시 볼 수 없다).
+ * **단일 흐름** (사용자 결정 2026-08-27): 종전에는 두 경로를 나란히 놓고 사람에게 고르게 했다
+ * (① MCP 커넥터 등록 / ② 토큰 수동 입력). 그런데 사용자는 **자기 AI 가 어느 쪽에 해당하는지
+ * 판정할 수 없다** — "MCP 를 지원하는 도구인가?" 는 만든 사람이나 답할 수 있는 질문이다.
+ *
+ * 그래서 선택을 사람에게서 걷어내 **AI 에게 넘긴다.** 이 화면은 연결에 필요한 모든 것을
+ * — 토큰까지 포함해 — `AI 가 읽을 지시문 한 덩어리`로 만들어 준다. 어느 방법이 되는지는
+ * AI 가 직접 시도해 판단한다. 사람이 할 일은 [만들기] → [복사] → [붙여넣기] 세 번뿐이고,
+ * **그 뒤의 인증은 AI 가 끝낸다**(사용자 요구 2026-08-27).
+ *
+ * 그래서 지시문의 순서는 "간단해 보이는 순" 이 아니라 **사람을 다시 부르지 않는 순** 이다:
+ * 토큰이 이미 손에 있는 A(설정에 헤더로 추가)·B(HTTP 직접 호출)가 먼저이고, 브라우저 '허용'
+ * 클릭이 한 번 더 필요한 커넥터 OAuth 는 C 로 뒤에 둔다.
  */
 (function () {
   "use strict";
@@ -20,12 +27,59 @@
     else { statusEl.removeAttribute("data-kind"); }
   }
 
-  function snippet(token) {
-    return JSON.stringify({
+  function baseOf(url) {
+    // `https://host/api/ai/mcp` → `https://host`. 실패하면 빈 문자열(지시문은 절대 URL 이
+    // 없어도 성립한다 — 상대 경로 안내만 조금 덜 친절해진다).
+    try { var u = new URL(url); return u.origin; } catch (_e) { return ""; }
+  }
+
+  /** AI 에게 그대로 붙여넣을 지시문.
+   *
+   * 설계 기준(사용자 결정 2026-08-27): **사람은 복사·붙여넣기까지만 하고, 나머지 인증은 AI 가
+   * 끝낸다.** 그래서 토큰이 이미 이 안에 들어 있는 경로(A·B)를 먼저 놓는다 — 그 둘은 추가로
+   * 사람이 누를 것이 없다. 커넥터 OAuth(C)는 브라우저 '허용' 클릭이 한 번 더 필요하므로
+   * **뒤로** 뺐다(가장 간단해 보여도 사람을 다시 부르는 방법이다).
+   *
+   * 어느 것을 쓸지는 고르게 하지 않는다 — "네가 지원하는 방식으로 되는 것을 시도하라" 고
+   * 맡긴다. 사용자는 자기 AI 가 무엇을 지원하는지 판정할 수 없기 때문이다.
+   */
+  function handoff(token) {
+    var base = baseOf(endpoint);
+    var guide = base ? base + "/api/ai/guide" : "/api/ai/guide";
+    var cfg = JSON.stringify({
       mcpServers: {
         "mysql-ai": { url: endpoint, headers: { Authorization: "Bearer " + token } },
       },
     }, null, 2);
+
+    return [
+      "아래 'DB 질의 어시스턴트' 에 연결해줘.",
+      "인증에 필요한 것은 이 안에 다 들어 있으니 **나한테 더 물어보지 않아도 돼.**",
+      "네가 지원하는 방식으로 아래 중 되는 것을 시도해서 알아서 연결하면 돼.",
+      "",
+      "■ 인증 (이것만 있으면 바로 통과 — 추가 로그인·승인 절차 없음)",
+      "    Authorization: Bearer " + token,
+      "",
+      "■ 방법 A — MCP 설정에 추가 (헤더에 위 토큰)",
+      cfg.split("\n").map(function (l) { return "    " + l; }).join("\n"),
+      "",
+      "■ 방법 B — HTTP 로 직접 호출",
+      "    POST " + (base || "") + "/api/ai/tools/list_open_requests",
+      "    헤더: Authorization: Bearer <위 토큰>",
+      "    본문: {\"limit\": 20}",
+      "    도구 목록·사용법: " + guide,
+      "",
+      "■ 방법 C — 커넥터 주소만 등록 (A·B 가 안 될 때만)",
+      "    URL: " + endpoint,
+      "    토큰 없이 표준 OAuth 로도 연결되지만, 브라우저에서 내가 '허용' 을 한 번 눌러야 해.",
+      "    A 나 B 가 되면 이건 쓸 필요 없어.",
+      "",
+      "연결되면 곧바로 이렇게 해줘:",
+      "  1) list_open_requests — 대기 중인 질문이 있는지 확인",
+      "  2) claim_request — 처리할 질문을 가져오기",
+      "  3) 필요한 조사(list_schemas / describe_table / execute_sql 등) 수행",
+      "  4) submit_answer — 답변 제출 (웹 대화 화면에 그대로 표시된다)",
+    ].join("\n");
   }
 
   function humanTtl(seconds) {
@@ -63,19 +117,20 @@
   }
 
   function showLoggedOut() {
-    $("connectLead").textContent = "웹에서 보낸 질문을 회원님의 AI 가 대신 답하도록 연결합니다. 한 번만 하면 됩니다.";
+    $("connectLead").textContent =
+      "웹에서 보낸 질문을 회원님의 AI 가 대신 답하도록 연결합니다. 한 번만 하면 됩니다.";
     $("connectLogin").classList.remove("aic-hidden");
-    $("connectAuto").classList.remove("aic-hidden");
+    // 로그아웃 상태에서도 무엇을 하는 화면인지는 보여준다(설명만 — 만들기는 로그인 후).
+    $("connectFlow").classList.remove("aic-hidden");
+    $("makeHandoff").disabled = true;
   }
 
   function init(info) {
     endpoint = info.endpoint || "";
-    $("connectEndpoint").textContent = endpoint;
     if (!info.logged_in) { showLoggedOut(); return; }
     $("connectLead").textContent =
-      (info.display_name || info.username || "") + " 계정으로 외부 AI 를 연결합니다.";
-    $("connectAuto").classList.remove("aic-hidden");
-    $("connectManual").classList.remove("aic-hidden");
+      (info.display_name || info.username || "") + " 계정으로 내 AI 를 연결합니다.";
+    $("connectFlow").classList.remove("aic-hidden");
   }
 
   fetch("/api/ai/connect/status", { credentials: "same-origin" })
@@ -83,41 +138,37 @@
     .then(init)
     .catch(function (e) { say("상태를 확인하지 못했습니다: " + e, "error"); });
 
-  $("copyEndpoint").addEventListener("click", function () {
-    copy(endpoint, "주소를 복사했습니다.");
-  });
-
-  $("issueToken").addEventListener("click", function () {
-    $("issueToken").disabled = true;
-    say("발급하는 중…");
+  $("makeHandoff").addEventListener("click", function () {
+    $("makeHandoff").disabled = true;
+    say("만드는 중…");
     fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" })
       .then(function (res) {
         return res.json().then(function (b) { return { ok: res.ok, body: b }; });
       })
       .then(function (r) {
-        $("issueToken").disabled = false;
+        $("makeHandoff").disabled = false;
         if (!r.ok) {
-          say((r.body && (r.body.error_description || r.body.error)) || "발급에 실패했습니다.", "error");
+          say((r.body && (r.body.error_description || r.body.error)) || "만들지 못했습니다.", "error");
           if (r.body && r.body.error === "unauthorized") { showLoggedOut(); }
           return;
         }
         issuedToken = r.body.access_token || "";
         endpoint = r.body.endpoint || endpoint;
-        $("tokenSnippet").textContent = snippet(issuedToken);
-        $("tokenResult").classList.remove("aic-hidden");
-        say("발급했습니다 — 유효기간 " + humanTtl(r.body.expires_in) +
-            ", 로그아웃하면 그 전에도 즉시 무효입니다.", "ok");
+        $("handoffText").textContent = handoff(issuedToken);
+        $("handoffResult").classList.remove("aic-hidden");
+        say("만들었습니다 — 유효기간 " + humanTtl(r.body.expires_in) +
+            ", 로그아웃하면 그 전에도 즉시 무효입니다. 이 화면을 벗어나면 다시 볼 수 없습니다.", "ok");
       })
       .catch(function (e) {
-        $("issueToken").disabled = false;
-        say("발급에 실패했습니다: " + e, "error");
+        $("makeHandoff").disabled = false;
+        say("만들지 못했습니다: " + e, "error");
       });
   });
 
-  $("copySnippet").addEventListener("click", function () {
-    copy(snippet(issuedToken), "설정을 복사했습니다.");
+  $("copyHandoff").addEventListener("click", function () {
+    copy(handoff(issuedToken), "복사했습니다 — AI 에게 그대로 붙여넣으세요.");
   });
-  $("copyToken").addEventListener("click", function () {
-    copy(issuedToken, "토큰을 복사했습니다.");
+  $("copyEndpoint").addEventListener("click", function () {
+    copy(endpoint, "주소를 복사했습니다.");
   });
 })();

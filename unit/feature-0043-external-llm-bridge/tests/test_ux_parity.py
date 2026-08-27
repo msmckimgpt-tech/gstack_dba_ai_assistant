@@ -519,7 +519,7 @@ def test_connect_page_explains_why_before_how():
     """'무엇을 하는 화면인지' 를 단계 설명보다 **먼저** 말한다."""
     html = CONNECT_HTML.read_text(encoding="utf-8")
     assert 'class="aic-why"' in html, "이 화면이 왜 필요한지 설명하는 블록이 없다"
-    assert html.index('aic-why') < html.index("방법 ①"), "설명이 단계 뒤에 있다"
+    assert html.index("aic-why") < html.index("aic-howto"), "설명이 실행 단계 뒤에 있다"
 
 
 def test_connect_page_names_real_tools():
@@ -532,9 +532,27 @@ def test_connect_page_names_real_tools():
 
 
 def test_connect_page_tells_where_to_paste():
-    """'주소만 등록하면' 이 아니라 **어디에** 넣는지 말한다."""
+    """붙여넣을 **대상**을 말한다 — 이제 그 대상은 설정 화면이 아니라 **AI 자신**이다."""
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "연결/커넥터 추가" in html or "커넥터" in html, "붙여넣을 위치를 알려주지 않는다"
+    assert "AI 에게 그대로 붙여넣습니다" in html, "어디에 붙여넣는지 알려주지 않는다"
+
+
+def test_connect_page_promises_the_human_is_done_after_pasting():
+    """붙여넣은 뒤로는 **사람이 할 일이 없다**고 명시한다(사용자 결정 2026-08-27)."""
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert "회원님이 하실 전부입니다" in html
+    assert "AI 가 알아서 합니다" in html, "나머지 인증을 AI 가 한다는 약속이 없다"
+
+
+def test_connect_page_is_a_single_flow():
+    """사람에게 방법을 **고르게 하지 않는다** — 판정 불가능한 선택을 시키지 않는다."""
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    import re
+
+    visible = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    for gone in ("방법 ①", "방법 ②", "connectAuto", "connectManual"):
+        assert gone not in visible, f"두 갈래 구조가 남아 있다: {gone}"
+    assert 'id="connectFlow"' in html, "단일 흐름 섹션이 없다"
 
 
 def test_connect_page_glosses_token_once_and_keeps_the_word():
@@ -543,7 +561,6 @@ def test_connect_page_glosses_token_once_and_keeps_the_word():
     '열쇠' 같은 새 이름을 만들면 정작 AI 도구 설정 화면의 `token` 칸과 매칭이 끊긴다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "<code>token</code>" in html, "도구 설정의 실제 항목명을 알려주지 않는다"
     assert "비밀 문자열" in html, "토큰이 무엇인지 한 번은 설명해야 한다"
     assert "열쇠" not in html, "용어를 두 벌로 만들면 사용자가 매칭에 실패한다"
 
@@ -558,9 +575,8 @@ def test_connect_page_no_unexplained_mcp_in_visible_text():
 
 
 @pytest.mark.parametrize("dom_id", [
-    "connectLead", "connectAuto", "connectEndpoint", "copyEndpoint", "connectManual",
-    "issueToken", "tokenResult", "tokenSnippet", "copySnippet", "copyToken",
-    "connectStatus", "connectLogin", "loginLink",
+    "connectLead", "connectFlow", "makeHandoff", "handoffResult", "handoffText",
+    "copyHandoff", "copyEndpoint", "connectStatus", "connectLogin", "loginLink",
 ])
 def test_connect_page_dom_contract_preserved(dom_id):
     """문구를 고쳐도 **JS 가 잡는 id 는 그대로**여야 한다 — 하나라도 빠지면 버튼이 죽는다."""

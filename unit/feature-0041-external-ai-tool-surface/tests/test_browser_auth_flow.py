@@ -312,23 +312,26 @@ def test_connect_page_warns_about_the_secret_it_shows():
     assert "다시 볼 수 없" in html, "1회 노출이라는 사실을 알리지 않는다"
 
 
-def test_connect_page_offers_the_zero_config_path_first():
-    """토큰 없이 되는 경로(주소 등록)를 **먼저** 보여준다.
+def test_connect_page_hands_off_without_calling_the_human_back():
+    """연결은 **사람을 다시 부르지 않는 경로**를 먼저 제시한다.
 
-    문구가 아니라 순서와 성격을 본다 — 위 테스트와 같은 이유로 표현에 묶지 않는다.
+    (구 계약: 'MCP 커넥터(무설정) 경로를 먼저 보여준다'.)
+
+    2026-08-27 사용자 결정으로 화면이 단일 흐름이 됐다 — 사람은 지시문을 복사해 AI 에게
+    넘기고, **나머지 인증은 AI 가 끝낸다.** 그 기준에서 보면 커넥터 OAuth 는 가장 간단해
+    보여도 브라우저 '허용' 클릭으로 **사람을 다시 부르는** 방법이다. 그래서 토큰이 이미
+    지시문에 실려 추가 개입이 없는 A·B 가 먼저이고, OAuth 는 C 로 뒤에 온다.
+
+    이 순서가 뒤집히면 "복사만 하면 끝" 이라는 약속이 깨진다.
     """
-    import re
-
-    html = _read(*_STATIC, "ai-connect.html")
-    assert html.index("connectAuto") < html.index("connectManual"), (
-        "토큰을 손으로 넣는 경로가 먼저 나온다 — 대부분의 사용자에게 불필요한 수고다")
-    # 주석을 걷어낸 **사용자가 보는 텍스트**만 본다. 다음 절을 설명하는 유지보수 주석
-    # (`<!-- ② … 토큰을 손으로 넣는다 -->`)이 이 구간에 걸쳐 있어, 그대로 검사하면
-    # 화면에 없는 단어를 있다고 판정한다.
-    visible = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-    auto = visible[visible.index("connectAuto"):visible.index("connectManual")]
-    assert "주소" in auto, "첫 경로가 '주소 등록' 임을 말하지 않는다"
-    assert "토큰" not in auto, "토큰 없이 되는 경로인데 토큰을 언급한다(경로 구분이 흐려진다)"
+    js = _read(*_STATIC, "ai-connect.js")
+    body = js[js.index("function handoff("):js.index("function humanTtl(")]
+    a, b, c = body.index("방법 A"), body.index("방법 B"), body.index("방법 C")
+    assert a < b < c, "지시문의 방법 순서가 A→B→C 가 아니다"
+    # C(OAuth)가 사람을 다시 부른다는 사실을 AI 에게 알려야 그것을 뒤로 미룬다.
+    assert "허용" in body[c:], "OAuth 경로에 사람 개입이 필요하다는 사실이 없다"
+    # A·B 는 토큰만으로 통과한다 — 추가 승인 절차가 없다는 것을 명시한다.
+    assert "추가 로그인·승인 절차 없음" in body
 
 
 @pytest.mark.parametrize("page", ["oauth-consent", "ai-connect"])
