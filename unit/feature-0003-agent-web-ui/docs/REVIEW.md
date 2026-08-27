@@ -5904,3 +5904,15 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
   (`run_id=t_LBtWKW0f1sBBfGK-`) · 배포본 `_load_latest_run_id_from_steps('20260827061652-5ab532d1')`
   = `('t_LBtWKW0f1sBBfGK-', False)` → **끝난 브리지 답변이 "최신 run" 으로 읽히고 있음**을 실측.
 - 배포 후 같은 호출이 `('', False)` 가 되는 것을 라이브에서 재확인(§16.3 deploy-backed 완료 기준).
+
+## REV-20260827T175500-bridge-scroll-evidence [SKIPPED:non-policy-doc] — 라이브 배포 검증 증적 기록
+
+- Related TASK: feature-0003-agent-web-ui / `TASK-20260827T160500-bridge-progress-scroll`
+- Reason: changed paths are docs + evidence 이미지만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-08-27T17:55:00+09:00
+- Human Approval Needed: no
+- 내용: 배포본 `eb6412ad` 라이브 실측(`('t_LBtWKW0f1sBBfGK-', False)` → `('', False)`, web-a/web-b)
+  + PB-0008 실 Windows Chrome 151 relay Run(도달성·서빙 baked PASS, 로그인 화면 실측 미수행 사유
+  명시) + `bin/win-browser.py` Windows host 오탐 발견을 §8.1 개선 제안으로 기록.
+- 정직성: 로그인 후 대화 화면의 스크롤 안정성은 **측정하지 않았다** — 서버측 실측·하네스로
+  대체 주장하지 않고 미수행으로 표기했다.

@@ -11851,3 +11851,10 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 | 3 | P1 | 빈 `run_id` 응답이 seen 집합을 초기화 → 뒤이은 완료 전이 영구 누락 | 빈 run 은 범위 미변경(읽기 전용 반환) + S15 |
 | 4 | P1 | 형제 하네스(`verify_progress_poll_resilience.mjs`)에 신규 helper 미주입 → `ReferenceError` 가 `detectNewRun` catch 에 삼켜져 **40/5 로 조용히 파손** | helper 추출·주입 + 추출 fail-loud 단언 → 46/0 |
 | 5 | — | 잔여 지적 없음 | — |
+
+### TASK-20260827T160500-bridge-progress-scroll — POST-DEPLOY 검증 마감
+
+- [x] 라이브 재배포(`make deploy-web`) + 전 서비스 `GIT_COMMIT=eb6412ad` 확인
+- [x] 배포본 직접 호출로 `_load_latest_run_id_from_steps` = `('', False)` 실측(web-a/web-b)
+- [x] PB-0008 실 Windows 브라우저 Run 기록(도달성·서빙 baked PASS)
+- [ ] 로그인 후 대화 화면 스크롤 안정성 실측 — **미수행**(검증용 세션·자격증명 부재, 사유 기록)
