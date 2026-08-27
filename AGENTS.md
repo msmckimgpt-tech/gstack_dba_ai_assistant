@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.48.0
+template_version: v3.49.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -603,6 +603,17 @@ AI가 위 항목에 해당하는 작업에 도달하면:
 4. 모든 비-승인 태스크가 완료되면 `REPORT.md`에 승인 대기 항목 목록을 정리하여 사람에게 전달한다.
 
 ### §12.2 사전 승인 범위 (Pre-approved Scope)
+
+> **⚠️ 배포 기본값 전환 (v3.49.0) — 아래 `deploy_scope` 규정 중 «기본값» 부분은 §16.5.1 이
+> 대체한다 (superseded).** 이제 **`deploy_scope` 의 기본값은 `included`** 다 — 선언이 없어도
+> cycle-final 후 배포까지 자율 진행한다. 근거: 배포 산출물은 대부분 git 트리에서 파생되므로
+> git 을 되돌린 뒤 재배포하는 것이 곧 rollback 경로다 (사용자 결정 2026-08-27).
+> - **opt-out**: 배포를 confirm 대상으로 되돌리려면 `FIRST_REQUEST.md`(전역) 또는
+>   `FUNCTION.md`(feature) 에 **`deploy_scope: excluded`** 를 명시한다.
+> - **유지되는 것**: 첫 배포 직전 1줄 표면화(silent 자동배포 금지), `REVIEW.md` 승인 근거 기록,
+>   그리고 **§12 Critical 게이트** — 재배포로 원복되지 않는 side-effect(파괴적 DB 마이그레이션,
+>   외부 발송 알림, 삭제된 외부 리소스)는 배포 게이트가 아니라 §12·§12.3 이 계속 잡는다.
+> - 아래 본문의 선언 위치·우선순위·발효 가시화·ground truth 규정은 그대로 유효하다.
 
 `FUNCTION.md`에 사람이 다음과 같이 사전 승인을 선언할 수 있다:
 
@@ -1865,6 +1876,11 @@ verify 대상이 되지 않는다.
 | BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **AI가 commit만** 수행, `REPORT.md`에 동기화 보류 사유 기록 |
 | 원격 저장소 미설정 | **커밋만** 수행, 원격 설정은 사람에게 위임 |
 
+> **PR 생성·배포 확장 (v3.49.0)**: 위 조건표의 첫 행(자동 동기화)에 **PR 생성**과 **배포**가
+> 포함된다 — 같은 전제 조건(BLOCKED 없음 ∧ Critical/Major 승인 대기 없음 ∧ verify PASS)
+> 아래에서 confirm 없이 진행한다. PR 머지 + cleanup 은 Step 6 이 이미 자율로 규정한다.
+> 단일 정본은 **§16.5.1**.
+
 #### Step 5: 결과 기록
 
 Git 동기화 결과를 `REPORT.md`에 기록한다.
@@ -2206,17 +2222,75 @@ AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈�
 - `자동 commit/push는 하지 않았습니다`
 - `commit 결정은 사용자에게 위임합니다`
 - `push 여부를 확인해 주세요`
+- `PR 을 생성할까요?` / `PR 을 머지해도 될까요?` (v3.49.0 — §16.5.1)
+- `배포까지 진행할까요?` / `배포는 사용자 확인 후 진행하겠습니다` (v3.49.0 — §16.5.1)
 
 허용되는 예외는 다음뿐이다:
 
 - `verify-completion` FAIL 또는 테스트 FAIL이 남아 있고 AI가 같은 cycle 안에서 복구할 수 없음
 - `BLOCKED` 항목 또는 Critical/Major 승인 대기가 `REPORT.md`에 기록됨
 - 원격 저장소가 없거나 인증/권한 문제로 push가 기술적으로 불가능함
-- 사용자가 명시적으로 "commit/push 하지 말라"고 지시함
+- 사용자가 명시적으로 "commit/push/PR/배포 하지 말라"고 지시함
 
 예외가 아니면 AI는 §16.3에 따라 commit하고, 가능한 경우 push까지 완료한 뒤 결과를
-`REPORT.md`와 최종 응답에 기록한다.
+`REPORT.md`와 최종 응답에 기록한다. cycle-final 체인 전 구간(commit → push → PR 생성 →
+PR 머지 → 배포)의 자율 경계는 **§16.5.1 이 단일 정본**이다.
 
+
+### §16.5.1 자율 실행 경계 — 단일 정본 (v3.49.0)
+
+cycle-final 체인 5단계의 자율 여부를 여기서 정의한다. §12.2·§16.3 Step 4/Step 6·§22 의
+「외부 영향 행동」 열거는 본 절과 충돌할 때 **본 절을 따른다**.
+
+**전제 조건 (5단계 공통)** — §16.3 Step 4 조건표와 동일하다. 새 조건을 추가하지 않는다:
+
+```
+BLOCKED 항목 없음  ∧  Critical/Major 승인 대기 없음  ∧  verify-completion PASS
+```
+
+**단계별 판정**:
+
+| 단계 | 판정 | 비고 |
+|---|---|---|
+| commit | **자율** | §16.3 Step 2 |
+| push | **자율** | 원격 미설정·인증 실패 시 commit 까지 + 사유 기록 |
+| **PR 생성** | **자율** (v3.49.0 전환) | 이전엔 "외부 노출" 을 근거로 confirm 대상이었다 |
+| PR 머지 + cleanup | **자율** | §16.3 Step 6. abnormal(non-MERGEABLE·dirty·non-ff) 은 자동 중단 |
+| **배포** | **자율** (v3.49.0 전환) | §12.2 `deploy_scope` 기본값 = `included`. 첫 배포 직전 1줄 표면화는 유지 |
+
+**전환 근거**:
+
+- **PR 생성**: 이전 판정의 근거였던 「전역 CLAUDE.md carve-out」이 실측 결과 **존재하지 않았다**
+  (2026-08-27 확인). 근거가 증발한 채 관성으로 남은 confirm 이었고, PR 은 close/revert 로
+  되돌아가므로 비가역 행동이 아니다.
+- **배포**: 배포 산출물은 대부분 git 트리에서 파생되므로, **git 을 되돌린 뒤 재배포하는 것이
+  곧 rollback 경로**다 (사용자 결정 2026-08-27). 즉 버전관리 자체가 배포의 원복 수단이다.
+
+**유지되는 경계 (본 절이 열지 않는 것)**:
+
+- **§12 승인 필요 항목은 그대로다.** 특히 재배포로 원복되지 않는 side-effect —
+  파괴적 DB 마이그레이션, 외부로 발송된 알림·메일, 삭제된 외부 리소스 — 는 배포 게이트가
+  아니라 **§12 Critical 게이트**가 잡는다. 배포가 자율이라는 사실이 그 안에 실린 파괴적
+  변경까지 자율로 만들지 않는다.
+- **§12.3 Critical 등급의 plan + confirm** (인증·인가·개인정보·rollback 어려운 migration).
+- **소비자 repo mutation·force-push** 등 §22 의 차단형 경계.
+
+**SKILL·persona 의 자체 보수화 금지 (MUST)**:
+
+SKILL·persona·subagent 정의 파일은 본 절의 자율 경계보다 **보수적인 계약을 자체 선언할 수
+없다**. 「자동 commit 금지」·「항상 사용자가 commit 결정」·「PR 은 기본 confirm」 같은 문구를
+SKILL 본문에 두는 것은 정책 위반이며, 발견 시 그 SKILL 을 본 절에 맞춰 교정한다.
+
+> **근거 (실측 2026-08-27)**: `entry.md` §6.7 이 「commit 권유 (자동 commit 금지) — 사용자
+> 명시 confirm 없이 commit 안 함」을, `version-upgrade.md` 가 「자동 commit 금지」를 각각
+> 자체 선언하고 있었다. 두 문구 모두 당시의 §16.3 Step 4·§16.5 를 **정면으로 위반**했으나
+> 어떤 게이트에도 걸리지 않았고, 같은 template 의 `resume.md` 는 반대로 정합했다 — 즉 한
+> template 안에서 두 SKILL 이 상반된 계약을 갖고 있었고, 사용자가 매 세션 진입에 쓰는 entry
+> 경로가 하필 보수적인 쪽이라 **매 cycle 마다 승인 요청이 재생산**됐다. 정책을 고쳐도 SKILL 이
+> 뒤집으면 소비자에게 도달하는 것은 SKILL 쪽이다.
+
+**사용자 지시 우선**: 사용자가 특정 turn·세션에 「commit/push/PR/배포 하지 말라」를 명시하면
+그 지시가 최우선이다 (§16.5 예외 4번). 본 절은 *기본값*을 정의할 뿐 사용자 지시를 덮지 않는다.
 
 ### §16.6 웹 UI 프로젝트 시각적 검증 기준
 
