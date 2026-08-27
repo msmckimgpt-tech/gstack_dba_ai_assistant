@@ -139,16 +139,27 @@ export function bindConnectModal() {
 
 let _connKnown = null;
 
-function _paintConn(connected) {
+function _paintConn(connected, listening) {
   const el = $("aiConnState");
   if (!el) return;
   _connKnown = connected;
   el.classList.remove("hidden");
-  el.dataset.state = connected ? "on" : "off";
-  el.textContent = connected ? "내 AI 연결됨" : "내 AI 연결 안 됨";
-  el.title = connected
-    ? "웹에서 보낸 질문을 연결된 AI 가 가져갑니다. 눌러서 다시 연결하거나 다른 AI 를 추가할 수 있습니다."
-    : "답변할 AI 가 없습니다. 눌러서 연결하세요.";
+  // 3상태. **연결됨 ≠ 대기 중** — 토큰은 DB 에, 러너는 프로세스에 있다. 머신을 재시작하면
+  // 러너만 사라지므로, 둘을 뭉치면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
+  if (!connected) {
+    el.dataset.state = "off";
+    el.textContent = "내 AI 연결 안 됨";
+    el.title = "답변할 AI 가 없습니다. 눌러서 연결하세요.";
+  } else if (!listening) {
+    el.dataset.state = "idle";
+    el.textContent = "AI 대기 안 함";
+    el.title = "연결은 되어 있으나 지금 듣고 있는 AI 가 없습니다"
+      + "(머신을 재시작했다면 러너가 꺼졌을 수 있습니다). 눌러서 다시 연결 정보를 받으세요.";
+  } else {
+    el.dataset.state = "on";
+    el.textContent = "내 AI 대기 중";
+    el.title = "질문을 보내면 연결된 AI 가 바로 가져갑니다.";
+  }
 }
 
 export async function refreshConnState() {
@@ -160,7 +171,7 @@ export async function refreshConnState() {
       if (el) el.classList.add("hidden");   // 로그인 전에는 말할 것이 없다
       return;
     }
-    _paintConn(!!b.connected);
+    _paintConn(!!b.connected, !!b.listening);
   } catch (_) {
     // 조회 실패는 **표시하지 않는다** — 틀린 상태를 보이느니 아무 말도 안 하는 편이 낫다.
     const el = $("aiConnState");

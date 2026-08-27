@@ -1099,6 +1099,45 @@ def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
         return False
 
 
+#: 대기 중으로 볼 수 있는 최근성. 서버 보류 상한(55초)의 두 배 남짓 — 한 번의 보류가 끝나고
+#: 다시 들어가는 사이의 공백을 '멈춤' 으로 오판하지 않을 만큼만 넉넉하게.
+_LISTENING_WINDOW_SEC = 150
+
+
+def account_is_listening(account_id: int) -> bool:
+    """이 계정의 AI 가 **지금 실제로 대기 중인가**.
+
+    ## 왜 토큰만으로는 부족한가
+
+    토큰은 DB 에 있고 러너는 프로세스다. 머신을 재시작하면 **러너만 사라진다** — 토큰은 그대로라
+    화면은 계속 "연결됨" 이라 말하고, 사용자는 아무도 듣지 않는 곳에 질문을 보낸다
+    (사용자 지적 2026-08-27: "머신이 재실행하여 첫 환경에서 다시 사용되었을 경우").
+
+    `wait_for_request` 는 호출마다 원장에 남는다. 그 최근성이 곧 **살아 있는 귀**의 증거다 —
+    추측이 아니라 관측이다.
+
+    조회 실패는 False. 여기서 True 로 넘기면 "대기 중" 이라 말해 놓고 답이 오지 않는다 —
+    연결 판정(fail-open)과 방향이 **반대**인 이유: 저쪽은 과잉 경고를, 이쪽은 헛된 기다림을 막는다.
+    """
+    if not account_id:
+        return False
+    try:
+        pg = _pg()
+        if pg is None:
+            return False
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM agent_runtime.tool_call_usage "
+                "WHERE account_id = %s AND tool = 'wait_for_request' "
+                f"  AND created_at > now() - interval '{_LISTENING_WINDOW_SEC} seconds' "
+                "LIMIT 1", (int(account_id),))
+            return cur.fetchone() is not None
+    except Exception as exc:
+        logging.getLogger(__name__).warning("[bridge] 대기 여부 조회 실패 account=%s: %r",
+                                            account_id, exc)
+        return False
+
+
 def _bridge_system_prompt(conn, *, product_id, role_id, account_id,
                           product_mode: str, conversation_id) -> str:
     """이 요청에 적용될 **5단계 시스템 프롬프트**(전역·제품·역할·계정·개인).
@@ -1851,6 +1890,7 @@ def bridge_status(request: Request) -> JSONResponse:
                 c2.close()
         except Exception:
             connected = True   # 판정 실패는 '연결됨' 으로(틀렸을 때 덜 성가신 방향)
+        listening = account_is_listening(int(account.get("id") or 0))
         return JSONResponse({
             "task_id": task_id,
             "status": status,
@@ -1858,9 +1898,14 @@ def bridge_status(request: Request) -> JSONResponse:
             "claimed_at": row[5].isoformat() if hasattr(row[5], "isoformat") else None,
             "connected": connected,
             # 화면이 한 단어로 말할 수 있게 서버가 국면을 정한다(프런트가 조합하면 갈린다).
+            "listening": listening,
+            # 'connected' 와 'listening' 은 다른 사실이다 — 토큰은 DB 에, 러너는 프로세스에 있다.
+            # 재부팅하면 러너만 사라지고, 그때 "대기 중" 이라 말하면 헛되이 기다리게 된다.
             "phase": ("done" if (bool(row[2]) or status == "submitted")
                       else "working" if row[1] is not None
-                      else "waiting" if connected else "not_connected"),
+                      else "waiting" if (connected and listening)
+                      else "not_listening" if connected
+                      else "not_connected"),
             # `answered` 는 **제출됐다** 는 뜻이고, `delivered` 는 **대화에 실렸다** 는 뜻이다.
             # 둘을 합치면 저장 실패 시 화면엔 아무것도 없는데 "답변 도착" 이라 말하게 된다
             # (codex 재리뷰 P1). 프런트는 delivered=false 면 그 사실을 사용자에게 알린다.

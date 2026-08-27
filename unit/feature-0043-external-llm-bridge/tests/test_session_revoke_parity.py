@@ -191,8 +191,9 @@ def test_indicator_exists_and_is_wired():
 
 
 def test_indicator_shows_both_states():
+    """(2026-08-27 3상태로 확장 — `test_indicator_has_three_states` 가 본체다.)"""
     js = MODAL_JS.read_text(encoding="utf-8")
-    assert "내 AI 연결됨" in js and "내 AI 연결 안 됨" in js, "한쪽 상태만 표시한다"
+    assert "내 AI 대기 중" in js and "내 AI 연결 안 됨" in js, "한쪽 상태만 표시한다"
 
 
 def test_indicator_opens_the_modal():
@@ -228,3 +229,88 @@ def test_indicator_hides_rather_than_lying():
     js = MODAL_JS.read_text(encoding="utf-8")
     body = js[js.index("export async function refreshConnState("):js.index("export function bindConnState(")]
     assert 'classList.add("hidden")' in body
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 상주 러너를 기본 경로로 · 재시작 대응 (사용자 결정 2026-08-27)
+#
+# 실측: AI 가 wait_for_request 를 10분간 반복하다(1회=도구 호출 1회) 질문을 **받은 직후**
+# 루프가 끝났다. claim 하지 않아 task 는 방치됐다. 대화형 세션은 턴 예산이 있고, 대기가 그것을
+# 태운다. 러너는 예산이 없는 일반 프로세스라 그 일이 없다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+AI_TOOLS_P = WEB_SRC / "routers" / "ai_tools.py"
+RUNNER = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py"
+
+
+def test_listening_is_measured_not_assumed():
+    """'토큰 있음' 과 '지금 듣고 있음' 은 다른 사실이다 — 재부팅하면 러너만 사라진다."""
+    body = _func(AI_TOOLS_P, "account_is_listening")
+    assert "wait_for_request" in body, "대기 호출 이력을 보지 않는다(추측이 된다)"
+    assert "tool_call_usage" in body, "관측이 아니라 다른 데서 만들어낸다"
+
+
+def test_listening_fails_closed():
+    """조회 실패를 '대기 중' 으로 넘기면 헛되이 기다리게 된다 — 연결 판정과 방향이 반대다."""
+    body = _func(AI_TOOLS_P, "account_is_listening")
+    tail = body[body.index("except Exception"):]
+    assert "return False" in tail
+
+
+def test_status_exposes_listening_separately():
+    for path, fn in ((WEB_SRC / "routers" / "oauth_as.py", "connect_status"),
+                     (AI_TOOLS_P, "bridge_status")):
+        body = _func(path, fn)
+        assert "listening" in body, f"{path.name}:{fn} 이 대기 여부를 알리지 않는다"
+
+
+def test_phase_distinguishes_connected_but_idle():
+    body = _func(AI_TOOLS_P, "bridge_status")
+    assert "not_listening" in body, "'연결됐지만 아무도 안 듣는' 국면이 없다"
+
+
+def test_indicator_has_three_states():
+    js = MODAL_JS.read_text(encoding="utf-8")
+    for label in ("내 AI 연결 안 됨", "AI 대기 안 함", "내 AI 대기 중"):
+        assert label in js, f"표시 상태 '{label}' 이 없다"
+    assert "머신을 재시작했다면" in js, "왜 대기가 끊겼는지 힌트가 없다"
+
+
+# ── 러너 재시작 대응 ─────────────────────────────────────────────────────────
+
+
+def test_runner_saves_config_for_restart():
+    """다시 챙길 것이 많을수록 **아무도 다시 띄우지 않는다**."""
+    src = RUNNER.read_text(encoding="utf-8")
+    assert "--resume" in src
+    assert "def save_conf(" in src and "def load_conf(" in src
+
+
+def test_runner_never_persists_the_token():
+    """토큰은 비밀이고 어차피 세션과 함께 죽는다 — 파일에 남길 이유가 없다."""
+    body = _func(RUNNER, "save_conf")
+    assert '"token"' not in body and "token=" not in body, "설정 파일에 토큰을 저장한다"
+    assert "0o600" in body, "설정 파일 권한을 좁히지 않는다"
+
+
+def test_runner_tells_how_to_come_back_on_401():
+    """조용히 죽으면 사용자에겐 '왜 답이 안 오지' 만 남는다."""
+    src = RUNNER.read_text(encoding="utf-8")
+    seg = src[src.index('if code == 401:'):]
+    assert "--resume" in seg[:800], "다시 띄우는 정확한 명령을 주지 않는다"
+
+
+def test_handoff_makes_the_runner_the_first_step():
+    """지시문이 러너를 **필수 1단계**로 둔다(선택 부록이 아니라)."""
+    body = _func(WEB_SRC / "routers" / "oauth_as.py", "compose_connect_handoff")
+    assert "상주 러너 (필수)" in body
+    assert body.index("상주 러너") < body.index("wait_for_request 를 직접"), (
+        "직접 대기가 러너보다 앞에 온다 — 사용자는 앞의 것을 고른다")
+    assert "턴 예산" in body, "왜 러너여야 하는지 근거가 없다(다음 사람이 되돌린다)"
+    assert "--resume" in body, "재시작 복귀 경로가 지시문에 없다"
+
+
+def test_handoff_warns_about_receiving_without_claiming():
+    """받아 놓고 멈추면 그 질문은 방치된다 — 실제로 그렇게 됐다."""
+    body = _func(WEB_SRC / "routers" / "oauth_as.py", "compose_connect_handoff")
+    assert "받아 놓고 멈추면" in body

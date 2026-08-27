@@ -2538,4 +2538,11 @@ select.admin-meta-input {
 @media (prefers-color-scheme: dark) {
   .ai-conn[data-state="on"] { color: #4ade80; background: rgba(74, 222, 128, .12); }
   .ai-conn[data-state="off"] { color: #fbbf24; background: rgba(251, 191, 36, .14); }
+/* 연결은 됐으나 아무도 듣지 않는 상태 — '연결됨' 과 뭉치면 헛되이 기다리게 된다. */
+.ai-conn[data-state="idle"] {
+  color: #92400e; border-color: rgba(146, 64, 14, .35); background: rgba(146, 64, 14, .10);
+}
+.ai-conn[data-state="idle"]::before { content: "◐ "; }
+@media (prefers-color-scheme: dark) {
+  .ai-conn[data-state="idle"] { color: #fcd34d; background: rgba(252, 211, 77, .12); }
 }
