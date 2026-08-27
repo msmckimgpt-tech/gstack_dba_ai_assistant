@@ -1846,11 +1846,7 @@ def bridge_status(request: Request) -> JSONResponse:
         try:
             c2 = conn.cursor()
             try:
-                c2.execute(
-                    "SELECT 1 FROM WebOAuthTokens WHERE AccountId=%s AND TokenType='access' "
-                    "AND RevokedAt IS NULL AND (ExpiresAt IS NULL OR ExpiresAt > NOW()) LIMIT 1",
-                    (int(account.get("id") or 0),))
-                connected = c2.fetchone() is not None
+                connected = _store.account_has_live_token(c2, int(account.get("id") or 0))
             finally:
                 c2.close()
         except Exception:

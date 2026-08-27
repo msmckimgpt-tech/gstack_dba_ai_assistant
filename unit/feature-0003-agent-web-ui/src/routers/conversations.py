@@ -78,7 +78,8 @@ def _delete_bridge_task(conn, task_id: str) -> None:
 #: 되는지**를 알러 왔다. 초기 문구는 서비스 구조를 4문단으로 설명했고, 사용자 제보로 걷어냈다.
 _BRIDGE_NOTICE_NOT_CONNECTED = (
     "답변할 AI 가 연결되어 있지 않습니다.\n\n"
-    "질문은 저장해 두었습니다. [AI 연결하기](/ai/connect)에서 연결하면 바로 처리됩니다."
+    "[AI 연결하기](/ai/connect)에서 연결한 뒤 **다시 질문해 주세요.** "
+    "이 대화 내용은 그대로 남아 있어 다음 질문에 함께 전달됩니다."
 )
 
 #: 이미 연결한 계정 — 설정은 끝났고, 남은 것은 그 AI 가 가져가는 일이다.
@@ -98,14 +99,12 @@ def _account_has_connected_ai(conn, account_id: int) -> bool:
     if not account_id:
         return False
     try:
+        import oauth_store as _store
+
         cur = conn.cursor()
         try:
-            cur.execute(
-                "SELECT 1 FROM WebOAuthTokens "
-                "WHERE AccountId=%s AND TokenType='access' AND RevokedAt IS NULL "
-                "  AND (ExpiresAt IS NULL OR ExpiresAt > NOW()) LIMIT 1",
-                (int(account_id),))
-            return cur.fetchone() is not None
+            # 인증 판정과 **같은 함수**를 쓴다 — 따로 세면 로그아웃 뒤에도 '연결됨' 이 된다.
+            return _store.account_has_live_token(cur, int(account_id))
         finally:
             cur.close()
     except Exception as exc:
@@ -226,6 +225,48 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             # dispatch 의 표준 실패 경로로 보낸다. 없으면 INSERT 실패가 HTTP 200 으로 나가
             # 프런트가 "정상 처리" 로 읽는다.
             "_http_status": 500,
+        }
+
+    # ── 연결이 없으면 **적재하지 않는다** (사용자 결정 2026-08-27) ──────────────
+    #
+    # 종전엔 연결 여부와 무관하게 큐에 넣었다. 그러면 아무도 가져갈 수 없는 질문이 쌓이고,
+    # 나중에 연결하는 순간 **밀린 것이 한꺼번에** 처리된다(실측: 같은 질문 5건 누적).
+    # 사용자가 그때 원하는 것은 "그동안 쌓인 것 전부" 가 아니라 **지금 묻는 것** 이다.
+    #
+    # 대화에는 남긴다 — 질문은 사라지지 않고, 연결 후 다시 물으면 **이전 문맥으로 함께** 간다
+    # (`_recent_conversation_context`). 그러니 버려지는 것은 '대기 항목' 이지 '내용' 이 아니다.
+    if not connected:
+        saved_ok = True
+        if conv_id:
+            try:
+                from modules.memory import save_memory_message as _save_msg0
+
+                saved_ok = bool(int(_save_msg0(
+                    conn, str(conv_id), "user", question,
+                    _bridge_user_message_meta(account, sender_username) or None) or 0))
+                conn.commit()
+            except Exception as exc:
+                log.error("[bridge] 미연결 질문 저장 실패 conv=%s: %r", conv_id, exc)
+                saved_ok = False
+            if saved_ok:
+                _bridge_save_core_message(conn, str(conv_id), "user", question,
+                                          sender_account_id=account_id or None)
+                try:
+                    _save_msg0(conn, str(conv_id), "assistant", notice_text,
+                               {"bridge": {"origin": "web", "queued": False}})
+                    conn.commit()
+                except Exception as exc:
+                    log.error("[bridge] 미연결 안내 저장 실패 conv=%s: %r", conv_id, exc)
+        log.info("[bridge] 연결 없음 — 적재하지 않음 conv=%s account=%s", conv_id, account_id)
+        return {
+            "answer": notice_text,
+            "conversation_id": conv_id or "",
+            # 대기 작업이 없으므로 **폴링하지 않는다** — 없는 task 를 5초마다 물으면 404 만 쌓인다.
+            "bridge_pending": False,
+            "bridge_connected": False,
+            "bridge_queued": False,
+            "bridge_toast": "AI 연결이 필요합니다. 연결 후 다시 질문해 주세요.",
+            "bridge_user_message_saved": bool(conv_id),
         }
 
     # ① 대기 작업 적재 → ② 사용자 질문 저장 → 저장 실패면 ①을 되돌린다.
@@ -4712,6 +4753,7 @@ async def ask(request: Request) -> JSONResponse:
             result["bridge_task_id"] = str(agent_result.get("bridge_task_id") or "")
             result["bridge_notice"] = str(agent_result.get("bridge_notice") or "")
             result["bridge_connected"] = bool(agent_result.get("bridge_connected"))
+            result["bridge_queued"] = bool(agent_result.get("bridge_queued", True))
             result["bridge_toast"] = str(agent_result.get("bridge_toast") or "")
         # worker 모드: 후처리는 워커가 수행했으므로 그 결과(첨부 목록)를 응답으로 전달(inproc 패리티
         # — 프런트 토스트/표면화). inproc 모드면 위에서 web 이 직접 materialize 한 목록을 쓴다.

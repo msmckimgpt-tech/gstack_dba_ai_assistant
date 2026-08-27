@@ -432,6 +432,37 @@ def resolve_access_token(cur, raw_token: str) -> dict[str, Any] | None:
             "session_id": session_id, "scopes": scopes}
 
 
+def account_has_live_token(cur, account_id: int) -> bool:
+    """이 계정에 **지금 실제로 통하는** access token 이 있는가.
+
+    ⚠ 판정을 여기 하나로 둔다. 종전엔 화면이 `WebOAuthTokens` 만 보고 세었는데,
+    `resolve_access_token` 은 **묶인 세션까지** 본다. 두 술어가 갈린 결과 —
+
+      로그아웃 → 세션 revoke → 인증은 막힘(401) → **그런데 화면은 "연결됨"**
+
+    사용자는 죽은 연결을 살아 있다고 안내받았다(제보 2026-08-27). 같은 질문에 두 개의 답이
+    있으면 언제든 갈리고, 갈리는 순간 느슨한 쪽이 사용자가 보는 진실이 된다.
+
+    그래서 `resolve_access_token` 과 **같은 조건**을 쓴다: 토큰 미폐기·미만료 + 세션 실재·
+    미폐기·미만료.
+    """
+    if not account_id:
+        return False
+    cur.execute(
+        "SELECT 1 FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        "WHERE t.AccountId = %s AND t.TokenType = 'access' AND t.RevokedAt IS NULL "
+        "  AND (t.ExpiresAt IS NULL OR t.ExpiresAt > NOW()) "
+        # 세션 결합 토큰은 세션이 살아 있어야 한다. `SessionId IS NULL`(세션 무관 토큰)은
+        # 그 조건이 적용되지 않는다 — 발급 축이 다르므로 여기서 배제하지 않는다.
+        "  AND (t.SessionId IS NULL OR "
+        "       (s.Id IS NOT NULL AND s.IsRevoked = 0 "
+        "        AND (s.ExpiresAt IS NULL OR s.ExpiresAt > NOW()))) "
+        "LIMIT 1",
+        (int(account_id),))
+    return cur.fetchone() is not None
+
+
 def revoke_for_session(cur, session_id: int) -> None:
     """웹 로그아웃 시 그 세션에서 파생된 토큰을 함께 죽인다(revoke 전파)."""
     cur.execute(

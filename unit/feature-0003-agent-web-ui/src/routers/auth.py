@@ -502,6 +502,31 @@ def auth_logout(request: Request) -> JSONResponse:
                 "UPDATE WebAuthSessions SET IsRevoked = 1 WHERE SessionTokenHash = %s",
                 (_hash_session_token(token),),
             )
+            # 이 세션에서 파생된 **AI 연결 토큰도 함께 죽인다**(사용자 제보 2026-08-27).
+            #
+            # 종전엔 세션만 revoke 했다. `resolve_access_token` 이 세션을 JOIN 해 보므로 인증
+            # 자체는 막혔지만, **토큰 행은 살아 있는 것처럼 남았다** — `RevokedAt IS NULL`.
+            # 그래서 "연결된 AI 가 있는가" 를 토큰 행으로 세는 화면이 죽은 연결을 살아 있다고
+            # 말했고, 사용자는 로그아웃 뒤에도 "연결됨" 안내를 받았다.
+            #
+            # `revoke_for_session` 은 이 목적으로 이미 있었는데 **아무도 부르지 않았다**
+            # (테스트만 호출). 정의와 호출이 갈리면 그 함수는 없는 것과 같다.
+            try:
+                cur.execute("SELECT Id FROM WebAuthSessions WHERE SessionTokenHash = %s",
+                            (_hash_session_token(token),))
+                _row = cur.fetchone()
+                if _row:
+                    import oauth_store as _store
+
+                    _store.revoke_for_session(cur, int(_row[0]))
+            except Exception:
+                # 세션 revoke 는 이미 끝났다(인증은 막힌다). 전파 실패로 로그아웃 자체를
+                # 실패시키지는 않는다 — 다만 화면 표시가 한동안 낙관적일 수 있다.
+                pass
+        try:
+            conn.commit()
+        except Exception:
+            pass
         cur.close()
         conn.close()
     except Exception:
