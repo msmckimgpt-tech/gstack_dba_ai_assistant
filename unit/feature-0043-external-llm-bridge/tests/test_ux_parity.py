@@ -471,7 +471,7 @@ def test_unconnected_notice_leads_with_action_not_waiting():
     assert "[AI 연결하기](/ai/connect)" in body, (
         "누를 수 있는 링크가 없다 — 경로 문자열은 사용자가 어떻게 할 수 없다")
     # 질문이 사라지지 않았다는 사실을 반드시 말한다(설정하러 가는 동안 불안하지 않게).
-    assert "대기열에 저장" in body
+    assert "저장해 두었습니다" in body
 
 
 def test_notice_avoids_builder_jargon():
@@ -518,30 +518,24 @@ CONNECT_JS = WEB_SRC / "static" / "ai-connect.js"
 def test_connect_page_explains_why_before_how():
     """'무엇을 하는 화면인지' 를 단계 설명보다 **먼저** 말한다."""
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert 'class="aic-why"' in html, "이 화면이 왜 필요한지 설명하는 블록이 없다"
-    assert html.index("aic-why") < html.index("aic-howto"), "설명이 실행 단계 뒤에 있다"
-
-
-def test_connect_page_names_real_tools():
-    """추상적인 'MCP 지원 도구' 대신 **실제 프로그램 이름**을 준다.
-
-    사용자는 자기 도구가 'MCP 를 지원하는지' 를 스스로 판정할 수 없다.
-    """
-    html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "Claude Desktop" in html and "Claude Code" in html
+    assert 'class="aic-why"' in html, "무엇을 하면 되는지 알려주는 도입부가 없다"
+    assert html.index("aic-why") < html.index("makeHandoff"), "안내가 버튼 뒤에 있다"
 
 
 def test_connect_page_tells_where_to_paste():
-    """붙여넣을 **대상**을 말한다 — 이제 그 대상은 설정 화면이 아니라 **AI 자신**이다."""
+    """붙여넣을 **대상**을 말한다 — 그 대상은 설정 화면이 아니라 **AI 자신**이다."""
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "AI 에게 그대로 붙여넣습니다" in html, "어디에 붙여넣는지 알려주지 않는다"
+    assert "AI에 붙여넣" in html, "어디에 붙여넣는지 알려주지 않는다"
 
 
 def test_connect_page_promises_the_human_is_done_after_pasting():
-    """붙여넣은 뒤로는 **사람이 할 일이 없다**고 명시한다(사용자 결정 2026-08-27)."""
+    """붙여넣은 뒤로는 **사람이 할 일이 없다**고 명시한다(사용자 결정 2026-08-27).
+
+    문구는 짧게 유지하되(슬롭 제거 2026-08-27) 이 약속 자체는 남는다 — 이게 없으면 사용자는
+    "그다음엔 뭘 해야 하지" 를 계속 찾는다.
+    """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "회원님이 하실 전부입니다" in html
-    assert "AI 가 알아서 합니다" in html, "나머지 인증을 AI 가 한다는 약속이 없다"
+    assert "AI가 알아서 합니다" in html, "나머지 인증을 AI 가 한다는 약속이 없다"
 
 
 def test_connect_page_is_a_single_flow():
@@ -561,7 +555,7 @@ def test_connect_page_glosses_token_once_and_keeps_the_word():
     '열쇠' 같은 새 이름을 만들면 정작 AI 도구 설정 화면의 `token` 칸과 매칭이 끊긴다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "비밀 문자열" in html, "토큰이 무엇인지 한 번은 설명해야 한다"
+    assert "비밀번호처럼" in html, "토큰을 어떻게 다뤄야 하는지 말하지 않는다"
     assert "열쇠" not in html, "용어를 두 벌로 만들면 사용자가 매칭에 실패한다"
 
 
@@ -584,3 +578,104 @@ def test_connect_page_dom_contract_preserved(dom_id):
     js = CONNECT_JS.read_text(encoding="utf-8")
     if dom_id in js:
         assert f'id="{dom_id}"' in html, f"{dom_id}: JS 가 참조하는데 HTML 에 없다"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 라이브 e2e 제보(2026-08-27, 다른 세션): `list_open_requests` 가 **항상 500**.
+#
+#   TypeError: record() got an unexpected keyword argument 'rows'
+#
+# 조회는 끝난 뒤 **원장 기록 단계**에서 터졌다. 대기 질문이 있든 없든 100% 실패했고,
+# `claim_request` 는 이 도구가 주는 task_id 를 요구하므로 **웹 브리지 축 전체가 끊겨** 있었다.
+#
+# 왜 못 잡았나: 내 테스트는 "도구가 등록됐는가"·"SQL 술어가 맞는가"·"권한 경계가 있는가" 를
+# 봤지만, **그 핸들러를 한 번도 끝까지 실행해 보지 않았다.** 등록과 동작은 다른 사실이다.
+#
+# 그래서 문자열이 아니라 **시그니처로** 검사한다 — 오타·이름 변경 어느 쪽이든 잡힌다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_every_ledger_record_call_matches_the_signature():
+    """`_ledger.record(...)` 호출의 키워드가 실제 시그니처와 일치하는가 — **전 호출부**.
+
+    한 곳만 고치면 다음에 같은 실수가 다른 곳에서 난다. AST 로 전수 대조한다.
+    """
+    import ast
+    import inspect
+    import sys
+
+    src_dir = str(WEB_SRC)
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import tool_ledger
+
+    valid = set(inspect.signature(tool_ledger.record).parameters) - {"pg_conn"}
+    offenders = []
+    for path in (_UNIT).rglob("*.py"):
+        if "/tests/" in str(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, "attr", None) != "record":
+                continue
+            mod = str(getattr(getattr(node.func, "value", None), "id", ""))
+            if "ledger" not in mod.lower():
+                continue
+            unknown = {k.arg for k in node.keywords if k.arg} - valid
+            if unknown:
+                offenders.append(f"{path.name}:{node.lineno} {sorted(unknown)}")
+    assert not offenders, (
+        "원장 기록 인자가 시그니처와 불일치 — 호출 시점에 TypeError 로 500 이 된다: "
+        + "; ".join(offenders))
+
+
+def test_bridge_list_records_rows_returned():
+    """대기 질문 목록이 반환 행수를 원장에 남긴다(사용량 상한의 입력)."""
+    src = _func_source(AI_TOOLS, "list_open_requests")
+    assert "rows_returned=" in src, "행수를 기록하지 않으면 상한 판정의 입력이 비어 있다"
+    assert "rows=" not in src.replace("rows_returned=", ""), "잘못된 인자명이 남아 있다"
+
+
+def test_capabilities_accepts_the_token_the_manifest_advertises():
+    """매니페스트가 안내하는 `/api/ai/capabilities` 에 `mat_` 토큰으로 도달할 수 있는가.
+
+    쿠키 전용이면 **안내받은 곳에 갈 수 없는 불일치**가 된다(라이브 제보: 토큰만 가진 AI 가 401).
+    """
+    disc = (WEB_SRC / "routers" / "ai_discovery.py").read_text(encoding="utf-8")
+    assert "def _account_from_ai_token(" in disc
+    handler = _func_source(WEB_SRC / "routers" / "ai_discovery.py", "ai_capabilities")
+    assert "_account_from_ai_token(" in handler, "토큰 축을 보지 않는다"
+    # 토큰 해석은 도구 표면과 **같은 해석기**를 써야 한다 — 두 벌이면 갈린다.
+    helper = _func_source(WEB_SRC / "routers" / "ai_discovery.py", "_account_from_ai_token")
+    assert "require_ai_token" in helper, "토큰 해석을 따로 구현했다(만료·폐기 판정이 두 벌)"
+
+
+def test_guide_lists_the_bridge_tools():
+    """가이드가 실제 서빙 도구를 다 열거하는가.
+
+    가이드만 읽은 외부 AI 는 열거되지 않은 축의 **존재 자체를 모른다**(라이브 제보 ③).
+    """
+    guide = (WEB_SRC / "static" / "ai-api-guide.md").read_text(encoding="utf-8")
+    for tool in ("list_open_requests", "claim_request", "read_task_attachment"):
+        assert tool in guide, f"가이드에 {tool} 이 없다 — 외부 AI 가 이 축을 못 찾는다"
+    assert "13종" in guide, "도구 수가 실제와 어긋난다"
+
+
+def test_guide_tool_count_matches_exposed_surface():
+    """가이드가 적은 도구 수 = 실제 노출 집합 크기. 숫자만 갱신하고 목록을 빼먹지 않게."""
+    import re
+
+    src = AI_TOOLS.read_text(encoding="utf-8")
+    p0 = re.search(r"P0_TOOLS = frozenset\(\{(.*?)\}\)", src, re.S).group(1)
+    p1 = re.search(r"P1_TOOLS = frozenset\(\{(.*?)\}\)", src, re.S).group(1)
+    structural = len(re.findall(r'"([a-z_]+)"', p0 + p1))
+    # 구조·SQL 도구 + 작업 3종(open_task/get_task_context/submit_answer) + 브리지 3종
+    expected = structural + 3 + 3
+    guide = (WEB_SRC / "static" / "ai-api-guide.md").read_text(encoding="utf-8")
+    assert f"({expected}종)" in guide, (
+        f"가이드의 도구 수가 실제({expected}종)와 다르다")

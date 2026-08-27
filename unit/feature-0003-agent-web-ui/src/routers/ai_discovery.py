@@ -695,6 +695,23 @@ def _folder_rows(account: dict[str, Any]) -> list[dict[str, Any]]:
     } for f in folders]
 
 
+def _account_from_ai_token(conn, request) -> "dict[str, Any] | None":
+    """`Authorization: Bearer mat_…` → 계정. 실패는 None(호출측이 401 을 만든다).
+
+    도구 표면(`routers/ai_tools.require_ai_token`)의 해석 로직을 그대로 재사용한다. 여기서
+    토큰을 직접 파싱하면 만료·폐기·세션 사망·scope 판정이 두 벌이 되고, 한쪽만 고쳐지는 순간
+    느슨한 쪽이 실질 경계가 된다.
+    """
+    try:
+        from routers.ai_tools import require_ai_token
+
+        ctx = require_ai_token(request, conn)
+        return ctx.get("account") if isinstance(ctx, dict) else None
+    except Exception:
+        # `_AuthError`(401/403) 포함 — 토큰이 없거나 무효면 그냥 '인증 안 됨' 이다.
+        return None
+
+
 @router.get("/api/ai/capabilities")
 def ai_capabilities(request: Request, conversation_id: str = "") -> JSONResponse:
     """외부 AI 가 **대화 품질을 조정하기 전에** 조회하는 라이브 옵션 카탈로그.
@@ -720,7 +737,13 @@ def ai_capabilities(request: Request, conversation_id: str = "") -> JSONResponse
     try:
         account = app._get_authenticated_account(conn, request)
         if not account:
-            return app._json_error("로그인이 필요합니다.", 401)
+            # `mat_`(OAuth access token) 축도 받는다 — **매니페스트가 이 URL 을 외부 AI 에게
+            # 안내한다.** 쿠키 전용으로 두면 안내받은 곳에 갈 수 없는 불일치가 된다(라이브 제보
+            # 2026-08-27: 토큰만 가진 AI 가 401 을 받음). 도구 표면과 **같은 해석기**를 쓴다 —
+            # 별도 구현은 두 벌 관리가 되고, 갈리는 순간 약한 쪽이 실질 경계가 된다.
+            account = _account_from_ai_token(conn, request)
+        if not account:
+            return app._json_error("로그인 또는 Bearer 토큰이 필요합니다.", 401)
 
         models = _model_rows(account, conn)
         products, default_pid = _product_rows(account, conn)

@@ -13,56 +13,45 @@
     <h1>내 AI 연결하기</h1>
     <p class="aic-lead" id="connectLead">확인하는 중…</p>
 
-    <!-- 단일 흐름(2026-08-27 사용자 결정): 방법 ①/② 를 사람에게 고르게 하지 않는다.
-         연결 정보를 **AI 가 읽을 지시문 한 덩어리**로 만들어 주고, 어느 방법이 되는지는
-         AI 가 스스로 시도해 판단한다. 사람이 할 일은 [만들기] → [복사] → 붙여넣기뿐이다. -->
+    <!-- 단일 흐름(2026-08-27): 연결 방법을 사람에게 고르게 하지 않는다. 연결 정보를 AI 가
+         읽을 지시문 한 덩어리로 만들어 주고, 어느 방법이 되는지는 AI 가 시도해 판단한다.
+         화면 문구는 짧게 유지한다 — 사용자는 구조 설명이 아니라 할 일을 찾으러 온다. -->
     <section id="connectFlow" class="aic-hidden">
       <p class="aic-why">
-        이 서비스는 답변을 직접 만들지 않습니다. 회원님이 쓰시는 <strong>AI 프로그램</strong>
-        (예: Claude Desktop, Claude Code)을 여기에 한 번 연결해 두면, 웹에서 보낸 질문을
-        그 AI 가 가져가 답해 줍니다.
+        아래에서 연결 정보를 만들어 쓰시는 AI에 붙여넣으면 됩니다.
+        연결 방식 선택과 인증은 AI가 알아서 합니다.
       </p>
-
-      <ol class="aic-howto">
-        <li>아래 <strong>연결 정보 만들기</strong>를 누릅니다.</li>
-        <li>만들어진 내용을 <strong>복사</strong>합니다.</li>
-        <li>쓰시는 <strong>AI 에게 그대로 붙여넣습니다.</strong>
-            <strong>여기까지가 회원님이 하실 전부입니다</strong> &mdash; 어떤 방식으로 연결할지
-            고르고 인증을 마치는 것은 <em>AI 가 알아서 합니다.</em></li>
-      </ol>
-
-      <div class="aic-note">
-        <p>만들어진 내용에는 <strong>연결 토큰</strong>이 들어갑니다. 토큰은
-           <em>이 서비스에 들어올 수 있는 비밀 문자열</em>로, <strong>회원님 권한 그대로</strong>
-           데이터를 봅니다 &mdash; 비밀번호처럼 다루시고 다른 사람에게 주지 마세요.</p>
-        <p><strong>로그아웃하면 바로 무효</strong>가 됩니다. 그리고
-           <strong>이 화면을 벗어나면 다시 볼 수 없으니</strong>, 만들면 그 자리에서 붙여넣으세요.</p>
-      </div>
 
       <div class="aic-actions" style="justify-content:flex-start">
         <button type="button" class="aic-btn aic-btn--primary" id="makeHandoff">연결 정보 만들기</button>
       </div>
 
       <div id="handoffResult" class="aic-hidden" style="margin-top:16px">
-        <p class="aic-handoff-hint">아래 내용을 <strong>그대로</strong> AI 에게 붙여넣으세요.</p>
+        <p class="aic-handoff-hint">아래 내용을 AI에 그대로 붙여넣으세요.</p>
         <div class="aic-code aic-code--block" id="handoffText"></div>
         <div class="aic-actions" style="justify-content:flex-start">
-          <button type="button" class="aic-btn aic-btn--primary" id="copyHandoff">AI 에게 줄 내용 복사</button>
+          <button type="button" class="aic-btn aic-btn--primary" id="copyHandoff">복사</button>
           <button type="button" class="aic-btn" id="copyEndpoint">주소만 복사</button>
         </div>
+      </div>
+
+      <div class="aic-note">
+        <p>연결 정보에는 <strong>토큰</strong>이 들어갑니다. 내 권한으로 데이터를 조회하므로
+           비밀번호처럼 다루고 남에게 주지 마세요.</p>
+        <p>로그아웃하면 무효가 되고, <strong>이 화면을 벗어나면 다시 볼 수 없습니다.</strong></p>
       </div>
     </section>
 
     <p class="aic-status" id="connectStatus"></p>
 
     <section id="connectLogin" class="aic-hidden">
-      <p>연결하려면 먼저 로그인해야 합니다.</p>
+      <p>먼저 로그인하세요.</p>
       <div class="aic-actions" style="justify-content:flex-start">
         <a class="aic-btn aic-btn--primary" id="loginLink" href="/?next=%2Fai%2Fconnect">로그인하러 가기</a>
       </div>
     </section>
 
-    <p class="aic-foot">잘 안 되시나요? <a href="/api/ai/guide" target="_blank" rel="noopener">자세한 연동 가이드</a>에 도구별 설정 방법과 문제 해결이 있습니다.</p>
+    <p class="aic-foot">잘 안 되면 <a href="/api/ai/guide" target="_blank" rel="noopener">연동 가이드</a>를 참고하세요.</p>
   </main>
   <script src="/static/ai-connect.js?v=dev"></script>
 </body>
