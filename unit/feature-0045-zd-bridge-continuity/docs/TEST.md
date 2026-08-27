@@ -50,9 +50,28 @@ source_of_truth: true
 > `modules` 네임스페이스가 feature-0003/0002 사이에서 갈리는 기존 환경 특성이며, `main`
 > 에서도 동일하게 재현된다(내 변경 이전 상태에서 확인). 정본 판정은 컨테이너 `make test`.
 
-### Run <TBD> (Environment: live-deploy)
-- 배포 로그의 `bridge_continuity_summary` 가 "끊김 0" 을 보고하는지
-- 배포 중 개인 AI 의 `wait_for_request` 가 오류 없이 교대하는지
+### Run 2026-08-27 (Environment: live-deploy) — **PASS**
+
+배포 `e7d54f70` (scope=all). 배포 프로세스 `EXIT=0`(파이프로 가리지 않은 실 exit).
+
+| 관측 | 결과 |
+|---|---|
+| `bridge_continuity_summary` | **"대기는 드레인으로 교대했고 진행 중 왕복은 완주했다(끊김 0)"** |
+| pre-drain (web-a) | `active_streams=0 bridge_inflight=0, 드레인된 대기=1` → 즉시 통과 |
+| pre-drain (web-b) | 동일 — 그 AI 가 web-a→web-b 로 옮겨갔다가 다시 교대(릴레이 확인) |
+| MCP 롤링 중 엣지 | `POST /api/ai/mcp` → **400**(502 아님). `상대 ext-tool-mcp-b 가 서빙` 로그와 동시 관측 |
+| 완결 판정 | `ext-tool-mcp-a/b = e7d54f70 (healthy)` — MCP 가 판정에 포함됨 |
+| 엣지 무중단 | 배포 창 `no upstreams available` **0건** |
+| 엣지 경계 | `POST /internal/bridge-drain` → **404**(엣지 차단 작동) |
+| 점유 회수 | 실행 안 됨 — `PREDRAIN_FORCED=0` 이므로 평상시 no-op 설계대로 |
+
+**직전 배포(1차)와의 대비가 이 feature 의 실증이다**: 1차에서는 상대 replica 가 구 이미지라
+드레인 창구가 없어 fallback(`브리지 축은 미확인`)을 탔고, MCP 는 단일 컨테이너라 전환 중
+`/api/ai/mcp` 가 502 였다. 2차에서는 양쪽 모두 신 코드라 드레인이 실제로 걸렸고, MCP 는
+`상대가 서빙` 하는 채로 하나씩 교체되어 그 경로가 끊기지 않았다.
+
+**부수 실증**: 새 `/livez` 가 `bridge_waiters: 1` 을 노출하는 동안 `active_streams` 는 0 이었다.
+종전 게이트가 "조용하다" 고 읽던 바로 그 상태에서 개인 AI 한 대가 대기 중이었다는 뜻이다.
 
 ### 검증이 놓쳤던 것 (REV-20260827-0001)
 

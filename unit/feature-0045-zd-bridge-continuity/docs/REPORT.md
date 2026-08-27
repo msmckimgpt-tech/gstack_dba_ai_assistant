@@ -15,7 +15,7 @@ source_of_truth: false
 코드·계약 검증은 끝났고, 남은 것은 라이브 배포 중 실측이다.
 
 ## 2. Progress
-- Planned: 라이브 배포 중 브리지 연결 유지 실측(`bridge_continuity_summary` 로그)
+- Planned: 없음 (라이브 실측 완료 — TEST.md §3 Run 2026-08-27 live-deploy PASS)
 - In Progress: 없음
 - Done: 관측·드레인·게이트 확장·MCP 2-replica·점유 회수·러너 백오프·quiesce 4축·테스트 46건
 
@@ -63,7 +63,7 @@ docker rm -f repo-ext-tool-mcp-1
 - 자동 테스트: `unit/feature-0045-zd-bridge-continuity/tests/` 46건 PASS
   (앱 계약 10 · 스파인 20 · 토폴로지 8 · 내부 창구 8)
 - 회귀: feature-0014(41) · feature-0020 · feature-0041 · feature-0043 스위트 PASS
-- 미검증 항목: 라이브 롤링 중 실제 브리지 연결 유지(배포 시점 실측)
+- 미검증 항목: 없음. 라이브 배포 `e7d54f70` 에서 끊김 0 · no-upstreams 0건 실측
 
 ## 6. Blocked Items
 - 없음
