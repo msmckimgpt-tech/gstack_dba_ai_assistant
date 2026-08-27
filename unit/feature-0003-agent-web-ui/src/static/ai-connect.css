@@ -164,3 +164,23 @@ body.aic-body {
 }
 
 .aic-foot a { color: var(--aic-accent); }
+
+/* 사용자 눈높이 개선(2026-08-27 사용자 제보) — '왜 필요한지' 와 '단계' 를 시각적으로 분리. */
+.aic-why {
+  background: rgba(0, 0, 0, .04);
+  border-left: 3px solid rgba(0, 0, 0, .18);
+  padding: 12px 14px;
+  border-radius: 6px;
+  margin: 0 0 22px;
+  line-height: 1.65;
+}
+.aic-step {
+  font-size: 1.02rem;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(0, 0, 0, .1);
+}
+@media (prefers-color-scheme: dark) {
+  .aic-why { background: rgba(255, 255, 255, .06); border-left-color: rgba(255, 255, 255, .22); }
+  .aic-step { border-bottom-color: rgba(255, 255, 255, .14); }
+}

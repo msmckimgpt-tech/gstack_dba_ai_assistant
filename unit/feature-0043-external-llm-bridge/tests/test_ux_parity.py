@@ -403,7 +403,7 @@ def test_bridge_polling_is_not_duplicated():
 def test_bridge_persists_wait_notice_as_assistant_message():
     """대기 안내가 **대화에 저장**된다 — 저장하지 않으면 화면에 질문만 남는다."""
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
-    assert '"assistant", _BRIDGE_WAIT_NOTICE' in src, (
+    assert '"assistant", notice_text' in src, (
         "대기 안내를 assistant 말풍선으로 저장하지 않는다 — 사용자에겐 '아무 일도 안 일어난' 것으로 보인다")
     assert '"placeholder": True' in src, (
         "placeholder 각인이 없으면 답변 도착 시 덮어쓸 대상을 찾을 수 없다")
@@ -411,9 +411,10 @@ def test_bridge_persists_wait_notice_as_assistant_message():
 
 def test_wait_notice_is_single_source():
     """저장 본문과 응답 `answer` 가 **같은 상수** — 갈리면 화면과 응답이 다른 말을 한다."""
-    src = CONVS.read_text(encoding="utf-8")
-    assert "_BRIDGE_WAIT_NOTICE = (" in src
-    assert '"answer": _BRIDGE_WAIT_NOTICE,' in src, "응답이 상수를 쓰지 않는다(문구 두 벌)"
+    src = _func_source(CONVS, "_enqueue_web_bridge_task")
+    # 저장 본문과 응답 `answer` 가 **같은 변수** — 갈리면 화면과 응답이 다른 말을 한다.
+    assert '"assistant", notice_text' in src
+    assert '"answer": notice_text,' in src, "응답이 같은 변수를 쓰지 않는다(문구 두 벌)"
 
 
 def test_wait_notice_not_written_to_core_store():
@@ -422,8 +423,7 @@ def test_wait_notice_not_written_to_core_store():
     넣으면 나중 LLM 문맥에 "AI 가 대기 안내를 했다" 는 가짜 turn 이 섞인다.
     """
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
-    notice_pos = src.index("_BRIDGE_WAIT_NOTICE,\n")
-    tail = src[notice_pos:]
+    tail = src[src.index('"assistant", notice_text'):]
     assert "_bridge_save_core_message(" not in tail, (
         "안내를 회수 store 에도 썼다 — LLM 문맥에 가짜 assistant turn 이 생긴다")
 
@@ -443,3 +443,128 @@ def test_placeholder_replace_is_scoped_to_one_task():
     assert "task_id" in src and "'placeholder'" in src
     assert "role = 'assistant'" in src, "역할 제한 없이 갱신하면 사용자 질문까지 덮어쓸 수 있다"
     assert "conversation_id = %s" in src, "대화 경계 없이 갱신한다"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 라이브 제보 2건째(2026-08-27): "가이드 메시지를 확인했지만, 일반적인 사용자는
+# '외부 AI 연결( /ai/connect )' 라는 의미 자체를 인지하지 못합니다."
+#
+# 맞는 지적이다. `MCP`·`/ai/connect` 는 **만든 사람의 언어**이고, 경로 문자열은 누를 수도 없다.
+# 그리고 안내가 **한 가지뿐**이라 상태와 무관하게 같은 말을 했다 — 연결이 없는 사람에게
+# "기다리세요" 는 영원히 오지 않을 것을 기다리라는 말이다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_notice_has_two_states():
+    """연결 여부에 따라 **다른 안내**를 한다 — 하나로는 둘 중 한쪽에게 반드시 틀린 말이 된다."""
+    src = CONVS.read_text(encoding="utf-8")
+    assert "_BRIDGE_NOTICE_NOT_CONNECTED = (" in src
+    assert "_BRIDGE_NOTICE_CONNECTED = (" in src
+    assert "def _account_has_connected_ai(" in src, "연결 여부를 판정하지 않는다"
+
+
+def test_unconnected_notice_leads_with_action_not_waiting():
+    """연결이 없으면 첫 줄이 **'기다리세요' 가 아니라 '설정이 필요하다'** 여야 한다."""
+    src = CONVS.read_text(encoding="utf-8")
+    body = src[src.index("_BRIDGE_NOTICE_NOT_CONNECTED = ("):src.index("#: 이미 연결한 계정")]
+    assert "연결되어 있지 않습니다" in body
+    assert "[AI 연결하기](/ai/connect)" in body, (
+        "누를 수 있는 링크가 없다 — 경로 문자열은 사용자가 어떻게 할 수 없다")
+    # 질문이 사라지지 않았다는 사실을 반드시 말한다(설정하러 가는 동안 불안하지 않게).
+    assert "대기열에 저장" in body
+
+
+def test_notice_avoids_builder_jargon():
+    """안내 본문에 `MCP` 같은 내부 용어를 쓰지 않는다."""
+    src = CONVS.read_text(encoding="utf-8")
+    for const in ("_BRIDGE_NOTICE_NOT_CONNECTED", "_BRIDGE_NOTICE_CONNECTED"):
+        start = src.index(f"{const} = (")
+        body = src[start:src.index(")\n", start)]
+        assert "MCP" not in body, f"{const}: 'MCP' 는 사용자의 언어가 아니다"
+
+
+def test_connection_probe_fails_open():
+    """조회 실패는 '연결됨' 으로 본다 — 틀렸을 때 덜 성가신 방향."""
+    src = _func_source(CONVS, "_account_has_connected_ai")
+    tail = src[src.index("except Exception"):]
+    assert "return True" in tail, (
+        "조회 실패 시 '연결 없음' 으로 단정하면 이미 연결한 사용자에게 매번 설정하라고 떠든다")
+
+
+def test_notice_decided_once_per_request():
+    """저장 본문·응답·토스트가 **같은 판정**을 쓴다(따로 조회하면 갈린다)."""
+    src = _func_source(CONVS, "_enqueue_web_bridge_task")
+    assert src.count("_account_has_connected_ai(") == 1, "연결 여부를 두 번 이상 조회한다"
+    assert "notice_text = " in src
+
+
+def test_toast_text_comes_from_server():
+    """토스트도 상태에 따라 달라진다 — 판정은 서버만 할 수 있다(토큰 조회)."""
+    src = _func_source(CONVS, "_enqueue_web_bridge_task")
+    assert '"bridge_toast"' in src
+    assert "AI 연결이 필요합니다" in src, "연결 없는 사용자에게도 '내 AI 가 처리' 라고 말한다"
+    comp = COMPOSER_JS.read_text(encoding="utf-8")
+    assert "payload.bridge_toast" in comp, "프런트가 서버 문구를 무시하고 고정 문구를 쓴다"
+
+
+# ── /ai/connect 화면도 사용자 눈높이로 (사용자 결정 2026-08-27) ────────────────
+#
+# 안내 말풍선의 링크를 눌러 도착한 화면이 또 전문 용어투성이면 안내를 고친 의미가 없다.
+
+CONNECT_HTML = WEB_SRC / "static" / "ai-connect.html"
+CONNECT_JS = WEB_SRC / "static" / "ai-connect.js"
+
+
+def test_connect_page_explains_why_before_how():
+    """'무엇을 하는 화면인지' 를 단계 설명보다 **먼저** 말한다."""
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert 'class="aic-why"' in html, "이 화면이 왜 필요한지 설명하는 블록이 없다"
+    assert html.index('aic-why') < html.index("방법 ①"), "설명이 단계 뒤에 있다"
+
+
+def test_connect_page_names_real_tools():
+    """추상적인 'MCP 지원 도구' 대신 **실제 프로그램 이름**을 준다.
+
+    사용자는 자기 도구가 'MCP 를 지원하는지' 를 스스로 판정할 수 없다.
+    """
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert "Claude Desktop" in html and "Claude Code" in html
+
+
+def test_connect_page_tells_where_to_paste():
+    """'주소만 등록하면' 이 아니라 **어디에** 넣는지 말한다."""
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert "연결/커넥터 추가" in html or "커넥터" in html, "붙여넣을 위치를 알려주지 않는다"
+
+
+def test_connect_page_glosses_token_once_and_keeps_the_word():
+    """'토큰' 이라는 말을 **버리지 않고 설명**한다.
+
+    '열쇠' 같은 새 이름을 만들면 정작 AI 도구 설정 화면의 `token` 칸과 매칭이 끊긴다.
+    """
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    assert "<code>token</code>" in html, "도구 설정의 실제 항목명을 알려주지 않는다"
+    assert "비밀 문자열" in html, "토큰이 무엇인지 한 번은 설명해야 한다"
+    assert "열쇠" not in html, "용어를 두 벌로 만들면 사용자가 매칭에 실패한다"
+
+
+def test_connect_page_no_unexplained_mcp_in_visible_text():
+    """사용자가 **보는 텍스트**에 설명 없는 `MCP` 가 없다(주석은 무관)."""
+    import re
+
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    visible = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert "MCP" not in visible, "화면 텍스트에 내부 용어가 남아 있다"
+
+
+@pytest.mark.parametrize("dom_id", [
+    "connectLead", "connectAuto", "connectEndpoint", "copyEndpoint", "connectManual",
+    "issueToken", "tokenResult", "tokenSnippet", "copySnippet", "copyToken",
+    "connectStatus", "connectLogin", "loginLink",
+])
+def test_connect_page_dom_contract_preserved(dom_id):
+    """문구를 고쳐도 **JS 가 잡는 id 는 그대로**여야 한다 — 하나라도 빠지면 버튼이 죽는다."""
+    html = CONNECT_HTML.read_text(encoding="utf-8")
+    js = CONNECT_JS.read_text(encoding="utf-8")
+    if dom_id in js:
+        assert f'id="{dom_id}"' in html, f"{dom_id}: JS 가 참조하는데 HTML 에 없다"

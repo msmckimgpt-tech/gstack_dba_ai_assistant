@@ -55,18 +55,67 @@ def _delete_bridge_task(conn, task_id: str) -> None:
             "[bridge] 적재 취소 실패 task=%s — 고아 task 가 남는다: %r", task_id, exc)
 
 
-#: 브리지 대기 안내 — **대화에 저장되는 본문**이자 동기 응답의 `answer` 다.
-#:
-#: 라이브 제보(2026-08-27): 전송해도 화면에 아무것도 나타나지 않았다. 원인은 이 안내를
-#: 응답 payload 로만 돌려주고 **대화에 저장하지 않은 것**이다. 기존 경로에서는 `agent_core`
-#: 가 답변을 저장하는데 브리지는 그 경로를 타지 않는다 — 프런트는 저장된 이력을 그리므로,
-#: 저장하지 않으면 질문만 덩그러니 남는다(토스트는 몇 초 뒤 사라져 근거가 남지 않는다).
-_BRIDGE_WAIT_NOTICE = (
-    "이 질문은 회원님의 AI(MCP 연결)가 처리합니다. 연결된 AI 가 가져가면 이 자리에 "
-    "답변이 표시됩니다.\n\n"
-    "· 아직 연결하지 않았다면 **외부 AI 연결**(`/ai/connect`) 에서 등록하세요.\n"
-    "· 연결된 AI 에게 “대기 중인 질문을 처리해줘” 라고 요청하면 즉시 가져갑니다."
+# ── 브리지 대기 안내 ──────────────────────────────────────────────────────────
+#
+# 이 문구는 **대화에 저장되는 본문**이자 동기 응답의 `answer` 다.
+#
+# 두 번의 라이브 제보로 지금 형태가 됐다.
+#
+# ① "전송했는데 아무것도 안 나온다" — 안내를 응답 payload 로만 돌려주고 대화에 저장하지
+#    않았다(프런트는 저장된 이력을 그린다). → 저장하도록 고쳤다.
+# ② "가이드는 봤지만 '외부 AI 연결(/ai/connect)' 이 무슨 뜻인지 모르겠다" — 맞는 지적이다.
+#    `MCP`·`/ai/connect` 는 **만든 사람의 언어**다. 경로 문자열은 클릭할 수도 없다.
+#
+# 그래서 두 가지를 바꿨다:
+#   · 전문 용어를 걷어내고 **무엇을 해야 하는지**를 첫 줄에 둔다.
+#   · 경로가 아니라 **누를 수 있는 링크**를 준다(메시지 렌더러가 마크다운 링크를 지원한다).
+#   · 그리고 **연결 여부에 따라 다른 말을 한다** — 연결이 없는 사람에게 "기다리세요" 는
+#     영원히 오지 않을 것을 기다리라는 말이고, 이미 연결한 사람에게 "연결하세요" 는 소음이다.
+
+#: 아직 연결된 AI 가 없는 계정 — 지금 필요한 것은 '기다림' 이 아니라 '설정' 이다.
+_BRIDGE_NOTICE_NOT_CONNECTED = (
+    "**답변할 AI 가 아직 연결되어 있지 않습니다.**\n\n"
+    "이 서비스는 답변을 직접 만들지 않습니다. 회원님이 쓰시는 **AI 프로그램**"
+    "(예: Claude Desktop, Claude Code)을 한 번 연결해 두면, 그 AI 가 질문을 가져가 답해 줍니다.\n\n"
+    "보내신 질문은 **대기열에 저장돼 있습니다.** 아래에서 연결하시면 이 질문부터 바로 처리됩니다.\n\n"
+    "👉 [AI 연결하기](/ai/connect) — 브라우저에서 1~2분이면 끝납니다."
 )
+
+#: 이미 연결한 계정 — 설정은 끝났고, 남은 것은 그 AI 가 가져가는 일이다.
+_BRIDGE_NOTICE_CONNECTED = (
+    "**연결된 AI 가 이 질문을 가져가면 여기에 답변이 표시됩니다.**\n\n"
+    "질문은 대기열에 저장돼 있습니다. 잠시 기다려도 답변이 오지 않으면, 사용 중인 AI 에게 "
+    "이렇게 말해 보세요 — “대기 중인 질문을 처리해줘”.\n\n"
+    "연결 상태를 확인하거나 다른 AI 를 추가하려면 [AI 연결 관리](/ai/connect)로 이동하세요."
+)
+
+
+def _account_has_connected_ai(conn, account_id: int) -> bool:
+    """이 계정에 **살아 있는** AI 연결(mat_ access token)이 있는가.
+
+    안내 문구를 고르는 데만 쓴다 — 권한 판정이 아니다. 그래서 조회 실패는 "연결 있음" 으로
+    본다: 확신 없이 "연결이 없습니다" 라고 단정하면, 이미 연결해 둔 사용자에게 매번 설정하라고
+    떠드는 쪽이 된다(틀렸을 때 더 성가신 방향으로 실패하지 않는다).
+    """
+    if not account_id:
+        return False
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT 1 FROM WebOAuthTokens "
+                "WHERE AccountId=%s AND TokenType='access' AND RevokedAt IS NULL "
+                "  AND (ExpiresAt IS NULL OR ExpiresAt > NOW()) LIMIT 1",
+                (int(account_id),))
+            return cur.fetchone() is not None
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] AI 연결 여부 조회 실패 account=%s — '연결됨' 으로 안내한다: %r",
+            account_id, exc)
+        return True
+
 
 
 def _bridge_attachment_csv(attachment_ids: Any) -> str | None:
@@ -160,6 +209,10 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
     task_id = "t_" + secrets.token_urlsafe(12)
     question = (message or "").strip()
     log = logging.getLogger(__name__)
+    # 한 번만 판정한다 — 저장 본문·응답 answer·토스트가 같은 문장을 써야 한다(따로 조회하면
+    # 그 사이 연결이 생기거나 사라져 화면과 토스트가 다른 말을 하게 된다).
+    connected = _account_has_connected_ai(conn, account_id)
+    notice_text = _BRIDGE_NOTICE_CONNECTED if connected else _BRIDGE_NOTICE_NOT_CONNECTED
 
     def _fail(reason: str, exc: Exception) -> dict[str, Any]:
         log.error("[bridge] %s conv=%s account=%s: %r", reason, conv_id, account_id, exc)
@@ -237,7 +290,7 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         # LLM 문맥에 "AI 가 대기 안내를 했다" 는 가짜 turn 이 섞인다.
         try:
             notice_id = int(_save_msg(
-                conn, str(conv_id), "assistant", _BRIDGE_WAIT_NOTICE,
+                conn, str(conv_id), "assistant", notice_text,
                 {"bridge": {"task_id": task_id, "origin": "web", "placeholder": True}}) or 0)
             conn.commit()
         except Exception as exc:
@@ -251,13 +304,19 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
 
     log.info("[bridge] 웹 질문 적재 task=%s conv=%s account=%s", task_id, conv_id, account_id)
     return {
-        "answer": _BRIDGE_WAIT_NOTICE,
+        "answer": notice_text,
         # 최종 JSON 조립이 `agent_result["conversation_id"]` 를 읽는다 — 비우면 프런트가
         # 대화를 식별하지 못해 폴링 대상도 잃는다.
         "conversation_id": conv_id or "",
         "bridge_pending": True,
         "bridge_task_id": task_id,
         "bridge_notice": _server_llm_blocked_message(),
+        # 프런트 토스트 문구를 **서버가 정한다**. 연결이 없는 사용자에게 "내 AI 가 처리할
+        # 질문으로 등록했습니다" 는 사실이 아니다 — 가져갈 AI 가 없다.
+        "bridge_connected": connected,
+        "bridge_toast": ("내 AI 가 처리할 질문으로 등록했습니다."
+                         if connected else
+                         "질문을 저장했습니다 — 답변하려면 AI 연결이 필요합니다."),
         # 브리지는 사용자 메시지를 이 함수에서 이미 저장했다. 후처리 단계가 다시 저장하지
         # 않도록 표시한다(중복 말풍선 방지).
         "bridge_user_message_saved": bool(conv_id),
@@ -4640,6 +4699,8 @@ async def ask(request: Request) -> JSONResponse:
             result["bridge_pending"] = True
             result["bridge_task_id"] = str(agent_result.get("bridge_task_id") or "")
             result["bridge_notice"] = str(agent_result.get("bridge_notice") or "")
+            result["bridge_connected"] = bool(agent_result.get("bridge_connected"))
+            result["bridge_toast"] = str(agent_result.get("bridge_toast") or "")
         # worker 모드: 후처리는 워커가 수행했으므로 그 결과(첨부 목록)를 응답으로 전달(inproc 패리티
         # — 프런트 토스트/표면화). inproc 모드면 위에서 web 이 직접 materialize 한 목록을 쓴다.
         if not _attach_postprocess_here:

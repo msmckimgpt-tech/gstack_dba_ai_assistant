@@ -403,7 +403,11 @@ const _BRIDGE_POLL_MAX_TICKS = 360;
 // 반환값 true = 이 응답은 브리지 대기다(호출부는 자기 성공 토스트를 띄우면 안 된다).
 export function handleBridgePending(payload, fallbackConvId, waitingToast) {
   if (!payload || !payload.bridge_pending || !payload.bridge_task_id) return false;
-  showToast(waitingToast || "내 AI 가 처리할 질문으로 등록했습니다.");
+  // 토스트 문구는 **서버가 정한 것을 우선**한다(`bridge_toast`). 연결된 AI 가 없는 사용자에게
+  // "내 AI 가 처리할 질문으로 등록했습니다" 는 사실이 아니다 — 가져갈 AI 가 없다. 그 판정은
+  // 서버만 할 수 있으므로(토큰 조회) 프런트가 문구를 고정하면 틀린 말을 하게 된다.
+  showToast(String(payload.bridge_toast || "") || waitingToast
+            || "내 AI 가 처리할 질문으로 등록했습니다.");
   const taskId = String(payload.bridge_task_id);
   const convId = String(payload.conversation_id || fallbackConvId || "");
   _rememberPendingBridgeTask(convId, taskId);

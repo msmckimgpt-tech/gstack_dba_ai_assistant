@@ -297,17 +297,38 @@ def test_console_token_refuses_when_session_is_unknown():
 
 
 def test_connect_page_warns_about_the_secret_it_shows():
+    """토큰 노출 경고 **3요소**가 있는가.
+
+    ⚠ 특정 문장이 아니라 **말해야 하는 사실**을 검사한다(2026-08-27 문구 개선에서 이 테스트가
+    깨졌다 — 뜻은 같은데 표현이 바뀌었을 뿐이었다). 문구는 사용자 눈높이에 맞춰 계속 다듬을
+    것이고, 그때마다 테스트가 깨지면 사람들은 **경고를 지우는 대신 테스트를 지운다**.
+    검사해야 하는 것은 표현이 아니라 세 가지 사실이다.
+    """
     html = _read(*_STATIC, "ai-connect.html")
-    assert "로그아웃하면" in html
-    assert "공유하지 마세요" in html or "공유하지" in html
+    assert "로그아웃하면" in html, "로그아웃 시 무효라는 사실이 없다"
+    # 타인 제공 금지 — 어떤 표현이든 이 사실은 있어야 한다.
+    assert any(k in html for k in ("공유하지", "다른 사람에게 주지", "남에게 주지")), (
+        "토큰을 남에게 주면 안 된다는 경고가 없다")
     assert "다시 볼 수 없" in html, "1회 노출이라는 사실을 알리지 않는다"
 
 
 def test_connect_page_offers_the_zero_config_path_first():
-    """MCP 를 지원하는 클라이언트는 토큰을 손으로 넣을 필요가 없다 — 그 경로를 먼저 보여준다."""
+    """토큰 없이 되는 경로(주소 등록)를 **먼저** 보여준다.
+
+    문구가 아니라 순서와 성격을 본다 — 위 테스트와 같은 이유로 표현에 묶지 않는다.
+    """
+    import re
+
     html = _read(*_STATIC, "ai-connect.html")
-    assert html.index("connectAuto") < html.index("connectManual")
-    assert "주소만 등록" in html
+    assert html.index("connectAuto") < html.index("connectManual"), (
+        "토큰을 손으로 넣는 경로가 먼저 나온다 — 대부분의 사용자에게 불필요한 수고다")
+    # 주석을 걷어낸 **사용자가 보는 텍스트**만 본다. 다음 절을 설명하는 유지보수 주석
+    # (`<!-- ② … 토큰을 손으로 넣는다 -->`)이 이 구간에 걸쳐 있어, 그대로 검사하면
+    # 화면에 없는 단어를 있다고 판정한다.
+    visible = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    auto = visible[visible.index("connectAuto"):visible.index("connectManual")]
+    assert "주소" in auto, "첫 경로가 '주소 등록' 임을 말하지 않는다"
+    assert "토큰" not in auto, "토큰 없이 되는 경로인데 토큰을 언급한다(경로 구분이 흐려진다)"
 
 
 @pytest.mark.parametrize("page", ["oauth-consent", "ai-connect"])
