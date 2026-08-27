@@ -106,6 +106,8 @@ source_of_truth: true
 | TASK-20260826T151501-ai-claude-feature-0043 | **잔여** — PB-0008 화면 시각검증(브리지 setup 불가·사유 명시) · gateway reconcile(PR #1352 병합 후) | [ ] pending |
 | TASK-20260828T070000-ai-claude-feature-0043 | 진행 스트리밍(SSE 55초) · 인터럽트 · 맥락 전환 supersede · 병렬 러너 | [ ] in-progress |
 
+| TASK-20260828T093000-ai-claude-feature-0043 | **라이브 실측 P1~P3 4건 수정** — 취소 무한 재통보 tight loop(답변 유실) · stall 오집계 · `_http:0` 연결실패 오판 · 답변 후 버튼 박제 | [x] done |
+
 ## 4. Requested Scope (요청 범위)
 
 사용자가 이 세션에서 실제로 요청한 항목 (§16.7 G1 — 완료 선언 전 항목당 1행 대조).
@@ -430,3 +432,13 @@ source_of_truth: true
 - [x] 두 값의 관계를 계약 테스트로 고정(lease 안 · lease 의 80% 이상)
 - [x] 배포본 사본 동기화(해시 일치 테스트 통과)
 - [ ] **라이브 확인** — 긴 조사가 900초에 끊기지 않는지(사용자 테스트)
+### TASK-20260828T093000 — 라이브 실측 수정 4건
+
+- status: done
+- risk: Major (라이브 tight loop + 답변 유실 경로)
+- [x] P1 취소 통보를 1회로(점유 해제) — `Status='canceled'` 는 유지
+- [x] P2 러너 stall 은 open task 가 있을 때만 집계
+- [x] P2 `_failed` 플래그 + `--check`·백오프 두 판정부 교체
+- [x] P3 대기를 지운 쪽이 `renderComposer()` 책임 + 입력 핸들러 backstop
+- [x] 회귀 9건 + 뮤테이션 역검증(점유 해제 제거 시 3건 KILL)
+- [ ] **배포 후 재실측** — 같은 시나리오(Q1 처리 중 Q2 전송)로 러너 생존·Q2 답변 도달 확인

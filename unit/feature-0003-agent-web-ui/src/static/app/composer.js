@@ -689,6 +689,10 @@ function _applyBridgePhase(phase, prev, taskId, convId) {
     // 말풍선 본문은 서버가 '처리되지 않음' 으로 바꿔 두었으므로 이력만 다시 읽으면 된다.
     _forgetPendingBridgeTask(convId, taskId);
     loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
+    // 답변 도착과 같은 이유로 여기서도 다시 그린다 — **대기를 지운 쪽이 렌더를 책임진다**.
+    // 입력 핸들러의 재렌더는 `_bridgePendingHere()` 로 게이트돼 있어, 방금 그것을 false 로
+    // 만든 이 자리에서 그리지 않으면 버튼이 '중단' 에 박제된다(라이브 실측 2026-08-28).
+    try { renderComposer(); } catch (_e) { /* 치명 아님 */ }
   }
 }
 
@@ -706,6 +710,13 @@ async function _renderBridgeAnswer(taskId, convId, delivered) {
     ? "내 AI 가 답변을 보냈습니다."
     : "답변이 도착했지만 대화에 반영하지 못했습니다. 새로고침해 주세요.");
   _forgetPendingBridgeTask(convId, taskId);
+  // 대기가 끝났으니 **컴포저를 다시 그린다** — 안 그리면 버튼이 '중단' 에 박제된다.
+  //
+  // 왜 저절로 안 되는가(라이브 실측 2026-08-28): 입력 핸들러의 재렌더는
+  // `_myAskInFlightHere() || _bridgePendingHere()` 로 게이트돼 있는데, 여기서 대기를 지우는
+  // 순간 그 술어가 **false 로 바뀐다** — 즉 화면을 고쳐 줄 트리거가 정확히 그 시점에 꺼진다.
+  // 상태를 바꾼 쪽이 렌더까지 책임진다(취소 경로의 `cancelCurrentRun` 은 이미 그렇게 한다).
+  try { renderComposer(); } catch (_e) { /* 렌더 실패가 답변 표시를 막지 않는다 */ }
 }
 
 /** 진행 중 조사 내역을 대기 말풍선 아래에 붙인다.
