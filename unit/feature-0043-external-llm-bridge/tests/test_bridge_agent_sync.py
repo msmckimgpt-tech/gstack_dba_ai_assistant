@@ -176,3 +176,60 @@ def test_runner_submits_even_on_ai_failure():
     tail = src[idx:idx + 900]
     assert "submit_answer" in src[idx:idx + 1600], "실패 시 제출 경로가 없다"
     assert "자동 안내로 대체" in tail, "실패를 사용자에게 알리지 않는다"
+
+
+# ── 러너 타임아웃 ↔ 서버 점유 lease (2026-08-28, 라이브 실측 후) ────────────────
+
+
+def _runner_const(name: str) -> float:
+    """러너 모듈을 import 하지 않고 상수만 읽는다(AST — 실행 부작용 없음)."""
+    import ast as _ast
+
+    tree = _ast.parse(CANON.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, _ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, _ast.Name) and tgt.id == name:
+                    return float(_ast.literal_eval(node.value))
+    raise AssertionError(f"bridge_agent.py 에서 상수 {name} 을 찾지 못했다")
+
+
+def _server_lease_sec() -> float:
+    import ast as _ast
+    import pathlib as _p
+
+    shared = _p.Path(__file__).resolve().parents[3] / "shared" / "bridge_tasks.py"
+    tree = _ast.parse(shared.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, _ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, _ast.Name) and tgt.id == "BRIDGE_CLAIM_LEASE_MIN":
+                    return float(_ast.literal_eval(node.value)) * 60.0
+    raise AssertionError("shared/bridge_tasks.py 에서 BRIDGE_CLAIM_LEASE_MIN 을 찾지 못했다")
+
+
+def test_ai_timeout_fits_inside_the_claim_lease():
+    """러너가 lease **밖에서** 제출하면 그 사이 다른 세션이 같은 질문을 다시 집을 수 있다.
+
+    타임아웃이 lease 를 넘으면, 답을 다 만들고도 제출이 거절되거나 같은 질문이 두 번 처리된다.
+    """
+    timeout = _runner_const("_AI_TIMEOUT_SEC")
+    lease = _server_lease_sec()
+    assert timeout < lease, (
+        f"AI 타임아웃({timeout:.0f}s)이 서버 점유 lease({lease:.0f}s)를 넘는다")
+    # 제출에 쓸 여유가 남아야 한다 — 타임아웃 직후의 submit_answer 도 lease 안에서 끝나야 한다.
+    assert lease - timeout >= 60, (
+        f"lease 여유가 {lease - timeout:.0f}s 뿐이다 — 제출이 lease 밖으로 밀릴 수 있다")
+
+
+def test_ai_timeout_uses_most_of_the_lease():
+    """너무 이르게 포기하지 않는다 — 서버가 아직 기다리는데 러너만 끊는 구간을 없앤다.
+
+    라이브 실측(2026-08-27): 900초(=lease 의 절반)에서 27단계 조사가 끊겼고, 사용자 화면에는
+    "AI 호출이 900초를 넘겨 중단했습니다" 만 남았다. 개인 AI 는 답을 만드는 중이었다.
+    """
+    timeout = _runner_const("_AI_TIMEOUT_SEC")
+    lease = _server_lease_sec()
+    assert timeout >= lease * 0.8, (
+        f"AI 타임아웃({timeout:.0f}s)이 lease({lease:.0f}s)의 80% 에 못 미친다 — "
+        "서버는 기다리는데 러너가 먼저 포기하는 구간이 남는다")
