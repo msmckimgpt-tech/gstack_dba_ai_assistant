@@ -95,7 +95,8 @@ make build
   (= `bin/deploy-web.sh --rollback`). `make deploy-all` 은 `deploy-web` 의 명시적 alias
   (feature-0020 — 스파인이 전 배포 대상 커버).
 - 정본: feature-0014(무중단 스파인) · feature-0015(워커 graceful·백업 위생) · feature-0017(빌드 게이트) ·
-  feature-0020(전 대상 확장) · feature-0039(정기 잡 인-컨테이너). 완료 판정 기준은 `../AGENTS.md` §16
+  feature-0020(전 대상 확장) · feature-0039(정기 잡 인-컨테이너) · feature-0045(브리지 연속성 — 개인 AI
+  연결·진행 중 왕복을 배포가 끊지 않도록 드레인·게이트·MCP 2-replica). 완료 판정 기준은 `../AGENTS.md` §16
   (§16.1 완료 기준 · §16.2 완료 선언 · §16.3 deploy-backed 소비자 완료 기준), 웹 UI 시각검증 기준은
   §16.6 + 실 Windows 브라우저 PB-0008.
 - AI 자율 배포: 기본 불가 (사람 승인 필요). 예외 = `FIRST_REQUEST.md` / `unit/<id>/docs/FUNCTION.md`
@@ -110,11 +111,13 @@ make build
 
 ### 9.2 서비스 정의
 - **Docker Compose**: `../docker-compose.yml`로 서비스 오케스트레이션
-- 서비스 23개(2026-08-20 `docker-compose.yml` 실측) — 데이터: `mysql` · `postgres` · `pgbouncer` ·
+- 서비스 24개(2026-08-27 `docker-compose.yml` 실측) — 데이터: `mysql` · `postgres` · `pgbouncer` ·
   `postgres-replica` · `postgres-replica-init` · `minio` · `minio-init` / 에이전트·워커: `agent` ·
   `memory-init` · `insight-worker` · `ask-worker` · `ask-worker-surge` · `ops-scheduler` / 웹·엣지:
   `web-a` · `web-b` · `caddy` / LLM: `bedrock-gateway` · `bedrock-gateway-surge` · `embed-ollama` /
-  도구·MCP: `mcp` · `gdrive-mcp` · `ext-tool-mcp` · `browser`
+  도구·MCP: `mcp` · `gdrive-mcp` · `ext-tool-mcp-a` · `ext-tool-mcp-b` · `browser`
+  (MCP 표면은 feature-0045 로 2 replica — 개인 AI 연결이 배포마다 끊기지 않도록 Caddy LB 뒤
+   one-at-a-time 롤링을 받는다)
 - 상세 볼륨/포트 설정은 `../AGENTS.md` §Docker Compose 기준 참조.
 
 ## 10. CI/CD 및 자동화

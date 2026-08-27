@@ -47,6 +47,7 @@ import shlex
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,6 +58,19 @@ _UA = "mysql-ai-bridge-agent/1"
 _WAIT_TIMEOUT_SEC = 90.0
 #: 조사·응답 생성은 오래 걸릴 수 있다(도구 여러 번 호출). 점유 lease 30분보다 짧게 잡는다.
 _AI_TIMEOUT_SEC = 900.0
+
+#: 연결이 **끊겼을 때만** 쓰는 복구 간격(feature-0045). 서버가 배포로 교체되는 몇 초 동안
+#: 연결이 실패하는데, 그때 쉬지 않고 재시도하면 초당 수천 번을 두드려 사용자 머신의 CPU 를
+#: 태운다. 대기(`wait_for_request`)에는 여전히 sleep 이 없다 — 이건 대기가 아니라 재연결이다.
+#: 상한을 15초로 둔 이유: 롤링 배포 한 replica 의 교체가 보통 그 안에 끝나므로, 복구가
+#: 지연되어 질문 인지가 늦어지는 일이 없다.
+_RECONNECT_BACKOFF_START = 1.0
+_RECONNECT_BACKOFF_MAX = 15.0
+
+#: 서버가 "배포 교대 중" 이라고 답했을 때의 **하한**. 백오프가 아니라 고정값이다 — 자라지
+#: 않으므로 인지가 늦어지지 않고, 엣지가 그 인스턴스를 후보에서 빼는 짧은 창(2s)에 호출이
+#: 폭주해 계정 호출 상한을 태우는 것만 막는다.
+_DRAINING_RETRY_FLOOR_SEC = 0.5
 
 
 def _log(msg: str) -> None:
@@ -312,6 +326,7 @@ def main() -> int:
         return 0 if not probe.get("_http") else 1
 
     _log("대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. (Ctrl+C 로 종료)")
+    backoff = 0.0
     while True:
         # ⚠ 여기에 sleep 이 없다. 대기는 서버가 한다 — 그것이 '폴링 아님' 의 실체다.
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
@@ -320,7 +335,25 @@ def main() -> int:
             _log("토큰이 무효해졌습니다(로그아웃/만료). 재발급 후 다시 실행하세요.")
             return 3
         if code:
-            _log(f"대기 실패 {code}: {res.get('error')} — 다시 대기합니다.")
+            # 서버가 배포로 교체되는 동안은 **연결 자체가 실패**한다(`_http == 0`). 종전에는
+            # 곧바로 `continue` 였는데, 그러면 서버가 없는 몇 초 동안 초당 수천 번을 재시도해
+            # 사용자 머신의 CPU 를 태운다(대기에 sleep 이 없다는 설계가, 실패 경로에서는 정확히
+            # 반대로 작용했다). **대기에는 여전히 sleep 이 없다** — 여기서 쉬는 것은 대기가
+            # 아니라 **연결 복구**다. 두 가지는 다른 일이고, 다르게 다뤄야 한다.
+            backoff = min(_RECONNECT_BACKOFF_MAX, (backoff * 2) or _RECONNECT_BACKOFF_START)
+            _log(f"대기 실패 {code}: {res.get('error')} — {backoff:.0f}초 뒤 다시 연결합니다.")
+            time.sleep(backoff)
+            continue
+        backoff = 0.0
+        if res.get("draining"):
+            # 배포 교대다. **오류가 아니므로 백오프하지 않는다** — 곧바로 다시 부르면 남은
+            # 인스턴스가 받는다. 다만 이 응답은 **즉시** 오고, 엣지가 그 인스턴스를 후보에서
+            # 빼기까지 짧은 창(health_interval 2s)이 있다. 그 창에서 sleep 0 으로 재호출하면
+            # 초당 수십~수백 회가 되어 계정 시간당 호출 상한을 태우고 429 락아웃을 만든다 —
+            # 실패 경로에서 없앤 hot loop 를 성공 경로에 다시 만드는 셈이다.
+            # 인지 지연이 무시할 만큼 짧은 하한만 둔다(백오프가 아니다 — 자라지 않는다).
+            _log("서버 인스턴스 교대 중 — 곧바로 다시 대기합니다.")
+            time.sleep(_DRAINING_RETRY_FLOOR_SEC)
             continue
         for task_id in (res.get("task_ids") or []):
             handle_one(api, str(task_id), kind, argv, args.cmd)

@@ -44,6 +44,7 @@ router = APIRouter()
 # agent 이미지가 그 경로를 COPY 하지 않아 라이브 기동이 ModuleNotFoundError 로 죽었다
 # (Dockerfile 은 feature-0002/0003/shared 만 복사). 소비자가 feature-0003 라우터뿐이므로
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
+import bridge_drain as _drain       # noqa: E402  feature-0045: 배포 연속성(대기 계상·드레인)
 import oauth_store as _store        # noqa: E402
 import session_guard as _guard      # noqa: E402
 import tool_authz as _authz         # noqa: E402
@@ -867,38 +868,57 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
     t0 = time.perf_counter()
     deadline = t0 + _WAIT_MAX_HOLD_SEC
     found: list[tuple] = []
-    while True:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "SELECT TaskId, Question, CreatedAt FROM WebAiTasks "
-                "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
-                " ORDER BY CreatedAt ASC LIMIT 20", (account_id,))
-            found = list(cur.fetchall() or [])
-        finally:
-            cur.close()
-        # ⚠ 커밋(또는 롤백)이 없으면 이 커넥션의 트랜잭션 스냅샷이 고정돼 **새로 들어온 행이
-        #   영원히 안 보인다**(REPEATABLE READ). 대기 루프에서 가장 빠지기 쉬운 함정이다.
-        try:
-            conn.commit()
-        except Exception:
-            pass
-        if found or time.perf_counter() >= deadline:
-            break
-        if await request.is_disconnected():
-            # 이미 끊긴 클라이언트를 위해 계속 두드리지 않는다.
-            return JSONResponse({"count": 0, "task_ids": [], "requests": "",
-                                 "timed_out": False, "disconnected": True})
-        await asyncio.sleep(_WAIT_TICK_SEC)
+    drained = False
+    # feature-0045: 이 대기를 **관측 가능**하게 만든다. 종전엔 무중단 스파인의 pre-drain
+    # 게이트가 이 대기를 전혀 보지 못해, 개인 AI 가 붙어 있는 replica 를 "조용하다"고 읽고
+    # 그대로 내렸다. 다만 대기는 **기다릴 대상이 아니라 비울 대상**이다(아래 드레인 분기).
+    with _drain.waiting():
+        while True:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT TaskId, Question, CreatedAt FROM WebAiTasks "
+                    "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
+                    " ORDER BY CreatedAt ASC LIMIT 20", (account_id,))
+                found = list(cur.fetchall() or [])
+            finally:
+                cur.close()
+            # ⚠ 커밋(또는 롤백)이 없으면 이 커넥션의 트랜잭션 스냅샷이 고정돼 **새로 들어온 행이
+            #   영원히 안 보인다**(REPEATABLE READ). 대기 루프에서 가장 빠지기 쉬운 함정이다.
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            if found or time.perf_counter() >= deadline:
+                break
+            # feature-0045: 이 replica 가 곧 교체된다(드레인). 여기서 계속 붙들고 있으면 그
+            # 연결이 recreate 로 **끊기고**, 클라이언트에겐 오류로 보인다. 대신 지금 정상
+            # 반환하면 호출측이 곧바로 다시 부르고, 그 호출은 엣지가 살아 있는 replica 로
+            # 보낸다 — 사용자 관점에서 아무 일도 일어나지 않은 것과 같다.
+            if _drain.is_draining():
+                drained = True
+                break
+            if await request.is_disconnected():
+                # 이미 끊긴 클라이언트를 위해 계속 두드리지 않는다.
+                return JSONResponse({"count": 0, "task_ids": [], "requests": "",
+                                     "timed_out": False, "disconnected": True})
+            await asyncio.sleep(_WAIT_TICK_SEC)
 
     waited_ms = int((time.perf_counter() - t0) * 1000)
     if not found:
         # 빈 대기도 원장에 남긴다 — 남기지 않으면 "AI 가 붙어 있었는가" 를 사후에 알 수 없다.
         _safe_record(account, ctx, tool="wait_for_request", outcome="ok",
                      latency_ms=waited_ms, rows_returned=0)
-        return JSONResponse({"count": 0, "task_ids": [], "requests": "",
-                             "timed_out": True, "waited_ms": waited_ms,
-                             "next": "곧바로 다시 wait_for_request 를 호출하면 된다(간격 불필요)."})
+        body = {"count": 0, "task_ids": [], "requests": "",
+                "timed_out": True, "waited_ms": waited_ms,
+                "next": "곧바로 다시 wait_for_request 를 호출하면 된다(간격 불필요)."}
+        if drained:
+            # **오류가 아니다.** 배포로 이 replica 가 교대하는 중이라는 사실을 그대로 알린다 —
+            # 호출측이 이것을 실패로 읽으면 백오프에 들어가 그만큼 인지가 늦어진다.
+            body["draining"] = True
+            body["next"] = ("이 서버 인스턴스가 배포 교대 중이라 대기를 정상 종료했습니다. "
+                            "곧바로 다시 호출하면 다른 인스턴스가 이어받습니다(간격 불필요).")
+        return JSONResponse(body)
 
     lines = [f"- task_id={r[0]}  ({r[2]})\n  {str(r[1] or '')[:500]}" for r in found]
     marked = _guard.wrap_tool_output(

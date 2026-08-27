@@ -171,15 +171,47 @@ if _SDK == 1 and not hasattr(_Server, "run_streamable_http_async"):  # pragma: n
         "`pip install -U 'mcp>=1.9'` 로 올리세요.\n")
     raise SystemExit(2)
 
-# v1 은 바인딩을 생성자 설정으로, v2 는 `run()` 인자로 받는다.
-if _SDK == 2:
-    mcp = _Server("mysql-ai-tools-http", instructions=_INSTRUCTIONS)
-    _RUN_KW: dict[str, Any] = {"host": _BIND, "port": _PORT,
-                               "streamable_http_path": _HTTP_PATH}
-else:  # pragma: no cover — v1 경로(구 SDK 사용자)
-    mcp = _Server("mysql-ai-tools-http", instructions=_INSTRUCTIONS,
-                  streamable_http_path=_HTTP_PATH, port=_PORT, host=_BIND)
-    _RUN_KW = {}
+# feature-0045: replica 가 둘이 되면 **세션 친화성**이 문제가 된다. streamable-http 의 기본
+# 모드는 세션 상태를 프로세스에 들고 있어서, LB 가 다음 요청을 다른 replica 로 보내면 그
+# 세션을 모르고 **404 `Session not found`** 를 낸다(SDK `streamable_http_manager`). 이 도구
+# 표면은 매 호출이 Bearer 토큰으로 독립 인증되므로 세션에 실을 상태가 없다 — stateless 로
+# 띄우면 replica 간 이동이 무해해지고, 배포 중 교체도 클라이언트에게 보이지 않는다.
+#
+# ⚠ **인자가 사는 자리가 SDK 버전마다 다르다**(적대 리뷰가 라이브 컨테이너에서 실측):
+#   · v2(`MCPServer`, 설치본 mcp 2.1.1): 생성자에 **없다**. `run_streamable_http_async()` /
+#     `streamable_http_app()` 의 kwarg 다 → `mcp.run(...)` 으로 넘긴다.
+#   · v1(`FastMCP`): 생성자 인자.
+# 초판은 생성자에만 시도하고 `TypeError` 를 WARN 으로 삼켰는데, 그러면 **조용히 stateful 로
+# 뜬다** — 2-replica LB 뒤에서 요청의 절반이 세션 404 로 죽는다(배포와 무관한 평시 결함,
+# 단일 컨테이너였던 종전보다 나쁘다). 삼키지 않고 자리를 정확히 맞춘다.
+_STATELESS = str(os.getenv("EXT_TOOL_MCP_STATELESS", "1")).lower() not in ("0", "false", "no", "off")
+
+
+def _server_kwargs() -> "tuple[dict[str, Any], dict[str, Any]]":
+    """(생성자 kwargs, run kwargs). stateless 를 **그 SDK 가 실제로 받는 자리**에 놓는다."""
+    init_kw: dict[str, Any] = {"instructions": _INSTRUCTIONS}
+    run_kw: dict[str, Any] = {}
+    if _SDK == 2:
+        run_kw.update(host=_BIND, port=_PORT, streamable_http_path=_HTTP_PATH)
+        if _STATELESS:
+            run_kw["stateless_http"] = True
+    else:  # pragma: no cover — v1 경로(구 SDK 사용자)
+        init_kw.update(streamable_http_path=_HTTP_PATH, port=_PORT, host=_BIND)
+        if _STATELESS:
+            init_kw["stateless_http"] = True
+    return init_kw, run_kw
+
+
+_INIT_KW, _RUN_KW = _server_kwargs()
+try:
+    mcp = _Server("mysql-ai-tools-http", **_INIT_KW)
+except TypeError as _exc:  # pragma: no cover — SDK 계약이 또 바뀐 경우
+    # **삼키지 않는다.** 조용히 stateful 로 뜨면 2-replica 에서 세션 404 가 절반씩 난다 —
+    # 그 실패는 배포가 아니라 사용자 요청에서 나타나고, 원인이 여기라는 단서가 없다.
+    sys.stderr.write(
+        f"[ext-tool-mcp-http] FATAL: 서버 생성 인자가 설치된 mcp SDK 와 맞지 않습니다({_exc}). "
+        "stateless 배선이 깨진 채 뜨면 2-replica 에서 세션이 갈립니다 — 기동을 중단합니다.\n")
+    raise SystemExit(2)
 
 
 def _bearer_from_context(ctx: Any) -> str:
@@ -223,7 +255,18 @@ def _post(path: str, payload: dict[str, Any], ctx: Any) -> str:
                     return json.dumps({"error": "response_too_large"}, ensure_ascii=False)
                 return raw.decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
-            # upstream 이 살아서 판정한 결과 — 다른 replica 로 넘기지 않는다.
+            # feature-0045: **드레인은 판정이 아니라 교대다.** 그 replica 는 곧 교체되며 이
+            # 요청을 처리할 의사가 없다고 말한 것이므로 다음 후보로 넘긴다. 이 분기가 없으면
+            # 어댑터는 목록의 첫 replica(web-a)를 고집하고, 그 replica 가 드레인된 배포에서는
+            # 모든 도구 호출이 503 으로 실패한다 — 무중단을 위해 만든 신호가 정반대로 작동한다.
+            if e.code == 503 and str(e.headers.get("X-Bridge-Draining", "") or "").strip() == "1":
+                last_err = "upstream draining"
+                try:
+                    e.read(_MAX_BYTES)
+                except Exception:  # noqa: BLE001 — 본문은 진단용이라 실패해도 무해
+                    pass
+                continue
+            # 그 외 HTTP 오류는 upstream 이 살아서 판정한 결과 — 다른 replica 로 넘기지 않는다.
             detail = _defang(e.read(_MAX_BYTES).decode("utf-8", "replace")[:1000])
             return json.dumps({"error": f"HTTP {e.code}", "detail": detail}, ensure_ascii=False)
         except Exception as e:  # noqa: BLE001 — 연결 실패만 다음 후보로

@@ -69,9 +69,14 @@ _STUBS = textwrap.dedent("""\
 
 
 # 블록 **뒤** 스텁 — 여기 있어야 스크립트의 실제 정의를 덮는다(앞에 두면 반대로 덮인다).
+# feature-0045: `bridge_active_total` 은 게이트의 **네 번째 축**이다(브리지로 처리 중인 작업).
+# 기본 스텁을 0(조용함)으로 두어 기존 시나리오의 의미를 보존하고, 이 축 자체의 동작은
+# feature-0045 테스트가 따로 검증한다. `server_llm_blocked` 는 실행 모드 분기에만 쓰인다.
 _POST_STUBS = textwrap.dedent("""\
     ask_execution_mode() { echo "${MODE_STUB:-worker}"; }
     stale_running_ask_jobs() { echo "${STALE_STUB:-0}"; }
+    bridge_active_total() { echo "${BRIDGE_STUB:-0}"; }
+    server_llm_blocked() { echo "${LLM_BLOCKED_STUB:-no}"; }
     """)
 
 

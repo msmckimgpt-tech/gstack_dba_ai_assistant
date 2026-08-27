@@ -228,7 +228,7 @@ def test_anonymous_mcp_401_is_answered_by_the_app_not_a_fixed_host():
     assert "{host}" not in code.split("header_up Host")[0], \
         "검증 없이 요청 Host 를 되비춘다"
     # 익명은 web 으로, 인증된 요청만 ext-tool-mcp 로 — 순서가 뒤집히면 익명이 MCP 에 닿는다.
-    assert code.index("web-a:8000") < code.index("ext-tool-mcp:8971")
+    assert code.index("web-a:8000") < code.index("ext-tool-mcp-a:8971")
 
     tools = _read("unit", "feature-0003-agent-web-ui", "src", "routers", "ai_tools.py")
     assert 'def mcp_unauthenticated(' in tools

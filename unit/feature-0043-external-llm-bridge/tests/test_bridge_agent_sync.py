@@ -31,7 +31,7 @@ def test_runner_has_no_third_party_imports():
 
     tree = ast.parse(CANON.read_text(encoding="utf-8"))
     stdlib = {
-        "argparse", "json", "os", "shlex", "ssl", "subprocess", "sys",
+        "argparse", "json", "os", "shlex", "ssl", "subprocess", "sys", "time",
         "urllib", "urllib.error", "urllib.parse", "urllib.request", "__future__",
     }
     external = []
@@ -46,13 +46,37 @@ def test_runner_has_no_third_party_imports():
 
 
 def test_runner_does_not_poll():
-    """러너에 sleep·간격이 없어야 한다 — 대기는 서버가 한다(사용자 요구: 폴링 금지)."""
+    """**대기**에 sleep·간격이 없어야 한다 — 대기는 서버가 한다(사용자 요구: 폴링 금지).
+
+    feature-0045 로 계약이 한 겹 정밀해졌다. 종전엔 파일 전체에서 `sleep` 을 금지했는데, 그
+    금지가 **연결 실패 경로까지** 덮고 있었다: 서버가 배포로 교체되는 몇 초 동안 러너는
+    초당 수천 번을 재시도하며 사용자 머신의 CPU 를 태웠다(무한 busy-loop).
+
+    대기와 재연결은 다른 일이다. 그래서 금지 대상을 **간격 있는 대기**로 좁히되,
+    허용되는 sleep 은 재연결 백오프 **하나뿐**임을 함께 고정한다 — 넓게 풀면 그 틈으로
+    주기 폴링이 돌아온다.
+    """
     src = CANON.read_text(encoding="utf-8")
     code = "\n".join(l for l in src.split("\n")
                      if l.strip() and not l.strip().startswith("#"))
-    assert "time.sleep" not in code and "sleep(" not in code, (
-        "러너가 잠들며 기다린다 — 그것이 폴링이고, 간격이 곧 환경 차이다")
     assert "wait_for_request" in code, "블로킹 대기 도구를 쓰지 않는다"
+
+    sleeps = sorted(l.strip() for l in code.split("\n") if "sleep(" in l)
+    assert sleeps == ["time.sleep(_DRAINING_RETRY_FLOOR_SEC)", "time.sleep(backoff)"], (
+        f"허용되지 않은 sleep 이 있다: {sleeps}. 러너의 sleep 은 **정확히 둘**이다 — "
+        "연결 복구 백오프와 배포 교대 하한. 대기 자체에 간격을 두면 그것이 폴링이고, "
+        "간격이 곧 환경 차이다")
+    # 백오프는 연결 실패에서만 자란다. 정상 응답 경로가 이 값을 건드리면 대기가 느려진다.
+    assert "backoff = 0.0" in code, "성공 시 백오프를 되돌리지 않으면 지연이 누적된다"
+    assert "_RECONNECT_BACKOFF_MAX" in code, "백오프 상한이 없으면 복구가 무한정 늦어진다"
+    # 교대 하한은 **자라지 않는다**(백오프가 아니다). 자라면 배포마다 인지가 점점 늦어진다.
+    floor = next(l for l in code.split("\n") if "_DRAINING_RETRY_FLOOR_SEC =" in l)
+    val = float(floor.split("=")[1].strip())
+    assert 0 < val <= 1.0, (
+        f"교대 하한이 {val}s 다 — 1초를 넘으면 질문 인지가 체감될 만큼 늦어지고, 0 이면 "
+        "엣지가 후보를 빼기 전 2초 창에서 호출이 폭주해 계정 상한을 태운다")
+    # 사용자가 대기 간격을 지정할 수 있으면 그 값이 곧 환경 차이다(러너에는 그런 인자가 없다).
+    assert "--poll" not in code, "대기 간격 인자가 생겼다 — 환경 차이를 만든다"
 
 
 def test_runner_covers_every_runtime():
