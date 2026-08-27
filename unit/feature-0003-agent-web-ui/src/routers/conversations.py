@@ -251,6 +251,9 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             if saved_ok:
                 _bridge_save_core_message(conn, str(conv_id), "user", question,
                                           sender_account_id=account_id or None)
+                # 연결이 없어 답변은 없어도 **질문은 남는다** — 제목도 함께 붙인다.
+                # 안 붙이면 사이드바에 "새 대화" 만 여러 줄 쌓여 서로 구분되지 않는다.
+                app._conv_apply_auto_topic(conn, str(conv_id), question)
                 try:
                     _save_msg0(conn, str(conv_id), "assistant", notice_text,
                                {"bridge": {"origin": "web", "queued": False}})
@@ -326,6 +329,14 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         # 취소했을 때 회수 store 에만 유령 turn 이 남는다.
         _bridge_save_core_message(conn, str(conv_id), "user", question,
                                   sender_account_id=account_id or None)
+
+        # **대화 제목을 지금 붙인다**(사용자 제보 2026-08-27 — 제목이 "새 대화" 로 굳었다).
+        #
+        # 서버 LLM 경로는 `agent_core._try_update_topic` 이 첫 메시지를 질문 앞머리로 즉시
+        # 붙이고 이후 턴마다 LLM 으로 다시 뽑았다. 브리지는 그 함수를 타지 않는다 — 그래서
+        # 첫 축(질문 기반)은 여기서, 맥락 축(요약 갱신)은 답변 제출 시 개인 AI 의 제안으로
+        # 채운다. 이 자리를 답변까지 미루면 질문을 보낸 직후의 사이드바가 구분되지 않는다.
+        app._conv_apply_auto_topic(conn, str(conv_id), question)
 
         # **대기 안내를 assistant 말풍선으로 남긴다**(라이브 제보 2026-08-27).
         #

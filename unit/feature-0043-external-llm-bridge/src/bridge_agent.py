@@ -53,6 +53,10 @@ import urllib.request
 
 _UA = "mysql-ai-bridge-agent/1"
 
+#: 답변 끝에서 대화 제목을 실어 오는 한 줄 규약. CLI 런타임은 stdout 하나뿐이라 별도 채널이
+#: 없다 — 제출 전에 이 줄을 떼어내므로 사용자 화면에는 남지 않는다.
+_TITLE_MARK = "#TITLE:"
+
 #: 서버가 최대 55초 보류한다. 그보다 넉넉히 잡아야 **정상 대기**를 타임아웃으로 오인하지 않는다.
 _WAIT_TIMEOUT_SEC = 90.0
 #: 조사·응답 생성은 오래 걸릴 수 있다(도구 여러 번 호출). 점유 lease 30분보다 짧게 잡는다.
@@ -195,17 +199,37 @@ def compose_prompt(api: Api, task: dict) -> str:
     parts += [
         "너는 사내 DB 질의 어시스턴트다. 아래 사용자 질문에 답하라.",
         "",
+        # ⚠ 본문 형태를 **정확히** 준다. 종전 예시는 `task_id` 가 없고 인자를 `arguments` 로
+        #   감싸지 않아, 그대로 따르면 400("task_id 가 필요합니다") 또는 "schema_name과
+        #   table_name은 필수" 만 돌아왔다 — 러너 경로의 조사가 통째로 실패하는 형태였다
+        #   (codex REV-20260828T040000 P1).
         "필요하면 이 도구들을 HTTP 로 직접 호출해 실제 DB 를 조사하라"
-        " (POST 로 JSON 본문, 헤더에 Authorization: Bearer <아래 토큰>):",
-        f"  {api.base}/api/ai/tools/list_schemas        {{}}",
-        f"  {api.base}/api/ai/tools/describe_schema     {{\"schema_name\":\"...\"}}",
-        f"  {api.base}/api/ai/tools/describe_table      {{\"schema_name\":\"...\",\"table_name\":\"...\"}}",
-        f"  {api.base}/api/ai/tools/search_tables       {{\"keyword\":\"...\"}}",
-        f"  {api.base}/api/ai/tools/execute_sql         {{\"sql\":\"SELECT ...\"}}",
+        " (POST · JSON 본문 · 헤더에 Authorization: Bearer <아래 토큰>).",
+        f"  공통 본문 = {{\"task_id\":\"{task.get('task_id')}\","
+        " \"reason\":\"지금 이걸 왜 조사하는지 한 문장\", \"arguments\":{...}}",
+        f"  {api.base}/api/ai/tools/list_schemas      arguments: {{}}",
+        f"  {api.base}/api/ai/tools/describe_schema   arguments: {{\"schema_name\":\"...\"}}",
+        f"  {api.base}/api/ai/tools/describe_table    arguments:"
+        " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
+        f"  {api.base}/api/ai/tools/search_tables     arguments: {{\"keyword\":\"...\"}}",
+        f"  {api.base}/api/ai/tools/get_table_indexes arguments:"
+        " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
+        f"  {api.base}/api/ai/tools/get_foreign_keys  arguments:"
+        " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
+        f"  {api.base}/api/ai/tools/execute_sql       arguments: {{\"sql\":\"SELECT ...\"}}",
         f"  토큰: {api.token}",
+        "",
+        # 조사 내역은 사용자 화면의 「실행 단계」에 그대로 그려진다. 사유가 없으면 서버가
+        # 도구의 일반적 목적으로 채우는데, 그건 *이 질문에서의* 이유가 아니다.
+        "`reason` 은 매 호출에 넣어라 — 사용자 화면의 실행 단계에 「어떤 이유로 → 어떤 작업」"
+        " 으로 표시된다.",
         "",
         "추측하지 말고 조사한 사실만 쓰라. 확인하지 못한 것은 '미확인' 이라고 밝혀라.",
         "답변만 출력하라(머리말·맺음말 없이).",
+        # 제목 축: 러너는 CLI 의 stdout 만 받으므로 별도 채널이 없다. 마지막 한 줄을 규약으로
+        # 삼고 제출 전에 떼어낸다 — 마커가 없으면 답변은 그대로다(파싱 실패가 답을 망치지 않음).
+        f"답변의 **맨 마지막 줄**에 `{_TITLE_MARK} <이 대화를 요약한 30자 안팎의 제목>` 을"
+        " 한 줄 덧붙여라. 이 줄은 사용자에게 보이지 않고 대화 제목으로만 쓰인다.",
     ]
     if ctxt:
         parts += ["", "── 이전 대화 ──", ctxt]
@@ -219,6 +243,31 @@ def compose_prompt(api: Api, task: dict) -> str:
         parts += ["", "── 사용자 요청 품질 ──", want]
     parts += ["", "── 질문 ──", q]
     return "\n".join(parts)
+
+
+def split_title(answer: str) -> tuple[str, str]:
+    """답변에서 `#TITLE:` 마지막 줄을 떼어 `(본문, 제목)` 으로 가른다.
+
+    마커가 없으면 본문은 **손대지 않는다** — 규약을 지키지 않는 런타임이 있어도 답변이
+    상하지 않아야 한다(제목이 없을 뿐이다). 마지막 줄만 본다: 중간에 같은 문자열이 있으면
+    그건 답변 내용이지 제목이 아니다.
+    """
+    body = str(answer or "")
+    lines = body.rstrip().split("\n")
+    if not lines:
+        return body, ""
+    tail = lines[-1].strip()
+    # `#` 를 요구한다 — `lstrip("#")` 로 느슨하게 받으면 답변의 정상적인 마지막 줄
+    # `Title: 실제 데이터 열` 까지 제목으로 오인해 **본문에서 지운다**(codex P2).
+    if not tail.upper().startswith(_TITLE_MARK.upper()):
+        return body, ""
+    rest = "\n".join(lines[:-1]).rstrip()
+    if not rest:
+        # 제목 줄이 전부라면 떼어낼 수 없다 — 떼면 빈 답변이 되어 제출이 400 으로 거절되고
+        # 사용자 화면에는 대기 말풍선만 남는다. 제목을 포기하고 본문을 지킨다.
+        return body, ""
+    title = tail[len(_TITLE_MARK):].strip().strip("\"'`").strip()
+    return rest, title[:120]
 
 
 # ── 한 건 처리 ───────────────────────────────────────────────────────────────
@@ -254,9 +303,12 @@ def handle_one(api: Api, task_id: str, kind: str, argv: list[str], custom: str |
         answer = (answer or "내 AI 가 빈 응답을 돌려주었습니다.") + \
             "\n\n(이 답변은 연결된 AI 에서 생성하지 못해 자동 안내로 대체된 것입니다.)"
 
-    res = api.call("submit_answer",
-                   {"task_id": task_id, "answer": answer, "source_tasks": [task_id]},
-                   timeout=120.0)
+    # 제목 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
+    answer, title = split_title(answer)
+    payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
+    if title:
+        payload["title"] = title
+    res = api.call("submit_answer", payload, timeout=120.0)
     if res.get("_http"):
         _log(f"{task_id}: 제출 실패 {res.get('_http')} {res.get('error')}")
         return False
