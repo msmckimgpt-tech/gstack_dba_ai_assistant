@@ -115,6 +115,13 @@ source_of_truth: true
 - [x] 개인 머신 **환경 제한 최소화 · 별도 종속 패키지 설치 없이 · API 를 통한 제공** — 산출물: 주 경로 URL+토큰 등록만(어댑터 등록 테스트로 확인), REST `curl` 가능, `bridge_runner.py` stdlib 전용(AST 잠금)
 - [x] cycle 종료 후 **바로 배포** — 산출물: `0b2b4435` 라이브 롤아웃 완료(web-a/b·ask/insight-worker·ops-scheduler·ext-tool-mcp 전 서비스 커밋 일치). gateway reconcile 만 스모크 전제 갱신(PR #1352) 후 완결 예정 — 앱 게이트가 정본이라 현재도 계정은 사용되지 않는다(라이브 실측)
 
+### 2026-08-28 세션 요청 (P0-T)
+
+- [x] **모델과 추론수준이 정합하지 않는 이슈 수정** — 산출물: 원인 확정(화면 값이 서비스 내부 alias 라 어떤 CLI 도 모름 · 기본값 haiku 이므로 사실상 전량 폴백) + 전달·적재·러너 경로 제거. 회귀 잠금 `test_ux_parity.py` 4건
+- [x] **연결된 AI 에 따른 능동적 재구성** — 판정: 서버가 런타임 종류를 알 수 없어(MCP 어댑터 별도 컨테이너·`clientInfo` 부재) 재구성 불가. 사용자 결정으로 **재구성 대신 제거**. 산출물: `model_selector: "hidden"` 계약 + 컴포저 숨김 + 메뉴 가드
+- [x] **제어 제한되면 브라우저에서 제거(숨김)** — 산출물: 카탈로그·화면·전송·적재 4지점 동시 차단. 게이트 해제 시 복원(이중 계약 테스트 `test_model_catalog_bridge_mode.py` 3건 · 조건 반전 뮤테이션 KILL)
+- [ ] **화면 확인** — 사용자 결정(2026-08-28)으로 배포 후 **사용자 육안확인**에 위임. AI 는 PB-0008 브리지 복구 + 라이브 도달(status 200)까지 실측
+
 ## 5. Next Action
 
 병합 → 배포(`deploy_scope: included`) → **POST-DEPLOY PB-0008 실 Windows 브라우저 시각검증**
@@ -222,6 +229,16 @@ source_of_truth: true
 - [x] 갱신 3시점(로드·발급 직후·탭 복귀), 폴링 없음
 - [x] 실패 시 침묵(틀린 상태 미표시)
 - [ ] **라이브 확인** — 표시가 실제 연결 상태를 따라가는가(사용자 테스트)
+
+### TASK-20260828T060000-bridge-model-selector — 모델·추론 조작면 제거 (P0-M supersede)
+- status: done
+- risk: Major (사용자 대면 조작면 제거 · 카탈로그 응답 계약 변경)
+- [x] 카탈로그가 차단 상태에서 `model_selector: "hidden"` + 빈 목록 반환(미인증 응답은 불변)
+- [x] 컴포저 모델·추론 항목 숨김 + 메뉴 열기 가드(키보드·직접 호출 우회 차단)
+- [x] 전송(`sendPrompt`)·재답변(`_submitMessageEdit`) 에서 model·reasoning_level 제외
+- [x] 브리지 적재·`claim_request`·러너에서 모델/추론 경로 제거(컬럼은 이력으로 보존)
+- [x] 이중 계약 테스트 — 차단 시 숨김 · 해제 시 복원(반환값 + 배선 양쪽), 조건 반전 뮤테이션 KILL
+- [ ] **라이브 확인** — 화면에서 두 항목이 사라지고 전송이 정상인가(PB-0008)
 
 ### TASK-20260828T060000 — 상주 러너 기본화 · 대기 여부 관측
 - status: done

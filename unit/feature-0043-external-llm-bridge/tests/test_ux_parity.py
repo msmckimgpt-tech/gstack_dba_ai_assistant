@@ -56,6 +56,32 @@ def _func_source(path: pathlib.Path, name: str) -> str:
     raise AssertionError(f"{path.name}: 함수 {name} 를 찾지 못했다(이름이 바뀌었나?)")
 
 
+def _js_func_source(path: pathlib.Path, name: str) -> str:
+    """JS 파일에서 `function <name>(` 하나의 본문만 떼어낸다(중괄호 균형 기준).
+
+    파일 전역 문자열 검색은 **다른 함수의 코드**를 근거로 통과할 수 있다 — 특히 composer.js 는
+    한 파일에 수십 개 함수가 산다. 문자열·주석 안의 중괄호까지 세지는 않지만(그러면 파서를
+    새로 쓰는 셈이다), 함수 경계를 넘어가는 오검출은 이것으로 충분히 막힌다.
+    """
+    src = path.read_text(encoding="utf-8")
+    for pattern in (f"function {name}(", f"async function {name}("):
+        at = src.find(pattern)
+        if at >= 0:
+            break
+    else:
+        raise AssertionError(f"{path.name}: JS 함수 {name} 를 찾지 못했다(이름이 바뀌었나?)")
+    start = src.index("{", at)
+    depth = 0
+    for i in range(start, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[at:i + 1]
+    raise AssertionError(f"{path.name}: {name} 의 중괄호가 닫히지 않는다")
+
+
 def _code_lines(path: pathlib.Path, comment: str) -> str:
     """주석을 걷어낸 본문 — 주석에 적힌 단어가 '배선됨' 으로 오판되지 않게."""
     out = []
@@ -839,76 +865,147 @@ def test_handoff_includes_self_install_of_the_runner():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 모델·추론 강도 정합 (사용자 제보 2026-08-27)
+# 모델·추론 강도 — **브리지 모드에서는 조작면 자체를 제거한다** (P0-T, 사용자 결정 2026-08-28)
 #
-# 웹 컴포저의 모델·추론 강도 선택은 기존 경로에서 그 요청의 LLM 호출을 지배한다.
-# 브리지는 둘을 통째로 버려, 무엇을 고르든 답변이 달라지지 않았다 — 화면은 선택지를 주는데
-# 실제로는 아무 효과가 없는 **거짓 조작면**이었다.
+# 앞선 계약(P0-M, 2026-08-27)은 "전달 + 못 맞추면 밝히기" 였다. 라이브에서 그 계약은 이렇게
+# 작동했다: 화면 값은 서비스 내부 alias(`claude-haiku-4`)이고 그것을 아는 CLI 는 없다 —
+# 기본값이 haiku 이므로 사실상 **모든** 브리지 요청이 모델 지정 실패 → 기본 모델 폴백이었다.
+# 요청은 반영되지 않으면서 "못 맞췄다" 는 고지만 매번 붙는, 있으나 마나 한 왕복.
 #
-# 답은 개인 AI 가 만들므로 서버가 강제할 수 없다. 그래서 계약은 "강제" 가 아니라
-# **"전달 + 못 맞추면 밝히기"** 다. 조용히 무시하는 것만 막는다.
+# 게다가 서버는 연결된 런타임이 claude 인지 codex·gemini·ollama 인지 **알 방법이 없다**
+# (MCP 어댑터가 별도 컨테이너라 clientInfo 가 오지 않는다). 맞는 값으로 번역할 수도 없다.
+#
+# 사용자 결정: 제어할 수 없으면 보여주지 않는다. 여기서 잠그는 것은 **네 지점**이다 —
+# 카탈로그(서버) · 조작면(화면) · 적재(DB) · 전달(도구/러너). 한 곳이라도 살아 있으면
+# 사용자는 다시 "고를 수 있는데 반영은 안 되는" 상태를 만난다.
+#
+# ⚠ 이중 계약: 게이트를 되돌리면(`AGENT_SERVER_LLM_ENABLED=1`) 선택기는 **복원돼야** 한다.
+# 숨김만 검사하면 "영구 제거" 뮤턴트가 통과한다.
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_task_persists_requested_model_and_reasoning():
-    """요청 시점의 선택을 task 에 굳힌다 — 나중에 대화 설정을 바꿔도 이 요청의 요구는 안 변한다."""
-    src = BOOTSTRAP.read_text(encoding="utf-8")
-    for col in ("RequestedModel", "ReasoningLevel"):
-        assert f'("{col}", "ALTER TABLE WebAiTasks ADD COLUMN {col}' in src, f"{col} 컬럼 미추가"
+def test_catalog_gates_selector_on_server_llm_state():
+    """카탈로그 핸들러가 **게이트를 매 호출 읽고** 양방향으로 분기한다.
+
+    한쪽만 검사하면 뮤턴트가 통과한다 — 숨김만 보면 '영구 제거' 가, 복원만 보면 '차단 중에도
+    목록 노출' 이 살아남는다. 반환값 대조는 DB 연결이 필요하므로 feature-0003 스위트
+    (`test_model_catalog_bridge_mode.py`)가 담당하고, 여기서는 **배선**을 잠근다.
+    """
+    src = (WEB_SRC / "routers" / "system.py").read_text(encoding="utf-8")
+    body = _func_source(WEB_SRC / "routers" / "system.py", "get_api_vault_options")
+    assert "server_llm_enabled()" in body, "핸들러가 게이트를 호출하지 않는다(상수로 굳으면 못 되돌린다)"
+    assert '"model_selector": "hidden"' in body, "차단 시 숨김 신호가 없다"
+    assert '"model_selector": "visible"' in body, "게이트 해제 시 선택기를 복원하는 분기가 없다"
+    assert "from shared.llm_gate import server_llm_enabled" in src
+
+
+def test_composer_hides_selector_on_explicit_server_signal():
+    """화면 숨김은 **서버가 실어 준 명시 값**으로만 판정한다.
+
+    카탈로그 로드 실패(null)로 숨기면 일시적 네트워크 장애가 조작면을 지우고, 사용자는
+    기능이 사라진 것으로 읽는다.
+    """
+    src = COMPOSER_JS.read_text(encoding="utf-8")
+    fn = src[src.index("function _composerModelSelectorHidden("):]
+    fn = fn[:fn.index("\n}")]
+    assert 'model_selector' in fn and '"hidden"' in fn
+    apply_fn = src[src.index("function _applyComposerSelectorVisibility("):]
+    apply_fn = apply_fn[:apply_fn.index("\n}\n")]
+    for dom_id in ("composerActionsModelItem", "composerActionsReasoningItem"):
+        assert dom_id in apply_fn, f"{dom_id} 가 숨김 대상에 없다"
+    assert 'classList.toggle("hidden"' in apply_fn, "숨김이 토글이 아니면 복원되지 않는다"
+
+
+def test_composer_menus_refuse_to_open_while_hidden():
+    """숨김 상태에서 메뉴를 여는 경로가 남아 있으면 키보드·직접 호출로 되살아난다."""
+    src = COMPOSER_JS.read_text(encoding="utf-8")
+    for fn_name in ("_openComposerModelMenu", "_openComposerReasoningMenu"):
+        body = src[src.index(f"function {fn_name}("):]
+        body = body[:body.index("\n}\n")]
+        assert "_composerModelSelectorHidden()" in body, f"{fn_name} 에 숨김 가드가 없다"
+
+
+def test_ask_payload_omits_model_and_reasoning_while_hidden():
+    """보여주지도 않은 값을 전송하지 않는다.
+
+    싣는 순간 대화 KV 에 저장되고, 게이트를 되돌렸을 때 **사용자가 고른 적 없는 모델**이
+    그 대화의 설정으로 되살아난다.
+    """
+    send = _js_func_source(COMPOSER_JS, "sendPrompt")
+    assert "_composerModelSelectorHidden()" in send, "전송 경로가 숨김 상태를 모른다"
+    assert "askBody.reasoning_level = _composerCurrentReasoningLevel()" in send, (
+        "추론 강도를 조건부로 싣는 형태가 아니다")
+    # 재답변(요청사항 수정) 경로도 같은 판정을 써야 한다 — 한쪽만 막으면 그쪽으로 샌다.
+    edit = _js_func_source(APP_JS, "_submitMessageEdit")
+    assert "_composerModelSelectorHidden()" in edit, "재답변 경로에 숨김 판정이 없다"
+
+
+def test_bridge_task_does_not_persist_model_or_reasoning():
+    """적재 SQL 이 두 컬럼을 쓰지 않는다. 단 **컬럼 자체는 남긴다**(과거 행의 값은 그때의 사실)."""
     enq = _func_source(CONVS, "_enqueue_web_bridge_task")
-    assert "RequestedModel, ReasoningLevel" in enq, "적재 SQL 이 두 값을 쓰지 않는다"
-
-
-def test_ask_handler_forwards_model_and_reasoning():
-    """핸들러가 **이미 계산해 둔** 값을 브리지에 넘긴다(dispatch 경로와 동형)."""
+    insert = enq[enq.index("INSERT INTO WebAiTasks"):]
+    insert = insert[:insert.index("VALUES")]
+    for col in ("RequestedModel", "ReasoningLevel"):
+        assert col not in insert, f"{col} 을 여전히 적재한다"
+    # 호출부도 넘기지 않는다(시그니처가 받지 않으므로 넘기면 TypeError 지만, 배선으로도 잠근다).
     src = CONVS.read_text(encoding="utf-8")
     call = src[src.index("agent_result = _enqueue_web_bridge_task("):]
     call = call[:call.index(")\n")]
-    assert "requested_model=model" in call, "모델 선택이 버려진다"
-    assert "reasoning_level=reasoning_level" in call, "추론 강도 선택이 버려진다"
+    assert "requested_model=" not in call and "reasoning_level=" not in call
+    # 이력 보존: 스키마에서 컬럼을 지우지 않았다.
+    boot = BOOTSTRAP.read_text(encoding="utf-8")
+    for col in ("RequestedModel", "ReasoningLevel"):
+        assert f'("{col}", "ALTER TABLE WebAiTasks ADD COLUMN {col}' in boot, (
+            f"{col} 컬럼을 삭제하면 과거 행의 값이 사라진다(이력 파괴)")
 
 
-def test_claim_returns_requested_quality():
-    """점유 응답이 품질 요청을 전달한다 — 전달하지 않으면 AI 가 알 방법이 없다."""
-    src = _func_source(AI_TOOLS, "claim_request")
-    assert "_requested_quality(" in src
-    assert '"requested": requested' in src
+def test_bridge_mode_skips_server_model_gates_and_kv_writes():
+    """브리지 모드에서 **서버 모델 게이트가 질문을 막지 않는다** (codex 리뷰 P1, 2026-08-28).
 
+    화면에서 모델을 고를 수 없게 되면 `/api/ask` 의 `model` 은 항상 `API_DEFAULT_MODEL`(haiku)로
+    채워진다. 그 상태로 모델 RBAC 를 태우면 **haiku 권한만 없는 계정은 개인 AI 처리와 무관하게
+    질문 자체가 403** 이 된다 — 서버가 그 모델을 쓰지도 않는데 막는 것이다(바로 위 토큰 쿼터
+    게이트를 조건부화한 것과 같은 형태의 모순).
 
-def test_requested_quality_asks_to_disclose_when_unmet():
-    """맞출 수 없으면 **답변에 밝히라**고 지시한다.
-
-    강제할 수 없는 것을 강제하는 척하면 안 된다. 하지만 조용히 무시하면 사용자는 자기 선택이
-    반영된 줄 안다 — 그 착각만은 막아야 한다.
+    KV 저장도 같이 막는다. 화면이 값을 안 보내므로 여기 도달하는 것은 구 캐시·직접 API 뿐이고,
+    저장하면 **고른 적 없는 설정**이 대화에 굳어 게이트 해제 후 되살아난다.
     """
-    body = _func_source(AI_TOOLS, "_requested_quality")
-    assert "밝히세요" in body or "밝혀" in body, "못 맞췄을 때 알릴 의무가 없다"
-    assert "조용히 무시" in body, "왜 밝혀야 하는지가 없다(다음 사람이 지운다)"
-    # 추론 강도는 런타임마다 이름이 달라 **값이 아니라 의도**로 전달해야 한다.
-    assert "_REASONING_INTENT" in AI_TOOLS.read_text(encoding="utf-8")
+    src = "\n".join(ln for ln in CONVS.read_text(encoding="utf-8").split("\n")
+                    if not ln.strip().startswith("#"))
+    assert "elif _server_llm_enabled() and not app._is_allowed_api_model(model):" in src, (
+        "카탈로그 allowlist(400) 가 브리지 모드에서도 적용된다")
+    assert "elif _server_llm_enabled() and not app._account_has_model_access(" in src, (
+        "모델 RBAC(403) 가 브리지 모드에서도 적용된다 — haiku 권한 없는 계정이 질문을 못 한다")
+    assert "if conv_id and reasoning_level and _server_llm_enabled():" in src, (
+        "브리지 모드에서 추론 강도가 대화 KV 에 저장된다")
+    assert "if conv_id and model_explicit and _model_save_key and _server_llm_enabled():" in src, (
+        "브리지 모드에서 모델이 대화 KV 에 저장된다")
 
 
-def test_runner_actually_applies_the_requested_model():
-    """러너가 받은 모델을 **실제 CLI 인자로 옮긴다** — 전달만 받고 안 쓰면 반쪽이다."""
+def test_claim_does_not_deliver_stale_quality_request():
+    """점유 응답에 `requested` 가 없다 — 과거 행에 남은 값을 지금 요구로 전달하지 않는다."""
+    # 주석에 남긴 "왜 안 읽는가" 설명이 '여전히 읽는다' 로 오검출되지 않게 코드 줄만 본다.
+    src = "\n".join(ln for ln in _func_source(AI_TOOLS, "claim_request").split("\n")
+                    if not ln.strip().startswith("#"))
+    assert '"requested"' not in src, "점유 응답이 여전히 품질 요구를 싣는다"
+    assert "RequestedModel" not in src and "ReasoningLevel" not in src, "여전히 읽는다"
+    whole = AI_TOOLS.read_text(encoding="utf-8")
+    assert "def _requested_quality(" not in whole, "죽은 헬퍼가 남아 다음 사람이 되살린다"
+    assert "_REASONING_INTENT = {" not in whole
+
+
+def test_runner_does_not_pass_service_alias_as_cli_model():
+    """러너가 모델 인자를 만들지 않는다 — 그 경로가 이번 결함의 발현부였다."""
     src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
         encoding="utf-8")
-    assert "_MODEL_FLAG" in src, "런타임별 모델 지정 방법이 없다"
-    for rt in ("claude", "codex", "gemini"):
-        assert f'"{rt}": [' in src, f"{rt} 모델 플래그가 없다"
-    assert "want_model" in src
-    ask = src[src.index("def ask_local_ai("):src.index("# ── 프롬프트")]
-    assert "cmd[:1] + flag" in ask, "모델 인자를 프롬프트 뒤에 붙이면 위치 인자로 먹힌다"
-
-
-def test_runner_falls_back_when_model_unavailable():
-    """요청 모델이 없으면 기본 모델로 답하되 **그 사실을 밝힌다**.
-
-    모델 하나 때문에 답을 아예 못 주는 것보다 낫고, 조용히 바꾸는 것보다 낫다.
-    """
-    src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
-        encoding="utf-8")
-    assert "기본 모델로 재시도" in src
-    assert "기본 모델로 답했습니다" in src, "모델이 바뀐 사실을 사용자에게 알리지 않는다"
+    code = _code_lines(
+        _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py", "#")
+    assert "_MODEL_FLAG" not in code, "모델 플래그 표가 살아 있다"
+    assert "want_model" not in code, "요청 모델을 여전히 다룬다"
+    assert "requested" not in code.replace("list_open_requests", "").replace(
+        "wait_for_request", "").replace("claim_request", ""), "requested 를 여전히 읽는다"
+    # 사용자가 자기 런타임 이름으로 고정할 수 있는 길은 문서에 남긴다(기능을 없애지는 않았다).
+    assert "--cmd 'claude --model opus -p {prompt}'" in src
 
 
 # ── 실행 단계 노출 (사용자 제보 2026-08-27) ───────────────────────────────────
