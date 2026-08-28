@@ -1563,7 +1563,15 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
   }
   const ordered = [...versions].reverse(); // 최신 버전이 위로.
   const latestNum = Number(ordered[0]?.version_number || 1);
-  const canCompare = versions.length > 1;
+  // REQ-20260828-attach-lineage-ui: **단건 계보에서도 비교할 수 있어야 한다**(사용자 제보
+  // 2026-08-28). 종전 판정은 `versions.length > 1` 하나였다 — assistant 편집본이 새 계보로
+  // 분기하면 그 계보는 v1 뿐이라, 비교 대상(원본 계보)이 **바로 옆에 있는데도** 진입점이
+  // 렌더되지 않았다. 모달은 이미 계보 축을 지원한다(`hasLineageAxis`) — 막고 있던 것은
+  // 여기 한 줄이었다.
+  const linHeads = (Array.isArray(lineages) ? lineages : [])
+    .filter((l) => Number(l?.head_attachment_id || 0) > 0);
+  const hasLineageAxis = linHeads.length > 1;
+  const canCompare = versions.length > 1 || hasLineageAxis;
   // 액션 열 정렬(사용자 보고 2026-08-11): 행마다 버튼 **개수**가 다르면 오른쪽 정렬(`margin-left:
   // auto`) 이라 있는 버튼들이 통째로 밀려, 같은 기능의 아이콘이 행마다 다른 x 좌표에 선다.
   // 체인 안에서 실제로 갈리는 슬롯은 둘이다:
@@ -1592,14 +1600,44 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
       .map((v) => Number(v.version_number || 1))
       .filter((n) => Number.isFinite(n));
     const oldestNum = vnums.length ? Math.min(...vnums) : latestNum;
-    cmpBtn.title = oldestNum === latestNum
-      ? "두 버전을 골라 내용 차이를 봅니다 (여러 단계 떨어진 버전도 가능)"
-      : `v${oldestNum}(최초) ↔ v${latestNum}(최신) 비교 — 다른 쌍은 모달에서 고릅니다`;
+    // 버튼이 실제로 여는 것을 그대로 말한다. 이 계보에 버전이 하나뿐이면 열리는 것은
+    // **계보 간 비교**이지 버전 비교가 아니다 — 같은 문구를 쓰면 눌러 보고 나서야 안다.
+    const singleVersion = versions.length < 2;
+    cmpBtn.textContent = singleVersion ? "⇄ 계보 비교" : "⇄ 버전 비교";
+    cmpBtn.title = singleVersion
+      ? `이 계보는 버전이 하나입니다 — 같은 이름의 다른 계보(${linHeads.length - 1}개)와 비교합니다`
+      : (oldestNum === latestNum
+        ? "두 버전을 골라 내용 차이를 봅니다 (여러 단계 떨어진 버전도 가능)"
+        : `v${oldestNum}(최초) ↔ v${latestNum}(최신) 비교 — 다른 쌍은 모달에서 고릅니다`);
     cmpBtn.addEventListener("click", () => openAttachmentDiffModal(
       attachmentId, versions,
-      oldestNum === latestNum ? undefined : { from: oldestNum, to: latestNum }, lineages));
+      (singleVersion || oldestNum === latestNum) ? undefined : { from: oldestNum, to: latestNum },
+      lineages));
     head.appendChild(cmpBtn);
     box.appendChild(head);
+  }
+
+  // REQ-20260828-attach-lineage-ui: **이 계보가 무엇으로 이뤄졌는지**를 글로 밝힌다.
+  //
+  // 아래 버전 행들이 곧 구성이지만, 같은 이름의 다른 계보가 함께 있을 때 그 행들만 보면
+  // "이게 이 파일의 전부" 로 읽힌다 — 실제로는 옆에 다른 계보가 더 있다(사용자 제보).
+  if (hasLineageAxis) {
+    const cur = linHeads.find((l) => l.is_current_lineage) || null;
+    const others = linHeads.filter((l) => !l.is_current_lineage);
+    const note = document.createElement("div");
+    note.className = "attach-list-versions-lineage";
+    // 같은 이유로 소유권을 말하지 않는다 — 그룹 대화에서 남의 업로드를 "내" 것이라 하게 된다.
+    const who = cur && cur.is_assistant_generated ? "AI가 만든 계보" : "사용자가 올린 계보";
+    const from = cur && Number(cur.branched_from_attachment_id || 0)
+      ? " · 다른 파일에서 갈라짐" : "";
+    note.textContent =
+      `이 계보: ${who}${from} · 파일 ${versions.length}개`
+      + ` / 같은 이름의 다른 계보 ${others.length}개`;
+    note.title = others
+      .map((l) => `#${l.head_attachment_id} v${l.version_number}`
+        + ` (${l.is_assistant_generated ? "AI" : "사용자"})`)
+      .join("\n") || "";
+    box.appendChild(note);
   }
 
   ordered.forEach((v) => {
@@ -2144,6 +2182,29 @@ async function _loadConversationAttachmentList(convId) {
     const anyItemManage = arr.some((x) => Boolean(x.can_manage));
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
+    // REQ-20260828-attach-lineage-ui: **같은 파일명의 계보 지형**을 목록에서 먼저 만든다.
+    //
+    // assistant 편집본이 사용자 계보를 잇지 않고 분기하므로(2026-08-06 결정) 같은 이름의 행이
+    // 여럿 뜬다. 종전 화면은 그 행들을 **이름만 같은 남남**으로 그렸다 — 어느 것이 내가 올린
+    // 것이고 어느 것이 거기서 갈라진 AI 계보인지, 각 계보가 파일 몇 개로 이뤄졌는지가 어디에도
+    // 없었다(사용자 제보 2026-08-28).
+    //
+    // 서버 왕복 없이 목록 자체로 판정한다 — 행마다 `root_attachment_id`·`version_count`·
+    // `branched_from_attachment_id` 가 이미 실려 온다. 목록은 계보당 **head 한 행**이므로
+    // 파일명으로 묶으면 그것이 곧 계보 집합이다.
+    const _lineageByName = new Map();
+    for (const x of arr) {
+      const nm = String(x.original_filename || "");
+      if (!_lineageByName.has(nm)) _lineageByName.set(nm, []);
+      _lineageByName.get(nm).push(x);
+    }
+    // 계보 정렬은 **오래된 것부터** — "원본 → 거기서 갈라진 것" 순서로 읽히게 한다.
+    for (const group of _lineageByName.values()) {
+      group.sort((p, q) => String(p.created_at || "").localeCompare(String(q.created_at || ""))
+        || Number(p.id || 0) - Number(q.id || 0));
+    }
+    // id → 그 id 를 head 로 갖는 행(분기 부모를 사람이 읽을 이름으로 되짚기 위해).
+    const _rowById = new Map(arr.map((x) => [Number(x.id || 0), x]));
     for (const a of arr) {
       // ② TASK-0285: 각 첨부의 버전 현황 표면화. wrapper(entry)로 감싸 가로 row(item) 아래에
       // 버전 이력 펼침 박스를 둔다(item 은 flex 가로 정렬이라 직접 자식으로 두면 깨짐).
@@ -2161,8 +2222,39 @@ async function _loadConversationAttachmentList(convId) {
         const title = isAi ? "AI가 수정한 최신 버전" : `버전 ${verNum}`;
         verBadge = ` <span class="attach-list-item-ver${isAi ? " ai-edited" : ""}" title="${title}">${escapeHtml(label)}</span>`;
       }
-      const verToggle = verCount > 1
-        ? ` · <button type="button" class="attach-list-item-vertoggle">버전 ${verCount}개 ▾</button>`
+      // REQ-20260828-attach-lineage-ui: 같은 이름의 계보 지형을 이 행에 새긴다.
+      const _sibs = _lineageByName.get(String(a.original_filename || "")) || [a];
+      const _linTotal = _sibs.length;
+      const _linIdx = Math.max(1, _sibs.findIndex((x) => Number(x.id) === Number(a.id)) + 1);
+      const _hasSiblings = _linTotal > 1;
+      let linBadge = "";
+      if (_hasSiblings) {
+        // **계보**의 출처를 먼저 본다 — 행 자체의 표식은 root 행에만 있고, 다중 버전 계보의
+        // head 행에는 없다(라이브 실측: v4 head 가 `null`). 둘 다 없으면 갈라진 적 없는 계보다.
+        const _originId = Number(
+          a.lineage_branched_from_attachment_id || a.branched_from_attachment_id || 0);
+        const _fromRow = _rowById.get(_originId);
+        // 분기 부모를 **사람이 아는 말**로 되짚는다. 부모가 목록에 없으면(삭제·중간 버전)
+        // 아는 만큼만 말한다 — 모르는 것을 지어내지 않는다.
+        // ⚠ 소유권을 단정하지 않는다(codex P2). 목록 payload 에는 업로더 account_id 가 없어
+        //   그룹 대화에서 **다른 멤버가 올린 파일도 "내 파일"** 이라고 말하게 된다.
+        //   아는 것은 "사람이 올렸나 / AI 가 만들었나" 뿐이므로 딱 그만큼만 말한다.
+        const _origin = _originId
+          ? (_fromRow
+            ? `${_fromRow.is_assistant_generated ? "AI 파일" : "업로드한 파일"}에서 갈라진 계보`
+            : "다른 파일에서 갈라진 계보")
+          : (isAi ? "AI가 만든 계보" : "사용자가 올린 계보");
+        const _linTitle =
+          `같은 이름의 계보 ${_linTotal}개 중 ${_linIdx}번째 — ${_origin} · 파일 ${verCount}개`;
+        linBadge = ` <span class="attach-list-item-lineage${isAi ? " ai" : ""}"`
+          + ` title="${escapeHtml(_linTitle)}">계보 ${_linIdx}/${_linTotal}</span>`;
+      }
+      // 펼침 토글은 **버전이 여럿일 때만** 뜨던 것이 단건 계보를 비교에서 통째로 막았다
+      // (사용자 제보 2026-08-28): 버전 박스가 열리지 않으면 "⇄ 버전 비교" 진입점 자체가
+      // 화면에 없다. 같은 이름의 다른 계보가 있으면 **비교할 대상이 존재**하므로 연다.
+      const verToggleLabel = verCount > 1 ? `버전 ${verCount}개` : `계보 ${_linTotal}개`;
+      const verToggle = (verCount > 1 || _hasSiblings)
+        ? ` · <button type="button" class="attach-list-item-vertoggle">${verToggleLabel} ▾</button>`
         : "";
       // 액션 버튼은 **메타줄**에 둔다 — 행 우측에 두면 이름줄의 가용 폭을 먹어, 패널
       // 최소 폭(240px)에서 파일명이 3자로 붕괴한다(§18.8 design 패널 실측). 이름줄은
@@ -2179,7 +2271,7 @@ async function _loadConversationAttachmentList(convId) {
       item.innerHTML = `
         <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
         <div class="attach-list-item-info">
-          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}</div>
+          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}${linBadge}</div>
           <div class="attach-list-item-meta">
             <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
             <span class="attach-list-item-actions">
@@ -2252,7 +2344,7 @@ async function _loadConversationAttachmentList(convId) {
         verToggleBtn.addEventListener("click", async () => {
           if (versionsBox) {
             const hidden = versionsBox.classList.toggle("hidden");
-            verToggleBtn.textContent = `버전 ${verCount}개 ${hidden ? "▾" : "▴"}`;
+            verToggleBtn.textContent = `${verToggleLabel} ${hidden ? "▾" : "▴"}`;
             return;
           }
           verToggleBtn.disabled = true;
@@ -2266,7 +2358,7 @@ async function _loadConversationAttachmentList(convId) {
             // 버튼이 말풍선 칩 경로와 **같은 축 토글**을 갖게 한다(한쪽에만 있으면 비대칭).
             _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : [], a.id,
               Array.isArray(vresp?.lineages) ? vresp.lineages : []);
-            verToggleBtn.textContent = `버전 ${verCount}개 ▴`;
+            verToggleBtn.textContent = `${verToggleLabel} ▴`;
           } catch (e) {
             versionsBox.innerHTML = `<div class="attach-list-versions-loading">버전 이력을 불러올 수 없습니다.</div>`;
           } finally {

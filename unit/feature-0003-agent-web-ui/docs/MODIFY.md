@@ -4863,3 +4863,26 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-28T01:03:05+09:00
+
+## CHG-20260828T230000-attach-lineage-ui (TASK-20260828T230000)
+
+- Date: 2026-08-28
+- Changed By: feature-0003-agent-web-ui (AI) — worktree `ai/root/feature-0003-attach-lineage-ui`
+- Summary: assistant 편집본의 **계보 분기**를 화면이 드러내게 한다. ① 버전이 하나뿐인 계보도
+  비교 UI 에 도달한다(게이트 두 겹 해소: 펼침 토글 + 비교 버튼). ② 첨부 목록이 같은 이름의
+  계보 지형(`계보 k/n`, 출처, 파일 수)을 말한다. ③ 모달 제목이 비교 축을 따라간다.
+  ④ 서버가 계보 출처를 **root 에서** 해소해 head 행에도 싣는다.
+- Files:
+  - `src/static/app/composer.js` — 계보 그룹핑·배지·토글/비교 게이트·버전 박스 계보 안내
+  - `src/static/app/attach-diff.js` — 전용 diff 모달 제목이 축을 따라감(`attach-diff-titleword`)
+  - `src/static/css/chat.css` — `.attach-list-item-lineage` / `.attach-list-versions-lineage`
+  - `src/routers/_conv_store.py` — `branched_from_attachment_id` (행 단위, MetaJson 정규화)
+  - `src/routers/conversations.py` — `lineage_branched_from_attachment_id` (root 해소, IN 1회)
+  - `tests/test_attach_lineage_ui.py` (신규 17건)
+- 하위호환: 목록 payload 는 **additive** — 기존 소비자는 새 키를 무시한다. 계보가 1개인 첨부의
+  화면은 종전과 **동일**(배지·안내 미표시).
+- 인접 결함 **미수정 명시**: `_serialize_attachment_for_api` 의 `degraded_reason` 은
+  `isinstance(meta, dict)` 게이트라 MySQL(longtext) 경로에서 종전에도 안 나갔다. 함께 고치면
+  이 cycle 범위 밖에서 표시가 바뀌므로 **건드리지 않았고**, 회귀로 그 게이트를 고정했다.
+- Cross-ref: FUNCTION.md REQ-20260828-attach-lineage-ui · TASK.md TASK-20260828T230000 ·
+  `docs/test-runs.d/TASK-20260828T230000-attach-lineage-ui.md`

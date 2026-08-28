@@ -11874,3 +11874,26 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 53→**56** · `generated`=="2026-08-28"==`releases[0].date` · 신규 3블록 items 4/13/2 · 직전 08-25 블록 items 3 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**(유일 ASCII/고유명 히트는 사용자가 화면에서 그대로 본 오류 문구 'AWS Bedrock 서비스가 일시적으로 응답하지 않습니다' 인용 1건 — 의도적 보존)
 - [x] reconcile-first: 편집 **전** 서빙 static 이 브랜치 blob 과 md5 동일(`79d362ce…` · 276,572B) → 파리티 갭 0. **커밋 직전 재측정**에서도 서빙 md5 = HEAD blob 동일(아직 미배포 상태의 정상값 — 이 커밋의 새 내용은 wrapper 의 post-merge 배포로 서빙된다).
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(`docs/CONVENTIONS.md`:568 `?v=dev` 고정·빌드 `inject_asset_stamp` content-hash 주입·수기 bump 금지 — `bin/deploy-web.sh`:1627 이 baked 이미지의 `?v=dev` 잔존을 ABORT 하므로 수기 bump 는 배포를 죽인다. cron wrapper 지시문의 'bump 포함' 은 stale).
+
+### TASK-20260828T230000 — 첨부 계보 UI (단건 계보 비교 + 목록 계보 표시)
+
+- status: done
+- risk: Minor §12.3 (web/UI + 목록 payload additive. 되돌리기 = revert + 재배포)
+- 사용자 제보: "단 건 계보일 경우, 모달 창에서 버전 비교를 진행할 수 있는 수단이 없는 이슈…
+  첨부 파일 목록에서도 각 계보 내 어떤 파일들이 구성되어 있는지 명시적으로 드러나지 않습니다."
+- [x] **게이트가 두 겹**이었음을 확인 — 비교 버튼(`versions.length > 1`)만 고치면 화면은
+      그대로다(펼침 토글 `verCount > 1` 이 먼저 막는다)
+- [x] 토글·버튼 판정에 계보 축 추가 · 문구를 여는 것과 일치("⇄ 계보 비교")
+- [x] 목록 계보 배지(`계보 k/n`) + 툴팁 · 형제 계보가 있을 때만
+- [x] 버전 박스에 계보 구성 안내(이 계보 파일 수 / 다른 계보 수)
+- [x] 모달 제목이 축을 따라감(계보 간 → 「계보 비교」, 버전 번호 나란히 표기 금지)
+- [x] 서버: 계보 출처를 **root 에서** 해소(`lineage_branched_from_attachment_id`, IN 1회)
+- [x] 회귀 17건 신규(`test_attach_lineage_ui.py`) + **뮤테이션 역검증 11종 전건 KILL**
+- [x] 라이브 실측(bind-mount): 계보 1/3·2/3·3/3 배지 · 단건 계보에서 「⇄ 계보 비교」 →
+      모달 제목 「계보 비교」 · 축 `계보 간(시간순)` · 실 diff(`LIMIT 50;`→`LIMIT 500;`)
+- [x] **자기 결함 1건 자수·수정** — 제목 수정을 원문 모달에 잘못 넣어 `axis` 미정의
+      ReferenceError 를 낼 뻔했다. 소스 문자열 단언은 통과시켰고 라이브 판독이 잡았다.
+      스코프 가드 회귀 추가(그 결함을 재현하는 뮤턴트로 KILL 확인)
+- [x] **codex 적대 리뷰** — P1 0 · P2 5 전건 조치(소유권 오표시 · 실패 무음 · 게이트
+      테스트가 `&&` 회귀를 통과 · aria-label 고정 · 계보 정의 확인). 뮤테이션 총 17종 KILL
+- [ ] POST-DEPLOY 실측 (배포본에서 재확인)
