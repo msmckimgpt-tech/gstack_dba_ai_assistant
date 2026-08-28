@@ -4116,6 +4116,24 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
         # degraded_reason (D17 partial_indexed) 만 표면화.
         if meta.get("degraded_reason"):
             payload["degraded_reason"] = str(meta["degraded_reason"])
+    # REQ-20260828-attach-lineage-ui: **이 계보가 무엇에서 갈라졌는가**.
+    #
+    # assistant 편집본은 사용자 계보를 잇지 않고 새 root 로 분기한다(2026-08-06 결정). 그 결과
+    # 같은 파일명에 계보가 여럿 공존하는데, 목록 응답에 분기 부모가 없어 화면에서는 "이름만
+    # 같은 남남" 으로 보였다(사용자 제보 2026-08-28). `/versions` 는 이미
+    # `branched_from_attachment_id` 를 주므로 **같은 이름**을 목록에도 실어, 두 화면이 같은
+    # 사실을 말하게 한다(한쪽만 알면 설명이 갈린다).
+    #
+    # ⚠ 위 `degraded_reason` 블록의 `isinstance(meta, dict)` 게이트는 **그대로 둔다** — MySQL
+    #   (longtext) 경로에서는 meta 가 문자열이라 그 필드가 종전에도 안 나갔다. 여기서 함께
+    #   고치면 이 cycle 의 범위 밖에서 표시가 바뀐다(별도 판단이 필요한 변경).
+    _branch_of = 0
+    try:
+        _branch_of = int((app._meta_json_to_dict(row.get("MetaJson")) or {})
+                         .get("branch_of_attachment_id") or 0)
+    except (TypeError, ValueError):
+        _branch_of = 0
+    payload["branched_from_attachment_id"] = _branch_of or None
     # TASK-0094 Sprint 1 Phase 9 (F1): delete UX 4 state.
     # active / delete_pending / restorable_until / purge_in_progress / erased
     deleted_at = row.get("DeletedAt")

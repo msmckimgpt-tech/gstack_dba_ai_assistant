@@ -3024,6 +3024,45 @@ def list_conversation_attachments(cid: str, request: Request, state: str = "acti
     except Exception:
         version_counts = {}
 
+    # REQ-20260828-attach-lineage-ui: **계보의 출처**(어느 파일에서 갈라졌나).
+    #
+    # 분기 표식(`branch_of_attachment_id`)은 그 계보의 **root** 행 MetaJson 에 있다. 목록은
+    # 계보당 head 한 행만 노출하므로, 다중 버전 계보(예: v4 head)의 행에는 그 표식이 없다 —
+    # 행만 보면 "갈라진 적 없는 계보" 로 읽힌다(라이브 실측 2026-08-28: 1256 v4 가 1246 에서
+    # 갈라졌는데 head 에는 표식이 없어 `None`).
+    #
+    # root 를 **한 번의 IN 조회**로 모아 해소한다(행마다 조회하면 N+1). fail-soft — 실패해도
+    # 목록은 그대로 나가고 계보 배지만 출처 없이 표시된다.
+    lineage_origin: dict[int, int] = {}
+    try:
+        _roots = sorted({int(r.get("RootAttachmentId") or r.get("Id") or 0) for r in rows} - {0})
+        if _roots:
+            lcur = conn.cursor()
+            try:
+                _marks = ",".join(["%s"] * len(_roots))
+                lcur.execute(
+                    f"SELECT Id, MetaJson FROM WebConversationAttachments WHERE Id IN ({_marks})",
+                    tuple(_roots),
+                )
+                for lr in (lcur.fetchall() or []):
+                    _meta = app._meta_json_to_dict(lr[1]) or {}
+                    try:
+                        _of = int(_meta.get("branch_of_attachment_id") or 0)
+                    except (TypeError, ValueError):
+                        _of = 0
+                    if _of:
+                        lineage_origin[int(lr[0])] = _of
+            finally:
+                lcur.close()
+    except Exception:
+        # 조용히 삼키면 클라이언트는 "해소 실패" 와 "분기 없음" 을 **구별할 수 없다**(codex P2) —
+        # 갈라진 계보에 "갈라진 적 없음" 툴팁이 붙는다. 목록은 그대로 내보내되(fail-soft)
+        # 사실이 사라졌다는 것은 로그로 남긴다.
+        logging.getLogger(__name__).warning(
+            "attachments: 계보 출처 해소 실패 (conversation_id=%s) — 계보 배지에 출처가 빠진다",
+            cid, exc_info=True)
+        lineage_origin = {}
+
     # REQ-20260806-attach-manage: 삭제 어포던스 표시 여부를 서버가 계산해 내린다 —
     # 표시 판정과 집행 판정이 같은 술어를 쓰도록(§16.7 G6). 프론트가 소유권을 따로
     # 추정하면 두 벌이 어긋나 "보이는데 404" 또는 "숨겨졌는데 권한 있음" 이 된다.
@@ -3031,10 +3070,14 @@ def list_conversation_attachments(cid: str, request: Request, state: str = "acti
     results = []
     for row in rows:
         ser = app._serialize_attachment_for_api(dict(row))
-        _vc = version_counts.get(int(ser.get("root_attachment_id") or ser.get("id") or 0))
+        _root = int(ser.get("root_attachment_id") or ser.get("id") or 0)
+        _vc = version_counts.get(_root)
         if _vc:
             ser["version_count"] = _vc["count"]
             ser["ai_version_count"] = _vc["ai_count"]
+        # 행이 아니라 **계보**의 출처. 행 자체의 `branched_from_attachment_id` 는 그대로 둔다
+        # (root 행에서는 둘이 같고, head 행에서는 이것만 값이 있다).
+        ser["lineage_branched_from_attachment_id"] = lineage_origin.get(_root) or None
         ser["can_manage"] = bool(_gate(dict(row)))
         results.append(ser)
     return JSONResponse({"attachments": results})

@@ -5928,3 +5928,28 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
 - **미착륙 prior-window 회수**: 08-27 doc_sync RN 커밋 `88150ddd` 가 origin/main 미착륙이라 그 창의 사용자향 delta 를 이번 창에 흡수 재작성했다. 초안의 제외 판정 1건(첨부 버전 상향)은 정본 재검증에서 사유 불성립으로 뒤집혀 hedge 포함으로 채택.
 - **cache-buster**: 수기 bump 없음. `docs/CONVENTIONS.md`:568 이 `?v=dev` 고정·빌드 `inject_asset_stamp` content-hash 주입·**수기 bump 금지**를 명문화하고 `bin/deploy-web.sh`:1627 이 baked 이미지의 placeholder 잔존을 ABORT 한다 — cron wrapper 지시문의 'bump 포함' 은 stale.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**.
+
+## REV-20260828T230000-ai-root-feature-0003 [CODEX:uncommitted-diff] — CHANGES-REQUESTED → P1 0 · P2 5 전건 조치
+
+`codex exec --sandbox read-only` 로 미커밋 diff 적대 검토(149k 토큰). **P1 0 · P2 5**, 전건 조치.
+세션 지시(AgentTool 미사용)와 §18.8 패널 요구가 충돌해 사용자 결정으로 codex 를 패널 대체로 채택.
+
+| # | 지적 | 판정 | 조치 |
+|---|---|---|---|
+| 1 | 계보를 **파일명 완전일치**로 재구성 — 대소문자·확장자 변경은 분리되고, 그룹 대화의 독립 동명 업로드는 한 집합으로 합쳐진다 | **기존 정의와 일치**(내가 만든 괴리 아님) | 서버 `_load_filename_lineage_heads` 도 `(ConversationId, OriginalFilename)` 완전일치 + 활성 head 다. 클라이언트가 **서버 정의를 그대로** 미러한다. 문구도 "같은 이름의 계보" 로 사실만 말한다. 계보 family 를 이름 밖으로 넓히는 것은 서버 계약 변경이라 별도 판단 |
+| 2 | 사람이 올린 첨부를 전부 "내 파일/내가 올린 계보" 로 표시 — payload 에 업로더 `account_id` 가 없어 **그룹 대화에서 남의 파일을 내 것이라 거짓말** | **CONFIRMED** | 주체 중립 문구로 교체("업로드한 파일에서 갈라진 계보" / "사용자가 올린 계보"). 회귀로 1인칭 소유권 문구 자체를 금지 |
+| 3 | 계보 해소 실패를 로그 없이 `{}` 로 삼킴 → 클라이언트가 "실패" 와 "분기 없음" 을 구별 못 함 | **CONFIRMED** | `warning` 로그 추가(목록은 fail-soft 로 그대로 나간다) |
+| 4 | 게이트 테스트가 **토큰 존재만** 검사 — `\|\|` → `&&` 로 회귀해도 통과 | **CONFIRMED** (가장 중요) | 소스 문자열이 아니라 **값**으로 고정: 표현식을 파싱해 `(V,L)` 조합별 진리값을 단언. `&&` 뮤턴트 2종 KILL 확인 |
+| 5 | 시각 제목은 축을 따라가는데 dialog `aria-label` 은 "첨부 버전 비교" 고정 — 스크린리더에만 틀린 제목 | **CONFIRMED** | `aria-label` 도 축 추종 + 회귀 |
+
+### 뮤테이션 역검증 — 총 17종 KILL
+
+1차 11종에 더해 codex 조치분 6종(`&&` 회귀 2 · 소유권 문구 2 · 실패 로그 · 접근성 이름).
+소유권 문구 2종은 **처음에 생존**했다 — 코드는 고쳤는데 잠그는 회귀를 안 썼기 때문이다.
+회귀 추가 후 KILL.
+
+### 이 리뷰가 잡은 것의 성격
+
+5건 중 3건(#2·#4·#5)이 **"고쳤다고 생각한 것이 절반만 고쳐진" 부류**다 — 보이는 제목만 고치고
+접근성 이름은 두었고, 게이트는 고쳤지만 테스트는 반대 값도 통과시켰고, 문구는 사실을 말하지만
+소유권은 여전히 단정했다. 내 눈으로는 "했다" 로 보이는 자리들이다.

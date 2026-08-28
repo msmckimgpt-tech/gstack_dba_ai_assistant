@@ -2763,6 +2763,28 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   background: #e8f0ff;
   color: #2563eb;
 }
+
+/* REQ-20260828-attach-lineage-ui: 같은 파일명에 계보가 여럿일 때만 뜨는 계보 배지.
+   assistant 편집본이 사용자 계보를 잇지 않고 분기하므로(2026-08-06) 같은 이름의 행이 여럿
+   뜨는데, 종전 화면은 그것들을 '이름만 같은 남남' 으로 그렸다. 버전 배지와 **다른 색축**을
+   써서 "몇 번째 버전인가"(v배지)와 "몇 번째 계보인가"(이 배지)가 섞이지 않게 한다. */
+.attach-list-item-lineage {
+  display: inline-block;
+  flex-shrink: 0;          /* 이름 말줄임에 먹히지 않게 — .attach-list-item-ver 와 같은 이유 */
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.attach-list-item-lineage.ai {
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
 .attach-list-item-vertoggle {
   border: none;
   background: transparent;
@@ -2907,6 +2929,15 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   border-radius: 999px;
 }
 .attach-list-versions-compare:hover { background: var(--primary-soft, #eff6ff); }
+/* REQ-20260828-attach-lineage-ui: 이 계보가 무엇으로 이뤄졌는지 + 같은 이름의 다른 계보 수.
+   버전 행만 보면 "이게 이 파일의 전부" 로 읽힌다 — 옆 계보의 존재를 글로 밝힌다. */
+.attach-list-versions-lineage {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+  padding: 2px 0 4px;
+  word-break: keep-all;    /* 240px 패널에서 '계보' 가 낱자로 쪼개지지 않게 */
+}
 /* 각 구버전 행의 `⇄` (그 버전 ↔ 최신 — 여러 단계 차이 포함) */
 .attach-list-version-cmp {
   flex-shrink: 0;

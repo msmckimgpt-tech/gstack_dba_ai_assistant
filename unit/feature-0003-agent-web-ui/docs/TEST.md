@@ -3422,3 +3422,23 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   거짓 음성. 헤더 JSON + `pre/code` 언어 클래스로 판정했다.
 
 증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260828T220000-bridge-attachment-write.md`
+
+## 20260828T2300-attach-lineage-ui 첨부 계보 UI (Minor §12.3, 2026-08-28)
+
+### Run 2026-08-28 — attach-lineage-ui PRE-COMMIT (Environment: 컨테이너 pytest + ruff) — PASS
+
+- 신규 회귀 17건(`tests/test_attach_lineage_ui.py`) — 비교 게이트 2겹 · 계보 배지 조건·배선 ·
+  버전 박스 계보 안내 · 토글 라벨 단일 출처 · 서버 root 해소/IN 1회 · 모달 제목 축 추종 ·
+  **원문 모달 `axis` 스코프 가드**
+- 뮤테이션 역검증 11종 전건 KILL(하네스 베이스라인 exit code 로 실제 구동 확인 후)
+
+### Run 2026-08-28 — attach-lineage-ui PRE-MERGE LIVE (Environment: **Windows-browser** PB-0008) — PASS
+
+브랜치 코드를 live web a/b 에 주입 + asset stamp 재주입 후 실 Chrome 판독.
+
+- 목록: `계보 1/3`·`2/3`·`3/3` 배지 + 툴팁(출처·파일 수). 계보 1개인 첨부는 미표시
+- 단건 계보: `⇄ 계보 비교` → 모달 제목 **「계보 비교」**, 축 `계보 간(시간순)`,
+  선택지 3계보, 실 diff `LIMIT 50;` → `LIMIT 500;`
+- payload: `1256`(v4 head) `lineage_from=1246` — root 해소 확인
+
+증적: `docs/test-runs.d/TASK-20260828T230000-attach-lineage-ui.md`

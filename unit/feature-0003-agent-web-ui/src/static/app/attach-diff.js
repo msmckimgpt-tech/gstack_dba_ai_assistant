@@ -1322,7 +1322,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
   backdrop.innerHTML =
     '<div class="share-mgr-panel attach-diff-panel">' +
     '  <div class="share-mgr-head">' +
-    `    <h3 class="share-mgr-title">버전 비교 — <span class="attach-diff-fname"></span></h3>` +
+    `    <h3 class="share-mgr-title"><span class="attach-diff-titleword">버전 비교</span> — <span class="attach-diff-fname"></span></h3>` +
     '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
     '  </div>' +
     '  <div class="attach-diff-controls">' +
@@ -1706,8 +1706,19 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
   // REQ-20260814-attach-version-tree-ui: 축 전환. 옵션 세트와 요청 파라미터가 함께 바뀌므로
   // 전환 시 **캐시를 버린다** — 이전 축의 전체-펼침 결과를 재사용하면 다른 쌍의 본문이 뜬다.
   const axisBtns = Array.from(backdrop.querySelectorAll(".attach-diff-axis"));
+  // REQ-20260828-attach-lineage-ui: 제목이 **지금 무엇을 견주는지** 말한다.
+  //
+  // 종전에는 축과 무관하게 "버전 비교" 로 고정이었다. 계보 간 비교에서 그 문구는 틀린다 —
+  // 견주는 대상이 한 줄기의 버전이 아니라 **다른 계보**다. 사용자가 계보를 못 보는 것이
+  // 이번 제보의 본질이고, 제목이 계보를 감추면 같은 결함이 모달에서 반복된다.
+  const titleWordEl = backdrop.querySelector(".attach-diff-titleword");
   const syncAxisButtons = () => {
     for (const b of axisBtns) b.classList.toggle("is-active", b.dataset.axis === axis);
+    const _word = axis === "time" ? "계보 비교" : "버전 비교";
+    if (titleWordEl) titleWordEl.textContent = _word;
+    // 접근성 이름도 함께 바꾼다(codex P2) — 눈에 보이는 제목만 고치면 스크린리더에는 계속
+    // "첨부 버전 비교" 가 읽혀, 계보 축에서 **틀린 제목**이 그쪽에만 남는다.
+    backdrop.setAttribute("aria-label", `첨부 ${_word}`);
   };
   syncAxisButtons();
   for (const b of axisBtns) {
@@ -1949,6 +1960,9 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   // 지금 보고 있는 것이 원문인지 비교인지가 제목에서 먼저 읽혀야 한다.
   const syncHead = () => {
     if (viewKind === "diff") {
+      // ⚠ 이 모달(`openAttachmentSourceModal`)에는 **계보 축이 없다** — 자기 체인의 버전만
+      //   견준다. 그래서 여기서는 "버전 비교" 가 정확하다. 계보 축을 가진 것은 전용 diff
+      //   모달(`openAttachmentDiffModal`)이고, 그쪽 제목은 그 함수가 따로 갱신한다.
       titleWordEl.textContent = "버전 비교";
       const f = Number(diffData?.from?.version_number || 0);
       const t = Number(diffData?.to?.version_number || 0);
