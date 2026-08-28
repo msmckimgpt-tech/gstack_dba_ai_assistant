@@ -46,8 +46,25 @@
           실행이 끝나면 대화 화면의 상태 표시가 <strong>내 AI 대기 중</strong>으로 바뀌고 입력창이 열립니다.
         </p>
 
+        <!-- 셋째 경로 (P0-AD) — 명령은 1단계와 **같고** 환경 판단만 AI 가 채운다.
+             문안은 대화 화면 모달과 같아야 한다(둘이 갈리면 어떤 사용자는 옛 안내를 받는다). -->
+        <details style="margin-top:16px" id="probeBox">
+          <summary>환경을 잘 모르겠다면 — AI에게 조사만 맡기기</summary>
+          <p class="aic-handoff-hint">
+            아래 내용을 내 컴퓨터의 AI(Claude Code · Codex 등)에 붙여넣으세요.
+            AI가 이 머신의 파이썬·AI CLI를 <strong>조사해 빈칸만 채우고</strong>,
+            설치와 검증은 1단계와 <strong>똑같은 스크립트</strong>가 합니다.
+            AI가 고른 값은 화면에 그대로 표시되고 범위를 벗어나면 스크립트가 버립니다 —
+            다만 <strong>어떤 값을 고르는지는 AI마다 다를 수 있습니다.</strong>
+          </p>
+          <div class="aic-code aic-code--block" id="probeText"></div>
+          <div class="aic-actions" style="justify-content:flex-start">
+            <button type="button" class="aic-btn" id="copyProbe">조사 지시문 복사</button>
+          </div>
+        </details>
+
         <details style="margin-top:16px">
-          <summary>터미널을 쓸 수 없다면 — AI에게 맡기기</summary>
+          <summary>터미널을 쓸 수 없다면 — AI에게 전부 맡기기</summary>
           <p class="aic-handoff-hint">
             아래 내용을 AI에 붙여넣으세요. 연결 방식 선택과 인증은 AI가 판단합니다
             — <strong>도구에 따라 설치 결과가 달라질 수 있습니다.</strong>

@@ -794,19 +794,35 @@ def compose_launch_commands(*, endpoint: str, token: str) -> dict:
         f"if ((Get-FileHash bridge_setup.ps1 -Algorithm SHA256).Hash "
         f"-ne '{ps_sha.upper()}') {{ throw '체크섬 불일치 — 실행하지 마세요' }}\n"
     ) if ps_verifiable else "# ⚠ 서버가 체크섬을 계산하지 못했습니다 — 운영자에게 값을 확인한 뒤 대조하세요\n"
-    posix = (
-        f"curl -fsS -o bridge_setup.sh {sh_url_use}\n"
-        f"{sh_verify}"
+    # ⚠ probe 판(P0-AD)은 **빈칸이 명령 안에 실재해야** 한다. "빈칸을 채워라" 라고 지시하면서
+    #   채울 자리를 주지 않으면 AI 는 변수를 스스로 지어 붙이고, 그 순간 이 설계가 없애려던
+    #   비결정성이 되돌아온다(변수명 오타 하나로 조용히 무시된다 — 셸은 모르는 변수를 그냥
+    #   환경에 실어 보내고 스크립트는 읽지 않는다). 따옴표 안만 채우게 두는 것이 요점이다.
+    probe_posix_prefix = (
+        "BRIDGE_PROBED_PY='' BRIDGE_PROBED_AI='' "
+        "BRIDGE_PROBED_ARGS='' BRIDGE_PROBED_HANDLER='auto' \\\n"
+    )
+    probe_win_prefix = (
+        "$env:BRIDGE_PROBED_PY=''; $env:BRIDGE_PROBED_AI=''; "
+        "$env:BRIDGE_PROBED_ARGS=''; $env:BRIDGE_PROBED_HANDLER='auto'\n"
+    )
+    posix_run = (
         f"BRIDGE_BASE='{base}' BRIDGE_TOKEN='{token}' "
         f"BRIDGE_CA_SHA256='{ca_fp}' BRIDGE_AGENT_SHA256='{agent_sha}' sh bridge_setup.sh"
     )
-    windows = (
-        f"iwr -UseBasicParsing -Uri '{ps_url_use}' -OutFile bridge_setup.ps1\n"
-        f"{ps_verify}"
+    windows_run = (
         f"$env:BRIDGE_BASE='{base}'; $env:BRIDGE_TOKEN='{token}'; "
         f"$env:BRIDGE_CA_SHA256='{ca_fp}'; $env:BRIDGE_AGENT_SHA256='{agent_sha}'; "
         f".\\bridge_setup.ps1"
     )
+    posix = f"curl -fsS -o bridge_setup.sh {sh_url_use}\n{sh_verify}{posix_run}"
+    windows = (f"iwr -UseBasicParsing -Uri '{ps_url_use}' -OutFile bridge_setup.ps1\n"
+               f"{ps_verify}{windows_run}")
+    # 사람이 쓰는 기본 경로에는 빈칸을 넣지 않는다 — 채울 사람이 없는 칸은 노이즈다.
+    posix_probe = (f"curl -fsS -o bridge_setup.sh {sh_url_use}\n{sh_verify}"
+                   f"{probe_posix_prefix}{posix_run}")
+    windows_probe = (f"iwr -UseBasicParsing -Uri '{ps_url_use}' -OutFile bridge_setup.ps1\n"
+                     f"{ps_verify}{probe_win_prefix}{windows_run}")
     return {
         "posix": posix,
         "windows": windows,
@@ -820,7 +836,89 @@ def compose_launch_commands(*, endpoint: str, token: str) -> dict:
         "setup_url": {"posix": sh_url, "windows": ps_url},
         "checksums": {"setup_posix": sh_sha, "setup_windows": ps_sha,
                       "agent": agent_sha, "ca": ca_fp},
+        # 셋째 경로 — 명령은 위와 **같고**, 환경 판단만 그 머신의 AI 가 채운다 (P0-AD).
+        "probe": compose_probe_setup_instruction(posix=posix_probe, windows=windows_probe),
     }
+
+
+#: `BRIDGE_PROBED_ARGS` 가 받는 인자 — 설치 스크립트의 allowlist 와 **같은 목록**이어야 한다.
+#: 여기서 더 많이 안내하면 AI 가 그 값을 채우고 스크립트가 버려서, 사용자는 "왜 반영이 안 되지"
+#: 를 겪는다(그리고 그 사실은 stderr 경고로만 보인다).
+_PROBED_ARG_ALLOWLIST = (
+    "--workers <1~64>", "--max-workers <1~64>", "--worker-idle-sec <1~86400>",
+    "--ai-timeout <1~86400>", "--refresh-caps",
+)
+
+#: LLM 칸이 지목할 수 있는 AI CLI — 설치 스크립트의 `_KNOWN_AI_CLIS` 와 **같은 목록**이어야
+#: 한다. 여기서 더 넓게 안내하면 AI 가 그 이름을 채우고 스크립트가 버린다.
+_PROBED_AI_ALLOWLIST = ("claude", "codex", "gemini", "ollama")
+
+
+def compose_probe_setup_instruction(*, posix: str, windows: str) -> str:
+    """그 머신의 AI 에게 주는 **환경 조사 지시문** (P0-AD, 사용자 결정 2026-08-28).
+
+    ## 이것이 `compose_connect_handoff` 와 다른 점
+
+    handoff 는 "연결해줘" 다 — 목표만 주므로 경로가 매번 달라지고, 그것이 P0-AC 가 기본 경로에서
+    내린 이유다. 이쪽은 **명령을 이미 만들어 놓고 빈칸만 채우게** 한다. AI 가 바꾸는 것은
+    `BRIDGE_PROBED_*` 값뿐이고, 그 값은 설치 스크립트가 다시 검증한다(실존·형식·allowlist).
+
+    즉 P0-AC 의 「같은 입력이면 같은 결과」가 유지된다 — 입력을 AI 가 고르지만 **실행 경로는
+    여전히 하나**이고, 무엇보다 고른 값이 명령에 그대로 보여서 재현·지원·검증이 된다.
+
+    ## 왜 AI 에게 맡길 만한가
+
+    이 브리지의 전제가 이미 "그 머신에 LLM CLI 가 있다" 이다(없으면 브리지가 무의미하다).
+    새 의존성이 생기지 않는다. 그리고 조사 대상은 우리가 열거할 수 없는 것들이다 — 실측된
+    조합 하나: 브라우저는 Windows, `claude` 는 WSL 안. 어떤 `uname` 분기도 그것을 맞히지 못한다.
+
+    ## 무엇을 맡기지 않는가 (지시문이 직접 금지한다)
+
+    무결성 대조 · 명령의 형태 · "됐다" 는 판정. 이 셋은 스크립트 안에 있고, AI 가 대신하면
+    「대조했다고 말하지만 안 한」 형태가 된다. 그건 검증할 표면이 없어 사후에도 드러나지 않는다.
+    """
+    allow = " · ".join(_PROBED_ARG_ALLOWLIST)
+    ai_allow = " · ".join(_PROBED_AI_ALLOWLIST)
+    return "\n".join([
+        "이 머신의 환경을 조사해서 아래 명령의 **빈칸만 채워** 실행해줘.",
+        "명령 자체는 바꾸지 마 — 무결성 대조·설치·기동은 그 스크립트가 한다.",
+        "",
+        "조사해서 채울 것 (모르면 비워 둬. 비우면 스크립트가 알아서 판단한다)",
+        "  BRIDGE_PROBED_PY       파이썬 3.8+ 실행 파일. 여러 개면 실제로 `-V` 를 찍어 고를 것.",
+        "                         (기본값은 `python3` → `python` 순 탐색이다. 그게 맞으면 비워 둬.)",
+        f"  BRIDGE_PROBED_AI       러너가 쓸 로컬 AI CLI. **이 중 하나만**: {ai_allow}",
+        "                         PATH 에 실재하는 것만 골라(`command -v` 로 확인). 목록 밖 CLI 는",
+        "                         스크립트가 버린다 — 그건 사용자가 직접 지정하는 몫이다.",
+        f"  BRIDGE_PROBED_ARGS     러너 인자. 허용: {allow}",
+        "                         이 머신 사양에 맞는 값을 골라. 그 외 인자는 스크립트가 버린다.",
+        "  BRIDGE_PROBED_HANDLER  auto(기본) · none.",
+        "                         `none` 은 「등록해도 이 머신의 브라우저가 그 핸들러를 보지",
+        "                         못한다」일 때 — 대표 사례: 이 셸은 WSL 인데 웹은 Windows",
+        "                         브라우저로 연다. 그때는 none 을 주고 사용자에게 그 사실을 알려줘.",
+        "",
+        "판단이 필요한 지점 (조사해서 사용자에게 알려줄 것)",
+        "  · 이 머신에 AI CLI 가 하나도 없으면 설치가 먼저다. 그 사실을 말하고 멈춰.",
+        "  · 러너는 재부팅하면 사라진다. 자동 시작이 필요하면 사용자에게 물어봐.",
+        "",
+        "하지 말 것 (스크립트가 하는 일이다 — 대신하면 검증이 무의미해진다)",
+        "  · CA 지문·체크섬을 네가 대조하고 넘어가기. 그 대조는 명령 안에 있다.",
+        "  · 명령을 다른 형태로 바꾸거나, 러너를 직접 띄우기.",
+        "  · 실패했는데 '됐다' 고 말하기. 판정은 스크립트의 종료 코드다.",
+        # ⚠ `BRIDGE_ARGS` 는 사람 칸이라 **무검증**이다. 스크립트는 누가 채웠는지 알 수 없으므로
+        #   (provenance 를 강제할 수단이 없다 — codex 지적) 여기서 명시적으로 선을 긋는다.
+        #   완전한 차단은 아니지만, 지시를 어겨야만 넘을 수 있게 만드는 것이 할 수 있는 전부다.
+        "  · `BRIDGE_ARGS` 를 채우거나 새 환경변수를 만들어 붙이기. 그 칸은 검증을 거치지 않는다",
+        "    — 네가 채울 곳은 위 `BRIDGE_PROBED_*` 네 개뿐이다.",
+        "",
+        "── macOS · Linux · WSL ──",
+        posix,
+        "",
+        "── Windows PowerShell ──",
+        windows,
+        "",
+        "실행 후 마지막 출력에 `완료.` 가 보이면 성공이야.",
+        "`⚠` 로 시작하는 줄이 있으면 그건 **네가 채운 값이 버려졌다**는 뜻이니 그대로 알려줘.",
+    ])
 
 
 def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") -> str:

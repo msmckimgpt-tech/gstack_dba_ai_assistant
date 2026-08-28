@@ -131,6 +131,15 @@ async function _make() {
     return;
   }
   $("connectModalText").textContent = text;
+  // P0-AD 셋째 경로. 구 서버(probe 미지원)면 그 블록만 감춘다 — 빈 `<pre>` 를 남기면
+  // 사용자는 복사할 것이 없는 칸을 보고 고장으로 읽는다.
+  const probeEl = $("connectModalProbe");
+  if (probeEl) {
+    const probe = String((_launch && _launch.probe) || "");
+    probeEl.textContent = probe;
+    const box = probeEl.closest("details");
+    if (box) box.hidden = !probe;
+  }
   _paintOsTab();
   const launchBtn = $("connectModalLaunch");
   // 실행 버튼은 **프로토콜 URL 이 있을 때만** 보인다. 없는데 보이면 누른 뒤 아무 일도 일어나지
@@ -196,6 +205,8 @@ export function bindConnectModal() {
     () => _copyFrom("connectModalText", "복사했습니다. AI에 붙여넣으세요."));
   $("connectModalCopyCmd")?.addEventListener("click",
     () => _copyFrom("connectModalCmd", "복사했습니다. 터미널에 붙여넣고 실행하세요."));
+  $("connectModalCopyProbe")?.addEventListener("click",
+    () => _copyFrom("connectModalProbe", "복사했습니다. 내 컴퓨터의 AI에 붙여넣으세요."));
   $("connectModalLaunch")?.addEventListener("click", _launchRunner);
   $("connectModalTabPosix")?.addEventListener("click", () => { _osTab = "posix"; _paintOsTab(); });
   $("connectModalTabWin")?.addEventListener("click", () => { _osTab = "windows"; _paintOsTab(); });

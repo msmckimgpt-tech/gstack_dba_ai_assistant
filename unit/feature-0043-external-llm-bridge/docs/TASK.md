@@ -758,3 +758,32 @@ AI 플랫폼에 관계없이, 클라이언트가 자유롭게 서술한 모델�
 - [x] **P2-2** 구버전 claude 플래그 미지원 시 빼고 경고(확인 실패 시엔 남긴다)
 - [x] **P2-3** `REQ-20260828-tool-permission-friction` + `AC-…-1~7` 정의, TEST 15건 매핑
 - [x] **P2-4** EOF whitespace
+
+### TASK-20260828T193000-ai-assisted-setup — 환경 판단만 AI 에게 (P0-AD)
+
+**요청**: "목적 자체는, LLM CLI에 연결시키기만 하면 됩니다. 그렇다면 해당 부분만, 각 머신에
+설치된 LLM의 도움을 받아 능동적으로 세팅되도록 구성해도 문제없을지 검토해주세요."
+
+- [x] **검토** — 조건부 가능. 경계는 「LLM=판단, 스크립트=실행」. 그 경계를 넘으면 P0-AC 가
+      고친 문제(구축 방식이 매번 다름)로 되돌아간다
+- [x] `bridge_setup.sh` — `BRIDGE_PROBED_*` 네 칸 + 실존·타입·범위·allowlist 검증
+- [x] `bridge_setup.ps1` — 동형 (pwsh7 PARSE OK + 동형 동작 실측)
+- [x] 서버 `compose_probe_setup_instruction` — 명령에 **실재하는 빈칸** + 위임 금지 3항
+- [x] 화면 — 모달·단독페이지 **양쪽**에 셋째 경로(결정론 → AI조사 → AI전부위임)
+- [x] 자체 발견 결함 2건 — `drop()` 이 stdout 이라 경고가 명령치환에 먹힘 · 지시문은 빈칸을
+      요구하는데 명령에 빈칸이 없었음
+- [x] 회귀 93건(기본 61 + codex 조치 32) · 뮤턴트 5종 전건 KILL
+- [x] **codex 적대 리뷰** — P1 3 · P2 4 전건 조치 (아래)
+- [x] `make test` 전량 green · ruff clean
+- [ ] **라이브 실증** — 배포 후 실제로 AI 에게 조사 지시문을 주고 러너가 뜨는지
+      (러너 재기동 토큰이 필요해 사용자 화면에서 완결)
+
+**codex 적대 리뷰 조치** (REV-20260828T193000):
+
+- [x] **P1** `BRIDGE_PROBED_AI=rm` 통과 → 알려진 AI CLI allowlist(sh·ps1·지시문 3곳 동기)
+- [x] **P1** UI 가 "결과는 ①과 같습니다" 로 단정 → 「스크립트가 같다」로 정정 + 비결정성 고지
+- [x] **P1** 문서 미갱신 → FUNCTION P0-AD · MODIFY · TASK · REVIEW · TEST 작성
+- [x] **P2** `--workers .` · `1..2` · `999999999` 통과 → 축별 타입·범위 검증
+- [x] **P2** `native` 모드가 `auto` 와 동일 구현 → 공개 목록에서 제거
+- [x] **P2** python 탐색 순서가 sh(`python3`)·ps1(`python`)·지시문 3곳 불일치 → 통일
+- [x] **P2** 테스트가 문자열만 봄 → `set --` 로 실제 argv 전개 검사 + 위험값 회귀 32건
