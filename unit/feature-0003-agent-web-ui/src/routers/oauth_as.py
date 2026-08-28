@@ -43,6 +43,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import ssl
 import time
@@ -493,6 +494,26 @@ def wk_protected_resource_scoped(rest: str, request: Request) -> JSONResponse:
 # "특정 URL 접속 → 로그인 → 버튼 → 복사" 경로. MCP OAuth 를 도는 클라이언트라면 이 페이지가
 # 필요 없다(위 discovery 로 자동). 그렇지 않은 도구·스크립트·수동 설정을 위한 우회로다.
 
+def _bridge_mode() -> bool:
+    """지금 **브리지가 답변 경로인가** (= 서버 계정 LLM 이 잠겨 있는가).
+
+    잠금 판정의 전제다. 서버 LLM 이 열려 있으면 개인 AI 연결은 선택 사항이고, 그때 컴포저를
+    잠그면 아무도 연결하지 않은 정상 운영에서 서비스가 통째로 멈춘다.
+
+    판정은 게이트 정본(`shared.llm_gate`)을 그대로 부른다 — 여기서 env 를 다시 읽으면
+    게이트 해석이 두 벌이 되고, 기본값(차단)이 한쪽에만 반영되는 순간 갈린다.
+    조회 실패는 **False**(잠그지 않음): 확신 없이 잠그면 멀쩡한 서비스를 세운다.
+    """
+    try:
+        from shared.llm_gate import server_llm_enabled
+
+        return not bool(server_llm_enabled())
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("[bridge] 게이트 상태 조회 실패 — 잠그지 않는다",
+                                            exc_info=True)
+        return False
+
+
 def _listening(account_id: int, conn=None) -> bool:
     """AI 가 지금 대기 중인가(하트비트 최근성 · `wait_for_request` 최근성). 실패는 False.
 
@@ -529,6 +550,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             cur.close()
     except Exception:
         connected = True   # 판정 실패는 '연결됨'(틀렸을 때 덜 성가신 방향)
+    # 토큰이 있는 것과 **지금 듣고 있는 것**은 다르다. 재부팅하면 러너만 사라지고 토큰은
+    # 남아, "연결됨" 만 보이면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
+    listening = _listening(int(account.get("id") or 0), conn)
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -536,9 +560,23 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "endpoint": f"{origin}/api/ai/mcp",
         "guide": f"{origin}/api/ai/guide",
         "connected": connected,
-        # 토큰이 있는 것과 **지금 듣고 있는 것**은 다르다. 재부팅하면 러너만 사라지고 토큰은
-        # 남아, "연결됨" 만 보이면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
-        "listening": _listening(int(account.get("id") or 0), conn),
+        "listening": listening,
+        # ── 컴포저 잠금의 **단일 판정** (P0-AB, 사용자 결정 2026-08-28) ──────────────
+        #
+        #   "머신 내 DQA 프로세스가 실행중인지, 토큰이 연결되어 있는지 여부를 점검하여 허용"
+        #
+        # 곱을 **서버가 낸다**. 프런트가 `connected && listening` 을 스스로 조립하면 그 순간
+        # 판정이 두 벌이 되고, 나중에 축이 하나 늘거나 규칙이 바뀔 때 화면과 서버가 갈린다 —
+        # 갈리는 순간 느슨한 쪽이 사용자가 보는 진실이 된다(P0-R 에서 이미 겪었다).
+        "ready": bool(connected and listening),
+        # 브리지가 **적용되는 상태인가** — 서버 LLM 이 열려 있으면 이 게이트는 성립하지 않는다.
+        # 이 값 없이 프런트가 잠그면, 게이트를 되돌린(`AGENT_SERVER_LLM_ENABLED=1`) 운영에서
+        # 아무도 연결하지 않았다는 이유로 **멀쩡한 서비스의 입력창이 잠긴다**.
+        "bridge_mode": _bridge_mode(),
+        # ── 컴포저를 잠글 것인가 — **서버의 단일 판정** ─────────────────────────────
+        # 프런트는 이 불리언 하나만 읽는다. 위 축들(connected·listening·bridge_mode)은 표시와
+        # 안내 문구용이고, 잠금 결정은 여기 한 곳에서만 난다.
+        "compose_blocked": bool(_bridge_mode() and not (connected and listening)),
     })
 
 
@@ -661,6 +699,128 @@ def _runner_checksum() -> str:
     except Exception:  # noqa: BLE001
         return ""
     return _cached_digest(served, lambda raw: hashlib.sha256(raw).hexdigest())
+
+
+def _setup_checksum(name: str) -> str:
+    """AI 가 아니라 **사람이** 내려받는 설치 스크립트의 SHA-256. 실패는 빈 문자열.
+
+    러너와 같은 이유로 **서빙되는 파일 그대로**를 해싱한다 — 정본 사본을 해싱하면 배포 누락 시
+    우리가 알려 준 값과 사용자가 받는 파일이 달라지고, 그때 체크섬은 안전장치가 아니라
+    오경보 장치가 된다.
+    """
+    try:
+        served = os.path.join(str(app.STATIC_DIR), "agent", name)
+    except Exception:  # noqa: BLE001
+        return ""
+    return _cached_digest(served, lambda raw: hashlib.sha256(raw).hexdigest())
+
+
+def compose_launch_commands(*, endpoint: str, token: str) -> dict:
+    """**LLM 을 거치지 않는** 연결 경로 — 붙여넣어 실행할 한 줄 (P0-AC, 사용자 결정 2026-08-28).
+
+    ## 왜 이것이 따로 있는가
+
+    `compose_connect_handoff` 는 **AI 에게** 주는 지시문이다. 받는 쪽이 해석하므로 결과가
+    매번 다르다 — 사용자 제보의 그 문제다("구축하는 방식이 모두 달라 사용자의 경험이 일정하지
+    않다"). 이쪽은 **셸에게** 주는 명령이라 해석층이 없다: 같은 입력이면 같은 결과다.
+
+    둘을 없애고 하나로 합치지 않는 이유: 지시문은 여전히 유효한 경로다(터미널을 못 쓰는
+    환경·이미 AI 로 잘 쓰던 사용자). 대체가 아니라 **기본 경로의 교체**이고, 화면이 이것을
+    먼저 보여 준다.
+
+    ## 무결성 값을 명령에 싣는 이유
+
+    스크립트를 받아 실행하라는 요구는 그 자체로는 사회공학과 구분되지 않는다(P0-W). 그래서
+    **대조할 값을 명령 안에** 넣는다 — 스크립트가 CA·러너를 받은 뒤 이 값으로 대조하고,
+    어긋나면 거기서 멈춘다. 값이 없으면(서버가 계산 실패) 스크립트는 **대조를 건너뛴 사실을
+    말한다**. 조용히 통과시키지 않는다.
+
+    반환: `{"posix": str, "windows": str, "protocol": str, "setup_url": {...}, "checksums": {...}}`
+    """
+    base = ""
+    if endpoint:
+        try:
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(endpoint)
+            if parts.scheme and parts.netloc:
+                base = f"{parts.scheme}://{parts.netloc}"
+        except Exception:  # noqa: BLE001
+            base = ""
+    sh_url = f"{base}/static/agent/bridge_setup.sh"
+    ps_url = f"{base}/static/agent/bridge_setup.ps1"
+    ca_fp = _ca_fingerprint()
+    agent_sha = _runner_checksum()
+    sh_sha = _setup_checksum("bridge_setup.sh")
+    ps_sha = _setup_checksum("bridge_setup.ps1")
+    host = ""
+    if base:
+        try:
+            from urllib.parse import urlsplit as _us
+
+            host = _us(base).hostname or ""
+        except Exception:  # noqa: BLE001
+            host = ""
+    # ⚠ 설치 스크립트 자체는 **평문 HTTP** 로 받는다. 이유는 CA 와 같다 — 아직 CA 를 신뢰하지
+    #   않는 머신이 https 로 받으려 하면 self-signed 로 실패한다(부트스트랩 데드락). 그 평문의
+    #   위험은 바로 다음 줄의 `sha256sum` 대조가 덮는다: 지문은 https(이 화면)로 왔고 파일은
+    #   평문으로 오므로, 바꿔치려면 두 채널을 동시에 잡아야 한다.
+    # ── 평문 경로는 **대조 값이 있을 때만** 연다 (codex 적대 리뷰 P1-3) ─────────────────
+    #
+    # 초판은 "값이 없으면 대조 줄을 빼고 그냥 실행" 이었다. 근거는 "빈 값과 비교하면 항상 실패해
+    # 정상 사용자가 막힌다" 였고 그 절반은 맞다 — 그런데 **틀린 결론을 냈다.**
+    #
+    # 이 체크섬은 장식이 아니라 **평문 HTTP 로 받는 것을 정당화하는 유일한 근거**다. 값이 없는데
+    # 평문 경로를 그대로 주면, 남는 것은 "모르는 주소에서 받은 스크립트를 검증 없이 실행" 이고
+    # 그게 바로 P0-W 가 외부 AI 에게 정당하게 거절당한 그 모양이다. 게다가 이 스크립트가 하는
+    # 첫 일이 **CA 를 신뢰시키는 것**이라, 바꿔치기당하면 이후 https 와 `mat_` 토큰까지 넘어간다.
+    #
+    # 그래서 값이 없으면 **https 경로로 내린다**. 그 경우 CA 를 이미 신뢰하는 머신에서만 되지만,
+    # "검증 없이 되는 것" 보다 "검증되는 환경에서만 되는 것" 이 옳다. 못 받는 사용자에게는
+    # 운영자 확인 경로를 준다(막다른 길로 두지 않는다).
+    sh_verifiable = bool(sh_sha)
+    ps_verifiable = bool(ps_sha)
+    sh_url_use = (f"http://{host}/static/agent/bridge_setup.sh"
+                  if (host and sh_verifiable) else sh_url)
+    ps_url_use = (f"http://{host}/static/agent/bridge_setup.ps1"
+                  if (host and ps_verifiable) else ps_url)
+    # macOS 기본 설치에는 `sha256sum` 이 **없다**(`shasum` 뿐) — 고정 호출하면 그 사용자에게는
+    # 명령이 통째로 실패한다(codex P2). 설치 스크립트 내부가 이미 쓰는 폴백 사슬을 그대로 쓴다.
+    sh_verify = (
+        "SUM=$(sha256sum bridge_setup.sh 2>/dev/null || shasum -a 256 bridge_setup.sh)\n"
+        f"case \"$SUM\" in {sh_sha}*) ;; *) echo '체크섬 불일치 — 실행하지 마세요'; exit 1;; esac\n"
+    ) if sh_verifiable else "# ⚠ 서버가 체크섬을 계산하지 못했습니다 — 운영자에게 값을 확인한 뒤 대조하세요\n"
+    ps_verify = (
+        f"if ((Get-FileHash bridge_setup.ps1 -Algorithm SHA256).Hash "
+        f"-ne '{ps_sha.upper()}') {{ throw '체크섬 불일치 — 실행하지 마세요' }}\n"
+    ) if ps_verifiable else "# ⚠ 서버가 체크섬을 계산하지 못했습니다 — 운영자에게 값을 확인한 뒤 대조하세요\n"
+    posix = (
+        f"curl -fsS -o bridge_setup.sh {sh_url_use}\n"
+        f"{sh_verify}"
+        f"BRIDGE_BASE='{base}' BRIDGE_TOKEN='{token}' "
+        f"BRIDGE_CA_SHA256='{ca_fp}' BRIDGE_AGENT_SHA256='{agent_sha}' sh bridge_setup.sh"
+    )
+    windows = (
+        f"iwr -UseBasicParsing -Uri '{ps_url_use}' -OutFile bridge_setup.ps1\n"
+        f"{ps_verify}"
+        f"$env:BRIDGE_BASE='{base}'; $env:BRIDGE_TOKEN='{token}'; "
+        f"$env:BRIDGE_CA_SHA256='{ca_fp}'; $env:BRIDGE_AGENT_SHA256='{agent_sha}'; "
+        f".\\bridge_setup.ps1"
+    )
+    return {
+        "posix": posix,
+        "windows": windows,
+        # 설치가 끝난 머신에서 **브라우저가 러너를 다시 띄우는** 경로. 스킴 핸들러는 설치
+        # 스크립트가 등록해 두었다 — 브라우저는 샌드박스라 프로세스를 직접 띄우지 못하므로,
+        # 이 우회가 "웹에서 원클릭 실행" 의 유일한 구현 수단이다.
+        #
+        # 토큰을 URL 에 싣는다: 핸들러 스크립트에는 토큰이 없고(디스크에 쓰지 않는다),
+        # 세션 결합이라 로그아웃하면 즉시 무효다.
+        "protocol": f"mysql-ai-bridge://start?token={token}",
+        "setup_url": {"posix": sh_url, "windows": ps_url},
+        "checksums": {"setup_posix": sh_sha, "setup_windows": ps_sha,
+                      "agent": agent_sha, "ca": ca_fp},
+    }
 
 
 def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") -> str:
@@ -920,8 +1080,11 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
     # 각자 조립하면 문안이 갈린다.
     # 발급자 이름을 함께 넘긴다 — 받는 AI 에게 "이건 네 사용자가 로그인해서 만든 것" 이라는
     # 유일한 출처 표시다. 없으면 지시문은 출처 불명의 붙여넣기와 구분되지 않는다.
+    _tok = str(issued.get("access_token") or "")
     return JSONResponse({**issued, "endpoint": endpoint,
                          "handoff": compose_connect_handoff(
-                             endpoint=endpoint,
-                             token=str(issued.get("access_token") or ""),
-                             username=str(account.get("username") or ""))})
+                             endpoint=endpoint, token=_tok,
+                             username=str(account.get("username") or "")),
+                         # P0-AC: LLM 을 거치지 않는 **기본 경로**. 화면은 이것을 먼저 보여 주고,
+                         # 지시문(`handoff`)은 '터미널을 쓸 수 없을 때' 로 내린다.
+                         "launch": compose_launch_commands(endpoint=endpoint, token=_tok)})

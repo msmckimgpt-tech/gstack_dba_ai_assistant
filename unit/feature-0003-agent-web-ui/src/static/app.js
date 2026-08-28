@@ -1,6 +1,6 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
-import { bindConnectModal, bindConnState, refreshConnState } from "./app/connect-modal.js?v=dev";
+import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange } from "./app/connect-modal.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
@@ -7593,6 +7593,10 @@ async function initialize() {
   // 페이지 1회 배선 — 문서 수준 위임이라 메시지 재렌더와 무관하게 유지된다.
   bindConnectModal();
   bindConnState();   // 내 AI 연결 상태 상시 표시(제보 2026-08-27)
+  // feature-0043 P0-AB: 연결 게이트가 열리거나 닫히면 컴포저를 다시 그린다.
+  // **상태를 바꾼 쪽이 렌더를 책임진다**(P0-V) — 잠금이 풀린 순간에 아무도 다시 그리지
+  // 않으면 입력창이 잠긴 채 박제되고, 사용자는 연결을 마쳤는데도 쓸 수 없다.
+  onComposeGateChange(() => { try { renderComposer(); } catch (_) { /* 치명 아님 */ } });
 
   // 좌측 대화 사이드바 너비 조절 핸들 배선 + 저장 너비 복원 (페이지 1회).
   setupSidebarResize();

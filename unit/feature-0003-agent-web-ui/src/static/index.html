@@ -244,6 +244,22 @@
             <button type="button" class="llm-restriction-banner-retry hidden" id="llmRestrictionBannerRetry"
                     title="제공자 상태를 다시 확인합니다">다시 확인</button>
           </div>
+          <!-- feature-0043 P0-AB(사용자 결정 2026-08-28): 브리지가 준비되지 않았으면 **요청이
+               막히고** 그 자리에 연결 안내가 온다. 잠금 사실만 알리고 조치 경로가 없으면
+               사용자는 고장으로 읽는다 — 그래서 이 패널이 곧 연결 진입점이다.
+               서버 판정(`compose_blocked`) 하나로만 켜진다(프런트가 조건을 새로 만들지 않는다).
+
+               자리는 **입력창 위**다. 다른 배너(provider 제한·실행시간 연장)와 같은 줄에 서고,
+               무엇보다 "왜 못 쓰는가" 를 입력창보다 **먼저** 읽게 한다 — 아래에 두면 사용자는
+               잠긴 입력창을 먼저 만나 고장으로 읽은 뒤에야 사유를 본다(실 브라우저 실측
+               2026-08-28). -->
+          <div class="composer-gate hidden" id="composerGate" role="status" aria-live="polite">
+            <div class="composer-gate-body">
+              <strong class="composer-gate-title" id="composerGateTitle">내 AI가 연결되어 있지 않습니다</strong>
+              <span class="composer-gate-desc" id="composerGateDesc">이 서비스는 답변을 내 컴퓨터의 AI가 만듭니다. 연결하면 입력창이 열립니다.</span>
+            </div>
+            <button type="button" class="composer-gate-btn" id="composerGateBtn">연결하기</button>
+          </div>
           <!-- feature-0030: 실행시간 한도 임박 — "이번 요청만 끝까지" 승인 배너. 진행 폴링이
                timeout_extension.prompted 를 보면 노출, 승인/종료 시 걷힌다. 화면을 차단하지
                않는다(2026-07-09 ask-timeout-nonblocking 결정과 동형). -->
@@ -654,18 +670,54 @@
       </div>
       <div class="connect-modal-body">
         <p class="connect-modal-why">
-          아래에서 연결 정보를 만들어 쓰시는 AI에 붙여넣으면 됩니다.
-          연결 방식 선택과 인증은 AI가 알아서 합니다.
+          내 AI를 이 서비스에 연결하면 질문에 답할 수 있습니다.
+          아래 <strong>연결 준비</strong>를 누르고, 나오는 명령 한 줄을 터미널에 붙여넣으면 끝입니다.
         </p>
         <div class="connect-modal-actions">
-          <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalMake">연결 정보 만들기</button>
+          <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalMake">연결 준비</button>
+          <!-- feature-0043 P0-AC: 이미 설치한 머신에서 러너만 다시 띄우는 경로.
+               브라우저는 샌드박스라 프로세스를 직접 못 띄우므로, 설치 스크립트가 등록해 둔
+               `mysql-ai-bridge://` 스킴을 여는 것이 유일한 구현 수단이다. 등록 전에는 아무 일도
+               일어나지 않으므로 **연결 준비를 누른 뒤에만** 보인다. -->
+          <button type="button" class="connect-modal-btn" id="connectModalLaunch" hidden
+                  title="이미 설치를 마친 머신에서 러너를 다시 실행합니다">내 AI 실행</button>
         </div>
         <div id="connectModalResult" hidden>
-          <p class="connect-modal-hint">아래 내용을 AI에 그대로 붙여넣으세요.</p>
-          <pre class="connect-modal-code" id="connectModalText"></pre>
-          <div class="connect-modal-actions">
-            <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalCopy">복사</button>
+          <!-- ① 기본 경로 — 셸이 실행하므로 결과가 항상 같다. -->
+          <div class="connect-modal-step">
+            <p class="connect-modal-hint">
+              <strong>1단계 · 터미널에 붙여넣기</strong>
+              — 내 컴퓨터의 터미널(<span class="connect-modal-os" id="connectModalOsLabel">macOS·Linux</span>)에
+              그대로 붙여넣고 실행하세요.
+            </p>
+            <div class="connect-modal-tabs" role="tablist" aria-label="운영체제 선택">
+              <button type="button" class="connect-modal-tab is-active" id="connectModalTabPosix"
+                      role="tab" aria-selected="true">macOS · Linux</button>
+              <button type="button" class="connect-modal-tab" id="connectModalTabWin"
+                      role="tab" aria-selected="false">Windows</button>
+            </div>
+            <pre class="connect-modal-code" id="connectModalCmd"></pre>
+            <div class="connect-modal-actions">
+              <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalCopyCmd">명령 복사</button>
+            </div>
+            <p class="connect-modal-hint connect-modal-hint--muted">
+              실행이 끝나면 이 화면의 상태 표시가 <strong>내 AI 대기 중</strong>으로 바뀌고
+              입력창이 열립니다.
+            </p>
           </div>
+          <!-- ② 보조 경로 — 터미널을 쓸 수 없을 때. 접어 둔다: 이쪽은 AI 해석에 결과가 달라져
+               "매번 다른 설치" 마찰의 원인이었고(제보 2026-08-28), 기본 경로로 두지 않는다. -->
+          <details class="connect-modal-alt">
+            <summary>터미널을 쓸 수 없다면 — AI에게 맡기기</summary>
+            <p class="connect-modal-hint">
+              아래 내용을 AI에 그대로 붙여넣으세요. 연결 방식 선택과 인증은 AI가 판단합니다
+              — <strong>도구에 따라 설치 결과가 달라질 수 있습니다.</strong>
+            </p>
+            <pre class="connect-modal-code" id="connectModalText"></pre>
+            <div class="connect-modal-actions">
+              <button type="button" class="connect-modal-btn" id="connectModalCopy">지시문 복사</button>
+            </div>
+          </details>
         </div>
         <div class="connect-modal-note">
           <p>연결 정보에는 <strong>토큰</strong>이 들어갑니다. 내 권한으로 데이터를 조회하므로

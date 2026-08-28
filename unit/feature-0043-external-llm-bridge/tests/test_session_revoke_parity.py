@@ -149,12 +149,22 @@ def test_unconnected_question_is_deferred_not_dropped():
 
     지금은 **보관한다**(`Status='deferred'`). 폭주 방지는 적재를 막는 대신 **승격을 1건으로
     제한**해서 얻는다 — 같은 것을 지키면서 재입력만 없앤다.
+
+    ⚠ 재갱신 (P0-AB, 사용자 결정 2026-08-28): 보관의 **조건**이 바뀌었다.
+
+    지금 게이트는 두 축의 곱이다 — *"머신 내 DQA프로세스가 실행중인지, 토큰이 연결되어
+    있는지 여부를 점검하여 허용"*. 토큰이 없으면 화면이 잠기고 서버가 409 로 거절하므로
+    보관할 것이 없다. 보관은 **게이트를 통과했다가 러너가 꺼진 창** 을 위한 것이 됐다:
+    *"이미 로그인 된 상태에서 질문이 진행되었다면 보관하여 다시 처리합니다."*
+
+    재입력을 요구하지 않는다는 원래의 약속은 그 창에서 그대로 지켜진다.
     """
     body = _func(CONVS, "_enqueue_web_bridge_task")
-    assert '"open" if connected else "deferred"' in body, "연결 여부로 상태를 가르지 않는다"
-    assert "INSERT INTO WebAiTasks" in body, "미연결 질문이 적재되지 않는다"
-    # 적재를 통째로 건너뛰던 옛 분기가 남아 있으면 두 경로가 공존해 언젠가 갈린다.
-    assert "if not connected:" not in body, "미연결 조기 반환 분기가 남아 있다"
+    assert '"open" if listening else "deferred"' in body, "러너 생존으로 상태를 가르지 않는다"
+    assert "INSERT INTO WebAiTasks" in body, "보류 질문이 적재되지 않는다"
+    # 토큰이 없을 때는 **차단**이 계약이다 — 조용히 적재로 되돌아가면 아무도 가져갈 수 없는
+    # 질문이 다시 쌓이고, 사용자 결정("요청이 막히고")이 무효가 된다.
+    assert "bridge_blocked" in body, "토큰 미보유 요청을 차단하지 않는다"
 
 
 def test_disconnected_path_still_keeps_the_conversation():
@@ -166,10 +176,10 @@ def test_disconnected_path_still_keeps_the_conversation():
 
 
 def test_disconnected_path_does_not_ask_for_polling():
-    """보류 질문은 언제 승격될지 모른다 — 폴링하면 연결 안 한 브라우저가 종일 빈 요청을 보낸다."""
+    """보류 질문은 언제 승격될지 모른다 — 폴링하면 러너 꺼진 브라우저가 종일 빈 요청을 보낸다."""
     body = _func(CONVS, "_enqueue_web_bridge_task")
-    assert '"bridge_pending": connected' in body, (
-        "미연결에서도 폴링을 켠다(또는 연결 상태에서 폴링이 꺼졌다)")
+    assert '"bridge_pending": listening' in body, (
+        "러너가 꺼진 상태에서도 폴링을 켠다(또는 대기 중인데 폴링이 꺼졌다)")
 
 
 def test_notice_promises_the_question_is_carried_over():
@@ -179,7 +189,9 @@ def test_notice_promises_the_question_is_carried_over():
     다시 입력하게 만든다).
     """
     src = CONVS.read_text(encoding="utf-8")
-    body = src[src.index("_BRIDGE_NOTICE_NOT_CONNECTED = ("):src.index("#: 승격 경쟁에서 밀렸거나")]
+    # P0-AB: 보류 말풍선의 사유가 '토큰 없음' → '러너 꺼짐' 으로 바뀌어 상수도 바뀌었다.
+    # 계약(이어받기·1건 규칙 고지)은 그대로다.
+    body = src[src.index("_BRIDGE_NOTICE_NOT_LISTENING = ("):src.index("#: 승격 경쟁에서 밀렸거나")]
     assert "이 질문부터" in body, "이어받는다는 사실을 말하지 않는다"
     assert "다시 질문해" not in body, "재입력을 요구하는 옛 문구가 남아 있다"
     assert "마지막 질문 1건" in body, "여러 번 물었을 때의 규칙을 밝히지 않는다"
@@ -242,7 +254,7 @@ def test_indicator_opens_the_modal():
 def test_indicator_refreshes_after_connecting():
     """방금 연결했는데 표시가 낡아 있으면 사용자는 실패한 줄 안다."""
     js = MODAL_JS.read_text(encoding="utf-8")
-    make = js[js.index("async function _make("):js.index("async function _copy(")]
+    make = js[js.index("async function _make("):js.index("/** 지정한 `<pre>` 의 내용을")]
     assert "refreshConnState()" in make
 
 
@@ -252,12 +264,30 @@ def test_indicator_refreshes_on_tab_return():
     assert "visibilitychange" in js
 
 
-def test_indicator_does_not_poll():
-    """연결은 자주 바뀌지 않는다. 주기 폴링은 이 기능 전체의 원칙과도 어긋난다."""
+def test_indicator_does_not_poll_when_unlocked():
+    """⚠ 계약이 좁혀졌다 (P0-AB, 사용자 결정 2026-08-28).
+
+    종전 계약은 "주기 폴링 없음" 이었고 그 근거는 (a) 연결이 자주 바뀌지 않는다 (b) 이 기능의
+    다른 축(대기열 인지)이 폴링을 쓰지 않는다 였다. 둘 다 여전히 맞다.
+
+    그런데 컴포저를 잠그기 시작하면서 **잠금을 푸는 신호**가 필요해졌다. 사용자는 다른 창
+    (터미널)에서 설치를 끝내고 이 탭으로 *돌아오지 않을 수 있고*, 그러면 갱신 3시점(로드·연결
+    생성 직후·탭 복귀)이 전부 비어 입력창이 잠긴 채 남는다 — "연결했는데 안 열린다".
+
+    그래서 폴링을 **잠긴 동안으로 한정**한다. 잠기지 않은 사용자(대다수·대부분의 시간)에게는
+    요청이 0 이라는 원래의 성질이 유지된다. 이 테스트는 그 한정이 살아 있는지를 본다.
+    """
     js = MODAL_JS.read_text(encoding="utf-8")
     code = "\n".join(l for l in js.split("\n")
                      if l.strip() and not l.strip().startswith("//"))
-    assert "setInterval" not in code, "연결 상태를 주기 폴링한다"
+    assert code.count("setInterval") == 1, (
+        "연결 상태 폴링이 한 자리가 아니다 — 상시 폴링이 되살아났을 수 있다")
+    # 켜고 끄는 판정이 잠금 상태에 걸려 있어야 한다. `_composeBlocked` 가 아닌 조건으로 켜지면
+    # 잠기지 않은 사용자도 종일 요청을 보낸다.
+    sync = code[code.index("function _syncGatePoll("):code.index("function _paintGate(")]
+    assert "_composeBlocked && !_gatePollTimer" in sync, "폴링 시작이 잠금 상태에 걸려 있지 않다"
+    assert "clearInterval" in sync, "잠금이 풀려도 폴링이 멈추지 않는다"
+    assert "document.hidden" in sync, "배경 탭에서도 계속 요청한다"
 
 
 def test_indicator_hides_rather_than_lying():

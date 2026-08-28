@@ -252,10 +252,18 @@ def test_deploy_spine_rolls_out_the_new_service():
 
 
 def test_caddy_routes_mcp_before_the_catchall():
-    """`handle` 은 순서가 의미를 갖는다 — 뒤에 두면 web 이 먼저 삼킨다."""
+    """`handle` 은 순서가 의미를 갖는다 — 뒤에 두면 web 이 먼저 삼킨다.
+
+    ⚠ 검사 범위를 **https 블록으로 좁힌다** (2026-08-28). 종전에는 파일 전체에서 첫
+    `reverse_proxy web-a:8000 web-b:8000` 을 찾았는데, feature-0043 이 `http://` 블록에
+    부트스트랩 파일용 프록시를 더하면서 그 첫 매칭이 **다른 서버 블록**의 것이 됐다.
+    순서 계약은 같은 블록 안에서만 의미가 있으므로, 블록을 먼저 자른 뒤 비교한다
+    (그러지 않으면 이 테스트는 관계없는 변경에 적색이 되거나, 반대로 진짜 순서 역전을 놓친다).
+    """
     cf = _read("unit", "feature-0006-lan-proxy-access", "src", "caddy", "Caddyfile")
-    mcp = cf.index("handle /api/ai/mcp*")
-    catchall = cf.index("reverse_proxy web-a:8000 web-b:8000")
+    https_block = cf[cf.index("https://{$WEB_PUBLIC_HOST}"):]
+    mcp = https_block.index("handle /api/ai/mcp*")
+    catchall = https_block.index("reverse_proxy web-a:8000 web-b:8000")
     assert mcp < catchall, "MCP 라우트가 기본 handle 뒤에 있다"
     # feature-0045: 두 upstream 을 나열해야 롤링 중 한쪽이 내려가도 후보가 남는다.
     assert "reverse_proxy ext-tool-mcp-a:8971 ext-tool-mcp-b:8971" in cf
