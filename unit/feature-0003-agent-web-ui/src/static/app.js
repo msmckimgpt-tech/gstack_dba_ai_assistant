@@ -276,6 +276,8 @@ export const state = {
   // 대화 전환 시 반드시 cancelShareRange() 로 초기화(loadConversations 재할당 지점 + renderMessages 가드).
   shareRange: null,
   stepSidePanelConvId: null,
+  // 사이드 패널이 현재 표시 중인 run — 브리지 진행 갱신의 대상 판정 키.
+  stepSidePanelRunId: null,
   // 실행 단계 패널이 현재 *라이브* run(state.pendingBubble)을 표시 중인지 여부.
   // 폴링(refreshStepSidePanel)은 라이브 패널일 때만 덮어쓴다 — 진행 중 새 요청을
   // 보낸 뒤 사용자가 이전 답변의 단계 패널을 열어두면, 라이브 폴링이 그 historical
@@ -3722,7 +3724,7 @@ function setupSidebarResize() {
   });
 }
 
-function openStepSidePanel(pending, { convId = null } = {}) {
+export function openStepSidePanel(pending, { convId = null } = {}) {
   const panel = document.getElementById("stepSidePanel");
   if (!panel) return;
   setupStepSidePanelResize();
@@ -3731,8 +3733,28 @@ function openStepSidePanel(pending, { convId = null } = {}) {
   // 라이브 run(진행 중 pending bubble)을 연 경우에만 폴링 갱신 대상으로 표시.
   // historical 패널(이전 답변의 meta.steps / lastCompletedRunSteps)은 폴링이 덮어쓰지 않는다.
   state.stepSidePanelLive = Boolean(pending) && pending === state.pendingBubble;
+  // 이 패널이 **어느 run 을 보고 있는지** 기억한다. 브리지 진행 갱신
+  // (`refreshStepSidePanelForRun`)은 같은 run 일 때만 덮어쓴다 — 사용자가 이전 답변의
+  // 단계를 열어 둔 채 새 질문이 도는 상황에서, 그 화면을 뺏지 않기 위해서다.
+  state.stepSidePanelRunId = String((pending && pending.runId) || "");
   _renderStepSidePanelBody(pending);
   panel.classList.remove("hidden");
+}
+
+/** 브리지 진행 중 단계 갱신 — **그 run 을 보고 있을 때만** 다시 그린다.
+ *
+ *  내부 경로는 `refreshStepSidePanel(pending)` 이 `stepSidePanelLive`(= pendingBubble 과
+ *  동일 객체)로 판정하는데, 브리지 대기 말풍선은 **저장된 메시지**라 그 객체가 아니다.
+ *  그래서 브리지에서는 판정 축을 run_id 로 둔다 — 같은 사실을 다른 키로 물을 뿐이다.
+ */
+export function refreshStepSidePanelForRun(runId, steps) {
+  const panel = document.getElementById("stepSidePanel");
+  if (!panel || panel.classList.contains("hidden")) return false;
+  const rid = String(runId || "");
+  if (!rid || String(state.stepSidePanelRunId || "") !== rid) return false;
+  _renderStepSidePanelBody({ steps: Array.isArray(steps) ? steps : [], runId: rid,
+                             convId: state.stepSidePanelConvId });
+  return true;
 }
 
 export function closeStepSidePanel() {
