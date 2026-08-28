@@ -934,3 +934,48 @@ cycle 에서 실화면으로 확인됐다(그 경로는 계약 테스트가 잠�
 붙지 않는" 상태가 그대로 나갔다.
 
 라이브 재확인: 같은 서버·같은 토큰으로 `--check` → `연결 정상.`
+
+
+## CHG-20260828T150000 — 연결 지속(하트비트) + 로그아웃 시 러너 자동 종료 (TASK-20260828T150000)
+
+연결이 **시간이 지나서** 끊기던 것을 **명시적으로 끊을 때만** 끊기게 바꿨다. 수명의 기준점을
+'발급 시점' 에서 '마지막 생존 신호' 로 옮긴 것이 변경의 전부이고, 나머지는 그 결정의 파급이다.
+
+| 파일 | 변경 |
+|---|---|
+| `routers/_bootstrap_schema.py` | `_ensure_bridge_heartbeat_schema` — `WebOAuthTokens.LastHeartbeatAt` 멱등 ALTER. fast/slow 양 경로 호출(운영 재기동은 slow path 를 안 탄다) |
+| `oauth_store.py` | `heartbeat()` · `account_is_heartbeating()` · `_LIVE_TOKEN_PREDICATE` 상수화(두 판정이 한 술어를 공유) · 상수 3종 |
+| `routers/ai_tools.py` | `POST /api/ai/bridge_heartbeat` · `_account_is_heartbeating()` · `account_is_listening(…, conn)` 2축 OR |
+| `routers/oauth_as.py` | `_listening(…, conn)` · 연결 지시문의 토큰 수명 서술 정정 |
+| `web_context.py` | 세션 만료 슬라이딩 + `AUTH_SESSION_MAX_DAYS`(절대 상한) |
+| `bridge_agent.py`(+배포본) | `Api._post` 일반화 · `Api.heartbeat` · `start_heartbeat` 데몬 스레드 · `ActiveTasks` · `shutdown_after_drain` · 401 분기에서 drain 후 종료 |
+
+### 왜 별도 테이블이 아니라 토큰 행인가
+
+이 사실이 필요한 두 곳(수명 연장 · '지금 듣고 있는가' 판정)이 **모두 그 토큰 행을 이미 읽는다**.
+나누면 같은 질문에 두 개의 답이 생기고, 갈리는 순간 느슨한 쪽이 사용자가 보는 진실이 된다
+(P0-R 에서 이미 한 번 겪었다). `LastUsedAt` 을 재활용하지 않은 이유는 반대다 — 그것은 "쓰였다"
+라는 넓은 사실이고, 여기서 필요한 것은 "대기하는 프로세스가 있다" 라는 좁은 사실이다.
+
+### 왜 하트비트를 도구로 만들지 않았나
+
+도구 표면은 "노출 = 가이드 열거 = `capabilities` = 수 대조" 가 계약(P0-I)이라 하나 늘리면 넷을
+함께 고쳐야 하고, 무엇보다 **조사 도구 목록에 생존 신호가 끼면** AI 가 그것을 조사 수단으로 읽는다.
+경로만 분리하고 **토큰 해석기는 공유**한다 — 인증 축이 갈리면 한쪽만 로그아웃을 반영한다.
+
+### 기존 테스트가 깨진 두 곳 (계약은 유지, 검사 방식만 이동)
+
+- `test_session_revoke_parity` 3건 — 술어를 상수로 모으면서 "함수 본문에 그 문자열이 있는가" 가
+  성립하지 않게 됐다. 상수 값을 AST 로 읽어 **같은 조건**을 단정하고, 소비처가 그 상수를 쓰는지
+  함께 본다(오히려 강한 계약).
+- `test_runner_tells_how_to_come_back_on_401` — 401 을 보는 자리가 둘이 됐다(하트비트·대기 루프).
+  복귀 안내는 **대기 루프 한 곳**이 정본이므로 검사 대상을 `main` 본문으로 특정했다. 파일 전체에서
+  첫 `if code == 401:` 을 잡으면 하트비트 쪽을 보게 되어, 안내가 사라져도 통과한다.
+
+### 교훈 — 하네스가 고장나면 '전건 통과' 와 '전건 생존' 이 같은 얼굴을 한다
+
+뮤테이션 역검증 1차에서 9종이 **전부 생존**으로 나왔다. 원인은 코드가 아니라 하네스였다 —
+컨테이너에 `pytest` 가 없어 출력이 `No module named pytest` 였고, "failed" 문자열이 없으니
+스크립트가 그것을 '생존' 으로 읽었다. 신호 없음을 성공으로 읽는 판정은 언제나 이 방향으로
+틀린다. `passed|failed` 어느 신호도 없으면 **HARNESS-BROKEN 으로 크게 실패**하도록 고친 뒤
+재실행해 9종 전건 KILL 을 확인했다.

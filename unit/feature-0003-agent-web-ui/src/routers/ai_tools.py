@@ -1614,7 +1614,43 @@ def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
 _LISTENING_WINDOW_SEC = 150
 
 
-def account_is_listening(account_id: int) -> bool:
+def _account_is_heartbeating(account_id: int, conn=None) -> bool:
+    """하트비트 축 — 러너가 주기적으로 "살아 있다" 고 말했는가(feature-0043 TASK-20260828T150000).
+
+    `wait_for_request` 최근성만 보던 종전 판정은 **워커가 전부 일하는 중이면 거짓이 된다** —
+    러너는 빈 자리를 잡고 나서야 대기하러 가므로, 긴 조사(최대 1700초) 동안 대기 호출이
+    한 번도 없다. 그 구간에서 화면은 멀쩡히 돌고 있는 러너를 "대기 안 함" 으로 그렸다.
+
+    하트비트는 그 일과 무관한 별도 스레드가 보내므로 **일하는 중에도 끊기지 않는다.**
+
+    conn 을 받으면 그것을 쓴다(호출부 대부분이 이미 열어 둔 연결을 갖고 있다). 없을 때만
+    자체 연결을 연다 — 판정 하나 때문에 매번 새 커넥션을 만들지 않기 위해서다.
+    """
+    if not account_id:
+        return False
+    own = None
+    try:
+        c = conn
+        if c is None:
+            own = c = app._connect_memory()
+        cur = c.cursor()
+        try:
+            return bool(_store.account_is_heartbeating(cur, int(account_id)))
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 하트비트 조회 실패 account=%s: %r", account_id, exc)
+        return False
+    finally:
+        if own is not None:
+            try:
+                own.close()
+            except Exception:
+                pass
+
+
+def account_is_listening(account_id: int, conn=None) -> bool:
     """이 계정의 AI 가 **지금 실제로 대기 중인가**.
 
     ## 왜 토큰만으로는 부족한가
@@ -1623,14 +1659,23 @@ def account_is_listening(account_id: int) -> bool:
     화면은 계속 "연결됨" 이라 말하고, 사용자는 아무도 듣지 않는 곳에 질문을 보낸다
     (사용자 지적 2026-08-27: "머신이 재실행하여 첫 환경에서 다시 사용되었을 경우").
 
-    `wait_for_request` 는 호출마다 원장에 남는다. 그 최근성이 곧 **살아 있는 귀**의 증거다 —
-    추측이 아니라 관측이다.
+    ## 두 축을 OR 로 본다
+
+    | 축 | 증거 | 무엇을 놓치는가 |
+    |---|---|---|
+    | 하트비트(우선) | `WebOAuthTokens.LastHeartbeatAt` 최근성 | 하트비트를 모르는 **구 러너**·등록형 MCP 클라이언트 |
+    | `wait_for_request` 원장(폴백) | 도구 호출 최근성 | 러너가 **일하는 중**이면 호출이 없다 |
+
+    한쪽만 두면 각자의 사각지대가 그대로 사용자 화면의 거짓말이 된다. OR 인 이유는 둘 다
+    "관측된 생존" 이기 때문이다 — 어느 쪽이든 관측됐으면 살아 있는 것이 맞다.
 
     조회 실패는 False. 여기서 True 로 넘기면 "대기 중" 이라 말해 놓고 답이 오지 않는다 —
     연결 판정(fail-open)과 방향이 **반대**인 이유: 저쪽은 과잉 경고를, 이쪽은 헛된 기다림을 막는다.
     """
     if not account_id:
         return False
+    if _account_is_heartbeating(account_id, conn):
+        return True
     try:
         pg = _pg()
         if pg is None:
@@ -2738,7 +2783,7 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
             try:
                 # 러너 기동 여부(형제 cycle TASK-20260828T060000). `bridge_status` 와 **같은
                 # 함수**를 써야 폴링과 스트리밍이 같은 국면을 말한다.
-                listening = account_is_listening(account_id)
+                listening = account_is_listening(account_id, conn)
             except Exception:
                 listening = True
         return {
@@ -2760,6 +2805,73 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
         return {"phase": "waiting", "answered": False, "delivered": False,
                 "connected": True, "listening": True, "steps": [], "_conn_broken": True}
 
+
+
+@router.post("/api/ai/bridge_heartbeat")
+def bridge_heartbeat(request: Request, ctx=Depends(require_ai_token),
+                     conn=Depends(app.get_conn)) -> JSONResponse:
+    """feature-0043 (TASK-20260828T150000) — 상주 러너의 생존 신호. **연결을 유지하는 축.**
+
+    ## 왜 필요한가
+
+    종전 연결 수명은 토큰 하나에 못박혀 있었다: 콘솔 발급 access 토큰은 **발급 시점부터
+    최대 12시간**이고 refresh 가 없다. 그래서 아무도 로그아웃하지 않고 러너도 멀쩡히 돌고
+    있는데 하루 두 번씩 401 로 죽었다(`bridge_agent.main` 이 그 자리에서 종료한다).
+
+    사용자 결정(2026-08-28): **끊는 것은 명시적 해제뿐**이다 — 러너 종료 · 웹 로그아웃.
+    그 외에는 유지한다. 그래서 수명의 기준점을 발급 시점에서 **마지막 하트비트**로 옮긴다.
+
+    | 사건 | 결과 |
+    |---|---|
+    | 러너가 살아 있다(하트비트 계속) | 만료가 계속 밀린다 — 끊기지 않는다 |
+    | 러너 종료 | 하트비트 중단 → `HEARTBEAT_EXTEND_SEC` 뒤 자연 만료 |
+    | 웹 로그아웃 | 세션 revoke 전파 → **즉시** 무효(하트비트가 되살리지 못한다) |
+    | 브라우저 종료 | 아무 일도 없다 — 세션은 살아 있고 러너는 계속 처리한다(사용자 결정) |
+
+    ## 왜 도구(`/api/ai/tools/*`)가 아닌가
+
+    도구 표면은 "노출 도구 = 가이드 열거 = `capabilities` = 수 대조" 가 계약으로 묶여 있다
+    (P0-I). 하트비트는 조사 도구가 아니라 **연결 유지 신호**라 그 목록에 끼면 AI 에게 "이걸
+    호출해 조사하라" 는 잘못된 신호를 준다. 대신 **같은 토큰 해석기**(`require_ai_token`)를
+    쓴다 — 인증 축이 갈리면 한쪽만 로그아웃을 반영하는 결함이 생긴다(P0-I 의 세 번째 사례).
+
+    ## 원장에 남기지 않는다
+
+    `tool_call_usage` 는 "그 AI 가 무엇을 조사했는가" 의 기록이고 화면의 실행 단계로 이어진다
+    (P0-N). 30초마다 오는 생존 신호를 거기 넣으면 사용자의 조사 내역이 하트비트로 뒤덮이고,
+    시간당 호출 상한도 신호가 태운다. 대신 흔적은 토큰 행의 `LastHeartbeatAt` 에 남는다.
+    """
+    if conn is None:
+        return app._json_error("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
+    account_id = int((ctx.get("account") or {}).get("id") or 0)
+    cur = conn.cursor()
+    try:
+        result = _store.heartbeat(cur, _bearer(request))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 하트비트 기록 실패 account=%s: %r", account_id, exc)
+        # 기록 실패로 러너를 죽이지 않는다 — 죽이면 "연결을 지키려는 신호" 가 연결을 끊는
+        # 장치가 된다. 다만 수명은 밀리지 않았으므로 그 사실을 응답에 싣는다.
+        return JSONResponse({"ok": False, "extended": False,
+                             "interval_sec": int(_store.HEARTBEAT_INTERVAL_SEC),
+                             "error": "하트비트를 기록하지 못했습니다(연결은 유지)."})
+    finally:
+        cur.close()
+    if result is None:
+        # `require_ai_token` 을 통과했는데 여기서 None 이면 그 사이에 폐기된 것이다
+        # (로그아웃과의 경합). 명시적 해제이므로 그대로 401 — 러너가 재발급 안내를 낸다.
+        raise app._AuthError("유효하지 않거나 만료된 토큰입니다.", 401, _challenge(request))
+    return JSONResponse({
+        "ok": True,
+        # 실제로 수명이 밀렸는가. `False` 는 오류가 아니라 **최근에 이미 밀렸다**는 뜻이다
+        # (쓰기 증폭 방어의 throttle). 성공을 가장하지 않되 러너를 놀라게 하지도 않는다.
+        "extended": bool(result.get("extended", True)),
+        # 러너가 다음 신호까지 쉴 간격을 **서버가 정한다**(P0-J 의 '환경 차이 금지'와 같은 축 —
+        # 클라이언트가 각자 정하면 판정 창의 의미가 사람마다 달라진다).
+        "interval_sec": int(result.get("interval_sec") or _store.HEARTBEAT_INTERVAL_SEC),
+        "expires_in": int(result.get("expires_in") or 0),
+        "window_sec": int(_store.HEARTBEAT_WINDOW_SEC),
+    })
 
 
 @router.get("/api/ai/bridge_status")
@@ -2808,7 +2920,7 @@ def bridge_status(request: Request) -> JSONResponse:
                 c2.close()
         except Exception:
             connected = True   # 판정 실패는 '연결됨' 으로(틀렸을 때 덜 성가신 방향)
-        listening = account_is_listening(int(account.get("id") or 0))
+        listening = account_is_listening(int(account.get("id") or 0), conn)
         return JSONResponse({
             "task_id": task_id,
             "status": status,

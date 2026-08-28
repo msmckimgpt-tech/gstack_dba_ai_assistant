@@ -432,6 +432,133 @@ def resolve_access_token(cur, raw_token: str) -> dict[str, Any] | None:
             "session_id": session_id, "scopes": scopes}
 
 
+# ── 연결 지속 (feature-0043 TASK-20260828T150000) ────────────────────────────
+#
+# 종전에는 러너 토큰이 **발급 시점부터 12시간**이었고 refresh 가 없어, 아무도 로그아웃하지
+# 않고 러너도 살아 있는데 하루 두 번씩 연결이 끊겼다. 사용자 결정(2026-08-28): 끊는 것은
+# **명시적 해제**(러너 종료 · 로그아웃)뿐이고, 그 외에는 유지한다.
+#
+# 그래서 수명의 기준점을 발급 시점에서 **마지막 하트비트**로 옮긴다. 상한 값 자체는 그대로다 —
+# 바뀐 것은 "언제부터 12시간인가" 이고, 러너를 끄면 12시간 뒤 자연 만료된다(끄는 것이 곧 해제).
+
+#: 하트비트 1회가 토큰 수명을 미는 폭. 종전 `CONSOLE_TOKEN_MAX_TTL_SEC` 과 같은 값 —
+#: "붙여넣은 설정이 잊힌 채 무한정 유효해지지 않게" 라는 원래 의도는 그대로 지켜진다
+#: (러너가 멈추면 그 시점부터 이 시간 뒤에 죽는다).
+HEARTBEAT_EXTEND_SEC = CONSOLE_TOKEN_MAX_TTL_SEC
+
+#: 러너가 하트비트를 보내는 주기. 서버가 응답으로 알려준다 — 클라이언트가 각자 정하면
+#: 그 값이 사람마다 달라지고, 판정 창을 서버가 정하는 의미가 사라진다(P0-J 와 같은 정신).
+HEARTBEAT_INTERVAL_SEC = 30
+
+#: '지금 듣고 있다' 로 볼 최근성. 주기의 3배 — 한 번 놓친 것(네트워크 순단·배포 교대)을
+#: 끊김으로 오판하지 않을 만큼만 넉넉하게. 넓히면 죽은 러너를 오래 살아 있다고 말한다.
+HEARTBEAT_WINDOW_SEC = 3 * HEARTBEAT_INTERVAL_SEC
+
+#: 행을 다시 쓰기까지의 최소 간격(쓰기 증폭 방어). 정상 주기의 1/3 이라 제때 온 신호는 항상
+#: 통과하고, 폭주만 no-op 이 된다. 통과하지 못한 호출이 잃는 것은 없다 — 이미 연장돼 있다.
+HEARTBEAT_MIN_WRITE_SEC = max(1, HEARTBEAT_INTERVAL_SEC // 3)
+
+#: ⚠ **SQL 의 현재 시각은 `UTC_TIMESTAMP()` 다 — `NOW()` 가 아니다** (라이브 실측 2026-08-28).
+#:
+#: 만료 시각은 파이썬이 `_utcnow()` 로 **UTC** 를 넣는데(`issue_token_pair`·`issue_console_token`),
+#: 컨테이너 TZ 는 `Asia/Seoul` 이라 MySQL `NOW()` 는 **KST 벽시계**다. 둘을 비교하면 9시간이
+#: 어긋난다. 라이브 증거: 콘솔 토큰의 `CreatedAt`(MySQL DEFAULT=KST) → `ExpiresAt`(파이썬=UTC)
+#: 간격이 **180분**으로 저장돼 있다 — 의도한 12시간에서 정확히 9시간을 뺀 값이다.
+#:
+#: 그 결과가 정확히 P0-R 이 없애려던 갈림이었다: 발급 3시간 뒤부터 **화면은 '연결 안 됨'**
+#: (SQL 술어가 KST 로 비교) **인데 인증은 통과**(파이썬이 UTC 로 비교)했다. 같은 질문에 두 개의
+#: 답이 있으면 갈리고, 여기서는 **엄격한 쪽이 화면**이라 사용자가 멀쩡한 연결을 끊긴 것으로 봤다.
+_SQL_NOW = "UTC_TIMESTAMP()"
+
+#: 살아 있는 access token 의 조건. `resolve_access_token` 이 인증에서 집행하는 것과 **같은
+#: 술어**를 SQL 로 옮긴 것이다 — 토큰 미폐기·미만료 + (세션 결합이면) 세션 실재·미폐기·미만료.
+#: 문자열 하나로 두는 이유: 아래 두 판정이 각자 쓰면 언제든 갈리고, 갈리는 순간 느슨한 쪽이
+#: 사용자가 보는 진실이 된다(P0-R 에서 이미 겪었다).
+_LIVE_TOKEN_PREDICATE = (
+    "t.TokenType = 'access' AND t.RevokedAt IS NULL "
+    f"AND (t.ExpiresAt IS NULL OR t.ExpiresAt > {_SQL_NOW}) "
+    "AND (t.SessionId IS NULL OR "
+    "     (s.Id IS NOT NULL AND s.IsRevoked = 0 "
+    f"      AND (s.ExpiresAt IS NULL OR s.ExpiresAt > {_SQL_NOW})))"
+)
+
+
+def heartbeat(cur, raw_token: str) -> dict[str, Any] | None:
+    """러너가 "살아 있다" 고 말한다. 유효하면 그 토큰의 수명을 다시 민다. 무효면 None.
+
+    **유효성 판정을 여기서 새로 쓰지 않는다** — `resolve_access_token` 을 그대로 부른다.
+    따로 세면 하트비트만 통과하는 뒷문이 생기고, 그 문은 로그아웃을 무시한다.
+
+    연장 상한은 **세션 만료를 넘지 않는다**(세션 결합 토큰인 경우). 세션도 활동 기준으로
+    슬라이딩하므로 실사용에서는 걸리지 않지만, 넘게 두면 "세션은 끝났는데 토큰은 남은"
+    창이 생기고 그 창이 정확히 P0-R 의 결함이다.
+
+    감소는 없다(`GREATEST`) — 하트비트가 이미 더 먼 만료를 앞당기면, 신호를 보낼수록 수명이
+    짧아지는 거꾸로 된 동작이 된다.
+    """
+    resolved = resolve_access_token(cur, raw_token)
+    if resolved is None:
+        return None
+    cur.execute(
+        "UPDATE WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"SET t.LastHeartbeatAt = {_SQL_NOW}, "
+        # `COALESCE` — `GREATEST(NULL, x)` 는 MySQL 에서 **NULL** 이다. 만료 없는 행이 있다면
+        # 하트비트가 그것을 영구 토큰으로 굳힌다(codex P1). 스키마는 NOT NULL 이지만 술어가
+        # `IS NULL` 을 허용하는 형태로 쓰여 있어, 두 곳의 가정이 갈린 채로 두지 않는다.
+        f"    t.ExpiresAt = GREATEST(COALESCE(t.ExpiresAt, {_SQL_NOW}), "
+        # 세션 상한도 같은 이유로 `s.ExpiresAt IS NULL` 을 분기한다 — LEAST 가 NULL 을 먹으면
+        # 전체가 NULL 이 되어 위와 같은 결과가 된다.
+        "        CASE WHEN s.Id IS NULL OR s.ExpiresAt IS NULL "
+        f"             THEN DATE_ADD({_SQL_NOW}, INTERVAL %s SECOND) "
+        f"             ELSE LEAST(DATE_ADD({_SQL_NOW}, INTERVAL %s SECOND), s.ExpiresAt) END) "
+        # ⚠ WHERE 에 **인증과 같은 술어**를 그대로 건다(codex P1). resolve 통과와 이 UPDATE
+        #   사이에 로그아웃·만료가 일어나는 창이 있고, 그 창에서 `GREATEST` 는 죽은 토큰의
+        #   만료를 미래로 민다. 술어를 재사용하므로 세션 폐기·만료까지 함께 막힌다.
+        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+        # 쓰기 증폭 방어(codex P2): 같은 토큰이 초당 수백 번 와도 행을 다시 쓰지 않는다.
+        # 정상 주기(30초)는 항상 통과하고, 통과하지 못한 호출은 **이미 최근에 연장된 것**이라
+        # 잃는 것이 없다.
+        f"  AND (t.LastHeartbeatAt IS NULL "
+        f"       OR t.LastHeartbeatAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))",
+        (int(HEARTBEAT_EXTEND_SEC), int(HEARTBEAT_EXTEND_SEC), token_hash(raw_token),
+         int(HEARTBEAT_MIN_WRITE_SEC)),
+    )
+    # 실제로 행이 바뀌었는가. **성공을 가장하지 않는다**(codex P2) — 다만 이것으로 인증을
+    # 실패시키지는 않는다: 위 throttle 때문에 `0` 은 정상 상황(최근에 이미 연장)이고,
+    # 드라이버가 `rowcount` 를 지원하지 않으면 `-1` 을 준다(그때는 알 수 없으므로 True).
+    rc = int(getattr(cur, "rowcount", -1) or 0)
+    out = dict(resolved)
+    out["extended"] = bool(rc != 0)
+    out["expires_in"] = int(HEARTBEAT_EXTEND_SEC)
+    out["interval_sec"] = int(HEARTBEAT_INTERVAL_SEC)
+    return out
+
+
+def account_is_heartbeating(cur, account_id: int, window_sec: int | None = None) -> bool:
+    """이 계정의 러너가 **지금 듣고 있는가** — 살아 있는 토큰 + 최근 하트비트.
+
+    `account_has_live_token`(토큰이 있는가)과 다른 사실이다. 토큰은 DB 에 있고 러너는
+    프로세스다 — 머신을 재시작하면 러너만 사라진다. 그때 "연결됨" 만 보이면 사용자는
+    아무도 듣지 않는 곳에 질문한다(제보 2026-08-27).
+
+    조회 실패는 호출측이 False 로 다룬다 — 헛된 기다림을 만들지 않는 방향.
+    """
+    if not account_id:
+        return False
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT 1 FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
+        "  AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+        "LIMIT 1",
+        (int(account_id), window),
+    )
+    return cur.fetchone() is not None
+
+
 def account_has_live_token(cur, account_id: int) -> bool:
     """이 계정에 **지금 실제로 통하는** access token 이 있는가.
 
@@ -448,16 +575,14 @@ def account_has_live_token(cur, account_id: int) -> bool:
     """
     if not account_id:
         return False
+    # 술어는 `_LIVE_TOKEN_PREDICATE` 한 곳에서 온다. 세션 결합 토큰은 세션이 살아 있어야
+    # 하고, `SessionId IS NULL`(세션 무관 토큰)에는 그 조건이 적용되지 않는다 — 발급 축이
+    # 다르므로 여기서 배제하지 않는다. 하트비트 판정(`account_is_heartbeating`)도 같은
+    # 술어 위에 최근성 한 줄만 얹는다.
     cur.execute(
         "SELECT 1 FROM WebOAuthTokens t "
         "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
-        "WHERE t.AccountId = %s AND t.TokenType = 'access' AND t.RevokedAt IS NULL "
-        "  AND (t.ExpiresAt IS NULL OR t.ExpiresAt > NOW()) "
-        # 세션 결합 토큰은 세션이 살아 있어야 한다. `SessionId IS NULL`(세션 무관 토큰)은
-        # 그 조건이 적용되지 않는다 — 발급 축이 다르므로 여기서 배제하지 않는다.
-        "  AND (t.SessionId IS NULL OR "
-        "       (s.Id IS NOT NULL AND s.IsRevoked = 0 "
-        "        AND (s.ExpiresAt IS NULL OR s.ExpiresAt > NOW()))) "
+        f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
         "LIMIT 1",
         (int(account_id),))
     return cur.fetchone() is not None

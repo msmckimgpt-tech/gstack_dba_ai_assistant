@@ -29,9 +29,11 @@
     설치물 없음         표준 라이브러리만 쓴다(`pip install` 불필요). 부팅 등록·crontab·서비스
                         설치를 하지 않는다. 남기는 파일은 `~/.mysql-ai-bridge/config.json`
                         (0600) **하나뿐**이고 거기에 **토큰은 넣지 않는다** → `save_conf`.
-    나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`). 그리고 `--ai ollama`
-                        일 때만 `BRIDGE_OLLAMA_URL`(기본 `127.0.0.1:11434`) — 그 경로를 쓰지
-                        않으면 호출되지 않는다. URL 을 만드는 자리는 이 **둘뿐**이다.
+    나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`) 와
+                        `/api/ai/bridge_heartbeat` (→ `Api.heartbeat`, 30초마다 빈 본문 1회).
+                        그리고 `--ai ollama` 일 때만 `BRIDGE_OLLAMA_URL`(기본
+                        `127.0.0.1:11434`) — 그 경로를 쓰지 않으면 호출되지 않는다.
+                        URL 을 만드는 자리는 `Api._post` 와 ollama 어댑터 **둘뿐**이다.
     관측·종료           하는 일은 전부 stderr 로그에 남는다. `Ctrl+C` 또는 `kill <pid>` 로 끝나고,
                         끝난 뒤 남는 것은 위 `config.json` 과 네가 리다이렉트한 로그 파일뿐이다.
 
@@ -40,7 +42,10 @@
 1. **토큰은 프롬프트 안에도 들어간다.** `compose_prompt` 가 조사 도구를 직접 부르라고 토큰을
    함께 주고, 그 프롬프트 전문이 argv 로 CLI 에 넘어간다 — 같은 호스트의 다른 사용자가
    `/proc/<pid>/cmdline` 으로 볼 수 있고, CLI 의 세션 기록에도 남는다. 인자 대신 `BRIDGE_TOKEN`
-   환경변수를 쓰면 셸 히스토리만큼은 피한다. 토큰이 세션 결합·최대 12시간인 것이 이 노출면의 상한이다.
+   환경변수를 쓰면 셸 히스토리만큼은 피한다. 토큰은 **웹 로그인 세션에 결합**돼 있어 그 사람이
+   로그아웃하면 즉시 죽고, 이 러너가 멈추면 마지막 하트비트로부터 12시간 뒤 만료된다 — 즉
+   **러너가 도는 동안은 계속 유효하다**(2026-08-28 이전에는 발급 후 12시간이 절대 상한이었다).
+   무기한이 되지 않게 하는 것은 러너를 끄는 행위 자체다.
 2. **운영자 시스템 지침은 구획되지 않는다.** 질문·대화이력은 서버가 ⟦UNTRUSTED-DATA⟧ 로 감싸
    보내지만, 관리 콘솔에서 설정하는 시스템 지침은 감싸지 않고 이 러너가 프롬프트 **맨 앞**에
    놓는다(그러지 않으면 뒤의 지시가 이겨 운영자 설정이 무시된다). 즉 **그 서비스의 운영자는 네
@@ -59,6 +64,35 @@
 **질문이 들어온 그 순간** 온다. 상한은 서버가 정하므로 모든 머신이 동일하게 동작한다.
 
 여기에는 sleep 이 없다. 대기는 서버가 한다.
+
+## 연결은 어떻게 유지되는가 (2026-08-28)
+
+대기와 별개로, **30초마다 한 줄짜리 생존 신호**(`/api/ai/bridge_heartbeat`)를 보내는 스레드가
+하나 돈다. 이건 질문을 찾는 폴링이 아니다 — 아무것도 가져오지 않고, 서버에 "이 러너가 아직
+있다" 만 말한다. 그 신호가 두 가지를 한다:
+
+1. **토큰 수명을 민다.** 종전에는 발급 후 12시간이 지나면 아무도 로그아웃하지 않았고 러너도
+   멀쩡한데 401 로 죽었다. 이제 기준점이 마지막 신호이므로, 도는 동안은 끊기지 않는다.
+2. **웹 화면의 '대기 중' 표시를 정확하게 만든다.** 종전 판정은 `wait_for_request` 최근성이라,
+   워커가 전부 일하는 중이면(긴 조사) 살아 있는 러너가 "대기 안 함" 으로 보였다.
+
+끊고 싶으면 이 프로세스를 끝내면 된다(`Ctrl+C` / `kill`). 그러면 신호가 멈추고 서버 쪽 토큰도
+12시간 뒤 만료된다.
+
+## 웹에서 로그아웃하면 러너도 스스로 끝난다 (사용자 요구 2026-08-28)
+
+로그아웃은 토큰을 **즉시** 무효로 만든다. 그 뒤로 이 러너는 아무것도 할 수 없다 — 질문을
+가져올 수도, 답을 제출할 수도 없다. 그런 프로세스를 남겨 두면 사용자 머신에 아무 일도 하지
+않는 것이 계속 떠 있게 된다. 그래서 **스스로 종료한다**:
+
+| 그때 상태 | 하는 일 |
+|---|---|
+| 유휴(진행 중 0건) | 즉시 종료 |
+| 진행 중 있음 | 최대 `BRIDGE_SHUTDOWN_GRACE_SEC`(기본 120초) 기다렸다가 종료 |
+| 유예 초과 | 진행 중인 AI 호출을 중단시키고 종료 |
+
+무한정 기다리지 않는 이유: 그 답변들은 **전달될 곳이 이미 없고**(제출이 401), 붙잡을수록
+아무도 볼 수 없는 답을 위해 네 계정 토큰만 탄다.
 
 ## 왜 런타임 무관인가
 
@@ -220,6 +254,22 @@ _RECONNECT_BACKOFF_MAX = 15.0
 #: 폭주해 계정 호출 상한을 태우는 것만 막는다.
 _DRAINING_RETRY_FLOOR_SEC = 0.5
 
+#: 하트비트 주기의 **기본값**(TASK-20260828T150000). 실제 값은 서버가 첫 응답으로 알려주고
+#: 그 뒤로는 그것을 쓴다 — 클라이언트가 각자 정하면 서버의 판정 창이 사람마다 다른 의미가
+#: 된다(P0-J 의 '환경 차이 금지' 와 같은 축). 여기 값은 서버 응답을 받기 전까지의 임시값이다.
+_HEARTBEAT_INTERVAL_SEC = 30.0
+#: 하트비트 호출의 응답 대기 상한. 이건 대기가 아니라 **짧은 신호**라 길게 잡을 이유가 없다.
+_HEARTBEAT_TIMEOUT_SEC = 15.0
+#: 서버가 알려준 주기의 **하한**. 서버가 0 이나 음수를 주는 사고에도 신호가 폭주하지 않게.
+#: (상한은 두지 않는다 — 판정 창을 정하는 쪽이 서버이므로 길게 주는 것은 서버의 선택이다.)
+_HEARTBEAT_MIN_INTERVAL_SEC = 5.0
+
+#: 연결이 해제된 뒤(로그아웃) **진행 중 작업을 기다리는 유예**. 이 시간이 지나면 중단하고
+#: 종료한다. 짧게 잡은 이유: 그 답변들은 이미 전달될 곳이 없고(토큰 무효 → 제출 401), 오래
+#: 붙잡을수록 아무도 볼 수 없는 답을 위해 개인 계정 토큰만 탄다. 그래도 0 이 아닌 이유는
+#: **곧 끝날 일을 중간에 끊지 않기** 위해서다.
+_SHUTDOWN_GRACE_SEC = float(os.environ.get("BRIDGE_SHUTDOWN_GRACE_SEC", "") or 120.0)
+
 
 def _log(msg: str) -> None:
     sys.stderr.write(f"[bridge] {msg}\n")
@@ -259,9 +309,20 @@ class Api:
         self.ctx = ssl.create_default_context(cafile=ca) if ca else None
 
     def call(self, tool: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
+        return self._post(f"/api/ai/tools/{tool}", payload, timeout)
+
+    def heartbeat(self, timeout: float = _HEARTBEAT_TIMEOUT_SEC) -> dict:
+        """"살아 있다" 는 신호 하나. 도구가 아니라 **연결 유지 경로**다.
+
+        도구 목록에 넣지 않는 이유는 그것이 조사 도구의 목록이기 때문이다 — 거기 끼면 AI 에게
+        "이걸 호출해 조사하라" 는 잘못된 신호를 준다. 인증은 도구와 **같은 토큰**을 쓴다.
+        """
+        return self._post("/api/ai/bridge_heartbeat", {}, timeout)
+
+    def _post(self, path: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
         body = json.dumps(payload or {}).encode("utf-8")
         req = urllib.request.Request(
-            f"{self.base}/api/ai/tools/{tool}", data=body, method="POST",
+            f"{self.base}{path}", data=body, method="POST",
             headers={"Authorization": f"Bearer {self.token}",
                      "Content-Type": "application/json", "User-Agent": _UA})
         try:
@@ -443,6 +504,56 @@ class WorkerPool:
                 self._free.pop(0)
                 removed += 1
         return removed
+
+
+class ActiveTasks:
+    """지금 처리 중인 task 들. **'유휴' 를 관측 가능한 사실로 만든다**(TASK-20260828T150000).
+
+    사용자 요구(2026-08-28): "로그아웃 + 모든 요청이 완료되어 유휴 상태면 러너도 안전하게
+    종료되게." 그 판정을 하려면 "지금 몇 건이 돌고 있는가" 를 물을 수 있어야 하는데, 종전에는
+    워커 자리(세마포어)만 있고 **셀 수 있는 것이 없었다** — 세마포어는 잔여 자리를 알려줄 뿐
+    누가 무엇을 하고 있는지 말해 주지 않는다.
+
+    id 를 들고 있는 이유: 유예가 지났을 때 그 작업들을 **취소로 전환**해야 하고(그래야 자식 AI
+    프로세스가 죽어 개인 계정 토큰이 계속 타지 않는다), 취소 통로는 task_id 로 말한다.
+    """
+
+    def __init__(self) -> None:
+        self._cv = threading.Condition()
+        self._ids: set[str] = set()
+
+    def enter(self, task_id: str) -> None:
+        with self._cv:
+            self._ids.add(str(task_id))
+
+    def leave(self, task_id: str) -> None:
+        with self._cv:
+            self._ids.discard(str(task_id))
+            self._cv.notify_all()
+
+    def snapshot(self) -> list[str]:
+        with self._cv:
+            return sorted(self._ids)
+
+    def count(self) -> int:
+        with self._cv:
+            return len(self._ids)
+
+    def wait_idle(self, timeout: float) -> bool:
+        """유휴가 될 때까지 기다린다. 유휴면 True, 유예가 먼저 끝나면 False.
+
+        ⚠ 폴링하지 않는다 — 워커가 끝나면서 깨운다(`Condition`). 남은 시간을 매번 다시 계산하는
+        이유: `wait` 는 깨어난 이유를 말해 주지 않으므로, 재계산 없이 반복하면 유예가 사실상
+        무한이 된다(자주 깨는 워커가 있으면 영원히 기다린다).
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._cv:
+            while self._ids:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    return False
+                self._cv.wait(remain)
+            return True
 
 
 # ── 내 AI 호출 ───────────────────────────────────────────────────────────────
@@ -743,6 +854,87 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
 
+def start_heartbeat(api: Api, stop: threading.Event) -> threading.Thread:
+    """연결 유지 신호를 보내는 데몬 스레드 (TASK-20260828T150000).
+
+    **대기 스레드와 분리한 것이 이 기능의 핵심이다.** 대기(`wait_for_request`)는 빈 워커 자리를
+    잡아야 들어가므로, 러너가 바쁠 때 정확히 멈춘다 — 연결 유지 신호가 바쁠 때 멈추면 아무
+    소용이 없다(긴 조사 도중에 화면이 '대기 안 함' 이 되고, 토큰 수명도 밀리지 않는다).
+
+    **실패해도 죽지 않는다.** 서버가 배포로 잠깐 사라지는 것과 토큰이 폐기된 것은 다른 사건이고,
+    전자로 러너를 끝내면 배포마다 사용자가 다시 띄워야 한다. 401 도 여기서는 **로그만** 남긴다 —
+    종료 판정은 메인 루프에 맡긴다(거기에 재발급 안내가 이미 있고, 두 곳에서 죽이면 안내가 두
+    벌이 되어 갈린다).
+
+    ⚠ 이 스레드의 `wait` 는 폴링이 아니다 — 서버에서 **아무것도 가져오지 않는다**. 질문 인지는
+    여전히 서버 보류(`wait_for_request`)가 하고, 그 즉시성은 이 주기와 무관하다.
+    """
+    def _loop() -> None:
+        interval = _HEARTBEAT_INTERVAL_SEC
+        while not stop.is_set():
+            res = api.heartbeat()
+            code = res.get("_http")
+            if code == 401:
+                # 복귀 안내는 여기서 하지 않는다 — 대기 루프 한 곳이 정본이다(두 곳에서
+                # 안내하면 문구가 갈리고, 한쪽만 고쳐지는 순간 틀린 안내가 남는다).
+                _log("하트비트 401 — 토큰이 무효해졌습니다(로그아웃 또는 만료). "
+                     "곧 대기 루프가 재발급 방법을 안내합니다.")
+            elif code or res.get("_failed"):
+                # 순단·배포 교대. 서버의 판정 창이 주기의 3배라 한 번 놓친 것은 흡수된다.
+                _log(f"하트비트 실패 {code}: {str(res.get('error') or '')[:120]}")
+            else:
+                # 주기는 **서버가 정한다**(P0-J 의 환경 차이 금지와 같은 축). 하한을 두는 것은
+                # 서버가 0 을 주는 등의 사고로 신호가 폭주하지 않게 하기 위해서다.
+                try:
+                    interval = max(_HEARTBEAT_MIN_INTERVAL_SEC,
+                                   float(res.get("interval_sec") or interval))
+                except (TypeError, ValueError):
+                    pass
+            stop.wait(interval)
+
+    t = threading.Thread(target=_loop, name="bridge-heartbeat", daemon=True)
+    t.start()
+    return t
+
+
+def shutdown_after_drain(active: ActiveTasks, cancels: CancelRegistry,
+                         grace_sec: float = _SHUTDOWN_GRACE_SEC) -> bool:
+    """연결이 명시적으로 해제됐다 — **하던 일을 마치고** 종료한다(사용자 요구 2026-08-28).
+
+    > "웹브라우저 내 로그아웃 + 모든 요청사항이 완료되어 유휴상태가 확인된다면 더 이상
+    >  사용되지 않을 브릿지 프로세스도 안전하게 종료될 수 있도록"
+
+    | 상태 | 하는 일 |
+    |---|---|
+    | 유휴(진행 중 0건) | 즉시 종료 — 더 할 일이 없다 |
+    | 진행 중 있음 | 유예 안에서 **끝나기를 기다린다**(죽이는 것은 마지막 수단) |
+    | 유예 초과 | 취소로 전환 → 자식 AI 프로세스가 죽는다 → 종료 |
+
+    유예를 두는 이유와 무한정 기다리지 않는 이유가 같다: 이 답변들은 **전달될 곳이 이미
+    없다**(로그아웃으로 토큰이 죽어 `submit_answer` 가 401 이다). 그래도 곧 끝날 일을 중간에
+    끊지는 않고, 오래 걸리는 것은 붙잡지 않는다 — 붙잡으면 아무도 볼 수 없는 답을 위해
+    사용자의 **개인 계정 토큰이 계속 탄다**(P0-T 에서 취소를 만든 것과 같은 이유).
+
+    반환값은 "유휴 상태로 끝났는가" — 호출측 로그가 두 결말을 구분해 말할 수 있게 한다.
+    """
+    n = active.count()
+    if n == 0:
+        _log("진행 중인 작업이 없습니다 — 브리지 러너를 종료합니다.")
+        return True
+    _log(f"진행 중 {n}건이 끝나기를 기다립니다(최대 {grace_sec:.0f}초). "
+         "이미 로그아웃되어 답변은 대화에 전달되지 않습니다.")
+    if active.wait_idle(grace_sec):
+        _log("진행 중이던 작업이 모두 끝났습니다 — 브리지 러너를 종료합니다.")
+        return True
+    remaining = active.snapshot()
+    cancels.add_many(remaining)
+    _log(f"유예가 지나 {len(remaining)}건을 중단합니다: {', '.join(remaining)} — 종료합니다.")
+    # 취소는 워커가 다음 확인 시점(_CANCEL_TICK_SEC)에 본다. 그 한 tick 만 준다 —
+    # 여기서 오래 기다리면 '안전한 종료' 가 다시 '종료되지 않음' 이 된다.
+    active.wait_idle(_CANCEL_TICK_SEC * 3)
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="mysql-ai 브리지 상주 러너")
     ap.add_argument("--base", default=os.environ.get("BRIDGE_BASE", ""), help="서비스 베이스 URL")
@@ -850,9 +1042,17 @@ def main() -> int:
         _log("연결 정상.")
         return 0
 
+    # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
+    # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
+    heartbeat_stop = threading.Event()
+    start_heartbeat(api, heartbeat_stop)
+
     cancels = CancelRegistry()
     #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.
     pool = WorkerPool(workers, max_workers, idle_sec, time.monotonic())
+    #: 지금 처리 중인 task. 종료 시 '유휴인가' 를 물을 수 있게 한다(TASK-20260828T150000).
+    #: 슬롯(`pool`)과 다른 사실을 센다 — 저쪽은 '자리가 몇 개인가', 이쪽은 '무엇이 돌고 있는가'.
+    active = ActiveTasks()
     #: 점유가 반복 실패한 task — 같은 것을 무한히 다시 시도해 서버를 두드리지 않도록 건너뛴다.
     skip: set[str] = set()
     #: 서버에 대기 질문이 있는데 한 건도 처리하지 못한 연속 라운드 수(spin 감지).
@@ -879,9 +1079,16 @@ def main() -> int:
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
         if code == 401:
-            # 여기서 조용히 죽으면 사용자는 "왜 답이 안 오지" 만 남는다. 다시 띄우는 **정확한
-            # 명령**을 준다 — 설정은 이미 저장돼 있으므로 토큰만 새로 받으면 된다.
+            # 연결이 **명시적으로** 해제됐다(로그아웃, 또는 러너가 오래 멈춰 있어 만료).
+            # 사용자 요구(2026-08-28): 이때 러너도 안전하게 종료된다 — 다만 하던 일을 먼저
+            # 마친다. 종료 절차는 `shutdown_after_drain` 한 곳이 정본이다.
             _log("토큰이 무효해졌습니다(로그아웃 또는 만료).")
+            # 죽은 토큰으로 30초마다 계속 두드리지 않는다.
+            heartbeat_stop.set()
+            shutdown_after_drain(active, cancels)
+            # 다시 띄우는 **정확한 명령**을 준다 — 설정은 이미 저장돼 있으므로 토큰만 새로 받으면
+            # 된다. (자발적 종료여도 안내는 남긴다: 로그아웃이 의도치 않았을 수 있다.)
+            _log("  다시 연결하려면:")
             _log("  1) 웹 대화 화면에서 'AI 연결하기' → [연결 정보 만들기] → 토큰 복사")
             _log(f"  2) python3 {os.path.basename(__file__)} --resume --token <새 토큰>")
             return 3
@@ -1011,11 +1218,16 @@ def main() -> int:
             pool.release(sid)
             continue
 
+        # 진행 중 원장 등록은 **스레드를 띄우기 전**에 한다. 스레드 안에서 하면 그 사이에
+        # 종료 절차가 유휴로 오판하고(카운트 0) 방금 점유한 작업을 두고 나간다.
+        active.enter(task_id)
+
         def _work(tid: str = task_id, payload: dict = claimed, slot: int = sid) -> None:
             try:
                 handle_one(api, tid, payload, kind, argv, args.cmd, cancels)
             finally:
                 cancels.forget(tid)
+                active.leave(tid)
                 # 반납 시각이 곧 그 슬롯의 `last_used` 다 — 회수 순서가 여기서 정해진다.
                 pool.release(slot)
                 done_once.set()
