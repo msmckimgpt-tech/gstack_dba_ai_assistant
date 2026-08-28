@@ -996,3 +996,32 @@ def test_user_named_cli_is_not_silently_replaced():
     # 질의가 알아낸 호출 형태로 교정한다(기본 추정이 아니라).
     assert "_learned and kind not in _RUNTIME_SPECS" in body, (
         "질의는 성공했는데 답변은 추정 형태로 보낸다")
+
+
+def test_resume_does_not_inherit_the_runtime_limit():
+    """`--resume` 이 `ai` 를 **상속하지 않는다** (P0-Z5, 라이브 실측으로 발견).
+
+    P0-Z3 이전에 `ai` 는 "무엇으로 답할까" 하나만 정했으므로 자동 감지 결과를 저장해 두는 것이
+    편의였다. P0-Z3 이후 같은 값이 **신고 목록까지 좁힌다** — 의미가 바뀌었는데 저장·상속
+    규칙이 그대로라, `--ai` 를 준 적 없는 사용자도 첫 기동의 감지 결과가 굳어 다음 재기동에서
+    다른 런타임이 화면에서 사라진다. 라이브에서 실제로 codex 가 사라졌다.
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    body = src[src.index("def main("):]
+    resume_block = body[body.index("if args.resume:"):]
+    resume_block = resume_block[:resume_block.index("if not args.base")]
+    assert 'conf.get("ai")' not in resume_block, (
+        "resume 이 ai 를 상속한다 — 자동 감지 결과가 다음 실행의 제한으로 승격된다")
+    # base·ca·cmd 는 그대로 복원한다(그것들은 진짜 '설정' 이다).
+    for keep in ('conf.get("base")', 'conf.get("ca")', 'conf.get("cmd")'):
+        assert keep in resume_block, f"{keep} 복원이 사라졌다"
+
+
+def test_only_explicit_ai_is_persisted():
+    """저장하는 `ai` 는 **사용자가 명시한 것만** — 자동 감지 결과를 저장하면 제한이 된다."""
+    src = _RUNNER.read_text(encoding="utf-8")
+    body = src[src.index("def main("):]
+    assert "save_conf(args.base, args.ca, kind, args.cmd)" not in body, (
+        "자동 감지된 kind 를 ai 로 저장한다")
+    assert body.count("save_conf(args.base, args.ca, (args.ai or \"\"), args.cmd") >= 1, (
+        "명시 --ai 만 저장하는 형태가 아니다")

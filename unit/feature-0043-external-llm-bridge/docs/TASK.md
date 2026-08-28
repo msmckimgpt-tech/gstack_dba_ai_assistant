@@ -679,3 +679,12 @@ AI 플랫폼에 관계없이, 클라이언트가 자유롭게 서술한 모델�
 - [x] 테스트 신규 14건 + 기존 계약 5건 갱신 · `make test` green
 - [x] 문서 (FUNCTION P0-Z4 · MODIFY · TASK · REPORT · TEST)
 - [ ] **라이브 확인** — 러너 재기동 후 AI 응답 목록이 화면에 뜨는지(사용자 테스트)
+
+### TASK-20260829T000000-resume-ai-scope — `--ai` 상속이 런타임을 지웠다 (P0-Z5)
+
+라이브 재기동에서 발견 — P0-Z4 배포 후 codex 가 신고에서 빠졌다.
+
+- [x] `--resume` 의 `ai` 상속 제거 (base·ca·cmd 만 복원)
+- [x] 저장은 명시 `--ai` 만
+- [x] 회귀 테스트 2건 · 문서 (FUNCTION P0-Z5 · MODIFY · TASK · REPORT)
+- [x] 재기동으로 라이브 확인
