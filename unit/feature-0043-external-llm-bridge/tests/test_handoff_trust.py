@@ -654,7 +654,10 @@ def test_runner_contract_states_the_residual_trust_boundary(path):
     여지는 남고, 이 파일이 없앨 수 있는 위험이 아니다. "전부 안전하다" 고 말하는 순간 이 문서
     전체가 신뢰를 잃는다 — 한 군데의 과장이 나머지 사실까지 의심하게 만든다.
     """
-    head = path.read_text(encoding="utf-8")[:4000]
+    # 6000 자: P0-Z4 가 헤더 앞부분에 "기동 시 1회 질의"(새 outbound + 계정 토큰 소모)를
+    # 더하면서 이 절이 4118 자 위치로 밀렸다. 범위를 넓히되 **헤더 안**은 유지한다 —
+    # 계약의 요지는 "파일을 열면 곧 보인다" 이지 특정 바이트 수가 아니다.
+    head = path.read_text(encoding="utf-8")[:6000]
     assert "남는 신뢰 경계" in head, "잔여 위험을 감췄다"
     assert "권한 설정" in head and "낮추라고 요구하지" in head, (
         "상대 런타임의 방어선을 낮추지 않는다는 약속이 없다")

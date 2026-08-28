@@ -135,8 +135,13 @@ def test_runner_does_not_offer_a_selector_it_cannot_honor():
     """
     main_src = _RUNNER.read_text(encoding="utf-8")
     body = main_src[main_src.index("def main("):]
-    assert "runtimes = [] if args.cmd else detect_runtimes(" in body, (
+    # `--cmd` 분기에서 신고를 비운다(그 명령에 모델이 박혀 있어 웹 선택이 무시되므로).
+    # `if args.cmd:` 는 main 에 두 번 나온다(호출 형태 결정 · 신고 결정). 뒤의 것이 대상이다.
+    cmd_branch = body[body.rindex("if args.cmd:"):]
+    cmd_branch = cmd_branch[:cmd_branch.index("else:")]
+    assert "runtimes = []" in cmd_branch, (
         "--cmd 사용자에게도 선택기가 뜬다(반영되지 않을 조작면)")
+    assert "resolve_caps(" not in cmd_branch, "--cmd 인데 AI 에게 능력을 묻는다(토큰 낭비)"
 
 
 # ── 러너: 서버가 준 값을 어떻게 다루는가 (신뢰 경계) ─────────────────────────
@@ -199,8 +204,11 @@ def test_handle_one_validates_the_runtime_before_switching():
     src = _RUNNER.read_text(encoding="utf-8")
     body = src[src.index("def handle_one("):]
     body = body[:body.index("\ndef ")]
-    assert "want_runtime in _RUNTIME_SPECS" in body, "표 대조 없이 런타임을 바꾼다"
+    # P0-Z4: 우리 표에 없는 CLI 도 쓸 수 있으므로 "표에 있는가" 만으로는 부족하다 —
+    # **아는 호출법이 있는가**(표 또는 질의로 배운 것) + PATH 실재를 함께 본다.
+    assert "_known or _learned" in body, "호출법 확인 없이 런타임을 바꾼다"
     assert "_which(want_runtime)" in body, "실재 확인 없이 런타임을 바꾼다"
+    assert "_offered" in body, "신고 대조 없이 런타임을 바꾼다"
 
 
 def test_runner_copies_are_byte_identical():
@@ -611,3 +619,380 @@ def test_reasoning_hydration_uses_one_predicate():
     app_js = (_WEB_SRC / "static" / "app.js").read_text(encoding="utf-8")
     assert "_composerReasoningValid(_rl)" in app_js, "hydration 이 공용 술어를 쓰지 않는다"
     assert "_isValidReasoningLevel(_rl)" not in app_js, "hydration 이 서버 집합으로 거절한다"
+
+
+# -- P0-Z4: 목록을 정하는 것은 **그 AI 자신** ------------------------------------
+#
+# P0-Z3 는 러너의 하드코딩 표를 신고했다. 그 표는 우리가 아는 시점에 멈춰 있어서, 실측에서
+# codex 는 표에 없던 모델(`gpt-5.6-*`)을 답했고 claude 는 우리가 빠뜨린 것(`fable`)을 답했다.
+# 아래는 "묻고 · 관대하게 받고 · 그래도 안전한가" 를 잠근다.
+
+
+def test_probe_never_runs_unless_asked():
+    """능력 질의는 **명시할 때만** 한다.
+
+    기본값이 켜져 있으면 이 함수를 부르는 모든 자리(테스트 포함)가 실제 AI 를 호출해 수십 초를
+    쓰고 사용자 계정 토큰을 태운다. 실제로 이 스위트가 그렇게 멈춘 적이 있다.
+    """
+    mod = _load_runner()
+    src = _RUNNER.read_text(encoding="utf-8")
+    sig = src[src.index("def detect_runtimes("):]
+    sig = sig[:sig.index(")")]
+    assert "probe: bool = False" in sig, "질의가 기본으로 켜져 있다"
+    # 실제로도 켜지 않으면 묻지 않는다(외부 호출이 일어나면 이 테스트가 느려진다).
+    calls: list = []
+    orig = mod.probe_runtime_caps
+    mod.probe_runtime_caps = lambda *a, **k: calls.append(a) or None
+    try:
+        mod.detect_runtimes()
+    finally:
+        mod.probe_runtime_caps = orig
+    assert calls == [], "옵트인 없이 AI 를 호출했다"
+
+
+@pytest.mark.parametrize("body,expect", [
+    ('{"models":[{"value":"opus"}]}', ["opus"]),
+    ('```json\n{"models":["opus","sonnet"]}\n```', ["opus", "sonnet"]),
+    ('답변드립니다:\n{"models":[{"value":"opus"}]}\n이상입니다.', ["opus"]),
+    ('앞에 {깨진 것 } 뒤에 {"models":["x"]}', ["x"]),
+    ('{"models": {"opus": "Opus"}}', ["opus"]),
+    ('{"models":[{"name":"o3"}]}', ["o3"]),
+    ('{"models":[{"id":"gpt-5.1"}]}', ["gpt-5.1"]),
+])
+def test_probe_accepts_however_the_ai_phrased_it(body, expect):
+    """**관대하게 수용한다** (사용자 요구).
+
+    형식을 요구하되, 코드펜스·머리말·맺음말·키 이름 차이·매핑 형태를 전부 받는다. 조금
+    어긋났다고 그 런타임을 통째로 버리면 사용자는 이유 없이 선택지를 잃는다.
+    """
+    mod = _load_runner()
+    got = mod._extract_json(body)
+    assert got is not None, "AI 응답에서 JSON 을 못 찾았다"
+    assert [o["value"] for o in mod._coerce_options(got.get("models"))] == expect
+
+
+def test_probe_still_refuses_values_that_could_become_flags():
+    """관대해도 **모양은 본다** — 옵션처럼 생긴 값·공백·빈 값은 버린다.
+
+    이 값들은 곧 `Popen` 인자가 된다. 내용(어떤 모델인가)은 AI 의 소관이지만, 모양은 우리가
+    책임진다.
+    """
+    mod = _load_runner()
+    got = mod._coerce_options(["ok", "--dangerously-skip", "a b", "", "-p", "$(id)"])
+    assert [o["value"] for o in got] == ["ok"]
+
+
+@pytest.mark.parametrize("raw,ph,expect", [
+    (["--model", "{model}"], "{model}", ["--model", "{model}"]),
+    ("--model {model}", "{model}", ["--model", "{model}"]),
+    ("--model={model}", "{model}", ["--model={model}"]),
+    ('--model "{model}"', "{model}", ["--model", "{model}"]),   # shlex 가 따옴표를 벗긴다
+    (["-c", "reasoning={effort}"], "{effort}", ["-c", "reasoning={effort}"]),
+    (["{model}"], "{model}", ["{model}"]),   # 위치 인자로 모델을 받는 CLI
+    (["--model"], "{model}", None),          # 치환 자리가 없다 = 값을 넣을 곳이 없다
+    ("", "{model}", None),
+    (["--model", "{model}", "; rm -rf /"], "{model}", None),   # 공백 포함 토큰
+    (42, "{model}", None),
+])
+def test_flag_shapes_are_coerced_or_refused(raw, ph, expect):
+    """AI 가 답한 호출법을 argv 조각으로 맞춘다 — 쓸 수 없으면 None."""
+    mod = _load_runner()
+    assert mod._coerce_flag(raw, ph) == expect
+
+
+@pytest.mark.parametrize("evil", [
+    ["sh", "-c", "{model}"],                                   # 셸 실행
+    ["bash", "{model}"],
+    ["python", "{model}"],
+    ["--model", "{model}", "--dangerously-skip-permissions"],  # 임의 플래그 편승
+    ["--model", "{model}", "--yolo"],
+    ["--a", "--b", "--c", "{model}"],                          # 토큰 과다
+    ["{model}", "{model}"],                                    # 치환 자리 중복
+    ["/bin/sh", "{model}"],
+])
+def test_flag_shape_refuses_execution_and_hitchhiking(evil):
+    """호출법은 **대조할 목록이 없는 유일한 값**이라 형태로만 막는다.
+
+    모델·등급 값은 신고 목록과 대조되지만 플래그는 형태 그 자체다 — 검사 없이 `Popen` 인자가
+    된다. 그래서 ① 치환 자리 정확히 1개 ② 토큰 ≤ 2 ③ 나머지는 `-` 로 시작을 강제한다.
+
+    ③이 없으면 `["sh","-c","{model}"]` 이 **셸을 실행**하고, ②가 없으면 임의 플래그가
+    따라붙는다. 둘 다 실측에서 통과하던 형태였다(자체 점검으로 발견).
+    """
+    mod = _load_runner()
+    assert mod._coerce_flag(evil, "{model}") is None, f"위험한 호출법이 통과했다: {evil}"
+
+
+def test_flags_never_leave_the_machine(monkeypatch):
+    """**호출법은 서버로 나가지 않는다** — 이번 변경의 신뢰 경계.
+
+    모델 이름은 사람이 골라야 하므로 서버를 거치지만, 플래그 형태까지 보내면 서버가 인자의
+    *형태* 를 바꿀 수 있게 된다. 목록(신고)과 호출법(로컬)을 가르는 것이 그 경계다.
+    """
+    mod = _load_runner()
+    caps = {"claude": {"label": "Claude",
+                       "models": [{"value": "opus", "label": "Opus"}],
+                       "efforts": [{"value": "low", "label": "Low"}],
+                       "model": ["--model", "{model}"],
+                       "effort": ["--effort", "{effort}"], "source": "probe"}}
+    # PATH 에 실제로 claude 가 있는지에 이 계약이 좌우되면 안 된다(컨테이너 CI 에는 없다).
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    reported = mod.detect_runtimes(cached=caps)
+    blob = json.dumps(reported, ensure_ascii=False)
+    for leak in ("--model", "--effort", "{model}", "{effort}", "model_flag"):
+        assert leak not in blob, f"호출법이 신고에 실렸다: {leak}"
+    # 신고에는 사람이 고를 것만 있다.
+    assert set(reported[0]) == {"runtime", "label", "models", "efforts"}
+
+
+def test_probe_result_is_cached_so_startup_does_not_burn_tokens():
+    """한 번 물으면 다음 기동은 묻지 않는다 — 질의는 사용자 계정 토큰을 쓴다."""
+    src = _RUNNER.read_text(encoding="utf-8")
+    save = src[src.index("def save_conf("):]
+    save = save[:save.index("\ndef ")]
+    assert 'payload["caps"] = caps' in save, "질의 결과를 저장하지 않는다(매번 다시 묻는다)"
+    assert 'prev = load_conf().get("caps")' in save, (
+        "능력을 구하지 않은 실행(`--cmd` 등)이 기존 캐시를 지운다")
+    main_src = src[src.index("def main("):]
+    assert "--refresh-caps" in src, "갱신 수단이 없다"
+    assert "None if args.refresh_caps else" in main_src, "갱신 플래그가 캐시를 무시하지 않는다"
+
+
+def test_builtin_table_is_only_a_fallback(monkeypatch):
+    """질의가 실패해도 화면이 비지 않는다 — 내장 표로 폴백한다.
+
+    물어보지 못했다고 사라지면, 종전에 잘 쓰던 사용자가 이유 없이 기능을 잃는다.
+    """
+    mod = _load_runner()
+    src = _RUNNER.read_text(encoding="utf-8")
+    fn = src[src.index("def detect_runtimes("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert '"source": "builtin"' in fn, "폴백 경로가 없다"
+    # 폴백이 실제로 동작한다(질의 없이 부르면 내장 표가 목록이 된다).
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    got = mod.detect_runtimes(cached={})
+    assert [r["runtime"] for r in got] == ["claude"], "폴백이 동작하지 않는다"
+    assert got[0]["models"], "폴백인데 목록이 비었다"
+
+
+def test_unknown_cli_is_asked_too():
+    """우리 표에 **없는** CLI 도 물어본다 (사용자 요구: 플랫폼에 관계없이).
+
+    호출법을 모르므로 가장 흔한 두 형태를 시도하고, 통한 형태를 기억해 실제 질문도 그 형태로
+    보낸다.
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    fn = src[src.index("def detect_runtimes("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert "unknown_argvs" in fn, "표 밖 CLI 를 물어보지 않는다"
+    assert '[n, "-p", "{prompt}"]' in fn and '[n, "{prompt}"]' in fn, (
+        "표 밖 CLI 의 호출 형태 후보가 없다")
+    assert 'got["argv"] = argv' in fn, "통한 호출 형태를 기억하지 않는다(실제 질문 때 못 쓴다)"
+
+
+def test_unknown_cli_can_actually_be_invoked():
+    """표 밖 CLI 로도 인자가 **조립된다** — AI 가 답한 플래그를 그대로 쓴다."""
+    mod = _load_runner()
+    caps = {"label": "MyCLI",
+            "models": [{"value": "big", "label": "Big"}],
+            "efforts": [{"value": "deep", "label": "Deep"}],
+            "model": ["--use-model", "{model}"], "effort": ["--think", "{effort}"],
+            "argv": ["mycli", "-p", "{prompt}"], "source": "probe"}
+    report = [{"runtime": "mycli", "label": "MyCLI",
+               "models": caps["models"], "efforts": caps["efforts"]}]
+    assert mod.build_cmd("mycli", "Q", "big", "deep", report, caps) == [
+        "mycli", "-p", "--use-model", "big", "--think", "deep", "Q"]
+    # 신고 밖 값은 표 밖 CLI 에서도 거부된다.
+    assert mod.build_cmd("mycli", "Q", "--evil", "deep", report, caps) == [
+        "mycli", "-p", "--think", "deep", "Q"]
+
+
+def test_probed_flags_win_over_the_builtin_table():
+    """AI 가 답한 호출법이 내장 표를 **이긴다**.
+
+    실측에서 codex 는 `-m` 이 아니라 `--model` 을 답했다. 표가 이기면 그 답이 무의미해진다.
+    """
+    mod = _load_runner()
+    caps = {"models": [{"value": "gpt-5.6-sol"}], "efforts": [{"value": "ultra"}],
+            "model": ["--model", "{model}"],
+            "effort": ["-c", "model_reasoning_effort={effort}"]}
+    report = [{"runtime": "codex", "models": caps["models"], "efforts": caps["efforts"]}]
+    got = mod.build_cmd("codex", "Q", "gpt-5.6-sol", "ultra", report, caps)
+    assert "--model" in got and "-m" not in got, "내장 표의 플래그가 AI 응답을 덮었다"
+
+
+def test_probe_timeout_is_not_zero():
+    """`float(env or 120)` 함정 — `os.environ.get(k, "0")` 은 문자열 "0"(truthy)이라
+    `or` 가 단락되지 않고 timeout 이 0 이 된다.
+
+    그러면 질의가 시작하자마자 죽고 폴백이 조용히 삼켜 "AI 가 답을 안 했다" 로 보인다.
+    실측으로 발견해 고친 자리라 값 자체를 잠근다.
+    """
+    mod = _load_runner()
+    assert mod._CAPS_PROBE_TIMEOUT_SEC > 60, (
+        f"질의 시간이 너무 짧다({mod._CAPS_PROBE_TIMEOUT_SEC}s) — 실측 codex 112s")
+
+
+def test_probes_run_in_parallel():
+    """여러 CLI 를 동시에 묻는다.
+
+    순차면 기동이 각 응답 시간의 **합**만큼 늦어진다(실측 23s + 112s = 135s). 병렬이면 가장
+    느린 하나로 끝난다.
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    fn = src[src.index("def detect_runtimes("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert "threading.Thread(target=_probe" in fn, "질의가 순차다"
+    assert "t.join(" in fn, "질의 스레드를 기다리지 않는다"
+
+
+def test_cached_caps_are_re_enforced_on_load():
+    """저장된 능력도 **로드할 때 다시 강제한다** — 안 하면 캐시 파일이 곧 우회 경로다.
+
+    질의 응답은 `probe_runtime_caps` 가 강제하지만 그 결과는 `config.json` 을 거쳐 다음
+    기동으로 돌아온다. 거기 적힌 플래그는 대조할 목록이 없어 그대로 `Popen` 인자가 된다.
+    """
+    mod = _load_runner()
+    got = mod.sanitize_caps({
+        # 플래그로 셸을 실행하려는 캐시
+        "claude": {"models": [{"value": "opus"}], "model": ["sh", "-c", "{model}"],
+                   "argv": ["claude", "-p", "{prompt}"]},
+        # 호출 형태로 다른 실행 파일을 부르려는 캐시
+        "evil2": {"models": [{"value": "x"}], "model": ["--m", "{model}"],
+                  "argv": ["/bin/sh", "-c", "{prompt}"]},
+        # 임의 플래그 편승
+        "evil3": {"models": [{"value": "y"}], "model": ["--m", "{model}", "--yolo"]},
+        # 런타임 이름 자체가 명령
+        "; rm -rf /": {"models": [{"value": "a"}]},
+        # 정상
+        "ok": {"models": [{"value": "z"}], "model": ["--model", "{model}"],
+               "argv": ["ok", "-p", "{prompt}"]},
+    })
+    assert got["claude"]["model"] is None, "셸 실행 플래그가 캐시로 되살아났다"
+    assert got["evil2"].get("argv") is None, "다른 실행 파일을 부르는 호출 형태가 통과했다"
+    assert got["evil3"]["model"] is None, "임의 플래그 편승이 캐시로 되살아났다"
+    assert "; rm -rf /" not in got, "명령 형태의 런타임 이름이 통과했다"
+    assert got["ok"]["model"] == ["--model", "{model}"], "정상 캐시까지 버렸다"
+    assert got["ok"]["argv"] == ["ok", "-p", "{prompt}"]
+    # 모델이 없는 항목은 아예 남기지 않는다(화면에 빈 그룹만 남는다).
+    assert mod.sanitize_caps({"x": {"models": []}}) == {}
+    assert mod.sanitize_caps("문자열") == {} and mod.sanitize_caps(None) == {}
+
+
+def test_main_sanitizes_the_cache_it_loads():
+    """`main` 이 캐시를 **그대로** 쓰지 않는다(위 강제를 실제로 통과시킨다)."""
+    src = _RUNNER.read_text(encoding="utf-8")
+    body = src[src.index("def main("):]
+    assert "sanitize_caps(load_conf()" in body, (
+        "저장된 능력을 검증 없이 신뢰한다 — 캐시 파일이 우회 경로가 된다")
+
+
+# -- codex REV-20260828T230000 회귀 방어 (P2 6건) ------------------------------
+
+
+def test_report_items_are_rebuilt_not_shallow_copied(monkeypatch):
+    """신고 항목을 **재구성한다** — 얕은 복사면 오염된 여분 키가 HTTP 본문에 실려 나간다.
+
+    서버 sanitizer 가 저장 전에 지우더라도 **전송은 이미 일어났다**. 그러면 "호출법은 서버로
+    나가지 않는다" 는 이 기능의 계약이 거짓이 된다 (codex P2-1).
+    """
+    mod = _load_runner()
+    caps = {"claude": {"label": "C",
+                       "models": [{"value": "opus", "label": "Opus",
+                                   "model": ["--secret-flag"], "extra": {"deep": 1}}],
+                       "efforts": [{"value": "low", "label": "Low", "sneak": "x"}],
+                       "model": ["--model", "{model}"],
+                       "effort": ["--effort", "{effort}"], "source": "probe"}}
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    got = mod.detect_runtimes(cached=caps)
+    blob = json.dumps(got, ensure_ascii=False)
+    for leak in ("--secret-flag", "extra", "sneak", "deep"):
+        assert leak not in blob, f"여분 키가 신고에 실렸다: {leak}"
+    assert set(got[0]["models"][0]) == {"value", "label"}
+    assert set(got[0]["efforts"][0]) == {"value", "label"}
+
+
+def test_builtin_fallback_is_never_cached(monkeypatch):
+    """폴백은 캐시하지 않는다 — 일시적 실패가 영구화되면 안 된다 (codex P2-3).
+
+    최초 기동의 인증 지연으로 폴백했는데 그것이 캐시되면, 인증이 복구돼도 다시 묻지 않아
+    낡은 내장 목록을 계속 보여준다. 사용자는 그것이 틀렸다는 사실조차 모른다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    detail: dict = {}
+    mod.detect_runtimes(cached={}, detail_out=detail)   # 질의 없음 → 전부 builtin 폴백
+    assert detail == {}, f"폴백이 캐시에 남았다: {list(detail)}"
+    # 물어서 얻은 것은 남는다.
+    detail2: dict = {}
+    probed = {"claude": {"label": "C", "models": [{"value": "opus"}], "efforts": [],
+                         "model": ["--model", "{model}"], "effort": None, "source": "probe"}}
+    mod.detect_runtimes(cached=probed, detail_out=detail2)
+    assert "claude" in detail2, "질의 결과가 캐시되지 않는다(매번 다시 묻는다)"
+
+
+def test_probe_shares_one_absolute_deadline():
+    """전체 질의에 **하나의 절대 deadline** — 후보를 순차로 시도해도 총량이 늘지 않는다.
+
+    표 밖 CLI 는 후보마다 timeout 을 다 쓸 수 있어(240×2) main 의 대기를 넘긴다. 그러면 main 은
+    폴백으로 기동하고, 남은 스레드가 아무도 읽지 않을 답을 위해 토큰을 계속 태운다 (codex P2-4).
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    fn = src[src.index("def detect_runtimes("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert "deadline = time.monotonic()" in fn, "공유 deadline 이 없다"
+    assert "left = deadline - time.monotonic()" in fn, "남은 시간을 후보마다 다시 재지 않는다"
+    assert "timeout=left" in fn, "남은 시간을 질의에 넘기지 않는다"
+    # `probe_runtime_caps` 가 그 값을 실제로 쓴다.
+    probe_fn = src[src.index("def probe_runtime_caps("):]
+    probe_fn = probe_fn[:probe_fn.index("\ndef ")]
+    assert "timeout if timeout and timeout > 0" in probe_fn, "넘겨받은 시간을 무시한다"
+
+
+@pytest.mark.parametrize("raw,expect_default", [
+    ("abc", True),      # 형식 오류 — 종전엔 **import 가 실패**해 러너가 아예 안 떴다
+    ("inf", True),      # Thread.join(inf) → OverflowError
+    ("nan", True),      # Thread.join(nan) → ValueError
+    ("-5", True),       # 기다리지 않고 background probe 를 방치
+    ("0", True),
+    ("999999", True),   # 범위 밖
+    ("60", False),      # 정상
+])
+def test_probe_timeout_env_is_validated(monkeypatch, raw, expect_default):
+    """설정 하나가 기동을 못 하게 만들면 안 된다 (codex P2-6)."""
+    mod = _load_runner()
+    monkeypatch.setenv("BRIDGE_CAPS_PROBE_TIMEOUT", raw)
+    got = mod._probe_timeout_from_env()
+    assert got == 240.0 if expect_default else got == 60.0
+    # 어떤 값이든 `Thread.join()` 에 넣을 수 있어야 한다(유한 양수).
+    assert got > 0 and got == got and got != float("inf")
+
+
+def test_probe_output_and_json_scan_are_bounded():
+    """오작동한 CLI 의 대량 출력이 CPU·메모리를 태우지 않는다 (codex P2-5)."""
+    mod = _load_runner()
+    assert mod._CAPS_PROBE_MAX_BYTES <= 1024 * 1024
+    assert mod._CAPS_JSON_MAX_CANDIDATES <= 256
+    # 닫히지 않은 `{` 가 대량이어도 후보 수 상한에서 멈춘다(O(n²) 방지).
+    junk = "{" * 5000 + "not json"
+    assert mod._extract_json(junk) is None
+    # 상한 뒤에 있는 정상 JSON 은 못 찾는다 — 그것이 상한의 의미다(찾으려면 O(n²)).
+    assert mod._extract_json("{" * 200 + '{"models":["x"]}') is None
+    # 정상 범위에서는 그대로 찾는다.
+    assert mod._extract_json("{" * 3 + '{"models":["x"]}')["models"] == ["x"]
+
+
+def test_user_named_cli_is_not_silently_replaced():
+    """`--ai mycli` 를 자동 감지가 갈아치우지 않는다 (codex P2-2).
+
+    갈아치우면 runtime 지정이 없는 요청이 사용자가 고르지 않은 AI 로 처리되고, 캐시에도 틀린
+    `kind` 가 남는다 — 사용자는 자기가 지목한 CLI 가 쓰이는 줄 안다.
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    body = src[src.index("def main("):]
+    assert "if args.ai and _which(args.ai):" in body, (
+        "표 밖 이름이 PATH 에 있어도 자동 감지로 대체된다")
+    assert 'picked = (args.ai, [args.ai, "-p", "{prompt}"])' in body
+    # 질의가 알아낸 호출 형태로 교정한다(기본 추정이 아니라).
+    assert "_learned and kind not in _RUNTIME_SPECS" in body, (
+        "질의는 성공했는데 답변은 추정 형태로 보낸다")

@@ -17,17 +17,26 @@
     서버에서 받는 것    질문 텍스트 · 대화 맥락 · **운영자 시스템 지침** · 첨부 목록 · task_id.
                         실행 가능한 코드나 셸 명령은 받지 않는다.
                         → `compose_prompt` 가 쓰는 필드가 전부다(직접 세어 보면 된다).
-    실행하는 것         `_RUNTIME_SPECS` 에 **하드코딩된** 로컬 AI CLI
-                        (`claude -p` / `codex exec` / `gemini -p` / ollama HTTP), 또는
-                        사용자가 `--cmd` 로 직접 준 명령.
+    실행하는 것         `_RUNTIME_SPECS` 에 하드코딩된 로컬 AI CLI(`claude -p` / `codex exec`
+                        / `gemini -p` / ollama HTTP), 사용자가 `--ai` 로 지목한 PATH 상의 CLI,
+                        또는 `--cmd` 로 직접 준 명령. **실행 파일은 언제나 이 머신에 이미
+                        설치된 것**이고(`_which` 로 확인), 우리가 내려받거나 만들지 않는다.
+    기동 시 1회 질의     각 CLI 에게 "너는 어떤 모델·추론 수준을 쓸 수 있나" 를 묻는다
+    (P0-Z4)             (`_CAPS_PROBE_PROMPT`). 보내는 것은 **그 질문 문장 하나뿐**이고 이
+                        머신의 파일·환경·대화 내용은 실리지 않는다. 답은
+                        `config.json` 에 캐시되어 다음 기동은 묻지 않는다(`--refresh-caps`
+                        로만 갱신). 이 질의는 **네 AI 계정의 토큰을 쓴다**.
     서버 값은 인자가     서버가 돌려주는 (런타임·모델·추론등급)은 사용자가 웹에서 고른 것이고
-    되기 전에 걸러진다   CLI 인자가 된다. 그러나 **표에 있는 값만** 통과한다 — 실행 파일 이름은
-                        `_RUNTIME_SPECS` 의 키여야 하고(그리고 PATH 에 실재해야 하고), 모델·
-                        등급은 그 런타임의 신고 목록에 있는 값이어야 한다. 그 외에는 조용히
-                        버려지고 CLI 기본값으로 실행된다. → `build_cmd` 의 `_valid()` 와
-                        `handle_one` 의 `want_runtime in _RUNTIME_SPECS and _which(...)`.
-                        즉 서버는 **우리가 미리 적어 둔 것 중에서 고를** 수 있을 뿐,
-                        새 명령·새 플래그를 만들어 넣지 못한다.
+    되기 전에 걸러진다   CLI 인자가 된다. 그러나 **신고 목록에 있는 값만** 통과한다 — 실행 파일
+                        이름은 이 러너가 신고한 런타임이어야 하고(그리고 PATH 에 실재해야
+                        하고), 모델·등급은 그 런타임이 스스로 답한 목록 안이어야 한다.
+                        그 외에는 조용히 버려지고 CLI 기본값으로 실행된다.
+                        → `build_cmd` 의 `_valid()` · `handle_one` 의 `_offered` 검사.
+    호출법은 서버로      플래그 형태(`--model {model}` 등)는 **로컬 `config.json` 에만** 있다.
+    나가지 않는다        신고에는 사람이 고를 목록만 싣는다 → `detect_runtimes` 가 돌려주는
+                        dict 에 `model`/`effort` 키가 없음을 직접 확인할 수 있다.
+                        그래서 서버는 **값을 고를** 수 있을 뿐, 인자의 *형태* 를 바꾸거나
+                        새 플래그를 만들어 넣지 못한다.
     셸을 거치지 않음    프롬프트도 모델·등급도 argv 로 넘어간다 — 본문에 셸 메타문자가 있어도
                         명령이 되지 않는다. → `_run_cli_cancelable` 의
                         `subprocess.Popen(cmd, ...)` 에서 `cmd` 는 리스트다(셸 해석이 개입하는
@@ -126,16 +135,21 @@ AI 는 자동 감지한다(claude → codex → gemini → ollama 순). 고정�
     --ai claude            # 또는 codex / gemini / ollama
     --cmd 'my-ai -p {prompt}'   # 완전 수동. {prompt} 자리에 질문이 들어간다
 
-## 모델·추론등급 (2026-08-28, P0-Z3)
+## 모델·추론등급 (2026-08-28, P0-Z4)
 
-**웹에서 고른다 — 단 목록은 이 러너가 알려준 것이다.** 기동 시 이 머신에 설치된 런타임을
-전부 찾아(claude·codex·gemini·ollama) 각자가 고를 수 있는 모델·추론등급을 하트비트에 실어
-보낸다. 웹 컴포저는 그 목록만 보여주고, 고른 값은 `claim_request` 로 돌아와 실제 CLI 인자가
-된다(`claude --model sonnet --effort low`, `codex -m … -c model_reasoning_effort=…`).
+**웹에서 고른다 — 단 목록은 각 AI 가 스스로 답한 것이다.** 기동 시 이 머신에 설치된 CLI 에게
+한 번 묻는다: *"너는 어떤 모델과 추론 수준을 인자로 지정할 수 있나?"* 그 답을 그대로 하트비트에
+실어 보내고, 웹 컴포저는 그 목록만 보여준다. 고른 값은 `claim_request` 로 돌아와 실제 인자가
+된다 — **호출법(플래그 형태)도 그 AI 가 답한 것**이므로 플랫폼이 달라도 우리 코드는 그대로다.
 
-종전에는 서비스 내부 alias(`claude-haiku-4`)를 보여줬는데 그 이름을 아는 CLI 가 없어서
-**무엇을 골라도 답이 달라지지 않았다**. 목록의 출처를 실행하는 쪽으로 옮긴 것이 이번 변경의
-전부다 — 아는 쪽이 말한다.
+왜 묻는가: 우리가 표로 갖고 있으면 그 표는 우리가 아는 시점에 멈춘다. 실제로 실측에서
+`codex` 는 우리 표에 없던 모델을 답했고 `claude` 는 우리가 빠뜨린 것을 답했다. **자기가 무엇을
+쓸 수 있는지 가장 잘 아는 것은 그 AI 자신이다.**
+
+답은 `config.json` 에 캐시되어 다음 기동은 묻지 않는다(질의는 네 계정의 토큰을 쓰고 수십 초가
+걸린다). 목록을 새로 받으려면 `--refresh-caps`.
+
+우리 표에 없는 CLI 도 `--ai <이름>` 으로 지목하면 같은 방식으로 물어본다 — 답하면 그대로 쓴다.
 
 명령을 통째로 직접 주면(`--cmd 'claude --model opus -p {prompt}'`) 그것이 이기고, 웹
 선택기는 표시되지 않는다(반영되지 않을 조작면을 띄우지 않는다).
@@ -175,6 +189,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import ssl
 import subprocess
@@ -238,16 +253,33 @@ _CONF_DIR = os.path.join(os.path.expanduser("~"), ".mysql-ai-bridge")
 _CONF_PATH = os.path.join(_CONF_DIR, "config.json")
 
 
-def save_conf(base: str, ca: str | None, ai: str, cmd: str | None) -> None:
+def save_conf(base: str, ca: str | None, ai: str, cmd: str | None,
+              caps: dict | None = None) -> None:
     """다음 실행이 `--resume` 한 줄로 끝나게 한다.
 
     머신을 재시작하면 이 프로세스는 사라진다(사용자 지적 2026-08-27). 그때 사용자가 다시
     챙겨야 하는 것이 많을수록 **아무도 다시 띄우지 않는다.** 토큰만 새로 받으면 되게 한다.
+
+    `caps` 는 각 AI 가 스스로 답한 능력(P0-Z4)이다. 여기 저장하는 이유는 **매 기동마다 다시
+    묻지 않기 위해서**다 — 그 질의는 사용자 계정의 토큰을 쓰고 수십 초가 걸린다. 갱신은
+    `--refresh-caps` 로 사용자가 명시할 때만(모델 목록이 바뀌는 일은 드물다).
+
+    ⚠ 여기에는 **플래그 형태(`model`/`effort`)도 함께** 남지만 그것은 서버로 나가지 않는다.
+    호출법을 아는 것은 이 파일과 러너뿐이다(P0-Z3 신뢰 경계).
     """
     try:
         os.makedirs(_CONF_DIR, exist_ok=True)
+        payload = {"base": base, "ca": ca, "ai": ai, "cmd": cmd}
+        if caps is not None:
+            payload["caps"] = caps
+        else:
+            # 이번 실행이 능력을 새로 구하지 않았다면(예: `--cmd` 모드) 기존 캐시를 지우지
+            # 않는다 — 다음 일반 기동이 다시 묻는 비용을 물지 않게.
+            prev = load_conf().get("caps")
+            if prev:
+                payload["caps"] = prev
         with open(_CONF_PATH, "w", encoding="utf-8") as f:
-            json.dump({"base": base, "ca": ca, "ai": ai, "cmd": cmd}, f, ensure_ascii=False)
+            json.dump(payload, f, ensure_ascii=False)
         os.chmod(_CONF_PATH, 0o600)
     except Exception as e:  # noqa: BLE001
         _log(f"설정 저장 실패(무시): {e}")
@@ -702,6 +734,319 @@ def detect_ai() -> tuple[str, list[str]] | None:
     return None
 
 
+#: AI 가 답한 **값**(모델·등급)에 요구하는 모양. 서버 쪽 `_CAPS_VALUE_RE` 와 같은 집합이다.
+#:
+#: 내용은 보지 않는다 — 어떤 모델이 있는지는 그 AI 의 소관이고, 우리가 아는 목록으로 거르면
+#: "관대하게 수용" 이 아니게 된다(P0-Z4). 여기서 보는 것은 **모양뿐**이다: 이 값은 곧
+#: `Popen` 인자가 되므로, 옵션으로 해석될 수 있는 것(선행 `-`)과 셸 메타문자·공백을 막는다.
+#: 실제 모델 이름은 이 집합 안에 다 들어온다(`gpt-5.1-codex` · `llama3:8b` · `gemini-2.5-pro`).
+_CAPS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,63}$")
+
+#: 연결된 AI 에게 **자기 능력을 직접 묻는** 질문 (P0-Z4, 사용자 결정 2026-08-28).
+#:
+#: ## 왜 묻는가
+#:
+#: 종전에는 `_RUNTIME_SPECS` 에 우리가 적어 둔 목록을 신고했다. 그 목록은 우리가 아는 시점에
+#: 멈춰 있어서 — CLI 가 새 모델을 얻어도, 사용자가 쓰는 런타임이 우리 표에 없어도 화면은
+#: 모른다. **자기가 무엇을 쓸 수 있는지 가장 잘 아는 것은 그 AI 자신**이므로 직접 묻는다.
+#:
+#: ## 형식을 요구하되 관대하게 받는다
+#:
+#: 형식을 주지 않으면 파싱이 불가능하고, 형식을 엄격히 강제하면 조금만 어긋나도 그 런타임이
+#: 통째로 사라진다. 그래서 **요구는 정확히, 수용은 관대하게** 한다 — 코드블록·머리말·설명이
+#: 섞여도 `_extract_json` 이 본문에서 객체를 찾아낸다.
+#:
+#: ## 플래그도 함께 묻는 이유
+#:
+#: 플랫폼마다 모델·추론 지정 방법이 다르다(`--model` / `-m` / `-c key=value`). 우리가 표로
+#: 갖고 있으면 새 플랫폼은 우리 배포를 기다려야 한다. AI 가 자기 호출법을 말하면 그 종속이
+#: 사라진다 — 사용자가 어떤 CLI 를 쓰든 우리 코드는 그대로다.
+_CAPS_PROBE_PROMPT = """\
+너 자신에 대해 답하라. 지금 이 CLI 를 **비대화형으로 한 번 실행할 때**, 어떤 모델과 어떤
+추론 수준(reasoning effort / thinking level)을 인자로 지정할 수 있는가?
+
+아래 JSON 객체 **하나만** 출력하라. 설명·머리말·맺음말을 붙이지 마라.
+
+{
+  "label": "이 CLI 를 사람에게 보여줄 짧은 이름 (예: Claude, Codex, Gemini)",
+  "models": [
+    {"value": "인자에 그대로 넣을 실제 값", "label": "사람이 읽을 이름"}
+  ],
+  "efforts": [
+    {"value": "인자에 그대로 넣을 실제 값", "label": "사람이 읽을 이름"}
+  ],
+  "model_flag": ["모델을 지정하는 인자 형태. {model} 자리에 위 value 가 들어간다"],
+  "effort_flag": ["추론 수준을 지정하는 인자 형태. {effort} 자리에 위 value 가 들어간다"]
+}
+
+규칙:
+- `value` 는 **네가 실제로 받아들이는 문자열**이어야 한다. 버전이 올라가도 유지되는 별칭
+  (alias)이 있으면 그것을 우선하라 — 풀네임은 세대가 바뀌면 죽는다.
+- 지정할 수 없는 항목은 **빈 배열**로 둬라. 없는 기능을 있다고 답하면, 사용자는 고를 수
+  있는데 반영되지 않는 화면을 보게 된다.
+- `model_flag` / `effort_flag` 는 인자를 **배열로** 쓴다.
+  예: ["--model", "{model}"] · ["-m", "{model}"] · ["-c", "reasoning={effort}"]
+- 모르는 것은 지어내지 마라. 확실한 것만 넣어라.
+"""
+
+#: 능력 질의에 주는 시간. 짧게 잡는다 — 이건 답변이 아니라 **기동 절차**이고, 여기서 오래
+#: 걸리면 사용자는 러너가 멈춘 줄 안다. 초과하면 내장 기본값으로 진행한다(기동을 막지 않는다).
+#:
+#: ⚠ `float(env or 120)` 로 쓰지 마라 — `os.environ.get(k, "0")` 은 **문자열 "0"**(truthy)을
+#: 돌려주므로 `or` 가 단락되지 않고 timeout 이 0 이 된다. 그러면 질의가 시작하자마자
+#: `TimeoutExpired` 로 죽고, 폴백이 조용히 삼켜 "AI 가 답을 안 했다" 로 보인다(실측으로 발견).
+#: 변환을 **먼저** 하고 그 결과로 기본값을 고른다.
+#: 실측(2026-08-28): claude 22.7초 · codex 112.3초. 후자가 120 에 아슬아슬해 여유를 둔다 —
+#: 여기서 잘리면 그 런타임은 조용히 내장 기본값으로 떨어지고, 사용자는 자기 AI 가 답한 목록
+#: 대신 우리가 적어 둔 (틀릴 수 있는) 목록을 보게 된다.
+def _probe_timeout_from_env() -> float:
+    """`BRIDGE_CAPS_PROBE_TIMEOUT` 을 **유한 양수**로만 받는다 (codex P2-6).
+
+    검사 없이 `float()` 하면 `abc` 하나로 **모듈 import 가 실패**해 러너가 아예 뜨지 않고,
+    `inf`/`nan` 은 `Thread.join()` 에서 `OverflowError`/`ValueError` 로 터진다. 음수는
+    "기다리지 않고 백그라운드 probe 를 방치" 라는 최악의 조용한 동작이 된다.
+    설정 하나가 기동을 못 하게 만드는 것은 어떤 경우에도 옳지 않다 — 이상하면 기본값으로 간다.
+    """
+    raw = os.environ.get("BRIDGE_CAPS_PROBE_TIMEOUT")
+    if raw:
+        try:
+            got = float(raw)
+        except (TypeError, ValueError):
+            got = 0.0
+        # `nan` 은 어떤 비교도 False 라 아래 범위 검사에서 자연히 걸러진다.
+        if 5.0 <= got <= 1800.0:
+            return got
+        _log(f"BRIDGE_CAPS_PROBE_TIMEOUT={raw!r} 은 5~1800초 범위가 아닙니다 — 기본값을 씁니다.")
+    return 240.0
+
+
+_CAPS_PROBE_TIMEOUT_SEC = _probe_timeout_from_env()
+
+#: probe stdout 상한 (codex P2-5). 오작동한 CLI 가 대량 출력을 쏟으면 그것이 전부 메모리에
+#: 쌓이고, 이어지는 JSON 탐색이 그 위에서 반복 스캔한다. 정상 응답은 수 KB 다.
+_CAPS_PROBE_MAX_BYTES = 256 * 1024
+#: `_extract_json` 이 시도할 후보 `{` 개수 상한. 닫히지 않은 중괄호가 많으면 각 시작점마다
+#: 본문 끝까지 훑어 O(n²) 가 된다.
+_CAPS_JSON_MAX_CANDIDATES = 64
+
+
+def _extract_json(text: str) -> dict | None:
+    """본문에서 JSON 객체 하나를 **관대하게** 꺼낸다. 못 찾으면 None.
+
+    AI 는 형식을 지키라고 해도 코드펜스를 붙이거나("```json ... ```"), 한 줄 설명을 앞에
+    두거나, 뒤에 요약을 덧붙인다. 그 정도로 그 런타임을 통째로 버리면 "관대하게 수용" 이
+    아니다 — 중괄호 균형을 세어 **첫 완전한 객체**를 찾는다.
+    """
+    s = str(text or "")[:_CAPS_PROBE_MAX_BYTES]
+    start = s.find("{")
+    tried = 0
+    while start != -1 and tried < _CAPS_JSON_MAX_CANDIDATES:
+        tried += 1
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(s)):
+            ch = s[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        got = json.loads(s[start:i + 1])
+                    except ValueError:
+                        break          # 이 후보는 깨졌다 — 다음 `{` 부터 다시
+                    return got if isinstance(got, dict) else None
+        start = s.find("{", start + 1)
+    return None
+
+
+def _coerce_options(raw: object, limit: int = 40) -> list[dict]:
+    """AI 가 준 목록을 `[{value,label}]` 로 **관대하게** 맞춘다.
+
+    받아들이는 모양(전부 실제로 관측되는 형태다):
+
+        ["opus", "sonnet"]                        → value=label=문자열
+        [{"value": "opus", "label": "Opus"}]      → 그대로
+        [{"value": "opus"}]                       → label 은 value 로 채움
+        [{"name": "opus", "description": "..."}]  → 흔한 키 이름 대체 수용
+        {"opus": "Opus", "sonnet": "Sonnet"}      → 매핑도 목록으로
+
+    모양이 어긋난 항목은 **그것만** 버린다. 하나가 이상하다고 나머지를 지우지 않는다.
+    """
+    items: list = []
+    if isinstance(raw, dict):
+        items = [{"value": k, "label": v} for k, v in raw.items()]
+    elif isinstance(raw, list):
+        items = list(raw)
+    out: list[dict] = []
+    seen: set = set()
+    for it in items[:limit]:
+        if isinstance(it, str):
+            value, label = it, it
+        elif isinstance(it, dict):
+            value = it.get("value") or it.get("id") or it.get("name") or it.get("model") or ""
+            label = it.get("label") or it.get("name") or it.get("title") or value
+        else:
+            continue
+        value = str(value or "").strip()
+        label = str(label or value).strip()
+        # 값의 모양만 본다 — 내용(어떤 모델인가)은 AI 의 소관이다.
+        if not value or not _CAPS_VALUE_RE.match(value) or value in seen:
+            continue
+        seen.add(value)
+        out.append({"value": value, "label": (label or value)[:60]})
+    return out
+
+
+def _coerce_flag(raw: object, placeholder: str) -> list[str] | None:
+    """AI 가 준 플래그 형태를 argv 조각으로 맞춘다. 쓸 수 없으면 None.
+
+    ⚠ **이 값은 서버로 나가지 않는다.** 로컬 `config.json` 에만 남고 러너가 직접 쓴다 —
+    그래서 서버가 손상되거나 응답이 변조돼도 여기에 임의 플래그를 밀어 넣을 수 없다
+    (P0-Z3 가 세운 신뢰 경계를 P0-Z4 도 그대로 지킨다).
+
+    받아들이는 모양: `["--model", "{model}"]` · `"--model {model}"` · `"--model={model}"`.
+    치환 자리(`{model}`/`{effort}`)가 없으면 쓸 수 없다 — 값을 넣을 곳이 없기 때문이다.
+    """
+    if isinstance(raw, str):
+        try:
+            parts = shlex.split(raw)
+        except ValueError:
+            return None            # 따옴표가 안 닫힌 문자열
+    elif isinstance(raw, list):
+        parts = [str(p) for p in raw]
+    else:
+        return None
+    parts = [p for p in (str(p).strip() for p in parts) if p]
+    if not parts:
+        return None
+    # 인자 하나하나가 공백·따옴표 없는 단일 토큰이어야 한다(셸을 거치지 않으므로 공백이
+    # 들어가면 그대로 한 인자가 되어 CLI 가 거절한다).
+    if any((" " in p or '"' in p or "'" in p) for p in parts):
+        return None
+
+    # ⚠ 여기가 이 기능의 가장 날카로운 자리다. 이 값은 **검사 없이 `Popen` 인자가 된다** —
+    #   모델·등급 값과 달리 신고 목록과 대조할 대상이 없기 때문이다(형태 그 자체이므로).
+    #   그래서 형태를 좁게 고정한다:
+    #
+    #     ① 치환 자리(`{model}`)를 **정확히 하나** 포함한다 — 값을 넣을 곳이 없으면 쓸 수 없고,
+    #        여럿이면 같은 값이 여러 인자로 퍼진다.
+    #     ② 토큰은 **최대 2개**. 실존하는 형태가 전부 그 안에 든다
+    #        (`--model {model}` · `-m {model}` · `--model={model}` · `-c key={effort}`).
+    #     ③ 치환 자리가 아닌 토큰은 **`-` 로 시작**해야 한다(옵션이어야 한다).
+    #
+    #   ③이 없으면 `["sh", "-c", "{model}"]` 같은 답이 그대로 통과해 **셸을 실행**하고,
+    #   ②가 없으면 `["--model", "{model}", "--dangerously-skip-permissions"]` 로 임의 플래그가
+    #   따라붙는다. 둘 다 실측으로 통과하던 형태였다.
+    #
+    #   이 방어의 신뢰 모델: 플래그는 로컬 AI 가 답한 것이고 서버를 거치지 않는다. 그래도
+    #   막는 이유는 (a) 캐시 파일이 오염될 수 있고 (b) AI 가 프롬프트를 오해할 수 있으며
+    #   (c) 무엇보다 **이 값만은 대조할 목록이 없기** 때문이다 — 심층 방어가 필요한 정확한 지점.
+    if len(parts) > 2:
+        return None
+    holders = [p for p in parts if placeholder in p]
+    if len(holders) != 1:
+        return None
+    if any(not p.startswith("-") for p in parts if placeholder not in p):
+        return None
+    return parts
+
+
+def sanitize_caps(raw: object) -> dict:
+    """저장된 능력을 **다시 강제한다** (P0-Z4 심층 방어).
+
+    질의 응답은 `probe_runtime_caps` 가 강제하지만, 그 결과는 `config.json` 을 거쳐 다음
+    기동으로 돌아온다. 로드 시점에 강제하지 않으면 **파일이 곧 우회 경로**가 된다 —
+    거기 적힌 플래그는 검사 없이 `Popen` 인자가 되기 때문이다.
+
+    그 파일은 0600 이고 사용자 소유라 실질 위험은 낮다(쓸 수 있는 자는 러너 자체를 고칠 수도
+    있다). 그래도 막는 이유: 이 검사는 사실상 공짜이고, "믿는 입력" 을 하나 줄이면 다음 사람이
+    캐시 경로를 새 기능의 통로로 쓸 때 그 통로가 이미 좁혀져 있다.
+    """
+    out: dict = {}
+    if not isinstance(raw, dict):
+        return out
+    for name, caps in raw.items():
+        if not isinstance(name, str) or not _CAPS_VALUE_RE.match(name) or not isinstance(caps, dict):
+            continue
+        models = _coerce_options(caps.get("models"))
+        if not models:
+            continue
+        model_flag = _coerce_flag(caps.get("model"), "{model}") if caps.get("model") else None
+        effort_flag = _coerce_flag(caps.get("effort"), "{effort}") if caps.get("effort") else None
+        argv = caps.get("argv")
+        if argv is not None:
+            # 호출 형태도 같은 규칙 — 첫 토큰은 실행 파일 이름(= 이 런타임)이어야 하고,
+            # 프롬프트 자리가 정확히 하나 있어야 한다. 그 외 형태는 버리고 표로 폴백한다.
+            argv = [str(a) for a in argv] if isinstance(argv, list) else []
+            if (not argv or argv[0] != name
+                    or sum(1 for a in argv if "{prompt}" in a) != 1
+                    or len(argv) > 5
+                    or any((" " in a or '"' in a or "'" in a) for a in argv)):
+                argv = None
+        entry = {
+            "label": " ".join(str(caps.get("label") or name).split())[:60] or name,
+            "models": models,
+            "efforts": _coerce_options(caps.get("efforts"), limit=12) if effort_flag else [],
+            "model": model_flag,
+            "effort": effort_flag,
+            "source": str(caps.get("source") or "cache")[:16],
+        }
+        if argv:
+            entry["argv"] = argv
+        out[name] = entry
+    return out
+
+
+def probe_runtime_caps(name: str, argv: list[str],
+                       timeout: float | None = None) -> dict | None:
+    """그 AI 에게 **직접 물어** 능력을 받는다 (P0-Z4). 실패하면 None.
+
+    실패를 조용히 삼키지 않고 None 으로 알리는 이유: 호출측이 내장 기본값으로 폴백할지
+    (표에 있는 런타임) 아니면 신고에서 뺄지(모르는 런타임) 정해야 한다.
+    """
+    cmd = [_CAPS_PROBE_PROMPT if a == "{prompt}" else a.replace("{prompt}", _CAPS_PROBE_PROMPT)
+           for a in argv]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=(timeout if timeout and timeout > 0
+                                       else _CAPS_PROBE_TIMEOUT_SEC))
+    except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "못 물었다" 로 같다)
+        return None
+    if proc.returncode != 0:
+        return None
+    # 출력이 아무리 커도 여기서 자른다 — `capture_output` 은 전부 메모리에 담는다.
+    got = _extract_json((proc.stdout or "")[:_CAPS_PROBE_MAX_BYTES])
+    if not got:
+        return None
+    models = _coerce_options(got.get("models"))
+    if not models:
+        # 모델을 하나도 못 받았으면 이 질의는 실패다 — 등급만으로는 선택기를 세울 수 없다.
+        return None
+    model_flag = _coerce_flag(got.get("model_flag"), "{model}")
+    effort_flag = _coerce_flag(got.get("effort_flag"), "{effort}")
+    efforts = _coerce_options(got.get("efforts"), limit=12) if effort_flag else []
+    label = " ".join(str(got.get("label") or name).split())[:60] or name
+    return {
+        "label": label,
+        "models": models,
+        "efforts": efforts,
+        # 플래그가 없으면 그 축은 지정 불가 — 목록도 비운다(위 `efforts` 와 같은 이유).
+        "model": model_flag,
+        "effort": effort_flag,
+        "source": "probe",
+    }
+
+
 def _ollama_models() -> list[dict]:
     """이 머신에 실제로 받아 둔 ollama 모델. 실패하면 빈 목록 — **추측하지 않는다**.
 
@@ -724,7 +1069,9 @@ def _ollama_models() -> list[dict]:
     return out
 
 
-def detect_runtimes(only: str | None = None) -> list[dict]:
+def detect_runtimes(only: str | None = None, cached: dict | None = None,
+                    detail_out: dict | None = None,
+                    probe: bool = False) -> list[dict]:
     """이 머신에서 **쓸 수 있는 런타임 전부**와 각자가 고를 수 있는 것 (P0-Z3).
 
     종전 `detect_ai()` 는 첫 번째 하나만 골랐다. 그것은 "무엇으로 답할까" 의 답으로는
@@ -732,28 +1079,140 @@ def detect_runtimes(only: str | None = None) -> list[dict]:
 
     `only` 가 주어지면 그 하나로 제한한다(`--ai` 의 의미: 자동 감지 대신 이것만 쓴다).
     표에 없는 이름이면 제한을 무시한다 — 사용자의 오타가 러너를 벙어리로 만들지 않게.
+
+    ## 목록은 **그 AI 가 정한다** (P0-Z4, 사용자 결정 2026-08-28)
+
+    각 런타임에 한 번 물어(`probe_runtime_caps`) 답을 그대로 쓴다. 실패하면 내장 표
+    (`_RUNTIME_SPECS`)로 폴백한다 — 물어보지 못했다고 화면에서 사라지면, 종전에 잘 되던
+    사용자가 이유 없이 기능을 잃는다.
+
+    `cached` 를 주면 묻지 않고 그것을 쓴다(매 기동마다 사용자 토큰을 태우지 않기 위해).
     """
     names = list(_RUNTIME_SPECS.keys())
     if only and only in _RUNTIME_SPECS:
         names = [only]
+    elif only:
+        # 표에 없는 런타임도 사용자가 지목했으면 물어본다 — 우리가 모르는 CLI 여도
+        # 자기 능력은 스스로 말할 수 있다(그것이 P0-Z4 의 요지다).
+        names = [only] if _which(only) else names
+
+    cached = cached or {}
+    present = [n for n in names if _which(n)]
+    # 우리 표에 없는 CLI 도 물어본다 (P0-Z4 — "플랫폼에 관계없이"). 호출법을 모르므로 가장
+    # 흔한 두 형태를 시도한다: `<cli> -p <프롬프트>` 와 `<cli> <프롬프트>`. 둘 다 실패하면
+    # 그 런타임은 신고에서 빠진다(사용자는 `--cmd` 로 직접 줄 수 있다).
+    unknown_argvs: dict = {}
+    for n in present:
+        if n not in _RUNTIME_SPECS:
+            unknown_argvs[n] = [[n, "-p", "{prompt}"], [n, "{prompt}"]]
+
+    # 물어야 할 것들을 **동시에** 묻는다. 순차로 하면 기동이 각 런타임의 응답 시간을 모두
+    # 더한 만큼 늦어진다(실측: claude 23초 + codex 112초 = 135초). 병렬이면 가장 느린 하나
+    # (112초)로 끝난다 — 그리고 이건 최초 1회뿐이다(다음 기동은 캐시를 쓴다).
+    probed: dict = {}
+    ask = [n for n in present
+           if cached.get(n) is None
+           and ((_RUNTIME_SPECS.get(n) or {}).get("argv") or n in unknown_argvs)] if probe else []
+    if ask:
+        _log(f"쓸 수 있는 모델·추론 수준을 물어보는 중… ({', '.join(ask)} — 최초 1회, 수십 초)")
+
+        # 전체 질의에 **하나의 절대 deadline** 을 둔다 (codex P2-4). 후보를 순차로 시도하는
+        # 표 밖 CLI 는 후보마다 timeout 을 다 쓸 수 있어(240초 × 2) main 의 대기(250초)를
+        # 넘긴다. 그러면 main 은 폴백으로 기동하고, 뒤에 남은 스레드가 아무도 읽지 않을 답을
+        # 위해 계속 토큰과 CPU 를 태운다. deadline 을 공유해 남은 시간이 없으면 멈춘다.
+        deadline = time.monotonic() + _CAPS_PROBE_TIMEOUT_SEC
+
+        def _probe(nm: str) -> None:
+            for argv in (unknown_argvs.get(nm) or [list(_RUNTIME_SPECS[nm]["argv"])]):
+                left = deadline - time.monotonic()
+                if left <= 5.0:
+                    return           # 남은 시간이 의미 없다 — 시작하지 않는 것이 유일한 절약
+                got = probe_runtime_caps(nm, argv, timeout=left)
+                if got:
+                    # 어느 호출 형태가 통했는지 함께 남긴다 — 실제 질문도 그 형태로 보낸다.
+                    got["argv"] = argv
+                    probed[nm] = got
+                    return
+
+        threads = [threading.Thread(target=_probe, args=(n,), daemon=True) for n in ask]
+        for t in threads:
+            t.start()
+        for t in threads:
+            # deadline 이 공유되므로 여기서 기다릴 시간도 그 하나로 정해진다.
+            t.join(max(1.0, deadline - time.monotonic()) + 5.0)
+        for n in ask:
+            got = probed.get(n)
+            if got:
+                _log(f"  {n}: 모델 {len(got['models'])}종"
+                     + (f" · 추론 {len(got['efforts'])}단계" if got["efforts"] else "")
+                     + " (본인 응답)")
+            else:
+                _log(f"  {n}: 응답을 받지 못해 내장 기본값을 씁니다.")
+
     out: list[dict] = []
-    for name in names:
-        spec = _RUNTIME_SPECS[name]
-        if not _which(name):
-            continue
-        models = _ollama_models() if name == "ollama" else list(spec.get("models") or [])
-        if not models:
+    for name in present:
+        spec = _RUNTIME_SPECS.get(name) or {}
+        caps = cached.get(name) or probed.get(name)
+
+        if caps is None:
+            # 폴백 — 우리가 아는 만큼. ollama 는 HTTP 라 물을 수 없어 실조회가 그 자리다.
+            models = _ollama_models() if name == "ollama" else list(spec.get("models") or [])
+            caps = {
+                "label": str(spec.get("label") or name),
+                "models": models,
+                "efforts": list(spec.get("efforts") or []) if spec.get("effort") else [],
+                "model": spec.get("model"),
+                "effort": spec.get("effort"),
+                "source": "builtin",
+            }
+
+        if not caps.get("models"):
             # 고를 것이 없는 런타임은 신고하지 않는다 — 화면에 빈 그룹만 남는다.
             continue
+        # 호출법을 포함한 **상세**는 여기 남긴다(서버로 나가지 않는다 — 아래 신고와 구분).
+        #
+        # ⚠ 폴백(`builtin`)은 **캐시하지 않는다**(codex P2-3). 캐시하면 최초 기동의 일시적
+        #   실패(인증 지연·타임아웃)가 영구화된다 — 다음 기동은 캐시가 있다고 묻지 않으므로,
+        #   인증이 복구돼도 낡은 내장 목록을 계속 보여준다. 사용자는 `--refresh-caps` 를
+        #   알기 전까지 그것이 틀렸다는 사실조차 모른다. 물어서 얻은 것만 남긴다.
+        if detail_out is not None and caps.get("source") != "builtin":
+            detail_out[name] = caps
+        # ⚠ 항목을 **재구성한다**(얕은 복사 금지 — codex P2-1). `list(caps["models"])` 는
+        #   내부 dict 를 그대로 참조하므로, 오염된 항목에 붙은 여분 키(`{"value":…,
+        #   "model":["--secret"]}`)가 하트비트 HTTP 본문에 실려 나간다. 서버 sanitizer 가
+        #   저장 전에 지우더라도 **전송은 이미 일어났고**, 그러면 "호출법은 서버로 나가지
+        #   않는다" 는 이 기능의 계약이 거짓이 된다.
+        def _pair(o: dict) -> dict:
+            return {"value": str(o.get("value") or ""), "label": str(o.get("label") or "")}
+
         out.append({
             "runtime": name,
-            "label": str(spec.get("label") or name),
-            "models": models,
+            "label": str(caps.get("label") or name),
+            "models": [_pair(o) for o in caps["models"]],
             # 플래그가 없으면 등급도 신고하지 않는다: 지정 수단이 없는데 목록을 주면
             # 다시 "고를 수 있는데 반영은 안 되는" 상태가 된다(P0-T 가 지운 바로 그것).
-            "efforts": list(spec.get("efforts") or []) if spec.get("effort") else [],
+            "efforts": [_pair(o) for o in (caps.get("efforts") or [])] if caps.get("effort") else [],
         })
     return out
+
+
+def resolve_caps(only: str | None, cached: dict | None,
+                 refresh: bool) -> tuple[list[dict], dict]:
+    """신고할 목록과 **로컬에 남길 능력 상세**를 함께 만든다 (P0-Z4).
+
+    두 값을 가르는 것이 이 함수의 존재 이유다:
+
+      - 반환 `[0]` = 서버로 나가는 신고. 사람이 고를 목록만 담는다.
+      - 반환 `[1]` = `config.json` 에 남는 상세. **호출법(플래그)이 여기 있다.**
+
+    호출법을 서버에 보내지 않으므로, 서버가 손상되거나 응답이 변조돼도 러너가 실행할 인자의
+    *형태* 는 바뀌지 않는다 — 바뀔 수 있는 것은 그 형태에 채울 값뿐이고, 그 값은 신고 목록과
+    대조된다(P0-Z3 의 두 번째 자물쇠).
+    """
+    detail: dict = {}
+    reported = detect_runtimes(only, cached=(None if refresh else (cached or None)),
+                               detail_out=detail, probe=True)
+    return reported, detail
 
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
@@ -841,7 +1300,8 @@ def offered_options(runtimes: list | None, runtime: str) -> tuple[list, list]:
 
 
 def build_cmd(runtime: str, prompt: str, model: str | None = None,
-              effort: str | None = None, runtimes: list | None = None) -> list[str]:
+              effort: str | None = None, runtimes: list | None = None,
+              caps: dict | None = None) -> list[str]:
     """지정 (런타임, 모델, 추론등급) 을 **그 CLI 의 실제 인자**로 옮긴다 (P0-Z3).
 
     대조 대상은 **이 러너가 신고한 목록**(`runtimes`)이다 — 서버가 뭘 돌려주든 우리가 고를 수
@@ -855,12 +1315,20 @@ def build_cmd(runtime: str, prompt: str, model: str | None = None,
     명령 주입 경로가 생기지 않는다. 모델·등급도 같은 규칙을 따른다.
     """
     spec = _RUNTIME_SPECS.get(runtime) or {}
-    argv = list(spec.get("argv") or [])
+    # 호출 형태의 출처: 우리 표 → 없으면 **질의 때 통했던 형태**(표 밖 CLI). 둘 다 없으면
+    # 인자를 만들 수 없으므로 빈 목록이 되고, 호출측이 종전 경로로 떨어진다.
+    argv = list(spec.get("argv") or (caps or {}).get("argv") or [])
     flags: list[str] = []
 
+    # 호출법(플래그 형태)의 출처 — **그 AI 가 스스로 답한 것**이 우선이고, 없으면 내장 표
+    # (P0-Z4). 이 값은 로컬 `config.json` 에서만 오고 서버를 거치지 않는다.
+    local = caps or {}
+    model_flag = local.get("model") if local.get("model") is not None else spec.get("model")
+    effort_flag = local.get("effort") if local.get("effort") is not None else spec.get("effort")
+
     if runtimes is None:
-        allowed_models = list(spec.get("models") or [])
-        allowed_efforts = list(spec.get("efforts") or [])
+        allowed_models = list(local.get("models") or spec.get("models") or [])
+        allowed_efforts = list(local.get("efforts") or spec.get("efforts") or [])
     else:
         allowed_models, allowed_efforts = offered_options(runtimes, runtime)
 
@@ -869,10 +1337,10 @@ def build_cmd(runtime: str, prompt: str, model: str | None = None,
             return False
         return any(str(o.get("value")) == value for o in options)
 
-    if model and spec.get("model") and _valid(allowed_models, model):
-        flags += [a.replace("{model}", model) for a in spec["model"]]
-    if effort and spec.get("effort") and _valid(allowed_efforts, effort):
-        flags += [a.replace("{effort}", effort) for a in spec["effort"]]
+    if model and model_flag and _valid(allowed_models, model):
+        flags += [a.replace("{model}", model) for a in model_flag]
+    if effort and effort_flag and _valid(allowed_efforts, effort):
+        flags += [a.replace("{effort}", effort) for a in effort_flag]
 
     # 플래그는 **프롬프트 앞**에 둔다. 서브커맨드(`codex exec`)와 위치 인자(프롬프트) 사이가
     # 옵션의 자리이고, 프롬프트 뒤에 붙이면 CLI 에 따라 프롬프트의 일부로 먹힌다.
@@ -890,7 +1358,8 @@ def build_cmd(runtime: str, prompt: str, model: str | None = None,
 def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
                  cancel_check=None, model: str | None = None,
                  effort: str | None = None,
-                 runtimes: list | None = None) -> tuple[bool, str]:
+                 runtimes: list | None = None,
+                 caps: dict | None = None) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
     `model`·`effort` 는 사용자가 **웹에서 고른 것**이다 (P0-Z3). 유효성은 `runtimes`(이 러너가
@@ -929,8 +1398,9 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
         except Exception as e:  # noqa: BLE001
             return False, f"로컬 LLM 호출 실패: {e}"
 
-    if kind in _RUNTIME_SPECS and (model or effort):
-        cmd = build_cmd(kind, prompt, model, effort, runtimes)
+    _local = (caps or {}).get(kind) or {}
+    if (kind in _RUNTIME_SPECS or _local.get("argv")) and (model or effort):
+        cmd = build_cmd(kind, prompt, model, effort, runtimes, _local)
     else:
         # 프롬프트는 **인자로** 넘긴다(셸을 거치지 않는다) — 질문 본문에 셸 메타문자가 섞여도
         # 그대로 전달되고, 명령 주입 경로가 생기지 않는다.
@@ -1044,7 +1514,7 @@ def split_title(answer: str) -> tuple[str, str]:
 
 def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str],
                custom: str | None, cancels: "CancelRegistry | None" = None,
-               runtimes: list | None = None) -> bool:
+               runtimes: list | None = None, caps: dict | None = None) -> bool:
     """이미 **점유된** task 하나를 처리한다.
 
     점유(`claim_request`)를 여기서 하지 않고 호출측(대기 루프)이 하는 이유: 점유가 늦으면 그
@@ -1068,9 +1538,11 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         # 말했고) 지금도 실재할 때만 그쪽으로 보낸다. `--ai` 로 제한한 사용자의 의도를
         # 서버 응답이 넘어서지 않게, 정적 표가 아니라 신고를 본다(codex P1-5).
         _offered = any(str(rt.get("runtime") or "") == want_runtime for rt in (runtimes or []))
-        if _offered and want_runtime in _RUNTIME_SPECS and _which(want_runtime):
+        _known = (_RUNTIME_SPECS.get(want_runtime) or {}).get("argv")
+        _learned = ((caps or {}).get(want_runtime) or {}).get("argv")
+        if _offered and (_known or _learned) and _which(want_runtime):
             run_kind = want_runtime
-            run_argv = list(_RUNTIME_SPECS[want_runtime].get("argv") or [])
+            run_argv = list(_known or _learned)
         else:
             unmet.append(f"런타임 {want_runtime}")
 
@@ -1091,7 +1563,8 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     _log(f"{task_id}: 내 AI({run_kind})에게 전달{_picked}"
          + (f" — 미반영: {', '.join(unmet)}" if unmet else ""))
     ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
-                              model=want_model, effort=want_effort, runtimes=runtimes)
+                              model=want_model, effort=want_effort, runtimes=runtimes,
+                              caps=caps)
     if answer == CANCELED:
         # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
         # 토큰과 왕복을 아끼는 지점이다.
@@ -1242,13 +1715,19 @@ def main() -> int:
     ap.add_argument("--base", default=os.environ.get("BRIDGE_BASE", ""), help="서비스 베이스 URL")
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""), help="mat_ 토큰")
     ap.add_argument("--ca", default=os.environ.get("BRIDGE_CA", "") or None, help="사설 CA 인증서 경로")
-    ap.add_argument("--ai", default=os.environ.get("BRIDGE_AI", ""), help="claude|codex|gemini|ollama")
+    ap.add_argument("--ai", default=os.environ.get("BRIDGE_AI", ""),
+                    help="claude|codex|gemini|ollama, 또는 PATH 상의 다른 AI CLI 이름. "
+                         "⚠ 모르는 이름은 능력을 묻기 위해 **실제로 한두 번 실행**한다 — "
+                         "AI 가 아닌 프로그램을 지목하지 마라(그 프로그램의 부수효과는 막지 못한다)")
     ap.add_argument("--cmd", default=os.environ.get("BRIDGE_CMD", "") or None,
                     help="직접 지정할 AI 명령. {prompt} 자리에 질문이 들어간다")
     ap.add_argument("--once", action="store_true", help="한 건만 처리하고 종료")
     ap.add_argument("--check", action="store_true", help="연결만 확인하고 종료")
     ap.add_argument("--resume", action="store_true",
                     help="지난 설정을 불러온다(주소·CA·AI). 토큰만 새로 주면 된다")
+    ap.add_argument("--refresh-caps", action="store_true",
+                    help="쓸 수 있는 모델·추론 수준을 AI 에게 **다시 묻는다**"
+                         "(기본은 저장된 답을 재사용 — 질의는 네 계정 토큰을 쓴다)")
     ap.add_argument("--workers", type=int, default=int(os.environ.get("BRIDGE_WORKERS", 0))
                     or _DEFAULT_WORKERS,
                     help=f"**시작** 동시 처리 수 (기본 {_DEFAULT_WORKERS}). 수요가 오면 늘어난다")
@@ -1289,6 +1768,11 @@ def main() -> int:
             _log("토큰이 필요합니다 — 웹에서 '연결 정보 만들기' 로 새로 받아 --token 에 주세요.")
             return 2
 
+    # 저장된 능력은 `--resume` 과 무관하게 읽는다 — 그것은 사용자가 준 설정이 아니라
+    # 우리가 관측한 결과이고, 매번 다시 묻는 비용을 아끼는 것이 저장의 목적이다.
+    # 저장된 값도 **다시 강제한다** — 그러지 않으면 이 파일이 곧 우회 경로가 된다.
+    conf_caps = sanitize_caps(load_conf().get("caps"))
+
     if not args.base or not args.token:
         _log("FATAL: --base 와 --token 이 필요합니다.")
         return 2
@@ -1306,7 +1790,14 @@ def main() -> int:
         if picked and args.ai == "ollama":
             picked = ("ollama", [])
         if not picked or (args.ai and args.ai not in dict(_CLI_ADAPTERS) and args.ai != "ollama"):
-            picked = detect_ai()
+            # ⚠ 표 밖 이름을 여기서 자동 감지로 갈아치우면, 사용자가 `--ai mycli` 로 지목한
+            #   것이 조용히 claude/codex 로 바뀐다(codex P2-2). 그러면 runtime 지정이 없는
+            #   요청이 사용자가 고르지 않은 AI 로 처리되고, 캐시에도 틀린 `kind` 가 남는다.
+            #   PATH 에 실재하면 그 이름을 그대로 쓴다 — 호출 형태는 질의가 알아낸다.
+            if args.ai and _which(args.ai):
+                picked = (args.ai, [args.ai, "-p", "{prompt}"])
+            else:
+                picked = detect_ai()
         if not picked:
             _log("FATAL: 쓸 수 있는 AI 를 찾지 못했습니다. --ai 또는 --cmd 로 지정하세요.")
             return 2
@@ -1347,14 +1838,35 @@ def main() -> int:
     # 이 머신이 무엇을 쓸 수 있는가 (P0-Z3). `--cmd` 로 명령을 통째로 준 사용자는 신고하지
     # 않는다 — 그 명령에 모델·등급이 이미 박혀 있고, 웹에서 고른 값은 반영되지 않는다.
     # 반영되지 않을 목록을 화면에 띄우는 것이 P0-T 가 지운 바로 그 상태다.
-    runtimes = [] if args.cmd else detect_runtimes(args.ai or None)
-    if runtimes:
-        _log("고를 수 있는 것: " + " · ".join(
-            f"{r['label']}({len(r['models'])}종"
-            + (f", 추론 {len(r['efforts'])}단계" if r["efforts"] else "")
-            + ")" for r in runtimes))
-    elif args.cmd:
+    # 목록은 **각 AI 가 스스로 답한 것**이다 (P0-Z4). 한 번 물으면 `config.json` 에 남고
+    # 다음 기동은 묻지 않는다 — 그 질의는 사용자 계정의 토큰을 쓰고 수십 초가 걸린다.
+    # 갱신은 `--refresh-caps` 로 명시할 때만(모델 목록이 바뀌는 일은 드물다).
+    caps: dict = {}
+    if args.cmd:
+        runtimes = []
         _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
+    else:
+        _cached = None if args.refresh_caps else (conf_caps or None)
+        runtimes, caps = resolve_caps(args.ai or None, _cached, args.refresh_caps)
+        if runtimes:
+            _log("고를 수 있는 것: " + " · ".join(
+                f"{r['label']}({len(r['models'])}종"
+                + (f", 추론 {len(r['efforts'])}단계" if r["efforts"] else "")
+                + ")" for r in runtimes))
+            _by_probe = [n for n, c in caps.items() if (c or {}).get("source") == "probe"]
+            _log("  출처: " + ("본인 응답 " + ", ".join(_by_probe) if _by_probe else "내장 기본값")
+                 + ("" if args.refresh_caps or not _cached else " (캐시 — 갱신은 --refresh-caps)"))
+        else:
+            _log("고를 수 있는 AI 를 찾지 못했습니다 — 웹 선택기는 표시되지 않습니다.")
+        # 물어서 얻은 답을 남긴다(다음 기동은 묻지 않는다). 저장 실패는 기동을 막지 않는다 —
+        # 그때는 다음에 다시 묻게 될 뿐이다.
+        # 표 밖 CLI 는 질의가 **통한 호출 형태**를 알아냈다 — 실제 질문도 그 형태로 보낸다
+        # (기본 추정 `-p` 가 아니라). 이것이 없으면 질의는 성공했는데 답변만 실패한다.
+        _learned = (caps.get(kind) or {}).get("argv")
+        if _learned and kind not in _RUNTIME_SPECS:
+            argv = list(_learned)
+        if caps:
+            save_conf(args.base, args.ca, kind, args.cmd, caps=caps)
 
     # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
@@ -1538,7 +2050,7 @@ def main() -> int:
 
         def _work(tid: str = task_id, payload: dict = claimed, slot: int = sid) -> None:
             try:
-                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes)
+                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes, caps)
             finally:
                 cancels.forget(tid)
                 active.leave(tid)

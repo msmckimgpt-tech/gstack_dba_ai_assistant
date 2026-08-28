@@ -79,6 +79,17 @@ source_of_truth: true
 | TEST-20260828T170000-hydration | `_bridge_model_offered` | 복원이 지금 신고된 목록과 대조 · 조회 실패는 복원 안 함 | AC-74 |
 | TEST-20260828T170000-composer | `composer.js` | 등급 목록이 신고 출처 · `model_selector_source` 명시값 판정 · 모델 변경 시 등급 재렌더 · 목록 내 폴백 | AC-75 |
 | TEST-20260828T170000-copies | 러너 2사본 | 정본과 배포본 바이트 일치(사용자 sha256 대조가 성립하는가) | AC-71 |
+| TEST-20260828T230000-optin | `detect_runtimes` | 질의는 **명시할 때만**(기본 off) — 켜지 않으면 AI 호출 0 | AC-76 |
+| TEST-20260828T230000-lenient | `_extract_json`·`_coerce_options` | 코드펜스·머리말·맺음말·문자열배열·name/id 키·매핑 형태 7종 수용 | AC-76 |
+| TEST-20260828T230000-shape | `_coerce_options` | 관대해도 모양은 본다 — 옵션 위장·공백·빈 값 거부 | AC-77 |
+| TEST-20260828T230000-flagshape | `_coerce_flag` | 배열·문자열·`=`형 수용 · 치환자리 없음·공백 토큰 거부 8종 | AC-77 |
+| TEST-20260828T230000-noleak | `detect_runtimes` | **플래그가 신고에 실리지 않는다**(키 4개만) — 신뢰 경계 | AC-77 |
+| TEST-20260828T230000-cache | `save_conf`·`main` | 질의 결과 캐시 · 미질의 실행이 캐시를 지우지 않음 · `--refresh-caps` | AC-76 |
+| TEST-20260828T230000-fallback | `detect_runtimes` | 질의 실패 시 내장 표 폴백(화면이 비지 않는다) | AC-76 |
+| TEST-20260828T230000-unknown | `detect_runtimes`·`build_cmd` | 표 밖 CLI 질의(두 호출 형태) + 통한 형태로 실제 조립 | AC-78 |
+| TEST-20260828T230000-probewins | `build_cmd` | AI 가 답한 플래그가 내장 표를 이긴다(codex `--model` vs 표 `-m`) | AC-78 |
+| TEST-20260828T230000-timeout | `_CAPS_PROBE_TIMEOUT_SEC` | `float(env or N)` 함정으로 0 이 되지 않는다(실측 codex 112s) | AC-76 |
+| TEST-20260828T230000-parallel | `detect_runtimes` | 여러 CLI 를 동시에 묻는다(순차면 응답시간의 합) | AC-76 |
 
 ## 3. Run 기록
 

@@ -32,6 +32,9 @@ def test_runner_has_no_third_party_imports():
     tree = ast.parse(CANON.read_text(encoding="utf-8"))
     stdlib = {
         "argparse", "json", "os", "shlex", "ssl", "subprocess", "sys",
+        # 2026-08-28 P0-Z4: AI 가 답한 모델·등급 **값의 모양**을 검사한다
+        # (내용이 아니라 모양만 — 어떤 모델이 있는지는 그 AI 의 소관이다).
+        "re",
         # 2026-08-28: 동시 처리 + 취소 시 자식 프로세스 종료. 둘 다 표준 라이브러리라
         # 무설치 계약은 유지된다(`pip install` 이 필요한 것이 하나도 없다).
         "threading",

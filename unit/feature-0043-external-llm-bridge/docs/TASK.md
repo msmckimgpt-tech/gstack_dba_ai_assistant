@@ -662,3 +662,20 @@ AI 는 거기서 멈춘다.
 
 - 동기 inproc 경로(`_ask_impl`)의 첨부 후처리는 아직 별개 구현 — 응답 shape·step 기록이 얽혀
   있어 분리했다. **합친 것은 브리지(없던 것) + worker(중복) 2개**
+
+### TASK-20260828T230000-caps-self-report — 능력 목록을 AI 자신이 정한다 (P0-Z4)
+
+**요청**: "실제 연결된 AI에 따라 '고를 수 있는 것'을 제한하여 노출. 노출 기준을 설정하는 것은
+연결 중 시도된 AI 스스로. 모델 및 추론레벨 형식에 맞추어 연결 시 답변되도록. claude 및 codex 등
+AI 플랫폼에 관계없이, 클라이언트가 자유롭게 서술한 모델과 추론레벨을 관대하게 수용"
+
+- [x] `_CAPS_PROBE_PROMPT` — 형식을 정확히 요구하는 질의문
+- [x] `probe_runtime_caps` + 관대한 파싱 3종(`_extract_json`·`_coerce_options`·`_coerce_flag`)
+- [x] 호출법(플래그)도 AI 응답에서 받기 → 플랫폼 무관
+- [x] 표 밖 CLI 지원(`--ai <이름>`, 두 호출 형태 시도 후 통한 것 기억)
+- [x] `config.json` 캐시 + `--refresh-caps` + 내장 표 폴백
+- [x] 병렬 질의 + 명시적 옵트인(`probe=True`)
+- [x] 플래그 미유출(서버 신고에서 제외) — 신뢰 경계 유지
+- [x] 테스트 신규 14건 + 기존 계약 5건 갱신 · `make test` green
+- [x] 문서 (FUNCTION P0-Z4 · MODIFY · TASK · REPORT · TEST)
+- [ ] **라이브 확인** — 러너 재기동 후 AI 응답 목록이 화면에 뜨는지(사용자 테스트)
