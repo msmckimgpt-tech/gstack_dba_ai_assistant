@@ -364,16 +364,32 @@ def test_bind_tool_delivered_attachments_signature_contract():
 
 
 def test_worker_postprocess_binds_tool_deliveries():
-    """§18.8 [P1] — 도구 전달분이 있으면 워커가 **조기 반환하지 않고** 바인딩해야 칩이 뜬다."""
+    """§18.8 [P1] — 도구 전달분이 있으면 워커가 **조기 반환하지 않고** 바인딩해야 칩이 뜬다.
+
+    feature-0043(2026-08-28) 이후 조립 자체는 `shared/attachment_write.py` 정본에 있고 워커는
+    그것을 부른다(브리지 경로와 한 벌). 계약은 그대로이므로 **두 곳에서** 확인한다 —
+    워커가 도구 전달분을 정본에 넘기는가, 정본이 조기 반환을 통과한 뒤 바인딩해 합치는가.
+    한쪽만 보면 배선이 끊겨도, 조립이 무너져도 통과한다.
+    """
     import inspect
     from modules import ask as ask_mod
+    from shared import attachment_write as aw
+
+    # ① 워커: 도구 전달분을 읽어 정본에 넘긴다.
     src = inspect.getsource(ask_mod)
     i_ids = src.find('result.get("tool_delivered_attachment_ids")')
     i_early = src.find('return  # 블록도 도구 전달도 없음')
-    i_bind = src.find("_bind_tool_delivered_attachments(")
+    i_pass = src.find("tool_attachment_ids=_tool_ids")
     assert i_ids > 0 and i_early > i_ids, "조기 반환 판정이 도구 전달분을 고려해야 한다"
-    assert i_bind > i_early, "조기 반환을 통과한 뒤 바인딩이 일어나야 한다"
-    assert "edited = list(bound) + list(edited)" in src, "응답 shape 에 합쳐져야 칩·토스트가 뜬다"
+    assert i_pass > i_early, "조기 반환을 통과한 뒤 도구 전달분을 후처리에 넘겨야 한다"
+
+    # ② 정본: 자체 조기 반환도 도구 전달분을 고려하고, 바인딩 결과를 edited 에 합친다.
+    core = inspect.getsource(aw.apply_assistant_attachment_blocks)
+    i_core_early = core.find("if not tool_ids and (")
+    i_bind = core.find("_bind_tool_delivered_attachments(")
+    assert i_core_early > 0 and i_bind > i_core_early, \
+        "정본의 조기 반환이 도구 전달분을 고려하고, 그 뒤 바인딩이 일어나야 한다"
+    assert "edited = list(bound) + list(edited)" in core, "응답 shape 에 합쳐져야 칩·토스트가 뜬다"
 
 
 def test_truncation_latched_before_review():

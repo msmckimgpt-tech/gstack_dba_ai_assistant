@@ -1032,6 +1032,55 @@ def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
         return 0
 
 
+def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversation_id: str,
+                                    message_id: int, answer: str,
+                                    task_id: str) -> tuple[str, list, list]:
+    """답변의 ```attachment-edit```/```attachment-new``` 블록을 **실제 첨부로** 만든다.
+
+    ## 왜 필요한가 (사용자 제보 2026-08-28)
+
+    기존 서비스에서 assistant 는 첨부를 고쳐 **새 버전**을 만들거나 **새 파일**을 남길 수 있었다.
+    브리지는 `modules/ask.py` 의 후처리를 타지 않으므로 그것이 통째로 빠져 있었다 — P0-E 가
+    "의도적으로 복원하지 않은 것" 으로 남겨 둔 항목이다.
+
+    남겨 둔 대가가 실측으로 드러났다. 개인 AI 는 관례를 **알아서** `attachment-edit` 블록을
+    만들어 냈는데(라이브 관측 2026-08-28), 서버가 처리하지 않아:
+
+    - 파일은 **만들어지지 않고**(버전 v1 그대로),
+    - 블록이 strip 되지 않아 **원문 diff 가 채팅에 그대로** 노출되고,
+    - 답변 본문은 "수정했습니다" 라고 말한다 → **거짓 성공**.
+
+    사용자에게는 "고쳤다는데 파일이 안 바뀐" 상태다. 안 여는 것보다 나쁘다.
+
+    실제 저장·strip·미전달 고지는 **경로 공용 정본**(`_apply_assistant_attachment_blocks`)이
+    한다 — 여기서 파싱·저장을 새로 쓰면 소유권·kind·용량 가드가 두 벌이 되고, 갈리는 순간
+    느슨한 쪽이 사용자가 보는 진실이 된다. 이 함수는 브리지 맥락(task_id 로깅, 회수 store 에
+    넘길 정리본 반환)만 얹는다.
+
+    Returns: `(정리본 or "", edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
+    """
+    log = logging.getLogger(__name__)
+    try:
+        res = app._apply_assistant_attachment_blocks(
+            conn, account=account, conversation_id=conversation_id,
+            message_id=int(message_id), answer=answer)
+    except Exception as exc:
+        # 후처리 실패가 답변 전달을 막지 않는다 — 답변은 이미 저장됐고 사용자는 그것을 봐야 한다.
+        log.error("[bridge] 첨부 후처리 실패 task=%s conv=%s: %r", task_id, conversation_id, exc)
+        return "", [], []
+
+    edited = list(res.get("edited") or [])
+    created = list(res.get("created") or [])
+    if edited or created or res.get("skipped") or res.get("undelivered"):
+        log.info("[bridge] 첨부 후처리 task=%s — 수정 %d · 신규 %d · 거부 %d · 미전달 %d",
+                 task_id, len(edited), len(created),
+                 len(res.get("skipped") or []), int(res.get("undelivered") or 0))
+    # 본문이 바뀌었고 **영속까지 됐을 때만** 정리본을 돌려준다. 실패했는데 정리본을 돌려주면
+    # 회수 store 와 화면 본문이 갈린다(표시본엔 블록이 남는데 회수본엔 없다).
+    return (str(res.get("answer") or "") if res.get("answer_persisted") else "",
+            edited, created)
+
+
 def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str,
                                *, title: str = "") -> bool:
     """`Origin='web'` task 의 답변을 원 대화에 assistant 메시지로 저장한다.
@@ -1118,6 +1167,11 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
                 logging.getLogger(__name__).warning(
                     "[bridge] 대화 제목 갱신 실패 task=%s: %r", task_id, exc)
 
+        # 답변 안의 첨부 쓰기 블록을 실제 첨부로 만든다(사용자 제보 2026-08-28).
+        _clean, _edited, _created = _materialize_bridge_attachments(
+            conn, account=account, conversation_id=str(conversation_id),
+            message_id=int(message_id), answer=answer, task_id=task_id)
+
         # 개인 AI 의 조사 내역을 'AI 추론' 탭에 보이도록 단계로 옮긴다(사용자 제보 2026-08-27).
         _steps = _materialize_bridge_steps(str(conversation_id), task_id)
         if _steps:
@@ -1129,7 +1183,10 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         try:
             import agent_core as _core
 
-            _core._save_message(conn, str(conversation_id), "assistant", content=answer)
+            # 첨부 블록을 정리한 본문이 있으면 **그것을** 남긴다 — 회수본에 원문 블록이 남으면
+            # 다음 턴 LLM 컨텍스트에 파일 전문이 통째로 다시 실린다(표시본은 이미 정리됨).
+            _core._save_message(conn, str(conversation_id), "assistant",
+                                content=(_clean or answer))
         except Exception as exc:
             logging.getLogger(__name__).error(
                 "[bridge] core store 답변 기록 실패 task=%s conv=%s — 표시본만 남는다: %r",
@@ -2407,8 +2464,39 @@ def _task_scope_clause(account: dict[str, Any]) -> tuple[str, list[Any]]:
     return " AND AccountId = %s", [int(account.get("id") or 0)]
 
 
+#: 제출 각인 후 **대화 반영이 끝나기까지** 기다려 주는 상한(초).
+#:
+#: `submit_answer` 는 `Status='submitted'` 를 먼저 커밋하고(재제출 차단이 그 커밋에 걸려 있다),
+#: 그 뒤에 말풍선 저장 · 첨부 materialize(MinIO 쓰기) · 회수 store 기록 · `Delivered=1` 을 한다.
+#: 그 사이에 상태를 물으면 `done` 이 나가고, 화면은 대기 말풍선을 그대로 둔 채 스트림을 닫는다
+#: (codex 적대 리뷰 P1, 2026-08-28 — 첨부 쓰기 복원이 이 구간에 MinIO 왕복을 더해 창을 넓혔다).
+#:
+#: 그렇다고 `Delivered` 를 **무조건** 기다리면 전달이 진짜 실패했을 때 화면이 영원히 돈다.
+#: 유예를 두고, 넘어가면 `done` 으로 보내 프런트의 `delivered=false` 안내가 뜨게 한다.
+_BRIDGE_DELIVER_GRACE_SEC = 15.0
+
+
+def _age_sec(ts: Any) -> float | None:
+    """DB 타임스탬프의 경과 초. 판정 불가면 `None` — **유예를 적용하지 않는다**.
+
+    시계 왜곡·타임존 불명으로 음수가 나오면 0 으로 본다(방금 제출된 것으로 취급).
+    """
+    if ts is None:
+        return None
+    try:
+        import datetime as _dt
+
+        if not isinstance(ts, _dt.datetime):
+            return None
+        now = _dt.datetime.now(ts.tzinfo) if ts.tzinfo else _dt.datetime.now()
+        return max(0.0, (now - ts).total_seconds())
+    except Exception:
+        return None
+
+
 def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool,
-                  listening: bool = True) -> str:
+                  listening: bool = True, delivered: bool = True,
+                  submitted_age_sec: float | None = None) -> str:
     """국면을 **한 단어**로 — 서버가 정한다(프런트가 조합하면 화면마다 갈린다).
 
     | phase | 뜻 |
@@ -2440,6 +2528,13 @@ def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool
     if str(status or "") == _STATUS_EXPIRED:
         return "expired"
     if submitted or str(status or "") == "submitted":
+        # 제출은 됐는데 **아직 대화에 실리지 않았다면** 잠깐은 계속 "처리 중" 이다.
+        # `done` 을 먼저 내보내면 프런트가 이력을 다시 읽고 스트림을 닫는데, 그 순간 대화에는
+        # 대기 말풍선밖에 없어 그 상태가 새로고침 전까지 굳는다. 유예를 넘기면 `done` 으로
+        # 보내 `delivered=false` 안내가 뜨게 한다(영원히 도는 것보다 정직하다).
+        if (not delivered and submitted_age_sec is not None
+                and submitted_age_sec < _BRIDGE_DELIVER_GRACE_SEC):
+            return "working"
         return "done"
     if claimed_by is not None:
         return "working"
@@ -2787,7 +2882,9 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
             except Exception:
                 listening = True
         return {
-            "phase": _bridge_phase(status, claimed_by, bool(row[2]), connected, listening),
+            "phase": _bridge_phase(status, claimed_by, bool(row[2]), connected, listening,
+                                   delivered=bool(row[3]),
+                                   submitted_age_sec=_age_sec(row[2])),
             "answered": submitted,
             "delivered": bool(row[3]),
             "connected": connected,
@@ -2933,7 +3030,9 @@ def bridge_status(request: Request) -> JSONResponse:
             # 화면이 한 단어로 말할 수 있게 서버가 국면을 정한다(프런트가 조합하면 갈린다).
             # 판정은 `_bridge_phase` 한 곳 — 폴링(여기)과 스트리밍(`_bridge_stream_snapshot`)이
             # 각자 조합하면 전송 방식에 따라 화면이 달라져 폴백이 곧 UX 회귀가 된다.
-            "phase": _bridge_phase(status, row[1], bool(row[2]), connected, listening),
+            "phase": _bridge_phase(status, row[1], bool(row[2]), connected, listening,
+                                   delivered=delivered,
+                                   submitted_age_sec=_age_sec(row[2])),
             # `answered` 는 **제출됐다** 는 뜻이고, `delivered` 는 **대화에 실렸다** 는 뜻이다.
             # 둘을 합치면 저장 실패 시 화면엔 아무것도 없는데 "답변 도착" 이라 말하게 된다
             # (codex 재리뷰 P1). 프런트는 delivered=false 면 그 사실을 사용자에게 알린다.

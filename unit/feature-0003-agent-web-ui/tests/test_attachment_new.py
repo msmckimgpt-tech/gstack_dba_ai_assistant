@@ -337,9 +337,16 @@ def test_s1_strip_block_with_note():
 
 def test_s2_strip_no_block_or_failed():
     assert app._strip_attachment_new_blocks("설명만", []) == "설명만"
-    # 블록만 있고 materialize 실패([]) → 빈 답변 방지(원문 유지)
+    # 블록만 있고 materialize 실패([]) → **원문을 되살리지 않는다**(계약 변경 2026-08-28).
+    #
+    # 종전 계약은 "빈 답변 방지 = 원문 유지" 였다. 그 의도는 옳지만 수단이 틀렸다 — 원문을
+    # 돌려주면 **파일 전문이 채팅에 그대로 쏟아진다**(codex 적대 리뷰 P1). 특히 실패·취소 run은
+    # 안내 문구도 붙지 않아 그 상태가 굳는다. 빈 답변도 원문 유출도 아닌, 사실 한 줄로 답한다.
     only = _new_block("x.sql", body="B")
-    assert app._strip_attachment_new_blocks(only, []) == only
+    out = app._strip_attachment_new_blocks(only, [])
+    assert out, "빈 답변이 되면 말풍선이 통째로 비어 '답이 없다' 로 읽힌다"
+    assert "B" not in out and "attachment-new" not in out, "파일 전문이 채팅에 남았다"
+    assert "전달되지 않았습니다" in out, "무슨 일이 있었는지 말하지 않는다"
 
 
 # ── PR: 프롬프트 ─────────────────────────────────────────────────────────────

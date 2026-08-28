@@ -78,6 +78,10 @@ def _install_fake_web(monkeypatch, *, latest_content, latest_id=77, account=None
 
     def _update(c, cid, mid, content):
         calls["update"].append({"cid": cid, "mid": mid, "content": content})
+        # 운영 계약은 **bool 반환**이다(영속 성공 여부). None 을 돌려주면 호출자가
+        # `answer_persisted=False` 로 보고 result 사본 교체를 건너뛰어, 그 경로를 검사하는
+        # 단언이 조용히 vacuous 해진다(codex P2, 2026-08-28).
+        return True
 
     web_app._materialize_assistant_attachment_edits = _mat_edits
     web_app._materialize_assistant_attachment_new = _mat_new
@@ -92,6 +96,15 @@ def _install_fake_web(monkeypatch, *, latest_content, latest_id=77, account=None
 
     web_app._bind_tool_delivered_attachments = _bind
     web_app._update_assistant_message_content = _update
+
+    # 후처리 시퀀스 자체는 **정본**(`shared/attachment_write.py`)이고, worker 는 그것을
+    # `web.app` 을 통해 부른다(feature-0043 — 브리지 경로와 한 벌). fake 에 이름만 얹으면
+    # 시퀀스가 가짜가 되므로, **진짜 함수에 위 stub 원시연산을 물려** 준다. 그래서 아래
+    # 단언들은 여전히 실제 조립(순서·cap 합산·미전달 계수·strip 정책)을 검증한다.
+    from shared.attachment_write import apply_assistant_attachment_blocks as _real_apply
+
+    web_app._apply_assistant_attachment_blocks = (
+        lambda c, **kw: _real_apply(c, ops=web_app, **kw))
 
     web_pkg = types.ModuleType("web")
     web_pkg.__path__ = []
@@ -125,6 +138,10 @@ def test_w1_materializes_and_strips(monkeypatch):
     assert calls["strip_edit"] == 1 and calls["strip_new"] == 1
     assert len(calls["update"]) == 1
     assert "[STRIPPED-NEW]" in calls["update"][0]["content"]
+    # 영속 성공 시 result 사본도 정리본으로 바뀐다. **초기값에 fence 가 없으므로**
+    # "fence 없음" 만 보면 아무 일도 안 일어난 세계가 통과한다 — 치환 마커를 확인한다.
+    assert result["answer"] != "stale-answer", "result 사본이 교체되지 않았다"
+    assert "[STRIPPED-NEW]" in result["answer"]
     assert "```attachment-new" not in result["answer"]
     assert result["new_attachments"] == created
     assert conn.closed is True                      # 커넥션 누수 없음
@@ -167,8 +184,14 @@ def test_w4_materialize_exception_is_fail_soft(monkeypatch):
 
     ask._postprocess_attachment_blocks("conv-1", 42, result)   # 예외 전파 없어야 함
 
-    assert result["answer"] == "orig"        # 답변 보존(전달 차단 없음)
+    # fail-soft 의 뜻: **예외가 전파되지 않고 전달이 막히지 않는다**. 답변 문자열이 그대로
+    # 남는다는 뜻은 아니다 — strip 은 materialize 성패와 무관하게 수행되므로(파일 전문이
+    # 채팅에 쏟아지는 것을 막는 원 정책) 저장된 메시지는 정리본이 되고, result 사본도 그것을
+    # 따라가야 ops view 와 어긋나지 않는다.
     assert "new_attachments" not in result
+    assert "```attachment-new" not in result["answer"], "실패 경로에서 원문 블록이 남았다"
+    assert "[STRIPPED-NEW]" in result["answer"]
+    assert "첨부 전달 실패" in result["answer"], "만들지 못한 사실을 답변이 말하지 않는다"
 
 
 def test_w5_shared_count_cap(monkeypatch):

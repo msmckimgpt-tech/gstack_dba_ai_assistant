@@ -21,6 +21,10 @@ import secrets
 import asyncio
 from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
 import shared.bridge_tasks as _bridge_tasks  # feature-0043: 브리지 취소·점유 술어 단일 정본
+from shared.attachment_write import (  # feature-0043: 첨부 쓰기 후처리 단일 정본
+    count_attachment_block_fences as _shared_count_attachment_block_fences,
+    apply_assistant_attachment_blocks as _shared_apply_assistant_attachment_blocks,
+)
 from shared.llm_gate import (  # feature-0043: 서버 계정 LLM 차단 시 pull 브리지로 분기
     server_llm_enabled as _server_llm_enabled,
     server_llm_blocked_message as _server_llm_blocked_message,
@@ -5268,7 +5272,16 @@ def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]
             for a in materialized
         )
         stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
-    return stripped or answer
+    # ⚠ 종전에는 `stripped or answer` 였다 — 답변이 **블록 하나로만** 이뤄진 경우(설명 없이
+    # 파일만 준 답변) strip 결과가 비어 **원문이 되살아났다**. materialize 가 실패했거나
+    # `failed=True` 라 아예 건너뛴 run 에서는 안내 문구도 안 붙으므로, 그 자리에 파일 전문이
+    # 그대로 채팅에 굳는다(codex 적대 리뷰 P1, 2026-08-28).
+    #
+    # 빈 문자열을 돌려주는 것도 답이 아니다 — 말풍선이 통째로 비어 "답이 없다" 로 읽힌다.
+    # 무슨 일이 있었는지 한 줄로 말한다.
+    if stripped:
+        return stripped
+    return "첨부 블록만 담긴 답변이었고, 파일은 전달되지 않았습니다."
 
 def _strip_attachment_new_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
     """답변에서 ```attachment-new``` 블록을 제거하고 "📎 첨부 전달" 안내 문구로 치환.
@@ -5295,7 +5308,16 @@ def _strip_attachment_new_blocks(answer: str, materialized: list[dict[str, Any]]
             for a in materialized
         )
         stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
-    return stripped or answer
+    # ⚠ 종전에는 `stripped or answer` 였다 — 답변이 **블록 하나로만** 이뤄진 경우(설명 없이
+    # 파일만 준 답변) strip 결과가 비어 **원문이 되살아났다**. materialize 가 실패했거나
+    # `failed=True` 라 아예 건너뛴 run 에서는 안내 문구도 안 붙으므로, 그 자리에 파일 전문이
+    # 그대로 채팅에 굳는다(codex 적대 리뷰 P1, 2026-08-28).
+    #
+    # 빈 문자열을 돌려주는 것도 답이 아니다 — 말풍선이 통째로 비어 "답이 없다" 로 읽힌다.
+    # 무슨 일이 있었는지 한 줄로 말한다.
+    if stripped:
+        return stripped
+    return "첨부 블록만 담긴 답변이었고, 파일은 전달되지 않았습니다."
 
 def _update_assistant_message_content(conn, conversation_id: str, message_id: int, content: str) -> bool:
     """assistant 메시지 content 갱신(TASK-0286 attachment-edit strip 반영을 DB 에도 영속).
@@ -5319,10 +5341,18 @@ def _update_assistant_message_content(conn, conversation_id: str, message_id: in
                     "UPDATE agent_runtime.messages SET content = %s WHERE id = %s AND conversation_id = %s",
                     (content, int(message_id), conversation_id),
                 )
+                # ⚠ **행 수를 본다**(codex 적대 리뷰 P1, 2026-08-28). 종전에는 예외만 없으면
+                #   True 였다 — id 가 다른 backend 의 것이거나 메시지가 사라졌으면 0행을 갱신하고도
+                #   "영속됐다" 고 답했다. 그 말을 믿은 호출자는 회수 store·result_json 만 정리본으로
+                #   바꾸고, 화면에는 원문 블록이 남아 **둘이 갈린다**.
+                _pg_rows = int(pgcur.rowcount or 0)
             pg.commit()
         finally:
             pg.close()
-        return True
+        if _pg_rows:
+            return True
+        logging.getLogger(__name__).warning(
+            "_update_assistant_message_content: PG 0행 갱신 (msg=%s) — MySQL fallback", message_id)
     except Exception:
         logging.getLogger(__name__).warning(
             "_update_assistant_message_content: PG update failed (msg=%s) — MySQL fallback", message_id, exc_info=True)
@@ -5333,14 +5363,50 @@ def _update_assistant_message_content(conn, conversation_id: str, message_id: in
                 "UPDATE AgentMemoryMessages SET Content = %s WHERE Id = %s AND ConversationId = %s",
                 (content, int(message_id), conversation_id),
             )
+            _my_rows = int(cur.rowcount or 0)
             conn.commit()
         finally:
             cur.close()
-        return True
+        if _my_rows:
+            return True
+        logging.getLogger(__name__).warning(
+            "_update_assistant_message_content: MySQL 0행 갱신 (msg=%s) — 미영속으로 보고한다",
+            message_id)
+        return False
     except Exception:
         logging.getLogger(__name__).warning(
             "_update_assistant_message_content: MySQL update failed (msg=%s)", message_id, exc_info=True)
     return False
+
+# feature-0043: 첨부 쓰기 후처리는 **한 벌**이다 — 정본은 `shared/attachment_write.py`.
+#
+# 이 시퀀스(materialize edit → new → 도구 전달분 바인딩 → strip → 미전달 고지 → content 갱신)는
+# 종전 ask-worker 경로에만 살아 있었고 브리지 경로에는 아예 없었다. 없는 쪽에서 사용자가 겪은
+# 것은 「됐다는데 안 된」 거짓 성공이다(라이브 실측 2026-08-28). 두 번째 구현을 쓰는 대신 합쳤다 —
+# 저장 가드가 갈리면 느슨한 쪽이 사용자가 보는 진실이 된다.
+#
+# shared 에 둔 이유: worker(agent-core)와 web 이 **둘 다** 부르고, 원시연산(materialize/strip/
+# update)은 web 층에 있다. shared 함수가 `ops` 로 그 네임스페이스를 받으므로 이 파일은 그냥
+# `app` 을 넘긴다.
+_count_attachment_block_fences = _shared_count_attachment_block_fences
+
+
+def _apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversation_id: str,
+                                       message_id: int, answer: str,
+                                       failed: bool = False,
+                                       tool_attachment_ids: "list[int] | tuple" = (),
+                                       ) -> dict[str, Any]:
+    """`shared.attachment_write` 정본에 web 원시연산(`app`)을 물려 호출한다.
+
+    **적용 범위**: 비동기 답변 경로 2개 — ask-worker(`modules/ask.py`)와 브리지
+    (`routers/ai_tools.py`). 동기 inproc 경로(`_ask_impl`)는 아직 자체 시퀀스를 갖고 있다
+    (materialize 사이에 step 기록이 끼고, 응답 body 에 첨부 목록을 실으며, `request` 로 audit
+    을 dispatch 한다). 그쪽까지 합치는 것이 옳지만 응답 shape 를 건드리므로 분리했다.
+    """
+    return _shared_apply_assistant_attachment_blocks(
+        conn, account=account, conversation_id=conversation_id, message_id=message_id,
+        answer=answer, failed=failed, tool_attachment_ids=tool_attachment_ids, ops=app)
+
 
 def _model_to_llm_provider(model: str | None) -> str | None:
     """vision invoke 모델 → LLM provider 식별자 매핑 (audit 용).

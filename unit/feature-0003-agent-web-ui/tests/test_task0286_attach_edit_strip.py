@@ -61,11 +61,21 @@ def test_s3_strip_no_block_unchanged():
     assert out == answer                          # 블록 없으면 원본 그대로
 
 
-def test_s4_strip_block_only_failed_keeps_original():
-    # 블록만 있고 materialize 실패(materialized=[]) → strip 결과가 비면 원문 유지(빈 답변 방지).
+def test_s4_strip_block_only_failed_does_not_resurrect_body():
+    """블록만 있고 materialize 실패 → **원문을 되살리지 않는다**(계약 변경 2026-08-28).
+
+    종전 계약은 "빈 답변 방지 = 원문 유지" 였고 의도는 옳았다. 그러나 수단이 파일 전문을
+    채팅에 그대로 남겼다(codex 적대 리뷰 P1). 실패·취소 run 은 안내 문구조차 붙지 않아
+    그 상태가 굳는다 — 사용자는 답변 대신 파일 덩어리를 본다.
+
+    빈 답변도, 원문 유출도 아닌 **사실 한 줄**이 옳은 답이다.
+    """
     answer = _block(1)
     out = app._strip_attachment_edit_blocks(answer, [])
-    assert out == answer
+    assert out, "빈 답변이 되면 말풍선이 통째로 비어 '답이 없다' 로 읽힌다"
+    assert out != answer, "원문이 그대로 돌아왔다 — 파일 전문이 채팅에 남는다"
+    assert "attachment-edit" not in out
+    assert "전달되지 않았습니다" in out, "무슨 일이 있었는지 말하지 않는다"
 
 
 def test_s5_strip_multiple_blocks_all_removed():

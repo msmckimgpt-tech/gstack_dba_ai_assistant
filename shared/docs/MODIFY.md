@@ -189,3 +189,28 @@ shared 코드 변경 시 아래 형식으로 기록한다.
   취소·supersede 진입점), feature-0043-external-llm-bridge(정본 feature — 러너 취소 하차 계약의 서버측 상대)
 - Cross-ref: `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` CHG-20260828T070000-ai-claude-feature-0043 ·
   FUNCTION.md P0-T · TASK.md TASK-20260828T070000
+
+## CHG-20260828T220000-attachment-write
+- Date: 2026-08-28
+- Changed By: feature-0043-external-llm-bridge (AI) — 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0043-bridge-attachment-write`
+- Summary: assistant 답변의 첨부 쓰기 블록 후처리를 `shared/attachment_write.py` 로 단일화.
+  `count_attachment_block_fences`(실제로 열리는 fence 만 계수 — 인용·들여쓰기 제외) +
+  `apply_assistant_attachment_blocks`(materialize edit → new → 도구 전달분 바인딩 → strip →
+  미전달 고지 → content 갱신).
+  **왜 shared 인가**: 이 시퀀스가 종전 ask-worker(`unit/feature-0002-agent-core/src/modules/ask.py`)
+  에만 있었고 브리지 경로(`routers/ai_tools.py`)에는 **아예 없었다**. 없는 쪽에서 사용자가 겪은 것은
+  「기능 없음」이 아니라 **거짓 성공**이다 — 개인 AI 가 규약대로 만든 `attachment-edit` 블록이 파일이
+  되지 않은 채 답변만 "수정했습니다" 라고 말했다(라이브 실측 2026-08-28, 첨부 1246 `sample.sql`).
+  브리지에 두 번째 구현을 쓰면 소유권·kind·용량·확장자 allowlist 가드가 두 벌이 되고, **갈리는 순간
+  느슨한 쪽이 사용자가 보는 진실**이 된다 — `bridge_tasks` 와 같은 이유.
+  **`ops` 파라미터**: 저장·strip 원시연산은 web 층(`app`)에 있다. 최상단 `import app` 을 두면 이
+  모듈이 web 전체를 끌고 오고 worker 테스트의 fake 주입도 막힌다. 생략 시 지연 `import app`.
+- Files: `shared/attachment_write.py` (신규)
+- Affected Features: feature-0002-agent-core(`modules/ask.py` — 중복 구현 제거 후 정본 호출),
+  feature-0003-agent-web-ui(`routers/conversations.py` 얇은 위임 + `app` 재노출,
+  `routers/ai_tools.py` 브리지 전달 경로), feature-0043-external-llm-bridge(정본 feature)
+- 잔여: 동기 inproc 경로(`routers/conversations.py::_ask_impl`)는 아직 자체 시퀀스 — 응답 body 에
+  첨부 목록을 싣고 materialize 사이에 step 을 기록해 shape 가 다르다. 별도 cycle.
+- Cross-ref: `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` ·
+  FUNCTION.md P0-AA · TASK.md TASK-20260828T220000 ·
+  `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260828T220000-bridge-attachment-write.md`

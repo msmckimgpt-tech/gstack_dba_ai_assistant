@@ -594,3 +594,34 @@ AI 는 거기서 멈춘다.
       `listening` false→true · **로그아웃 직후 하트비트 401**
 - [ ] **잔여 실측** — 실 러너 기동 상태에서의 자동 종료 · 12시간 이상 연속 유지
       (둘 다 시간이 흘러야 관측된다)
+- [ ] **배포 후 실측** — PB-0008 실 Windows 브라우저(`/ai/connect` 문구 도달) + 러너 24시간
+      연속 유지 + 로그아웃 시 자동 종료
+### TASK-20260828T220000 — 첨부 **쓰기** 복원 (assistant 파일 수정·생성)
+
+- status: done
+- risk: Major (§12.3 — 외부 입력이 첨부를 쓴다. 저장 가드는 기존 것을 그대로 쓰되 경로가 는다)
+- 사용자 제보: "assistant가 첨부된 파일을 수정하여 버전관리는 진행하거나 새로운 첨부파일을
+  추가하는 동작이 가능했습니다."
+- [x] **결손 실증** — 라이브 `87d1beec`, 첨부 1246 `sample.sql`. 개인 AI 가 `attachment-edit`
+      블록을 정확히 만들었으나 `versions` 는 v1 그대로, 블록은 strip 되지 않아 원문 diff 가
+      채팅에 노출, 답변은 "수정했습니다" → **거짓 성공**
+- [x] **P0-E 근거 정정** — 「개인 AI 가 관례를 모른다」가 사실이 아니었다. 규약은
+      `system_prompt`(agent_core base)에 실려 이미 전달되고 있었다
+- [x] **한 벌로 합침** — `_apply_assistant_attachment_blocks`(web 층 `routers/conversations.py`)
+      신설, worker(`modules/ask.py`)의 중복 구현을 이 함수 호출로 교체, 브리지가 같은 함수 사용
+- [x] fence 계수(`_count_attachment_block_fences`)도 공용화 — 인용 fence·들여쓴 fence 제외
+- [x] 회수 store 에 **정리본** 기록(원문 블록 재유입 차단) · 영속 실패 시 원문 유지
+- [x] 러너 프롬프트에 규약 **중복 정의 금지**(주석으로 이유 고정 + 회귀로 잠금)
+- [x] 회귀 12건 신규(`test_bridge_attachment_write.py`) — 배선 3 · 한 벌 3 · 거짓 성공 금지 5 ·
+      중복 안내 금지 1
+- [x] **라이브 재실증**(머지 전 bind-mount) — `attachment-new` 생성 · user 계보 편집은 새 root
+      분기(설계대로) · **assistant 계보 편집은 v1→v2 연장** · 실 Windows 브라우저에서 블록 헤더
+      미노출·첨부 칩 표시 확인
+- [x] **codex 적대 리뷰** — P1 4 · P2 2 전건 조치(제출-전달 사이 `done` 조기 노출 · 0행 갱신을
+      영속으로 오보 · 미전달 분모가 실 파서와 불일치 · 블록만 있는 답변에서 원문 부활 ·
+      테스트 2건 vacuous). 뮤테이션 역검증 5종 전건 KILL
+
+### 잔여 (이 cycle 밖)
+
+- 동기 inproc 경로(`_ask_impl`)의 첨부 후처리는 아직 별개 구현 — 응답 shape·step 기록이 얽혀
+  있어 분리했다. **합친 것은 브리지(없던 것) + worker(중복) 2개**
