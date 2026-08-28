@@ -108,6 +108,18 @@ source_of_truth: true
 | TEST-20260828T171500-wiring | `handle_one` | 감지가 제출 경로에 배선 · 제목 분리 **뒤** | AC-20260828T171500-tool-permission-friction-5 |
 | TEST-20260828T171500-clicheck | `_ensure_strict_mcp_supported` | 확인 실패 시 플래그 유지(드러나는 실패 우선) | AC-20260828T171500-tool-permission-friction-7 |
 
+| TEST-20260828T193000-blanks | `compose_launch_commands` | probe 명령에 `BRIDGE_PROBED_*` 빈칸이 **실재**한다(기본 명령에는 없다) | AC-20260828T193000-ai-assisted-setup-1 |
+| TEST-20260828T193000-samescript | `compose_launch_commands` | 조사 경로와 기본 경로가 같은 스크립트를 부른다 | AC-20260828T193000-ai-assisted-setup-1 |
+| TEST-20260828T193000-allowlist | `bridge_setup.sh` | `--cmd`·`--base`·`--token`·`--ca`·`--once`·`--check` 차단(통째로) | AC-20260828T193000-ai-assisted-setup-2 |
+| TEST-20260828T193000-numeric | `bridge_setup.sh` | 축별 타입·범위(`.` · `1..2` · `999999999` · `1.5` 거부) | AC-20260828T193000-ai-assisted-setup-2 |
+| TEST-20260828T193000-aiwhitelist | `bridge_setup.sh` | `rm`·`sh`·`curl` 등 PATH 실행 파일 거부, 알려진 CLI 만 | AC-20260828T193000-ai-assisted-setup-3 |
+| TEST-20260828T193000-stderr | `bridge_setup.sh` | 거른 사실이 stderr 로 **도달**한다(명령치환에 안 먹힘) | AC-20260828T193000-ai-assisted-setup-4 |
+| TEST-20260828T193000-realargv | `bridge_setup.sh` | `set --` 로 실제 argv 전개 검사(문자열 포함이 아니라) | AC-20260828T193000-ai-assisted-setup-2 |
+| TEST-20260828T193000-humanwins | `bridge_setup.sh` | 사람 칸이 뒤에 와서 이긴다 · 사람 칸은 무검증 유지 | AC-20260828T193000-ai-assisted-setup-5 |
+| TEST-20260828T193000-parity | `bridge_setup.{sh,ps1}` | 두 판이 같은 칸·같은 allowlist·같은 python 순서 | AC-20260828T193000-ai-assisted-setup-6 |
+| TEST-20260828T193000-nodelegate | 지시문 | 대조·명령형태·판정 위임 금지 + `BRIDGE_ARGS` 선 긋기 | AC-20260828T193000-ai-assisted-setup-7 |
+| TEST-20260828T193000-uihonest | `index.html`·`ai-connect.html` | "결과가 같다" 단정 없음 + 비결정성 고지 | AC-20260828T193000-ai-assisted-setup-8 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

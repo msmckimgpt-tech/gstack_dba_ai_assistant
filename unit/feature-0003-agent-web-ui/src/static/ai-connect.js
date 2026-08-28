@@ -128,6 +128,11 @@
         // feature-0043 P0-AC: 원클릭 명령도 **서버가 준 것을 표시만** 한다. 이 화면이 이걸
         // 빠뜨리고 있었던 탓에, 링크를 새 탭으로 연 사용자는 기본 경로를 만나지 못했다.
         launch = (r.body.launch && typeof r.body.launch === "object") ? r.body.launch : null;
+        // P0-AD 셋째 경로. 구 서버(probe 미지원)면 그 블록을 감춘다 — 빈 칸을 남기면
+        // 사용자는 복사할 것이 없는 자리를 보고 고장으로 읽는다.
+        var probe = (launch && launch.probe) || "";
+        $("probeText").textContent = probe;
+        $("probeBox").hidden = !probe;
         paintOsTab();
         $("handoffResult").classList.remove("aic-hidden");
         say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
@@ -141,6 +146,10 @@
 
   $("copyHandoff").addEventListener("click", function () {
     copy(handoffText, "복사했습니다. AI에 붙여넣으세요.");
+  });
+
+  $("copyProbe").addEventListener("click", function () {
+    copy((launch && launch.probe) || "", "복사했습니다. 내 컴퓨터의 AI에 붙여넣으세요.");
   });
 
   $("copyCmd").addEventListener("click", function () {

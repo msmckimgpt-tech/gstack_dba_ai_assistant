@@ -705,10 +705,29 @@
               입력창이 열립니다.
             </p>
           </div>
-          <!-- ② 보조 경로 — 터미널을 쓸 수 없을 때. 접어 둔다: 이쪽은 AI 해석에 결과가 달라져
+          <!-- ② 셋째 경로 (P0-AD) — 명령은 ①과 **같고**, 환경 판단(파이썬·AI CLI·핸들러)만
+               그 머신의 AI 가 채운다. ③과 다른 점은 AI 가 **명령을 만들지 않는다**는 것이다:
+               빈칸만 채우고, 채운 값은 설치 스크립트가 다시 검증한다. 그래서 ③이 겪던
+               "매번 다른 설치" 가 되돌아오지 않는다. -->
+          <details class="connect-modal-alt">
+            <summary>환경을 잘 모르겠다면 — AI에게 조사만 맡기기</summary>
+            <p class="connect-modal-hint">
+              아래 내용을 내 컴퓨터의 AI(Claude Code · Codex 등)에 붙여넣으세요.
+              AI가 이 머신의 파이썬·AI CLI를 <strong>조사해 빈칸만 채우고</strong>,
+              설치와 검증은 ①과 <strong>똑같은 스크립트</strong>가 합니다.
+              AI가 고른 값(파이썬·AI·워커 수)은 화면에 그대로 표시되고
+              범위를 벗어나면 스크립트가 버립니다 — 다만 <strong>어떤 값을 고르는지는
+              AI마다 다를 수 있습니다.</strong>
+            </p>
+            <pre class="connect-modal-code" id="connectModalProbe"></pre>
+            <div class="connect-modal-actions">
+              <button type="button" class="connect-modal-btn" id="connectModalCopyProbe">조사 지시문 복사</button>
+            </div>
+          </details>
+          <!-- ③ 보조 경로 — 터미널을 쓸 수 없을 때. 접어 둔다: 이쪽은 AI 해석에 결과가 달라져
                "매번 다른 설치" 마찰의 원인이었고(제보 2026-08-28), 기본 경로로 두지 않는다. -->
           <details class="connect-modal-alt">
-            <summary>터미널을 쓸 수 없다면 — AI에게 맡기기</summary>
+            <summary>터미널을 쓸 수 없다면 — AI에게 전부 맡기기</summary>
             <p class="connect-modal-hint">
               아래 내용을 AI에 그대로 붙여넣으세요. 연결 방식 선택과 인증은 AI가 판단합니다
               — <strong>도구에 따라 설치 결과가 달라질 수 있습니다.</strong>
