@@ -3048,15 +3048,19 @@ export function renderMessages() {
       classes.push("is-mention-me");
     }
     row.className = classes.join(" ");
-    // feature-0043(2026-08-28): 브리지 대기 말풍선에 **앵커**를 남긴다.
+    // feature-0043(2026-08-28): 브리지 대기 말풍선의 **앵커**. 아래 `bubble` 에 붙인다.
     //
-    // 진행 중 조사 내역(`_renderBridgeSteps`)은 이 앵커를 찾아 말풍선 안에 붙는다. 앵커 없이
-    // 이력을 재조회해 그리면 단계가 늘 때마다 전체 재렌더라 스크롤이 흔들리고 요청이 배로 뛴다.
+    // 진행 중 조사 내역(`_renderBridgeSteps`)은 이 앵커를 찾아 붙는다. 앵커 없이 이력을
+    // 재조회해 그리면 단계가 늘 때마다 전체 재렌더라 스크롤이 흔들리고 요청이 배로 뛴다.
     // 답변으로 덮인 뒤에는 `placeholder=false` 가 되므로 앵커도 자연히 사라진다.
+    //
+    // ⚠ 앵커를 **행(`row`)** 에 두면 단계가 말풍선 **밖으로** 그려진다(사용자 제보 2026-08-28:
+    //   "단계가 말풍선 외부로 빠져나와 난잡하게 노출"). `row` 는 아바타·메타·말풍선을 담는
+    //   바깥 컨테이너라, 거기 append 하면 카드가 말풍선과 나란히 서는 별개 블록이 된다.
+    //   완료본의 실행 단계는 말풍선 **안** details 에 들어가므로 진행 중도 같은 자리여야 한다.
     const _bridgeMeta = (message.meta && message.meta.bridge) || null;
-    if (_bridgeMeta && _bridgeMeta.task_id && _bridgeMeta.placeholder) {
-      row.dataset.bridgeTask = String(_bridgeMeta.task_id);
-    }
+    const _bridgeAnchorTask = (_bridgeMeta && _bridgeMeta.task_id && _bridgeMeta.placeholder)
+      ? String(_bridgeMeta.task_id) : "";
 
     const meta = document.createElement("div");
     meta.className = "message-meta";
@@ -3107,6 +3111,8 @@ export function renderMessages() {
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
+    // 진행 중 단계는 이 말풍선 안에 붙는다(위 앵커 주석 참조).
+    if (_bridgeAnchorTask) bubble.dataset.bridgeTask = _bridgeAnchorTask;
     const content = document.createElement("div");
     renderMessageContent(content, message.content || "", role);
     bubble.appendChild(content);
