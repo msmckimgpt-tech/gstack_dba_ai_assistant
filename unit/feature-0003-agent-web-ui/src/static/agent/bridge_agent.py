@@ -89,14 +89,26 @@ AI 는 자동 감지한다(claude → codex → gemini → ollama 순). 고정�
 
 한 번만 처리하고 끝내려면 `--once`. 연결만 확인하려면 `--check`.
 
-## 동시 처리 (2026-08-28)
+## 동시 처리 — 수요에 맞춰 늘고, 안 쓰면 줄어든다 (사용자 결정 2026-08-28)
 
-기본으로 **2건을 동시에** 처리한다(`--workers`). 직렬이면 5분짜리 조사 하나가 뒤따르는
-10초짜리 질문을 통째로 막는다 — 서버는 애초에 병렬이다(`claim_request` 는 원자적 점유이고
-`wait_for_request` 는 여러 건을 한 번에 돌려준다). 직렬이던 것은 이 러너뿐이었다.
+**1개로 시작해서 필요한 만큼만 늘린다.** 직렬이면 5분짜리 조사 하나가 뒤따르는 10초짜리
+질문을 통째로 막는데(서버는 애초에 병렬이다 — `claim_request` 는 원자적 점유이고
+`wait_for_request` 는 여러 건을 한 번에 돌려준다), 그렇다고 처음부터 여러 개를 띄우면
+질문이 하나뿐인 대부분의 시간에 쓰지도 않을 용량을 들고 있게 된다.
 
-상한을 사용자가 정하게 두는 이유: 실질 한계는 **개인 계정의 쿼터**와 AI 런타임의 동시성인데,
-그건 우리가 알 수 없다. `--workers 1` 로 종전 동작(직렬)으로 되돌린다.
+    확장   `wait_for_request` 가 돌려준 대기 질문 수가 현재 슬롯 수를 넘으면 그만큼 늘린다
+           (상한 `--max-workers`, 기본 8). **수요가 관측된 순간에만** 늘어난다
+    축소   `--worker-idle-sec`(기본 300초) 넘게 쉰 슬롯을 **오래된 것부터** 회수한다.
+           최소 1개는 남긴다 — 0이 되면 다음 질문을 받을 창구가 사라진다
+
+여기에 타이머 스레드도, 추가 sleep 도 없다. 서버가 대기를 최대 55초 보류하므로 **그 반환이
+곧 tick** 이다(폴링 금지 원칙과 정합 — 우리는 시간을 재려고 서버를 두드리지 않는다).
+
+슬롯을 꺼낼 때 **가장 최근에 쓴 것부터** 쓴다(LIFO). 그래야 안 쓰이는 슬롯이 계속 안 쓰인 채로
+남아 회수 대상이 된다 — 돌아가며 쓰면(FIFO) 전부 조금씩 최근이 되어 아무것도 회수되지 않는다.
+
+`--workers N` 은 **시작 개수**다(기본 1). 상한은 `--max-workers` 가 정한다 — 실질 한계는
+**개인 계정의 쿼터**와 AI 런타임의 동시성인데 그건 우리가 알 수 없어 사용자에게 남긴다.
 
 ## 취소 (2026-08-28)
 
@@ -154,8 +166,14 @@ _AI_TIMEOUT_SEC = float(os.environ.get("BRIDGE_AI_TIMEOUT_SEC", "0") or 0)
 #: ⚠ 이건 폴링이 아니다 — 서버를 두드리지 않는다. 자식 프로세스가 끝나기를 `Thread.join(timeout)`
 #: 으로 기다리면서 그 틈에 취소 여부를 보는 것이고, 대기 자체는 여전히 블로킹이다(sleep 없음).
 _CANCEL_TICK_SEC = 1.0
-#: 기본 동시 처리 수. 1 = 종전 직렬.
-_DEFAULT_WORKERS = 2
+#: **시작** 동시 처리 수. 수요가 관측되면 늘어난다(`WorkerPool`).
+_DEFAULT_WORKERS = 1
+#: 확장 상한. 개인 계정 쿼터와 런타임 동시성이 실질 한계라 무제한은 위험하다 — 요청이 몰리면
+#: 개인 머신에 수십 개 프로세스가 뜨고 쿼터가 한 번에 소진된다(사용자 결정 2026-08-28: 8).
+_DEFAULT_MAX_WORKERS = 8
+#: 이 시간 넘게 쉰 슬롯은 회수한다(사용자 결정 2026-08-28: 5분).
+#: 너무 짧으면 질문이 드문드문 이어질 때 확장·축소를 반복하고, 너무 길면 유휴 슬롯이 오래 남는다.
+_DEFAULT_WORKER_IDLE_SEC = 300.0
 #: 대기 질문이 있는데 한 건도 처리하지 못한 채 반복되는 라운드의 상한.
 #: 넘으면 조용히 도는 대신 **크게 실패**한다 — 간격 없는 재시도는 서버를 두드리는 폴링이다.
 _MAX_STALLED_ROUNDS = 20
@@ -296,6 +314,135 @@ class CancelRegistry:
         """처리를 마친 task 는 원장에서 뺀다 — 무한히 자라지 않게."""
         with self._lock:
             self._ids.discard(str(task_id))
+
+
+# ── 동시 처리 슬롯 ───────────────────────────────────────────────────────────
+
+
+class WorkerPool:
+    """동시 처리 슬롯을 **수요에 맞춰 늘리고, 쉬는 것부터 회수한다**(사용자 결정 2026-08-28).
+
+    왜 `Semaphore` 가 아닌가: 세마포어는 크기를 바꿀 수 없다. 종전에는 고정 N 이었고, 그래서
+    질문이 하나뿐인 대부분의 시간에도 N 개를 들고 있었다.
+
+    ## 슬롯을 목록으로 두는 이유
+
+    카운터 하나로도 개수는 셀 수 있다. 그런데 "**오래된** 슬롯부터 회수" 는 개수만으로는
+    표현되지 않는다 — 어느 것이 얼마나 쉬었는지 알아야 한다. 그래서 슬롯마다 `last_used` 를
+    들고, 회수는 그 순서로 한다.
+
+    ## 왜 LIFO 로 꺼내는가
+
+    유휴 슬롯 중 **가장 최근에 쓴 것**을 준다. 돌아가며 쓰면(FIFO) 전부 조금씩 최근이 되어
+    idle 임계를 넘는 슬롯이 영영 생기지 않고, 그러면 축소가 작동하지 않는다. 한쪽만 계속 쓰면
+    나머지는 자연히 오래되어 회수 대상이 된다.
+
+    ## 시간
+
+    `time.monotonic()` 을 쓴다(벽시계는 NTP 보정·서머타임에 뒤로 갈 수 있다). 슬롯은 생성
+    시각으로 초기화한다 — 0 같은 센티넬로 두면 "프로세스 시작 직후" 가 곧 "아주 오래 쉼" 이
+    되어 첫 라운드에 회수된다.
+    """
+
+    def __init__(self, start: int, maximum: int, idle_sec: float, now: float,
+                 clock=time.monotonic) -> None:
+        # `clock` 은 **테스트 훅**이다. 시각을 락 안에서 만들어야 정렬 불변식이 지켜지는데
+        # (아래 `release` 참조), 그러면 호출측이 시각을 주입할 수 없어 회수 순서를 결정적으로
+        # 검증할 방법이 사라진다. 시계 자체를 갈아끼우면 둘 다 만족한다.
+        self._clock = clock
+        self._cv = threading.Condition()
+        self._max = max(1, int(maximum))
+        self._idle = float(idle_sec)
+        self._next_id = 1
+        #: 유휴 슬롯 `(last_used, id)` — **last_used 오름차순**(앞이 가장 오래 쉰 것).
+        self._free: list[tuple[float, int]] = []
+        #: 사용 중 슬롯 id.
+        self._busy: set[int] = set()
+        for _ in range(max(1, min(int(start), self._max))):
+            self._free.append((now, self._next_id))
+            self._next_id += 1
+
+    # ── 조회 ────────────────────────────────────────────────────────────────
+
+    @property
+    def capacity(self) -> int:
+        with self._cv:
+            return len(self._free) + len(self._busy)
+
+    @property
+    def in_use(self) -> int:
+        with self._cv:
+            return len(self._busy)
+
+    # ── 사용 ────────────────────────────────────────────────────────────────
+
+    def try_acquire(self) -> int | None:
+        """유휴 슬롯 하나를 잡는다. 없으면 `None`(블로킹하지 않는다)."""
+        with self._cv:
+            if not self._free:
+                return None
+            _, sid = self._free.pop()      # 가장 최근에 쓴 것 — 위 'LIFO' 참조
+            self._busy.add(sid)
+            return sid
+
+    def release(self, sid: int) -> None:
+        """슬롯을 돌려준다. 그 사이 축소로 사라진 슬롯이면 조용히 버린다.
+
+        ⚠ **반납 시각을 락 안에서 만든다.** 호출측이 `time.monotonic()` 을 먼저 계산해 넘기면,
+        먼저 시간을 얻은 스레드가 늦게 락을 잡는 순간 `_free` 가 시각 역순으로 쌓인다. 그러면
+        `reap` 이 맨 앞만 보고 "아직 임계 전" 이라 판단해 **뒤에 갇힌 오래된 슬롯을 영영 회수하지
+        못한다**(codex 리뷰 P2). 정렬 불변식은 이 한 줄에 걸려 있다.
+
+        모르는 슬롯을 버리는 이유: 반납이 조용히 용량을 부풀리는 버그는 재현이 어렵다.
+        """
+        with self._cv:
+            if sid not in self._busy:
+                return
+            self._busy.discard(sid)
+            self._free.append((self._clock(), sid))     # 락 안 — 단조 증가가 보장된다
+            self._cv.notify_all()
+
+    # ── 확장·축소 ───────────────────────────────────────────────────────────
+
+    def grow_for(self, pending: int) -> int:
+        """대기 질문 `pending` 건을 **지금 진행 중인 것과 함께** 소화할 만큼 늘린다(상한까지).
+
+        ⚠ 목표는 `in_use + pending` 이다. 대기 수만 보면 **진행 중인 작업이 쓰는 자리를 빼고**
+        세어 과소 확장한다 — capacity 4 · busy 3 · pending 3 이면 총수요가 6인데 `grow_to(3)` 은
+        아무것도 늘리지 않고, 결국 한 건만 시작된다(codex 리뷰 P1).
+
+        **관측된 수요에만** 반응한다 — 예측해서 미리 늘리지 않는다. 예측이 빗나가면 그 비용은
+        사용자 계정의 쿼터로 나간다.
+        """
+        added = 0
+        with self._cv:
+            now = self._clock()                      # 락 안에서 — `release` 와 같은 이유
+            target = min(len(self._busy) + int(pending), self._max)
+            while len(self._free) + len(self._busy) < target:
+                self._free.append((now, self._next_id))
+                self._next_id += 1
+                added += 1
+            if added:
+                self._cv.notify_all()
+        return added
+
+    def reap(self, now: float) -> int:
+        """`idle_sec` 넘게 쉰 유휴 슬롯을 **오래된 것부터** 회수한다. 회수 개수를 돌려준다.
+
+        **최소 1개는 남긴다.** 0이 되면 다음 질문을 받을 창구가 사라지고, 그 상태는 스스로
+        풀리지 않는다(확장은 수요를 봐야 하는데 수요를 보려면 슬롯이 있어야 한다).
+
+        사용 중인 슬롯은 건드리지 않는다 — 오래 걸리는 조사가 회수되면 그 답변이 사라진다.
+        """
+        removed = 0
+        with self._cv:
+            while self._free and (len(self._free) + len(self._busy)) > 1:
+                last_used, sid = self._free[0]
+                if now - last_used <= self._idle:
+                    break                    # 정렬돼 있으므로 뒤는 볼 필요 없다
+                self._free.pop(0)
+                removed += 1
+        return removed
 
 
 # ── 내 AI 호출 ───────────────────────────────────────────────────────────────
@@ -610,7 +757,15 @@ def main() -> int:
                     help="지난 설정을 불러온다(주소·CA·AI). 토큰만 새로 주면 된다")
     ap.add_argument("--workers", type=int, default=int(os.environ.get("BRIDGE_WORKERS", 0))
                     or _DEFAULT_WORKERS,
-                    help=f"동시 처리 수 (기본 {_DEFAULT_WORKERS}, 1 = 직렬)")
+                    help=f"**시작** 동시 처리 수 (기본 {_DEFAULT_WORKERS}). 수요가 오면 늘어난다")
+    ap.add_argument("--max-workers", type=int,
+                    default=int(os.environ.get("BRIDGE_MAX_WORKERS", 0)) or _DEFAULT_MAX_WORKERS,
+                    help=f"확장 상한 (기본 {_DEFAULT_MAX_WORKERS}). 개인 계정 쿼터가 실질 한계다")
+    ap.add_argument("--worker-idle-sec", type=float,
+                    default=float(os.environ.get("BRIDGE_WORKER_IDLE_SEC", 0))
+                    or _DEFAULT_WORKER_IDLE_SEC,
+                    help=f"이 시간 넘게 쉰 슬롯을 오래된 것부터 회수 (기본 {int(_DEFAULT_WORKER_IDLE_SEC)}초)")
+    # main 이 같은 창에 들인 축 — AI 호출 상한을 진행 신호 기반으로 뒀다(TASK-…140000).
     ap.add_argument("--ai-timeout", type=float,
                     default=_AI_TIMEOUT_SEC,
                     help="AI 호출 상한(초). 기본 0 = 상한 없음 — 진행 중이면 끊지 않는다"
@@ -618,7 +773,16 @@ def main() -> int:
     args = ap.parse_args()
     # 전역을 여기서 확정한다 — 취소 감시 루프가 이 값을 읽는다.
     globals()["_AI_TIMEOUT_SEC"] = max(0.0, float(args.ai_timeout or 0))
-    workers = max(1, int(args.workers or 1))
+    max_workers = max(1, int(args.max_workers or _DEFAULT_MAX_WORKERS))
+    # ⚠ 시작값을 상한으로 **clamp** 한다. 종전엔 `max(workers, max_workers)` 였는데, 그러면
+    #   `--workers 100 --max-workers 8` 이 상한을 100 으로 밀어올렸다 — 상한이 상한이 아니게
+    #   된다(codex 리뷰 P2). 기존 `BRIDGE_WORKERS` 가 큰 머신에서 새 안전장치가 통째로
+    #   무력화되는 경로이기도 하다.
+    workers = max(1, min(int(args.workers or 1), max_workers))
+    if int(args.workers or 1) > max_workers:
+        _log(f"--workers {args.workers} 가 상한 {max_workers} 를 넘어 {workers} 로 시작합니다"
+             " (상한을 올리려면 --max-workers).")
+    idle_sec = max(1.0, float(args.worker_idle_sec or _DEFAULT_WORKER_IDLE_SEC))
 
     # 재시작 후 복귀 경로 — 명시 인자가 우선이고, 빈 것만 지난 설정으로 채운다.
     if args.resume:
@@ -674,10 +838,8 @@ def main() -> int:
         return 0
 
     cancels = CancelRegistry()
-    #: 빈 워커 자리. **`wait_for_request` 를 부르기 전에** 하나를 잡는다 — 자리가 없는데
-    #: 대기만 하면, 열린 질문이 남아 있는 한 서버가 즉시 응답해 tight loop 가 된다.
-    #: 세마포어는 블로킹이라 여기서도 sleep 이 필요 없다.
-    slots = threading.Semaphore(workers)
+    #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.
+    pool = WorkerPool(workers, max_workers, idle_sec, time.monotonic())
     #: 점유가 반복 실패한 task — 같은 것을 무한히 다시 시도해 서버를 두드리지 않도록 건너뛴다.
     skip: set[str] = set()
     #: 서버에 대기 질문이 있는데 한 건도 처리하지 못한 연속 라운드 수(spin 감지).
@@ -687,7 +849,9 @@ def main() -> int:
     #: 연결이 끊겼을 때의 복구 간격(feature-0045). 대기가 아니라 재연결이므로 sleep 이 있다.
     backoff = 0.0
 
-    _log(f"대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. (동시 {workers}건, Ctrl+C 로 종료)")
+    _log(f"대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. "
+         f"(동시 {workers}건에서 시작 · 수요 시 최대 {max_workers} · "
+         f"{int(idle_sec)}초 유휴 시 회수 · Ctrl+C 로 종료)")
     while True:
         # ⚠ **여기서 워커 자리를 잡지 않는다** (codex P1-2, 2026-08-28).
         #
@@ -740,6 +904,17 @@ def main() -> int:
         if fresh:
             _log(f"취소 통보: {', '.join(fresh)} — 진행 중이면 중단합니다.")
 
+        # ── 유휴 슬롯 회수 ─────────────────────────────────────────────────
+        # 여기가 **tick 이다.** 서버가 대기를 최대 55초 보류하므로 이 루프는 적어도 그 간격으로
+        # 돈다 — 시간을 재려고 타이머 스레드를 띄우거나 서버를 두드릴 필요가 없다(폴링 금지와
+        # 정합). 조용한 시간대에는 타임아웃 라운드가 곧 회수 라운드가 된다.
+        # ⚠ 대기 질문이 있으면 회수하지 않는다. 곧 쓸 자리를 버리면 바로 다시 늘려야 하고,
+        #   그 사이 `available=0` 인 창이 생겨 진행이 멈출 수 있다(codex 리뷰 P1 후단).
+        if not (res.get("task_ids") or []):
+            reaped = pool.reap(time.monotonic())
+            if reaped:
+                _log(f"유휴 슬롯 {reaped}개 회수 — 동시 처리 {pool.capacity}건")
+
         # skip 은 영구 블랙리스트가 아니다 — **대기가 실제로 비어서 타임아웃했을 때만** 비운다.
         #
         # 왜 비워야 하나: 다른 러너가 집어 간 작업을 skip 에 넣었는데 그쪽이 죽어 lease 가
@@ -779,10 +954,24 @@ def main() -> int:
             continue
         stalled = 0
 
+        # ── 수요 기반 확장 ─────────────────────────────────────────────────
+        # 목표는 **진행 중 + 대기**다(상한까지). 대기 수만 보면 실행 중인 작업이 쓰는 자리를
+        # 빼고 세어 과소 확장한다(codex 리뷰 P1). 관측된 수요에만 반응한다 — 예측이 빗나가면
+        # 그 비용이 사용자 계정 쿼터로 나간다.
+        added = pool.grow_for(len(pending))
+        if added:
+            _log(f"동시 요청 {len(pending)}건(진행 중 {pool.in_use}) — "
+                 f"슬롯 {added}개 확장, 동시 처리 {pool.capacity}건")
+
         # 자리를 **비차단으로** 잡는다 — 없으면 이번 라운드는 디스패치를 건너뛴다.
         # 그 task 는 서버에 그대로 남아 다음 대기에서 다시 제안되고, 그동안에도 우리는
         # `wait_for_request` 를 계속 부르므로 **취소 통보가 끊기지 않는다**(P1-2 의 요지).
-        if not slots.acquire(blocking=False):
+        #
+        # ⚠ 여기서 `Condition` 으로 블로킹하지 않는 이유가 그것이다. 자리가 날 때까지 막으면
+        #   더 정확해 보이지만, 막힌 동안 서버를 읽지 못해 **취소 인지가 자리 반납에 묶인다**.
+        #   짧은 간격으로 되돌아오는 편이 취소를 더 빨리 본다.
+        sid = pool.try_acquire()
+        if sid is None:
             time.sleep(_DRAINING_RETRY_FLOOR_SEC)
             continue
 
@@ -793,7 +982,7 @@ def main() -> int:
         if claimed.get("_http") == 409:
             _log(f"{task_id}: 이미 다른 세션이 가져갔다 — 건너뜀")
             skip.add(task_id)
-            slots.release()
+            pool.release(sid)
             continue
         if claimed.get("_http") or claimed.get("_failed"):
             # ⚠ `_failed`(연결 실패, `_http == 0`)를 함께 본다 (codex P2-2, 2026-08-28).
@@ -806,18 +995,26 @@ def main() -> int:
             _code = int(claimed.get("_http") or 0)
             if _code and _code < 500 and _code != 429:
                 skip.add(task_id)
-            slots.release()
+            pool.release(sid)
             continue
 
-        def _work(tid: str = task_id, payload: dict = claimed) -> None:
+        def _work(tid: str = task_id, payload: dict = claimed, slot: int = sid) -> None:
             try:
                 handle_one(api, tid, payload, kind, argv, args.cmd, cancels)
             finally:
                 cancels.forget(tid)
-                slots.release()
+                # 반납 시각이 곧 그 슬롯의 `last_used` 다 — 회수 순서가 여기서 정해진다.
+                pool.release(slot)
                 done_once.set()
 
-        threading.Thread(target=_work, daemon=True).start()
+        try:
+            threading.Thread(target=_work, daemon=True).start()
+        except (RuntimeError, OSError) as e:  # 스레드 한도·메모리 부족
+            # 여기서 그냥 터지면 **슬롯과 서버 점유가 함께 샌다** — 슬롯은 busy 인 채로,
+            # task 는 lease 만료까지 남의 눈에 안 보인 채로 묶인다(codex 리뷰 P2).
+            _log(f"{task_id}: 워커 스레드를 시작하지 못했습니다({e}) — 자리를 반납하고 건너뜁니다.")
+            pool.release(sid)
+            continue
         if args.once:
             # 그 한 건이 **끝날 때까지** 기다린다. 바로 반환하면 daemon 스레드가 죽어
             # 답이 제출되지 않는다(`--once` 가 아무것도 안 하는 것과 같아진다).

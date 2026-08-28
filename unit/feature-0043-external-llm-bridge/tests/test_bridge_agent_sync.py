@@ -100,23 +100,34 @@ def test_runner_does_not_poll():
     assert "--poll" not in code, "대기 간격 인자가 생겼다 — 환경 차이를 만든다"
 
 
-def test_runner_waits_for_a_slot_before_asking_the_server():
-    """워커가 다 찼으면 **자리를 기다린 뒤** 서버에 묻는다(2026-08-28).
+def test_runner_reads_the_server_even_while_saturated():
+    """포화 중에도 **서버는 읽는다**. tight loop 방지는 디스패치 **뒤**에 있다.
 
-    순서가 반대면 tight loop 가 된다: 열린 질문이 남아 있는 한 `wait_for_request` 는 즉시
-    응답하므로, 자리가 없는데 계속 물으면 초당 수십 번 서버를 두드린다. 세마포어는 블로킹이라
-    이 대기에도 sleep 이 필요 없다.
+    계약이 2026-08-28 codex 리뷰로 뒤집혔다. 종전은 "자리를 잡은 뒤에 묻는다" 였고, 슬롯이
+    2개일 때는 무해했다. 그런데 기본이 1이 되면서 치명적이 됐다 — 작업 하나가 도는 동안 대기
+    루프가 통째로 멈춰 **새 질문도 취소 통보도 받지 못한다.** 취소는 이 응답 채널로만 오므로,
+    사용자가 중단을 눌러도 최대 `_AI_TIMEOUT_SEC`(1700초) 동안 개인 계정 토큰이 계속 탄다.
+
+    원래 의도(간격 없는 재호출 금지)는 사라지지 않고 **자리를 옮겼다**: 한 건도 시작하지
+    못한 라운드에서만 `wait_for_free()` 로 막는다. 서버는 취소를 한 번만 알리고 점유를 놓으므로
+    (`ai_tools.wait_for_request` 가 같은 교훈으로 그렇게 고쳐졌다) 할 일 없는 즉시-반환이
+    반복되지 않는다.
     """
     import ast
 
-    tree = ast.parse(CANON.read_text(encoding="utf-8"))
+    src = CANON.read_text(encoding="utf-8")
+    tree = ast.parse(src)
     main = next(n for n in ast.walk(tree)
                 if isinstance(n, ast.FunctionDef) and n.name == "main")
-    body = ast.get_source_segment(CANON.read_text(encoding="utf-8"), main) or ""
+    body = ast.get_source_segment(src, main) or ""
     loop = body[body.index("while True:"):]
-    assert "slots.acquire()" in loop, "워커 자리를 기다리지 않는다"
-    assert loop.index("slots.acquire()") < loop.index('api.call("wait_for_request"'), (
-        "자리를 잡기 전에 서버에 묻는다 — 워커가 다 차면 tight loop 가 된다")
+    assert loop.index('api.call("wait_for_request"') < loop.index("pool.try_acquire()"), (
+        "자리를 잡은 뒤에 서버를 읽는다 — 포화 중 취소·새 질문을 놓친다")
+    # 간격 없는 재호출 금지: 자리가 없으면 짧은 간격을 두고 되돌아온다(블로킹이 아니다 —
+    # 막으면 그동안 서버를 못 읽어 취소 인지가 자리 반납에 묶인다).
+    guard = loop[loop.index("if sid is None:"):]
+    assert "time.sleep(_DRAINING_RETRY_FLOOR_SEC)" in guard[:200], (
+        "자리가 없을 때 간격 없이 되돌아온다 — 서버를 두드리는 hot loop 가 된다")
 
 
 def test_runner_claims_in_the_wait_loop_not_in_the_worker():

@@ -482,11 +482,20 @@ def test_bridge_pending_is_not_mixed_into_ask_inflight():
 # ── ⑥ 병렬 러너 ─────────────────────────────────────────────────────────────
 
 
-def test_runner_is_parallel_by_default():
-    """기본이 동시 처리다 — 직렬이면 긴 조사 하나가 뒤따르는 짧은 질문을 통째로 막는다."""
+def test_runner_scales_concurrency_to_demand():
+    """동시 처리가 **수요를 따라간다** — 긴 조사 하나가 뒤따르는 짧은 질문을 막지 않는다.
+
+    계약이 2026-08-28 사용자 결정으로 바뀌었다. 종전은 "기본 2개 고정"(`Semaphore(workers)`)
+    이었는데, 그러면 질문이 하나뿐인 대부분의 시간에도 쓰지 않을 용량을 들고 있다. 지금은
+    **1에서 시작해 관측된 수요만큼 늘고, 안 쓰면 오래된 것부터 회수**한다.
+
+    막지 않는다는 원래 의도는 유지된다 — 오히려 상한(8)까지 늘 수 있어 종전(2)보다 넓다.
+    """
     src = _src(RUNNER)
-    assert "_DEFAULT_WORKERS = " in src and "--workers" in src
-    assert "threading.Semaphore(workers)" in src, "동시 처리 상한이 세마포어로 잡히지 않는다"
+    assert "_DEFAULT_WORKERS = 1" in src, "1개에서 시작하지 않는다"
+    assert "--workers" in src and "--max-workers" in src
+    assert "class WorkerPool" in src, "동시 처리 상한이 동적 풀로 잡히지 않는다"
+    assert "threading.Semaphore(" not in src, "고정 세마포어가 남아 있다(용량이 안 변한다)"
 
 
 def test_runner_cancel_registry_is_thread_safe():
@@ -515,7 +524,10 @@ def test_runner_once_waits_for_the_worker():
 
 @pytest.mark.parametrize("needle,why", [
     ("skip.add(task_id)", "점유 실패가 반복되면 같은 task 를 무한히 다시 시도한다"),
-    ("slots.release()", "실패 경로에서 워커 자리를 반납하지 않는다(영구 고갈)"),
+    # 2026-08-28: 종전엔 `slots.release()` 를 검사했다. 지금은 실패 경로가 자리를 **잡기 전에**
+    # 빠지므로 반납할 것이 없고(구조적 해소), 자리를 잡은 뒤 점유가 실패하는 경로만 반납한다.
+    # 시각은 이제 락 안에서 만든다(락 밖 timestamp 가 정렬 불변식을 깼다 — codex P2).
+    ("pool.release(sid)", "점유 실패 시 잡아 둔 자리를 반납하지 않는다(영구 고갈)"),
 ])
 def test_runner_wait_loop_cannot_spin(needle: str, why: str):
     """대기 루프가 서버를 두드리는 tight loop 로 변하지 않는다."""
@@ -579,11 +591,13 @@ def test_runner_keeps_listening_for_cancels_while_workers_are_busy():
     #   코드로 오인해 "아직 결함이 있다" 고 오판한다.
     main = "\n".join(l for l in main.split("\n") if not l.strip().startswith("#"))
     loop = main[main.index("while True:"):]
+    # 2026-08-28: 고정 세마포어 → 동적 `WorkerPool`. **계약은 그대로**(대기가 취득보다 앞 ·
+    # 취득은 비차단) — 검사 대상만 따라간다. `try_acquire()` 는 이름 그대로 블로킹하지 않는다.
     wait_at = loop.index('api.call("wait_for_request"')
-    acq_at = loop.index("slots.acquire(")
+    acq_at = loop.index("pool.try_acquire()")
     assert wait_at < acq_at, (
         "워커 자리를 대기보다 먼저 잡는다 — 자리가 없으면 취소 통보도 함께 끊긴다")
-    assert "slots.acquire(blocking=False)" in loop, (
+    assert "sid = pool.try_acquire()" in loop and "if sid is None:" in loop, (
         "자리 획득이 차단형이다 — 거기서 멈추면 그동안 취소를 못 듣는다")
 
 
