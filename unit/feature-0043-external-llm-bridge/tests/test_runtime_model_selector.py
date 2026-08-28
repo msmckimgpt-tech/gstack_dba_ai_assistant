@@ -169,7 +169,10 @@ def test_build_cmd_refuses_values_it_did_not_offer(model, effort):
     """
     mod = _load_runner()
     cmd = mod.build_cmd("claude", "질문", model, effort)
-    assert cmd == ["claude", "-p", "질문"], f"거부되지 않은 값: {model!r}/{effort!r}"
+    # 기대값은 표의 base argv 에서 유도한다 — 호출 형태(`--strict-mcp-config` 등)가 바뀌어도
+    # 이 테스트가 지키려는 것("신고 밖 값은 인자가 되지 않는다")은 그대로여야 한다.
+    base = [a.replace("{prompt}", "질문") for a in mod._RUNTIME_SPECS["claude"]["argv"]]
+    assert cmd == base, f"거부되지 않은 값: {model!r}/{effort!r}"
 
 
 def test_build_cmd_keeps_prompt_as_the_last_positional():
@@ -454,15 +457,17 @@ def test_build_cmd_checks_the_actual_report_not_the_static_table():
     report = [{"runtime": "codex", "label": "Codex",
                "models": [{"value": "gpt-5.1-codex", "label": "x"}],
                "efforts": [{"value": "low", "label": "낮음"}]}]
+    # 기대값은 표의 base argv 에서 유도한다(호출 형태 변경에 깨지지 않게).
+    _claude = [a.replace("{prompt}", "Q") for a in mod._RUNTIME_SPECS["claude"]["argv"]]
     # 신고에 없는 런타임의 모델 -> 인자가 되지 않는다(표에는 있다).
-    assert mod.build_cmd("claude", "Q", "opus", "max", report) == ["claude", "-p", "Q"]
+    assert mod.build_cmd("claude", "Q", "opus", "max", report) == _claude
     # 신고에 있는 것은 그대로 인자가 된다.
     assert mod.build_cmd("codex", "Q", "gpt-5.1-codex", "low", report) == [
         "codex", "exec", "--skip-git-repo-check",
         "-m", "gpt-5.1-codex", "-c", "model_reasoning_effort=low", "Q"]
     # 신고를 주지 않으면 정적 표로 폴백한다(단위 테스트·구 호출부 호환).
-    assert mod.build_cmd("claude", "Q", "opus", None) == [
-        "claude", "-p", "--model", "opus", "Q"]
+    assert mod.build_cmd("claude", "Q", "opus", None) == \
+        _claude[:-1] + ["--model", "opus", "Q"]
 
 
 def test_ollama_path_also_validates_against_the_report():

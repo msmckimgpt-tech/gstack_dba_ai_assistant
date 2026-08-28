@@ -1183,8 +1183,11 @@ def test_runner_build_cmd_drops_unoffered_values():
     spec.loader.exec_module(mod)
 
     # 신고 목록에 있는 값 → 실제 인자가 된다.
-    assert mod.build_cmd("claude", "Q", "sonnet", "low") == [
-        "claude", "-p", "--model", "sonnet", "--effort", "low", "Q"]
+    # base argv 는 표에서 유도한다 — 호출 형태(`--strict-mcp-config` 등)가 바뀌어도 이 테스트가
+    # 지키려는 것("표 안 값만 인자가 된다")은 그대로여야 한다.
+    _claude_base = [a for a in mod._RUNTIME_SPECS["claude"]["argv"] if a != "{prompt}"]
+    assert mod.build_cmd("claude", "Q", "sonnet", "low") == \
+        _claude_base + ["--model", "sonnet", "--effort", "low", "Q"]
     # codex 는 effort 플래그가 config override 형태다(런타임마다 다르다).
     assert mod.build_cmd("codex", "Q", "gpt-5.1-codex", "high") == [
         "codex", "exec", "--skip-git-repo-check",
@@ -1193,9 +1196,9 @@ def test_runner_build_cmd_drops_unoffered_values():
     assert mod.build_cmd("gemini", "Q", "gemini-2.5-pro", "high") == [
         "gemini", "-p", "-m", "gemini-2.5-pro", "Q"]
     # 표 밖 값(옵션 위장·주입 시도)은 **조용히 버려진다** — 프롬프트만 남는다.
-    assert mod.build_cmd("claude", "Q", "--dangerously-skip-permissions", "$(rm -rf /)") == [
-        "claude", "-p", "Q"]
-    assert mod.build_cmd("claude", "Q", "claude-haiku-4", None) == ["claude", "-p", "Q"], (
+    assert mod.build_cmd("claude", "Q", "--dangerously-skip-permissions", "$(rm -rf /)") == \
+        _claude_base + ["Q"]
+    assert mod.build_cmd("claude", "Q", "claude-haiku-4", None) == _claude_base + ["Q"], (
         "서버 alias 가 인자로 새어 나간다 — P0-T 가 겪은 바로 그 실패 경로")
     # 프롬프트는 항상 마지막 위치 인자이고, 플래그는 그 앞에 온다(뒤에 붙으면 프롬프트에 먹힌다).
     assert mod.build_cmd("claude", "Q", "opus", None)[-1] == "Q"
