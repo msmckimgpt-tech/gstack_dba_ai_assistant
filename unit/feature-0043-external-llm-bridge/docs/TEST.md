@@ -91,6 +91,23 @@ source_of_truth: true
 | TEST-20260828T230000-timeout | `_CAPS_PROBE_TIMEOUT_SEC` | `float(env or N)` 함정으로 0 이 되지 않는다(실측 codex 112s) | AC-76 |
 | TEST-20260828T230000-parallel | `detect_runtimes` | 여러 CLI 를 동시에 묻는다(순차면 응답시간의 합) | AC-76 |
 
+| TEST-20260828T171500-strictmcp | `build_cmd` | claude 호출에 `--strict-mcp-config` 가 **실제로 실린다**(표가 아니라 조립 결과) | AC-20260828T171500-tool-permission-friction-1 |
+| TEST-20260828T171500-flagpos | `build_cmd` | 모델·등급 선택 경로에서도 플래그가 프롬프트 **앞**에 남는다 | AC-20260828T171500-tool-permission-friction-1 |
+| TEST-20260828T171500-noconfig | `build_cmd` | `--mcp-config` 미동반 — 배제가 교체로 바뀌지 않는다 | AC-20260828T171500-tool-permission-friction-1 |
+| TEST-20260828T171500-nobypass | `_RUNTIME_SPECS` | 어떤 런타임에도 권한 우회 플래그가 없다(보안 계약 회귀 잠금) | AC-20260828T171500-tool-permission-friction-2 |
+| TEST-20260828T171500-noask | `compose_prompt` | 승인 요구 금지 + **이유**(사용자가 승인 절차에 접근 불가) | AC-20260828T171500-tool-permission-friction-4 |
+| TEST-20260828T171500-onfail | `compose_prompt` | 실패 시 대체 행동(실패 사실 기재 + 확인 범위까지 답) | AC-20260828T171500-tool-permission-friction-4 |
+| TEST-20260828T171500-onecred | `compose_prompt` | 토큰 단일화 + 교차 계정 위험 고지 | AC-20260828T171500-tool-permission-friction-4 |
+| TEST-20260828T171500-allpaths | `compose_prompt` | 첨부·이전대화·지침·scope 어느 조합에도 계약이 실린다 | AC-20260828T171500-tool-permission-friction-4 |
+
+| TEST-20260828T171500-reopen | `_coerce_flag` | 학습 플래그로 MCP·권한·도구·샌드박스 축을 되열 수 없다(11종) | AC-20260828T171500-tool-permission-friction-3 |
+| TEST-20260828T171500-legit | `_coerce_flag` | 정당한 모델·등급 플래그는 그대로 통과(codex `-c model_reasoning_effort=` 포함) | AC-20260828T171500-tool-permission-friction-3 |
+| TEST-20260828T171500-customwarn | `_warn_custom_cmd_without_mcp_isolation` | `--cmd` claude 에 배제가 없으면 1회 경고 · 오발 없음 | AC-20260828T171500-tool-permission-friction-6 |
+| TEST-20260828T171500-keepmcp | `_KEEP_MCP` | 탈출구 존재 + 기본값은 배제 | AC-20260828T171500-tool-permission-friction-6 |
+| TEST-20260828T171500-annotate | `annotate_approval_request` | 라이브 원문 4종 감지 + 결재 도메인 정상 답변 무손상 | AC-20260828T171500-tool-permission-friction-5 |
+| TEST-20260828T171500-wiring | `handle_one` | 감지가 제출 경로에 배선 · 제목 분리 **뒤** | AC-20260828T171500-tool-permission-friction-5 |
+| TEST-20260828T171500-clicheck | `_ensure_strict_mcp_supported` | 확인 실패 시 플래그 유지(드러나는 실패 우선) | AC-20260828T171500-tool-permission-friction-7 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

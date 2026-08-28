@@ -21,6 +21,12 @@
                         / `gemini -p` / ollama HTTP), 사용자가 `--ai` 로 지목한 PATH 상의 CLI,
                         또는 `--cmd` 로 직접 준 명령. **실행 파일은 언제나 이 머신에 이미
                         설치된 것**이고(`_which` 로 확인), 우리가 내려받거나 만들지 않는다.
+    권한은 낮추지 않고   claude 는 `--strict-mcp-config` 로 부른다 — 네 CLI 에 설정된 MCP 서버를
+    **좁힌다**          이 호출에서 **쓰지 않는다**는 뜻이다(권한 우회 플래그가 아니다). 조사는
+                        프롬프트에 실린 이 task 전용 토큰의 HTTP 경로로만 하고, 네가 다른 곳에
+                        설정해 둔 자격증명은 건드리지 않는다. 우리는 `--dangerously-skip-
+                        permissions` 나 `--permission-mode bypassPermissions` 를 쓰지 않는다.
+                        → `_RUNTIME_SPECS["claude"]["argv"]` 를 직접 보면 된다.
     기동 시 1회 질의     각 CLI 에게 "너는 어떤 모델·추론 수준을 쓸 수 있나" 를 묻는다
     (P0-Z4)             (`_CAPS_PROBE_PROMPT`). 보내는 것은 **그 질문 문장 하나뿐**이고 이
                         머신의 파일·환경·대화 내용은 실리지 않는다. 답은
@@ -650,10 +656,52 @@ class ActiveTasks:
 #: CLI 가 새 세대로 넘어간 날 목록이 통째로 죽고, 그 죽음은 **사용자 화면에서** 드러난다.
 #: 실조회가 가능한 런타임(ollama)은 정적 목록 대신 그 결과를 쓴다 — 아는 방법이 있으면
 #: 추측하지 않는다.
+#: 학습 플래그(`_coerce_flag`)로 **절대 들어오면 안 되는** 토큰 조각 — 소문자 부분일치.
+#: 모델·추론등급을 지정하는 정당한 플래그(`--model`·`-m`·`--effort`·`-c
+#: model_reasoning_effort=…`)에는 아래 조각이 하나도 들어가지 않는다. 반대로 여기 걸리는
+#: 것들은 전부 **우리가 방금 좁힌 축을 다시 여는** 플래그다 (codex P1-1).
+_FORBIDDEN_FLAG_FRAGMENTS: tuple[str, ...] = (
+    "mcp",            # --mcp-config / --strict-mcp-config / -c mcp_servers=…
+    "permission",     # --permission-mode
+    "bypass",         # bypassPermissions
+    "dangerous",      # --dangerously-skip-permissions
+    "tool",           # --allowedTools / --disallowed-tools
+    "sandbox",        # codex -s / -c sandbox_permissions=…
+    "setting",        # --settings
+    "system-prompt",  # --append-system-prompt
+    "system_prompt",
+    "add-dir",
+)
+
+#: 상주 MCP 서버를 **살려 두고 싶은** 사용자의 탈출구 (codex P1-3).
+#: 기본은 배제다 — 라이브 사고의 원인이 그 표면이었기 때문이다(사용자 결정 2026-08-28).
+#: 그러나 배제는 mysql-ai 만이 아니라 그 사용자가 붙여 둔 **모든** MCP 서버에 걸린다
+#: (`--strict-mcp-config` 는 `--mcp-config` 로 준 것만 쓴다는 뜻이므로, 아무것도 주지 않으면
+#: 전부 사라진다). GitHub·사내 검색 MCP 를 쓰던 사람에게 그것은 기능 손실이다. 그 사람이
+#: 되돌릴 수 있는 자리를 남긴다 — 대신 되돌리면 만료된 토큰 경합도 함께 돌아온다.
+_KEEP_MCP = os.environ.get("BRIDGE_KEEP_MCP", "").strip().lower() in ("1", "true", "yes", "on")
+
+#: claude 호출에서 MCP 표면을 끊는 플래그. 위 `_KEEP_MCP` 와 아래 런타임 지원 확인
+#: (`_claude_supports_strict_mcp`) 두 조건이 모두 통과할 때만 실린다.
+_STRICT_MCP_FLAG = "--strict-mcp-config"
+
 _RUNTIME_SPECS: dict[str, dict] = {
     "claude": {
         "label": "Claude",
-        "argv": ["claude", "-p", "{prompt}"],
+        # `--strict-mcp-config` 는 **경합하는 자격증명을 끊는 자리**다 (2026-08-28 라이브).
+        # 러너는 프롬프트에 이 task 에 결속된 토큰을 실어 보내는데, 같은 머신의 `claude` 에
+        # 같은 서비스의 MCP 서버가 상주 설정돼 있으면(`~/.claude.json` 의 별개 `mat_` 토큰)
+        # 모델은 그 도구를 먼저 집는다. 그 토큰이 만료된 순간 조사가 통째로 401 이 되고,
+        # 사용자 화면에는 「권한을 승인해 달라」 는, 승인할 대상조차 없는 답이 나갔다.
+        # 이 플래그로 그 표면을 아예 없앤다 — 조사 도구 8종은 프롬프트의 HTTP 경로로 전부
+        # 제공되므로 **조사 능력은 줄지 않는다**(줄어드는 것은 만료된 두 번째 인증 경로뿐).
+        # `--mcp-config` 를 함께 주지 않으므로 MCP 서버는 0개가 된다(실측: 도구 목록 없음).
+        # ⚠ 이것은 사용자의 **권한 설정을 낮추는 것이 아니다** — 오히려 좁힌다. 파일 상단
+        #   보안 계약의 「네 런타임의 권한 설정이 마지막 방어선」 은 그대로 유지된다.
+        # ⚠ 되돌리는 자리: `BRIDGE_KEEP_MCP=1` (다른 MCP 서버를 함께 쓰던 사용자용, codex P1-3).
+        "argv": (["claude", "-p"]
+                 + ([] if _KEEP_MCP else [_STRICT_MCP_FLAG])
+                 + ["{prompt}"]),
         "model": ["--model", "{model}"],
         "effort": ["--effort", "{effort}"],
         "models": [
@@ -671,6 +719,10 @@ _RUNTIME_SPECS: dict[str, dict] = {
     },
     "codex": {
         "label": "Codex",
+        # ⚠ claude 의 `--strict-mcp-config` 에 해당하는 플래그가 codex 에는 없다 (실측
+        #   `codex exec --help`, 2026-08-28). 그래서 이 런타임에서는 MCP 경합을 **실행 측에서
+        #   끊지 못하고**, `compose_prompt` 의 「이 토큰이 유일한 자격증명이다」 문장만이
+        #   방어선이다. 없는 플래그를 있는 것처럼 넣으면 CLI 가 통째로 실패해 답이 오지 않는다.
         "argv": ["codex", "exec", "--skip-git-repo-check", "{prompt}"],
         "model": ["-m", "{model}"],
         # config override 로 넘긴다 — codex 에는 전용 effort 플래그가 없다.
@@ -957,6 +1009,17 @@ def _coerce_flag(raw: object, placeholder: str) -> list[str] | None:
     if len(holders) != 1:
         return None
     if any(not p.startswith("-") for p in parts if placeholder not in p):
+        return None
+    # ④ **위험한 축의 플래그 이름은 거부한다** (codex REV-20260828T171500 P1-1).
+    #    ①~③ 은 "셸 실행" 과 "임의 플래그 따라붙기" 를 막지만, 형태가 멀쩡한 **한 개의 나쁜
+    #    플래그**는 통과시킨다 — `["--mcp-config", "{model}"]` 는 토큰 2개·치환자 1개·옵션
+    #    시작이라 ①~③ 을 전부 만족하면서 방금 우리가 없앤 MCP 표면을 되살리고,
+    #    `["--permission-mode", "{model}"]` + 모델값 `bypassPermissions` 는 권한 경계를 연다.
+    #    모델·등급을 지정하는 정당한 플래그에는 아래 조각이 들어갈 일이 없다.
+    #    ⚠ 치환자를 **포함한 토큰도 검사한다** — `-c mcp_servers={effort}` 처럼 값 자리에
+    #      숨는 형태가 있기 때문이다(codex 의 `-c` config override 축).
+    low = " ".join(parts).lower()
+    if any(bad in low for bad in _FORBIDDEN_FLAG_FRAGMENTS):
         return None
     return parts
 
@@ -1355,6 +1418,62 @@ def build_cmd(runtime: str, prompt: str, model: str | None = None,
     return out + flags
 
 
+def _ensure_strict_mcp_supported(kind: str, exe: str = "claude") -> bool:
+    """claude 가 `--strict-mcp-config` 를 아는지 기동 시 1회 확인한다. (플래그가 남으면 True)
+
+    모르는 버전에 넘기면 **모든 질문이** unknown option 으로 죽는다 — 사용자에게는 "AI 가
+    답을 안 한다" 로만 보인다 (codex P2-2). 그래서 확인하고, 없으면 표에서 빼고 말한다.
+
+    **확인 자체가 실패하면(미설치·타임아웃) 플래그를 남긴다.** 두 오류의 값이 다르기
+    때문이다 — 잘못 남기면 즉시·시끄럽게 실패해서 고칠 수 있고, 잘못 빼면 원 결함이
+    조용히 돌아와 아무도 모른다. 드러나는 쪽을 고른다.
+    """
+    if kind != "claude" or _KEEP_MCP:
+        return False
+    spec_argv = list((_RUNTIME_SPECS.get("claude") or {}).get("argv") or [])
+    if _STRICT_MCP_FLAG not in spec_argv:
+        return False
+    try:
+        proc = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=30)
+        helptext = (proc.stdout or "") + (proc.stderr or "")
+    except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "확인 못 했다" 로 같다)
+        _log(f"참고: {exe} --help 로 {_STRICT_MCP_FLAG} 지원을 확인하지 못했습니다. "
+             "플래그는 그대로 씁니다(문제가 있으면 첫 질문에서 곧바로 드러납니다).")
+        return True
+    if _STRICT_MCP_FLAG in helptext:
+        return True
+    _RUNTIME_SPECS["claude"]["argv"] = [a for a in spec_argv if a != _STRICT_MCP_FLAG]
+    _log(f"경고: 이 claude 는 {_STRICT_MCP_FLAG} 를 지원하지 않습니다(구버전). 플래그를 빼고 "
+         "진행하지만, 이 머신에 설정된 MCP 서버가 그대로 붙습니다 — 같은 서비스의 상주 토큰이 "
+         "만료돼 있으면 조사가 401 로 막힐 수 있습니다. claude 를 업데이트하는 것을 권합니다.")
+    return False
+
+
+#: `--cmd` 경고를 이미 냈는가 (매 질문마다 같은 줄을 찍지 않는다).
+_custom_cmd_warned = False
+
+
+def _warn_custom_cmd_without_mcp_isolation(argv: list[str]) -> bool:
+    """claude 를 부르는 `--cmd` 에 MCP 배제가 없으면 **1회** 경고한다. (경고했으면 True)
+
+    판정은 실행 파일 이름으로만 한다 — 경로(`/usr/local/bin/claude`)로 줄 수도 있어서
+    basename 을 본다. 다른 CLI 를 부르는 `--cmd` 는 대상이 아니다(그 CLI 에는 이 플래그가
+    없다).
+    """
+    global _custom_cmd_warned
+    if _custom_cmd_warned or _KEEP_MCP or not argv:
+        return False
+    if os.path.basename(str(argv[0])).lower() not in ("claude", "claude.exe"):
+        return False
+    if _STRICT_MCP_FLAG in [str(a) for a in argv]:
+        return False
+    _custom_cmd_warned = True
+    _log(f"경고: --cmd 의 claude 명령에 {_STRICT_MCP_FLAG} 가 없습니다. 이 머신에 설정된 MCP "
+         "서버(같은 서비스의 상주 토큰 포함)가 그대로 붙어, 만료된 토큰이 조사를 401 로 "
+         f"막을 수 있습니다. 명령에 {_STRICT_MCP_FLAG} 를 추가하는 것을 권합니다.")
+    return True
+
+
 def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
                  cancel_check=None, model: str | None = None,
                  effort: str | None = None,
@@ -1376,6 +1495,12 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     if custom:
         argv = shlex.split(custom)
         kind = "custom"
+        # ⚠ `--cmd` 는 사용자가 명령을 **통째로** 준 것이라 우리가 플래그를 얹지 않는다(얹으면
+        #   중복 지정으로 CLI 가 거절한다). 그래서 claude 를 부르는 custom 명령에는 MCP 배제가
+        #   빠지고, 그 사용자는 라이브 사고와 **같은 경합**을 그대로 만난다 (codex P1-2).
+        #   명령을 자동으로 고치지는 않는다 — 사용자가 준 것을 우리가 바꾸면 `--cmd` 의 의미가
+        #   사라진다. 대신 **말한다**. 조용히 놔두면 그 사용자만 원인 모를 재발을 겪는다.
+        _warn_custom_cmd_without_mcp_isolation(argv)
     if kind == "ollama":
         # ⚠ 이 경로는 `build_cmd` 를 타지 않으므로 **여기서 직접 대조한다**
         # (codex REV-20260828T170000 P1-5). 안 하면 서버가 준 임의 문자열이 그대로 생성 요청의
@@ -1442,6 +1567,14 @@ def compose_prompt(api: Api, task: dict) -> str:
         #   (codex REV-20260828T040000 P1).
         "필요하면 이 도구들을 HTTP 로 직접 호출해 실제 DB 를 조사하라"
         " (POST · JSON 본문 · 헤더에 Authorization: Bearer <아래 토큰>).",
+        # ⚠ 아래 토큰이 **유일한** 자격증명이라고 못 박는다. 러너가 부르는 CLI 에 같은 서비스의
+        #   MCP 서버가 상주 설정돼 있으면(그 헤더는 이 task 와 무관한 별개 토큰이다) 모델은
+        #   프롬프트의 토큰 대신 그 도구를 먼저 집는다 — 그 토큰이 만료돼 있으면 조사가 통째로
+        #   401 이 되고, 그 실패가 아래 「승인 요구 금지」가 없으면 승인 요청으로 둔갑한다
+        #   (라이브 실측 2026-08-28). 실행 측 배제는 `_RUNTIME_SPECS` 의
+        #   `--strict-mcp-config` 가 하고, 이 문장은 그 플래그가 없는 런타임에서의 방어선이다.
+        "  이 토큰이 조사의 유일한 자격증명이다 — 다른 경로에 설정된 자격증명(같은 서비스의"
+        " 상주 MCP 서버 등)을 쓰지 마라. 그쪽은 이 질문과 무관한 계정일 수 있다.",
         f"  공통 본문 = {{\"task_id\":\"{task.get('task_id')}\","
         " \"reason\":\"지금 이걸 왜 조사하는지 한 문장\", \"arguments\":{...}}",
         f"  {api.base}/api/ai/tools/list_schemas      arguments: {{}}",
@@ -1462,6 +1595,18 @@ def compose_prompt(api: Api, task: dict) -> str:
         " 으로 표시된다.",
         "",
         "추측하지 말고 조사한 사실만 쓰라. 확인하지 못한 것은 '미확인' 이라고 밝혀라.",
+        "",
+        # ⚠ 이 답을 읽는 사람은 **웹 대화창의 사용자**다. 네 실행 환경(러너 머신의 CLI)의 승인
+        #   대화에 그 사람은 접근할 수 없고, 애초에 승인할 대상도 없다. 그런데 도구 호출이
+        #   실패하면(특히 401) 모델은 그것을 「권한이 없다」로 읽고 **사용자에게 승인을 요청하는
+        #   답**을 만든다 — 라이브에서 실제로 그렇게 나갔고, 사용자는 승인할 방법도 이유도 없는
+        #   지시를 두 턴 연속 받았다(2026-08-28 제보). 실행 불가능한 지시는 답이 아니다.
+        "도구 사용 권한이나 승인을 사용자에게 요구하지 마라 — 이 답을 읽는 사람은 네 실행"
+        " 환경의 승인 절차에 접근할 수 없고, 승인할 대상도 없다.",
+        "조사 도구가 실패하면(401·403·타임아웃 등) 승인을 요청하지 말고, **무엇이 어떻게"
+        " 실패했는지**를 답변에 그대로 적은 뒤 확인한 범위까지 답하라. 재시도·승인 요청으로"
+        " 답을 대신하지 마라.",
+        "",
         "답변만 출력하라(머리말·맺음말 없이).",
         # 제목 축: 러너는 CLI 의 stdout 만 받으므로 별도 채널이 없다. 마지막 한 줄을 규약으로
         # 삼고 제출 전에 떼어낸다 — 마커가 없으면 답변은 그대로다(파싱 실패가 답을 망치지 않음).
@@ -1482,6 +1627,50 @@ def compose_prompt(api: Api, task: dict) -> str:
     #   블록을 정확히 만들어 냈다(2026-08-28) — 빠진 것은 안내가 아니라 **서버의 처리**였다.
     parts += ["", "── 질문 ──", q]
     return "\n".join(parts)
+
+
+#: 「사용자에게 도구 승인을 요구하는」 답변의 표지. 프롬프트 계약(compose_prompt)은 **지시**이지
+#: 집행이 아니다 — 모델이 따르지 않으면 그 답이 그대로 화면에 간다 (codex P1-4). 여기서 그것을
+#: 잡아 **사용자에게 할 일이 없다는 사실을 덧붙인다.**
+#:
+#: 왜 답변을 지우거나 재생성하지 않는가: 오탐이 있을 수 있고(질문 자체가 결재·승인 도메인일 수
+#: 있다), 그때 지우면 정상 답을 잃는다. 재생성은 한 번 더 왕복하는 비용이고 같은 답이 나올
+#: 수도 있다. **더하기만 하는 조치**는 오탐 비용이 한 줄이다.
+_APPROVAL_REQUEST_PATTERNS: tuple[str, ...] = (
+    r"권한\s*(을|이)?\s*승인",
+    r"승인\s*(을)?\s*(해\s*주|부탁)",
+    r"도구\s*사용\s*(을)?\s*승인",
+    r"승인해\s*주(세요|시면|신)",
+    r"승인하신\s*(후|뒤)",
+    r"approve\s+(the\s+)?(tool|permission)",
+    r"grant\s+(me\s+)?(tool\s+)?permission",
+)
+
+#: 덧붙이는 한 줄. 「네가 할 일은 없다」를 말한다 — 사용자가 승인 절차를 찾아 헤매는 것이
+#: 원래 마찰이었다.
+_APPROVAL_REQUEST_NOTE = (
+    "> 참고: 위 답변이 도구 사용 승인을 요청하고 있으나 **이 화면에는 승인 절차가 없고,"
+    " 승인이 필요하지도 않습니다.** 연결된 AI 가 도구 호출 실패(대개 인증 만료)를 권한 문제로"
+    " 잘못 해석한 것입니다 — 사용자가 하실 일은 없습니다. 계속 반복되면 러너를 재기동해"
+    " 주세요."
+)
+
+
+def flag_approval_request(answer: str) -> bool:
+    """답변이 사용자에게 도구 승인을 요구하는가."""
+    body = str(answer or "")
+    return any(re.search(p, body, re.IGNORECASE) for p in _APPROVAL_REQUEST_PATTERNS)
+
+
+def annotate_approval_request(answer: str) -> tuple[str, bool]:
+    """승인 요구가 감지되면 안내 한 줄을 덧붙인다. `(본문, 감지여부)`.
+
+    ⚠ **제목 분리 뒤에** 부른다 — 앞에서 부르면 이 줄이 마지막이 되어 제목 규약 위치를 밀어낸다
+    (같은 함정을 `unmet` 고지에서 이미 겪었다).
+    """
+    if not flag_approval_request(answer):
+        return answer, False
+    return (str(answer or "").rstrip() + "\n\n" + _APPROVAL_REQUEST_NOTE), True
 
 
 def split_title(answer: str) -> tuple[str, str]:
@@ -1594,6 +1783,14 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
             f"\n\n> 참고: 요청하신 {' · '.join(unmet)} 은(는) 이 AI 에서 쓸 수 없어"
             " 기본 설정으로 답했습니다."
         )
+
+    # 프롬프트 계약은 지시이지 집행이 아니다 — 따르지 않은 답이 그대로 화면에 가는 것을 여기서
+    # 막는다 (codex P1-4). 답을 지우지 않고 「할 일이 없다」를 덧붙인다. 제목 분리 **뒤**다.
+    answer, _asked_approval = annotate_approval_request(answer)
+    if _asked_approval:
+        _log(f"{task_id}: 답변이 사용자에게 도구 승인을 요구했다 — 안내를 덧붙였다. "
+             "(연결된 AI 가 도구 호출 실패를 권한 문제로 오해한 신호. "
+             f"claude 라면 {_STRICT_MCP_FLAG} 적용 여부와 토큰 유효성을 확인하라)")
 
     payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
     if title:
@@ -1803,6 +2000,10 @@ def main() -> int:
             return 2
         kind, argv = picked
     _log(f"AI = {kind}" + (f" ({args.cmd})" if args.cmd else ""))
+    # 구버전 claude 는 `--strict-mcp-config` 를 모른다 — 그러면 **모든 질문이** unknown option
+    # 으로 실패한다 (codex P2-2). 기동 시 한 번 확인해서, 없으면 플래그를 빼고 그 사실을 크게
+    # 말한다. 조용히 빼면 원 결함(만료 MCP 토큰 경합)이 아무 표시 없이 돌아온다.
+    _ensure_strict_mcp_supported(kind)
     save_conf(args.base, args.ca, kind, args.cmd)
 
     # ⚠ 연결 확인에 `wait_for_request` 를 쓰면 안 된다 (라이브 실측 2026-08-28).
