@@ -1006,6 +1006,10 @@ def compose_prompt(api: Api, task: dict) -> str:
                   f"  본문 읽기: POST {api.base}/api/ai/tools/read_task_attachment "
                   f"{{\"task_id\":\"{task.get('task_id')}\",\"attachment_id\":<id>}}",
                   "  첨부가 있는 질문은 반드시 본문을 읽고 답하라."]
+    # ⚠ 첨부 **쓰기** 규약(```attachment-edit``` / ```attachment-new```)은 여기 적지 않는다 —
+    #   `system_prompt`(agent_core base)가 이미 싣고 온다. 여기에 또 쓰면 두 벌이 되고, 형식이
+    #   갈리는 순간 서버 파서가 아는 쪽만 파일이 된다. 실측에서도 개인 AI 는 이 안내 없이
+    #   블록을 정확히 만들어 냈다(2026-08-28) — 빠진 것은 안내가 아니라 **서버의 처리**였다.
     parts += ["", "── 질문 ──", q]
     return "\n".join(parts)
 

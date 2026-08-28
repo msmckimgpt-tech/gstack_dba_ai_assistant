@@ -417,6 +417,12 @@ def _fake_browser_stack(mod, monkeypatch):
         def close(self):
             self.closed = True
 
+        # 운영 코드는 "열려 있는 탭 수" 를 세어 마지막 탭을 남긴다(2bf63215). 더블에 이 메서드가
+        # 없으면 그 계산이 AttributeError 로 죽고, `finally` 의 except 가 삼켜 **아무 탭도 닫히지
+        # 않는다** — 테스트는 조용히 다른 것을 검증하게 된다.
+        def is_closed(self):
+            return self.closed
+
     class Ctx:
         def __init__(self):
             self.pages = [P()]
@@ -438,7 +444,15 @@ def _fake_browser_stack(mod, monkeypatch):
         def stop(self):
             pass
 
-    monkeypatch.setattr(mod, "_connect", lambda _ep: (PW(), Browser(), ctx.pages[0]))
+    # `_connect` 는 `want_created_flag` 를 받고, 참이면 `created` 를 덧붙인 4-tuple 을 준다
+    # (2bf63215 에서 운영 코드가 그렇게 바뀌었다). 더블이 옛 서명이면 `_drive_new_page` 가
+    # TypeError 로 죽어 **이 파일의 4건이 통째로 실패**한다.
+    # 여기서는 탭이 미리 있는 상황이므로 `created=False` — 운영과 같은 의미다.
+    def _fake_connect(_ep, *, want_created_flag: bool = False):
+        base = (PW(), Browser(), ctx.pages[0])
+        return (*base, False) if want_created_flag else base
+
+    monkeypatch.setattr(mod, "_connect", _fake_connect)
     return ctx
 
 
@@ -473,9 +487,14 @@ def test_drive_new_page_uses_and_closes_its_own_tab(mod):
     class P:
         def __init__(self, name):
             self.name = name
+            self._closed = False
 
         def close(self):
+            self._closed = True
             closed.append(self.name)
+
+        def is_closed(self):
+            return self._closed
 
     class Ctx:
         def __init__(self):
@@ -499,8 +518,18 @@ def test_drive_new_page_uses_and_closes_its_own_tab(mod):
         def stop(self):
             pass
 
-    mod._connect = lambda _ep: (PW(), Browser(), ctx.pages[0])
+    # 이 시나리오의 `connect-made` 탭은 **`_connect` 가 만든** 여분 탭이다 → `created=True`.
+    # 그 사실을 `_drive_new_page` 에게 전달해야 "내가 만든 것만 치운다" 판정이 성립한다.
+    def _fake_connect(_ep, *, want_created_flag: bool = False):
+        base = (PW(), Browser(), ctx.pages[0])
+        return (*base, True) if want_created_flag else base
+
+    mod._connect = _fake_connect
     seen = {}
     mod._drive_new_page("http://fake", lambda page: seen.setdefault("page", page) or {"x": 1})
     assert seen["page"] is created[0], "기존 탭에서 동작했다 — 앞선 검증 화면을 빼앗는다"
-    assert set(closed) == {"mine", "connect-made"}, f"탭 정리 누락: {closed}"
+    # 2bf63215 이후 계약: **마지막 탭은 남긴다**. 다 닫으면 Chrome 이 통째로 종료돼
+    # 다음 명령이 `no_bridge` 로 끊긴다(라이브 3회 재현). 그래서 내 탭만 닫고, 그 결과
+    # 하나 남는 `connect-made` 는 회수하지 않는다 — 쌓이는 빈 탭보다 죽은 브라우저가 비싸다.
+    assert closed == ["mine"], f"내 탭만 닫아야 한다: {closed}"
+    assert not ctx.pages[0].is_closed(), "마지막 탭까지 닫았다 — 브라우저가 죽는다"

@@ -3398,3 +3398,27 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 누출 스캔(7패턴 — feature-id / TASK·REV·CHG·ADR id / §번호 / 파일확장자 / 내부용어 / 경로 / 커밋해시): **0건**. 유일 고유명 히트는 사용자가 화면에서 그대로 본 오류 문구 인용 1건으로 의도적 보존.
 - reconcile-first 실측: 편집 전 서빙 `https://localhost/static/release-notes-data.js` 200 · 브랜치 blob 과 **md5 동일**(`79d362ce…` · 276,572B) → 파리티 갭 0. 커밋 직전 재측정도 동일.
 - **Pass/Fail: PASS**.
+
+## 20260828T2200-bridge-attachment-write 브리지 첨부 쓰기 복원 (Major §12.3, 2026-08-28)
+
+### Run 2026-08-28 — bridge-attachment-write PRE-COMMIT (Environment: 컨테이너 pytest + ruff) — PASS
+
+- `make test` 전건 통과(rebase `bf5b3ae2` 후 클린 실행) · ruff All checks passed
+- 신규 회귀 16건(`unit/feature-0043-external-llm-bridge/tests/test_bridge_attachment_write.py`)
+- 기존 worker 첨부 회귀 21건은 **강화** — fake 가 정본(`shared/attachment_write.py`)에 stub
+  원시연산을 물려 실제 조립(순서·cap 합산·미전달 계수·strip 정책)을 검증한다
+
+### Run 2026-08-28 — bridge-attachment-write PRE-MERGE LIVE (Environment: **Windows-browser** PB-0008) — PASS
+
+브랜치 코드를 `docker cp` 로 live web a/b 에 주입 + 재기동, 실 `claude` CLI 러너 연결 후
+실제 대화(`20260828031049-b13a4b02`)에서 확인.
+
+- `attachment-new` → 첨부 **1248 daily_count.sql** 생성(assistant)
+- `attachment-edit`(user 계보) → **1249** 로 분기(설계대로 새 root v1)
+- `attachment-edit`(assistant 계보) → **1249 v1 → 1251 v2** 버전 연장
+- 실 Windows Chrome(151.0.7922.170) 화면: 블록 헤더 `{"source_attachment_id"` **미노출**,
+  첨부 칩 표시, 📎 전달 마커 4종, 거짓 실패 고지 없음
+- 판독 주의: 렌더된 코드블록은 innerText 에 ``` 를 남기지 않는다 → fence 문자로 판정하면
+  거짓 음성. 헤더 JSON + `pre/code` 언어 클래스로 판정했다.
+
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260828T220000-bridge-attachment-write.md`

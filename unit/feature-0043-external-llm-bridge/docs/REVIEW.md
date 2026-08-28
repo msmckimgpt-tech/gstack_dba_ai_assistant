@@ -799,3 +799,51 @@ P1-5 는 **내 문서·테스트의 주장이 과했다는 지적**이기도 하
 검증 중 저지른 실수도 적는다: `bootstrap_admin` 의 access token 을 **일괄** revoke 해, 같은
 계정으로 검증하던 병렬 세션의 러너까지 끊었을 수 있다. 공유 계정에서는 자기 세션이 발급한
 토큰만 골라 폐기해야 한다(REPORT §10 운영 교훈).
+
+## REV-20260828T220000-ai-claude-feature-0043 [CODEX:uncommitted-diff] — CHANGES-REQUESTED → P1 4건·P2 2건 전건 조치
+
+`codex exec --sandbox read-only` 로 미커밋 diff 전체를 적대 검토(229k 토큰). **P1 4건 · P2 2건**
+지적, **전건 조치**. 세션 지시(AgentTool 미사용)와 §18.8 패널 요구가 충돌해 사용자 결정으로
+codex 리뷰를 패널 대체로 채택했다.
+
+| # | 등급 | 지적 | 판정 | 조치 |
+|---|---|---|---|---|
+| 1 | P1 | `Status='submitted'` 커밋이 말풍선 저장·첨부 materialize 보다 **먼저**라 SSE 가 `done` 을 내보내고 스트림을 닫는다. 그 순간 대화엔 대기 말풍선뿐 | **CONFIRMED** — 기존 순서였으나 이번 변경이 그 구간에 MinIO 왕복을 더해 창을 넓혔다 | `_bridge_phase` 에 `delivered`·`submitted_age_sec` 추가. 미전달 + 유예(15초) 내면 `working` 유지, 넘기면 `done`(전달 실패 시 화면이 영영 도는 것보다 정직) |
+| 2 | P1 | `_update_assistant_message_content` 가 **0행 갱신에도 True** — PG/MySQL id 공간이 다른데 성공으로 받으면 표시본은 원문, 회수본은 정리본으로 갈린다 | **CONFIRMED** | 두 backend 모두 `rowcount` 판정. PG 0행이면 MySQL fallback, 그것도 0행이면 `False` |
+| 3 | P1 | fence 계수기와 실 파서의 문법이 다르다(계수기는 들여쓴/인용 fence 무시, 파서는 `strip().startswith` 로 연다) → 미전달 0 인 침묵 경로 | **CONFIRMED** | 분모를 **파서**(`_attachment_*_block_spans`)로 교체. 파서 부재 시 fence 계수로 폴백(부분집합이라 과대계상 없음) |
+| 4 | P1 | 블록만 있는 답변은 strip 결과가 비어 `stripped or answer` 가 **원문을 되살린다** — `failed=True` 면 안내도 없어 파일 전문이 채팅에 굳는다 | **CONFIRMED**(기존 결함, 이번에 브리지까지 이 경로를 탄다) | 빈 결과에 원문을 되살리지 않고 한 줄 사실 고지로 대체 |
+| 5 | P2 | 저장 순서 테스트가 `"save_memory_message"` 의 첫 위치를 잡아 **import 문**을 저장으로 오인 — 실제 호출을 지워도 통과 | **CONFIRMED** | `_replace_bridge_placeholder(` / `_save_msg(` **호출**을 기준으로 변경 |
+| 6 | P2 | worker result 사본 테스트가 vacuous — fake `_update` 가 `None` 을 돌려줘 `answer_persisted=False` 인데, 초기값에 fence 가 없어 "fence 없음" 이 그냥 통과 | **CONFIRMED** | fake 를 운영 계약대로 `True` 반환으로 고치고, 치환 마커 존재를 단언 |
+
+### #4 는 **명시된 기존 계약**을 뒤집었다
+
+`test_s4_strip_block_only_failed_keeps_original` · `test_s2_strip_no_block_or_failed` 가
+"블록만 있고 materialize 실패면 **원문 유지**" 를 계약으로 못박고 있었다. 사유는 「빈 답변 방지」
+하나였다 — 의도는 옳지만 수단이 틀렸다. 원문을 돌려주면 **파일 전문이 채팅에 그대로 쏟아진다**.
+
+빈 답변도 원문 유출도 아닌 **사실 한 줄**로 바꾸고, 두 테스트를 새 계약으로 **명시적으로**
+갱신했다(조용히 지우지 않았다 — 이름·독스트링에 무엇이 왜 바뀌었는지 남겼다).
+
+확인한 것: 이 fallback 은 worker self-heal 의 입력원이 아니다. 워커 모드에서 web inproc 이
+strip 을 건너뛰는 보호는 **별도 게이트**(`_attach_postprocess_here`)이고 그대로다.
+
+### 뮤테이션 역검증 — 5종 전건 KILL
+
+조치를 하나씩 되돌려 회귀가 죽는지 확인했다(자기충족 방지: 되돌림은 **운영 코드**에 적용).
+
+| 뮤턴트 | 결과 |
+|---|---|
+| strip 을 `stripped or answer` 로 복귀 | KILLED |
+| 전달 유예(`working` 유지) 제거 | KILLED |
+| PG `rowcount` 판정 제거 | KILLED |
+| MySQL `rowcount` 판정 제거 | KILLED |
+| 미전달 분모를 fence 계수로 복귀 | KILLED |
+
+1차 `rowcount` 회귀는 `return True` **개수**를 세어 뮤턴트가 **생존**했다 — 개수를 유지한 채
+가드만 지울 수 있었다. AST 로 "모든 `return True` 가 행 수 판정 안에 있는가" 를 보게 고쳐 KILL.
+
+### 리뷰가 잡아낸 것의 성격
+
+4건 중 3건(#2·#3·#4)은 **내가 재사용한 기존 헬퍼의 결함**이고, 내 변경이 그것을 **새 경로로
+확산**시켰다. "기존 함수를 그대로 쓰니 안전하다" 는 전제가 절반만 맞았다 — 재사용은 가드를
+물려받지만 **결함도 물려받는다**. #1 은 내 변경이 기존 창을 넓힌 경우다.

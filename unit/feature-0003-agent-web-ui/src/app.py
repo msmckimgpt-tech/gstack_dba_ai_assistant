@@ -3795,6 +3795,9 @@ from routers.conversations import (  # noqa: E402
     _strip_attachment_edit_blocks,
     _strip_attachment_new_blocks,
     _update_assistant_message_content,
+    # feature-0043: 첨부 쓰기 후처리 정본 — ask-worker·브리지 두 경로가 같이 쓴다.
+    _count_attachment_block_fences,
+    _apply_assistant_attachment_blocks,
     _model_to_llm_provider,
     _dispatch_ask_run,
     _make_internal_ask_request,
