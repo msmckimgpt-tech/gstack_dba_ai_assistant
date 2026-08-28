@@ -977,6 +977,63 @@ cycle 에서 실화면으로 확인됐다(그 경로는 계약 테스트가 잠�
 스크립트가 그것을 '생존' 으로 읽었다. 신호 없음을 성공으로 읽는 판정은 언제나 이 방향으로
 틀린다. `passed|failed` 어느 신호도 없으면 **HARNESS-BROKEN 으로 크게 실패**하도록 고친 뒤
 재실행해 9종 전건 KILL 을 확인했다.
+
+## CHG-20260828T170000-runtime-model-selector — 러너 신고 기반 모델·추론등급 선택기 (TASK-20260828T170000-runtime-model-selector)
+
+- **날짜**: 2026-08-28
+- **REQ**: 사용자 요구 — "웹브라우저 내 [모델 + 추론수준] 설정을 되살립니다. 해당 설정값에
+  따른 워커를 동작시키고(없다면 워커 확장) 요청을 전달하는 방식으로 구성해주세요. 이는 각
+  AI플랫폼에 대응되어야 하니 모델 종류의 확장도 염두해주세요. (claude 뿐만 아니라, codex 등...)"
+- **위험도**: Major (외부 입력이 CLI 인자가 되는 신규 경로 + 라이브 조작면 복원)
+- **계약**: `FUNCTION.md` §P0-Z3 (P0-T supersede)
+
+### 왜
+
+사용자가 "간단한 요청에도 큰 모델·깊은 추론이 도는 비효율" 을 지적했다. 조사해 보니 러너가
+`--cmd` 없이 떠 있어 **모든 브리지 요청이 그 머신의 기본 모델 + 기본 effort** 로 처리되고
+있었다(실측: `~/.claude/settings.json` 의 `effortLevel: high` 가 전 요청에 적용).
+
+P0-T 가 하루 전 조작면을 지운 이유는 "서버가 런타임을 알 수 없어 고른 값을 번역할 수 없다"
+였다. 사용자 결정으로 그 전제를 **러너가 직접 신고**해서 깬다 — 아는 쪽이 말한다.
+
+### 변경 내용
+
+| 층 | 종전 (P0-T) | 조치 (P0-Z3) |
+|---|---|---|
+| 러너 신고 | 없음 | `_RUNTIME_SPECS` 표(claude·codex·gemini·ollama) → `detect_runtimes()` 가 설치된 전부를 신고. ollama 는 `/api/tags` 실조회. 하트비트 본문에 **매번** 실음 |
+| 스키마 | — | `WebOAuthTokens.RunnerCapabilities`(TEXT) · `WebAiTasks.RequestedRuntime`(VARCHAR32) 온라인 DDL |
+| 저장 | — | `set_runner_capabilities` — **값이 바뀔 때만** 쓴다(30초 주기가 쓰기 증폭이 되지 않게). 유효성 술어는 하트비트와 **동일**(`_LIVE_TOKEN_PREDICATE`) |
+| 카탈로그 | 차단이면 무조건 `hidden` | 차단 + 신고 있음 → 신고 목록(`runtime:model`, group=런타임) + `visible` + `model_selector_source: "runner"`. 신고 없음 → `hidden` 유지 |
+| 전송·적재 | 미동봉·미적재 | 동봉 복원 + 세 컬럼 적재(`_split_runtime_model` 로 짝을 가름) |
+| 전달 | `claim_request` 미전달 | `requested: {runtime, model, reasoning_level}` 전달 |
+| 실행 | 인자 조립 경로 제거 | `build_cmd` — claude `--model/--effort`, codex `-m`/`-c model_reasoning_effort=`, gemini `-m`, ollama 본문 `model` |
+| 화면 | 항목 숨김 | 같은 가드 유지(서버가 `visible` 일 때만 풀림) + 런타임별 추론등급(`reasoning_levels_by_runtime`) + 모델 변경 시 등급 재렌더 |
+| 복원 | 저장 안 함 | 저장하되 hydration 이 **지금 신고된 목록**과 대조(`_bridge_model_offered`) |
+
+### 신뢰 경계 (이 변경이 새로 만든 것)
+
+신고는 토큰을 쥔 클라이언트가 주는 값이고, 그것이 DB → 화면 → `Popen` 인자로 흐른다. 두 겹:
+
+- 서버 `_sanitize_runtimes`: 이름 문자집합(선행 `-`·공백·따옴표·세미콜론 불허) · 라벨 1줄 접기 ·
+  개수/길이 상한 · **어긋난 항목만** 버림
+- 러너 `build_cmd` 의 표 대조: 자기가 신고한 값만 인자화. 옵션 위장·타 런타임 모델·구 서버
+  alias 전부 조용히 폐기 후 CLI 기본값
+
+런타임 전환도 `want_runtime in _RUNTIME_SPECS and _which(want_runtime)` 로 이중 확인한다.
+
+### 되돌리기
+
+게이트 1개(`AGENT_SERVER_LLM_ENABLED=1`) — 해제 시 같은 코드가 원래 서버 카탈로그를 반환.
+테스트가 세 갈래(신고 없음 / 신고 있음 / 게이트 해제)를 모두 잠근다.
+
+### 검증
+
+- 신규 `test_runtime_model_selector.py` 39건 — 신고 모양·주입 거부(파라미터 11종)·인자 순서·
+  sanitizer 경계·저장/조회 술어 일치·프런트 배선
+- `test_model_catalog_bridge_mode.py` 반환값 계약을 삼중으로 확장(신고 없음/있음/조회 실패/게이트 해제)
+- P0-T 계약을 잠그던 5건은 **새 계약으로 재작성**(삭제 아님 — vacuous pass 방지)
+- `make test` 전체 통과 · ruff clean
+- `claude -p --model haiku --effort low "..."` 인자 순서 라이브 실측 통과
 ## CHG-20260828T160000 — 브리지 전 구간 라이브 검증 기록 (TASK-20260828T160000)
 
 코드 변경 없음 — **증적만** 추가한다(문서 + 스크린샷 3장).

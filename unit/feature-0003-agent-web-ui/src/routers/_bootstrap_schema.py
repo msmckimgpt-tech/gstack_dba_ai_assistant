@@ -2579,6 +2579,11 @@ def _ensure_oauth_client_schema(conn) -> None:
             # 대해 무엇이 요구됐는지가 변하지 않는다).
             ("RequestedModel", "ALTER TABLE WebAiTasks ADD COLUMN RequestedModel VARCHAR(64) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
             ("ReasoningLevel", "ALTER TABLE WebAiTasks ADD COLUMN ReasoningLevel VARCHAR(16) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `RequestedRuntime`: 어느 **런타임**으로 답할지 (P0-Z3, TASK-20260828T170000).
+            # 모델 이름만으로는 부족하다 — 한 머신에 claude·codex 가 함께 있을 수 있고, 그때
+            # `sonnet` 이 어느 CLI 의 이름인지는 이름만 봐서 정해지지 않는다. 고른 항목이 어느
+            # 그룹에서 왔는지를 함께 굳혀야 러너가 같은 것을 실행한다.
+            ("RequestedRuntime", "ALTER TABLE WebAiTasks ADD COLUMN RequestedRuntime VARCHAR(32) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
             # `RoleId`: 시스템 프롬프트 5단계(전역·제품·역할·계정·개인) 조립에 필요하다.
             # 브리지는 `agent_core.compose_system_prompt` 를 타지 않으므로, 그 프롬프트를 서버가
             # 대신 조립해 AI 에게 넘겨야 한다 — 그러려면 요청 시점의 역할이 남아 있어야 한다.
@@ -2704,6 +2709,13 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
 
     컬럼:
       - LastHeartbeatAt : 러너가 마지막으로 '살아 있다' 고 말한 시각. NULL = 한 번도 없음.
+      - RunnerCapabilities : 그 러너가 **쓸 수 있는 것** (P0-Z3, TASK-20260828T170000).
+        런타임·모델·추론등급의 JSON 배열. NULL = 신고 없음(구 러너 또는 `--cmd` 사용자)
+        → 그 상태에서는 화면의 모델 선택기가 종전대로 숨겨진다.
+
+    능력을 같은 행에 두는 이유는 위와 같다 — "살아 있는가" 와 "무엇을 쓸 수 있는가" 는 같은
+    러너의 두 면이라, 나누면 한쪽만 낡아 화면이 없는 모델을 보여주게 된다. 하트비트가 끊기면
+    둘 다 함께 낡고, 카탈로그는 `LastHeartbeatAt` 신선도로 함께 걸러진다.
 
     `LastUsedAt`(이미 있음)을 재활용하지 않는 이유: 그것은 "이 토큰이 쓰였다" 이고 도구 호출도
     포함하는 넓은 사실이다. 반면 여기서 알고 싶은 것은 **대기하는 프로세스가 있는가** 라는
@@ -2715,13 +2727,22 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
     """
     cur = conn.cursor()
     try:
-        try:
-            cur.execute("ALTER TABLE WebOAuthTokens ADD COLUMN LastHeartbeatAt DATETIME NULL")
-        except Exception:
-            # 이미 있거나(정상 반복 실행) 테이블이 아직 없다(신규 설치 순서). 어느 쪽이든
-            # catchup 체인을 세우지 않는다 — 여기서 예외를 올리면 무관한 seed 들이 통째로
-            # abort 된다(webperm 사례와 동형).
-            pass
+        # 컬럼마다 따로 시도한다 — 한 문장에 묶으면 먼저 추가된 컬럼 때문에 전체가 실패해
+        # 나중 컬럼이 영영 안 생긴다(같은 catchup 이 반복 실행되므로 반드시 걸린다).
+        for ddl in (
+            "ALTER TABLE WebOAuthTokens ADD COLUMN LastHeartbeatAt DATETIME NULL",
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerCapabilities TEXT NULL",
+            # 능력 쓰기 throttle 의 기준 시각. `LastHeartbeatAt` 을 재활용할 수 없다 —
+            # 그것은 30초마다 갱신되므로 능력 쓰기 간격을 재는 데 쓰면 항상 '방금 썼다' 가 된다.
+            "ALTER TABLE WebOAuthTokens ADD COLUMN CapabilitiesAt DATETIME NULL",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                # 이미 있거나(정상 반복 실행) 테이블이 아직 없다(신규 설치 순서). 어느 쪽이든
+                # catchup 체인을 세우지 않는다 — 여기서 예외를 올리면 무관한 seed 들이 통째로
+                # abort 된다(webperm 사례와 동형).
+                pass
     finally:
         cur.close()
 

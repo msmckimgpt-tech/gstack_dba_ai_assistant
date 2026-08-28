@@ -728,6 +728,62 @@ task 는 계속 `open` → 즉시 재제안 → 20라운드 → `exit 4` → **�
   성공으로 읽는 판정은 언제나 이 방향으로 틀린다. `passed|failed` 가 없으면 HARNESS-BROKEN
   으로 실패하도록 고친 뒤 재실행했다.
 - **테스트는 codex 가 실행하지 못했다**(read-only 샌드박스) — 위 수치는 전부 이 세션의 실행 결과다.
+
+## REV-20260828T170000-runtime-model-selector [CODEX:staged-diff] — CHANGES-REQUESTED → 조치 완료
+
+- **일시**: 2026-08-28
+- **범위**: `git diff --cached` 19파일 (P0-Z3 — 러너 신고 기반 모델·추론등급 선택기)
+- **모델**: `codex exec -s read-only -c model_reasoning_effort=high`
+- **판정**: **CHANGES-REQUESTED — P1 6건 · P2 3건** → **전건 조치 완료**
+
+§18.8 검증 패널을 subagent 로 돌리는 대신 codex 적대 리뷰로 대체했다(세션이 AgentTool 사용을
+금지). 리뷰 대상은 이번 변경이 새로 만든 **신뢰 경계** — 러너 신고가 DB·타 세션 화면·`Popen`
+인자 셋으로 흐르는 경로다.
+
+### codex 가 확인한 것 (통과)
+
+- CLI 직접 인자 주입 차단 — `Popen` argv 배열 + `build_cmd` 가 표 밖 값을 버리는 것을 **실호출**로 확인.
+- claude/codex 설치본 `--help` 로 `--model`·`--effort`·`-m`·`-c` 플래그 실재 확인.
+- 게이트(`AGENT_SERVER_LLM_ENABLED=1`) 되돌리기 시 서버 카탈로그·allowlist/RBAC·쿼터·dispatch 복귀.
+- 조건부 UPDATE 자체의 정확성 · 러너 두 사본 byte-identical · AST/ESM 문법.
+
+### P1 (전건 수정)
+
+| # | 결함 | 조치 |
+|---|---|---|
+| 1·2 | 신규 대화 기본 모델이 러너 목록이 아니라 서버 alias(haiku) — 사용자가 선택기를 건드리지 않고 보낸 첫 질문에 그 alias 가 **굳고** 러너는 버린다 | 카탈로그가 신고 목록 첫 항목을 `default_model` 로 명시 + 프런트 `_composerCurrentModel` 이 러너 카탈로그를 세션 기본값보다 **먼저** 본다 |
+| 3 | `Api.heartbeat` 가 `if runtimes` 라 **빈 목록이 미신고로 뭉개짐** → `--cmd` 로 갈아타도 과거 목록이 계속 신선한 것으로 노출 | `runtimes is None` 으로 분기 — `[]` 는 그대로 전송 |
+| 4 | 목록을 신고한 러너 ≠ 질문을 가져간 러너일 때 지정이 **조용히** 무시됨 | 반영 못 한 지정을 답변에 명시(`unmet`). 제목 분리 **뒤**에 붙여 `#TITLE:` 규약을 밀지 않음 |
+| 5 | `build_cmd` 가 **정적 표**를 대조 — `--ai` 제한·PATH 실재·ollama 실조회와 갈린다. 즉 "자기가 신고한 값만 실행" 이 거짓. ollama 는 대조를 **아예 통과** | `offered_options(runtimes, runtime)` 신설 — 실제 신고를 대조. `ask_local_ai`·`handle_one` 이 신고를 워커까지 전달. ollama 경로에도 동일 대조 |
+| 6 | 값 **토글**로 하트비트 throttle 우회 → 매 요청 UPDATE(원장·상한 밖 엔드포인트) | `CapabilitiesAt` 컬럼 + `HEARTBEAT_MIN_WRITE_SEC` 간격을 값 비교와 **함께** 적용 |
+
+### P2 (전건 수정)
+
+| # | 결함 | 조치 |
+|---|---|---|
+| 1 | 등급 hydration 이 서버 고정 집합으로 검사 → 러너 어휘(`medium`·`xhigh`)가 다른 브라우저에서 사라짐 | 공용 술어 `_composerReasoningValid` 로 통일(hydration·현재값 계산이 같은 판정) |
+| 2 | 중첩 필드 타입 오류(`models: 1`)가 **TypeError → 500**. 제어·bidi 문자 미제거 | `_capped_list` 로 타입 방어 + 라벨에서 C0/C1·bidi override 제거(**공백 치환** — 지우면 낱말이 붙는다) |
+| 3 | 런타임 이름에 `:` 허용 → `ollama:spoof` + `bar` 가 적재 시 `runtime=ollama, model=spoof:bar` 로 재해석 | 런타임 전용 `_CAPS_RUNTIME_RE`(`:` 불허). 모델 값의 `:` 는 유지(`llama3:8b`) |
+
+### 내가 틀렸던 것
+
+P1-5 는 **내 문서·테스트의 주장이 과했다는 지적**이기도 하다. "러너는 자기가 신고한 값만
+실행한다" 고 썼는데 실제로는 "소스에 하드코딩돼 있고 PATH 에 있으면 실행한다" 였다. 정적 표와
+신고가 갈리는 세 경우(`--ai` 제한 · PATH 부재 · ollama 실조회)를 내가 세지 않았다.
+문구를 고치는 대신 **코드를 주장에 맞췄다**.
+
+### 회귀 방어
+
+수정한 자리마다 테스트를 뒀다(`test_runtime_model_selector.py` +11건, 총 533건 green).
+전부 "그럴듯한 코드가 조용히 틀리는" 부류라, 테스트 없이 고치면 다음 편집에서 되돌아온다.
+`make test` 컨테이너 전량 green · ruff clean.
+
+### 미해소 (수용된 한계)
+
+- **다중 러너 완전 결합**(P1-4 의 근본 해소)은 하지 않았다. capability revision 을 각인하고
+  claim 을 그 러너로 제한하려면 러너 식별자라는 새 축이 필요하다. 대신 P1-5 수정으로 러너가
+  자기 신고 밖 지정을 거부하고, 그 사실을 **답변에 밝힌다** — 사용자가 속지 않는 상태까지는
+  닫았다. 완전 결합은 다중 러너 사용이 실제로 관측되면 그때 연다.
 ## REV-20260828T160000-ai-root-feature-0043 [SKIPPED:evidence-only] — 라이브 검증 기록
 
 외부 적대 리뷰 미실행. 이 cycle 은 **코드를 바꾸지 않는다** — 이미 머지·배포된 동작을 라이브에서

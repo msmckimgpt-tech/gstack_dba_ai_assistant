@@ -65,6 +65,20 @@ source_of_truth: true
 | TEST-20260828T150000-session-slide | `web_context` | 활동 시 만료 슬라이딩 · 절대 상한 ≥ 무활동 창 · throttle 유지 · CreatedAt NULL 방어 | AC-69 |
 | TEST-20260828T150000-shutdown | `shutdown_after_drain` · `ActiveTasks` | 유휴 즉시 종료 / 진행 중 대기 후 종료 / 유예 초과 시 취소 · 유예는 절대시각 · 401 배선 · 등록 경합 방지 | AC-70 |
 | TEST-20260828T150000-schema | `_ensure_bridge_heartbeat_schema` | 컬럼 보장이 fast/slow 양 경로 · ALTER 실패가 catchup 을 세우지 않음 | AC-66 |
+| TEST-20260828T170000-specs | `_RUNTIME_SPECS` | 새 플랫폼이 표 1항목으로 닫히는가 — label·argv·model·effort 키 전수 · 등급목록↔플래그 동반 | AC-71 |
+| TEST-20260828T170000-detect | `detect_runtimes` | 설치된 것만 신고 · `--ai` 제한 · 오타는 제한 무시 · 모델 0개 런타임 제외 · ollama 실조회 | AC-71 |
+| TEST-20260828T170000-report-loop | `start_heartbeat` | 능력을 **매번** 싣는다(루프 안) · `--cmd` 사용자는 신고 안 함 | AC-71 |
+| TEST-20260828T170000-build-cmd | `build_cmd` | 런타임별 실제 인자 · 플래그가 프롬프트 **앞** · 등급 플래그 없는 런타임은 인자 미생성 | AC-72 |
+| TEST-20260828T170000-reject | `build_cmd` (파라미터 11종) | 표 밖 값 거부 — 옵션 위장 · 셸 메타문자 · 경로순회 · 타 런타임 모델 · 구 서버 alias | AC-72 |
+| TEST-20260828T170000-runtime-switch | `handle_one` | 서버 지정 런타임은 표 대조 + PATH 실재 확인 후에만 사용 | AC-72 |
+| TEST-20260828T170000-sanitize | `_sanitize_runtimes` | 미신고(None)/빈신고([]) 구분 · 이름 문자집합 · 어긋난 항목만 폐기 · 라벨 1줄 · 개수 상한 · 정상 신고 무손상 | AC-73 |
+| TEST-20260828T170000-caps-store | `set_runner_capabilities` · `account_runner_capabilities` | 값 변경 시에만 쓰기(NULL 분기 포함) · 술어가 하트비트와 동일 · 최근 1건 · 깨진 JSON 방어 | AC-73 |
+| TEST-20260828T170000-catalog | `/api/api-vault/options` | 삼중 계약 — 신고없음 hidden / 신고있음 visible+`runtime:model`+런타임별 등급 / 조회실패 추측금지 / 게이트 해제 복원 | AC-74 |
+| TEST-20260828T170000-persist | `_enqueue_web_bridge_task` · `_split_runtime_model` | 세 컬럼 적재 · 호출부 전달 · 런타임:모델 짝 가르기(접두 없으면 런타임 미생성) | AC-74 |
+| TEST-20260828T170000-claim | `claim_request` | `requested` 3값 전달 · 출처가 요청시점 각인(`WebAiTasks`)인가 | AC-74 |
+| TEST-20260828T170000-hydration | `_bridge_model_offered` | 복원이 지금 신고된 목록과 대조 · 조회 실패는 복원 안 함 | AC-74 |
+| TEST-20260828T170000-composer | `composer.js` | 등급 목록이 신고 출처 · `model_selector_source` 명시값 판정 · 모델 변경 시 등급 재렌더 · 목록 내 폴백 | AC-75 |
+| TEST-20260828T170000-copies | 러너 2사본 | 정본과 배포본 바이트 일치(사용자 sha256 대조가 성립하는가) | AC-71 |
 
 ## 3. Run 기록
 

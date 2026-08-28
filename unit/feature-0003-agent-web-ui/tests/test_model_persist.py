@@ -277,25 +277,38 @@ def test_a1c_ask_rejects_disallowed_model_before_persisting(monkeypatch):
     assert not [s for s in saved if s[1] == _KEY], "거부된 모델은 저장되지 않는다"
 
 
-# ── A1-bridge: 서버 LLM 차단 시의 반대편 계약 (feature-0043 P0-T) ────────────────
+# ── A1-bridge: 서버 LLM 차단 시의 반대편 계약 (feature-0043 P0-Z3) ────────────────
 #
-# 화면에서 모델을 고를 수 없게 된 상태다. 여기 도달하는 model 값은 구 프론트 캐시나 직접 API
-# 호출뿐이므로 (a) 저장하지 않고 (b) 서버 모델 게이트로 막지도 않는다. (b)가 중요하다 —
-# 막으면 `model` 이 항상 `API_DEFAULT_MODEL` 로 채워지는 탓에 **haiku 권한만 없는 계정은 개인
-# AI 처리와 무관하게 질문 자체가 403** 이 된다(codex 리뷰 P1).
+# 화면의 모델 목록이 **연결된 러너의 신고**에서 오는 상태다(값은 `runtime:model`). 그러므로
+# (a) 고른 값을 저장하고 (b) 서버 모델 게이트로는 막지 않는다.
+#
+# (a)는 P0-T 에서 뒤집혔다: 그때는 선택기가 숨겨져 있어 도달하는 값이 구 캐시뿐이었고, 저장하면
+# 고른 적 없는 설정이 굳었다. 지금은 사용자가 실제로 고른 값이라 저장이 옳고, 러너 교체로 인한
+# 되살아남은 복원 단계의 신고 대조가 막는다.
+#
+# (b)는 그대로다 — 이 게이트들은 *서버가 그 모델로 호출해도 되는가* 를 묻는데 브리지 요청은
+# 서버 모델을 하나도 쓰지 않는다. 막으면 `model` 이 서버 카탈로그 밖 값(`claude:sonnet`)이라
+# **개인 AI 가 답할 수 있는 질문이 서버 권한으로 400/403** 이 된다(codex 리뷰 P1).
 
 
-def test_a1d_bridge_mode_does_not_persist_model(monkeypatch):
-    """차단 상태에서는 클라이언트가 model 을 실어도 대화 KV 에 저장하지 않는다.
+def test_a1d_bridge_mode_persists_the_pick(monkeypatch):
+    """차단 상태에서도 고른 모델을 대화 KV 에 저장한다 (P0-Z3 — P0-T 의 미저장을 되돌린다).
 
-    저장하면 사용자가 이번에 고른 적 없는 설정이 그 대화에 굳어, 게이트를 되돌린 뒤 되살아난다.
+    P0-T 가 막았던 이유는 "화면에서 고를 수 없으니 여기 오는 값은 고른 적 없는 것" 이었다.
+    P0-Z3 에서 화면이 **연결된 러너가 신고한 목록**으로 선택기를 되살렸으므로 그 전제가 사라졌다 —
+    이제 저장하지 않으면 사용자는 대화를 옮길 때마다 다시 골라야 한다.
+
+    되살아남(러너가 바뀌었는데 옛 선택이 복원되는 것)은 저장이 아니라 **복원 쪽**에서 막는다:
+    `/api/history` 의 hydration 이 `_bridge_model_offered()` 로 지금 신고된 목록과 대조한다
+    (feature-0043 `test_runtime_model_selector.py` 가 그 대조를 잠근다).
     """
     saved, _ = _run_ask_capture(monkeypatch, {
-        "message": "안녕", "conversation_id": "conv-1", "model": "claude-sonnet-4",
+        "message": "안녕", "conversation_id": "conv-1", "model": "claude:sonnet",
     }, server_llm=False)
-    assert not [s for s in saved if s[1] == _KEY], (
-        "브리지 모드인데 모델이 대화 KV 에 저장됐다"
-    )
+    picked = [s for s in saved if s[1] == _KEY]
+    assert picked, "브리지 모드에서 고른 모델이 저장되지 않는다 — 대화를 옮기면 선택이 사라진다"
+    assert picked[-1][2] == "claude:sonnet", (
+        f"저장된 값이 고른 값과 다르다: {picked[-1][2]!r}")
 
 
 def test_a1e_bridge_mode_does_not_reject_on_model_gates(monkeypatch):
