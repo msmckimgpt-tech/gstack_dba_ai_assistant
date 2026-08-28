@@ -66,11 +66,27 @@ def test_runner_does_not_poll():
                      if l.strip() and not l.strip().startswith("#"))
     assert "wait_for_request" in code, "블로킹 대기 도구를 쓰지 않는다"
 
-    sleeps = sorted(l.strip() for l in code.split("\n") if "sleep(" in l)
-    assert sleeps == ["time.sleep(_DRAINING_RETRY_FLOOR_SEC)", "time.sleep(backoff)"], (
-        f"허용되지 않은 sleep 이 있다: {sleeps}. 러너의 sleep 은 **정확히 둘**이다 — "
-        "연결 복구 백오프와 배포 교대 하한. 대기 자체에 간격을 두면 그것이 폴링이고, "
-        "간격이 곧 환경 차이다")
+    # 허용 목록(2026-08-28 codex 조치로 배압 2종이 늘었다). 전부 **대기가 아닌 경로**다 —
+    # 연결 복구 · 배포 교대 · 워커 포화 배압 · 점유 실패 배압 · 제출 재시도.
+    allowed = {
+        "time.sleep(backoff)",                                        # 연결 복구 백오프
+        "time.sleep(_DRAINING_RETRY_FLOOR_SEC)",                      # 배포 교대 / 워커 포화
+        "time.sleep(_RECONNECT_BACKOFF_START)",                       # 제출 1회 재시도
+        "time.sleep(min(_RECONNECT_BACKOFF_MAX, "
+        "_DRAINING_RETRY_FLOOR_SEC * stalled))",                      # 점유 실패 배압
+    }
+    sleeps = sorted({l.strip() for l in code.split("\n") if "sleep(" in l})
+    extra = [s for s in sleeps if s not in allowed]
+    assert not extra, (
+        f"허용되지 않은 sleep 이 있다: {extra}. 대기 자체에 간격을 두면 그것이 폴링이고, "
+        "간격이 곧 환경 차이다. 새 sleep 을 넣으려면 그것이 **대기가 아님**을 여기 명시하라")
+
+    # ★ 핵심 계약: **대기 호출 자체는 sleep 과 붙어 있지 않다.** 위 목록이 늘어나도 이건 불변이다.
+    loop = code[code.index("while True:"):]
+    wait_line = loop.index('api.call("wait_for_request"')
+    window = loop[max(0, wait_line - 300):wait_line]
+    assert "sleep(" not in window, (
+        "대기 호출 **직전**에 sleep 이 있다 — 그것이 주기 폴링이다(간격이 곧 환경 차이)")
     # 백오프는 연결 실패에서만 자란다. 정상 응답 경로가 이 값을 건드리면 대기가 느려진다.
     assert "backoff = 0.0" in code, "성공 시 백오프를 되돌리지 않으면 지연이 누적된다"
     assert "_RECONNECT_BACKOFF_MAX" in code, "백오프 상한이 없으면 복구가 무한정 늦어진다"

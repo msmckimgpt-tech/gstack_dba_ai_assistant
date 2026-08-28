@@ -568,6 +568,18 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         # 취소 신호를 못 본 채 여기까지 왔다(서버가 마지막 관문). 정상 흐름이다.
         _log(f"{task_id}: 서버가 제출을 거절했다(취소된 요청) — 버린다")
         return False
+    if res.get("_failed"):
+        # ⚠ 연결 실패는 `_http == 0` 이라 아래 진위 검사에 걸리지 않는다 (codex P2-2).
+        #   그대로 두면 **저장 여부를 모르는데 "제출 완료" 라고 기록**한다. 답변은 이미 만들어
+        #   놓았으므로 한 번 더 시도할 값어치가 있다 — 서버의 `SubmittedAt IS NULL` 가드가
+        #   중복 제출을 409 로 막으므로 재시도는 안전하다(멱등).
+        _log(f"{task_id}: 제출 중 연결 실패 — 한 번 더 시도합니다: {res.get('error')}")
+        time.sleep(_RECONNECT_BACKOFF_START)
+        res = api.call("submit_answer", payload, timeout=120.0)
+        if res.get("_failed") or res.get("_http"):
+            _log(f"{task_id}: 제출 실패(재시도 후) {res.get('_http')} {res.get('error')} — "
+                 "이 답변은 전달되지 않았다. lease 만료 뒤 다시 제안된다.")
+            return False
     if res.get("_http"):
         _log(f"{task_id}: 제출 실패 {res.get('_http')} {res.get('error')}")
         return False
@@ -665,8 +677,16 @@ def main() -> int:
 
     _log(f"대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. (동시 {workers}건, Ctrl+C 로 종료)")
     while True:
-        slots.acquire()
-        # ⚠ 여기에 sleep 이 없다. 대기는 서버가 한다 — 그것이 '폴링 아님' 의 실체다.
+        # ⚠ **여기서 워커 자리를 잡지 않는다** (codex P1-2, 2026-08-28).
+        #
+        # 종전에는 `slots.acquire()` 가 이 앞에 있었다(tight loop 차단 목적). 그런데 취소와 새
+        # 질문은 **같은 응답**으로 오므로, 자리가 없어 여기서 멈추면 `wait_for_request` 를 아예
+        # 부르지 않게 되고 **취소 통보도 함께 끊긴다** — 워커가 다 찬 동안 사용자가 중단을 눌러도
+        # 러너는 최대 `_AI_TIMEOUT_SEC`(약 28분) 동안 모른 채 개인 계정 토큰을 계속 태운다.
+        # 취소를 즉시 인지시키려던 설계가 정작 가장 필요한 순간에 꺼져 있었다.
+        #
+        # 그래서 **대기는 항상** 하고, 자리는 디스패치 직전에 **비차단으로** 잡는다.
+        # ⚠ 대기 자체에는 여전히 sleep 이 없다 — 대기는 서버가 한다.
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
         if code == 401:
@@ -688,7 +708,6 @@ def main() -> int:
             # 아니라 **연결 복구**다. 두 가지는 다른 일이고, 다르게 다뤄야 한다.
             backoff = min(_RECONNECT_BACKOFF_MAX, (backoff * 2) or _RECONNECT_BACKOFF_START)
             _log(f"대기 실패 {code}: {res.get('error')} — {backoff:.0f}초 뒤 다시 연결합니다.")
-            slots.release()
             time.sleep(backoff)
             continue
         backoff = 0.0
@@ -700,7 +719,6 @@ def main() -> int:
             # 만든다 — 실패 경로에서 없앤 hot loop 를 성공 경로에 다시 만드는 셈이다.
             # 인지 지연이 무시할 만큼 짧은 하한만 둔다(백오프가 아니다 — 자라지 않는다).
             _log("서버 인스턴스 교대 중 — 곧바로 다시 대기합니다.")
-            slots.release()
             time.sleep(_DRAINING_RETRY_FLOOR_SEC)
             continue
 
@@ -729,25 +747,32 @@ def main() -> int:
             # 이 상태로 `continue` 하면 `wait_for_request` 가 또 즉시 돌아와 **간격 없이 서버를
             # 두드린다** — 우리가 없애려던 바로 그 폴링이, 그것도 최악의 형태로 생긴다.
             #
-            # 정상 상황에서는 오래가지 않는다(남이 집은 작업은 점유 즉시 목록에서 빠진다).
-            # 오래간다는 것은 claim 이 계속 실패한다는 뜻이고, 그건 러너가 제 일을 못 하고 있다는
-            # 뜻이다 — 조용히 도는 것보다 **크게 실패하는 편이 낫다**(사용자가 원인을 알 수 있다).
-            # **서버가 open task 를 실제로 보고했을 때만** 집계한다(2026-08-28 라이브 실측).
+            # **서버가 open task 를 실제로 보고했을 때만** 집계한다(2026-08-28 라이브 실측):
+            # `timed_out` 은 취소 통보로도 False 가 되고 그때 `task_ids` 는 비어 있다 —
+            # 처리할 것이 없는데 "처리 못 했다" 고 세면 안 된다.
             #
-            # 종전에는 `timed_out` 이 아니기만 하면 셌다. 그런데 `timed_out` 은 취소 통보로도
-            # False 가 되고, 그때 `task_ids` 는 비어 있다 — 즉 **처리할 것이 없는데 "처리 못 했다"
-            # 고 세어** 20라운드 만에 러너를 죽였다. 그 바람에 다른 워커가 진행 중이던 답변까지
-            # 유실됐다(실측). 셀 대상이 없으면 stall 도 없다.
+            # ⚠ 여기서 **러너를 죽이지 않는다** (codex P1-4, 2026-08-28). 종전에는 20라운드 뒤
+            #   `exit 4` 였는데, 그러면 **진행 중이던 다른 워커의 답변까지 함께 사라진다**.
+            #   한 task 의 점유 실패(권한 재검증·원장 장애 등)로 러너 전체를 끄는 것은 blast
+            #   radius 가 과하다. 대신 **경고하고 계속 산다** — 그 사이 다른 워커는 답을 제출하고,
+            #   문제의 task 는 lease 만료나 서버측 종결로 자연히 빠진다.
             if res.get("task_ids"):
                 stalled += 1
-                if stalled >= _MAX_STALLED_ROUNDS:
-                    _log(f"FATAL: 대기 질문이 {len(res.get('task_ids') or [])}건 있는데 "
-                         f"{stalled}회 연속 하나도 처리하지 못했습니다(점유 실패 반복). "
-                         "서버 상태와 토큰 권한을 확인하세요.")
-                    return 4
-            slots.release()
+                if stalled == _MAX_STALLED_ROUNDS:
+                    _log(f"WARN: 대기 질문 {len(res.get('task_ids') or [])}건을 {stalled}회 연속 "
+                         "처리하지 못했습니다(점유 실패 반복). 서버 상태와 토큰 권한을 "
+                         "확인하세요 — 러너는 계속 대기합니다.")
+                # 쉬는 것은 대기가 아니라 **재시도 간격**이다(hot loop 차단, 상한 있음).
+                time.sleep(min(_RECONNECT_BACKOFF_MAX, _DRAINING_RETRY_FLOOR_SEC * stalled))
             continue
         stalled = 0
+
+        # 자리를 **비차단으로** 잡는다 — 없으면 이번 라운드는 디스패치를 건너뛴다.
+        # 그 task 는 서버에 그대로 남아 다음 대기에서 다시 제안되고, 그동안에도 우리는
+        # `wait_for_request` 를 계속 부르므로 **취소 통보가 끊기지 않는다**(P1-2 의 요지).
+        if not slots.acquire(blocking=False):
+            time.sleep(_DRAINING_RETRY_FLOOR_SEC)
+            continue
 
         # 점유는 **여기서** 한다(값싸고 즉시 끝난다). 점유하는 순간 그 task 는 다음
         # `wait_for_request` 결과에서 빠지므로, 워커가 다 찼을 때 같은 것을 다시 받지 않는다.
@@ -758,9 +783,17 @@ def main() -> int:
             skip.add(task_id)
             slots.release()
             continue
-        if claimed.get("_http"):
+        if claimed.get("_http") or claimed.get("_failed"):
+            # ⚠ `_failed`(연결 실패, `_http == 0`)를 함께 본다 (codex P2-2, 2026-08-28).
+            #   앞선 수정은 대기 루프만 고쳤고 여기는 그대로였다 — claim 도중 TCP/TLS 가 끊기면
+            #   **빈 응답을 정상 점유로 읽고** AI 를 돌려, 아무도 기다리지 않는 답을 만든다.
             _log(f"{task_id}: 점유 실패 {claimed.get('_http')} {claimed.get('error')}")
-            skip.add(task_id)
+            # 일시 장애(연결 실패·5xx·429)는 **영구 skip 하지 않는다** — 그 task 는 정상이고
+            # 잠시 뒤면 집을 수 있다. 영구 skip 은 "이미 남이 가져갔다"(409) 처럼 재시도해도
+            # 달라지지 않는 경우에만 쓴다(codex P1-4 의 blast radius 축소와 같은 취지).
+            _code = int(claimed.get("_http") or 0)
+            if _code and _code < 500 and _code != 429:
+                skip.add(task_id)
             slots.release()
             continue
 

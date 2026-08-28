@@ -25,6 +25,8 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
 import json
 import logging
 import secrets
@@ -1245,11 +1247,18 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
                 # 새 질문과 똑같이 즉시 인지된다 — 도구 개수도 늘지 않는다.
                 #
                 # 점유자 스코프(`ClaimedBy=%s`)로 좁힌다: 남이 집은 작업의 취소는 내 하차 사유가 아니다.
+                # **점유한 세션에게만** 알린다 (codex P2-1, 2026-08-28).
+                #
+                # 계정 단위로만 좁히면, 같은 계정의 러너 A 가 처리 중인 작업의 취소를 러너 B 가
+                # 먼저 받아 소비해 버린다(아래에서 점유를 놓으므로 A 는 **영원히 못 듣는다**).
+                # A 는 생성이 끝날 때까지 계속 태우고 제출 단계에서야 409 를 본다.
+                # `ClaimedClient` 가 NULL 인 행은 컬럼 추가 이전 점유라 호환을 위해 통과시킨다.
                 cur.execute(
                     "SELECT TaskId FROM WebAiTasks "
                     "WHERE AccountId=%s AND Origin='web' AND Status=%s AND ClaimedBy=%s "
+                    "  AND (ClaimedClient IS NULL OR ClaimedClient=%s) "
                     "ORDER BY CreatedAt ASC LIMIT 20",
-                    (account_id, _STATUS_CANCELED, account_id))
+                    (account_id, _STATUS_CANCELED, account_id, ctx.get("client_id")))
                 canceled = [str(r[0]) for r in (cur.fetchall() or [])]
                 if canceled:
                     # **한 번만 알린다** — 알린 뒤 점유를 놓는다(2026-08-28 라이브 실측 P1).
@@ -2383,6 +2392,17 @@ _BRIDGE_STREAM_MAX_HOLD_SEC = 55.0
 #: 0.5초 해상도가 필요 없고, 대화당 여러 스트림이 열릴 수 있어 DB 부하를 아낀다.
 _BRIDGE_STREAM_TICK_SEC = 1.0
 
+#: 이 web 프로세스가 동시에 열어 두는 브리지 SSE 의 상한 (codex P1-3, 2026-08-28).
+#:
+#: 스트림 하나가 MySQL 커넥션 하나를 상한(55초) 동안 들고 있다. 상한이 없으면 같은 task 에
+#: 인증된 스트림을 반복해 열기만 해도 커넥션이 뷰어 수만큼 늘어 **풀이 마르고, 그 순간
+#: 대화·관리 콘솔 등 무관한 경로까지 함께 죽는다**. 브리지 진행 표시는 편의 기능이므로
+#: 인프라를 위태롭게 하면서까지 지킬 것이 아니다 — 상한을 넘으면 **폴링으로 내려보낸다**
+#: (프런트에 이미 폴백이 있고, 그쪽은 커넥션을 붙들지 않는다).
+_BRIDGE_STREAM_MAX_CONCURRENT = int(os.environ.get("BRIDGE_STREAM_MAX_CONCURRENT", "40") or 40)
+_BRIDGE_STREAM_LIVE = 0
+_BRIDGE_STREAM_LOCK = threading.Lock()
+
 
 @router.get("/api/ai/bridge_stream")
 async def bridge_stream(request: Request):
@@ -2444,6 +2464,18 @@ async def bridge_stream(request: Request):
         except Exception:
             pass
 
+    # 동시 스트림 상한 (codex P1-3). 넘으면 **폴링으로 내려보낸다** — 오류가 아니라 강등이다.
+    # 프런트는 이미 폴백을 갖고 있고(`_pollBridgeAnswer`), 그쪽은 커넥션을 붙들지 않는다.
+    # 여기서 거절하지 않으면 커넥션 풀이 말라 **무관한 경로까지 함께 죽는다**.
+    global _BRIDGE_STREAM_LIVE
+    with _BRIDGE_STREAM_LOCK:
+        if _BRIDGE_STREAM_LIVE >= _BRIDGE_STREAM_MAX_CONCURRENT:
+            logging.getLogger(__name__).warning(
+                "[bridge] SSE 동시 상한 도달(%d) — task=%s 는 폴링으로 처리한다",
+                _BRIDGE_STREAM_MAX_CONCURRENT, task_id)
+            return app._json_error("진행 스트림이 혼잡합니다. 폴링으로 처리하세요.", 503)
+        _BRIDGE_STREAM_LIVE += 1
+
     async def event_stream():
         # 커넥션은 **스트림당 하나**를 유지하고 tick 마다 커밋해 스냅샷을 갱신한다.
         #
@@ -2472,7 +2504,12 @@ async def bridge_stream(request: Request):
                         sconn = app._connect_memory()
                     except Exception:
                         sconn = None
-                snap = _bridge_stream_snapshot(sconn, task_id, account_id)
+                # ⚠ **동기 DB 조회를 이벤트 루프에서 직접 돌리지 않는다** (codex P1-3, 2026-08-28).
+                #   `_bridge_stream_snapshot` 은 mysql-connector·psycopg 동기 호출을 한다 —
+                #   매초, 열려 있는 스트림 수만큼. 루프에서 직접 부르면 그 시간 동안 **이 워커의
+                #   모든 요청**이 멈춘다(DB 가 느려지면 전면 정지). 스레드로 밀어낸다.
+                snap = await asyncio.to_thread(
+                    _bridge_stream_snapshot, sconn, task_id, account_id)
                 if snap is None:
                     # task 가 사라졌다 = 미점유 상태로 취소되어 삭제됐다(취소 정본의 DELETE 갈래).
                     # 종결로 알리고 닫는다 — 없는 행을 계속 물으면 404 만 쌓인다.
@@ -2481,6 +2518,15 @@ async def bridge_stream(request: Request):
                                                   "answered": False, "delivered": False})
                     yield app._sse_pack("end", {"reason": "canceled"})
                     return
+
+                if snap.pop("_conn_broken", False):
+                    # 커넥션이 죽었다 — 버리고 다음 tick 에 새로 연다(codex P2-3).
+                    # 그대로 두면 남은 상한 동안 죽은 커넥션을 재사용하며 완료·취소를 숨긴다.
+                    try:
+                        sconn.close()
+                    except Exception:
+                        pass
+                    sconn = None
 
                 if snap["phase"] != last_phase:
                     last_phase = snap["phase"]
@@ -2505,6 +2551,11 @@ async def bridge_stream(request: Request):
                     sconn.close()
                 except Exception:
                     pass
+            # 상한 카운터는 **반드시** 돌려준다 — 새면 상한이 영구히 닫혀 이후 모든 사용자가
+            # 폴링으로 강등된다(조용히, 재기동 전까지). 클라이언트 절단·예외 모두 여기를 지난다.
+            global _BRIDGE_STREAM_LIVE
+            with _BRIDGE_STREAM_LOCK:
+                _BRIDGE_STREAM_LIVE = max(0, _BRIDGE_STREAM_LIVE - 1)
 
     return app.StreamingResponse(
         app._counted_stream(event_stream()),  # feature-0014: 무중단 배포 pre-drain 용 스트림 카운트
@@ -2578,8 +2629,12 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
     except Exception as exc:
         logging.getLogger(__name__).debug(
             "[bridge] 스트림 스냅샷 실패 task=%s: %r", task_id, exc)
+        # ⚠ **끊긴 커넥션임을 호출측에 알린다** (codex P2-3, 2026-08-28).
+        #   종전에는 가짜 `waiting` 만 돌려주고 `sconn` 은 그대로 뒀다 — 커넥션이 죽으면 남은
+        #   55초 동안 죽은 커넥션을 계속 재사용하며 매 tick 같은 예외를 냈고, 그 사이 **완료·취소
+        #   전환이 통째로 숨겨졌다**. 다음 tick 에 다시 연결하도록 신호를 실어 보낸다.
         return {"phase": "waiting", "answered": False, "delivered": False,
-                "connected": True, "listening": True, "steps": []}
+                "connected": True, "listening": True, "steps": [], "_conn_broken": True}
 
 
 
