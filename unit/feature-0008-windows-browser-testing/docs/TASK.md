@@ -118,3 +118,26 @@ source_of_truth: true
       중복 구현 없이 `doctor ok:true` 실측으로 확인
 - [x] (부수) 직전 cycle 이 세션 부재로 미수행 처리한 로그인 후 스크롤 실측 — 산출물:
       feature-0003 `test-runs.d/REV-20260827T160500-…md` §6 (scrollTop 20/20 불변)
+
+### TASK-20260828T220000 — `session-login` 이 브라우저를 죽였다 (라이브 실측)
+
+**위험도: Minor** (검증 드라이버 내부. 제품 코드 무관. 되돌리기 = revert.)
+
+**증상**: `launch` → `session-login` → `goto` 가 매번 `no_bridge` 로 끊겼다(2026-08-28, 3회
+재현). 배포로 격리 프로필 세션이 만료된 뒤 재발급하려 할 때마다 검증이 통째로 막혔다.
+
+**원인**: `_drive_new_page` 가 "내가 만든 빈 탭을 치운다" 며 `stray` 를 닫는데, 판정이
+`len(ctx.pages) == 1` 이었다. **사용자가 열어 둔 탭이 하나뿐일 때도** 그것을 자기 것으로
+오인해 닫았고, 탭이 0이 되면 **Chrome 이 통째로 종료**된다. 검증하러 띄운 브라우저를
+검증 준비 명령이 닫는 셈이었다.
+
+- status: done (라이브 전후 대조)
+- risk: Minor
+- [x] ① `_connect(want_created_flag=True)` — **빈 탭을 만들었는지**를 직접 돌려준다
+      (탭 개수로 추측하지 않는다)
+- [x] ② `stray = base_page if created else None`
+- [x] ③ 마지막 방어 — 닫으면 탭이 0이 되는 상황이면 남긴다(빈 탭 하나 < 죽은 브라우저)
+- [x] ④ **라이브 전후 대조**: 수정 전 스크립트 → `session-login` 후 브리지 사망 재현 ·
+      수정본 → `launch → session-login → goto` 온전, `doctor ok:true issues:[]`
+- [x] ⑤ 그 덕에 **미완이던 화면 검증 완료** — `/ai/connect` 지시문 5,942자에 동시 처리 안내
+      3줄 + CA 지문 + 러너 체크섬 + 발급자 전부 실렌더

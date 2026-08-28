@@ -129,3 +129,7 @@ setup(`bin/win-browser-setup.ps1` / mirrored), 검증 절차(PB-0008), 완료 �
 - 잔여 위험(수용): 검증 프로필은 영속이라 Chrome 이 자격증명 상태를 남길 수 있다. 프로필은
   per-user `%LOCALAPPDATA%`(ACL 보호)이며 **자격증명과 같은 민감도로 취급**한다.
   `session-logout` 은 그 로그인 세션에서 발급된 AI 연결(`mat_`) 토큰도 함께 폐기한다.
+
+- AC-20260828T220000-windows-browser-testing: 세션 명령(`session-login`·`session-check`)이
+  **브라우저를 종료시키지 않는다** — `launch` → 세션 발급 → `goto` 가 한 흐름으로 이어진다.
+  드라이버가 치우는 탭은 **자기가 만든 것뿐**이고, 그것이 마지막 탭이면 남긴다.
