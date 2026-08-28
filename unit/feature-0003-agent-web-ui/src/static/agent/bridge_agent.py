@@ -1762,7 +1762,20 @@ def main() -> int:
         conf = load_conf()
         args.base = args.base or conf.get("base") or ""
         args.ca = args.ca or conf.get("ca")
-        args.ai = args.ai or conf.get("ai") or ""
+        # ⚠ `ai` 는 **상속하지 않는다** (P0-Z5, 라이브 실측 2026-08-28).
+        #
+        #   P0-Z3 이전에 `ai` 는 "무엇으로 답할까" 하나만 정했고, 그 값은 자동 감지 결과여도
+        #   저장해 두는 것이 편의였다. 그런데 P0-Z3 이후 같은 값이 **신고 목록까지 좁힌다** —
+        #   의미가 바뀌었는데 저장·상속 규칙은 그대로였다.
+        #
+        #   결과: `--ai` 를 준 적 없는 사용자도 첫 기동의 자동 감지 결과가 `ai` 로 굳고,
+        #   `--resume` 이 그것을 상속해 **다른 런타임이 화면에서 사라진다**. 실제로 라이브
+        #   재기동에서 codex 가 설치돼 있는데 claude 만 신고됐다(사용자 요청은 정확히
+        #   "claude 뿐만 아니라 codex 등" 이었다).
+        #
+        #   `ai` 는 그 실행의 제한이지 복원할 설정이 아니다. 제한하려면 매번 명시한다 —
+        #   그래야 "지금 무엇이 제한되고 있는가" 가 명령줄에 그대로 보인다.
+        #   (`detect_ai()` 가 실행 런타임을 매번 다시 정하므로 잃는 것은 없다.)
         args.cmd = args.cmd or conf.get("cmd")
         if not args.token:
             _log("토큰이 필요합니다 — 웹에서 '연결 정보 만들기' 로 새로 받아 --token 에 주세요.")
@@ -1803,7 +1816,9 @@ def main() -> int:
             return 2
         kind, argv = picked
     _log(f"AI = {kind}" + (f" ({args.cmd})" if args.cmd else ""))
-    save_conf(args.base, args.ca, kind, args.cmd)
+    # 저장하는 `ai` 는 **사용자가 명시한 것만**이다(위 상속 주석과 같은 이유). 자동 감지
+    # 결과를 저장하면 그것이 다음 실행의 제한으로 승격된다.
+    save_conf(args.base, args.ca, (args.ai or ""), args.cmd)
 
     # ⚠ 연결 확인에 `wait_for_request` 를 쓰면 안 된다 (라이브 실측 2026-08-28).
     #
@@ -1866,7 +1881,7 @@ def main() -> int:
         if _learned and kind not in _RUNTIME_SPECS:
             argv = list(_learned)
         if caps:
-            save_conf(args.base, args.ca, kind, args.cmd, caps=caps)
+            save_conf(args.base, args.ca, (args.ai or ""), args.cmd, caps=caps)
 
     # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
