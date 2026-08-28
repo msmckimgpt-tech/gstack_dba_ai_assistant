@@ -102,3 +102,32 @@ P0-E 는 이 축을 의도적으로 열지 않았고 근거는 「개인 AI 가 
 
 - Environment: Windows-browser (PB-0008 relay, Chrome/151.0.7922.170, `https://localhost/?conversation=20260828031049-b13a4b02`)
 - 대상 배포본: 미머지 브랜치 `ai/claude/feature-0043-bridge-attachment-write` (bind-mount)
+
+## 9. POST-DEPLOY 검증 (배포본 `e5223dcc`, 2026-08-28)
+
+`make deploy-web` 전체 스코프 완료. 실물 이미지 태그가 **전 서비스 동일 SHA**:
+`web-a`/`web-b` = `mysql-ai-web:e5223dcc`, `ask-worker`/`insight-worker`/`ext-tool-mcp-a`/
+`ext-tool-mcp-b` = `mysql-ai-agent:e5223dcc` (state 파일이 아니라 `compose ps` 실물 확인).
+
+| 게이트 | 결과 |
+|---|---|
+| [2] 워커 롤아웃 | 완료(부분 완료 아님 — 위 태그 전수 일치) |
+| [2b] surge 잔존 | 0 |
+| [5] 무중단 실측 | `no upstreams available` **0건**(최근 15분) |
+| 코드 도달 | `/app/shared/attachment_write.py` 존재 · 컨테이너 내 import OK · `_BRIDGE_DELIVER_GRACE_SEC` 반영 |
+
+**배포본 실동작**(실 `claude` 러너, task `t_2YljaEeR9umGyk2d`):
+
+- `attachment-edit`(source=1254) → **1249 체인 v4 생성**(id 1256) — 버전 연장 정상
+- `attachment-new` → **deploy_check.sql**(id 1257, assistant) 생성
+- 최종 체인: `1249 v1 → 1251 v2 → 1254 v3 → 1256 v4`
+
+**[4] 실 사용자 표면 PB-0008**(Windows Chrome, `?conversation=` deep-link):
+
+- 블록 헤더(`{"source_attachment_id"`) 노출 **0건**
+- 📎 전달 마커: `수정본 sample.sql (v4)` · `deploy_check.sql`
+- 거짓 실패 고지 없음
+- `deploy_check.sql` 칩 화면 표시 확인
+
+- Environment: Windows-browser (PB-0008 relay, Chrome/151.0.7922.170)
+- 배포본 판정 기준: `GIT_COMMIT`/이미지 태그 `e5223dcc`
