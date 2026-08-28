@@ -3,7 +3,7 @@
 //   발화자/아바타). app.js 구 L3118–4068 에서 byte-동치 이동 (본문 무수정 — ITEM-P5b).
 import {
   state, showToast, identiconSvg, markdownToHtml, messageLogEl, _downloadAttachmentById,
-  apiFetch,
+  apiFetch, buildStepDetailEl,
 } from "../app.js?v=dev";
 // attach-diff-bubble-chip: 말풍선 칩의 비교·원문 진입점도 **저장소 단일 모달**을 쓴다.
 // 첨부 사이드 패널(composer.js)이 쓰는 것과 같은 모듈이며, 렌더러를 복제하지 않는다
@@ -733,15 +733,15 @@ function buildStepBlocks(steps, containerEl) {
   const sqlSteps = steps.filter((s) => String(s.tool || "") === "execute_sql");
 
   if (nonSqlSteps.length) {
-    const list = document.createElement("ul");
-    nonSqlSteps.forEach((step) => {
-      const item = document.createElement("li");
-      const work = String(step.work || step.intent || step.tool || "단계").trim();
-      const reason = String(step.reason || "").trim();
-      item.textContent = reason ? `${work} — ${reason}` : work;
-      list.appendChild(item);
+    // 사이드바·진행 표시와 **같은 카드**로 그린다(`buildStepDetailEl`). 종전에는 여기서만
+    // `작업 — 근거` 를 한 줄 `<li>` 로 이어 붙여, 같은 단계가 패널에서는 카드로 말풍선에서는
+    // 평문 목록으로 보였다(사용자 제보 2026-08-28). 표시층이 한 벌이어야 구조가 안 갈린다.
+    const box = document.createElement("div");
+    box.className = "step-detail-list";
+    nonSqlSteps.forEach((step, idx) => {
+      box.appendChild(buildStepDetailEl(step, idx, { compact: true }));
     });
-    appendDetailBlock(containerEl, "단계", list);
+    appendDetailBlock(containerEl, "단계", box);
   }
 
   if (!sqlSteps.length) return;

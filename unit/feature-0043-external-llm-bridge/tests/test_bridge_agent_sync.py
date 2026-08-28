@@ -197,6 +197,25 @@ def test_runner_submits_even_on_ai_failure():
 # ── 러너 타임아웃 ↔ 서버 점유 lease (2026-08-28, 라이브 실측 후) ────────────────
 
 
+def _runner_const_expr(name: str) -> str:
+    """상수 대입식의 **기본값 리터럴**만 뽑는다(`os.environ.get(..., "0")` 의 "0")."""
+    import ast as _ast
+
+    tree = _ast.parse(CANON.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, _ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, _ast.Name) and tgt.id == name:
+                    # `os.environ.get("KEY", "0")` 의 **두 번째** 인자(기본값)를 본다.
+                    for sub in _ast.walk(node.value):
+                        if isinstance(sub, _ast.Call) and len(sub.args) >= 2:
+                            default = sub.args[1]
+                            if isinstance(default, _ast.Constant):
+                                return str(default.value)
+                    return _ast.unparse(node.value)
+    raise AssertionError(f"bridge_agent.py 에서 상수 {name} 을 찾지 못했다")
+
+
 def _runner_const(name: str) -> float:
     """러너 모듈을 import 하지 않고 상수만 읽는다(AST — 실행 부작용 없음)."""
     import ast as _ast
@@ -224,28 +243,39 @@ def _server_lease_sec() -> float:
     raise AssertionError("shared/bridge_tasks.py 에서 BRIDGE_CLAIM_LEASE_MIN 을 찾지 못했다")
 
 
-def test_ai_timeout_fits_inside_the_claim_lease():
-    """러너가 lease **밖에서** 제출하면 그 사이 다른 세션이 같은 질문을 다시 집을 수 있다.
+def test_ai_timeout_is_unlimited_by_default():
+    """⚠ 계약이 바뀌었다(사용자 요구 2026-08-28).
 
-    타임아웃이 lease 를 넘으면, 답을 다 만들고도 제출이 거절되거나 같은 질문이 두 번 처리된다.
+    직전 계약은 "타임아웃이 lease 안에 있고 그 80% 이상" 이었다 — 즉 **여전히 러너의 시계로
+    끊는다**는 전제였다. 사용자 요구는 그 전제 자체를 지웠다:
+
+        "기본적으로 time_out 은 진행되어선 안되며, 각 단계에 대한 갱신을 수신받는 부분을
+         기준으로. 연결은 살아있는 상태입니다."
+
+    지금 기본값은 **0(상한 없음)** 이고, 멈춘 것과 일하는 것은 서버가 관측한 **진행 신호**로
+    가른다(도구 호출 → lease 갱신 → 멈추면 30분 뒤 회수 → 제출 409 → 러너 하차).
     """
-    timeout = _runner_const("_AI_TIMEOUT_SEC")
-    lease = _server_lease_sec()
-    assert timeout < lease, (
-        f"AI 타임아웃({timeout:.0f}s)이 서버 점유 lease({lease:.0f}s)를 넘는다")
-    # 제출에 쓸 여유가 남아야 한다 — 타임아웃 직후의 submit_answer 도 lease 안에서 끝나야 한다.
-    assert lease - timeout >= 60, (
-        f"lease 여유가 {lease - timeout:.0f}s 뿐이다 — 제출이 lease 밖으로 밀릴 수 있다")
+    assert _runner_const_expr("_AI_TIMEOUT_SEC") == "0", (
+        "러너가 여전히 고정 상한을 기본값으로 들고 있다 — 일하는 AI 를 시계로 끊는다")
 
 
-def test_ai_timeout_uses_most_of_the_lease():
-    """너무 이르게 포기하지 않는다 — 서버가 아직 기다리는데 러너만 끊는 구간을 없앤다.
+def test_timeout_check_is_skipped_when_unlimited():
+    """상한이 0 인데 비교를 그대로 두면 `waited >= 0` 이 첫 tick 에 참이 되어 **즉시** 끊긴다."""
+    src = CANON.read_text(encoding="utf-8")
+    assert "if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:" in src, (
+        "상한 0(무제한)일 때 검사를 건너뛰지 않는다 — 모든 호출이 즉시 중단된다")
+    assert "timeout=(_AI_TIMEOUT_SEC or None)" in src, (
+        "ollama HTTP 경로가 0 을 그대로 넘긴다 — urllib 이 즉시 타임아웃한다")
 
-    라이브 실측(2026-08-27): 900초(=lease 의 절반)에서 27단계 조사가 끊겼고, 사용자 화면에는
-    "AI 호출이 900초를 넘겨 중단했습니다" 만 남았다. 개인 AI 는 답을 만드는 중이었다.
-    """
-    timeout = _runner_const("_AI_TIMEOUT_SEC")
-    lease = _server_lease_sec()
-    assert timeout >= lease * 0.8, (
-        f"AI 타임아웃({timeout:.0f}s)이 lease({lease:.0f}s)의 80% 에 못 미친다 — "
-        "서버는 기다리는데 러너가 먼저 포기하는 구간이 남는다")
+
+def test_cancel_still_works_without_a_timeout():
+    """무제한이 '사용자가 멈출 수 없다' 를 뜻하면 안 된다."""
+    src = CANON.read_text(encoding="utf-8")
+    assert "_CANCEL_TICK_SEC" in src and "cancel_check()" in src, (
+        "취소 감시가 사라졌다 — 상한이 없는데 멈출 수도 없으면 개인 계정 토큰이 계속 탄다")
+
+
+def test_timeout_is_opt_in():
+    """스스로 상한을 걸고 싶은 사용자를 위한 경로는 남긴다(기본값이 아닐 뿐)."""
+    src = CANON.read_text(encoding="utf-8")
+    assert "--ai-timeout" in src and "BRIDGE_AI_TIMEOUT_SEC" in src

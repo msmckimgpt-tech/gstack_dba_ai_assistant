@@ -61,6 +61,7 @@ import {
   sendBtn,
   showPermissionDeniedToast,
   showToast,
+  buildStepDetailEl,
   startElapsedTimer,
   startProgressPolling,
   state,
@@ -719,10 +720,15 @@ async function _renderBridgeAnswer(taskId, convId, delivered) {
   try { renderComposer(); } catch (_e) { /* 렌더 실패가 답변 표시를 막지 않는다 */ }
 }
 
-/** 진행 중 조사 내역을 대기 말풍선 아래에 붙인다.
+/** 진행 중 조사 내역을 대기 말풍선 안에 붙인다.
  *
  *  대화를 다시 읽지 않는다 — 단계는 1초마다 늘 수 있고, 그때마다 이력을 재조회하면 스크롤이
  *  흔들리고 요청이 배로 뛴다. 여기서 바꾸는 것은 **이 말풍선의 부속 영역**뿐이다.
+ *
+ *  ⚠ 렌더러는 **완료본·사이드바와 같은 것**(`buildStepDetailEl`)을 쓴다. 종전에는 여기서만
+ *  `도구명 + 행수` 를 평문으로 이어 붙였고, 그래서 진행 중에만 화면이 `list_schemas 3행` 같은
+ *  나열로 보였다(사용자 제보 2026-08-28). 같은 사실을 두 모양으로 그리면 사용자는 그것을
+ *  "구조가 깨졌다" 로 읽는다 — 실제로 깨진 것이 맞다.
  *
  *  요소가 없으면 조용히 지나간다(대기 말풍선이 아직 안 그려졌거나 이미 답변으로 덮인 경우). */
 function _renderBridgeSteps(taskId, steps) {
@@ -735,16 +741,14 @@ function _renderBridgeSteps(taskId, steps) {
     box.className = "bridge-live-steps";
     host.appendChild(box);
   }
-  // 관측한 사실만 적는다 — 어떤 도구를, 어디에, 몇 행. 사고 과정은 우리 밖이라 비운다.
-  box.innerHTML = steps.map((s) => {
-    const where = [s.datasource, s.schema].filter(Boolean).join(" · ");
-    const rows = Number(s.rows || 0);
-    return `<div class="bridge-live-step">`
-      + `<span class="bridge-live-step-tool">${escapeHtml(String(s.tool || ""))}</span>`
-      + (where ? `<span class="bridge-live-step-where">${escapeHtml(where)}</span>` : "")
-      + (rows ? `<span class="bridge-live-step-rows">${rows}행</span>` : "")
-      + `</div>`;
-  }).join("");
+  // 통째로 다시 그린다 — 단계는 append-only 라 증분 갱신의 이득이 작고, 부분 갱신은 순서가
+  // 어긋날 때 조용히 틀린 화면을 남긴다.
+  box.replaceChildren();
+  steps.forEach((step, idx) => {
+    // compact: 진행 중에는 SQL 본문·결과 미리보기를 접는다(말풍선이 화면을 다 먹지 않게).
+    // 전체는 답변 도착 후 '단계 보기' 패널에서 같은 카드로 볼 수 있다.
+    box.appendChild(buildStepDetailEl(step, idx, { compact: true }));
+  });
 }
 
 async function _pollBridgeAnswerInner(taskId, convId) {

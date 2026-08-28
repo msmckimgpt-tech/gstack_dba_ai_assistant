@@ -366,12 +366,19 @@ def test_stream_stops_when_client_disconnects():
 def test_live_steps_carry_only_observed_facts():
     """진행 단계는 **관측한 사실**만 옮긴다 — LLM 사고 과정은 우리 밖이다.
 
-    지어내면 그 순간 이 패널 전체가 못 믿을 것이 된다(`_materialize_bridge_steps` 가 그은 선).
+    ⚠ 계약이 한 번 정련됐다(2026-08-28). 종전 판정은 "원장에서 읽고 `reason_text` 가 없을
+    것" 이었는데, 그 결과 진행 중 화면이 `list_schemas 3행` 같은 **평문 나열**이 됐다 —
+    완료본은 「작업 + 근거」 카드인데 진행 중만 다른 모양이었다(사용자 제보).
+
+    지금은 우리가 **도구 호출 시점에 직접 기록한** 단계(`agent_runtime.steps`)를 그대로
+    돌려준다. 거기 실린 `reason` 은 개인 AI 가 보낸 것이거나 서버가 도구 목적에서 파생한
+    것이고, **출처(`reason_source`)가 함께 나간다**. 금지선은 "사유를 싣지 않는다" 가 아니라
+    **"출처 없이 AI 의 사고인 양 싣지 않는다"** 로 정확해졌다.
     """
     fn = _pyfunc(TOOLS_PY, "_bridge_live_steps")
-    assert "tool_call_usage" in fn, "관측 원장이 아니라 다른 곳에서 만든다"
-    assert "reason_text" not in fn, "사고 과정을 지어낸다"
-    assert "_BRIDGE_PROGRESS_TOOLS" in fn, "브리지 진행 도구를 조사 내역으로 섞는다"
+    assert "FROM agent_runtime.steps" in fn, "우리가 기록한 단계가 아니라 다른 곳에서 만든다"
+    assert '"reason_source"' in fn, "사유의 출처가 빠졌다 — 지어낸 것과 구분되지 않는다"
+    assert '"work_source"' in fn, "작업 문구의 출처가 빠졌다"
 
 
 def test_step_filter_is_shared_between_live_and_final():
@@ -379,11 +386,19 @@ def test_step_filter_is_shared_between_live_and_final():
 
     갈리면 제출 순간 단계 목록이 달라져 사용자가 "단계가 사라졌다" 고 본다.
     """
-    tools = _src(TOOLS_PY)
-    assert tools.count("_BRIDGE_PROGRESS_TOOLS") >= 3, "필터가 공유되지 않는다"
     final = _pyfunc(TOOLS_PY, "_materialize_bridge_steps")
-    assert "_BRIDGE_PROGRESS_TOOLS" in final
+    assert "_BRIDGE_PROGRESS_TOOLS" in final, "이관 경로가 진행 도구를 걸러내지 않는다"
     assert 'skip = {"wait_for_request"' not in final, "제출 경로가 자체 집합을 갖는다"
+    # 진행 표시는 이제 **필터가 필요 없다** — 진행 도구(wait·claim·submit)는 애초에
+    # `agent_runtime.steps` 에 기록되지 않으므로, 조회 결과에 섞일 수 없다(구조적 배제).
+    live = _pyfunc(TOOLS_PY, "_bridge_live_steps")
+    # ⚠ **실행되는 SQL** 만 본다 — docstring 은 왜 원장을 떠났는지 설명하느라 그 이름을
+    #   언급한다(주석이 검사를 좌우하면 그 테스트는 코드가 아니라 산문을 지키게 된다).
+    live_code = "\n".join(
+        ln for ln in live.splitlines()
+        if "FROM " in ln or "SELECT " in ln or "cur.execute" in ln)
+    assert "tool_call_usage" not in live_code, (
+        "진행 표시가 다시 원장을 읽는다 — 그러면 진행 도구 필터가 또 필요해진다")
 
 
 def test_phase_is_decided_by_the_server_in_one_word():
