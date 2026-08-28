@@ -1415,3 +1415,13 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **[SKIPPED] 사유**: 증적 기록 전용(문서만). 새 로직·표면·권한 0. **Human Approval Needed**: 아니오.
 - 배포: 불요(서빙 산출물 무변경).
 - Timestamp: 2026-08-28T18:00:00+09:00
+## REV-20260828T200000-check-probe [SKIPPED:live-verified-one-liner] — `--check` 가 정상 연결에서도 항상 실패했다 (feature-0043)
+- 범위: 러너 확인용 probe 1줄(`wait_for_request` → `list_open_requests`) + 회귀 테스트 2건 + feature TASK/MODIFY. 서빙 사본 동기화.
+- **발견 경위 — 라이브 실측이 아니었으면 못 찾았다**: 동적 워커 풀(REV-…160000) 검증을 위해 러너를 띄우려다 `--check` 가 "연결 실패" 를 뱉었다. 확증: `list_open_requests` **0.0초/200**(연결·인증 정상) · `--check` 의 호출은 **10초 read timeout** · 같은 호출을 90초로 주면 **55.3초 뒤 `timed_out: true`**.
+- **원인**: `wait_for_request` 는 질문이 없으면 55초를 보류하도록 **설계된** 도구인데(P0-J 의 '폴링 아님' 이 그 성질에 기댄다) `--check` 가 10초 timeout 으로 불렀다 — **대기 질문이 없는 정상 상태에서 반드시 실패**한다. **온보딩 시점이 정확히 그 상태**이고 지시문 ③단계가 `--check` 이므로, 외부 AI 는 연결이 정상인데도 거기서 멈춘다.
+- **왜 이제 드러났나**: 직전 cycle 이 `_failed` 판정을 넣기 전에는 timeout(`_http=0`)을 성공으로 읽어 "연결 정상." 을 출력했다 — 거짓 안심이 진짜 결함을 가리고 있었다. **한쪽 오독을 고치니 반대쪽 오독이 보인** 형태다.
+- 조치: 확인용 호출을 `list_open_requests`(limit 1, timeout 20s)로. 같은 인증·같은 경로를 쓰면서 즉시 답한다. 401 판정은 그대로.
+- 검증: 회귀 2건 + **되돌리는 뮤턴트 KILL** · **라이브 재확인**(같은 서버·같은 토큰 → `연결 정상.`).
+- **[SKIPPED] 사유**: 한 줄 교체이고 **라이브 실측으로 전후를 모두 확인**했다(실패 재현 → 수정 → 정상). 새 표면·권한 0. **Human Approval Needed**: 아니오.
+- 배포: `deploy_scope` 활성 — 서빙 러너 파일이 바뀌므로 재배포 필요.
+- Timestamp: 2026-08-28T20:00:00+09:00

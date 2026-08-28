@@ -820,14 +820,27 @@ def main() -> int:
     _log(f"AI = {kind}" + (f" ({args.cmd})" if args.cmd else ""))
     save_conf(args.base, args.ca, kind, args.cmd)
 
-    probe = api.call("wait_for_request", {}, timeout=10.0)
+    # ⚠ 연결 확인에 `wait_for_request` 를 쓰면 안 된다 (라이브 실측 2026-08-28).
+    #
+    #   그 도구는 **질문이 없으면 55초를 보류하도록 설계**돼 있다(그것이 '폴링 아님' 의 실체다).
+    #   그런데 여기서는 10초 timeout 으로 불렀으므로, **대기 질문이 없는 정상 상태에서 반드시
+    #   read timeout** 이 나고 `--check` 가 "연결 실패" 를 출력했다. 온보딩 시점이 정확히 그
+    #   상태다 — 지시문이 ③단계로 `--check` 를 권하는데 그것이 **항상 실패**했다.
+    #
+    #   실측: `list_open_requests` 0.0초/200 (연결 정상) · `wait_for_request` 10초 timeout ·
+    #   같은 호출을 90초로 주면 55.3초 뒤 `timed_out: true` 로 정상 반환.
+    #
+    #   직전 수정이 `_failed` 를 보게 하면서(거짓 "연결 정상" 제거) 이 결함이 드러났다 —
+    #   한쪽 오독을 고치니 반대쪽 오독이 보인 형태다. 확인용 호출은 **즉시 답하는 도구**여야
+    #   한다. `list_open_requests` 는 같은 인증·같은 경로를 쓰면서 바로 돌아온다.
+    probe = api.call("list_open_requests", {"limit": 1}, timeout=20.0)
     if probe.get("_http") == 401:
         _log("FATAL: 토큰이 무효합니다(발급자가 로그아웃했거나 만료). 재발급이 필요합니다.")
         return 3
     if args.check:
-        # ⚠ `not probe.get("_http")` 만 보면 **연결 실패(0)를 성공으로 읽는다** — 실제로
-        #   사설 CA 미지정 상태에서 "연결 정상." 을 출력했다(라이브 실측 2026-08-28).
-        #   `--check` 가 거짓 안심을 주면 사용자는 러너가 왜 아무 일도 안 하는지 알 수 없다.
+        # `_http` 만 보면 **연결 실패(0)를 성공으로 읽는다** — 사설 CA 미지정 상태에서 실제로
+        # "연결 정상." 을 출력했다. `--check` 가 거짓 안심을 주면 사용자는 러너가 왜 아무 일도
+        # 안 하는지 알 수 없다.
         failed = bool(probe.get("_http")) or bool(probe.get("_failed"))
         if failed:
             _log(f"연결 실패: {probe.get('error')}")
