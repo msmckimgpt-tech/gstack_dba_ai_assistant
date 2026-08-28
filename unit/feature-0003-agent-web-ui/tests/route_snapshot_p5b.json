@@ -1,6 +1,6 @@
 {
-  "total_routes": 259,
-  "api_routes": 258,
+  "total_routes": 260,
+  "api_routes": 259,
   "ordered": [
     {
       "path": "/static",
@@ -1748,6 +1748,13 @@
       "path": "/api/ai/bridge_stream",
       "methods": [
         "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/bridge_heartbeat",
+      "methods": [
+        "POST"
       ],
       "type": "APIRoute"
     },

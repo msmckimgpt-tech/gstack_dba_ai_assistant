@@ -535,6 +535,8 @@ def _ensure_web_tables():
         app._ensure_web_conversation_attachment_provider_files_schema(conn)
         # TASK-0274: 첨부 버전 관리 컬럼 보장 (slow path — 기존 배포 첨부 테이블에 컬럼 backfill).
         app._ensure_attachment_version_schema(conn)
+        # feature-0043 (TASK-20260828T150000): 브리지 하트비트 컬럼 보장 (slow path).
+        app._ensure_bridge_heartbeat_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         app._ensure_web_audit_events_schema(conn)
         # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 컬럼/체크포인트 (slow path).
@@ -2692,6 +2694,38 @@ def _ensure_attachment_version_schema(conn) -> None:
     finally:
         cur.close()
 
+def _ensure_bridge_heartbeat_schema(conn) -> None:
+    """feature-0043 (TASK-20260828T150000): 브리지 연결 하트비트 컬럼 idempotent ALTER.
+
+    상주 러너가 살아 있다는 사실을 **토큰 행에** 새긴다. 별도 테이블을 만들지 않는 이유:
+    이 사실이 필요한 두 곳(수명 연장 · '지금 듣고 있는가' 판정)이 모두 그 토큰 행을 이미
+    읽는다. 나누면 같은 질문에 두 개의 답이 생기고, 갈리는 순간 느슨한 쪽이 사용자가 보는
+    진실이 된다(P0-R 에서 이미 한 번 겪었다).
+
+    컬럼:
+      - LastHeartbeatAt : 러너가 마지막으로 '살아 있다' 고 말한 시각. NULL = 한 번도 없음.
+
+    `LastUsedAt`(이미 있음)을 재활용하지 않는 이유: 그것은 "이 토큰이 쓰였다" 이고 도구 호출도
+    포함하는 넓은 사실이다. 반면 여기서 알고 싶은 것은 **대기하는 프로세스가 있는가** 라는
+    좁은 사실이라, 한 컬럼에 두 뜻을 담으면 판정이 낙관적으로 기운다.
+
+    avatar 선례(`_ensure_avatar_icon_schema`)와 동형으로 fast-path(`_ensure_seed_catchup`)·
+    slow-path(`_ensure_web_tables`) 양쪽에서 호출한다 — 운영 재기동은 slow path 를 안 타므로
+    한쪽만 두면 'Unknown column' 이 배포 후에야 드러난다.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute("ALTER TABLE WebOAuthTokens ADD COLUMN LastHeartbeatAt DATETIME NULL")
+        except Exception:
+            # 이미 있거나(정상 반복 실행) 테이블이 아직 없다(신규 설치 순서). 어느 쪽이든
+            # catchup 체인을 세우지 않는다 — 여기서 예외를 올리면 무관한 seed 들이 통째로
+            # abort 된다(webperm 사례와 동형).
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_seed_catchup(conn) -> None:
     """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
 
@@ -2755,6 +2789,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
     _ensure_attachment_version_schema(conn)
+    # feature-0043 (TASK-20260828T150000): 브리지 하트비트 컬럼 fast-path 보정.
+    _ensure_bridge_heartbeat_schema(conn)
     # TASK-20260618T044318/061703: DB allowlist 규칙 테이블 + Source/RuleId + 다중규칙(UNIQUE 제거·SortOrder)
     #   fast-path 보정 — slow path 안 타는 재기동에서도 다중규칙 마이그레이션이 반영되도록(MAJOR#2 재리뷰).
     _ensure_web_product_db_rules_schema(conn)

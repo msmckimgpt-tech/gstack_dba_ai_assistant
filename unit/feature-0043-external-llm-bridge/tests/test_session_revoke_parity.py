@@ -81,18 +81,41 @@ def test_single_source_for_connection_state():
     assert "def account_has_live_token(" in STORE.read_text(encoding="utf-8")
 
 
+def _live_predicate() -> str:
+    """`_LIVE_TOKEN_PREDICATE` 상수의 실제 값.
+
+    2026-08-28(TASK-20260828T150000)부터 술어가 **상수 하나**로 모였다 — 하트비트 판정
+    (`account_is_heartbeating`)이 같은 조건 위에 최근성만 얹기 때문이다. 그래서 조건을
+    함수 본문에서 찾던 종전 방식은 더 이상 성립하지 않는다. **계약은 그대로**이므로,
+    상수 값 자체를 읽어 같은 조건을 단정한다(그리고 아래에서 소비처가 그 상수를 쓰는지 본다).
+
+    ⚠ 소스 문자열을 읽지 않는다 — 상수가 f-string 으로 시각 축(`UTC_TIMESTAMP()`)을 끼워
+    넣으므로, 텍스트로는 **조립 결과**를 볼 수 없다. 모듈을 로드해 실제 값을 본다.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("oauth_store_parity_test", STORE)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    pred = getattr(mod, "_LIVE_TOKEN_PREDICATE", None)
+    assert isinstance(pred, str) and pred, "oauth_store: _LIVE_TOKEN_PREDICATE 상수가 없다"
+    return pred
+
+
 def test_connection_probe_checks_the_bound_session():
     """토큰 행만 보면 로그아웃 뒤에도 '연결됨' 이 된다 — 세션까지 봐야 한다."""
     body = _func(STORE, "account_has_live_token")
+    pred = _live_predicate()
+    assert "_LIVE_TOKEN_PREDICATE" in body, "판정이 공유 술어를 쓰지 않는다(복제본이 생겼다)"
     assert "WebAuthSessions" in body, "묶인 세션을 보지 않는다"
-    assert "IsRevoked = 0" in body, "세션 폐기 여부를 보지 않는다"
-    assert "s.ExpiresAt IS NULL OR s.ExpiresAt > NOW()" in body, "세션 만료를 보지 않는다"
+    assert "s.IsRevoked = 0" in pred, "세션 폐기 여부를 보지 않는다"
+    assert "s.ExpiresAt IS NULL OR s.ExpiresAt > UTC_TIMESTAMP()" in pred, "세션 만료를 보지 않는다"
 
 
 def test_session_null_tokens_are_not_excluded():
     """세션 무관 토큰(발급 축이 다름)까지 배제하면 멀쩡한 연결이 끊긴 것으로 보인다."""
-    body = _func(STORE, "account_has_live_token")
-    assert "t.SessionId IS NULL OR" in body
+    assert "t.SessionId IS NULL OR" in _live_predicate()
 
 
 def test_all_consumers_use_the_shared_predicate():
@@ -105,7 +128,7 @@ def test_all_consumers_use_the_shared_predicate():
 
 def test_predicate_matches_the_auth_path():
     """표시 술어가 인증 술어(`resolve_access_token`)와 **같은 조건**을 본다."""
-    probe = _func(STORE, "account_has_live_token")
+    probe = _live_predicate()
     resolve = _func(STORE, "resolve_access_token")
     for cond in ("IsRevoked", "ExpiresAt", "RevokedAt"):
         assert cond in probe and cond in resolve, f"{cond} 조건이 한쪽에만 있다"
@@ -319,9 +342,15 @@ def test_runner_never_persists_the_token():
 
 
 def test_runner_tells_how_to_come_back_on_401():
-    """조용히 죽으면 사용자에겐 '왜 답이 안 오지' 만 남는다."""
-    src = RUNNER.read_text(encoding="utf-8")
-    seg = src[src.index('if code == 401:'):]
+    """조용히 죽으면 사용자에겐 '왜 답이 안 오지' 만 남는다.
+
+    ⚠ 401 을 보는 자리가 둘이 됐다(TASK-20260828T150000) — 하트비트 스레드와 대기 루프.
+    **복귀 안내는 대기 루프 한 곳**이다(두 곳에서 안내하면 갈린다). 그래서 검사 대상을
+    `main` 본문으로 특정한다 — 파일 전체에서 첫 `if code == 401:` 을 잡으면 하트비트 쪽을
+    보게 되고, 안내가 사라져도 통과하는 vacuous pass 가 된다.
+    """
+    body = _func(RUNNER, "main")
+    seg = body[body.index('if code == 401:'):]
     assert "--resume" in seg[:800], "다시 띄우는 정확한 명령을 주지 않는다"
 
 

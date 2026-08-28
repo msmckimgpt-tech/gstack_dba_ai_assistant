@@ -1526,7 +1526,15 @@ SEED_ROLE_DEFINITIONS = (
 )
 
 PASSWORD_HASH_ITERATIONS = max(100_000, int(os.getenv("WEB_PASSWORD_HASH_ITERATIONS", "310000")))
+#: 무활동 세션 수명. 종전에는 **로그인 시점부터** 이 기간이었다(슬라이딩 없음) — 매일 쓰는
+#: 사용자도 14일째에 갑자기 로그아웃됐고, 그 세션에 묶인 브리지 토큰까지 함께 죽었다.
+#: 지금은 활동이 있을 때마다 여기까지 다시 민다(feature-0043 TASK-20260828T150000).
 AUTH_SESSION_DAYS = max(1, int(os.getenv("WEB_AUTH_SESSION_DAYS", "14")))
+#: 슬라이딩의 **절대 상한** — 로그인 시점부터 이 기간이 지나면 활동과 무관하게 재로그인.
+#: 무한 연장은 "세션 = 사람이 최근에 인증했다는 증거" 를 시간이 지나도 참이라고 우기는 것과
+#: 같다. 상한이 있어야 자격증명 변경·계정 회수가 결국 반영된다.
+AUTH_SESSION_MAX_DAYS = max(
+    AUTH_SESSION_DAYS, int(os.getenv("WEB_AUTH_SESSION_MAX_DAYS", "90")))
 
 
 def _seed_role_definition(role_key: str) -> dict[str, Any] | None:
@@ -3698,14 +3706,36 @@ AND a.DeletedAt IS NULL
                 return row
             cur = conn.cursor()
             cur.execute(
+                # feature-0043 (TASK-20260828T150000): 활동이 있으면 만료를 **다시 민다**.
+                #   `GREATEST` — 이미 더 먼 만료를 앞당기지 않는다(쓸수록 짧아지는 역전 방지).
+                #   `LEAST(CreatedAt + MAX_DAYS, UTC + DAYS)` — 슬라이딩에 절대 상한을 씌운다.
+                #   `COALESCE(CreatedAt, …)` — CreatedAt 이 비면 LEAST 가 NULL 이 되고
+                #     NOT NULL 컬럼 UPDATE 가 통째로 실패한다(활동 기록까지 같이 잃는다).
+                #
+                # ⚠ `UTC_TIMESTAMP()` 이지 `NOW()` 가 아니다. `ExpiresAt` 은 `_issue_auth_session`
+                #   이 `datetime.now(timezone.utc)` 로 넣은 **UTC** 이고, 컨테이너 TZ 는
+                #   `Asia/Seoul` 이라 `NOW()` 로 밀면 9시간을 덤으로 준다(라이브 실측 2026-08-28).
+                #   `LastSeenAt` 은 그대로 `CURRENT_TIMESTAMP` — 그 컬럼은 DEFAULT/ON UPDATE 가
+                #   이미 로컬 축이고 관측용이라, 여기만 UTC 로 바꾸면 오히려 한 컬럼이 갈린다.
+                #   `CreatedAt`(DEFAULT=로컬)로 계산하는 절대 상한은 그만큼 관대해진다(90일 + 9시간).
+                #   상한 쪽 오차는 안전한 방향이라 이 cycle 에서 컬럼 축까지 옮기지 않는다.
+                # throttle(_session_touch_due, 기본 60s) 안에서만 도는 UPDATE 라 폴링 트래픽이
+                # 이 문장을 매 요청 실행하지는 않는다.
                 """
 UPDATE WebAuthSessions
 SET LastSeenAt = CURRENT_TIMESTAMP,
+    ExpiresAt = GREATEST(
+        ExpiresAt,
+        LEAST(DATE_ADD(COALESCE(CreatedAt, UTC_TIMESTAMP()), INTERVAL %s DAY),
+              DATE_ADD(UTC_TIMESTAMP(), INTERVAL %s DAY))
+    ),
     RemoteAddr = %s,
     UserAgent = %s
 WHERE SessionTokenHash = %s
                 """,
                 (
+                    int(AUTH_SESSION_MAX_DAYS),
+                    int(AUTH_SESSION_DAYS),
                     _get_client_ip(request),
                     str(request.headers.get("user-agent", "") or "")[:255],
                     _hash_session_token(token),

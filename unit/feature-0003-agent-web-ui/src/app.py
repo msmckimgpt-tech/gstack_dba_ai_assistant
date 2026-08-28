@@ -3504,6 +3504,7 @@ from routers._bootstrap_schema import (  # noqa: E402
     _ensure_attachment_version_schema,
     _ensure_avatar_icon_schema,
     _ensure_bootstrap_admin,
+    _ensure_bridge_heartbeat_schema,
     _ensure_dynamic_permissions_schema,
     _ensure_llm_quota_schema,
     _ensure_login_lockout_schema,

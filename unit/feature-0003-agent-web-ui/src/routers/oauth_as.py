@@ -493,15 +493,16 @@ def wk_protected_resource_scoped(rest: str, request: Request) -> JSONResponse:
 # "특정 URL 접속 → 로그인 → 버튼 → 복사" 경로. MCP OAuth 를 도는 클라이언트라면 이 페이지가
 # 필요 없다(위 discovery 로 자동). 그렇지 않은 도구·스크립트·수동 설정을 위한 우회로다.
 
-def _listening(account_id: int) -> bool:
-    """AI 가 지금 대기 중인가(원장의 `wait_for_request` 최근성). 실패는 False.
+def _listening(account_id: int, conn=None) -> bool:
+    """AI 가 지금 대기 중인가(하트비트 최근성 · `wait_for_request` 최근성). 실패는 False.
 
     판정은 도구 표면과 **같은 함수**를 쓴다 — 따로 세면 화면마다 다른 답을 하게 된다.
+    이미 열린 연결이 있으면 넘긴다(하트비트 축은 MySQL 을 읽는다).
     """
     try:
         from routers.ai_tools import account_is_listening
 
-        return bool(account_is_listening(account_id))
+        return bool(account_is_listening(account_id, conn))
     except Exception:
         return False
 
@@ -537,7 +538,7 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "connected": connected,
         # 토큰이 있는 것과 **지금 듣고 있는 것**은 다르다. 재부팅하면 러너만 사라지고 토큰은
         # 남아, "연결됨" 만 보이면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
-        "listening": _listening(int(account.get("id") or 0)),
+        "listening": _listening(int(account.get("id") or 0), conn),
     })
 
 
@@ -765,8 +766,12 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         # 토큰의 **성질**을 밝힌다. 수명·폐기 경로를 모르면 붙여넣기 토큰은 영구 비밀처럼 보이고,
         # 그것이 곧 "채팅으로 장기 크리덴셜을 받았다" 는 거절 사유가 된다(제보 2026-08-27).
         "  이 토큰은 발급한 **로그인 세션에 묶여 있다** — 사용자가 웹에서 로그아웃하면 즉시 무효가",
-        "  되고, 살아 있어도 최대 12시간이다. 새로 받으려면 웹 대화 화면 → 'AI 연결하기' →",
-        "  [연결 정보 만들기] 를 다시 누르면 된다.",
+        # 2026-08-28: 수명의 기준점이 '발급 시점' 에서 '마지막 생존 신호' 로 바뀌었다. 여기에
+        # 옛 문구(최대 12시간)를 남겨 두면 AI 는 반나절마다 재발급을 준비하려 들고, 그것은
+        # 이제 일어나지 않는 일이다 — 가이드가 실제와 어긋나면 AI 는 안내받은 대로 갔다가 막힌다.
+        "  된다. 상주 러너가 도는 동안은 30초마다 가는 생존 신호가 수명을 밀어 주므로 만료되지",
+        "  않는다. 러너를 끄면 마지막 신호로부터 12시간 뒤 만료된다. 새로 받으려면 웹 대화 화면 →",
+        "  'AI 연결하기' → [연결 정보 만들기] 를 다시 누르면 된다.",
         # scope 는 `data.read` 지만 같은 토큰이 답변 제출·task 생성·첨부 열람까지 준다.
         # "조사 도구뿐" 이라고 줄이면 그것도 검증에 걸리는 과장이다.
         "  범위는 **네 계정의 것**에 한정된다: DB 구조 조사·조회, 그리고 받은 질문에 대한 답변",
@@ -838,7 +843,8 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         "        주는 것이다). 그래서 네 런타임의 세션 기록에 남을 수 있고, 아래 명령을 그대로 치면",
         "        셸 히스토리에도 남는다. 그게 곤란하면 인자 대신 환경변수로 넘겨라:",
         "          export BRIDGE_TOKEN='<위 토큰>'   # 이후 --token 생략 가능",
-        "        토큰 수명이 최대 12시간이고 로그아웃으로 즉시 죽는 것이 이 노출면의 상한이다.",
+        "        로그아웃으로 즉시 죽고, 러너를 끄면 12시간 뒤 만료되는 것이 이 노출면의 상한이다",
+        "        (러너가 도는 동안은 생존 신호로 계속 유효하다).",
         "",
         "   ③ 연결 확인 (여기까지는 아무것도 상주하지 않는다)",
         f"      python3 bridge_agent.py --base {base} \\",

@@ -54,6 +54,18 @@ source_of_truth: true
 | TEST-20260828T070000-runner-once | `main` | `--once` 가 워커 완료를 기다린다(daemon 스레드 조기 종료 방지) | AC-65 |
 | TEST-20260828T070000-fallback | `_pollBridgeAnswer` | SSE 실패 시 폴링 폴백 · 두 경로가 같은 렌더·4xx 판정 | AC-64 |
 
+| TEST-20260828T150000-hb-extends | `oauth_store.heartbeat` | 유효 토큰 → 연장 UPDATE 1회 · `LastHeartbeatAt` 기록 · 응답에 주기/수명 | AC-66 |
+| TEST-20260828T150000-hb-no-resurrect | `oauth_store.heartbeat` | 로그아웃·세션만료·토큰폐기·토큰만료·refresh **5종 전건** UPDATE 미발행 | AC-66 |
+| TEST-20260828T150000-hb-no-inversion | `oauth_store.heartbeat` | `GREATEST`(만료 앞당김 금지) · `LEAST(…, s.ExpiresAt)`(세션 초과 금지) · 대상 토큰 1행 | AC-66 |
+| TEST-20260828T150000-hb-predicate | `account_is_heartbeating` | 살아있음 술어 + 최근성 동시 요구 · 창 경계 양측 · 계정 0 은 조회조차 안 함 | AC-67 |
+| TEST-20260828T150000-hb-single-predicate | `oauth_store` | 두 판정이 `_LIVE_TOKEN_PREDICATE` 하나를 공유(복제본 금지) | AC-67 |
+| TEST-20260828T150000-listening-2axis | `account_is_listening` | 하트비트 축이 원장보다 **먼저**(일하는 중 오판 방지) · 원장 폴백 유지 | AC-67 |
+| TEST-20260828T150000-endpoint | `/api/ai/bridge_heartbeat` | 같은 토큰 해석기 경유 · 도구 목록 밖 · 원장 미기록 · 기록 실패가 연결을 끊지 않음 | AC-66 |
+| TEST-20260828T150000-runner-thread | `start_heartbeat` | 가짜 Api 로 **실제 루프 구동** · 실패(0·401) 후 생존 · 주기 하한 · daemon · `main` 배선 | AC-68 |
+| TEST-20260828T150000-session-slide | `web_context` | 활동 시 만료 슬라이딩 · 절대 상한 ≥ 무활동 창 · throttle 유지 · CreatedAt NULL 방어 | AC-69 |
+| TEST-20260828T150000-shutdown | `shutdown_after_drain` · `ActiveTasks` | 유휴 즉시 종료 / 진행 중 대기 후 종료 / 유예 초과 시 취소 · 유예는 절대시각 · 401 배선 · 등록 경합 방지 | AC-70 |
+| TEST-20260828T150000-schema | `_ensure_bridge_heartbeat_schema` | 컬럼 보장이 fast/slow 양 경로 · ALTER 실패가 catchup 을 세우지 않음 | AC-66 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).
