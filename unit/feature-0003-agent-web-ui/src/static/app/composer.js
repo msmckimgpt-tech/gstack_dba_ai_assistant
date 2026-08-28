@@ -2552,6 +2552,19 @@ function _adoptComposerModelPickToConv(state, newConvId, pendingKey) {
 }
 
 function _composerCurrentModel() {
+  // feature-0043 P0-Z3: 러너 카탈로그가 서 있으면 **그 목록 안에서만** 고른다.
+  //
+  // 아래 폴백 사슬은 서버 LLM 어휘(`state.session.default_model` → 최종 리터럴 haiku)로
+  // 내려가는데, 브리지 모드에서 그 값은 러너가 모르는 이름이다. 그대로 두면 사용자가 선택기를
+  // 건드리지 않고 보낸 첫 질문에 그 alias 가 실려 **굳고**, 러너는 버린다 — 고른 적 없는 값이
+  // 저장되고 반영은 안 되는 상태가 신규 대화마다 재현된다(codex REV-20260828T170000 P1-2).
+  const runnerCatalog = _composerRunnerCatalog();
+  if (runnerCatalog) {
+    const offered = Array.isArray(runnerCatalog.models) ? runnerCatalog.models : [];
+    const picked = state.selectedModel;
+    if (picked && offered.some((m) => m.value === picked)) return picked;
+    return runnerCatalog.default_model || (offered[0] && offered[0].value) || "";
+  }
   return state.selectedModel
     || state.session?.default_model
     || state.modelCatalog?.default_model
@@ -2630,14 +2643,72 @@ function _closeComposerActionsMenus() {
   if (reasoningItem) reasoningItem.setAttribute("aria-expanded", "false");
 }
 
-// 현재 모델이 extended thinking(요청 단위 budget)을 지원하는가 — backend model_supports_thinking
-// 과 동일 규칙(claude-* 만). 로컬 LLM 등은 미지원 → 선택기 비활성.
+// feature-0043 P0-Z3: 브리지 모드에서 목록의 출처가 **연결된 러너**인가.
+// 서버가 `model_selector_source: "runner"` 로 명시할 때만 참 — 값으로 말하게 해서, 프론트가
+// 카탈로그 모양을 보고 추측하지 않게 한다(추측하면 서버가 형태를 바꾼 날 조용히 어긋난다).
+function _composerRunnerCatalog() {
+  const catalog = state.modelCatalog || state.apiVaultOptions;
+  if (String(catalog?.model_selector_source || "") !== "runner") return null;
+  return catalog;
+}
+
+// 현재 고른 모델의 런타임 (`"<runtime>:<model>"` 의 앞부분). 브리지 모드가 아니면 "".
+function _composerCurrentRuntime() {
+  if (!_composerRunnerCatalog()) return "";
+  const value = String(_composerCurrentModel() || "");
+  const idx = value.indexOf(":");
+  return idx > 0 ? value.slice(0, idx) : "";
+}
+
+// 지금 고를 수 있는 추론 강도 목록.
+//
+// 브리지 모드에서는 **런타임마다 다르다** — claude 는 5단계, codex 는 3단계, gemini 는 아예
+// 없다. 그래서 서버 상수(REASONING_LEVEL_OPTIONS)가 아니라 러너가 신고한 목록을 쓴다.
+// 빈 배열은 "이 런타임은 추론 강도를 지정할 수 없다" 는 뜻이고, 그때 항목은 비활성이 된다.
+function _composerReasoningOptions() {
+  const catalog = _composerRunnerCatalog();
+  if (!catalog) return REASONING_LEVEL_OPTIONS;
+  const byRuntime = catalog.reasoning_levels_by_runtime || {};
+  const list = byRuntime[_composerCurrentRuntime()];
+  return Array.isArray(list) ? list : [];
+}
+
+// 이 값이 **지금** 고를 수 있는 추론 강도인가.
+//
+// 브리지 모드에서는 러너가 신고한 목록으로, 아니면 서버 고정 집합으로 판정한다. hydration
+// (app.js)과 현재값 계산이 같은 술어를 쓰게 하려고 따로 뺐다 — 갈리면 한쪽이 버린 값을
+// 다른 쪽이 표시한다.
+function _composerReasoningValid(value) {
+  if (!value) return false;
+  if (_composerRunnerCatalog()) {
+    return _composerReasoningOptions().some((o) => o.value === value);
+  }
+  return _isValidReasoningLevel(value);
+}
+
+// 현재 모델이 추론 강도 지정을 지원하는가.
+//
+// 서버 LLM 경로에서는 extended thinking(요청 단위 budget) 규칙 그대로 — backend
+// model_supports_thinking 과 동일(claude-* 만). 브리지 모드에서는 **러너가 그 등급을
+// 신고했는가**가 곧 지원 여부다(우리가 아는 규칙이 아니라 그쪽이 말한 사실).
 function _composerModelSupportsThinking() {
+  if (_composerRunnerCatalog()) return _composerReasoningOptions().length > 0;
   return String(_composerCurrentModel() || "").toLowerCase().startsWith("claude-");
 }
 
 // 현재 적용 추론 강도: state → 로컬 미러 → 기본값.
 function _composerCurrentReasoningLevel() {
+  const options = _composerReasoningOptions();
+  if (_composerRunnerCatalog()) {
+    // 러너 어휘(`medium`·`xhigh` 등)는 서버 집합 검사(_isValidReasoningLevel)를 통과하지
+    // 못하므로 여기서는 **신고 목록** 자체를 기준으로 삼는다. 목록에 없으면 첫 항목으로
+    // 떨어진다 — 런타임을 바꿔 등급 어휘가 갈린 순간에도 항상 유효한 값이 선택돼 있다.
+    const has = (v) => options.some((o) => o.value === v);
+    if (has(state.reasoningLevel)) return state.reasoningLevel;
+    const stored = _readReasoningPrefFromLocal();
+    if (has(stored)) return stored;
+    return options.length ? options[0].value : "";
+  }
   return (
     (_isValidReasoningLevel(state.reasoningLevel) && state.reasoningLevel)
     || _readReasoningPrefFromLocal()
@@ -2667,18 +2738,20 @@ function _renderComposerReasoningMenu() {
   if (!menu) return;
   const current = _composerCurrentReasoningLevel();
   menu.innerHTML = "";
-  REASONING_LEVEL_OPTIONS.forEach((opt) => {
+  _composerReasoningOptions().forEach((opt) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "composer-model-item" + (opt.value === current ? " is-selected" : "");
     item.setAttribute("role", "menuitem");
     item.setAttribute("data-reasoning-value", opt.value);
+    // 러너 신고 항목에는 설명(`desc`)이 없다 — 그 자리를 비운다(빈 문자열이면 줄이 생기지
+    // 않는다). 없는 설명을 지어내면 그것이 곧 사용자가 믿는 사실이 된다.
     item.innerHTML = `
       <div class="composer-model-item-head">
         <span class="composer-model-item-label">${escapeHtml(opt.label)}</span>
         ${opt.value === current ? '<span class="composer-model-item-check" aria-label="현재 선택">✓</span>' : ""}
       </div>
-      <div class="composer-model-item-desc">${escapeHtml(opt.desc)}</div>
+      ${opt.desc ? `<div class="composer-model-item-desc">${escapeHtml(opt.desc)}</div>` : ""}
     `;
     item.addEventListener("click", () => {
       state.reasoningLevel = opt.value;
@@ -2777,6 +2850,12 @@ function _renderComposerModelMenu() {
       state._modelPickedForConvId = state.activeConversationId || "";
       _updateComposerModelLabel();
       _renderComposerModelMenu();
+      // feature-0043 P0-Z3: 브리지 모드에서는 **런타임마다 추론 등급 어휘가 다르다**
+      // (claude 5단계 · codex 3단계 · gemini 없음). 모델을 바꾸면 등급 목록과 라벨도 함께
+      // 다시 그린다 — 안 하면 claude 에서 고른 `xhigh` 가 codex 로 바꾼 뒤에도 라벨에 남고,
+      // 그 값은 codex 에 없어 조용히 무시된다(= 반영 안 되는 표시).
+      _updateComposerReasoningLabel();
+      _renderComposerReasoningMenu();
       _closeComposerActionsMenus();
     });
     menu.appendChild(item);
@@ -3083,9 +3162,13 @@ async function sendPrompt() {
   // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
   // feature-0008 (composer-model-selector): model 결정은 `_composerCurrentModel()` 단일 정의를 따른다
   // (selectedModel → session.default_model → catalog default → 최종 안전망).
-  // feature-0043 bridge-model-selector: 조작면이 숨겨진 상태(서버 계정 LLM 차단)에서는 화면이
-  // 보여주지도 않은 값을 실어 보내지 않는다. 싣는 순간 그 값이 대화 KV 에 저장되고, 나중에
-  // 게이트를 되돌렸을 때 **사용자가 고른 적 없는 모델**이 그 대화의 설정으로 되살아난다.
+  // feature-0043: 조작면이 숨겨진 상태에서는 화면이 보여주지도 않은 값을 실어 보내지 않는다.
+  // 싣는 순간 그 값이 대화 KV 에 저장되고, 나중에 **사용자가 고른 적 없는 모델**이 그 대화의
+  // 설정으로 되살아난다.
+  //
+  // P0-Z3(2026-08-28) 이후 이 상태의 의미가 좁아졌다: 브리지 모드라도 연결된 러너가 능력을
+  // 신고하면 선택기는 보이고(그때 값은 `runtime:model`) 여기서 정상적으로 실린다. 숨김은
+  // **고를 것이 실제로 없을 때**만 남는다 — 러너 미연결 · 구 러너 · `--cmd` 직접 지정.
   const _selectorHidden = _composerModelSelectorHidden();
   const askBody = {
     message,
@@ -3638,6 +3721,7 @@ export {  // 인라인 export(_downloadAttachmentById) 제외
   _composerCurrentModel,
   _composerCurrentReasoningLevel,
   _composerModelSelectorHidden,   // feature-0043: 재답변 경로(app.js)도 같은 판정을 쓴다
+  _composerReasoningValid,        // feature-0043 P0-Z3: hydration(app.js)이 같은 술어를 쓴다
   _detachShareRangeEsc,
   _ensureMentionMembers,
   _loadConversationAttachments,

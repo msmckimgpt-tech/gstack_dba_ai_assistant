@@ -17,12 +17,21 @@
     서버에서 받는 것    질문 텍스트 · 대화 맥락 · **운영자 시스템 지침** · 첨부 목록 · task_id.
                         실행 가능한 코드나 셸 명령은 받지 않는다.
                         → `compose_prompt` 가 쓰는 필드가 전부다(직접 세어 보면 된다).
-    실행하는 것         `_CLI_ADAPTERS` 에 **하드코딩된** 로컬 AI CLI 하나
-                        (`claude -p` / `codex exec` / `gemini -p`), 또는 사용자가 `--cmd` 로
-                        직접 준 명령. 서버는 이 선택에 관여하지 않는다.
-    셸을 거치지 않음    프롬프트는 argv 로 넘어간다 — 질문 본문에 셸 메타문자가 있어도 명령이
-                        되지 않는다. → `_run_cli_cancelable` 의 `subprocess.Popen(cmd, ...)`
-                        에서 `cmd` 는 리스트다(셸 해석이 개입하는 자리가 없다).
+    실행하는 것         `_RUNTIME_SPECS` 에 **하드코딩된** 로컬 AI CLI
+                        (`claude -p` / `codex exec` / `gemini -p` / ollama HTTP), 또는
+                        사용자가 `--cmd` 로 직접 준 명령.
+    서버 값은 인자가     서버가 돌려주는 (런타임·모델·추론등급)은 사용자가 웹에서 고른 것이고
+    되기 전에 걸러진다   CLI 인자가 된다. 그러나 **표에 있는 값만** 통과한다 — 실행 파일 이름은
+                        `_RUNTIME_SPECS` 의 키여야 하고(그리고 PATH 에 실재해야 하고), 모델·
+                        등급은 그 런타임의 신고 목록에 있는 값이어야 한다. 그 외에는 조용히
+                        버려지고 CLI 기본값으로 실행된다. → `build_cmd` 의 `_valid()` 와
+                        `handle_one` 의 `want_runtime in _RUNTIME_SPECS and _which(...)`.
+                        즉 서버는 **우리가 미리 적어 둔 것 중에서 고를** 수 있을 뿐,
+                        새 명령·새 플래그를 만들어 넣지 못한다.
+    셸을 거치지 않음    프롬프트도 모델·등급도 argv 로 넘어간다 — 본문에 셸 메타문자가 있어도
+                        명령이 되지 않는다. → `_run_cli_cancelable` 의
+                        `subprocess.Popen(cmd, ...)` 에서 `cmd` 는 리스트다(셸 해석이 개입하는
+                        자리가 없다).
     원격 코드 실행 없음 `eval`·`exec`·`compile`·동적 import 가 없다. 자동 업데이트도 없다.
                         → `grep -nE 'eval[(]|exec[(]|compile[(]|__import__' bridge_agent.py`
                           (매칭되는 줄은 **이 안내문 자신뿐**이어야 한다. 코드에는 없다.)
@@ -30,9 +39,12 @@
                         설치를 하지 않는다. 남기는 파일은 `~/.mysql-ai-bridge/config.json`
                         (0600) **하나뿐**이고 거기에 **토큰은 넣지 않는다** → `save_conf`.
     나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`) 와
-                        `/api/ai/bridge_heartbeat` (→ `Api.heartbeat`, 30초마다 빈 본문 1회).
-                        그리고 `--ai ollama` 일 때만 `BRIDGE_OLLAMA_URL`(기본
-                        `127.0.0.1:11434`) — 그 경로를 쓰지 않으면 호출되지 않는다.
+                        `/api/ai/bridge_heartbeat` (→ `Api.heartbeat`, 30초마다 1회 —
+                        본문은 이 머신에서 **쓸 수 있는 런타임·모델 이름 목록**뿐이다.
+                        경로·버전·설정 파일 내용은 싣지 않는다 → `detect_runtimes`).
+                        그리고 ollama 를 쓸 때만 `BRIDGE_OLLAMA_URL`(기본
+                        `127.0.0.1:11434`) — 그 경로를 쓰지 않으면 호출되지 않는다
+                        (모델 목록 조회 `/api/tags` 도 같은 호스트다).
                         URL 을 만드는 자리는 `Api._post` 와 ollama 어댑터 **둘뿐**이다.
     관측·종료           하는 일은 전부 stderr 로그에 남는다. `Ctrl+C` 또는 `kill <pid>` 로 끝나고,
                         끝난 뒤 남는 것은 위 `config.json` 과 네가 리다이렉트한 로그 파일뿐이다.
@@ -114,12 +126,19 @@ AI 는 자동 감지한다(claude → codex → gemini → ollama 순). 고정�
     --ai claude            # 또는 codex / gemini / ollama
     --cmd 'my-ai -p {prompt}'   # 완전 수동. {prompt} 자리에 질문이 들어간다
 
-**모델은 웹에서 고르지 않는다** — 이 머신의 AI 설정이 정한다. 특정 모델로 고정하려면 자기
-런타임의 실제 모델 이름으로 명령을 직접 준다:
+## 모델·추론등급 (2026-08-28, P0-Z3)
 
-    --cmd 'claude --model opus -p {prompt}'
+**웹에서 고른다 — 단 목록은 이 러너가 알려준 것이다.** 기동 시 이 머신에 설치된 런타임을
+전부 찾아(claude·codex·gemini·ollama) 각자가 고를 수 있는 모델·추론등급을 하트비트에 실어
+보낸다. 웹 컴포저는 그 목록만 보여주고, 고른 값은 `claim_request` 로 돌아와 실제 CLI 인자가
+된다(`claude --model sonnet --effort low`, `codex -m … -c model_reasoning_effort=…`).
 
-(서비스가 아는 모델 이름과 각 CLI 가 아는 모델 이름은 다르다. 그 이름을 아는 것은 사용자다.)
+종전에는 서비스 내부 alias(`claude-haiku-4`)를 보여줬는데 그 이름을 아는 CLI 가 없어서
+**무엇을 골라도 답이 달라지지 않았다**. 목록의 출처를 실행하는 쪽으로 옮긴 것이 이번 변경의
+전부다 — 아는 쪽이 말한다.
+
+명령을 통째로 직접 주면(`--cmd 'claude --model opus -p {prompt}'`) 그것이 이기고, 웹
+선택기는 표시되지 않는다(반영되지 않을 조작면을 띄우지 않는다).
 
 한 번만 처리하고 끝내려면 `--once`. 연결만 확인하려면 `--check`.
 
@@ -311,13 +330,24 @@ class Api:
     def call(self, tool: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
         return self._post(f"/api/ai/tools/{tool}", payload, timeout)
 
-    def heartbeat(self, timeout: float = _HEARTBEAT_TIMEOUT_SEC) -> dict:
-        """"살아 있다" 는 신호 하나. 도구가 아니라 **연결 유지 경로**다.
+    def heartbeat(self, runtimes: list | None = None,
+                  timeout: float = _HEARTBEAT_TIMEOUT_SEC) -> dict:
+        """"살아 있다" + **"이런 걸 쓸 수 있다"**. 도구가 아니라 연결 유지 경로다.
 
         도구 목록에 넣지 않는 이유는 그것이 조사 도구의 목록이기 때문이다 — 거기 끼면 AI 에게
         "이걸 호출해 조사하라" 는 잘못된 신호를 준다. 인증은 도구와 **같은 토큰**을 쓴다.
+
+        능력(`runtimes`)을 별도 채널이 아니라 여기에 싣는 이유 (P0-Z3): 살아 있음과 능력은
+        **같은 사실의 두 면**이다. 따로 보내면 "살아 있다고 하는데 능력은 모르는" 또는 그
+        반대의 상태가 생기고, 화면은 그 둘 중 어느 쪽을 믿을지 정해야 한다. 한 왕복으로
+        묶으면 그 질문 자체가 생기지 않는다 — 러너가 죽으면 둘 다 함께 낡는다.
         """
-        return self._post("/api/ai/bridge_heartbeat", {}, timeout)
+        # ⚠ `if runtimes` 로 쓰면 **빈 목록이 미신고로 뭉개진다**(codex REV-20260828T170000 P1-3).
+        # 그러면 `--cmd` 로 갈아탄 러너가 "고를 것 없음" 을 말하지 못하고, 서버에 남아 있던 과거
+        # 목록이 계속 신선한 것으로 노출된다 — 사용자는 고를 수 있는데 반영되지 않는 화면을 본다.
+        # `None`(신고할 처지가 아님)과 `[]`(신고했고 고를 것이 없음)은 여기서도 다른 값이다.
+        return self._post("/api/ai/bridge_heartbeat",
+                          {} if runtimes is None else {"runtimes": runtimes}, timeout)
 
     def _post(self, path: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
         body = json.dumps(payload or {}).encode("utf-8")
@@ -558,24 +588,101 @@ class ActiveTasks:
 
 # ── 내 AI 호출 ───────────────────────────────────────────────────────────────
 
-#: 자동 감지 순서와 호출 방법. 전부 "프롬프트 → stdout" 계약이라 한 틀로 덮인다.
+#: 런타임 명세 — 자동 감지 순서 · 호출 방법 · **이 머신이 고를 수 있는 것**.
+#:
+#: ## 왜 한 표에 모으는가 (P0-Z3, 사용자 결정 2026-08-28)
+#:
+#: 웹 화면의 모델·추론 목록은 이 표에서 나온다. 서버는 사용자의 런타임을 알지 못하므로
+#: (MCP 어댑터가 별도 컨테이너라 `clientInfo` 가 웹까지 오지 않는다), **아는 쪽이 말한다** —
+#: 러너가 하트비트에 자기 능력을 실어 보내고 서버는 그것을 그대로 카탈로그로 쓴다.
+#: 그래서 목록과 실행이 같은 출처를 갖는다. P0-T 가 지운 것은 *조작면* 이 아니라
+#: **출처가 다른 조작면**이었다(서버 alias 를 보여주고 CLI 로 실행 → 아무 것도 안 맞음).
+#:
+#: ## 새 플랫폼을 더하려면
+#:
+#: 이 표에 한 항목을 더한다. 그 외에 손댈 곳은 없다 — 감지·신고·인자 조립·화면 렌더가
+#: 전부 이 표를 읽는다.
+#:
+#:     "<name>": {
+#:         "label":  화면에 보일 이름(그룹 배지),
+#:         "argv":   ["cli", "-p", "{prompt}"],     # {prompt} 자리에 질문이 들어간다
+#:         "model":  ["--model", "{model}"],        # 없으면 모델 지정 불가로 신고된다
+#:         "effort": ["--effort", "{effort}"],      # 없으면 추론등급 지정 불가로 신고된다
+#:         "models": [{"value":..., "label":...}],  # 정적 목록(alias 우선 — 아래 주석)
+#:         "efforts":[{"value":..., "label":...}],
+#:     }
+#:
+#: ## 왜 alias 를 우선하는가
+#:
+#: `opus`·`sonnet` 같은 alias 는 모델 세대가 바뀌어도 같은 이름으로 남는다. 풀네임을 굳히면
+#: CLI 가 새 세대로 넘어간 날 목록이 통째로 죽고, 그 죽음은 **사용자 화면에서** 드러난다.
+#: 실조회가 가능한 런타임(ollama)은 정적 목록 대신 그 결과를 쓴다 — 아는 방법이 있으면
+#: 추측하지 않는다.
+_RUNTIME_SPECS: dict[str, dict] = {
+    "claude": {
+        "label": "Claude",
+        "argv": ["claude", "-p", "{prompt}"],
+        "model": ["--model", "{model}"],
+        "effort": ["--effort", "{effort}"],
+        "models": [
+            {"value": "opus", "label": "Opus"},
+            {"value": "sonnet", "label": "Sonnet"},
+            {"value": "haiku", "label": "Haiku"},
+        ],
+        "efforts": [
+            {"value": "low", "label": "낮음"},
+            {"value": "medium", "label": "보통"},
+            {"value": "high", "label": "높음"},
+            {"value": "xhigh", "label": "매우높음"},
+            {"value": "max", "label": "최대"},
+        ],
+    },
+    "codex": {
+        "label": "Codex",
+        "argv": ["codex", "exec", "--skip-git-repo-check", "{prompt}"],
+        "model": ["-m", "{model}"],
+        # config override 로 넘긴다 — codex 에는 전용 effort 플래그가 없다.
+        "effort": ["-c", "model_reasoning_effort={effort}"],
+        "models": [
+            {"value": "gpt-5.1-codex", "label": "GPT-5.1 Codex"},
+            {"value": "gpt-5.1-codex-mini", "label": "GPT-5.1 Codex mini"},
+        ],
+        "efforts": [
+            {"value": "low", "label": "낮음"},
+            {"value": "medium", "label": "보통"},
+            {"value": "high", "label": "높음"},
+        ],
+    },
+    "gemini": {
+        "label": "Gemini",
+        "argv": ["gemini", "-p", "{prompt}"],
+        "model": ["-m", "{model}"],
+        # 추론등급 플래그가 없다 — 없는 것을 있다고 신고하지 않는다(화면에서 그 항목이 빠진다).
+        "effort": None,
+        "models": [
+            {"value": "gemini-2.5-pro", "label": "2.5 Pro"},
+            {"value": "gemini-2.5-flash", "label": "2.5 Flash"},
+        ],
+        "efforts": [],
+    },
+    "ollama": {
+        "label": "Ollama",
+        # HTTP 어댑터 — argv 가 없다(`ask_local_ai` 가 분기한다).
+        "argv": [],
+        "model": None,
+        "effort": None,
+        "models": [],      # 실조회(`_ollama_models`)로 채운다.
+        "efforts": [],
+    },
+}
+
+#: 하위 호환 — 종전 `(name, argv)` 순서쌍을 쓰던 자리(감지 순서 포함)를 위해 표에서 파생한다.
+#: ollama 는 HTTP 어댑터라 여기 넣지 않는다(종전과 동일).
 _CLI_ADAPTERS: list[tuple[str, list[str]]] = [
-    ("claude", ["claude", "-p", "{prompt}"]),
-    ("codex", ["codex", "exec", "--skip-git-repo-check", "{prompt}"]),
-    ("gemini", ["gemini", "-p", "{prompt}"]),
+    (name, list(spec["argv"]))
+    for name, spec in _RUNTIME_SPECS.items()
+    if spec.get("argv")
 ]
-
-
-#: 모델·추론 강도는 **웹에서 지정하지 않는다** (P0-T, 사용자 결정 2026-08-28 · 형제 cycle).
-#:
-#: 종전에는 웹 컴포저에서 고른 값을 `--model` 인자로 넘겼다. 그런데 그 값은 서비스 내부의
-#: litellm alias(`claude-haiku-4` 등)라 어느 CLI 도 알지 못했고 — 기본값이 haiku 이므로 사실상
-#: **모든** 요청이 모델 지정 실패 → 기본 모델 재시도 경로를 탔다. 요청은 반영되지 않으면서
-#: "못 맞췄다" 는 고지만 매번 붙는, 있으나 마나 한 왕복이었다.
-#:
-#: 이제 어떤 모델로 답할지는 **이 머신의 AI 설정**이 정한다 — 고정하고 싶으면
-#: `--cmd 'claude --model opus -p {prompt}'` 처럼 자기 런타임의 실제 모델 이름으로 지정한다
-#: (그 이름을 아는 것은 서버가 아니라 사용자다).
 
 
 def _which(name: str) -> str | None:
@@ -593,6 +700,60 @@ def detect_ai() -> tuple[str, list[str]] | None:
     if _which("ollama"):
         return "ollama", []
     return None
+
+
+def _ollama_models() -> list[dict]:
+    """이 머신에 실제로 받아 둔 ollama 모델. 실패하면 빈 목록 — **추측하지 않는다**.
+
+    빈 목록은 "고를 것이 없다" 로 신고되고, 화면에서는 그 런타임 그룹이 통째로 빠진다.
+    없는 모델을 목록에 남기면 사용자가 고른 순간 실행이 실패한다(P0-T 가 겪은 형태).
+    """
+    try:
+        base = os.environ.get("BRIDGE_OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
+        tags = base.replace("/api/generate", "/api/tags")
+        req = urllib.request.Request(tags, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=5.0) as r:
+            data = json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[dict] = []
+    for m in (data.get("models") or []):
+        name = str((m or {}).get("name") or "").strip()
+        if name:
+            out.append({"value": name, "label": name})
+    return out
+
+
+def detect_runtimes(only: str | None = None) -> list[dict]:
+    """이 머신에서 **쓸 수 있는 런타임 전부**와 각자가 고를 수 있는 것 (P0-Z3).
+
+    종전 `detect_ai()` 는 첫 번째 하나만 골랐다. 그것은 "무엇으로 답할까" 의 답으로는
+    충분했지만, 웹에 "무엇을 고를 수 있는가" 를 알려주려면 **전부**가 필요하다.
+
+    `only` 가 주어지면 그 하나로 제한한다(`--ai` 의 의미: 자동 감지 대신 이것만 쓴다).
+    표에 없는 이름이면 제한을 무시한다 — 사용자의 오타가 러너를 벙어리로 만들지 않게.
+    """
+    names = list(_RUNTIME_SPECS.keys())
+    if only and only in _RUNTIME_SPECS:
+        names = [only]
+    out: list[dict] = []
+    for name in names:
+        spec = _RUNTIME_SPECS[name]
+        if not _which(name):
+            continue
+        models = _ollama_models() if name == "ollama" else list(spec.get("models") or [])
+        if not models:
+            # 고를 것이 없는 런타임은 신고하지 않는다 — 화면에 빈 그룹만 남는다.
+            continue
+        out.append({
+            "runtime": name,
+            "label": str(spec.get("label") or name),
+            "models": models,
+            # 플래그가 없으면 등급도 신고하지 않는다: 지정 수단이 없는데 목록을 주면
+            # 다시 "고를 수 있는데 반영은 안 되는" 상태가 된다(P0-T 가 지운 바로 그것).
+            "efforts": list(spec.get("efforts") or []) if spec.get("effort") else [],
+        })
+    return out
 
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
@@ -656,11 +817,88 @@ def _kill(proc) -> None:
         pass
 
 
+def offered_options(runtimes: list | None, runtime: str) -> tuple[list, list]:
+    """**이 러너가 실제로 신고한** 그 런타임의 (모델, 등급) 목록. 없으면 빈 목록.
+
+    정적 표(`_RUNTIME_SPECS`)가 아니라 신고를 보는 이유 (codex REV-20260828T170000 P1-5):
+    둘은 갈릴 수 있다 —
+
+      - `--ai codex` 로 제한하면 신고는 codex 뿐이지만 표에는 claude 도 있다
+      - PATH 에 없는 런타임은 신고에서 빠지지만 표에는 남아 있다
+      - ollama 의 모델 목록은 **실조회 결과**라 표에는 아예 없다
+
+    표를 대조하면 "자기가 신고한 값만 실행한다" 가 거짓이 되고, 실제로는 "소스에 적혀 있고
+    PATH 에 있으면 실행한다" 가 된다. 그 차이는 사용자가 `--ai` 로 세운 제한을 서버 응답이
+    넘어서는 형태로 드러난다.
+
+    `runtimes` 가 `None` 이면(신고 자체를 안 하는 `--cmd` 모드) 빈 목록 — 어차피 그 경로는
+    지정값을 쓰지 않는다.
+    """
+    for rt in (runtimes or []):
+        if str(rt.get("runtime") or "") == runtime:
+            return list(rt.get("models") or []), list(rt.get("efforts") or [])
+    return [], []
+
+
+def build_cmd(runtime: str, prompt: str, model: str | None = None,
+              effort: str | None = None, runtimes: list | None = None) -> list[str]:
+    """지정 (런타임, 모델, 추론등급) 을 **그 CLI 의 실제 인자**로 옮긴다 (P0-Z3).
+
+    대조 대상은 **이 러너가 신고한 목록**(`runtimes`)이다 — 서버가 뭘 돌려주든 우리가 고를 수
+    있다고 말한 것만 실행한다. `runtimes` 를 주지 않으면 정적 표로 폴백한다(단위 테스트·
+    구 호출부 호환). 그 폴백은 신고보다 넓을 수 있으므로 **운영 경로는 반드시 신고를 넘긴다**.
+
+    표 밖 값은 **조용히 버린다** — 알 수 없는 문자열을 인자로 넘기면 CLI 가 통째로 실패하고,
+    그러면 답이 아예 오지 않는다. 버린 사실은 호출측(`ask_local_ai`)이 사용자에게 밝힌다.
+
+    프롬프트는 **인자로** 넘긴다(셸 미경유) — 질문에 셸 메타문자가 섞여도 그대로 전달되고
+    명령 주입 경로가 생기지 않는다. 모델·등급도 같은 규칙을 따른다.
+    """
+    spec = _RUNTIME_SPECS.get(runtime) or {}
+    argv = list(spec.get("argv") or [])
+    flags: list[str] = []
+
+    if runtimes is None:
+        allowed_models = list(spec.get("models") or [])
+        allowed_efforts = list(spec.get("efforts") or [])
+    else:
+        allowed_models, allowed_efforts = offered_options(runtimes, runtime)
+
+    def _valid(options: list, value: str | None) -> bool:
+        if not value:
+            return False
+        return any(str(o.get("value")) == value for o in options)
+
+    if model and spec.get("model") and _valid(allowed_models, model):
+        flags += [a.replace("{model}", model) for a in spec["model"]]
+    if effort and spec.get("effort") and _valid(allowed_efforts, effort):
+        flags += [a.replace("{effort}", effort) for a in spec["effort"]]
+
+    # 플래그는 **프롬프트 앞**에 둔다. 서브커맨드(`codex exec`)와 위치 인자(프롬프트) 사이가
+    # 옵션의 자리이고, 프롬프트 뒤에 붙이면 CLI 에 따라 프롬프트의 일부로 먹힌다.
+    out: list[str] = []
+    for a in argv:
+        if a == "{prompt}" or "{prompt}" in a:
+            out += flags
+            flags = []
+            out.append(prompt if a == "{prompt}" else a.replace("{prompt}", prompt))
+        else:
+            out.append(a)
+    return out + flags
+
+
 def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
-                 cancel_check=None) -> tuple[bool, str]:
+                 cancel_check=None, model: str | None = None,
+                 effort: str | None = None,
+                 runtimes: list | None = None) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
-    모델은 이 머신의 AI 설정이 정한다 — 서버는 모델을 요구하지 않는다(위 상수 자리 주석).
+    `model`·`effort` 는 사용자가 **웹에서 고른 것**이다 (P0-Z3). 유효성은 `runtimes`(이 러너가
+    하트비트로 신고한 목록)로 판정한다 — 서버가 준 값을 그대로 믿지 않는다. 지정이 없거나
+    신고 밖이면 이 머신의 AI 설정이 정한다.
+
+    `custom`(`--cmd`)이 있으면 그것이 이긴다 — 사용자가 명령 전체를 직접 준 것이므로 그 위에
+    우리가 플래그를 얹으면 중복 지정으로 CLI 가 거절할 수 있다.
 
     `cancel_check` 는 "지금 취소됐는가" 를 묻는 함수다. 취소되면 본문 자리에 `CANCELED` 를
     돌려준다 — 실패와 구분해야 호출측이 "제출하지 않는다" 를 선택할 수 있다.
@@ -670,14 +908,20 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
         argv = shlex.split(custom)
         kind = "custom"
     if kind == "ollama":
-        model = os.environ.get("BRIDGE_OLLAMA_MODEL", "llama3")
+        # ⚠ 이 경로는 `build_cmd` 를 타지 않으므로 **여기서 직접 대조한다**
+        # (codex REV-20260828T170000 P1-5). 안 하면 서버가 준 임의 문자열이 그대로 생성 요청의
+        # 모델명이 되어, 이 머신에 없는 모델을 부르거나 남의 모델을 부른다.
+        _models, _ = offered_options(runtimes, "ollama")
+        _ok = model and any(str(o.get("value")) == model for o in _models)
+        model_name = model if _ok else os.environ.get("BRIDGE_OLLAMA_MODEL", "llama3")
         # 이미 취소됐다면 호출 자체를 하지 않는다(HTTP 는 중간에 끊어도 서버 쪽 생성이 계속될
         # 수 있어, 시작하지 않는 것이 유일하게 확실한 절약이다).
         if _canceled():
             return False, CANCELED
         req = urllib.request.Request(
             os.environ.get("BRIDGE_OLLAMA_URL", "http://127.0.0.1:11434/api/generate"),
-            data=json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8"),
+            data=json.dumps({"model": model_name, "prompt": prompt,
+                             "stream": False}).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=(_AI_TIMEOUT_SEC or None)) as r:
@@ -685,9 +929,12 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
         except Exception as e:  # noqa: BLE001
             return False, f"로컬 LLM 호출 실패: {e}"
 
-    # 프롬프트는 **인자로** 넘긴다(셸을 거치지 않는다) — 질문 본문에 셸 메타문자가 섞여도
-    # 그대로 전달되고, 명령 주입 경로가 생기지 않는다.
-    cmd = [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv]
+    if kind in _RUNTIME_SPECS and (model or effort):
+        cmd = build_cmd(kind, prompt, model, effort, runtimes)
+    else:
+        # 프롬프트는 **인자로** 넘긴다(셸을 거치지 않는다) — 질문 본문에 셸 메타문자가 섞여도
+        # 그대로 전달되고, 명령 주입 경로가 생기지 않는다.
+        cmd = [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv]
     if _canceled():
         return False, CANCELED
     return _run_cli_cancelable(cmd, _canceled)
@@ -792,7 +1039,8 @@ def split_title(answer: str) -> tuple[str, str]:
 
 
 def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str],
-               custom: str | None, cancels: "CancelRegistry | None" = None) -> bool:
+               custom: str | None, cancels: "CancelRegistry | None" = None,
+               runtimes: list | None = None) -> bool:
     """이미 **점유된** task 하나를 처리한다.
 
     점유(`claim_request`)를 여기서 하지 않고 호출측(대기 루프)이 하는 이유: 점유가 늦으면 그
@@ -802,9 +1050,44 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     """
     _canceled = (lambda: cancels.is_canceled(task_id)) if cancels else (lambda: False)
 
+    # 웹에서 고른 (런타임·모델·추론등급). 유효성은 **이 러너의 신고**로 판정한다 (P0-Z3) —
+    # 서버가 준 값을 그대로 믿지 않는다. 지정이 없으면 이 머신의 AI 설정이 정한다.
+    want = claimed.get("requested") or {}
+    want_runtime = str(want.get("runtime") or "").strip()
+    want_model = str(want.get("model") or "").strip() or None
+    want_effort = str(want.get("reasoning_level") or "").strip() or None
+    run_kind, run_argv = kind, argv
+    unmet: list[str] = []
+
+    if want_runtime and want_runtime != run_kind:
+        # 사용자가 이 머신의 **다른** 런타임을 골랐다. 신고에 있고(= 우리가 고를 수 있다고
+        # 말했고) 지금도 실재할 때만 그쪽으로 보낸다. `--ai` 로 제한한 사용자의 의도를
+        # 서버 응답이 넘어서지 않게, 정적 표가 아니라 신고를 본다(codex P1-5).
+        _offered = any(str(rt.get("runtime") or "") == want_runtime for rt in (runtimes or []))
+        if _offered and want_runtime in _RUNTIME_SPECS and _which(want_runtime):
+            run_kind = want_runtime
+            run_argv = list(_RUNTIME_SPECS[want_runtime].get("argv") or [])
+        else:
+            unmet.append(f"런타임 {want_runtime}")
+
+    # 반영하지 못하는 지정을 **조용히 버리지 않는다**(codex P1-4). 같은 계정에 러너가 여럿이면
+    # 목록을 신고한 러너와 질문을 가져간 러너가 다를 수 있고, 그때 사용자는 자기가 고른 것이
+    # 적용됐다고 믿는다. 무엇이 반영되지 않았는지는 답변에 적어 사용자가 알게 한다.
+    _models, _efforts = offered_options(runtimes, run_kind)
+    if want_model and not any(str(o.get("value")) == want_model for o in _models):
+        unmet.append(f"모델 {want_model}")
+    if want_effort and not any(str(o.get("value")) == want_effort for o in _efforts):
+        unmet.append(f"추론등급 {want_effort}")
+
     prompt = compose_prompt(api, {**claimed, "task_id": task_id})
-    _log(f"{task_id}: 내 AI({kind})에게 전달")
-    ok, answer = ask_local_ai(kind, argv, prompt, custom, _canceled)
+    _picked = "".join([
+        f", 모델 {want_model}" if want_model else "",
+        f", 추론 {want_effort}" if want_effort else "",
+    ])
+    _log(f"{task_id}: 내 AI({run_kind})에게 전달{_picked}"
+         + (f" — 미반영: {', '.join(unmet)}" if unmet else ""))
+    ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
+                              model=want_model, effort=want_effort, runtimes=runtimes)
     if answer == CANCELED:
         # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
         # 토큰과 왕복을 아끼는 지점이다.
@@ -824,6 +1107,17 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
 
     # 제목 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
     answer, title = split_title(answer)
+
+    # 반영하지 못한 지정을 **밝힌다**(codex REV-20260828T170000 P1-4). 조용히 기본값으로
+    # 답하면 사용자는 자기가 고른 모델로 답이 나온 줄 안다 — 그 오해는 화면 어디에도 드러나지
+    # 않는다. 같은 계정에 러너가 여럿일 때(목록을 신고한 러너 ≠ 질문을 가져간 러너) 실제로
+    # 발생한다. 제목 분리 **뒤**에 붙인다: 앞에 붙이면 이 줄이 제목 규약 위치를 밀어낸다.
+    if unmet:
+        answer = (answer or "") + (
+            f"\n\n> 참고: 요청하신 {' · '.join(unmet)} 은(는) 이 AI 에서 쓸 수 없어"
+            " 기본 설정으로 답했습니다."
+        )
+
     payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
     if title:
         payload["title"] = title
@@ -854,7 +1148,8 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
 
-def start_heartbeat(api: Api, stop: threading.Event) -> threading.Thread:
+def start_heartbeat(api: Api, stop: threading.Event,
+                    runtimes: list | None = None) -> threading.Thread:
     """연결 유지 신호를 보내는 데몬 스레드 (TASK-20260828T150000).
 
     **대기 스레드와 분리한 것이 이 기능의 핵심이다.** 대기(`wait_for_request`)는 빈 워커 자리를
@@ -872,7 +1167,10 @@ def start_heartbeat(api: Api, stop: threading.Event) -> threading.Thread:
     def _loop() -> None:
         interval = _HEARTBEAT_INTERVAL_SEC
         while not stop.is_set():
-            res = api.heartbeat()
+            # 능력은 **매번** 싣는다. 처음 한 번만 보내면 서버가 재시작하거나 토큰 행이 갈릴 때
+            # 화면의 목록이 영영 비고, 그 빈 목록은 "러너가 없다" 와 구분되지 않는다.
+            # 서버는 값이 그대로면 쓰지 않으므로(쓰기 증폭 없음) 매번 싣는 비용이 없다.
+            res = api.heartbeat(runtimes)
             code = res.get("_http")
             if code == 401:
                 # 복귀 안내는 여기서 하지 않는다 — 대기 루프 한 곳이 정본이다(두 곳에서
@@ -1042,10 +1340,22 @@ def main() -> int:
         _log("연결 정상.")
         return 0
 
+    # 이 머신이 무엇을 쓸 수 있는가 (P0-Z3). `--cmd` 로 명령을 통째로 준 사용자는 신고하지
+    # 않는다 — 그 명령에 모델·등급이 이미 박혀 있고, 웹에서 고른 값은 반영되지 않는다.
+    # 반영되지 않을 목록을 화면에 띄우는 것이 P0-T 가 지운 바로 그 상태다.
+    runtimes = [] if args.cmd else detect_runtimes(args.ai or None)
+    if runtimes:
+        _log("고를 수 있는 것: " + " · ".join(
+            f"{r['label']}({len(r['models'])}종"
+            + (f", 추론 {len(r['efforts'])}단계" if r["efforts"] else "")
+            + ")" for r in runtimes))
+    elif args.cmd:
+        _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
+
     # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
     heartbeat_stop = threading.Event()
-    start_heartbeat(api, heartbeat_stop)
+    start_heartbeat(api, heartbeat_stop, runtimes)
 
     cancels = CancelRegistry()
     #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.
@@ -1224,7 +1534,7 @@ def main() -> int:
 
         def _work(tid: str = task_id, payload: dict = claimed, slot: int = sid) -> None:
             try:
-                handle_one(api, tid, payload, kind, argv, args.cmd, cancels)
+                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes)
             finally:
                 cancels.forget(tid)
                 active.leave(tid)

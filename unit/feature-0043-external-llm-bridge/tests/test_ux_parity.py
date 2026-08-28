@@ -926,13 +926,35 @@ def test_catalog_gates_selector_on_server_llm_state():
     한쪽만 검사하면 뮤턴트가 통과한다 — 숨김만 보면 '영구 제거' 가, 복원만 보면 '차단 중에도
     목록 노출' 이 살아남는다. 반환값 대조는 DB 연결이 필요하므로 feature-0003 스위트
     (`test_model_catalog_bridge_mode.py`)가 담당하고, 여기서는 **배선**을 잠근다.
+
+    P0-Z3(2026-08-28) 이후 차단 상태의 분기가 하나 더 생겼다 — 러너 신고가 있으면 `visible`,
+    없으면 종전대로 `hidden`. 그래서 "차단 = 항상 숨김" 을 잠그던 종전 단언은 **거짓이 된다**
+    (그대로 두면 새 계약이 회귀로 보고된다). 대신 세 갈래가 모두 배선돼 있는지를 잠근다.
     """
     src = (WEB_SRC / "routers" / "system.py").read_text(encoding="utf-8")
     body = _func_source(WEB_SRC / "routers" / "system.py", "get_api_vault_options")
     assert "server_llm_enabled()" in body, "핸들러가 게이트를 호출하지 않는다(상수로 굳으면 못 되돌린다)"
-    assert '"model_selector": "hidden"' in body, "차단 시 숨김 신호가 없다"
+    assert '"visible" if visible else "hidden"' in body, (
+        "차단 상태의 숨김/노출이 러너 신고 유무로 갈리지 않는다 — 한쪽으로 굳으면 "
+        "'고를 게 없는데 선택기가 뜨거나' '신고했는데 영영 숨는다'")
+    assert "account_runner_capabilities" in body, (
+        "카탈로그가 러너 신고를 읽지 않는다 — 목록의 출처가 서버로 되돌아간 것이다(P0-T 재발)")
     assert '"model_selector": "visible"' in body, "게이트 해제 시 선택기를 복원하는 분기가 없다"
     assert "from shared.llm_gate import server_llm_enabled" in src
+
+
+def test_catalog_never_guesses_runner_models_on_failure():
+    """능력 조회가 실패하면 목록을 **추측으로 채우지 않는다** (P0-Z3).
+
+    권한 필터 실패는 fail-soft 로 전체 목록을 주지만(부트스트랩 경로라 선택기를 비우지 않는
+    쪽이 낫다), 러너 능력은 다르다 — 여기서 추측한 이름은 그 러너에 없을 수 있고, 고른 순간
+    반영되지 않는다. 그것이 정확히 P0-T 가 지운 상태다.
+    """
+    body = _func_source(WEB_SRC / "routers" / "system.py", "get_api_vault_options")
+    except_block = body[body.index("    except Exception:"):]
+    except_block = except_block[:except_block.index("    finally:")]
+    assert "runner_caps = []" in except_block, (
+        "능력 조회 실패 시 빈 목록으로 닫지 않는다 — fail-soft 가 fail-open 이 된다")
 
 
 def test_composer_hides_selector_on_explicit_server_signal():
@@ -976,23 +998,55 @@ def test_ask_payload_omits_model_and_reasoning_while_hidden():
     assert "_composerModelSelectorHidden()" in edit, "재답변 경로에 숨김 판정이 없다"
 
 
-def test_bridge_task_does_not_persist_model_or_reasoning():
-    """적재 SQL 이 두 컬럼을 쓰지 않는다. 단 **컬럼 자체는 남긴다**(과거 행의 값은 그때의 사실)."""
+def test_bridge_task_persists_the_picked_runtime_model_and_level():
+    """적재 SQL 이 고른 값 **셋 다**를 굳힌다 (P0-Z3 — P0-T 의 미적재를 되돌린다).
+
+    셋인 이유: 모델 이름만으로는 어느 CLI 의 것인지 정해지지 않는다(한 머신에 claude·codex 가
+    함께 있을 수 있다). 런타임이 빠지면 러너가 같은 것을 실행한다는 보장이 사라진다.
+
+    요청 시점에 굳히는 것이 계약이다 — 나중에 대화 설정을 바꿔도 이 질문에 무엇이 요구됐는지는
+    변하지 않아야 한다(각인과 같은 이유).
+    """
     enq = _func_source(CONVS, "_enqueue_web_bridge_task")
     insert = enq[enq.index("INSERT INTO WebAiTasks"):]
     insert = insert[:insert.index("VALUES")]
-    for col in ("RequestedModel", "ReasoningLevel"):
-        assert col not in insert, f"{col} 을 여전히 적재한다"
-    # 호출부도 넘기지 않는다(시그니처가 받지 않으므로 넘기면 TypeError 지만, 배선으로도 잠근다).
+    for col in ("RequestedRuntime", "RequestedModel", "ReasoningLevel"):
+        assert col in insert, f"{col} 을 적재하지 않는다 — 고른 값이 러너에 닿지 않는다"
+    # 호출부가 실제로 넘긴다(시그니처만 받고 호출부가 안 주면 항상 NULL 이 굳는다).
     src = CONVS.read_text(encoding="utf-8")
     call = src[src.index("agent_result = _enqueue_web_bridge_task("):]
     call = call[:call.index(")\n")]
-    assert "requested_model=" not in call and "reasoning_level=" not in call
+    assert "requested_model=" in call and "reasoning_level=" in call, (
+        "적재 호출이 고른 값을 넘기지 않는다 — 컬럼만 있고 값은 늘 비는 배선")
+    # 런타임·모델은 화면 값(`runtime:model`)을 **적재 시점에** 가른다.
+    assert "_split_runtime_model(" in enq, "런타임과 모델의 짝을 가르지 않는다"
     # 이력 보존: 스키마에서 컬럼을 지우지 않았다.
     boot = BOOTSTRAP.read_text(encoding="utf-8")
-    for col in ("RequestedModel", "ReasoningLevel"):
+    for col in ("RequestedRuntime", "RequestedModel", "ReasoningLevel"):
         assert f'("{col}", "ALTER TABLE WebAiTasks ADD COLUMN {col}' in boot, (
-            f"{col} 컬럼을 삭제하면 과거 행의 값이 사라진다(이력 파괴)")
+            f"{col} 컬럼이 없다(또는 삭제됐다) — 과거 행의 값이 사라진다(이력 파괴)")
+
+
+def test_split_runtime_model_keeps_the_pair_together():
+    """`"<runtime>:<model>"` 을 가르되, 접두 없는 값은 **런타임을 지어내지 않는다** (P0-Z3)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_convs_probe", CONVS)
+    # 모듈 전체 import 는 app 의존이 무거우므로 함수 소스만 떼어 실행한다.
+    src = CONVS.read_text(encoding="utf-8")
+    start = src.index("def _split_runtime_model(")
+    end = src.index("\n\n\n", start)
+    ns: dict = {"Any": object}
+    exec(src[start:end], ns)  # noqa: S102 — 테스트가 대상 함수를 격리 실행
+    split = ns["_split_runtime_model"]
+    assert split("claude:sonnet") == ("claude", "sonnet")
+    assert split("codex:gpt-5.1-codex") == ("codex", "gpt-5.1-codex")
+    # 접두 없음(구 대화 KV 의 서버 alias) → 런타임 None. 러너는 자기 표에 없는 모델을 버린다.
+    assert split("claude-haiku-4") == (None, "claude-haiku-4")
+    assert split("") == (None, None)
+    assert split(None) == (None, None)
+    # 콜론만 있고 모델이 빈 값이면 런타임을 만들지 않는다(빈 `-m` 인자가 생기지 않게).
+    assert split("claude:") == (None, "claude:")
 
 
 def test_bridge_mode_skips_server_model_gates_and_kv_writes():
@@ -1003,8 +1057,9 @@ def test_bridge_mode_skips_server_model_gates_and_kv_writes():
     질문 자체가 403** 이 된다 — 서버가 그 모델을 쓰지도 않는데 막는 것이다(바로 위 토큰 쿼터
     게이트를 조건부화한 것과 같은 형태의 모순).
 
-    KV 저장도 같이 막는다. 화면이 값을 안 보내므로 여기 도달하는 것은 구 캐시·직접 API 뿐이고,
-    저장하면 **고른 적 없는 설정**이 대화에 굳어 게이트 해제 후 되살아난다.
+    KV 저장은 **P0-Z3 에서 되살렸다**(아래 별도 테스트) — 화면이 선택기를 보여주고 사용자가
+    실제로 고르므로 "고른 적 없는 값" 이 아니게 됐다. 되살아남은 저장이 아니라 복원 쪽에서
+    막는다. 반면 이 두 게이트를 건너뛰는 이유는 그대로다 — 서버가 그 모델을 쓰지 않는다.
     """
     src = "\n".join(ln for ln in CONVS.read_text(encoding="utf-8").split("\n")
                     if not ln.strip().startswith("#"))
@@ -1012,36 +1067,115 @@ def test_bridge_mode_skips_server_model_gates_and_kv_writes():
         "카탈로그 allowlist(400) 가 브리지 모드에서도 적용된다")
     assert "elif _server_llm_enabled() and not app._account_has_model_access(" in src, (
         "모델 RBAC(403) 가 브리지 모드에서도 적용된다 — haiku 권한 없는 계정이 질문을 못 한다")
-    assert "if conv_id and reasoning_level and _server_llm_enabled():" in src, (
-        "브리지 모드에서 추론 강도가 대화 KV 에 저장된다")
-    assert "if conv_id and model_explicit and _model_save_key and _server_llm_enabled():" in src, (
-        "브리지 모드에서 모델이 대화 KV 에 저장된다")
 
 
-def test_claim_does_not_deliver_stale_quality_request():
-    """점유 응답에 `requested` 가 없다 — 과거 행에 남은 값을 지금 요구로 전달하지 않는다."""
-    # 주석에 남긴 "왜 안 읽는가" 설명이 '여전히 읽는다' 로 오검출되지 않게 코드 줄만 본다.
+def test_bridge_mode_persists_picks_but_refuses_to_restore_stale_ones():
+    """브리지 모드에서 선택을 **저장하고**, 복원은 **지금 유효한 것만** 한다 (P0-Z3).
+
+    두 축이 함께 있어야 한다. 저장만 있으면 러너를 바꾼 뒤 없는 모델이 선택된 채로 보이고
+    (P0-T 가 지적한 형태), 복원 검증만 있으면 애초에 저장되는 것이 없어 매번 다시 골라야 한다.
+    """
+    src = "\n".join(ln for ln in CONVS.read_text(encoding="utf-8").split("\n")
+                    if not ln.strip().startswith("#"))
+    # 저장: 게이트 조건이 빠졌다(브리지에서도 저장한다).
+    assert "if conv_id and reasoning_level:" in src, (
+        "브리지 모드에서 추론 강도가 저장되지 않는다 — 매 요청 다시 골라야 한다")
+    assert "if conv_id and model_explicit and _model_save_key:" in src, (
+        "브리지 모드에서 모델이 저장되지 않는다")
+    # 복원: 브리지면 **러너 신고 목록**과 대조한다(서버 카탈로그가 아니라).
+    hist = _func_source(CONVS, "history") if "def history(" in src else src
+    assert "_bridge_model_offered(" in hist, (
+        "복원이 러너 신고와 대조하지 않는다 — 러너를 바꿔도 옛 선택이 되살아난다")
+    offered = _func_source(CONVS, "_bridge_model_offered")
+    assert "account_runner_capabilities" in offered, "신고 목록을 읽지 않는다"
+    assert "return False" in offered, "조회 실패가 복원 허용으로 기울면 없는 모델이 되살아난다"
+
+
+def test_claim_delivers_the_pick_from_request_time():
+    """점유 응답이 고른 값 셋을 **요청 시점 그대로** 전달한다 (P0-Z3 — P0-T 의 미전달을 되돌린다).
+
+    P0-T 가 끊었던 이유는 화면 값이 서버 alias 라 러너가 알아듣지 못해서였다. 이제 목록이
+    러너의 자기 신고이므로 여기서 돌려주는 값은 그 CLI 의 어휘다.
+
+    '요청 시점' 이 계약이다 — 지금의 대화 설정이 아니라 그 질문이 적재될 때 굳은 값을 읽는다.
+    """
     src = "\n".join(ln for ln in _func_source(AI_TOOLS, "claim_request").split("\n")
                     if not ln.strip().startswith("#"))
-    assert '"requested"' not in src, "점유 응답이 여전히 품질 요구를 싣는다"
-    assert "RequestedModel" not in src and "ReasoningLevel" not in src, "여전히 읽는다"
-    whole = AI_TOOLS.read_text(encoding="utf-8")
-    assert "def _requested_quality(" not in whole, "죽은 헬퍼가 남아 다음 사람이 되살린다"
-    assert "_REASONING_INTENT = {" not in whole
+    assert '"requested"' in src, "점유 응답이 고른 값을 싣지 않는다 — 러너가 알 방법이 없다"
+    for col in ("RequestedRuntime", "RequestedModel", "ReasoningLevel"):
+        assert col in src, f"{col} 을 읽지 않는다"
+    # 값의 출처가 `WebAiTasks`(요청 시점 각인)여야 한다 — 대화 KV(현재 설정)를 읽으면
+    # 질문한 뒤 설정을 바꾼 사용자에게 다른 값이 적용된다.
+    assert "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s" in src
 
 
-def test_runner_does_not_pass_service_alias_as_cli_model():
-    """러너가 모델 인자를 만들지 않는다 — 그 경로가 이번 결함의 발현부였다."""
-    src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
-        encoding="utf-8")
-    code = _code_lines(
-        _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py", "#")
-    assert "_MODEL_FLAG" not in code, "모델 플래그 표가 살아 있다"
-    assert "want_model" not in code, "요청 모델을 여전히 다룬다"
-    assert "requested" not in code.replace("list_open_requests", "").replace(
-        "wait_for_request", "").replace("claim_request", ""), "requested 를 여전히 읽는다"
-    # 사용자가 자기 런타임 이름으로 고정할 수 있는 길은 문서에 남긴다(기능을 없애지는 않았다).
+def test_runner_only_accepts_models_it_itself_offered():
+    """러너가 **자기 표에 있는 값만** 인자로 만든다 (P0-Z3).
+
+    서버가 돌려주는 값은 사용자가 골랐다고는 하나 네트워크 너머에서 온 문자열이다. 그것이
+    그대로 `Popen` 인자가 되면 옵션처럼 보이는 값(`--dangerously-skip-permissions`)이 실행
+    플래그가 될 수 있다. 표 대조가 그 경로를 닫는 지점이고, 이 테스트가 그 대조를 잠근다.
+
+    P0-T 시절의 "러너는 모델 인자를 만들지 않는다" 는 이 대조로 대체됐다 — 만들되, 자기가
+    신고한 것 중에서만 만든다.
+    """
+    runner = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py"
+    src = runner.read_text(encoding="utf-8")
+    code = _code_lines(runner, "#")
+    assert "_RUNTIME_SPECS" in code, "런타임 명세 표가 없다"
+    build = _func_source(runner, "build_cmd")
+    assert "_valid(" in build, "표 대조 없이 값을 인자로 만든다"
+    # 대조 대상이 **실제 신고 목록**이어야 한다. 정적 표(`_RUNTIME_SPECS`)만 보면 `--ai` 로
+    # 좁힌 사용자의 제한을 서버 응답이 넘어서고, ollama 의 실조회 목록과도 갈린다
+    # (codex REV-20260828T170000 P1-5).
+    assert "offered_options(runtimes, runtime)" in build, (
+        "대조가 신고 목록이 아니라 정적 표를 본다")
+    # 런타임 전환도 신고를 거친다 — 표 + PATH 만으로는 `--ai` 제한을 넘어선다.
+    handle = _func_source(runner, "handle_one")
+    assert 'rt.get("runtime")' in handle and "runtimes or []" in handle, (
+        "런타임 전환이 신고를 보지 않는다 — 표에 있고 PATH 에 있으면 전환된다")
+    assert "want_runtime in _RUNTIME_SPECS" in handle and "_which(want_runtime)" in handle, (
+        "서버가 준 런타임 이름을 검증 없이 실행한다")
+    # ollama 는 `build_cmd` 를 타지 않는다 — 그 경로에도 대조가 있어야 한다.
+    ask = _func_source(runner, "ask_local_ai")
+    assert 'offered_options(runtimes, "ollama")' in ask, (
+        "ollama 경로가 서버 값을 검증 없이 모델명으로 쓴다")
+    # 반영 못 한 지정은 조용히 버리지 않는다(사용자가 오해하지 않게).
+    assert "unmet" in handle, "미반영 지정을 사용자에게 알리지 않는다"
+    # 사용자가 명령을 통째로 고정하는 길은 그대로 남는다(기능을 없애지 않았다).
     assert "--cmd 'claude --model opus -p {prompt}'" in src
+
+
+def test_runner_build_cmd_drops_unoffered_values():
+    """`build_cmd` 실행 동작 — 표 밖 값은 **버려지고**, 표 안 값만 인자가 된다 (P0-Z3).
+
+    소스 검사만 두면 `_valid` 가 항상 True 를 돌려주도록 바뀌어도 통과한다. 여기서는 함수를
+    실제로 돌려 결과 argv 를 본다.
+    """
+    import importlib.util
+
+    runner = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py"
+    spec = importlib.util.spec_from_file_location("_runner_probe", runner)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # 신고 목록에 있는 값 → 실제 인자가 된다.
+    assert mod.build_cmd("claude", "Q", "sonnet", "low") == [
+        "claude", "-p", "--model", "sonnet", "--effort", "low", "Q"]
+    # codex 는 effort 플래그가 config override 형태다(런타임마다 다르다).
+    assert mod.build_cmd("codex", "Q", "gpt-5.1-codex", "high") == [
+        "codex", "exec", "--skip-git-repo-check",
+        "-m", "gpt-5.1-codex", "-c", "model_reasoning_effort=high", "Q"]
+    # gemini 는 추론등급 플래그가 없다 — 등급을 줘도 인자가 생기지 않는다.
+    assert mod.build_cmd("gemini", "Q", "gemini-2.5-pro", "high") == [
+        "gemini", "-p", "-m", "gemini-2.5-pro", "Q"]
+    # 표 밖 값(옵션 위장·주입 시도)은 **조용히 버려진다** — 프롬프트만 남는다.
+    assert mod.build_cmd("claude", "Q", "--dangerously-skip-permissions", "$(rm -rf /)") == [
+        "claude", "-p", "Q"]
+    assert mod.build_cmd("claude", "Q", "claude-haiku-4", None) == ["claude", "-p", "Q"], (
+        "서버 alias 가 인자로 새어 나간다 — P0-T 가 겪은 바로 그 실패 경로")
+    # 프롬프트는 항상 마지막 위치 인자이고, 플래그는 그 앞에 온다(뒤에 붙으면 프롬프트에 먹힌다).
+    assert mod.build_cmd("claude", "Q", "opus", None)[-1] == "Q"
 
 
 # ── 실행 단계 노출 (사용자 제보 2026-08-27) ───────────────────────────────────

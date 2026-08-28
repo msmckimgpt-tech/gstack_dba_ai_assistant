@@ -1,7 +1,7 @@
 import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState } from "./app/connect-modal.js?v=dev";
-import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
+import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
@@ -5020,8 +5020,13 @@ export async function loadHistory({ append = false, branchView = null, preserveS
   // N1 가드: fetch await 동안 사용자가 명시로 강도를 바꿨다면(픽 시각 > 로드 시작) hydration 을
   // 건너뛰어 사용자의 최신 선택을 보존한다(픽은 이미 localStorage 미러에도 기록됨).
   if (!append && !(state._reasoningPickedAt && state._reasoningPickedAt > _histLoadStartedAt)) {
+    // feature-0043 P0-Z3: 브리지 모드의 등급 어휘는 러너의 것이다(claude 의 `medium`·`xhigh`,
+    // codex 의 `medium`). 서버 고정 집합(low/normal/high/max)으로 검사하면 그 값들이 전부
+    // `null` 로 떨어져, 다른 브라우저에서 대화를 열 때 사용자가 고른 등급이 사라진다
+    // (codex REV-20260828T170000 P2-1). 판정을 `_composerReasoningValid` 하나에 위임한다 —
+    // 러너 카탈로그가 서 있으면 그 목록으로, 아니면 종전 집합으로 검사한다.
     const _rl = payload.reasoning_level;
-    state.reasoningLevel = _isValidReasoningLevel(_rl) ? _rl : null;
+    state.reasoningLevel = _composerReasoningValid(_rl) ? _rl : null;
     _updateComposerReasoningLabel();
   }
   // feature-0019 paging-scroll-preserve: 페이징(preserveScroll) 재렌더 전 스크롤 위치를 저장한다.

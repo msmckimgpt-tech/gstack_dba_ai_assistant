@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi import File
 from fastapi import UploadFile
 import hashlib
+import re
 import secrets
 import asyncio
 from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
@@ -313,12 +314,69 @@ def _bridge_save_core_message(conn, conv_id: str, role: str, content: str,
             conv_id, role, exc)
 
 
+def _bridge_model_offered(conn, account: Any, value: str) -> bool:
+    """이 계정의 러너가 **지금** 그 모델을 내놓고 있는가 (P0-Z3).
+
+    저장된 선택을 화면에 되살리기 전에 묻는다. 러너를 바꿨거나(claude 머신 → codex 머신)
+    러너를 껐으면 그 값은 더 이상 고를 수 있는 것이 아니고, 되살리면 사용자는 "고른 적 없는
+    모델이 선택돼 있는" 화면을 본다(P0-T 가 지적한 형태).
+
+    조회 실패는 False — 복원하지 않는 쪽이 안전하다(프론트가 기본값으로 폴백할 뿐이다).
+    """
+    runtime, model = _split_runtime_model(value)
+    if not runtime or not model:
+        return False
+    try:
+        import oauth_store as _store
+
+        cur = conn.cursor()
+        try:
+            caps = _store.account_runner_capabilities(cur, int((account or {}).get("id") or 0))
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).debug("bridge model hydration check failed", exc_info=True)
+        return False
+    for rt in caps:
+        if str(rt.get("runtime") or "") != runtime:
+            continue
+        return any(str(m.get("value") or "") == model for m in (rt.get("models") or []))
+    return False
+
+
+#: 브리지 모드에서 통과시킬 추론등급의 **모양** (P0-Z3). 값의 의미는 러너가 정하므로 여기서
+#: 목록을 굳히지 않는다 — 굳히면 새 런타임의 등급이 서버 배포를 기다려야 한다. 대신 인자로
+#: 들어가도 안전한 문자만 허용한다(러너의 `build_cmd` 가 자기 표와 다시 대조한다).
+_BRIDGE_LEVEL_RE = re.compile(r"^[a-z][a-z0-9_-]{0,15}$")
+
+
+def _split_runtime_model(value: Any) -> tuple[str | None, str | None]:
+    """화면이 보낸 `"<runtime>:<model>"` 을 (런타임, 모델) 로 가른다 (P0-Z3).
+
+    카탈로그가 값에 런타임을 접두하는 이유는 한 머신에 여러 CLI 가 있을 때 모델 이름만으로는
+    어느 것인지 정해지지 않기 때문이다. 그 짝을 **적재 시점에** 갈라 두면 이후 경로(claim ·
+    러너)가 다시 문자열을 파싱할 일이 없다.
+
+    접두가 없는 값(구 대화의 KV 에 남은 서버 alias 등)은 런타임 없이 모델만 돌려준다 —
+    러너는 자기 표에 없는 모델을 조용히 버리므로 기본 설정으로 답한다.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None, None
+    runtime, sep, model = raw.partition(":")
+    if not sep or not model.strip():
+        return None, raw[:64]
+    return (runtime.strip()[:32] or None), (model.strip()[:64] or None)
+
+
 def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
                              message: str, product_id: Any,
                              product_mode: str = "pinned",
                              sender_username: str = "",
                              attachment_ids: Any = None,
-                             role_id: Any = None) -> dict[str, Any]:
+                             role_id: Any = None,
+                             requested_model: Any = None,
+                             reasoning_level: Any = None) -> dict[str, Any]:
     """feature-0043 — 웹 대화 질문을 개인 머신 AI 가 가져갈 **대기 작업**으로 적재한다.
 
     반환 shape 은 `_dispatch_ask_run` 의 `agent_result` 와 호환된다(동기 응답 계약 유지) —
@@ -377,13 +435,19 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
     try:
         cur = conn.cursor()
         try:
-            # `RequestedModel`·`ReasoningLevel` 은 **쓰지 않는다** (P0-T, 사용자 결정 2026-08-28).
-            # 컬럼은 남긴다 — 과거 행의 값은 그때의 사실이고, 지우면 이력이 거짓이 된다.
+            # 사용자가 고른 (런타임·모델·추론등급)을 **질문과 함께 굳힌다** (P0-Z3, 사용자
+            # 결정 2026-08-28 — P0-T 를 대체). 화면의 값은 `runtime:model` 형태이고, 그 짝을
+            # 여기서 갈라 둔다 — 러너가 claim 시점에 어느 CLI 로 실행할지 알아야 한다.
+            #
+            # 고르지 않았으면 셋 다 NULL 이고, 러너는 자기 기본 설정으로 답한다(무지정 = 종전
+            # 동작). 요청 시점에 굳히는 이유는 각인과 같다: 나중에 대화 설정을 바꿔도 이
+            # 질문에 대해 무엇이 요구됐는지는 변하지 않아야 한다.
+            _runtime, _model = _split_runtime_model(requested_model)
             cur.execute(
                 "INSERT INTO WebAiTasks (TaskId, AccountId, ConversationId, ProductId, "
                 "Question, Status, Origin, ProductMode, SenderUsername, AttachmentIds, "
-                "RoleId) "
-                "VALUES (%s,%s,%s,%s,%s,%s,'web',%s,%s,%s,%s)",
+                "RoleId, RequestedRuntime, RequestedModel, ReasoningLevel) "
+                "VALUES (%s,%s,%s,%s,%s,%s,'web',%s,%s,%s,%s,%s,%s,%s)",
                 (task_id, account_id, conv_id or None,
                  int(product_id) if product_id else None, question[:4000], status,
                  # 답변 각인·발신자 표시·첨부 인지를 위해 **질문과 함께** 굳힌다. 나중에 대화
@@ -391,7 +455,9 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
                  ("auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"),
                  (str(sender_username or "").strip()[:128] or None),
                  _bridge_attachment_csv(attachment_ids),
-                 (int(role_id) if role_id else None)))
+                 (int(role_id) if role_id else None),
+                 _runtime, _model,
+                 (str(reasoning_level or "").strip()[:16] or None)))
             conn.commit()
         finally:
             cur.close()
@@ -736,7 +802,15 @@ def history(
                 if (
                     _saved_model
                     and app._is_safe_model_name(_saved_model)
-                    and app._is_allowed_api_model(_saved_model)
+                    and (
+                        app._is_allowed_api_model(_saved_model)
+                        # feature-0043 P0-Z3: 브리지 모드의 유효 목록은 서버 카탈로그가 아니라
+                        # **지금 연결된 러너가 신고한 것**이다. 이 검증이 되살아남을 막는 지점
+                        # 이기도 하다 — 러너가 바뀌어 그 모델이 사라졌거나 게이트가 해제되면
+                        # 저장값은 여기서 탈락하고 프론트는 기본값으로 돌아간다.
+                        or (not _server_llm_enabled()
+                            and _bridge_model_offered(conn, account, _saved_model))
+                    )
                 ):
                     model = _saved_model
         except Exception:
@@ -3944,6 +4018,14 @@ async def ask(request: Request) -> JSONResponse:
     # config 기본 thinking 유지). B1 회귀 방지(REV 적대검증): 부재 필드를 기본값으로 강제 대입하면
     # 선택기 미상호작용·구 클라이언트의 sonnet 이 config 16000 → 강등되는 회귀 발생 → 강제 대입 금지.
     reasoning_level = normalize_reasoning_level(data.get("reasoning_level"))
+    # feature-0043 P0-Z3: 브리지 모드의 등급 어휘는 **서버가 아니라 러너의 것**이다.
+    # `normalize_reasoning_level` 의 집합(low/normal/high/max)은 서버 LLM 의 thinking budget
+    # 어휘라, 러너가 신고한 값(claude 의 `medium`·`xhigh`, codex 의 `medium`)이 여기서 통째로
+    # None 이 된다 — 사용자가 고른 등급이 조용히 사라지는 형태다. 브리지에서는 원값을 살리되
+    # 모양만 강제한다(러너가 자기 표에 없는 값은 어차피 버린다 — 두 겹).
+    if not _server_llm_enabled():
+        _raw_level = str(data.get("reasoning_level") or "").strip().lower()
+        reasoning_level = _raw_level if _BRIDGE_LEVEL_RE.match(_raw_level) else None
     # ── 기본 입력 검증 ──
     if not message:
         conn.close()
@@ -4505,10 +4587,12 @@ async def ask(request: Request) -> JSONResponse:
         # 로 캡처한 값으로 끝까지 실행된다(in-flight 영향 0). best-effort: 저장 실패는 답변을 막지 않음.
         # 명시 레벨(reasoning_level 이 진리값)일 때만 저장 — 부재(None)면 기존 저장값·모델 기본을 보존.
         #
-        # feature-0043 P0-T: **브리지 모드에서는 저장하지 않는다.** 화면이 두 조작면을 감췄으므로
-        # 여기 도달하는 값은 구 프론트 캐시나 직접 API 호출뿐이고, 저장하면 사용자가 이번에 고른 적
-        # 없는 설정이 그 대화에 굳어 게이트 해제 후 되살아난다(codex 리뷰 P1).
-        if conv_id and reasoning_level and _server_llm_enabled():
+        # feature-0043 P0-Z3: **브리지 모드에서도 저장한다** (P0-T 의 미저장을 되돌린다).
+        # P0-T 가 막았던 이유는 "고른 적 없는 값이 굳는다" 였는데, 이제 화면이 선택기를 보여주고
+        # 사용자가 실제로 고른다. 되살아남 우려는 저장이 아니라 **복원 쪽**에서 닫는다 —
+        # `/api/history` hydration 이 지금 유효한 카탈로그(브리지면 러너 신고 목록)에 있는 값만
+        # 돌려주므로, 러너가 바뀌거나 게이트가 해제되면 옛 선택은 저절로 복원되지 않는다.
+        if conv_id and reasoning_level:
             try:
                 app.save_memory_kv(conn, conv_id, "reasoning_level", reasoning_level)
             except Exception:
@@ -4531,9 +4615,11 @@ async def ask(request: Request) -> JSONResponse:
         # 기존 대화에는 영원히 반영되지 않는다. 기본값과 같을 때 지우면 복원 결과(=기본값)는 동일하면서
         # 기본값 변경이 자연히 따라온다. 사용자가 명시로 기본값을 다시 고른 경우에도 같은 경로로 해제된다.
         #
-        # feature-0043 P0-T: 위 reasoning_level 과 같은 이유로 **브리지 모드에서는 저장하지 않는다**.
+        # feature-0043 P0-Z3: 위 reasoning_level 과 같은 이유로 **브리지 모드에서도 저장한다**.
+        # 다만 아래 '기본값이면 지운다' 규칙은 서버 모델 기본값(haiku) 이야기라 브리지에는 해당
+        # 사항이 없다 — 브리지 값(`runtime:model`)은 그 기본값과 결코 같지 않으므로 그대로 저장된다.
         _model_save_key = _model_kv_key(account)  # "" = 계정 식별 불가 → 저장 skip(fail-closed)
-        if conv_id and model_explicit and _model_save_key and _server_llm_enabled():
+        if conv_id and model_explicit and _model_save_key:
             try:
                 _default_model = app._resolve_session_default_model()
             except Exception:
@@ -4564,15 +4650,15 @@ async def ask(request: Request) -> JSONResponse:
                 product_mode=product_mode_for_run,
                 sender_username=_sender_username_for_run or "",
                 attachment_ids=attachment_ids_clean,
-                # 모델·추론 강도는 **넘기지 않는다** (사용자 결정 2026-08-28, P0-T).
+                # 모델·추론 강도를 **다시 넘긴다** (사용자 결정 2026-08-28, P0-Z3 — P0-T 대체).
                 #
-                # 종전(P0-M)에는 "전달하고 못 맞추면 밝히기" 로 두었으나, 실제로는 화면 값이
-                # 서버 내부 alias(`claude-haiku-4`)라 개인 AI 의 CLI 가 알지 못했고 — 기본값이
-                # haiku 이므로 사실상 **모든** 브리지 요청이 모델 지정 실패 → 기본 모델 폴백
-                # 경로를 탔다. 요청이 반영되지도 않으면서 "못 맞췄다" 는 고지만 매번 붙었다.
-                # 서버는 연결된 런타임의 종류조차 알 수 없다 — MCP 어댑터가 별도 컨테이너라
-                # clientInfo 가 오지 않는다. 맞는 값으로 번역할 방법도 없으므로, 조작면과 함께
-                # 전달 경로도 닫는다.
+                # P0-T 가 이 경로를 닫았던 이유는 화면 값이 서버 내부 alias(`claude-haiku-4`)라
+                # 개인 AI 의 CLI 가 알지 못했기 때문이다. 이제 화면의 목록은 **연결된 러너가
+                # 하트비트로 신고한 것**이고 값도 `runtime:model` 로 온다 — 러너의 자기 어휘라
+                # 그대로 CLI 인자가 된다. 선택기가 숨겨진 상태(신고 없음)에서는 프론트가 값을
+                # 싣지 않으므로 여기로도 오지 않는다(고르지 않은 값이 굳는 일이 없다).
+                requested_model=model,
+                reasoning_level=reasoning_level,
                 # 시스템 프롬프트 5단계 조립에 필요(역할별 지침).
                 role_id=role_id_for_run,
             )

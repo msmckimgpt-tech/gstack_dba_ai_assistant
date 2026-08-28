@@ -29,11 +29,12 @@ import os
 import threading
 import json
 import logging
+import re
 import secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse
 
 # feature-0043: 브리지 task 의 점유·취소 술어 **단일 정본**. 지역 별칭(`_CLAIMABLE_SQL` 등)은
@@ -1472,14 +1473,18 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             return _json_err(409, f"이미 다른 세션이 가져간 질문입니다"
                                   f"(점유는 {_BRIDGE_CLAIM_LEASE_MIN}분 뒤 자동 해제됩니다).")
 
-        # `RequestedModel`·`ReasoningLevel` 은 **읽지 않는다** (P0-T, 사용자 결정 2026-08-28) —
-        # 웹에서 그 값을 고를 수 없게 됐고, 과거 행에 남은 값을 지금 전달하면 사용자가 이번에
-        # 고르지도 않은 요구가 답변에 반영된 척하게 된다. 컬럼은 이력으로 남긴다.
+        # `RequestedRuntime`·`RequestedModel`·`ReasoningLevel` 을 **다시 읽는다**
+        # (P0-Z3, 사용자 결정 2026-08-28 — P0-T 를 대체).
+        #
+        # P0-T 가 이 세 값을 끊었던 이유는 웹이 보여준 목록이 서버 alias 라 러너가 알아듣지
+        # 못해서였다. 이제 목록은 **그 러너가 신고한 것**이므로 여기서 돌려주는 값은 러너의
+        # 자기 어휘다 — 그대로 CLI 인자가 된다. 요청 시점에 굳힌 값을 쓰는 것도 그대로다:
+        # 사용자가 그 뒤 대화 설정을 바꿔도 이 질문에 대해 무엇이 요구됐는지는 변하지 않는다.
         cur.execute(
             "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds, "
-            "RoleId, ProductMode "
+            "RoleId, ProductMode, RequestedRuntime, RequestedModel, ReasoningLevel "
             "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
-        row = cur.fetchone() or ("", None, None, None, None, None, None)
+        row = cur.fetchone() or ("", None, None, None, None, None, None, None, None, None)
     finally:
         cur.close()
 
@@ -1552,6 +1557,15 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
+        # 사용자가 웹에서 고른 (런타임·모델·추론등급) (P0-Z3). 러너의 **자기 신고 목록**에서
+        # 고른 값이므로 그대로 CLI 인자가 된다. 고르지 않았으면 빈 값 — 러너는 그때 자기
+        # 기본 설정으로 답한다. AI 에게 지시로 주지 않는 이유: 이건 프롬프트가 아니라
+        # 실행 파라미터다(프롬프트로 주면 모델이 "그런 척" 하는 답을 쓸 수 있다).
+        "requested": {
+            "runtime": str(row[7] or ""),
+            "model": str(row[8] or ""),
+            "reasoning_level": str(row[9] or ""),
+        },
         "next": ("조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
                  "선언합니다." + (
                      f" 이 질문에는 첨부 {len(attachments)}건이 있습니다 — "
@@ -2807,8 +2821,99 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
 
 
 
+#: 능력 신고의 모양 상한 (P0-Z3). 러너가 보내는 실제 값은 이보다 훨씬 작다 — 상한은 정상
+#: 사용을 자르기 위한 것이 아니라 토큰을 쥔 클라이언트가 화면·저장소를 임의로 채우지 못하게
+#: 하기 위한 것이다.
+_CAPS_MAX_RUNTIMES = 8
+_CAPS_MAX_MODELS = 40
+_CAPS_MAX_EFFORTS = 12
+_CAPS_MAX_LABEL = 60
+#: 런타임·모델·등급 **값**에 허용하는 문자. 이 값들은 러너에서 CLI 인자가 되고 화면에도
+#: 그려지므로, 인자·마크업 어느 쪽으로도 해석될 수 없는 집합으로 좁힌다(공백·따옴표·꺾쇠·
+#: 세미콜론 전부 불허). 선행 `-` 도 막는다 — 옵션처럼 보이는 값을 애초에 들이지 않는다.
+_CAPS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,63}$")
+#: 런타임 **이름**은 값보다 더 좁다 — `:` 를 금지한다 (codex REV-20260828T170000 P2-3).
+#: 화면 값이 `"<runtime>:<model>"` 이라, 런타임에 `:` 가 있으면 적재 시 짝을 가르는 지점
+#: (`_split_runtime_model`)이 첫 `:` 에서 끊어 **다른 조합으로 재해석**된다
+#: (`ollama:spoof` + `bar` → runtime=`ollama`, model=`spoof:bar`).
+_CAPS_RUNTIME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@/+-]{0,31}$")
+#: 라벨에서 지우는 문자 — 제어문자(C0/C1)와 bidi override.
+#: 화면은 `textContent`/`escapeHtml` 로 넣으므로 XSS 는 이미 막히지만, bidi override 는
+#: **다른 사용자에게 보이는 문자열의 표시 순서**를 뒤집어 이름을 위장할 수 있다.
+_CAPS_LABEL_STRIP_RE = re.compile(
+    "[\u0000-\u001f\u007f-\u009f"       # C0 / C1 제어문자
+    "\u200e\u200f\u202a-\u202e"          # LRM/RLM · embedding·override
+    "\u2066-\u2069]")                     # isolate
+
+
+def _sanitize_option(raw: object) -> dict | None:
+    """`{value, label}` 한 항목을 검사한다. 어긋나면 None(그 항목만 버린다)."""
+    if not isinstance(raw, dict):
+        return None
+    value = str(raw.get("value") or "").strip()
+    if not _CAPS_VALUE_RE.match(value):
+        return None
+    return {"value": value, "label": _sanitize_label(raw.get("label"), value)}
+
+
+def _sanitize_label(raw: object, fallback: str) -> str:
+    """화면에 그릴 이름 — 한 줄로 접고, 제어·bidi 문자를 지우고, 길이를 자른다.
+
+    문자 제한이 값보다 느슨한 것은 사람이 읽는 문자열이기 때문이다(한글·괄호 등 허용).
+    대신 **표시를 교란하는 부류**만 정확히 제거한다.
+    """
+    # 지우지 않고 **공백으로 바꾼 뒤** 접는다 — 지우면 `"Cla\nude"` 가 `"Claude"` 로 붙어
+    # 원래 없던 단어가 만들어진다(줄바꿈은 낱말 경계였다).
+    text = _CAPS_LABEL_STRIP_RE.sub(" ", str(raw or ""))
+    return " ".join(text.split())[:_CAPS_MAX_LABEL] or fallback
+
+
+def _sanitize_runtimes(raw: object) -> list | None:
+    """러너가 신고한 능력을 **저장해도 되는 모양**으로 좁힌다 (P0-Z3).
+
+    `None` 을 돌려주면 "신고가 없었다" 는 뜻이고 저장을 건너뛴다 — 구 러너와 `--cmd` 사용자가
+    보내는 빈 본문이 그 경우다. 빈 목록(`[]`)은 "신고했는데 고를 것이 없다" 라 다른 사실이며,
+    저장해서 화면이 선택기를 감추게 한다.
+
+    모양이 어긋난 항목은 **그것만** 버린다. 전체를 거절하면 런타임 하나의 사소한 결함이
+    나머지 정상 런타임까지 화면에서 지운다.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return None
+    out: list[dict] = []
+    for item in raw[:_CAPS_MAX_RUNTIMES]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("runtime") or "").strip()
+        if not _CAPS_RUNTIME_RE.match(name):
+            continue
+        # ⚠ 중첩 필드도 **타입을 확인한다**(codex REV-20260828T170000 P2-2). `models: 1` 처럼
+        #   리스트가 아닌 값이 오면 슬라이스에서 TypeError 가 나고, 그 예외는 하트비트 전체를
+        #   500 으로 만든다 — 연결을 지키려는 신호가 연결을 끊는 장치가 된다.
+        models = [o for o in (
+            _sanitize_option(m) for m in _capped_list(item.get("models"), _CAPS_MAX_MODELS)
+        ) if o]
+        if not models:
+            # 고를 모델이 없는 런타임은 화면에 빈 그룹만 남긴다 — 신고에서 뺀다.
+            continue
+        efforts = [o for o in (
+            _sanitize_option(e) for e in _capped_list(item.get("efforts"), _CAPS_MAX_EFFORTS)
+        ) if o]
+        out.append({"runtime": name, "label": _sanitize_label(item.get("label"), name),
+                    "models": models, "efforts": efforts})
+    return out
+
+
+def _capped_list(raw: object, cap: int) -> list:
+    """리스트면 상한까지, 아니면 빈 목록. 타입 오류가 예외로 번지지 않게 한다."""
+    return raw[:cap] if isinstance(raw, list) else []
+
+
 @router.post("/api/ai/bridge_heartbeat")
-def bridge_heartbeat(request: Request, ctx=Depends(require_ai_token),
+def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None),
+                     ctx=Depends(require_ai_token),
                      conn=Depends(app.get_conn)) -> JSONResponse:
     """feature-0043 (TASK-20260828T150000) — 상주 러너의 생존 신호. **연결을 유지하는 축.**
 
@@ -2840,13 +2945,34 @@ def bridge_heartbeat(request: Request, ctx=Depends(require_ai_token),
     `tool_call_usage` 는 "그 AI 가 무엇을 조사했는가" 의 기록이고 화면의 실행 단계로 이어진다
     (P0-N). 30초마다 오는 생존 신호를 거기 넣으면 사용자의 조사 내역이 하트비트로 뒤덮이고,
     시간당 호출 상한도 신호가 태운다. 대신 흔적은 토큰 행의 `LastHeartbeatAt` 에 남는다.
+
+    ## 능력도 여기로 온다 (P0-Z3, TASK-20260828T170000)
+
+    본문의 `runtimes` 는 그 러너가 **쓸 수 있는 런타임·모델·추론등급**이고, 웹 컴포저의
+    모델 선택기는 이 값만 보여준다. 별도 엔드포인트를 만들지 않는 이유는 살아 있음과 능력이
+    같은 사실의 두 면이기 때문이다 — 나누면 한쪽만 낡아 화면이 없는 모델을 보여준다.
+
+    ⚠ **이 본문은 클라이언트가 준 값이다.** 그대로 저장하면 화면에 그리는 것이 곧 남이 넣은
+    문자열이 되고, 러너는 그것을 되받아 CLI 인자로 쓴다. 그래서 저장 전에
+    `_sanitize_runtimes` 가 모양·개수·문자집합을 강제한다(러너 쪽에도 두 번째 자물쇠가 있다 —
+    `build_cmd` 는 자기 표에 없는 값을 실행하지 않는다).
     """
     if conn is None:
         return app._json_error("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
     account_id = int((ctx.get("account") or {}).get("id") or 0)
+    caps = _sanitize_runtimes((payload or {}).get("runtimes"))
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
+        if caps is not None:
+            # 능력 기록 실패는 하트비트를 실패시키지 않는다 — 연결 유지가 주 목적이고,
+            # 능력은 다음 30초에 다시 온다(매번 싣기 때문에 자연히 복구된다).
+            try:
+                _store.set_runner_capabilities(cur, _bearer(request),
+                                               json.dumps(caps, ensure_ascii=False))
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "[bridge] 능력 신고 기록 실패 account=%s: %r", account_id, exc)
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "[bridge] 하트비트 기록 실패 account=%s: %r", account_id, exc)

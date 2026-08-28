@@ -18,6 +18,7 @@ from typing import Any
 
 import app
 import bridge_drain as _drain  # feature-0045: 브리지 in-flight + lame-duck drain
+import oauth_store as _store   # feature-0043 P0-Z3: 러너 능력 신고(모델 선택기 카탈로그)
 
 INCLUDE_ORDER = 60  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -478,11 +479,28 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     않는다 — 그래서 상태를 값으로 말한다). 게이트를 되돌리면(`AGENT_SERVER_LLM_ENABLED=1`)
     같은 코드가 원래 카탈로그를 그대로 반환한다.
 
+    runtime-model-selector (P0-Z3, 사용자 결정 2026-08-28 — 위 P0-T 를 **대체**): 위 문단의
+    "서버는 알 방법이 없다" 는 전제를 러너가 직접 말해서 깬다. 상주 러너가 하트비트에
+    자기가 쓸 수 있는 런타임·모델·추론등급을 실어 보내고(`WebOAuthTokens.RunnerCapabilities`),
+    이 카탈로그는 **그 신고를 그대로** 목록으로 쓴다. 그래서 화면에 보이는 이름이 곧 그
+    러너의 CLI 가 아는 이름이 되고, 고른 값이 실제로 반영된다.
+
+    | 상태 | 응답 |
+    |---|---|
+    | 서버 LLM 차단 + 러너 신고 있음 | 신고 목록 + `model_selector: "visible"` (그룹 = 런타임) |
+    | 서버 LLM 차단 + 신고 없음 | 빈 목록 + `"hidden"` — 종전 P0-T 동작 그대로 |
+    | 서버 LLM 활성 | 원래 서버 카탈로그 (게이트 되돌리기 경로, 불변) |
+
+    "신고 없음" 이 곧 숨김인 것이 이 설계의 안전판이다 — 러너가 없거나(고를 주체가 없다),
+    구 러너이거나(신고를 모른다), `--cmd` 로 명령을 직접 준 사용자(고른 값이 무시된다)일 때
+    선택기가 나타나지 않는다. **반영되지 않을 조작면은 어느 경로로도 생기지 않는다.**
+
     이 분기는 **인증 확인 뒤**에 둔다 — 미인증 응답은 종전대로 빈 카탈로그이고, 게이트 상태라는
     운영 사실조차 익명에게 싣지 않는다(위 api-exposure-hardening 과 같은 방향).
     """
     models: list = []
     authenticated = False
+    runner_caps: list = []
     conn = None
     try:
         conn = app._connect_memory()
@@ -492,11 +510,24 @@ def get_api_vault_options(request: Request) -> JSONResponse:
             models = app._filter_models_for_account_access(
                 account, list(PUBLIC_API_MODEL_OPTIONS), conn=conn
             )
+            # 브리지 모드에서 쓸 목록 (P0-Z3). 같은 conn 안에서 읽는다 — 별도 연결을 열면
+            # 인증과 능력이 서로 다른 순간의 사실이 되고, 로그아웃 직후의 창이 벌어진다.
+            if not server_llm_enabled():
+                cur = conn.cursor()
+                try:
+                    runner_caps = _store.account_runner_capabilities(
+                        cur, int(account.get("id") or 0))
+                finally:
+                    cur.close()
     except Exception:
         # 카탈로그 조회는 화면 부트스트랩 경로 — 권한 필터 실패로 선택기를 비우지 않는다(fail-soft).
         # 단 인증 여부를 확정하지 못한 요청에까지 전체 목록을 주지는 않는다(fail-soft ≠ fail-open).
         if authenticated:
             models = list(PUBLIC_API_MODEL_OPTIONS)
+        # ⚠ 능력 조회 실패는 fail-soft 로 **채우지 않는다** — 여기서 추측한 목록은 그 러너에
+        #   없는 모델일 수 있고, 그것을 고른 요청은 반영되지 않는다(P0-T 가 지운 상태의 재발).
+        #   빈 목록은 선택기가 숨겨질 뿐이고, 답변 경로는 그대로 동작한다.
+        runner_caps = []
     finally:
         if conn is not None:
             try:
@@ -506,15 +537,44 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     if not authenticated:
         return JSONResponse({"default_model": None, "models": []})
     if not server_llm_enabled():
-        # 브리지 모드 — 서버가 부를 수 없는 모델 목록을 주지 않는다(위 docstring).
+        # 브리지 모드 — 목록의 출처는 **연결된 러너의 신고**다(위 docstring 의 표).
+        bridge_models: list = []
+        reasoning_by_runtime: dict = {}
+        for rt in runner_caps:
+            name = str(rt.get("runtime") or "")
+            label = str(rt.get("label") or name)
+            for m in (rt.get("models") or []):
+                bridge_models.append({
+                    # 값에 런타임을 접두한다 — 한 머신에 claude·codex 가 함께 있으면 모델
+                    # 이름만으로는 어느 CLI 의 것인지 정해지지 않는다(`sonnet` 이 두 곳에
+                    # 있을 수도 있다). 화면이 고른 항목이 어느 그룹에서 왔는지를 값 자체가
+                    # 지니게 해, 전송·적재·전달 어디서도 그 짝이 풀리지 않는다.
+                    "value": f"{name}:{m.get('value')}",
+                    "label": str(m.get("label") or m.get("value") or ""),
+                    "group": label,
+                })
+            # 추론등급은 런타임마다 다르다(gemini 는 아예 없다). 화면이 고른 모델의 런타임을
+            # 보고 해당 목록을 그리도록 런타임별로 내려준다.
+            reasoning_by_runtime[name] = list(rt.get("efforts") or [])
+        visible = bool(bridge_models)
         return JSONResponse({
-            "default_model": None,
-            "models": [],
+            # ⚠ `None` 으로 두면 프론트가 **서버 기본값(haiku)** 으로 폴백한다
+            # (codex REV-20260828T170000 P1-2): 사용자가 선택기를 건드리지 않고 보낸 첫 질문에
+            # 그 alias 가 실려 굳고, 러너는 자기 목록에 없으니 버린다 — "고른 적 없는 값이
+            # 저장되고 반영은 안 되는" 상태가 신규 대화마다 재현된다.
+            # 신고 목록의 **첫 항목**을 기본값으로 명시해 그 폴백 경로를 끊는다.
+            "default_model": bridge_models[0]["value"] if visible else None,
+            "models": bridge_models,
             "server_llm_enabled": False,
             # 프론트 계약: "hidden" 이면 모델·추론 강도 조작면을 DOM 에서 감춘다.
-            "model_selector": "hidden",
+            "model_selector": "visible" if visible else "hidden",
+            "model_selector_source": "runner" if visible else "",
+            "reasoning_levels_by_runtime": reasoning_by_runtime,
             "model_selector_reason": (
-                "답변은 연결된 본인 AI 가 생성하므로 이 화면에서 모델을 지정할 수 없습니다."
+                "연결된 본인 AI 가 쓸 수 있는 모델입니다."
+                if visible else
+                "답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가 알려준 모델이 없어"
+                " 이 화면에서는 지정할 수 없습니다."
             ),
         })
     return JSONResponse(

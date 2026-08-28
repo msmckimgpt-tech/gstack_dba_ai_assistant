@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import urllib.parse
@@ -557,6 +558,88 @@ def account_is_heartbeating(cur, account_id: int, window_sec: int | None = None)
         (int(account_id), window),
     )
     return cur.fetchone() is not None
+
+
+#: 능력 신고 본문의 상한 (P0-Z3). 이 값을 넘으면 저장하지 않는다.
+#:
+#: 러너는 자기 머신의 런타임·모델 이름만 싣는다(현실적으로 수백 바이트). 상한을 두는 것은
+#: 토큰을 쥔 클라이언트가 TEXT 컬럼을 임의 크기 저장소로 쓰는 것을 막기 위해서다 — 하트비트는
+#: 30초마다 오므로 상한이 없으면 그것이 곧 무료 쓰기 채널이 된다.
+RUNNER_CAPS_MAX_BYTES = 8 * 1024
+
+
+def set_runner_capabilities(cur, raw_token: str, capabilities: str | None) -> bool:
+    """러너가 신고한 능력을 그 토큰 행에 새긴다 (P0-Z3). 실제로 썼으면 True.
+
+    **값이 바뀔 때만, 그리고 너무 자주는 쓰지 않는다.** 두 조건이 함께 필요하다:
+
+    - 값 비교만 두면 클라이언트가 **두 값을 번갈아** 보내는 것으로 매 요청 UPDATE 를 만든다
+      (codex REV-20260828T170000 P1-6). 하트비트 본체는 `HEARTBEAT_MIN_WRITE_SEC` 로 막히는데
+      능력이 옆에서 그 방어를 되살리는 형태다 — 이 엔드포인트는 원장·시간당 상한 밖이라
+      쓰기 증폭을 통제할 다른 장치가 없다.
+    - 시간 조건만 두면 정상적인 능력 변경(러너 재기동으로 런타임이 늘었다)이 창 동안 반영되지
+      않는다. 그래서 **둘 다** 건다: 달라졌고, 최소 간격이 지났을 때.
+
+    간격은 하트비트와 같은 상수를 쓴다 — 정상 주기(30초)는 항상 통과하므로 실사용에서 능력
+    갱신이 지연되지 않는다.
+
+    **유효성 술어는 하트비트와 같은 것을 쓴다**(`_LIVE_TOKEN_PREDICATE`). 따로 세면 능력만
+    통과하는 뒷문이 생기고, 그 문은 로그아웃을 무시한다 — 폐기된 러너의 모델 목록이 화면에
+    남는다.
+    """
+    if not raw_token:
+        return False
+    if capabilities is not None and len(capabilities.encode("utf-8")) > RUNNER_CAPS_MAX_BYTES:
+        return False
+    cur.execute(
+        "UPDATE WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"SET t.RunnerCapabilities = %s, t.CapabilitiesAt = {_SQL_NOW} "
+        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+        # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 분기한다.
+        "  AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s) "
+        # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
+        f"  AND (t.CapabilitiesAt IS NULL "
+        f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))",
+        (capabilities, token_hash(raw_token), capabilities, int(HEARTBEAT_MIN_WRITE_SEC)),
+    )
+    return int(getattr(cur, "rowcount", -1) or 0) != 0
+
+
+def account_runner_capabilities(cur, account_id: int,
+                                window_sec: int | None = None) -> list:
+    """이 계정의 **지금 듣고 있는** 러너가 쓸 수 있는 것 (P0-Z3). 없으면 빈 목록.
+
+    신선도 조건이 `account_is_heartbeating` 과 같다 — 화면의 "연결됨" 표시와 모델 목록이
+    같은 사실에서 나와야 한다. 갈리면 "연결 안 됨인데 모델은 고를 수 있는" 또는 그 반대가
+    되고, 둘 중 하나는 반드시 사용자를 속인다.
+
+    러너가 여럿이면(같은 계정으로 여러 머신) **가장 최근에 말한 것**을 쓴다. 합치지 않는
+    이유: 합친 목록에서 고른 모델이 실제로 질문을 가져가는 러너에 없을 수 있고, 그러면
+    P0-T 가 지운 "고를 수 있는데 반영은 안 되는" 상태가 되돌아온다.
+    """
+    if not account_id:
+        return []
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT t.RunnerCapabilities FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
+        "  AND t.RunnerCapabilities IS NOT NULL "
+        "  AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+        "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+        (int(account_id), window),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return []
+    try:
+        parsed = json.loads(row[0])
+    except (TypeError, ValueError):
+        # 저장된 값이 깨졌다 — 빈 목록으로 다룬다(선택기가 숨겨질 뿐, 답변 경로는 멀쩡하다).
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def account_has_live_token(cur, account_id: int) -> bool:
