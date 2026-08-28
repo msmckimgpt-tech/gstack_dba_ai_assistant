@@ -105,3 +105,44 @@
 - Environment: Windows-browser (PB-0008 relay, Chrome/151.0.7922.170,
   `https://localhost/?conversation=20260828031049-b13a4b02`)
 - 대상: 미머지 브랜치 `ai/root/feature-0003-attach-lineage-ui` (bind-mount)
+
+## 5. POST-DEPLOY 검증 (배포본 `da377d81`, 2026-08-28)
+
+`make deploy-web` 전체 스코프 완료. 실물 이미지 태그 **전 서비스 동일 SHA**
+(`web-a`/`web-b` = `mysql-ai-web:da377d81`, agent 4종 = `mysql-ai-agent:da377d81`).
+
+| 게이트 | 결과 |
+|---|---|
+| [2] 워커 롤아웃 | 완료(태그 전수 일치 — 부분 완료 아님) |
+| [2b] surge 잔존 | 0 |
+| [5] 무중단 실측 | `no upstreams available` **0건** |
+| 코드 도달 | `lineage_branched_from_attachment_id` 1 · `_lineageByName` 5 · `attach-diff-titleword` 2 |
+
+### 배포본 payload
+
+```
+1246 sample.sql v1 user      cnt=1 lineage_from=None
+1247 sample.sql v1 assistant cnt=1 lineage_from=1246
+1256 sample.sql v4 assistant cnt=4 lineage_from=1246   ← root(1249) 에서 해소
+```
+
+### 배포본 화면 (PB-0008, 실 Windows Chrome)
+
+| 파일 | 배지 | 툴팁 | 토글 |
+|---|---|---|---|
+| daily_count.sql | (없음) | — | (없음) |
+| deploy_check.sql | (없음) | — | (없음) |
+| sample.sql | `계보 1/3` | 같은 이름의 계보 3개 중 1번째 — **사용자가 올린 계보** · 파일 1개 | `계보 3개` |
+| sample.sql | `계보 2/3` | 같은 이름의 계보 3개 중 2번째 — **업로드한 파일에서 갈라진 계보** · 파일 1개 | `계보 3개` |
+| sample.sql | `계보 3/3` | 같은 이름의 계보 3개 중 3번째 — 업로드한 파일에서 갈라진 계보 · 파일 4개 | `버전 4개` |
+
+codex P2 조치가 배포본에 반영됐다 — 문구가 **소유권을 단정하지 않는다**("내 파일" → "업로드한 파일").
+
+**단건 계보(계보 2/3) 비교**: `⇄ 계보 비교` → 모달 제목 **「계보 비교」** ·
+`aria-label="첨부 계보 비교"`(접근성 이름도 축 추종) · 축 `계보 간(시간순)` ·
+실 diff `LIMIT 50;` → `LIMIT 500;`
+
+**판정: 제보 2건 모두 배포본에서 해소.**
+
+- Environment: Windows-browser (PB-0008 relay, Chrome/151.0.7922.170)
+- 배포본 판정 기준: 이미지 태그 `da377d81`

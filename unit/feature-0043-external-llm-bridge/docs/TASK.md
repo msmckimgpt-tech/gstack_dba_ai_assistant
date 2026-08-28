@@ -680,6 +680,24 @@ AI 플랫폼에 관계없이, 클라이언트가 자유롭게 서술한 모델�
 - [x] 문서 (FUNCTION P0-Z4 · MODIFY · TASK · REPORT · TEST)
 - [ ] **라이브 확인** — 러너 재기동 후 AI 응답 목록이 화면에 뜨는지(사용자 테스트)
 
+### TASK-20260829T000000-resume-ai-scope — `--ai` 상속이 런타임을 지웠다 (P0-Z5)
+
+라이브 재기동에서 발견 — P0-Z4 배포 후 codex 가 신고에서 빠졌다.
+
+- [x] `--resume` 의 `ai` 상속 제거 (base·ca·cmd 만 복원)
+- [x] 저장은 명시 `--ai` 만
+- [x] 회귀 테스트 2건 · 문서 (FUNCTION P0-Z5 · MODIFY · TASK · REPORT)
+- [x] 재기동으로 라이브 확인
+
+### TASK-20260828T200000 — 진행 표시를 기존 두 자리에서 갱신 (사용자 제보 2차)
+- status: done
+- risk: Minor (표시층 — 서버 무변경)
+- 제보: 사이드바(실행 단계 패널)가 갱신되지 않고, 단계가 「실행 단계」 드롭다운 **밖**에서 갱신됨
+- [x] `.bridge-live-steps` 제3 블록 폐기 — 말풍선 details 를 `renderMessageDetails` 로 재구성
+- [x] 「단계 보기」 개수 + 클릭 대상 함께 갱신(리스너 중복 방지)
+- [x] 사이드 패널 run 단위 갱신(`refreshStepSidePanelForRun`) — 다른 run 은 덮지 않음
+- [x] 신규 7건 · 기존 계약 1건 갱신 · `make test` green
+- [ ] **라이브 확인** — 진행 중 드롭다운·개수·패널이 함께 늘어나는지(사용자 테스트)
 ### TASK-20260828T240000-connect-gate — 요청과 연결을 가른다 (P0-AB · P0-AC)
 
 **요청**: "[assistant 요청, 브릿지 연결] 을 각각 구분 / 브릿지가 연결된 상태가 아니라면 요청이

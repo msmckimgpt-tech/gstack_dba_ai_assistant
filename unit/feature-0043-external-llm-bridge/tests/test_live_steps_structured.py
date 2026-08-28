@@ -127,9 +127,16 @@ def test_activity_does_not_invent_reasoning():
 
 
 def test_live_renderer_uses_the_shared_card_builder():
-    """진행 중과 완료본이 다른 렌더러를 쓰면, 같은 사실이 두 모양으로 보인다."""
+    """진행 중과 완료본이 다른 렌더러를 쓰면, 같은 사실이 두 모양으로 보인다.
+
+    ⚠ 계약이 한 단계 더 좁혀졌다(2026-08-28 2차 제보). 처음엔 카드 빌더
+    (`buildStepDetailEl`)를 직접 부르게 했는데, 그러면 카드는 같아도 **자리**가 달랐다 —
+    진행 중에만 별도 블록이 생겨 드롭다운 밖에 쌓였다. 지금은 완료본이 쓰는 **details 조립
+    함수**(`renderMessageDetails`, 내부에서 같은 카드 빌더를 쓴다)를 그대로 부른다.
+    """
     src = _js_func(COMPOSER_JS, "_renderBridgeSteps")
-    assert "buildStepDetailEl(" in src, "진행 표시가 여전히 자체 문자열 조립을 쓴다"
+    assert "renderMessageDetails(" in src, (
+        "진행 표시가 완료본과 같은 조립 경로를 쓰지 않는다")
     assert "bridge-live-step-tool" not in src, "옛 평문 나열 마크업이 남아 있다"
     assert "innerHTML" not in src, "innerHTML 문자열 조립이 남아 있다"
 

@@ -62,10 +62,13 @@ import {
   showPermissionDeniedToast,
   showToast,
   buildStepDetailEl,
+  refreshStepSidePanelForRun,
+  openStepSidePanel,
   startElapsedTimer,
   startProgressPolling,
   state,
 } from "../app.js?v=dev";
+import { renderMessageDetails } from "./messages.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
 // feature-0043 P0-AB: 브리지 연결 게이트. 잠금 판정은 서버가 내고(`compose_blocked`) 여기서는
 // 그 결과만 읽는다 — 조건을 다시 조립하지 않는다(두 벌이 되면 화면과 서버가 갈린다).
@@ -744,35 +747,55 @@ async function _renderBridgeAnswer(taskId, convId, delivered) {
   try { renderComposer(); } catch (_e) { /* 렌더 실패가 답변 표시를 막지 않는다 */ }
 }
 
-/** 진행 중 조사 내역을 대기 말풍선 안에 붙인다.
+/** 진행 중 조사 내역을 **완료본과 같은 두 자리**에 반영한다.
  *
- *  대화를 다시 읽지 않는다 — 단계는 1초마다 늘 수 있고, 그때마다 이력을 재조회하면 스크롤이
- *  흔들리고 요청이 배로 뛴다. 여기서 바꾸는 것은 **이 말풍선의 부속 영역**뿐이다.
+ *    ① 대기 말풍선의 「▶ 실행 단계」 details      ② 「단계 보기」로 여는 사이드 패널
  *
- *  ⚠ 렌더러는 **완료본·사이드바와 같은 것**(`buildStepDetailEl`)을 쓴다. 종전에는 여기서만
- *  `도구명 + 행수` 를 평문으로 이어 붙였고, 그래서 진행 중에만 화면이 `list_schemas 3행` 같은
- *  나열로 보였다(사용자 제보 2026-08-28). 같은 사실을 두 모양으로 그리면 사용자는 그것을
- *  "구조가 깨졌다" 로 읽는다 — 실제로 깨진 것이 맞다.
+ *  종전에는 말풍선 아래에 `.bridge-live-steps` 라는 **제3의 블록**을 만들어 카드를 쌓았다.
+ *  그래서 사용자 화면에는 드롭다운(▶ 실행 단계)은 `1단계` 인데 그 **바깥에** 6개가 널린
+ *  모양이 됐고, 사이드 패널은 열어 둔 시점 그대로 멈춰 있었다(사용자 제보 2026-08-28).
  *
- *  요소가 없으면 조용히 지나간다(대기 말풍선이 아직 안 그려졌거나 이미 답변으로 덮인 경우). */
+ *  자리를 새로 만들지 않는다 — 완료된 답변이 쓰는 자리를 **그대로 갱신**한다. 그러면
+ *  "진행 중일 때만 다르게 보이는" 상태 자체가 사라진다.
+ *
+ *  요소가 없으면 조용히 지나간다(대기 말풍선이 아직 안 그려졌거나 이미 답변으로 덮인 경우).
+ */
 function _renderBridgeSteps(taskId, steps) {
   if (!Array.isArray(steps) || !steps.length) return;
-  const host = document.querySelector(`[data-bridge-task="${CSS.escape(String(taskId))}"]`);
-  if (!host) return;
-  let box = host.querySelector(".bridge-live-steps");
-  if (!box) {
-    box = document.createElement("div");
-    box.className = "bridge-live-steps";
-    host.appendChild(box);
+  const tid = String(taskId);
+
+  // ② 사이드 패널 — 그 run 을 보고 있을 때만 덮어쓴다(남의 화면을 뺏지 않는다).
+  refreshStepSidePanelForRun(tid, steps);
+
+  // ① 말풍선 details — 앵커는 `.message-bubble`(app.js 가 placeholder 에만 부여).
+  const bubble = document.querySelector(`[data-bridge-task="${CSS.escape(tid)}"]`);
+  if (!bubble) return;
+
+  // 옛 제3 블록이 남아 있으면 걷어낸다(배포 전에 열려 있던 탭 대비).
+  const legacy = bubble.querySelector(".bridge-live-steps");
+  if (legacy) legacy.remove();
+
+  // details 는 통째로 다시 만든다 — 단계는 append-only 라 증분 갱신의 이득이 작고,
+  // 부분 갱신은 순서가 어긋날 때 조용히 틀린 화면을 남긴다. 펼침 상태는 유지한다.
+  const prev = bubble.querySelector(".message-details");
+  const wasOpen = prev ? prev.open : false;
+  const next = renderMessageDetails({ steps });
+  if (next) {
+    next.open = wasOpen;
+    if (prev) prev.replaceWith(next);
+    else bubble.appendChild(next);
   }
-  // 통째로 다시 그린다 — 단계는 append-only 라 증분 갱신의 이득이 작고, 부분 갱신은 순서가
-  // 어긋날 때 조용히 틀린 화면을 남긴다.
-  box.replaceChildren();
-  steps.forEach((step, idx) => {
-    // compact: 진행 중에는 SQL 본문·결과 미리보기를 접는다(말풍선이 화면을 다 먹지 않게).
-    // 전체는 답변 도착 후 '단계 보기' 패널에서 같은 카드로 볼 수 있다.
-    box.appendChild(buildStepDetailEl(step, idx, { compact: true }));
-  });
+
+  // 「단계 보기 (N)」 — 개수와 클릭 대상(steps)을 함께 갱신한다. 텍스트만 고치면
+  // 눌렀을 때 옛 목록이 열린다.
+  const btn = bubble.querySelector(".bubble-steps-btn");
+  if (btn) {
+    btn.textContent = `단계 보기 (${steps.length})`;
+    const src = { steps, runId: tid, convId: state.activeConversationId };
+    const fresh = btn.cloneNode(true);   // 기존 리스너 제거(중복 바인딩 방지)
+    fresh.addEventListener("click", () => openStepSidePanel(src));
+    btn.replaceWith(fresh);
+  }
 }
 
 async function _pollBridgeAnswerInner(taskId, convId) {
