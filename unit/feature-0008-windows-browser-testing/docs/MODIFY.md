@@ -105,3 +105,19 @@ source_of_truth: true
   `--origin https://attacker.example` 거부(exit 1) · 멱등 재호출(`already:true`) ·
   **직전 cycle 이 미수행으로 남긴 로그인 후 스크롤 실측을 이 세션으로 완료**.
 - Timestamp: 2026-08-28T11:20:00+09:00
+
+## CHG-20260828T220000 — `session-login` 이 브라우저를 죽였다 (TASK-20260828T220000)
+
+| 대상 | 변경 |
+|---|---|
+| `_connect` | `want_created_flag=True` 시 `(pw, browser, page, created)` — **빈 탭을 만들었는지** 를 직접 알려준다 |
+| `_drive_new_page` | `stray` 판정을 `len(ctx.pages) == 1` → `created` 로. 그리고 닫으면 탭이 0이 되는 상황이면 **남긴다** |
+
+**왜 틀렸나**: "내가 만든 것은 내가 치운다" 는 의도는 옳았지만, **무엇이 내 것인지를 탭 개수로
+추측**했다. 사용자가 탭 하나만 열어 둔 상태와 내가 빈 탭을 하나 만든 상태가 개수로는 구분되지
+않는다. 그 오인의 대가가 **브라우저 종료**였고, 그래서 `session-login` 은 성공을 보고하면서도
+그 다음 명령을 전부 무효화했다(성공 로그가 실패를 가렸다).
+
+**라이브 전후 대조**: 수정 전 스크립트로 `session-login` → `doctor ok:false`(브리지 없음) 재현 ·
+수정본으로 같은 흐름 → `doctor ok:true issues:[]` + `goto` 200. 그 덕에 feature-0043 이 미완으로
+남겼던 `/ai/connect` 화면 검증도 이어서 완료했다(지시문 5,942자 · 안내 3줄 · 지문·체크섬 실렌더).

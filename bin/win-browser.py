@@ -610,8 +610,13 @@ def cmd_relay_stop(_args):
 
 
 # ── playwright attach helpers ────────────────────────────────────────────────
-def _connect(ep):
-    """connect_over_cdp 후 (playwright, browser, page) 반환. 실패 시 SystemExit."""
+def _connect(ep, *, want_created_flag: bool = False):
+    """connect_over_cdp 후 (playwright, browser, page) 반환. 실패 시 SystemExit.
+
+    `want_created_flag=True` 면 `(pw, browser, page, created)` 를 준다 — `created` 는 **이 함수가
+    빈 탭을 새로 만들었는가**다. 호출측이 "내가 만든 것만 치운다" 를 정확히 판정하려면 그 사실을
+    알아야 한다(탭 개수로 추측하면 사용자가 열어 둔 마지막 탭을 자기 것으로 오인한다).
+    """
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
@@ -627,8 +632,9 @@ def _connect(ep):
         sys.exit(1)
     # 실물 브라우저의 기존 context/page 를 우선 사용 (사용자가 보는 화면).
     ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    return pw, browser, page
+    created = not ctx.pages
+    page = ctx.new_page() if created else ctx.pages[0]
+    return (pw, browser, page, created) if want_created_flag else (pw, browser, page)
 
 
 def _resolve_endpoint():
@@ -668,11 +674,17 @@ def _drive_new_page(ep, fn):
     세션 부트스트랩은 앞선 검증 단계가 띄워 둔 화면을 빼앗으면 안 된다 — 내 탭만 열고 닫는다.
     쿠키는 프로필에 남으므로 탭을 닫아도 세션은 유지된다.
     """
-    pw, browser, base_page = _connect(ep)
+    pw, browser, base_page, created = _connect(ep, want_created_flag=True)
     ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-    # `_connect` 는 context 에 탭이 하나도 없으면 빈 탭을 만든다. 우리는 그 탭을 쓰지 않으므로
-    # 그대로 두면 호출마다 빈 탭이 쌓인다 — 내가 만들게 한 것도 내가 치운다(적대 리뷰 P2).
-    stray = base_page if len(ctx.pages) == 1 else None
+    # `_connect` 는 context 에 탭이 하나도 없을 때만 빈 탭을 만든다. 그 탭은 우리가 쓰지
+    # 않으므로 치운다 — 내가 만들게 한 것은 내가 치운다.
+    #
+    # ⚠ 종전 판정은 `len(ctx.pages) == 1` 이었다. **사용자가 열어 둔 탭이 하나뿐일 때도** 그것을
+    #   자기 것으로 오인해 닫았고, 그러면 탭이 0이 되어 **Chrome 이 통째로 종료**된다. 실제로
+    #   `launch` → `session-login` → `goto` 가 매번 `no_bridge` 로 끊겼다(라이브 2026-08-28,
+    #   3회 재현). 검증하러 띄운 브라우저를 검증 준비 명령이 닫는 셈이었다.
+    #   그래서 **만들었는지 여부**를 `_connect` 에게 직접 받는다.
+    stray = base_page if created else None
     page = ctx.new_page()
     try:
         result = fn(page)
@@ -685,10 +697,14 @@ def _drive_new_page(ep, fn):
         emit({"ok": False, "error": "action_failed", "detail": str(e)})
         return 1
     finally:
+        # 닫는 순서와 **남는 탭 수**를 함께 본다. 마지막 탭까지 닫으면 브라우저가 종료되므로,
+        # 그 경우엔 빈 탭 하나를 남긴다 — 쌓이는 빈 탭보다 죽은 브라우저가 훨씬 비싸다.
         for _p in (page, stray):
             if _p is None:
                 continue
             try:
+                if len([q for q in ctx.pages if not q.is_closed()]) <= 1:
+                    break
                 _p.close()
             except Exception:
                 pass

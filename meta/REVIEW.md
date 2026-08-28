@@ -1433,3 +1433,12 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **[SKIPPED] 사유**: 증적 기록 전용(문서만). 새 로직·표면·권한 0이고, 기록하는 사실 자체가 라이브 실측이다. **Human Approval Needed**: 아니오.
 - 배포: 불요(서빙 산출물 무변경). 실측용 대화 4건이 `bootstrap_admin` 계정에 남는다(제목·본문에 실측 목적 명시).
 - Timestamp: 2026-08-28T21:00:00+09:00
+## REV-20260828T220000-winbrowser-tab-survival [SKIPPED:live-before-after] — `session-login` 이 브라우저를 죽였다 (feature-0008)
+- 범위: `bin/win-browser.py` 의 `_connect`(created 플래그) · `_drive_new_page`(stray 판정 + 마지막 탭 보호) + feature-0008 TASK/MODIFY/FUNCTION. **제품 코드 무관**(검증 드라이버).
+- 증상: `launch` → `session-login` → `goto` 가 매번 `no_bridge`(2026-08-28, 3회 재현). 배포로 격리 프로필 세션이 끊긴 뒤 재발급하려 할 때마다 PB-0008 이 통째로 막혔다.
+- 원인: `_drive_new_page` 가 "내가 만든 빈 탭을 치운다" 며 `stray` 를 닫는데 판정이 `len(ctx.pages) == 1` 이었다 — **사용자가 열어 둔 탭이 하나뿐일 때도** 자기 것으로 오인해 닫았고, 탭이 0이 되면 Chrome 이 종료된다. **무엇이 내 것인지를 개수로 추측한 것**이 결함이다(사용자 탭 1개와 내가 만든 탭 1개는 개수로 구분되지 않는다). `session-login` 은 성공을 보고하면서 다음 명령을 전부 무효화했다 — 성공 로그가 실패를 가렸다.
+- 조치: `_connect(want_created_flag=True)` 가 **만들었는지 여부**를 직접 반환 → `stray = base_page if created else None`. 마지막 방어로 "닫으면 탭이 0" 이면 남긴다(빈 탭 하나 < 죽은 브라우저).
+- 검증(**라이브 전후 대조**): 수정 전 스크립트 → `session-login` 성공 직후 `doctor ok:false`(브리지 없음) **재현** · 수정본 → `launch → session-login → goto` 온전, `doctor ok:true issues:[]`, `goto` 200. 그 덕에 feature-0043 이 미완으로 남겼던 `/ai/connect` 화면 검증도 완료(지시문 5,942자 · 동시 처리 안내 3줄 · CA 지문 · 러너 체크섬 · 발급자 실렌더).
+- **[SKIPPED] 사유**: 검증 드라이버 한정이고 **라이브 전후 대조로 결함 재현과 해소를 모두 보였다**. 제품 표면·권한 변경 0. **Human Approval Needed**: 아니오.
+- 배포: 불요(서빙 산출물 아님).
+- Timestamp: 2026-08-28T22:00:00+09:00
