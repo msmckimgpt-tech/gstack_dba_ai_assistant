@@ -128,21 +128,27 @@ _TITLE_MARK = "#TITLE:"
 
 #: 서버가 최대 55초 보류한다. 그보다 넉넉히 잡아야 **정상 대기**를 타임아웃으로 오인하지 않는다.
 _WAIT_TIMEOUT_SEC = 90.0
-#: 조사·응답 생성 상한. **서버 점유 lease(30분) 직전**까지 기다린다.
+#: 조사·응답 생성 상한. **0 = 상한 없음(기본)** — 사용자 요구 2026-08-28:
 #:
-#: 왜 lease 직전인가(사용자 결정 2026-08-28, 라이브 실측 후): 종전 900초는 lease 의 절반이라,
-#: 서버는 아직 이 러너의 점유를 인정하는데 러너가 먼저 포기하는 구간이 15분이나 있었다. 실제로
-#: 27단계짜리 조사가 그 벽에 걸려 "AI 호출이 900초를 넘겨 중단했습니다" 로 끝났다(PB-0008 검증
-#: 중 관측) — 개인 AI 는 답을 만들고 있었고, 서버도 기다릴 수 있었는데 중간에서 끊은 것이다.
+#:   "기본적으로 time_out 은 진행되어선 안되며, 각 단계에 대한 갱신을 수신받는 부분을
+#:    기준으로. 연결은 살아있는 상태입니다."
 #:
-#: 1700초 = lease 1800초 − 100초. 그 여유는 **제출에 쓸 시간**이다: 타임아웃 직후에도
-#: `submit_answer` 가 lease 안에서 끝나야 답변이 원 대화에 붙는다(lease 가 만료된 뒤 제출하면
-#: 그 사이 다른 세션이 같은 질문을 다시 집을 수 있다).
+#: 고정 상한은 **일하고 있는 AI 를 끊는다**. 실제로 900초일 때 27단계짜리 조사가 그 벽에
+#: 걸려 "AI 호출이 900초를 넘겨 중단했습니다" 로 끝났다(PB-0008 검증 중 관측) — 개인 AI 는
+#: 답을 만들고 있었고, 서버도 기다릴 수 있었는데 중간에서 러너가 끊은 것이다.
 #:
-#: ⚠ 서버 상수(`shared/bridge_tasks.BRIDGE_CLAIM_LEASE_MIN`)와 **짝**이다. 러너는 stdlib
-#: 전용 단일 파일이라 그 값을 import 할 수 없으므로, 서버에서 lease 를 바꾸면 여기도 함께
-#: 조정해야 한다(계약 테스트가 두 값의 관계를 지킨다).
-_AI_TIMEOUT_SEC = 1700.0
+#: 그럼 멈춘 것과 일하는 것을 무엇으로 가르나 — **진행 신호**다. 도구를 부를 때마다 서버가
+#: 점유 lease 를 밀어 주므로(`_renew_claim_lease`), 조사가 이어지는 한 lease 는 만료되지
+#: 않고, 정말 멈추면 마지막 호출로부터 30분 뒤 서버가 회수한다. 회수되면 이 러너의 제출은
+#: 409 로 거절되어 스스로 하차한다 — 상한은 **서버가 관측한 사실**로 집행되지, 러너의 시계로
+#: 집행되지 않는다.
+#:
+#: 취소는 여전히 즉시 듣는다(`_CANCEL_TICK_SEC` 마다 확인 → 프로세스 kill). "무제한" 이
+#: "사용자가 멈출 수 없다" 를 뜻하지 않는다.
+#:
+#: 값을 주면 그 초만큼만 기다린다(`--ai-timeout` · `BRIDGE_AI_TIMEOUT_SEC`) — 개인 계정
+#: 쿼터를 스스로 제한하고 싶은 사용자를 위한 opt-in 이다.
+_AI_TIMEOUT_SEC = float(os.environ.get("BRIDGE_AI_TIMEOUT_SEC", "0") or 0)
 #: 진행 중인 AI 프로세스의 **취소 확인 간격**.
 #:
 #: ⚠ 이건 폴링이 아니다 — 서버를 두드리지 않는다. 자식 프로세스가 끝나기를 `Thread.join(timeout)`
@@ -343,7 +349,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
-    없다. 그러면 사용자가 중단을 눌러도 개인 계정 토큰이 최대 28분(`_AI_TIMEOUT_SEC`) 더 탄다 —
+    없다. 그러면 사용자가 중단을 눌러도 개인 계정 토큰이 그 조사가 끝날 때까지 계속 탄다 —
     취소의 실질 목적이 바로 그 낭비를 막는 것이다.
 
     ⚠ 여기에도 sleep 은 없다. 자식이 끝나기를 `Thread.join(timeout)` 으로 **블로킹 대기**하고,
@@ -374,7 +380,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check) -> tuple[bool, str]:
             _kill(proc)
             pump.join(5.0)
             return False, CANCELED
-        if waited >= _AI_TIMEOUT_SEC:
+        if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:
             _kill(proc)
             pump.join(5.0)
             return False, f"AI 호출이 {int(_AI_TIMEOUT_SEC)}초를 넘겨 중단했습니다."
@@ -416,7 +422,7 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
             data=json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=_AI_TIMEOUT_SEC) as r:
+            with urllib.request.urlopen(req, timeout=(_AI_TIMEOUT_SEC or None)) as r:
                 return True, str(json.loads(r.read().decode("utf-8", "replace")).get("response") or "")
         except Exception as e:  # noqa: BLE001
             return False, f"로컬 LLM 호출 실패: {e}"
@@ -605,7 +611,13 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=int(os.environ.get("BRIDGE_WORKERS", 0))
                     or _DEFAULT_WORKERS,
                     help=f"동시 처리 수 (기본 {_DEFAULT_WORKERS}, 1 = 직렬)")
+    ap.add_argument("--ai-timeout", type=float,
+                    default=_AI_TIMEOUT_SEC,
+                    help="AI 호출 상한(초). 기본 0 = 상한 없음 — 진행 중이면 끊지 않는다"
+                         "(서버가 진행 신호로 lease 를 갱신하고, 멈추면 회수한다)")
     args = ap.parse_args()
+    # 전역을 여기서 확정한다 — 취소 감시 루프가 이 값을 읽는다.
+    globals()["_AI_TIMEOUT_SEC"] = max(0.0, float(args.ai_timeout or 0))
     workers = max(1, int(args.workers or 1))
 
     # 재시작 후 복귀 경로 — 명시 인자가 우선이고, 빈 것만 지난 설정으로 채운다.

@@ -43,6 +43,7 @@ from shared.bridge_tasks import (
     CLAIMABLE_SQL as _CLAIMABLE_SQL,
     DEFERRED_MAX_AGE_HOURS as _DEFERRED_MAX_AGE_HOURS,
     STATUS_CANCELED as _STATUS_CANCELED,
+    STATUS_OPEN as _STATUS_OPEN,
     STATUS_DEFERRED as _STATUS_DEFERRED,
     STATUS_EXPIRED as _STATUS_EXPIRED,
     claim_is_live as _claim_is_live,
@@ -386,6 +387,7 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
+    _renew_claim_lease(conn, task_id, int(account.get("id") or 0))
     _ctx_work, _ctx_reason = _bridge_step_narration(body, {})
     _record_bridge_step(
         conn, task, "get_task_context",
@@ -553,6 +555,12 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     # 재제출은 409 다. 원장 실패로 여기서 503 을 내면 답변은 확정됐는데 화면엔 없고 자동
     # 복구 경로도 없는 상태가 굳는다. 전달을 앞에 두면 원장 장애가 사용자 대면 결과를
     # 훼손하지 않는다(원장은 그 뒤에도 여전히 fail-closed 로 집행된다).
+    # 조사를 마치고 답을 냈다는 **내부 동작** 단계 — 도구 호출 사이에서 끝나면 실행 단계가
+    # "마지막 SQL" 로 뚝 끊겨, 답변이 어디서 왔는지 읽히지 않는다.
+    _record_bridge_activity(
+        conn, {"conversation_id": task.get("conversation_id"), "task_id": task_id},
+        "조사 결과를 정리해 답변을 작성했습니다")
+
     delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
                                            title=str(body.get("title") or ""))
 
@@ -771,6 +779,79 @@ def _insert_bridge_step(conversation_id: str, run_id: str, entry: dict[str, Any]
             pg.close()
         except Exception:
             pass
+
+
+def _renew_claim_lease(conn, task_id: str, account_id: int) -> None:
+    """도구를 부른 **그 사실**로 점유 lease 를 갱신한다 — 진행 신호 = 살아 있음.
+
+    ## 왜 필요한가 (사용자 요구 2026-08-28)
+
+    > "기본적으로 time_out 은 진행되어선 안되며, 각 단계에 대한 갱신을 수신받는 부분을
+    > 기준으로. 연결은 살아있는 상태입니다."
+
+    종전에는 `ClaimedAt` 이 **점유한 순간**에 고정됐고, lease(30분)는 거기서부터 흘렀다.
+    그래서 개인 AI 가 40분짜리 조사를 성실히 수행해도 30분에 회수되고, 러너는 자기 상한
+    (900초)에 먼저 걸려 "AI 호출이 900초를 넘겨 중단했습니다" 를 남겼다 — **일하고 있는데
+    시간이 다 됐다고 끊은 것**이다.
+
+    지금은 도구 호출마다 `ClaimedAt` 을 현재로 민다. 그러면 lease 는 "마지막 진행 이후
+    30분" 이 되어, 조사가 이어지는 한 만료되지 않는다. 반대로 **정말 멈춘 경우**(러너 크래시·
+    머신 절전)는 마지막 도구 호출로부터 30분 뒤 회수되어 종전 안전망이 그대로 남는다.
+
+    경계: 점유자 본인일 때만 민다(`ClaimedBy = %s`). 남이 내 lease 를 갱신할 수 있으면
+    회수 자체가 무의미해진다. 실패는 흡수한다 — 갱신 실패가 도구 결과 반환을 막지 않는다
+    (최악이 종전 동작, 즉 고정 lease 다).
+    """
+    if not task_id or not account_id:
+        return
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE WebAiTasks SET ClaimedAt = NOW() "
+                "WHERE TaskId = %s AND Origin = 'web' AND ClaimedBy = %s "
+                "  AND Status = %s AND SubmittedAt IS NULL",
+                (task_id, int(account_id), _STATUS_OPEN))
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "[bridge] lease 갱신 실패 task=%s: %r", task_id, exc)
+
+
+def _record_bridge_activity(conn, task: dict[str, Any], label: str, *, detail: str = "") -> None:
+    """도구 호출이 아닌 **내부 동작**을 단계로 남긴다(`action='activity'`).
+
+    내부 LLM 경로는 `agent_core._emit_activity` 로 "요청을 받았습니다 — 대화 맥락을 불러오는
+    중" 같은 진행을 남긴다. 브리지에는 그 축이 통째로 없어서, 실행 단계가 **DB 를 뒤진 기록**
+    으로만 보였다 — 사용자에게는 "추론 단계가 누락" 으로 읽힌다(제보 2026-08-28).
+
+    지어내지 않는다: 여기 남기는 것은 **우리가 관측한 브리지 생애주기**(가져감·제출함)뿐이고,
+    개인 AI 의 사고 과정이 아니다. 출처는 `work_source='bridge-runtime'` 으로 구분되며,
+    화면은 이 단계를 「내부 동작」 배지로 구분해 그린다(도구 단계와 섞이지 않는다).
+    """
+    conversation_id = str(task.get("conversation_id") or "")
+    task_id = str(task.get("task_id") or "")
+    if not conversation_id or not task_id or not label:
+        return
+    try:
+        _insert_bridge_step(conversation_id, task_id, {
+            "action": "activity",
+            "tool": "",
+            "intent": str(label)[:255],
+            "work": str(label),
+            "work_source": "bridge-runtime",
+            "reason": str(detail or ""),
+            "reason_source": "bridge-runtime" if detail else "",
+            "args": {},
+            "sql": "",
+            "result_summary": None,
+            "error": "",
+        })
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 내부 동작 단계 기록 실패 task=%s: %r", task_id, exc)
 
 
 def _record_bridge_step(conn, task: dict[str, Any], tool_name: str, args: dict[str, Any],
@@ -1455,6 +1536,12 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     scope = _bridge_product_scope(conn, row[2])
     # 사용자에게 "지금 처리 중" 을 보인다(제보 2026-08-27 — 상황을 알 방법이 없었다).
     _mark_bridge_working(conn, task_id, conversation_id)
+    # 조사가 시작됐다는 **내부 동작** 단계. 도구 호출만 남기면 실행 단계가 "DB 를 뒤진 기록"
+    # 으로만 보이고, 그 앞뒤의 진행(가져감·정리함)이 통째로 빠진다(사용자 제보 2026-08-28).
+    _record_bridge_activity(
+        conn, {"conversation_id": conversation_id, "task_id": task_id},
+        "질문을 가져왔습니다 — 대화 맥락과 첨부를 확인합니다",
+        detail=("첨부 %d건을 함께 받았습니다." % len(attachments)) if attachments else "")
     return JSONResponse({
         "task_id": task_id,
         "question": marked,
@@ -1851,6 +1938,7 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
+    _renew_claim_lease(conn, task_id, account_id)
     _att_work, _att_reason = _bridge_step_narration(body, {})
     _record_bridge_step(
         conn, {"conversation_id": conversation_id, "task_id": task_id},
@@ -2090,6 +2178,9 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     except _ledger.LedgerUnavailable as exc:
         # ★ 결과를 반환하지 않는다 — 기록 없는 호출은 상한 우회다(codex P1).
         return _json_err(503, f"원장을 기록할 수 없어 결과를 반환하지 않습니다: {exc}")
+
+    # 진행 신호 = lease 갱신. 조사가 이어지는 한 서버가 회수하지 않는다(사용자 요구 2026-08-28).
+    _renew_claim_lease(conn, task_id, int(account.get("id") or 0))
 
     # 웹 대화에서 온 질문이면 이 조사를 '실행 단계' 로 남긴다(화면의 「AI 추론」 탭).
     # 각인본(`marked`)이 아니라 `rendered` 를 넘긴다 — 단계 미리보기는 사람이 읽는 자리다.
@@ -2335,11 +2426,25 @@ def _bridge_live_steps(task_id: str) -> list[dict[str, Any]]:
     그런데 **그 AI 가 무엇을 조사했는지는 우리 안에 있다**(`tool_call_usage` 원장에 호출 즉시
     남는다). 이미 관측한 사실을 늦게 보여줄 이유가 없다.
 
-    옮기는 것은 관측 사실뿐이다 — 어떤 도구를 · 어떤 스키마에 · 몇 행 · 얼마나 걸려.
-    LLM 사고 과정은 없다(우리 밖에서 일어났다). **지어내면 그 순간 이 패널 전체가 못 믿을
-    것이 된다** — `_materialize_bridge_steps` 가 그은 선을 여기서도 지킨다.
+    ## 출처는 **원장이 아니라 `agent_runtime.steps`** 다 (사용자 제보 2026-08-28)
 
-    브리지 자체의 진행 도구(wait·claim·submit)는 조사 내역이 아니므로 걸러낸다.
+    처음엔 `tool_call_usage` 원장에서 읽었다. 원장에는 도구·스키마·행수뿐이라, 화면에는
+    `list_schemas 3행` / `search_tables 70행` 같은 **평문 나열**만 떴다 — 완료된 답변의
+    실행 단계는 「작업 + 근거」 카드로 그려지는데 **진행 중에만 다른 모양**이었던 것이다.
+
+    지금은 도구 호출 시점에 `_record_bridge_step` 이 같은 단계를 `agent_runtime.steps` 에
+    남긴다(작업·근거·소요·인자 포함). 그러니 진행 중에도 **완료본과 같은 레코드**를 그대로
+    돌려주면 된다 — 표시층이 두 모양을 가질 이유가 없다.
+
+    반환 키는 완료 경로(`_assemble_steps`)와 **같은 이름**을 쓴다(`work`·`reason`·`action`
+    ·`tool`·`result_summary`). 프런트가 같은 렌더러(`buildStepDetailEl`)로 그릴 수 있어야
+    구조가 갈리지 않는다.
+
+    LLM 사고 과정을 지어내지 않는다는 선은 그대로다 — 여기 실리는 `reason` 은 개인 AI 가
+    도구 호출에 함께 보낸 것이거나(`reason_source='external-ai'`), 서버가 도구 목적에서
+    파생한 것(`'derived'`)이며 출처가 함께 나간다.
+
+    브리지 자체의 진행 도구(wait·claim·submit)는 애초에 단계로 기록되지 않는다.
     실패는 흡수한다 — 단계 조회 실패가 상태 조회를 막지 않는다(없으면 빈 목록일 뿐이다).
     """
     if not task_id:
@@ -2350,27 +2455,46 @@ def _bridge_live_steps(task_id: str) -> list[dict[str, Any]]:
             return []
         with pg.cursor() as cur:
             cur.execute(
-                "SELECT tool, datasource_key, schema_name, rows_returned, latency_ms, "
-                "       outcome, created_at "
-                "FROM agent_runtime.tool_call_usage "
-                "WHERE task_id = %s ORDER BY id ASC LIMIT %s",
-                (task_id, _BRIDGE_LIVE_STEPS_MAX + len(_BRIDGE_PROGRESS_TOOLS)))
+                "SELECT step_index, action, tool, intent, work_text, work_source, "
+                "       reason_text, reason_source, args_json, sql_text, "
+                "       result_summary_json, error_text, created_at "
+                "FROM agent_runtime.steps "
+                "WHERE run_id = %s ORDER BY step_index ASC, id ASC LIMIT %s",
+                (task_id, _BRIDGE_LIVE_STEPS_MAX))
             rows = cur.fetchall() or []
         out: list[dict[str, Any]] = []
         for r in rows:
-            tool = str(r[0] or "")
-            if tool in _BRIDGE_PROGRESS_TOOLS:
-                continue
+            try:
+                args = json.loads(r[8]) if r[8] else {}
+            except Exception:
+                args = {}
+            summary: Any = None
+            if r[10]:
+                try:
+                    summary = json.loads(r[10])
+                except Exception:
+                    summary = None
             out.append({
-                "tool": tool,
-                "datasource": str(r[1] or ""),
-                "schema": str(r[2] or ""),
-                "rows": int(r[3] or 0),
-                "latency_ms": int(r[4] or 0),
-                "outcome": str(r[5] or ""),
-                "at": r[6].isoformat() if hasattr(r[6], "isoformat") else "",
+                "step_index": int(r[0] or 0),
+                "action": str(r[1] or "step"),
+                "tool": str(r[2] or ""),
+                "intent": str(r[3] or ""),
+                "work": str(r[4] or ""),
+                "work_source": str(r[5] or ""),
+                "reason": str(r[6] or ""),
+                "reason_source": str(r[7] or ""),
+                "args": args,
+                "sql": str(r[9] or ""),
+                "result_summary": summary,
+                "error": str(r[11] or ""),
+                "created_at": r[12].isoformat() if hasattr(r[12], "isoformat") else "",
+                # 종전 키 — 옛 프런트가 아직 남아 있어도 빈 화면이 되지 않게 함께 싣는다.
+                "datasource": str(args.get("datasource") or ""),
+                "schema": str(args.get("schema_name") or ""),
+                "rows": int((summary or {}).get("rows_returned") or 0)
+                        if isinstance(summary, dict) else 0,
             })
-        return out[:_BRIDGE_LIVE_STEPS_MAX]
+        return out
     except Exception as exc:
         logging.getLogger(__name__).debug(
             "[bridge] 진행 단계 조회 실패 task=%s: %r", task_id, exc)
