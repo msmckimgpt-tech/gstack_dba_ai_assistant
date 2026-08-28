@@ -12,6 +12,35 @@ http://{$WEB_PUBLIC_HOST}, :80 {
 		root * /srv/trust
 		file_server
 	}
+	# feature-0043 P0-AC (2026-08-28): 브리지 설치 스크립트도 **같은 부트스트랩 데드락**에 걸린다.
+	# 이 스크립트가 하는 첫 일이 사내 CA 를 받아 신뢰시키는 것인데, 스크립트 자신을 https 로만
+	# 주면 CA 가 없는 머신은 그것부터 받을 수 없다. `/trust/*` 를 평문으로 여는 이유와 정확히
+	# 같으므로 같은 블록에서 연다.
+	#
+	# 범위를 **이 두 파일로 못박는다** — `/static/*` 를 통째로 열면 앱 자산 전체가 평문 경로를
+	# 갖게 되고, 그건 이 예외가 감당하려던 것보다 훨씬 넓다.
+	#
+	# 평문의 위험은 **지문·체크섬 대조**가 덮는다: 대조 값은 https(웹 콘솔)로 온 명령에 실려
+	# 있고 파일은 평문으로 오므로, 바꿔치려면 두 채널을 동시에 잡아야 한다. 스크립트는 값이
+	# 어긋나면 실행을 중단한다.
+	@bridge_setup path /static/agent/bridge_setup.sh /static/agent/bridge_setup.ps1
+	handle @bridge_setup {
+		reverse_proxy web-a:8000 web-b:8000 {
+			lb_policy cookie weblb
+			lb_try_duration 5s
+			lb_try_interval 250ms
+			transport http {
+				tls
+				tls_trust_pool file /certs/rootCA.pem
+				tls_server_name {$WEB_PUBLIC_HOST}
+				dial_timeout 5s
+			}
+			header_up Host {host}
+			header_up X-Forwarded-For {client_ip}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Port 443
+		}
+	}
 	handle {
 		redir https://{host}{uri} permanent
 	}

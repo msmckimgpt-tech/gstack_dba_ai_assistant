@@ -19,6 +19,19 @@
   var $ = function (id) { return document.getElementById(id); };
   var statusEl = $("connectStatus");
   var endpoint = "";
+  // feature-0043 P0-AC: 서버가 준 원클릭 명령 {posix, windows, protocol}. 화면은 표시만 한다 —
+  // 여기서 조립하면 무결성 값이 빠지고(브라우저는 모른다) 모달과 문안이 갈린다(P0-X).
+  var launch = null;
+  var osTab = /win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix";
+
+  function paintOsTab() {
+    var isWin = osTab === "windows";
+    var pt = $("tabPosix"), wt = $("tabWin");
+    if (pt) pt.className = "aic-btn" + (isWin ? "" : " aic-btn--primary");
+    if (wt) wt.className = "aic-btn" + (isWin ? " aic-btn--primary" : "");
+    var cmd = $("launchCmd");
+    if (cmd) cmd.textContent = launch ? String(launch[osTab] || "") : "";
+  }
 
   function say(msg, kind) {
     statusEl.textContent = msg || "";
@@ -112,6 +125,10 @@
         endpoint = r.body.endpoint || endpoint;
         handoffText = r.body.handoff || "";
         $("handoffText").textContent = handoffText;
+        // feature-0043 P0-AC: 원클릭 명령도 **서버가 준 것을 표시만** 한다. 이 화면이 이걸
+        // 빠뜨리고 있었던 탓에, 링크를 새 탭으로 연 사용자는 기본 경로를 만나지 못했다.
+        launch = (r.body.launch && typeof r.body.launch === "object") ? r.body.launch : null;
+        paintOsTab();
         $("handoffResult").classList.remove("aic-hidden");
         say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
             " · 로그아웃 시 즉시 무효.", "ok");
@@ -125,4 +142,10 @@
   $("copyHandoff").addEventListener("click", function () {
     copy(handoffText, "복사했습니다. AI에 붙여넣으세요.");
   });
+
+  $("copyCmd").addEventListener("click", function () {
+    copy((launch && launch[osTab]) || "", "복사했습니다. 터미널에 붙여넣고 실행하세요.");
+  });
+  $("tabPosix").addEventListener("click", function () { osTab = "posix"; paintOsTab(); });
+  $("tabWin").addEventListener("click", function () { osTab = "windows"; paintOsTab(); });
 })();

@@ -79,10 +79,15 @@ def test_enqueue_sets_topic_from_question():
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
     assert "_conv_apply_auto_topic" in src, (
         "브리지 적재 경로가 자동 제목을 붙이지 않는다 — 대화 제목이 '새 대화' 로 굳는다")
-    # 미연결도 같은 경로를 탄다(2026-08-28 보류 적재로 통합) — 그래서 호출은 한 자리면 된다.
-    # 통합 전에는 분기가 둘이라 두 곳에 각각 필요했고, 한쪽을 빼먹으면 그 경로만 "새 대화" 였다.
-    assert "if not connected:" not in src, (
-        "미연결 분기가 되살아났다 — 제목 적용이 한쪽 경로에서만 도는 구조로 돌아간다")
+    # ⚠ 계약 갱신 (P0-AB, 사용자 결정 2026-08-28). 종전 검사는 `if not connected:` **부재**를
+    # 요구했다 — 그때는 미연결도 적재했고, 분기가 둘이면 한쪽만 제목을 붙일 위험이 있었기
+    # 때문이다. 지금 미연결은 **적재 자체를 하지 않는다**(요청 차단). 적재가 없으면 붙일 제목도
+    # 없으므로 그 분기는 이 계약의 위협이 아니다.
+    #
+    # 지켜야 할 것은 그대로다: **적재하는 경로가 하나뿐**이어야 한다. 둘이 되는 순간 한쪽이
+    # 제목을 빠뜨리고, 그 경로의 대화만 "새 대화" 로 굳는다. 호출 횟수로 그것을 고정한다.
+    assert src.count("_conv_apply_auto_topic(") == 1, (
+        "제목 적용 호출이 한 자리가 아니다 — 적재 경로가 갈렸고, 한쪽만 고쳐질 수 있다")
 
 
 def test_submit_answer_forwards_title_to_delivery():

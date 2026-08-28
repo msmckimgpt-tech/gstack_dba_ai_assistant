@@ -2512,6 +2512,62 @@ select.admin-meta-input {
 .connect-modal-status { margin: 0; font-size: .9rem; min-height: 1.2em; }
 .connect-modal-status[data-kind="ok"] { color: #15803d; }
 .connect-modal-status[data-kind="error"] { color: #b91c1c; }
+
+/* feature-0043 P0-AC — 원클릭 연결(LLM 비경유).
+   기본 경로가 명령이고 AI 지시문은 접힌 보조다. 위계를 CSS 로도 만든다 — 같은 무게로
+   나란히 두면 사용자는 다시 "어느 쪽이 내 경우인가" 를 판정해야 하고, 그 판정 요구가
+   바로 이 기능이 없애려는 마찰이다. */
+.connect-modal-step { margin: 0 0 14px; }
+.connect-modal-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+.connect-modal-tab {
+  border: 1px solid rgba(0, 0, 0, .18); background: transparent; color: inherit;
+  border-radius: 999px; padding: 4px 12px; cursor: pointer;
+  font-size: .82rem; font-family: inherit;
+}
+.connect-modal-tab.is-active { background: #2563eb; border-color: #2563eb; color: #fff; }
+.connect-modal-hint--muted { opacity: .7; font-size: .86rem; margin-top: -4px; }
+.connect-modal-alt {
+  border-top: 1px solid rgba(0, 0, 0, .1); padding-top: 12px; margin: 0 0 14px;
+}
+.connect-modal-alt > summary {
+  cursor: pointer; font-size: .88rem; opacity: .75; margin-bottom: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  .connect-modal-tab { border-color: rgba(255, 255, 255, .22); }
+  .connect-modal-alt { border-top-color: rgba(255, 255, 255, .12); }
+}
+
+/* feature-0043 P0-AB — 브리지 연결 게이트 (사용자 결정 2026-08-28).
+   컴포저 바로 위에 붙는다. "왜 못 쓰는가" 와 "무엇을 하면 되는가" 가 같은 시야 안에 있어야
+   하고, 조치 버튼이 없으면 잠금은 고장과 구분되지 않는다. */
+.composer-gate {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid rgba(180, 83, 9, .35); background: rgba(180, 83, 9, .08);
+  border-radius: 8px; padding: 10px 12px; margin: 0 0 8px;
+}
+.composer-gate.hidden { display: none; }
+.composer-gate-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.composer-gate-title { font-size: .9rem; color: #b45309; }
+.composer-gate-desc { font-size: .84rem; opacity: .8; line-height: 1.5; }
+.composer-gate-btn {
+  flex: 0 0 auto; border: 1px solid #2563eb; background: #2563eb; color: #fff;
+  border-radius: 6px; padding: 7px 14px; cursor: pointer;
+  font-size: .88rem; font-family: inherit; white-space: nowrap;
+}
+.composer-gate-btn:hover { filter: brightness(1.08); }
+/* 잠긴 동안 컴포저 부속 조작(첨부·모델·추론 메뉴)도 함께 죽인다. 입력창만 막으면 파일을
+   붙여 놓고 보내지 못하는 상태가 되어 "막혔다" 가 아니라 "고장났다" 로 읽힌다.
+   `.composer-gate` 자신은 제외한다 — 잠금을 푸는 유일한 버튼이 거기 있다. */
+.composer-wrap.is-bridge-locked > *:not(.composer-gate) { opacity: .5; }
+.composer-wrap.is-bridge-locked button:not(.composer-gate-btn),
+.composer-wrap.is-bridge-locked textarea,
+.composer-wrap.is-bridge-locked input {
+  pointer-events: none;
+}
+@media (prefers-color-scheme: dark) {
+  .composer-gate { border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .10); }
+  .composer-gate-title { color: #fbbf24; }
+}
 @media (prefers-color-scheme: dark) {
   .connect-modal { background: #1b1b22; }
   .connect-modal-header { border-bottom-color: rgba(255, 255, 255, .12); }

@@ -2113,8 +2113,12 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   font-size: 11px;
   color: var(--text-muted);
 }
-/* TASK-20260619T014034: 상태점(.llm-status-dot)이 보일 때는 status/hint 가 비어도 footer 유지. */
-.composer-footer:has(.composer-status:empty):has(.composer-hint:empty):has(.llm-status-dot.hidden) { display: none; }
+/* TASK-20260619T014034: 상태점(.llm-status-dot)이 보일 때는 status/hint 가 비어도 footer 유지.
+   feature-0043 P0-AB: **연결 표시(.ai-conn)도 같은 대우**를 받는다. 이 조건이 없어서 P0-T 가
+   약속한 "연결 상태 상시 표시" 가 실제로는 한 번도 보이지 않았다 — status·hint 가 비고 provider
+   상태점이 숨겨진 것이 평상시 화면이라, footer 가 통째로 display:none 이 되며 연결 칩까지 함께
+   사라졌다(2026-08-28 실 브라우저 실측). 칩을 넣은 것과 칩이 보이는 것은 다른 사실이다. */
+.composer-footer:has(.composer-status:empty):has(.composer-hint:empty):has(.llm-status-dot.hidden):has(.ai-conn.hidden) { display: none; }
 .composer-hint:empty { display: none; }
 .composer-status:empty { display: none; }
 

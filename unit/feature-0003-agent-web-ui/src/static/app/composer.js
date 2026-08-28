@@ -67,6 +67,9 @@ import {
   state,
 } from "../app.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
+// feature-0043 P0-AB: 브리지 연결 게이트. 잠금 판정은 서버가 내고(`compose_blocked`) 여기서는
+// 그 결과만 읽는다 — 조건을 다시 조립하지 않는다(두 벌이 되면 화면과 서버가 갈린다).
+import { isComposeBlocked, refreshConnState } from "./connect-modal.js?v=dev";
 import { openAttachmentDiffModal, openAttachmentSourceModal } from "./attach-diff.js?v=dev";
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 
@@ -261,10 +264,27 @@ function renderComposer() {
   //   판정의 단일 진실원은 `canAskInConversation`(→ isOwnScopeConversation) 이다.
   // TASK-0047: composer busy 상태 변화에 따라 product chip 도 disabled 동기화.
   renderProductChip();
+  // ── feature-0043 P0-AB: 브리지 연결 게이트 (사용자 결정 2026-08-28) ──────────────
+  //
+  //   "요청이 막힘에 따라 메세지 박스 내 상호작용도 진행되지 않도록 처리해주세요.
+  //    (연결 완수 후 활성화)"
+  //
+  // 답변할 AI 가 없는 상태에서 입력을 받아 두면, 사용자는 자기 질문이 처리되는 중이라고
+  // 믿는다. 그 믿음이 깨지는 시점이 늦을수록 마찰이 크다 — 그래서 **쓰기 전에** 막는다.
+  //
+  // `isBlocked`(참조 제품 삭제)와 **OR 로 합치지 않고 따로 둔다**: 사유가 다르면 안내도
+  // 달라야 하고, 잠금 패널이 사유별 문구를 이미 그리고 있다.
+  const bridgeBlocked = isComposeBlocked();
+  const composerLocked = isBlocked || bridgeBlocked;
   // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
   // composer-nonblock-interrupt R1: 처리 중이어도 입력창은 잠그지 않는다 — 전송이 막히지 않게.
-  // 차단된 대화(참조 제품 삭제)만 입력 비활성(이력 열람만).
-  promptInputEl.disabled = isBlocked;
+  // 차단된 대화(참조 제품 삭제)·브리지 미연결만 입력 비활성(이력 열람만).
+  promptInputEl.disabled = composerLocked;
+  // 첨부·모델·추론 등 컴포저 부속 조작도 함께 잠근다. 입력창만 막으면 파일을 붙여 놓고
+  // 보내지 못하는 상태가 되어, "막혔다" 가 아니라 "고장났다" 로 읽힌다.
+  // (§16.8 — 잠금은 한 덩어리로 보여야 한다.)
+  const composerRoot = promptInputEl.closest ? promptInputEl.closest(".composer-wrap") : null;
+  if (composerRoot) composerRoot.classList.toggle("is-bridge-locked", bridgeBlocked);
   // R1: 전송/중단 버튼 모드 — *내가 띄운* @assistant run 이 진행 중(myRun)이고 입력이 비어 있을 때만
   // "중단"(명시적 취소). 입력에 글자가 있으면 처리 중이라도 "전송"(R3 1:1 인터럽트 / R2 그룹 가드로
   // 라우팅). 타 멤버 run(글로벌 processing)으로는 중단 모드로 바뀌지 않는다(myRun 기준).
@@ -304,7 +324,7 @@ function renderComposer() {
       sendBtn.dataset.mode = "send";
     }
     sendBtn.setAttribute("aria-label", "전송");
-    if (hasAsk && !isBlocked) {
+    if (hasAsk && !composerLocked) {
       sendBtn.removeAttribute("aria-disabled");
       sendBtn.classList.remove("is-access-blocked");
       sendBtn.title = "";
@@ -312,9 +332,13 @@ function renderComposer() {
       sendBtn.setAttribute("aria-disabled", "true");
       sendBtn.classList.add("is-access-blocked");
       // TASK-0248: 차단 사유를 권한 부재 안내보다 우선 노출.
-      sendBtn.title = isBlocked
-        ? (activeConv.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.")
-        : "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
+      // 브리지 잠금은 **가장 먼저** 온다 — 그 상태에서는 권한이 있어도 보낼 곳이 없고,
+      // 사용자가 할 일(연결)이 권한 문의와 전혀 다르다.
+      sendBtn.title = bridgeBlocked
+        ? "내 AI 가 연결되어 있지 않습니다. 아래 [연결하기] 를 눌러 연결하세요."
+        : (isBlocked
+          ? (activeConv.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.")
+          : "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`");
     }
   }
   // REQ-20260608-0158: 즉시 답변 버튼 — 내 run 처리 중에는 (중단/전송 모드 무관) 노출.
@@ -2581,6 +2605,14 @@ function _bindComposerAttachmentEvents() {
       chatOverlay.classList.add("hidden");
       const files = Array.from(ev.dataTransfer?.files || []);
       if (!files.length) return;
+      // feature-0043 P0-AB: 잠금은 **여기도** 지나야 한다 (codex 적대 리뷰 P2).
+      // 컴포저 잠금은 `pointer-events: none` 으로 걸리는데, 드래그-드롭은 포인터 이벤트가
+      // 아니라 그 가드를 통째로 지나간다 — 잠긴 화면에 파일을 끌어다 놓으면 업로드가 됐다.
+      // 첨부만 쌓이고 보낼 수는 없는 상태는 "막혔다" 가 아니라 "고장났다" 로 읽힌다.
+      if (isComposeBlocked()) {
+        showToast("내 AI 가 연결되어 있지 않습니다. 연결한 뒤 파일을 첨부해 주세요.", true);
+        return;
+      }
       // 한 번에 여러 파일 드롭 시 순차 업로드 (backend 는 1 파일/요청 단위).
       // attach-multi-upload: 배치 요약 1회로 결과를 알린다(파일마다 토스트 → 상호 덮어쓰기).
       await _uploadComposerAttachments(files);
@@ -3103,6 +3135,20 @@ async function sendPrompt() {
     showToast(active.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.", true);
     return;
   }
+  // feature-0043 P0-AB: 브리지 미연결이면 **여기서도** 막는다.
+  //
+  // 입력창 잠금(`renderComposer`)만으로는 부족하다 — 잠금이 반영되기 전 눌린 Ctrl+Enter,
+  // 프로그램적 호출, 잠금 사이의 경쟁이 남는다. 그리고 잠금은 *표시*이지 *집행*이 아니다:
+  // 집행은 서버(409)가 하고, 이 가드는 그 왕복을 사용자에게 오류로 보이지 않게 흡수한다.
+  //
+  // **입력은 지우지 않는다.** 사용자가 쓴 문장을 잃으면 연결한 뒤 다시 써야 하고, 그것이
+  // 정확히 P0-X 가 없앤 마찰이다.
+  if (isComposeBlocked()) {
+    showToast("내 AI 가 연결되어 있지 않습니다. 연결하면 입력한 질문 그대로 보낼 수 있습니다.", true);
+    try { document.getElementById("composerGateBtn")?.focus(); } catch (_) { /* 무시 */ }
+    renderComposer();
+    return;
+  }
   if (state.composerAttachments.uploadingCount > 0) {
     showToast("파일 업로드가 완료될 때까지 기다려주세요.", true);
     return;
@@ -3577,6 +3623,47 @@ async function sendPrompt() {
       _syncConversationAttachmentsToBucket(newCid || state.activeConversationId).catch(() => {});
     }
   } catch (error) {
+    // ── feature-0043 P0-AB: 서버가 연결 게이트로 거절한 요청 (409 bridge_blocked) ─────
+    //
+    // 화면 잠금이 앞서 막지 못한 경우다(낡은 탭·잠금 반영 직전 전송·직접 호출). 여기서
+    // 일반 실패 토스트를 띄우면 사용자는 **고장**으로 읽는다 — 실제로는 할 일이 있고,
+    // 그 할 일이 화면에 이미 준비돼 있다.
+    //
+    //   · 낙관적으로 그린 사용자 말풍선을 걷는다 — 서버는 아무것도 저장하지 않았다.
+    //     남겨 두면 새로고침에 사라지는 유령 말풍선이 된다.
+    //   · **입력은 되돌려 준다** — 연결한 뒤 그대로 다시 보낼 수 있어야 한다(P0-X 의 취지).
+    //   · 상태를 다시 읽어 잠금·안내 패널을 즉시 맞춘다.
+    if (error && error.status === 409 && error.payload && error.payload.bridge_blocked) {
+      state.pendingBubble = null;
+      try { state.messages = state.messages.filter((m) => m !== optimisticUserMessage); } catch (_e) {}
+      // lazy-create 낙관 상태도 함께 걷는다 (codex 적대 리뷰 P2). 서버는 대화를 **만들지
+      // 않았으므로**(게이트가 생성 앞에 있다) 이걸 두면 사이드바에 영영 열 수 없는 유령
+      // "새 대화" 가 남고, 다음 전송이 그 sentinel 로 라우팅된다.
+      if (isLazyCreate) {
+        try {
+          if (state.pendingSentinel === busyKey) {
+            state.pendingNewConversation = false;
+            state.pendingSentinel = null;
+          }
+          state.pendingConversationEntries.delete(busyKey);
+        } catch (_e) { /* 정리 실패가 안내를 막지 않는다 */ }
+        try { renderConversationList(); } catch (_e) {}
+      }
+      try { renderMessages(); } catch (_e) {}
+      if (!String((promptInputEl && promptInputEl.value) || "").trim()) {
+        promptInputEl.value = message;
+        promptInputEl.style.height = "auto";
+      } else {
+        // 사용자가 그 사이 새로 입력했다 — 덮어쓰지 않는다(기존 실패 경로와 같은 규칙).
+        // 다만 원문을 잃게 두지도 않는다: 연결한 뒤 그대로 다시 보낼 수 있어야 한다.
+        showToast("보내지 못한 질문은 그대로 두었습니다. 연결 후 다시 보내 주세요.");
+      }
+      showToast(error.message || "내 AI 가 연결되어 있지 않습니다. 연결한 뒤 다시 보내 주세요.", true);
+      // 잠금 판정은 서버가 낸다 — 여기서 지레 잠그지 않고 다시 물어본다.
+      try { refreshConnState(); } catch (_e) { /* 표시 실패가 흐름을 막지 않는다 */ }
+      try { renderComposer(); } catch (_e) { /* no-op */ }
+      return;
+    }
     // feature-0009 gc-share-group-sync (#2 graceful fallback): 그룹 대화의 비멘션 메시지가 stale
     // is_group 으로 /api/ask 에 도달해 서버가 422(group_requires_mention)로 거부하면, block/오류 대신
     // 사람채팅(store-only)으로 즉시 재라우팅한다 — 메시지 유실·차단 없음. 로컬 그룹 신호도 동기화해
