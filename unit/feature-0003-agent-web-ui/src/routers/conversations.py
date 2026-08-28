@@ -514,7 +514,14 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         try:
             notice_id = int(_save_msg(
                 conn, str(conv_id), "assistant", notice_text,
-                {"bridge": {"task_id": task_id, "origin": "web", "placeholder": True}}) or 0)
+                {"bridge": {"task_id": task_id, "origin": "web", "placeholder": True},
+                 # 이 말풍선이 **자기 run** 의 단계를 가리키게 한다(사용자 제보 2026-08-28).
+                 #
+                 # 각인이 없으면 `_load_steps_for_message` 가 "이 메시지 시각 이전의 가장 최근
+                 # run" 으로 폴백해, 대기 말풍선에 **직전 답변의 단계**가 붙는다 — 화면에는
+                 # 이제 막 시작한 질문 아래 `단계 보기 (21)` 처럼 남의 단계 수가 뜬다.
+                 # 답변 전달 시 `_deliver_web_bridge_answer` 가 같은 값으로 meta 를 다시 굳힌다.
+                 "run_id": task_id}) or 0)
             conn.commit()
         except Exception as exc:
             # 안내 저장 실패는 요청을 취소할 사유가 아니다 — 질문은 이미 적재됐고 개인 AI 가

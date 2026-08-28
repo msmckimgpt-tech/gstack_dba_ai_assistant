@@ -4789,6 +4789,11 @@ def _resolve_copy_window(conn, source_id: str, account_id: int, *, share_floor_i
 #: "최근 step = 진행 중" 추론에서 반드시 제외한다.
 _BRIDGE_LEDGER_WORK_SOURCE = "bridge-ledger"
 
+#: 브리지 task_id 의 접두(`_enqueue_web_bridge_task` 의 `"t_" + token_urlsafe(12)`).
+#: 브리지 run 은 전용 진행 표시(대기 말풍선 안)가 담당하므로 내부 경로 fallback 에서 뺀다.
+#: `_` 는 LIKE 의 단일문자 와일드카드라 이스케이프한다(`t?` 를 잘못 잡지 않게).
+_BRIDGE_RUN_ID_LIKE = r"t\_%"
+
 
 def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
     """agent_runtime.steps 에서 가장 최근 run_id 와 활성 여부를 반환.
@@ -4810,6 +4815,18 @@ def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
     원장은 답변이 **끝난 뒤** 기록되므로 진행 중 신호가 될 수 없다 — 여기서 제외한다.
     (원장 자체는 그대로 남는다. 말풍선의 '단계 보기' 는 `_load_steps_for_message` 가
     메시지의 `meta.run_id` 로 따로 읽으므로 이 제외에 영향받지 않는다.)
+
+    **브리지 run 자체를 통째로 제외한다 (2026-08-28, 사용자 제보).**
+    위 제외는 `work_source='bridge-ledger'`(사후 이관) 만 걸렀는데, 그 뒤 브리지가 도구 호출
+    **그 시점에** 단계를 남기게 되면서(P0-Z) 그 단계들은 `derived`·`external-ai`·
+    `bridge-runtime` 출처라 이 필터를 그냥 통과했다. 그러자 `/api/progress` 가 브리지 run 을
+    "진행 중인 내부 run" 으로 잡아, **내부 경로용 진행 표시(progress-strip)가 말풍선 밖에**
+    단계를 그렸다 — 사용자 화면에는 새 질문 아래로 단계가 쏟아져 나온 모양이 됐다.
+
+    브리지에는 전용 진행 표시가 이미 있다(`bridge_status`/`bridge_stream` → 대기 말풍선 **안**).
+    두 축이 같은 run 을 동시에 그리면 화면이 두 번 그려지고 자리도 갈린다. run_id 접두(`t_`)로
+    브리지 run 을 가려 **내부 경로 fallback 에서 빼는 것**이 그 경계를 세우는 가장 싼 방법이다
+    (브리지 task_id 는 `_enqueue_web_bridge_task` 가 `"t_" + token_urlsafe(12)` 로 만든다).
     """
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
         return "", False
@@ -4823,11 +4840,12 @@ SELECT run_id, MAX(created_at) AS last_step_at
 FROM agent_runtime.steps
 WHERE conversation_id = %s
   AND COALESCE(work_source, '') <> %s
+  AND run_id NOT LIKE %s
 GROUP BY run_id
 ORDER BY last_step_at DESC
 LIMIT 1
                 """,
-                (conversation_id, _BRIDGE_LEDGER_WORK_SOURCE),
+                (conversation_id, _BRIDGE_LEDGER_WORK_SOURCE, _BRIDGE_RUN_ID_LIKE),
             )
             row = pgcur.fetchone()
         pg.close()
