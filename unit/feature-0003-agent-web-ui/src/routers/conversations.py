@@ -176,10 +176,28 @@ def _mark_bridge_placeholders_canceled(conn, conversation_id: str, task_ids: lis
 #:
 #: 짧게 쓴다. 사용자는 구조 설명을 읽으러 온 것이 아니라 **왜 답이 없는지**와 **무엇을 하면
 #: 되는지**를 알러 왔다. 초기 문구는 서비스 구조를 4문단으로 설명했고, 사용자 제보로 걷어냈다.
+#: ⚠ **폐기됨 (P0-AB, 2026-08-28)** — 토큰이 없는 상태는 이제 *말풍선*이 아니라 **차단**이다.
+#: 요청이 대화에 아무것도 남기지 않으므로 저장할 본문도 없다. 그 자리의 문구는
+#: `_BRIDGE_BLOCKED_ERROR`(거절 응답)이고, 안내는 연결 패널이 맡는다.
+#: 상수를 지우지 않고 남기는 이유는 **되돌리기 경로** 때문이다 — 게이트 결정을 물리면
+#: (deferred 보관으로 복귀) 저장할 문구가 다시 필요하다.
 _BRIDGE_NOTICE_NOT_CONNECTED = (
     "답변할 AI 가 연결되어 있지 않습니다.\n\n"
     "[AI 연결하기](/ai/connect)에서 연결하면 **이 질문부터 바로 처리합니다** — 다시 입력하지 "
     "않으셔도 됩니다. (연결 없이 여러 번 물으신 경우 **마지막 질문 1건**만 처리됩니다.)"
+)
+
+#: 토큰은 살아 있는데 **러너 프로세스가 안 듣는 중** — 보류 적재된 질문의 말풍선 (P0-AB).
+#:
+#: `_BRIDGE_NOTICE_NOT_CONNECTED` 와 나누는 이유: 사용자가 할 일이 다르다. 저쪽은 *연결 정보를
+#: 새로 만들어야* 하고, 이쪽은 이미 만들어 둔 것으로 **프로세스만 다시 띄우면** 된다. 하나로
+#: 뭉치면 이미 연결한 사용자에게 "연결하세요" 라고 말해 토큰을 매번 새로 만들게 한다.
+#:
+#: 링크는 그대로 `/ai/connect` 다 — 그 모달이 실행 버튼과 원클릭 명령을 함께 제공한다.
+_BRIDGE_NOTICE_NOT_LISTENING = (
+    "내 AI 가 실행 중이 아니라 이 질문은 **보관**했습니다.\n\n"
+    "[내 AI 실행하기](/ai/connect)로 다시 띄우면 **이 질문부터 바로 처리합니다** — 다시 입력하지 "
+    "않으셔도 됩니다. (실행 전에 여러 번 물으신 경우 **마지막 질문 1건**만 처리됩니다.)"
 )
 
 #: 승격 경쟁에서 밀렸거나 너무 오래된 보류 질문 — 말풍선 본문이 이것으로 바뀐다.
@@ -190,6 +208,19 @@ _BRIDGE_NOTICE_DEFERRED_EXPIRED = (
     "이 질문은 처리되지 않았습니다.\n\n"
     "AI 연결 후에는 **마지막 질문 1건**만 자동으로 처리됩니다. 이 질문의 답이 필요하시면 "
     "다시 보내 주세요 — 대화 내용은 그대로 남아 함께 전달됩니다."
+)
+
+#: 연결 게이트가 막은 요청의 에러 문구 (P0-AB, 사용자 결정 2026-08-28).
+#:
+#: `_BRIDGE_NOTICE_NOT_CONNECTED` 와 **다른 자리**에 쓰인다. 저쪽은 *대화에 저장되는 말풍선*
+#: 이고 이쪽은 *거절 응답*이다 — 차단된 요청은 대화에 아무것도 남기지 않으므로(질문도 안내도),
+#: 이 문구는 토스트·연결 패널로만 보인다.
+#:
+#: "고장" 으로 읽히지 않게 쓴다. 서버 LLM 차단은 정상 상태이고, 여기서 필요한 것은 수리가
+#: 아니라 **연결**이다.
+_BRIDGE_BLOCKED_ERROR = (
+    "답변할 AI 가 연결되어 있지 않아 질문을 보내지 못했습니다. "
+    "먼저 내 AI 를 연결해 주세요 — 연결하면 이 입력창이 바로 열립니다."
 )
 
 #: 이미 연결한 계정 — 설정은 끝났고, 남은 것은 그 AI 가 가져가는 일이다.
@@ -227,9 +258,21 @@ _BRIDGE_NOTICE_SUPERSEDED = (
 def _account_has_connected_ai(conn, account_id: int) -> bool:
     """이 계정에 **살아 있는** AI 연결(mat_ access token)이 있는가.
 
-    안내 문구를 고르는 데만 쓴다 — 권한 판정이 아니다. 그래서 조회 실패는 "연결 있음" 으로
-    본다: 확신 없이 "연결이 없습니다" 라고 단정하면, 이미 연결해 둔 사용자에게 매번 설정하라고
-    떠드는 쪽이 된다(틀렸을 때 더 성가신 방향으로 실패하지 않는다).
+    ⚠ **용도가 넓어졌다** (P0-AB, codex 적대 리뷰 P1-2). 종전 docstring 은 "안내 문구를 고르는
+    데만 쓴다 — 권한 판정이 아니다" 였는데, 지금은 `/api/ask` 의 **차단 게이트**가 이 값을
+    읽는다. 그 서술을 그대로 두면 다음 사람이 "안내용이니까" 라며 더 느슨하게 고친다.
+
+    fail-open(조회 실패 → "연결 있음")은 **의도적으로 유지한다**. 방향을 고를 때 물어야 하는
+    것은 "어느 쪽이 안전한가" 가 아니라 **"어느 쪽으로 틀리는 것이 덜 나쁜가"** 다:
+
+    | 조회 실패 시 | 결과 |
+    |---|---|
+    | 차단(fail-closed) | 정상 사용자의 질문이 **거절되고 사라진다** — 일시적 DB 오류가 서비스 정지가 된다 |
+    | 통과(fail-open) | 질문이 `deferred` 로 **보관**된다. 아무도 안 가져가면 24시간 뒤 만료 |
+
+    통과 쪽의 최악은 "아무 일도 안 일어남" 이고, 차단 쪽의 최악은 "쓴 문장을 잃음" 이다.
+    그리고 **데이터 경계는 이 함수가 지키는 것이 아니다** — 토큰이 실제로 없으면 도구 호출이
+    401 이고, 아무도 그 task 를 가져갈 수 없다. 여기서 새는 것은 권한이 아니라 대기열 한 줄이다.
     """
     if not account_id:
         return False
@@ -247,6 +290,35 @@ def _account_has_connected_ai(conn, account_id: int) -> bool:
             "[bridge] AI 연결 여부 조회 실패 account=%s — '연결됨' 으로 안내한다: %r",
             account_id, exc)
         return True
+
+
+def _account_ai_is_listening(conn, account_id: int) -> bool:
+    """이 계정의 개인 AI **프로세스가 지금 듣고 있는가** (P0-AB).
+
+    `_account_has_connected_ai`(토큰이 있는가)와 **다른 사실**이다 — 토큰은 DB 에 있고 러너는
+    프로세스라, 머신을 재시작하면 러너만 사라진다. 사용자 결정(2026-08-28)이 요구하는 게이트는
+    두 축의 **곱**이다: *"머신 내 DQA 프로세스가 실행중인지, 토큰이 연결되어 있는지 여부를
+    점검하여 허용합니다."*
+
+    판정은 `/api/ai/connect/status` 가 쓰는 것과 **같은 함수**(`account_is_listening`)다.
+    화면과 서버가 따로 세면 "화면은 잠겼는데 서버는 받는" 또는 그 반대가 되고, 그 순간
+    느슨한 쪽이 사용자가 보는 진실이 된다(P0-R 에서 이미 한 번 겪었다).
+
+    조회 실패는 **False**(= 보류 적재). 연결 판정(fail-open)과 방향이 반대인 이유는 같다 —
+    저쪽은 과잉 경고를, 이쪽은 **헛된 기다림**을 막는다. 확신 없이 "듣고 있다" 로 적재하면
+    아무도 가져가지 않는 질문이 `open` 으로 대기열에 남는다.
+    """
+    if not account_id:
+        return False
+    try:
+        from routers.ai_tools import account_is_listening
+
+        return bool(account_is_listening(int(account_id), conn))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] AI 대기 여부 조회 실패 account=%s — '대기 안 함' 으로 본다: %r",
+            account_id, exc)
+        return False
 
 
 
@@ -402,7 +474,11 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
     # 한 번만 판정한다 — 저장 본문·응답 answer·토스트가 같은 문장을 써야 한다(따로 조회하면
     # 그 사이 연결이 생기거나 사라져 화면과 토스트가 다른 말을 하게 된다).
     connected = _account_has_connected_ai(conn, account_id)
-    notice_text = _BRIDGE_NOTICE_CONNECTED if connected else _BRIDGE_NOTICE_NOT_CONNECTED
+    # 러너 생존은 토큰과 **다른 사실**이다(P0-AB). 여기서 한 번 재고, 저장 본문·응답 플래그·
+    # 토스트가 전부 이 한 값을 쓴다 — 따로 조회하면 그 사이 러너가 죽거나 살아나 화면과
+    # 토스트가 다른 말을 하게 된다.
+    listening = _account_ai_is_listening(conn, account_id) if connected else False
+    notice_text = _BRIDGE_NOTICE_CONNECTED if listening else _BRIDGE_NOTICE_NOT_LISTENING
 
     def _fail(reason: str, exc: Exception) -> dict[str, Any]:
         log.error("[bridge] %s conv=%s account=%s: %r", reason, conv_id, account_id, exc)
@@ -417,7 +493,31 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             "_http_status": 500,
         }
 
-    # ── 연결이 없으면 **보류 적재**(`deferred`) 한다 (사용자 결정 2026-08-27 → 2026-08-28) ──
+    # ── 토큰이 없으면 **적재하지 않는다** (사용자 결정 2026-08-28 — P0-AB) ────────────────
+    #
+    # 여기까지 오는 것은 화면이 이미 잠겨 있어야 하는 상태다(컴포저 게이트 = 토큰 ∧ 러너).
+    # 그런데도 도달했다면 낡은 탭·직접 호출이므로 **fail-closed** 로 거절한다 — 프런트 잠금만
+    # 두면 그 잠금이 유일한 방어가 되고, 그때는 "요청이 막힌다" 가 화면의 약속일 뿐 집행이
+    # 아니게 된다.
+    #
+    # 거절은 `_http_status: 409` 다(500 아님). 이것은 고장이 아니라 **상태 불일치**이고,
+    # 프런트는 이 코드를 보고 연결 안내를 여는 것으로 응답한다.
+    if not connected:
+        log.info("[bridge] 미연결 요청 차단 conv=%s account=%s", conv_id, account_id)
+        return {
+            "answer": "",
+            "conversation_id": conv_id or "",
+            "error": _BRIDGE_BLOCKED_ERROR,
+            "bridge_pending": False,
+            "bridge_blocked": True,
+            # 프런트가 "어느 축이 비었나" 를 알아야 안내 문구를 고를 수 있다(둘 다 없음 vs
+            # 러너만 꺼짐은 사용자가 할 일이 다르다).
+            "bridge_connected": False,
+            "bridge_listening": False,
+            "_http_status": 409,
+        }
+
+    # ── 토큰은 있는데 러너가 안 듣는 중이면 **보류 적재**(`deferred`) ─────────────────────
     #
     # 처음엔 아예 적재하지 않았다. 아무도 가져갈 수 없는 질문이 쌓이고, 나중에 연결하는 순간
     # **밀린 것이 한꺼번에** 처리되기 때문이다(실측: 같은 질문 5건 누적). 그런데 그 대가로
@@ -428,7 +528,13 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
     # 지금은 **적재하되 대기열에는 보이지 않게** 둔다(`Status='deferred'`). 연결이 성립하면
     # `_promote_latest_deferred` 가 **가장 최근 1건만** `open` 으로 올리고 나머지는 만료시킨다 —
     # 재입력은 없애면서 "밀린 것이 한꺼번에" 도 그대로 막는다.
-    status = "open" if connected else "deferred"
+    #
+    # 2026-08-28(P0-AB): 이 분기의 **조건이 바뀌었다**. 종전에는 "토큰 없음" 이 보류 사유였는데
+    # 이제 그쪽은 위에서 차단된다. 남은 보류 사유는 **토큰은 살아 있는데 러너가 꺼진 창** 뿐이다 —
+    # 화면 게이트가 `러너 대기 중` 을 요구하므로 대부분 전송 자체가 막히고, 여기 걸리는 것은
+    # "잠금이 화면에 반영되기 직전에 눌린 전송" 이다. 사용자 결정: *이미 연결 완료 상태에서
+    # 진행된 질문은 보관하여 다시 처리한다.*
+    status = "open" if listening else "deferred"
 
     # ① 대기 작업 적재 → ② 사용자 질문 저장 → 저장 실패면 ①을 되돌린다.
     #
@@ -567,23 +673,30 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
         # 최종 JSON 조립이 `agent_result["conversation_id"]` 를 읽는다 — 비우면 프런트가
         # 대화를 식별하지 못해 폴링 대상도 잃는다.
         "conversation_id": conv_id or "",
-        # **폴링은 연결됐을 때만** 한다. 보류 질문은 언제 승격될지 모르는데 5초마다 물으면
-        # 연결하지 않은 사용자의 브라우저가 종일 빈 요청을 보낸다. 승격된 답변은 다음 이력
+        # **폴링은 대기열에 올랐을 때만** 한다. 보류 질문은 언제 승격될지 모르는데 5초마다
+        # 물으면 러너가 꺼진 브라우저가 종일 빈 요청을 보낸다. 승격된 답변은 다음 이력
         # 조회(연결 표시 갱신·탭 복귀·새로고침)에서 말풍선이 답변으로 바뀐 채 나타난다.
-        "bridge_pending": connected,
-        # 보류 적재(미연결)임을 **명시**한다. `bridge_pending` 하나로는 "적재 실패" 와
-        # "보관됨" 이 구분되지 않고, 응답 조립이 이 플래그를 보고 프런트에 상태를 실어 준다.
-        "bridge_deferred": not connected,
+        #
+        # P0-AB: 판정 축이 `connected`(토큰) → `listening`(러너)로 옮겨졌다. 토큰만 있고
+        # 러너가 꺼진 상태에서 폴링하면 아무 일도 일어나지 않는 요청만 쌓인다.
+        "bridge_pending": listening,
+        # 보류 적재임을 **명시**한다. `bridge_pending` 하나로는 "적재 실패" 와 "보관됨" 이
+        # 구분되지 않고, 응답 조립이 이 플래그를 보고 프런트에 상태를 실어 준다.
+        "bridge_deferred": not listening,
         # 대기열에 **보이는가** — 보류는 아직 아니다. 프런트는 이 값으로 폴링 여부와 토스트
         # 강조를 가른다(없으면 "응답을 갱신했습니다" 같은 완료 토스트가 뜬다).
-        "bridge_queued": connected,
+        "bridge_queued": listening,
         "bridge_task_id": task_id,
         "bridge_notice": _server_llm_blocked_message(),
-        # 프런트 토스트 문구를 **서버가 정한다**. 연결이 없는 사용자에게 "내 AI 가 처리할
-        # 질문으로 등록했습니다" 는 사실이 아니다 — 가져갈 AI 가 없다.
-        "bridge_connected": connected,
-        "bridge_toast": ("내 AI 에게 보냈습니다." if connected else
-                         "질문을 보관했습니다. AI 를 연결하면 이 질문부터 처리합니다."),
+        # 프런트 토스트 문구를 **서버가 정한다**. 러너가 듣고 있지 않은 사용자에게 "내 AI 가
+        # 처리할 질문으로 등록했습니다" 는 사실이 아니다 — 가져갈 프로세스가 없다.
+        #
+        # 여기까지 왔다는 것은 토큰은 있다는 뜻이다(없으면 위에서 차단됐다). 그래서
+        # `bridge_connected` 는 언제나 True 이고, 갈리는 축은 `bridge_listening` 이다.
+        "bridge_connected": True,
+        "bridge_listening": listening,
+        "bridge_toast": ("내 AI 에게 보냈습니다." if listening else
+                         "질문을 보관했습니다. 내 AI 를 실행하면 이 질문부터 처리합니다."),
         # 브리지는 사용자 메시지를 이 함수에서 이미 저장했다. 후처리 단계가 다시 저장하지
         # 않도록 표시한다(중복 말풍선 방지).
         "bridge_user_message_saved": bool(conv_id),
@@ -4197,6 +4310,31 @@ async def ask(request: Request) -> JSONResponse:
         if not app._account_has_permission(account, "conversation.ask"):
             conn.close()
             return app._json_error("권한이 없습니다.", 403)
+        # ── feature-0043 P0-AB: 브리지 연결 게이트는 **여기서** 판정한다 ────────────────
+        #
+        # 왜 이렇게 앞인가 (codex 적대 리뷰 P1-1): 종전에는 브리지 분기(`_enqueue_web_bridge_task`)
+        # 안에서 거절했는데, 그 지점은 **대화 생성·제품 설정·모델 KV 저장·감사 dispatch 가 이미
+        # 끝난 뒤**다. 그래서 "차단하면 아무것도 남기지 않는다" 는 계약이 절반만 참이었다 —
+        # 말풍선은 안 남지만 **빈 대화가 사이드바에 남는다.** 사용자에겐 "보내지도 못했는데 새
+        # 대화가 생겼다" 로 보인다.
+        #
+        # 판정을 **쓰기가 시작되기 전**으로 올리면 그 계약이 통째로 참이 된다. 권한 검사 바로
+        # 다음이 그 자리다.
+        if not _server_llm_enabled():
+            _gate_account_id = int((account or {}).get("id") or 0)
+            if not _account_has_connected_ai(conn, _gate_account_id):
+                logging.getLogger(__name__).info(
+                    "[bridge] 미연결 요청 차단(사전) account=%s", _gate_account_id)
+                conn.close()
+                return JSONResponse(
+                    {
+                        "error": _BRIDGE_BLOCKED_ERROR,
+                        "bridge_blocked": True,
+                        "bridge_connected": False,
+                        "bridge_listening": False,
+                    },
+                    status_code=409,
+                )
         # TASK-0059: frontend "새 대화" 버튼 lazy 경로의 명시적 신규 의도. hint 가 있으면 직전
         # 대화 (account.last_conversation_id) 로 폴백하지 않고 신규 cid 를 강제 생성한다.
         # hint 없는 legacy client (세션 부트스트랩 후 직전 대화 자동 이어받기) 는 force_new=False
@@ -4746,6 +4884,20 @@ async def ask(request: Request) -> JSONResponse:
                     reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
                 ),
             )
+        # 브리지 연결 게이트가 막은 요청 (P0-AB, 사용자 결정 2026-08-28) — 표준 에러 경로로
+        # 내보내되 **본문에 축을 싣는다**. `_json_error` 는 `{"error": …}` 뿐이라, 그대로 쓰면
+        # 프런트가 "고장" 과 "연결 필요" 를 구분하지 못해 연결 패널을 열 근거가 없다.
+        if agent_result.get("bridge_blocked"):
+            conn.close()
+            return JSONResponse(
+                {
+                    "error": str(agent_result.get("error") or _BRIDGE_BLOCKED_ERROR),
+                    "bridge_blocked": True,
+                    "bridge_connected": bool(agent_result.get("bridge_connected")),
+                    "bridge_listening": bool(agent_result.get("bridge_listening")),
+                },
+                status_code=int(agent_result.get("_http_status") or 409),
+            )
         # worker mode 의 빠른 실패(readiness 503 / slot 429 / enqueue 500)는 표준 에러로 표면화.
         _dispatch_http_status = int(agent_result.get("_http_status") or 0)
         if _dispatch_http_status and _dispatch_http_status != 200:
@@ -5091,6 +5243,10 @@ async def ask(request: Request) -> JSONResponse:
             result["bridge_task_id"] = str(agent_result.get("bridge_task_id") or "")
             result["bridge_notice"] = str(agent_result.get("bridge_notice") or "")
             result["bridge_connected"] = bool(agent_result.get("bridge_connected"))
+            # P0-AB: 러너 생존은 토큰과 다른 축이다. 프런트의 컴포저 잠금이 두 축의 곱을 쓰므로
+            # 전송 응답에도 실어 준다 — 안 실으면 방금 러너가 죽은 사실을 다음 상태 조회까지
+            # 화면이 모른다.
+            result["bridge_listening"] = bool(agent_result.get("bridge_listening"))
             result["bridge_queued"] = bool(agent_result.get("bridge_queued", True))
             result["bridge_toast"] = str(agent_result.get("bridge_toast") or "")
             # 대체된 이전 대기 질문(2026-08-28). 프런트가 그 task 의 폴러·스트림을 정리하도록

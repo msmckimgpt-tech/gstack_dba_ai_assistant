@@ -552,9 +552,10 @@ def test_toast_text_comes_from_server():
     """토스트도 상태에 따라 달라진다 — 판정은 서버만 할 수 있다(토큰 조회)."""
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
     assert '"bridge_toast"' in src
-    # 연결 없는 사용자에게 "내 AI 에게 보냈습니다" 는 거짓이다 — 가져갈 AI 가 없다.
-    # 대신 보관 사실과 다음 행동(연결)을 말한다.
-    assert "AI 를 연결하면" in src, "연결 없는 사용자에게도 '내 AI 가 처리' 라고 말한다"
+    # 러너가 안 듣는 사용자에게 "내 AI 에게 보냈습니다" 는 거짓이다 — 가져갈 프로세스가 없다.
+    # 대신 보관 사실과 다음 행동을 말한다. P0-AB 로 그 '다음 행동' 이 바뀌었다: 토큰은 이미
+    # 있으므로 새로 연결할 필요가 없고, **실행만** 하면 된다.
+    assert "내 AI 를 실행하면" in src, "러너가 꺼진 사용자에게도 '내 AI 가 처리' 라고 말한다"
     assert "보관했습니다" in src, "질문이 보관됐다는 사실을 알리지 않는다"
     comp = COMPOSER_JS.read_text(encoding="utf-8")
     assert "payload.bridge_toast" in comp, "프런트가 서버 문구를 무시하고 고정 문구를 쓴다"
@@ -576,9 +577,15 @@ def test_connect_page_explains_why_before_how():
 
 
 def test_connect_page_tells_where_to_paste():
-    """붙여넣을 **대상**을 말한다 — 그 대상은 설정 화면이 아니라 **AI 자신**이다."""
+    """붙여넣을 **대상**을 말한다.
+
+    ⚠ 대상이 바뀌었다 (P0-AC, 사용자 결정 2026-08-28). 기본 경로가 AI 지시문에서 **터미널
+    명령**으로 교체됐으므로 1차 대상은 터미널이다. AI 는 접힌 보조 경로에 남아 있고, 그쪽
+    안내도 여전히 대상을 말해야 한다 — 계약(대상을 밝힌다)은 그대로, 대상만 둘이 됐다.
+    """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "AI에 붙여넣" in html, "어디에 붙여넣는지 알려주지 않는다"
+    assert "터미널에 붙여넣" in html, "기본 경로에서 어디에 붙여넣는지 알려주지 않는다"
+    assert "AI에 붙여넣" in html, "보조 경로에서 어디에 붙여넣는지 알려주지 않는다"
 
 
 def test_connect_page_promises_the_human_is_done_after_pasting():
@@ -586,9 +593,14 @@ def test_connect_page_promises_the_human_is_done_after_pasting():
 
     문구는 짧게 유지하되(슬롭 제거 2026-08-27) 이 약속 자체는 남는다 — 이게 없으면 사용자는
     "그다음엔 뭘 해야 하지" 를 계속 찾는다.
+
+    ⚠ P0-AC 로 **기본 경로에서는 AI 가 아니라 스크립트가** 나머지를 한다. 그래서 약속의 주어가
+    바뀌었다: "붙여넣으면 끝" + "끝나면 입력창이 열린다". AI 경로의 약속은 보조 경로에 남는다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "AI가 알아서 합니다" in html, "나머지 인증을 AI 가 한다는 약속이 없다"
+    assert "붙여넣으면 끝입니다" in html, "기본 경로에서 사람이 할 일의 끝을 말하지 않는다"
+    assert "입력창이 열립니다" in html, "끝난 뒤 무엇이 달라지는지 말하지 않는다"
+    assert "AI가 판단합니다" in html, "보조 경로에서 나머지를 AI 가 한다는 약속이 없다"
 
 
 def test_connect_page_is_a_single_flow():
@@ -643,10 +655,19 @@ def test_connect_page_has_exactly_one_copy_action():
     """복사 버튼은 **하나**다(사용자 제보 2026-08-27).
 
     둘이면 "어느 걸 복사하지?" 라는 선택이 다시 생긴다 — 방법 ①/② 를 통합한 이유와 같은 결함이다.
-    주소는 이미 지시문 본문에 들어 있다.
+
+    ⚠ P0-AC 로 경로가 둘이 됐다(명령 · AI 지시문). 그래도 **한 화면에 나란히 놓지는 않는다** —
+    지시문은 `<details>` 안에 접혀 있어, 펼치기 전까지 사용자가 보는 복사 버튼은 여전히 하나다.
+    "선택을 시키지 않는다" 는 원래 계약은 개수가 아니라 **동시 노출**의 문제였다.
     """
+    import re
+
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert html.count("복사</button>") == 1, "복사 버튼이 하나가 아니다"
+    # 접힌 영역을 걷어낸 = 펼치기 전에 보이는 화면.
+    visible = re.sub(r"<details.*?</details>", "", html, flags=re.S)
+    assert visible.count("복사</button>") == 1, (
+        "펼치기 전 화면에 복사 버튼이 둘 이상이다 — 다시 고르게 만든다")
+    assert "<details" in html, "보조 경로가 접혀 있지 않아 두 경로가 동시에 노출된다"
     assert "주소만 복사" not in html
 
 

@@ -1164,7 +1164,6 @@ codex 가 같은 지점을 독립 지목했다. P2 6건은 전부 codex 발견:
 - **P2-6** `BRIDGE_CAPS_PROBE_TIMEOUT=abc` 로 **import 실패** → 유한 양수 5~1800초 검증
 
 회귀 방어 테스트 15건 추가(브리지 스위트 611건 green).
-
 ## CHG-20260829T000000-resume-ai-scope — `--ai` 상속이 런타임을 지웠다 (TASK-20260829T000000-resume-ai-scope)
 
 - **날짜**: 2026-08-28
@@ -1191,3 +1190,32 @@ P0-AA 로 자리는 말풍선 안으로 옮겼으나 여전히 `.bridge-live-ste
 (펼침 유지), 「단계 보기」는 개수와 클릭 대상을 함께 교체, 사이드 패널은 `run_id` 로 대상
 판정 후 갱신. 브리지가 내부 경로와 다른 판정 축(run_id)을 쓰는 이유는 대기 말풍선이
 `pendingBubble` **객체가 아니라 저장된 메시지**이기 때문이다.
+## CHG-20260828T240000 — 연결 게이트 + 원클릭 연결 (P0-AB · P0-AC)
+
+**요구**: 브릿지 연결 상태가 아니면 요청을 막고 가이드를 즉시 제공, 메시지 박스 상호작용도
+차단(연결 완수 후 활성화). 그리고 LLM 해석에 따라 결과가 달라지는 연결 방식을 정형화.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `routers/oauth_as.py` | `_bridge_mode()` 신규 · `connect_status` 에 `ready`·`bridge_mode`·**`compose_blocked`** · `compose_launch_commands()` 신규 · `_setup_checksum()` · 발급 응답에 `launch` |
+| `routers/conversations.py` | `_account_ai_is_listening()` 신규 · 토큰 없으면 **409 차단**(적재·저장 0) · 보류 축 `connected`→`listening` · `_BRIDGE_BLOCKED_ERROR`·`_BRIDGE_NOTICE_NOT_LISTENING` · 차단 응답 조립 |
+| `static/app/connect-modal.js` | `isComposeBlocked`/`onComposeGateChange` export · `_paintGate` · 잠금 중 한정 폴링 · OS 탭 · `_launchRunner`(스킴) · `_copyFrom` |
+| `static/app/composer.js` | `renderComposer` 잠금(`composerLocked`·`is-bridge-locked`) · `sendPrompt` 가드 · 409 흡수(말풍선 회수·입력 복원) |
+| `static/app.js` | `onComposeGateChange` → `renderComposer` 배선 |
+| `static/index.html` | 잠금 안내 패널(입력창 **위**) · 모달 재구성(명령 우선, 지시문 `<details>`) |
+| `static/css/*` | 게이트 패널·OS 탭 스타일 · **footer 접힘 조건에 `.ai-conn` 추가** |
+| `src/bridge_setup.{sh,ps1}` (신규) | CA·러너 대조 → 스킴 핸들러 등록 → `--check` → 상주. `static/agent/` 에 배포본(해시 일치 강제) |
+| `feature-0006 Caddyfile` | 설치 스크립트 2개를 평문 HTTP 경로에 추가(부트스트랩 데드락) |
+
+### 되돌리기
+
+게이트 축은 `AGENT_SERVER_LLM_ENABLED=1` 하나로 전부 풀린다 — `_bridge_mode()` 가 False 가 되어
+`compose_blocked` 도 False 가 되고, 잠금·차단이 동시에 사라진다(테스트가 양방향을 잠근다).
+원클릭 축은 독립적이라 게이트와 무관하게 남는다.
+
+### 검증
+
+`make test` 컨테이너 전량 green · ruff clean · 신규 32건 + 기존 계약 9건 갱신.
+PB-0008 실 Windows 브라우저에서 잠금·해제·모달 실측(결함 3건 발견·수정).

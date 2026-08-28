@@ -122,26 +122,39 @@ def test_promotion_failure_never_breaks_the_tool_call():
 # ── 적재 경로 ─────────────────────────────────────────────────────────────────
 
 
-def test_unconnected_question_is_stored_as_deferred():
-    """미연결이어도 **적재한다** — 종전엔 아예 넣지 않아 재입력을 요구했다."""
+def test_runner_off_question_is_stored_as_deferred():
+    """⚠ 축이 바뀌었다 (P0-AB, 사용자 결정 2026-08-28).
+
+    종전 보류 사유는 **토큰 없음**이었다. 지금 그 상태는 화면이 막고 서버가 409 로 거절하므로
+    적재 자체가 없다. 남은 보류 사유는 **토큰은 살아 있는데 러너가 꺼진 창** 뿐이다 —
+    사용자 결정: *"이미 로그인 된 상태(연결 완료 상태)에서 질문이 진행되었다면 보관하여 다시
+    처리합니다."*
+
+    지켜지는 것은 그대로다: 게이트를 통과해 전송된 질문은 **재입력을 요구하지 않는다.**
+    """
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
-    assert '"open" if connected else "deferred"' in src, (
-        "연결 여부로 상태를 가르지 않는다 — 미연결 질문이 보관되지 않는다")
-    # 적재 자체를 건너뛰던 옛 분기가 남아 있으면 안 된다.
-    assert "적재하지 않는다" not in src, "미연결 조기 반환 분기가 남아 있다"
+    assert '"open" if listening else "deferred"' in src, (
+        "러너 생존으로 상태를 가르지 않는다 — 러너가 꺼진 사이의 질문이 보관되지 않는다")
+    assert "_account_ai_is_listening(" in src, (
+        "러너 생존을 재지 않는다 — 토큰만 보고 open 으로 넣으면 아무도 안 가져간다")
 
 
-def test_unconnected_reply_does_not_poll():
+def test_deferred_reply_does_not_poll():
     """보류 질문은 언제 승격될지 모른다 — 5초마다 묻게 두면 종일 빈 요청을 보낸다."""
     src = _func_source(CONVS, "_enqueue_web_bridge_task")
-    assert '"bridge_pending": connected' in src, (
-        "미연결 상태에서도 폴링을 켠다(또는 연결 상태에서 폴링이 꺼졌다)")
+    assert '"bridge_pending": listening' in src, (
+        "러너가 꺼진 상태에서도 폴링을 켠다(또는 대기 중인데 폴링이 꺼졌다)")
 
 
 def test_notice_promises_no_reentry():
-    """안내가 여전히 '다시 질문해 주세요' 면, 고친 동작을 사용자가 알 방법이 없다."""
+    """안내가 여전히 '다시 질문해 주세요' 면, 고친 동작을 사용자가 알 방법이 없다.
+
+    P0-AB 이후 보류 말풍선은 `_BRIDGE_NOTICE_NOT_LISTENING` 이다(사유가 '토큰 없음' 에서
+    '러너 꺼짐' 으로 바뀌었으므로 문구도 바뀐다 — 사용자가 할 일이 다르다). 계약 자체는
+    그대로: **이어받는다**는 사실과 **1건 규칙**을 말해야 한다.
+    """
     text = CONVS.read_text(encoding="utf-8")
-    start = text.index("_BRIDGE_NOTICE_NOT_CONNECTED")
+    start = text.index("_BRIDGE_NOTICE_NOT_LISTENING")
     notice = text[start:start + 400]
     assert "이 질문부터" in notice, "연결 후 이어받는다는 사실을 안내하지 않는다"
     assert "다시 질문해 주세요" not in notice, "재입력을 요구하는 옛 문구가 남아 있다"
@@ -247,8 +260,10 @@ def test_deferred_reply_reaches_the_frontend():
     assert 'agent_result.get("bridge_pending") or agent_result.get("bridge_deferred")' in src, (
         "응답 조립이 보류 적재를 프런트에 전달하지 않는다")
     body = _func_source(CONVS, "_enqueue_web_bridge_task")
-    assert '"bridge_deferred": not connected' in body
-    assert '"bridge_queued": connected' in body, (
+    # P0-AB: 판정 축이 `connected`(토큰) → `listening`(러너)로 옮겨졌다. 토큰 축은 이 함수에
+    # 도달하기 전에 이미 참으로 확정돼 있다(아니면 409 로 거절됐다).
+    assert '"bridge_deferred": not listening' in body
+    assert '"bridge_queued": listening' in body, (
         "프런트가 폴링 여부·토스트 강조를 가를 신호가 없다")
 
 
