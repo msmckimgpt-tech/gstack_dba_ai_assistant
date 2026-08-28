@@ -1397,3 +1397,14 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 **한계 정직**: verify-completion 의 check #1·#5 는 v1.1 deferred 라 STATUS·wiki 정합을 보증하지 않는다 — 위 타깃별 기계 검증으로 대체했다. `docs/STATUS.md` §5 prose 는 `gen-status --check` 가 보증하지 않는 영역이라 수기 대조로 갱신했다.
 
 **landing/배포**: 무인 cron wrapper v3 소유 — 본 skill 은 로컬 commit 까지만(push/merge/deploy 는 wrapper). 본 META changeset 은 서빙 산출물이 없어 **재배포 불요**이나, 같은 run 의 operational 커밋(`7e4f7bbe`)이 릴리즈노트 static 을 바꾸므로 wrapper 의 post-merge 배포는 **필수**다.
+## REV-20260828T160000-dynamic-worker-pool [CODEX:P1x3+P2x3-fixed] — 동시 처리 수요 추종 (TASK-20260828T160000 · feature-0043)
+- 범위: `bridge_agent.py` 의 `WorkerPool` 신설 + 대기 루프 재구성 · 서빙 사본 · 지시문 안내 3줄 · 테스트 23건 신규 + 기존 계약 3건 이동 · feature TASK/MODIFY/FUNCTION.
+- 요구(사용자): "워커는 1개부터 시작 … 현재 실행중인 워커 개수를 초과하는 동시 요청이 구성될 때마다 동적 확장 … 특정 시간 이상 사용되지 않는 오래된 워커부터 비활성화". 결정(AskUserQuestion): 상한 **8** · 유휴 **5분** · `--workers` 는 **시작값**.
+- 설계 요지: 고정 `Semaphore` → 슬롯 목록(`last_used`) 기반 동적 풀. 확장은 **관측된 총수요**(`in_use + pending`), 축소는 **LRU + 최소 1 + 사용 중 보호**. **LIFO 취득이 축소의 전제**다(FIFO 면 전부 조금씩 최근이 되어 idle 임계를 넘는 슬롯이 영영 생기지 않아 회수 코드가 호출될 일이 없다). **tick 을 새로 만들지 않았다** — 서버 long-poll 반환이 tick이라 타이머 스레드·추가 sleep 0(P0-J 폴링 금지와 정합).
+- **codex 적대 리뷰 P1×3 · P2×3 전건 조치**(전부 결정적 재현으로 증명됨): ⓐ **포화 시 확장·취소 통보 동반 정지** — `wait_for_free()` 가 질의보다 앞이라 슬롯 1개가 작업 중이면 루프가 멈춘다. 취소는 그 채널로만 오므로 중단을 눌러도 최대 1700초 토큰이 탄다. **기본 2에서는 남는 자리에 가려져 있던 결함이 1로 내리는 순간 상시화**됐다 → 서버를 먼저 읽고 자리 대기는 디스패치 뒤로. ⓑ **확장량 과소계산**(진행 중 작업을 수요에서 제외 — capacity4·busy3·pending3 에서 확장 0, 한 건만 시작) → `in_use + pending`. ⓒ **claim 연결 실패 오판**(`_http=0` 은 falsy → 점유 못 한 작업을 실행, 서버엔 open 이라 무한 반복) → `_failed` 판정 추가. ⓓ **락 밖 timestamp 가 `_free` 정렬을 역전**시켜 뒤에 갇힌 오래된 슬롯을 영영 회수 못 함 → 시각을 락 안에서 생성하고 **시그니처에서 시각 인자를 제거**(구조적 불가능화). ⓔ `--max-workers` 가 상한이 아님(`max()` 방향 오류로 `--workers 100` 이 상한을 밀어올림) → clamp. ⓕ `Thread.start()` 실패 시 슬롯·서버 점유 동반 누수 → try/except + 반납.
+- **테스트 vacuous pass 도 지적받아 조치**: `test_grow_wakes_a_waiter` 가 실제 `main()` 에 없는 실행 구조로 통과하고 있었고, staggered demand·포화 중 취소·총수요·`_failed` claim·시각 역순 반납·`workers>max`·스레드 예외가 전부 미검사였다 — **결정적 재현 5개가 실패를 보이는데 66건은 green** 이었다. 그 5개를 회귀로 잠갔다(18→23건). 시각을 락 안에서 만들면서도 회수 순서를 결정적으로 검증하기 위해 **시계 주입 훅**(`clock=`)을 뒀다.
+- 깨진 기존 계약 3건은 skip 없이 이동·재작성: `test_runner_waits_for_a_slot_before_asking_the_server` → `test_runner_reads_the_server_even_while_saturated`(계약이 **뒤집힌 것**을 명시), `test_runner_is_parallel_by_default` → `test_runner_scales_concurrency_to_demand`(사용자 결정으로 계약 자체가 바뀜), `wait_loop_cannot_spin` 의 반납 needle 은 새 시그니처로.
+- 검증: feature-0043 스위트 green · `make test` **exit 0 / FAILED 0** · 풀 동작 실측(1 → 3건 관측 시 3 → 99건 몰림 시 상한 8 → 5분 유휴 후 임계 초과분만 회수 → 재수요 확장).
+- **[CODEX] 판정**: P1 잔여 0. **Human Approval Needed**: 아니오 — 러너 단일 파일 내부 동시성 정책이고 서버·인증·데이터 경계 무변경. 최악의 회귀도 종전 고정 동작 수준.
+- 배포: `deploy_scope` 활성(지시문 3줄이 서빙 문안). 배포 후 라이브 로그에서 확장·회수 관측이 잔여(TASK ⑩).
+- Timestamp: 2026-08-28T16:00:00+09:00
