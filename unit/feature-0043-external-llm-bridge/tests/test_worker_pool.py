@@ -367,3 +367,37 @@ def test_thread_start_failure_releases_the_slot(ba):
     seg = seg[:seg.index("if args.once:")] if "if args.once:" in seg else seg[:600]
     assert "except" in seg and "pool.release(" in seg, (
         "스레드 시작 실패 시 슬롯을 반납하지 않는다 — 자리와 서버 점유가 함께 샌다")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 라이브 실측(2026-08-28)이 잡은 것: `--check` 가 **정상 연결에서도 항상 실패**했다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_check_probe_uses_a_tool_that_answers_immediately(ba):
+    """연결 확인은 **즉시 답하는 도구**로 한다 — `wait_for_request` 로 하면 항상 실패한다.
+
+    그 도구는 질문이 없으면 **55초를 보류하도록 설계**돼 있다(그것이 '폴링 아님' 의 실체다).
+    `--check` 는 10초 timeout 으로 불렀으므로 **대기 질문이 없는 정상 상태에서 반드시 read
+    timeout** 이 났고, 그때 "연결 실패" 를 출력했다. 온보딩 시점이 정확히 그 상태이고,
+    지시문이 ③단계로 `--check` 를 권하므로 **외부 AI 는 거기서 멈춘다**.
+
+    실측: `list_open_requests` 0.0초/200(연결 정상) · `wait_for_request` 10초 timeout ·
+    같은 호출 90초로는 55.3초 뒤 `timed_out: true`.
+    """
+    src = CANON.read_text(encoding="utf-8")
+    main = src[src.index("def main("):]
+    head = main[:main.index("if args.check:")]
+    assert 'api.call("list_open_requests"' in head, (
+        "연결 확인이 즉시 답하는 도구를 쓰지 않는다")
+    assert 'api.call("wait_for_request", {}, timeout=10' not in head, (
+        "확인용 호출이 55초 보류 도구를 짧은 timeout 으로 부른다 — 정상 상태에서 항상 실패한다")
+
+
+def test_check_probe_timeout_exceeds_a_normal_round_trip(ba):
+    """확인용 timeout 이 정상 왕복보다 넉넉하다 — 느린 링크를 고장으로 오인하지 않는다."""
+    src = CANON.read_text(encoding="utf-8")
+    main = src[src.index("def main("):]
+    line = next(l for l in main.split("\n") if 'api.call("list_open_requests"' in l)
+    timeout = float(line.split("timeout=")[1].rstrip(")").strip())
+    assert timeout >= 15.0, f"확인용 timeout 이 {timeout}s 로 빡빡하다"
