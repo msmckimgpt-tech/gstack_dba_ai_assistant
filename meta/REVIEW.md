@@ -1408,3 +1408,10 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **[CODEX] 판정**: P1 잔여 0. **Human Approval Needed**: 아니오 — 러너 단일 파일 내부 동시성 정책이고 서버·인증·데이터 경계 무변경. 최악의 회귀도 종전 고정 동작 수준.
 - 배포: `deploy_scope` 활성(지시문 3줄이 서빙 문안). 배포 후 라이브 로그에서 확장·회수 관측이 잔여(TASK ⑩).
 - Timestamp: 2026-08-28T16:00:00+09:00
+## REV-20260828T180000-pool-evidence [SKIPPED:evidence-only] — 동적 풀 배포 후 확인 (feature-0043)
+- 범위: `test-runs.d` fragment 1건 갱신 + `TASK.md` 체크박스 + `MODIFY.md` entry. **코드·설정 변경 0.**
+- 확정: 배포 `976bd069` 에서 ⓐ **서빙 러너에 동적 풀이 실렸음**(`class WorkerPool` · 시작 1 · 상한 8 · 유휴 300초를 컨테이너에서 직접 검사) ⓑ **지시문이 안내 3줄을 렌더함**(배포본 `compose_connect_handoff` 실호출 — 5,771자 · CA 지문·러너 체크섬 실값) ⓒ 풀 동작(1 → 진행 중 1 + 대기 3 = 4 → 상한 8 → clamp).
+- **미완 1건을 정직하게 남긴다**: 브라우저 화면 판독. `win-browser` 의 `session-login`·`session-check` 가 CDP 브리지를 함께 닫아 `launch` → 로그인 → `goto` 가 서로를 무효화했다(3회 시도, 매번 `no_bridge` 또는 `authenticated: false`). **제품 결함이 아니라 검증 도구의 순서 의존 문제**다. 대체로 서버가 렌더하는 문안을 확정했고, 그것이 화면에 그대로 뜬다는 사실은 직전 cycle(TASK-…120000)에서 실화면 확인 + 계약 테스트로 잠겨 있다.
+- **[SKIPPED] 사유**: 증적 기록 전용(문서만). 새 로직·표면·권한 0. **Human Approval Needed**: 아니오.
+- 배포: 불요(서빙 산출물 무변경).
+- Timestamp: 2026-08-28T18:00:00+09:00
