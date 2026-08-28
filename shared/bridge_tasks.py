@@ -194,20 +194,48 @@ def cancel_bridge_tasks(conn, *, account_id: int, conversation_id: str | None = 
             #     · UPDATE — 방금 제출된 작업의 `submitted` 를 `canceled` 로 덮어, 이미 화면에
             #       실린 답변이 "취소됨" 으로 뒤집힌다.
             #   `to_delete`/`to_cancel` 분류는 파이썬이 하되 **집행은 SQL 이 확인**한다.
-            if to_delete:
-                marks = ",".join(["%s"] * len(to_delete))
-                status_marks = ",".join(["%s"] * len(CANCELABLE_STATUSES))
+            # ⚠ **DML 이 실제로 바꾼 것만 돌려준다** (codex P1-1, 2026-08-28).
+            #
+            # 위 SELECT 로 분류한 뒤 쓰기 사이에 러너가 claim 하거나 답을 제출하면, 재확인
+            # 조건에 걸려 DELETE/UPDATE 가 **0행**이 된다. 그런데 종전에는 미리 계산한
+            # `to_delete`/`to_cancel` 을 그대로 돌려줬다 — 호출측은 그 id 로 말풍선을 "취소됨"
+            # 으로 바꾸고, task 는 멀쩡히 살아 있어 잠시 뒤 **취소 안내 아래에 답변이 붙는다.**
+            # 사용자 결정(409 거절 + 대화 미전달)의 정반대이며, 재확인 조건을 넣은 바로 그
+            # 수정이 만든 회귀다(조건은 맞았고 **반환값이 따라오지 않았다**).
+            #
+            # 그래서 각 id 를 **한 건씩** 쓰고 `rowcount` 로 확인한다. IN(...) 일괄 쓰기는
+            # "몇 건 바뀌었나" 만 주고 "어느 것이 바뀌었나" 를 주지 않는다 — 여기서 필요한
+            # 것은 후자다.
+            confirmed_deleted: list[str] = []
+            confirmed_canceled: list[str] = []
+            status_marks = ",".join(["%s"] * len(CANCELABLE_STATUSES))
+            for tid in to_delete:
                 # 보류 질문도 지운다(점유될 수 없으므로 항상 이 갈래로 온다).
                 cur.execute(
-                    f"DELETE FROM WebAiTasks WHERE AccountId = %s AND TaskId IN ({marks}) "
+                    f"DELETE FROM WebAiTasks WHERE AccountId = %s AND TaskId = %s "
                     f"AND Status IN ({status_marks}) AND {CLAIMABLE_SQL}",
-                    (int(account_id), *to_delete, *CANCELABLE_STATUSES))
-            if to_cancel:
-                marks = ",".join(["%s"] * len(to_cancel))
+                    (int(account_id), tid, *CANCELABLE_STATUSES))
+                if int(cur.rowcount or 0):
+                    confirmed_deleted.append(tid)
+                    continue
+                # 지우지 못했다 = 그 사이 누가 집었다. **놓아주지 않고** 취소로 승격한다 —
+                # 여기서 포기하면 사용자는 중단을 눌렀는데 답변이 그대로 온다.
                 cur.execute(
                     "UPDATE WebAiTasks SET Status = %s "
-                    f"WHERE AccountId = %s AND TaskId IN ({marks}) AND Status = %s",
-                    (STATUS_CANCELED, int(account_id), *to_cancel, STATUS_OPEN))
+                    "WHERE AccountId = %s AND TaskId = %s AND Status = %s",
+                    (STATUS_CANCELED, int(account_id), tid, STATUS_OPEN))
+                if int(cur.rowcount or 0):
+                    confirmed_canceled.append(tid)
+                # 둘 다 0행 = 이미 제출까지 끝났다. 취소할 것이 없으므로 **보고하지 않는다**
+                # (보고하면 화면이 완료된 답변을 '취소됨' 으로 덮는다).
+            for tid in to_cancel:
+                cur.execute(
+                    "UPDATE WebAiTasks SET Status = %s "
+                    "WHERE AccountId = %s AND TaskId = %s AND Status = %s",
+                    (STATUS_CANCELED, int(account_id), tid, STATUS_OPEN))
+                if int(cur.rowcount or 0):
+                    confirmed_canceled.append(tid)
+            to_delete, to_cancel = confirmed_deleted, confirmed_canceled
             conn.commit()
         finally:
             cur.close()

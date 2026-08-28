@@ -59,6 +59,22 @@ def _delete_bridge_task(conn, task_id: str) -> None:
                 "DELETE FROM WebAiTasks WHERE TaskId=%s AND Origin='web' "
                 f"AND Status IN ({status_marks}) AND ClaimedBy IS NULL",
                 (task_id, *_bridge_tasks.CANCELABLE_STATUSES))
+            if not int(cur.rowcount or 0):
+                # 못 지웠다 = 이 짧은 창에 러너가 먼저 집었다 (codex P2-4, 2026-08-28).
+                #
+                # 종전에는 여기서 포기했다. 그러면 사용자 질문 저장이 실패해 API 가 500 을
+                # 돌려준 뒤에도 **개인 AI 는 그 질문을 계속 처리하고**, 잠시 뒤 대화에는
+                # 질문 없는 **고아 답변**이 나타난다(사용자는 묻지도 않은 답을 본다).
+                # 지울 수 없으면 **취소로 승격**해 `submit_answer` 409 가 받게 한다.
+                cur.execute(
+                    "UPDATE WebAiTasks SET Status=%s WHERE TaskId=%s AND Origin='web' "
+                    f"AND Status IN ({status_marks})",
+                    (_bridge_tasks.STATUS_CANCELED, task_id,
+                     *_bridge_tasks.CANCELABLE_STATUSES))
+                if int(cur.rowcount or 0):
+                    logging.getLogger(__name__).warning(
+                        "[bridge] 적재 롤백 중 이미 점유됨 task=%s — 취소로 승격했다"
+                        "(제출은 409 로 거절된다)", task_id)
             conn.commit()
         finally:
             cur.close()

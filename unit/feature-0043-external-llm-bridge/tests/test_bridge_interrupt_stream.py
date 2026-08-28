@@ -276,14 +276,34 @@ def test_cancel_write_reconfirms_the_condition_in_sql():
     """
     fn = _pyfunc(SHARED_BRIDGE, "cancel_bridge_tasks")
     dele = fn[fn.index("DELETE FROM WebAiTasks"):]
-    dele = dele[:dele.index("if to_cancel:")]
+    dele = dele[:dele.index("if int(cur.rowcount or 0):")]
     assert "CLAIMABLE_SQL" in dele, "DELETE 가 점유 여부를 재확인하지 않는다"
     # 상태 재확인은 `Status IN (...)` 로 바뀌었다 — 취소 대상이 open 하나가 아니라
     # open·deferred 둘이기 때문(2026-08-28 보류 질문 도입). 재확인한다는 계약은 그대로다.
     assert "Status IN (" in dele, "DELETE 가 상태를 재확인하지 않는다"
     upd = fn[fn.index("UPDATE WebAiTasks SET Status = %s"):]
-    upd = upd[:upd.index("conn.commit()")]
     assert "Status = %s" in upd, "UPDATE 가 상태를 재확인하지 않는다(제출본을 덮어쓴다)"
+
+
+def test_cancel_reports_only_what_it_actually_changed():
+    """**DML 이 바꾼 것만** 돌려준다 (codex P1-1).
+
+    SELECT 로 분류한 뒤 쓰기 사이에 러너가 claim 하거나 답을 제출하면 재확인 조건에 걸려
+    DELETE/UPDATE 가 0행이 된다. 그런데 미리 계산한 목록을 그대로 돌려주면, 호출측은 그 id 로
+    말풍선을 "취소됨" 으로 바꾸고 task 는 멀쩡히 살아 있어 **취소 안내 아래에 답변이 붙는다.**
+    재확인 조건을 넣은 바로 그 수정이 만든 회귀다 — 조건은 맞았고 **반환값이 따라오지 않았다.**
+
+    그리고 지우지 못한 것은 **놓아주지 않고 취소로 승격**해야 한다. 거기서 포기하면 사용자는
+    중단을 눌렀는데 답변이 그대로 온다.
+    """
+    fn = _pyfunc(SHARED_BRIDGE, "cancel_bridge_tasks")
+    assert "confirmed_deleted" in fn and "confirmed_canceled" in fn, (
+        "확인된 결과를 따로 모으지 않는다 — 미확인 id 를 성공으로 보고한다")
+    assert "cur.rowcount" in fn, "DML 결과를 확인하지 않는다"
+    assert "to_delete, to_cancel = confirmed_deleted, confirmed_canceled" in fn, (
+        "반환값이 확인된 목록으로 교체되지 않는다")
+    # 일괄 IN(...) 쓰기는 "몇 건" 만 주고 "어느 것" 을 안 준다 — 건별로 써야 한다.
+    assert "TaskId = %s" in fn, "건별 확인이 아니라 일괄 쓰기다(어느 것이 바뀌었는지 모른다)"
 
 
 def test_cancel_sql_uses_parameters_for_values():
@@ -507,17 +527,49 @@ def test_runner_skip_list_is_not_permanent():
         "skip 을 타임아웃이 아닌 시점에 비운다 — 실패 반복 시 tight loop 가 된다")
 
 
-def test_runner_fails_loudly_instead_of_spinning():
-    """대기 질문이 있는데 한 건도 처리 못 하는 상태가 이어지면 **크게 실패**한다.
+def test_runner_backs_off_instead_of_spinning_and_stays_alive():
+    """대기 질문이 있는데 한 건도 처리 못 하는 상태에서 **쉬되 죽지는 않는다**.
 
-    그 상태로 `continue` 하면 `wait_for_request` 가 즉시 돌아와 간격 없이 서버를 두드린다 —
-    우리가 없애려던 폴링이 최악의 형태로 되살아난다. 조용히 도는 것보다 사용자가 원인을
-    알 수 있게 멈추는 편이 낫다.
+    두 가지를 동시에 만족해야 한다:
+
+    1. **hot loop 금지** — 그 상태로 곧바로 `continue` 하면 `wait_for_request` 가 즉시 돌아와
+       간격 없이 서버를 두드린다(우리가 없애려던 폴링의 최악 형태).
+    2. **러너를 죽이지 않는다**(codex P1-4) — 종전에는 20라운드 뒤 `exit 4` 였는데, 그러면
+       **진행 중이던 다른 워커의 답변까지 함께 사라진다**. 한 task 의 점유 실패로 러너 전체를
+       끄는 것은 blast radius 가 과하다. 경고는 남기되 계속 산다.
     """
     src = _src(RUNNER)
     assert "_MAX_STALLED_ROUNDS" in src, "spin 감지 상한이 없다"
     main = src[src.index("def main()"):]
-    assert "stalled" in main and "return 4" in main, "spin 상태에서 종료하지 않는다"
+    blk = main[main.index("if not pending:"):]
+    blk = blk[:blk.index("stalled = 0")]
+    assert "time.sleep(" in blk, "쉬지 않고 다시 물어 hot loop 가 된다"
+    assert "return 4" not in blk, (
+        "stall 로 러너를 종료한다 — 진행 중이던 다른 워커의 답변까지 잃는다")
+    assert "WARN" in blk, "조용히 돌기만 하고 사용자에게 알리지 않는다"
+
+
+def test_runner_keeps_listening_for_cancels_while_workers_are_busy():
+    """워커가 다 차 있어도 **취소 통보는 계속 받는다** (codex P1-2).
+
+    취소와 새 질문은 같은 응답으로 온다. 자리를 `wait_for_request` **앞에서** 잡으면, 워커가
+    다 찬 동안 그 호출 자체를 하지 않게 되어 **취소 채널이 함께 끊긴다** — 사용자가 중단을
+    눌러도 러너는 최대 `_AI_TIMEOUT_SEC`(약 28분) 동안 모른 채 개인 계정 토큰을 태운다.
+    취소를 즉시 인지시키려던 설계가 정작 가장 필요한 순간에 꺼져 있는 셈이다.
+    """
+    src = _src(RUNNER)
+    main = src[src.index("def main()"):]
+    # ⚠ 주석을 걸러낸 뒤 본다 — 이 구간의 주석은 고친 결함을 설명하느라 옛 표현
+    #   (`slots.acquire()` 가 앞에 있었다)을 그대로 인용한다. 걸러내지 않으면 그 문장을
+    #   코드로 오인해 "아직 결함이 있다" 고 오판한다.
+    main = "\n".join(l for l in main.split("\n") if not l.strip().startswith("#"))
+    loop = main[main.index("while True:"):]
+    wait_at = loop.index('api.call("wait_for_request"')
+    acq_at = loop.index("slots.acquire(")
+    assert wait_at < acq_at, (
+        "워커 자리를 대기보다 먼저 잡는다 — 자리가 없으면 취소 통보도 함께 끊긴다")
+    assert "slots.acquire(blocking=False)" in loop, (
+        "자리 획득이 차단형이다 — 거기서 멈추면 그동안 취소를 못 듣는다")
 
 
 def test_stream_holds_one_connection_and_commits_each_tick():
@@ -557,3 +609,104 @@ def test_stream_skips_pointless_queries_before_claim():
         "점유 전에도 매 tick 원장을 조회한다")
     assert "if not submitted and claimed_by is None" in snap, (
         "종결된 task 에도 매 tick 연결 여부를 조회한다")
+
+
+# ── codex 적대 리뷰 조치 (2026-08-28) ────────────────────────────────────────
+
+
+def test_stream_does_not_block_the_event_loop():
+    """SSE tick 의 동기 DB 조회를 이벤트 루프에서 직접 돌리지 않는다 (codex P1-3).
+
+    `_bridge_stream_snapshot` 은 mysql-connector·psycopg **동기** 호출을 한다 — 매초,
+    열려 있는 스트림 수만큼. 루프에서 직접 부르면 그 시간 동안 **이 워커의 모든 요청**이
+    멈춘다(DB 가 느려지면 브리지와 무관한 대화·콘솔까지 전면 정지).
+    """
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert "asyncio.to_thread(" in fn, "동기 DB 조회가 이벤트 루프를 막는다"
+    # 주석에도 함수명이 나오므로 **코드 줄만** 본다 — 안 그러면 주석을 호출로 오인한다.
+    code = "\n".join(l for l in fn.split("\n") if not l.strip().startswith("#"))
+    inner = code[code.index("async def event_stream("):]
+    call_line = next(l for l in inner.split("\n") if "_bridge_stream_snapshot" in l)
+    idx = inner.index(call_line)
+    assert "to_thread" in inner[max(0, idx - 120):idx + len(call_line)], (
+        "스냅샷 호출이 스레드로 밀려나지 않았다 — 매 tick 이벤트 루프를 막는다")
+
+
+def test_stream_has_a_concurrency_cap_that_is_always_released():
+    """동시 스트림 상한이 있고, **어떤 경로로 끝나도 반납**된다 (codex P1-3).
+
+    스트림 하나가 커넥션 하나를 55초 붙든다. 상한이 없으면 뷰어 수만큼 커넥션이 늘어
+    풀이 마르고 무관한 경로까지 죽는다. 반대로 카운터가 새면 상한이 **영구히 닫혀**
+    이후 모두가 조용히 폴링으로 강등된다 — 그래서 반납은 `finally` 여야 한다.
+    """
+    tools = _src(TOOLS_PY)
+    assert "_BRIDGE_STREAM_MAX_CONCURRENT" in tools, "동시 스트림 상한이 없다"
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert "503" in fn, "상한 초과를 거절(폴링 강등)하지 않는다"
+    inner = fn[fn.index("async def event_stream("):]
+    tail = inner[inner.index("finally:"):]
+    assert "_BRIDGE_STREAM_LIVE" in tail, "상한 카운터를 finally 에서 반납하지 않는다(누수)"
+
+
+def test_stream_drops_a_broken_connection():
+    """죽은 커넥션을 상한이 끝날 때까지 재사용하지 않는다 (codex P2-3).
+
+    종전에는 스냅샷 예외를 가짜 `waiting` 으로 바꾸기만 하고 `sconn` 을 그대로 뒀다 —
+    커넥션이 죽으면 남은 55초 동안 같은 예외를 반복하며 **완료·취소 전환이 통째로 숨겨졌다.**
+    """
+    snap = _pyfunc(TOOLS_PY, "_bridge_stream_snapshot")
+    assert "_conn_broken" in snap, "끊긴 커넥션을 호출측에 알리지 않는다"
+    fn = _pyfunc(TOOLS_PY, "bridge_stream")
+    assert '_conn_broken' in fn and "sconn = None" in fn, (
+        "끊긴 커넥션을 버리고 다시 열지 않는다")
+
+
+def test_cancel_notification_is_scoped_to_the_claiming_session():
+    """취소 통보를 **점유한 세션**에게만 준다 (codex P2-1).
+
+    계정 단위로만 좁히면 같은 계정의 러너 B 가 러너 A 의 취소를 먼저 받아 소비한다
+    (통보 뒤 점유를 놓으므로 A 는 영원히 못 듣는다). A 는 생성이 끝날 때까지 계속 태운다.
+    """
+    fn = _pyfunc(TOOLS_PY, "wait_for_request")
+    sel = fn[fn.index("SELECT TaskId FROM WebAiTasks"):]
+    sel = sel[:sel.index("canceled = [")]
+    assert "ClaimedClient" in sel, "점유 세션을 수신자 조건에 넣지 않는다"
+
+
+def test_enqueue_rollback_cancels_an_already_claimed_task():
+    """적재 롤백 중 이미 점유됐으면 **취소로 승격**한다 (codex P2-4).
+
+    질문 저장이 실패해 API 가 500 을 돌려준 뒤에도 개인 AI 는 그 질문을 계속 처리한다.
+    지우지 못한 채 두면 대화에 **질문 없는 고아 답변**이 나타난다(사용자는 묻지도 않은 답을 본다).
+    """
+    fn = _pyfunc(CONV_PY, "_delete_bridge_task")
+    assert "cur.rowcount" in fn, "삭제 성공 여부를 확인하지 않는다"
+    assert "STATUS_CANCELED" in fn, "지우지 못한 task 를 취소로 승격하지 않는다"
+
+
+def test_runner_treats_connection_failure_as_failure_everywhere():
+    """`_failed` 를 claim·submit 에서도 본다 (codex P2-2).
+
+    앞선 수정은 대기 루프만 고쳤다. claim 중 끊기면 **빈 응답을 정상 점유로 읽어** AI 를
+    돌리고, submit 중 끊기면 저장 여부를 모르는데 "제출 완료" 로 기록한다.
+    """
+    src = _src(RUNNER)
+    main = src[src.index("def main()"):]
+    assert 'claimed.get("_failed")' in main, "claim 실패를 성공으로 읽는다"
+    handle = src[src.index("def handle_one("):]
+    handle = handle[:handle.index("\ndef ")]
+    assert 'res.get("_failed")' in handle, "submit 실패를 성공으로 읽는다"
+
+
+def test_runner_does_not_permanently_skip_transient_claim_failures():
+    """일시 장애(5xx·429·연결 실패)로 task 를 **영구 skip 하지 않는다** (codex P1-4).
+
+    그 task 는 정상이고 잠시 뒤면 집을 수 있다. 영구 skip 은 409(이미 남이 가져감)처럼
+    재시도해도 달라지지 않는 경우에만 쓴다.
+    """
+    src = _src(RUNNER)
+    main = src[src.index("def main()"):]
+    blk = main[main.index('if claimed.get("_http") or claimed.get("_failed"):'):]
+    blk = blk[:blk.index("def _work(")]
+    assert "_code < 500" in blk and "429" in blk, (
+        "일시 장애까지 영구 skip 한다 — 러너가 도는데 그 질문만 영영 처리되지 않는다")
