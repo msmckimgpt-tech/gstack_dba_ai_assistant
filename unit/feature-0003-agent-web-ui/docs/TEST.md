@@ -3442,3 +3442,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - payload: `1256`(v4 head) `lineage_from=1246` — root 해소 확인
 
 증적: `docs/test-runs.d/TASK-20260828T230000-attach-lineage-ui.md`
+
+## TASK-20260831T010305-doc-sync-rn-0831 — 릴리즈노트 2026-08-28 블록 items append 검증
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면에 새 내용이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
+- `node --check static/release-notes-data.js` → PASS.
+- `node tests/verify_release_notes.mjs` → **ALL PASS 34 / 0**. 편집 **전** 동일 스크립트를 cycle 초반에 실행해 34/0 을 측정했으므로 **회귀 0** 을 실증한다(jsdom@24 를 `/tmp` 에 핀 설치 — 스크립트가 `/tmp/node_modules/jsdom` 를 하드코딩하므로 미설치 세션에서는 실행 불가).
+- 구조 단언: `releases` **56 불변**(신규 date 블록 없음) · `generated`=="2026-08-28"==`releases[0].date` · `releases[0].items` 4→**15** · `releases[1]`(2026-08-27) items 13 불변 · `type` ∈ {new,improved,fixed} · `area` ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0.
+- 누출 스캔(7패턴 — feature-id / TASK·REV·CHG·ADR id / §번호 / 파일확장자 / 내부용어 / 경로 / 커밋해시): 신규 11항목 구간 **전건 0건**.
+- reconcile-first 실측: 편집 전 서빙 `https://localhost/static/release-notes-data.js` 200 · 브랜치 blob 과 **md5 동일**(`d40ed98d…` · 308,144B) → 파리티 갭 0. 독립 표본 4개(`index.html`·`admin.html`·app JS·설치 스크립트)도 캐시토큰 정규화 후 md5 일치.
+- **Pass/Fail: PASS**.

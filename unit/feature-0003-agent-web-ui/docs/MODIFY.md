@@ -4886,3 +4886,15 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
   이 cycle 범위 밖에서 표시가 바뀌므로 **건드리지 않았고**, 회귀로 그 게이트를 고정했다.
 - Cross-ref: FUNCTION.md REQ-20260828-attach-lineage-ui · TASK.md TASK-20260828T230000 ·
   `docs/test-runs.d/TASK-20260828T230000-attach-lineage-ui.md`
+
+## CHG-20260831T010305-doc-sync-rn-0831 (2026-08-28 블록 items append) 릴리즈노트 콘텐츠 — 28커밋 창 사용자향 11항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 기존 `date: "2026-08-28"` 블록 `items` 에 **11항목 append**(4→**15**) + 같은 블록 `summary` 증강. **`releases` 56 불변**(신규 date 블록 없음) · `generated` "2026-08-28" 불변 · 08-27 이하 블록 바이트 불변.
+- 항목 골자: 연결 전 입력창 잠금·안내 · 연결 세 갈래(명령 한 줄 / AI 에게 조사만 / AI 에게 전부) · '답변 모델'·'추론 강도' 선택기 복원 · 답변이 첨부를 다음 버전으로 올리거나 새로 만들기 · 첨부 계보 UI · 동시 처리 수요 추종 · 하트비트 연결 지속 + 로그아웃 시 자동 종료 · 진행 표시 위치·구조 정정 · 도구 승인 요구 제거 · 연결 점검 역방향 오판 재수정 · 취소 오보고 재수정.
+- 블록 귀속: 창 28 커밋의 착륙일이 **전부 2026-08-28**(10:46~20:00)이고 그 date 블록이 이미 존재하므로 신규 블록이 아니라 **기존 블록 items append**. 기존 4항목은 직전 RN 커밋 `7e4f7bbe`(08-28 01:58) 시점 작업이라 시간적으로 겹치지 않고, 전 파일 grep 으로 중복 0 확인.
+- 정직성 2건(적대검증 수용): 연결 게이트의 '잠금 **해제** 확인' 단정 완화(POST-DEPLOY 증적이 해제 축을 미수행으로 배제) · 하트비트의 '배포 후 실제 확인' 단정 완화(정본 test-run 이 라이브 지속을 잔여로 명시).
+- 정본 모순 수렴 2건: 08-27 블록이 '감췄습니다'·'열지 않았습니다' 로 단정한 두 기능을 창이 되살렸다 — 과거 블록을 고치지 않고 새 항목에서 경위를 밝혀 수렴.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` **56 불변** · `generated`=="2026-08-28"==`releases[0].date` · items[0] 4→**15** · items[1] 13 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**
+- Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+- landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-31T01:03:05+09:00

@@ -5953,3 +5953,16 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
 5건 중 3건(#2·#4·#5)이 **"고쳤다고 생각한 것이 절반만 고쳐진" 부류**다 — 보이는 제목만 고치고
 접근성 이름은 두었고, 게이트는 고쳤지만 테스트는 반대 값도 통과시켰고, 문구는 사실을 말하지만
 소유권은 여전히 단정했다. 내 눈으로는 "했다" 로 보이는 자리들이다.
+
+## REV-20260831T010305-doc-sync-rn-0831 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-08-28 블록 items append(11항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260831T010305-doc-sync-rn-0831`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + companion 문서).
+- Timestamp: 2026-08-31T01:03:05+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` **56 불변** · `generated`=="2026-08-28"==`releases[0].date` · items[0] 4→**15** · items[1] 13 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**
+- **적대검증**: ULTRACODE 워크플로 `wf_b9237e20-af7` — 6 에이전트 / 1,006,922 토큰 / 290 tool-use / 35분. 4축 병렬 스윕(릴리즈노트·wiki·정책문서·정본교차) → 2조 교차검증(정확성 반증 렌즈 + 거버넌스·scope 렌즈, 각자 MISS 능동 탐색). 51 findings / 102 verdict(각 조 46/51 CONFIRMED) · 신규 MISS 9건.
+- **수용한 검증조 지적(릴리즈노트 축)**: ① 연결 게이트 항목의 「잠금·안내·**해제** 확인」 단정 — POST-DEPLOY 증적의 「미수행(정직 표기)」 절이 '실 러너 기동 → 잠금 해제 → 질문 왕복' 을 AI 무인 완결 불가로 배제하므로 해제 축을 분리 ② 하트비트 항목의 「배포한 뒤 실제 확인」 단정 — 정본 test-run frontmatter 가 `잔여 — 배포 후 PB-0008 실화면 · 라이브 지속 실측`, 시각검증 fragment 가 `PENDING` 이라 확실성 표기 하향 ③ MISS-05 RN-01/RN-02 단방향 의존(summary 가 items 를 열거) — 두 편집을 한 커밋에 함께 적용.
+- **미러 vs 정본 수렴**: 08-27 블록이 '두 항목을 화면에서 감췄습니다'·'첨부 쓰기는 이번에 열지 않았습니다' 로 단정했으나 창이 둘 다 되살렸다. 과거 블록을 고치지 않고(그 시점 사실의 기록) 새 항목에서 경위를 밝혀 수렴했다.
+- **report-only(정본 소관)**: feature-0043 `REPORT.md` §1 이 아직 「PB-0008 화면 시각검증만 미수행」으로 단정해 같은 파일 §4-A·§10 과 모순 — 사용자향 문안의 '확인했습니다' vs '회원님의 확인이 필요합니다' 를 가르는 근거가 이 정본이라, 모순이 남는 한 매 창 미러가 재오염된다. 「조회 결과 CSV」에서도 `REPORT.md` §7.0 과 `FUNCTION.md` 가 갈려 미러는 보수적으로 미복원 쪽을 적었다.
+- **cache-buster**: 수기 bump 없음. 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며 `bin/deploy-web.sh` 가 baked 이미지의 placeholder 잔존을 ABORT 한다 — cron wrapper 지시문의 'bump 포함' 은 stale(수기 bump 는 배포를 죽인다).
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**.

@@ -4523,3 +4523,6 @@ head 한 행만 노출하므로 다중 버전 계보(v4 head)의 행에는 표�
 - AC-20260828-attach-lineage-ui-5: 모달 제목이 비교 축을 따라간다(계보 간 → 「계보 비교」).
 - AC-20260828-attach-lineage-ui-6: 원문 모달은 `axis` 를 참조하지 않는다(그 스코프에 없는
   변수라 화면이 열리는 순간 ReferenceError).
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0831, 2026-08-28 블록 items append)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 기존 `2026-08-28` 블록 `items` 에 **11항목 append**(4→15) + `summary` 증강. **신규 date 블록 없음**(`releases` 56 불변) · `generated` 불변. 기능 계약·렌더 로직 변경 없음(콘텐츠 데이터 전용).
