@@ -24,7 +24,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] §4·§9 + [[../../docs/CODEBASE_MAP\|docs/CODEBASE_MAP.md]] |
-| 디렉토리 수 | top-level 8 (정책 / unit / shared / docs / bin / wiki / artifacts / .worktrees) |
+| 디렉토리 수 | top-level 10 — `bin` / `docs` / `meta` / `playbooks` / `plugins` / `scripts` / `shared` / `tests` / `unit` / `wiki` (+ 루트 정책 파일 `AGENTS.md`·`CLAUDE.md`·`GEMINI.md`). `artifacts/` 는 repo 외부, `.worktrees/` 는 git 미추적이라 세지 않는다 |
 
 ## 목차
 
@@ -52,7 +52,7 @@ sources:
 | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | 정책 정본 + multi-agent schema 호환 | `AGENTS.md` (정본 — schema 파일) |
 | `docs/` | 정책·도메인 정본 (PROJECT/ARCHITECTURE/DECISIONS/CONVENTIONS/SECURITY/STATUS 외) | 각 파일 frontmatter `source_of_truth: true` |
 | `unit/<feature-id>/` | feature 단위 구현·문서·테스트 | `unit/<id>/docs/FUNCTION.md` 가 기능 정본 |
-| `shared/` | feature-0002·0003·격리 컨테이너가 공유하는 Python 패키지 (feature-0011 P5a 추출 Step 1~5 완료 · 현재 12 모듈 · `shared/model_catalog` 는 LLM 카탈로그와 provider identity 주입 규칙의 단일 정본) | `docs/CODEBASE_MAP.md` §3 Shared Module Index (모듈 색인 정본) + `shared/README.md` + `shared/docs/MODIFY.md` |
+| `shared/` | feature-0002·0003·격리 컨테이너가 공유하는 Python 패키지 (feature-0011 P5a 추출 Step 1~5 완료 · 현재 15 모듈(`ls shared/*.py` 실측 2026-08-31, `__init__` 포함) · `shared/model_catalog` 는 LLM 카탈로그와 provider identity 주입 규칙의 단일 정본) | `docs/CODEBASE_MAP.md` §3 Shared Module Index (모듈 색인 정본) + `shared/README.md` + `shared/docs/MODIFY.md` |
 | `bin/` | 운용·검증 스크립트 (`verify-completion.sh`, `wiki-lint.sh`, `kb-cutover-readiness.sh`, ...) | 각 스크립트 자체 |
 | `playbooks/` | 반복 작업 표준화 (`PB-NNNN`) | 각 PB 파일 |
 | `wiki/` | 사람용 graph 입구 (본 vault) | mirror — 정본 없음 |

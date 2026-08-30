@@ -38,8 +38,8 @@ sources:
 
 ## 2. 상태
 
-- **단계**: draft
-- **마지막 갱신**: 2026-06-04
+- **단계**: review (정본 `unit/feature-0008-windows-browser-testing/docs/TASK.md` §1 · Features MOC 행과 동일)
+- **마지막 갱신**: 2026-08-28 — `session-login` 이 사용자가 열어 둔 탭을 자기 것으로 오인해 닫고 **브라우저를 통째로 죽이던** 결함 수정(탭 개수로 추측하지 않고 빈 탭 생성 여부를 직접 반환 + 닫으면 탭이 0이 되는 상황이면 남긴다). 그 덕에 막혀 있던 화면 검증들이 성립했다.
 - **AI 작업자**: claude (ai/claude/feature-0008-windows-browser-testing)
 
 ## 3. 책임 경계

@@ -68,6 +68,7 @@ feature-0003 의 [[feature-0003-agent-web-ui|`_get_client_ip()`]] (AC-0205~0207)
 - dev 환경은 `docker-compose.override.yml` 로 web 컨테이너 plain HTTP 가동 (browser 자동화 친화)
 - Windows scheduled task 로 LAN port-proxy 영속화
 - **엣지 보안 헤더 일괄 부착** (2026-08-11, 정본 feature-0003 `TASK-20260811T1830-api-exposure-hardening`) — `Caddyfile` 에서 nosniff · X-Frame-Options · Referrer-Policy · Permissions-Policy 를 일괄 부착 + `Server` 제거 + CSP Report-Only. **HSTS 는 의도적 제외** — `/trust` 평문 CA 번들 배포와 충돌하고 헤더가 호스트 단위라 경로 예외가 불가능하다.
+- **평문 HTTP 표면은 두 자리다** (2026-08-28, 정본 feature-0043 P0-AC) — `/trust/*` 에 더해 브리지 설치 스크립트 `/static/agent/bridge_setup.sh`·`.ps1` **두 파일만** 평문으로 연다. 같은 부트스트랩 데드락이기 때문이다: 스크립트가 하는 첫 일이 사내 CA 를 받아 신뢰시키는 것인데 그 스크립트 자신을 https 로만 주면 CA 없는 머신은 받을 수 없다. `/static/*` 를 통째로 열지 않은 이유는 범위가 예외가 감당하려던 것보다 훨씬 넓어지기 때문이고, 평문의 위험은 **지문·체크섬 대조**가 덮는다 — 대조 값은 https(웹 콘솔)로 온 명령에 실려 있어 바꿔치려면 두 채널을 동시에 잡아야 하고, 스크립트는 값이 어긋나면 실행을 중단한다.
 - **롤링 배포와의 결합 계약** (2026-08-11, 정본 feature-0014 `20260811T1557-edge-rolling-gate`) — Caddy passive 격리(`fail_duration` 30s)는 값 그대로 유지하고(인하는 실장애 격리를 함께 약화시킨다), 대신 `bin/deploy-web.sh` 가 다음 replica 를 내리기 전에 **엣지 후보 복귀**(admin API `fails==0` + Caddy→replica `/livez` 실도달)를 확인한다. `Caddyfile` 주석이 이 결합 계약을 고정한다 — 종전에는 실측 10초 롤링 간격이 30s 격리 창보다 짧아 available upstream 이 0 이 되며 배포당 12~17초 전면 503 이 났다.
 
 ## 4. 사용법
@@ -88,6 +89,8 @@ src/windows/port-proxy-add.bat
 ### 5.2 본 feature 를 의존하는 feature
 
 - [[feature-0003-agent-web-ui]] — `_get_client_ip()` trust 정합 의존
+- [[feature-0045-zd-bridge-continuity]] — `ext-tool-mcp-a/b` 2 upstream LB 가 본 feature Caddyfile 거주 ([[../Architecture/Overview|Architecture Overview]] §2.4)
+- [[feature-0043-external-llm-bridge]] — 설치 스크립트 2파일의 평문 HTTP 예외가 본 feature Caddyfile 거주 (2026-08-28, P0-AC)
 
 ## 6. 관련 정본
 

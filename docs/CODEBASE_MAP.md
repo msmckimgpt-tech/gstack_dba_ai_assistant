@@ -44,7 +44,7 @@ repo/
 │   ├── ROUTEMAP.md         # route → router:handler → auth 인덱스 (L0, 자동 생성)
 │   └── CODEBASE_MAP.md     # 이 문서
 ├── playbooks/              # PB-0001 ~ PB-0006, PB-0008
-├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters (feature-0011 추출 + 0018/0026)
+├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유, `ls shared/*.py` 실측 15): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters·hangul_qwerty·llm_budget·llm_gate·resource_budget·share_window·bridge_tasks·attachment_write (feature-0011 추출 + 0018/0026 외 후속 feature 편입)
 ├── tests/integration/      # 통합 테스트
 └── unit/                   # 기능 단위
     ├── _template/
@@ -119,6 +119,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `shared/perf_counters.py` | 요청-스코프 DB conn 카운터 (ContextVar, 컨텍스트 밖 no-op — feature-0026) | feature-0002·0003 (db 가 incr, web 미들웨어가 activate) |
 | `shared/conn_health.py` | per-datasource 연결 health 모니터 (TCP liveness, circuit) | feature-0002·0003 (db·datasources 와 lazy 상호참조) |
 | `shared/datasources.py` | datasource 레지스트리 (DB+`.env` 병합, 자격증명 복호) | feature-0002·0003 (cred_crypto back-dep — 아직 modules/) |
+| `shared/attachment_write.py` | assistant 답변의 첨부 쓰기 블록(`attachment-edit`/`attachment-new`) 후처리 **단일 정본** — materialize → 도구 전달분 바인딩 → strip → 미전달 고지 → content 갱신. 저장 가드가 두 벌로 갈리는 것을 막는다 (feature-0043, 2026-08-28 · SECURITY §49) | feature-0002 (`modules/ask.py` ask-worker)·feature-0003 (`routers/conversations.py` 브리지 경로) |
 
 > 아직 추출되지 않은 cross-feature 공통 후보(cred_crypto·memory·llm 등)는 feature-0002 `modules/` 에 잔존(후속 step). 신규 공용 모듈 추가는 PB-0002 참조.
 > **web_context.py 는 shared/ 아님** — feature-0003 web 전용 leaf helper 다 (§4a). 여러 feature 가 아닌 web-ui 내부만 소비한다.
