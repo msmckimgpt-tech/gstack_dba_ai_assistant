@@ -95,7 +95,7 @@ import oauth_store as _store        # noqa: E402
 _BATCH_CLAIM_PERMISSION = "kb.ingest.manual"
 
 
-def _runner_job_grants(conn, ctx) -> dict:
+def _runner_job_grants(conn, ctx, request) -> dict:
     """이 토큰 세션의 러너가 받을 수 있는 작업 축. 실패는 **대화만**(fail-closed).
 
     조회 실패에 콘솔 작업까지 열어 주면, 신고하지 않은 구 러너가 그것을 집어 대화용
@@ -111,7 +111,13 @@ def _runner_job_grants(conn, ctx) -> dict:
 
         cur = conn.cursor()
         try:
-            profile = _store.account_runner_profile(cur, account_id)
+            # ⚠ **이 토큰**의 신고를 읽는다 — 계정의 최신 러너가 아니다(codex 적대 리뷰 P1).
+            #
+            # `account_runner_profile` 은 그 계정에서 가장 최근 하트비트한 러너 하나를 고른다.
+            # 화면의 모델 목록에는 그것이 맞지만 **자격**에 쓰면 경계가 열린다: 같은 계정에
+            # 러너 둘이 붙어 있고 R1 만 `batch_jobs` 에 동의했을 때, R2 의 폴링이 R1 의
+            # 프로필을 읽어 배치를 가져간다 — 동의는 **러너 단위**라는 설계가 무너진다.
+            profile = _store.token_runner_profile(cur, _bearer(request))
         finally:
             cur.close()
         features = profile.get("features") or []
@@ -593,7 +599,14 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     if not isinstance(declared, list):
         return _json_err(400, "source_tasks 선언이 필요합니다(근거로 쓴 task id 목록).")
 
-    task = _load_task(conn, task_id, account)
+    # ⚠ `include_claimed_batch` 는 **여기서만** 켠다 (codex 적대 리뷰 P1).
+    #
+    # 배치 task 는 소유자가 없어(`AccountId=0`) 제출하려면 점유자 조건으로 열어야 한다.
+    # 그런데 `_load_task` 는 조사 도구(`execute_sql`·`read_task_attachment` 등)도 쓰고,
+    # 그 도구들은 반환된 `ProductId`/`DatasourceKey` 로 **데이터 스코프**를 정한다 —
+    # 기본값으로 열어 두면 배치 task 행 자체가 그 계정에 없던 스코프를 나르는 bearer 가 된다.
+    # 제출은 그 값들을 쓰지 않으므로 여기만 넓히는 것이 안전하다.
+    task = _load_task(conn, task_id, account, include_claimed_batch=True)
     if task is None:
         return _json_err(404, "task 를 찾을 수 없습니다.")
 
@@ -1466,7 +1479,7 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
     try:
         # TASK-20260831T100000: 자격 기반 스코프. 대화만 받는 구 러너에는 술어가 종전과
         # 동치이므로(가지 1개) **행동이 바뀌지 않는다** — 콘솔 작업은 애초에 보이지 않는다.
-        scope_sql, scope_params = _dispatch_scope_sql(_runner_job_grants(conn, ctx), account_id)
+        scope_sql, scope_params = _dispatch_scope_sql(_runner_job_grants(conn, ctx, request), account_id)
         cur.execute(
             "SELECT TaskId, Question, CreatedAt, Kind, JobKind FROM WebAiTasks "
             "WHERE " + scope_sql + " AND Status='open' AND " + _CLAIMABLE_SQL +
@@ -1580,7 +1593,7 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
     # 그대로 내렸다. 다만 대기는 **기다릴 대상이 아니라 비울 대상**이다(아래 드레인 분기).
     # 자격은 대기 **시작 시점에 한 번** 잰다(루프 안에서 재지 않는 이유는 아래 질의 주석).
     _wait_scope_sql, _wait_scope_params = _dispatch_scope_sql(
-        _runner_job_grants(conn, ctx), account_id)
+        _runner_job_grants(conn, ctx, request), account_id)
     with _drain.waiting():
         while True:
             cur = conn.cursor()
@@ -1724,7 +1737,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
     t0 = time.perf_counter()
     _claim_scope_sql, _claim_scope_params = _dispatch_scope_sql(
-        _runner_job_grants(conn, ctx), account_id)
+        _runner_job_grants(conn, ctx, request), account_id)
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2563,7 +2576,8 @@ def _json_err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def _load_task(conn, task_id: str, account: dict[str, Any]) -> dict[str, Any] | None:
+def _load_task(conn, task_id: str, account: dict[str, Any], *,
+               include_claimed_batch: bool = False) -> dict[str, Any] | None:
     """task 조회 — **소유 계정 스코프**. 남의 task 로는 어떤 도구도 못 돈다.
 
     ## 배경 배치는 소유자가 없다 (TASK-20260831T100000)
@@ -2579,14 +2593,17 @@ def _load_task(conn, task_id: str, account: dict[str, Any]) -> dict[str, Any] | 
     if not task_id:
         return None
     me = int(account.get("id") or 0)
+    where = "TaskId = %s AND AccountId = %s"
+    params: list[Any] = [task_id, me]
+    if include_claimed_batch:
+        where = ("TaskId = %s AND (AccountId = %s "
+                 "  OR (Kind = %s AND Origin = %s AND ClaimedBy = %s))")
+        params = [task_id, me, _KIND_JOB, _ORIGIN_BATCH, me]
     cur = conn.cursor()
     try:
         cur.execute("SELECT TaskId, ConversationId, ProductId, Question, Status, DatasourceKey, "
                     "       Kind, JobKind "
-                    "FROM WebAiTasks WHERE TaskId = %s AND ("
-                    "      AccountId = %s "
-                    "   OR (Kind = %s AND Origin = %s AND ClaimedBy = %s)) LIMIT 1",
-                    (task_id, me, _KIND_JOB, _ORIGIN_BATCH, me))
+                    f"FROM WebAiTasks WHERE {where} LIMIT 1", tuple(params))
         row = cur.fetchone()
     finally:
         cur.close()

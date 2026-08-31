@@ -599,10 +599,75 @@ def parse_runner_features(raw: Any) -> list[str]:
     return out
 
 
+#: `RunnerFeatures` 컬럼 폭. **직렬화 결과가 이 값을 넘지 않아야 한다.**
+#:
+#: ⚠ 개수·항목길이 상한만으로는 부족하다(codex 적대 리뷰 P2): 12개 × 32자 + 구분자 = 최대
+#: 395자라 VARCHAR(255) 를 넘고, 비엄격 SQL 모드에서는 **조용히 잘린다**. 잘린 꼬리가
+#: 다른 기능 이름의 접두사가 되면 자격이 오판된다 —
+#: `…,batch_jobs_evil` 이 255자에서 잘려 `…,batch_jobs` 가 되는 형태.
+#: 그래서 직렬화 단계에서 **항목 단위로** 끊는다(절대 항목 중간에서 자르지 않는다).
+RUNNER_FEATURES_COLUMN_CHARS = 255
+
+
 def serialize_runner_features(features: Any) -> str:
-    """기능 목록을 저장 형태(CSV)로. `parse_runner_features` 와 **같은 정규화**를 통과시킨다."""
-    return ",".join(parse_runner_features(
-        ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features))
+    """기능 목록을 저장 형태(CSV)로. `parse_runner_features` 와 **같은 정규화**를 통과시킨다.
+
+    컬럼 폭을 넘으면 **항목 단위로 버린다** — 잘린 문자열이 다른 기능 이름이 되는 경로를
+    만들지 않는다(위 상수 주석).
+    """
+    names = parse_runner_features(
+        ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
+    out: list[str] = []
+    used = 0
+    for name in names:
+        add = len(name) + (1 if out else 0)
+        if used + add > RUNNER_FEATURES_COLUMN_CHARS:
+            break
+        out.append(name)
+        used += add
+    return ",".join(out)
+
+
+def token_runner_profile(cur, raw_token: str) -> dict:
+    """**이 토큰이 신고한** 능력·기능·버전. 계정의 다른 러너를 보지 않는다.
+
+    ## 왜 계정이 아니라 토큰인가 (codex 적대 리뷰 P1)
+
+    `account_runner_profile` 은 그 계정에서 **가장 최근에 하트비트한 러너 하나**를 고른다.
+    화면의 모델 선택기에는 그것이 맞다(사람은 계정 단위로 보고, 목록은 정보다).
+
+    그러나 **자격 판정**에 쓰면 경계가 열린다. 같은 계정에 러너 둘이 붙어 있고 R1 만
+    `batch_jobs` 에 동의했을 때, R2 의 폴링이 R1 의 프로필을 읽어 배치 작업을 가져간다 —
+    동의하지 않은 사람의 계정 토큰이 조직 배경 작업을 태우게 되고, 그 동의는 **러너 단위**
+    라는 것이 애초의 설계였다("배치는 그 사람이 요청한 적 없는 일이다").
+
+    그래서 자격은 신고한 그 토큰에서만 읽는다. 신고가 없으면 빈 값 = 자격 없음.
+    """
+    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
+    if not raw_token:
+        return empty
+    cur.execute(
+        "SELECT t.RunnerCapabilities, t.RunnerFeatures, t.RunnerAgentVersion "
+        "FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+        "  AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) LIMIT 1",
+        (token_hash(raw_token), int(HEARTBEAT_WINDOW_SEC)),
+    )
+    row = cur.fetchone()
+    if not row:
+        return empty
+    caps: list = []
+    if row[0]:
+        try:
+            parsed = json.loads(row[0])
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            caps = parsed
+    return {"capabilities": caps, "features": parse_runner_features(row[1]),
+            "agent_version": str(row[2] or "").strip(), "listening": True}
 
 
 def set_runner_report(cur, raw_token: str, capabilities: str | None,

@@ -916,3 +916,15 @@ JSON 산출물을 망친다. P0-Z3 의 원칙("신고가 없으면 선택기도 
 - red-team 자가 검증 결과가 `추론` 탭에 다시 나타난다.
 - `features` 미신고(구) 러너에는 콘솔 작업이 배급되지 않고, 화면이 갱신을 안내한다.
 - `AGENT_SERVER_LLM_ENABLED=1` 로 되돌리면 종전 직접 경로가 복원된다 — 테스트가 양방향을 잠근다.
+
+#### 적대 리뷰 조치 (REV-20260831T140000-console-job-scope)
+
+- [x] **P1** 자격을 계정 최신 러너가 아니라 **그 토큰**의 신고에서 읽는다
+      (`oauth_store.token_runner_profile`) — 동의하지 않은 러너에게 배치가 새던 경로
+- [x] **P1** `_load_task` 배치 확대를 **제출 경로 opt-in** 으로 좁힘 — 조사 도구가 배치 task 의
+      `ProductId`/`DatasourceKey` 를 스코프 bearer 로 쓰던 경로
+- [x] **P2** `serialize_runner_features` 가 컬럼 폭 안에서 **항목 단위로** 끊는다 —
+      `…,batch_jobs_evil` → `…,batch_jobs` 위조 차단
+- [x] 회귀 9건 신설 + **뮤턴트 3종 전건 KILL 실증**. 첫 작성본이 뮤턴트를 못 죽인 원인
+      (길이 정렬 우연 · filler dedup)까지 REVIEW 에 기록
+- [x] **D3** `make test` 전량 green (6020 passed / 0 failed) + ruff clean

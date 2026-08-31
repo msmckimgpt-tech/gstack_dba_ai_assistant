@@ -1195,3 +1195,75 @@ P0-AC 를 되돌리는 것이고, 그러면 사용자가 아침에 제보한 문
   도달했다" 가 된다. `_HANDLER=none` 으로 "등록해도 소용없음" 을 고를 수 있게만 했다.
 - **라이브 실증 미완.** 실제 AI 에게 조사 지시문을 주고 러너가 뜨는지는 사용자 화면에서
   완결된다(러너 재기동에 새 토큰이 필요하다).
+
+## REV-20260831T140000-console-job-scope [CODEX:console-job-scope] — accepted (P1 2 · P2 1 전건 조치)
+
+**대상**: TASK-20260831T100000 (관리 콘솔 LLM 정합) 중 **권한 경계 표면** —
+`_runner_job_grants` / `_dispatch_scope_sql` / `_load_task` / `oauth_store.set_runner_report`.
+
+**범위 한정 (정직하게)**: 첫 시도는 cycle 전체 diff(2,582줄)를 넘겼는데 codex 가 탐색 단계에서
+상한에 걸려 **서두만 출력하고 종료**했다(두 차례). 그래서 가장 위험한 축 — 계정 스코프를
+벗어나는 배치 배급과 그 자격 판정 — 으로 좁혀 다시 돌렸다. 따라서 이 리뷰는 **보안 경계
+축의 검토이며, UI/관측 축은 포함하지 않는다.**
+
+### P1-1 — 자격이 러너 단위로 닫히지 않았다 (조치 완료)
+
+`_runner_job_grants` 가 `account_runner_profile`(그 계정에서 **가장 최근 하트비트한 러너**)을
+읽었다. 화면의 모델 목록에는 그것이 맞지만 자격에 쓰면 경계가 열린다:
+
+> 같은 계정에 러너 둘이 붙어 있고 R1 만 `batch_jobs` 에 동의했을 때, **동의하지 않은 R2 의
+> 폴링이 R1 의 프로필을 읽어** 배치 작업을 가져간다.
+
+동의를 러너 단위로 둔 이유가 정확히 그것("배치는 그 사람이 요청한 적 없는 일이고 자기 계정
+토큰을 태운다")인데, 판정이 계정 단위여서 그 설계가 무너져 있었다.
+
+**조치**: `oauth_store.token_runner_profile(cur, raw_token)` 신설 — 신고한 **그 토큰**에서만
+읽는다. 유효성 술어는 `_LIVE_TOKEN_PREDICATE` 그대로(따로 세면 로그아웃을 무시하는 뒷문).
+
+### P1-2 — `_load_task` 확대가 조사 도구에 스코프를 흘렸다 (조치 완료)
+
+배치 task 는 소유자가 없어(`AccountId=0`) 제출하려면 점유자 조건으로 열어야 했다. 그런데
+`_load_task` 는 조사 도구(`execute_sql`·`read_task_attachment` 등)도 쓰고, 그 도구들은 반환된
+`ProductId`/`DatasourceKey` 로 **데이터 스코프**를 정한다 — 기본값으로 열어 두면
+**배치 task 행 자체가 그 계정에 없던 스코프를 나르는 bearer** 가 된다.
+
+**조치**: `include_claimed_batch` opt-in 으로 좁히고 **제출 경로에서만** 켠다. 제출은 그
+값들을 쓰지 않으므로 안전하다.
+
+### P2 — 기능 CSV 가 컬럼 폭에서 항목 중간에 잘릴 수 있었다 (조치 완료)
+
+개수(12)·항목길이(32) 상한만으로는 최대 395자라 `VARCHAR(255)` 를 넘고, 비엄격 SQL 모드에서
+**조용히 잘린다**. 잘린 꼬리가 다른 기능 이름의 접두사가 되면 자격이 오판된다 —
+`…,batch_jobs_evil` → `…,batch_jobs`.
+
+**조치**: `serialize_runner_features` 가 컬럼 폭 안에서 **항목 단위로** 끊는다(중간 절단 없음).
+
+### 지적하지 않은 축 (codex 판정 그대로 기록)
+
+- `set_runner_report` 의 `COALESCE` + 조건절: 쓰기-증폭 방어 유지 확인, 결함 없음.
+- SQL 인젝션·바인딩 누락: 없음(외부 입력 전부 파라미터 바인딩).
+
+### 회귀 잠금 + 뮤턴트 실증
+
+`unit/feature-0043-external-llm-bridge/tests/test_console_job_scope.py` 9건 신설.
+
+⚠ **첫 작성본은 뮤턴트를 죽이지 못했다** — 그 사실이 이 절의 요점이다:
+
+| 원인 | 어떻게 통과해 버렸나 |
+|---|---|
+| 항목 길이가 절단 경계에 정렬(31+1=32, 255=8×32−1) | 문자 절단 뮤턴트도 **온전한 항목만** 남겼다 |
+| filler 를 동일 문자열로 채움 | `parse_runner_features` 의 dedup 에 접혀 폭에 미달 → 절단 미발생 |
+
+즉 검사는 통과했지만 **아무것도 잠그지 않았다**. 길이 범위를 돌게 하고(정렬 우연 제거),
+filler 를 서로 다르게 만들고, 공격 fixture 의 prefix 길이를 계산해서 절단점이 `batch_jobs`
+끝에 떨어지도록 고쳤다.
+
+뮤턴트 3종 전건 KILL 실증:
+
+| 뮤턴트 | 죽인 검사 |
+|---|---|
+| `serialize_runner_features` → 문자 절단 | `test_features_never_truncate_mid_token` · `test_truncation_cannot_forge_a_shorter_feature_name` |
+| 자격을 `account_runner_profile` 로 판정 | `test_grants_read_the_token_profile_not_the_account` |
+| `include_claimed_batch` 기본값 True | `test_batch_widening_is_opt_in_not_default` |
+
+**검증**: 6020 passed / 0 failed / 16 skipped · ruff clean.

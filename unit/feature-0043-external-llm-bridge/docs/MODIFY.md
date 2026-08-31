@@ -1376,3 +1376,34 @@ P0-AA 로 자리는 말풍선 안으로 옮겼으나 여전히 `.bridge-live-ste
 
 `make test` 컨테이너 전량 green · ruff clean · 신규 32건 + 기존 계약 9건 갱신.
 PB-0008 실 Windows 브라우저에서 잠금·해제·모달 실측(결함 3건 발견·수정).
+
+## CHG-20260831T100000 — 관리 콘솔을 브리지 구조에 정합 (사용자 요청)
+
+**요청**: "LLM 동작 과정이 바뀐 구조에 따라 '관리 콘솔' 에서 작동하던 LLM의 동작도 정합하게
+구성하고 싶습니다."
+
+**왜 필요했나**: feature-0043 이 서버 계정 LLM 을 차단하고 대화 답변을 개인 AI 브리지로
+뒤집었는데 **그 전환이 대화 화면만 따라갔다**. `static/admin/*.js` 전체에 차단 사실을 읽는
+코드가 0건이라, 버튼은 눌러야 503 을 알았고 집행되지 않는 설정이 "설정됨" 으로 보였으며
+`LLM 사용량` 0 은 "아무도 안 쓴다" 로 읽혔다.
+
+**무엇을 바꿨나**
+
+- `routers/_console_llm.py` 신설 — 콘솔 LLM 상태 판정 **단일 정본**. `server_llm_blocked`
+  (게이트)와 `delegation`(러너 신고)을 독립 축으로 유지. `/api/admin/me` 가 함께 싣는다.
+- 조작면 4곳(메타 단건·일괄 · 프롬프트 자동작성 · 그래프 능동 분석)이 **누르기 전에** 상태를
+  말한다. 판정은 `jobDelegable(jobKind)` — 러너 자격 ∧ 그 종류의 전 구간 배선.
+- 미적용 설정 4종에 배지 + 패널 내 사유 dropdown + 설정 탭 최하단 집계(사용자 결정).
+- `AI 운영 현황` 에 브리지 축·KPI·위임 작업 현황(소유/수행 계정 분리).
+- `LLM 사용량`·`추론` 화면에 집계 범위 배너 — 지표의 침묵이 오독이 되던 두 자리.
+- `WebAiTasks` 에 `Kind`·`JobKind`·`JobPayload`·`JobAppliedAt`·`JobApplyError` 비파괴 ADD.
+  `WebOAuthTokens` 에 `RunnerFeatures`·`RunnerAgentVersion`.
+- 배급 자격(`_runner_job_grants`/`_dispatch_scope_sql`)과 claim/submit 의 `Kind` 분기.
+
+**되돌리기**: 게이트 1개(`AGENT_SERVER_LLM_ENABLED=1`) — 컬럼은 비파괴 ADD 라 잔존해도 무해.
+
+**의도적 잔여 (정직하게)**: 각 기능의 **적재 호출부·프롬프트 조립·산출물 반영**(C2 호출부 ·
+C7~C10)은 미완이다. 그것을 화면이 낙관하지 않도록 `JOB_SPECS[...]["wired"]` 를 **전부 False**
+로 두었다 — `enqueue_console_job` 이 거절하고 조작면은 사유와 함께 비활성으로 보인다.
+부분 배선을 True 로 적지 않는 것이 P0-M·P0-T 의 함정("고를 수 있는데 반영은 안 되는")을
+다시 열지 않는 유일한 방법이다. 근거: `docs/REVIEW.md` REV-20260831T140000-console-job-scope.
