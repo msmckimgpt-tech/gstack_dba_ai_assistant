@@ -1734,3 +1734,23 @@ skip 이었고 ② 설령 돌아도 **PowerShell 7 은 BOM 없이도 UTF-8 로 �
 
 - 실 Windows PowerShell 5.1: `python3 ok=False` → `python ok=True` → 예외 없이 완주
 - 회귀 2건 · 수정 전에서 FAIL 실증
+
+## CHG-20260831T173600-ai-claude-feature-0043-compact-evidence — 표시 밀도 조정 POST-DEPLOY 증적
+
+`CHG-20260831T170034-…` 의 라이브 검증. 코드 변경 0 — 증적 문서만.
+
+배포본이 **실제로 서빙하는 모듈**에 이번 변경 식별자가 있는지 먼저 대조한 뒤(app.js 7 hits ·
+messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 인스턴스로 렌더했다.
+
+- ① 내부 동작 행 **22px**(도구 카드 121px) · `border: none` · `background: transparent` · 배지 0
+- ② 누적 3.2초 간격 3회 판독에서 증가폭이 경과와 일치(`지금 − 첫 단계 기록 시각`)
+- ③ 말풍선 「쿼리 결과」 목록에 내부 동작 0건 — 제보의 반복 문구 ×8 소멸
+- ④ 내부 동작만 있는 시점 → 여닫이 자체가 생기지 않음(빈 확장 없음)
+- ⑤ 완료 답변 패널 → 티커 대상 0 · 2.6초 후 값 동일(정지 화면)
+
+⚠ 이번 랜딩은 **GitHub Actions 를 게이트에서 제외**했다 — 07:50 이후 main 포함 전 실행이 계정
+결제/한도로 러너 시작 전 실패(사용자 결정). 대체 근거는 CI 와 동일 스위트를 머지 base 에서
+컨테이너 실행한 전량 green.
+
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260831T170034-live-steps-compact-postdeploy.md`
+캡처: `artifacts/pb0008-live-steps-compact/` (git 밖, §2)
