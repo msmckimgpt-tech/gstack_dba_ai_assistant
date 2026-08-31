@@ -588,7 +588,12 @@ register_handler_windows() {
     _ps1="$BRIDGE_HOME/.register_win_handler.$$.ps1"
   fi
   rm -f "$_ps1" 2>/dev/null || true
-  if ! cat > "$_ps1" <<PSEOF
+  # ⚠ **UTF-8 BOM 을 먼저 쓴다.** Windows PowerShell 5.1 은 BOM 없는 `.ps1` 을 시스템 ANSI
+  #   코드페이지로 읽어 한글 주석이 깨지고, 깨진 바이트가 인접한 따옴표·괄호를 삼켜 파서가
+  #   죽는다(사용자 제보 2026-08-31, `bridge_setup.ps1` 에서 실제로 발생). 여기 생성물도
+  #   한글 주석을 담으므로 같은 위험이 있다 — 지금 우연히 통과하는 것에 기대지 않는다.
+  printf '\357\273\277' > "$_ps1" 2>/dev/null || true
+  if ! cat >> "$_ps1" <<PSEOF
 # mysql-ai 브리지 — Windows 브라우저용 스킴 핸들러 등록 (HKCU, 관리자 권한 불필요).
 # 이 파일은 bridge_setup.sh 가 생성하고 실행 직후 지운다.
 \$ErrorActionPreference = 'Stop'

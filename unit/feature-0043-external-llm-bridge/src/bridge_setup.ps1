@@ -1,4 +1,18 @@
-# mysql-ai 브리지 설치·기동 스크립트 (Windows PowerShell).
+﻿# mysql-ai 브리지 설치·기동 스크립트 (Windows PowerShell).
+#
+# ⚠ **이 파일은 UTF-8 BOM 을 반드시 유지한다.** (사용자 제보 2026-08-31)
+#
+# Windows PowerShell 5.1(윈도우 기본)은 BOM 없는 `.ps1` 을 UTF-8 이 아니라 **시스템 ANSI
+# 코드페이지**(한국어 윈도우면 CP949)로 읽는다. 그러면 이 파일의 한글 주석·메시지가 깨지고,
+# 깨진 바이트가 인접한 `'`·`)` 를 삼켜 **파서가 죽는다** — 사용자가 본 것이 그것이다:
+#
+#     식에 닫는 ')'가 없습니다.
+#     ... "BRIDGE_PROBED_HANDLER='$ProbedHandler' ??auto|none 以??섎굹?ъ빞 ?⑸땲??
+#
+# 실측: BOM 없음 → ParseFile 오류 6건 / BOM 있음 → PARSE OK. (PowerShell 7 은 BOM 없이도
+# UTF-8 로 읽으므로 **7 로만 검사하면 이 결함을 못 본다** — 회귀 테스트는 BOM 바이트를 직접 본다.)
+#
+# 편집기 설정 주의: "UTF-8(BOM 없음)" 으로 저장하면 이 결함이 그대로 되돌아온다.
 #
 # POSIX 판(`bridge_setup.sh`)과 **같은 계약**이다 — 하는 일·안 하는 일·멈추는 지점이 같다.
 # 두 파일이 갈리면 OS 마다 다른 연결 절차가 되고, 그것이 정확히 이 기능이 없애려는 마찰이다.

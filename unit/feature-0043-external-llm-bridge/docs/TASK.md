@@ -154,6 +154,9 @@ source_of_truth: true
       두고(UNC 해석 제거) Windows exe 기동을 3회→1회로. 실측 근거·회귀 3건 포함
 - [x] **로그에 시각 기록** — 설치(`[bridge-setup …]`)·러너(`[bridge …]`)·핸들러 실행
       (`[bridge-launch …]`) 전부 `YYYY-MM-DD HH:MM:SS`
+- [x] **PowerShell 설치 경로 파싱 실패 해소** (사용자 제보 2026-08-31) — `.ps1` 에 UTF-8 BOM
+      (5.1 은 BOM 없으면 CP949 로 읽어 한글이 따옴표·괄호를 삼킨다). 게이트도 교정 —
+      pwsh(7) 검사는 이 클래스를 원리적으로 못 보므로 BOM 바이트를 직접 검사
 - [x] **발사 경로 교정** — 산출물: hidden iframe → 최상위 이동. 실 Windows 크롬 실측으로
       iframe 이 크롬의 외부 프로그램 허용 판정에 도달하지 않음을 확인, 이탈 우려는 대조군
       (미등록 스킴 최상위 이동 시 URL·제목 불변)으로 기각
