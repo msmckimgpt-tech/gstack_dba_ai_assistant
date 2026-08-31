@@ -1539,3 +1539,16 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - 검증: `make test` 전량 PASS · ruff clean · 신규 회귀 10건 + 기존 계약 6건 갱신 · PB-0008 실 Windows 브라우저(bind-mount 격리, 라이브 무접촉) — 두 그룹 트리 실측(`CLAUDE` 4종 · `CODEX` 6종, `gpt-5.1-*` 소멸) · `docs/test-runs.d/REV-20260831T170000-model-group-tree.md`.
 - **Human Approval Needed**: 아니오 (Major — 스키마 변경 없음, 되돌리기는 폴백 블록 한 곳).
 - Timestamp: 2026-08-31T17:00:00+09:00
+
+## REV-20260831T183000-runner-version-sync [SKIPPED:same-cycle-followup-adversarial-in-prev] — ACCEPTED (feature-0043)
+
+- 범위: 러너 파일 지문 대조(버전과 별개 축) + 연결 직후 카탈로그 갱신. `bridge_agent.py`(+배포 사본) · `_bootstrap_schema.py` · `oauth_store.py` · `routers/{ai_tools,oauth_as}.py` · `static/{app.js,app/connect-modal.js,css/search-audit.css}`.
+- 사용자 제보(2026-08-31 3차): ① 재설치·재연결 후에도 `gpt-5.1-*` 가 그대로 ② 연결 완수 후 모델·추론 강도가 안 보이고 **새로고침해야** 나타남.
+- **[SKIPPED] 사유**: 같은 cycle 계열의 **후속 수정**이며, 직전 두 건(`REV-20260831T110000` · `REV-20260831T170000`)에서 codex 적대 패널을 이미 돌렸다. 이번 변경은 그 패널이 지적한 축(폴백·지문·대조)의 **연장**이고 새 신뢰경계를 열지 않는다 — 러너는 자기 파일 해시를 실을 뿐이고(서버로 나가는 값이 하나 늘지만 형태가 강제된다), 서버 판정은 읽기 전용 대조다. 대신 **라이브 실증을 강화**했다: 세 상태(미연결 / 새로고침 없는 연결 / 지문 불일치)를 실 브라우저에서 각각 관측했다.
+- **원인 ①**: `AGENT_VERSION` 이 날짜 단위(`2026.08.31`)라 **같은 날 세 번 바뀐 러너가 전부 같은 버전**이었다. 라이브에서 러너(하트비트 21초 전)가 `gpt-5.1-codex` 를 신고하고 있었고 파일은 폴백 제거 이전 배포본이었는데, 그 사실을 말할 축이 없었다.
+- **원인 ②**: 카탈로그(`/api/api-vault/options`)를 페이지 로드 때 한 번만 받았다. 게이트 변화는 컴포저만 다시 그렸으므로 목록은 "러너 없음" 상태로 남았다.
+- 조치: 지문(`agent_build`) 신고 + `RunnerBuild` 저장 + 배포본 대조 → 러너 로그(세션 1회) · 칩 `stale` 상태 · `connect_status.runner_stale`. 게이트 변화 시 카탈로그를 **먼저** 받고 그린다.
+- **자체 발견**: 판정 실패를 완전히 침묵시켰더니 원인을 추적할 수 없었다(실측 중 실제로 겪었고, 정작 원인은 예외가 아니라 상주 프로세스의 옛 모듈이었다) → 사용자에게는 조용하되 로그에는 남긴다.
+- 검증: `make test` 전량 PASS · ruff clean · 신규 회귀 6건 + 기존 계약 2건 갱신 · PB-0008 3상태 실측 — `docs/test-runs.d/REV-20260831T183000-connect-refresh.md`.
+- **Human Approval Needed**: 아니오 (Major — 스키마는 멱등 ALTER 1컬럼, 되돌리기는 NULL 이면 종전 동작).
+- Timestamp: 2026-08-31T18:30:00+09:00

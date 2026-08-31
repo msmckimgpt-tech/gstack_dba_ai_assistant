@@ -350,3 +350,116 @@ def test_disclosure_and_body_agree_on_what_is_displayable():
 def test_side_panel_still_shows_activity_steps():
     """말풍선에서 뺀 것이 '어디에도 없다' 가 되면 안 된다 — 소요시간은 패널이 보여준다."""
     assert "_buildStepActivityRow" in PANEL, "사이드 패널에서도 내부 동작이 사라졌다"
+
+
+# ── 말풍선 상세의 자기 스크롤 패널 (사용자 제보 2026-08-31 3차) ────────────────
+#
+#   "'▼ 쿼리 결과'의 내용이 너무 길어질 경우에는 페이지 내 스크롤이 과도하게 길어지는 경향이
+#    확인되었고 정작 중요한 쿼리데이터 결과셋이 밀려버리는 이슈 … 말풍선 내 별도의 스크롤 패널
+#    내부에서만 렌더되도록 구성하고(최대 높이는 고정. 최소 높이는 제한 없음.), 쿼리데이터
+#    결과셋을 페이징 할 때 마다 해당 위치로 내부 패널의 스크롤이 이동되도록"
+
+CSS_TEXT = (WEB_SRC / "static" / "css" / "chat.css").read_text(encoding="utf-8")
+NAVIGATOR = _strip_js_comments(_js_func(MESSAGES, "buildSqlNavigator"))
+
+
+def _css_rule(selector: str) -> str:
+    """정확히 그 selector 의 규칙 블록. **줄 시작에 앵커**한다.
+
+    앵커 없이 `index(selector + " {")` 로 찾으면 `.result-table-wrap {` 가 스코프 규칙
+    `.message-details-body .result-table-wrap {` 안에서 먼저 걸려 **다른 규칙을 읽는다**
+    (이 파일이 실제로 그 함정에 걸렸다). 전역 규칙과 스코프 규칙을 가르는 것이 이 테스트의
+    요점이므로, 여기서 헷갈리면 단정이 무의미해진다.
+    """
+    m = re.search(r"^%s \{" % re.escape(selector), CSS_TEXT, re.M)
+    assert m, f"CSS 규칙을 찾지 못했다: {selector}"
+    return CSS_TEXT[m.start():CSS_TEXT.index("\n}", m.start()) + 2]
+
+
+def _min_caps(rule: str) -> tuple[int, int]:
+    """`max-height: min(<N>vh, <M>px)` 의 (N, M). 두 상한의 대소를 비교하기 위한 파서."""
+    m = re.search(r"max-height:\s*min\((\d+)vh,\s*(\d+)px\)", rule)
+    assert m, f"max-height: min(Nvh, Mpx) 형태가 아니다:\n{rule}"
+    return int(m.group(1)), int(m.group(2))
+
+
+def test_details_body_is_its_own_scroll_panel():
+    """상한 없는 컨테이너였다 — 펼치는 순간 페이지가 그만큼 길어지고 결과셋이 밀렸다."""
+    rule = _css_rule(".message-details-body")
+    assert "max-height:" in rule, "최대 높이가 고정되지 않았다"
+    assert "overflow-y: auto" in rule, "패널이 스크롤되지 않는다(넘치면 그대로 늘어난다)"
+    assert "min-height" not in rule, (
+        "최소 높이를 제한했다 — 사용자 요구는 '최소 높이는 제한 없음'(짧으면 짧은 대로)")
+
+
+def test_details_panel_does_not_chain_scroll_to_the_page():
+    """패널 끝에서 페이지로 스크롤이 새면, 없애려던 증상이 그대로 남는다."""
+    assert "overscroll-behavior: contain" in _css_rule(".message-details-body")
+
+
+def test_inner_table_cap_leaves_room_inside_the_panel():
+    """중첩 스크롤 함정 방지 — 표 하나가 패널을 가득 채우면 안 된다.
+
+    상세에는 표만 있는 게 아니다(단계 목록·페이징 헤더·gap). 그래서 전역 표 상한을 그대로
+    쓰면 작은 창에서 표+목록이 패널을 넘겨 「표를 끝까지 굴려야 바깥이 움직이는」 상태가
+    된다(codex 적대 리뷰 P2). 패널 안쪽 표는 별도로 좁혀야 한다.
+    """
+    out_vh, out_px = _min_caps(_css_rule(".message-details-body"))
+    in_vh, in_px = _min_caps(_css_rule(".message-details-body .result-table-wrap"))
+    # 여유분 — 목록·헤더가 들어갈 자리. 표가 패널의 3/4 를 넘으면 함정이 되살아난다.
+    assert in_vh <= out_vh * 0.75, f"패널 안쪽 표 {in_vh}vh 이 패널 {out_vh}vh 대비 과하다"
+    assert in_px <= out_px * 0.75, f"패널 안쪽 표 {in_px}px 이 패널 {out_px}px 대비 과하다"
+    # 패널 밖(대화 본문 인라인 표)의 전역 상한은 건드리지 않는다 — 거긴 바깥 스크롤러가 없다.
+    glob_vh, glob_px = _min_caps(_css_rule(".result-table-wrap"))
+    assert (glob_vh, glob_px) == (60, 460), "전역 표 상한을 바꿨다(패널 밖 표까지 좁아진다)"
+
+
+def test_paging_reveal_reapplies_after_layout_settles():
+    """표 렌더·폰트가 다음 프레임 이후 확정되면 첫 계산이 어긋난다(codex 적대 리뷰 P2)."""
+    assert NAVIGATOR.count("revealInPanel()") >= 3, (
+        "reveal 을 한 번만 계산한다 — 늦게 확정되는 레이아웃에서 헤더가 가려진다")
+
+
+def test_live_scroll_restore_cancels_stale_schedules():
+    """짧은 간격 재구성에서 늦게 실행된 옛 복원이 사용자가 옮긴 위치를 되돌린다."""
+    render = _strip_js_comments(_js_func(COMPOSER, "_renderBridgeSteps"))
+    assert "cancelAnimationFrame" in render, "직전 복원 예약을 취소하지 않는다"
+    assert "nextBody.scrollTop === 0" in render, (
+        "사용자가 이미 옮긴 패널을 덮어쓴다 — 조작과 다투지 않아야 한다")
+
+
+def test_paging_moves_only_the_inner_panel_scroll():
+    """`scrollIntoView` 는 **조상 스크롤러 전부**를 움직여 페이지까지 끌고 간다 — 금지."""
+    assert 'closest(".message-details-body")' in NAVIGATOR, (
+        "자기 스크롤 패널을 찾지 않는다")
+    assert "scroller.scrollTop" in NAVIGATOR, "패널의 scrollTop 을 옮기지 않는다"
+    assert "scrollIntoView" not in NAVIGATOR, (
+        "scrollIntoView 로 조상 전부를 스크롤한다 — 이 cycle 이 없애려는 증상이다")
+
+
+def test_paging_reveal_is_wired_to_every_page_transition():
+    """◀▶·키보드(←/→/Home/End)가 모두 같은 전환 함수를 거쳐야 한 곳만 고치면 된다."""
+    assert "function pageTo(" in NAVIGATOR, "전환 경로가 하나로 모이지 않았다"
+    assert "requestAnimationFrame(revealInPanel)" in NAVIGATOR, (
+        "레이아웃 확정 전에 위치를 재면 교체 전 높이로 계산해 어긋난다")
+    # 전환의 정의는 `activeIdx` 변경이다. 그 대입이 한 곳(=pageTo)뿐이어야 reveal 이 빠지는
+    # 경로가 생기지 않는다. (builder 말미의 초기 `update()` 는 전환이 아니라 첫 렌더이고,
+    # 그때는 DOM 에 붙기 전이라 reveal 대상 패널이 아예 없다 — 세면 안 되는 호출이다.)
+    reassigns = re.findall(r"(?<!let )activeIdx\s*=\s*(?!=)", NAVIGATOR)
+    assert len(reassigns) == 1, (
+        f"전환 지점이 {len(reassigns)}곳이다 — reveal 없는 전환 경로가 남는다")
+
+
+def test_focus_does_not_scroll_ancestors():
+    """기본 focus() 는 조상 스크롤러를 움직인다 — 스크롤 책임은 revealInPanel 한 곳이다."""
+    assert NAVIGATOR.count("preventScroll: true") == 2, (
+        "◀▶ 두 버튼 모두 preventScroll 로 포커스하지 않는다")
+    assert "root.focus();" not in NAVIGATOR, "preventScroll 없는 focus 가 남아 있다"
+
+
+def test_live_rerender_preserves_the_inner_scroll():
+    """진행 중에는 상세가 수십 번 재구성된다 — 매번 스크롤이 0 이 되면 읽을 수 없다."""
+    render = _strip_js_comments(_js_func(COMPOSER, "_renderBridgeSteps"))
+    assert "prevScroll" in render, "재구성 전 스크롤을 기억하지 않는다"
+    assert "requestAnimationFrame" in render, (
+        "layout 확정 전에 복원하면 실 브라우저가 0 으로 clamp 한다")

@@ -116,6 +116,29 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260831T1827-connect-modal-autoclose 연결 성립 시 토스트 + 모달 자동 닫기 (Minor §12.3, 2026-08-31, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose.md`)**
+
+- **라이브 결함 재현(배포본 `1c0864dc`)**: 배지가 «내 AI 대기 중» 으로 바뀌어도 모달이 그대로
+  남고 알림 0 — 그 모달이 바로 그 배지를 덮고 있다. 스크린샷 1장. 검증 후 `fetch` 원복·모달
+  닫기·실제 상태 재조회로 브라우저 원상 복구.
+- **행위 테스트** `tests/verify_connect_modal_autoclose.mjs` **25/0 PASS** — 실제 모듈을 최소 DOM
+  shim 위에서 구동. 리스너를 저장·디스패치해 `[내 AI 실행]` 버튼 경로도 실제로 탄다.
+  A(성립 → 토스트 1 + 닫힘) · B(이미 연결된 채 열기 → 안 닫힘) · C(토큰만 발급 → 안 닫힘,
+  명령 보존) · D(중복 알림 없음) · E(import 경로 실재 · 닫으면 폴링 멎음 · 닫기가 막혀도 알림
+  1회) · F(실행 버튼 경합 3종) · G(첫 조회 실패 후에도 전이 감지).
+- **G11-b 결함 주입 실증**: 수정 전 코드(`git show main:…`)에서 **7건 FAIL**
+  (A3·A4·A5·D1·E2a·E3·G1). 통과만 확인한 단언이 아니다. B·C 가 수정 전에도 PASS 인 것은
+  정상(그 축은 깨뜨리지 않아야 할 성질이며 회귀 잠금으로 의미를 갖는다).
+- **codex 적대 리뷰 3라운드**: 1R BLOCK(P1 2·P2 4) → 2R 승인불가(P1-1 잔존 + 새 P2) →
+  3R **P1 0**. 뮤테이션 9종으로 방어 계층을 갈랐다 — 응답 epoch 검사만 제거·`_connSeq` 만
+  제거는 각각 생존하고 **둘 다 제거할 때만** F3 가 죽는다(경합 재현). 상세는 REVIEW.md
+  `REV-20260831T182700-…-connect-modal-autoclose`.
+- **미검증(정직 표기)**: `_gateInFlight` 해제 전용 단언 없음(폴링 5초를 테스트에서 발화시킬
+  수단 부재) · `ux`/`design` 도메인 심사 미수행(세션 도구 제약 — `[SKIPPED:tool-restricted:*]`).
+- **미검증 축(정직 표기)**: 실 러너를 기동해 서버가 스스로 `listening:true` 를 내는 end-to-end
+  경로는 AI 무인 완결 불가(개인 머신 AI CLI 설치·인증 필요)로 **미수행**. 이번 검증은 프론트엔드
+  계약에 한정된다.
+
 ### 20260824T2030-dnd-reorder-affordance 드래그&드롭 이동에도 재배치 연출 (Minor §12.3, 2026-08-24, feature-0003 프론트) — **Environment: Windows-browser (PASS — `docs/test-runs.d/REV-20260824T203000-dnd-reorder-affordance.md`)**
 
 - **실측**: 최상위 대화를 폴더로 **드래그&드롭**(합성 `dragstart/dragover/drop` + DataTransfer —

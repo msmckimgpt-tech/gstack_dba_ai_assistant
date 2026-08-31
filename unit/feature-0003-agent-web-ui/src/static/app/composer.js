@@ -588,6 +588,10 @@ export function abandonBridgeTasks(convId, taskIds) {
 //: (서버는 `request.is_disconnected()` 로 이를 감지해 DB 두드리기를 멈춘다).
 const _bridgeStreamAborts = new Map();
 
+//: 상세 패널 내부 스크롤 복원의 예약 핸들. 진행 중 재구성이 반복될 때 **늦게 실행된 옛
+//: 복원이 사용자가 옮긴 위치를 되돌리는** 것을 막기 위해 직전 예약을 취소한다.
+let _bridgeDetailScrollRaf = 0;
+
 /** 이 대화에 아직 답을 기다리는 브리지 task 가 있는가.
  *
  *  **중단 버튼의 판정원**이다. 기존 `_myAskInFlightHere()` 는 `/api/ask` 의 왕복 수명을 재는데,
@@ -835,11 +839,32 @@ function _renderBridgeSteps(taskId, steps, omitted = 0) {
   // 부분 갱신은 순서가 어긋날 때 조용히 틀린 화면을 남긴다. 펼침 상태는 유지한다.
   const prev = bubble.querySelector(".message-details");
   const wasOpen = prev ? prev.open : false;
+  // 상세가 자기 스크롤 패널이 된 뒤로는(2026-08-31) 통째 재구성이 그 안의 스크롤을 0 으로
+  // 되돌린다 — 새 단계가 도착할 때마다 사용자가 보던 위치를 잃는다. 펼침 상태와 같은 이유로
+  // 보존한다(진행 중에는 이 재구성이 수십 번 돈다).
+  const prevBody = prev ? prev.querySelector(".message-details-body") : null;
+  const prevScroll = prevBody ? prevBody.scrollTop : 0;
   const next = renderMessageDetails({ steps });
   if (next) {
     next.open = wasOpen;
     if (prev) prev.replaceWith(next);
     else bubble.appendChild(next);
+    if (prevScroll > 0) {
+      // rAF — layout 확정 전에 넣으면 실 브라우저가 0 으로 clamp 한다(높이가 아직 0).
+      //
+      // ⚠ 예약해 둔 이전 복원을 **먼저 취소**한다. 진행 중에는 이 재구성이 짧은 간격으로
+      //   반복되는데, 늦게 실행된 옛 rAF 가 사용자가 그 사이 옮긴 위치를 과거 값으로
+      //   되돌린다(codex 적대 리뷰 P2). 또한 새 패널이 이미 0 이 아니면(사용자가 손댔다)
+      //   복원하지 않는다 — 사용자 조작과 다투지 않는다.
+      const nextBody = next.querySelector(".message-details-body");
+      if (nextBody) {
+        if (_bridgeDetailScrollRaf) cancelAnimationFrame(_bridgeDetailScrollRaf);
+        _bridgeDetailScrollRaf = requestAnimationFrame(() => {
+          _bridgeDetailScrollRaf = 0;
+          if (nextBody.isConnected && nextBody.scrollTop === 0) nextBody.scrollTop = prevScroll;
+        });
+      }
+    }
   }
 
   // 「단계 보기 (N)」 — 개수와 클릭 대상(steps)을 함께 갱신한다. 텍스트만 고치면

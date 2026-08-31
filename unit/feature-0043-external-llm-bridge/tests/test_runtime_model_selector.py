@@ -1398,3 +1398,53 @@ def test_help_is_not_called_without_time_left(monkeypatch):
     assert (flag, opts) == (None, [])
     # 그리고 그것은 **결론이 아니다** — 확정으로 굳으면 다음 기동이 다시 보지 않는다.
     assert settled is False, "확인하지 못한 것을 확정으로 기록했다"
+
+
+# -- 2026-08-31 (3차): 「재설치했는데 그대로」 ------------------------------------
+#
+# 사용자가 러너를 다시 받고 연결했는데도 옛 모델 목록(`gpt-5.1-*`)을 봤다. 원인은 그날 러너가
+# **세 번** 바뀌었고 `AGENT_VERSION` 은 날짜 단위(`2026.08.31`)라 셋이 전부 같은 버전이었던 것.
+# 화면·로그 어디에도 "지금 도는 러너가 배포본과 다르다" 는 사실이 없었다.
+
+
+def test_runner_reports_its_own_file_fingerprint():
+    """러너가 **자기 파일**의 지문을 신고한다 — 버전(날짜)이 답하지 못하는 질문이다."""
+    mod = _load_runner()
+    got = mod._self_build()
+    assert re.fullmatch(r"[0-9a-f]{12}", got), f"지문 모양이 아니다: {got!r}"
+    # 파일이 바뀌면 지문도 바뀐다(같은 날 여러 번 배포돼도 구분된다).
+    import hashlib
+    assert got == hashlib.sha256(_RUNNER.read_bytes()).hexdigest()[:12]
+
+
+def test_heartbeat_carries_the_fingerprint_every_time():
+    """지문을 **매번** 싣는다 — 서버가 언제든 대조할 수 있어야 한다."""
+    mod = _load_runner()
+    sent: list = []
+
+    class _Api(mod.Api):
+        def __init__(self):
+            super().__init__("https://x", "t", None)
+
+        def _post(self, path, payload=None, timeout=60.0):
+            sent.append(payload)
+            return {"ok": True}
+
+    _Api().heartbeat([{"runtime": "claude", "models": [{"value": "opus"}], "efforts": []}])
+    assert sent[0].get("agent_build") == mod._self_build(), "지문이 하트비트에 실리지 않는다"
+    assert sent[0].get("agent_version") == mod.AGENT_VERSION, "버전 축이 사라졌다"
+
+
+def test_stale_build_is_announced_once_not_every_beat():
+    """구버전 경고는 **세션당 한 번**이다.
+
+    30초마다 반복하면 소음이고, 소음은 곧 무시된다 — 정작 필요한 순간에 읽히지 않는다.
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    fn = src[src.index("def start_heartbeat("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert "stale_build" in fn, "서버가 알려 준 사실을 러너가 읽지 않는다"
+    assert "_stale_said" in fn, "매 하트비트마다 같은 경고를 반복한다"
+    assert "배포본과 다릅니다" in fn, "무엇이 문제인지 말하지 않는다"
+    # 다음 행동까지 말한다 — "다르다" 만으로는 사용자가 할 일을 모른다.
+    assert "다시 받아" in fn or "다시 실행" in fn, "재설치 경로를 안내하지 않는다"

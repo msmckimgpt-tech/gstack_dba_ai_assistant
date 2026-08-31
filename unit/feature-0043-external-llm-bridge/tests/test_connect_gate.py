@@ -214,8 +214,16 @@ def test_unlock_triggers_a_rerender():
     assert "export function onComposeGateChange(" in modal, "잠금 변화를 알릴 경로가 없다"
     assert "for (const fn of _gateListeners)" in modal, "구독자를 부르지 않는다"
     app = _strip_js_comments(APP_JS.read_text(encoding="utf-8"))
-    assert "onComposeGateChange(() => { try { renderComposer(); }" in app, (
-        "잠금이 풀려도 컴포저를 다시 그리지 않는다")
+    # 콜백이 async 로 바뀌었다 (2026-08-31): 잠금 해제 시 **카탈로그를 먼저 다시 받고**
+    # 그 뒤에 그린다 — 안 그러면 모델·추론 강도 항목이 옛 목록(빈 목록)으로 남아 사용자가
+    # 새로고침해야 보였다. 계약은 그대로다 — 게이트가 바뀌면 다시 그린다.
+    _cb = app[app.index("onComposeGateChange("):]
+    _cb = _cb[:_cb.index('});')]
+    assert "renderComposer()" in _cb, "잠금이 풀려도 컴포저를 다시 그리지 않는다"
+    assert "loadVaultOptions()" in _cb, (
+        "잠금이 풀렸는데 모델 카탈로그를 다시 받지 않는다 — 선택기가 빈 채로 남는다")
+    assert _cb.index("loadVaultOptions()") < _cb.index("renderComposer()"), (
+        "옛 목록으로 그린 뒤에 카탈로그를 받는다(순서가 반대다)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

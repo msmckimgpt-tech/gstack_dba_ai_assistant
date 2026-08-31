@@ -1817,7 +1817,38 @@ messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 �
 - 회귀 4건 — **수정 전에서 4/4 FAIL** 실증
 - ⚠ **실제 설치는 실행하지 않았다** — 이 머신엔 이미 파이썬이 있고, 검증을 위해 남의 머신
   상태를 바꾸지 않는다. 설치 명령의 유효성은 `winget show` 로, 배선은 회귀로 확인했다.
+## CHG-20260831T183000-runner-version-sync — 러너 지문 대조 + 연결 직후 카탈로그 갱신 (P0-AG)
 
+**요구**: 재설치·재연결해도 옛 모델 목록이 그대로다 · 연결 완수 후 모델·추론 강도가 안 보이고
+새로고침해야 나타난다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `src/bridge_agent.py` | `_self_build()` 신규(자기 파일 sha256 12자) · 하트비트에 `agent_build` · 응답의 `stale_build` 를 **세션당 한 번** 로그로 |
+| `static/agent/bridge_agent.py` | 배포 사본 동기화 |
+| `routers/_bootstrap_schema.py` | `WebOAuthTokens.RunnerBuild VARCHAR(16)` 멱등 ALTER |
+| `oauth_store.py` | `set_runner_report(agent_build=…)` 저장(모양 강제 + 값 변경 시에만 쓰기) · `account_runner_build()` 조회 |
+| `routers/ai_tools.py` | `_deployed_runner_build()`(배포본 지문, 프로세스 1회 캐시) · `_runner_update_hint(…, agent_build)` 에 `stale_build` |
+| `routers/oauth_as.py` | `connect_status` 에 `runner_stale` — 서버가 판정하고 프런트는 불리언 하나만 읽는다 |
+| `static/app/connect-modal.js` | 칩 4번째 상태 `stale` |
+| `static/css/search-audit.css` | `.ai-conn[data-state="stale"]` |
+| `static/app.js` | 게이트 변화 시 `loadVaultOptions()` → `renderComposer()` → 선택기 재렌더 (순서 고정) |
+
+### 왜 버전만으로 부족했나
+
+`AGENT_VERSION` 은 날짜 단위(`2026.08.31`)다. 그날 러너가 **세 번** 바뀌었고 셋 다 같은 버전이라
+"배포본과 다른 러너" 를 표현할 축이 없었다. 지문은 그 질문에만 답한다 — 버전(호환성)과 지문
+(동일성)은 서로를 대체하지 않으므로 둘 다 신고한다.
+
+양쪽 지문을 다 아는 경우에만 판정한다. 구 러너는 지문을 아예 신고하지 않고, 그때 "다르다" 고
+말할 근거는 없다(모르는 것을 경고로 바꾸지 않는다).
+
+### 되돌리기
+
+`RunnerBuild` 가 NULL 이면 대조가 서지 않아 종전과 동일하게 동작한다(경고 없음).
+게이트 콜백은 `loadVaultOptions()` 호출만 빼면 종전 동기 렌더로 돌아간다.
 ## CHG-20260831T175500-ai-claude-corp-feature-0043-schannel-revocation — Windows 러너 수신 실패 + 같은 구간의 조용한 결함 3종
 
 - **날짜**: 2026-08-31
@@ -1880,7 +1911,46 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
   파이썬 불가 → 실패 사유에 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN` 실림 / 임시파일 잔재 0
 - 회귀 `test_windows_tls_revocation.py` **18건** — 수정 전 코드에서 **13/18 FAIL** 실증(§16.7 G11-b)
 - `_ps_code` 주석 스트리퍼를 실 PowerShell `[PSParser]::Tokenize`(토큰 2,602 · 오류 0)와 대조 검증
+## CHG-20260831T175800-ai-claude-feature-0043-details-scroll-panel — 상세를 자기 스크롤 패널로 + 페이징 시 패널 내부 이동
 
+**요청 (2026-08-31)**: 「'▼ 쿼리 결과'의 내용이 너무 길어질 경우에는 페이지 내 스크롤이 과도하게
+길어지는 경향이 확인되었고 정작 중요한 쿼리데이터 결과셋이 밀려버리는 이슈 … 말풍선 내 별도의
+스크롤 패널 내부에서만 렌더되도록 구성하고(최대 높이는 고정. 최소 높이는 제한 없음.),
+쿼리데이터 결과셋을 페이징 할 때 마다 해당 위치로 내부 패널의 스크롤이 이동되도록」.
+
+**원인**: `.message-details-body` 는 단계 목록 + SQL 패널 + 결과 표를 모두 쌓는데 **높이 상한이
+없었다**. 상세를 펼치는 순간 페이지가 그만큼 길어지고, 정작 결과셋은 화면 밖으로 밀렸다.
+게다가 `sql-navigator` 의 높이보존 floor(`minHeight`)가 가장 큰 패널 높이로 고정돼 짧은
+결과셋으로 넘겨도 컨테이너가 줄지 않아 그 길이가 유지됐다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `static/css/chat.css` | `.message-details-body` → `max-height: min(70vh,680px)` + `overflow-y:auto` + `overscroll-behavior:contain` (min-height 미지정) · `.message-details-body .result-table-wrap` → `min(46vh,380px)` 로 **패널보다 좁힘** |
+| `static/app/messages.js` | `revealInPanel` 신규 — 자기 패널 `scrollTop` 만 계산해 결과셋을 상단으로. 전환 경로를 `pageTo` 한 곳으로 합쳐 ◀▶·키보드가 모두 거치게. `focus({preventScroll:true})` |
+| `static/app/composer.js` | 진행 중 재구성 시 내부 스크롤 보존(직전 rAF 취소 + `scrollTop===0` 일 때만) |
+
+### 지켠 선
+
+- **`scrollIntoView` 금지** — 조상 스크롤러 전부를 움직여 대화 로그와 페이지를 끌고 간다.
+  이 cycle 이 없애려는 증상이 바로 그것이라, 자기 패널의 `scrollTop` 만 옮긴다.
+- **패널 밖 인라인 표의 전역 상한은 불변** — 거긴 바깥 스크롤러가 없으므로 좁힐 이유가 없다.
+- **사용자 조작과 다투지 않는다** — 복원은 패널이 아직 `scrollTop === 0` 일 때만.
+
+### 되돌리기
+
+CSS 두 규칙(`max-height`/`overflow-y` + 스코프 표 상한)을 지우면 종전 무제한 높이로 복귀한다.
+`revealInPanel` 은 `pageTo` 안 3줄, 스크롤 보존은 `_renderBridgeSteps` 안 국소 블록이다.
+
+### 검증
+
+컨테이너 pytest 전량 green(신규 10건 — 패널 상한·중첩 방지 대소 불변식·reveal 배선·focus·
+스크롤 보존) · node 하네스 18/18 무회귀 · codex 적대 리뷰 2R **P1 0건 수렴**(1R P2 3건 전건 반영)
+· PB-0008 실 Windows 브라우저 POST-DEPLOY.
+
+**관측된 flake(무관)**: `feature-0014 test_edge_rolling_gate.py::test_g3b_…` 가 부하 중 1회
+타이밍 실패(2.0087s < 3s). 격리 재실행 3/3 PASS, 본 diff 는 feature-0014 파일을 0건 건드린다.
 ## CHG-20260831T184200-ai-claude-corp-feature-0043-schannel-postdeploy — POST-DEPLOY 라이브 검증 기록 (문서 전용)
 
 - **날짜**: 2026-08-31
@@ -1897,3 +1967,43 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
 - 엣지 `/healthz` 200 · soak 통과 · caddy `no upstreams available` **0건** · RestartCount 0
 - 자기정정 1건: 하네스 기대 해시가 배포 전 러너 값이라 `MISMATCH` 가 났고, 3자 대조로
   «상수 stale» 임을 확정했다(수신 실패 아님). 불일치를 WARN 으로 강등하지 않았다.
+
+## CHG-20260831T190000-verify-anchor-fix — 침묵 처리 계약을 구조로 잠금 (P0-AG 후속)
+
+**요구**: 직전 커밋에서 임시 디버그 로그를 제거하자 계약 테스트가 앵커 문자열을 잃고 깨졌다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `routers/oauth_as.py` | 침묵 처리 주석의 원인 서술 정정(예외가 아니라 상주 프로세스의 옛 모듈) |
+| `tests/test_model_catalog_bridge_mode.py` | 앵커를 문자열에서 **`except` 블록 구조**로 — `runner_stale = False` 와 `exc_info=True` 가 그 블록 안에 함께 있는지 본다 |
+
+### 왜
+
+주석 한 줄을 고치면 깨지는 테스트는 계약을 지키는 것이 아니라 **글자를 지키는 것**이다.
+잠글 것은 "판정 실패가 거짓 경고가 되지 않고, 그러면서 추적 가능하다" 이지 특정 문구가 아니다.
+
+## CHG-20260831T191500-gatepoll-anchor — 선재 계약 테스트 실패 해소 (P0-AG 후속)
+
+`test_indicator_does_not_poll_when_unlocked` 가 **main 에서도** 실패하고 있었다. #1447 이
+`_syncGatePoll` 의 폴링 사유를 둘(`_composeBlocked || _modalOpen`)로 늘리면서 계약 테스트를
+갱신하지 않았고, 테스트는 조건 문자열(`_composeBlocked && !_gatePollTimer`)을 박제하고 있었다.
+
+잠글 것은 사유의 **개수**가 아니라 «사유가 없으면 멎는다» 이므로 그 성질을 본다 —
+`wantPoll && !_gatePollTimer` / `!wantPoll && _gatePollTimer` 가 같은 값의 양면인지까지.
+
+## CHG-20260831T194000-ai-claude-feature-0043-scrollpanel-evidence — 스크롤 패널 POST-DEPLOY 실측 증적
+
+`CHG-20260831T175800-…` 의 라이브 검증. 코드 변경 0 — 증적 문서만.
+
+배포본(`47299f6a`) 서빙 자산에 이번 변경이 도달했는지 먼저 대조(messages.js 9 hits ·
+chat.css 2 hits) 후, 페이지가 로드한 모듈 URL 로 `import()` 해 실측했다.
+
+- 패널 `clientHeight 622` / `scrollHeight 782` → 자기 스크롤 · `min-height: 0px`(제한 없음)
+- 안쪽 표 `378px` < 패널 `622px` — 중첩 스크롤 함정 부재
+- 페이징: 패널 `scrollTop 0 → 375`, **대화 로그·문서 스크롤 0 불변**
+- 결과셋 위치: `navOffset 381 → 6px`(코드의 여백 상수와 일치, 최대 스크롤 577 아님 = clamp 아님)
+- 키보드(`ArrowRight`) 동일 경로 · 짧은 상세(단계 1건) `81px` 비스크롤
+
+캡처: `artifacts/pb0008-details-scroll-panel/` (git 밖, §2). 검증 DOM 은 제거 확인.

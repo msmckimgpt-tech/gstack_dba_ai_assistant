@@ -671,7 +671,8 @@ def token_runner_profile(cur, raw_token: str) -> dict:
 
 
 def set_runner_report(cur, raw_token: str, capabilities: str | None,
-                      features: Any, agent_version: str | None = None) -> bool:
+                      features: Any, agent_version: str | None = None,
+                      agent_build: str | None = None) -> bool:
     """러너의 신고 **세 축을 한 문장으로** 새긴다 (능력·기능·버전). 실제로 썼으면 True.
 
     ## 왜 한 문장인가 (TASK-20260831T100000)
@@ -703,22 +704,28 @@ def set_runner_report(cur, raw_token: str, capabilities: str | None,
         capabilities = None
     csv = serialize_runner_features(features)
     ver = str(agent_version or "").strip()[:32]
+    # 지문은 **모양만** 강제한다(16진 6~16자) — 값의 의미는 해석하지 않고 대조에만 쓴다.
+    bld = str(agent_build or "").strip().lower()[:16]
+    if bld and not re.fullmatch(r"[0-9a-f]{6,16}", bld):
+        bld = ""
     cur.execute(
         "UPDATE WebOAuthTokens t "
         "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
         "SET t.RunnerCapabilities = COALESCE(%s, t.RunnerCapabilities), "
-        f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, t.CapabilitiesAt = {_SQL_NOW} "
+        f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, t.RunnerBuild = %s, "
+        f"    t.CapabilitiesAt = {_SQL_NOW} "
         f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
         # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 축마다 분기한다.
         "  AND ((%s IS NOT NULL "
         "        AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s)) "
         "       OR t.RunnerFeatures IS NULL OR t.RunnerFeatures <> %s "
-        "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s) "
+        "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s "
+        "       OR t.RunnerBuild IS NULL OR t.RunnerBuild <> %s) "
         # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
         f"  AND (t.CapabilitiesAt IS NULL "
         f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))",
-        (capabilities, csv, ver, token_hash(raw_token),
-         capabilities, capabilities, csv, ver, int(HEARTBEAT_MIN_WRITE_SEC)),
+        (capabilities, csv, ver, bld, token_hash(raw_token),
+         capabilities, capabilities, csv, ver, bld, int(HEARTBEAT_MIN_WRITE_SEC)),
     )
     return int(getattr(cur, "rowcount", -1) or 0) != 0
 
@@ -878,6 +885,32 @@ def count_live_runners(cur, feature: str | None = None,
     row = cur.fetchone() or (0, 0, 0)
     return {"connected": int(row[0] or 0), "listening": int(row[1] or 0),
             "with_feature": int(row[2] or 0)}
+
+
+def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str:
+    """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. 없으면 빈 문자열.
+
+    신선도 술어는 능력 조회와 같은 것을 쓴다 — 갈리면 "연결됐다는데 지문은 옛 러너의 것"
+    같은 상태가 만들어지고, 화면은 둘 중 어느 쪽을 믿을지 정해야 한다.
+    """
+    if not account_id:
+        return ""
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    try:
+        cur.execute(
+            "SELECT t.RunnerBuild FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
+            "  AND t.LastHeartbeatAt IS NOT NULL "
+            f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+            "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+            (int(account_id), window),
+        )
+        row = cur.fetchone()
+    except Exception:
+        # 컬럼이 아직 없는 배포 — "모른다" 로 다룬다(대조하지 않는다).
+        return ""
+    return str((row or [""])[0] or "").strip()
 
 
 def account_bridge_defaults(cur, account_id: int) -> tuple[str, str]:

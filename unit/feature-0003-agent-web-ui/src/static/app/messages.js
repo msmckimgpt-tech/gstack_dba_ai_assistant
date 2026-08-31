@@ -603,6 +603,9 @@ function buildSqlStepPanel(step) {
   return panel;
 }
 
+//: 페이징 시 결과셋 위에 남기는 여백(px). 0 으로 두면 헤더가 패널 상단에 딱 붙어 잘린 듯 보인다.
+const _NAV_REVEAL_MARGIN_PX = 6;
+
 function buildSqlNavigator(sqlSteps) {
   const root = document.createElement("div");
   root.className = "sql-navigator";
@@ -676,30 +679,58 @@ function buildSqlNavigator(sqlSteps) {
     // 들어오는 패널이 더 크면 floor 를 키운다(축소만 방지, 확장은 허용).
     preserveHeight();
   }
+  //: 페이징한 결과셋을 **자기 스크롤 패널의 맨 위**로 올린다.
+  //:
+  //: 사용자 제보 2026-08-31: "쿼리데이터 결과셋을 페이징 할 때 마다 해당 위치로 내부 패널의
+  //: 스크롤이 이동되도록". 상세가 `max-height` 패널이 된 뒤로는 ◀▶ 로 넘긴 결과가 패널
+  //: 스크롤 아래에 가려 있을 수 있다 — 넘겼는데 화면이 안 바뀐 것처럼 보인다.
+  //:
+  //: ⚠ `scrollIntoView` 를 쓰지 않는다. 그것은 **조상 스크롤러 전부**를 움직여 대화 로그와
+  //:   페이지까지 끌고 간다 — 이 cycle 이 없애려는 바로 그 증상이다. 자기 패널의 `scrollTop`
+  //:   만 계산해서 옮긴다.
+  function revealInPanel() {
+    const scroller = root.closest(".message-details-body");
+    if (!scroller) return;   // 아직 DOM 에 붙기 전(빌드 중 첫 update) — 옮길 패널이 없다
+    const delta = root.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    scroller.scrollTop += delta - _NAV_REVEAL_MARGIN_PX;
+  }
+  //: 전환 후 레이아웃(패널 교체 + minHeight floor)이 확정된 뒤에 재야 한다 — 같은 프레임에
+  //: 재면 교체 전 높이로 계산해 어긋난다.
+  //:
+  //: **두 프레임에 걸쳐 재적용**한다. 표 렌더·폰트 적용·동적 높이가 다음 프레임 이후에
+  //: 확정되면 첫 계산이 수 px~수십 px 어긋나 헤더가 가려진다(codex 적대 리뷰 P2). 이
+  //: 저장소의 사이드 패널 스크롤 복원(`_scheduleStepPanelScroll`)도 같은 규약이다.
+  function pageTo(nextIdx) {
+    const next = Math.min(Math.max(nextIdx, 0), sqlSteps.length - 1);
+    if (next === activeIdx) return;
+    activeIdx = next;
+    update();
+    revealInPanel();
+    requestAnimationFrame(() => {
+      revealInPanel();
+      requestAnimationFrame(revealInPanel);
+    });
+  }
   function go(delta) {
-    const next = Math.min(Math.max(activeIdx + delta, 0), sqlSteps.length - 1);
-    if (next !== activeIdx) {
-      activeIdx = next;
-      update();
-    }
+    pageTo(activeIdx + delta);
   }
   function goTo(idx) {
-    const next = Math.min(Math.max(idx, 0), sqlSteps.length - 1);
-    if (next !== activeIdx) {
-      activeIdx = next;
-      update();
-    }
+    pageTo(idx);
   }
 
   prevBtn.addEventListener("click", (evt) => {
     evt.preventDefault();
     go(-1);
-    root.focus();
+    // `preventScroll` — 기본 focus() 는 조상 스크롤러를 함께 움직여 페이지를 끌고 간다.
+    // 스크롤은 `revealInPanel` 이 자기 패널 안에서만 책임진다.
+    root.focus({ preventScroll: true });
   });
   nextBtn.addEventListener("click", (evt) => {
     evt.preventDefault();
     go(1);
-    root.focus();
+    // `preventScroll` — 기본 focus() 는 조상 스크롤러를 함께 움직여 페이지를 끌고 간다.
+    // 스크롤은 `revealInPanel` 이 자기 패널 안에서만 책임진다.
+    root.focus({ preventScroll: true });
   });
   root.addEventListener("keydown", (evt) => {
     // 내부 input/textarea에 포커스가 있으면 무시

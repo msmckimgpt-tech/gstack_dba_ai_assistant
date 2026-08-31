@@ -4941,7 +4941,6 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-31T01:03:05+09:00
-
 ## CHG-20260831T193000-attach-lineage-visibility 첨부 계보 «비교 가시성» 재설계 — 공통영역 그룹 카드 + 분기 레일 + 그룹 레벨 비교
 - 같은 파일명의 계보들을 **공통영역 카드**(`.attach-lineage-group`)로 감싼다. 종전에는 평면 형제 행이라 같은 파일의 갈래와 무관한 다른 파일이 시각적으로 동급이었다 — 판별하려면 파일명을 글자 단위로 대조해야 했다(NN/g: enclosure 가 근접성을 압도).
 - 렌더 순서 확정(`_orderedArr`) — 카드는 연속한 형제만 감쌀 수 있으므로 그룹을 **첫 멤버 자리에 통째로** 방출한다(목록 전체 순서 보존, 그룹 내부는 오래된 것 → 갈라져 나온 것).
@@ -4969,3 +4968,47 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Verification: 회귀 9건 추가(총 28건) — 각 조치를 **구조로** 잠금(§16.7 G10). pytest `feature-0003`+`feature-0002` **4986 passed / 5 skipped** · `node --check` PASS · **PB-0008 재실측**: `role=group` · aria-label `IMMEDIATE_LEAVE_MEMBER.sql — 같은 이름의 계보 2개` · 행 이름 `…(AI 계보, 갈라져 나옴, 2개 중 2번째) 원문 보기` · `aria-expanded` false→true→false · computed 테두리 `rgb(168,165,152)` · 레일 `rgb(140,138,124)` · 칩 `rgb(90,88,82)` · 파일명 `rgb(107,105,96)`
 - Files: `static/app/composer.js`, `static/app/attach-diff.js`, `static/css/chat.css`, `tests/test_attach_lineage_group_ui.py`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`
 - Timestamp: 2026-08-31T20:15:00+09:00
+## CHG-20260831T1827-connect-modal-autoclose 연결 성립 시 토스트 + 모달 자동 닫기
+- `static/app/connect-modal.js`: 연결이 **실제로 성립한 순간**(서버 판정 `listening: true`)에
+  토스트로 알리고 모달을 닫는다. 종전에는 어느 경로로 연결되든 창이 남았고, 기본 경로(1단계
+  명령을 터미널에 붙여넣기)는 모달 밖에서 끝나므로 사용자가 손으로 닫아야 «내 AI 대기 중»
+  배지를 볼 수 있었다 — 그 배지를 모달 자신이 덮고 있었다.
+- 신설: `_announceConnected()`(토스트+상태문구+닫기 단일 통로, 열려 있는 동안 1회) ·
+  `_noteListeningForModal()`(매 조회의 대기 상태를 모달 판정에 반영) · 상태 3종(`_modalOpen` ·
+  `_openBaselineListening` · `_announced`).
+- 변경: `openConnectModal()` 이 열림 상태를 세우고 즉시 1회 조회 + 지켜보기 시작 ·
+  `closeConnectModal()` 이 지켜보기 종료 · `_syncGatePoll()` 의 폴링 사유를
+  `_composeBlocked || _modalOpen` 으로 확장 · `_launchRunner()` 성공 경로가 같은 통로로 합류
+  (종전 `_status(...)` 단독 → `_announceConnected()`).
+- **판정 시점을 «토큰 발급» 이 아니라 «대기 중이 됨» 으로 둔 이유**: 발급 시점에 닫으면 모달이
+  스스로 "이 창을 닫으면 다시 볼 수 없습니다" 라고 알린 그 명령이 사라지는데, 정작 연결은
+  아직 아무 일도 일어나지 않았다.
+- **기준선을 «연 뒤의 첫 관측» 으로 둔 이유**: 직전에 알던 값을 쓰면 다른 창에서 이미 연결해 둔
+  사용자의 낡은 «연결 안 됨» 이 기준선이 되어 **창이 열리자마자 닫힌다** — 그 사용자는 대개 새
+  연결 정보를 만들러 온 것이다.
+- **`_announced` 를 close 에서 되돌리지 않는 이유**(자체 적대 검토 적발): 알리는 쪽이 곧 닫는
+  쪽이라 닫으면서 풀면, 같은 성공을 관측한 다른 경로(폴링 ↔ `[내 AI 실행]` 대기 루프는 겹친다)가
+  빗장 풀린 문으로 다시 들어와 토스트를 두 번 띄운다.
+- 순환 import(`connect-modal.js` → `app.js`)는 이 번들의 기존 패턴이다(`messages.js`·`sidebar.js`·
+  `composer.js` 가 같은 형태). 토스트 표면을 모달이 따로 만들면 같은 사건이 화면마다 다르게 뜬다.
+- Verification: 신규 `tests/verify_connect_modal_autoclose.mjs` **10/0 PASS**(실제 모듈을 최소 DOM
+  shim 위에서 구동하는 행위 테스트) · **G11-b 결함 주입 실증** — 수정 전 코드에서 A3·A4·A5·D1
+  **4건 FAIL** 확인.
+- Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
+  `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose.md`.
+- Cross-ref: TASK.md `20260831T1827-connect-modal-autoclose` · REVIEW.md
+  `REV-20260831T182700-connect-modal-autoclose`
+- Timestamp: 2026-08-31T18:27:00+09:00
+
+## CHG-20260831T193500-connect-modal-autoclose-postdeploy POST-DEPLOY 실측 증적 (docs-only)
+- 라이브 배포본 **`0fad9129`** 에서 PB-0008 Windows-browser 실측 — 전이 후 `modal_hidden:true`
+  + 토스트 1건 + 배지 «내 AI 대기 중». PRE(`1c0864dc`, 모달 남고 알림 0)와 같은 절차로 대비.
+- 증적: `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose-postdeploy.md` +
+  `docs/evidence/connect-modal-autoclose/{predeploy-modal-stays-open,postdeploy-1-modal-open,postdeploy-2-toast-and-closed}.png`
+- 배포 체크리스트: 무중단 blip **0** · 대화 스모크 PASS · surge 잔존 0 · 자산 스탬프
+  `241f5e208040` → `16960c2c319d` · web-a/b 둘 다 `0fad9129`.
+- **CI 사실 기록**: PR #1447 은 `UNSTABLE` 로 머지됐다 — Actions job `steps=0` 미실행(전 브랜치·
+  main push 동일). CI 정적 게이트 4종을 로컬 전건 PASS 로 대체 충족, Python 변경 0건. 운영 조치 필요.
+- Files: `docs/{TASK,REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-postdeploy.md`,
+  `docs/evidence/connect-modal-autoclose/*.png`. 코드 변경 0.
+- Timestamp: 2026-08-31T19:35:00+09:00
