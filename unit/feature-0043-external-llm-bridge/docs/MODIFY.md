@@ -1928,3 +1928,19 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
 - 엣지 `/healthz` 200 · soak 통과 · caddy `no upstreams available` **0건** · RestartCount 0
 - 자기정정 1건: 하네스 기대 해시가 배포 전 러너 값이라 `MISMATCH` 가 났고, 3자 대조로
   «상수 stale» 임을 확정했다(수신 실패 아님). 불일치를 WARN 으로 강등하지 않았다.
+
+## CHG-20260831T190000-verify-anchor-fix — 침묵 처리 계약을 구조로 잠금 (P0-AG 후속)
+
+**요구**: 직전 커밋에서 임시 디버그 로그를 제거하자 계약 테스트가 앵커 문자열을 잃고 깨졌다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `routers/oauth_as.py` | 침묵 처리 주석의 원인 서술 정정(예외가 아니라 상주 프로세스의 옛 모듈) |
+| `tests/test_model_catalog_bridge_mode.py` | 앵커를 문자열에서 **`except` 블록 구조**로 — `runner_stale = False` 와 `exc_info=True` 가 그 블록 안에 함께 있는지 본다 |
+
+### 왜
+
+주석 한 줄을 고치면 깨지는 테스트는 계약을 지키는 것이 아니라 **글자를 지키는 것**이다.
+잠글 것은 "판정 실패가 거짓 경고가 되지 않고, 그러면서 추적 가능하다" 이지 특정 문구가 아니다.
