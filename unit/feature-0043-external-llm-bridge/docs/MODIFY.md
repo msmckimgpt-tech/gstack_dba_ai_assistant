@@ -1480,6 +1480,56 @@ codex 적대 리뷰 **P1 0건**, P2/P3 8건 중 6건 반영·2건 근거 기각.
 축 복구만 끄려면 러너에서 `--refresh-caps` 없이 기존 `config.json` 을 쓰면 되고, 계정 기본값은
 컬럼이 NULL 이면 종전과 동일하게 목록 첫 항목이 시작점이 된다(두 축 모두 폴백이 종전 동작).
 
+## CHG-20260831T124500-ai-claude-feature-0043-wsl-scheme-handler — 핸들러를 «브라우저가 도는 OS» 에 등록
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 라이브 제보 — "'내 AI 실행' 을 통해 연결을 시도했지만, 연결이 진행되지 않는것으로 확인되었습니다."
+- **위험도**: Major (§12.3 — 사용자가 자기 머신에서 실행하는 설치 스크립트가 Windows 레지스트리
+  HKCU 에 쓰게 된다. 관리자 권한 불요·사용자 범위·해제 명령 동반)
+- **승인**: 사용자 결정 2026-08-31 (AskUserQuestion — "A+B 전부": 동작하게 만들되 실패 시 정직하게 강등)
+
+### 원인 (라이브 실측)
+
+| 관측 | 값 |
+|---|---|
+| Windows `HKCU\Software\Classes\mysql-ai-bridge` | **없음** |
+| WSL `~/.local/share/applications/mysql-ai-bridge.desktop` | 있음 (08-31 10:03) + xdg-mime 기본값 설정됨 |
+| 러너 | WSL `/home/claude-corp/.mysql-ai-bridge/` — 설치·동작 이력 있음, 현재 프로세스 없음 |
+| 같은 계정 당일 토큰 4건 | `LastHeartbeatAt` **전부 NULL** (러너가 그 토큰을 집은 적 없음) |
+
+`register_handler()` 가 `uname` 으로 갈라 **설치 셸이 도는 OS** 에 등록했다. 버튼을 누르는 주체는
+셸이 아니라 **브라우저**다. 등록은 성공했고 스크립트는 "등록했습니다" 라고 말했고 Windows
+브라우저는 그것을 보지 못했다 — 사용자는 동작한다고 믿고 눌렀고 아무 일도 일어나지 않았다.
+
+### 변경 내용
+
+- `bridge_setup.sh`
+  - `is_wsl()` / `win_exe()` / `register_handler_windows()` 신규. WSL 이면 Windows HKCU 에
+    스킴을 등록하고 핸들러가 `wsl.exe -d <배포판> -u <사용자> -- launch.sh "%1"` 로 되돌아온다.
+  - 등록은 PowerShell **스크립트 파일**로 수행(WSL→Win32 인자 변환에서 따옴표가 먹히지 않게).
+    쓰기 후 **조회로 사후검증**하고, 실패면 등록 성공으로 처리하지 않는다.
+  - 보고 분기 `_handler_rc=3` 신설 — WSL 인데 Windows 등록 실패면 「등록했습니다」를 말하지
+    않고 사유 + "버튼은 동작하지 않습니다" 를 낸다.
+  - 생성되는 `launch.sh` 에 `bail()` — tty 에 붙어 있으면 오류 후 20초 붙잡는다(핸들러가 여는
+    콘솔이 즉시 닫혀 오류가 사라지던 문제).
+  - 해제 안내에 Windows 레지스트리 키 추가.
+- `connect-modal.js`
+  - `_launchRunner` 재작성 — hidden iframe → **최상위 이동**(클릭 핸들러 안에서 동기 실행),
+    최대 30초(8회) 상태 재조회, 응답 없으면 실패로 강등 + 1단계 명령 강조·스크롤.
+  - `refreshConnState()` 가 읽은 값을 반환(판정 단일화, 낡은 응답·실패는 `null`).
+  - `_revealCommand()` — 스크롤 기준은 **상태 문구**(모달 맨 아래). 명령 기준으로 잡으면 방금
+    띄운 실패 문구가 화면 밖에 남는다(PB-0008 실측).
+- `search-audit.css` — `.connect-modal-code.is-attention` 강조.
+- 서빙본 `static/agent/bridge_setup.sh` 동기화(사용자가 내려받는 것은 서빙본이고 체크섬도 거기서 난다).
+
+### 실측 근거 (실 Windows + WSL)
+
+- `-d "Ubuntu"` 형태는 **무동작**(wsl.exe 가 따옴표를 이름의 일부로 읽는다) · `-d Ubuntu` 는 3/3 기동.
+- 크롬 hidden iframe 은 외부 프로그램 허용 판정에 **도달 흔적조차 없음**; `location.href` 는
+  도달한다("Not allowed to launch … because a user gesture is required" 로그).
+- 미등록 스킴을 최상위로 열어도 페이지는 그대로(URL·제목 불변) — iframe 을 쓰던 근거 소멸.
+- 클릭에서 기동까지 4초는 부족, 8초에 3/3 성공 → 대기 창 30초.
+
 ## CHG-20260831T132500-ai-claude-feature-0043-live-steps-postdeploy — POST-DEPLOY 시각검증 증적
 
 `CHG-20260831T113350-…` 의 라이브 검증. 배포본 `74e2672c` 실 Windows 브라우저(PB-0008)에서

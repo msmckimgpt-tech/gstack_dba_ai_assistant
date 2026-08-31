@@ -3474,6 +3474,13 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 이 커밋에서 대체 수행한 것: 위임 계약 회귀 15건(형식 정합·이음매 순서·러너 프레이밍·
   프롬프트 평탄화 순서) + 전량 green(6253+) + route 골든 대조(추가 1·제거 0).
 
+### Run — TASK-20260831T160000-console-job-wiring (POST-DEPLOY 보완)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**(배포본 `d550db16`). 신규 ESM 모듈 로드 ·
+  조작면 게이트 무회귀 · 폴링 엔드포인트 404 계약 · 종류별 위임 판정(`delegable_jobs`) 확인.
+  위임 **왕복 e2e** 는 `console_jobs` 신고 러너가 사용자 머신에 있어야 해 미관측 — 사용자
+  확인에 위임. 증적: `docs/test-runs.d/TASK-20260831T160000-console-job-wiring-postdeploy.md`
+
 ### Run — 20260831T1445-conv-last-activity-updatedat ("최근 갱신" 이 첫 턴 시각에 고정되던 결함)
 
 - **단위/구조**: 신규 2종 **20 PASS** — `feature-0002/tests/test_conv_activity_touch.py`(8: touch
