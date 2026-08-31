@@ -6166,3 +6166,18 @@ baseline-first-obs→G1 / announced-guard→E3 / clearinterval→E2b·F2a·F2b.
   디자인 일관성 심사, UX 카피 톤 심사.
 - Timestamp: 2026-08-31T19:35:00+09:00
 - Human Approval Needed: no
+
+## REV-20260831T193500-connect-modal-autoclose-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260831T1827-connect-modal-autoclose`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-08-31T19:35:00+09:00
+- Human Approval Needed: no
+- **실측 요지**: 배포본 `0fad9129`(자산 `?v=16960c2c319d`)에서 전이 후 `modal_hidden:true` +
+  토스트 「내 AI가 연결되었습니다. 이제 질문을 보낼 수 있습니다.」 + 배지 «내 AI 대기 중».
+  PRE(`1c0864dc`)는 같은 절차에서 모달이 남고 알림 0 이었다 — 두 스크린샷이 그 차이를 담는다.
+- **미수행(정직 표기)**: 실 러너 기동 end-to-end. 조회 응답만 가로챈 프론트엔드 계약 검증이며,
+  검증 후 `fetch` 원복·모달 닫기·실제 상태 재조회로 브라우저를 원상 복구했다.
+- **CI**: PR #1447 은 Actions 전면 미실행(job `steps=0`) 상태에서 `UNSTABLE` 로 머지됐다.
+  CI 정적 게이트 4종을 로컬에서 전건 PASS 로 대체 충족했고 Python 변경은 0건이다. 이 사실을
+  숨기지 않고 기록한다 — 복구 전까지 모든 PR 이 CI 미검증으로 머지된다(운영 조치 필요).
