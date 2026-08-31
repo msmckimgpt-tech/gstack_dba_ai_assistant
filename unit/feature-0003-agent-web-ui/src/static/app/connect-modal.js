@@ -8,6 +8,11 @@
 //
 // 지시문 본문은 **서버가 만든다**(`/api/ai/connect/token` 의 `handoff`). 화면이 조립하면
 // 단독 페이지와 문안이 갈리고, 한쪽만 고쳐지는 순간 어떤 사용자는 옛 안내를 받는다.
+//
+// 토스트는 이 화면의 정본(`app.js`)을 쓴다 — 모달이 자기 알림 표면을 따로 만들면 같은 사건이
+// 화면마다 다른 모양으로 뜬다. 순환 import 는 이 번들의 기존 패턴이다(messages·sidebar·composer).
+import { showToast } from "../app.js?v=dev";
+
 const $ = (id) => document.getElementById(id);
 
 let _lastFocus = null;
@@ -22,6 +27,33 @@ let _lastFocus = null;
 // 무결성 값(CA 지문·체크섬)이 빠지고 — 브라우저는 그 값을 모른다 — 대조 없는 설치가 된다.
 let _launch = null;      //: 서버가 준 {posix, windows, protocol}
 let _osTab = "posix";    //: 지금 보여 주는 명령 (사용자가 탭으로 바꾼다)
+
+// ── 연결이 성립하면 알리고 닫는다 (사용자 요청 2026-08-31) ────────────────────
+//
+//   "정상적으로 연결이 진행되었을 경우 정상적으로 연결되었다는 토스트 메세지 출력과 함께
+//    모달을 닫도록"
+//
+// 종전에는 어느 경로로 연결되든 모달이 그대로 남았다. 기본 경로(1단계 명령을 터미널에 붙여넣기)
+// 는 **모달 밖에서** 끝나므로, 사용자는 다 해 놓고도 이 창을 손으로 닫아야 비로소 «내 AI 대기 중»
+// 배지를 볼 수 있었다 — 모달이 그 배지를 가리고 있기 때문이다. 결과를 아는 쪽(화면)이 알리고
+// 치운다.
+//
+// ⚠ **판정은 «연결 준비» 가 아니라 «대기 중이 됨» 이다.** 토큰·명령을 발급한 시점에 닫으면
+// "이 창을 닫으면 다시 볼 수 없습니다" 대로 명령을 잃는데, 정작 연결은 아직 아무 일도 일어나지
+// 않았다. 서버가 판정한 `listening` 만 신호로 쓴다.
+//
+// ⚠ **«열려 있는 동안의 전이» 만 센다.** 이미 연결된 사용자가 (새 토큰을 만들려고) 이 창을 열 수
+// 있고, 그때 첫 조회의 `listening:true` 를 성공으로 읽으면 **열자마자 닫히는** 창이 된다.
+let _modalOpen = false;
+let _openBaselineListening = null;  //: 열었을 때의 대기 상태 (null = 아직 모름)
+let _announced = false;             //: 이번에 열린 동안 이미 알렸는가 (경로 둘이 겹쳐도 1회)
+//: 창의 세대. 열 때마다 오른다 — 창보다 오래 사는 비동기 루프(`[내 AI 실행]` 대기)가 자기가
+//: 시작한 창이 아직 그 창인지 확인하는 유일한 수단이다.
+let _modalEpoch = 0;
+//: 마지막으로 화면에 반영된 대기 상태. 창을 열 때의 기준선을 첫 조회를 기다리지 않고 잡는다 —
+//: 기다렸다가 그 첫 조회가 실패하면 다음 정상 응답(성공)을 기준선으로 삼아 **영영 알리지 못한다**
+//: (codex 1R P2-3).
+let _lastKnownListening = null;
 
 function _status(msg, kind) {
   const el = $("connectModalStatus");
@@ -59,9 +91,21 @@ export function openConnectModal() {
   _osTab = /win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix";
   _paintOsTab();
   _status("");
+  // 기준선은 **이미 알고 있는 값**이 있으면 그것으로 잡고, 없을 때만 첫 관측을 기다린다.
+  // 첫 관측만 쓰면, 여는 직후 조회가 실패했을 때 그 다음 정상 응답(= 성공)을 기준선으로 삼아
+  // **영영 알리지 못한다** (codex 1R P2-3). 알고 있는 값을 쓰면 그 창은 이미 배지로도 같은
+  // 상태를 보이고 있으므로, 판정과 화면이 갈리지 않는다.
+  _modalOpen = true;
+  _openBaselineListening = _lastKnownListening;
+  _announced = false;
+  _modalEpoch += 1;
   overlay.hidden = false;
   document.addEventListener("keydown", _onKeydown);
   if (make) make.focus();
+  // 열려 있는 동안은 상태를 지켜본다 — 기본 경로(터미널 명령)는 이 창 밖에서 끝나므로,
+  // 지켜보지 않으면 «연결됐다» 는 사실이 이 화면에 영영 도착하지 않는다.
+  _syncGatePoll();
+  try { refreshConnState(); } catch (_) { /* 조회 실패는 여는 동작을 막지 않는다 */ }
   return true;
 }
 
@@ -99,7 +143,51 @@ export function closeConnectModal() {
   if (launchBtn) launchBtn.hidden = true;
   const result = $("connectModalResult");
   if (result) result.hidden = true;
+  // 지켜보기를 멈춘다 — 잠금이 걸려 있으면 그쪽 사유로 폴링이 유지되고, 아니면 여기서 멎는다.
+  //
+  // ⚠ `_announced` 는 **여기서 되돌리지 않는다.** 성공을 알리는 쪽이 곧 닫는 쪽이라, 닫으면서
+  //   풀어 버리면 같은 성공을 관측한 다른 경로(폴링과 `[내 AI 실행]` 대기 루프는 겹친다)가
+  //   빗장 풀린 문으로 다시 들어와 토스트를 두 번 띄운다. 다음에 열 때 초기화한다.
+  _modalOpen = false;
+  _openBaselineListening = null;
+  // 세대를 올려 두면, 아직 도는 `[내 AI 실행]` 대기 루프가 다음 회차에서 스스로 물러난다.
+  _modalEpoch += 1;
+  _syncGatePoll();
   try { if (_lastFocus && _lastFocus.focus) _lastFocus.focus(); } catch (_) { /* 무시 */ }
+}
+
+/** 연결이 성립했음을 알리고 창을 치운다. 열려 있는 동안 **1회**.
+ *
+ *  토스트로 알리는 이유: 모달이 닫히면 그 안의 상태 문구는 함께 사라진다. 사용자가 마지막으로
+ *  받는 확인이 «창이 사라졌다» 뿐이면, 성공인지 자기가 잘못 눌러 닫힌 것인지 구별되지 않는다.
+ */
+function _announceConnected() {
+  if (_announced) return;
+  _announced = true;
+  const msg = "내 AI가 연결되었습니다. 이제 질문을 보낼 수 있습니다.";
+  // 상태 문구도 같이 세운다 — 닫기가 어떤 이유로 실패해도(오버레이 부재 등) 창 안에 결과가
+  // 남아, 사용자가 성공을 못 본 채로 남겨지지 않는다.
+  _status(msg, "ok");
+  try { showToast(msg); } catch (_) { /* 알림 실패가 닫기를 막지 않는다 */ }
+  closeConnectModal();
+}
+
+/** 이번 조회의 대기 상태를 모달 판정에 반영한다 (`_paintConn` 에서 호출).
+ *
+ *  `epoch` 는 그 조회가 **출발한 시점의 창 세대**다. 조회가 날아가 있는 동안 창을 닫고 다시
+ *  열었으면, 그 응답은 지금 열려 있는 창의 이야기가 아니다 — 새 창의 기준선에 대고 «전이» 로
+ *  읽으면 방금 받은 명령을 지우며 닫힌다. `_connSeq` 의 최신성 검사가 대개 먼저 걸러내지만,
+ *  그것은 «요청 순서» 의 성질이지 «창 경계» 의 보장이 아니다 (codex 2R).
+ */
+function _noteListeningForModal(listening, epoch) {
+  if (!_modalOpen) return;
+  if (epoch !== undefined && epoch !== _modalEpoch) return;
+  if (_openBaselineListening === null) {
+    _openBaselineListening = listening;   // 첫 관측 = 기준선
+    return;
+  }
+  if (_openBaselineListening === true) return;   // 열 때 이미 연결됨 — 전이가 아니다
+  if (listening === true) _announceConnected();
 }
 
 async function _make() {
@@ -230,6 +318,9 @@ async function _launchRunner() {
   // ⚠ **이번 시도 동안의** 관측만 센다. 세대를 올리면 이전 시도(그리고 클릭 직전에 출발해
   //   지금 도착하는 요청)의 관측이 이 판정에 새지 않는다.
   const attempt = ++_launchAttempt;
+  //: 이 대기가 어느 «창» 의 것인지. 창을 닫거나 다시 열면 세대가 바뀌고, 그때부터 이 루프의
+  //: 관측은 남의 창 이야기가 된다 (codex 1R P1-1).
+  const epoch = _modalEpoch;
   _lastObserved = null;
   // 벽시계 상한 — 요청별 상한만으로는 최악(대기 30초 + 8×8초)이 90초를 넘고, Abort API 가
   // 없는 환경에서는 아예 안 끝난다(codex 2R P1-3·P2). 루프 자체에 마감을 둔다.
@@ -238,7 +329,11 @@ async function _launchRunner() {
     let observed = 0;   //: 실제로 답을 받아 본 횟수 (조회 실패와 «아직 아님» 을 가른다)
     for (const ms of _LAUNCH_WAIT_MS) {
       if (Date.now() >= deadline) break;
+      // ⚠ 이 루프는 창보다 오래 산다. 그 사이 창이 닫혔거나 **다시 열렸으면** 이 대기는 남의
+      //   창에 대고 말하는 것이 된다 — 조용히 물러난다 (codex 1R P1-1).
+      if (epoch !== _modalEpoch) return;
       await _sleep(ms);
+      if (epoch !== _modalEpoch) return;
       let body = null;
       // 조회 자체에도 상한을 씌운다 — `fetch` 가 어떤 이유로든 안 끝나면 여기서 끊는다.
       try { body = await _raceTimeout(refreshConnState(), _STATUS_FETCH_TIMEOUT_MS); }
@@ -248,7 +343,15 @@ async function _launchRunner() {
       //   그때 `null` 을 «대기 안 함» 으로 읽으면, 다른 요청이 이미 «대기 중» 을 반영했는데도
       //   마지막 회차가 실패 문구를 씌운다. 그래서 직전에 **관측된** 값도 함께 본다.
       if (_isListeningNow(body, attempt)) {
-        _status("내 AI가 대기 중입니다. 이제 질문을 보낼 수 있습니다.", "ok");
+        // ⚠ **여기서 닫지 않는다** (codex 1R P1-2). 닫기 판정은 `_noteListeningForModal` 한
+        //   곳에만 둔다 — 그쪽은 «이 창을 연 뒤의 false → true 전이» 를 보고, 이쪽은 그 기준선을
+        //   모른다. 두 벌로 두면 «다른 컴퓨터의 러너가 이미 대기 중» 인 상태에서 새 컴퓨터용
+        //   명령을 발급하고 이 버튼을 누른 순간, 남의 러너 때문에 «성공» 으로 닫혀 방금 받은
+        //   명령이 사라진다.
+        //
+        //   이 회차가 진짜 전이였다면 위 `refreshConnState()` 안에서 이미 알리고 닫혔다
+        //   (`_paintConn` → `_noteListeningForModal`). 그때는 이 문구가 닫힌 창에 남을 뿐이다.
+        if (!_announced) _status("내 AI가 대기 중입니다. 이제 질문을 보낼 수 있습니다.", "ok");
         return;
       }
     }
@@ -377,16 +480,32 @@ export function onComposeGateChange(fn) {
 // 돌고 풀리는 즉시 멈춘다. 잠기지 않은 사용자(대다수·대부분의 시간)에게는 요청이 0이다.
 const _GATE_POLL_MS = 5000;
 let _gatePollTimer = null;
+let _gateInFlight = false;   //: 폴링이 띄운 조회가 아직 도는 중인가 (겹침 방지 — codex 1R P2-4)
 
 function _syncGatePoll() {
-  if (_composeBlocked && !_gatePollTimer) {
+  // 지켜볼 사유는 둘 — 컴포저가 잠겨 있거나(원래 축), 연결 모달이 열려 있거나(성립 감지).
+  // 어느 쪽도 아니면 즉시 멎는다: 잠기지 않고 창도 닫은 사용자에게는 요청이 0이다.
+  const wantPoll = _composeBlocked || _modalOpen;
+  if (wantPoll && !_gatePollTimer) {
     _gatePollTimer = setInterval(() => {
       // 탭이 안 보이면 건너뛴다 — 배경 탭이 종일 요청을 보내지 않게. 돌아오는 순간은
       // `visibilitychange` 가 따로 잡는다.
       if (document.hidden) return;
-      refreshConnState();
+      // ⚠ 앞선 조회가 아직 안 끝났으면 새로 보내지 않는다 (codex 1R P2-4). 서버 응답이 폴링
+      //   간격보다 느리면(6초 > 5초) 매 응답이 다음 요청의 세대 검사에 걸려 **전부 버려지고**,
+      //   그동안 러너가 붙어도 이 화면은 영영 모른다. 겹치지 않게 하면 세대 검사가 버릴 것이
+      //   없다.
+      if (_gateInFlight) return;
+      _gateInFlight = true;
+      // ⚠ 상한을 씌워 **반드시** 풀리게 한다 (codex 2R). 조회가 영원히 settle 되지 않는 환경
+      //   (`AbortController` 조차 없어 `_fetchStatus` 의 상한이 걸리지 않는 경우)에서 플래그가
+      //   선 채로 굳으면, 겹침을 막으려던 가드가 **폴링을 영구 정지**시킨다 — 고치려던 것보다
+      //   나쁜 실패다.
+      _raceTimeout(Promise.resolve(refreshConnState()).catch(() => null),
+                   _STATUS_FETCH_TIMEOUT_MS + 2000)
+        .then(() => { _gateInFlight = false; }, () => { _gateInFlight = false; });
     }, _GATE_POLL_MS);
-  } else if (!_composeBlocked && _gatePollTimer) {
+  } else if (!wantPoll && _gatePollTimer) {
     clearInterval(_gatePollTimer);
     _gatePollTimer = null;
   }
@@ -429,7 +548,11 @@ function _paintGate(body) {
   }
 }
 
-function _paintConn(connected, listening) {
+function _paintConn(connected, listening, epoch) {
+  // 배지 요소가 없어도 «연결됨» 판정은 살아 있어야 한다 — 모달의 성공 감지가 배지의 존재에
+  // 얹혀 있으면, 배지를 감추는 화면에서 연결이 조용히 알려지지 않는다.
+  _lastKnownListening = !!listening;
+  _noteListeningForModal(!!listening, epoch);
   const el = $("aiConnState");
   if (!el) return;
   _connKnown = connected;
@@ -510,6 +633,8 @@ export async function refreshConnState() {
   //   요청이 클릭 뒤에 도착했을 때 «이번 시도의 관측» 으로 오인된다 — 그 값이 `listening:true`
   //   면 이후 조회가 전부 실패해도 성공 메시지가 뜬다(codex 3R P1: 2R 수정이 남긴 창).
   const atStart = _launchAttempt;
+  //: 이 조회가 출발한 시점의 창 세대. 응답이 돌아왔을 때 그 창이 아직 그 창인지 가른다.
+  const epochAtStart = _modalEpoch;
   try {
     const r = await _fetchStatus();
     // HTTP 오류는 **관측이 아니다** — 401·503 이 JSON 본문을 실어 보내면 「받아 봤다」로 세어져
@@ -530,7 +655,7 @@ export async function refreshConnState() {
       _paintGate({ compose_blocked: false });
       return b || null;
     }
-    _paintConn(!!b.connected, !!b.listening);
+    _paintConn(!!b.connected, !!b.listening, epochAtStart);
     _paintGate(b);
     return b;
   } catch (_) {
