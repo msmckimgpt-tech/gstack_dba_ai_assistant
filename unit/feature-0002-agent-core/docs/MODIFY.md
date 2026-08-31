@@ -44,6 +44,20 @@ source_of_truth: true
   (`CHG-20260831T144500-conv-last-activity-effective-max`).
 - **검증**: 신규 `tests/test_conv_activity_touch.py` 8 PASS · 뮤테이션 2종 KILL(touch 호출 제거 시
   미분기·브랜치 두 테스트가 FAIL).
+- **⚠ 사후 발견 — 이 테이블에는 `updated_at` 무조건 갱신 트리거가 있다**(POST-DEPLOY 백필 중 관측):
+  `trg_core_conv_updated_at` = `BEFORE UPDATE … FOR EACH ROW EXECUTE FUNCTION set_updated_at()`
+  (baseline alembic 0001). 즉 **`core_conversations` 에 대한 모든 UPDATE 가 `updated_at` 을
+  `now()` 로 덮는다**. 두 가지 귀결:
+  1. 본 변경의 touch SQL(`SET updated_at = now()`)은 트리거와 **같은 결과**라 무해하다. 명시성을
+     위해 그대로 둔다 — 트리거에 의존해 `SET updated_at = updated_at` 같은 트릭을 쓰면 의도가
+     코드에서 사라진다. 또한 이 트리거가 있었음에도 결함이 존재했다는 사실이 진단을 확인해 준다:
+     트리거는 **그 테이블을 UPDATE 할 때만** 발동하고, 메시지 INSERT 는 그 테이블을 건드리지
+     않으므로 자동 제목 부여 외에는 발동할 계기 자체가 없었다.
+  2. **과거 시각으로 되돌리는 백필은 트리거를 우회해야 한다.** 우회 없이 `SET updated_at =
+     <과거값>` 을 실행하면 19행이 전부 실행 시각으로 밀린다(실제로 1차 백필에서 그렇게 됐고
+     같은 트랜잭션 밖에서 즉시 정정했다). 정본 절차 =
+     `BEGIN; SET LOCAL session_replication_role = 'replica'; UPDATE …; COMMIT;`
+     (alembic 0046 이 `relationship` 계열 트리거를 조건부로 바꾼 것과 달리 이 트리거는 무조건형).
 
 ## CHG-20260814T190000-ds-connect-network-guidance (데이터소스 연결 제한 안내: 머신 네트워크·VPN 확인, Minor)
 

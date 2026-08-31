@@ -65,12 +65,19 @@ source_of_truth: true
 - [x] 기존 회귀 0 (feature-0002/0003/0023/0043 전량 rc=0) — 초기 3건 파손은 SQL 목록 전체 동등
       단언이 원인, 계약 유지하며 INSERT 로 좁히고 touch 전용 테스트 신설
 - [x] 문서 정합 (TASK/REPORT/MODIFY/REVIEW/FUNCTION/TEST + feature-0002 MODIFY cross-ref)
-- [ ] 라이브 배포 + 사용자 지목 대화의 부제 실측
-- [ ] 기존 19건 `updated_at` 백필 (단조 전진 — 마지막 메시지 시각으로)
+- [x] 라이브 배포(`b35fa376`, `make deploy-web` scope=all) — web-a/web-b 동일 SHA · 엣지
+      `no upstreams available` **0건** · surge 잔존 0 · 대화 스모크 PASS
+- [x] 기존 19건 `updated_at` 백필 — 마지막 메시지 시각으로 정정, 잔여 drift **0**, 백업
+      `artifacts/conv-updatedat-backfill-20260831/before.tsv`, 목표값 대조 **19/19 일치**
+- [x] 라이브 배포본 표면 실측 — 지목 대화의 프런트 수신 값 `2026-08-31T01:54:39+00:00`
+      (= KST 10:54:39 = 마지막 메시지 시각), `touch_conversation` 배포본 존재 확인
+- [x] **사후 발견 기록** — `core_conversations` 의 `trg_core_conv_updated_at`(무조건 `now()`)
+      때문에 1차 백필이 19행을 실행 시각으로 밀었고 즉시 정정(트리거 우회). feature-0002
+      MODIFY 에 정본 절차 기록
 
 ### 9. Requested Scope
 
-- "최근 갱신 일자가 첫 대화 작성 시점에서 변경되지 않는" 결함 수정 — 진행 중
+- "최근 갱신 일자가 첫 대화 작성 시점에서 변경되지 않는" 결함 수정 — ✓ 완료(배포·백필·실측)
 
 ## 20260812T2200-attach-md-render-post — 배포본 실측으로 잔여 종결 (비-정책 doc-only)
 
