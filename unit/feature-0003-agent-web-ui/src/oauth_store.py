@@ -642,6 +642,73 @@ def account_runner_capabilities(cur, account_id: int,
     return parsed if isinstance(parsed, list) else []
 
 
+def account_bridge_defaults(cur, account_id: int) -> tuple[str, str]:
+    """이 계정이 **마지막으로 고른** (모델, 추론등급). 없으면 빈 문자열 (2026-08-31).
+
+    대화별 저장(`AgentMemoryKv` 의 `model:<account-id>`)만 있을 때는 새 대화를 열 때마다
+    목록의 첫 항목으로 되돌아가, 사용자가 매번 다시 골라야 했다. 계정 기본값은 그 시작점을
+    정하고, 대화별 저장은 **그 대화에서만** 다른 값을 쓰는 override 로 남는다.
+
+    ⚠ 여기서 **유효성을 판정하지 않는다**. 저장 시점에 유효했던 값이 지금도 유효한지는
+    "지금 연결된 러너가 무엇을 신고했는가" 에 달렸고, 그 대조는 카탈로그(`system.py`)가
+    자기 목록으로 한다. 여기서 한 번 더 걸면 두 곳의 판정이 갈리고, 갈리는 순간 한쪽이
+    사용자에게 거짓을 말한다.
+    """
+    if not account_id:
+        return "", ""
+    try:
+        cur.execute(
+            "SELECT BridgeDefaultModel, BridgeDefaultEffort FROM WebAccounts WHERE Id = %s",
+            (int(account_id),),
+        )
+        row = cur.fetchone()
+    except Exception:
+        # 컬럼이 아직 없는 배포(부트스트랩 ALTER 이전) — 기본값 없음과 같이 다룬다.
+        return "", ""
+    # ⚠ 조회 뒤도 함께 감싼다. 여기서 새는 예외는 호출부(카탈로그)의 fail-soft 로 흘러가
+    #   **러너 목록까지 통째로 비운다** — 편의 기능 하나가 선택기 전체를 지우는 형태다.
+    if not row or len(row) < 2:
+        return "", ""
+    return (str(row[0] or "").strip(), str(row[1] or "").strip())
+
+
+def set_account_bridge_defaults(cur, account_id: int, model: str | None,
+                                effort: str | None) -> None:
+    """계정 기본값을 갱신한다. **명시 선택만** 호출할 것 (2026-08-31).
+
+    폴백으로 채워진 값까지 저장하면, 사용자가 고른 적 없는 값이 계정 기본값으로 굳고 그
+    뒤의 모든 새 대화가 그것으로 시작한다 — `requested_model` 이 서버 alias 로 오염됐던
+    것과 같은 부류의 결함이다(그쪽은 질문 단위, 이쪽은 계정 단위라 더 오래 남는다).
+
+    `None` 인 축은 **건드리지 않는다**. 모델만 바꾼 요청이 등급 기본값을 지우면, 사용자는
+    한쪽을 고른 대가로 다른 쪽을 잃는다.
+    """
+    if not account_id:
+        return
+    sets, values, guards = [], [], []
+    if model is not None:
+        sets.append("BridgeDefaultModel = %s")
+        values.append(str(model).strip()[:112] or None)
+        # `<=>` 는 NULL-safe 비교다 — `<>` 로 쓰면 아직 NULL 인 계정(첫 저장)이 걸러진다.
+        guards.append("NOT (BridgeDefaultModel <=> %s)")
+    if effort is not None:
+        sets.append("BridgeDefaultEffort = %s")
+        values.append(str(effort).strip()[:16] or None)
+        guards.append("NOT (BridgeDefaultEffort <=> %s)")
+    if not sets:
+        return
+    # 값이 그대로면 쓰지 않는다. 대화 요청은 사람 속도라 증폭 위험이 하트비트만큼 크지는
+    # 않지만, 같은 모델로 계속 대화하는 흔한 사용에서 매 질문이 UPDATE 를 만들 이유가 없다.
+    sql = (f"UPDATE WebAccounts SET {', '.join(sets)} "
+           f"WHERE Id = %s AND ({' OR '.join(guards)})")
+    try:
+        cur.execute(sql, tuple(values + [int(account_id)] + values))
+    except Exception:
+        # 기본값 저장 실패가 **답변을 막지 않는다** — 이건 편의 기능이고, 이번 요청의 값은
+        # 이미 질문과 함께 굳었다(`WebAiTasks`). 다음 대화가 첫 항목으로 시작할 뿐이다.
+        pass
+
+
 def account_has_live_token(cur, account_id: int) -> bool:
     """이 계정에 **지금 실제로 통하는** access token 이 있는가.
 

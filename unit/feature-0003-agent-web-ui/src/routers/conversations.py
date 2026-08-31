@@ -4834,6 +4834,33 @@ async def ask(request: Request) -> JSONResponse:
         # dispatch **앞**에 두는 이유: 뒤에 두면 워커 enqueue·슬롯 점유·attach long-poll 이 이미
         # 일어난 뒤라 되돌릴 것이 생긴다. 여기서 갈라지면 LLM 실행 경로를 통째로 타지 않는다.
         if not _server_llm_enabled():
+            # 계정 기본값 갱신 (2026-08-31, 사용자 결정: 계정 기본값 + 대화별 override).
+            #
+            # **명시 선택만** 기록한다 — `model` 은 위 4175 줄에서 서버 기본값으로 폴백되므로
+            # 그대로 저장하면 사용자가 고른 적 없는 alias 가 계정 기본값으로 굳고, 그 뒤의
+            # 모든 새 대화가 그것으로 시작한다(질문 단위 오염보다 오래 남는다).
+            # 저장 실패는 답변을 막지 않는다 — 이번 요청의 값은 이미 질문과 함께 굳었다.
+            # ⚠ 저장 자체를 `model_explicit` 에 묶는다 (codex P1-7). `reasoning_level` 은
+            #   선택기가 보이면 사용자가 메뉴를 열지 않아도 **항상** 실려 오므로, 그것만으로
+            #   저장하면 "마지막으로 고른 값" 이 아니라 "마지막으로 전송된 계산값" 이 계정
+            #   기본값이 된다 — 다른 브라우저의 폴백이 내 기본값을 덮어쓰는 경로가 열린다.
+            #   모델 필드는 프론트가 카탈로그를 확보했을 때만 싣는다(그쪽도 이번에 좁혔다).
+            _defaults_model = model if model_explicit else None
+            if _defaults_model:
+                try:
+                    import oauth_store as _store
+
+                    _cur = conn.cursor()
+                    try:
+                        _store.set_account_bridge_defaults(
+                            _cur, int(account.get("id") or 0),
+                            _defaults_model, (reasoning_level or None))
+                        conn.commit()
+                    finally:
+                        _cur.close()
+                except Exception:
+                    logging.getLogger(__name__).debug(
+                        "bridge account defaults save failed", exc_info=True)
             agent_result = _enqueue_web_bridge_task(
                 conn=conn, account=account, conv_id=conv_id, message=message,
                 product_id=product_id_for_run,
@@ -4847,9 +4874,20 @@ async def ask(request: Request) -> JSONResponse:
                 # P0-T 가 이 경로를 닫았던 이유는 화면 값이 서버 내부 alias(`claude-haiku-4`)라
                 # 개인 AI 의 CLI 가 알지 못했기 때문이다. 이제 화면의 목록은 **연결된 러너가
                 # 하트비트로 신고한 것**이고 값도 `runtime:model` 로 온다 — 러너의 자기 어휘라
-                # 그대로 CLI 인자가 된다. 선택기가 숨겨진 상태(신고 없음)에서는 프론트가 값을
-                # 싣지 않으므로 여기로도 오지 않는다(고르지 않은 값이 굳는 일이 없다).
-                requested_model=model,
+                # 그대로 CLI 인자가 된다.
+                #
+                # ⚠ `model` 이 아니라 `model_explicit` 을 본다 (라이브 실측 2026-08-31).
+                #   위 4175 줄이 `data.get("model") or API_DEFAULT_MODEL` 로 폴백하므로,
+                #   프론트가 값을 싣지 않은 요청도 여기 도달할 때는 **이미 `claude-haiku-4` 로
+                #   채워져 있다**. 그대로 넘기면 사용자가 고른 적 없는 서버 alias 가 그 질문의
+                #   「요청 모델」로 굳고, 러너는 모르는 이름이라 버린 뒤 답변에 "요청하신 모델
+                #   claude-haiku-4 는 쓸 수 없어 기본 설정으로 답했습니다" 라는 **거짓 고지**를
+                #   붙인다. 사용자에게는 "무슨 모델로 답했는지 확인되지 않는" 상태로 보인다.
+                #   (라이브 WebAiTasks #69·#70 이 정확히 이 형태였다 — 8/28 의 #62·#65~68 은
+                #   프론트가 값을 실어 `claude`/`sonnet`/`high` 로 정상 적재됐다.)
+                #   무지정은 **무지정으로 넘긴다** — 러너가 자기 기본 설정으로 답하고, 그 사실이
+                #   화면에도 그대로 표시된다.
+                requested_model=(model if model_explicit else None),
                 reasoning_level=reasoning_level,
                 # 시스템 프롬프트 5단계 조립에 필요(역할별 지침).
                 role_id=role_id_for_run,

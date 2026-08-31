@@ -203,9 +203,12 @@ def test_runner_submits_even_on_ai_failure():
     """AI 가 실패해도 **답을 제출한다** — 침묵하면 사용자 화면이 30분간 대기 상태로 남는다."""
     src = CANON.read_text(encoding="utf-8")
     idx = src.index("if not ok or not answer.strip():")
-    tail = src[idx:idx + 900]
-    assert "submit_answer" in src[idx:idx + 1600], "실패 시 제출 경로가 없다"
-    assert "자동 안내로 대체" in tail, "실패를 사용자에게 알리지 않는다"
+    # 고정 글자수 window 를 쓰지 않는다 — 그 사이에 한 줄만 늘어도(주석 포함) 제출 호출이
+    # 창 밖으로 밀려 "제출 경로가 없다" 는 거짓 실패가 난다(2026-08-31 실제로 그랬다).
+    # 이 분기가 속한 **함수의 나머지 전체**를 본다.
+    fn_tail = src[idx:idx + src[idx:].index("\ndef ")]
+    assert "submit_answer" in fn_tail, "실패 시 제출 경로가 없다"
+    assert "자동 안내로 대체" in fn_tail, "실패를 사용자에게 알리지 않는다"
 
 
 # ── 러너 타임아웃 ↔ 서버 점유 lease (2026-08-28, 라이브 실측 후) ────────────────
