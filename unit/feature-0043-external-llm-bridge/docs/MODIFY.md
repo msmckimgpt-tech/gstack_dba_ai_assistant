@@ -1992,3 +1992,18 @@ CSS 두 규칙(`max-height`/`overflow-y` + 스코프 표 상한)을 지우면 �
 
 잠글 것은 사유의 **개수**가 아니라 «사유가 없으면 멎는다» 이므로 그 성질을 본다 —
 `wantPoll && !_gatePollTimer` / `!wantPoll && _gatePollTimer` 가 같은 값의 양면인지까지.
+
+## CHG-20260831T194000-ai-claude-feature-0043-scrollpanel-evidence — 스크롤 패널 POST-DEPLOY 실측 증적
+
+`CHG-20260831T175800-…` 의 라이브 검증. 코드 변경 0 — 증적 문서만.
+
+배포본(`47299f6a`) 서빙 자산에 이번 변경이 도달했는지 먼저 대조(messages.js 9 hits ·
+chat.css 2 hits) 후, 페이지가 로드한 모듈 URL 로 `import()` 해 실측했다.
+
+- 패널 `clientHeight 622` / `scrollHeight 782` → 자기 스크롤 · `min-height: 0px`(제한 없음)
+- 안쪽 표 `378px` < 패널 `622px` — 중첩 스크롤 함정 부재
+- 페이징: 패널 `scrollTop 0 → 375`, **대화 로그·문서 스크롤 0 불변**
+- 결과셋 위치: `navOffset 381 → 6px`(코드의 여백 상수와 일치, 최대 스크롤 577 아님 = clamp 아님)
+- 키보드(`ArrowRight`) 동일 경로 · 짧은 상세(단계 1건) `81px` 비스크롤
+
+캡처: `artifacts/pb0008-details-scroll-panel/` (git 밖, §2). 검증 DOM 은 제거 확인.

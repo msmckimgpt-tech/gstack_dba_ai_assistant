@@ -1313,4 +1313,8 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
 - [x] 진행 중 재구성 시 내부 스크롤 보존(옛 예약 취소 + 사용자 조작 우선)
 - [x] pytest 신규 10건 · 전량 green · node 하네스 18/18 무회귀
 - [x] **codex 적대 리뷰 2R** — P1 0건 수렴, 1R P2 3건 전건 반영
-- [ ] **PB-0008 POST-DEPLOY 시각검증** — 상한 수치는 실 화면 실측 대상. 배포 직후 기록
+- [x] **PB-0008 POST-DEPLOY 시각검증** — 배포본 `47299f6a` 실측 7항목 전건 PASS:
+      패널 622/782 자기 스크롤(`min-height: 0`) · 안쪽 표 378 < 622 · 페이징 시 패널 scrollTop
+      0→375 이동하고 **대화 로그·문서 스크롤 0 불변** · navOffset 381→**6px**(계산된 위치,
+      clamp 아님) · 키보드 동일 · 짧은 상세 81px 비스크롤.
+      증적 `feature-0003 docs/test-runs.d/…-details-scroll-panel-postdeploy.md`
