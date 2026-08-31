@@ -39,6 +39,21 @@ __all__ = [
     "cancel_bridge_tasks",
     "claim_is_live",
     "promote_latest_deferred",
+    # ── 콘솔 작업 위임 (TASK-20260831T100000) ──
+    "KIND_CHAT",
+    "KIND_JOB",
+    "ORIGIN_WEB",
+    "ORIGIN_EXTERNAL",
+    "ORIGIN_BATCH",
+    "RUNNER_FEATURE_CONSOLE_JOBS",
+    "RUNNER_FEATURE_BATCH_JOBS",
+    "RUNNER_MIN_AGENT_VERSION",
+    "JOB_SPECS",
+    "job_spec",
+    "job_label",
+    "BATCH_JOB_KINDS",
+    "BATCH_PENDING_MAX",
+    "BATCH_TASK_MAX_AGE_MIN",
 ]
 
 #: 점유 lease. 이 시간이 지나도록 제출되지 않은 작업은 **다시 대기열에 나타난다**.
@@ -85,6 +100,110 @@ CLAIMABLE_SQL = (
     "(ClaimedBy IS NULL OR ClaimedAt IS NULL "
     f"OR ClaimedAt < DATE_SUB(NOW(), INTERVAL {BRIDGE_CLAIM_LEASE_MIN} MINUTE))"
 )
+
+
+# ── 콘솔 작업 위임 (TASK-20260831T100000, console-llm-parity) ───────────────────────
+#
+# 관리 콘솔의 LLM 기능도 개인 AI 가 처리한다. 대화 브리지와 **같은 테이블·같은 점유 술어**를
+# 쓰되 `Kind` 로 갈린다 — 나누면 lease·취소·원장이 두 벌이 되고, 그 다섯 중 하나만 갈려도
+# "목록엔 없는데 제출은 되는" 부류의 결함이 되돌아온다.
+
+#: `WebAiTasks.Kind` — 무엇을 하는 작업인가. `Origin`(누가 열었나)과 **직교**한다.
+KIND_CHAT = "chat"
+KIND_JOB = "job"
+
+#: `WebAiTasks.Origin` — 누가 열었나. 종전 두 값에 배치 축이 더해진다.
+ORIGIN_WEB = "web"
+ORIGIN_EXTERNAL = "external"
+#: 워커가 연 배경 작업. 특정 사용자의 질문이 아니므로 계정 스코프로 닫히지 않고,
+#: **권한 + 기능 신고**로 닫힌다(배급 자격은 `ai_tools` 가 집행).
+ORIGIN_BATCH = "batch"
+
+#: 러너가 하트비트에 싣는 기능 이름. **이 값이 배급 자격이다.**
+#:
+#: 왜 자격이 필요한가: 콘솔 작업을 모르는 러너가 그것을 집으면 대화용 프레이밍(「너는 사내 DB
+#: 질의 어시스턴트다」 · 제목 마커)으로 감싸 JSON 산출물을 망친다. 그 실패는 조용하다 —
+#: 답은 오는데 내용이 규약을 벗어나 있고, 파서는 빈 결과를 돌려준다.
+RUNNER_FEATURE_CONSOLE_JOBS = "console_jobs"
+#: 배경 배치까지 받겠다는 **별도 동의**. 콘솔 작업 능력과 나누는 이유: 배치는 그 사람이 요청한
+#: 적 없는 일이고 자기 계정 토큰을 태운다. 능력이 있다고 동의한 것으로 보면 안 된다.
+RUNNER_FEATURE_BATCH_JOBS = "batch_jobs"
+
+#: 이 버전 미만의 러너에는 콘솔 작업을 주지 않고 **갱신을 지시한다**(사용자 결정 2026-08-31).
+#: 기능 신고가 1차 자격이고 버전은 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가
+#: 자격을 유지한다.
+RUNNER_MIN_AGENT_VERSION = "2026.08.31"
+
+#: 배치 대기열 상한. 배급 가능한 러너가 없어도 워커는 계속 도므로, 상한이 없으면 아무도 못
+#: 집는 작업이 무한히 쌓인다(P0-S 가 대화 축에서 이미 고친 형태).
+BATCH_PENDING_MAX = 24
+#: 배치 작업의 유효 기간(분). 넘으면 만료 — 배경 산출물은 재생성 가능하므로 오래된 요청을
+#: 붙들고 있을 이유가 없고, 붙들면 화면의 "대기 중" 이 영구 고착된다.
+BATCH_TASK_MAX_AGE_MIN = 180
+
+
+#: 콘솔 작업 종류 레지스트리 — **한 곳에서 정의하고 모두가 읽는다.**
+#:
+#: 각 항목:
+#:   label       : 사람이 읽는 이름(화면·원장 공용). 두 곳이 각자 지으면 반드시 갈린다.
+#:   origin      : 이 종류를 누가 여는가 (`web`=관리자 조작 / `batch`=워커).
+#:   response    : 'text' | 'json'. 러너 프롬프트의 출력 규약과 회수 파서를 함께 정한다.
+#:   apply       : 산출물이 도달할 곳. 'review'=사람이 검토 후 저장(폼에 채움) /
+#:                 'store'=기존 저장 경로에 자동 기입.
+#:
+#: `apply` 를 종류마다 굳히는 이유(사용자 결정 2026-08-31 "자율적으로 입력"): 전환은 **기존
+#: 경로의 쓰기 의미를 보존**해야 한다. 메타데이터 자동완성은 원래 검토형이었고 배치는 원래
+#: 자동기입형이었다 — 위임하면서 한쪽으로 통일하면 그 자체가 사용감 회귀다.
+JOB_SPECS: dict[str, dict[str, str]] = {
+    "metadata_suggest": {
+        "label": "메타데이터 자동완성(단건)",
+        "origin": ORIGIN_WEB, "response": "json", "apply": "review",
+    },
+    "metadata_bulk": {
+        "label": "메타데이터 자동완성(일괄)",
+        "origin": ORIGIN_WEB, "response": "json", "apply": "review",
+    },
+    "node_analysis": {
+        "label": "그래프 AI 능동 분석",
+        "origin": ORIGIN_WEB, "response": "json", "apply": "store",
+    },
+    "prompt_generate": {
+        "label": "시스템 프롬프트 자동작성",
+        "origin": ORIGIN_WEB, "response": "text", "apply": "review",
+    },
+    "insight_summary": {
+        "label": "인사이트 배치",
+        "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
+    },
+    "cluster_label": {
+        "label": "클러스터 라벨링",
+        "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
+    },
+    # red-team 은 대기열에 따로 적재되지 않는다 — **답변한 그 러너**가 자기 답변을 검증해
+    # `submit_answer` 에 함께 싣는다(사용자 결정 2026-08-31: "요청 당시의 호출자가 스스로의
+    # 대화내역을 알 수 있으므로"). 별도 task 로 만들면 그 AI 가 자기 답변의 맥락을 잃고,
+    # 검증을 위해 대화를 한 번 더 넘겨야 한다.
+}
+
+#: 워커가 여는 종류(배급 자격이 `batch_jobs` 동의를 추가로 요구한다).
+BATCH_JOB_KINDS = tuple(k for k, v in JOB_SPECS.items() if v["origin"] == ORIGIN_BATCH)
+
+
+def job_spec(job_kind: Any) -> dict[str, str] | None:
+    """등록된 작업 종류의 명세. 모르는 값은 `None` — 호출측이 **거절**한다.
+
+    관대하게 기본값을 주지 않는 이유: 여기서 추측하면 모르는 종류가 'text/review' 로 조용히
+    처리되어, 산출물이 어디에도 도달하지 않은 채 "제출됨" 으로 남는다.
+    """
+    return JOB_SPECS.get(str(job_kind or "").strip())
+
+
+def job_label(job_kind: Any) -> str:
+    """화면·원장 공용 이름. 미등록이면 원본 문자열(빈 값이면 '콘솔 작업')."""
+    spec = job_spec(job_kind)
+    if spec:
+        return spec["label"]
+    return str(job_kind or "").strip() or "콘솔 작업"
 
 
 def claim_is_live(claimed_by: Any, claimed_at: Any) -> bool:

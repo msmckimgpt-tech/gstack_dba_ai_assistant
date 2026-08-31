@@ -568,6 +568,96 @@ def account_is_heartbeating(cur, account_id: int, window_sec: int | None = None)
 RUNNER_CAPS_MAX_BYTES = 8 * 1024
 
 
+#: 러너 기능 신고의 상한 — 개수와 한 항목의 길이. `RunnerFeatures` 는 VARCHAR(255) 라
+#: 넘치면 잘리는데, 잘린 CSV 의 마지막 토큰은 **다른 기능 이름의 접두사**가 되어 배급 자격이
+#: 오판될 수 있다. 저장 전에 잘라 그 상황 자체를 만들지 않는다.
+RUNNER_FEATURES_MAX = 12
+RUNNER_FEATURE_MAX_LEN = 32
+
+
+def parse_runner_features(raw: Any) -> list[str]:
+    """저장된 CSV 를 기능 이름 목록으로 — **읽기·쓰기가 같은 정규화를 쓴다**.
+
+    한쪽만 소문자화하거나 공백을 다르게 다루면 `"Console_Jobs"` 를 신고한 러너가 배급에서
+    빠진다. 그 실패는 조용하다(작업이 그냥 안 간다) — 그래서 정규화를 한 함수에 둔다.
+    """
+    if not raw:
+        return []
+    out: list[str] = []
+    for part in str(raw).split(","):
+        name = part.strip().lower()
+        # 이름처럼 생긴 것만 받는다. 이 값은 SQL LIKE 나 화면 표시로 흘러가므로, 모양을
+        # 여기서 잠근다(P0-Z4 의 "요구는 정확히, 수용은 관대하게" 중 모양 축).
+        if not name or len(name) > RUNNER_FEATURE_MAX_LEN:
+            continue
+        if not all(c.isalnum() or c in "_-" for c in name):
+            continue
+        if name not in out:
+            out.append(name)
+        if len(out) >= RUNNER_FEATURES_MAX:
+            break
+    return out
+
+
+def serialize_runner_features(features: Any) -> str:
+    """기능 목록을 저장 형태(CSV)로. `parse_runner_features` 와 **같은 정규화**를 통과시킨다."""
+    return ",".join(parse_runner_features(
+        ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features))
+
+
+def set_runner_report(cur, raw_token: str, capabilities: str | None,
+                      features: Any, agent_version: str | None = None) -> bool:
+    """러너의 신고 **세 축을 한 문장으로** 새긴다 (능력·기능·버전). 실제로 썼으면 True.
+
+    ## 왜 한 문장인가 (TASK-20260831T100000)
+
+    축마다 UPDATE 를 나누면 **서로의 쓰기-증폭 방어를 무력화하거나 서로를 막는다.** 방어는
+    `CapabilitiesAt` 기준 최소 간격인데, 그 컬럼이 하나뿐이라:
+
+    - 능력이 먼저 쓰면 `CapabilitiesAt = NOW()` 가 되고 → 같은 요청의 기능 쓰기가 **throttle
+      에 걸려 유실**된다. 능력이 바뀔 때마다 기능만 조용히 빠진다.
+    - throttle 기준을 축마다 따로 두면 컬럼이 늘고, 그때부터 "두 축이 같은 러너의 사실" 이라는
+      전제를 시각이 두 개인 구조가 스스로 깬다.
+
+    한 문장이면 방어도 하나이고, 세 값은 **항상 같은 하트비트의 것**이 된다.
+
+    ## 방어 조건은 종전과 같다
+
+    달라졌을 때(값 비교) **그리고** 최소 간격이 지났을 때만 쓴다. 값 비교만 두면 클라이언트가
+    두 값을 번갈아 보내 매 요청 UPDATE 를 만들고(codex REV-20260828T170000 P1-6), 시간 조건만
+    두면 정상적인 신고 변경이 창 동안 반영되지 않는다.
+
+    ⚠ 유효성 술어는 `_LIVE_TOKEN_PREDICATE` 하나다. 따로 세면 신고만 통과하는 뒷문이 생기고,
+    그 문은 로그아웃을 무시한다 — 폐기된 러너의 능력이 화면에 남는다(P0-R 의 재발).
+    """
+    if not raw_token:
+        return False
+    if capabilities is not None and len(capabilities.encode("utf-8")) > RUNNER_CAPS_MAX_BYTES:
+        # 능력이 과대해도 **기능·버전은 살린다** — 한 축의 결함이 나머지를 지우지 않게
+        # (P0-Z3 의 `_sanitize_runtimes` 가 항목 단위로 버리는 것과 같은 방향).
+        capabilities = None
+    csv = serialize_runner_features(features)
+    ver = str(agent_version or "").strip()[:32]
+    cur.execute(
+        "UPDATE WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        "SET t.RunnerCapabilities = COALESCE(%s, t.RunnerCapabilities), "
+        f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, t.CapabilitiesAt = {_SQL_NOW} "
+        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+        # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 축마다 분기한다.
+        "  AND ((%s IS NOT NULL "
+        "        AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s)) "
+        "       OR t.RunnerFeatures IS NULL OR t.RunnerFeatures <> %s "
+        "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s) "
+        # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
+        f"  AND (t.CapabilitiesAt IS NULL "
+        f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))",
+        (capabilities, csv, ver, token_hash(raw_token),
+         capabilities, capabilities, csv, ver, int(HEARTBEAT_MIN_WRITE_SEC)),
+    )
+    return int(getattr(cur, "rowcount", -1) or 0) != 0
+
+
 def set_runner_capabilities(cur, raw_token: str, capabilities: str | None) -> bool:
     """러너가 신고한 능력을 그 토큰 행에 새긴다 (P0-Z3). 실제로 썼으면 True.
 
@@ -606,40 +696,123 @@ def set_runner_capabilities(cur, raw_token: str, capabilities: str | None) -> bo
     return int(getattr(cur, "rowcount", -1) or 0) != 0
 
 
-def account_runner_capabilities(cur, account_id: int,
-                                window_sec: int | None = None) -> list:
-    """이 계정의 **지금 듣고 있는** 러너가 쓸 수 있는 것 (P0-Z3). 없으면 빈 목록.
+def account_runner_profile(cur, account_id: int,
+                           window_sec: int | None = None) -> dict:
+    """이 계정의 **지금 듣고 있는** 러너 한 대의 프로필 — 능력·기능·버전을 **한 질의로**.
 
-    신선도 조건이 `account_is_heartbeating` 과 같다 — 화면의 "연결됨" 표시와 모델 목록이
-    같은 사실에서 나와야 한다. 갈리면 "연결 안 됨인데 모델은 고를 수 있는" 또는 그 반대가
-    되고, 둘 중 하나는 반드시 사용자를 속인다.
+    ## 왜 한 질의인가 (TASK-20260831T100000)
 
-    러너가 여럿이면(같은 계정으로 여러 머신) **가장 최근에 말한 것**을 쓴다. 합치지 않는
-    이유: 합친 목록에서 고른 모델이 실제로 질문을 가져가는 러너에 없을 수 있고, 그러면
-    P0-T 가 지운 "고를 수 있는데 반영은 안 되는" 상태가 되돌아온다.
+    `capabilities`(쓸 수 있는 모델)와 `features`(다룰 줄 아는 작업 종류)를 각각 조회하면,
+    같은 `ORDER BY LastHeartbeatAt DESC LIMIT 1` 을 써도 두 질의 사이에 하트비트가 도착해
+    **서로 다른 러너의 사실**이 섞일 수 있다 — "A 머신의 모델 목록 + B 머신의 기능" 이라는
+    실재하지 않는 조합이 화면에 뜨고, 그 조합으로 고른 값은 어느 쪽에서도 실행되지 않는다.
+    한 행에서 함께 읽으면 그 조합은 구조적으로 만들어지지 않는다.
+
+    ## 신선도
+
+    조건이 `account_is_heartbeating` 과 같다 — 화면의 "연결됨" 표시와 모델 목록이 같은
+    사실에서 나와야 한다. 갈리면 "연결 안 됨인데 모델은 고를 수 있는" 또는 그 반대가 되고,
+    둘 중 하나는 반드시 사용자를 속인다.
+
+    ## 러너가 여럿이면
+
+    **가장 최근에 말한 것** 하나를 쓴다. 합치지 않는 이유: 합친 목록에서 고른 모델이 실제로
+    질문을 가져가는 러너에 없을 수 있고, 그러면 P0-T 가 지운 "고를 수 있는데 반영은 안 되는"
+    상태가 되돌아온다.
+
+    ⚠ **`RunnerCapabilities IS NOT NULL` 을 조건에 두지 않는다.** 종전 함수는 그 조건으로
+    행을 골랐는데, 그러면 능력을 신고하지 않은(=`--cmd` 사용자) 러너가 콘솔 작업 기능을
+    신고해도 **행 자체가 안 잡혀** 기능이 없는 것으로 보인다. 두 축은 수명이 다르므로
+    행 선택은 **하트비트 신선도**로만 하고, 각 축의 부재는 각자 빈 값으로 표현한다.
+
+    Returns:
+        `{"capabilities": list, "features": list[str], "agent_version": str,
+          "listening": bool}` — 러너가 없으면 전부 빈 값 + `listening=False`.
     """
+    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
     if not account_id:
-        return []
+        return empty
     window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
     cur.execute(
-        "SELECT t.RunnerCapabilities FROM WebOAuthTokens t "
+        "SELECT t.RunnerCapabilities, t.RunnerFeatures, t.RunnerAgentVersion "
+        "FROM WebOAuthTokens t "
         "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
         f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
-        "  AND t.RunnerCapabilities IS NOT NULL "
         "  AND t.LastHeartbeatAt IS NOT NULL "
         f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
         "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
         (int(account_id), window),
     )
     row = cur.fetchone()
-    if not row or not row[0]:
-        return []
-    try:
-        parsed = json.loads(row[0])
-    except (TypeError, ValueError):
-        # 저장된 값이 깨졌다 — 빈 목록으로 다룬다(선택기가 숨겨질 뿐, 답변 경로는 멀쩡하다).
-        return []
-    return parsed if isinstance(parsed, list) else []
+    if not row:
+        return empty
+    caps: list = []
+    if row[0]:
+        try:
+            parsed = json.loads(row[0])
+        except (TypeError, ValueError):
+            # 저장된 값이 깨졌다 — 빈 목록으로 다룬다(선택기가 숨겨질 뿐, 답변 경로는 멀쩡하다).
+            parsed = None
+        if isinstance(parsed, list):
+            caps = parsed
+    return {
+        "capabilities": caps,
+        "features": parse_runner_features(row[1]),
+        "agent_version": str(row[2] or "").strip(),
+        "listening": True,
+    }
+
+
+def account_runner_capabilities(cur, account_id: int,
+                                window_sec: int | None = None) -> list:
+    """이 계정의 **지금 듣고 있는** 러너가 쓸 수 있는 것 (P0-Z3). 없으면 빈 목록.
+
+    `account_runner_profile` 의 능력 축만 꺼내는 얇은 래퍼다 — 판정은 한 곳에만 둔다.
+    """
+    return account_runner_profile(cur, account_id, window_sec).get("capabilities") or []
+
+
+def count_live_runners(cur, feature: str | None = None,
+                       window_sec: int | None = None) -> dict:
+    """관제용 러너 집계 — 연결·수신·기능보유 계정 수를 **한 질의**로.
+
+    ## 왜 여기 있는가
+
+    `_LIVE_TOKEN_PREDICATE` 는 이 모듈의 사적 술어다. 관제(`routers/ai_ops.py`)가 그것을
+    직접 가져다 쓰면 술어가 모듈 밖으로 새고, 새는 순간 "인증이 보는 살아 있음" 과 "관제가
+    보는 살아 있음" 이 갈릴 준비를 마친다 — 이 feature 가 P0-R 에서 겪은 결함의 형태가
+    정확히 그것이다. 그래서 판정은 여기 두고 **숫자만** 내보낸다.
+
+    ## 세 수를 한 질의로 세는 이유
+
+    따로 세면 그 사이 하트비트가 도착해 `listening > connected` 같은 불가능한 조합이
+    화면에 뜬다. 한 스냅샷에서 세면 그 조합은 만들어지지 않는다.
+
+    Args:
+        feature: 이 기능을 신고한 러너도 함께 센다(`RunnerFeatures` CSV 멤버십).
+
+    Returns:
+        `{"connected": int, "listening": int, "with_feature": int}`
+    """
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT COUNT(DISTINCT t.AccountId), "
+        "       COUNT(DISTINCT CASE WHEN t.LastHeartbeatAt > "
+        f"              DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) THEN t.AccountId END), "
+        "       COUNT(DISTINCT CASE WHEN t.LastHeartbeatAt > "
+        f"              DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+        # 빈 feature 인자로 FIND_IN_SET 을 돌리면 항상 0 이라 "기능 보유 0" 이 되는데,
+        # 그것은 사실이 아니라 **묻지 않았다**는 뜻이다. 인자가 없으면 listening 과 같게 센다.
+        "              AND (%s = '' OR FIND_IN_SET(%s, COALESCE(t.RunnerFeatures, '')) > 0) "
+        "              THEN t.AccountId END) "
+        "FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE {_LIVE_TOKEN_PREDICATE}",
+        (window, window, str(feature or ""), str(feature or "")),
+    )
+    row = cur.fetchone() or (0, 0, 0)
+    return {"connected": int(row[0] or 0), "listening": int(row[1] or 0),
+            "with_feature": int(row[2] or 0)}
 
 
 def account_has_live_token(cur, account_id: int) -> bool:

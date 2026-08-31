@@ -3,6 +3,13 @@ import { _metaShowGraph, _metaGraphLoadRoots, _metaRoleLegendTips, _metaGraph } 
 import { loadUsage } from "./admin/usage.js?v=dev";
 import { loadAiOps } from "./admin/aiops.js?v=dev";
 import { loadExtTasks } from "./admin/exttasks.js?v=dev";
+// feature-0043 TASK-20260831T100000 — 콘솔 LLM 상태 표면화(미적용 배지·사유·조작면 게이트).
+import {
+  applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
+  llmBlocked, delegationReady,
+} from "./admin/llm-state.js?v=dev";
+// 다른 admin/* 모듈이 "../admin.js" 로 가져다 쓰는 계약 보존 (aiops·usage 와 동형 re-export).
+export { applyLlmInactiveMarks, gateLlmControl, renderLlmNotice, llmBlocked, delegationReady };
 import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
@@ -36,6 +43,14 @@ export const ACCOUNT_PAGE_SIZE = 15;
 
 export const adminState = {
   me: null,
+  // feature-0043 TASK-20260831T100000 — 콘솔 LLM 상태(`/api/admin/me` 의 `llm`).
+  //   {server_llm_blocked, delegation, reason, action_url, runner, inactive_surfaces}
+  // **프론트가 조합하지 않는다** — 판정은 서버 한 곳(`routers/_console_llm.py`)이고 여기는
+  // 그 결과를 담는 자리다. 화면이 다시 조합하면 서버와 갈리고, 갈리는 순간 느슨한 쪽이
+  // 사용자가 보는 진실이 된다(P0-R 에서 이미 겪은 형태).
+  // `null` = 아직 못 받음. 빈 객체로 초기화하지 않는 이유: "못 받음" 과 "차단 아님" 은
+  // 다른 사실이고, 후자로 지으면 화면이 근거 없이 낙관한다.
+  llm: null,
   permissions: [],
   roles: [],
   accounts: [],
@@ -2375,6 +2390,12 @@ export function switchTab(tabName) {
     adminState.settings.initialized = true;
     mountSettingsSections();
   }
+  // feature-0043 TASK-20260831T100000 — 미적용 배지·사유 dropdown·최하단 집계.
+  //
+  // `initialized` 분기 **밖**에서 매 진입마다 부른다: 패널 본문은 지연 마운트되는 것이
+  // 있어(런타임/예산/red-team) 첫 진입 시점엔 배지를 붙일 자리가 아직 없을 수 있다.
+  // 함수가 멱등이므로 반복 호출이 중복을 만들지 않는다.
+  if (tabName === "settings") applyLlmInactiveMarks();
   // TASK-0205: 데이터소스 관리 tab 진입 시 렌더.
   if (tabName === "datasources") {
     renderDatasourcesPane();
@@ -4465,6 +4486,14 @@ export function buildSystemPromptEditor({ scope, productId = null, roleId = null
       }
     });
     section.appendChild(autoBtn);
+    // feature-0043 TASK-20260831T100000 — 자동작성은 서버 계정 AI 를 쓰던 경로다.
+    //
+    // ⚠ `finish()`(스트림 종료 핸들러)가 `autoBtn.textContent = "자동 작성"` 으로 **원문을
+    //   복원**하므로, 위임 문구는 그 복원과 충돌한다. 그래서 여기서는 문구를 바꾸지 않고
+    //   (`delegatedText` 미지정) 활성/비활성과 툴팁만 다룬다 — 두 곳이 같은 속성을 두고
+    //   싸우면 마지막에 실행된 쪽이 이기고, 그 순서는 사용자 조작에 따라 달라진다.
+    gateLlmControl(autoBtn, { label: "시스템 프롬프트 자동작성" });
+    renderLlmNotice(section, { label: "프롬프트 자동작성" });
   }
 
   const resolveProductId = () => {
@@ -4533,6 +4562,10 @@ async function initialize() {
     return;
   }
   adminState.me = me.user;
+  // feature-0043 TASK-20260831T100000 — 콘솔 LLM 상태. 같은 응답에 실려 오므로 추가 왕복이
+  // 없고, 무엇보다 **권한과 상태가 같은 순간의 사실**이 된다(따로 물으면 그 사이 러너가
+  // 죽어 한 화면 안에서 서로 다른 답이 그려진다).
+  adminState.llm = me.llm || null;
 
   // Tab switches
   document.querySelectorAll(".admin-tab").forEach((btn) => {

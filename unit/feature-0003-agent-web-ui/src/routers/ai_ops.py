@@ -71,6 +71,153 @@ def _provider_axis() -> dict:
             "server_llm_blocked": blocked}
 
 
+def _bridge_axis(conn) -> dict:
+    """feature-0043 TASK-20260831T100000 — **외부 AI 브리지** 상태 축.
+
+    ## 왜 이 축이 필요한가
+
+    서버 계정 LLM 이 차단된 뒤 실제 추론은 전부 개인 AI 러너가 한다. 그런데 관제에는 그
+    사실을 볼 자리가 없었다 — `LLM 제공자` 축은 쓰이지 않는 provider 를 계속 보고했고,
+    운영자는 "누가 연결돼 있나 / 대기가 밀렸나" 를 어디서도 확인할 수 없었다.
+
+    이 축이 없으면 **차단 상태의 정상/비정상이 구분되지 않는다**: 러너 0대(아무 질문도
+    처리되지 않음)와 러너 5대(정상 운영)가 화면에서 똑같이 보인다.
+
+    ## 판정
+
+    | 상태 | 조건 | 뜻 |
+    |---|---|---|
+    | `na` | 게이트 열림 | 브리지를 쓰지 않는 배포 — 롤업에서 제외 |
+    | `down` | 듣는 러너 0 | 들어오는 질문이 **아무도 처리하지 못한다** |
+    | `degraded` | 점유되지 않은 채 오래된 작업 있음 | 러너는 있는데 소화하지 못한다 |
+    | `ok` | 그 외 | |
+
+    실패는 `unknown` — 조회 실패를 `ok` 로 접으면 관제가 침묵으로 안심시킨다.
+    """
+    from shared.bridge_tasks import (
+        KIND_JOB, ORIGIN_BATCH, RUNNER_FEATURE_CONSOLE_JOBS, STATUS_OPEN,
+    )
+    from shared.llm_gate import server_llm_enabled
+
+    if server_llm_enabled():
+        return {"key": "bridge", "label": "외부 AI 브리지", "state": "na",
+                "detail": "서버 계정 LLM 사용 중 (브리지 미사용)", "metrics": {}}
+
+    metrics = {"connected_accounts": 0, "listening_runners": 0, "console_capable": 0,
+               "open_tasks": 0, "working_tasks": 0, "stale_tasks": 0,
+               "open_jobs": 0, "job_failures": 0}
+    try:
+        import oauth_store as _store
+
+        cur = conn.cursor()
+        try:
+            # 연결(살아 있는 토큰) · 듣고 있음(최근 하트비트) · 콘솔 작업 가능(기능 신고).
+            # 집계는 `oauth_store` 안에서 한다 — 살아 있음의 술어는 그 모듈의 것이고,
+            # 여기로 복사해 오면 인증과 관제가 서로 다른 "살아 있음" 을 보게 된다(P0-R).
+            runners = _store.count_live_runners(cur, RUNNER_FEATURE_CONSOLE_JOBS)
+            metrics["connected_accounts"] = runners["connected"]
+            metrics["listening_runners"] = runners["listening"]
+            metrics["console_capable"] = runners["with_feature"]
+
+            # 대기·처리중·정체. `stale` 은 **미점유인 채로** 오래된 것 — 점유된 것은
+            # 개인 머신에서 돌고 있는 정상 상태라 여기 섞으면 거짓 경보가 된다.
+            cur.execute(
+                "SELECT "
+                "  SUM(Status = %s AND ClaimedBy IS NULL), "
+                "  SUM(Status = %s AND ClaimedBy IS NOT NULL), "
+                "  SUM(Status = %s AND ClaimedBy IS NULL "
+                "      AND CreatedAt < DATE_SUB(NOW(), INTERVAL 10 MINUTE)), "
+                "  SUM(Status = %s AND Kind = %s), "
+                "  SUM(Kind = %s AND JobApplyError IS NOT NULL) "
+                "FROM WebAiTasks WHERE Origin IN ('web', %s)",
+                (STATUS_OPEN, STATUS_OPEN, STATUS_OPEN, STATUS_OPEN, KIND_JOB,
+                 KIND_JOB, ORIGIN_BATCH))
+            r2 = cur.fetchone() or (0, 0, 0, 0, 0)
+            metrics["open_tasks"] = int(r2[0] or 0)
+            metrics["working_tasks"] = int(r2[1] or 0)
+            metrics["stale_tasks"] = int(r2[2] or 0)
+            metrics["open_jobs"] = int(r2[3] or 0)
+            metrics["job_failures"] = int(r2[4] or 0)
+        finally:
+            cur.close()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[ai-ops] 브리지 축 조회 실패: %r", exc)
+        return {"key": "bridge", "label": "외부 AI 브리지", "state": "unknown",
+                "detail": "상태를 읽지 못했습니다", "metrics": metrics}
+
+    if metrics["listening_runners"] == 0:
+        state = "down"
+        detail = ("듣고 있는 개인 AI 러너가 없습니다 — 들어오는 질문이 처리되지 않습니다"
+                  f" (연결 계정 {metrics['connected_accounts']})")
+    elif metrics["stale_tasks"] > 0:
+        state = "degraded"
+        detail = (f"러너 {metrics['listening_runners']} · 10분 넘게 아무도 가져가지 않은 질문 "
+                  f"{metrics['stale_tasks']}건")
+    else:
+        state = "ok"
+        detail = (f"러너 {metrics['listening_runners']} (콘솔 작업 가능 {metrics['console_capable']})"
+                  f" · 대기 {metrics['open_tasks']} · 처리중 {metrics['working_tasks']}")
+    return {"key": "bridge", "label": "외부 AI 브리지", "state": state,
+            "detail": detail, "metrics": metrics}
+
+
+def _delegated_jobs(conn, limit: int = 30) -> list[dict]:
+    """위임된 콘솔 작업의 **상태와 소유 계정** (사용자 결정 2026-08-31 명시 표기 요구).
+
+    > "해당 작업이 어떤 상태인지, 어느 계정에서 진행되고 있는지 등. 명시적인 표기가
+    >  가능해야 합니다."
+
+    소유(`AccountId` — 누가 시켰나)와 수행(`ClaimedBy` — 누가 하고 있나)을 **나눠서** 준다.
+    관리자 작업은 둘이 같지만 배치는 다르다(워커가 열고 아무 러너나 집는다) — 합치면
+    "내가 시킨 적 없는 작업이 내 이름으로" 또는 그 반대가 된다.
+
+    실패는 빈 목록 + 로그. 이 표가 비는 것보다 관제 전체가 500 이 되는 쪽이 나쁘다.
+    """
+    from shared.bridge_tasks import KIND_JOB, job_label
+
+    out: list[dict] = []
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT t.TaskId, t.JobKind, t.Status, t.Origin, t.CreatedAt, t.ClaimedAt, "
+                "       t.SubmittedAt, t.JobAppliedAt, t.JobApplyError, "
+                "       owner.Username, worker.Username "
+                "FROM WebAiTasks t "
+                "LEFT JOIN WebAccounts owner  ON owner.Id  = t.AccountId "
+                "LEFT JOIN WebAccounts worker ON worker.Id = t.ClaimedBy "
+                "WHERE t.Kind = %s "
+                "ORDER BY t.CreatedAt DESC LIMIT %s",
+                (KIND_JOB, int(limit)))
+            for r in (cur.fetchall() or []):
+                out.append({
+                    "task_id": str(r[0] or ""),
+                    "job_kind": str(r[1] or ""),
+                    "label": job_label(r[1]),
+                    "status": str(r[2] or ""),
+                    "origin": str(r[3] or ""),
+                    "created_at": _iso(r[4]),
+                    "claimed_at": _iso(r[5]),
+                    "submitted_at": _iso(r[6]),
+                    "applied_at": _iso(r[7]),
+                    # 실패 사유를 감추지 않는다 — "제출됐는데 반영 안 됨" 은 화면이 말해야
+                    # 하는 상태이고, 감추면 운영자는 성공으로 읽는다.
+                    "apply_error": str(r[8] or ""),
+                    "owner": str(r[9] or ""),      # 누가 시켰나 (배치는 비어 있을 수 있다)
+                    "worker": str(r[10] or ""),    # 누가 하고 있나 / 했나
+                })
+        finally:
+            cur.close()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[ai-ops] 위임 작업 목록 조회 실패: %r", exc)
+    return out
+
+
+def _iso(v) -> str:
+    """datetime → ISO 문자열. 값이 없거나 datetime 이 아니면 빈 문자열."""
+    return v.isoformat() if hasattr(v, "isoformat") else ""
+
+
 def _ask_worker_axis(conn) -> dict:
     """요청 처리(ask) 워커 heartbeat. inprocess 모드면 N/A(롤업 제외).
     임계: age≤60s 정상 / 60<age≤120s 저하 / >120s·부재 중단 (WEB_ASK_WORKER_READY_MAX_AGE_SEC=60 정합)."""
@@ -449,7 +596,11 @@ def admin_ai_ops(
     days = max(1, min(90, days))
 
     # ── 상태 축 → worst-of 배너 ──
-    axes = [_provider_axis(), _ask_worker_axis(conn), _insight_worker_axis(conn), _datasource_axis()]
+    # ⚠ **순서 고정** — 아래 `kpis` 가 `axes[0]`(provider) · `axes[1]`·`axes[2]`(워커)를
+    #   위치로 읽는다. 새 축은 반드시 **뒤에** 붙인다(앞에 끼우면 KPI 가 조용히 다른 축을
+    #   보고, 그 오독은 화면상 아무 표시 없이 일어난다).
+    axes = [_provider_axis(), _ask_worker_axis(conn), _insight_worker_axis(conn),
+            _datasource_axis(), _bridge_axis(conn)]
     rolled = [a for a in axes if a["state"] != "na"]
     banner_state = "ok"
     for a in rolled:
@@ -675,6 +826,12 @@ def admin_ai_ops(
             "workers_total": sum(1 for a in (axes[1], axes[2]) if a["state"] != "na"),
         },
         "attention": attention,
+        # ── feature-0043 TASK-20260831T100000 ────────────────────────────────────
+        # 브리지 축의 수치를 KPI 로도 꺼내 둔다(축 `detail` 문자열을 프론트가 파싱해서
+        # 쓰지 않게 — 문자열을 파싱하면 문구를 고치는 순간 KPI 가 깨진다).
+        "bridge": axes[4].get("metrics") or {},
+        # 위임 작업 현황 — **어떤 작업이 · 어떤 상태로 · 어느 계정에서**(사용자 결정 2026-08-31).
+        "delegated_jobs": _delegated_jobs(conn),
         "categories": categories,
         "activity": activity,
         "activity_next_cursor": activity_next_cursor,

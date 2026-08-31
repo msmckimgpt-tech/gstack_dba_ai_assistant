@@ -330,8 +330,15 @@ def test_capability_read_shares_the_freshness_rule_with_listening():
     갈리면 "연결 안 됨인데 모델은 고를 수 있는"(또는 그 반대) 화면이 되고, 둘 중 하나는
     반드시 사용자를 속인다.
     """
+    # TASK-20260831T100000: 질의는 `account_runner_profile` 로 옮겼다(능력·기능·버전을 한
+    # 행에서 함께 읽어야 서로 다른 러너의 사실이 섞이지 않는다). `account_runner_capabilities`
+    # 는 그 결과의 한 축을 꺼내는 얇은 래퍼다.
+    #
+    # 그래서 이 검사가 보는 자리를 **질의가 실제로 사는 함수**로 옮긴다. 계약은 그대로다 —
+    # "읽기와 듣기가 같은 신선도를 쓴다". 래퍼를 계속 보면 정의가 옮겨간 것만으로 FAIL 이
+    # 나고, 그 FAIL 은 계약 위반이 아니라 **검사가 구조를 잠근** 결과다.
     src = _OAUTH_STORE.read_text(encoding="utf-8")
-    read_fn = src[src.index("def account_runner_capabilities("):]
+    read_fn = src[src.index("def account_runner_profile("):]
     read_fn = read_fn[:read_fn.index("\ndef ")]
     listen_fn = src[src.index("def account_is_heartbeating("):]
     listen_fn = listen_fn[:listen_fn.index("\ndef ")]
@@ -340,16 +347,25 @@ def test_capability_read_shares_the_freshness_rule_with_listening():
             f"신선도 술어가 갈렸다: {fragment}")
     # 러너가 여럿이면 가장 최근 것 하나 — 합치면 실제로 가져가는 러너에 없는 모델이 섞인다.
     assert "ORDER BY t.LastHeartbeatAt DESC LIMIT 1" in read_fn
+    # 래퍼가 **자기 질의를 갖지 않는다** — 가지면 두 벌이 되고, 그 순간 이 검사가 보는
+    # 쪽만 옳고 실제로 쓰이는 쪽은 갈릴 수 있다.
+    wrapper = src[src.index("def account_runner_capabilities("):]
+    wrapper = wrapper[:wrapper.index("\ndef ")]
+    assert "cur.execute" not in wrapper, "래퍼가 별도 질의를 갖는다(판정 이중화)"
+    assert "account_runner_profile(" in wrapper, "래퍼가 정본을 부르지 않는다"
 
 
 def test_capability_read_survives_corrupted_json():
     """저장된 값이 깨져도 답변 경로는 멀쩡해야 한다(선택기가 숨겨질 뿐)."""
+    # TASK-20260831T100000: 파싱도 `account_runner_profile` 로 옮겼다(위 테스트와 같은 이유).
     src = _OAUTH_STORE.read_text(encoding="utf-8")
-    fn = src[src.index("def account_runner_capabilities("):]
+    fn = src[src.index("def account_runner_profile("):]
     fn = fn[:fn.index("\ndef ")]
     assert "except (TypeError, ValueError)" in fn, "JSON 파싱 실패가 요청을 500 으로 만든다"
-    assert "return parsed if isinstance(parsed, list) else []" in fn, (
-        "리스트가 아닌 저장값이 그대로 화면으로 나간다")
+    # 구조가 아니라 **결과**를 잠근다: 리스트가 아닌 저장값은 화면으로 나가지 않는다.
+    # (종전 검사는 `return parsed if isinstance(...)` 라는 한 줄의 형태를 요구해, 같은 계약을
+    #  다른 형태로 쓰기만 해도 FAIL 했다.)
+    assert "isinstance(parsed, list)" in fn, "리스트가 아닌 저장값이 그대로 화면으로 나간다"
 
 
 # ── 화면: 런타임마다 다른 어휘를 어떻게 그리는가 ─────────────────────────────

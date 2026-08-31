@@ -3058,18 +3058,24 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         return app._json_error("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
     account_id = int((ctx.get("account") or {}).get("id") or 0)
     caps = _sanitize_runtimes((payload or {}).get("runtimes"))
+    # TASK-20260831T100000 — 기능·버전 신고. 능력(모델 목록)과 **같은 문장으로** 저장한다.
+    # 나누면 둘이 같은 throttle 기준 시각(`CapabilitiesAt`)을 두고 서로를 막는다
+    # (능력이 먼저 쓰면 기능 쓰기가 그 요청에서 통째로 유실된다).
+    features = (payload or {}).get("features")
+    agent_version = str((payload or {}).get("agent_version") or "").strip()
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
-        if caps is not None:
-            # 능력 기록 실패는 하트비트를 실패시키지 않는다 — 연결 유지가 주 목적이고,
-            # 능력은 다음 30초에 다시 온다(매번 싣기 때문에 자연히 복구된다).
-            try:
-                _store.set_runner_capabilities(cur, _bearer(request),
-                                               json.dumps(caps, ensure_ascii=False))
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger(__name__).warning(
-                    "[bridge] 능력 신고 기록 실패 account=%s: %r", account_id, exc)
+        # 신고 기록 실패는 하트비트를 실패시키지 않는다 — 연결 유지가 주 목적이고,
+        # 신고는 다음 30초에 다시 온다(매번 싣기 때문에 자연히 복구된다).
+        try:
+            _store.set_runner_report(
+                cur, _bearer(request),
+                json.dumps(caps, ensure_ascii=False) if caps is not None else None,
+                features, agent_version)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] 러너 신고 기록 실패 account=%s: %r", account_id, exc)
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "[bridge] 하트비트 기록 실패 account=%s: %r", account_id, exc)
@@ -3094,7 +3100,42 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         "interval_sec": int(result.get("interval_sec") or _store.HEARTBEAT_INTERVAL_SEC),
         "expires_in": int(result.get("expires_in") or 0),
         "window_sec": int(_store.HEARTBEAT_WINDOW_SEC),
+        # ── 갱신 유도 (사용자 결정 2026-08-31, TASK-20260831T100000) ────────────────
+        #
+        # 러너는 사용자 머신에 설치된 파일이라 우리가 갱신을 **강제할 수 없다.** 그런데
+        # 콘솔 작업을 모르는 러너가 그것을 집으면 대화용 프레이밍으로 감싸 산출물을 망친다.
+        # 배급 자격(`RunnerFeatures`)이 1차 방어이고, 이 응답은 그 사람이 **왜 자기에게만
+        # 작업이 안 오는지** 알게 하는 축이다 — 자격만 막고 이유를 말하지 않으면 조용한 배제다.
+        #
+        # 지시가 아니라 **사실 + 경로**를 준다: 러너가 이 값을 보고 스스로 안내를 출력한다.
+        # 서버가 자동 다운로드·자기교체를 시키지 않는 이유: 그것은 사용자 머신의 프로세스를
+        # 우리가 말없이 바꾸는 것이고, 이 feature 가 지켜 온 경계("러너를 띄운 사람의 설정을
+        # 낮추지 않는다")를 넘는다.
+        "runner_update": _runner_update_hint(agent_version, features),
     })
+
+
+def _runner_update_hint(agent_version: str, features: object) -> dict:
+    """러너가 최신인가 — 아니면 무엇을 하면 되는가.
+
+    `required=False` 여도 `available` 이 참일 수 있다(기능은 있는데 버전만 낮은 경우).
+    러너는 `required` 일 때만 사용자에게 강하게 안내한다 — 매 기동 갱신을 종용하면
+    잘 쓰고 있던 사람에게 소음이 된다.
+    """
+    from shared.bridge_tasks import RUNNER_FEATURE_CONSOLE_JOBS, RUNNER_MIN_AGENT_VERSION
+    from routers._console_llm import version_at_least
+
+    declared = _store.parse_runner_features(
+        ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
+    fresh = version_at_least(agent_version, RUNNER_MIN_AGENT_VERSION)
+    supports = RUNNER_FEATURE_CONSOLE_JOBS in declared
+    return {
+        "current": bool(fresh and supports),
+        "min_version": RUNNER_MIN_AGENT_VERSION,
+        "download_url": "/static/agent/bridge_agent.py",
+        "reason": ("" if (fresh and supports) else
+                   "이 버전은 관리 콘솔 작업을 받을 수 없습니다 — 최신 실행 파일로 다시 실행하세요."),
+    }
 
 
 @router.get("/api/ai/bridge_status")

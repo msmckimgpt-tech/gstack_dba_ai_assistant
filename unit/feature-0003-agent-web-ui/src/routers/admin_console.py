@@ -36,7 +36,34 @@ def admin_me(request: Request, account=Depends(app.require_permission("console.a
     return JSONResponse({
         "ok": True,
         "user": user_payload,
+        # ── feature-0043 TASK-20260831T100000 — 콘솔 LLM 상태를 **여기 한 번** 싣는다.
+        #
+        # 관리 콘솔은 이 사실을 여섯 곳에서 쓴다(조작면 게이트 · 설정 배지 · 최하단 집계 ·
+        # 사용량 배너 · 운영 현황 축 · 위임 적재 전 검사). 화면마다 따로 물으면 (a) 부팅에
+        # 요청이 여섯 번 붙고 (b) 그 사이 러너가 죽으면 **같은 화면 안에서 서로 다른 답**을
+        # 그린다. admin.js 는 부팅 시 이 endpoint 를 이미 부르므로 새 왕복도 없다.
+        #
+        # 별도 endpoint 로 빼지 않는 이유: 그러면 "권한은 있는데 상태는 모르는" 중간 상태가
+        # 생기고, 그 창에서 렌더된 버튼은 자기가 살아 있는지 모른 채 그려진다.
+        "llm": _console_llm_payload(conn, account),
     })
+
+
+def _console_llm_payload(conn, account) -> dict:
+    """`/api/admin/me` 에 실을 콘솔 LLM 상태 + 미적용 표면 목록.
+
+    **실패해도 콘솔 진입을 막지 않는다**(fail-soft): 이 값이 없으면 화면은 종전처럼 그려질
+    뿐이지만, 여기서 예외를 올리면 관리 콘솔 자체가 열리지 않는다. 다만 조용히 낙관하지도
+    않는다 — 판정 실패는 `_console_llm.console_llm_state` 안에서 이미 위임 불가로 기운다.
+    """
+    try:
+        from routers._console_llm import console_llm_state, inactive_surfaces
+
+        state = console_llm_state(conn, account)
+        return {**state, "inactive_surfaces": inactive_surfaces(state)}
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("[console-llm] 상태 조립 실패: %r", exc)
+        return {}
 
 
 @router.get("/api/admin/permissions")
