@@ -6066,3 +6066,103 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
   않으며, 실패가 조용하다(오류 없이 다른 값이 들어간다).
 - 결론: 배포·백필·표면 실측 종결. 미실측 1건(PB-0008 육안)은 사유와 함께 명시했고 완료로 오인
   보고하지 않는다.
+
+## REV-20260831T182700-ai-claude-corp-feature-0003-connect-modal-autoclose [CODEX:connect-modal-autoclose] — PASS (3R P1 0건)
+
+- Related TASK: feature-0003-agent-web-ui / `20260831T1827-connect-modal-autoclose`
+- Source: codex exec (codex-cli 0.146.0) — 3 라운드 적대 리뷰
+- Trigger: UI/모달 키워드 매칭(§18.8 dispatch 표 3행 → ux·design). **세션 도구 제약으로
+  subagent panel 대신 §18.8.1 경량 경로(codex)로 수행** — 상위 우선순위 지시가 Agent tool
+  사용을 금지하므로 §18.8.2 「상위 우선순위 지시 carve-out」 적용. 미검증 도메인은 아래
+  `[SKIPPED:tool-restricted:*]` 로 명시한다.
+- Timestamp: 2026-08-31T19:35:00+09:00
+- Verdict: **PASS (P1 0건)** — 1R BLOCK(P1 2·P2 4) → 2R 승인불가(P1-1 잔존 + 새 P2 1) → 3R **P1 0**
+- Human Approval Needed: no
+
+### 무엇을 바꿨나
+
+「내 AI 연결하기」 모달이 연결 성립(`listening: true`) 시 토스트로 알리고 스스로 닫는다.
+**판정 시점을 «토큰 발급» 이 아니라 «대기 중이 됨» 으로** 두었다 — 발급 시점에 닫으면 모달이
+스스로 "이 창을 닫으면 다시 볼 수 없습니다" 라고 알린 그 명령이 사라지는데, 정작 연결은 아직
+아무 일도 일어나지 않는다.
+
+### 라운드별 지적과 조치
+
+**1R — BLOCK (P1 2 · P2 4)**
+
+- **P1-1 이전 실행 루프가 새 모달을 닫는다**: `[내 AI 실행]` 대기 루프가 창보다 오래 살아,
+  창을 닫고 새로 연 뒤 그 루프의 성공 관측이 **새 창**을 닫는다(그 창의 명령이 사라진다).
+  → 창 세대 `_modalEpoch` 도입. 루프가 시작 시 캡처해 매 회차 대조 후 불일치면 물러난다.
+- **P1-2 실행 버튼이 기준선을 우회한다**: 다른 컴퓨터의 러너가 이미 대기 중이면, 이 컴퓨터용
+  새 명령을 발급하고 실행을 누른 순간 **남의 러너 때문에** 즉시 성공으로 닫힌다.
+  → **닫기 판정을 `_noteListeningForModal` 한 곳으로 일원화**. 두 P1 은 뿌리가 같았다 —
+  판정이 두 곳에 있었고, 한쪽은 «이 창의 전이» 라는 기준선을 몰랐다.
+- P2-3 첫 조회 실패 시 그 뒤의 성공을 «기준선» 으로 삼켜 영영 알리지 못함 → 기준선을
+  `_lastKnownListening`(직전에 화면에 반영된 값)으로.
+- P2-4 폴링이 in-flight 를 무시하고 5초마다 새 요청 → 응답이 6초면 전부 세대 검사에 버려짐
+  → `_gateInFlight` 겹침 가드.
+- P2-5 중복 토스트 테스트가 항진명제(`_announced` 가드를 지워도 통과) → E3 신설: 오버레이를
+  치워 닫기를 불가능하게 만든 뒤 3회 관측 → 알림 1회.
+- P2-6 타이머·배선 미검증 → setInterval/clearInterval 계측(E2) · import 경로 실재(E1) ·
+  리스너를 실제로 저장·디스패치하는 shim 으로 버튼 경로 구동(F1·F2).
+
+**2R — 승인 불가 (P1-1 잔존 + 새 P2)**
+
+- epoch 검사가 `sleep` 전후에만 있어 **fetch in-flight 중 창 교체** 경합을 안 덮는다. F2 는
+  조회 출발 **전에** 닫으므로 그 경합을 검증하지 않는다 — 「막힌다」를 확정할 근거가 없다.
+  → `refreshConnState()` 가 출발 시점 epoch 를 캡처해 `_noteListeningForModal` 로 전달(창-경계
+  검사를 **응답 처리 지점**으로 내림) + 테스트 F3 신설(응답 1200ms 지연으로 in-flight 상태를
+  만든 뒤 창 교체).
+- 새 P2: `_gateInFlight` 가 settle 안 되면 폴링을 **영구 정지**시킨다(고치려던 것보다 나쁜 실패).
+  → `_raceTimeout` 으로 감싸 반드시 풀리게 하고 성공·실패 양쪽에서 플래그를 내린다.
+
+**3R — PASS (P1 0)**
+
+### 계층을 가른 뮤테이션 실측 (2R 의 「확정할 수 없다」에 대한 답)
+
+| 뮤턴트 | 결과 |
+|---|---|
+| 응답 epoch 검사만 제거 | 25/0 통과 — `_connSeq` 최신성 검사가 막는다 |
+| `_connSeq` 검사만 제거 | 25/0 통과 — epoch 검사가 막는다 |
+| **둘 다 제거** | **F3a·F3b·F3c FAIL — 경합이 실제로 재현된다** |
+
+경합은 실재하고, 현재 코드는 **이중으로** 막으며, F3 는 그 중복이 필요한 지점을 정확히 겨눈다.
+논증이 아니라 관측으로 닫았다.
+
+전체 뮤테이션 9종: loop-epoch→F2a·F2b / response-epoch→생존(seq 가 1차) / both-epoch→F2a·F2b /
+connseq→생존(epoch 이 1차) / seq+respepoch→**F3a·F3b·F3c** / launchrunner-announces→F1c·F1d·F1e /
+baseline-first-obs→G1 / announced-guard→E3 / clearinterval→E2b·F2a·F2b.
+
+### 검증
+
+- 신규 행위 테스트 `tests/verify_connect_modal_autoclose.mjs` **25/0 PASS** (A~G) — 실제 모듈을
+  최소 DOM shim 위에서 구동. 리스너를 저장·디스패치해 `[내 AI 실행]` 버튼 경로도 실제로 탄다.
+- **G11-b 결함 주입 실증**: 수정 전(main) 코드에서 **7건 FAIL**(A3·A4·A5·D1·E2a·E3·G1).
+- PB-0008 Windows-browser 라이브 결함 재현(배포본 `1c0864dc`) — 배지가 «내 AI 대기 중» 인데
+  모달이 그대로 남고 알림 0. 스크린샷 1장.
+
+### 남은 위험 (정직 표기 — 완료로 오인 보고하지 않는다)
+
+- **`_gateInFlight` 해제 전용 테스트 없음** (codex 3R P2 잔여). 폴링 간격 5초를 테스트에서
+  발화시킬 수단이 없어서다. 코드 방어(`_raceTimeout` 상한)는 넣었으나 그 방어를 겨누는 단언은
+  없다. 타임아웃 후 원 요청이 늦게 종료될 때의 중첩·부수효과도 후속 보강 대상.
+- **실 러너 end-to-end 미수행**: 서버가 스스로 `listening:true` 를 내는 경로(개인 머신에 AI CLI
+  설치·인증 후 러너 기동)는 AI 무인 완결 불가. 이번 검증은 「서버가 그 값을 줄 때 화면이 어떻게
+  반응하는가」라는 프론트엔드 계약에 한정된다. 그 필드를 내는 서버 계약 자체는 이번 변경 이전부터
+  같은 코드가 소비하던 것이라 이번 변경의 위험 표면이 아니다.
+- **`_lastKnownListening` 기준선의 stale 위험**: 직전 관측이 stale `false` 인데 실제로는 이미
+  연결돼 있었다면, 창을 열자마자 닫힐 수 있다. 그 상태는 배지도 «연결 안 됨» 으로 보이던
+  상태라 판정과 화면이 갈리지는 않지만, 새 연결 정보를 만들려던 사용자에게는 마찰이다.
+  `visibilitychange`·폴링이 상태를 최신으로 유지하므로 드물다고 판단해 수용했다.
+
+## REV-20260831T182700-connect-modal-autoclose [SKIPPED:tool-restricted:ux-design] — 미검증 도메인 명시
+
+- Related TASK: feature-0003-agent-web-ui / `20260831T1827-connect-modal-autoclose`
+- Reason: §18.8 dispatch 표가 UI/모달 변경에 요구하는 `ux`·`design` subagent 는 이 세션의 상위
+  우선순위 도구 제약(Agent tool 금지)으로 호출할 수 없다. §18.8.2 「상위 우선순위 지시
+  carve-out」 대로 제약 없는 채널(codex 3라운드 + PB-0008 실화면)로 가능한 검증을 수행하고,
+  덮지 못한 도메인을 여기 명시한다 — 미검증을 완료로 오인 보고하지 않는다.
+- 실제로 덮인 축: 정합성·경합·자원(codex) · 실 렌더/상호작용(PB-0008). 덮이지 않은 축: 시각
+  디자인 일관성 심사, UX 카피 톤 심사.
+- Timestamp: 2026-08-31T19:35:00+09:00
+- Human Approval Needed: no

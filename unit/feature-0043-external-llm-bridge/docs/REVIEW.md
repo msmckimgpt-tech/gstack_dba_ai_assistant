@@ -1719,7 +1719,6 @@ P1 추이가 **4 → 3 → 1 → 0 으로 단조 감소**했다(§18.8 (b) 의 �
   무시하는 경로를 실패 폴백에 두면 계약이 실패 시에만 조용히 해제된다.
 - **왜 파이썬인가.** 폴백이 하나 더 필요해서가 아니다. 러너가 이미 그 평가기를 쓰므로, 수신과
   상주의 신뢰 경로를 **하나로 만드는** 것이 목적이다 — 이번 결함이 그 둘의 갈라짐이었다.
-
 ## REV-20260831T175800-ai-claude-feature-0043-details-scroll-panel [CODEX:staged-diff] — P1 0건 (2R 수렴) · 1R P2 3건 전건 반영
 
 **대상**: 말풍선 상세의 자기 스크롤 패널 + 결과셋 페이징 시 패널 내부 이동.
@@ -1754,3 +1753,11 @@ P1 추이가 **4 → 3 → 1 → 0 으로 단조 감소**했다(§18.8 (b) 의 �
   floor 가 페이지를 밀지 못하므로 해악이 줄었고, 제거는 이 요청의 범위가 아니다. 다만 큰
   결과셋을 본 뒤 짧은 결과셋으로 넘기면 패널 안에 빈 공간이 남는다(페이징 시 상단으로
   올리므로 시야에 걸리지는 않는다).
+## REV-20260831T184200-ai-claude-corp-feature-0043-schannel-postdeploy [SKIPPED:evidence-only] — 라이브 검증 기록
+
+- **Related TASK**: feature-0043-external-llm-bridge
+- **Reason**: changed paths are docs/test-runs.d evidence only — 코드·설정 변경 0건
+  (배포본 `b28c3fab` 에서의 POST-DEPLOY 실측 적재). 검증 대상 코드는 이미
+  `REV-20260831T175500-…` 에서 감사됐고 본 cycle 은 그 결과의 기록이다.
+- **Timestamp**: 2026-08-31T18:42:00+09:00
+- **Human Approval Needed**: no

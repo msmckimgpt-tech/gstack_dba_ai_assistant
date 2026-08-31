@@ -1880,7 +1880,6 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
   파이썬 불가 → 실패 사유에 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN` 실림 / 임시파일 잔재 0
 - 회귀 `test_windows_tls_revocation.py` **18건** — 수정 전 코드에서 **13/18 FAIL** 실증(§16.7 G11-b)
 - `_ps_code` 주석 스트리퍼를 실 PowerShell `[PSParser]::Tokenize`(토큰 2,602 · 오류 0)와 대조 검증
-
 ## CHG-20260831T175800-ai-claude-feature-0043-details-scroll-panel — 상세를 자기 스크롤 패널로 + 페이징 시 패널 내부 이동
 
 **요청 (2026-08-31)**: 「'▼ 쿼리 결과'의 내용이 너무 길어질 경우에는 페이지 내 스크롤이 과도하게
@@ -1921,3 +1920,19 @@ CSS 두 규칙(`max-height`/`overflow-y` + 스코프 표 상한)을 지우면 �
 
 **관측된 flake(무관)**: `feature-0014 test_edge_rolling_gate.py::test_g3b_…` 가 부하 중 1회
 타이밍 실패(2.0087s < 3s). 격리 재실행 3/3 PASS, 본 diff 는 feature-0014 파일을 0건 건드린다.
+## CHG-20260831T184200-ai-claude-corp-feature-0043-schannel-postdeploy — POST-DEPLOY 라이브 검증 기록 (문서 전용)
+
+- **날짜**: 2026-08-31
+- **REQ**: §16.3 deploy-backed 완료 기준 — push/merge 는 코드 완료이지 배포 완료가 아니다
+- **위험도**: Minor (문서 전용 — 코드 변경 0건)
+
+`CHG-20260831T175500-…` 의 배포(`b28c3fab`) 후, **사용자가 실제로 내려받는 배포본 바이트**로
+같은 시나리오를 재현한 증적을 적재한다. 배포 전 실측은 워킹트리 사본이었으므로 별 기록이다.
+
+- `via=curl` 수신 성공(167,906 bytes) — 폴백이 아니라 **curl 경로 자체가 살아났다**
+- main 정본 · 라이브 서빙본 · Windows 수신본 **3자 SHA256 일치**(`f38b984d…`)
+- 무관한 CA 대조군은 배포본에서도 실패 — pin 유지 재확인
+- 양 replica `GIT_COMMIT=b28c3fab` + **replica 내부 파일 해시 동일**(롤링 캐시 함정 차단)
+- 엣지 `/healthz` 200 · soak 통과 · caddy `no upstreams available` **0건** · RestartCount 0
+- 자기정정 1건: 하네스 기대 해시가 배포 전 러너 값이라 `MISMATCH` 가 났고, 3자 대조로
+  «상수 stale» 임을 확정했다(수신 실패 아님). 불일치를 WARN 으로 강등하지 않았다.

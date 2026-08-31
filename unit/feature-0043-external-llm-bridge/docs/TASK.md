@@ -208,6 +208,10 @@ curl: (60) schannel: CertGetCertificateChain trust error CERT_TRUST_REVOCATION_S
       주석이 단언을 통과시키지 못하게 주석·here-string 제외 코드영역만 검사, PowerShell
       토크나이저와 대조 검증) · G11-b 준수(수정 전 코드에서 **13/18 FAIL** 실증)
 - [x] **서빙 사본 동일성 + BOM 유지** — `static/agent/` 양쪽 바이트 동일, `efbbbf` 보존
+- [x] **POST-DEPLOY 라이브 검증** — 배포본 `b28c3fab` 바이트로 사용자 시나리오 재현: `via=curl`
+      수신 성공(167,906 bytes · 3자 SHA256 일치) · 무관한 CA 대조군 실패(pin 유지) · 양 replica
+      커밋 일치 · 무중단 실측 `no upstreams available` 0건 (증적:
+      `test-runs.d/TASK-20260831T175500-schannel-revocation-postdeploy.md`)
 
 **[다의어] "수정이 필요합니다"**
 - 고른 독해: 이 경로가 **성공하게** 만든다(사용자가 러너를 실제로 받아 연결까지 간다).

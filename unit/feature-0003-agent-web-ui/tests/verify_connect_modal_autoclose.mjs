@@ -1,0 +1,358 @@
+// verify_connect_modal_autoclose.mjs
+// 「내 AI 연결하기」 모달이 **연결이 실제로 성립한 순간** 토스트로 알리고 스스로 닫히는지 검증한다.
+//
+//   [요청] "'내 AI 연결하기' 과정을 통해 정상적으로 연결이 진행되었을 경우 정상적으로
+//          연결되었다는 토스트 메세지 출력과 함께 모달을 닫도록" (사용자, 2026-08-31)
+//   [결함] 종전엔 어느 경로로 연결되든 창이 남았다. 기본 경로(1단계 명령을 터미널에 붙여넣기)는
+//          모달 **밖에서** 끝나므로, 사용자는 다 해 놓고도 손으로 닫아야 «내 AI 대기 중» 배지를
+//          볼 수 있었다 — 모달이 그 배지를 덮고 있다.
+//
+// 이 검증이 «성공했다」가 아니라 «무엇을 성공으로 볼 것인가」를 겨누는 이유: 판정 시점을 한 칸
+// 앞(토큰 발급)으로 당기면 «연결되었습니다」를 띄우면서 아직 아무도 대기하지 않는 상태로 창을
+// 닫게 되고, 그때 사라지는 것이 "다시 볼 수 없습니다" 라고 적힌 그 명령이다. 그래서 아래
+// 시나리오는 **닫혀야 할 때 닫히는가**만큼 **닫히면 안 될 때 안 닫히는가**에 무게를 둔다.
+//
+// 검증 축 (전부 실제 모듈을 실행하는 행위 테스트 — 소스 문자열 검사 아님):
+//   A. 미연결 상태로 열어 둔 창에서 러너가 붙으면 → 토스트 1건 + 창 닫힘.
+//   B. 이미 연결된 사용자가 (새 연결 정보를 만들려고) 열면 → 열자마자 닫히지 않는다.
+//   C. 「연결 준비」로 토큰만 발급된 상태(connected=true, listening=false) → 닫히지 않는다.
+//   D. 성립 후 추가 관측이 토스트를 다시 띄우지 않는다.
+//   E. 배선·자원 — import 경로 실재 · 닫으면 폴링이 멎음 · 닫기가 막혀도 알림은 1회.
+//   F. 실행 버튼 경합 (codex 1R P1) — 남의 러너로 인한 거짓 성공 · 이전 창의 대기가 새 창을 닫음.
+//   G. 첫 조회 실패 (codex 1R P2-3) — 그 뒤의 진짜 전이를 놓치지 않는다.
+//
+// 실행: node verify_connect_modal_autoclose.mjs
+//   대상 파일 교체(회귀 실증용): CONNECT_MODAL_SRC=<path> node verify_connect_modal_autoclose.mjs
+//   (순수 node — jsdom/네트워크 비의존. 실제 렌더·클릭·모듈 로딩의 최종 확인은 PB-0008
+//    Windows-browser: 순환 import 가 실제 브라우저에서 풀리는지는 그쪽이 정본이다.)
+
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_SRC = join(__dirname, "..", "src", "static", "app", "connect-modal.js");
+const SRC = process.env.CONNECT_MODAL_SRC || DEFAULT_SRC;
+const IS_DEFAULT_SRC = SRC === DEFAULT_SRC;
+
+let passed = 0, failed = 0;
+function ok(name, cond) {
+  if (cond) { passed++; console.log(`  PASS  ${name}`); }
+  else { failed++; console.log(`  FAIL  ${name}`); }
+}
+
+// ── 최소 DOM shim ────────────────────────────────────────────────────────────
+// jsdom 을 쓰지 않는 이유는 이 저장소의 기존 verify_*.mjs 와 같다 — 필요한 표면이 좁고,
+// 의존성 없이 도는 편이 CI·다른 작업자 환경에서 재현하기 쉽다. 다만 **리스너는 실제로
+// 저장하고 디스패치**한다: 그러지 않으면 버튼 경로(`[내 AI 실행]`)가 통째로 미검증으로 남고,
+// 이 모듈의 가장 까다로운 경합이 바로 그 경로에 있다.
+class FakeClassList {
+  constructor() { this._s = new Set(); }
+  add(...c) { c.forEach((x) => this._s.add(x)); }
+  remove(...c) { c.forEach((x) => this._s.delete(x)); }
+  contains(c) { return this._s.has(c); }
+  toggle(c, force) {
+    if (force === undefined) { this._s.has(c) ? this._s.delete(c) : this._s.add(c); }
+    else if (force) { this._s.add(c); } else { this._s.delete(c); }
+  }
+}
+class FakeEl {
+  constructor(id) {
+    this.id = id; this.hidden = false; this.textContent = ""; this.disabled = false;
+    this.title = ""; this.dataset = {}; this.classList = new FakeClassList();
+    this._attrs = {}; this._ls = new Map();
+  }
+  setAttribute(k, v) { this._attrs[k] = String(v); }
+  removeAttribute(k) { delete this._attrs[k]; }
+  getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }
+  addEventListener(t, fn) { if (!this._ls.has(t)) this._ls.set(t, []); this._ls.get(t).push(fn); }
+  removeEventListener(t, fn) {
+    const a = this._ls.get(t); if (!a) return;
+    const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1);
+  }
+  dispatch(t, ev) { for (const fn of (this._ls.get(t) || []).slice()) fn(ev || {}); }
+  click() { this.dispatch("click", { button: 0, target: this }); }
+  focus() { globalThis.document.activeElement = this; }
+  closest() { return null; }
+  scrollIntoView() {}
+}
+
+const IDS = [
+  "connectModalOverlay", "connectModalStatus", "connectModalMake", "connectModalLaunch",
+  "connectModalResult", "connectModalText", "connectModalCmd", "connectModalProbe",
+  "connectModalTabPosix", "connectModalTabWin", "connectModalOsLabel", "connectModalCloseBtn",
+  "connectModalCopy", "connectModalCopyCmd", "connectModalCopyProbe",
+  "aiConnState", "composerGate", "composerGateTitle", "composerGateDesc", "composerGateBtn",
+];
+let els = new Map(IDS.map((id) => [id, new FakeEl(id)]));
+const $ = (id) => els.get(id) || null;
+
+const docListeners = new Map();
+globalThis.document = {
+  activeElement: null,
+  hidden: false,
+  getElementById: (id) => els.get(id) || null,
+  addEventListener(t, fn) { if (!docListeners.has(t)) docListeners.set(t, []); docListeners.get(t).push(fn); },
+  removeEventListener(t, fn) {
+    const a = docListeners.get(t); if (!a) return;
+    const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1);
+  },
+  dispatch(t, ev) { for (const fn of (docListeners.get(t) || []).slice()) fn(ev || {}); },
+  createRange: () => ({ selectNodeContents() {} }),
+};
+globalThis.window = {
+  getSelection: () => ({ removeAllRanges() {}, addRange() {} }),
+  location: { href: "" },
+};
+globalThis.navigator = { platform: "Linux x86_64", userAgent: "node-test" };
+
+// 폴링 타이머 계측 — «닫으면 멎는다» 를 관측 가능한 사실로 만든다. 이게 없으면
+// `clearInterval` 을 지운 변이도 테스트를 통과한다(codex 1R P2-6).
+const liveTimers = new Set();
+const _realSetInterval = globalThis.setInterval;
+const _realClearInterval = globalThis.clearInterval;
+globalThis.setInterval = (fn, ms) => { const t = _realSetInterval(fn, ms); liveTimers.add(t); return t; };
+globalThis.clearInterval = (t) => { liveTimers.delete(t); return _realClearInterval(t); };
+
+// 서버 응답 — 시나리오마다 갈아 끼운다. `/api/ai/connect/status` 의 계약 필드만 담는다.
+let statusBody = { logged_in: true, connected: false, listening: false, compose_blocked: false };
+let statusFails = false;      //: 조회가 실패하는 구간 (네트워크 오류·5xx)
+let statusDelayMs = 0;        //: 응답 지연 (겹침 검증용)
+const setStatus = (b) => { statusBody = b; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+globalThis.fetch = async (url) => {
+  const u = String((url && url.url) ? url.url : url);
+  if (u.indexOf("/api/ai/connect/token") >= 0) {
+    return { ok: true, json: async () => ({
+      access_token: "tok-test", endpoint: "https://example.invalid/api/ai/mcp",
+      handoff: "붙여넣기용 지시문",
+      launch: { posix: "curl … | sh", windows: "irm … | iex",
+                protocol: "mysql-ai-bridge://connect?t=tok-test", probe: "환경 조사 지시문" },
+    }) };
+  }
+  // ⚠ 응답 본문은 **출발 시점**에 캡처한다 — 실제 서버가 그렇듯. 지연 후에 읽으면 «날아가
+  //   있는 동안 상태가 바뀐» 경합을 만들 수 없고, 그 경합이 바로 F3 가 겨누는 것이다.
+  const snapshot = statusBody;
+  const failing = statusFails;
+  if (statusDelayMs) await sleep(statusDelayMs);
+  if (failing) throw new Error("network down");
+  return { ok: true, json: async () => snapshot };
+};
+
+// 토스트는 `app.js` 정본을 쓰지만, 여기서는 그 호출만 잡으면 된다.
+globalThis.__toasts = [];
+
+// ── 모듈 적재 ────────────────────────────────────────────────────────────────
+// `import { showToast } from "../app.js"` 를 스텁으로 바꿔 data: URL 로 적재한다. app.js 는
+// 화면 전체를 세우는 대형 번들이라, 이 모듈 하나를 보려고 통째로 평가시키지 않는다.
+const raw = readFileSync(SRC, "utf8");
+const IMPORT_RE = /^import\s*\{\s*showToast\s*\}\s*from\s*["']([^"']+)["'];?\s*$/m;
+const importMatch = raw.match(IMPORT_RE);
+const stubbed = raw.replace(IMPORT_RE, "const showToast = (m) => { globalThis.__toasts.push(m); };");
+if (stubbed === raw && /^import\s/m.test(raw)) {
+  // 스텁이 안 걸린 채 상대 import 가 남아 있으면 data: URL 적재가 깨진다 — 조용히 넘기지 않는다.
+  console.log("  WARN  showToast import 스텁이 매칭되지 않았습니다 (import 형태 변경?)");
+}
+const mod = await import(
+  "data:text/javascript;base64," + Buffer.from(stubbed, "utf8").toString("base64")
+);
+
+const overlay = $("connectModalOverlay");
+// 열기 직후의 fire-and-forget 조회가 기준선을 잡을 시간을 준다.
+const settle = () => sleep(20);
+
+async function reset() {
+  try { mod.closeConnectModal(); } catch (_) { /* 이미 닫힘 */ }
+  globalThis.__toasts.length = 0;
+  statusFails = false;
+  statusDelayMs = 0;
+}
+
+console.log("\n[A] 미연결 상태로 열어 둔 창에서 러너가 붙으면 알리고 닫는다");
+{
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  const opened = mod.openConnectModal();
+  await settle();
+  ok("A1 창이 열린다", opened === true && overlay.hidden === false);
+  ok("A2 아직 알리지 않는다", globalThis.__toasts.length === 0);
+
+  // 사용자가 1단계 명령을 터미널에서 실행 → 러너가 붙는다.
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();
+  ok("A3 토스트 1건", globalThis.__toasts.length === 1);
+  ok("A4 문구가 «연결» 을 말한다", /연결되었습니다/.test(globalThis.__toasts[0] || ""));
+  ok("A5 창이 닫힌다", overlay.hidden === true);
+}
+
+console.log("\n[B] 이미 연결된 사용자가 열면 열자마자 닫히지 않는다");
+{
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  mod.openConnectModal();
+  await settle();
+  await mod.refreshConnState();
+  ok("B1 창이 열린 채 남는다", overlay.hidden === false);
+  ok("B2 알리지 않는다", globalThis.__toasts.length === 0);
+}
+
+console.log("\n[C] 토큰만 발급된 상태(러너 미기동)에서는 닫지 않는다");
+{
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  mod.openConnectModal();
+  await settle();
+  // 「연결 준비」 직후 — 토큰은 생겼지만(connected) 아직 아무도 대기하지 않는다(listening=false).
+  setStatus({ logged_in: true, connected: true, listening: false, compose_blocked: false });
+  await mod.refreshConnState();
+  ok("C1 창이 남는다 (명령을 잃지 않는다)", overlay.hidden === false);
+  ok("C2 알리지 않는다", globalThis.__toasts.length === 0);
+}
+
+console.log("\n[D] 성립 후 추가 관측이 토스트를 다시 띄우지 않는다");
+{
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  mod.openConnectModal();
+  await settle();
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();
+  await mod.refreshConnState();
+  await mod.refreshConnState();
+  ok("D1 토스트는 여전히 1건", globalThis.__toasts.length === 1);
+}
+
+console.log("\n[E] 배선·자원");
+{
+  // E1 — 스텁 정규식이 import 를 통째로 지우므로, 경로가 틀려도 위 시나리오는 전부 통과한다.
+  //      그 경로가 실재하는지는 여기서 따로 본다(틀리면 라이브에서 화면 전체가 죽는다).
+  if (IS_DEFAULT_SRC) {
+    const spec = importMatch ? importMatch[1].split("?")[0] : null;
+    const resolved = spec ? join(dirname(SRC), spec) : null;
+    ok("E1 showToast import 경로가 실재한다", !!resolved && existsSync(resolved));
+  } else {
+    console.log("  SKIP  E1 (대체 소스 경로 — 상대 import 기준점이 다르다)");
+  }
+
+  // E2 — 닫으면 폴링이 멎는가. 타이머를 계측하지 않으면 `clearInterval` 을 지운 변이도 통과한다.
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  const before = liveTimers.size;
+  mod.openConnectModal();
+  await settle();
+  const during = liveTimers.size;
+  mod.closeConnectModal();
+  await settle();
+  ok("E2a 열면 폴링이 돈다", during === before + 1);
+  ok("E2b 닫으면 폴링이 멎는다", liveTimers.size === before);
+
+  // E3 — 닫기가 막혀도 알림은 1회. `_announced` 가드를 직접 겨눈다: 오버레이를 치우면
+  //      `closeConnectModal` 이 조기 반환해 «열림» 상태가 남고, 다음 관측이 다시 알리려 한다.
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  mod.openConnectModal();
+  await settle();
+  const savedOverlay = els.get("connectModalOverlay");
+  els.delete("connectModalOverlay");          // 닫기를 불가능하게 만든다
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();
+  await mod.refreshConnState();
+  await mod.refreshConnState();
+  const toastsWhileStuck = globalThis.__toasts.length;
+  els.set("connectModalOverlay", savedOverlay);
+  ok("E3 닫기가 막혀도 알림은 1회", toastsWhileStuck === 1);
+}
+
+console.log("\n[F] 실행 버튼 경합 (codex 1R P1 — 라운드 1 수정의 회귀 잠금)");
+{
+  // 공통 준비: 「연결 준비」로 명령을 발급해 `[내 AI 실행]` 버튼을 살린다.
+  const launchBtn = $("connectModalLaunch");
+  const cmdEl = $("connectModalCmd");
+  mod.bindConnectModal();   // 실제 리스너 배선 — 버튼 경로를 우회하지 않는다
+
+  // F1 (P1-2) — 남의 컴퓨터 러너가 이미 대기 중인데, 이 컴퓨터용 새 명령을 발급하고 실행을
+  //             눌렀다. 첫 조회가 그 남의 러너 때문에 true 여도 **이 창의 전이가 아니다**.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  mod.openConnectModal();
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  ok("F1a 명령이 발급됐다", String(cmdEl.textContent || "").length > 0);
+  ok("F1b 실행 버튼이 보인다", launchBtn.hidden === false);
+  launchBtn.click();
+  await sleep(2600);   // 첫 대기 회차(2000ms) + 여유
+  ok("F1c 남의 러너로 닫히지 않는다", overlay.hidden === false);
+  ok("F1d 명령이 남아 있다", String(cmdEl.textContent || "").length > 0);
+  ok("F1e 거짓 알림이 없다", globalThis.__toasts.length === 0);
+
+  // F2 (P1-1) — 실행을 눌러 둔 채 창을 닫고 **새 창**을 열었다. 이전 대기가 뒤늦게 성공을
+  //             보더라도 새 창을 닫아선 안 된다 (그 창의 명령이 사라진다).
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  mod.openConnectModal();
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  launchBtn.click();                 // 대기 시작 (첫 회차 2000ms)
+  await sleep(200);
+  mod.closeConnectModal();           // 사용자가 창을 닫고
+  mod.openConnectModal();            // 곧바로 새 창을 연다
+  await settle();
+  $("connectModalMake").click();     // 새 명령 발급
+  await settle();
+  const newCmd = String(cmdEl.textContent || "");
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  // 이제 이전 대기의 첫 조회가 도착한다 — 그 응답은 listening:true 다.
+  await sleep(2600);
+  ok("F2a 이전 대기가 새 창을 닫지 않는다", overlay.hidden === false);
+  ok("F2b 새 명령이 남아 있다", String(cmdEl.textContent || "") === newCmd && newCmd.length > 0);
+
+  // F3 (P1-1 심층, codex 2R) — F2 는 조회가 **출발하기 전**에 창을 닫으므로 in-flight 경합을
+  //    건드리지 않는다. 여기서는 조회를 날려 둔 채 창을 교체한다: 그 늦은 응답은
+  //    `listening:true` 이고, 새 창의 기준선은 `false` 다. «막힌다» 를 논증이 아니라 관측으로
+  //    잠근다.
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  await mod.refreshConnState();                 // 페이지가 «대기 안 함» 을 안다
+  mod.openConnectModal();
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  statusDelayMs = 1200;
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  launchBtn.click();                            // 대기 시작 — 첫 조회는 t≈2000 에 출발
+  await sleep(2150);                            // 그 조회가 날아가 있는 지금
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  mod.closeConnectModal();
+  mod.openConnectModal();                       // 새 창 — 이 창의 조회는 false 를 받는다
+  $("connectModalMake").click();
+  await sleep(400);
+  const cmd3 = String(cmdEl.textContent || "");
+  await sleep(3000);                            // 양쪽 응답이 모두 도착할 시간
+  ok("F3a in-flight 응답이 새 창을 닫지 않는다", overlay.hidden === false);
+  ok("F3b 새 명령이 남아 있다", String(cmdEl.textContent || "") === cmd3 && cmd3.length > 0);
+  ok("F3c 거짓 알림이 없다", globalThis.__toasts.length === 0);
+  statusDelayMs = 0;
+}
+
+console.log("\n[G] 첫 조회 실패 (codex 1R P2-3)");
+{
+  // 여는 직후 조회가 실패해도, 그 뒤에 온 진짜 전이를 «기준선» 으로 삼켜서는 안 된다.
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  await mod.refreshConnState();      // 페이지가 이미 «대기 안 함» 을 알고 있는 상태
+  statusFails = true;
+  mod.openConnectModal();
+  await settle();                    // 여는 직후 조회 = 실패
+  statusFails = false;
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();      // 러너가 붙었다
+  ok("G1 첫 조회가 실패해도 전이를 놓치지 않는다",
+     globalThis.__toasts.length === 1 && overlay.hidden === true);
+}
+
+await reset();
+console.log(`\n결과: ${passed} passed, ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);
