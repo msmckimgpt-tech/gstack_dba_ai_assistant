@@ -863,5 +863,8 @@ LLM처리를 수행하도록 구성해주세요."
 - [x] pytest 신규 25건(서버 12 · 프런트 구조 13) + 기존 계약 2건 갱신 · 컨테이너 전량 green
 - [x] node 하네스 `verify_bridge_live_step_progress.mjs` 18/18 — **뮤테이션 역검증 2종 포함**
 - [x] **codex 적대 리뷰 2R** — P1 0건 수렴 · P2/P3 8건 중 6건 반영 · 2건 근거 기각
-- [ ] **PB-0008 POST-DEPLOY 시각검증** — JS 는 배포 전 실 브라우저 검증이 불가(자산 스탬프
-      미주입 + 모듈 캐시). 배포 직후 `docs/test-runs.d/` fragment 로 기록
+- [x] **PB-0008 POST-DEPLOY 시각검증** — 배포본 `74e2672c` 실 Windows 브라우저에서 완료.
+      추론 구간 91초가 카드에 붙고(제보 ①), 절단 고지·총 단계 수·「진행 중」 표기 확인(제보 ②),
+      저장 답변 경로 무회귀. 증적 `feature-0003 docs/test-runs.d/…-postdeploy.md`
+- [ ] 실 러너 end-to-end 왕복(회선 절단 → 재접속 눈 관측)은 사용자 머신 AI CLI + 새 토큰이
+      필요해 무인 완결 불가 — 함수 수준은 하네스 S1~S8 이 덮는다
