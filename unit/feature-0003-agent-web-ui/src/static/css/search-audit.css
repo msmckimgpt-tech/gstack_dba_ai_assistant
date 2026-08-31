@@ -2494,6 +2494,16 @@ select.admin-meta-input {
   white-space: pre-wrap; word-break: break-all;
   max-height: 320px; overflow-y: auto;
 }
+/* [내 AI 실행] 이 응답을 못 받았을 때 되돌아갈 곳(1단계 명령)을 잠깐 가리킨다.
+   실패를 말하면서 대안을 글로만 가리키면 사용자가 어느 블록인지 찾아야 한다. */
+.connect-modal-code.is-attention {
+  /* 색은 토큰으로 (feature-0003 §8.1) — 폴백은 `--primary` 의 현재 값과 같다. */
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .connect-modal-code.is-attention { transition: outline-color .2s ease-in-out; }
+}
 .connect-modal-actions { display: flex; gap: 8px; margin: 0 0 14px; }
 .connect-modal-btn {
   border: 1px solid rgba(0, 0, 0, .18); background: transparent; color: inherit;
