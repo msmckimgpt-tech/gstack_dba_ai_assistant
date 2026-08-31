@@ -174,13 +174,17 @@ BATCH_TASK_MAX_AGE_MIN = 180
 JOB_SPECS: dict[str, dict[str, Any]] = {
     "metadata_suggest": {
         "label": "메타데이터 자동완성(단건)",
-        "origin": ORIGIN_WEB, "response": "json", "apply": "review",
-        "wired": False,
+        # ⚠ **text 다.** 기존 프롬프트(`_metadata_suggest_messages`)가 "설명 본문만 출력하고
+        #   머리말·따옴표를 붙이지 마세요" 를 지시한다 — 서버가 그 텍스트를
+        #   `{target, suggestion}` 봉투로 감쌀 뿐이다. json 으로 잡으면 위임 프롬프트가
+        #   조립부와 **모순된 형식**을 요구하고, 그 모순은 AI 가 무엇을 내든 한쪽이 틀린다.
+        "origin": ORIGIN_WEB, "response": "text", "apply": "review",
+        "wired": True,
     },
     "metadata_bulk": {
         "label": "메타데이터 자동완성(일괄)",
         "origin": ORIGIN_WEB, "response": "json", "apply": "review",
-        "wired": False,
+        "wired": True,
     },
     "node_analysis": {
         "label": "그래프 AI 능동 분석",
@@ -190,7 +194,7 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
     "prompt_generate": {
         "label": "시스템 프롬프트 자동작성",
         "origin": ORIGIN_WEB, "response": "text", "apply": "review",
-        "wired": False,
+        "wired": True,
     },
     "insight_summary": {
         "label": "인사이트 배치",

@@ -458,8 +458,11 @@ def test_empty_report_is_sent_not_swallowed():
     api.heartbeat([])
     api.heartbeat(None)
     api.heartbeat([{"runtime": "claude", "models": [], "efforts": []}])
-    assert sent[0][1] == {"runtimes": []}, "빈 신고가 미신고로 뭉개졌다"
-    assert sent[1][1] == {}, "미신고가 빈 신고로 바뀌었다"
+    # 계약은 **`runtimes` 축**이다 — 빈 목록(신고했고 고를 것 없음)과 미포함(신고할 처지가
+    # 아님)이 구분되는가. 본문 전체 동치로 잠그면 무관한 축이 늘 때마다(기능·버전 신고 등)
+    # 이 검사가 깨지는데, 그것은 계약 위반이 아니라 **검사가 너무 넓은** 것이다.
+    assert sent[0][1].get("runtimes") == [], "빈 신고가 미신고로 뭉개졌다"
+    assert "runtimes" not in sent[1][1], "미신고가 빈 신고로 바뀌었다"
     assert sent[2][1]["runtimes"], "정상 신고가 실리지 않았다"
 
 

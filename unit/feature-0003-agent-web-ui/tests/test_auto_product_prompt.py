@@ -163,7 +163,7 @@ def _install(monkeypatch, *, store, pct_by_pid, llm=None, fail_marker=False):
     monkeypatch.setattr(app, "_insight_cov_cache_get", lambda key: None)
     monkeypatch.setattr(app, "_insight_cov_cache_put", lambda key, val: None)
 
-    def _fake_assemble(product_id):
+    def _fake_assemble(product_id, delegate_ctx=None):
         return None, {
             "openai_client": llm,
             "create_kwargs": {"model": "x", "messages": [], "timeout": 90},
@@ -276,7 +276,7 @@ def test_collect_context_auth_gate(monkeypatch):
     called = {"assemble": 0}
     monkeypatch.setattr(app, "_connect_memory", lambda: _FakeMemConn({}))
 
-    def _fake_assemble(pid):
+    def _fake_assemble(pid, delegate_ctx=None):
         called["assemble"] += 1
         return None, {"ok": True}
 

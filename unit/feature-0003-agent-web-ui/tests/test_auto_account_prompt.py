@@ -134,7 +134,7 @@ def test_collect_account_prompt_context_delegates(monkeypatch):
     monkeypatch.setattr(app, "_check_account_token_quota", lambda conn, account: (True, ""))
     seen: dict = {}
 
-    def _assemble(a, r, p):
+    def _assemble(a, r, p, delegate_ctx=None):
         seen.update({"a": a, "r": r, "p": p})
         return None, {"ok": True}
 

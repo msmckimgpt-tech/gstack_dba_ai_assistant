@@ -337,6 +337,23 @@ def _log(msg: str) -> None:
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+#: 이 러너의 버전. 서버가 콘솔 작업 배급 자격의 **2차 조건**으로 쓴다(1차는 기능 신고).
+#:
+#: 왜 둘 다인가: 기능 이름만 보면 신고 **형식**이 바뀐 뒤에도 구 러너가 자격을 유지한다.
+#: 버전은 그 형식 변경을 표현할 수 있는 유일한 축이다. 서버의 하한은
+#: `shared/bridge_tasks.RUNNER_MIN_AGENT_VERSION` — 여기 값이 그보다 낮으면 콘솔 작업이
+#: 배급되지 않고, 하트비트 응답의 `runner_update` 가 그 사실을 말한다.
+AGENT_VERSION = "2026.08.31"
+
+#: 이 러너가 다룰 줄 아는 작업 종류.
+#:
+#: `console_jobs` — 관리 콘솔 작업(대화가 아닌 프롬프트 한 덩어리). 신고하지 않으면 서버가
+#:   배급하지 않는다. 신고 없이 받으면 대화용 프레이밍으로 감싸 산출물이 조용히 망가진다.
+#: `batch_jobs` — 배경 배치까지 받겠다는 **별도 동의**. 기본 포함이 아니다: 그 작업은 이
+#:   사람이 요청한 적 없고 자기 계정 토큰을 태운다. `--batch` 로 켠다.
+AGENT_FEATURES: tuple[str, ...] = ("console_jobs",)
+
+
 def _transport_is_safe(base: str) -> bool:
     """토큰을 이 주소로 보내도 되는가. https, 또는 진짜 loopback 만 참.
 
@@ -360,6 +377,11 @@ def _transport_is_safe(base: str) -> bool:
 
 
 class Api:
+    #: 이 인스턴스가 신고할 기능. `--batch` 로 배치 동의를 더한다 —
+    #: 전역 상수를 바꾸지 않는 이유: 같은 프로세스에서 두 Api 를 만들 수 있고, 동의는
+    #: **그 실행의 선택**이지 모듈의 성질이 아니다.
+    features: tuple[str, ...] = AGENT_FEATURES
+
     def __init__(self, base: str, token: str, ca: str | None):
         self.base = base.rstrip("/")
         self.token = token
@@ -384,8 +406,13 @@ class Api:
         # 그러면 `--cmd` 로 갈아탄 러너가 "고를 것 없음" 을 말하지 못하고, 서버에 남아 있던 과거
         # 목록이 계속 신선한 것으로 노출된다 — 사용자는 고를 수 있는데 반영되지 않는 화면을 본다.
         # `None`(신고할 처지가 아님)과 `[]`(신고했고 고를 것이 없음)은 여기서도 다른 값이다.
-        return self._post("/api/ai/bridge_heartbeat",
-                          {} if runtimes is None else {"runtimes": runtimes}, timeout)
+        body: dict = {} if runtimes is None else {"runtimes": runtimes}
+        # 기능·버전 신고 (TASK-20260831T100000). **항상** 싣는다 — 능력(`runtimes`)과 달리
+        # 이것은 "무엇을 다룰 줄 아는가" 라 `--cmd` 사용자에게도 참이다. 서버는 이 값으로
+        # 콘솔 작업 배급 자격을 정하고, 낡은 버전이면 응답으로 갱신 경로를 알려 준다.
+        body["features"] = list(self.features)
+        body["agent_version"] = AGENT_VERSION
+        return self._post("/api/ai/bridge_heartbeat", body, timeout)
 
     def _post(self, path: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
         body = json.dumps(payload or {}).encode("utf-8")
@@ -1781,6 +1808,16 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
 
 def compose_prompt(api: Api, task: dict) -> str:
     """내 AI 에게 줄 프롬프트. **조사 도구 사용법을 함께 준다** — 그래야 DB 를 실제로 본다."""
+    # ── 콘솔 작업은 프레이밍을 씌우지 않는다 (TASK-20260831T100000) ────────────────────
+    #
+    # 아래 대화용 프레이밍("너는 사내 DB 질의 어시스턴트다" · 제목 마커 · 답변 규약)은 콘솔
+    # 작업에 전부 해롭다: 서버가 이미 완성된 지시문(형식 요구 포함)을 보냈고, 여기서 덧씌우면
+    # **두 지시가 충돌**해 JSON 을 요구했는데 산문이 오거나 끝에 제목 줄이 붙는다.
+    #
+    # 조사 도구 블록도 붙이지 않는다 — 콘솔 작업의 입력(스키마 골격·기존 설명)은 서버가
+    # 프롬프트에 이미 실어 보냈고, 추가 조사는 그 작업의 정의 밖이다.
+    if str(task.get("kind") or "chat") == "job":
+        return str(task.get("question") or "")
     q = str(task.get("question") or "")
     ctxt = str(task.get("conversation_context") or "")
     sysp = str(task.get("system_prompt") or "")
@@ -2191,6 +2228,10 @@ def main() -> int:
                          "AI 가 아닌 프로그램을 지목하지 마라(그 프로그램의 부수효과는 막지 못한다)")
     ap.add_argument("--cmd", default=os.environ.get("BRIDGE_CMD", "") or None,
                     help="직접 지정할 AI 명령. {prompt} 자리에 질문이 들어간다")
+    ap.add_argument("--batch", action="store_true",
+                    help="배경 배치 작업(인사이트·클러스터 라벨)까지 받는다. "
+                         "기본은 받지 않는다 — 그 작업은 당신이 요청한 적 없고 당신 계정의 "
+                         "AI 사용량을 쓴다.")
     ap.add_argument("--once", action="store_true", help="한 건만 처리하고 종료")
     ap.add_argument("--check", action="store_true", help="연결만 확인하고 종료")
     ap.add_argument("--resume", action="store_true",
@@ -2265,6 +2306,10 @@ def main() -> int:
         return 2
 
     api = Api(args.base, args.token, args.ca)
+    if getattr(args, "batch", False):
+        # 배치 동의는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 서버는 이 신고를
+        # 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을 가져가지는 않는다.
+        api.features = tuple(AGENT_FEATURES) + ("batch_jobs",)
 
     if args.cmd:
         kind, argv = "custom", []

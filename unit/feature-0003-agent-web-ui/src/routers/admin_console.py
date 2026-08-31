@@ -66,6 +66,82 @@ def _console_llm_payload(conn, account) -> dict:
         return {}
 
 
+@router.get("/api/admin/ai-jobs/{task_id}")
+def admin_ai_job_status(task_id: str, request: Request,
+                        account=Depends(app.require_permission(
+                            "console.access", message="관리 콘솔 접근 권한이 필요합니다.")),
+                        conn=Depends(app.get_conn)) -> JSONResponse:
+    """feature-0043 TASK-20260831T100000 — 위임한 콘솔 작업의 진행/결과 폴링.
+
+    ## 왜 대화 축(`/api/ai/bridge_status`)을 재사용하지 않는가
+
+    그쪽은 **본문을 싣지 않는다** — 답변은 대화에 저장되고 화면이 대화를 다시 읽기 때문이다.
+    콘솔 작업은 저장될 대화가 없고 결과가 **폼·그래프로 직접 들어가야** 하므로 본문이 필요하다.
+    같은 엔드포인트에 두 계약을 넣으면 "언제 본문이 오는가" 가 호출자마다 달라진다.
+
+    ## 스코프
+
+    `AccountId` 로 닫는다 — **자기가 적재한 작업만**. 배치(`Origin='batch'`)는 소유자가 없어
+    여기서 보이지 않는다(그건 관제 화면 `_delegated_jobs` 의 몫이고, 그쪽은 관제 권한을 쓴다).
+
+    없는 task 와 남의 task 를 구분하지 않는다(둘 다 404) — 구분하면 응답 차이로 남의 task id
+    존재 여부를 알아낼 수 있다.
+    """
+    from shared.bridge_tasks import job_label, load_console_job
+
+    if conn is None:
+        return app._json_error("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
+    account_id = int((account or {}).get("id") or 0)
+    job = load_console_job(conn, str(task_id), account_id=account_id)
+    if job is None:
+        return app._json_error("작업을 찾을 수 없습니다.", 404)
+
+    status = str(job.get("status") or "")
+    submitted = status == "submitted"
+    applied = job.get("applied_at") is not None
+    error = str(job.get("apply_error") or "")
+    # 국면은 **서버가 한 단어로** 정한다 — 프런트가 조합하면 화면마다 갈린다(대화 축과 같은 규율).
+    if status in ("canceled", "expired"):
+        phase = "canceled"
+    elif not submitted:
+        phase = "working" if job.get("claimed_by") is not None else "waiting"
+    elif error:
+        # 「제출됐지만 반영 실패」는 성공이 아니다 — 합치면 화면이 완료라 말하는데 값이 없다.
+        phase = "apply_failed"
+    else:
+        phase = "done"
+    return JSONResponse({
+        "task_id": job["task_id"],
+        "job_kind": job["job_kind"],
+        "label": job_label(job["job_kind"]),
+        "phase": phase,
+        "status": status,
+        "claimed": job.get("claimed_by") is not None,
+        "applied": applied,
+        "apply_error": error,
+        # 본문은 **완료됐을 때만** 싣는다. 진행 중에 부분 결과를 흘리면 화면이 그것을 최종으로
+        # 읽고 폼에 채운 뒤, 잠시 뒤 다른 값으로 덮인다.
+        "result": (job.get("answer") if submitted else None),
+        # 적재 시점에 굳힌 입력. 화면이 **서버 봉투를 재구성**하는 데 쓴다 — 직접 경로는
+        # `{target, suggestion}` 같은 봉투를 서버가 만들지만, 위임 결과는 AI 가 낸 본문뿐이라
+        # "이 답이 무엇에 대한 것인가" 를 화면이 알아야 폼의 어느 칸에 넣을지 정한다.
+        "payload": _console_job_payload(job.get("payload")),
+    })
+
+
+def _console_job_payload(raw):
+    """저장된 JSON payload → dict. 깨졌으면 `None`(화면은 그때 폼 컨텍스트로 폴백한다)."""
+    if not raw:
+        return None
+    try:
+        import json as _json
+
+        parsed = _json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 @router.get("/api/admin/permissions")
 def admin_permissions(request: Request, account=Depends(app.require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(app.get_conn)) -> JSONResponse:
     # TASK-0052 Phase 1A: catalog 를 app._resolve_permission_catalog 경로로 조회.

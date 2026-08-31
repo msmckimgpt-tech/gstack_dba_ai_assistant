@@ -1493,3 +1493,21 @@ codex 적대 리뷰 **P1 0건**, P2/P3 8건 중 6건 반영·2건 근거 기각.
 
 증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260831T113350-live-steps-reasoning-postdeploy.md`
 캡처: `artifacts/pb0008-live-steps-reasoning/` (git 밖, §2)
+
+## CHG-20260831T160000 — 콘솔 작업 위임 배선 (사용자 결정)
+
+**무엇**: 관리 콘솔 LLM 기능의 위임 경로를 실제로 이었다 — 폴링 API(C6) · 조립부 뒤 위임
+seam(C7a) · 프론트 대기/결과 채우기(C7b) · 러너 job 분기와 기능 신고(C10).
+
+**이음매**: 네 기능 모두 `messages` 조립 **뒤**, LLM 호출 **앞** 한 지점. 조립부(스키마
+grounding·제품 바인딩·필드 제약)를 그대로 재사용하고 여기서 프롬프트를 다시 쓰지 않는다.
+
+**러너**: `kind='job'` 이면 대화 프레이밍(사내 DB 어시스턴트·제목 마커·답변 규약)을 씌우지
+않는다 — 서버가 보낸 형식 요구와 충돌해 JSON 을 요구했는데 산문이 오는 것을 막는다.
+`features`/`agent_version` 을 항상 신고하고 배치 동의는 `--batch` opt-in.
+
+**개방한 종류**: `metadata_suggest`(text) · `metadata_bulk`(json) · `prompt_generate`(text).
+`node_analysis`·`insight_summary`·`cluster_label` 은 반영 경로 미구현이라 `wired: False` —
+그 상태에서 적재는 거절되고 조작면은 사유와 함께 비활성이다.
+
+**되돌리기**: 게이트 1개 + `JOB_SPECS[...]["wired"]`.

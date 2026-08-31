@@ -3461,3 +3461,15 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   라이브 상태가 `runner_idle` 분기를 타 **`no_connection` 과 실제로 갈렸다**(설계 의도 실증).
   상세·미검증 항목: `docs/test-runs.d/TASK-20260831T100000-console-llm-parity-postdeploy.md`
 - 무중단 실측 `no upstreams available` = 0 · `/readyz` git_commit = `5e806c6a`.
+
+### Run — TASK-20260831T160000-console-job-wiring (콘솔 작업 위임 배선)
+
+- **Environment: Windows-browser (PB-0008)** — **이 커밋 시점 미수행**. 사유: 본 changeset 의
+  화면 변화(`llm-state.js` 폴링 헬퍼 · `metadata.js` 위임 결과 처리)는 **연결된 러너가
+  `console_jobs` 를 신고한 상태에서만** 관측 가능한데, 그 러너는 사용자 머신에서 이 배포본을
+  받아 실행해야 존재한다. 그리고 라이브는 아직 이전 SHA(`5e806c6a`)를 서빙하므로 지금
+  브라우저로 보는 것은 **이 변경이 아니다**. JS 는 `docker cp` QA 가 불가하다(asset stamp
+  미주입 → 모듈 캐시로 구버전 실행). 그래서 배포 후 POST-DEPLOY 로 수행하고 증적을 별도
+  fragment 로 남긴다 — 직전 cycle(TASK-20260831T100000)과 같은 절차.
+- 이 커밋에서 대체 수행한 것: 위임 계약 회귀 15건(형식 정합·이음매 순서·러너 프레이밍·
+  프롬프트 평탄화 순서) + 전량 green(6253+) + route 골든 대조(추가 1·제거 0).
