@@ -1210,9 +1210,12 @@ def test_runner_build_cmd_drops_unoffered_values():
     assert mod.build_cmd("claude", "Q", "sonnet", "low") == \
         _claude_base + ["--model", "sonnet", "--effort", "low", "Q"]
     # codex 는 effort 플래그가 config override 형태다(런타임마다 다르다).
-    assert mod.build_cmd("codex", "Q", "gpt-5.1-codex", "high") == [
+    # 모델 값은 표에서 유도한다 — 표가 실측으로 갱신돼도(2026-08-31 gpt-5.1-* → gpt-5.6-*)
+    # 이 테스트가 지키려는 것("표 안 값이 그 런타임의 인자 형태로 조립된다")은 그대로다.
+    _codex_model = mod._RUNTIME_SPECS["codex"]["models"][0]["value"]
+    assert mod.build_cmd("codex", "Q", _codex_model, "high") == [
         "codex", "exec", "--skip-git-repo-check",
-        "-m", "gpt-5.1-codex", "-c", "model_reasoning_effort=high", "Q"]
+        "-m", _codex_model, "-c", "model_reasoning_effort=high", "Q"]
     # gemini 는 추론등급 플래그가 없다 — 등급을 줘도 인자가 생기지 않는다.
     assert mod.build_cmd("gemini", "Q", "gemini-2.5-pro", "high") == [
         "gemini", "-p", "-m", "gemini-2.5-pro", "Q"]

@@ -763,14 +763,25 @@ _RUNTIME_SPECS: dict[str, dict] = {
         "model": ["-m", "{model}"],
         # config override 로 넘긴다 — codex 에는 전용 effort 플래그가 없다.
         "effort": ["-c", "model_reasoning_effort={effort}"],
+        # ⚠ 아래 `models` 는 **신고에 쓰이지 않는다** (2026-08-31). 화면 목록의 출처는
+        #   probe 응답뿐이고, 이 표는 `build_cmd(runtimes=None)` 폴백(단위 테스트·구 호출부)
+        #   에서만 대조에 쓰인다. 그래도 실측값으로 맞춰 둔다 — 낡은 값이 코드에 남아 있으면
+        #   다음 사람이 그것을 현재 목록으로 읽는다(이번 결함이 정확히 그렇게 시작했다).
+        #   실측 2026-08-31(codex 본인 응답): sol·terra·luna 는 5.6 세대, 그 아래로 5.5·5.4.
         "models": [
-            {"value": "gpt-5.1-codex", "label": "GPT-5.1 Codex"},
-            {"value": "gpt-5.1-codex-mini", "label": "GPT-5.1 Codex mini"},
+            {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+            {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+            {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+            {"value": "gpt-5.5", "label": "GPT-5.5"},
+            {"value": "gpt-5.4", "label": "GPT-5.4"},
+            {"value": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
         ],
         "efforts": [
             {"value": "low", "label": "낮음"},
             {"value": "medium", "label": "보통"},
             {"value": "high", "label": "높음"},
+            {"value": "xhigh", "label": "매우높음"},
+            {"value": "max", "label": "최대"},
         ],
     },
     "gemini": {
@@ -1305,8 +1316,12 @@ def _settle_effort_axis(
     spec = _RUNTIME_SPECS.get(name) or {}
     spec_flag = _coerce_flag(spec.get("effort"), "{effort}")
     spec_opts = _coerce_options(spec.get("efforts"), limit=12)
-    if spec_flag and spec_opts:
-        help_budget = min(_CAPS_HELP_TIMEOUT_SEC, left) if left > 0 else _CAPS_HELP_TIMEOUT_SEC
+    if spec_flag and spec_opts and left > 0:
+        # ⚠ `left <= 0` 이면 도움말도 부르지 않는다 (codex P1-3). 종전에는 남은 시간이 없어도
+        #   15초를 새로 줬는데, 그러면 "전체 deadline" 이라는 말이 거짓이 된다 — 호출측은 이미
+        #   폴백으로 떠난 뒤이고, 그 15초는 아무도 읽지 않을 답을 기다리는 시간이다.
+        #   시간이 없으면 축을 비우되 **확정으로 기록하지 않아**(아래 False) 다음 기동이 다시 본다.
+        help_budget = min(_CAPS_HELP_TIMEOUT_SEC, left)
         seen = _help_mentions_flag(_cli_help_text(name, timeout=help_budget), spec_flag)
         if seen is True:
             _log(f"{name}: 추론 수준을 답하지 않아 내장 표로 보완했다 (--help 로 실재 확인).")
@@ -1319,7 +1334,13 @@ def _settle_effort_axis(
 
     # ③ 넘길 방법을 확인하지 못했다 — 축을 비운다. 화면에서 그 항목이 빠지고,
     #    반영되지 않을 조작면은 생기지 않는다.
-    return None, [], True
+    #
+    #    확정 여부는 **왜 여기 왔는지**로 갈린다. 우리 표에 짝이 아예 없으면(표 밖 CLI) 더
+    #    확인할 것이 없으니 결론이다. 짝은 있는데 시간이 없어 도움말을 못 봤다면 그것은
+    #    결론이 아니다 — 확정으로 기록하면 "시간이 없어 못 본 것" 이 "이 CLI 는 지원하지
+    #    않는다" 로 굳는다(P2-2 와 같은 부류).
+    _unchecked = bool(spec_flag and spec_opts and left <= 0)
+    return None, [], not _unchecked
 
 
 def probe_runtime_caps(name: str, argv: list[str],
@@ -1350,6 +1371,16 @@ def probe_runtime_caps(name: str, argv: list[str],
         budget - (time.monotonic() - started),
     )
     label = " ".join(str(got.get("label") or name).split())[:60] or name
+    # 모델 축도 **넘길 방법이 있어야 목록이 뜻을 갖는다** (codex P1-2). 목록만 신고하고
+    # 플래그가 없으면 화면에는 고를 수 있는 것처럼 나오지만 `build_cmd` 는 인자를 붙이지
+    # 못해 CLI 기본 모델로 답한다 — "고를 수 있는데 반영은 안 되는" 조작면이 이 경로로
+    # 되살아난다. 우리 표에 그 CLI 의 플래그가 있으면 그것으로 메우고(호출법 폴백은 유지
+    # 하기로 한 축이다), 표에도 없으면(표 밖 CLI) **목록을 비운다** — 그러면 그 런타임은
+    # 신고되지 않고, 사용자는 없는 선택지를 보지 않는다.
+    if not model_flag:
+        model_flag = _coerce_flag((_RUNTIME_SPECS.get(name) or {}).get("model"), "{model}")
+    if not model_flag:
+        models = []
     return {
         "label": label,
         "models": models,
@@ -1457,7 +1488,15 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 probed[nm] = {**prev, "effort": flag, "efforts": opts,
                               "effort_probed": bool(settled)}
                 return
-            for argv in (unknown_argvs.get(nm) or [list(_RUNTIME_SPECS[nm]["argv"])]):
+            attempts = list(unknown_argvs.get(nm) or [list(_RUNTIME_SPECS[nm]["argv"])])
+            # 표 안 CLI 는 후보 호출 형태가 하나뿐이라 **한 번 실패하면 곧 포기**였다.
+            # 실측(2026-08-31): codex 는 같은 조건에서 성공(6종 응답)과 실패를 오간다. 그 한
+            # 번의 실패가 이제는 "그 런타임이 화면에서 통째로 사라짐" 을 뜻한다(내장 모델
+            # 목록 폴백을 없앴으므로). 남은 시간이 있으면 한 번 더 묻는다 — 시간 검사는
+            # 루프 안에 이미 있어 deadline 을 넘기지 않는다.
+            if len(attempts) == 1:
+                attempts = attempts * 2
+            for argv in attempts:
                 left = deadline - time.monotonic()
                 if left <= 5.0:
                     return           # 남은 시간이 의미 없다 — 시작하지 않는 것이 유일한 절약
@@ -1485,7 +1524,13 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 # 축 재확정만 시도했고 그것도 못 얻었다 — 캐시를 지우지 않는다.
                 _log(f"  {n}: 추론 수준을 확인하지 못해 이전 값을 유지합니다.")
             else:
-                _log(f"  {n}: 응답을 받지 못해 내장 기본값을 씁니다.")
+                # ⚠ 종전 문구(내장 표로 대신한다는 안내)는 이제 거짓이다 (2026-08-31).
+                #   모델 목록 폴백을 없앴으므로
+                #   답을 못 받으면 **그 런타임은 화면에 나타나지 않는다**. 로그가 종전 문구를
+                #   유지하면 사용자는 목록이 있는 줄 알고 선택기를 찾는다 — 그리고 없는 이유를
+                #   어디서도 듣지 못한다. 다음 행동(재시도 방법)까지 여기서 말한다.
+                _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
+                     f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 
     out: list[dict] = []
     for name in present:
@@ -1495,12 +1540,28 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
         caps = probed.get(name) or cached.get(name)
 
         if caps is None:
-            # 폴백 — 우리가 아는 만큼. ollama 는 HTTP 라 물을 수 없어 실조회가 그 자리다.
-            models = _ollama_models() if name == "ollama" else list(spec.get("models") or [])
+            # 폴백 — **호출법만** 우리가 아는 것을 쓴다. 모델 목록은 넣지 않는다.
+            #
+            # ⚠ 종전에는 내장 표의 모델 이름까지 신고했다. 그 표는 우리가 적어 둔 시점에
+            #   멈춰 있어서, 라이브에서 codex 가 `gpt-5.1-codex` 로 보였다 — 실제 그 계정이
+            #   쓸 수 있는 것은 `gpt-5.6-sol`·`terra`·`luna`·`5.5`·`5.4` 였다(사용자 제보
+            #   2026-08-31). **없는 모델을 고를 수 있다고 말하는 것**이라, 고른 순간 CLI 가
+            #   거부하거나 조용히 다른 모델로 답한다.
+            #
+            #   목록의 출처는 연결된 AI 라는 것이 이 기능의 계약이고(사용자 결정), 그 계약을
+            #   폴백이 뒷문으로 깨고 있었다. 물어보지 못했으면 **모른다고 하는 편이** 틀린
+            #   목록을 확신 있게 보여주는 것보다 낫다 — 아래 `if not caps.get("models")` 가
+            #   그 런타임을 신고에서 빼고, 화면에는 그 그룹이 나타나지 않는다.
+            #
+            #   호출법(argv·플래그)은 성격이 다르다: 잘 변하지 않고, 없으면 **실행 자체가**
+            #   불가능하며, 값이 아니라 형태라 "틀린 선택지를 제시" 하는 문제가 생기지 않는다.
+            #
+            #   ollama 는 예외 — HTTP 로 **실조회**한 목록이라 우리가 적어 둔 값이 아니다.
+            models = _ollama_models() if name == "ollama" else []
             caps = {
                 "label": str(spec.get("label") or name),
                 "models": models,
-                "efforts": list(spec.get("efforts") or []) if spec.get("effort") else [],
+                "efforts": [],
                 "model": spec.get("model"),
                 "effort": spec.get("effort"),
                 "source": "builtin",
@@ -2079,29 +2140,20 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     # 않는다. 같은 계정에 러너가 여럿일 때(목록을 신고한 러너 ≠ 질문을 가져간 러너) 실제로
     # 발생한다. 제목 분리 **뒤**에 붙인다: 앞에 붙이면 이 줄이 제목 규약 위치를 밀어낸다.
     #
-    # **반영된 것도 밝힌다** (사용자 요구 2026-08-31: "실제 해당 설정값을 통해 LLM 처리를
-    # 수행"). 미반영만 고지하면 침묵이 두 가지를 뜻하게 된다 — "지정대로 됐다" 와 "지정이
-    # 애초에 전달되지 않았다". 사용자가 그 둘을 구분할 방법이 화면에 없었고, 그래서
-    # "무슨 모델로 답했는지 확인되지 않는다" 가 됐다.
+    # ⚠ **반영된 지정은 답변 본문에 쓰지 않는다** (사용자 결정 2026-08-31).
     #
-    # 두 축을 **각각** 말한다 (codex P2-3). 한쪽만 미반영일 때 미반영 사실만 알리면, 반영된
-    # 다른 축은 여전히 침묵에 남아 같은 모호함이 그 축에 그대로 옮겨간다.
-    # 지정이 **있을 때만** 붙인다 — 무지정 요청까지 매번 한 줄을 더하면 그건 노이즈다.
-    _applied = " · ".join([s for s in (
-        f"모델 {want_model}" if _model_ok else "",
-        f"추론등급 {want_effort}" if _effort_ok else "",
-    ) if s])
+    #   잠깐 넣었다가 뺐다. 넣은 이유는 "무엇으로 답했는지 확인할 수 없다" 였는데, 그 확인
+    #   수단은 **선택기 라벨**이면 충분하다 — 그리고 그쪽이 답변을 읽기 전에, 다음 질문을
+    #   보내기 전에 보인다. 답변마다 붙는 한 줄은 정상 경로에서 아무것도 더하지 않으면서
+    #   본문을 밀어낸다. (라벨이 러너 어휘를 표시하지 못하던 결함은 같은 cycle 에서 고쳤다.)
+    #
+    #   **미반영 고지는 남긴다** — 그건 다른 사실이다. "고른 값이 반영되지 않았다" 는 화면
+    #   어디에도 드러나지 않으므로 답변이 유일한 통로다.
     if unmet:
         answer = (answer or "") + (
             f"\n\n> 참고: 요청하신 {' · '.join(unmet)} 은(는) 이 AI 에서 쓸 수 없어"
             " 기본 설정으로 답했습니다."
-            + (f" ({run_kind} 의 {_applied} 는 적용됐습니다.)" if _applied else "")
         )
-    elif _applied and ok:
-        # ⚠ `ok` 를 함께 본다 (실 브라우저 발견 2026-08-31). AI 실행이 실패해 **자동 안내로
-        #   대체된** 본문에까지 "…로 생성했습니다" 를 붙이면, 생성되지 않은 답을 생성했다고
-        #   말하는 것이 된다 — 같은 말풍선 안에서 두 문장이 서로를 부정한다.
-        answer = (answer or "") + f"\n\n> 이 답변은 {run_kind} 의 {_applied} 로 생성했습니다."
 
     # 프롬프트 계약은 지시이지 집행이 아니다 — 따르지 않은 답이 그대로 화면에 가는 것을 여기서
     # 막는다 (codex P1-4). 답을 지우지 않고 「할 일이 없다」를 덧붙인다. 제목 분리 **뒤**다.
@@ -2396,8 +2448,11 @@ def main() -> int:
                 f"{r['label']}({len(r['models'])}종"
                 + (f", 추론 {len(r['efforts'])}단계" if r["efforts"] else "")
                 + ")" for r in runtimes))
+            # 출처 표기에서 「내장 기본값」을 뺀다 (2026-08-31). 모델 목록 폴백이 없어졌으므로
+            # 여기 오른 런타임은 **전부** 그 AI 가 답한 것(또는 ollama 실조회)이다. 없는 출처를
+            # 이름으로 남겨 두면 다음 사람이 그 경로가 아직 있다고 읽는다.
             _by_probe = [n for n, c in caps.items() if (c or {}).get("source") == "probe"]
-            _log("  출처: " + ("본인 응답 " + ", ".join(_by_probe) if _by_probe else "내장 기본값")
+            _log("  출처: " + ("본인 응답 " + ", ".join(_by_probe) if _by_probe else "실조회")
                  + ("" if args.refresh_caps or not _cached else " (캐시 — 갱신은 --refresh-caps)"))
         else:
             _log("고를 수 있는 AI 를 찾지 못했습니다 — 웹 선택기는 표시되지 않습니다.")

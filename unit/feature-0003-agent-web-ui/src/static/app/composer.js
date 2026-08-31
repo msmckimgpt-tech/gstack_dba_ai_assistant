@@ -3054,12 +3054,46 @@ function _renderComposerModelMenu() {
     menu.appendChild(empty);
     return;
   }
+  // 플랫폼(런타임)별 **그룹 트리**로 그린다 (사용자 결정 2026-08-31).
+  //
+  // 브리지 모드의 목록은 여러 CLI 가 섞여 있고(claude·codex·gemini·ollama·그 밖의 CLI), 값도
+  // `runtime:model` 이라 flat 목록에서는 어느 플랫폼의 모델인지 배지 하나로만 구분됐다.
+  // 항목이 늘수록 그 구분이 눈에 들어오지 않는다 — 같은 플랫폼끼리 붙여 놓고 머리글을
+  // 세우면 훑는 단위가 「모델 N개」에서 「플랫폼 몇 개」로 줄어든다.
+  //
+  // 그룹이 하나도 없는 카탈로그(서버 LLM 모드)는 종전 flat 렌더 그대로 — 머리글 하나뿐인
+  // 트리는 들여쓰기만 늘리고 아무것도 나누지 않는다.
+  const _groupOf = (m) => (typeof m === "string" ? "" : (m.group || ""));
+  // ⚠ 그룹 키는 **런타임 식별자**(값의 `runtime:` 접두)이고, 머리글에 쓰는 이름만 `group` 이다
+  //   (codex P1-1). 표시명은 그 AI 가 답한 값이라 서로 다른 CLI 가 같은 이름을 낼 수 있고
+  //   (`"label": "Local AI"` 둘), 표시명으로 묶으면 두 런타임이 한 머리글 아래 섞인다 —
+  //   트리에서는 배지도 없앴으므로 사용자는 어느 CLI 의 모델인지 알 방법이 없다.
+  const _keyOf = (m) => {
+    const v = typeof m === "string" ? m : (m.value || "");
+    const i = v.indexOf(":");
+    return i > 0 ? v.slice(0, i) : "";
+  };
+  const _grouped = models.some(_groupOf);
+  const _order = [];
+  const _buckets = new Map();
+  const _titles = new Map();
   models.forEach((m) => {
+    const key = _grouped ? (_keyOf(m) || _groupOf(m) || "기타") : "";
+    if (!_buckets.has(key)) {
+      _buckets.set(key, []);
+      _order.push(key);
+      // 같은 런타임인데 항목마다 표시명이 다르면 **첫 이름**을 쓴다(머리글이 흔들리지 않게).
+      _titles.set(key, _groupOf(m) || key);
+    }
+    _buckets.get(key).push(m);
+  });
+
+  const _renderItem = (m) => {
     const value = typeof m === "string" ? m : (m.value || "");
     const label = typeof m === "string" ? m : (m.label || value);
     const description = typeof m === "string" ? "" : (m.description || "");
     const group = typeof m === "string" ? "" : (m.group || "");
-    if (!value) return;
+    if (!value) return null;
     const item = document.createElement("button");
     item.type = "button";
     item.className = "composer-model-item" + (value === current ? " is-selected" : "");
@@ -3069,7 +3103,10 @@ function _renderComposerModelMenu() {
     // `claude-opus` + group `Claude`) 정보가 0 이고 행만 시끄러워진다(사용자 지적). label 이 이미
     // group 명으로 시작하면 배지를 생략한다 — provider 가 섞이는 카탈로그(Local LLM 등)에서는
     // label 접두가 다르므로 배지가 그대로 살아 구분 기능을 유지한다(조건부 생략, 무조건 제거 아님).
-    const groupRedundant = !!group && label.toLowerCase().startsWith(group.toLowerCase());
+    // 트리에서는 머리글이 그 역할을 하므로 배지를 달지 않는다(같은 말을 두 번 쓰지 않는다).
+    // flat 렌더에서는 종전 규칙 그대로 — label 이 group 명으로 시작하면 생략.
+    const groupRedundant = _grouped
+      || (!!group && label.toLowerCase().startsWith(group.toLowerCase()));
     item.innerHTML = `
       <div class="composer-model-item-head">
         <span class="composer-model-item-label">${escapeHtml(label)}</span>
@@ -3094,7 +3131,32 @@ function _renderComposerModelMenu() {
       _renderComposerReasoningMenu();
       _closeComposerActionsMenus();
     });
-    menu.appendChild(item);
+    return item;
+  };
+
+  _order.forEach((key) => {
+    const title = _titles.get(key) || key;
+    if (key) {
+      // 머리글은 **버튼이 아니다** — 고를 수 없는 것을 고를 수 있게 보이면 안 되고,
+      // 키보드 이동(roving menuitem)에서도 걸리지 않아야 한다.
+      const head = document.createElement("div");
+      head.className = "composer-model-group-head";
+      head.setAttribute("role", "presentation");
+      head.textContent = title;
+      menu.appendChild(head);
+    }
+    (_buckets.get(key) || []).forEach((m) => {
+      const item = _renderItem(m);
+      if (!item) return;
+      // 배지를 뗀 자리를 **접근성 이름**으로 메운다 (codex P2-4). 머리글이
+      // `presentation` 이라 스크린리더에는 소속이 전달되지 않는다 — 같은 모델명이 여러
+      // 플랫폼에 있을 때 눈으로는 구분되는 것이 귀로는 구분되지 않는다.
+      if (key) {
+        const _lbl = item.querySelector(".composer-model-item-label");
+        item.setAttribute("aria-label", `${title} ${(_lbl && _lbl.textContent) || ""}`.trim());
+      }
+      menu.appendChild(item);
+    });
   });
 }
 
