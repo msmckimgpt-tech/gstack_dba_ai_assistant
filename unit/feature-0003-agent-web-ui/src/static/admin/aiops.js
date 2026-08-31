@@ -4,6 +4,96 @@
 //   $ (getElementById 헬퍼) 는 admin.js module-scope — 적대 패널이 잡은 자유 식별자라 명시 import.
 import { adminState, apiFetch, mountGuidanceRegistryPanel, $ } from "../admin.js?v=dev";
 
+// ── feature-0043 TASK-20260831T100000 — 브리지 관측 ────────────────────────────────
+//
+// 서버 계정 LLM 이 차단된 배포에서 실제 추론은 전부 개인 AI 러너가 한다. 그 사실을 볼 자리가
+// 관제에 없어서, 운영자는 "누가 연결돼 있나 / 대기가 밀렸나 / 위임한 작업이 어떻게 됐나" 를
+// 어디서도 확인할 수 없었다. 아래 둘이 그 공백을 메운다.
+//
+// 색은 `base.css` 의 tag 토큰만 쓴다 — feature-0003 docs/AGENTS.md §10 이 인라인 하드코딩
+// 색상값을 절대 금지사항으로 두고 있다(우회하면 테마 변경이 이 표만 비껴간다).
+
+// ⚠ `esc` 는 `renderAiOps` 의 **지역 상수**다(모듈 스코프가 아니다). 아래 모듈-스코프
+// 함수들이 그 이름을 참조하면 자유 식별자가 되어 런타임 ReferenceError 로 표 전체가
+// 사라진다 — 정적 검사로는 잡히지 않고 화면에서만 드러나는 부류다. 자체 정의를 둔다.
+function _e(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+/** 브리지 KPI 두 장. 게이트가 열린 배포(브리지 미사용)에서는 아무것도 그리지 않는다 —
+ *  쓰이지 않는 축을 0 으로 보여 주면 그 0 이 "장애" 로 읽힌다. */
+function bridgeKpis(bridge, kpi, fmtNum) {
+  // 키가 하나도 없으면 브리지를 안 쓰는 배포(축이 `na`)이거나 조회 실패다. 둘 다 그리지 않는다.
+  if (!bridge || Object.keys(bridge).length === 0) return "";
+  const listening = Number(bridge.listening_runners || 0);
+  const capable = Number(bridge.console_capable || 0);
+  const connected = Number(bridge.connected_accounts || 0);
+  const open = Number(bridge.open_tasks || 0);
+  const working = Number(bridge.working_tasks || 0);
+  const stale = Number(bridge.stale_tasks || 0);
+  return kpi("연결된 AI", `${fmtNum(listening)}`,
+             `연결 계정 ${connected} · 콘솔 작업 가능 ${capable}`)
+    + kpi("대기 / 처리중", `${fmtNum(open)} / ${fmtNum(working)}`,
+          // 정체 건수는 **0 일 때 말하지 않는다** — 상시 표시하면 "0건 정체" 가 배경 소음이
+          // 되어 실제로 1건이 생겼을 때 눈에 띄지 않는다.
+          stale ? `10분 넘게 미점유 ${stale}건` : "질문 대기열");
+}
+
+const _JOB_STATUS_TOKEN = {
+  open: "warn", submitted: "ok", canceled: "neutral",
+  deferred: "neutral", expired: "neutral",
+};
+const _JOB_STATUS_LABEL = {
+  open: "대기", submitted: "제출됨", canceled: "취소됨",
+  deferred: "보류", expired: "만료",
+};
+
+function _jobChip(kind, label) {
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:11px;font-weight:600;`
+    + `font-size:11px;color:var(--tag-${kind}-fg);background:var(--tag-${kind}-bg);`
+    + `border:1px solid var(--tag-${kind}-bd)">${_e(label)}</span>`;
+}
+
+/**
+ * 위임 작업 현황 표 — 사용자 결정(2026-08-31):
+ *   "해당 작업이 어떤 상태인지, 어느 계정에서 진행되고 있는지 등. 명시적인 표기가 가능해야"
+ *
+ * **소유(시킨 사람)와 수행(하고 있는 사람)을 나눠서** 보여 준다. 관리자 작업은 둘이 같지만
+ * 배치는 다르다(워커가 열고 아무 러너나 집는다) — 한 칸으로 합치면 "내가 시킨 적 없는
+ * 작업이 내 이름으로" 또는 그 반대가 된다.
+ */
+function delegatedJobsTable(jobs) {
+  if (!Array.isArray(jobs) || jobs.length === 0) return "";
+  const rows = jobs.map((j) => {
+    const st = String(j.status || "");
+    // 「제출됐지만 반영 실패」는 **별도 상태로 승격**한다. `submitted` 로만 보이면 운영자는
+    // 성공으로 읽는데, 실제로는 산출물이 어디에도 도달하지 않았다.
+    const failed = !!j.apply_error;
+    const chipKind = failed ? "danger" : (_JOB_STATUS_TOKEN[st] || "neutral");
+    const chipText = failed ? "반영 실패" : (_JOB_STATUS_LABEL[st] || st || "—");
+    const when = String(j.applied_at || j.submitted_at || j.claimed_at || j.created_at || "")
+      .replace("T", " ").slice(0, 19);
+    return `<tr>`
+      + `<td>${_e(j.label || j.job_kind || "—")}</td>`
+      + `<td>${_jobChip(chipKind, chipText)}</td>`
+      + `<td>${_e(j.owner || (j.origin === "batch" ? "(배경 배치)" : "—"))}</td>`
+      + `<td>${_e(j.worker || "—")}</td>`
+      + `<td style="color:var(--text-2)">${_e(when || "—")}</td>`
+      + `<td style="color:var(--tag-danger-fg)">${_e(j.apply_error || "")}</td>`
+      + `</tr>`;
+  }).join("");
+  return `<div style="margin-bottom:18px">`
+    + `<div style="font-weight:700;margin-bottom:6px">위임 작업 현황`
+    + `<span style="font-weight:400;color:var(--text-2);font-size:12px;margin-left:8px">`
+    + `관리 콘솔·배경 작업을 연결된 개인 AI 가 처리한 내역</span></div>`
+    // 좁은 화면에서 표가 본문을 밀지 않게 자기 안에서 스크롤한다.
+    + `<div style="overflow-x:auto"><table class="admin-llm-jobs-table">`
+    + `<thead><tr><th>작업</th><th>상태</th><th>요청 계정</th><th>수행 계정</th>`
+    + `<th>시각</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
+
 // ── TASK-AIOPS: AI 운영 현황 패널 (관리 콘솔 > 감사 > AI 운영 현황) ──────────────
 // TASK-AIOPS-paging: 활동 row HTML(초기 렌더 + '더 보기' append 공용) — 자체 esc/포맷(모듈 스코프).
 function _aiOpsEscApg(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
@@ -164,7 +254,16 @@ function renderAiOps(data) {
     + kpi("워커 정상", `${esc(k.workers_ok)}/${esc(k.workers_total)}`, "요청·인사이트 워커")
     + kpi("24시간 활동", fmtNum(a24.calls) + "회", (a24.requests || 0) + "개 요청")
     + kpi("단계 간 간격 p50 / p95", fmtMs(lat.p50_ms) + " / " + fmtMs(lat.p95_ms), "추론 단계 사이(도구·오케스트레이션) · 다단계 요청 " + (lat.multistep_requests || 0) + "/" + (lat.agent_requests || 0) + " · 간격 " + (lat.measured_calls || 0) + "건")
+    // feature-0043 TASK-20260831T100000 — 브리지 KPI.
+    //
+    // 서버가 추론하지 않는 배포에서는 **이 두 수가 서비스의 생사**다. 종전 KPI(워커·활동·
+    // 지연)는 전부 서버 측 지표라, 러너가 0대여도 화면은 "정상" 만 보여 줬다.
+    // 값은 `data.bridge`(구조화)에서 읽는다 — 축의 `detail` 문자열을 파싱하면 문구를
+    // 고치는 순간 KPI 가 조용히 깨진다.
+    + bridgeKpis(data.bridge || {}, kpi, fmtNum)
     + `</div>`;
+  // feature-0043 TASK-20260831T100000 — 위임 작업 현황.
+  h += delegatedJobsTable(data.delegated_jobs || []);
   // Attention
   const att = data.attention || [];
   if (att.length) {

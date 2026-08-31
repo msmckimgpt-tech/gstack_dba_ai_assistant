@@ -23,7 +23,9 @@ DB 커넥션·트랜잭션 관리는 여기 없다. 호출측이 이미 자기 �
 """
 from __future__ import annotations
 
+import json
 import logging
+import secrets
 from typing import Any
 
 __all__ = [
@@ -39,6 +41,27 @@ __all__ = [
     "cancel_bridge_tasks",
     "claim_is_live",
     "promote_latest_deferred",
+    # ── 콘솔 작업 위임 (TASK-20260831T100000) ──
+    "KIND_CHAT",
+    "KIND_JOB",
+    "ORIGIN_WEB",
+    "ORIGIN_EXTERNAL",
+    "ORIGIN_BATCH",
+    "RUNNER_FEATURE_CONSOLE_JOBS",
+    "RUNNER_FEATURE_BATCH_JOBS",
+    "RUNNER_MIN_AGENT_VERSION",
+    "JOB_SPECS",
+    "job_spec",
+    "job_label",
+    "BATCH_JOB_KINDS",
+    "BATCH_PENDING_MAX",
+    "BATCH_TASK_MAX_AGE_MIN",
+    "CONSOLE_PROMPT_MAX_CHARS",
+    "ConsoleJobRejected",
+    "enqueue_console_job",
+    "expire_stale_batch_jobs",
+    "load_console_job",
+    "mark_console_job_applied",
 ]
 
 #: 점유 lease. 이 시간이 지나도록 제출되지 않은 작업은 **다시 대기열에 나타난다**.
@@ -85,6 +108,294 @@ CLAIMABLE_SQL = (
     "(ClaimedBy IS NULL OR ClaimedAt IS NULL "
     f"OR ClaimedAt < DATE_SUB(NOW(), INTERVAL {BRIDGE_CLAIM_LEASE_MIN} MINUTE))"
 )
+
+
+# ── 콘솔 작업 위임 (TASK-20260831T100000, console-llm-parity) ───────────────────────
+#
+# 관리 콘솔의 LLM 기능도 개인 AI 가 처리한다. 대화 브리지와 **같은 테이블·같은 점유 술어**를
+# 쓰되 `Kind` 로 갈린다 — 나누면 lease·취소·원장이 두 벌이 되고, 그 다섯 중 하나만 갈려도
+# "목록엔 없는데 제출은 되는" 부류의 결함이 되돌아온다.
+
+#: `WebAiTasks.Kind` — 무엇을 하는 작업인가. `Origin`(누가 열었나)과 **직교**한다.
+KIND_CHAT = "chat"
+KIND_JOB = "job"
+
+#: `WebAiTasks.Origin` — 누가 열었나. 종전 두 값에 배치 축이 더해진다.
+ORIGIN_WEB = "web"
+ORIGIN_EXTERNAL = "external"
+#: 워커가 연 배경 작업. 특정 사용자의 질문이 아니므로 계정 스코프로 닫히지 않고,
+#: **권한 + 기능 신고**로 닫힌다(배급 자격은 `ai_tools` 가 집행).
+ORIGIN_BATCH = "batch"
+
+#: 러너가 하트비트에 싣는 기능 이름. **이 값이 배급 자격이다.**
+#:
+#: 왜 자격이 필요한가: 콘솔 작업을 모르는 러너가 그것을 집으면 대화용 프레이밍(「너는 사내 DB
+#: 질의 어시스턴트다」 · 제목 마커)으로 감싸 JSON 산출물을 망친다. 그 실패는 조용하다 —
+#: 답은 오는데 내용이 규약을 벗어나 있고, 파서는 빈 결과를 돌려준다.
+RUNNER_FEATURE_CONSOLE_JOBS = "console_jobs"
+#: 배경 배치까지 받겠다는 **별도 동의**. 콘솔 작업 능력과 나누는 이유: 배치는 그 사람이 요청한
+#: 적 없는 일이고 자기 계정 토큰을 태운다. 능력이 있다고 동의한 것으로 보면 안 된다.
+RUNNER_FEATURE_BATCH_JOBS = "batch_jobs"
+
+#: 이 버전 미만의 러너에는 콘솔 작업을 주지 않고 **갱신을 지시한다**(사용자 결정 2026-08-31).
+#: 기능 신고가 1차 자격이고 버전은 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가
+#: 자격을 유지한다.
+RUNNER_MIN_AGENT_VERSION = "2026.08.31"
+
+#: 배치 대기열 상한. 배급 가능한 러너가 없어도 워커는 계속 도므로, 상한이 없으면 아무도 못
+#: 집는 작업이 무한히 쌓인다(P0-S 가 대화 축에서 이미 고친 형태).
+BATCH_PENDING_MAX = 24
+#: 배치 작업의 유효 기간(분). 넘으면 만료 — 배경 산출물은 재생성 가능하므로 오래된 요청을
+#: 붙들고 있을 이유가 없고, 붙들면 화면의 "대기 중" 이 영구 고착된다.
+BATCH_TASK_MAX_AGE_MIN = 180
+
+
+#: 콘솔 작업 종류 레지스트리 — **한 곳에서 정의하고 모두가 읽는다.**
+#:
+#: 각 항목:
+#:   label       : 사람이 읽는 이름(화면·원장 공용). 두 곳이 각자 지으면 반드시 갈린다.
+#:   origin      : 이 종류를 누가 여는가 (`web`=관리자 조작 / `batch`=워커).
+#:   response    : 'text' | 'json'. 러너 프롬프트의 출력 규약과 회수 파서를 함께 정한다.
+#:   apply       : 산출물이 도달할 곳. 'review'=사람이 검토 후 저장(폼에 채움) /
+#:                 'store'=기존 저장 경로에 자동 기입.
+#:   wired       : **이 종류의 전 구간(적재 호출부 · 프롬프트 조립 · 산출물 반영)이 실제로
+#:                 존재하는가.** False 면 `enqueue_console_job` 이 거절하고, 관리 콘솔은 그
+#:                 종류의 조작면을 "위임 불가" 로 표시한다.
+#:
+#:                 ⚠ **부분 배선을 True 로 적지 않는다.** 이 feature 가 P0-M·P0-T 에서 두 번
+#:                 밟은 함정이 정확히 그것이다 — 화면은 "할 수 있다" 고 말하는데 실행 경로가
+#:                 없어, 사용자가 누르면 아무 일도 일어나지 않거나 조용히 다른 것이 된다.
+#:                 전 구간이 서기 전까지는 False 가 **정직한 값**이고, 그 상태에서 화면은
+#:                 사유와 함께 비활성으로 보인다.
+#:
+#: `apply` 를 종류마다 굳히는 이유(사용자 결정 2026-08-31 "자율적으로 입력"): 전환은 **기존
+#: 경로의 쓰기 의미를 보존**해야 한다. 메타데이터 자동완성은 원래 검토형이었고 배치는 원래
+#: 자동기입형이었다 — 위임하면서 한쪽으로 통일하면 그 자체가 사용감 회귀다.
+JOB_SPECS: dict[str, dict[str, Any]] = {
+    "metadata_suggest": {
+        "label": "메타데이터 자동완성(단건)",
+        "origin": ORIGIN_WEB, "response": "json", "apply": "review",
+        "wired": False,
+    },
+    "metadata_bulk": {
+        "label": "메타데이터 자동완성(일괄)",
+        "origin": ORIGIN_WEB, "response": "json", "apply": "review",
+        "wired": False,
+    },
+    "node_analysis": {
+        "label": "그래프 AI 능동 분석",
+        "origin": ORIGIN_WEB, "response": "json", "apply": "store",
+        "wired": False,
+    },
+    "prompt_generate": {
+        "label": "시스템 프롬프트 자동작성",
+        "origin": ORIGIN_WEB, "response": "text", "apply": "review",
+        "wired": False,
+    },
+    "insight_summary": {
+        "label": "인사이트 배치",
+        "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
+        "wired": False,
+    },
+    "cluster_label": {
+        "label": "클러스터 라벨링",
+        "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
+        "wired": False,
+    },
+    # red-team 은 대기열에 따로 적재되지 않는다 — **답변한 그 러너**가 자기 답변을 검증해
+    # `submit_answer` 에 함께 싣는다(사용자 결정 2026-08-31: "요청 당시의 호출자가 스스로의
+    # 대화내역을 알 수 있으므로"). 별도 task 로 만들면 그 AI 가 자기 답변의 맥락을 잃고,
+    # 검증을 위해 대화를 한 번 더 넘겨야 한다.
+}
+
+#: 워커가 여는 종류(배급 자격이 `batch_jobs` 동의를 추가로 요구한다).
+BATCH_JOB_KINDS = tuple(k for k, v in JOB_SPECS.items() if v["origin"] == ORIGIN_BATCH)
+
+
+def job_spec(job_kind: Any) -> dict[str, Any] | None:
+    """등록된 작업 종류의 명세. 모르는 값은 `None` — 호출측이 **거절**한다.
+
+    관대하게 기본값을 주지 않는 이유: 여기서 추측하면 모르는 종류가 'text/review' 로 조용히
+    처리되어, 산출물이 어디에도 도달하지 않은 채 "제출됨" 으로 남는다.
+    """
+    return JOB_SPECS.get(str(job_kind or "").strip())
+
+
+def job_label(job_kind: Any) -> str:
+    """화면·원장 공용 이름. 미등록이면 원본 문자열(빈 값이면 '콘솔 작업')."""
+    spec = job_spec(job_kind)
+    if spec:
+        return spec["label"]
+    return str(job_kind or "").strip() or "콘솔 작업"
+
+
+#: 작업 프롬프트 상한. `Question` 은 대화 축에서 4000자로 잘라 넣는데, 콘솔 작업은 스키마
+#: 골격이 실려 훨씬 길다(일괄 자동완성은 테이블 수십 개). `Question` 컬럼은 TEXT 라 64KB 를
+#: 담지만, 그 전부를 개인 AI 에게 보내면 그쪽 컨텍스트가 먼저 터진다 — 적재 시점에 자른다.
+CONSOLE_PROMPT_MAX_CHARS = 24_000
+
+
+class ConsoleJobRejected(Exception):
+    """작업을 적재하지 **않았다**. 호출측이 사용자에게 사유를 그대로 말할 수 있게 예외로 올린다.
+
+    조용히 `None` 을 돌려주지 않는 이유: 적재 실패가 "성공했지만 결과가 아직" 과 구분되지
+    않으면, 화면은 오지 않을 결과를 무한히 기다린다(이 feature 가 P0-F 에서 겪은 형태).
+    """
+
+
+def enqueue_console_job(conn, *, account_id: int, job_kind: str, prompt: str,
+                        payload: Any = None, product_id: Any = None,
+                        datasource_key: str | None = None) -> str:
+    """관리 콘솔·배경 작업을 개인 AI 가 가져갈 **대기 작업**으로 적재한다. 반환 = `task_id`.
+
+    ## 대화 브리지와 같은 테이블을 쓰는 이유
+
+    점유(`CLAIMABLE_SQL`)·lease·취소·원장·각인이 전부 `WebAiTasks` 위에 있다. 별도 테이블을
+    만들면 그 다섯이 두 벌이 되고, 하나만 갈려도 "목록엔 없는데 제출은 되는" 부류의 결함이
+    되돌아온다. 갈리는 축은 `Kind` 하나로 좁힌다.
+
+    ## 배치는 상한과 만료를 갖는다
+
+    관리자 작업은 사람이 눌러서 생기므로 저절로 멈춘다. 배치는 워커가 계속 돌아서 **배급
+    가능한 러너가 없어도 무한히 쌓인다** — P0-S 가 대화 축에서 고친 형태 그대로다. 그래서
+    적재 전에 오래된 것을 만료시키고 대기 수에 상한을 건다.
+
+    Raises:
+        ConsoleJobRejected: 모르는 작업 종류 · 배치 대기 상한 초과. **적재하지 않았음**이
+            확실하므로 호출측은 종전 경로로 폴백하거나 사용자에게 사유를 말하면 된다.
+        Exception: DB 오류는 그대로 올린다(삼키면 화면이 오지 않을 결과를 기다린다).
+    """
+    log = logging.getLogger(__name__)
+    spec = job_spec(job_kind)
+    if spec is None:
+        # 모르는 종류를 관대하게 받으면 산출물이 어디에도 도달하지 않은 채 "제출됨" 으로 남는다.
+        raise ConsoleJobRejected(f"등록되지 않은 콘솔 작업 종류입니다: {job_kind!r}")
+    if not spec.get("wired"):
+        # 반영될 곳이 없는 작업을 대기열에 넣지 않는다. 넣으면 개인 AI 가 실제로 그것을
+        # 가져가 토큰과 시간을 쓰고, 남는 것은 "제출됐지만 반영 실패" 뿐이다 —
+        # P0-S 가 대화 축에서 세운 규율("아무도 못 집는 작업을 쌓지 않는다")의 반영 축 버전.
+        raise ConsoleJobRejected(
+            f"{spec['label']}은(는) 아직 위임 배선이 완성되지 않았습니다.")
+    origin = spec["origin"]
+    text = str(prompt or "").strip()
+    if not text:
+        raise ConsoleJobRejected("작업 프롬프트가 비어 있습니다.")
+    if origin == ORIGIN_WEB and not account_id:
+        # 관리자 작업은 **그 사람의** AI 가 처리한다(계정 스코프가 곧 배급 경계).
+        raise ConsoleJobRejected("작업을 요청한 계정을 알 수 없습니다.")
+
+    cur = conn.cursor()
+    try:
+        if origin == ORIGIN_BATCH:
+            expire_stale_batch_jobs(conn, cur=cur)
+            cur.execute(
+                "SELECT COUNT(*) FROM WebAiTasks "
+                "WHERE Kind = %s AND Origin = %s AND JobKind = %s AND Status = %s",
+                (KIND_JOB, ORIGIN_BATCH, job_kind, STATUS_OPEN))
+            pending = int((cur.fetchone() or [0])[0] or 0)
+            if pending >= BATCH_PENDING_MAX:
+                # 조용히 넘기지 않는다 — 워커 로그에 남아야 "왜 배치가 안 도나" 를 추적한다.
+                raise ConsoleJobRejected(
+                    f"배치 대기열이 가득 찼습니다({pending}/{BATCH_PENDING_MAX}) — "
+                    "가져가는 러너가 없거나 처리가 밀려 있습니다.")
+
+        task_id = "j_" + secrets.token_urlsafe(12)
+        cur.execute(
+            "INSERT INTO WebAiTasks (TaskId, AccountId, Question, Status, Origin, "
+            "Kind, JobKind, JobPayload, ProductId, DatasourceKey) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (task_id,
+             # 배치는 소유 계정이 없다(워커가 열었다). 0 을 넣어 "아무의 것도 아님" 을
+             # 명시한다 — NULL 로 두면 계정 스코프 질의가 조용히 이 행을 포함할 수 있다.
+             int(account_id or 0),
+             text[:CONSOLE_PROMPT_MAX_CHARS],
+             STATUS_OPEN, origin, KIND_JOB, job_kind,
+             json.dumps(payload, ensure_ascii=False) if payload is not None else None,
+             int(product_id) if product_id else None,
+             (str(datasource_key or "").strip()[:128] or None)))
+        conn.commit()
+    finally:
+        cur.close()
+    log.info("[console-job] 적재 kind=%s origin=%s account=%s task=%s",
+             job_kind, origin, account_id, task_id)
+    return task_id
+
+
+def expire_stale_batch_jobs(conn, *, cur=None) -> int:
+    """가져가지 않은 채 오래된 **배치** 작업을 만료시킨다. 반환 = 만료 건수.
+
+    관리자 작업은 만료시키지 않는다 — 사람이 화면 앞에서 기다리고 있으므로, 사라지면
+    "눌렀는데 아무 일도 없었다" 가 된다. 배치 산출물은 재생성 가능하므로 오래된 요청을
+    붙들 이유가 없고, 붙들면 화면의 "대기 중" 이 영구 고착된다.
+
+    점유된 것은 건드리지 않는다(`ClaimedBy IS NULL`) — 남의 머신에서 돌고 있을 수 있다.
+    """
+    own = cur is None
+    c = conn.cursor() if own else cur
+    try:
+        c.execute(
+            "UPDATE WebAiTasks SET Status = %s "
+            "WHERE Kind = %s AND Origin = %s AND Status = %s AND ClaimedBy IS NULL "
+            f"  AND CreatedAt < DATE_SUB(NOW(), INTERVAL {BATCH_TASK_MAX_AGE_MIN} MINUTE)",
+            (STATUS_EXPIRED, KIND_JOB, ORIGIN_BATCH, STATUS_OPEN))
+        n = int(c.rowcount or 0)
+        if own:
+            conn.commit()
+    finally:
+        if own:
+            c.close()
+    if n:
+        logging.getLogger(__name__).info("[console-job] 배치 작업 만료 %d건", n)
+    return n
+
+
+def load_console_job(conn, task_id: str, *, account_id: int | None = None) -> dict | None:
+    """콘솔 작업 1건. `account_id` 를 주면 **그 계정이 요청한 것만** 돌려준다(스코프 경계).
+
+    없거나 스코프 밖이면 `None` — 둘을 구분하지 않는다. 구분하면 남의 task id 존재 여부를
+    응답 차이로 알아낼 수 있다(0041 의 `missing_task_and_out_of_scope_are_indistinguishable`
+    계약과 동형).
+    """
+    where = "TaskId = %s AND Kind = %s"
+    params: list[Any] = [str(task_id), KIND_JOB]
+    if account_id is not None:
+        where += " AND AccountId = %s"
+        params.append(int(account_id))
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT TaskId, JobKind, Status, Origin, Answer, JobPayload, "
+            "       JobAppliedAt, JobApplyError, ClaimedBy, ClaimedAt, AccountId "
+            f"FROM WebAiTasks WHERE {where} LIMIT 1", tuple(params))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+    if row is None:
+        return None
+    return {
+        "task_id": str(row[0] or ""), "job_kind": str(row[1] or ""),
+        "status": str(row[2] or ""), "origin": str(row[3] or ""),
+        "answer": row[4], "payload": row[5],
+        "applied_at": row[6], "apply_error": str(row[7] or ""),
+        "claimed_by": row[8], "claimed_at": row[9], "account_id": int(row[10] or 0),
+    }
+
+
+def mark_console_job_applied(conn, task_id: str, error: str = "") -> None:
+    """산출물이 기존 저장 경로에 **실제로 반영됐는지**를 기록한다.
+
+    `SubmittedAt`(제출됨)과 나누는 이유: 합치면 write-through 가 실패해도 화면은 "적용됨"
+    이라 말한다. `Delivered` 를 `Status` 와 나눈 것과 같은 규율이다 — 두 사실은 따로 틀린다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAiTasks SET JobAppliedAt = NOW(), JobApplyError = %s "
+            "WHERE TaskId = %s AND Kind = %s",
+            ((str(error).strip()[:255] or None), str(task_id), KIND_JOB))
+        conn.commit()
+    finally:
+        cur.close()
 
 
 def claim_is_live(claimed_by: Any, claimed_at: Any) -> bool:

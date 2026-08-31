@@ -1,7 +1,7 @@
 // ITEM-09 batch3 — graph.js L3192~L5414 pure move: graph-ctxmenu: 우클릭 상호작용·상세/관계 패널.
 // 규약: 공개 표면은 graph/graph.js(barrel) 가 re-export — admin.js 는 barrel 만 import.
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
-import { adminState, apiFetch, can, showToast } from "../admin.js?v=dev";
+import { adminState, apiFetch, can, showToast, gateLlmControl, renderLlmNotice } from "../admin.js?v=dev";
 import { _META_SEARCH_CAP, _META_TERMS_COMBO, _metaComboName, _metaGraph, _metaNatSort, _metaSchemaComboOf } from "./graph-state.js?v=dev";
 import { _META_ROLE, _metaFocusAdjacency, _metaFocusKeyFor, _metaRoleChipHTML, _metaRoleOf } from "./graph-roleviz.js?v=dev";
 import { _metaApplyState, _metaCacheSig, _metaSetBusy, _metaSigRole, _metaStateSig, _metaYieldPaint } from "./graph-util.js?v=dev";
@@ -2870,6 +2870,16 @@ function _metaGraphBindAiPopover(key, scope) {
     _metaGraphAnalyze(key, scope, p);
   };
   btn.addEventListener("click", start);
+  // feature-0043 TASK-20260831T100000 — 능동 분석은 서버 계정 AI 를 쓰던 경로다.
+  //
+  // 종전에는 눌러도 `{ok:false, reason}` 이 결과 box 에 조용히 앉아, 사용자는 분석이 실패한
+  // 것인지 대상이 없는 것인지 구분하지 못했다. 실행 전에 상태를 말하고 조치 경로를 준다.
+  // ⚠ 게이트는 `metadata.graph.analyze` 권한 게이트와 **직교**한다 — 권한이 있어도 실행
+  //   수단이 없을 수 있고, 그 둘을 한 조건으로 접으면 어느 쪽이 원인인지 화면이 말할 수 없다.
+  gateLlmControl(btn, { label: "그래프 AI 능동 분석", delegatedText: "✨ 능동 분석 (내 AI)",
+                        jobKind: "node_analysis" });
+  renderLlmNotice(document.getElementById("metaGraphAiSec"),
+                  { label: "AI 능동 분석", jobKind: "node_analysis" });
   if (!pop || !ta || !go) return;   // popover 마크업 부재(비정상) — 버튼 단독 동작 보존
   if (_metaGraph.aiPrompt) ta.value = _metaGraph.aiPrompt;
   let hideT = null;

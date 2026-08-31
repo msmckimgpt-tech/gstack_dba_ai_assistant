@@ -5,6 +5,7 @@
 import {
   adminState, apiFetch,
   _metaPopulateScopeSelect, activateAiConsoleSubtab, switchTab,
+  llmBlocked,
 } from "../admin.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (작업 화면 번들과 공유).
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
@@ -19,8 +20,40 @@ import { USAGE_METRICS, USAGE_METRIC_DEFAULT, usageMetricOf, usageMetricNote, us
 
 // TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
 //   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
+// feature-0043 TASK-20260831T100000 — **0 을 「미사용」으로 읽지 않게** 한다.
+//
+// 이 화면은 서버 `agent_runtime.llm_usage` 를 집계한다. 서버 계정 LLM 이 차단된 뒤로 그
+// 원장에는 새 행이 거의 쌓이지 않으므로 그래프가 0 으로 수렴하는데, 그것은 "아무도 AI 를
+// 안 쓴다" 가 아니라 **여기서 세지 않는 곳에서 쓰고 있다** 는 뜻이다(추론은 각자의 개인 AI
+// 머신에서 일어나고, 우리 쪽에 남는 것은 도구 호출 원장이다).
+//
+// 그 차이를 화면이 말하지 않으면 운영자는 정확히 반대로 결론 내린다 — 지표가 침묵으로
+// 거짓말하는 형태다. 배너 한 줄로 "이 집계의 범위" 를 명시하고 실제 활동이 있는 곳을 가리킨다.
+const _USAGE_SCOPE_NOTE_ID = "usageScopeNote";
+
+function _renderUsageScopeNote() {
+  const anchor = document.getElementById("usageSummary");
+  if (!anchor || !anchor.parentElement) return;
+  let note = document.getElementById(_USAGE_SCOPE_NOTE_ID);
+  if (!llmBlocked()) {           // 게이트를 되돌리면 흔적 없이 사라진다.
+    if (note) note.remove();
+    return;
+  }
+  if (!note) {
+    note = document.createElement("p");
+    note.id = _USAGE_SCOPE_NOTE_ID;
+    note.className = "admin-llm-inactive-note";
+    anchor.parentElement.insertBefore(note, anchor);
+  }
+  note.textContent =
+    "이 집계는 서버가 직접 호출한 LLM 사용분입니다. 현재 대화 답변은 각자 연결한 본인 AI 가"
+    + " 만들므로 여기에 잡히지 않습니다 — 값이 0 에 가까운 것은 사용이 없다는 뜻이 아닙니다."
+    + " 실제 처리 내역은 '외부 AI 작업' 과 '운영 현황' 에서 확인하세요.";
+}
+
 async function loadUsage(opts) {
   const refetch = !(opts && opts.refetch === false);
+  _renderUsageScopeNote();
   const sel = document.getElementById("usageDaysSel");
   const granSel = document.getElementById("usageGranSel");
   const days = sel ? sel.value : "30";

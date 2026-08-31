@@ -2605,6 +2605,32 @@ def _ensure_oauth_client_schema(conn) -> None:
             # 대신 조립해 AI 에게 넘겨야 한다 — 그러려면 요청 시점의 역할이 남아 있어야 한다.
             # 없으면 운영자가 설정한 역할별 지침이 브리지 답변에서만 통째로 사라진다.
             ("RoleId", "ALTER TABLE WebAiTasks ADD COLUMN RoleId BIGINT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # ── 콘솔 작업 위임(TASK-20260831T100000, console-llm-parity) ────────────────
+            #
+            # 관리 콘솔의 LLM 기능(메타데이터 자동완성·그래프 능동 분석·프롬프트 자동작성)과
+            # 배경 배치(insight·cluster_label)도 개인 AI 가 처리한다. 새 테이블을 만들지 않는
+            # 이유는 대화 브리지 때와 같다 — 원장·각인·점유·lease·취소 술어가 전부 이 테이블
+            # 위에 있고, 나누면 그 다섯이 두 벌이 된다.
+            #
+            # `Kind`: 'chat'(대화 답변, 기본) | 'job'(콘솔 작업). 기존 행은 DEFAULT 로 'chat' 이
+            # 되므로 배급·회수 분기가 과거 데이터를 재해석하지 않는다. **Origin 을 재사용하지
+            # 않는 이유**: Origin 은 "누가 열었나"(web/external/batch)이고 Kind 는 "무엇을
+            # 하는가" 다. 한 컬럼에 두 축을 섞으면 'web 이 연 콘솔 작업' 을 표현할 수 없다.
+            ("Kind", "ALTER TABLE WebAiTasks ADD COLUMN Kind VARCHAR(32) NOT NULL DEFAULT 'chat', ALGORITHM=INPLACE, LOCK=NONE"),
+            # `JobKind`: 콘솔 작업의 종류(metadata_suggest·node_analysis·prompt_generate…).
+            # 화면이 "무슨 작업이 돌고 있나" 를 사람 말로 표시하고, 회수 시 어느 저장 경로로
+            # write-through 할지가 이 값으로 정해진다.
+            ("JobKind", "ALTER TABLE WebAiTasks ADD COLUMN JobKind VARCHAR(48) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `JobPayload`: 그 작업의 입력(JSON) — 대상 스키마·테이블·제품 id 등. 회수 시점에
+            # "이 답이 무엇에 대한 것인가" 를 되물을 수 없으므로 적재 시점에 굳힌다.
+            ("JobPayload", "ALTER TABLE WebAiTasks ADD COLUMN JobPayload MEDIUMTEXT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `JobAppliedAt`: 산출물이 **기존 저장 경로에 실제로 반영된** 시각.
+            # `SubmittedAt`(제출됨)과 분리한다 — 합치면 write-through 가 실패해도 화면은
+            # "적용됨" 이라 말하게 된다(`Delivered` 를 `Status` 와 분리한 것과 같은 이유).
+            ("JobAppliedAt", "ALTER TABLE WebAiTasks ADD COLUMN JobAppliedAt DATETIME NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `JobApplyError`: write-through 실패 사유(1줄). 조용한 실패 금지 — 화면이
+            # "제출됐지만 반영 실패" 를 사유와 함께 말할 수 있어야 한다.
+            ("JobApplyError", "ALTER TABLE WebAiTasks ADD COLUMN JobApplyError VARCHAR(255) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
         ):
             try:
                 cur.execute(
@@ -2728,6 +2754,8 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
       - RunnerCapabilities : 그 러너가 **쓸 수 있는 것** (P0-Z3, TASK-20260828T170000).
         런타임·모델·추론등급의 JSON 배열. NULL = 신고 없음(구 러너 또는 `--cmd` 사용자)
         → 그 상태에서는 화면의 모델 선택기가 종전대로 숨겨진다.
+      - RunnerFeatures / RunnerAgentVersion : 그 러너가 **다룰 줄 아는 작업 종류**와 버전
+        (TASK-20260831T100000). 콘솔 작업 배급 자격과 갱신 유도의 근거.
 
     능력을 같은 행에 두는 이유는 위와 같다 — "살아 있는가" 와 "무엇을 쓸 수 있는가" 는 같은
     러너의 두 면이라, 나누면 한쪽만 낡아 화면이 없는 모델을 보여주게 된다. 하트비트가 끊기면
@@ -2751,6 +2779,21 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # 능력 쓰기 throttle 의 기준 시각. `LastHeartbeatAt` 을 재활용할 수 없다 —
             # 그것은 30초마다 갱신되므로 능력 쓰기 간격을 재는 데 쓰면 항상 '방금 썼다' 가 된다.
             "ALTER TABLE WebOAuthTokens ADD COLUMN CapabilitiesAt DATETIME NULL",
+            # ── 콘솔 작업 위임(TASK-20260831T100000) ────────────────────────────────────
+            #
+            # `RunnerFeatures`: 그 러너가 **다룰 줄 아는 작업 종류**(CSV, 예: `console_jobs`).
+            # `RunnerCapabilities`(런타임·모델 목록)와 나누는 이유는 그 값이 **JSON 배열**이라는
+            # 계약을 이미 두 소비처가 의존하기 때문이다(`account_runner_capabilities` 는
+            # `isinstance(parsed, list)` 가 아니면 버린다). 객체로 바꾸면 구 배포의 읽기가
+            # 조용히 빈 목록이 되어 모델 선택기가 사라진다 — 능력 축과 기능 축은 수명이 다르다.
+            #
+            # 왜 필요한가: 콘솔 작업을 모르는 구 러너가 그것을 집으면 대화용 프레이밍으로 감싸
+            # JSON 산출물을 망친다. P0-Z3 의 원칙("신고가 없으면 선택기도 없다")을 그대로
+            # 적용해, **신고한 러너에게만 배급**한다.
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerFeatures VARCHAR(255) NULL",
+            # `RunnerAgentVersion`: 러너 자기 버전. 구버전이면 하트비트 응답으로 갱신을
+            # 지시한다(사용자 결정 2026-08-31 — '자동 갱신 유도').
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerAgentVersion VARCHAR(32) NULL",
         ):
             try:
                 cur.execute(ddl)

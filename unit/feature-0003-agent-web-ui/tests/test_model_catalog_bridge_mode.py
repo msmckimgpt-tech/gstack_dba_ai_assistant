@@ -45,7 +45,14 @@ _REPORT = [
 
 
 class _FakeCursor:
-    """`account_runner_capabilities` 가 읽는 한 줄만 돌려준다."""
+    """`account_runner_profile` 이 읽는 한 줄만 돌려준다.
+
+    ⚠ **행의 컬럼 수는 실제 질의와 맞춰야 한다.** TASK-20260831T100000 에서 그 질의가
+    `(RunnerCapabilities,)` → `(RunnerCapabilities, RunnerFeatures, RunnerAgentVersion)` 로
+    넓어졌는데, 더블이 1-tuple 을 계속 돌려주자 `row[1]` 이 IndexError 를 냈고 호출측의
+    fail-soft 가 그것을 삼켜 **선택기가 조용히 숨겨졌다**. 실패가 조용했다는 것이 요점이다 —
+    더블이 실제 질의보다 좁으면 "기능이 없다" 와 구분되지 않는다.
+    """
 
     def __init__(self, row):
         self._row = row
@@ -115,7 +122,7 @@ def test_blocked_gate_with_a_runner_offers_what_the_runner_reported(
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False),)))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
     payload = client.get(ENDPOINT).json()
 
     assert payload["model_selector"] == "visible", "신고가 있는데 선택기가 숨겨진다"
@@ -145,7 +152,7 @@ def test_blocked_gate_with_an_empty_report_still_hides(client, signed_in, monkey
     "선택기를 띄울 수 없다" 로 수렴해야 한다. 빈 목록으로 선택기를 띄우면 사용자는 빈 메뉴를 연다.
     """
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
-    monkeypatch.setattr(appmod, "_connect_memory", lambda: _FakeConn(("[]",)))
+    monkeypatch.setattr(appmod, "_connect_memory", lambda: _FakeConn(("[]", "", "")))
     payload = client.get(ENDPOINT).json()
     assert payload["models"] == []
     assert payload["model_selector"] == "hidden"
@@ -166,7 +173,7 @@ def test_blocked_gate_does_not_guess_when_the_report_is_unreadable(
     monkeypatch.setattr(store, "account_runner_capabilities", _boom)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False),)))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
     payload = client.get(ENDPOINT).json()
     assert payload["models"] == [], "조회 실패인데 목록이 채워졌다(추측)"
     assert payload["model_selector"] == "hidden"
@@ -222,9 +229,14 @@ class _DefaultsConn(_FakeConn):
 
 
 def _with_defaults(monkeypatch, defaults_row):
+    # ⚠ caps_row 는 **3컬럼**이다 (capabilities, features, agent_version). TASK-20260831T100000
+    #   에서 `account_runner_profile` 질의가 넓어졌고, 1-tuple 을 주면 `row[1]` 이 IndexError →
+    #   호출측 fail-soft 가 삼켜 **선택기가 조용히 숨겨진다**(= 기본값 검사가 전부 None 을 본다).
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _DefaultsConn((json.dumps(_REPORT, ensure_ascii=False),), defaults_row))
+        lambda: _DefaultsConn(
+            (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31"),
+            defaults_row))
 
 
 def test_account_default_becomes_the_starting_pick(client, signed_in, monkeypatch):
@@ -271,7 +283,7 @@ def test_defaults_failure_does_not_empty_the_catalog(client, signed_in, monkeypa
 
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False),)))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
     monkeypatch.setattr(store, "account_bridge_defaults", _boom)
     payload = client.get(ENDPOINT).json()
     assert payload["model_selector"] == "visible", "기본값 실패가 선택기를 통째로 지웠다"

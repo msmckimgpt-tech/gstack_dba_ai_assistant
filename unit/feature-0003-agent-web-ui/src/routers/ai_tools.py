@@ -49,7 +49,16 @@ from shared.bridge_tasks import (
     STATUS_EXPIRED as _STATUS_EXPIRED,
     claim_is_live as _claim_is_live,
     promote_latest_deferred as _promote_latest_deferred,
+    # TASK-20260831T100000 — 콘솔 작업 위임.
+    KIND_CHAT as _KIND_CHAT,
+    KIND_JOB as _KIND_JOB,
+    ORIGIN_BATCH as _ORIGIN_BATCH,
+    ORIGIN_WEB as _ORIGIN_WEB,
+    RUNNER_FEATURE_BATCH_JOBS as _FEATURE_BATCH_JOBS,
+    RUNNER_FEATURE_CONSOLE_JOBS as _FEATURE_CONSOLE_JOBS,
+    RUNNER_MIN_AGENT_VERSION as _RUNNER_MIN_AGENT_VERSION,
 )
+
 
 import app
 
@@ -63,6 +72,178 @@ router = APIRouter()
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import bridge_drain as _drain       # noqa: E402  feature-0045: 배포 연속성(대기 계상·드레인)
 import oauth_store as _store        # noqa: E402
+
+
+# ── 배급 자격: 이 러너에게 무엇을 줄 수 있는가 (TASK-20260831T100000) ────────────────
+#
+# 종전 대기열 술어는 `AccountId=me AND Origin='web'` 하나였다. 콘솔 작업이 들어오면서 두
+# 축이 더해진다:
+#
+# | 무엇 | 스코프 | 자격 |
+# |---|---|---|
+# | 대화 질문 (`Kind='chat'`) | 내 계정 | 없음 (종전과 동일) |
+# | 관리 콘솔 작업 (`Kind='job'`, `Origin='web'`) | 내 계정 | `console_jobs` 신고 + 버전 |
+# | 배경 배치 (`Kind='job'`, `Origin='batch'`) | **계정 무관** | 위 + `batch_jobs` 동의 + 권한 |
+#
+# ⚠ 배치만 계정 스코프를 벗어난다. 그래서 그 자리에 **권한 검사**를 둔다 — 자격이 기능
+#   신고뿐이면 토큰을 가진 누구나 조직 배경 작업을 가져갈 수 있고, 그 프롬프트에는 스키마
+#   메타데이터가 실린다. 신고는 클라이언트가 주는 값이라 자격의 근거가 될 수 없다.
+
+#: 배치 작업을 가져가려면 이 권한이 필요하다. 메타데이터 거버넌스 권한을 재사용한다 —
+#: 배치 산출물(인사이트·클러스터 라벨)이 정확히 그 대상이라, 새 권한을 만들면 운영자가
+#: 같은 사람에게 두 번 부여하게 된다.
+_BATCH_CLAIM_PERMISSION = "kb.ingest.manual"
+
+
+def _runner_job_grants(conn, ctx, request) -> dict:
+    """이 토큰 세션의 러너가 받을 수 있는 작업 축. 실패는 **대화만**(fail-closed).
+
+    조회 실패에 콘솔 작업까지 열어 주면, 신고하지 않은 구 러너가 그것을 집어 대화용
+    프레이밍으로 감싼 산출물을 만든다 — 실패가 조용하고(답은 온다) 결과만 어긋난다.
+    """
+    out = {"console": False, "batch": False}
+    account = ctx.get("account") or {}
+    account_id = int(account.get("id") or 0)
+    if not account_id:
+        return out
+    try:
+        from routers._console_llm import version_at_least
+
+        cur = conn.cursor()
+        try:
+            # ⚠ **이 토큰**의 신고를 읽는다 — 계정의 최신 러너가 아니다(codex 적대 리뷰 P1).
+            #
+            # `account_runner_profile` 은 그 계정에서 가장 최근 하트비트한 러너 하나를 고른다.
+            # 화면의 모델 목록에는 그것이 맞지만 **자격**에 쓰면 경계가 열린다: 같은 계정에
+            # 러너 둘이 붙어 있고 R1 만 `batch_jobs` 에 동의했을 때, R2 의 폴링이 R1 의
+            # 프로필을 읽어 배치를 가져간다 — 동의는 **러너 단위**라는 설계가 무너진다.
+            profile = _store.token_runner_profile(cur, _bearer(request))
+        finally:
+            cur.close()
+        features = profile.get("features") or []
+        if _FEATURE_CONSOLE_JOBS not in features:
+            return out
+        if not version_at_least(profile.get("agent_version"), _RUNNER_MIN_AGENT_VERSION):
+            return out
+        out["console"] = True
+        # 배치는 **동의 + 권한** 둘 다. 동의만으로 열면 그 사람이 요청한 적 없는 조직 작업이
+        # 자기 계정 토큰을 태우고, 권한만으로 열면 러너가 배치를 원치 않아도 배급된다.
+        if _FEATURE_BATCH_JOBS in features and app._account_has_permission(
+                account, _BATCH_CLAIM_PERMISSION):
+            out["batch"] = True
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "[console-job] 배급 자격 판정 실패 account=%s: %r", account_id, exc)
+        return {"console": False, "batch": False}
+    return out
+
+
+def _apply_console_job_result(conn, task_id: str, answer: str) -> tuple[bool, str]:
+    """콘솔 작업 산출물을 원래 저장 경로로 — 실패해도 **예외를 올리지 않는다**.
+
+    제출은 이미 확정됐으므로(`Status='submitted'`) 여기서 5xx 를 내면 러너가 재제출을
+    시도해 409 에 부딪힌다. 실패는 상태로 남겨 화면이 "제출됐지만 반영 실패" 를 사유와
+    함께 말하게 한다. 모듈 import 실패까지 여기서 흡수한다 — 반영 배선이 없는 배포에서도
+    제출 경로 자체는 살아 있어야 한다.
+    """
+    try:
+        from routers._console_jobs import apply_console_job_result
+
+        return apply_console_job_result(conn, task_id, answer)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).error(
+            "[console-job] 반영 디스패치 실패 task=%s: %r", task_id, exc)
+        return False, f"반영 경로를 실행하지 못했습니다: {exc}"
+
+
+def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
+                       job_kind: str, payload_raw, t0: float) -> JSONResponse:
+    """콘솔 작업 점유 응답 — 대화 경로의 부속을 **하나도 태우지 않는다**.
+
+    ## 대화와 무엇이 다른가
+
+    | 대화 | 콘솔 작업 |
+    |---|---|
+    | 5단계 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
+    | 이전 대화 문맥·첨부 | 없다 (대화가 없다) |
+    | 말풍선 진행 표시·제목 규약 | 없다 (화면이 폼·그래프다) |
+
+    프롬프트를 적재 시점에 완성해 두는 이유: 조립에 필요한 것(대상 스키마·기존 설명·제품
+    바인딩)은 **버튼을 누른 그 순간의 화면 상태**다. 점유 시점에 다시 조립하면 그 사이 바뀐
+    값으로 만들어져, 사용자가 본 것과 다른 대상에 대한 답이 온다.
+
+    출력 규약(`response_format`)을 함께 준다 — 러너가 `json` 을 요구받았는지 알아야 프롬프트
+    말미에 형식 지시를 붙이고, 회수 쪽 파서와 짝이 맞는다.
+    """
+    from shared.bridge_tasks import job_label, job_spec
+
+    spec = job_spec(job_kind) or {}
+    account_id = int((account or {}).get("id") or 0)
+    marked = _guard.wrap_tool_output(
+        f"{_guard.session_canary(task_id)}\n{prompt}",
+        account=str(account.get("username") or account.get("id")),
+        conversation_id=None, task_id=task_id, source="console_job")
+    payload = None
+    if payload_raw:
+        try:
+            payload = json.loads(payload_raw)
+        except (TypeError, ValueError):
+            # 적재한 것이 깨졌다 — 작업 자체는 프롬프트만으로도 수행 가능하므로 계속한다.
+            # (payload 는 회수 시점의 write-through 대상 식별용이라 서버가 다시 읽는다.)
+            payload = None
+    try:
+        _ledger.record(_pg(), account_id=account_id, tool="claim_request",
+                       client_id=ctx.get("client_id"), task_id=task_id,
+                       bytes_out=len(marked.encode("utf-8")),
+                       latency_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
+    except _ledger.LedgerUnavailable as exc:
+        # 대화 축과 같은 처리 — 점유는 이미 커밋됐으므로 여기서 그냥 503 을 내면 그 작업이
+        # `ClaimedBy` 가 박힌 채 목록에서 사라져 lease 만료까지 고착된다.
+        _release_claim(conn, task_id, account_id)
+        return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다(점유 해제됨): {exc}")
+    return JSONResponse({
+        "task_id": task_id,
+        "kind": _KIND_JOB,
+        "job_kind": job_kind,
+        "job_label": job_label(job_kind),
+        # 대화의 `question` 자리 — 러너가 같은 키를 읽도록 이름을 맞춘다(두 키를 두면
+        # 러너가 분기해야 하고, 그 분기가 구버전에서 빈 프롬프트가 된다).
+        "question": marked,
+        "response_format": str(spec.get("response") or "text"),
+        "payload": payload,
+        # 대화 경로가 채우던 자리들 — **빈 값을 명시**한다. 키 자체가 없으면 러너가
+        # `task.get("system_prompt")` 에서 `None` 을 받아 문자열 연산에서 터진다.
+        "conversation_context": "",
+        "system_prompt": "",
+        "scope": {},
+        "attachments": [],
+        "requested": {"runtime": "", "model": "", "reasoning_level": ""},
+        "next": ("조사 없이 요청된 형식으로만 답하세요. 완료되면 submit_answer 로 제출합니다"
+                 " (source_tasks 에는 이 task_id 만 넣으면 됩니다)."),
+    })
+
+
+def _dispatch_scope_sql(grants: dict, account_id: int) -> tuple[str, list]:
+    """대기열 조회 술어 + 파라미터. **자격이 늘어날수록 OR 가지가 늘어난다.**
+
+    한 문장으로 조립하는 이유: 축마다 따로 질의하면 `ORDER BY CreatedAt` 이 축 안에서만
+    성립해 **오래된 배치가 방금 온 사용자 질문보다 먼저** 나갈 수 있다. 사용자는 화면 앞에서
+    기다리고 배치는 아니므로, 그 역전은 그대로 체감 지연이 된다.
+    """
+    # ⚠ 테이블 별칭을 쓰지 않는다. 이 술어는 `_CLAIMABLE_SQL`(공유 정본)과 **같은 WHERE 절에**
+    #   붙는데, 그쪽은 별칭 없는 컬럼명으로 쓰여 있다. 여기서 별칭을 도입하면 호출측이 공유
+    #   술어 문자열을 치환해야 하고, 그 치환은 정본이 바뀌는 날 조용히 어긋난다.
+    branches = ["(Kind = %s AND Origin = %s AND AccountId = %s)"]
+    params: list = [_KIND_CHAT, _ORIGIN_WEB, account_id]
+    if grants.get("console"):
+        branches.append("(Kind = %s AND Origin = %s AND AccountId = %s)")
+        params += [_KIND_JOB, _ORIGIN_WEB, account_id]
+    if grants.get("batch"):
+        # 계정 조건이 **없다** — 배치는 누구의 것도 아니고, 자격은 위에서 이미 걸렀다.
+        branches.append("(Kind = %s AND Origin = %s)")
+        params += [_KIND_JOB, _ORIGIN_BATCH]
+    return "(" + " OR ".join(branches) + ")", params
+
 import session_guard as _guard      # noqa: E402
 import tool_authz as _authz         # noqa: E402
 import tool_ledger as _ledger       # noqa: E402
@@ -418,7 +599,14 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     if not isinstance(declared, list):
         return _json_err(400, "source_tasks 선언이 필요합니다(근거로 쓴 task id 목록).")
 
-    task = _load_task(conn, task_id, account)
+    # ⚠ `include_claimed_batch` 는 **여기서만** 켠다 (codex 적대 리뷰 P1).
+    #
+    # 배치 task 는 소유자가 없어(`AccountId=0`) 제출하려면 점유자 조건으로 열어야 한다.
+    # 그런데 `_load_task` 는 조사 도구(`execute_sql`·`read_task_attachment` 등)도 쓰고,
+    # 그 도구들은 반환된 `ProductId`/`DatasourceKey` 로 **데이터 스코프**를 정한다 —
+    # 기본값으로 열어 두면 배치 task 행 자체가 그 계정에 없던 스코프를 나르는 bearer 가 된다.
+    # 제출은 그 값들을 쓰지 않으므로 여기만 넓히는 것이 안전하다.
+    task = _load_task(conn, task_id, account, include_claimed_batch=True)
     if task is None:
         return _json_err(404, "task 를 찾을 수 없습니다.")
 
@@ -562,19 +750,46 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         conn, {"conversation_id": task.get("conversation_id"), "task_id": task_id},
         "조사 결과를 정리해 답변을 작성했습니다")
 
-    delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
-                                           title=str(body.get("title") or ""))
+    # ── 콘솔 작업이면 대화가 아니라 **원래 저장 경로**로 보낸다 (TASK-20260831T100000) ──
+    #
+    # `_deliver_web_bridge_answer` 는 `Origin='web' AND ConversationId` 를 요구하므로 콘솔
+    # 작업에는 이미 False 를 돌려준다 — 즉 **막혀 있지는 않되 아무 데도 도달하지 않는다.**
+    # 그 상태로 두면 답변은 `WebAiTasks.Answer` 에만 남고 사용자가 누른 화면은 영원히 빈
+    # 채로 기다린다(P0-F 가 대화 축에서 고친 것과 정확히 같은 형태).
+    #
+    # 사용자 결정(2026-08-31 "관리 콘솔에 입력되는 값 또한 자율적으로 입력"): 위임은 **기존
+    # 경로의 쓰기 의미를 보존**한다 — 검토형(`apply='review'`)은 폼이 가져갈 수 있게 두고,
+    # 자동기입형(`apply='store'`)은 서버가 그 자리에서 저장까지 한다.
+    is_job = str(task.get("kind") or _KIND_CHAT) == _KIND_JOB
+    applied, apply_error = False, ""
+    delivered = False
+    if is_job:
+        applied, apply_error = _apply_console_job_result(conn, task_id, answer)
+    else:
+        delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
+                                               title=str(body.get("title") or ""))
 
+    # ⚠ 원장 호출은 **한 곳뿐이다.** 분기마다 두면 (a) 「전달이 원장보다 먼저」라는 계약이
+    #   분기 하나에서만 성립하고 (b) 그 계약을 지키는 회귀 가드가 소스 순서를 보므로 조용히
+    #   무력화된다(실제로 이 수정 전에 그 가드가 FAIL 했다). 결과 필드만 분기로 나눈다.
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="submit_answer",
                        client_id=ctx.get("client_id"), task_id=task_id,
                        bytes_out=len(answer.encode("utf-8")),
-                       outcome="denied" if findings else "ok",
-                       detail=("cross_session:" + ",".join(f["kind"] for f in findings))[:255]
-                       if findings else None)
+                       outcome=("denied" if (findings or apply_error) else "ok"),
+                       detail=(("cross_session:" + ",".join(f["kind"] for f in findings))[:255]
+                               if findings else
+                               (f"console_job_apply:{apply_error}"[:255] if apply_error else None)))
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
+    if is_job:
+        return JSONResponse({"task_id": task_id, "recorded": True, "kind": _KIND_JOB,
+                             # 「제출됨」과 「반영됨」을 나눠서 돌려준다 — 합치면 write-through
+                             # 실패가 러너에게 성공으로 보이고, 그 러너는 재시도하지 않는다.
+                             "applied": applied,
+                             "apply_error": apply_error,
+                             "cross_session_findings": findings})
     return JSONResponse({"task_id": task_id, "recorded": True,
                          "delivered_to_conversation": delivered,
                          "cross_session_findings": findings})
@@ -1301,16 +1516,23 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
     rows: list[dict[str, Any]] = []
     cur = conn.cursor()
     try:
+        # TASK-20260831T100000: 자격 기반 스코프. 대화만 받는 구 러너에는 술어가 종전과
+        # 동치이므로(가지 1개) **행동이 바뀌지 않는다** — 콘솔 작업은 애초에 보이지 않는다.
+        scope_sql, scope_params = _dispatch_scope_sql(_runner_job_grants(conn, ctx, request), account_id)
         cur.execute(
-            "SELECT TaskId, Question, CreatedAt FROM WebAiTasks "
-            "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
+            "SELECT TaskId, Question, CreatedAt, Kind, JobKind FROM WebAiTasks "
+            "WHERE " + scope_sql + " AND Status='open' AND " + _CLAIMABLE_SQL +
             " ORDER BY CreatedAt ASC LIMIT %s",
-            (account_id, limit))
+            (*scope_params, limit))
         for r in cur.fetchall() or []:
             rows.append({
                 "task_id": str(r[0]),
                 "question": str(r[1] or ""),
                 "asked_at": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2] or ""),
+                # 작업 종류를 함께 준다 — 러너가 목록만 보고 "이건 대화가 아니다" 를 알아야
+                # 프레이밍을 고를 수 있다(claim 까지 가서야 알면 한 번 더 왕복한다).
+                "kind": str(r[3] or _KIND_CHAT),
+                "job_kind": str(r[4] or ""),
             })
     finally:
         cur.close()
@@ -1408,14 +1630,23 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
     # feature-0045: 이 대기를 **관측 가능**하게 만든다. 종전엔 무중단 스파인의 pre-drain
     # 게이트가 이 대기를 전혀 보지 못해, 개인 AI 가 붙어 있는 replica 를 "조용하다"고 읽고
     # 그대로 내렸다. 다만 대기는 **기다릴 대상이 아니라 비울 대상**이다(아래 드레인 분기).
+    # 자격은 대기 **시작 시점에 한 번** 잰다(루프 안에서 재지 않는 이유는 아래 질의 주석).
+    _wait_scope_sql, _wait_scope_params = _dispatch_scope_sql(
+        _runner_job_grants(conn, ctx, request), account_id)
     with _drain.waiting():
         while True:
             cur = conn.cursor()
             try:
+                # TASK-20260831T100000: 대기 루프도 **같은 자격 술어**를 쓴다.
+                #
+                # ⚠ 자격은 루프 **밖**에서 한 번만 잰다(`_wait_scope_sql`). 매 tick 마다 재면
+                #   0.5초마다 토큰 테이블을 두드리고, 무엇보다 러너가 대기 중 기능 신고를
+                #   바꾸면 같은 대기 안에서 스코프가 흔들려 "방금 보이던 작업이 사라지는"
+                #   상태가 된다. 자격은 다음 호출에서 갱신되면 충분하다.
                 cur.execute(
-                    "SELECT TaskId, Question, CreatedAt FROM WebAiTasks "
-                    "WHERE AccountId=%s AND Origin='web' AND Status='open' AND " + _CLAIMABLE_SQL +
-                    " ORDER BY CreatedAt ASC LIMIT 20", (account_id,))
+                    "SELECT TaskId, Question, CreatedAt, Kind, JobKind FROM WebAiTasks "
+                    "WHERE " + _wait_scope_sql + " AND Status='open' AND " + _CLAIMABLE_SQL +
+                    " ORDER BY CreatedAt ASC LIMIT 20", tuple(_wait_scope_params))
                 found = list(cur.fetchall() or [])
                 # **내가 점유 중인데 취소된 작업** — 사용자가 중단을 눌렀거나 새 질문으로 갈아탔다.
                 #
@@ -1544,13 +1775,20 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         return _json_err(400, "task_id 가 필요합니다.")
 
     t0 = time.perf_counter()
+    _claim_scope_sql, _claim_scope_params = _dispatch_scope_sql(
+        _runner_job_grants(conn, ctx, request), account_id)
     cur = conn.cursor()
     try:
         cur.execute(
+            # TASK-20260831T100000: 점유 조건에도 **같은 자격 술어**를 건다.
+            #
+            # 목록·대기에만 걸고 여기 빼면, 러너가 (다른 경로로 알아낸) task_id 로 자격 밖
+            # 작업을 집을 수 있다 — 목록은 방어이고 **집행은 이 UPDATE 다**. 같은 문장 안에
+            # 두므로 TOCTOU 도 없다.
             "UPDATE WebAiTasks SET ClaimedBy=%s, ClaimedAt=NOW(), ClaimedClient=%s "
-            "WHERE TaskId=%s AND AccountId=%s AND Origin='web' AND Status='open' "
+            "WHERE TaskId=%s AND " + _claim_scope_sql + " AND Status='open' "
             "AND " + _CLAIMABLE_SQL,
-            (account_id, ctx.get("client_id"), task_id, account_id))
+            (account_id, ctx.get("client_id"), task_id, *_claim_scope_params))
         claimed = int(cur.rowcount or 0)
         conn.commit()
         if claimed != 1:
@@ -1576,13 +1814,31 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         # 못해서였다. 이제 목록은 **그 러너가 신고한 것**이므로 여기서 돌려주는 값은 러너의
         # 자기 어휘다 — 그대로 CLI 인자가 된다. 요청 시점에 굳힌 값을 쓰는 것도 그대로다:
         # 사용자가 그 뒤 대화 설정을 바꿔도 이 질문에 대해 무엇이 요구됐는지는 변하지 않는다.
+        # ⚠ `AccountId` 조건을 **빼고** 읽는다(TASK-20260831T100000).
+        #
+        # 배경 배치 task 는 소유 계정이 없다(`AccountId=0`) — 계정 조건을 남기면 방금 성공한
+        # 점유의 본문을 못 읽어 빈 작업이 나간다. 스코프는 위 UPDATE 가 이미 집행했으므로
+        # (그 문장이 1행을 바꿨다는 것이 곧 자격 통과의 증거다) 여기서 다시 걸 필요가 없다.
         cur.execute(
             "SELECT Question, ConversationId, ProductId, CreatedAt, AttachmentIds, "
-            "RoleId, ProductMode, RequestedRuntime, RequestedModel, ReasoningLevel "
-            "FROM WebAiTasks WHERE TaskId=%s AND AccountId=%s", (task_id, account_id))
-        row = cur.fetchone() or ("", None, None, None, None, None, None, None, None, None)
+            "RoleId, ProductMode, RequestedRuntime, RequestedModel, ReasoningLevel, "
+            "Kind, JobKind, JobPayload "
+            "FROM WebAiTasks WHERE TaskId=%s", (task_id,))
+        row = cur.fetchone() or ("", None, None, None, None, None, None, None, None, None,
+                                 _KIND_CHAT, None, None)
     finally:
         cur.close()
+
+    # ── 콘솔 작업이면 여기서 갈린다 (TASK-20260831T100000) ──────────────────────────
+    #
+    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 5단계 시스템 프롬프트 ·
+    # 진행 표시 · 제목 규약)는 **콘솔 작업에 하나도 해당하지 않는다.** 억지로 통과시키면
+    # 없는 대화를 조회하고 없는 말풍선을 갱신하려 든다 — 각각은 fail-soft 지만, 합치면
+    # "왜 이 작업만 느린가" 를 아무도 설명하지 못하는 상태가 된다.
+    if str(row[10] or _KIND_CHAT) == _KIND_JOB:
+        return _claim_console_job(conn, account, ctx, task_id=task_id,
+                                  prompt=str(row[0] or ""), job_kind=str(row[11] or ""),
+                                  payload_raw=row[12], t0=t0)
 
     question = str(row[0] or "")
     conversation_id = row[1]
@@ -2359,22 +2615,42 @@ def _json_err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def _load_task(conn, task_id: str, account: dict[str, Any]) -> dict[str, Any] | None:
-    """task 조회 — **소유 계정 스코프**. 남의 task 로는 어떤 도구도 못 돈다."""
+def _load_task(conn, task_id: str, account: dict[str, Any], *,
+               include_claimed_batch: bool = False) -> dict[str, Any] | None:
+    """task 조회 — **소유 계정 스코프**. 남의 task 로는 어떤 도구도 못 돈다.
+
+    ## 배경 배치는 소유자가 없다 (TASK-20260831T100000)
+
+    배치 작업(`Origin='batch'`)은 워커가 열었으므로 `AccountId = 0` 이다. 소유 스코프만
+    두면 그것을 집은 러너가 **자기가 집은 작업의 본문조차 읽지 못한다**(제출이 404).
+
+    그래서 「소유했거나 **내가 점유했거나**」로 넓힌다. 넓히는 범위는 배치로 한정하고
+    (`Kind='job' AND Origin='batch'`), 점유자 조건(`ClaimedBy = me`)이 그 안에서 다시
+    닫는다 — 즉 **자격을 통과해 실제로 집은 사람만** 열린다. 대화·관리자 작업의 소유
+    스코프는 종전 그대로다.
+    """
     if not task_id:
         return None
+    me = int(account.get("id") or 0)
+    where = "TaskId = %s AND AccountId = %s"
+    params: list[Any] = [task_id, me]
+    if include_claimed_batch:
+        where = ("TaskId = %s AND (AccountId = %s "
+                 "  OR (Kind = %s AND Origin = %s AND ClaimedBy = %s))")
+        params = [task_id, me, _KIND_JOB, _ORIGIN_BATCH, me]
     cur = conn.cursor()
     try:
-        cur.execute("SELECT TaskId, ConversationId, ProductId, Question, Status, DatasourceKey "
-                    "FROM WebAiTasks WHERE TaskId = %s AND AccountId = %s LIMIT 1",
-                    (task_id, int(account.get("id") or 0)))
+        cur.execute("SELECT TaskId, ConversationId, ProductId, Question, Status, DatasourceKey, "
+                    "       Kind, JobKind "
+                    f"FROM WebAiTasks WHERE {where} LIMIT 1", tuple(params))
         row = cur.fetchone()
     finally:
         cur.close()
     if not row:
         return None
     return {"task_id": row[0], "conversation_id": row[1], "product_id": row[2],
-            "question": row[3], "status": row[4], "datasource_key": row[5]}
+            "question": row[3], "status": row[4], "datasource_key": row[5],
+            "kind": str(row[6] or _KIND_CHAT), "job_kind": str(row[7] or "")}
 
 
 def _sibling_tasks(conn, account: dict[str, Any], client_id: str | None,
@@ -3144,18 +3420,24 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         return app._json_error("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
     account_id = int((ctx.get("account") or {}).get("id") or 0)
     caps = _sanitize_runtimes((payload or {}).get("runtimes"))
+    # TASK-20260831T100000 — 기능·버전 신고. 능력(모델 목록)과 **같은 문장으로** 저장한다.
+    # 나누면 둘이 같은 throttle 기준 시각(`CapabilitiesAt`)을 두고 서로를 막는다
+    # (능력이 먼저 쓰면 기능 쓰기가 그 요청에서 통째로 유실된다).
+    features = (payload or {}).get("features")
+    agent_version = str((payload or {}).get("agent_version") or "").strip()
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
-        if caps is not None:
-            # 능력 기록 실패는 하트비트를 실패시키지 않는다 — 연결 유지가 주 목적이고,
-            # 능력은 다음 30초에 다시 온다(매번 싣기 때문에 자연히 복구된다).
-            try:
-                _store.set_runner_capabilities(cur, _bearer(request),
-                                               json.dumps(caps, ensure_ascii=False))
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger(__name__).warning(
-                    "[bridge] 능력 신고 기록 실패 account=%s: %r", account_id, exc)
+        # 신고 기록 실패는 하트비트를 실패시키지 않는다 — 연결 유지가 주 목적이고,
+        # 신고는 다음 30초에 다시 온다(매번 싣기 때문에 자연히 복구된다).
+        try:
+            _store.set_runner_report(
+                cur, _bearer(request),
+                json.dumps(caps, ensure_ascii=False) if caps is not None else None,
+                features, agent_version)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] 러너 신고 기록 실패 account=%s: %r", account_id, exc)
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "[bridge] 하트비트 기록 실패 account=%s: %r", account_id, exc)
@@ -3180,7 +3462,42 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         "interval_sec": int(result.get("interval_sec") or _store.HEARTBEAT_INTERVAL_SEC),
         "expires_in": int(result.get("expires_in") or 0),
         "window_sec": int(_store.HEARTBEAT_WINDOW_SEC),
+        # ── 갱신 유도 (사용자 결정 2026-08-31, TASK-20260831T100000) ────────────────
+        #
+        # 러너는 사용자 머신에 설치된 파일이라 우리가 갱신을 **강제할 수 없다.** 그런데
+        # 콘솔 작업을 모르는 러너가 그것을 집으면 대화용 프레이밍으로 감싸 산출물을 망친다.
+        # 배급 자격(`RunnerFeatures`)이 1차 방어이고, 이 응답은 그 사람이 **왜 자기에게만
+        # 작업이 안 오는지** 알게 하는 축이다 — 자격만 막고 이유를 말하지 않으면 조용한 배제다.
+        #
+        # 지시가 아니라 **사실 + 경로**를 준다: 러너가 이 값을 보고 스스로 안내를 출력한다.
+        # 서버가 자동 다운로드·자기교체를 시키지 않는 이유: 그것은 사용자 머신의 프로세스를
+        # 우리가 말없이 바꾸는 것이고, 이 feature 가 지켜 온 경계("러너를 띄운 사람의 설정을
+        # 낮추지 않는다")를 넘는다.
+        "runner_update": _runner_update_hint(agent_version, features),
     })
+
+
+def _runner_update_hint(agent_version: str, features: object) -> dict:
+    """러너가 최신인가 — 아니면 무엇을 하면 되는가.
+
+    `required=False` 여도 `available` 이 참일 수 있다(기능은 있는데 버전만 낮은 경우).
+    러너는 `required` 일 때만 사용자에게 강하게 안내한다 — 매 기동 갱신을 종용하면
+    잘 쓰고 있던 사람에게 소음이 된다.
+    """
+    from shared.bridge_tasks import RUNNER_FEATURE_CONSOLE_JOBS, RUNNER_MIN_AGENT_VERSION
+    from routers._console_llm import version_at_least
+
+    declared = _store.parse_runner_features(
+        ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
+    fresh = version_at_least(agent_version, RUNNER_MIN_AGENT_VERSION)
+    supports = RUNNER_FEATURE_CONSOLE_JOBS in declared
+    return {
+        "current": bool(fresh and supports),
+        "min_version": RUNNER_MIN_AGENT_VERSION,
+        "download_url": "/static/agent/bridge_agent.py",
+        "reason": ("" if (fresh and supports) else
+                   "이 버전은 관리 콘솔 작업을 받을 수 없습니다 — 최신 실행 파일로 다시 실행하세요."),
+    }
 
 
 @router.get("/api/ai/bridge_status")

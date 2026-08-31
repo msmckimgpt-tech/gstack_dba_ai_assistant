@@ -7,6 +7,7 @@
 import {
   adminState, apiFetch, can, showToast, $, formatDateTime,
   loadSampleReview, _sampleFeedbackAction,
+  gateLlmControl, renderLlmNotice,
 } from "../admin.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
@@ -727,6 +728,17 @@ function _metaBindControls() {
     suggestBtn.dataset.bound = "1";
     suggestBtn.addEventListener("click", () => _metaSuggestFill(suggestBtn));
   }
+  // feature-0043 TASK-20260831T100000 — **누르기 전에** 상태를 말한다.
+  //
+  // 종전에는 서버 계정 AI 가 차단된 뒤에도 버튼이 멀쩡히 보였고, 누르면 503 토스트가 떴다가
+  // 몇 초 뒤 사라졌다 — 사용자에게 남는 것은 "왜 안 되지" 뿐이고, 그것을 고장으로 읽으면
+  // 계속 재시도한다. 게이트는 `bound` 분기 **밖**에 둔다: 바인딩은 1회지만 상태 표시는
+  // 폼이 다시 그려질 때마다 최신이어야 한다.
+  gateLlmControl(suggestBtn, {
+    label: "메타데이터 AI 자동완성",
+    delegatedText: "AI 자동완성 (내 AI)",
+    jobKind: "metadata_suggest",
+  });
 }
 
 // metadata-product-scope: 프론트는 물리 datasource 를 다루지 않는다. tables/columns 골격·AI grounding
@@ -2208,6 +2220,16 @@ function _metaBindBootstrap() {
     aiBtn.dataset.bound = "1";
     aiBtn.addEventListener("click", () => _metaBootstrapAiFill(aiBtn));
   }
+  // feature-0043 TASK-20260831T100000 — 일괄 자동완성도 같은 게이트.
+  // 여기는 안내 줄까지 붙인다: 일괄은 사용자가 골격을 다 만들어 둔 **뒤에** 누르는 버튼이라,
+  // 그 시점에 막히면 이미 들인 수고가 헛되었다고 느낀다 — 먼저 알려야 한다.
+  gateLlmControl(aiBtn, {
+    label: "메타데이터 AI 일괄 자동완성",
+    delegatedText: "AI 일괄 자동완성 (내 AI)",
+    jobKind: "metadata_bulk",
+  });
+  renderLlmNotice(aiBtn && aiBtn.closest(".admin-settings-panel-body, .admin-subpane, .admin-detail-col"),
+                  { label: "AI 일괄 자동완성", jobKind: "metadata_bulk" });
   // metadata-bs-collapse: 테이블명 검색 필터. 검색어 변경은 결과 부분집합을 바꾸므로
   //   metadata-bs-paging: 페이지를 1쪽으로 리셋한 뒤 뷰 재계산.
   const search = document.getElementById("metadataBootstrapSearch");

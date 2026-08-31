@@ -2434,3 +2434,94 @@
 /* usage-metric-charts: 모델 부분 선택 + 비-가산 지표(요청)는 성립하지 않아 비활성 — 값도 "—". */
 .admin-usage-metric--pick.is-disabled { opacity: .5; cursor: not-allowed; }
 .admin-usage-metric--pick.is-disabled:hover { border-color: var(--border); }
+
+/* ── feature-0043 TASK-20260831T100000 — 콘솔 LLM 미적용 표시 ─────────────────────
+ *
+ * 서버 계정 AI 차단은 **고장이 아니라 운영 결정**이다. 그래서 색은 위험(danger)이 아니라
+ * 주의(warn) 계열을 쓴다 — 붉게 칠하면 사용자가 장애로 읽고 재시도·문의로 간다.
+ * 색상값은 전부 토큰 참조다(feature-0003 docs/AGENTS.md §10: 인라인 하드코딩 색상 금지 —
+ * 우회하면 테마 변경이 이 표면만 비껴간다). */
+
+.admin-llm-inactive-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+  color: var(--tag-warn-fg);
+  background: var(--tag-warn-bg);
+  border: 1px solid var(--tag-warn-bd);
+}
+
+/* 조작면 게이트 — 막힌 버튼. `disabled` 만으로는 "왜" 가 없으므로 title 과 함께 쓴다. */
+.is-llm-blocked { opacity: .55; cursor: not-allowed; }
+.is-llm-blocked:hover { border-color: var(--border); }
+
+/* 조작면 옆 안내 줄 — 이유 + 조치 경로. 조치가 없으면 안내도 소용없다. */
+.admin-llm-inactive-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--tag-warn-fg);
+  background: var(--tag-warn-bg);
+  border: 1px solid var(--tag-warn-bd);
+}
+.admin-llm-inactive-note a { color: inherit; font-weight: 600; }
+
+/* 사유 dropdown — 패널 안에도, 최하단 집계 안에도 같은 모양으로 들어간다(같은 사실이므로). */
+.admin-llm-detail {
+  margin: 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.admin-llm-detail > summary {
+  padding: 7px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-2);
+  list-style: revert;            /* 기본 마커 유지 — 접힘/펼침이 보이지 않으면 못 찾는다 */
+}
+.admin-llm-detail-body { padding: 2px 12px 10px; line-height: 1.6; }
+.admin-llm-detail-body p { margin: 4px 0; color: var(--text-2); }
+.admin-llm-detail-body code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  word-break: break-all;         /* env 이름이 길어도 가로 스크롤을 만들지 않는다 */
+}
+
+/* 최하단 집계 — 흩어진 배지를 한 자리에서 읽는다. 활성 패널과 무관하게 항상 보인다. */
+.admin-llm-summary {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.admin-llm-summary-head h3 { margin: 0 0 4px; font-size: 14px; }
+.admin-llm-summary-list { margin: 10px 0 0; padding: 0; list-style: none; }
+.admin-llm-summary-list > li { margin: 0 0 4px; }
+.admin-llm-summary-list > li > b { font-size: 13px; }
+
+/* 위임 작업 현황 표 (AI 운영 현황). 전용 클래스를 쓴다 — 형제 화면(외부 AI 작업)이 쓰는
+ * `.admin-table` 은 규칙이 없는 채로 굳어 있어, 거기에 규칙을 주면 이 작업의 범위 밖 화면이
+ * 함께 바뀐다. */
+.admin-llm-jobs-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.admin-llm-jobs-table th,
+.admin-llm-jobs-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+.admin-llm-jobs-table th {
+  color: var(--text-2);
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
