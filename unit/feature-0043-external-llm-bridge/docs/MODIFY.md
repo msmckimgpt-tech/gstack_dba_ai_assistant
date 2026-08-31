@@ -1561,3 +1561,12 @@ grounding·제품 바인딩·필드 제약)를 그대로 재사용하고 여기�
 그 상태에서 적재는 거절되고 조작면은 사유와 함께 비활성이다.
 
 **되돌리기**: 게이트 1개 + `JOB_SPECS[...]["wired"]`.
+
+## CHG-20260831T153000-ai-claude-feature-0043-wsl-postdeploy — POST-DEPLOY 증적 (코드 변경 0)
+
+- **날짜**: 2026-08-31
+- **위험도**: Minor (문서만)
+- **내용**: `CHG-20260831T124500-…` 의 라이브 검증. 배포본 `b35fa376`(내 커밋 `f1f24f27` 포함
+  확인) 에서 `[내 AI 실행]` 강등 경로를 실 Windows 브라우저로 재확인. web-a/b 이미지·
+  `GIT_COMMIT` 일치 · healthz 200 · caddy `no upstreams available` 0건.
+- **증적**: `docs/test-runs.d/TASK-20260831T124500-wsl-scheme-handler-postdeploy.md`
