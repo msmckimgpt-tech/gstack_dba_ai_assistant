@@ -7,10 +7,12 @@ import { loadExtTasks } from "./admin/exttasks.js?v=dev";
 import {
   applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
   llmBlocked, delegationReady, jobDelegable,
+  awaitDelegatedResult, jobPhaseLabel,
 } from "./admin/llm-state.js?v=dev";
 // 다른 admin/* 모듈이 "../admin.js" 로 가져다 쓰는 계약 보존 (aiops·usage 와 동형 re-export).
 export { applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
-         llmBlocked, delegationReady, jobDelegable };
+         llmBlocked, delegationReady, jobDelegable,
+         awaitDelegatedResult, jobPhaseLabel };
 import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,

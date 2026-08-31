@@ -7,7 +7,7 @@
 import {
   adminState, apiFetch, can, showToast, $, formatDateTime,
   loadSampleReview, _sampleFeedbackAction,
-  gateLlmControl, renderLlmNotice,
+  gateLlmControl, renderLlmNotice, awaitDelegatedResult, jobPhaseLabel,
 } from "../admin.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
@@ -796,9 +796,35 @@ async function _metaSuggestFill(btn) {
   btn.disabled = true;
   btn.textContent = "AI 생성 중…";
   try {
-    const data = await apiFetch(`/api/admin/metadata/${encodeURIComponent(sub)}/suggest`, {
+    const _raw = await apiFetch(`/api/admin/metadata/${encodeURIComponent(sub)}/suggest`, {
       method: "POST", body: JSON.stringify(payload),
     });
+    // feature-0043 TASK-20260831T100000 — 위임되면 응답에 결과가 없다(`bridge_pending`).
+    //
+    // 종전 코드는 응답을 곧바로 폼에 채웠으므로, 그대로 두면 `undefined` 가 들어가고
+    // 사용자는 "AI 가 빈 값을 냈다" 고 읽는다. 래퍼가 그 간극을 메운다 — 위임이 아니면
+    // 원본을 **그대로 통과**시키므로 게이트 분기가 이 함수에 들어오지 않는다.
+    const _done = await awaitDelegatedResult(_raw, function (phase) {
+      btn.textContent = jobPhaseLabel(phase);
+    });
+    // 위임 결과는 **AI 가 낸 본문 그대로**다(서버 봉투가 아니다).
+    //
+    // 직접 경로에서는 서버가 `{target, suggestion, meta}` 로 감싸 주지만, 위임에서는 그 조립을
+    // 한 주체가 없다 — `metadata_suggest` 의 기존 프롬프트는 "설명 본문만 출력" 을 지시하므로
+    // `result` 는 평문이다. 그래서 화면이 봉투를 재구성한다. `target` 은 적재 시점에 굳혀 둔
+    // payload 에서 온다(폼 상태에서 다시 계산하면 그 사이 사용자가 서브뷰를 바꿨을 수 있다).
+    let data = _done;
+    if (_raw && _raw.bridge_pending === true) {
+      const body = String((_done && _done.result) || "").trim();
+      const tgt = (_done && _done.payload && _done.payload.target) || "";
+      if (!body || !tgt) {
+        if (typeof showToast === "function") {
+          showToast("연결된 AI 의 답을 해석하지 못했습니다. 다시 시도하세요.", true);
+        }
+        return;
+      }
+      data = { target: tgt, suggestion: body, meta: { grounded: false } };
+    }
     const target = data && data.target;
     const suggestion = (data && data.suggestion) || "";
     const input = target ? wrap.querySelector(`[name="${target}"]`) : null;

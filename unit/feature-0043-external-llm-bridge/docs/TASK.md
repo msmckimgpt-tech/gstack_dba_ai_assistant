@@ -1019,3 +1019,43 @@ LLM처리를 수행하도록 구성해주세요."
       surge 잔존 0 · **무중단 실측 `no upstreams available` = 0** · `/readyz` git_commit 일치
 - [ ] **위임 e2e 미검증** — `wired` 전부 False 라 콘솔 작업이 적재되지 않는다. 위임이 실제로
       도는 화면은 C7~C10 배선 후에야 관측 가능(정직한 잔여)
+
+### TASK-20260831T160000-console-job-wiring — 위임 배선을 실제로 잇는다 (사용자 결정)
+
+**사용자 결정(AskUserQuestion 2026-08-31)**: 배선 단위 = **6종 한 번에** · 배치 귀속 =
+**러너 opt-in 현행** · red-team = **별도 호출로 분리** · 모델 권한 = **미적용 배지 유지**.
+
+**위험도: Major** — 신규 세션인증 엔드포인트 1 · 러너 계약 확장 · 4개 조작면의 서버 경로 분기.
+인증·인가 규칙 변경 없음. 되돌리기 = 게이트 1개 + `wired` 플래그.
+
+#### 이음매 하나로 좁힌 이유
+
+관리 콘솔의 네 기능은 전부 **`messages` 를 조립한 뒤** LLM 을 부른다. 그 조립부가 이
+feature 의 자산이다(스키마 grounding · 제품 바인딩 · 필드 제약). 그래서 위임은 조립 **뒤**,
+호출 **앞** 한 지점에만 끼운다 — 프롬프트를 여기서 새로 쓰면 같은 기능이 경로에 따라 다르게
+산출되고, 그때부터 한쪽은 반드시 낡는다(P0-P·P0-U 가 겪은 형태).
+
+- [x] **C6** `GET /api/admin/ai-jobs/{task_id}` — 세션 인증 · 본인 적재분만 · 국면을 서버가
+      한 단어로 정한다(`waiting|working|done|apply_failed|canceled`). 본문은 완료 시에만
+- [x] **C7a** 위임 seam — 메타 단건·일괄(`admin_metadata`) + 프롬프트 3종(`_prompt_context`)
+- [x] **C7b** 프론트 — `awaitDelegatedResult` 로 대기·국면 표시·결과 채우기
+- [x] **C10** 러너 — `kind='job'` 이면 대화 프레이밍을 **씌우지 않고** 프롬프트를 그대로 쓴다.
+      `features`/`agent_version` 신고 + `--batch` opt-in. 정본↔배포본 해시 일치
+- [x] 위임 계약 회귀 12건 신설
+- [ ] **C8 배치 2종** — `apply_external_*` 미구현이라 `wired: False` 유지(적재 자체가 거절됨)
+- [ ] **C9 red-team 별도 호출** — 러너 2차 호출 + `submit_answer` review 동반 (미착수)
+- [ ] **node_analysis** — 반영 경로 미구현이라 `wired: False` 유지
+
+#### 발견한 결함 (전부 자체 발견)
+
+| 지점 | 무엇이 틀렸나 |
+|---|---|
+| `metadata_suggest` 형식 | `json` 으로 잡았는데 **기존 프롬프트는 평문**을 요구한다 → 위임 지시가 조립부와 모순 |
+| 위임 결과 해석 | 서버 봉투(`{target, suggestion}`)를 AI 가 만들 리 없다 → payload 로 화면이 재구성 |
+| 내 회귀 가드 | **자기 주석 문자열**을 매칭해 거짓 실패(memory 의 "구조단언은 주석 제외" 그대로) |
+| 기존 `test_ux_parity` | 같은 취약성 — 내 주석이 노출시켰다. 계약은 두고 판정 대상만 코드로 좁힘 |
+| 테스트 더블 3종 | 넓어진 시그니처(`delegate_ctx`)를 못 받아 TypeError |
+| 하트비트 계약 검사 | 본문 **전체 동치**로 잠가, 무관한 축이 늘자 깨졌다 → `runtimes` 축으로 좁힘 |
+
+검증: 8개 unit 디렉토리 **6253 passed / 0 failed** · ruff clean · route 골든 260→261
+(추가 1 · 제거 0).

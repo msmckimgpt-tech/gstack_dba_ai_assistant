@@ -1388,6 +1388,11 @@ def test_runner_puts_system_prompt_first():
     src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
         encoding="utf-8")
     body = src[src.index("def compose_prompt("):src.index("# ── 한 건 처리")]
+    # ⚠ **주석을 제외하고** 본다 (TASK-20260831T100000). 이 검사는 본문 문자열의 **위치**를
+    #   비교하는데, 같은 문구가 설명 주석에도 나타나면 순서 판정이 그대로 뒤집힌다 — 실제로
+    #   콘솔 작업 분기를 설명하는 주석이 추가되자 거짓 실패가 났다. 계약("지침이 맨 앞")은
+    #   그대로 두고, 판정 대상만 코드로 좁힌다.
+    body = "\n".join(_l for _l in body.split("\n") if not _l.lstrip().startswith("#"))
     assert "system_prompt" in body
     assert body.index("시스템 프롬프트로 삼아") < body.index("너는 사내 DB 질의 어시스턴트다"), (
         "운영자 지침이 기본 지시보다 뒤에 온다")

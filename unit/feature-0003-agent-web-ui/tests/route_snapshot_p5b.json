@@ -1,6 +1,6 @@
 {
-  "total_routes": 260,
-  "api_routes": 259,
+  "total_routes": 261,
+  "api_routes": 260,
   "ordered": [
     {
       "path": "/static",
@@ -72,6 +72,13 @@
     },
     {
       "path": "/api/admin/me",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/ai-jobs/{task_id}",
       "methods": [
         "GET"
       ],

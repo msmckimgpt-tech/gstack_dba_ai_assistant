@@ -383,7 +383,24 @@ def _normalize_signal_topics(raw_topics: "list[str]", *, limit: int) -> list[str
             break
     return out
 
-def _assemble_product_prompt_llm_request(product_id: int):
+def _maybe_delegate_prompt(delegate_ctx, messages):
+    """프롬프트 자동작성을 개인 AI 에게 넘길 수 있으면 대기 응답을, 아니면 `None`.
+
+    `delegate_ctx` 는 `(request, account, scope, scope_id)` — **request 를 가진 호출부만**
+    채운다. 무인 sweep(`_auto_prompt_sweep_once`)은 `None` 을 넘기므로 위임 대상이 아니다:
+    그 자리에는 결과를 기다릴 사람이 없고, 남의 계정 러너를 배경 작업에 태울 근거도 없다.
+    """
+    if not delegate_ctx:
+        return None
+    request, account, scope, scope_id = delegate_ctx
+    from routers import _console_jobs
+
+    return _console_jobs.maybe_delegate(
+        request, account, job_kind="prompt_generate", messages=messages,
+        payload={"scope": scope, "scope_id": scope_id})
+
+
+def _assemble_product_prompt_llm_request(product_id: int, delegate_ctx=None):
     """TASK-0309: 제품 프롬프트 LLM 요청 조립 (request-less, 인증 비포함).
 
     TASK-0237 의 수집·조립을 인증에서 분리한 코어. 인증 게이트 경로
@@ -717,6 +734,15 @@ def _assemble_product_prompt_llm_request(product_id: int):
     from modules.llm import _get_llm_client
     from shared.llm_gate import feature_blocked_message, server_llm_enabled
 
+    # feature-0043 TASK-20260831T100000 — 위임 seam: 조립이 끝난 `messages` 를 그대로 넘긴다.
+    #
+    # 클라이언트 취득 **앞**에 두는 이유: 게이트가 닫혀 있으면 그 취득이 곧 503 이고, 뒤에
+    # 두면 위임할 기회 없이 실패한다. 반환은 `(즉시 반환할 응답, ctx)` 계약 그대로다 —
+    # 호출부는 첫 슬롯이 있으면 그것을 그대로 돌려주므로 제어 흐름이 바뀌지 않는다.
+    _delegated = _maybe_delegate_prompt(delegate_ctx, messages)
+    if _delegated is not None:
+        return _delegated, None
+
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
         # feature-0043 사용감 패리티: 차단(운영 결정)과 초기화 실패(장애)를 구분해 말한다.
@@ -842,7 +868,7 @@ def _collect_conversation_signals_pg(
         logging.getLogger(__name__).warning("_collect_conversation_signals_pg PG error: %s", pg_exc)
     return topic_lines, summary_lines
 
-def _assemble_role_prompt_llm_request(role_id: int):
+def _assemble_role_prompt_llm_request(role_id: int, delegate_ctx=None):
     """역할 '전체 제품 프롬프트'(role scope, ProductId NULL) LLM 요청 조립 (request-less).
 
     제품 프롬프트 자동작성과 동형 계약((error, ctx) 반환). 컨텍스트는 **역할 성격**
@@ -936,6 +962,15 @@ def _assemble_role_prompt_llm_request(role_id: int):
     from modules.llm import _get_llm_client
     from shared.llm_gate import feature_blocked_message, server_llm_enabled
 
+    # feature-0043 TASK-20260831T100000 — 위임 seam: 조립이 끝난 `messages` 를 그대로 넘긴다.
+    #
+    # 클라이언트 취득 **앞**에 두는 이유: 게이트가 닫혀 있으면 그 취득이 곧 503 이고, 뒤에
+    # 두면 위임할 기회 없이 실패한다. 반환은 `(즉시 반환할 응답, ctx)` 계약 그대로다 —
+    # 호출부는 첫 슬롯이 있으면 그것을 그대로 돌려주므로 제어 흐름이 바뀌지 않는다.
+    _delegated = _maybe_delegate_prompt(delegate_ctx, messages)
+    if _delegated is not None:
+        return _delegated, None
+
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
         # feature-0043 사용감 패리티: 차단(운영 결정)과 초기화 실패(장애)를 구분해 말한다.
@@ -970,7 +1005,8 @@ def _assemble_role_prompt_llm_request(role_id: int):
         "meta_base": meta_base,
     }
 
-def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_id: "int | None"):
+def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_id: "int | None",
+                                        delegate_ctx=None):
     """프로필 '제품별 개인 프롬프트'(account scope) LLM 요청 조립 (request-less).
 
     계정의 역할 성격 + (선택 제품의 이름·용도) + **본인의 실제 대화 패턴**(집계 topic·summary,
@@ -1058,6 +1094,15 @@ def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_
     from modules.llm import _get_llm_client
     from shared.llm_gate import feature_blocked_message, server_llm_enabled
 
+    # feature-0043 TASK-20260831T100000 — 위임 seam: 조립이 끝난 `messages` 를 그대로 넘긴다.
+    #
+    # 클라이언트 취득 **앞**에 두는 이유: 게이트가 닫혀 있으면 그 취득이 곧 503 이고, 뒤에
+    # 두면 위임할 기회 없이 실패한다. 반환은 `(즉시 반환할 응답, ctx)` 계약 그대로다 —
+    # 호출부는 첫 슬롯이 있으면 그것을 그대로 돌려주므로 제어 흐름이 바뀌지 않는다.
+    _delegated = _maybe_delegate_prompt(delegate_ctx, messages)
+    if _delegated is not None:
+        return _delegated, None
+
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
         # feature-0043 사용감 패리티: 차단(운영 결정)과 초기화 실패(장애)를 구분해 말한다.
@@ -1111,7 +1156,8 @@ async def _collect_product_prompt_context(product_id: int, request: Request):
             return app._json_error("제품 관리 권한이 필요합니다.", 403), None
     finally:
         conn.close()
-    return app._assemble_product_prompt_llm_request(product_id)
+    return app._assemble_product_prompt_llm_request(
+        product_id, delegate_ctx=(request, account, "product", int(product_id)))
 
 async def _collect_role_prompt_context(role_id: int, request: Request):
     """역할 프롬프트 자동작성의 **인증 게이트** 래퍼 — `system_prompt.manage.role.any` 확인 후
@@ -1125,7 +1171,8 @@ async def _collect_role_prompt_context(role_id: int, request: Request):
             return app._json_error("역할 시스템 프롬프트 관리 권한이 필요합니다.", 403), None
     finally:
         conn.close()
-    return app._assemble_role_prompt_llm_request(int(role_id))
+    return app._assemble_role_prompt_llm_request(
+        int(role_id), delegate_ctx=(request, account, "role", int(role_id)))
 
 async def _collect_account_prompt_context(product_id: "int | None", request: Request):
     """프로필 개인 프롬프트 자동작성의 **인증 게이트** 래퍼 — 본인 인증 + (제품 지정 시) 제품
@@ -1148,7 +1195,9 @@ async def _collect_account_prompt_context(product_id: "int | None", request: Req
         role_id = int(account.get("role_id") or 0)
     finally:
         conn.close()
-    return app._assemble_account_prompt_llm_request(acc_id, role_id, int(product_id) if product_id else None)
+    return app._assemble_account_prompt_llm_request(
+        acc_id, role_id, int(product_id) if product_id else None,
+        delegate_ctx=(request, account, "account", acc_id))
 
 
 # ── ITEM-10 p11 ──

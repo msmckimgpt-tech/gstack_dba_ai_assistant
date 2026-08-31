@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 import app
+from routers import _console_jobs
 
 INCLUDE_ORDER = 120  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -2844,6 +2845,19 @@ async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
         _ds_key = _scope_datasource_for_schema(data.get("scope_key"), _sch)
         grounding = _metadata_introspect_table(_ds_key, _sch, fields.get("table_name") or "")
     messages = _metadata_suggest_messages(sub, fields, grounding)
+    # feature-0043 TASK-20260831T100000 — 조립 **뒤**, 호출 **앞** 한 지점에서만 위임한다.
+    #
+    # 프롬프트 조립부(스키마 grounding · 제품 바인딩 · 필드 제약)가 이 기능의 자산이므로
+    # 그것을 그대로 넘긴다. 여기서 새로 쓰면 같은 기능이 경로에 따라 다르게 산출되고,
+    # 그때부터 한쪽은 반드시 낡는다(P0-P·P0-U 가 겪은 형태).
+    #
+    # `None` = 위임 대상 아님(게이트 열림 / 러너 자격 없음) → 종전 경로 그대로. 게이트가
+    # 닫혀 있으면 그 경로가 `feature_blocked_message` 로 안내하므로 여기서 중복하지 않는다.
+    _delegated = _console_jobs.maybe_delegate(
+        request, account, job_kind="metadata_suggest", messages=messages,
+        payload={"sub": sub, "target": target})
+    if _delegated is not None:
+        return _delegated
     text, meta, lerr = await app._metadata_llm_complete(messages, task="summary")
     if lerr:
         return lerr
@@ -2903,6 +2917,13 @@ async def admin_metadata_bootstrap_describe(request: Request, account=Depends(ap
     if not tables:
         return app._json_error("유효한 테이블이 없습니다.", 400)
     messages = _metadata_bulk_describe_messages(mode, tables)
+    # 위임 seam — 단건과 같은 자리(조립 뒤 · 호출 앞). 일괄은 대상 표를 payload 에 굳힌다:
+    # 회수 시점에 "이 답이 어느 테이블들에 대한 것인가" 를 되물을 수 없기 때문이다.
+    _delegated = _console_jobs.maybe_delegate(
+        request, account, job_kind="metadata_bulk", messages=messages,
+        payload={"mode": mode, "tables": tables})
+    if _delegated is not None:
+        return _delegated
     text, meta, lerr = await app._metadata_llm_complete(messages, task="prompt_gen", temperature=0.2)
     if lerr:
         return lerr
