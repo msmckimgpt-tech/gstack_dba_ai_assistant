@@ -1,4 +1,18 @@
-# mysql-ai 브리지 설치·기동 스크립트 (Windows PowerShell).
+﻿# mysql-ai 브리지 설치·기동 스크립트 (Windows PowerShell).
+#
+# ⚠ **이 파일은 UTF-8 BOM 을 반드시 유지한다.** (사용자 제보 2026-08-31)
+#
+# Windows PowerShell 5.1(윈도우 기본)은 BOM 없는 `.ps1` 을 UTF-8 이 아니라 **시스템 ANSI
+# 코드페이지**(한국어 윈도우면 CP949)로 읽는다. 그러면 이 파일의 한글 주석·메시지가 깨지고,
+# 깨진 바이트가 인접한 `'`·`)` 를 삼켜 **파서가 죽는다** — 사용자가 본 것이 그것이다:
+#
+#     식에 닫는 ')'가 없습니다.
+#     ... "BRIDGE_PROBED_HANDLER='$ProbedHandler' ??auto|none 以??섎굹?ъ빞 ?⑸땲??
+#
+# 실측: BOM 없음 → ParseFile 오류 6건 / BOM 있음 → PARSE OK. (PowerShell 7 은 BOM 없이도
+# UTF-8 로 읽으므로 **7 로만 검사하면 이 결함을 못 본다** — 회귀 테스트는 BOM 바이트를 직접 본다.)
+#
+# 편집기 설정 주의: "UTF-8(BOM 없음)" 으로 저장하면 이 결함이 그대로 되돌아온다.
 #
 # POSIX 판(`bridge_setup.sh`)과 **같은 계약**이다 — 하는 일·안 하는 일·멈추는 지점이 같다.
 # 두 파일이 갈리면 OS 마다 다른 연결 절차가 되고, 그것이 정확히 이 기능이 없애려는 마찰이다.
@@ -45,8 +59,28 @@ if (-not $Token) { Die 'BRIDGE_TOKEN 이 비어 있습니다. 웹 콘솔의 [연
 #: 문법 오류로 죽고, 그 죽음은 "AI 가 답을 안 한다" 로만 보인다.
 function Test-PyOk([string]$cand) {
   if (-not $cand) { return $false }
-  if (-not (Get-Command $cand -ErrorAction SilentlyContinue)) { return $false }
-  & $cand -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>$null | Out-Null
+  $cmd = Get-Command $cand -ErrorAction SilentlyContinue
+  if (-not $cmd) { return $false }
+
+  # ⚠ **Microsoft Store 앱 실행 별칭 스텁을 먼저 걸러낸다** (사용자 제보 2026-08-31).
+  #   파이썬을 설치하지 않은 윈도우에도 `…\AppData\Local\Microsoft\WindowsApps\python3.exe`
+  #   가 **2바이트 스텁**으로 존재한다. 실행하면 Store 를 열려고 stderr 에 `Python` 을 뱉는데,
+  #   `$ErrorActionPreference='Stop'` 에서 그 stderr 는 **NativeCommandError 로 던져진다**
+  #   (`2>$null` 로도 못 막는다 — 리다이렉션 이전에 오류 레코드가 된다). 그래서 설치가 거기서
+  #   죽고, **바로 다음 후보인 진짜 파이썬까지 가보지도 못했다**(실측: 같은 머신에
+  #   `Python314\python.exe` 가 멀쩡히 있었다).
+  $src = $cmd.Source
+  if ($src -and $src -like '*\WindowsApps\*') { return $false }
+
+  # ⚠ 아래는 **네이티브 명령**이다. 함수 스코프에서만 Stop 을 풀고 try 로 감싼다 — 전역을
+  #   바꾸지 않으므로 이 절 밖의 fail-fast 계약은 그대로다.
+  $ErrorActionPreference = 'SilentlyContinue'
+  $global:LASTEXITCODE = 0
+  try {
+    & $cand -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>&1 | Out-Null
+  } catch {
+    return $false
+  }
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -68,8 +102,13 @@ if (-not $Py) {
     if (Test-PyOk $c) { $Py = $c; break }
   }
 }
-if (-not $Py) { Die 'python 3.8 이상을 찾지 못했습니다. 설치한 뒤 다시 실행하세요.
-  (경로를 알고 있다면: $env:BRIDGE_PROBED_PY=''C:\path\to\python.exe'')' }
+if (-not $Py) { Die 'python 3.8 이상을 찾지 못했습니다.
+
+  · 설치: https://www.python.org/downloads/windows/ (설치 중 "Add python.exe to PATH" 체크)
+  · 이미 설치했는데 이 메시지가 나오면, 경로를 직접 지정하세요:
+        $env:BRIDGE_PROBED_PY=''C:\path\to\python.exe''
+  · 참고: 시작 메뉴의 "앱 실행 별칭" 에 있는 python3 는 Microsoft Store 로 가는 **빈 스텁**이라
+    파이썬이 아닙니다 — 이 스크립트는 그것을 건너뜁니다.' }
 
 #: 러너에 넘길 `--ai <name>`. **PATH 에 실재할 때만** 넘긴다 — 없는 이름을 주면 러너가
 #: "쓸 수 있는 AI 를 찾지 못했습니다" 로 죽는다(실측 2026-08-28: Windows 에 claude 부재).

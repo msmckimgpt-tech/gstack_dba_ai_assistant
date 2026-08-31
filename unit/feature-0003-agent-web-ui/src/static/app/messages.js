@@ -726,11 +726,33 @@ function buildSqlNavigator(sqlSteps) {
   return root;
 }
 
-function buildStepBlocks(steps, containerEl) {
+/** 말풍선 목록에 그릴 단계 — **내부 동작(`action='activity'`)은 뺀다**.
+ *
+ *  사용자 제보 2026-08-31: "'▼ 쿼리결과' 버튼을 통해 확장되는 리스트에서 추론 구간은
+ *  의미있는 정보가 없는 것으로 확인되었으니, 출력하지 않도록".
+ *
+ *  왜 그 목록에서만 무의미한가: 여기에는 **소요시간 칸이 없다**. 그래서 내부 동작 행이 남기는
+ *  것은 일반 문장 한 줄뿐이고, SQL 단계가 별도 블록으로 빠지는 탓에 그 문장들이 서로 인접해
+ *  같은 문구가 연달아 쌓인다(제보 화면: 「결과를 검토하고 다음 작업을 정합니다」 ×8).
+ *  내부 동작의 값은 **구간의 길이**이고 그것은 「단계 보기」 사이드 패널이 보여준다 — 그래서
+ *  여기서 빼도 정보가 사라지지 않고 자리만 정리된다.
+ *
+ *  ⚠ 이 판정은 `renderMessageDetails` 의 **여닫이 존재 여부**와 같은 집합을 봐야 한다.
+ *  전량이 내부 동작인 시점(브리지 착수 직후)에 여닫이만 만들면 **빈 확장**이 노출된다
+ *  (codex 적대 리뷰 P2).
+ */
+function bubbleVisibleSteps(steps) {
+  return (Array.isArray(steps) ? steps : [])
+    .filter((s) => String((s && s.action) || "") !== "activity");
+}
+
+function buildStepBlocks(shown, containerEl) {
   // execute_sql 단계는 SQL + 결과 테이블 + CSV 링크로 묶어 표시
   // 나머지 단계는 요약 목록으로 표시. 2개 이상이면 Navigator로 압축.
-  const nonSqlSteps = steps.filter((s) => String(s.tool || "") !== "execute_sql");
-  const sqlSteps = steps.filter((s) => String(s.tool || "") === "execute_sql");
+  // 인자는 이미 `bubbleVisibleSteps` 를 통과한 목록이다(호출부가 여닫이 판정에 같은 집합을
+  // 쓰기 위해 위에서 한 번만 거른다 — 여기서 다시 거르면 두 곳이 갈릴 수 있다).
+  const nonSqlSteps = shown.filter((s) => String(s.tool || "") !== "execute_sql");
+  const sqlSteps = shown.filter((s) => String(s.tool || "") === "execute_sql");
 
   if (nonSqlSteps.length) {
     // 사이드바·진행 표시와 **같은 카드**로 그린다(`buildStepDetailEl`). 종전에는 여기서만
@@ -757,7 +779,10 @@ function buildStepBlocks(steps, containerEl) {
 }
 
 function renderMessageDetails(meta = {}) {
-  const steps = Array.isArray(meta?.steps) ? meta.steps : [];
+  // 여닫이의 존재 여부는 **그릴 것이 있는가** 로 판정한다. 내부 동작만 있는 시점(브리지 착수
+  // 직후: 「질문을 가져왔습니다」 1건)에 `meta.steps.length` 로 판정하면 여닫이는 생기고 본문은
+  // 비어, 사용자는 눌러 봐야 빈 칸을 본다(codex 적대 리뷰 P2).
+  const steps = bubbleVisibleSteps(meta?.steps);
   const hasSql = steps.some((s) => String(s.tool || "") === "execute_sql" && s.sql);
   const hasDetails = hasSql || meta?.rationale || steps.length || Array.isArray(meta?.csv_paths) && meta.csv_paths.length;
   if (!hasDetails) return null;

@@ -1602,7 +1602,6 @@ grounding·제품 바인딩·필드 제약)를 그대로 재사용하고 여기�
 - 생성된 `launch.sh` 를 실제 `wsl.exe` 로 호출: 러너 0→1, 20초 뒤에도 생존,
   `/api/ai/connect/status` 가 `listening:true` · `ready:true`
 - 회귀 2건(L12 대기 계약 · L13 사망 보고) — **수정 전 스크립트에서 2/2 FAIL** 실증
-
 ## CHG-20260831T170000-model-tree — 없는 모델을 보여주던 폴백 + 플랫폼 그룹 트리 (P0-AF)
 
 **요구**: 실제 가용하지 않은 codex 모델(`gpt-5.1-*`)이 목록에 뜬다 · 플랫폼별 그룹 트리 ·
@@ -1631,3 +1630,155 @@ grounding·제품 바인딩·필드 제약)를 그대로 재사용하고 여기�
 
 `_RUNTIME_SPECS` 의 `models` 는 그대로 있다 — `detect_runtimes` 의 폴백 블록에서 다시 읽게
 하면 종전 동작으로 돌아간다(권장하지 않는다: 그 표가 낡는 순간 같은 결함이 재발한다).
+## CHG-20260831T170034-ai-claude-feature-0043-live-steps-compact — 추론 구간 표시 밀도 + 실시간 누적
+
+**요청 (2026-08-31, 직전 cycle 확인 후)**: ① 「추론 구간이 … 사이드 바 내부에서 비교적 큰 범위를
+차지 … 최대한 단순한 형태로. 외곽선 및 배경 없이 한 줄로 출력되어도 문제없습니다. 목적 자체는
+추론에 대한 소요시간을 확보하는 것」 ② 「최하단의 누적시간은 실시간으로 갱신 (단순히, 첫
+호출시간과 현재시간의 차이로)」 ③ 「'▼ 쿼리결과' 버튼을 통해 확장되는 리스트에서 추론 구간은
+의미있는 정보가 없는 것으로 확인되었으니, 출력하지 않도록」.
+
+③ 은 **직전 cycle 이 만든 회귀**다 — 단계 수를 2배로 늘려 놓고 소요 칸이 없는 목록에도 그대로
+흘려보냈다. SQL 단계가 별도 블록으로 빠지는 탓에 남은 내부 동작 문구들이 서로 인접해 같은 문장이
+연달아 쌓였다(제보 화면 ×8).
+
+### 변경
+
+| 파일 | symbol | 무엇 |
+|---|---|---|
+| `static/app.js` | `_buildStepActivityRow` (신규) | 내부 동작 = **한 줄** 행(번호·문구·소요). 카드 컨테이너·배지·제목 블록 없음. 시작 시각·사유는 `title` |
+| ″ | `_stepPanelTicker`·`_paintStepPanelLiveTimes`·`_liveDurEl` (신규) | `[data-live-from]` 요소의 **텍스트만** 1초마다 `지금 − 기준시각` 으로 갱신. 대상 없음/패널 닫힘이면 자기 정지 |
+| ″ | `_renderStepSidePanelBody` | activity 분기 · 최하단 실시간 누적 기준점(첫 단계 기록 시각) · 진행 중 경과 티커 · 티커 起停 |
+| ″ | `closeStepSidePanel` | 티커 정리 |
+| `static/app/messages.js` | `bubbleVisibleSteps` (신규) · `renderMessageDetails` · `buildStepBlocks` | 말풍선 목록에서 내부 동작 제외. **여닫이 존재 판정도 같은 집합** — 전량이 내부 동작인 시점의 빈 확장 방지 |
+| `static/css/chat.css` | `.step-side-panel-activity` | flex 한 줄(`nowrap` + `ellipsis`), border·background 없음 |
+
+### 정보를 없애지 않는다
+
+말풍선에서 뺀 내부 동작은 **「단계 보기」 사이드 패널에 그대로 있다**(거기에는 소요 칸이 있고,
+그게 이 행의 존재 이유다). 한 줄로 접은 시작 시각·사유도 `title` 로 남는다 — 지운 게 아니라
+접었다.
+
+### 되돌리기
+
+`_buildStepActivityRow` 분기 1개(`app.js`)와 `bubbleVisibleSteps` 필터 1개(`messages.js`)를
+제거하면 직전 표시로 복귀한다. 티커는 `[data-live-from]` 이 없으면 애초에 돌지 않는다.
+
+### 검증
+
+컨테이너 pytest 전량 green(신규 12건) · node 하네스 18/18 무회귀 ·
+codex 적대 리뷰 2R **P1 0건 수렴**(1R P2 2·P3 1 전건 반영) ·
+PB-0008 실 Windows 브라우저 POST-DEPLOY.
+## CHG-20260831T190000 — 위임 결과 각인 래퍼 노출 수정 (라이브 제보)
+
+**무엇**: 콘솔 작업 폴링이 각인본(`WebAiTasks.Answer`)을 화면에 그대로 줘서
+`⟦UNTRUSTED-DATA⟧ …` 래퍼가 폼 입력란에 들어갔다. 원문을 `JobResult` 로 따로 보존하고
+폴링이 그것을 준다(과거 행은 `unwrap_external_answer` 폴백).
+
+**왜 저장본을 나누나**: `Answer` 는 감사 보존 + 지연 인젝션 방어용이라 각인이 필요하고,
+화면은 사람이 읽을 원문이 필요하다 — 대화 경로가 이미 같은 이유로 나눠 두고 있었다.
+
+**되돌리기**: 컬럼은 비파괴 ADD. revert 시 폴백 경로가 과거 행을 그대로 처리한다.
+## CHG-20260831T164500-ai-claude-feature-0043-setup-speed-logts — 등록 80초→0.7초 + 로그 시각
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 제보 — "'러너 체크섬 일치.' 이후로 핸들러를 등록하는 부분의 시간이 너무
+  오래 소요" · "로그 내 타임스탬프가 기록되도록"
+- **위험도**: Minor (등록 경로 최적화 + 로그 포맷)
+
+### 원인 (단계별 실측)
+
+| 단계 | 소요 |
+|---|---|
+| `powershell -File` (**WSL UNC 경로**) | **80.27s** |
+| `powershell -File` (Windows 로컬 경로) | 0.41s |
+| `wsl.exe -l -q` · `wslpath` · `reg.exe` | < 0.1s |
+
+부하 시엔 Windows exe **기동 자체가 3.0~3.4초**라, 3회 호출(TEMP 조회·등록·검증)이 그대로 쌓였다.
+
+### 변경
+
+- 등록 PS1 을 **Windows `%TEMP%`** 에 쓰고 그 Windows 경로로 실행 (UNC 해석 제거)
+- TEMP 는 `PATH` 의 `/mnt/<드라이브>/Users/<사용자>/…` 에서 떼어 얻는다(Windows 호출 0회).
+  못 얻으면 그때만 `cmd.exe` 1회. 둘 다 실패하면 종전 경로 + "느립니다" 고지
+- 별도 `Test-Path` 검증 제거 — 등록 PS1 이 **되읽어 대조하고 throw** 하므로 보장은 동일
+- `say`/`die`/`drop`(설치) · `_log`(러너) · `bail`·완료 문구(핸들러 실행) 에 시각 추가
+
+### 검증
+
+- **80.27초 → 0.73초** (라이브, 사용자 셸과 같은 PATH). 등록값 정확·임시파일 잔재 0
+- 회귀 3건(L14 로컬 경로 · L15 기동 1회 · L16 시각) — **수정 전 스크립트에서 3/3 FAIL** 실증
+
+## CHG-20260831T172000-ai-claude-feature-0043-ps1-bom — Windows PowerShell 경로 파싱 실패
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 제보 — PowerShell 에서 설치 시 `식에 닫는 ')'가 없습니다` 외 파싱 오류 6건
+- **위험도**: Minor (인코딩 표식 + 게이트 교정)
+
+### 원인
+
+Windows PowerShell 5.1 은 BOM 없는 `.ps1` 을 **시스템 ANSI 코드페이지**(CP949)로 읽는다.
+한글 주석·메시지가 깨지고 깨진 바이트가 인접한 `'`·`)` 를 삼켜 파서가 죽었다.
+
+| 대상 | 결과 |
+|---|---|
+| 서빙본(BOM 없음) | `ParseFile` **오류 6건** |
+| BOM 추가본 | **PARSE OK**, `U+B7EC`(러) 정상 디코딩 |
+
+**게이트가 두 겹으로 놓쳤다**: 기존 `test_windows_installer_parses` 는 ① `pwsh` 미설치라 항상
+skip 이었고 ② 설령 돌아도 **PowerShell 7 은 BOM 없이도 UTF-8 로 읽어** 이 클래스를 못 본다.
+
+### 변경
+
+- `bridge_setup.ps1` 정본·서빙본에 UTF-8 BOM + 상단에 「BOM 없이 저장하면 재발」 경고
+- 설치 중 생성하는 등록 PS1 도 `printf '\357\273\277'` 로 BOM 선행 후 append
+- 회귀 2건: BOM 바이트 직접 검사 · 생성물의 BOM 선행 순서 검사. 기존 pwsh 검사에는
+  「이 축은 여기서 안 잡힌다」를 명시
+
+### 검증
+
+- Windows PowerShell 5.1 실파싱 PARSE OK · 코드포인트 대조로 디코딩 정합 확인
+- 신규 2건이 **수정 전 상태에서 2/2 FAIL** 실증 · 등록 왕복 재확인 PASS
+
+## CHG-20260831T180000-ai-claude-feature-0043-ps-python-probe — Store 스텁이 설치를 죽이던 것
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 제보 — `python3.exe : Python` / `NativeCommandError` 로 설치 중단
+- **위험도**: Minor
+
+### 원인
+
+`WindowsApps\python3.exe` 는 Microsoft Store 로 보내는 **2바이트 스텁**이다. 실행 시 stderr 로
+`Python` 을 뱉고, `$ErrorActionPreference='Stop'` 에서 그것이 **NativeCommandError 로 던져진다**
+(`2>$null` 무효). 첫 후보에서 죽어 **진짜 파이썬(`Python314\python.exe`)까지 가지 못했다.**
+
+### 변경
+
+- `Test-PyOk`: `Source` 가 `\WindowsApps\` 면 후보 제외 · 네이티브 호출만 `SilentlyContinue`
+  + `try/catch` (전역 Stop 유지)
+- 못 찾았을 때 안내를 실행 가능하게 (설치 링크 · `BRIDGE_PROBED_PY` · 스텁이 파이썬이 아님)
+
+### 검증
+
+- 실 Windows PowerShell 5.1: `python3 ok=False` → `python ok=True` → 예외 없이 완주
+- 회귀 2건 · 수정 전에서 FAIL 실증
+
+## CHG-20260831T173600-ai-claude-feature-0043-compact-evidence — 표시 밀도 조정 POST-DEPLOY 증적
+
+`CHG-20260831T170034-…` 의 라이브 검증. 코드 변경 0 — 증적 문서만.
+
+배포본이 **실제로 서빙하는 모듈**에 이번 변경 식별자가 있는지 먼저 대조한 뒤(app.js 7 hits ·
+messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 인스턴스로 렌더했다.
+
+- ① 내부 동작 행 **22px**(도구 카드 121px) · `border: none` · `background: transparent` · 배지 0
+- ② 누적 3.2초 간격 3회 판독에서 증가폭이 경과와 일치(`지금 − 첫 단계 기록 시각`)
+- ③ 말풍선 「쿼리 결과」 목록에 내부 동작 0건 — 제보의 반복 문구 ×8 소멸
+- ④ 내부 동작만 있는 시점 → 여닫이 자체가 생기지 않음(빈 확장 없음)
+- ⑤ 완료 답변 패널 → 티커 대상 0 · 2.6초 후 값 동일(정지 화면)
+
+⚠ 이번 랜딩은 **GitHub Actions 를 게이트에서 제외**했다 — 07:50 이후 main 포함 전 실행이 계정
+결제/한도로 러너 시작 전 실패(사용자 결정). 대체 근거는 CI 와 동일 스위트를 머지 base 에서
+컨테이너 실행한 전량 green.
+
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260831T170034-live-steps-compact-postdeploy.md`
+캡처: `artifacts/pb0008-live-steps-compact/` (git 밖, §2)

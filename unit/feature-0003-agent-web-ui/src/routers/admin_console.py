@@ -121,12 +121,32 @@ def admin_ai_job_status(task_id: str, request: Request,
         "apply_error": error,
         # 본문은 **완료됐을 때만** 싣는다. 진행 중에 부분 결과를 흘리면 화면이 그것을 최종으로
         # 읽고 폼에 채운 뒤, 잠시 뒤 다른 값으로 덮인다.
-        "result": (job.get("answer") if submitted else None),
+        #
+        # ⚠ **각인본(`Answer`)을 주지 않는다** (2026-08-31 라이브 제보). 그것은 감사 보존·지연
+        #   인젝션 방어용이고, 화면에 그대로 주면 `⟦UNTRUSTED-DATA⟧ …` 래퍼가 통째로 폼
+        #   입력란에 들어간다. 원문은 제출 시점에 `JobResult` 로 따로 보존한다.
+        "result": (_console_job_body(job) if submitted else None),
         # 적재 시점에 굳힌 입력. 화면이 **서버 봉투를 재구성**하는 데 쓴다 — 직접 경로는
         # `{target, suggestion}` 같은 봉투를 서버가 만들지만, 위임 결과는 AI 가 낸 본문뿐이라
         # "이 답이 무엇에 대한 것인가" 를 화면이 알아야 폼의 어느 칸에 넣을지 정한다.
         "payload": _console_job_payload(job.get("payload")),
     })
+
+
+def _console_job_body(job) -> str:
+    """화면에 줄 **원문**. `JobResult`(정본) → 없으면 각인본을 벗겨 폴백.
+
+    폴백이 있는 이유: 이 수정 **이전에** 제출된 작업은 원문 컬럼이 비어 있다. 그 행들을
+    버리면 사용자는 이미 AI 가 답한 작업을 다시 시켜야 한다.
+
+    새 코드가 폴백에 의존하지 않게 순서를 이렇게 둔다 — 정본이 있으면 파싱하지 않는다.
+    """
+    raw = job.get("result")
+    if raw:
+        return str(raw)
+    from session_guard import unwrap_external_answer
+
+    return unwrap_external_answer(job.get("answer") or "")
 
 
 def _console_job_payload(raw):

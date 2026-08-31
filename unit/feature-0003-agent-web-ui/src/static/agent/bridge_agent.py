@@ -329,7 +329,16 @@ _SHUTDOWN_GRACE_SEC = float(os.environ.get("BRIDGE_SHUTDOWN_GRACE_SEC", "") or 1
 
 
 def _log(msg: str) -> None:
-    sys.stderr.write(f"[bridge] {msg}\n")
+    """`bridge.log` 한 줄. **시각을 함께 적는다** (사용자 요청 2026-08-31).
+
+    종전엔 시각이 없어서, 로그만 보고는 「러너가 언제 떴는지 · 어디서 멈췄는지 · 이 줄이
+    방금 것인지 어제 것인지」를 가릴 수 없었다 — 실제로 이 파일로 사고를 조사할 때
+    파일 mtime 과 DB 하트비트를 대조해야 겨우 시간을 복원했다.
+
+    지역시각을 쓴다: 이 로그를 읽는 사람은 자기 화면의 시계와 대조한다. UTC 로 적으면
+    "웹은 15:35 인데 로그는 06:35" 가 되어 같은 사건이 다른 사건으로 보인다.
+    """
+    sys.stderr.write(f"[bridge {time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
     sys.stderr.flush()
 
 
