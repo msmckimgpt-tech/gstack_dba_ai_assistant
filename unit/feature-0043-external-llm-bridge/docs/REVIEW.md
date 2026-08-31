@@ -1664,3 +1664,67 @@ P1 추이가 **4 → 3 → 1 → 0 으로 단조 감소**했다(§18.8 (b) 의 �
   회귀로 확인했고, **첫 실사용자의 설치 성공 여부는 미관측**이다.
 - **POSIX 판(`bridge_setup.sh`)은 그대로**: 리눅스·macOS 는 `python3` 이 사실상 항상 있어
   같은 마찰이 관측되지 않았다. 관측되면 그때 같은 축으로 넣는다.
+
+## REV-20260831T175500-ai-claude-corp-feature-0043-schannel-revocation [SUBAGENT:self] — SHIP
+
+- **일시**: 2026-08-31 · **범위**: `bridge_setup.ps1`(정본+서빙본) TLS 신뢰·수신 경로 +
+  `bridge_setup.sh` divergence 주석 + 회귀 18건
+- **Trigger**: credential/자격증명·certificate validation keyword matched → **security** 도메인
+- **Verdict**: PASS (HIGH·MEDIUM 0건)
+- **Human Approval Needed**: no
+
+### 검증 채널 — 그리고 덮지 못한 것 (정직 표기)
+
+§18.8 dispatch 표는 이 변경에 **security** 를 요구한다. 본 세션에는 하네스 수준의 상위 우선순위
+지시로 **Agent(subagent) 도구 사용이 금지**돼 있어, §18.8.2 「상위 우선순위 지시 carve-out」에
+따라 그 제약이 우선한다 — 본 §를 우회 근거로 쓰지 않았다. 대신 제약 없는 채널로 수행했다:
+
+- **built-in `/security-review` 채널 진입** — 다만 그 스킬의 지문 자체가 sub-task 분해를
+  요구하므로, 분해 없이 **main 세션에서 인라인 감사**로 대체 수행했다. 아래가 그 산출물이다.
+- **라이브 대조군 실측** (아래) — 정적 리뷰가 판정할 수 없는 축을 실제 TLS 핸드셰이크로 갈랐다.
+- `[SKIPPED:tool-restricted:security-subagent]` — **독립 관점의 적대 검증은 미수행**이다.
+  단일 관점(자기 감사)이라 «내가 만든 전제를 내가 못 본다» 위험이 남는다. 실제로 이 cycle 에서
+  발견된 3건 중 **2건이 라이브 실측으로만 잡혔다**(정적 자기검토는 통과시켰다) — 그 사실이
+  이 잔여 위험의 크기를 보여 준다.
+
+### 인라인 보안 감사 (축별)
+
+| 축 | 판정 | 근거 |
+|---|---|---|
+| 인증서 검증 우회 | **강화됨** | 완화는 폐기검사 축에 한정. 대조군: 무관한 CA pin 시 `--ssl-revoke-best-effort` 가 있어도 `CERT_TRUST_IS_UNTRUSTED_ROOT` 로 실패(curl) · `CERTIFICATE_VERIFY_FAILED: self-signed certificate` 로 실패(python). **IWR 폴백 제거로 pin 우회 경로가 오히려 하나 사라졌다** |
+| 파이썬 폴백의 신뢰 앵커 | 유지 | `ssl.create_default_context(cafile=ca)` — `cafile` 을 주면 CPython 은 `set_default_verify_paths()` 를 부르지 않는다(시스템 저장소 미탑재). `check_hostname=True`·`CERT_REQUIRED` 기본. 러너 상주(`--ca`)와 **동일 평가기** |
+| 명령 주입 | 해당 없음 | `& $exe @argv` 는 셸을 거치지 않는 argv 전달. `$url`·`$dest`·`$CaPath` 의 메타문자로 탈출 불가. `$exe` 는 `Get-Command curl.exe` 산출 또는 검증 통과한 `$Py`(선행 `^-`·메타문자 거부 + 실행 검증) |
+| 실패 경로 | fail-closed | 두 경로 실패 시 `throw` → `Die`(exit 1). `$AgentTmp` 는 `$AgentPath` 로 **승격되지 않는다** — 부분 설치가 남지 않는다 |
+| 자격증명 유출 | 없음 | `BRIDGE_TOKEN` 은 argv·URL 에 실리지 않고 `$env:` 로만 러너에 간다. `Invoke-NativeCapture` 가 받는 것은 curl `--version`·curl 수신·python 수신 셋뿐이며 어느 것도 토큰을 다루지 않는다. 사유 문자열은 curl/python 의 stderr 원문 |
+| 임시 파일 | 새 경계 없음 | `_download.py` 는 `$Home_`(사용자 프로필 하위, 앞 단계에서 생성)에 쓰고 `finally` 에서 제거(잔재 0 실측). 그 디렉토리 쓰기 권한을 가진 공격자는 이미 상주 실행 대상인 `bridge_agent.py` 를 바꿀 수 있다 — 권한 경계를 새로 넘지 않는다 |
+| `Substring` 경계 | 안전 | `Length -gt 480` 가드 하에서만 240 / Length-240 인덱스 사용 |
+
+### 수용한 잔여 위험 (명시)
+
+- **`--ssl-no-revoke` 폴백은 폐기검사를 통째로 끈다.** curl < 7.70 에서만 도달한다(윈도우 동봉
+  curl 은 1803 판이 7.55 라 이 경로가 실재한다). 이 CA 는 CRL·OCSP 배포점이 **아예 없어** 폐기
+  검사가 애초에 신호를 주지 못하므로 실질 손실은 0 에 가깝지만, «폐기된 인증서를 걸러낼 수단이
+  그 경로에선 없다» 는 것은 사실이다. 체인·호스트명·CA pin·러너 SHA256 은 그대로 유지된다.
+- **`Test-Downloaded` 는 크기>0 만 본다.** 서버가 `BRIDGE_AGENT_SHA256` 을 주지 않는 경로에서는
+  절단된 러너가 통과할 수 있다. 이는 기존 자세이며(스크립트가 «대조를 건너뜁니다» 를 명시한다)
+  본 변경은 그것을 **좁혔다**(종전엔 종료코드만 봤다).
+
+### 판단
+
+- **왜 좁은 옵션을 먼저 쓰는가.** `--ssl-no-revoke` 로 한 줄에 끝낼 수 있었다. 그러지 않은
+  이유는 «지금 우리 CA 가 폐기정보를 안 낸다» 가 «앞으로도 폐기검사가 무의미하다» 를 뜻하지
+  않기 때문이다. best-effort 는 CRL 이 생기는 날 자동으로 다시 엄격해진다.
+- **왜 IWR 을 되돌렸는가.** 폴백을 늘리는 것이 견고함이라고 생각했는데, 그 폴백이 **pin 을 보지
+  않는 평가기**였다. 「받은 것은 대조한다」가 이 스크립트의 계약이고, 대조 대상인 신뢰 앵커를
+  무시하는 경로를 실패 폴백에 두면 계약이 실패 시에만 조용히 해제된다.
+- **왜 파이썬인가.** 폴백이 하나 더 필요해서가 아니다. 러너가 이미 그 평가기를 쓰므로, 수신과
+  상주의 신뢰 경로를 **하나로 만드는** 것이 목적이다 — 이번 결함이 그 둘의 갈라짐이었다.
+
+## REV-20260831T184200-ai-claude-corp-feature-0043-schannel-postdeploy [SKIPPED:evidence-only] — 라이브 검증 기록
+
+- **Related TASK**: feature-0043-external-llm-bridge
+- **Reason**: changed paths are docs/test-runs.d evidence only — 코드·설정 변경 0건
+  (배포본 `b28c3fab` 에서의 POST-DEPLOY 실측 적재). 검증 대상 코드는 이미
+  `REV-20260831T175500-…` 에서 감사됐고 본 cycle 은 그 결과의 기록이다.
+- **Timestamp**: 2026-08-31T18:42:00+09:00
+- **Human Approval Needed**: no

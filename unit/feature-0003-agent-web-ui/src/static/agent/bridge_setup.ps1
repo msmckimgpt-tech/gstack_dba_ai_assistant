@@ -317,21 +317,160 @@ Move-Item -Force $CaTmp $CaPath
 # ── 2. 러너 ──────────────────────────────────────────────────────────────────
 $AgentPath = Join-Path $Home_ 'bridge_agent.py'
 $AgentTmp  = "$AgentPath.tmp"
-Say '러너를 받는 중…'
+$AgentUrl  = "$Base/static/agent/bridge_agent.py"
 # Windows 는 CA 를 시스템 저장소에 넣지 않고도 요청별로 신뢰시키기 어려워, curl.exe 가 있으면
-# --cacert 로 프로세스 한정 신뢰를 쓴다(POSIX 판과 같은 계약). 없으면 사용자가 CA 를 신뢰해
-# 두었다고 보고 Invoke-WebRequest 로 받는다.
+# --cacert 로 프로세스 한정 신뢰를 쓴다(POSIX 판과 같은 계약).
 $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-try {
-  if ($curl) {
-    & $curl.Source -fsS --cacert $CaPath -o $AgentTmp "$Base/static/agent/bridge_agent.py"
-    if ($LASTEXITCODE -ne 0) { throw 'curl failed' }
-  } else {
-    Invoke-WebRequest -Uri "$Base/static/agent/bridge_agent.py" -OutFile $AgentTmp -UseBasicParsing
+
+#: 네이티브 명령을 **종료코드와 stderr 원문까지 회수**해서 부른다.
+#:
+#: `$ErrorActionPreference` 를 함수 스코프에서만 **'Continue'** 로 둔다 — 전역을 바꾸지 않으므로
+#: 이 절 밖의 fail-fast 계약은 그대로다. 세 값의 차이가 여기서 전부 문제가 된다(실측 2026-08-31,
+#: 실 Windows PowerShell 5.1):
+#:   · 'Stop'             → 네이티브 stderr 가 NativeCommandError 로 **던져진다** (`2>$null` 로도
+#:                          못 막는다 — Test-PyOk 이 같은 함정을 이미 겪었다).
+#:   · 'SilentlyContinue' → 그 ErrorRecord 가 **조용히 버려진다**. curl 이 exit 60 으로 죽었는데
+#:                          회수된 메시지 길이가 **0** 이었다. 그러면 실패 보고가 "사유: (없음)"
+#:                          이 되어, 사유를 모으려고 만든 이 구조가 무의미해진다.
+#:   · 'Continue'         → 던지지도 버리지도 않는다. 유일하게 맞는 값이다.
+function Invoke-NativeCapture([string]$exe, [string[]]$argv) {
+  $ErrorActionPreference = 'Continue'
+  # ⚠ 실행 **자체가** 실패하면($exe 부재·권한 거부) $LASTEXITCODE 는 건드려지지 않는다. 0 으로
+  #   초기화해 두면 그것이 «성공» 으로 읽힌다 — 실측: 없는 파이썬 경로로 불렀는데 Get-RemoteFile
+  #   이 via=python 을 **성공 반환**했다(받은 파일은 없었다). 그래서 초기값을 실패값으로 둔다.
+  $global:LASTEXITCODE = 127
+  $lines = @()
+  try {
+    foreach ($item in (& $exe @argv 2>&1)) {
+      # 네이티브 stderr 는 ErrorRecord 로 온다. PowerShell 의 장식(위치·CategoryInfo·틸데 밑줄)이
+      # 아니라 **원문만** 꺼낸다 — 그 장식은 로케일 의존이라 문자열 패턴으로 걸러낼 수도 없다.
+      if ($item -is [System.Management.Automation.ErrorRecord]) { $lines += $item.Exception.Message }
+      else { $lines += [string]$item }
+    }
+  } catch {
+    $lines += $_.Exception.Message
   }
-} catch {
-  Die '러너를 받지 못했습니다. CA 신뢰 또는 네트워크를 확인하세요.'
+  $code = $LASTEXITCODE
+  $out  = (($lines | Where-Object { $_ }) -join ' / ').Trim()
+  # 사용자에게 보일 한 줄이라 길이를 자른다. 단 **양끝을 남긴다** — curl 의 핵심 토큰
+  # (CERT_TRUST_*)은 첫 줄에 오고, 파이썬 트레이스백의 핵심(SSLCertVerificationError 등)은
+  # **마지막 줄**에 온다. 앞만 남기면 파이썬 실패에서 정작 원인이 잘려 나간다(실측).
+  if ($out.Length -gt 480) {
+    $out = $out.Substring(0, 240) + ' … ' + $out.Substring($out.Length - 240)
+  }
+  return [pscustomobject]@{ Code = $code; Out = $out }
 }
+
+#: 종료코드 0 은 «파일이 왔다» 를 뜻하지 않는다. 실행 실패·부분 수신·0바이트를 성공으로 읽지
+#: 않도록 **실물**을 본다 — 아래 체크섬 대조는 서버가 값을 주지 않으면 건너뛰므로(그 경로에서는
+#: 이것이 유일한 확인이다) 이 검사가 그 구멍을 메운다.
+function Test-Downloaded([string]$p) {
+  if (-not (Test-Path -LiteralPath $p)) { return $false }
+  try { return ((Get-Item -LiteralPath $p).Length -gt 0) } catch { return $false }
+}
+
+#: 윈도우 동봉 curl 의 **폐기검사 하드 실패**를 푸는 옵션 하나를 고른다 (사용자 제보 2026-08-31).
+#:
+#: 윈도우 기본 curl.exe 의 TLS 백엔드는 **Schannel** 이다(실측: curl 8.13.0 (Windows)
+#: libcurl/8.13.0 Schannel). Schannel 의 CertGetCertificateChain 은 체인을 세운 **뒤** 폐기
+#: 상태를 조회하는데, 우리 사내 CA 에는 조회할 곳이 없다 — CRL 배포점도 OCSP(AIA)도 없다
+#: (실측: root·leaf 양쪽 모두 그 확장이 부재). 그래서 결과가 «알 수 없음» 이고 curl 은 그것을
+#: **실패로 본다**:
+#:
+#:     curl: (60) schannel: CertGetCertificateChain trust error CERT_TRUST_REVOCATION_STATUS_UNKNOWN
+#:
+#: 이것은 CA 신뢰 실패도 네트워크 실패도 아니다 — --cacert 는 이미 먹었고 체인도 섰다. 그런데
+#: 종전 안내문이 "CA 신뢰 또는 네트워크를 확인하세요" 라, 사용자는 멀쩡한 두 곳을 뒤지게 됐다.
+#: POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 결함이 없다 — **Windows 전용
+#: divergence** 이고, 그래서 이 옵션은 이쪽에만 둔다(bridge_setup.sh 에 같은 것을 넣지 않는다).
+#:
+#: 순서에 의미가 있다. --ssl-revoke-best-effort 는 «조회할 곳이 없거나 못 닿을 때만» 넘어가고,
+#: CRL 에 닿았는데 revoked 라고 하면 **여전히 멈춘다**. --ssl-no-revoke 는 폐기검사를 통째로
+#: 끈다. 그래서 잃을 것이 없는 쪽을 먼저 쓰고, 그 옵션을 모르는 구형 curl(7.70 미만)에서만
+#: 내려간다. 완화하는 것은 폐기검사뿐이고, CA 지문 pin 과 러너 체크섬 대조는 그대로다.
+function Get-CurlRevokeArgs([string]$exe) {
+  # 모르는 옵션이면 curl 이 **파싱 단계에서** exit 2 로 죽는다 — 네트워크를 타지 않는 감지다.
+  foreach ($f in @('--ssl-revoke-best-effort', '--ssl-no-revoke')) {
+    if ((Invoke-NativeCapture $exe @($f, '--version')).Code -eq 0) { return @($f) }
+  }
+  return @()
+}
+$CurlRevokeArgs = if ($curl) { Get-CurlRevokeArgs $curl.Source } else { @() }
+if ($curl -and $CurlRevokeArgs.Count -eq 0) {
+  Drop 'curl 이 폐기검사 완화 옵션(--ssl-revoke-best-effort / --ssl-no-revoke)을 모릅니다. Schannel 이면 여기서 막힐 수 있어 파이썬 경로로 넘어갑니다'
+}
+
+#: 파일 하나를 받는 **단일 경로**. 최초 수신과 체크섬 재시도가 각자 구현하던 것을 모은다 —
+#: 갈라져 있던 동안 재시도 쪽에는 $LASTEXITCODE 검사가 **아예 없어서**, 실패한 재시도가 조용히
+#: 통과하고 바로 다음 대조가 "러너 체크섬이 다릅니다" 로 **오진**했다(실제 원인은 수신 실패).
+#:
+#: 순서: curl(--cacert, 프로세스 한정 신뢰) → 파이썬(--ca 와 **같은 신뢰 경로**). 둘 다 실패면 멈춘다.
+#: 파이썬이 «폴백 하나 더» 가 아닌 이유: 러너는 아래에서 --ca $CaPath 로 **파이썬 TLS** 를 쓴다.
+#: 다운로드만 다른 평가기(Schannel)로 하면 신뢰 경로가 둘로 갈리고, 이번 결함이 정확히 그
+#: 갈라짐이었다 — 한쪽만 죽었다. 파이썬으로도 못 받으면 러너도 못 뜨므로 실패가 정직해진다.
+#:
+#: ⚠ **Invoke-WebRequest 를 폴백으로 두지 않는다.** IWR 은 $CaPath 를 보지 않고 **OS 신뢰
+#:   저장소**로 검증한다 — 즉 우리가 pin 한 CA 와 무관하게 통과할 수 있다. 실측(2026-08-31,
+#:   실 Windows): 사내 CA 가 이미 CurrentUser\Root·LocalMachine\Root 에 있는 머신에서,
+#:   **무관한 CA 를 pin 해도 IWR 이 다운로드를 성공**시켰다. 그것을 «curl·파이썬 실패 시의
+#:   폴백» 으로 두면 신뢰 실패가 조용한 성공으로 바뀐다 — 이 스크립트가 지킨다고 말하는 것이
+#:   바로 그 pin 이다. 종전 코드는 IWR 을 «curl 부재 시» 에만 썼고, 그 자리는 지금 파이썬이
+#:   대신한다(파이썬은 pin 을 지키고, 위에서 이미 3.8+ 를 확보했으므로 반드시 존재한다).
+#:
+#: 실패 시 각 경로의 사유를 **모아서** throw 한다. 하나만 말하면 다음 사람이 또 헤맨다.
+function Get-RemoteFile([string]$url, [string]$dest) {
+  $why = @()
+
+  if ($curl) {
+    $r = Invoke-NativeCapture $curl.Source (@('-fsS') + $CurlRevokeArgs + @('--cacert', $CaPath, '-o', $dest, $url))
+    if ($r.Code -eq 0 -and (Test-Downloaded $dest)) { return 'curl' }
+    $msg = if ($r.Out) { $r.Out } else { '(메시지 없음 — 받은 파일도 없습니다)' }
+    $why += "  · curl (exit $($r.Code)): $msg"
+  }
+
+  # 파이썬 — 러너가 쓰는 것과 **같은** 신뢰 앵커. 코드는 파일로 떨어뜨려 argv 로 넘긴다
+  # (-c 로 넘기면 PowerShell 5.1 의 네이티브 인자 따옴표 처리에서 깨지는 조합이 있다).
+  $dlPy = Join-Path $Home_ '_download.py'
+  try {
+    # ASCII — 본문이 전부 ASCII 이고, BOM 없는 순수 바이트가 파이썬에 가장 안전하다.
+    Set-Content -Encoding ASCII -Path $dlPy -Value @(
+      'import ssl, sys, urllib.request',
+      'url, dest, ca = sys.argv[1], sys.argv[2], sys.argv[3]',
+      'ctx = ssl.create_default_context(cafile=ca)',
+      'req = urllib.request.Request(url, headers={"User-Agent": "mysql-ai-bridge-setup"})',
+      'with urllib.request.urlopen(req, context=ctx, timeout=60) as r:',
+      '    body = r.read()',
+      'with open(dest, "wb") as f:',
+      '    f.write(body)'
+    )
+    $r = Invoke-NativeCapture $Py @($dlPy, $url, $dest, $CaPath)
+    if ($r.Code -eq 0 -and (Test-Downloaded $dest)) { return 'python' }
+    $msg = if ($r.Out) { $r.Out } else { '(메시지 없음 — 받은 파일도 없습니다)' }
+    $why += "  · python (exit $($r.Code)): $msg"
+  } finally {
+    Remove-Item -Force -Path $dlPy -ErrorAction SilentlyContinue
+  }
+
+  throw ($why -join "`n")
+}
+
+Say '러너를 받는 중…'
+try {
+  $via = Get-RemoteFile $AgentUrl $AgentTmp
+} catch {
+  $why = "$_"
+  Die @"
+러너를 받지 못했습니다. 시도한 경로와 사유:
+$why
+
+  · CERT_TRUST_REVOCATION_STATUS_UNKNOWN 이면 CA·네트워크가 아니라 윈도우 폐기검사(Schannel)
+    문제입니다. curl 이 구형이면 갱신하거나, 파이썬 경로가 열리도록 파이썬을 확인하세요.
+  · 그 밖의 사유면 사내망 연결과 CA 지문을 확인하세요.
+"@
+}
+# 정상 경로는 조용히 지난다. 폴백이 걸렸다는 사실만 말한다 — 지원 문의 때 이 한 줄이 원인 구간을
+# 바로 가른다(curl 이 막혔는가, 아니면 서버·네트워크인가).
+if ($via -ne 'curl') { Say "  (curl 경로가 막혀 $via 로 받았습니다)" }
 
 if ($AgSha) {
   $got = Sha256File $AgentTmp
@@ -339,8 +478,14 @@ if ($AgSha) {
     # 롤링 배포 교대 중일 수 있다 — 1회 재시도 후에도 다르면 멈춘다.
     Say '체크섬 불일치 — 배포 교대 중일 수 있어 1회 재시도합니다.'
     Start-Sleep -Seconds 20
-    if ($curl) { & $curl.Source -fsS --cacert $CaPath -o $AgentTmp "$Base/static/agent/bridge_agent.py" }
-    else { Invoke-WebRequest -Uri "$Base/static/agent/bridge_agent.py" -OutFile $AgentTmp -UseBasicParsing }
+    try {
+      Get-RemoteFile $AgentUrl $AgentTmp | Out-Null
+    } catch {
+      # 종전에는 재시도 실패를 **검사하지 않아** 낡은 파일이 그대로 남고, 그 다음 대조가
+      # "체크섬이 다릅니다" 로 오진했다. 수신 실패는 수신 실패라고 말한다.
+      $why = "$_"
+      Die "러너를 다시 받지 못했습니다. 시도한 경로와 사유:`n$why"
+    }
     $got = Sha256File $AgentTmp
     if ($got -ne $AgSha.ToLower()) {
       Die "러너 체크섬이 다릅니다.`n  기대: $($AgSha.ToLower())`n  실제: $got`n  진행하지 말고 운영자에게 알리세요."

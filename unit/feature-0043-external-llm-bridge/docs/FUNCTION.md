@@ -1220,6 +1220,55 @@ xdg 만 성공한 상태가 정확히 이 결함의 모양이었다. Windows 등
 ⚠ **파이썬 종속 자체는 남는다.** 이 변경은 마찰을 없앤 것이지 종속을 없앤 것이 아니다 —
 종속 0 은 단일 실행파일 배포(안 A)가 필요하고, 그 축은 사용자 결정으로 보류됐다.
 
+##### Windows 러너 수신 — Schannel 폐기검사와 신뢰 경로 단일화 (2026-08-31 6차 제보)
+
+> ```
+> [bridge-setup] CA 지문 일치.
+> [bridge-setup] 러너를 받는 중…
+> curl: (60) schannel: CertGetCertificateChain trust error CERT_TRUST_REVOCATION_STATUS_UNKNOWN
+> [bridge-setup] 중단: 러너를 받지 못했습니다. CA 신뢰 또는 네트워크를 확인하세요.
+> ```
+
+**원인은 안내문이 가리킨 두 곳(CA 신뢰·네트워크)이 아니다.** 윈도우 동봉 `curl.exe` 는 TLS
+백엔드가 **Schannel** 이고(실측: `curl 8.13.0 (Windows) libcurl/8.13.0 Schannel`), Schannel 의
+`CertGetCertificateChain` 은 체인을 세운 **뒤** 폐기 상태를 조회한다. 그런데 우리 사내 CA 에는
+조회할 곳이 없다 — **CRL 배포점도 OCSP(AIA)도 없다**(실측: root·leaf 양쪽 모두 그 확장 부재).
+결과가 «알 수 없음» 이고 curl 은 그것을 하드 실패로 본다. `--cacert` 는 이미 먹었고 체인도 섰다.
+
+POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 실패가 없다 — **Windows 전용
+divergence** 다. 그래서 완화 옵션은 `.ps1` 에만 두고, `.sh` 에는 «왜 여기엔 없는지» 를 주석으로
+남긴다(설명 없는 비대칭은 다음 사람이 parity 를 맞추려고 되돌린다).
+
+**완화는 좁은 쪽부터.** `--ssl-revoke-best-effort`(curl 7.70+)는 폐기 정보를 «못 구할 때만»
+넘어가고, CRL 에 닿아 revoked 라고 하면 **여전히 멈춘다**. `--ssl-no-revoke` 는 폐기검사를 통째로
+끈다. 전자를 먼저 쓰고 그것을 모르는 구형 curl 에서만 후자로 내려간다. 감지는 **네트워크를 타지
+않는다** — 모르는 옵션이면 curl 이 파싱 단계에서 exit 2 다(`--version` 으로 판정). 완화되는 것은
+폐기검사뿐이고 **CA 지문 pin·러너 체크섬 대조는 그대로다**: 무관한 CA 를 pin 한 대조군은
+`--ssl-revoke-best-effort` 가 있어도 `CERT_TRUST_IS_UNTRUSTED_ROOT` 로 실패했다(실측).
+
+**신뢰 경로를 하나로 모은다.** 종전에는 다운로드가 curl/Schannel 로 신뢰를 평가하고, 러너 상주는
+파이썬(`--ca $CaPath`)으로 평가했다 — **평가기가 둘**이라 한쪽만 죽을 수 있고, 이번 결함이 정확히
+그 갈라짐이었다. 이제 curl 이 막히면 **러너와 같은 경로(파이썬 `cafile`)로** 받는다. 파이썬으로도
+못 받으면 러너도 못 뜨므로 실패가 정직해진다(파이썬은 앞 단계에서 3.8+ 를 이미 확보했다).
+
+⚠ **`Invoke-WebRequest` 는 폴백으로 쓰지 않는다.** IWR 은 `$CaPath` 를 보지 않고 **OS 신뢰
+저장소**로 검증한다. 실측(실 Windows): 사내 CA 가 이미 `CurrentUser\Root`·`LocalMachine\Root` 에
+들어 있는 머신에서 **무관한 CA 를 pin 해도 IWR 이 러너 수신을 성공**시켰다 — 폴백으로 두면 신뢰
+실패가 조용한 성공이 된다. 종전 코드는 IWR 을 «curl 부재 시» 에만 썼고, 그 자리는 이제 파이썬이
+대신한다. (1절의 CA 수신 IWR 은 그대로 정당하다 — 평문 HTTP 이고 지문 대조가 덮는다.)
+
+같은 구간에서 **조용히 통과하던 결함 셋**을 함께 닫았다:
+
+| 결함 | 어떻게 조용했나 | 조치 |
+|---|---|---|
+| 체크섬 재시도의 실패 미검사 | 재시도 실패 후 낡은 파일이 남고, 다음 대조가 "러너 체크섬이 다릅니다" 로 **오진** | 재시도도 단일 수신 경로를 쓰고 실패를 잡아 «수신 실패» 로 말한다 (POSIX 판은 같은 자리에 `\|\| die` 가 있어 무사했다) |
+| 실행 실패의 fail-open | `$exe` 가 없으면 `$LASTEXITCODE` 가 건드려지지 않아 초기값 0 = «성공». 실측: 없는 파이썬 경로로 불렀는데 `via=python` 성공 반환(받은 파일은 없었다) | 초기값을 실패값(127)으로 + 성공 반환을 **수신 실물 확인**(`Test-Downloaded`)으로 보호 |
+| 실패 사유 유실 | `SilentlyContinue` 아래 파이프는 네이티브 stderr 의 ErrorRecord 를 **조용히 버린다**. 실측: curl exit 60 인데 회수 길이 **0** | `Continue` 로 회수(던지지도 버리지도 않는 유일한 값) + ErrorRecord 에서 **원문만** 추출(PowerShell 장식은 로케일 의존이라 문자열로 못 걸러낸다) |
+
+실패 시에는 시도한 **모든** 경로의 사유를 모아 낸다 — 하나만 말하면 다음 사람이 또 헤맨다.
+사유 문자열은 길이를 자르되 **양끝을 남긴다**(curl 의 `CERT_TRUST_*` 는 첫 줄, 파이썬 트레이스백의
+`SSLCertVerificationError` 는 **마지막 줄**에 온다 — 앞만 남기면 정작 원인이 잘린다).
+
 ##### Windows 파이썬 탐지 — Store 스텁을 건너뛴다 (2026-08-31 5차 제보)
 
 > `python3.exe : Python` … `NativeCommandError`
