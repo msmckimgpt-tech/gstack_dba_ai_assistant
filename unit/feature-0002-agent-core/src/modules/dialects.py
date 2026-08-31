@@ -1638,14 +1638,25 @@ class MSSQLDialect(Dialect):
         """SQL Server Agent 작업 조회 — 열거(name='')와 정의(name!='')를 한 골격으로.
 
         **msdb 접근의 유일한 지점**이다. 컬럼 투영·조인·필터가 전부 여기서 고정되며,
-        외부에서 오는 값은 `keyword`/`name`/`allow_dbs`/`schema`(전부 caller 가 `_safe_ident`
-        정제) 뿐이다 — freeform 의 msdb 하드 차단은 불변이고, 이 경로가 새 우회로가 되지
-        않도록 임의 SQL 조립을 허용하지 않는다.
+        외부에서 오는 값은 `keyword`/`name`/`allow_dbs`/`schema` 뿐이다 — freeform 의 msdb
+        하드 차단은 불변이고, 이 경로가 새 우회로가 되지 않도록 임의 SQL 조립을 허용하지 않는다.
+
+        **정제 계약(수정됨)**: `schema` 는 식별자라 caller 가 `_safe_ident` 로 정제한다. 그러나
+        `name`/`keyword` 는 **작업명 — 식별자가 아니라 리터럴 값**이다. 식별자 정제기를 태우면
+        `[DK] Ranking Update` 의 대괄호가 지워져 영구 미매칭이 되므로(관측 서버 83개 중 73개가
+        `[` 접두), caller 는 문자를 보존하는 `_safe_literal_value`(역슬래시·제어문자만 제거)로
+        넘기고 **리터럴 이스케이프(작은따옴표 이중화)는 이 함수가 진다** — 삽입 지점이 이중화를
+        책임지는 `_sql_str_list` 와 같은 계약이다. 그래야 인용 탈출 경계가 한 곳에 남는다.
 
         열거 모드: 작업당 1행(대상 DB 별로 분해 — 한 작업이 여러 허용 DB 를 건드리면 각 DB 슬롯에
         나타난다). 정의 모드: **단계당 1행**(PART_LABEL='N. 단계명', DEFINITION=단계 명령).
         `sysjobsteps.database_name` 이 허용 DB 인 단계만 통과한다(제품 경계 — 위 (2) 참조).
         """
+        # 리터럴 이스케이프는 삽입 지점 책임(위 계약). caller 정제와 이중으로 걸리지 않도록
+        # 여기서만 한 번 이중화한다.
+        name = str(name or "").replace("'", "''")
+        keyword = str(keyword or "").replace("'", "''")
+        schema = str(schema or "").replace("'", "''")
         allow = _sql_str_list(allow_dbs)
         db_filter = f"LOWER(st.database_name) IN ({allow})"
         if schema:
