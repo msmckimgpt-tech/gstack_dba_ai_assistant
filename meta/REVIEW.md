@@ -1509,3 +1509,33 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - 검증: `make test` 전량 PASS · ruff clean · 신규 회귀 25건 + 기존 계약 5건 갱신 · PB-0008 실 Windows 브라우저(bind-mount 격리, 라이브 무접촉) — `docs/test-runs.d/TASK-20260831T110000-runtime-caps-restore.md`.
 - **Human Approval Needed**: 아니오 (Major — 신규 파괴적 side-effect 없음, 스키마는 멱등 ALTER 2컬럼 추가, 게이트 되돌리기 경로 불변).
 - Timestamp: 2026-08-31T11:00:00+09:00
+
+## REV-20260831T170000-model-tree [CODEX:model-list-source-and-tree] — ACCEPTED-WITH-CHANGES (feature-0043)
+
+- 범위: 없는 모델을 보여주던 폴백 제거 + 플랫폼 그룹 트리 + 답변 본문 고지 제거. `bridge_agent.py`(+배포 사본) · `routers/ai_tools.py` 무관 · `static/app/composer.js` · `static/css/chat.css` · 테스트 2파일.
+- 사용자 요구(2026-08-31, 앞 cycle 검수 후): codex 목록이 실제 가용 모델이 아니다(`gpt-5.1` → 실제 `gpt-5.6`·Sol/Terra/Luna) · 플랫폼별 그룹 트리 · **답변 본문에 모델·등급 불필요**.
+- 패널: `codex exec`(기본 모델, effort=high) — diff 직접 전달. **P1 3건 · P2 3건 + 추적성 지적 1건**. P1 전건 + P2 2건 조치, P2 1건과 추적성은 잔여 기록.
+
+### 수용 (P1)
+
+- **P1-1 표시명으로 그룹을 묶어 서로 다른 런타임이 합쳐진다** — `Map` 키가 `group`(그 AI 가 답한 표시명)이라, 두 CLI 가 같은 이름을 내면 한 머리글 아래 섞인다. 트리에서는 배지도 없앴으므로 **어느 CLI 인지 알 방법이 사라진다** → 키를 값의 `runtime:` 접두(식별자)로, 표시명은 머리글에만.
+- **P1-2 모델 목록은 뜨는데 넘길 플래그가 없다** — probe 가 `models` 만 주고 `model_flag` 를 빠뜨리면 화면에는 고를 수 있는 것처럼 나오지만 `build_cmd` 가 인자를 못 붙여 CLI 기본 모델로 답한다(effort 축은 이미 다뤘는데 model 축이 비대칭으로 남아 있었다) → 우리 표의 플래그로 메우고, 표에도 없으면(표 밖 CLI) **목록을 비운다**.
+- **P1-3 `left <= 0` 인데 도움말에 15초를 새로 준다** — "전체 deadline" 이 거짓이 된다. 호출측은 이미 폴백으로 떠난 뒤라 그 시간은 아무도 읽지 않을 답을 기다리는 데 쓰인다 → 남은 시간이 없으면 도움말도 부르지 않고, **확정으로도 기록하지 않는다**(못 본 것이 "없다" 로 굳지 않게).
+
+### 수용 (P2)
+
+- **P2-4 접근성** — 머리글이 `role=presentation` 이고 트리에서 배지를 뗐으므로 스크린리더에는 소속이 전달되지 않는다 → 항목 `aria-label` 에 `"<플랫폼> <모델>"`(실측: `Claude Opus` · `Codex GPT-5.6 Sol`). 화면 라벨은 그대로 짧다.
+- **P2-6 넘침** — 그룹 트리로 항목이 런타임 수만큼 늘어나는데 메뉴에 `max-height`·`overflow-y` 가 없었다(여러 CLI 를 붙이면 뒤쪽 선택지를 클릭할 수 없다) → `max-height: min(60vh, 420px)` + `overflow-y: auto`, 긴 이름은 `overflow-wrap: anywhere`.
+
+### 잔여 (미조치, 근거 기록)
+
+- **P2-5 모델 메뉴 키보드 화살표 이동 부재** — 이번 변경이 만든 결함이 아니라 이 메뉴의 선재 한계다(`Escape` 만 처리). 그룹 트리가 항목 수를 늘려 체감은 커졌으나, roving tabindex 도입은 이 cycle 범위를 넘고 다른 팝업(추론 등급·첨부)과 함께 다뤄야 일관된다.
+- **per-message 추적성** — 답변 본문에서 고지를 뺐으므로 과거 답변이 어느 런타임·모델·등급으로 생성됐는지 화면에서 사후 확인할 수 없다. **사용자 명시 결정**이며, 서버 원장(`WebAiTasks.RequestedRuntime/Model/ReasoningLevel`)에는 그대로 남아 운영자 조회가 가능하다.
+
+### 자체 발견 1건 (패널 밖)
+
+폴백을 없앤 뒤에도 러너 로그가 **「응답을 받지 못해 내장 기본값을 씁니다」** 라고 말하고 있었다 — 이제 없는 폴백을 약속하는 문구다. 사용자는 목록이 있는 줄 알고 선택기를 찾고, 없는 이유를 어디서도 듣지 못한다(화면과 로그가 서로 다른 사실을 말하는 상태). 「목록에 나오지 않습니다 + `--refresh-caps` 로 재시도」로 고치고, 기동 요약의 출처 표기에서도 「내장 기본값」을 뺐다.
+
+- 검증: `make test` 전량 PASS · ruff clean · 신규 회귀 10건 + 기존 계약 6건 갱신 · PB-0008 실 Windows 브라우저(bind-mount 격리, 라이브 무접촉) — 두 그룹 트리 실측(`CLAUDE` 4종 · `CODEX` 6종, `gpt-5.1-*` 소멸) · `docs/test-runs.d/REV-20260831T170000-model-group-tree.md`.
+- **Human Approval Needed**: 아니오 (Major — 스키마 변경 없음, 되돌리기는 폴백 블록 한 곳).
+- Timestamp: 2026-08-31T17:00:00+09:00

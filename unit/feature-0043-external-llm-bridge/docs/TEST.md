@@ -135,6 +135,15 @@ source_of_truth: true
 | TEST-20260831T110000-defsafe | `get_api_vault_options` | 기본값 조회 실패가 **러너 목록을 비우지 않는다**(회귀로 발견) | AC-20260831T110000-runtime-caps-restore-5 |
 | TEST-20260831T110000-axisonly | `set_account_bridge_defaults` | 한 축만 바꾼 요청이 다른 축 기본값을 지우지 않는다 | AC-20260831T110000-runtime-caps-restore-5 |
 
+| TEST-20260831T170000-nofallback | `detect_runtimes` | 답한 적 없는 런타임은 **신고하지 않는다**(내장 모델 이름 폴백 제거) | AC-20260831T170000-model-tree-1 |
+| TEST-20260831T170000-ollama | `detect_runtimes` | ollama 는 예외 — 실조회 결과라 그대로 신고 | AC-20260831T170000-model-tree-1 |
+| TEST-20260831T170000-invoke | `build_cmd` | 모델 목록은 빼도 **호출법은 남아** 실행이 가능하다 | AC-20260831T170000-model-tree-2 |
+| TEST-20260831T170000-retry | `detect_runtimes` | 표 안 CLI 도 한 번 더 묻는다 · 재시도가 deadline 을 넘기지 않는다 | AC-20260831T170000-model-tree-3 |
+| TEST-20260831T170000-generation | `_RUNTIME_SPECS` | 표의 codex 모델이 실측 세대다(폐기 `gpt-5.1-*` 부재) | AC-20260831T170000-model-tree-1 |
+| TEST-20260831T170000-tree | `_renderComposerModelMenu` | 플랫폼별 머리글 + 하위 항목 · 머리글은 버튼이 아니다 · 그룹 없으면 flat | AC-20260831T170000-model-tree-4 |
+| TEST-20260831T170000-treecss | `chat.css` | 머리글이 항목과 시각적으로 구분된다(스타일 없는 클래스가 아니다) | AC-20260831T170000-model-tree-4 |
+| TEST-20260831T170000-nonote | `handle_one` | 정상 답변 본문에 모델·등급을 쓰지 않는다 · **미반영 고지는 남는다** | AC-20260831T170000-model-tree-5 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

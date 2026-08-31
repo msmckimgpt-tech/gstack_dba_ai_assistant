@@ -288,3 +288,43 @@ def test_defaults_failure_does_not_empty_the_catalog(client, signed_in, monkeypa
     payload = client.get(ENDPOINT).json()
     assert payload["model_selector"] == "visible", "기본값 실패가 선택기를 통째로 지웠다"
     assert payload["default_model"] == "claude:opus"
+
+
+# -- 모델 메뉴 그룹 트리 (사용자 결정 2026-08-31) --------------------------------
+
+
+def test_model_menu_renders_a_group_tree():
+    """플랫폼(런타임)별 **머리글 + 하위 항목** 으로 그린다.
+
+    브리지 목록은 여러 CLI 가 섞여 있고 값도 `runtime:model` 이라, flat 목록에서는 어느
+    플랫폼의 모델인지 배지 하나로만 구분됐다. 항목이 늘수록 그 구분이 눈에 안 들어온다.
+    """
+    import pathlib
+    js = (pathlib.Path(__file__).resolve().parents[1]
+          / "src" / "static" / "app" / "composer.js").read_text(encoding="utf-8")
+    fn = js[js.index("function _renderComposerModelMenu("):]
+    fn = fn[:fn.index("\nfunction ")]
+    assert "composer-model-group-head" in fn, "그룹 머리글을 그리지 않는다"
+    # 머리글은 **버튼이 아니다** — 고를 수 없는 것이 고를 수 있게 보이면 안 된다.
+    head = fn[fn.index("const head = document.createElement"):]
+    head = head[:head.index("menu.appendChild(head)")]
+    assert 'createElement("div")' in head, "머리글이 버튼으로 만들어진다(선택 가능해 보인다)"
+    assert '"presentation"' in head, "머리글이 메뉴 항목으로 노출된다(키보드 이동에 걸린다)"
+    # 그룹이 하나도 없는 카탈로그(서버 LLM 모드)는 종전 flat 렌더 — 머리글 하나뿐인 트리는
+    # 들여쓰기만 늘리고 아무것도 나누지 않는다.
+    assert "const _grouped = models.some(_groupOf)" in fn, "그룹 유무를 보지 않는다"
+    # 트리에서는 배지를 달지 않는다(머리글과 같은 말을 두 번 쓰지 않는다).
+    assert "_grouped\n      || (!!group" in fn or "_grouped ||" in fn, (
+        "그룹 배지가 머리글과 중복된 채 남는다")
+
+
+def test_group_head_has_its_own_style():
+    """머리글이 항목과 **시각적으로 구분**된다 — 클래스만 있고 스타일이 없으면 같은 줄로 읽힌다."""
+    import pathlib
+    css = (pathlib.Path(__file__).resolve().parents[1]
+           / "src" / "static" / "css" / "chat.css").read_text(encoding="utf-8")
+    assert ".composer-model-group-head {" in css, "머리글 스타일이 없다"
+    block = css[css.index(".composer-model-group-head {"):]
+    block = block[:block.index("}")]
+    # 고를 수 없는 줄이라는 신호: 작고 흐리다.
+    assert "font-size" in block and "color" in block

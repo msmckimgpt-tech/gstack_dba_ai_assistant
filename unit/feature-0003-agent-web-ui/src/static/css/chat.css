@@ -1444,6 +1444,11 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* 그룹 트리 도입으로 항목 수가 런타임 수만큼 늘어난다(머리글 포함). 상한이 없으면
+     여러 CLI 를 붙인 사용자에게 메뉴가 뷰포트 아래까지 자라 **뒤쪽 선택지를 클릭할 수
+     없다** (codex P2-6). 화면 높이에 맞춰 잘리고, 넘치면 그 안에서 스크롤한다. */
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
 }
 .composer-model-menu.hidden { display: none; }
 .composer-model-empty {
@@ -1479,6 +1484,8 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
 .composer-model-item-label {
   font-weight: 600;
   color: var(--text, #111827);
+  /* 공백 없는 긴 모델명(신고 값 상한 64자)이 메뉴 폭을 밀어내지 않게 (codex P2-6). */
+  overflow-wrap: anywhere;
 }
 .composer-model-item-group {
   font-size: 11px;
@@ -1486,6 +1493,27 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   background: rgba(0,0,0,0.04);
   padding: 1px 6px;
   border-radius: 999px;
+}
+/* 플랫폼(런타임) 그룹 머리글 — 여러 CLI 의 모델이 한 메뉴에 섞이는 브리지 모드에서
+   훑는 단위를 「모델 N개」에서 「플랫폼 몇 개」로 줄인다 (사용자 결정 2026-08-31).
+   고를 수 없는 줄이므로 항목과 확실히 다르게 보여야 한다 — 작고, 흐리고, hover 반응 없음. */
+.composer-model-group-head {
+  padding: 8px 12px 4px;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #9ca3af);
+  user-select: none;
+}
+/* 첫 머리글은 메뉴 상단 여백과 겹쳐 뜨므로 위쪽만 줄인다. */
+.composer-model-group-head:first-child {
+  padding-top: 2px;
+}
+/* 그룹 안 항목은 머리글 아래로 한 단 들여 트리로 읽히게 한다. */
+.composer-model-group-head ~ .composer-model-item {
+  margin-left: 6px;
 }
 .composer-model-item-check {
   margin-left: auto;

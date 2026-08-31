@@ -82,16 +82,27 @@ def test_runtime_specs_declare_everything_the_pipeline_needs():
 
 
 def test_detect_runtimes_reports_only_what_is_installed(monkeypatch):
-    """설치되지 않은 런타임은 신고하지 않는다 — 고를 수 없는 것을 보여주지 않기 위해."""
+    """설치되지 않은 런타임은 신고하지 않는다 — 고를 수 없는 것을 보여주지 않기 위해.
+
+    2026-08-31: 여기에 **두 번째 조건**이 붙었다. 설치돼 있어도 그 AI 가 답한 목록이 없으면
+    신고하지 않는다(내장 표의 모델 이름은 더 이상 신고에 쓰이지 않는다). 그래서 이 테스트는
+    캐시를 함께 준다 — 캐시가 곧 "그 AI 가 답한 적 있다" 는 사실이다.
+    """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "codex" else None)
-    got = mod.detect_runtimes()
-    assert [r["runtime"] for r in got] == ["codex"]
+    caps = {"codex": {"label": "Codex", "models": [{"value": "gpt-5.6-sol", "label": "Sol"}],
+                      "efforts": [], "model": ["-m", "{model}"], "effort": None,
+                      "effort_probed": True, "source": "probe"}}
+    assert [r["runtime"] for r in mod.detect_runtimes(cached=caps)] == ["codex"]
 
     # `--ai` 로 제한하면 그 하나만. 표에 없는 이름이면 제한을 무시한다(오타가 러너를
     # 벙어리로 만들지 않게 — 그때는 감지된 것을 그대로 신고한다).
-    assert [r["runtime"] for r in mod.detect_runtimes("codex")] == ["codex"]
-    assert [r["runtime"] for r in mod.detect_runtimes("nonexistent-ai")] == ["codex"]
+    assert [r["runtime"] for r in mod.detect_runtimes("codex", cached=caps)] == ["codex"]
+    assert [r["runtime"] for r in mod.detect_runtimes("nonexistent-ai", cached=caps)] == ["codex"]
+
+    # 설치돼 있지만 답한 적 없는 런타임은 **신고되지 않는다** — 틀린 목록을 보여주느니
+    # 그 그룹이 화면에 없는 편이 낫다(사용자 제보 2026-08-31: 없는 gpt-5.1-* 가 보였다).
+    assert mod.detect_runtimes() == []
 
 
 def test_detect_runtimes_omits_runtimes_with_no_models(monkeypatch):
@@ -782,21 +793,28 @@ def test_probe_result_is_cached_so_startup_does_not_burn_tokens():
     assert "None if args.refresh_caps else" in main_src, "갱신 플래그가 캐시를 무시하지 않는다"
 
 
-def test_builtin_table_is_only_a_fallback(monkeypatch):
-    """질의가 실패해도 화면이 비지 않는다 — 내장 표로 폴백한다.
+def test_builtin_table_falls_back_for_invocation_only(monkeypatch):
+    """내장 표는 **호출법**만 폴백한다 — 모델 이름은 폴백하지 않는다 (2026-08-31).
 
-    물어보지 못했다고 사라지면, 종전에 잘 쓰던 사용자가 이유 없이 기능을 잃는다.
+    종전에는 표의 모델 이름까지 신고했다. 그 표는 우리가 적어 둔 시점에 멈춰 있어서
+    라이브에서 codex 가 `gpt-5.1-codex` 로 보였는데, 그 계정이 실제로 쓸 수 있는 것은
+    `gpt-5.6-*` 였다(사용자 제보). **없는 모델을 고를 수 있다고 말하는 것**이고, 고른 순간
+    CLI 가 거부하거나 조용히 다른 모델로 답한다.
+
+    호출법은 성격이 다르다 — 잘 변하지 않고, 없으면 실행 자체가 불가능하며, 값이 아니라
+    형태라 "틀린 선택지를 제시" 하는 문제가 생기지 않는다.
     """
     mod = _load_runner()
     src = _RUNNER.read_text(encoding="utf-8")
     fn = src[src.index("def detect_runtimes("):]
     fn = fn[:fn.index("\ndef ")]
-    assert '"source": "builtin"' in fn, "폴백 경로가 없다"
-    # 폴백이 실제로 동작한다(질의 없이 부르면 내장 표가 목록이 된다).
+    assert '"source": "builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
-    got = mod.detect_runtimes(cached={})
-    assert [r["runtime"] for r in got] == ["claude"], "폴백이 동작하지 않는다"
-    assert got[0]["models"], "폴백인데 목록이 비었다"
+    # 질의도 캐시도 없다 → **신고하지 않는다**(빈 목록으로 그룹만 남기지 않는다).
+    assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 아직 신고된다"
+    # 그래도 호출법은 살아 있어 실행은 가능하다(그것이 이 표의 남은 역할이다).
+    assert mod.build_cmd("claude", "Q", None, None) == [
+        a.replace("{prompt}", "Q") for a in mod._RUNTIME_SPECS["claude"]["argv"]]
 
 
 def test_unknown_cli_is_asked_too():
@@ -1106,6 +1124,9 @@ def test_missing_effort_flag_is_recovered_by_asking_again(monkeypatch):
 def test_recovery_falls_back_to_the_builtin_pair_only_when_help_confirms_it(monkeypatch):
     """재질의도 실패하면 **내장 표의 짝**을 쓰되, 그 CLI 의 도움말로 실재를 확인한다.
 
+    `left=5.0` — 재질의 최소치(20초) 미만이라 ①은 건너뛰고, 양수라 ②(도움말 확인)는 돈다.
+    (`left<=0` 이면 도움말도 부르지 않는다 — codex P1-3, 별도 테스트가 그쪽을 본다.)
+
     확인 없이 쓰면 우리 표가 낡은 순간(플래그가 사라진 CLI 버전) 고른 값이 조용히 무시되고,
     화면은 반영된다고 말한다. 도움말에 없으면 축을 비우는 것이 정직하다.
     """
@@ -1113,7 +1134,7 @@ def test_recovery_falls_back_to_the_builtin_pair_only_when_help_confirms_it(monk
     monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: None)   # 재질의 실패
     monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --effort <level>")
     flag, opts, settled = mod._settle_effort_axis(
-        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0)
+        "claude", ["claude", "-p", "{prompt}"], None, [], 5.0)
     assert flag == ["--effort", "{effort}"]
     assert [o["value"] for o in opts] == ["low", "medium", "high", "xhigh", "max"]
     assert settled is True
@@ -1121,12 +1142,12 @@ def test_recovery_falls_back_to_the_builtin_pair_only_when_help_confirms_it(monk
     # 도움말에 없다 → 축을 비우고, 그것은 **결론**이다(다시 묻지 않는다).
     monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --model <name>")
     assert mod._settle_effort_axis(
-        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0) == (None, [], True)
+        "claude", ["claude", "-p", "{prompt}"], None, [], 5.0) == (None, [], True)
 
     # 도움말을 **못 읽은 것**은 "없다" 가 아니다 — 채택하지 않되 결론으로도 기록하지 않는다.
     monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: None)
     assert mod._settle_effort_axis(
-        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0) == (None, [], False)
+        "claude", ["claude", "-p", "{prompt}"], None, [], 5.0) == (None, [], False)
 
 
 def test_reask_answer_of_no_support_is_respected(monkeypatch):
@@ -1228,23 +1249,152 @@ def test_sanitizer_preserves_the_settled_marker():
     assert got2["claude"]["effort_probed"] is False
 
 
-def test_applied_picks_are_disclosed_too():
-    """**반영된** 지정도 답변에 밝힌다 (사용자 요구 2026-08-31).
+def test_answer_body_carries_no_model_or_effort_note():
+    """정상 답변 본문에는 모델·추론등급을 **쓰지 않는다** (사용자 결정 2026-08-31).
 
-    미반영만 고지하면 침묵이 두 가지를 뜻한다 — "지정대로 됐다" 와 "지정이 애초에 전달되지
-    않았다". 사용자가 그 둘을 구분할 방법이 화면에 없어 "무슨 모델로 답했는지 확인되지
-    않는다" 가 됐다. 무지정 요청에는 붙이지 않는다(그 한 줄은 노이즈다).
+    확인 수단은 선택기 라벨이면 충분하고, 그쪽이 답변을 읽기 전에·다음 질문을 보내기 전에
+    보인다. 답변마다 붙는 한 줄은 정상 경로에서 아무것도 더하지 않으면서 본문을 밀어낸다.
+
+    **미반영 고지는 남는다** — 그건 다른 사실이다. "고른 값이 반영되지 않았다" 는 화면
+    어디에도 드러나지 않으므로 답변이 유일한 통로다.
     """
     src = _RUNNER.read_text(encoding="utf-8")
     body = src[src.index("def handle_one("):]
     body = body[:body.index("\ndef ")]
-    assert "elif _applied and ok:" in body, (
-        "지정이 있어도 반영 사실을 밝히지 않거나, 실패한 답에까지 '생성했습니다' 를 붙인다")
-    assert "로 생성했습니다" in body
-    # 한쪽만 미반영일 때도 **반영된 축은 말한다** (codex P2-3).
-    assert "는 적용됐습니다" in body, "미반영이 있으면 반영된 축이 침묵에 남는다"
-    # 목록에 있어도 **넘길 플래그가 없으면** 반영이 아니다 (codex P1-5).
+    assert "로 생성했습니다" not in body, "정상 답변에 모델·등급 고지가 남아 있다"
+    assert "는 적용됐습니다" not in body, "미반영 고지에 반영 축 설명이 남아 있다"
+    # 미반영 고지 자체는 유지된다.
+    assert "기본 설정으로 답했습니다" in body, "미반영 사실까지 지웠다"
+    # 목록에 있어도 **넘길 플래그가 없으면** 반영이 아니다 (codex P1-5) — 판정은 그대로.
     assert "_model_flag" in body and "_effort_flag" in body, (
-        "플래그 유무를 보지 않아 '적용됐다' 가 거짓이 될 수 있다")
-    # 제목 규약을 밀어내지 않게 **제목 분리 뒤**에 있어야 한다(미반영 고지와 같은 이유).
-    assert body.index("split_title(answer)") < body.index("로 생성했습니다")
+        "플래그 유무를 보지 않아 미반영 판정이 느슨해진다")
+    # 남은 고지(미반영)도 제목 규약을 밀어내지 않게 **제목 분리 뒤**에 있어야 한다.
+    assert body.index("split_title(answer)") < body.index("기본 설정으로 답했습니다")
+
+
+# -- 2026-08-31 (2차): 없는 모델을 보여주던 폴백 · 그룹 트리 --------------------
+#
+# 사용자 제보: codex 목록에 `gpt-5.1-*` 이 떴는데 그 계정이 실제로 쓸 수 있는 것은
+# `gpt-5.6-sol`·`terra`·`luna`·`5.5`·`5.4` 였다. 원인은 내장 표를 **모델 목록 폴백**으로
+# 쓴 것 — 표는 우리가 적어 둔 시점에 멈춰 있다.
+
+
+def test_unprobed_runtime_is_not_reported_at_all(monkeypatch):
+    """답한 적 없는 런타임은 **신고하지 않는다** — 빈 그룹도 남기지 않는다.
+
+    "물어보지 못했다" 와 "이것을 쓸 수 있다" 는 다른 사실이다. 후자로 말하면 사용자는 없는
+    모델을 고르고, CLI 는 거부하거나 조용히 다른 모델로 답한다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
+    # ollama 만 예외 경로(실조회)라 여기서는 비워 둔다 — 아래 별도 테스트가 그쪽을 본다.
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
+    assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 신고에 남아 있다"
+
+
+def test_ollama_still_reports_because_it_is_a_real_lookup(monkeypatch):
+    """ollama 는 예외 — 그 목록은 우리가 적은 값이 아니라 **실조회 결과**다."""
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "ollama" else None)
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
+    got = mod.detect_runtimes(cached={})
+    assert [r["runtime"] for r in got] == ["ollama"]
+    assert [m["value"] for m in got[0]["models"]] == ["llama3"]
+
+
+def test_builtin_invocation_survives_so_execution_still_works(monkeypatch):
+    """모델 목록은 빼도 **호출법은 남는다** — 없으면 실행 자체가 불가능해진다."""
+    mod = _load_runner()
+    for rt in ("claude", "codex", "gemini"):
+        spec = mod._RUNTIME_SPECS[rt]
+        assert spec.get("argv"), f"{rt}: 호출 형태가 사라졌다"
+        # `runtimes` 없이 부르는 폴백 경로(단위 테스트·구 호출부)는 그대로 동작한다.
+        cmd = mod.build_cmd(rt, "Q", None, None)
+        assert cmd[-1] == "Q" and cmd[0] == rt
+
+
+def test_probe_retries_once_for_table_runtimes():
+    """표 안 CLI 도 **한 번 더** 묻는다.
+
+    후보 호출 형태가 하나뿐이라 종전에는 첫 실패가 곧 포기였다. 내장 모델 폴백을 없앤 지금
+    그 한 번의 실패는 "그 런타임이 화면에서 통째로 사라짐" 을 뜻한다(실측: codex 는 같은
+    조건에서 성공과 실패를 오간다).
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    fn = src[src.index("def detect_runtimes("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert "attempts = attempts * 2" in fn, "표 안 CLI 가 한 번만 시도한다"
+    # deadline 검사는 루프 안에 그대로 있어야 한다(재시도가 총량을 넘기지 않게).
+    retry_block = fn[fn.index("attempts = attempts * 2"):]
+    assert "left <= 5.0" in retry_block, "재시도가 남은 시간을 보지 않는다"
+
+
+def test_codex_builtin_table_matches_measured_generation():
+    """표에 남은 codex 모델은 **실측 세대**다.
+
+    신고에 쓰이지 않더라도 낡은 값이 코드에 남아 있으면 다음 사람이 그것을 현재 목록으로
+    읽는다 — 이번 결함이 정확히 그렇게 시작했다.
+    """
+    mod = _load_runner()
+    values = [m["value"] for m in mod._RUNTIME_SPECS["codex"]["models"]]
+    assert not any(v.startswith("gpt-5.1") for v in values), "폐기된 세대가 표에 남아 있다"
+    assert any(v.startswith("gpt-5.6") for v in values), "실측 세대가 표에 없다"
+
+
+def test_probe_failure_log_does_not_promise_a_fallback():
+    """실패 로그가 **없는 폴백을 약속하지 않는다** (자체 발견 2026-08-31).
+
+    모델 목록 폴백을 없앤 뒤에도 로그는 「내장 기본값을 씁니다」라고 말하고 있었다. 그러면
+    사용자는 목록이 있는 줄 알고 선택기를 찾고, 없는 이유를 어디서도 듣지 못한다 — 화면과
+    로그가 서로 다른 사실을 말하는 상태다. 다음 행동(재시도 방법)까지 로그가 말해야 한다.
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    # 주석이 아니라 **사용자에게 나가는 문자열**만 본다 — 주석은 옛 문구를 인용할 수 있다.
+    emitted = [ln for ln in src.splitlines()
+               if "_log(" in ln or (ln.strip().startswith('"') or ln.strip().startswith("f\""))]
+    blob = "\n".join(ln for ln in emitted if not ln.strip().startswith("#"))
+    assert "내장 기본값을 씁니다" not in blob, "없는 폴백을 약속하는 문구가 남아 있다"
+    fn = src[src.index("def detect_runtimes("):]
+    fn = fn[:fn.index("\ndef ")]
+    assert "목록에 나오지 않습니다" in fn, "목록에서 빠진다는 사실을 알리지 않는다"
+    assert "--refresh-caps" in fn, "다시 시도할 방법을 말하지 않는다"
+
+
+# -- codex REV-20260831T170000 회귀 방어 -----------------------------------------
+
+
+def test_model_axis_needs_a_flag_too(monkeypatch):
+    """모델 목록만 있고 **넘길 플래그가 없으면** 신고하지 않는다 (codex P1-2).
+
+    목록만 신고하면 화면에는 고를 수 있는 것처럼 나오지만 `build_cmd` 가 인자를 붙이지 못해
+    CLI 기본 모델로 답한다 — "고를 수 있는데 반영은 안 되는" 조작면의 재발이다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: None)
+    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout: {
+        "models": [{"value": "foo"}], "model_flag": []})
+    # 표 밖 CLI — 우리 표에도 플래그가 없다 → 목록을 비운다(= 그 런타임은 신고되지 않는다).
+    got = mod.probe_runtime_caps("mycli", ["mycli", "-p", "{prompt}"])
+    assert got["models"] == [], "넘길 방법이 없는 모델이 목록에 남았다"
+    # 표 안 CLI — 우리 표의 플래그로 메운다(호출법 폴백은 유지하기로 한 축이다).
+    got2 = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"])
+    assert got2["model"] == ["--model", "{model}"]
+    assert [m["value"] for m in got2["models"]] == ["foo"]
+
+
+def test_help_is_not_called_without_time_left(monkeypatch):
+    """남은 시간이 없으면 도움말도 부르지 않는다 (codex P1-3).
+
+    종전에는 `left <= 0` 이어도 15초를 새로 줬다 — 호출측은 이미 폴백으로 떠난 뒤라 그
+    시간은 아무도 읽지 않을 답을 기다리는 데 쓰인다.
+    """
+    mod = _load_runner()
+    calls: list = []
+    monkeypatch.setattr(mod, "_cli_help_text",
+                        lambda name, timeout=0: calls.append(timeout) or "--effort")
+    flag, opts, settled = mod._settle_effort_axis(
+        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0)
+    assert calls == [], "남은 시간이 없는데 도움말을 실행했다"
+    assert (flag, opts) == (None, [])
+    # 그리고 그것은 **결론이 아니다** — 확정으로 굳으면 다음 기동이 다시 보지 않는다.
+    assert settled is False, "확인하지 못한 것을 확정으로 기록했다"
