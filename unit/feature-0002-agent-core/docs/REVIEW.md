@@ -2690,3 +2690,13 @@ drift 를 못 잡는 테스트). 실제 거부 경로(`_freeform_sql_access_erro
 3. **작업 단계 중 `database_name` 이 빈 것**(CmdExec/PowerShell 등 OS 레벨)은 제품 경계 밖이라
    여전히 제외된다(fail-closed, by-design). 도구가 caveat 으로 고지한다.
 
+
+## REV-20260831T113000-scheduler-reachability-deploy-record [SKIPPED:non-policy-doc]
+
+Trigger: 코드 변경 **0**(배포 결과·원장·학습 기록 전용). 선행 cycle 의 코드 변경은
+`REV-20260831T110000-scheduler-discovery-reachability`(자체 적대 3렌즈, 실증 기반)에서 리뷰를
+마쳤고 이후 코드 불변.
+
+Verdict: **SKIPPED** — 패널 미실시. 기록된 사실의 근거: 7서비스 실물 이미지 `7e512eb8` ·
+surge 0 · caddy blip 0 · 대화 스모크 PASS · 배포본 런타임 심볼·메시지·실 datasource 반환 실측.
+

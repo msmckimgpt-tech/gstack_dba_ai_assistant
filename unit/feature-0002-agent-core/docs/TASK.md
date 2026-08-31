@@ -3370,3 +3370,12 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
 - [ ] **라이브 실측** — "모델이 실제로 그 도구를 고르는지" 는 배포 후 동일 시나리오 재현·다음
       audit corroboration 대상. 코드·테스트는 "경로가 열려 있고 이름이 보존된다" 까지만 증명한다.
 
+
+- [x] **배포 완료·배포본 실증**(2026-08-31, PR #1422 → main `7e512eb8`): `make deploy-web`
+      scope=all, **7서비스 실물 `7e512eb8`** · surge 잔존 0 · caddy `no upstreams available` **0**
+      (무중단 실측) · 대화 스모크 PASS. baked `/app/modules/tools.py` 봉인 심볼 3종 적재 확인.
+      실 datasource 재현: msdb 차단이 스케줄 도구를 지목 · `describe_db_object` 가 원 작업의
+      **10개 단계 전문 3,660자** 반환(사용자가 말한 기준값 50/51/53 하드코딩 노출).
+- [x] 원장 2항목(`FR-blocked-path-omits-structured-tool` · `FR-agent-job-name-mangled-by-ident-sanitizer`)
+      `fixed:deployed:unverified-live` 기록 + LEARNINGS `LRN-20260831-0001/0002`.
+
