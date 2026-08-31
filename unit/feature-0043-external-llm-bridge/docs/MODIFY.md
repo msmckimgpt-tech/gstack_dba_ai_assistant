@@ -1449,3 +1449,17 @@ codex 적대 리뷰 **P1 0건**, P2/P3 8건 중 6건 반영·2건 근거 기각.
 `AGENT_SERVER_LLM_ENABLED=1` 로 게이트를 열면 카탈로그는 종전 서버 목록으로 복원된다(불변).
 축 복구만 끄려면 러너에서 `--refresh-caps` 없이 기존 `config.json` 을 쓰면 되고, 계정 기본값은
 컬럼이 NULL 이면 종전과 동일하게 목록 첫 항목이 시작점이 된다(두 축 모두 폴백이 종전 동작).
+
+## CHG-20260831T132500-ai-claude-feature-0043-live-steps-postdeploy — POST-DEPLOY 시각검증 증적
+
+`CHG-20260831T113350-…` 의 라이브 검증. 배포본 `74e2672c` 실 Windows 브라우저(PB-0008)에서
+페이지가 실제로 로드한 모듈 URL(`app.js?v=cb0480b0bd8e`)로 `import()` 해 **배포본과 같은
+인스턴스**로 렌더를 확인했다. 코드 변경 0 — 증적 문서만.
+
+- 추론 구간 91초가 카드에 붙는다(제보 ①) · 마지막 단계 「진행 중」 강조
+- 총 단계 수 122 · 절단 고지 1줄 · 누적 미표시(제보 ② 잔여 층)
+- 저장 답변 경로는 종전과 동일(무회귀)
+- 미수행: 실 러너 end-to-end 왕복(무인 완결 불가) — 사유 명시
+
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260831T113350-live-steps-reasoning-postdeploy.md`
+캡처: `artifacts/pb0008-live-steps-reasoning/` (git 밖, §2)
