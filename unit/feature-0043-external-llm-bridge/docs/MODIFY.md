@@ -1944,3 +1944,12 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
 
 주석 한 줄을 고치면 깨지는 테스트는 계약을 지키는 것이 아니라 **글자를 지키는 것**이다.
 잠글 것은 "판정 실패가 거짓 경고가 되지 않고, 그러면서 추적 가능하다" 이지 특정 문구가 아니다.
+
+## CHG-20260831T191500-gatepoll-anchor — 선재 계약 테스트 실패 해소 (P0-AG 후속)
+
+`test_indicator_does_not_poll_when_unlocked` 가 **main 에서도** 실패하고 있었다. #1447 이
+`_syncGatePoll` 의 폴링 사유를 둘(`_composeBlocked || _modalOpen`)로 늘리면서 계약 테스트를
+갱신하지 않았고, 테스트는 조건 문자열(`_composeBlocked && !_gatePollTimer`)을 박제하고 있었다.
+
+잠글 것은 사유의 **개수**가 아니라 «사유가 없으면 멎는다» 이므로 그 성질을 본다 —
+`wantPoll && !_gatePollTimer` / `!wantPoll && _gatePollTimer` 가 같은 값의 양면인지까지.
