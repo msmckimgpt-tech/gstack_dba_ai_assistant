@@ -8,6 +8,43 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260831T144500-conv-activity-touch (대화 활동 시각 전진을 표시 store 쓰기에 붙임, Minor)
+
+- **왜**: `agent_runtime.core_conversations.updated_at` 을 움직이는 write 가 **자동 제목 부여
+  경로에만** 있었다(`feature-0003/_conv_store._conv_update_topic_if_auto` 의
+  `SET topic=…, updated_at=now()`). 그 UPDATE 는 제목이 placeholder 일 때만 행을 잡으므로 첫 턴에
+  제목이 확정된 뒤로는 후속 턴이 쌓여도 시각이 전진하지 않았다 — 라이브 실측(대화
+  `20260828073505-be34624d`) 마지막 메시지 08-31 10:54 vs `updated_at` 08-28 16:38, **2일 18시간**
+  어긋남. 355 대화 중 19건 동일. 사이드바 "최근 갱신" 과 목록 정렬이 그 컬럼을 읽는다
+  (사용자 제보 2026-08-31).
+- `src/modules/runtime_backend.py`:
+  - `_PG_TOUCH_CONVERSATION` 신설 — `UPDATE agent_runtime.core_conversations SET updated_at = now()
+    WHERE conversation_id = %(conversation_id)s`.
+  - `PgRuntimeBackend.touch_conversation(conn, *, conversation_id)` 신설 (fail-soft + WARN 로그).
+  - `PgRuntimeBackend.save_memory_message` 가 INSERT 후 touch — **미분기·브랜치 두 경로 모두**.
+    반환 id 는 보존(브랜치 leaf 전진이 그 값을 쓴다).
+- **축을 표시 store 로 잡은 이유**: 회수 store(`core_messages`)는 tool turn 까지 담아 한 run 에
+  수십 건이 쌓인다. 표시 store 는 화면에 뜨는 단위(질문·답변·안내)라 사용자가 읽는 "최근 갱신" 의
+  의미와 겹치고, 행 UPDATE 빈도도 turn 단위로 유지된다. `internal` 로 걸러진 메시지는 호출측
+  `memory.save_memory_message` 가 0 을 반환하고 끝내므로 이 지점에 도달하지 않는다 — 화면에 없는
+  활동이 시각을 밀어 올리지 않는다.
+- **`_PG_UPSERT_CONVERSATION` 재사용 안 함**: 그 UPSERT 는 행이 없으면 **INSERT** 하고 COALESCE 로
+  topic·owner·product 를 덮는다. 활동 시각 전진만 필요한 자리에서 쓰면 topic 없는 유령 대화를
+  만든다. touch 는 있는 행만 건드린다.
+- **fail-soft 인 이유**: 메시지는 이미 저장됐다(autocommit 이라 별개 커밋). 예외를 올리면 저장에
+  성공한 turn 이 실패로 보고되고, 브리지 경로(`feature-0003/routers/conversations.py`)는 그것을
+  요청 취소로 읽어 **적재된 질문을 지운다**. 활동 시각은 표시·정렬용 파생값이므로 메시지 본문
+  뒤에 둔다 — 대신 WARN 으로 남겨 조용히 어긋나지 않게 한다.
+- **커버리지**: 서버 LLM 경로(`agent_core._mirror_message` — user 7982 · assistant 9102/9393/…),
+  브리지 질문·대기 안내(`conversations.py`), 브리지 답변 전달(`ai_tools.py`), 그룹 사람-채팅
+  미러(`_conv_store._save_group_chat_message_pg`) 가 모두 이 choke-point 를 통과한다.
+- **회귀 경계**: 스키마·마이그레이션·권한·엔드포인트 0. MySQL 백엔드는 `save_memory_message` 가
+  2026-05-27 cutover 로 PG 전용이라 대칭 대상이 없다.
+- **표시 축 cross-ref**: 목록 표면이 KV·행 max 를 쓰도록 하는 쪽은 feature-0003
+  (`CHG-20260831T144500-conv-last-activity-effective-max`).
+- **검증**: 신규 `tests/test_conv_activity_touch.py` 8 PASS · 뮤테이션 2종 KILL(touch 호출 제거 시
+  미분기·브랜치 두 테스트가 FAIL).
+
 ## CHG-20260814T190000-ds-connect-network-guidance (데이터소스 연결 제한 안내: 머신 네트워크·VPN 확인, Minor)
 
 - **왜**: 사용자 요청(2026-08-14) — assistant 요청 중 데이터소스 연결이 제한되면 사용자가

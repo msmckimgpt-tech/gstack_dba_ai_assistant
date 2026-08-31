@@ -11,6 +11,33 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260831T144500-conv-last-activity-effective-max
+
+**변경**: `src/routers/_conv_store.py`
+- `_effective_activity_at(last_active, last_activity_at)` 신설 — 판정 계층의 마지막 활동(KV 파생)과
+  대화 행 `updated_at` 중 **나중 것**을 UTC naive 로 반환.
+- 목록 **2경로**(`_list_conversations_pg` · `_list_conversations` MySQL) 의
+  `item["last_activity_effective_at"]` 배선을 그 헬퍼 경유로 교체.
+
+**사유**: 표시 축이 KV 하나뿐이라, KV `last_status*` 를 쓰지 않는 브리지(개인 AI 연결) 경로에서는
+`last_activity_effective_at` 이 비고 프런트가 `last_activity_at`(= 고정된 `updated_at`)로 폴백해
+첫 턴 시각을 보여줬다(사용자 제보 2026-08-31, 실측 2일 18시간 어긋남).
+
+**우선순위가 아니라 max 인 이유**: 서버 LLM 으로 시작해 브리지로 이어간 대화는 KV 가 **첫 run
+시각에 멈춘 채** 남는다. `effective || row` 표시식은 앞 값이 있으면 뒤를 보지 않으므로, KV 를
+무조건 우선하면 그 대화에서 같은 결함이 되살아난다. 반대로 행 축만 쓰면 진행 중 run 의 step
+시각(KV)이 행 UPDATE 보다 앞서 가는 종전 개선(conv-audit 봉인 B)을 되돌린다.
+
+**tz 미지 값 제외**: MySQL 경로의 `updated_at` 은 naive DATETIME 이라 UTC 로 읽으면 KST 환경에서
+9시간 미래가 되어 max 를 영구 점거한다 — `_iso_or_empty` 가 봉인한 CHG-20260527-0001 tz 회귀와
+같은 입구다. PG 경로는 timestamptz 라 offset 을 갖고 오므로 정상 통과한다.
+
+**코드 거주 cross-ref**: 활동 시각을 **전진시키는** 쪽은 feature-0002
+(`CHG-20260831T144500-conv-activity-touch`) — 표시 store 쓰기 choke-point 에 붙었다.
+
+**회귀 경계**: 프런트 표시식·엔드포인트·스키마·RBAC 무변경. 신규 테스트
+`tests/test_conv_last_activity_effective.py` 12 PASS(뮤테이션 1종 KILL).
+
 ## CHG-20260814T160000-ask-result-job-backstop (cross-ref — conv-audit 봉인 B)
 
 feature-0002 마찰 `FR-early-return-kv-never-finalized` → **코드 거주 primary 는

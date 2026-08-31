@@ -1108,7 +1108,9 @@ GROUP BY m.conversation_id
             item["display_status"] = display_status
             item["is_stale"] = is_stale
             item["status_at"] = status_at
-            item["last_activity_effective_at"] = _iso_or_empty(last_active)
+            item["last_activity_effective_at"] = _iso_or_empty(
+                _effective_activity_at(last_active, item.get("last_activity_at"))
+            )
             try:
                 item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
             except Exception:
@@ -1505,7 +1507,9 @@ WHERE ConversationId IN ({placeholders2})
             item["display_status"] = display_status
             item["is_stale"] = is_stale
             item["status_at"] = status_at
-            item["last_activity_effective_at"] = _iso_or_empty(last_active)
+            item["last_activity_effective_at"] = _iso_or_empty(
+                _effective_activity_at(last_active, item.get("last_activity_at"))
+            )
             try:
                 item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
             except Exception:
@@ -5925,6 +5929,40 @@ def _iso_or_empty(dt: "Any | None") -> str:
         return aware.astimezone(app.timezone.utc).isoformat()
     except Exception:
         return ""
+
+
+def _effective_activity_at(last_active: "Any | None", last_activity_at: Any) -> "Any | None":
+    """판정 계층의 마지막 활동(KV 파생)과 대화 행 `updated_at` 중 **나중 것**.
+
+    conv-last-activity-updatedat: 두 축은 서로를 대체하지 못한다.
+      - KV 축(`last_active`) = run 상태·step 시각. **서버 LLM run 이 있었던 대화만** 채워진다.
+        브리지(개인 AI 연결) 경로는 `last_status*` KV 를 쓰지 않아 이 축이 통째로 빈다.
+      - 행 축(`updated_at`) = 대화 활동 시각. 이제 표시 store 쓰기마다 전진한다
+        (`runtime_backend.touch_conversation`).
+    한쪽만 보면 반대쪽 경로에서 표시가 뒤처진다 — 서버 LLM 으로 시작해 브리지로 이어간 대화는
+    KV 가 **첫 run 시각에 멈춘 채** 남아 있으므로, `last_active` 를 무조건 우선하면 종전 결함이
+    그 대화에서 되살아난다. 그래서 우선순위가 아니라 max 다.
+
+    tz 를 모르는 값은 **비교에서 뺀다**(fail-safe). MySQL 경로의 `updated_at` 은 naive DATETIME
+    이라 UTC 로 오해하면 KST 환경에서 9 시간 미래가 되어 max 를 영구히 점거한다
+    (`_iso_or_empty` 가 봉인한 CHG-20260527-0001 tz 회귀와 같은 입구). PG 경로는 timestamptz 라
+    offset 을 갖고 오므로 이 게이트를 정상 통과한다.
+    """
+    cands: list[Any] = []
+    if isinstance(last_active, app.datetime):
+        cands.append(
+            last_active.astimezone(app.timezone.utc).replace(tzinfo=None)
+            if last_active.tzinfo is not None else last_active
+        )
+    row_dt = last_activity_at if isinstance(last_activity_at, app.datetime) else None
+    if row_dt is None and last_activity_at:
+        try:
+            row_dt = app.datetime.fromisoformat(str(last_activity_at).strip().replace(" ", "T", 1))
+        except Exception:
+            row_dt = None
+    if isinstance(row_dt, app.datetime) and row_dt.tzinfo is not None:
+        cands.append(row_dt.astimezone(app.timezone.utc).replace(tzinfo=None))
+    return max(cands, default=None)
 
 
 def _compute_display_status(

@@ -12,6 +12,11 @@ source_of_truth: true
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+- REQ-20260831T144500-conv-last-activity-updatedat (20260831T1445-conv-last-activity-updatedat, **Minor §12.3** — `feature-0002/src/modules/runtime_backend.py`(활동 시각 전진) + `feature-0003/src/routers/_conv_store.py`(표시 축 max) + 신규 테스트 2종, 스키마·마이그레이션·RBAC·엔드포인트·프론트 0, 비파괴·가역): **대화에 말풍선이 실리면 그 대화의 "최근 갱신" 과 목록 위치가 함께 움직인다**. 종전에는 `core_conversations.updated_at` 을 전진시키는 write 가 **자동 제목 부여 경로에만** 있어(`_conv_update_topic_if_auto` 의 `SET topic=…, updated_at=now()`, 제목이 placeholder 일 때만 행을 잡는다) 첫 턴에 제목이 확정된 뒤로는 후속 턴이 쌓여도 컬럼이 고정됐다 — 라이브 실측(대화 `20260828073505-be34624d`) 마지막 메시지 08-31 10:54 vs `updated_at` 08-28 16:38, **2일 18시간 16분**. 전수 355 대화 중 **19건**(전부 2턴 이상; 단일 턴은 생성=마지막이라 증상이 드러나지 않았다). 표시 축이 KV 하나뿐이라 서버 LLM 경로는 `last_activity_effective_at` 이 채워져 가려졌고, KV `last_status*` 를 쓰지 않는 **브리지(개인 AI 연결)** 경로만 고정값을 노출했다(그 대화 KV 키 실측 0건). 같은 컬럼을 읽는 목록 정렬(`ORDER BY c.updated_at DESC`)도 첫 턴 기준이라 활발한 대화가 상단에 오지 못하는 2차 증상이 함께 있었다. 사용자 원문: "요청을 전송하여 대화가 갱신되었는데도 최근 갱신 일자가 첫 대화를 작성했던 부분에서 변경되지 않은 이슈가 확인되었습니다. 대화 제목: `dk_game_integrate 랭킹 자동화 프로시저 명명 제안`" `/_template:entry` arg-given dispatch. REV-20260831T144500-conv-last-activity-updatedat. AC-20260831T144500-conv-last-activity-updatedat-1 ~ -4.
+  - AC-20260831T144500-conv-last-activity-updatedat-1 (전진 지점 = 표시 store 쓰기): `PgRuntimeBackend.save_memory_message` 는 INSERT 후 `touch_conversation` 으로 `core_conversations.updated_at` 을 `now()` 로 전진시킨다 — **미분기 append 와 브랜치 write 두 경로 모두**. 축을 표시 store 로 잡은 이유는 회수 store(`core_messages`)가 tool turn 까지 담아 한 run 에 수십 건이 쌓이는 반면 표시 store 는 화면에 뜨는 단위(질문·답변·안내)라 사용자가 읽는 "최근 갱신" 의 의미와 겹치기 때문이다. `internal` 로 걸러진 메시지는 호출측이 0 을 반환하고 끝내므로 이 지점에 도달하지 않는다(화면에 없는 활동은 시각을 밀지 않는다). 회수 store 단독 쓰기(`save_core_message`)는 touch 하지 않는다.
+  - AC-20260831T144500-conv-last-activity-updatedat-2 (touch 는 UPDATE·fail-soft): 전진 SQL 은 `UPDATE … SET updated_at = now() WHERE conversation_id = %s` 로 **있는 행만** 건드린다 — `_PG_UPSERT_CONVERSATION` 을 재사용하면 행 부재 시 INSERT 하고 COALESCE 로 topic·owner·product 를 덮어 **topic 없는 유령 대화**를 만든다. touch 실패는 흡수하고 WARN 으로 남긴다: 메시지는 이미 별개 커밋으로 저장됐고, 예외를 올리면 저장에 성공한 turn 이 실패로 보고되어 브리지 경로가 **적재된 질문을 취소**한다(`conversations.py` 는 저장 실패를 요청 취소로 읽는다).
+  - AC-20260831T144500-conv-last-activity-updatedat-3 (표시 축 = 두 축의 max): 대화 목록 payload 의 `last_activity_effective_at` 은 판정 계층의 마지막 활동(KV 파생)과 대화 행 `updated_at` 중 **나중 것**이다(`_effective_activity_at`, 목록 PG·MySQL **2경로 모두**). 우선순위가 아니라 max 인 이유: 프런트 표시식은 `effective || last_activity_at` 이라 앞 값이 있으면 뒤를 보지 않으므로, 서버 LLM 으로 시작해 브리지로 이어간 대화(KV 가 첫 run 시각에 멈춘 채 남는다)에서 KV 를 무조건 우선하면 같은 결함이 되살아난다. 반대로 행 축만 쓰면 진행 중 run 의 step 시각이 행 UPDATE 보다 앞서 가는 AC-0631 개선을 되돌린다.
+  - AC-20260831T144500-conv-last-activity-updatedat-4 (tz 미지 값 제외): max 비교는 **타임존을 아는 값만** 대상으로 한다. MySQL 경로의 `updated_at` 은 naive DATETIME 이라 UTC 로 읽으면 KST 환경에서 9시간 미래가 되어 max 를 영구 점거한다(AC-0633·AC-0311 이 봉인한 것과 같은 입구). tz 미지 값 하나뿐이면 필드를 비워 프런트가 종전 폴백(`last_activity_at` → `created_at`)을 쓰게 한다. PG 경로는 timestamptz 라 offset 을 갖고 오므로 정상 통과한다.
 - REQ-20260825T1030-ctxmenu-order-parity (20260825T1030-ctxmenu-order-parity, **Minor §12.3** — feature-0003 프론트 `static/app/sidebar.js`(항목 순서) + `static/app.js`(주석 정합) + 하네스, 백엔드·라우터·RBAC·스키마·엔드포인트 0, 비파괴·가역): 좌측 대화목록의 **폴더와 대화는 우클릭/`···` 메뉴에서 같은 순서 규칙을 쓴다**. 종전에는 폴더가 `하위 폴더 추가 · 이름 변경 · 설정 · 최상위로 꺼내기`, 대화가 `이름 변경 · 공유 · 이동 · 설정` 이라 **공통 항목 두 개가 서로 다른 자리**에 있었다 — `이름 변경` 은 폴더 2번째 / 대화 1번째, `설정` 은 폴더 3번째(중간) / 대화 마지막. 같은 목록에서 같은 조작을 하려는데 대상이 폴더냐 대화냐에 따라 커서를 옮길 자리가 달라지는 것이 마찰이다(REQ-20260824T173000-sidebar-rename-focus 로 대화에 '이름 변경' 이 생기면서 비대칭이 드러났다). 사용자 원문: "'이름 변경' 기능에 대한 순서가 대화/폴더의 우클릭 구성에서 각각 달라 UX가 부정합하여 개선이 필요합니다." `/_template:entry` arg-given dispatch. REV-20260825T103000-ctxmenu-order-parity. AC-20260825T103000-ctxmenu-order-parity-1 ~ -3.
   - AC-20260825T103000-ctxmenu-order-parity-1 (공통 규칙): 두 메뉴는 `[이름 변경] → [고유 액션] → [이동 류] → [설정]` 순서를 따른다. 폴더 = `이름 변경 · 하위 폴더 추가 · 최상위로 꺼내기 · 설정`, 대화 = `이름 변경 · 공유 · 이동 · 설정`. 즉 **공통 항목이 양쪽에서 같은 자리**에 온다 — `이름 변경` 은 항상 **첫 항목**, `설정` 은 항상 **마지막 항목**.
   - AC-20260825T103000-ctxmenu-order-parity-2 (조건부 항목이 빠져도 규칙 유지): 조건부 항목 — 폴더의 `하위 폴더 추가`(깊이 상한 도달 시 미표시) · `최상위로 꺼내기`(최상위 폴더면 미표시), 대화의 `이동`(`folder.manage.own` 미보유 시 미표시) — 이 빠져도 남은 항목의 상대 순서는 규칙을 지키고, 첫/끝 고정(이름 변경 / 설정)은 깨지지 않는다.
@@ -4323,7 +4328,11 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
     `max(last_status_at, last step at)`(UTC naive) 또는 시각 정보가 없으면 `None`. 대화 목록 payload 는
     이 값을 `_iso_or_empty()` 로 **타임존을 명시한** ISO8601 문자열로 직렬화해
     `last_activity_effective_at` 필드에 싣는다(naive 직렬화 시 프런트 `new Date()` 가 로컬로 해석해
-    9시간 어긋나는 경로 차단).
+    9시간 어긋나는 경로 차단). **2026-08-31 확장** — 직렬화 대상은 `last_active` 단독이 아니라
+    `_effective_activity_at(last_active, last_activity_at)` = **KV 축과 대화 행 `updated_at` 의 max**
+    다(AC-20260831T144500-conv-last-activity-updatedat-3·-4). KV 축은 서버 LLM run 이 있었던 대화만
+    채워지므로 단독으로 쓰면 브리지 경로에서 필드가 비고, 무조건 우선하면 혼합 경로 대화에서 stale
+    KV 가 표시를 첫 run 시각으로 끌어당긴다.
     - AC-0631a (§18.8 codex [P2]): **terminal 상태도** `last_active` 를 돌려준다(`last_status_at`
       = 마감 시각). `None` 을 주면 완료·오류·취소 대화의 신규 필드가 항상 비어 표면이 다시 요청
       접수 시각으로 폴백해, 계약이 `processing` 에서만 성립하는 비대칭이 된다. 단
@@ -4338,9 +4347,12 @@ signature 를 **일자 집합**만으로 좁혔다. 세로 구성(어떤 세그�
     `+00:00` 로 저장돼 실동작 변화는 없다(저장 형식 변경에 대한 방어).
   - AC-0632: frontend 는 "마지막 활동/최근 갱신" 표시에 `last_activity_effective_at` 를 우선 사용하고
     부재 시 `last_activity_at` → `created_at` 으로 폴백한다(대화 부제 `최근 갱신` + 사이드바 stale
-    툴팁 **양쪽**). `last_activity_at`(= `core_conversations.updated_at`)은 run 진행 중 갱신되지 않아
-    요청 접수 시각에 멈춰 있으므로, 단독 사용 시 "마지막 활동" 이라는 라벨과 값이 어긋난다(사고 대화
-    실측 43분 차이). 대화 부제의 상태 칸은 내부 enum 이 아니라 `pendingStatusLabel()` 의 한국어 표시를
+    툴팁 **양쪽**). `last_activity_at`(= `core_conversations.updated_at`)은 **run 이 진행되는 동안에는
+    전진하지 않는다** — 2026-08-31 이후 turn 단위(표시 store 쓰기)로는 전진하지만 그 단위는 여전히
+    말풍선이 실릴 때이므로, run 중간의 step 진행은 KV 축만 관측한다. 따라서 단독 사용 시 "마지막
+    활동" 이라는 라벨과 값이 어긋난다(사고 대화 실측 43분 차이). 반대로 KV 축 단독 사용의 실패
+    모드는 AC-20260831T144500-conv-last-activity-updatedat-3 에 있다 — 그래서 서버가 **두 축의
+    max** 를 싣는다. 대화 부제의 상태 칸은 내부 enum 이 아니라 `pendingStatusLabel()` 의 한국어 표시를
     쓴다.
 
 - REQ-20260824-sidebar-reorder-anim (**Minor** §12.3): 좌측 대화목록에서 **요소의 명칭을 바꾸면
