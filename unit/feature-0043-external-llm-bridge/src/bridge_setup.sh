@@ -355,18 +355,28 @@ cat > "$LAUNCH_SH" <<LAUNCHEOF
 set -eu
 BRIDGE_HOME="\${BRIDGE_HOME:-\$HOME/.mysql-ai-bridge}"
 URL="\${1:-}"
+# ⚠ 이 스크립트는 **콘솔 창 안에서** 불릴 수 있다(Windows 핸들러가 wsl.exe 로 되부르는 경로).
+#   그 창은 스크립트가 끝나는 순간 닫히므로, 오류를 그냥 출력하면 사용자는 **깜빡임만** 본다 —
+#   그건 스킴이 등록되지 않았을 때와 화면상 구별되지 않는다(둘 다 "아무 일도 안 일어남").
+#   그래서 터미널에 붙어 있을 때만 잠깐 붙잡아 둔다.
+bail() {
+  printf '%s\n' "\$1" >&2
+  if [ -t 2 ]; then printf '\n(이 창은 20초 뒤 닫힙니다)\n' >&2; sleep 20; fi
+  exit "\$2"
+}
 TOKEN=\$(printf '%s' "\$URL" | sed -n 's/.*[?&]token=\([^&]*\).*/\1/p')
-[ -n "\$TOKEN" ] || { printf 'token 이 없습니다: %s\n' "\$URL" >&2; exit 2; }
+[ -n "\$TOKEN" ] || bail "token 이 없습니다: \$URL" 2
 # ⚠ 이 스킴은 **아무 웹페이지나 열 수 있다**. 그래서 토큰을 확인하기 전에는 아무것도 죽이지
 #   않는다 — 종전엔 곧바로 pkill 이라, 임의 사이트가 쓰레기 토큰으로 이 URL 을 열게 하는 것만으로
 #   정상 러너를 끌 수 있었다(codex 적대 리뷰 P2). 순서를 뒤집는다: **먼저 검증, 그다음 교체.**
 case "\$TOKEN" in
   mat_*) ;;
-  *) printf 'token 형식이 아닙니다 — 무시합니다.\n' >&2; exit 2 ;;
+  *) bail "token 형식이 아닙니다 — 무시합니다." 2 ;;
 esac
 BRIDGE_TOKEN="\$TOKEN" $PY "\$BRIDGE_HOME/bridge_agent.py" \\
   --base '$BRIDGE_BASE' --ca "\$BRIDGE_HOME/rootCA.crt" --check >/dev/null 2>&1 \\
-  || { printf '토큰이 유효하지 않습니다 — 실행 중인 러너를 그대로 둡니다.\n' >&2; exit 3; }
+  || bail "토큰이 유효하지 않습니다(만료·로그아웃) — 실행 중인 러너를 그대로 둡니다.
+웹 화면에서 [연결 준비] 를 다시 누르고 [내 AI 실행] 을 눌러 주세요." 3
 pkill -f 'bridge_agent.py' >/dev/null 2>&1 || true
 BRIDGE_TOKEN="\$TOKEN" nohup $PY "\$BRIDGE_HOME/bridge_agent.py" \\
   --base '$BRIDGE_BASE' --ca "\$BRIDGE_HOME/rootCA.crt" --resume $RUNNER_ARGS \\
@@ -374,10 +384,188 @@ BRIDGE_TOKEN="\$TOKEN" nohup $PY "\$BRIDGE_HOME/bridge_agent.py" \\
 LAUNCHEOF
 chmod 700 "$LAUNCH_SH"
 
+# ── 3-a. 등록할 곳은 «셸» 이 아니라 «브라우저» 를 따른다 ──────────────────────
+#
+# 종전 구현은 `uname` 으로 갈라 **이 셸이 도는 OS** 에 등록했다. 그런데 이 버튼을 누르는
+# 주체는 셸이 아니라 **브라우저**다. WSL 셸 + Windows 브라우저 조합에서는 등록이 성공하고도
+# 브라우저가 그 등록을 보지 못한다 — 그리고 종전 코드는 그 상태에서 「등록했습니다」 라고
+# 말했다. 사용자는 동작한다고 믿고 버튼을 누르고, 아무 일도 일어나지 않는다.
+#
+# 실측(2026-08-31): `HKCU\Software\Classes\mysql-ai-bridge` 키 없음 ·
+# `~/.local/share/applications/mysql-ai-bridge.desktop` 있음 · 버튼 무동작 · 같은 계정의
+# 토큰 4건이 전부 하트비트 없이 남음. 사용자 제보 "'내 AI 실행' 을 통해 연결을 시도했지만,
+# 연결이 진행되지 않는것으로 확인되었습니다."
+#
+# 그래서 WSL 이면 **Windows 쪽(HKCU)에도** 등록하고, 그 핸들러가 `wsl.exe` 로 이 배포판의
+# `launch.sh` 를 되부르게 한다. 관리자 권한은 필요 없다(HKCU 는 이 사용자 범위).
+
+#: 이 셸이 WSL 안인가. `BRIDGE_FORCE_WSL=1|0` 으로 강제할 수 있다 — 감지가 틀리는 배포판과
+#: 테스트에서 쓴다. 보안 게이트가 아니라 환경 판정이므로 강제를 열어 둔다.
+is_wsl() {
+  case "${BRIDGE_FORCE_WSL:-}" in 1) return 0 ;; 0) return 1 ;; esac
+  [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
+  [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] && return 0
+  grep -qi microsoft /proc/version 2>/dev/null && return 0
+  return 1
+}
+
+#: WSL 에서 Windows 실행파일 경로를 찾는다.
+#:
+#: ⚠ `command -v` 하나만 믿으면 안 된다 — interop PATH 가 실려 있지 않은 셸(서비스·cron·
+#:   일부 컨테이너 셸)이 실제로 있고, 그 셸에서는 `powershell.exe` 가 «없음» 으로 오판된다
+#:   (실측 2026-08-31: 같은 머신인데 `command -v powershell.exe` 는 빈 값, 절대경로는 실행됨).
+#: ⚠ `powershell.exe` 는 System32 **직하가 아니다** — `System32\WindowsPowerShell\v1.0\` 에 있고,
+#:   Windows PATH 가 그 디렉토리를 담고 있어서 평소엔 티가 안 난다. 폴백 목록을 System32 만으로
+#:   두면 interop PATH 없는 셸에서 「powershell.exe 없음」 으로 오판한다(추출 실행 테스트가
+#:   실제로 그렇게 실패했다, 2026-08-31).
+win_exe() {
+  _we=$(command -v "$1" 2>/dev/null || true)
+  if [ -n "$_we" ]; then printf '%s' "$_we"; return 0; fi
+  for _wr in /mnt/c/Windows /c/Windows /mnt/c/WINDOWS /c/WINDOWS; do
+    for _ws in System32 System32/WindowsPowerShell/v1.0 SysWOW64 ""; do
+      if [ -n "$_ws" ]; then _wd="$_wr/$_ws"; else _wd="$_wr"; fi
+      if [ -x "$_wd/$1" ]; then printf '%s' "$_wd/$1"; return 0; fi
+    done
+  done
+  return 1
+}
+
+#: Windows 브라우저가 보는 곳(HKCU)에 스킴을 등록한다. 실패 사유는 `$HANDLER_WIN_WHY` 에.
+#:
+#: 등록은 **PowerShell 스크립트 파일**로 한다. `reg.exe add /d '...\"%1\"'` 는 WSL→Win32
+#: 인자 변환에서 따옴표가 한 겹씩 먹혀, 조용히 깨진 커맨드라인이 등록된다. 파일로 넘기면
+#: 인용 규칙이 한 언어(PowerShell) 안에서만 적용돼 경계를 건널 것이 없다.
+register_handler_windows() {
+  HANDLER_WIN_WHY=""
+  WSL_EXE=$(win_exe wsl.exe) || { HANDLER_WIN_WHY="wsl.exe 를 찾지 못했습니다"; return 1; }
+  PS_EXE=$(win_exe powershell.exe) || { HANDLER_WIN_WHY="powershell.exe 를 찾지 못했습니다"; return 1; }
+
+  # ⚠ **`-d`·`-u` 값은 따옴표로 감싸면 안 된다** (실측 2026-08-31). 레지스트리 커맨드라인은
+  #   ShellExecute 가 wsl.exe 에 **원문 그대로** 넘기고, wsl.exe 의 자체 파서는 이 두 옵션의
+  #   값에서 따옴표를 벗기지 않는다 — `-d "Ubuntu"` 는 이름이 `"Ubuntu"` 인 배포판을 찾다가
+  #   rc=-1 로 죽고, 그 오류는 즉시 닫히는 콘솔에 찍혀 사라진다. 즉 **버튼을 눌러도 아무 일도
+  #   일어나지 않는** 형태가 되어, 이 절이 고치려는 결함과 화면상 구별되지 않는다.
+  #   (변형 실측: `-d "Ubuntu"` FAIL · `-d Ubuntu` PASS — 경로 쪽 따옴표는 무관했다.)
+  #
+  #   따옴표를 못 쓰므로 공백·따옴표가 든 이름은 **표현할 수단이 없다**. 그때는 조용히
+  #   생략하지 않고 등록을 포기하고 사유를 말한다 — `-u` 를 생략하면 기본 사용자로 러너가
+  #   떠서 `$HOME` 이 달라지고(`~/.mysql-ai-bridge` 없음) "왜 안 되지" 가 한 겹 더 깊어진다.
+  _safe_word() {
+    case "${1:-}" in
+      "" ) return 1 ;;
+      *[!A-Za-z0-9._-]* ) return 1 ;;
+      * ) return 0 ;;
+    esac
+  }
+
+  # ── 배포판 이름 — «어느 배포판인가» 를 추측하지 않는다 ────────────────────────
+  #
+  # ⚠ `wsl.exe -l -q` 의 **첫 줄은 현재 셸의 배포판이 아니다**(설치 순서·기본값에 따라 다르다).
+  #   그것을 현재 배포판으로 가정하면, 배포판이 여럿인 머신에서 핸들러가 **엉뚱한 배포판의**
+  #   `launch.sh` 를 부른다 — 그 경로에는 파일이 없으니 아무 일도 안 일어나고, 설치는 성공으로
+  #   표시된다. 정확히 이 절이 고치려는 「조용한 무동작」 이 형태만 바꿔 되돌아온다.
+  #   그래서 목록 폴백은 **배포판이 정확히 하나일 때만** 쓴다(그때는 현재 셸이 그것일 수밖에 없다).
+  #   `-d` 생략(기본 배포판)도 같은 이유로 쓰지 않는다.
+  _distro="${WSL_DISTRO_NAME:-}"
+  if [ -z "$_distro" ]; then
+    # `wsl.exe -l -q` 는 UTF-16LE 를 뱉는다 — NUL·CR 에 더해 **BOM(0xFF 0xFE)** 도 걷어내야
+    # 한다. NUL 만 지우면 첫 이름 앞에 `\xff\xfe` 가 붙어 정상 이름이 거절된다(codex P2).
+    _dlist=$("$WSL_EXE" -l -q 2>/dev/null | tr -d '\000\r\377\376' | sed '/^[[:space:]]*$/d' || true)
+    _dcount=$(printf '%s\n' "$_dlist" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+    if [ "$_dcount" = "1" ]; then
+      _distro=$(printf '%s' "$_dlist" | sed -n '1p')
+    else
+      HANDLER_WIN_WHY="이 셸의 WSL 배포판 이름을 확정할 수 없습니다(WSL_DISTRO_NAME 미설정, 후보 ${_dcount}개) — 엉뚱한 배포판에 연결하지 않도록 등록하지 않습니다"
+      return 1
+    fi
+  fi
+  if ! _safe_word "$_distro"; then
+    HANDLER_WIN_WHY="배포판 이름 '$_distro' 에 공백·특수문자가 있어 핸들러 명령으로 넘길 수 없습니다"
+    return 1
+  fi
+  HANDLER_WIN_DISTRO="$_distro"
+  _dopt="-d $_distro"
+
+  _wuser=$(id -un 2>/dev/null || printf '%s' "${USER:-}")
+  if ! _safe_word "$_wuser"; then
+    HANDLER_WIN_WHY="이 셸의 사용자 이름('$_wuser')을 핸들러 명령으로 넘길 수 없습니다"
+    return 1
+  fi
+
+  # 경로는 큰따옴표로 감싸 넘기므로 **경로 안의 큰따옴표·개행·제어문자**가 인용을 깨뜨린다
+  # (codex P2). 깨진 커맨드라인은 등록에는 성공하고 클릭에는 무동작이라, 또 조용한 실패가 된다.
+  case "$LAUNCH_SH" in
+    *'"'*|*'%'*) HANDLER_WIN_WHY="설치 경로('$LAUNCH_SH')에 따옴표·%가 있어 핸들러 명령으로 넘길 수 없습니다"; return 1 ;;
+  esac
+  if [ "$LAUNCH_SH" != "$(printf '%s' "$LAUNCH_SH" | tr -d '\000-\037\177')" ]; then
+    HANDLER_WIN_WHY="설치 경로에 제어문자가 있어 핸들러 명령으로 넘길 수 없습니다"
+    return 1
+  fi
+
+  # wsl.exe 는 System32 에 있고 System32 는 Windows PATH 에 항상 있다. 그래도 절대경로를
+  # 우선 쓴다 — PATH 를 손댄 환경에서 엉뚱한 실행파일이 잡히는 것을 막는다.
+  _win_wsl=$(wslpath -w "$WSL_EXE" 2>/dev/null || printf 'wsl.exe')
+
+  # `--` 뒤는 셸을 거치지 않고 execvp 로 간다(`?`·`&` 가 든 URL 이 그대로 argv[1] 이 된다).
+  # 이 자리의 따옴표는 wsl.exe 가 제대로 처리한다(위 옵션 값과 다른 지점 — 실측으로 갈랐다).
+  _cmdline="\"$_win_wsl\" $_dopt -u $_wuser -- \"$LAUNCH_SH\" \"%1\""
+  # 아래 PowerShell 리터럴은 홑따옴표로 감싼다 — 값에 홑따옴표가 있으면 그 리터럴이 깨진다.
+  # 깨진 채로 등록하느니 등록하지 않고 **말한다**.
+  case "$_cmdline" in
+    *"'"*) HANDLER_WIN_WHY="경로·사용자명에 홑따옴표가 있어 안전하게 등록할 수 없습니다"; return 1 ;;
+  esac
+
+  # ⚠ 파일명을 **매번 고유하게** 만들고 생성 실패를 검사한다 (codex 2R P1-2). 고정 이름을
+  #   쓰면 이전 실행이 남긴 (혹은 다른 배포판용으로 쓰인) 스크립트가 그대로 실행될 수 있고,
+  #   그 PS1 안의 자기 대조는 **그 옛 값끼리** 맞으므로 통과한다 — 바깥 검사는 키 존재만 보니
+  #   "현재 배포판에 등록했다" 고 보고하면서 레지스트리는 다른 명령을 가리키게 된다.
+  _ps1="$BRIDGE_HOME/.register_win_handler.$$.ps1"
+  rm -f "$_ps1" 2>/dev/null || true
+  if ! cat > "$_ps1" <<PSEOF
+# mysql-ai 브리지 — Windows 브라우저용 스킴 핸들러 등록 (HKCU, 관리자 권한 불필요).
+# 이 파일은 bridge_setup.sh 가 생성하고 실행 직후 지운다.
+\$ErrorActionPreference = 'Stop'
+\$key = 'HKCU:\Software\Classes\mysql-ai-bridge'
+New-Item -Path \$key -Force | Out-Null
+New-ItemProperty -Path \$key -Name '(default)' -Value 'URL:mysql-ai bridge' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path \$key -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+New-Item -Path "\$key\shell\open\command" -Force | Out-Null
+New-ItemProperty -Path "\$key\shell\open\command" -Name '(default)' -Value '$_cmdline' -PropertyType String -Force | Out-Null
+# ── 되읽어 대조한다 ─────────────────────────────────────────────────────────
+# 「키가 있다」는 「그 키에 우리가 쓴 값이 있다」가 아니다. 다른 설치·정책·이전 버전이 남긴
+# 값이 그대로면 클릭은 무동작인데 등록은 성공으로 보고된다. 값까지 맞아야 성공이다.
+\$actual = (Get-Item "\$key\shell\open\command").GetValue('')
+if (\$actual -ne '$_cmdline') { throw "등록된 명령이 기대와 다릅니다: \$actual" }
+PSEOF
+  then
+    rm -f "$_ps1" 2>/dev/null || true
+    HANDLER_WIN_WHY="등록 스크립트를 만들지 못했습니다($_ps1)"
+    return 1
+  fi
+  _ps1_win=$(wslpath -w "$_ps1" 2>/dev/null || true)
+  [ -n "$_ps1_win" ] || { rm -f "$_ps1"; HANDLER_WIN_WHY="WSL 경로를 Windows 경로로 바꾸지 못했습니다(wslpath)"; return 1; }
+  if ! "$PS_EXE" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$_ps1_win" >/dev/null 2>&1; then
+    rm -f "$_ps1"
+    HANDLER_WIN_WHY="레지스트리 쓰기가 거부되었습니다(PowerShell 실행 정책·정책 제한)"
+    return 1
+  fi
+  rm -f "$_ps1"
+
+  # ── 사후검증 — 「등록했다」 를 쓰기 성공으로 갈음하지 않는다 ──────────────────
+  # 이 절 전체가 「등록했다고 말했지만 브라우저는 못 본다」 를 고치는 것이므로, 여기서
+  # 다시 «썼으니 됐겠지» 로 끝내면 같은 종류의 거짓말을 한 층 아래에 만드는 것이다.
+  if ! "$PS_EXE" -NoProfile -NonInteractive -Command \
+       "if (Test-Path 'HKCU:\Software\Classes\mysql-ai-bridge\shell\open\command') { exit 0 } else { exit 1 }" \
+       >/dev/null 2>&1; then
+    HANDLER_WIN_WHY="등록 직후 조회에서 키가 보이지 않습니다"
+    return 1
+  fi
+  return 0
+}
+
 register_handler() {
-  # 조사 결과가 "이 머신에서는 등록해도 소용없다" 일 수 있다 — 실측된 조합이 그렇다:
-  # 브라우저가 Windows 이고 이 셸이 WSL 이면, 여기 등록한 xdg 핸들러를 그 브라우저는
-  # 보지 못한다. 헛되이 등록물을 남기는 대신 **안 하는 것**을 고를 수 있게 한다.
+  # 사용자가 "이 머신에서는 등록해도 소용없다" 를 명시한 경우 — 헛되이 등록물을 남기는
+  # 대신 **안 하는 것**을 고를 수 있게 한다.
   [ "$BRIDGE_PROBED_HANDLER" = "none" ] && return 2
   case "$(uname -s 2>/dev/null || echo unknown)" in
     Darwin)
@@ -407,10 +595,22 @@ MACEOF
         -f "$APP" >/dev/null 2>&1 || return 1
       ;;
     Linux)
-      command -v xdg-mime >/dev/null 2>&1 || return 1
-      DESKTOP_DIR="$HOME/.local/share/applications"
-      mkdir -p "$DESKTOP_DIR"
-      cat > "$DESKTOP_DIR/mysql-ai-bridge.desktop" <<DESKEOF
+      # WSL 은 Linux 지만 브라우저가 **Windows 쪽**일 수 있다. 두 곳 다 시도하고, 어느 쪽이
+      # 성공했는지를 따로 남긴다 — 성공 문구가 사실보다 넓어지지 않게 하려면 여기서 갈라야 한다.
+      if is_wsl; then
+        register_handler_windows && HANDLER_WIN="ok" || HANDLER_WIN="fail"
+      fi
+      # WSL 안에서도 WSLg·X11 로 Linux 브라우저를 쓸 수 있으므로 xdg 등록은 그대로 한다.
+      # 실패해도 Windows 쪽이 성공했으면 버튼은 동작한다.
+      # ⚠ 각 단계의 성패를 **개별로** 본다. `xdg-mime` 만 보면, desktop 파일 쓰기가 실패해도
+      #   (경로가 디렉토리이거나 권한이 없거나 디스크가 찼거나) 등록 성공으로 보고된다 —
+      #   그러면 「등록했습니다」 라고 말하고 클릭은 무동작이다(codex P1). 이 절이 고치는
+      #   결함과 정확히 같은 형태다.
+      HANDLER_LINUX="fail"
+      if command -v xdg-mime >/dev/null 2>&1; then
+        DESKTOP_DIR="$HOME/.local/share/applications"
+        DESKTOP_FILE="$DESKTOP_DIR/mysql-ai-bridge.desktop"
+        if mkdir -p "$DESKTOP_DIR" 2>/dev/null && cat > "$DESKTOP_FILE" <<DESKEOF
 [Desktop Entry]
 Type=Application
 Name=mysql-ai bridge launcher
@@ -419,21 +619,58 @@ NoDisplay=true
 Terminal=false
 MimeType=x-scheme-handler/mysql-ai-bridge;
 DESKEOF
-      update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
-      xdg-mime default mysql-ai-bridge.desktop x-scheme-handler/mysql-ai-bridge >/dev/null 2>&1 || return 1
+        then
+          update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+          # 파일이 실재하고 비어 있지 않은지까지 본다 — 쓰기가 조용히 잘린 경우를 거른다.
+          if [ -s "$DESKTOP_FILE" ] \
+             && xdg-mime default mysql-ai-bridge.desktop x-scheme-handler/mysql-ai-bridge >/dev/null 2>&1; then
+            HANDLER_LINUX="ok"
+          fi
+        fi
+      fi
+      # WSL 이면 «Windows 쪽이 성공했는가» 가 사실상의 판정이다 — 이 조합의 브라우저는
+      # 대부분 Windows 쪽이고, xdg 등록만 성공한 상태가 정확히 이번 결함의 모양이었다.
+      if is_wsl; then
+        [ "$HANDLER_WIN" = "ok" ] && return 0
+        return 3
+      fi
+      [ "$HANDLER_LINUX" = "ok" ] && return 0
+      return 1
       ;;
     *) return 1 ;;
   esac
   return 0
 }
 
+#: 등록 결과 — `register_handler` 가 채운다. 초기값은 「시도 안 함」.
+HANDLER_WIN="na"
+HANDLER_LINUX="na"
+HANDLER_WIN_WHY=""
+HANDLER_WIN_DISTRO=""
+
 register_handler && _handler_rc=0 || _handler_rc=$?
 if [ "$_handler_rc" = "0" ]; then
-  say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 (mysql-ai-bridge://)."
+  if [ "$HANDLER_WIN" = "ok" ]; then
+    say "웹 [내 AI 실행] 버튼용 핸들러를 **Windows 쪽**에 등록했습니다 (mysql-ai-bridge://)."
+    # 배포판은 **항상 확정된 상태**로만 여기 온다 — 확정 못 하면 위에서 등록 자체를 포기한다
+    # (추측한 배포판에 연결하면 조용한 무동작이 형태만 바꿔 되돌아온다).
+    say "  누르면 wsl.exe 가 배포판 '$HANDLER_WIN_DISTRO' 의 러너를 다시 띄웁니다."
+    [ "$HANDLER_LINUX" = "ok" ] && say "  (WSL 안 브라우저용 xdg 등록도 함께 했습니다.)"
+  else
+    say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 (mysql-ai-bridge://)."
+  fi
 elif [ "$_handler_rc" = "2" ]; then
   # 실패가 아니라 **선택**이다. 실패 문구를 쓰면 사용자는 고칠 것을 찾는다.
   say "핸들러 등록을 건너뜁니다 (BRIDGE_PROBED_HANDLER=none — 이 머신의 브라우저는 여기 등록한"
   say "  핸들러를 보지 못한다는 조사 결과). 러너가 꺼지면 이 명령을 다시 실행하세요."
+elif [ "$_handler_rc" = "3" ]; then
+  # WSL 인데 Windows 등록만 실패 — 여기서 「등록했습니다」 라고 말하면 정확히 이번 결함이
+  # 재생산된다(xdg 등록은 성공했지만 Windows 브라우저는 그것을 보지 못한다).
+  say "⚠ 이 셸은 WSL 이고, Windows 쪽 핸들러 등록에 실패했습니다"
+  say "  ($HANDLER_WIN_WHY)."
+  say "  → Windows 브라우저의 [내 AI 실행] 버튼은 동작하지 않습니다. 러너가 꺼지면 이 명령을"
+  say "     다시 실행하세요. (연결 자체에는 영향 없음)"
+  [ "$HANDLER_LINUX" = "ok" ] && say "  (WSL 안에서 여는 브라우저라면 xdg 등록으로 동작합니다.)"
 else
   # 등록 실패가 연결 자체를 막지는 않는다 — 러너는 아래에서 그대로 뜬다. 다만 브라우저
   # 버튼은 동작하지 않으므로 **그 사실을 말한다**(조용히 실패하면 버튼을 눌러 보고 고장으로 읽는다).
@@ -461,8 +698,10 @@ if kill -0 "$BRIDGE_PID" 2>/dev/null; then
   say "완료. 웹 화면의 표시가 '내 AI 대기 중' 으로 바뀌면 질문을 보낼 수 있습니다."
   say "  로그   : $BRIDGE_HOME/bridge.log"
   say "  종료   : kill $BRIDGE_PID   (또는 pkill -f bridge_agent.py)"
-  say "  해제   : rm -rf $BRIDGE_HOME  +  핸들러 등록 파일 삭제"
+  say "  해제   : rm -rf $BRIDGE_HOME  +  핸들러 등록 삭제"
   say "           (Linux: ~/.local/share/applications/mysql-ai-bridge.desktop)"
+  [ "$HANDLER_WIN" = "ok" ] && \
+    say "           (Windows: reg.exe delete 'HKCU\\Software\\Classes\\mysql-ai-bridge' /f)"
 else
   die "러너가 바로 종료됐습니다. 로그를 확인하세요: $BRIDGE_HOME/bridge.log"
 fi

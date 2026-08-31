@@ -500,11 +500,18 @@ def test_scheme_handler_validates_before_killing():
 
 
 def test_status_refresh_ignores_out_of_order_responses():
-    """[P2] 겹친 조회가 역순 도착하면 낡은 '열림' 이 최신 잠금을 덮고, 폴링 타이머까지 멈춘다."""
+    """[P2] 겹친 조회가 역순 도착하면 낡은 '열림' 이 최신 잠금을 덮고, 폴링 타이머까지 멈춘다.
+
+    ⚠ 조기 반환에 **값이 붙었다** (`return null;`, 2026-08-31). `refreshConnState` 가 읽은
+    값을 돌려주게 되면서다 — `[내 AI 실행]` 이 「요청했다」가 아니라 「대기 중이 됐다」로
+    판정하려면 이 함수의 결과를 봐야 하고, 호출부가 따로 `fetch` 하면 세대 번호가 우회된다.
+    낡은 응답에 `null` 을 주는 것이 계약의 일부다 — 「모른다」를 「대기 안 함」으로 바꿔
+    돌려주면 성공하는 중인 사용자에게 실패라고 말하게 된다.
+    """
     code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
     assert "let _connSeq = 0;" in code, "세대 번호가 없다"
     assert "const seq = ++_connSeq;" in code
-    assert "if (seq !== _connSeq) return;" in code, "낡은 응답을 그대로 반영한다"
+    assert "if (seq !== _connSeq) return null;" in code, "낡은 응답을 그대로 반영한다"
 
 
 def test_drop_upload_respects_the_lock():
