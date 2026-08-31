@@ -2781,3 +2781,30 @@ REASON_CTX`(`other-member` | `owner-unverified`)로 남기고 문구를 분기�
 - **남은 것(정직)**: **모델이 실제로 그 경로를 고르는지**는 실제 LLM 턴이 필요하다. 코드·프롬프트는
   "보여준다" 까지만 증명하며, 행동 변화는 다음 audit 의 corroboration(동명 root 중복 3그룹/2대화 ·
   `attachment-new` 기원 root 17건 중 v≥2 연장 2건 기준선) 재측정으로 판정한다.
+
+## CHG-20260831T110000-scheduler-discovery-reachability
+
+**무엇을**: 예약 작업(SQL Server Agent 작업) 조회 경로의 **도달 가능성** 두 겹을 봉인.
+`modules/tools.py` — 발견 도구 안내 단일 출처 `_DISCOVERY_TOOL_NAMES`/`_discovery_tools_hint()`
+신설, `sys` 스키마 차단 안내를 거기서 파생, 시스템 DB 하드 차단에 예약 작업 정당 경로 안내 추가,
+리터럴 값 정제기 `_safe_literal_value()` 신설, `_tool_describe_db_object` 가 MSSQL 예약 작업명만
+리터럴 경로로 라우팅. `modules/dialects.py` — `_agent_jobs_sql` 정제 계약을 "삽입 지점이 따옴표
+이중화" 로 명문화하고 `name`/`keyword`/`schema` 를 1회 이중화.
+
+**왜**: 라이브 대화에서 사용자가 3턴에 걸쳐 요청한 Agent 작업 본문이 끝내 미확인으로 남았다.
+도구는 이미 있었고(2026-08-12 머지, 배포본 적재, 실 datasource 에서 대상 작업 정확 반환) 모델이
+그것을 부르지 못한 것이다 — msdb 차단이 대안을 지목하지 않아 6분간 카탈로그 청킹을 brute-force
+한 뒤 "영구 차단이라 확인 불가" 로 단정했다. 설령 불렀어도 `describe_db_object` 가 작업명의
+대괄호를 식별자 정제기로 지워 매칭에 실패했을 것이다(관측 서버 작업 83개 중 73개가 `[` 접두).
+
+**어느 RC**: RC-1 `FR-blocked-path-omits-structured-tool`(L2 거부 피드백 — 안내가 도구 카탈로그와
+분리돼 drift) · RC-2 `FR-agent-job-name-mangled-by-ident-sanitizer`(L2 capability gap — 식별자
+정제기를 리터럴 값에 오적용).
+
+**재발 봉인 방식**: RC-1 은 *drift* 라 코드가 권위선 — 안내를 카탈로그에서 파생시키고 정합을
+테스트로 잠가, 새 발견 도구가 추가되면 스위트가 깨져 안내 갱신을 강제한다(문서 규율이 아니라
+빌드 게이트). RC-2 는 *정제기 오적용* 이라 경계를 분리 — 식별자 경로(`_safe_ident`)는 라이브 SQLi
+실증 근거대로 **완화 없이 그대로** 두고, 리터럴 경로만 신설해 문자를 보존하되 탈출 벡터
+(역슬래시·제어문자)를 제거하고 이스케이프 책임을 삽입 지점 1곳에 모았다. 보안 경계 무변경 —
+freeform msdb 차단·허용 DB fail-closed·제품 경계 필터 전부 불변이며 테스트로 잠갔다.
+
