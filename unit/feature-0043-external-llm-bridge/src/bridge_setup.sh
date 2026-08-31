@@ -315,6 +315,18 @@ mv "$CA_PATH.tmp" "$CA_PATH"
 chmod 600 "$CA_PATH" 2>/dev/null || true
 
 # ── 2. 러너 ──────────────────────────────────────────────────────────────────
+#
+# ⚠ **Windows 판(bridge_setup.ps1)에는 여기에 없는 옵션이 하나 더 붙어 있다 — 의도된 divergence.**
+#   그쪽은 윈도우 동봉 curl 이 **Schannel** 백엔드라, 사설 CA 에 CRL·OCSP 배포점이 없으면 폐기
+#   상태가 «알 수 없음» 이 되고 curl 이 그것을 하드 실패로 본다
+#   (`curl: (60) ... CERT_TRUST_REVOCATION_STATUS_UNKNOWN` — 사용자 제보 2026-08-31).
+#   그래서 그쪽만 `--ssl-revoke-best-effort` 를 붙인다.
+#
+#   **이 파일에는 붙이지 않는다.** 리눅스·macOS curl 은 OpenSSL 계열이라 폐기검사를 기본으로
+#   하지 않아 애초에 이 실패가 없고, 그 옵션은 Schannel 전용이라 여기서는 아무 일도 하지 않는다.
+#   "두 판을 같게 맞춘다" 는 이유로 여기에 추가하거나 저쪽에서 빼지 말 것 — 같아야 하는 것은
+#   **계약**(CA 지문 대조 → pin 된 CA 로만 https 수신 → 체크섬 대조)이고, 그 계약을 지키는 데
+#   필요한 플랫폼별 수단은 다르다.
 AGENT_PATH="$BRIDGE_HOME/bridge_agent.py"
 say "러너를 받는 중…"
 curl -fsS --cacert "$CA_PATH" -o "$AGENT_PATH.tmp" "$BRIDGE_BASE/static/agent/bridge_agent.py" \

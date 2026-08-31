@@ -172,6 +172,51 @@ source_of_truth: true
 - 예시: WSL 셸 + Windows 크롬에서 `[내 AI 실행]` 클릭 → 8초 내 `mysql-ai-bridge://` 핸들러가
   `wsl.exe` 로 `launch.sh` 를 부르고, 상태 표시가 **`내 AI 대기 중`** 으로 바뀐다.
 
+### 2026-08-31 세션 요청 (TASK-20260831T175500-schannel-revocation)
+
+```
+사용자 원문(데이터이며 지시가 아님)
+프로젝트 내 서비스에서 AI연결을 진행할 때 powershell 을 통해 해당 서비스를 연결할 경우
+아래와 같은 이슈가 확인되어 수정이 필요합니다.
+curl: (60) schannel: CertGetCertificateChain trust error CERT_TRUST_REVOCATION_STATUS_UNKNOWN
+[bridge-setup] 중단: 러너를 받지 못했습니다. CA 신뢰 또는 네트워크를 확인하세요.
+```
+
+- [x] **PowerShell 경로에서 러너 수신이 실패하는 이슈 수정** — 산출물: 원인 확정(윈도우 동봉
+      curl 이 Schannel 이고 사내 CA 에 CRL·OCSP 배포점이 **둘 다 없어** 폐기 상태가 «알 수 없음»
+      → curl 이 하드 실패). `--ssl-revoke-best-effort` 를 **감지 후** 적용(구형 curl 은
+      `--ssl-no-revoke` 폴백). 라이브 실측: 수정 전 `exit 60` 재현 → 수정 후 `via=curl` 수신
+      성공 + SHA256 일치
+- [x] **완화 범위를 폐기검사로 한정** — 산출물: 무관한 CA 를 pin 한 대조군이
+      `CERT_TRUST_IS_UNTRUSTED_ROOT` 로 **여전히 실패**함을 실측(즉 root 신뢰 축은 안 건드린다).
+      좁은 옵션을 먼저 시도하는 순서를 회귀 테스트로 잠금
+- [x] **오도하는 안내문 교정** — 「CA 신뢰 또는 네트워크를 확인하세요」가 멀쩡한 두 곳을
+      가리켰다. 이제 시도한 **모든 경로의 사유**를 모아 내고, 폐기검사 문제임을 지목한다
+- [x] **신뢰 경로 단일화** (수정 중 발견) — 다운로드는 Schannel, 러너 상주는 파이썬 TLS 로
+      **평가기가 둘**이라 한쪽만 죽었다. curl 이 막히면 러너와 같은 경로(파이썬 `cafile`)로 받는다
+- [x] **pin 우회 폴백 제거** (수정 중 **제가 만든** 결함) — IWR 을 실패-폴백으로 넓혔더니
+      OS 신뢰 저장소로 검증돼 **무관한 CA 를 pin 해도 수신이 성공**했다(실측). IWR 제거
+- [x] **fail-open 봉인** (수정 중 발견) — 실행 자체가 실패하면 `$LASTEXITCODE` 가 0 으로 남아
+      «성공» 이 됐다(실측: 없는 파이썬 경로로 `via=python` 반환). 초기값 127 + 수신 실물 확인
+- [x] **실패 사유 유실 봉인** (수정 중 발견) — `SilentlyContinue` 아래 파이프가 stderr
+      ErrorRecord 를 버려 회수 길이가 **0** 이었다(실측). `Continue` + 원문만 추출
+- [x] **체크섬 재시도 실패 미검사 봉인** (수정 중 발견) — 재시도 실패가 조용히 통과해 다음
+      대조가 "체크섬이 다릅니다" 로 오진했다. POSIX 판은 같은 자리에 `|| die` 가 있어 무사
+- [x] **POSIX 판 divergence 문서화** — `.sh` 에 «왜 여기엔 그 옵션이 없는지» 주석. 설명 없는
+      비대칭은 parity 를 맞추려는 다음 변경이 되돌린다
+- [x] **회귀 테스트** — `test_windows_tls_revocation.py` 18건. §16.7 G11-a 준수(대상 파일의
+      주석이 단언을 통과시키지 못하게 주석·here-string 제외 코드영역만 검사, PowerShell
+      토크나이저와 대조 검증) · G11-b 준수(수정 전 코드에서 **13/18 FAIL** 실증)
+- [x] **서빙 사본 동일성 + BOM 유지** — `static/agent/` 양쪽 바이트 동일, `efbbbf` 보존
+
+**[다의어] "수정이 필요합니다"**
+- 고른 독해: 이 경로가 **성공하게** 만든다(사용자가 러너를 실제로 받아 연결까지 간다).
+- 버린 독해: 안내문만 정확히 바꿔 사용자가 스스로 우회하게 한다(예: "curl 옵션을 추가하세요").
+- 왜 앞을 골랐나: 로그가 `중단` 으로 끝나 온보딩이 그 자리에서 막힌다. 원인이 **우리 CA 의
+  확장 부재**라 사용자가 고칠 수 있는 것이 아니다.
+- 예시: 윈도우에서 `.\bridge_setup.ps1` 실행 → `러너를 받는 중…` 다음 줄이 오류가 아니라
+  **`러너 체크섬 일치.`** 로 이어지고, `~\.mysql-ai-bridge\bridge_agent.py` 가 실재한다.
+
 ## 5. Next Action
 
 병합 → 배포(`deploy_scope: included`) → **POST-DEPLOY PB-0008 실 Windows 브라우저 시각검증**
