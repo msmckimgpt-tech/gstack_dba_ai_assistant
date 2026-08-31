@@ -102,6 +102,14 @@ def _bridge_axis(conn) -> dict:
     if server_llm_enabled():
         return {"key": "bridge", "label": "외부 AI 브리지", "state": "na",
                 "detail": "서버 계정 LLM 사용 중 (브리지 미사용)", "metrics": {}}
+    if conn is None:
+        # MySQL 핸들 자체가 없다 — 이것은 **브리지의 사실이 아니라 핸들러의 상태**다.
+        # `unknown`(롤업 참여)으로 두면 DB 미가용 배포에서 종합 상태가 브리지 때문에
+        # 나빠진 것처럼 보인다. 다른 축(`_ask_worker_axis` 의 inprocess)이 같은 상황에서
+        # `na` 를 쓰는 것과 같은 이유로 롤업에서 빠진다 — 감추는 것이 아니라, DB 미가용은
+        # 이 화면의 다른 곳이 이미 말한다.
+        return {"key": "bridge", "label": "외부 AI 브리지", "state": "na",
+                "detail": "DB 미가용 — 브리지 상태를 평가할 수 없습니다", "metrics": {}}
 
     metrics = {"connected_accounts": 0, "listening_runners": 0, "console_capable": 0,
                "open_tasks": 0, "working_tasks": 0, "stale_tasks": 0,
@@ -176,6 +184,8 @@ def _delegated_jobs(conn, limit: int = 30) -> list[dict]:
     from shared.bridge_tasks import KIND_JOB, job_label
 
     out: list[dict] = []
+    if conn is None:
+        return out
     try:
         cur = conn.cursor()
         try:
