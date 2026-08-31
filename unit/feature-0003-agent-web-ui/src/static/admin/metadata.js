@@ -737,6 +737,7 @@ function _metaBindControls() {
   gateLlmControl(suggestBtn, {
     label: "메타데이터 AI 자동완성",
     delegatedText: "AI 자동완성 (내 AI)",
+    jobKind: "metadata_suggest",
   });
 }
 
@@ -2225,9 +2226,10 @@ function _metaBindBootstrap() {
   gateLlmControl(aiBtn, {
     label: "메타데이터 AI 일괄 자동완성",
     delegatedText: "AI 일괄 자동완성 (내 AI)",
+    jobKind: "metadata_bulk",
   });
   renderLlmNotice(aiBtn && aiBtn.closest(".admin-settings-panel-body, .admin-subpane, .admin-detail-col"),
-                  { label: "AI 일괄 자동완성" });
+                  { label: "AI 일괄 자동완성", jobKind: "metadata_bulk" });
   // metadata-bs-collapse: 테이블명 검색 필터. 검색어 변경은 결과 부분집합을 바꾸므로
   //   metadata-bs-paging: 페이지를 1쪽으로 리셋한 뒤 뷰 재계산.
   const search = document.getElementById("metadataBootstrapSearch");

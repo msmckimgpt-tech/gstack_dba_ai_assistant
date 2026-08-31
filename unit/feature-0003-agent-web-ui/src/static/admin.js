@@ -6,10 +6,11 @@ import { loadExtTasks } from "./admin/exttasks.js?v=dev";
 // feature-0043 TASK-20260831T100000 — 콘솔 LLM 상태 표면화(미적용 배지·사유·조작면 게이트).
 import {
   applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
-  llmBlocked, delegationReady,
+  llmBlocked, delegationReady, jobDelegable,
 } from "./admin/llm-state.js?v=dev";
 // 다른 admin/* 모듈이 "../admin.js" 로 가져다 쓰는 계약 보존 (aiops·usage 와 동형 re-export).
-export { applyLlmInactiveMarks, gateLlmControl, renderLlmNotice, llmBlocked, delegationReady };
+export { applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
+         llmBlocked, delegationReady, jobDelegable };
 import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
@@ -2139,6 +2140,19 @@ function renderReasoning(redteam, notes) {
   if (!body) return;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+  // feature-0043 TASK-20260831T100000 — **빈 화면이 스스로를 설명하게** 한다.
+  //
+  // 서버 측 red-team 검증은 `agent_core.run_agent` 안에서 돌았고, 그 경로가 게이트에 막힌
+  // 뒤로는 새 리뷰가 쌓이지 않는다. 그런데 이 화면은 종전 그대로 "0 · 0 · 0" 을 그렸다 —
+  // 운영자는 그것을 "검증이 통과하고 있다" 또는 "고장" 으로 읽을 뿐, **애초에 돌지 않는다**
+  // 는 사실은 어디에도 없었다. 지표의 침묵이 곧 오독이 되는 자리다.
+  //
+  // 지표는 지우지 않는다(과거 기록은 그때의 사실이다). 위에 범위를 한 줄로 얹는다.
+  const gateNote = llmBlocked()
+    ? `<p class="admin-llm-inactive-note">서버가 답변을 만들지 않으므로 <b>서버 측 자가 리뷰는`
+      + ` 실행되지 않습니다</b>(고장이 아닙니다). 아래 수치는 전환 이전 기록입니다.</p>`
+    : "";
+
   // ── 1. red-team 리뷰 활동 ──
   const st = (redteam && redteam.stats) || {};
   const statHtml = `
@@ -2181,6 +2195,7 @@ function renderReasoning(redteam, notes) {
     : '<div class="admin-detail-empty">축적된 노트가 없습니다.</div>';
 
   body.innerHTML = `
+    ${gateNote}
     <div class="reasoning-section">
       <h3 class="reasoning-section-title">자가 적대 리뷰 활동</h3>
       <!-- 안내는 "이 화면이 무엇인가" 한 줄로 끝낸다. 접기/펼치기·정렬 같은 조작법과 다른
@@ -4492,8 +4507,9 @@ export function buildSystemPromptEditor({ scope, productId = null, roleId = null
     //   복원**하므로, 위임 문구는 그 복원과 충돌한다. 그래서 여기서는 문구를 바꾸지 않고
     //   (`delegatedText` 미지정) 활성/비활성과 툴팁만 다룬다 — 두 곳이 같은 속성을 두고
     //   싸우면 마지막에 실행된 쪽이 이기고, 그 순서는 사용자 조작에 따라 달라진다.
-    gateLlmControl(autoBtn, { label: "시스템 프롬프트 자동작성" });
-    renderLlmNotice(section, { label: "프롬프트 자동작성" });
+    gateLlmControl(autoBtn, { label: "시스템 프롬프트 자동작성",
+                             jobKind: "prompt_generate" });
+    renderLlmNotice(section, { label: "프롬프트 자동작성", jobKind: "prompt_generate" });
   }
 
   const resolveProductId = () => {

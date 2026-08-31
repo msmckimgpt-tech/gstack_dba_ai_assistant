@@ -39,9 +39,25 @@ export function llmBlocked() {
   return llmState().server_llm_blocked === true;
 }
 
-/** 이 관리자의 개인 AI 가 콘솔 작업을 대신할 수 있는가. */
+/** 이 관리자의 개인 AI 가 콘솔 작업을 대신할 수 있는가 (러너 자격 축). */
 export function delegationReady() {
   return llmState().delegation === "ready";
+}
+
+/**
+ * **이 기능**을 위임할 수 있는가 — 러너 자격 ∧ 그 종류의 전 구간 배선.
+ *
+ * 러너가 콘솔 작업을 신고했다는 것과 *이* 기능의 적재 호출부·프롬프트 조립·산출물 반영이
+ * 서 있다는 것은 **다른 사실**이다. 앞의 것만 보고 조작면을 열면 사용자는 "눌렀는데 아무
+ * 일도 없는" 버튼을 만난다 — 이 feature 가 P0-M·P0-T 에서 두 번 지운 바로 그 상태다.
+ *
+ * `jobKind` 를 주지 않으면 러너 자격만 본다(위임 대상이 아닌 조작면용).
+ */
+export function jobDelegable(jobKind) {
+  if (!delegationReady()) return false;
+  if (!jobKind) return true;
+  const list = llmState().delegable_jobs;
+  return Array.isArray(list) && list.indexOf(jobKind) >= 0;
 }
 
 /** 상태별 안내 1문장 + 조치 경로. 화면이 문구를 지어내지 않게 서버 값을 그대로 쓴다. */
@@ -67,10 +83,16 @@ export function inactiveSurfaces() {
  * @param {string}      opts.label     이 기능의 이름(툴팁 문구에 쓴다)
  * @param {string}      opts.delegatedText 위임 가능할 때 버튼에 쓸 문구(생략 시 원문 유지)
  *
+ * @param {string}      opts.jobKind   이 버튼이 적재할 콘솔 작업 종류. 주면 **그 종류의
+ *                                     배선까지** 확인하고 열린다(`jobDelegable`).
+ *
  * 위임 가능하면 **막지 않는다** — 그 경우 이 버튼은 실제로 동작한다(개인 AI 가 처리).
  * 막아야 하는 것은 "차단됐고 위임도 불가" 뿐이다.
+ *
+ * ⚠ `jobKind` 를 생략하면 러너 자격만 본다. 위임 흐름을 붙이는 버튼에는 **반드시** 준다 —
+ *   생략하면 배선이 없는데도 버튼이 열려, 누르면 아무 일도 일어나지 않는다.
  */
-export function gateLlmControl(el, { label = "이 기능", delegatedText = "" } = {}) {
+export function gateLlmControl(el, { label = "이 기능", delegatedText = "", jobKind = "" } = {}) {
   if (!el) return;
   // 원문을 한 번만 보존한다 — 재렌더가 여러 번 돌아도 "위임" 문구가 원문을 덮지 않게.
   if (el.dataset.llmOrigText == null) el.dataset.llmOrigText = el.textContent || "";
@@ -85,7 +107,7 @@ export function gateLlmControl(el, { label = "이 기능", delegatedText = "" } 
     if (origTitle) el.setAttribute("title", origTitle); else el.removeAttribute("title");
     return;
   }
-  if (delegationReady()) {                   // 위임 가능 — 동작한다. 다만 **누가** 하는지 밝힌다.
+  if (jobDelegable(jobKind)) {               // 위임 가능 — 동작한다. 다만 **누가** 하는지 밝힌다.
     el.disabled = false;
     el.classList.remove("is-llm-blocked");
     if (delegatedText) el.textContent = delegatedText;
@@ -105,10 +127,10 @@ export function gateLlmControl(el, { label = "이 기능", delegatedText = "" } 
  *
  * 이미 있으면 갱신하고, 필요 없어지면 지운다(재렌더마다 쌓이지 않게).
  */
-export function renderLlmNotice(mountEl, { label = "이 기능" } = {}) {
+export function renderLlmNotice(mountEl, { label = "이 기능", jobKind = "" } = {}) {
   if (!mountEl) return;
   let note = mountEl.querySelector(`:scope > .${NOTE_CLASS}`);
-  if (!llmBlocked() || delegationReady()) {
+  if (!llmBlocked() || jobDelegable(jobKind)) {
     if (note) note.remove();
     return;
   }

@@ -2876,8 +2876,10 @@ function _metaGraphBindAiPopover(key, scope) {
   // 것인지 대상이 없는 것인지 구분하지 못했다. 실행 전에 상태를 말하고 조치 경로를 준다.
   // ⚠ 게이트는 `metadata.graph.analyze` 권한 게이트와 **직교**한다 — 권한이 있어도 실행
   //   수단이 없을 수 있고, 그 둘을 한 조건으로 접으면 어느 쪽이 원인인지 화면이 말할 수 없다.
-  gateLlmControl(btn, { label: "그래프 AI 능동 분석", delegatedText: "✨ 능동 분석 (내 AI)" });
-  renderLlmNotice(document.getElementById("metaGraphAiSec"), { label: "AI 능동 분석" });
+  gateLlmControl(btn, { label: "그래프 AI 능동 분석", delegatedText: "✨ 능동 분석 (내 AI)",
+                        jobKind: "node_analysis" });
+  renderLlmNotice(document.getElementById("metaGraphAiSec"),
+                  { label: "AI 능동 분석", jobKind: "node_analysis" });
   if (!pop || !ta || !go) return;   // popover 마크업 부재(비정상) — 버튼 단독 동작 보존
   if (_metaGraph.aiPrompt) ta.value = _metaGraph.aiPrompt;
   let hideT = null;

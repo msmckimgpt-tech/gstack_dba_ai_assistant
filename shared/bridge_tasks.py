@@ -158,11 +158,15 @@ BATCH_TASK_MAX_AGE_MIN = 180
 #:   response    : 'text' | 'json'. 러너 프롬프트의 출력 규약과 회수 파서를 함께 정한다.
 #:   apply       : 산출물이 도달할 곳. 'review'=사람이 검토 후 저장(폼에 채움) /
 #:                 'store'=기존 저장 경로에 자동 기입.
-#:   wired       : **이 종류의 양쪽 배선(프롬프트 조립 · 산출물 반영)이 실제로 존재하는가.**
-#:                 False 면 `enqueue_console_job` 이 거절한다 — 반영될 곳이 없는 작업을
-#:                 대기열에 넣으면 개인 AI 의 토큰과 시간을 태우고 "제출됐지만 반영 실패" 만
-#:                 남는다. 종류를 먼저 선언하고 배선을 나중에 붙이는 동안, 이 플래그가
-#:                 「선언됐지만 아직 못 쓴다」를 대기열이 아니라 **거절**로 표현한다.
+#:   wired       : **이 종류의 전 구간(적재 호출부 · 프롬프트 조립 · 산출물 반영)이 실제로
+#:                 존재하는가.** False 면 `enqueue_console_job` 이 거절하고, 관리 콘솔은 그
+#:                 종류의 조작면을 "위임 불가" 로 표시한다.
+#:
+#:                 ⚠ **부분 배선을 True 로 적지 않는다.** 이 feature 가 P0-M·P0-T 에서 두 번
+#:                 밟은 함정이 정확히 그것이다 — 화면은 "할 수 있다" 고 말하는데 실행 경로가
+#:                 없어, 사용자가 누르면 아무 일도 일어나지 않거나 조용히 다른 것이 된다.
+#:                 전 구간이 서기 전까지는 False 가 **정직한 값**이고, 그 상태에서 화면은
+#:                 사유와 함께 비활성으로 보인다.
 #:
 #: `apply` 를 종류마다 굳히는 이유(사용자 결정 2026-08-31 "자율적으로 입력"): 전환은 **기존
 #: 경로의 쓰기 의미를 보존**해야 한다. 메타데이터 자동완성은 원래 검토형이었고 배치는 원래
@@ -171,12 +175,12 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
     "metadata_suggest": {
         "label": "메타데이터 자동완성(단건)",
         "origin": ORIGIN_WEB, "response": "json", "apply": "review",
-        "wired": True,
+        "wired": False,
     },
     "metadata_bulk": {
         "label": "메타데이터 자동완성(일괄)",
         "origin": ORIGIN_WEB, "response": "json", "apply": "review",
-        "wired": True,
+        "wired": False,
     },
     "node_analysis": {
         "label": "그래프 AI 능동 분석",
@@ -186,7 +190,7 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
     "prompt_generate": {
         "label": "시스템 프롬프트 자동작성",
         "origin": ORIGIN_WEB, "response": "text", "apply": "review",
-        "wired": True,
+        "wired": False,
     },
     "insight_summary": {
         "label": "인사이트 배치",

@@ -51,6 +51,7 @@ __all__ = [
     "DELEGATION_OUTDATED",
     "INACTIVE_SURFACES",
     "console_llm_state",
+    "delegable_job_kinds",
     "delegation_available",
     "inactive_surfaces",
     "version_at_least",
@@ -299,4 +300,25 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False) -> dict:
         "reason": _REASON.get(state, ""),
         "action_url": _ACTION_URL.get(state, ""),
         "runner": runner,
+        # ── 위임은 **작업 종류 단위**로 참이다 (TASK-20260831T100000) ──────────────
+        #
+        # 러너가 콘솔 작업을 신고했다는 것과 *이* 기능의 전 구간(적재 호출부·프롬프트
+        # 조립·산출물 반영)이 서 있다는 것은 다른 사실이다. 앞의 것만 보고 조작면을 열면
+        # 사용자는 "눌렀는데 아무 일도 없는" 버튼을 만난다 — P0-M·P0-T 가 두 번 지운
+        # 바로 그 상태다.
+        #
+        # 그래서 화면이 종류별로 판정할 수 있게 **배선이 선 종류의 목록**을 함께 내린다.
+        # 러너 자격이 없으면 목록은 비어 있다(둘 다 필요하므로 여기서 미리 접는다).
+        "delegable_jobs": (delegable_job_kinds() if state == DELEGATION_READY else []),
     }
+
+
+def delegable_job_kinds() -> list[str]:
+    """전 구간 배선이 선 작업 종류. 레지스트리의 `wired` 가 유일한 출처다.
+
+    화면이 자기 목록을 갖지 않게 서버가 내려보낸다 — 프론트에 종류 이름을 적어 두면
+    배선을 끄는 날 그 목록만 낡아, 없는 경로를 여는 버튼이 남는다.
+    """
+    from shared.bridge_tasks import JOB_SPECS
+
+    return [k for k, v in JOB_SPECS.items() if v.get("wired")]
