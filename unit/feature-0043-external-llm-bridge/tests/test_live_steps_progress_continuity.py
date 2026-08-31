@@ -223,3 +223,130 @@ def test_comment_stripper_removes_comments_but_keeps_strings():
     out = _strip_js_comments(src)
     assert 'return "error"' not in out, "주석이 남아 존재 단언을 통과시킨다"
     assert '"http://x//y"' in out, "문자열 리터럴 안의 // 를 주석으로 잘랐다"
+
+
+# ── 추론 구간의 표시 밀도 (사용자 제보 2026-08-31 2차) ────────────────────────
+#
+#   "해당 구간이 사이드 바 내부에서 비교적 큰 범위를 차지하는 것으로 출력되어 최대한 단순한
+#    형태로 구성해주세요. 외곽선 및 배경 없이 한 줄로 출력되어도 문제없습니다. 목적 자체는
+#    추론에 대한 소요시간을 확보하는 것 자체이기 때문입니다."
+#   "최하단의 누적시간은 실시간으로 갱신되도록 구성해주세요. (단순히, 첫 호출시간과 현재시간의
+#    차이로 갱신)"
+#   "'▼ 쿼리결과' 버튼을 통해 확장되는 리스트에서 추론 구간은 의미있는 정보가 없는 것으로
+#    확인되었으니, 출력하지 않도록 구성해주세요."
+
+ACTIVITY_ROW = _strip_js_comments(_js_func(APP, "_buildStepActivityRow"))
+MESSAGES = (WEB_SRC / "static" / "app" / "messages.js").read_text(encoding="utf-8")
+VISIBLE_FN = _strip_js_comments(_js_func(MESSAGES, "bubbleVisibleSteps"))
+DETAILS_FN = _strip_js_comments(_js_func(MESSAGES, "renderMessageDetails"))
+STEP_BLOCKS = _strip_js_comments(_js_func(MESSAGES, "buildStepBlocks"))
+
+
+def test_activity_rows_do_not_use_the_card_container():
+    """카드(`.step-side-panel-item`)를 쓰면 외곽선·배경·패딩이 함께 붙는다 — 그게 부피의 정체다."""
+    assert "step-side-panel-activity" in ACTIVITY_ROW, "전용 한 줄 클래스가 없다"
+    assert "step-side-panel-item" not in ACTIVITY_ROW, (
+        "내부 동작이 여전히 카드 컨테이너를 쓴다(외곽선·배경이 붙는다)")
+    assert "buildStepDetailEl" not in ACTIVITY_ROW, (
+        "카드 빌더를 그대로 부른다 — 「내부 동작」 배지·제목 블록이 다시 3줄을 차지한다")
+
+
+def test_activity_row_keeps_only_label_and_duration():
+    """남기는 것은 번호·구간 문구·소요시간. 시작 시각·사유는 title 로 접는다."""
+    assert "step-activity-text" in ACTIVITY_ROW, "구간 문구 요소가 없다"
+    assert "step-side-panel-time" in ACTIVITY_ROW, "소요시간 칸이 없다 — 이 행의 존재 이유다"
+    assert "row.title" in ACTIVITY_ROW, "접은 정보(시작 시각·사유)를 title 로 남기지 않았다"
+
+
+def test_activity_row_is_single_line_by_css():
+    """CSS 가 한 줄을 보장해야 한다 — 좁은 패널에서 접히면 '한 줄' 계약이 깨진다."""
+    css = (WEB_SRC / "static" / "css" / "chat.css").read_text(encoding="utf-8")
+    block = css[css.index(".step-side-panel-activity {"):]
+    block = block[:block.index("\n}") + 2]
+    assert "flex-wrap: nowrap" in block, "좁은 패널에서 행이 접힌다"
+    assert "border" not in block and "background" not in block, (
+        "외곽선/배경을 다시 붙였다 — 사용자가 지운 것이 그것이다")
+    text_block = css[css.index(".step-side-panel-activity .step-activity-text {"):]
+    text_block = text_block[:text_block.index("\n}") + 2]
+    assert "text-overflow: ellipsis" in text_block and "white-space: nowrap" in text_block, (
+        "긴 문구가 줄바꿈으로 두 줄이 된다")
+
+
+# ── 실시간 누적 티커 ─────────────────────────────────────────────────────────
+
+def test_cumulative_on_the_last_row_is_live():
+    """'첫 호출시간과 현재시간의 차이' — 기준점을 심고 티커가 그 텍스트만 갱신한다."""
+    assert "_parseStepTs(s && s.created_at)" in PANEL, "첫 호출 시각을 기준점으로 잡지 않는다"
+    assert "isLastRow" in PANEL and "liveCumFrom" in PANEL, "최하단 행 판정·기준점이 없다"
+    live = _strip_js_comments(_js_func(APP, "_liveDurEl"))
+    assert "dataset.liveFrom" in live, "티커가 찾을 표식이 없다"
+
+
+def test_ticker_updates_text_only_and_stops_itself():
+    """재렌더가 아니라 텍스트만 갱신한다 — 스크롤·펼친 결과셋을 건드리면 부작용이 크다."""
+    paint = _strip_js_comments(_js_func(APP, "_paintStepPanelLiveTimes"))
+    assert "textContent" in paint, "텍스트 갱신이 아니다"
+    assert "innerHTML" not in paint, "재렌더로 갱신한다(스크롤·펼침 상태가 날아간다)"
+    assert "_stopStepPanelTicker()" in paint, (
+        "대상이 사라져도 계속 돈다 — 보이지 않는 화면을 1초마다 다시 쓴다")
+    assert 'classList.contains("hidden")' in paint, "닫힌 패널에도 티커가 돈다"
+
+
+def test_ticker_does_not_run_for_finished_answers():
+    """완료된 답변의 단계 패널은 정지 화면이어야 한다 — 흐르는 숫자는 거짓이 된다."""
+    assert 'body.querySelector("[data-live-from]")' in PANEL, (
+        "진행 중 값이 있는지 보지 않고 티커를 건다")
+    assert "else _stopStepPanelTicker();" in PANEL, "정지 화면에서 티커를 끄지 않는다"
+    close = _strip_js_comments(_js_func(APP, "closeStepSidePanel"))
+    assert "_stopStepPanelTicker()" in close, "패널을 닫아도 타이머가 남는다"
+
+
+def test_single_finished_step_still_gets_a_live_cumulative():
+    """단계가 하나인데 그것이 이미 끝난 도구면, 화면에 흐르는 값이 하나도 없다.
+
+    codex 적대 리뷰 P2(단일 단계 경계). 진행 중 행이면 「진행 중」 경과가 곧 누적이라 중복이지만,
+    끝난 도구 하나만 있는 상태에서는 "첫 호출 이후 얼마나 지났는가" 를 알 수 없다.
+    """
+    assert "(idx > 0 || Number.isFinite(tmNow.selfMs))" in PANEL, (
+        "단계가 하나면 누적이 영원히 표시되지 않는다")
+
+
+def test_running_tooltip_matches_what_is_shown():
+    """툴팁이 화면과 모순되면 안 된다 — 경과를 흘리면서 "표시되지 않는다" 고 적을 수 없다."""
+    assert "소요는 다음 기록이 남으면 표시됩니다" not in PANEL, (
+        "실시간 경과를 표시하면서 툴팁은 미표시라고 안내한다(codex 적대 리뷰 P3)")
+    assert "1초마다 갱신" in PANEL, "갱신 주기를 사용자에게 알리지 않는다"
+
+
+def test_truncated_window_gets_no_live_cumulative():
+    """앞 단계가 생략된 창의 첫 행은 '처음' 이 아니다 — 흐르게 하면 틀린 값이 흐른다."""
+    assert "(isLive && omitted === 0)" in PANEL, (
+        "생략된 창에서도 실시간 누적을 건다(창 기준 누적을 전체 누적으로 오표기)")
+
+
+# ── 말풍선 목록에서 내부 동작 제외 ────────────────────────────────────────────
+
+def test_bubble_step_list_excludes_activity_steps():
+    """말풍선 목록엔 소요시간 칸이 없어 내부 동작 행은 문장 한 줄만 남고 연달아 쌓인다."""
+    assert '!== "activity"' in VISIBLE_FN, "말풍선 목록이 내부 동작을 그대로 나열한다"
+    # 필터가 SQL/비-SQL 양쪽 분기에 **모두** 적용돼야 한다 — 한쪽만 걸면 다시 새어 나온다.
+    assert STEP_BLOCKS.count("shown.filter(") == 2, (
+        "필터된 목록을 두 분기가 함께 쓰지 않는다")
+    assert "steps.filter(" not in STEP_BLOCKS, (
+        "원본 `steps` 를 직접 거르는 분기가 남아 있다(제외가 우회된다)")
+
+
+def test_disclosure_and_body_agree_on_what_is_displayable():
+    """전량이 내부 동작인 시점(브리지 착수 직후)에 여닫이만 생기면 **빈 확장**이 노출된다.
+
+    codex 적대 리뷰 P2. 여닫이 존재 판정과 본문 조립이 **같은 집합**을 봐야 한다.
+    """
+    assert "bubbleVisibleSteps(meta?.steps)" in DETAILS_FN, (
+        "여닫이 판정이 필터 전 목록(`meta.steps`)을 본다 — 빈 확장이 만들어진다")
+    assert "meta.steps.length" not in DETAILS_FN and "meta?.steps.length" not in DETAILS_FN, (
+        "원본 길이로 여닫이를 판정하는 경로가 남아 있다")
+
+
+def test_side_panel_still_shows_activity_steps():
+    """말풍선에서 뺀 것이 '어디에도 없다' 가 되면 안 된다 — 소요시간은 패널이 보여준다."""
+    assert "_buildStepActivityRow" in PANEL, "사이드 패널에서도 내부 동작이 사라졌다"
