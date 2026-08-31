@@ -1008,3 +1008,14 @@ LLM처리를 수행하도록 구성해주세요."
       저장 답변 경로 무회귀. 증적 `feature-0003 docs/test-runs.d/…-postdeploy.md`
 - [ ] 실 러너 end-to-end 왕복(회선 절단 → 재접속 눈 관측)은 사용자 머신 AI CLI + 새 토큰이
       필요해 무인 완결 불가 — 함수 수준은 하네스 S1~S8 이 덮는다
+
+#### POST-DEPLOY (배포본 5e806c6a)
+
+- [x] **D4** `verify-completion --pre-commit` PASS
+- [x] **D5** **PB-0008 실 Windows 브라우저 시각검증 PASS (4/4 축)** — 배포본 5e806c6a.
+      증적 `feature-0003 docs/test-runs.d/TASK-20260831T100000-console-llm-parity-postdeploy.md`.
+      라이브가 `runner_idle` 분기를 타 `no_connection` 과 실제로 갈린 것이 부수 실증
+- [x] **D6** 배포 완료 — web-a/b + 워커 5종 = `5e806c6a` · 대화 스모크 PASS(전환 모드) ·
+      surge 잔존 0 · **무중단 실측 `no upstreams available` = 0** · `/readyz` git_commit 일치
+- [ ] **위임 e2e 미검증** — `wired` 전부 False 라 콘솔 작업이 적재되지 않는다. 위임이 실제로
+      도는 화면은 C7~C10 배선 후에야 관측 가능(정직한 잔여)

@@ -3451,3 +3451,13 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 누출 스캔(7패턴 — feature-id / TASK·REV·CHG·ADR id / §번호 / 파일확장자 / 내부용어 / 경로 / 커밋해시): 신규 11항목 구간 **전건 0건**.
 - reconcile-first 실측: 편집 전 서빙 `https://localhost/static/release-notes-data.js` 200 · 브랜치 blob 과 **md5 동일**(`d40ed98d…` · 308,144B) → 파리티 갭 0. 독립 표본 4개(`index.html`·`admin.html`·app JS·설치 스크립트)도 캐시토큰 정규화 후 md5 일치.
 - **Pass/Fail: PASS**.
+
+### Run — TASK-20260831T100000-console-llm-parity (관리 콘솔 LLM 정합, POST-DEPLOY)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. 배포본 `5e806c6a` 실 Chrome
+  (`Chrome/151.0.7922.170`, `https://localhost/admin`)에서 4축 전부 PASS:
+  조작면 게이트(`metadataSuggestBtn` disabled + 사유 툴팁) · 미적용 배지 3 + 사유 dropdown 7
+  + 최하단 집계 4건 · 사용량/추론 배너 · `AI 운영 현황` 브리지 축 + KPI 2종.
+  라이브 상태가 `runner_idle` 분기를 타 **`no_connection` 과 실제로 갈렸다**(설계 의도 실증).
+  상세·미검증 항목: `docs/test-runs.d/TASK-20260831T100000-console-llm-parity-postdeploy.md`
+- 무중단 실측 `no upstreams available` = 0 · `/readyz` git_commit = `5e806c6a`.
