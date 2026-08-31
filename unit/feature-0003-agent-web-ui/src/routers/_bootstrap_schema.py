@@ -475,6 +475,22 @@ def _ensure_web_tables():
             cur.execute("ALTER TABLE WebAccounts ADD COLUMN AvatarObjectKey VARCHAR(512) NULL")
         except Exception:
             pass
+        # feature-0043 (2026-08-31, 사용자 결정): 브리지 모드에서 **내가 마지막으로 고른**
+        # 모델·추론등급. 대화별 저장(`AgentMemoryKv` 의 `model:<account-id>`)은 그 대화 안에서만
+        # 유효해서, 새 대화를 열 때마다 목록의 첫 항목으로 되돌아갔다 — 사용자가 매번 다시
+        # 골라야 했다. 계정 기본값을 두면 새 대화가 그 값으로 시작하고, 대화별 저장은 그대로
+        # 남아 **그 대화에서만** 다른 값을 쓰는 override 로 동작한다(2층 구조).
+        #
+        # 값은 `runtime:model` 형태(예: `claude:opus`)라 대화별 저장값과 같은 어휘를 쓴다.
+        # 길이는 러너 신고의 상한(런타임 32 + 모델 64 + 구분자)을 담을 수 있게 잡는다.
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultModel VARCHAR(112) NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultEffort VARCHAR(16) NULL")
+        except Exception:
+            pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebPermissions (

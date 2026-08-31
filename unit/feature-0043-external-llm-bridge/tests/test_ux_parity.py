@@ -56,6 +56,25 @@ def _func_source(path: pathlib.Path, name: str) -> str:
     raise AssertionError(f"{path.name}: 함수 {name} 를 찾지 못했다(이름이 바뀌었나?)")
 
 
+def _bridge_enqueue_kwarg(name: str) -> ast.expr:
+    """`_enqueue_web_bridge_task(...)` 호출이 그 이름으로 넘기는 **값 노드**.
+
+    ⚠ 문자열 자르기(`call[:call.index(")\\n")]`)를 쓰지 않는다 (2026-08-31). 인자 사이 주석에
+    닫는 괄호가 하나만 있어도 호출이 거기서 잘려, 실제로는 넘기고 있는 인자를 "안 넘긴다" 고
+    보고한다 — 실제로 그렇게 깨졌다. 계약("이 인자를 넘긴다")은 그대로 두고 읽는 방법만
+    구조 기반으로 바꾼다.
+    """
+    src = CONVS.read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "_enqueue_web_bridge_task"):
+            for kw in node.keywords:
+                if kw.arg == name:
+                    return kw.value
+            raise AssertionError(f"적재 호출이 {name} 를 넘기지 않는다")
+    raise AssertionError("브리지 적재 호출을 찾지 못했다 — 경로가 사라졌나?")
+
+
 def _js_func_source(path: pathlib.Path, name: str) -> str:
     """JS 파일에서 `function <name>(` 하나의 본문만 떼어낸다(중괄호 균형 기준).
 
@@ -972,8 +991,11 @@ def test_catalog_never_guesses_runner_models_on_failure():
     반영되지 않는다. 그것이 정확히 P0-T 가 지운 상태다.
     """
     body = _func_source(WEB_SRC / "routers" / "system.py", "get_api_vault_options")
-    except_block = body[body.index("    except Exception:"):]
-    except_block = except_block[:except_block.index("    finally:")]
+    # 핸들러 자신의 except/finally 만 본다 — 들여쓰기를 앵커에 포함해 **안쪽 try** 의
+    # except 를 집지 않게 한다(2026-08-31: 계정 기본값 조회를 감싸는 중첩 try 가 생기면서
+    # 종전 앵커가 그쪽을 먼저 잡아 거짓 실패했다).
+    except_block = body[body.index("\n    except Exception:"):]
+    except_block = except_block[:except_block.index("\n    finally:")]
     assert "runner_caps = []" in except_block, (
         "능력 조회 실패 시 빈 목록으로 닫지 않는다 — fail-soft 가 fail-open 이 된다")
 
@@ -1034,11 +1056,10 @@ def test_bridge_task_persists_the_picked_runtime_model_and_level():
     for col in ("RequestedRuntime", "RequestedModel", "ReasoningLevel"):
         assert col in insert, f"{col} 을 적재하지 않는다 — 고른 값이 러너에 닿지 않는다"
     # 호출부가 실제로 넘긴다(시그니처만 받고 호출부가 안 주면 항상 NULL 이 굳는다).
-    src = CONVS.read_text(encoding="utf-8")
-    call = src[src.index("agent_result = _enqueue_web_bridge_task("):]
-    call = call[:call.index(")\n")]
-    assert "requested_model=" in call and "reasoning_level=" in call, (
-        "적재 호출이 고른 값을 넘기지 않는다 — 컬럼만 있고 값은 늘 비는 배선")
+    # 값의 **모양**까지는 여기서 보지 않는다 — 무지정을 무지정으로 넘기는 계약은
+    # `test_bridge_request_pins.py` 가 AST 로 따로 잠근다(2026-08-31).
+    _bridge_enqueue_kwarg("requested_model")
+    _bridge_enqueue_kwarg("reasoning_level")
     # 런타임·모델은 화면 값(`runtime:model`)을 **적재 시점에** 가른다.
     assert "_split_runtime_model(" in enq, "런타임과 모델의 짝을 가르지 않는다"
     # 이력 보존: 스키마에서 컬럼을 지우지 않았다.
@@ -1357,9 +1378,9 @@ def test_task_persists_role_for_prompt_composition():
     """역할이 남아 있어야 역할별 지침을 조립할 수 있다."""
     src = BOOTSTRAP.read_text(encoding="utf-8")
     assert '("RoleId", "ALTER TABLE WebAiTasks ADD COLUMN RoleId' in src
-    call = CONVS.read_text(encoding="utf-8")
-    call = call[call.index("agent_result = _enqueue_web_bridge_task("):]
-    assert "role_id=role_id_for_run" in call[:call.index(")\n")], "역할을 넘기지 않는다"
+    role = _bridge_enqueue_kwarg("role_id")
+    assert isinstance(role, ast.Name) and role.id == "role_id_for_run", (
+        f"역할을 넘기지 않는다(넘기는 값: {ast.dump(role)})")
 
 
 def test_runner_puts_system_prompt_first():

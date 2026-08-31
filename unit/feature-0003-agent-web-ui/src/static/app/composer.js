@@ -426,12 +426,27 @@ const _BRIDGE_POLL_MS = 5000;
 //: 그 사실을 안내한 뒤 멈춘다(대화를 다시 열면 그 사이 도착한 답변은 그대로 보인다).
 const _BRIDGE_POLL_MAX_TICKS = 360;
 
-//: 같은 30분을 SSE 로 재는 상한. 서버가 55초마다 스트림을 닫으므로(배포 pre-drain 과의
-//: 상호작용 — `_BRIDGE_STREAM_MAX_HOLD_SEC` 주석 참조) 그만큼 재접속한다.
-const _BRIDGE_STREAM_MAX_ATTEMPTS = 33;
+//: 같은 30분을 SSE 로 재는 상한 — **시간으로** 잰다. 서버가 55초마다 스트림을 닫으므로
+//: (배포 pre-drain 과의 상호작용 — `_BRIDGE_STREAM_MAX_HOLD_SEC` 주석 참조) 그만큼 재접속한다.
+//:
+//: ⚠ 종전에는 **재접속 횟수**(33회)로 셌다. 오류 재시도(3초)가 정상 재접속(55초)과 같은
+//: 예산을 먹어, 회선이 열 번쯤 흔들리면 30분 예산이 1분 만에 소진되고 그 뒤로는 조용히
+//: 멈췄다 — 사용자에게는 "일정 시간이 지나면 실행 단계 갱신이 멈춘다" 로 보인다
+//: (제보 2026-08-31). 횟수는 병리적 재접속 폭주를 막는 안전판으로만 남긴다.
+const _BRIDGE_WATCH_MAX_MS = 30 * 60 * 1000;
+//: 횟수 안전판. **시간 예산보다 먼저 닿으면 안 된다** — `_BRIDGE_STREAM_MIN_CYCLE_MS` 로
+//: 나눈 값(30분 / 1초 = 1800)보다 넉넉해야, 서버가 계속 즉시 끊는 상황에서도 예산이 횟수로
+//: 조기 소진되지 않는다(codex 적대 리뷰 P2 — 600 이면 10분에 종료됐다).
+const _BRIDGE_STREAM_MAX_ATTEMPTS = 2000;
 //: 재접속 간격. 서버가 정상 종료(`reconnect`)했으면 0 에 가깝게 다시 붙고, 오류로 끊겼으면
 //: 이 값만큼 쉬었다 붙는다 — 서버가 죽었을 때 초당 재접속으로 두드리지 않기 위해.
 const _BRIDGE_STREAM_RETRY_MS = 3000;
+//: 한 번 붙었다 끊기는 최소 주기. 서버가 즉시 EOF 를 내는 병리 상태에서 시간 예산만 보고
+//: 초당 수백 회 재접속하지 않도록 한다.
+const _BRIDGE_STREAM_MIN_CYCLE_MS = 1000;
+//: 연속 회선 오류가 이만큼 쌓이면 SSE 를 포기하고 **폴링으로 내려간다**. 이 환경에서 스트림이
+//: 계속 끊긴다는 뜻이고, 폴링은 커넥션을 붙들지 않아 그런 회선에서 더 잘 버틴다.
+const _BRIDGE_STREAM_ERROR_GIVEUP = 3;
 
 //: 취소·대체된 task 를 알리는 문구. 서버가 대화 본문을 이미 바꿔 두었으므로 토스트는
 //: "무슨 일이 일어났는지" 만 짧게 말한다.
@@ -599,14 +614,24 @@ async function _streamBridgeStatus(taskId, convId) {
   if (typeof window.fetch !== "function" || !window.ReadableStream) return false;
   let sawAnyFrame = false;
   let lastPhase = "";
+  //: 연속 회선 오류. 프레임을 하나라도 받으면 0 으로 되돌린다 — "지금 이 회선이 계속
+  //: 끊기는가" 를 재는 값이지 누적 오류 수가 아니다.
+  let streakErrors = 0;
+  //: **단조 시계**로 예산을 잰다. 벽시계(`Date.now`)는 NTP 보정·사용자 시각 변경에
+  //: 끌려가 감시를 조기 종료시키거나(앞으로 점프) 상한을 넘겨 돌게 한다(codex 적대 리뷰 P2).
+  const _mono = () => ((typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now());
+  const watchUntil = _mono() + _BRIDGE_WATCH_MAX_MS;
 
   for (let attempt = 0; attempt < _BRIDGE_STREAM_MAX_ATTEMPTS; attempt += 1) {
+    if (_mono() >= watchUntil) break;
     if (_abandonedBridgeTasks.has(String(taskId))) return true;
     // 사용자가 다른 대화로 옮겼으면 조용히 멈춘다 — 남의 화면을 갱신하지 않는다.
     if (convId && String(state.activeConversationId || "") !== String(convId)) return true;
 
     const ctrl = new AbortController();
     _bridgeStreamAborts.set(taskId, ctrl);
+    const attemptStartedAt = _mono();
     let resp;
     try {
       resp = await fetch(`/api/ai/bridge_stream?task_id=${encodeURIComponent(taskId)}`, {
@@ -640,23 +665,48 @@ async function _streamBridgeStatus(taskId, convId) {
         lastPhase = phase;
         _applyBridgePhase(phase, prev, taskId, convId);
       },
-      markFrame: () => { sawAnyFrame = true; },
+      markFrame: () => { sawAnyFrame = true; streakErrors = 0; },
+      signal: ctrl.signal,
     });
     _bridgeStreamAborts.delete(taskId);
     if (outcome === "end" || outcome === "aborted") return true;
+    if (outcome === "error") {
+      // 회선이 끊겼다 — **종결이 아니다**. 종전에는 이것을 "aborted" 로 뭉뚱그려 호출측이
+      // 정상 종결로 읽었고, 그래서 일시적 오류 한 번이 진행 갱신을 영구히 멈췄다(제보
+      // 2026-08-31: 새로고침하면 진전돼 있고 잠시 뒤 또 멈춘다). 쉬었다 다시 붙는다.
+      streakErrors += 1;
+      // 이 회선에서 스트림이 계속 끊긴다 — 폴링으로 내려간다(호출측이 폴백을 건다).
+      if (streakErrors >= _BRIDGE_STREAM_ERROR_GIVEUP) return false;
+      await new Promise((r) => setTimeout(r, _BRIDGE_STREAM_RETRY_MS));
+      continue;
+    }
     // "reconnect" 또는 예기치 않은 EOF → 곧바로 다시 붙는다(간격 없음 = 폴링 아님).
+    // 다만 **너무 빨리 끊겼으면** 최소 주기를 둔다 — 즉시 EOF 를 내는 서버에 초당 수백 회
+    // 재접속하지 않기 위해(시간 예산만으로는 이 폭주를 막지 못한다).
+    const lasted = _mono() - attemptStartedAt;
+    if (lasted < _BRIDGE_STREAM_MIN_CYCLE_MS) {
+      await new Promise((r) => setTimeout(r, _BRIDGE_STREAM_MIN_CYCLE_MS - lasted));
+    }
   }
   // 상한 도달 — 개인 AI 가 꺼져 있으면 답은 오지 않는다. 그 사실을 말하고 멈춘다.
   showToast("아직 답변이 오지 않았습니다. 내 AI 연결이 켜져 있는지 확인해 주세요.");
   return true;
 }
 
-/** SSE 프레임을 읽어 처리한다. 반환: "end" | "reconnect" | "aborted" | "eof". */
-async function _consumeBridgeStream(resp, taskId, convId, { onPhase, markFrame }) {
-  const reader = resp.body.getReader();
+/** SSE 프레임을 읽어 처리한다. 반환: "end" | "reconnect" | "aborted" | "error" | "eof".
+ *
+ *  `aborted` 와 `error` 는 **다른 사실**이다: 앞은 우리가 끊은 것(취소·대화 이탈)이라 종결이고,
+ *  뒤는 회선이 끊긴 것이라 재접속 대상이다. 종전에는 둘을 하나로 묶어, 네트워크 요동 한 번이
+ *  30분짜리 감시를 통째로 끝냈다. */
+async function _consumeBridgeStream(resp, taskId, convId, { onPhase, markFrame, signal }) {
+  // ⚠ `getReader()` 도 try 안이다 — 밖에 두면 body 가 있으되 읽을 수 없는 응답(프록시가
+  //   바꿔치기한 스트림 등)에서 예외가 재시도 로직을 **우회해** 감시가 통째로 죽는다
+  //   (codex 적대 리뷰 P2). 여기 들어온 모든 실패는 "error" 로 수렴해 재접속 대상이 된다.
+  let reader = null;
   const decoder = new TextDecoder();
   let buf = "";
   try {
+    reader = resp.body.getReader();
     for (;;) {
       const { value, done } = await reader.read();
       if (done) return "eof";
@@ -682,7 +732,7 @@ async function _consumeBridgeStream(resp, taskId, convId, { onPhase, markFrame }
             return "end";
           }
         } else if (event === "steps") {
-          _renderBridgeSteps(taskId, data.steps);
+          _renderBridgeSteps(taskId, data.steps, Number(data.steps_omitted || 0));
         } else if (event === "reconnect") {
           return "reconnect";
         } else if (event === "end") {
@@ -695,9 +745,11 @@ async function _consumeBridgeStream(resp, taskId, convId, { onPhase, markFrame }
       }
     }
   } catch (_err) {
-    return "aborted";
+    // 우리가 끊었을 때만 종결이다(취소·대화 이탈 → `ctrl.abort()`). 그 외는 회선 오류이므로
+    // 호출측이 다시 붙어야 한다 — 여기서 종결로 보고하면 감시가 영구히 죽는다.
+    return (signal && signal.aborted) ? "aborted" : "error";
   } finally {
-    try { reader.cancel(); } catch (_e) { /* no-op */ }
+    try { if (reader) reader.cancel(); } catch (_e) { /* no-op */ }
   }
 }
 
@@ -760,12 +812,16 @@ async function _renderBridgeAnswer(taskId, convId, delivered) {
  *
  *  요소가 없으면 조용히 지나간다(대기 말풍선이 아직 안 그려졌거나 이미 답변으로 덮인 경우).
  */
-function _renderBridgeSteps(taskId, steps) {
+function _renderBridgeSteps(taskId, steps, omitted = 0) {
   if (!Array.isArray(steps) || !steps.length) return;
   const tid = String(taskId);
+  //: 서버가 최신 쪽 창만 실어 보냈을 때 밀려난 앞 단계 수. 화면은 이 사실을 말해야 한다 —
+  //: 말하지 않으면 "앞부분이 사라졌다" 또는 "갱신이 멈췄다" 로 읽힌다(무음 절단 금지).
+  const omittedCount = Math.max(0, Number(omitted) || 0);
 
   // ② 사이드 패널 — 그 run 을 보고 있을 때만 덮어쓴다(남의 화면을 뺏지 않는다).
-  refreshStepSidePanelForRun(tid, steps);
+  //    `live: true` — 이 목록은 **진행 중**이라, 마지막 단계는 아직 끝나지 않았다.
+  refreshStepSidePanelForRun(tid, steps, { live: true, omitted: omittedCount });
 
   // ① 말풍선 details — 앵커는 `.message-bubble`(app.js 가 placeholder 에만 부여).
   const bubble = document.querySelector(`[data-bridge-task="${CSS.escape(tid)}"]`);
@@ -787,11 +843,13 @@ function _renderBridgeSteps(taskId, steps) {
   }
 
   // 「단계 보기 (N)」 — 개수와 클릭 대상(steps)을 함께 갱신한다. 텍스트만 고치면
-  // 눌렀을 때 옛 목록이 열린다.
+  // 눌렀을 때 옛 목록이 열린다. 개수는 **총 단계 수**다(창 밖으로 밀려난 앞 단계 포함) —
+  // 창 크기를 개수로 내보내면 상한에 닿는 순간 숫자가 멈춰 "진행이 멈췄다" 로 읽힌다.
   const btn = bubble.querySelector(".bubble-steps-btn");
   if (btn) {
-    btn.textContent = `단계 보기 (${steps.length})`;
-    const src = { steps, runId: tid, convId: state.activeConversationId };
+    btn.textContent = `단계 보기 (${steps.length + omittedCount})`;
+    const src = { steps, runId: tid, convId: state.activeConversationId,
+                  live: true, omitted: omittedCount };
     const fresh = btn.cloneNode(true);   // 기존 리스너 제거(중복 바인딩 방지)
     fresh.addEventListener("click", () => openStepSidePanel(src));
     btn.replaceWith(fresh);
@@ -826,7 +884,9 @@ async function _pollBridgeAnswerInner(taskId, convId) {
       _applyBridgePhase(status.phase, prev, taskId, convId);
       if (status.phase === "canceled") return;
     }
-    if (status && Array.isArray(status.steps)) _renderBridgeSteps(taskId, status.steps);
+    if (status && Array.isArray(status.steps)) {
+      _renderBridgeSteps(taskId, status.steps, Number(status.steps_omitted || 0));
+    }
     if (status && status.answered) {
       await _renderBridgeAnswer(taskId, convId, status.delivered !== false);
       return;
@@ -2820,6 +2880,19 @@ function _composerReasoningOptions() {
   return Array.isArray(list) ? list : [];
 }
 
+// 이 등급 값을 사람에게 보여줄 이름. 브리지 모드에서는 **신고가 준 라벨**이 정본이다.
+//
+// 서버 표(`_reasoningLevelLabel`)를 쓰면 러너 어휘가 전부 미등록이라 기본 라벨로 떨어진다 —
+// 메뉴 항목은 `매우높음` 인데 버튼만 "일반" 인, 같은 값을 두 이름으로 부르는 화면이 된다.
+function _composerReasoningLabelFor(value) {
+  if (_composerRunnerCatalog()) {
+    const hit = _composerReasoningOptions().find((o) => o.value === value);
+    // 목록에 없으면 값 자체를 보여준다 — 없는 이름을 지어내는 것보다 낫다.
+    return hit ? (hit.label || hit.value) : String(value || "");
+  }
+  return _reasoningLevelLabel(value);
+}
+
 // 이 값이 **지금** 고를 수 있는 추론 강도인가.
 //
 // 브리지 모드에서는 러너가 신고한 목록으로, 아니면 서버 고정 집합으로 판정한다. hydration
@@ -2851,7 +2924,16 @@ function _composerCurrentReasoningLevel() {
     // 못하므로 여기서는 **신고 목록** 자체를 기준으로 삼는다. 목록에 없으면 첫 항목으로
     // 떨어진다 — 런타임을 바꿔 등급 어휘가 갈린 순간에도 항상 유효한 값이 선택돼 있다.
     const has = (v) => options.some((o) => o.value === v);
+    // ① 이 세션에서 방금 고른 값이 언제나 먼저다.
     if (has(state.reasoningLevel)) return state.reasoningLevel;
+    // ② 계정 기본값 — 서버가 **지금 런타임 목록으로 대조해** 내려준 값이다(2026-08-31).
+    //    ⚠ 로컬 미러보다 **앞**에 둔다 (codex P2-4). `localStorage` 는 계정이 아니라
+    //    브라우저에 묶여 있어, 계정 A 에서 고른 값이 로그아웃 뒤 계정 B 의 첫 화면에
+    //    그대로 남는다. 계정 기본값은 서버가 그 계정에 대해 아는 사실이므로 이쪽이 진실에
+    //    가깝다(그리고 B 가 고르는 순간 ①이 다시 이긴다).
+    const acct = String(_composerRunnerCatalog()?.default_reasoning_level || "");
+    if (has(acct)) return acct;
+    // ③ 로컬 미러 — 계정 기본값이 아직 없을 때의 편의(같은 브라우저·같은 사용자 가정).
     const stored = _readReasoningPrefFromLocal();
     if (has(stored)) return stored;
     return options.length ? options[0].value : "";
@@ -2871,7 +2953,14 @@ function _updateComposerReasoningLabel() {
   if (_composerModelSelectorHidden()) return;
   const supported = _composerModelSupportsThinking();
   if (labelEl) {
-    labelEl.textContent = supported ? _reasoningLevelLabel(_composerCurrentReasoningLevel()) : "미지원";
+    // 라벨도 **신고 목록에서** 찾는다 (실 브라우저 발견 2026-08-31). `_reasoningLevelLabel` 은
+    // 서버 LLM 어휘(low/normal/high/max)의 표라, 러너 어휘(`medium`·`xhigh`)를 넘기면 못 찾고
+    // 기본 라벨("일반")로 떨어진다 — 메뉴에서는 `매우높음` 이 선택 표시인데 버튼 라벨만
+    // "일반" 인 상태가 되고, 사용자는 자기가 고른 등급이 적용됐는지 확인할 수 없다.
+    // (고른 값 자체는 정상 전송되고 있었다 — 어긋난 것은 표시 계층뿐이다.)
+    labelEl.textContent = supported
+      ? _composerReasoningLabelFor(_composerCurrentReasoningLevel())
+      : "미지원";
   }
   if (item) {
     // thinking 미지원 모델이면 선택기를 비활성(클릭·팝업 차단) — 파라미터는 어차피 무시된다.
@@ -3330,7 +3419,16 @@ async function sendPrompt() {
   // P0-Z3(2026-08-28) 이후 이 상태의 의미가 좁아졌다: 브리지 모드라도 연결된 러너가 능력을
   // 신고하면 선택기는 보이고(그때 값은 `runtime:model`) 여기서 정상적으로 실린다. 숨김은
   // **고를 것이 실제로 없을 때**만 남는다 — 러너 미연결 · 구 러너 · `--cmd` 직접 지정.
-  const _selectorHidden = _composerModelSelectorHidden();
+  // 카탈로그를 아직(또는 끝내) 받지 못했으면 **모델·등급을 싣지 않는다** (codex P1-6,
+  // 2026-08-31). 그 상태의 `_composerCurrentModel()` 은 러너 카탈로그를 못 봐서 서버 alias
+  // (`claude-haiku-4`)로 폴백하는데, 그것을 실어 보내면 서버는 `model_explicit=True` 로 읽어
+  // **사용자가 고른 적 없는 값을 그 질문에 굳히고 계정 기본값으로도 저장한다**. 러너는 모르는
+  // 이름이라 버리고, 답변에는 "요청하신 모델을 쓸 수 없다" 는 거짓 고지가 붙는다.
+  // (라이브 WebAiTasks #69·#70 이 이 형태였다. 서버측 `model_explicit` 분기만으로는 이
+  //  경로를 막지 못한다 — 프론트가 값을 실어 보내는 순간 그것이 곧 '명시' 가 되기 때문이다.)
+  // 싣지 않으면 서버가 그 대화의 저장값 또는 기본값으로 처리한다(종전 무지정 동작).
+  const _catalogReady = !!(state.modelCatalog || state.apiVaultOptions);
+  const _selectorHidden = _composerModelSelectorHidden() || !_catalogReady;
   const askBody = {
     message,
     conversation_id: targetConvId || "",

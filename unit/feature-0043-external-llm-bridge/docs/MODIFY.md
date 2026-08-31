@@ -1376,7 +1376,6 @@ P0-AA 로 자리는 말풍선 안으로 옮겼으나 여전히 `.bridge-live-ste
 
 `make test` 컨테이너 전량 green · ruff clean · 신규 32건 + 기존 계약 9건 갱신.
 PB-0008 실 Windows 브라우저에서 잠금·해제·모달 실측(결함 3건 발견·수정).
-
 ## CHG-20260831T100000 — 관리 콘솔을 브리지 구조에 정합 (사용자 요청)
 
 **요청**: "LLM 동작 과정이 바뀐 구조에 따라 '관리 콘솔' 에서 작동하던 LLM의 동작도 정합하게
@@ -1407,3 +1406,90 @@ C7~C10)은 미완이다. 그것을 화면이 낙관하지 않도록 `JOB_SPECS[.
 로 두었다 — `enqueue_console_job` 이 거절하고 조작면은 사유와 함께 비활성으로 보인다.
 부분 배선을 True 로 적지 않는 것이 P0-M·P0-T 의 함정("고를 수 있는데 반영은 안 되는")을
 다시 열지 않는 유일한 방법이다. 근거: `docs/REVIEW.md` REV-20260831T140000-console-job-scope.
+## CHG-20260831T113350-ai-claude-feature-0043-live-steps-reasoning — 추론 구간 표시 + 진행 갱신 중단 해소
+
+**제보 (2026-08-31)**: ① 「각 도구에 대한 수행시간은 확인되었지만, 추론을 진행하는 부분은
+확인되지 않아」 ② 「답변 도중 실행단계의 진전이 갱신되지 않는다 … 새로고침하면 진전돼 있고
+일정 시간 후 또 멈춘다」.
+
+### 근본원인
+
+| # | 무엇 | 왜 |
+|---|---|---|
+| R1 | 추론 구간이 화면에 없다 | 브리지 `activity` 단계가 `claim`·`submit` 둘뿐이라 **도구 사이**를 덮지 못했다. 도구 단계는 자기 `elapsed_ms` 만 갖고, 그 사이 간격은 어느 단계에도 귀속되지 않아 타임라인에서 사라졌다 |
+| R2-a | 진행 갱신이 멈춘다 (주 원인) | `_consumeBridgeStream` 이 **모든** 예외를 `"aborted"` 로 반환 → `_streamBridgeStatus` 가 정상 종결로 읽어 `true` 반환 → 폴링 폴백도 안 걸림. **회선 오류 1회가 감시를 영구 종료**. 새로고침이 `resumeBridgePolling` 으로 되살리므로 제보의 증상과 정확히 일치 |
+| R2-b | 상한이 조기 소진 | 예산이 **횟수**(33) 라 3초 오류 재시도가 55초 정상 재접속과 같은 값을 먹었다 |
+| R2-c | 상한 도달 후 영구 정지 | `_bridge_live_steps` 가 `ORDER BY step_index ASC LIMIT 40` → 41번째부터 **가장 오래된 40건에 고정**, 서버 변경감지도 `len()` 만 봐서 신호가 영영 멎었다(무음 절단, §16.7 G9-b) |
+| — | 부수 | 같은 함수가 tick(1초)마다 PG 커넥션을 열고 **닫지 않았다** |
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `routers/ai_tools.py` | `_record_bridge_reasoning_gap` 신규 — 도구 단계 직후 「결과를 검토하고 다음 작업을 정합니다」 activity 1건. `_bridge_live_steps` → 최신 쪽 창 + `(steps, omitted)` 반환 + 커넥션 close. `_bridge_stream_snapshot`·`bridge_status` 에 `steps_omitted`. `bridge_stream` 변경감지를 `(len, omitted, 마지막 step_index)` 서명으로 |
+| `static/app/composer.js` | abort ↔ 회선 오류 분리(`"error"`) · 시간(단조 시계) 기준 예산 · 연속 오류 3회 시 폴링 강등 · 최소 재접속 주기 · 「단계 보기」 개수를 총 단계 수로 |
+| `static/app.js` | `refreshStepSidePanelForRun(runId, steps, {live, omitted})` · 생략 고지 1줄 · 진행 중 마지막 단계 「진행 중」 표기 · 생략 시 '누적' 미표시 |
+| `static/css/chat.css` | `.step-side-panel-time.is-running` · `.step-side-panel-omitted` |
+
+### 지어내지 않는 선
+
+추론 구간에 적는 것은 **우리가 관측한 간격**(도구가 결과를 돌려준 시각 ~ 다음 호출 도착)
+뿐이다. `work_source='bridge-runtime'`, 사유 칸은 **비운다** — 그 AI 가 왜 그렇게 판단했는지는
+우리가 모른다. 화면은 「내부 동작」 배지로 도구 단계와 구분해 그린다.
+
+### 되돌리기
+
+`_record_bridge_reasoning_gap` 호출 1줄을 지우면 R1 이 원복된다(단계는 append-only 라 기존
+데이터에 영향 없음). R2 는 프런트 3함수 국소 변경이라 개별 revert 가능.
+
+### 검증
+
+컨테이너 pytest 전량 green (신규 서버 12건 + 프런트 구조 13건, 기존 계약 2건 갱신) ·
+node 하네스 `verify_bridge_live_step_progress.mjs` 18/18 (뮤테이션 역검증 2종 포함) ·
+codex 적대 리뷰 **P1 0건**, P2/P3 8건 중 6건 반영·2건 근거 기각.
+## CHG-20260831T110000-runtime-caps-restore — 쓸 수 있는 모델·등급이 화면에서 사라졌다 (P0-AE)
+
+**요구**: 연결된 내 AI 로 답할 때 쓸 모델·effort 가 확인되지 않는다. 사용자 재량대로 적용할 수
+있게 하고, 지정된 값이 **실제 LLM 호출에 반영**되게 한다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `src/bridge_agent.py` | `_ask_json` 추출(1차·재질의 공용) · `_cli_help_text`·`_help_mentions_flag`·`_settle_effort_axis`·`_caps_axis_unsettled` 신규 · `_CAPS_EFFORT_PROMPT`·`_CAPS_AXIS_MIN_SEC`·`_CAPS_HELP_TIMEOUT_SEC` · `probe_runtime_caps` 가 축을 확정하고 `effort_probed` 표지를 남김 · `detect_runtimes` 가 미확정 캐시를 **축만** 재확정하고 새 결과가 캐시를 이김 · `sanitize_caps` 가 표지 보존 · `handle_one` 이 **반영된** 지정도 고지 |
+| `static/agent/bridge_agent.py` | 배포 사본 동기화(byte-identical 계약) |
+| `routers/conversations.py` | `requested_model=(model if model_explicit else None)` — 서버 alias 오염 차단 · 브리지 분기에서 **명시 선택만** 계정 기본값으로 저장 |
+| `routers/system.py` | 카탈로그가 계정 기본값을 **지금 신고된 목록과 대조 후** `default_model`·`default_reasoning_level` 로 내려보냄 · 기본값 조회 실패를 자기 자리에서 삼켜 러너 목록을 지키지 않게 함 |
+| `oauth_store.py` | `account_bridge_defaults` · `set_account_bridge_defaults`(None 축은 건드리지 않음) |
+| `routers/_bootstrap_schema.py` | `WebAccounts.BridgeDefaultModel`·`BridgeDefaultEffort` 멱등 ALTER |
+| `static/app/composer.js` | 등급 현재값 사슬에 계정 기본값 추가(로컬 미러 **뒤** — 방금 고른 값이 다른 기기 저장값에 밀리지 않게) |
+| 테스트 4파일 | 회귀 25건 추가 + 기존 4건의 텍스트 window 취약성 교정 |
+
+### 왜 이렇게 갈랐나
+
+목록의 출처는 **연결된 AI** 라는 계약(사용자 결정)을 유지하면서 부분 응답을 복구해야 했다.
+그래서 순서가 「다시 묻는다 → CLI 자신의 도움말로 확인한다 → 비운다」이다. 내장 표를 먼저
+쓰면 그 표가 낡은 순간 고른 값이 조용히 무시되고, 그냥 비우면 실제로 되는 기능을 잃는다.
+
+(플래그, 값 목록)은 **짝**으로만 채택한다. AI 가 준 플래그에 우리 표의 값을 붙이면 그 CLI 가
+받지 않는 조합이 만들어지고, 그러면 화면은 반영된다고 말하는데 실행은 아닌 상태가 된다.
+
+### 되돌리기
+
+`AGENT_SERVER_LLM_ENABLED=1` 로 게이트를 열면 카탈로그는 종전 서버 목록으로 복원된다(불변).
+축 복구만 끄려면 러너에서 `--refresh-caps` 없이 기존 `config.json` 을 쓰면 되고, 계정 기본값은
+컬럼이 NULL 이면 종전과 동일하게 목록 첫 항목이 시작점이 된다(두 축 모두 폴백이 종전 동작).
+
+## CHG-20260831T132500-ai-claude-feature-0043-live-steps-postdeploy — POST-DEPLOY 시각검증 증적
+
+`CHG-20260831T113350-…` 의 라이브 검증. 배포본 `74e2672c` 실 Windows 브라우저(PB-0008)에서
+페이지가 실제로 로드한 모듈 URL(`app.js?v=cb0480b0bd8e`)로 `import()` 해 **배포본과 같은
+인스턴스**로 렌더를 확인했다. 코드 변경 0 — 증적 문서만.
+
+- 추론 구간 91초가 카드에 붙는다(제보 ①) · 마지막 단계 「진행 중」 강조
+- 총 단계 수 122 · 절단 고지 1줄 · 누적 미표시(제보 ② 잔여 층)
+- 저장 답변 경로는 종전과 동일(무회귀)
+- 미수행: 실 러너 end-to-end 왕복(무인 완결 불가) — 사유 명시
+
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260831T113350-live-steps-reasoning-postdeploy.md`
+캡처: `artifacts/pb0008-live-steps-reasoning/` (git 밖, §2)

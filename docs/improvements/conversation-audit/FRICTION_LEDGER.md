@@ -2300,3 +2300,105 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   없어(feature-0003 시그니처) **미적용** — 별도 cycle.
 - 검증: 신규 12 테스트 · 뮤테이션 12/12 KILL · `make test` RC=0 · 4,948 PASS.
 - **라이브 실측 필요분**: 두 항목 모두 배포 후 실측 전까지 `fixed:undeployed`.
+
+---
+
+## FR-blocked-path-omits-structured-tool — fixed:deployed:unverified-live (L2 거부 피드백; 차단이 대체 도구를 지목하지 않아 "확인 불가" 로 단정)
+
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트 + **배포 완료**(2026-08-31, PR #1422
+  merge main `7e512eb8` → `make deploy-web` scope=all). **7서비스 실물 `7e512eb8`**(web-a·web-b·
+  ask-worker·insight-worker·ops-scheduler·ext-tool-mcp-a/b) · surge 잔존 0 · caddy
+  `no upstreams available` **0**(무중단 실측) · 대화 스모크 PASS · quiesce drained(3s).
+  **배포본 런타임 실증**: baked `/app/modules/tools.py` 에 봉인 심볼 3종 적재, msdb 차단 메시지가
+  `search_db_objects(object_role='schedule')` / `describe_db_object` 를 지목함을 확인.
+  `verified` 로 닫지 **않는** 이유: **모델이 실제로 그 도구를 고르는지** 는 실 LLM 턴이 필요하다.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit "dk_game_integrate 랭킹 자동화 프로시저
+  명명 제안"` + 지시 "assistant 가 스케줄러를 적절히 조회할 수 있도록 관련 도구 추가" (2026-08-31)
+- **last_seen**: 2026-08-31 · **seen_count**: 1 · **seen_distinct_conv**: 1
+  (90일 corroboration: `msdb` 하드차단 노출 1건/1대화 · `sys` 스키마 차단 3건/3대화)
+- **modality**: 1:1 · **conv(마스킹)**: `…be34624d`(topic "dk_game_integrate 랭킹 자동화 프로시저
+  명명 제안", 6 메시지) · product **P-114** · datasource `mssql-qa-idc`(MSSQL)
+- **symptom_confidence**: high (사용자 3턴 반복 요청 + steps 전량 실측)
+  · **rootcause_confidence**: high (코드 file:line + steps 로그 + 라이브 도구 호출 **3중 삼각측량**)
+- **suspected_layers**: **L2**(거부 피드백에 교정 힌트 부재)
+
+- **증상(signal)**: `E-USR`(3턴 반복 지시 — `agent 본문을 확인해주세요` → `msdb 내부를 탐색하며
+  확인해주세요`, 후자는 **사용자가 경로까지 떠먹인 over-spec** = `I-DIY`) + `E-SYS`(brute-force —
+  24 step 중 10회가 `sys.columns` 60자 청킹 자작 우회) + `I-FALSE`(assistant 가 "allowlist 와
+  무관한 영구 차단이라 데이터소스를 바꿔도 동일 — 확인 불가" 로 **잘못 단정**).
+- **confirmed_root_cause**: `modules/tools.py` 의 두 차단 chokepoint 가 대체 도구를 지목하지 않음.
+  ① 시스템 DB 하드 차단(`_freeform_sql_access_error`) — 교정 힌트 **0**. ② `sys` 스키마 차단 —
+  안내가 `search_tables/search_routines/describe_table/describe_routine` **4개 고정**이라
+  feature-0040(2026-08-12 머지)이 추가한 `search_db_objects`/`describe_db_object` 가 **누락**.
+  재발경로 = **data/config drift 의 코드판**(안내 문자열이 도구 카탈로그와 분리돼 따로 늙는다).
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님(사용자 목표 3턴 미달성). **F2** 사용자 입력 오류
+  아님 — "msdb 내부를 탐색" 은 **정확한 지시**였다(작업은 실제로 msdb 에 있다). **F3** 기수정
+  아님 — 도구 존재는 확인됐으나 **도달하지 않았다**(도구 존재 ≠ 마찰 해소). **F4** 의도된 동작
+  아님 — freeform msdb 차단은 의도지만 "구조화 도구로 접근 가능" 이 설계 의도이며 그 안내 부재는
+  의도가 아니다. **F5** ANCHOR 충돌 없음(feature-0002 §1~§3 은 소유권·구조 축). **F6** 외부 기인
+  아님.
+- **corroboration**: **idiosyncratic**(90일 msdb 1/1 · sys 3/3). 그럼에도 fix-now — Phase 7.4
+  **명백한 구조결함** 분기: 근본이 코드 file:line 에 confirmed(high) ∧ 재발경로가 drift ∧ 안내
+  추가는 Minor 표면. 저빈도의 이유는 MSSQL Agent 작업 조회가 이번이 사실상 첫 실사용이기 때문
+  (schedule 역할 도구 자체는 90일 22회/8대화 사용 — MySQL EVENT 경로에서는 정상 작동 중).
+- **triage**: S=4 · F=2 · L=4 · C=5 · R=4 → **21**, disposition=**fix-now**. 위험등급 **Major**
+  (§12.3 거부 피드백 = 코어 LLM 경로) → attended. 사용자가 범위를 AskUserQuestion 으로 명시 승인.
+- **봉인**: 안내를 `_DISCOVERY_TOOL_NAMES` **단일 출처**에서 파생 + **상시 노출 세트
+  `TOOL_DEFINITIONS` 와의 정합을 테스트로 강제**(새 `search_*`/`describe_*` 도구가 늘면 스위트가
+  깨져 안내 갱신을 강요 — 문서 규율이 아니라 빌드 게이트). 시스템 DB 하드 차단에 예약 작업의
+  정당 경로를 명시. **차단 자체는 불변** — 늘어난 것은 안내 문자열뿐(보안 경계 무변경).
+  확장 전용(`TOOL_DEFINITIONS_FULL`) 도구는 광고하지 않는다(부를 수 없는 이름을 권하면 새 마찰).
+- **fix**: `CHG-20260831T110000-scheduler-discovery-reachability`
+  (TASK-20260831T110000) / **코드 거주 `feature-0002-agent-core`** /
+  `REV-20260831T110000-scheduler-discovery-reachability`
+- **rc_ids**: RC-1 · **batch-id**: B-20260831T110000-scheduler-discovery-reachability
+- **§18.8 패널**: `[SKIPPED:codex-timeout]`(codex exec 10분 무응답 exit 143) → 자체 적대 3렌즈
+  실증 수행. **qa 렌즈 자체 적발 1건**: 초판 테스트가 헬퍼만 검사해 하드코딩 회귀를 놓치는
+  **항진명제**였다 → 실제 거부 경로(`_freeform_sql_access_error`)를 태우는 검사로 교체.
+- **라이브 실측 필요분(§정직)**: 코드/테스트/배포본 실증은 "차단 메시지가 도구를 지목한다" 까지만
+  증명한다. **모델이 그 도구를 실제로 고르는지**는 실 LLM 턴이 필요하다 → 다음 audit 에서
+  corroboration(msdb/sys 차단 후 `search_db_objects` 호출 전환율) 재측정 시 `verified`.
+
+---
+
+## FR-agent-job-name-mangled-by-ident-sanitizer — fixed:deployed:unverified-live (L2 capability gap; 식별자 정제기를 리터럴 값에 오적용해 88% 작업이 조회 불가)
+
+- **status**: `fixed:deployed:unverified-live` — 위 항목과 **같은 batch**(PR #1422, main
+  `7e512eb8`, 7서비스 배포). **배포본 실증**: 실 datasource 로
+  `describe_db_object(object_role='schedule', object_name='[DK] Ranking Update')` 호출 →
+  **3,660자 · 10개 단계 전문** 반환, 단계별 `DECLARE @ServerGroup INT = 50/51/53` 하드코딩 노출.
+  `verified` 미충족 사유는 위와 동일(모델 행동은 실 LLM 턴 필요).
+- **source**: 위 audit 과 동일 호출 — 사용자 지시의 실질 목표("agent 본문 확인")를 막던 축.
+- **last_seen**: 2026-08-31 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high · **rootcause_confidence**: high
+  (코드 file:line + 라이브 도구 호출 전/후 대조 + 대상 서버 작업명 분포 실측 **3중**)
+- **suspected_layers**: **L2**(도구가 존재하나 입력 정제로 결과에 도달 못 함)
+
+- **증상(signal)**: 도구를 정확히 호출해도 "현재 DB에 `DK Ranking Update` 예약 작업이 없습니다"
+  — **대괄호가 소실**된 이름으로 매칭 실패. 더 나쁜 것은 그 빈 결과에 "권한에 따라 보이는 범위가
+  다르다" 는 caveat 이 붙어 **결함이 권한 모호성으로 위장**된다는 점(거짓 음성 + 오귀인).
+- **confirmed_root_cause**: `modules/tools.py` `_tool_describe_db_object` 가 **모든 역할**의
+  `object_name` 에 식별자 정제기 `_safe_ident`(인용 구분자 `[ ] ' " \` ; \` 제거)를 적용. 그러나
+  SQL Server Agent 작업명은 DB 객체 식별자가 아니라 `msdb.dbo.sysjobs.name` 의 **임의 문자열**이고
+  질의에서도 `WHERE j.name = '<값>'` 리터럴로 비교된다. **정량**: 관측 서버 작업 **83개 중 73개
+  (88%)가 `[` 접두**(팀 명명 관례 `[DK]`/`[CC]`) → 사실상 전량 describe 불가.
+  재발경로 = **정제기 오적용**(식별자 문맥 vs 리터럴 문맥 혼동).
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님. **F4** 의도된 동작 아님 — `_safe_ident` 의 대괄호
+  제거는 **식별자 인용 문맥에서는 정당**(REV-0201 B1 라이브 SQLi 실증)하나, 리터럴 값에까지
+  적용된 것은 의도가 아니다. **보안 회귀 방향으로 promote 하지 않았다** — 정제기를 완화한 것이
+  아니라 **문맥을 분리**했다(식별자 경로는 한 글자도 안 바뀜).
+- **corroboration**: 관측 1대화이나 **결정론적 구조결함**(88% 작업이 이름만으로 조회 불가는
+  빈도가 아니라 산술). Phase 7.4 명백한 구조결함 분기로 fix-now.
+- **triage**: S=4 · F=2 · L=3 · C=5 · R=3 → **19**, disposition=**fix-now**. 위험등급 **Major**
+  (정제기 = SQLi 신뢰경계 인접) → attended 승인.
+- **봉인**: 리터럴 전용 정제기 `_safe_literal_value` 신설(문자 보존, 역슬래시·제어문자만 제거) +
+  `role==schedule ∧ _mssql_active()` 일 때만 라우팅(MySQL EVENT 는 실제 식별자라 종전 경로 유지).
+  따옴표 이중화는 **삽입 지점**(dialect `_agent_jobs_sql`)이 1회 — caller 가 함께 이중화하면 다시
+  미매칭이 되므로 책임을 한 곳에 모았다(`_sql_str_list` 와 동일 계약).
+  **보안 검증**: 적대 입력 **13종**을 `sqlglot(read="tsql")` 파싱 기준으로 ① 리터럴 노드 갇힘
+  ② 문장 수 정확히 1 ③ 고정 조인 4뷰 밖 테이블 0 — 전 케이스 통과, 회귀 테스트로 승격.
+- **fix**: 위와 동일 CHG/REV · **rc_ids**: RC-2 · **batch-id**: 위와 동일
+- **범위 밖(의도)**: `search_db_objects` 의 `keyword` 는 `_safe_ident` 유지 — SQL Server `LIKE` 에서
+  `[` 는 문자 클래스 와일드카드라 보존이 오히려 예측 불가를 만든다(부분 일치로 여전히 매칭됨).
+  단계의 `database_name` 이 빈 작업(CmdExec/PowerShell 등 OS 레벨)은 제품 경계 밖이라 계속 제외
+  (fail-closed, by-design — 도구가 caveat 으로 고지).

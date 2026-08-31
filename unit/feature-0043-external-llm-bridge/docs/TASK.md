@@ -928,3 +928,83 @@ JSON 산출물을 망친다. P0-Z3 의 원칙("신고가 없으면 선택기도 
 - [x] 회귀 9건 신설 + **뮤턴트 3종 전건 KILL 실증**. 첫 작성본이 뮤턴트를 못 죽인 원인
       (길이 정렬 우연 · filler dedup)까지 REVIEW 에 기록
 - [x] **D3** `make test` 전량 green (6020 passed / 0 failed) + ruff clean
+### TASK-20260831T110000-runtime-caps-restore — 쓸 수 있는 모델·추론등급이 화면에서 사라졌다 (P0-AE)
+
+**요청**: "assistant(내 AI에 연결되었을 때) 에서 사용할 모델, effort가 확인되지 않는 이슈가
+확인되었습니다. 사용자 재량대로 각 설정값을 적용하여 사용할 수 있도록 구성해주세요."
++ "설정된 모델 및 effort를 포함한 요청을 브릿지가 수신할 경우 실제 해당 설정값을 통해
+LLM처리를 수행하도록 구성해주세요."
+
+**사용자 결정**: 목록은 **연결된 AI 로부터 전달받는다**(사용자가 직접 타이핑하지 않는다) ·
+지정값은 **계정 기본값 + 대화별 override** 로 기억한다.
+
+**라이브 진단** (수정 전 실측):
+
+| 관측 | 값 |
+|---|---|
+| 러너 신고(토큰 #47, 하트비트 정상) | claude: models=[opus,sonnet,haiku] **efforts=[]** · codex: 내장 폴백 |
+| 직전 신고(#42, probe 성공본) | claude: +fable, efforts 5단계 · codex: gpt-5.6-* 6종 |
+| 러너 캐시 `config.json` | `"efforts": [], "effort": null, "source": "probe"` |
+| `claude --help` 실측 | `--effort <level>  Effort level for the current session` — **플래그는 실재한다** |
+| `WebAiTasks` #69·#70 (당일) | `RequestedRuntime=NULL` `RequestedModel='claude-haiku-4'` `ReasoningLevel=NULL` |
+| `WebAiTasks` #62·#65~68 (8/28) | `claude` / `sonnet` / `high` — 정상 |
+
+**근본 원인 2건** (독립적이고, 둘 다 사용자 화면에서는 같은 증상으로 보인다):
+
+- [x] **A. 부분 응답이 축을 통째로 죽였다** — `probe_runtime_caps` 가
+      `efforts = ... if effort_flag else []`. AI 가 큰 JSON 하나에서 `effort_flag` **한 칸**을
+      빠뜨리자 등급 목록이 전부 버려졌고, 그 부분 결과가 내장 표를 이겨(폴백은 질의 자체가
+      실패했을 때만) **실제로 지원되는 `--effort` 가 화면에서 사라졌다**
+- [x] **B. 무지정 요청에 서버 alias 가 굳었다** — `model = data.get("model") or
+      API_DEFAULT_MODEL` 폴백 뒤에 `requested_model=model` 이라, 프론트가 값을 싣지 않은
+      요청도 `claude-haiku-4` 로 적재됐다. 러너는 모르는 이름이라 버리고 기본값으로 답한 뒤
+      **"요청하신 모델 claude-haiku-4 는 쓸 수 없어…" 라는 거짓 고지**를 붙였다
+
+**조치**:
+
+- [x] `_settle_effort_axis` 신규 — 축이 비면 ① **그 축만 좁게 재질의** → ② 내장 표의 짝을
+      **그 CLI 의 `--help` 로 실재 확인** 후 채택 → ③ 확인 못 하면 비움(지어내지 않는다).
+      (플래그, 값 목록) **짝을 섞지 않는다** — 섞으면 그 CLI 가 받지 않는 조합이 만들어진다
+- [x] `_CAPS_EFFORT_PROMPT` 신규 — 축 하나만 묻는 좁은 질의(1차에서 빠진 필드를 답한다)
+- [x] `_cli_help_text` · `_help_mentions_flag` — 낱말 경계 검사(`--effort` ≠ `--effort-level`),
+      **못 읽음(None) 과 없음(False) 을 구분**
+- [x] `effort_probed` 표지 + `_caps_axis_unsettled` — `effort: null` 이 뭉갠 두 사실("물어봤는데
+      없다" / "다룬 적 없다")을 가른다. 없으면 이 복구가 **기존 사용자에게 영영 실행되지 않는다**
+- [x] `detect_runtimes` — 미확정 캐시는 **축만** 재확정(전체 재질의 아님) · `probed` 가 캐시를 이긴다
+- [x] `requested_model=(model if model_explicit else None)` — 무지정을 무지정으로 넘긴다
+- [x] 계정 기본값 `WebAccounts.BridgeDefaultModel`·`BridgeDefaultEffort`(멱등 ALTER) +
+      `account_bridge_defaults`/`set_account_bridge_defaults` + 카탈로그가 **지금 신고된 목록과
+      대조 후** 내려보냄 + `composer.js` 가 그 값을 시작점으로 사용
+- [x] 반영된 지정도 답변에 밝힌다 — 미반영만 고지하면 침묵이 "지정대로 됐다" 와 "지정이
+      전달되지 않았다" 두 가지를 뜻해 사용자가 구분할 수 없다
+- [x] 회귀 25건(러너 12 · 카탈로그 5 · 요청 고정 8) · `make test` 전량 green · ruff clean
+- [x] **실측**: `--help` 폴백(claude 5단계 · codex 3단계 · gemini 정확히 비움) · 재질의
+      (claude 가 `--effort` + 5단계 정확히 응답) · 조립 결과
+      `claude -p --strict-mcp-config --model opus --effort xhigh <질문>`
+- [x] 기존 테스트 4건의 **텍스트 window 취약성** 교정(계약 유지, 읽는 방법만 AST·정확 앵커로)
+- [ ] **POST-DEPLOY 시각검증** — 선택기 렌더는 JS 라 배포 후 실 브라우저에서 확인(PB-0008)
+
+## 20260831T1133-live-steps-reasoning — 추론 구간 표시 + 진행 갱신 중단 해소
+
+**요청 (2026-08-31)**: ① 「각 도구에 대한 수행시간은 확인되었지만, 추론을 진행하는 부분은
+확인되지 않아 수정이 필요합니다」 ② 「답변 도중 실행단계의 진전이 갱신되지 않는 … 시간이
+지날때마다 각 실행 단계의 갱신이 멈추는 이슈를 수정해주세요」.
+
+계획·근본원인·AC 는 `TASK-20260831T113350-live-steps-reasoning.md`.
+
+- [x] R1 — `_record_bridge_reasoning_gap`: 도구 단계 직후 추론 구간 activity 1건
+- [x] R2-a — abort ↔ 회선 오류 분리(`"error"`). **일시 오류 1회가 감시를 영구 종료하던 주범**
+- [x] R2-b — 예산을 횟수 → **시간 30분**(단조 시계). 횟수는 폭주 안전판으로 격하
+- [x] R2-c — 표시 창을 최신 쪽으로 + `steps_omitted` 동반(무음 절단 제거, §16.7 G9-b)
+- [x] 부수 — `_bridge_live_steps` PG 커넥션 close (tick 마다 새던 것)
+- [x] 서버 변경감지를 `(len, omitted, 마지막 step_index)` 서명으로
+- [x] 연속 오류 3회 시 폴링 강등 · 최소 재접속 주기
+- [x] 화면 — 「단계 보기」 총 단계 수 · 생략 고지 1줄 · 「진행 중」 표기 · 생략 시 누적 미표시
+- [x] pytest 신규 25건(서버 12 · 프런트 구조 13) + 기존 계약 2건 갱신 · 컨테이너 전량 green
+- [x] node 하네스 `verify_bridge_live_step_progress.mjs` 18/18 — **뮤테이션 역검증 2종 포함**
+- [x] **codex 적대 리뷰 2R** — P1 0건 수렴 · P2/P3 8건 중 6건 반영 · 2건 근거 기각
+- [x] **PB-0008 POST-DEPLOY 시각검증** — 배포본 `74e2672c` 실 Windows 브라우저에서 완료.
+      추론 구간 91초가 카드에 붙고(제보 ①), 절단 고지·총 단계 수·「진행 중」 표기 확인(제보 ②),
+      저장 답변 경로 무회귀. 증적 `feature-0003 docs/test-runs.d/…-postdeploy.md`
+- [ ] 실 러너 end-to-end 왕복(회선 절단 → 재접속 눈 관측)은 사용자 머신 AI CLI + 새 토큰이
+      필요해 무인 완결 불가 — 함수 수준은 하네스 S1~S8 이 덮는다

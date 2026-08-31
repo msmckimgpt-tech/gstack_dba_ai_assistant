@@ -634,8 +634,10 @@ def test_stream_skips_pointless_queries_before_claim():
     의미가 있다 — 이미 집혔거나 끝난 뒤에는 `not_connected` 로 갈릴 일이 없다.
     """
     snap = _pyfunc(TOOLS_PY, "_bridge_stream_snapshot")
-    assert "if claimed_by is not None else []" in snap, (
-        "점유 전에도 매 tick 원장을 조회한다")
+    # 반환 모양이 `(steps, 생략 수)` 로 바뀌었다(2026-08-31, 최신 쪽 창 + 절단 고지).
+    # 잠그는 계약은 그대로다 — 점유 전에는 조회 자체를 하지 않는다.
+    assert "if claimed_by is not None else ([], 0)" in snap, (
+        "점유 전에도 매 tick 단계를 조회한다")
     assert "if not submitted and claimed_by is None" in snap, (
         "종결된 task 에도 매 tick 연결 여부를 조회한다")
 

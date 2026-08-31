@@ -1108,9 +1108,48 @@ def _record_bridge_step(conn, task: dict[str, Any], tool_name: str, args: dict[s
             reason_text=reason_text, reason_source=("external-ai" if reason else "derived"),
             error=error, elapsed_ms=elapsed_ms)
         _insert_bridge_step(conversation_id, task_id, entry)
+        # 도구가 끝난 **그 시점부터** 개인 AI 는 결과를 읽고 다음 작업을 정한다. 그 구간을
+        # 단계로 남기지 않으면 화면에는 도구 실행 시간만 남고 **도구 사이의 시간은 어느
+        # 단계에도 귀속되지 않아 통째로 사라진다** — 사용자에게는 "추론을 진행하는 부분이
+        # 확인되지 않는다" 로 보인다(제보 2026-08-31).
+        _record_bridge_reasoning_gap(conn, task)
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "[bridge] 실행 단계 기록 실패 task=%s tool=%s: %r", task_id, tool_name, exc)
+
+
+#: 도구 사이 추론 구간의 표시 문구. 한 곳에서만 정의한다 — 문구가 갈리면 같은 구간이
+#: 두 이름으로 보인다.
+_BRIDGE_REASONING_LABEL = "결과를 검토하고 다음 작업을 정합니다"
+
+
+def _record_bridge_reasoning_gap(conn, task: dict[str, Any]) -> None:
+    """도구 호출 **사이의 추론 구간**을 내부 동작 단계로 연다.
+
+    ## 왜 도구 단계만으로는 부족한가 (제보 2026-08-31)
+
+    > "각 도구에 대한 수행시간은 확인되었지만, 추론을 진행하는 부분은 확인되지 않아"
+
+    화면의 소요 산출(`app.js:_computeStepTimings`)은 도구 단계에 **그 도구의 실측
+    실행시간**(`result_summary.elapsed_ms`)만 붙인다. 그래서 도구 A 가 끝난 뒤 도구 B 가
+    올 때까지의 간격 — 개인 AI 가 결과를 읽고 다음 조사를 정하는 시간, 보통 조사 전체에서
+    가장 긴 구간 — 은 **어느 단계에도 붙지 않아** 타임라인에서 사라졌다. 브리지에 있던
+    activity 단계는 `claim`(시작)·`submit`(끝) 두 개뿐이라 그 사이를 덮지 못한다.
+
+    이 단계를 도구 직후에 열어 두면 그 간격이 이 단계의 소요가 된다:
+    `selfMs = (다음 기록 시각 − 이 시각) − 다음 도구의 실측 실행시간`.
+
+    ## 지어내지 않는다
+
+    남기는 것은 **우리가 관측한 구간**(우리 도구가 결과를 돌려준 시각 ~ 다음 호출이 도착한
+    시각)이지 개인 AI 의 사고 *내용*이 아니다. `_record_bridge_activity` 와 같은 출처
+    (`work_source='bridge-runtime'`)를 쓰고, 화면은 「내부 동작」 배지로 도구 단계와 구분해
+    그린다. 사유(reason) 칸은 비운다 — 우리는 그 AI 가 *왜* 그렇게 판단했는지 모른다.
+
+    부수 효과: 진행 중 화면에서 마지막 도구 뒤에 이 단계가 **즉시** 보인다. 종전에는 마지막
+    도구에서 표시가 끊겨, 추론이 길어질수록 "멈춘 화면" 으로 읽혔다.
+    """
+    _record_bridge_activity(conn, task, _BRIDGE_REASONING_LABEL)
 
 
 def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
@@ -2844,11 +2883,16 @@ _BRIDGE_PROGRESS_TOOLS = frozenset({
     "wait_for_request", "list_open_requests", "claim_request", "submit_answer",
 })
 
-#: 진행 중 노출할 조사 단계 상한. 긴 조사에서 매 프레임 수백 행을 실어 나르지 않는다.
-_BRIDGE_LIVE_STEPS_MAX = 40
+#: 진행 중 한 프레임에 싣는 조사 단계 상한. 긴 조사에서 매 프레임 수백 행을 실어 나르지 않는다.
+#:
+#: ⚠ 이 상한은 **최신 쪽 창**이다(오래된 쪽을 생략). 종전에는 `ORDER BY step_index ASC LIMIT`
+#: 이라 상한에 닿는 순간 **가장 오래된 40건에 고정**됐고, 서버의 변경 감지가 길이만 봤으므로
+#: 그 뒤로는 진행 갱신이 영영 멎었다(새로고침해도 같은 40건). 생략한 건수는 `steps_omitted`
+#: 로 함께 실어 화면이 절단 사실을 말한다 — 무음 절단 금지(AGENTS.md §16.7 G9-b).
+_BRIDGE_LIVE_STEPS_MAX = 120
 
 
-def _bridge_live_steps(task_id: str) -> list[dict[str, Any]]:
+def _bridge_live_steps(task_id: str) -> tuple[list[dict[str, Any]], int]:
     """개인 AI 가 **지금까지 호출한 도구**를 요약해 돌려준다(진행 중에도).
 
     종전에는 `_materialize_bridge_steps` 가 제출 시점에 일괄 이관해, 답변이 오기 전까지
@@ -2876,22 +2920,35 @@ def _bridge_live_steps(task_id: str) -> list[dict[str, Any]]:
 
     브리지 자체의 진행 도구(wait·claim·submit)는 애초에 단계로 기록되지 않는다.
     실패는 흡수한다 — 단계 조회 실패가 상태 조회를 막지 않는다(없으면 빈 목록일 뿐이다).
+
+    반환은 `(단계 목록, 생략된 앞 단계 수)`. 목록은 상한을 넘으면 **최신 쪽**을 남기고
+    시간순으로 돌려준다 — 진행 표시의 목적은 "지금 무엇을 하고 있는가" 이고, 앞쪽에 고정된
+    창은 그 목적을 정확히 배반한다(그리고 갱신이 멎은 것처럼 보인다).
+
+    생략 수는 **가장 앞 단계의 번호에서 파생**한다. `_insert_bridge_step` 이 `MAX+1` 을
+    advisory lock 아래에서 매기므로 run 안의 `step_index` 는 1 부터 조밀하다 — 그래서
+    `첫 행의 번호 − 1` 이 곧 밀려난 개수다. `count(*) OVER ()` 로 세면 창(LIMIT)이 DB
+    작업량을 줄이지 못하고 매 tick 그 run 전체를 훑는다(codex 적대 리뷰 P2).
     """
     if not task_id:
-        return []
+        return [], 0
+    pg = None
     try:
         pg = _pg()
         if pg is None:
-            return []
+            return [], 0
         with pg.cursor() as cur:
             cur.execute(
                 "SELECT step_index, action, tool, intent, work_text, work_source, "
                 "       reason_text, reason_source, args_json, sql_text, "
                 "       result_summary_json, error_text, created_at "
                 "FROM agent_runtime.steps "
-                "WHERE run_id = %s ORDER BY step_index ASC, id ASC LIMIT %s",
+                "WHERE run_id = %s ORDER BY step_index DESC, id DESC LIMIT %s",
                 (task_id, _BRIDGE_LIVE_STEPS_MAX))
-            rows = cur.fetchall() or []
+            rows = list(cur.fetchall() or [])
+        # 창은 최신 쪽에서 떴지만 화면은 시간순이다.
+        rows.reverse()
+        omitted = max(0, int(rows[0][0] or 1) - 1) if rows else 0
         out: list[dict[str, Any]] = []
         for r in rows:
             try:
@@ -2924,11 +2981,20 @@ def _bridge_live_steps(task_id: str) -> list[dict[str, Any]]:
                 "rows": int((summary or {}).get("rows_returned") or 0)
                         if isinstance(summary, dict) else 0,
             })
-        return out
+        return out, omitted
     except Exception as exc:
         logging.getLogger(__name__).debug(
             "[bridge] 진행 단계 조회 실패 task=%s: %r", task_id, exc)
-        return []
+        return [], 0
+    finally:
+        # ⚠ 종전에는 닫지 않고 GC 에 맡겼다. 이 함수는 SSE tick(1초)마다 도므로, 열린 채
+        #   남은 커넥션이 트랜잭션을 붙들고(idle in transaction) 스트림 수만큼 쌓인다.
+        #   연 쪽이 닫는다 — `_insert_bridge_step` 과 같은 규약.
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
 
 
 #: SSE 를 붙들어 두는 **서버 고정** 상한(초).
@@ -3041,7 +3107,10 @@ async def bridge_stream(request: Request):
         #   상태 변화가 영영 안 보인다(REPEATABLE READ). `wait_for_request` 루프가 같은 이유로
         #   매 확인마다 커밋한다.
         last_phase = ""
-        last_step_count = -1
+        #: 단계 변화 서명. **길이만 비교하면 안 된다** — 표시 창(`_BRIDGE_LIVE_STEPS_MAX`)에
+        #: 닿는 순간 길이가 상한에 고정돼, 창이 밀려도 "변한 것 없음" 이 되어 진행 신호가
+        #: 영영 멎는다(제보 2026-08-31). 생략 수와 마지막 단계 번호를 함께 본다.
+        last_step_sig: tuple[int, int, int] | None = None
         deadline = time.perf_counter() + _BRIDGE_STREAM_MAX_HOLD_SEC
         try:
             sconn = app._connect_memory()
@@ -3087,9 +3156,13 @@ async def bridge_stream(request: Request):
                     yield app._sse_pack("phase", {**snap, "task_id": task_id,
                                                   "conversation_id": conversation_id})
                 steps = snap["steps"]
-                if len(steps) != last_step_count:
-                    last_step_count = len(steps)
-                    yield app._sse_pack("steps", {"task_id": task_id, "steps": steps})
+                omitted = int(snap.get("steps_omitted") or 0)
+                sig = (len(steps), omitted,
+                       int(steps[-1].get("step_index") or 0) if steps else 0)
+                if sig != last_step_sig:
+                    last_step_sig = sig
+                    yield app._sse_pack("steps", {"task_id": task_id, "steps": steps,
+                                                  "steps_omitted": omitted})
 
                 if snap["phase"] in ("done", "canceled"):
                     yield app._sse_pack("end", {"reason": snap["phase"]})
@@ -3131,7 +3204,7 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
         # ⚠ `None` 은 "task 없음(=취소 삭제)" 이라는 뜻이므로 여기서 돌려주면 안 된다.
         #   돌려주면 DB 가 잠깐 흔들릴 때마다 사용자 화면이 "취소됨" 으로 확정된다.
         return {"phase": "waiting", "answered": False, "delivered": False,
-                "connected": True, "listening": True, "steps": []}
+                "connected": True, "listening": True, "steps": [], "steps_omitted": 0}
     try:
         # 오래 들고 있는 커넥션의 트랜잭션 스냅샷을 푼다(없으면 새 상태가 영영 안 보인다).
         try:
@@ -3171,6 +3244,9 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
                 listening = account_is_listening(account_id, conn)
             except Exception:
                 listening = True
+        # 아직 아무도 안 집었으면 조사 내역이 있을 수 없다 — 매 tick 단계를 뒤지지 않는다.
+        live_steps, steps_omitted = (
+            _bridge_live_steps(task_id) if claimed_by is not None else ([], 0))
         return {
             "phase": _bridge_phase(status, claimed_by, bool(row[2]), connected, listening,
                                    delivered=bool(row[3]),
@@ -3179,8 +3255,9 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
             "delivered": bool(row[3]),
             "connected": connected,
             "listening": listening,
-            # 아직 아무도 안 집었으면 조사 내역이 있을 수 없다 — 매 tick 원장을 뒤지지 않는다.
-            "steps": _bridge_live_steps(task_id) if claimed_by is not None else [],
+            "steps": live_steps,
+            # 창 밖으로 밀려난 앞 단계 수 — 화면이 "생략됐다" 고 말할 수 있게 함께 싣는다.
+            "steps_omitted": steps_omitted,
         }
     except Exception as exc:
         logging.getLogger(__name__).debug(
@@ -3190,7 +3267,8 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
         #   55초 동안 죽은 커넥션을 계속 재사용하며 매 tick 같은 예외를 냈고, 그 사이 **완료·취소
         #   전환이 통째로 숨겨졌다**. 다음 tick 에 다시 연결하도록 신호를 실어 보낸다.
         return {"phase": "waiting", "answered": False, "delivered": False,
-                "connected": True, "listening": True, "steps": [], "_conn_broken": True}
+                "connected": True, "listening": True, "steps": [], "steps_omitted": 0,
+                "_conn_broken": True}
 
 
 
@@ -3256,12 +3334,20 @@ def _sanitize_runtimes(raw: object) -> list | None:
     if not isinstance(raw, list):
         return None
     out: list[dict] = []
+    seen_runtimes: set = set()
     for item in raw[:_CAPS_MAX_RUNTIMES]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("runtime") or "").strip()
         if not _CAPS_RUNTIME_RE.match(name):
             continue
+        # 같은 런타임을 두 번 신고하면 **첫 항목만** 남긴다 (codex P2-5). 카탈로그는 모델을
+        # 누적하지만 등급은 `reasoning_levels_by_runtime[name]` 에 덮어써서, 중복이 있으면
+        # 화면에 앞 항목의 모델과 뒤 항목의 등급이 섞여 나온다 — 그 조합은 어느 러너도
+        # 신고한 적이 없다.
+        if name in seen_runtimes:
+            continue
+        seen_runtimes.add(name)
         # ⚠ 중첩 필드도 **타입을 확인한다**(codex REV-20260828T170000 P2-2). `models: 1` 처럼
         #   리스트가 아닌 값이 오면 슬라이스에서 TypeError 가 나고, 그 예외는 하트비트 전체를
         #   500 으로 만든다 — 연결을 지키려는 신호가 연결을 끊는 장치가 된다.
@@ -3461,6 +3547,7 @@ def bridge_status(request: Request) -> JSONResponse:
         except Exception:
             connected = True   # 판정 실패는 '연결됨' 으로(틀렸을 때 덜 성가신 방향)
         listening = account_is_listening(int(account.get("id") or 0), conn)
+        live_steps, steps_omitted = _bridge_live_steps(task_id)
         return JSONResponse({
             "task_id": task_id,
             "status": status,
@@ -3483,7 +3570,9 @@ def bridge_status(request: Request) -> JSONResponse:
             "delivered": delivered,
             "conversation_id": str(row[3] or ""),
             # 진행 중인 조사 내역(2026-08-28). 답변 전에도 "무엇을 보고 있는지" 를 말한다.
-            "steps": _bridge_live_steps(task_id),
+            # 스트리밍(`bridge_stream`)과 **같은 필드**를 낸다 — 갈리면 폴백이 화면을 바꾼다.
+            "steps": live_steps,
+            "steps_omitted": steps_omitted,
         })
     finally:
         try:
