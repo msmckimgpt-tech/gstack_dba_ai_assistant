@@ -489,3 +489,36 @@ def test_screens_hide_the_block_when_server_has_no_probe(js, el):
     src = js.read_text(encoding="utf-8")
     assert el in src, f"{el} 를 렌더하지 않는다"
     assert "hidden = !probe" in src, "probe 부재 시 감추는 처리가 없다"
+
+
+# ── Windows 파이썬 탐지 (사용자 제보 2026-08-31 5차) ─────────────────────────
+
+def test_ps1_python_probe_skips_store_alias_stub():
+    """Microsoft Store **앱 실행 별칭 스텁**을 파이썬으로 오인하지 않는다.
+
+    파이썬을 설치하지 않은 윈도우에도
+    `…\\AppData\\Local\\Microsoft\\WindowsApps\\python3.exe` 가 **2바이트 스텁**으로 있다.
+    실행하면 Store 를 열려고 stderr 에 `Python` 을 뱉고, `$ErrorActionPreference='Stop'`
+    에서 그 stderr 는 **NativeCommandError 로 던져진다** — `2>$null` 로도 못 막는다
+    (리다이렉션 이전에 오류 레코드가 되기 때문).
+
+    그래서 설치가 거기서 죽고 **다음 후보인 진짜 파이썬까지 가보지도 못한다**. 실측
+    (2026-08-31, 실 Windows): 같은 머신에 `Python314\\python.exe` 가 멀쩡히 있었는데도
+    `python3` 스텁에서 종료됐다. 수정 후: `python3 ok=False` → `python ok=True` 로 진행.
+    """
+    ps1 = _SETUP_PS1.read_text(encoding="utf-8-sig")
+    fn = ps1[ps1.index("function Test-PyOk"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "WindowsApps" in fn, "Store 앱 실행 별칭 스텁을 걸러내지 않는다"
+    assert "SilentlyContinue" in fn, (
+        "네이티브 명령 구간에서 Stop 을 풀지 않는다 — 스텁의 stderr 가 터미네이팅 오류가 된다")
+    assert "try {" in fn and "catch" in fn, "네이티브 호출을 try/catch 로 감싸지 않는다"
+
+
+def test_ps1_python_candidates_include_the_py_launcher():
+    """후보에 `py` 런처를 둔다 — 윈도우 정품 설치에 딸려 오고 PATH 에 `python` 이 없을 때 유일한 길."""
+    ps1 = _SETUP_PS1.read_text(encoding="utf-8-sig")
+    blk = ps1[ps1.index("foreach ($c in @("):]
+    blk = blk[:blk.index(")")]
+    for cand in ("python3", "python", "py"):
+        assert f"'{cand}'" in blk, f"파이썬 후보에 {cand} 가 없다: {blk}"

@@ -157,6 +157,8 @@ source_of_truth: true
 - [x] **PowerShell 설치 경로 파싱 실패 해소** (사용자 제보 2026-08-31) — `.ps1` 에 UTF-8 BOM
       (5.1 은 BOM 없으면 CP949 로 읽어 한글이 따옴표·괄호를 삼킨다). 게이트도 교정 —
       pwsh(7) 검사는 이 클래스를 원리적으로 못 보므로 BOM 바이트를 직접 검사
+- [x] **Windows Store 파이썬 스텁이 설치를 죽이던 것** (제보 2026-08-31) — `WindowsApps`
+      스텁 경로 제외 + 네이티브 호출만 SilentlyContinue/try-catch
 - [x] **발사 경로 교정** — 산출물: hidden iframe → 최상위 이동. 실 Windows 크롬 실측으로
       iframe 이 크롬의 외부 프로그램 허용 판정에 도달하지 않음을 확인, 이탈 우려는 대조군
       (미등록 스킴 최상위 이동 시 URL·제목 불변)으로 기각

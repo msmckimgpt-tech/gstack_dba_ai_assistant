@@ -59,8 +59,28 @@ if (-not $Token) { Die 'BRIDGE_TOKEN 이 비어 있습니다. 웹 콘솔의 [연
 #: 문법 오류로 죽고, 그 죽음은 "AI 가 답을 안 한다" 로만 보인다.
 function Test-PyOk([string]$cand) {
   if (-not $cand) { return $false }
-  if (-not (Get-Command $cand -ErrorAction SilentlyContinue)) { return $false }
-  & $cand -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>$null | Out-Null
+  $cmd = Get-Command $cand -ErrorAction SilentlyContinue
+  if (-not $cmd) { return $false }
+
+  # ⚠ **Microsoft Store 앱 실행 별칭 스텁을 먼저 걸러낸다** (사용자 제보 2026-08-31).
+  #   파이썬을 설치하지 않은 윈도우에도 `…\AppData\Local\Microsoft\WindowsApps\python3.exe`
+  #   가 **2바이트 스텁**으로 존재한다. 실행하면 Store 를 열려고 stderr 에 `Python` 을 뱉는데,
+  #   `$ErrorActionPreference='Stop'` 에서 그 stderr 는 **NativeCommandError 로 던져진다**
+  #   (`2>$null` 로도 못 막는다 — 리다이렉션 이전에 오류 레코드가 된다). 그래서 설치가 거기서
+  #   죽고, **바로 다음 후보인 진짜 파이썬까지 가보지도 못했다**(실측: 같은 머신에
+  #   `Python314\python.exe` 가 멀쩡히 있었다).
+  $src = $cmd.Source
+  if ($src -and $src -like '*\WindowsApps\*') { return $false }
+
+  # ⚠ 아래는 **네이티브 명령**이다. 함수 스코프에서만 Stop 을 풀고 try 로 감싼다 — 전역을
+  #   바꾸지 않으므로 이 절 밖의 fail-fast 계약은 그대로다.
+  $ErrorActionPreference = 'SilentlyContinue'
+  $global:LASTEXITCODE = 0
+  try {
+    & $cand -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>&1 | Out-Null
+  } catch {
+    return $false
+  }
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -82,8 +102,13 @@ if (-not $Py) {
     if (Test-PyOk $c) { $Py = $c; break }
   }
 }
-if (-not $Py) { Die 'python 3.8 이상을 찾지 못했습니다. 설치한 뒤 다시 실행하세요.
-  (경로를 알고 있다면: $env:BRIDGE_PROBED_PY=''C:\path\to\python.exe'')' }
+if (-not $Py) { Die 'python 3.8 이상을 찾지 못했습니다.
+
+  · 설치: https://www.python.org/downloads/windows/ (설치 중 "Add python.exe to PATH" 체크)
+  · 이미 설치했는데 이 메시지가 나오면, 경로를 직접 지정하세요:
+        $env:BRIDGE_PROBED_PY=''C:\path\to\python.exe''
+  · 참고: 시작 메뉴의 "앱 실행 별칭" 에 있는 python3 는 Microsoft Store 로 가는 **빈 스텁**이라
+    파이썬이 아닙니다 — 이 스크립트는 그것을 건너뜁니다.' }
 
 #: 러너에 넘길 `--ai <name>`. **PATH 에 실재할 때만** 넘긴다 — 없는 이름을 주면 러너가
 #: "쓸 수 있는 AI 를 찾지 못했습니다" 로 죽는다(실측 2026-08-28: Windows 에 claude 부재).

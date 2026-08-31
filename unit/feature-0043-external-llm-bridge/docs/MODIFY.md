@@ -1672,3 +1672,26 @@ skip 이었고 ② 설령 돌아도 **PowerShell 7 은 BOM 없이도 UTF-8 로 �
 
 - Windows PowerShell 5.1 실파싱 PARSE OK · 코드포인트 대조로 디코딩 정합 확인
 - 신규 2건이 **수정 전 상태에서 2/2 FAIL** 실증 · 등록 왕복 재확인 PASS
+
+## CHG-20260831T180000-ai-claude-feature-0043-ps-python-probe — Store 스텁이 설치를 죽이던 것
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 제보 — `python3.exe : Python` / `NativeCommandError` 로 설치 중단
+- **위험도**: Minor
+
+### 원인
+
+`WindowsApps\python3.exe` 는 Microsoft Store 로 보내는 **2바이트 스텁**이다. 실행 시 stderr 로
+`Python` 을 뱉고, `$ErrorActionPreference='Stop'` 에서 그것이 **NativeCommandError 로 던져진다**
+(`2>$null` 무효). 첫 후보에서 죽어 **진짜 파이썬(`Python314\python.exe`)까지 가지 못했다.**
+
+### 변경
+
+- `Test-PyOk`: `Source` 가 `\WindowsApps\` 면 후보 제외 · 네이티브 호출만 `SilentlyContinue`
+  + `try/catch` (전역 Stop 유지)
+- 못 찾았을 때 안내를 실행 가능하게 (설치 링크 · `BRIDGE_PROBED_PY` · 스텁이 파이썬이 아님)
+
+### 검증
+
+- 실 Windows PowerShell 5.1: `python3 ok=False` → `python ok=True` → 예외 없이 완주
+- 회귀 2건 · 수정 전에서 FAIL 실증
