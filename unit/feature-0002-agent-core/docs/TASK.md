@@ -3347,3 +3347,35 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
 - [ ] **모델 행동 실측** — 실제 LLM 턴에서 `update_attachment` 를 고르는지는 다음 audit
       corroboration 대상(코드/프롬프트는 '보여준다' 까지만 증명한다).
 - [ ] **배포 후 라이브 실측** — 원 대화 동일 입력 재현으로 assistant 계보 v2 생성 관측.
+
+## TASK-20260831T110000-scheduler-discovery-reachability — 스케줄러 조회 경로 도달성 봉인
+
+원장: `FR-blocked-path-omits-structured-tool` · `FR-agent-job-name-mangled-by-ident-sanitizer`.
+출처: `/_dqa:conversation_audit "dk_game_integrate 랭킹 자동화 프로시저 명명 제안"` + 사용자 지시
+("assistant 가 스케줄러를 적절히 조회할 수 있도록 관련 도구 추가").
+
+- [x] **요청 재정의(정직)** — "도구 추가" 가 아니라 **도달성 결함**이었다. `search_db_objects
+      (object_role='schedule')` 는 2026-08-12 머지·배포본 적재 상태였고, 라이브 datasource 실증에서
+      대상 작업을 정확히 반환한다. 부재가 아니라 (a) 차단이 그 도구를 지목하지 않고 (b) 도구를
+      불러도 작업명이 훼손돼 본문에 도달하지 못하는 문제.
+- [x] RC-1 — 차단 거부 2곳이 대체 도구를 지목하도록. 안내를 `_DISCOVERY_TOOL_NAMES` 단일 출처에서
+      파생하고 **카탈로그와의 정합을 테스트로 강제**(도구가 늘면 테스트가 깨져 안내 갱신을 강요).
+      시스템 DB 하드 차단에는 예약 작업의 정당 경로를 명시(차단 자체는 불변 — 늘어난 건 안내뿐).
+- [x] RC-2 — 예약 작업명은 식별자가 아니라 리터럴. `_safe_literal_value` 신설로 문자 보존
+      (`[DK] Ranking Update` 무손실), 리터럴 이스케이프는 삽입 지점(dialect) 1회 이중화.
+      **`_safe_ident` 는 불변**(REV-0201 B1 SQLi 방어) · 식별자 역할은 종전 경로 유지.
+- [x] 신규 테스트 14 PASS(안내 drift 봉인 · 미노출 도구 광고 금지 · 리터럴/식별자 정제 비대칭 ·
+      따옴표 1회 이중화 · 허용목록 fail-closed 유지 · 도구 진입점 라우팅) · feature-0002 회귀
+      FAILED 0 · ruff clean.
+- [ ] **라이브 실측** — "모델이 실제로 그 도구를 고르는지" 는 배포 후 동일 시나리오 재현·다음
+      audit corroboration 대상. 코드·테스트는 "경로가 열려 있고 이름이 보존된다" 까지만 증명한다.
+
+
+- [x] **배포 완료·배포본 실증**(2026-08-31, PR #1422 → main `7e512eb8`): `make deploy-web`
+      scope=all, **7서비스 실물 `7e512eb8`** · surge 잔존 0 · caddy `no upstreams available` **0**
+      (무중단 실측) · 대화 스모크 PASS. baked `/app/modules/tools.py` 봉인 심볼 3종 적재 확인.
+      실 datasource 재현: msdb 차단이 스케줄 도구를 지목 · `describe_db_object` 가 원 작업의
+      **10개 단계 전문 3,660자** 반환(사용자가 말한 기준값 50/51/53 하드코딩 노출).
+- [x] 원장 2항목(`FR-blocked-path-omits-structured-tool` · `FR-agent-job-name-mangled-by-ident-sanitizer`)
+      `fixed:deployed:unverified-live` 기록 + LEARNINGS `LRN-20260831-0001/0002`.
+

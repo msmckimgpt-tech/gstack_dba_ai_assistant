@@ -46,6 +46,24 @@ _INTERNAL_SCHEMAS = frozenset({"agent_memory"})
 # `_is_user_schema` / `search_tables` 의 "사용자 스키마 아님" 판정에 쓰이는 union.
 _SYSTEM_SCHEMAS = _METADATA_SCHEMAS | _INTERNAL_SCHEMAS
 
+# ── 구조 발견 도구 카탈로그 (거부 피드백의 단일 출처) ─────────────────────────
+# freeform SQL 이 차단될 때 거부 메시지가 **대신 쓸 수 있는 도구**를 지목하지 않으면, 모델은
+# 대안이 없다고 판단해 우회를 자작하다 포기한다(FR-blocked-path-omits-structured-tool: msdb 를
+# 차단당한 모델이 `search_db_objects` 를 보유하고도 6분간 카탈로그 청킹을 brute-force 한 뒤
+# "영구 차단이라 확인 불가" 로 결론). 근본은 안내 문자열이 도구 카탈로그와 **분리돼 drift** 한
+# 것 — feature-0040 이 발견 도구를 2개 늘렸는데 거부 안내는 옛 4개에 고정돼 있었다.
+# 그래서 안내를 여기 한 곳에서 파생하고, `TOOL_DEFINITIONS` 와의 정합을 테스트로 잠근다
+# (새 `search_*`/`describe_*` 도구가 늘면 테스트가 깨져 안내 갱신을 강제한다).
+_DISCOVERY_TOOL_NAMES: tuple[str, ...] = (
+    "search_tables", "search_routines", "search_db_objects",
+    "describe_table", "describe_routine", "describe_db_object",
+)
+
+
+def _discovery_tools_hint() -> str:
+    """구조 탐색 대체 도구 나열 — 거부 메시지가 공유하는 단일 문자열."""
+    return "/".join(_DISCOVERY_TOOL_NAMES)
+
 # ── Product 단위 스키마 whitelist (None 이면 기존 동작, set 이면 교집합 필터) ──
 # TASK-0128 (#2/#8 race): 이전엔 plain 모듈 전역이라 공유 threadpool 에서 동시 ask 가
 # 서로의 allowlist 를 덮어쓰는 교차테넌트 레이스가 있었다. ContextVar 로 전환 — asyncio.to_thread
@@ -706,10 +724,23 @@ def _freeform_sql_access_error(sql: str) -> str | None:
         hard_forbidden |= _dialects.active().system_databases()
     hard_hit = sorted((set(schemas) | set(catalogs)) & hard_forbidden)
     if hard_hit:
-        return (
+        msg = (
             f"오류: 접근이 영구 차단된 데이터베이스 참조: {', '.join(hard_hit)} "
             f"(앱 내부/시스템 DB — allowlist 무관 차단)."
         )
+        # **차단 ≠ 확인 불가**. 시스템 DB 에 사는 객체(SQL Server Agent 작업)는 구조화 도구가
+        # 고정 컬럼 투영 + 허용 DB 필터로 읽는 정당한 경로를 이미 갖고 있다(dialect `_agent_jobs_sql`).
+        # 그 경로를 지목하지 않으면 모델은 대안이 없다고 보고 freeform 우회를 자작하다 "영구 차단이라
+        # 확인 불가" 로 단정한다 — 라이브에서 관측된 실패다. freeform 차단 자체는 불변이고,
+        # 여기서 늘어나는 것은 **안내뿐**이다(보안 경계 무변경).
+        if engine == "mssql" and (set(hard_hit) & set(_dialects.active().system_databases())):
+            msg += (
+                " 단, 예약 작업(SQL Server Agent 작업)은 시스템 DB 를 직접 조회하지 않고 "
+                "`search_db_objects(object_role='schedule')` 로 열거하고 "
+                "`describe_db_object(object_role='schedule', object_name=...)` 로 단계별 명령까지 "
+                "확인할 수 있습니다 — 이 차단은 그 경로를 막지 않습니다."
+            )
+        return msg
 
     # ── TASK-0206 DB-단위 접근: MSSQL 은 catalog(DB) 가 접근 단위 ──────────────────
     if engine == "mssql" and active_ds:
@@ -797,7 +828,7 @@ def _freeform_sql_access_error(sql: str) -> str | None:
                     )
                 return (
                     f"오류: 시스템 스키마 직접 조회가 차단되었습니다: {', '.join(blocked_sys)} "
-                    f"(구조 탐색은 search_tables/search_routines/describe_table/describe_routine 사용).{_hint}"
+                    f"(구조 탐색은 {_discovery_tools_hint()} 사용).{_hint}"
                 )
         return None
 
@@ -1884,6 +1915,26 @@ def _safe_ident(name: str) -> str:
         .replace("[", "").replace("]", "")
         .strip()
     )
+
+
+def _safe_literal_value(value: str) -> str:
+    r"""**식별자가 아닌** 값(SQL 문자열 리터럴로 비교되는 이름)의 정제.
+
+    `_safe_ident` 를 쓰면 안 되는 자리가 있다 — SQL Server Agent 작업명은 DB 객체 식별자가
+    아니라 `msdb.dbo.sysjobs.name` 에 담긴 **임의 문자열**이고, 질의에서도 `WHERE j.name =
+    '<값>'` 처럼 리터럴로 비교된다. 식별자 정제기는 인용 구분자를 지우므로 `[DK] Ranking
+    Update` 가 `DK Ranking Update` 로 훼손돼 **영구히 매칭되지 않는다**(관측된 서버에서
+    작업 83개 중 73개가 `[` 접두 → 사실상 전량 조회 불가). 값의 문자를 보존하되 리터럴
+    문맥에서 위험한 것만 없앤다:
+      - **역슬래시 `\`** — MySQL 은 백슬래시 이스케이프가 기본 ON 이라 값이 `x\` 로 끝나면
+        종료 따옴표를 이스케이프해 리터럴 밖으로 탈출한다(`_safe_ident` 와 같은 논거).
+      - **제어문자(개행·탭·NUL 등)** — 줄 단위 주석(`--`)과 결합해 뒤 조건을 무력화하는
+        고전 경로. 값에 개행이 필요한 객체명은 없다.
+    작은따옴표는 **여기서 지우지 않는다** — 리터럴 삽입 지점(dialect)이 이중화 책임을 지는
+    `_sql_str_list` 와 동일한 계약이다. 지우면 `O'Brien Job` 같은 정상 이름이 또 훼손된다.
+    """
+    out = str(value or "").replace("\\", "")
+    return "".join(ch for ch in out if ch >= " " and ch != "\x7f").strip()
 
 
 def _tool_list_schemas(conn, _args: dict) -> str:
@@ -3855,7 +3906,13 @@ def _tool_describe_db_object(conn, args: dict) -> str:
     gate = _dbobj_role_gate(role)
     if gate is not None:
         return gate
-    name = _safe_ident(args.get("object_name", ""))
+    # SQL Server Agent 작업명만 **리터럴 값**이다(`sysjobs.name` — 임의 문자열, 질의에서도
+    # `= '<값>'` 비교). 식별자 정제기를 쓰면 `[DK] Ranking Update` 가 훼손돼 영구 미매칭이 된다.
+    # 나머지 역할(뷰·트리거·시퀀스·MySQL EVENT)의 이름은 실제 SQL 식별자라 `_safe_ident` 불변.
+    _name_raw = args.get("object_name", "")
+    name = (_safe_literal_value(_name_raw)
+            if (role == _r.ROLE_SCHEDULE and _mssql_active())
+            else _safe_ident(_name_raw))
     if not name:
         return "오류: object_name 은 필수입니다."
     schema = _safe_ident(args.get("schema_name", ""))

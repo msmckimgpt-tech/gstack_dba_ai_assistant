@@ -3058,12 +3058,20 @@ def _sanitize_runtimes(raw: object) -> list | None:
     if not isinstance(raw, list):
         return None
     out: list[dict] = []
+    seen_runtimes: set = set()
     for item in raw[:_CAPS_MAX_RUNTIMES]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("runtime") or "").strip()
         if not _CAPS_RUNTIME_RE.match(name):
             continue
+        # 같은 런타임을 두 번 신고하면 **첫 항목만** 남긴다 (codex P2-5). 카탈로그는 모델을
+        # 누적하지만 등급은 `reasoning_levels_by_runtime[name]` 에 덮어써서, 중복이 있으면
+        # 화면에 앞 항목의 모델과 뒤 항목의 등급이 섞여 나온다 — 그 조합은 어느 러너도
+        # 신고한 적이 없다.
+        if name in seen_runtimes:
+            continue
+        seen_runtimes.add(name)
         # ⚠ 중첩 필드도 **타입을 확인한다**(codex REV-20260828T170000 P2-2). `models: 1` 처럼
         #   리스트가 아닌 값이 오면 슬라이스에서 TypeError 가 나고, 그 예외는 하트비트 전체를
         #   500 으로 만든다 — 연결을 지키려는 신호가 연결을 끊는 장치가 된다.

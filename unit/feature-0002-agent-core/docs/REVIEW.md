@@ -2625,3 +2625,78 @@ Verdict: **SKIPPED** — 패널 미실시. 사유: 코드 변경 **0**(배포 �
 
 기록된 사실의 근거: 6서비스 실물 이미지 `ded1812d` · caddy blip 0 · surge 0 · 배포본 런타임 심볼·문구
 적재 확인 · 원 마찰 첨부 1239/1240 에 대한 렌더 실측.
+
+## REV-20260831T110000-scheduler-discovery-reachability [SKIPPED:codex-timeout] + 자체 적대 3렌즈
+
+Trigger: `schema/query`(카탈로그·msdb 조회 SQL 생성) + `auth/credential` 인접(식별자/리터럴 정제기 =
+SQLi 신뢰경계) → 렌즈 **backend + security + qa**.
+
+Verdict: **SHIP** (BLOCKING 0 · MAJOR 0 · 자체 적발 1건 수정 반영).
+
+**codex 패널 미실시 사유**: `codex exec` 10분 상한에서 응답 없이 종료(exit 143 — 본 저장소에 기록된
+알려진 함정). 대신 자체 적대 검토를 **실증 기반**으로 수행했다. 아래는 문자열 대조가 아니라 파서·
+라이브 datasource 로 확인한 결과다.
+
+### security 렌즈 — 리터럴 완화가 인용 탈출을 여는가
+
+`sqlglot(read="tsql")` 파싱 기준으로 적대 입력 **13종**(`x' OR 1=1 --` · `x'; DROP TABLE t; --` ·
+`x' UNION SELECT name FROM sys.databases --` · `N'x'` · `]'--` · 따옴표 7연속 · `x'/*` · 유니코드
+`’` · 역슬래시 말미 · 탭/개행 포함)을 태워 3축을 단언: ① 값이 **문자열 리터럴 노드**로만 존재 ②
+파싱된 **문장 수 정확히 1**(문장 분리 주입 0) ③ 고정 조인 4뷰(`sysjobs`/`sysjobsteps`/
+`sysjobschedules`/`sysschedules`) **밖의 테이블 등장 0**. 전 케이스 통과. 이 검증은 일회성으로 두지
+않고 `test_hostile_job_names_stay_inside_string_literal` 로 **회귀에 승격**했다.
+- `_safe_ident` 는 **한 글자도 바뀌지 않았다** — 대괄호 제거의 근거(REV-0201 B1 라이브 SQLi)는
+  식별자 인용 문맥에 그대로 유효하다. 완화는 리터럴 문맥으로만 한정되며, 그 비대칭을
+  `test_identifier_sanitizer_unchanged_security_boundary` / `test_describe_tool_still_sanitizes_identifier_roles`
+  가 양방향으로 잠근다.
+- 라우팅 조건(`role==schedule and _mssql_active()`)의 폭: `_mssql_active()` 는 dialect==mssql ∧
+  datasource 활성이라 MySQL EVENT(실제 식별자)는 종전 경로 유지. 넓어질 여지 없음.
+- 값의 다른 출구: `name` 은 `object_definition()` 과 **미발견 안내 문자열**(마크다운)로만 흐른다.
+  SQL 은 `_agent_jobs_sql` 단일 지점 — 이중 이스케이프 없음(caller 는 이중화하지 않는다).
+- 안내 추가가 차단을 약화시키는가: **아니다.** freeform msdb 하드 차단·허용 DB fail-closed
+  (`IN ('')`)·제품 경계 단계 필터 전부 불변이며 `test_agent_job_sql_keeps_allowlist_boundary` 로 잠갔다.
+  늘어난 것은 **문자열 안내뿐**이고, 안내가 지목하는 경로는 이미 존재하던 정당한 구조화 도구다.
+
+### backend 렌즈 — 이스케이프 책임 배치
+
+이중화를 삽입 지점 1곳(dialect)에 두고 caller 는 문자 보존만 한다(`_sql_str_list` 와 동일 계약).
+반대 배치(caller 이중화)면 다른 caller 가 생길 때 이중 이스케이프로 **다시 미매칭**이 된다 —
+`test_agent_job_sql_escapes_single_quote_exactly_once` 가 그 회귀를 잡는다.
+
+### qa 렌즈 — 테스트가 항진명제인가 (**자체 적발 1건**)
+
+초판 `test_sys_schema_block_names_the_object_tools` 는 `_discovery_tools_hint()` 헬퍼만 검사해,
+**거부 메시지가 옛 하드코딩으로 되돌아가도 통과**하는 항진명제였다(정확히 이번 마찰을 만든
+drift 를 못 잡는 테스트). 실제 거부 경로(`_freeform_sql_access_error`)를 태워 메시지 문자열을
+검사하도록 교체했다 — allowlist·pin 게이트를 통과시켜 sys 게이트에 실제로 도달시킨다.
+또한 안내 기준을 `TOOL_DEFINITIONS_FULL` → **상시 노출 세트 `TOOL_DEFINITIONS`** 로 바로잡았다
+(초판은 확장 전용 `describe_schema` 를 포함시킬 뻔했다 — 부를 수 없는 도구를 광고하면 새 마찰).
+
+### 라이브 실증 (배포 전, 실 datasource)
+
+수정 코드를 라이브 워커의 실 env·실 네트워크·실 datasource(`mssql-qa-idc`)로 실행:
+- msdb 차단 메시지가 `search_db_objects(object_role='schedule')` / `describe_db_object` 를 지목.
+- `describe_db_object(object_role='schedule', object_name='[DK] Ranking Update')` → **3,660자 · 10개
+  단계 전문** 반환. 원 대화가 3턴간 도달하지 못한 바로 그 내용이며, 사용자가 말한 "기준값
+  50/51/52" 의 실체(`DECLARE @ServerGroup INT = 5X;` 단계별 하드코딩)가 그대로 드러난다.
+
+### 잔여 (정직)
+
+1. **모델 행동은 미증명** — 안내가 있다고 모델이 그 도구를 고른다는 보장은 없다. 배포 후 동일
+   시나리오 재현 + 다음 audit corroboration 으로만 판정한다.
+2. **`search_db_objects` 의 `keyword` 는 범위 밖** — 여전히 `_safe_ident` 라 `[DK]` 검색은 `DK` 로
+   축약된다. 실질 손해가 없고(부분 일치로 여전히 매칭) SQL Server `LIKE` 에서 `[` 는 문자 클래스
+   와일드카드라 **보존이 오히려 예측 불가**를 만든다 → 의도적 미변경.
+3. **작업 단계 중 `database_name` 이 빈 것**(CmdExec/PowerShell 등 OS 레벨)은 제품 경계 밖이라
+   여전히 제외된다(fail-closed, by-design). 도구가 caveat 으로 고지한다.
+
+
+## REV-20260831T113000-scheduler-reachability-deploy-record [SKIPPED:non-policy-doc]
+
+Trigger: 코드 변경 **0**(배포 결과·원장·학습 기록 전용). 선행 cycle 의 코드 변경은
+`REV-20260831T110000-scheduler-discovery-reachability`(자체 적대 3렌즈, 실증 기반)에서 리뷰를
+마쳤고 이후 코드 불변.
+
+Verdict: **SKIPPED** — 패널 미실시. 기록된 사실의 근거: 7서비스 실물 이미지 `7e512eb8` ·
+surge 0 · caddy blip 0 · 대화 스모크 PASS · 배포본 런타임 심볼·메시지·실 datasource 반환 실측.
+

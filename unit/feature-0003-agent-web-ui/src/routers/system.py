@@ -501,6 +501,8 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     models: list = []
     authenticated = False
     runner_caps: list = []
+    account_bridge_model = ""
+    account_bridge_effort = ""
     conn = None
     try:
         conn = app._connect_memory()
@@ -517,6 +519,18 @@ def get_api_vault_options(request: Request) -> JSONResponse:
                 try:
                     runner_caps = _store.account_runner_capabilities(
                         cur, int(account.get("id") or 0))
+                    # 계정 기본값도 **같은 커넥션에서** 읽는다 — 별개 연결을 열면 목록과
+                    # 기본값이 서로 다른 순간의 사실이 되고, 그 틈에서 "목록에 없는 기본값"
+                    # 이 나온다.
+                    #
+                    # ⚠ 실패를 **여기서** 삼킨다. 바깥 except 로 흘리면 그쪽이 `runner_caps`
+                    #   를 비워 선택기가 통째로 사라진다 — 시작점을 정해 주는 편의 기능 하나가
+                    #   목록 전체를 지우는 형태다(회귀 테스트로 잠금).
+                    try:
+                        account_bridge_model, account_bridge_effort = \
+                            _store.account_bridge_defaults(cur, int(account.get("id") or 0))
+                    except Exception:
+                        account_bridge_model, account_bridge_effort = "", ""
                 finally:
                     cur.close()
     except Exception:
@@ -528,6 +542,11 @@ def get_api_vault_options(request: Request) -> JSONResponse:
         #   없는 모델일 수 있고, 그것을 고른 요청은 반영되지 않는다(P0-T 가 지운 상태의 재발).
         #   빈 목록은 선택기가 숨겨질 뿐이고, 답변 경로는 그대로 동작한다.
         runner_caps = []
+        # 기본값도 같이 버린다 — 목록 없이 남은 기본값은 대조할 곳이 없어 그대로 쓰이거나
+        # (없는 값이 선택돼 보이거나) 어차피 아래 `visible=False` 로 무시된다. 두 사실을
+        # 함께 버려 "목록은 실패했는데 기본값만 살아 있는" 중간 상태를 만들지 않는다.
+        account_bridge_model = ""
+        account_bridge_effort = ""
     finally:
         if conn is not None:
             try:
@@ -557,13 +576,35 @@ def get_api_vault_options(request: Request) -> JSONResponse:
             # 보고 해당 목록을 그리도록 런타임별로 내려준다.
             reasoning_by_runtime[name] = list(rt.get("efforts") or [])
         visible = bool(bridge_models)
+        # 계정 기본값 — **지금 신고된 목록 안에 있을 때만** 쓴다 (2026-08-31, 사용자 결정).
+        #
+        # 러너를 바꿨거나(claude 머신 → codex 머신) 그 모델이 사라졌으면 저장값은 여기서
+        # 탈락하고 첫 항목으로 떨어진다. 대조 없이 내려보내면 화면은 "고를 수 없는 것이
+        # 선택돼 있는" 상태가 되고, 그 값으로 보낸 질문은 러너가 버린다.
+        _default_model = bridge_models[0]["value"] if visible else None
+        _default_effort = ""
+        if visible:
+            _offered_values = {m["value"] for m in bridge_models}
+            if account_bridge_model and account_bridge_model in _offered_values:
+                _default_model = account_bridge_model
+            # 등급은 **고른 모델의 런타임** 목록으로 대조한다 — claude 의 `xhigh` 는 codex 에
+            # 없다. 모델이 바뀌면 등급도 함께 무효가 되는 것이 이 축의 성질이다.
+            _rt = str(_default_model or "").split(":", 1)[0]
+            if account_bridge_effort and any(
+                    str(e.get("value")) == account_bridge_effort
+                    for e in (reasoning_by_runtime.get(_rt) or [])):
+                _default_effort = account_bridge_effort
         return JSONResponse({
             # ⚠ `None` 으로 두면 프론트가 **서버 기본값(haiku)** 으로 폴백한다
             # (codex REV-20260828T170000 P1-2): 사용자가 선택기를 건드리지 않고 보낸 첫 질문에
             # 그 alias 가 실려 굳고, 러너는 자기 목록에 없으니 버린다 — "고른 적 없는 값이
             # 저장되고 반영은 안 되는" 상태가 신규 대화마다 재현된다.
             # 신고 목록의 **첫 항목**을 기본값으로 명시해 그 폴백 경로를 끊는다.
-            "default_model": bridge_models[0]["value"] if visible else None,
+            # 계정 기본값이 지금도 유효하면 그것이 첫 항목을 대신한다(위 대조 참조).
+            "default_model": _default_model,
+            # 사용자가 마지막으로 고른 추론등급 — 새 대화가 이 값으로 시작한다. 빈 문자열은
+            # "저장된 값이 없거나 지금 런타임에서 무효" 이고, 그때 프론트는 목록 첫 항목을 쓴다.
+            "default_reasoning_level": _default_effort,
             "models": bridge_models,
             "server_llm_enabled": False,
             # 프론트 계약: "hidden" 이면 모델·추론 강도 조작면을 DOM 에서 감춘다.

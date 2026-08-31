@@ -1030,3 +1030,202 @@ def test_only_explicit_ai_is_persisted():
         "자동 감지된 kind 를 ai 로 저장한다")
     assert body.count("save_conf(args.base, args.ca, (args.ai or \"\"), args.cmd") >= 1, (
         "명시 --ai 만 저장하는 형태가 아니다")
+
+
+# -- 2026-08-31: 부분 응답이 축을 죽이던 결함 (라이브 실측) ----------------------
+#
+# 라이브 러너 캐시가 `{"models": [opus,sonnet,haiku], "efforts": [], "effort": null}` 로 굳어
+# 있었다. claude 는 `--effort` 를 **실제로 지원한다**(`claude --help` 로 확인). 즉 AI 가 큰
+# JSON 하나에서 `effort_flag` 하나를 빠뜨렸고, 종전 코드가 그걸 "지원하지 않음" 으로 읽어
+# 등급 목록을 통째로 버린 것이다. 화면에서는 추론 강도 항목이 사라졌고, 사용자에게는
+# "쓸 수 있는 effort 가 확인되지 않는" 상태로 보였다.
+
+
+def test_partial_answer_does_not_kill_the_whole_axis(monkeypatch):
+    """모델은 받고 등급은 못 받은 답이 **모델까지** 잃게 하지 않는다.
+
+    반대 방향의 실수도 함께 막는다 — 축이 비었다고 질의 전체를 실패로 돌리면(`return None`)
+    호출측이 내장 표로 폴백해, 그 AI 가 실제로 답한 모델 목록이 버려진다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout: (
+        {"label": "Claude", "models": [{"value": "opus"}], "model_flag": ["--model", "{model}"]}
+        if prompt is mod._CAPS_PROBE_PROMPT else None))
+    # 축 재질의도 실패하고 도움말도 못 읽는 상황 → 축만 비고 모델은 남는다.
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: None)
+    got = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"])
+    assert got is not None, "축 하나가 비었다고 질의 전체가 실패했다"
+    assert [m["value"] for m in got["models"]] == ["opus"]
+    assert got["efforts"] == [] and got["effort"] is None
+    # 도움말을 **못 읽은** 상황이라 결론이 아니다 — 표지를 남기지 않아 다음 기동이 다시
+    # 확인한다 (codex P2-2: 일시적 확인 실패가 영구 미지원으로 굳지 않게).
+    assert got["effort_probed"] is False, "확인하지 못한 것을 확정으로 기록했다"
+
+    # 도움말을 읽을 수 있으면 같은 입력이 **확정**으로 끝난다(그리고 축이 복구된다).
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --effort <level>")
+    got2 = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"])
+    assert got2["effort"] == ["--effort", "{effort}"]
+    assert got2["effort_probed"] is True
+
+
+def test_missing_effort_flag_is_recovered_by_asking_again(monkeypatch):
+    """1차에서 빠진 축을 **좁게 다시 물어** 되살린다 (실측: claude 가 이 경로로 답했다)."""
+    mod = _load_runner()
+
+    def _fake(argv, prompt, timeout):
+        if prompt is mod._CAPS_PROBE_PROMPT:
+            return {"models": [{"value": "opus"}], "model_flag": ["--model", "{model}"]}
+        return {"efforts": [{"value": "xhigh", "label": "매우높음"}],
+                "effort_flag": ["--effort", "{effort}"]}
+
+    monkeypatch.setattr(mod, "_ask_json", _fake)
+    got = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"])
+    assert got["effort"] == ["--effort", "{effort}"]
+    assert [e["value"] for e in got["efforts"]] == ["xhigh"]
+
+
+def test_recovery_falls_back_to_the_builtin_pair_only_when_help_confirms_it(monkeypatch):
+    """재질의도 실패하면 **내장 표의 짝**을 쓰되, 그 CLI 의 도움말로 실재를 확인한다.
+
+    확인 없이 쓰면 우리 표가 낡은 순간(플래그가 사라진 CLI 버전) 고른 값이 조용히 무시되고,
+    화면은 반영된다고 말한다. 도움말에 없으면 축을 비우는 것이 정직하다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: None)   # 재질의 실패
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --effort <level>")
+    flag, opts, settled = mod._settle_effort_axis(
+        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0)
+    assert flag == ["--effort", "{effort}"]
+    assert [o["value"] for o in opts] == ["low", "medium", "high", "xhigh", "max"]
+    assert settled is True
+
+    # 도움말에 없다 → 축을 비우고, 그것은 **결론**이다(다시 묻지 않는다).
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --model <name>")
+    assert mod._settle_effort_axis(
+        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0) == (None, [], True)
+
+    # 도움말을 **못 읽은 것**은 "없다" 가 아니다 — 채택하지 않되 결론으로도 기록하지 않는다.
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: None)
+    assert mod._settle_effort_axis(
+        "claude", ["claude", "-p", "{prompt}"], None, [], 0.0) == (None, [], False)
+
+
+def test_reask_answer_of_no_support_is_respected(monkeypatch):
+    """재질의가 "지정할 수 없다" 로 명확히 답하면 **내장 표로 덮지 않는다**.
+
+    우리 표에 값이 있어도 그 CLI 버전에는 없을 수 있다. 목록의 출처는 연결된 AI 라는 것이
+    이 기능의 계약이므로, AI 의 명시적 부정이 우리 표를 이긴다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout: {
+        "efforts": [], "effort_flag": []})
+    calls: list = []
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: calls.append(name) or "--effort")
+    assert mod._settle_effort_axis(
+        "claude", ["claude", "-p", "{prompt}"], None, [], 60.0) == (None, [], True)
+    assert calls == [], "AI 가 '없다' 고 답했는데 도움말로 뒤집었다"
+
+    # ⚠ 그러나 **누락·오류는 부정이 아니다** (codex P1-2). 빈 객체·필드 누락은 "지원하지
+    #   않는다" 가 아니라 "답하지 않았다" 이므로, 도움말 보완 단계로 내려가야 한다.
+    for vague in ({}, {"efforts": []}, {"effort_flag": []}, {"efforts": [], "effort_flag": "x"}):
+        monkeypatch.setattr(mod, "_ask_json", lambda a, p, t, _v=vague: _v)
+        monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --effort <level>")
+        flag, opts, settled = mod._settle_effort_axis(
+            "claude", ["claude", "-p", "{prompt}"], None, [], 60.0)
+        assert flag == ["--effort", "{effort}"], f"누락 응답({vague})을 미지원으로 오판했다"
+        assert settled is True
+
+
+def test_help_flag_check_uses_word_boundaries():
+    """`--effort` 가 `--effort-level` 에 부분일치해 참이 되지 않는다.
+
+    그 오탐은 "있다고 판단했는데 CLI 가 거부하는" 형태라, 사용자에게는 고른 값이 조용히
+    무시되는 것으로 보인다(P0-T 가 지운 상태와 같다).
+    """
+    mod = _load_runner()
+    assert mod._help_mentions_flag("  --effort <level>  Effort", ["--effort", "{effort}"]) is True
+    assert mod._help_mentions_flag("  --effort-level <x>", ["--effort", "{effort}"]) is False
+    # `-c key={effort}` 형태는 `=` 앞까지가 플래그 이름이다.
+    assert mod._help_mentions_flag("  -c, --config", ["-c", "reasoning={effort}"]) is True
+    # 위치 인자로 받는 형태·도움말 부재는 **판정 불가**(None) — "없다" 와 구분한다.
+    assert mod._help_mentions_flag("anything", ["{model}"]) is None
+    assert mod._help_mentions_flag(None, ["--effort", "{effort}"]) is None
+
+
+@pytest.mark.parametrize("caps,expect", [
+    ({"effort": None}, True),                              # 구 러너가 남긴 캐시 — 다시 확정한다
+    ({"effort": None, "effort_probed": True}, False),      # 물어봤고 "없다" 였다 — 다시 묻지 않는다
+    ({"effort": ["--effort", "{effort}"]}, False),         # 이미 있다
+    ("문자열", False), (None, False),
+])
+def test_old_cache_is_recognized_as_unsettled(caps, expect):
+    """`effort: null` 이 뭉갠 두 사실을 가른다.
+
+    구분하지 않으면 이 복구가 **기존 사용자에게는 영영 실행되지 않는다** — 캐시가 있으니
+    묻지 않고, 묻지 않으니 축이 계속 빈 채로 신고된다.
+    """
+    mod = _load_runner()
+    assert mod._caps_axis_unsettled(caps) is expect
+
+
+def test_unsettled_cache_is_re_probed_and_the_new_answer_wins(monkeypatch):
+    """구 캐시는 축만 다시 확정하고, 그 결과가 캐시를 **이긴다**.
+
+    반대로 두면(캐시 우선) 재확정이 매 기동마다 돌면서도 결과가 버려져, 사용자는 같은 빈
+    목록을 계속 본다 — 고쳤는데 화면은 그대로인 가장 나쁜 형태다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    monkeypatch.setattr(mod, "_settle_effort_axis",
+                        lambda *a, **k: (["--effort", "{effort}"],
+                                         [{"value": "max", "label": "Max"}], True))
+    # 전체 질의는 일어나지 않아야 한다 — 모델 목록은 이미 그 AI 가 답한 것이다.
+    monkeypatch.setattr(mod, "probe_runtime_caps",
+                        lambda *a, **k: pytest.fail("캐시가 있는데 전체를 다시 물었다"))
+    stale = {"claude": {"label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
+                        "efforts": [], "model": ["--model", "{model}"], "effort": None,
+                        "argv": ["claude", "-p", "{prompt}"], "source": "probe"}}
+    detail: dict = {}
+    got = mod.detect_runtimes(cached=stale, detail_out=detail, probe=True)
+    assert [e["value"] for e in got[0]["efforts"]] == ["max"], "재확정 결과가 캐시에 밀렸다"
+    assert [m["value"] for m in got[0]["models"]] == ["opus"], "모델 목록까지 다시 물었다"
+    assert detail["claude"]["effort_probed"] is True, "표지가 캐시에 남지 않아 매번 다시 묻는다"
+
+
+def test_sanitizer_preserves_the_settled_marker():
+    """축 확정 표지가 캐시 로드에서 **살아남는다**.
+
+    여기서 떨어뜨리면 확정을 마친 캐시가 매 기동마다 미확정으로 되살아나 같은 질의를
+    반복한다 — 그리고 그 질의는 사용자 계정 토큰을 쓴다.
+    """
+    mod = _load_runner()
+    got = mod.sanitize_caps({"claude": {
+        "models": [{"value": "opus"}], "model": ["--model", "{model}"],
+        "effort": None, "effort_probed": True}})
+    assert got["claude"]["effort_probed"] is True
+    # 표지가 없던 캐시는 없는 채로 남는다(그래야 재확정 대상이 된다).
+    got2 = mod.sanitize_caps({"claude": {
+        "models": [{"value": "opus"}], "model": ["--model", "{model}"], "effort": None}})
+    assert got2["claude"]["effort_probed"] is False
+
+
+def test_applied_picks_are_disclosed_too():
+    """**반영된** 지정도 답변에 밝힌다 (사용자 요구 2026-08-31).
+
+    미반영만 고지하면 침묵이 두 가지를 뜻한다 — "지정대로 됐다" 와 "지정이 애초에 전달되지
+    않았다". 사용자가 그 둘을 구분할 방법이 화면에 없어 "무슨 모델로 답했는지 확인되지
+    않는다" 가 됐다. 무지정 요청에는 붙이지 않는다(그 한 줄은 노이즈다).
+    """
+    src = _RUNNER.read_text(encoding="utf-8")
+    body = src[src.index("def handle_one("):]
+    body = body[:body.index("\ndef ")]
+    assert "elif _applied and ok:" in body, (
+        "지정이 있어도 반영 사실을 밝히지 않거나, 실패한 답에까지 '생성했습니다' 를 붙인다")
+    assert "로 생성했습니다" in body
+    # 한쪽만 미반영일 때도 **반영된 축은 말한다** (codex P2-3).
+    assert "는 적용됐습니다" in body, "미반영이 있으면 반영된 축이 침묵에 남는다"
+    # 목록에 있어도 **넘길 플래그가 없으면** 반영이 아니다 (codex P1-5).
+    assert "_model_flag" in body and "_effort_flag" in body, (
+        "플래그 유무를 보지 않아 '적용됐다' 가 거짓이 될 수 있다")
+    # 제목 규약을 밀어내지 않게 **제목 분리 뒤**에 있어야 한다(미반영 고지와 같은 이유).
+    assert body.index("split_title(answer)") < body.index("로 생성했습니다")

@@ -2880,6 +2880,19 @@ function _composerReasoningOptions() {
   return Array.isArray(list) ? list : [];
 }
 
+// 이 등급 값을 사람에게 보여줄 이름. 브리지 모드에서는 **신고가 준 라벨**이 정본이다.
+//
+// 서버 표(`_reasoningLevelLabel`)를 쓰면 러너 어휘가 전부 미등록이라 기본 라벨로 떨어진다 —
+// 메뉴 항목은 `매우높음` 인데 버튼만 "일반" 인, 같은 값을 두 이름으로 부르는 화면이 된다.
+function _composerReasoningLabelFor(value) {
+  if (_composerRunnerCatalog()) {
+    const hit = _composerReasoningOptions().find((o) => o.value === value);
+    // 목록에 없으면 값 자체를 보여준다 — 없는 이름을 지어내는 것보다 낫다.
+    return hit ? (hit.label || hit.value) : String(value || "");
+  }
+  return _reasoningLevelLabel(value);
+}
+
 // 이 값이 **지금** 고를 수 있는 추론 강도인가.
 //
 // 브리지 모드에서는 러너가 신고한 목록으로, 아니면 서버 고정 집합으로 판정한다. hydration
@@ -2911,7 +2924,16 @@ function _composerCurrentReasoningLevel() {
     // 못하므로 여기서는 **신고 목록** 자체를 기준으로 삼는다. 목록에 없으면 첫 항목으로
     // 떨어진다 — 런타임을 바꿔 등급 어휘가 갈린 순간에도 항상 유효한 값이 선택돼 있다.
     const has = (v) => options.some((o) => o.value === v);
+    // ① 이 세션에서 방금 고른 값이 언제나 먼저다.
     if (has(state.reasoningLevel)) return state.reasoningLevel;
+    // ② 계정 기본값 — 서버가 **지금 런타임 목록으로 대조해** 내려준 값이다(2026-08-31).
+    //    ⚠ 로컬 미러보다 **앞**에 둔다 (codex P2-4). `localStorage` 는 계정이 아니라
+    //    브라우저에 묶여 있어, 계정 A 에서 고른 값이 로그아웃 뒤 계정 B 의 첫 화면에
+    //    그대로 남는다. 계정 기본값은 서버가 그 계정에 대해 아는 사실이므로 이쪽이 진실에
+    //    가깝다(그리고 B 가 고르는 순간 ①이 다시 이긴다).
+    const acct = String(_composerRunnerCatalog()?.default_reasoning_level || "");
+    if (has(acct)) return acct;
+    // ③ 로컬 미러 — 계정 기본값이 아직 없을 때의 편의(같은 브라우저·같은 사용자 가정).
     const stored = _readReasoningPrefFromLocal();
     if (has(stored)) return stored;
     return options.length ? options[0].value : "";
@@ -2931,7 +2953,14 @@ function _updateComposerReasoningLabel() {
   if (_composerModelSelectorHidden()) return;
   const supported = _composerModelSupportsThinking();
   if (labelEl) {
-    labelEl.textContent = supported ? _reasoningLevelLabel(_composerCurrentReasoningLevel()) : "미지원";
+    // 라벨도 **신고 목록에서** 찾는다 (실 브라우저 발견 2026-08-31). `_reasoningLevelLabel` 은
+    // 서버 LLM 어휘(low/normal/high/max)의 표라, 러너 어휘(`medium`·`xhigh`)를 넘기면 못 찾고
+    // 기본 라벨("일반")로 떨어진다 — 메뉴에서는 `매우높음` 이 선택 표시인데 버튼 라벨만
+    // "일반" 인 상태가 되고, 사용자는 자기가 고른 등급이 적용됐는지 확인할 수 없다.
+    // (고른 값 자체는 정상 전송되고 있었다 — 어긋난 것은 표시 계층뿐이다.)
+    labelEl.textContent = supported
+      ? _composerReasoningLabelFor(_composerCurrentReasoningLevel())
+      : "미지원";
   }
   if (item) {
     // thinking 미지원 모델이면 선택기를 비활성(클릭·팝업 차단) — 파라미터는 어차피 무시된다.
@@ -3390,7 +3419,16 @@ async function sendPrompt() {
   // P0-Z3(2026-08-28) 이후 이 상태의 의미가 좁아졌다: 브리지 모드라도 연결된 러너가 능력을
   // 신고하면 선택기는 보이고(그때 값은 `runtime:model`) 여기서 정상적으로 실린다. 숨김은
   // **고를 것이 실제로 없을 때**만 남는다 — 러너 미연결 · 구 러너 · `--cmd` 직접 지정.
-  const _selectorHidden = _composerModelSelectorHidden();
+  // 카탈로그를 아직(또는 끝내) 받지 못했으면 **모델·등급을 싣지 않는다** (codex P1-6,
+  // 2026-08-31). 그 상태의 `_composerCurrentModel()` 은 러너 카탈로그를 못 봐서 서버 alias
+  // (`claude-haiku-4`)로 폴백하는데, 그것을 실어 보내면 서버는 `model_explicit=True` 로 읽어
+  // **사용자가 고른 적 없는 값을 그 질문에 굳히고 계정 기본값으로도 저장한다**. 러너는 모르는
+  // 이름이라 버리고, 답변에는 "요청하신 모델을 쓸 수 없다" 는 거짓 고지가 붙는다.
+  // (라이브 WebAiTasks #69·#70 이 이 형태였다. 서버측 `model_explicit` 분기만으로는 이
+  //  경로를 막지 못한다 — 프론트가 값을 실어 보내는 순간 그것이 곧 '명시' 가 되기 때문이다.)
+  // 싣지 않으면 서버가 그 대화의 저장값 또는 기본값으로 처리한다(종전 무지정 동작).
+  const _catalogReady = !!(state.modelCatalog || state.apiVaultOptions);
+  const _selectorHidden = _composerModelSelectorHidden() || !_catalogReady;
   const askBody = {
     message,
     conversation_id: targetConvId || "",
