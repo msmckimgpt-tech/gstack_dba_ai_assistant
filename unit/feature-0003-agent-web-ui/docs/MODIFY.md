@@ -4987,3 +4987,11 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Files: `docs/{TASK,REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-postdeploy.md`,
   `docs/evidence/connect-modal-autoclose/*.png`. 코드 변경 0.
 - Timestamp: 2026-08-31T19:35:00+09:00
+
+## CHG-20260901T010306-doc-sync-rn-0901 (2026-08-31 블록 신설) 릴리즈노트 콘텐츠 — 75커밋 창 사용자향 14항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 **신규 `date: "2026-08-31"` 블록 prepend** — items **14** + `summary`. `releases` 56→**57** · `generated` "2026-08-28"→**"2026-08-31"**(== `releases[0].date`) · **08-28 이하 전 블록 바이트 불변**.
+- 항목 골자: '답변 모델'·'추론 강도' 재복원(두 원인 — 한쪽만 답해 오면 통째로 버리던 것 · 고르지 않은 값에 서버 기본값이 붙던 것) · 없는 모델 폴백 제거 + 플랫폼 그룹 트리 · 연결 직후 선택기 표시 + 지문 대조로 `내 AI 업데이트 필요` · 연결 성립 토스트 + 모달 자동 닫기 · 실행 단계 추론 구간 복원 + 진행 갱신 요동 차단 · 단계 표시 한 줄 축약 + 누적 시간 실시간 · 쿼리 결과 자기 스크롤 패널 · 대화 「최근 갱신」 고정 결함 + 19건 백필 · 예약 작업 조회 도달성 · 설치 경로 4종(PowerShell 파싱·파이썬 스텁·자동 설치·인증서 확인) · 실행 속도 80초→1초 미만 · 러너 조기 종료 방지 · 관리 콘솔 상태 고지 + 위임 3종.
+- 블록 귀속: 창 75 커밋의 착륙일이 **전부 2026-08-31** 이고 그 date 블록이 **부재**(최신 08-28)하므로 append 가 아니라 **신규 블록**. 사전 grep 으로 08-29/08-30/08-31 히트 0 확인(owning feature self-add 부재).
+- 재발 명시 1건: 08-28 블록의 「되살렸다」 단정을 창의 `d35f78dd` 가 반증 — 과거 블록 불가침 원칙대로 새 항목에서 경위를 밝혀 수렴.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 56→**57** · `generated`=="2026-08-31"==`releases[0].date` · `releases[0].items` **14** + summary · `releases[1]`(2026-08-28) items 15 불변 · **08-28 이하 tail 바이트 동일**(9,045B 순증) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 18패턴 **0건**
+- Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.

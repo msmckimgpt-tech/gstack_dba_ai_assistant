@@ -12063,3 +12063,18 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] **CI 게이트 사실 기록**: PR #1447 은 `UNSTABLE` 로 머지됐다 — Actions job 이 `steps=0`
       으로 미실행(전 브랜치·main push 동일, 마지막 정상 15:01 KST). CI 의 정적 게이트 4종을
       로컬에서 전건 PASS 로 대체 충족했고, 이 커밋의 Python 변경은 0건이다. **운영 조치 필요**.
+
+## 20260901T010306-doc-sync-rn-0901 — 릴리즈노트 2026-08-31 블록 신설(14항목 + summary) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+
+### Requested Scope (요청 범위)
+- [x] 델타 창 `dae0903d`·`a6ce8dad`..`f62aa92f`(**37 non-merge / 38 merge** · PR #1422~#1451 · 착륙 전부 2026-08-31 11:40~19:40)의 **사용자 체감 변화**를 릴리즈노트에 반영 — 산출물: 신규 `2026-08-31` 블록 items **14** + summary
+- [x] 블록 귀속: 창 커밋 착륙일이 전부 2026-08-31 이고 그 date 블록이 **부재**하므로(최신 08-28) **신규 블록 prepend** — 산출물: `releases` 56→**57** · `generated` "2026-08-28"→**"2026-08-31"**(== `releases[0].date`)
+- [x] 과거 블록 불가침 — 산출물: **`date: "2026-08-28"` 이하 전 구간 바이트 동일**(순증 9,045B 전량이 신규 블록)
+- [x] 사용자향 평이화·내부동작 비노출 검증 — 산출물: 18패턴 누출 스캔 **0건**. UI 명칭(`내 AI 실행`·`단계 보기`·`쿼리 결과`·`내 AI 업데이트 필요`·`미적용`)은 실제 static 파일에서 노출 문자열임을 확인 후에만 사용
+- [x] 회귀 0 실증 — 산출물: `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일**
+- [x] **재발 명시 1건**: 직전 08-28 블록이 「'답변 모델'·'추론 강도' 를 되살렸다」로 단정했으나 창의 `d35f78dd` 가 그 두 칸이 여전히 비어 있었음을 고쳤다. 과거 블록을 고치지 않고 새 항목에서 재발 경위를 밝혀 수렴
+- [x] **미검증 고지**: 회원 머신에서만 확인 가능한 축을 배포 서비스 확인 축과 분리하고, 접힌 summary 말미에도 그 사실을 노출
+- [x] 제외(사용자 표면 0): POST-DEPLOY 증적 커밋 8건 · merge 커밋 38건 · 문서 self-add(`f5b99c8d`·`9fad94fd`·`b88b7665`) · 테스트 선재 실패 해소(`ca684b47`·`7899b4dc`) · 진단 로그
+- [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 56→**57** · `generated`=="2026-08-31"==`releases[0].date` · `releases[0].items` **14** + summary · `releases[1]`(2026-08-28) items 15 불변 · **08-28 이하 tail 바이트 동일**(9,045B 순증) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 18패턴 **0건**
+- [x] reconcile-first: 서빙 `release-notes-data.js` 200 · 329,914B · `origin/main` blob 과 바이트 동일 → **파리티 갭 0**. `repo/` clean · HEAD == origin/main == `f62aa92f`
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(정본 `docs/CONVENTIONS.md:568` — wrapper 지시문의 'bump 포함' 은 저장소 정본과 충돌)

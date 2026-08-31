@@ -3560,3 +3560,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   (배포본 `cac907c4`). 사용자가 제보한 **그 문자열**이 본문 230자만 남고 마커·고지가 전부
   제거됨을 실측. 폴링 스코프(타 계정 task → 404)도 라이브 확인. 증적:
   `docs/test-runs.d/TASK-20260831T190000-job-result-unwrap-postdeploy.md`
+
+## TASK-20260901T010306-doc-sync-rn-0901 — 릴리즈노트 2026-08-31 블록 신설 검증
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면에 새 내용이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
+- `node --check static/release-notes-data.js` → PASS.
+- `node tests/verify_release_notes.mjs` → **ALL PASS 34 / 0**. 편집 **전** 동일 스크립트를 cycle 초반에 실행해 34/0 을 측정했으므로 **회귀 0** 을 실증한다(jsdom@24 를 `/tmp` 에 핀 설치 — 스크립트가 `/tmp/node_modules/jsdom` 를 하드코딩하므로 미설치 세션에서는 실행 불가).
+- 구조 단언: `releases` 56→**57**(신규 date 블록 1개) · `generated`=="2026-08-31"==`releases[0].date` · `releases[0].items` **14** + `summary` 보유 · `releases[1]`(2026-08-28) items **15 불변** · **`date: "2026-08-28"` 이하 전 구간 바이트 동일**(순증 9,045B 전량이 신규 블록) · `type` ∈ {new,improved,fixed} · `area` ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0.
+- 누출 스캔(18패턴 — feature-id / 브리지·러너·워커·핸들러 / Schannel·BOM·WSL·winget / `bridge_*` / 파일확장자 / payload·JSON / 폴링 / 배포본 / `Kind=` / `wired`): 신규 14항목 + summary 구간 **전건 0건**.
+- reconcile-first 실측(run 시작 시점): 서빙 `https://mysql-ai.company.local/static/release-notes-data.js` 200 · 329,914B · `origin/main` blob 과 **바이트 동일** → 파리티 갭 0. `repo/` main checkout clean · HEAD == `origin/main` == `f62aa92f`.
+- **Pass/Fail: PASS**.
