@@ -62,6 +62,7 @@ __all__ = [
     "expire_stale_batch_jobs",
     "load_console_job",
     "mark_console_job_applied",
+    "store_console_job_result",
 ]
 
 #: 점유 lease. 이 시간이 지나도록 제출되지 않은 작업은 **다시 대기열에 나타난다**.
@@ -369,7 +370,7 @@ def load_console_job(conn, task_id: str, *, account_id: int | None = None) -> di
     try:
         cur.execute(
             "SELECT TaskId, JobKind, Status, Origin, Answer, JobPayload, "
-            "       JobAppliedAt, JobApplyError, ClaimedBy, ClaimedAt, AccountId "
+            "       JobAppliedAt, JobApplyError, ClaimedBy, ClaimedAt, AccountId, JobResult "
             f"FROM WebAiTasks WHERE {where} LIMIT 1", tuple(params))
         row = cur.fetchone()
     finally:
@@ -382,7 +383,25 @@ def load_console_job(conn, task_id: str, *, account_id: int | None = None) -> di
         "answer": row[4], "payload": row[5],
         "applied_at": row[6], "apply_error": str(row[7] or ""),
         "claimed_by": row[8], "claimed_at": row[9], "account_id": int(row[10] or 0),
+        # 화면이 읽을 **원문**. `answer`(각인본)와 다른 소비처다 — 섞으면 래퍼가 폼에 들어간다.
+        "result": row[11],
     }
+
+
+def store_console_job_result(conn, task_id: str, result: str) -> None:
+    """화면이 읽을 **원문**을 보존한다 (각인 래퍼 없음).
+
+    `Answer`(각인본)를 화면에 그대로 주면 래퍼가 폼 입력란에 들어간다 — 대화 경로가 원문을
+    대화에 따로 저장하는 것과 같은 이유로 저장본을 나눈다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAiTasks SET JobResult = %s WHERE TaskId = %s AND Kind = %s",
+            (str(result or ""), str(task_id), KIND_JOB))
+        conn.commit()
+    finally:
+        cur.close()
 
 
 def mark_console_job_applied(conn, task_id: str, error: str = "") -> None:

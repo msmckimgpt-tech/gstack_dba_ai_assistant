@@ -1106,3 +1106,36 @@ feature 의 자산이다(스키마 grounding · 제품 바인딩 · 필드 제�
       `delegable_jobs` 판정. 증적 `feature-0003 docs/test-runs.d/…-console-job-wiring-postdeploy.md`
 - [ ] **위임 왕복 e2e 미관측** — `console_jobs` 신고 러너가 사용자 머신에 있어야 관측 가능
       (AI 가 띄울 수 없음). 함수 수준은 회귀 18건이 덮는다
+
+### TASK-20260831T190000-job-result-unwrap — 위임 결과에 각인 래퍼가 노출됐다 (라이브 제보)
+
+**제보(2026-08-31)**: 최신 러너를 붙이고 용어사전 자동완성을 실행하자 폼 입력란에
+`⟦UNTRUSTED-DATA⟧ (account=… task=… source=external_ai_answer)` + `[UNTRUSTED] Authored by
+an external AI runtime…` 이 본문과 함께 통째로 들어갔다.
+
+**위험도: Minor** (읽기 경로 1곳 + 비파괴 컬럼 1개. 데이터 손실·권한 변경 없음.)
+
+#### 원인 — 저장본이 둘인데 화면이 잘못된 쪽을 읽었다
+
+`WebAiTasks.Answer` 는 **각인본**이다: 감사 보존 + 지연 인젝션 방어(저장된 답변은 나중에
+요약·검색 경로로 우리 LLM 컨텍스트에 되돌아올 수 있다). 대화 경로는 이것을 화면에 쓰지
+않는다 — 원문을 대화에 따로 저장하고 화면은 그쪽을 읽는다. `_deliver_web_bridge_answer` 의
+주석이 그 이유를 이미 적어 두고 있었다:
+
+> "각인된 본문이 아니라 원문을 저장한다 … 두 소비처의 요구가 달라 저장본을 나눈다."
+
+콘솔 작업 경로가 그 규율을 따라가지 못하고 `Answer` 를 그대로 폴링 응답에 실었다.
+
+- [x] `WebAiTasks.JobResult` 비파괴 ADD — 화면이 읽을 **원문**
+- [x] 제출 시점에 원문 보존(`store_console_job_result`). 실패해도 반영을 막지 않는다
+- [x] 폴링이 원문을 준다. **이 수정 이전 행**은 각인본을 벗겨 폴백(`unwrap_external_answer`) —
+      버리면 이미 AI 가 답한 작업을 다시 시켜야 한다
+- [x] `session_guard.unwrap_external_answer` — `wrap_external_answer` 의 정확한 역함수.
+      형식을 못 알아보면 **원본 그대로**(추측해 자르면 본문이 사라진다)
+- [x] 회귀 7건 + **뮤턴트 KILL 실증**(각인본을 그대로 내보내는 원래 결함 → 2건 FAIL)
+
+#### 잠근 것은 구조가 아니라 **불변식**
+
+「화면으로 나가는 본문에 sentinel 이 없다」 하나다. 저장을 어떻게 나누든, 파싱을 하든 안 하든
+그것만 지켜지면 재발하지 않는다. 정본이 있으면 파싱하지 않는다는 것도 함께 잠갔다 —
+폴백에 의존하기 시작하면 "저장본을 나눈다" 는 규율이 파싱으로 대체된다.

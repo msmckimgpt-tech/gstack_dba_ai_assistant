@@ -2631,6 +2631,14 @@ def _ensure_oauth_client_schema(conn) -> None:
             # `JobApplyError`: write-through 실패 사유(1줄). 조용한 실패 금지 — 화면이
             # "제출됐지만 반영 실패" 를 사유와 함께 말할 수 있어야 한다.
             ("JobApplyError", "ALTER TABLE WebAiTasks ADD COLUMN JobApplyError VARCHAR(255) NULL, ALGORITHM=INPLACE, LOCK=NONE"),
+            # `JobResult`: 화면이 읽을 **원문**(각인 래퍼 없음).
+            #
+            # `Answer` 와 나누는 이유는 대화 경로가 이미 세운 규율과 같다 — `Answer` 는 감사
+            # 보존 + 지연 인젝션 방어용 **각인본**이고, 사람에게 보이는 자리는 원문이 필요하다
+            # ("두 소비처의 요구가 달라 저장본을 나눈다", `_deliver_web_bridge_answer`).
+            # 이 컬럼이 없던 동안 위임 결과의 각인 래퍼가 통째로 폼 입력란에 들어갔다
+            # (2026-08-31 라이브 제보).
+            ("JobResult", "ALTER TABLE WebAiTasks ADD COLUMN JobResult MEDIUMTEXT NULL, ALGORITHM=INPLACE, LOCK=NONE"),
         ):
             try:
                 cur.execute(
