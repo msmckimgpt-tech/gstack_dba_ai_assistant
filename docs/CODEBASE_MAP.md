@@ -14,7 +14,7 @@ source_of_truth: true
 기능 추가/삭제, 파일 구조 변경 시 갱신한다.
 
 > **Freshness**: feature-0012 (web-router-modularization) 완결 반영 — `app.py` 19,650→3,722줄(-81%),
-> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 로 추출됨 — **35개 파일**(route-module 29 + `_` 접두 공유헬퍼 5 + `__init__` registrar, 2026-08-25 실측). (분할 완결 시점 HEAD `f7ad45d7`, 2026-07-13 = 당시 28개)
+> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 로 추출됨 — **37개 파일**(route-module 29 + `_` 접두 공유헬퍼 7 + `__init__` registrar, 2026-09-01 실측). (분할 완결 시점 HEAD `f7ad45d7`, 2026-07-13 = 당시 28개)
 
 > **AI 탐색 진입점 (재귀 4계층)**: 바꾸려는 것이 route/handler 라면 아래 순서로 좁혀 내려간다.
 > **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 200 route). ·
@@ -54,16 +54,16 @@ repo/
     │   └── src/
     │       ├── app.py           # 4,000줄 (feature-0012 P5b 완결 시점 3,722 · -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
     │       ├── web_context.py   # leaf helper (app-internal 의존 0인 순수 컨텍스트 조각, 단방향 추출)
-    │       ├── routers/         # 도메인 APIRouter 패키지 — 35 파일 (§4a 참조)
+    │       ├── routers/         # 도메인 APIRouter 패키지 — 37 파일 (§4a 참조)
     │       │   ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include
     │       │   ├── <29 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
-    │       │   └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_folder_store·_prompt_context (register_all 제외)
+    │       │   └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_console_jobs·_console_llm·_conv_store·_folder_store·_prompt_context (register_all 제외)
     │       └── static/          # 프론트 자산 — ?v= 는 전부 `?v=dev` placeholder(빌드가 content-hash 주입, §13.1)
     │           ├── admin.js     # 관리 콘솔(4,831줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
     │           ├── app.js       # 작업 화면(8,562줄) · css/ 7분할 · share.js/css · index/admin/share.html
-    │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress
+    │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress·connect-modal·next-target
     │           │               #   + attach-diff = 첨부 버전 diff 비교 모달, 2026-08-06)
-    │           ├── admin/      # 관리 콘솔 도메인 모듈 9
+    │           ├── admin/      # 관리 콘솔 도메인 모듈 11
     │           ├── modal-dismiss.js  # 배경 dismiss 저장소 단일 primitive(양 ESM 번들 공유)
     │           └── graph/       # 그래프 뷰 ES 모듈 (ITEM-09 batch3, 2026-07-12) — CODE_NAVIGATION §8 참조
     │               ├── graph.js           # barrel — 공개 4심볼 re-export (admin.js 는 이 경로만 import)
@@ -120,6 +120,13 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `shared/conn_health.py` | per-datasource 연결 health 모니터 (TCP liveness, circuit) | feature-0002·0003 (db·datasources 와 lazy 상호참조) |
 | `shared/datasources.py` | datasource 레지스트리 (DB+`.env` 병합, 자격증명 복호) | feature-0002·0003 (cred_crypto back-dep — 아직 modules/) |
 | `shared/attachment_write.py` | assistant 답변의 첨부 쓰기 블록(`attachment-edit`/`attachment-new`) 후처리 **단일 정본** — materialize → 도구 전달분 바인딩 → strip → 미전달 고지 → content 갱신. 저장 가드가 두 벌로 갈리는 것을 막는다 (feature-0043, 2026-08-28 · SECURITY §49) | feature-0002 (`modules/ask.py` ask-worker)·feature-0003 (`routers/conversations.py` 브리지 경로) |
+| `shared/runtime_settings.py` | 관리 콘솔 `시스템 > 설정` 런타임 설정 레지스트리 + resolver + 프로세스 간 전파 스냅샷 (feature-0018) | feature-0002·0003 |
+| `shared/llm_budget.py` | 백그라운드 LLM 토큰 예산 — rolling 집계·게이트 (feature-0032) | feature-0002·0003 |
+| `shared/llm_gate.py` | 서버 보유 계정 LLM 호출 **fail-closed 게이트 단일 정본** (feature-0043 · SECURITY §49) | feature-0002 (`modules/llm`·`agent_core`)·feature-0003 |
+| `shared/bridge_tasks.py` | 웹 브리지 대기 작업(`WebAiTasks`) **상태 술어 단일 정본** — 집을 수 있는가/취소됐는가 (feature-0043, 2026-08-28) | feature-0003 (`routers/ai_tools.py`·`routers/conversations.py`) |
+| `shared/resource_budget.py` | 공유 자원 예산·격리 + 워커 자원 계측 (feature-0025 T0) | feature-0002 워커 루프 |
+| `shared/share_window.py` | 공유(그룹) 대화 첨부 참조 스코프 **판정 정본** — 그룹 여부 + 공유창 window 게이트 (feature-0009 · SECURITY §47) | feature-0002 (`agent_core`)·feature-0003 |
+| `shared/hangul_qwerty.py` | 한글 ↔ QWERTY 자판 상호 변환 **서버측 정본** (프론트 정본 `static/hangul-qwerty.js` 와 매핑표 동치 · 회귀 잠금 테스트 2종) | feature-0002·0003 (SQL LIKE 검색 경로) |
 
 > 아직 추출되지 않은 cross-feature 공통 후보(cred_crypto·memory·llm 등)는 feature-0002 `modules/` 에 잔존(후속 step). 신규 공용 모듈 추가는 PB-0002 참조.
 > **web_context.py 는 shared/ 아님** — feature-0003 web 전용 leaf helper 다 (§4a). 여러 feature 가 아닌 web-ui 내부만 소비한다.
@@ -130,7 +137,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 |---------|------|-----------|
 | `feature-0001-platform-runtime` | 플랫폼 런타임/공통 자산 | (scaffold — `src/README.md`, `tests/README.md`) |
 | `feature-0002-agent-core` | Agent 핵심 로직 | `src/agent_core.py` (라이브 진입점 = in-process tool-calling 루프), `src/modules/*` (config/llm/knowledge/sql_ops 등), `tests/test_llm_api.py` |
-| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (4,000줄 조립 루트, 2026-08-25 실측) + `src/routers/*` (35 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
+| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (4,000줄 조립 루트, 2026-08-25 실측) + `src/routers/*` (37 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
 | `feature-0004-browser-automation` | 브라우저 자동화 | `src/app.py`, `src/ctl.py` |
 | `feature-0005-qa-mcp` | QA 및 MCP 테스트 | `src/mcp_tests.py` |
 | `feature-0006-lan-proxy-access` | LAN/프록시 접근 | (scaffold — `src/README.md`, `tests/README.md`) |
@@ -146,6 +153,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `feature-0016-metadata-graph` / `feature-0016-zd-pg-pause-caddy` | 메타데이터 그래프 · PG-pause/Caddy 무중단 | (feature dir 2개) |
 | `feature-0017-deploy-build-gate` | 배포 빌드 게이트 | (feature dir) |
 | `feature-0039-ops-scheduler` | **운영 정기 잡 인-컨테이너 스케줄러** — 백업·복원 리허설·AGE 그래프 sync 를 호스트 root crontab 에서 `ops-scheduler` 서비스로 이관(docker 소켓 의존 제거) | 코드 거주: feature-0002 `src/scripts/ops_scheduler.py`·`ops_backup.sh`·`ops_restore_rehearsal.sh`·`ops_graph_sync.sh`·`healthcheck_ops_scheduler.py` + repo-level `docker-compose.yml`(`ops-scheduler`)·`bin/{backup,restore-rehearsal,metadata-graph-sync}.sh`(수동 래퍼) |
+| `feature-0043-external-llm-bridge` | **서버 계정 LLM 차단 + 웹 대화 pull 브리지** — 추론 주체를 개인 머신 AI 로 반전 | `src/bridge_runner.py`(표준 라이브러리 전용 러너) · `src/bridge_agent.py` · `src/bridge_setup.sh`/`src/bridge_setup.ps1`(결정론적 원클릭 진입점, 2026-08-28 신설) + 코드 거주: `shared/llm_gate.py`·`shared/bridge_tasks.py`·feature-0003 `routers/ai_tools.py` |
 | `_template` | 신규 feature 템플릿 | `docs/AGENTS.md`, `docs/TASK.md`, `docs/FUNCTION.md`, `docs/REPORT.md`, 등 |
 
 각 feature는 `docs/`(AGENTS, FUNCTION, TASK, TEST, REPORT, MODIFY, REVIEW), `src/`, `tests/` 구조를 따른다.
@@ -163,10 +171,10 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 | 조립 루트 | `src/app.py` (4,000줄, 2026-08-25 실측) | DI seam(`get_conn`/`get_current_account`/`require_permission`)·인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)·audit(`record_audit_event`, setattr 패치-단일점)·보안게이트(`_ssrf_check_host`/`_enforce_audit_prod_gate`)·lifecycle(`@app.on_event` startup/shutdown)·FastAPI app+미들웨어·config 상수·꼬리 rebind 블록·`register_all(app)` |
 | 도메인 router (29) | `src/routers/<domain>.py` | 각 파일이 `router = APIRouter()` + `@router.<method>` 핸들러 보유. 도메인 = static_pages·auth·conversations·share·system·profile·integrations·attachments·media·keywords·ai_ops + admin_*(console·usage·conversations·quotas·sample_feedback·metadata·audits·accounts·roles·datasources·products·settings·reasoning·perf — perf=HTTP 성능 스냅샷 조회(feature-0026)). 정확한 목록·INCLUDE_ORDER → ROUTEMAP.md |
 | leaf helper | `src/web_context.py` (3,751줄, 2026-08-25 실측) | app-internal 의존이 전혀 없는 순수 컨텍스트 조립 조각. **단방향 추출**(app→web_context 만, 역참조 없음). routers(auth·share 등)와 app 이 소비 |
-| 공유 헬퍼 (5, `_` 접두) | `src/routers/_audit_infra.py`·`_bootstrap_schema.py`·`_conv_store.py`·`_folder_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유)·`_folder_store`=대화 폴더 PG 스토어(feature-0024) |
+| 공유 헬퍼 (7, `_` 접두) | `src/routers/_audit_infra.py`·`_bootstrap_schema.py`·`_console_jobs.py`·`_console_llm.py`·`_conv_store.py`·`_folder_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유)·`_folder_store`=대화 폴더 PG 스토어(feature-0024)·`_console_jobs`=콘솔 작업 프롬프트 조립 + 개인 AI 산출물의 기존 저장경로 반영(feature-0043)·`_console_llm`=관리 콘솔 LLM 상태 판정 단일 정본(feature-0043) |
 | 등록기 | `src/routers/__init__.py` | `register_all(app)` — non-`_`·`router` 보유 모듈 자동발견 후 `(INCLUDE_ORDER, name)` 순 include. 신규 라우터 = `router` 심볼 가진 파일 추가만(꼬리 배선 편집 불필요) |
 
-> 파일 수 = 29 route-module + `__init__.py` + 5 `_` 접두 공유헬퍼 = **35 파일** (2026-08-25 실측) (task 표기 "6 공유모듈" = `__init__` + 5 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가. feature-0045 가 leaf `src/bridge_drain.py`(브리지 배포 연속성 — 개인 AI 의 대기·도구 호출을 **따로** 세는 in-flight 카운터 + lame-duck 드레인 미들웨어; 드레인 중 신규 도구 호출은 `503 X-Bridge-Draining` 으로 돌려보내되 제출·첨부 읽기는 받는다)를 추가하고, `routers/system.py` 에 배포 제어 창구 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용)을 두었다.
+> 파일 수 = 29 route-module + `__init__.py` + 7 `_` 접두 공유헬퍼 = **37 파일** (2026-09-01 실측) (task 표기 "8 공유모듈" = `__init__` + 7 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가. feature-0045 가 leaf `src/bridge_drain.py`(브리지 배포 연속성 — 개인 AI 의 대기·도구 호출을 **따로** 세는 in-flight 카운터 + lame-duck 드레인 미들웨어; 드레인 중 신규 도구 호출은 `503 X-Bridge-Draining` 으로 돌려보내되 제출·첨부 읽기는 받는다)를 추가하고, `routers/system.py` 에 배포 제어 창구 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용)을 두었다.
 
 ### 배선 규약 (7)
 
