@@ -83,9 +83,15 @@ def test_panel_remembers_which_run_it_shows():
 
 
 def test_steps_button_count_and_source_are_updated_together():
-    """개수만 고치면 눌렀을 때 **옛 목록**이 열린다."""
+    """개수만 고치면 눌렀을 때 **옛 목록**이 열린다.
+
+    ⚠ 개수는 `steps.length` 가 아니라 **총 단계 수**여야 한다(2026-08-31). 서버가 진행 중
+    목록을 최신 쪽 창으로 자를 수 있으므로(`_BRIDGE_LIVE_STEPS_MAX`), 창 크기를 개수로
+    내보내면 상한에 닿는 순간 숫자가 멈춰 사용자에게 "진행이 멈췄다" 로 보인다.
+    """
     src = _js_func(COMPOSER_JS, "_renderBridgeSteps")
-    assert "단계 보기 (${steps.length})" in src, "개수가 갱신되지 않는다"
+    assert "단계 보기 (${steps.length + omittedCount})" in src, (
+        "개수가 갱신되지 않거나 창 크기만 세고 있다(생략분 미포함)")
     assert "openStepSidePanel(src)" in src, "클릭 대상이 옛 목록 그대로다"
     assert "cloneNode" in src, "리스너가 중첩 바인딩된다(클릭 한 번에 여러 번 열림)"
 

@@ -843,3 +843,25 @@ LLM처리를 수행하도록 구성해주세요."
       `claude -p --strict-mcp-config --model opus --effort xhigh <질문>`
 - [x] 기존 테스트 4건의 **텍스트 window 취약성** 교정(계약 유지, 읽는 방법만 AST·정확 앵커로)
 - [ ] **POST-DEPLOY 시각검증** — 선택기 렌더는 JS 라 배포 후 실 브라우저에서 확인(PB-0008)
+
+## 20260831T1133-live-steps-reasoning — 추론 구간 표시 + 진행 갱신 중단 해소
+
+**요청 (2026-08-31)**: ① 「각 도구에 대한 수행시간은 확인되었지만, 추론을 진행하는 부분은
+확인되지 않아 수정이 필요합니다」 ② 「답변 도중 실행단계의 진전이 갱신되지 않는 … 시간이
+지날때마다 각 실행 단계의 갱신이 멈추는 이슈를 수정해주세요」.
+
+계획·근본원인·AC 는 `TASK-20260831T113350-live-steps-reasoning.md`.
+
+- [x] R1 — `_record_bridge_reasoning_gap`: 도구 단계 직후 추론 구간 activity 1건
+- [x] R2-a — abort ↔ 회선 오류 분리(`"error"`). **일시 오류 1회가 감시를 영구 종료하던 주범**
+- [x] R2-b — 예산을 횟수 → **시간 30분**(단조 시계). 횟수는 폭주 안전판으로 격하
+- [x] R2-c — 표시 창을 최신 쪽으로 + `steps_omitted` 동반(무음 절단 제거, §16.7 G9-b)
+- [x] 부수 — `_bridge_live_steps` PG 커넥션 close (tick 마다 새던 것)
+- [x] 서버 변경감지를 `(len, omitted, 마지막 step_index)` 서명으로
+- [x] 연속 오류 3회 시 폴링 강등 · 최소 재접속 주기
+- [x] 화면 — 「단계 보기」 총 단계 수 · 생략 고지 1줄 · 「진행 중」 표기 · 생략 시 누적 미표시
+- [x] pytest 신규 25건(서버 12 · 프런트 구조 13) + 기존 계약 2건 갱신 · 컨테이너 전량 green
+- [x] node 하네스 `verify_bridge_live_step_progress.mjs` 18/18 — **뮤테이션 역검증 2종 포함**
+- [x] **codex 적대 리뷰 2R** — P1 0건 수렴 · P2/P3 8건 중 6건 반영 · 2건 근거 기각
+- [ ] **PB-0008 POST-DEPLOY 시각검증** — JS 는 배포 전 실 브라우저 검증이 불가(자산 스탬프
+      미주입 + 모듈 캐시). 배포 직후 `docs/test-runs.d/` fragment 로 기록

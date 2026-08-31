@@ -1376,7 +1376,47 @@ P0-AA 로 자리는 말풍선 안으로 옮겼으나 여전히 `.bridge-live-ste
 
 `make test` 컨테이너 전량 green · ruff clean · 신규 32건 + 기존 계약 9건 갱신.
 PB-0008 실 Windows 브라우저에서 잠금·해제·모달 실측(결함 3건 발견·수정).
+## CHG-20260831T113350-ai-claude-feature-0043-live-steps-reasoning — 추론 구간 표시 + 진행 갱신 중단 해소
 
+**제보 (2026-08-31)**: ① 「각 도구에 대한 수행시간은 확인되었지만, 추론을 진행하는 부분은
+확인되지 않아」 ② 「답변 도중 실행단계의 진전이 갱신되지 않는다 … 새로고침하면 진전돼 있고
+일정 시간 후 또 멈춘다」.
+
+### 근본원인
+
+| # | 무엇 | 왜 |
+|---|---|---|
+| R1 | 추론 구간이 화면에 없다 | 브리지 `activity` 단계가 `claim`·`submit` 둘뿐이라 **도구 사이**를 덮지 못했다. 도구 단계는 자기 `elapsed_ms` 만 갖고, 그 사이 간격은 어느 단계에도 귀속되지 않아 타임라인에서 사라졌다 |
+| R2-a | 진행 갱신이 멈춘다 (주 원인) | `_consumeBridgeStream` 이 **모든** 예외를 `"aborted"` 로 반환 → `_streamBridgeStatus` 가 정상 종결로 읽어 `true` 반환 → 폴링 폴백도 안 걸림. **회선 오류 1회가 감시를 영구 종료**. 새로고침이 `resumeBridgePolling` 으로 되살리므로 제보의 증상과 정확히 일치 |
+| R2-b | 상한이 조기 소진 | 예산이 **횟수**(33) 라 3초 오류 재시도가 55초 정상 재접속과 같은 값을 먹었다 |
+| R2-c | 상한 도달 후 영구 정지 | `_bridge_live_steps` 가 `ORDER BY step_index ASC LIMIT 40` → 41번째부터 **가장 오래된 40건에 고정**, 서버 변경감지도 `len()` 만 봐서 신호가 영영 멎었다(무음 절단, §16.7 G9-b) |
+| — | 부수 | 같은 함수가 tick(1초)마다 PG 커넥션을 열고 **닫지 않았다** |
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `routers/ai_tools.py` | `_record_bridge_reasoning_gap` 신규 — 도구 단계 직후 「결과를 검토하고 다음 작업을 정합니다」 activity 1건. `_bridge_live_steps` → 최신 쪽 창 + `(steps, omitted)` 반환 + 커넥션 close. `_bridge_stream_snapshot`·`bridge_status` 에 `steps_omitted`. `bridge_stream` 변경감지를 `(len, omitted, 마지막 step_index)` 서명으로 |
+| `static/app/composer.js` | abort ↔ 회선 오류 분리(`"error"`) · 시간(단조 시계) 기준 예산 · 연속 오류 3회 시 폴링 강등 · 최소 재접속 주기 · 「단계 보기」 개수를 총 단계 수로 |
+| `static/app.js` | `refreshStepSidePanelForRun(runId, steps, {live, omitted})` · 생략 고지 1줄 · 진행 중 마지막 단계 「진행 중」 표기 · 생략 시 '누적' 미표시 |
+| `static/css/chat.css` | `.step-side-panel-time.is-running` · `.step-side-panel-omitted` |
+
+### 지어내지 않는 선
+
+추론 구간에 적는 것은 **우리가 관측한 간격**(도구가 결과를 돌려준 시각 ~ 다음 호출 도착)
+뿐이다. `work_source='bridge-runtime'`, 사유 칸은 **비운다** — 그 AI 가 왜 그렇게 판단했는지는
+우리가 모른다. 화면은 「내부 동작」 배지로 도구 단계와 구분해 그린다.
+
+### 되돌리기
+
+`_record_bridge_reasoning_gap` 호출 1줄을 지우면 R1 이 원복된다(단계는 append-only 라 기존
+데이터에 영향 없음). R2 는 프런트 3함수 국소 변경이라 개별 revert 가능.
+
+### 검증
+
+컨테이너 pytest 전량 green (신규 서버 12건 + 프런트 구조 13건, 기존 계약 2건 갱신) ·
+node 하네스 `verify_bridge_live_step_progress.mjs` 18/18 (뮤테이션 역검증 2종 포함) ·
+codex 적대 리뷰 **P1 0건**, P2/P3 8건 중 6건 반영·2건 근거 기각.
 ## CHG-20260831T110000-runtime-caps-restore — 쓸 수 있는 모델·등급이 화면에서 사라졌다 (P0-AE)
 
 **요구**: 연결된 내 AI 로 답할 때 쓸 모델·effort 가 확인되지 않는다. 사용자 재량대로 적용할 수
