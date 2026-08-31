@@ -4941,3 +4941,36 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-31T01:03:05+09:00
+
+
+## CHG-20260831T1827-connect-modal-autoclose 연결 성립 시 토스트 + 모달 자동 닫기
+- `static/app/connect-modal.js`: 연결이 **실제로 성립한 순간**(서버 판정 `listening: true`)에
+  토스트로 알리고 모달을 닫는다. 종전에는 어느 경로로 연결되든 창이 남았고, 기본 경로(1단계
+  명령을 터미널에 붙여넣기)는 모달 밖에서 끝나므로 사용자가 손으로 닫아야 «내 AI 대기 중»
+  배지를 볼 수 있었다 — 그 배지를 모달 자신이 덮고 있었다.
+- 신설: `_announceConnected()`(토스트+상태문구+닫기 단일 통로, 열려 있는 동안 1회) ·
+  `_noteListeningForModal()`(매 조회의 대기 상태를 모달 판정에 반영) · 상태 3종(`_modalOpen` ·
+  `_openBaselineListening` · `_announced`).
+- 변경: `openConnectModal()` 이 열림 상태를 세우고 즉시 1회 조회 + 지켜보기 시작 ·
+  `closeConnectModal()` 이 지켜보기 종료 · `_syncGatePoll()` 의 폴링 사유를
+  `_composeBlocked || _modalOpen` 으로 확장 · `_launchRunner()` 성공 경로가 같은 통로로 합류
+  (종전 `_status(...)` 단독 → `_announceConnected()`).
+- **판정 시점을 «토큰 발급» 이 아니라 «대기 중이 됨» 으로 둔 이유**: 발급 시점에 닫으면 모달이
+  스스로 "이 창을 닫으면 다시 볼 수 없습니다" 라고 알린 그 명령이 사라지는데, 정작 연결은
+  아직 아무 일도 일어나지 않았다.
+- **기준선을 «연 뒤의 첫 관측» 으로 둔 이유**: 직전에 알던 값을 쓰면 다른 창에서 이미 연결해 둔
+  사용자의 낡은 «연결 안 됨» 이 기준선이 되어 **창이 열리자마자 닫힌다** — 그 사용자는 대개 새
+  연결 정보를 만들러 온 것이다.
+- **`_announced` 를 close 에서 되돌리지 않는 이유**(자체 적대 검토 적발): 알리는 쪽이 곧 닫는
+  쪽이라 닫으면서 풀면, 같은 성공을 관측한 다른 경로(폴링 ↔ `[내 AI 실행]` 대기 루프는 겹친다)가
+  빗장 풀린 문으로 다시 들어와 토스트를 두 번 띄운다.
+- 순환 import(`connect-modal.js` → `app.js`)는 이 번들의 기존 패턴이다(`messages.js`·`sidebar.js`·
+  `composer.js` 가 같은 형태). 토스트 표면을 모달이 따로 만들면 같은 사건이 화면마다 다르게 뜬다.
+- Verification: 신규 `tests/verify_connect_modal_autoclose.mjs` **10/0 PASS**(실제 모듈을 최소 DOM
+  shim 위에서 구동하는 행위 테스트) · **G11-b 결함 주입 실증** — 수정 전 코드에서 A3·A4·A5·D1
+  **4건 FAIL** 확인.
+- Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
+  `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose.md`.
+- Cross-ref: TASK.md `20260831T1827-connect-modal-autoclose` · REVIEW.md
+  `REV-20260831T182700-connect-modal-autoclose`
+- Timestamp: 2026-08-31T18:27:00+09:00
