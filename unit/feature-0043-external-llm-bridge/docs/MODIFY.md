@@ -1817,3 +1817,36 @@ messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 �
 - 회귀 4건 — **수정 전에서 4/4 FAIL** 실증
 - ⚠ **실제 설치는 실행하지 않았다** — 이 머신엔 이미 파이썬이 있고, 검증을 위해 남의 머신
   상태를 바꾸지 않는다. 설치 명령의 유효성은 `winget show` 로, 배선은 회귀로 확인했다.
+
+## CHG-20260831T183000-runner-version-sync — 러너 지문 대조 + 연결 직후 카탈로그 갱신 (P0-AG)
+
+**요구**: 재설치·재연결해도 옛 모델 목록이 그대로다 · 연결 완수 후 모델·추론 강도가 안 보이고
+새로고침해야 나타난다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `src/bridge_agent.py` | `_self_build()` 신규(자기 파일 sha256 12자) · 하트비트에 `agent_build` · 응답의 `stale_build` 를 **세션당 한 번** 로그로 |
+| `static/agent/bridge_agent.py` | 배포 사본 동기화 |
+| `routers/_bootstrap_schema.py` | `WebOAuthTokens.RunnerBuild VARCHAR(16)` 멱등 ALTER |
+| `oauth_store.py` | `set_runner_report(agent_build=…)` 저장(모양 강제 + 값 변경 시에만 쓰기) · `account_runner_build()` 조회 |
+| `routers/ai_tools.py` | `_deployed_runner_build()`(배포본 지문, 프로세스 1회 캐시) · `_runner_update_hint(…, agent_build)` 에 `stale_build` |
+| `routers/oauth_as.py` | `connect_status` 에 `runner_stale` — 서버가 판정하고 프런트는 불리언 하나만 읽는다 |
+| `static/app/connect-modal.js` | 칩 4번째 상태 `stale` |
+| `static/css/search-audit.css` | `.ai-conn[data-state="stale"]` |
+| `static/app.js` | 게이트 변화 시 `loadVaultOptions()` → `renderComposer()` → 선택기 재렌더 (순서 고정) |
+
+### 왜 버전만으로 부족했나
+
+`AGENT_VERSION` 은 날짜 단위(`2026.08.31`)다. 그날 러너가 **세 번** 바뀌었고 셋 다 같은 버전이라
+"배포본과 다른 러너" 를 표현할 축이 없었다. 지문은 그 질문에만 답한다 — 버전(호환성)과 지문
+(동일성)은 서로를 대체하지 않으므로 둘 다 신고한다.
+
+양쪽 지문을 다 아는 경우에만 판정한다. 구 러너는 지문을 아예 신고하지 않고, 그때 "다르다" 고
+말할 근거는 없다(모르는 것을 경고로 바꾸지 않는다).
+
+### 되돌리기
+
+`RunnerBuild` 가 NULL 이면 대조가 서지 않아 종전과 동일하게 동작한다(경고 없음).
+게이트 콜백은 `loadVaultOptions()` 호출만 빼면 종전 동기 렌더로 돌아간다.

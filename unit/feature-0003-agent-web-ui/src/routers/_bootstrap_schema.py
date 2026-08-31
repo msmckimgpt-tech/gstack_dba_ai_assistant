@@ -2802,6 +2802,11 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # `RunnerAgentVersion`: 러너 자기 버전. 구버전이면 하트비트 응답으로 갱신을
             # 지시한다(사용자 결정 2026-08-31 — '자동 갱신 유도').
             "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerAgentVersion VARCHAR(32) NULL",
+            # `RunnerBuild`: 러너 **파일 자체**의 지문 12자 (2026-08-31). 버전은 날짜 단위라
+            # **같은 날 여러 번 배포된 러너를 구분하지 못한다** — 실제로 그날 러너가 세 번
+            # 바뀌었고, 사용자는 재설치하고도 옛 모델 목록을 봤다("고쳤다는데 그대로").
+            # 지문은 "정확히 그 파일인가" 라는 다른 질문에 답한다(버전=호환성, 지문=동일성).
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerBuild VARCHAR(16) NULL",
         ):
             try:
                 cur.execute(ddl)

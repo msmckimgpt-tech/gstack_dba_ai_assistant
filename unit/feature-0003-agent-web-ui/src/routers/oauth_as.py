@@ -553,6 +553,28 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     # 토큰이 있는 것과 **지금 듣고 있는 것**은 다르다. 재부팅하면 러너만 사라지고 토큰은
     # 남아, "연결됨" 만 보이면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
     listening = _listening(int(account.get("id") or 0), conn)
+    # 러너가 **배포본과 다른 파일**로 돌고 있는가 (2026-08-31). 버전(날짜)이 같아도 파일이
+    # 다를 수 있고, 그 차이가 곧 "고쳤다는데 화면은 그대로" 다 — 사용자가 그 이유를 알 수
+    # 있는 자리가 화면 어디에도 없었다. 판정은 서버가 내고 프런트는 불리언 하나만 읽는다.
+    runner_stale = False
+    if listening:
+        try:
+            from routers.ai_tools import _deployed_runner_build
+
+            _deployed = _deployed_runner_build()
+            cur2 = conn.cursor()
+            try:
+                _reported = _store.account_runner_build(cur2, int(account.get("id") or 0))
+            finally:
+                cur2.close()
+            # 양쪽을 다 알 때만 "다르다" 고 말한다 — 구 러너는 지문을 아예 신고하지 않는다.
+            runner_stale = bool(_deployed and _reported and _reported != _deployed)
+        except Exception:
+            # 사용자에게는 조용하다(경고를 지어내지 않는다) — 그러나 **로그에는 남긴다**.
+            # 이 자리를 완전히 침묵시켰더니 판정이 왜 안 서는지 추적할 방법이 없었다
+            # (실측 2026-08-31: 커서 재사용 오류가 여기서 통째로 삼켜지고 있었다).
+            runner_stale = False
+            logging.getLogger(__name__).debug("runner build 대조 실패", exc_info=True)
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -577,6 +599,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         # 프런트는 이 불리언 하나만 읽는다. 위 축들(connected·listening·bridge_mode)은 표시와
         # 안내 문구용이고, 잠금 결정은 여기 한 곳에서만 난다.
         "compose_blocked": bool(_bridge_mode() and not (connected and listening)),
+        # 연결은 성립했는데 **그 러너가 배포본과 다르다** — 잠금 사유는 아니고(답변은 온다)
+        # 안내 사유다. 이 값이 없으면 사용자는 옛 동작을 보면서 이유를 알 방법이 없다.
+        "runner_stale": runner_stale,
     })
 
 

@@ -3425,6 +3425,7 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     # (능력이 먼저 쓰면 기능 쓰기가 그 요청에서 통째로 유실된다).
     features = (payload or {}).get("features")
     agent_version = str((payload or {}).get("agent_version") or "").strip()
+    agent_build = str((payload or {}).get("agent_build") or "").strip()
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
@@ -3434,7 +3435,7 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
             _store.set_runner_report(
                 cur, _bearer(request),
                 json.dumps(caps, ensure_ascii=False) if caps is not None else None,
-                features, agent_version)
+                features, agent_version, agent_build)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] 러너 신고 기록 실패 account=%s: %r", account_id, exc)
@@ -3473,16 +3474,48 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # 서버가 자동 다운로드·자기교체를 시키지 않는 이유: 그것은 사용자 머신의 프로세스를
         # 우리가 말없이 바꾸는 것이고, 이 feature 가 지켜 온 경계("러너를 띄운 사람의 설정을
         # 낮추지 않는다")를 넘는다.
-        "runner_update": _runner_update_hint(agent_version, features),
+        "runner_update": _runner_update_hint(agent_version, features, agent_build),
     })
 
 
-def _runner_update_hint(agent_version: str, features: object) -> dict:
+def _deployed_runner_build() -> str:
+    """지금 배포 중인 `static/agent/bridge_agent.py` 의 지문 12자. 못 읽으면 빈 문자열.
+
+    프로세스 생애 1회만 계산한다 — 그 파일은 이미지에 구워져 있어 재배포 없이는 바뀌지 않고,
+    바뀌는 배포에서는 이 프로세스도 함께 새로 뜬다.
+    """
+    global _DEPLOYED_RUNNER_BUILD
+    if _DEPLOYED_RUNNER_BUILD is None:
+        try:
+            import hashlib
+            import os as _os
+
+            _path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                  "static", "agent", "bridge_agent.py")
+            with open(_path, "rb") as _f:
+                _DEPLOYED_RUNNER_BUILD = hashlib.sha256(_f.read()).hexdigest()[:12]
+        except Exception:  # noqa: BLE001  (파일 부재·권한 — 모르면 대조하지 않는다)
+            _DEPLOYED_RUNNER_BUILD = ""
+    return _DEPLOYED_RUNNER_BUILD
+
+
+#: 위 지문의 프로세스 캐시. `None` = 아직 계산 안 함, `""` = 계산했는데 못 읽음.
+_DEPLOYED_RUNNER_BUILD: str | None = None
+
+
+def _runner_update_hint(agent_version: str, features: object,
+                        agent_build: str = "") -> dict:
     """러너가 최신인가 — 아니면 무엇을 하면 되는가.
 
     `required=False` 여도 `available` 이 참일 수 있다(기능은 있는데 버전만 낮은 경우).
     러너는 `required` 일 때만 사용자에게 강하게 안내한다 — 매 기동 갱신을 종용하면
     잘 쓰고 있던 사람에게 소음이 된다.
+
+    **지문 대조**(2026-08-31): 버전은 날짜 단위라 같은 날 여러 번 배포된 러너를 구분하지
+    못한다. 실제로 그날 러너가 세 번 바뀌었고, 사용자는 재설치하고도 옛 모델 목록을 보며
+    "고쳤다는데 그대로" 를 겪었다 — 화면 어디에도 그 이유가 없었다. 지문이 다르면
+    `stale_build` 로 그 사실을 말한다(버전 하한과 **독립**이다: 버전은 통과해도 파일이
+    다를 수 있고, 그 차이가 정확히 이번 사례였다).
     """
     from shared.bridge_tasks import RUNNER_FEATURE_CONSOLE_JOBS, RUNNER_MIN_AGENT_VERSION
     from routers._console_llm import version_at_least
@@ -3491,11 +3524,18 @@ def _runner_update_hint(agent_version: str, features: object) -> dict:
         ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
     fresh = version_at_least(agent_version, RUNNER_MIN_AGENT_VERSION)
     supports = RUNNER_FEATURE_CONSOLE_JOBS in declared
+    deployed = _deployed_runner_build()
+    # 양쪽 지문을 다 아는 경우에만 판정한다 — 한쪽이라도 비면 "다르다" 고 말할 근거가 없다
+    # (구 러너는 지문을 아예 신고하지 않는다).
+    stale_build = bool(deployed and agent_build and agent_build != deployed)
     return {
-        "current": bool(fresh and supports),
+        "current": bool(fresh and supports and not stale_build),
         "min_version": RUNNER_MIN_AGENT_VERSION,
         "download_url": "/static/agent/bridge_agent.py",
-        "reason": ("" if (fresh and supports) else
+        "stale_build": stale_build,
+        "reason": ("" if (fresh and supports and not stale_build) else
+                   "실행 중인 러너가 배포본과 다릅니다 — 최신 실행 파일로 다시 실행하세요."
+                   if stale_build else
                    "이 버전은 관리 콘솔 작업을 받을 수 없습니다 — 최신 실행 파일로 다시 실행하세요."),
     }
 

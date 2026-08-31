@@ -2612,3 +2612,14 @@ select.admin-meta-input {
 @media (prefers-color-scheme: dark) {
   .ai-conn[data-state="idle"] { color: #fcd34d; background: rgba(252, 211, 77, .12); }
 }
+/* 연결·대기는 성립했는데 **그 러너가 배포본과 다른 파일**인 상태 (2026-08-31).
+   답변은 오므로 '실패' 색(주황/빨강)이 아니라 «주의»로 둔다 — 다만 초록(정상)과는
+   확실히 갈라야 한다. 이 구분이 없어서 사용자가 「재설치했는데 그대로」의 이유를
+   화면에서 찾지 못했다. */
+.ai-conn[data-state="stale"] {
+  color: #1d4ed8; border-color: rgba(29, 78, 216, .35); background: rgba(29, 78, 216, .09);
+}
+.ai-conn[data-state="stale"]::before { content: "↑ "; }
+@media (prefers-color-scheme: dark) {
+  .ai-conn[data-state="stale"] { color: #93c5fd; background: rgba(147, 197, 253, .12); }
+}
