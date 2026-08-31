@@ -1789,3 +1789,66 @@ messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 �
 - 회귀 4건 — **수정 전에서 4/4 FAIL** 실증
 - ⚠ **실제 설치는 실행하지 않았다** — 이 머신엔 이미 파이썬이 있고, 검증을 위해 남의 머신
   상태를 바꾸지 않는다. 설치 명령의 유효성은 `winget show` 로, 배선은 회귀로 확인했다.
+
+## CHG-20260831T175500-ai-claude-corp-feature-0043-schannel-revocation — Windows 러너 수신 실패 + 같은 구간의 조용한 결함 3종
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 제보 — "powershell 을 통해 해당 서비스를 연결할 경우 아래와 같은 이슈"
+  (`curl: (60) schannel: CertGetCertificateChain trust error CERT_TRUST_REVOCATION_STATUS_UNKNOWN`)
+- **위험도**: Major (TLS 신뢰 평가 경로를 건드린다 — 완화 범위를 폐기검사로 한정하고 대조군으로 실증)
+
+### 근본 원인 (실측)
+
+| 확인 항목 | 실측 결과 |
+|---|---|
+| 윈도우 기본 curl | `curl 8.13.0 (Windows) libcurl/8.13.0 **Schannel**` |
+| 사내 root CA 확장 | CRL Distribution Points **부재** · Authority Information Access(OCSP) **부재** |
+| 엣지 leaf 인증서 | 동일 — 폐기 정보 배포점 부재 |
+| `--cacert` 만 | `curl: (60) … CERT_TRUST_REVOCATION_STATUS_UNKNOWN` (rc=60) |
+| `--ssl-revoke-best-effort` 추가 | **rc=0**, 162,942 bytes 수신, SHA256 일치 |
+
+Schannel 의 `CertGetCertificateChain` 은 체인을 세운 **뒤** 폐기 상태를 조회한다. 조회할 곳이
+없으면 «알 수 없음» 이고 curl 은 그것을 하드 실패로 본다 — CA 신뢰 실패도 네트워크 실패도 아니다.
+POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 결함이 없다(**Windows 전용**).
+
+### 변경 (`bridge_setup.ps1` 정본 + 서빙본, 바이트 동일)
+
+- `Get-CurlRevokeArgs` — `--ssl-revoke-best-effort` → `--ssl-no-revoke` 순으로 **감지 후** 채택.
+  감지는 네트워크를 타지 않는다(모르는 옵션이면 curl 이 파싱 단계에서 exit 2 → `--version` 판정).
+  좁은 쪽을 먼저 쓰는 이유: 후자는 폐기검사를 통째로 끄고, 전자는 **CRL 에 닿아 revoked 면 여전히 멈춘다**.
+- `Get-RemoteFile` — 러너 수신의 **단일 경로**. curl(`--cacert`) → 파이썬(`cafile`, **러너와 같은
+  신뢰 앵커**). 종전에는 최초 수신과 체크섬 재시도가 각자 구현이었고, 다운로드는 Schannel·러너
+  상주는 파이썬 TLS 로 **평가기가 둘**이었다(이번 결함이 그 갈라짐이다).
+- `Invoke-NativeCapture` — 종료코드 + stderr 원문 회수. `Test-Downloaded` — 수신 실물 확인.
+- 실패 시 시도한 **모든 경로의 사유**를 모아 낸다. 안내문이 폐기검사 문제를 지목한다.
+
+### 같은 구간에서 함께 닫은 «조용한» 결함 3종
+
+| 결함 | 실측 증상 | 조치 |
+|---|---|---|
+| 체크섬 재시도 실패 미검사 | 재시도 실패 후 낡은 파일이 남고 다음 대조가 "체크섬이 다릅니다" 로 **오진** | 재시도도 `Get-RemoteFile` 사용 + try/catch (POSIX 판은 `\|\| die` 로 무사했다) |
+| 실행 실패의 fail-open | 없는 파이썬 경로로 불렀는데 `via=python` **성공 반환**(파일 없음) — `$LASTEXITCODE` 초기값 0 | 초기값 **127** + 성공 반환을 `Test-Downloaded` 로 보호 |
+| 실패 사유 유실 | curl exit 60 인데 회수 길이 **0** — `SilentlyContinue` 가 stderr ErrorRecord 를 버린다 | `Continue` + ErrorRecord 원문만 추출(장식은 로케일 의존) |
+
+### 변경 (`bridge_setup.sh` 정본 + 서빙본, 주석만)
+
+- 러너 절에 **의도된 divergence** 주석 — 왜 여기엔 그 옵션이 없는지. 설명 없는 비대칭은
+  parity 를 맞추려는 다음 변경이 되돌린다.
+
+### 제가 만들었다가 되돌린 것 (정직 기록)
+
+초안은 `Invoke-WebRequest` 를 «curl·파이썬 실패 시» 폴백으로 넓혔다. 실측에서 그것이
+**무관한 CA 를 pin 해도 러너 수신을 성공**시켰다 — IWR 은 `$CaPath` 를 보지 않고 OS 신뢰
+저장소로 검증하고, 이 머신에는 사내 CA 가 `CurrentUser\Root`·`LocalMachine\Root` 에 있었다.
+신뢰 실패가 조용한 성공이 되는 경로였다. 제거했다 — 종전 코드의 IWR 은 «curl 부재 시» 에만
+있었고 그 자리는 파이썬이 대신한다(pin 을 지키고, 앞 단계에서 3.8+ 를 이미 확보했다).
+
+### 검증
+
+- 실 Windows PowerShell 5.1(`5.1.19041.6456`): `ParseFile` **오류 0건**, `U+B7EC` 디코딩 OK
+- 실 Windows 동작 매트릭스 A~G — 감지 `--ssl-revoke-best-effort` / 정상 `via=curl` sha OK /
+  옵션 없음(수정 전 재현) `via=python` sha OK / curl 부재 `via=python` sha OK /
+  **무관한 CA → 실패**(`CERT_TRUST_IS_UNTRUSTED_ROOT` + `CERTIFICATE_VERIFY_FAILED`) /
+  파이썬 불가 → 실패 사유에 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN` 실림 / 임시파일 잔재 0
+- 회귀 `test_windows_tls_revocation.py` **18건** — 수정 전 코드에서 **13/18 FAIL** 실증(§16.7 G11-b)
+- `_ps_code` 주석 스트리퍼를 실 PowerShell `[PSParser]::Tokenize`(토큰 2,602 · 오류 0)와 대조 검증

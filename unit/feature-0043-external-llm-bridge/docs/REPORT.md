@@ -249,6 +249,46 @@ kill 권한이 없다. 우리가 하는 것은 세 가지다:
 
 - 대기 질문이 일정 시간 미처리되면 사용자에게 알리는 경로(현재는 조용히 대기).
 - `claim` 후 미제출 상태로 방치된 작업의 lease 만료·재큐잉.
+- **사내 CA 에 CRL 배포점(또는 OCSP)을 넣는 것** — 그러면 윈도우에서 폐기검사 완화 옵션이
+  필요 없어지고, `--ssl-revoke-best-effort` 가 «못 구할 때만 넘어가는» 성질 덕에 자동으로 다시
+  엄격해진다. 지금은 확장이 아예 없어 Schannel 이 «알 수 없음» 을 하드 실패로 본다
+  (§4-C · `CHG-20260831T175500-…`). 인프라 축이라 이 feature 밖.
+- **CI 에 등재되지 않은 테스트 디렉토리 3개** — `unit/feature-0043-external-llm-bridge/tests` ·
+  `unit/feature-0041-external-ai-tool-surface/tests` · `unit/feature-0008-windows-browser-testing/tests`
+  는 `Makefile` `test` 에는 있으나 **`.github/workflows/ci.yml` 에는 없다**(실측 2026-08-31).
+  ci.yml 은 `pytest` 인자를 명시하므로 `pytest.ini` `testpaths` 가 무시된다 — 그 주석이 경계한
+  함정이 feature-0043 에서는 아직 열려 있다. 즉 **본 cycle 이 추가한 회귀 18건도 CI 에서는
+  돌지 않는다**(`make test` 와 로컬에서만 돈다). 등재는 다른 feature 의 스위트도 CI 게이트에
+  편입시키는 변경이라 그 스위트들의 CI 통과 여부 확인이 선행돼야 해 본 cycle 범위 밖으로 둔다.
+
+## 4-C. Windows 러너 수신 — Schannel 폐기검사 + 신뢰 경로 단일화 (사용자 제보 2026-08-31)
+
+사용자가 PowerShell 경로로 연결하다 `러너를 받는 중…` 에서 멈췄다:
+`curl: (60) schannel: CertGetCertificateChain trust error CERT_TRUST_REVOCATION_STATUS_UNKNOWN`.
+
+**원인은 안내문이 가리킨 두 곳이 아니었다.** 윈도우 동봉 curl 은 백엔드가 Schannel 이고, 사내
+CA 에는 CRL·OCSP 배포점이 **둘 다 없다**(실측: root·leaf 양쪽). 폐기 상태가 «알 수 없음» 이고
+curl 이 그것을 하드 실패로 본다 — `--cacert` 는 이미 먹었고 체인도 섰다. POSIX 판은 OpenSSL
+curl 이라 이 실패가 없는 **Windows 전용 divergence** 다.
+
+조치는 폐기검사 **완화 한정**(`--ssl-revoke-best-effort` 우선, 구형 curl 만 `--ssl-no-revoke`)
++ 수신을 단일 경로로 모아 curl 이 막히면 **러너와 같은 평가기**(파이썬 `cafile`)로 받기.
+CA 지문 pin·러너 체크섬은 그대로다 — 무관한 CA 를 pin 한 대조군은 완화 옵션이 있어도
+`CERT_TRUST_IS_UNTRUSTED_ROOT` 로 실패했다(실측).
+
+**같은 구간에서 조용히 통과하던 결함 3건**을 함께 닫았다: 체크섬 재시도의 실패 미검사(오진의
+원인) · 실행 실패의 fail-open(`$LASTEXITCODE` 초기값 0) · 실패 사유 유실(`SilentlyContinue` 가
+stderr ErrorRecord 를 버린다).
+
+⚠ **제가 만들었다가 되돌린 것**: 초안은 `Invoke-WebRequest` 를 실패 폴백으로 넓혔는데, 실측에서
+그것이 **무관한 CA 를 pin 해도 수신을 성공**시켰다(IWR 은 `$CaPath` 대신 OS 신뢰 저장소를 본다).
+제거했다. 이 cycle 의 결함 3건 중 **2건은 정적 자기검토를 통과하고 실 Windows 실측에서만
+잡혔다** — 상세·증적은 `test-runs.d/TASK-20260831T175500-schannel-revocation.md`.
+
+**잔여**: 첫 실사용자의 전체 설치 왕복(핸들러 등록·러너 상주 포함)은 미관측이다 — 수신 함수를
+실 PowerShell 5.1 에서 직접 구동해 A~G 7케이스로 검증했고, 이 머신의 기존 브리지 상태를 검증
+목적으로 갈아엎지는 않았다. 독립 관점 적대 검증도 하네스 제약(Agent 도구 금지)으로 미수행
+(`REVIEW.md` `REV-20260831T175500-…` 에 `[SKIPPED:tool-restricted:security-subagent]` 로 명시).
 
 ## 9. 후속 — 대화 제목 · 단계 사유 복원 (사용자 제보 2026-08-27, TASK-20260828T050000)
 
