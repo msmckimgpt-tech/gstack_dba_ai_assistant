@@ -1880,3 +1880,44 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
   파이썬 불가 → 실패 사유에 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN` 실림 / 임시파일 잔재 0
 - 회귀 `test_windows_tls_revocation.py` **18건** — 수정 전 코드에서 **13/18 FAIL** 실증(§16.7 G11-b)
 - `_ps_code` 주석 스트리퍼를 실 PowerShell `[PSParser]::Tokenize`(토큰 2,602 · 오류 0)와 대조 검증
+
+## CHG-20260831T175800-ai-claude-feature-0043-details-scroll-panel — 상세를 자기 스크롤 패널로 + 페이징 시 패널 내부 이동
+
+**요청 (2026-08-31)**: 「'▼ 쿼리 결과'의 내용이 너무 길어질 경우에는 페이지 내 스크롤이 과도하게
+길어지는 경향이 확인되었고 정작 중요한 쿼리데이터 결과셋이 밀려버리는 이슈 … 말풍선 내 별도의
+스크롤 패널 내부에서만 렌더되도록 구성하고(최대 높이는 고정. 최소 높이는 제한 없음.),
+쿼리데이터 결과셋을 페이징 할 때 마다 해당 위치로 내부 패널의 스크롤이 이동되도록」.
+
+**원인**: `.message-details-body` 는 단계 목록 + SQL 패널 + 결과 표를 모두 쌓는데 **높이 상한이
+없었다**. 상세를 펼치는 순간 페이지가 그만큼 길어지고, 정작 결과셋은 화면 밖으로 밀렸다.
+게다가 `sql-navigator` 의 높이보존 floor(`minHeight`)가 가장 큰 패널 높이로 고정돼 짧은
+결과셋으로 넘겨도 컨테이너가 줄지 않아 그 길이가 유지됐다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `static/css/chat.css` | `.message-details-body` → `max-height: min(70vh,680px)` + `overflow-y:auto` + `overscroll-behavior:contain` (min-height 미지정) · `.message-details-body .result-table-wrap` → `min(46vh,380px)` 로 **패널보다 좁힘** |
+| `static/app/messages.js` | `revealInPanel` 신규 — 자기 패널 `scrollTop` 만 계산해 결과셋을 상단으로. 전환 경로를 `pageTo` 한 곳으로 합쳐 ◀▶·키보드가 모두 거치게. `focus({preventScroll:true})` |
+| `static/app/composer.js` | 진행 중 재구성 시 내부 스크롤 보존(직전 rAF 취소 + `scrollTop===0` 일 때만) |
+
+### 지켠 선
+
+- **`scrollIntoView` 금지** — 조상 스크롤러 전부를 움직여 대화 로그와 페이지를 끌고 간다.
+  이 cycle 이 없애려는 증상이 바로 그것이라, 자기 패널의 `scrollTop` 만 옮긴다.
+- **패널 밖 인라인 표의 전역 상한은 불변** — 거긴 바깥 스크롤러가 없으므로 좁힐 이유가 없다.
+- **사용자 조작과 다투지 않는다** — 복원은 패널이 아직 `scrollTop === 0` 일 때만.
+
+### 되돌리기
+
+CSS 두 규칙(`max-height`/`overflow-y` + 스코프 표 상한)을 지우면 종전 무제한 높이로 복귀한다.
+`revealInPanel` 은 `pageTo` 안 3줄, 스크롤 보존은 `_renderBridgeSteps` 안 국소 블록이다.
+
+### 검증
+
+컨테이너 pytest 전량 green(신규 10건 — 패널 상한·중첩 방지 대소 불변식·reveal 배선·focus·
+스크롤 보존) · node 하네스 18/18 무회귀 · codex 적대 리뷰 2R **P1 0건 수렴**(1R P2 3건 전건 반영)
+· PB-0008 실 Windows 브라우저 POST-DEPLOY.
+
+**관측된 flake(무관)**: `feature-0014 test_edge_rolling_gate.py::test_g3b_…` 가 부하 중 1회
+타이밍 실패(2.0087s < 3s). 격리 재실행 3/3 PASS, 본 diff 는 feature-0014 파일을 0건 건드린다.
