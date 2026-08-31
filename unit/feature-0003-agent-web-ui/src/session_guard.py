@@ -102,6 +102,50 @@ def wrap_external_answer(answer: str, *, account: str, task_id: str,
     return (f"{INJ_OPEN} ({label})\n{_EXTERNAL_ANSWER_NOTE}\n{_clean(answer)}\n{INJ_CLOSE}")
 
 
+def unwrap_external_answer(stored: str) -> str:
+    """`wrap_external_answer` 의 **역함수** — 사람에게 보일 원문만 돌려준다.
+
+    ## 왜 필요한가 (2026-08-31 라이브 제보)
+
+    `WebAiTasks.Answer` 는 **각인본**이다(감사 보존 + 지연 인젝션 방어). 대화 경로는 그것을
+    화면에 쓰지 않는다 — 원문을 대화에 따로 저장하고 화면은 그쪽을 읽는다("두 소비처의 요구가
+    달라 저장본을 나눈다", `_deliver_web_bridge_answer`).
+
+    콘솔 작업 경로가 그 규율을 따라가지 못해, 위임 결과를 폼에 채울 때 각인 래퍼가 통째로
+    입력란에 들어갔다:
+
+        ⟦UNTRUSTED-DATA⟧ (account=… task=… source=external_ai_answer)
+        [UNTRUSTED] Authored by an external AI runtime…
+        <실제 설명 본문>
+        ⟦/UNTRUSTED-DATA⟧
+
+    ## 이 함수는 **폴백**이다
+
+    정본 해결은 제출 시점에 원문을 `JobResult` 로 따로 보존하는 것이고, 이 함수는 그 컬럼이
+    비어 있는 **과거 행**을 위한 것이다. 새 코드가 이것에 의존하기 시작하면 "저장본을 나눈다"
+    는 규율이 파싱으로 대체되고, 각인 형식이 바뀌는 날 조용히 깨진다.
+
+    형식을 못 알아보면 **원본을 그대로 돌려준다** — 추측해서 잘라 내면 본문 일부가 사라지고,
+    그 손실은 폼에 채워진 뒤에야 보인다.
+    """
+    text = str(stored or "")
+    if INJ_OPEN not in text or INJ_CLOSE not in text:
+        return text
+    start = text.index(INJ_OPEN)
+    end = text.rindex(INJ_CLOSE)
+    if end <= start:
+        return text
+    inner = text[start + len(INJ_OPEN):end]
+    lines = inner.split("\n")
+    # 여는 줄의 꼬리(라벨 ` (account=… )`) + 경계 고지 1줄을 걷어낸다. 그 둘은 우리가 붙인
+    # 것이고 본문이 아니다. 구조가 예상과 다르면(줄 수 부족) 걷어내지 않는다.
+    if lines and lines[0].lstrip().startswith("("):
+        lines = lines[1:]
+    if lines and lines[0].startswith(_EXTERNAL_ANSWER_NOTE.split("\n")[0][:20]):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
 def session_canary(task_id: str) -> str:
     """task 고유의 무해한 마커. context 번들 헤더에 심어 두고, 다른 task 답변에 등장하면
     교차오염 확증으로 쓴다. 결정론적이라 서버가 상태를 들고 있을 필요가 없다."""

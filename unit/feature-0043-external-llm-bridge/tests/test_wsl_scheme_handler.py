@@ -82,6 +82,7 @@ def _stub_bin(tmp_path: Path, *, ps_file_rc: int = 0, ps_command_rc: int = 0,
     listing = distro_listing if distro_listing is not None else "StubDistro\\n"
     (bindir / "wsl.exe").write_text(textwrap.dedent(f"""\
         #!/bin/sh
+        echo wsl >> "{tmp_path}/launch-count.txt"
         # `-l -q` 만 흉내낸다 (배포판 목록). 실물처럼 UTF-16LE BOM 을 앞에 붙인다 —
         # BOM 을 걷어내지 않으면 정상 이름이 거절된다(codex P2 의 실패 모드).
         case "$1" in -l) printf '\\377\\376{listing}' ;; esac
@@ -93,17 +94,25 @@ def _stub_bin(tmp_path: Path, *, ps_file_rc: int = 0, ps_command_rc: int = 0,
         shift
         printf '%s' "$1"
         """))
+    # ⚠ Windows exe **기동 횟수**를 남긴다 — 부하 시 회당 3초대라 횟수가 체감을 지배한다.
+    launch_log = f"{tmp_path}/launch-count.txt"
     (bindir / "powershell.exe").write_text(textwrap.dedent(f"""\
         #!/bin/sh
-        # 등록 실행(-File)과 사후검증(-Command)을 구분해 각각의 종료코드를 낸다.
+        echo powershell >> "{launch_log}"
+        # 등록 실행(-File)과 (구) 사후검증(-Command)을 구분해 각각의 종료코드를 낸다.
         for a in "$@"; do
           case "$prev" in
-            -File) cp "$a" "{tmp_path}/captured.ps1"; exit {ps_file_rc} ;;
+            -File) printf '%s' "$a" > "{tmp_path}/captured.file"; cp "$a" "{tmp_path}/captured.ps1"; exit {ps_file_rc} ;;
             -Command) printf '%s' "$a" > "{tmp_path}/captured.cmd"; exit {ps_command_rc} ;;
           esac
           prev="$a"
         done
         exit 0
+        """))
+    (bindir / "cmd.exe").write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        echo cmd >> "{launch_log}"
+        printf 'C:\\NoTemp\\r\\n'
         """))
     for f in bindir.iterdir():
         f.chmod(0o755)
@@ -112,6 +121,7 @@ def _stub_bin(tmp_path: Path, *, ps_file_rc: int = 0, ps_command_rc: int = 0,
 
 def _run_register(tmp_path: Path, *, distro: str | None = "StubDistro",
                   user: str = "tester", launch_name: str = "launch.sh",
+                  extra_path: str | None = None,
                   **stub_kw) -> tuple[int, str, str]:
     """`register_handler_windows` 를 실제로 실행한다. 반환: (rc, HANDLER_WIN_WHY, 등록 커맨드라인)"""
     bindir = _stub_bin(tmp_path, **stub_kw)
@@ -122,7 +132,7 @@ def _run_register(tmp_path: Path, *, distro: str | None = "StubDistro",
     script = tmp_path / "run.sh"
     script.write_text(
         "set -eu\n"
-        f'PATH="{bindir}:$PATH"\n'
+        f'PATH="{bindir}:{extra_path or ""}:$PATH"\n'
         # `id` 를 대체해 사용자명을 고정한다 — 테스트가 도는 계정 이름에 좌우되지 않게.
         f'id() {{ printf "{user}"; }}\n'
         + _slice_functions("is_wsl", "win_exe", "register_handler_windows")
@@ -201,14 +211,21 @@ def test_l3b_unsafe_user_is_refused(tmp_path: Path):
 # ── L4 ───────────────────────────────────────────────────────────────────────
 
 def test_l4_write_success_is_not_registration_success(tmp_path: Path):
-    """쓰기가 성공해도 **조회로 확인**하기 전에는 등록됐다고 하지 않는다.
+    """쓰기가 성공해도 **되읽어 대조**하기 전에는 등록됐다고 하지 않는다.
 
     이 절 전체가 「등록했다고 말했지만 브라우저는 못 본다」 를 고치는 것이다. 여기서 다시
     «썼으니 됐겠지» 로 끝내면 같은 종류의 거짓말을 한 층 아래에 만든다.
+
+    ⚠ 사후검증은 **PS1 안에서** 끝난다(2026-08-31 속도 개선). 종전엔 PowerShell 을 한 번 더
+    띄워 `Test-Path` 했는데, 같은 보장을 두 번 하면서 Windows 프로세스 기동(부하 시 3초대)을
+    하나 더 썼다. 보장은 그대로, 호출만 줄였다 — 그래서 이 테스트는 **PS1 이 되읽고 던지는지**
+    를 본다.
     """
-    rc, why, _ = _run_register(tmp_path, ps_command_rc=1)   # 쓰기 OK, 사후검증 FAIL
-    assert rc != 0, "사후검증이 실패했는데 등록 성공으로 처리했다"
-    assert why, "사후검증 실패 사유가 비어 있다"
+    captured = None
+    rc, why, _ = _run_register(tmp_path, ps_file_rc=1)   # 등록 실행(=쓰기+대조)이 실패
+    assert rc != 0, "등록·대조가 실패했는데 성공으로 처리했다"
+    assert why, "실패 사유가 비어 있다"
+    del captured
 
 
 def test_l4b_write_failure_is_reported(tmp_path: Path):
@@ -440,3 +457,76 @@ def test_l13_launcher_reports_when_the_runner_dies(tmp_path: Path):
                                    PATH=f"{b}:{os.environ['PATH']}"))
     assert proc.returncode != 0, "러너가 죽었는데 성공으로 끝냈다"
     assert "종료" in proc.stderr or "로그" in proc.stderr, f"사유를 말하지 않는다: {proc.stderr!r}"
+
+
+# ── 속도·타임스탬프 (사용자 요청 2026-08-31 3차) ─────────────────────────────
+
+def test_l14_ps1_goes_to_a_windows_local_dir_not_a_wsl_unc_path(tmp_path: Path):
+    """등록 스크립트는 **Windows 로컬 디스크**에 둔다.
+
+    `powershell -File` 에 WSL 경로(`\\\\wsl.localhost\\…`)를 주면 UNC 해석이 걸려 **80초**가
+    든다(실측). 같은 스크립트를 Windows 로컬 경로로 주면 0.4초다 — 200배 차이이고, 사용자에게는
+    "러너 체크섬 일치" 뒤로 설치가 멈춘 것처럼 보인다(제보 2026-08-31).
+
+    스텁 powershell 이 받은 `-File` 인자를 그대로 갈무리해, 그 경로가 WSL 홈이 아니라
+    Windows 임시 폴더인지 본다.
+    """
+    win_tmp = tmp_path / "mnt" / "c" / "Users" / "tester" / "AppData" / "Local" / "Temp"
+    win_tmp.mkdir(parents=True)
+    # PATH 에 WindowsApps 경로를 심어 «Windows 호출 없이» 프로필을 찾게 한다(빠른 경로).
+    fake_path = str(win_tmp.parent.parent / "Microsoft" / "WindowsApps")
+    (win_tmp.parent.parent / "Microsoft" / "WindowsApps").mkdir(parents=True)
+    rc, why, _ = _run_register(tmp_path, extra_path=fake_path)
+    assert rc == 0, f"등록 실패: {why}"
+    used = (tmp_path / "captured.file").read_text(encoding="utf-8").strip()
+    assert str(win_tmp) in used, f"PS1 을 Windows 로컬 폴더에 두지 않았다: {used!r}"
+    assert ".mysql-ai-bridge" not in used, f"WSL 홈(UNC 경로)에 두었다 — 80초 경로다: {used!r}"
+
+
+def test_l15_windows_process_launches_are_minimised(tmp_path: Path):
+    """Windows 프로세스 기동 **횟수**를 센다 — 부하 시 exe 하나가 3초대다(실측).
+
+    빠른 경로(PATH 에서 프로필을 얻고 `WSL_DISTRO_NAME` 이 있음)에서는 **등록 실행 1회**만
+    있어야 한다. 종전 3회(TEMP 조회 · 등록 · 별도 `Test-Path` 검증)가 체감 지연의 본체였다.
+    """
+    win_tmp = tmp_path / "mnt" / "c" / "Users" / "tester" / "AppData" / "Local" / "Temp"
+    win_tmp.mkdir(parents=True)
+    apps = win_tmp.parent.parent / "Microsoft" / "WindowsApps"
+    apps.mkdir(parents=True)
+    rc, why, _ = _run_register(tmp_path, extra_path=str(apps))
+    assert rc == 0, f"등록 실패: {why}"
+    launches = (tmp_path / "launch-count.txt").read_text(encoding="utf-8").strip().split("\n")
+    launches = [l for l in launches if l]
+    assert len(launches) == 1, (
+        f"Windows 프로세스를 {len(launches)}회 띄웠다(기대 1) — 부하 시 회당 3초다: {launches}")
+
+
+def test_l16_logs_carry_a_timestamp():
+    """설치·러너 로그에 **시각**이 붙는다 (사용자 요청 2026-08-31).
+
+    시각이 없으면 「어느 단계가 오래 걸리는지」를 로그로 읽을 수 없다 — 실제로 이번 지연도
+    사용자 제보를 받고서야 단계별로 재 봤다. 실행해서 확인한다(문자열 검사가 아니라).
+    """
+    import re
+    src = _SETUP_SH.read_text(encoding="utf-8")
+    # 설치 로그: say/die/drop 정의 구간만 떼어 실제로 출력시킨다.
+    defs = "\n".join(l for l in src.split("\n")
+                     if l.startswith(("_ts()", "die()", "say()", "drop()")))
+    proc = subprocess.run(["sh", "-c", defs + '\nsay "러너 체크섬 일치."\n'],
+                          capture_output=True, text=True, timeout=20)
+    assert re.search(r"\[bridge-setup \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]", proc.stdout), \
+        f"설치 로그에 시각이 없다: {proc.stdout!r}"
+
+    # 러너 로그: 정본 `_log` 를 그대로 실행한다.
+    agent = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(encoding="utf-8")
+    m = re.search(r"def _log\(msg: str\) -> None:.*?sys\.stderr\.flush\(\)", agent, re.S)
+    assert m, "_log 정의를 찾지 못했다"
+    ns: dict = {}
+    exec("import sys, time\n" + m.group(0), ns)
+    import io as _io
+    import contextlib
+    buf = _io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        ns["_log"]("AI = claude")
+    assert re.match(r"\[bridge \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] AI = claude", buf.getvalue()), \
+        f"러너 로그에 시각이 없다: {buf.getvalue()!r}"

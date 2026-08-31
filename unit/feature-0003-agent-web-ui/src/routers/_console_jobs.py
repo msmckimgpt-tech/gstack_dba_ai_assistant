@@ -29,7 +29,9 @@ import logging
 import re
 from typing import Any
 
-from shared.bridge_tasks import job_label, job_spec, load_console_job, mark_console_job_applied
+from shared.bridge_tasks import (
+    job_label, job_spec, load_console_job, mark_console_job_applied, store_console_job_result,
+)
 
 __all__ = [
     "apply_console_job_result",
@@ -131,6 +133,19 @@ def apply_console_job_result(conn, task_id: str, answer: str) -> tuple[bool, str
         result = str(answer or "").strip()
         if not result:
             return _fail(conn, task_id, kind, "AI 답변이 비어 있습니다.")
+
+    # 화면이 읽을 **원문**을 보존한다 (2026-08-31 라이브 제보).
+    #
+    # `WebAiTasks.Answer` 는 각인본이다 — 감사 보존과 지연 인젝션 방어를 위해 저장 시점에
+    # `⟦UNTRUSTED-DATA⟧ … ⟦/UNTRUSTED-DATA⟧` 로 구획된다. 그것을 폼에 그대로 채우면 사용자
+    # 눈에 래퍼가 통째로 들어간다(실제 제보). 대화 경로는 이 문제를 원문을 따로 저장해
+    # 해결했고("두 소비처의 요구가 달라 저장본을 나눈다"), 콘솔 경로도 같은 규율을 쓴다.
+    #
+    # 실패해도 반영을 막지 않는다 — 보존은 화면 편의이지 반영의 조건이 아니다.
+    try:
+        store_console_job_result(conn, task_id, str(answer or "").strip())
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[console-job] 원문 보존 실패 task=%s: %r", task_id, exc)
 
     # 검토형은 여기서 저장하지 않는다 — 사람이 화면에서 확인하고 기존 '저장' 버튼으로 넣는다.
     # 위임이 그 단계를 건너뛰면 **기존 경로의 쓰기 의미가 바뀐다**(사용감 회귀).
