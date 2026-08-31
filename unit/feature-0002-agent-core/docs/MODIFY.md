@@ -2808,3 +2808,21 @@ REASON_CTX`(`other-member` | `owner-unverified`)로 남기고 문구를 분기�
 (역슬래시·제어문자)를 제거하고 이스케이프 책임을 삽입 지점 1곳에 모았다. 보안 경계 무변경 —
 freeform msdb 차단·허용 DB fail-closed·제품 경계 필터 전부 불변이며 테스트로 잠갔다.
 
+
+## CHG-20260831T113000-scheduler-reachability-deploy-record
+
+**무엇을**: `CHG-20260831T110000-scheduler-discovery-reachability` 의 배포·실증 기록 + 마찰 원장·
+LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
+
+**왜**: merge ≠ 배포 완료. 코드가 이미지에 baked 라 워커 롤아웃 전까지 라이브 assistant 는 옛
+코드로 답한다. 배포와 배포본 실증을 기록으로 남겨 다음 audit 이 기준선으로 쓰게 한다.
+
+- **배포**: PR #1422 merge main `7e512eb8` → `make deploy-web` scope=all. 7서비스 실물
+  `7e512eb8`(web-a·web-b·ask-worker·insight-worker·ops-scheduler·ext-tool-mcp-a/b) · surge 0 ·
+  엣지 blip 0 · 대화 스모크 PASS · quiesce drained(3s, 진행 중 run 미절단).
+- **배포본 실증**: 봉인 심볼 3종 적재 · msdb 차단 메시지가 스케줄 도구 2종 지목 ·
+  실 datasource 로 `[DK] Ranking Update` 10개 단계 전문(3,660자) 반환.
+- **남은 것(정직)**: **모델이 실제로 그 도구를 고르는지**는 실 LLM 턴이 필요하다. 코드·배포는
+  "경로가 열려 있고 이름이 보존된다" 까지만 증명하며, 행동 변화는 다음 audit corroboration
+  (msdb/sys 차단 후 `search_db_objects` 호출 전환율) 재측정으로 판정한다.
+
