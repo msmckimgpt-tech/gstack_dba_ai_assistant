@@ -1570,3 +1570,35 @@ grounding·제품 바인딩·필드 제약)를 그대로 재사용하고 여기�
   확인) 에서 `[내 AI 실행]` 강등 경로를 실 Windows 브라우저로 재확인. web-a/b 이미지·
   `GIT_COMMIT` 일치 · healthz 200 · caddy `no upstreams available` 0건.
 - **증적**: `docs/test-runs.d/TASK-20260831T124500-wsl-scheme-handler-postdeploy.md`
+
+## CHG-20260831T161500-ai-claude-feature-0043-wsl-runner-survive — wsl.exe 가 러너를 거둬가던 것
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 재제보 — "명령어 실행을 통해 러너를 상주시켰지만, '내 AI 실행' 과정을
+  진행해도 연결이 진행되지 않았습니다."
+- **위험도**: Minor (launch.sh 생성 템플릿 한 곳)
+
+### 원인 (실측)
+
+`CHG-20260831T124500-…` 로 Windows 핸들러 등록은 성공했다(로그: "Windows 쪽에 등록했습니다").
+그런데 그 핸들러가 부르는 `launch.sh` 가 러너를 띄우고 **곧바로 끝나면 wsl.exe 가 그 자식까지
+거둬간다**. 대조 실험:
+
+| 실행 경로 | 결과 |
+|---|---|
+| `launch.sh` 직접 실행 | 러너 시작 2→3, 프로세스 생존 |
+| `wsl.exe -- launch.sh` (원본) | 시작 3→3, **프로세스 없음** + 기존 러너도 pkill 로 소멸 |
+| 같은 스크립트 + 부모가 `sleep 3` | 러너 생존, 「대기 시작」 도달 |
+| `setsid` / stdin `< /dev/null` (부모 즉시 종료) | 둘 다 **실패** |
+
+### 변경
+
+`launch.sh` 가 러너를 띄운 뒤 ①생존 ②로그 증가 ③최소 3초를 모두 확인할 때까지(상한 30초)
+기다린 뒤 종료한다. 죽었으면 `bail` 로 사유를 말하고 콘솔을 붙잡는다. stdin 도 `/dev/null`
+로 끊는다(단독으로는 무효였지만 데몬화 위생).
+
+### 검증
+
+- 생성된 `launch.sh` 를 실제 `wsl.exe` 로 호출: 러너 0→1, 20초 뒤에도 생존,
+  `/api/ai/connect/status` 가 `listening:true` · `ready:true`
+- 회귀 2건(L12 대기 계약 · L13 사망 보고) — **수정 전 스크립트에서 2/2 FAIL** 실증

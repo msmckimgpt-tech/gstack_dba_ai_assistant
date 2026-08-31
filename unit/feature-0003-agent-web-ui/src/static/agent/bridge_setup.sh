@@ -378,9 +378,35 @@ BRIDGE_TOKEN="\$TOKEN" $PY "\$BRIDGE_HOME/bridge_agent.py" \\
   || bail "토큰이 유효하지 않습니다(만료·로그아웃) — 실행 중인 러너를 그대로 둡니다.
 웹 화면에서 [연결 준비] 를 다시 누르고 [내 AI 실행] 을 눌러 주세요." 3
 pkill -f 'bridge_agent.py' >/dev/null 2>&1 || true
+# ⚠ **부모가 즉시 끝나면 wsl.exe 가 이 자식까지 죽인다** (실측 2026-08-31). 이 스크립트는
+#   Windows 핸들러에서 \`wsl.exe -- launch.sh\` 로 불리는데, 그 명령이 끝나는 순간 WSL 이
+#   세션을 정리하면서 방금 띄운 러너를 함께 거둬간다. \`nohup\`·\`setsid\`·stdin 차단 전부
+#   막지 못했고(3종 다 실패), **부모가 자식이 자리잡을 때까지 살아 있는 것만** 통했다.
+#
+#   증상은 앞선 결함과 똑같이 «아무 일도 일어나지 않음» 이다 — rc=0, 오류 없음, 로그에
+#   러너 시작 줄조차 없음. 게다가 위 \`pkill\` 은 이미 실행됐으므로 **돌던 러너까지 사라진다**
+#   (누르기 전보다 나빠진다). 그래서 여기서 기다린다.
+BEFORE_LINES=0
+[ -f "\$BRIDGE_HOME/bridge.log" ] && BEFORE_LINES=\$(wc -l < "\$BRIDGE_HOME/bridge.log" 2>/dev/null || echo 0)
 BRIDGE_TOKEN="\$TOKEN" nohup $PY "\$BRIDGE_HOME/bridge_agent.py" \\
   --base '$BRIDGE_BASE' --ca "\$BRIDGE_HOME/rootCA.crt" --resume $RUNNER_ARGS \\
-  >> "\$BRIDGE_HOME/bridge.log" 2>&1 &
+  < /dev/null >> "\$BRIDGE_HOME/bridge.log" 2>&1 &
+CHILD=\$!
+# 살아 있고 + 로그가 늘었고 + 최소 3초 — 셋을 다 본다. 로그만 보면 아직 못 쓴 순간에 속고,
+# 생존만 보면 곧 거둬질 자식을 살아 있다고 읽는다(실측 하한이 3초였다).
+WAITED=0
+while [ "\$WAITED" -lt 30 ]; do
+  sleep 1
+  WAITED=\$((WAITED + 1))
+  kill -0 "\$CHILD" 2>/dev/null || bail "러너가 바로 종료됐습니다. 로그를 확인하세요: \$BRIDGE_HOME/bridge.log" 4
+  NOW_LINES=\$(wc -l < "\$BRIDGE_HOME/bridge.log" 2>/dev/null || echo 0)
+  if [ "\$NOW_LINES" -gt "\$BEFORE_LINES" ] && [ "\$WAITED" -ge 3 ]; then
+    printf '내 AI 를 실행했습니다. 웹 화면의 표시가 '"'"'내 AI 대기 중'"'"' 으로 바뀝니다.\\n'
+    exit 0
+  fi
+done
+# 30초가 지나도 첫 줄이 없다 — 살아는 있으므로 죽이지 않고, 무엇을 볼지 말한다.
+printf '러너가 아직 준비 중입니다(30초). 로그: %s\\n' "\$BRIDGE_HOME/bridge.log"
 LAUNCHEOF
 chmod 700 "$LAUNCH_SH"
 

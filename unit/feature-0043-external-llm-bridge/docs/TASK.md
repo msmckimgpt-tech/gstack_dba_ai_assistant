@@ -147,6 +147,9 @@ source_of_truth: true
       `refreshConnState` 가 판정값 반환)
 - [x] **POST-DEPLOY 라이브 검증** — 배포본 `b35fa376` 에서 강등 경로 재확인 + 무중단 실측
       (증적: `test-runs.d/TASK-20260831T124500-wsl-scheme-handler-postdeploy.md`)
+- [x] **러너가 wsl.exe 세션 정리에 거둬가지 않게** (사용자 재제보 2026-08-31) — `launch.sh`
+      가 러너의 자리잡음(생존+로그+3초)을 확인할 때까지 기다린 뒤 종료. 라이브 왕복으로
+      `listening:true` 확인 (증적: `test-runs.d/TASK-20260831T161500-wsl-runner-survive.md`)
 - [x] **발사 경로 교정** — 산출물: hidden iframe → 최상위 이동. 실 Windows 크롬 실측으로
       iframe 이 크롬의 외부 프로그램 허용 판정에 도달하지 않음을 확인, 이탈 우려는 대조군
       (미등록 스킴 최상위 이동 시 URL·제목 불변)으로 기각

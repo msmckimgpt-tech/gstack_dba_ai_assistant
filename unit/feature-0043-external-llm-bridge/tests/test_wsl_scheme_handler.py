@@ -359,3 +359,84 @@ def test_l11_xdg_step_failures_are_not_swallowed():
         proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
         assert "HANDLER_LINUX=fail" in proc.stdout, (
             f"desktop 파일 쓰기가 실패했는데 등록 성공으로 처리했다:\n{proc.stdout}\n{proc.stderr}")
+
+
+# ── 사용자 재제보 반영 (2026-08-31 2차) ──────────────────────────────────────
+
+def _render_launch(tmp_path: Path) -> Path:
+    """설치 스크립트의 heredoc 을 **실제 sh 로 전개해** `launch.sh` 를 만든다.
+
+    파이썬 문자열 치환으로 흉내내면 이스케이프가 실물과 갈리고(실측: `\\n` 이 두 겹으로
+    남았다), 그러면 테스트가 «실물이 아닌 것» 을 검사하게 된다. 생성 자체를 셸에 맡긴다.
+    """
+    src = _SETUP_SH.read_text(encoding="utf-8")
+    blk = src.split('cat > "$LAUNCH_SH" <<LAUNCHEOF\n')[1].split("\nLAUNCHEOF")[0]
+    out = tmp_path / "launch.sh"
+    gen = tmp_path / "gen.sh"
+    gen.write_text(
+        "set -eu\nPY=python3\nBRIDGE_BASE='https://example.test'\nRUNNER_ARGS=''\n"
+        f'LAUNCH_SH="{out}"\n'
+        'cat > "$LAUNCH_SH" <<LAUNCHEOF\n' + blk + "\nLAUNCHEOF\n"
+    )
+    r = subprocess.run(["sh", str(gen)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"launch.sh 생성 실패: {r.stderr}"
+    out.chmod(0o755)
+    return out
+
+
+def _stub_runner(tmp_path: Path, resume_body: str) -> Path:
+    """러너·pkill 스텁. `--check` 는 통과시키고 `--resume` 거동만 시나리오로 바꾼다."""
+    bh = tmp_path / "home" / ".mysql-ai-bridge"
+    bh.mkdir(parents=True, exist_ok=True)
+    (bh / "bridge_agent.py").write_text("#!/bin/sh\nexit 0\n")
+    (bh / "rootCA.crt").write_text("stub\n")
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    (b / "python3").write_text(
+        "#!/bin/sh\n"
+        'for a in "$@"; do\n'
+        '  [ "$a" = "--check" ] && exit 0\n'
+        f'  [ "$a" = "--resume" ] && {{ {resume_body} }}\n'
+        "done\nexit 0\n"
+    )
+    (b / "pkill").write_text("#!/bin/sh\nexit 0\n")   # 실제 프로세스를 죽이지 않는다
+    for f in b.iterdir():
+        f.chmod(0o755)
+    return b
+
+
+def test_l12_launcher_waits_until_the_runner_is_established(tmp_path: Path):
+    """`wsl.exe` 는 **부모가 끝나는 순간 자식까지 죽인다** (실측 2026-08-31).
+
+    핸들러가 부르는 `launch.sh` 가 러너를 띄우고 곧바로 끝나면, WSL 이 세션을 정리하면서
+    그 러너를 함께 거둬간다. 증상은 앞선 결함과 똑같은 «아무 일도 일어나지 않음» 이고,
+    그 앞의 `pkill` 은 이미 실행됐으므로 **돌던 러너까지 사라져 누르기 전보다 나빠진다.**
+
+    실측: `nohup` · `setsid` · stdin 차단 **셋 다 막지 못했고**, 부모가 3초 이상 살아 있는
+    경우에만 자식이 살아남았다. 그래서 계약은 「부모가 자식이 자리잡을 때까지 기다린다」다.
+    """
+    import time
+    launch = _render_launch(tmp_path)
+    b = _stub_runner(tmp_path, 'sleep 2; echo "[bridge] AI = stub"; sleep 60; exit 0;')
+    t0 = time.time()
+    proc = subprocess.run(["sh", str(launch), "mysql-ai-bridge://start/?token=mat_STUBTOKEN"],
+                          capture_output=True, text=True, timeout=60,
+                          env=dict(os.environ, HOME=str(tmp_path / "home"),
+                                   PATH=f"{b}:{os.environ['PATH']}"))
+    elapsed = time.time() - t0
+    assert proc.returncode == 0, f"정상 경로인데 실패: rc={proc.returncode} {proc.stderr!r}"
+    assert elapsed >= 3, (
+        f"부모가 {elapsed:.1f}초만에 끝났다 — wsl.exe 가 자식을 거둬갈 창을 그대로 둔 것이다")
+    assert "대기 중" in proc.stdout, f"실행 결과를 말하지 않는다: {proc.stdout!r}"
+
+
+def test_l13_launcher_reports_when_the_runner_dies(tmp_path: Path):
+    """러너가 바로 죽으면 **그 사실을 말한다** — 조용히 성공으로 끝내지 않는다."""
+    launch = _render_launch(tmp_path)
+    b = _stub_runner(tmp_path, "exit 9;")
+    proc = subprocess.run(["sh", str(launch), "mysql-ai-bridge://start/?token=mat_STUBTOKEN"],
+                          capture_output=True, text=True, timeout=60,
+                          env=dict(os.environ, HOME=str(tmp_path / "home"),
+                                   PATH=f"{b}:{os.environ['PATH']}"))
+    assert proc.returncode != 0, "러너가 죽었는데 성공으로 끝냈다"
+    assert "종료" in proc.stderr or "로그" in proc.stderr, f"사유를 말하지 않는다: {proc.stderr!r}"
