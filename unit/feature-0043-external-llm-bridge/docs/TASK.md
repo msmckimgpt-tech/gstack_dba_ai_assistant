@@ -150,6 +150,10 @@ source_of_truth: true
 - [x] **러너가 wsl.exe 세션 정리에 거둬가지 않게** (사용자 재제보 2026-08-31) — `launch.sh`
       가 러너의 자리잡음(생존+로그+3초)을 확인할 때까지 기다린 뒤 종료. 라이브 왕복으로
       `listening:true` 확인 (증적: `test-runs.d/TASK-20260831T161500-wsl-runner-survive.md`)
+- [x] **핸들러 등록 80.27초 → 0.73초** (사용자 제보 2026-08-31) — PS1 을 Windows `%TEMP%` 에
+      두고(UNC 해석 제거) Windows exe 기동을 3회→1회로. 실측 근거·회귀 3건 포함
+- [x] **로그에 시각 기록** — 설치(`[bridge-setup …]`)·러너(`[bridge …]`)·핸들러 실행
+      (`[bridge-launch …]`) 전부 `YYYY-MM-DD HH:MM:SS`
 - [x] **발사 경로 교정** — 산출물: hidden iframe → 최상위 이동. 실 Windows 크롬 실측으로
       iframe 이 크롬의 외부 프로그램 허용 판정에 도달하지 않음을 확인, 이탈 우려는 대조군
       (미등록 스킴 최상위 이동 시 URL·제목 불변)으로 기각
