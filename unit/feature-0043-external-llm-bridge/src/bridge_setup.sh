@@ -85,8 +85,12 @@ BRIDGE_PROBED_ARGS="${BRIDGE_PROBED_ARGS:-}"
 #:   판단값을 준 줄 알지만 동작은 바뀌지 않는다 — 없는 선택지는 공개하지 않는다.
 BRIDGE_PROBED_HANDLER="${BRIDGE_PROBED_HANDLER:-auto}"
 
-die() { printf '\n[bridge-setup] 중단: %s\n' "$1" >&2; exit 1; }
-say() { printf '[bridge-setup] %s\n' "$1"; }
+#: 설치 로그에도 **시각을 적는다** (사용자 요청 2026-08-31). 어느 단계에서 오래 걸리는지는
+#: 줄 사이의 시간차로만 보이는데, 시각이 없으면 그 차이를 읽을 수 없다 — 실제로
+#: "러너 체크섬 일치 이후가 오래 걸린다" 는 제보를 받고서야 단계별로 재 봤다.
+_ts() { date '+%Y-%m-%d %H:%M:%S'; }
+die() { printf '\n[bridge-setup %s] 중단: %s\n' "$(_ts)" "$1" >&2; exit 1; }
+say() { printf '[bridge-setup %s] %s\n' "$(_ts)" "$1"; }
 #: 검증에서 버린 값은 **말한다**. 조용히 버리면 LLM 이 채운 값이 반영된 줄 알고, 그 오해는
 #: 화면 어디에도 드러나지 않는다(러너의 `unmet` 고지와 같은 이유).
 #:
@@ -94,7 +98,7 @@ say() { printf '[bridge-setup] %s\n' "$1"; }
 #:   경고가 치환값에 먹혀 화면에 안 나온다 — 실측에서 `--cmd` 주입을 정확히 차단하면서
 #:   경고만 사라졌다(2026-08-28 자체 발견). 「조용히 버리지 않는다」를 주석에 적어 두고 그
 #:   반대를 구현한 형태라, 값을 거르는 것만큼 **거른 사실이 도달하는 것**도 계약이다.
-drop() { printf '[bridge-setup] ⚠ %s — 이 값은 버리고 기본 동작으로 진행합니다.\n' "$1" >&2; }
+drop() { printf '[bridge-setup %s] ⚠ %s — 이 값은 버리고 기본 동작으로 진행합니다.\n' "$(_ts)" "$1" >&2; }
 
 [ -n "$BRIDGE_BASE" ] || die "BRIDGE_BASE 가 비어 있습니다. 웹 콘솔의 [연결 명령 복사] 로 받은 명령을 그대로 실행하세요."
 [ -n "$BRIDGE_TOKEN" ] || die "BRIDGE_TOKEN 이 비어 있습니다. 웹 콘솔의 [연결 명령 복사] 로 받은 명령을 그대로 실행하세요."
@@ -359,8 +363,9 @@ URL="\${1:-}"
 #   그 창은 스크립트가 끝나는 순간 닫히므로, 오류를 그냥 출력하면 사용자는 **깜빡임만** 본다 —
 #   그건 스킴이 등록되지 않았을 때와 화면상 구별되지 않는다(둘 다 "아무 일도 안 일어남").
 #   그래서 터미널에 붙어 있을 때만 잠깐 붙잡아 둔다.
+_ts() { date '+%Y-%m-%d %H:%M:%S'; }
 bail() {
-  printf '%s\n' "\$1" >&2
+  printf '[bridge-launch %s] %s\n' "\$(_ts)" "\$1" >&2
   if [ -t 2 ]; then printf '\n(이 창은 20초 뒤 닫힙니다)\n' >&2; sleep 20; fi
   exit "\$2"
 }
@@ -401,12 +406,12 @@ while [ "\$WAITED" -lt 30 ]; do
   kill -0 "\$CHILD" 2>/dev/null || bail "러너가 바로 종료됐습니다. 로그를 확인하세요: \$BRIDGE_HOME/bridge.log" 4
   NOW_LINES=\$(wc -l < "\$BRIDGE_HOME/bridge.log" 2>/dev/null || echo 0)
   if [ "\$NOW_LINES" -gt "\$BEFORE_LINES" ] && [ "\$WAITED" -ge 3 ]; then
-    printf '내 AI 를 실행했습니다. 웹 화면의 표시가 '"'"'내 AI 대기 중'"'"' 으로 바뀝니다.\\n'
+    printf '[bridge-launch %s] 내 AI 를 실행했습니다. 웹 화면의 표시가 '"'"'내 AI 대기 중'"'"' 으로 바뀝니다.\\n' "\$(_ts)"
     exit 0
   fi
 done
 # 30초가 지나도 첫 줄이 없다 — 살아는 있으므로 죽이지 않고, 무엇을 볼지 말한다.
-printf '러너가 아직 준비 중입니다(30초). 로그: %s\\n' "\$BRIDGE_HOME/bridge.log"
+printf '[bridge-launch %s] 러너가 아직 준비 중입니다(30초). 로그: %s\\n' "\$(_ts)" "\$BRIDGE_HOME/bridge.log"
 LAUNCHEOF
 chmod 700 "$LAUNCH_SH"
 
@@ -541,11 +546,47 @@ register_handler_windows() {
     *"'"*) HANDLER_WIN_WHY="경로·사용자명에 홑따옴표가 있어 안전하게 등록할 수 없습니다"; return 1 ;;
   esac
 
+  # ── PS1 은 **Windows 로컬 디스크**에 둔다 (실측 2026-08-31) ───────────────────
+  #
+  # ⚠ `powershell -File` 에 **WSL 경로**(`\\wsl.localhost\<distro>\…`)를 주면 UNC 해석이
+  #   걸려 **80초**가 든다. 같은 스크립트를 Windows 로컬 경로로 주면 **0.4초**다 —
+  #   200배 차이이고, 사용자에게는 "러너 체크섬 일치" 뒤로 설치가 멈춘 것처럼 보인다
+  #   (사용자 제보 2026-08-31). 그래서 %TEMP% 에 쓰고 그 Windows 경로로 실행한다.
+  #
+  #   실측: powershell -File (WSL UNC) 80.27s · (Windows 로컬) 0.41s ·
+  #         wsl.exe -l -q 0.08s · wslpath 0.00s · reg.exe query 0.04s
+  # ⚠ **Windows 프로세스 기동 횟수를 센다.** 부하가 걸린 머신에서 exe 하나가 3초씩 든다
+  #   (실측: powershell·cmd·reg 모두 3.0~3.4s. 한가할 땐 0.04~0.4s). 그래서 「무엇을 부르는가」
+  #   보다 「몇 번 부르는가」가 체감을 지배한다 — 종전 3회(TEMP 조회·등록·검증)를 1회로 줄인다.
+  #
+  #   TEMP 는 대개 **Windows 호출 없이** 얻을 수 있다: WSL 이 물려받은 PATH 에
+  #   `/mnt/c/Users/<사용자>/AppData/Local/Microsoft/WindowsApps` 가 들어 있다. 거기서
+  #   프로필 경로를 떼어 쓴다(공짜). 못 얻으면 그때만 `cmd.exe` 를 한 번 부른다.
+  _wintmp=""
+  _prof=$(printf '%s\n' "$PATH" | tr ':' '\n' \
+          | sed -n 's|^\(.*/mnt/[a-z]/Users/[^/]*\)/.*|\1|p' | head -1)
+  if [ -n "$_prof" ] && [ -d "$_prof/AppData/Local/Temp" ] && [ -w "$_prof/AppData/Local/Temp" ]; then
+    _wintmp="$_prof/AppData/Local/Temp"
+  else
+    _t=$("$(win_exe cmd.exe || printf '')" /c 'echo %TEMP%' 2>/dev/null | tr -d '\r\n') || _t=""
+    case "$_t" in
+      ?:\\*) _wintmp=$(wslpath -u "$_t" 2>/dev/null || true) ;;
+      *) _wintmp="" ;;
+    esac
+    [ -n "$_wintmp" ] && [ -d "$_wintmp" ] && [ -w "$_wintmp" ] || _wintmp=""
+  fi
+
   # ⚠ 파일명을 **매번 고유하게** 만들고 생성 실패를 검사한다 (codex 2R P1-2). 고정 이름을
   #   쓰면 이전 실행이 남긴 (혹은 다른 배포판용으로 쓰인) 스크립트가 그대로 실행될 수 있고,
   #   그 PS1 안의 자기 대조는 **그 옛 값끼리** 맞으므로 통과한다 — 바깥 검사는 키 존재만 보니
   #   "현재 배포판에 등록했다" 고 보고하면서 레지스트리는 다른 명령을 가리키게 된다.
-  _ps1="$BRIDGE_HOME/.register_win_handler.$$.ps1"
+  if [ -n "$_wintmp" ]; then
+    _ps1="$_wintmp/mysql-ai-bridge-reg.$$.ps1"
+  else
+    # %TEMP% 를 못 얻었다 — 느리지만 되는 경로로 간다. 느려지는 사실을 말한다.
+    say "  (Windows 임시 폴더를 찾지 못해 느린 경로로 등록합니다 — 1분 이상 걸릴 수 있습니다.)"
+    _ps1="$BRIDGE_HOME/.register_win_handler.$$.ps1"
+  fi
   rm -f "$_ps1" 2>/dev/null || true
   if ! cat > "$_ps1" <<PSEOF
 # mysql-ai 브리지 — Windows 브라우저용 스킴 핸들러 등록 (HKCU, 관리자 권한 불필요).
@@ -570,22 +611,20 @@ PSEOF
   fi
   _ps1_win=$(wslpath -w "$_ps1" 2>/dev/null || true)
   [ -n "$_ps1_win" ] || { rm -f "$_ps1"; HANDLER_WIN_WHY="WSL 경로를 Windows 경로로 바꾸지 못했습니다(wslpath)"; return 1; }
+  # ── 사후검증은 **이 한 번의 실행 안에서** 끝난다 ─────────────────────────────
+  #
+  # 「등록했다」 를 쓰기 성공으로 갈음하지 않는다 — 위 PS1 이 마지막에 값을 **되읽어 대조**하고
+  # 어긋나면 `throw` 한다. 그래서 이 프로세스의 종료코드가 곧 「그 값이 실제로 거기 있다」다.
+  #
+  # 종전엔 여기서 PowerShell 을 **한 번 더** 띄워 `Test-Path` 로 확인했다. 같은 보장을 두 번
+  # 하면서 Windows 프로세스 기동(부하 시 3초대)을 하나 더 쓴 것이라, 사용자가 겪은 "설치가
+  # 멈춘 것 같다" 의 1/3 이 이 줄이었다. 보장을 줄이지 않고 호출만 줄인다.
   if ! "$PS_EXE" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$_ps1_win" >/dev/null 2>&1; then
     rm -f "$_ps1"
-    HANDLER_WIN_WHY="레지스트리 쓰기가 거부되었습니다(PowerShell 실행 정책·정책 제한)"
+    HANDLER_WIN_WHY="레지스트리 쓰기·대조가 실패했습니다(실행 정책·정책 제한, 또는 등록된 값이 기대와 다름)"
     return 1
   fi
   rm -f "$_ps1"
-
-  # ── 사후검증 — 「등록했다」 를 쓰기 성공으로 갈음하지 않는다 ──────────────────
-  # 이 절 전체가 「등록했다고 말했지만 브라우저는 못 본다」 를 고치는 것이므로, 여기서
-  # 다시 «썼으니 됐겠지» 로 끝내면 같은 종류의 거짓말을 한 층 아래에 만드는 것이다.
-  if ! "$PS_EXE" -NoProfile -NonInteractive -Command \
-       "if (Test-Path 'HKCU:\Software\Classes\mysql-ai-bridge\shell\open\command') { exit 0 } else { exit 1 }" \
-       >/dev/null 2>&1; then
-    HANDLER_WIN_WHY="등록 직후 조회에서 키가 보이지 않습니다"
-    return 1
-  fi
   return 0
 }
 
