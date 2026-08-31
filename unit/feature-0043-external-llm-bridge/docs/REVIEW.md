@@ -1485,3 +1485,10 @@ P1 추이가 **4 → 3 → 1 → 0 으로 단조 감소**했다(§18.8 (b) 의 �
 - 동작 하네스 18 checks PASS · 수정 전 판에서 FAIL 실증(라운드별 신규 검사 포함)
 - 셸 실행 테스트 18건 PASS · 수정 전 스크립트에서 11/13 FAIL 실증
 - PB-0008 실 Windows 브라우저 재검증(2R 반영본): 강등 문구·강조·문구/명령 동시 가시 PASS
+
+## REV-20260831T153000-ai-claude-feature-0043-wsl-postdeploy [SKIPPED:non-policy-doc] — 증적 문서만
+
+- **일시**: 2026-08-31
+- **범위**: `docs/REPORT.md` + `docs/test-runs.d/…-postdeploy.md` (코드 변경 0)
+- **Trigger**: doc-only, 비정책 → §18.8 dispatch 표에 따라 panel SKIP
+- **내용**: 배포본 `b35fa376` POST-DEPLOY 라이브 검증 결과 기록. 판정 PASS.
