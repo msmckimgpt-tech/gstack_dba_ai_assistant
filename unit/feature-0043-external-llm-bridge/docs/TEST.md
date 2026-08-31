@@ -144,6 +144,14 @@ source_of_truth: true
 | TEST-20260831T170000-treecss | `chat.css` | 머리글이 항목과 시각적으로 구분된다(스타일 없는 클래스가 아니다) | AC-20260831T170000-model-tree-4 |
 | TEST-20260831T170000-nonote | `handle_one` | 정상 답변 본문에 모델·등급을 쓰지 않는다 · **미반영 고지는 남는다** | AC-20260831T170000-model-tree-5 |
 
+| TEST-20260831T183000-fingerprint | `_self_build` | 러너가 **자기 파일** 지문을 신고한다(파일이 바뀌면 지문도 바뀐다) | AC-20260831T183000-runner-version-sync-1 |
+| TEST-20260831T183000-hbcarry | `Api.heartbeat` | 지문·버전을 **매번** 싣는다(두 축 모두) | AC-20260831T183000-runner-version-sync-1 |
+| TEST-20260831T183000-once | `start_heartbeat` | 구버전 경고는 세션당 한 번 · 다음 행동까지 말한다 | AC-20260831T183000-runner-version-sync-2 |
+| TEST-20260831T183000-compare | `_deployed_runner_build`·`_runner_update_hint` | 배포본과 대조 · **양쪽을 다 알 때만** 판정(미신고를 구버전으로 단정하지 않음) | AC-20260831T183000-runner-version-sync-2 |
+| TEST-20260831T183000-status | `connect_status` | 프런트는 불리언 하나만 읽는다 · 듣고 있을 때만 판정 · 실패가 거짓 경고가 되지 않음 | AC-20260831T183000-runner-version-sync-2 |
+| TEST-20260831T183000-chip | `connect-modal.js`·CSS | 칩이 정상과 **구분되는** 상태를 보인다 · 서버 값이 칩까지 배선됨 | AC-20260831T183000-runner-version-sync-3 |
+| TEST-20260831T183000-recatalog | `app.js` 게이트 콜백 | 잠금이 풀리면 **카탈로그를 먼저 다시 받고** 그린다(순서 고정) | AC-20260831T183000-runner-version-sync-4 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

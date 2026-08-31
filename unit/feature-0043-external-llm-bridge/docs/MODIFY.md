@@ -1817,7 +1817,38 @@ messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 �
 - 회귀 4건 — **수정 전에서 4/4 FAIL** 실증
 - ⚠ **실제 설치는 실행하지 않았다** — 이 머신엔 이미 파이썬이 있고, 검증을 위해 남의 머신
   상태를 바꾸지 않는다. 설치 명령의 유효성은 `winget show` 로, 배선은 회귀로 확인했다.
+## CHG-20260831T183000-runner-version-sync — 러너 지문 대조 + 연결 직후 카탈로그 갱신 (P0-AG)
 
+**요구**: 재설치·재연결해도 옛 모델 목록이 그대로다 · 연결 완수 후 모델·추론 강도가 안 보이고
+새로고침해야 나타난다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `src/bridge_agent.py` | `_self_build()` 신규(자기 파일 sha256 12자) · 하트비트에 `agent_build` · 응답의 `stale_build` 를 **세션당 한 번** 로그로 |
+| `static/agent/bridge_agent.py` | 배포 사본 동기화 |
+| `routers/_bootstrap_schema.py` | `WebOAuthTokens.RunnerBuild VARCHAR(16)` 멱등 ALTER |
+| `oauth_store.py` | `set_runner_report(agent_build=…)` 저장(모양 강제 + 값 변경 시에만 쓰기) · `account_runner_build()` 조회 |
+| `routers/ai_tools.py` | `_deployed_runner_build()`(배포본 지문, 프로세스 1회 캐시) · `_runner_update_hint(…, agent_build)` 에 `stale_build` |
+| `routers/oauth_as.py` | `connect_status` 에 `runner_stale` — 서버가 판정하고 프런트는 불리언 하나만 읽는다 |
+| `static/app/connect-modal.js` | 칩 4번째 상태 `stale` |
+| `static/css/search-audit.css` | `.ai-conn[data-state="stale"]` |
+| `static/app.js` | 게이트 변화 시 `loadVaultOptions()` → `renderComposer()` → 선택기 재렌더 (순서 고정) |
+
+### 왜 버전만으로 부족했나
+
+`AGENT_VERSION` 은 날짜 단위(`2026.08.31`)다. 그날 러너가 **세 번** 바뀌었고 셋 다 같은 버전이라
+"배포본과 다른 러너" 를 표현할 축이 없었다. 지문은 그 질문에만 답한다 — 버전(호환성)과 지문
+(동일성)은 서로를 대체하지 않으므로 둘 다 신고한다.
+
+양쪽 지문을 다 아는 경우에만 판정한다. 구 러너는 지문을 아예 신고하지 않고, 그때 "다르다" 고
+말할 근거는 없다(모르는 것을 경고로 바꾸지 않는다).
+
+### 되돌리기
+
+`RunnerBuild` 가 NULL 이면 대조가 서지 않아 종전과 동일하게 동작한다(경고 없음).
+게이트 콜백은 `loadVaultOptions()` 호출만 빼면 종전 동기 렌더로 돌아간다.
 ## CHG-20260831T175500-ai-claude-corp-feature-0043-schannel-revocation — Windows 러너 수신 실패 + 같은 구간의 조용한 결함 3종
 
 - **날짜**: 2026-08-31
@@ -1897,3 +1928,28 @@ POSIX 판은 OpenSSL curl 이라 폐기검사를 기본으로 하지 않아 이 
 - 엣지 `/healthz` 200 · soak 통과 · caddy `no upstreams available` **0건** · RestartCount 0
 - 자기정정 1건: 하네스 기대 해시가 배포 전 러너 값이라 `MISMATCH` 가 났고, 3자 대조로
   «상수 stale» 임을 확정했다(수신 실패 아님). 불일치를 WARN 으로 강등하지 않았다.
+
+## CHG-20260831T190000-verify-anchor-fix — 침묵 처리 계약을 구조로 잠금 (P0-AG 후속)
+
+**요구**: 직전 커밋에서 임시 디버그 로그를 제거하자 계약 테스트가 앵커 문자열을 잃고 깨졌다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `routers/oauth_as.py` | 침묵 처리 주석의 원인 서술 정정(예외가 아니라 상주 프로세스의 옛 모듈) |
+| `tests/test_model_catalog_bridge_mode.py` | 앵커를 문자열에서 **`except` 블록 구조**로 — `runner_stale = False` 와 `exc_info=True` 가 그 블록 안에 함께 있는지 본다 |
+
+### 왜
+
+주석 한 줄을 고치면 깨지는 테스트는 계약을 지키는 것이 아니라 **글자를 지키는 것**이다.
+잠글 것은 "판정 실패가 거짓 경고가 되지 않고, 그러면서 추적 가능하다" 이지 특정 문구가 아니다.
+
+## CHG-20260831T191500-gatepoll-anchor — 선재 계약 테스트 실패 해소 (P0-AG 후속)
+
+`test_indicator_does_not_poll_when_unlocked` 가 **main 에서도** 실패하고 있었다. #1447 이
+`_syncGatePoll` 의 폴링 사유를 둘(`_composeBlocked || _modalOpen`)로 늘리면서 계약 테스트를
+갱신하지 않았고, 테스트는 조건 문자열(`_composeBlocked && !_gatePollTimer`)을 박제하고 있었다.
+
+잠글 것은 사유의 **개수**가 아니라 «사유가 없으면 멎는다» 이므로 그 성질을 본다 —
+`wantPoll && !_gatePollTimer` / `!wantPoll && _gatePollTimer` 가 같은 값의 양면인지까지.

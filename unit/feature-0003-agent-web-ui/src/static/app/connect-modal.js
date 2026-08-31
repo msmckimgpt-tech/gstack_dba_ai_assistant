@@ -548,7 +548,7 @@ function _paintGate(body) {
   }
 }
 
-function _paintConn(connected, listening, epoch) {
+function _paintConn(connected, listening, epoch, runnerStale) {
   // 배지 요소가 없어도 «연결됨» 판정은 살아 있어야 한다 — 모달의 성공 감지가 배지의 존재에
   // 얹혀 있으면, 배지를 감추는 화면에서 연결이 조용히 알려지지 않는다.
   _lastKnownListening = !!listening;
@@ -568,6 +568,15 @@ function _paintConn(connected, listening, epoch) {
     el.textContent = "AI 대기 안 함";
     el.title = "연결은 되어 있으나 지금 듣고 있는 AI 가 없습니다"
       + "(머신을 재시작했다면 러너가 꺼졌을 수 있습니다). 눌러서 다시 연결 정보를 받으세요.";
+  } else if (runnerStale) {
+    // 연결도 대기도 성립했는데 **그 러너가 배포본과 다른 파일**이다 (2026-08-31).
+    // 잠금 사유는 아니다 — 답변은 온다. 다만 옛 동작·옛 모델 목록이 그대로 보이고,
+    // 그 이유가 화면 어디에도 없어 사용자가 「재설치했는데 그대로」를 겪었다.
+    el.dataset.state = "stale";
+    el.textContent = "내 AI 업데이트 필요";
+    el.title = "연결은 되어 있지만 실행 중인 러너가 서버 배포본과 다릅니다."
+      + " 옛 동작·옛 모델 목록이 보일 수 있습니다 —"
+      + " 눌러서 최신 실행 명령을 받아 다시 실행하세요.";
   } else {
     el.dataset.state = "on";
     el.textContent = "내 AI 대기 중";
@@ -655,7 +664,7 @@ export async function refreshConnState() {
       _paintGate({ compose_blocked: false });
       return b || null;
     }
-    _paintConn(!!b.connected, !!b.listening, epochAtStart);
+    _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale);
     _paintGate(b);
     return b;
   } catch (_) {

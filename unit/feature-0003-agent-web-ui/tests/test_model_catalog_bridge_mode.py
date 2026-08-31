@@ -328,3 +328,53 @@ def test_group_head_has_its_own_style():
     block = block[:block.index("}")]
     # 고를 수 없는 줄이라는 신호: 작고 흐리다.
     assert "font-size" in block and "color" in block
+
+
+# -- 러너 지문 대조 (사용자 제보 2026-08-31: 「재설치했는데 그대로」) ----------------
+
+
+def test_server_compares_the_deployed_runner_fingerprint():
+    """서버가 **자기 배포본**의 지문을 알고, 러너 신고와 대조한다."""
+    import routers.ai_tools as ai_tools
+
+    deployed = ai_tools._deployed_runner_build()
+    assert deployed, "배포본 지문을 못 읽는다 — 대조 자체가 성립하지 않는다"
+    # 같은 지문이면 최신, 다르면 stale. **양쪽을 다 알 때만** 판정한다 —
+    # 구 러너는 지문을 아예 신고하지 않고, 그때 "다르다" 고 말할 근거는 없다.
+    same = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], deployed)
+    diff = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "0" * 12)
+    none = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "")
+    assert same["stale_build"] is False and same["current"] is True
+    assert diff["stale_build"] is True and diff["current"] is False
+    assert diff["reason"], "다르다고만 하고 무엇을 할지 말하지 않는다"
+    assert none["stale_build"] is False, "신고하지 않은 러너를 구버전으로 단정한다"
+
+
+def test_connect_status_exposes_staleness_as_a_single_boolean():
+    """프런트는 **불리언 하나만** 읽는다 — 판정을 두 벌로 만들지 않는다."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "src" / "routers" / "oauth_as.py").read_text(encoding="utf-8")
+    fn = src[src.index("def connect_status("):]
+    assert '"runner_stale": runner_stale,' in fn, "연결 상태에 구버전 사실이 없다"
+    # 듣고 있을 때만 본다 — 러너가 없으면 지문을 비교할 대상 자체가 없다.
+    assert "if listening:" in fn
+    # 판정 실패가 **거짓 경고**가 되지 않는다 — 그리고 침묵하되 로그에는 남긴다
+    # (완전히 침묵시켰더니 왜 판정이 안 서는지 추적할 수 없었다 — 실측 2026-08-31).
+    _exc = fn[fn.index("except Exception:"):]
+    _exc = _exc[:_exc.index("return JSONResponse")]
+    assert "runner_stale = False" in _exc, "판정 실패가 거짓 경고로 나간다"
+    assert "exc_info=True" in _exc, "실패를 완전히 침묵시켜 추적할 수 없다"
+
+
+def test_chip_shows_a_distinct_state_for_stale_runner():
+    """칩이 정상(초록)과 **구분되는** 상태를 보인다 — 색만 같으면 사실이 전달되지 않는다."""
+    import pathlib
+    base = pathlib.Path(__file__).resolve().parents[1] / "src" / "static"
+    js = (base / "app" / "connect-modal.js").read_text(encoding="utf-8")
+    assert 'el.dataset.state = "stale"' in js, "구버전 상태가 칩에 없다"
+    assert "업데이트 필요" in js
+    # 호출부가 서버 값을 실제로 넘긴다(배선 없이 분기만 있으면 영영 안 뜬다).
+    assert "!!b.runner_stale" in js, "서버 값이 칩까지 도달하지 않는다"
+    css = (base / "css" / "search-audit.css").read_text(encoding="utf-8")
+    assert '.ai-conn[data-state="stale"]' in css, "스타일이 없어 정상 상태와 같아 보인다"
