@@ -8,6 +8,70 @@ source_of_truth: true
 
 # Task
 
+## 20260831T1445-conv-last-activity-updatedat — "최근 갱신" 이 첫 턴 시각에 고정되던 결함 (Minor §12.3 — 비파괴 내부 배선)
+
+**사용자 요청(2026-08-31)**: "요청을 전송하여 대화가 갱신되었는데도 최근 갱신 일자가 첫 대화를
+작성했던 부분에서 변경되지 않은 이슈가 확인되었습니다. 대화 제목: `dk_game_integrate 랭킹 자동화
+프로시저 명명 제안`"
+
+**라이브 실측(재현 확정)** — 대화 `20260828073505-be34624d`:
+
+| 축 | 값 |
+|---|---|
+| `created_at` | 2026-08-28 16:35:05 |
+| `core_conversations.updated_at` | **2026-08-28 16:38:07 (고정)** |
+| 마지막 메시지 | 2026-08-31 10:54:39 |
+| 어긋남 | **2일 18시간 16분** |
+| KV `last_status*` | **0건** (브리지 경로) |
+
+전수 측정: 355 대화 중 **19건**이 같은 상태(마지막 메시지 > `updated_at` + 1분). 전부 2턴 이상
+대화 — 단일 턴 대화는 생성=마지막이라 증상이 드러나지 않았다.
+
+**근본원인 — 활동 시각을 올리는 write 가 «자동 제목 부여» 경로에만 있었다.**
+`_conv_store._conv_update_topic_if_auto` 의 `SET topic=…, updated_at=now()` 가 유일한 전진
+지점이고, 그 UPDATE 는 제목이 placeholder 일 때만 행을 잡는다. 첫 턴에 제목이 확정되면 이후
+턴이 몇 개 쌓여도 `updated_at` 은 움직이지 않는다. 메시지 저장 경로(`save_memory_message` /
+`save_core_message`)에는 갱신이 없었다.
+
+**왜 이 대화에서만 눈에 띄었나 — 표시 축이 한 개뿐이었다.** 부제는 `last_activity_effective_at
+|| last_activity_at` 순으로 읽는데(`static/app.js`), 앞의 값은 KV `last_status_at` 파생이다.
+서버 LLM 경로는 그 KV 가 있어 증상이 가려졌고, KV 를 쓰지 않는 **브리지(개인 AI 연결)** 경로는
+폴백이 비어 고정된 `updated_at` 이 그대로 노출됐다. 같은 컬럼을 읽는 목록 정렬
+(`ORDER BY c.updated_at DESC`)도 첫 턴 시각 기준이라 활발한 대화가 상단으로 오지 못했다.
+
+### 2.1 Implementation Plan
+
+| 파일 | 심볼 | 변경 | 완료 판정 |
+|---|---|---|---|
+| `unit/feature-0002-agent-core/src/modules/runtime_backend.py` | `_PG_TOUCH_CONVERSATION` · `PgRuntimeBackend.touch_conversation` · `save_memory_message` | 표시 store 쓰기마다 활동 시각 전진 (UPDATE — 있는 행만, fail-soft) | 2턴째 이후 메시지에서 `updated_at` 이 전진 |
+| `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py` | `_effective_activity_at` 신설 + 목록 2경로(PG·MySQL) 배선 | 표시 축을 KV·행 **max** 로 (우선순위 아님) | 혼합 경로 대화에서 stale KV 가 표시를 뒤로 끌지 않음 |
+| `unit/feature-0002-agent-core/tests/test_conv_activity_touch.py` | — | 신규 (touch 발동·fail-soft·경계) | 8 PASS + 뮤테이션 KILL |
+| `unit/feature-0003-agent-web-ui/tests/test_conv_last_activity_effective.py` | — | 신규 (두 축 max·tz 게이트) | 12 PASS + 뮤테이션 KILL |
+
+- **축을 표시 store 로 잡은 이유**: 회수 store(`core_messages`)는 tool turn 까지 담아 한 run 에
+  수십 건이 쌓인다. 화면에 뜨는 단위(질문·답변·안내)와 사용자가 읽는 "최근 갱신" 의 의미가
+  겹치는 쪽은 표시 store 다. `internal` 로 걸러진 메시지는 이 지점에 도달하지 않는다.
+- **`_PG_UPSERT_CONVERSATION` 재사용 안 함**: 그 UPSERT 는 행이 없으면 INSERT 하고 COALESCE 로
+  다른 컬럼을 덮는다 — 활동 시각 전진만 필요한 자리에서 쓰면 topic 없는 유령 대화를 만든다.
+- **max 이지 우선순위 아님**: 서버 LLM 으로 시작해 브리지로 이어간 대화는 KV 가 첫 run 시각에
+  멈춘 채 남는다. KV 를 무조건 우선하면 그 대화에서 같은 결함이 되살아난다.
+- **tz 미지 값은 비교 제외**: MySQL 경로의 naive DATETIME 을 UTC 로 읽으면 KST 환경에서 9시간
+  미래가 되어 max 를 영구 점거한다(`_iso_or_empty` 가 봉인한 CHG-20260527-0001 과 같은 입구).
+- 위험도: **Minor** (§12.3 — 스키마·마이그레이션·RBAC·엔드포인트·프론트 **0**, 비파괴 내부 배선).
+
+- [x] `runtime_backend.py` — touch SQL + `touch_conversation` + 표시 store 두 경로(미분기·브랜치) 배선
+- [x] `_conv_store.py` — `_effective_activity_at` + 목록 2경로 배선
+- [x] 신규 테스트 2종 **20 PASS** · **뮤테이션 3종 KILL**(touch 제거 2 · 표시 축 되돌림 1)
+- [x] 기존 회귀 0 (feature-0002/0003/0023/0043 전량 rc=0) — 초기 3건 파손은 SQL 목록 전체 동등
+      단언이 원인, 계약 유지하며 INSERT 로 좁히고 touch 전용 테스트 신설
+- [x] 문서 정합 (TASK/REPORT/MODIFY/REVIEW/FUNCTION/TEST + feature-0002 MODIFY cross-ref)
+- [ ] 라이브 배포 + 사용자 지목 대화의 부제 실측
+- [ ] 기존 19건 `updated_at` 백필 (단조 전진 — 마지막 메시지 시각으로)
+
+### 9. Requested Scope
+
+- "최근 갱신 일자가 첫 대화 작성 시점에서 변경되지 않는" 결함 수정 — 진행 중
+
 ## 20260812T2200-attach-md-render-post — 배포본 실측으로 잔여 종결 (비-정책 doc-only)
 
 - [x] 배포본 `105fa2b7` 의 **실제 모듈**(`import('/static/app/attach-diff.js')`)에 신규 배선 9축

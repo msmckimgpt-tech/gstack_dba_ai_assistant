@@ -3473,3 +3473,23 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   fragment 로 남긴다 — 직전 cycle(TASK-20260831T100000)과 같은 절차.
 - 이 커밋에서 대체 수행한 것: 위임 계약 회귀 15건(형식 정합·이음매 순서·러너 프레이밍·
   프롬프트 평탄화 순서) + 전량 green(6253+) + route 골든 대조(추가 1·제거 0).
+
+### Run — 20260831T1445-conv-last-activity-updatedat ("최근 갱신" 이 첫 턴 시각에 고정되던 결함)
+
+- **단위/구조**: 신규 2종 **20 PASS** — `feature-0002/tests/test_conv_activity_touch.py`(8: touch
+  발동 · 브랜치 경로 · UPDATE 여부 · fail-soft · 회수 store 비-touch · SQL 상수 컬럼 잠금) +
+  `feature-0003/tests/test_conv_last_activity_effective.py`(12: 두 축 max · tz 게이트 · 직렬화 ·
+  목록 2경로 구조 단언).
+- **뮤테이션 역검증 3종 KILL**: `save_memory_message` 의 touch 호출 제거 → 미분기·브랜치 두
+  테스트 FAIL / 표시 축을 `_iso_or_empty(last_active)` 로 되돌림 → 구조 단언 FAIL.
+- **전량 회귀**: `feature-0002 + feature-0003 + feature-0023 + feature-0043` 전 수집 대상 실행,
+  **실패 0**(rc=0). 초기 실행에서 `test_message_branching.py` 3건이 SQL 실행 목록 **전체 동등**
+  단언으로 파손 → 그 절의 계약(어느 INSERT 를 타는가)을 INSERT 로 좁혀 유지하고 touch 동반은
+  전용 테스트를 새로 추가(단언만 느슨하게 두면 다음 변경이 touch 를 조용히 잃는다).
+- **라이브 실측(수정 전, 재현·범위 확정)**: 대화 `20260828073505-be34624d` — `updated_at`
+  08-28 16:38:07 고정 vs 마지막 메시지 08-31 10:54:39(**2일 18시간 16분**), KV `last_status*`
+  0건(브리지 경로). 전수 355 대화 중 **19건** 동일(모두 2턴 이상).
+- **Environment: Windows-browser (PB-0008)** — **이 커밋 시점 미수행**. 사유: 본 changeset 은
+  **프론트 자산 변경 0**(`static/**`·`templates/**` diff 없음)이라 `visual_verification_scope`
+  check #13 의 hard gate 대상이 아니다. 또한 화면에 보이는 값은 **배포 + 백필 이후**에야 바뀌므로
+  지금 브라우저로 보는 것은 이 변경이 아니다. 배포·백필 후 POST-DEPLOY 로 부제 실측을 수행한다.

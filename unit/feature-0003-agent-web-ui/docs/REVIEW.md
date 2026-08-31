@@ -10,6 +10,91 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260831T144500-conv-last-activity-updatedat [SKIPPED:upstream-tool-carveout] — 활동 시각 전진 지점과 표시 축 선택
+
+- **Trigger**: `Code change` (backend write path + 목록 payload). §18.8 dispatch 표 매칭 축 =
+  backend·qa. UI 키워드("표시")가 요청문에 있으나 **프론트 코드 변경 0**(표시식 무변경)이라
+  ux/design 축은 해당하지 않는다.
+- **채널(§18.8.2)**: 본 세션의 상위 지시가 subagent 호출을 금지해(`Do not call the AgentTool
+  unless the user requested it`) panel 미호출 — 선례 REV-20260812T203000 과 동일 carve-out.
+  대체 채널 = ① 라이브 PG 전수 실측(재현·범위 확정) ② 신규 테스트 2종 20 PASS ③ **뮤테이션
+  역검증 3종 KILL** ④ 호출 경로 전수 추적(아래).
+- **승인 근거(§12.2)**: `FIRST_REQUEST.md` `deploy_scope: included` — cycle-final 후 배포까지
+  사전 승인 범위. 첫 배포 직전 1줄 표면화 이행 예정. 위험도 **Minor**(§12.3 — 스키마·마이그레이션·
+  RBAC·엔드포인트·프론트 0, 비파괴·가역).
+
+### 판단 1 — 전진 지점을 «표시 store 쓰기» 로 잡은 근거
+
+후보 3개를 비교했다.
+
+| 후보 | 문제 |
+|---|---|
+| `save_core_message`(회수 store) | tool turn 까지 담아 한 run 에 수십 건 → 행 UPDATE 가 그만큼 늘고, **화면에 없는 활동**이 "최근 갱신" 을 밀어 올려 사용자가 읽는 값의 의미가 흐려진다 |
+| PG 트리거 | 관례상 명시 코드를 쓰는 저장소이고, 두 store 중 어느 쪽을 축으로 삼을지의 **판단이 스키마에 숨는다** |
+| **표시 store 쓰기**(채택) | 화면에 뜨는 단위(질문·답변·안내)와 "최근 갱신" 의 의미가 겹치고, `internal` 필터가 호출측에서 이미 걸러진다 |
+
+**호출 경로 전수 확인** — 사용자 가시 turn 이 모두 이 choke-point 를 통과하는지 직접 추적했다:
+서버 LLM(`agent_core._mirror_message` — user 7982 · assistant 9102/9393/9435/9473/9487) ·
+브리지 질문·대기 안내(`conversations.py` 586/621) · 브리지 답변 전달(`ai_tools.py` 1393) ·
+그룹 사람-채팅 미러(`_conv_store._save_group_chat_message_pg`). 누락 0.
+MySQL 백엔드는 `save_memory_message` 가 2026-05-27 cutover 로 PG 전용이라 대칭 대상이 없다.
+
+### 판단 2 — UPSERT 재사용을 거부한 이유 (유령 대화)
+
+`_PG_UPSERT_CONVERSATION` 은 행이 없으면 **INSERT** 하고 COALESCE 로 topic·owner·product 를
+덮는다. 활동 시각 전진만 필요한 자리에서 쓰면 topic 없는 대화 행이 생긴다. 별도 `UPDATE`(있는
+행만)를 새로 두었고, 테스트가 SQL 상수에 다른 컬럼이 섞이지 않는지도 단정한다.
+
+### 판단 3 — fail-soft 로 둔 이유 (저장 성공한 turn 을 실패로 만들지 않는다)
+
+브리지 경로는 표시 store 저장 실패를 **요청 취소**로 읽어 적재된 task 를 지운다
+(`conversations.py` `_fail("사용자 메시지를 대화에 저장하지 못해 요청을 취소했다")`). touch 는
+표시·정렬용 파생값이므로 예외를 올리면 안 된다 — 흡수 + WARN. autocommit 이라 메시지 INSERT 는
+이미 별개 커밋으로 확정된 상태다.
+
+### 판단 4 — 표시 축을 «우선순위» 가 아니라 «max» 로 한 이유
+
+프런트 표시식은 `effective || last_activity_at` 이라 **앞 값이 있으면 뒤를 보지 않는다**. KV 축은
+서버 LLM run 이 있었던 대화만 채워지므로:
+
+- KV 단독 → 브리지 경로에서 필드가 비어 종전 폴백으로 돌아간다(수정 전 상태).
+- KV 우선 → **서버 LLM 으로 시작해 브리지로 이어간 대화**에서 KV 가 첫 run 시각에 멈춘 채 남아
+  같은 결함이 되살아난다. 이 경로가 이번 결함의 가장 그럴듯한 재발 형태라 테스트로 못박았다
+  (`test_later_axis_wins_when_row_is_newer`).
+- 행 단독 → 진행 중 run 의 step 시각이 행 UPDATE 보다 앞서 가는 AC-0631 개선을 되돌린다
+  (`test_later_axis_wins_when_kv_is_newer`).
+
+### 판단 5 — tz 미지 값을 비교에서 뺀 이유
+
+MySQL 경로 `updated_at` 은 naive DATETIME 이다. UTC 로 읽으면 KST 환경에서 **9시간 미래**가 되어
+max 를 영구 점거하고, 그때 사용자는 미래 시각을 본다 — AC-0633·AC-0311 이 이미 봉인한 입구의
+재발이다. tz 를 아는 값만 비교하고, 그 결과가 없으면 필드를 비워 종전 폴백에 맡긴다.
+
+### 자체 검토에서 나온 지적과 처리
+
+1. **[자체] 반환 id 소실 위험** — touch 를 `with conn.cursor()` 블록 안에 두면 `fetchone()` 결과를
+   덮어쓸 수 있었다. INSERT 결과를 먼저 `new_id` 로 확정한 뒤 블록을 닫고 touch 한다. 테스트가
+   반환 id 를 단정한다(`assert new_id == 4242`).
+2. **[자체] 기존 테스트 3건 파손** — `test_message_branching.py` 가 실행 SQL **목록 전체**를 동등
+   비교해 부수 문장 추가마다 깨진다. 그 절의 계약("어느 INSERT 를 타는가")을 유지하며 INSERT 로
+   좁혀 단정하고, touch 동반은 **전용 테스트를 새로 추가**해 커버리지를 잃지 않게 했다 — 단언을
+   느슨하게만 만들고 끝내면 다음 변경이 touch 를 조용히 잃는다.
+3. **[자체] 표시 축 수정이 2경로 중 1곳만이면 백엔드 전환 시 부활** — 구조 단언으로 2곳 모두
+   헬퍼를 통과하는지 + raw `_iso_or_empty(last_active)` 잔존 0 을 검사한다.
+4. **[미해소·의도] 기존 19건은 코드만으로 교정되지 않는다** — 새 메시지가 오면 자연 전진하지만
+   사용자가 지목한 대화의 화면은 그때까지 그대로다. 라이브 백필을 별도 단계로 분리해 표면화한다
+   (단조 전진 UPDATE — 마지막 메시지 시각으로, `GREATEST` 로 되돌림 방향 차단).
+
+### 미검증 (정직 표기)
+
+- **라이브 부제 실측**: 배포 후 실제 화면에서 "최근 갱신" 이 마지막 메시지 시각으로 뜨는지는
+  배포·백필 이후 확인 대상. 프론트 자산 변경이 없어 `visual_verification_scope` check #13 의
+  hard gate 대상은 아니다(웹 자산 diff 0).
+- **동시 write 경합**: touch 는 단일 행 UPDATE 이고 값이 `now()` 라 순서에 관계없이 최신이 남는다 —
+  별도 잠금 검토 안 함.
+- **행 UPDATE 증가분 계측**: turn 당 2~3회(질문·답변·안내) 추가. 단일 행 PK UPDATE 라 무시 가능한
+  규모로 판단했고 실측하지 않았다.
+
 ## REV-20260812T220000-attach-md-render-post [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
 - 대상 diff: `feature-0003/docs/{TASK,MODIFY,REPORT}.md` + `docs/test-runs.d/*.md` — **코드 변경 0**.
 - §18.8 dispatch 표 1행(비정책 doc-only) → panel SKIP. 실측은 PB-0008 실 Windows Chrome 으로 수행.

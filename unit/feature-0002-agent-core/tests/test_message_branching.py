@@ -168,13 +168,24 @@ def test_save_core_message_with_edit_version_uses_branch_insert():
 # 표시 store(messages) 쓰기 라우팅 (INV-1 항등성 + 브랜치)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _writes(cur) -> list[str]:
+    """INSERT 문만 남긴다 — 이 절의 계약은 «어느 INSERT 를 타는가» 다.
+
+    conv-last-activity-updatedat(2026-08-31): 표시 store 쓰기가 대화 활동 시각 전진
+    (`touch_conversation`) 을 함께 수행하므로 실행 목록에 UPDATE 가 1건 동반된다. 목록 전체를
+    동등 비교하면 라우팅과 무관한 부수 문장 추가마다 이 절이 깨지므로, 라우팅 계약은 INSERT 로
+    좁혀 단정하고 touch 동반 여부는 아래 전용 테스트가 지킨다.
+    """
+    return [s for s in cur.executed if s.lstrip().startswith("INSERT")]
+
+
 def test_save_memory_message_nonbranch_uses_existing_insert():
     cur = _FakeCursor(fetchone=(11,))
     new_id = _backend().save_memory_message(
         _FakeConn(cur), conversation_id="c1", role="user", content="hi"
     )
     assert new_id == 11
-    assert cur.executed == [rb._PG_INSERT_MEMORY_MESSAGE]  # byte-identical 경로 + RETURNING id
+    assert _writes(cur) == [rb._PG_INSERT_MEMORY_MESSAGE]  # byte-identical 경로 + RETURNING id
 
 
 def test_save_memory_message_with_parent_uses_branch_insert():
@@ -182,7 +193,7 @@ def test_save_memory_message_with_parent_uses_branch_insert():
     _backend().save_memory_message(
         _FakeConn(cur), conversation_id="c1", role="assistant", content="a", parent_message_id=7
     )
-    assert cur.executed == [rb._PG_INSERT_MEMORY_MESSAGE_BRANCH]
+    assert _writes(cur) == [rb._PG_INSERT_MEMORY_MESSAGE_BRANCH]
     assert cur.params[0]["parent_message_id"] == 7
 
 
@@ -192,8 +203,19 @@ def test_save_memory_message_with_core_link_uses_branch_insert():
         _FakeConn(cur), conversation_id="c1", role="user", content="edited",
         edit_root_message_id=3, edit_version=2, core_message_id=99,
     )
-    assert cur.executed == [rb._PG_INSERT_MEMORY_MESSAGE_BRANCH]
+    assert _writes(cur) == [rb._PG_INSERT_MEMORY_MESSAGE_BRANCH]
     assert cur.params[0]["core_message_id"] == 99 and cur.params[0]["edit_version"] == 2
+
+
+def test_save_memory_message_accompanies_activity_touch():
+    """위 세 테스트가 INSERT 로 좁힌 대가로, touch 동반은 여기서 명시적으로 지킨다.
+
+    (전진 규칙 자체의 계약은 `test_conv_activity_touch.py` 가 보유 — 여기서는 이 파일이 잠그는
+    라우팅 절이 touch 를 «잃어버렸는지» 만 본다.)
+    """
+    cur = _FakeCursor(fetchone=(14,))
+    _backend().save_memory_message(_FakeConn(cur), conversation_id="c1", role="user", content="hi")
+    assert rb._PG_TOUCH_CONVERSATION in cur.executed
 
 
 def test_load_display_branch_state_parses_and_defaults():

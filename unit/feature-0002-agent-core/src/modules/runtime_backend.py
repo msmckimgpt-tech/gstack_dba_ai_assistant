@@ -92,6 +92,26 @@ ON CONFLICT (conversation_id) DO UPDATE SET
 RETURNING conversation_id, (xmax = 0) AS pg_inserted
 """
 
+# conv-last-activity-updatedat: 대화 활동 시각(`updated_at`)만 전진시키는 touch.
+#
+# 종전에는 이 컬럼을 움직이는 write 가 **자동 제목 부여 경로에만** 있었다
+# (`_conv_store._conv_update_topic_if_auto` — `SET topic=…, updated_at=now()`). 그 UPDATE 는
+# 제목이 placeholder 일 때만 행을 잡으므로, 첫 턴에 제목이 확정된 뒤로는 후속 턴이 아무리
+# 쌓여도 `updated_at` 이 **첫 턴 시각에 고정**됐다. 사이드바 "최근 갱신" 은 서버가 KV 에서
+# 파생하는 `last_activity_effective_at` 을 먼저 읽어 서버 LLM 경로에서는 가려졌지만, KV
+# `last_status*` 를 쓰지 않는 브리지(개인 AI 연결) 경로에서는 그 폴백이 비어 이 값이 그대로
+# 노출됐다 — 라이브 실측 2일 18시간 어긋남(2026-08-31 사용자 제보). 목록 정렬
+# (`ORDER BY c.updated_at DESC`) 도 같은 컬럼을 읽으므로 활발한 대화가 상단에 오지 못했다.
+#
+# 제목·소유자·제품을 함께 쓰는 `_PG_UPSERT_CONVERSATION` 을 재사용하지 않는 이유: 그 UPSERT 는
+# 행이 없으면 **INSERT** 하고 COALESCE 로 다른 컬럼을 덮는다. 활동 시각 전진만 필요한 자리에서
+# 쓰면 대화 행이 없을 때 topic 없는 유령 대화를 만든다. 여기서는 있는 행만 건드린다.
+_PG_TOUCH_CONVERSATION = """
+UPDATE agent_runtime.core_conversations
+SET updated_at = now()
+WHERE conversation_id = %(conversation_id)s
+"""
+
 _PG_INSERT_CORE_MESSAGE = """
 INSERT INTO agent_runtime.core_messages
     (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id, recall_floor_created_at)
@@ -743,7 +763,34 @@ class PgRuntimeBackend:
                     "meta_json": meta_json,
                 })
             row = cur.fetchone()
-            return int(row[0]) if row else 0
+            new_id = int(row[0]) if row else 0
+        # conv-last-activity-updatedat: 표시 store 에 말풍선이 실린 것이 곧 "대화가 갱신됐다" 다.
+        # 여기(표시 store)를 축으로 삼은 이유: 회수 store(core_messages)는 tool 호출·중간 turn 까지
+        # 담아 한 run 에 수십 건이 쌓이고, 반대로 이 store 는 화면에 뜨는 단위(질문·답변·안내)라
+        # 사용자가 읽는 "최근 갱신" 의 의미와 정확히 겹친다. `internal` 로 걸러진 메시지는 애초에
+        # 이 지점에 도달하지 않으므로(호출측 `save_memory_message` 가 0 을 반환하고 끝낸다) 화면에
+        # 없는 활동이 시각을 밀어 올리는 일도 없다.
+        self.touch_conversation(conn, conversation_id=conversation_id)
+        return new_id
+
+    def touch_conversation(self, conn: Any, *, conversation_id: str) -> None:
+        """대화 활동 시각(`updated_at`)만 전진. 실패는 흡수한다.
+
+        메시지는 이미 저장됐다(autocommit 이라 별개 커밋이다). 여기서 예외를 올리면 **저장에
+        성공한 turn 이 실패로 보고**되고, 브리지 경로에서는 그것이 요청 취소로 이어진다
+        (`conversations.py` 가 저장 실패 시 task 를 지운다). 활동 시각은 표시·정렬용 파생값이므로
+        메시지 본문보다 뒤에 두는 것이 옳다 — 대신 로그로 남겨 조용히 어긋나지 않게 한다.
+        """
+        if not str(conversation_id or "").strip():
+            return
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_PG_TOUCH_CONVERSATION, {"conversation_id": conversation_id})
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "touch_conversation: 대화 활동 시각 전진 실패 (cid=%s) — 목록 '최근 갱신'/정렬이 뒤처진다",
+                conversation_id, exc_info=True,
+            )
 
     def set_active_display_leaf(self, conn: Any, *, conversation_id: str, leaf_id: int) -> None:
         """feature-0019: 표시 store 정상 append 후 display 활성 leaf 전진(has_branches 대화만)."""
