@@ -120,6 +120,21 @@ source_of_truth: true
 | TEST-20260828T193000-nodelegate | 지시문 | 대조·명령형태·판정 위임 금지 + `BRIDGE_ARGS` 선 긋기 | AC-20260828T193000-ai-assisted-setup-7 |
 | TEST-20260828T193000-uihonest | `index.html`·`ai-connect.html` | "결과가 같다" 단정 없음 + 비결정성 고지 | AC-20260828T193000-ai-assisted-setup-8 |
 
+| TEST-20260831T110000-partial | `probe_runtime_caps` | 축 하나가 비어도 **모델은 남는다**(부분 성공 ≠ 실패) + `effort_probed` 표지 | AC-20260831T110000-runtime-caps-restore-1 |
+| TEST-20260831T110000-reask | `_settle_effort_axis` | 1차에서 빠진 축을 **좁게 다시 물어** 되살린다(실측 경로) | AC-20260831T110000-runtime-caps-restore-1 |
+| TEST-20260831T110000-helpgate | `_settle_effort_axis` | 내장 표 짝은 **`--help` 로 실재 확인** 후에만 · 없으면 비움 · 못 읽으면 채택 안 함 | AC-20260831T110000-runtime-caps-restore-2 |
+| TEST-20260831T110000-aiwins | `_settle_effort_axis` | AI 가 "지정 불가" 로 명확히 답하면 내장 표로 덮지 않는다 | AC-20260831T110000-runtime-caps-restore-2 |
+| TEST-20260831T110000-boundary | `_help_mentions_flag` | `--effort` 가 `--effort-level` 에 부분일치하지 않는다 · None(모름) 과 False(없음) 구분 | AC-20260831T110000-runtime-caps-restore-2 |
+| TEST-20260831T110000-unsettled | `_caps_axis_unsettled` | `effort: null` 이 뭉갠 두 사실을 가른다(구 캐시만 재확정) | AC-20260831T110000-runtime-caps-restore-3 |
+| TEST-20260831T110000-reprobe | `detect_runtimes` | 미확정 캐시는 **축만** 재확정 · 새 결과가 캐시를 **이긴다** · 표지가 남는다 | AC-20260831T110000-runtime-caps-restore-3 |
+| TEST-20260831T110000-marker | `sanitize_caps` | 확정 표지가 캐시 로드에서 살아남는다(매 기동 재질의 방지) | AC-20260831T110000-runtime-caps-restore-3 |
+| TEST-20260831T110000-applied | `handle_one` | **반영된** 지정도 답변에 밝힌다 · 무지정에는 붙이지 않는다 · 제목 분리 뒤 | AC-20260831T110000-runtime-caps-restore-6 |
+| TEST-20260831T110000-noalias | `/api/ask` 브리지 분기 | 무지정 요청이 **무지정으로** 적재된다(AST — 조건 반전까지) | AC-20260831T110000-runtime-caps-restore-4 |
+| TEST-20260831T110000-explicit | `model_explicit` | 명시 판정이 **원본 요청 본문**을 본다(폴백된 값에서 파생되면 항상 참) | AC-20260831T110000-runtime-caps-restore-4 |
+| TEST-20260831T110000-acctdef | `get_api_vault_options` | 계정 기본값이 시작점이 되되 **신고 목록 안일 때만** · 등급은 고른 모델의 런타임으로 대조 | AC-20260831T110000-runtime-caps-restore-5 |
+| TEST-20260831T110000-defsafe | `get_api_vault_options` | 기본값 조회 실패가 **러너 목록을 비우지 않는다**(회귀로 발견) | AC-20260831T110000-runtime-caps-restore-5 |
+| TEST-20260831T110000-axisonly | `set_account_bridge_defaults` | 한 축만 바꾼 요청이 다른 축 기본값을 지우지 않는다 | AC-20260831T110000-runtime-caps-restore-5 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

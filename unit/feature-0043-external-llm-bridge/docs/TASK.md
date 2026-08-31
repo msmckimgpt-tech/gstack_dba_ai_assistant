@@ -787,3 +787,59 @@ AI 플랫폼에 관계없이, 클라이언트가 자유롭게 서술한 모델�
 - [x] **P2** `native` 모드가 `auto` 와 동일 구현 → 공개 목록에서 제거
 - [x] **P2** python 탐색 순서가 sh(`python3`)·ps1(`python`)·지시문 3곳 불일치 → 통일
 - [x] **P2** 테스트가 문자열만 봄 → `set --` 로 실제 argv 전개 검사 + 위험값 회귀 32건
+
+### TASK-20260831T110000-runtime-caps-restore — 쓸 수 있는 모델·추론등급이 화면에서 사라졌다 (P0-AE)
+
+**요청**: "assistant(내 AI에 연결되었을 때) 에서 사용할 모델, effort가 확인되지 않는 이슈가
+확인되었습니다. 사용자 재량대로 각 설정값을 적용하여 사용할 수 있도록 구성해주세요."
++ "설정된 모델 및 effort를 포함한 요청을 브릿지가 수신할 경우 실제 해당 설정값을 통해
+LLM처리를 수행하도록 구성해주세요."
+
+**사용자 결정**: 목록은 **연결된 AI 로부터 전달받는다**(사용자가 직접 타이핑하지 않는다) ·
+지정값은 **계정 기본값 + 대화별 override** 로 기억한다.
+
+**라이브 진단** (수정 전 실측):
+
+| 관측 | 값 |
+|---|---|
+| 러너 신고(토큰 #47, 하트비트 정상) | claude: models=[opus,sonnet,haiku] **efforts=[]** · codex: 내장 폴백 |
+| 직전 신고(#42, probe 성공본) | claude: +fable, efforts 5단계 · codex: gpt-5.6-* 6종 |
+| 러너 캐시 `config.json` | `"efforts": [], "effort": null, "source": "probe"` |
+| `claude --help` 실측 | `--effort <level>  Effort level for the current session` — **플래그는 실재한다** |
+| `WebAiTasks` #69·#70 (당일) | `RequestedRuntime=NULL` `RequestedModel='claude-haiku-4'` `ReasoningLevel=NULL` |
+| `WebAiTasks` #62·#65~68 (8/28) | `claude` / `sonnet` / `high` — 정상 |
+
+**근본 원인 2건** (독립적이고, 둘 다 사용자 화면에서는 같은 증상으로 보인다):
+
+- [x] **A. 부분 응답이 축을 통째로 죽였다** — `probe_runtime_caps` 가
+      `efforts = ... if effort_flag else []`. AI 가 큰 JSON 하나에서 `effort_flag` **한 칸**을
+      빠뜨리자 등급 목록이 전부 버려졌고, 그 부분 결과가 내장 표를 이겨(폴백은 질의 자체가
+      실패했을 때만) **실제로 지원되는 `--effort` 가 화면에서 사라졌다**
+- [x] **B. 무지정 요청에 서버 alias 가 굳었다** — `model = data.get("model") or
+      API_DEFAULT_MODEL` 폴백 뒤에 `requested_model=model` 이라, 프론트가 값을 싣지 않은
+      요청도 `claude-haiku-4` 로 적재됐다. 러너는 모르는 이름이라 버리고 기본값으로 답한 뒤
+      **"요청하신 모델 claude-haiku-4 는 쓸 수 없어…" 라는 거짓 고지**를 붙였다
+
+**조치**:
+
+- [x] `_settle_effort_axis` 신규 — 축이 비면 ① **그 축만 좁게 재질의** → ② 내장 표의 짝을
+      **그 CLI 의 `--help` 로 실재 확인** 후 채택 → ③ 확인 못 하면 비움(지어내지 않는다).
+      (플래그, 값 목록) **짝을 섞지 않는다** — 섞으면 그 CLI 가 받지 않는 조합이 만들어진다
+- [x] `_CAPS_EFFORT_PROMPT` 신규 — 축 하나만 묻는 좁은 질의(1차에서 빠진 필드를 답한다)
+- [x] `_cli_help_text` · `_help_mentions_flag` — 낱말 경계 검사(`--effort` ≠ `--effort-level`),
+      **못 읽음(None) 과 없음(False) 을 구분**
+- [x] `effort_probed` 표지 + `_caps_axis_unsettled` — `effort: null` 이 뭉갠 두 사실("물어봤는데
+      없다" / "다룬 적 없다")을 가른다. 없으면 이 복구가 **기존 사용자에게 영영 실행되지 않는다**
+- [x] `detect_runtimes` — 미확정 캐시는 **축만** 재확정(전체 재질의 아님) · `probed` 가 캐시를 이긴다
+- [x] `requested_model=(model if model_explicit else None)` — 무지정을 무지정으로 넘긴다
+- [x] 계정 기본값 `WebAccounts.BridgeDefaultModel`·`BridgeDefaultEffort`(멱등 ALTER) +
+      `account_bridge_defaults`/`set_account_bridge_defaults` + 카탈로그가 **지금 신고된 목록과
+      대조 후** 내려보냄 + `composer.js` 가 그 값을 시작점으로 사용
+- [x] 반영된 지정도 답변에 밝힌다 — 미반영만 고지하면 침묵이 "지정대로 됐다" 와 "지정이
+      전달되지 않았다" 두 가지를 뜻해 사용자가 구분할 수 없다
+- [x] 회귀 25건(러너 12 · 카탈로그 5 · 요청 고정 8) · `make test` 전량 green · ruff clean
+- [x] **실측**: `--help` 폴백(claude 5단계 · codex 3단계 · gemini 정확히 비움) · 재질의
+      (claude 가 `--effort` + 5단계 정확히 응답) · 조립 결과
+      `claude -p --strict-mcp-config --model opus --effort xhigh <질문>`
+- [x] 기존 테스트 4건의 **텍스트 window 취약성** 교정(계약 유지, 읽는 방법만 AST·정확 앵커로)
+- [ ] **POST-DEPLOY 시각검증** — 선택기 렌더는 JS 라 배포 후 실 브라우저에서 확인(PB-0008)

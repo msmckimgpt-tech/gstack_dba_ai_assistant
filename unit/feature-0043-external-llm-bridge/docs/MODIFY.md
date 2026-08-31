@@ -1376,3 +1376,36 @@ P0-AA 로 자리는 말풍선 안으로 옮겼으나 여전히 `.bridge-live-ste
 
 `make test` 컨테이너 전량 green · ruff clean · 신규 32건 + 기존 계약 9건 갱신.
 PB-0008 실 Windows 브라우저에서 잠금·해제·모달 실측(결함 3건 발견·수정).
+
+## CHG-20260831T110000-runtime-caps-restore — 쓸 수 있는 모델·등급이 화면에서 사라졌다 (P0-AE)
+
+**요구**: 연결된 내 AI 로 답할 때 쓸 모델·effort 가 확인되지 않는다. 사용자 재량대로 적용할 수
+있게 하고, 지정된 값이 **실제 LLM 호출에 반영**되게 한다.
+
+### 변경
+
+| 파일 | 무엇 |
+|---|---|
+| `src/bridge_agent.py` | `_ask_json` 추출(1차·재질의 공용) · `_cli_help_text`·`_help_mentions_flag`·`_settle_effort_axis`·`_caps_axis_unsettled` 신규 · `_CAPS_EFFORT_PROMPT`·`_CAPS_AXIS_MIN_SEC`·`_CAPS_HELP_TIMEOUT_SEC` · `probe_runtime_caps` 가 축을 확정하고 `effort_probed` 표지를 남김 · `detect_runtimes` 가 미확정 캐시를 **축만** 재확정하고 새 결과가 캐시를 이김 · `sanitize_caps` 가 표지 보존 · `handle_one` 이 **반영된** 지정도 고지 |
+| `static/agent/bridge_agent.py` | 배포 사본 동기화(byte-identical 계약) |
+| `routers/conversations.py` | `requested_model=(model if model_explicit else None)` — 서버 alias 오염 차단 · 브리지 분기에서 **명시 선택만** 계정 기본값으로 저장 |
+| `routers/system.py` | 카탈로그가 계정 기본값을 **지금 신고된 목록과 대조 후** `default_model`·`default_reasoning_level` 로 내려보냄 · 기본값 조회 실패를 자기 자리에서 삼켜 러너 목록을 지키지 않게 함 |
+| `oauth_store.py` | `account_bridge_defaults` · `set_account_bridge_defaults`(None 축은 건드리지 않음) |
+| `routers/_bootstrap_schema.py` | `WebAccounts.BridgeDefaultModel`·`BridgeDefaultEffort` 멱등 ALTER |
+| `static/app/composer.js` | 등급 현재값 사슬에 계정 기본값 추가(로컬 미러 **뒤** — 방금 고른 값이 다른 기기 저장값에 밀리지 않게) |
+| 테스트 4파일 | 회귀 25건 추가 + 기존 4건의 텍스트 window 취약성 교정 |
+
+### 왜 이렇게 갈랐나
+
+목록의 출처는 **연결된 AI** 라는 계약(사용자 결정)을 유지하면서 부분 응답을 복구해야 했다.
+그래서 순서가 「다시 묻는다 → CLI 자신의 도움말로 확인한다 → 비운다」이다. 내장 표를 먼저
+쓰면 그 표가 낡은 순간 고른 값이 조용히 무시되고, 그냥 비우면 실제로 되는 기능을 잃는다.
+
+(플래그, 값 목록)은 **짝**으로만 채택한다. AI 가 준 플래그에 우리 표의 값을 붙이면 그 CLI 가
+받지 않는 조합이 만들어지고, 그러면 화면은 반영된다고 말하는데 실행은 아닌 상태가 된다.
+
+### 되돌리기
+
+`AGENT_SERVER_LLM_ENABLED=1` 로 게이트를 열면 카탈로그는 종전 서버 목록으로 복원된다(불변).
+축 복구만 끄려면 러너에서 `--refresh-caps` 없이 기존 `config.json` 을 쓰면 되고, 계정 기본값은
+컬럼이 NULL 이면 종전과 동일하게 목록 첫 항목이 시작점이 된다(두 축 모두 폴백이 종전 동작).

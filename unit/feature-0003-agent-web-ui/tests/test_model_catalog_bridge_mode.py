@@ -189,3 +189,90 @@ def test_anonymous_response_unchanged(client, monkeypatch):
     monkeypatch.setattr(appmod, "_get_authenticated_account", lambda conn, request: None)
     payload = client.get(ENDPOINT).json()
     assert payload == {"default_model": None, "models": []}
+
+
+# -- 계정 기본값 (2026-08-31, 사용자 결정: 계정 기본값 + 대화별 override) ----------
+#
+# 대화별 저장만 있을 때는 새 대화를 열 때마다 목록 첫 항목으로 되돌아가, 사용자가 매번 다시
+# 골라야 했다. 계정 기본값이 그 시작점을 정한다 — 단, **지금 신고된 목록 안에 있을 때만**.
+
+
+class _DefaultsCursor(_FakeCursor):
+    """능력 조회와 기본값 조회가 **같은 커서**를 쓴다 — SQL 로 갈라 각자의 행을 준다."""
+
+    def __init__(self, caps_row, defaults_row):
+        super().__init__(caps_row)
+        self._defaults_row = defaults_row
+        self._want = "caps"
+
+    def execute(self, sql, *_args, **_kwargs) -> None:
+        self._want = "defaults" if "BridgeDefaultModel" in str(sql) else "caps"
+
+    def fetchone(self):
+        return self._defaults_row if self._want == "defaults" else self._row
+
+
+class _DefaultsConn(_FakeConn):
+    def __init__(self, caps_row, defaults_row):
+        super().__init__(caps_row)
+        self._defaults_row = defaults_row
+
+    def cursor(self):
+        return _DefaultsCursor(self._caps_row, self._defaults_row)
+
+
+def _with_defaults(monkeypatch, defaults_row):
+    monkeypatch.setattr(
+        appmod, "_connect_memory",
+        lambda: _DefaultsConn((json.dumps(_REPORT, ensure_ascii=False),), defaults_row))
+
+
+def test_account_default_becomes_the_starting_pick(client, signed_in, monkeypatch):
+    """저장된 계정 기본값이 목록 첫 항목을 **대신한다**."""
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    _with_defaults(monkeypatch, ("codex:gpt-5.1-codex", "high"))
+    payload = client.get(ENDPOINT).json()
+    assert payload["default_model"] == "codex:gpt-5.1-codex"
+    assert payload["default_reasoning_level"] == "high"
+
+
+def test_stale_account_default_falls_back_to_the_offered_list(client, signed_in, monkeypatch):
+    """러너를 바꿔 그 모델이 사라졌으면 **첫 항목으로 떨어진다**.
+
+    대조 없이 내려보내면 화면은 "고를 수 없는 것이 선택돼 있는" 상태가 되고, 그 값으로 보낸
+    질문은 러너가 버린다 — P0-T 가 지운 바로 그 형태다.
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    _with_defaults(monkeypatch, ("gemini:gemini-2.5-pro", "ultra"))
+    payload = client.get(ENDPOINT).json()
+    assert payload["default_model"] == "claude:opus", "신고 밖 기본값이 그대로 나갔다"
+    assert payload["default_reasoning_level"] == "", "신고 밖 등급이 그대로 나갔다"
+
+
+def test_effort_default_is_checked_against_the_picked_runtime(client, signed_in, monkeypatch):
+    """등급은 **고른 모델의 런타임** 목록으로 대조한다 — claude 의 `xhigh` 는 codex 에 없다."""
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    # 모델은 codex 인데 등급은 claude 어휘(`xhigh`) → 등급만 탈락한다.
+    _with_defaults(monkeypatch, ("codex:gpt-5.1-codex", "xhigh"))
+    payload = client.get(ENDPOINT).json()
+    assert payload["default_model"] == "codex:gpt-5.1-codex"
+    assert payload["default_reasoning_level"] == "", "다른 런타임의 등급이 통과했다"
+    # 같은 런타임의 등급이면 그대로 선다.
+    _with_defaults(monkeypatch, ("claude:opus", "xhigh"))
+    assert client.get(ENDPOINT).json()["default_reasoning_level"] == "xhigh"
+
+
+def test_defaults_failure_does_not_empty_the_catalog(client, signed_in, monkeypatch):
+    """기본값 조회가 실패해도 **목록은 살아 있다** — 편의 기능이 선택기를 지우지 않는다."""
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("column missing")
+
+    monkeypatch.setattr(
+        appmod, "_connect_memory",
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False),)))
+    monkeypatch.setattr(store, "account_bridge_defaults", _boom)
+    payload = client.get(ENDPOINT).json()
+    assert payload["model_selector"] == "visible", "기본값 실패가 선택기를 통째로 지웠다"
+    assert payload["default_model"] == "claude:opus"
