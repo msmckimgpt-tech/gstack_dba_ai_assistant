@@ -3747,13 +3747,13 @@ export function openStepSidePanel(pending, { convId = null } = {}) {
  *  동일 객체)로 판정하는데, 브리지 대기 말풍선은 **저장된 메시지**라 그 객체가 아니다.
  *  그래서 브리지에서는 판정 축을 run_id 로 둔다 — 같은 사실을 다른 키로 물을 뿐이다.
  */
-export function refreshStepSidePanelForRun(runId, steps) {
+export function refreshStepSidePanelForRun(runId, steps, { live = false, omitted = 0 } = {}) {
   const panel = document.getElementById("stepSidePanel");
   if (!panel || panel.classList.contains("hidden")) return false;
   const rid = String(runId || "");
   if (!rid || String(state.stepSidePanelRunId || "") !== rid) return false;
   _renderStepSidePanelBody({ steps: Array.isArray(steps) ? steps : [], runId: rid,
-                             convId: state.stepSidePanelConvId });
+                             convId: state.stepSidePanelConvId, live, omitted });
   return true;
 }
 
@@ -3982,13 +3982,24 @@ function _renderStepSidePanelBody(pending) {
   const resultScroll = _snapshotStepResultScroll(body);
   body.innerHTML = "";
   const steps = Array.isArray(pending && pending.steps) ? pending.steps : [];
-  if (badge) badge.textContent = steps.length ? `${steps.length}단계` : "";
+  // 진행 중 목록은 서버가 최신 쪽 창만 보낼 수 있다(`_BRIDGE_LIVE_STEPS_MAX`). 밀려난 앞
+  // 단계 수를 배지·안내에 반영한다 — 조용히 자르면 사용자는 "앞이 사라졌다" 또는 "갱신이
+  // 멈췄다" 로 읽는다(AGENTS.md §16.7 G9-b 무음 절단 금지).
+  const omitted = Math.max(0, Number(pending && pending.omitted) || 0);
+  const isLive = Boolean(pending && pending.live);
+  if (badge) badge.textContent = steps.length ? `${steps.length + omitted}단계` : "";
   if (!steps.length) {
     const empty = document.createElement("p");
     empty.style.cssText = "font-size:12px;color:var(--text-muted);padding:8px 0";
     empty.textContent = "아직 실행된 단계가 없습니다.";
     body.appendChild(empty);
     return;
+  }
+  if (omitted > 0) {
+    const note = document.createElement("p");
+    note.className = "step-side-panel-omitted";
+    note.textContent = `앞선 ${omitted}단계는 진행 중 목록에서 생략했습니다. 답변이 도착하면 전체가 표시됩니다.`;
+    body.appendChild(note);
   }
   // step-timing-attribution: 진행 투명화 — 각 단계 헤더 우측에 **시작 시각 · 이 단계 소요 ·
   // 누적 경과**를 표기한다. 소요는 "직전 기록과의 간격" 이 아니라 `_computeStepTimings` 가
@@ -4013,20 +4024,34 @@ function _renderStepSidePanelBody(pending) {
       itemHeader.appendChild(badge);
     }
     const tm = timings[idx] || {};
+    // 진행 중 목록의 **마지막 단계**는 아직 끝나지 않았다 — 소요를 모르는 것이 아니라
+    // 아직 없는 것이다. 숫자를 지어내지 않고 그 사실만 말한다. 이 표기가 없으면 마지막
+    // 내부 동작(추론 중)이 완료된 단계와 구별되지 않아 "멈춘 화면" 으로 읽힌다.
+    const isRunningNow = isLive && idx === steps.length - 1 && !Number.isFinite(tm.selfMs);
     if (Number.isFinite(tm.startTs)) {
       const parts = [_fmtStepClock(tm.startTs)];
       if (Number.isFinite(tm.selfMs)) {
         parts.push(`${tm.approx ? "~" : ""}${_fmtStepDur(tm.selfMs)}`);
+      } else if (isRunningNow) {
+        parts.push("진행 중");
       }
       // 누적은 첫 단계에서 소요와 같은 값이라 중복이다 — 둘째 단계부터 표시한다.
-      if (Number.isFinite(tm.cumulativeMs) && idx > 0) {
+      // ⚠ 앞 단계가 **생략된** 목록에서는 누적을 아예 표시하지 않는다. 기준점이 창의 첫
+      //   단계라 "처음부터 누적" 이 아니라 "이 창에서의 누적" 이 되고, 그것을 같은 라벨로
+      //   내보내면 조용히 틀린 수치가 된다(codex 적대 리뷰 P3). 모르는 값은 비운다.
+      if (Number.isFinite(tm.cumulativeMs) && idx > 0 && omitted === 0) {
         parts.push(`누적 ${_fmtStepDur(tm.cumulativeMs)}`);
       }
       const timeEl = document.createElement("span");
       timeEl.className = "step-side-panel-time";
+      if (isRunningNow) timeEl.classList.add("is-running");
       timeEl.textContent = parts.join(" · ");
       // 툴팁은 실제로 표시된 것만 설명한다 — 소요를 못 구한 단계에 "소요" 라고 적으면 거짓말이다.
-      timeEl.title = !Number.isFinite(tm.selfMs)
+      timeEl.title = isRunningNow
+        ? "시작 시각 · 이 단계는 아직 진행 중입니다 (소요는 다음 기록이 남으면 표시됩니다)"
+        : omitted > 0 && Number.isFinite(tm.selfMs)
+        ? "시작 시각 · 이 단계 소요 (앞 단계가 생략되어 처음부터의 누적은 표시하지 않습니다)"
+        : !Number.isFinite(tm.selfMs)
         ? "시작 시각 (이 단계의 소요는 기록만으로 분리할 수 없어 표시하지 않습니다)"
         : (tm.approx
           ? "시작 시각 · 이 단계 소요(도구 실행 시간이 섞인 근사 — 이 대화는 도구 실측 이전 기록입니다) · 처음부터 누적"

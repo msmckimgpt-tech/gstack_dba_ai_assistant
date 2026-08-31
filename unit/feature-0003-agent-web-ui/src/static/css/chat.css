@@ -2583,6 +2583,22 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
+/* live-steps-reasoning: 아직 끝나지 않은 마지막 단계(대개 추론 구간). 완료된 단계와 같은
+   회색이면 "멈춘 화면" 으로 읽히므로 강조색으로 진행 중임을 말한다. */
+.step-side-panel-time.is-running {
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+/* live-steps-reasoning: 진행 중 목록이 최신 쪽 창만 담을 때의 절단 고지(무음 절단 금지). */
+.step-side-panel-omitted {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
 
 /* 대화 첨부파일 목록 아이템 (다운로드 포함) */
 .attach-list-item {
