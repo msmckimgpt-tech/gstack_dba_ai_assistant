@@ -1059,3 +1059,12 @@ feature 의 자산이다(스키마 grounding · 제품 바인딩 · 필드 제�
 
 검증: 8개 unit 디렉토리 **6253 passed / 0 failed** · ruff clean · route 골든 260→261
 (추가 1 · 제거 0).
+
+#### POST-DEPLOY (배포본 d550db16)
+
+- [x] **배포** — web·워커 전 서비스 `d550db16` · 대화 스모크 PASS · surge 0 ·
+      **무중단 실측 `no upstreams available` = 0**
+- [x] **PB-0008** — 신규 ESM 모듈 로드 · 조작면 게이트 무회귀 · 폴링 404 계약 ·
+      `delegable_jobs` 판정. 증적 `feature-0003 docs/test-runs.d/…-console-job-wiring-postdeploy.md`
+- [ ] **위임 왕복 e2e 미관측** — `console_jobs` 신고 러너가 사용자 머신에 있어야 관측 가능
+      (AI 가 띄울 수 없음). 함수 수준은 회귀 18건이 덮는다
