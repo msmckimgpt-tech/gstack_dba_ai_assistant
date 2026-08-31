@@ -410,9 +410,53 @@ def test_windows_installer_drops_to_stderr_too():
     assert "[Console]::Error.WriteLine" in ps1
 
 
+def test_windows_installer_keeps_a_utf8_bom():
+    """`.ps1` 은 **UTF-8 BOM 을 유지**해야 한다 (사용자 제보 2026-08-31).
+
+    Windows PowerShell 5.1(윈도우 기본)은 BOM 없는 `.ps1` 을 UTF-8 이 아니라 **시스템 ANSI
+    코드페이지**(한국어 윈도우면 CP949)로 읽는다. 그러면 한글 주석·메시지가 깨지고, 깨진
+    바이트가 인접한 `'`·`)` 를 삼켜 **파서가 죽는다**:
+
+        식에 닫는 ')'가 없습니다.
+
+    실측(2026-08-31, 실 Windows): BOM 없음 → `ParseFile` 오류 **6건** / BOM 있음 → PARSE OK.
+    디코딩도 함께 확인했다 — BOM 있으면 `U+B7EC`(러)가 그대로 읽히고, 없으면 그 문자가 없다.
+
+    ⚠ **왜 바이트를 직접 보는가.** 아래 `pwsh` 파서 검사는 이 결함을 **원리적으로 못 본다** —
+    PowerShell 7 은 BOM 없이도 UTF-8 로 읽으므로 통과한다. 게다가 그 테스트는 `pwsh` 미설치
+    환경에서 늘 skip 이었다(=아무것도 검사하지 않았다). 실제로 이 결함은 그 게이트를 그대로
+    통과해 사용자에게 도달했다 (§16.7 G11-b).
+    """
+    for f in (_SETUP_PS1,
+              _WEB_SRC / "static" / "agent" / "bridge_setup.ps1"):
+        head = f.read_bytes()[:3]
+        assert head == b"\xef\xbb\xbf", (
+            f"{f.name}: UTF-8 BOM 이 없다 — Windows PowerShell 5.1 이 CP949 로 읽어 파서가 죽는다 "
+            f"(첫 3바이트={head!r})")
+
+
+def test_generated_registration_ps1_gets_a_bom():
+    """설치 중 **생성**하는 등록 PS1 에도 BOM 을 쓴다.
+
+    그 생성물도 한글 주석을 담으므로 같은 위험이 있다. 지금 우연히 파싱되는 것에 기대지 않는다.
+    """
+    src = _SETUP_SH.read_text(encoding="utf-8")
+    # BOM 을 쓰는 줄이 heredoc(`cat >> "$_ps1" <<PSEOF`)보다 **앞에** 있어야 한다 —
+    # 뒤에 있으면 스크립트 본문 뒤에 BOM 이 붙어 아무 효과가 없다.
+    i_bom = src.find(r"""printf '\357\273\277' > "$_ps1" """.rstrip())
+    i_here = src.find('cat >> "$_ps1" <<PSEOF')
+    assert i_bom != -1, "등록 PS1 생성 시 UTF-8 BOM 을 쓰지 않는다"
+    assert i_here != -1, "등록 PS1 을 append(>>)로 이어 쓰지 않는다 — BOM 이 덮인다"
+    assert i_bom < i_here, "BOM 을 본문 뒤에 썼다 — 선두가 아니면 효과가 없다"
+
+
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="pwsh 미설치 — 파서 검사 생략")
 def test_windows_installer_parses():
-    """ps1 이 실제로 파싱된다(문법 회귀 방지)."""
+    """ps1 이 실제로 파싱된다(문법 회귀 방지).
+
+    ⚠ 이것은 **PowerShell 7** 검사다. 7 은 BOM 없는 UTF-8 도 정상으로 읽으므로 «윈도우 기본
+    5.1 에서 깨지는» 클래스는 여기서 안 잡힌다 — 그 축은 위 `..._keeps_a_utf8_bom` 이 본다.
+    """
     proc = subprocess.run(
         ["pwsh", "-NoProfile", "-Command",
          f"$e=$null;[System.Management.Automation.Language.Parser]::ParseFile("
