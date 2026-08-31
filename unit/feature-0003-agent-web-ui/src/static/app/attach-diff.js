@@ -1288,9 +1288,10 @@ function _attachSplitHandle(wrap, scroller, opts) {
  *
  * @param {number|string} attachmentId 체인 내 아무 버전의 첨부 id (권한 기준 첨부)
  * @param {Array<object>} versions     `/api/attachments/{id}/versions` 응답의 versions (ASC)
- * @param {object} [preselect]         {from, to} 초기 선택 VersionNumber
- */
-/**
+ * @param {object} [preselect]         {from, to} 초기 선택 VersionNumber.
+ *   `{axis: "time"}` 도 받는다 — 호출부가 **계보 축으로 열기**를 요청하는 경로
+ *   (첨부 목록의 그룹 카드). 계보 축이 실재할 때만 존중한다.
+ *   `{truncated: true}` 는 계보 목록이 서버 상한에 걸려 잘렸다는 신호다(무음 절단 금지).
  * @param {Array<object>} lineages  `/versions` 응답의 `lineages`(같은 파일명의 계보 head, 시간순).
  *   REQ-20260814-attach-version-tree-ui: 작성 주체별로 계보가 갈린 뒤로 "최신" 이 두 뜻이 됐다 —
  *   **계보 내 최신**(이 체인의 최고 버전)과 **시간순 최신**(같은 파일의 모든 계보 중 가장 나중).
@@ -1333,6 +1334,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
         '      <button type="button" class="attach-diff-axis" data-axis="lineage">이 계보 안</button>' +
         '      <button type="button" class="attach-diff-axis" data-axis="time">계보 간(시간순)</button>' +
         '    </div>'
+      : '') +
+    // codex 2R [P1]: 계보 목록이 서버 상한에 걸려 잘렸으면 **그 사실을 밝힌다**(§16.7 G9-b).
+    // 밝히지 않으면 목록의 그룹 카드는 "계보 21" 이라 말하는데 여기 선택지는 20개뿐이고,
+    // 사용자는 빠진 계보가 있다는 것 자체를 알 수 없다 — 화면이 없는 완전성을 주장한다.
+    (hasLineageAxis && preselect?.truncated
+      ? '    <span class="attach-diff-trunc" role="status">계보가 많아 최근 20개만 나열합니다</span>'
       : '') +
     '    <label class="attach-diff-ctl"><span>기준</span><select class="attach-diff-from"></select></label>' +
     '    <button type="button" class="attach-diff-swap" title="기준과 비교 대상 맞바꾸기" aria-label="기준과 비교 대상 맞바꾸기">⇄</button>' +
@@ -1429,6 +1436,13 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
 
   // 계보가 하나뿐이면 축 자체가 없으므로 `list` 가 2개 미만일 수 없다(위 guard).
   if (hasLineageAxis && list.length < 2) axis = "time";
+  // REQ-20260831-attach-lineage-visibility: 호출부가 **어느 축으로 열지** 지정할 수 있다.
+  //
+  // 첨부 목록의 그룹 카드는 "이 파일의 계보들을 견주자" 는 의도로 눌린다 — 그런데 그 계보에
+  // 버전이 여럿이면 위 줄이 안 걸려 「이 계보 안」(버전 축)으로 열렸다. 사용자가 계보를 보러
+  // 눌렀는데 버전 화면이 뜨면 축 토글을 스스로 찾아 눌러야 한다(의도와 착지의 불일치).
+  // 계보 축이 실재할 때만 존중한다 — 없는 축으로 열면 select 가 빈 채로 뜬다.
+  if (hasLineageAxis && preselect?.axis === "time") axis = "time";
   _fillSelects();
 
   let mode = _readViewMode();

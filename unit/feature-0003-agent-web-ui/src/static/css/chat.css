@@ -2860,6 +2860,152 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   border-color: #bfdbfe;
   color: #2563eb;
 }
+/* 갈라져 나온 계보 — 앞의 `⤷` 와 같은 뜻을 색으로도 준다(글리프 하나에만 의존하지 않는다). */
+.attach-list-item-lineage.branched { border-style: dashed; }
+
+/* ── REQ-20260831-attach-lineage-visibility: 계보 그룹 카드 (공통영역) ──────────────
+   같은 파일명의 계보들이 평면 형제 행이라, 무관한 다른 파일과 **시각적으로 동급**이었다.
+   NN/g 의 공통영역(common region) 원칙 — 테두리·배경에 의한 enclosure 는 근접성을
+   압도한다 — 을 그대로 적용한다. 행 간격 조절로는 "같은 파일의 갈래" 가 전달되지 않는다. */
+/* codex P2(대비): 종전 초안은 `var(--border)`(#e6e5e0)를 카드 배경(#f0efea) 위에 썼다 —
+   대비 **1.10:1** 로 사실상 보이지 않는다. 그룹 테두리와 레일은 «내용 이해에 필요한 그래픽»
+   (WCAG 1.4.11)이라 장식이 아니다: 이 카드가 곧 "같은 파일의 갈래" 라는 유일한 신호다.
+   테두리 #a8a598 = 흰 패널 대비 2.47:1(배경 채움과 합산), 레일 #8c8a7c = 카드 대비 3.02:1. */
+.attach-lineage-group {
+  border: 1px solid #a8a598;
+  border-radius: var(--r-md, 8px);
+  background: var(--surface-2, #f6f6f3);
+  padding: 6px 7px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.attach-lineage-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;          /* 240px 폭에서 비교 버튼이 잘리지 않고 다음 줄로 접힌다 */
+  padding: 0 1px 1px;
+}
+/* 파일명은 그룹 머리에서 **한 번**만 말한다 — 행마다 반복하던 같은 이름이 좁은 패널의
+   가용 폭을 먹고, 정작 갈래를 가르는 정보(누가/언제/몇 개)를 밀어냈다. */
+.attach-lineage-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2, #4b5563);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-lineage-group-count {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 7px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* 비교는 그룹의 **1급 액션**이다 — 종전에는 계보를 펼쳐야 비교 버튼이 나왔다(2단계 진입). */
+.attach-lineage-group-cmp {
+  flex-shrink: 0;
+  border: 1px solid #bfdbfe;
+  background: var(--primary-soft, #eff6ff);
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.attach-lineage-group-cmp:hover { background: #dbeafe; }
+.attach-lineage-group-cmp:disabled { opacity: .55; cursor: default; }
+/* 레일 — GitKraken 류 커밋 그래프의 레인처럼 **분기를 그린다**. 종전에는 분기 관계가
+   산문·툴팁("다른 파일에서 갈라짐")에만 있어, 보려면 읽어야 했다. */
+.attach-lineage-group-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+}
+.attach-lineage-group-body::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: #8c8a7c;
+  border-radius: 1px;
+}
+/* 각 계보 행의 elbow — 레일에서 이 행으로 뻗는 가지. */
+.attach-list-entry.in-lineage-group { position: relative; }
+.attach-list-entry.in-lineage-group::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 15px;
+  width: 7px;
+  height: 2px;
+  background: #8c8a7c;
+}
+/* 갈라져 나온 계보는 한 단 더 들여쓴다 — "원본 → 거기서 갈라진 것" 이 위치로 읽힌다. */
+.attach-lineage-group-body > .attach-list-entry.is-branch { margin-left: 8px; }
+.attach-list-entry.is-branch::before { left: -17px; width: 15px; }
+/* 그룹 안의 행은 카드가 이미 경계를 주므로 자기 테두리를 낮춘다(이중 테두리 방지). */
+.attach-lineage-group .attach-list-item { background: var(--surface, #fff); }
+/* 위계 역전 — 그룹 안에서 **파일명은 이미 머리가 말했다**. 세 번 되풀이되는 같은 이름이
+   시선을 먹고, 정작 갈래를 가르는 정보(누가/언제/얼마나)를 뒤로 민다. 이름은 클릭 대상
+   (원문 보기)이라 지우지 않고 **낮춘다** — 크기·굵기·색으로 계보 칩에 1순위를 넘긴다.
+   (NN/g 시각 위계: 무엇이 중요한지는 크기와 색이 정한다.) 접근성 이름은 그대로 파일명이다. */
+.attach-lineage-group .attach-list-item-name-text {
+  font-size: 10.5px;
+  font-weight: 400;
+  /* codex P2(대비): #807d72 는 흰 배경 대비 4.12:1 로 소형 텍스트 AA(4.5) 미달이다.
+     «낮춘다» 가 «읽을 수 없게 한다» 가 되면 안 된다 — 5.51:1 로 올리되 굵기·크기로 위계는 유지. */
+  color: #6b6960;
+}
+/* 작성 주체 색축 — 사용자=중립 슬레이트 / AI=파랑. Google Docs 가 편집자를 색으로 가르는
+   것과 같은 축이며, 이 화면에서는 "누구의 갈래인가" 가 곧 사용자가 찾는 정보다.
+   ⚠ 인접 규칙이 `var(--muted)` 를 쓰는데 그 토큰은 이 저장소에 **정의돼 있지 않다**
+   (`--text-muted` 가 실재 토큰) — 그래서 종전 사용자 계보 칩은 본문색 그대로 렌더돼
+   AI 칩과의 색 대비가 성립하지 않았다(라이브 computed 실측 rgb(38,37,30)). 그룹 안에서만
+   실토큰으로 덮어, 인접 화면의 기존 렌더를 건드리지 않는다. */
+.attach-lineage-group .attach-list-item-lineage {
+  font-size: 10.5px;
+  padding: 1.5px 7px;
+  color: var(--text-2, #5a5852);   /* 7.11:1 — 정체성 칩은 이 화면의 1순위 정보다 */
+}
+.attach-lineage-group .attach-list-item-lineage.ai { color: #2563eb; }
+.attach-lineage-group-count { color: var(--text-2, #5a5852); }
+
+/* 변경 규모 — 열어 보기 전에 "얼마나 다른가" 의 1차 신호(GitKraken change gauge 계열).
+   우리가 아는 것은 바이트 크기뿐이므로 색은 중립으로 두고, 내용 차이라고 말하지 않는다
+   (문구·title 이 그 경계를 지킨다). */
+.attach-list-item-sizedelta {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-2, #4b5563);
+  white-space: nowrap;
+}
+
+/* 계보 목록이 서버 상한에 걸려 잘렸음을 비교 모달에서 밝힌다(무음 절단 금지, §16.7 G9-b). */
+.attach-diff-trunc {
+  font-size: 11.5px;
+  color: #8a5a00;
+  background: #fff7e6;
+  border: 1px solid #f0d9a8;
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
 .attach-list-item-vertoggle {
   border: none;
   background: transparent;

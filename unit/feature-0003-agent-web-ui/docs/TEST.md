@@ -3537,3 +3537,18 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   (배포본 `cac907c4`). 사용자가 제보한 **그 문자열**이 본문 230자만 남고 마커·고지가 전부
   제거됨을 실측. 폴링 스코프(타 계정 task → 404)도 라이브 확인. 증적:
   `docs/test-runs.d/TASK-20260831T190000-job-result-unwrap-postdeploy.md`
+
+### Run — TASK-20260831T193000-attach-lineage-visibility (첨부 계보 비교 가시성 재설계)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. §13.2.9 격리 컨테이너
+  `web-verify-lineage`(라이브 web 이미지 + 브랜치 static 트리 **stamp 재주입** bind-mount,
+  `https://localhost:18098`)에서 실 Windows Chrome 151 로 판독. 공유 트리·라이브 web-a/b 무수정.
+- 구조: 그룹 카드 2 · `.in-lineage-group` **4/4**(평면 잔존 0) · `.is-branch` 2 · 그룹 비교 버튼 2
+- 픽셀: 확대 캡처로 레일·elbow·분기 들여쓰기 판독 / 240px 최소 폭에서 그룹 머리 **wrap**(무손실)
+- computed 색축: 파일명 `rgb(128,125,114)` · 사용자 칩 `rgb(128,125,114)` · AI 칩 `rgb(37,99,235)`
+  — 교정 전 `var(--muted)`(미정의 토큰) 경로에서 사용자 칩이 본문색 `rgb(38,37,30)` 이던 결함 포착
+- 인터랙션 **2 surface 개별 실행**: 그룹 머리 `⇄ 계보 비교` / 버전 박스 `⇄ 계보 비교` — 둘 다
+  축 `time` · aria `첨부 계보 비교` · 기준 `사용자 업로드 v1 · 현재` → 비교 `AI 수정본 v2` · `+182 / -21`
+- 증적: `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`
+- 회귀: `unit/feature-0003-agent-web-ui/tests` + `unit/feature-0002-agent-core/tests` 전건 PASS
+  (신규 `test_attach_lineage_group_ui.py` 18건 포함) · `node --check` ESM PASS

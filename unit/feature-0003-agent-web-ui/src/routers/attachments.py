@@ -232,9 +232,14 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
         # 자기 체인만 보고 "이게 이 파일의 최신" 이라고 말하게 된다 — 다른 계보에 더 나중 버전이
         # 있어도 모른다. 계보 head 를 시간순으로 함께 실어 두 축을 모두 표현할 수 있게 한다.
         lineages: list[dict[str, Any]] = []
+        # codex 2R [P1]: 계보 head 로더는 상한(기본 20)을 갖는다. 잘렸다는 사실을 응답에 싣지
+        # 않으면, 목록의 그룹 카드가 "계보 21" 이라 말하는데 비교 화면엔 20개만 떠도 사용자는
+        # 알 길이 없다 — 무음 절단(§16.7 G9-b)이다.
+        lineages_truncated = False
         try:
             heads = app._load_filename_lineage_heads(
                 conn, str(base.get("ConversationId") or ""), str(base.get("OriginalFilename") or ""))
+            lineages_truncated = bool(heads and heads[0].pop("_lineage_heads_truncated", False))
             for h in heads:
                 _h_root = int(h.get("RootAttachmentId") or 0) or int(h.get("Id") or 0)
                 _meta = app._meta_json_to_dict(h.get("MetaJson"))
@@ -261,6 +266,8 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
             "versions": versions,
             # 시간순 정렬(최신 우선). 계보가 1개뿐이면 자기 자신만 들어온다.
             "lineages": lineages,
+            # 상한에 걸려 잘렸는지. 소비자는 이 값이 참이면 "일부만 보여준다" 를 밝혀야 한다.
+            "lineages_truncated": lineages_truncated,
         })
     finally:
         conn.close()

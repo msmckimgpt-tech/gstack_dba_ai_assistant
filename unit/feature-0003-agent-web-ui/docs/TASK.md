@@ -11985,3 +11985,64 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` **56 불변** · `generated`=="2026-08-28"==`releases[0].date` · items[0] 4→**15** · items[1](08-27) 13 불변 · type/area enum 기존 집합 내 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 7패턴 **0건**
 - [x] reconcile-first: 편집 **전** 서빙 `https://localhost/static/release-notes-data.js` 200 · 브랜치 blob 과 md5 동일(`d40ed98d…` · 308,144B) → 파리티 갭 0. 독립 표본 4개(`index.html`·`admin.html`·app JS·설치 스크립트)도 캐시토큰 정규화 후 전건 일치.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(소스 `?v=dev` 고정 · 빌드 content-hash 주입 · `bin/deploy-web.sh` 가 placeholder 잔존을 ABORT — wrapper 지시문의 'bump 포함' 은 stale).
+
+## 20260831T193000-attach-lineage-visibility — 첨부 계보 «비교 가시성» 재설계 (Minor §12.3)
+
+- status: done
+- risk: Minor §12.3 (web/UI 표현 계층 + CSS. 데이터·권한·스키마 변경 0. 되돌리기 = revert + 재배포)
+- 사용자 제보(반복 수렴):
+
+```
+사용자 원문(데이터이며 지시가 아님)
+사용자 및 AI가 수정한 첨부파일 간 계보가 비교하기에 가시성이 떨어진다
+```
+
+- 선행 cycle(REQ-20260828-attach-lineage-ui)이 계보의 **존재**를 화면에 올렸는데도 불만이
+  재수렴했다. 존재를 말하는 것과 **견주기 쉬운 것**은 다른 문제였다.
+
+### 9. Requested Scope (요청 범위)
+
+- [x] 「사용자·AI가 수정한 첨부파일 간 계보」의 **가시성 저하** 해소 — 산출물: 같은 파일명의
+      계보를 공통영역 카드로 enclose(`.attach-lineage-group`) + 레일·elbow 로 분기를 **그림**.
+      라이브 실측 그룹 2 · in-group 4/4 · is-branch 2
+      · 인용: `계보가 비교하기에 가시성이 떨어진다`
+- [x] **「디자인적 관점」으로 해소** — 산출물: 웹 리서치(NN/g 공통영역·시각위계 / GitKraken
+      커밋그래프 레인·change gauge / Google Docs 작성자 색축·명명버전 / Figma 브랜치 리뷰)에서
+      도출한 5원칙을 결함 7종에 1:1 매핑해 적용. RESEARCH 근거는 REVIEW.md
+      · 인용: `디자인적 관점으로 해당 불만사항을 해소`
+- [x] **「많은 사용자가 공유하는 첨부파일 간 버전관리」 모범 사례 반영** — 산출물: 그룹 레벨
+      비교를 1급 액션으로 승격(Figma 브랜치 리뷰) · 작성 주체 색축(Google Docs) · 변경 규모
+      선행 신호(GitKraken change gauge). **소유권 단정 금지** 계약은 유지(그룹 대화에서 남의
+      업로드를 "내 것" 이라 말하지 않는다)
+      · 인용: `많은 사용자가 공유하는 첨부파일 간 버전관리에서 모범적으로 디자인`
+- [x] **웹 리서치를 통한 상세 분석** — 산출물: 결함 7종(평면 형제행 / 분기 미도해 / 낱말 중복 /
+      비교 2단계 진입 / 색축 미성립 / 규모 신호 부재 / 서수는 정체성이 아님) 진단표 + 각 항목의
+      근거 원칙·출처. REVIEW.md `REV-20260831T193000`
+      · 인용: `웹 리서치를 통해 상세하게 분석 및 개선`
+
+[다의어] 고른 독해 / 버린 독해 / 예시:
+- **고른 독해**: 「계보 간 가시성」 = **첨부 목록 패널에서 같은 파일의 갈래들을 한눈에 식별하고
+  비교로 진입하는 경로**의 가시성.
+- **버린 독해**: 「계보 간 가시성」 = 비교 **모달 내부**의 diff 판독성(색·줄정렬·구문 색).
+- **예시(관측 가능한 값)**: `IMMEDIATE_LEAVE_MEMBER.sql` 의 두 계보가 목록에서 **한 카드 안에
+  묶여** 보이고, 그 카드 머리의 `⇄ 계보 비교` **클릭 1회**로 `기준=사용자 업로드 v1 /
+  비교=AI 수정본 v2` 화면에 착지한다(종전: 행을 펼쳐야 비교 버튼이 나타남 = 2단계).
+- 모달 내부 판독성은 이번 범위 밖 — 선행 cycle 이 이미 축·제목·구문색을 다뤘다.
+
+### 작업
+
+- [x] 진단 — 선행 구현 실측(`composer.js` 목록 렌더 / `attach-diff.js` 축 / `chat.css`)
+- [x] 웹 리서치 — 버전이력·브랜치·계보 시각화 모범 패턴 수집
+- [x] 공통영역 그룹 카드 + 파일명 1회 + `계보 N` + 그룹 레벨 `⇄ 계보 비교`
+- [x] 렌더 순서 확정(`_orderedArr`) — 그룹은 첫 멤버 자리에 통째로(목록 순서 보존)
+- [x] 레일 + elbow + 분기 들여쓰기(CSS), 분기 표식은 글리프 `⤷` + 파선(색 단독 의존 금지)
+- [x] 서수 `계보 1/2` → 정체성 `사용자 계보` / `⤷ AI 계보` (서수는 title 로 보존)
+- [x] 크기 델타 칩 `+8KB` — **크기** 차이임을 문구·title 이 명시(내용 차이 단정 금지)
+- [x] 모달 `preselect.axis` 지원 — 그룹 비교가 계보 축으로 직행
+- [x] 그룹 안 위계 역전(파일명 낮춤 / 계보 칩 승격) + **색축 미성립 결함 교정**
+      (`var(--muted)` 미정의 토큰 → `--text-muted`; computed 실측이 잡음)
+- [x] 토글 라벨 `계보 N개` → `상세` (그룹 머리와 낱말 중복 제거)
+- [x] 회귀 테스트 18건 신규(`test_attach_lineage_group_ui.py`) — 배선 사각(만들고 안 씀)
+      을 잡는 단언 포함
+- [x] **PB-0008 실 Windows 브라우저 시각검증** — 격리 컨테이너 + stamp 재주입,
+      `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`

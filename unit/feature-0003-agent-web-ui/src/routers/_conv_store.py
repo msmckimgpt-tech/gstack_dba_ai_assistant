@@ -7141,9 +7141,17 @@ def _load_filename_lineage_heads(
             ORDER BY CreatedAt DESC, Id DESC
             LIMIT %s
             """,
-            (str(conversation_id), str(filename), int(limit)),
+            # codex 2R [P1]: **절단 사실을 알 수 있게 1건 더 읽는다**(§16.7 G9-b 무음 절단 금지).
+            # 종전에는 정확히 `limit` 만 읽어 "마침 20개" 와 "21개 이상인데 잘림" 이 구분되지
+            # 않았다. 그룹 카드가 목록 기준 전체 계보 수(예: `계보 21`)를 말하는데 비교 화면엔
+            # 20개만 뜨면, 화면이 없는 것을 있다고 말한 셈이 된다. 초과분 1건은 아래에서 버리고
+            # 대신 `_truncated` 표식을 실어 호출부가 사용자에게 밝힐 수 있게 한다.
+            (str(conversation_id), str(filename), int(limit) + 1),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
+        _over_cap = len(rows) > int(limit)
+        if _over_cap:
+            rows = rows[: int(limit)]
         # §18.8 적대 리뷰 [P1]: **root 당 1건**으로 접는다. 업로드 경로는 INSERT commit 뒤에
         # supersede 하고 그 실패를 삼키므로(기존 결함), 같은 체인에 live head 가 둘 남을 수 있다.
         # 그 상태를 그대로 반환하면 **한 계보를 두 계보로 오인**해 "AI 가 만든 다른 버전이 있다"
@@ -7156,6 +7164,10 @@ def _load_filename_lineage_heads(
                 continue
             seen_roots.add(_root)
             deduped.append(r)
+        # 절단 표식은 **첫 행에만** 붙인다(행 dict 는 그대로 직렬화되지 않고 호출부가 필드를
+        # 골라 담으므로, 표식이 응답 payload 로 새지 않는다). 목록이 비면 절단도 없다.
+        if deduped and _over_cap:
+            deduped[0]["_lineage_heads_truncated"] = True
         return deduped
     except Exception:
         logging.getLogger(__name__).warning(

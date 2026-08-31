@@ -4941,3 +4941,31 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - landing/배포: 무인 cron doc_sync — 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수.
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-31T01:03:05+09:00
+
+## CHG-20260831T193000-attach-lineage-visibility 첨부 계보 «비교 가시성» 재설계 — 공통영역 그룹 카드 + 분기 레일 + 그룹 레벨 비교
+- 같은 파일명의 계보들을 **공통영역 카드**(`.attach-lineage-group`)로 감싼다. 종전에는 평면 형제 행이라 같은 파일의 갈래와 무관한 다른 파일이 시각적으로 동급이었다 — 판별하려면 파일명을 글자 단위로 대조해야 했다(NN/g: enclosure 가 근접성을 압도).
+- 렌더 순서 확정(`_orderedArr`) — 카드는 연속한 형제만 감쌀 수 있으므로 그룹을 **첫 멤버 자리에 통째로** 방출한다(목록 전체 순서 보존, 그룹 내부는 오래된 것 → 갈라져 나온 것).
+- **분기를 그린다** — 그룹 본문의 세로 레일 + 행별 elbow + 분기 계보 한 단 들여쓰기(`.is-branch`). 종전에는 관계가 산문·툴팁("다른 파일에서 갈라짐")에만 있어 보려면 읽어야 했다.
+- **그룹 레벨 비교 승격** — 카드 머리의 `⇄ 계보 비교` 가 계보를 펼치지 않고 바로 계보 간 비교를 연다(종전 2단계 진입). `openAttachmentDiffModal` 에 `preselect.axis` 를 추가해 호출부가 축을 지정한다(계보 축 실재 시에만 존중 — 없는 축으로 열면 select 가 빈 채로 뜬다).
+- **서수 → 정체성** — `계보 1/2` → `사용자 계보` / `⤷ AI 계보`. 서수는 "몇 번째" 만 말하고 순서가 바뀌면 같은 계보가 다른 번호로 보인다. 서수는 title 로 내려 보존. 소유권 단정 금지 계약 유지(payload 에 업로더 account_id 없음).
+- **변경 규모 선행 신호** — 첫 계보 대비 크기 델타 칩(`+8KB`). 우리가 아는 것은 바이트뿐이므로 문구·title 이 "크기 차이 / 내용 차이는 비교에서 확인" 을 명시한다.
+- **색축 미성립 결함 교정** — 인접 규칙이 쓰던 `var(--muted)` 는 이 저장소에 **정의되지 않은 토큰**이라 조용히 무시됐고, 사용자 계보 칩이 본문색 그대로 렌더돼 AI 칩과의 대비가 성립하지 않았다(라이브 computed 실측 `rgb(38,37,30)`). 그룹 스코프에서만 `--text-muted` 로 덮어 인접 화면 렌더는 건드리지 않는다.
+- 그룹 안 **위계 역전** — 파일명은 머리가 이미 말했으므로 행에서는 낮추고(크기·굵기·색), 계보 칩에 1순위를 넘긴다. 클릭 대상(원문 보기)·접근성 이름은 그대로 파일명.
+- 토글 라벨 `계보 N개` → `상세` — 그룹 머리가 「계보 2」를 말하는 옆에서 되풀이하면 누르면 다른 계보가 나올 것처럼 읽힌다(라이브 판독).
+- 버전 박스 계보 안내 압축 — 한 줄에 네 사실을 담아 240px 에서 세 줄로 접히던 문구를 `주체 · 파일 N개 · 다른 계보 M개` 로(§16.8).
+- Verification: pytest `unit/feature-0003-agent-web-ui/tests` + `unit/feature-0002-agent-core/tests` 전건 PASS(신규 18건 포함) · `node --check` ESM PASS · **PB-0008 실 Windows 브라우저**(격리 컨테이너 + asset stamp 재주입) 구조·픽셀·computed·인터랙션 2 surface 실측 PASS — `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`
+- Files: `static/app/composer.js`, `static/app/attach-diff.js`, `static/css/chat.css`, `tests/test_attach_lineage_group_ui.py`(신규), `docs/{TASK,MODIFY,REVIEW,REPORT,FUNCTION,TEST}.md`, `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`(신규)
+- Cross-ref: FUNCTION.md REQ-20260831-attach-lineage-visibility · TASK.md 20260831T193000-attach-lineage-visibility · REVIEW.md REV-20260831T193000-ai-claude-feature-0003-attach-lineage-viz
+- Timestamp: 2026-08-31T19:30:00+09:00
+
+## CHG-20260831T201500-attach-lineage-adversarial-fixes 적대 리뷰(codex) 지적 조치 — 없는 관계를 주장하지 않는다 + 접근성·대비
+- **P1 — 파생을 데이터로만 주장한다.** 종전 초안은 **서수**(`_linIdx > 1`)로 들여쓰기(`is-branch`)를 붙였다. 그러면 같은 이름을 두 번 **독립 업로드**한 경우에도 두 번째가 첫 번째에서 갈라져 나온 것처럼 그려진다 — 화면이 없는 관계를 만들어낸다. 판정을 서버가 준 분기 부모(`lineage_branched_from_attachment_id`)로 옮겼고(`_branched = _originId > 0`), 그룹 계보수 title 의 "갈라진" 문구도 "같은 이름으로 존재하는" 으로 바꿨다(묶는 기준은 이름이지 파생이 아니다). **깊이는 주장하지 않는다** — 분기 부모 id 가 형제 계보의 중간 버전일 수 있어 목록(계보당 head 한 행)에서 되짚지 못하는 경우가 흔하다(라이브 실측). 되짚을 수 없는 관계로 A→B→C 를 그리면 그것 역시 근거 없는 주장이다.
+- **P2 — 이름 없는 첨부를 묶지 않는다.** 빈 이름이 전부 `""` 한 키로 모여 서로 무관한 첨부가 한 카드 안에서 "같은 파일의 갈래" 로 단정되던 경로를 차단(`if (!nm) continue`). 배지 시절에는 잘못 센 숫자였지만 카드는 enclosure 로 **관계를 주장**한다 — 같은 데이터 결함이 더 강한 거짓말이 된다.
+- **P2 — stale 비동기 모달.** 그룹 비교의 `/versions` 응답이 늦게 오는 사이 대화를 옮기거나 휴지통으로 전환하면, 떨어져 나간 카드가 **지금 보고 있지 않은 대화**의 비교 화면을 띄웠다. `document.contains(_card.el)` + `state.activeConversationId !== convId` 두 축으로 차단.
+- **P2 — 접근성 3종.** ① 카드에 `role="group"` + `aria-label`(눈으로만 보이는 그룹은 그룹이 아니다) ② 행 접근성 이름에 계보 정체성 부착 — 종전엔 같은 이름의 계보 N개가 스크린리더에 전부 "report.csv 원문 보기" 로 읽혀 구분 불가였다(칩은 포커스 대상이 아니라 title 이 읽히지 않는다) ③ 펼침 토글 `aria-expanded`(`▾/▴` 는 시각 신호 — 이번 cycle 로 단건 계보에도 붙어 노출 면이 넓어졌다).
+- **P2 — 크기 미상을 0 으로 읽지 않는다.** `Number(x || 0)` 가 `null` 을 0 으로 흡수해 `−100000B`(파일이 줄었다)를 단정하던 경로를 양측 `Number.isFinite` 검사로 차단.
+- **P2 — 대비.** 종전 초안은 `var(--border)`(#e6e5e0)를 카드 배경(#f0efea) 위에 써 **1.10:1** — 사실상 보이지 않았다. 그룹 테두리·레일은 «내용 이해에 필요한 그래픽»(WCAG 1.4.11)이지 장식이 아니다(이 카드가 곧 "같은 파일의 갈래" 라는 유일한 신호). 테두리 `#a8a598`, 레일·elbow `#8c8a7c` 2px, 정체성 칩 `#5a5852`(7.11:1), 낮춘 파일명 `#6b6960`(5.51:1 — 종전 `#807d72` 는 4.12:1 로 소형 텍스트 AA 미달이었다. «낮춘다» 가 «못 읽게 한다» 가 되면 안 된다).
+- **P3** — 죽은 `data-lineage-count` 제거 · `preselect.axis` JSDoc 보강.
+- Verification: 회귀 9건 추가(총 28건) — 각 조치를 **구조로** 잠금(§16.7 G10). pytest `feature-0003`+`feature-0002` **4986 passed / 5 skipped** · `node --check` PASS · **PB-0008 재실측**: `role=group` · aria-label `IMMEDIATE_LEAVE_MEMBER.sql — 같은 이름의 계보 2개` · 행 이름 `…(AI 계보, 갈라져 나옴, 2개 중 2번째) 원문 보기` · `aria-expanded` false→true→false · computed 테두리 `rgb(168,165,152)` · 레일 `rgb(140,138,124)` · 칩 `rgb(90,88,82)` · 파일명 `rgb(107,105,96)`
+- Files: `static/app/composer.js`, `static/app/attach-diff.js`, `static/css/chat.css`, `tests/test_attach_lineage_group_ui.py`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`
+- Timestamp: 2026-08-31T20:15:00+09:00

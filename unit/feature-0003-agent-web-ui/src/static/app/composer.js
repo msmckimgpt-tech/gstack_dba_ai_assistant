@@ -1737,9 +1737,10 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
     const who = cur && cur.is_assistant_generated ? "AI가 만든 계보" : "사용자가 올린 계보";
     const from = cur && Number(cur.branched_from_attachment_id || 0)
       ? " · 다른 파일에서 갈라짐" : "";
-    note.textContent =
-      `이 계보: ${who}${from} · 파일 ${versions.length}개`
-      + ` / 같은 이름의 다른 계보 ${others.length}개`;
+    // REQ-20260831-attach-lineage-visibility: 그룹 카드가 파일명·계보 수·비교를 이미 이고
+    // 있으므로 여기서는 **이 갈래의 정체성**만 짧게 말한다. 종전 문구("이 계보: … / 같은
+    // 이름의 다른 계보 N개")는 한 줄에 네 사실을 담아 240px 폭에서 세 줄로 접혔다(§16.8).
+    note.textContent = `${who}${from} · 파일 ${versions.length}개 · 다른 계보 ${others.length}개`;
     note.title = others
       .map((l) => `#${l.head_attachment_id} v${l.version_number}`
         + ` (${l.is_assistant_generated ? "AI" : "사용자"})`)
@@ -2252,6 +2253,78 @@ async function _runBulkDownload(convId, format, scope, progressEl) {
   }
 }
 
+/**
+ * REQ-20260831-attach-lineage-visibility: 같은 파일명의 계보들을 **하나의 공통영역**으로 감싼다.
+ *
+ * 종전 화면은 계보를 평면 형제 행으로 그렸다 — `IMMEDIATE_LEAVE_MEMBER.sql` 두 계보와 무관한
+ * `ND_MIGRATION_RESET.sql` 이 **시각적으로 동급**이라, 어느 둘이 같은 파일의 갈래인지 판별하려면
+ * 이름을 글자 단위로 대조해야 했다(사용자 제보 반복 수렴 2026-08-31). NN/g 의 공통영역(common
+ * region) 원칙은 **테두리·배경에 의한 enclosure 가 근접성을 압도**한다고 말한다 — 행 간격을
+ * 아무리 조절해도 "같은 파일의 갈래" 라는 사실은 근접성만으로 전달되지 않는다.
+ *
+ * 그래서 그룹 카드가 담당하는 것은 세 가지다:
+ *   1. **enclosure** — 이 안의 행들은 같은 파일이다 (공통영역).
+ *   2. **파일명 1회** — 행마다 반복되던 같은 이름을 머리로 올려, 행은 *갈래를 가르는 정보*
+ *      (누가 만든 계보 / 언제 / 몇 개)만 지고 좁은 패널 폭을 되찾는다.
+ *   3. **그룹 레벨 비교** — 종전에는 계보를 **펼쳐야** 비교 버튼이 나왔다(진입 2단계).
+ *      Figma 의 브랜치 리뷰처럼 비교는 그룹의 1급 액션이어야 한다.
+ *
+ * @param {string} filename  이 그룹의 파일명(모든 멤버가 공유)
+ * @param {number} count     계보 수
+ * @returns {{el: HTMLElement, body: HTMLElement, cmpBtn: HTMLButtonElement}}
+ */
+function _attachLineageGroupCard(filename, count) {
+  const el = document.createElement("div");
+  el.className = "attach-lineage-group";
+  // codex P2: **시각적 enclosure 를 접근성 트리에도 전달한다**. 카드가 맨 `div` 면 스크린리더는
+  // 머리(파일명·계보 수·비교)와 자식 행들을 한 덩어리로 인식하지 못해, 어느 행이 어느 파일에
+  // 속하는지 프로그램적으로 알 수 없다 — 눈으로만 보이는 그룹은 그룹이 아니다.
+  el.setAttribute("role", "group");
+  el.setAttribute("aria-label", `${filename || "파일"} — 같은 이름의 계보 ${count}개`);
+  const head = document.createElement("div");
+  head.className = "attach-lineage-group-head";
+  const nameEl = document.createElement("span");
+  nameEl.className = "attach-lineage-group-name";
+  nameEl.textContent = filename || "파일";
+  nameEl.title = filename || "";
+  const countEl = document.createElement("span");
+  countEl.className = "attach-lineage-group-count";
+  countEl.textContent = `계보 ${count}`;
+  // codex P1 동류: **묶는 기준은 이름**이다. "갈라진" 이라고 쓰면 독립 업로드 2건에도 파생
+  // 관계를 주장하게 된다 — 아는 것은 "같은 이름으로 이만큼 있다" 까지다.
+  countEl.title = `같은 이름으로 존재하는 계보 ${count}개`;
+  const cmpBtn = document.createElement("button");
+  cmpBtn.type = "button";
+  cmpBtn.className = "attach-lineage-group-cmp";
+  cmpBtn.textContent = "⇄ 계보 비교";
+  cmpBtn.title = `${filename} 의 계보 ${count}개를 나란히 비교합니다`;
+  cmpBtn.setAttribute("aria-label", `${filename || "파일"} 의 계보 비교`);
+  head.append(nameEl, countEl, cmpBtn);
+  const body = document.createElement("div");
+  body.className = "attach-lineage-group-body";
+  el.append(head, body);
+  return { el, body, cmpBtn };
+}
+
+/** 크기 차이를 **부호 있는 한 토막**으로. 내용 차이가 아니라 크기 차이임을 호출부가 밝힌다. */
+function _attachSizeDelta(bytes, baseBytes) {
+  // codex P2: **크기 미상을 0 바이트로 읽지 않는다**. `null`/`undefined` 를 `|| 0` 으로
+  // 흡수하면 "모른다" 가 "0 이다" 로 바뀌어 `−100000B`(파일이 줄었다)를 화면이 단정한다.
+  // 모르면 아무 말도 하지 않는 것이 맞다.
+  // codex 2R [P2]: `Number(null) === 0` 이라 **변환 뒤** isFinite 검사는 미상을 걸러내지
+  // 못한다. 변환 **전에** null/undefined/빈 문자열을 막아야 "모른다" 가 "0" 으로 바뀌지 않는다.
+  const _bad = (v) => v === null || v === undefined || v === "" || typeof v === "boolean";
+  if (_bad(bytes) || _bad(baseBytes)) return "";
+  const a = Number(bytes), b = Number(baseBytes);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) return "";
+  const d = a - b;
+  if (!Number.isFinite(d) || d === 0) return "";
+  const abs = Math.abs(d);
+  const unit = abs > 1048576 ? `${(abs / 1048576).toFixed(1)}MB`
+    : abs > 1024 ? `${Math.round(abs / 1024)}KB` : `${abs}B`;
+  return (d > 0 ? "+" : "−") + unit;
+}
+
 async function _loadConversationAttachmentList(convId) {
   const listEl = document.getElementById("attachSidePanelList");
   if (!listEl || !convId) return;
@@ -2302,6 +2375,12 @@ async function _loadConversationAttachmentList(convId) {
     const _lineageByName = new Map();
     for (const x of arr) {
       const nm = String(x.original_filename || "");
+      // REQ-20260831-attach-lineage-visibility: **이름 없는 첨부는 묶지 않는다**.
+      //
+      // 종전에는 빈 이름이 전부 `""` 한 키로 모여 서로 무관한 첨부들이 "같은 이름의 계보" 로
+      // 세어졌다(배지 `계보 1/2`). 배지 시절에는 잘못 센 숫자였지만, 이제는 그것들을 **한
+      // 카드로 감싸** "같은 파일의 갈래" 라고 화면이 단정하게 된다 — 근거 없는 주장이다.
+      if (!nm) continue;
       if (!_lineageByName.has(nm)) _lineageByName.set(nm, []);
       _lineageByName.get(nm).push(x);
     }
@@ -2312,13 +2391,34 @@ async function _loadConversationAttachmentList(convId) {
     }
     // id → 그 id 를 head 로 갖는 행(분기 부모를 사람이 읽을 이름으로 되짚기 위해).
     const _rowById = new Map(arr.map((x) => [Number(x.id || 0), x]));
-    for (const a of arr) {
+    // REQ-20260831-attach-lineage-visibility: **같은 파일의 계보를 붙여 놓는다**.
+    //
+    // 서버 순서는 계보를 흩어 놓을 수 있고, 흩어진 채로는 그룹 카드(공통영역)를 그릴 수 없다
+    // — 카드는 연속한 형제만 감쌀 수 있기 때문이다. 그래서 렌더 순서를 먼저 확정한다:
+    // 계보 그룹은 **첫 멤버가 나오는 자리**에 통째로 들어가고(목록 전체 순서는 보존),
+    // 그룹 안은 `_lineageByName` 이 이미 정렬해 둔 **오래된 것 → 갈라져 나온 것** 순이다.
+    const _emittedGroups = new Set();
+    const _orderedArr = [];
+    for (const x of arr) {
+      const nm = String(x.original_filename || "");
+      const grp = _lineageByName.get(nm) || [x];
+      if (grp.length < 2) { _orderedArr.push(x); continue; }
+      if (_emittedGroups.has(nm)) continue;   // 이미 그룹으로 통째 방출됨
+      _emittedGroups.add(nm);
+      _orderedArr.push(...grp);
+    }
+    // 파일명 → 그 그룹의 카드(첫 멤버에서 만들고 나머지 멤버가 재사용).
+    const _groupCards = new Map();
+    for (const a of _orderedArr) {
       // ② TASK-0285: 각 첨부의 버전 현황 표면화. wrapper(entry)로 감싸 가로 row(item) 아래에
       // 버전 이력 펼침 박스를 둔다(item 은 flex 가로 정렬이라 직접 자식으로 두면 깨짐).
       const entry = document.createElement("div");
       entry.className = "attach-list-entry";
       const item = document.createElement("div");
       item.className = "attach-list-item";
+      // REQ-20260831-attach-lineage-visibility: 이 행이 들어갈 자리. 형제 계보가 있으면
+      // 그룹 카드 안(공통영역), 없으면 종전처럼 목록 직속이다.
+      let _hostEl = listEl;
       const statusLabel = a.status === "ingested" ? "읽기 완료" : a.status === "failed" ? "오류" : a.status || "";
       const verNum = Number(a.version_number || 1);
       const isAi = Boolean(a.is_assistant_generated);
@@ -2334,12 +2434,25 @@ async function _loadConversationAttachmentList(convId) {
       const _linTotal = _sibs.length;
       const _linIdx = Math.max(1, _sibs.findIndex((x) => Number(x.id) === Number(a.id)) + 1);
       const _hasSiblings = _linTotal > 1;
+      // codex P1: **파생 관계는 데이터가 뒷받침할 때만 주장한다**.
+      //
+      // 목록을 파일명으로 묶는 것 자체는 옳다 — 목록은 계보당 head 한 행이고, 사용자가 찾는
+      // 것은 "이 이름으로 뭐가 있나" 다. 하지만 종전 초안은 **서수**(`_linIdx > 1`)로 들여쓰기와
+      // `⤷` 를 붙였다. 그러면 같은 이름을 두 번 **독립 업로드**한 경우에도 두 번째가 첫 번째에서
+      // 갈라져 나온 것처럼 그려진다 — 화면이 없는 관계를 만들어낸다.
+      // 분기 표식은 서버가 준 분기 부모(`lineage_branched_from_attachment_id`)로만 판정한다.
+      //
+      // ⚠ **깊이는 주장하지 않는다**(한 단만 들여쓴다). 분기 부모 id 는 형제 계보의 **중간
+      //    버전**일 수 있어 목록(계보당 head 한 행)에서 되짚지 못하는 경우가 흔하다(라이브
+      //    실측: head 행에는 표식이 없고 root 행에만 있다). 되짚을 수 없는 관계로 A→B→C 깊이를
+      //    그리면 그것 역시 근거 없는 주장이 된다 — "갈라져 나왔다" 까지만 말한다.
+      const _originId = Number(
+        a.lineage_branched_from_attachment_id || a.branched_from_attachment_id || 0);
+      const _branched = _originId > 0;
       let linBadge = "";
       if (_hasSiblings) {
-        // **계보**의 출처를 먼저 본다 — 행 자체의 표식은 root 행에만 있고, 다중 버전 계보의
-        // head 행에는 없다(라이브 실측: v4 head 가 `null`). 둘 다 없으면 갈라진 적 없는 계보다.
-        const _originId = Number(
-          a.lineage_branched_from_attachment_id || a.branched_from_attachment_id || 0);
+        // **계보**의 출처(`_originId`)는 위에서 이미 해소했다 — 행 자체의 표식은 root 행에만
+        // 있고 다중 버전 계보의 head 행에는 없다(라이브 실측: v4 head 가 `null`).
         const _fromRow = _rowById.get(_originId);
         // 분기 부모를 **사람이 아는 말**로 되짚는다. 부모가 목록에 없으면(삭제·중간 버전)
         // 아는 만큼만 말한다 — 모르는 것을 지어내지 않는다.
@@ -2353,13 +2466,104 @@ async function _loadConversationAttachmentList(convId) {
           : (isAi ? "AI가 만든 계보" : "사용자가 올린 계보");
         const _linTitle =
           `같은 이름의 계보 ${_linTotal}개 중 ${_linIdx}번째 — ${_origin} · 파일 ${verCount}개`;
-        linBadge = ` <span class="attach-list-item-lineage${isAi ? " ai" : ""}"`
-          + ` title="${escapeHtml(_linTitle)}">계보 ${_linIdx}/${_linTotal}</span>`;
+        // REQ-20260831-attach-lineage-visibility: 서수(`계보 1/2`)를 **정체성**으로 바꾼다.
+        //
+        // "몇 번째" 는 사용자가 알고 싶은 것이 아니다 — 알고 싶은 것은 **누구의 갈래인가**,
+        // 그리고 **어디서 갈라졌나** 다. 서수는 그 둘 중 아무것도 말하지 않으면서 좁은
+        // 이름줄을 먹고, 순서가 바뀌면 같은 계보가 어제와 다른 번호로 보인다.
+        // 서수는 title 로 내리고(`_linTitle` 이 이미 담고 있다), 화면에는 정체성을 올린다.
+        //
+        // ⚠ 소유권은 여전히 단정하지 않는다 — 목록 payload 에 업로더 account_id 가 없어
+        //   그룹 대화에서 남의 업로드를 "내 것" 이라 말하게 된다(선행 cycle 이 세운 계약).
+        const _linWho = isAi ? "AI 계보" : "사용자 계보";
+        linBadge = ` <span class="attach-list-item-lineage${isAi ? " ai" : ""}${_branched ? " branched" : ""}"`
+          + ` title="${escapeHtml(_linTitle)}">${_branched ? "⤷ " : ""}${escapeHtml(_linWho)}</span>`;
+      }
+      // REQ-20260831-attach-lineage-visibility: 계보 그룹 카드(공통영역)에 이 행을 태운다.
+      //
+      // 카드는 **첫 멤버에서 한 번** 만들고 나머지 멤버가 재사용한다. 만들면서 곧바로 목록에
+      // 붙이므로 카드의 자리 = 첫 멤버가 원래 있던 자리다(목록 전체 순서 보존).
+      if (_hasSiblings) {
+        const _gname = String(a.original_filename || "");
+        let _card = _groupCards.get(_gname);
+        if (!_card) {
+          _card = _attachLineageGroupCard(_gname, _linTotal);
+          _groupCards.set(_gname, _card);
+          listEl.appendChild(_card.el);
+          // 그룹 레벨 비교 — **계보를 펼치지 않고** 바로 계보 간 비교로 들어간다.
+          // 모달은 `/versions` 응답의 `lineages` 를 필요로 하므로 첫 계보 head 로 한 번
+          // 조회한 뒤 `axis: "time"`(계보 간)으로 연다. 조회 대상은 아무 계보나 되지만
+          // 첫 계보를 쓰면 모달의 좌(기준)가 자연히 원본 계보가 된다.
+          const _first = _sibs[0] || a;
+          _card.cmpBtn.addEventListener("click", async () => {
+            _card.cmpBtn.disabled = true;
+            try {
+              const vr = await apiFetch(
+                `/api/attachments/${encodeURIComponent(_first.id)}/versions`);
+              // codex P2: **응답이 늦게 오는 사이 화면이 바뀔 수 있다**. 대화를 옮기거나
+              // 휴지통으로 전환하면 이 카드는 이미 DOM 에서 떨어져 나갔는데, 그때 모달을
+              // 열면 **지금 보고 있지 않은 대화의 비교 화면**이 위에 뜬다. 두 축으로 막는다 —
+              // 카드가 아직 문서에 붙어 있는가 + 대화가 그대로인가.
+              if (!document.contains(_card.el) || state.activeConversationId !== convId) return;
+              const _lins = Array.isArray(vr?.lineages) ? vr.lineages : [];
+              // codex 2R [P1]: **계보 축이 없으면 열지 않는다**. 서버의 계보 해소는 fail-soft
+              // 라 `lineages: []` 로 떨어질 수 있는데, 그 상태로 모달을 열면 축 지정이 조용히
+              // 무시되고 이 계보의 **버전 비교**가 뜬다 — 사용자가 「계보 비교」를 눌렀는데
+              // 다른 것을 비교하는 조용한 오답이다. 못 하면 못 한다고 말한다.
+              if (_lins.length < 2) {
+                showToast("계보 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.", true);
+                return;
+              }
+              openAttachmentDiffModal(
+                _first.id,
+                Array.isArray(vr?.versions) ? vr.versions : [],
+                { axis: "time", truncated: Boolean(vr?.lineages_truncated) },
+                _lins);
+            } catch (e) {
+              // 성공 경로와 같은 이유로 여기서도 확인한다 — 대화를 옮긴 뒤 옛 요청의 실패
+              // 토스트가 뜨면 사용자는 **지금 화면**이 실패한 줄로 읽는다.
+              if (!document.contains(_card.el) || state.activeConversationId !== convId) return;
+              showToast("계보 정보를 불러올 수 없습니다.", true);
+            } finally {
+              _card.cmpBtn.disabled = false;
+            }
+          });
+        }
+        _hostEl = _card.body;
+        // 갈래를 행 자체에도 새긴다 — 레일/커넥터는 CSS 가 이 클래스로 그린다.
+        // codex P1: 들여쓰기(=파생 주장)는 **서수가 아니라 분기 데이터**로만 붙인다.
+        entry.classList.add("in-lineage-group");
+        if (_branched) entry.classList.add("is-branch");
+      }
+      // REQ-20260831-attach-lineage-visibility: **차이의 규모**를 열기 전에 알린다.
+      //
+      // 종전에는 비교 모달을 열어 봐야 두 계보가 크게 다른지 한 줄 다른지 알 수 있었다.
+      // GitKraken 의 change gauge 처럼 목록 단계에서 규모 신호를 준다 — 다만 우리가 아는
+      // 것은 **바이트 크기**뿐이므로 딱 그만큼만 말한다(내용 차이라고 말하지 않는다).
+      // 기준은 이 그룹의 **첫 계보**(가장 오래된 것) — 갈라져 나온 쪽이 얼마나 커졌는지가
+      // 사용자가 읽는 방향이다.
+      let sizeDeltaChip = "";
+      if (_hasSiblings && _linIdx > 1) {
+        // codex 2R [P2]: 여기서 `|| 0` 을 쓰면 위 헬퍼의 미상 가드를 **호출부가 무력화**한다
+        // (미상 기준을 0 으로 바꿔 넘기므로 헬퍼는 정상 값으로 본다). 원값 그대로 넘긴다.
+        const _base = _sibs[0]?.size;
+        const _delta = _attachSizeDelta(a.size, _base);
+        if (_delta) {
+          sizeDeltaChip = ` · <span class="attach-list-item-sizedelta"`
+            + ` title="첫 계보(${fmtSize(_base)}) 대비 파일 크기 차이입니다 — 내용이 얼마나 다른지는 비교에서 확인하세요">`
+            + `${escapeHtml(_delta)}</span>`;
+        }
       }
       // 펼침 토글은 **버전이 여럿일 때만** 뜨던 것이 단건 계보를 비교에서 통째로 막았다
       // (사용자 제보 2026-08-28): 버전 박스가 열리지 않으면 "⇄ 버전 비교" 진입점 자체가
       // 화면에 없다. 같은 이름의 다른 계보가 있으면 **비교할 대상이 존재**하므로 연다.
-      const verToggleLabel = verCount > 1 ? `버전 ${verCount}개` : `계보 ${_linTotal}개`;
+      // REQ-20260831-attach-lineage-visibility: 단건 계보의 라벨을 **이 토글이 여는 것**에 맞춘다.
+      //
+      // 종전 fallback 은 `계보 N개` 였다 — 그 시절엔 이 토글을 열어야 계보 비교 진입점이 나왔기
+      // 때문이다. 이제 계보 비교는 그룹 머리의 1급 액션이고, 이 토글이 여는 것은 **이 계보의
+      // 상세**(구성 안내 + 버전 행)다. 그룹 머리가 이미 "계보 2" 라고 말하는 옆에서 같은 문구를
+      // 되풀이하면, 누르면 다른 계보가 나올 것처럼 읽힌다(라이브 실측 2026-08-31).
+      const verToggleLabel = verCount > 1 ? `버전 ${verCount}개` : "상세";
       const verToggle = (verCount > 1 || _hasSiblings)
         ? ` · <button type="button" class="attach-list-item-vertoggle">${verToggleLabel} ▾</button>`
         : "";
@@ -2380,7 +2584,7 @@ async function _loadConversationAttachmentList(convId) {
         <div class="attach-list-item-info">
           <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}${linBadge}</div>
           <div class="attach-list-item-meta">
-            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
+            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${sizeDeltaChip}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
             <span class="attach-list-item-actions">
               <button class="attach-list-item-dl" title="다운로드" aria-label="${nameSafe} 다운로드" data-id="${a.id}">⬇</button>
               ${a.can_manage ? `<button class="attach-list-item-del" title="삭제" aria-label="${nameSafe} 삭제" data-id="${a.id}">🗑</button>` : ""}
@@ -2420,7 +2624,15 @@ async function _loadConversationAttachmentList(convId) {
       const nameBtn = item.querySelector(".attach-list-item-name-text");
       nameBtn.setAttribute("role", "button");
       nameBtn.tabIndex = 0;
-      nameBtn.setAttribute("aria-label", `${a.original_filename || "첨부"} 원문 보기`);
+      // codex P2: 같은 이름의 계보가 여럿이면 **접근성 이름이 전부 같아진다** — 스크린리더로는
+      // 세 행이 모두 "report.csv 원문 보기" 로 읽혀 어느 갈래인지 구분할 수 없다. 화면에서는
+      // 칩과 들여쓰기가 그 구분을 하지만 칩은 포커스 대상이 아니라 title 이 읽히지 않는다.
+      // 그래서 **행의 접근성 이름 자체에** 정체성을 싣는다(시각·비시각 표면의 정보량 정합).
+      const _srWho = _hasSiblings
+        ? ` (${isAi ? "AI 계보" : "사용자 계보"}${_branched ? ", 갈라져 나옴" : ""}` +
+          `, ${_linTotal}개 중 ${_linIdx}번째)`
+        : "";
+      nameBtn.setAttribute("aria-label", `${a.original_filename || "첨부"}${_srWho} 원문 보기`);
       nameBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openSource(); });
       nameBtn.addEventListener("keydown", (ev) => {
         if (ev.key !== "Enter" && ev.key !== " ") return;
@@ -2448,10 +2660,15 @@ async function _loadConversationAttachmentList(convId) {
       const verToggleBtn = item.querySelector(".attach-list-item-vertoggle");
       if (verToggleBtn) {
         let versionsBox = null;
+        // codex P2: 펼침 상태를 **문자에만** 두지 않는다. `▾/▴` 는 시각 신호라 스크린리더에는
+        // 열렸는지 닫혔는지가 전달되지 않는다. 이 토글은 이번 cycle 로 단건 계보에도 붙어
+        // 노출 면이 넓어졌으므로 여기서 상태를 프로그램적으로 노출한다.
+        verToggleBtn.setAttribute("aria-expanded", "false");
         verToggleBtn.addEventListener("click", async () => {
           if (versionsBox) {
             const hidden = versionsBox.classList.toggle("hidden");
             verToggleBtn.textContent = `${verToggleLabel} ${hidden ? "▾" : "▴"}`;
+            verToggleBtn.setAttribute("aria-expanded", hidden ? "false" : "true");
             return;
           }
           verToggleBtn.disabled = true;
@@ -2466,6 +2683,7 @@ async function _loadConversationAttachmentList(convId) {
             _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : [], a.id,
               Array.isArray(vresp?.lineages) ? vresp.lineages : []);
             verToggleBtn.textContent = `${verToggleLabel} ▴`;
+            verToggleBtn.setAttribute("aria-expanded", "true");
           } catch (e) {
             versionsBox.innerHTML = `<div class="attach-list-versions-loading">버전 이력을 불러올 수 없습니다.</div>`;
           } finally {
@@ -2473,7 +2691,8 @@ async function _loadConversationAttachmentList(convId) {
           }
         });
       }
-      listEl.appendChild(entry);
+      // 형제 계보가 있으면 그룹 카드 안으로, 아니면 목록 직속으로(`_hostEl` 이 그 판정을 담는다).
+      _hostEl.appendChild(entry);
     }
   } catch (exc) {
     listEl.innerHTML = `<div class="attach-list-empty">목록을 불러올 수 없습니다.</div>`;
