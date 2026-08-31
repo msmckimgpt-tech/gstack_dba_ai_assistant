@@ -102,13 +102,101 @@ if (-not $Py) {
     if (Test-PyOk $c) { $Py = $c; break }
   }
 }
-if (-not $Py) { Die 'python 3.8 이상을 찾지 못했습니다.
 
-  · 설치: https://www.python.org/downloads/windows/ (설치 중 "Add python.exe to PATH" 체크)
+# ── 파이썬이 없으면 «설치까지» 도와준다 (사용자 결정 2026-08-31) ───────────────
+#
+# 개발자가 아닌 사용자에게 "파이썬을 먼저 설치하고 오세요" 는 사실상 막다른 길이다. 그래서
+# 없을 때는 여기서 설치 경로를 연다. 단 **말없이 설치하지는 않는다** — 남의 컴퓨터에 소프트웨어를
+# 얹는 일이므로 무엇을 왜 설치하는지 말하고 동의를 받는다(비대화형이면 명령만 알려 주고 멈춘다).
+#
+# 수단은 **winget**(App Installer)이다. 윈도우 10 1809+ 에 기본 포함이고, 패키지가 서명·해시
+# 검증된 공식 경로라 **우리가 설치 프로그램 해시를 관리하지 않아도 된다** — 이 스크립트의
+# 「받은 것은 대조한다」 계약을 우리가 직접 구현하는 대신 winget 이 이미 지키는 축이다.
+# (임의 URL 에서 installer.exe 를 받아 실행하는 방식은 대조 없이 실행하는 형태가 되어 채택 안 함.)
+
+#: winget 이 **실제로 쓸 수 있는가**. `WindowsApps\winget.exe` 는 App Installer 가 없으면
+#: python3 와 같은 빈 스텁일 수 있으므로, 존재가 아니라 **`--version` 이 도는지**로 본다.
+function Test-WingetOk {
+  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { return $false }
+  $ErrorActionPreference = 'SilentlyContinue'
+  $global:LASTEXITCODE = 0
+  try { & winget --version 2>&1 | Out-Null } catch { return $false }
+  return ($LASTEXITCODE -eq 0)
+}
+
+#: 설치 직후 이 프로세스의 PATH 에는 새 파이썬이 없다(부모가 물려준 값이라 갱신되지 않는다).
+#: 레지스트리에서 다시 읽어 합친다 — 새 셸을 열라고 안내하면 그 자체가 또 다른 막다른 길이다.
+function Update-PathFromRegistry {
+  try {
+    $m = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $u = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:PATH = (@($m, $u) | Where-Object { $_ }) -join ';'
+  } catch { }
+}
+
+if (-not $Py) {
+  $canWinget = Test-WingetOk
+  $autoOk = $false
+  if ($canWinget) {
+    if ($env:BRIDGE_AUTO_INSTALL_PYTHON -eq '1') {
+      $autoOk = $true                      # 스크립트·무인 실행용 사전 동의
+    } elseif ([Environment]::UserInteractive) {
+      Say '이 브리지는 파이썬 3.8 이상이 필요한데 이 컴퓨터에서 찾지 못했습니다.'
+      Say '  winget(마이크로소프트 공식 앱 설치 도구)으로 Python 3.12 를 설치할 수 있습니다.'
+      Say '  설치 범위는 현재 사용자이며 관리자 권한이 필요하지 않습니다.'
+      $ans = Read-Host '  지금 설치할까요? (y/N)'
+      $autoOk = ($ans -eq 'y' -or $ans -eq 'Y')
+    }
+  }
+
+  if ($autoOk) {
+    Say 'Python 3.12 를 설치하는 중… (수 분 걸릴 수 있습니다)'
+    $ErrorActionPreference = 'SilentlyContinue'
+    $global:LASTEXITCODE = 0
+    try {
+      & winget install --id Python.Python.3.12 --exact --scope user --silent `
+        --accept-package-agreements --accept-source-agreements --disable-interactivity 2>&1 | Out-Null
+    } catch { }
+    if ($LASTEXITCODE -ne 0) {
+      # `--scope user` 를 받지 않는 패키지·환경이 있다. 범위를 빼고 한 번 더 — 그래도 안 되면
+      # 아래 안내로 떨어진다(조용히 실패하지 않는다).
+      $global:LASTEXITCODE = 0
+      try {
+        & winget install --id Python.Python.3.12 --exact --silent `
+          --accept-package-agreements --accept-source-agreements --disable-interactivity 2>&1 | Out-Null
+      } catch { }
+    }
+    $ErrorActionPreference = 'Stop'
+    Update-PathFromRegistry
+    foreach ($c in @('python3','python','py')) {
+      if (Test-PyOk $c) { $Py = $c; break }
+    }
+    if (-not $Py) {
+      # PATH 가 아직 안 잡혔을 수 있다 — 표준 설치 위치를 직접 본다.
+      foreach ($p in @("$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+                       "$env:ProgramFiles\Python312\python.exe")) {
+        if ((Test-Path $p) -and (Test-PyOk $p)) { $Py = $p; break }
+      }
+    }
+    if ($Py) { Say "파이썬을 설치했습니다: $Py" }
+  }
+}
+
+if (-not $Py) {
+  $hint = if ($canWinget) {
+    '  · 설치(권장): winget install --id Python.Python.3.12 --exact --scope user'
+  } else {
+    '  · 설치: https://www.python.org/downloads/windows/ (설치 중 "Add python.exe to PATH" 체크)'
+  }
+  Die "python 3.8 이상을 찾지 못했습니다.
+
+$hint
+  · 설치 후 이 명령을 다시 실행하세요.
   · 이미 설치했는데 이 메시지가 나오면, 경로를 직접 지정하세요:
-        $env:BRIDGE_PROBED_PY=''C:\path\to\python.exe''
-  · 참고: 시작 메뉴의 "앱 실행 별칭" 에 있는 python3 는 Microsoft Store 로 가는 **빈 스텁**이라
-    파이썬이 아닙니다 — 이 스크립트는 그것을 건너뜁니다.' }
+        `$env:BRIDGE_PROBED_PY='C:\path\to\python.exe'
+  · 참고: 시작 메뉴의 `"앱 실행 별칭`" 에 있는 python3 는 Microsoft Store 로 가는 **빈 스텁**이라
+    파이썬이 아닙니다 — 이 스크립트는 그것을 건너뜁니다."
+}
 
 #: 러너에 넘길 `--ai <name>`. **PATH 에 실재할 때만** 넘긴다 — 없는 이름을 주면 러너가
 #: "쓸 수 있는 AI 를 찾지 못했습니다" 로 죽는다(실측 2026-08-28: Windows 에 claude 부재).

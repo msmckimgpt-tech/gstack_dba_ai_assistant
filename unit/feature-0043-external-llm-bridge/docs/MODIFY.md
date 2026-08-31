@@ -1754,3 +1754,38 @@ messages.js 3 hits), 페이지가 로드한 그 URL 로 `import()` 해 같은 �
 
 증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260831T170034-live-steps-compact-postdeploy.md`
 캡처: `artifacts/pb0008-live-steps-compact/` (git 밖, §2)
+
+## CHG-20260831T190000-ai-claude-feature-0043-python-autoinstall — 파이썬 설치 마찰 제거 (안 C)
+
+- **날짜**: 2026-08-31
+- **REQ**: 사용자 요청 — "최대한 종속 이슈를 제거… 개발자 외 일반 사용자도 사용할 수 있도록"
+- **승인**: 사용자 결정 2026-08-31 (AskUserQuestion — **«C. 설치 마찰만 제거»**)
+- **위험도**: Major (사용자 머신에 소프트웨어를 설치한다 — 동의 절차를 함께 넣어 완화)
+
+### 근거가 된 실측 (스톡 Windows)
+
+| 런타임 | 존재 |
+|---|---|
+| PowerShell 5.1 · .NET 4.x · `curl.exe` · `tar.exe` | **항상** |
+| `winget` (App Installer 1.29.290) | **있음** |
+| `node`/`npm` · `python` | **없음** |
+
+러너는 표준 라이브러리만 쓴다(pip 의존 0) — 남은 종속은 «파이썬 런타임 유무» 하나였다.
+
+### 변경 (`bridge_setup.ps1`)
+
+- `Test-WingetOk` — 존재가 아니라 `--version` 실행으로 판정(스텁 방어, 파이썬에서 배운 축)
+- 파이썬 미발견 시: 동의(`y/N`) → `winget install --id Python.Python.3.12 --exact --scope user
+  --silent --accept-{package,source}-agreements --disable-interactivity`.
+  `--scope user` 거부 환경 대비 1회 재시도
+- `Update-PathFromRegistry` + 재탐지 + 표준 설치 위치 폴백
+- 실패 시 안내를 winget 유무에 맞춰 분기
+
+### 검증
+
+- 실 Windows PowerShell 5.1: 파싱 PASS(BOM 보존) · `Test-WingetOk=True` ·
+  `Update-PathFromRegistry` 예외 없음(PATH 1784→1824) · `Test-PyOk python3=False`(스텁) / `python=True`
+- `winget show --id Python.Python.3.12 --accept-source-agreements` → rc=0, 3.12.10 확인
+- 회귀 4건 — **수정 전에서 4/4 FAIL** 실증
+- ⚠ **실제 설치는 실행하지 않았다** — 이 머신엔 이미 파이썬이 있고, 검증을 위해 남의 머신
+  상태를 바꾸지 않는다. 설치 명령의 유효성은 `winget show` 로, 배선은 회귀로 확인했다.

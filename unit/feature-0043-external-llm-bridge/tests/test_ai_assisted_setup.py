@@ -522,3 +522,63 @@ def test_ps1_python_candidates_include_the_py_launcher():
     blk = blk[:blk.index(")")]
     for cand in ("python3", "python", "py"):
         assert f"'{cand}'" in blk, f"파이썬 후보에 {cand} 가 없다: {blk}"
+
+
+# ── 파이썬 설치 마찰 제거 (사용자 결정 2026-08-31, 안 C) ─────────────────────
+
+def _ps1_text() -> str:
+    return _SETUP_PS1.read_text(encoding="utf-8-sig")
+
+
+def test_python_autoinstall_asks_before_installing():
+    """**말없이 설치하지 않는다** — 남의 컴퓨터에 소프트웨어를 얹는 일이다.
+
+    대화형이면 동의를 묻고, 비대화형이면 명령만 알려 주고 멈춘다. 사전 동의는 env
+    (`BRIDGE_AUTO_INSTALL_PYTHON=1`)로만 준다 — 기본값이 «묻지 않고 설치» 가 되면
+    사용자가 예상하지 못한 변경이 일어난다.
+    """
+    ps1 = _ps1_text()
+    blk = ps1[ps1.index("function Test-WingetOk"):]
+    assert "Read-Host" in blk, "설치 전에 동의를 묻지 않는다"
+    assert "UserInteractive" in blk, "비대화형에서도 프롬프트를 시도한다(멈춰 버린다)"
+    assert "BRIDGE_AUTO_INSTALL_PYTHON" in blk, "무인 실행용 사전 동의 경로가 없다"
+
+
+def test_python_autoinstall_uses_a_signed_package_source():
+    """설치는 **winget** 으로만 한다 — 임의 URL 에서 installer.exe 를 받아 실행하지 않는다.
+
+    이 스크립트의 계약이 「받은 것은 대조한다」다. 설치 프로그램만 예외로 두면 그 계약이
+    가장 무거운 지점에서 깨진다. winget 패키지는 서명·해시가 검증된 공식 경로라 우리가
+    해시를 관리하지 않고도 같은 보장을 얻는다.
+    """
+    ps1 = _ps1_text()
+    blk = ps1[ps1.index("function Test-WingetOk"):]
+    assert "winget install" in blk, "winget 설치 경로가 없다"
+    assert "Python.Python.3" in blk, "설치할 패키지 ID 를 고정하지 않았다"
+    for flag in ("--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"):
+        assert flag in blk, f"winget 무인 실행에 {flag} 가 없다(첫 실행에서 멈춘다)"
+    # 임의 다운로드-실행 경로가 없어야 한다.
+    for bad in ("Invoke-WebRequest -Uri 'https://www.python.org", "Start-Process .*installer"):
+        assert bad not in blk, f"대조 없는 설치 경로가 있다: {bad}"
+
+
+def test_python_autoinstall_refreshes_path_and_reprobes():
+    """설치 직후 **이 프로세스의 PATH 에는 새 파이썬이 없다** — 레지스트리에서 다시 읽고 재탐지한다.
+
+    "새 셸을 열어 다시 실행하세요" 는 그 자체가 또 하나의 막다른 길이다.
+    """
+    ps1 = _ps1_text()
+    assert "function Update-PathFromRegistry" in ps1, "PATH 갱신 경로가 없다"
+    blk = ps1[ps1.index("if ($autoOk) {"):]
+    assert "Update-PathFromRegistry" in blk, "설치 후 PATH 를 갱신하지 않는다"
+    assert "Test-PyOk" in blk, "설치 후 재탐지하지 않는다"
+    assert "LOCALAPPDATA" in blk, "PATH 가 안 잡힌 경우의 표준 설치 위치 폴백이 없다"
+
+
+def test_winget_probe_does_not_trust_mere_presence():
+    """`WindowsApps\\winget.exe` 도 스텁일 수 있다 — 존재가 아니라 `--version` 이 도는지로 본다."""
+    ps1 = _ps1_text()
+    fn = ps1[ps1.index("function Test-WingetOk"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "--version" in fn, "winget 을 실제로 실행해 보지 않는다"
+    assert "LASTEXITCODE" in fn, "종료코드를 보지 않는다"
