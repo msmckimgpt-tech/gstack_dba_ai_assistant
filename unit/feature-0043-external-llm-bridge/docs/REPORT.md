@@ -285,6 +285,8 @@ stderr ErrorRecord 를 버린다).
 제거했다. 이 cycle 의 결함 3건 중 **2건은 정적 자기검토를 통과하고 실 Windows 실측에서만
 잡혔다** — 상세·증적은 `test-runs.d/TASK-20260831T175500-schannel-revocation.md`.
 
+**POST-DEPLOY (배포 `b28c3fab`)**: 라이브 배포본 바이트로 사용자 시나리오를 재현해 **`via=curl` 수신 성공**(167,906 bytes, main 정본·라이브 서빙본·Windows 수신본 3자 SHA256 일치)을 확인했다 — 폴백이 아니라 curl 경로 자체가 살아났다. 무관한 CA 대조군은 배포본에서도 실패해 pin 유지를 재확인. 양 replica `GIT_COMMIT=b28c3fab` · replica 내부 파일 해시 동일 · 엣지 `/healthz` 200 · soak 통과 · caddy `no upstreams available` **0건**(무중단 실측) · RestartCount 0. 증적: `test-runs.d/TASK-20260831T175500-schannel-revocation-postdeploy.md`.
+
 **잔여**: 첫 실사용자의 전체 설치 왕복(핸들러 등록·러너 상주 포함)은 미관측이다 — 수신 함수를
 실 PowerShell 5.1 에서 직접 구동해 A~G 7케이스로 검증했고, 이 머신의 기존 브리지 상태를 검증
 목적으로 갈아엎지는 않았다. 독립 관점 적대 검증도 하네스 제약(Agent 도구 금지)으로 미수행
