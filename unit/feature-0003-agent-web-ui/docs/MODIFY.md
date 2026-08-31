@@ -4974,3 +4974,16 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Cross-ref: TASK.md `20260831T1827-connect-modal-autoclose` · REVIEW.md
   `REV-20260831T182700-connect-modal-autoclose`
 - Timestamp: 2026-08-31T18:27:00+09:00
+
+## CHG-20260831T193500-connect-modal-autoclose-postdeploy POST-DEPLOY 실측 증적 (docs-only)
+- 라이브 배포본 **`0fad9129`** 에서 PB-0008 Windows-browser 실측 — 전이 후 `modal_hidden:true`
+  + 토스트 1건 + 배지 «내 AI 대기 중». PRE(`1c0864dc`, 모달 남고 알림 0)와 같은 절차로 대비.
+- 증적: `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose-postdeploy.md` +
+  `docs/evidence/connect-modal-autoclose/{predeploy-modal-stays-open,postdeploy-1-modal-open,postdeploy-2-toast-and-closed}.png`
+- 배포 체크리스트: 무중단 blip **0** · 대화 스모크 PASS · surge 잔존 0 · 자산 스탬프
+  `241f5e208040` → `16960c2c319d` · web-a/b 둘 다 `0fad9129`.
+- **CI 사실 기록**: PR #1447 은 `UNSTABLE` 로 머지됐다 — Actions job `steps=0` 미실행(전 브랜치·
+  main push 동일). CI 정적 게이트 4종을 로컬 전건 PASS 로 대체 충족, Python 변경 0건. 운영 조치 필요.
+- Files: `docs/{TASK,REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-postdeploy.md`,
+  `docs/evidence/connect-modal-autoclose/*.png`. 코드 변경 0.
+- Timestamp: 2026-08-31T19:35:00+09:00

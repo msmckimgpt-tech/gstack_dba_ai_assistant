@@ -12055,4 +12055,11 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
       각각 생존(서로가 1차 방어), **둘 다 제거할 때만** F3 가 죽는다(경합 재현). 나머지 방어는
       각각 자기 단언을 죽인다.
 - [x] `node --check` 상당(data: URL 모듈 적재) PASS
-- [x] PB-0008 Windows-browser POST-DEPLOY 실측 — `docs/test-runs.d/` fragment 참조
+- [x] PB-0008 Windows-browser **POST-DEPLOY 실측 PASS** (배포본 `0fad9129`, 자산
+      `?v=16960c2c319d`) — 전이 후 `modal_hidden:true` + 토스트 1건 + 배지 «내 AI 대기 중».
+      PRE(`1c0864dc`)와 같은 절차로 대비. 무중단 blip 0 · 대화 스모크 PASS.
+      증적: `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose-postdeploy.md` +
+      `docs/evidence/connect-modal-autoclose/*.png`
+- [x] **CI 게이트 사실 기록**: PR #1447 은 `UNSTABLE` 로 머지됐다 — Actions job 이 `steps=0`
+      으로 미실행(전 브랜치·main push 동일, 마지막 정상 15:01 KST). CI 의 정적 게이트 4종을
+      로컬에서 전건 PASS 로 대체 충족했고, 이 커밋의 Python 변경은 0건이다. **운영 조치 필요**.
