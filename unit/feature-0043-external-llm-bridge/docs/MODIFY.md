@@ -1602,3 +1602,43 @@ grounding·제품 바인딩·필드 제약)를 그대로 재사용하고 여기�
 - 생성된 `launch.sh` 를 실제 `wsl.exe` 로 호출: 러너 0→1, 20초 뒤에도 생존,
   `/api/ai/connect/status` 가 `listening:true` · `ready:true`
 - 회귀 2건(L12 대기 계약 · L13 사망 보고) — **수정 전 스크립트에서 2/2 FAIL** 실증
+
+## CHG-20260831T170034-ai-claude-feature-0043-live-steps-compact — 추론 구간 표시 밀도 + 실시간 누적
+
+**요청 (2026-08-31, 직전 cycle 확인 후)**: ① 「추론 구간이 … 사이드 바 내부에서 비교적 큰 범위를
+차지 … 최대한 단순한 형태로. 외곽선 및 배경 없이 한 줄로 출력되어도 문제없습니다. 목적 자체는
+추론에 대한 소요시간을 확보하는 것」 ② 「최하단의 누적시간은 실시간으로 갱신 (단순히, 첫
+호출시간과 현재시간의 차이로)」 ③ 「'▼ 쿼리결과' 버튼을 통해 확장되는 리스트에서 추론 구간은
+의미있는 정보가 없는 것으로 확인되었으니, 출력하지 않도록」.
+
+③ 은 **직전 cycle 이 만든 회귀**다 — 단계 수를 2배로 늘려 놓고 소요 칸이 없는 목록에도 그대로
+흘려보냈다. SQL 단계가 별도 블록으로 빠지는 탓에 남은 내부 동작 문구들이 서로 인접해 같은 문장이
+연달아 쌓였다(제보 화면 ×8).
+
+### 변경
+
+| 파일 | symbol | 무엇 |
+|---|---|---|
+| `static/app.js` | `_buildStepActivityRow` (신규) | 내부 동작 = **한 줄** 행(번호·문구·소요). 카드 컨테이너·배지·제목 블록 없음. 시작 시각·사유는 `title` |
+| ″ | `_stepPanelTicker`·`_paintStepPanelLiveTimes`·`_liveDurEl` (신규) | `[data-live-from]` 요소의 **텍스트만** 1초마다 `지금 − 기준시각` 으로 갱신. 대상 없음/패널 닫힘이면 자기 정지 |
+| ″ | `_renderStepSidePanelBody` | activity 분기 · 최하단 실시간 누적 기준점(첫 단계 기록 시각) · 진행 중 경과 티커 · 티커 起停 |
+| ″ | `closeStepSidePanel` | 티커 정리 |
+| `static/app/messages.js` | `bubbleVisibleSteps` (신규) · `renderMessageDetails` · `buildStepBlocks` | 말풍선 목록에서 내부 동작 제외. **여닫이 존재 판정도 같은 집합** — 전량이 내부 동작인 시점의 빈 확장 방지 |
+| `static/css/chat.css` | `.step-side-panel-activity` | flex 한 줄(`nowrap` + `ellipsis`), border·background 없음 |
+
+### 정보를 없애지 않는다
+
+말풍선에서 뺀 내부 동작은 **「단계 보기」 사이드 패널에 그대로 있다**(거기에는 소요 칸이 있고,
+그게 이 행의 존재 이유다). 한 줄로 접은 시작 시각·사유도 `title` 로 남는다 — 지운 게 아니라
+접었다.
+
+### 되돌리기
+
+`_buildStepActivityRow` 분기 1개(`app.js`)와 `bubbleVisibleSteps` 필터 1개(`messages.js`)를
+제거하면 직전 표시로 복귀한다. 티커는 `[data-live-from]` 이 없으면 애초에 돌지 않는다.
+
+### 검증
+
+컨테이너 pytest 전량 green(신규 12건) · node 하네스 18/18 무회귀 ·
+codex 적대 리뷰 2R **P1 0건 수렴**(1R P2 2·P3 1 전건 반영) ·
+PB-0008 실 Windows 브라우저 POST-DEPLOY.

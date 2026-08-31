@@ -3760,6 +3760,9 @@ export function refreshStepSidePanelForRun(runId, steps, { live = false, omitted
 export function closeStepSidePanel() {
   const panel = document.getElementById("stepSidePanel");
   if (panel) panel.classList.add("hidden");
+  // 보이지 않는 화면을 1초마다 다시 쓰지 않는다(티커는 자기 가드로도 멈추지만, 상태를
+  // 바꾼 쪽이 정리까지 책임진다 — 이 모듈의 다른 정리 지점과 같은 규약).
+  _stopStepPanelTicker();
   // 닫을 때 라이브 플래그를 내려 stale-true 가 남지 않게 한다(방어적 — 재오픈 시
   // openStepSidePanel 이 어차피 재계산하지만 의도를 명시).
   state.stepSidePanelLive = false;
@@ -3970,6 +3973,102 @@ export function _computeStepTimings(steps) {
   return result;
 }
 
+//: 진행 중 목록의 실시간 경과 티커. 패널은 **새 단계가 도착할 때만** 다시 그려지므로, 그
+//: 사이의 경과는 이 타이머가 **텍스트만** 갱신한다(재렌더 없음 — 스크롤·펼친 결과셋을
+//: 건드리지 않는다). 사용자 요청 2026-08-31: "최하단의 누적시간은 실시간으로 갱신 … 단순히,
+//: 첫 호출시간과 현재시간의 차이로".
+let _stepPanelTicker = null;
+
+function _stopStepPanelTicker() {
+  if (_stepPanelTicker) {
+    clearInterval(_stepPanelTicker);
+    _stepPanelTicker = null;
+  }
+}
+
+/** `data-live-from`(기준 시각, ms) 을 가진 요소를 "지금 − 그 시각" 으로 다시 쓴다.
+ *
+ *  라벨은 `data-live-label`(예: `"누적 "`). 대상이 없거나 패널이 닫혔으면 스스로 멈춘다 —
+ *  타이머가 화면 없는 채로 영원히 도는 것을 막는다.
+ */
+function _paintStepPanelLiveTimes() {
+  const panel = document.getElementById("stepSidePanel");
+  const body = document.getElementById("stepSidePanelBody");
+  if (!panel || !body || panel.classList.contains("hidden")) { _stopStepPanelTicker(); return; }
+  const nodes = body.querySelectorAll("[data-live-from]");
+  if (!nodes.length) { _stopStepPanelTicker(); return; }
+  const now = Date.now();
+  nodes.forEach((el) => {
+    const from = Number(el.dataset.liveFrom);
+    if (!Number.isFinite(from)) return;
+    el.textContent = `${el.dataset.liveLabel || ""}${_fmtStepDur(Math.max(0, now - from))}`;
+  });
+}
+
+function _startStepPanelTicker() {
+  _stopStepPanelTicker();
+  _paintStepPanelLiveTimes();          // 첫 값은 즉시 — 1초 동안 빈 칸으로 두지 않는다.
+  _stepPanelTicker = setInterval(_paintStepPanelLiveTimes, 1000);
+}
+
+/** 진행 중 값을 `data-live-from` 으로 심은 경과 조각. 티커가 이 요소의 텍스트만 갱신한다. */
+function _liveDurEl(fromTs, label) {
+  const el = document.createElement("span");
+  el.className = "step-live-dur";
+  el.dataset.liveFrom = String(fromTs);
+  el.dataset.liveLabel = label;
+  el.textContent = `${label}${_fmtStepDur(Math.max(0, Date.now() - fromTs))}`;
+  return el;
+}
+
+/** 내부 동작(추론 구간)의 **한 줄** 표시 — 카드 틀·배경·배지 없이.
+ *
+ *  사용자 요청 2026-08-31: "해당 구간이 사이드 바 내부에서 비교적 큰 범위를 차지하는 것으로
+ *  출력되어 최대한 단순한 형태로 … 외곽선 및 배경 없이 한 줄로 출력되어도 문제없습니다.
+ *  목적 자체는 추론에 대한 소요시간을 확보하는 것".
+ *
+ *  그래서 이 행에 남기는 것은 **번호 · 무슨 구간인지 · 소요시간** 뿐이다. 시작 시각·사유·
+ *  상세는 지우지 않고 `title` 로 옮긴다(정보를 없애는 게 아니라 접는다). 누적은 **마지막
+ *  행에서만** 붙인다 — 한 줄 안에 들어가야 하고, 사용자가 요구한 자리도 최하단이다.
+ */
+function _buildStepActivityRow(step, idx, tm, { isRunningNow, cumulativeFrom }) {
+  const row = document.createElement("div");
+  row.className = "step-side-panel-activity";
+  if (isRunningNow) row.classList.add("is-running");
+
+  const numEl = document.createElement("span");
+  numEl.className = "step-side-panel-num";
+  numEl.textContent = `${idx + 1}.`;
+  row.appendChild(numEl);
+
+  const textEl = document.createElement("span");
+  textEl.className = "step-activity-text";
+  textEl.textContent = step.work || step.intent || "내부 동작";
+  row.appendChild(textEl);
+
+  const timeEl = document.createElement("span");
+  timeEl.className = "step-side-panel-time";
+  if (isRunningNow) timeEl.classList.add("is-running");
+  if (Number.isFinite(tm.selfMs)) {
+    timeEl.appendChild(document.createTextNode(
+      `${tm.approx ? "~" : ""}${_fmtStepDur(tm.selfMs)}`));
+  } else if (isRunningNow) {
+    timeEl.appendChild(_liveDurEl(tm.startTs, "진행 중 "));
+  }
+  if (Number.isFinite(cumulativeFrom)) {
+    if (timeEl.childNodes.length) timeEl.appendChild(document.createTextNode(" · "));
+    timeEl.appendChild(_liveDurEl(cumulativeFrom, "누적 "));
+  }
+  if (timeEl.childNodes.length) row.appendChild(timeEl);
+
+  const parts = [];
+  if (Number.isFinite(tm.startTs)) parts.push(`시작 ${_fmtStepClock(tm.startTs)}`);
+  if (step.reason) parts.push(step.reason);
+  if (isRunningNow) parts.push("이 구간은 아직 진행 중입니다 (경과는 1초마다 갱신됩니다)");
+  row.title = parts.join(" · ") || String(step.work || "내부 동작");
+  return row;
+}
+
 function _renderStepSidePanelBody(pending) {
   const body = document.getElementById("stepSidePanelBody");
   const badge = document.getElementById("stepSidePanelBadge");
@@ -4006,7 +4105,31 @@ function _renderStepSidePanelBody(pending) {
   // 갈라 낸 **그 단계가 실제로 돌던 시간**이다(초판의 한 칸 밀림 오귀속 해소 — 그 함수의
   // 주석에 기전과 실측 근거가 있다). 모르는 구간은 숫자를 비운다.
   const timings = _computeStepTimings(steps);
+  // 실시간 누적의 기준점 = **첫 단계의 기록 시각**("첫 호출 시간"). 앞 단계가 생략된 창에서는
+  // 이 값이 "처음" 이 아니므로 티커를 걸지 않는다 — 창 기준 누적을 전체 누적으로 내보내면
+  // 조용히 틀린 수치가 된다(직전 cycle 의 codex P3 와 같은 이유).
+  const anchorTs = (isLive && omitted === 0)
+    ? steps.map((s) => _parseStepTs(s && s.created_at)).find((t) => Number.isFinite(t))
+    : NaN;
   steps.forEach((step, idx) => {
+    const tmNow = timings[idx] || {};
+    const isLastRow = idx === steps.length - 1;
+    const runningNow = isLive && isLastRow && !Number.isFinite(tmNow.selfMs);
+    // 최하단 행의 누적만 실시간으로 흐른다(사용자 요청).
+    //
+    // `idx > 0` 예외의 이유: 단계가 하나뿐이면 누적과 그 단계의 소요가 **같은 값**이라 두 번
+    // 적는 셈이다. 단 그 한 단계가 **이미 끝난 도구**(고정 실측)면 이야기가 다르다 — 그때
+    // 화면에 흐르는 값이 하나도 없어 "첫 호출 이후 얼마나 지났는가" 를 알 수 없다. 그 경우엔
+    // 누적을 붙인다 (codex 적대 리뷰 P2 — 단일 단계 경계).
+    const liveCumFrom = (isLastRow && Number.isFinite(anchorTs)
+                         && (idx > 0 || Number.isFinite(tmNow.selfMs))) ? anchorTs : NaN;
+    // 내부 동작(추론 구간)은 카드가 아니라 **한 줄**이다.
+    if (String((step && step.action) || "") === "activity") {
+      body.appendChild(_buildStepActivityRow(step, idx, tmNow, {
+        isRunningNow: runningNow, cumulativeFrom: liveCumFrom,
+      }));
+      return;
+    }
     const item = document.createElement("div");
     item.className = "step-side-panel-item";
     // reason은 buildStepDetailEl 이 .step-reason 으로 인라인 렌더링하므로
@@ -4023,32 +4146,36 @@ function _renderStepSidePanelBody(pending) {
       badge.textContent = toolLabel(step.tool);
       itemHeader.appendChild(badge);
     }
-    const tm = timings[idx] || {};
     // 진행 중 목록의 **마지막 단계**는 아직 끝나지 않았다 — 소요를 모르는 것이 아니라
-    // 아직 없는 것이다. 숫자를 지어내지 않고 그 사실만 말한다. 이 표기가 없으면 마지막
-    // 내부 동작(추론 중)이 완료된 단계와 구별되지 않아 "멈춘 화면" 으로 읽힌다.
-    const isRunningNow = isLive && idx === steps.length - 1 && !Number.isFinite(tm.selfMs);
+    // 아직 없는 것이다. 종전에는 "진행 중" 만 적고 숫자를 비웠는데, 지금은 1초 티커가
+    // `지금 − 시작` 으로 흘려 준다(사용자가 지정한 산출 방식 — 지어낸 값이 아니다).
+    const tm = tmNow;
+    const isRunningNow = runningNow;
     if (Number.isFinite(tm.startTs)) {
-      const parts = [_fmtStepClock(tm.startTs)];
+      const timeEl = document.createElement("span");
+      timeEl.className = "step-side-panel-time";
+      if (isRunningNow) timeEl.classList.add("is-running");
+      timeEl.appendChild(document.createTextNode(_fmtStepClock(tm.startTs)));
       if (Number.isFinite(tm.selfMs)) {
-        parts.push(`${tm.approx ? "~" : ""}${_fmtStepDur(tm.selfMs)}`);
+        timeEl.appendChild(document.createTextNode(
+          ` · ${tm.approx ? "~" : ""}${_fmtStepDur(tm.selfMs)}`));
       } else if (isRunningNow) {
-        parts.push("진행 중");
+        timeEl.appendChild(document.createTextNode(" · "));
+        timeEl.appendChild(_liveDurEl(tm.startTs, "진행 중 "));
       }
       // 누적은 첫 단계에서 소요와 같은 값이라 중복이다 — 둘째 단계부터 표시한다.
       // ⚠ 앞 단계가 **생략된** 목록에서는 누적을 아예 표시하지 않는다. 기준점이 창의 첫
       //   단계라 "처음부터 누적" 이 아니라 "이 창에서의 누적" 이 되고, 그것을 같은 라벨로
       //   내보내면 조용히 틀린 수치가 된다(codex 적대 리뷰 P3). 모르는 값은 비운다.
-      if (Number.isFinite(tm.cumulativeMs) && idx > 0 && omitted === 0) {
-        parts.push(`누적 ${_fmtStepDur(tm.cumulativeMs)}`);
+      if (Number.isFinite(liveCumFrom)) {
+        timeEl.appendChild(document.createTextNode(" · "));
+        timeEl.appendChild(_liveDurEl(liveCumFrom, "누적 "));
+      } else if (Number.isFinite(tm.cumulativeMs) && idx > 0 && omitted === 0) {
+        timeEl.appendChild(document.createTextNode(` · 누적 ${_fmtStepDur(tm.cumulativeMs)}`));
       }
-      const timeEl = document.createElement("span");
-      timeEl.className = "step-side-panel-time";
-      if (isRunningNow) timeEl.classList.add("is-running");
-      timeEl.textContent = parts.join(" · ");
       // 툴팁은 실제로 표시된 것만 설명한다 — 소요를 못 구한 단계에 "소요" 라고 적으면 거짓말이다.
       timeEl.title = isRunningNow
-        ? "시작 시각 · 이 단계는 아직 진행 중입니다 (소요는 다음 기록이 남으면 표시됩니다)"
+        ? "시작 시각 · 이 단계는 아직 진행 중입니다 (경과는 1초마다 갱신됩니다)"
         : omitted > 0 && Number.isFinite(tm.selfMs)
         ? "시작 시각 · 이 단계 소요 (앞 단계가 생략되어 처음부터의 누적은 표시하지 않습니다)"
         : !Number.isFinite(tm.selfMs)
@@ -4065,6 +4192,10 @@ function _renderStepSidePanelBody(pending) {
   // 내부 결과셋 + 외부 패널 스크롤 복원(동기 + rAF). rAF 로 layout 확정 후 재적용해
   // 가로 스크롤이 layout 미확정 시점의 0-clamp 로 초기화되는 것을 막는다.
   _scheduleStepPanelScroll(body, resultScroll, wasAtBottom, prevScrollTop);
+  // 진행 중 값(누적·진행 중 경과)이 하나라도 실렸으면 1초 티커를 건다. 없으면 걸지 않는다
+  // (완료된 답변의 단계 패널은 정지 화면이어야 한다 — 흐르는 숫자는 거짓이 된다).
+  if (body.querySelector("[data-live-from]")) _startStepPanelTicker();
+  else _stopStepPanelTicker();
 }
 
 export function formatElapsed(ms) {

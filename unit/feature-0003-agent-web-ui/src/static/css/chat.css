@@ -2589,6 +2589,33 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   color: var(--primary-dark);
   font-weight: 600;
 }
+/* live-steps-compact: 내부 동작(추론 구간) **한 줄** 행 — 카드 틀·배경 없이.
+   사용자 요청 2026-08-31: "최대한 단순한 형태로 … 외곽선 및 배경 없이 한 줄로 출력되어도
+   문제없습니다. 목적 자체는 추론에 대한 소요시간을 확보하는 것".
+   `.step-side-panel-item` 과 달리 border·background·padding 을 갖지 않는다. */
+.step-side-panel-activity {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 2px 2px 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  /* 한 줄 보장 — 좁은 패널(최소 300px)에서도 접히지 않는다. */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.step-side-panel-activity .step-activity-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-side-panel-activity .step-side-panel-time {
+  margin-left: 0;   /* 부모 flex 가 자리를 잡는다 — auto 밀어내기 불필요 */
+}
+
 /* live-steps-reasoning: 진행 중 목록이 최신 쪽 창만 담을 때의 절단 고지(무음 절단 금지). */
 .step-side-panel-omitted {
   margin: 0 0 8px;
