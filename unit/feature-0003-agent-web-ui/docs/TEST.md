@@ -3500,3 +3500,25 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   **프론트 자산 변경 0**(`static/**`·`templates/**` diff 없음)이라 `visual_verification_scope`
   check #13 의 hard gate 대상이 아니다. 또한 화면에 보이는 값은 **배포 + 백필 이후**에야 바뀌므로
   지금 브라우저로 보는 것은 이 변경이 아니다. 배포·백필 후 POST-DEPLOY 로 부제 실측을 수행한다.
+
+### Run — 20260831T1445-conv-last-activity-updatedat (POST-DEPLOY: 배포·백필·표면 실측)
+
+- **배포**: `make deploy-web`(scope=all) → `b35fa376`. web-a·web-b 동일 SHA · 워커 3종 동일 SHA ·
+  soak 통과 · 대화 스모크 PASS. **무중단 실측**: 배포 창 caddy `no upstreams available`
+  **0건** · surge 잔존 **0**.
+- **백필**: 대상 19건(마지막 메시지 > `updated_at` + 1분)을 마지막 메시지 시각으로 정정.
+  잔여 drift **0**, 오늘로 밀린 잔재 **0**, 백업 대비 목표값 **19/19 일치**
+  (`artifacts/conv-updatedat-backfill-20260831/{before.tsv,after-all.tsv}`).
+  - **1차 백필은 틀렸고 즉시 정정했다**: `core_conversations` 의 `trg_core_conv_updated_at`
+    (BEFORE UPDATE → `set_updated_at()`, 무조건 `now()`)이 값을 덮어 19행이 전부 실행 시각
+    (15:12:48)으로 밀렸다. `SET LOCAL session_replication_role='replica'` 로 트리거를 우회해
+    의도한 값으로 다시 썼다. 정본 절차는 feature-0002 `CHG-20260831T144500-conv-activity-touch`
+    에 기록.
+- **표면 실측(라이브 배포본 안에서)**: 지목 대화 `20260828073505-be34624d` —
+  DB `updated_at` = `2026-08-31 10:54:39+09` → `_effective_activity_at`(KV 축 없음) →
+  프런트 수신 값 **`2026-08-31T01:54:39.405521+00:00`**(= KST 10:54:39 = 마지막 메시지 시각).
+  `PgRuntimeBackend.touch_conversation` 배포본 존재 확인.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 프론트 자산 변경 0(check #13 skip 판정)
+  이고, 부제 렌더는 서버가 싣는 값 + 기존 `formatDateTime` 경로라 **바뀐 것은 값 하나**다. 그
+  값을 배포본 안에서 직접 실측했다(위). 지목 대화는 사용자 소유라 admin 계정 브라우저 세션으로
+  같은 화면에 도달할 수 없다 — 최종 육안 확인은 사용자 화면에 위임한다.

@@ -11,6 +11,22 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260831T163000-conv-last-activity-postdeploy (POST-DEPLOY 실측 + 백필, doc-only)
+
+**변경**: 문서만 — `docs/{TASK,REPORT,TEST,REVIEW}.md` + feature-0002 `docs/MODIFY.md`. 코드 0.
+
+**기록 내용**:
+- 라이브 배포 `b35fa376`(scope=all) — web-a/b·워커 동일 SHA · 엣지 `no upstreams available` 0건 ·
+  surge 잔존 0 · 대화 스모크 PASS.
+- 기존 19건 `updated_at` 백필 — 마지막 메시지 시각으로 정정, 잔여 drift 0, 백업 대비 19/19 일치.
+- 배포본 안에서 표면 값 실측 — 지목 대화의 프런트 수신 값 `2026-08-31T01:54:39+00:00`
+  (= KST 10:54:39 = 마지막 메시지 시각).
+
+**사후 발견(정정 이력 보존)**: `core_conversations` 의 `trg_core_conv_updated_at`
+(BEFORE UPDATE → `set_updated_at()`, 무조건 `now()`) 때문에 1차 백필이 19행을 실행 시각으로
+밀었고 즉시 정정했다(트리거 우회). 상세·정본 절차는 feature-0002
+`CHG-20260831T144500-conv-activity-touch` 의 「사후 발견」 절.
+
 ## CHG-20260831T144500-conv-last-activity-effective-max
 
 **변경**: `src/routers/_conv_store.py`

@@ -6051,3 +6051,18 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
 - **report-only(정본 소관)**: feature-0043 `REPORT.md` §1 이 아직 「PB-0008 화면 시각검증만 미수행」으로 단정해 같은 파일 §4-A·§10 과 모순 — 사용자향 문안의 '확인했습니다' vs '회원님의 확인이 필요합니다' 를 가르는 근거가 이 정본이라, 모순이 남는 한 매 창 미러가 재오염된다. 「조회 결과 CSV」에서도 `REPORT.md` §7.0 과 `FUNCTION.md` 가 갈려 미러는 보수적으로 미복원 쪽을 적었다.
 - **cache-buster**: 수기 bump 없음. 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며 `bin/deploy-web.sh` 가 baked 이미지의 placeholder 잔존을 ABORT 한다 — cron wrapper 지시문의 'bump 포함' 은 stale(수기 bump 는 배포를 죽인다).
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**.
+
+## REV-20260831T163000-conv-last-activity-updatedat-post [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 + 백필 사후 발견 (doc-only)
+
+- 대상 diff: `feature-0002/docs/MODIFY.md` + `feature-0003/docs/{TASK,REPORT,TEST}.md` — **코드 변경 0**.
+- §18.8 dispatch 표 1행(비정책 doc-only) → panel SKIP.
+- **정정 기록**: 1차 백필이 19행을 실행 시각으로 밀었다. 원인은 `core_conversations` 의
+  `trg_core_conv_updated_at`(BEFORE UPDATE → `set_updated_at()`, 무조건 `now()`) — 사전에 이
+  트리거를 확인하지 않고 `SET updated_at = GREATEST(...)` 를 실행한 판단 오류다. 즉시 관측하고
+  (`updated_at > now() - 20m` 이 정확히 19건) 트리거를 우회해 의도한 값으로 다시 썼으며, 백업과
+  대조해 19/19 일치를 확인했다. 다른 대화로의 파급 0.
+- **일반화**: 파생 타임스탬프 컬럼을 **과거 값으로** 쓰는 작업은 그 컬럼에 걸린 트리거를 먼저
+  조회한다(`pg_trigger`). "UPDATE 하면 그 값이 들어간다" 는 트리거가 있는 테이블에서 성립하지
+  않으며, 실패가 조용하다(오류 없이 다른 값이 들어간다).
+- 결론: 배포·백필·표면 실측 종결. 미실측 1건(PB-0008 육안)은 사유와 함께 명시했고 완료로 오인
+  보고하지 않는다.
