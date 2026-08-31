@@ -571,8 +571,10 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             runner_stale = bool(_deployed and _reported and _reported != _deployed)
         except Exception:
             # 사용자에게는 조용하다(경고를 지어내지 않는다) — 그러나 **로그에는 남긴다**.
-            # 이 자리를 완전히 침묵시켰더니 판정이 왜 안 서는지 추적할 방법이 없었다
-            # (실측 2026-08-31: 커서 재사용 오류가 여기서 통째로 삼켜지고 있었다).
+            # 이 자리를 완전히 침묵시켰더니 판정이 왜 `False` 인지 좁힐 방법이 없었다
+            # (실측 2026-08-31: 결국 예외가 아니라 상주 프로세스가 옛 모듈을 들고 있던
+            #  것이었는데, 그것을 **배제하는 데만** 여러 왕복이 들었다 — 로그 한 줄이
+            #  있었으면 첫 시도에 갈라졌다).
             runner_stale = False
             logging.getLogger(__name__).debug("runner build 대조 실패", exc_info=True)
     return JSONResponse({

@@ -359,8 +359,12 @@ def test_connect_status_exposes_staleness_as_a_single_boolean():
     assert '"runner_stale": runner_stale,' in fn, "연결 상태에 구버전 사실이 없다"
     # 듣고 있을 때만 본다 — 러너가 없으면 지문을 비교할 대상 자체가 없다.
     assert "if listening:" in fn
-    # 판정 실패가 **거짓 경고**가 되지 않는다.
-    assert "runner_stale = False   # 판정 실패는 조용히" in fn
+    # 판정 실패가 **거짓 경고**가 되지 않는다 — 그리고 침묵하되 로그에는 남긴다
+    # (완전히 침묵시켰더니 왜 판정이 안 서는지 추적할 수 없었다 — 실측 2026-08-31).
+    _exc = fn[fn.index("except Exception:"):]
+    _exc = _exc[:_exc.index("return JSONResponse")]
+    assert "runner_stale = False" in _exc, "판정 실패가 거짓 경고로 나간다"
+    assert "exc_info=True" in _exc, "실패를 완전히 침묵시켜 추적할 수 없다"
 
 
 def test_chip_shows_a_distinct_state_for_stale_runner():
