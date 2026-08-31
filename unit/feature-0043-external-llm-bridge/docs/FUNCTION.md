@@ -1185,6 +1185,24 @@ WSL 에서 판정 기준은 **Windows 쪽 등록의 성패**다 — 이 조합�
 xdg 만 성공한 상태가 정확히 이 결함의 모양이었다. Windows 등록이 실패하면 「등록했습니다」라고
 말하지 않고, 사유와 함께 **버튼이 동작하지 않는다는 사실**을 말한다.
 
+##### Windows 파이썬 탐지 — Store 스텁을 건너뛴다 (2026-08-31 5차 제보)
+
+> `python3.exe : Python` … `NativeCommandError`
+
+파이썬을 설치하지 않은 윈도우에도 `…\AppData\Local\Microsoft\WindowsApps\python3.exe` 가
+**2바이트 스텁**으로 존재한다(Microsoft Store 앱 실행 별칭). 실행하면 Store 를 열려고 stderr 에
+`Python` 을 뱉는데, `$ErrorActionPreference='Stop'` 에서 그 stderr 는 **NativeCommandError 로
+던져진다** — `2>$null` 로도 못 막는다(리다이렉션 이전에 오류 레코드가 되기 때문).
+
+그래서 설치가 그 자리에서 죽고 **다음 후보인 진짜 파이썬까지 가보지도 못했다**. 실측: 같은
+머신에 `Python314\python.exe` 가 멀쩡히 있었다.
+
+`Test-PyOk` 는 이제 ① `Source` 가 `\WindowsApps\` 면 **후보에서 제외**하고 ② 네이티브 호출
+구간에서만 `SilentlyContinue` + `try/catch` 로 감싼다(전역 fail-fast 는 그대로). 후보는
+`python3 → python → py`(윈도우 정품 설치에 딸려 오는 런처).
+
+실측 결과: `python3 ok=False` (스텁 제외) → `python ok=True` → 진행.
+
 ##### `.ps1` 은 UTF-8 **BOM** 을 유지한다 (2026-08-31 4차 제보)
 
 > `식에 닫는 ')'가 없습니다.` … `BRIDGE_PROBED_HANDLER='$ProbedHandler' ??auto|none 以??섎굹?ъ빞`
