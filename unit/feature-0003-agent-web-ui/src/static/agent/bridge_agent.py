@@ -354,6 +354,25 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 #: 배급되지 않고, 하트비트 응답의 `runner_update` 가 그 사실을 말한다.
 AGENT_VERSION = "2026.08.31"
 
+
+def _self_build() -> str:
+    """이 **파일 자체**의 지문 12자. 못 읽으면 빈 문자열.
+
+    `AGENT_VERSION` 만으로는 부족하다 (사용자 제보 2026-08-31). 날짜 단위라 **같은 날 여러 번
+    배포된 러너가 전부 같은 버전**이 된다 — 실제로 그날 러너가 세 번 바뀌었고, 사용자는
+    「재설치했는데 목록이 그대로」를 봤다. 서버는 자기가 배포 중인 `static/agent/bridge_agent.py`
+    의 지문을 알고 있으므로, 이 값을 비교하면 "정확히 그 파일인가" 를 판정할 수 있다.
+
+    버전(호환성 축)과 지문(동일성 축)은 다른 질문에 답한다 — 그래서 둘 다 싣는다.
+    """
+    try:
+        import hashlib
+
+        with open(__file__, "rb") as _f:
+            return hashlib.sha256(_f.read()).hexdigest()[:12]
+    except Exception:  # noqa: BLE001  (읽기 실패·경로 부재 — 모르면 빈 값)
+        return ""
+
 #: 이 러너가 다룰 줄 아는 작업 종류.
 #:
 #: `console_jobs` — 관리 콘솔 작업(대화가 아닌 프롬프트 한 덩어리). 신고하지 않으면 서버가
@@ -421,6 +440,9 @@ class Api:
         # 콘솔 작업 배급 자격을 정하고, 낡은 버전이면 응답으로 갱신 경로를 알려 준다.
         body["features"] = list(self.features)
         body["agent_version"] = AGENT_VERSION
+        # 지문은 **동일성** 축이다 (2026-08-31). 날짜 버전이 같아도 파일이 다르면 서버가
+        # 「배포본과 다른 러너가 돌고 있다」를 알 수 있고, 그 사실을 화면이 말해 줄 수 있다.
+        body["agent_build"] = _self_build()
         return self._post("/api/ai/bridge_heartbeat", body, timeout)
 
     def _post(self, path: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
@@ -2209,7 +2231,10 @@ def start_heartbeat(api: Api, stop: threading.Event,
     ⚠ 이 스레드의 `wait` 는 폴링이 아니다 — 서버에서 **아무것도 가져오지 않는다**. 질문 인지는
     여전히 서버 보류(`wait_for_request`)가 하고, 그 즉시성은 이 주기와 무관하다.
     """
+    _stale_said = False
+
     def _loop() -> None:
+        nonlocal _stale_said
         interval = _HEARTBEAT_INTERVAL_SEC
         while not stop.is_set():
             # 능력은 **매번** 싣는다. 처음 한 번만 보내면 서버가 재시작하거나 토큰 행이 갈릴 때
@@ -2233,6 +2258,17 @@ def start_heartbeat(api: Api, stop: threading.Event,
                                    float(res.get("interval_sec") or interval))
                 except (TypeError, ValueError):
                     pass
+                # 배포본과 다른 러너로 돌고 있으면 **한 번** 말한다 (2026-08-31).
+                #
+                # 사용자는 「재설치했는데 목록이 그대로」를 겪었다 — 그날 러너가 세 번 바뀌었고
+                # 버전(날짜)은 셋 다 같아서 어디에도 그 사실이 드러나지 않았다. 30초마다
+                # 반복하면 소음이라 세션당 한 번만 남긴다(그 뒤로는 화면 쪽 안내가 맡는다).
+                _u = res.get("runner_update") or {}
+                if _u.get("stale_build") and not _stale_said:
+                    _stale_said = True
+                    _log("⚠ 실행 중인 러너가 서버 배포본과 다릅니다 — 최신 파일로 다시 받아 "
+                         "실행하세요(웹의 '내 AI 연결하기' → 원클릭 명령). "
+                         "그 전까지는 옛 동작·옛 모델 목록이 그대로 보입니다.")
             stop.wait(interval)
 
     t = threading.Thread(target=_loop, name="bridge-heartbeat", daemon=True)

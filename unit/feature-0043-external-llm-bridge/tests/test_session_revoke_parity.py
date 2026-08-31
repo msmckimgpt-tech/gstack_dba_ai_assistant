@@ -282,11 +282,19 @@ def test_indicator_does_not_poll_when_unlocked():
                      if l.strip() and not l.strip().startswith("//"))
     assert code.count("setInterval") == 1, (
         "연결 상태 폴링이 한 자리가 아니다 — 상시 폴링이 되살아났을 수 있다")
-    # 켜고 끄는 판정이 잠금 상태에 걸려 있어야 한다. `_composeBlocked` 가 아닌 조건으로 켜지면
-    # 잠기지 않은 사용자도 종일 요청을 보낸다.
+    # 켜고 끄는 판정이 **지켜볼 사유**에 걸려 있어야 한다. 사유 없이 켜지면 잠기지 않고
+    # 창도 닫은 사용자가 종일 요청을 보낸다.
+    #
+    # 사유는 둘로 늘었다 (#1447): 컴포저 잠금(원래 축) + 연결 모달 열림(성립 감지).
+    # 잠그는 것은 개수가 아니라 **"사유가 없으면 멎는다"** 이므로, 조건 문자열을 통째로
+    # 박제하지 않고 그 성질을 본다 — 종전 앵커는 사유가 하나 늘자 계약이 그대로인데도 깨졌다.
     sync = code[code.index("function _syncGatePoll("):code.index("function _paintGate(")]
-    assert "_composeBlocked && !_gatePollTimer" in sync, "폴링 시작이 잠금 상태에 걸려 있지 않다"
-    assert "clearInterval" in sync, "잠금이 풀려도 폴링이 멈추지 않는다"
+    assert "_composeBlocked" in sync, "폴링 시작이 잠금 상태를 보지 않는다"
+    assert "!_gatePollTimer" in sync, "이미 도는 타이머 위에 또 건다"
+    assert "clearInterval" in sync, "사유가 사라져도 폴링이 멈추지 않는다"
+    # 켜는 조건과 끄는 조건이 **같은 값의 양면**이어야 한다(따로 쓰면 한쪽만 바뀌어 갈린다).
+    assert "wantPoll && !_gatePollTimer" in sync and "!wantPoll && _gatePollTimer" in sync, (
+        "켜기/끄기 판정이 같은 값에서 나오지 않는다")
     assert "document.hidden" in sync, "배경 탭에서도 계속 요청한다"
 
 
