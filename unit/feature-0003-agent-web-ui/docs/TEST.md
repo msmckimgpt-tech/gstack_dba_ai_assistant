@@ -3530,3 +3530,10 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   이 커밋에서는 **뮤턴트 검증**으로 대체 — 원래 결함을 재주입하자 회귀 2건 FAIL, 되돌리자
   7건 PASS. 사용자가 제보한 정확한 문자열(`⟦UNTRUSTED-DATA⟧`·`[UNTRUSTED]`)이 화면 본문에
   없음을 불변식으로 잠갔다.
+
+### Run — TASK-20260831T190000-job-result-unwrap (POST-DEPLOY 보완)
+
+- **Environment: Windows-browser (PB-0008) + 배포본 컨테이너 직접 실행** — **수행**
+  (배포본 `cac907c4`). 사용자가 제보한 **그 문자열**이 본문 230자만 남고 마커·고지가 전부
+  제거됨을 실측. 폴링 스코프(타 계정 task → 404)도 라이브 확인. 증적:
+  `docs/test-runs.d/TASK-20260831T190000-job-result-unwrap-postdeploy.md`
