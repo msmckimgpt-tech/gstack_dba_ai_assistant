@@ -573,7 +573,12 @@ def test_runner_backs_off_instead_of_spinning_and_stays_alive():
     assert "time.sleep(" in blk, "쉬지 않고 다시 물어 hot loop 가 된다"
     assert "return 4" not in blk, (
         "stall 로 러너를 종료한다 — 진행 중이던 다른 워커의 답변까지 잃는다")
-    assert "WARN" in blk, "조용히 돌기만 하고 사용자에게 알리지 않는다"
+    # 잠그려는 성질은 「**눈에 띄는 심각도로** 알린다」이지 `WARN` 이라는 글자가 아니다.
+    # 로그가 구조화되며(TASK-20260901T163000) 이 자리는 `level="ERROR"` 가 됐다 — 종전보다
+    # 강한 신호인데 글자 검사만 보면 «알리지 않는다» 로 읽혔다. 성질로 검사한다.
+    assert ('level="ERROR"' in blk or 'level="WARN"' in blk or "WARN" in blk), \
+        "조용히 돌기만 하고 사용자에게 알리지 않는다"
+    assert "task.stalled" in blk, "사건 코드가 없으면 이 상태를 로그에서 걸러낼 수 없다"
 
 
 def test_runner_keeps_listening_for_cancels_while_workers_are_busy():
