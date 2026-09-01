@@ -6,10 +6,20 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-stale-runner-outraces-fresh-one — fixed:undeployed (L4↔L7 경계; 서버가 «낡았다» 를 알고도 점유를 내줘 사용자의 갱신 조치가 무효화)
+## FR-stale-runner-outraces-fresh-one — fixed:deployed:unverified-live (L4↔L7 경계; 여러 러너 중 «누가 정본인가» 에 답이 없어 옛 연결이 질문을 가로채고 연결 모달도 완수되지 않음)
 
-- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 20 · 뮤테이션 5종 KILL · 4 feature 전량
-  rc=0 · ruff clean). 배포·라이브 실측 미수행.
+- **status**: `fixed:deployed:unverified-live` — **2단계**로 해소.
+  - **1차**(PR #1491, 배포 `0f89132e`): 양보 판정 + 집행(`claim_request` 409) + 억제(목록·대기)
+    + 러너 자가 종료 신호. 단 판정축을 **빌드 지문**으로 잡았다.
+  - **2차 축 정정**(`CHG-20260901T183000`): 사용자 재현(`root` → `claude-corp` 연속 연결)에서
+    **두 러너의 지문이 같아** 1차 판정이 무판정이었다. 사용자가 준 규칙은 처음부터 «연결 순서»
+    였다 → 축을 **토큰 발급 순서**로 교체. 같은 뿌리의 두 번째 증상(연결 모달이 닫히지 않음)은
+    `account_runner_build` 의 하트비트 정렬이 만든 `runner_stale` **진동**이었고, 화면 정본도
+    같은 축(`ORDER BY t.Id DESC`)으로 옮겨 해소했다.
+  - 검증: 23건 · 뮤테이션 4종 KILL(⚠ 최초 M1 생존 → 테스트 더블 판별력 보강 후 KILL) ·
+    4 feature rc=0 · ruff clean.
+- **교훈(일반화)**: 사고 하나에서 축을 뽑으면 그 사고의 **우연한 속성**이 규칙에 섞인다.
+  사용자가 규칙을 문장으로 줬을 때는 그 문장을 축으로 삼아야 한다.
 - **source**: 사용자 재보고 (2026-09-01) — "웹페이지 새로고침, 연결 준비를 통해 러너를 다시
   연결한 후 요청을 보냈지만 같은 이슈가 확인되어 조치가 필요합니다".
 - **last_seen**: 2026-09-01 · **seen_count**: 1 · **seen_distinct_conv**: 1

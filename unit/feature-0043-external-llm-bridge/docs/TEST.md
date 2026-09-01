@@ -171,6 +171,14 @@ source_of_truth: true
 | TEST-20260901T173000-superseded | 하트비트 · 러너 | `superseded` ≠ `stale_build` · 러너는 **하던 일을 마치고** 대기 호출 앞에서 종료 | AC-20260901T173000-stale-runner-yield-7 |
 | TEST-20260901T173000-account | 판정 질의 | 계정 스코프 — 다른 계정 러너 병존은 허용(사용자 결정) | AC-20260901T173000-stale-runner-yield-8 |
 
+| TEST-20260901T183000-order | `stale_runner_must_yield` | **빌드가 같아도** 나중 연결이 이긴다(직전 축이 놓친 구멍) | AC-20260901T183000-newest-runner-wins-1 |
+| TEST-20260901T183000-lone | `stale_runner_must_yield` | 러너가 하나면 계속 일한다 | AC-20260901T183000-newest-runner-wins-2 |
+| TEST-20260901T183000-label | `stale_runner_must_yield` | 지문은 라벨 — 못 읽어도 판정은 선다 | AC-20260901T183000-newest-runner-wins-3 |
+| TEST-20260901T183000-mcp | `stale_runner_must_yield` | 하트비트 이력 없는 토큰(등록형 MCP)은 당사자가 아니다 | AC-20260901T183000-newest-runner-wins-4 |
+| TEST-20260901T183000-nowobble | `account_runner_build` | 화면 정본이 **연결 순서** 축 — `runner_stale` 진동 소멸(모달 닫힘) | AC-20260901T183000-newest-runner-wins-5 |
+| TEST-20260901T183000-sameaxis | 화면·양보 | 두 판정이 **같은 축**을 쓴다(갈리면 하나는 거짓말) | AC-20260901T183000-newest-runner-wins-6 |
+| TEST-20260901T183000-account | 후보 질의 | 계정 스코프 — 다른 계정 러너 병존 허용 | AC-20260901T183000-newest-runner-wins-7 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

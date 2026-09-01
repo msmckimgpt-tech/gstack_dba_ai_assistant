@@ -26,11 +26,18 @@ UPDATE 라 「누가 먼저 폴링했는가」가 승자를 정하고, 서버는
 지금 문제를 일으키는 그 프로세스에는 영원히 닿지 않는다. 서버 판정만이 러너 갱신 없이
 즉시 발효한다.
 
-## 왜 «절대» 가 아니라 «상대» 판정인가
+## 판정축 정정 (2026-09-01, 사용자 재현으로 드러남)
 
-배포 직후에는 **모든** 사용자의 러너가 배포본과 다르다. 「낡았으면 거절」을 절대 규칙으로
-두면 매 배포가 전 사용자 서비스 중단이 된다. 그래서 **같은 계정에 최신 러너가 실제로 듣고
-있을 때만** 양보시킨다 — 단독 러너는 낡았어도 종전대로 일한다.
+첫 구현은 **빌드 지문**으로 판정했다(사고 당시 두 러너의 빌드가 달랐다). 그 축은 **러너 둘이
+같은 빌드면 아무 판정도 세우지 못한다** — 사용자가 `root` → `claude-corp` 순으로 연속 연결하자
+둘 다 최신 빌드였고, 옛 연결은 끝나지 않았으며 연결 모달도 닫히지 않았다.
+
+사용자가 요구한 규칙은 처음부터 **연결 순서**였다: 「연결된 계정에서 다른 신규 러너에
+연결되는 부분이 확인된다면 오래된 러너는 프로세스를 종료 … 계정이 다를 경우는 예외」.
+토큰 행은 「연결 준비」마다 새로 발급되므로 `Id` 순서가 곧 연결 순서다.
+
+이 축은 「배포 직후 전 사용자 중단」 위험과 무관하다 — 발동 조건이 «러너가 둘 이상» 이지
+«낡았다» 가 아니기 때문이다. 러너가 하나면 후보가 없어 종전대로 일한다.
 """
 from __future__ import annotations
 
@@ -60,13 +67,18 @@ def _store():
 class _Cur:
     """`stale_runner_must_yield` 가 쏘는 두 질의에만 답하는 최소 더블.
 
-    ⚠ `%s` 개수와 넘어온 파라미터 개수를 **매 실행 검증**한다. 이 검증이 없으면 arity 가
-    어긋난 질의가 조용히 «조건 불일치» 로 떨어져, 실제로는 판정이 죽었는데 테스트는
-    「양보 안 함」을 정상으로 읽는다(이 저장소가 이미 겪은 함정).
+    ⚠ **후보 질의의 술어를 실제로 평가한다.** 처음엔 「peer 행이 있으면 무조건 반환」이었는데,
+    그 더블은 후보 조건을 하나 더 좁히는 뮤턴트(예: `RunnerBuild <> %s` 추가 = 축을 빌드로
+    되돌리기)를 **전부 통과시켰다** — 판별력 없는 더블은 그 자체가 거짓 통과 장치다.
+    지금은 더블이 `Id > %s` 와 (질의가 언급할 때만) `RunnerBuild` 비교를 직접 계산한다.
+
+    ⚠ `%s` 개수와 넘어온 파라미터 개수도 매 실행 검증한다 — arity 가 어긋난 질의는 조용히
+    «조건 불일치» 로 떨어져, 판정이 죽었는데 「양보 안 함」이 정상으로 읽힌다.
     """
 
-    def __init__(self, mine: str | None, peer_rows: list):
-        self.mine, self.peer_rows = mine, peer_rows
+    def __init__(self, mine, peers: list, my_id: int = 100):
+        #: peers = [(token_id, runner_build), …] — 계정 안의 **다른** 토큰들.
+        self.mine, self.peers, self.my_id = mine, peers, my_id
         self.queries: list[tuple[str, tuple]] = []
         self._row = None
 
@@ -75,9 +87,13 @@ class _Cur:
             f"파라미터 개수 불일치: %s {sql.count('%s')}개 vs 인자 {len(params)}개")
         self.queries.append((sql, tuple(params)))
         if "t.TokenHash = %s" in sql and "AccountId" not in sql:
-            self._row = (self.mine,) if self.mine is not None else None
-        else:
-            self._row = self.peer_rows[0] if self.peer_rows else None
+            self._row = (self.my_id, self.mine) if self.mine is not None else None
+            return
+        # 후보 질의 — 질의가 실제로 거는 조건만 평가한다.
+        hits = [pr for pr in self.peers if pr[0] > self.my_id]
+        if "RunnerBuild" in sql:
+            hits = [pr for pr in hits if pr[1] != (self.mine or "")]
+        self._row = (1,) if hits else None
 
     def fetchone(self):
         return self._row
@@ -93,49 +109,61 @@ def _yield_to(mine, peers, deployed=DEPLOYED, token="tok"):
 # ── 판정 ──────────────────────────────────────────────────────────────────────
 
 
-def test_live_case_stale_runner_yields_to_fresh_peer():
-    """라이브 재현: 옛 러너 + 같은 계정의 최신 러너 → 양보한다."""
-    assert _yield_to(STALE, [(1,)]) == STALE
+def test_older_connection_yields_to_newer_one():
+    """라이브 재현: 먼저 연결된 러너 + 나중에 연결된 러너 → 먼저 쪽이 양보한다."""
+    assert _yield_to(STALE, [(200, DEPLOYED)]) == STALE
 
 
-def test_lone_stale_runner_keeps_working():
-    """최신 러너가 **없으면** 낡아도 계속 일한다 — 배포 직후 전 사용자 중단 방지."""
+def test_lone_runner_keeps_working():
+    """나중 연결이 **없으면** 계속 일한다 — 러너 하나뿐인 정상 운영은 불변."""
     assert _yield_to(STALE, []) == ""
 
 
-def test_fresh_runner_never_yields():
-    assert _yield_to(DEPLOYED, [(1,)]) == ""
+def test_same_build_runners_still_compete_by_connection_order():
+    """⭐ 축 정정의 핵심: **빌드가 같아도** 나중 연결이 이긴다.
+
+    첫 구현(빌드 지문 축)은 이 경우를 통째로 놓쳤고, 그것이 사용자 재현에서 드러난 결함이다.
+    """
+    assert _yield_to(DEPLOYED, [(200, DEPLOYED)]) == DEPLOYED
 
 
-def test_no_fingerprint_reported_is_not_a_verdict():
-    """지문을 신고하지 않는 구 러너는 «다르다» 고 말할 근거가 없다(fail-open)."""
-    assert _yield_to("", [(1,)]) == ""
-    assert _yield_to(None, [(1,)]) == ""
-
-
-def test_unknown_deployed_build_is_not_a_verdict():
-    assert _yield_to(STALE, [(1,)], deployed="") == ""
+def test_verdict_does_not_depend_on_the_deployed_fingerprint():
+    """지문은 안내 라벨일 뿐 — 못 읽어도 판정은 선다."""
+    assert _yield_to(DEPLOYED, [(200, DEPLOYED)], deployed="") == DEPLOYED
+    assert _yield_to("", [(200, DEPLOYED)]) == "unknown"
 
 
 def test_missing_token_or_account_is_not_a_verdict():
     st = _store()
-    assert st.stale_runner_must_yield(_Cur(STALE, [(1,)]), "", 10, DEPLOYED) == ""
-    assert st.stale_runner_must_yield(_Cur(STALE, [(1,)]), "tok", 0, DEPLOYED) == ""
+    assert st.stale_runner_must_yield(_Cur(STALE, [(200, DEPLOYED)]), "", 10, DEPLOYED) == ""
+    assert st.stale_runner_must_yield(_Cur(STALE, [(200, DEPLOYED)]), "tok", 0, DEPLOYED) == ""
+
+
+def test_a_client_that_never_heartbeats_is_not_a_party_to_this():
+    """등록형 MCP 클라이언트(하트비트 없음)는 순서 다툼의 당사자가 아니다.
+
+    그것까지 «오래된 연결» 로 세면 러너를 새로 띄우는 순간 무설치 계약 경로가 조용히 죽는다.
+    """
+    st = _store()
+    assert st.stale_runner_must_yield(_Cur(None, [(200, DEPLOYED)]), "tok", 10, DEPLOYED) == ""
+    body = (_WEB_SRC / "oauth_store.py").read_text(encoding="utf-8").split(
+        "def stale_runner_must_yield", 1)[1].split("\ndef ", 1)[0]
+    assert body.count("LastHeartbeatAt IS NOT NULL") == 2, \
+        "양쪽 모두 «하트비트한 적 있는» 토큰이어야 한다"
 
 
 # ── 최신 러너 후보의 자격 (굶기지 않기 위한 자물쇠) ────────────────────────────
 
 
 def test_peer_lookup_excludes_self_and_requires_live_fresh_heartbeat():
-    """비교 대상은 **남**이고, 살아 있고, 하트비트가 창 안이어야 한다.
+    """비교 대상은 **나중에 연결됐고**, 살아 있고, 하트비트가 창 안이어야 한다.
 
     셋 중 하나라도 빠지면 죽은 행 하나가 멀쩡한 러너를 영구히 굶긴다.
     """
-    cur = _Cur(STALE, [(1,)])
+    cur = _Cur(STALE, [(200, DEPLOYED)])
     _store().stale_runner_must_yield(cur, "tok", 10, DEPLOYED)
     peer_sql = cur.queries[-1][0]
-    assert "t.TokenHash <> %s" in peer_sql, "자기 자신을 «다른 러너» 로 셌다"
-    assert "t.RunnerBuild = %s" in peer_sql, "배포본과 같은 지문만 세야 한다"
+    assert "t.Id > %s" in peer_sql, "«나중에 연결된» 조건이 없다 — 자기 자신도 후보가 된다"
     assert "LastHeartbeatAt IS NOT NULL" in peer_sql and "DATE_SUB" in peer_sql, \
         "하트비트 신선도를 보지 않으면 죽은 행이 후보가 된다"
     assert "_LIVE" not in peer_sql and "RevokedAt IS NULL" in peer_sql, \
@@ -279,3 +307,39 @@ def test_served_runner_matches_canonical():
     served = _UNIT / "feature-0003-agent-web-ui" / "src" / "static" / "agent" / "bridge_agent.py"
     assert hashlib.sha256(served.read_bytes()).hexdigest() == \
         hashlib.sha256(RUNNER.read_bytes()).hexdigest()
+
+
+# ── 연결 모달이 닫히지 않던 결함 (같은 축) ────────────────────────────────────
+
+
+def test_account_runner_build_picks_the_newest_connection_not_the_latest_beat():
+    """⭐ `runner_stale` 진동 해소 — 화면이 말하는 러너 = 실제로 처리할 러너.
+
+    러너가 둘 붙어 있고 지문이 다르면, **하트비트 기준** 정렬은 30초마다 승자가 바뀌어
+    `runner_stale` 이 진동한다. 연결 모달은 `listening && !stale` 을 성공 신호로 쓰므로,
+    진동하는 동안 그 조건이 안정적으로 서지 않아 **연결이 완수되지 않는다**
+    (사용자 제보 2026-09-01: root → claude-corp 연속 연결 시 모달이 닫히지 않음).
+    """
+    body = (_WEB_SRC / "oauth_store.py").read_text(encoding="utf-8").split(
+        "def account_runner_build", 1)[1].split("\ndef ", 1)[0]
+    code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+    assert "ORDER BY t.Id DESC" in code, "하트비트 기준 정렬이면 두 러너 사이에서 진동한다"
+    assert "ORDER BY t.LastHeartbeatAt DESC" not in code
+
+
+def test_display_axis_and_yield_axis_are_the_same():
+    """화면 정본과 점유 양보가 **같은 축**을 쓴다 — 갈리면 둘 중 하나가 반드시 거짓말이다."""
+    src = (_WEB_SRC / "oauth_store.py").read_text(encoding="utf-8")
+    for fn in ("account_runner_build", "stale_runner_must_yield"):
+        body = src.split(f"def {fn}", 1)[1].split("\ndef ", 1)[0]
+        code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+        assert "t.Id" in code, f"{fn} 이 연결 순서 축을 쓰지 않는다"
+
+
+def test_superseded_signal_is_connection_order_not_build():
+    """자가 종료 신호도 같은 축이어야 한다 — 빌드가 같아도 옛 연결은 물러난다."""
+    hb = AI_TOOLS.read_text(encoding="utf-8").split(
+        "def bridge_heartbeat(", 1)[1].split("\n@router.", 1)[0]
+    assert '"superseded": bool(_superseded_by)' in hb
+    # 판정은 양보 판정과 **같은 함수**를 부른다(두 벌이면 축이 갈린다).
+    assert "_stale_runner_yield_to(" in hb
