@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T121000-interrupt-preserve-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
+
+- **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + TASK/MODIFY/REPORT).
+  §18.8 dispatch 표의 어느 축(backend/qa/ux/design/security)도 매칭되지 않는다.
+- **채널**: doc-only 이므로 패널 대상 아님. 기록의 근거는 **실측 그 자체**다 — 서빙 사본
+  fetch 결과(D1~D4)와 Playwright 클릭 실패 로그(`element is not enabled`).
+
+### 판단 — 「미검증」을 적는 것이 이 기록의 요지
+
+도달 4/4 가 PASS 이고 계약 테스트 40건과 뮤테이션 4종이 통과했으므로, 이 상태를 "완료" 로
+적고 넘어갈 수 있었다. 그렇게 하지 않은 이유는 **각 축이 서로를 대신하지 못하기** 때문이다:
+
+- 계약 테스트는 함수가 옳음을 말한다 — 사용자가 그 함수에 도달하는지는 말하지 않는다.
+- 도달 확인은 자산이 브라우저에 왔음을 말한다 — 그 화면이 의도대로 움직이는지는 말하지 않는다.
+- 왕복 검증만이 마지막 축을 덮는데, 그것이 **러너 미연결로 불가능**했다.
+
+이 구분을 흐리면 다음 세션이 fragment 를 보고 "검증됐다" 로 읽는다. 그래서 §3 에 축별
+검증/미검증 표를 두고, 미수행 사유를 추정이 아니라 **관측된 문자열**(`is-access-blocked`,
+`element is not enabled`, `pgrep` 무응답)로 남겼다.
+
+**재개 조건이 사람 자격에 걸려 있다**: 러너 재기동에는 웹에서 사람이 발급하는 `mat_` 토큰이
+필요하고 러너는 그것을 저장하지 않는다. AI 세션이 단독으로 넘을 수 있는 문턱이 아니므로
+BLOCKED 로 위장하지 않고 **이월**로 적는다(측정 항목은 이미 사전 열거돼 있어, 연결 직후
+그대로 수행하면 된다).
+
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
 ## REV-20260901T031500-interrupt-preserve-bridge [SKIPPED:upstream-tool-carveout] — 라이브 실경로(브리지)까지 보존을 넓힌 근거

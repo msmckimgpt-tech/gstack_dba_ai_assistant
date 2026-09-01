@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T121000-interrupt-preserve-postdeploy (POST-DEPLOY 실측 기록, doc-only)
+
+**변경**: 문서만 — `docs/{TASK,REPORT}.md` + 신규 `docs/test-runs.d/TASK-20260901T121000-…md`. 코드 0.
+
+**기록 내용**: 배포 `b793e7ea` 에서 프런트 자산·외부 스펙 **도달 4/4 PASS**(서빙 사본 직접
+fetch). 중단 왕복 12항목은 **미수행** — 개인 AI 러너 미연결로 `#sendBtn` 이 차단되어 진행 중
+run 을 만들 수 없다(실측 근거를 fragment 에 기록). "계약이 옳고 자산이 도달했다" 가 "사용자가
+그 화면을 본다" 를 대신하지 않으므로 미검증 축을 명시적으로 남긴다.
+
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
 ## CHG-20260901T031500-interrupt-preserve-bridge — 중단 보존을 브리지(개인 AI) 경로까지
