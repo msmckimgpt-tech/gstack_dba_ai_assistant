@@ -209,3 +209,6 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 | TEST-20260901T163000-windows | `_human_log_path` (실 서브프로세스) | stderr 가 다른 곳이면 러너가 직접 쓴다 — Windows 설치본의 «증거 0» 복구 | AC-20260901T163000-runner-log-5 |
 | TEST-20260901T163000-rotate | `_rotate_if_needed` | 상한 초과 시 회전 + 세대 정리 · 원장 권한 0600 | AC-20260901T163000-runner-log-6 |
 | TEST-20260901T163000-codes | `_EV_*` | 사건 코드가 상수로 선언되고 `계층.동작` 형태 · task 축 이벤트가 `task` 키를 공유 | AC-20260901T163000-runner-log-1 |
+
+| TEST-20260901T170000-stop-last | `_arm_exit_release` (실 프로세스 종료) | `run.stop` 이 **마지막 줄** · 해제가 그 앞 · 집계에 해제가 실림. 구코드 FAIL 재현 확인 | AC-20260901T163000-runner-log-2 |
+| TEST-20260901T170000-stop-order | `bridge_agent.py` 소스 | 요약 등록이 해제 등록보다 **앞**(atexit 역순 계약을 이름으로 고정) | AC-20260901T163000-runner-log-2 |

@@ -2698,7 +2698,19 @@ stderr 에 **의미 있는** 줄이 있으면 그것, 없으면 stdout. 둘 다 
 그래서 (a) ALTER 를 fast path 도 타는 `_ensure_bridge_heartbeat_schema` 로 옮기고, (b) 토큰 행
 `RunnerOs` 를 한 겹 두어 **연결 사건일 때만** 계정에 반영하도록 바꿨다. (b) 는 덤으로 폐기 토큰의
 계정 쓰기(P2-5)까지 막는다 — 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문이다.
+## CHG-20260901T170000-runner-log-atexit-order — 종료 요약을 진짜 마지막 줄로
 
+- **날짜**: 2026-09-01
+- **REQ**: CHG-20260901T163000 의 POST-DEPLOY 실측이 적발
+- **위험도**: Minor (`atexit` 등록 두 줄 순서 + 회귀 2건)
+- **변경 파일**: `bridge_agent.py`(+배포 사본) · `tests/test_bridge_log_structure.py`
+
+`atexit` 역순 실행을 주석에 **반대로** 적어 두고 그대로 등록했다. 배포본 `--check` 종료
+로그가 `run.stop` → `api.fail` 순으로 남아 드러났다. 요약을 먼저 등록해 마지막에 실행되게 한다.
+
+교훈 하나 더: 이 결함의 첫 회귀 테스트가 vacuous 했다(테스트 스크립트가 핸들러를 직접
+등록해 제품 경로를 안 탔다 — 구코드에서도 통과). 순서는 `_arm_exit_release` 의 성질이므로
+그 함수를 불러야 관측된다. **구코드에서 FAIL 을 재현하고 나서야** 그 테스트를 믿었다.
 ## CHG-20260901T170000-ai-claude-feature-0043-connect-os-postdeploy — POST-DEPLOY 실측 기록
 
 - **날짜**: 2026-09-01
