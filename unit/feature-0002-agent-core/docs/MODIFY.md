@@ -3108,3 +3108,22 @@ Task-Cycle: feature-0002-agent-core
   문자열 인덱스로 호출 순서를 판정하면 주석·독스트링이 답을 바꾼다.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T183000-kb-external-reach-f2-live — F2 L0 증거층 라이브 실증 (doc-only)
+
+코드 변경 0. 직전 POST-DEPLOY 기록에서 **보류**로 남겼던 F2 실효를 실측으로 확정한 기록.
+
+- 배포본(`insight-worker`, `GIT_COMMIT=5a4d49fc`) 안에서 planner → 수집 경로를 그대로 구동:
+  `select_priority_targets('mssql-06656002eda6','atum2_db_1')` → 9 대상 →
+  `_collect_priority_stats(...)` → 반환 9 · `report['stats_collect_attempted'] == 9`.
+- 결과: `metadata_table_stats` **243→252** · `metadata_column_stats` **2,252→2,392** ·
+  `collected_at` **2026-08-26 14:09 → 2026-09-01 18:26**. **전환일 이후 첫 수집**이며,
+  같은 시각 `[llm-gate] 서버 계정 LLM 호출 차단` 로그가 함께 찍혔다 — **게이트가 닫힌 채로
+  수집이 됐다**는 것이 이 변경의 계약이다.
+- ⚠ 자연 사이클 유입은 아직 0. 원인은 코드가 아니라 **호출 조건**이다 —
+  `_seed_coverage_targets` 는 「구조 변경 없는」 사이클의 else 분기에서만 불리고 그 앞에 성공한
+  datasource 스캔이 필요한데, 라이브 datasource 다수가 접속 실패다(기존 환경 문제).
+  「경로가 작동한다」와 「그 경로가 얼마나 자주 불리는가」는 다른 축이고, 후자는 F6 의 몫이다.
+- 증적: `feature-0003/docs/test-runs.d/20260901T160000-kb-external-reach-visual.md` Run 8.
+
+Task-Cycle: feature-0002-agent-core
