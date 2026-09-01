@@ -2376,7 +2376,7 @@ async function _runBulkDownload(convId, format, scope, progressEl) {
  * @param {number} count     계보 수
  * @returns {{el: HTMLElement, body: HTMLElement, cmpBtn: HTMLButtonElement}}
  */
-function _attachLineageGroupCard(filename, count) {
+function _attachLineageGroupCard(filename, count, icon) {
   const el = document.createElement("div");
   el.className = "attach-lineage-group";
   // codex P2: **시각적 enclosure 를 접근성 트리에도 전달한다**. 카드가 맨 `div` 면 스크린리더는
@@ -2386,6 +2386,12 @@ function _attachLineageGroupCard(filename, count) {
   el.setAttribute("aria-label", `${filename || "파일"} — 같은 이름의 계보 ${count}개`);
   const head = document.createElement("div");
   head.className = "attach-lineage-group-head";
+  // REQ-20260901-attach-lineage-uploader: 종류 아이콘도 **카드 머리에서 한 번**. 멤버 행마다
+  // 같은 아이콘을 되풀이하던 것을 여기로 올렸다(행은 갈래를 가르는 정보만 진다).
+  const iconEl = document.createElement("span");
+  iconEl.className = "attach-lineage-group-icon";
+  iconEl.setAttribute("aria-hidden", "true");   // 장식 — 접근성 이름은 카드 aria-label 이 진다
+  iconEl.textContent = icon || "📎";
   const nameEl = document.createElement("span");
   nameEl.className = "attach-lineage-group-name";
   nameEl.textContent = filename || "파일";
@@ -2402,7 +2408,13 @@ function _attachLineageGroupCard(filename, count) {
   cmpBtn.textContent = "⇄ 계보 비교";
   cmpBtn.title = `${filename} 의 계보 ${count}개를 나란히 비교합니다`;
   cmpBtn.setAttribute("aria-label", `${filename || "파일"} 의 계보 비교`);
-  head.append(nameEl, countEl, cmpBtn);
+  // 아이콘과 파일명은 **한 덩어리**로 묶는다. 따로 두면 머리가 wrap 될 때 아이콘만 자기 줄로
+  // 떨어져 나가 파일명과 분리된다(라이브 실측 240~300px). 묶으면 그 덩어리가 통째로 줄고
+  // 파일명이 말줄임되며, 칩들은 오른쪽에 붙어 있다가 정말 좁을 때만 다음 줄로 접힌다.
+  const titleEl = document.createElement("span");
+  titleEl.className = "attach-lineage-group-title";
+  titleEl.append(iconEl, nameEl);
+  head.append(titleEl, countEl, cmpBtn);
   const body = document.createElement("div");
   body.className = "attach-lineage-group-body";
   el.append(head, body);
@@ -2447,6 +2459,9 @@ async function _loadConversationAttachmentList(convId) {
   try {
     const resp = await apiFetch(
       `/api/conversations/${encodeURIComponent(convId)}/attachments${isTrash ? "?state=deleted" : ""}`);
+    // codex P2: **늦게 온 응답은 버린다.** 대화를 옮긴 뒤 이전 대화의 첨부가 새 화면에
+    // 그려지면, 목록 자체가 남의 대화 것이 된다(계보 라벨의 공유/1:1 판정만의 문제가 아니다).
+    if (state.activeConversationId !== convId) return;
     const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
     if (arr.length === 0) {
       // 0건일 때는 안내를 띄우지 않는다 — "삭제한 첨부입니다" 와 "삭제한 첨부가 없습니다"
@@ -2512,6 +2527,15 @@ async function _loadConversationAttachmentList(convId) {
     }
     // 파일명 → 그 그룹의 카드(첫 멤버에서 만들고 나머지 멤버가 재사용).
     const _groupCards = new Map();
+    // REQ-20260901-attach-lineage-uploader: 업로더 이름은 **공유 대화에서만** 뜻이 있다
+    // (1:1 은 늘 자기 자신 — 이름을 붙이면 정보 0 인 문자열이 좁은 이름줄을 먹는다).
+    // 판정은 저장소 단일 술어를 쓴다 — 사이드바 그룹 배지·전송 라우팅과 같은 신호.
+    //
+    // ⚠ codex P2: 판정 대상은 **이 응답이 속한 대화**(`convId`)이지 «지금 화면의 대화» 가
+    //   아니다. 응답이 늦게 오는 사이 대화를 옮기면, 그룹 A 의 행이 1:1 B 의 성격으로 분류돼
+    //   업로더명이 사라지거나(반대로) 1:1 목록에 이름이 붙는다.
+    const _convForList = (state.conversations || []).find((c) => c && c.id === convId) || null;
+    const _isShared = isGroupConversation(_convForList);
     for (const a of _orderedArr) {
       // ② TASK-0285: 각 첨부의 버전 현황 표면화. wrapper(entry)로 감싸 가로 row(item) 아래에
       // 버전 이력 펼침 박스를 둔다(item 은 flex 가로 정렬이라 직접 자식으로 두면 깨짐).
@@ -2537,6 +2561,9 @@ async function _loadConversationAttachmentList(convId) {
       const _linTotal = _sibs.length;
       const _linIdx = Math.max(1, _sibs.findIndex((x) => Number(x.id) === Number(a.id)) + 1);
       const _hasSiblings = _linTotal > 1;
+      // 업로더 표시명. 서버가 해소하지 못하면 빈 값 — 호출부가 「업로더 미상」으로 적는다
+      // (없는 이름을 만들지 않는다).
+      const _upName = String(a.uploader_username || "").trim();
       // codex P1: **파생 관계는 데이터가 뒷받침할 때만 주장한다**.
       //
       // 목록을 파일명으로 묶는 것 자체는 옳다 — 목록은 계보당 head 한 행이고, 사용자가 찾는
@@ -2559,14 +2586,15 @@ async function _loadConversationAttachmentList(convId) {
         const _fromRow = _rowById.get(_originId);
         // 분기 부모를 **사람이 아는 말**로 되짚는다. 부모가 목록에 없으면(삭제·중간 버전)
         // 아는 만큼만 말한다 — 모르는 것을 지어내지 않는다.
-        // ⚠ 소유권을 단정하지 않는다(codex P2). 목록 payload 에는 업로더 account_id 가 없어
-        //   그룹 대화에서 **다른 멤버가 올린 파일도 "내 파일"** 이라고 말하게 된다.
-        //   아는 것은 "사람이 올렸나 / AI 가 만들었나" 뿐이므로 딱 그만큼만 말한다.
+        // REQ-20260901-attach-lineage-uploader: 이제 **누가 올렸는지 안다**(payload
+        //   `uploader_username`). 선행 cycle 의 "소유권 단정 금지" 는 *데이터가 없어서* 였지
+        //   원칙이 아니었다 — 사실이 생겼으니 그 사실만큼 말한다. 여전히 지어내지는 않는다:
+        //   이름이 해소되지 않으면 「업로더 미상」이지 「내 파일」이 아니다.
         const _origin = _originId
           ? (_fromRow
             ? `${_fromRow.is_assistant_generated ? "AI 파일" : "업로드한 파일"}에서 갈라진 계보`
             : "다른 파일에서 갈라진 계보")
-          : (isAi ? "AI가 만든 계보" : "사용자가 올린 계보");
+          : (isAi ? "AI가 만든 계보" : (_upName ? `${_upName} 님이 올린 계보` : "사용자가 올린 계보"));
         const _linTitle =
           `같은 이름의 계보 ${_linTotal}개 중 ${_linIdx}번째 — ${_origin} · 파일 ${verCount}개`;
         // REQ-20260831-attach-lineage-visibility: 서수(`계보 1/2`)를 **정체성**으로 바꾼다.
@@ -2576,11 +2604,23 @@ async function _loadConversationAttachmentList(convId) {
         // 이름줄을 먹고, 순서가 바뀌면 같은 계보가 어제와 다른 번호로 보인다.
         // 서수는 title 로 내리고(`_linTitle` 이 이미 담고 있다), 화면에는 정체성을 올린다.
         //
-        // ⚠ 소유권은 여전히 단정하지 않는다 — 목록 payload 에 업로더 account_id 가 없어
-        //   그룹 대화에서 남의 업로드를 "내 것" 이라 말하게 된다(선행 cycle 이 세운 계약).
-        const _linWho = isAi ? "AI 계보" : "사용자 계보";
-        linBadge = ` <span class="attach-list-item-lineage${isAi ? " ai" : ""}${_branched ? " branched" : ""}"`
-          + ` title="${escapeHtml(_linTitle)}">${_branched ? "⤷ " : ""}${escapeHtml(_linWho)}</span>`;
+        // REQ-20260901-attach-lineage-uploader: **공유 대화에서는 이름으로 가른다.**
+        //
+        // 종전에는 사람이 올린 계보가 전부 「사용자 계보」였다 — 서로 다른 멤버가 같은 이름의
+        // 파일을 올리면 두 행이 **글자 하나 다르지 않았다**(라이브 실측: 대화 20260813083932 의
+        // 계정 10·50 동명 계보 4쌍). 같은 화면에서 assistant 는 이미 `uploaded by admin` 으로
+        // 구분하고 있었으니, 사용자만 못 보던 셈이다.
+        //
+        // 1:1 대화에서는 이름을 붙이지 않는다 — 업로더가 늘 자기 자신이라 정보가 0 이면서
+        // 240px 이름줄만 먹는다(§16.8). 그룹 여부는 저장소 단일 술어 `isGroupConversation`.
+        // 정체성은 **행의 1차 라벨**(`_rowLabel`)이 진다 — 아래 마크업 참조. 그래서 이 칩은
+        // 정체성을 되풀이하지 않고 **분기 사실만** 진다: 「누구의 갈래인가」(라벨)와 「갈라져
+        // 나왔는가」(이 칩)는 서로 다른 사실이고, 둘을 한 칩에 담으면 라벨과 겹친다.
+        // 갈라지지 않은 계보에는 칩 자체가 붙지 않는다 — 늘 뜨는 배지는 정보가 아니다.
+        linBadge = _branched
+          ? ` <span class="attach-list-item-lineage${isAi ? " ai" : ""} branched"`
+            + ` title="${escapeHtml(_linTitle)}">⤷ 갈라짐</span>`
+          : "";
       }
       // REQ-20260831-attach-lineage-visibility: 계보 그룹 카드(공통영역)에 이 행을 태운다.
       //
@@ -2590,7 +2630,12 @@ async function _loadConversationAttachmentList(convId) {
         const _gname = String(a.original_filename || "");
         let _card = _groupCards.get(_gname);
         if (!_card) {
-          _card = _attachLineageGroupCard(_gname, _linTotal);
+          // codex P3: 행 아이콘을 걷어냈으므로 머리 아이콘이 **그룹 전체**를 대표하게 된다.
+          // 형제들의 kind 가 갈리는 경계 데이터에서 첫 행의 종류만 남으면 카드가 나머지를
+          // 잘못 대표한다 — 갈리면 중립 클립으로 되돌린다(모르는 것을 단정하지 않는다).
+          const _kinds = new Set(_sibs.map((x) => String(x?.kind || "")));
+          _card = _attachLineageGroupCard(
+            _gname, _linTotal, _kinds.size === 1 ? kindIcon(a.kind) : "📎");
           _groupCards.set(_gname, _card);
           listEl.appendChild(_card.el);
           // 그룹 레벨 비교 — **계보를 펼치지 않고** 바로 계보 간 비교로 들어간다.
@@ -2682,10 +2727,39 @@ async function _loadConversationAttachmentList(convId) {
       const whenChip = _fmtAttachWhen(a.created_at)
         ? ` · <span class="attach-list-item-when"${whenTitle ? ` title="${escapeHtml(whenTitle)}"` : ""}>${escapeHtml(_fmtAttachWhen(a.created_at))}</span>`
         : "";
+      // REQ-20260901-attach-lineage-uploader: **그룹 카드 안에서는 되풀이를 걷어낸다.**
+      //
+      // 카드 머리가 이미 아이콘 1개 + 파일명 1개를 말한다. 그런데 멤버 행마다 같은 아이콘과 같은
+      // 파일명이 또 나와, 계보 2개짜리 카드 하나에 같은 이름이 **3번** 실렸다(사용자 지적).
+      // 좁은 패널에서 그 반복이 정작 갈래를 가르는 정보(누가·언제·몇 개)를 밀어낸다.
+      //   · 아이콘 — 그룹 안에서는 렌더하지 않는다(카드 머리가 이미 종류를 말한다).
+      //   · 파일명 — 행의 1차 라벨을 **계보 정체성**으로 바꾼다. 이 요소는 「원문 보기」 클릭
+      //     대상이므로 지우지 않고 **문구만** 바꾸며, 접근성 이름·title 은 파일명을 유지한다.
+      // 그 결과 정체성이 이름줄의 1순위가 되고(위계 역전), linBadge 는 **분기 표식 전용**으로
+      // 좁아진다 — 같은 사실을 두 번 말하지 않는다.
+      // codex P2: **라벨이 겹치면 계보가 다시 구분되지 않는다.** 같은 사람이 같은 이름을
+      // 독립으로 두 번 올리면 두 행 모두 「Alice」 이고, 독립 업로드라 `⤷ 갈라짐` 칩도 없다.
+      // 겹칠 때만 서수를 덧붙인다 — 흔한 2계보(사람↔AI)에서는 군더더기가 붙지 않는다.
+      const _identityOf = (x) => (x && x.is_assistant_generated)
+        ? "AI 수정본"
+        : (_isShared ? (String(x?.uploader_username || "").trim() || "업로더 미상") : "사용자 업로드");
+      const _selfIdentity = _identityOf(a);
+      const _identityCollides = _hasSiblings
+        && _sibs.filter((x) => _identityOf(x) === _selfIdentity).length > 1;
+      const _identityLabel = _identityCollides
+        ? `${_selfIdentity} · 계보 ${_linIdx}/${_linTotal}`
+        : _selfIdentity;
+      const _rowLabel = _hasSiblings
+        ? _identityLabel
+        : (a.original_filename || "알 수 없음");
+      // 그룹 안에서는 버전 배지도 「v2 · AI 수정」의 뒤쪽을 버린다 — 라벨이 이미 AI 라고 말했다.
+      const _verBadgeRow = (_hasSiblings && isAi && verBadge)
+        ? ` <span class="attach-list-item-ver ai-edited" title="AI가 수정한 최신 버전">v${verNum}</span>`
+        : verBadge;
       item.innerHTML = `
-        <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
+        ${_hasSiblings ? "" : `<span class="attach-list-item-icon">${kindIcon(a.kind)}</span>`}
         <div class="attach-list-item-info">
-          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}${linBadge}</div>
+          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text${_hasSiblings ? (isAi ? " is-ai-lineage" : " is-user-lineage") : ""}">${escapeHtml(_rowLabel)}</span>${_verBadgeRow}${linBadge}</div>
           <div class="attach-list-item-meta">
             <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${sizeDeltaChip}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
             <span class="attach-list-item-actions">
@@ -2731,8 +2805,12 @@ async function _loadConversationAttachmentList(convId) {
       // 세 행이 모두 "report.csv 원문 보기" 로 읽혀 어느 갈래인지 구분할 수 없다. 화면에서는
       // 칩과 들여쓰기가 그 구분을 하지만 칩은 포커스 대상이 아니라 title 이 읽히지 않는다.
       // 그래서 **행의 접근성 이름 자체에** 정체성을 싣는다(시각·비시각 표면의 정보량 정합).
+      // codex P2: 접근성 이름이 **화면과 같은 사실**을 말해야 한다. 화면에는 `Alice`/`Bob` 이
+      // 보이는데 여기서 둘 다 「사용자 계보」로 읽으면, 이 cycle 이 연 구분이 스크린리더·
+      // 음성 명령 사용자에게는 **닫힌 채**다(시각 표면만 고친 반쪽 개선).
+      // 파일명은 유지한다 — 행에서 문구만 뺐지 그 사실을 AT 에서까지 뺀 것이 아니다.
       const _srWho = _hasSiblings
-        ? ` (${isAi ? "AI 계보" : "사용자 계보"}${_branched ? ", 갈라져 나옴" : ""}` +
+        ? ` (${_selfIdentity}${_branched ? ", 갈라져 나옴" : ""}` +
           `, ${_linTotal}개 중 ${_linIdx}번째)`
         : "";
       nameBtn.setAttribute("aria-label", `${a.original_filename || "첨부"}${_srWho} 원문 보기`);

@@ -3641,3 +3641,22 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   `사용자 업로드 v1 · 현재` → `AI 수정본 v2` · `+182 / -21`.
 - 배포 상태: 전 서비스 이미지 **동일 SHA** · surge 잔존 0 · `no upstreams available` **0건**.
 - 증적: `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md`
+
+### Run — TASK-20260901T163000-attach-lineage-uploader (공유 대화 업로더 식별 + 되풀이 제거)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. §13.2.9 격리 컨테이너(static stamp
+  `c64defd96a04` + 변경 라우터 2종 bind-mount), `https://localhost:18101`.
+- **경계 3경로 실측**: ① 공유 대화(`20260813083932`, 계정 10·50) → 행 라벨
+  `jmkimmasangsoft.com`/`admin` 로 분리(종전 8행 전부 「사용자 계보」) · 그룹 카드 4 ·
+  행 아이콘 **0** · 머리 아이콘 4 · 카드당 파일명 3회→**1회** ② 1:1(`20260831093200`) →
+  `사용자 업로드`/`AI 수정본`, **이름 없음** ③ 단독 계보(`20260828043852`) → 카드 없음 ·
+  행 아이콘 **2/2 유지** · 라벨 = 파일명.
+- 240px 최소 폭에서 아이콘+파일명 한 줄 유지(첫 캡처가 아이콘 분리 결함을 포착 → 수정).
+- assistant 계약 확인: `_build_attachment_context_section` 실 렌더가
+  `uploaded by <이름>` + per-lineage/overall latest 를 싣는 것을 caller 10·50 양쪽에서 확인.
+- 증적: `docs/test-runs.d/TASK-20260901T163000-attach-lineage-uploader.md`
+- 회귀: **5167 passed / 5 skipped**(신규 11건). ⚠ `test_query_embed_visibility.py` 2건은
+  **main 기준선에서도 동일 실패**(스위트 순서 의존) — 본 변경 무관.
+- Run 2(적대 리뷰 조치 후): codex P1 **0** · P2 4 전건 조치 후 재실측 — 노출 범위(versions 행
+  `account_id` 부재 / lineages 유지) · AT 정합(업로더명이 aria 에도) · stale 가드의 **정상 경로**
+  통과 · 라벨 충돌 시 서수(`사용자 업로드 · 계보 1/3`). 5173 passed.
