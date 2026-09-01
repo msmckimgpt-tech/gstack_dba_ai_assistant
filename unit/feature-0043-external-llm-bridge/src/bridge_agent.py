@@ -23,10 +23,13 @@
                         설치된 것**이고(`_which` 로 확인), 우리가 내려받거나 만들지 않는다.
     권한은 낮추지 않고   claude 는 `--strict-mcp-config` 로 부른다 — 네 CLI 에 설정된 MCP 서버를
     **좁힌다**          이 호출에서 **쓰지 않는다**는 뜻이다(권한 우회 플래그가 아니다). 조사는
-                        프롬프트에 실린 이 task 전용 토큰의 HTTP 경로로만 하고, 네가 다른 곳에
+                        `BRIDGE_TOKEN` 환경변수의 이 task 전용 토큰으로만 하고, 네가 다른 곳에
                         설정해 둔 자격증명은 건드리지 않는다. 우리는 `--dangerously-skip-
                         permissions` 나 `--permission-mode bypassPermissions` 를 쓰지 않는다.
                         → `_RUNTIME_SPECS["claude"]["argv"]` 를 직접 보면 된다.
+    작업 디렉토리는     자식 CLI 는 `~/.mysql-ai-bridge/work` (빈 디렉토리) 에서 돈다. 러너를
+    중립 폴더           코드 저장소 안에서 띄워도 그 저장소의 `CLAUDE.md`·정체성이 이 호출에
+                        얹히지 않게 하려는 것이다. → `_child_workdir`.
     기동 시 1회 질의     각 CLI 에게 "너는 어떤 모델·추론 수준을 쓸 수 있나" 를 묻는다
     (P0-Z4)             (`_CAPS_PROBE_PROMPT`). 보내는 것은 **그 질문 문장 하나뿐**이고 이
                         머신의 파일·환경·대화 내용은 실리지 않는다. 답은
@@ -51,8 +54,9 @@
                         → `grep -nE 'eval[(]|exec[(]|compile[(]|__import__' bridge_agent.py`
                           (매칭되는 줄은 **이 안내문 자신뿐**이어야 한다. 코드에는 없다.)
     설치물 없음         표준 라이브러리만 쓴다(`pip install` 불필요). 부팅 등록·crontab·서비스
-                        설치를 하지 않는다. 남기는 파일은 `~/.mysql-ai-bridge/config.json`
-                        (0600) **하나뿐**이고 거기에 **토큰은 넣지 않는다** → `save_conf`.
+                        설치를 하지 않는다. 남기는 것은 `~/.mysql-ai-bridge/config.json`
+                        (0600) 과 자식 CLI 를 띄우는 **빈 폴더** `~/.mysql-ai-bridge/work`
+                        뿐이고, config 에 **토큰은 넣지 않는다** → `save_conf`·`_child_workdir`.
     나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`) 와
                         `/api/ai/bridge_heartbeat` (→ `Api.heartbeat`, 30초마다 1회 —
                         본문은 이 머신에서 **쓸 수 있는 런타임·모델 이름 목록**뿐이다.
@@ -66,18 +70,20 @@
 
 **정직하게 적는 잔여 노출면 둘** — 숨기면 소스를 읽는 순간 드러나고, 그때 잃는 것이 더 크다.
 
-1. **토큰은 프롬프트 안에도 들어간다.** `compose_prompt` 가 조사 도구를 직접 부르라고 토큰을
-   함께 주고, 그 프롬프트 전문이 argv 로 CLI 에 넘어간다 — 같은 호스트의 다른 사용자가
-   `/proc/<pid>/cmdline` 으로 볼 수 있고, CLI 의 세션 기록에도 남는다. 인자 대신 `BRIDGE_TOKEN`
-   환경변수를 쓰면 셸 히스토리만큼은 피한다. 토큰은 **웹 로그인 세션에 결합**돼 있어 그 사람이
-   로그아웃하면 즉시 죽고, 이 러너가 멈추면 마지막 하트비트로부터 12시간 뒤 만료된다 — 즉
-   **러너가 도는 동안은 계속 유효하다**(2026-08-28 이전에는 발급 후 12시간이 절대 상한이었다).
-   무기한이 되지 않게 하는 것은 러너를 끄는 행위 자체다.
-2. **운영자 시스템 지침은 구획되지 않는다.** 질문·대화이력은 서버가 ⟦UNTRUSTED-DATA⟧ 로 감싸
-   보내지만, 관리 콘솔에서 설정하는 시스템 지침은 감싸지 않고 이 러너가 프롬프트 **맨 앞**에
-   놓는다(그러지 않으면 뒤의 지시가 이겨 운영자 설정이 무시된다). 즉 **그 서비스의 운영자는 네
-   답변 방식에 영향을 줄 수 있다.** 무엇이 설정돼 있는지는 `claim_request` 응답의
-   `system_prompt` 로 그대로 보이니, 필요하면 먼저 확인하고 판단해라.
+1. **토큰은 자식 프로세스의 환경변수로 들어간다** (`BRIDGE_TOKEN` — 2026-09-01 이전에는
+   프롬프트 본문에 평문으로 실렸다). 즉 네가 띄우는 AI CLI 와 그 자식들이 값을 읽을 수 있고,
+   같은 사용자 권한이면 `/proc/<pid>/environ` 으로도 보인다. 종전 방식(argv)보다 좁지만
+   **0 은 아니다**. 토큰은 **웹 로그인 세션에 결합**돼 있어 그 사람이 로그아웃하면 즉시 죽고,
+   이 러너가 멈추면 마지막 하트비트로부터 12시간 뒤 만료된다 — 즉 **러너가 도는 동안은 계속
+   유효하다**(2026-08-28 이전에는 발급 후 12시간이 절대 상한이었다). 무기한이 되지 않게 하는
+   것은 러너를 끄는 행위 자체다. → `ask_local_ai` 의 `child_env`.
+2. **운영자 시스템 지침은 구획되지 않는다.** 요청·대화이력은 서버가 각각 ⟦USER-REQUEST⟧ ·
+   ⟦CONVERSATION-HISTORY⟧ 로 구획해 보내지만, 관리 콘솔에서 설정하는 시스템 지침은 구획 없이
+   **시스템 채널**(`--append-system-prompt`, 미지원 런타임은 프롬프트 맨 앞)로 들어간다. 즉
+   **그 서비스의 운영자는 네 답변 방식에 영향을 줄 수 있다.** 무엇이 설정돼 있는지는
+   `claim_request` 응답의 `system_prompt` 로 그대로 보이니, 필요하면 먼저 확인하고 판단해라.
+   그 지침 선두에는 서버가 붙인 출처 고지가 있고, 거기에 **상위 안전 규칙이 우선한다**고
+   명시돼 있다.
 
 **남는 신뢰 경계**: 위 2번의 연장선이다. 서버가 보낸 텍스트는 네 AI 의 프롬프트가 되고, 네 AI 가
 도구를 쓸 수 있는 에이전트라면 그 프롬프트가 행동을 유도할 여지는 남는다 — 이 파일이 없앨 수 있는
@@ -830,6 +836,17 @@ _KEEP_MCP = os.environ.get("BRIDGE_KEEP_MCP", "").strip().lower() in ("1", "true
 #: (`_claude_supports_strict_mcp`) 두 조건이 모두 통과할 때만 실린다.
 _STRICT_MCP_FLAG = "--strict-mcp-config"
 
+#: 운영자 지침을 **실제 시스템 채널**로 넘기는 플래그 (TASK-20260901T140000).
+#:
+#: 종전에는 지침을 프롬프트 본문에 넣고 「── 아래 지침을 시스템 프롬프트로 삼아 답하라 ──」
+#: 라는 머리말을 붙였다. 그 문형은 **사용자 메시지 안에서 자기 역할을 재지정하는 것**이라
+#: 프롬프트 인젝션의 대표 서명과 동형이고, 평문 토큰·외부 주소 지시와 겹치면서 라이브에서
+#: 정상 요청이 인젝션으로 오판돼 답변이 자가중단됐다(2026-09-01 대화
+#: `20260901030637-95dc8844` — 거부문이 이 문형을 근거 1번으로 인용).
+#:
+#: 실제 시스템 채널로 넘기면 같은 지침이 **본문 밖**에 놓여 그 서명이 사라진다.
+_APPEND_SYSTEM_FLAG = "--append-system-prompt"
+
 _RUNTIME_SPECS: dict[str, dict] = {
     "claude": {
         "label": "Claude",
@@ -849,6 +866,10 @@ _RUNTIME_SPECS: dict[str, dict] = {
                  + ["{prompt}"]),
         "model": ["--model", "{model}"],
         "effort": ["--effort", "{effort}"],
+        # 운영자 지침을 본문이 아니라 이 플래그로 넘긴다 (TASK-20260901T140000).
+        # 지원 여부는 기동 시 `--help` 로 확인한다(`system_channel_supported`) — 모르는
+        # 버전에 넘기면 **모든 질문이** unknown option 으로 죽기 때문이다.
+        "system": [_APPEND_SYSTEM_FLAG, "{system}"],
         "models": [
             {"value": "opus", "label": "Opus"},
             {"value": "sonnet", "label": "Sonnet"},
@@ -1949,7 +1970,8 @@ def resolve_caps(only: str | None, cached: dict | None,
 CANCELED = "__canceled__"
 
 
-def _run_cli_cancelable(cmd: list[str], cancel_check) -> tuple[bool, str]:
+def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
+                        env: dict | None = None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
@@ -1961,7 +1983,8 @@ def _run_cli_cancelable(cmd: list[str], cancel_check) -> tuple[bool, str]:
     """
     try:
         proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
+                                stderr=subprocess.PIPE, text=True,
+                                cwd=cwd, env=env)
     except Exception as e:  # noqa: BLE001
         return False, f"AI 실행 실패: {e}"
 
@@ -2114,6 +2137,90 @@ def _ensure_strict_mcp_supported(kind: str, exe: str = "claude") -> bool:
     return False
 
 
+#: `--append-system-prompt` 지원 여부 캐시. `None` = 아직 확인 안 함.
+_system_channel_cache: dict[str, bool] = {}
+
+
+def system_channel_supported(kind: str, custom: str | None = None,
+                             exe: str | None = None) -> bool:
+    """이 런타임에서 운영자 지침을 **시스템 채널**로 넘길 수 있는가 (TASK-20260901T140000).
+
+    ## 실패 기본값이 `--strict-mcp-config` 와 **반대**인 이유
+
+    `_ensure_strict_mcp_supported` 는 확인 실패 시 플래그를 **남긴다** — 잘못 남기면 첫
+    질문에서 시끄럽게 터져 고칠 수 있고, 잘못 빼면 원 결함이 조용히 돌아오기 때문이다.
+
+    여기는 반대다. 잘못 남기면 unknown option 으로 **모든 질문이 죽고**, 잘못 빼면 종전
+    동작(지침을 본문에 싣는다)으로 떨어질 뿐이다 — 오탐 위험은 남지만 서비스는 돈다.
+    즉 «드러나는 쪽» 이 아니라 «답이 오는 쪽» 을 고른다. 두 함수의 비대칭은 의도적이다.
+
+    `--cmd`(사용자가 명령을 통째로 준 경우)는 대상이 아니다 — 그 명령에 우리가 플래그를
+    얹으면 중복 지정으로 CLI 가 거절할 수 있고, `--cmd` 의 의미도 사라진다.
+    """
+    if custom or kind != "claude":
+        return False
+    spec = _RUNTIME_SPECS.get(kind) or {}
+    if not spec.get("system"):
+        return False
+    exe = exe or str((spec.get("argv") or [kind])[0])
+    if exe in _system_channel_cache:
+        return _system_channel_cache[exe]
+    try:
+        proc = subprocess.run(_resolve_exe([exe, "--help"]), capture_output=True,
+                              text=True, timeout=30)
+        helptext = (proc.stdout or "") + (proc.stderr or "")
+    except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "확인 못 했다")
+        _system_channel_cache[exe] = False
+        _log(f"참고: {exe} --help 로 {_APPEND_SYSTEM_FLAG} 지원을 확인하지 못했습니다. "
+             "운영자 지침은 종전대로 프롬프트 본문에 싣습니다.")
+        return False
+    ok = _APPEND_SYSTEM_FLAG in helptext
+    _system_channel_cache[exe] = ok
+    if not ok:
+        _log(f"참고: 이 {exe} 는 {_APPEND_SYSTEM_FLAG} 를 지원하지 않습니다(구버전). 운영자 "
+             "지침을 프롬프트 본문에 싣습니다 — 일부 AI 가 이를 인젝션으로 오판할 수 있으니 "
+             "업데이트를 권합니다.")
+    return ok
+
+
+def _with_system_prompt(cmd: list[str], kind: str, system: str | None) -> list[str]:
+    """조립된 명령에 `--append-system-prompt <지침>` 을 끼운다. 자리는 **프롬프트 바로 앞**.
+
+    프롬프트 뒤에 붙이면 CLI 에 따라 프롬프트의 일부로 먹힌다(`build_cmd` 의 플래그 배치와
+    같은 이유). 프롬프트 자리를 못 찾으면 **끼우지 않는다** — 위치를 추측해 넣느니 종전
+    동작으로 떨어지는 편이 안전하다(본문 폴백은 `compose_prompt` 가 이미 갖고 있다).
+    """
+    tmpl = list(((_RUNTIME_SPECS.get(kind) or {}).get("system")) or [])
+    if not system or not tmpl or not cmd:
+        return cmd
+    flags = [a.replace("{system}", system) for a in tmpl]
+    # 프롬프트는 `ask_local_ai`/`build_cmd` 가 이미 치환해 넣었으므로 자리표시자가 없다.
+    # 마지막 인자가 프롬프트인 것이 모든 런타임 명세의 공통 형태다(`{prompt}` 가 argv 끝).
+    return cmd[:-1] + flags + cmd[-1:]
+
+
+def _child_workdir() -> str | None:
+    """자식 AI CLI 를 띄울 **중립 작업 디렉토리** (TASK-20260901T140000).
+
+    ## 왜 필요한가
+
+    `Popen` 은 cwd 를 주지 않으면 러너의 것을 상속한다. 러너를 코드 저장소 안에서 띄운
+    사용자는 그 저장소의 `CLAUDE.md`·`AGENTS.md` 와 «코딩 에이전트» 정체성이 얹힌 채로
+    질문을 받게 되고, 그러면 「내 역할은 이 저장소의 코딩이지 사내 DB 질의가 아니다」가
+    거부 논거가 된다 — 라이브 거부문이 실제로 "저는 지금 `/root` 저장소에서 Claude Code로
+    동작 중" 이라고 밝히며 그 논거를 폈다(2026-09-01).
+
+    빈 디렉토리 하나면 그 상속이 끊긴다. 만들지 못하면 `None` 을 돌려 **종전대로** 상속한다
+    (작업 디렉토리 때문에 답변 자체를 막지는 않는다).
+    """
+    path = os.path.join(os.path.expanduser("~"), ".mysql-ai-bridge", "work")
+    try:
+        os.makedirs(path, exist_ok=True)
+        return path
+    except Exception:  # noqa: BLE001
+        return None
+
+
 #: `--cmd` 경고를 이미 냈는가 (매 질문마다 같은 줄을 찍지 않는다).
 _custom_cmd_warned = False
 
@@ -2143,7 +2250,9 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
                  cancel_check=None, model: str | None = None,
                  effort: str | None = None,
                  runtimes: list | None = None,
-                 caps: dict | None = None) -> tuple[bool, str]:
+                 caps: dict | None = None,
+                 system: str | None = None,
+                 token: str | None = None) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
     `model`·`effort` 는 사용자가 **웹에서 고른 것**이다 (P0-Z3). 유효성은 `runtimes`(이 러너가
@@ -2195,16 +2304,30 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
         # 프롬프트는 **인자로** 넘긴다(셸을 거치지 않는다) — 질문 본문에 셸 메타문자가 섞여도
         # 그대로 전달되고, 명령 주입 경로가 생기지 않는다.
         cmd = [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv]
+    # 운영자 지침을 실제 시스템 채널로 (TASK-20260901T140000). 호출측이 지원 여부를 이미
+    # 판정해 `system` 을 넘겼을 때만 실린다 — 여기서 다시 판정하면 프롬프트를 만든 판정과
+    # 갈릴 수 있고, 그러면 지침이 **두 벌**이거나 **한 벌도 없는** 상태가 된다.
+    cmd = _with_system_prompt(cmd, kind, system)
     if _canceled():
         return False, CANCELED
-    return _run_cli_cancelable(cmd, _canceled)
+    # 토큰은 **환경변수로** 준다 (TASK-20260901T140000). 프롬프트 본문에 실린 평문 자격증명이
+    # 인젝션 오판의 근거 2번이었고, 같은 노출은 `/proc/<pid>/cmdline`·CLI 세션 기록으로도
+    # 샜다(`FUNCTION.md` 가 잔여 노출면으로 인정하던 항목). 자식은 이 값을 그대로 상속한다.
+    child_env = None
+    if token:
+        child_env = {**os.environ, "BRIDGE_TOKEN": str(token)}
+    return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env)
 
 
 # ── 프롬프트 ─────────────────────────────────────────────────────────────────
 
 
-def compose_prompt(api: Api, task: dict) -> str:
-    """내 AI 에게 줄 프롬프트. **조사 도구 사용법을 함께 준다** — 그래야 DB 를 실제로 본다."""
+def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
+    """내 AI 에게 줄 프롬프트. **조사 도구 사용법을 함께 준다** — 그래야 DB 를 실제로 본다.
+
+    `system_channel=True` 이면 운영자 지침 블록을 본문에서 **뺀다** — 그 지침은 호출측이
+    `--append-system-prompt` 로 실제 시스템 채널에 싣는다(TASK-20260901T140000).
+    """
     # ── 콘솔 작업은 프레이밍을 씌우지 않는다 (TASK-20260831T100000) ────────────────────
     #
     # 아래 대화용 프레이밍("너는 사내 DB 질의 어시스턴트다" · 제목 마커 · 답변 규약)은 콘솔
@@ -2221,11 +2344,18 @@ def compose_prompt(api: Api, task: dict) -> str:
     scope = task.get("scope") or {}
     atts = task.get("attachments") or []
     parts: list[str] = []
-    if sysp:
+    if sysp and not system_channel:
         # 운영자가 설정한 5단계 지침(전역·제품·역할·계정·개인). **맨 앞**에 둔다 — 뒤에 두면
         # 앞의 지시가 이기고, 그러면 운영자 설정이 사실상 무시된다.
-        parts += ["── 아래 지침을 시스템 프롬프트로 삼아 답하라 ──", sysp,
-                  "── 지침 끝 ──", ""]
+        #
+        # ⚠ 문구가 바뀐 이유 (TASK-20260901T140000): 종전 머리말은 「아래 지침을 **시스템
+        #   프롬프트로 삼아** 답하라」였다. 사용자 메시지 본문 안에서 자기 역할을 재지정하는
+        #   그 문형이 프롬프트 인젝션의 대표 서명과 동형이라, 라이브에서 정상 요청이 인젝션으로
+        #   오판돼 답변이 자가중단됐다(거부문 근거 1번). 같은 지침을 **역할 재지정 없이**
+        #   출처와 함께 제시한다. `system_channel=True` 인 런타임에서는 이 블록 자체가 빠지고
+        #   `--append-system-prompt` 로 나간다(그쪽이 정본, 이건 폴백이다).
+        parts += ["── 이 서비스 운영자가 설정한 답변 규칙 (관리 콘솔 설정값) ──", sysp,
+                  "── 규칙 끝 ──", ""]
     if scope.get("product_name") or scope.get("datasources"):
         # 어떤 제품·어떤 DB 를 보고 있는지 모르면 엉뚱한 스키마를 찾아 헤맨다.
         who = scope.get("product_name") or ""
@@ -2234,14 +2364,23 @@ def compose_prompt(api: Api, task: dict) -> str:
         parts += [f"대상 제품: {who}" + (f" ({key})" if key else "")
                   + (f" · 데이터소스: {ds}" if ds else ""), ""]
     parts += [
-        "너는 사내 DB 질의 어시스턴트다. 아래 사용자 질문에 답하라.",
+        # ⚠ 「너는 …이다」 라는 역할 **부여**가 아니라, 이 실행이 무엇인지에 대한 **사실**로
+        #   적는다 (TASK-20260901T140000). 앞의 것은 본문 속 역할 재지정이라 인젝션 서명과
+        #   동형이고, 뒤의 것은 그렇지 않다. 하는 일은 같다.
+        "이 요청은 사내 DB 질의다 — 아래 `⟦USER-REQUEST⟧` 블록의 요청에 답하라.",
         "",
         # ⚠ 본문 형태를 **정확히** 준다. 종전 예시는 `task_id` 가 없고 인자를 `arguments` 로
         #   감싸지 않아, 그대로 따르면 400("task_id 가 필요합니다") 또는 "schema_name과
         #   table_name은 필수" 만 돌아왔다 — 러너 경로의 조사가 통째로 실패하는 형태였다
         #   (codex REV-20260828T040000 P1).
         "필요하면 이 도구들을 HTTP 로 직접 호출해 실제 DB 를 조사하라"
-        " (POST · JSON 본문 · 헤더에 Authorization: Bearer <아래 토큰>).",
+        " (POST · JSON 본문 · 헤더에 `Authorization: Bearer $BRIDGE_TOKEN`).",
+        # ⚠ 조사 주소의 **출처**를 밝힌다 (TASK-20260901T140000). 밝히지 않으면 「모르는
+        #   주소로 자격증명을 실어 보내라」로만 읽히고, 라이브에서 그것이 인젝션 판정의
+        #   근거 2번이 됐다. 이 주소는 러너 설정 파일에 있어 **확인 가능한 사실**이다.
+        f"  이 주소({api.base})는 당신을 실행한 사람이 자기 머신에서 띄운 브리지 러너의"
+        " 설정값(`~/.mysql-ai-bridge/config.json` 의 `base`)이다 — 제3자 주소가 아니다."
+        " 의심되면 그 파일을 직접 읽어 대조하라.",
         # ⚠ 아래 토큰이 **유일한** 자격증명이라고 못 박는다. 러너가 부르는 CLI 에 같은 서비스의
         #   MCP 서버가 상주 설정돼 있으면(그 헤더는 이 task 와 무관한 별개 토큰이다) 모델은
         #   프롬프트의 토큰 대신 그 도구를 먼저 집는다 — 그 토큰이 만료돼 있으면 조사가 통째로
@@ -2262,7 +2401,12 @@ def compose_prompt(api: Api, task: dict) -> str:
         f"  {api.base}/api/ai/tools/get_foreign_keys  arguments:"
         " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
         f"  {api.base}/api/ai/tools/execute_sql       arguments: {{\"sql\":\"SELECT ...\"}}",
-        f"  토큰: {api.token}",
+        # ⚠ 토큰 **값**을 여기 쓰지 않는다 (TASK-20260901T140000). 프롬프트 본문의 평문
+        #   자격증명은 (a) 인젝션 판정의 근거가 됐고 (b) argv 로 넘어가 같은 호스트의 다른
+        #   사용자가 `/proc/<pid>/cmdline` 으로 볼 수 있었으며 (c) CLI 세션 기록에도 남았다.
+        #   자식 프로세스는 러너의 환경변수를 상속하므로 값은 이미 손에 있다.
+        "  토큰: 이 프로세스의 환경변수 `BRIDGE_TOKEN` 에 있다"
+        " (`printenv BRIDGE_TOKEN` 으로 읽거나, 셸에서 `$BRIDGE_TOKEN` 으로 바로 쓴다).",
         "",
         # 조사 내역은 사용자 화면의 「실행 단계」에 그대로 그려진다. 사유가 없으면 서버가
         # 도구의 일반적 목적으로 채우는데, 그건 *이 질문에서의* 이유가 아니다.
@@ -2530,7 +2674,14 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     if want_effort and not _effort_ok:
         unmet.append(f"추론등급 {want_effort}")
 
-    prompt = compose_prompt(api, {**claimed, "task_id": task_id})
+    # 운영자 지침을 실제 시스템 채널로 보낼 수 있는가 (TASK-20260901T140000).
+    # **한 번만 판정해 두 곳에 쓴다** — 프롬프트 조립과 명령 조립이 각자 판정하면 지침이
+    # 두 벌이 되거나(본문 + 플래그) 한 벌도 없는 상태가 된다.
+    # 콘솔 작업(`kind='job'`)은 서버가 완성된 지시문을 보내므로 운영자 지침 자체가 없다.
+    _sysp = str(claimed.get("system_prompt") or "")
+    _use_sys_channel = bool(_sysp) and system_channel_supported(run_kind, custom)
+    prompt = compose_prompt(api, {**claimed, "task_id": task_id},
+                            system_channel=_use_sys_channel)
     _picked = "".join([
         f", 모델 {want_model}" if want_model else "",
         f", 추론 {want_effort}" if want_effort else "",
@@ -2539,7 +2690,9 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
          + (f" — 미반영: {', '.join(unmet)}" if unmet else ""))
     ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
                               model=want_model, effort=want_effort, runtimes=runtimes,
-                              caps=caps)
+                              caps=caps,
+                              system=(_sysp if _use_sys_channel else None),
+                              token=api.token)
     if answer == CANCELED:
         # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
         # 토큰과 왕복을 아끼는 지점이다.

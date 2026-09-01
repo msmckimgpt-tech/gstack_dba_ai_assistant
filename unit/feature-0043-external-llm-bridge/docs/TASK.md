@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (라이브 배포 `0b2b4435` 완료 · 실측 PASS · PB-0008 화면 검증만 잔여)
+- State: in-progress (인젝션 오판 해소 cycle 진행 — TASK-20260901T140000)
 - Owner: AI (계획·구현) / Human (승인)
 - Priority: high
-- Last Updated: 2026-08-27
+- Last Updated: 2026-09-01
 
 ## 2. Implementation Plan
 
@@ -1604,3 +1604,22 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       증적 `docs/test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md`
 - [x] 별건(인젝션 오판)은 `ai/claude/feature-0043-bridge-injection-falsepositive` 가 이미 담당 —
       중복 cycle 열지 않음
+## 20260901T1400-injection-false-positive — 브리지 프롬프트가 인젝션으로 오판되는 문제
+
+**요청 (2026-09-01)**: 「assistant가 프롬프트 인젝션 시도로 처리하여 요청사항을 자가중단하는
+현상이 확인되었습니다. 보안적으로 안정적이지만, 요구사항이 충족되지 않은 상태라 개선이
+필요합니다」.
+
+계획·근본원인·라이브 근거·AC 는 `TASK-20260901T140000-injection-false-positive.md`.
+**위험도 Major** — 신뢰경계 표시(각인)의 의미 변경. 사용자 승인 2026-09-01(범위 "1+2").
+
+<!-- PLAN-APPROVED by mckim on 2026-09-01 -->
+
+- [ ] S1~S4 — `session_guard`: principal 요청 구획 · 대화이력 구획 · 위조 제거 확대 ·
+      인젝션-거부 탐지(양방향 오탐 계약)
+- [ ] S5~S8 — `ai_tools`: claim_request 각인 교체 · 거부턴 맥락 제외 · 출처 preamble ·
+      submit_answer 탐지·안내
+- [ ] R1~R4 — `bridge_agent`: 운영자 지침을 `--append-system-prompt` 실채널로 · 토큰을
+      `BRIDGE_TOKEN` 환경변수로 · 자식 CLI 중립 cwd · 역할변경 문형 제거
+- [ ] 단위 테스트 + `make test`
+- [ ] 배포 후 라이브 재현 검증

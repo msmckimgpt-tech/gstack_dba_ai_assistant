@@ -62,6 +62,13 @@ feature-0041(외부 AI 도구 표면)의 인증·도구·원장·각인 인프�
   붙인다), 러너를 쓰지 않는 등록형 AI 는 그 코드를 지나지도 않는다. 반영되지 **않은** 지정의
   고지는 종전대로 남는다.
 
+- REQ-20260901-injection-false-positive: 연결된 개인 AI 가 **정상 요청을 프롬프트 인젝션으로
+  오판해 답을 만들지 않는** 일이 없어야 한다. 방어를 낮추는 것이 아니라, 우리가 보내는 것의
+  **형태**가 인젝션 페이로드와 동형이던 것을 고친다 — 요청·이력·비신뢰 데이터를 각각 제
+  신뢰등급으로 구획하고, 운영자 지침을 본문 속 역할 재지정이 아니라 실제 시스템 채널로
+  넘기고, 자격증명을 본문에서 환경변수로 옮긴다. 그리고 한 번 오판이 나도 **그 대화가 고착되지
+  않는다**(거부턴이 다음 요청의 맥락에서 빠지고, 사용자에게 무엇이 일어났는지 안내된다).
+
 ## 3. In Scope
 
 ### P0-A. 서버측 LLM 전면 차단
@@ -1977,6 +1984,20 @@ python 은 `python3 → python` 순으로 찍고, 핸들러는 `uname` 으로 �
 | `AC-20260901T115000-answer-notice-seal-4` | 탐색 범위는 답변 **말미 8줄**이다. **코드 펜스를 세지 않는다** — 닫히지 않은 펜스로 봉인이 뚫리거나 중첩 펜스 안의 내용이 지워지지 않는다. 본문 중간의 예시 인용과 문장 중간의 언급은 남는다 |
 | `AC-20260901T115000-answer-notice-seal-5` | 러너 정본 2사본(`feature-0043/src` · `feature-0003/src/static/agent`)이 고지를 **다시 만들지 않고**(파일 전체 검사), 두 사본은 바이트 동일하다 |
 | `AC-20260901T115000-answer-notice-seal-6` | 비용이 입력에 비례해 폭발하지 않는다(줄 길이 상한). 정리로 **본문**이 비면 정리하지 않는다 — 빈 답변 400 은 task 를 점유된 채 대기 말풍선으로 남긴다 |
+
+### AC-20260901T140000-injection-false-positive (REQ-20260901-injection-false-positive)
+
+| ID | 기준 |
+|---|---|
+| `AC-20260901T140000-injection-false-positive-1` | **요청 블록은 비신뢰 구획이 아니다.** 인증된 계정 본인의 요청은 `⟦USER-REQUEST⟧` + `[PRINCIPAL]` 고지로 나가고, 대화 이력은 `⟦CONVERSATION-HISTORY⟧` + `[HISTORY]` 고지로 나간다. `⟦UNTRUSTED-DATA⟧` 는 도구 결과·DB 내용·외부 AI 답변에만 남는다 |
+| `AC-20260901T140000-injection-false-positive-2` | **L2 각인과 L3 탐지는 변하지 않는다.** 세 구획 모두 `account`·`conversation`·`task` 라벨과 `[SCOPE]` 를 유지하고, 요청 블록은 `session_canary` 를 계속 싣는다. 위조 제거(`_clean`)는 새 sentinel 4종까지 **확대**된다 |
+| `AC-20260901T140000-injection-false-positive-3` | **운영자 지침이 본문 속 역할 재지정으로 실리지 않는다.** 지원 런타임(claude)에서는 `--append-system-prompt` 로 나가고 본문에서 빠진다. 미지원·`--cmd` 폴백에서는 본문 맨 앞에 남되 「시스템 프롬프트로 삼아 답하라」 문형을 쓰지 않는다. 지원 여부 확인 실패의 기본값은 **끄기**다(잘못 켜면 모든 질문이 unknown option 으로 죽는다) |
+| `AC-20260901T140000-injection-false-positive-4` | **토큰 값이 프롬프트 본문에 없다.** 자식 CLI 는 `BRIDGE_TOKEN` 환경변수로 받으며, 프롬프트는 그 사실과 읽는 법을 알려준다. 환경 상속을 끊지 않는다(PATH 소실 = CLI 미탐지) |
+| `AC-20260901T140000-injection-false-positive-5` | **자식 CLI 는 중립 작업 디렉토리**(`~/.mysql-ai-bridge/work`)에서 돈다. 만들지 못하면 종전대로 상속한다(작업 디렉토리로 답변을 막지 않는다) |
+| `AC-20260901T140000-injection-false-positive-6` | **출처 고지가 배포 즉시 전 러너에 도달한다.** 서버가 `system_prompt` 페이로드 선두에 요청자 계정·러너 출처·토큰 결속 범위·구획 규약을 붙이고, 상위 안전 규칙이 우선함을 명시한다. 운영자 지침이 비어 있어도 나간다 |
+| `AC-20260901T140000-injection-false-positive-7` | **자기강화 루프가 끊긴다.** 인젝션 오판으로 판정된 assistant 턴은 다음 요청의 `conversation_context` 에서 제외되고, 제외 사실이 1줄로 고지된다(무음 절단 금지). 원본은 `core_messages` 에 그대로 남는다 |
+| `AC-20260901T140000-injection-false-positive-8` | **오탐 거부에는 안내가 덧붙는다** — 지우거나 재생성하지 않는다. 판정은 「프롬프트 인젝션」 용어와 거부 동사가 200자 안에 함께 있을 때만 참이라, 「SQL 인젝션 위험이 있어 거부해야 합니다」 같은 정상 쿼리 리뷰 답변은 걸리지 않는다. 콘솔 작업(폼 입력값)에는 안내를 붙이지 않고 판정만 남긴다 |
+| `AC-20260901T140000-injection-false-positive-9` | 오탐 발생 사실이 원장(`tool_call_usage.detail = injection_refusal`)과 `submit_answer` 응답(`injection_refusal`)에 남아 빈도를 셀 수 있다 |
 
 ## 9. Constraints / Risks
 
