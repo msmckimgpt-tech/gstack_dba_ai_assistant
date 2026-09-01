@@ -4198,11 +4198,17 @@ def _build_interrupted_note(
     rationale: str = "",
     activity_trail: list[str] | None = None,
     partial_answer: str = "",
+    header: str | None = None,
 ) -> str:
     """중단된 run 의 보존 본문을 만든다. 남길 것이 하나도 없으면 빈 문자열.
 
     빈 문자열을 반환하면 호출부가 메시지를 저장하지 않는다 — 헤더만 남은 말풍선은
     사용자에게 "중단됨" 외에 아무 정보도 주지 않으면서 다음 run 의 맥락만 오염시킨다.
+
+    `header` 로 첫 문단을 갈아끼울 수 있다 — **브리지(개인 AI) 취소 경로**가 자기 안내
+    문구를 헤더로 넘겨 같은 본문 형식을 공유한다(빌더가 두 벌이 되면 두 경로의 화면이
+    갈리고, 갈리는 쪽 중 약한 것이 사용자가 보는 진실이 된다). `""` 를 넘기면 헤더 없이
+    본문만 — 호출자가 이미 자기 안내를 말풍선에 갖고 있을 때 쓴다.
     """
     body: list[str] = []
 
@@ -4244,7 +4250,9 @@ def _build_interrupted_note(
 
     if not body:
         return ""
-    return f"{_INTERRUPT_NOTE_HEADER}\n\n" + "\n".join(body).strip()
+    head = _INTERRUPT_NOTE_HEADER if header is None else str(header).strip()
+    joined = "\n".join(body).strip()
+    return f"{head}\n\n{joined}" if head else joined
 
 
 def _build_step_payload(
