@@ -2127,3 +2127,37 @@ worst-of 에 참여해 **쓰지 않는 provider 의 제한 하나가 화면 전�
   **자체 발견 1건**: 커버리지 문구의 마크다운 강조가 평문 렌더라 별표가 화면에 그대로 떴다
   (소스 검사로는 잡히지 않는 부류) — 제거 후 재확인
 - 증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260901T110000-aiops-external-realign.md`
+
+## CHG-20260901T152000-runner-roster-honesty — 조회 실패를 「러너 0대」로 단정하던 결함
+
+앞 CHG 의 자체 적대 검토에서 나온 **P1 1건**.
+
+`oauth_store.list_live_runners` 가 질의 실패를 `return []` 로 삼켰고, `_runner_roster` 는
+그 빈 목록에 `available: True` 를 붙였다. 화면은 빈 목록을 **"연결된 개인 AI 가 없습니다 —
+들어오는 질문을 아무도 처리하지 못합니다"** 라는 빨간 단정으로 그린다. 즉 **질의 하나가
+실패하면 관제가 장애를 선언한다.**
+
+이것이 나쁜 이유는 두 가지다:
+
+1. **이 cycle 이 없애려던 결함과 같은 형태다** — 「모르는 것」을 「나쁜 사실」로 바꿔 말하는 것.
+2. **그 함수의 docstring 이 계약을 정확히 적어 두고 있었다** ("빈 목록이지 '러너 없음' 이
+   아니므로, 호출측이 그 차이를 화면에 표현한다"). 주석이 계약을 말하는데 코드가 지키지 않으면
+   다음 사람은 주석을 읽고 지켜지는 줄 안다 — 가장 늦게 발견되는 부류다.
+
+### 변경
+
+- `oauth_store.list_live_runners` — 질의 실패를 **위로 올린다**. 호출측(`_runner_roster`)이
+  이미 `except` 로 감싸 `available:False` + 사유를 화면에 표면화한다.
+- 단 `RunnerBuild`(2026-08-31 추가) 부재는 **컬럼 사다리로 한 단계 내려간다** — 지문 대조는
+  이 명부가 답하는 네 질문 중 하나일 뿐인데, 그것 하나로 구 배포에서 화면이 통째로 비면
+  안 된다(`_query_activity` 가 `target`·`cache_*` 에 쓰는 것과 같은 규율).
+- 지문을 모르면 `stale_build` 를 **False 로 둔다** — 모르는 것을 stale 로 적으면 멀쩡한
+  러너에게 재설치를 시킨다.
+
+### 검증
+
+- 회귀 2건 (`test_runner_roster_query_failure_is_not_reported_as_zero_runners` ·
+  `test_runner_roster_survives_missing_runner_build_column`)
+- **역검증**: 직전 커밋(`33e00e0e`)의 `oauth_store.py` 를 되돌려 실행 → **둘 다 FAIL**.
+  내가 만든 뮤턴트가 아니라 **실제 출하 직전 코드**에서 죽는 것을 확인했다(자기충족 아님).
+- `make test` 전량 PASS · ruff clean

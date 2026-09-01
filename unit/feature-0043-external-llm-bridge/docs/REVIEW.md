@@ -1842,3 +1842,16 @@ clamp 배치도 별도로 기록했다. **경계 양측(§16.7 G4)을 측정 설
   같은 4파일로 재실행할 값어치가 있다.
 - **자가 검증 end-to-end 미검증** — 마이그 0057 미적용 + 라이브 러너 구버전. 화면은 그
   사실을 `미지원`·`—` 로 정확히 표시하며, 실측은 POST-DEPLOY 로 이월.
+
+## REV-20260901T152000-ai-claude-runner-roster-honesty [SKIPPED:self-review-followup] — P1 수정 반영
+
+- **Related TASK**: TASK-20260901T110000-aiops-external-realign (feature-0043)
+- **Reason**: 바로 위 `REV-20260901T110000-…` 의 자체 적대 검토에서 나온 P1 1건을 수정한
+  커밋이다. 변경은 그 리뷰가 이미 감사한 범위 안(`list_live_runners` 단일 함수 + 회귀 2건)
+  이고, 새 도메인 키워드(auth/schema/UI/API/perf)를 도입하지 않는다.
+- **역검증 근거**: 신규 회귀 2건이 **수정 전 커밋 `33e00e0e` 에서 실제로 FAIL** 한다.
+  내가 만든 뮤턴트가 아니라 출하 직전 코드에서 죽는 것을 확인했다.
+- **외부 리뷰는 여전히 없다** — codex 쿼터 소진(15:44 리셋). 위 리뷰의 「남는 위험」이
+  그대로 유효하다.
+- **Timestamp**: 2026-09-01T15:20:00+09:00
+- **Human Approval Needed**: no
