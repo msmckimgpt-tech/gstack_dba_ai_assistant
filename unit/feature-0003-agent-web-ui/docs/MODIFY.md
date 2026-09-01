@@ -5395,3 +5395,10 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 - Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
   `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…-transition.md`.
 - Timestamp: 2026-09-01T05:30:00+09:00
+
+## CHG-20260901T061000-transition-postdeploy POST-DEPLOY 실측 증적 (docs-only)
+- 배포본 `17d36ad8` 에서 요청 두 경로 확인 — A(명령 재연결) 재연결 후 닫힘 + 「연결되었습니다」 /
+  B(«업데이트 필요» 갱신) 갱신 후 닫힘 + 「최신으로 갱신되었습니다」. 무중단 blip 0.
+- Files: `docs/{TASK,REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-transition-postdeploy.md`,
+  `docs/evidence/connect-modal-autoclose/pd3-*.png`. 코드 변경 0.
+- Timestamp: 2026-09-01T06:10:00+09:00
