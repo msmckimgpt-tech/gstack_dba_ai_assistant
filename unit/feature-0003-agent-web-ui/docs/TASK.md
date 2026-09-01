@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Task
 
+## 20260901T1430-rqrd-postdeploy — 말풍선 여닫이 제거 POST-DEPLOY 부재 확인 (doc-only)
+
+**부재 확인 4/4 PASS.** 선행 cycle(`20260901T1330-remove-query-result-details`)이 fragment §3 에
+사전 열거한 항목의 이행. 코드 변경 **0**.
+
+- 배포본 `786815f2`(web-a·web-b 동일 SHA), 자산 `?v=cd84170acd28`, 엣지 `no upstreams available` **0건**.
+- **도달**: 서빙 `messages.js`(23,668 bytes)에 `renderMessageDetails`·`buildSqlNavigator`·
+  `buildStepBlocks` **전부 부재**. `location.reload(true)` 후 스탬프 붙은 실 서빙 사본을 읽어
+  Chrome 모듈 캐시 축을 갈라냈다.
+- **부재 확인**(기준선과 **같은 대화** `20260901030637-95dc8844`): `.message-details` 1→**0** ·
+  `.message-detail-block` 2→**0** · `.step-detail-list` 1→**0** · `.sql-navigator` 1→**0**.
+- **대체 표시면 정상**: 「단계 보기」 버튼 `[77, 2, 2]` **불변**, 클릭 시 패널 배지 「77단계」
+  (카드 37 + 내부 동작 40 = 77), 카드 결과셋 토글 37개가 `hidden true→false` 로 동작, `.step-sql` 17블록.
+- **여전히 미검증**: 브리지 **진행 중** 입구 «없으면 생성»(러너 미연결) · 구형 메시지 표시면
+  소실 실측(해당 형식 메시지를 라이브에서 찾지 못함 — 소실 자체는 코드상 확정).
+
+### 7. Completion Checklist
+
+- [x] POST-DEPLOY 부재 확인 4항목 기록 (`test-runs.d/TASK-20260901T1430-…md`)
+- [x] 기준선 ↔ 배포 후 **같은 대화** 대조 (스크린샷 2장)
+- [x] 미검증 축을 축별로 분리 표기
+- [x] MODIFY.md · REPORT.md 반영
+- [ ] 브리지 진행 중 입구 생성 — 개인 AI 러너 연결 후 관측
+
+
 ## 20260901T1330-remove-query-result-details — 말풍선 「▼ 쿼리 결과」 여닫이 제거 (Minor §12.3 — 프론트 표시면 제거)
 
 **사용자 요청(2026-09-01)**:
@@ -67,7 +92,8 @@ source_of_truth: true
       `test_live_steps_progress_continuity.py` 의 해당 절을 제거 계약으로 교체했다(조립 경로
       부재 6종 · 호출부 부재 · 사문 CSS 6종 · 남은 표시면의 상한 유지 · 진행 갱신은 패널만).
       `test_live_steps_in_panel.py` · `test_live_steps_structured.py` 도 같은 방향으로 전환.
-- [ ] **POST-DEPLOY 실측** — 부재 확인 4항목(위 fragment §3 에 사전 열거). 배포 후 수행.
+- [x] **POST-DEPLOY 실측** — 부재 확인 **4/4 PASS**(배포본 `786815f2`, 자산 `?v=cd84170acd28`).
+      증적: `docs/test-runs.d/TASK-20260901T1430-remove-query-result-details-postdeploy.md`
 - [ ] 브리지 진행 중 「단계 보기」 입구 생성 — 개인 AI 러너 미연결로 관측 대상 생성 불가
       (실측 사유: `내 AI가 실행 중이 아닙니다` 배너). 구조 단언으로만 잠긴 상태.
 
@@ -79,7 +105,7 @@ source_of_truth: true
 - [x] 호출부 no-op 방지 — 브리지 진행 표시가 패널 입구를 보장
 - [x] 컨테이너 pytest 전건 PASS + PRE-DEPLOY 기준선 실측
 - [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
-- [ ] POST-DEPLOY 부재 확인 4항목
+- [x] POST-DEPLOY 부재 확인 4항목 — 4/4 PASS
 
 ### 9. Requested Scope
 
