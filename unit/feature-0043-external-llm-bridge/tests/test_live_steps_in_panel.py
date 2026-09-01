@@ -1,4 +1,4 @@
-"""feature-0043 — 진행 중 단계가 **완료본과 같은 두 자리**에만 그려지는가 (제보 2026-08-28).
+"""feature-0043 — 진행 중 단계가 **완료본과 같은 자리**에만 그려지는가 (제보 2026-08-28).
 
 화면에서 이렇게 보였다:
 
@@ -14,7 +14,11 @@
 쌓았다. 완료된 답변이 쓰는 자리(말풍선 details · 사이드 패널)는 손대지 않았으므로, 그 둘은
 처음 그려진 상태로 멈춰 있었다.
 
-고침: 자리를 만들지 않고 **기존 두 자리를 갱신**한다.
+고침: 자리를 만들지 않고 **기존 자리를 갱신**한다.
+
+⚠ 2026-09-01 사용자 결정으로 「완료본이 쓰는 자리」가 **하나로 줄었다** — 말풍선 여닫이
+(`▼ 쿼리 결과`)가 제거되고 「단계 보기」 사이드 패널만 남았다. 말풍선에는 그 패널로 들어가는
+입구(「단계 보기 (N)」)만 둔다. 아래 단언들은 그 축소된 계약을 잠근다.
 """
 from __future__ import annotations
 
@@ -59,12 +63,29 @@ def test_no_third_block_is_created():
     assert 'box.appendChild' not in src, "별도 컨테이너에 카드를 쌓는다"
 
 
-def test_updates_the_bubble_details():
-    """완료본이 쓰는 말풍선 details 를 그대로 갱신한다."""
+def test_bubble_keeps_no_details_dropdown():
+    """말풍선 여닫이는 2026-09-01 사용자 결정으로 제거됐다 — 되살리면 표시면이 다시 두 벌이 된다.
+
+    당시 계약: 「단계 보기」 사이드 패널이 같은 단계·SQL·결과를 더 정확하게 보여주므로
+    말풍선 쪽은 중복이었다. 진행 표시도 패널 한 곳만 갱신한다.
+    """
     src = _js_func(COMPOSER_JS, "_renderBridgeSteps")
-    assert "renderMessageDetails(" in src, "말풍선 details 를 갱신하지 않는다"
-    assert ".message-details" in src, "기존 details 를 찾아 교체하지 않는다"
-    assert "wasOpen" in src, "펼침 상태를 잃는다(사용자가 열어 둔 드롭다운이 닫힌다)"
+    assert "renderMessageDetails(" not in src, "말풍선 여닫이를 다시 조립한다"
+    assert "wasOpen" not in src, "여닫이 펼침 상태를 다시 다룬다(여닫이가 되살아났다)"
+    # 배포 전 열려 있던 탭에 남은 옛 여닫이는 걷어낸다(잔재가 화면에 남지 않게).
+    assert '.message-details' in src and "legacyDetails" in src, (
+        "옛 탭에 남은 여닫이를 정리하지 않는다")
+
+
+def test_bubble_always_offers_an_entrance_to_the_panel():
+    """패널이 유일 표시면이면, 말풍선에 그 입구가 **반드시** 있어야 한다.
+
+    브리지 placeholder 말풍선은 `meta.steps` 없이 그려져 app.js 가 「단계 보기」 버튼을
+    붙이지 못한다 — 여기서 만들지 않으면 진행 중 단계로 들어갈 길이 화면에 아예 없다.
+    """
+    src = _js_func(COMPOSER_JS, "_renderBridgeSteps")
+    assert "bubble.appendChild(fresh)" in src, (
+        "버튼이 없는 말풍선에 입구를 만들지 않는다 — 진행 중 단계에 도달할 수 없다")
 
 
 def test_updates_the_side_panel_for_that_run():
@@ -93,7 +114,8 @@ def test_steps_button_count_and_source_are_updated_together():
     assert "단계 보기 (${steps.length + omittedCount})" in src, (
         "개수가 갱신되지 않거나 창 크기만 세고 있다(생략분 미포함)")
     assert "openStepSidePanel(src)" in src, "클릭 대상이 옛 목록 그대로다"
-    assert "cloneNode" in src, "리스너가 중첩 바인딩된다(클릭 한 번에 여러 번 열림)"
+    assert "btn.replaceWith(fresh)" in src, (
+        "기존 버튼을 교체하지 않는다 — 옛 리스너가 남아 클릭 한 번에 여러 번 열린다")
 
 
 def test_legacy_block_is_cleaned_up():

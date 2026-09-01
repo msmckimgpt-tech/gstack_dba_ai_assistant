@@ -2199,7 +2199,6 @@ AI 출력이 코드블록 도중 잘리고 CLI 가 exit 0 이면 러너는 `ok=T
 **BLOCK → 조치 후 PASS.** P1 4건 전건 수정 + 회귀 테스트(총 28건, `test_orphan_claim_reclaim.py`).
 codex 판정은 미산출이므로 「독립 검증을 받았다」고 적지 않는다 — 위 결함은 **자체 검증**의
 산물이다.
-
 ## REV-20260901T143000-ai-claude-selfreview-envelope [SKIPPED:live-e2e-verified] — 봉투 결함 + 경량 모델
 
 - **Related TASK**: TASK-20260901T143000-selfreview-envelope (feature-0043)
@@ -2225,3 +2224,9 @@ codex 쿼터 소진(15:44 리셋)이 이어진다. 직전 cycle 의 「남는 �
 **주석이 계약을 말하는데 코드가 안 지키는 것**(직전 cycle P1)과 **양쪽이 맞는데 이음매가
 틀린 것**(이번 P0)은 둘 다 단위 테스트가 구조적으로 못 보는 자리다. 전자는 구조 단언으로,
 후자는 **한쪽이 만든 값을 다른 쪽 함수에 그대로 흘리는 테스트**로 잠갔다.
+## REV-20260901T150000-orphan-claim-postdeploy [SKIPPED:evidence-only] — 라이브 실측 기록
+
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260901T140000-orphan-claim-reclaim
+- Reason: 코드 변경 0 — POST-DEPLOY 증적 문서 + TASK 체크박스 + TEST Run 행만. 검증 대상 코드는
+  `REV-20260901T144500-orphan-claim-reclaim` 에서 이미 적대 검토(P1 4건 적발·전건 수정)를 거쳤다.
+- Timestamp: 2026-09-01T15:00:00+09:00
