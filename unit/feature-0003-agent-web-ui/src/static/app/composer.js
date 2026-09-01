@@ -765,6 +765,15 @@ function _applyBridgePhase(phase, prev, taskId, convId) {
     // "가져가면 표시됩니다" 만 본다.
     loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
     showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
+  } else if (phase === "stalled") {
+    // 가져갔는데 **진행 신호가 끊겼다** (TASK-20260901T140000). 서버가 대기 말풍선 본문을
+    // 무진행 고지로 바꿔 두었으므로 이력을 다시 읽어야 그것이 보인다 — `working` 전환과
+    // 같은 처리다(그쪽도 서버가 본문을 바꾸고 여기서 읽어 온다).
+    //
+    // 종결로 다루지 **않는다**: 러너가 다시 켜지면 그 질문은 자동으로 다시 배달되고 답이
+    // 온다. 여기서 대기를 지우면 그 답이 도착해도 화면이 받을 준비가 안 돼 있다.
+    loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
+    showToast("연결된 AI 의 진행 신호가 끊겼습니다. 러너가 켜져 있는지 확인해 주세요.", true);
   } else if (phase === "not_connected") {
     showToast("연결된 AI 가 없습니다. 'AI 연결하기' 에서 연결해 주세요.", true);
   } else if (phase === "canceled" || phase === "expired") {

@@ -422,7 +422,11 @@ def test_runner_heartbeat_thread_actually_loops(runner):
     stop = threading.Event()
 
     class _Api:
-        def heartbeat(self, timeout: float = 0.0):
+        # `*args/**kwargs` 로 받는다 — 실물 서명이 늘어날 때(runtimes·
+        # released_instances) 더블만 낡아 스레드가 TypeError 로 죽고, 그 죽음이
+        # 이 파일이 아니라 **뒤에 도는 다른 테스트**의 실패로 나타난다
+        # (TASK-20260901T140000 에서 실제로 겪었다).
+        def heartbeat(self, *args, **kwargs):
             calls.append(0.0)
             if len(calls) >= 3:
                 stop.set()
@@ -441,7 +445,11 @@ def test_runner_heartbeat_survives_failures(runner):
     stop = threading.Event()
 
     class _Api:
-        def heartbeat(self, timeout: float = 0.0):
+        # `*args/**kwargs` 로 받는다 — 실물 서명이 늘어날 때(runtimes·
+        # released_instances) 더블만 낡아 스레드가 TypeError 로 죽고, 그 죽음이
+        # 이 파일이 아니라 **뒤에 도는 다른 테스트**의 실패로 나타난다
+        # (TASK-20260901T140000 에서 실제로 겪었다).
+        def heartbeat(self, *args, **kwargs):
             seen.append("call")
             if len(seen) == 1:
                 return {"_http": 0, "_failed": True, "error": "connection refused"}
