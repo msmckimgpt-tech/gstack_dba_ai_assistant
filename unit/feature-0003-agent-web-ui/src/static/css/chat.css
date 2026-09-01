@@ -2176,11 +2176,11 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   color: var(--text-muted);
 }
 /* TASK-20260619T014034: 상태점(.llm-status-dot)이 보일 때는 status/hint 가 비어도 footer 유지.
-   feature-0043 P0-AB: **연결 표시(.ai-conn)도 같은 대우**를 받는다. 이 조건이 없어서 P0-T 가
-   약속한 "연결 상태 상시 표시" 가 실제로는 한 번도 보이지 않았다 — status·hint 가 비고 provider
-   상태점이 숨겨진 것이 평상시 화면이라, footer 가 통째로 display:none 이 되며 연결 칩까지 함께
-   사라졌다(2026-08-28 실 브라우저 실측). 칩을 넣은 것과 칩이 보이는 것은 다른 사실이다. */
-.composer-footer:has(.composer-status:empty):has(.composer-hint:empty):has(.llm-status-dot.hidden):has(.ai-conn.hidden) { display: none; }
+   2026-09-01 제보: 연결 칩(.ai-conn)이 사이드바 프로필 행으로 떠나면서 그 조건절도 함께 뺀다.
+   **빼지 않으면 여백이 그대로 남는다** — footer 안에 `.ai-conn` 이 없으면 `:has(.ai-conn.hidden)`
+   이 영영 거짓이라 이 규칙이 매칭되지 않고, 평상시(상태·힌트·provider 점 모두 빈 화면)에도
+   빈 footer 한 줄이 입력창 아래에 남는다. 사용자가 지적한 "불필요한 여백" 이 바로 그 줄이다. */
+.composer-footer:has(.composer-status:empty):has(.composer-hint:empty):has(.llm-status-dot.hidden) { display: none; }
 .composer-hint:empty { display: none; }
 .composer-status:empty { display: none; }
 

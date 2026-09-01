@@ -116,6 +116,24 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260901T1200-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행 여백 (Minor §12.3, 2026-09-01, feature-0003 프론트 배치 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md` · 배포 전 단계는 라이브 페이지에 변경본 CSS 주입 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
+
+- **제보 재현**: 배포본 실측에서 `.composer-footer` 의 computed display 가 `flex` — 상태·힌트가
+  모두 빈 평상시 화면에서도 입력창 아래 26px 한 줄이 상시 남는다. 접힘 규칙이 칩을 예외로 두는데
+  칩은 늘 보이므로 규칙이 한 번도 매칭되지 않았다.
+- **수정 후 16조합 실측**(4상태 × 계정 4종, 사이드바 252px): `.composer-footer` **전 조합
+  `display: none`**. `admin`·`mckim` 은 네 상태 전부 프로필 행 같은 줄(행 높이 65px 고정,
+  화살표→칩 18px, 이름 잘림 0), `bootstrap_admin`(15자)·`verylongaccountname_x`(21자)는 네 상태
+  전부 아래 줄(90px)로 일관 + 이름 ellipsis + **가로 넘침 0** — 상태 전환에 따른 레이아웃 튐 0.
+- **라벨 접두 제거의 근거**: 접두를 남기면 «대기 중»(85px)만 여백(119px)에 들어가고
+  «연결 안 됨»(101px)·«업데이트 필요»(106px)는 화살표 자리까지 더해 초과 → 아래 줄. 행 높이가
+  65↔90 을 오가며 사이드바 하단이 튄다.
+- 자동 검증: 컨테이너 `make test` pytest 전건 PASS(rc=0) + ruff PASS ·
+  `verify_connect_modal_autoclose.mjs` 25/0 · `verify_llm_restriction_surface.mjs` 35/0.
+- 계약 테스트 방향 전환: `test_connection_chip_is_free_of_the_footer_collapse_rule` — 종전
+  "접힘 조건에 칩이 **있어야** 한다" → "**없어야** 한다" + 칩이 프로필 행에 있고 배치·wrap
+  규칙이 존재하는지. 조건이 남으면 여백이 그대로 돌아온다.
+
 ### 20260901T0330-connect-modal-launch-close 실행 성공인데 창이 안 닫히던 회귀 정정 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (배포 후 POST-DEPLOY 실측 — `docs/test-runs.d/TASK-20260901T0330-connect-modal-launch-close.md` · 배포 전 단계는 순수 node 행위 테스트 + 라이브 배포본 대비)**
 
 - **제보 재현**: 「내 AI가 대기 중입니다…」 를 받았는데 모달이 안 닫힌다는 제보를 시나리오 H 로

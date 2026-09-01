@@ -569,28 +569,34 @@ function _paintConn(connected, listening, epoch, runnerStale) {
   el.classList.remove("hidden");
   // 3상태. **연결됨 ≠ 대기 중** — 토큰은 DB 에, 러너는 프로세스에 있다. 머신을 재시작하면
   // 러너만 사라지므로, 둘을 뭉치면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
+  //
+  // 문구에서 «내 AI» 접두를 뺀 이유 (2026-09-01): 칩이 사이드바 **프로필 행**으로 옮겨
+  // 가면서 주어는 그 자리가 말한다(내 계정 옆). 접두를 남기면 가장 긴 상태가 106px 이라
+  // 계정 이름 옆 여백(≈119px)에 들어가지 못해, 상태가 바뀔 때마다 칩이 아래 줄로 내려갔다
+  // 올라오며 사이드바 하단이 한 줄씩 튀었다(실 브라우저 실측). 지금은 네 상태가 모두
+  // 같은 자리에 고정된다. 전체 설명은 그대로 title 에 남는다.
   if (!connected) {
     el.dataset.state = "off";
-    el.textContent = "내 AI 연결 안 됨";
-    el.title = "답변할 AI 가 없습니다. 눌러서 연결하세요.";
+    el.textContent = "연결 안 됨";
+    el.title = "내 AI 가 연결되어 있지 않습니다 — 답변할 AI 가 없습니다. 눌러서 연결하세요.";
   } else if (!listening) {
     el.dataset.state = "idle";
-    el.textContent = "AI 대기 안 함";
-    el.title = "연결은 되어 있으나 지금 듣고 있는 AI 가 없습니다"
+    el.textContent = "대기 안 함";
+    el.title = "내 AI 가 연결은 되어 있으나 지금 듣고 있는 AI 가 없습니다"
       + "(머신을 재시작했다면 러너가 꺼졌을 수 있습니다). 눌러서 다시 연결 정보를 받으세요.";
   } else if (runnerStale) {
     // 연결도 대기도 성립했는데 **그 러너가 배포본과 다른 파일**이다 (2026-08-31).
     // 잠금 사유는 아니다 — 답변은 온다. 다만 옛 동작·옛 모델 목록이 그대로 보이고,
     // 그 이유가 화면 어디에도 없어 사용자가 「재설치했는데 그대로」를 겪었다.
     el.dataset.state = "stale";
-    el.textContent = "내 AI 업데이트 필요";
-    el.title = "연결은 되어 있지만 실행 중인 러너가 서버 배포본과 다릅니다."
+    el.textContent = "업데이트 필요";
+    el.title = "내 AI 는 연결되어 있지만 실행 중인 러너가 서버 배포본과 다릅니다."
       + " 옛 동작·옛 모델 목록이 보일 수 있습니다 —"
       + " 눌러서 최신 실행 명령을 받아 다시 실행하세요.";
   } else {
     el.dataset.state = "on";
-    el.textContent = "내 AI 대기 중";
-    el.title = "질문을 보내면 연결된 AI 가 바로 가져갑니다.";
+    el.textContent = "대기 중";
+    el.title = "내 AI 가 대기 중입니다. 질문을 보내면 바로 가져갑니다.";
   }
 }
 

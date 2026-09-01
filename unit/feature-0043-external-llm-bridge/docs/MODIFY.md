@@ -2322,3 +2322,12 @@ PB-0008 실 Windows 브라우저 POST-DEPLOY.
 CSS 세 줄(단계 300 · SQL 320 · 결과표 460)이며 구조 변경 없이 바꿀 수 있다.
 
 캡처: `artifacts/pb0008-steps-result-split/` (git 밖, §2). 검증 DOM 제거 확인.
+
+## CHG-20260901T121500-win-ai-detect-postdeploy — 배포본 도달성 확인 (문서만)
+
+`c0545cdd` 배포 후 「사용자가 실제로 받는 파일이 수정본인가」를 확인했다. 정본 = 컨테이너
+(web-a/b) = **라이브 엣지** sha 동일, 그 **엣지 사본으로** 실 Windows 에서 감지·실행까지
+end-to-end 통과. 서버측 상주 러너도 배포본으로 교체·재기동했다(라이브 `--check` 가 「연결
+정상.」 → 「사용할 AI: claude」 순으로 출력 — 축 분리가 실제로 도는 증거).
+
+코드 변경 없음. 증적: `docs/test-runs.d/TASK-20260901T110000-win-ai-detect-postdeploy.md`.
