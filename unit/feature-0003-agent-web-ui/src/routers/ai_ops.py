@@ -38,10 +38,37 @@ _log = logging.getLogger(__name__)
 _SEV = {"ok": 0, "unknown": 1, "degraded": 2, "down": 3}
 _SEV_LABEL = {"ok": "정상", "unknown": "부분 가시", "degraded": "저하", "down": "중단", "na": "해당 없음"}
 
+# ── 외부AI 운영축 상수 (TASK-20260901T110000) ─────────────────────────────────
+# 이름 리터럴을 여기 다시 적지 않는다 — 정본이 바뀌는 날 관제만 낡아, 있는 기능을
+# "없다" 고 표시하게 된다(그 오표시는 사용자에게 재설치를 시킨다).
+try:
+    from shared.bridge_tasks import (
+        RUNNER_FEATURE_CONSOLE_JOBS as _CONSOLE_JOBS_FEATURE,
+        RUNNER_FEATURE_SELF_REVIEW as _SELF_REVIEW_FEATURE,
+    )
+except Exception:  # pragma: no cover — import 실패 시에도 라우터는 서야 한다
+    _CONSOLE_JOBS_FEATURE, _SELF_REVIEW_FEATURE = "console_jobs", "self_review"
+try:
+    from shared.self_review import AXIS_LABELS as _AXIS_LABELS
+except Exception:  # pragma: no cover
+    _AXIS_LABELS = {}
+
 
 # ── 상태 축 ─────────────────────────────────────────────────────────────────────
 def _provider_axis() -> dict:
-    """LLM provider 외부요인 제한 상태(PG agent_runtime.llm_provider_health cheap read)."""
+    """LLM provider 외부요인 제한 상태(PG agent_runtime.llm_provider_health cheap read).
+
+    ⚠ **차단 중에는 롤업에서 빠진다** (`state="na"`, TASK-20260901T110000).
+
+    이 축은 서버 계정으로 LLM 을 부를 때의 외부 제한을 말한다. 게이트가 닫힌 배포에서는
+    아무도 그 경로를 쓰지 않으므로, 여기서 `degraded` 가 나와도 **서비스에는 아무 일도
+    일어나지 않는다**. 그런데 종전에는 그 값이 종합 배너의 worst-of 에 참여해, 쓰지 않는
+    provider 의 제한 하나가 화면 전체를 '저하' 로 물들였다 — 그리고 그 '저하' 는 운영자가
+    실제로 확인해야 할 브리지 신호를 같은 색으로 덮었다.
+
+    다만 **원본 상태는 계속 싣는다**(`raw_state`). 게이트를 되돌리는 날 되살아날 제한이라,
+    전환 전에 그것을 확인할 수 있어야 한다 — 롤업에서 빼는 것과 감추는 것은 다르다.
+    """
     # feature-0043(codex 리뷰 P2): **관리자 관제는 마스킹된 값을 보면 안 된다.**
     # 대화 UI 는 차단 중 provider 상태를 non-restricted 로 덮는다(전송에 영향이 없고, 복구 ping
     # 이 불가능해 배너가 영구 고착되므로). 그 마스킹이 이 화면까지 오면 운영자는 "정상" 만 보고,
@@ -66,9 +93,11 @@ def _provider_axis() -> dict:
     if blocked:
         # 차단 중임을 **관제에는 명시**한다. 이걸 빼면 운영자는 degraded 를 보고 "왜 아무도
         # 영향을 안 받지?" 를, 반대로 ok 를 보고 "정말 괜찮은가?" 를 판단할 근거가 없다.
-        detail += " · 서버 계정 LLM 차단(외부 AI 브리지) — 대화 전송에는 영향 없음"
+        detail += " · 서버 계정 LLM 미사용 — 이 축은 지금 서비스에 영향을 주지 않습니다"
+        return {"key": "provider", "label": "서버 계정 LLM (미사용)", "state": "na",
+                "detail": detail, "raw_state": state, "server_llm_blocked": True}
     return {"key": "provider", "label": "LLM 제공자", "state": state, "detail": detail,
-            "server_llm_blocked": blocked}
+            "raw_state": state, "server_llm_blocked": blocked}
 
 
 def _bridge_axis(conn) -> dict:
@@ -228,6 +257,128 @@ def _iso(v) -> str:
     return v.isoformat() if hasattr(v, "isoformat") else ""
 
 
+def _runner_roster(conn, limit: int = 100) -> dict:
+    """계정별 **러너 명부** — 누가 연결했고, 지금 듣고 있고, 무엇을 다룰 줄 아는가.
+
+    ## 왜 수가 아니라 명부인가 (TASK-20260901T110000)
+
+    서버가 추론하지 않는 배포에서 운영자가 실제로 받는 질문은 "이 사람 질문이 왜 처리가
+    안 되나" 다. 「러너 3대」로는 답할 수 없다 — 답은 계정 단위 사실이고, 그 사실마다
+    **조치가 다르다**: 토큰 없음(연결 안내) · 토큰 있고 미수신(러너 기동) · 수신하는데
+    기능 미신고(갱신) · 신고했는데 지문 불일치(재설치).
+
+    배포본 지문과 대조해 `stale_build` 를 함께 준다. 그 대조가 없으면 「재설치했는데 그대로」
+    (2026-08-31 사용자 제보)를 화면이 다시 설명하지 못한다.
+    """
+    out: dict = {"available": False, "items": [], "deployed_build": ""}
+    if conn is None:
+        out["reason"] = "DB 미가용 — 러너 명부를 조회할 수 없습니다."
+        return out
+    try:
+        import oauth_store as _store
+
+        cur = conn.cursor()
+        try:
+            items = _store.list_live_runners(cur, limit=limit)
+        finally:
+            cur.close()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[ai-ops] 러너 명부 조회 실패: %r", exc)
+        out["reason"] = "러너 명부를 읽지 못했습니다."
+        return out
+
+    deployed = ""
+    try:
+        # 서버가 **배포 중인** 러너 파일의 지문. 하트비트의 지문과 다르면 그 사용자는
+        # 옛 파일을 돌리고 있다. 판정은 이미 `ai_tools` 가 하고 있으므로 그 함수를 부른다 —
+        # 여기서 다시 계산하면 두 곳의 "배포본" 이 갈릴 준비를 마친다.
+        from routers.ai_tools import _deployed_runner_build
+
+        deployed = str(_deployed_runner_build() or "")
+    except Exception:
+        deployed = ""
+    for it in items:
+        build = str(it.get("runner_build") or "")
+        # 둘 중 하나라도 모르면 **대조하지 않는다**(False). 모르는 것을 'stale' 로 적으면
+        # 멀쩡한 러너에게 재설치를 시킨다.
+        it["stale_build"] = bool(deployed and build and build != deployed)
+        it["console_capable"] = _CONSOLE_JOBS_FEATURE in (it.get("features") or [])
+        it["self_review_capable"] = _SELF_REVIEW_FEATURE in (it.get("features") or [])
+    out["available"] = True
+    out["items"] = items
+    out["deployed_build"] = deployed
+    return out
+
+
+def _self_review_stats(days: int) -> dict:
+    """외부 AI **자가 검증** 집계 (`redteam_reviews.source='external'`).
+
+    서버측 이력(`source='server'`)과 **합산하지 않는다.** 서버 검증은 게이트가 닫힌 뒤
+    늘지 않는 과거 기록이고 외부 검증은 현행이다 — 합치면 "검증이 줄고 있다" 는 착시가
+    생기는데, 실제로 일어난 일은 주체가 바뀐 것뿐이다.
+
+    컬럼 부재(0057 미적용 이미지)는 `available: False` — 0 으로 접으면 "검증이 하나도 없다"
+    로 읽히고, 그것은 마이그레이션 상태가 아니라 운영 상태에 대한 거짓말이 된다.
+    """
+    out: dict = {"available": False, "reviews": 0, "pass_count": 0, "revise_count": 0,
+                 "block_count": 0, "warn_count": 0, "by_axis": []}
+    try:
+        from shared.db import _pg_connect_ro
+
+        pg = _pg_connect_ro()
+    except Exception:
+        out["reason"] = "계측 저장소(PG)를 조회할 수 없습니다."
+        return out
+    if pg is None:
+        out["reason"] = "계측 저장소(PG)를 조회할 수 없습니다."
+        return out
+    try:
+        with pg.cursor() as cur:
+            win = f"now() - interval '{int(days)} days'"
+            cur.execute(
+                "SELECT count(*), "
+                "       count(*) FILTER (WHERE verdict = 'pass'), "
+                "       count(*) FILTER (WHERE verdict = 'revise'), "
+                "       COALESCE(sum(block_count), 0), COALESCE(sum(warn_count), 0) "
+                "FROM agent_runtime.redteam_reviews "
+                f"WHERE source = 'external' AND created_at >= {win}")
+            r = cur.fetchone() or (0, 0, 0, 0, 0)
+            out.update({"available": True, "reviews": int(r[0] or 0),
+                        "pass_count": int(r[1] or 0), "revise_count": int(r[2] or 0),
+                        "block_count": int(r[3] or 0), "warn_count": int(r[4] or 0)})
+            # 축별 분포 — "어디가 반복해서 걸리나" 는 프롬프트·데이터 어느 쪽을 고칠지의 신호다.
+            cur.execute(
+                "SELECT f->>'axis' AS axis, f->>'severity' AS sev, count(*) "
+                "FROM agent_runtime.redteam_reviews r, "
+                "     LATERAL jsonb_array_elements(COALESCE(r.findings, '[]'::jsonb)) AS f "
+                f"WHERE r.source = 'external' AND r.created_at >= {win} "
+                "GROUP BY 1, 2 ORDER BY 3 DESC")
+            fold: dict[str, dict] = {}
+            for row in (cur.fetchall() or []):
+                axis = str(row[0] or "")
+                if not axis:
+                    continue
+                e = fold.setdefault(axis, {"axis": axis, "label": _AXIS_LABELS.get(axis, axis),
+                                           "block": 0, "warn": 0})
+                if str(row[1] or "") == "BLOCK":
+                    e["block"] += int(row[2] or 0)
+                else:
+                    e["warn"] += int(row[2] or 0)
+            out["by_axis"] = sorted(fold.values(),
+                                    key=lambda x: (x["block"], x["warn"]), reverse=True)
+    except Exception:
+        # 0057 미적용 배포 — 컬럼이 없다. 조용히 0 으로 접지 않는다(위 docstring).
+        _log.debug("ai_ops self-review stats query failed (source 컬럼 부재?)", exc_info=True)
+        out["available"] = False
+        out["reason"] = "자가 검증 원장이 아직 준비되지 않았습니다(마이그레이션 대기)."
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    return out
+
+
 def _ask_worker_axis(conn) -> dict:
     """요청 처리(ask) 워커 heartbeat. inprocess 모드면 N/A(롤업 제외).
     임계: age≤60s 정상 / 60<age≤120s 저하 / >120s·부재 중단 (WEB_ASK_WORKER_READY_MAX_AGE_SEC=60 정합)."""
@@ -320,6 +471,28 @@ _COVERAGE = {
         {"name": "LLM provider health probe", "reason": "헬스체크 전용 — 의도적 계측 제외"},
     ],
     "note": "위 미계측 활동은 llm_usage 에 기록되지 않아 KPI·비용 합계에서 제외됩니다('전체 비용' 아님).",
+}
+
+#: 서버 계정 LLM 이 차단된 배포의 커버리지. 위 목록을 그대로 보이면 **하지 않는 일을
+#: "계측됨" 으로 나열**하게 된다 — 커버리지 표의 목적이 정직 노출인데 그 자리에서 거짓을
+#: 말하는 셈이다.
+_COVERAGE_EXTERNAL = {
+    "instrumented": [
+        "외부 AI 도구 호출(조회·조사 — 호출·행수·바이트)",
+        "브리지 작업(대화 질문·콘솔 위임·배경 배치의 개설·점유·제출·반영)",
+        "외부 AI 자가 검증 판정(5축)",
+        "러너 연결·수신·기능 신고",
+    ],
+    "uninstrumented": [
+        {"name": "개인 AI 의 토큰·비용", "reason": "추론이 각자의 머신·계정에서 일어나 우리 원장에 남지 않는다(구조적)"},
+        {"name": "개인 AI 의 내부 단계·지연", "reason": "러너가 신고하는 진행 단계 외에는 관측 경로가 없다"},
+        {"name": "임베딩 (로컬 bge-m3)", "reason": "embeddings.create 응답에 usage 필드 없음(SDK 한계)"},
+    ],
+    # ⚠ 마크다운 강조를 쓰지 않는다 — 이 문자열은 `esc()` 를 거쳐 **평문으로** 렌더되므로
+    #   별표가 그대로 화면에 뜬다(라이브 실측 2026-09-01).
+    "note": ("추론 비용·토큰은 각 사용자의 AI 계정에서 발생하므로 이 화면에 합계가 없습니다 — "
+             "0 이 아니라 우리가 세는 축이 아닙니다. 서버가 직접 호출하던 시절의 토큰·비용 "
+             "기록은 '기록' 탭에 보존되어 있습니다."),
 }
 
 _ACTIVITY_LIMIT_DEFAULT = 30
@@ -539,6 +712,330 @@ def _worker_resources() -> dict:
     if not out["available"]:
         out["reason"] = "스냅샷 파싱 실패 — 파일 손상 또는 권한"
     return out
+
+
+# ── 외부AI 운영축 엔드포인트 3종 (TASK-20260901T110000) ───────────────────────
+#
+# 종전 관제는 전부 `llm_usage`(서버 계정 호출)를 봤다. 서버가 추론하지 않는 배포에서 그
+# 원장은 늘지 않으므로 화면 전체가 0 으로 수렴했고, 그 0 은 "아무도 AI 를 안 쓴다" 로
+# 읽혔다 — 실제로는 **우리가 세지 않는 곳에서** 쓰고 있었다. 아래 셋이 그 공백을 메운다.
+
+_PERM_MSG = "AI 운영 현황 조회 권한이 필요합니다 (운영자 전용)."
+
+
+@router.get("/api/admin/ai-ops/tools")
+def admin_ai_ops_tools(
+    request: Request,
+    account=Depends(app.require_permission("console.aiops.read", message=_PERM_MSG)),
+) -> JSONResponse:
+    """**도구 사용량** — 외부 AI 가 우리 도구로 무엇을 얼마나 읽었나 (`tool_call_usage`).
+
+    외부AI 세계에서 「서버에 남는 실제 활동」은 이것뿐이다. 토큰이 아니라 **호출·행·바이트**
+    를 센다(비용은 그쪽이 내고 부하는 우리 DB 가 낸다 — `tool_ledger` 가 그 원장이다).
+
+    Query: days(기본 7, 1~90). PG 미가용 시 부분 degrade(200 유지, `pg_available:false`).
+    """
+    try:
+        days = int(request.query_params.get("days", "7"))
+    except Exception:
+        days = 7
+    days = max(1, min(90, days))
+
+    out: dict = {"window_days": days, "pg_available": True, "totals": {},
+                 "by_tool": [], "by_datasource": [], "by_account": [], "by_day": []}
+    try:
+        from shared.db import _pg_connect_ro
+
+        pg = _pg_connect_ro()
+    except Exception:
+        pg = None
+    if pg is None:
+        out["pg_available"] = False
+        return JSONResponse(out)
+    win = f"now() - interval '{days} days'"
+    try:
+        with pg.cursor() as cur:
+            def _q(sql: str) -> list:
+                try:
+                    cur.execute(sql)
+                    return cur.fetchall() or []
+                except Exception:
+                    # 질의 하나가 실패해도 나머지는 보여 준다. 실패한 트랜잭션을 정리하지
+                    # 않으면 뒤따르는 질의가 전부 25P02 로 죽는다(같은 파일 `_query_activity`
+                    # 가 같은 이유로 rollback 한다).
+                    _log.debug("ai_ops tools query failed", exc_info=True)
+                    try:
+                        pg.rollback()
+                    except Exception:
+                        pass
+                    return []
+
+            r = _q("SELECT count(*), COALESCE(sum(rows_returned),0), "
+                   "       COALESCE(sum(bytes_out),0), count(DISTINCT account_id), "
+                   "       count(DISTINCT task_id), "
+                   "       count(*) FILTER (WHERE outcome <> 'ok') "
+                   f"FROM agent_runtime.tool_call_usage WHERE created_at >= {win}")
+            if r:
+                out["totals"] = {
+                    "calls": int(r[0][0] or 0), "rows": int(r[0][1] or 0),
+                    "bytes": int(r[0][2] or 0), "accounts": int(r[0][3] or 0),
+                    "tasks": int(r[0][4] or 0), "not_ok": int(r[0][5] or 0),
+                }
+            # 도구별. `outcome` 을 접지 않고 함께 센다 — 「많이 불렸다」와 「많이 거절됐다」는
+            # 다른 사실이고, 후자만이 조치를 요구한다.
+            out["by_tool"] = [{
+                "tool": str(x[0] or ""), "calls": int(x[1] or 0),
+                "rows": int(x[2] or 0), "bytes": int(x[3] or 0),
+                "denied": int(x[4] or 0), "gated": int(x[5] or 0), "errors": int(x[6] or 0),
+                "p95_ms": (round(float(x[7]), 1) if x[7] is not None else None),
+            } for x in _q(
+                "SELECT tool, count(*), COALESCE(sum(rows_returned),0), "
+                "       COALESCE(sum(bytes_out),0), "
+                "       count(*) FILTER (WHERE outcome = 'denied'), "
+                "       count(*) FILTER (WHERE outcome = 'gated'), "
+                "       count(*) FILTER (WHERE outcome = 'error'), "
+                "       percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) "
+                f"FROM agent_runtime.tool_call_usage WHERE created_at >= {win} "
+                "GROUP BY tool ORDER BY 2 DESC LIMIT 40")]
+            out["by_datasource"] = [{
+                "datasource_key": str(x[0] or "(없음)"), "calls": int(x[1] or 0),
+                "rows": int(x[2] or 0), "bytes": int(x[3] or 0),
+            } for x in _q(
+                "SELECT COALESCE(datasource_key, ''), count(*), "
+                "       COALESCE(sum(rows_returned),0), COALESCE(sum(bytes_out),0) "
+                f"FROM agent_runtime.tool_call_usage WHERE created_at >= {win} "
+                "GROUP BY 1 ORDER BY 2 DESC LIMIT 30")]
+            # 계정별 — 상한(`AGENT_EXT_TOOL_*`)이 계정 단위라 이 축이 곧 「누가 상한에
+            # 가까운가」다.
+            out["by_account"] = [{
+                # 이름은 이 원장에 없다(PG 는 id 만 안다) — 아래 `_attach_usernames` 가 MySQL
+                # 에서 합류시킨다. 여기서 빈 문자열을 두는 이유는 실패 시에도 키가 존재하게
+                # 하기 위해서다(프론트가 `username || 계정 #id` 로 떨어진다).
+                "account_id": int(x[0] or 0), "username": "",
+                "calls": int(x[1] or 0), "rows": int(x[2] or 0), "bytes": int(x[3] or 0),
+            } for x in _q(
+                "SELECT account_id, count(*), COALESCE(sum(rows_returned),0), "
+                "       COALESCE(sum(bytes_out),0) "
+                f"FROM agent_runtime.tool_call_usage WHERE created_at >= {win} "
+                "GROUP BY account_id ORDER BY 2 DESC LIMIT 30")]
+            out["by_day"] = [{
+                "day": (x[0].isoformat() if hasattr(x[0], "isoformat") else str(x[0] or "")),
+                "calls": int(x[1] or 0), "rows": int(x[2] or 0), "bytes": int(x[3] or 0),
+            } for x in _q(
+                "SELECT date_trunc('day', created_at)::date, count(*), "
+                "       COALESCE(sum(rows_returned),0), COALESCE(sum(bytes_out),0) "
+                f"FROM agent_runtime.tool_call_usage WHERE created_at >= {win} "
+                "GROUP BY 1 ORDER BY 1")]
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    # 계정 이름은 MySQL 에 있다(PG 원장은 id 만 안다). 이름 없이 id 만 보여 주면 운영자가
+    # 그 줄로 아무 판단도 할 수 없으므로 여기서 합류시킨다 — 실패하면 id 만 남는다.
+    _attach_usernames(out["by_account"])
+    return JSONResponse(out)
+
+
+def _attach_usernames(rows: list) -> None:
+    """`account_id` 만 있는 행에 `username` 을 채운다(best-effort, 실패 시 그대로 둔다)."""
+    ids = sorted({int(r.get("account_id") or 0) for r in rows if r.get("account_id")})
+    if not ids:
+        return
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return
+    try:
+        cur = conn.cursor()
+        try:
+            marks = ",".join(["%s"] * len(ids))
+            cur.execute(f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({marks})", ids)
+            names = {int(a): str(b or "") for a, b in (cur.fetchall() or [])}
+        finally:
+            cur.close()
+    except Exception:
+        return
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    for r in rows:
+        r["username"] = names.get(int(r.get("account_id") or 0), "")
+
+
+#: 작업 원장 페이지 크기. 상한을 두는 이유는 한 조회가 `WebAiTasks` 를 통째로 끌어오지
+#: 않게 하기 위해서다(질문 본문이 실린다 — 행마다 무겁다).
+_TASKS_LIMIT_DEFAULT = 40
+_TASKS_LIMIT_MAX = 200
+
+
+@router.get("/api/admin/ai-ops/tasks")
+def admin_ai_ops_tasks(
+    request: Request,
+    account=Depends(app.require_permission("console.aiops.read", message=_PERM_MSG)),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    """**브리지 작업 통합 원장** — 대화 질문 · 콘솔 위임 · 배경 배치 · 외부 AI 세션.
+
+    종전에는 두 화면이 이 표를 반쪽씩 보고 있었다: 「위임 작업 현황」은 `Kind='job'` 만,
+    「외부 AI 작업」은 `Origin` 무관이지만 상태·소유·수행 계정을 싣지 않았다. 그래서
+    **대화 질문이 밀려 있는 것**은 어느 화면에도 나오지 않았다 — 정작 사용자가 기다리는
+    것이 그것인데.
+
+    소유(`AccountId` — 누가 시켰나)와 수행(`ClaimedBy` — 누가 하고 있나)을 나눠서 준다.
+    관리자 작업은 둘이 같지만 배치는 다르다(워커가 열고 아무 러너나 집는다).
+
+    Query: kind(chat|job) · origin(web|batch|external) · status · limit · offset.
+    """
+    from shared.bridge_tasks import job_label
+
+    try:
+        limit = int(request.query_params.get("limit") or _TASKS_LIMIT_DEFAULT)
+        offset = max(0, int(request.query_params.get("offset") or 0))
+    except (TypeError, ValueError):
+        limit, offset = _TASKS_LIMIT_DEFAULT, 0
+    limit = max(1, min(_TASKS_LIMIT_MAX, limit))
+
+    where, params = ["1=1"], []
+    for col, key in (("Kind", "kind"), ("Origin", "origin"), ("Status", "status")):
+        val = str(request.query_params.get(key) or "").strip()
+        if val:
+            # allowlist 가 아니라 **파라미터 바인딩**으로 막는다 — 값 목록을 여기 복제하면
+            # `bridge_tasks` 가 종류를 늘리는 날 이 필터만 낡아 새 종류가 조회되지 않는다.
+            where.append(f"t.{col} = %s")
+            params.append(val[:32])
+
+    items: list[dict] = []
+    total = 0
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT COUNT(*) FROM WebAiTasks t WHERE " + " AND ".join(where),
+                            tuple(params))
+                total = int((cur.fetchone() or (0,))[0] or 0)
+                cur.execute(
+                    "SELECT t.TaskId, t.Kind, t.Origin, t.Status, t.JobKind, "
+                    "       t.CreatedAt, t.ClaimedAt, t.SubmittedAt, t.JobAppliedAt, "
+                    "       t.JobApplyError, owner.Username, worker.Username, "
+                    "       t.ConversationId, t.Question, t.DatasourceKey, "
+                    "       t.InjectionVerdict, t.AnswerVerdict, t.AnswerBytes, "
+                    "       (t.Answer IS NOT NULL) "
+                    "FROM WebAiTasks t "
+                    "LEFT JOIN WebAccounts owner  ON owner.Id  = t.AccountId "
+                    "LEFT JOIN WebAccounts worker ON worker.Id = t.ClaimedBy "
+                    "WHERE " + " AND ".join(where) +
+                    " ORDER BY t.Id DESC LIMIT %s OFFSET %s",
+                    (*params, limit, offset))
+                for r in (cur.fetchall() or []):
+                    kind = str(r[1] or "")
+                    items.append({
+                        "task_id": str(r[0] or ""),
+                        "kind": kind,
+                        "origin": str(r[2] or ""),
+                        "status": str(r[3] or ""),
+                        "job_kind": str(r[4] or ""),
+                        # 대화 질문에는 job_kind 가 없다 — 라벨을 지어내지 않고 종류로 말한다.
+                        "label": (job_label(r[4]) if str(r[4] or "") else ""),
+                        "created_at": _iso(r[5]), "claimed_at": _iso(r[6]),
+                        "submitted_at": _iso(r[7]), "applied_at": _iso(r[8]),
+                        "apply_error": str(r[9] or ""),
+                        "owner": str(r[10] or ""), "worker": str(r[11] or ""),
+                        "conversation_id": str(r[12] or ""),
+                        # 목록에는 **머리만** 싣는다. 전문은 상세(`/api/ai/tasks/{id}`)가 준다 —
+                        # 목록에 본문을 실으면 한 페이지가 수 MB 가 되고, 외부 각인 블록이
+                        # 목록 응답으로 흘러 나간다.
+                        "question_head": str(r[13] or "")[:160],
+                        "datasource_key": str(r[14] or ""),
+                        "injection_verdict": str(r[15] or ""),
+                        "answer_verdict": str(r[16] or ""),
+                        "answer_bytes": (int(r[17]) if r[17] is not None else None),
+                        "has_answer": bool(r[18]),
+                    })
+            finally:
+                cur.close()
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("[ai-ops] 작업 원장 조회 실패: %r", exc)
+
+    # 각 작업의 자가 검증 판정을 붙인다 — 답변 옆에 있어야 의미가 있다(별도 화면에 두면
+    # 「이 답변이 검증을 통과했나」를 두 화면을 오가며 맞춰야 한다).
+    _attach_reviews(items)
+    return JSONResponse({"items": items, "total": total, "limit": limit, "offset": offset})
+
+
+def _attach_reviews(items: list) -> None:
+    """작업 목록에 `review`(외부 자가 검증 요약)를 붙인다. 실패는 조용히 넘어간다.
+
+    붙지 않은 것과 `verdict='pass'` 는 **다른 사실**이므로, 값이 없으면 키 자체를 두지
+    않는다(프론트가 `undefined` 를 '검증 없음' 으로 그린다). 빈 dict 로 채우면 화면이
+    그것을 통과로 그릴 여지가 생긴다.
+    """
+    ids = [str(i.get("task_id") or "") for i in items if i.get("task_id")]
+    if not ids:
+        return
+    try:
+        from shared.db import _pg_connect_ro
+
+        pg = _pg_connect_ro()
+    except Exception:
+        return
+    if pg is None:
+        return
+    found: dict[str, dict] = {}
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT ON (task_id) task_id, verdict, block_count, warn_count, "
+                "       findings, created_at "
+                "FROM agent_runtime.redteam_reviews "
+                "WHERE source = 'external' AND task_id = ANY(%s) "
+                "ORDER BY task_id, id DESC",
+                (ids,))
+            for r in (cur.fetchall() or []):
+                raw_findings = r[4] if isinstance(r[4], list) else []
+                # 축 한글 라벨은 **서버가 붙인다**. 프론트에 표를 두면 축을 늘리는 날 화면만
+                # 낡아 새 축이 영문 원문으로 샌다 — 그 원문은 외부 AI 가 쓴 문자열이다.
+                findings = []
+                for f in raw_findings:
+                    if not isinstance(f, dict):
+                        continue
+                    axis = str(f.get("axis") or "")
+                    findings.append({**f, "axis_label": _AXIS_LABELS.get(axis, axis)})
+                found[str(r[0])] = {
+                    "verdict": str(r[1] or ""), "block_count": int(r[2] or 0),
+                    "warn_count": int(r[3] or 0),
+                    "findings": findings,
+                    "created_at": _iso(r[5]),
+                }
+    except Exception:
+        _log.debug("ai_ops task review join failed (0057 미적용?)", exc_info=True)
+        return
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    for it in items:
+        rv = found.get(str(it.get("task_id") or ""))
+        if rv:
+            it["review"] = rv
+
+
+@router.get("/api/admin/ai-ops/runners")
+def admin_ai_ops_runners(
+    request: Request,
+    account=Depends(app.require_permission("console.aiops.read", message=_PERM_MSG)),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    """**러너 명부** — 계정별 연결·수신·기능·버전·지문. (`_runner_roster` 참조)"""
+    try:
+        limit = max(1, min(200, int(request.query_params.get("limit") or 100)))
+    except (TypeError, ValueError):
+        limit = 100
+    return JSONResponse(_runner_roster(conn, limit=limit))
 
 
 @router.get("/api/admin/ai-ops/activity")
@@ -842,10 +1339,20 @@ def admin_ai_ops(
         "bridge": axes[4].get("metrics") or {},
         # 위임 작업 현황 — **어떤 작업이 · 어떤 상태로 · 어느 계정에서**(사용자 결정 2026-08-31).
         "delegated_jobs": _delegated_jobs(conn),
+        # ── TASK-20260901T110000 (외부AI 정합 재편) ──────────────────────────────
+        # 러너 명부 — 「러너 N대」로는 답할 수 없는 "이 사람 질문이 왜 안 되나" 의 답.
+        "runners": _runner_roster(conn),
+        # 외부 AI 자가 검증 집계. 서버측 이력과 **합산하지 않는다**(주체가 다르다).
+        "self_review": _self_review_stats(days),
+        # 이 배포가 서버 계정 LLM 을 쓰는가. 화면이 「기록」 라벨을 붙일지 판단하는 축이다 —
+        # `axes` 를 뒤져 찾게 하면 축 순서를 바꾸는 날 라벨이 조용히 사라진다.
+        "server_llm_blocked": bool(axes[0].get("server_llm_blocked")),
         "categories": categories,
         "activity": activity,
         "activity_next_cursor": activity_next_cursor,
-        "coverage": _COVERAGE,
+        # 커버리지는 **이 배포가 실제로 무엇을 세는가**를 말한다. 서버가 추론하지 않는데
+        # 서버 추론 목록을 '계측됨' 으로 보이면, 정직 노출을 위한 표가 그 자리에서 거짓말한다.
+        "coverage": (_COVERAGE_EXTERNAL if axes[0].get("server_llm_blocked") else _COVERAGE),
         "pg_available": pg_available,
         # T0b: 워커 공유 자원 예산·계측(파일 스냅샷). 라우트 추가 없음 — 기존 응답 확장.
         "worker_resources": worker_resources,

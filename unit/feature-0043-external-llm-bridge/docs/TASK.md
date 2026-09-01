@@ -1322,3 +1322,98 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       0→375 이동하고 **대화 로그·문서 스크롤 0 불변** · navOffset 381→**6px**(계산된 위치,
       clamp 아님) · 키보드 동일 · 짧은 상세 81px 비스크롤.
       증적 `feature-0003 docs/test-runs.d/…-details-scroll-panel-postdeploy.md`
+
+## TASK-20260901T110000-aiops-external-realign — 「AI 운영 현황」을 외부AI 운영축으로 전면 재편 (P0-AH)
+
+**요청 (2026-09-01)**: "assistant 가 작동하는 구조가 변경됨에 따라 '관리 콘솔 > AI 운영 현황'
+내부의 **모든 작동 사항들은 외부AI 작동에 정합한 구조로** 변경해주세요. 이제 **내부 AI 는
+사용하지 않습니다**."
+
+**사용자 결정 (2026-09-01, AskUserQuestion 4문)**:
+1. 재편 범위 = **전면 재편** (탭 자체를 외부AI 운영축으로 다시 나눔)
+2. 서버계정 LLM 과거 지표 = **「기록」 으로 격리** (보존하되 기본 진입에서 제외)
+3. 신규 지표 = **도구 사용량 집계 · 브리지 작업 대기열/이력 · 러너 현황 상세** (3종 전부)
+4. 미구현 안내(`외부 AI 5축 자가 검증`) = **자가 검증 제출까지 구현**
+
+### 2.1 Implementation Plan
+
+**위험도: Major** (§12.3 — 다중 파일·신규 API·러너 프로토콜 확장. 인증/인가 구조 무변경,
+파괴적 데이터 없음, 마이그레이션은 additive expand-safe.)
+
+#### 다의어 고지 — "외부AI 정합한 구조" 가 무엇으로 판정되는가 (§7.1 · §16.7 G1)
+
+> **입력**: 서버 계정 LLM 이 차단(`AGENT_SERVER_LLM_ENABLED` 미설정)된 배포에서
+> 관리자가 `관리 콘솔 > AI 운영 현황` 에 진입.
+> **기대 화면**: 첫 화면(운영 현황)의 **모든 수치가 외부AI 축**이다 —
+> 러너 N대 · 대기/처리중 M건 · 도구 호출 K회 · 자가 검증 통과율.
+> 서버 토큰·비용·모델 도넛은 **첫 화면에 없다**(「기록」 탭에만 있고 '전환 이전' 라벨을 단다).
+> **수치 1개**: 첫 화면 KPI 타일 중 `agent_runtime.llm_usage` 를 출처로 하는 것 = **0개**.
+
+#### 재편 결과 (AS-IS → TO-BE)
+
+| AS-IS 서브탭 | 출처 | TO-BE |
+|---|---|---|
+| LLM 사용량 (`usage`) | `llm_usage` | → **기록**(`archive`) 안 섹션 1, '전환 이전' 라벨 |
+| 운영 현황 (`ops`) | 축5 + llm_usage KPI | → **운영 현황**(`ops`), 외부AI 축으로 재구성 |
+| 추론 (`reasoning`) | 서버 `redteam_reviews` | → **기록** 안 섹션 2 (서버측 이력) + 현행 외부AI 자가검증은 `tasks`/`ops` 로 |
+| 외부 AI 작업 (`exttasks`) | `WebAiTasks`(전체) | → **브리지 작업**(`tasks`) 로 승격·통합 |
+| — | `tool_call_usage` | → **도구 사용량**(`tools`) 신설 |
+
+#### 영향받는 파일 · symbol
+
+| 경로 | symbol / 변경 |
+|---|---|
+| `unit/feature-0002-agent-core/alembic/versions/20260901_0057_redteam_review_source.py` | **신규** — `redteam_reviews.source`(server/external) · `task_id` 컬럼 additive |
+| `shared/bridge_tasks.py` | `RUNNER_FEATURE_SELF_REVIEW` 신설 |
+| `shared/self_review.py` | **신규** — 5축 계약 정본(`AXES` · `build_instruction()` · `sanitize()`). 러너는 서버가 내려준 지시문을 실행만 한다 |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` | `claim_request` 응답에 `self_review` 지시 · `submit_answer` 가 `review` 수용 → `_record_external_review()` |
+| `unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py` | `run_self_review()` · `handle_one` 이 초안 뒤 1회 추가 호출 · 신고 feature 에 `self_review` |
+| `unit/feature-0003-agent-web-ui/src/oauth_store.py` | `list_live_runners()` — 계정별 러너 현황 상세 |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py` | `_provider_axis` 차단 시 `na` 강등 · `_runner_roster` · `_self_review_stats` · 신규 `GET /api/admin/ai-ops/{tools,tasks,runners}` |
+| `unit/feature-0003-agent-web-ui/src/routers/_console_llm.py` | `redteam-review` 항목 `delegated: True` + 문구 정정 |
+| `unit/feature-0003-agent-web-ui/src/static/admin.html` | 서브탭 4종 재편 + `tasks`/`tools`/`archive` subpane |
+| `unit/feature-0003-agent-web-ui/src/static/admin/{aiops,tasks,tools,archive}.js` | `tasks.js`·`tools.js` 신규, `aiops.js` 재구성, `exttasks.js` → `tasks.js` 흡수 |
+| `unit/feature-0003-agent-web-ui/src/static/admin.js` | `initAiConsoleSubtabs` 키 재편 + deep-link alias 하위호환 |
+
+#### 완료 판정 기준 (acceptance criteria)
+
+- `AC-20260901T110000-aiops-external-realign-1`: 게이트 차단 배포의 `AI 운영 현황` 첫 화면 KPI 중 `llm_usage` 출처 타일 0개.
+- `-2`: 서브탭이 `[운영 현황 · 브리지 작업 · 도구 사용량 · 기록]` 이고, 구 deep-link(`tab=usage|ai-ops|reasoning`)가 빈 pane 없이 착지한다.
+- `-3`: `tool_call_usage` 집계가 도구별·대상별·판정별로 화면에 나온다(현행 콘솔 어디에도 없던 축).
+- `-4`: 러너가 자가 검증 JSON 을 `submit_answer` 에 실으면 `redteam_reviews(source='external')` 에 저장되고 화면에 판정이 뜬다.
+- `-5`: 자가 검증을 신고하지 않은 구 러너의 제출도 **거절되지 않는다**(하위호환 — 검증은 선택).
+- `-6`: `_console_llm.py` 의 안내 문구가 실제 코드 경로와 일치한다(없는 기능을 있다고 말하지 않는다).
+
+<!-- PLAN-APPROVED by user on 2026-09-01 (AskUserQuestion 4문 응답) -->
+
+### 2.2 이행
+
+- [x] **서브탭 전면 재편** `[운영 현황 · 브리지 작업 · 도구 사용량 · 기록]` — 기존 pane 은
+      본문 무수정 이동, `exttasks.js` 는 `tasks.js` 로 흡수(삭제)
+- [x] **첫 화면에서 `llm_usage` 출처 타일 제거** (AC-1) — 라이브 실측으로 0개 확인.
+      차단 배포에서만 숨기고 게이트가 열린 배포는 종전 그대로(정상 운영 관제를 무르게 하지 않음)
+- [x] **`LLM 제공자` 축 롤업 제외** — 쓰지 않는 provider 의 제한이 배너를 물들이던 것을 끊되
+      `raw_state` 는 보존(되돌리는 날 되살아날 제한을 전환 전에 확인할 수 있어야 한다)
+- [x] **도구 사용량 신설** (AC-3) — `tool_call_usage` 를 도구별·대상별·계정별·일별로.
+      실측 7일 2,956 호출 · 10,184 행 · 1.4 MB
+- [x] **브리지 작업 통합 원장** — 대화 질문 + 콘솔 위임 + 배치 + 외부 세션. 소유/수행 계정 분리.
+      목록에 **답변 본문을 싣지 않는다**(각인 블록 유출 방지)
+- [x] **러너 명부** — 네 상태(미연결·미수신·기능 미신고·지문 불일치)를 **조치가 다르므로** 가른다
+- [x] **기록 탭 격리** (AC-2) — 3섹션 접힘 + 펼칠 때 조회. 과거 기록 온전 보존
+- [x] **옛 deep-link 흡수** (AC-2) — `admin_console.py` 가 아직 보내는 `tab:"usage"` 를 제품
+      경로(대시보드 위젯 「열기 →」)로 실측: `ai-console/archive` 착지, 빈 pane 아님
+- [x] **외부 AI 자가 검증(5축) 실구현** (AC-4·AC-6) — 계약 정본 `shared/self_review.py` ·
+      마이그 0057 · `claim_request` 지시 하달 · `submit_answer` 수용·저장 · 러너 수행·신고
+- [x] **하위호환** (AC-5) — 검증 없는 제출을 거절하지 않는다. 구 러너 사용자의 답변이 막히지 않음
+- [x] **안내 문구 정정** (AC-6) — 없는 기능을 있다고 말하던 문장을 구현 범위까지만 말하도록.
+      `delegated_feature` 로 기능 단위 판정(`--no-self-review` 사용자에게 '적용 중' 으로 안 보이게)
+- [x] `make test` 전량 green · ruff clean · migrate-lint expand-safe · ROUTEMAP 264 routes
+- [x] 신규 회귀 **54건** + 기존 계약 3건 **축 정정**(등호→하한 이상 · 소스 문자열→행위)
+- [x] **PB-0008 실 Windows 브라우저**(bind-mount 격리, 라이브 무접촉) 9항목 전건 PASS +
+      자체 발견 1건(평문 렌더에 마크다운 강조 → 별표 노출) 수정·재확인
+
+#### 잔여 (POST-DEPLOY)
+
+- [ ] 자가 검증 **end-to-end** — 마이그 0057 적용 + **러너 갱신** 후에야 판정이 원장에 앉는다.
+      현재 라이브 러너는 `2026.08.31` 이라 `self_review` 미신고(화면이 `미지원` 으로 정확히 표시)
+

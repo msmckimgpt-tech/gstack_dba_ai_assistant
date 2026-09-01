@@ -49,6 +49,7 @@ __all__ = [
     "ORIGIN_BATCH",
     "RUNNER_FEATURE_CONSOLE_JOBS",
     "RUNNER_FEATURE_BATCH_JOBS",
+    "RUNNER_FEATURE_SELF_REVIEW",
     "RUNNER_MIN_AGENT_VERSION",
     "JOB_SPECS",
     "job_spec",
@@ -137,6 +138,14 @@ RUNNER_FEATURE_CONSOLE_JOBS = "console_jobs"
 #: 배경 배치까지 받겠다는 **별도 동의**. 콘솔 작업 능력과 나누는 이유: 배치는 그 사람이 요청한
 #: 적 없는 일이고 자기 계정 토큰을 태운다. 능력이 있다고 동의한 것으로 보면 안 된다.
 RUNNER_FEATURE_BATCH_JOBS = "batch_jobs"
+
+#: 답변 초안을 **자기 스스로 5축 검증**할 수 있다는 신고 (TASK-20260901T110000).
+#:
+#: 자격이 아니라 **관측 축**이다 — 이 기능이 없어도 답변은 정상적으로 오고 제출도 받는다.
+#: 신고를 받는 이유는 콘솔이 「검증 결과가 없다」를 두 가지로 갈라 말할 수 있어야 하기
+#: 때문이다: (a) 러너가 검증할 줄 모른다(구버전 — 조치=갱신), (b) 검증했는데 결과가
+#: 비었다(판정 자체가 pass). 합치면 운영자는 전자를 후자로 읽고 "다들 통과하네" 로 끝낸다.
+RUNNER_FEATURE_SELF_REVIEW = "self_review"
 
 #: 이 버전 미만의 러너에는 콘솔 작업을 주지 않고 **갱신을 지시한다**(사용자 결정 2026-08-31).
 #: 기능 신고가 1차 자격이고 버전은 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가

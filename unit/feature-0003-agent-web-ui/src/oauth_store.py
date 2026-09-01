@@ -887,6 +887,90 @@ def count_live_runners(cur, feature: str | None = None,
             "with_feature": int(row[2] or 0)}
 
 
+def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> list[dict]:
+    """관제용 **러너 명부** — 살아 있는 토큰을 가진 계정별로 한 줄 (TASK-20260901T110000).
+
+    ## 왜 집계(`count_live_runners`)로 부족한가
+
+    수만 보면 "러너 3대" 는 알아도 **누가 왜 못 받는지**는 알 수 없다. 서버가 추론하지 않는
+    배포에서 운영자가 실제로 받는 질문은 "이 사람 질문이 왜 처리가 안 되나" 이고, 그 답은
+    계정 단위 사실이다 — 토큰은 있는데 듣지 않는가(러너 종료), 듣는데 기능 신고가 없는가
+    (구버전), 신고했는데 지문이 배포본과 다른가(재설치 안 됨).
+
+    ## 계정당 한 줄인 이유
+
+    같은 계정에 러너가 여럿일 수 있지만 **가장 최근에 말한 것**만 쓴다 — `account_runner_profile`
+    과 같은 규율이다. 합치면 실재하지 않는 조합(A 의 버전 + B 의 기능)이 만들어지고, 질문을
+    실제로 가져가는 것은 그중 하나뿐이다.
+
+    Returns:
+        `[{account_id, username, listening, last_heartbeat_at, age_sec,
+           features: list[str], agent_version, runner_build, model_count}]`
+        — `listening=False` 는 **토큰은 살아 있는데 하트비트가 창 밖**이라는 뜻이다
+        (연결은 했고 지금 프로세스가 없다). 그 구분이 조치를 가른다.
+    """
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    try:
+        cur.execute(
+            # **계정 중복 제거는 파이썬에서 한다.** SQL 로 접으려면 상관 서브쿼리에 같은
+            # 술어를 alias 만 바꿔 한 번 더 써야 하는데(또는 MySQL 의 느슨한 GROUP BY 에
+            # 기대야 하는데), 전자는 술어 사본이 하나 더 생겨 갈릴 준비를 마치고 후자는
+            # 여러 컬럼이 **서로 다른 행**에서 와 실재하지 않는 러너를 만든다.
+            # 정렬이 이미 최신순이므로 첫 등장만 취하면 같은 결과다.
+            "SELECT t.AccountId, a.Username, t.LastHeartbeatAt, "
+            f"       TIMESTAMPDIFF(SECOND, t.LastHeartbeatAt, {_SQL_NOW}), "
+            "       t.RunnerFeatures, t.RunnerAgentVersion, t.RunnerBuild, t.RunnerCapabilities "
+            "FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            "LEFT JOIN WebAccounts a ON a.Id = t.AccountId "
+            f"WHERE {_LIVE_TOKEN_PREDICATE} "
+            # NULL 하트비트(한 번도 안 온 러너)를 뒤로 — 앞에 오면 '가장 최근' 이 뒤집힌다.
+            "ORDER BY t.LastHeartbeatAt IS NULL, t.LastHeartbeatAt DESC, t.Id DESC "
+            "LIMIT %s",
+            # 계정당 토큰이 여럿일 수 있어 넉넉히 읽고 접는다. 상한이 있는 이유는 관제
+            # 조회 하나가 토큰 테이블을 통째로 끌어오지 않게 하기 위해서다.
+            (max(int(limit), 1) * 8,),
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        # 컬럼 부재(구 배포)·질의 실패 — 명부를 못 만든다. 빈 목록이지 "러너 없음" 이
+        # 아니므로, 호출측이 그 차이를 화면에 표현한다.
+        return []
+    out: list[dict] = []
+    seen_accounts: set[int] = set()
+    for r in rows:
+        acct = int(r[0] or 0)
+        if acct in seen_accounts:
+            continue
+        seen_accounts.add(acct)
+        if len(out) >= max(int(limit), 1):
+            break
+        age = r[3]
+        age_sec = int(age) if age is not None else None
+        caps_n = 0
+        if r[7]:
+            try:
+                parsed = json.loads(r[7])
+                if isinstance(parsed, list):
+                    # 신고 형태는 런타임 묶음이라, 「고를 수 있는 모델 총수」로 접는다.
+                    caps_n = sum(len(rt.get("models") or [])
+                                 for rt in parsed if isinstance(rt, dict))
+            except (TypeError, ValueError):
+                caps_n = 0
+        out.append({
+            "account_id": int(r[0] or 0),
+            "username": str(r[1] or ""),
+            "listening": bool(age_sec is not None and age_sec <= window),
+            "last_heartbeat_at": (r[2].isoformat() if hasattr(r[2], "isoformat") else ""),
+            "age_sec": age_sec,
+            "features": parse_runner_features(r[4]),
+            "agent_version": str(r[5] or "").strip(),
+            "runner_build": str(r[6] or "").strip(),
+            "model_count": caps_n,
+        })
+    return out
+
+
 def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str:
     """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. 없으면 빈 문자열.
 

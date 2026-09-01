@@ -760,6 +760,19 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     # 사용자 결정(2026-08-31 "관리 콘솔에 입력되는 값 또한 자율적으로 입력"): 위임은 **기존
     # 경로의 쓰기 의미를 보존**한다 — 검토형(`apply='review'`)은 폼이 가져갈 수 있게 두고,
     # 자동기입형(`apply='store'`)은 서버가 그 자리에서 저장까지 한다.
+    # ── 자가 검증 결과 보존 (TASK-20260901T110000) ──────────────────────────────────
+    #
+    # **답변 확정 뒤, 전달 전**에 둔다. 뒤에 두면 전달 실패 경로에서 검증 기록이 통째로
+    # 빠지고(그 답변이야말로 왜 실패했는지 알아야 하는 것이다), 앞(UPDATE 전)에 두면
+    # 제출이 409 로 거절된 답변의 검증이 원장에 남는다.
+    #
+    # **best-effort 다**(`_ledger.record` 의 fail-closed 와 다르다). 원장은 상한의 원천이라
+    # 못 쓰면 거절해야 하지만, 검증은 관측이다 — 관측을 못 남긴다고 이미 확정된 답변을
+    # 사용자에게서 빼앗을 이유가 없다. 대신 **성공 여부를 응답에 실어** 러너가 침묵으로
+    # "기록됐다" 고 믿지 않게 한다.
+    review_recorded = _record_external_review(
+        task_id, body.get("review"), conversation_id=task.get("conversation_id"))
+
     is_job = str(task.get("kind") or _KIND_CHAT) == _KIND_JOB
     applied, apply_error = False, ""
     delivered = False
@@ -789,10 +802,78 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                              # 실패가 러너에게 성공으로 보이고, 그 러너는 재시도하지 않는다.
                              "applied": applied,
                              "apply_error": apply_error,
+                             "review_recorded": review_recorded,
                              "cross_session_findings": findings})
     return JSONResponse({"task_id": task_id, "recorded": True,
                          "delivered_to_conversation": delivered,
+                         # 검증을 보냈는데 저장되지 않았다는 사실을 러너가 알아야 한다 —
+                         # 모르면 로그에 "검증 포함 제출 완료" 만 남고 원장은 비어 있다.
+                         "review_recorded": review_recorded,
                          "cross_session_findings": findings})
+
+
+def _record_external_review(task_id: str, raw: Any, *, conversation_id: Any = None) -> bool:
+    """러너가 실어 보낸 5축 자가 검증을 `redteam_reviews(source='external')` 에 보존.
+
+    Returns:
+        저장했으면 True. **검증이 없었던 경우도 False** 다 — 호출측이 그 둘을 구분할 필요가
+        없기 때문이다(둘 다 "원장에 행이 없다"). 구분이 필요한 축은 러너의 기능 신고
+        (`RUNNER_FEATURE_SELF_REVIEW`)이고, 그것은 하트비트가 따로 나른다.
+
+    `sanitize` 가 `None` 을 돌려주면 **아무것도 쓰지 않는다.** 형태를 못 갖춘 응답을
+    `verdict='pass'` 로 접어 넣으면 "검증했고 문제없었다" 는 주장이 되는데, 실제로 일어난
+    일은 러너의 AI 가 JSON 을 못 냈다는 것뿐이다 — 그 침묵이 곧 거짓 안심이 된다.
+    """
+    if raw is None:
+        return False
+    try:
+        from shared import self_review as _sr
+
+        clean = _sr.sanitize(_sr.parse_review_text(raw))
+    except Exception:
+        logging.getLogger(__name__).debug("자가 검증 파싱 실패 task=%s", task_id, exc_info=True)
+        return False
+    if not clean:
+        return False
+    pg = _pg()
+    if pg is None:
+        return False
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "INSERT INTO agent_runtime.redteam_reviews "
+                "(conversation_id, run_id, task_id, source, verdict, findings, "
+                " block_count, warn_count, model, latency_ms, reasoning_level) "
+                # `findings` 는 JSONB — psycopg3 는 str 을 text 로 바인딩하므로 명시
+                # `::jsonb` cast 가 없으면 42804 로 거부되고 판정이 조용히 유실된다
+                # (`modules/redteam.record_review` 와 같은 규약).
+                #
+                # `run_id` 는 NULL 이다 — 서버 요청 식별자라 외부 경로에 존재하지 않는다.
+                # 없는 값을 task_id 로 채우면 두 세계의 식별자가 한 컬럼에서 섞여, 콘솔이
+                # 어느 쪽 원장과 조인해야 하는지 판단할 근거를 잃는다.
+                "VALUES (%s, NULL, %s, 'external', %s, %s::jsonb, %s, %s, %s, %s, %s)",
+                (str(conversation_id or "") or None, str(task_id or "")[:64],
+                 clean["verdict"], json.dumps(clean["findings"], ensure_ascii=False),
+                 clean["block_count"], clean["warn_count"],
+                 clean.get("model"), clean.get("latency_ms"), clean.get("reasoning_level")))
+        pg.commit()
+        return True
+    except Exception:
+        # 이미 확정된 답변을 관측 실패로 되돌리지 않는다(위 호출부 주석 참조).
+        logging.getLogger(__name__).warning(
+            "자가 검증 기록 실패 task=%s", task_id, exc_info=True)
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        # `_pg()` 는 호출마다 새 연결을 연다 — 닫지 않으면 제출마다 하나씩 샌다
+        # (`record_review` 가 같은 이유로 finally 에서 닫는다).
+        try:
+            pg.close()
+        except Exception:
+            pass
 
 
 #: 브리지에만 있는 도구의 (무엇을, 왜). 내부 경로에는 대응 도구가 없어 `_derive_step_*` 이
@@ -1918,12 +1999,73 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             "model": str(row[8] or ""),
             "reasoning_level": str(row[9] or ""),
         },
+        # 자가 검증 지시 (TASK-20260901T110000). 러너는 이 지시문을 초안과 함께 자기 AI 에게
+        # 한 번 더 넘기고, 받은 JSON 을 `submit_answer` 의 `review` 로 실어 보낸다.
+        # **지시문 전문을 서버가 준다** — 축·심각도·출력형식은 우리 규약이라, 러너에 박아 두면
+        # 축을 고칠 때마다 전 사용자가 재설치해야 하고 재설치하지 않은 러너는 낡은 축으로
+        # 판정한 결과를 같은 컬럼에 쓴다(스키마는 같고 의미만 갈리는 어긋남).
+        "self_review": _self_review_directive(question),
         "next": ("조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
                  "선언합니다." + (
                      f" 이 질문에는 첨부 {len(attachments)}건이 있습니다 — "
                      f"read_task_attachment(task_id, attachment_id) 로 본문을 읽고 나서 답하세요."
                      if attachments else "")),
     })
+
+
+def _self_review_enabled() -> bool:
+    """운영자의 `REDTEAM_ENABLED` 스위치 하나가 외부 자가 검증도 지배한다.
+
+    같은 knob 을 쓰는 이유: 운영자에게 「서버 자가 리뷰」와 「외부 자가 검증」은 같은 질문이다
+    (답변을 내보내기 전에 검증하는가). 두 스위치로 나누면 하나를 끄고 다른 하나가 도는 상태가
+    생기고, 콘솔의 그 패널은 어느 쪽을 말하는지 알 수 없게 된다.
+
+    ⚠ `REDTEAM_MIN_LEVEL`(최소 추론 강도)은 **적용하지 않는다.** 그 게이트는 서버 카탈로그의
+    강도 어휘(low/normal/high/max)로 판정하는데, 브리지의 강도는 **러너가 신고한 자기 어휘**라
+    (`Low`/`medium`/`xhigh`/`5` …) 같은 사다리 위에 있지 않다. 억지로 매핑하면 어떤 러너에게는
+    항상 skip, 다른 러너에게는 항상 수행이 되고 그 차이는 화면 어디에도 드러나지 않는다.
+    적용하지 못하는 설정을 적용한 척하지 않는다 — 그 사실은 `_console_llm.INACTIVE_SURFACES`
+    가 콘솔에 표시한다.
+
+    조회 실패는 **끔**(False). 검증은 관측 축이고, 알 수 없을 때 켜면 사용자의 개인 AI 에
+    호출 하나를 더 태우게 된다 — 우리가 확신 없이 남의 자원을 쓰지 않는다.
+    """
+    try:
+        from shared import runtime_settings as _rs
+
+        return int(_rs.get_int("REDTEAM_ENABLED")) > 0
+    except Exception:
+        return False
+
+
+def _self_review_directive(question: str) -> dict:
+    """`claim_request` 응답에 싣는 자가 검증 지시.
+
+    `enabled: False` 여도 **키 자체는 보낸다** — 키가 없으면 러너는 "이 서버는 자가 검증을
+    모르는 구버전" 과 "검증을 끈 서버" 를 구분할 수 없고, 구분하지 못하면 로그에 무엇을 쓸지도
+    정하지 못한다.
+    """
+    if not _self_review_enabled():
+        return {"enabled": False, "reason": "운영자 설정에서 자가 검증이 꺼져 있습니다."}
+    try:
+        from shared import self_review as _sr
+
+        return {
+            "enabled": True,
+            # 초안 자리는 러너가 채운다(`{{DRAFT}}` 치환이 아니라 조립 함수를 서버가 이미
+            # 실행했으므로, 여기서는 질문만 박힌 지시문에 러너가 초안을 이어 붙인다).
+            "instruction": _sr.build_instruction(question, _SELF_REVIEW_DRAFT_SLOT),
+            "draft_slot": _SELF_REVIEW_DRAFT_SLOT,
+            "max_findings": _sr.MAX_FINDINGS,
+        }
+    except Exception:
+        logging.getLogger(__name__).debug("self-review directive 조립 실패", exc_info=True)
+        return {"enabled": False, "reason": "검증 지시문을 준비하지 못했습니다."}
+
+
+#: 러너가 초안을 끼워 넣을 자리 표시. **본문에 나타날 리 없는 문자열**이어야 한다 —
+#: 사용자가 우연히 같은 글자를 쓰면 초안이 엉뚱한 위치에 두 번 들어간다.
+_SELF_REVIEW_DRAFT_SLOT = "⁣[[BRIDGE_SELF_REVIEW_DRAFT]]⁣"
 
 
 # (P0-T, 2026-08-28) `_REASONING_INTENT` 와 `_requested_quality()` 는 제거됐다.
