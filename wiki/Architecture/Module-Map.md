@@ -52,7 +52,7 @@ sources:
 | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | 정책 정본 + multi-agent schema 호환 | `AGENTS.md` (정본 — schema 파일) |
 | `docs/` | 정책·도메인 정본 (PROJECT/ARCHITECTURE/DECISIONS/CONVENTIONS/SECURITY/STATUS 외) | 각 파일 frontmatter `source_of_truth: true` |
 | `unit/<feature-id>/` | feature 단위 구현·문서·테스트 | `unit/<id>/docs/FUNCTION.md` 가 기능 정본 |
-| `shared/` | feature-0002·0003·격리 컨테이너가 공유하는 Python 패키지 (feature-0011 P5a 추출 Step 1~5 완료 · 현재 15 모듈(`ls shared/*.py` 실측 2026-08-31, `__init__` 포함) · `shared/model_catalog` 는 LLM 카탈로그와 provider identity 주입 규칙의 단일 정본) | `docs/CODEBASE_MAP.md` §3 Shared Module Index (모듈 색인 정본) + `shared/README.md` + `shared/docs/MODIFY.md` |
+| `shared/` | feature-0002·0003·격리 컨테이너가 공유하는 Python 패키지 (feature-0011 P5a 추출 Step 1~5 완료 · 현재 16 모듈(`ls shared/*.py` 실측 2026-09-02, `__init__` 포함 — 창에서 `shared/self_review.py` 신설: 외부 AI 자가 검증 5축의 **계약 정본**을 서버에 두어 러너 재설치 없이 축을 고칠 수 있게 한다) · `shared/model_catalog` 는 LLM 카탈로그와 provider identity 주입 규칙의 단일 정본) | `docs/CODEBASE_MAP.md` §3 Shared Module Index (모듈 색인 정본) + `shared/README.md` + `shared/docs/MODIFY.md` |
 | `bin/` | 운용·검증 스크립트 (`verify-completion.sh`, `wiki-lint.sh`, `kb-cutover-readiness.sh`, ...) | 각 스크립트 자체 |
 | `playbooks/` | 반복 작업 표준화 (`PB-NNNN`) | 각 PB 파일 |
 | `wiki/` | 사람용 graph 입구 (본 vault) | mirror — 정본 없음 |
