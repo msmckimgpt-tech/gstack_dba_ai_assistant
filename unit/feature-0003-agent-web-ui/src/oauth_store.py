@@ -670,6 +670,60 @@ def token_runner_profile(cur, raw_token: str) -> dict:
             "agent_version": str(row[2] or "").strip(), "listening": True}
 
 
+def stale_runner_must_yield(cur, raw_token: str, account_id: int,
+                            deployed_build: str, window_sec: int | None = None) -> str:
+    """이 러너가 **낡았고, 같은 계정에 최신 러너가 함께 듣고 있는가**. 그러면 그 지문을 준다.
+
+    빈 문자열 = 양보할 이유 없음(정상 처리).
+
+    ## 왜 «절대» 가 아니라 «상대» 판정인가 (TASK-20260901T173000)
+
+    러너는 사용자 머신 파일이라 우리가 갱신을 강제할 수 없다. 그래서 배포 직후에는 **모든**
+    사용자의 러너가 배포본과 다르다 — 여기서 「낡았으면 거절」을 절대 규칙으로 두면 매 배포가
+    전 사용자 서비스 중단이 된다. `runner_update` 가 지금까지 *안내만* 해 온 이유가 그것이다.
+
+    그런데 안내만으로는 막지 못하는 상태가 있다: **한 계정에 러너가 둘 붙어 있고 하나가
+    낡은 경우.** 점유는 선착순 원자 UPDATE 라, 사용자가 화면의 「연결 준비」로 새 러너를
+    띄워도 옛 러너가 먼저 집으면 그 답이 사용자에게 간다. 사용자 입장에서는 «시키는 대로
+    했는데 그대로» 이고, 화면에는 그 이유가 없다(라이브 2026-09-01: 옛 러너가 17:20:03 질문을
+    5초 만에 옛 코드로 처리 — 같은 계정의 최신 러너는 41초 전에 대기에 들어가 있었다).
+
+    상대 판정이면 두 위험이 동시에 사라진다 — 최신 러너가 **실제로 듣고 있을 때만** 양보하므로
+    배포 직후 단독 러너는 종전대로 계속 일하고(무회귀), 둘이 붙은 순간에는 새 쪽이 이긴다.
+
+    ## 판정 근거가 없으면 양보시키지 않는다 (fail-open)
+
+    - 배포본 지문을 못 읽었거나(`deployed_build` 빈 값) 이 토큰이 지문을 신고하지 않았으면
+      «다르다» 고 말할 근거가 없다 — `_runner_update_hint` 의 「양쪽을 다 알 때만 판정」과
+      같은 규율이다. 구 러너는 지문을 아예 신고하지 않으므로 이 경로로는 잡히지 않는다.
+    - 최신 러너 후보는 **살아 있는 토큰**(`_LIVE_TOKEN_PREDICATE`)이면서 하트비트가 창 안이어야
+      한다. 낡은 행이 되살아나 멀쩡한 러너를 굶기지 않게 하는 자물쇠다.
+    """
+    if not raw_token or not deployed_build or not account_id:
+        return ""
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT t.RunnerBuild FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} LIMIT 1",
+        (token_hash(raw_token),),
+    )
+    row = cur.fetchone()
+    mine = str((row or [""])[0] or "").strip()
+    if not mine or mine == deployed_build:
+        return ""
+    # 같은 계정에서 **배포본과 같은 지문**으로 지금 듣고 있는 다른 러너가 있는가.
+    cur.execute(
+        "SELECT 1 FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.AccountId = %s AND t.TokenHash <> %s AND {_LIVE_TOKEN_PREDICATE} "
+        "  AND t.RunnerBuild = %s AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) LIMIT 1",
+        (int(account_id), token_hash(raw_token), deployed_build, window),
+    )
+    return mine if cur.fetchone() else ""
+
+
 def set_runner_report(cur, raw_token: str, capabilities: str | None,
                       features: Any, agent_version: str | None = None,
                       agent_build: str | None = None) -> bool:

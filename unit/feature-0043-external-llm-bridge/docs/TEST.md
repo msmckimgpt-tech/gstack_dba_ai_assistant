@@ -161,6 +161,16 @@ source_of_truth: true
 | TEST-20260901T160000-redact | `_redact_secrets` · `_FAIL_DETAIL_MAX` | 사유에 자격증명이 실리지 않고 길이 상한이 있다 | AC-20260901T160000-cli-failure-reason-6 |
 | TEST-20260901T160000-single-site | `_run_cli_cancelable` | 실패 사유 조립이 **한 곳**에서만 일어난다(두 벌 방지) | AC-20260901T160000-cli-failure-reason-7 |
 
+| TEST-20260901T173000-live-repro | `stale_runner_must_yield` | 옛 러너 + 같은 계정 최신 러너 → **양보**(라이브 지문으로 고정) | AC-20260901T173000-stale-runner-yield-1 |
+| TEST-20260901T173000-lone | `stale_runner_must_yield` | 최신 러너가 없으면 낡아도 계속 일한다 — 배포 직후 전 사용자 중단 방지 | AC-20260901T173000-stale-runner-yield-2 |
+| TEST-20260901T173000-failopen | `stale_runner_must_yield` | 지문 미상·미신고·조회 실패는 **양보 없음**(fail-open) | AC-20260901T173000-stale-runner-yield-3 |
+| TEST-20260901T173000-peer | 후보 질의 | **남 · 살아 있음 · 하트비트 신선** 3중 자물쇠 + 인증과 같은 술어 | AC-20260901T173000-stale-runner-yield-4 |
+| TEST-20260901T173000-claim | `claim_request` | 집행은 점유 UPDATE **앞** 409 — 억제만으로는 못 막는다 | AC-20260901T173000-stale-runner-yield-5 |
+| TEST-20260901T173000-nobusyloop | `wait_for_request` | 양보 판정이 **즉시 반환하지 않는다**(옛 러너의 즉시 재호출 → busy-loop) | AC-20260901T173000-stale-runner-yield-5 |
+| TEST-20260901T173000-cancel | `wait_for_request` | 취소 통보는 양보 판정에 묶이지 않는다(주석 제외 코드 구간 단언) | AC-20260901T173000-stale-runner-yield-6 |
+| TEST-20260901T173000-superseded | 하트비트 · 러너 | `superseded` ≠ `stale_build` · 러너는 **하던 일을 마치고** 대기 호출 앞에서 종료 | AC-20260901T173000-stale-runner-yield-7 |
+| TEST-20260901T173000-account | 판정 질의 | 계정 스코프 — 다른 계정 러너 병존은 허용(사용자 결정) | AC-20260901T173000-stale-runner-yield-8 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

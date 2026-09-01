@@ -230,6 +230,50 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
     })
 
 
+def _stale_runner_yield_to(request: Request, conn, account_id: int) -> str:
+    """이 러너가 낡았고 **같은 계정의 최신 러너가 지금 듣고 있으면** 그 낡은 지문을 준다.
+
+    빈 문자열 = 종전대로 처리(양보 없음).
+
+    ## 무엇을 막는가 (TASK-20260901T173000, 라이브)
+
+    사용자가 화면의 「연결 준비」로 최신 러너를 띄웠는데도 **옛 러너가 질문을 먼저 집어** 옛
+    동작으로 답했다. 점유는 선착순 원자 UPDATE 라 «누가 먼저 폴링했는가» 가 승자를 정하고,
+    `runner_update.stale_build` 는 그 사실을 **말할 뿐 막지 않았다**. 사용자에게는 「고쳤다는데
+    그대로」로 보이고, 두 러너가 붙어 있다는 사실은 화면 어디에도 없다.
+
+    ## 왜 서버에서 막아야만 하는가
+
+    낡은 러너는 **정의상 우리 새 코드를 갖고 있지 않다.** 러너측에 「낡으면 집지 마라」를 넣어도
+    그 코드는 이미 도는 옛 프로세스에 없다 — 지금 문제를 일으키는 바로 그 러너에게는 영원히
+    닿지 않는다. 서버 판정만이 러너 갱신 없이 즉시 발효한다.
+
+    실패는 **양보 없음**으로 떨어진다(fail-open): 판정 근거가 없거나 조회가 실패하면 종전 동작이
+    남을 뿐이고, 잘못 양보시키면 멀쩡한 러너가 굶는다 — 두 오류의 값이 다르다.
+    """
+    try:
+        deployed = _deployed_runner_build()
+        if not deployed:
+            return ""
+        cur = conn.cursor()
+        try:
+            return _store.stale_runner_must_yield(cur, _bearer(request), account_id, deployed)
+        finally:
+            cur.close()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "[bridge] stale-runner 판정 실패 account=%s: %r", account_id, exc)
+        return ""
+
+
+#: 양보 사유를 러너·사람 양쪽이 같은 문장으로 읽게 한다(두 벌이면 하나만 고쳐진다).
+def _stale_runner_notice(stale_build: str) -> str:
+    return ("이 러너는 배포본과 다른 실행 파일(지문 " + (stale_build[:12] or "?") + ")이고, "
+            "같은 계정에 최신 러너가 이미 연결돼 있습니다. 질문은 그 최신 러너가 처리합니다 — "
+            "이 프로세스는 종료해도 됩니다(웹 화면의 「연결 준비」로 받은 최신 파일이 도는 "
+            "쪽만 남기세요).")
+
+
 def _dispatch_scope_sql(grants: dict, account_id: int) -> tuple[str, list]:
     """대기열 조회 술어 + 파라미터. **자격이 늘어날수록 OR 가지가 늘어난다.**
 
@@ -1848,6 +1892,14 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
     # 연결이 끊겼던 동안 보관된 질문을 지금 대기열에 올린다(최근 1건).
     _promote_deferred_for(conn, account_id)
 
+    # 낡은 러너가 최신 러너와 함께 붙어 있으면 **목록부터** 비운다 (TASK-20260901T173000).
+    # 집행은 `claim_request` 지만, 목록까지 비워야 그 러너가 매 주기 집었다 409 받는 공회전을
+    # 하지 않는다 — 그 공회전은 계정 공용 상한(`_ledger`)을 태워 최신 러너를 굶긴다.
+    _yield_to = _stale_runner_yield_to(request, conn, account_id)
+    if _yield_to:
+        return JSONResponse({"count": 0, "requests": [],
+                             "next": _stale_runner_notice(_yield_to)})
+
     rows: list[dict[str, Any]] = []
     cur = conn.cursor()
     try:
@@ -1968,6 +2020,16 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
     # 자격은 대기 **시작 시점에 한 번** 잰다(루프 안에서 재지 않는 이유는 아래 질의 주석).
     _wait_scope_sql, _wait_scope_params = _dispatch_scope_sql(
         _runner_job_grants(conn, ctx, request), account_id)
+    # 양보 대상이면 **대기에 들어가지 않는다** (TASK-20260901T173000). 들어가면 그 러너는
+    # 최대 대기시간 동안 새 질문을 자기 쪽으로 끌어와 놓고 claim 에서 튕기며, 그 사이 진짜
+    # 처리자인 최신 러너는 같은 질문을 못 본 채 대기만 한다. 판정은 대기 **시작 시점 1회**다
+    # (자격 술어와 같은 규율 — 루프 안에서 재면 대기 중 상태가 흔들린다).
+    #
+    # ⚠ 여기서 **즉시 반환하지 않는다**. 낡은 러너는 `timed_out` 을 받으면 곧바로 다시 부르는
+    #   것이 정상 동작이라(그 코드는 이미 도는 옛 프로세스에 있다) 즉시 반환은 초당 수십 회의
+    #   busy-loop 가 된다 — 옛 러너를 막으려던 조치가 서버를 때리는 장치가 된다. 대신 대기는
+    #   종전대로 유지하고 **일감만 보이지 않게** 한다(아래 `found` 억제).
+    _wait_yield_to = _stale_runner_yield_to(request, conn, account_id)
     with _drain.waiting():
         while True:
             cur = conn.cursor()
@@ -1982,7 +2044,10 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
                     "SELECT TaskId, Question, CreatedAt, Kind, JobKind FROM WebAiTasks "
                     "WHERE " + _wait_scope_sql + " AND Status='open' AND " + _CLAIMABLE_SQL +
                     " ORDER BY CreatedAt ASC LIMIT 20", tuple(_wait_scope_params))
-                found = list(cur.fetchall() or [])
+                # 양보 대상이면 새 질문을 **보여주지 않는다** (TASK-20260901T173000). 취소 통보
+                # (아래)는 그대로 흘린다 — 이미 집어 둔 작업을 끊는 신호는 낡은 러너에게도
+                # 필요하고, 그것을 막으면 사용자가 누른 중단이 그 러너에 닿지 않는다.
+                found = [] if _wait_yield_to else list(cur.fetchall() or [])
                 # **내가 점유 중인데 취소된 작업** — 사용자가 중단을 눌렀거나 새 질문으로 갈아탔다.
                 #
                 # 왜 여기서 보는가(2026-08-28): 취소를 알릴 별도 도구를 만들면 러너가 채널을 하나 더
@@ -2071,6 +2136,7 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
                 "timed_out": not canceled, "waited_ms": waited_ms,
                 "next": ("취소된 작업을 중단하세요(제출해도 409 로 거절됩니다)."
                          if canceled else
+                         _stale_runner_notice(_wait_yield_to) if _wait_yield_to else
                          "곧바로 다시 wait_for_request 를 호출하면 된다(간격 불필요).")}
         if drained and not canceled:
             # feature-0045: **오류가 아니다.** 배포로 이 replica 가 교대하는 중이라는 사실을
@@ -2122,6 +2188,17 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         return _json_err(400, "task_id 가 필요합니다.")
 
     t0 = time.perf_counter()
+    # ── 집행: 낡은 러너는 최신 러너가 함께 붙어 있으면 점유하지 못한다 (TASK-20260901T173000) ──
+    #
+    # 목록·대기에도 억제를 걸었지만 **집행은 여기다** — 러너는 다른 경로로 알아낸 task_id 로
+    # 곧장 claim 할 수 있고(실제로 `wait` 응답의 `canceled_task_ids` 로도 id 를 본다), 그러면
+    # 억제만 있는 구조는 아무것도 막지 못한다. `_dispatch_scope_sql` 이 자격을 이 UPDATE 에
+    # 함께 거는 것과 같은 규율이다.
+    _claim_yield_to = _stale_runner_yield_to(request, conn, account_id)
+    if _claim_yield_to:
+        _safe_record(account, ctx, tool="claim_request", outcome="denied",
+                     detail="stale_runner_yield", task_id=task_id)
+        return _json_err(409, _stale_runner_notice(_claim_yield_to))
     _claim_scope_sql, _claim_scope_params = _dispatch_scope_sql(
         _runner_job_grants(conn, ctx, request), account_id)
     cur = conn.cursor()
@@ -4131,6 +4208,9 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # `require_ai_token` 을 통과했는데 여기서 None 이면 그 사이에 폐기된 것이다
         # (로그아웃과의 경합). 명시적 해제이므로 그대로 401 — 러너가 재발급 안내를 낸다.
         raise app._AuthError("유효하지 않거나 만료된 토큰입니다.", 401, _challenge(request))
+    # 이 신호 **뒤에** 판정한다 — 방금 쓴 자기 하트비트가 반영된 상태여야 「누가 듣고 있나」가
+    # 현재 사실이 된다. 실패는 fail-open(양보 없음)이므로 연결 유지 신호를 죽이지 않는다.
+    _superseded_by = _stale_runner_yield_to(request, conn, account_id)
     return JSONResponse({
         "ok": True,
         # 실제로 수명이 밀렸는가. `False` 는 오류가 아니라 **최근에 이미 밀렸다**는 뜻이다
@@ -4152,7 +4232,16 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # 서버가 자동 다운로드·자기교체를 시키지 않는 이유: 그것은 사용자 머신의 프로세스를
         # 우리가 말없이 바꾸는 것이고, 이 feature 가 지켜 온 경계("러너를 띄운 사람의 설정을
         # 낮추지 않는다")를 넘는다.
-        "runner_update": _runner_update_hint(agent_version, features, agent_build),
+        # `superseded` 는 `stale_build` 와 **다른 사실**이다 (TASK-20260901T173000).
+        # `stale_build` = "네 파일이 배포본과 다르다"(혼자여도 참, 그래도 계속 일한다).
+        # `superseded`  = "같은 계정에 최신 러너가 이미 붙어 있다" — 이때만 이 러너는 할 일이
+        # 없고, 남아 있으면 선착순 점유로 사용자 답변을 옛 동작으로 되돌린다. 둘을 한 필드로
+        # 합치면 배포 직후 단독 러너까지 스스로 종료해 서비스가 끊긴다.
+        # **계정이 다르면 애초에 후보가 아니다** — 판정 질의가 `AccountId` 로 묶여 있어,
+        # 한 머신에서 여러 계정으로 러너를 띄우는 구조는 그대로 허용된다(사용자 결정 2026-09-01).
+        "runner_update": {**_runner_update_hint(agent_version, features, agent_build),
+                          "superseded": bool(_superseded_by),
+                          "superseded_by_build": _deployed_runner_build() if _superseded_by else ""},
         # 사망 신고로 실제 놓아준 작업들 (TASK-20260901T140000). 러너가 로그로 남겨
         # "재기동 뒤 무엇이 되살아났는지" 를 사람이 볼 수 있게 한다 — 조용한 회수는
         # 다음에 같은 증상이 나왔을 때 진단 근거가 되지 못한다.
