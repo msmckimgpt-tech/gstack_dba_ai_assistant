@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T020746-interrupt-preserved-note (중단된 run 의 진행분을 단계 목록까지 보존, Minor)
+
+- **왜**: 중단(interrupt) 시 사용자가 잃던 것이 화면·이력·다음 맥락 **세 축 동시**였다. 보존 축
+  자체는 `composer-nonblock-interrupt` R3 가 만들었으나 **명시 '중단' 버튼만 거기서 빠져** 있었고
+  (`/api/cancel` 기본값 — feature-0003 `CHG-20260901T020746-interrupt-context-preserve`),
+  보존 본문의 근거인 `steps` 는 **도구 step 만** 담아(`steps.append` 는 tool 분기 1곳) 도구 호출
+  전 중단은 보존 경로에 태워도 남길 문장이 0 이었다. 사용자 요청 2026-09-01: "요청했던 작업을
+  중단(interrupt) 하더라도 추론했던 내용, 맥락, 단계가 손실되지는 않도록."
+- `src/agent_core.py`:
+  - `_build_interrupted_note(steps, rationale, activity_trail, partial_answer)` 신설 — 보존 본문을
+    **① 미완 라벨 ② 진행 단계 ③ 단계별 근거**(+ 진행 중이던 답변) 세 구획으로 만든다. 남길 것이
+    전무하면 **빈 문자열**을 반환해 호출부가 저장을 건너뛴다(헤더만 남은 말풍선 금지).
+    보조: `_interrupted_step_lines`(activity 제외 · 라벨 우선순위 work→intent→sql · 개행 접기 ·
+    160자 컷), 상수 `_INTERRUPT_NOTE_HEADER`·`_INTERRUPT_STEP_LINES_MAX`(20)·
+    `_INTERRUPT_ACTIVITY_LINES_MAX`(8)·`_INTERRUPT_LINE_CHARS_MAX`(160).
+  - `_append_activity_trail(trail, label, cap=40)` 신설 + `_run_agent_core` 의 `_emit_activity` 가
+    호출 — 진행 라벨을 in-process 로 적재(꼬리 우선). DB(`agent_runtime.steps`)를 되읽지 않는
+    이유는 취소 경로에 왕복을 더하지 않기 위해서다(그 경로는 이미 KV·큐·브리지 3축을 건드린다).
+    적재 규칙을 모듈 레벨로 뺀 것은 중첩 함수 인라인이면 경계(공백·상한)를 단위 검증할 수 없어서다.
+  - 취소 분기(`if canceled_by_user:`) — 종전 `rationale or answer` 한 줄 대신 위 빌더를 호출하고
+    `activity_trail` 을 넘긴다. 저장은 종전과 동일하게 `_save_message`(다음 run 맥락) +
+    `_mirror_message`(화면, `meta={"interrupted": True, ...}`) 2곳.
+- **미완 라벨이 본문에 있어야 하는 이유**: 보존분은 `core_messages` 를 타고 다음 run 의 recall 에
+  실리는데 모델이 보는 것은 본문 텍스트뿐이다 — mirror meta 의 `interrupted: true` 는 화면 렌더
+  전용이다. 라벨이 없으면 중간 기록이 확정 결론으로 읽혀, 방향을 바꾸려 중단한 사용자에게 폐기된
+  가설 위에서 답을 잇는다(사용자 결정 2026-09-01).
+- **단계 UI 는 이 메시지 1건이 앵커**: 취소해도 `agent_runtime.steps` 행은 남고(`_purge_run_steps`
+  호출부 0) feature-0003 history 조립부가 assistant 메시지마다 그 run 의 steps 를 붙인다 —
+  별도 스냅샷 저장 경로를 만들지 않았다.
+- 테스트: `tests/test_interrupt_preserves_context.py` 19건(실호출 17 + 배선 2), 뮤테이션 3종 KILL.
+
 ## CHG-20260831T144500-conv-activity-touch (대화 활동 시각 전진을 표시 store 쓰기에 붙임, Minor)
 
 - **왜**: `agent_runtime.core_conversations.updated_at` 을 움직이는 write 가 **자동 제목 부여

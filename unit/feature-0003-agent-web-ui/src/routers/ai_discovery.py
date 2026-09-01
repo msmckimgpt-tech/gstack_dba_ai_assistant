@@ -95,8 +95,12 @@ _CONVERSATION_ENDPOINTS = [
      "request": {"conversation_id": "string"}, "response": {"output": "string", "status": "string"}},
     {"method": "GET", "path": "/api/progress", "summary": "진행 중 run 의 단계(스텝) 관찰.",
      "request": {"conversation_id": "string"}, "response": {"steps": "array"}},
-    {"method": "POST", "path": "/api/cancel", "summary": "진행 중 ask 취소.",
-     "request": {"conversation_id": "string"}, "response": {"cancelled": "bool"}},
+    {"method": "POST", "path": "/api/cancel",
+     "summary": "진행 중 ask 취소. **기본은 보존 취소** — 그때까지의 진행 단계·근거가 대화에 "
+                "assistant 메시지로 남아 다음 질문의 맥락으로 이어진다.",
+     "request": {"conversation_id": "string",
+                 "preserve_reasoning": "bool (선택, 기본 true) — false 를 명시하면 진행분을 남기지 않고 폐기"},
+     "response": {"cancelled": "bool"}},
     # ── 대화 품질 조정 (conversation-quality-controls, 2026-07-28) ──────────────────────
     {"method": "GET", "path": "/api/ai/capabilities",
      "summary": "이 토큰/계정이 실제로 조정할 수 있는 품질 옵션(모델·추론 강도·제품·폴더 지침·첨부)의 "
@@ -542,10 +546,15 @@ def _openapi_spec(request: Request) -> dict:
                 "parameters": _cid_param(True), "responses": {"200": {"description": "결과"}, **_errs}}},
             "/api/progress": {"get": {"summary": "진행 단계(스텝) 관찰.", "operationId": "progress",
                 "parameters": _cid_param(True), "responses": {"200": {"description": "스텝"}, **_errs}}},
-            "/api/cancel": {"post": {"summary": "진행 중 ask 취소.", "operationId": "cancel",
+            "/api/cancel": {"post": {
+                "summary": "진행 중 ask 취소(기본 = 진행분 보존).", "operationId": "cancel",
                 "requestBody": {"required": True, "content": {"application/json": {"schema": {
                     "type": "object", "required": ["conversation_id"],
-                    "properties": {"conversation_id": {"type": "string"}}}}}},
+                    "properties": {"conversation_id": {"type": "string"},
+                                   "preserve_reasoning": {
+                                       "type": "boolean", "default": True,
+                                       "description": "진행된 추론·단계를 대화에 남길지. "
+                                                      "false 를 명시할 때만 폐기한다."}}}}}},
                 "responses": {"200": {"description": "취소"}, **_errs}}},
             # ── 대화 품질 조정 (conversation-quality-controls, 2026-07-28) ─────────────────
             "/api/ai/capabilities": {"get": {

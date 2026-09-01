@@ -1217,10 +1217,17 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
         "conversation.cancel.any",
     ):
         return app._json_error("권한이 없습니다.", 403)
-    # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청은 preserve_reasoning=true 로 취소 →
-    # agent_core 가 이 run 의 부분 추론을 메시지로 보존(가시 + 다음 run 맥락). 명시 '중단' 버튼(미지정)
-    # 은 기존대로 폐기 — 동작 무변경.
-    _preserve_reasoning = bool(data.get("preserve_reasoning"))
+    # REQ-20260901T020746-interrupt-context-preserve: **미지정 = 보존** 으로 기본값을 뒤집는다.
+    #
+    # 종전엔 `bool(data.get(...))` 이라 플래그를 안 보내는 쪽 — 즉 **명시 '중단' 버튼** — 이
+    # 전부 폐기였다. 그 결과 사용자가 보던 진행 단계는 프런트가 지우고, 앵커가 될 assistant
+    # 메시지가 없어 이력에도 남지 않으며, `core_messages` 에 아무것도 쓰지 않아 다음 요청의
+    # LLM 맥락에서도 사라졌다(화면·이력·다음 맥락 세 축 동시 소실 — 사용자 신고 2026-09-01).
+    #
+    # 기본을 보존으로 두면 **웹 UI 와 외부 AI 도구 표면(`ai_discovery.py` 의 `/api/cancel`)이
+    # 한 규칙을 공유**한다. 프런트만 고치면 외부 경로는 계속 폐기하기 때문이다.
+    # 폐기를 원하는 호출자는 `preserve_reasoning: false` 를 **명시**한다(향후 '버리고 중단' UI 여지).
+    _preserve_reasoning = bool(data.get("preserve_reasoning", True))
 
     # feature-0043: **브리지 대기 취소** — 서버 LLM 이 잠긴 동안 이 대화의 "진행 중" 은 서버 run
     # 이 아니라 `WebAiTasks` 의 대기 작업이다. 아래 KV/큐 취소는 그 축을 전혀 건드리지 않으므로,

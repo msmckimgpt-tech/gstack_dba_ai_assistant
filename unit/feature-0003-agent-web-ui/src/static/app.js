@@ -7006,6 +7006,38 @@ function renderShareRangeBanner() {
   _attachShareRangeEsc();  // ESC 로도 range 취소(idempotent).
 }
 
+/** REQ-20260901T020746-interrupt-context-preserve: 중단 뒤 도착하는 **보존 말풍선**을 화면에 올린다.
+ *
+ *  중단은 KV 플래그만 세우고 즉시 반환한다 — agent 루프는 진행 중이던 LLM 호출이 끝난 뒤에야
+ *  체크포인트에서 진행분을 메시지로 쓴다(수 초~수십 초). 그런데 `cancelCurrentRun` 은 같은
+ *  turn 에 진행 폴링을 멈추므로(`stopProgressPolling({reset:true})`) 자동 갱신 트리거가 없다.
+ *  그러면 사용자는 "진행된 내용은 대화에 남습니다" 라는 안내를 보고도 **직접 새로고침해야**
+ *  그것을 본다 — 안내가 거짓말처럼 읽힌다.
+ *
+ *  **유한 재확인** 이다(무한 폴링 아님): 정해진 3회 간격만 다시 읽고, 보존분이 붙었으면 즉시
+ *  종료한다. `preserveScroll` 로 읽던 위치를 빼앗지 않으며, 사용자가 대화를 옮겼거나 새 요청을
+ *  시작했으면 그 흐름이 화면의 주인이므로 곧바로 물러난다. */
+async function _reloadForPreservedInterrupt(cid) {
+  if (!cid) return;
+  const DELAYS_MS = [1500, 4000, 10000];
+  const assistantCount = () =>
+    (Array.isArray(state.messages) ? state.messages : [])
+      .filter((m) => String((m && m.role) || "") === "assistant").length;
+  const before = assistantCount();
+  for (const delay of DELAYS_MS) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    // 대화를 옮겼거나 새 요청이 시작됐으면 그쪽이 화면을 갱신한다 — 끼어들지 않는다.
+    if (String(state.activeConversationId || "") !== String(cid)) return;
+    if (state.busyConversations.size) return;
+    try {
+      await loadHistory({ preserveScroll: true });
+    } catch (_e) {
+      return;  // 네트워크 blip — 다음 자연 갱신(대화 재진입)에 맡긴다.
+    }
+    if (assistantCount() > before) return;  // 보존분 도착 — 더 읽을 이유가 없다.
+  }
+}
+
 async function cancelCurrentRun() {
   // TASK-0241: 취소 즉시 처리 — 서버 응답을 기다리지 않고 곧바로 UI 를 풀어 채팅창 재사용/재요청을
   // 가능하게 한다. 취소 대상 키 후보: 활성 대화 cid + (cid 발급 전) pending sentinel. lazy-create 의
@@ -7047,15 +7079,24 @@ async function cancelCurrentRun() {
     promptInputEl.disabled = false;
     promptInputEl.focus();
   }
-  showToast("요청을 취소했습니다.");
+  // REQ-20260901T020746-interrupt-context-preserve: 중단은 이제 **버리는 동작이 아니다**.
+  // 진행분이 대화에 남는다는 사실을 여기서 말해 두지 않으면, 사용자는 남은 말풍선을 보고
+  // "취소했다면서 왜 답이 붙지?" 로 읽는다(취소 직후 도착한 답변과 구분이 안 된다).
+  showToast("요청을 중단했습니다. 진행된 내용은 대화에 남습니다.");
   // ── 2) 서버 취소는 백그라운드로 발사(응답 대기 안 함) ──
   // 서버는 cancel 플래그 설정 + KV 즉시 canceled(only_if_current_run) 로 곧바로 취소처리하고,
-  // running run 은 다음 체크포인트에서 답변 없이 종료한다(TASK-0241 백엔드).
+  // running run 은 다음 체크포인트에서 **진행분을 메시지로 남기고** 종료한다.
   if (cid) {
     apiFetch("/api/cancel", {
       method: "POST",
-      body: JSON.stringify({ conversation_id: cid }),
+      // 기본값도 보존이지만(서버 `data.get("preserve_reasoning", True)`) 의도를 호출부에
+      // 남긴다 — 이 값이 빠지면 '중단 = 폐기' 로 되돌아갔던 것이 원래의 결함이다.
+      body: JSON.stringify({ conversation_id: cid, preserve_reasoning: true }),
     }).then((res) => {
+      // 보존분은 agent 루프가 **다음 체크포인트에 도달한 뒤** 쓴다(진행 중인 LLM 호출이
+      // 끝나야 하므로 즉시가 아니다). 취소와 동시에 폴링을 멈췄으니 자동 갱신 트리거가
+      // 없어, 유한 횟수로만 다시 읽어 준다(무한 재로드 순환 금지).
+      _reloadForPreservedInterrupt(cid);
       // feature-0043(2026-08-28): 브리지 축의 결과를 반영한다.
       //
       // 응답을 **버리면 안 되는 이유**: 위 optimistic 해제는 서버 run 축(KV·큐)만 푼다.
