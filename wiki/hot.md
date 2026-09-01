@@ -17,6 +17,7 @@ last_updated: 2026-09-01
 - **실 LLM 8축 + PB-0008 5축 전건 PASS.** 사전 코드분석이 예측한 괴리 중 **인라인 쿼리결과·rationale 2건은 오판**이었다 — 원장 한 곳(`tool_call_usage`)이 비었다고 그 정보가 어디에도 없는 것은 아니었다. 세 번째로 예측했던 **결과 CSV 는 지금도 미복원**(FUNCTION §「의도적으로 복원하지 않은 것」) — REPORT §7.0 의 '3건 전부 오판' 서술과 갈리는 **정본 내부모순**이라 미러는 보수적으로 적는다.
 
 ## Recent Changes
+- (09-01) 연결 칩이 **컴포저를 떠나 사이드바 프로필 행**으로 — 칩 하나가 붙잡던 입력창 아래 한 줄이 사라졌다(footer 접힘 조건에서 `.ai-conn` 제거가 실질). 자리 판단은 폭 임계값이 아니라 **계정 이름 길이**가 한다(`flex: 1 0 auto` + `flex-wrap`): 짧으면 프로필 버튼 옆, 길면 아래 줄. 라벨은 «내 AI» 접두를 빼 네 상태가 같은 자리에 고정된다(주어는 자리와 `title` 이 진다).
 - (08-31) 관리 콘솔 LLM 정합 + 콘솔 작업 위임 — `routers/_console_llm.py`(판정 정본 · `delegable_jobs`) · `JOB_SPECS[...]["wired"]` · `maybe_delegate`(조립 뒤·호출 앞) · `static/admin/*.js`(상태 배지 · `미적용` 사유)
 - (08-31) 실행 단계 — 추론 구간 activity · `_computeStepTimings` 귀속 · SSE 취소/오류 분리 · 표시 창 절단 고지 · `.message-details-body` 자기 스크롤 패널 · `pageTo` 단일 페이징
 - (08-31) 설치 경로 — `bridge_setup.ps1`(UTF-8 BOM · Windows Store 파이썬 스텁 · winget 설치 · Schannel 폐기검사) · `register_handler()` 등록 기준을 **브라우저가 도는 OS** 로(WSL→Windows HKCU + 쓰기 후 조회 검증)

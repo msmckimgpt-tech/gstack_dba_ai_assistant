@@ -5110,3 +5110,38 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Files: `docs/{REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-launch-close-postdeploy.md`,
   `docs/evidence/connect-modal-autoclose/pd2-*.png`. 코드 변경 0.
 - Timestamp: 2026-09-01T04:05:00+09:00
+
+## CHG-20260901T120000-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행
+- `static/index.html`: `#aiConnState` 를 `.composer-footer` 에서 `.sidebar-profile` 로 이동
+  (`.profile-trigger` 의 **형제** — `<button>` 중첩 금지). 연결 모달 안내 문구도 "이 화면의 상태
+  표시" → "왼쪽 아래 계정 옆 표시" 로 정정(가리키는 자리가 바뀌었다).
+- `static/css/chat.css`: footer 접힘 규칙에서 `:has(.ai-conn.hidden)` 제거. **이 한 줄이 실질** —
+  칩이 떠난 뒤에도 조건을 남기면 footer 안에 없는 요소를 찾느라 규칙이 영영 거짓이 되어 빈
+  footer 한 줄이 입력창 아래에 상시 남는다(= 사용자가 지적한 여백).
+- `static/css/profile.css`: `.sidebar-profile` 을 flex-wrap 컨테이너로, `.profile-trigger` 는
+  `flex: 1 0 auto`(grow O / **shrink X**) — 자리가 있으면 칩이 이름 옆 여백에, 없으면 이름을
+  뭉개는 대신 칩이 다음 줄로. 폭 임계값 추정 대신 실제 이름 길이에 판단을 맡긴다(같은 252px
+  사이드바라도 `admin` 은 여백 119px, `bootstrap_admin` 은 10px — 실측). `.profile-arrow` 는
+  **흐름에 그대로 둔다** — 절대배치를 시도했으나 칩이 아래 줄인 조합에서 트리거가 전폭이 되며
+  긴 계정명(21자)이 화살표 밑으로 들어갔고, 화살표 자리를 padding 으로 비우면 같은 줄 임계가
+  16px 빡빡해져 `admin` + 최장 라벨이 밀렸다. 흐름 유지로 두 문제가 함께 사라진다.
+- `static/app/connect-modal.js`: 상태 라벨에서 «내 AI» 접두 제거 — `연결 안 됨` / `대기 안 함` /
+  `업데이트 필요` / `대기 중`. 접두를 남기면 최장 106px 라 «대기 중» 만 여백에 들어가고 나머지
+  상태는 아래 줄로 내려가, 상태가 바뀔 때마다 사이드바 하단이 한 줄씩 튄다(실측). 접두가 지던
+  주어는 자리(내 계정 옆)와 `title` 툴팁이 받는다.
+- `static/ai-connect.html`: 같은 이유로 안내 문구 정정.
+- 테스트 계약 전환: `test_connect_gate.py` 는 "접힘 조건에 칩이 있어야" → "**없어야**" +
+  칩이 프로필 행에 있고 배치·wrap 규칙이 존재하는지. `test_session_revoke_parity.py` 는 문구
+  대신 **네 상태가 갈리는가** + 접두를 뺀 자리를 title 이 받는가로 재정의.
+- Verification: 컨테이너 `make test` pytest 전건 PASS(rc=0) + ruff PASS ·
+  `verify_connect_modal_autoclose.mjs` 25/0 · `verify_llm_restriction_surface.mjs` 35/0 ·
+  **PB-0008 실 브라우저 실측 16조합**(4상태 × 계정 4종) — `admin`/`mckim` 전 상태 같은 줄·행 높이
+  65px 고정·화살표→칩 18px 일정·이름 잘림 0, `bootstrap_admin`(15자)/`verylongaccountname_x`(21자)
+  전 상태 아래 줄로 일관·가로 넘침 0, `.composer-footer` 전 조합 `display:none`.
+- Files: `static/index.html`, `static/ai-connect.html`, `static/css/{chat,profile}.css`,
+  `static/app/connect-modal.js`, `feature-0043/tests/{test_connect_gate,test_session_revoke_parity}.py`,
+  `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`, `docs/test-runs.d/…-chip-to-profile-row.md`,
+  `docs/evidence/ai-conn-badge-sidebar/*.png`
+- Cross-ref: TASK.md `20260901T1200-ai-conn-chip-to-profile-row` · 칩 도입 cycle
+  `feature-0043 P0-AB`(2026-08-28)
+- Timestamp: 2026-09-01T12:00:00+09:00

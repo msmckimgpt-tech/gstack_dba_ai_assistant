@@ -242,18 +242,45 @@ def test_guide_panel_exists_next_to_the_composer():
         "안내가 입력창 아래에 있다 — 사유보다 잠금을 먼저 만난다")
 
 
-def test_connection_chip_survives_the_footer_collapse_rule():
+def test_connection_chip_is_free_of_the_footer_collapse_rule():
     """칩을 넣은 것과 칩이 보이는 것은 다른 사실이다 (실 브라우저 실측 2026-08-28).
 
-    `.composer-footer` 는 status·hint 가 비고 provider 상태점이 숨겨지면 통째로 접힌다 — 그게
-    평상시 화면이다. 그 조건에 연결 칩이 빠져 있어, P0-T 가 약속한 "연결 상태 상시 표시" 가
-    실제로는 **한 번도 보이지 않았다**(`display: none`).
+    종전엔 칩이 `.composer-footer` 안에 있어, status·hint 가 비고 provider 상태점이 숨겨지는
+    **평상시 화면**에서 footer 와 함께 통째로 접혔다. 그래서 접힘 조건에 칩을 넣어 예외를 뒀다.
+
+    2026-09-01 제보로 칩을 사이드바 프로필 행으로 옮기며 그 종속 자체를 끊었다. 이제 남은 계약은
+    반대 방향이다 — 접힘 조건에 `.ai-conn` 이 **남아 있으면 안 된다**. footer 안에 없는 요소를
+    찾는 `:has()` 는 영영 거짓이라 규칙이 매칭되지 않고, 빈 footer 한 줄이 입력창 아래에 상시
+    남는다(사용자가 지적한 "불필요한 여백" 이 정확히 그 줄이다).
     """
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert (html.index('class="sidebar-profile"')
+            < html.index('id="aiConnState"')
+            < html.index('class="composer-footer"')), (
+        "칩이 사이드바 프로필 행에 없다 — 컴포저로 돌아가면 여백 문제도 함께 돌아온다")
+
     css = (WEB_SRC / "static" / "css" / "chat.css").read_text(encoding="utf-8")
     line = [l for l in css.split("\n") if l.startswith(".composer-footer:has(")]
     assert line, "footer 접힘 규칙을 찾지 못했다"
-    assert ":has(.ai-conn.hidden)" in line[0], (
-        "연결 칩이 보여도 footer 가 접힌다 — 칩이 화면에 도달하지 않는다")
+    assert ".ai-conn" not in line[0], (
+        "footer 밖으로 나간 칩을 접힘 조건이 아직 찾는다 — 조건이 영영 거짓이라 빈 줄이 남는다")
+
+    # 칩이 프로필 행 «여백» 에 얹히는 근거. 이 규칙이 없으면 칩은 프로필 버튼 아래로 흘러
+    # 사이드바 하단에 한 줄을 새로 만든다 — 여백을 옮겨 심는 것에 지나지 않는다.
+    prof = (WEB_SRC / "static" / "css" / "profile.css").read_text(encoding="utf-8")
+    assert ".sidebar-profile > .ai-conn" in prof, "프로필 행 배치 규칙이 없다"
+
+    # 자리가 모자랄 때의 계약: **이름을 뭉개지 않고 칩이 다음 줄로 내려간다.**
+    # 그 판단은 폭 임계값이 아니라 실제 계정 이름 길이가 한다 — 같은 252px 사이드바라도
+    # `admin` 은 여백이 119px 남고 `bootstrap_admin` 은 10px 밖에 안 남는다(실측 2026-09-01).
+    # 두 축이 다 필요하다: wrap 이 없으면 칩이 밀려 나가고, trigger 가 shrink 하면
+    # wrap 대신 이름이 잘린다.
+    row = prof[prof.index(".sidebar-profile {"):prof.index(".profile-avatar {")]
+    assert "flex-wrap: wrap" in row, (
+        "자리가 없을 때 칩이 다음 줄로 내려갈 길이 없다 — 사이드바는 180px 까지 좁아진다")
+    assert "flex: 1 0 auto" in row, (
+        ".profile-trigger 가 shrink 한다 — 칩이 들어올 자리를 계정 이름에서 빼앗아 "
+        "다음 줄로 내려가는 대신 이름이 잘린다")
 
 
 def test_guide_distinguishes_missing_token_from_stopped_process():

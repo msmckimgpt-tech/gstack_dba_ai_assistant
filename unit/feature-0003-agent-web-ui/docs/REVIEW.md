@@ -6572,3 +6572,56 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
   + 토스트 1건. 제보하신 「대기 중입니다」 문구는 성공 통로가 합쳐지며 사라졌다.
 - **미수행(정직 표기)**: 실 러너 기동 end-to-end. 조회·토큰 응답을 가로챈 프론트엔드 계약
   검증이며 검증 후 브라우저를 원상 복구했다.
+
+## REV-20260901T120000-ai-conn-chip-to-profile-row [SKIPPED:tool-restricted:ux,design] — 연결 칩 자리 이동 (프론트 배치 단독)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T1200-ai-conn-chip-to-profile-row`
+- Trigger: §18.8 dispatch 표의 `UI/button/layout` → `ux`·`design` 도메인. §18.8.2 순서대로
+  **제약 없는 채널을 먼저** 시도했다.
+- Timestamp: 2026-09-01T12:00:00+09:00
+- Human Approval Needed: no (Minor §12.3 — 비파괴 프론트 배치)
+
+### 검증 채널 (§18.8.2)
+
+1. **`codex exec` 적대 리뷰 — 시도했으나 물리적으로 불가**: 핵심 diff 11.5KB 를 프롬프트에
+   인라인하고 파일 접근을 금지한 형태(무응답 회피 레시피)로 호출했으나 계정 사용량 한도
+   소진으로 즉시 실패(`ERROR: You've hit your usage limit`). 재시도 불가.
+2. **subagent panel 미호출** — 세션에 상위 우선순위 도구 제약(요청 없는 Agent tool 호출 금지)이
+   걸려 있어 §18.8.2 "상위 우선순위 지시 carve-out" 을 적용했다. `ux`/`design` 도메인 심사는
+   **미수행**이며 아래 자체 점검이 그것을 대체하지 못한다.
+3. **기계적·실측 채널로 수행한 검증** (아래).
+
+### 기계적 검증
+
+- **뮤테이션 역검증 4/4 KILLED** — ① footer 접힘 조건에 `:has(.ai-conn.hidden)` 복원 →
+  `test_connection_chip_is_free_of_the_footer_collapse_rule` FAIL ② `flex-wrap: wrap` 제거 → FAIL
+  ③ `flex: 1 0 auto` → `1 1 auto`(shrink 허용) → FAIL ④ 칩을 `.composer-footer` 로 되돌림 → FAIL.
+  복원 후 전건 PASS. 계약이 «자리» 와 «양보 방향» 을 실제로 잠근다.
+- 컨테이너 `make test` — pytest 전건 PASS(rc=0) + ruff PASS
+- `verify_connect_modal_autoclose.mjs` 25/0 · `verify_llm_restriction_surface.mjs` 35/0
+- **PB-0008 실 브라우저 실측 16조합** — 4상태 × 계정 4종(5·5·15·21자). 상세는
+  `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md`.
+
+### 자체 점검 (ux/design 대체 아님 — 관측 사실만)
+
+- **레이아웃 안정성**: 계정당 네 상태가 같은 줄·같은 행 높이를 유지(65px 또는 90px 고정).
+  가로 넘침 전 조합 0. 21자 계정은 이름 ellipsis 로 흡수.
+- **클릭·포커스**: DOM 순서가 `[프로필 버튼] → [칩]` 이라 탭 순서가 자연스럽다. 칩은
+  `<button>` 그대로이고 `id` 기반 접근(`$("aiConnState")`)이라 JS 배선 변경 0 — 자리만 옮겼다.
+  화살표를 절대배치 + `pointer-events: none` 으로 빼는 안은 실측 결함으로 되돌렸다(2.1 참조).
+- **문구**: 접두를 뺀 만큼 `title` 이 주어를 진다(네 상태 전부 "내 AI …" 로 시작). 그 계약을
+  `test_indicator_has_three_states` 가 `js.count("내 AI") >= 3` 으로 잠근다.
+- **명시도**: `.sidebar-profile > .ai-conn`(0,2,0)이 `search-audit.css` 의 `.ai-conn`(0,1,0)보다
+  강해 로드 순서(profile → search-audit)와 무관하게 적용된다. `display` 는 건드리지 않아
+  `.ai-conn.hidden` 의 숨김이 그대로 이긴다 — 실측 칩 폭 60~81px 로 확인.
+
+### 남은 위험 (정직 표기)
+
+- **`ux`/`design` 도메인 심사 미수행** — 도구 제약(위 2번). 특히 칩 글꼴을 `.78rem → .68rem`
+  (12.48px → 10.88px)로 낮춘 것은 가독성 하락이 사실이며, 전문 심사 없이 «프로필 역할 텍스트
+  11px 과 같은 눈높이» 라는 근거만으로 채택했다.
+- **배포본 자산 재확인 잔여** — 본 cycle 실측은 라이브 페이지에 변경본 CSS 를 주입한 상태의
+  측정이다(정적 자산은 web 이미지에 baked). 배포 후 `?v=<hash>` 자산으로 같은 16조합을
+  재측정해 POST-DEPLOY fragment 로 남긴다.
+- **칩이 화살표 뒤에 선다** — 사용자 스크린샷이 지목한 자리는 화살표 앞이었으나, 그 배치는
+  긴 계정명이 화살표 밑으로 들어가는 실측 결함을 낳아 되돌렸다. 완료 보고에 명시한다.

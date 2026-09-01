@@ -239,9 +239,13 @@ def test_indicator_exists_and_is_wired():
 
 
 def test_indicator_shows_both_states():
-    """(2026-08-27 3상태로 확장 — `test_indicator_has_three_states` 가 본체다.)"""
+    """(2026-08-27 3상태로 확장 — `test_indicator_has_three_states` 가 본체다.)
+
+    2026-09-01: 칩이 사이드바 프로필 행으로 옮겨가며 «내 AI» 접두가 빠졌다(주어는 자리가
+    말한다). 문구가 아니라 **두 상태가 갈리는가**가 이 테스트의 계약이다.
+    """
     js = MODAL_JS.read_text(encoding="utf-8")
-    assert "내 AI 대기 중" in js and "내 AI 연결 안 됨" in js, "한쪽 상태만 표시한다"
+    assert '"대기 중"' in js and '"연결 안 됨"' in js, "한쪽 상태만 표시한다"
 
 
 def test_indicator_opens_the_modal():
@@ -357,9 +361,13 @@ def test_phase_distinguishes_connected_but_idle():
 
 def test_indicator_has_three_states():
     js = MODAL_JS.read_text(encoding="utf-8")
-    for label in ("내 AI 연결 안 됨", "AI 대기 안 함", "내 AI 대기 중"):
-        assert label in js, f"표시 상태 '{label}' 이 없다"
+    # 문구는 2026-09-01 에 «내 AI» 접두를 뺐다(칩이 프로필 행으로 이동 — 주어는 자리가 말한다).
+    # 계약은 «세 상태가 서로 다른 말을 하는가» 이므로 라벨 상수를 그 기준으로 검사한다.
+    for label in ('"연결 안 됨"', '"대기 안 함"', '"대기 중"'):
+        assert label in js, f"표시 상태 {label} 이 없다"
     assert "머신을 재시작했다면" in js, "왜 대기가 끊겼는지 힌트가 없다"
+    # 접두가 빠진 만큼 «무엇의» 상태인지는 툴팁이 진다 — 둘 다 사라지면 정체불명 칩이 된다.
+    assert js.count("내 AI") >= 3, "접두를 뺀 자리를 title 이 받아 주지 않는다"
 
 
 # ── 러너 재시작 대응 ─────────────────────────────────────────────────────────
