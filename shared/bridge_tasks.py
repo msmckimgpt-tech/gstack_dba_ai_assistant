@@ -407,14 +407,23 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
         "wired": True,
     },
     "insight_summary": {
-        "label": "인사이트 배치",
+        # 이름을 좁혔다(TASK-20260901T190000): 배선된 것은 **테이블 인사이트**다. 스키마·계정
+        # 인사이트는 아직 서버 경로뿐이고, 넓은 이름을 두면 `wired: True` 가 그것들까지
+        # 배선됐다고 말하게 된다 — 이 레지스트리가 금지하는 부분 배선의 전형이다.
+        "label": "테이블 인사이트 배치",
         "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
-        "wired": False,
+        # 적재(`insight._delegate_table_insight`) · 프롬프트(`llm.table_insight_messages`,
+        # 서버 호출과 같은 정본) · 반영(`insight.apply_external_insight_summary` → 기존
+        # KV 이음매 → 다음 cycle 의 상속 경로가 발행).
+        "wired": True,
     },
     "cluster_label": {
         "label": "클러스터 라벨링",
         "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
-        "wired": False,
+        # TASK-20260901T190000 — 적재(`semantic_cluster._delegate_cluster_labels`) ·
+        # 프롬프트(`_cluster_label_messages`, `llm.CLUSTER_LABEL_PROMPT` 그대로) ·
+        # 반영(`semantic_cluster.apply_external_cluster_labels` → 기존 kv 캐시).
+        "wired": True,
     },
     # red-team 은 대기열에 따로 적재되지 않는다 — **답변한 그 러너**가 자기 답변을 검증해
     # `submit_answer` 에 함께 싣는다(사용자 결정 2026-08-31: "요청 당시의 호출자가 스스로의
@@ -722,9 +731,42 @@ class ConsoleJobRejected(Exception):
     """
 
 
+def open_job_exists(conn, job_kind: str, dedupe_key: str) -> bool:
+    """같은 일이 **이미 대기·처리 중인가** (TASK-20260901T190000).
+
+    배경 배치는 워커 루프가 주기적으로 도는데, 위임한 결과가 아직 안 왔으면 그 pass 도
+    "아직 값이 없다" 로 판단해 **같은 작업을 다시 적재한다**. 그렇게 쌓인 중복은 전부 실제로
+    개인 AI 가 처리하고 — 즉 **같은 답을 사용자 계정 토큰으로 여러 번 산다**.
+
+    대기열 상한(`BATCH_PENDING_MAX`)은 폭주만 막을 뿐 중복 자체를 막지 못한다. 그래서 적재
+    전에 같은 `dedupe_key` 의 미완 작업이 있는지 본다(`open` = 대기 · 점유 중 포함).
+
+    ⚠ 조회 실패는 **False**(적재 진행)로 떨어진다. 여기서 fail-closed 하면 일시적 DB 오류가
+    배경 처리를 통째로 멈추는데, 그 대가는 최악의 경우 중복 1건이다 — 방향이 반대다.
+    """
+    key = str(dedupe_key or "").strip()
+    if not key:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebAiTasks "
+            "WHERE Kind = %s AND JobKind = %s AND Status = %s "
+            "  AND JSON_UNQUOTE(JSON_EXTRACT(JobPayload, '$.dedupe_key')) = %s LIMIT 1",
+            (KIND_JOB, str(job_kind), STATUS_OPEN, key))
+        return cur.fetchone() is not None
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "[console-job] 중복 확인 실패 kind=%s key=%s: %r", job_kind, key, exc)
+        return False
+    finally:
+        cur.close()
+
+
 def enqueue_console_job(conn, *, account_id: int, job_kind: str, prompt: str,
                         payload: Any = None, product_id: Any = None,
-                        datasource_key: str | None = None) -> str:
+                        datasource_key: str | None = None,
+                        dedupe_key: str | None = None) -> str:
     """관리 콘솔·배경 작업을 개인 AI 가 가져갈 **대기 작업**으로 적재한다. 반환 = `task_id`.
 
     ## 대화 브리지와 같은 테이블을 쓰는 이유
@@ -762,6 +804,15 @@ def enqueue_console_job(conn, *, account_id: int, job_kind: str, prompt: str,
     if origin == ORIGIN_WEB and not account_id:
         # 관리자 작업은 **그 사람의** AI 가 처리한다(계정 스코프가 곧 배급 경계).
         raise ConsoleJobRejected("작업을 요청한 계정을 알 수 없습니다.")
+
+    if dedupe_key:
+        # 같은 일을 두 번 사지 않는다. `payload` 에 키를 접어 넣어 **조회 대상과 저장 대상이
+        # 같은 값**이 되게 한다 — 따로 두면 한쪽만 갱신되는 날 중복이 조용히 돌아온다.
+        if open_job_exists(conn, job_kind, dedupe_key):
+            raise ConsoleJobRejected(
+                f"{spec['label']}: 같은 작업이 이미 대기 중입니다(중복 적재 안 함).")
+        payload = {**(payload if isinstance(payload, dict) else {"value": payload}),
+                   "dedupe_key": str(dedupe_key)}
 
     cur = conn.cursor()
     try:

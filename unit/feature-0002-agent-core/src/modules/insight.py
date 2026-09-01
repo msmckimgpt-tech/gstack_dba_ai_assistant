@@ -22,6 +22,7 @@ import hashlib, json, logging, random, re, time, uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from shared.llm_gate import server_llm_enabled  # feature-0043: 서버 계정 LLM fail-closed 게이트
 from . import dialects as _dialects  # P7: insight 컬럼 핑거프린트 dialect 분기(MSSQL)
 from shared import db as _db              # P7 follow-up: datasource 지원 connect_with_retry 명시 사용
 
@@ -200,6 +201,111 @@ def _save_group_insight_kv(mem_conn, sig, insight) -> None:
                        json.dumps(insight, ensure_ascii=False))
     except Exception:
         pass
+
+
+# ── 테이블 인사이트의 개인 AI 위임 (TASK-20260901T190000, P0-AK) ────────────────────
+#
+# 서버 계정 LLM 이 닫힌 뒤 이 배치는 통째로 멎어 있었다(`_get_llm_client` 가 None → 매 cycle
+# `invalid_response`). 사용자 결정(2026-09-01) "연결한 AI를 통해 작동하도록 배선".
+#
+# ## 워커는 기다리지 않는다 — **KV 가 이음매다**
+#
+# 이 loop 에는 이미 「이전 cycle 대표가 남긴 분석을 LLM 없이 상속」하는 경로가 있다
+# (`kv_inherit`). 위임 결과를 **그 자리에 넣으면** 발행·검증·fan-out 이 전부 기존 경로로
+# 흐른다 — 저장을 새로 쓰지 않는다는 이 feature 의 제약이 그대로 지켜진다.
+#
+#     cycle N   : 게이트 닫힘 → 적재(dedupe) → 이 테이블은 이번 cycle 미분석(종전과 동일)
+#     러너 응답 : apply_external_insight_summary → KV 기입
+#     cycle N+1 : `kv_inherit` 로 상속 → 기존 발행 경로 그대로
+#
+# ## 왜 그룹 KV 를 그대로 쓰지 않는가
+#
+# 그룹 KV(`_group_insight_kv_key`)는 **시그니처가 있는 테이블**만 가진다. 시그니처가 없는
+# 테이블(그룹 미형성)은 저장할 곳이 없어 영영 분석되지 않는다 — 그건 「배선했다」가 아니다.
+# 그래서 위임 결과는 `테이블키 + 지문` 으로 키를 만들어 **모든 테이블**이 대상이 된다.
+# 지문을 키에 넣는 이유: 테이블이 바뀌면 낡은 분석이 자동으로 미적중이 된다(그룹 KV 의
+# 시그니처가 하는 일과 같은 축).
+
+#: 위임 결과 KV 의 접두. 그룹 캐시와 **다른 이름 공간**이다 — 섞으면 시그니처 없는 테이블의
+#: 결과가 그룹 상속 경로로 새어 들어가 엉뚱한 형제에게 전파된다.
+_DELEGATED_INSIGHT_KV_PREFIX = "delegated_table_insight"
+
+
+def _delegated_insight_kv_key(table_key, tfp) -> str:
+    """위임 결과 KV 키. 지문이 바뀌면 키가 바뀌어 낡은 분석이 자동으로 버려진다."""
+    import hashlib as _hashlib
+
+    raw = f"{table_key}\x1f{tfp or ''}"
+    return f"{_DELEGATED_INSIGHT_KV_PREFIX}:{_hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]}"
+
+
+def _load_delegated_insight_kv(mem_conn, table_key, tfp):
+    """개인 AI 가 낸 이 테이블의 분석 dict. 없거나 오류면 None(= 이번 cycle 미분석)."""
+    if mem_conn is None or not table_key:
+        return None
+    try:
+        raw = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID,
+                             _delegated_insight_kv_key(table_key, tfp))
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _delegate_table_insight(mem_conn, table_key, tfp, payload, schema, table) -> bool:
+    """이 테이블의 인사이트를 동의한 개인 AI 대기열에 올린다. **fail-soft**.
+
+    같은 테이블을 매 cycle 다시 적재하지 않도록 KV 키를 그대로 `dedupe_key` 로 쓴다 —
+    키가 곧 「이 지문의 이 테이블」이라, 지문이 바뀌면 새 작업이 되고 안 바뀌면 중복이 막힌다.
+    """
+    from shared import bridge_tasks as _bt
+
+    if mem_conn is None or not table_key:
+        return False
+    try:
+        from modules.semantic_cluster import _batch_consenting_account
+        from modules.llm import table_insight_messages
+
+        account_id = _batch_consenting_account(mem_conn)
+        if not account_id:
+            # 매 테이블 로그를 남기면 소음이라 호출측이 cycle 당 한 번만 말한다.
+            return False
+        _bt.enqueue_console_job(
+            mem_conn, account_id=account_id, job_kind="insight_summary",
+            prompt=_bt.messages_to_prompt(table_insight_messages(payload), "json"),
+            payload={"kv_key": _delegated_insight_kv_key(table_key, tfp),
+                     "table_key": str(table_key), "schema": str(schema), "table": str(table)},
+            dedupe_key=_delegated_insight_kv_key(table_key, tfp))
+        return True
+    except _bt.ConsoleJobRejected as exc:
+        _log.info("insight_summary 위임 미적재 %s.%s: %s", schema, table, exc)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("insight_summary 위임 적재 실패 %s.%s: %r", schema, table, exc)
+    return False
+
+
+def apply_external_insight_summary(conn, payload, result) -> None:
+    """개인 AI 가 낸 테이블 인사이트를 **KV 이음매**에 기입한다 (`_STORE_ROUTES` 대상).
+
+    발행(fact 저장·검증·fan-out)은 하지 않는다 — 그것은 다음 cycle 의 `kv_inherit` 경로가
+    기존대로 한다. 여기서 직접 발행하면 발행 로직이 두 벌이 되고, 두 벌이 되는 순간 한쪽이
+    낡아 같은 분석이 경로에 따라 다르게 저장된다(이 feature 가 지켜 온 제약).
+    """
+    kv_key = str((payload or {}).get("kv_key") or "")
+    if not kv_key:
+        raise ValueError("위임 payload 에 kv_key 가 없습니다 — 어디에 쓸지 알 수 없습니다.")
+    if not isinstance(result, dict) or not result:
+        raise ValueError("테이블 인사이트 결과가 JSON 객체가 아닙니다.")
+    if conn is None:
+        raise RuntimeError("제어면 연결이 없습니다.")
+    save_memory_kv(conn, GLOBAL_CONVERSATION_ID, kv_key,
+                   json.dumps(result, ensure_ascii=False))
+    _log.info("insight_summary 위임 결과 기입 %s", (payload or {}).get("table_key"))
 
 
 def _publish_table_insight(
@@ -2437,11 +2543,33 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         insight_via = "group_cache"
                     else:
                         kv_insight = _load_group_insight_kv(mem_conn, sig) if sig is not None else None
+                        if kv_insight is None:
+                            # 개인 AI 가 앞선 cycle 에 답해 둔 것 (TASK-20260901T190000).
+                            # 그룹 KV 다음에 보는 이유: 그룹 상속이 더 넓은 재사용이고,
+                            # 위임 결과는 그 그물에 안 걸린 테이블을 채우는 축이다.
+                            kv_insight = _load_delegated_insight_kv(
+                                mem_conn, table_key, current_table_fps.get(table, ""))
+                            if isinstance(kv_insight, dict):
+                                insight_via = "delegated"
                         if isinstance(kv_insight, dict):
                             table_insight = kv_insight                    # 이전 cycle 대표 상속(LLM 0)
-                            insight_via = "kv_inherit"
+                            if insight_via != "delegated":
+                                insight_via = "kv_inherit"
                             if sig is not None:
                                 group_insight_cache[sig] = kv_insight
+                        elif not server_llm_enabled():
+                            # 서버 계정 LLM 이 닫혀 있다 — **호출하지 않고 위임한다.**
+                            # `table_insight` 는 None 인 채로 두어 이번 cycle 은 종전의
+                            # 「미분석」과 똑같이 흐른다(발행 없음 · 오류 기록 없음).
+                            # 오류 문구를 넣지 않는 이유: 이것은 실패가 아니라 대기다.
+                            if _delegate_table_insight(mem_conn, table_key,
+                                                       current_table_fps.get(table, ""),
+                                                       table_payload, schema, table):
+                                report["insight_delegated"] = int(
+                                    report.get("insight_delegated", 0)) + 1
+                            else:
+                                report["insight_delegate_skipped"] = int(
+                                    report.get("insight_delegate_skipped", 0)) + 1
                         else:
                             try:
                                 table_insight = llm_table_insight(table_payload)

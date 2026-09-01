@@ -48,6 +48,7 @@ __all__ = [
     "messages_for_provider",
     # TASK-20260901T190000: 노드 분석 프롬프트 조립 — 서버 호출과 **위임**이 함께 읽는 정본.
     "node_analysis_messages",
+    "table_insight_messages",
 ]
 
 
@@ -1827,6 +1828,19 @@ def llm_schema_insight(payload: dict[str, Any], *, scope_key: str | None = None)
     return obj
 
 
+def table_insight_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
+    """테이블 인사이트 1건의 `messages` — **서버 호출과 위임이 함께 읽는 정본**.
+
+    `node_analysis_messages` 와 같은 이유로 분리했다(TASK-20260901T190000): 게이트가 닫힌 지금
+    이 분석은 동의한 사용자의 개인 AI 가 수행하고, 위임 자리에서 프롬프트를 새로 쓰면 같은
+    기능이 경로에 따라 다른 규칙으로 산출된다.
+    """
+    return [
+        {"role": "system", "content": TABLE_INSIGHT_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
 def llm_table_insight(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
@@ -1838,10 +1852,7 @@ def llm_table_insight(payload: dict[str, Any], *, scope_key: str | None = None) 
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
-            messages=prepare_provider_messages([
-                {"role": "system", "content": TABLE_INSIGHT_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ], _insight_model),
+            messages=prepare_provider_messages(table_insight_messages(payload), _insight_model),
             **_max_tokens_kwargs(_insight_model, "insight"),
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
