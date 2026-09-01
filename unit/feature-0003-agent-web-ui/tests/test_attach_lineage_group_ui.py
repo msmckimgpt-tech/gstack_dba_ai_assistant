@@ -254,7 +254,11 @@ def test_branch_chip_carries_only_the_branch_fact():
     m = re.search(r"linBadge\s*=\s*(_branched[^;]*);", body, re.S)
     assert m, "분기 칩 조립을 찾지 못했다"
     chip = m.group(1)
-    assert "갈라짐" in chip, "분기 사실을 말하지 않는다"
+    assert "⤷" in chip, "분기 사실을 말하지 않는다"
+    # 화면은 글리프 한 자, 말로 된 설명은 title 과 접근성 이름이 진다(한 줄 간소화).
+    # 글리프는 AT 에서 중복이라 감춘다 — `_srWho` 가 이미 「, 갈라져 나옴」을 읽는다.
+    assert 'aria-hidden="true"' in chip, "AT 가 글리프를 이름 뒤에 한 번 더 읽는다"
+    assert "_linTitle" in chip, "말로 된 설명(title)을 잃었다"
     assert "_upName" not in chip and "_linWho" not in chip, (
         "칩이 정체성을 되풀이한다 — 라벨과 겹친다")
     assert chip.rstrip().endswith('""'), "갈라지지 않은 계보에도 칩이 붙는다"
@@ -276,8 +280,12 @@ def test_branched_lineage_is_marked_in_the_badge():
     body = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
     assert re.search(r"_branched\s*=\s*_originId\s*>\s*0", body), "분기 판정이 없다"
     assert '"⤷ "' in body or "⤷" in body, "분기 글리프가 없다"
-    rule = _css_rule(_src(CSS), ".attach-list-item-lineage.branched")
-    assert "dashed" in rule, "색·글리프 외의 형태 신호가 없다(색각 이상 사용자에게 소실)"
+    # 형태 신호는 이제 **글리프 자체**가 진다(REQ-20260901). 파선 테두리는 글리프 한 자만
+    # 남으면서 «빈 동그라미» 로 읽혀 걷어냈다 — 색 단독 의존이 아니라는 요건은 유지된다.
+    rule = _css_rule(_src(CSS), ".attach-lineage-group .attach-list-item-lineage.branched")
+    assert "border: none" in rule, "글리프 표식에 pill 껍데기가 남아 빈 배지로 보인다"
+    body2 = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
+    assert "⤷" in body2, "색 외의 형태 신호(글리프)가 사라졌다"
 
 
 # ── G5. 변경 규모 — 열기 전에 알린다 ───────────────────────────────────────
@@ -506,19 +514,15 @@ def test_size_delta_does_not_claim_content_difference():
 
 # ── G6. 카피 예산 — 같은 낱말이 서로 다른 뜻으로 흩어지지 않는다 ───────────
 
-def test_versions_box_note_is_compressed():
-    """버전 박스 안내가 짧아졌다 — 그룹 카드가 파일명·계보 수·비교를 이미 이고 있다.
+def test_versions_box_has_no_lineage_note_left():
+    """압축이 아니라 **제거**다 — 네 사실이 전부 카드 머리·행 칩으로 옮겨갔다(사용자 지적).
 
-    종전 문구는 한 줄에 네 사실("이 계보: 누구 · 갈라짐 · 파일 N개 / 같은 이름의 다른 계보 M개")
-    을 담아 240px 폭에서 세 줄로 접혔다 (§16.8 사용자 대면 텍스트 예산).
+    이 테스트의 앞선 형태는 「문구를 짧게 유지」였다. 그 문구 자체가 되풀이임이 드러났으므로
+    계약을 «없음» 으로 올린다.
     """
     body = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
-    m = re.search(r"note\.textContent\s*=\s*(.+?);\n", body, re.S)
-    assert m, "계보 안내 문구를 찾지 못했다"
-    txt = m.group(1)
-    assert "이 계보:" not in txt, "박스 안에서 '이 계보:' 를 다시 말한다(스코프 중복)"
-    assert "같은 이름의 다른 계보" not in txt, "파일명 스코프를 문장에서 되풀이한다"
-    assert "다른 계보" in txt, "다른 계보의 존재를 말하지 않는다(선행 cycle 계약)"
+    assert not re.search(r"note\.textContent\s*=", body), "계보 안내문이 남아 있다"
+    assert "attach-list-versions-lineage" not in body, "안내문 요소가 남아 있다"
 
 
 def test_group_head_says_filename_once():

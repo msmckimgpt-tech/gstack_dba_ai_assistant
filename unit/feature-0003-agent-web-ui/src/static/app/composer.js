@@ -1831,29 +1831,23 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
   //
   // 아래 버전 행들이 곧 구성이지만, 같은 이름의 다른 계보가 함께 있을 때 그 행들만 보면
   // "이게 이 파일의 전부" 로 읽힌다 — 실제로는 옆에 다른 계보가 더 있다(사용자 제보).
-  if (hasLineageAxis) {
-    const cur = linHeads.find((l) => l.is_current_lineage) || null;
-    const others = linHeads.filter((l) => !l.is_current_lineage);
-    const note = document.createElement("div");
-    note.className = "attach-list-versions-lineage";
-    // 같은 이유로 소유권을 말하지 않는다 — 그룹 대화에서 남의 업로드를 "내" 것이라 하게 된다.
-    const who = cur && cur.is_assistant_generated ? "AI가 만든 계보" : "사용자가 올린 계보";
-    const from = cur && Number(cur.branched_from_attachment_id || 0)
-      ? " · 다른 파일에서 갈라짐" : "";
-    // REQ-20260831-attach-lineage-visibility: 그룹 카드가 파일명·계보 수·비교를 이미 이고
-    // 있으므로 여기서는 **이 갈래의 정체성**만 짧게 말한다. 종전 문구("이 계보: … / 같은
-    // 이름의 다른 계보 N개")는 한 줄에 네 사실을 담아 240px 폭에서 세 줄로 접혔다(§16.8).
-    note.textContent = `${who}${from} · 파일 ${versions.length}개 · 다른 계보 ${others.length}개`;
-    note.title = others
-      .map((l) => `#${l.head_attachment_id} v${l.version_number}`
-        + ` (${l.is_assistant_generated ? "AI" : "사용자"})`)
-      .join("\n") || "";
-    box.appendChild(note);
-  }
+  // REQ-20260901-lineage-row-compaction: **계보 구성 안내문을 걷어낸다**(사용자 지적 — 되풀이).
+  //
+  // 이 문구가 이고 있던 네 사실이 이제 전부 화면 다른 곳에 **먼저** 있다:
+  //   · 「AI가 만든 계보」      → 행의 1차 라벨 `AI 수정본`
+  //   · 「다른 파일에서 갈라짐」 → 행의 분기 칩 `⤷ 갈라짐`
+  //   · 「파일 N개」            → 펼침 토글 `버전 N개`
+  //   · 「다른 계보 M개」        → 그룹 카드 머리의 `계보 M`
+  // REQ-20260828 이 이 문구를 넣은 이유(옆 계보의 존재가 화면에 없다)는 그때는 참이었으나
+  // 그룹 카드가 그 사실을 **구조로** 말하게 되면서 사라졌다. 같은 사실을 두 번 말하지 않는다.
+  // 계보 head 상세(id·버전)는 「⇄ 계보 비교」가 선택지로 이미 열거한다.
 
   ordered.forEach((v) => {
-    // 목록 행과 같은 이유로 2줄 구조 — 버전 박스는 좌측 들여쓰기(28px)까지 먹어 한 줄에
-    // 몰면 파일명이 2자로 남는다(§18.8 design 패널 실측 240/280/360px 전 구간 잘림).
+    // REQ-20260901-lineage-row-compaction: **한 줄로 되돌린다.**
+    //
+    // 2줄이던 이유는 파일명이었다 — "한 줄에 몰면 파일명이 2자로 남는다"(§18.8 design 실측).
+    // 그 파일명이 이 cycle 에서 사라졌으므로(그룹 카드 머리가 이미 한 번 말한다) 2줄일 이유도
+    // 함께 사라진다. 남는 것은 `v2` · 역할·시각 · 액션뿐이라 240px 에서도 한 줄에 들어간다.
     const row = document.createElement("div");
     row.className = "attach-list-version-row";
     const vnum = Number(v.version_number || 1);
@@ -1862,13 +1856,16 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
     const tag = document.createElement("span");
     tag.className = "attach-list-version-tag" + (isAi ? " ai-edited" : "");
     tag.textContent = `v${vnum}`;
-    const nameEl = document.createElement("span");
-    nameEl.className = "attach-list-version-name";
-    nameEl.title = v.original_filename || "";
-    nameEl.textContent = v.original_filename || "파일";
+    // REQ-20260901-lineage-row-compaction: **파일명을 되풀이하지 않는다**(사용자 지적).
+    //
+    // 이 박스는 언제나 한 계보 안이고, 그 계보의 파일명은 그룹 카드 머리(계보가 여럿일 때)나
+    // 목록 행(단독 계보일 때)이 이미 말했다. 버전 행마다 또 적으면 같은 이름이 화면에
+    // 세 번·네 번 실린다 — 좁은 패널에서 그 반복이 정작 버전을 가르는 정보를 밀어낸다.
+    // 행 전체의 `title` 로는 남겨, 마우스로는 어느 파일인지 여전히 확인된다.
+    row.title = v.original_filename || "";
     const head = document.createElement("div");
     head.className = "attach-list-version-head";
-    head.append(tag, nameEl);
+    head.append(tag);
 
     const roleEl = document.createElement("span");
     roleEl.className = "attach-list-version-role";
@@ -2546,7 +2543,18 @@ async function _loadConversationAttachmentList(convId) {
       // REQ-20260831-attach-lineage-visibility: 이 행이 들어갈 자리. 형제 계보가 있으면
       // 그룹 카드 안(공통영역), 없으면 종전처럼 목록 직속이다.
       let _hostEl = listEl;
-      const statusLabel = a.status === "ingested" ? "읽기 완료" : a.status === "failed" ? "오류" : a.status || "";
+      // REQ-20260901-lineage-row-compaction: 상태는 **말할 것이 있을 때만** 적는다.
+      //
+      // 종전 fallback 은 서버 enum 을 그대로 흘려 화면에 `uploaded` 라는 영문 내부값이 상시로
+      // 떴다(스크린샷 실측). 그 값은 «저장은 됐고 샌드박스 적재는 안 됨» 인데, .sql 같은 텍스트
+      // 첨부에서는 그것이 **정상이자 영구 상태**라 모든 행에 붙는 상수다 — 사용자가 할 수 있는
+      // 것도 없다. 한 줄로 합치는 이 cycle 에서 그 상수는 정작 갈래를 가르는 정보를 밀어낸다.
+      // 뜻이 있는 두 상태만 남긴다: 읽기 완료(AI 가 적재함) · 오류(실패). 모르는 enum 이 새로
+      // 생기면 그때는 원문을 보여 준다 — 조용히 삼키면 새 실패 상태가 화면에서 사라진다.
+      const statusLabel = a.status === "ingested" ? "읽기 완료"
+        : a.status === "failed" ? "오류"
+        : a.status === "uploaded" ? ""
+        : (a.status || "");
       const verNum = Number(a.version_number || 1);
       const isAi = Boolean(a.is_assistant_generated);
       const verCount = Number(a.version_count || 1);
@@ -2617,9 +2625,13 @@ async function _loadConversationAttachmentList(convId) {
         // 정체성을 되풀이하지 않고 **분기 사실만** 진다: 「누구의 갈래인가」(라벨)와 「갈라져
         // 나왔는가」(이 칩)는 서로 다른 사실이고, 둘을 한 칩에 담으면 라벨과 겹친다.
         // 갈라지지 않은 계보에는 칩 자체가 붙지 않는다 — 늘 뜨는 배지는 정보가 아니다.
+        // REQ-20260901-lineage-row-compaction: 칩을 **글리프 한 자**로 줄인다(한 줄 간소화).
+        // 「갈라짐」 세 글자가 좁은 패널에서 34px 을 먹어 행을 두 줄로 밀어냈다. `⤷` 는 이미
+        // 분기를 뜻하고, 말로 된 설명은 title 과 접근성 이름(`_srWho`)이 그대로 진다 —
+        // 사실을 지운 것이 아니라 **화면 문구만** 줄였다.
         linBadge = _branched
           ? ` <span class="attach-list-item-lineage${isAi ? " ai" : ""} branched"`
-            + ` title="${escapeHtml(_linTitle)}">⤷ 갈라짐</span>`
+            + ` title="${escapeHtml(_linTitle)}" aria-hidden="true">⤷</span>`
           : "";
       }
       // REQ-20260831-attach-lineage-visibility: 계보 그룹 카드(공통영역)에 이 행을 태운다.
@@ -2697,7 +2709,10 @@ async function _loadConversationAttachmentList(convId) {
         const _base = _sibs[0]?.size;
         const _delta = _attachSizeDelta(a.size, _base);
         if (_delta) {
-          sizeDeltaChip = ` · <span class="attach-list-item-sizedelta"`
+          // REQ-20260901-lineage-row-compaction: 크기와 델타를 **한 토막**으로 붙인다.
+          // `9KB · +8KB` 는 구분점·공백이 두 번 들어가 좁은 폭에서 그만큼 행을 밀어낸다 —
+          // `9KB +8KB` 로 붙여도 읽히는 사실은 같다(둘 다 크기 축이라 묶이는 것이 자연스럽다).
+          sizeDeltaChip = ` <span class="attach-list-item-sizedelta"`
             + ` title="첫 계보(${fmtSize(_base)}) 대비 파일 크기 차이입니다 — 내용이 얼마나 다른지는 비교에서 확인하세요">`
             + `${escapeHtml(_delta)}</span>`;
         }

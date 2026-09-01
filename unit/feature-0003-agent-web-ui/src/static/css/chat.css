@@ -2739,7 +2739,7 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   border: 1px solid #a8a598;
   border-radius: var(--r-md, 8px);
   background: var(--surface-2, #f6f6f3);
-  padding: 6px 7px 7px;
+  padding: 6px 5px 7px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2797,7 +2797,10 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-left: 12px;
+  /* REQ-20260901-lineage-row-compaction: 레일 들여쓰기를 12 → 9px. 280px 패널에서 행이
+     한 줄에 들어가느냐가 3~5px 로 갈린다(실측: 같은 구성의 행이 20px/38px 로 나뉨).
+     레일·elbow 는 그대로 그려지므로 분기 도해는 잃지 않는다. */
+  padding-left: 9px;
 }
 .attach-lineage-group-body::before {
   content: "";
@@ -2821,7 +2824,7 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   background: #8c8a7c;
 }
 /* 갈라져 나온 계보는 한 단 더 들여쓴다 — "원본 → 거기서 갈라진 것" 이 위치로 읽힌다. */
-.attach-lineage-group-body > .attach-list-entry.is-branch { margin-left: 8px; }
+.attach-lineage-group-body > .attach-list-entry.is-branch { margin-left: 6px; }
 .attach-list-entry.is-branch::before { left: -17px; width: 15px; }
 /* 그룹 안의 행은 카드가 이미 경계를 주므로 자기 테두리를 낮춘다(이중 테두리 방지). */
 .attach-lineage-group .attach-list-item { background: var(--surface, #fff); }
@@ -2864,7 +2867,44 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   color: var(--text-2, #5a5852);   /* 7.11:1 — 정체성 칩은 이 화면의 1순위 정보다 */
 }
 .attach-lineage-group .attach-list-item-lineage.ai { color: #2563eb; }
+/* REQ-20260901-lineage-row-compaction: 분기 표식이 **글리프 한 자**가 되면서 pill 껍데기가
+   어울리지 않게 됐다 — 파선 테두리 안에 `⤷` 만 들어가 «빈 동그라미» 로 읽힌다(캡처 실측).
+   테두리·배경을 걷고 글리프 자체를 표식으로 쓴다. 색 단독 의존이 아니라는 요건은 이제
+   **글리프**가 충족한다(파선이 지던 역할을 형태가 이어받는다). */
+.attach-lineage-group .attach-list-item-lineage.branched {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
 .attach-lineage-group-count { color: var(--text-2, #5a5852); }
+
+/* REQ-20260901-lineage-row-compaction: 그룹 안 행을 **한 줄로** 합친다(사용자 지적).
+   종전에는 «업로드 주체» 줄과 «파일 정보 + 버튼» 줄이 따로였다 — 행이 이고 있는 것이
+   [정체성][v2][⤷갈라짐] · [크기][시각][토글] · [⬇][🗑] 로 짧아진 지금은 한 줄에 들어간다.
+   `wrap` 이라 240px 처럼 좁아지면 그때만 접힌다(고정 2줄이 아니라 필요 시 줄바꿈). */
+.attach-lineage-group .attach-list-item-info {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  /* 간격은 **5px** — 실측으로 정한 값이다. 8px 이면 흔한 행(정체성+크기·시각·토글+버튼)이
+     정확히 5px 모자라 **버튼만** 다음 줄로 떨어졌다(info 가용 205px vs 필요 210px).
+     한 줄에 들어가느냐가 이 cycle 의 목적이므로 여기서 아끼는 3px 이 값을 한다. */
+  gap: 2px 4px;
+}
+/* 같은 이유로 그룹 안 액션 버튼·배지의 좌우 여백을 좁힌다 — 실측상 이 행들은 필요폭과 가용폭이
+   **0~2px** 차이라(nowrap 측정) 여기서 아끼는 몇 px 이 «한 줄이냐 두 줄이냐» 를 가른다. */
+.attach-lineage-group .attach-list-item-actions > button { padding-left: 2px; padding-right: 2px; }
+.attach-lineage-group .attach-list-item-ver { padding-left: 4px; padding-right: 4px; }
+/* 메타 래퍼를 **투명하게** 만들어 자식(정보 텍스트·액션)이 행의 직접 flex 항목이 되게 한다.
+   래퍼로 두면 [이름][메타[텍스트][액션]] 이라 액션이 메타 **안에서** 텍스트와 폭을 다투고,
+   이름이 길어질수록 메타가 좁아져 텍스트가 2~3줄로 접힌다(실측: info 205px 중 메타 62px).
+   `display: contents` 면 셋이 같은 줄에서 폭을 나눠 갖고, 액션은 오른쪽 끝에 붙는다. */
+.attach-lineage-group .attach-list-item-meta { display: contents; }
+.attach-lineage-group .attach-list-item-metatext { min-width: 0; }
+.attach-lineage-group .attach-list-item-actions { margin-left: auto; }
 
 /* 변경 규모 — 열어 보기 전에 "얼마나 다른가" 의 1차 신호(GitKraken change gauge 계열).
    우리가 아는 것은 바이트 크기뿐이므로 색은 중립으로 두고, 내용 차이라고 말하지 않는다
@@ -2914,6 +2954,11 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
 }
 .attach-list-version-row {
   display: flex;
+  /* REQ-20260901-lineage-row-compaction: **한 줄**. 2줄이던 근거(파일명)를 이 cycle 이
+     걷어냈다 — 남는 것은 [v2][역할·시각][⬇][🗑] 뿐이라 240px 에서도 들어간다.
+     좁아지면 `wrap` 이 접는다(고정 2줄이 아니라 필요할 때만 — 잘림 대신 줄바꿈). */
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   font-size: 11px;
@@ -2957,18 +3002,13 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   font-size: 11px;
 }
 .attach-list-version-dl:hover { background: rgba(37, 99, 235, 0.08); }
-/* REQ-20260806-attach-manage: 버전 행도 2줄 — 좌측 들여쓰기(28px)까지 먹은 뒤 한 줄에
-   [v2][이름][역할][⬇][🗑] 를 몰면 240px 에서 이름 가용폭이 23.2px(≈2자)가 된다
-   (§18.8 design 실측: 240/280/360px 전 구간 잘림). 이름은 head 행이 통째로 쓴다. */
-.attach-list-version-row { flex-direction: column; align-items: stretch; gap: 2px; }
-.attach-list-version-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.attach-list-version-head .attach-list-version-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.attach-list-version-foot { display: flex; align-items: center; gap: 6px; }
+/* REQ-20260901-lineage-row-compaction: 버전 행을 **한 줄로 되돌린다**.
+   2줄이던 근거는 파일명이었다(한 줄에 몰면 240px 에서 이름 가용폭 23.2px ≈ 2자 — §18.8 design
+   실측). 그 파일명을 이 cycle 이 걷어냈으므로(카드 머리가 이미 말한다) 근거가 사라졌다.
+   남는 것은 [v2][역할·시각][⬇][🗑] 뿐이고, 좁아지면 `wrap` 이 접는다(고정 2줄이 아니라
+   필요할 때만 접힘 — 잘림 대신 줄바꿈이라는 이 패널의 원칙 유지). */
+.attach-list-version-head { display: flex; align-items: center; gap: 6px; min-width: 0; flex-shrink: 0; }
+.attach-list-version-foot { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .attach-list-version-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 /* 액션 열 정렬(사용자 보고 2026-08-11) — 첨부 목록 **3종 공통** 규칙.
    두 가지가 열을 어긋나게 한다:

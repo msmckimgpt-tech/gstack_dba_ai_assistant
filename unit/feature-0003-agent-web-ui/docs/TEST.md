@@ -3661,3 +3661,13 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   `account_id` 부재 / lineages 유지) · AT 정합(업로더명이 aria 에도) · stale 가드의 **정상 경로**
   통과 · 라벨 충돌 시 서수(`사용자 업로드 · 계보 1/3`). 5173 passed.
 | TEST-20260901T163000-runner-log-delivery | `static/agent/bridge_agent.py` (Windows-browser) | 러너 로그 구조화 cycle 의 시각검증. **화면 렌더 변경 0** (이 파일은 렌더 자산이 아니라 사용자가 내려받아 실행하는 스크립트) — 대신 실 Windows 브라우저에서 `/static/agent/bridge_agent.py` **배달 지문**을 실측했다. PRE-DEPLOY `served_build=0a4ba732366c` / 214,898 bytes. Environment: Windows-browser. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |
+
+### Run — TASK-20260901T170000-lineage-row-compaction (되풀이 제거 + 한 줄 간소화)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. 격리 컨테이너(stamp `a3db80724568`).
+- 되풀이: 버전 행 파일명 요소 **0** · 계보 안내문 **0** · raw `uploaded` **0**
+  (카드당 파일명 노출 6회 → 1회).
+- 한 줄(행 높이 20px=한 줄): **버전 행 전 폭 20px** · 사람 업로드 계보 행 280px 에서 **20px** ·
+  AI 수정본 계보 행 39px(두 줄) — 필요 268 / 가용 206, **62px 부족**을 수치로 확정.
+- 캡처가 결함 1건 포착: 글리프만 남은 파선 pill 이 «빈 동그라미» → 테두리 제거.
+- 증적: `docs/test-runs.d/TASK-20260901T170000-lineage-row-compaction.md`

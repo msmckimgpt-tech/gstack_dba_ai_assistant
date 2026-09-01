@@ -289,3 +289,59 @@ def test_group_icon_does_not_misrepresent_mixed_kinds():
     assert re.search(r"_kinds\s*=\s*new Set\(_sibs\.map", body), "형제 종류를 모으지 않는다"
     assert re.search(r'_kinds\.size === 1 \? kindIcon\(a\.kind\) : "📎"', body), (
         "종류가 갈려도 첫 행의 아이콘으로 그룹을 대표한다")
+
+
+# ── U6. 한 줄 간소화 + 남은 되풀이 제거 (REQ-20260901-lineage-row-compaction) ──
+
+def test_version_rows_do_not_repeat_the_filename():
+    """버전 행이 파일명을 되풀이하지 않는다 (사용자 지적 2026-09-01).
+
+    이 박스는 언제나 한 계보 안이고, 그 파일명은 그룹 카드 머리(계보 여럿) 또는 목록 행(단독
+    계보)이 이미 말했다. 행마다 또 적으면 같은 이름이 화면에 3~4번 실린다.
+    ⚠ 마우스 확인 경로는 남긴다 — 행 `title` 로 이동.
+    """
+    body = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
+    assert 'className = "attach-list-version-name"' not in body, (
+        "버전 행이 여전히 파일명을 렌더한다")
+    assert re.search(r"row\.title\s*=\s*v\.original_filename", body), (
+        "파일명 확인 경로를 통째로 잃었다 — 화면에서 뺐으면 title 로라도 남겨야 한다")
+
+
+def test_version_row_is_a_single_line():
+    """버전 행이 **한 줄**이다 — 2줄이던 근거(파일명)가 사라졌으므로.
+
+    좁아지면 `wrap` 이 접는다(고정 2줄이 아니라 필요할 때만 — 잘림 대신 줄바꿈 원칙).
+    """
+    rule = _css_rule(_src(CSS), ".attach-list-version-row")
+    assert "flex-direction: row" in rule, "여전히 세로 2줄 구조다"
+    assert "flex-wrap: wrap" in rule, "좁은 폭에서 잘린다 — 접힘 경로가 없다"
+
+
+def test_lineage_row_is_a_single_line_in_group():
+    """그룹 안 계보 행도 **한 줄** — 업로드 주체와 파일 정보·버튼이 갈라져 있지 않다."""
+    rule = _css_rule(_src(CSS), ".attach-lineage-group .attach-list-item-info")
+    assert "flex-direction: row" in rule, "정체성 줄과 메타 줄이 여전히 분리돼 있다"
+    assert "flex-wrap: wrap" in rule, "좁은 폭에서 잘린다 — 접힘 경로가 없다"
+    # 메타 래퍼는 `display: contents` 로 **투명화**했다 — 자식(텍스트·액션)이 행의 직접 flex
+    # 항목이 되어 폭을 나눠 갖는다. 래퍼로 남기면 액션이 메타 **안에서** 텍스트와 다퉈
+    # 이름이 길어질수록 텍스트가 2~3줄로 접힌다(실측: info 205px 중 메타 62px).
+    meta = _css_rule(_src(CSS), ".attach-lineage-group .attach-list-item-meta")
+    assert "display: contents" in meta, "메타 래퍼가 남아 액션과 텍스트가 폭을 다툰다"
+    acts = _css_rule(_src(CSS), ".attach-lineage-group .attach-list-item-actions")
+    assert "margin-left: auto" in acts, "액션이 오른쪽 끝으로 밀리지 않는다"
+
+
+def test_neutral_upload_status_is_not_shown_raw():
+    """상태는 **뜻이 있을 때만** 적는다 — 서버 enum 을 화면에 흘리지 않는다.
+
+    `uploaded` 는 텍스트 첨부에서 정상이자 영구 상태라 모든 행에 붙는 상수였고(스크린샷 실측),
+    사용자가 할 수 있는 것도 없다. 다만 **모르는 enum 은 계속 보여 준다** — 조용히 삼키면
+    새로 생긴 실패 상태가 화면에서 사라진다.
+    """
+    body = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
+    m = re.search(r"statusLabel\s*=\s*(.+?);\n", body, re.S)
+    assert m, "상태 라벨 조립을 찾지 못했다"
+    expr = m.group(1)
+    assert '"uploaded" ? ""' in expr.replace(" ", " "), "중립 상태를 여전히 원문으로 노출한다"
+    assert "읽기 완료" in expr and "오류" in expr, "뜻이 있는 상태를 잃었다"
+    assert "a.status ||" in expr, "모르는 enum 을 조용히 삼킨다 — 새 실패 상태가 사라진다"
