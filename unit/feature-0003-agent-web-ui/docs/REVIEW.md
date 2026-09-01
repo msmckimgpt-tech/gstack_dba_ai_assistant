@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T143000-rqrd-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 부재 확인 기록 (doc-only)
+
+- **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + 스크린샷 + TASK/MODIFY/REPORT).
+  §18.8 dispatch 표의 어느 축(backend/qa/ux/design/security)도 매칭되지 않는다.
+- **채널**: doc-only 이므로 패널 대상 아님. 기록의 근거는 **실측 그 자체**다 — 서빙 사본
+  fetch 결과(D1~D3)와 라이브 DOM 계수(PD1~PD4).
+
+### 판단 — 제거 검증은 «전·후 두 번» 이라야 성립한다
+
+「없다」만 관측하면 **애초에 없던 것**과 구별되지 않는다. 그래서 배포 전 fragment 가 제거
+대상 4요소를 기준선으로 못 박았고, 이 fragment 가 같은 대화·같은 위치에서 그것들이 0 이
+됐음을 못 박는다. 대조 대상을 «같은 대화» 로 고정한 것이 이 쌍의 유효성 조건이다 — 다른
+화면을 보면 두 관측이 서로를 증명하지 못한다.
+
+선행 cycle 의 잔여 2축(브리지 진행 중 입구 생성 · 구형 메시지 소실 실측)은 **여전히 미검증**
+이며 사유와 함께 남겼다. 4/4 PASS 가 그 둘을 대신하지 않는다.
+
 ## REV-20260901T133000-remove-query-result-details [SKIPPED:upstream-tool-carveout] — 말풍선 「▼ 쿼리 결과」 여닫이 제거
 
 - **Trigger**: `UI/화면/레이아웃` keyword matched (사용자 요청이 말풍선 표시면 제거) →
