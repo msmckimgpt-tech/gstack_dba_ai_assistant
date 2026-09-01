@@ -5372,3 +5372,26 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
 
 **검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
+
+## CHG-20260901T053000-connect-modal-transition 판정 축 교체 — 명령 경로·업데이트 갱신도 닫는다
+- `static/app/connect-modal.js`: 모달 자동 닫기의 판정을 «창을 열 때 **고정한** 기준선 대비
+  `listening` 전이» 에서 «**직전 관측** 대비 **쓸 수 있는 상태**(`listening && !runner_stale`)
+  전이» 로 바꿨다. 사용자 요청 2건이 같은 뿌리였다:
+  - 기준선을 고정하므로 열 때 «대기 중» 이면 그 뒤 끊겼다 다시 이어져도 전이가 아니다 →
+    「연결 준비」 명령으로 재연결한 창이 영영 닫히지 않았다.
+  - 갱신 중 `listening` 은 줄곧 참이고 `runner_stale` 만 풀린다 → «업데이트 필요» 갱신을
+    `listening` 만 보는 축이 통째로 놓쳤다.
+- 실행 버튼 경로(`_isListeningNow`·`_lastObserved.ok`)도 같은 축으로 통일 — 두 경로가 다른 축을
+  쓰면 실행 버튼만 «됐다» 고 말한다.
+- 문구 분기 신설(`MSG_CONNECTED` / `MSG_UPDATED`) — 업데이트하러 온 사용자가 자기가 한 일과
+  다른 말을 듣지 않게. 실행 경로는 시작 시점의 상태(`wasStale`)로 문구를 고른다.
+- 제거: `_openBaselineListening` · `_lastKnownListening`(→ `_lastObs` 로 통합) ·
+  `_noteListeningForModal`(→ `_noteConnForModal`).
+- Verification: **37/0 PASS**(I1 명령 재연결 · I2 업데이트 갱신 · I3 실행으로 갱신 · I4 낡은 채
+  이어진 것은 성공 아님 · H5 실행했는데 낡은 러너) · **라이브 배포본에서 6건 FAIL**(제보 재현
+  확인) · 뮤테이션 stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→H5 / msg-flat-auto→I2d·I3b.
+- 미잠금 명시: 실행 경로의 문구 분기와 `_lastObserved.ok` stale 검사는 뮤턴트 생존(자동 경로가
+  먼저 판정을 끝내 도달 희박 — 방어적 중복).
+- Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
+  `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…-transition.md`.
+- Timestamp: 2026-09-01T05:30:00+09:00
