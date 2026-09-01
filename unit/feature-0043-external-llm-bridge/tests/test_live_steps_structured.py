@@ -126,34 +126,41 @@ def test_activity_does_not_invent_reasoning():
 # ── ③ 표시층 통일 ────────────────────────────────────────────────────────────
 
 
-def test_live_renderer_uses_the_shared_card_builder():
+def test_live_renderer_feeds_the_single_display_surface():
     """진행 중과 완료본이 다른 렌더러를 쓰면, 같은 사실이 두 모양으로 보인다.
 
-    ⚠ 계약이 한 단계 더 좁혀졌다(2026-08-28 2차 제보). 처음엔 카드 빌더
-    (`buildStepDetailEl`)를 직접 부르게 했는데, 그러면 카드는 같아도 **자리**가 달랐다 —
-    진행 중에만 별도 블록이 생겨 드롭다운 밖에 쌓였다. 지금은 완료본이 쓰는 **details 조립
-    함수**(`renderMessageDetails`, 내부에서 같은 카드 빌더를 쓴다)를 그대로 부른다.
+    ⚠ 계약이 두 번 좁혀졌다.
+    ① 2026-08-28 2차 제보: 카드 빌더(`buildStepDetailEl`)를 직접 부르면 카드는 같아도
+       **자리**가 달랐다 — 진행 중에만 별도 블록이 생겨 드롭다운 밖에 쌓였다. 그래서 완료본이
+       쓰는 details 조립 함수를 그대로 부르게 했다.
+    ② 2026-09-01 사용자 결정: 그 말풍선 여닫이 자체가 제거됐다(같은 내용을 「단계 보기」
+       패널이 더 정확하게 보여준다). 이제 표시면은 **패널 하나**이고, 진행 표시도 그 패널을
+       갱신하는 것으로 끝난다 — 자리가 하나면 모양이 갈릴 자리도 없다.
     """
     src = _js_func(COMPOSER_JS, "_renderBridgeSteps")
-    assert "renderMessageDetails(" in src, (
-        "진행 표시가 완료본과 같은 조립 경로를 쓰지 않는다")
+    assert "refreshStepSidePanelForRun(" in src, (
+        "진행 표시가 유일 표시면(사이드 패널)을 갱신하지 않는다")
+    assert "renderMessageDetails(" not in src, (
+        "제거된 말풍선 여닫이를 다시 조립한다 — 표시면이 두 벌로 되돌아간다")
     assert "bridge-live-step-tool" not in src, "옛 평문 나열 마크업이 남아 있다"
     assert "innerHTML" not in src, "innerHTML 문자열 조립이 남아 있다"
 
 
-def test_in_bubble_steps_use_the_shared_card_builder():
-    """말풍선 안 비-SQL 단계도 같은 카드로 — 종전에는 `작업 — 근거` 한 줄 목록이었다."""
-    src = _js_func(MESSAGES_JS, "buildStepBlocks")
-    assert "buildStepDetailEl(" in src, "말풍선 단계가 여전히 <li> 평문 목록이다"
-    assert "item.textContent = reason" not in src, "옛 한 줄 조립이 남아 있다"
+def test_the_bubble_has_no_step_renderer_of_its_own():
+    """말풍선이 자기 단계 렌더러를 되찾으면 그 순간 표시층이 다시 갈린다."""
+    src = MESSAGES_JS.read_text(encoding="utf-8")
+    for gone in ("function buildStepBlocks(", "function renderMessageDetails(",
+                 "function buildSqlNavigator(", "function buildSqlStepPanel("):
+        assert gone not in src, f"제거된 말풍선 조립 경로가 되살아났다: {gone}"
 
 
 def test_card_builder_is_exported_once():
-    """두 소비처가 **같은 함수**를 부른다 — 복제하면 그 순간 다시 갈린다."""
+    """단계 카드는 **한 함수**가 그린다 — 복제하면 그 순간 다시 갈린다."""
     src = APP_JS.read_text(encoding="utf-8")
     assert src.count("export function buildStepDetailEl") == 1
-    for consumer in (COMPOSER_JS, MESSAGES_JS):
-        assert "buildStepDetailEl" in consumer.read_text(encoding="utf-8")
+    # 소비처는 사이드 패널(app.js 내부)과 진행 스트립(progress.js) 이다.
+    progress_js = APP_JS.parent / "app" / "progress.js"
+    assert "buildStepDetailEl" in progress_js.read_text(encoding="utf-8")
 
 
 def test_card_builder_renders_activity_distinctly():

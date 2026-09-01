@@ -648,8 +648,14 @@ def test_runner_contract_is_accurate_about_what_it_receives_and_leaves(path):
         "제거한 로컬 LLM URL 이 되살아났다 — 「나가는 곳 한 곳」이 다시 거짓이 된다")
     assert "하나뿐이다" in head or "**하나뿐**" in head, (
         "URL 생성 지점이 하나가 됐는데 문서가 그렇게 말하지 않는다")
-    assert "프롬프트 안에도 들어간다" in head, "토큰의 실제 노출면을 말하지 않는다"
-    assert "BRIDGE_TOKEN" in head, "노출을 줄이는 수단을 알려주지 않는다"
+    # 2026-09-01(TASK-20260901T140000): 토큰이 프롬프트 본문 → **자식 환경변수**로 옮겼다.
+    # 계약은 그대로다 — 「노출면을 정직하게 적는다」. 노출면이 바뀌었으니 문장도 바뀌어야
+    # 하고, 이 검사는 *새 사실* 이 적혀 있는지를 본다(옛 문장이 남아 있으면 그것이 거짓이다).
+    assert "프롬프트 안에도 들어간다" not in head, "옛 노출면 서술이 남아 사실과 어긋난다"
+    assert "환경변수로 들어간다" in head, "토큰의 실제 노출면을 말하지 않는다"
+    assert "/proc/<pid>/environ" in head, "환경변수 경로의 잔여 노출을 감췄다"
+    assert "0 은 아니다" in head, "노출이 사라졌다고 과장했다"
+    assert "BRIDGE_TOKEN" in head, "어느 변수인지 알려주지 않는다"
     # 자기모순 금지: 같은 표 안에서 "아무것도 안 남는다" 와 "config.json 을 남긴다" 가 공존했다.
     assert "끝나면 아무것도 남지 않는다" not in head, "같은 표의 다른 행과 모순되는 문장이다"
 

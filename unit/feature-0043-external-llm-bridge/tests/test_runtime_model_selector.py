@@ -133,10 +133,14 @@ def test_heartbeat_carries_capabilities_every_time():
     src = _RUNNER.read_text(encoding="utf-8")
     loop = src[src.index("def start_heartbeat("):]
     loop = loop[:loop.index("\ndef ")]
-    assert "api.heartbeat(runtimes)" in loop, "하트비트가 능력을 싣지 않는다"
+    # 첫 인자가 `runtimes` 이면 된다 — TASK-20260901T140000 이 사망 신고
+    # (`released_instances=`)를 같은 호출에 덧붙였으므로 전량 일치로 고정하면
+    # 이 계약과 무관한 인자 추가가 곧 실패가 된다.
+    call = "api.heartbeat(runtimes"
+    assert call in loop, "하트비트가 능력을 싣지 않는다"
     # 루프 밖에서 한 번만 보내는 형태가 아닌지 — 호출이 while 안에 있어야 한다.
     while_at = loop.index("while not stop.is_set():")
-    assert loop.index("api.heartbeat(runtimes)") > while_at, "능력 신고가 루프 밖에 있다"
+    assert loop.index(call) > while_at, "능력 신고가 루프 밖에 있다"
 
 
 def test_runner_does_not_offer_a_selector_it_cannot_honor():

@@ -134,6 +134,49 @@ def upsert_column_desc(conn, scope_key, table_name, column_name, description,
         cur.close()
 
 
+#: 전역(`common`) scope — 읽기 캐스케이드의 두 번째 티어. `kb_glossary.GLOBAL_SCOPE` 와 같은 값이며
+#: 그 모듈을 import 하면 순환이 되므로 리터럴로 둔다(양쪽이 갈리면 상속 표시가 조용히 빈다).
+GLOBAL_SCOPE = "common"
+
+
+def list_global_table_desc_for_scope(conn, limit=_TABLE_ADMIN_LIMIT):
+    """전역 테이블 설명 — 제품 목록에 **읽기 전용 상속분**으로 함께 보이기 위한 조회.
+
+    ⚠ 이 화면 비대칭이 실측 중복을 만들었다: 읽기는 `[제품, common]` 2단인데 목록은 1단이라
+    관리자가 「이 제품에 설명이 없다」고 읽고 다시 쓴다. 라이브(2026-09-01) `column_descriptions`
+    에서 **833개 컬럼이 2개 이상 scope 에 중복**이고 그중 **826개(99.2%)는 설명 텍스트까지
+    동일**했다 — 다만 그 중복은 **제품↔제품** 축이고, 이 로더가 여는 건 제품↔`common` 축이다.
+    즉 826행이 이 변경으로 자동 정리되지는 **않는다**(공통화는 큐레이션 작업이다). 이 로더가
+    막는 것은 **앞으로의 재생산** — 전역에 올려도 콘솔에 안 보이면 아무도 올리지 않는다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, schema_name, table_name, description, source, "
+            "created_at, updated_at FROM table_descriptions WHERE scope_key = %s "
+            "ORDER BY updated_at DESC, id DESC LIMIT %s",
+            (GLOBAL_SCOPE, int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
+def list_global_column_desc_for_scope(conn, limit=_COLUMN_ADMIN_LIMIT):
+    """전역 컬럼 설명 — `list_global_table_desc_for_scope` 동형(읽기 전용 상속분)."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, schema_name, table_name, column_name, description, "
+            "source, created_at, updated_at, ordinal FROM column_descriptions WHERE scope_key = %s "
+            "ORDER BY table_name, ordinal NULLS LAST, column_name, id LIMIT %s",
+            (GLOBAL_SCOPE, int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
 def update_table_desc(conn, desc_id, scope_key, description,
                       schema_name=None, table_name=None) -> int:
     """테이블 설명 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404).

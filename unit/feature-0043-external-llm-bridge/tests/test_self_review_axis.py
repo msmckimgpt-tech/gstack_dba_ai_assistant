@@ -187,6 +187,99 @@ def test_self_review_disabled_still_sends_the_key():
     assert '"enabled": False' in body and '"reason"' in body
 
 
+# ── ③-a 이음매 — **러너가 만든 값을 서버가 실제로 소비하는가** ────────────────
+#
+# 이 스위트의 첫 판은 양쪽을 각각만 검사했다: 서버 쪽은 `sanitize(parse_review_text("<원문>"))`
+# 을 **직접** 불렀고, 러너 쪽은 `{"raw": …}` 를 만드는지만 봤다. 둘 다 green 이었는데
+# **라이브에서는 모든 자가 검증이 버려졌다** — 러너가 보낸 봉투를 서버가 벗기지 않았기 때문이다.
+#
+# 헬퍼가 맞는 것과 진입점이 그 헬퍼를 그렇게 쓰는 것은 다른 사실이다. 아래는 그 이음매만 본다.
+
+
+def _runner_envelope(ai_output: str) -> dict:
+    """러너가 `submit_answer` 에 싣는 봉투를 **러너 소스에서 읽어** 재현한다.
+
+    모양을 여기 손으로 적으면 러너가 봉투를 바꾸는 날 이 테스트만 낡아, 다시 「양쪽 green +
+    라이브 실패」가 된다. `handle_one` 의 실제 조립 구문을 앵커로 잡는다.
+    """
+    handle = _func_src(RUNNER_PY, "handle_one")
+    assert 'payload["review"] = {' in handle, "러너의 봉투 조립부가 사라졌다"
+    for key in ('"raw":', '"latency_ms":', '"model":', '"reasoning_level":'):
+        assert key in handle, f"봉투에 {key} 가 없다"
+    return {"raw": ai_output, "latency_ms": 9416, "model": "fable", "reasoning_level": "high"}
+
+
+def test_server_consumes_the_exact_envelope_the_runner_sends(sr):
+    """러너 봉투 → 서버 판정. **라이브에서 깨졌던 바로 그 경로**다.
+
+    실측(2026-09-01): claude CLI 가 `{"verdict":"pass","findings":[]}` 를 돌려줬고 러너는
+    "자가 검증 완료 (9416ms) — 제출에 동봉" 을 로그했는데, 서버 원장에는 행이 0 이었다.
+    """
+    env = _runner_envelope('{"verdict":"pass","findings":[]}')
+    out = sr.from_runner_payload(env)
+    assert out is not None, "러너가 보낸 봉투를 서버가 버렸다 — 라이브 결함 재발"
+    assert out["verdict"] == "pass"
+    # 관측 메타는 **봉투 것**이 실려야 한다(판정 본문에는 없는 값이다).
+    assert out["latency_ms"] == 9416 and out["model"] == "fable"
+    assert out["reasoning_level"] == "high"
+
+
+def test_envelope_meta_wins_over_ai_self_reported_meta(sr):
+    """AI 가 스스로 적은 지연·모델은 **우리가 관측한 값이 아니다** — 봉투가 이긴다."""
+    env = _runner_envelope('{"verdict":"pass","findings":[],"latency_ms":1,"model":"거짓"}')
+    out = sr.from_runner_payload(env)
+    assert out["latency_ms"] == 9416 and out["model"] == "fable"
+
+
+def test_envelope_with_findings_survives_end_to_end(sr):
+    """지적이 있는 판정도 봉투를 거쳐 그대로 온다(건수 재도출 포함)."""
+    body = ('{"verdict":"pass","findings":[{"axis":"honesty","severity":"BLOCK",'
+            '"claim":"c","evidence":"e","fix_hint":"f"}]}')
+    out = sr.from_runner_payload(_runner_envelope(body))
+    assert out["verdict"] == "revise" and out["block_count"] == 1
+
+
+@pytest.mark.parametrize("bad", ["", "산문만 있음", "{}", "null"])
+def test_envelope_with_unusable_body_is_still_rejected(sr, bad):
+    """봉투를 벗겼다고 아무거나 받지는 않는다 — 형태가 아니면 여전히 기록하지 않는다."""
+    assert sr.from_runner_payload(_runner_envelope(bad)) is None
+
+
+def test_bare_forms_still_accepted(sr):
+    """구 러너·수동 제출 호환 — 봉투 없이 판정 dict 나 원문 문자열로 와도 받는다."""
+    assert sr.from_runner_payload({"verdict": "pass", "findings": []})["verdict"] == "pass"
+    assert sr.from_runner_payload('{"verdict":"pass","findings":[]}')["verdict"] == "pass"
+    assert sr.from_runner_payload(None) is None
+
+
+def test_server_entrypoint_uses_the_envelope_reader():
+    """`sanitize(parse_review_text(...))` 를 **직접** 부르면 봉투가 다시 통째로 들어간다.
+
+    이 단언이 없으면 다음 사람이 «같은 두 함수를 쓰니 같겠지» 하며 되돌릴 수 있다 —
+    라이브에서 조용히 깨지는 형태로.
+    """
+    # ⚠ **AST 로 실제 호출만 본다.** 문자열 검사는 위 설명 주석의 함수 이름까지 잡아 거짓
+    #   실패를 낸다(이 저장소가 `compose_prompt` 검사에서 이미 겪은 형태). 잠글 것은 문구가
+    #   아니라 «어느 함수를 부르는가» 다.
+    body = _func_src(AI_TOOLS_PY, "_record_external_review")
+    called = {n.func.attr for n in ast.walk(ast.parse(body))
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert "from_runner_payload" in called, "봉투 리더를 쓰지 않는다"
+    assert "parse_review_text" not in called, (
+        "봉투를 벗기지 않고 원문 파서를 직접 부른다 — 라이브 결함의 원인 그 자체")
+
+
+def test_dropped_review_is_not_silent():
+    """러너가 보냈는데 우리가 버렸다면 **로그에 남아야 한다** — 이 결함이 오래 숨은 이유가
+    정확히 침묵이었다(파싱 실패가 debug 레벨이라 아무 데도 안 보였다)."""
+    body = _func_src(AI_TOOLS_PY, "_record_external_review")
+    tree = ast.parse(body)
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr in ("info", "warning")]
+    assert calls, "버린 사실을 info/warning 으로 남기지 않는다"
+
+
 def test_review_is_optional_on_submit():
     """검증 없는 제출을 거절하면 구 러너 사용자의 답변이 그날로 전부 막힌다.
 
@@ -351,3 +444,77 @@ def test_inactive_surfaces_requires_the_specific_feature():
         {**ready, "runner": {"features": ["console_jobs", "self_review"]}})
     # 게이트가 열려 있으면 미적용 자체가 없다.
     assert keys({"server_llm_blocked": False}) == []
+
+
+# ── ⑥ 콘솔 작업은 경량 모델로 돈다 (사용자 결정 2026-09-01) ──────────────────
+#
+# > "관리 콘솔에서 이용될 모델은 모두 경량 모델로 구성해주세요. claude는 haiku, codex는 luna
+# >  모델과 같은 경량 모델로 작동해야 합니다."
+#
+# 콘솔 작업의 산출물은 기계적인데(설명 한 줄·프롬프트 초안·라벨) 호출은 **사용자 개인 계정의
+# 토큰**을 태운다. 남의 자원을 우리가 쓰는 자리에서 상위 모델을 기본으로 둘 근거가 없다.
+
+
+def _bt():
+    import importlib.util
+    import pathlib as _pl
+    p = _pl.Path(__file__).resolve().parents[3] / "shared" / "bridge_tasks.py"
+    spec = importlib.util.spec_from_file_location("_bt_under_test", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_console_job_picks_the_light_model_per_runtime():
+    """사용자가 이름으로 지목한 두 축이 실제로 그 값을 고르는가."""
+    bt = _bt()
+    claude = [{"runtime": "claude", "models": [{"value": "opus"}, {"value": "sonnet"},
+                                               {"value": "haiku"}, {"value": "fable"}]}]
+    codex = [{"runtime": "codex", "models": [{"value": "gpt-5.6-sol"}, {"value": "gpt-5.6-luna"},
+                                             {"value": "gpt-5.4-mini"}]}]
+    assert bt.pick_console_job_model(claude) == ("claude", "haiku")
+    # codex 는 실 모델명이 접두를 달고 온다(`gpt-5.6-luna`) — 완전일치를 요구하면 못 찾는다.
+    assert bt.pick_console_job_model(codex) == ("codex", "gpt-5.6-luna")
+
+
+def test_console_job_model_never_invents_a_name():
+    """**신고 목록에 없는 이름을 지어 보내지 않는다.**
+
+    러너는 받은 값을 CLI 인자로 넘긴다 — 없는 모델이면 실행이 실패하고, 사용자에게는
+    "AI 가 답을 안 한다" 로만 보인다(P0-T 가 겪은 형태). 후보가 없으면 빈 값이고 러너
+    기본값이 쓰인다.
+    """
+    bt = _bt()
+    assert bt.pick_console_job_model(
+        [{"runtime": "claude", "models": [{"value": "opus"}, {"value": "sonnet"}]}]) == ("", "")
+    assert bt.pick_console_job_model([{"runtime": "ollama", "models": [{"value": "qwen3:8b"}]}]) == ("", "")
+
+
+@pytest.mark.parametrize("caps", [None, "x", [], [{}], [{"runtime": "claude"}],
+                                  [{"runtime": "claude", "models": None}]])
+def test_console_job_model_survives_broken_capabilities(caps):
+    """능력 신고는 러너가 만든 값이다 — 깨져 있어도 작업 적재를 막지 않는다."""
+    assert _bt().pick_console_job_model(caps) == ("", "")
+
+
+def test_console_job_model_follows_the_runner_report_order():
+    """런타임 간 우열을 서버가 정하지 않는다 — `--ai` 로 제한한 사용자의 의도를 넘어선다."""
+    bt = _bt()
+    claude = {"runtime": "claude", "models": [{"value": "haiku"}]}
+    codex = {"runtime": "codex", "models": [{"value": "gpt-5.6-luna"}]}
+    assert bt.pick_console_job_model([claude, codex])[0] == "claude"
+    assert bt.pick_console_job_model([codex, claude])[0] == "codex"
+
+
+def test_claim_console_job_actually_ships_the_light_model():
+    """레지스트리가 맞는 것과 **적재 응답이 그것을 싣는가**는 다른 사실이다.
+
+    이 cycle 이 고친 자가 검증 결함이 정확히 그 간극이었다(양쪽 green + 이음매 실패).
+    """
+    body = _func_src(AI_TOOLS_PY, "_claim_console_job")
+    assert "pick_console_job_model" in body, "경량 선택을 부르지 않는다"
+    assert '"runtime": _light_runtime' in body and '"model": _light_model' in body, (
+        "고른 값을 `requested` 에 싣지 않는다 — 러너는 여전히 자기 기본 모델로 돈다")
+    # 대화 축은 건드리지 않았는지(사용자가 화면에서 고른 값이다).
+    chat = _func_src(AI_TOOLS_PY, "claim_request")
+    assert "pick_console_job_model" not in chat, "대화 축까지 경량으로 낮췄다"

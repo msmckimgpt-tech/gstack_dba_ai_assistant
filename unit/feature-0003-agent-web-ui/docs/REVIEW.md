@@ -8,6 +8,58 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T143000-rqrd-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 부재 확인 기록 (doc-only)
+
+- **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + 스크린샷 + TASK/MODIFY/REPORT).
+  §18.8 dispatch 표의 어느 축(backend/qa/ux/design/security)도 매칭되지 않는다.
+- **채널**: doc-only 이므로 패널 대상 아님. 기록의 근거는 **실측 그 자체**다 — 서빙 사본
+  fetch 결과(D1~D3)와 라이브 DOM 계수(PD1~PD4).
+
+### 판단 — 제거 검증은 «전·후 두 번» 이라야 성립한다
+
+「없다」만 관측하면 **애초에 없던 것**과 구별되지 않는다. 그래서 배포 전 fragment 가 제거
+대상 4요소를 기준선으로 못 박았고, 이 fragment 가 같은 대화·같은 위치에서 그것들이 0 이
+됐음을 못 박는다. 대조 대상을 «같은 대화» 로 고정한 것이 이 쌍의 유효성 조건이다 — 다른
+화면을 보면 두 관측이 서로를 증명하지 못한다.
+
+선행 cycle 의 잔여 2축(브리지 진행 중 입구 생성 · 구형 메시지 소실 실측)은 **여전히 미검증**
+이며 사유와 함께 남겼다. 4/4 PASS 가 그 둘을 대신하지 않는다.
+
+## REV-20260901T133000-remove-query-result-details [SKIPPED:upstream-tool-carveout] — 말풍선 「▼ 쿼리 결과」 여닫이 제거
+
+- **Trigger**: `UI/화면/레이아웃` keyword matched (사용자 요청이 말풍선 표시면 제거) →
+  §18.8 표상 required subagents = `ux, design`.
+- **채널 불가 2건 (실측)**:
+  1. `codex exec` — `ERROR: You've hit your usage limit … try again at 3:44 PM`(2026-09-01
+     14:20 KST 시도). 프롬프트 조립·diff 전달까지 정상 수행 후 상류 한도로 반환.
+  2. `ux` · `design` subagent — **이 저장소에 정의가 없다**(`.claude/agents/` 에는
+     `improve-fit-reviewer` 뿐). 표가 지정한 두 도메인을 호출할 실체가 부재하다.
+- **carve-out**: 위 두 사실을 사용자에게 제시하고 선택을 받았다 —
+  「carve-out 승인 후 진행」(2026-09-01). 선례: `REV-20260901T031500` ·
+  `REV-20260901T020746` 의 같은 태그.
+- **입력 측 ADR 전달**(§18.8): 대상 diff + 「의도된 구성」 3건(제거는 사용자 결정 · CSV 소실은
+  고지 후 수용 · `share.js` 는 범위 밖)을 codex 프롬프트에 명시했다. 재실행 시 그대로 쓴다.
+
+### 자체 적대 점검 — 결함 2건 적발 (패널 대체 아님, 보완)
+
+패널을 대신한다고 주장하지 않는다. 아래는 「제거 변경」 고유의 실패 모드 5축을 스스로 겨눈
+결과이며, **2건이 실제로 걸렸다**.
+
+| 축 | 결과 |
+|---|---|
+| 제거 후 조용히 no-op 이 되는 배선 | **적발 → 수정**: `_renderBridgeSteps` 가 여닫이만 그리고 있었다. 그냥 지웠다면 진행 중 말풍선에 단계 진입로가 **0** 이 된다(placeholder 는 `meta.steps` 없이 그려져 app.js 가 버튼을 붙이지 못한다). 패널 갱신 + 버튼 «없으면 생성» 으로 교정. |
+| 제거된 심볼/CSS 잔재 참조 | **적발 → 수정**: `messageLogEl` 이 미사용 import 로 남았다(제거된 스크롤 앵커 전용). 그 외 잔재 0 — 함수 9종·CSS 12규칙 전수 grep 로 확인(`share.js` 의 동명 함수는 그쪽 **자체 사본**이며 범위 밖). |
+| 남은 표시면 진입로 부재 경계 | 위 수정으로 닫힘. 구조 단언으로 잠금(`test_bubble_always_offers_an_entrance_to_the_panel`). |
+| 테스트가 항진명제인가 | 부재 단언 6종은 **제거 전 코드에서 전부 FAIL** 하는 형태(`"function renderMessageDetails(" not in src`)라 항진이 아니다. 존재 단언(`bubble.appendChild(fresh)`)도 마찬가지. |
+| 고지되지 않은 동반 소실 | **적발 → 고지**: 구형 메시지 폴백(`meta.sql` → 「실행 SQL」, `meta.csv_paths` → 「결과 파일」)도 이 블록 안에 있었고, 그런 메시지는 `meta.steps` 가 없어 「단계 보기」 버튼조차 없다 → **대체 표시면 부재**. 결정 시 고지된 손실은 CSV 2건뿐이었으므로 TASK/REPORT 에 기록하고 사용자에게 별도 보고했다. |
+
+### 잔여 리스크 (숨기지 않는다)
+
+- ux/design 관점의 **독립** 검토는 받지 못했다. 위 표는 같은 작성자가 자기 변경을 본 것이고,
+  「방어를 넣었다 ≠ 방어가 성립한다」는 자체 검토가 구조적으로 약한 축이다.
+- 브리지 **진행 중** 화면의 라이브 관측이 없다(개인 AI 러너 미연결). 구조 단언까지만 잠겼다.
+- POST-DEPLOY 부재 확인 4항목은 배포 후 수행 — 미수행 상태에서 완료를 선언하지 않는다.
+
 ## REV-20260901T121000-interrupt-preserve-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
 
 - **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + TASK/MODIFY/REPORT).
@@ -6651,6 +6703,18 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - **칩이 화살표 뒤에 선다** — 사용자 스크린샷이 지목한 자리는 화살표 앞이었으나, 그 배치는
   긴 계정명이 화살표 밑으로 들어가는 실측 결함을 낳아 되돌렸다. 완료 보고에 명시한다.
 
+## REV-20260901T124500-ai-conn-chip-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T1200-ai-conn-chip-to-profile-row`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T12:45:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `40340f53` 에서 주입 없이 16조합 재측정 — 배포 전 실측치와 전부 일치.
+  `.composer-footer` 전 조합 `display: none`(사용자가 지적한 입력창 아래 여백 해소).
+- **선행 cycle 의 잔여 해소**: `REV-20260901T120000-…` 이 "배포본 자산 재확인 잔여" 로 남긴
+  항목이 본 Run 으로 닫혔다. **`ux`/`design` 도메인 심사 미수행은 그대로 잔여** — 칩 글꼴
+  10.88px 의 가독성 판단은 여전히 전문 심사를 거치지 않았다.
+
 ## REV-20260901T125600-ai-claude-glossary-tier-postdeploy [SKIPPED:non-policy-doc] — 증적 기록 전용
 
 - Related TASK: feature-0003-agent-web-ui (`20260901T1256-glossary-tier-postdeploy`)
@@ -6661,3 +6725,437 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - 기록된 사실의 근거: `alembic_version=0058_glossary_term_tier` · 제품 목록 239건 중 상속 7건 ·
   폼 select 3선택지 · 큐 필터 6선택지 · 캡처 3장(`artifacts/pb0008-glossary-term-tier/`) ·
   배포 체크리스트 [1][2][1b][2b][5] 통과(`no upstreams available` 0건).
+
+## REV-20260901T160000-kb-external-reach [SKIPPED:codex-no-output] — 지식베이스 외부 AI 도달 범위 (web 거주분)
+
+리뷰 정본은 `unit/feature-0002-agent-core/docs/REVIEW.md` REV-20260901T160000-kb-external-reach
+(cross-cut cycle — 코어·web 을 한 번에 판정). Cross-ref: CHG-20260901T160000-kb-external-reach
+(양 feature) · ANCHOR 무충돌.
+
+web 거주분에 한정한 요점:
+
+- **[BLOCKING·해소] product scope 를 주변 상태에서 읽으면 계정 경계를 넘는다.** MCP 는 계정
+  결속 도구다 — `cfg.get_active_product_scope()` 는 **서버 프로세스의** 활성 제품이라 A 계정
+  질문에 B 제품 사전을 실을 수 있다. task 의 ProductId 에서만 해석하도록 봉인하고
+  (`_bridge_product_scope_key`), 해석 불가 시 **빈 문자열**(= 제품 층 미주입)로 접었다.
+- **[MINOR·해소] 헬퍼를 `@router.post` 데코레이터와 함수 사이에 끼워 SyntaxError.** 데코레이터
+  아래로 이동. (즉시 발현이라 무해했지만, 편집 위치가 문법을 바꾸는 지점이다.)
+- **도구 시그니처 불변이 설계 제약이었다.** `get_task_context` 의 이름·인자를 그대로 두고
+  **반환 본문만** 넓혔기 때문에 러너(개인 AI) 재배포 없이 도달한다. 새 도구를 만들었다면
+  러너가 그 도구를 부르도록 갱신될 때까지 아무 효과가 없었을 것이다.
+
+Verdict: PASS (정본 판정에 종속).
+
+## REV-20260901T115300-side-panel-exclusive [SUBAGENT:ux+design] — BLOCK ×2 → 수정 → 확인 라운드
+
+- **Trigger**: `Code change` + §18.8 dispatch 표의 `UI, layout, dialog / 화면, 레이아웃` 매칭 →
+  축 = **ux, design**. 백엔드·스키마·RBAC 변경 0 이라 security/backend/qa 축은 해당 없음.
+- **채널(§18.8)**: 본 세션의 상위 지시가 subagent 호출을 금지한다(`Do not call the AgentTool
+  unless the user requested it`). **자체 SKIP 하지 않고 사용자에게 확인**했다 — 1차 답변은
+  `/codex review` 대체였으나 codex 사용 한도가 소진(15:44 해제)돼 실행 불가였고, 2차 확인에서
+  **이번 단계 한정 AgentTool 패널을 허용**받아 §18.8 정본 경로로 수행했다.
+- **1라운드 결과: ux `BLOCK` · design `BLOCK`** (아래 「라운드 1 지적과 처리」). 두 리뷰어
+  모두 뮤테이션·격리 사본 실측을 근거로 제시했고, 제품 3건·가드 3건이 실효 결함이었다.
+- **§18.8 수렴 계약(a)**: P1 을 수정했으므로 **확인 라운드 1회**를 돌렸다 — 수정한 라운드
+  자체는 종결 근거가 아니다(수정이 새 결함을 만들 수 있으므로).
+
+### 라운드 1 지적과 처리 (실효 판정)
+
+| # | 축 | 지적 | 처리 |
+|---|---|---|---|
+| U-3 | 제품/접근성 | `.hidden` 이 `display:flex !important; translateX(100%)` 라 숨은 패널이 Tab·스크린리더에 남는다 → "하나만 열린다" 가 시각 사용자에게만 성립 | **수정** — 등록부가 `inert`/`aria-hidden` 동기화(배타 경로 동기 + 관찰 그물) |
+| U-1 | 제품/UX | 배타 닫힘이 첨부 패널의 휴지통 모드·스크롤을 파기(재개방 시 무조건 `active` 리셋) | **수정** — 자동 닫힘 한정 스냅샷·복원. 사용자 × 닫기의 리셋은 그대로(의도) |
+| U-2 | 제품/UX | 업로드 중·실패 pill 이 서버 목록에 없어 재개방 시 소실(실패 항목 회수 경로까지) | **수정** — 복원 경로에서 pending 있으면 pill 뷰로 |
+| D-3 | 제품 | `registerSidePanel` 조용한 no-op — `colse:` 오타 하나로 배타 이탈, 증상은 «수정 전» 과 동일 | **수정** — 콘솔 보고 + 사후 단언 + pytest 형태 검증 |
+| D-4 | 제품 | `catch {}` 가 close 실패를 완전 무음으로 삼킴 | **수정** — `console.error` + 사후 단언 |
+| D-1 | 가드 | 우회 스캔이 `getElementById` 한 형태만 봐 `querySelector`·핸들 import·소유모듈-남의패널 3형태 통과(실측) | **수정** — 세 축 추가, 소유 면제를 자기 패널로 한정 |
+| D-2 | 가드 | 스캐너가 «없다» 축에 리터럴 마스크 사용 + 중첩 템플릿 오독으로 파일 전체 마스킹(실측 false PASS) | **수정** — 모드 스택 파서 + 미종료 리터럴 예외 + «없다» 축 마스크 미사용 |
+| — | 가드 | census 가 body 직속 `<aside>` 기준이라 `<div>` 오버레이는 밖, 올바른 확장을 오히려 FAIL | **수정** — `data-side-panel` 선언적 표식 |
+| — | 가드 | 등록부 leaf 불변식 미강제 · 등록문 실행 여부 미검증 · 하네스 CI 미배선 | **수정 2 + 기록 1** — S1 leaf 단언, 줄머리 앵커, CI gap 은 S6 이 «기록» 을 강제 |
+| — | 설계 | `openSidePanel` 로 열기까지 문 하나로 (호출 누락 실패 모드 제거) | **채택** |
+| C1 | UX | Esc 로 닫을 수 없다 (3종 전부, 이 변경 이전부터) | **미채택(범위 밖)** — 새 키보드 계약 추가는 요청 범위를 넘는다. 후속 항목으로 기록 |
+| §3 | 설계 | 단일 우측 dock + 탭 / `body[data-open-panel]` 단일 상태 정본 재설계 | **미채택(범위 밖)** — 요청은 "하나만 열리게" 다. 대안으로 아래 기록 |
+| C4 | UX | ≤680px 에서는 프로필 진입점(좌측 사이드바)이 없어 계약이 관측되지 않는다 | **문서화** — 아래 「검증 범위」 |
+| C3 | 검증 | 시나리오가 backdrop 합성 click 을 "실 사용자 경로" 로 라벨 | **수정** — `#closeProfileBtn` 클릭으로 교체, 라벨 정정 |
+
+### 검증 범위 (정직 표기)
+
+- 이 계약이 **관측되는 폭은 ≥681px** 다. ≤680px 에서는 `.sidebar { display:none }` 이라
+  프로필 진입점 자체가 없고, 첨부·단계는 `max-width:92vw` 로 서로의 opener 를 덮어 두 번째
+  패널을 열 방법이 없다 — 배타 코드가 실행될 일이 없다.
+- 「프로필이 열린 상태에서 첨부/단계 열기」는 backdrop(z 195)이 화면 전체 클릭을 먹어 **실
+  포인터로 도달 불가**하다. 방어적 계약이며 jsdom C4 가 잠근다.
+
+### 라운드 2 (확인 라운드) 결과 — **BLOCK ×2**, P1 6 → 2 로 단조 감소
+
+두 리뷰어가 **같은 회귀 1건**을 독립으로 지목했다(§18.8 (b) 판정: 비단조 아님 — 라운드를
+더 돌린다).
+
+| # | 축 | 지적 | 처리 |
+|---|---|---|---|
+| B1 | 제품(이 변경이 만든 회귀) | 배타 닫힘 스냅샷이 **대화 전환을 넘어 살아남아** 다른 대화가 휴지통 모드로 열린다 — REQ-20260806-attach-manage 가 없앤 결함의 부활. 두 리뷰어가 각각 정본 소스로 재현 | **수정** — 스냅샷에 `convId` 를 실어 **자기무효화**. 전환 choke-point 에 한 줄을 더하는 대신(다음 전환 경로마다 복제해야 한다) 스냅샷이 스스로 만료되게 했다 |
+| B2 | 문서 | `FUNCTION.md` 계약·AC 가 라운드 1 **이전** 설계를 서술 — AC-4 가 구현에 없는 보장을 약속(실측 반증) | **수정** — 계약을 `openSidePanel` 중앙 열기로 다시 쓰고 AC 를 실제 검사 축(6종)·한계와 함께 재작성 |
+| C-b | 제품 | 휴지통 모드로 복원할 때 pill 복원이 삭제분 목록을 덮어 «헤더는 휴지통, 본문은 활성» | **수정** — `deleted` 복원 시 pill 복원 건너뜀 |
+| C-a/C8 | 제품 | `try { el.inert = … } catch` 는 **도달 불가 코드**(미지원 엔진은 던지지 않는다) → «읽히지 않는데 포커스는 가는» 최악 조합 가능 | **수정** — `"inert" in HTMLElement.prototype` 기능 검출 + 미지원 시 `aria-hidden` 도 걸지 않음 + CSS `visibility:hidden; pointer-events:none` 폴백 |
+| C-d | 문서 | 모듈 주석이 세 패널의 `.hidden` 을 한 규칙으로 서술 — 프로필은 base `.hidden{display:none}` 에 걸려 이미 제거 상태 | **수정** — 주석·FUNCTION 정정 |
+| C1 | 가드 | 소유 모듈 안에서 «네 번째 열기 지점» 은 여전히 통과(M4) | **수정** — **S7**: `hidden` 해제는 `openSidePanel(` 스팬 안에서만(형태-무관 축) |
+| C2 | 가드 | 표식 없는 신규 오버레이는 census 밖(M6) | **수정** — **S8**: body 직속 오버레이 후보는 표식 **강제** |
+| C3 | 가드 | `app.js` 면제가 파일 8천 줄 전체(M1) | **수정** — 핸들 획득 **선언 줄만** 면제 |
+| C4 | 가드 | `[data-side-panel]`·클래스 선택자·`getElementsByClassName` 축 부재(M2·M3) | **수정** — 세 축 추가 |
+| C5 | 가드 | 벤더 번들 9MB 를 손수 렉서로 훑어 무관한 산술이 계약 테스트를 붉게 함(M5) · 3회 중복 스캔 | **수정** — `vendor/` 제외 · 파일별 캐시 · 예외에 파일 경로 · `i++ /`·`}/` 오판 해소 |
+| C6 | 가드 | 축약 속성·꼬리 주석에서 «틀린 진단» FAIL | **수정** — 축약형 인정 + 종단 완화 |
+| C-c | UX | 「단계」 패널은 복원 대상에서 빠짐(무통보 소실) | **미채택 + 문서화** — 그 화면은 말풍선 「단계 보기」로 전부 재유도되지만 첨부의 목록 모드는 **서버 조회 파라미터**라 재유도할 곳이 없다. 비대칭의 사유를 FUNCTION 에 명시(design S2 의 권고안) |
+| S-1/S-2 | 설계 | 「닫힌 원인별 분기」를 대화별 모드로 승격 · 사후 단언 술어를 계산 가시성으로 | **미채택(후속)** — 둘 다 이번 요청 범위 밖. 아래 「후속 과제」 |
+
+### 라운드 3 (확인 라운드) 결과 — ux **CONCERN** · design **BLOCK ×2** → 수정 완료
+
+두 리뷰어 모두 **제품 동작은 건전**으로 판정했고, BLOCK 사유는 «가드·문서가 실제보다 강하게
+서술돼 다음 라운드의 판단 근거를 오염시킨다» 에 한정됐다.
+
+| # | 축 | 지적 | 처리 |
+|---|---|---|---|
+| B-1 | 문서·가드 | 사후 단언이 `_panels` 만 순회해 **등록 누락 패널을 원리적으로 못 보는데**, FUNCTION·docstring 이 그것을 백스톱으로 인용(실측 반증) | **수정** — 열거 출처를 `[data-side-panel]` **DOM 표식**으로 바꿔 «등록 누락» 을 실제로 잡게 했다(하네스 C16). 못 덮는 것(문을 안 탄 열기)은 문장에서 **뺐다** |
+| B-2 | 가드 | `scan_file`/`_SCAN_CACHE` 가 **호출자 0 인 dead code** — 「예외에 파일 경로」 보장이 부재 | **수정** — 배선 + `test_n5b` 로 경로가 실리는지 단언 |
+| C-1 | 가드 | S7 의 고정 400자 창이 «12줄 떨어진» 평범한 형태를 놓침(실측 P4 생존) | **수정** — 창을 **수신 표현식 판정**으로 교체(인라인 조회 · 같은 함수 안 대입 변수). 하위 요소는 제외 |
+| C-2 | 가드 | S8 후보 집합이 문서화된 한계보다 넓게 빔(작은따옴표·`<section>`·`<nav>`·중첩 5형태) | **수정** — `HTMLParser` attrs + **class 토큰** 판정으로 교체(따옴표·태그·중첩 무관). 남은 한계를 FUNCTION 에 실측대로 기재 |
+| C-3 | 가드 | `_HANDLE_DECL` 이 줄바꿈·`let` 같은 **정당한 포맷**에 거짓 FAIL | **수정** — `\s*` 관대화 + `const\|let` |
+| C-4 | 가드 | mjs 등록문 정규식이 pytest 와 갈려 꼬리 주석 한 줄로 **프로덕션 코드를 삼킴**(CI 미배선이라 조용히) | **수정** — 규약 정렬 + **내용 단언**(`looksLikeRegistration`) 추가 |
+| C-5 / ux C3-3 | 제품 | `openFn()` 이 try 밖 — 렌더 예외 시 «남의 패널만 닫힌» 순수 손실 | **수정** — try/catch + 보고(하네스 C15) |
+| ux C3-2 | 제품 | 복원 **비동기 꼬리**에 대화 동일성 가드 부재(B1 과 같은 계열의 async 축) | **수정** — 꼬리를 이름 있는 함수로 뽑아 같은 술어 적용(하네스 C18) |
+| ux C3-1 | 검증 | pill 복원·scrollTop 축이 **어떤 게이트에도 없음** — 「20종 KILL」이 그 사각을 가림 | **수정** — 꼬리 추출로 구동 가능해져 하네스 C17/C18 이 덮는다. 뮤테이션 3종(pill guard·scroll·async guard) KILL 확인 |
+| ux S3-1 | 설계 | A→B→A 왕복에서 스냅샷이 전환 리셋을 이김 | **명시적 선택 + 문서화** — 대화가 같으면 복원한다(AC-7 에 «그 대화의 뷰이지 그 방문의 뷰가 아니다» 로 기재). 시간 축은 후속 과제 「대화별 모드 승격」이 개념째 없앤다 |
+
+### 라운드 4 (사용자 연장 승인, 확인 라운드) — ux **CONCERN** · design **BLOCK ×2** → 수정 완료
+
+두 리뷰어 모두 «라운드 3 수정이 만든 **사용자 가시 회귀는 없다**» 로 판정했다. BLOCK 은
+가드가 만든 **거짓 FAIL** 과 문서–코드 역전에 한정됐다.
+
+| # | 축 | 지적 | 처리 |
+|---|---|---|---|
+| B4-1 | 가드(거짓 FAIL) | `_enclosing_fn_span` 이 `function f(a, { b } = {})` 의 **시그니처 중괄호**를 본문으로 오인 → 파일 전수 폴백 → 8천 줄 안의 동명 `panel` 이 무관한 커밋을 붉게 만든다(실측, `app.js` 는 이미 폴백 안) | **수정** — `extract_fn_span` 과 같은 규약으로 시그니처 괄호를 균형 매칭한 뒤 본문을 잡고, **화살표 함수**도 경계로 인정. 경계 미상은 offender 가 아니라 **«보류»** 로 센다(정적 층은 fail-open, 결과 층이 이중 방어) |
+| B4-2 | 문서·가드 | AC-4 가 출하 코드와 **반대**를 서술(`x-side-panel` 을 «census 밖» 이라 했으나 실제로는 잡는다) + `declared_overlays`(정규식·큰따옴표 전용) vs `unmarked_overlays`(HTMLParser) **따옴표 비대칭** → 단일따옴표 마크업의 미등록 패널이 **두 축 모두 조용히 통과** | **수정** — census 를 HTMLParser 단일 경로로 통일(실측: 단일따옴표에서 `declared` 가 표식을 인식) + AC-4 를 출하 규칙·실제 한계로 재기술 |
+| C4-1(design) | 가드 | `scan_file`/`_SCAN_CACHE` 가 «호출은 되지만 제거해도 차이 없는» 코드 + 캐시 0 read | **수정** — 삭제. 파일명 귀속은 `strip_comments_only(path=…)` 한 곳으로 통일 |
+| C4-2 | 제품 | 사후 단언이 **id 없는 표식 패널**을 버림 | **수정** — 표식값/클래스를 대체 라벨로 |
+| C4-3 | 가드 | `looksLikeRegistration` 의 `\bfunction\b` 금지가 `close: function(){}` 에서 pytest 와 다시 갈림 | **수정** — 술어를 «다음 문장을 삼켰는가»(`registerSidePanel(` 출현 1회)로 |
+| C4-4 | 제품 | 열기 실패 시 `_syncInteractivity` 를 건너뛰어 «보이는데 inert» 가 남을 수 있음 | **수정** — 성공·실패 양쪽에서 동기화(문장 순서 전제 제거) |
+| ux C4-1 | 검증 | 복원 꼬리 **배선** 축이 여전히 열림 — 호출 한 줄을 지워도 전건 green(실측) | **수정** — **S10**: 정의 스팬 밖 호출 존재를 단언 |
+| ux C4-2 | 검증 | pill 스텁이 카운터만 세어 «누가 슬롯을 마지막에 썼나» 를 관측 못함 | **수정** — 더블이 실제로 슬롯을 덮게 하고 C17 을 **결과 축**으로(휴지통 마커 생존 단언) |
+| ux C4-3 · S4-1 | 설계 | active 분기의 슬롯 클로버 · `activeConversationId` 타입 정규화 | **미채택(후속)** — 둘 다 라운드 2 산이거나 호출부 가드에 의존하는 가정. 「후속 과제」에 추가 |
+
+### 라운드 3 재검증 (실측)
+
+- `make test` **6466 outcome 0 FAIL** (ruff clean) · jsdom 행위 하네스 **66 PASS** ·
+  구조 가드 pytest **22 케이스** · PB-0008 실 Windows 브라우저 **16 step ok**.
+- **뮤테이션 전건 KILL** — 라운드 2·3 리뷰어가 «생존» 으로 제시한 형태를 전부 포함한다:
+  등록 오타 · never-called 등록 · 배타 호출 제거 · 접근성 동기화 제거 · `app.js` peek ·
+  `[data-side-panel]` 선택자 · 클래스 선택자 · 소유 모듈 4번째 opener · **12줄 떨어진 opener** ·
+  표식 없는 신규 오버레이(**중첩 포함**) · CSS 폴백 제거 · convId 가드 제거 ·
+  **async 꼬리 가드 제거** · **pill deleted 가드 제거** · **scrollTop 복원 제거** ·
+  **사후 단언 열거 출처 되돌리기** · **openFn try 제거** · 꼬리 주석(정당 포맷, 거짓 FAIL 없음).
+  각 주입은 `grep -c` 카운트 변화로 **적용 여부를 확인**한 뒤 판정했다(자기충족 역검증 회피).
+- 정상 산술(`i++ / n`)·줄바꿈 선언·꼬리 주석이 거짓 FAIL 을 내지 않음을 대조군으로 확인.
+
+### 후속 과제 (이번 범위 밖 — 기록)
+
+- **Esc 로 닫기** — 세 패널 모두 × 버튼뿐이다. 「우측은 하나뿐」 규칙이 강해질수록 되돌리는
+  관용 경로가 필요해진다. 등록부가 «지금 열린 것» 을 아는 유일한 지점이라 자리도 자연스럽다.
+- **`_attachListState` 를 대화별(`byConv`)로 승격** — 그러면 «배타/× 닫힘 구분» 과 복원
+  스냅샷이라는 개념이 통째로 사라진다(design S-1).
+- **사후 단언 술어를 계산 가시성으로** — 지금은 `.hidden` 클래스를 본다. 인라인 스타일이나
+  `[hidden]` 으로 감추는 형태가 생기면 조용히 통과한다(design S-2).
+- **단일 우측 dock + 탭** 재설계 — 배타가 정의상 성립하고 되돌아가기 비용이 0 이 된다(ux §3).
+- **복원 꼬리의 active 분기 슬롯 클로버** — `_renderAttachmentPills` 가 서버 목록을 통째로
+  덮는다(라운드 2 산). 스냅샷에 `renderer: "pills" | "server"` 를 실으면 두 분기가 한 규칙이
+  된다(ux 라운드 4 C4-3).
+- **`activeConversationId` 타입 정규화** — 세 지점이 `(x || null)` 원시 비교를 쓰는데, 그
+  술어가 옳으려면 전 경로에서 타입이 같아야 한다(현재는 호출부 `if (cid)` 가 막고 있다).
+  `String(cid || "")` 헬퍼로 통일하는 것이 정합적이다(design 라운드 4 S4-1).
+
+### 라운드 2 지적의 처리 상세
+- **승인 근거(§12.2)**: `FIRST_REQUEST.md` `deploy_scope: included`. 위험도 **Minor**
+  (§12.3 — frontend-only, 비파괴, 가역).
+
+### 대안 분기
+
+- **Alt-A: 각 opener 가 나머지 두 패널의 DOM 을 직접 `hidden` 처리.** 안 고른 이유 — 닫기 규칙이
+  세 벌이 되고, 단계 패널의 라이브 티커 정지·프로필 backdrop 내림이 각 사본에서 빠진다.
+  실제로 등록부가 DOM 만 감추게 만들면 티커가 화면 없이 계속 돌고 backdrop 이 남아 화면 전체
+  클릭이 막힌다 — 하네스 C3·C4 가 그 두 실패를 각각 잠근다.
+- **Alt-B: CSS 로만 해결(형제 선택자·`:has()`).** 안 고른 이유 — 보이지 않게 만들 뿐 **상태는
+  열린 채**다. 닫기 버튼 접근 불가·티커 잔존 같은 실제 문제는 그대로 남는다.
+- **Alt-C: `openSidePanel(key)` 를 등록부가 소유(열기까지 중앙화).** 안 고른 이유 — 열기는
+  패널마다 다르다(너비 복원·탭 전환·목록 적재·backdrop). 중앙화하면 등록부가 세 패널의 세부를
+  알아야 해 결합이 커진다. **닫기만** 공통화하는 것이 최소 계약이다.
+- **좌측 `<aside class="sidebar">` 제외**: in-flow 그리드 컬럼이라 겹치지 않으며, 배타에 넣으면
+  첨부를 여는 순간 대화목록이 사라진다. TASK.md 의 [다의어] 블록에 고른/버린 독해와 예시를 기록.
+
+### 검증 채널 (§18.8 대체)
+
+1. **jsdom 행위 하네스** `tests/verify_side_panel_exclusive.mjs` — **정본 소스의 함수 본문**과
+   실 등록부 소스를 jsdom realm 에서 그대로 평가(추출·주입, stub 금지). **54 PASS**.
+2. **역검증(§16.7 G11-b)** — ① main 원본 소스로 실행 → 추출 5건 FAIL, exit 1.
+   ② 계약 호출만 제거한 뮤턴트(주입 여부를 `grep -c` 1→0 으로 **확인**) → 6 FAIL, exit 1.
+   뮤턴트가 실제로 적용됐음을 확인한 뒤 판정했다(자기충족 역검증 회피).
+3. **구조 가드 pytest** — 주석·문자열 리터럴 안의 계약 호출을 인정하지 않는 스캐너(§16.7 G11-a)
+   + **DOM 전수 대조**(`data-side-panel` 표식 ↔ 등록부 + 표식 강제): 향후 4번째 패널이 등록을 잊으면 CI 에서
+   걸린다(§16.7 G6 wiring 전수감사와 동형).
+4. **적용면 전수감사(§16.7 G8-a)** — 세 패널 DOM 을 `getElementById` 로 집는 모듈이 소유 3모듈
+   뿐임을 스캔으로 고정(S5·S7). 우회 열기 경로가 생기면 FAIL.
+5. **PB-0008 실 Windows 브라우저** — 격리 컨테이너에 내 빌드를 마운트해 실제 클릭 경로로 4단계
+   실측, BEFORE(main) 겹침 재현 캡처 동반. 상세는 `docs/test-runs.d/TASK-20260901T1153-side-panel-exclusive.md`.
+
+### 알려진 gap (기록 — S6 이 이 문장의 존재를 단언한다)
+
+- **side-panel-exclusive: 행위 하네스 CI 미배선** — `tests/verify_side_panel_exclusive.mjs`
+  (jsdom 49 케이스)는 `make test` 의 agent 이미지에 **node 가 없어** pytest 에서 실행되지
+  않는다(실측: `command -v node` 부재). 그래서 등록 성립·접근성 동기화·사후 단언은 로컬과
+  PB-0008 게이트에서만 돌고, CI 에서는 구조 가드(S1~S5)가 그 대리 지표다.
+  `tests/test_side_panel_exclusive.py::test_s6_*` 는 node 가 없으면 **조용히 skip 하지 않고**
+  이 문장이 저장소에 있는지 단언한다 — 「검증 못 함」이 「검증함」으로 오인되지 않게 한다.
+
+### 남은 리스크
+
+- **역방향(프로필 열린 상태에서 첨부 열기)은 실 클릭으로 도달 불가**하다 — backdrop(z 195)이
+  화면 전체 클릭을 먹기 때문. 그 경로는 방어적 계약이며 jsdom C4 가 잠근다(브라우저 실측 아님).
+- 등록부는 **협조적**이다 — 새 패널이 `registerSidePanel` 을 부르지 않으면 배타에 참여하지 않는다.
+  그 누락을 구조 가드 S3(DOM 전수 대조)가 잡는다. 다만 body 직속 `<aside>` 가 아닌 형태로 새
+  오버레이를 만들면 census 밖이다(한계 명시).
+
+## REV-20260901T163000-side-panel-exclusive-merge — origin/main 병합 충돌 자율 해결 (§16.4)
+
+- **상황**: PR #1475 가 `origin/main` 대비 **43 커밋** 뒤처져 `mergeStateStatus=DIRTY`.
+  `bin/setup-git-parallel.sh` (append-doc merge driver + rerere) 실행 후 `git merge origin/main`.
+- **자동 병합된 것**: `static/app.js` · `app/composer.js` · `css/chat.css` · `index.html` ·
+  `docs/STATUS.md` — **코드 충돌 0**.
+- **자율 해결 (§16.4 «명료한 충돌» — append-only 양쪽 신규 항목 추가)**:
+  `FUNCTION.md` · `MODIFY.md` · `REVIEW.md`(말미 append, main 것 먼저) ·
+  `REPORT.md` · `TASK.md`(사이클 § 는 최신이 위) · `wiki/Log.md`(시간순) — 총 9 블록,
+  **양쪽 항목 모두 보존**.
+- **`wiki/hot.md`** 는 rewrite 문서(≤500자 캐시)라 기계 병합 대상이 아니다 — 양쪽 사실을
+  합쳐 최신 2건으로 재작성(645자).
+- **사람 판단 필요 항목 0** — 동일 함수/로직 상충 · HUMAN-LOCKED · 보안·비즈니스 로직 충돌
+  없음. 병합 후 하네스 **67 PASS** · 구조 가드 **23** 재확인으로 내 변경이 병합에 소실되지
+  않았음을 검증(핵심 심볼 `openSidePanel`·`registerSidePanel`·`_applyAttachRestoreAfterLoad`·
+  `data-side-panel`·`visibility: hidden` 전수 잔존 확인).
+
+## REV-20260901T163000-ai-claude-attach-lineage-uploader — 설계 판단 근거 (Minor §12.3)
+
+### 왜 "소유권 단정 금지" 를 풀었나
+
+선행 cycle(REQ-20260831)은 계보 문구가 소유권을 단정하지 못하게 막았다. 그 근거는 **목록
+payload 에 업로더 account_id 가 없다** 는 사실이었지 원칙이 아니었다 — 없는 사실을 말하지
+말라는 것이었다. 이번에 그 사실을 실었으므로 **아는 만큼만** 말하도록 연다. 여전히 지어내지는
+않는다: 이름이 해소되지 않으면 「업로더 미상」이지 「내 파일」이 아니다.
+
+### 이 cycle 의 발견 — 결함은 «모델이 모른다» 가 아니었다
+
+사용자 3번째 질문(assistant 가 계보 현황을 파악하는가)을 **코드 읽기가 아니라 실 프롬프트
+렌더**로 확인한 것이 나머지 둘의 성격을 바꿨다. `_build_attachment_context_section` 을 라이브
+대화(`20260813083932`, 계정 10·50)에 caller 를 바꿔 가며 실행한 결과:
+
+```
+• uploaded by jmkimmasangsoft.com — v2 (attachment_id=1149, …)
+• uploaded by admin — v1 (attachment_id=1150, …)  ← overall latest (newest by time)
+```
+
+per-lineage latest ↔ overall latest 두 축, 타 멤버 read-only 경계까지 이미 있었다. 즉
+**같은 화면에서 모델은 업로더로 계보를 가르는데 사용자만 못 보고 있었다.** 그래서 이 작업은
+기능 추가가 아니라 **비대칭 해소**이며, 그 원천 계약을 회귀로 함께 잠갔다(화면을 고치면서
+프롬프트 쪽을 깨면 비대칭이 반대 방향으로 되살아난다).
+
+### 판단 근거 · 버린 대안
+
+- **왜 공유 대화에서만 이름인가**: 1:1 은 업로더가 늘 자기 자신이라 이름이 정보를 0 만큼 주면서
+  240px 이름줄을 먹는다(§16.8). 판정은 저장소 단일 술어 `isGroupConversation` — 사이드바 그룹
+  배지·전송 라우팅과 같은 신호를 쓴다(판정이 두 벌이면 화면끼리 어긋난다).
+- **왜 행에서 파일명을 지웠나(문구만)**: 카드 머리가 이미 말한 이름을 행이 되풀이하면 좁은
+  패널에서 갈래를 가르는 정보를 밀어낸다. 그러나 그 요소는 「원문 보기」 클릭 대상이자 접근성
+  이름이라 **지우지 않고 문구만** 바꿨다 — `title`·`aria-label` 은 파일명 그대로다. 화면에서
+  지운 것을 AT 에서도 지우면 어포던스가 조용히 사라진다.
+- **왜 분기 칩을 좁혔나**: 정체성이 라벨로 올라갔으므로 칩이 정체성을 또 말하면 같은 행에서 같은
+  사실이 두 번 나온다(사용자가 지적한 중복 축을 내가 다시 만드는 꼴). 칩은 「갈라졌다」만 진다.
+- **버린 대안 (a)** 업로더 아바타(identicon) 표시 — `_msgAvatarEl` 관용구가 있어 가능하지만
+  240px 폭에서 아바타가 라벨 폭을 먹고, 이름 텍스트가 이미 식별에 충분하다. 폭이 넉넉한 화면의
+  후속 개선으로 남긴다.
+- **버린 대안 (b)** 1:1 에서도 이름 표시 — 일관성은 얻지만 정보 0 인 문자열이 상시 폭을 먹는다.
+
+### 노출면 검토 (직접 수행 — codex 채널 사용량 한도)
+
+| 축 | 판정 |
+|---|---|
+| XSS | username 이 DOM 에 닿는 경로는 **정확히 2곳** — `_linTitle`(칩 title) · `_rowLabel`(행 라벨). 둘 다 `escapeHtml` 경유이며 그 구현이 `& < > " '` 를 모두 치환해 **따옴표 속성 컨텍스트에서도 안전**. |
+| SQL injection | `IN ({_am})` 의 `_am` 은 `%s` 플레이스홀더만으로 조립되고 파라미터는 `int()` 강제 — 파라미터 바인딩. |
+| 신규 노출면 | `account_id`/`uploader_username` 은 **대화 접근권으로 이미 게이트된** 엔드포인트로만 나간다. 익명 공유 뷰는 첨부 자체를 노출하지 않는다(`share.py`: "file attachments 는 conversation.file.read.* gated 이므로 공유 view 에서 hide"). 같은 사실이 `/versions` 의 `lineages[].account_id` 로 **이미** 나가고 있었고, 그룹 대화는 메시지 아바타로 멤버 username 을 이미 렌더한다(feature-0009). **새 노출 클래스 아님.** |
+| 표시-집행 정합 | 삭제 어포던스는 종전대로 서버 `can_manage`(`_gate`) 판정만 따른다 — 업로더 이름 표시가 권한을 바꾸지 않는다. |
+
+### 위험도
+
+**Minor §12.3** — payload 필드 추가(비파괴) + 표현 계층. 스키마·마이그레이션·권한·엔드포인트
+변경 0. 되돌리기 = revert + 재배포. 배포 사전 승인은 `FIRST_REQUEST.md` `deploy_scope: included`.
+
+### 검증
+
+pytest `feature-0003`+`feature-0002`+`feature-0023` **5167 passed / 5 skipped**(신규 11건) ·
+`node --check` · `ast.parse` · **PB-0008 경계 3경로**(공유/1:1/단독) + 240px 폭 —
+`docs/test-runs.d/TASK-20260901T163000-attach-lineage-uploader.md`.
+
+⚠ `test_query_embed_visibility.py` 2건은 **main(`afcd1a42`) 기준선에서도 동일 실패** — 본 변경
+무관(스위트 순서 의존, web-ui 테스트의 `sys.modules` 스텁 미정리). 별도 cycle 대상.
+
+## REV-20260901T172000-ai-claude-attach-lineage-uploader [CODEX:feature-0003-attach-lineage-uploader] — PASS (P1 0 · P2 4 전건 조치)
+
+- Related TASK: feature-0003-agent-web-ui (20260901T163000-attach-lineage-uploader)
+- Source: codex review (codex-cli 0.146.0 `codex exec`, read-only, 판정 기준 `docs/CODE_REVIEW.md`)
+- Trigger: UI/화면/레이아웃 + 정보 노출 keyword → §18.8 dispatch `ux, design`(+security 축).
+  subagent panel 대신 codex 채널(§18.8.1 항목 2, check #9 accepted) — 본 세션은 Agent tool 제한.
+- Timestamp: 2026-09-01T17:20:00+09:00
+- Verdict: **PASS** — P1 **0건** · P2 4건 · P3 1건 → **전건 조치 + 라이브 실증**
+- Human Approval Needed: no (Minor §12.3)
+
+### P1 없음 — 노출면은 열리지 않았다
+
+codex 확인: 익명 share 경로는 첨부 목록/serializer 를 통과하지 않아 `uploader_username` 신규
+노출 없음 · `/api/conversations/{id}/attachments` 는 기존 대화 접근권 게이트 유지 ·
+XSS 는 `escapeHtml`/`textContent`/`setAttribute` 경로로 차단 · 이름 조회는 단일 IN batch(N+1 아님).
+
+### P2 4건 — 조치와 라이브 실증
+
+| # | 지적 | 조치 | 실측 |
+|---|---|---|---|
+| 1 | `account_id` 를 **공유 serializer** 에 넣어 목록 밖(메타·`versions[]`·휴지통·history)까지 업로더 id 가 번짐 — 「목록에만 추가」 범위를 넘는 최소권한 회귀 | serializer 에서 빼고 **목록 엔드포인트가 자기 응답에만** 부착 | `/versions` 의 `versions[0].account_id` **부재** · `lineages[0].account_id` **유지**(기존 노출 불변) · 목록 `uploader_username="admin"` |
+| 2 | 화면은 `Alice`/`Bob` 인데 **접근성 이름은 둘 다 「사용자 계보」** — 이 cycle 이 연 구분이 AT 사용자에겐 닫힌 채 | 화면 라벨과 **같은 출처**(`_selfIdentity`)를 aria 이름에 사용 | `…(jmkimmasangsoft.com, 2개 중 1번째) 원문 보기` / `…(admin, 2개 중 2번째) …` |
+| 3 | 공유 여부를 `currentConversation()` 으로 판정 — 응답 지연 중 대화를 옮기면 그룹 A 의 행이 1:1 B 로 분류 | 판정을 `convId` 대응 객체로 + **stale 응답 자체를 버림**(목록이 남의 대화 것이 되는 상위 결함) | 가드 추가 후에도 정상 경로 렌더 확인(그룹 4 · 라벨 정상) |
+| 4 | 같은 사람이 같은 이름을 독립 2회 업로드하면 두 행 모두 `Alice` 이고 분기 칩도 없어 **다시 구분 불가** | 라벨이 **겹칠 때만** 서수 덧붙임(흔한 2계보엔 군더더기 없음) + aria 동반 | 스텁 3계보 동일 업로더 → `사용자 업로드 · 계보 1/3·2/3·3/3`, aria `(사용자 업로드, 3개 중 N번째)` |
+
+### P3 — 조치
+
+머리 아이콘이 그룹 전체를 대표하게 됐으므로, 형제들의 `kind` 가 갈리면 첫 행 아이콘 대신
+**중립 클립**으로 되돌린다(모르는 것을 단정하지 않는다).
+
+### 자기 지적 — 내가 세운 원칙을 내가 어겼다
+
+P2-2 는 이 cycle 이 MODIFY 에 「화면에서 지운 것을 AT 에서도 지우면 안 된다」고 적어 놓고,
+정작 **새로 추가한 업로더 이름을 AT 에 싣지 않은** 것이다. 파일명은 지키면서 새 사실은 안 실은
+반쪽 — 원칙을 문장으로 갖는 것과 그 원칙이 성립하는 것은 다르다.
+
+또 P2-3 조치로 넣은 stale 가드는 **차단이 아니라 정상 경로**를 먼저 확인했다(§CODE_REVIEW 2.2):
+가드 추가 후 공유 대화가 그대로 렌더되는지를 재실측했다 — 「막는 것만 확인하고 통과를 확인하지
+않는」 결함 클래스를 피하기 위해서다.
+
+### 회귀
+
+신규 6건 추가(총 17건) + 기존 계약 4건 갱신. 각 지적의 복귀 경로를 개별로 막는다:
+serializer 재오염 · aria/화면 출처 분리 · `currentConversation()` 복귀 · stale 가드 순서 ·
+충돌 서수의 분기 이탈 · 혼합 kind 대표. pytest **5173 passed / 5 skipped**.
+## REV-20260901T053000-ai-claude-corp-connect-modal-transition [CODEX:connect-modal-transition] — PASS (2R P1 0)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0530-connect-modal-transition`
+- Source: codex exec (codex-cli 0.146.0) — 2 라운드
+- Trigger: UI/모달 키워드(§18.8 표 3행). 세션 도구 제약으로 §18.8.1 경량 경로 —
+  `ux`/`design` 은 이전 cycle 들과 같이 `[SKIPPED:tool-restricted:*]` 범위.
+- Timestamp: 2026-09-01T05:30:00+09:00
+- Verdict: **PASS** — 1R **P1 1** → 2R **P1 0**
+- Human Approval Needed: no
+
+### 사용자 요청 2건이 같은 뿌리였다
+
+종전 판정 = «창을 열 때 **고정한** 기준선 대비 `listening` 의 false→true 전이».
+
+- **명령 경로**: 기준선을 고정하므로, 열 때 «대기 중» 이었으면 그 뒤 실제로 끊겼다가 명령으로
+  다시 이어져도 전이로 세지 않는다 — 그 창은 영영 닫히지 않는다.
+- **«업데이트 필요» 갱신**: 갱신 중 `listening` 은 줄곧 참이고 `runner_stale` 만 풀린다.
+  `listening` 만 보는 축은 이 경로를 **통째로** 놓친다.
+
+기준을 **직전 관측**으로, 축을 **«쓸 수 있는 상태»**(`listening && !stale`)로 올려 둘을 한
+규칙으로 덮었다. 실행 버튼 경로도 같은 축으로 통일했다 — 두 경로가 다른 축을 쓰면 실행 버튼만
+«됐다» 고 말한다.
+
+### codex 1R — P1 1건 (수정이 만든 새 결함)
+
+> `_paintConn()` 이 `epoch` 검증 전에 `_lastObs` 를 갱신한다. 이전 모달의 늦은 응답이 현재
+> 모달의 직전 관측으로 오염되면 `!ok → ok` 로 오판해 현재 모달을 **즉시 닫고 명령을 잃을 수
+> 있다.**
+
+정확한 지적이다. **판정을 «직전 관측» 기준으로 바꾸면 그 값 자체가 자산이 된다** — 남의 창
+응답이 거기 섞이면 일어나지 않은 전이가 만들어진다. 창 세대가 다르면 **기록조차 하지 않도록**
+고쳤고(갱신·판정을 함께 세대 검사 안으로), 그 경합을 겨누는 **J1** 을 신설했다.
+
+**2R: P1 0** — 「epoch 불일치 응답은 `_lastObs` 갱신과 전이 판정 모두에 도달하지 않는다.」
+
+### 검증
+
+- **39/0 PASS**. 신설: I1(명령 재연결) · I2(업데이트 갱신) · I3(실행으로 갱신) · I4(낡은 채
+  이어진 것은 성공 아님) · H5(실행했는데 낡은 러너) · J1·J2(오염 방지).
+- **라이브 배포본에서 6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4) — 제보 두 경로가 실재함을 배포본으로
+  확인.
+- 뮤테이션: stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→**H5** / msg-flat-auto→I2d·I3b /
+  obs-pollution(P1 되돌림)→**J1**.
+
+### 남은 위험 (정직 표기)
+
+- **실행 경로의 문구 분기**와 **`_lastObserved.ok` 의 stale 검사**는 뮤턴트가 생존한다 — 자동
+  관측 경로가 거의 항상 먼저 판정을 끝내 그 분기에 도달하지 않기 때문이다(방어적 중복,
+  낡은-응답 경합에서만 쓰인다). 커버리지 구멍임을 숨기지 않는다.
+- 남의 러너로 인한 오닫힘(직전 cycle 의 수용한 트레이드오프)은 그대로 남는다 — 서버의
+  `listening` 이 계정 단위 판정이라 화면은 러너 소유를 구분할 수 없다.
+- `_gateInFlight` 해제 전용 단언 없음 — 변동 없음.
+- `ux`/`design` 도메인 심사 미수행 — 세션 도구 제약.
+
+## REV-20260901T061000-transition-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0530-connect-modal-transition`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T06:10:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `17d36ad8` 에서 A(명령 재연결)·B(«업데이트 필요» 갱신) 두 경로 모두 닫힘 확인.
+  B 의 문구가 «최신으로 갱신되었습니다» 로 나와 상황과 일치한다.
+- **미수행(정직 표기)**: 실 러너 기동·갱신 end-to-end. 조회·토큰 응답을 가로챈 프론트엔드 계약
+  검증이며 검증 후 브라우저를 원상 복구했다.
+
+## REV-20260901T170000-ai-claude-lineage-row-compaction [SKIPPED:non-policy-doc] — 표현 계층 전용 (Minor §12.3)
+
+- Related TASK: feature-0003-agent-web-ui (20260901T170000-lineage-row-compaction)
+- Trigger: UI/레이아웃 keyword → §18.8 `ux, design`. 변경이 **표현 계층 전용**(JS 렌더 문구·
+  CSS 여백)이고 데이터·권한·API·노출면 델타가 0 이라, 직전 cycle 의 codex 라운드가 이미
+  같은 코드 경로(그룹 카드·행 라벨·업로더 노출)를 P1 0 으로 종결했다. 그 위에 얹은 여백·문구
+  축소는 새 위험 축을 만들지 않는다 — 판정은 **실측 게이트**(폭 4구간 행 높이·요소 개수)로 한다.
+- Timestamp: 2026-09-01T17:00:00+09:00
+- Human Approval Needed: no
+
+### 판단 근거
+
+- **왜 파일명을 지웠나**: 카드 하나에서 같은 이름이 6회 실렸다(머리 1 + 계보행 2 + 버전행 3).
+  좁은 패널에서 그 반복이 정작 버전·계보를 가르는 정보를 밀어낸다. 지운 것은 **화면 문구**이고
+  `title`·`aria-label`·클릭 대상은 그대로다 — 어포던스·AT 를 깎지 않는다.
+- **왜 안내문을 지웠나**: 그 네 사실이 카드 머리·행 칩으로 옮겨가 **구조로** 표현됐다.
+  REQ-20260828 이 문구를 넣은 근거(화면 어디에도 없다)가 소멸했으므로 문구도 함께 소멸한다.
+- **왜 `uploaded` 를 감췄나**: 텍스트 첨부에서 정상이자 영구 상태라 모든 행에 붙는 영문 상수였고
+  사용자가 할 것이 없다. 다만 **모르는 enum 은 계속 노출**한다 — 조용히 삼키면 새로 생긴 실패
+  상태가 화면에서 사라진다(무음 실패 금지).
+- **왜 한 줄을 끝까지 밀어붙이지 않았나**: AI 수정본 행은 **62px** 이 모자란다(필요 268 /
+  가용 206). 되찾으려면 `버전 2개 ▾`(52px)·`+8KB`(34px)·`8/31`(30px) 중 무엇을 빼야 하고
+  **셋 다 정보 손실**이다. 「잘림 대신 줄바꿈」이 이 패널의 기존 원칙이므로 임의로 자르지 않고,
+  부족 폭을 수치로 남겨 **선택을 사용자에게** 돌린다. 한 줄을 위해 정보를 조용히 빼는 것이
+  이 cycle 의 목적은 아니다.
+- **버린 대안**: 넘칠 때 `text-overflow: ellipsis` 로 자르기 — 「버전 N개」 같은 **유일한
+  진입점**이 잘려 사라진다(선행 cycle 이 정확히 그 이유로 말줄임을 되돌린 이력이 있다).
+
+### 자기 지적
+
+분기 칩을 글리프로 줄이면서 **파선 pill 껍데기를 그대로 뒀다** — 캡처에서 «빈 동그라미» 로
+드러났다. 문구를 줄이면 그것을 담던 그릇도 다시 봐야 한다는 것을, 캡처가 없었으면 놓쳤다.
+
+### 회귀
+
+신규 4건 + 계약 이전 6건. pytest **5177 passed / 5 skipped**.
+⚠ `test_query_embed_visibility.py` 2건은 main 기준선 동일 실패(본 변경 무관).
+
+## REV-20260901T174000-side-panel-exclusive-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 기록
+
+- **Trigger**: 비정책 doc-only (test-runs.d fragment + TASK/MODIFY/REPORT). §18.8 dispatch 표의
+  「비정책 doc-only」 행 → panel SKIP.
+- **내용**: 선행 cycle 의 §16.3 deploy-backed 완료 조건 2 를 기록. 코드·계약 변경 0.
+- **정직 기록**: `bin/deploy-web.sh` 는 **멱등 no-op** 으로 끝났다 — 병렬 세션이 이미 내 머지를
+  포함하는 상위 커밋(`d3ead999`)으로 배포한 뒤였다. 그래서 완료 근거를 「내가 배포 명령을
+  돌렸다」가 아니라 **「라이브가 내 커밋을 담고 있다」** 4축 실측으로 세웠다(§16.7 G7-a —
+  이름·명령 이력이 아니라 실 resolve).

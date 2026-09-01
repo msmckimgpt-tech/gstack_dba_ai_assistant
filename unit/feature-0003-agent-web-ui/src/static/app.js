@@ -1,4 +1,4 @@
-import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
+import { renderMessageContent, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange } from "./app/connect-modal.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
@@ -21,6 +21,9 @@ export { matchesAnyVariant, searchVariants };
 import { SQL_HL_KEYWORDS, SQL_HL_TYPES, detectCodeLanguage, paintCodeInto, codeLanguageLabel } from "./code-highlight.js?v=dev";
 export { detectCodeLanguage, paintCodeInto, codeLanguageLabel };
 import { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange } from "./app/profile.js?v=dev";
+// side-panel-exclusive: 우측 오버레이 사이드 패널(첨부·실행 단계·프로필)은 한 번에 하나만
+// 열린다. 등록·해제 규칙의 정본은 그 모듈이며, 여기서 조건을 다시 조립하지 않는다.
+import { registerSidePanel, openSidePanel } from "./app/side-panels.js?v=dev";
 export const authOverlayEl = document.getElementById("authOverlay");
 const loginFormEl = document.getElementById("loginForm");
 const signupFormEl = document.getElementById("signupForm");
@@ -3120,10 +3123,9 @@ export function renderMessages() {
     bubble.appendChild(content);
 
     if (role === "assistant") {
-      const details = renderMessageDetails(message.meta || {});
-      if (details) {
-        bubble.appendChild(details);
-      }
+      // 말풍선 안 「▼ 쿼리 결과」 여닫이는 제거됐다(2026-09-01 사용자 결정) — 단계·SQL·
+      // 결과셋의 유일한 표시면은 아래 「단계 보기」 버튼이 여는 사이드 패널이다.
+      //
       // meta.steps 가 있는 모든 assistant 말풍선에 "단계 보기" 버튼 부착.
       // 진행 중(state.pendingBubble) 여부와 무관하게 항상 부착한다 — 이전 답변의
       // 영속 step 은 새 요청이 진행 중이어도 그대로 유효하므로, 대화 중 새 요청을
@@ -3726,19 +3728,23 @@ function setupSidebarResize() {
 
 export function openStepSidePanel(pending, { convId = null } = {}) {
   const panel = document.getElementById("stepSidePanel");
+  // 열 수 있는지 **먼저** 확인한다 — 열지도 못하면서 남의 패널만 닫는 것은 순수 손실이다.
   if (!panel) return;
-  setupStepSidePanelResize();
-  _applyStepSidePanelWidth(panel);
-  state.stepSidePanelConvId = convId || (pending && pending.convId) || state.activeConversationId || null;
-  // 라이브 run(진행 중 pending bubble)을 연 경우에만 폴링 갱신 대상으로 표시.
-  // historical 패널(이전 답변의 meta.steps / lastCompletedRunSteps)은 폴링이 덮어쓰지 않는다.
-  state.stepSidePanelLive = Boolean(pending) && pending === state.pendingBubble;
-  // 이 패널이 **어느 run 을 보고 있는지** 기억한다. 브리지 진행 갱신
-  // (`refreshStepSidePanelForRun`)은 같은 run 일 때만 덮어쓴다 — 사용자가 이전 답변의
-  // 단계를 열어 둔 채 새 질문이 도는 상황에서, 그 화면을 뺏지 않기 위해서다.
-  state.stepSidePanelRunId = String((pending && pending.runId) || "");
-  _renderStepSidePanelBody(pending);
-  panel.classList.remove("hidden");
+  // side-panel-exclusive: 모든 열기는 이 문을 통과한다(다른 우측 패널을 먼저 닫는다).
+  openSidePanel("step", () => {
+    setupStepSidePanelResize();
+    _applyStepSidePanelWidth(panel);
+    state.stepSidePanelConvId = convId || (pending && pending.convId) || state.activeConversationId || null;
+    // 라이브 run(진행 중 pending bubble)을 연 경우에만 폴링 갱신 대상으로 표시.
+    // historical 패널(이전 답변의 meta.steps / lastCompletedRunSteps)은 폴링이 덮어쓰지 않는다.
+    state.stepSidePanelLive = Boolean(pending) && pending === state.pendingBubble;
+    // 이 패널이 **어느 run 을 보고 있는지** 기억한다. 브리지 진행 갱신
+    // (`refreshStepSidePanelForRun`)은 같은 run 일 때만 덮어쓴다 — 사용자가 이전 답변의
+    // 단계를 열어 둔 채 새 질문이 도는 상황에서, 그 화면을 뺏지 않기 위해서다.
+    state.stepSidePanelRunId = String((pending && pending.runId) || "");
+    _renderStepSidePanelBody(pending);
+    panel.classList.remove("hidden");
+  });
 }
 
 /** 브리지 진행 중 단계 갱신 — **그 run 을 보고 있을 때만** 다시 그린다.
@@ -3767,6 +3773,11 @@ export function closeStepSidePanel() {
   // openStepSidePanel 이 어차피 재계산하지만 의도를 명시).
   state.stepSidePanelLive = false;
 }
+
+// side-panel-exclusive: 다른 패널이 열릴 때 이 패널을 닫을 수 있도록 등록한다.
+// 티커 정지까지 포함된 `closeStepSidePanel` 을 그대로 넘긴다 — 등록부가 DOM 을 직접
+// 감추면 티커가 화면 없이 계속 도는 두 번째 규칙이 생긴다.
+registerSidePanel("step", { close: closeStepSidePanel, elementId: "stepSidePanel" });
 
 export function refreshStepSidePanel(pending) {
   const panel = document.getElementById("stepSidePanel");

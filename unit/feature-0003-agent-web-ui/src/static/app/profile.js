@@ -14,6 +14,9 @@ import {
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 // usage-metric-charts: 지표 정의 정본(관리 콘솔 LLM 사용량 화면과 공유).
 import { USAGE_METRICS, USAGE_METRIC_DEFAULT, usageMetricOf, usageMetricNote } from "../usage-metrics.js?v=dev";
+// side-panel-exclusive: 우측 오버레이 패널은 한 번에 하나. 등록부는 의존성 없는 별 모듈이라
+// app.js 를 경유하지 않고 직접 import 한다(순환 한 겹 추가 회피).
+import { registerSidePanel, openSidePanel } from "./side-panels.js?v=dev";
 
 function switchProfileTab(tab) {
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
@@ -771,18 +774,33 @@ function renderMotionPref() {
 }
 
 function openProfile(tab = "prompt") {
-  renderProfile();
-  switchProfileTab(tab);
-  setupProfileDrawerResize();          // 너비 조절 핸들 1회 배선
-  _applyProfileDrawerWidth(profileDrawerEl); // 저장된 너비 복원
-  profileDrawerEl.classList.remove("hidden");
-  profileBackdropEl.classList.remove("hidden");
+  // 열 수 있는지 **먼저** 확인한다 — 다른 opener 와 같은 가드 순서. 여기서 걸러 두지
+  // 않으면 아래 절차 중 예외가 났을 때 첨부·단계만 닫히고 프로필은 열리지 않는다.
+  if (!profileDrawerEl || !profileBackdropEl) return;
+  // side-panel-exclusive: 프로필 드로어는 z-index 가 가장 높아 아래 패널을 **열린 채
+  // 가려** 버린다(닫기 버튼까지 가린다). 모든 열기는 등록부의 문을 통과한다.
+  openSidePanel("profile", () => {
+    renderProfile();
+    switchProfileTab(tab);
+    setupProfileDrawerResize();          // 너비 조절 핸들 1회 배선
+    _applyProfileDrawerWidth(profileDrawerEl); // 저장된 너비 복원
+    profileDrawerEl.classList.remove("hidden");
+    profileBackdropEl.classList.remove("hidden");
+  });
 }
 
 function closeProfile() {
+  // `openProfile` 과 같은 전제 조건 — 등록부가 **매 열기마다** 이 함수를 부르므로, 핸들이
+  // 없는 환경에서 예외를 던지면 배타 경로가 그때마다 "close 실패" 를 보고하게 된다.
+  if (!profileDrawerEl || !profileBackdropEl) return;
   profileDrawerEl.classList.add("hidden");
   profileBackdropEl.classList.add("hidden");
 }
+
+// side-panel-exclusive: 다른 패널이 열릴 때 이 드로어를 닫을 수 있도록 등록한다.
+// backdrop 까지 함께 내리는 `closeProfile` 을 그대로 넘긴다 — 등록부가 드로어만 감추면
+// 반투명 backdrop 이 남아 화면 전체 클릭이 막힌다.
+registerSidePanel("profile", { close: closeProfile, elementId: "profileDrawer" });
 
 async function handlePasswordChange(event) {
   event.preventDefault();

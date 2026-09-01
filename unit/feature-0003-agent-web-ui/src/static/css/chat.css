@@ -710,96 +710,8 @@
   font-weight: 600;
 }
 
-/* Details / expand block */
-.message-details {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.message-details summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-size: 12px;
-  user-select: none;
-}
-
-/* steps-result-split (2026-09-01): 상세 본문은 **스크롤하지 않는다**.
- *
- * 사용자 제보: "'▼ 쿼리 결과' 를 펼쳤을 때, 각 단계와 결과셋 범위를 분리해주세요.
- * **스크롤 대상은 각 단계 뿐입니다.**"
- *
- * 직전(2026-08-31)에는 이 컨테이너 전체가 한 개의 스크롤 패널이었다. 페이지가 과도하게
- * 늘어나는 문제는 그것으로 잡혔지만, 정작 보려던 **결과셋까지 그 스크롤 안에 갇혔다** —
- * 단계가 많을수록 결과셋을 찾아 굴려야 했다. 이제 상한은 **단계 목록**만 갖고
- * (`.step-detail-list`), 결과셋은 그 아래에 온전한 높이로 놓인다.
- *
- * 페이지 높이는 여전히 유계다 — 단계 목록(상한) + SQL 블록(min 40vh/320px) + 결과 표
- * (min 60vh/460px, 기본 접힘)이 각자 자기 상한을 갖기 때문이다. 그 상한들은 이 개편 이전부터
- * 있던 것이라, 바깥 캡을 걷어도 원래 증상으로 돌아가지 않는다(회귀 테스트가 잠근다). */
-.message-details-body {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
-/* steps-result-split: **유일한 스크롤 대상** — 단계 목록.
-   최대 높이 고정, 최소 높이 제한 없음(짧으면 짧은 대로). 안쪽에 중첩 스크롤러가 없다 —
-   이 목록의 카드는 `compact` 로 그려져 SQL 블록·결과 미리보기를 담지 않는다(중첩 함정
-   원천 부재). */
-.step-detail-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  max-height: min(38vh, 300px);
-  overflow-y: auto;
-  /* 목록 끝에서 페이지로 스크롤이 새지 않게. */
-  overscroll-behavior: contain;
-}
-
-/* steps-result-split: 결과셋 범위 — **스크롤 대상이 아니다**.
-   안쪽 SQL 블록·결과 표의 자체 상한만 유지한다(그 둘은 각자 스크롤한다). */
-.sql-result-group.is-result-range {
-  min-width: 0;
-}
-
-.message-detail-block {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.message-detail-block strong { font-size: 12px; color: var(--text-2); }
-
-.message-detail-block ul {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--text-muted);
-}
-
-.message-detail-block li { margin-bottom: 3px; }
-
-/* SQL 쿼리 + 결과 테이블 그룹 */
-.sql-result-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.sql-result-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--text-muted);
-}
-
+/* 답변 본문의 ```sql 코드블록(`enhanceSqlBlocks`). 말풍선 여닫이 제거(2026-09-01)
+   이후 남은 유일한 소비처다 — 「단계 보기」 패널은 `.step-sql` 을 쓴다. */
 .sql-block {
   padding: 10px 12px;
   border-radius: var(--r-sm);
@@ -939,13 +851,8 @@
 }
 .message-link:hover { background: var(--primary-soft); color: var(--primary); border-color: rgba(37,99,235,.2); }
 
-/* SQL 쿼리 — 항상 표시 */
-.sql-toggle-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* 「단계 보기」 패널 카드의 결과셋 토글 버튼(`buildStepDetailEl`).
+   말풍선 여닫이가 제거된(2026-09-01) 뒤로 이 두 규칙의 소비처는 그 패널뿐이다. */
 .sql-toggle-btn {
   align-self: flex-start;
 }
@@ -954,20 +861,6 @@
 .sql-result-toggle-wrap {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.sql-result-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* SQL 결과 액션 영역 (전체 데이터 보기 + CSV 링크) */
-.sql-result-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   gap: 6px;
 }
 
@@ -993,86 +886,6 @@
 .result-table-wrap.is-full-data {
   max-height: min(70vh, 560px);
   overflow: auto;
-}
-
-/* SQL 쿼리 Navigator — 다수 execute_sql step을 한 화면에서 탐색 */
-.sql-navigator {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  padding: 8px;
-  background: var(--bg);
-  outline: none;
-  min-width: 0;
-}
-.sql-navigator:focus-visible {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
-}
-
-.sql-nav-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.sql-nav-btn {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background .12s ease, border-color .12s ease;
-}
-.sql-nav-btn:hover:not(:disabled) {
-  background: var(--primary-soft);
-  border-color: rgba(37,99,235,.2);
-  color: var(--primary);
-}
-.sql-nav-btn:disabled {
-  opacity: .4;
-  cursor: default;
-}
-
-.sql-nav-indicator {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text);
-  min-width: 64px;
-  text-align: center;
-}
-
-.sql-nav-context {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-left: auto;
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sql-nav-panels {
-  display: block;
-}
-
-.sql-nav-panel {
-  display: none;
-  min-width: 0;
-}
-.sql-nav-panel.is-active {
-  display: flex;
 }
 
 /* ─── Composer ───────────────────────────────────────────────────── */
@@ -2315,7 +2128,17 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
 .attach-side-panel:not(.hidden) {
   transform: translateX(0);
 }
-.attach-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* side-panel-exclusive: `display:flex` 를 유지하는 이유는 슬라이드 아웃 전환 때문인데,
+   그대로 두면 화면 밖 패널이 **여전히 Tab 대상이고 aria-live 도 계속 읽힌다**. 전환이 끝난
+   뒤 `visibility:hidden` 으로 넘겨 모든 엔진에서 포커스·접근성 트리 양쪽에서 제거한다
+   (JS 의 `inert` 동기화는 그 위의 보강이며, `inert` 미지원 엔진에서는 이 규칙만 남는다). */
+.attach-side-panel.hidden {
+  display: flex !important;
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform .2s ease, visibility 0s linear .2s;
+}
 /* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
 .attach-side-panel.is-resizing { transition: none; user-select: none; }
 /* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
@@ -2547,7 +2370,14 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   transition: transform .2s ease;
 }
 .step-side-panel:not(.hidden) { transform: translateX(0); }
-.step-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* side-panel-exclusive: 위 .attach-side-panel.hidden 과 같은 이유 — 전환 후 포커스 제거. */
+.step-side-panel.hidden {
+  display: flex !important;
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform .2s ease, visibility 0s linear .2s;
+}
 /* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
 .step-side-panel.is-resizing { transition: none; user-select: none; }
 /* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
@@ -2927,7 +2757,7 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   border: 1px solid #a8a598;
   border-radius: var(--r-md, 8px);
   background: var(--surface-2, #f6f6f3);
-  padding: 6px 7px 7px;
+  padding: 6px 5px 7px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2985,7 +2815,10 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-left: 12px;
+  /* REQ-20260901-lineage-row-compaction: 레일 들여쓰기를 12 → 9px. 280px 패널에서 행이
+     한 줄에 들어가느냐가 3~5px 로 갈린다(실측: 같은 구성의 행이 20px/38px 로 나뉨).
+     레일·elbow 는 그대로 그려지므로 분기 도해는 잃지 않는다. */
+  padding-left: 9px;
 }
 .attach-lineage-group-body::before {
   content: "";
@@ -3009,7 +2842,7 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   background: #8c8a7c;
 }
 /* 갈라져 나온 계보는 한 단 더 들여쓴다 — "원본 → 거기서 갈라진 것" 이 위치로 읽힌다. */
-.attach-lineage-group-body > .attach-list-entry.is-branch { margin-left: 8px; }
+.attach-lineage-group-body > .attach-list-entry.is-branch { margin-left: 6px; }
 .attach-list-entry.is-branch::before { left: -17px; width: 15px; }
 /* 그룹 안의 행은 카드가 이미 경계를 주므로 자기 테두리를 낮춘다(이중 테두리 방지). */
 .attach-lineage-group .attach-list-item { background: var(--surface, #fff); }
@@ -3017,12 +2850,28 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
    시선을 먹고, 정작 갈래를 가르는 정보(누가/언제/얼마나)를 뒤로 민다. 이름은 클릭 대상
    (원문 보기)이라 지우지 않고 **낮춘다** — 크기·굵기·색으로 계보 칩에 1순위를 넘긴다.
    (NN/g 시각 위계: 무엇이 중요한지는 크기와 색이 정한다.) 접근성 이름은 그대로 파일명이다. */
+/* REQ-20260901-attach-lineage-uploader: 그룹 안에서 행의 1차 라벨은 **파일명이 아니라 계보
+   정체성**이다(파일명은 카드 머리가 한 번 말한다). 그래서 종전처럼 낮추지 않고 **올린다** —
+   이것이 이제 그 행에서 사용자가 찾는 정보다. 작성 주체 색축은 여기서 진다. */
 .attach-lineage-group .attach-list-item-name-text {
-  font-size: 10.5px;
-  font-weight: 400;
-  /* codex P2(대비): #807d72 는 흰 배경 대비 4.12:1 로 소형 텍스트 AA(4.5) 미달이다.
-     «낮춘다» 가 «읽을 수 없게 한다» 가 되면 안 된다 — 5.51:1 로 올리되 굵기·크기로 위계는 유지. */
-  color: #6b6960;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2, #5a5852);      /* 7.11:1 */
+}
+.attach-lineage-group .attach-list-item-name-text.is-ai-lineage { color: #2563eb; }
+/* 카드 머리의 종류 아이콘 — 행마다 되풀이하던 것을 여기로 올렸다.
+   아이콘+파일명은 한 덩어리(`-title`)라 머리가 접혀도 둘이 갈라지지 않는다. */
+.attach-lineage-group-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;          /* 파일명이 말줄임될 수 있게 — 없으면 덩어리가 칩을 밀어낸다 */
+}
+.attach-lineage-group-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
 }
 /* 작성 주체 색축 — 사용자=중립 슬레이트 / AI=파랑. Google Docs 가 편집자를 색으로 가르는
    것과 같은 축이며, 이 화면에서는 "누구의 갈래인가" 가 곧 사용자가 찾는 정보다.
@@ -3036,7 +2885,44 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   color: var(--text-2, #5a5852);   /* 7.11:1 — 정체성 칩은 이 화면의 1순위 정보다 */
 }
 .attach-lineage-group .attach-list-item-lineage.ai { color: #2563eb; }
+/* REQ-20260901-lineage-row-compaction: 분기 표식이 **글리프 한 자**가 되면서 pill 껍데기가
+   어울리지 않게 됐다 — 파선 테두리 안에 `⤷` 만 들어가 «빈 동그라미» 로 읽힌다(캡처 실측).
+   테두리·배경을 걷고 글리프 자체를 표식으로 쓴다. 색 단독 의존이 아니라는 요건은 이제
+   **글리프**가 충족한다(파선이 지던 역할을 형태가 이어받는다). */
+.attach-lineage-group .attach-list-item-lineage.branched {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
 .attach-lineage-group-count { color: var(--text-2, #5a5852); }
+
+/* REQ-20260901-lineage-row-compaction: 그룹 안 행을 **한 줄로** 합친다(사용자 지적).
+   종전에는 «업로드 주체» 줄과 «파일 정보 + 버튼» 줄이 따로였다 — 행이 이고 있는 것이
+   [정체성][v2][⤷갈라짐] · [크기][시각][토글] · [⬇][🗑] 로 짧아진 지금은 한 줄에 들어간다.
+   `wrap` 이라 240px 처럼 좁아지면 그때만 접힌다(고정 2줄이 아니라 필요 시 줄바꿈). */
+.attach-lineage-group .attach-list-item-info {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  /* 간격은 **5px** — 실측으로 정한 값이다. 8px 이면 흔한 행(정체성+크기·시각·토글+버튼)이
+     정확히 5px 모자라 **버튼만** 다음 줄로 떨어졌다(info 가용 205px vs 필요 210px).
+     한 줄에 들어가느냐가 이 cycle 의 목적이므로 여기서 아끼는 3px 이 값을 한다. */
+  gap: 2px 4px;
+}
+/* 같은 이유로 그룹 안 액션 버튼·배지의 좌우 여백을 좁힌다 — 실측상 이 행들은 필요폭과 가용폭이
+   **0~2px** 차이라(nowrap 측정) 여기서 아끼는 몇 px 이 «한 줄이냐 두 줄이냐» 를 가른다. */
+.attach-lineage-group .attach-list-item-actions > button { padding-left: 2px; padding-right: 2px; }
+.attach-lineage-group .attach-list-item-ver { padding-left: 4px; padding-right: 4px; }
+/* 메타 래퍼를 **투명하게** 만들어 자식(정보 텍스트·액션)이 행의 직접 flex 항목이 되게 한다.
+   래퍼로 두면 [이름][메타[텍스트][액션]] 이라 액션이 메타 **안에서** 텍스트와 폭을 다투고,
+   이름이 길어질수록 메타가 좁아져 텍스트가 2~3줄로 접힌다(실측: info 205px 중 메타 62px).
+   `display: contents` 면 셋이 같은 줄에서 폭을 나눠 갖고, 액션은 오른쪽 끝에 붙는다. */
+.attach-lineage-group .attach-list-item-meta { display: contents; }
+.attach-lineage-group .attach-list-item-metatext { min-width: 0; }
+.attach-lineage-group .attach-list-item-actions { margin-left: auto; }
 
 /* 변경 규모 — 열어 보기 전에 "얼마나 다른가" 의 1차 신호(GitKraken change gauge 계열).
    우리가 아는 것은 바이트 크기뿐이므로 색은 중립으로 두고, 내용 차이라고 말하지 않는다
@@ -3086,6 +2972,11 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
 }
 .attach-list-version-row {
   display: flex;
+  /* REQ-20260901-lineage-row-compaction: **한 줄**. 2줄이던 근거(파일명)를 이 cycle 이
+     걷어냈다 — 남는 것은 [v2][역할·시각][⬇][🗑] 뿐이라 240px 에서도 들어간다.
+     좁아지면 `wrap` 이 접는다(고정 2줄이 아니라 필요할 때만 — 잘림 대신 줄바꿈). */
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   font-size: 11px;
@@ -3129,18 +3020,13 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   font-size: 11px;
 }
 .attach-list-version-dl:hover { background: rgba(37, 99, 235, 0.08); }
-/* REQ-20260806-attach-manage: 버전 행도 2줄 — 좌측 들여쓰기(28px)까지 먹은 뒤 한 줄에
-   [v2][이름][역할][⬇][🗑] 를 몰면 240px 에서 이름 가용폭이 23.2px(≈2자)가 된다
-   (§18.8 design 실측: 240/280/360px 전 구간 잘림). 이름은 head 행이 통째로 쓴다. */
-.attach-list-version-row { flex-direction: column; align-items: stretch; gap: 2px; }
-.attach-list-version-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.attach-list-version-head .attach-list-version-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.attach-list-version-foot { display: flex; align-items: center; gap: 6px; }
+/* REQ-20260901-lineage-row-compaction: 버전 행을 **한 줄로 되돌린다**.
+   2줄이던 근거는 파일명이었다(한 줄에 몰면 240px 에서 이름 가용폭 23.2px ≈ 2자 — §18.8 design
+   실측). 그 파일명을 이 cycle 이 걷어냈으므로(카드 머리가 이미 말한다) 근거가 사라졌다.
+   남는 것은 [v2][역할·시각][⬇][🗑] 뿐이고, 좁아지면 `wrap` 이 접는다(고정 2줄이 아니라
+   필요할 때만 접힘 — 잘림 대신 줄바꿈이라는 이 패널의 원칙 유지). */
+.attach-list-version-head { display: flex; align-items: center; gap: 6px; min-width: 0; flex-shrink: 0; }
+.attach-list-version-foot { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .attach-list-version-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 /* 액션 열 정렬(사용자 보고 2026-08-11) — 첨부 목록 **3종 공통** 규칙.
    두 가지가 열을 어긋나게 한다:

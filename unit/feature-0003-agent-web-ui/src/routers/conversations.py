@@ -3235,9 +3235,48 @@ def list_conversation_attachments(cid: str, request: Request, state: str = "acti
     # 표시 판정과 집행 판정이 같은 술어를 쓰도록(§16.7 G6). 프론트가 소유권을 따로
     # 추정하면 두 벌이 어긋나 "보이는데 404" 또는 "숨겨졌는데 권한 있음" 이 된다.
     _gate = app._manage_gate_for_conversation(conn, account, cid)
+
+    # REQ-20260901-attach-lineage-uploader: 업로더 **표시명**을 한 번의 IN 조회로 붙인다.
+    #
+    # 공유 대화에서 여러 멤버가 같은 이름의 파일을 올리면 화면은 그것들을 전부 「사용자 계보」로
+    # 뭉뚱그렸다 — 서로 다른 계보인데 구분되지 않는다(라이브 실측: 대화 20260813083932 의
+    # 계정 10·50 동명 계보 4쌍). 같은 사실을 assistant 프롬프트는 이미 `uploaded by <name>` 으로
+    # 싣고 있었으므로, 이 조회는 **모델이 아는 것을 화면에도 도달시키는** 것이다.
+    #
+    # fail-soft — 이름 해소가 실패해도 목록은 그대로 나간다. 다만 프론트는 이름 부재를
+    # "업로더 미상" 으로 표시하지 "내 파일" 로 격하하지 않는다(없는 사실을 만들지 않는다).
+    # 조회는 `_list_conversations_pg` 의 owner_username enrichment 와 같은 관용구다.
+    uploader_names: dict[int, str] = {}
+    try:
+        _accts = sorted({int(r.get("AccountId") or 0) for r in rows} - {0})
+        if _accts:
+            acur = conn.cursor()
+            try:
+                _am = ",".join(["%s"] * len(_accts))
+                acur.execute(
+                    f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({_am})",
+                    tuple(_accts),
+                )
+                for aid, uname in (acur.fetchall() or []):
+                    if uname:
+                        uploader_names[int(aid)] = str(uname)
+            finally:
+                acur.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "attachments: 업로더 표시명 해소 실패 (conversation_id=%s) — 계보가 이름 없이 표시된다",
+            cid, exc_info=True)
+        uploader_names = {}
+
     results = []
     for row in rows:
         ser = app._serialize_attachment_for_api(dict(row))
+        # codex P2: 업로더는 **이 응답에만** 붙인다(공유 serializer 에 넣으면 메타·versions·
+        # 휴지통 등 전 소비자로 새어 최소권한이 회귀한다). 화면이 계보를 가르는 데 필요한
+        # 곳은 목록 하나다.
+        _uid = int(row.get("AccountId") or 0)
+        ser["account_id"] = _uid or None
+        ser["uploader_username"] = uploader_names.get(_uid) or None
         _root = int(ser.get("root_attachment_id") or ser.get("id") or 0)
         _vc = version_counts.get(_root)
         if _vc:

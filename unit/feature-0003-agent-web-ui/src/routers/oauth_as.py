@@ -580,6 +580,20 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             #  있었으면 첫 시도에 갈라졌다).
             runner_stale = False
             logging.getLogger(__name__).debug("runner build 대조 실패", exc_info=True)
+    # 마지막으로 연결됐던 명령 계열 (2026-09-01, 사용자 요청). 화면 1단계의 기본 탭이 이것으로
+    # 정해진다 — 종전의 `navigator.platform` 추측은 **브라우저가 도는 OS** 라, WSL 안에서
+    # 러너를 띄우는 사용자에게는 항상 틀렸다(매번 탭을 바꿔야 했다).
+    #
+    # `listening` 을 조건으로 걸지 않는다: 이 화면을 여는 순간은 대개 **연결이 끊긴 뒤**다.
+    last_os = ""
+    try:
+        cur3 = conn.cursor()
+        try:
+            last_os = _store.account_bridge_os(cur3, int(account.get("id") or 0))
+        finally:
+            cur3.close()
+    except Exception:
+        last_os = ""   # 「모른다」 — 화면은 종전 추측으로 돌아간다
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -588,6 +602,8 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "guide": f"{origin}/api/ai/guide",
         "connected": connected,
         "listening": listening,
+        # `""` = 「연결한 적이 없거나 구 러너라 모른다」. 화면은 그때만 브라우저 OS 로 추측한다.
+        "last_os": last_os,
         # ── 컴포저 잠금의 **단일 판정** (P0-AB, 사용자 결정 2026-08-28) ──────────────
         #
         #   "머신 내 DQA 프로세스가 실행중인지, 토큰이 연결되어 있는지 여부를 점검하여 허용"
@@ -1200,6 +1216,10 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
         issued = _store.issue_console_token(cur, account_id=int(account.get("id") or 0),
                                             session_id=int(session_id))
         conn.commit()
+        # 발급 응답에도 실어 보낸다 (2026-09-01). 상태 조회와 **같은 함수**에서 오므로 두 값이
+        # 갈릴 수 없고, 화면은 "언제 마지막으로 상태를 읽었는지" 를 따질 필요가 없어진다 —
+        # 명령을 그리는 바로 그 응답이 어느 탭을 먼저 보일지도 함께 답한다.
+        last_os = _store.account_bridge_os(cur, int(account.get("id") or 0))
     finally:
         cur.close()
     origin = _origin(request)
@@ -1215,4 +1235,6 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
                              username=str(account.get("username") or "")),
                          # P0-AC: LLM 을 거치지 않는 **기본 경로**. 화면은 이것을 먼저 보여 주고,
                          # 지시문(`handoff`)은 '터미널을 쓸 수 없을 때' 로 내린다.
-                         "launch": compose_launch_commands(endpoint=endpoint, token=_tok)})
+                         "launch": compose_launch_commands(endpoint=endpoint, token=_tok),
+                         # 어느 탭을 먼저 보일지 (`""` = 모른다 → 화면이 브라우저 OS 로 추측).
+                         "last_os": last_os})

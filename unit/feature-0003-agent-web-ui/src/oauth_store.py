@@ -672,6 +672,67 @@ def token_runner_profile(cur, raw_token: str) -> dict:
             "agent_version": str(row[2] or "").strip(), "listening": True}
 
 
+def stale_runner_must_yield(cur, raw_token: str, account_id: int,
+                            deployed_build: str = "", window_sec: int | None = None) -> str:
+    """이 러너보다 **나중에 연결된** 러너가 같은 계정에서 지금 듣고 있는가. 그러면 그 지문을 준다.
+
+    빈 문자열 = 양보할 이유 없음(정상 처리).
+
+    ## 판정축은 «빌드» 가 아니라 «연결 순서» 다 (2026-09-01 정정)
+
+    첫 구현은 *배포본과 지문이 다른* 러너만 양보시켰다. 그 축은 실제 사고(옛 코드 러너가
+    가로챔)를 재현하지만 **사용자가 요구한 규칙이 아니었고**, 무엇보다 흔한 경우를 통째로
+    놓친다 — 러너 둘이 **같은 빌드**면 아무 판정도 서지 않아 둘 다 계속 경쟁한다.
+
+    사용자 결정(2026-09-01): 「연결된 계정에서 다른 신규 러너에 연결되는 부분이 확인된다면
+    오래된 러너는 프로세스를 종료 … 다만 계정이 다를 경우는 예외」. 즉 기준은 **누가 나중에
+    연결했는가**다. 토큰 행은 「연결 준비」마다 새로 발급되므로 `Id` 순서가 곧 연결 순서다.
+
+    이 축은 「배포 직후 전 사용자 중단」 위험과도 무관하다 — 발동 조건이 «러너가 둘 이상»
+    이지 «낡았다» 가 아니기 때문이다. 러너가 하나면 후보가 없어 종전대로 일한다.
+
+    ## 러너끼리만 순서를 다툰다 (등록형 MCP 클라이언트 보호)
+
+    양쪽 모두 **하트비트한 적이 있는** 토큰이어야 한다. 하트비트를 모르는 등록형 MCP
+    클라이언트(무설치 계약 경로)는 이 다툼의 당사자가 아니다 — 그것까지 «오래된 연결» 로
+    세면, 러너를 새로 띄우는 순간 그 사용자의 MCP 경로가 조용히 죽는다.
+
+    ## 판정 근거가 없으면 양보시키지 않는다 (fail-open)
+
+    후보는 **살아 있는 토큰**(`_LIVE_TOKEN_PREDICATE`)이면서 하트비트가 창 안이어야 한다.
+    낡은 행이 되살아나 멀쩡한 러너를 굶기지 않게 하는 자물쇠다. `deployed_build` 는 이제
+    판정에 쓰지 않고 **안내 문구용**으로만 받는다(호출부 호환).
+    """
+    if not raw_token or not account_id:
+        return ""
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT t.Id, t.RunnerBuild FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+        "  AND t.LastHeartbeatAt IS NOT NULL LIMIT 1",
+        (token_hash(raw_token),),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return ""
+    my_id, mine = int(row[0]), str(row[1] or "").strip()
+    # 같은 계정에서 **나중에 연결**됐고 지금 듣고 있는 러너가 있는가.
+    cur.execute(
+        "SELECT 1 FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.AccountId = %s AND t.Id > %s AND {_LIVE_TOKEN_PREDICATE} "
+        "  AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) LIMIT 1",
+        (int(account_id), my_id, window),
+    )
+    if not cur.fetchone():
+        return ""
+    # 양보한다는 사실이 참이고, 지문은 «누구인지» 를 사람이 알아보게 하는 라벨일 뿐이다.
+    return mine or "unknown"
+
+
+
 def set_runner_report(cur, raw_token: str, capabilities: str | None,
                       features: Any, agent_version: str | None = None,
                       agent_build: str | None = None) -> bool:
@@ -1054,7 +1115,15 @@ def account_runner_build(cur, account_id: int, window_sec: int | None = None) ->
             f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
             "  AND t.LastHeartbeatAt IS NOT NULL "
             f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
-            "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+            # ⚠ **가장 최근 하트비트**가 아니라 **가장 나중에 연결된** 러너를 고른다
+            #   (2026-09-01). 러너가 둘 붙어 있고 지문이 다르면, 하트비트 기준 정렬은 30초마다
+            #   승자가 바뀌어 `runner_stale` 이 **진동**한다 — 화면의 연결 모달은
+            #   `listening && !stale` 을 성공 신호로 쓰므로, 진동하는 동안 그 조건이 안정적으로
+            #   서지 않아 **연결이 완수되지 않는다**(사용자 제보 2026-09-01: root → claude-corp
+            #   연속 연결 시 모달이 닫히지 않음). 「나중에 연결된 쪽이 정본」은 점유 양보 판정
+            #   (`stale_runner_must_yield`)과 **같은 축**이라, 화면이 말하는 러너와 실제로 질문을
+            #   처리할 러너가 항상 같은 하나가 된다.
+            "ORDER BY t.Id DESC LIMIT 1",
             (int(account_id), window),
         )
         row = cur.fetchone()
@@ -1134,6 +1203,96 @@ def set_account_bridge_defaults(cur, account_id: int, model: str | None,
         # 기본값 저장 실패가 **답변을 막지 않는다** — 이건 편의 기능이고, 이번 요청의 값은
         # 이미 질문과 함께 굳었다(`WebAiTasks`). 다음 대화가 첫 항목으로 시작할 뿐이다.
         pass
+
+
+#: 연결 화면이 아는 명령 계열은 이 둘뿐이다 — 탭이 둘이고, 서버가 만드는 명령도 둘이다
+#: (`compose_launch_commands` 의 `posix`/`windows`). **닫힌 집합으로 둔다**: 이 값은 러너가
+#: 준 문자열이고 화면의 키로 쓰이므로, 표에 없는 값이 통과하면 화면은 존재하지 않는 명령을
+#: 고르려다 빈 칸을 그린다.
+BRIDGE_OS_FAMILIES: tuple[str, ...] = ("posix", "windows")
+
+
+def normalize_bridge_os(value: object) -> str:
+    """러너가 신고한 명령 계열을 닫힌 집합으로 접는다. 모르면 빈 문자열.
+
+    빈 문자열은 「모른다」이고, 화면은 그때 **종전 추측**(브라우저 OS)으로 돌아간다 — 틀린
+    값을 굳히는 것보다 낫다. 구 러너는 이 축을 아예 신고하지 않으므로 그 경로가 곧 하위호환이다.
+    """
+    v = str(value or "").strip().lower()
+    return v if v in BRIDGE_OS_FAMILIES else ""
+
+
+def account_bridge_os(cur, account_id: int) -> str:
+    """이 계정이 **마지막으로 연결했던** 러너의 명령 계열. 없으면 빈 문자열 (2026-09-01).
+
+    ⚠ 「지금 듣고 있는가」를 묻지 않는다 — 그것은 `account_runner_build` 의 질문이다. 이 값이
+    필요한 순간은 대개 **연결이 끊긴 뒤**(그래서 다시 연결하려고 화면을 여는 때)라, 신선도
+    술어를 얹으면 정작 필요할 때 항상 빈 값이 된다.
+    """
+    if not account_id:
+        return ""
+    try:
+        cur.execute("SELECT BridgeLastOs FROM WebAccounts WHERE Id = %s", (int(account_id),))
+        row = cur.fetchone()
+    except Exception:
+        # 컬럼이 아직 없는 배포(부트스트랩 ALTER 이전) — 「모른다」와 같이 다룬다.
+        return ""
+    if not row:
+        return ""
+    return normalize_bridge_os(row[0])
+
+
+def set_account_bridge_os(cur, raw_token: str, account_id: int, os_family: object) -> bool:
+    """러너가 신고한 명령 계열을 **연결 사건일 때만** 계정에 접는다. 썼으면 True (2026-09-01).
+
+    ## 왜 두 단계인가 (codex 적대 리뷰 P1-2)
+
+    계정 값 하나만 두고 하트비트마다 "다르면 쓴다" 로 하면, 같은 계정에 러너가 **둘**(WSL 과
+    Windows) 붙어 있을 때 30초마다 값이 뒤집힌다. 가드는 매번 통과하므로 쓰기 증폭도 남고,
+    무엇보다 그 값은 「마지막으로 **연결**된 OS」가 아니라 「마지막으로 도착한 하트비트」가 된다
+    — 사용자가 PowerShell 로 다시 등록해도 옆에 살아 있는 WSL 러너가 30초 안에 되돌린다.
+
+    그래서 먼저 **토큰 행**에 계열을 새긴다. 그 UPDATE 가 실제로 행을 바꿨다는 것은 「이 러너가
+    처음으로(또는 바뀐 계열로) 자기를 밝혔다」 — 즉 **연결 사건** — 이라는 뜻이다. 계정 값은 그때만
+    따라간다. 두 러너가 각자 한 번씩 쓰고 나면 이후 하트비트는 양쪽 다 no-op 이라 진동이 없고,
+    계정 값은 **가장 나중에 연결한 쪽**으로 남는다.
+
+    ## 토큰 생존 술어를 낀다 (codex 적대 리뷰 P2-5)
+
+    1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문에, 로그아웃과 경합해 최종적으로 401 을 받는
+    요청은 계정 필드(토큰보다 오래 사는 값)를 바꾸지 못한다. `set_runner_report` 와 같은 술어를
+    쓴다 — 따로 세면 신고만 통과하는 뒷문이 생긴다.
+
+    **모르는 값은 지우지 않는다.** 구 러너(신고 없음)의 하트비트가 기존 값을 NULL 로 밀면, 구·신
+    러너를 오가는 사용자는 매번 다른 기본값을 본다 — 「신고 없음」은 「windows 가 아니다」가 아니다.
+    """
+    fam = normalize_bridge_os(os_family)
+    if not raw_token or not account_id or not fam:
+        return False
+    try:
+        cur.execute(
+            "UPDATE WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            "SET t.RunnerOs = %s "
+            f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+            # `<=>` 는 NULL-safe 비교 — `<>` 면 아직 NULL 인 행(첫 신고)이 걸러진다.
+            "  AND NOT (t.RunnerOs <=> %s)",
+            (fam, token_hash(raw_token), fam),
+        )
+    except Exception:
+        # 컬럼 부재·쓰기 실패가 **하트비트를 실패시키지 않는다** — 이건 화면 기본값 편의이고,
+        # 다음 30초에 같은 값이 다시 온다.
+        return False
+    if int(getattr(cur, "rowcount", -1) or 0) == 0:
+        return False   # 이 러너는 이미 같은 계열로 밝혀져 있다 — 새 연결이 아니다
+    try:
+        cur.execute(
+            "UPDATE WebAccounts SET BridgeLastOs = %s WHERE Id = %s AND NOT (BridgeLastOs <=> %s)",
+            (fam, int(account_id), fam),
+        )
+    except Exception:
+        return False
+    return int(getattr(cur, "rowcount", -1) or 0) != 0
 
 
 def account_has_live_token(cur, account_id: int) -> bool:

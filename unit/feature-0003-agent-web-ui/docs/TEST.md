@@ -116,6 +116,28 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260901T1245-ai-conn-chip-postdeploy 연결 칩 프로필 행 이동 POST-DEPLOY 재실측 (docs-only, 2026-09-01) — **Environment: Windows-browser (PASS — 배포본 `40340f53` 자산 그대로, 주입 없음 — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md`)**
+
+- 서빙 자산 확인: `profile.css` 배치 규칙 1건 · `chat.css` footer 접힘 규칙의 `.ai-conn` 잔여
+  **0건** · 칩이 `.sidebar-profile` 안(144행, `composer-footer` 406행보다 앞) · 라벨 4종 접두 없음.
+- **16조합 전부 배포 전 실측치와 일치** — `.composer-footer` 전 조합 `display: none`(제보 여백
+  해소), `admin`/`mckim` 네 상태 같은 줄·행 높이 65px 고정, 15자/21자 계정 아래 줄·가로 넘침 0.
+- 측정 가드: 칩의 런타임 부모가 `.sidebar-profile` 이 아니면 조기 반환 — 통과.
+
+### 20260901T0530-connect-modal-transition 명령 경로·«업데이트 필요» 갱신도 닫히도록 판정 축 교체 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (배포 후 POST-DEPLOY 실측 — `docs/test-runs.d/TASK-20260901T0530-connect-modal-transition.md`)**
+
+- **제보 재현**: 같은 테스트를 **현재 라이브 배포본**에 태우면 **6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4)
+  — 사용자가 말한 두 상황이 코드로 확인된다. 수정본 **39/0 PASS**.
+- **두 요청은 같은 뿌리**: 기준선을 «창을 열 때 고정» 한 것(명령 경로)과 판정 축이 `listening`
+  한 축뿐이었던 것(업데이트 갱신). 기준을 **직전 관측**으로, 축을 **«쓸 수 있는 상태»**
+  (`listening && !runner_stale`)로 올려 둘을 한 규칙으로 덮는다.
+- **뮤테이션**: stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→**H5** / msg-flat-auto→I2d·I3b /
+  epoch 검증 전 `_lastObs` 갱신(codex P1 되돌림)→**J1**.
+- **codex 적대 리뷰**: 1R **P1 1건**(늦은 응답이 다음 창의 «직전 관측» 을 오염 → 일어나지 않은
+  전이) → 창 세대가 다르면 **기록조차 하지 않도록** 수정 + J1 신설 → 확인 라운드.
+- **미잠금(정직 표기)**: 실행 경로의 문구 분기와 `_lastObserved.ok` 의 stale 검사는 뮤턴트가
+  생존한다(자동 경로가 먼저 판정을 끝내 도달 희박 — 방어적 중복).
+
 ### 20260901T1200-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행 여백 (Minor §12.3, 2026-09-01, feature-0003 프론트 배치 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md` · 배포 전 단계는 라이브 페이지에 변경본 CSS 주입 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
 
 - **제보 재현**: 배포본 실측에서 `.composer-footer` 의 computed display 가 `flex` — 상태·힌트가
@@ -3627,3 +3649,35 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   `사용자 업로드 v1 · 현재` → `AI 수정본 v2` · `+182 / -21`.
 - 배포 상태: 전 서비스 이미지 **동일 SHA** · surge 잔존 0 · `no upstreams available` **0건**.
 - 증적: `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md`
+
+### Run — TASK-20260901T163000-attach-lineage-uploader (공유 대화 업로더 식별 + 되풀이 제거)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. §13.2.9 격리 컨테이너(static stamp
+  `c64defd96a04` + 변경 라우터 2종 bind-mount), `https://localhost:18101`.
+- **경계 3경로 실측**: ① 공유 대화(`20260813083932`, 계정 10·50) → 행 라벨
+  `jmkimmasangsoft.com`/`admin` 로 분리(종전 8행 전부 「사용자 계보」) · 그룹 카드 4 ·
+  행 아이콘 **0** · 머리 아이콘 4 · 카드당 파일명 3회→**1회** ② 1:1(`20260831093200`) →
+  `사용자 업로드`/`AI 수정본`, **이름 없음** ③ 단독 계보(`20260828043852`) → 카드 없음 ·
+  행 아이콘 **2/2 유지** · 라벨 = 파일명.
+- 240px 최소 폭에서 아이콘+파일명 한 줄 유지(첫 캡처가 아이콘 분리 결함을 포착 → 수정).
+- assistant 계약 확인: `_build_attachment_context_section` 실 렌더가
+  `uploaded by <이름>` + per-lineage/overall latest 를 싣는 것을 caller 10·50 양쪽에서 확인.
+- 증적: `docs/test-runs.d/TASK-20260901T163000-attach-lineage-uploader.md`
+- 회귀: **5167 passed / 5 skipped**(신규 11건). ⚠ `test_query_embed_visibility.py` 2건은
+  **main 기준선에서도 동일 실패**(스위트 순서 의존) — 본 변경 무관.
+- Run 2(적대 리뷰 조치 후): codex P1 **0** · P2 4 전건 조치 후 재실측 — 노출 범위(versions 행
+  `account_id` 부재 / lineages 유지) · AT 정합(업로더명이 aria 에도) · stale 가드의 **정상 경로**
+  통과 · 라벨 충돌 시 서수(`사용자 업로드 · 계보 1/3`). 5173 passed.
+| TEST-20260901T163000-runner-log-delivery | `static/agent/bridge_agent.py` (Windows-browser) | 러너 로그 구조화 cycle 의 시각검증. **화면 렌더 변경 0** (이 파일은 렌더 자산이 아니라 사용자가 내려받아 실행하는 스크립트) — 대신 실 Windows 브라우저에서 `/static/agent/bridge_agent.py` **배달 지문**을 실측했다. PRE-DEPLOY `served_build=0a4ba732366c` / 214,898 bytes. Environment: Windows-browser. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |
+
+### Run — TASK-20260901T170000-lineage-row-compaction (되풀이 제거 + 한 줄 간소화)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. 격리 컨테이너(stamp `a3db80724568`).
+- 되풀이: 버전 행 파일명 요소 **0** · 계보 안내문 **0** · raw `uploaded` **0**
+  (카드당 파일명 노출 6회 → 1회).
+- 한 줄(행 높이 20px=한 줄): **버전 행 전 폭 20px** · 사람 업로드 계보 행 280px 에서 **20px** ·
+  AI 수정본 계보 행 39px(두 줄) — 필요 268 / 가용 206, **62px 부족**을 수치로 확정.
+- 캡처가 결함 1건 포착: 글리프만 남은 파선 pill 이 «빈 동그라미» → 테두리 제거.
+- 증적: `docs/test-runs.d/TASK-20260901T170000-lineage-row-compaction.md`
+
+| TEST-20260901T170000-runner-log-postdeploy | `static/agent/bridge_agent.py` (Windows-browser) | POST-DEPLOY — 실 Windows 브라우저 fetch 로 배달 지문 `a17b8f5ea7f6` (main 일치·PRE 에서 갱신) + 서빙 본문에 구조화 로그 존재. 배포본을 실제 구동해 원장 4사건·토큰 마스킹 0건 확인. **화면 렌더 변경 0**. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |
