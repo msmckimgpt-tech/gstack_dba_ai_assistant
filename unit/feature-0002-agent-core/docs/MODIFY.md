@@ -3179,3 +3179,24 @@ Task-Cycle: feature-0002-agent-core
 - 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 5.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T194500-glossary-sweep-applied — 용어사전 소급 정리 실적용 (데이터 변경, 코드 0)
+
+cycle 1(`term_tier`)에서 dry-run 리포트 후 재승인을 받기로 한 항목. 사용자 승인
+(2026-09-01)으로 라이브 적용했다. **코드 변경 0 — 데이터 정리다.**
+
+- 실행: `glossary_tier_sweep.py --apply --manifest /shared/glossary-sweep/20260901T194500-*.json`
+- 적용 전 dry-run 이 **승인 시점 수치와 동일**함을 확인(범용 69 · 중복 36 · 교차제품 28 보고만).
+- 결과: `kb_glossary` 739 → **634행**(105행 삭제) · `glossary_feedback` 의
+  `skipped_general` **57행**(되살리기 경로 보존).
+- **교차 제품 28종은 삭제하지 않았다**(cycle 1 결정 유지) — 읽기 캐스케이드가
+  `[그 제품, common]` 이라 한 제품은 다른 제품 scope 를 읽지 않는다. 지우면 그 제품에서
+  그냥 사라지고, 같은 이름이 제품마다 다른 뜻일 수 있다(`CharacterID`·`AID`·`LogType`).
+- **되돌리기 검증**: 매니페스트 행 키가 `restore()` 가 읽는 키와 일치하고 105행이 모두 담겨
+  있음을 확인했다. 파괴적 작업의 안전망은 「파일이 생겼다」가 아니라 「그 파일로 되돌아간다」다.
+- ⚠ **주의할 상호작용**: 같은 날 G1 수정이 한도 밖이던 `증분 복제` 를 회복시켰는데, 이 정리가
+  같은 용어를 범용어로 판정해 회수했다. 모순이 아니라 원인이 다르다 — 전자는 버그(짧다는
+  이유로 잘림), 후자는 정책(범용어 미등록). 큐에 남아 있으므로 되살릴 수 있다.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 7·8.
+
+Task-Cycle: feature-0002-agent-core
