@@ -18,8 +18,9 @@
 //   C. 「연결 준비」로 토큰만 발급된 상태(connected=true, listening=false) → 닫히지 않는다.
 //   D. 성립 후 추가 관측이 토스트를 다시 띄우지 않는다.
 //   E. 배선·자원 — import 경로 실재 · 닫으면 폴링이 멎음 · 닫기가 막혀도 알림은 1회.
-//   F. 실행 버튼 경합 (codex 1R P1) — 남의 러너로 인한 거짓 성공 · 이전 창의 대기가 새 창을 닫음.
+//   F. 창 교체 경합 (codex 1R P1-1 · 2R) — 이전 창의 대기(대기 중·in-flight)가 새 창을 닫음.
 //   G. 첫 조회 실패 (codex 1R P2-3) — 그 뒤의 진짜 전이를 놓치지 않는다.
+//   H. 사용자 제보(2026-09-01) — 실행을 눌러 «대기 중» 을 확인했으면 닫는다.
 //
 // 실행: node verify_connect_modal_autoclose.mjs
 //   대상 파일 교체(회귀 실증용): CONNECT_MODAL_SRC=<path> node verify_connect_modal_autoclose.mjs
@@ -264,28 +265,15 @@ console.log("\n[E] 배선·자원");
   ok("E3 닫기가 막혀도 알림은 1회", toastsWhileStuck === 1);
 }
 
-console.log("\n[F] 실행 버튼 경합 (codex 1R P1 — 라운드 1 수정의 회귀 잠금)");
+console.log("\n[F] 창 교체 경합 — 이전 창의 대기가 새 창을 닫지 않는다 (codex 1R P1-1 · 2R)");
 {
   // 공통 준비: 「연결 준비」로 명령을 발급해 `[내 AI 실행]` 버튼을 살린다.
   const launchBtn = $("connectModalLaunch");
   const cmdEl = $("connectModalCmd");
   mod.bindConnectModal();   // 실제 리스너 배선 — 버튼 경로를 우회하지 않는다
 
-  // F1 (P1-2) — 남의 컴퓨터 러너가 이미 대기 중인데, 이 컴퓨터용 새 명령을 발급하고 실행을
-  //             눌렀다. 첫 조회가 그 남의 러너 때문에 true 여도 **이 창의 전이가 아니다**.
-  await reset();
-  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
-  mod.openConnectModal();
-  await settle();
-  $("connectModalMake").click();
-  await settle();
-  ok("F1a 명령이 발급됐다", String(cmdEl.textContent || "").length > 0);
-  ok("F1b 실행 버튼이 보인다", launchBtn.hidden === false);
-  launchBtn.click();
-  await sleep(2600);   // 첫 대기 회차(2000ms) + 여유
-  ok("F1c 남의 러너로 닫히지 않는다", overlay.hidden === false);
-  ok("F1d 명령이 남아 있다", String(cmdEl.textContent || "").length > 0);
-  ok("F1e 거짓 알림이 없다", globalThis.__toasts.length === 0);
+  // (구 F1 «남의 러너로 닫히지 않는다» 는 제거됐다 — 그 판정이 사용자 제보의 원인이었다.
+  //  같은 상황을 [H] 가 **반대 기대**로 잠근다: 사용자가 누른 실행이 성공을 확인하면 닫는다.)
 
   // F2 (P1-1) — 실행을 눌러 둔 채 창을 닫고 **새 창**을 열었다. 이전 대기가 뒤늦게 성공을
   //             보더라도 새 창을 닫아선 안 된다 (그 창의 명령이 사라진다).
@@ -334,7 +322,59 @@ console.log("\n[F] 실행 버튼 경합 (codex 1R P1 — 라운드 1 수정의 �
   ok("F3a in-flight 응답이 새 창을 닫지 않는다", overlay.hidden === false);
   ok("F3b 새 명령이 남아 있다", String(cmdEl.textContent || "") === cmd3 && cmd3.length > 0);
   ok("F3c 거짓 알림이 없다", globalThis.__toasts.length === 0);
+
+  // F4 — 실행 대기 중 창을 **닫기만** 했다(다시 열지 않는다). 뒤늦게 도착한 성공 응답이
+  //      토스트를 띄워선 안 된다 — 창을 치운 사용자에게 「연결되었습니다」가 불쑥 뜨면 그것이
+  //      무엇에 대한 말인지 알 수 없다. F3(창 교체)는 `_connSeq` 가 먼저 걸러내므로 성공
+  //      분기까지 도달하지 않는다; 이 케이스가 그 분기의 창-세대 검사를 실제로 겨눈다.
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  await mod.refreshConnState();
+  mod.openConnectModal();
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  statusDelayMs = 1200;
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  launchBtn.click();
+  await sleep(2150);            // 조회가 날아가 있는 지금
+  mod.closeConnectModal();      // 사용자가 창을 닫는다
+  await sleep(2500);            // 그 응답이 도착할 시간
+  ok("F4 닫은 뒤 도착한 성공이 토스트를 띄우지 않는다", globalThis.__toasts.length === 0);
   statusDelayMs = 0;
+}
+
+console.log("\n[H] 사용자 제보 재현 (2026-09-01) — 실행을 눌러 «대기 중» 을 확인했는데 창이 남았다");
+{
+  // 제보: "「내 AI가 대기 중입니다. 이제 질문을 보낼 수 있습니다.」 라는 메세지를 받았지만,
+  //        모달이 닫히지 않았습니다."
+  //
+  // 그 문구는 `[내 AI 실행]` 대기 루프에서만 나온다. 즉 사용자는 버튼을 눌렀고, 화면은
+  // «대기 중» 을 확인했으면서도 창을 치우지 않았다 — 성공을 말하면서 아무것도 하지 않은 것이다.
+  //
+  // 원인은 기준선이다: 창을 열 때 이미 «대기 중» 으로 알려져 있었으면 자동 관측 경로는 전이가
+  // 아니라고 판정한다(그건 옳다 — 열자마자 닫히면 안 되니까). 그런데 **사용자가 직접 누른
+  // 실행**까지 그 판정에 묶어 버린 것이 이 결함이다. 버튼을 누른 것은 명시적 의도이고, 그
+  // 결과로 대기 중이 확인됐으면 사용자에게 그것은 성공이다.
+  const launchBtn = $("connectModalLaunch");
+  const cmdEl = $("connectModalCmd");
+  mod.bindConnectModal();
+
+  await reset();
+  // 페이지가 이미 «대기 중» 을 알고 있는 상태에서 창을 연다 (제보 상황).
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();
+  mod.openConnectModal();
+  await settle();
+  ok("H1 열자마자 닫히지는 않는다 (자동 경로의 기준선은 유효하다)", overlay.hidden === false);
+  $("connectModalMake").click();
+  await settle();
+  ok("H2 명령이 발급된다", String(cmdEl.textContent || "").length > 0);
+  launchBtn.click();
+  await sleep(2600);
+  ok("H3 실행이 성공을 확인하면 창이 닫힌다", overlay.hidden === true);
+  ok("H4 토스트로 알린다", globalThis.__toasts.length === 1
+     && /연결되었습니다/.test(globalThis.__toasts[0] || ""));
 }
 
 console.log("\n[G] 첫 조회 실패 (codex 1R P2-3)");
