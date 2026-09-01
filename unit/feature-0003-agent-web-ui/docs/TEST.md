@@ -3661,3 +3661,5 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   `account_id` 부재 / lineages 유지) · AT 정합(업로더명이 aria 에도) · stale 가드의 **정상 경로**
   통과 · 라벨 충돌 시 서수(`사용자 업로드 · 계보 1/3`). 5173 passed.
 | TEST-20260901T163000-runner-log-delivery | `static/agent/bridge_agent.py` (Windows-browser) | 러너 로그 구조화 cycle 의 시각검증. **화면 렌더 변경 0** (이 파일은 렌더 자산이 아니라 사용자가 내려받아 실행하는 스크립트) — 대신 실 Windows 브라우저에서 `/static/agent/bridge_agent.py` **배달 지문**을 실측했다. PRE-DEPLOY `served_build=0a4ba732366c` / 214,898 bytes. Environment: Windows-browser. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |
+
+| TEST-20260901T170000-runner-log-postdeploy | `static/agent/bridge_agent.py` (Windows-browser) | POST-DEPLOY — 실 Windows 브라우저 fetch 로 배달 지문 `a17b8f5ea7f6` (main 일치·PRE 에서 갱신) + 서빙 본문에 구조화 로그 존재. 배포본을 실제 구동해 원장 4사건·토큰 마스킹 0건 확인. **화면 렌더 변경 0**. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |

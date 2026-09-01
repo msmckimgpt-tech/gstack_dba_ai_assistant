@@ -250,3 +250,55 @@ def test_task_lifecycle_events_share_the_task_key(agent, tmp_path):
         agent.log_event(ev, "…", task="t-99")
     rows = [r for r in _audit(tmp_path) if r.get("task") == "t-99"]
     assert len(rows) == 3
+
+
+# ── 종료 순서 (라이브 실측이 잡은 결함) ────────────────────────────────────────
+
+
+def test_run_stop_is_the_last_line_on_exit(tmp_path):
+    """`run.stop` 이 **진짜 마지막 줄**이어야 한다 — 실 프로세스 종료로 확인한다.
+
+    `atexit` 는 나중에 등록한 것을 먼저 부른다. 요약을 자기 점유 해제 **뒤에** 등록하면
+    요약이 먼저 실행되어, ① 해제 결과를 세지 못하고 ② 「여기서 끝났다」의 표지 구실도 못
+    한다(뒤에 줄이 더 있으니 로그가 잘린 것과 구분되지 않는다).
+
+    라이브 실측 2026-09-01(배포본 `a17b8f5ea7f6`)에서 실제로 반대로 걸려 있었다 —
+    `--check` 종료가 `run.stop`(seq 4) → `api.fail`(seq 5) 순이었다.
+
+    ⚠ **`_arm_exit_release` 를 반드시 거친다.** 이 테스트를 처음 쓸 때 스크립트가 두 핸들러를
+      직접 `atexit.register` 했는데, 그러면 검사하는 것이 *제품의 등록 순서*가 아니라
+      *테스트 자신의 등록 순서*라 구코드에서도 통과했다(vacuous). 순서는 그 함수의 성질이므로
+      그 함수를 불러야 한다.
+    """
+    env = {**os.environ, "BRIDGE_LOG_DIR": str(tmp_path), "PYTHONPATH": str(SRC)}
+    # 네트워크를 타지 않는 Api 대역 — 해제 경로가 «무언가 로그를 남긴다» 만 성립하면 된다.
+    script = (
+        "import bridge_agent as B\n"
+        "class FakeApi:\n"
+        "    token = 'x'\n"
+        "    def heartbeat(self, *a, **k):\n"
+        "        B.log_event('exit.release', '해제 흉내')\n"
+        "        return {'released_claims': ['t-1']}\n"
+        "B._RUNNER_INSTANCE = 'ordertest'\n"
+        "B._arm_exit_release(FakeApi())\n"
+    )
+    subprocess.run([sys.executable, "-c", script], stderr=subprocess.DEVNULL,
+                   env=env, check=True, timeout=60)
+    rows = [json.loads(x) for x
+            in (tmp_path / "bridge.events.jsonl").read_text(encoding="utf-8").splitlines() if x]
+    evs = [r["ev"] for r in rows]
+    assert evs and evs[-1] == "run.stop", f"run.stop 이 마지막 줄이 아니다: {evs}"
+    assert "exit.release" in evs, "해제 경로가 돌지 않았다 — 이 검사가 vacuous 하다"
+    # 해제가 요약보다 **앞**이어야 그 결과가 집계에 실린다.
+    assert evs.index("exit.release") < evs.index("run.stop")
+    assert rows[-1]["tally"].get("exit.release") == 1, \
+        "요약이 해제 결과를 세지 못했다 — 요약이 먼저 실행된 것"
+
+
+def test_exit_summary_is_registered_before_the_release(agent):
+    """등록 **순서**를 소스에서 고정한다 — 위 실동작 검사의 회귀 방향을 이름으로 못박는다."""
+    src = AGENT.read_text(encoding="utf-8")
+    i_stop = src.index("atexit.register(_log_run_stop)")
+    i_rel = src.index("atexit.register(release_own_claims_on_exit)")
+    assert i_stop < i_rel, (
+        "요약을 해제보다 **먼저** 등록해야 atexit 역순에서 요약이 마지막에 실행된다")

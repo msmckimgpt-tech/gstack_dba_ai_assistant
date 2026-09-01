@@ -66,3 +66,39 @@ edit_policy: append-only
 2. 새 러너를 실제로 띄워 `run.start` → `run.ready` → `hb.*` 가 원장에 남는가.
    ⚠ 이건 **러너를 띄운 본인만** 할 수 있는 확인이 아니라 AI 가 직접 수행한다(라이브 검증은
    AI 책임 — 사용자 정정 2026-08-26).
+
+## Run 2026-09-01 16:35 KST — POST-DEPLOY 실측 (배포본 `a17b8f5ea7f6`)
+
+- Environment: **Windows-browser** (PB-0008, `bin/win-browser.py eval`) + WSL 실 구동
+- 배포: `make deploy-web` (main `55a5c56c`)
+
+### ① 배달 지문 — PASS
+
+실 Windows 브라우저에서 `fetch('/static/agent/bridge_agent.py')` → SHA-256 앞 12자
+**`a17b8f5ea7f6`**. main 의 파일 지문과 **일치**하고, PRE-DEPLOY 값(`0a4ba732366c`)에서 갱신됐다.
+서빙 본문에 `def log_event(` · `bridge.events.jsonl` 존재 확인 — 구조화 로그가 실제로 배달된다.
+(이게 어긋나면 모든 러너가 「내 AI 업데이트 필요」로 굳는다 — 2026-08-31 에 겪은 형태.)
+
+### ② 배포본을 실제로 구동 — PASS
+
+`curl` 로 서빙 파일을 내려받아(sha 일치) 라이브 `https://localhost` 에 `--check` 로 붙였다.
+사설 CA 는 `artifacts/trust-bundle/rootCA.crt`. 두 파일이 **0600 으로 생성**됐고 원장은:
+
+```
+run.start          seq 1  ver=2026.09.01 build=a17b8f5ea7f6 run=82189c6ae985 prev_run=e5f5568cc81e
+                          host=localhost ca=true py=3.12.3 platform=linux workers=1
+api.fail           seq 2  path=/api/ai/tools/list_open_requests http=401 dur_ms=19 detail={"error":"유효하지 않거나…"}
+conn.unauthorized  seq 3  FATAL http=401 reason=token_invalid
+run.stop           seq 4  uptime_sec=0 errors=1 tally={run.start:1, api.fail:1, conn.unauthorized:1}
+```
+
+- **종전이라면 seq 2 는 아예 없었다** — `Api._post` 의 실패는 반환만 되고 로그에 남지 않았다.
+  이제 경로·상태·소요·서버 본문이 남는다.
+- 세션 머리글이 「이 프로세스가 무엇이었나」를 한 줄로 답한다(빌드 지문·직전 인스턴스 포함).
+- 토큰(`mat_invalidtokenforlogtest`)은 **두 파일 어디에도 0건** — 마스킹 실동작 확인.
+
+### ③ 이 실측이 잡은 결함 (수정: `TASK-20260901T170000`)
+
+seq 5 로 `api.fail`(해제 호출의 401)이 **`run.stop` 뒤에** 찍혔다. `atexit` 역순 실행을
+주석에 반대로 적고 그대로 등록한 탓이다. 종료 요약이 마지막 줄이 아니면 해제 결과를 세지
+못하고 「여기서 끝났다」의 표지도 못 된다. 후속 cycle 에서 순서 교체 + 회귀 2건.

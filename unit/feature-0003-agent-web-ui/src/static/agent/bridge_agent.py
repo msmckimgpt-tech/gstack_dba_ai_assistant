@@ -3373,13 +3373,21 @@ def _arm_exit_release(api: Api) -> None:
     """
     global _ACTIVE_API
     _ACTIVE_API = api
-    atexit.register(release_own_claims_on_exit)
-    # 종료 요약도 **같은 출구**에 건다 (TASK-20260901T163000). 종전에는 러너가 사라진 뒤
+    # 종료 요약을 **같은 출구**에 건다 (TASK-20260901T163000). 종전에는 러너가 사라진 뒤
     # 로그의 마지막 줄이 무엇이든 그것이 마지막 사건인지, 그냥 거기서 잘린 것인지 알 수
     # 없었다 — 87분 고아 사고에서 「12:47 종료」를 다른 증거로 짜맞춰야 했던 이유다.
-    # ⚠ `release_own_claims_on_exit` **뒤에** 등록한다: atexit 는 역순 실행이라, 이러면
-    #   요약이 해제 결과까지 반영한 뒤 마지막 줄로 찍힌다.
+    #
+    # ⚠ 등록 순서가 곧 **역순 실행 순서**다: atexit 는 나중에 등록한 것을 먼저 부른다.
+    #   그래서 요약을 **먼저** 등록해야 그것이 **마지막에** 실행되어, 자기 점유 해제까지
+    #   끝난 뒤의 진짜 마지막 줄이 된다.
+    #
+    #   라이브 실측(2026-09-01, 배포본 a17b8f5ea7f6)에서 반대로 걸려 있었다 — `--check`
+    #   종료 로그가 `run.stop`(seq 4) → `api.fail`(seq 5, 해제 호출의 401) 순으로 남았다.
+    #   요약이 마지막 줄이 아니면 그 요약은 **해제 결과를 세지 못하고**, 「여기서 끝났다」의
+    #   표지 구실도 못 한다(뒤에 줄이 더 있으니 잘린 것과 구분되지 않는다). 종료 요약의
+    #   두 가지 쓸모가 동시에 죽는, 한 줄짜리 순서 결함이었다.
     atexit.register(_log_run_stop)
+    atexit.register(release_own_claims_on_exit)
     try:
         import signal as _signal
 
