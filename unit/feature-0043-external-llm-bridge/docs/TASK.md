@@ -2021,3 +2021,25 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
 - [x] 인라인 적대 3렌즈 `REV-20260901T183000`
 - [ ] 배포 후 라이브 실측 — ① 오래된 러너 프로세스가 실제 종료되는가 ② 연속 연결 시 모달이
       닫히는가
+
+### 완료 체크리스트 — TASK-20260901T190000-ai-jobs-rewire (P0-AK)
+
+- [x] 진단 — `enqueue_*` 가 적재 **전에** 거절(거절 자체는 옳고, **위임 경로가 없었다**) ·
+      반영 함수 3종은 `_STORE_ROUTES` 에 **선언만** 있고 구현 부재
+- [x] `shared/bridge_consent.py` 신설 — 진리표 · `normalize_consent` · 고지 문구 단일 정본
+- [x] 러너 자격 판정을 `shared/bridge_tasks` 로 승격(질의·생존 술어·버전 하한·기능 정규화·
+      프롬프트 편성) — 웹과 **insight-worker** 가 같은 판정을 읽는다
+- [x] `node_analysis` — 게이트를 「둘 중 하나라도」로 · `_delegate_job`(워커는 기다리지 않는다) ·
+      `apply_external_node_analysis`(늦은 답이 최신 값을 덮지 않음 + run 마감)
+- [x] `cluster_label` — 라벨 배치 위임 + 기존 kv 캐시에 기입(다음 pass 캐시 적중)
+- [x] `insight_summary` — 테이블 인사이트 위임 + KV 이음매(다음 cycle 상속 경로가 기존대로 발행).
+      **이름을 "테이블 인사이트 배치" 로 좁혔다** — 스키마·계정 축은 아직 서버 경로뿐이다
+- [x] `dedupe_key` — 결과 오기 전 재적재로 **같은 답을 여러 번 사는 것**을 막는다
+- [x] 배치 동의 웹 토글 — `WebAccounts.BridgeBatchConsent` · 하트비트 응답 · 러너 동적 신고 ·
+      `/api/ai/connect/batch-consent` · '내 AI 연결' 체크박스 + 고지 · 콘솔 `배경 작업 동의 N`
+- [x] 신규 계약 21건(이음매 진리표 포함) · 역검증 13건 FAIL@`d1b2a688`
+- [x] 낡은 계약 테스트 4파일 재작성(3건은 구조를 잠그고 있었고, 1건은 계약 자체가 제보된 결함)
+- [x] `make test` green(컨테이너) · ruff clean · route 골든 +1/-0 · ROUTEMAP 재생성
+- [x] 라이브 오염 확인 — 게이트 통과 테스트가 실제 PG 에 닿던 것을 고치고 `ds1` 잔재 0건 실측
+- [ ] **배포 후 라이브 end-to-end**(사용자 요구) — AC-1~-5. 그래프에서 실제로 눌러 202 →
+      러너 로그 `kind=job` → 원장 `done` → 화면 · 웹 토글 ≤30초 반영 · 동의 0명 표면화

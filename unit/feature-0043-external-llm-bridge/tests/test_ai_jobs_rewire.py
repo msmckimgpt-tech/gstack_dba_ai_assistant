@@ -302,3 +302,69 @@ def test_web_console_only_offers_operator_initiated_kinds():
             break
     else:
         raise AssertionError("delegable_job_kinds 를 찾지 못했다")
+
+
+# ── 5b. 중복 거절이 **말만이 아니라 실제로** 일어나는가 ─────────────────────────
+
+
+class _FakeMySQLCursor:
+    def __init__(self, dup_exists: bool):
+        self._dup = dup_exists
+        self.executed: list = []
+        self._last = None
+        self.rowcount = 1
+
+    def execute(self, sql, params=None):
+        flat = " ".join(sql.split())
+        self.executed.append((flat, params))
+        if flat.startswith("SELECT 1 FROM WebAiTasks"):
+            self._last = (1,) if self._dup else None
+        elif flat.startswith("SELECT COUNT(*)"):
+            self._last = (0,)
+        else:
+            self._last = None
+
+    def fetchone(self):
+        return self._last
+
+    def close(self):
+        pass
+
+
+class _FakeMySQLConn:
+    def __init__(self, dup_exists: bool):
+        self.cur = _FakeMySQLCursor(dup_exists)
+        self.commits = 0
+
+    def cursor(self):
+        return self.cur
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_enqueue_console_job_actually_refuses_a_duplicate():
+    """`dedupe_key` 를 **넘기는 것**과 그것이 **작동하는 것**은 다른 사실이다.
+
+    호출부만 검사하면 `enqueue_console_job` 안의 확인이 통째로 사라져도 통과한다 — 실제로
+    뮤테이션에서 그 뮤턴트가 생존했다. 여기서는 적재를 **돌려서** 결과를 본다.
+    """
+    dup = _FakeMySQLConn(dup_exists=True)
+    with pytest.raises(bt.ConsoleJobRejected):
+        bt.enqueue_console_job(dup, account_id=0, job_kind="cluster_label",
+                               prompt="p", payload={"a": 1}, dedupe_key="k1")
+    assert not any(s.startswith("INSERT INTO WebAiTasks") for s, _ in dup.cur.executed), (
+        "중복인데 적재했다 — 같은 답을 사용자 계정 토큰으로 두 번 사게 된다")
+
+
+def test_enqueue_console_job_proceeds_when_no_duplicate_and_stores_the_key():
+    """중복이 없으면 적재하고, **조회했던 그 키를 payload 에 넣는다**(다음 조회가 찾을 수 있게)."""
+    fresh = _FakeMySQLConn(dup_exists=False)
+    task_id = bt.enqueue_console_job(fresh, account_id=0, job_kind="cluster_label",
+                                     prompt="p", payload={"a": 1}, dedupe_key="k1")
+    assert task_id.startswith("j_")
+    inserts = [(s, p) for s, p in fresh.cur.executed if s.startswith("INSERT INTO WebAiTasks")]
+    assert len(inserts) == 1
+    stored = " ".join(str(x) for x in inserts[0][1])
+    assert "dedupe_key" in stored and "k1" in stored, (
+        "저장한 payload 에 키가 없다 — 다음 pass 의 조회가 이 행을 못 찾아 중복이 돌아온다")
