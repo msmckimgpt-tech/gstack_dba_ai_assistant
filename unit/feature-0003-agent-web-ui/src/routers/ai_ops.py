@@ -283,6 +283,9 @@ def _runner_roster(conn, limit: int = 100) -> dict:
         finally:
             cur.close()
     except Exception as exc:  # noqa: BLE001
+        # `available` 은 False 로 남는다 — 화면이 **「러너 0대」가 아니라 「조회 불가」**로
+        # 말한다. 둘을 합치면 조회 실패 한 번이 "아무도 처리하지 못합니다" 라는 장애 선언이
+        # 된다(이 cycle 이 없애려던 오독과 같은 형태).
         _log.warning("[ai-ops] 러너 명부 조회 실패: %r", exc)
         out["reason"] = "러너 명부를 읽지 못했습니다."
         return out

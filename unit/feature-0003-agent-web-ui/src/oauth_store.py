@@ -908,34 +908,48 @@ def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> l
            features: list[str], agent_version, runner_build, model_count}]`
         — `listening=False` 는 **토큰은 살아 있는데 하트비트가 창 밖**이라는 뜻이다
         (연결은 했고 지금 프로세스가 없다). 그 구분이 조치를 가른다.
+
+    Raises:
+        Exception: 질의 자체가 실패하면 **그대로 올린다**(빈 목록으로 삼키지 않는다).
+
+        ⚠ 첫 작성본은 실패를 `return []` 로 삼켰다. 그러면 호출측이 「러너 0대」와
+        「조회 실패」를 구분할 수 없고, 화면은 빈 목록을 **"연결된 개인 AI 가 없습니다 —
+        들어오는 질문을 아무도 처리하지 못합니다"** 라는 빨간 단정으로 그린다. 조회 실패를
+        장애 선언으로 바꾸는 것은 이 cycle 이 없애려던 오독과 정확히 같은 형태다.
     """
     window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
-    try:
-        cur.execute(
-            # **계정 중복 제거는 파이썬에서 한다.** SQL 로 접으려면 상관 서브쿼리에 같은
-            # 술어를 alias 만 바꿔 한 번 더 써야 하는데(또는 MySQL 의 느슨한 GROUP BY 에
-            # 기대야 하는데), 전자는 술어 사본이 하나 더 생겨 갈릴 준비를 마치고 후자는
-            # 여러 컬럼이 **서로 다른 행**에서 와 실재하지 않는 러너를 만든다.
-            # 정렬이 이미 최신순이므로 첫 등장만 취하면 같은 결과다.
-            "SELECT t.AccountId, a.Username, t.LastHeartbeatAt, "
+    # **계정 중복 제거는 파이썬에서 한다.** SQL 로 접으려면 상관 서브쿼리에 같은 술어를
+    # alias 만 바꿔 한 번 더 써야 하는데(또는 MySQL 의 느슨한 GROUP BY 에 기대야 하는데),
+    # 전자는 술어 사본이 하나 더 생겨 갈릴 준비를 마치고 후자는 여러 컬럼이 **서로 다른
+    # 행**에서 와 실재하지 않는 러너를 만든다. 정렬이 이미 최신순이라 첫 등장만 취하면 같다.
+    def _sql(cols: str) -> str:
+        return (
+            f"SELECT t.AccountId, a.Username, t.LastHeartbeatAt, "
             f"       TIMESTAMPDIFF(SECOND, t.LastHeartbeatAt, {_SQL_NOW}), "
-            "       t.RunnerFeatures, t.RunnerAgentVersion, t.RunnerBuild, t.RunnerCapabilities "
+            f"       t.RunnerFeatures, t.RunnerAgentVersion, {cols} "
             "FROM WebOAuthTokens t "
             "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
             "LEFT JOIN WebAccounts a ON a.Id = t.AccountId "
             f"WHERE {_LIVE_TOKEN_PREDICATE} "
             # NULL 하트비트(한 번도 안 온 러너)를 뒤로 — 앞에 오면 '가장 최근' 이 뒤집힌다.
             "ORDER BY t.LastHeartbeatAt IS NULL, t.LastHeartbeatAt DESC, t.Id DESC "
-            "LIMIT %s",
-            # 계정당 토큰이 여럿일 수 있어 넉넉히 읽고 접는다. 상한이 있는 이유는 관제
-            # 조회 하나가 토큰 테이블을 통째로 끌어오지 않게 하기 위해서다.
-            (max(int(limit), 1) * 8,),
+            "LIMIT %s"
         )
+
+    # 계정당 토큰이 여럿일 수 있어 넉넉히 읽고 접는다. 상한이 있는 이유는 관제 조회 하나가
+    # 토큰 테이블을 통째로 끌어오지 않게 하기 위해서다.
+    params = (max(int(limit), 1) * 8,)
+    try:
+        cur.execute(_sql("t.RunnerBuild, t.RunnerCapabilities"), params)
         rows = cur.fetchall() or []
     except Exception:
-        # 컬럼 부재(구 배포)·질의 실패 — 명부를 못 만든다. 빈 목록이지 "러너 없음" 이
-        # 아니므로, 호출측이 그 차이를 화면에 표현한다.
-        return []
+        # `RunnerBuild` 는 뒤늦게 추가된 컬럼이다(2026-08-31). 그 컬럼 하나가 없다고 명부
+        # 전체를 잃으면 **구 배포에서 이 화면이 통째로 비는데**, 지문 대조는 이 명부가
+        # 답하는 네 질문 중 하나일 뿐이다 — 한 단계 내려가 나머지를 살린다
+        # (`_query_activity` 의 컬럼 사다리와 같은 규율). 그래도 실패하면 위로 올린다.
+        rows = []
+        cur.execute(_sql("'' AS RunnerBuild, t.RunnerCapabilities"), params)
+        rows = cur.fetchall() or []
     out: list[dict] = []
     seen_accounts: set[int] = set()
     for r in rows:

@@ -192,6 +192,84 @@ def test_runner_roster_reports_unavailable_not_empty():
     assert out.get("reason")
 
 
+class _BoomCur:
+    """모든 질의가 실패하는 커서 — 「조회 실패」 경로."""
+    def execute(self, sql, params=None):
+        raise RuntimeError("table missing")
+
+    def fetchall(self):
+        return []
+
+    def close(self):
+        pass
+
+
+class _BoomConn:
+    def cursor(self, *a, **k):
+        return _BoomCur()
+
+    def close(self):
+        pass
+
+
+def test_runner_roster_query_failure_is_not_reported_as_zero_runners():
+    """**조회 실패를 「러너 0대」로 접지 않는다.**
+
+    첫 작성본은 `list_live_runners` 가 실패를 `return []` 로 삼켰다. 그러면 호출측이 두
+    사실을 구분할 수 없고, 화면은 빈 목록을 **"연결된 개인 AI 가 없습니다 — 들어오는 질문을
+    아무도 처리하지 못합니다"** 라는 빨간 단정으로 그린다 — 질의 하나가 실패했을 뿐인데
+    장애를 선언하는 것이고, 이 cycle 이 없애려던 오독과 정확히 같은 형태다.
+    """
+    out = ai_ops._runner_roster(_BoomConn())
+    assert out["available"] is False, "조회 실패가 '러너 0대'(available=True)로 보고됐다"
+    assert out["items"] == []
+    assert out.get("reason"), "왜 못 읽었는지 화면이 말할 근거가 없다"
+
+
+class _StaleSchemaCur:
+    """`RunnerBuild` 컬럼이 없는 구 배포 — 첫 질의만 실패하고 폴백은 성공한다."""
+    def __init__(self, rows):
+        self.rows = rows
+        self.n = 0
+
+    def execute(self, sql, params=None):
+        self.n += 1
+        if self.n == 1 and "t.RunnerBuild" in sql:
+            raise RuntimeError("Unknown column 't.RunnerBuild'")
+        self._ok = True
+
+    def fetchall(self):
+        return self.rows if getattr(self, "_ok", False) else []
+
+    def close(self):
+        pass
+
+
+class _StaleSchemaConn:
+    def __init__(self, rows):
+        self.cur = _StaleSchemaCur(rows)
+
+    def cursor(self, *a, **k):
+        return self.cur
+
+    def close(self):
+        pass
+
+
+def test_runner_roster_survives_missing_runner_build_column(monkeypatch):
+    """`RunnerBuild` 는 뒤늦게 추가된 컬럼이다 — 그것 하나가 없다고 명부 전체를 잃으면
+    구 배포에서 이 화면이 통째로 빈다. 지문 대조는 명부가 답하는 네 질문 중 하나일 뿐이다."""
+    monkeypatch.setattr("routers.ai_tools._deployed_runner_build", lambda: "aaaaaaaaaaaa",
+                        raising=False)
+    rows = [(1, "alice", None, 20, "console_jobs,self_review", "2026.09.01", "", None)]
+    out = ai_ops._runner_roster(_StaleSchemaConn(rows))
+    assert out["available"] is True, "컬럼 하나 부재로 명부 전체를 잃었다"
+    assert out["items"][0]["username"] == "alice"
+    assert out["items"][0]["self_review_capable"] is True
+    # 지문을 모르므로 **대조하지 않는다** — 멀쩡한 러너에게 재설치를 시키지 않는다.
+    assert out["items"][0]["stale_build"] is False
+
+
 # ── ④ 자가 검증 집계 — 미준비와 0건을 가른다 ────────────────────────────────
 
 
