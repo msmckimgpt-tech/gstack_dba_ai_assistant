@@ -2546,3 +2546,64 @@ TASK 체크박스 + TEST Run 행만.
 **미검증 2건을 남긴 이유까지 기록했다** — 러너는 사용자 머신 파일이라 우리 배포로 갱신되지
 않고(서버가 `runner_update.stale_build` 로 알린다), `stalled` 말풍선은 그 상태를 만들 라이브
 조건이 없고 인위 조성은 병렬 세션 6곳과 충돌한다. **모른다고 적는 것이 통과로 적는 것보다 낫다.**
+
+## CHG-20260901T162000-ai-claude-feature-0043-injection-fp-postdeploy — 인젝션 오판 해소 POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-injection-false-positive (CHG-20260901T140000 의 사후 검증)
+- **위험도**: Minor (문서만 — **코드 변경 0**)
+- **배포 대상**: `afcd1a42` (scope=all)
+
+배포본에서 직접 구동해 확인한 것: 서버축 6/6(구획 2종·출처 고지·새 sentinel 위조 판정·
+**오염 대화의 거부턴 제외 실측**) · 러너 배포 도달 4/4(서빙 사본 md5 일치 + 그 파일을 import 해
+`compose_prompt`/`build_cmd` 구동). 잔여는 사용자 왕복 1건.
+
+증적: `docs/test-runs.d/TASK-20260901T140000-injection-false-positive-postdeploy.md`
+(feature-0003 사본 동반 — check #13 대상 파일 소유 feature).
+
+## CHG-20260901T160000-ai-claude-feature-0043-connect-os-default — 기본 OS 탭을 추측에서 관측으로
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-connect-os-default
+- **위험도**: Minor (§12.3 — 비파괴 컬럼 추가 + 화면 기본값. 모든 실패 경로가 종전 동작 복귀)
+- **승인**: 사용자 요청 2026-09-01 (본문 그대로)
+
+### 배경
+
+1단계 명령 탭의 기본 선택이 `navigator.platform` 이었다. 그것은 브라우저가 도는 OS 이고 러너는
+다른 곳에서 돈다 — WSL 안에서 러너를 띄우는 사용자에게는 **항상** Windows 가 뽑혔고, 매번 탭을
+바꿔야 했다. 같은 조합(브라우저 Windows / CLI 는 WSL 안)은 2026-08-28 P0-AD 에서 이미
+「어느 분기도 맞히지 못한다」로 관측된 적이 있다 — 그때는 설치 스크립트의 분기였고 이번은
+화면의 기본값이라, 같은 오류가 다른 층에서 한 번 더 나온 형태다.
+
+### 변경 내용
+
+| 층 | 파일 | 변경 |
+|---|---|---|
+| 러너 | `feature-0043/src/bridge_agent.py` (+ `feature-0003/src/static/agent/` 배포 사본) | `_self_os()` 추가, 하트비트 본문에 `agent_os` |
+| 스키마 | `routers/_bootstrap_schema.py` | `_ensure_bridge_heartbeat_schema` 에 `WebOAuthTokens.RunnerOs` + `WebAccounts.BridgeLastOs` (멱등 · **fast path 에서도 불리는 자리**) |
+| 저장 | `oauth_store.py` | `BRIDGE_OS_FAMILIES` · `normalize_bridge_os` · `account_bridge_os` · `set_account_bridge_os` |
+| 수신 | `routers/ai_tools.py` | 하트비트에서 `agent_os` 파싱 → 기록 (실패는 삼킨다) |
+| API | `routers/oauth_as.py` | `connect_status` · `connect_issue_token` 응답에 `last_os` |
+| 화면 | `static/ai-connect.js` · `static/app/connect-modal.js` | 서버 값 우선, 추측은 폴백, 사용자 선택은 고정 |
+| 테스트 | `feature-0043/tests/test_connect_os_default.py` | 신규 28건 |
+
+### 판단이 갈렸던 지점
+
+- **어디에 저장하나** — 토큰 행(`WebOAuthTokens`)이 아니라 계정(`WebAccounts`). 묻는 질문이
+  「지금 듣고 있는 러너」가 아니라 「마지막으로 연결됐던 것」이라, 토큰에 두면 이 화면이 필요한
+  순간(연결이 끊긴 뒤)에 값이 없다. 같은 이유로 읽기에 신선도 술어를 얹지 않았다.
+- **브라우저 로컬 저장(localStorage)이 아닌 이유** — 요청이 「마지막으로 **연결**되었던 os」다.
+  탭을 눌러 본 것과 실제로 등록한 것은 다르고, 후자만 서버가 안다. 기기를 바꿔도 따라온다.
+- **모르는 값의 처리** — 구 러너는 이 축을 신고하지 않는다. 그 하트비트가 기존 값을 NULL 로
+  밀지 않게 했고, 화면도 `""` 를 `posix` 로 접지 않는다.
+
+### 적대 리뷰가 되돌린 설계 (REV-20260901T163000)
+
+초판은 계정 컬럼 하나에 "값이 다르면 쓴다" 였다. codex 가 두 가지를 깼다 — ① ALTER 를 slow path
+에만 둬서 **기존 운영 DB 에는 컬럼이 생기지 않고**(기능이 영구 폴백), ② 같은 계정에 러너가 둘이면
+30초마다 값이 뒤집혀 **PowerShell 로 재등록해도 WSL 러너가 되돌린다**(요청 시나리오가 그대로 깨진다).
+
+그래서 (a) ALTER 를 fast path 도 타는 `_ensure_bridge_heartbeat_schema` 로 옮기고, (b) 토큰 행
+`RunnerOs` 를 한 겹 두어 **연결 사건일 때만** 계정에 반영하도록 바꿨다. (b) 는 덤으로 폐기 토큰의
+계정 쓰기(P2-5)까지 막는다 — 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문이다.

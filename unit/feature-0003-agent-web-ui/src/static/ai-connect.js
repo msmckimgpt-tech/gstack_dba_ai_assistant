@@ -22,7 +22,36 @@
   // feature-0043 P0-AC: 서버가 준 원클릭 명령 {posix, windows, protocol}. 화면은 표시만 한다 —
   // 여기서 조립하면 무결성 값이 빠지고(브라우저는 모른다) 모달과 문안이 갈린다(P0-X).
   var launch = null;
-  var osTab = /win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix";
+  // 기본 탭은 **마지막으로 연결됐던 OS** 다 (사용자 요청 2026-09-01).
+  //
+  // 종전에는 `navigator.platform` 으로 정했는데, 그것은 **브라우저가 도는 OS** 이지 러너가 도는
+  // OS 가 아니다. WSL 안에서 러너를 띄우는 사용자는 Windows 브라우저로 이 화면을 보므로 항상
+  // PowerShell 명령이 먼저 뽑혔고, 매번 탭을 바꿔야 했다("windows가 항상 기본적으로 선택된 상태").
+  //
+  // 서버가 러너 신고로 아는 사실(`last_os`)을 쓰고, **그것이 없을 때만** 종전 추측으로 돌아간다 —
+  // 아직 한 번도 연결하지 않았거나 구 러너라 신고가 없는 경우다.
+  var osGuess = /win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix";
+  var osTab = osGuess;
+  //: 사용자가 탭을 직접 누른 뒤에는 서버 값이 그 선택을 덮지 않는다 — 화면이 손 밑에서 바뀌면
+  //: 방금 고른 명령이 아닌 것을 복사하게 된다.
+  var osTabPinned = false;
+  //: 지금 탭을 정한 근거의 등급. 낮은 등급의 **늦은** 응답이 높은 등급을 덮지 못한다 —
+  //: 페이지 로드 직후 발급을 누르면 상태 조회가 발급 응답보다 늦게 도착할 수 있고, 그때 이미
+  //: 그려진 명령이 손 밑에서 바뀐다(codex 적대 리뷰 P2-4).
+  //: 0 = 브라우저 추측 · 1 = 상태 조회 · 2 = 발급 응답(명령을 함께 실어 온 그 응답).
+  var osRank = 0;
+
+  /** 서버가 아는 「마지막으로 연결된 OS」를 기본 탭에 반영한다. 모르면 그대로 둔다. */
+  function adoptLastOs(value, rank) {
+    if (osTabPinned) { return; }
+    var r = Number(rank || 0);
+    if (r < osRank) { return; }
+    var v = String(value || "");
+    if (v !== "posix" && v !== "windows") { return; }
+    osRank = r;
+    osTab = v;
+    paintOsTab();
+  }
 
   function paintOsTab() {
     var isWin = osTab === "windows";
@@ -97,6 +126,7 @@
 
   function init(info) {
     endpoint = info.endpoint || "";
+    adoptLastOs(info && info.last_os, 1);
     if (!info.logged_in) { showLoggedOut(); return; }
     $("connectLead").textContent =
       (info.display_name || info.username || "") + " 계정 · 웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
@@ -133,6 +163,8 @@
         var probe = (launch && launch.probe) || "";
         $("probeText").textContent = probe;
         $("probeBox").hidden = !probe;
+        // 발급 응답이 실어 온 값이 더 최신이다 — 이 화면을 열어 둔 사이에 연결했을 수 있다.
+        adoptLastOs(r.body && r.body.last_os, 2);
         paintOsTab();
         $("handoffResult").classList.remove("aic-hidden");
         say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
@@ -155,6 +187,6 @@
   $("copyCmd").addEventListener("click", function () {
     copy((launch && launch[osTab]) || "", "복사했습니다. 터미널에 붙여넣고 실행하세요.");
   });
-  $("tabPosix").addEventListener("click", function () { osTab = "posix"; paintOsTab(); });
-  $("tabWin").addEventListener("click", function () { osTab = "windows"; paintOsTab(); });
+  $("tabPosix").addEventListener("click", function () { osTab = "posix"; osTabPinned = true; paintOsTab(); });
+  $("tabWin").addEventListener("click", function () { osTab = "windows"; osTabPinned = true; paintOsTab(); });
 })();

@@ -116,6 +116,20 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260901T0530-connect-modal-transition 명령 경로·«업데이트 필요» 갱신도 닫히도록 판정 축 교체 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (배포 후 POST-DEPLOY 실측 — `docs/test-runs.d/TASK-20260901T0530-connect-modal-transition.md`)**
+
+- **제보 재현**: 같은 테스트를 **현재 라이브 배포본**에 태우면 **6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4)
+  — 사용자가 말한 두 상황이 코드로 확인된다. 수정본 **39/0 PASS**.
+- **두 요청은 같은 뿌리**: 기준선을 «창을 열 때 고정» 한 것(명령 경로)과 판정 축이 `listening`
+  한 축뿐이었던 것(업데이트 갱신). 기준을 **직전 관측**으로, 축을 **«쓸 수 있는 상태»**
+  (`listening && !runner_stale`)로 올려 둘을 한 규칙으로 덮는다.
+- **뮤테이션**: stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→**H5** / msg-flat-auto→I2d·I3b /
+  epoch 검증 전 `_lastObs` 갱신(codex P1 되돌림)→**J1**.
+- **codex 적대 리뷰**: 1R **P1 1건**(늦은 응답이 다음 창의 «직전 관측» 을 오염 → 일어나지 않은
+  전이) → 창 세대가 다르면 **기록조차 하지 않도록** 수정 + J1 신설 → 확인 라운드.
+- **미잠금(정직 표기)**: 실행 경로의 문구 분기와 `_lastObserved.ok` 의 stale 검사는 뮤턴트가
+  생존한다(자동 경로가 먼저 판정을 끝내 도달 희박 — 방어적 중복).
+
 ### 20260901T1200-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행 여백 (Minor §12.3, 2026-09-01, feature-0003 프론트 배치 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md` · 배포 전 단계는 라이브 페이지에 변경본 CSS 주입 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
 
 - **제보 재현**: 배포본 실측에서 `.composer-footer` 의 computed display 가 `flex` — 상태·힌트가
