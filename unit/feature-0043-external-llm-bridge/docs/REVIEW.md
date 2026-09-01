@@ -2277,3 +2277,10 @@ codex 판정은 미산출이므로 「독립 검증을 받았다」고 적지 �
 - Reason: 코드 변경 0 — POST-DEPLOY 증적 문서 + TASK 체크박스 + TEST Run 행만. 검증 대상 코드는
   `REV-20260901T144500-orphan-claim-reclaim` 에서 이미 적대 검토(P1 4건 적발·전건 수정)를 거쳤다.
 - Timestamp: 2026-09-01T15:00:00+09:00
+
+## REV-20260901T162000-ai-claude-feature-0043-injection-fp-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- **일시**: 2026-09-01
+- **범위**: 문서 3파일(TASK·REPORT·MODIFY) + test-runs.d fragment 2사본. **코드 변경 0**.
+- **판정**: 적대 패널 비대상 — 라이브 실측 결과를 옮겨 적은 기록이며 새 동작을 도입하지 않는다.
+  선행 cycle 의 검토 기록은 `REV-20260901T150000 [SKIPPED:tool-quota:codex]`.

@@ -2546,3 +2546,17 @@ TASK 체크박스 + TEST Run 행만.
 **미검증 2건을 남긴 이유까지 기록했다** — 러너는 사용자 머신 파일이라 우리 배포로 갱신되지
 않고(서버가 `runner_update.stale_build` 로 알린다), `stalled` 말풍선은 그 상태를 만들 라이브
 조건이 없고 인위 조성은 병렬 세션 6곳과 충돌한다. **모른다고 적는 것이 통과로 적는 것보다 낫다.**
+
+## CHG-20260901T162000-ai-claude-feature-0043-injection-fp-postdeploy — 인젝션 오판 해소 POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-injection-false-positive (CHG-20260901T140000 의 사후 검증)
+- **위험도**: Minor (문서만 — **코드 변경 0**)
+- **배포 대상**: `afcd1a42` (scope=all)
+
+배포본에서 직접 구동해 확인한 것: 서버축 6/6(구획 2종·출처 고지·새 sentinel 위조 판정·
+**오염 대화의 거부턴 제외 실측**) · 러너 배포 도달 4/4(서빙 사본 md5 일치 + 그 파일을 import 해
+`compose_prompt`/`build_cmd` 구동). 잔여는 사용자 왕복 1건.
+
+증적: `docs/test-runs.d/TASK-20260901T140000-injection-false-positive-postdeploy.md`
+(feature-0003 사본 동반 — check #13 대상 파일 소유 feature).

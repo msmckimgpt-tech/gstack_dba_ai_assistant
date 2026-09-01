@@ -1615,11 +1615,17 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
 
 <!-- PLAN-APPROVED by mckim on 2026-09-01 -->
 
-- [ ] S1~S4 — `session_guard`: principal 요청 구획 · 대화이력 구획 · 위조 제거 확대 ·
+- [x] S1~S4 — `session_guard`: principal 요청 구획 · 대화이력 구획 · 위조 제거 확대 ·
       인젝션-거부 탐지(양방향 오탐 계약)
-- [ ] S5~S8 — `ai_tools`: claim_request 각인 교체 · 거부턴 맥락 제외 · 출처 preamble ·
+- [x] S5~S8 — `ai_tools`: claim_request 각인 교체 · 거부턴 맥락 제외 · 출처 preamble ·
       submit_answer 탐지·안내
-- [ ] R1~R4 — `bridge_agent`: 운영자 지침을 `--append-system-prompt` 실채널로 · 토큰을
+- [x] R1~R4 — `bridge_agent`: 운영자 지침을 `--append-system-prompt` 실채널로 · 토큰을
       `BRIDGE_TOKEN` 환경변수로 · 자식 CLI 중립 cwd · 역할변경 문형 제거
-- [ ] 단위 테스트 + `make test`
-- [ ] 배포 후 라이브 재현 검증
+- [x] 단위 테스트 + 전량 pytest rc=0 (신규 35건 · 뮤테이션 3종 KILL) · ruff clean
+- [x] 자체 적대 검토 P1 1건 적발·수정(새 sentinel 위조가 들어오는 쪽 판정에서 누락)
+      — 독립 패널은 codex 사용량 한도로 미수행(`REV-20260901T150000 [SKIPPED:tool-quota:codex]`)
+- [x] 배포 `afcd1a42` (scope=all · 엣지 무중단 0건) + **POST-DEPLOY 실측 서버축 6/6 ·
+      러너 배포 도달 4/4** — ⭐ 오염됐던 그 대화(`20260901030637-95dc8844`)의 맥락 조립에서
+      거부턴 2건이 실제로 빠지고 제외 고지가 실린다(고착 해제 실증)
+- [ ] 사용자 왕복 1건 — 같은 대화 재질문이 거부문이 아닌 실제 리뷰인지(러너를 띄운 본인만 가능).
+      러너측 효과는 화면 「연결 준비」 재실행 후 발효
