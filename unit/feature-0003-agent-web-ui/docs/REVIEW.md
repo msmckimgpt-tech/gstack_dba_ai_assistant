@@ -6330,3 +6330,9 @@ baseline-first-obs→G1 / announced-guard→E3 / clearinterval→E2b·F2a·F2b.
 - **미러 vs 정본 수렴**: 직전 08-28 블록이 「'답변 모델'·'추론 강도' 를 러너 신고 기반으로 **되살렸다**」로 단정했으나 창의 `d35f78dd` 가 그 두 칸이 **여전히 비어 있었음**을 고쳤다. 과거 블록은 그 시점 사실의 기록이므로 고치지 않고, 신규 항목에서 「8월 28일 안내에서 '되살렸다' 고 알려 드린 그 두 칸이 실제로는 여전히 비어 있던 문제」로 **재발을 명시**해 수렴했다.
 - **cache-buster**: 수기 bump 없음. 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며 `bin/deploy-web.sh` 가 baked 이미지의 placeholder 잔존을 ABORT 한다(정본 `docs/CONVENTIONS.md:568`). 이번 run 의 cron wrapper 지시문이 '캐시버스터 bump 를 같은 커밋에 포함하라' 고 명시했으나 저장소 정본과 정면 충돌하므로 따르지 않았다 — 수기 bump 는 배포를 죽인다.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**.
+
+## REV-20260901T101500-ai-claude-feature-0003-attach-lineage-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (doc/test-only)
+- Related TASK: feature-0003-agent-web-ui (20260901T101500-attach-lineage-postdeploy)
+- Reason: 변경 경로가 `docs/**` 전용(코드·스키마·권한·UI 마크업 델타 0) — §18.8 dispatch 표 첫 행(비정책 doc-only) → panel SKIP.
+- 선행 cycle 의 검증 원장은 REV-20260831T210000 [CODEX] 2라운드로 이미 종결됐고, 본 entry 는 그 배포본 실증을 기록만 한다.
+- Timestamp: 2026-09-01T10:15:00+09:00

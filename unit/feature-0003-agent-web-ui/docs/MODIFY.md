@@ -5020,3 +5020,11 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - 재발 명시 1건: 08-28 블록의 「되살렸다」 단정을 창의 `d35f78dd` 가 반증 — 과거 블록 불가침 원칙대로 새 항목에서 경위를 밝혀 수렴.
 - Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 56→**57** · `generated`=="2026-08-31"==`releases[0].date` · `releases[0].items` **14** + summary · `releases[1]`(2026-08-28) items 15 불변 · **08-28 이하 tail 바이트 동일**(9,045B 순증) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 18패턴 **0건**
 - Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+
+## CHG-20260901T101500-attach-lineage-postdeploy 계보 가시성 재설계 POST-DEPLOY 증적
+- 라이브 배포본 `2f09d755` 에서 PB-0008 재확인: 모듈 스탬프 `2e71f760557a`(신 코드 로드) · 그룹 카드 2 · 카드 안 행 4 · 분기 2 · `role=group` + 그룹 aria-label · 행 접근성 이름에 계보 정체성 · 대비 테두리 `rgb(168,165,152)`/레일 `rgb(140,138,124)` · 그룹 비교 클릭 1회 → 축 `time` · `사용자 업로드 v1 · 현재` → `AI 수정본 v2` · `+182 / -21`.
+- 배포 상태: web-a/b·insight·ask·ops-scheduler·ext-tool-mcp-a/b **전 서비스 동일 SHA** · surge 잔존 0 · `no upstreams available` **0건**(무중단 실측) · 대화 스모크 PASS.
+- 인프라 조건 2건 기록(본 변경 무관): ① Caddy `docker exec` 파손(`procReady not received`)을 deploy-web preflight 가 **rootCA 불일치로 오진**해 ABORT — `docker restart repo-caddy-1` 로 복구 후 완주(Caddy 는 그 시점에도 정상 서빙) ② GitHub Actions 가 결제/지출한도로 **전 저장소 red**(job 미시작, step 0개·3초 failure — main 도 동일)이라 CI 게이트가 무력, 결제 조치 전까지 같은 판단이 반복된다.
+- Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/TEST.md`, `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md`(신규).
+- Reason: changed paths are docs only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-09-01T10:15:00+09:00

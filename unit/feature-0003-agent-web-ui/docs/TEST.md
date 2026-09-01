@@ -3584,3 +3584,13 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 누출 스캔(18패턴 — feature-id / 브리지·러너·워커·핸들러 / Schannel·BOM·WSL·winget / `bridge_*` / 파일확장자 / payload·JSON / 폴링 / 배포본 / `Kind=` / `wired`): 신규 14항목 + summary 구간 **전건 0건**.
 - reconcile-first 실측(run 시작 시점): 서빙 `https://mysql-ai.company.local/static/release-notes-data.js` 200 · 329,914B · `origin/main` blob 과 **바이트 동일** → 파리티 갭 0. `repo/` main checkout clean · HEAD == `origin/main` == `f62aa92f`.
 - **Pass/Fail: PASS**.
+
+### Run — TASK-20260901T101500-attach-lineage-postdeploy (POST-DEPLOY)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. 라이브 배포본 `2f09d755`
+  (`https://localhost/`, 격리 컨테이너 아님). 모듈 스탬프 `2e71f760557a` 로 신 코드 로드 확인.
+- 그룹 카드 2 · 카드 안 행 4 · 분기 2 · `role=group` · 행 접근성 이름에 계보 정체성 · 대비
+  테두리 `rgb(168,165,152)`/레일 `rgb(140,138,124)` · 그룹 비교 클릭 1회 → 축 `time` ·
+  `사용자 업로드 v1 · 현재` → `AI 수정본 v2` · `+182 / -21`.
+- 배포 상태: 전 서비스 이미지 **동일 SHA** · surge 잔존 0 · `no upstreams available` **0건**.
+- 증적: `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md`
