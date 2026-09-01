@@ -710,96 +710,8 @@
   font-weight: 600;
 }
 
-/* Details / expand block */
-.message-details {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.message-details summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-size: 12px;
-  user-select: none;
-}
-
-/* steps-result-split (2026-09-01): 상세 본문은 **스크롤하지 않는다**.
- *
- * 사용자 제보: "'▼ 쿼리 결과' 를 펼쳤을 때, 각 단계와 결과셋 범위를 분리해주세요.
- * **스크롤 대상은 각 단계 뿐입니다.**"
- *
- * 직전(2026-08-31)에는 이 컨테이너 전체가 한 개의 스크롤 패널이었다. 페이지가 과도하게
- * 늘어나는 문제는 그것으로 잡혔지만, 정작 보려던 **결과셋까지 그 스크롤 안에 갇혔다** —
- * 단계가 많을수록 결과셋을 찾아 굴려야 했다. 이제 상한은 **단계 목록**만 갖고
- * (`.step-detail-list`), 결과셋은 그 아래에 온전한 높이로 놓인다.
- *
- * 페이지 높이는 여전히 유계다 — 단계 목록(상한) + SQL 블록(min 40vh/320px) + 결과 표
- * (min 60vh/460px, 기본 접힘)이 각자 자기 상한을 갖기 때문이다. 그 상한들은 이 개편 이전부터
- * 있던 것이라, 바깥 캡을 걷어도 원래 증상으로 돌아가지 않는다(회귀 테스트가 잠근다). */
-.message-details-body {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
-/* steps-result-split: **유일한 스크롤 대상** — 단계 목록.
-   최대 높이 고정, 최소 높이 제한 없음(짧으면 짧은 대로). 안쪽에 중첩 스크롤러가 없다 —
-   이 목록의 카드는 `compact` 로 그려져 SQL 블록·결과 미리보기를 담지 않는다(중첩 함정
-   원천 부재). */
-.step-detail-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  max-height: min(38vh, 300px);
-  overflow-y: auto;
-  /* 목록 끝에서 페이지로 스크롤이 새지 않게. */
-  overscroll-behavior: contain;
-}
-
-/* steps-result-split: 결과셋 범위 — **스크롤 대상이 아니다**.
-   안쪽 SQL 블록·결과 표의 자체 상한만 유지한다(그 둘은 각자 스크롤한다). */
-.sql-result-group.is-result-range {
-  min-width: 0;
-}
-
-.message-detail-block {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.message-detail-block strong { font-size: 12px; color: var(--text-2); }
-
-.message-detail-block ul {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--text-muted);
-}
-
-.message-detail-block li { margin-bottom: 3px; }
-
-/* SQL 쿼리 + 결과 테이블 그룹 */
-.sql-result-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.sql-result-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--text-muted);
-}
-
+/* 답변 본문의 ```sql 코드블록(`enhanceSqlBlocks`). 말풍선 여닫이 제거(2026-09-01)
+   이후 남은 유일한 소비처다 — 「단계 보기」 패널은 `.step-sql` 을 쓴다. */
 .sql-block {
   padding: 10px 12px;
   border-radius: var(--r-sm);
@@ -939,13 +851,8 @@
 }
 .message-link:hover { background: var(--primary-soft); color: var(--primary); border-color: rgba(37,99,235,.2); }
 
-/* SQL 쿼리 — 항상 표시 */
-.sql-toggle-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* 「단계 보기」 패널 카드의 결과셋 토글 버튼(`buildStepDetailEl`).
+   말풍선 여닫이가 제거된(2026-09-01) 뒤로 이 두 규칙의 소비처는 그 패널뿐이다. */
 .sql-toggle-btn {
   align-self: flex-start;
 }
@@ -954,20 +861,6 @@
 .sql-result-toggle-wrap {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.sql-result-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* SQL 결과 액션 영역 (전체 데이터 보기 + CSV 링크) */
-.sql-result-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   gap: 6px;
 }
 
@@ -993,86 +886,6 @@
 .result-table-wrap.is-full-data {
   max-height: min(70vh, 560px);
   overflow: auto;
-}
-
-/* SQL 쿼리 Navigator — 다수 execute_sql step을 한 화면에서 탐색 */
-.sql-navigator {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  padding: 8px;
-  background: var(--bg);
-  outline: none;
-  min-width: 0;
-}
-.sql-navigator:focus-visible {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
-}
-
-.sql-nav-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.sql-nav-btn {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background .12s ease, border-color .12s ease;
-}
-.sql-nav-btn:hover:not(:disabled) {
-  background: var(--primary-soft);
-  border-color: rgba(37,99,235,.2);
-  color: var(--primary);
-}
-.sql-nav-btn:disabled {
-  opacity: .4;
-  cursor: default;
-}
-
-.sql-nav-indicator {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text);
-  min-width: 64px;
-  text-align: center;
-}
-
-.sql-nav-context {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-left: auto;
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sql-nav-panels {
-  display: block;
-}
-
-.sql-nav-panel {
-  display: none;
-  min-width: 0;
-}
-.sql-nav-panel.is-active {
-  display: flex;
 }
 
 /* ─── Composer ───────────────────────────────────────────────────── */

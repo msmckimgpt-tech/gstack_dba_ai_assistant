@@ -8,6 +8,41 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T133000-remove-query-result-details [SKIPPED:upstream-tool-carveout] — 말풍선 「▼ 쿼리 결과」 여닫이 제거
+
+- **Trigger**: `UI/화면/레이아웃` keyword matched (사용자 요청이 말풍선 표시면 제거) →
+  §18.8 표상 required subagents = `ux, design`.
+- **채널 불가 2건 (실측)**:
+  1. `codex exec` — `ERROR: You've hit your usage limit … try again at 3:44 PM`(2026-09-01
+     14:20 KST 시도). 프롬프트 조립·diff 전달까지 정상 수행 후 상류 한도로 반환.
+  2. `ux` · `design` subagent — **이 저장소에 정의가 없다**(`.claude/agents/` 에는
+     `improve-fit-reviewer` 뿐). 표가 지정한 두 도메인을 호출할 실체가 부재하다.
+- **carve-out**: 위 두 사실을 사용자에게 제시하고 선택을 받았다 —
+  「carve-out 승인 후 진행」(2026-09-01). 선례: `REV-20260901T031500` ·
+  `REV-20260901T020746` 의 같은 태그.
+- **입력 측 ADR 전달**(§18.8): 대상 diff + 「의도된 구성」 3건(제거는 사용자 결정 · CSV 소실은
+  고지 후 수용 · `share.js` 는 범위 밖)을 codex 프롬프트에 명시했다. 재실행 시 그대로 쓴다.
+
+### 자체 적대 점검 — 결함 2건 적발 (패널 대체 아님, 보완)
+
+패널을 대신한다고 주장하지 않는다. 아래는 「제거 변경」 고유의 실패 모드 5축을 스스로 겨눈
+결과이며, **2건이 실제로 걸렸다**.
+
+| 축 | 결과 |
+|---|---|
+| 제거 후 조용히 no-op 이 되는 배선 | **적발 → 수정**: `_renderBridgeSteps` 가 여닫이만 그리고 있었다. 그냥 지웠다면 진행 중 말풍선에 단계 진입로가 **0** 이 된다(placeholder 는 `meta.steps` 없이 그려져 app.js 가 버튼을 붙이지 못한다). 패널 갱신 + 버튼 «없으면 생성» 으로 교정. |
+| 제거된 심볼/CSS 잔재 참조 | **적발 → 수정**: `messageLogEl` 이 미사용 import 로 남았다(제거된 스크롤 앵커 전용). 그 외 잔재 0 — 함수 9종·CSS 12규칙 전수 grep 로 확인(`share.js` 의 동명 함수는 그쪽 **자체 사본**이며 범위 밖). |
+| 남은 표시면 진입로 부재 경계 | 위 수정으로 닫힘. 구조 단언으로 잠금(`test_bubble_always_offers_an_entrance_to_the_panel`). |
+| 테스트가 항진명제인가 | 부재 단언 6종은 **제거 전 코드에서 전부 FAIL** 하는 형태(`"function renderMessageDetails(" not in src`)라 항진이 아니다. 존재 단언(`bubble.appendChild(fresh)`)도 마찬가지. |
+| 고지되지 않은 동반 소실 | **적발 → 고지**: 구형 메시지 폴백(`meta.sql` → 「실행 SQL」, `meta.csv_paths` → 「결과 파일」)도 이 블록 안에 있었고, 그런 메시지는 `meta.steps` 가 없어 「단계 보기」 버튼조차 없다 → **대체 표시면 부재**. 결정 시 고지된 손실은 CSV 2건뿐이었으므로 TASK/REPORT 에 기록하고 사용자에게 별도 보고했다. |
+
+### 잔여 리스크 (숨기지 않는다)
+
+- ux/design 관점의 **독립** 검토는 받지 못했다. 위 표는 같은 작성자가 자기 변경을 본 것이고,
+  「방어를 넣었다 ≠ 방어가 성립한다」는 자체 검토가 구조적으로 약한 축이다.
+- 브리지 **진행 중** 화면의 라이브 관측이 없다(개인 AI 러너 미연결). 구조 단언까지만 잠겼다.
+- POST-DEPLOY 부재 확인 4항목은 배포 후 수행 — 미수행 상태에서 완료를 선언하지 않는다.
+
 ## REV-20260901T121000-interrupt-preserve-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
 
 - **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + TASK/MODIFY/REPORT).

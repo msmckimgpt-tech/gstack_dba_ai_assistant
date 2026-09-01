@@ -1,4 +1,4 @@
-import { renderMessageContent, renderMessageDetails, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
+import { renderMessageContent, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange } from "./app/connect-modal.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
@@ -3120,10 +3120,9 @@ export function renderMessages() {
     bubble.appendChild(content);
 
     if (role === "assistant") {
-      const details = renderMessageDetails(message.meta || {});
-      if (details) {
-        bubble.appendChild(details);
-      }
+      // 말풍선 안 「▼ 쿼리 결과」 여닫이는 제거됐다(2026-09-01 사용자 결정) — 단계·SQL·
+      // 결과셋의 유일한 표시면은 아래 「단계 보기」 버튼이 여는 사이드 패널이다.
+      //
       // meta.steps 가 있는 모든 assistant 말풍선에 "단계 보기" 버튼 부착.
       // 진행 중(state.pendingBubble) 여부와 무관하게 항상 부착한다 — 이전 답변의
       // 영속 step 은 새 요청이 진행 중이어도 그대로 유효하므로, 대화 중 새 요청을
