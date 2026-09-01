@@ -5179,7 +5179,13 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Cross-ref: TASK.md `20260901T1200-ai-conn-chip-to-profile-row` · 칩 도입 cycle
   `feature-0043 P0-AB`(2026-08-28)
 - Timestamp: 2026-09-01T12:00:00+09:00
+## CHG-20260901T125600-glossary-tier-postdeploy — 통용범위 축 POST-DEPLOY 증적
 
+`docs/test-runs.d/CHG-20260901T120000-glossary-term-tier.md` 에 `Environment: Windows-browser`
+Run 추가. **런타임 코드 변경 0** — 배포본 `40340f53` 에서 실측한 결과만 기록한다.
+
+앞 cycle 이 시각검증을 이월한 사유(「alembic 0058 적용 전에는 목록 조회가 503 이라 배포 전
+검증이 무의미」)가 해소돼 그 약속을 이행했다. 확인 6항목 전건 PASS — 상세는 fragment.
 ## CHG-20260901T125500-aiops-realign-postdeploy — 재편 POST-DEPLOY 실측 증적
 
 코드 변경 0 (증적만). 배포본 `2ac3ca0e` 라이브 실측 — 배포 게이트 8항 전건 PASS,

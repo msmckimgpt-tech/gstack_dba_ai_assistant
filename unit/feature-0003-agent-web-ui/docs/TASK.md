@@ -12446,3 +12446,16 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
       성공 통로가 합쳐지며 사라졌다. 무중단 blip 0.
       증적: `docs/test-runs.d/TASK-20260901T0330-connect-modal-launch-close-postdeploy.md` +
       `docs/evidence/connect-modal-autoclose/pd2-*.png`
+
+## 20260901T1256-glossary-tier-postdeploy — 통용범위 축 POST-DEPLOY 시각검증
+
+선행 cycle(`20260901T1200-glossary-term-tier`)이 배포 전에는 검증할 수 없다고 명시한 항목의
+이행. **코드 변경 0 — 증적 기록 전용.**
+
+- [x] alembic `0058_glossary_term_tier` 라이브 적용 확인 (기존 732행 backfill 무손실)
+- [x] 등록 폼 「통용 범위」 select 노출 + scope 별 기본값(제품→product / 공용→org)
+- [x] 전역 상속 행 7건이 `전역 상속 · 여기서 편집 불가` 배지 + 편집 불가(role 속성 부재)
+- [x] 검토 큐 상태 필터에 `일반 용어로 제외됨` 노출
+- [x] 배포 체크리스트 [1][2][1b][2b][5] — 엣지 `no upstreams available` 0건
+- [ ] 소급 정리 실적용 (범용 69행·중복 36행) — **사용자 재승인 대기**
+- [ ] `#GLOSSARY:` 라이브 왕복 — 러너 갱신 후 관측

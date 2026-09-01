@@ -6650,3 +6650,14 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
   재측정해 POST-DEPLOY fragment 로 남긴다.
 - **칩이 화살표 뒤에 선다** — 사용자 스크린샷이 지목한 자리는 화살표 앞이었으나, 그 배치는
   긴 계정명이 화살표 밑으로 들어가는 실측 결함을 낳아 되돌렸다. 완료 보고에 명시한다.
+
+## REV-20260901T125600-ai-claude-glossary-tier-postdeploy [SKIPPED:non-policy-doc] — 증적 기록 전용
+
+- Related TASK: feature-0003-agent-web-ui (`20260901T1256-glossary-tier-postdeploy`)
+- Reason: changed paths are docs only (test-runs.d fragment · TASK · MODIFY) — 정책 doc 밖,
+  런타임 코드 변경 0. 코드 리뷰는 선행 cycle `REV-20260901T120000-ai-claude-metadata-term-scope`
+  가 마쳤고 이후 코드 불변(배포본 `40340f53` 그대로).
+- Timestamp: 2026-09-01T12:56:00+09:00
+- 기록된 사실의 근거: `alembic_version=0058_glossary_term_tier` · 제품 목록 239건 중 상속 7건 ·
+  폼 select 3선택지 · 큐 필터 6선택지 · 캡처 3장(`artifacts/pb0008-glossary-term-tier/`) ·
+  배포 체크리스트 [1][2][1b][2b][5] 통과(`no upstreams available` 0건).
