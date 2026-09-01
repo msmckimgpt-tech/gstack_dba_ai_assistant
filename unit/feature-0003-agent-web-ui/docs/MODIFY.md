@@ -5048,3 +5048,12 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Cross-ref: TASK.md `20260901T0330-connect-modal-launch-close` · 직전 cycle
   `CHG-20260831T1827-connect-modal-autoclose`
 - Timestamp: 2026-09-01T03:30:00+09:00
+
+## CHG-20260901T040500-launch-close-postdeploy POST-DEPLOY 실측 증적 (docs-only)
+- 배포본 `ead6e30f` 에서 **제보 경로를 그대로 클릭**해 확인 — 이미 «대기 중» 인 상태에서 모달을
+  열고 「연결 준비」 후 `[내 AI 실행]` → `modal_hidden:true` + 토스트 「내 AI가 연결되었습니다…」.
+  배포 전 같은 절차에서는 창이 남고 「대기 중입니다」 문구만 떴다(= 사용자가 받은 화면).
+- 무중단 blip 0 · 자산 `?v=caa9885f1a64`.
+- Files: `docs/{REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-launch-close-postdeploy.md`,
+  `docs/evidence/connect-modal-autoclose/pd2-*.png`. 코드 변경 0.
+- Timestamp: 2026-09-01T04:05:00+09:00

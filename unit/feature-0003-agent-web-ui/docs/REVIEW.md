@@ -6396,3 +6396,14 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
   경로(「연결 준비」 재클릭)가 있다.
 - `_gateInFlight` 해제 전용 단언 없음(직전 cycle 잔여 P2) — 변동 없음.
 - `ux`/`design` 도메인 심사 미수행 — 세션 도구 제약(§18.8.2 carve-out).
+
+## REV-20260901T040500-launch-close-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0330-connect-modal-launch-close`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T04:05:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `ead6e30f` 에서 제보 경로(기준선 true + 실행 버튼 클릭) → `modal_hidden:true`
+  + 토스트 1건. 제보하신 「대기 중입니다」 문구는 성공 통로가 합쳐지며 사라졌다.
+- **미수행(정직 표기)**: 실 러너 기동 end-to-end. 조회·토큰 응답을 가로챈 프론트엔드 계약
+  검증이며 검증 후 브라우저를 원상 복구했다.
