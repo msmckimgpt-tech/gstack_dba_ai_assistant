@@ -118,5 +118,32 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - 테스터 설치 번들 갱신: `bash bin/trust-bundle.sh` → `artifacts/trust-bundle/`. 서빙: `http://<host>/trust/`
 - 번들 라이브 검증: `curl http://<host>/trust/install-trust-windows.bat` → 200
 
+### 만료 감시 — 게이트와 감시는 다른 축이다 (2026-09-01)
+
+`bin/deploy-web.sh` 의 `preflight_tls()` 가 leaf 만료를 보지만 그것은 **배포할 때만** 돈다.
+배포가 없으면 신호도 없고, 그 사이 만료되면 **첫 신호가 전면 outage** 다. 그리고 그 preflight 는
+**Root CA 를 아예 보지 않는다** — CA 만료는 테스터 전원 재설치라 회복 비용이 훨씬 크다.
+
+| 축 | 실행 시점 | 대상 | 임계 | 실패 시 |
+|---|---|---|---|---|
+| `deploy-web.sh preflight_tls` (게이트) | 배포 직전 | leaf | 14일 | WARN 후 배포 계속 |
+| `bin/cert-expiry-check.sh` (감시) | 주기(cron 주 1회) | **leaf + Root CA** | leaf 30일 / CA 180일 | exit 1(WARN)·2(CRIT) → cron 메일 |
+
+- ⚠ **감시 임계는 게이트보다 넓어야 한다.** 좁으면 게이트가 먼저 울려 감시가 아무것도 더해
+  주지 않는다 — 스크립트가 `--leaf-warn < 14` 를 **거절**하고, 두 파일의 상수 관계를 테스트가 잠근다.
+- `--live <host>` 로 **실제 서빙본**도 함께 본다. 디스크 cert 를 갱신하고 배포하지 않으면
+  사용자가 받는 것은 여전히 옛 cert 다 — 파일만 보면 그 창을 못 본다.
+- 설치: `bash bin/install-cert-expiry-cron.sh`(멱등, `--print`/`--remove`). 정상이면 침묵하고
+  임계 침범 시에만 stderr → cron 메일.
+- 경보 시 갱신: `bash bin/tls-internal-ca.sh`(leaf 재발급 — **CA 유지라 테스터 재설치 불필요**)
+  → `make deploy-web-only`.
+
+> **왜 CRL/OCSP 가 아니라 만료 감시인가** (사용자 결정 2026-09-01): 사내 CA 에는 CRL 배포점도
+> OCSP 도 없어 Windows Schannel 이 폐기상태를 «알 수 없음» 으로 하드 실패시킨다(feature-0043
+> 브리지 결함의 원인). CRL 을 도입하면 폐기가 가능해지지만 **완화 플래그를 없애지는 못한다** —
+> CRL 은 `nextUpdate` 가 있어 만료·404 시 같은 오류로 되돌아가므로 안전망이 계속 필요하다.
+> 즉 CRL 은 «새 liveness 의존성 + 그 실패 모드가 이번 버그» 인 반면, 막는 위협(leaf 키 유출 +
+> MITM)은 저확률이다. 그래서 폐기 인프라 대신 **만료를 놓치지 않는 것**에 투자한다.
+
 ## 13. Pre-approved Changes
 - 비파괴적 운영 자산 재배치와 경로 수정

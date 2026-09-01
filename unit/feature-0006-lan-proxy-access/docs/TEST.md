@@ -30,3 +30,30 @@ source_of_truth: true
   - Environment: Windows-browser (PB-0008). **사유 명시(미수행)**: `/trust/` 는 inline CSS + 단순 OS감지 JS 의 **정적 다운로드 페이지**로 앱 로직/동적 상태 표면 없음. server-side(HTTP 200 + 링크/지문 정확성) 검증으로 충족. 실제 설치(`certutil`/`security`)는 Windows/macOS 클라이언트 권한 동작이라 CI 브리지 불가 — 운영자/테스터 1회 수동 확인 영역. 시각 회귀 우려 낮음(단일 페이지). 후속 운영 검증 시 실제 브라우저 확인 권장.
   - 사후 PB-0008(실 Windows Chrome, win-browser.py): `http://112.185.196.20/trust/`=200 렌더(지문박스·Win/mac/crt 버튼·OS감지 mac카드 숨김), 앱 `https://112.185.196.20/`=200 로그인 렌더. 증거 `artifacts/pb0008-trust/{trust-page-ip,app-login-ip}.png`. (호스트명은 Windows hosts admin 부재로 IP 검증.)
 - 2026-06-17 (TASK-20260617T083954-ai-claude-bat-encoding-fix): Environment: Windows cmd.exe (실측). 깨진 .bat 재현(`echo`→`cho`·base64 명령실행) 확인 → ASCII+CRLF+no-chcp 수정본을 neuter(자가상승+certutil 제거) 후 cmd.exe 실행: echo/지문표시/base64 디코드/지문검증 전 구간 정상, `ACTUAL==FP_HEX` 통과(이전 잠복 mismatch 해소), `[OK]` 도달. `file`=ASCII+CRLF 확인. `.command` 는 `base64 -D`(macOS 전용)라 Linux 단위실행 불가 — 지문 로직 openssl 결정적. 실 certutil/security 설치는 관리자 환경 1회 확인 권장.
+
+## Run — TASK-20260901T103000-ai-claude-corp-cert-expiry-monitor (2026-09-01)
+
+Environment: WSL Ubuntu (openssl 3.x) · 라이브 엣지 `112.185.196.20`
+> UI 표면 없음(운영 스크립트) — Windows-browser 시각검증 대상 아님.
+
+**동작 실측 — 생성한 cert 로 경계를 넘겨 본다** (텍스트 검사가 아니라 실행 결과):
+
+| 케이스 | 기대 | 실측 |
+|---|---|---|
+| leaf 100일 | exit 0 (정상) | **0** |
+| leaf 20일 | exit 1 (WARN, 30일 임계) | **1** |
+| leaf 3일 | exit 2 (CRITICAL, 7일 임계) | **2** |
+| leaf 여유 + **rootCA 10일** | exit 2 (CA 축 단독 발동) | **2**, 메시지가 `rootCA` 지목 |
+| cert 파일 부재 | 비-0 (fail-open 금지) | **비-0** |
+| `--leaf-warn 5` (게이트 14일보다 좁음) | exit 3 거절 | **3**, 사유에 «게이트» 명시 |
+
+**실환경 1회**: `--live 112.185.196.20` → leaf(2028-09-19)·rootCA(2036-06-14)·live 3축 OK, exit 0.
+
+**드리프트 잠금**: `deploy-web.sh` 의 `checkend 1209600`(14일)과 감시의 `DEPLOY_GATE_DAYS=14` 가
+어긋나면 FAIL 하는 단언 포함 — 두 파일이 조용히 갈라지는 것을 막는 유일한 연결.
+
+**자가적용 검증**: `unit/feature-0006-lan-proxy-access/tests` 를 Makefile·ci.yml 양쪽에 등재했고,
+직전 cycle 의 parity 테스트가 이를 검증했다. **한쪽만 등재한 사본에서 그 테스트가 FAIL 함**도
+별도 실증(가드가 실제로 무언가를 잡는다는 근거).
+
+결과: 신규 9건 PASS · `bash -n` 2개 파일 OK · cron 은 `--print` 확인만(**crontab 무변경**).

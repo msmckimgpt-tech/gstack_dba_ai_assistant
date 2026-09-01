@@ -189,3 +189,50 @@ source_of_truth: true
 - Files: unit/feature-0006-lan-proxy-access/docs/ANCHOR.md, unit/feature-0006-lan-proxy-access/docs/TASK.md
 - Impact: feature 방향성 stable reference 확립. "이 feature를 프로덕션으로" 요청 시 §3의 cherry-pick 기준이 onboarding 진입점. dev-specific 경로 제거 판단이 Conflict Protocol 없이 자연 진행.
 - Rollback Notes: ANCHOR.md 내용 revert 시 verify-completion check #6이 24h grace 만료 후 FAIL. 사용자 직접 §1-§3 재작성 필요.
+
+## CHG-20260901T103000-ai-claude-corp-cert-expiry-monitor — 인증서 만료 감시(leaf + Root CA)
+
+- **날짜**: 2026-09-01
+- **REQ**: 사용자 결정 2026-09-01 (AskUserQuestion — «만료 모니터링만»)
+- **위험도**: Minor (읽기 전용 감시 추가 · 배포 스파인 무변경 · cron 설치는 사용자 판단)
+
+### 무엇이 비어 있었나
+
+`bin/deploy-web.sh` 의 `preflight_tls()` 가 이미 leaf 만료를 본다. 두 가지가 빠져 있었다:
+
+1. **배포할 때만 돈다.** 배포가 없으면 신호도 없고, 그 사이 만료되면 첫 신호가 전면 outage 다.
+2. **Root CA 를 아예 보지 않는다.** CA 만료는 테스터 전원 재설치라 회복 비용이 leaf 보다 크다.
+
+### 변경
+
+- `bin/cert-expiry-check.sh` (신규) — leaf + Root CA 2축, 3단 판정(정상/WARN/CRITICAL)을 종료코드
+  0/1/2 로 낸다(cron 알림이 이것으로 갈린다). `--live <host>` 로 **실제 서빙본**도 확인하고,
+  디스크와 만료가 다르면 「갱신했으나 미배포」로 보고한다.
+  - `set -e` 를 쓰지 않는다 — `openssl -checkend` 의 비-0 는 «만료 임박» 이라는 **정상 신호**이지
+    스크립트 실패가 아니다. `-e` 면 첫 경고에서 죽어 나머지 축을 못 본다.
+- `bin/install-cert-expiry-cron.sh` (신규) — `install-worktree-audit-cron.sh` 패턴 승계(marker 멱등).
+  주 1회(월 09:10). 매일 돌리면 같은 경고가 30번 반복돼 신호가 소음이 된다.
+- `Makefile` + `.github/workflows/ci.yml` — `unit/feature-0006-lan-proxy-access/tests` 를
+  **양쪽에** 등재. 직전 cycle(CHG-20260901T101500)이 세운 규약의 첫 자가적용이며, 그 parity
+  테스트가 이 등재를 실제로 검증했다(한쪽만 했을 때 FAIL 함도 실증).
+
+### 게이트와 감시의 관계를 구조로 잠갔다
+
+감시 임계가 게이트(14일)보다 좁으면 게이트가 먼저 울려 감시가 무의미하다. 그래서
+`--leaf-warn < 14` 를 **스크립트가 거절**하고, `deploy-web.sh` 의 `checkend 1209600` 과
+감시의 `DEPLOY_GATE_DAYS=14` 가 어긋나면 테스트가 FAIL 한다 — 두 파일이 조용히 갈라지는 것을
+막는 유일한 연결이다. (배포 스파인은 **건드리지 않았다** — 위험 대비 이득이 낮다.)
+
+### 왜 CRL/OCSP 가 아닌가 (사용자 결정)
+
+CRL 을 도입하면 폐기가 가능해지지만 **완화 플래그(feature-0043 `--ssl-revoke-best-effort`)를
+없애지 못한다** — CRL 은 `nextUpdate` 가 있어 만료·404 시 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN`
+으로 되돌아가므로 안전망이 계속 필요하다. 즉 «새 liveness 의존성 + 그 실패 모드가 이번에 고친
+버그» 인데, 막는 위협(leaf 키 유출 + MITM)은 저확률이다. 수명 단축도 회전 실패가 전면 outage 다.
+
+### 검증
+
+- **동작 실측**(텍스트 검사 아님): openssl 로 100/20/3일 cert 생성 → exit **0/1/2** 확인.
+  CA 단독 임박 → CRITICAL · cert 부재 → 비-0(fail-open 아님) · `--leaf-warn 5` → exit 3 거절.
+- 실환경 1회: leaf/rootCA/live 3축 OK(exit 0) — `--live` 경로 포함.
+- 신규 테스트 9건 PASS · `bash -n` OK · cron 설치기는 `--print` 로만 확인(**crontab 미변경**).
