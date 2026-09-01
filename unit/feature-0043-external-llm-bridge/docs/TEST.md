@@ -152,6 +152,15 @@ source_of_truth: true
 | TEST-20260831T183000-chip | `connect-modal.js`·CSS | 칩이 정상과 **구분되는** 상태를 보인다 · 서버 값이 칩까지 배선됨 | AC-20260831T183000-runner-version-sync-3 |
 | TEST-20260831T183000-recatalog | `app.js` 게이트 콜백 | 잠금이 풀리면 **카탈로그를 먼저 다시 받고** 그린다(순서 고정) | AC-20260831T183000-runner-version-sync-4 |
 
+| TEST-20260901T160000-live-repro | `describe_cli_failure` | **stdout 에만 있는 사유**가 사용자 문장에 실린다(라이브 실측 문자열로 고정) | AC-20260901T160000-cli-failure-reason-1 |
+| TEST-20260901T160000-no-empty-colon | `describe_cli_failure` | 어떤 조합에서도 «빈 콜론» 으로 끝나지 않는다 — 사용자가 실제로 본 표면 | AC-20260901T160000-cli-failure-reason-2 |
+| TEST-20260901T160000-noise | `_meaningful_lines` | stderr 의 잡음이 stdout 사유를 가리지 않는다(이 결함의 정확한 기전) | AC-20260901T160000-cli-failure-reason-3 |
+| TEST-20260901T160000-stderr-wins | `describe_cli_failure` | stderr 에 의미 있는 사유가 있으면 종전대로 그쪽이 이긴다(회귀 없음) | AC-20260901T160000-cli-failure-reason-4 |
+| TEST-20260901T160000-hints | `_FAILURE_HINTS` | 회복 가능한 부류는 다음 행동 1줄 · 모르는 실패엔 **안내를 지어내지 않는다** | AC-20260901T160000-cli-failure-reason-5 |
+| TEST-20260901T160000-hint-boundary | `_FAILURE_HINTS` | 짧은 토큰(`401`)이 무관한 숫자에 걸려 엉뚱한 안내를 주지 않는다 | AC-20260901T160000-cli-failure-reason-5 |
+| TEST-20260901T160000-redact | `_redact_secrets` · `_FAIL_DETAIL_MAX` | 사유에 자격증명이 실리지 않고 길이 상한이 있다 | AC-20260901T160000-cli-failure-reason-6 |
+| TEST-20260901T160000-single-site | `_run_cli_cancelable` | 실패 사유 조립이 **한 곳**에서만 일어난다(두 벌 방지) | AC-20260901T160000-cli-failure-reason-7 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).

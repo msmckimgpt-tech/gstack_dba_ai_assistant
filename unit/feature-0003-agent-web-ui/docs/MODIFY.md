@@ -5372,3 +5372,15 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
 
 **검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
+
+## CHG-20260901T160000-ai-claude-feature-0003-runner-mirror-sync — 러너 배포 사본 동기화 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Minor (파일 소유만 이쪽 — 로직 변경의 정본은 feature-0043)
+- **cross-ref**: feature-0043 마찰 `FR-cli-failure-reason-discarded-on-stdout` →
+  코드 수정 `CHG-20260901T160000-ai-claude-feature-0043-cli-failure-reason`.
+
+`static/agent/bridge_agent.py` 는 사용자가 「연결 준비」로 내려받는 **실물**이며 정본
+(`unit/feature-0043-external-llm-bridge/src/bridge_agent.py`)과 바이트 동일해야 한다
+(`test_bridge_agent_sync`). 이번 변경은 그 동기화뿐 — 웹 앱이 import 하지 않는 정적 자산이라
+서버·프론트 동작 변화 0(HTML·CSS·JS 변경 0).
