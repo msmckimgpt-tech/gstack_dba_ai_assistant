@@ -8,7 +8,7 @@ ai_read_priority: 5
 # CODE_TASKS — TASK 카드 카탈로그 (변경유형 → 코드영역 → 재귀 실행)
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.
-     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 35개 파일(route-module 29 + 언더스코어 공유모듈 5 + `__init__`, 2026-08-25 재실측).
+     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 37개 파일(route-module 29 + 언더스코어 공유모듈 7 + `__init__`, 2026-09-01 재실측).
      source: routers/*.py + docs/ROUTEMAP.md + static/graph/ 실측(2026-07-13; routers 카운트는 2026-08-25 재실측). freshness 는 ROUTEMAP source_commit 로 검증. -->
 
 > **이 문서의 용도**: "무엇을 바꾸려는가"(변경유형)를 입력으로, **어느 파일:심볼에서 시작해 →
@@ -61,16 +61,18 @@ ai_read_priority: 5
 
 ---
 
-## 영역 지도 (routers/ 35파일, 2026-08-25 실측)
+## 영역 지도 (routers/ 37파일, 2026-09-01 실측)
 
 - **29 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
-- **6 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
+- **8 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
   - `routers/_prompt_context.py` — 프롬프트 컨텍스트 조립(admin_roles·admin_products·auth·conversations 소비).
   - `routers/_audit_infra.py` — 감사 인프라 헬퍼(전 라우터 소비).
   - `routers/_bootstrap_schema.py` — 웹 테이블/시드 부트스트랩(startup 기계가 호출, DDL idempotent).
   - `routers/_folder_store.py` — 대화 폴더 PG 스토어(feature-0024, `conversation_folders`·`folder_conversation_map`).
+  - `routers/_console_jobs.py` — 콘솔 작업의 프롬프트 조립 + 개인 AI 산출물의 기존 저장경로 반영(feature-0043, 2026-08-31 신설).
+  - `routers/_console_llm.py` — 관리 콘솔 LLM 상태 판정 단일 정본(feature-0043, 2026-08-31 신설).
 - **공유 컨텍스트**: `src/web_context.py`(leaf, stdlib-only) · `shared/db.py`(repo-root, PG `_pg_connect`) ·
   `unit/feature-0003-agent-web-ui/src/modules/`(attachment mirror·group_members 등).
 - **app.py 잔류(4,000줄, 2026-08-25 실측)**: DI seam · 인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)

@@ -51,7 +51,7 @@ sources:
 >
 > **2026-06 멀티 데이터소스**: data plane 이 단일 MySQL replica → **N 개 데이터소스 (MySQL·MSSQL)** 로 일반화 (§2.5). 자격증명은 envelope 암호화 저장, 접근은 DB-단위 allowlist. agent 실행은 **ask-worker out-of-process 큐**로 cutover.
 >
-> **2026-08-27 외부 LLM 브리지 전환**: 서버 보유 계정으로 나가는 **chat** 호출이 fail-closed 로 전면 차단됐다(코드 게이트 + `litellm_config.yaml` 계정 alias 14종 주석, 활성 model_list = `titan-embed` 1건). 따라서 아래 §2.1 의 `agent → bedrock-gateway → AWS Bedrock` 경로와 §2.2 의 `agent → Bedrock` 신뢰 경계는 **임베딩 전용으로 축소**됐다. 웹 대화 질문은 `_enqueue_web_bridge_task()` 가 `/api/ask` dispatch **앞에서** 가로채 `WebAiTasks` 대기 작업으로 적재하고, 사용자 개인 머신의 AI 가 MCP/REST(`list_open_requests` · `claim_request` · `submit_answer`)로 가져가 답변한다(pull 브리지). 정본: [[../Features/feature-0043-external-llm-bridge]].
+> **2026-08-27 외부 LLM 브리지 전환**: 서버 보유 계정으로 나가는 **chat** 호출이 fail-closed 로 전면 차단됐다(코드 게이트 + `litellm_config.yaml` 계정 alias 14종 주석, 활성 model_list = `titan-embed` 1건). 따라서 아래 §2.1 의 `agent → bedrock-gateway → AWS Bedrock` 경로와 §2.2 의 `agent → Bedrock` 신뢰 경계는 **임베딩 전용으로 축소**됐다. 웹 대화 질문은 `_enqueue_web_bridge_task()` 가 `/api/ask` dispatch **앞에서** 가로채 `WebAiTasks` 대기 작업으로 적재하고, 사용자 개인 머신의 AI 가 MCP/REST(`list_open_requests` · `claim_request` · `submit_answer`)로 가져가 답변한다(pull 브리지). 정본: [[../Features/feature-0043-external-llm-bridge]]. **2026-08-31 확장**: 같은 대기열을 **관리 콘솔 작업**도 탄다 — 메타데이터 자동완성(단건·일괄)과 프롬프트 자동작성 3스코프가 `messages` 를 조립한 **뒤·LLM 호출 앞** 한 지점에서 위임되어 «대화가 없는 브리지 task»(`Kind` 축)로 적재되고, 개인 AI 가 같은 점유·lease·취소·원장 위에서 처리한다. 위임 대상이 아니면(게이트 열림 · 러너 자격 없음 · 미배선 종류 · 적재 실패) 종전 직접 경로가 그대로 돈다.
 
 ## 2. 상세
 

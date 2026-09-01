@@ -6317,3 +6317,16 @@ baseline-first-obs→G1 / announced-guard→E3 / clearinterval→E2b·F2a·F2b.
 - **CI**: PR #1447 은 Actions 전면 미실행(job `steps=0`) 상태에서 `UNSTABLE` 로 머지됐다.
   CI 정적 게이트 4종을 로컬에서 전건 PASS 로 대체 충족했고 Python 변경은 0건이다. 이 사실을
   숨기지 않고 기록한다 — 복구 전까지 모든 PR 이 CI 미검증으로 머지된다(운영 조치 필요).
+
+## REV-20260901T010306-doc-sync-rn-0901 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-08-31 블록 신설(14항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260901T010306-doc-sync-rn-0901`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + companion 문서).
+- Timestamp: 2026-09-01T01:03:06+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 56→**57** · `generated`=="2026-08-31"==`releases[0].date` · `releases[0].items` **14** + summary · `releases[1]`(2026-08-28) items 15 불변 · **08-28 이하 tail 바이트 동일**(9,045B 순증) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 18패턴 **0건**
+- **적대검증**: ULTRACODE 워크플로 `wf_8127f38e-d76` — 6 에이전트 / **1,006,536 토큰** / 320 tool-use / 35분. 4축 병렬 스윕(릴리즈노트·wiki·정책문서·정본교차) → 2조 교차검증(정확성 반증 렌즈 / 거버넌스·scope 렌즈, 각자 MISS 능동 탐색). **63 findings · 126 verdict**(정확성 61/63 · 거버넌스 59/63 CONFIRMED) · **신규 MISS 12건**.
+- **블록 귀속**: 창 75 커밋의 착륙일이 **전부 2026-08-31**(11:40~19:40)이고 그 date 블록이 **존재하지 않으므로**(최신이 2026-08-28) 기존 블록 append 가 아니라 **신규 블록 prepend**. 전 파일 grep 으로 `2026-08-29`/`08-30`/`08-31` 히트 0 을 사전 확인했다(owning feature self-add 부재).
+- **수용한 검증조 지적(릴리즈노트 축)**: 「연결이 요청의 전제조건」 계열 항목에서 회원 머신에서만 확인 가능한 축(실 러너 기동 → 왕복)을 배포 서비스 확인 축과 **분리**해 확실성을 낮췄다. summary 말미에 「대부분은 배포된 서비스에서 눈으로 확인했고, 회원님의 컴퓨터에서만 확인할 수 있는 항목에는 그 사실을 함께 적었습니다」로 미검증 고지를 접힌 요약에도 노출했다.
+- **미러 vs 정본 수렴**: 직전 08-28 블록이 「'답변 모델'·'추론 강도' 를 러너 신고 기반으로 **되살렸다**」로 단정했으나 창의 `d35f78dd` 가 그 두 칸이 **여전히 비어 있었음**을 고쳤다. 과거 블록은 그 시점 사실의 기록이므로 고치지 않고, 신규 항목에서 「8월 28일 안내에서 '되살렸다' 고 알려 드린 그 두 칸이 실제로는 여전히 비어 있던 문제」로 **재발을 명시**해 수렴했다.
+- **cache-buster**: 수기 bump 없음. 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며 `bin/deploy-web.sh` 가 baked 이미지의 placeholder 잔존을 ABORT 한다(정본 `docs/CONVENTIONS.md:568`). 이번 run 의 cron wrapper 지시문이 '캐시버스터 bump 를 같은 커밋에 포함하라' 고 명시했으나 저장소 정본과 정면 충돌하므로 따르지 않았다 — 수기 bump 는 배포를 죽인다.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**.
