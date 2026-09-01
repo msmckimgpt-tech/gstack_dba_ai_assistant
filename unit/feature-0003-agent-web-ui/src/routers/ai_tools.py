@@ -580,6 +580,93 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
     return JSONResponse({"task_id": task_id, "context": marked})
 
 
+#: 「이 답변은 claude 의 모델 opus · 추론등급 xhigh 로 생성했습니다.」 — 답변 본문에 실리는
+#: 모델·추론등급 고지 한 줄.
+#:
+#: **문장 구조 전체로 좁힌다.** 종전 초안은 「`이 답변은` … `모델`|`추론등급` … `로
+#: 생성했습니다.`」 로만 봤는데, 그러면 `모델` 이 `모델링`·`논리 모델` 에 부분일치해 정상
+#: 문장을 지우고, 더 나쁘게는 **미반영 사실을 자기 말로 쓴 문장**(「…요청하신 모델 opus 대신
+#: 기본 모델로 생성했습니다」)까지 삼킨다 — 우리가 지키려던 계약이 같은 정규식에서 깨진다
+#: (적대 리뷰 P1-4). 러너가 만드는 형태는 `f"이 답변은 {런타임} 의 {축} 로 생성했습니다."`
+#: 이고 `{축}` 은 `모델 X` · `추론등급 Y` · 둘의 `·` 결합 셋뿐이므로, 그 골격을 그대로 쓴다.
+#:
+#: 런타임·모델 이름은 러너가 **신고**하는 값이라 서버가 목록을 갖고 있지 않다 — `\S+` 로
+#: 자리만 잡는다(이름을 열거하면 새 런타임이 붙는 날 그것만 통과한다).
+#:
+#: `[\s>\-*]*` 접두는 인용(`>`·`>>`)·목록(`-`) 부착을 함께 받는다. `\s` 는 전각 공백·NBSP·
+#: `\r` 을 포함하므로 CRLF 와 폭 넓은 공백이 자동으로 덮인다.
+_ANSWER_MODEL_NOTICE_RE = re.compile(
+    r"^[\s>\-*]*이 답변은\s+\S+\s*의\s+"
+    r"(?:모델\s+\S+(?:\s*·\s*추론등급\s+\S+)?|추론등급\s+\S+)"
+    r"\s*로 생성했습니다\.?\s*$")
+
+#: 고지를 찾는 범위 — 답변 **말미** 몇 줄.
+#:
+#: 러너는 본문 뒤에 고지 1줄을 붙이고, 그 뒤에 미반영 고지·승인 안내가 각각 최대 1줄 더 올 수
+#: 있다(빈 줄 포함해도 여유롭게 8줄 안이다). 전량을 훑지 않는 이유가 이 값의 존재 이유다:
+#:
+#: - **펜스 상태를 추적하지 않기 위해서.** 코드 펜스를 세어 「안/밖」 을 가르는 방식은 닫히지
+#:   않은 펜스 하나로 **봉인이 통째로 뚫린다**(AI 출력이 코드블록 도중 잘리는 것은 흔하다).
+#:   4-백틱 중첩 펜스에서는 반대로 블록 **안의 내용을 지운다**. 둘 다 적대 리뷰가 실측했다.
+#: - **예시로 인용된 같은 문장을 지키기 위해서.** 본문 중간의 인용은 범위 밖이다.
+#:
+#: 남는 트레이드오프: 말미 8줄 **안**에 이 문장을 예시로 두면 지워진다. 짧은 답변에서 그
+#: 문장이 본문일 확률보다, 그 자리에 실제 고지가 있을 확률이 훨씬 높다.
+_NOTICE_TAIL_LINES = 8
+
+#: 검사할 줄 길이 상한. 고지는 100자 안팎이다.
+#:
+#: 길이를 안 막으면 아주 긴 **한 줄**이 정규식 backtracking 으로 이벤트 루프를 초 단위로
+#: 세운다(적대 리뷰 P1-1 은 종전 초안에서 180KB 한 줄에 36초를 실측했다). 지금 정규식은 lazy
+#: 중첩이 없어 그 형태는 아니지만, 상한은 **입력이 아무리 이상해도** 비용을 상수로 묶는
+#: 값싼 보험이다 — 그리고 이 함수는 async 핸들러 안에서 동기로 돈다.
+_NOTICE_MAX_LINE = 300
+
+
+def _strip_model_notice(answer: str, *, allow_empty: bool = False) -> str:
+    """답변 말미에서 모델·추론등급 고지 줄을 걷어낸다 (사용자 결정 2026-09-01).
+
+    **왜 서버가 하는가.** 이 고지를 만들던 곳은 러너(`bridge_agent.py`)이고 정본에서는 이미
+    지웠다(2026-08-31). 그런데 러너는 서버가 배포하는 코드가 아니라 **각 사용자 머신에 설치된
+    사본**이다 — 우리가 고쳐도 그 머신이 다시 받아 가기 전까지는 계속 붙는다(라이브 실측:
+    수정·배포 이틀 뒤인 2026-09-01 제출분에도 그대로 실려 있었다). 게다가 러너를 쓰지 않는
+    등록형 AI 는 애초에 그 코드를 지나지 않으므로 자기 판단으로 같은 문장을 쓸 수 있다.
+
+    답변이 대화로 가는 문은 `submit_answer` 하나뿐이므로, 거기서 한 번 걷어내면 구버전 러너·
+    등록형 AI·AI 자발 부착이 **같은 한 지점**에서 닫힌다. 러너 쪽 제거는 그대로 두되(만들지
+    않는 것이 낫다), 집행은 서버가 한다 — 인지와 집행은 층이 다르다.
+
+    **미반영 고지는 건드리지 않는다.** 「요청하신 모델 X 은(는) 이 AI 에서 쓸 수 없어 기본
+    설정으로 답했습니다」 는 다른 사실이다 — 고른 값이 반영되지 않았다는 것은 화면 어디에도
+    드러나지 않아 답변이 유일한 통로다(사용자 결정 2026-08-31·2026-09-01 재확인). 그래서
+    정규식은 **문장 골격 전체**로 좁혔고, 같은 사실을 다른 말로 쓴 문장도 남는다.
+
+    **본문은 정리 결과가 비면 정리하지 않는다.** 답변 전체가 고지 한 줄인 제출은 병리적이지만,
+    그때 우리가 할 수 있는 최선은 사용자가 **무언가를** 보게 하는 것이다 — 빈 답변으로 만들면
+    위쪽 검사가 400 을 돌려주고, 그 task 는 점유된 채 lease 만료까지 대기 말풍선으로 남는다.
+
+    `allow_empty=True` 는 그 예외를 끈다. **제목** 축이 그렇다 — 제목은 한 줄이라 고지를 걷으면
+    항상 비고, 빈 제목은 「제목을 바꾸지 않는다」로 안전하게 흡수된다(`_deliver_web_bridge_answer`
+    가 빈 값을 건너뛴다). 본문 규칙을 그대로 쓰면 제목만은 언제나 원문으로 되돌아와 봉인이
+    제목 축에서만 뚫린다.
+    """
+    if "생성했습니다" not in answer:
+        return answer            # 빠른 길 — 거의 모든 답변이 여기서 끝난다
+    lines = answer.split("\n")
+    head = max(0, len(lines) - _NOTICE_TAIL_LINES)
+    kept = lines[:head]
+    dropped = 0
+    for line in lines[head:]:
+        if len(line) <= _NOTICE_MAX_LINE and _ANSWER_MODEL_NOTICE_RE.match(line):
+            dropped += 1
+            continue
+        kept.append(line)
+    if not dropped:
+        return answer            # 원문을 그대로 돌려준다(재조립이 여백을 흔들지 않게)
+    cleaned = "\n".join(kept).rstrip()
+    return cleaned if (cleaned or allow_empty) else answer
+
+
 @router.post("/api/ai/tools/submit_answer")
 async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                         conn=Depends(app.get_conn)) -> JSONResponse:
@@ -626,6 +713,15 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         _safe_record(account, ctx, tool="submit_answer", outcome="denied",
                      detail="task_canceled", task_id=task_id)
         return _json_err(409, _CANCELED_SUBMIT_MSG)
+
+    # ⚠ 고지 제거는 **여기 한 번**. 아래의 교차오염 대조·저장본(`stored`)·대화 전달본
+    #   (`_deliver_web_bridge_answer`)·원장 바이트수가 전부 이 변수를 보므로, 한 곳에서 정리하면
+    #   경로가 갈릴 수 없다. 소비처마다 정리하면 그중 하나를 빠뜨리는 날 화면에만 남는다.
+    #
+    #   자리가 **빈 답변 검사·`_load_task`·취소 판정 뒤**인 것도 계약이다: 앞에 두면 (a) 존재하지
+    #   않거나 점유하지 않은 task 로도 정리 비용을 태울 수 있고 (b) 정리로 답변이 비는 순간 위쪽
+    #   400("answer 가 필요합니다")이 **실제로 answer 를 보낸** 클라이언트에게 거짓말을 하게 된다.
+    answer = _strip_model_notice(answer)
 
     foreign = _sibling_tasks(conn, account, ctx.get("client_id"), exclude=task_id)
     findings = _guard.detect_cross_session(
@@ -766,8 +862,12 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     if is_job:
         applied, apply_error = _apply_console_job_result(conn, task_id, answer)
     else:
-        delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
-                                               title=str(body.get("title") or ""))
+        # 제목도 같은 봉인을 지난다 — 사용자 대면 표면은 본문만이 아니다. 러너는 `split_title`
+        # 이 먼저 돌아 여기 닿지 않지만, 등록형 AI 는 `title` 을 직접 싣고 그 값은 사이드바
+        # 대화 제목으로 박힌다(적대 리뷰 P2-4).
+        delivered = _deliver_web_bridge_answer(
+            conn, task_id, account, answer,
+            title=_strip_model_notice(str(body.get("title") or ""), allow_empty=True))
 
     # ⚠ 원장 호출은 **한 곳뿐이다.** 분기마다 두면 (a) 「전달이 원장보다 먼저」라는 계약이
     #   분기 하나에서만 성립하고 (b) 그 계약을 지키는 회귀 가드가 소스 순서를 보므로 조용히
