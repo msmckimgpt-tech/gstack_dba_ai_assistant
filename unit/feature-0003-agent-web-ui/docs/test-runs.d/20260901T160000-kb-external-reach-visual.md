@@ -47,3 +47,41 @@ verdict: PASS
   단위 테스트 3건 + 뮤턴트 M7 로 잠갔다.
 - **F1(`get_task_context`) 라이브 왕복**: MCP 토큰이 필요한 브리지 경로라 이 컨테이너에서
   단독 관측이 안 된다. 배포 후 실사용 turn 에서 관측한다.
+
+---
+
+## POST-DEPLOY (배포 `5a4d49fc`, 2026-09-01 18:1x KST)
+
+### Run 5 — 배포 판정
+- `git log` 머지 커밋 `5a4d49fc` = PR #1493 · CI SUCCESS · MERGEABLE/CLEAN.
+- 컨테이너 실물 태그: `web-a`·`web-b` = `mysql-ai-web:5a4d49fc`,
+  `insight-worker`·`ask-worker`·`ops-scheduler`·`ext-tool-mcp-a/b` = `mysql-ai-agent:5a4d49fc`.
+  (state 파일이 아니라 `docker compose ps` 실물로 확인 — 부분 완료 0.)
+- 대화 경로 스모크 PASS · surge 잔존 0 ·
+  **`caddy` `no upstreams available` = 0건**(배포 창 20분) → 엣지 무중단 실측.
+
+### Run 6 — 라이브 시각검증 (Environment: Windows-browser, `https://localhost` = 배포본)
+- 관리 콘솔 → 메타데이터 → `DK온라인 - QA` → ENUM 코드사전:
+  `9건` · `.is-inherited` **9행** · 배지 **「전역 상속 · 여기서 편집 불가」**.
+  bind-mount 사전검증(Run 3)과 **동일 결과** — 배포본에서 재현됨.
+
+### Run 7 — F2 배선 실물 확인 (배포된 이미지 안에서 소스 검사)
+- `insight-worker` 컨테이너 `GIT_COMMIT=5a4d49fc`.
+- `inspect.getsource(_seed_coverage_targets)` 기준 **주석 제외** 실제 호출 순서:
+  `55: _collect_priority_stats(...)` → `57: _na.enqueue_change_analysis(...)`
+  → 수집이 게이트보다 **앞**이다.
+- `run_insight_cycle` payload 템플릿에 `"stats_collect_attempted": 0` 존재.
+- 라이브 knob: `analysis_planner.enabled=True`(seed 3 / cycle 9) · `metadata_stats.enabled=True`.
+- ⚠ **자기 검증 함정 1건 기록**: 처음엔 `src.index('_collect_priority_stats') <
+  src.index('enqueue_change_analysis')` 로 순서를 봤는데 **False** 가 나왔다. 코드가 아니라
+  검사가 틀렸다 — 내가 그 위에 쓴 **주석**이 `enqueue_change_analysis` 를 먼저 언급하기
+  때문이다. 문자열 인덱스로 호출 순서를 판정하면 주석·독스트링이 답을 바꾼다.
+
+### Run 8 — F2 실효 관측 (미완 · 정직)
+- 배포 시점 `metadata_table_stats` 243행 / `metadata_column_stats` 2,252행,
+  둘 다 `collected_at` 최신값 **2026-08-26 14:09**(= 전환일에 멈춘 그대로).
+- 배포 후 약 20분 시점까지 신규 유입 **0**. 라이브 insight 사이클은 도는 중이나
+  (`insight_datasource_scan_failed` 다수 — 사내망 datasource 접속 실패, 이 cycle 과 무관한
+  기존 환경 문제) `_seed_coverage_targets` 가 대상을 고르는 지점까지 아직 도달하지 않았다.
+- **판정 보류**: 「배선됐다」는 Run 7 로 증명됐고, 「실제로 쌓인다」는 사이클이 성공 스캔에
+  도달해야 관측된다. `metadata_*_stats.collected_at` 이 2026-08-26 을 넘어가는지로 판정한다.

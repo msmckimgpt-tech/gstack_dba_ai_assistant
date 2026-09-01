@@ -3081,3 +3081,24 @@ Task-Cycle: feature-0002-agent-core
 - 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T182000-kb-external-reach-postdeploy — 배포 `5a4d49fc` 라이브 실증 (doc-only)
+
+코드 변경 0. PR #1493 머지 후 배포·검증 기록.
+
+- **배포**: `sudo -E bin/deploy-web.sh` rc=0 — web-a/b `mysql-ai-web:5a4d49fc`,
+  워커 3종 + ext-tool-mcp 2종 `mysql-ai-agent:5a4d49fc`(실물 `ps` 확인, 부분 완료 0) ·
+  대화 스모크 PASS · surge 잔존 0 · **caddy `no upstreams available` 0건**(무중단 실측).
+- **F4 라이브 PASS**: `https://localhost` 관리 콘솔 ENUM 탭(`product.dk_qa`)에서 전역 상속
+  **9건 + 배지** 렌더 — 배포 전 bind-mount 검증과 동일 결과.
+- **F2 배선 PASS / 실효 보류(정직)**: 배포 이미지 안에서 실제 호출 순서가 수집(55행) →
+  게이트(57행)임을 확인했고 knob 2종도 켜져 있다. 다만 `metadata_*_stats` 는 아직
+  `2026-08-26 14:09` 에 멈춰 있다 — 라이브 사이클이 성공 스캔에 도달해야 쌓인다.
+  판정 기준: `collected_at` 이 2026-08-26 을 넘어가는지.
+- **러너 재기동 불필요**: 이 cycle 은 `bridge_agent.py` 를 건드리지 않았고(변경 0건) MCP 도구
+  이름·인자도 불변이라, 사용자 머신 러너는 그대로 두고도 확장된 번들을 받는다.
+- ⚠ **자기 검증 함정**: 배선 순서를 `src.index()` 비교로 봤다가 **False** 가 나왔는데, 코드가
+  아니라 검사가 틀렸다 — 내가 쓴 주석이 `enqueue_change_analysis` 를 먼저 언급한다.
+  문자열 인덱스로 호출 순서를 판정하면 주석·독스트링이 답을 바꾼다.
+
+Task-Cycle: feature-0002-agent-core

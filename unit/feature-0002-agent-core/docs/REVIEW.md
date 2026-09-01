@@ -2884,3 +2884,12 @@ codex 는 한도 해제 후에도 결론을 내지 못했다(위 표 2~4). 이 c
 PASS — Blocking 2 · Major 1 · Minor 4 전건 in-cycle 해소. 컨테이너 `make test` **rc=0 · FAILED 0 ·
 6,672 tests** · ruff clean · 뮤테이션 **12종 KILL + 등가 2종 식별**. 권한 코드·인가 경계·신규
 라우트·스키마 변경 0.
+
+## REV-20260901T182000-kb-external-reach-postdeploy [SKIPPED:non-policy-doc] — 배포 실증 기록 전용
+
+- Cross-ref: CHG-20260901T182000-kb-external-reach-postdeploy · 원천 REV-20260901T160000-kb-external-reach ·
+  증적 `feature-0003/docs/test-runs.d/20260901T160000-kb-external-reach-visual.md` §POST-DEPLOY.
+- 코드 변경 0 (doc-only) — 리뷰 패널 대상 아님. ANCHOR 무충돌.
+- 기록된 사실의 근거: 컨테이너 `GIT_COMMIT=5a4d49fc` · `docker compose ps` 실물 태그 ·
+  caddy 로그 `no upstreams available` 0 · PB-0008 라이브 상속 9건/배지 · 배포 이미지 내
+  `inspect.getsource` 호출 순서 · `metadata_*_stats.collected_at` = 2026-08-26(미갱신).
