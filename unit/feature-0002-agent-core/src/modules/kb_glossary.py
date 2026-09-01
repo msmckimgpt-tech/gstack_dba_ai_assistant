@@ -11,8 +11,11 @@ product-scope (metadata-product-scope): scope_key = **활성 제품**( cfg.get_a
 (종전 ds-scope 는 양쪽 다 깨졌다: 등록분이 1/N DS 에서만 주입 · 공유 DS 에서 타 제품 혼입.)
 등록(upsert)도 동일 scope_key(=제품 스코프 또는 'common' 공용)로 저장해야 read 가 매칭된다.
 
-한계(launch 볼륨 전제): read 는 scope 당 glossary 200 / enum 500 row 를 fetch 후 Python 매칭 →
-제품이 그 이상 보유 시 LIMIT 밖 항목은 누락 가능(follow-up: SQL-side 매칭/cap 상향).
+읽기 매칭(2026-09-01 개정): **SQL 이 먼저 후보를 좁히고** Python 이 낱말 경계를 판정한다.
+종전엔 `ORDER BY length(term) DESC LIMIT 200` 으로 **전체**를 읽은 뒤 Python 이 매칭해, scope 가
+200 을 넘으면 **가장 짧은 항목부터 조용히 탈락**했다 — 위 docstring 이 예고한 follow-up 이 라이브에서
+현실이 됐다(GZ_QA_G 239행 → 39행 상시 누락, 그게 하필 `AID`·`CCU`·`PvE`·`재화`·`캐시` 같은
+도메인 약어였다). 이제 LIMIT 은 **매칭 후보**에만 걸리고, 한도에 닿으면 로그로 알린다.
 """
 from __future__ import annotations
 
@@ -522,44 +525,126 @@ def delete_enum_entry(conn, entry_id, scope_key) -> int:
 
 
 # ── 읽기(RO) — ds-scoped ────────────────────────────────────────────────────
-def _fetch_glossary(conn, scopes, role_key=None):
+#: 낱말 경계 판정용 문자 부류.
+#:
+#: `_ASCII_WORD` 는 식별자 문자다 — 이게 붙어 있으면 그 이름의 **일부**이지 그 이름이 아니다.
+#: `_HANGUL` 은 한글 음절·자모.
+_ASCII_WORD_RE = re.compile(r"[A-Za-z0-9_]")
+_HANGUL_RE = re.compile(r"[가-힣ᄀ-ᇿ㄰-㆏]")
+
+
+def term_occurs_as_word(term: str, msg_lower: str) -> bool:
+    """`term` 이 메시지에 **낱말로** 등장하는가 (부분 문자열이 아니라).
+
+    ## 왜 필요한가 (라이브 실측 2026-09-01)
+
+    종전 판정은 `str(term).lower() in msg` — 단어 경계가 없었다. GZ_QA_G 질문의
+    `BillingType` 이 **다른 제품(DK온라인)** ENUM 의 컬럼명 `Type` 에 걸려, 그 제품 전용 코드
+    설명이 GZ_QA_G 프롬프트에 실렸다. `ACIDITY`→`CID`, `PvErr`→`PvE`, `소재화`→`재화` 도 같은 형태다.
+
+    ## 경계 규칙이 **비대칭**인 이유 (한국어 조사)
+
+    | 위치 | 영숫자로 시작/끝나는 항목 | 한글로 시작/끝나는 항목 |
+    |---|---|---|
+    | 앞 | 영숫자·`_` 가 붙어 있으면 불일치 | 한글이 붙어 있으면 불일치 |
+    | 뒤 | 영숫자·`_` 가 붙어 있으면 불일치 | **제약 없음** |
+
+    뒤쪽 한글을 막으면 **조사가 붙은 정상 표현이 전부 깨진다** — `파티셔닝 키도`, `증분 복제와`,
+    `재화를`, `캐시가`. 한국어에서 조사는 접미로 붙으므로 신뢰할 수 있는 경계는 **앞쪽**이고,
+    실제 오탐도 앞쪽에서 난다(`소`재화). 그래서 앞만 막고 뒤는 연다.
+    """
+    t = str(term or "").strip().lower()
+    if not t or not msg_lower:
+        return False
+    n, m = len(t), len(msg_lower)
+    start = 0
+    while True:
+        i = msg_lower.find(t, start)
+        if i < 0:
+            return False
+        prev_c = msg_lower[i - 1] if i > 0 else ""
+        next_c = msg_lower[i + n] if i + n < m else ""
+        ok = True
+        # 앞 경계 — 같은 부류 문자가 붙어 있으면 그 낱말의 일부다.
+        if _ASCII_WORD_RE.match(t[0]):
+            ok = ok and not (prev_c and _ASCII_WORD_RE.match(prev_c))
+        elif _HANGUL_RE.match(t[0]):
+            ok = ok and not (prev_c and _HANGUL_RE.match(prev_c))
+        # 뒤 경계 — 영숫자로 끝나는 항목만. 한글 끝은 조사를 허용해야 하므로 열어 둔다.
+        if _ASCII_WORD_RE.match(t[-1]):
+            ok = ok and not (next_c and _ASCII_WORD_RE.match(next_c))
+        if ok:
+            return True
+        start = i + 1
+
+
+def _fetch_glossary(conn, scopes, message=None, role_key=None):
     """ds-scoped 용어 읽기. role_key 지정 시 [그 역할, '*'(공용)] 으로 추가 격리(역할별 비중복).
+
+    `message` 를 주면 **SQL 이 먼저 후보를 좁힌다**(질문에 문자열로 등장하는 것만). 그래야
+    `LIMIT` 이 「scope 전체」가 아니라 「매칭 후보」에 걸린다 — 종전엔 전체를 길이 내림차순으로
+    잘라 읽어서, scope 가 한도를 넘으면 **가장 짧은 항목이 항상 탈락**했다(라이브: GZ_QA_G 239행
+    중 39행 상시 누락, 전부 도메인 약어). `message=None` 은 하위호환(전체 읽기).
+
+    낱말 경계 판정은 여기서 하지 않는다 — SQL 은 거친 필터고, `term_occurs_as_word` 가 정밀
+    필터다. 순서를 바꾸면(경계를 SQL 로) 한국어 조사 규칙을 두 벌로 유지하게 된다.
 
     role_key=None 이면 역할 필터 없음(하위호환 — 모든 역할 행). 역할이 식별되는 호출(대화 소유자
     역할)에서는 role_key 를 넘겨 다른 역할 전용 용어가 새지 않게 한다.
     """
-    cur = conn.cursor()
-    try:
-        if role_key is None:
-            cur.execute(
-                "SELECT term, definition FROM kb_glossary WHERE scope_key = ANY(%s) "
-                "ORDER BY length(term) DESC LIMIT %s",
-                (scopes, _GLOSSARY_READ_LIMIT),
-            )
-        else:
-            roles = [_normalize_role_key(role_key), COMMON_ROLE]
-            cur.execute(
-                "SELECT term, definition FROM kb_glossary "
-                "WHERE scope_key = ANY(%s) AND role_key = ANY(%s) "
-                "ORDER BY length(term) DESC LIMIT %s",
-                (scopes, roles, _GLOSSARY_READ_LIMIT),
-            )
-        return cur.fetchall() or []
-    finally:
-        cur.close()
-
-
-def _fetch_enums(conn, scopes):
+    msg = str(message or "").lower()
+    where = ["scope_key = ANY(%s)"]
+    params: list = [scopes]
+    if msg:
+        # 후보 좁히기 — 대소문자 무관 부분일치(정밀 판정은 Python).
+        where.append("position(lower(term) in %s) > 0")
+        params.append(msg)
+    if role_key is not None:
+        where.append("role_key = ANY(%s)")
+        params.append([_normalize_role_key(role_key), COMMON_ROLE])
+    params.append(_GLOSSARY_READ_LIMIT)
     cur = conn.cursor()
     try:
         cur.execute(
-            "SELECT table_name, column_name, code, label FROM enum_dictionary "
-            "WHERE scope_key = ANY(%s) ORDER BY table_name, column_name, code LIMIT %s",
-            (scopes, _ENUM_READ_LIMIT),
+            "SELECT term, definition FROM kb_glossary WHERE " + " AND ".join(where)
+            + " ORDER BY length(term) DESC LIMIT %s",
+            tuple(params),
         )
-        return cur.fetchall() or []
+        rows = cur.fetchall() or []
     finally:
         cur.close()
+    if len(rows) >= _GLOSSARY_READ_LIMIT:
+        # 조용히 자르지 않는다 — 이 결함이 오래 안 보인 이유가 무음 절단이었다(§16.7 G9-b).
+        _log.warning("glossary_read_limit_hit scopes=%s limit=%d — 일부 용어가 누락됐을 수 있다",
+                     scopes, _GLOSSARY_READ_LIMIT)
+    return rows
+
+
+def _fetch_enums(conn, scopes, message=None):
+    """ENUM 읽기. `message` 를 주면 SQL 이 후보를 좁힌다(용어 축과 같은 이유 — 위 참조)."""
+    msg = str(message or "").lower()
+    where = ["scope_key = ANY(%s)"]
+    params: list = [scopes]
+    if msg:
+        where.append("(position(lower(column_name) in %s) > 0 "
+                     " OR position(lower(table_name) in %s) > 0)")
+        params.extend([msg, msg])
+    params.append(_ENUM_READ_LIMIT)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT table_name, column_name, code, label FROM enum_dictionary WHERE "
+            + " AND ".join(where)
+            + " ORDER BY table_name, column_name, code LIMIT %s",
+            tuple(params),
+        )
+        rows = cur.fetchall() or []
+    finally:
+        cur.close()
+    if len(rows) >= _ENUM_READ_LIMIT:
+        _log.warning("enum_read_limit_hit scopes=%s limit=%d — 일부 ENUM 이 누락됐을 수 있다",
+                     scopes, _ENUM_READ_LIMIT)
+    return rows
 
 
 def load_glossary_enum_context(user_message, scope_key=None, conn=None, role_key=None) -> str:
@@ -581,8 +666,9 @@ def load_glossary_enum_context(user_message, scope_key=None, conn=None, role_key
             return ""
         # product-scope: 명시 scope 없으면 **활성 제품** 스코프 사용(_kb_scope_candidates 내부 해소).
         scopes = _kb_scope_candidates(scope_key)  # [active_product_scope, 'common', '']
-        gloss = _fetch_glossary(c, scopes, role_key=role_key)
-        enums = _fetch_enums(c, scopes)
+        # 질문을 함께 넘긴다 — 한도가 「scope 전체」가 아니라 「매칭 후보」에 걸리게.
+        gloss = _fetch_glossary(c, scopes, message=msg, role_key=role_key)
+        enums = _fetch_enums(c, scopes, message=msg)
     except Exception as exc:
         _log.debug("glossary_enum_read_failed err=%r", exc)
         return ""
@@ -593,10 +679,11 @@ def load_glossary_enum_context(user_message, scope_key=None, conn=None, role_key
             except Exception:
                 pass
 
-    matched_terms = [(t, d) for (t, d) in gloss if t and str(t).lower() in msg]
+    # 정밀 판정 — **낱말 경계**. 부분 문자열이면 남의 제품 항목이 딸려 온다(`BillingType`→`Type`).
+    matched_terms = [(t, d) for (t, d) in gloss if t and term_occurs_as_word(t, msg)]
     matched_enums = [
         (tb, col, code, lab) for (tb, col, code, lab) in enums
-        if (col and str(col).lower() in msg) or (tb and str(tb).lower() in msg)
+        if term_occurs_as_word(col, msg) or term_occurs_as_word(tb, msg)
     ]
     if not matched_terms and not matched_enums:
         return ""

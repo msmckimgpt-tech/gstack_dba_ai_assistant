@@ -1600,3 +1600,52 @@ feature-0043 외부 AI 전환 전, 서버 계정 AI 는 `agent_core._build_knowl
 - feature-0003: `routers/ai_tools.py`(`_bridge_product_scope_key`·`_kb_grounding_sections`·
   `get_task_context` 번들 확장·상한) · `routers/admin_metadata.py`(`_with_inherited`·
   `_load_inherited` + 4축 배선) · `static/admin/metadata.js`(상속 배지를 용어 전용 블록 밖으로)
+
+
+## grounding 매칭 — 한도는 «후보»에, 판정은 «낱말»로 (2026-09-01)
+
+**REQ-20260901-kb-grounding-match (Major §12.3)**: 직전 cycle(외부 AI 도달 범위)이 KB 층을
+프롬프트에 연결한 뒤 **GZ_QA_G 로 라이브 실측**하다 드러난 결함 2건. 둘 다 기존 결함이지만,
+F1 이 이 층들을 외부 AI 프롬프트에 잇는 순간 답변 품질에 직접 닿는다.
+
+### 근본 원인
+
+**① 한도가 「scope 전체」에 걸렸다.** `_fetch_glossary` 가
+`ORDER BY length(term) DESC LIMIT 200` 으로 scope 의 **모든** 용어를 잘라 읽고 Python 이 그
+안에서 매칭했다. 정렬이 길이 내림차순이라 잘리는 쪽은 **언제나 가장 짧은 것**이다.
+
+    GZ_QA_G 읽기 캐스케이드 239행 → 200행만 로드 → 39행 상시 누락
+    누락분: AID · CCU · CID · CIID · PvE · 재화 · 캐시 · 드롭 · 업적 · 배포 · 복합키 · 선택도 …
+
+DBA 질문에서 가장 자주 쓰는 약어가 구조적으로 제외됐고, 로그도 note 도 없었다. 모듈 docstring 이
+「follow-up: SQL-side 매칭」으로 예고해 둔 조건이 라이브에서 충족된 것이다. 그리고 직전 cycle 이
+자율수집을 되살렸으므로 **사전이 커질수록 짧은 것부터 더 잘린다**.
+
+**② 판정이 부분 문자열이었다.** `str(term).lower() in msg` — 단어 경계가 없다. GZ_QA_G 질문의
+`BillingType` 이 **DK온라인** ENUM 컬럼명 `Type` 에 걸려 그 제품 전용 코드 설명이 GZ_QA_G
+프롬프트에 실렸다(`ACIDITY`→`CID`, `PvErr`→`PvE`, `소재화`→`재화` 도 같은 형태).
+원 요청의 마찰 「제품 고유 내용이 특정 scope 를 넘어 동작한다」가 ENUM 축에서 재현된 것이다.
+
+### AC (수용 기준)
+
+- **AC-20260901T190000-match-1** — `LIMIT` 은 **매칭 후보**에만 걸린다. SQL 이
+  `position(lower(term) in <msg>) > 0` 로 먼저 좁히고, Python 이 낱말 경계를 판정한다.
+  경계 판정을 SQL 로 내리지 않는 이유: 한국어 조사 규칙을 두 벌로 유지하게 된다.
+- **AC-20260901T190000-match-2** — 한도에 닿으면 **로그로 말한다**(`glossary_read_limit_hit` /
+  `enum_read_limit_hit`). 무음 절단이 이 결함을 오래 안 보이게 한 원인이다(§16.7 G9-b).
+- **AC-20260901T190000-match-3** — 매칭은 **낱말 경계**를 지킨다. 경계 규칙은 **비대칭**이다:
+
+  | 위치 | 영숫자로 시작/끝 | 한글로 시작/끝 |
+  |---|---|---|
+  | 앞 | 영숫자·`_` 가 붙으면 불일치 | 한글이 붙으면 불일치 |
+  | 뒤 | 영숫자·`_` 가 붙으면 불일치 | **제약 없음(조사 허용)** |
+
+  뒤쪽 한글을 막으면 `파티셔닝 키도`·`증분 복제와`·`재화를` 같은 **정상 표현이 전부 깨진다** —
+  한국어에서 조사는 접미로 붙으므로 신뢰할 수 있는 경계는 앞쪽이고, 실제 오탐도 앞쪽에서 난다.
+- **AC-20260901T190000-match-4** — `message` 미지정은 종전대로 전체 읽기(하위호환).
+
+### 코드 거주
+
+feature-0002 `modules/kb_glossary.py`: `term_occurs_as_word` 신설 ·
+`_fetch_glossary(conn, scopes, message=None, role_key=None)` ·
+`_fetch_enums(conn, scopes, message=None)` · `load_glossary_enum_context` 배선.

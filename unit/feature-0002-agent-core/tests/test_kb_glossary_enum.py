@@ -180,7 +180,10 @@ def test_role_scoped_read_sql():
     assert gloss_reads, "glossary read SQL 미발생"
     sql, params = gloss_reads[0]
     assert "role_key = ANY(%s)" in sql
-    roles = params[1]
+    # ⚠ 위치(params[1])로 집지 않는다 — 2026-09-01 에 질문 후보필터 파라미터가 앞에 끼어들면서
+    #   위치 가정이 깨졌다. 이 테스트가 보려는 것은 「역할 캐스케이드가 실렸는가」이지 순서가 아니다.
+    roles = next((x for x in params if isinstance(x, list) and "*" in x), None)
+    assert roles is not None, f"역할 캐스케이드 파라미터가 없다: {params!r}"
     assert "operator" in roles and "*" in roles   # 정규화(소문자) + 공용 캐스케이드
 
 

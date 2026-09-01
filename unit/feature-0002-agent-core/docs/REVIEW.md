@@ -2893,3 +2893,59 @@ PASS — Blocking 2 · Major 1 · Minor 4 전건 in-cycle 해소. 컨테이너 `
 - 기록된 사실의 근거: 컨테이너 `GIT_COMMIT=5a4d49fc` · `docker compose ps` 실물 태그 ·
   caddy 로그 `no upstreams available` 0 · PB-0008 라이브 상속 9건/배지 · 배포 이미지 내
   `inspect.getsource` 호출 순서 · `metadata_*_stats.collected_at` = 2026-08-26(미갱신).
+
+## REV-20260901T190000-kb-grounding-match [SKIPPED:codex-no-output] — grounding 매칭 (한도·낱말경계)
+
+- Related TASK: feature-0002-agent-core (`20260901T190000-kb-grounding-match`)
+- Trigger: 스키마·권한 무변경, 그러나 **제품 경계**(남의 제품 항목 혼입)가 걸려 backend·security 렌즈.
+  codex 는 직전 cycle 에서 4회 시도 전건 무산출(형태 문제 미해결, 후속 항목으로 남아 있음)이라
+  이번에도 **자체 적대 검증 + 뮤테이션 + 라이브 전후 대조**로 수행.
+- Verdict: PASS
+
+### 1. 뮤테이션 실증 (§16.7 G11-b) — 9/9 KILL
+
+| # | 뮤턴트 | 죽인 테스트 |
+|---|---|---|
+| N1 | 용어 판정을 부분일치로 되돌림 | `test_loader_excludes_substring_false_positive_term` |
+| N2 | ENUM 판정을 부분일치로 되돌림 | `test_loader_excludes_substring_false_positive_enum` |
+| N3 | 용어 fetch 에 질문 미전달 | `test_loader_passes_message_down` |
+| N4 | ENUM fetch 에 질문 미전달 | 〃 |
+| N5 | 한도 도달 로그 제거 | `test_limit_hit_is_logged_not_silent` |
+| N6 | 한글 접미까지 차단(조사 파손) | `test_korean_particle_suffix_is_allowed` |
+| N7 | 한글 접두 미차단 | `test_korean_prefix_boundary_blocks_compound` |
+| N8 | SQL 술어를 `OR TRUE` 로 약화 | `test_glossary_query_filters_by_message_in_sql` |
+| N9 | ASCII 접두 미차단 | `test_ascii_identifier_needs_word_boundary` |
+
+### 2. Findings (전건 in-cycle 해소)
+
+- **[BLOCKING·해소] 1차 뮤테이션 결과가 통째로 무효였다.** 베이스라인 자체가 RED 였다 —
+  내 SQL 재구성이 기존 `test_role_scoped_read_sql` 을 깼는데, 그 실패가 **모든** 뮤턴트를
+  「KILL」로 보이게 했다. 7종 중 5종의 KILL 판정이 가짜였다.
+  **Action**: 베이스라인 green 을 먼저 확인하고 재실행 → 실제로는 3종이 생존했다.
+  ⚠ **교훈**: 뮤테이션 라운드는 **baseline green 확인이 전제**다. 이걸 빠뜨리면 뮤테이션이
+  「모든 뮤턴트를 잡는다」는 가장 안심되는 형태의 거짓 신호를 준다.
+- **[BLOCKING·해소] N1·N2 생존 — 배선 미검사(이 세션 3번째).** 경계 테스트가
+  `term_occurs_as_word` 를 **직접**만 불러서, 진입점의 판정을 부분일치로 되돌리는 뮤턴트를
+  통과시켰다. **Action**: `load_glossary_enum_context` 를 구동해 **출력에 오탐이 없는지**
+  단언하는 테스트 3건 추가.
+- **[BLOCKING·해소] N8 생존 — 단언이 약했다.** `"position(...) > 0" in sql` 은
+  `(position(...) > 0 OR TRUE)` 도 통과시킨다(부분 문자열 단언이 부분 문자열 결함을 못 잡는
+  아이러니). **Action**: WHERE **연접항 집합**을 단언하도록 강화.
+
+### 3. Challenge to current spec
+
+- **한도값을 올리지 않았다(의도)**. 200/500 은 그대로 두고 **걸리는 대상**을 바꿨다. 올리기는
+  같은 결함을 뒤로 미룰 뿐이고, 후보 필터가 들어간 지금은 실질 한도가 훨씬 여유롭다.
+- **경계 규칙은 완전하지 않다(정직)**. 한글 접미를 열어 뒀으므로 `재화` 가 `재화권` 에 매칭된다.
+  조사와 합성어를 형태소 분석 없이 가르지 못한다 — 형태소 분석기 도입은 이 cycle 범위 밖이고,
+  현재 비대칭이 **실측된 오탐 방향**(앞쪽)을 막는다는 것이 근거다.
+- **SQL 후보 필터는 인덱스를 못 쓴다**(`position()` 은 seq scan). scope_key 인덱스가 먼저
+  좁히므로 현 볼륨(scope 당 수백 행)에서는 무해하다. 수만 행 규모가 되면 trigram 인덱스가
+  필요하다 — 그때의 신호는 `glossary_read_limit_hit` 로그다.
+- **미검증**: 답변 품질 변화. 증명한 것은 「프롬프트에 실리는 근거가 정확해졌다」까지다
+  (`증분 복제` 회복 · DK온라인 ENUM 차단). AI 연결 계정에서의 대화 완주는 후속 항목.
+
+### 4. Verdict
+
+PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 tests · ruff clean ·
+뮤테이션 9/9 KILL · 라이브 전후 대조 확인. 권한·인가·라우트·스키마 변경 0.
