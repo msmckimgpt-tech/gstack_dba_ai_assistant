@@ -6,10 +6,26 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-cli-failure-reason-discarded-on-stdout — fixed:undeployed (L2 오류 피드백; 사유가 사는 파이프를 하나로 가정해 실패 원인이 통째로 소실)
+## FR-cli-failure-reason-discarded-on-stdout — fixed:deployed:unverified-live (L2 오류 피드백; 사유가 사는 파이프를 하나로 가정해 실패 원인이 통째로 소실)
 
-- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 11 · 뮤테이션 3종 KILL · ruff clean ·
-  인접 feature 회귀 0, 기준선 동일). 배포·라이브 실측 미수행.
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트 완료(신규 11 · 뮤테이션 3종 KILL ·
+  ruff clean · 인접 feature 회귀 0, 기준선 동일) + **배포 완료**(2026-09-01, PR #1487 merge main
+  `4521a7e1` → `make deploy-web` **scope=all**). 7서비스 `4521a7e1` 일치(web-a/b·ask-worker·
+  insight-worker·ops-scheduler·ext-tool-mcp-a/b) · edge `/healthz` ok(mysql_ok·pg_ok) ·
+  **무중단 실측 `no upstreams available` 0** · surge 잔존 0 · quiesce drained(4s/3s) ·
+  대화 스모크 PASS.
+  **배포본 런타임 실증(서빙 실물)**: `GET /static/agent/bridge_agent.py` (http=200) 의 md5 가
+  배포 SHA 의 블롭과 **일치**하고, 그 파일을 그대로 import 해 라이브 실측 입력을 넣으니
+
+      AI 가 오류로 끝났습니다(exit 1). 연결된 AI 가 남긴 사유: You've hit your session limit
+      · resets 5:30pm (Asia/Seoul)
+
+      연결된 AI 의 사용 한도에 걸렸습니다. 위에 적힌 초기화 시각이 지난 뒤 같은 질문을 다시
+      보내면 처리됩니다(질문은 그대로 다시 보내면 됩니다).
+
+  — 즉 **사용자가 받게 될 문장이 배포본에서 실제로 생성된다**(종전: 콜론 뒤 빈 문장).
+  `verified` 로 닫지 **않는** 이유: 러너는 사용자 머신 파일이라 서버 배포로 갱신되지 않는다 —
+  사용자가 화면의 「연결 준비」를 다시 눌러야 이 사본이 내려간다. 아래 실측 필요분 참조.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-09-01) — "프로젝트 내 서비스의
   assistant 가 동작하지 않는 부분이 확인되어 수정이 필요합니다. 대화 제목은 «253서버 프리미엄
   포인트 누적·사용로그 집계»".
