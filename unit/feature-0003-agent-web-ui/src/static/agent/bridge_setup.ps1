@@ -642,6 +642,12 @@ $proc = Start-Process -PassThru -WindowStyle Hidden -FilePath $Py -ArgumentList 
 Start-Sleep -Seconds 2
 if ($proc -and -not $proc.HasExited) {
   Say "완료. 웹 화면의 표시가 '내 AI 대기 중' 으로 바뀌면 질문을 보낼 수 있습니다."
+  # ⚠ 이 창은 숨겨져 있고 stderr 를 아무 데도 잇지 않는다 — 종전에는 그래서 **Windows 러너의
+  #   사고에 증거가 하나도 없었다**. 이제 러너가 자기 로그 파일을 직접 쓴다(POSIX 는 셸이
+  #   stderr 를 이어 주고, 러너가 같은 파일인지 확인해 이중 기록을 피한다).
+  Say "  로그   : $Home_\bridge.log          (사람이 읽는 줄)"
+  Say "  감사    : $Home_\bridge.events.jsonl (한 줄 = 한 사건. 문제 보고 시 이 파일을 보내"
+  Say "            주세요 — 토큰은 기록 전에 지워집니다)"
   Say "  종료   : Stop-Process -Id $($proc.Id)"
   Say "  해제   : Remove-Item -Recurse '$Home_'  +  Remove-Item -Recurse 'HKCU:\Software\Classes\mysql-ai-bridge'"
 } else {

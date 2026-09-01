@@ -6905,3 +6905,176 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
   않았음을 검증(핵심 심볼 `openSidePanel`·`registerSidePanel`·`_applyAttachRestoreAfterLoad`·
   `data-side-panel`·`visibility: hidden` 전수 잔존 확인).
 
+## REV-20260901T163000-ai-claude-attach-lineage-uploader — 설계 판단 근거 (Minor §12.3)
+
+### 왜 "소유권 단정 금지" 를 풀었나
+
+선행 cycle(REQ-20260831)은 계보 문구가 소유권을 단정하지 못하게 막았다. 그 근거는 **목록
+payload 에 업로더 account_id 가 없다** 는 사실이었지 원칙이 아니었다 — 없는 사실을 말하지
+말라는 것이었다. 이번에 그 사실을 실었으므로 **아는 만큼만** 말하도록 연다. 여전히 지어내지는
+않는다: 이름이 해소되지 않으면 「업로더 미상」이지 「내 파일」이 아니다.
+
+### 이 cycle 의 발견 — 결함은 «모델이 모른다» 가 아니었다
+
+사용자 3번째 질문(assistant 가 계보 현황을 파악하는가)을 **코드 읽기가 아니라 실 프롬프트
+렌더**로 확인한 것이 나머지 둘의 성격을 바꿨다. `_build_attachment_context_section` 을 라이브
+대화(`20260813083932`, 계정 10·50)에 caller 를 바꿔 가며 실행한 결과:
+
+```
+• uploaded by jmkimmasangsoft.com — v2 (attachment_id=1149, …)
+• uploaded by admin — v1 (attachment_id=1150, …)  ← overall latest (newest by time)
+```
+
+per-lineage latest ↔ overall latest 두 축, 타 멤버 read-only 경계까지 이미 있었다. 즉
+**같은 화면에서 모델은 업로더로 계보를 가르는데 사용자만 못 보고 있었다.** 그래서 이 작업은
+기능 추가가 아니라 **비대칭 해소**이며, 그 원천 계약을 회귀로 함께 잠갔다(화면을 고치면서
+프롬프트 쪽을 깨면 비대칭이 반대 방향으로 되살아난다).
+
+### 판단 근거 · 버린 대안
+
+- **왜 공유 대화에서만 이름인가**: 1:1 은 업로더가 늘 자기 자신이라 이름이 정보를 0 만큼 주면서
+  240px 이름줄을 먹는다(§16.8). 판정은 저장소 단일 술어 `isGroupConversation` — 사이드바 그룹
+  배지·전송 라우팅과 같은 신호를 쓴다(판정이 두 벌이면 화면끼리 어긋난다).
+- **왜 행에서 파일명을 지웠나(문구만)**: 카드 머리가 이미 말한 이름을 행이 되풀이하면 좁은
+  패널에서 갈래를 가르는 정보를 밀어낸다. 그러나 그 요소는 「원문 보기」 클릭 대상이자 접근성
+  이름이라 **지우지 않고 문구만** 바꿨다 — `title`·`aria-label` 은 파일명 그대로다. 화면에서
+  지운 것을 AT 에서도 지우면 어포던스가 조용히 사라진다.
+- **왜 분기 칩을 좁혔나**: 정체성이 라벨로 올라갔으므로 칩이 정체성을 또 말하면 같은 행에서 같은
+  사실이 두 번 나온다(사용자가 지적한 중복 축을 내가 다시 만드는 꼴). 칩은 「갈라졌다」만 진다.
+- **버린 대안 (a)** 업로더 아바타(identicon) 표시 — `_msgAvatarEl` 관용구가 있어 가능하지만
+  240px 폭에서 아바타가 라벨 폭을 먹고, 이름 텍스트가 이미 식별에 충분하다. 폭이 넉넉한 화면의
+  후속 개선으로 남긴다.
+- **버린 대안 (b)** 1:1 에서도 이름 표시 — 일관성은 얻지만 정보 0 인 문자열이 상시 폭을 먹는다.
+
+### 노출면 검토 (직접 수행 — codex 채널 사용량 한도)
+
+| 축 | 판정 |
+|---|---|
+| XSS | username 이 DOM 에 닿는 경로는 **정확히 2곳** — `_linTitle`(칩 title) · `_rowLabel`(행 라벨). 둘 다 `escapeHtml` 경유이며 그 구현이 `& < > " '` 를 모두 치환해 **따옴표 속성 컨텍스트에서도 안전**. |
+| SQL injection | `IN ({_am})` 의 `_am` 은 `%s` 플레이스홀더만으로 조립되고 파라미터는 `int()` 강제 — 파라미터 바인딩. |
+| 신규 노출면 | `account_id`/`uploader_username` 은 **대화 접근권으로 이미 게이트된** 엔드포인트로만 나간다. 익명 공유 뷰는 첨부 자체를 노출하지 않는다(`share.py`: "file attachments 는 conversation.file.read.* gated 이므로 공유 view 에서 hide"). 같은 사실이 `/versions` 의 `lineages[].account_id` 로 **이미** 나가고 있었고, 그룹 대화는 메시지 아바타로 멤버 username 을 이미 렌더한다(feature-0009). **새 노출 클래스 아님.** |
+| 표시-집행 정합 | 삭제 어포던스는 종전대로 서버 `can_manage`(`_gate`) 판정만 따른다 — 업로더 이름 표시가 권한을 바꾸지 않는다. |
+
+### 위험도
+
+**Minor §12.3** — payload 필드 추가(비파괴) + 표현 계층. 스키마·마이그레이션·권한·엔드포인트
+변경 0. 되돌리기 = revert + 재배포. 배포 사전 승인은 `FIRST_REQUEST.md` `deploy_scope: included`.
+
+### 검증
+
+pytest `feature-0003`+`feature-0002`+`feature-0023` **5167 passed / 5 skipped**(신규 11건) ·
+`node --check` · `ast.parse` · **PB-0008 경계 3경로**(공유/1:1/단독) + 240px 폭 —
+`docs/test-runs.d/TASK-20260901T163000-attach-lineage-uploader.md`.
+
+⚠ `test_query_embed_visibility.py` 2건은 **main(`afcd1a42`) 기준선에서도 동일 실패** — 본 변경
+무관(스위트 순서 의존, web-ui 테스트의 `sys.modules` 스텁 미정리). 별도 cycle 대상.
+
+## REV-20260901T172000-ai-claude-attach-lineage-uploader [CODEX:feature-0003-attach-lineage-uploader] — PASS (P1 0 · P2 4 전건 조치)
+
+- Related TASK: feature-0003-agent-web-ui (20260901T163000-attach-lineage-uploader)
+- Source: codex review (codex-cli 0.146.0 `codex exec`, read-only, 판정 기준 `docs/CODE_REVIEW.md`)
+- Trigger: UI/화면/레이아웃 + 정보 노출 keyword → §18.8 dispatch `ux, design`(+security 축).
+  subagent panel 대신 codex 채널(§18.8.1 항목 2, check #9 accepted) — 본 세션은 Agent tool 제한.
+- Timestamp: 2026-09-01T17:20:00+09:00
+- Verdict: **PASS** — P1 **0건** · P2 4건 · P3 1건 → **전건 조치 + 라이브 실증**
+- Human Approval Needed: no (Minor §12.3)
+
+### P1 없음 — 노출면은 열리지 않았다
+
+codex 확인: 익명 share 경로는 첨부 목록/serializer 를 통과하지 않아 `uploader_username` 신규
+노출 없음 · `/api/conversations/{id}/attachments` 는 기존 대화 접근권 게이트 유지 ·
+XSS 는 `escapeHtml`/`textContent`/`setAttribute` 경로로 차단 · 이름 조회는 단일 IN batch(N+1 아님).
+
+### P2 4건 — 조치와 라이브 실증
+
+| # | 지적 | 조치 | 실측 |
+|---|---|---|---|
+| 1 | `account_id` 를 **공유 serializer** 에 넣어 목록 밖(메타·`versions[]`·휴지통·history)까지 업로더 id 가 번짐 — 「목록에만 추가」 범위를 넘는 최소권한 회귀 | serializer 에서 빼고 **목록 엔드포인트가 자기 응답에만** 부착 | `/versions` 의 `versions[0].account_id` **부재** · `lineages[0].account_id` **유지**(기존 노출 불변) · 목록 `uploader_username="admin"` |
+| 2 | 화면은 `Alice`/`Bob` 인데 **접근성 이름은 둘 다 「사용자 계보」** — 이 cycle 이 연 구분이 AT 사용자에겐 닫힌 채 | 화면 라벨과 **같은 출처**(`_selfIdentity`)를 aria 이름에 사용 | `…(jmkimmasangsoft.com, 2개 중 1번째) 원문 보기` / `…(admin, 2개 중 2번째) …` |
+| 3 | 공유 여부를 `currentConversation()` 으로 판정 — 응답 지연 중 대화를 옮기면 그룹 A 의 행이 1:1 B 로 분류 | 판정을 `convId` 대응 객체로 + **stale 응답 자체를 버림**(목록이 남의 대화 것이 되는 상위 결함) | 가드 추가 후에도 정상 경로 렌더 확인(그룹 4 · 라벨 정상) |
+| 4 | 같은 사람이 같은 이름을 독립 2회 업로드하면 두 행 모두 `Alice` 이고 분기 칩도 없어 **다시 구분 불가** | 라벨이 **겹칠 때만** 서수 덧붙임(흔한 2계보엔 군더더기 없음) + aria 동반 | 스텁 3계보 동일 업로더 → `사용자 업로드 · 계보 1/3·2/3·3/3`, aria `(사용자 업로드, 3개 중 N번째)` |
+
+### P3 — 조치
+
+머리 아이콘이 그룹 전체를 대표하게 됐으므로, 형제들의 `kind` 가 갈리면 첫 행 아이콘 대신
+**중립 클립**으로 되돌린다(모르는 것을 단정하지 않는다).
+
+### 자기 지적 — 내가 세운 원칙을 내가 어겼다
+
+P2-2 는 이 cycle 이 MODIFY 에 「화면에서 지운 것을 AT 에서도 지우면 안 된다」고 적어 놓고,
+정작 **새로 추가한 업로더 이름을 AT 에 싣지 않은** 것이다. 파일명은 지키면서 새 사실은 안 실은
+반쪽 — 원칙을 문장으로 갖는 것과 그 원칙이 성립하는 것은 다르다.
+
+또 P2-3 조치로 넣은 stale 가드는 **차단이 아니라 정상 경로**를 먼저 확인했다(§CODE_REVIEW 2.2):
+가드 추가 후 공유 대화가 그대로 렌더되는지를 재실측했다 — 「막는 것만 확인하고 통과를 확인하지
+않는」 결함 클래스를 피하기 위해서다.
+
+### 회귀
+
+신규 6건 추가(총 17건) + 기존 계약 4건 갱신. 각 지적의 복귀 경로를 개별로 막는다:
+serializer 재오염 · aria/화면 출처 분리 · `currentConversation()` 복귀 · stale 가드 순서 ·
+충돌 서수의 분기 이탈 · 혼합 kind 대표. pytest **5173 passed / 5 skipped**.
+## REV-20260901T053000-ai-claude-corp-connect-modal-transition [CODEX:connect-modal-transition] — PASS (2R P1 0)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0530-connect-modal-transition`
+- Source: codex exec (codex-cli 0.146.0) — 2 라운드
+- Trigger: UI/모달 키워드(§18.8 표 3행). 세션 도구 제약으로 §18.8.1 경량 경로 —
+  `ux`/`design` 은 이전 cycle 들과 같이 `[SKIPPED:tool-restricted:*]` 범위.
+- Timestamp: 2026-09-01T05:30:00+09:00
+- Verdict: **PASS** — 1R **P1 1** → 2R **P1 0**
+- Human Approval Needed: no
+
+### 사용자 요청 2건이 같은 뿌리였다
+
+종전 판정 = «창을 열 때 **고정한** 기준선 대비 `listening` 의 false→true 전이».
+
+- **명령 경로**: 기준선을 고정하므로, 열 때 «대기 중» 이었으면 그 뒤 실제로 끊겼다가 명령으로
+  다시 이어져도 전이로 세지 않는다 — 그 창은 영영 닫히지 않는다.
+- **«업데이트 필요» 갱신**: 갱신 중 `listening` 은 줄곧 참이고 `runner_stale` 만 풀린다.
+  `listening` 만 보는 축은 이 경로를 **통째로** 놓친다.
+
+기준을 **직전 관측**으로, 축을 **«쓸 수 있는 상태»**(`listening && !stale`)로 올려 둘을 한
+규칙으로 덮었다. 실행 버튼 경로도 같은 축으로 통일했다 — 두 경로가 다른 축을 쓰면 실행 버튼만
+«됐다» 고 말한다.
+
+### codex 1R — P1 1건 (수정이 만든 새 결함)
+
+> `_paintConn()` 이 `epoch` 검증 전에 `_lastObs` 를 갱신한다. 이전 모달의 늦은 응답이 현재
+> 모달의 직전 관측으로 오염되면 `!ok → ok` 로 오판해 현재 모달을 **즉시 닫고 명령을 잃을 수
+> 있다.**
+
+정확한 지적이다. **판정을 «직전 관측» 기준으로 바꾸면 그 값 자체가 자산이 된다** — 남의 창
+응답이 거기 섞이면 일어나지 않은 전이가 만들어진다. 창 세대가 다르면 **기록조차 하지 않도록**
+고쳤고(갱신·판정을 함께 세대 검사 안으로), 그 경합을 겨누는 **J1** 을 신설했다.
+
+**2R: P1 0** — 「epoch 불일치 응답은 `_lastObs` 갱신과 전이 판정 모두에 도달하지 않는다.」
+
+### 검증
+
+- **39/0 PASS**. 신설: I1(명령 재연결) · I2(업데이트 갱신) · I3(실행으로 갱신) · I4(낡은 채
+  이어진 것은 성공 아님) · H5(실행했는데 낡은 러너) · J1·J2(오염 방지).
+- **라이브 배포본에서 6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4) — 제보 두 경로가 실재함을 배포본으로
+  확인.
+- 뮤테이션: stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→**H5** / msg-flat-auto→I2d·I3b /
+  obs-pollution(P1 되돌림)→**J1**.
+
+### 남은 위험 (정직 표기)
+
+- **실행 경로의 문구 분기**와 **`_lastObserved.ok` 의 stale 검사**는 뮤턴트가 생존한다 — 자동
+  관측 경로가 거의 항상 먼저 판정을 끝내 그 분기에 도달하지 않기 때문이다(방어적 중복,
+  낡은-응답 경합에서만 쓰인다). 커버리지 구멍임을 숨기지 않는다.
+- 남의 러너로 인한 오닫힘(직전 cycle 의 수용한 트레이드오프)은 그대로 남는다 — 서버의
+  `listening` 이 계정 단위 판정이라 화면은 러너 소유를 구분할 수 없다.
+- `_gateInFlight` 해제 전용 단언 없음 — 변동 없음.
+- `ux`/`design` 도메인 심사 미수행 — 세션 도구 제약.
+
+## REV-20260901T061000-transition-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0530-connect-modal-transition`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T06:10:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `17d36ad8` 에서 A(명령 재연결)·B(«업데이트 필요» 갱신) 두 경로 모두 닫힘 확인.
+  B 의 문구가 «최신으로 갱신되었습니다» 로 나와 상황과 일치한다.
+- **미수행(정직 표기)**: 실 러너 기동·갱신 end-to-end. 조회·토큰 응답을 가로챈 프론트엔드 계약
+  검증이며 검증 후 브라우저를 원상 복구했다.

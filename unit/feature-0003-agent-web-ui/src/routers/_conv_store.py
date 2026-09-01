@@ -4110,6 +4110,12 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
     # TASK-0274: 버전 관리 필드. RootAttachmentId NULL = 이 row 자체가 루트(원본).
     _att_id = int(row.get("Id") or 0)
     _root_id = row.get("RootAttachmentId")
+    # ⚠ REQ-20260901-attach-lineage-uploader 는 업로더(`account_id`)를 **여기 넣지 않는다**
+    #   (codex P2). 이 serializer 는 목록뿐 아니라 `/api/attachments/{id}` 메타·`/versions` 의
+    #   `versions[]`·휴지통·history/tool 응답이 모두 공유한다 — 여기 넣으면 «목록 payload 에만
+    #   추가» 라는 범위를 넘어 전 소비자에 업로더 id 가 실린다(최소권한 회귀). 기존에 노출되던
+    #   것은 `/versions` 의 `lineages[].account_id` 이지 이 serializer 소비자 전체가 아니었다.
+    #   업로더는 **목록 엔드포인트가 자기 응답에만** 부착한다(`conversations.py`).
     payload["version_number"] = int(row.get("VersionNumber") or 1)
     payload["root_attachment_id"] = int(_root_id) if _root_id else _att_id
     payload["created_by_role"] = str(row.get("CreatedByRole") or "user")

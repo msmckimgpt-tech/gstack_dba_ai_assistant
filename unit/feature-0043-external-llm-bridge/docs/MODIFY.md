@@ -2560,7 +2560,6 @@ TASK 체크박스 + TEST Run 행만.
 
 증적: `docs/test-runs.d/TASK-20260901T140000-injection-false-positive-postdeploy.md`
 (feature-0003 사본 동반 — check #13 대상 파일 소유 feature).
-
 ## CHG-20260901T160000-ai-claude-feature-0043-cli-failure-reason — 자식 AI 의 실패 사유를 버리지 않는다
 
 - **날짜**: 2026-09-01
@@ -2609,3 +2608,93 @@ stderr 에 **의미 있는** 줄이 있으면 그것, 없으면 stdout. 둘 다 
 붙들어야 하고, 그동안 화면은 다시 무진전 구간이 된다 — 원장
 `FR-llm-attempt-cap-inside-latency-tail` 이 다룬 바로 그 마찰이다. 이번 cycle 은 **사실을 정확히
 전달**하는 데까지다.
+## CHG-20260901T163000-runner-log-structure — 러너 로그를 감사 가능한 구조로
+
+- **날짜**: 2026-09-01
+- **REQ**: 「러너가 기록하는 로그 … 충분한 감사 및 에러 핸들링이 가능하도록, 상세 정보를
+  포함할 수 있도록」 (사용자 요청 2026-09-01)
+- **위험도**: Major (러너 전 경로의 관측 계층 교체 — 비파괴 가산)
+- **변경 파일**: `bridge_agent.py`(+배포 사본) · `bridge_setup.sh`/`.ps1`(+배포 사본) ·
+  신규 `tests/test_bridge_log_structure.py` · 기존 테스트 3건 정합 · docs 5종
+
+### 무엇을 바꿨나
+
+`_log` 한 줄짜리 stderr 출력 → **두 sink 구조**. 사람 줄은 `[bridge <시각+오프셋>] <LEVEL>
+<사건코드> <필드…> | <문장>`, 기계 원장은 `~/.mysql-ai-bridge/bridge.events.jsonl`
+(한 줄 = 한 사건, 0600, 8MiB·3세대 회전). 안정 계약은 **문장이 아니라 `ev` 코드와 필드 이름**
+이며 `_EV_*` 상수로 선언했다.
+
+- 상관관계: 모든 원장 줄에 `ts`·`lvl`·`ev`·`seq`·`run`(러너 인스턴스)·`pid`.
+  질문 축은 `task` 공유 → 서버 `BridgeTasks.TaskId`·웹 화면과 3자 대조.
+- 계측 3지점: `Api._post`(모든 서버 왕복) · `_run_cli_cancelable`(AI 호출) ·
+  `handle_one`(전달→제출). 호출부마다 재면 빠지는 곳이 생기고 그곳이 하필 느려진다.
+- 에러: `_log_exc` 가 예외 형·표현(두 sink) + 스택 마지막 12프레임(원장). 자식 CLI 실패는
+  exit code + stderr 끝 2KB. 종전엔 `str(e)` 만 남아 형과 스택이 통째로 사라졌다.
+- 비밀: `register_secret`(값) + 형태 패턴 3종. 본문은 싣지 않고 길이만 센다.
+- 종료: `run.stop` 한 줄에 uptime·처리·실패·오류 + 사건별 집계. 종료 경로 셋에 빗장.
+
+### 왜 이 형태인가 (대안과 갈림길)
+
+- **`logging` 모듈을 쓰지 않았다** — 남의 머신에서 남의 파이썬으로 도는 단일 파일이라 전역
+  로거 설정이 그 환경과 싸운다. 필요한 것은 두 sink 와 잠금뿐이다.
+- **`_log(msg)` 위치인자 계약을 깨지 않았다** — 호출부 80여 곳을 한꺼번에 고치면 같은 파일을
+  동시 편집 중인 병렬 세션 3곳과 전면 충돌한다. 새 자리부터 `event=`·필드를 주면 그 줄만
+  조사 가능해지는 점진 도입이 된다.
+- **로그 파일 소유를 러너로 가져왔다** — Windows 설치본은 stderr 를 아무 데도 잇지 않아
+  **로그가 0** 이었다. 다만 POSIX 설치본은 셸이 stderr 를 `bridge.log` 로 잇고 있으므로
+  그대로 쓰면 모든 줄이 두 벌이 된다. 설정 스위치로 가르지 않고 **inode 비교로 자동 판정**
+  했다 — 사용자가 고르게 하면 대부분 틀린 쪽을 고르고, 틀린 것을 아는 시점이 사고 조사 중이다.
+- **`bridge.log` 회전만 설치 스크립트가 한다** — 러너 자신은 못 한다. 자기 stderr fd 가 옛
+  inode 를 붙들고 있어 파일을 옮겨도 옛 파일에 계속 쓴다. 기동 직전이 유일하게 안전한 시점.
+
+### 계약 문서 동반 수정
+
+이 파일의 **보안 계약 표**(「남기는 것」·「나가는 곳」·「관측·종료」)를 함께 고쳤다. 새 파일
+2종이 생겼는데 표가 그대로면 표가 거짓이 되고, 거짓인 표 하나가 그 문서 전체의 신뢰를 없앤다
+— 이 러너를 실행하라고 설득하는 유일한 수단이 그 검증 가능성이다.
+## CHG-20260901T160000-ai-claude-feature-0043-connect-os-default — 기본 OS 탭을 추측에서 관측으로
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-connect-os-default
+- **위험도**: Minor (§12.3 — 비파괴 컬럼 추가 + 화면 기본값. 모든 실패 경로가 종전 동작 복귀)
+- **승인**: 사용자 요청 2026-09-01 (본문 그대로)
+
+### 배경
+
+1단계 명령 탭의 기본 선택이 `navigator.platform` 이었다. 그것은 브라우저가 도는 OS 이고 러너는
+다른 곳에서 돈다 — WSL 안에서 러너를 띄우는 사용자에게는 **항상** Windows 가 뽑혔고, 매번 탭을
+바꿔야 했다. 같은 조합(브라우저 Windows / CLI 는 WSL 안)은 2026-08-28 P0-AD 에서 이미
+「어느 분기도 맞히지 못한다」로 관측된 적이 있다 — 그때는 설치 스크립트의 분기였고 이번은
+화면의 기본값이라, 같은 오류가 다른 층에서 한 번 더 나온 형태다.
+
+### 변경 내용
+
+| 층 | 파일 | 변경 |
+|---|---|---|
+| 러너 | `feature-0043/src/bridge_agent.py` (+ `feature-0003/src/static/agent/` 배포 사본) | `_self_os()` 추가, 하트비트 본문에 `agent_os` |
+| 스키마 | `routers/_bootstrap_schema.py` | `_ensure_bridge_heartbeat_schema` 에 `WebOAuthTokens.RunnerOs` + `WebAccounts.BridgeLastOs` (멱등 · **fast path 에서도 불리는 자리**) |
+| 저장 | `oauth_store.py` | `BRIDGE_OS_FAMILIES` · `normalize_bridge_os` · `account_bridge_os` · `set_account_bridge_os` |
+| 수신 | `routers/ai_tools.py` | 하트비트에서 `agent_os` 파싱 → 기록 (실패는 삼킨다) |
+| API | `routers/oauth_as.py` | `connect_status` · `connect_issue_token` 응답에 `last_os` |
+| 화면 | `static/ai-connect.js` · `static/app/connect-modal.js` | 서버 값 우선, 추측은 폴백, 사용자 선택은 고정 |
+| 테스트 | `feature-0043/tests/test_connect_os_default.py` | 신규 28건 |
+
+### 판단이 갈렸던 지점
+
+- **어디에 저장하나** — 토큰 행(`WebOAuthTokens`)이 아니라 계정(`WebAccounts`). 묻는 질문이
+  「지금 듣고 있는 러너」가 아니라 「마지막으로 연결됐던 것」이라, 토큰에 두면 이 화면이 필요한
+  순간(연결이 끊긴 뒤)에 값이 없다. 같은 이유로 읽기에 신선도 술어를 얹지 않았다.
+- **브라우저 로컬 저장(localStorage)이 아닌 이유** — 요청이 「마지막으로 **연결**되었던 os」다.
+  탭을 눌러 본 것과 실제로 등록한 것은 다르고, 후자만 서버가 안다. 기기를 바꿔도 따라온다.
+- **모르는 값의 처리** — 구 러너는 이 축을 신고하지 않는다. 그 하트비트가 기존 값을 NULL 로
+  밀지 않게 했고, 화면도 `""` 를 `posix` 로 접지 않는다.
+
+### 적대 리뷰가 되돌린 설계 (REV-20260901T163000)
+
+초판은 계정 컬럼 하나에 "값이 다르면 쓴다" 였다. codex 가 두 가지를 깼다 — ① ALTER 를 slow path
+에만 둬서 **기존 운영 DB 에는 컬럼이 생기지 않고**(기능이 영구 폴백), ② 같은 계정에 러너가 둘이면
+30초마다 값이 뒤집혀 **PowerShell 로 재등록해도 WSL 러너가 되돌린다**(요청 시나리오가 그대로 깨진다).
+
+그래서 (a) ALTER 를 fast path 도 타는 `_ensure_bridge_heartbeat_schema` 로 옮기고, (b) 토큰 행
+`RunnerOs` 를 한 겹 두어 **연결 사건일 때만** 계정에 반영하도록 바꿨다. (b) 는 덤으로 폐기 토큰의
+계정 쓰기(P2-5)까지 막는다 — 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문이다.

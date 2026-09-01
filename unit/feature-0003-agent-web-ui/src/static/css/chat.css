@@ -2829,12 +2829,28 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
    시선을 먹고, 정작 갈래를 가르는 정보(누가/언제/얼마나)를 뒤로 민다. 이름은 클릭 대상
    (원문 보기)이라 지우지 않고 **낮춘다** — 크기·굵기·색으로 계보 칩에 1순위를 넘긴다.
    (NN/g 시각 위계: 무엇이 중요한지는 크기와 색이 정한다.) 접근성 이름은 그대로 파일명이다. */
+/* REQ-20260901-attach-lineage-uploader: 그룹 안에서 행의 1차 라벨은 **파일명이 아니라 계보
+   정체성**이다(파일명은 카드 머리가 한 번 말한다). 그래서 종전처럼 낮추지 않고 **올린다** —
+   이것이 이제 그 행에서 사용자가 찾는 정보다. 작성 주체 색축은 여기서 진다. */
 .attach-lineage-group .attach-list-item-name-text {
-  font-size: 10.5px;
-  font-weight: 400;
-  /* codex P2(대비): #807d72 는 흰 배경 대비 4.12:1 로 소형 텍스트 AA(4.5) 미달이다.
-     «낮춘다» 가 «읽을 수 없게 한다» 가 되면 안 된다 — 5.51:1 로 올리되 굵기·크기로 위계는 유지. */
-  color: #6b6960;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2, #5a5852);      /* 7.11:1 */
+}
+.attach-lineage-group .attach-list-item-name-text.is-ai-lineage { color: #2563eb; }
+/* 카드 머리의 종류 아이콘 — 행마다 되풀이하던 것을 여기로 올렸다.
+   아이콘+파일명은 한 덩어리(`-title`)라 머리가 접혀도 둘이 갈라지지 않는다. */
+.attach-lineage-group-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;          /* 파일명이 말줄임될 수 있게 — 없으면 덩어리가 칩을 밀어낸다 */
+}
+.attach-lineage-group-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
 }
 /* 작성 주체 색축 — 사용자=중립 슬레이트 / AI=파랑. Google Docs 가 편집자를 색으로 가르는
    것과 같은 축이며, 이 화면에서는 "누구의 갈래인가" 가 곧 사용자가 찾는 정보다.
