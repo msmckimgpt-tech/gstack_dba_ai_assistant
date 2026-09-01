@@ -152,6 +152,73 @@ source_of_truth: true
 | TEST-20260831T183000-chip | `connect-modal.js`·CSS | 칩이 정상과 **구분되는** 상태를 보인다 · 서버 값이 칩까지 배선됨 | AC-20260831T183000-runner-version-sync-3 |
 | TEST-20260831T183000-recatalog | `app.js` 게이트 콜백 | 잠금이 풀리면 **카탈로그를 먼저 다시 받고** 그린다(순서 고정) | AC-20260831T183000-runner-version-sync-4 |
 
+| TEST-20260901T160000-live-repro | `describe_cli_failure` | **stdout 에만 있는 사유**가 사용자 문장에 실린다(라이브 실측 문자열로 고정) | AC-20260901T160000-cli-failure-reason-1 |
+| TEST-20260901T160000-no-empty-colon | `describe_cli_failure` | 어떤 조합에서도 «빈 콜론» 으로 끝나지 않는다 — 사용자가 실제로 본 표면 | AC-20260901T160000-cli-failure-reason-2 |
+| TEST-20260901T160000-noise | `_meaningful_lines` | stderr 의 잡음이 stdout 사유를 가리지 않는다(이 결함의 정확한 기전) | AC-20260901T160000-cli-failure-reason-3 |
+| TEST-20260901T160000-stderr-wins | `describe_cli_failure` | stderr 에 의미 있는 사유가 있으면 종전대로 그쪽이 이긴다(회귀 없음) | AC-20260901T160000-cli-failure-reason-4 |
+| TEST-20260901T160000-hints | `_FAILURE_HINTS` | 회복 가능한 부류는 다음 행동 1줄 · 모르는 실패엔 **안내를 지어내지 않는다** | AC-20260901T160000-cli-failure-reason-5 |
+| TEST-20260901T160000-hint-boundary | `_FAILURE_HINTS` | 짧은 토큰(`401`)이 무관한 숫자에 걸려 엉뚱한 안내를 주지 않는다 | AC-20260901T160000-cli-failure-reason-5 |
+| TEST-20260901T160000-redact | `_redact_secrets` · `_FAIL_DETAIL_MAX` | 사유에 자격증명이 실리지 않고 길이 상한이 있다 | AC-20260901T160000-cli-failure-reason-6 |
+| TEST-20260901T160000-single-site | `_run_cli_cancelable` | 실패 사유 조립이 **한 곳**에서만 일어난다(두 벌 방지) | AC-20260901T160000-cli-failure-reason-7 |
+
+| TEST-20260901T173000-live-repro | `stale_runner_must_yield` | 옛 러너 + 같은 계정 최신 러너 → **양보**(라이브 지문으로 고정) | AC-20260901T173000-stale-runner-yield-1 |
+| TEST-20260901T173000-lone | `stale_runner_must_yield` | 최신 러너가 없으면 낡아도 계속 일한다 — 배포 직후 전 사용자 중단 방지 | AC-20260901T173000-stale-runner-yield-2 |
+| TEST-20260901T173000-failopen | `stale_runner_must_yield` | 지문 미상·미신고·조회 실패는 **양보 없음**(fail-open) | AC-20260901T173000-stale-runner-yield-3 |
+| TEST-20260901T173000-peer | 후보 질의 | **남 · 살아 있음 · 하트비트 신선** 3중 자물쇠 + 인증과 같은 술어 | AC-20260901T173000-stale-runner-yield-4 |
+| TEST-20260901T173000-claim | `claim_request` | 집행은 점유 UPDATE **앞** 409 — 억제만으로는 못 막는다 | AC-20260901T173000-stale-runner-yield-5 |
+| TEST-20260901T173000-nobusyloop | `wait_for_request` | 양보 판정이 **즉시 반환하지 않는다**(옛 러너의 즉시 재호출 → busy-loop) | AC-20260901T173000-stale-runner-yield-5 |
+| TEST-20260901T173000-cancel | `wait_for_request` | 취소 통보는 양보 판정에 묶이지 않는다(주석 제외 코드 구간 단언) | AC-20260901T173000-stale-runner-yield-6 |
+| TEST-20260901T173000-superseded | 하트비트 · 러너 | `superseded` ≠ `stale_build` · 러너는 **하던 일을 마치고** 대기 호출 앞에서 종료 | AC-20260901T173000-stale-runner-yield-7 |
+| TEST-20260901T173000-account | 판정 질의 | 계정 스코프 — 다른 계정 러너 병존은 허용(사용자 결정) | AC-20260901T173000-stale-runner-yield-8 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).
+
+| TEST-20260901T140000-cc-compose | `claimed_client_value` | 인스턴스를 새기되 **미신고 러너는 종전 값 그대로** · 잘릴 땐 인스턴스를 지킨다 | AC-20260901T140000-orphan-claim-reclaim-1 |
+| TEST-20260901T140000-cc-sanitize | `claimed_client_value` | 영숫자 아닌 인스턴스는 무시 — `LIKE` 메타문자가 회수 범위를 넓히지 못한다 | AC-20260901T140000-orphan-claim-reclaim-1 |
+| TEST-20260901T140000-release-scope | `release_runner_instance_claims` | 경계 = **점유자**(`ClaimedBy`) · `open` · 미제출 · 상태 불변 · 커밋됨 | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-release-noop | `release_runner_instance_claims` | 빈·무효 신고는 **SQL 을 한 줄도 쏘지 않는다**(빈 목록이 「전부」로 번역되지 않음) | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-release-nomatch | `release_runner_instance_claims` | 0건 매칭이면 UPDATE 를 건너뛴다(무조건절 사고 차단) | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-phase-fresh | `_bridge_phase` (실구동) | 진행 신호가 신선하면 `working` — 임계 직전까지 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-phase-stalled | `_bridge_phase` (실구동) | 임계를 넘으면 `stalled` — 「가져갔다」와 「진행한다」를 가른다 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-phase-unknown | `_bridge_phase` (실구동) | 판정 불가는 `working` 유지(관측 못 한 것을 「멈췄다」로 단정 안 함) | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-phase-terminal | `_bridge_phase` (실구동) | 종결(`canceled`·`expired`·`done`)이 무진행보다 앞선다 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-threshold | `BRIDGE_NO_PROGRESS_SEC` | 임계가 **정상 무도구 최대치(621초) < x < lease(1800초)** 안에 있다 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-wiring | `ai_tools.py` | 폴링·스트리밍 **두 호출부** 모두 판정 인자·후행 고지를 탄다(전송 방식이 화면을 바꾸지 않게) | AC-20260901T140000-orphan-claim-reclaim-4 |
+| TEST-20260901T140000-cancel-prefix | `wait_for_request` | 취소 통보 대조가 **앞자리 비교** — 인스턴스가 붙어도 통보가 끊기지 않는다 | AC-20260901T140000-orphan-claim-reclaim-5 |
+| TEST-20260901T140000-runner | `bridge_agent.py` | 발급·점유 각인·첫 신호 사망신고·종료 세 갈래(`atexit`+`SIGTERM`) 배선 | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-confkeep | `save_conf` | 설정 전체 재작성이 `runner_instance` 를 **이어 나른다**(잃으면 회수가 조용히 죽는다) | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-front | `_applyBridgePhase` | `stalled` 에 이력을 다시 읽고 **종결로 다루지 않는다**(러너가 켜지면 답이 온다) | AC-20260901T140000-orphan-claim-reclaim-4 |
+
+| TEST-20260901T140000-pb0008 | 라이브 화면 (Windows-browser) | PRE-DEPLOY baseline — 배포본에 무진행 축 0건 · 제보 대화 말풍선 6건 실측 · 별건(인젝션 거부) 발견. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim.md` | AC-20260901T140000-orphan-claim-reclaim-4 |
+| TEST-20260901T140000-postdeploy | 배포본 `9c04b52c` (Windows-browser) | POST-DEPLOY — 코드 도달 6축 · 배포본 함수 구동 · 국면표 6케이스 ALL PASS · **실 MySQL 에서 점유자 술어 4형식**(P1 회귀 차단) · 자산 스탬프 갱신. 미검증 2건 명시. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md` | AC-20260901T140000-orphan-claim-reclaim-1~5 |
+| TEST-20260901T160000-os-closed-set | `normalize_bridge_os` | 표 밖 값(`linux`·`darwin`·`nt`·숫자·`None`)은 전부 `""` — 화면의 키로 쓰이므로 닫힌 집합이어야 한다 | AC-20260901T160000-connect-os-default-1 |
+| TEST-20260901T160000-os-no-erase | `set_account_bridge_os` | 「모른다」(빈값·표 밖)로는 **UPDATE 자체가 나가지 않는다** — 구 러너의 하트비트가 기존 값을 지우지 않는다 | AC-20260901T160000-connect-os-default-4 |
+| TEST-20260901T160000-os-write-guard | `set_account_bridge_os` | `NOT (BridgeLastOs <=> %s)` NULL-safe 가드 · rowcount 0 이면 「썼다」고 하지 않는다 · 컬럼 부재 예외를 삼킨다 | AC-20260901T160000-connect-os-default-5 |
+| TEST-20260901T160000-os-read-freshness | `account_bridge_os` | 질의에 `LastHeartbeatAt` 이 **없다** — 신선도를 얹으면 연결이 끊긴 뒤(=이 화면을 여는 때) 항상 빈 값 | AC-20260901T160000-connect-os-default-3 |
+| TEST-20260901T160000-os-wiring | 러너·하트비트·API | `os.name` 판정 · `body["agent_os"]` · `set_account_bridge_os` 호출과 예외 격리 · 두 응답의 `last_os` | AC-20260901T160000-connect-os-default-1,2 |
+| TEST-20260901T160000-os-front | `ai-connect.js` · `connect-modal.js` | 서버 값이 추측을 이긴다(두 화면) · 발급 응답도 반영 · 탭을 누르면 고정되어 늦은 응답이 덮지 않는다 | AC-20260901T160000-connect-os-default-2,6 |
+| TEST-20260901T160000-os-keys-align | `compose_launch_commands` | 정규화 표의 이름이 서버가 만드는 명령의 키와 같다 — 갈리면 화면이 빈 명령을 그린다 | AC-20260901T160000-connect-os-default-2 |
+| TEST-20260901T160000-os-schema-reach | `_ensure_bridge_heartbeat_schema` | ALTER 가 **fast path 에서도 불리는** 함수 안에 있고 `_ensure_seed_catchup` 이 그것을 부른다 (codex P1-1 — 기존 운영 DB 컬럼 미생성) | AC-20260901T160000-connect-os-default-1 |
+| TEST-20260901T160000-os-connection-event | `set_account_bridge_os` | 토큰 행이 이미 같은 계열이면 **계정 UPDATE 가 나가지 않는다** — 두 러너 진동 차단 (codex P1-2) | AC-20260901T160000-connect-os-default-5 |
+| TEST-20260901T160000-os-live-token | `set_account_bridge_os` | 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돈다 — 폐기 토큰이 계정 필드를 못 바꾼다 (codex P2-5) | AC-20260901T160000-connect-os-default-5 |
+| TEST-20260901T160000-modal-epoch | `connect-modal._make` | 발급 응답에 창 세대 검사 — 닫힌/다른 창에 토큰·명령을 되살리지 않는다 (codex P1-3) | AC-20260901T160000-connect-os-default-6 |
+| TEST-20260901T160000-page-rank | `ai-connect.adoptLastOs` | 근거 등급(추측<상태<발급) — 늦게 온 상태 조회가 그려진 명령을 덮지 않는다 (codex P2-4) | AC-20260901T160000-connect-os-default-6 |
+| TEST-20260901T160000-postdeploy | 배포본 `b50513e0` (Windows-browser) | POST-DEPLOY **양방향** — 「모른다」 폴백 · WSL 러너 → `posix` → 두 화면 macOS·Linux(브라우저는 Win32) · PowerShell 재등록 → `windows` → 화면 Windows · 사용자 탭 선택 유지. 증적 `test-runs.d/TASK-20260901T160000-connect-os-default-postdeploy.md` | AC-20260901T160000-connect-os-default-1~6 |
+
+| TEST-20260901T163000-both-sinks | `log_event` | 사람 줄 + JSONL 원장 양쪽에 나오고, 원장에 `ts`·`lvl`·`ev`·`seq`·`run`·`pid` 가 **항상** 있다 | AC-20260901T163000-runner-log-1 |
+| TEST-20260901T163000-offset | `_tz_suffix` | 지역시각에 UTC 오프셋 동반 — 서버 로그와 같은 사건임을 계산으로 확인할 수 있다 | AC-20260901T163000-runner-log-1 |
+| TEST-20260901T163000-seq | `log_event` | 순번 단조 — 같은 초에 여러 줄이 나도 인터리브 순서를 잃지 않는다 | AC-20260901T163000-runner-log-1 |
+| TEST-20260901T163000-exc | `_log_exc` | 예외 **형**과 스택이 원장에 남고, 사람 줄에는 요약만(스택이 화면을 덮지 않게) | AC-20260901T163000-runner-log-2 |
+| TEST-20260901T163000-summary | `_log_run_stop` | 종료 한 줄에 uptime·처리·오류 + 사건별 집계 · 종료 경로가 여럿이어도 **한 번만** | AC-20260901T163000-runner-log-2 |
+| TEST-20260901T163000-scrub | `_scrub` | 등록 토큰과 **미등록 토큰 형태** 둘 다 두 sink 에서 마스킹 | AC-20260901T163000-runner-log-3 |
+| TEST-20260901T163000-nobody | `log_event` | 질문·답변 본문을 싣지 않고 길이만 센다(보안 계약 표와 정합) | AC-20260901T163000-runner-log-3 |
+| TEST-20260901T163000-legacy | `_log` | 종전 위치인자 호출이 그대로 동작 — 호출부 80여 곳 무변경 계약 | AC-20260901T163000-runner-log-4 |
+| TEST-20260901T163000-nodup | `_human_log_path` (실 서브프로세스) | stderr 가 이미 그 파일이면 **이중 기록하지 않는다**(POSIX 설치본 리다이렉트) | AC-20260901T163000-runner-log-5 |
+| TEST-20260901T163000-windows | `_human_log_path` (실 서브프로세스) | stderr 가 다른 곳이면 러너가 직접 쓴다 — Windows 설치본의 «증거 0» 복구 | AC-20260901T163000-runner-log-5 |
+| TEST-20260901T163000-rotate | `_rotate_if_needed` | 상한 초과 시 회전 + 세대 정리 · 원장 권한 0600 | AC-20260901T163000-runner-log-6 |
+| TEST-20260901T163000-codes | `_EV_*` | 사건 코드가 상수로 선언되고 `계층.동작` 형태 · task 축 이벤트가 `task` 키를 공유 | AC-20260901T163000-runner-log-1 |
+
+| TEST-20260901T170000-stop-last | `_arm_exit_release` (실 프로세스 종료) | `run.stop` 이 **마지막 줄** · 해제가 그 앞 · 집계에 해제가 실림. 구코드 FAIL 재현 확인 | AC-20260901T163000-runner-log-2 |
+| TEST-20260901T170000-stop-order | `bridge_agent.py` 소스 | 요약 등록이 해제 등록보다 **앞**(atexit 역순 계약을 이름으로 고정) | AC-20260901T163000-runner-log-2 |

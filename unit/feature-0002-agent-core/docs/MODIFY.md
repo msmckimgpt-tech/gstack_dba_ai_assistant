@@ -3065,3 +3065,19 @@ LLM 게이트(`shared/llm_gate.py`) 자체 0 · 자율수집 임계값 0.
 **12종 KILL + 등가 2종 식별**(배선 뮤턴트 3종 포함 — 아래 REVIEW 참조).
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T180000-kb-external-reach-merge — origin/main(50 commit) 재병합 해소
+
+고병렬 창(§13.2.5-A). **코드 로직 변경 0** — 문서 말미 블록 충돌만.
+
+- `feature-0003/docs/{MODIFY,REVIEW}.md`: 양쪽 다 **말미 신규 블록 추가**. append-doc driver 가
+  「본문 변경 감지」로 `git merge-file` 에 위임해 표준 마커가 남았고, §16.4 자율 해결 표 1행
+  (「서로 다른 섹션 변경 → 양쪽 반영」)에 따라 **양쪽 유지 + 시간순 정렬**로 해소. 마커 잔존 0.
+- `routers/ai_tools.py`: 3-way clean. 자동 병합을 그대로 믿지 않고 확인 —
+  `_kb_grounding_sections`·`_bridge_product_scope_key` 참조 7건 생존 · AST PASS.
+- ⚠ **식별자 충돌 아님**: main 에 `CHG-20260901T160000-side-panel-exclusive-r5` ·
+  `-runner-mirror-sync` 가 있어 타임스탬프 접두가 겹치지만, §13.1 이 보는 것은 **전체 식별자**
+  이고 슬러그가 달라 유일하다. 재번호하지 않았다.
+- 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
+
+Task-Cycle: feature-0002-agent-core

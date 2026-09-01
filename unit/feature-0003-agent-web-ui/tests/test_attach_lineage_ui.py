@@ -164,23 +164,35 @@ def test_lineage_origin_is_not_invented_when_parent_unknown():
         "부모를 못 찾은 경우의 문구가 없다 — 없는 사실을 단정하게 된다")
 
 
-def test_versions_box_states_lineage_composition():
-    """버전 박스가 **이 계보의 구성 + 다른 계보 수**를 글로 밝힌다.
+def test_lineage_composition_is_stated_by_the_card_not_repeated_in_the_box():
+    """옆 계보의 존재는 **여전히 화면에 있다** — 다만 자리가 옮겨졌다.
 
-    버전 행만 보면 "이게 이 파일의 전부" 로 읽힌다 — 옆 계보의 존재가 사용자에게 보이지 않는다.
+    REQ-20260828 이 버전 박스에 「이 계보: … / 다른 계보 N개」 안내문을 넣은 이유는 그 사실이
+    화면 어디에도 없었기 때문이다. REQ-20260831 이 그룹 카드를 도입하면서 같은 사실을
+    **구조로**(머리의 `계보 N` · 행의 `⤷ 갈라짐` 칩 · 정체성 라벨 · 토글 `버전 N개`) 말하게
+    됐고, REQ-20260901 에서 박스의 문구는 되풀이가 되어 걷어냈다(사용자 지적).
+
+    여기서 잠그는 것은 **보장이 사라지지 않았다**는 것이다 — 위치만 바뀌었지 사실은 남아야 한다.
     """
-    body = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
-    assert "attach-list-versions-lineage" in body, "계보 구성 안내를 렌더하지 않는다"
-    assert "is_current_lineage" in body, "어느 것이 이 계보인지 서버 판정을 쓰지 않는다"
-    assert "다른 계보" in body, "다른 계보의 존재를 말하지 않는다"
+    box = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
+    assert "attach-list-versions-lineage" not in box, (
+        "박스가 카드 머리와 같은 사실을 되풀이한다")
+    card = _code_only(_fn_body(_src(COMPOSER), "_attachLineageGroupCard"))
+    assert "계보 ${count}" in card, "카드 머리가 계보 수를 말하지 않는다"
+    lst = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
+    assert "⤷" in lst, "분기 사실이 행에서도 사라졌다"   # 문구는 title/aria, 화면은 글리프
+    assert "_identityLabel" in lst, "계보 정체성이 행에서도 사라졌다"
+    assert "버전 ${verCount}개" in lst, "이 계보의 파일 수(버전 토글)가 사라졌다"
 
 
-def test_lineage_note_only_when_axis_exists():
-    """계보가 하나뿐이면 안내를 붙이지 않는다(늘 뜨는 문구는 정보가 아니다)."""
-    body = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
-    i_gate = body.find("if (hasLineageAxis)")
-    i_note = body.find("attach-list-versions-lineage")
-    assert 0 <= i_gate < i_note, "계보 안내가 축 유무와 무관하게 렌더된다"
+def test_versions_box_does_not_reintroduce_a_lineage_note():
+    """박스에 계보 안내문을 **되살리지 않는다** — 짧은 되풀이도 되풀이다."""
+    box = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
+    assert "attach-list-versions-lineage" not in box, "박스가 계보 안내 요소를 되살렸다"
+    # ⚠ 「다른 계보」 문자열 자체를 금지하지 않는다 — 비교 버튼의 `title` 은 그 버튼이 **무엇을
+    #   여는지**를 설명하는 정당한 용례다(상시 렌더되는 안내문과 다르다). 금지 대상은
+    #   «화면에 늘 떠 있는 되풀이 문구» 이므로 요소 자체로 판정한다.
+    assert not re.search(r"note\.textContent\s*=", box), "안내문 조립이 남아 있다"
 
 
 # ── L3. 토글 문구는 한 곳에서 만든다 ───────────────────────────────────────

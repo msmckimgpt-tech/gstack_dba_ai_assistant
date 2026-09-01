@@ -375,6 +375,23 @@ console.log("\n[H] 사용자 제보 재현 (2026-09-01) — 실행을 눌러 «�
   ok("H3 실행이 성공을 확인하면 창이 닫힌다", overlay.hidden === true);
   ok("H4 토스트로 알린다", globalThis.__toasts.length === 1
      && /연결되었습니다/.test(globalThis.__toasts[0] || ""));
+
+  // H5 — 실행했더니 «대기 중» 은 됐는데 **그 러너가 낡았다**. 사용자가 풀려던 문제(«업데이트
+  //      필요»)가 그대로면 성공이 아니다 — 여기서 닫으면 배지는 여전히 경고인 채 창만 사라진다.
+  //      열 때 이미 정상이었으므로 자동 경로는 관여하지 않는다: 이 단언은 실행 경로의 판정 축을
+  //      **단독으로** 겨눈다.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
+  await mod.refreshConnState();
+  mod.openConnectModal();
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: true, compose_blocked: false });
+  launchBtn.click();
+  await sleep(2600);
+  ok("H5 낡은 러너로 실행된 것은 성공이 아니다",
+     overlay.hidden === false && globalThis.__toasts.length === 0);
 }
 
 console.log("\n[G] 첫 조회 실패 (codex 1R P2-3)");
@@ -391,6 +408,105 @@ console.log("\n[G] 첫 조회 실패 (codex 1R P2-3)");
   await mod.refreshConnState();      // 러너가 붙었다
   ok("G1 첫 조회가 실패해도 전이를 놓치지 않는다",
      globalThis.__toasts.length === 1 && overlay.hidden === true);
+}
+
+console.log("\n[I] 사용자 요청 (2026-09-01) — 명령 경로 · «업데이트 필요» 갱신도 닫힌다");
+{
+  const launchBtn = $("connectModalLaunch");
+  mod.bindConnectModal();
+
+  // I1 — 「연결 준비」로 받은 **명령을 터미널에서 실행**해 다시 이어진 경우.
+  //      한때는 창을 열 때의 상태를 기준선으로 **고정**했다. 그래서 열 때 «대기 중» 이었으면
+  //      그 뒤 실제로 끊겼다가 다시 이어져도 «전이» 로 세지 않아 영영 닫히지 않았다.
+  //      기준은 고정값이 아니라 **직전 관측**이어야 한다.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();          // 화면이 «대기 중» 을 안다
+  mod.openConnectModal();
+  await settle();
+  ok("I1a 열자마자 닫히지 않는다", overlay.hidden === false);
+  $("connectModalMake").click();
+  await settle();
+  setStatus({ logged_in: true, connected: true, listening: false, compose_blocked: false });
+  await mod.refreshConnState();          // 러너를 껐다 (명령을 실행하려고)
+  ok("I1b 끊긴 것만으로는 닫지 않는다", overlay.hidden === false);
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await mod.refreshConnState();          // 명령을 실행해 다시 이어졌다
+  ok("I1c 명령으로 다시 이어지면 닫힌다", overlay.hidden === true);
+  ok("I1d «연결» 을 말한다", /연결되었습니다/.test(globalThis.__toasts[0] || ""));
+
+  // I2 — 배지가 «업데이트 필요» 인 상태에서 갱신했다. `listening` 은 줄곧 참이고
+  //      `runner_stale` 만 풀린다 — `listening` 만 보는 판정은 이 경로를 통째로 놓친다.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: true, compose_blocked: false });
+  await mod.refreshConnState();
+  mod.openConnectModal();
+  await settle();
+  ok("I2a 열자마자 닫히지 않는다", overlay.hidden === false);
+  $("connectModalMake").click();
+  await settle();
+  ok("I2b 아직 낡은 동안은 창이 남는다", overlay.hidden === false);
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
+  await mod.refreshConnState();          // 최신 러너로 갱신됐다
+  ok("I2c 갱신되면 닫힌다", overlay.hidden === true);
+  ok("I2d «갱신» 을 말한다 (연결이 아니라)",
+     /갱신되었습니다/.test(globalThis.__toasts[0] || ""));
+
+  // I3 — 같은 갱신을 `[내 AI 실행]` 으로 한 경우. 두 경로가 같은 축·같은 말을 써야 한다.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: true, compose_blocked: false });
+  await mod.refreshConnState();
+  mod.openConnectModal();
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  launchBtn.click();
+  await sleep(1200);
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
+  await sleep(1600);                     // 대기 루프의 첫 회차(2000ms) 가 도달할 시간
+  ok("I3a 실행으로 갱신해도 닫힌다", overlay.hidden === true);
+  ok("I3b 같은 말을 쓴다", /갱신되었습니다/.test(globalThis.__toasts[0] || ""));
+
+  // I4 — 낡은 채로 «대기 중» 이 되는 것은 성공이 아니다 (연결은 됐지만 사용자가 풀려던
+  //      문제는 그대로다). 이걸 성공으로 읽으면 «업데이트 필요» 배지를 남긴 채 창만 닫힌다.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: false, compose_blocked: false });
+  await mod.refreshConnState();
+  mod.openConnectModal();
+  await settle();
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: true, compose_blocked: false });
+  await mod.refreshConnState();
+  ok("I4 낡은 러너로 이어진 것은 성공이 아니다", overlay.hidden === false
+     && globalThis.__toasts.length === 0);
+}
+
+console.log("\n[J] 닫은 창의 늦은 응답이 다음 창의 «직전 관측» 을 오염시키지 않는다 (codex P1)");
+{
+  const cmdEl = $("connectModalCmd");
+  // 판정을 «직전 관측» 기준으로 바꾸면 그 값 자체가 자산이 된다 — 남의 창 응답이 거기 섞이면
+  // 일어나지 않은 전이가 만들어지고, 새로 연 창이 방금 받은 명령과 함께 닫힌다.
+  await reset();
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
+  await mod.refreshConnState();          // 화면이 «쓸 수 있음» 을 안다
+  mod.openConnectModal();                 // 창 A
+  await settle();
+  statusDelayMs = 1200;
+  setStatus({ logged_in: true, connected: true, listening: false, compose_blocked: false });
+  const late = mod.refreshConnState();    // 창 A 의 조회 — «사용 불가» 를 늦게 들고 온다
+  await sleep(200);
+  mod.closeConnectModal();                // 닫기만 한다 (다시 열지 않는다)
+  statusDelayMs = 0;
+  await late;                             // 늦은 응답 도착 — 창 세대가 이미 다르다
+  setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
+  mod.openConnectModal();                 // 창 B — 열 때 이미 «쓸 수 있음»
+  await settle();
+  $("connectModalMake").click();
+  await settle();
+  const cmd = String(cmdEl.textContent || "");
+  await mod.refreshConnState();
+  ok("J1 오염된 관측으로 새 창을 닫지 않는다",
+     overlay.hidden === false && globalThis.__toasts.length === 0);
+  ok("J2 새 명령이 남아 있다", String(cmdEl.textContent || "") === cmd && cmd.length > 0);
 }
 
 await reset();

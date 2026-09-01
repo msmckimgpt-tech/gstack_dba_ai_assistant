@@ -415,6 +415,18 @@ pkill -f 'bridge_agent.py' >/dev/null 2>&1 || true
 #   증상은 앞선 결함과 똑같이 «아무 일도 일어나지 않음» 이다 — rc=0, 오류 없음, 로그에
 #   러너 시작 줄조차 없음. 게다가 위 \`pkill\` 은 이미 실행됐으므로 **돌던 러너까지 사라진다**
 #   (누르기 전보다 나빠진다). 그래서 여기서 기다린다.
+# 로그 회전은 **여기서** 한다 (TASK-20260901T163000). 러너의 stderr 를 셸이 이 파일로
+# 잇고 있으므로 러너 자신은 이 파일을 안전하게 밀어낼 수 없다(자기 fd 가 옛 inode 를
+# 붙들고 있어, 옮겨도 계속 옛 파일에 쓴다). 기동 직전이 유일하게 안전한 시점이다.
+# 상주 러너는 몇 달을 돌기도 하므로 상한이 없으면 이 파일이 조용히 디스크를 먹는다.
+if [ -f "\$BRIDGE_HOME/bridge.log" ]; then
+  _sz=\$(wc -c < "\$BRIDGE_HOME/bridge.log" 2>/dev/null || echo 0)
+  if [ "\$_sz" -gt 8388608 ]; then
+    rm -f "\$BRIDGE_HOME/bridge.log.2" 2>/dev/null || true
+    mv -f "\$BRIDGE_HOME/bridge.log.1" "\$BRIDGE_HOME/bridge.log.2" 2>/dev/null || true
+    mv -f "\$BRIDGE_HOME/bridge.log" "\$BRIDGE_HOME/bridge.log.1" 2>/dev/null || true
+  fi
+fi
 BEFORE_LINES=0
 [ -f "\$BRIDGE_HOME/bridge.log" ] && BEFORE_LINES=\$(wc -l < "\$BRIDGE_HOME/bridge.log" 2>/dev/null || echo 0)
 BRIDGE_TOKEN="\$TOKEN" nohup $PY "\$BRIDGE_HOME/bridge_agent.py" \\
@@ -797,6 +809,14 @@ fi
 pkill -f 'bridge_agent.py' >/dev/null 2>&1 || true
 
 say "러너를 상주시킵니다…"
+# 기동 직전 로그 회전 (launch.sh 와 같은 규칙·같은 이유 — 러너는 자기 stderr 가 향하는
+# 파일을 안전하게 밀어낼 수 없다).
+if [ -f "$BRIDGE_HOME/bridge.log" ] \
+   && [ "$(wc -c < "$BRIDGE_HOME/bridge.log" 2>/dev/null || echo 0)" -gt 8388608 ]; then
+  rm -f "$BRIDGE_HOME/bridge.log.2" 2>/dev/null || true
+  mv -f "$BRIDGE_HOME/bridge.log.1" "$BRIDGE_HOME/bridge.log.2" 2>/dev/null || true
+  mv -f "$BRIDGE_HOME/bridge.log" "$BRIDGE_HOME/bridge.log.1" 2>/dev/null || true
+fi
 BRIDGE_TOKEN="$BRIDGE_TOKEN" nohup "$PY" "$AGENT_PATH" \
   --base "$BRIDGE_BASE" --ca "$CA_PATH" --resume $RUNNER_ARGS \
   >> "$BRIDGE_HOME/bridge.log" 2>&1 &
@@ -804,7 +824,9 @@ BRIDGE_PID=$!
 sleep 2
 if kill -0 "$BRIDGE_PID" 2>/dev/null; then
   say "완료. 웹 화면의 표시가 '내 AI 대기 중' 으로 바뀌면 질문을 보낼 수 있습니다."
-  say "  로그   : $BRIDGE_HOME/bridge.log"
+  say "  로그   : $BRIDGE_HOME/bridge.log          (사람이 읽는 줄)"
+  say "  감사    : $BRIDGE_HOME/bridge.events.jsonl (한 줄 = 한 사건. 문제 보고 시 이 파일을"
+  say "            보내 주세요 — 토큰은 기록 전에 지워집니다)"
   say "  종료   : kill $BRIDGE_PID   (또는 pkill -f bridge_agent.py)"
   say "  해제   : rm -rf $BRIDGE_HOME  +  핸들러 등록 삭제"
   say "           (Linux: ~/.local/share/applications/mysql-ai-bridge.desktop)"

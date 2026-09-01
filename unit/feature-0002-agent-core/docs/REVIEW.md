@@ -2754,16 +2754,26 @@ surge 0 · caddy blip 0 · 대화 스모크 PASS · 배포본 런타임 심볼·
 PASS — Blocking 2건 in-cycle 해소, cross-domain 1건 해소. `make test` rc=0 · ruff clean ·
 뮤테이션 4/4 KILL. 보안 표면(권한 코드·인가 경계·신규 라우트) 변경 0.
 
-## REV-20260901T160000-kb-external-reach [SKIPPED:codex-usage-limit] — 지식베이스 외부 AI 도달 범위 (F1·F2·F4·F5)
+## REV-20260901T160000-kb-external-reach [SKIPPED:codex-no-output] — 지식베이스 외부 AI 도달 범위 (F1·F2·F4·F5)
 
 - Related TASK: feature-0002-agent-core (`20260901T160000-kb-external-reach`) + feature-0003 거주분
 - Trigger: schema 무변경이나 계정/제품 **경계**와 외부 AI 컨텍스트 주입이 걸려 backend·security 렌즈.
   §18.8.2 1번 「제약 없는 채널 우선」에 따라 **codex 를 먼저 시도**했다 — 세션 도구 제약
-  (AgentTool 미요청)에 걸리지 않는 독립 채널이기 때문이다. 결과 `ERROR: You've hit your usage
-  limit ... try again at 3:44 PM`(2026-09-01 14:35 KST 시점, exit 0 이라 조용히 지나갈 뻔했다).
+  (AgentTool 미요청)에 걸리지 않는 독립 채널이기 때문이다. **4회 시도 전건 무산**:
+
+  | 시도 | 조건 | 결과 |
+  |---|---|---|
+  | 1 | 긴 프롬프트(1.5KB), 14:35 KST | `ERROR: You've hit your usage limit … try again at 3:44 PM` |
+  | 2 | 같은 프롬프트, 17:44 KST(한도 해제 후) | 출력 **없음**(`codex_memories_write::phase2` 오류만) |
+  | 3 | 파일·함수 지정, 실행 금지 명시 | 파일 내용만 덤프, **결론 미출력** |
+  | 4 | diff 를 프롬프트에 인라인, 「결론 3줄만」 | 프롬프트 에코 후 **본문 없음** |
+
+  ⚠ **4회 모두 프로세스 exit 0 이었다.** 출력을 안 읽었으면 「리뷰 통과」로 기록될 뻔했다 —
+  이 저장소가 이미 아는 함정(`codex-review-prompt-size-and-poll-verify-recipe`)의 재현이고,
+  이번엔 짧은 프롬프트로도 재현됐다(진단 probe 는 정상 응답하므로 CLI 자체는 살아 있다).
   저장소 선례(`REV-20260831T110000 [SKIPPED:codex-timeout] + 자체 적대 3렌즈`)에 맞춰 **자체
-  적대 검증 + 뮤테이션 실증**으로 수행. ⚠ 독립 채널이 아니므로 **내가 놓친 것을 내가 놓친 채로**
-  둘 수 있다 — 아래 4·5번 항목은 그 한계를 명시한다.
+  적대 검증 + 뮤테이션 실증 + 라이브 시각검증**으로 수행. ⚠ 독립 채널이 아니므로 **내가 놓친
+  것을 내가 놓친 채로** 둘 수 있다 — 아래 4·5번 항목은 그 한계를 명시한다.
 - Timestamp: 2026-09-01T16:00:00+09:00
 - Verdict: PASS (Blocking 2 + Major 1 + Minor 3 전건 in-cycle 해소)
 
@@ -2865,8 +2875,9 @@ Cross-ref: CHG-20260901T160000-kb-external-reach(양 feature) · FUNCTION `## �
   조회). 대역 테스트는 이걸 재지 않는다 — 배포 후 응답 시간으로 관측한다.
 - **외부 AI 의 실제 소비**. 「번들에 실린다」까지만 증명한다(§3 참조).
 
-codex 한도는 15:44 KST 에 풀린다. 이 cycle 을 막아 세우진 않되, **다음 cycle 첫 작업으로 이
-diff 를 codex 에 다시 태우는 것**을 후속에 남긴다.
+codex 는 한도 해제 후에도 결론을 내지 못했다(위 표 2~4). 이 cycle 을 막아 세우진 않되,
+**codex 호출 형태 자체를 고치는 것**(예: 대상 파일 1개 + 라인 범위 + 실행 금지 + 짧은 출력
+형식)을 후속에 남긴다 — 지금은 「독립 채널이 있다」고 적혀 있지만 실제로는 쓰이지 못하고 있다.
 
 ### 5. Verdict
 

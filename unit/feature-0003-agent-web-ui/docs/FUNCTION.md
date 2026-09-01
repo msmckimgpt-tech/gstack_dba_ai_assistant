@@ -12,6 +12,10 @@ source_of_truth: true
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+- REQ-20260901T133000-remove-query-result-details (20260901T1330-remove-query-result-details, **Minor §12.3** — `static/app/messages.js` · `static/app.js` · `static/app/composer.js` · `static/css/chat.css` + feature-0043 계약 테스트 3종 방향 전환. 백엔드·스키마·RBAC·엔드포인트 0): **말풍선 안 「▼ 쿼리 결과 / 실행 단계」 여닫이를 제거하고, 단계·SQL·결과셋의 표시면을 「단계 보기」 사이드 패널 하나로 통일한다.** 사용자 원문(2026-09-01): "`▼ 쿼리 결과` 펼치기에 대한 UI는 더 이상 의미없는 구조로 확인됩니다. (이미 `단계 보기` 기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능) 해당 UI를 정리해주세요." 라이브 실측이 그 판단을 뒷받침한다 — 같은 답변에서 여닫이는 SQL 17건 + 비-SQL 일부를 보였고 패널은 **77단계 전부**를 소요시간과 함께 보였다(중복이면서 덜 보여주는 쪽이 여닫이였다). 「정리」가 다의어(삭제 vs 부분 제거)라 §16.7 G1 · §12 절차로 승격해 사용자 결정을 받았다 — **「제거만」**. 함께 소멸하는 기능을 결정 **전에** 고지했다: CSV 다운로드 링크 · 「전체 데이터 보기」(패널에 대체재 없음). 사후 자체 점검에서 셋째가 드러나 별도 보고했다: `steps` 없는 **구형 메시지 폴백**(「실행 SQL」·「결과 파일」)도 이 블록 안에 있었고 그런 메시지는 「단계 보기」 버튼조차 붙지 않아 **대체 표시면이 없다**. REV-20260901T133000-remove-query-result-details. AC-20260901T133000-remove-query-result-details-1 ~ -3.
+  - AC-20260901T133000-remove-query-result-details-1 (여닫이와 그 조립 경로 전체 제거): assistant 말풍선은 더 이상 `<details class="message-details">` 를 갖지 않는다. `renderMessageDetails` · `buildStepBlocks` · `bubbleVisibleSteps` · `buildSqlNavigator` · `buildSqlStepPanel` · `loadFullCsvIntoTable` · `appendDetailBlock` · `extractFirstTableRef` · `formatSqlForDisplay`(+`SQL_FORMAT_KEYWORDS`)를 함께 제거하고, 생산자가 사라진 CSS 규칙(`.message-details*` · `.message-detail-block` · `.step-detail-list` · `.sql-navigator`/`.sql-nav-*` · `.sql-result-group`/`-body`/`-actions` · `.sql-toggle-wrap` · 사문이던 `.sql-result-label`)도 걷어낸다. **표시면을 지우면서 그것을 만들던 함수를 남기면 다음 사람이 그 자리를 아직 살아 있는 것으로 읽는다.** 남기는 것은 다른 소비처가 있는 것뿐이다 — `buildResultTable` · `parseMarkdownTablePreview` · `parseCsv`(본문 인라인 표 로더), `.sql-block`(본문 ```sql 블록), `.sql-toggle-btn` · `.sql-result-toggle-wrap`(「단계 보기」 패널 카드). 본 AC 는 **AC-0072 의 「`renderMessageDetails()` 의 접이식이 보존된다」와 AC-0340(구형 fallback 의 `meta.sql` 표시)을 supersede** 한다.
+  - AC-20260901T133000-remove-query-result-details-2 (진행 표시는 패널을 갱신하고, 말풍선에는 입구를 보장한다): `_renderBridgeSteps` 는 `refreshStepSidePanelForRun` 으로 사이드 패널을 갱신하고, 말풍선에는 「단계 보기 (N)」 버튼만 둔다 — **없으면 만든다**. 이 «없으면 만든다» 가 필수인 이유: 브리지 placeholder 말풍선은 `meta.steps` 없이 그려져 `app.js` 의 버튼 부착 분기(`msgMetaSteps.length`)를 타지 못하므로, 만들지 않으면 진행 중 단계로 들어갈 입구가 **화면에 0개**가 된다(여닫이 제거가 조용한 no-op 이 되는 지점). 기존 버튼은 `replaceWith` 로 통째 교체해 옛 리스너를 끊고(클릭 1회에 여러 번 열리는 중복 바인딩 방지), 개수는 **총 단계 수**(`steps.length + omittedCount`)를 쓴다 — 창 크기를 개수로 내보내면 상한에 닿는 순간 숫자가 멈춰 "진행이 멈췄다" 로 읽힌다. 배포 전 열려 있던 탭에 남은 옛 여닫이(`.message-details`)와 옛 제3 블록(`.bridge-live-steps`)은 발견 시 제거한다.
+  - AC-20260901T133000-remove-query-result-details-3 (남은 표시면의 상한은 유지된다): 여닫이가 지고 있던 바깥 캡(`.message-details-body` · `.step-detail-list`)이 사라져도 페이지가 다시 늘어나지 않는다 — 근거는 **각 부분이 자기 상한을 갖는다**는 것이다: 「단계 보기」 패널 카드의 `.step-sql`(`max-height:180px` + `overflow-y:auto`)과 전역 `.result-table-wrap`(`max-height: min(60vh, 460px)`). 이 두 상한은 이 변경 이전부터 있던 것이며 회귀 테스트가 잠근다.
 - REQ-20260901T031500-interrupt-preserve-bridge (20260901T0315-interrupt-preserve-bridge, **Minor §12.3** — `feature-0003/src/routers/conversations.py` + `feature-0002/src/agent_core.py`(`header` 파라미터) + 신규 테스트 12건. 스키마·RBAC·엔드포인트 0, 비파괴 텍스트 추가): **브리지(개인 AI) 경로의 중단도 진행 단계를 다음 요청의 맥락으로 넘긴다.** 앞 REQ 는 서버 run 경로를 고쳤는데, 라이브는 `feature-0043` 전환 모드(서버 계정 LLM 차단 — 배포 스모크가 매번 확인)라 **사용자가 실제로 누르는 중단은 브리지 경로**를 탄다. 그 경로를 축별로 추적하면 화면·이력(취소 안내 말풍선)과 단계 접이식(말풍선이 `run_id = task_id` 각인을 유지 + `_record_bridge_step` 이 개인 AI 의 도구 호출을 steps 에 적재)은 **이미 성립**했고, **다음 요청의 맥락만** 비어 있었다 — 브리지가 개인 AI 에게 넘기는 대화 맥락(`ai_tools._recent_conversation_context`)은 표시 store 의 **content 텍스트만** 읽고 steps·meta 를 보지 않기 때문이다. 그래서 중단 뒤 "아까 그거 이어서" 라고 물어도 개인 AI 는 자기가 직전에 무엇을 조사했는지 몰랐다. REV-20260901T031500-interrupt-preserve-bridge. AC-20260901T031500-interrupt-preserve-bridge-1 ~ -3.
   - AC-20260901T031500-interrupt-preserve-bridge-1 (취소 말풍선이 진행 단계를 싣는다): `_mark_bridge_placeholders_canceled` 는 **task 루프 안에서** `_bridge_progress_tail(conn, conversation_id, task_id)` 로 그 task 의 `agent_runtime.steps` 를 렌더해 취소 안내 뒤에 덧붙인다. 루프 밖에서 한 번 만들면 여러 대기 질문을 함께 취소할 때 모든 말풍선이 같은 단계를 갖는다(남의 조사가 내 질문 아래 붙는다). `run_id` 각인은 종전대로 건드리지 않아 접이식 단계도 유지된다.
   - AC-20260901T031500-interrupt-preserve-bridge-2 (형식은 서버 경로와 한 벌 + 미완 라벨): 본문은 `agent_core._build_interrupted_note` 를 **그대로 재사용**하고 `header=_BRIDGE_PROGRESS_TAIL_HEADER` 로 첫 문단만 브리지 문맥으로 바꾼다(브리지 전용 렌더러를 두면 두 경로의 화면이 갈리고 약한 쪽이 진실이 된다). 그 머리말이 **미완 라벨** 역할을 한다 — "완료된 답변이 아니라 중간 기록이며, 이어지는 지시가 이와 다른 방향이면 그 지시를 따르세요". 이 텍스트가 다음 요청의 개인 AI 맥락에 실리므로 라벨이 없으면 중간 조사가 확정 결론으로 읽힌다.
@@ -4482,6 +4486,44 @@ fallback 으로 읽는다("최근 3분 내 step = 진행 중"). 이 fallback 의
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0828, 신규 2026-08-26·08-27·08-28 블록 prepend)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)의 `releases` head 에 **신규 3 date 블록**(08-28 items 4 / 08-27 items 13 / 08-26 items 2 · 전건 area work) prepend + `generated` top-block date 연동. 기능 계약·렌더 로직 변경 없음(콘텐츠 데이터 전용).
 
+## REQ-20260901-lineage-row-compaction — 계보 내부 되풀이 제거 + 행 한 줄 (표현 계층, Minor §12.3)
+
+1. **파일명은 한 번만** — 그룹 카드 머리(계보 여럿) 또는 목록 행(단독 계보)에서 1회. 계보 행과
+   버전 행은 파일명을 렌더하지 않는다. 확인 경로는 남긴다 — 버전 행 `title`, 계보 행
+   `title`·`aria-label`·「원문 보기」 클릭 대상.
+2. **계보 안내문 없음** — 그 사실들(주체·분기·파일 수·다른 계보 수)은 행 라벨 · `⤷` 칩 ·
+   토글 `버전 N개` · 카드 머리 `계보 M` 이 각각 진다. 박스에서 되풀이하지 않는다.
+3. **행은 한 행** — 계보 행의 정체성·정보·액션은 같은 flex 행에 놓는다(`display: contents` 로
+   메타 래퍼를 투명화해 액션과 텍스트가 폭을 나눠 갖게 한다). 버전 행도 한 행이다.
+   ⚠ 폭이 모자라면 **접힌다(wrap)** — 자르지 않는다. 「버전 N개」 같은 유일한 진입점이
+   말줄임으로 사라지는 것을 막기 위한 이 패널의 기존 원칙이다.
+4. **상태는 뜻이 있을 때만** — `읽기 완료`(ingested) · `오류`(failed) 만 표시하고, 텍스트
+   첨부에서 상수인 `uploaded` 는 감춘다. **모르는 enum 은 원문 그대로 노출**한다(새로 생긴
+   실패 상태를 조용히 삼키지 않는다).
+5. **분기 표식은 글리프** — 화면은 `⤷` 한 자(`aria-hidden`), 말로 된 설명은 `title` 과 행의
+   접근성 이름이 진다. 색 단독 의존 금지 요건은 **글리프 형태**가 충족한다(pill 테두리 불필요).
+
+## REQ-20260901-attach-lineage-uploader — 계보를 «누가 올렸는지»로 가른다 (목록 payload + 표현 계층, Minor §12.3)
+
+1. **payload** — 첨부 목록은 각 행의 `account_id`(업로더)와 `uploader_username`(표시명)을 싣는다.
+   표시명은 한 번의 IN 조회로 해소하며 **fail-soft** 다 — 실패해도 목록은 나가고, 미해소는
+   `null` 로 남긴다(빈 문자열·기본 이름으로 메우지 않는다).
+2. **공유 대화 한정 표시** — 행의 계보 라벨은 공유 대화(`isGroupConversation`)에서 **업로더
+   이름**, 1:1 에서는 `사용자 업로드`. 1:1 은 업로더가 늘 자기 자신이라 이름이 정보를 주지 않고
+   좁은 이름줄만 먹는다(§16.8). 이름을 모르면 **「업로더 미상」** — 「내 파일」로 격하하지 않는다.
+3. **되풀이 금지** — 그룹 카드 안에서 파일명과 종류 아이콘은 **카드 머리에서 한 번만** 렌더한다.
+   행의 1차 라벨은 파일명이 아니라 **계보 정체성**(업로더 / `AI 수정본`)이다.
+   ⚠ 행의 파일명 **요소**는 유지한다 — 「원문 보기」 클릭 대상이자 접근성 이름이므로
+   `title`·`aria-label` 은 파일명 그대로다(화면 문구만 바꾼다).
+4. **한 사실은 한 곳에서** — 정체성은 라벨이, 분기 사실(`⤷ 갈라짐`)은 칩이 진다. 갈라지지 않은
+   계보에는 칩이 붙지 않는다. 그룹 안 버전 배지는 `v{n}` 으로 축약한다(라벨이 이미 AI 라고 말한다).
+   작성 주체 색축은 라벨이 진다(`.is-ai-lineage`).
+5. **카드 머리 결속** — 아이콘과 파일명은 한 덩어리(`min-width: 0`)라 머리가 접혀도 갈라지지
+   않고, 파일명이 말줄임된다.
+6. **assistant 쪽 계약 유지** — `## FILE VERSION LINEAGES` 는 계보마다 `uploaded by <이름>` 과
+   per-lineage/overall latest 를 계속 싣는다. 화면과 프롬프트가 **같은 사실**을 말해야 한다
+   (이 REQ 의 발단이 그 둘의 비대칭이었다).
+
 ## REQ-20260831-attach-lineage-visibility — 계보를 «견주기 쉽게» 만든다 (web/UI 표현 계층, Minor §12.3)
 
 같은 파일명의 계보가 여럿일 때, 첨부 목록은 다음을 만족한다.
@@ -4621,3 +4663,94 @@ head 한 행만 노출하므로 다중 버전 계보(v4 head)의 행에는 표�
   `업데이트 필요` / `대기 중` 네 가지이며 **접두 없이** 쓴다. 무엇의 상태인지는 자리(내 계정
   옆)와 `title` 툴팁이 진다. 접두를 되살리면 상태에 따라 칩이 줄을 넘나들며 사이드바 하단이
   튄다(실측 2026-09-01).
+## (side-panel-exclusive, 2026-09-01) 우측 오버레이 사이드 패널은 한 번에 하나만 열린다
+
+화면 **우측에 겹쳐 뜨는 오버레이 패널**은 셋이다 — `#attachSidePanel`(첨부 파일) ·
+`#stepSidePanel`(실행 단계) · `#profileDrawer`(유저 프로필, `#profileBackdrop` 동반). 셋은
+`position: fixed; top:0; right:0; height:100vh` 로 **같은 자리**를 쓰고 z-index 만 다르다
+(180 / 181 / 200·backdrop 195). 따라서 둘 이상이 열리면 위의 하나만 보이고 나머지는 **열린 채
+가려진다** — 그 상태에서는 가려진 패널의 닫기 버튼·리사이즈 핸들도 클릭할 수 없다.
+
+**계약**: 어느 패널을 열든, 그 직전에 나머지 오버레이 패널이 닫힌다.
+
+- **정본은 등록부 `src/static/app/side-panels.js`** 다. 각 소유 모듈이 자기 close 를
+  `registerSidePanel(key, {close, elementId})` 로 등록하고, **모든 열기는
+  `openSidePanel(key, openFn)` 을 통과**한다. opener 가 배타를 «기억해서» 호출하는 구조가
+  아니므로 호출 누락이라는 실패 모드가 없다.
+- **닫기는 소유 모듈의 close 를 경유한다** — 등록부가 DOM 을 직접 감추지 않는다. 실행 단계는
+  라이브 티커 정지(`_stopStepPanelTicker`)가, 프로필은 backdrop 내림이 닫기의 일부다.
+- **접근성**: 숨은 패널은 `inert`/`aria-hidden` 으로 조작 대상에서 빠진다. `#attachSidePanel`·
+  `#stepSidePanel` 의 `.hidden` 은 슬라이드 아웃 전환 때문에 `display:flex` 를 유지하므로,
+  CSS 가 전환 후 `visibility: hidden; pointer-events: none` 으로 넘긴다(`inert` 미지원 엔진의
+  실효 폴백). `#profileDrawer` 는 base `.hidden { display:none !important }` 에 걸려 원래부터
+  제거된 상태다 — 세 패널의 숨김 규칙은 한 벌이 아니다.
+- **가드 순서**: 열 대상이 없으면(요소 부재·핸들 null) 남의 패널을 닫지 않는다 — 열지도
+  못하면서 열려 있던 패널만 사라지는 것은 순수 손실이다.
+- **재진입 안전**: close 안에서 다시 배타가 불려도 한 번만 순회하며, 무시된 요청을 보고한다.
+- **관측 가능성**: 등록 실패·close 실패·열기 실패·중첩 요청 무시를 콘솔에 남기고, 순회 후
+  **닫히지 않은 패널이 남으면 보고**한다. 이 사후 단언의 열거 출처는 `[data-side-panel]`
+  **DOM 표식**이라 «등록을 잊은 패널» 도 잡는다. ⚠ 다만 **등록부의 문을 아예 타지 않고 연**
+  패널은 트리거 자체가 없어 보지 못한다 — 그 표면은 정적 가드(AC-5·AC-6)만 덮는다.
+- **좌측 대화목록 `<aside class="sidebar">` 는 대상이 아니다** — in-flow 그리드 컬럼이라 겹치지
+  않으며, 배타에 넣으면 첨부를 여는 순간 대화목록이 사라진다.
+
+**배타 닫힘은 상태를 파기하지 않는다 (첨부 한정)**: 첨부 패널은 «닫힘 = 상태 파기» 라
+(재개방 시 목록 모드가 `active` 로 리셋되고 서버 목록을 다시 그린다), 배타로 자동 닫힌
+경우에 한해 `{convId, listState, scrollTop}` 을 스냅샷했다가 **같은 대화에서 다시 열 때만**
+복원한다. 사용자가 × 로 닫은 경우의 리셋은 의도이므로 유지한다.
+**실행 단계 패널에는 같은 장치가 없다** — 그 화면은 말풍선의 「단계 보기」에서 전부
+재유도되지만 첨부의 목록 모드는 **서버 조회 파라미터**(`?state=deleted`)라 재유도할 곳이
+없기 때문이다. 이 비대칭은 의도된 것이다.
+
+- AC-20260901T115300-side-panel-exclusive-1: 첨부 패널이 열린 상태에서 「단계 보기」를 누르면
+  실행 단계만 열리고 첨부는 닫힌다(그 반대도 같다).
+- AC-20260901T115300-side-panel-exclusive-2: 프로필 드로어를 열면 다른 패널이 닫히고, 프로필을
+  닫을 때는 드로어와 **backdrop 이 함께** 내려간다(backdrop 만 남아 화면 클릭이 막히지 않는다).
+- AC-20260901T115300-side-panel-exclusive-3: 같은 패널을 두 번 열어도 자기 자신을 닫지 않는다.
+- AC-20260901T115300-side-panel-exclusive-4: `index.html` 의 `data-side-panel` 표식이 붙은
+  오버레이는 **전수가** 등록부에 등록돼 있고(S3), 오버레이 **후보**는 표식을 가져야 한다(S8).
+  후보 판정은 태그가 아니라 **class 토큰**(`*-side-panel` · `drawer` · `*-drawer`) + body 직속
+  `<aside>` 이며, 두 축 모두 같은 `HTMLParser` 경로를 쓴다 — 따옴표 종류·태그(`<section>`/
+  `<nav>`)·중첩(app-shell 안)에 좌우되지 않는다. 좌측 in-flow 컬럼(`class="sidebar"`)은
+  후보가 아니다. **한계**: 위 토큰 패턴에 맞지 않는 이름(`class="rail"` 등)으로 만든 오버레이는
+  census 밖이고, 표식이 없으므로 런타임 사후 단언도 그 패널을 보지 못한다.
+- AC-20260901T115300-side-panel-exclusive-5: 세 패널 DOM 에 소유 허용 범위 밖에서 닿지 않는다 —
+  검사 축은 `getElementById` · `querySelector("#…")` · `[data-side-panel]` 선택자 · 패널 고유
+  클래스 선택자 · `getElementsByClassName` · **모듈 스코프 핸들 import**(`profileDrawerEl`)
+  여섯이며, 소유 면제는 **자기 패널에 한정**한다. `app.js` 의 프로필 핸들 접근은 `export const
+  profile(Drawer|Backdrop)El = document.getElementById(...)` **선언 줄에서만** 허용된다.
+- AC-20260901T115300-side-panel-exclusive-6: 감시 대상 패널의 `hidden` **해제**는
+  `openSidePanel(` 스팬 안에서만 나타난다(S7). 판정은 **수신 표현식**을 본다 — 인라인 조회든,
+  같은 함수 안에서 대입된 지역 변수든 그 패널을 집으면 대상이고, 하위 요소
+  (`#attachSidePanelNote`)는 아니다. **한계**: 완전히 형태-무관하지는 않다 — 패널을 집는
+  형태의 열거에 없는 새 관용구, 함수 밖에서 얻어 넘긴 핸들, 동적 id 조립은 놓친다.
+- AC-20260901T115300-side-panel-exclusive-7: 배타로 닫힌 첨부 패널을 **같은 대화에서** 다시
+  열면 목록 모드·스크롤이 복원되고, **대화가 바뀌면 복원하지 않는다**(다른 대화가 휴지통
+  모드로 열려 «첨부가 없는 것처럼» 보이는 것을 막는다). 동일성 판정은 스냅샷 **생성·소비·
+  적용(서버 왕복 뒤 꼬리)** 세 지점에서 같은 술어를 쓴다. 활성 모드 복원 시에는 업로드 중·실패
+  pill 뷰를 되돌리되 **휴지통 모드에서는 덮지 않는다**(두 렌더러가 같은 목록 슬롯을 쓴다).
+  ⚠ 대화가 **같으면** 그 사이에 다른 대화를 다녀왔어도 복원한다 — 스냅샷은 «그 대화의 뷰»
+  이지 «그 방문의 뷰» 가 아니다. 이 선택은 의도된 것이며, 시간 축이 필요해지면 후속 과제
+  「`_attachListState` 를 대화별로 승격」이 그 개념을 통째로 없앤다.
+- AC-20260901T115300-side-panel-exclusive-8: `openFn` 이 던지면 **다른 패널은 이미 닫힌
+  뒤**이며, 그 사실이 콘솔에 보고된다(사전 검사는 요소 부재만 덮고 렌더 예외는 못 덮는다).
+
+## 연결 모달 자동 닫기 — 판정 축 (2026-09-01 갱신)
+
+닫기 판정의 축은 «**쓸 수 있는 상태**» 다: `listening === true && runner_stale !== true`.
+대기 중인 것만으로는 부족하다 — 러너가 배포본과 다른 파일이면 화면은 «업데이트 필요» 로 문제를
+표시하고 있고, 사용자는 그것을 풀려고 창을 연다.
+
+기준은 «창을 열 때 고정한 값» 이 아니라 **직전 관측**이다. 고정하면 한 번 «정상» 으로 잡힌 창은
+그 뒤 실제로 끊겼다가 다시 이어져도 영영 닫히지 않는다.
+
+- AC-20260901T0530-connect-modal-transition-1: 「연결 준비」로 받은 명령을 터미널에서 실행해
+  다시 이어지면, 창을 열 때 «대기 중» 이었더라도 알리고 닫는다.
+- AC-20260901T0530-connect-modal-transition-2: 배지가 «업데이트 필요» 인 상태에서 러너를 갱신해
+  `runner_stale` 이 풀리면(그동안 `listening` 은 계속 참) 알리고 닫는다.
+- AC-20260901T0530-connect-modal-transition-3: 알림 문구는 무엇이 풀렸는지를 따른다 — 직전이
+  «대기 중이지만 낡음» 이었으면 「최신으로 갱신되었습니다」, 아니면 「연결되었습니다」.
+- AC-20260901T0530-connect-modal-transition-4: **낡은 러너로 이어진 것은 성공이 아니다** —
+  자동 경로·실행 버튼 경로 모두 닫지 않는다(사용자가 풀려던 문제가 그대로이므로).
+- AC-20260901T0530-connect-modal-transition-5: 창을 열 때 이미 «쓸 수 있는 상태» 면 자동 경로는
+  닫지 않는다(열자마자 닫히는 창 방지). 사용자가 직접 누른 실행은 이 제한을 받지 않는다.
