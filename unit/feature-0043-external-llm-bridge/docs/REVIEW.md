@@ -2457,3 +2457,11 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
   `REV-20260901T163000` (codex, P1 3건·P2 2건 전건 조치) 로 이미 리뷰됐다.
 - 기록의 근거는 라이브 관측값 자체이며, 그 값들은 fragment 에 명령·응답 단위로 남아 있다
   (재현 가능). 미검증 항목(구 러너·동시 2러너)은 fragment 에 **명시**했다 — 통과로 위장하지 않는다.
+
+## REV-20260901T170000-ai-claude-feature-0043-cli-failure-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- **일시**: 2026-09-01
+- **범위**: 문서 3파일(MODIFY·TASK·원장) + test-runs.d fragment 2사본. **코드 변경 0**.
+- **판정**: 적대 패널 비대상 — 라이브 실측 결과를 옮겨 적은 기록이며 새 동작을 도입하지 않는다.
+  검증 대상 코드는 `REV-20260901T160000 [AGENT-TEAM:inline-adversarial]` 에서 이미 3렌즈 검토
+  (P1 1건 적발·수정)를 거쳤다.

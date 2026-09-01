@@ -2725,3 +2725,18 @@ stderr 에 **의미 있는** 줄이 있으면 그것, 없으면 stdout. 둘 다 
 PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로
 생겼다**는 증거이기도 하다 — codex P1-1 의 수정이 라이브에서 성립했다는 뜻이고, 안 생겼다면 값은
 영원히 `""` 로 남아 «테스트는 전통과하는데 기능은 없는» 상태가 됐을 것이다.
+
+## CHG-20260901T170000-ai-claude-feature-0043-cli-failure-postdeploy — 실패 사유 소실 해소 POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-cli-failure-reason (CHG-20260901T160000 의 사후 검증)
+- **위험도**: Minor (문서만 — **코드 변경 0**)
+- **배포 대상**: `4521a7e1` (scope=all)
+
+배포 게이트 5/5 + **배포 실물 런타임 실증 3/3**. 가장 중요한 것은 R3 — 서빙되는 러너 사본을
+그대로 import 해 라이브 실측 입력을 넣으니 사용자가 받게 될 문장이 **사유와 다음 행동까지 갖춘
+형태로** 생성됐다(종전: 콜론 뒤 빈 문장). 원장 status 를 `fixed:undeployed` →
+`fixed:deployed:unverified-live` 로 갱신. 잔여는 러너 갱신 후 사용자 왕복 1건.
+
+증적: `docs/test-runs.d/TASK-20260901T160000-cli-failure-reason-postdeploy.md`
+(feature-0003 사본 동반).
