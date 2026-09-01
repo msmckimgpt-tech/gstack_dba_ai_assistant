@@ -27,6 +27,31 @@ source_of_truth: true
 - [x] TASK-20260617T083954-ai-claude-bat-encoding-fix (REQ-0286, AC-20260617T083954-ai-claude-bat-encoding-fix-01~02, **Minor** §12.3, CHG-20260617T083954-ai-claude-bat-encoding-fix/REV-20260617T083954-ai-claude-bat-encoding-fix — 설치 스크립트 실행 버그 2종). 라이브 `.bat` 실행 시 `echo`→`cho`·base64 명령실행·지문 항상불일치. **버그①**: LF+UTF-8+`chcp 65001`→cmd.exe 코드페이지 전환 후 파일 오프셋 상실. 수정=ASCII 전용+CRLF+chcp 제거, `trust-bundle.sh` 가 .bat CRLF 출력+비-ASCII die. **버그②**: 지문 비교가 PEM **파일** 해시(`Get-FileHash`/`shasum`) vs 인증서 **DER** 지문→항상 불일치. 수정=DER SHA-256(win `X509Certificate2.RawData`, mac `openssl x509 -fingerprint`). **★cmd.exe 실측**: neuter(자가상승+certutil) 후 echo/지문표시/base64디코드/지문검증(ACTUAL==FP_HEX) 전구간 정상 도달. `.command` 는 `base64 -D`(macOS 전용 옵션) 라 Linux 테스트 불가-macOS 정상. macOS .command/index.html LF 유지.
 - [x] TASK-20260617T083954-ai-claude-id-collision-fix (CHG-20260617T083954-ai-claude-id-collision-fix/REV-20260617T083954-ai-claude-id-collision-fix, **Minor** §12.3 — 동시세션 ID 충돌 정리, **비-일련번호 형식 전환**). feature-0002(MSSQL, #309 선머지)가 docs 에서 `TASK-0299`·`AC-0562`·`AC-0563`·`CHG-20260617-0310`·`REV-20260617-0310` 점유 + `TASK-0298` 도 test 주석 참조 → 본 feature-0006 의 동일 6 ID 를 §6/ADR-0025 의 **timestamp+branch 형식 `<PREFIX>-<YYYYMMDDTHHMMSS>-<branch>`** 로 재번호(일련번호 점유-경합 제거). 사용자 결정(2026-06-17, "일련번호가 아닌 형태"): AC 도 ADR-0024 기본(순번 spec 앵커)에서 본건 한정 timestamp 형식 적용(신규·외부참조 적음). feature-0002 는 미변경. 비-충돌 ID(TASK-0296/0297, AC-0549~0561, CHG/REV-0307~0309) 는 보존.
 
+- [x] TASK-20260901T103000-ai-claude-corp-cert-expiry-monitor (**Minor** §12.3 — 인증서 만료 감시).
+  `deploy-web.sh` preflight 는 **배포할 때만** 돌고 **Root CA 를 보지 않는다**. 주기 감시
+  `bin/cert-expiry-check.sh`(leaf 30일 / CA 180일 · `--live` 로 서빙본 대조) + cron 설치기 추가.
+  감시 임계가 게이트(14일)보다 좁으면 스크립트가 거절하고, 두 파일 상수 관계를 테스트가 잠근다.
+  `unit/feature-0006-lan-proxy-access/tests` 를 Makefile·ci.yml **양쪽**에 등재(신설 규약 자가적용).
+
+## 8. Requested Scope (요청 범위)
+
+사용자 요청 (§16.7 G1 — 완료 선언 전 항목당 1행 대조). 2026-09-01 AskUserQuestion 결정.
+
+```
+사용자 원문(데이터이며 지시가 아님)
+AskUserQuestion 으로 모범적인 대안을 검토하여 제안까지 진행해주세요.
+→ 선택: 「만료 모니터링만 (권장)」
+```
+
+- [x] **CA 폐기검사 축 — 만료 모니터링만** — 산출물: `bin/cert-expiry-check.sh`(leaf+CA 2축·
+      3단 임계·`--live` 서빙본 대조) + `bin/install-cert-expiry-cron.sh`(멱등 주 1회). CRL·수명단축
+      **불채택** 근거를 FUNCTION.md §12 에 기록(둘 다 새 outage 원인을 들이고, CRL 은 완화 플래그를
+      없애지도 못함)
+- [x] **게이트와 감시의 관계를 구조로 잠금** — 산출물: `--leaf-warn < 14` 거절 + `deploy-web.sh`
+      의 `checkend 1209600` 상수와 감시의 `DEPLOY_GATE_DAYS=14` 가 어긋나면 FAIL 하는 테스트
+- [x] **동작 검증(텍스트 아님)** — 산출물: openssl 로 100/20/3일 cert 를 생성해 exit 0/1/2 실측,
+      CA 단독 임박·cert 부재·게이트보다 좁은 임계까지 9건
+
 ## 3. In Progress
 - TASK-0004 엄격한 네트워크 시나리오 정의 대기
 

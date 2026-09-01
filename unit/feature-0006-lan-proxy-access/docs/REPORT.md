@@ -92,3 +92,17 @@ Caddy 설정과 Windows LAN 프록시 스크립트를 별도 feature로 이관�
 
 ## 7. Human Attention Needed
 - 실제 LAN 운영 기준과 검증 절차 확정
+
+## 인증서 만료 감시 (2026-09-01)
+
+`deploy-web.sh` 의 TLS preflight 는 **배포 시점 게이트**이지 감시가 아니었다 — 배포가 없으면
+신호도 없고, **Root CA 는 아예 보지 않았다**. `bin/cert-expiry-check.sh`(leaf 30일 / CA 180일 ·
+`--live` 로 서빙본 대조) + `bin/install-cert-expiry-cron.sh`(주 1회, 멱등) 로 그 면을 덮었다.
+
+- 감시 임계 < 게이트(14일) 면 스크립트가 **거절**하고, 두 파일의 상수 관계를 테스트가 잠갔다.
+- 동작은 텍스트가 아니라 **생성 cert 로 실측**(100/20/3일 → exit 0/1/2, CA 단독 임박 → CRITICAL).
+- **cron 미설치** — `--print` 확인만 했다. 운영 호스트 crontab 은 사용자 판단이며, 설치 전까지
+  이 감시는 수동 실행 전용이다: `bash bin/install-cert-expiry-cron.sh`
+- 폐기(revocation) 축은 도입하지 않았다(사용자 결정) — 근거는 `MODIFY.md` 의
+  «왜 CRL/OCSP 가 아닌가». leaf 키 유출 + MITM 은 이 감시로 막지 못한다.
+
