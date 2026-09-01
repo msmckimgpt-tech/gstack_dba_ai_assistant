@@ -5372,7 +5372,18 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
 
 **검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
-
+## CHG-20260901T163000-attach-lineage-uploader 공유 대화 계보 업로더 식별 + 그룹 카드 되풀이 제거
+- **payload 에 업로더를 싣는다** — `_serialize_attachment_for_api` 에 `account_id`, 목록 엔드포인트에 `uploader_username`(WebAccounts IN 조회 1회). 종전에는 목록이 `AccountId` 를 직렬화에서 버려, 화면이 사람이 올린 계보를 전부 「사용자 계보」로 뭉뚱그렸다 — 공유 대화에서 서로 다른 멤버의 동명 계보가 **글자 하나 다르지 않았다**(라이브 실측: 대화 20260813083932 의 계정 10·50 동명 계보 4쌍 = 8행). 선행 cycle 의 "소유권 단정 금지" 계약은 *데이터가 없어서* 였지 원칙이 아니었다.
+- ⭐ **같은 사실을 assistant 는 이미 알고 있었다** — `## FILE VERSION LINEAGES` 가 `uploaded by jmkimmasangsoft.com` / `uploaded by admin` 으로 계보를 이름으로 가른다(라이브 프롬프트 렌더로 확인). 결함은 「모델이 모른다」가 아니라 **「같은 사실이 화면에 도달하지 않는다」** 였다. 그 원천 계약을 회귀로 함께 잠갔다.
+- **공유 대화에서만 이름을 쓴다** — 판정은 저장소 단일 술어 `isGroupConversation`. 1:1 은 업로더가 늘 자기 자신이라 이름이 정보 0 이면서 240px 이름줄만 먹는다(§16.8). 이름 해소 실패는 「업로더 미상」 — 「내 파일」로 격하하지 않는다(없는 사실을 만들지 않는다).
+- **되풀이 제거** — 그룹 카드 하나에 같은 파일명이 3회(머리 1 + 행 2), 같은 아이콘이 3회 실렸다(사용자 지적). 아이콘은 카드 머리로 통합하고, 행의 1차 라벨을 파일명 → **계보 정체성**으로 바꿨다. ⚠ 요소 자체는 지우지 않는다 — 「원문 보기」 클릭 대상이자 접근성 이름이라 `title`·`aria-label` 은 파일명을 유지한다(화면에서 지운 것을 AT 에서도 지우지 않는다).
+- 정체성이 라벨로 올라갔으므로 **분기 칩은 분기 사실 전용**(`⤷ 갈라짐`)으로 좁혔다 — 라벨과 칩이 같은 사실을 두 번 말하지 않는다. 갈라지지 않은 계보엔 칩이 붙지 않는다. 작성 주체 색축도 라벨로 이전(`.is-ai-lineage`). 그룹 안 버전 배지는 `v2` 로 축약(라벨이 이미 「AI 수정본」이라 말한다).
+- 카드 머리의 아이콘+파일명은 **한 덩어리**(`.attach-lineage-group-title`, `min-width: 0`) — 따로 두면 머리가 접힐 때 아이콘만 자기 줄로 떨어져 나간다(라이브 캡처가 포착해 수정).
+- Verification: pytest `feature-0003`+`feature-0002`+`feature-0023` **5167 passed / 5 skipped**(신규 11건) · `node --check` · `ast.parse` · **PB-0008** 3경로 실측 — 공유(라벨 이름 분리 · 행 아이콘 0 · 머리 아이콘 4) / 1:1(`사용자 업로드`·`AI 수정본`, 이름 없음) / 단독 계보(카드 없음 · 아이콘 2/2 · 라벨 = 파일명) + 240px 폭 무손실.
+- ⚠ 기존 실패 2건(`test_query_embed_visibility.py`)은 **main 기준선에서도 동일 재현** — 전체 스위트 실행 시 web-ui 테스트의 `sys.modules` 스텁 미정리로 agent-core 테스트의 `parents[3]` 가 IndexError. 본 변경 무관, 별도 cycle 대상.
+- Files: `routers/_conv_store.py`, `routers/conversations.py`, `static/app/composer.js`, `static/css/chat.css`, `tests/test_attach_lineage_uploader.py`(신규), `tests/test_attach_lineage_group_ui.py`, `docs/{TASK,MODIFY,REVIEW,REPORT,FUNCTION,TEST}.md`, `docs/test-runs.d/TASK-20260901T163000-attach-lineage-uploader.md`(신규)
+- **부수 복구 — 무력화돼 있던 게이트 1개**: `docs/TASK.md` 의 다른 세션 항목(2026-09-01 interrupt-preserve)에 **닫는 코드펜스만 있고 여는 펜스가 없었다**. `verify-completion` check #18(§16.7 G1 Requested Scope)의 펜스 파서가 그 시점부터 파일 끝까지를 "코드펜스 안" 으로 보아 **모든 Requested Scope 섹션을 인식하지 못했다**(feature-0003 전 cycle 영향 — 이 cycle 진입 시 `WARN: 섹션이 없습니다`). 여는 펜스 + 저장소 표준 라벨을 복원하니 **117 항목** 인식으로 돌아왔다. 이력의 의미는 건드리지 않은 포맷 복구다(§16.4 «주석·포맷» 자율 해결).
+- Timestamp: 2026-09-01T16:30:00+09:00
 ## CHG-20260901T053000-connect-modal-transition 판정 축 교체 — 명령 경로·업데이트 갱신도 닫는다
 - `static/app/connect-modal.js`: 모달 자동 닫기의 판정을 «창을 열 때 **고정한** 기준선 대비
   `listening` 전이» 에서 «**직전 관측** 대비 **쓸 수 있는 상태**(`listening && !runner_stale`)
@@ -5395,3 +5406,10 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 - Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
   `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…-transition.md`.
 - Timestamp: 2026-09-01T05:30:00+09:00
+
+## CHG-20260901T061000-transition-postdeploy POST-DEPLOY 실측 증적 (docs-only)
+- 배포본 `17d36ad8` 에서 요청 두 경로 확인 — A(명령 재연결) 재연결 후 닫힘 + 「연결되었습니다」 /
+  B(«업데이트 필요» 갱신) 갱신 후 닫힘 + 「최신으로 갱신되었습니다」. 무중단 blip 0.
+- Files: `docs/{TASK,REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-transition-postdeploy.md`,
+  `docs/evidence/connect-modal-autoclose/pd3-*.png`. 코드 변경 0.
+- Timestamp: 2026-09-01T06:10:00+09:00

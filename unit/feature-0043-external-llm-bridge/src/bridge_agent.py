@@ -842,6 +842,28 @@ def _self_build() -> str:
     except Exception:  # noqa: BLE001  (읽기 실패·경로 부재 — 모르면 빈 값)
         return ""
 
+
+def _self_os() -> str:
+    """이 러너가 도는 **명령 계열**: `"windows"` 또는 `"posix"` (2026-09-01).
+
+    왜 서버가 이걸 알아야 하는가: 연결 화면의 1단계는 붙여넣을 명령을 OS 별로 나눠 보여 주는데,
+    종전에는 그 기본 선택을 **브라우저**(`navigator.platform`)로 정했다. 그런데 브라우저가 도는
+    OS 와 러너가 도는 OS 는 **같지 않다** — WSL 안에서 러너를 띄우는 사용자는 Windows 브라우저로
+    화면을 보므로, 항상 PowerShell 명령이 먼저 뽑혀 매번 탭을 바꿔야 했다(제보 2026-09-01).
+
+    러너가 자기 계열을 신고하면 그 값이 「마지막으로 연결된 OS」가 되고, 화면은 추측 대신
+    **실제로 연결됐던 쪽**을 먼저 보여 준다. PowerShell 명령으로 다시 등록하면 그 신고가 곧
+    `windows` 라 화면도 따라 바뀐다.
+
+    `sys.platform` 이 아니라 `os.name` 을 보는 이유: 우리가 가르려는 것은 배포판이 아니라
+    **어느 명령문이 통하는가** 이고, 그 축에서 WSL 은 리눅스다(`os.name == "posix"`).
+    """
+    try:
+        return "windows" if os.name == "nt" else "posix"
+    except Exception:  # noqa: BLE001  (판정 불가 — 모르면 빈 값. 화면은 종전 추측으로 돌아간다)
+        return ""
+
+
 #: 이 러너가 다룰 줄 아는 작업 종류.
 #:
 #: `console_jobs` — 관리 콘솔 작업(대화가 아닌 프롬프트 한 덩어리). 신고하지 않으면 서버가
@@ -925,6 +947,9 @@ class Api:
         # 지문은 **동일성** 축이다 (2026-08-31). 날짜 버전이 같아도 파일이 다르면 서버가
         # 「배포본과 다른 러너가 돌고 있다」를 알 수 있고, 그 사실을 화면이 말해 줄 수 있다.
         body["agent_build"] = _self_build()
+        # 명령 계열 신고 (2026-09-01). 연결 화면의 1단계가 **마지막으로 연결된 쪽**을 먼저
+        # 보여 주게 하는 유일한 사실 — 브라우저가 도는 OS 는 러너가 도는 OS 가 아니다(WSL).
+        body["agent_os"] = _self_os()
         return self._post("/api/ai/bridge_heartbeat", body, timeout)
 
     def _post(self, path: str, payload: dict | None = None, timeout: float = 60.0) -> dict:

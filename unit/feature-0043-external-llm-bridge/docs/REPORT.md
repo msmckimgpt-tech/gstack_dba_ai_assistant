@@ -10,6 +10,13 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
+**2026-09-01 (TASK-20260901T160000)**: 연결 화면 1단계의 기본 OS 탭을 **추측에서 관측으로** 옮겼다.
+종전에는 `navigator.platform`(= 브라우저가 도는 OS)이 정해서, WSL 안에서 러너를 띄우는 사용자에게는
+**항상** Windows 가 먼저 뽑혔다(제보). 이제 러너가 하트비트에 자기 명령 계열을 신고하고
+(`agent_os`), 서버가 **연결 사건일 때만** 계정에 접어(`WebOAuthTokens.RunnerOs` → `BridgeLastOs`),
+두 화면(모달·단독 페이지)이 그 값을 기본 탭으로 쓴다. 모르면 종전 추측으로 돌아간다.
+codex 적대 리뷰가 P1 3건·P2 2건을 냈고 전건 수정·회귀 잠금(`REV-20260901T163000`).
+
 **배포 완결 `11049643` — 두 자물쇠(앱 게이트 + gateway config) 라이브 반영 · 전 서비스 SHA 일치 · 무중단 blip 0 · 스모크 PASS. PB-0008 화면 시각검증만 미수행(브리지 setup 불가 — 사유 명시).**
 
 서버 보유 계정(`claude-corp`/`root`)으로 나가는 chat 호출은 두 겹(코드 게이트 + 설정 주석)으로
@@ -260,6 +267,15 @@ kill 권한이 없다. 우리가 하는 것은 세 가지다:
 것은 **없다** — 개인 AI 안의 사고 과정은 관측 불가다. 조사 내역(도구 호출)만 남는다.
 
 ## 8. 개선 제안 (§8.1 — 기록만)
+
+- **`BridgeDefaultModel`·`BridgeDefaultEffort` 컬럼이 기존 배포에 생기지 않았을 수 있다**
+  (2026-09-01 발견, 이번 범위 밖). 두 ALTER 가 slow path(`_ensure_web_tables`)에만 있는데,
+  기존 DB 는 `_runtime_tables_available()` 이 참이라 fast path(`_ensure_seed_catchup`)만 돈다.
+  읽기(`account_bridge_defaults`)·쓰기 모두 예외를 삼키므로, 컬럼이 없어도 **조용히 "기본값 없음"**
+  으로 동작한다 — 즉 「새 대화가 매번 목록 첫 항목으로 되돌아간다」는 종전 마찰이 그대로
+  남아 있어도 아무도 모른다. 라이브 `SHOW COLUMNS FROM WebAccounts` 로 확인 후, 없으면
+  `_ensure_bridge_heartbeat_schema` 와 같은 fast-path 자리로 옮기는 별 cycle 이 필요하다.
+  (이번 cycle 의 `BridgeLastOs` 는 codex 적대 리뷰 P1-1 로 그 함정을 피해 갔다.)
 
 - 대기 질문이 일정 시간 미처리되면 사용자에게 알리는 경로(현재는 조용히 대기).
 - `claim` 후 미제출 상태로 방치된 작업의 lease 만료·재큐잉.

@@ -1629,7 +1629,6 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       거부턴 2건이 실제로 빠지고 제외 고지가 실린다(고착 해제 실증)
 - [ ] 사용자 왕복 1건 — 같은 대화 재질문이 거부문이 아닌 실제 리뷰인지(러너를 띄운 본인만 가능).
       러너측 효과는 화면 「연결 준비」 재실행 후 발효
-
 ## 20260901T1630-runner-log-structure — 러너 로그를 감사·에러핸들링 가능한 구조로
 
 **요청 (2026-09-01)**: 「'내 AI 연결하기' 를 통해 러너가 실행될 때 기록하는 로그에서 보다
@@ -1687,3 +1686,36 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       검사하려던 성질(시각)과 무관한 이유로 깨지는 검사였다),
       `test_bridge_interrupt_stream`(`"WARN"` 글자 → 심각도 성질 + 사건 코드)
 - [x] 러너 스위트 **1045 passed / 1 skipped** · ruff clean · `bash -n` · 배포본 동기화
+## 20260901T1600-connect-os-default — 1단계 기본 OS 탭을 「마지막으로 연결됐던 OS」로
+
+**요청 (2026-09-01)**: 「'내 AI 연결하기' 의 1단계에서 명령문이 처음 선택된 os가, 실행중인
+os가 아니라 마지막으로 연결되었던 os를 기준으로 선택되도록 구성해주세요. 현재는 주로
+linux(wsl) 내 명령문을 사용하고 있지만 windows가 항상 기본적으로 선택된 상태입니다. 이후
+powershell 테스트를 진행하며 해당 명령문으로 다시 등록했을 때 windows로 선택되어야 합니다」.
+
+**근본 원인**: 기본 탭을 `navigator.platform` 이 정했다 — 그것은 **브라우저가 도는 OS** 이고
+러너는 다른 곳에서 돈다. WSL 사용자는 Windows 브라우저로 화면을 보므로 판정이 구조적으로 틀렸다
+(운이 아니라 매번).
+
+**위험도: Minor** (§12.3 — 비파괴적 컬럼 추가 + 화면 기본값. 인증·인가·데이터 파괴 없음.
+실패 경로는 전부 「종전 동작으로 복귀」다). §7.1 계획 = 본 절.
+
+**완료 판정 기준 (다의어 고지 §7.1)**: WSL 러너가 붙어 있는 계정으로 `/ai/connect` 를 열면
+1단계 기본 탭이 **macOS·Linux** 이고 명령이 `curl … bridge_setup.sh` 로 보인다 (종전에는
+Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다시 등록하면 그 다음 열람에서
+**Windows** 가 먼저 뽑힌다.
+
+- [x] 러너: `_self_os()` (= `os.name`) 신고를 하트비트에 추가 · 배포 사본 동기화
+- [x] 서버: `WebOAuthTokens.RunnerOs` + `WebAccounts.BridgeLastOs` 컬럼(fast-path 멱등 ALTER) · `normalize_bridge_os`/
+      `account_bridge_os`/`set_account_bridge_os` · 하트비트 기록(실패는 삼킨다)
+- [x] API: `/api/ai/connect/status` · `/api/ai/connect/token` 응답에 `last_os`
+- [x] 화면: 단독 페이지·대화 모달 둘 다 서버 값 우선 + 추측 폴백 + 사용자 선택 고정
+- [x] 계약 테스트 28건 (`test_connect_os_default.py`) — 닫힌 집합 · 「모른다」가 안 지운다 ·
+      연결-사건 가드 · 토큰 생존 술어 · 신선도 술어 부재 · 배선 · 두 화면 · 응답 경합
+- [x] 적대 리뷰 (codex, effort=high) — **P1 3건 · P2 2건 전건 확인·수정·회귀 잠금**
+      (`REV-20260901T163000`): 기존 DB 컬럼 미생성 · 두 러너 값 진동 · 모달 늦은 발급 응답 ·
+      단독 페이지 응답 순서 · 폐기 토큰의 계정 쓰기
+- [x] PB-0008 PRE-DEPLOY baseline — 라이브에서 결함 재현(Windows 탭 + PowerShell 명령 고정,
+      `last_os` 키 부재). 증적 `test-runs.d/…-pb0008.md`
+- [ ] PB-0008 POST-DEPLOY — 러너를 실제로 붙여 `posix` 신고 → 화면이 macOS·Linux 를 먼저
+- [ ] 라이브 재배포 + POST-DEPLOY 실측
