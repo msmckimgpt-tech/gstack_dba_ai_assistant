@@ -5459,3 +5459,13 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 `oauth_store.stale_runner_must_yield`(상대 판정) + `routers/ai_tools.py` 집행 1지점
 (`claim_request` 409) · 억제 2지점(`list_open_requests`·`wait_for_request`) ·
 하트비트 응답 `runner_update.superseded` 신설. 화면(HTML·CSS·JS) 변경 0.
+
+## CHG-20260901T174000-side-panel-exclusive-postdeploy (doc-only)
+
+**변경**: 문서만 — `docs/test-runs.d/TASK-20260901T1740-side-panel-exclusive-postdeploy.md`
+신규 + `docs/{TASK,REVIEW,REPORT}.md`. **코드 0**.
+
+**기록 내용**: 선행 cycle `side-panel-exclusive` 의 라이브 배포본(`d3ead999`) 실측 —
+배포 판정 4축(머지 커밋 포함관계 · 컨테이너 `GIT_COMMIT` · 파일 실재 · healthz/엣지) +
+PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔류물 정리 확인.
+

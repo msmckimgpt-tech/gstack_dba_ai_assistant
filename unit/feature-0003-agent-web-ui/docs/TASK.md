@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Task
 
+## 20260901T1740-side-panel-exclusive-postdeploy — 라이브 배포본 실측 (doc-only)
+
+선행 cycle `20260901T1153-side-panel-exclusive` 의 **§16.3 deploy-backed 완료 조건 2**
+(라이브 재배포 검증)를 기록한다. 코드 변경 0.
+
+- [x] 배포 판정 4축 실측 — PR #1475 머지 커밋 `cce7df5e` ⊂ 라이브 배포본 `d3ead999`(web-a·b
+      `GIT_COMMIT` 동일) · 컨테이너 내 `side-panels.js` 실재 · `/healthz` 200 ·
+      엣지 `no upstreams available` 0건
+- [x] **PB-0008 POST-DEPLOY 16 step ok** — 라이브 자산 스탬프 `9763bcf30835` 가 붙은 배포본
+      모듈로 실행(PRE-DEPLOY 는 `?v=dev` 격리 컨테이너라 서로 다른 빌드)
+- [x] 검증 잔류물 정리 — 격리 컨테이너 2개 제거 · 임시 env 삭제 · 브라우저 종료 · DOM 원복
+- [x] 정직 기록 — `deploy-web.sh` 는 **멱등 no-op** 이었다(병렬 세션이 이미 상위 커밋으로
+      배포). 「내가 배포했다」가 아니라 「라이브가 내 커밋을 담고 있다」를 4축으로 확인
+
+### 9. Requested Scope
+
+- [x] 선행 cycle 의 deploy-backed 완료 조건 2(라이브 재배포 검증) 기록 — ✓ 완료
+
 ## 20260901T1153-side-panel-exclusive — 우측 사이드 패널은 한 번에 하나만 (Minor §12.3 — frontend-only, 비파괴)
 ## 20260901T1430-rqrd-postdeploy — 말풍선 여닫이 제거 POST-DEPLOY 부재 확인 (doc-only)
 
