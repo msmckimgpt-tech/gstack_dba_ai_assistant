@@ -131,6 +131,33 @@
     $("connectLead").textContent =
       (info.display_name || info.username || "") + " 계정 · 웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
     $("connectFlow").classList.remove("aic-hidden");
+    paintBatchConsent(info);
+  }
+
+  // ── 배경 작업 동의 토글 (TASK-20260901T190000) ────────────────────────────────
+  //
+  // 고지 문구는 **서버가 준 것을 그대로 쓴다**. 화면이 자기 문구를 지으면 러너 로그·관리
+  // 콘솔과 갈리고, 갈리는 순간 사용자는 같은 사실을 두 가지로 듣는다.
+  function paintBatchConsent(info) {
+    var box = $("batchConsentBox");
+    if (!box) { return; }
+    var notice = (info && info.batch_consent_notice) || "";
+    if (!notice) {
+      // 구 서버(이 축을 모른다) — 조작면을 만들지 않는다. 빈 토글을 남기면 사용자는
+      // 켰는데 아무 일도 일어나지 않는 것을 보게 된다.
+      box.classList.add("aic-hidden");
+      return;
+    }
+    $("batchConsentNotice").textContent = notice;
+    $("batchConsent").checked = !!(info && info.batch_consent);
+    box.classList.remove("aic-hidden");
+  }
+
+  function sayConsent(msg, kind) {
+    var el = $("batchConsentStatus");
+    if (!el) { return; }
+    el.textContent = msg || "";
+    el.className = "aic-status" + (kind ? " aic-status--" + kind : "");
   }
 
   fetch("/api/ai/connect/status", { credentials: "same-origin" })
@@ -187,6 +214,39 @@
   $("copyCmd").addEventListener("click", function () {
     copy((launch && launch[osTab]) || "", "복사했습니다. 터미널에 붙여넣고 실행하세요.");
   });
+  $("batchConsent").addEventListener("change", function () {
+    var el = $("batchConsent");
+    var want = !!el.checked;
+    el.disabled = true;
+    sayConsent("저장 중…");
+    fetch("/api/ai/connect/batch-consent", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: want })
+    })
+      .then(function (res) {
+        return res.json().then(function (b) { return { ok: res.ok, body: b }; });
+      })
+      .then(function (r) {
+        el.disabled = false;
+        if (!r.ok) {
+          // **되돌린다.** 실패한 채로 켜진 토글을 두면 사용자는 켰다고 믿는데 러너는
+          // 영영 배경 작업을 받지 않는다 — 이 축에서 가장 나쁜 상태다.
+          el.checked = !want;
+          sayConsent((r.body && (r.body.error_description || r.body.error))
+                     || "저장하지 못했습니다.", "error");
+          return;
+        }
+        el.checked = !!r.body.batch_consent;
+        sayConsent(r.body.message || "저장했습니다.", "ok");
+      })
+      .catch(function (e) {
+        el.disabled = false;
+        el.checked = !want;
+        sayConsent("저장하지 못했습니다: " + e, "error");
+      });
+  });
+
   $("tabPosix").addEventListener("click", function () { osTab = "posix"; osTabPinned = true; paintOsTab(); });
   $("tabWin").addEventListener("click", function () { osTab = "windows"; osTabPinned = true; paintOsTab(); });
 })();

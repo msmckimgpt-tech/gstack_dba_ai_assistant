@@ -1849,21 +1849,29 @@ def apply_external_cluster_labels(conn, payload, result) -> None:
             continue
         if lab:
             by_idx[idx] = lab
+    # 쓸 것을 **먼저 정하고** 그 다음에 연결한다. 순서가 반대면 유효한 라벨이 하나도 없는
+    # 응답에도 PG 를 열게 되고, 무엇보다 「빈 결과」와 「PG 미가용」이 같은 자리에서 갈려
+    # 실패 사유가 뒤바뀐다(작업 행에 남는 문구가 사용자 진단의 전부다).
+    writes = []
+    for e in entries:
+        try:
+            lab = by_idx.get(int(e.get("idx")))
+        except (TypeError, ValueError):
+            continue
+        if lab and e.get("kv_key"):
+            writes.append((str(e["kv_key"]), lab))
+    if not writes:
+        # 「제출됐지만 아무것도 반영되지 않음」을 성공으로 접지 않는다 — 그러면 콘솔은 완료라
+        # 말하는데 라벨은 그대로 affix 이고, 다음 pass 가 같은 작업을 또 산다.
+        raise ValueError("유효한 라벨이 하나도 없습니다(형식 또는 위생 규칙 불일치).")
     c, owned = _rw_conn(None)
     if c is None:
         raise RuntimeError("클러스터 원장(PG)에 연결할 수 없습니다.")
-    written = 0
     try:
         cur = c.cursor()
         try:
-            for e in entries:
-                try:
-                    lab = by_idx.get(int(e.get("idx")))
-                except (TypeError, ValueError):
-                    continue
-                if lab and e.get("kv_key"):
-                    _kv_put(cur, str(e["kv_key"]), lab)
-                    written += 1
+            for kv_key, lab in writes:
+                _kv_put(cur, kv_key, lab)
         finally:
             cur.close()
     finally:
@@ -1872,11 +1880,7 @@ def apply_external_cluster_labels(conn, payload, result) -> None:
                 c.close()
             except Exception:
                 pass
-    if not written:
-        # 「제출됐지만 아무것도 반영되지 않음」을 성공으로 접지 않는다 — 그러면 콘솔은 완료라
-        # 말하는데 라벨은 그대로 affix 이고, 다음 pass 가 같은 작업을 또 산다.
-        raise ValueError("유효한 라벨이 하나도 없습니다(형식 또는 위생 규칙 불일치).")
-    _log.info("cluster_label 위임 결과 기입 %d건 ds=%s", written,
+    _log.info("cluster_label 위임 결과 기입 %d건 ds=%s", len(writes),
               (payload or {}).get("datasource_key"))
 
 

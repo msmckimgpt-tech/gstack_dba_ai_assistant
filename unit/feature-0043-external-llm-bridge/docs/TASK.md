@@ -1968,3 +1968,38 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
 - `-6`: 게이트를 되돌리면(`AGENT_SERVER_LLM_ENABLED=1`) 종전 서버 경로가 그대로 돈다.
 
 <!-- PLAN-APPROVED by user on 2026-09-01 (AskUserQuestion 3문 응답) -->
+
+### 2.2 구현 기록 (2026-09-01)
+
+계획과 **다르게 간 곳**과 그 이유:
+
+| 계획 | 실제 | 왜 |
+|---|---|---|
+| `_run_llm_inner` 에 위임 분기 | `_run_llm`(바깥) 에 센티넬 + `_persist` 가 적재 | `_run_llm_inner` 는 예산 슬롯 **안**이다. 거기서 위임하면 개인 AI 가 도는 동안 서버 LLM 예산 슬롯을 붙든다. 그리고 적재는 DB 를 쓰므로 「DB 미접근」 계약인 스레드 본체에서 할 수 없다 |
+| `routers/ai_tools.py` claim 시 동의 재확인 | 재확인 **안 함** | 배급 자격은 러너 신고(`RunnerFeatures`) 하나가 정본이다. claim 자리에서 계정 동의를 또 보면 같은 질문에 두 개의 답이 생기고, 갈리는 순간 느슨한 쪽이 사실이 된다 |
+| `insight_summary` = "인사이트 배치" | **"테이블 인사이트 배치"** 로 이름을 좁힘 | 배선된 것은 테이블 축이다. 스키마·계정 인사이트는 서버 경로뿐 — 넓은 이름에 `wired: True` 를 달면 그것들까지 배선됐다고 말하게 된다(레지스트리가 금지하는 부분 배선) |
+
+계획에 **없었는데 필요했던 것**:
+
+- **`shared/bridge_tasks` 로 승격 4종** — 러너 자격 질의(`runner_profile_for_account`)·생존
+  술어(`LIVE_TOKEN_PREDICATE`)·버전 하한(`version_at_least`)·기능 정규화
+  (`parse_runner_features`) + 프롬프트 편성(`messages_to_prompt`). 종전엔 전부 웹 프로세스
+  안에 있었는데, 위임 판단을 **insight-worker** 가 하게 되면서 다른 컨테이너가 같은 질문에
+  답해야 했다. 워커 쪽에 다시 적으면 로그아웃한 세션의 러너를 워커만 자격 있다고 보는 창이
+  열리고, 그 창에서 적재된 작업은 아무도 집지 않는다.
+- **`dedupe_key`** (`enqueue_console_job`) — 배경 배치는 결과가 오기 전까지 매 pass 「아직
+  값이 없다」로 판단해 **같은 작업을 다시 적재**한다. 그 중복은 전부 실제로 처리되므로
+  같은 답을 사용자 계정 토큰으로 여러 번 사는 것이 된다. 대기열 상한은 폭주만 막는다.
+- **`apply_external_node_analysis` 안의 run 마감** — 워커의 마감 판정은 그 cycle 에 잡을 집은
+  run 만 훑는다(`touched_runs`). 마지막 잡이 위임으로 끝난 run 은 워커가 다시 건드릴 일이
+  없어, 여기서 닫지 않으면 영원히 `running` 이고 그 상태가 사용자의 재트리거까지 막는다.
+
+낡은 계약 테스트 **3건을 행위 기반으로 재작성**(구조를 잠그고 있던 것):
+
+- `test_node_analysis_refuses_before_enqueue` → `…_only_when_nowhere_to_delegate`.
+  종전 계약(「닫혔으면 거절」)이 곧 사용자가 제보한 결함이었다. 지켜야 할 것(큐에 넣어 놓고
+  한참 뒤 실패로 끝내지 않는다)은 그대로 두고 판정 대상만 바꿨다.
+- `test_capability_read_shares_the_freshness_rule_with_listening` / `…_survives_corrupted_json`
+  — 소스 문자열을 보던 검사라 질의가 shared 로 옮겨가자 계약은 그대로인데 FAIL 했다(같은
+  검사가 이미 두 번 옮겨졌다는 주석이 남아 있었다). **실제로 나가는 SQL** 과 **반환값**을
+  보도록 고쳐, 정의가 어디로 가든 술어가 진짜로 갈릴 때만 실패한다.
