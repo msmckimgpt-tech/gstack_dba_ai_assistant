@@ -3501,8 +3501,9 @@ def release_own_claims_on_exit() -> None:
 #: atexit) 각자 찍으면 원장에 종료가 두 번 나오고, 그러면 「러너가 두 번 죽었나」로 읽힌다.
 _RUN_STOPPED = threading.Event()
 
-#: **같은 계정**에 배포본과 같은 러너가 붙어서, 이 러너가 물러나야 한다는 서버 판정
-#: (TASK-20260901T173000, 사용자 결정 2026-09-01).
+#: **같은 계정**에 더 나중에 연결된 러너가 붙어서, 이 러너가 물러나야 한다는 서버 판정
+#: (TASK-20260901T183000, 사용자 결정 2026-09-01 — 「연결된 계정에서 다른 신규 러너에 연결되는
+#: 부분이 확인된다면 오래된 러너는 프로세스를 종료 … 계정이 다를 경우는 예외」).
 #:
 #: 왜 Event 인가: 이 사실을 아는 것은 하트비트 스레드이고, 물러날 수 있는 것은 대기 루프다
 #: (진행 중 작업을 마치고 끝내는 절차가 거기 있다). 스레드에서 곧바로 죽이면 처리 중이던
@@ -3679,8 +3680,9 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 if _u.get("superseded") and not _SUPERSEDED.is_set():
                     _SUPERSEDED.set()
                     log_event(_EV_HB_SUPERSEDED,
-                              "같은 계정에 최신 러너가 연결됐습니다 — 이 러너는 하던 일을 마치고 "
-                              "물러납니다(질문은 최신 러너가 처리합니다).",
+                              "같은 계정에 더 나중에 연결된 러너가 있습니다 — 이 러너는 하던 일을 "
+                              "마치고 물러납니다(질문은 그 최신 연결이 처리합니다). "
+                              "계정이 다른 러너는 영향받지 않습니다.",
                               level="WARN", local_build=_self_build(),
                               peer_build=str(_u.get("superseded_by_build") or "") or None)
                 if _u.get("stale_build") and not _stale_said:
@@ -4035,10 +4037,10 @@ def main() -> int:
             heartbeat_stop.set()
             idle = shutdown_after_drain(active, cancels)
             log_event(_EV_HB_SUPERSEDED,
-                      "최신 러너에 자리를 넘기고 종료합니다.",
+                      "더 나중에 연결된 러너에 자리를 넘기고 종료합니다.",
                       level="WARN", idle=idle, active=active.count())
-            _log("  이 러너는 더 이상 필요하지 않습니다 — 웹 화면의 「연결 준비」로 받은")
-            _log("  최신 러너가 이미 같은 계정에 연결돼 질문을 처리합니다.")
+            _log("  이 러너는 더 이상 필요하지 않습니다 — 같은 계정에 더 나중에 연결된")
+            _log("  러너가 이미 질문을 처리하고 있습니다(한 계정에는 러너 하나만 남깁니다).")
             return 0
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
