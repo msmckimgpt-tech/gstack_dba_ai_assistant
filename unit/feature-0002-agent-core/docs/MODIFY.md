@@ -2951,3 +2951,21 @@ LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
   기존 `test_kb_glossary_enum.py`·`test_metadata_glossary_{enum,autoreg}.py` 계약 갱신.
 - **검증**: `make test` PASS(rc=0, ruff clean). 뮤테이션 4종(결정적 강등 제거 · general 미등록
   가드 제거 · 판정이력 단일 scope 회귀 · 러너 파싱 제거) **전건 KILL**(§16.7 G11-b).
+
+## CHG-20260901T130000-glossary-term-tier-merge — origin/main 병합 해소 기록
+
+`ai/claude/metadata-term-scope` 에 `origin/main`(#1459·#1460 머지분)을 병합. 코드 변경 0.
+
+- `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` — 양쪽이 append-only 문서 말미에 각각
+  신규 `## CHG-` 블록을 추가. `bin/merge-append-doc.sh` driver 가 블록 단위로 병존시켰다
+  (AGENTS.md §16.4 자율 해결 표 1행 「append-only 문서 양쪽 신규 항목 추가 → 양쪽 유지」).
+  중복 헤더 0 · 충돌 마커 잔존 0 확인.
+- `src/agent_core.py` · 두 `MODIFY.md` — 서로 다른 구간이라 3-way clean.
+- 병합 후 `make test` 재실행 **PASS**(rc=0, FAILED 0) — 낡은 base 로 통과한 결과로 머지하지
+  않는다는 §13.2.5 신선도 계약 이행.
+
+⚠ GitHub 이 이 PR 을 `CONFLICTING` 으로 표시한 것은 **원격에 이 저장소의 custom merge driver 가
+없기 때문**이다(driver 등록은 clone-로컬 — `bin/setup-git-parallel.sh`). 로컬에서 driver 로
+해소해 push 하면 원격 판정이 `MERGEABLE` 로 바뀐다.
+
+Task-Cycle: feature-0002-agent-core
