@@ -12137,3 +12137,17 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 56→**57** · `generated`=="2026-08-31"==`releases[0].date` · `releases[0].items` **14** + summary · `releases[1]`(2026-08-28) items 15 불변 · **08-28 이하 tail 바이트 동일**(9,045B 순증) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 18패턴 **0건**
 - [x] reconcile-first: 서빙 `release-notes-data.js` 200 · 329,914B · `origin/main` blob 과 바이트 동일 → **파리티 갭 0**. `repo/` clean · HEAD == origin/main == `f62aa92f`
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(정본 `docs/CONVENTIONS.md:568` — wrapper 지시문의 'bump 포함' 은 저장소 정본과 충돌)
+
+## 20260901T101500-attach-lineage-postdeploy — 첨부 계보 가시성 재설계 POST-DEPLOY 실증 (비-정책 doc/test-only)
+
+- status: done
+- risk: Minor §12.3 (문서·증적만. 코드 변경 0)
+
+### Requested Scope (요청 범위)
+
+- [x] 선행 cycle(20260831T193000-attach-lineage-visibility)의 **배포본 검증** 기록 — 산출물:
+      `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md` + TEST.md Run.
+      라이브 `2f09d755` 에서 그룹 카드 2 · 분기 2 · `role=group` · 그룹 비교 축 `time` 착지 확인
+- [x] 배포 중 관측한 **인프라 조건 2건** 기록(본 변경과 무관, 다음 cycle 이 같은 진단을
+      반복하지 않도록) — 산출물: 같은 fragment 의 「배포 중 관측한 인프라 조건」 절.
+      Caddy exec 파손의 rootCA 오진 · GitHub Actions 결제 정지로 인한 전 저장소 CI red
