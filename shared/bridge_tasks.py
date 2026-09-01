@@ -64,6 +64,8 @@ __all__ = [
     "job_spec",
     "job_label",
     "BATCH_JOB_KINDS",
+    "CONSOLE_JOB_LIGHT_MODELS",
+    "pick_console_job_model",
     "BATCH_PENDING_MAX",
     "BATCH_TASK_MAX_AGE_MIN",
     "CONSOLE_PROMPT_MAX_CHARS",
@@ -409,6 +411,73 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
 
 #: 워커가 여는 종류(배급 자격이 `batch_jobs` 동의를 추가로 요구한다).
 BATCH_JOB_KINDS = tuple(k for k, v in JOB_SPECS.items() if v["origin"] == ORIGIN_BATCH)
+
+
+#: 콘솔·배경 작업에 쓸 **경량 모델** 선호 (사용자 결정 2026-09-01).
+#:
+#: > "관리 콘솔에서 이용될 모델은 모두 경량 모델로 구성해주세요. claude는 haiku, codex는 luna
+#: >  모델과 같은 경량 모델로 작동해야 합니다."
+#:
+#: ## 왜 콘솔 작업만인가
+#:
+#: 콘솔 작업은 **기계적 산출물**이다 — 테이블 설명 한 줄, 프롬프트 초안, 클러스터 라벨.
+#: 대화 답변처럼 사용자가 읽고 판단할 추론이 아니다. 그런데 그 호출은 **사용자 개인 계정의
+#: 토큰**을 태운다. 남의 자원을 우리가 쓰는 자리에서 상위 모델을 기본으로 두는 것은 근거가 없다.
+#: 대화 축은 건드리지 않는다 — 그건 사용자가 화면에서 직접 고른 값이다.
+#:
+#: ## 값은 **후보**이지 지시가 아니다
+#:
+#: 여기 적힌 문자열은 러너가 신고한 모델 이름과 **부분일치로 대조**할 후보다. 대조에 실패하면
+#: 아무 것도 보내지 않고 러너 기본값에 맡긴다 — 없는 모델 이름을 지어 보내면 러너가 그 값을
+#: 인자로 넘겨 실행이 실패한다(P0-T 가 겪은 형태). **우리가 아는 이름이 아니라 그 러너가
+#: 고를 수 있다고 말한 이름만** 나간다.
+#:
+#: 순서가 선호도다(앞이 더 가볍다).
+CONSOLE_JOB_LIGHT_MODELS: dict[str, tuple[str, ...]] = {
+    "claude": ("haiku",),
+    "codex": ("luna", "mini"),
+    # 로컬 런타임은 모델 이름 규약이 제각각이라 후보를 적지 않는다 — 대조 실패로 떨어져
+    # 러너 기본값을 쓴다(그쪽은 애초에 자기 머신 자원이라 과금 축이 다르다).
+}
+
+
+def pick_console_job_model(capabilities: Any) -> tuple[str, str]:
+    """러너 신고 목록에서 콘솔 작업용 **경량 (런타임, 모델)** 을 고른다. 없으면 `("", "")`.
+
+    Args:
+        capabilities: 러너가 하트비트로 신고한 목록.
+            `[{"runtime": "claude", "models": [{"value": "haiku", ...}, ...]}, ...]`
+
+    ## 왜 런타임까지 함께 돌려주는가
+
+    모델 이름은 런타임에 종속이다(`haiku` 는 claude 의 것이다). 모델만 보내면 러너는 그것을
+    **자기 현재 런타임**의 목록과 대조하고, 다르면 「미반영」으로 떨어뜨린다. 둘을 함께 보내야
+    러너가 그 런타임으로 옮겨 실행한다.
+
+    ## 순서
+
+    **러너가 신고한 순서**를 따른다 — 그 순서가 그 머신의 선호다. 우리가 런타임 간 우열을
+    정하면 `--ai` 로 제한한 사용자의 의도를 서버가 넘어선다.
+    """
+    if not isinstance(capabilities, list):
+        return "", ""
+    for entry in capabilities:
+        if not isinstance(entry, dict):
+            continue
+        runtime = str(entry.get("runtime") or "").strip()
+        wanted = CONSOLE_JOB_LIGHT_MODELS.get(runtime)
+        if not runtime or not wanted:
+            continue
+        values = [str((m or {}).get("value") or "") if isinstance(m, dict) else str(m or "")
+                  for m in (entry.get("models") or [])]
+        values = [v for v in values if v]
+        for needle in wanted:
+            for value in values:
+                # 부분일치 — 신고 값은 런타임마다 형태가 다르다(`haiku` vs `gpt-5.6-luna`).
+                # 완전일치를 요구하면 이름 규약이 바뀌는 날 조용히 대조에 실패한다.
+                if needle.lower() in value.lower():
+                    return runtime, value
+    return "", ""
 
 
 def job_spec(job_kind: Any) -> dict[str, Any] | None:

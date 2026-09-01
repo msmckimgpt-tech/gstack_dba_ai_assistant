@@ -40,6 +40,7 @@ __all__ = [
     "SEVERITIES",
     "VERDICTS",
     "build_instruction",
+    "from_runner_payload",
     "parse_review_text",
     "sanitize",
 ]
@@ -170,6 +171,58 @@ def parse_review_text(text: Any) -> dict[str, Any] | None:
     except Exception:
         return None
     return obj if isinstance(obj, dict) else None
+
+
+def from_runner_payload(payload: Any) -> dict[str, Any] | None:
+    """러너가 `submit_answer` 에 실어 보낸 **봉투**를 열어 판정으로 만든다.
+
+    ## 왜 이 함수가 따로 필요한가 (라이브 실측 2026-09-01)
+
+    러너는 판정을 해석하지 않고 **원문 그대로** 나른다 — 그래서 보내는 것은 판정이 아니라
+    봉투다::
+
+        {"raw": "{\\"verdict\\":\\"pass\\",\\"findings\\":[]}",
+         "latency_ms": 9416, "model": "fable", "reasoning_level": "high"}
+
+    첫 구현의 서버는 이 봉투를 그대로 `parse_review_text` 에 넣었다. 그 함수는 dict 를 받으면
+    **그대로 돌려주므로**(이미 파싱된 판정으로 간주), `sanitize` 는 `verdict` 도 `findings` 도
+    없는 dict 를 보고 `None` 을 냈다 — 즉 **모든 자가 검증이 조용히 버려졌다.**
+
+    라이브에서 러너는 "자가 검증 완료 (9416ms) — 제출에 동봉" 을 로그했고 서버는 아무 경고도
+    내지 않았다(파싱 실패는 `debug` 레벨이다). 원장만 비어 있었다.
+
+    ## 왜 단위 테스트가 못 잡았나
+
+    양쪽을 **각각** 검사했기 때문이다 — 서버 테스트는 `sanitize(parse_review_text("<원문>"))`
+    을 직접 불렀고, 러너 테스트는 러너가 `{"raw": …}` 를 만드는지만 봤다. **이음매**(러너가
+    만든 그 값을 서버가 실제로 소비하는가)를 아무도 보지 않았다. 이 저장소가 반복해 겪은
+    「헬퍼는 맞는데 진입점이 그걸 안 쓴다」와 같은 형태다.
+
+    그래서 봉투 규약을 **이 모듈 하나**에 두고, 양쪽이 같은 정의를 읽게 한다.
+
+    Args:
+        payload: 러너 봉투(`{"raw": str, ...}`) · 이미 파싱된 판정 dict · 또는 원문 문자열.
+            셋 다 받는 이유는 구 러너·수동 제출 호환이다.
+
+    Returns:
+        `sanitize` 결과에 봉투의 관측 메타(지연·모델·등급)를 얹은 dict. 못 읽으면 `None`.
+    """
+    if payload is None:
+        return None
+    meta: dict[str, Any] = {}
+    body: Any = payload
+    if isinstance(payload, dict) and "raw" in payload:
+        # 봉투다 — 판정은 `raw` 안에 있고, 나머지는 관측 메타다.
+        body = payload.get("raw")
+        for key in ("latency_ms", "model", "reasoning_level"):
+            if payload.get(key) not in (None, ""):
+                meta[key] = payload[key]
+    parsed = parse_review_text(body)
+    if parsed is None:
+        return None
+    # 메타는 **봉투 것이 우선**이다. 판정 본문에 같은 키가 있어도 그것은 AI 가 스스로 적은
+    # 값이라(우리가 관측한 값이 아니다) 신뢰 등급이 다르다.
+    return sanitize({**parsed, **meta})
 
 
 def sanitize(payload: Any) -> dict[str, Any] | None:
