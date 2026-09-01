@@ -188,18 +188,37 @@ def test_probed_ai_rejects_non_identifier(val):
     assert "--ai" not in args
 
 
-def test_probed_ai_must_exist_on_path():
-    """알려진 이름이어도 **PATH 에 없으면** 넘기지 않는다.
+def _absent_ai_name() -> str | None:
+    """PATH 에도 **표준 설치 위치에도** 없는 알려진 AI 이름. 없으면 None.
+
+    2026-09-01 이후 설치 스크립트의 실존 검사는 PATH 밖(`~/.local/bin` 등)까지 본다 —
+    러너의 `_which_ai` 와 같은 계약이다. 그래서 「부재」를 만들려면 양쪽 모두에서 없어야 한다.
+    """
+    extra = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.npm-global/bin"),
+             "/usr/local/bin", "/opt/homebrew/bin"]
+    for n in ("gemini", "ollama", "codex", "claude"):
+        if shutil.which(n) is not None:
+            continue
+        if any(os.access(os.path.join(d, n), os.X_OK) for d in extra):
+            continue
+        return n
+    return None
+
+
+def test_probed_ai_must_exist_on_this_machine():
+    """알려진 이름이어도 **이 컴퓨터에 없으면** 넘기지 않는다.
 
     실측된 사례가 정확히 이것이다(2026-08-28): Windows 에 `claude` 가 없는데 그쪽으로
     러너를 세우면 "쓸 수 있는 AI 를 찾지 못했습니다" 로 뜨자마자 죽는다.
+
+    ⚠ 2026-09-01: 「없다」의 판정 범위가 PATH → PATH + 표준 설치 위치로 **넓어졌다**
+    (설치기가 PATH 를 못 넣은 머신에서 멀쩡한 AI 를 못 찾던 결함). 버린다는 계약은 그대로다.
     """
-    missing = next((n for n in ("gemini", "ollama", "codex", "claude")
-                    if shutil.which(n) is None), None)
+    missing = _absent_ai_name()
     if missing is None:
         pytest.skip("알려진 AI CLI 가 모두 설치돼 있어 '부재' 를 만들 수 없다")
     args, err = _run_probe({"BRIDGE_PROBED_AI": missing})
-    assert "PATH 에 없습니다" in err
+    assert "찾지 못했습니다" in err
     assert args == ""
 
 
