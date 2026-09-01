@@ -428,18 +428,128 @@
           </div>
         </div>
       </section>
-
-      <!-- TASK-0136: LLM 사용량 pane (admin 전용). /api/admin/usage 집계 표시. -->
-      <!-- feature-0021 console-subtabs: AI 운영 현황 통합 pane — 서브탭 [LLM 사용량 | 운영 현황 | 추론] -->
+      <!-- feature-0043 TASK-20260901T110000 — 외부AI 운영축 재편.
+           서버가 추론하지 않는 배포에서 종전 서브탭([LLM 사용량 | 운영 현황 | 추론 | 외부 AI
+           작업])은 첫 화면이 곧 `llm_usage` 였고, 그 원장은 더 이상 늘지 않는다 — 화면 전체가
+           0 으로 수렴했고 그 0 은 "아무도 AI 를 안 쓴다" 로 읽혔다. 실제 활동은 브리지 작업과
+           도구 호출에 있다. 순서가 곧 우선순위이므로 그 둘을 앞에 둔다.
+           전환 이전 서버 지표(토큰·비용·서버 red-team)는 '기록' 으로 격리한다 — 지우지 않는다
+           (그때의 사실이다). 다만 현행 운영 판단을 흐리지 않는 자리로 옮긴다. -->
       <section class="admin-pane" data-admin-pane="ai-console">
         <div class="admin-subtabs" role="tablist" aria-label="AI 운영 서브뷰">
-          <button type="button" class="admin-subtab is-active" data-ai-subtab="usage" role="tab">LLM 사용량</button>
-          <button type="button" class="admin-subtab" data-ai-subtab="ops" role="tab">운영 현황</button>
-          <button type="button" class="admin-subtab" data-ai-subtab="reasoning" role="tab">추론</button>
-          <!-- feature-0041 AC-7: 외부 AI 가 우리 도구로 수행한 작업의 질문·답변 원장. -->
-          <button type="button" class="admin-subtab" data-ai-subtab="exttasks" role="tab">외부 AI 작업</button>
+          <button type="button" class="admin-subtab is-active" data-ai-subtab="ops" role="tab">운영 현황</button>
+          <button type="button" class="admin-subtab" data-ai-subtab="tasks" role="tab">브리지 작업</button>
+          <button type="button" class="admin-subtab" data-ai-subtab="tools" role="tab">도구 사용량</button>
+          <button type="button" class="admin-subtab" data-ai-subtab="archive" role="tab">기록</button>
         </div>
-      <div class="admin-subpane is-active" data-ai-subpane="usage">
+      <div class="admin-subpane is-active" data-ai-subpane="ops">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Ops</div>
+            <h2>AI 운영 현황</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="aiOpsBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </div>
+      <!-- 브리지 작업 통합 원장 — 대화 질문(chat) · 콘솔 위임(job/web) · 배경 배치(job/batch) ·
+           외부 AI 세션(external). 종전에는 두 화면이 이 표를 반쪽씩 봤다: '위임 작업 현황' 은
+           job 만, '외부 AI 작업' 은 상태·소유·수행 계정을 싣지 않았다. 그래서 **사용자가 실제로
+           기다리는 대화 질문이 밀려 있는 것**은 어느 화면에도 나오지 않았다.
+           답변 본문은 상세에서만, 저장 시점 각인(⟦UNTRUSTED-DATA⟧) 그대로 보여 준다. -->
+      <div class="admin-subpane" data-ai-subpane="tasks" hidden>
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Bridge Tasks</div>
+            <h2>브리지 작업</h2>
+          </div>
+          <div class="admin-pane-actions" style="gap:8px;">
+            <select id="bridgeTaskKindSel" class="btn-secondary" aria-label="작업 종류">
+              <option value="">전체 종류</option>
+              <option value="chat">대화 질문</option>
+              <option value="job">콘솔·배경 작업</option>
+            </select>
+            <select id="bridgeTaskOriginSel" class="btn-secondary" aria-label="작업 출처">
+              <option value="">전체 출처</option>
+              <option value="web">웹(사용자·관리자)</option>
+              <option value="batch">배경 배치</option>
+              <option value="external">외부 AI 세션</option>
+            </select>
+            <select id="bridgeTaskStatusSel" class="btn-secondary" aria-label="상태">
+              <option value="">전체 상태</option>
+              <option value="open">대기</option>
+              <option value="submitted">제출됨</option>
+              <option value="deferred">보류</option>
+              <option value="canceled">취소됨</option>
+              <option value="expired">만료</option>
+            </select>
+            <button type="button" id="bridgeTasksRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <p class="admin-pane-hint">
+          추론은 각자 연결한 <strong>본인 AI</strong> 가 자기 머신에서 수행합니다. 이 표는 그 왕복이
+          우리 쪽에 남긴 기록입니다 — 누가 열었고, 누가 가져갔고, 무엇이 제출·반영됐는지.
+          답변에 <strong>자가 검증</strong> 판정이 동봉되면 같은 줄에 표시됩니다.
+        </p>
+        <div id="bridgeTasksBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </div>
+      <!-- 도구 사용량 — 외부AI 세계에서 **서버에 남는 실제 활동**. 토큰이 아니라 호출·행·바이트를
+           센다(비용은 그쪽 계정이 내고 부하는 우리 DB 가 낸다 — `tool_ledger` 가 그 원장이다).
+           종전 콘솔 어디에도 이 축의 집계가 없었다. -->
+      <div class="admin-subpane" data-ai-subpane="tools" hidden>
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Tool Usage</div>
+            <h2>도구 사용량</h2>
+          </div>
+          <div class="admin-pane-actions" style="gap:8px;">
+            <select id="toolUsageDaysSel" class="btn-secondary" aria-label="집계 범위">
+              <option value="1">최근 1일</option>
+              <option value="7" selected>최근 7일</option>
+              <option value="30">최근 30일</option>
+              <option value="90">최근 90일</option>
+            </select>
+            <button type="button" id="toolUsageRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="toolUsageBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </div>
+      <!-- 기록 — 서버가 직접 추론하던 시절의 지표. **지우지 않는다**(그때의 사실이고 감사
+           대상이다). 다만 현행 운영 판단을 흐리지 않도록 기본 진입에서 빼고, 각 섹션은
+           펼칠 때 조회한다(둘을 한 번에 불러오면 이 탭 진입이 가장 무거워진다). -->
+      <div class="admin-subpane" data-ai-subpane="archive" hidden>
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Archive</div>
+            <h2>기록 <span class="admin-usage-caption">· 전환 이전</span></h2>
+          </div>
+        </header>
+        <p class="admin-llm-inactive-note" id="archiveScopeNote">
+          아래 지표는 <strong>서버가 자기 계정으로 LLM 을 호출하던 시절</strong>의 기록입니다.
+          현재 답변은 각자 연결한 본인 AI 가 만들므로 이 원장에는 새 기록이 쌓이지 않습니다 —
+          값이 멈춰 있는 것은 고장이 아닙니다. 현행 활동은 <strong>운영 현황 · 브리지 작업 ·
+          도구 사용량</strong> 에서 확인하세요.
+        </p>
+        <!-- 서버가 직접 호출하던 시절의 활동 원장(카테고리·최근 활동 피드·백그라운드 토큰
+             예산). 게이트가 **열린** 배포에서는 현행 지표라 '운영 현황' 이 직접 그리고,
+             여기는 비워 둔다 — 같은 사실을 두 곳이 그리면 한쪽이 반드시 낡는다. -->
+        <details class="admin-archive-section" id="archiveActivitySection">
+          <summary>서버 AI 활동 이력 · 카테고리 · 백그라운드 토큰 예산</summary>
+          <div class="admin-archive-section-body" id="archiveActivityBody">
+            <div class="admin-detail-empty">펼치면 불러옵니다.</div>
+          </div>
+        </details>
+        <details class="admin-archive-section" id="archiveUsageSection">
+          <summary>서버 LLM 토큰 사용량 · 비용</summary>
+          <div class="admin-archive-section-body">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Usage</div>
@@ -546,22 +656,11 @@
         </details>
         <!-- TASK-20260623T014626-quota-ui-relocate: LLM 사용 한도 설정은 '감사>LLM 사용량'(모니터링 목적)에서
              '계정' / '역할' 상세 화면으로 이전됨(각 항목 속성으로 구성). 이 화면은 사용량 조회 전용. -->
-      </div>
-      <div class="admin-subpane" data-ai-subpane="ops" hidden>
-        <header class="admin-pane-head">
-          <div>
-            <div class="drawer-label">AI Ops</div>
-            <h2>AI 운영 현황</h2>
           </div>
-          <div class="admin-pane-actions">
-            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
-          </div>
-        </header>
-        <div id="aiOpsBody">
-          <div class="admin-detail-empty">불러오는 중…</div>
-        </div>
-      </div>
-      <div class="admin-subpane" data-ai-subpane="reasoning" hidden>
+        </details>
+        <details class="admin-archive-section" id="archiveReasoningSection">
+          <summary>서버 측 자가 리뷰(적대 검증) 이력</summary>
+          <div class="admin-archive-section-body">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">AI Reasoning</div>
@@ -574,29 +673,8 @@
         <div id="reasoningBody">
           <div class="admin-detail-empty">불러오는 중…</div>
         </div>
-      </div>
-
-      <!-- feature-0041 AC-7 (2026-08-14): 외부 AI 작업 원장.
-           보존의 수혜자는 **사람 운영자**다 — 외부 AI 에게는 이 화면도 REST 도 열려 있지 않다.
-           답변 본문은 저장 시점에 각인(⟦UNTRUSTED-DATA⟧)된 형태 그대로 보여 준다: 벗겨서
-           보여 주면 화면에서 복사해 붙인 텍스트가 '외부가 쓴 것' 이라는 사실을 잃는다. -->
-      <div class="admin-subpane" data-ai-subpane="exttasks" hidden>
-        <header class="admin-pane-head">
-          <div>
-            <div class="drawer-label">External AI</div>
-            <h2>외부 AI 작업</h2>
           </div>
-          <div class="admin-pane-actions">
-            <button type="button" id="extTasksRefreshBtn" class="btn-secondary">새로고침</button>
-          </div>
-        </header>
-        <p class="admin-pane-hint">
-          외부 AI 런타임이 자기 계정 LLM 으로 추론하며 우리 도구를 쓴 작업입니다.
-          원 질문과 제출된 답변이 보존되며, 답변은 저장 시점에 <strong>비신뢰 데이터로 각인</strong>됩니다.
-        </p>
-        <div id="extTasksBody">
-          <div class="admin-detail-empty">불러오는 중…</div>
-        </div>
+        </details>
       </div>
       </section>
 

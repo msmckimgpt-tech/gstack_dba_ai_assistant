@@ -1322,6 +1322,111 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       0→375 이동하고 **대화 로그·문서 스크롤 0 불변** · navOffset 381→**6px**(계산된 위치,
       clamp 아님) · 키보드 동일 · 짧은 상세 81px 비스크롤.
       증적 `feature-0003 docs/test-runs.d/…-details-scroll-panel-postdeploy.md`
+## TASK-20260901T110000-aiops-external-realign — 「AI 운영 현황」을 외부AI 운영축으로 전면 재편 (P0-AH)
+
+**요청 (2026-09-01)**: "assistant 가 작동하는 구조가 변경됨에 따라 '관리 콘솔 > AI 운영 현황'
+내부의 **모든 작동 사항들은 외부AI 작동에 정합한 구조로** 변경해주세요. 이제 **내부 AI 는
+사용하지 않습니다**."
+
+**사용자 결정 (2026-09-01, AskUserQuestion 4문)**:
+1. 재편 범위 = **전면 재편** (탭 자체를 외부AI 운영축으로 다시 나눔)
+2. 서버계정 LLM 과거 지표 = **「기록」 으로 격리** (보존하되 기본 진입에서 제외)
+3. 신규 지표 = **도구 사용량 집계 · 브리지 작업 대기열/이력 · 러너 현황 상세** (3종 전부)
+4. 미구현 안내(`외부 AI 5축 자가 검증`) = **자가 검증 제출까지 구현**
+
+### 2.1 Implementation Plan
+
+**위험도: Major** (§12.3 — 다중 파일·신규 API·러너 프로토콜 확장. 인증/인가 구조 무변경,
+파괴적 데이터 없음, 마이그레이션은 additive expand-safe.)
+
+#### 다의어 고지 — "외부AI 정합한 구조" 가 무엇으로 판정되는가 (§7.1 · §16.7 G1)
+
+> **입력**: 서버 계정 LLM 이 차단(`AGENT_SERVER_LLM_ENABLED` 미설정)된 배포에서
+> 관리자가 `관리 콘솔 > AI 운영 현황` 에 진입.
+> **기대 화면**: 첫 화면(운영 현황)의 **모든 수치가 외부AI 축**이다 —
+> 러너 N대 · 대기/처리중 M건 · 도구 호출 K회 · 자가 검증 통과율.
+> 서버 토큰·비용·모델 도넛은 **첫 화면에 없다**(「기록」 탭에만 있고 '전환 이전' 라벨을 단다).
+> **수치 1개**: 첫 화면 KPI 타일 중 `agent_runtime.llm_usage` 를 출처로 하는 것 = **0개**.
+
+#### 재편 결과 (AS-IS → TO-BE)
+
+| AS-IS 서브탭 | 출처 | TO-BE |
+|---|---|---|
+| LLM 사용량 (`usage`) | `llm_usage` | → **기록**(`archive`) 안 섹션 1, '전환 이전' 라벨 |
+| 운영 현황 (`ops`) | 축5 + llm_usage KPI | → **운영 현황**(`ops`), 외부AI 축으로 재구성 |
+| 추론 (`reasoning`) | 서버 `redteam_reviews` | → **기록** 안 섹션 2 (서버측 이력) + 현행 외부AI 자가검증은 `tasks`/`ops` 로 |
+| 외부 AI 작업 (`exttasks`) | `WebAiTasks`(전체) | → **브리지 작업**(`tasks`) 로 승격·통합 |
+| — | `tool_call_usage` | → **도구 사용량**(`tools`) 신설 |
+
+#### 영향받는 파일 · symbol
+
+| 경로 | symbol / 변경 |
+|---|---|
+| `unit/feature-0002-agent-core/alembic/versions/20260901_0057_redteam_review_source.py` | **신규** — `redteam_reviews.source`(server/external) · `task_id` 컬럼 additive |
+| `shared/bridge_tasks.py` | `RUNNER_FEATURE_SELF_REVIEW` 신설 |
+| `shared/self_review.py` | **신규** — 5축 계약 정본(`AXES` · `build_instruction()` · `sanitize()`). 러너는 서버가 내려준 지시문을 실행만 한다 |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` | `claim_request` 응답에 `self_review` 지시 · `submit_answer` 가 `review` 수용 → `_record_external_review()` |
+| `unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py` | `run_self_review()` · `handle_one` 이 초안 뒤 1회 추가 호출 · 신고 feature 에 `self_review` |
+| `unit/feature-0003-agent-web-ui/src/oauth_store.py` | `list_live_runners()` — 계정별 러너 현황 상세 |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py` | `_provider_axis` 차단 시 `na` 강등 · `_runner_roster` · `_self_review_stats` · 신규 `GET /api/admin/ai-ops/{tools,tasks,runners}` |
+| `unit/feature-0003-agent-web-ui/src/routers/_console_llm.py` | `redteam-review` 항목 `delegated: True` + 문구 정정 |
+| `unit/feature-0003-agent-web-ui/src/static/admin.html` | 서브탭 4종 재편 + `tasks`/`tools`/`archive` subpane |
+| `unit/feature-0003-agent-web-ui/src/static/admin/{aiops,tasks,tools,archive}.js` | `tasks.js`·`tools.js` 신규, `aiops.js` 재구성, `exttasks.js` → `tasks.js` 흡수 |
+| `unit/feature-0003-agent-web-ui/src/static/admin.js` | `initAiConsoleSubtabs` 키 재편 + deep-link alias 하위호환 |
+
+#### 완료 판정 기준 (acceptance criteria)
+
+- `AC-20260901T110000-aiops-external-realign-1`: 게이트 차단 배포의 `AI 운영 현황` 첫 화면 KPI 중 `llm_usage` 출처 타일 0개.
+- `-2`: 서브탭이 `[운영 현황 · 브리지 작업 · 도구 사용량 · 기록]` 이고, 구 deep-link(`tab=usage|ai-ops|reasoning`)가 빈 pane 없이 착지한다.
+- `-3`: `tool_call_usage` 집계가 도구별·대상별·판정별로 화면에 나온다(현행 콘솔 어디에도 없던 축).
+- `-4`: 러너가 자가 검증 JSON 을 `submit_answer` 에 실으면 `redteam_reviews(source='external')` 에 저장되고 화면에 판정이 뜬다.
+- `-5`: 자가 검증을 신고하지 않은 구 러너의 제출도 **거절되지 않는다**(하위호환 — 검증은 선택).
+- `-6`: `_console_llm.py` 의 안내 문구가 실제 코드 경로와 일치한다(없는 기능을 있다고 말하지 않는다).
+
+<!-- PLAN-APPROVED by user on 2026-09-01 (AskUserQuestion 4문 응답) -->
+
+### 2.2 이행
+
+- [x] **서브탭 전면 재편** `[운영 현황 · 브리지 작업 · 도구 사용량 · 기록]` — 기존 pane 은
+      본문 무수정 이동, `exttasks.js` 는 `tasks.js` 로 흡수(삭제)
+- [x] **첫 화면에서 `llm_usage` 출처 타일 제거** (AC-1) — 라이브 실측으로 0개 확인.
+      차단 배포에서만 숨기고 게이트가 열린 배포는 종전 그대로(정상 운영 관제를 무르게 하지 않음)
+- [x] **`LLM 제공자` 축 롤업 제외** — 쓰지 않는 provider 의 제한이 배너를 물들이던 것을 끊되
+      `raw_state` 는 보존(되돌리는 날 되살아날 제한을 전환 전에 확인할 수 있어야 한다)
+- [x] **도구 사용량 신설** (AC-3) — `tool_call_usage` 를 도구별·대상별·계정별·일별로.
+      실측 7일 2,956 호출 · 10,184 행 · 1.4 MB
+- [x] **브리지 작업 통합 원장** — 대화 질문 + 콘솔 위임 + 배치 + 외부 세션. 소유/수행 계정 분리.
+      목록에 **답변 본문을 싣지 않는다**(각인 블록 유출 방지)
+- [x] **러너 명부** — 네 상태(미연결·미수신·기능 미신고·지문 불일치)를 **조치가 다르므로** 가른다
+- [x] **기록 탭 격리** (AC-2) — 3섹션 접힘 + 펼칠 때 조회. 과거 기록 온전 보존
+- [x] **옛 deep-link 흡수** (AC-2) — `admin_console.py` 가 아직 보내는 `tab:"usage"` 를 제품
+      경로(대시보드 위젯 「열기 →」)로 실측: `ai-console/archive` 착지, 빈 pane 아님
+- [x] **외부 AI 자가 검증(5축) 실구현** (AC-4·AC-6) — 계약 정본 `shared/self_review.py` ·
+      마이그 0057 · `claim_request` 지시 하달 · `submit_answer` 수용·저장 · 러너 수행·신고
+- [x] **하위호환** (AC-5) — 검증 없는 제출을 거절하지 않는다. 구 러너 사용자의 답변이 막히지 않음
+- [x] **안내 문구 정정** (AC-6) — 없는 기능을 있다고 말하던 문장을 구현 범위까지만 말하도록.
+      `delegated_feature` 로 기능 단위 판정(`--no-self-review` 사용자에게 '적용 중' 으로 안 보이게)
+- [x] `make test` 전량 green · ruff clean · migrate-lint expand-safe · ROUTEMAP 264 routes
+- [x] 신규 회귀 **54건** + 기존 계약 3건 **축 정정**(등호→하한 이상 · 소스 문자열→행위)
+- [x] **PB-0008 실 Windows 브라우저**(bind-mount 격리, 라이브 무접촉) 9항목 전건 PASS +
+      자체 발견 1건(평문 렌더에 마크다운 강조 → 별표 노출) 수정·재확인
+
+#### 자체 적대 검토 후속 (같은 cycle)
+
+- [x] **[P1] 러너 명부가 조회 실패를 「러너 0대」로 단정하던 것** — `list_live_runners` 가
+      실패와 실제 0대를 둘 다 빈 목록으로 돌려줘, 화면이 "아무도 처리하지 못합니다" 라는
+      빨간 단정을 그렸다. 질의 하나의 실패가 장애 선언이 되는 형태이고 이 cycle 이 없애려던
+      오독과 같다. **docstring 은 그 계약을 정확히 적어 두고 있었는데 코드가 지키지 않았다**
+- [x] `RunnerBuild`(뒤늦게 추가된 컬럼) 부재는 **한 단계 내려가 나머지를 살린다** — 그것
+      하나로 구 배포에서 명부가 통째로 비면 안 된다(`_query_activity` 컬럼 사다리와 동형)
+- [x] 회귀 2건 + **직전 커밋 `33e00e0e` 에서 둘 다 FAIL 실증**(자기충족 아님)
+- [x] `/codex review` 2회 시도 모두 판정 실패(330초 타임아웃 · 쿼터 소진) — **"통과" 로
+      적지 않고** REVIEW.md 에 사유와 남는 위험을 기록
+
+#### 잔여 (POST-DEPLOY)
+
+- [ ] 자가 검증 **end-to-end** — 마이그 0057 적용 + **러너 갱신** 후에야 판정이 원장에 앉는다.
+      현재 라이브 러너는 `2026.08.31` 이라 `self_review` 미신고(화면이 `미지원` 으로 정확히 표시)
 
 ## 20260901T1045-steps-result-split — 단계/결과셋 범위 분리 · 스크롤은 단계만
 
@@ -1341,3 +1446,153 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       상한 460 복원 · 페이징 시 **어떤 스크롤도 불변**(결과 위치 424px 고정) · 두 범위 제목
       렌더 · 상세 1295px = 부분 상한 합 안(유계).
       증적 `feature-0003 docs/test-runs.d/…-steps-result-split-postdeploy.md`
+
+## 20260901T1100-win-ai-detect — 설치된 AI 를 찾지 못하던 결함 3겹
+
+**요청 (2026-09-01)**: 「powershell 로 진행했지만 `FATAL: 쓸 수 있는 AI 를 찾지 못했습니다.
+--ai 또는 --cmd 로 지정하세요.` 로 연결이 진행되지 않습니다. 추가로, 사용자에게 특정 명령어
+및 옵션을 요구해서는 안됩니다 — 일반적인 사용자 입장에서는 해당 옵션의 의미도, 사용법도
+이해하지 못합니다.」
+
+실측으로 확인한 사실: 그 머신에는 `claude.exe`(Claude Code 2.1.70)가 **설치돼 있었고 실행도
+됐다.** 못 찾은 것은 우리 쪽이다.
+
+- [x] `_which` 크로스플랫폼화 — 윈도우 실행 확장자(`.exe`·`.com`. `.cmd`·`.bat` 는 codex
+      P1 조치로 제외 — 배치 shim 은 `cmd.exe` 파싱을 거쳐 명령 주입 경로가 열린다)
+- [x] 확장자 없는 sh shim 배제 — 찾아 놓고 못 부르는 상태(WinError 193) 차단
+- [x] `_which_ai` — PATH 밖 **표준 설치 위치**(`~/.local\bin` · npm 전역 · Ollama)까지 탐색
+- [x] 그 탐색을 **알려진 AI 이름 allowlist 로 한정** (홈 디렉토리 임의 이름 실행 차단)
+- [x] `_resolve_exe` — 실행 choke-point 3곳에서 argv[0] 을 찾은 경로로 해석
+- [x] `--check` 를 **연결 축 / AI 축** 으로 분리 — exit 4 신설(연결 정상 + AI 없음)
+- [x] 사용자 대면 안내에서 `--ai`·`--cmd` 제거 → 「무엇이 필요한가 · 어디를 찾아봤는가」
+- [x] `bridge_setup.ps1`·`.sh` 대칭 — 같은 탐색 범위 + exit 4 전용 안내
+- [x] 배포본 동기화 3종(러너·ps1·sh) · BOM 보존 · PS 5.1 ParseErrors 0
+- [x] 신규 회귀 26건 green · **뮤테이션 3종 역검증 전건 대응**
+- [x] 기존 4건 교정(계약 유지 — `_which`→`_which_ai` 이름·부재 정의 확장)
+- [x] 컨테이너 전수 `make test` rc=0 · ruff clean
+- [x] **실 Windows 실측** — `Get-Command claude`=False 인 채 `_which_ai`가 찾아내고
+      `claude --help` 7,436자 수신(=PATH 밖 실행 파일이 실제로 실행됨)
+- [x] **codex 적대 리뷰 P1 1건 · P2 4건 전건 조치** — 배치 shim 명령 주입 차단(`.cmd`·`.bat`
+      제외) · 확장자 포함 이름 회귀 · `--ai` 실존 확인(`pick_ai`) · 감지를 실제로 연결 뒤로 ·
+      설치기↔러너 판정 대칭. 회귀 8건 추가(총 34건) + 실 Windows 재실측
+- [x] **POST-DEPLOY 도달성 검증** — 배포본 `c0545cdd` · 무중단 실측(`no upstreams` 0건) ·
+      정본 = 컨테이너(web-a/b) = **라이브 엣지** sha 동일 · **엣지 사본으로** 실 Windows
+      end-to-end(`Get-Command claude`=False 인 채 감지 성공 + 실제 프로세스 기동) ·
+      안내 문구 실 PowerShell 표시 확인(옵션 이름 0회) · 서버측 러너 배포본 교체·재기동
+      (라이브 `--check` = 「연결 정상.」 → 「사용할 AI: claude」 → exit 0).
+      증적 `docs/test-runs.d/TASK-20260901T110000-win-ai-detect-postdeploy.md`
+- [ ] 사용자 실제 설치 왕복 1회 (토큰은 사용자가 웹에서 발급 — [연결 명령 복사] 재실행)
+
+## 20260901T1150-answer-notice-server-seal — 모델·추론등급 고지를 **서버가** 걷어낸다
+
+**요청 (2026-09-01)**: 「프로젝트 내 서비스에서, assistant가 답변을 전달할 때 "이 답변은
+<LLM 플랫폼> 의 모델 <LLM 모델> · 추론등급 <깊이> 로 생성했습니다." 와 같은 텍스트가 답변에
+포함되지 않도록 구성해주세요.」
+
+**사용자 결정 (2026-09-01)**: 차단 지점 = **서버 집행 + 러너 사본 갱신** 둘 다 ·
+미반영 고지(「…쓸 수 없어 기본 설정으로 답했습니다」)는 **유지** · 이미 저장된 과거 답변
+7건은 **그대로 둔다**(확정 답변 불변).
+
+**라이브 진단** (수정 전 실측):
+
+| 관측 | 값 |
+|---|---|
+| 고지 제거 커밋 `82f3a160` (2026-08-31) | 배포본 `65641296` 에 **포함됨** (`merge-base --is-ancestor` 확인) |
+| repo 정본 `bridge_agent.py` | 고지 문구 **0건** |
+| 실행 중 러너 (PID 69063, `~/.mysql-ai-bridge/`, 08-31 16:55 설치) | 고지 문구 **2건** — md5 가 정본과 불일치 |
+| `WebAiTasks` 고지 포함 답변 | 7건 (#71·#73·#75·#76·#77·#78·**#80 = 09-01 11:05 제출**) |
+
+**근본 원인**: 러너는 **서버 배포 대상이 아니다** — 각 사용자 머신에 설치된 사본이므로 정본을
+고치고 배포해도 그 머신이 다시 받아 가기 전까지 옛 코드가 돈다. 서버에는 이 고지를 걸러내는
+방어가 없었고, 러너를 쓰지 않는 등록형 AI 는 애초에 그 코드를 지나지 않는다.
+
+- [x] 서버 `submit_answer` 에 `_strip_model_notice` choke-point — 빈 답변 검사·task 적재·취소
+      판정 **뒤** 1회 (저장본·대화 전달본·원장 바이트수·**대화 제목** 네 소비처가 같은 정리본)
+- [x] 매칭은 **문장 골격 전체** — 어휘 조각으로 보면 `모델링`·`논리 모델` 에 부분일치하고
+      미반영 사실을 자기 말로 쓴 문장까지 삼킨다(지키려던 계약이 같은 정규식에서 깨진다)
+- [x] 탐색 범위 = 답변 **말미 8줄**, **펜스를 세지 않는다** — 닫히지 않은 펜스로 봉인이
+      뚫리거나 중첩 펜스 안이 지워지지 않는다. 본문 중간의 예시 인용은 범위 밖
+- [x] 비용 상한(줄 길이 가드) + 본문이 비면 정리 안 함(빈 답변 400 이 task 를 박제하지 않게)
+- [x] 계약 테스트 **36건** (`test_answer_model_notice_seal.py`) — 헬퍼 정확성 + **진입점 실구동**
+- [x] **적대 리뷰(subagent) P1 4건 · P2 6건 → P1 전건 + P2 5건 반영** — 초안의 펜스 상태
+      기계와 어휘 정규식을 둘 다 폐기시킨 지적
+- [x] 뮤테이션 **7종 전건 KILL**
+- [x] 러너 정본이 고지를 **다시 만들지 않는지** 회귀 잠금 (파일 전체 + 2사본 바이트 동일성)
+- [x] 구버전 러너 설치 사본 갱신 + 재기동 — 배포본과 `md5 4c8851ca…` 일치, 새 토큰으로
+      `--check` 통과 후 상주 기동(PID 1147300). 임시 토큰 파일 폐기
+- [x] **라이브 실측 (배포본 `7fb2dca4`)** — 4축 전건 PASS: 배포 도달(엣지 무중단 0건) ·
+      배포본 함수 직접 구동 5케이스 · **고지가 붙은 답변을 REST 로 직접 제출 → 저장본에서
+      걷힘**(미반영 고지는 보존) · **실 브리지 왕복 #86**(모델 `sonnet`·등급 `high` 명시
+      지정에도 고지 없음 / 배포 전 #83 대조군은 고지 있음).
+      증적 `docs/test-runs.d/TASK-20260901T115000-answer-notice-server-seal-postdeploy.md`
+
+---
+
+## TASK-20260901T140000-orphan-claim-reclaim — 러너가 죽으면 질문이 30분 사라진다 (P0-AI)
+
+**사용자 제보 (2026-09-01)**: 「"쿼리 리뷰를 진행해주세요. 라이브 기준 데이터라, QA
+데이터소스에 정합하지 않을 수 있습니다. 제재 대상자" 대화에서 **추론 과정이 너무
+길어지는** 이슈가 확인되었습니다.」
+
+**라이브 진단** (대화 `20260901030637-95dc8844` · task `t_GliHOXeBognfeeOI`, claude·sonnet·xhigh):
+
+| 시각 | 사실 | 출처 |
+|---|---|---|
+| 12:07:26 | 개인 AI 에 전달 | `bridge.log` |
+| 12:07:46–12:13:20 | 도구 **14회** 정상 진행(354초) | `agent_runtime.steps` 29행 |
+| 12:13~16 | 러너 **재설치·재기동** (`bridge_agent.py` mtime 12:13 · `config.json` 12:14 · 「대기 시작」 12:13:48·12:14:24 · 프로세스 12:16:09) → 자식 `claude` 사망 | 파일 mtime · 로그 · `ps` |
+| 12:13:20→12:43:20 | **무진행 30분**. task 는 `open` + `ClaimedBy=10` + `ClaimedAt=12:13:20` 이라 `CLAIMABLE_SQL` 을 통과하지 못해 **재기동한 자기 러너에게도 안 보임** | `WebAiTasks` |
+| 12:43:21 | lease 만료 → 재배달 → **조사를 처음부터 재실행** | `bridge.log` |
+| 12:47:47 | 「토큰이 필요합니다」로 러너 종료 → **또 고아** | `bridge.log` |
+| 13:34:23 | 사용자가 포기하고 재전송(supersede) → 새 task `t_DkWkdi0DNgdq552j` → **80초 만에 제출** | `WebAiTasks` |
+| (13:34·13:40 제출 내용) | ⚠ **리뷰가 아니라 거부** — 러너의 AI 가 브리지 프롬프트를 프롬프트 인젝션으로 판정. **별건 결함**(아래 참조) | PB-0008 화면 · `WebAiTasks.Answer` |
+
+**사용자 대기 87분.** 그 87분 중 60분 이상은 **아무도 그 질문을 볼 수 없던 시간**이다 — 길어진
+것은 모델의 추론이 아니다. (87분을 끝낸 13:34 제출이 낸 것은 리뷰가 아니라 거부 답변이었다.
+그것은 이 cycle 이 고치는 결함과 별개이며 아래 「PB-0008 에서 드러난 별건」에 기록한다.)
+
+**근본 원인 두 겹**
+
+1. **회수 경로 부재** — lease 는 도구 호출마다 갱신되므로(`_renew_claim_lease`) 러너
+   프로세스가 사라지는 순간 그 갱신값이 **최대 30분짜리 사각지대**가 된다. 점유는 토큰의
+   `client_id` 로만 표시돼 있어 「어느 프로세스가 들고 있나」를 아무도 답하지 못했고,
+   그래서 재기동한 **같은 러너조차** 자기가 두고 온 작업을 되찾지 못했다.
+2. **표시가 두 사실을 합쳤다** — `_bridge_phase` 는 점유돼 있기만 하면 `working` 이었다.
+   「가져갔다」와 「진행하고 있다」가 한 국면으로 뭉개져, 화면은 그 30분을 「조사·작성
+   중입니다」로 그렸다. 사용자에게는 그것이 **끝없이 길어지는 추론**이다.
+
+**부차 관측** (수정 대상 아님, 기록만): 최근 8건이 전부 `xhigh` — 추론 등급이 계정 기본값
+으로 고착돼 질문 난이도와 무관하게 적용된다(2026-08-31 사용자 결정 축이라 임의 변경 안 함).
+정상 완료 건의 마지막 도구 이후 답변 작성 구간은 최대 621초(실측 15건).
+
+### 이행
+
+- [x] **러너 인스턴스 축** — 프로세스마다 `runner_instance`(hex 12자) 발급,
+      `~/.mysql-ai-bridge/config.json` 에 보존. `claim_request` 가 그 값을
+      `ClaimedClient = <client_id>#<instance>` 로 새긴다(스키마 변경 없음, VARCHAR(64) 재사용).
+- [x] **사망 신고** — 하트비트 `released_instances`. 기동 첫 신호에 **직전 인스턴스**를,
+      종료 시 **자기 자신**을 싣는다. 서버는 그 인스턴스가 점유한 `open`·미제출 작업만
+      놓아준다(`ClaimedBy=NULL`). 30분 → **다음 하트비트까지(≤30초)**.
+- [x] 신고는 **닿을 때까지 재시도** — 첫 신호가 배포 교대·순단에 걸리면 회수가 통째로
+      유실된다. 서버 쪽은 멱등(이미 놓은 것은 0행)이라 반복 비용이 없다.
+- [x] **종료 세 갈래를 한 출구로** — `atexit` + `SIGTERM`→`SystemExit`. 설치 스크립트가 옛
+      러너를 정리할 때 쓰는 것이 정확히 그 시그널이다(재설치가 이번 결함의 발단).
+      `SIGKILL`·전원 차단은 **다음 기동의 사망 신고**가 덮는다(두 경로는 대체 아닌 보완).
+- [x] 경계는 `ClaimedBy = account_id` — 질문 소유 계정이 아니라 **점유자**. 배치 작업은
+      소유 계정이 없어(`AccountId=0`) `AccountId` 로 닫으면 회수에서 통째로 빠진다.
+- [x] **무진행 국면 `stalled`** — `ClaimedAt`(= 마지막 진행 시각)이 `BRIDGE_NO_PROGRESS_SEC`
+      (900초)보다 오래되면 `working` 이 아니라 `stalled`. 임계는 정상 무도구 구간 최대치
+      (621초)보다 크고 lease(1800초)보다 작다 — 사용자는 **회수가 일어나기 전에** 알게 된다.
+      판정 불가(`None`)면 `working` 유지(관측 못 한 것을 「멈췄다」로 단정하지 않는다).
+- [x] 대기 말풍선 본문을 **1회** 무진행 고지로 교체(`_mark_bridge_no_progress`) — UPDATE 조건에
+      「아직 진행 중 문구일 것」을 걸어 매 tick no-op. 고지는 사용자가 **할 수 있는 일**로 끝난다
+      (러너 확인 → 다시 켜면 자동 재배달 → 원치 않으면 중단).
+- [x] 판정·후행을 **한 곳**에 — 폴링(`bridge_status`)과 스트리밍(`_bridge_stream_snapshot`)이
+      같은 `_bridge_phase` + 같은 `_announce_no_progress` 를 탄다(전송 방식이 화면을 바꾸지 않게).
+- [x] 취소 통보의 점유자 대조를 **앞자리 비교**로(`SUBSTRING_INDEX(ClaimedClient,'#',1)`) —
+      전량 일치로 두면 인스턴스를 신고하는 러너의 취소가 한 건도 매칭되지 않아, 취소를 눌러도
+      러너가 계속 태우는 종전 결함이 되돌아온다. (`LIKE` 가 아닌 이유: `client_id` 에 `_`·`%`)
+- [x] 계약 테스트 **21건** (`test_orphan_claim_reclaim.py`) — 합성·해석, 회수 SQL 경계
+      (점유자·open·미제출·상태 불변), 빈 신고 no-op, 국면 전이 실구동, 임계 상·하한, 배선
+- [x] 테스트 더블 서명 경화 — `heartbeat(self, timeout=…)` 더블이 실물 서명 확장에 죽어
+      **다른 파일의 실패**로 나타났다(`*args/**kwargs` 로 교체)

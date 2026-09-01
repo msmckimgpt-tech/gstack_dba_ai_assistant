@@ -154,7 +154,9 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
 #
 # 그룹 단위: (task, target, 실행 주체 conversation_id). 대화 기록이 '대화 1건 = 1행'인 것과
 #   대칭으로, 시스템은 '작업 × 대상 = 1행' 이라 사용자가 "어떤 작업이 어떤 객체에서 돌았는지"
-#   를 바로 읽는다. run 단위 원장이 필요하면 'AI 운영 현황 > 운영 현황'의 최근 활동 피드가 정본.
+#   를 바로 읽는다. run 단위 원장이 필요하면 최근 활동 피드가 정본 — 서버 계정 LLM 을 쓰는
+#   배포에서는 'AI 운영 현황 > 운영 현황', 차단된 배포(외부 AI)에서는 같은 탭의 '기록'
+#   안에 있다(TASK-20260901T110000 — 늘지 않는 지표를 첫 화면에서 뺐다).
 
 _USAGE_SYS_LIMIT = 200  # 시스템 사용 기록 상한(대화 목록 _USAGE_CONV_LIMIT 과 동일 규모).
 

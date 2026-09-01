@@ -276,6 +276,20 @@ ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ux_kb_glossary_scope_term;
 ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ux_kb_glossary_scope_role_term;
 ALTER TABLE kb_glossary ADD  CONSTRAINT ux_kb_glossary_scope_role_term UNIQUE (scope_key, role_key, term);
 CREATE INDEX IF NOT EXISTS ix_kb_glossary_scope_role ON kb_glossary (scope_key, role_key);
+-- 0058 미러(용어 통용범위 축): term_tier = product|org|general. 쓰기 축이 제품 하나뿐이라 범용 DB 용어가
+-- 제품 scope 에 갇히고 제품마다 중복되던 마찰(2026-09-01)의 해소축. 읽기 캐스케이드는 이미 2단
+-- (제품 → common) 이었다 — 쓰기에 그 축을 만든다. 미러 누락 시 boot 정본 배포에서 컬럼 부재 →
+-- upsert 의 term_tier 바인딩이 UndefinedColumn 으로 죽는다(0023 미러 트랩과 동형).
+ALTER TABLE kb_glossary ADD COLUMN IF NOT EXISTS term_tier varchar(16) NOT NULL DEFAULT 'product';
+ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ck_kb_glossary_term_tier;
+ALTER TABLE kb_glossary ADD  CONSTRAINT ck_kb_glossary_term_tier
+    CHECK (term_tier IN ('product', 'org', 'general'));
+CREATE INDEX IF NOT EXISTS ix_kb_glossary_tier ON kb_glossary (term_tier, scope_key);
+-- 표기변형 중복 조회용 정규화 인덱스 — 식은 `kb_glossary.normalize_term_surface()` 와 동일 규칙
+-- (괄호 이하 제거 → 공백/하이픈/언더스코어 제거 → 소문자). 양쪽이 갈리면 중복 미검출.
+CREATE INDEX IF NOT EXISTS ix_kb_glossary_term_norm ON kb_glossary (
+    lower(regexp_replace(regexp_replace(term, '\s*[(（].*$', '', 'g'), '[[:space:]_-]', '', 'g'))
+);
 
 CREATE TABLE IF NOT EXISTS enum_dictionary (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -306,7 +320,7 @@ CREATE TABLE IF NOT EXISTS glossary_feedback (
     term                 varchar(128) NOT NULL,
     suggested_definition text         NOT NULL,
     confidence           real         NOT NULL DEFAULT 0.5,
-    status               varchar(16)  NOT NULL DEFAULT 'pending',  -- pending|auto_promoted|promoted|rejected
+    status               varchar(16)  NOT NULL DEFAULT 'pending',  -- pending|auto_promoted|promoted|rejected|skipped_general
     source_run_id        varchar(64),
     conversation_id      varchar(128),
     promoted_glossary_id bigint,
@@ -314,11 +328,22 @@ CREATE TABLE IF NOT EXISTS glossary_feedback (
     created_at           timestamptz  NOT NULL DEFAULT now(),
     updated_at           timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT ck_glossary_feedback_status
-        CHECK (status IN ('pending', 'auto_promoted', 'promoted', 'rejected')),
+        CHECK (status IN ('pending', 'auto_promoted', 'promoted', 'rejected', 'skipped_general')),
     CONSTRAINT ux_glossary_feedback_scope_role_term UNIQUE (scope_key, role_key, term)
 );
 CREATE INDEX IF NOT EXISTS ix_glossary_feedback_status ON glossary_feedback (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_glossary_feedback_scope  ON glossary_feedback (scope_key, role_key);
+-- 0058 미러: 통용범위 축 + 'skipped_general'(범용 판정으로 미등록 — 조용히 버리지 않고 사유를 남긴다).
+-- CREATE TABLE 은 IF NOT EXISTS 라 기존 배치에서는 위 본문이 실행되지 않는다 → ALTER 미러가 필수.
+ALTER TABLE glossary_feedback ADD COLUMN IF NOT EXISTS term_tier varchar(16) NOT NULL DEFAULT 'product';
+ALTER TABLE glossary_feedback DROP CONSTRAINT IF EXISTS ck_glossary_feedback_term_tier;
+ALTER TABLE glossary_feedback ADD  CONSTRAINT ck_glossary_feedback_term_tier
+    CHECK (term_tier IN ('product', 'org', 'general'));
+ALTER TABLE glossary_feedback DROP CONSTRAINT IF EXISTS ck_glossary_feedback_status;
+ALTER TABLE glossary_feedback ADD  CONSTRAINT ck_glossary_feedback_status
+    CHECK (status IN ('pending', 'auto_promoted', 'promoted', 'rejected', 'skipped_general'));
+CREATE INDEX IF NOT EXISTS ix_glossary_feedback_tier
+    ON glossary_feedback (term_tier, status, created_at DESC);
 DROP TRIGGER IF EXISTS trg_glossary_feedback_updated_at ON glossary_feedback;
 CREATE TRIGGER trg_glossary_feedback_updated_at
     BEFORE UPDATE ON glossary_feedback

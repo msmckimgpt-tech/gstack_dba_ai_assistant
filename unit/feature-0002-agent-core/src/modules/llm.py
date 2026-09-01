@@ -558,6 +558,16 @@ Rules:
 """.strip()
 
 
+# ⚠ **`confidence` 와 `tier` 는 직교한다 — 이 분리가 이 프롬프트의 핵심이다 (0057).**
+#
+# 종전 프롬프트는 confidence 를 "how clearly defined AND **how reusable**" 로 정의했다. 그러면
+# **범용일수록 점수가 올라 자동승급 임계(0.85)를 넘고**, 저장 축은 제품 scope 하나뿐이라 그렇게
+# 넘은 범용 용어가 **가장 좁은 곳에 박혔다**. 재사용성이 저장 위치를 좁히는 방향으로 작동한 것이
+# 라이브 마찰(트랜잭션·CTE·EXPLAIN·B-tree 인덱스가 product.* 에 auto 등록)의 근본 원인이다.
+#
+# 그래서 두 질문을 갈라 묻는다:
+#   confidence = 이 턴이 그 용어를 **얼마나 명확히 정의했는가** (등록/보류)
+#   tier       = 그 용어가 **어디까지 통용되는가**             (저장 위치)
 GLOSSARY_SUGGEST_PROMPT = """
 You are a domain glossary extractor for a Korean MySQL/MSSQL DBA assistant.
 From one Q&A turn (user question + assistant answer), extract domain TERMS that are
@@ -568,19 +578,42 @@ Return JSON only. No markdown, no reasoning text.
 Output schema:
 {
   "terms": [
-    {"term": "용어", "definition": "1~2문장 한국어 정의", "confidence": 0.0~1.0}
+    {"term": "용어", "definition": "1~2문장 한국어 정의",
+     "tier": "product" | "org" | "general", "confidence": 0.0~1.0}
   ]
 }
+
+`tier` — HOW WIDELY the term applies. This decides WHERE it is stored. Judge it
+independently of `confidence`:
+- "product": specific to THIS product/service. Table, column, procedure, code value,
+  in-game or in-service concept, or a name that only means something inside this
+  codebase. Examples: CharacterID, SponsorCode, characterbounty, 튜닝인덱스, 활성 후원.
+- "org": not tied to one product, but specific to THIS organization — internal
+  conventions, shared naming rules, in-house standards that an outsider would not know.
+- "general": standard RDBMS / SQL / industry knowledge that any competent DBA already
+  knows and any language model already knows. Examples: 트랜잭션, 롤백, 복합 인덱스,
+  CTE, 실행 계획(EXPLAIN), B-tree 인덱스, 복제 이벤트, Online DDL, 시점 복구(PITR),
+  binlog, information_schema, 멱등성, 논리적 삭제.
+When unsure between "product" and "org", choose "product". When the term is textbook
+DB knowledge, you MUST choose "general" — do not upgrade it just because the answer
+explained it well.
+
+`confidence` — HOW CLEARLY THIS TURN DEFINED THE TERM. Nothing else.
+- 0.9+ : the answer states the meaning explicitly and unambiguously.
+- 0.5  : the meaning is inferable but not stated outright.
+- Reusability, importance, and how general the term is MUST NOT affect this number.
 
 Rules:
 - Only include a term if the turn actually defines or clarifies its meaning. If nothing
   qualifies, return {"terms": []}.
 - definition must be self-contained Korean (1~2 sentences), not "see above".
-- confidence reflects how clearly the term is defined AND how reusable it is
-  (0.9+ = explicitly defined & broadly reusable, 0.5 = plausible but uncertain).
-- Do NOT invent terms not grounded in the text. Do NOT include generic SQL keywords
+- Use ONE canonical surface form per concept. Do not emit both "멱등성" and
+  "멱등성(Idempotency)", or both "CTE" and "CTE (Common Table Expression)". Prefer the
+  form the answer actually used, and put the original-language gloss inside the
+  definition rather than the term.
+- Do NOT invent terms not grounded in the text. Do NOT include bare SQL keywords
   (SELECT, JOIN), the assistant's process steps, or PII.
-- At most 5 terms. Prefer the most reusable ones.
+- At most 5 terms. Prefer the ones most specific to this product.
 """.strip()
 
 
@@ -1571,7 +1604,9 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """대화 한 턴(질문+답변)에서 용어사전 후보를 추론(용어사전 자율등록, 0021).
 
     payload: {"user_message": str, "assistant_answer": str}
-    반환: [{"term": str, "definition": str, "confidence": float}, ...] (없으면 []).
+    반환: `[{"term", "definition", "confidence", "tier"}, ...]` (없으면 []).
+    `tier` ∈ {product, org, general} — 통용범위 축(0057). 미제공/미지원 값은 호출측
+    (`kb_glossary.normalize_suggestion_items`)이 `product`(가장 좁게)로 접는다.
     실패(클라이언트 없음/예외/JSON 파싱 실패)는 [] — 호출측(ask 경로) 차단 금지(soft-fail).
     """
     _model = AGENT_GLOSSARY_SUGGEST_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
@@ -1614,7 +1649,11 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             conf = 0.5
         out.append({"term": term, "definition": definition,
-                    "confidence": max(0.0, min(1.0, conf))})
+                    "confidence": max(0.0, min(1.0, conf)),
+                    # 통용범위 축(0057). 여기서는 **원문 그대로 실어 보낸다** — 화이트리스트
+                    # 강제는 `kb_glossary.normalize_suggestion_items` 한 곳에서 한다(러너 입력과
+                    # 같은 검증을 타게 하려면 검증이 한 곳이어야 한다).
+                    "tier": item.get("tier")})
     return out
 
 

@@ -9,6 +9,7 @@ source_of_truth: true
 # Task
 
 ## 20260901T1153-side-panel-exclusive — 우측 사이드 패널은 한 번에 하나만 (Minor §12.3 — frontend-only, 비파괴)
+## 20260901T1330-remove-query-result-details — 말풍선 「▼ 쿼리 결과」 여닫이 제거 (Minor §12.3 — 프론트 표시면 제거)
 
 **사용자 요청(2026-09-01)**:
 
@@ -41,6 +42,186 @@ source_of_truth: true
 "열려 있는 다른 패널" 을 아무도 책임지지 않았고, 그 결과 화면에는 z 가 높은 하나만 보이면서
 아래 패널은 **열린 채 가려진다** — 가려진 패널의 닫기 버튼·리사이즈 핸들도 함께 가려져
 접근이 불가능해진다. 프로필은 backdrop(z 195)까지 깔아 화면 전체 클릭을 먹는다.
+`▼ 쿼리 결과` 펼치기에 대한 UI는 더 이상 의미없는 구조로 확인됩니다. (이미 `단계 보기`
+기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능) 해당 UI를 정리해주세요.
+```
+
+**[다의어] 「정리」** — 고른 독해: *블록 전체 삭제*. 버린 독해: *결과셋 범위만 빼고 「단계」
+목록은 말풍선에 유지*. 요청 문구만으로는 둘을 가를 관측값이 없어 §16.7 G1 · §12 절차로
+승격해 **사용자에게 되돌려 확인**했다 — AskUserQuestion 3택, 선택 = **「제거만」**.
+예시로 되돌린 값: 「같은 대화에서 `.message-details` 개수 1 → **0**, 「단계 보기」 버튼은 유지」.
+
+**함께 사라지는 것을 먼저 알리고 결정을 받았다.** CSV 다운로드 링크와 「전체 데이터 보기」
+(CSV 전체 행을 표에 로드)는 **이 블록에만** 있었고 「단계 보기」 패널에는 대체재가 없다.
+그 사실을 제시하고 「제거 + CSV 이관」 을 권장안으로 올렸으나 사용자가 **「제거만」** 을
+선택했으므로, 두 기능은 이번 제거와 함께 소멸한다(의식적 트레이드오프). 본문에 에이전트가
+남긴 `/api/file` 링크·```csv 블록 다운로드는 별개 경로라 그대로 남는다.
+
+**제거 범위 — 조립 경로 전체.** 표시면을 지우면서 그것을 만들던 함수를 남기면 다음 사람이
+그 자리를 아직 살아 있는 것으로 읽는다. `renderMessageDetails` · `buildStepBlocks` ·
+`bubbleVisibleSteps` · `buildSqlNavigator` · `buildSqlStepPanel` · `loadFullCsvIntoTable` ·
+`appendDetailBlock` · `extractFirstTableRef` · `formatSqlForDisplay`(+ 키워드 표)를 함께 지웠고,
+생산자가 사라진 CSS 규칙(`.message-details*` · `.message-detail-block` · `.step-detail-list` ·
+`.sql-navigator`/`.sql-nav-*` · `.sql-result-group`/`-body`/`-actions` · `.sql-toggle-wrap`)도
+같이 걷어냈다. 남긴 것은 **다른 소비처가 있는 것만** — `buildResultTable` ·
+`parseMarkdownTablePreview` · `parseCsv`(본문 인라인 표), `.sql-block`(본문 ```sql 블록),
+`.sql-toggle-btn` · `.sql-result-toggle-wrap`(「단계 보기」 패널 카드).
+
+**함께 사라지는 것 — 셋째(자체 점검에서 발견, 숨기지 않는다).** 이 여닫이 안에는 `steps` 가
+없는 **구형 메시지**용 폴백(`meta.sql` → 「실행 SQL」, `meta.csv_paths` → 「결과 파일」)도 있었다.
+그런 메시지는 `meta.steps` 가 없어 「단계 보기」 버튼도 붙지 않으므로, 제거 후 **대체 표시면이
+없다**(SQL 문자열이 본문에 인라인으로 있으면 그것만 남는다). 「제거만」 결정은 이 블록 전체를
+대상으로 한 것이므로 범위 안이지만, 결정 시점에 고지된 것은 CSV 2건뿐이었다 — 사실을 여기
+남기고 사용자에게 별도로 알린다. 되살릴 의사가 있으면 자리는 「단계 보기」 패널이다.
+
+**호출부가 no-op 이 되지 않게 했다 — 이번 변경의 실질.** 브리지 진행 표시
+(`_renderBridgeSteps`)는 이 여닫이를 통째로 다시 그리는 방식이었다. 그냥 지우면 진행 중
+말풍선에는 **단계로 들어갈 입구가 하나도 남지 않는다** — placeholder 말풍선은 `meta.steps`
+없이 그려져 app.js 가 「단계 보기」 버튼을 붙이지 못하기 때문이다. 그래서 이 함수는 이제
+사이드 패널을 갱신하고, 말풍선에는 버튼이 **없으면 만든다**. 배포 전 열려 있던 탭에 남은
+옛 여닫이도 걷어낸다.
+
+### 검증
+
+- [x] **PRE-DEPLOY 기준선 실측(PB-0008)** — 라이브 대화 `20260901030637-95dc8844` 에서 제거
+      대상 4요소 직접 관측: `.message-details`(summary=「쿼리 결과」) · 블록 `["단계","쿼리 결과"]` ·
+      `.step-detail-list` 1 · 네비게이터 「쿼리 1/17」(결과 표 14). 「제거했다」를 「원래 없었다」와
+      구별하기 위한 절반이다. 증적: `docs/test-runs.d/TASK-20260901T1330-remove-query-result-details.md`
+      + `docs/evidence/remove-query-result-details/before-bubble-details.png`
+- [x] 컨테이너 pytest 전건 PASS(rc=0) — 9개 feature 스위트
+- [x] ESM 문법 검사 3파일(`node --check`) PASS
+- [x] **계약 테스트 방향 전환** — 종전 테스트들은 이 여닫이를 *다듬는* 계약(스크롤 대상·범위
+      분리·페이징)을 잠그고 있었다. 잠글 대상이 아니라 **되살아나면 안 되는 것**이 됐으므로,
+      `test_live_steps_progress_continuity.py` 의 해당 절을 제거 계약으로 교체했다(조립 경로
+      부재 6종 · 호출부 부재 · 사문 CSS 6종 · 남은 표시면의 상한 유지 · 진행 갱신은 패널만).
+      `test_live_steps_in_panel.py` · `test_live_steps_structured.py` 도 같은 방향으로 전환.
+- [ ] **POST-DEPLOY 실측** — 부재 확인 4항목(위 fragment §3 에 사전 열거). 배포 후 수행.
+- [ ] 브리지 진행 중 「단계 보기」 입구 생성 — 개인 AI 러너 미연결로 관측 대상 생성 불가
+      (실측 사유: `내 AI가 실행 중이 아닙니다` 배너). 구조 단언으로만 잠긴 상태.
+
+### 7. Completion Checklist
+
+- [x] 다의어 「정리」를 §12 절차로 승격해 사용자 결정 확보 (제거만)
+- [x] 함께 소멸하는 기능(CSV 다운로드·전체 데이터 보기)을 결정 **전에** 고지
+- [x] 조립 경로·사문 CSS 동반 제거 (죽은 코드 잔존 0)
+- [x] 호출부 no-op 방지 — 브리지 진행 표시가 패널 입구를 보장
+- [x] 컨테이너 pytest 전건 PASS + PRE-DEPLOY 기준선 실측
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+- [ ] POST-DEPLOY 부재 확인 4항목
+
+### 9. Requested Scope
+
+- [x] "`▼ 쿼리 결과` 펼치기에 대한 UI ... 해당 UI를 정리해주세요" — 말풍선 여닫이 전체 제거
+      (`renderMessageDetails` 및 하위 조립 경로 + 사문 CSS) — ✓ 완료(PRE-DEPLOY 기준선 실측,
+      부재 확인은 POST-DEPLOY 이월)
+- [x] "(이미 `단계 보기` 기능을 통해 사이드바에서 ... 조회 가능)" — 대체 표시면이 유일 경로로
+      성립하는지: 말풍선에 「단계 보기」 입구가 **항상** 있도록 브리지 진행 경로 보정 — ✓ 완료
+      (구조 단언까지. 라이브 진행 중 관측은 러너 미연결로 미수행 — 사유 명시)
+- 범위 밖(명시): 공유 뷰(`share.js`)의 SQL 결과 표시. 그쪽에는 「단계 보기」 패널이 없어
+      대체재가 없으므로 손대지 않았다.
+
+
+## 20260901T1210-interrupt-preserve-postdeploy — 중단 보존 2 cycle 의 POST-DEPLOY 실측 (doc-only)
+
+**배포 도달 4/4 PASS · 중단 왕복 12항목 미수행(블로커 확정).**
+
+- 대상 배포 `b793e7ea`(scope=all, 엣지 `no upstreams available` 0건) / 선행 `3490cf73`.
+- **도달 확인**(실 Windows Chrome, 서빙 사본 직접 fetch): `app.js?v=3c9d838b3ed0` 에
+  `_reloadForPreservedInterrupt` · `preserve_reasoning: true` · 새 토스트 문구 3종 존재.
+  `/api/ai/manifest` · `/api/ai/openapi.json` 양쪽에 파라미터 + `"default": true`.
+- **왕복 미수행 사유(실측)**: `#sendBtn` 이 `aria-disabled="true" class="send-btn is-access-blocked"`
+  — "내 AI 가 연결되어 있지 않습니다". 질문 전송이 차단되어 **진행 중 run 을 만들 수 없다**.
+  라이브는 feature-0043 전환 모드라 답변을 개인 AI 러너가 만드는데 러너 프로세스가 0개이고,
+  재기동에는 사람이 웹에서 발급하는 새 `mat_` 토큰이 필요하다(러너는 토큰을 저장하지 않는다).
+- 측정 항목 12건은 앞 두 fragment 에 **사전 열거된 채로 유효**하다 — 개인 AI 연결 후 수행.
+- 코드 변경 **0**(doc-only). 배포 불필요.
+
+### 7. Completion Checklist
+
+- [x] POST-DEPLOY 도달 확인 4/4 기록 (`test-runs.d/TASK-20260901T121000-…md` §1)
+- [x] 미수행 항목과 그 **실측 사유**를 숨기지 않고 기록 (§2)
+- [x] "무엇이 검증됐고 무엇이 안 됐는가" 를 축별로 분리 표기 (§3)
+- [ ] 중단 왕복 12항목 — **개인 AI 러너 연결 후 수행**(측정 항목은 앞 두 fragment 에 사전 열거)
+- [x] MODIFY.md · REPORT.md 반영
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+
+## 20260901T1200-ai-conn-chip-to-profile-row — 연결 칩을 입력창에서 사이드바 프로필 행으로 (Minor §12.3 — 프론트 배치 단독)
+
+**사용자 요청(2026-09-01)**: "'내 AI 대기 중' 과 같은 연결 버튼을 프로필 버튼 여백에 위치하도록
+구성해주세요. 현재는 요청텍스트 입력창 내부에 존재하여 불필요한 여백이 너무 많이 나타나는
+상황입니다." (사이드바 프로필 행의 빈 가로 공간을 스크린샷으로 지목)
+
+**원인 — 칩 하나가 입력창 아래 한 줄을 상시 붙잡고 있었다.** `.composer-footer` 는 상태·힌트가
+비고 provider 상태점이 숨겨지면 통째로 접히도록 되어 있는데(그게 평상시 화면), 2026-08-28 에
+연결 칩이 그 안으로 들어오면서 접힘 조건에 `:has(.ai-conn.hidden)` 예외가 추가됐다. 칩은 늘
+보이므로 그 조건은 늘 거짓 → footer 는 **한 번도 접히지 않았다**. 입력창 아래 26px 한 줄이
+상시 남은 것이 사용자가 지적한 여백이다.
+
+**조치**: 칩을 `.sidebar-profile` 로 옮기고(마크업상 `.profile-trigger` 의 **형제** — `<button>`
+안에 `<button>` 은 중첩 금지), footer 접힘 조건에서 칩 조건을 뺐다. 칩이 떠난 뒤에도 조건을
+남기면 footer 안에 없는 요소를 찾느라 규칙이 영영 매칭되지 않아 **여백이 그대로 남는다** —
+이 한 줄이 이번 변경의 실질이다.
+
+**배치 — 폭 임계값을 추정하지 않고 실제 이름 길이에 맡겼다.** `.sidebar-profile` 을 flex-wrap
+컨테이너로 두고 `.profile-trigger` 를 `flex: 1 0 auto`(grow O, **shrink X**)로 고정했다. 자리가
+있으면 칩이 프로필 버튼 오른쪽 여백에 들어가고, 없으면 이름을 뭉개는 대신 칩이 다음 줄로
+내려간다.
+
+**화살표는 흐름에 남긴다(중간 시도 되돌림).** 스크린샷이 지목한 자리는 화살표 *앞* 이라
+`.profile-arrow` 를 행 오른쪽 끝에 절대배치해 봤으나, 칩이 아래 줄로 내려간 조합에서
+`.profile-trigger` 가 전폭이 되며 **긴 계정명이 화살표 밑으로 들어갔다**(21자 계정 재현).
+화살표 자리를 트리거 padding 으로 비우면 같은 줄 임계가 16px 빡빡해져 `admin` + 최장 라벨이
+아래 줄로 밀린다. 화살표를 흐름에 두면 두 문제가 동시에 사라지고, 칩이 프로필 버튼 **밖의
+별개 요소**(다른 클릭 대상 — 연결 모달)라는 사실도 경계로 드러난다.
+
+**라벨에서 «내 AI» 접두 제거 (사용자 결정)**: 실측상 `admin` 계정 기준 여백은 119px 인데 종전
+라벨은 최장 106px + 화살표 자리라 «대기 중» 만 겨우 들어가고 «연결 안 됨»·«업데이트 필요» 는
+아래 줄로 내려갔다 — 상태가 바뀔 때마다 사이드바 하단이 한 줄씩 튄다. 접두를 빼 최장 81px 로
+줄이자 **네 상태 전부 같은 자리에 고정**됐다. 주어는 이제 자리가 말한다(내 계정 옆). 전체
+설명은 `title` 툴팁에 그대로 남는다.
+
+### 검증
+
+- [x] **실 브라우저 실측(PB-0008)** — 사이드바 252px 기준 네 상태 × 계정 4종 **16조합** 측정:
+      `admin`·`mckim` 은 **전 상태 같은 줄**(행 높이 65px 고정, 화살표→칩 간격 18px 일정, 이름
+      잘림 없음), `bootstrap_admin`(15자)·`verylongaccountname_x`(21자)는 전 상태 아래 줄(90px)로
+      일관 — 상태 전환에 따른 튐 0. 21자 계정은 이름이 ellipsis 되며 **가로 넘침 0**.
+      `.composer-footer` 는 **전 조합에서 `display: none`** (여백 해소 확인).
+      증적: `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md` +
+      `docs/evidence/ai-conn-badge-sidebar/*.png`
+- [x] 컨테이너 `make test` — pytest 전건 PASS(rc=0) + ruff PASS
+- [x] `verify_connect_modal_autoclose.mjs` 25/0 · `verify_llm_restriction_surface.mjs` 35/0
+- [x] 계약 테스트 방향 전환 — `test_connection_chip_is_free_of_the_footer_collapse_rule`:
+      종전엔 "접힘 조건에 칩이 **있어야** 한다" 였고 이제 "**없어야** 한다"(+ 칩이 프로필 행에
+      있고, 배치 규칙과 wrap fallback 이 존재하는지). 조건이 남으면 여백이 돌아온다.
+- [x] 라벨 계약 테스트는 문구가 아니라 **네 상태가 갈리는가** + 접두를 뺀 자리를 title 이
+      받는가(`js.count("내 AI") >= 3`)로 재정의
+
+## 20260901T0315-interrupt-preserve-bridge — 중단 보존을 «사용자가 실제로 타는 경로»(브리지)까지 (Minor §12.3 — 비파괴 텍스트 추가)
+
+**앞 cycle 의 미완 부분을 잇는다.** `REQ-20260901T020746-interrupt-context-preserve` 는 **서버 run
+경로**의 중단 보존을 고쳤다. 그 cycle 의 배포 스모크가 사실 하나를 드러냈다:
+
+```
+[smoke-conv] [llm-gate] 서버 계정 LLM 호출 차단 caller=modules.llm._get_llm_client
+             — feature-0043 전환(추론은 사용자 개인 AI 런타임이 수행)
+```
+
+**라이브는 서버 LLM 이 꺼진 브리지(개인 AI) 모드다.** 즉 사용자가 실제로 누르는 '중단' 은
+서버 run 이 아니라 브리지 경로를 탄다 — 앞 cycle 이 고친 지점을 지나가지 않는다.
+
+**브리지 경로의 축별 실태 (전수 확인)**:
+
+| 축 | 상태 | 근거 |
+|---|---|---|
+| 화면·이력 | **되고 있었다** | `_mark_bridge_placeholders_canceled` 가 대기 말풍선을 취소 안내로 바꿔 남긴다 |
+| 단계(접이식) | **되고 있었다** | 그 말풍선이 `run_id = task_id` 각인을 유지하고(취소 UPDATE 는 `bridge.canceled`/`placeholder` 만 건드린다), `_record_bridge_step` 이 개인 AI 의 도구 호출을 인자·사유까지 담아 `agent_runtime.steps` 에 쌓아 둔다 |
+| **다음 요청의 맥락** | **안 되고 있었다** | 브리지가 개인 AI 에게 넘기는 대화 맥락(`ai_tools._recent_conversation_context`)은 표시 store 의 **content 텍스트만** 읽는다 — steps 도 meta 도 보지 않는다 |
+
+그래서 중단 뒤 "아까 그거 이어서" 라고 물으면 개인 AI 는 자기가 직전에 무엇을 조사했는지
+모른 채 처음부터 다시 시작했다. **요청의 세 요소 중 «맥락» 이 라이브 경로에서 미충족**이었다.
+
+**REQ-20260901T031500-interrupt-preserve-bridge**
 
 ### 2.1 Implementation Plan
 
@@ -191,6 +372,142 @@ source_of_truth: true
 - [x] 「유저 프로필」 — `#profileDrawer`(+backdrop) 등록·배타 — ✓ 완료
 - [x] 「등」 — **향후 추가되는 오버레이 패널도 자동으로 걸리게** — ✓ 완료
       (구조 가드 S3 가 `data-side-panel` 표식 전수를 등록부와 대조 — 태그 무관)
+| `feature-0002/src/agent_core.py` | `_build_interrupted_note` | `header` 파라미터 추가(기본 = 기존 라벨, `""` = 본문만) | 서버 경로 기본 동작 무변경 · 브리지가 자기 머리말로 같은 빌더 재사용 |
+| `feature-0003/src/routers/conversations.py` | `_bridge_progress_tail` 신설 + `_mark_bridge_placeholders_canceled` | 취소 말풍선 본문에 그 task 의 진행 단계를 **task 별로** 덧붙인다 | 중단 후 다음 질문의 개인 AI 맥락에 진행 단계가 텍스트로 들어간다 |
+| `feature-0003/src/routers/conversations.py` | `_BRIDGE_PROGRESS_TAIL_HEADER` | 진행 단계 머리말 = **미완 라벨** | 개인 AI 가 중간 조사를 확정 결론으로 읽지 않는다 |
+| `feature-0003/tests/test_bridge_cancel_preserves_progress.py` | — | 신규 12건 | PASS + 뮤테이션 KILL |
+
+**완료 판정 기준의 구체 예시**: 개인 AI 가 `describe_table` → `execute_sql` 2건을 부른 뒤
+사용자가 '중단' 을 누르면 — 취소 안내 말풍선 본문이 「취소 안내 + (미완 라벨) + `진행 단계:`
+2줄」이 되고, 이어서 보낸 질문을 개인 AI 가 열었을 때 그 텍스트가 대화 맥락에 포함돼 있다.
+
+- **빌더를 공유한 이유**: 형식이 두 벌이 되면 서버·브리지 두 경로의 화면이 갈리고, 갈리는 쪽
+  중 약한 것이 사용자가 보는 진실이 된다(이 저장소가 P0-R 에서 이미 겪은 부류).
+- **꼬리를 task 루프 «안» 에서 만드는 이유**: `notice` 는 호출자가 하나만 주는데 단계는 task
+  마다 다르다. 루프 밖에서 만들면 모든 말풍선이 같은 단계를 갖는다.
+- **단계가 없으면 붙이지 않는다**: 도구를 한 번도 안 부른 채 중단됐으면 붙일 것이 없다.
+  "진행된 내용" 을 단정하는 문구가 거짓이 되지 않도록 머리말도 꼬리와 함께만 붙인다.
+- **부분 추론 자체는 여전히 미커버**(구조적): 개인 AI 의 사고 과정은 러너 쪽에 있고 우리는
+  관측하지 못한다. 우리가 남길 수 있는 것은 **우리 도구로 관측한 사실**(무엇을 왜 조회했는가)뿐이다.
+- 위험도: **Minor** (§12.3 — 스키마·RBAC·엔드포인트 0. 이미 쓰던 UPDATE 의 본문 문자열이
+  길어질 뿐이고, 조회 실패·단계 부재는 모두 종전 동작으로 degrade).
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다 (AC-20260901T031500-interrupt-preserve-bridge-1 ~ -3)
+- [x] 자동 테스트가 통과한다 — `make test` 전건 green(ruff clean) + 신규 12 PASS + 뮤테이션 1종 KILL
+- [ ] 웹/UI 브라우저 검증 — **POST-DEPLOY**(앞 cycle fragment 의 측정 항목과 함께 수행)
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md — `docs/test-runs.d/` fragment
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md 갱신 (`bin/gen-status.sh`)
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+
+## 20260901T0207-interrupt-context-preserve — 중단(interrupt)이 추론·맥락·단계를 통째로 버리던 결함 (Minor §12.3 — 비파괴 추가, 스키마·RBAC 변경 0)
+
+**사용자 요청(2026-09-01)**: "프로젝트 내 서비스에서, 대화 중 assistant에게 요청했던 작업을
+중단(interrupt) 하더라도 추론했던 내용, 맥락, 단계가 손실되지는 않도록 구성해주세요."
+
+**사용자 결정(같은 turn, AskUserQuestion)**:
+1. 맥락 승계 = **화면 + 다음 요청의 LLM 맥락 모두 보존**. 단 "방향이 틀려서 재요청한 경우도
+   LLM 이 충분히 판단할 수 있는 구조로" — 보존분이 *확정 결론*이 아니라 *중단된 미완 조사*임을
+   본문 자체가 밝히고, 뒤이은 새 지시가 우선함을 명시할 것.
+2. 보존 범위 = **단계 목록 + 근거 요약** (도구 결과 원문은 제외 — 토큰 비용).
+3. 재개(이어서 진행) 기능은 이번 범위 밖 — 보존까지.
+
+**REQ-20260901T020746-interrupt-context-preserve**
+
+**근본원인 — 보존 경로는 이미 있는데 «명시 중단» 만 그 경로에서 빠져 있었다.**
+
+`composer-nonblock-interrupt` R3 가 도입한 `preserve_reasoning` 축은 두 진입점 중 하나에만
+배선돼 있었다:
+
+| 중단 진입점 | 호출 | `cancel_preserve` | 결과 |
+|---|---|---|---|
+| 진행 중 새 발화(인터럽트 재요청) — `_interruptCurrentRunForResend` | `/api/cancel {preserve_reasoning: true}` | `"1"` | 부분 추론 보존 |
+| **명시 '중단' 버튼** — `cancelCurrentRun` | `/api/cancel` (플래그 없음) | `"0"` | **전량 폐기** |
+
+`/api/cancel` 의 `bool(data.get("preserve_reasoning"))` 가 미지정을 `False` 로 접고,
+`agent_core.run_agent` 의 canceled 분기가 그 플래그를 보고 답변 없이 종료한다. 사용자가 보던
+진행 단계는 프런트가 `stopProgressPolling({reset:true})` 로 지우고, 앵커가 될 assistant
+메시지가 없으니 이력에도 남지 않으며, `core_messages` 에 아무것도 안 써 다음 요청의 LLM
+맥락에서도 사라진다. **세 축(화면·이력·다음 맥락)이 동시에 비는 것이 사용자가 겪은 손실이다.**
+
+**두 번째 구멍 — 도구 호출 전 중단은 보존 경로에 태워도 남길 것이 없다.**
+보존 본문은 `result["rationale"] = _summarize_step_rationale(steps)` 인데, `steps` 는 **도구
+step 만** 담는다(`agent_core.py` 의 `steps.append` 는 tool 분기 1곳). 진행 표시를 만드는
+`_emit_activity` 는 DB 에만 쓰고 in-process 리스트에 남지 않는다. 그래서 "맥락 로드 →
+추론 중" 국면에서 중단하면 `_partial` 이 빈 문자열이라 인터럽트 재요청 경로조차 아무것도
+보존하지 못한다. 사용자가 중단을 누르는 전형적 시점(오래 걸린다)이 정확히 이 국면이다.
+
+**단계(steps)는 이미 살아 있다 — 없는 것은 앵커다.** 취소해도 `agent_runtime.steps` 행은
+지워지지 않고(`_purge_run_steps` 는 정의만 있고 호출부 0), history 조립부
+(`_conv_store.py` 4경로)가 **assistant 메시지마다** `_load_steps_for_message` 로 그 run 의
+steps 를 붙여 `meta.steps` 로 내려보내면 프런트 `renderMessageDetails` 가 접이식 "실행 단계"
+로 그린다. 즉 **보존 메시지 1건을 남기는 것만으로 단계 UI 가 자동으로 복구된다** — 별도
+저장·별도 렌더 경로가 필요 없다.
+
+### 2.1 Implementation Plan
+
+| 파일 | 심볼 | 변경 | 완료 판정 |
+|---|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/routers/conversations.py` | `cancel_request` | `preserve_reasoning` 기본값을 **보존(True)** 으로 전환 — 명시 `false` 만 폐기 | 플래그 없는 `/api/cancel` 이 `mark_cancel_requested(..., preserve_reasoning=True)` 를 호출 |
+| `unit/feature-0002-agent-core/src/agent_core.py` | `_emit_activity` (+ `_activity_trail`) | 진행 라벨을 in-process 로 축적(최근 40) — 도구 호출 전 중단도 남길 것이 생김 | 도구 0회 run 을 중단해도 보존 본문이 비지 않음 |
+| `unit/feature-0002-agent-core/src/agent_core.py` | `_build_interrupted_note` 신설 + canceled 분기 | 보존 본문 = **미완 라벨 + 진행 단계 목록 + 단계별 근거**. 새 지시 우선 지침 포함 | 본문에 세 구획이 모두 있고, LLM 이 "미완·새 지시 우선" 을 읽을 수 있음 |
+| `unit/feature-0003-agent-web-ui/src/routers/ai_discovery.py` | `/api/cancel` 스펙 2곳 | 외부 AI 도구 표면에 `preserve_reasoning` 파라미터·기본값 노출 | discovery/OpenAPI 응답에 파라미터 기술 |
+| `unit/feature-0003-agent-web-ui/src/static/app.js` | `cancelCurrentRun` | 의도 명시(`preserve_reasoning: true`) + 안내 문구 + 보존분 도착 시 이력 재로드 | 중단 후 새로고침 없이 보존 말풍선이 화면에 나타남 |
+| `unit/feature-0002-agent-core/tests/test_interrupt_preserves_context.py` | — | 신규 (본문 3구획·activity 폴백·미완 라벨) | PASS |
+| `unit/feature-0003-agent-web-ui/tests/test_cancel_preserve_default.py` | — | 신규 (기본 True·명시 false·외부 스펙 노출) | PASS |
+
+**완료 판정 기준의 구체 예시 (§7.1 다의어 고지)**: 1:1 대화에서 SQL 2건을 조회한 뒤 3번째
+추론 중 '중단' 을 누르면 — 대화에 assistant 말풍선 1건이 남고(본문 = 중단 안내 + 진행 단계
+2줄 + 단계별 근거), 그 말풍선의 접이식 "실행 단계" 에 execute_sql 2건이 그대로 펼쳐지며,
+이어서 "아까 그거 계속" 이라고 물으면 다음 run 의 LLM 이 그 2건을 이미 아는 상태로 답한다.
+
+- **왜 서버 기본값을 뒤집는가(프런트만 고치지 않고)**: `/api/cancel` 은 외부 AI 도구 표면
+  (`ai_discovery.py`)에도 공개돼 있어 웹 UI 만 고치면 외부 경로는 계속 폐기한다. 기본을
+  보존으로 두고 **명시 `false` 만 폐기**로 남기면(향후 "버리고 중단" UI 여지) 두 표면이 한
+  규칙을 공유한다.
+- **미완 라벨이 load-bearing 인 이유(사용자 결정 1의 단서)**: 보존분은 `core_messages` 를 타고
+  다음 run 의 recall 에 그대로 실린다. 라벨이 없으면 LLM 이 그것을 *확정된 중간 결론*으로 읽어,
+  사용자가 방향을 바꾸려 중단한 경우에도 폐기된 가설 위에서 답을 잇는다. 본문 첫 줄이
+  "중단된 미완 조사 · 이어지는 지시가 다르면 새 지시를 따른다" 를 명시해 LLM 에게 판단
+  근거를 준다 — meta 플래그(`interrupted: true`)는 화면 전용이라 LLM 이 읽지 못한다.
+- **도구 결과 원문을 싣지 않는 이유**: 사용자 결정 2. 결과 원문은 접이식 "쿼리 결과" 로 이미
+  화면에서 볼 수 있고(steps 경로), recall 에까지 넣으면 중단 1회가 다음 run 의 입력 토큰을
+  크게 부풀린다.
+- **재개 버튼 미구현**: 사용자 결정 3 — 별도 cycle. 재개 지점 정의·중복 실행 방지·브리지 축
+  정합이 얽혀 이번 범위와 위험도가 다르다.
+- **브리지(개인 AI) 축은 범위 밖**: 브리지는 러너가 최종 답변만 제출해 웹에 부분 추론이
+  존재하지 않는다. 중단 시 대기 말풍선을 취소 안내로 바꾸는 현행 동작이 이미 "화면에 남긴다"
+  요건을 충족한다(`_mark_bridge_placeholders_canceled`). REPORT 에 미커버로 명시.
+- 위험도: **Minor** (§12.3 — 스키마·마이그레이션·RBAC·인증 변경 0, 비파괴 메시지 1건 추가.
+  롤백 = 코드 revert + 재배포).
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다 (AC-20260901T020746-interrupt-context-preserve-1 ~ -4)
+- [x] 자동 테스트가 통과한다 — `make test` 전건 green(ruff clean) + 신규 28 PASS + 뮤테이션 3종 KILL
+- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증 — **POST-DEPLOY 이월**(사용자 결정 2026-09-01).
+      중단 UX 는 진행 중 run 이 실재해야 관측되고 정적 자산은 배포 시 스탬프가 주입된다.
+      측정 항목 9건을 `docs/test-runs.d/TASK-20260901T020746-interrupt-context-preserve.md` §4 에
+      **사전 열거**했다(사후 합리화 금지).
+- [x] FUNCTION.md가 현재 동작과 일치한다 (§2 Goal 에 REQ + AC 4건)
+- [x] MODIFY.md에 변경 이력이 기록되었다 (feature-0003 · feature-0002 양쪽)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (판단 5건 + 미커버 3건 + 채널 carve-out 사유)
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md — `docs/test-runs.d/` fragment(§5.3)로 기록
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다 (`bin/gen-status.sh` 재생성)
+- [x] ANCHOR.md §1~§3이 채워져 있다 (기존 — 본 변경과 충돌 없음)
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+- [ ] (deploy-backed) 라이브 재배포 검증 — cycle-finalize 후 수행
+- [x] 요청 범위 자기-열거 완결성 게이트 (§16.7 G1~G4): 요청 3요소("추론했던 내용"·"맥락"·"단계")를
+      각각 보존 본문 구획 · `_save_message` recall · steps 앵커에 배선하고, 경계 양측(보존/폐기 ·
+      도구 있음/없음 · 빈 손)을 테스트로 확인했다.
 
 ## 20260831T1445-conv-last-activity-updatedat — "최근 갱신" 이 첫 턴 시각에 고정되던 결함 (Minor §12.3 — 비파괴 내부 배선)
 
@@ -12387,3 +12704,16 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
       성공 통로가 합쳐지며 사라졌다. 무중단 blip 0.
       증적: `docs/test-runs.d/TASK-20260901T0330-connect-modal-launch-close-postdeploy.md` +
       `docs/evidence/connect-modal-autoclose/pd2-*.png`
+
+## 20260901T1256-glossary-tier-postdeploy — 통용범위 축 POST-DEPLOY 시각검증
+
+선행 cycle(`20260901T1200-glossary-term-tier`)이 배포 전에는 검증할 수 없다고 명시한 항목의
+이행. **코드 변경 0 — 증적 기록 전용.**
+
+- [x] alembic `0058_glossary_term_tier` 라이브 적용 확인 (기존 732행 backfill 무손실)
+- [x] 등록 폼 「통용 범위」 select 노출 + scope 별 기본값(제품→product / 공용→org)
+- [x] 전역 상속 행 7건이 `전역 상속 · 여기서 편집 불가` 배지 + 편집 불가(role 속성 부재)
+- [x] 검토 큐 상태 필터에 `일반 용어로 제외됨` 노출
+- [x] 배포 체크리스트 [1][2][1b][2b][5] — 엣지 `no upstreams available` 0건
+- [ ] 소급 정리 실적용 (범용 69행·중복 36행) — **사용자 재승인 대기**
+- [ ] `#GLOSSARY:` 라이브 왕복 — 러너 갱신 후 관측

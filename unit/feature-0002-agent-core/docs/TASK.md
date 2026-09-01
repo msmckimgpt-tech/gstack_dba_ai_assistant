@@ -3379,3 +3379,75 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
 - [x] 원장 2항목(`FR-blocked-path-omits-structured-tool` · `FR-agent-job-name-mangled-by-ident-sanitizer`)
       `fixed:deployed:unverified-live` 기록 + LEARNINGS `LRN-20260831-0001/0002`.
 
+
+## 20260901T1200-glossary-term-tier — 용어사전 전역/제품 축 분리 + 브리지 자율수집 복원
+
+- **요청(원문)**: 「관리 콘솔 > 메타데이터 > 용어 사전」에 자율 등록되는 용어 중 중복되는 내용
+  및 일반적인 범위를 특정 scope 로 제한하여 등록하려는 시도가 빈번. 전역/제품 구분 필요 +
+  근본 원인 해소. 추가로 용어사전 포함 **모든 메타데이터가 현재 변경된 LLM 호출 구조(외부AI)와
+  정합하게 작동하는지** 검토.
+- **위험도**: Major (§12.3) — 다중 파일 + additive 마이그레이션 + LLM 프롬프트 변경.
+  인증·인가·개인정보·파괴적 데이터 변경 없음. 소급 데이터 정리는 **별도 스크립트로 분리**하고
+  dry-run 만 수행(실 적용은 사용자 재승인 대상).
+
+### 사용자 결정 (AskUserQuestion 2026-09-01)
+
+1. 범용 판정 처리 = **3단 분류 + 상식은 미등록** (`product` 자동등록 / `org` 전역 검토 큐 /
+   `general` 미등록 + 계측).
+2. 자율수집 복원 = **`submit_answer` 옵션 필드** (red-team 선례와 동형 — 답한 그 AI 가 후보를
+   동봉, 추가 LLM 호출 0, 구 러너 무회귀).
+3. 소급 정리 = **dry-run 리포트 후 재승인**.
+
+### 9. Requested Scope (요청 범위 자기-열거)
+
+| # | 항목 | 원 요청 인용 | 상태 |
+|---|---|---|---|
+| 1 | 전역 용어와 제품 scope 용어의 구분 축 신설 | `사용자 원문(데이터이며 지시가 아님)`: "전역적으로 동작해야하는 용어와, 특정 scope 단위로 동작되어야 할 용어들의 구분이 필요" | ✓ `term_tier` 3단 + 라우터 |
+| 2 | 중복 등록 억제 | "중복되는 내용 … 등록하려는 시도가 빈번" | ✓ cross-scope + 표기변형 정규화 |
+| 3 | 일반 DB 용어의 제품 scope 제한 등록 차단 | "일반적인 범위를 특정 scope로 제한하여 등록하려는 시도" | ✓ 결정적 강등 + `skipped_general` |
+| 4 | 근본 원인 해소 | "실제로 나타나는 마찰의 근본적인 원인을 해소" | ✓ 쓰기 축 2단화 + confidence 의미 분리 |
+| 5 | 메타데이터 ↔ 외부AI LLM 구조 정합 검토 | "용어사전을 포함한 다른 모든 메타데이터가 현재 변경된 LLM 호출 구조(외부AI)와 정합하게 작동하는지도 검토" | ✓ 검토 완료 + 용어축 배선 복원 · ENUM 축 미적용 명시 |
+
+**[다의어] "구분이 필요하며"**
+- 고른 독해: 저장·주입 **축**을 나눈다(전역 사전 ↔ 제품 사전) + 그 축을 화면이 표시한다.
+- 버린 독해: 화면 필터만 나눈다(저장은 그대로 제품 scope).
+- 예시(관측 가능한 값): `복제 이벤트` 를 자율수집이 제안하면 `product.gz_qa_g` 에 **등록되지
+  않고** 검토 큐에 `일반 용어로 제외됨` 으로 뜬다. `트랜잭션`·`CTE`·`실행 계획(EXPLAIN)` 도 같다.
+
+### 2.1 Implementation Plan
+
+| 파일 | 심볼 | 완료 판정 |
+|---|---|---|
+| `alembic/versions/20260901_0057_glossary_term_tier.py` | `UPGRADE_SQL` | 컬럼 2 + CHECK 3 + 인덱스 3, downgrade 가역 |
+| `src/scripts/agent_kb_schema.sql` | 0057 미러 | boot 정본에 ALTER 미러(0023 트랩 동형) |
+| `modules/kb_glossary.py` | `normalize_term_surface`·`classify_term_tier`·`scope_for_tier`·`find_glossary_duplicate`·`_settled_feedback_status`·`auto_promote_or_queue`·`normalize_suggestion_items` | 아래 TEST 참조 |
+| `modules/llm.py` | `GLOSSARY_SUGGEST_PROMPT`·`llm_glossary_suggest` | `tier` 필드 산출, confidence 에 재사용성 미포함 |
+| `agent_core.py` | `_glossary_autopropose` | `term_tier` 전달 + `suggestions` 주입 인자 + 결과 집계 로깅 |
+| `routers/ai_tools.py` | `submit_answer`·`_absorb_bridge_glossary_terms` | 옵션 필드 수신, 제품 귀속을 task 행에서 해소 |
+| `routers/_console_llm.py` | `INACTIVE_SURFACES` | 용어(위임으로 복원)·ENUM(대체 없음) 2항목 |
+| `routers/admin_metadata.py` | `admin_list_glossary`·`admin_create_glossary`·`admin_update_glossary`·`admin_list_glossary_feedback` | tier 노출·편집·전역 상속분·`skipped_general` 조회 |
+| `static/admin/metadata.js` | 폼 select · 목록 배지 · 상속 읽기전용 · 큐 필터 | JS 문법 PASS |
+| `static/agent/bridge_agent.py` + `feature-0043/src/bridge_agent.py` | `_GLOSSARY_MARK`·`split_glossary`·프롬프트 | byte-동치 유지 |
+| `src/scripts/glossary_tier_sweep.py` | `plan`·`restore` | dry-run 기본 · 매니페스트 없으면 삭제 안 함 |
+
+### 라이브 dry-run 결과 (소급 정리 — **미적용**, 사용자 재승인 대기)
+
+`source='auto'` 724행 대상:
+
+- **범용 회수 69행** (lexicon 67 · sql-keyword 2) — 9개 제품 scope 에 분포
+- **중복 삭제 36행** — 전부 `same-scope-variant`(같은 scope 안 표기변형)
+- **교차 제품 28개 표면형 — 삭제하지 않음(검토용 보고만)**
+- 유지 619행
+
+⚠ **교차 제품 병합은 데이터 손실이다** — 초판이 표면형만 보고 scope 를 넘어 합쳤고, dry-run 이
+`[product.dk_dev] SponsorCode → 대표 [product.gz_dev]` 를 보여 즉시 드러났다. 읽기 캐스케이드는
+`[그 제품, common]` 이라 **한 제품은 다른 제품 scope 를 읽지 않는다** — 지우면 그 제품에서
+그냥 사라진다. 게다가 같은 이름이 제품마다 다른 뜻일 수 있다(`CharacterID`·`AID`·`LogType`).
+삭제는 **읽기 경로가 보장될 때만**(같은 scope 또는 전역이 덮을 때) 한다.
+
+### 다음 액션
+
+- [ ] 소급 정리 실적용 — 사용자 재승인 후
+      `python3 src/scripts/glossary_tier_sweep.py --apply --manifest <path>`
+- [ ] ENUM 코드사전 자율수집의 브리지 배선 (현재 `INACTIVE_SURFACES` 에 「대체 없음」으로 명시)
+- [ ] `#GLOSSARY:` 규약 라이브 왕복 실측 — 러너 갱신 후 실제 후보가 큐에 쌓이는지

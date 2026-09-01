@@ -8,7 +8,232 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T133000-remove-query-result-details [SKIPPED:upstream-tool-carveout] — 말풍선 「▼ 쿼리 결과」 여닫이 제거
+
+- **Trigger**: `UI/화면/레이아웃` keyword matched (사용자 요청이 말풍선 표시면 제거) →
+  §18.8 표상 required subagents = `ux, design`.
+- **채널 불가 2건 (실측)**:
+  1. `codex exec` — `ERROR: You've hit your usage limit … try again at 3:44 PM`(2026-09-01
+     14:20 KST 시도). 프롬프트 조립·diff 전달까지 정상 수행 후 상류 한도로 반환.
+  2. `ux` · `design` subagent — **이 저장소에 정의가 없다**(`.claude/agents/` 에는
+     `improve-fit-reviewer` 뿐). 표가 지정한 두 도메인을 호출할 실체가 부재하다.
+- **carve-out**: 위 두 사실을 사용자에게 제시하고 선택을 받았다 —
+  「carve-out 승인 후 진행」(2026-09-01). 선례: `REV-20260901T031500` ·
+  `REV-20260901T020746` 의 같은 태그.
+- **입력 측 ADR 전달**(§18.8): 대상 diff + 「의도된 구성」 3건(제거는 사용자 결정 · CSV 소실은
+  고지 후 수용 · `share.js` 는 범위 밖)을 codex 프롬프트에 명시했다. 재실행 시 그대로 쓴다.
+
+### 자체 적대 점검 — 결함 2건 적발 (패널 대체 아님, 보완)
+
+패널을 대신한다고 주장하지 않는다. 아래는 「제거 변경」 고유의 실패 모드 5축을 스스로 겨눈
+결과이며, **2건이 실제로 걸렸다**.
+
+| 축 | 결과 |
+|---|---|
+| 제거 후 조용히 no-op 이 되는 배선 | **적발 → 수정**: `_renderBridgeSteps` 가 여닫이만 그리고 있었다. 그냥 지웠다면 진행 중 말풍선에 단계 진입로가 **0** 이 된다(placeholder 는 `meta.steps` 없이 그려져 app.js 가 버튼을 붙이지 못한다). 패널 갱신 + 버튼 «없으면 생성» 으로 교정. |
+| 제거된 심볼/CSS 잔재 참조 | **적발 → 수정**: `messageLogEl` 이 미사용 import 로 남았다(제거된 스크롤 앵커 전용). 그 외 잔재 0 — 함수 9종·CSS 12규칙 전수 grep 로 확인(`share.js` 의 동명 함수는 그쪽 **자체 사본**이며 범위 밖). |
+| 남은 표시면 진입로 부재 경계 | 위 수정으로 닫힘. 구조 단언으로 잠금(`test_bubble_always_offers_an_entrance_to_the_panel`). |
+| 테스트가 항진명제인가 | 부재 단언 6종은 **제거 전 코드에서 전부 FAIL** 하는 형태(`"function renderMessageDetails(" not in src`)라 항진이 아니다. 존재 단언(`bubble.appendChild(fresh)`)도 마찬가지. |
+| 고지되지 않은 동반 소실 | **적발 → 고지**: 구형 메시지 폴백(`meta.sql` → 「실행 SQL」, `meta.csv_paths` → 「결과 파일」)도 이 블록 안에 있었고, 그런 메시지는 `meta.steps` 가 없어 「단계 보기」 버튼조차 없다 → **대체 표시면 부재**. 결정 시 고지된 손실은 CSV 2건뿐이었으므로 TASK/REPORT 에 기록하고 사용자에게 별도 보고했다. |
+
+### 잔여 리스크 (숨기지 않는다)
+
+- ux/design 관점의 **독립** 검토는 받지 못했다. 위 표는 같은 작성자가 자기 변경을 본 것이고,
+  「방어를 넣었다 ≠ 방어가 성립한다」는 자체 검토가 구조적으로 약한 축이다.
+- 브리지 **진행 중** 화면의 라이브 관측이 없다(개인 AI 러너 미연결). 구조 단언까지만 잠겼다.
+- POST-DEPLOY 부재 확인 4항목은 배포 후 수행 — 미수행 상태에서 완료를 선언하지 않는다.
+
+## REV-20260901T121000-interrupt-preserve-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
+
+- **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + TASK/MODIFY/REPORT).
+  §18.8 dispatch 표의 어느 축(backend/qa/ux/design/security)도 매칭되지 않는다.
+- **채널**: doc-only 이므로 패널 대상 아님. 기록의 근거는 **실측 그 자체**다 — 서빙 사본
+  fetch 결과(D1~D4)와 Playwright 클릭 실패 로그(`element is not enabled`).
+
+### 판단 — 「미검증」을 적는 것이 이 기록의 요지
+
+도달 4/4 가 PASS 이고 계약 테스트 40건과 뮤테이션 4종이 통과했으므로, 이 상태를 "완료" 로
+적고 넘어갈 수 있었다. 그렇게 하지 않은 이유는 **각 축이 서로를 대신하지 못하기** 때문이다:
+
+- 계약 테스트는 함수가 옳음을 말한다 — 사용자가 그 함수에 도달하는지는 말하지 않는다.
+- 도달 확인은 자산이 브라우저에 왔음을 말한다 — 그 화면이 의도대로 움직이는지는 말하지 않는다.
+- 왕복 검증만이 마지막 축을 덮는데, 그것이 **러너 미연결로 불가능**했다.
+
+이 구분을 흐리면 다음 세션이 fragment 를 보고 "검증됐다" 로 읽는다. 그래서 §3 에 축별
+검증/미검증 표를 두고, 미수행 사유를 추정이 아니라 **관측된 문자열**(`is-access-blocked`,
+`element is not enabled`, `pgrep` 무응답)로 남겼다.
+
+**재개 조건이 사람 자격에 걸려 있다**: 러너 재기동에는 웹에서 사람이 발급하는 `mat_` 토큰이
+필요하고 러너는 그것을 저장하지 않는다. AI 세션이 단독으로 넘을 수 있는 문턱이 아니므로
+BLOCKED 로 위장하지 않고 **이월**로 적는다(측정 항목은 이미 사전 열거돼 있어, 연결 직후
+그대로 수행하면 된다).
+
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
+
+## REV-20260901T031500-interrupt-preserve-bridge [SKIPPED:upstream-tool-carveout] — 라이브 실경로(브리지)까지 보존을 넓힌 근거
+
+- **Trigger**: `Code change` (브리지 취소 경로 본문 조립). §18.8 축 = backend·qa.
+- **채널(§18.8.2)**: 앞 cycle 과 동일 carve-out(세션 상위 지시가 subagent 금지 · codex 3회
+  환경 실패 · 사용자 승인 2026-09-01). 대체 채널 = 신규 12 PASS · 뮤테이션 1종 KILL ·
+  브리지 3축 전수 확인(아래) · `make test` 전건.
+- **승인 근거(§12.2)**: `deploy_scope: included`. 위험도 **Minor**(§12.3 — 이미 쓰던 UPDATE 의
+  본문 문자열이 길어질 뿐 · 실패는 전부 종전 동작으로 degrade).
+
+### 판단 1 — 이 작업이 «scope 확장» 이 아니라 «요청의 실경로» 인 근거
+
+앞 cycle 을 배포하고 나서야 스모크 로그가 드러냈다:
+
+```
+[smoke-conv] [llm-gate] 서버 계정 LLM 호출 차단 — feature-0043 전환
+             (추론은 사용자 개인 AI 런타임이 수행)
+```
+
+라이브는 서버 LLM 이 꺼진 브리지 모드다. **사용자가 실제로 누르는 '중단' 은 앞 cycle 이 고친
+지점을 지나가지 않는다.** 서버 경로만 고치고 완료를 선언했다면, 요청("중단해도 추론·맥락·단계가
+손실되지 않게")은 문서상 충족이고 화면에서는 미충족이었다.
+
+**앞 cycle 의 REPORT 가 브리지를 "미커버(구조적으로 부분 추론 없음)" 로 적은 것은 절반만
+맞았다.** 부분 추론이 없다는 것은 사실이나, 그로부터 "브리지는 남길 것이 없다" 를 도출한 것이
+오류였다 — 개인 AI 가 **우리 도구를 부른 내역**은 우리 안에 있다(`_record_bridge_step` 이
+인자·사유까지 담아 `agent_runtime.steps` 에 적재). 그 사실을 이번에 반영한다.
+
+### 판단 2 — 세 축 중 «맥락» 만 비어 있었다 (전수 확인)
+
+브리지 취소를 축별로 추적한 결과, 두 축은 이미 성립하고 있었다:
+
+| 축 | 성립 여부 | 기전 |
+|---|---|---|
+| 화면·이력 | ○ | `_mark_bridge_placeholders_canceled` 가 대기 말풍선을 취소 안내로 교체(삭제가 아니라 교체) |
+| 단계(접이식) | ○ | 그 UPDATE 는 `bridge.canceled`·`bridge.placeholder` 만 건드리고 **`run_id` 각인을 유지**한다 → `_load_steps_for_message` 가 그 task 의 steps 를 붙인다 |
+| 다음 요청의 맥락 | **×** | `ai_tools._recent_conversation_context` 는 `_conv_load_messages_raw` 의 **content 텍스트만** 읽는다 — steps 도 meta 도 보지 않는다 |
+
+그래서 고칠 지점은 하나였다: **단계를 말풍선 본문(텍스트)에 적는 것**. 접이식에 이미 보이는
+것을 텍스트로도 적는 중복처럼 보이지만, 두 소비자가 다르다 — 접이식은 **사람**이 보고,
+본문 텍스트는 **다음 요청의 개인 AI**가 본다.
+
+### 판단 3 — 빌더를 공유하고 머리말만 갈아끼운 근거
+
+`_build_interrupted_note` 에 `header` 파라미터를 추가해 브리지가 자기 문맥의 머리말로 같은
+본문 형식을 쓴다. 브리지 전용 렌더러를 따로 만들지 않은 이유는 이 저장소가 반복해 겪은 부류의
+결함이기 때문이다 — 같은 사실을 두 벌로 만들면 두 화면이 갈리고, 갈리는 쪽 중 **약한 것이
+사용자가 보는 진실**이 된다(P0-R). 기본값(`header=None`)은 서버 경로 라벨을 그대로 유지해
+앞 cycle 의 19건이 무회귀로 통과한다.
+
+### 판단 4 — 꼬리를 task 루프 «안» 에서 만든 근거
+
+`_mark_bridge_placeholders_canceled` 의 `notice` 는 호출자가 **하나만** 준다(취소/supersede
+두 문구). 그러나 진행 단계는 **task 마다 다르다**. 루프 밖에서 한 번 만들면 여러 대기 질문을
+한꺼번에 취소할 때 모든 말풍선이 같은 단계를 갖는다 — 남의 조사가 내 질문 아래 붙는다.
+테스트가 `for tid in task_ids` 와 `_bridge_progress_tail(` 의 **순서**를 단언한다.
+
+### 판단 5 — degrade 를 «종전 동작» 으로 고정한 근거
+
+단계 조회 실패(PG 다운)·단계 부재(도구 호출 전 중단) 모두 빈 문자열을 반환해 **종전 취소
+안내 그대로**가 된다. 단계 기록은 취소의 조건이 아니다 — 여기서 예외를 올리면 취소 자체가
+무를 수 있고, 그러면 사용자는 "취소했다" 는 표시조차 못 본다(브리지 취소는 이미 확정된 뒤다).
+머리말도 꼬리와 **함께만** 붙여, 단계가 없을 때 "진행된 내용" 을 단정하지 않는다.
+
+### 미커버 (구조적)
+
+- **개인 AI 의 부분 추론 자체**: 러너 쪽에서 일어나므로 우리는 관측하지 못한다. 우리가 남길 수
+  있는 것은 **우리 도구로 관측한 사실**(무엇을 왜 조회했는가)뿐이며, 그것을 추론인 양 적지 않는다.
+- **회수 store(core_messages)**: 브리지 안내 말풍선은 의도적으로 표시 store 에만 쓴다(시스템
+  안내를 LLM turn 으로 위조하지 않기 위해 — 기존 설계). 브리지의 맥락 조립이 표시 store 를
+  읽으므로 이 선택으로도 맥락 승계는 성립한다.
+
+## REV-20260901T020746-interrupt-context-preserve [SKIPPED:upstream-tool-carveout] — 중단 보존의 기본값·라벨·재확인 설계
+
+- **Trigger**: `Code change` (backend 취소 계약 + frontend 중단 UX). §18.8 dispatch 표 매칭 축 =
+  backend·qa·ux.
+- **채널(§18.8.2)**: 본 세션의 상위 지시가 subagent 호출을 금지한다(`Do not call the AgentTool
+  unless the user requested it`). 제약 없는 채널을 먼저 시도 — `codex` 적대 리뷰를 **3회**
+  (exec 2회 · review --uncommitted 1회) 호출했으나 전부 첫 응답 뒤 결론 없이 종료했다
+  (환경 문제: `bubblewrap` 부재 경고 + collab spawn 오류). **사용자에게 1회 확인**해
+  carve-out 승인을 받았다(2026-09-01, AskUserQuestion — 선례 REV-20260831T144500·
+  REV-20260812T203000 과 동일). 대체 채널 = ① 신규 테스트 2종 **28 PASS**(동작 19 + 엔드포인트 9)
+  ② **뮤테이션 역검증 3종 KILL** ③ 호출 경로 전수 추적(아래) ④ `make test` 전건 통과
+  ⑤ 배포 후 PB-0008 실 Windows 브라우저 실측(사용자 결정 — 중단 UX 는 진행 중 run 이 있어야
+  검증되므로 라이브에서).
+- **승인 근거(§12.2)**: `FIRST_REQUEST.md` `deploy_scope: included` — cycle-final 후 배포까지
+  사전 승인 범위. 첫 배포 직전 1줄 표면화 이행. 위험도 **Minor**(§12.3 — 스키마·마이그레이션·
+  RBAC·신규 엔드포인트 0, 비파괴 메시지 1건 추가, 롤백 = revert + 재배포).
+
+### 판단 1 — 기본값을 프런트가 아니라 «서버» 에서 뒤집은 근거
+
+증상만 보면 프런트 한 줄(`preserve_reasoning: true` 추가)로 끝난다. 그렇게 하지 않은 이유는
+`/api/cancel` 이 **두 표면에 공개**돼 있기 때문이다 — 웹 UI 와 외부 AI 도구 표면
+(`ai_discovery.py` 의 discovery 목록 + OpenAPI). 프런트만 고치면 외부 경로는 계속 폐기하고,
+"중단하면 진행분이 남는다" 는 계약이 호출자에 따라 갈린다. 갈리는 계약은 느슨한 쪽이 사용자가
+보는 진실이 된다(같은 저장소의 P0-R 선례).
+
+그래서 서버 기본값을 `True` 로 두고 **명시 falsy 만 폐기**로 남겼다. 폐기 경로를 없애지 않은
+것은 (a) 향후 '버리고 중단' UI 의 자리이고, (b) 명시적 사용자 의사를 무시하지 않기 위해서다.
+`""`·`0`·`null` 같은 falsy 를 기본값으로 승격시키지 않는 것도 테스트로 잠갔다 — `data.get(k, True)`
+는 "키가 없을 때" 만 기본값을 주므로 이 구분이 코드에 이미 있다.
+
+### 판단 2 — 미완 라벨을 meta 가 아니라 «본문» 에 둔 근거 (사용자 결정 1의 단서)
+
+사용자 결정은 "화면 + 다음 맥락 모두 보존" 이되 **"방향이 틀려서 재요청한 경우도 LLM이 충분히
+판단할 수 있는 구조로"** 였다. 보존분은 `_save_message` 로 `core_messages` 에 들어가 다음 run 의
+recall 에 실린다. 이때 모델이 보는 것은 **본문 텍스트뿐**이다 — mirror meta 의
+`interrupted: true` 는 표시 store 에만 있고 화면 렌더용이다. 라벨을 meta 로만 두면 화면은 알아도
+모델은 모르고, 중간 기록을 확정 결론으로 읽어 폐기된 가설 위에서 답을 잇는다.
+
+따라서 헤더 문장이 두 가지를 명시한다: (a) **미완**("완료된 답변이 아니라 … 중간 기록"),
+(b) **새 지시 우선**("이어지는 지시가 이와 다른 방향이면 그 지시를 따르세요"). 이 두 문구의 존재를
+테스트가 직접 단언한다(문구를 지우면 red).
+
+대안으로 "보존은 하되 recall 에서 제외" 를 검토했으나 사용자 결정 1이 명시적으로 배제했다 —
+그러면 "맥락 손실 방지" 요구의 절반만 충족한다.
+
+### 판단 3 — 활동 trail 을 «in-process» 로 든 근거
+
+도구 호출 전 중단을 커버하려면 활동 라벨이 필요한데, 그 값은 이미 `agent_runtime.steps` 에
+`action='activity'` 로 저장돼 있다. DB 를 되읽지 않고 in-process 리스트로 든 이유:
+
+| 후보 | 문제 |
+|---|---|
+| 취소 분기에서 `load_recent_steps` 로 되읽기 | 취소 경로에 DB 왕복이 하나 더 붙는다. 그 경로는 이미 KV·큐·브리지 3축을 건드리며, 한 번의 조회 실패가 보존 자체를 날릴 수 있다(같은 함수의 브리지 취소가 그 이유로 순서를 앞당겼다) |
+| activity 를 `steps` 리스트에 함께 담기 | `steps` 는 `result["steps"]`·`_step_csv_paths`·`_summarize_step_rationale` 의 입력이다. 여기에 activity 를 섞으면 세 소비처의 의미가 동시에 바뀐다 |
+| **채택: 별도 `_activity_trail` (라벨 문자열만, 상한 40)** | 비용이 문자열 몇십 개. 소비처가 하나(취소 분기)라 파급이 없다 |
+
+상한을 **꼬리 우선**(앞에서 버림)으로 둔 것은 "무엇을 하던 중이었나" 가 중단 직전 라벨에 있기
+때문이다. 적재 규칙(공백 무시·상한)은 중첩 함수에 인라인으로 두면 단위 검증이 불가능해
+모듈 레벨 `_append_activity_trail` 로 분리했다(경계 3건을 실제 호출로 잠금).
+
+### 판단 4 — 단계 UI 를 «앵커 1건» 으로 복구한 근거 (새 저장 경로를 만들지 않음)
+
+"단계가 손실된다" 는 증상만 보면 단계 스냅샷을 메시지 meta 에 따로 저장하는 설계가 떠오른다.
+전수 추적 결과 **그럴 필요가 없었다**:
+
+- 취소해도 `agent_runtime.steps` 행은 남는다 — `_purge_run_steps` 는 정의만 있고 **호출부 0**.
+- history 조립부 4경로가 assistant 메시지마다 `_load_step_meta` → `_load_steps_for_message` 로
+  그 run 의 steps 를 붙여 `meta.steps` 로 내려보낸다.
+- 프런트 `renderMessageDetails` 가 `meta.steps` 로 접이식 "실행 단계"·"쿼리 결과" 를 그린다.
+
+즉 빠져 있던 것은 데이터가 아니라 **앵커가 될 메시지 1건**이었다. 별도 저장·별도 렌더 경로를
+만들면 같은 사실의 두 번째 사본이 생겨 어긋날 표면만 늘어난다.
+
+### 판단 5 — 재로드를 «유한 3회» 로 묶은 근거
+
+보존분은 agent 루프가 다음 체크포인트에 도달한 뒤 쓰인다(진행 중 LLM 호출이 끝나야 하므로 수 초~
+수십 초). 중단은 같은 turn 에 진행 폴링을 멈추므로 자동 갱신 트리거가 없다 — 다시 읽어 주지
+않으면 "대화에 남습니다" 안내가 거짓말이 된다(사용자가 직접 새로고침해야 보인다).
+
+무한 폴링은 배제했다. 이 저장소는 두 엔드포인트가 갈릴 때 재로드가 0ms 순환에 빠져 화면을 매 회
+맨 아래로 끌어내린 마찰을 이미 겪었다(bridge-progress-scroll-loop). 그래서 **정해진 3회
+(1.5s·4s·10s)** 만 읽고, ① 보존분 도착 ② 대화 이동 ③ 새 요청 시작 중 하나면 즉시 물러난다.
+`preserveScroll: true` 로 읽던 위치도 지킨다(브리지 취소 경로가 이미 쓰는 인자).
+
+### 미커버 (의도적)
+
+- **브리지(개인 AI) 축**: 러너가 최종 답변만 제출하므로 웹에 부분 추론이 존재하지 않는다. 중단 시
+  대기 말풍선을 취소 안내로 바꾸는 현행 동작(`_mark_bridge_placeholders_canceled`)이 이미 "화면에
+  남긴다" 를 충족한다. 보존할 중간 산출물이 없는 것이 구조적 사실이다.
+- **재개(이어서 진행) 버튼**: 사용자 결정 3 — 별도 cycle. 재개 지점 정의·중복 실행 방지·브리지
+  축 정합이 얽혀 위험도가 다르다.
+- **삭제 요청과의 상호작용**: `pending_delete` 면 보존을 건너뛴다(기존 가드 그대로) — 삭제 대상
+  대화에 메시지를 남기면 곧 지워질 행을 쓰는 것이고, 삭제 의사가 보존보다 강하다.
 
 ## REV-20260831T144500-conv-last-activity-updatedat [SKIPPED:upstream-tool-carveout] — 활동 시각 전진 지점과 표시 축 선택
 
@@ -6408,6 +6633,69 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - **미수행(정직 표기)**: 실 러너 기동 end-to-end. 조회·토큰 응답을 가로챈 프론트엔드 계약
   검증이며 검증 후 브라우저를 원상 복구했다.
 
+## REV-20260901T120000-ai-conn-chip-to-profile-row [SKIPPED:tool-restricted:ux,design] — 연결 칩 자리 이동 (프론트 배치 단독)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T1200-ai-conn-chip-to-profile-row`
+- Trigger: §18.8 dispatch 표의 `UI/button/layout` → `ux`·`design` 도메인. §18.8.2 순서대로
+  **제약 없는 채널을 먼저** 시도했다.
+- Timestamp: 2026-09-01T12:00:00+09:00
+- Human Approval Needed: no (Minor §12.3 — 비파괴 프론트 배치)
+
+### 검증 채널 (§18.8.2)
+
+1. **`codex exec` 적대 리뷰 — 시도했으나 물리적으로 불가**: 핵심 diff 11.5KB 를 프롬프트에
+   인라인하고 파일 접근을 금지한 형태(무응답 회피 레시피)로 호출했으나 계정 사용량 한도
+   소진으로 즉시 실패(`ERROR: You've hit your usage limit`). 재시도 불가.
+2. **subagent panel 미호출** — 세션에 상위 우선순위 도구 제약(요청 없는 Agent tool 호출 금지)이
+   걸려 있어 §18.8.2 "상위 우선순위 지시 carve-out" 을 적용했다. `ux`/`design` 도메인 심사는
+   **미수행**이며 아래 자체 점검이 그것을 대체하지 못한다.
+3. **기계적·실측 채널로 수행한 검증** (아래).
+
+### 기계적 검증
+
+- **뮤테이션 역검증 4/4 KILLED** — ① footer 접힘 조건에 `:has(.ai-conn.hidden)` 복원 →
+  `test_connection_chip_is_free_of_the_footer_collapse_rule` FAIL ② `flex-wrap: wrap` 제거 → FAIL
+  ③ `flex: 1 0 auto` → `1 1 auto`(shrink 허용) → FAIL ④ 칩을 `.composer-footer` 로 되돌림 → FAIL.
+  복원 후 전건 PASS. 계약이 «자리» 와 «양보 방향» 을 실제로 잠근다.
+- 컨테이너 `make test` — pytest 전건 PASS(rc=0) + ruff PASS
+- `verify_connect_modal_autoclose.mjs` 25/0 · `verify_llm_restriction_surface.mjs` 35/0
+- **PB-0008 실 브라우저 실측 16조합** — 4상태 × 계정 4종(5·5·15·21자). 상세는
+  `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md`.
+
+### 자체 점검 (ux/design 대체 아님 — 관측 사실만)
+
+- **레이아웃 안정성**: 계정당 네 상태가 같은 줄·같은 행 높이를 유지(65px 또는 90px 고정).
+  가로 넘침 전 조합 0. 21자 계정은 이름 ellipsis 로 흡수.
+- **클릭·포커스**: DOM 순서가 `[프로필 버튼] → [칩]` 이라 탭 순서가 자연스럽다. 칩은
+  `<button>` 그대로이고 `id` 기반 접근(`$("aiConnState")`)이라 JS 배선 변경 0 — 자리만 옮겼다.
+  화살표를 절대배치 + `pointer-events: none` 으로 빼는 안은 실측 결함으로 되돌렸다(2.1 참조).
+- **문구**: 접두를 뺀 만큼 `title` 이 주어를 진다(네 상태 전부 "내 AI …" 로 시작). 그 계약을
+  `test_indicator_has_three_states` 가 `js.count("내 AI") >= 3` 으로 잠근다.
+- **명시도**: `.sidebar-profile > .ai-conn`(0,2,0)이 `search-audit.css` 의 `.ai-conn`(0,1,0)보다
+  강해 로드 순서(profile → search-audit)와 무관하게 적용된다. `display` 는 건드리지 않아
+  `.ai-conn.hidden` 의 숨김이 그대로 이긴다 — 실측 칩 폭 60~81px 로 확인.
+
+### 남은 위험 (정직 표기)
+
+- **`ux`/`design` 도메인 심사 미수행** — 도구 제약(위 2번). 특히 칩 글꼴을 `.78rem → .68rem`
+  (12.48px → 10.88px)로 낮춘 것은 가독성 하락이 사실이며, 전문 심사 없이 «프로필 역할 텍스트
+  11px 과 같은 눈높이» 라는 근거만으로 채택했다.
+- **배포본 자산 재확인 잔여** — 본 cycle 실측은 라이브 페이지에 변경본 CSS 를 주입한 상태의
+  측정이다(정적 자산은 web 이미지에 baked). 배포 후 `?v=<hash>` 자산으로 같은 16조합을
+  재측정해 POST-DEPLOY fragment 로 남긴다.
+- **칩이 화살표 뒤에 선다** — 사용자 스크린샷이 지목한 자리는 화살표 앞이었으나, 그 배치는
+  긴 계정명이 화살표 밑으로 들어가는 실측 결함을 낳아 되돌렸다. 완료 보고에 명시한다.
+
+## REV-20260901T125600-ai-claude-glossary-tier-postdeploy [SKIPPED:non-policy-doc] — 증적 기록 전용
+
+- Related TASK: feature-0003-agent-web-ui (`20260901T1256-glossary-tier-postdeploy`)
+- Reason: changed paths are docs only (test-runs.d fragment · TASK · MODIFY) — 정책 doc 밖,
+  런타임 코드 변경 0. 코드 리뷰는 선행 cycle `REV-20260901T120000-ai-claude-metadata-term-scope`
+  가 마쳤고 이후 코드 불변(배포본 `40340f53` 그대로).
+- Timestamp: 2026-09-01T12:56:00+09:00
+- 기록된 사실의 근거: `alembic_version=0058_glossary_term_tier` · 제품 목록 239건 중 상속 7건 ·
+  폼 select 3선택지 · 큐 필터 6선택지 · 캡처 3장(`artifacts/pb0008-glossary-term-tier/`) ·
+  배포 체크리스트 [1][2][1b][2b][5] 통과(`no upstreams available` 0건).
 ## REV-20260901T115300-side-panel-exclusive [SUBAGENT:ux+design] — BLOCK ×2 → 수정 → 확인 라운드
 
 - **Trigger**: `Code change` + §18.8 dispatch 표의 `UI, layout, dialog / 화면, 레이아웃` 매칭 →
@@ -6582,4 +6870,21 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - 등록부는 **협조적**이다 — 새 패널이 `registerSidePanel` 을 부르지 않으면 배타에 참여하지 않는다.
   그 누락을 구조 가드 S3(DOM 전수 대조)가 잡는다. 다만 body 직속 `<aside>` 가 아닌 형태로 새
   오버레이를 만들면 census 밖이다(한계 명시).
+
+## REV-20260901T163000-side-panel-exclusive-merge — origin/main 병합 충돌 자율 해결 (§16.4)
+
+- **상황**: PR #1475 가 `origin/main` 대비 **43 커밋** 뒤처져 `mergeStateStatus=DIRTY`.
+  `bin/setup-git-parallel.sh` (append-doc merge driver + rerere) 실행 후 `git merge origin/main`.
+- **자동 병합된 것**: `static/app.js` · `app/composer.js` · `css/chat.css` · `index.html` ·
+  `docs/STATUS.md` — **코드 충돌 0**.
+- **자율 해결 (§16.4 «명료한 충돌» — append-only 양쪽 신규 항목 추가)**:
+  `FUNCTION.md` · `MODIFY.md` · `REVIEW.md`(말미 append, main 것 먼저) ·
+  `REPORT.md` · `TASK.md`(사이클 § 는 최신이 위) · `wiki/Log.md`(시간순) — 총 9 블록,
+  **양쪽 항목 모두 보존**.
+- **`wiki/hot.md`** 는 rewrite 문서(≤500자 캐시)라 기계 병합 대상이 아니다 — 양쪽 사실을
+  합쳐 최신 2건으로 재작성(645자).
+- **사람 판단 필요 항목 0** — 동일 함수/로직 상충 · HUMAN-LOCKED · 보안·비즈니스 로직 충돌
+  없음. 병합 후 하네스 **67 PASS** · 구조 가드 **23** 재확인으로 내 변경이 병합에 소실되지
+  않았음을 검증(핵심 심볼 `openSidePanel`·`registerSidePanel`·`_applyAttachRestoreAfterLoad`·
+  `data-side-panel`·`visibility: hidden` 전수 잔존 확인).
 

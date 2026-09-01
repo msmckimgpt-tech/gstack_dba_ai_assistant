@@ -43,6 +43,9 @@ def test_runner_has_no_third_party_imports():
         # 2026-08-31: 이 파일 자체의 지문(`_self_build`) — 서버 배포본과 대조해 «구버전으로
         # 돌고 있다» 를 알린다. 표준 라이브러리라 무설치 계약은 그대로다.
         "hashlib",
+        # TASK-20260901T140000: 러너 인스턴스 발급(`secrets`) + 종료 시 자기 점유 해제
+        # (`atexit`·`signal`). 셋 다 표준 라이브러리 — 무설치 계약은 그대로다.
+        "secrets", "atexit", "signal",
         "urllib", "urllib.error", "urllib.parse", "urllib.request", "__future__",
     }
     external = []

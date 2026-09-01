@@ -132,10 +132,14 @@ def test_heartbeat_carries_capabilities_every_time():
     src = _RUNNER.read_text(encoding="utf-8")
     loop = src[src.index("def start_heartbeat("):]
     loop = loop[:loop.index("\ndef ")]
-    assert "api.heartbeat(runtimes)" in loop, "하트비트가 능력을 싣지 않는다"
+    # 첫 인자가 `runtimes` 이면 된다 — TASK-20260901T140000 이 사망 신고
+    # (`released_instances=`)를 같은 호출에 덧붙였으므로 전량 일치로 고정하면
+    # 이 계약과 무관한 인자 추가가 곧 실패가 된다.
+    call = "api.heartbeat(runtimes"
+    assert call in loop, "하트비트가 능력을 싣지 않는다"
     # 루프 밖에서 한 번만 보내는 형태가 아닌지 — 호출이 while 안에 있어야 한다.
     while_at = loop.index("while not stop.is_set():")
-    assert loop.index("api.heartbeat(runtimes)") > while_at, "능력 신고가 루프 밖에 있다"
+    assert loop.index(call) > while_at, "능력 신고가 루프 밖에 있다"
 
 
 def test_runner_does_not_offer_a_selector_it_cannot_honor():
@@ -221,7 +225,10 @@ def test_handle_one_validates_the_runtime_before_switching():
     # P0-Z4: 우리 표에 없는 CLI 도 쓸 수 있으므로 "표에 있는가" 만으로는 부족하다 —
     # **아는 호출법이 있는가**(표 또는 질의로 배운 것) + PATH 실재를 함께 본다.
     assert "_known or _learned" in body, "호출법 확인 없이 런타임을 바꾼다"
-    assert "_which(want_runtime)" in body, "실재 확인 없이 런타임을 바꾼다"
+    # 2026-09-01: 실재 확인의 **범위**가 PATH → PATH + 표준 설치 위치로 넓어져 함수 이름이
+    # `_which_ai` 가 됐다(설치기가 PATH 를 못 넣은 머신에서 멀쩡한 AI 를 못 찾던 결함).
+    # 확인한다는 계약은 그대로이므로, 잠그는 것도 그대로 「실재를 확인하는가」다.
+    assert "_which_ai(want_runtime)" in body, "실재 확인 없이 런타임을 바꾼다"
     assert "_offered" in body, "신고 대조 없이 런타임을 바꾼다"
 
 
@@ -1030,11 +1037,25 @@ def test_user_named_cli_is_not_silently_replaced():
     갈아치우면 runtime 지정이 없는 요청이 사용자가 고르지 않은 AI 로 처리되고, 캐시에도 틀린
     `kind` 가 남는다 — 사용자는 자기가 지목한 CLI 가 쓰이는 줄 안다.
     """
+    # 2026-09-01: 선택 로직이 `main()` 안의 인라인 분기에서 `pick_ai()` 로 빠졌다. 계약은
+    # 그대로이므로 **실제로 호출해서** 확인한다 — 소스 문자열 검사보다 견고하고, 이번 개정의
+    # 계기가 정확히 「문자열은 맞는데 계약은 새는」 경우였다(표 안 이름은 실존 확인 자체가
+    # 없어서 없는 AI 를 «있다» 고 답했다, codex 적대 리뷰 P2).
+    mod = _load_runner()
+    orig = mod._which_ai
+    try:
+        # 지목한 것만 없고 다른 AI 는 있는 상황 — 그래도 갈아치우지 않는다.
+        mod._which_ai = lambda name: "/somewhere/codex" if name == "codex" else None
+        assert mod.pick_ai("mycli", None) is None, "지목한 CLI 가 없자 다른 AI 로 대체했다"
+        assert mod.pick_ai("claude", None) is None, "표 안 이름도 실존 확인을 거쳐야 한다"
+        # 지목이 실재하면 그 이름을 그대로 쓴다(표 밖이어도).
+        mod._which_ai = lambda name: f"/somewhere/{name}"
+        assert mod.pick_ai("mycli", None) == ("mycli", ["mycli", "-p", "{prompt}"])
+    finally:
+        mod._which_ai = orig
+
     src = _RUNNER.read_text(encoding="utf-8")
     body = src[src.index("def main("):]
-    assert "if args.ai and _which(args.ai):" in body, (
-        "표 밖 이름이 PATH 에 있어도 자동 감지로 대체된다")
-    assert 'picked = (args.ai, [args.ai, "-p", "{prompt}"])' in body
     # 질의가 알아낸 호출 형태로 교정한다(기본 추정이 아니라).
     assert "_learned and kind not in _RUNTIME_SPECS" in body, (
         "질의는 성공했는데 답변은 추정 형태로 보낸다")

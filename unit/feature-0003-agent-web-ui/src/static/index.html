@@ -135,6 +135,13 @@
               <path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
+          <!-- feature-0043(2026-08-27 제보): 내 AI 연결 상태를 **질문 전에** 보인다. 클릭하면 연결 모달.
+               2026-09-01 제보로 컴포저 하단(.composer-footer)에서 이 자리로 옮겼다 — 칩 하나 때문에
+               입력창 아래 한 줄이 상시 생겨 여백만 커졌다. 트리거 **안에** 넣지 않은 이유:
+               `<button>` 안의 `<button>` 은 중첩 금지라, 형제로 두고 CSS flex 흐름으로 프로필
+               버튼이 쓰고 남은 여백을 채운다(profile.css). 계정 이름이 길어 자리가 없으면 이름을
+               뭉개는 대신 칩이 다음 줄로 내려간다. -->
+          <button type="button" class="ai-conn hidden" id="aiConnState" title="내 AI 연결 상태"></button>
         </div>
       </aside>
 
@@ -399,10 +406,9 @@
           <div class="composer-footer">
             <!-- TASK-20260619T014034: LLM provider 상태점(glanceable) — restricted 시 적색.
                  hover/focus 툴팁으로 원인·발생시각·조치 표시(indirect 표면). -->
-            <!-- feature-0043(2026-08-27 제보): 내 AI 연결 상태를 **질문 전에** 보인다.
-                 종전엔 질문을 보내야만 안내 말풍선으로 간접 확인됐다 — 연결이 됐는지는
-                 묻기 전에 알아야 하는 사실이다. 클릭하면 연결 모달이 열린다. -->
-            <button type="button" class="ai-conn hidden" id="aiConnState" title="내 AI 연결 상태"></button>
+            <!-- 내 AI 연결 상태(#aiConnState)는 2026-09-01 제보로 사이드바 프로필 행으로 옮겼다.
+                 이 자리에 두면 평상시(상태·힌트·provider 점이 모두 빈 화면)에도 칩 하나 때문에
+                 footer 한 줄이 유지돼 입력창 아래 여백만 커진다. -->
             <span class="llm-status-dot hidden" id="llmStatusDot" tabindex="0" role="img"></span>
             <span class="composer-status" id="composerTitle"></span>
             <span class="composer-hint" id="composerHint"></span>
@@ -701,7 +707,7 @@
               <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalCopyCmd">명령 복사</button>
             </div>
             <p class="connect-modal-hint connect-modal-hint--muted">
-              실행이 끝나면 이 화면의 상태 표시가 <strong>내 AI 대기 중</strong>으로 바뀌고
+              실행이 끝나면 왼쪽 아래 계정 옆 표시가 <strong>대기 중</strong>으로 바뀌고
               입력창이 열립니다.
             </p>
           </div>

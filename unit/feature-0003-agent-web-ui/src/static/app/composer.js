@@ -61,14 +61,12 @@ import {
   sendBtn,
   showPermissionDeniedToast,
   showToast,
-  buildStepDetailEl,
   refreshStepSidePanelForRun,
   openStepSidePanel,
   startElapsedTimer,
   startProgressPolling,
   state,
 } from "../app.js?v=dev";
-import { renderMessageDetails } from "./messages.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
 // side-panel-exclusive: 우측 오버레이 패널은 한 번에 하나. 등록부는 의존성 없는 별 모듈이라
 // app.js 를 경유하지 않고 직접 import 한다(순환 한 겹 추가 회피).
@@ -690,10 +688,6 @@ export function abandonBridgeTasks(convId, taskIds) {
 //: (서버는 `request.is_disconnected()` 로 이를 감지해 DB 두드리기를 멈춘다).
 const _bridgeStreamAborts = new Map();
 
-//: 상세 패널 내부 스크롤 복원의 예약 핸들. 진행 중 재구성이 반복될 때 **늦게 실행된 옛
-//: 복원이 사용자가 옮긴 위치를 되돌리는** 것을 막기 위해 직전 예약을 취소한다.
-let _bridgeDetailScrollRaf = 0;
-
 /** 이 대화에 아직 답을 기다리는 브리지 task 가 있는가.
  *
  *  **중단 버튼의 판정원**이다. 기존 `_myAskInFlightHere()` 는 `/api/ask` 의 왕복 수명을 재는데,
@@ -867,6 +861,15 @@ function _applyBridgePhase(phase, prev, taskId, convId) {
     // "가져가면 표시됩니다" 만 본다.
     loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
     showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
+  } else if (phase === "stalled") {
+    // 가져갔는데 **진행 신호가 끊겼다** (TASK-20260901T140000). 서버가 대기 말풍선 본문을
+    // 무진행 고지로 바꿔 두었으므로 이력을 다시 읽어야 그것이 보인다 — `working` 전환과
+    // 같은 처리다(그쪽도 서버가 본문을 바꾸고 여기서 읽어 온다).
+    //
+    // 종결로 다루지 **않는다**: 러너가 다시 켜지면 그 질문은 자동으로 다시 배달되고 답이
+    // 온다. 여기서 대기를 지우면 그 답이 도착해도 화면이 받을 준비가 안 돼 있다.
+    loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
+    showToast("연결된 AI 의 진행 신호가 끊겼습니다. 러너가 켜져 있는지 확인해 주세요.", true);
   } else if (phase === "not_connected") {
     showToast("연결된 AI 가 없습니다. 'AI 연결하기' 에서 연결해 주세요.", true);
   } else if (phase === "canceled" || phase === "expired") {
@@ -905,16 +908,17 @@ async function _renderBridgeAnswer(taskId, convId, delivered) {
   try { renderComposer(); } catch (_e) { /* 렌더 실패가 답변 표시를 막지 않는다 */ }
 }
 
-/** 진행 중 조사 내역을 **완료본과 같은 두 자리**에 반영한다.
+/** 진행 중 조사 내역을 **완료본과 같은 자리**에 반영한다 — 「단계 보기」 사이드 패널.
  *
- *    ① 대기 말풍선의 「▶ 실행 단계」 details      ② 「단계 보기」로 여는 사이드 패널
+ *  종전에는 말풍선 아래에 `.bridge-live-steps` 라는 **제3의 블록**을 만들어 카드를 쌓았고
+ *  (사용자 제보 2026-08-28), 다음 판에서는 말풍선 안 「▼ 실행 단계」 여닫이를 통째로 다시
+ *  그렸다. 2026-09-01 사용자 결정으로 그 여닫이 자체가 사라졌으므로 — 같은 단계·SQL·결과를
+ *  사이드 패널이 더 정확하게 보여준다 — 진행 표시도 **패널 한 곳**만 갱신한다. 표시면이
+ *  하나면 "진행 중일 때만 다르게 보이는" 상태가 생길 자리가 없다.
  *
- *  종전에는 말풍선 아래에 `.bridge-live-steps` 라는 **제3의 블록**을 만들어 카드를 쌓았다.
- *  그래서 사용자 화면에는 드롭다운(▶ 실행 단계)은 `1단계` 인데 그 **바깥에** 6개가 널린
- *  모양이 됐고, 사이드 패널은 열어 둔 시점 그대로 멈춰 있었다(사용자 제보 2026-08-28).
- *
- *  자리를 새로 만들지 않는다 — 완료된 답변이 쓰는 자리를 **그대로 갱신**한다. 그러면
- *  "진행 중일 때만 다르게 보이는" 상태 자체가 사라진다.
+ *  말풍선에는 패널로 들어가는 입구 —「단계 보기 (N)」— 만 둔다. **없으면 만든다**:
+ *  브리지 placeholder 말풍선은 `meta.steps` 없이 그려져 app.js 가 버튼을 붙이지 못하므로,
+ *  여기서 만들지 않으면 진행 중 단계로 들어갈 입구가 화면에 아예 없다.
  *
  *  요소가 없으면 조용히 지나간다(대기 말풍선이 아직 안 그려졌거나 이미 답변으로 덮인 경우).
  */
@@ -925,64 +929,34 @@ function _renderBridgeSteps(taskId, steps, omitted = 0) {
   //: 말하지 않으면 "앞부분이 사라졌다" 또는 "갱신이 멈췄다" 로 읽힌다(무음 절단 금지).
   const omittedCount = Math.max(0, Number(omitted) || 0);
 
-  // ② 사이드 패널 — 그 run 을 보고 있을 때만 덮어쓴다(남의 화면을 뺏지 않는다).
+  // ① 사이드 패널 — 그 run 을 보고 있을 때만 덮어쓴다(남의 화면을 뺏지 않는다).
   //    `live: true` — 이 목록은 **진행 중**이라, 마지막 단계는 아직 끝나지 않았다.
   refreshStepSidePanelForRun(tid, steps, { live: true, omitted: omittedCount });
 
-  // ① 말풍선 details — 앵커는 `.message-bubble`(app.js 가 placeholder 에만 부여).
+  // ② 말풍선의 입구 — 앵커는 `.message-bubble`(app.js 가 placeholder 에만 부여).
   const bubble = document.querySelector(`[data-bridge-task="${CSS.escape(tid)}"]`);
   if (!bubble) return;
 
-  // 옛 제3 블록이 남아 있으면 걷어낸다(배포 전에 열려 있던 탭 대비).
+  // 옛 블록이 남아 있으면 걷어낸다(배포 전에 열려 있던 탭 대비 — 제3 블록, 그리고
+  // 2026-09-01 에 제거된 말풍선 여닫이).
   const legacy = bubble.querySelector(".bridge-live-steps");
   if (legacy) legacy.remove();
-
-  // details 는 통째로 다시 만든다 — 단계는 append-only 라 증분 갱신의 이득이 작고,
-  // 부분 갱신은 순서가 어긋날 때 조용히 틀린 화면을 남긴다. 펼침 상태는 유지한다.
-  const prev = bubble.querySelector(".message-details");
-  const wasOpen = prev ? prev.open : false;
-  // 상세가 자기 스크롤 패널이 된 뒤로는(2026-08-31) 통째 재구성이 그 안의 스크롤을 0 으로
-  // 되돌린다 — 새 단계가 도착할 때마다 사용자가 보던 위치를 잃는다. 펼침 상태와 같은 이유로
-  // 보존한다(진행 중에는 이 재구성이 수십 번 돈다).
-  // 스크롤 대상은 **단계 목록**이다(2026-09-01 개편 — 상세 본문은 더 이상 스크롤하지 않는다).
-  // 여기가 옛 선택자(`.message-details-body`)에 남아 있으면 보존이 조용히 no-op 이 된다.
-  const prevBody = prev ? prev.querySelector(".step-detail-list") : null;
-  const prevScroll = prevBody ? prevBody.scrollTop : 0;
-  const next = renderMessageDetails({ steps });
-  if (next) {
-    next.open = wasOpen;
-    if (prev) prev.replaceWith(next);
-    else bubble.appendChild(next);
-    if (prevScroll > 0) {
-      // rAF — layout 확정 전에 넣으면 실 브라우저가 0 으로 clamp 한다(높이가 아직 0).
-      //
-      // ⚠ 예약해 둔 이전 복원을 **먼저 취소**한다. 진행 중에는 이 재구성이 짧은 간격으로
-      //   반복되는데, 늦게 실행된 옛 rAF 가 사용자가 그 사이 옮긴 위치를 과거 값으로
-      //   되돌린다(codex 적대 리뷰 P2). 또한 새 패널이 이미 0 이 아니면(사용자가 손댔다)
-      //   복원하지 않는다 — 사용자 조작과 다투지 않는다.
-      const nextBody = next.querySelector(".step-detail-list");
-      if (nextBody) {
-        if (_bridgeDetailScrollRaf) cancelAnimationFrame(_bridgeDetailScrollRaf);
-        _bridgeDetailScrollRaf = requestAnimationFrame(() => {
-          _bridgeDetailScrollRaf = 0;
-          if (nextBody.isConnected && nextBody.scrollTop === 0) nextBody.scrollTop = prevScroll;
-        });
-      }
-    }
-  }
+  const legacyDetails = bubble.querySelector(".message-details");
+  if (legacyDetails) legacyDetails.remove();
 
   // 「단계 보기 (N)」 — 개수와 클릭 대상(steps)을 함께 갱신한다. 텍스트만 고치면
   // 눌렀을 때 옛 목록이 열린다. 개수는 **총 단계 수**다(창 밖으로 밀려난 앞 단계 포함) —
   // 창 크기를 개수로 내보내면 상한에 닿는 순간 숫자가 멈춰 "진행이 멈췄다" 로 읽힌다.
+  const src = { steps, runId: tid, convId: state.activeConversationId,
+                live: true, omitted: omittedCount };
+  const fresh = document.createElement("button");   // 새로 만든다 = 기존 리스너 제거
+  fresh.type = "button";
+  fresh.className = "bubble-steps-btn";
+  fresh.textContent = `단계 보기 (${steps.length + omittedCount})`;
+  fresh.addEventListener("click", () => openStepSidePanel(src));
   const btn = bubble.querySelector(".bubble-steps-btn");
-  if (btn) {
-    btn.textContent = `단계 보기 (${steps.length + omittedCount})`;
-    const src = { steps, runId: tid, convId: state.activeConversationId,
-                  live: true, omitted: omittedCount };
-    const fresh = btn.cloneNode(true);   // 기존 리스너 제거(중복 바인딩 방지)
-    fresh.addEventListener("click", () => openStepSidePanel(src));
-    btn.replaceWith(fresh);
-  }
+  if (btn) btn.replaceWith(fresh);
+  else bubble.appendChild(fresh);
 }
 
 async function _pollBridgeAnswerInner(taskId, convId) {

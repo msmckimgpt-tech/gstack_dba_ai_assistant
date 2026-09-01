@@ -9,7 +9,107 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T1330-remove-query-result-details — 말풍선 「▼ 쿼리 결과」 여닫이 제거
+
+**왜**: 사용자 요청 — "「▼ 쿼리 결과」 펼치기 UI 는 더 이상 의미없는 구조. 이미 「단계 보기」
+기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능. 해당 UI 를 정리해주세요."
+라이브 실측이 그 판단을 뒷받침한다 — 같은 답변에서 여닫이는 SQL 17건 + 비-SQL 일부를 보였고
+「단계 보기」 패널은 **77단계 전부**를 소요시간과 함께 보였다. 중복이면서 덜 보여주는 쪽이
+여닫이였다.
+
+**「정리」는 다의어라 §12 로 승격**(AGENTS.md §16.7 G1) — 고른 독해 *블록 전체 삭제* / 버린 독해
+*결과셋 범위만 제거*. 요청 문구만으로 가를 관측값이 없어 사용자에게 되돌렸고, **「제거만」**
+결정을 받았다. 함께 소멸하는 것(**CSV 다운로드 링크 · 「전체 데이터 보기」** — 이 블록에만
+있었고 패널에 대체재 없음)을 결정 **전에** 고지했으며, 권장안이던 「CSV 이관」은 사용자가
+선택하지 않았다(의식적 트레이드오프).
+
+**변경**:
+- `static/app/messages.js` — `renderMessageDetails` · `buildStepBlocks` · `bubbleVisibleSteps` ·
+  `buildSqlNavigator` · `buildSqlStepPanel` · `loadFullCsvIntoTable` · `appendDetailBlock` ·
+  `extractFirstTableRef` · `formatSqlForDisplay`(+`SQL_FORMAT_KEYWORDS`) 제거. export 축소.
+- `static/app.js` — 말풍선 조립에서 여닫이 부착 제거 + import 축소.
+- `static/app/composer.js` — `_renderBridgeSteps` 를 **패널 갱신 + 말풍선 입구 보장**으로 재구성.
+- `static/css/chat.css` — 생산자가 사라진 12규칙 제거(`.message-details*` · `.message-detail-block` ·
+  `.step-detail-list` · `.sql-navigator`/`.sql-nav-*` · `.sql-result-group`/`-body`/`-actions` ·
+  `.sql-toggle-wrap` · 이미 사문이던 `.sql-result-label`).
+- 계약 테스트 3종 방향 전환 — feature-0043 `test_live_steps_{in_panel,structured,progress_continuity}.py`.
+
+**남긴 것은 다른 소비처가 있는 것만**: `buildResultTable` · `parseMarkdownTablePreview` ·
+`parseCsv`(본문 인라인 표 로더), `.sql-block`(본문 ```sql 블록), `.sql-toggle-btn` ·
+`.sql-result-toggle-wrap`(「단계 보기」 패널 카드).
+
+**함정 — 호출부가 조용히 no-op 이 된다**: 브리지 진행 표시는 이 여닫이를 통째로 다시 그리는
+방식이었다. 그냥 지우면 진행 중 말풍선에 단계로 들어갈 **입구가 하나도 남지 않는다** —
+placeholder 말풍선은 `meta.steps` 없이 그려져 `app.js` 가 「단계 보기」 버튼을 붙이지 못하기
+때문이다. `_renderBridgeSteps` 가 버튼을 **없으면 만들도록** 바꾼 것이 이 변경의 실질이다.
+
+**검증**: 컨테이너 pytest 9스위트 rc=0 · `node --check` ESM 3파일 · PRE-DEPLOY 기준선 실측
+(PB-0008, 제거 대상 4요소 라이브 관측 — 「제거했다」를 「원래 없었다」와 구별하기 위한 절반).
+POST-DEPLOY 부재 확인 4항목은 이월(사전 열거).
+
+## CHG-20260901T121000-interrupt-preserve-postdeploy (POST-DEPLOY 실측 기록, doc-only)
+
+**변경**: 문서만 — `docs/{TASK,REPORT}.md` + 신규 `docs/test-runs.d/TASK-20260901T121000-…md`. 코드 0.
+
+**기록 내용**: 배포 `b793e7ea` 에서 프런트 자산·외부 스펙 **도달 4/4 PASS**(서빙 사본 직접
+fetch). 중단 왕복 12항목은 **미수행** — 개인 AI 러너 미연결로 `#sendBtn` 이 차단되어 진행 중
+run 을 만들 수 없다(실측 근거를 fragment 에 기록). "계약이 옳고 자산이 도달했다" 가 "사용자가
+그 화면을 본다" 를 대신하지 않으므로 미검증 축을 명시적으로 남긴다.
+
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
+
+## CHG-20260901T031500-interrupt-preserve-bridge — 중단 보존을 브리지(개인 AI) 경로까지
+
+**왜**: 앞 cycle(`CHG-20260901T020746`)은 **서버 run** 경로를 고쳤는데, 그 배포 스모크가
+라이브는 `feature-0043` 전환 모드(서버 계정 LLM 차단 · 답변은 개인 AI 가 생성)임을 드러냈다.
+사용자가 실제로 누르는 '중단' 은 브리지 경로를 탄다. 그 경로는 화면·이력·단계(접이식)는
+이미 남기고 있었으나 — 취소 안내 말풍선이 `run_id = task_id` 각인을 유지하고
+`_record_bridge_step` 이 개인 AI 의 도구 호출을 steps 에 쌓으므로 — **다음 요청의 맥락**만
+비어 있었다: 브리지가 개인 AI 에게 넘기는 대화 맥락(`ai_tools._recent_conversation_context`)은
+표시 store 의 **content 텍스트만** 읽고 steps·meta 는 보지 않는다.
+
+**변경**:
+
+| 파일 | 변경 |
+|---|---|
+| `src/routers/conversations.py` | `_bridge_progress_tail` 신설 — 그 task 의 steps 를 `agent_core._build_interrupted_note(header=...)` 로 렌더. `_mark_bridge_placeholders_canceled` 가 **task 루프 안에서** 취소 안내 뒤에 덧붙인다 |
+| `src/routers/conversations.py` | `_BRIDGE_PROGRESS_TAIL_HEADER` 신설 — 진행 단계의 머리말이자 **미완 라벨**(개인 AI 가 중간 조사를 확정 결론으로 읽지 않게) |
+| `tests/test_bridge_cancel_preserves_progress.py` | 신규 12 PASS + 뮤테이션 1종 KILL |
+
+feature-0002 동반: `_build_interrupted_note` 에 `header` 파라미터(기본 = 기존 라벨 유지) —
+`CHG-20260901T031500-interrupt-note-header`.
+
+**degrade 규칙**: 단계 조회 실패·단계 부재는 모두 **종전 안내 그대로**로 떨어진다. 단계가
+없으면 머리말도 붙이지 않아 "진행된 내용" 이 거짓이 되지 않는다. **부분 추론 자체는 여전히
+미커버**(구조적 — 개인 AI 의 사고는 러너 쪽에 있다). 우리가 남기는 것은 우리 도구로 관측한
+사실뿐이다.
+
+## CHG-20260901T020746-interrupt-context-preserve — 중단(interrupt)이 진행분을 버리지 않는다
+
+**요청(2026-09-01)**: "대화 중 assistant에게 요청했던 작업을 중단(interrupt) 하더라도 추론했던
+내용, 맥락, 단계가 손실되지는 않도록 구성해주세요."
+
+**근본원인**: `preserve_reasoning` 보존 축은 이미 있었으나 **명시 '중단' 버튼만 거기서 빠져
+있었다**. `/api/cancel` 의 `bool(data.get("preserve_reasoning"))` 가 미지정을 폐기로 접어,
+그 경로에서는 화면·이력·다음 맥락 세 축이 동시에 비었다. 부수적으로 보존 본문의 근거인
+`steps` 는 도구 step 만 담아, 도구 호출 전(추론 중) 중단은 보존 경로에 태워도 남길 것이 0 이었다.
+
+**변경**:
+
+| 파일 | 변경 |
+|---|---|
+| `src/routers/conversations.py` | `cancel_request` — `preserve_reasoning` 기본값 `True`. 명시 `false` 만 폐기 |
+| `src/routers/ai_discovery.py` | `/api/cancel` 스펙 2곳(목록·OpenAPI)에 `preserve_reasoning` + 기본값 노출 |
+| `src/static/app.js` | `cancelCurrentRun` — 보존 의도 명시 · 안내 문구("진행된 내용은 대화에 남습니다") · `_reloadForPreservedInterrupt` 신설(유한 3회 재확인, `preserveScroll`) |
+| `tests/test_cancel_preserve_default.py` | 신규 9 PASS — 기본값 방향 · falsy 명시값 · 프런트/외부 스펙 배선 |
+
+feature-0002 동반 변경(`_build_interrupted_note` · `_append_activity_trail` · 취소 분기 배선)은
+feature-0002 `CHG-20260901T020746-interrupt-preserved-note` 참조.
+
+**보존 메시지가 단계 UI 의 앵커**: 취소해도 `agent_runtime.steps` 행은 남고(`_purge_run_steps`
+는 호출부 0), history 조립부가 assistant 메시지마다 `_load_steps_for_message` 로 그 run 의
+steps 를 붙인다. 따라서 메시지 1건을 남기는 것만으로 접이식 "실행 단계"·"쿼리 결과" 가
+복구된다 — 별도 저장·별도 렌더 경로를 만들지 않았다.
 
 ## CHG-20260831T163000-conv-last-activity-postdeploy (POST-DEPLOY 실측 + 백필, doc-only)
 
@@ -5057,6 +5157,92 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Files: `docs/{REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-launch-close-postdeploy.md`,
   `docs/evidence/connect-modal-autoclose/pd2-*.png`. 코드 변경 0.
 - Timestamp: 2026-09-01T04:05:00+09:00
+## CHG-20260901T120000-glossary-term-tier (cross-cut, 정본 feature-0002)
+
+용어 통용범위(term_tier) 축 + 브리지 자율수집 복원의 **web 측 거주분**. 설계·AC 정본은
+`unit/feature-0002-agent-core/docs/FUNCTION.md` 의 `## 용어 통용범위(term_tier) 축`.
+
+- `routers/ai_tools.py`: `submit_answer` 가 `glossary_terms` 옵션을 받고
+  `_absorb_bridge_glossary_terms` 로 라우터에 태운다. 제품 귀속은 **task 행의 `ProductId`**
+  에서 해소한다(주변 상태 `get_active_product_scope` 미사용 — 웹 요청 스레드에서 그 값이 이
+  대화의 제품이라는 보장이 없다, §16.7 G7-a). 제품 조회 실패는 fail-closed(아무것도 안 함),
+  제품 없는 대화는 전역 scope 로 넘겨 라우터가 **검토 큐**로 받는다. 응답에 `glossary` 집계 추가.
+- `routers/_console_llm.py`: `INACTIVE_SURFACES` 에 `glossary-autocollect`(위임으로 복원 —
+  `delegated: True`) · `enum-autocollect`(대체 없음 — `instead` 를 의도적으로 비움) 등재.
+  두 항목이 없어서 전환 이후 자율수집 정지가 화면 어디에도 표시되지 않았다.
+- `routers/admin_metadata.py`: `_metadata_check_term_tier` 신설(PUT 은 미지정 시 **기존 유지**
+  — 사용자가 고치지 않은 축을 조용히 바꾸지 않는다). 목록에 **전역 상속분**(`inherited: true`,
+  읽기 전용)을 함께 내려보낸다 — 제품 행만 보여 온 것이 같은 용어를 제품마다 다시 등록하게
+  만든 경로다. 검토 큐 status 필터에 `skipped_general` 허용, 응답에 `term_tier` 추가.
+- `static/admin/metadata.js`: 폼 `select` 필드 타입 신설 + 「통용 범위」 필드(기본값은 보고 있는
+  scope 가 답한다 — 서버 기본값과 같은 규칙), 목록 배지(전역/일반/전역 상속), 상속 행 편집 차단
+  (`canEdit=false` — 서버 판정을 그대로 쓴다), 검토 큐 상태 필터 + `그래도 등록` 버튼.
+- `static/agent/bridge_agent.py`: `_GLOSSARY_MARK`·`_GLOSSARY_MAX`·`split_glossary` + 프롬프트
+  규약(제목 줄 **바로 앞** 줄). 파싱 순서는 title→glossary→title 로 순서 뒤바뀜도 흡수.
+  ⚠ 이 파일은 `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` 와 **byte-동치**
+  여야 한다(`test_bridge_agent_sync`). 이번 cycle 에서 실제로 그 테스트가 누락을 잡았다.
+- 테스트: `tests/test_bridge_glossary_terms.py`(신규 14건) ·
+  `tests/test_metadata_glossary_{enum,autoreg}.py` 계약 갱신.
+## CHG-20260901T120000-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행
+- `static/index.html`: `#aiConnState` 를 `.composer-footer` 에서 `.sidebar-profile` 로 이동
+  (`.profile-trigger` 의 **형제** — `<button>` 중첩 금지). 연결 모달 안내 문구도 "이 화면의 상태
+  표시" → "왼쪽 아래 계정 옆 표시" 로 정정(가리키는 자리가 바뀌었다).
+- `static/css/chat.css`: footer 접힘 규칙에서 `:has(.ai-conn.hidden)` 제거. **이 한 줄이 실질** —
+  칩이 떠난 뒤에도 조건을 남기면 footer 안에 없는 요소를 찾느라 규칙이 영영 거짓이 되어 빈
+  footer 한 줄이 입력창 아래에 상시 남는다(= 사용자가 지적한 여백).
+- `static/css/profile.css`: `.sidebar-profile` 을 flex-wrap 컨테이너로, `.profile-trigger` 는
+  `flex: 1 0 auto`(grow O / **shrink X**) — 자리가 있으면 칩이 이름 옆 여백에, 없으면 이름을
+  뭉개는 대신 칩이 다음 줄로. 폭 임계값 추정 대신 실제 이름 길이에 판단을 맡긴다(같은 252px
+  사이드바라도 `admin` 은 여백 119px, `bootstrap_admin` 은 10px — 실측). `.profile-arrow` 는
+  **흐름에 그대로 둔다** — 절대배치를 시도했으나 칩이 아래 줄인 조합에서 트리거가 전폭이 되며
+  긴 계정명(21자)이 화살표 밑으로 들어갔고, 화살표 자리를 padding 으로 비우면 같은 줄 임계가
+  16px 빡빡해져 `admin` + 최장 라벨이 밀렸다. 흐름 유지로 두 문제가 함께 사라진다.
+- `static/app/connect-modal.js`: 상태 라벨에서 «내 AI» 접두 제거 — `연결 안 됨` / `대기 안 함` /
+  `업데이트 필요` / `대기 중`. 접두를 남기면 최장 106px 라 «대기 중» 만 여백에 들어가고 나머지
+  상태는 아래 줄로 내려가, 상태가 바뀔 때마다 사이드바 하단이 한 줄씩 튄다(실측). 접두가 지던
+  주어는 자리(내 계정 옆)와 `title` 툴팁이 받는다.
+- `static/ai-connect.html`: 같은 이유로 안내 문구 정정.
+- 테스트 계약 전환: `test_connect_gate.py` 는 "접힘 조건에 칩이 있어야" → "**없어야**" +
+  칩이 프로필 행에 있고 배치·wrap 규칙이 존재하는지. `test_session_revoke_parity.py` 는 문구
+  대신 **네 상태가 갈리는가** + 접두를 뺀 자리를 title 이 받는가로 재정의.
+- Verification: 컨테이너 `make test` pytest 전건 PASS(rc=0) + ruff PASS ·
+  `verify_connect_modal_autoclose.mjs` 25/0 · `verify_llm_restriction_surface.mjs` 35/0 ·
+  **PB-0008 실 브라우저 실측 16조합**(4상태 × 계정 4종) — `admin`/`mckim` 전 상태 같은 줄·행 높이
+  65px 고정·화살표→칩 18px 일정·이름 잘림 0, `bootstrap_admin`(15자)/`verylongaccountname_x`(21자)
+  전 상태 아래 줄로 일관·가로 넘침 0, `.composer-footer` 전 조합 `display:none`.
+- Files: `static/index.html`, `static/ai-connect.html`, `static/css/{chat,profile}.css`,
+  `static/app/connect-modal.js`, `feature-0043/tests/{test_connect_gate,test_session_revoke_parity}.py`,
+  `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`, `docs/test-runs.d/…-chip-to-profile-row.md`,
+  `docs/evidence/ai-conn-badge-sidebar/*.png`
+- Cross-ref: TASK.md `20260901T1200-ai-conn-chip-to-profile-row` · 칩 도입 cycle
+  `feature-0043 P0-AB`(2026-08-28)
+- Timestamp: 2026-09-01T12:00:00+09:00
+## CHG-20260901T125600-glossary-tier-postdeploy — 통용범위 축 POST-DEPLOY 증적
+
+`docs/test-runs.d/CHG-20260901T120000-glossary-term-tier.md` 에 `Environment: Windows-browser`
+Run 추가. **런타임 코드 변경 0** — 배포본 `40340f53` 에서 실측한 결과만 기록한다.
+
+앞 cycle 이 시각검증을 이월한 사유(「alembic 0058 적용 전에는 목록 조회가 503 이라 배포 전
+검증이 무의미」)가 해소돼 그 약속을 이행했다. 확인 6항목 전건 PASS — 상세는 fragment.
+## CHG-20260901T125500-aiops-realign-postdeploy — 재편 POST-DEPLOY 실측 증적
+
+코드 변경 0 (증적만). 배포본 `2ac3ca0e` 라이브 실측 — 배포 게이트 8항 전건 PASS,
+화면 4축(서브탭·KPI·러너 명부·배너) 확인.
+
+**이번 실측의 핵심**: `자가 검증` KPI 가 **배포 후에 나타났다**. 사전검증(격리 인스턴스,
+마이그 0057 미적용)에서는 `available:false` 라 타일을 그리지 않았고, 배포로 컬럼이 생기자
+나타났다 — 「원장 미준비」와 「0건」을 가르는 설계가 **두 환경에서 각각 다르게, 의도대로**
+동작했다는 실증이다.
+
+**⚠ 러너 중단은 이 세션이 만들었다**: 배포 후 러너 갱신 중 **토큰 보존 전에 프로세스를 먼저
+종료**해 `mat_` 토큰이 소실됐다(서버는 해시만 보관 · `config.json` 미저장 · 프로세스 환경변수가
+유일한 사본). 파일 교체는 성공(지문 일치, 구본 백업)했으나 재기동 불가 — 사용자 재연결이
+필요하다. 영향 1건은 lease 30분 규약으로 자동 복귀하며 답변 유실은 없다.
+
+절차 교훈: **토큰 확보 → 종료 → 재기동은 한 명령 안에서** 해야 한다(Bash 호출마다 셸이 새로
+떠 변수가 넘어가지 않는다). 아는 함정을 호출을 나눠 쓰며 그대로 밟았다.
+
+- 증적: `docs/test-runs.d/TASK-20260901T110000-aiops-external-realign-postdeploy.md`
 
 ## CHG-20260901T115300-side-panel-exclusive
 
@@ -5176,4 +5362,3 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
 
 **검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
-
