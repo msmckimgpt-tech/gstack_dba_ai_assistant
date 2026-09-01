@@ -1717,6 +1717,13 @@ Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다�
       단독 페이지 응답 순서 · 폐기 토큰의 계정 쓰기
 - [x] PB-0008 PRE-DEPLOY baseline — 라이브에서 결함 재현(Windows 탭 + PowerShell 명령 고정,
       `last_os` 키 부재). 증적 `test-runs.d/…-pb0008.md`
+- [x] 라이브 재배포 `b50513e0` (scope=all · 엣지 무중단 0건 · 대화 스모크 PASS)
+- [x] **PB-0008 POST-DEPLOY 양방향 실측** — ① `last_os=""` 면 종전 추측 폴백(회귀 없음)
+      ② WSL 러너 연결 → `posix` → 두 화면 모두 **macOS·Linux** 를 먼저(브라우저는 `Win32`)
+      ③ 실 Windows 파이썬으로 PowerShell 재등록 → `windows` → 화면도 Windows.
+      ②가 곧 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로 생겼다**는 증거(codex P1-1 라이브 성립).
+      증적 `docs/test-runs.d/TASK-20260901T160000-connect-os-default-postdeploy.md`
+- [ ] 사용자 확인 1건 — 본인 계정·본인 러너에서 같은 동작(러너는 화면 「연결 준비」 재실행으로 갱신)
 - [ ] PB-0008 POST-DEPLOY — 러너를 실제로 붙여 `posix` 신고 → 화면이 macOS·Linux 를 먼저
 - [ ] 라이브 재배포 + POST-DEPLOY 실측
 

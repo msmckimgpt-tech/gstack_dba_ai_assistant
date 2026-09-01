@@ -186,6 +186,7 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 | TEST-20260901T160000-os-live-token | `set_account_bridge_os` | 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돈다 — 폐기 토큰이 계정 필드를 못 바꾼다 (codex P2-5) | AC-20260901T160000-connect-os-default-5 |
 | TEST-20260901T160000-modal-epoch | `connect-modal._make` | 발급 응답에 창 세대 검사 — 닫힌/다른 창에 토큰·명령을 되살리지 않는다 (codex P1-3) | AC-20260901T160000-connect-os-default-6 |
 | TEST-20260901T160000-page-rank | `ai-connect.adoptLastOs` | 근거 등급(추측<상태<발급) — 늦게 온 상태 조회가 그려진 명령을 덮지 않는다 (codex P2-4) | AC-20260901T160000-connect-os-default-6 |
+| TEST-20260901T160000-postdeploy | 배포본 `b50513e0` (Windows-browser) | POST-DEPLOY **양방향** — 「모른다」 폴백 · WSL 러너 → `posix` → 두 화면 macOS·Linux(브라우저는 Win32) · PowerShell 재등록 → `windows` → 화면 Windows · 사용자 탭 선택 유지. 증적 `test-runs.d/TASK-20260901T160000-connect-os-default-postdeploy.md` | AC-20260901T160000-connect-os-default-1~6 |
 
 | TEST-20260901T163000-both-sinks | `log_event` | 사람 줄 + JSONL 원장 양쪽에 나오고, 원장에 `ts`·`lvl`·`ev`·`seq`·`run`·`pid` 가 **항상** 있다 | AC-20260901T163000-runner-log-1 |
 | TEST-20260901T163000-offset | `_tz_suffix` | 지역시각에 UTC 오프셋 동반 — 서버 로그와 같은 사건임을 계산으로 확인할 수 있다 | AC-20260901T163000-runner-log-1 |
