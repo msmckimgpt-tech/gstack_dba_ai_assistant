@@ -180,10 +180,26 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
     출력 규약(`response_format`)을 함께 준다 — 러너가 `json` 을 요구받았는지 알아야 프롬프트
     말미에 형식 지시를 붙이고, 회수 쪽 파서와 짝이 맞는다.
     """
-    from shared.bridge_tasks import job_label, job_spec
+    from shared.bridge_tasks import job_label, job_spec, pick_console_job_model
 
     spec = job_spec(job_kind) or {}
     account_id = int((account or {}).get("id") or 0)
+
+    # 이 러너가 고를 수 있다고 신고한 목록에서 경량 모델을 고른다(아래 `requested` 참조).
+    # 조회 실패는 빈 값 — 관측용 편의가 작업 자체를 막지 않는다.
+    _light_runtime, _light_model = "", ""
+    try:
+        import oauth_store as _store
+
+        _cur = conn.cursor()
+        try:
+            _light_runtime, _light_model = pick_console_job_model(
+                _store.account_runner_capabilities(_cur, account_id))
+        finally:
+            _cur.close()
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "콘솔 작업 경량 모델 선택 실패 task=%s", task_id, exc_info=True)
     # 대화 축과 같은 이유로 `wrap_principal_request` 다 (TASK-20260901T140000) — 이 본문은
     # 조사로 얻은 비신뢰 데이터가 아니라 **사용자가 콘솔에서 눌러 발생시킨 작업 지시**다.
     marked = _guard.wrap_principal_request(
@@ -224,7 +240,18 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
         "system_prompt": "",
         "scope": {},
         "attachments": [],
-        "requested": {"runtime": "", "model": "", "reasoning_level": ""},
+        # 콘솔·배경 작업은 **경량 모델**로 돈다 (사용자 결정 2026-09-01).
+        #
+        # 이 산출물은 기계적이다(설명 한 줄·프롬프트 초안·라벨) — 그런데 호출은 **사용자
+        # 개인 계정의 토큰**을 태운다. 남의 자원을 우리가 쓰는 자리에서 상위 모델을 기본으로
+        # 둘 근거가 없다. 대화 축은 건드리지 않는다(그건 사용자가 화면에서 고른 값이다).
+        #
+        # 값은 **그 러너가 신고한 목록에서만** 고른다 — 대조 실패면 빈 값이고 러너 기본값이
+        # 쓰인다. 없는 이름을 지어 보내면 러너가 그것을 인자로 넘겨 실행이 실패한다.
+        "requested": {"runtime": _light_runtime, "model": _light_model,
+                      # 추론 등급은 비운다 — 등급 어휘는 러너마다 다르고(P0-Z3), 여기서
+                      # 추측하면 「고른 적 없는 값이 반영됐다」가 된다. 모델만 낮춘다.
+                      "reasoning_level": ""},
         "next": ("조사 없이 요청된 형식으로만 답하세요. 완료되면 submit_answer 로 제출합니다"
                  " (source_tasks 에는 이 task_id 만 넣으면 됩니다)."),
     })
@@ -1127,11 +1154,21 @@ def _record_external_review(task_id: str, raw: Any, *, conversation_id: Any = No
     try:
         from shared import self_review as _sr
 
-        clean = _sr.sanitize(_sr.parse_review_text(raw))
+        # ⚠ 러너가 보내는 것은 판정이 아니라 **봉투**다(`{"raw": "<원문>", "latency_ms": …}`).
+        #   첫 구현은 이 봉투를 `parse_review_text` 에 그대로 넣었는데, 그 함수는 dict 를
+        #   「이미 파싱된 판정」으로 보고 그대로 돌려주므로 `sanitize` 가 `verdict` 도
+        #   `findings` 도 없는 dict 를 보고 None 을 냈다 — **모든 자가 검증이 조용히
+        #   버려졌다**(라이브 실측 2026-09-01: 러너는 "검증 완료 — 제출에 동봉" 을 로그했고
+        #   서버는 경고 하나 없이 원장이 비어 있었다). 봉투 규약은 `self_review` 가 정본이다.
+        clean = _sr.from_runner_payload(raw)
     except Exception:
         logging.getLogger(__name__).debug("자가 검증 파싱 실패 task=%s", task_id, exc_info=True)
         return False
     if not clean:
+        # ⚠ `debug` 가 아니라 `info` 다. 러너가 무언가를 보냈는데 우리가 버렸다는 사실은
+        #   운영자가 볼 수 있어야 한다 — 이 결함이 오래 숨은 이유가 정확히 «침묵» 이었다.
+        logging.getLogger(__name__).info(
+            "[self-review] 형식을 갖추지 못해 기록하지 않음 task=%s (러너는 보냈다)", task_id)
         return False
     pg = _pg()
     if pg is None:

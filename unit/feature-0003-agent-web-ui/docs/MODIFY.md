@@ -5425,6 +5425,17 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
   `docs/evidence/connect-modal-autoclose/pd3-*.png`. 코드 변경 0.
 - Timestamp: 2026-09-01T06:10:00+09:00
 
+## CHG-20260901T173000-ai-claude-feature-0003-stale-runner-yield — 낡은 러너 양보 판정·집행 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Major (점유 집행 경로 — `claim_request` 409 추가)
+- **cross-ref**: 마찰 `FR-stale-runner-outraces-fresh-one` / 정본 TASK 노트는 feature-0043 의
+  `TASK-20260901T173000-stale-runner-yield.md`.
+
+`oauth_store.stale_runner_must_yield`(상대 판정) + `routers/ai_tools.py` 집행 1지점
+(`claim_request` 409) · 억제 2지점(`list_open_requests`·`wait_for_request`) ·
+하트비트 응답 `runner_update.superseded` 신설. 화면(HTML·CSS·JS) 변경 0.
+
 ## CHG-20260901T170000-lineage-row-compaction 계보 내부 되풀이 제거 + 행 한 줄 간소화
 - **버전 행에서 파일명 제거** — 이 박스는 언제나 한 계보 안이고 파일명은 카드 머리(계보 여럿)나 목록 행(단독)이 이미 말했다. 행마다 또 적어 카드 하나에 같은 이름이 **6회** 실렸다(머리 1 + 계보행 2 + 버전행 3). 확인 경로는 행 `title` 로 남긴다.
 - **2줄 → 1줄** — 버전 행이 2줄이던 **근거가 파일명이었다**("한 줄에 몰면 240px 에서 이름 가용폭 23.2px ≈ 2자"). 그 파일명이 사라졌으므로 근거도 사라진다. 라이브 실측: 버전 행 **전 폭에서 20px(한 줄)**.

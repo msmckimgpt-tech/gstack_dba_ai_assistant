@@ -2527,7 +2527,51 @@ lease 는 도구 호출마다 갱신된다 — 「진행하고 있으니 살아 
 종전 형식으로 돌아가므로 `SUBSTRING_INDEX`·`claimed_client_matches` 는 그대로 둬도 무해 —
 구분자가 없으면 전체를 앞자리로 본다). 표시 축만 끄려면 `_bridge_phase` 의 `stalled` 분기
 하나를 지운다. 러너 쪽은 `init_runner_instance()`·`_arm_exit_release()` 두 호출을 뺀다.
+## CHG-20260901T143000-selfreview-envelope — 봉투 미해제로 자가 검증이 0건 저장되던 결함 + 콘솔 경량 모델
 
+### 결함 (직전 cycle 이 만든 것 — 라이브 실측에서만 드러남)
+
+러너가 `submit_answer` 에 싣는 것은 판정이 아니라 **봉투**다:
+`{"raw": "<판정 JSON 원문>", "latency_ms": …, "model": …, "reasoning_level": …}`.
+
+서버는 이 봉투를 `parse_review_text` 에 **그대로** 넣었다. 그 함수는 dict 를 받으면 「이미
+파싱된 판정」으로 보고 그대로 돌려주므로, `sanitize` 가 `verdict` 도 `findings` 도 없는 dict 를
+보고 `None` 을 냈다 — **자가 검증이 한 건도 저장되지 않았다.** 러너 로그는 "검증 완료 — 제출에
+동봉" 이었고 서버는 경고조차 없었다(파싱 실패가 `debug`).
+
+**단위 테스트 27건이 green 인 채로 기능은 0% 동작했다.** 양쪽을 각각만 검사했기 때문이다 —
+서버 테스트는 원문 문자열을 **직접** 넣었고, 러너 테스트는 봉투를 만드는지만 봤다. 이 저장소가
+반복해 겪은 「헬퍼는 맞는데 진입점이 그걸 안 쓴다」와 같은 형태다.
+
+### 변경
+
+- `shared/self_review.from_runner_payload()`(신규) — 봉투 규약의 **단일 정본**. 봉투 ·
+  이미 파싱된 판정 dict · 원문 문자열 셋 다 받는다(구 러너·수동 제출 호환). 관측 메타는
+  **봉투가 이긴다** — 판정 본문의 같은 키는 AI 가 스스로 적은 값이라 신뢰 등급이 다르다.
+- `routers/ai_tools._record_external_review` — 봉투 리더 사용 + **버린 사실을 `info` 로 기록**
+  (이 결함이 오래 숨은 이유가 정확히 침묵이었다).
+- 이음매 테스트 6건 — 봉투 모양을 **러너 소스에서 읽어** 재현. 손으로 적으면 러너가 봉투를
+  바꾸는 날 이 테스트만 낡아 같은 형태로 다시 깨진다.
+- `test_server_entrypoint_uses_the_envelope_reader` 는 **AST 로 실제 호출만** 본다 — 문자열
+  검사는 설명 주석의 함수 이름까지 잡아 거짓 실패를 낸다(같은 함정을 이 파일에서 한 번 밟았다).
+
+### 콘솔 작업 경량 모델 (사용자 결정 2026-09-01)
+
+- `shared/bridge_tasks.CONSOLE_JOB_LIGHT_MODELS` + `pick_console_job_model()` —
+  claude→`haiku`, codex→`luna`/`mini`. **러너가 신고한 목록에서 부분일치**로 고르고, 실패하면
+  빈 값(러너 기본값)이다. 없는 이름을 지어 보내면 러너가 CLI 인자로 넘겨 실행이 실패한다(P0-T).
+- `_claim_console_job` 이 `requested.{runtime,model}` 에 그 값을 싣는다. 런타임 순서는
+  **러너 신고 순서** — 서버가 우열을 정하면 `--ai` 제한 사용자의 의도를 넘어선다.
+- **대화 축 불변**(사용자가 화면에서 고른 값) · 추론 등급 불변(어휘가 러너마다 다르다).
+
+### 검증
+
+- **역검증**: 수정 전 사본에서 이음매 8건 FAIL — 출하된 코드에서 죽는다(자기충족 아님)
+- **실 러너 end-to-end**: `redteam_reviews id=397 source=external verdict=revise block_count=1`.
+  검증이 실제 결함(답변이 오류 안내문)을 `[BLOCK/completeness]` 로 지목
+- **경량 모델 실측**: 같은 러너·같은 창에서 콘솔 작업 `haiku` · 대화 `fable`
+- `make test` 전량 green · ruff clean
+- 증적: `docs/test-runs.d/TASK-20260901T143000-selfreview-envelope.md`
 ## CHG-20260901T150000-orphan-claim-postdeploy — 고아 점유 회수 라이브 실측 (문서만)
 
 `CHG-20260901T140000-orphan-claim-reclaim` 의 배포 후 검증. **코드 변경 0** — 증적 문서 +
@@ -2725,6 +2769,48 @@ stderr 에 **의미 있는** 줄이 있으면 그것, 없으면 stdout. 둘 다 
 PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로
 생겼다**는 증거이기도 하다 — codex P1-1 의 수정이 라이브에서 성립했다는 뜻이고, 안 생겼다면 값은
 영원히 `""` 로 남아 «테스트는 전통과하는데 기능은 없는» 상태가 됐을 것이다.
+
+## CHG-20260901T173000-ai-claude-feature-0043-stale-runner-yield — 낡은 러너가 최신 러너의 질문을 가로채던 결함
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-stale-runner-yield (사용자 재보고 — 직전 cycle 안내를 따랐는데 재발)
+- **위험도**: Major (§12.3 — 점유 집행 경로. 다만 판정이 **상대**라 단독 러너 동작은 불변)
+- **승인**: 사용자 결정 2026-09-01 (「오래된 러너는 프로세스를 종료 … 계정이 다를 경우는 예외」)
+
+### 배경
+
+같은 계정에 러너가 둘 붙어 있었고(배포본 `d0ac1263d454` vs 옛 `0a4ba732366c`), 17:20:03 질문을
+**옛 러너가 먼저 집어** 옛 동작으로 답했다. 점유는 선착순 원자 UPDATE 라 「누가 먼저 폴링했는가」
+가 승자를 정하고, 서버는 `runner_update.stale_build` 로 그 사실을 **알면서도 말만 하고 내줬다**.
+사용자는 안내대로 「연결 준비」를 눌렀는데 결과가 같았다.
+
+### 변경 내용
+
+**1. 상대 양보 판정** (`oauth_store.stale_runner_must_yield`)
+
+이 토큰의 지문 ≠ 배포본 **그리고** 같은 계정에 배포본 지문으로 하트비트가 살아 있는 **다른**
+토큰이 있을 때만 양보. 절대 판정(「낡았으면 거절」)은 배포 직후 전 사용자 중단이 되므로 쓰지
+않는다. 근거가 없으면 양보 없음(fail-open) — 잘못 양보시키면 멀쩡한 러너가 굶는다.
+
+**2. 집행 1지점 · 억제 2지점** (`routers/ai_tools.py`)
+
+집행은 `claim_request`(409) — 러너는 다른 경로로 알아낸 `task_id` 로 곧장 claim 할 수 있어
+억제만으로는 막지 못한다. 억제는 `list_open_requests`·`wait_for_request` — 없으면 낡은 러너가
+집었다 409 받기를 반복해 계정 공용 상한을 태워 **최신 러너를 굶긴다**. ⚠ 대기에서 즉시 반환하지
+않는다(옛 러너의 즉시 재호출이 정상 동작이라 busy-loop 가 된다). 취소 통보는 막지 않는다.
+
+**3. 러너 자가 종료** (`bridge_agent.py`, 사용자 결정)
+
+하트비트 응답에 `runner_update.superseded` 신설(**`stale_build` 와 별개 필드** — 합치면 배포
+직후 단독 러너까지 자살한다). 러너는 `_SUPERSEDED` 를 세우고 대기 루프가 로그아웃과 같은
+`shutdown_after_drain` 으로 **하던 일을 마치고** 종료한다. 판정은 대기 호출 **앞**에 둔다.
+
+**계정 경계**: 판정 질의가 `AccountId` 로 묶여 있어 다른 계정 러너는 후보가 아니다 — 한 머신에서
+여러 계정 러너를 띄우는 구조는 그대로 허용된다(사용자 요구).
+
+### 즉시 조치 (코드 밖)
+
+문제를 일으키던 옛 러너 프로세스를 SIGTERM 으로 정상 종료시켜 라이브를 복구했다.
 
 ## CHG-20260901T170000-ai-claude-feature-0043-cli-failure-postdeploy — 실패 사유 소실 해소 POST-DEPLOY 실측 기록
 

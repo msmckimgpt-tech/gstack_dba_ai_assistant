@@ -2468,6 +2468,46 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-stale-runner-outraces-fresh-one — fixed:undeployed (L4↔L7 경계; 서버가 «낡았다» 를 알고도 점유를 내줘 사용자의 갱신 조치가 무효화)
+
+- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 20 · 뮤테이션 5종 KILL · 4 feature 전량
+  rc=0 · ruff clean). 배포·라이브 실측 미수행.
+- **source**: 사용자 재보고 (2026-09-01) — "웹페이지 새로고침, 연결 준비를 통해 러너를 다시
+  연결한 후 요청을 보냈지만 같은 이슈가 확인되어 조치가 필요합니다".
+- **last_seen**: 2026-09-01 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **modality**: 1:1 · **conv(마스킹)**: `…d7010dcf` · task `t_SGLPV3…` (17:20:03)
+- **symptom_confidence**: high · **rootcause_confidence**: high
+  (`WebOAuthTokens` 두 토큰 지문 + 러너 로그 처리 시각 + 배포본 지문 직접 산출 3중 대조)
+- **suspected_layers**: **L4**(점유 술어에 러너 신선도 축 부재) ↔ **L7**(사용자가 지시받은 조치가
+  무효화되는데 화면에 그 사실이 없음)
+
+- **증상(signal)**: `E-USR` 재보고 — **직전 cycle 의 안내를 그대로 따랐는데 결과가 같음**.
+  이 부류는 이탈보다 나쁘다: 안내를 지켰는데 같으면 다음 안내를 믿을 이유가 사라진다.
+- **confirmed_root_cause**: 같은 계정(`account 10`)에 러너 2개가 하트비트 중이었고
+  (배포본 `d0ac1263d454` vs 옛 `0a4ba732366c`), 점유가 선착순 원자 UPDATE 라 옛 러너가 17:20:03
+  질문을 먼저 집어 옛 코드로 답했다. 서버는 `runner_update.stale_build` 로 그 사실을 **알고
+  있었지만 안내만 하고 점유를 내줬다** — 「안다」와 「막는다」 사이가 비어 있었다.
+  재발경로 = **ux contract**(러너는 우리가 갱신할 수 없는 사용자 머신 파일 → 「사용자가 갱신하면
+  된다」는 계약 자체가 다중 러너 앞에서 성립하지 않았다).
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님(사용자 조치가 무효화). **F2** 사용자 오류 아님 —
+  지시받은 대로 했다. **F3** 기수정 아님 — 직전 cycle 은 *사유 소실* 축이고 이건 *그 수정이
+  도달하지 못하게 막는* 별개 구조. **F4** 의도된 동작 아님(선착순은 단일 러너 전제의 설계였다).
+  **F5** ANCHOR 충돌 없음. **F6** 외부 기인 아님 — 판정도 집행도 우리 서버에 있다.
+- **corroboration**: 단일 대화지만 Phase 7.4 **명백한 구조결함** 충족 — 삼각측량이 코드 정본까지
+  `confirmed` 이고, 다중 러너는 이 제품의 정상 사용 형태(사용자가 예외로 명시 요구)라 재발이
+  구조적으로 보장된다.
+- **triage**: S=4 · F=2 · L=4 · C=5 · R=3 → **20**, disposition=**fix-now**. 위험등급 **Major**
+  (§12.3 점유 집행 경로). 사용자 승인 2026-09-01(러너 자가 종료 + 계정 예외 명시).
+- **fix**: `CHG-20260901T173000-ai-claude-feature-0043-stale-runner-yield` /
+  **코드 거주 `feature-0043-external-llm-bridge`**(서버측은 feature-0003 cross-ref) /
+  `REV-20260901T173000` (인라인 적대 3렌즈 — P1 1건 자체 적발·수정).
+- **핵심 설계**: 판정은 **상대**다(같은 계정에 배포본 지문 러너가 실제로 들을 때만 양보) —
+  절대 판정은 배포 직후 전 사용자 중단이 된다. 서버 축은 **러너 갱신 없이 즉시 발효**하고,
+  러너 자가 종료는 그 위의 정리 축이다(옛 프로세스에는 그 코드가 없으므로).
+- **라이브 실측 필요분**: 서버 축은 배포 후 옛 러너 재등장 시 즉시 관측 가능. 자가 종료는 러너가
+  새 사본으로 갱신된 뒤에만. 재측정 축 = 같은 `AccountId` 에 서로 다른 지문 러너가 동시
+  하트비트하는 창의 지속 시간.
+
 ## FR-agent-job-name-mangled-by-ident-sanitizer — fixed:deployed:unverified-live (L2 capability gap; 식별자 정제기를 리터럴 값에 오적용해 88% 작업이 조회 불가)
 
 - **status**: `fixed:deployed:unverified-live` — 위 항목과 **같은 batch**(PR #1422, main
