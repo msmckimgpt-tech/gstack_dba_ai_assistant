@@ -434,16 +434,41 @@ def test_backfill_scope_filter_and_dry_run(monkeypatch):
     assert rep["datasources"]["m1"]["schemas"] == {"db1": "(dry-run)"}
 
 
-# ── feature-0043 게이트: 차단 중에는 **큐에 넣기 전에** 거절 ────────────────────
+# ── feature-0043 게이트: **큐에 넣기 전에** 판정 ───────────────────────────────
 # 소스 검사(test_ux_parity)와 별개로 **실제 반환값**을 본다. 배선만 맞고 조건이 뒤집혀 있으면
 # 소스 검사는 통과하고 운영에서만 터진다.
+#
+# TASK-20260901T190000 로 판정 대상이 바뀌었다: 종전 「서버 계정 LLM 이 닫혔으면 거절」은
+# 라이브에서 그래프 'AI 능동 분석' 을 통째로 막았고 사용자가 그것을 제보했다. 새 계약은
+# 「**둘 중 하나라도**(서버 LLM · 연결된 개인 AI) 있으면 진행」이다. 지켜야 할 것은 그대로 —
+# *큐에 넣어 놓고 한참 뒤 알 수 없는 실패로 끝내지 않는다.*
 @pytest.mark.parametrize("call", [
     lambda: na.enqueue_analysis("ds1", "ds1:app.T0"),
     lambda: na.enqueue_schema_analysis("ds1", "ds1:app"),
 ])
-def test_enqueue_refuses_while_server_llm_blocked(monkeypatch, call):
+def test_enqueue_refuses_when_there_is_nowhere_to_run(monkeypatch, call):
+    """서버 LLM 닫힘 + 위임할 러너 없음 → 적재 전에 거절."""
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    monkeypatch.setattr(na, "delegation_possible", lambda who: False)
     res = call()
     assert res["ok"] is False
-    # 이유가 "고장" 으로 읽히면 사용자는 무한히 재시도한다.
-    assert "고장이 아닙니다" in str(res.get("reason") or "")
+    # 사용자가 **스스로 할 수 있는 일**을 안내한다("운영자에게 문의" 로 끝내지 않는다) —
+    # 종전 문구는 그 사람이 아무것도 못 하고 기다리게 만들었다.
+    assert "내 AI 연결" in str(res.get("reason") or "")
+
+
+@pytest.mark.parametrize("call", [
+    lambda: na.enqueue_analysis("ds1", "ds1:app.T0"),
+    lambda: na.enqueue_schema_analysis("ds1", "ds1:app"),
+])
+def test_enqueue_proceeds_when_a_personal_ai_is_connected(monkeypatch, call):
+    """연결된 개인 AI 가 있으면 **게이트가 막지 않는다** — 제보된 결함이 고쳐진 지점.
+
+    적재 자체는 PG 가 없어 실패하지만, 그 사유가 **게이트 문구가 아니어야** 한다.
+    (게이트가 아직 막고 있으면 여기서 '내 AI 연결' 안내가 되돌아온다.)
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    monkeypatch.setattr(na, "delegation_possible", lambda who: True)
+    res = call()
+    assert "내 AI 연결" not in str(res.get("reason") or ""), (
+        "연결된 AI 가 있는데도 게이트가 막고 있다 — 사용자 제보의 그 상태다")
