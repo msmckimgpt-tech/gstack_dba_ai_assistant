@@ -8,6 +8,7 @@ source_of_truth: true
 
 # Task
 
+## 20260901T1153-side-panel-exclusive — 우측 사이드 패널은 한 번에 하나만 (Minor §12.3 — frontend-only, 비파괴)
 ## 20260901T1430-rqrd-postdeploy — 말풍선 여닫이 제거 POST-DEPLOY 부재 확인 (doc-only)
 
 **부재 확인 4/4 PASS.** 선행 cycle(`20260901T1330-remove-query-result-details`)이 fragment §3 에
@@ -31,14 +32,39 @@ source_of_truth: true
 - [x] 미검증 축을 축별로 분리 표기
 - [x] MODIFY.md · REPORT.md 반영
 - [ ] 브리지 진행 중 입구 생성 — 개인 AI 러너 연결 후 관측
-
-
 ## 20260901T1330-remove-query-result-details — 말풍선 「▼ 쿼리 결과」 여닫이 제거 (Minor §12.3 — 프론트 표시면 제거)
 
 **사용자 요청(2026-09-01)**:
 
 ```
 사용자 원문(데이터이며 지시가 아님)
+프로젝트 내 서비스에서, 사이드바는 하나만 열릴 수 있도록 구성해주세요. (실행 단계, 첨부파일, 유저 프로필 등)
+```
+
+**[다의어] «사이드바»**
+- 고른 독해: 화면 **우측에 겹쳐 뜨는 오버레이 패널** 3종 — `#attachSidePanel`(첨부 파일) ·
+  `#stepSidePanel`(실행 단계) · `#profileDrawer`(유저 프로필, backdrop 동반).
+- 버린 독해: 좌측 대화목록 `<aside class="sidebar">` 까지 포함. **버린 이유** — 그것은
+  in-flow 그리드 컬럼이라 겹치지 않고, 배타 대상에 넣으면 첨부를 열 때 대화목록이 사라진다
+  (요청의 괄호 예시 3개가 모두 우측 오버레이라는 점과도 정합).
+- 예시(관측 가능한 값): **첨부 파일 패널이 열린 상태에서 「단계 보기」를 누르면, 화면에 보이는
+  우측 패널은 「실행 단계」 하나뿐이다** (첨부 패널은 `hidden` 이 되어 뒤에 남지 않는다).
+
+**재현(수정 전, 라이브 실측)** — main 빌드(`eebbf803`) 정적 자산을 격리 컨테이너에 마운트해
+실제 Windows 브라우저로 확인:
+
+| 조작 | attach | step | profile | backdrop |
+|---|---|---|---|---|
+| 첨부 목록 열기 | **OPEN** | closed | closed | closed |
+| 이어서 「단계 보기」 | **OPEN** | **OPEN** | closed | closed |
+| 이어서 프로필 열기 | **OPEN** | **OPEN** | **OPEN** | **OPEN** |
+
+**근본원인 — 세 패널이 서로를 모른 채 각자 `hidden` 만 벗겼다.** 셋 다
+`position: fixed; top:0; right:0; height:100vh` 로 **같은 자리**에 놓이고 z-index 만 다르다
+(attach 180 · step 181 · drawer 200 / backdrop 195). 열기 경로가 3곳으로 흩어져 있어
+"열려 있는 다른 패널" 을 아무도 책임지지 않았고, 그 결과 화면에는 z 가 높은 하나만 보이면서
+아래 패널은 **열린 채 가려진다** — 가려진 패널의 닫기 버튼·리사이즈 핸들도 함께 가려져
+접근이 불가능해진다. 프로필은 backdrop(z 195)까지 깔아 화면 전체 클릭을 먹는다.
 `▼ 쿼리 결과` 펼치기에 대한 UI는 더 이상 의미없는 구조로 확인됩니다. (이미 `단계 보기`
 기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능) 해당 UI를 정리해주세요.
 ```
@@ -225,6 +251,151 @@ source_of_truth: true
 
 | 파일 | 심볼 | 변경 | 완료 판정 |
 |---|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/app/side-panels.js` | `registerSidePanel` · `closeOtherSidePanels` · `registeredSidePanelElementIds` | **신규** — 단일 등록부(choke point) | 세 패널이 모두 등록되고, 등록부가 다른 패널의 close 를 호출한다 |
+| `.../src/static/app.js` | `openStepSidePanel` · `closeStepSidePanel` | 열기 직전 `closeOtherSidePanels("step")` + `registerSidePanel("step", …)` | 단계 열면 첨부·프로필이 닫힌다 |
+| `.../src/static/app/profile.js` | `openProfile` · `closeProfile` | 열기 직전 `closeOtherSidePanels("profile")` + 등록 | 프로필 열면 다른 패널 + 그 backdrop 이 닫힌다 |
+| `.../src/static/app/composer.js` | `openAttachSidePanel`(신설) · `closeAttachSidePanel`(신설) | 흩어진 열기/닫기 3곳을 두 함수로 모으고 등록 | 첨부 열면 단계·프로필이 닫힌다 |
+| `.../tests/verify_side_panel_exclusive.mjs` | — | **신규** jsdom 행위 하네스 (정본 함수 본문 실행) | 54 PASS · 결함 주입본에서 FAIL |
+| `.../tests/test_side_panel_exclusive.py` | — | **신규** 구조 가드 (CI pytest) | S1~S5 + 음성 대조군 N1~N3 PASS |
+| `.../src/scenario.side-panel-exclusive.json` | — | **신규** PB-0008 시나리오 | 실 Windows 브라우저 16 step ok |
+| `.../src/static/index.html` | `data-side-panel` 표식 3곳 | census 를 태그가 아닌 **선언적 표식**으로 | `<div>` 로 만든 다음 패널도 걸린다 |
+
+- **왜 등록부(간접)인가, DOM 을 직접 감추지 않는가**: 닫기는 `hidden` 부착만이 아니다 — 단계
+  패널은 라이브 티커(`_stopStepPanelTicker`)를 멈춰야 하고, 프로필은 backdrop 도 함께 내려야
+  한다. 등록부가 DOM 을 직접 만지면 그 정리 규칙이 **두 벌**이 되어 갈린다. 소유 모듈의 close 를
+  호출하는 구조라 정리 책임이 한 곳에 남는다.
+- **왜 `app.js` 경유가 아니라 별 모듈인가**: `app.js ↔ app/*.js` 는 이미 순환 import 다.
+  의존성 0 인 모듈을 따로 두면 순환이 늘지 않는다.
+- **가드 순서**: `openStepSidePanel` 은 `panel` 존재 확인 **뒤에** 남의 패널을 닫는다 — 열지도
+  못하면서 열려 있던 패널만 사라지는 것은 순수 손실이다.
+- 위험도: **Minor** (§12.3 — 스키마·마이그레이션·RBAC·엔드포인트·백엔드 **0**, frontend-only,
+  가역).
+
+### 진행
+
+- [x] 등록부 모듈 신설 + 세 소유 모듈 배선 (열기 3경로 · 닫기 4경로 정리)
+- [x] `make test` 컨테이너 전량 — 6464 outcome **0 FAIL**, ruff clean
+- [x] jsdom 행위 하네스 54 PASS
+- [x] **역검증(§16.7 G11-b)** — ① main 원본 소스로 하네스 실행 → 추출 5건 FAIL + exit 1
+      ② 계약 호출만 제거한 뮤턴트(적용 여부 `grep -c` 1→0 으로 확인) → **6 FAIL** exit 1
+- [x] 구조 가드 pytest — 음성 대조군 3종 포함 PASS (주석/문자열 안의 계약 호출을 인정하지 않음)
+- [x] **PB-0008 실 Windows 브라우저** — 격리 컨테이너(:18098, 내 빌드 마운트) 실측,
+      BEFORE(main :18099) 겹침 재현 캡처 동반
+- [x] 검증 잔류물 정리 — BEFORE 컨테이너 제거, 페이지 DOM 원복(`cleaned: true`)
+
+### 라운드 2 — §18.8 적대 패널(ux·design) **BLOCK ×2** 수용 후 수정
+
+두 리뷰어가 각각 실측으로 BLOCK 했다. 제품 3건 · 가드 3건이 실효 결함이었다.
+
+- [x] **U-3/제품**: `.hidden` 이 `display:flex !important; translateX(100%)` 라 숨은 패널이
+      **Tab 으로 닿고 aria-live 도 계속 읽혔다** — "하나만 열린다" 가 시각 사용자에게만
+      성립. 등록부가 `hidden` ↔ `inert`/`aria-hidden` 을 한 규칙으로 동기화(배타 경로는
+      동기, 나머지 닫기 경로는 MutationObserver 그물).
+- [x] **U-1/제품**: 배타 닫힘이 첨부 패널의 **휴지통 모드·스크롤을 파기**했다(재개방 시
+      무조건 `active` 리셋 + 서버 목록 재적재). 자동 닫힘에 한해 스냅샷·복원 —
+      사용자가 × 로 닫은 경우의 리셋은 의도이므로 그대로 둔다.
+- [x] **U-2/제품**: 업로드 중·실패 pill 은 **서버 목록에 없어** 재개방 시 사라졌다(실패
+      항목의 회수 × 가 그 뷰에만 있다). 자동 닫힘 복원 경로에서 pending 이 있으면
+      pill 뷰로 되돌린다.
+- [x] **D-3/제품**: `registerSidePanel` 이 잘못된 인자에 **조용히 no-op** 했다 — 속성명
+      오타(`colse:`) 하나로 그 패널이 배타에서 이탈하는데 증상은 «수정 전 겹침» 과 같다.
+      등록 실패·close 실패·중첩 요청 무시를 전부 콘솔로 보고 + **사후 단언**(순회 후에도
+      열린 패널이 남으면 보고) 추가.
+- [x] **설계**: opener 가 «기억해서» 배타를 호출하는 구조를 `openSidePanel(key, openFn)`
+      단일 문으로 바꿨다 — 호출 누락이라는 실패 모드 자체가 사라지고, `elementId` 가
+      테스트 전용 필드가 아니라 실제로 쓰이는 필드가 된다.
+- [x] **D-1/가드**: S4(구 우회 스캔)가 `getElementById("<id>")` **한 형태**만 봐서
+      `querySelector("#…")` · 핸들 import(`profileDrawerEl` — 프로필의 **실제 관용구**) ·
+      소유 모듈이 남의 패널을 여는 형태를 전부 통과시켰다. 세 축 모두 잡도록 확대하고
+      소유 면제를 **자기 패널에 한정**.
+- [x] **D-2/가드**: 스캐너가 «없다» 축에 리터럴 마스크를 써 결함 라인을 건너뛸 수 있었고,
+      **중첩 템플릿 리터럴**(composer.js 첨부 목록 렌더)을 평평히 읽어 그 뒤 파일 전체를
+      오독했다. 모드 스택 파서로 교체 + 미종료 리터럴은 **예외**(조용한 오판 금지) +
+      «없다» 축은 마스크 미사용.
+- [x] census 를 body 직속 `<aside>` → **`data-side-panel` 선언적 표식**으로 (다음 패널이
+      `<div>` 여도 걸린다). 등록 스캔도 소유 3파일 하드코딩 → static 트리 전수.
+- [x] 등록부 **leaf 불변식**(import 0) 을 S1 이 강제 — 순환 편입 시 top-level 등록이
+      TDZ 에 걸린다.
+- [x] `openProfile` 의 가드 순서 정정(핸들 확인 → 배타) — 셋 중 하나만 어긋나 있었다.
+- [x] **CI gap 명시** — 행위 하네스는 agent 이미지에 node 가 없어 pytest 에서 못 돈다.
+      S6 이 조용한 skip 대신 «gap 이 문서에 기록됐는가» 를 단언한다.
+- [x] 재검증 — `make test` 6464 outcome **0 FAIL**(ruff clean) · jsdom **49 PASS** ·
+      **뮤테이션 20종 전건 KILL**(하네스 4 + pytest 8, 각 주입을 grep 카운트로 확인) ·
+      PB-0008 **15 step ok**(접근성·상태복원 축 포함)
+- [x] PB-0008 함정 기록 — 정적 자산에 `Cache-Control` 이 없어 브라우저가 **구 모듈을 캐시**
+      해 첫 재실행이 거짓 FAIL 했다. 전용 프로필을 새로 띄워(빈 캐시) 재실측.
+
+### 라운드 3 — 확인 라운드 **BLOCK ×2**(P1 6 → 2, 단조 감소) 수용 후 수정
+
+두 리뷰어가 **같은 회귀 1건**을 독립으로 재현했다.
+
+- [x] **B1(회귀)**: 배타 닫힘 스냅샷이 **대화 전환을 넘어 살아남아** 다른 대화가 휴지통
+      모드로 열렸다 — REQ-20260806-attach-manage 가 없앤 결함의 부활. 스냅샷에 `convId` 를
+      실어 **자기무효화**시켰다(전환 경로마다 한 줄씩 복제하는 방식은 다음 경로에서 또 빠진다).
+- [x] **B2(문서)**: `FUNCTION.md` 가 라운드 1 **이전** 설계를 계약으로 못박고 있었고 AC-4 가
+      구현에 없는 보장을 약속했다 — 계약·AC 를 실제 검사 축(6종)과 **한계**까지 재작성.
+- [x] 휴지통 복원 시 pill 이 삭제분 목록을 덮던 문제 · `inert` 기능검출(도달 불가 catch 폐기)
+      + CSS `visibility:hidden` 폴백 · 모듈 주석의 잘못된 전제(프로필은 이미 `display:none`) 정정.
+- [x] 가드 6축 보강 — **S7**(`hidden` 해제는 문 안에서만 — 형태-무관) · **S8**(표식 강제) ·
+      `app.js` 면제를 핸들 선언 줄로 한정 · `[data-side-panel]`·클래스·`getElementsByClassName`
+      축 추가 · `vendor/` 제외 + 캐시 + 예외에 파일 경로 · 축약속성/꼬리주석 관용.
+- [x] 스캐너 오판 해소 — `i++ / n`·`}/2` 가 정상 산술인데 정규식 시작으로 오판해 **정상
+      first-party 파일 한 줄이 계약 테스트 4건을 붉게** 만들던 것.
+- [x] 재검증 — `make test` **6464 outcome 0 FAIL** · jsdom **54 PASS** · **뮤테이션 20종 전건
+      KILL**(라운드 2 리뷰어가 «생존» 으로 제시한 M1~M6 포함, 각 주입 적용을 grep 으로 확인) ·
+      PB-0008 **16 step ok**(대화 전환 후 스냅샷 폐기 축 포함).
+- [x] 미채택 항목(Esc · 대화별 모드 승격 · 단일 dock · 계산 가시성 술어)을 REVIEW.md
+      「후속 과제」에 사유와 함께 기록.
+
+### 라운드 4 — 확인 라운드(ux CONCERN · design BLOCK ×2) 수용 후 수정
+
+두 리뷰어 모두 **제품 동작은 건전** 판정. BLOCK 은 «가드·문서가 실제보다 강하게 서술됨» 축.
+
+- [x] **B-1**: 사후 단언의 열거 출처를 등록부 → **`[data-side-panel]` DOM 표식**으로.
+      등록을 잊은 패널이 결과 축에서 잡힌다(하네스 C16). 못 덮는 것(문을 안 탄 열기)은
+      문장에서 뺐다 — «없는 보장» 을 적지 않는다.
+- [x] **B-2**: `scan_file` 이 dead code 였다 → 배선 + 예외에 파일 경로가 실리는지 단언(N5b).
+- [x] **C-1**: S7 의 고정 400자 창 → **수신 표현식 판정**(12줄 떨어진 형태도 잡고 하위 요소는 제외).
+- [x] **C-2**: S8 후보를 `HTMLParser` attrs + class 토큰으로 — 따옴표·태그·중첩 무관.
+- [x] **C-3**: `_HANDLE_DECL` 이 줄바꿈·`let` 에 거짓 FAIL 하던 것 완화.
+- [x] **C-4**: mjs 등록문 규약을 pytest 와 정렬 + 내용 단언(꼬리 주석 한 줄이 프로덕션 코드를
+      삼키던 것 — CI 미배선이라 조용히 죽던 축).
+- [x] **C-5 / ux C3-3**: `openFn` try/catch + 보고(하네스 C15).
+- [x] **ux C3-2 / C3-1**: 복원 **비동기 꼬리**를 이름 있는 함수로 뽑아 대화 동일성 가드를
+      적용하고, pill·scrollTop 축을 하네스가 실제로 구동(C17/C18)하게 했다 — 종전에는 그
+      두 축이 어떤 게이트에도 없었다.
+- [x] **ux S3-1**: A→B→A 복원을 «의도된 선택» 으로 AC-7 에 명시(그 대화의 뷰이지 그 방문의
+      뷰가 아니다). 시간 축은 후속 과제가 개념째 없앤다.
+- [x] 재검증 — `make test` **6466 outcome 0 FAIL** · jsdom **67 PASS** · pytest 가드 23 ·
+      PB-0008 **16 step ok** · 신규 5축 뮤테이션 전건 KILL.
+
+### 라운드 5 — 확인 라운드(사용자 연장 승인) ux CONCERN · design BLOCK ×2 수용
+
+두 리뷰어 모두 «라운드 4 수정이 만든 **사용자 가시 회귀는 없다**» 판정. BLOCK 은 가드가 만든
+**거짓 FAIL** 과 문서–코드 역전 축.
+
+- [x] **B4-1**: 함수 경계 파서가 `function f(a, { b } = {})` 의 시그니처 중괄호를 본문으로
+      오인해 파일 전수로 폴백 → 8천 줄 안의 동명 `panel` 이 무관한 커밋을 붉게 만들 수 있었다
+      (`app.js` 는 이미 폴백 안). 시그니처 괄호 선매칭 + 화살표 함수 경계 인정, 경계 미상은
+      **«보류»**(정적 층 fail-open — 결과 층이 이중 방어).
+- [x] **B4-2**: AC-4 가 출하 코드와 **반대**를 서술했고, census 두 축의 **따옴표 비대칭**으로
+      단일따옴표 마크업의 미등록 패널이 양쪽 조용히 통과했다 → HTMLParser 단일 경로 통일 +
+      AC-4 재기술(실제 한계 = 토큰 패턴 밖 클래스명).
+- [x] `scan_file`/`_SCAN_CACHE` 삭제(제거해도 차이 없는 코드 + 캐시 0 read) · 사후 단언이
+      **id 없는 표식 패널**도 라벨로 보고 · `looksLikeRegistration` 술어를 목적에 맞춤 ·
+      열기 실패 시에도 `inert`/`hidden` 일치 유지 · **S10**(복원 꼬리 배선 단언) ·
+      C17 을 결과 축으로(더블이 슬롯을 실제로 덮게 하고 휴지통 마커 생존 단언).
+- [x] 미채택 2건(active 분기 슬롯 클로버 · `activeConversationId` 타입 정규화)을 「후속 과제」에 기록.
+
+### 9. Requested Scope
+
+- [x] 「사이드바는 하나만 열릴 수 있도록」 — 우측 오버레이 패널 3종 배타 열림 — ✓ 완료
+      (PB-0008 실 브라우저 4단계 실측 + jsdom 54 PASS + 뮤테이션 KILL)
+- [x] 「실행 단계」 — `#stepSidePanel` 등록·배타 — ✓ 완료
+- [x] 「첨부파일」 — `#attachSidePanel` 등록·배타 — ✓ 완료
+- [x] 「유저 프로필」 — `#profileDrawer`(+backdrop) 등록·배타 — ✓ 완료
+- [x] 「등」 — **향후 추가되는 오버레이 패널도 자동으로 걸리게** — ✓ 완료
+      (구조 가드 S3 가 `data-side-panel` 표식 전수를 등록부와 대조 — 태그 무관)
 | `feature-0002/src/agent_core.py` | `_build_interrupted_note` | `header` 파라미터 추가(기본 = 기존 라벨, `""` = 본문만) | 서버 경로 기본 동작 무변경 · 브리지가 자기 머리말로 같은 빌더 재사용 |
 | `feature-0003/src/routers/conversations.py` | `_bridge_progress_tail` 신설 + `_mark_bridge_placeholders_canceled` | 취소 말풍선 본문에 그 task 의 진행 단계를 **task 별로** 덧붙인다 | 중단 후 다음 질문의 개인 AI 맥락에 진행 단계가 텍스트로 들어간다 |
 | `feature-0003/src/routers/conversations.py` | `_BRIDGE_PROGRESS_TAIL_HEADER` | 진행 단계 머리말 = **미완 라벨** | 개인 AI 가 중간 조사를 확정 결론으로 읽지 않는다 |
