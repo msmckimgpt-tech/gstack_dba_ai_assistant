@@ -212,6 +212,16 @@ _UA = "mysql-ai-bridge-agent/1"
 #: 없다 — 제출 전에 이 줄을 떼어내므로 사용자 화면에는 남지 않는다.
 _TITLE_MARK = "#TITLE:"
 
+#: 같은 계열의 두 번째 한 줄 규약 — 이 턴에서 배운 **도메인 용어 후보**를 실어 온다.
+#:
+#: 왜 별도 task 가 아니라 답변 동봉인가: 서버가 자기 계정 LLM 을 닫으면서(feature-0043) 답변
+#: 직후 큐레이션이 통째로 멈췄다. 되살리는 방법으로 「러너에게 용어 추출 작업을 따로 위임」이
+#: 아니라 동봉을 고른 이유는 red-team 과 같다 — **답한 그 AI 가 이미 맥락을 갖고 있고**, 별도
+#: 작업으로 만들면 대화를 한 번 더 넘겨야 하며 개인 계정 토큰을 두 번 태운다.
+_GLOSSARY_MARK = "#GLOSSARY:"
+#: 한 답변이 실을 수 있는 후보 수. 서버도 같은 상한을 다시 건다(러너 신뢰 경계 — 이 값은 예의일 뿐).
+_GLOSSARY_MAX = 5
+
 #: 서버가 최대 55초 보류한다. 그보다 넉넉히 잡아야 **정상 대기**를 타임아웃으로 오인하지 않는다.
 _WAIT_TIMEOUT_SEC = 90.0
 #: 조사·응답 생성 상한. **0 = 상한 없음(기본)** — 사용자 요구 2026-08-28:
@@ -1982,6 +1992,20 @@ def compose_prompt(api: Api, task: dict) -> str:
         # 삼고 제출 전에 떼어낸다 — 마커가 없으면 답변은 그대로다(파싱 실패가 답을 망치지 않음).
         f"답변의 **맨 마지막 줄**에 `{_TITLE_MARK} <이 대화를 요약한 30자 안팎의 제목>` 을"
         " 한 줄 덧붙여라. 이 줄은 사용자에게 보이지 않고 대화 제목으로만 쓰인다.",
+        # 용어 축: 제목 바로 **앞** 줄. 순서를 고정하는 이유는 `split_title` 이 「맨 마지막 줄」을
+        # 계약으로 갖고 있고 그 계약에 회귀 가드가 걸려 있어서다(둘 다 마지막을 요구하면 하나가
+        # 반드시 진다). 파서는 순서가 뒤바뀐 경우도 흡수하지만, 지시는 한 가지로 준다.
+        f"그 제목 줄 **바로 앞 줄**에 `{_GLOSSARY_MARK} <JSON 배열>` 을 한 줄 덧붙여라 —"
+        " 이 턴에서 **정의가 분명해진 도메인 용어**만 담는다. 사용자에게 보이지 않는다.",
+        '  형식: [{"term":"용어","definition":"1~2문장 한국어 정의",'
+        '"tier":"product|org|general","confidence":0.0~1.0}]',
+        '  tier — 그 용어가 **어디까지 통용되는가**: "product"=이 제품 고유(테이블·컬럼·코드값·'
+        '서비스 내부 개념) / "org"=제품 무관하되 이 조직 고유 관례 / "general"=범용 RDBMS·SQL'
+        " 표준 지식(트랜잭션·복합 인덱스·CTE·실행 계획·복제·Online DDL·시점 복구 등).",
+        '  confidence — **이 턴이 그 용어를 얼마나 명확히 정의했는가**만 본다. 용어가 얼마나'
+        " 일반적인지·중요한지는 이 숫자에 반영하지 마라(그건 tier 가 답한다).",
+        f"  한 개념당 표기는 하나만(`멱등성` 과 `멱등성(Idempotency)` 를 함께 넣지 마라)."
+        f" 최대 {_GLOSSARY_MAX}개. 담을 것이 없으면 `{_GLOSSARY_MARK} []` 로 적어라.",
     ]
     if ctxt:
         parts += ["", "── 이전 대화 ──", ctxt]
@@ -2066,6 +2090,37 @@ def split_title(answer: str) -> tuple[str, str]:
         return body, ""
     title = tail[len(_TITLE_MARK):].strip().strip("\"'`").strip()
     return rest, title[:120]
+
+
+def split_glossary(answer: str) -> "tuple[str, list]":
+    """답변에서 `#GLOSSARY:` 마지막 줄을 떼어 `(본문, 후보목록)` 으로 가른다.
+
+    `split_title` 과 같은 계약: 마커가 없거나 JSON 이 깨졌으면 **본문을 손대지 않고** 빈 목록을
+    돌려준다. 규약을 모르는 런타임이나 잘못 만든 JSON 이 답변을 상하게 하면 안 된다 — 용어
+    수집은 보조물이고 답변이 본체다.
+
+    떼어낸 뒤 본문이 비면 포기한다(제목 규약과 동일 이유: 빈 답변은 서버가 400 으로 거절한다).
+    """
+    body = str(answer or "")
+    lines = body.rstrip().split("\n")
+    if not lines:
+        return body, []
+    tail = lines[-1].strip()
+    if not tail.upper().startswith(_GLOSSARY_MARK.upper()):
+        return body, []
+    rest = "\n".join(lines[:-1]).rstrip()
+    if not rest:
+        return body, []
+    raw = tail[len(_GLOSSARY_MARK):].strip().strip("`").strip()
+    try:
+        parsed = json.loads(raw) if raw else []
+    except Exception:
+        # 형식을 못 지킨 것은 그 AI 의 사정이고, 그 대가를 사용자 답변이 치르게 하지 않는다.
+        # 다만 줄은 떼어낸다 — 남기면 화면에 `#GLOSSARY: [...` 가 그대로 보인다.
+        return rest, []
+    if not isinstance(parsed, list):
+        return rest, []
+    return rest, parsed[:_GLOSSARY_MAX]
 
 
 # ── 한 건 처리 ───────────────────────────────────────────────────────────────
@@ -2154,8 +2209,15 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         _log(f"{task_id}: 답변 완료 직전에 취소됨 — 제출하지 않는다")
         return False
 
-    # 제목 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
+    # 제목·용어 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
+    #
+    # 순서: title → glossary → title 한 번 더. 지시는 「용어 줄, 그 다음 제목 줄」 하나로 주지만,
+    # 두 줄을 뒤바꿔 내는 런타임이 있으면 첫 `split_title` 이 실패하고 그 줄이 본문에 남는다.
+    # 두 번째 호출은 그 경우를 흡수한다(마커가 없으면 no-op 이라 정상 경로에는 무영향).
     answer, title = split_title(answer)
+    answer, glossary_terms = split_glossary(answer)
+    if not title:
+        answer, title = split_title(answer)
 
     # 반영하지 못한 지정을 **밝힌다**(codex REV-20260828T170000 P1-4). 조용히 기본값으로
     # 답하면 사용자는 자기가 고른 모델로 답이 나온 줄 안다 — 그 오해는 화면 어디에도 드러나지
@@ -2188,6 +2250,10 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
     if title:
         payload["title"] = title
+    if glossary_terms:
+        # 빈 목록은 싣지 않는다 — 서버가 `None` 과 `[]` 를 구분해 「규약을 모르는 러너」와
+        # 「담을 것이 없던 턴」을 로그에서 가를 수 있게 한다.
+        payload["glossary_terms"] = glossary_terms
     res = api.call("submit_answer", payload, timeout=120.0)
     if res.get("_http") == 409:
         # 취소 신호를 못 본 채 여기까지 왔다(서버가 마지막 관문). 정상 흐름이다.
@@ -2208,7 +2274,9 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     if res.get("_http"):
         _log(f"{task_id}: 제출 실패 {res.get('_http')} {res.get('error')}")
         return False
-    _log(f"{task_id}: 제출 완료 (대화 반영={res.get('delivered_to_conversation')})")
+    _gl = res.get("glossary") or {}
+    _log(f"{task_id}: 제출 완료 (대화 반영={res.get('delivered_to_conversation')})"
+         + (f" 용어 {_gl}" if _gl else ""))
     return True
 
 

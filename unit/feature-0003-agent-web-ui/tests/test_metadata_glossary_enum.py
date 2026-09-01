@@ -200,11 +200,12 @@ def test_glossary_create_calls_core_and_audits(monkeypatch):
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     captured = {}
-    # 0021: upsert_glossary_term 시그니처에 role_key/source 추가(기본 '*'/'manual').
+    # 0021: role_key/source 추가(기본 '*'/'manual'). 0057: term_tier(통용범위) 추가.
     monkeypatch.setattr(_kg, "upsert_glossary_term",
-                        lambda conn, scope_key, term, definition, role_key="*", source="manual": captured.update(
+                        lambda conn, scope_key, term, definition, role_key="*", source="manual",
+                        term_tier="product": captured.update(
                             {"conn": conn, "scope_key": scope_key, "term": term, "definition": definition,
-                             "role_key": role_key, "source": source}))
+                             "role_key": role_key, "source": source, "term_tier": term_tier}))
     events = _audit_capture(monkeypatch)
 
     resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest({
@@ -339,10 +340,15 @@ def test_glossary_list_serializes(monkeypatch):
     acct = _admin(monkeypatch)
     monkeypatch.setattr(_dbmod, "_pg_connect_ro", lambda: _PgConn())
     ts = datetime.datetime(2026, 6, 24, 10, 0, 0)
-    # 0021 row: (id, scope_key, role_key, term, definition, source, created_at, updated_at)
-    rows = [(1, "common", "*", "용어A", "정의A", "manual", ts, ts),
-            (2, "common", "sales", "용어B", "정의B", "auto", ts, ts)]
+    # 0021 row + 0057 term_tier:
+    #   (id, scope_key, role_key, term, definition, source, created_at, updated_at, term_tier)
+    rows = [(1, "common", "*", "용어A", "정의A", "manual", ts, ts, "org"),
+            (2, "common", "sales", "용어B", "정의B", "auto", ts, ts, "product")]
     monkeypatch.setattr(_kg, "list_glossary_admin", lambda conn, scope_key, **k: rows)
+    # scope_key='common' 이면 전역 상속분을 덧붙이지 않는다(자기 자신이라 중복) — 그 분기 확인.
+    monkeypatch.setattr(_kg, "list_global_glossary_for_scope",
+                        lambda conn, **k: (_ for _ in ()).throw(
+                            AssertionError("common 조회에서 전역 상속분을 또 읽었다")))
 
     resp = admin_metadata.admin_list_glossary(_FakeRequest(query={"scope_key": "common"}), account=acct)
     assert resp.status_code == 200
@@ -351,6 +357,9 @@ def test_glossary_list_serializes(monkeypatch):
     assert out["items"][0]["id"] == 1 and out["items"][0]["term"] == "용어A"
     assert out["items"][0]["role_key"] == "*" and out["items"][0]["source"] == "manual"
     assert out["items"][1]["role_key"] == "sales" and out["items"][1]["source"] == "auto"
+    # 0057: 통용범위 축 + 「이 행이 편집 가능한가」 판정을 서버가 내려보낸다.
+    assert out["items"][0]["term_tier"] == "org" and out["items"][0]["inherited"] is False
+    assert out["inherited_count"] == 0
     assert out["items"][0]["updated_at"].startswith("2026-06-24")
 
 

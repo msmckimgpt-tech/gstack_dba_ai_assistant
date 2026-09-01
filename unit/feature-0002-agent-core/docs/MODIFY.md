@@ -2877,3 +2877,46 @@ LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
   "경로가 열려 있고 이름이 보존된다" 까지만 증명하며, 행동 변화는 다음 audit corroboration
   (msdb/sys 차단 후 `search_db_objects` 호출 전환율) 재측정으로 판정한다.
 
+
+## CHG-20260901T120000-glossary-term-tier — 용어 통용범위 축 + 브리지 자율수집 복원
+
+- **alembic 0057** `20260901_0057_glossary_term_tier.py` (신규): `kb_glossary.term_tier` ·
+  `glossary_feedback.term_tier`(각 `varchar(16)` NOT NULL DEFAULT 'product' + CHECK 3값) ·
+  `glossary_feedback.status` CHECK 에 `skipped_general` 추가 · 인덱스 3(`ix_kb_glossary_tier` ·
+  `ix_glossary_feedback_tier` · `ix_kb_glossary_term_norm` 함수 인덱스). downgrade 는
+  `skipped_general` 행을 `rejected` 로 접은 뒤 제약을 되돌린다(그러지 않으면 재추가 실패로
+  downgrade 자체가 막힌다). `MAX_MIGRATION.txt` 갱신.
+- **`src/scripts/agent_kb_schema.sql`**: 0057 ALTER 미러 추가(boot 정본 — `CREATE TABLE IF NOT
+  EXISTS` 라 기존 배치에서는 본문이 실행되지 않으므로 ALTER 미러가 필수. 0023 트랩 동형).
+- **`src/modules/kb_glossary.py`**: `TIER_*` 상수 · `GLOBAL_SCOPE` · `STATUS_SKIPPED_GENERAL` ·
+  `normalize_term_tier` · `normalize_term_surface` · `_GENERAL_TERM_SURFACES`(정규화 전체일치
+  사전) · `_SQL_KEYWORD_RE` · `classify_term_tier` · `scope_for_tier` ·
+  `find_glossary_duplicate` · `_settled_feedback_status` · `list_global_glossary_for_scope` ·
+  `normalize_suggestion_items` 신설. `auto_promote_or_queue` 를 8단 판정으로 재작성
+  (반환값에 `skipped_general` · `duplicate` 추가). `upsert_glossary_term` ·
+  `update_glossary_term` · `list_glossary_admin` · `get_glossary_term` ·
+  `record_glossary_suggestion` · `_insert_glossary_auto` · `list_glossary_feedback` ·
+  `promote_glossary_feedback` 에 `term_tier` 배선(promote 는 `skipped_general` 도 승급 대상).
+- **`src/modules/llm.py`**: `GLOSSARY_SUGGEST_PROMPT` 개정 — `tier` 필드 신설(3값 + 예시),
+  confidence 정의에서 **재사용성 제거**("Reusability … MUST NOT affect this number"),
+  한 개념 한 표기 지시 추가. `llm_glossary_suggest` 가 `tier` 를 원문 그대로 실어 보낸다
+  (화이트리스트 강제는 `normalize_suggestion_items` 한 곳).
+- **`src/agent_core.py`**: `_glossary_autopropose` 가 `term_tier` 를 전달하고, `suggestions`
+  인자를 받아 **LLM 추론을 건너뛸 수 있게** 확장(브리지 경로 진입점). 결과 집계 반환 +
+  `glossary_autopropose_done` 로깅(조용한 0건과 「등록될 용어 없음」을 가른다).
+- **`src/scripts/glossary_tier_sweep.py`** (신규): 소급 정리 — dry-run 기본, `--apply` 는
+  `--manifest` 필수(매니페스트를 못 쓰면 삭제하지 않는다), `--restore` 로 되돌리기.
+  `source='manual'` 무접촉. 교차 제품은 **보고만**.
+- **cross-cut feature-0003**: `routers/ai_tools.py` `submit_answer` 에 `glossary_terms` 옵션
+  수신 + `_absorb_bridge_glossary_terms`(제품 귀속을 task 행에서 해소·fail-closed) ·
+  `routers/_console_llm.py` `INACTIVE_SURFACES` 에 용어/ENUM 자율수집 2항목 ·
+  `routers/admin_metadata.py` tier CRUD + 전역 상속분(`inherited`) + `skipped_general` 조회 ·
+  `static/admin/metadata.js` select 필드 타입·배지·상속 읽기전용·큐 상태 필터 ·
+  `static/agent/bridge_agent.py` `_GLOSSARY_MARK`·`split_glossary`·프롬프트 규약.
+- **cross-cut feature-0043**: `src/bridge_agent.py` 정본 동기화(배포본과 byte-동치 —
+  `test_bridge_agent_sync` 가 이 계약을 잠근다. 실제로 첫 실행에서 이 테스트가 누락을 잡았다).
+- **테스트**: `tests/test_glossary_term_tier.py`(신규 20건) ·
+  `unit/feature-0003-agent-web-ui/tests/test_bridge_glossary_terms.py`(신규 14건) ·
+  기존 `test_kb_glossary_enum.py`·`test_metadata_glossary_{enum,autoreg}.py` 계약 갱신.
+- **검증**: `make test` PASS(rc=0, ruff clean). 뮤테이션 4종(결정적 강등 제거 · general 미등록
+  가드 제거 · 판정이력 단일 scope 회귀 · 러너 파싱 제거) **전건 KILL**(§16.7 G11-b).

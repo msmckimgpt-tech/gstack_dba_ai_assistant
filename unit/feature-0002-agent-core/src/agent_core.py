@@ -4700,57 +4700,82 @@ def _try_update_topic(conn, conversation_id: str, user_message: str, answer: str
         pass
 
 
-def _glossary_autopropose(conversation_id: str, user_message: str, answer: str, run_id: str) -> None:
+def _glossary_autopropose(conversation_id: str, user_message: str, answer: str, run_id: str,
+                          suggestions: "list | None" = None) -> "dict[str, int]":
     """대화 답변 직후 용어사전 자율등록(0021) — best-effort, ask 경로 차단 금지.
 
-    LLM 으로 도메인 용어 후보를 추론하고, 사용자 결정(하이브리드)에 따라 confidence ≥ THRESHOLD 면
-    용어사전(kb_glossary)에 자동 등록(source='auto', 되돌리기 가능), 미만이면 검토 큐(glossary_feedback
-    pending) 에 적재한다. 역할 기본 귀속 = 공용('*'). 저장소는 agent_kb(PG, mem_conn 아님).
-    AGENT_GLOSSARY_AUTOPROPOSE=0 이면 비활성. 어떤 예외도 호출측(run_agent)으로 전파하지 않는다.
+    LLM 으로 도메인 용어 후보를 추론하고 `kb_glossary.auto_promote_or_queue` 로 라우팅한다.
+    라우팅 규칙(통용범위 축, 0057)의 정본은 그 함수이고 여기서는 후보 수집·연결·집계만 한다.
+
+    Args:
+        suggestions: 이미 확보한 후보 목록(선택). 주어지면 **LLM 추론을 건너뛴다** —
+            feature-0043 브리지에서 개인 AI 가 답변과 함께 실어 보낸 후보를 그대로 태우는
+            경로(`routers/ai_tools.submit_answer`)가 이 인자를 쓴다. 서버 계정 LLM 이
+            차단된 지금 자율수집이 살아 있는 **유일한** 경로다.
+
+    Returns:
+        결과 집계 `{outcome: count}` (예: `{"auto_promoted": 2, "skipped_general": 1}`).
+        호출측 로깅·응답 요약용이며, 비활성/미가용/실패는 빈 dict.
+
+    역할 기본 귀속 = 공용('*'). 저장소는 agent_kb(PG, mem_conn 아님).
+    AGENT_GLOSSARY_AUTOPROPOSE=0 이면 비활성. 어떤 예외도 호출측으로 전파하지 않는다.
     """
+    stats: "dict[str, int]" = {}
     try:
         from shared import config as _cfg
         if not getattr(_cfg, "AGENT_GLOSSARY_AUTOPROPOSE", False):
-            return
+            return stats
         from modules import kb_glossary as _kg
-        suggestions = _kg.infer_terminology_suggestions(user_message, answer)
+        if suggestions is None:
+            suggestions = _kg.infer_terminology_suggestions(user_message, answer)
         if not suggestions:
-            return
+            return stats
         from shared.db import _pg_available, _pg_connect
         if not _pg_available():
-            return
-        # metadata-product-scope: 자율수집분도 **제품** 스코프에 귀속한다 — 콘솔 검토 큐/등록분이
+            return stats
+        # metadata-product-scope: 제품 고유 용어는 **제품** 스코프에 귀속한다 — 콘솔 검토 큐/등록분이
         # 같은 축이라야 사람이 제품 단위로 검수하고, 그 제품의 모든 datasource 질의에 주입된다.
         # 제품 미지정 대화(제품 없는 1:1/CLI)면 'common'(공용 사전). 단 **제품이 있는데 해소 실패면
         # 중단** — 'common' 으로 쓰면 그 제품 전용 용어가 전 제품에 퍼진다(codex review P1).
+        #
+        # 0057 이후에도 이 중단은 유지한다. tier 판정은 용어 자체를 보므로 제품 없이도 가능하지만,
+        # 해소 «실패» 는 「제품이 있는데 못 읽었다」는 뜻이라 그 대화가 어느 제품 것인지 모르는
+        # 상태다 — 그 상태에서 등록하면 tier=product 후보의 귀속처를 추측하게 된다.
         if _cfg.is_product_scope_unresolved():
             _log("glossary_autopropose_skip_unresolved_product", {"cid": conversation_id})
-            return
+            return stats
         scope_key = _cfg.get_active_product_scope() or "common"
         pg = _pg_connect(autocommit=False)
         try:
             for s in suggestions:
-                _kg.auto_promote_or_queue(
+                outcome = _kg.auto_promote_or_queue(
                     pg, scope_key, s.get("term"), s.get("definition"),
                     confidence=s.get("confidence", 0.5), role_key=_kg.COMMON_ROLE,
                     source_run_id=run_id, conversation_id=conversation_id,
+                    term_tier=s.get("term_tier"),
                 )
+                stats[outcome] = stats.get(outcome, 0) + 1
             pg.commit()
         except Exception:
             try:
                 pg.rollback()
             except Exception:
                 pass
+            stats = {}
         finally:
             try:
                 pg.close()
             except Exception:
                 pass
+        if stats:
+            # 무엇이 왜 걸러졌는지 남긴다 — 조용한 0건은 「등록될 용어가 없었다」와 구별되지 않는다.
+            _log("glossary_autopropose_done", {"cid": conversation_id, **stats})
     except Exception as exc:
         try:
             _log("glossary_autopropose_failed", {"err": repr(exc)})
         except Exception:
             pass
+    return stats
 
 
 def _enum_known_table_index() -> "set | None":
