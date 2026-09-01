@@ -12197,3 +12197,9 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
       baseline-first-obs→G1 / announced-guard→E3 / clearinterval→E2b.
 - [x] 구 F1(「남의 러너로 닫히지 않는다」)은 **제거**했다 — 그 단언이 이 회귀를 «올바름» 으로
       잠그고 있었다. 같은 상황을 H 가 반대 기대로 잠근다.
+- [x] **POST-DEPLOY 실측 PASS** (배포본 `ead6e30f`, 자산 `?v=caa9885f1a64`) — 제보 경로를 그대로
+      클릭했다: 이미 «대기 중» 인 상태에서 모달을 열고 「연결 준비」 후 `[내 AI 실행]` →
+      `modal_hidden:true` + 토스트 「내 AI가 연결되었습니다…」. 제보하신 「대기 중입니다」 문구는
+      성공 통로가 합쳐지며 사라졌다. 무중단 blip 0.
+      증적: `docs/test-runs.d/TASK-20260901T0330-connect-modal-launch-close-postdeploy.md` +
+      `docs/evidence/connect-modal-autoclose/pd2-*.png`
