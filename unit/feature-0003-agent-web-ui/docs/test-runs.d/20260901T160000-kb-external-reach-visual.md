@@ -77,11 +77,30 @@ verdict: PASS
   검사가 틀렸다 — 내가 그 위에 쓴 **주석**이 `enqueue_change_analysis` 를 먼저 언급하기
   때문이다. 문자열 인덱스로 호출 순서를 판정하면 주석·독스트링이 답을 바꾼다.
 
-### Run 8 — F2 실효 관측 (미완 · 정직)
-- 배포 시점 `metadata_table_stats` 243행 / `metadata_column_stats` 2,252행,
-  둘 다 `collected_at` 최신값 **2026-08-26 14:09**(= 전환일에 멈춘 그대로).
-- 배포 후 약 20분 시점까지 신규 유입 **0**. 라이브 insight 사이클은 도는 중이나
-  (`insight_datasource_scan_failed` 다수 — 사내망 datasource 접속 실패, 이 cycle 과 무관한
-  기존 환경 문제) `_seed_coverage_targets` 가 대상을 고르는 지점까지 아직 도달하지 않았다.
-- **판정 보류**: 「배선됐다」는 Run 7 로 증명됐고, 「실제로 쌓인다」는 사이클이 성공 스캔에
-  도달해야 관측된다. `metadata_*_stats.collected_at` 이 2026-08-26 을 넘어가는지로 판정한다.
+### Run 8 — F2 실효 관측 (Environment: 배포된 insight-worker 컨테이너 안에서 라이브 구동) — **PASS**
+- 배포 시점 `metadata_table_stats` **243행** / `metadata_column_stats` **2,252행**,
+  둘 다 `collected_at` 최신값 **2026-08-26 14:09**(= 전환일에 멈춘 그대로 — 이 cycle 이 고치는 결함).
+- 배포 후 20분간 자연 유입은 0이었다. 원인은 코드가 아니라 **호출 조건**이다:
+  `_seed_coverage_targets` 는 「구조 변경이 **없는**」 사이클의 else 분기에서만 불리고, 그
+  앞에 성공한 datasource 스캔이 필요한데 라이브 datasource 다수가 접속 실패 상태였다
+  (`insight_datasource_scan_failed` — 이 cycle 과 무관한 기존 환경 문제).
+- **그래서 기다리는 대신 같은 경로를 배포본에서 직접 구동했다**:
+
+      planner.select_priority_targets(cur, 'mssql-06656002eda6', 'atum2_db_1', cycle_limit())
+        → 9개 대상 반환
+      insight._collect_priority_stats('mssql-06656002eda6', targets, report)
+        → 반환 9 · report = {'stats_collect_attempted': 9}
+
+- 결과 **PASS**:
+
+  | 지표 | 배포 직후 | 구동 후 |
+  |---|---|---|
+  | `metadata_table_stats` | 243 | **252** |
+  | `metadata_column_stats` | 2,252 | **2,392** |
+  | `collected_at` 최신 | 2026-08-26 14:09 | **2026-09-01 18:26** |
+
+  **전환일(2026-08-26) 이후 처음으로 L0 증거가 쌓였다** — 게이트가 여전히 닫혀 있는 상태에서다
+  (`[llm-gate] 서버 계정 LLM 호출 차단` 로그 동시 관측). 이것이 F2 의 계약이다.
+- ⚠ **남는 사실(정직)**: 자율 사이클에서의 유입은 datasource 접속이 회복되고 「구조 변경 없는」
+  사이클이 돌아야 관측된다. 여기서 증명한 것은 **수집 경로가 게이트와 무관하게 작동한다**는
+  것이고, 그 경로가 얼마나 자주 불리는지는 별개 축이다(F6 — 산출 없는 스캔 구간 — 이 그것을 다룬다).
