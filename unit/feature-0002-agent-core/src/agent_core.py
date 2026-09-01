@@ -4136,6 +4136,117 @@ def _summarize_step_rationale(steps: list[dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
+# REQ-20260901T020746-interrupt-context-preserve ────────────────────────────────
+# 중단(interrupt)된 run 의 보존 본문. 세 구획으로 고정한다 —
+#   ① 미완 라벨(+ 새 지시 우선 지침)  ② 진행 단계  ③ 단계별 근거
+#
+# ①이 load-bearing 인 이유: 이 본문은 `core_messages` 를 타고 **다음 run 의 LLM 맥락**에
+# 그대로 실린다. 라벨이 없으면 모델이 이것을 *확정된 중간 결론* 으로 읽어, 사용자가 방향을
+# 바꾸려고 중단한 경우에도 폐기된 가설 위에서 답을 잇는다. mirror meta 의
+# `interrupted: true` 는 화면 렌더 전용이라 모델이 읽지 못한다 — 판단 근거는 본문에 있어야 한다
+# (사용자 결정 2026-09-01: "방향이 틀려서 재요청한 경우도 LLM이 충분히 판단할 수 있는 구조로").
+_INTERRUPT_NOTE_HEADER = (
+    "(중단된 요청입니다 — 아래는 완료된 답변이 아니라 중단 시점까지 진행한 중간 기록입니다. "
+    "확정된 결론으로 취급하지 말고, 이어지는 지시가 이와 다른 방향이면 그 지시를 따르세요.)"
+)
+_INTERRUPT_STEP_LINES_MAX = 20   # 진행 단계 표시 상한(초과분은 "외 N단계" 로 접는다)
+_INTERRUPT_ACTIVITY_LINES_MAX = 8  # 도구 step 이 없을 때 쓰는 활동 라벨 상한
+_INTERRUPT_LINE_CHARS_MAX = 160  # 단계 1줄 길이 상한
+# run 당 activity 는 보통 10 내외. 넘치면 오래된 것부터 버린다 — 중단 시점에 가까운 꼬리가
+# "무엇을 하던 중이었나" 를 말해 주므로 앞이 아니라 뒤를 남긴다.
+_ACTIVITY_TRAIL_MAX = 40
+
+
+def _append_activity_trail(trail: list[str], label: str, cap: int = _ACTIVITY_TRAIL_MAX) -> None:
+    """진행 라벨을 in-process trail 에 적재(제자리 변경). 빈 라벨은 무시, 상한 초과는 앞에서 버린다.
+
+    `_emit_activity` 안에 인라인으로 두면 중첩 함수라 단위 검증이 불가능해, 상한·공백 처리 같은
+    경계가 소스 읽기로만 확인된다. 모듈 레벨로 빼서 실제 호출로 잠근다.
+    """
+    text = str(label or "").strip()
+    if not text:
+        return
+    trail.append(text)
+    if cap > 0 and len(trail) > cap:
+        del trail[0:len(trail) - cap]
+
+
+def _interrupted_step_lines(steps: list[dict[str, Any]]) -> list[str]:
+    """도구 step 목록 → "1. [tool] 무엇을 했는지" 표시 줄."""
+    lines: list[str] = []
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("action") or "step") == "activity":
+            continue  # 활동 라벨은 별도 폴백 경로에서 다룬다(화면 접이식도 이를 거른다)
+        tool = str(step.get("tool") or "").strip()
+        label = (str(step.get("work") or "").strip()
+                 or str(step.get("intent") or "").strip()
+                 or str(step.get("sql") or "").strip())
+        label = " ".join(label.split())  # 개행·연속 공백 접기(SQL 이 label 로 온 경우)
+        if len(label) > _INTERRUPT_LINE_CHARS_MAX:
+            label = label[:_INTERRUPT_LINE_CHARS_MAX] + "…"
+        if tool and label:
+            lines.append(f"[{tool}] {label}")
+        elif tool or label:
+            lines.append(tool or label)
+    return lines
+
+
+def _build_interrupted_note(
+    steps: list[dict[str, Any]] | None,
+    rationale: str = "",
+    activity_trail: list[str] | None = None,
+    partial_answer: str = "",
+) -> str:
+    """중단된 run 의 보존 본문을 만든다. 남길 것이 하나도 없으면 빈 문자열.
+
+    빈 문자열을 반환하면 호출부가 메시지를 저장하지 않는다 — 헤더만 남은 말풍선은
+    사용자에게 "중단됨" 외에 아무 정보도 주지 않으면서 다음 run 의 맥락만 오염시킨다.
+    """
+    body: list[str] = []
+
+    step_lines = _interrupted_step_lines(steps or [])
+    if step_lines:
+        shown = step_lines[:_INTERRUPT_STEP_LINES_MAX]
+        body.append("진행 단계:")
+        body.extend(f"{idx}. {line}" for idx, line in enumerate(shown, 1))
+        if len(step_lines) > len(shown):
+            body.append(f"… 외 {len(step_lines) - len(shown)}단계")
+    else:
+        # 도구를 아직 한 번도 부르지 않은 국면에서 중단된 경우 — 무엇을 하던 중이었는지라도
+        # 남긴다. 이 폴백이 없으면 "맥락 로드/추론 중" 중단이 통째로 사라진다.
+        seen: set[str] = set()
+        acts: list[str] = []
+        for label in (activity_trail or []):
+            text = " ".join(str(label or "").split())
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            acts.append(text)
+        if acts:
+            shown_acts = acts[-_INTERRUPT_ACTIVITY_LINES_MAX:]
+            body.append("진행 상황:")
+            body.extend(f"- {text}" for text in shown_acts)
+
+    rationale_text = str(rationale or "").strip()
+    if rationale_text:
+        if body:
+            body.append("")
+        body.append(rationale_text)
+
+    partial_text = str(partial_answer or "").strip()
+    if partial_text:
+        if body:
+            body.append("")
+        body.append("진행 중이던 답변:")
+        body.append(partial_text)
+
+    if not body:
+        return ""
+    return f"{_INTERRUPT_NOTE_HEADER}\n\n" + "\n".join(body).strip()
+
+
 def _build_step_payload(
     run_id: str,
     step_index: int,
@@ -7866,11 +7977,22 @@ def _run_agent_core(
     # 로 표시만 구분(프론트가 보조 타임라인으로 렌더). 실패는 조용히 무시(투명화 보조 기능이
     # 본 추론을 깨지 않게).
     emit_index = 0
+    # REQ-20260901T020746-interrupt-context-preserve: 진행 라벨의 in-process 사본.
+    #
+    # 취소 보존 본문은 종전에 `steps`(=도구 step 목록)만 근거로 삼았는데, `steps.append` 는
+    # tool 분기 1곳뿐이라 **도구를 아직 한 번도 부르지 않은 국면**("맥락 불러오는 중",
+    # "추론 중")에서 중단하면 보존할 문장이 0 이었다. 사용자가 중단을 누르는 전형적 시점이
+    # 정확히 그 국면이다. activity step 은 DB(agent_runtime.steps)에는 이미 쌓이지만 그것을
+    # 되읽으려면 취소 경로에서 DB 왕복이 한 번 더 생기고, 화면 접이식은 activity 를 걸러낸다
+    # (`bubbleVisibleSteps`). 그래서 여기서 값싸게(라벨 문자열만) 들고 간다.
+    # 적재 규칙(공백 무시·상한 초과 시 앞에서 폐기)은 모듈 레벨 `_append_activity_trail` 가 갖는다.
+    _activity_trail: list[str] = []
 
     def _emit_activity(label: str, detail: str = "") -> None:
         nonlocal emit_index
         if not _writes_allowed(mem_conn, cid):
             return
+        _append_activity_trail(_activity_trail, label)
         emit_index += 1
         try:
             save_memory_step(mem_conn, cid, run_id, {
@@ -9442,9 +9564,12 @@ def _run_agent_core(
 
     if canceled_by_user:
         result["error"] = "요청이 취소되었습니다."
-        # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청(preserve_reasoning)으로 취소된 run 은
-        # 부분 추론을 폐기하지 않고 assistant 메시지로 보존한다 — 가시(이력) + 다음 run 맥락.
-        # 명시 '중단' 버튼(cancel_preserve != "1")은 기존대로 답변 없이 종료(동작 무변경).
+        # 중단된 run 의 진행분 보존 — 가시(이력) + 다음 run 맥락.
+        #
+        # composer-nonblock-interrupt R3 이 인터럽트 재요청 경로에 도입했고,
+        # REQ-20260901T020746-interrupt-context-preserve 가 **명시 '중단' 버튼도 기본 보존**
+        # 으로 넓혔다(`/api/cancel` 의 preserve_reasoning 기본값 = true). 이제 폐기는 호출자가
+        # `preserve_reasoning: false` 를 명시했을 때뿐이다.
         # _clear_cancel_request 가 cancel_* 플래그를 지우기 전에 먼저 읽는다.
         try:
             _preserve_reasoning = str(load_memory_kv(mem_conn, cid, "cancel_preserve") or "").strip() == "1"
@@ -9453,9 +9578,19 @@ def _run_agent_core(
         if _preserve_reasoning and not pending_delete:
             try:
                 if _writes_allowed(mem_conn, cid):
-                    _partial = str(result.get("rationale") or "").strip() or str(result.get("answer") or "").strip()
-                    if _partial:
-                        _kept = f"(이전 요청이 중단되어, 진행된 내용까지 보존합니다.)\n\n{_partial}"
+                    # 단계 목록 + 근거 요약 + (있으면) 진행 중이던 답변. 도구 호출 전 중단은
+                    # activity trail 이 받는다. 남길 것이 없으면 빈 문자열 → 저장 안 함.
+                    _kept = _build_interrupted_note(
+                        steps,
+                        rationale=str(result.get("rationale") or ""),
+                        activity_trail=_activity_trail,
+                        partial_answer=str(result.get("answer") or ""),
+                    )
+                    if _kept:
+                        # 이 메시지가 **단계 UI 의 앵커** 다: history 조립부가 assistant 메시지마다
+                        # `_load_steps_for_message` 로 그 run 의 steps 를 붙여 내려보내므로
+                        # (취소해도 agent_runtime.steps 행은 지워지지 않는다), 이 한 건이 남는 것만으로
+                        # 화면의 접이식 "실행 단계"·"쿼리 결과" 가 그대로 복구된다.
                         _save_message(mem_conn, cid, "assistant", content=_kept, recall_floor_created_at=_answer_recall_floor_ca_val)
                         _mirror_message(mem_conn, cid, "assistant", _kept, run_id,
                                         meta={"interrupted": True, **_answer_product_meta},

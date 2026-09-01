@@ -11,6 +11,33 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260901T020746-interrupt-context-preserve — 중단(interrupt)이 진행분을 버리지 않는다
+
+**요청(2026-09-01)**: "대화 중 assistant에게 요청했던 작업을 중단(interrupt) 하더라도 추론했던
+내용, 맥락, 단계가 손실되지는 않도록 구성해주세요."
+
+**근본원인**: `preserve_reasoning` 보존 축은 이미 있었으나 **명시 '중단' 버튼만 거기서 빠져
+있었다**. `/api/cancel` 의 `bool(data.get("preserve_reasoning"))` 가 미지정을 폐기로 접어,
+그 경로에서는 화면·이력·다음 맥락 세 축이 동시에 비었다. 부수적으로 보존 본문의 근거인
+`steps` 는 도구 step 만 담아, 도구 호출 전(추론 중) 중단은 보존 경로에 태워도 남길 것이 0 이었다.
+
+**변경**:
+
+| 파일 | 변경 |
+|---|---|
+| `src/routers/conversations.py` | `cancel_request` — `preserve_reasoning` 기본값 `True`. 명시 `false` 만 폐기 |
+| `src/routers/ai_discovery.py` | `/api/cancel` 스펙 2곳(목록·OpenAPI)에 `preserve_reasoning` + 기본값 노출 |
+| `src/static/app.js` | `cancelCurrentRun` — 보존 의도 명시 · 안내 문구("진행된 내용은 대화에 남습니다") · `_reloadForPreservedInterrupt` 신설(유한 3회 재확인, `preserveScroll`) |
+| `tests/test_cancel_preserve_default.py` | 신규 9 PASS — 기본값 방향 · falsy 명시값 · 프런트/외부 스펙 배선 |
+
+feature-0002 동반 변경(`_build_interrupted_note` · `_append_activity_trail` · 취소 분기 배선)은
+feature-0002 `CHG-20260901T020746-interrupt-preserved-note` 참조.
+
+**보존 메시지가 단계 UI 의 앵커**: 취소해도 `agent_runtime.steps` 행은 남고(`_purge_run_steps`
+는 호출부 0), history 조립부가 assistant 메시지마다 `_load_steps_for_message` 로 그 run 의
+steps 를 붙인다. 따라서 메시지 1건을 남기는 것만으로 접이식 "실행 단계"·"쿼리 결과" 가
+복구된다 — 별도 저장·별도 렌더 경로를 만들지 않았다.
+
 ## CHG-20260831T163000-conv-last-activity-postdeploy (POST-DEPLOY 실측 + 백필, doc-only)
 
 **변경**: 문서만 — `docs/{TASK,REPORT,TEST,REVIEW}.md` + feature-0002 `docs/MODIFY.md`. 코드 0.
