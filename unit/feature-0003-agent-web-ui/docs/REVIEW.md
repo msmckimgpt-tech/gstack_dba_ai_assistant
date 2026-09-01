@@ -7116,3 +7116,14 @@ serializer 재오염 · aria/화면 출처 분리 · `currentConversation()` 복
 
 신규 4건 + 계약 이전 6건. pytest **5177 passed / 5 skipped**.
 ⚠ `test_query_embed_visibility.py` 2건은 main 기준선 동일 실패(본 변경 무관).
+
+## REV-20260901T174000-side-panel-exclusive-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 기록
+
+- **Trigger**: 비정책 doc-only (test-runs.d fragment + TASK/MODIFY/REPORT). §18.8 dispatch 표의
+  「비정책 doc-only」 행 → panel SKIP.
+- **내용**: 선행 cycle 의 §16.3 deploy-backed 완료 조건 2 를 기록. 코드·계약 변경 0.
+- **정직 기록**: `bin/deploy-web.sh` 는 **멱등 no-op** 으로 끝났다 — 병렬 세션이 이미 내 머지를
+  포함하는 상위 커밋(`d3ead999`)으로 배포한 뒤였다. 그래서 완료 근거를 「내가 배포 명령을
+  돌렸다」가 아니라 **「라이브가 내 커밋을 담고 있다」** 4축 실측으로 세웠다(§16.7 G7-a —
+  이름·명령 이력이 아니라 실 resolve).
+
