@@ -842,7 +842,9 @@ function _renderBridgeSteps(taskId, steps, omitted = 0) {
   // 상세가 자기 스크롤 패널이 된 뒤로는(2026-08-31) 통째 재구성이 그 안의 스크롤을 0 으로
   // 되돌린다 — 새 단계가 도착할 때마다 사용자가 보던 위치를 잃는다. 펼침 상태와 같은 이유로
   // 보존한다(진행 중에는 이 재구성이 수십 번 돈다).
-  const prevBody = prev ? prev.querySelector(".message-details-body") : null;
+  // 스크롤 대상은 **단계 목록**이다(2026-09-01 개편 — 상세 본문은 더 이상 스크롤하지 않는다).
+  // 여기가 옛 선택자(`.message-details-body`)에 남아 있으면 보존이 조용히 no-op 이 된다.
+  const prevBody = prev ? prev.querySelector(".step-detail-list") : null;
   const prevScroll = prevBody ? prevBody.scrollTop : 0;
   const next = renderMessageDetails({ steps });
   if (next) {
@@ -856,7 +858,7 @@ function _renderBridgeSteps(taskId, steps, omitted = 0) {
       //   반복되는데, 늦게 실행된 옛 rAF 가 사용자가 그 사이 옮긴 위치를 과거 값으로
       //   되돌린다(codex 적대 리뷰 P2). 또한 새 패널이 이미 0 이 아니면(사용자가 손댔다)
       //   복원하지 않는다 — 사용자 조작과 다투지 않는다.
-      const nextBody = next.querySelector(".message-details-body");
+      const nextBody = next.querySelector(".step-detail-list");
       if (nextBody) {
         if (_bridgeDetailScrollRaf) cancelAnimationFrame(_bridgeDetailScrollRaf);
         _bridgeDetailScrollRaf = requestAnimationFrame(() => {
