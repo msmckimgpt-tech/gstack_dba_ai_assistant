@@ -3561,6 +3561,21 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   제거됨을 실측. 폴링 스코프(타 계정 task → 404)도 라이브 확인. 증적:
   `docs/test-runs.d/TASK-20260831T190000-job-result-unwrap-postdeploy.md`
 
+### Run — TASK-20260831T193000-attach-lineage-visibility (첨부 계보 비교 가시성 재설계)
+
+- **Environment: Windows-browser (PB-0008)** — **수행**. §13.2.9 격리 컨테이너
+  `web-verify-lineage`(라이브 web 이미지 + 브랜치 static 트리 **stamp 재주입** bind-mount,
+  `https://localhost:18098`)에서 실 Windows Chrome 151 로 판독. 공유 트리·라이브 web-a/b 무수정.
+- 구조: 그룹 카드 2 · `.in-lineage-group` **4/4**(평면 잔존 0) · `.is-branch` 2 · 그룹 비교 버튼 2
+- 픽셀: 확대 캡처로 레일·elbow·분기 들여쓰기 판독 / 240px 최소 폭에서 그룹 머리 **wrap**(무손실)
+- computed 색축: 파일명 `rgb(128,125,114)` · 사용자 칩 `rgb(128,125,114)` · AI 칩 `rgb(37,99,235)`
+  — 교정 전 `var(--muted)`(미정의 토큰) 경로에서 사용자 칩이 본문색 `rgb(38,37,30)` 이던 결함 포착
+- 인터랙션 **2 surface 개별 실행**: 그룹 머리 `⇄ 계보 비교` / 버전 박스 `⇄ 계보 비교` — 둘 다
+  축 `time` · aria `첨부 계보 비교` · 기준 `사용자 업로드 v1 · 현재` → 비교 `AI 수정본 v2` · `+182 / -21`
+- 증적: `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`
+- 회귀: `unit/feature-0003-agent-web-ui/tests` + `unit/feature-0002-agent-core/tests` 전건 PASS
+  (신규 `test_attach_lineage_group_ui.py` **32건** 포함 — 적대 리뷰 2라운드 조치분 반영) · `node --check` ESM PASS
+
 ## TASK-20260901T010306-doc-sync-rn-0901 — 릴리즈노트 2026-08-31 블록 신설 검증
 - **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면에 새 내용이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
 - `node --check static/release-notes-data.js` → PASS.

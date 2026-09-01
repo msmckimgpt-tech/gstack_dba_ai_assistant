@@ -6066,7 +6066,143 @@ bind-mount 한 검증용 컨테이너에서 했다. 그것은 "이 코드가 이
   않으며, 실패가 조용하다(오류 없이 다른 값이 들어간다).
 - 결론: 배포·백필·표면 실측 종결. 미실측 1건(PB-0008 육안)은 사유와 함께 명시했고 완료로 오인
   보고하지 않는다.
+## REV-20260831T193000-ai-claude-feature-0003-attach-lineage-viz — 첨부 계보 비교 가시성 재설계 (Minor §12.3)
 
+### 왜 선행 cycle 로 부족했나
+
+REQ-20260828-attach-lineage-ui 는 계보의 **존재**를 화면에 올렸다(배지 `계보 1/2`, 구성 안내문,
+단건 계보 비교 진입점). 그런데도 불만이 재수렴했다. **존재를 말하는 것과 견주기 쉬운 것은 다른
+문제**이기 때문이다 — 선행 cycle 은 «정보를 추가»했고, 이번 제보는 «구조가 안 보인다»였다.
+
+### 웹 리서치 → 설계 원칙 (디자인적 관점)
+
+| 출처 | 원칙 | 이 화면에 적용 |
+|---|---|---|
+| NN/g «The Principle of Common Region» | enclosure(테두리·배경)는 **근접성을 압도**한다 | 같은 파일의 계보를 카드로 감쌈 |
+| NN/g «Visual Hierarchy» | 무엇이 중요한지는 **크기·색**이 정한다 | 그룹 안 파일명 낮춤 / 계보 칩 승격 |
+| GitKraken Commit Graph | 브랜치를 **레인 + 연결선**으로 그린다 | 레일 + elbow + 분기 들여쓰기 |
+| GitKraken change gauge | 변경 규모를 **열기 전에** 보여준다 | 크기 델타 칩(정직한 라벨) |
+| Google Docs 버전 기록 | **작성자별 색** + 타임라인 + 명명 버전 | 사용자=중립 / AI=파랑 색축 |
+| Figma 브랜치 리뷰 | 비교/머지가 **1급 액션** | 그룹 머리의 `⇄ 계보 비교` |
+
+공통 관찰: 성숙한 도구는 모두 **컨테이너가 artifact 이름을 말하고, 행은 그 갈래를 가르는 정보만
+싣는다**(Google Docs 는 행에 문서명을 쓰지 않고, GitKraken 은 저장소명을 쓰지 않는다). 우리 화면은
+행마다 같은 파일명을 되풀이하며 정작 «누구의 갈래인가»를 서수(`계보 1/2`) 뒤에 감췄다.
+
+### 진단한 결함 7종
+
+1. 평면 형제 행 — 같은 파일의 갈래와 무관한 파일이 시각적 동급
+2. 분기가 산문·툴팁에만 — 보려면 읽어야 함
+3. 「계보」가 네 곳에서 서로 다른 뜻으로 반복(§16.8 예산)
+4. 비교 진입 2단계 — 펼쳐야 버튼이 나타남
+5. 작성 주체 색축 미성립 — **정의되지 않은 CSS 토큰**으로 조용히 무효
+6. 변경 규모 신호 부재 — 열어 봐야 앎
+7. 서수는 정체성이 아님 — 순서가 바뀌면 같은 계보가 다른 번호
+
+### 판단 근거 · 대안
+
+- **왜 카드(enclosure)인가, 간격이 아니라**: NN/g 가 명시하듯 공통영역이 근접성을 압도한다.
+  간격만으로는 «같은 파일의 갈래»가 전달되지 않는다 — 이미 그 상태였고 제보가 그 결과였다.
+- **왜 행에서 파일명을 지우지 않았나**: 그 요소가 «원문 보기» 클릭 대상이자 접근성 이름이다.
+  지우면 a11y 가 깎인다. 대신 **위계를 역전**했다(크기·굵기·색) — 정보는 남기고 시선만 옮긴다.
+- **왜 크기 델타인가, 실제 diff 통계가 아니라**: 실 통계(`+182 / -21`)는 계보마다 diff API
+  왕복이 필요해 목록 렌더 비용이 계보 수에 비례한다. 크기는 payload 에 이미 있어 **공짜**다.
+  대신 «내용 차이» 라고 말하지 않는다 — 같은 크기의 전혀 다른 파일에서 화면이 거짓말하게 된다.
+  실 내용 차이는 모달의 `+N / -N` 이 담당하고, 칩의 title 이 그 경로를 안내한다.
+- **왜 분기 표식에 글리프 + 파선을 함께 쓰나**: 색 단독 인코딩은 색각 이상 사용자에게 소실된다.
+- **버린 대안**: (a) 트리 위젯 — 계보 깊이가 사실상 2단이라 위젯 비용 대비 이득 없음.
+  (b) 목록을 계보 기준으로 재정렬 — 사용자가 기억하는 «최근 올린 순»을 깨뜨림. 그래서 그룹만
+  첫 멤버 자리에 통째로 넣어 전체 순서를 보존했다.
+
+### 자기 결함 1건 (실측이 잡음)
+
+색축을 넣었는데 **성립하지 않았다** — 인접 규칙이 쓰던 `var(--muted)` 가 이 저장소에 정의되지
+않은 토큰이라 조용히 무시됐고, 사용자 계보 칩이 본문색 그대로 렌더됐다. CSS 를 읽는 것만으로는
+드러나지 않는다(문법상 완전히 정상). 라이브 `getComputedStyle` 실측이 `rgb(38,37,30)` 을 반환해
+잡혔다. 「방어를 넣었다 ≠ 방어가 성립한다」의 CSS 판. 회귀 테스트로 잠갔다.
+
+또한 첫 라이브 시도에서 `groups: 0` 이 관측됐는데, 이를 «미구현»으로 읽지 않고 **캐시 축을
+갈라내** asset stamp 재주입으로 재현했다. 서버 파일이 신버전이어도 Chrome 모듈 캐시가 구버전을
+실행하는 이 저장소의 기지 함정이다.
+
+### 위험도 · 승인 근거
+
+- **Minor §12.3** — 표현 계층(JS 렌더 + CSS)만. 데이터·스키마·권한·API 계약 변경 0.
+  되돌리기 = revert + 재배포. 외부 비용 없음. 캐시-키/fingerprint 변경 없음(§16.3 blast-radius 비대상).
+- **배포 사전 승인**: `FIRST_REQUEST.md` 의 `deploy_scope: included` (2026-06-11 사용자 결정,
+  cycle 시작 시점에 이미 존재). cycle-final 후 web 재배포까지 사전 승인 범위 — 첫 배포 직전 1줄 표면화.
+- 검증: pytest 전건 PASS(신규 18) · `node --check` PASS · PB-0008 실 Windows 브라우저
+  구조·픽셀·computed·인터랙션 2 surface — `docs/test-runs.d/TASK-20260831T193000-attach-lineage-visibility.md`
+
+### 출처
+
+- https://www.nngroup.com/articles/common-region/
+- https://www.nngroup.com/articles/visual-hierarchy-ux-definition/
+- https://www.gitkraken.com/features/commit-graph
+- https://help.figma.com/hc/en-us/articles/360038006754-View-a-file-s-version-history
+- https://help.figma.com/hc/en-us/articles/360063144053-Guide-to-branching
+- https://zapier.com/blog/google-docs-revision-history/
+
+## REV-20260831T210000-ai-claude-feature-0003-attach-lineage-viz [CODEX:feature-0003-attach-lineage-visibility] — PASS (2R 조치 완료)
+
+- Related TASK: feature-0003-agent-web-ui (20260831T193000-attach-lineage-visibility)
+- Source: codex review (codex-cli 0.146.0, `codex exec` read-only, 판정 기준 = `docs/CODE_REVIEW.md`)
+- Trigger: UI/화면/레이아웃 keyword matched → §18.8 dispatch `ux, design`. subagent panel 대신
+  codex 채널 사용(§18.8.1 항목 2, check #9 accepted) — 본 세션은 Agent tool 사용이 제한된 환경.
+- Timestamp: 2026-08-31T21:00:00+09:00
+- Rounds: **2** (§18.8 패널 수렴 계약 (a) — P1 을 수정했으므로 확인 라운드 1회 수행)
+- Verdict: **PASS** — 라운드별 P1: 1R **1건** → 2R **2건**(신규) → 전건 조치 + 라이브 실증
+- Human Approval Needed: no (Minor §12.3 · 표현 계층 + fail-soft 신호 추가, 파괴적 변경 0)
+
+### 1R (P1 1 · P2 6 · P3 2) — 전건 조치
+
+| 등급 | 지적 | 조치 |
+|---|---|---|
+| P1 | 파일명이 그룹 키라 **독립 업로드 2건에도 파생 관계를 주장** | 그룹핑은 이름 유지(사용자가 찾는 것은 "이 이름으로 뭐가 있나"), **파생 주장만** 데이터로 — `is-branch` 를 서수 → `_originId > 0` 로, 계보수 title 에서 "갈라진" 제거 |
+| P2 | 3+ 계보 깊이가 서수 기반 | **깊이를 주장하지 않는다**(한 단만). 분기 부모 id 가 형제의 중간 버전일 수 있어 목록에서 되짚지 못한다(라이브 실측) — 되짚을 수 없는 관계로 A→B→C 를 그리면 그것도 근거 없는 주장. 의도적 제한으로 코드에 명시 |
+| P2 | 비동기 응답 뒤 화면이 바뀌어도 모달이 뜸 | `document.contains(_card.el)` + `activeConversationId` 이중 가드 |
+| P2 | SR 에서 계보 정체성 구분 불가 | 행 접근성 이름에 `(AI 계보, 갈라져 나옴, 2개 중 2번째)` 부착 |
+| P2 | 카드가 접근성 트리에서 그룹이 아님 | `role="group"` + aria-label |
+| P2 | `상세` 토글에 `aria-expanded` 없음 | 3지점(초기·토글·로드완료) 부착 |
+| P2 | 크기 미상을 0 으로 오인 | `Number.isFinite` 양측 검사 |
+| P2 | 그룹 신호 대비 1.10:1 | 테두리 `#a8a598` · 레일 `#8c8a7c`(3.02:1, 2px) · 칩 `#5a5852`(7.11:1) · 낮춘 파일명 `#6b6960`(5.51:1) |
+| P3 | 죽은 `data-lineage-count` · JSDoc | 제거 · 보강 |
+
+### 2R (P1 2 신규 · P2 2 · P3 1) — 전건 조치
+
+1R 조치는 **배선까지 확인되어 재지적 없음**. 새로 드러난 것은 둘 다 「조용한 오답」 축이다.
+
+- **P1 — 계보 비교가 실패 시 버전 비교로 조용히 전환.** 서버의 계보 해소는 fail-soft 라
+  `lineages: []` 로 떨어질 수 있는데, 그러면 `preselect.axis` 가 의도적으로 무시되고 **이 계보의
+  버전 비교**가 열린다. 사용자가 누른 것과 열리는 것이 다른 조용한 오답. → **못 하면 못 한다고
+  말한다**: 호출부가 `lineages.length < 2` 를 검사해 안내 후 열지 않는다.
+  라이브 실증(fetch 스텁으로 `lineages: []` 재현): 모달 **미개봉** + 「계보 정보를 불러오지
+  못했습니다」 토스트.
+- **P1 — 계보 목록 `LIMIT 20` 무음 절단.** 그룹 카드는 목록 기준 전체 계보 수를 말하는데 비교
+  API 는 20개에서 말없이 자른다 → 화면이 없는 완전성을 주장. → 로더가 `limit + 1` 을 읽어
+  **"마침 20개" 와 "잘림" 을 구분**하고, 응답에 `lineages_truncated` 를 실어 모달이 밝힌다.
+  라이브 실증: 로더 `limit=1 → truncated=True` / `limit=2,20 → False`, 모달에 「계보가 많아
+  최근 20개만 나열합니다」(role=status) 렌더.
+- **P2 — `Number(null) === 0`.** 변환 **뒤** isFinite 검사는 미상을 통과시킨다. 변환 전 가드로
+  이동 + 호출부의 `|| 0`(헬퍼 가드를 무력화하던 경로) 제거.
+- **P2 — catch 경로 stale 가드 부재.** 실패 토스트도 지금 화면의 것일 때만.
+- **P3 — JSDoc 블록 분리** → 함수에 붙는 단일 블록으로 병합.
+
+### 왜 2R 이 필요했나 (수렴 계약의 값)
+
+1R 의 수정이 **새 P1 을 만들지는 않았지만**, 1R 이 못 본 축(조용한 축 격하 · 무음 절단)을 2R 이
+잡았다. 「수정한 라운드 자체는 종결 근거가 아니다」(§18.8 (a))가 실제로 값을 냈다. 3R 은 돌리지
+않는다 — 2R 지적은 전부 **새 코드가 아니라 기존 fail-soft 경로의 노출**이었고, 조치가 그 경로를
+좁히는 방향(열지 않기·밝히기)이라 새 표면을 만들지 않았으며, 각 조치를 라이브에서 **양측**
+(정상/실패, 절단/비절단) 실증했다.
+
+### 회귀 (§16.7 G10 — 점수정이 아니라 구조로 잠금)
+
+신규 `test_attach_lineage_group_ui.py` **32건**. 각 지적이 되돌아오는 경로를 개별로 막는다:
+서수 기반 분기 판정 복귀 · 계보수 title 의 파생 주장 · stale 가드 순서(성공·실패 양쪽) ·
+`role=group` · 행 접근성 이름 · `aria-expanded` 3지점 · 변환 전 미상 가드 + 호출부 `|| 0` ·
+절단 신호 3층(로더·응답·모달) · 대비 floor · 축 부재 시 fail-loud.
+pytest `feature-0003`+`feature-0002`+`feature-0023` **4997 passed / 5 skipped**.
 ## REV-20260831T182700-ai-claude-corp-feature-0003-connect-modal-autoclose [CODEX:connect-modal-autoclose] — PASS (3R P1 0건)
 
 - Related TASK: feature-0003-agent-web-ui / `20260831T1827-connect-modal-autoclose`
