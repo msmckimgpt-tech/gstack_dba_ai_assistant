@@ -1578,3 +1578,28 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       `gpt-5.1` 응답·화면 0건) · 자격 있는 러너(선택기 정상 복귀 · 사유 지워짐).
       첫 시도가 HSTS 로 라이브 사이트를 보고 있던 것을 stamp 대조로 갈라냄.
       증적 `feature-0003 docs/test-runs.d/TASK-20260901T123000-caps-trust-gate-ui.md`
+
+### Run 2 — 적대 패널 조치 (2026-09-01, security CONCERN / backend BLOCK / qa BLOCK)
+
+- [x] `origin/main` 39커밋 머지 — 브랜치가 머지 대상이 아닌 base 에서 검증됐다는 지적 해소.
+      머지가 지적을 실물로 확인했다(`test_runner_declares_features_and_version` 이 정확히 충돌)
+- [x] **B1** 쓰기 시점 화석 가드 — 능력 미탑재 신고는 `"[]"` 로 이전 능력 무효화
+- [x] **B2/S1** 지문 tri-state(`None`=모름) + 조회 실패 로그 — 「컬럼 없는 배포에서 전원에게
+      거짓 갱신 지시」 차단
+- [x] **C1** `token_runner_profile` 도 게이트 통과 + AST 로 「모든 투영 함수가 게이트를 지난다」 잠금
+- [x] **B4/S3** 다중 러너 fail-closed + `mixed_runners`(「옛 것을 끄라」)
+- [x] **qa §3** 런타임별 provenance 신설 — 러너가 `source` 를 싣고 서버가 allowlist 로 거른다
+      (캐시 경로 포함). 자격 불리언만으로는 재발 클래스가 한 iteration 미뤄질 뿐이었다
+- [x] **S §3** `declares_caps_contract` 로 rename — 「인가 경계가 아니다」 명시
+- [x] 잡음 6종: 모듈 import · ARIA role · 다운로드 링크 배선 · 카탈로그 실패 사유 ·
+      `console_llm_state` dict 형태 · `detect_runtimes` docstring(양 미러)
+- [x] 소스검사 단언을 AST 로 격상 + 프런트 jsdom 하네스 10케이스
+- [x] **단언별 G11-b 재실증** — qa 가 생존시킨 뮤턴트 8종 전부 FAILED 확인
+- [x] `make test` 전량 green · 하네스 10/10
+- [x] 증적 문서의 과대 주장·수치 정정 (13/7건 · main 아닌 HEAD · ruff 비차단 · 칩/메뉴 축 분리)
+- [x] **PB-0008 재검증** (머지 후 빌드 stamp `5c5c2da471d6`) — 링크 배선·ARIA role·숨김이
+      실화면 도달 확인. 정체 대조가 **두 번** 작동(포트 선점·탭 이동으로 남의 컨테이너 응답을
+      읽을 뻔함). (b)혼재·(c)정상 상태는 타 세션 러너가 같은 계정에 붙어 있어 실화면 재확인
+      **미수행** — pytest 2행 fixture + jsdom 하네스가 덮는다(증적에 분리 표기).
+      증적 `feature-0003 docs/test-runs.d/TASK-20260901T140000-caps-trust-gate-ui-r2.md`
+- [ ] §18.8 확인 라운드 1회 (P1 0)

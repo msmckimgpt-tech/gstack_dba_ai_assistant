@@ -2212,3 +2212,26 @@ AI 출력이 코드블록 도중 잘리고 CLI 가 exit 0 이면 러너는 `ok=T
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-qa.md
 - Critical issue: 새 소스검사 단언 중 G11-b 가 실증된 것이 0건(16 FAILED 가 선행 단언에서 단락) + 생존 뮤턴트 6종 실증 + 브랜치가 main 대비 39 behind 라 머지 시 스위트 적색
 - Human Approval Needed: no
+
+---
+
+## REV-20260901T142000-ai-claude-feature-0043-caps-trust-gate [REJECTED:all-subagents]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: §18.8 수렴 계약 (a) 확인 라운드(security·backend·qa 3인)를 조치 후 착수했으나 **세 에이전트 모두 세션 사용량 한도로 조기 종료**(`You've hit your session limit · resets 5:30pm (Asia/Seoul)`). 대체 채널 `/codex review` 도 같은 시점 OpenAI 쿼터 소진(`try again at 3:44 PM`)이라 두 경로가 동시에 막혔다. 산출물 0건.
+- Rejected agents: security, backend, qa (전원 — accepted artifact 0)
+- Timestamp: 2026-09-01T14:20:00+09:00
+
+> ⚠ **이 entry 는 check #9 를 만족하지 않는다** (§18.9 — `[REJECTED:all-subagents]` 는 시도
+> 흔적이지 accepted review 가 아니다). 의도적이다: 라운드 1 이 **BLOCK 2건**을 냈고, 그
+> 조치가 새 결함을 만들지 않았는지는 **확인 라운드만이** 답할 수 있다. 수정한 라운드 자체는
+> 종결 근거가 아니라는 것이 §18.8 (a) 이고, 조치 규모(P1 7 · concern 8 · 설계축 신설 1 ·
+> main 39커밋 머지)를 생각하면 여기서 통과시키는 것이 정확히 그 계약이 막으려는 형태다.
+>
+> **잔여 위험 (명시)** — 확인 라운드가 우선 볼 지점:
+> - 다중 러너 fail-closed 가 **정상 사용자의 선택기를 지우는** 경우(만료 직전 유령 토큰 행,
+>   잠자던 노트북)가 있는가. 거짓양성의 대가는 정의상 정상 사용자가 치른다(§16.7 G9-c).
+> - 쓰기 시점 `"[]"` 가드가 `--cmd` 모드·8KiB 초과에서 **정상 목록을 30초마다 지우는가**.
+> - `oauth_store` 의 모듈 레벨 `shared` import 가 단독 import 경로(alembic·워커·스크립트)를
+>   깨는가.
+> - provenance allowlist 가 정당한 런타임(ollama 실조회·구 빌드가 남긴 캐시)을 떨어뜨리는가.
+> - `_func_source` 의 docstring 행 제거가 데코레이터·다중행 시그니처 함수에서 정확한가.

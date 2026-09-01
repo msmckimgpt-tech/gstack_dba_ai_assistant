@@ -499,7 +499,8 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     caps-trust-gate (사용자 제보 2026-09-01, 4차 재발): 위 세 번째 행이 이번에 더해졌다.
     폴백을 제거한 러너를 배포해도 **사용자 머신의 러너를 우리가 갱신할 수는 없어서**, 낡은
     빌드가 자기 소스의 내장 표(`gpt-5.1-codex`)를 계속 신고했고 이 카탈로그가 그것을 그대로
-    그렸다. 이제 `caps_trusted`(= 러너의 `caps_self_report` 신고)가 거짓이면 목록을 비운다.
+    그렸다. 이제 러너가 목록 출처 계약을 선언하지 않았으면(저장 계층의
+    `declares_caps_contract`) 목록을 비우고, 그 사실을 `runner_caps_stale` 로 말한다.
     **빈 목록만 내리지 않고 사유를 함께 내리는 것**이 이 행의 핵심이다 — 사유 없이 감추면
     선택기가 이유 없이 사라진 것으로 보이고(그 자체가 앞선 cycle 의 마찰이었다), 사용자는
     다음 행동(러너 다시 실행)을 어디서도 듣지 못한다.
@@ -513,6 +514,8 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     # 러너는 듣고 있는데 능력 신고 자격이 없다(구 빌드) — "고를 것이 없다" 와 구분해야
     # 화면이 다음 행동을 말할 수 있다. 기본 False: 러너가 아예 없을 때와 섞지 않는다.
     runner_caps_stale = False
+    # 선언한 러너도 함께 있는가(= 옛 것을 안 껐다). 안내 문구가 이 축으로 갈린다.
+    runner_mixed = False
     account_bridge_model = ""
     account_bridge_effort = ""
     conn = None
@@ -535,7 +538,11 @@ def get_api_vault_options(request: Request) -> JSONResponse:
                         cur, int(account.get("id") or 0))
                     runner_caps = list(_profile.get("capabilities") or [])
                     runner_caps_stale = bool(
-                        _profile.get("listening") and not _profile.get("caps_trusted"))
+                        _profile.get("listening")
+                        and not _profile.get("caps_contract_declared"))
+                    # 「갱신은 했는데 옛 것을 안 껐다」와 「아직 갱신 안 했다」는 다른 지시를
+                    # 요구한다 — 전자에게 「다시 실행하세요」는 이미 한 일이라 거짓이다.
+                    runner_mixed = bool(_profile.get("mixed_runners"))
                     # 계정 기본값도 **같은 커넥션에서** 읽는다 — 별개 연결을 열면 목록과
                     # 기본값이 서로 다른 순간의 사실이 되고, 그 틈에서 "목록에 없는 기본값"
                     # 이 나온다.
@@ -559,9 +566,10 @@ def get_api_vault_options(request: Request) -> JSONResponse:
         #   없는 모델일 수 있고, 그것을 고른 요청은 반영되지 않는다(P0-T 가 지운 상태의 재발).
         #   빈 목록은 선택기가 숨겨질 뿐이고, 답변 경로는 그대로 동작한다.
         runner_caps = []
-        # 조회가 실패했으면 자격 여부도 **모르는** 것이다 — 모르는 것을 "구 러너" 로 단정해
+        # 조회가 실패했으면 선언 여부도 **모르는** 것이다 — 모르는 것을 "구 러너" 로 단정해
         # 갱신 안내를 띄우면, 일시적 DB 오류가 멀쩡한 사용자에게 틀린 지시를 준다.
         runner_caps_stale = False
+        runner_mixed = False
         # 기본값도 같이 버린다 — 목록 없이 남은 기본값은 대조할 곳이 없어 그대로 쓰이거나
         # (없는 값이 선택돼 보이거나) 어차피 아래 `visible=False` 로 무시된다. 두 사실을
         # 함께 버려 "목록은 실패했는데 기본값만 살아 있는" 중간 상태를 만들지 않는다.
@@ -636,6 +644,8 @@ def get_api_vault_options(request: Request) -> JSONResponse:
             "model_selector_reason": (
                 "연결된 본인 AI 가 쓸 수 있는 모델입니다."
                 if visible else
+                "옛 러너가 아직 실행 중입니다 — 그것을 종료하면 모델을 고를 수 있습니다."
+                if runner_mixed else
                 "연결된 러너가 오래된 버전이라 모델 목록을 신뢰할 수 없습니다 —"
                 " 최신 실행 파일로 다시 실행해 주세요."
                 if runner_caps_stale else
@@ -644,7 +654,9 @@ def get_api_vault_options(request: Request) -> JSONResponse:
             ),
             # 프론트가 사유 문구를 파싱하지 않게 상태를 **별도 값**으로 준다.
             "runner_caps_stale": runner_caps_stale,
+            # 프런트가 안내 안 **링크로 그린다**(소비처 0 이던 것을 배선 — 적대리뷰 C2).
             "runner_download_url": "/static/agent/bridge_agent.py",
+            "runner_mixed": runner_mixed,
         })
     return JSONResponse(
         {

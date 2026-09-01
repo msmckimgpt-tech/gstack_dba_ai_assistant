@@ -1475,6 +1475,12 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   word-break: keep-all;
 }
 .composer-actions-note.hidden { display: none; }
+/* 받을 곳 링크 — 안내 문장 안에서만 강조된다(별도 버튼 줄을 만들지 않는다). */
+.composer-actions-note a {
+  color: var(--primary, #2563eb);
+  text-decoration: underline;
+  white-space: nowrap;
+}
 
 /* Secondary popup — 모델 선택 (description 포함). primary 우측 fixed 로 띄움. */
 .composer-model-menu {

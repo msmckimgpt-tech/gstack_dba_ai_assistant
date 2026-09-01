@@ -31,11 +31,22 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+# ⚠ **모듈 레벨 import 다** (backend 적대리뷰 §3, 2026-09-01). 처음엔 「저장 계층이 shared 에
+#   모듈 로드 의존을 만들지 않는다」는 이유로 함수 안 지연 import 였는데, 그 사유가 실제
+#   의존 그래프와 달랐다 — `web/app.py` 가 이미 모듈 스코프에서 `shared` 를 import 하므로
+#   웹 프로세스는 그것에 하드·비지연 의존을 갖는다. 지연은 아무것도 사지 못하고 **미테스트
+#   `except` 분기**만 지불했고, 그 분기가 실화되면 전 계정의 모델 선택기가 조용히 사라진다.
+#   여기서 import 하면 패키징 파손이 **관측 가능한 startup 에서 크게 실패**한다.
+from shared.bridge_tasks import RUNNER_FEATURE_CAPS_SELF_REPORT
+
+_log = logging.getLogger(__name__)
 
 # 인가 코드 TTL. 짧을수록 좋다 — 코드는 브라우저 리다이렉트 한 번을 건너는 데만 쓰인다.
 AUTH_CODE_TTL_SEC = 60
@@ -642,8 +653,18 @@ def token_runner_profile(cur, raw_token: str) -> dict:
     라는 것이 애초의 설계였다("배치는 그 사람이 요청한 적 없는 일이다").
 
     그래서 자격은 신고한 그 토큰에서만 읽는다. 신고가 없으면 빈 값 = 자격 없음.
+
+    ## 능력 축은 `account_runner_profile` 과 **같은 게이트**를 지난다 (2026-09-01)
+
+    이 함수도 `RunnerCapabilities` 를 투영하므로 계약 게이트의 **두 번째 관문**이다.
+    현재 소비처(`ai_tools._runner_job_grants`)는 `features`·`agent_version` 만 읽어 오늘은
+    새지 않지만, per-runner 정확성이 필요한 다음 소비자는 자연스럽게 이쪽으로 손을 뻗는다 —
+    저장소가 이미 그쪽이 authz 에 *더* 옳다고 가르치고 있기 때문이다. 그때 미게이트 목록을
+    받으면 이번에 닫은 경로가 조용히 다시 열린다(§16.7 G8-a, backend·security 적대리뷰 C1).
+    구조 테스트가 「`RunnerCapabilities` 를 투영하는 모든 함수가 게이트를 지난다」를 잠근다.
     """
-    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
+    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False,
+             "caps_contract_declared": False}
     if not raw_token:
         return empty
     cur.execute(
@@ -658,16 +679,12 @@ def token_runner_profile(cur, raw_token: str) -> dict:
     row = cur.fetchone()
     if not row:
         return empty
-    caps: list = []
-    if row[0]:
-        try:
-            parsed = json.loads(row[0])
-        except (TypeError, ValueError):
-            parsed = None
-        if isinstance(parsed, list):
-            caps = parsed
-    return {"capabilities": caps, "features": parse_runner_features(row[1]),
-            "agent_version": str(row[2] or "").strip(), "listening": True}
+    features = parse_runner_features(row[1])
+    declared = declares_caps_contract(features)
+    return {"capabilities": _parse_caps_column(row[0]) if declared else [],
+            "features": features,
+            "agent_version": str(row[2] or "").strip(), "listening": True,
+            "caps_contract_declared": declared}
 
 
 def set_runner_report(cur, raw_token: str, capabilities: str | None,
@@ -698,11 +715,30 @@ def set_runner_report(cur, raw_token: str, capabilities: str | None,
     """
     if not raw_token:
         return False
+    csv = serialize_runner_features(features)
     if capabilities is not None and len(capabilities.encode("utf-8")) > RUNNER_CAPS_MAX_BYTES:
         # 능력이 과대해도 **기능·버전은 살린다** — 한 축의 결함이 나머지를 지우지 않게
         # (P0-Z3 의 `_sanitize_runtimes` 가 항목 단위로 버리는 것과 같은 방향).
+        # ⚠ 단 아래 화석 가드가 이 `None` 을 「신고했는데 못 실었다」로 다뤄야 한다.
         capabilities = None
-    csv = serialize_runner_features(features)
+    # ── 화석 가드 (backend 적대리뷰 B1, 2026-09-01) ────────────────────────────────
+    #
+    # `COALESCE(%s, t.RunnerCapabilities)` 는 `capabilities is None` 일 때 **이전 행 값을
+    # 남긴다**. 그런데 같은 문장이 `RunnerFeatures` 는 새 값으로 덮는다. 그 조합이 결함을
+    # 저장 경로로 되살린다:
+    #
+    #   구 러너가 `[{codex: gpt-5.1-codex}]` 저장 → 사용자가 새 러너를 **같은 토큰**으로
+    #   재실행(원클릭 명령이 토큰을 품는다) → 새 신고가 8KiB 초과이거나 `--cmd` 모드라
+    #   `capabilities=None` → 옛 목록 유지 + `RunnerFeatures` 에 `caps_self_report` 부착
+    #   → 읽기 게이트가 그 화석을 「연결된 본인 AI 가 쓸 수 있는 모델」로 인증한다.
+    #
+    # 읽기 게이트는 features 와 capabilities 를 **같은 러너의 사실**로 가정하는데 쓰기
+    # 경로가 그 가정을 깬다. 그래서 두 축을 여기서 원자적으로 만든다: 능력을 싣지 못한
+    # 신고는 **이전 능력을 무효화**한다(`"[]"` = 「신고했고 고를 것이 없다」). `None` 을
+    # 그대로 두어 과거를 남기는 것은 이 신고에 대해 아는 바가 없을 때뿐인데, 여기서는
+    # 「이 러너가 무엇을 쓸 수 있는지 우리는 모른다」가 정확히 참이므로 빈 것이 정직하다.
+    if capabilities is None:
+        capabilities = "[]"
     ver = str(agent_version or "").strip()[:32]
     # 지문은 **모양만** 강제한다(16진 6~16자) — 값의 의미는 해석하지 않고 대조에만 쓴다.
     bld = str(agent_build or "").strip().lower()[:16]
@@ -797,29 +833,46 @@ def account_runner_profile(cur, account_id: int,
     신고해도 **행 자체가 안 잡혀** 기능이 없는 것으로 보인다. 두 축은 수명이 다르므로
     행 선택은 **하트비트 신선도**로만 하고, 각 축의 부재는 각자 빈 값으로 표현한다.
 
-    ## 능력 축의 자격 게이트 (2026-09-01, 사용자 제보 4차)
+    ## 능력 축의 계약 게이트 (2026-09-01, 사용자 제보 4차)
 
-    `capabilities` 는 **`caps_self_report` 를 신고한 러너의 것만** 통과시킨다
-    (`_caps_trusted`). 자격이 없으면 저장된 값이 있어도 빈 목록으로 내리고 `caps_trusted`
-    를 `False` 로 말한다 — 「목록이 없다」와 「믿을 수 없어 감췄다」는 다른 사실이고, 화면은
-    후자에 대해 다음 행동(러너 갱신)을 말해야 하기 때문이다.
+    `capabilities` 는 **`caps_self_report` 를 선언한 러너의 것만** 통과시킨다
+    (`declares_caps_contract`). 선언이 없으면 저장된 값이 있어도 빈 목록으로 내리고
+    `caps_contract_declared` 를 `False` 로 말한다 — 「목록이 없다」와 「믿을 수 없어 감췄다」는
+    다른 사실이고, 화면은 후자에 대해 다음 행동(러너 갱신)을 말해야 하기 때문이다.
 
     **게이트를 여기 두는 이유**: 능력 소비처가 셋이다 — 카탈로그(`routers/system.py`),
     저장 선택 복원(`routers/conversations._bridge_model_offered`), 그리고 얇은 래퍼
-    `account_runner_capabilities`. 소비처마다 걸면 하나를 빠뜨리는 순간 그 경로로 낡은
-    목록이 되살아난다(§16.7 G8-a). 뒤 둘이 모두 이 함수를 지나므로 **여기가 유일한 관문**이다.
+    `account_runner_capabilities`. 뒤 둘이 모두 이 함수를 지난다. **`token_runner_profile`
+    도 같은 컬럼을 투영하므로 그쪽에도 같은 게이트를 건다** — 「여기가 유일한 관문」은
+    거짓이었다(backend·security 적대리뷰 C1). 두 곳이 관문이고, 그 사실을 구조 테스트가
+    잠근다(§16.7 G8-a).
+
+    ## 다중 러너: **하나라도 미선언이면 감춘다** (fail-closed, 2026-09-01)
+
+    종전엔 `ORDER BY LastHeartbeatAt DESC LIMIT 1` 로 **가장 최근에 말한 러너 하나**만 봤다.
+    그러면 옛 러너와 새 러너가 함께 살아 있을 때(= 이 게이트의 안내가 「다시 실행해 주세요」로
+    **직접 만드는 상태**) 이기는 행이 30초마다 번갈아 바뀌어 선택기가 깜빡인다 — 사용자는
+    이미 시킨 대로 했는데 화면이 계속 낡았다고 말한다(적대리뷰 3인 중 2인이 독립 지적).
+
+    그래서 살아 있는 행을 **여러 개 읽고**, 하나라도 계약을 선언하지 않았으면 능력을 내지
+    않는다. 신뢰된 행을 *선호*하는 대안은 기각했다 — 그 목록으로 고른 모델을 실제로 질문을
+    가져가는 것이 미선언 러너일 수 있고, 그러면 P0-T 가 지운 「고를 수 있는데 반영은 안 되는」
+    상태가 정확히 되돌아온다. 판정이 결정적이고 fail-closed 인 편이 낫다.
+
+    `mixed_runners` 로 「선언한 러너도 함께 있다」를 구분해 화면이 **옛 러너를 멈추라**고
+    말할 수 있게 한다(그냥 「갱신하세요」는 이미 갱신한 사람에게 거짓이다).
 
     `features`·`agent_version`·`listening` 축은 **건드리지 않는다** — 콘솔 작업 배급 자격과
     「연결됨」 표시는 능력 신고와 수명이 다른 사실이고, 함께 접으면 구 러너의 콘솔 위임까지
-    끊는 무관한 회귀가 된다.
+    끊는 무관한 회귀가 된다. 이 축들은 종전대로 **가장 최근 행**의 것이다.
 
     Returns:
         `{"capabilities": list, "features": list[str], "agent_version": str,
-          "listening": bool, "caps_trusted": bool}` — 러너가 없으면 전부 빈 값 +
-        `listening=False`.
+          "listening": bool, "caps_contract_declared": bool, "mixed_runners": bool}`
+        — 러너가 없으면 전부 빈 값 + `listening=False`.
     """
     empty = {"capabilities": [], "features": [], "agent_version": "",
-             "listening": False, "caps_trusted": False}
+             "listening": False, "caps_contract_declared": False, "mixed_runners": False}
     if not account_id:
         return empty
     window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
@@ -830,52 +883,70 @@ def account_runner_profile(cur, account_id: int,
         f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
         "  AND t.LastHeartbeatAt IS NOT NULL "
         f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
-        "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+        f"ORDER BY t.LastHeartbeatAt DESC LIMIT {int(RUNNER_ROWS_SCAN_MAX)}",
         (int(account_id), window),
     )
-    row = cur.fetchone()
-    if not row:
+    rows = list(cur.fetchall() or [])
+    if not rows:
         return empty
-    caps: list = []
-    if row[0]:
-        try:
-            parsed = json.loads(row[0])
-        except (TypeError, ValueError):
-            # 저장된 값이 깨졌다 — 빈 목록으로 다룬다(선택기가 숨겨질 뿐, 답변 경로는 멀쩡하다).
-            parsed = None
-        if isinstance(parsed, list):
-            caps = parsed
-    features = parse_runner_features(row[1])
-    trusted = _caps_trusted(features)
+    newest = rows[0]
+    features = parse_runner_features(newest[1])
+    declared_flags = [declares_caps_contract(parse_runner_features(r[1])) for r in rows]
+    all_declared = all(declared_flags)
     return {
-        # 자격 없는 신고는 **여기서** 떨어뜨린다 — 아래 소비처가 각자 판정하지 않게.
-        "capabilities": caps if trusted else [],
+        # 선언 없는 신고는 **여기서** 떨어뜨린다 — 아래 소비처가 각자 판정하지 않게.
+        "capabilities": _parse_caps_column(newest[0]) if all_declared else [],
         "features": features,
-        "agent_version": str(row[2] or "").strip(),
+        "agent_version": str(newest[2] or "").strip(),
         "listening": True,
-        "caps_trusted": trusted,
+        "caps_contract_declared": all_declared,
+        # 선언한 러너도 함께 있다 = 사용자가 갱신은 했고 **옛 것을 안 껐다**.
+        "mixed_runners": (not all_declared) and any(declared_flags),
     }
 
 
-def _caps_trusted(features: list[str]) -> bool:
-    """이 러너의 능력 신고를 화면에 그려도 되는가 (사용자 제보 2026-09-01, 4차 재발).
+#: 계정당 훑는 살아 있는 러너 행 수 상한. 사람이 동시에 붙이는 머신 수의 현실적 상한이면서,
+#: 상한이 없으면 토큰이 많은 계정에서 이 질의가 커진다. 초과분은 보지 않으므로 **미선언
+#: 러너를 놓칠 수 있다** — 그 방향은 fail-open 이라 상한을 넉넉히 둔다.
+RUNNER_ROWS_SCAN_MAX = 8
+
+
+def _parse_caps_column(raw: Any) -> list:
+    """`RunnerCapabilities` 컬럼 한 칸을 목록으로. 깨졌으면 빈 목록.
+
+    두 프로필 함수가 같은 파싱을 하므로 한 곳에 둔다 — 각자 적으면 한쪽만 고쳐진다.
+    빈 목록은 선택기가 숨겨질 뿐이고 답변 경로는 멀쩡하다.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def declares_caps_contract(features: list[str]) -> bool:
+    """이 러너가 **모델 목록의 출처 계약**을 선언했는가 (사용자 제보 2026-09-01, 4차 재발).
 
     참인 조건은 하나다 — 러너가 `caps_self_report` 를 신고했는가. 그 이름은 「모델 목록의
     출처가 AI 자신의 응답뿐」이라는 계약을 지키는 빌드만 안다(정본:
-    `shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT`).
+    `shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT`, 모듈 상단에서 import).
 
-    ⚠ **이름을 여기에 리터럴로 적지 않는다.** 두 곳이 각자 문자열을 지으면 한쪽 오타가
-    「아무도 자격을 못 얻는」(전 사용자 선택기 소멸) 또는 그 반대로 조용히 갈린다. 지연
-    import 인 이유는 이 모듈이 저장 계층이라 `shared` 에 모듈 로드 의존을 만들지 않기
-    위해서다(`routers/ai_tools._runner_update_hint` 와 같은 패턴).
+    ## ⚠ 이것은 **인가 경계가 아니다** (security 적대리뷰 §3, 2026-09-01)
 
-    import 실패는 **자격 없음**으로 다룬다 — 이 방향의 대가는 선택기가 감춰지는 것이고,
-    반대 방향의 대가는 없는 모델을 확신 있게 보여주는 것이다. 후자가 이 §의 결함이다.
+    종전 이름은 `_caps_trusted` 였고 `자격`(entitlement) 어휘를 썼는데, 그 어휘가 인가
+    경계처럼 읽힌다. 실제로는 **호환성 자기신고**다 — 값은 클라이언트가 준 하트비트 본문에서
+    오고 서버는 검증 수단이 없다(러너는 사용자가 내려받아 실행하는 평문 파일이다). 위조의
+    blast radius 는 **그 사용자 자기 드롭다운 하나**이며, 하트비트를 위조할 수 있는 자는
+    이미 그 계정의 살아 있는 토큰을 쥐고 있어 인증 API 표면 전체를 갖는다 — 틀린 모델 목록을
+    보이는 것은 escalation 이 아니다. 그래서 이 게이트는 호환성 검사로서 건전하다.
+    **여기에 진짜 보안 결정을 얹지 마라** — 이름을 바꾼 이유가 그것이다.
+
+    자기신고의 한계는 런타임별 provenance(`_sanitize_runtimes` 의 `source` allowlist)가
+    보완한다: 이 불리언은 「이 빌드가 계약을 아는가」, provenance 는 「이 목록이 실제로
+    어떻게 얻어졌는가」에 답한다. 둘은 다른 질문이고 함께 걸린다.
     """
-    try:
-        from shared.bridge_tasks import RUNNER_FEATURE_CAPS_SELF_REPORT
-    except Exception:  # noqa: BLE001
-        return False
     return RUNNER_FEATURE_CAPS_SELF_REPORT in (features or [])
 
 
@@ -1029,14 +1100,31 @@ def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> l
     return out
 
 
-def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str:
-    """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. 없으면 빈 문자열.
+def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str | None:
+    """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. **tri-state.**
+
+    | 반환 | 뜻 |
+    |---|---|
+    | `"<hex>"` | 러너가 이 지문을 신고했다 |
+    | `""` | 행은 있는데 **러너가 지문을 신고하지 않았다** (= 지문 축 이전 빌드) |
+    | `None` | **우리가 모른다** — 조회 실패·컬럼 부재·듣고 있는 러너 없음 |
+
+    ## 왜 tri-state 인가 (security·backend 적대리뷰 B2, 2026-09-01)
+
+    종전엔 셋이 모두 `""` 였다. 그리고 「지문 부재 = 더 오래됨」 판정을 도입하는 순간, 그
+    뭉갬이 **`RunnerBuild` 컬럼이 아직 없는 배포에서 최신 러너를 도는 사용자 전원에게**
+    「최신 실행 파일로 다시 실행하세요」라는 거짓 지시를 보내게 된다 — 이 변경 자신이
+    「모르는 것을 stale 로 부르면 거짓 경고가 된다」고 배포본 쪽 축에 적용한 규칙을 신고
+    쪽 축에는 적용하지 않은 비대칭이었다.
+
+    ⚠ 이 함수의 반환을 `if not build:` 로 판정하지 마라 — `""` 와 `None` 이 갈리는 것이
+    이 함수의 존재 이유다. 판정은 `routers/ai_tools.runner_build_is_stale` 하나가 한다.
 
     신선도 술어는 능력 조회와 같은 것을 쓴다 — 갈리면 "연결됐다는데 지문은 옛 러너의 것"
     같은 상태가 만들어지고, 화면은 둘 중 어느 쪽을 믿을지 정해야 한다.
     """
     if not account_id:
-        return ""
+        return None
     window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
     try:
         cur.execute(
@@ -1049,10 +1137,15 @@ def account_runner_build(cur, account_id: int, window_sec: int | None = None) ->
             (int(account_id), window),
         )
         row = cur.fetchone()
-    except Exception:
-        # 컬럼이 아직 없는 배포 — "모른다" 로 다룬다(대조하지 않는다).
-        return ""
-    return str((row or [""])[0] or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        # 컬럼이 아직 없는 배포·일시적 DB 오류 — **모른다**. 침묵시키지 않는다: 이 값이
+        # `None` 인 이유를 좁힐 수 없으면 「왜 아무도 stale 로 안 잡히나」를 추적 못 한다.
+        _log.warning("[bridge] 러너 지문 조회 실패 account=%s — 대조하지 않는다: %r",
+                     account_id, exc)
+        return None
+    if not row:
+        return None            # 듣고 있는 러너가 없다 — 대조할 대상 자체가 없다
+    return str(row[0] or "").strip()
 
 
 def account_bridge_defaults(cur, account_id: int) -> tuple[str, str]:

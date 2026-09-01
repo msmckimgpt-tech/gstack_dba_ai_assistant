@@ -48,11 +48,38 @@ MCP_STDIO = _UNIT / "feature-0041-external-ai-tool-surface" / "src" / "external_
 
 
 def _func_source(path: pathlib.Path, name: str) -> str:
-    """모듈에서 함수 하나의 소스만 떼어낸다(파일 전역 검색이 남의 코드를 오검출하지 않게)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    """모듈에서 함수 하나의 소스만 떼어낸다 — **docstring 과 주석을 뺀 코드만**.
+
+    ⚠ 종전에는 `ast.get_source_segment` 결과를 그대로 돌려줬고 거기엔 **docstring 이
+    포함**됐다. 그래서 이 헬퍼를 경유하는 모든 「X 가 있다」 단언을 그 함수 자신의 설명
+    문장이 통과시켰다 — qa 적대리뷰가 뮤턴트로 실증했다: `_profile.get("caps" "_trusted")`
+    (동작 동일, 토큰은 코드에서 사라짐)를 넣어도 `assert "caps_trusted" in body` 가 green.
+    §16.7 **G11-a** 가 「가장 위험한 형태」로 지목한 바로 그것이다.
+
+    ⚠ **`ast.unparse` 로 재출력하지 않는다.** 그러면 포맷이 정규화돼(따옴표·줄바꿈·괄호)
+    이 헬퍼를 쓰는 **무관한 단언들이 무더기로 깨진다**(실측: 15건). 원문 형식은 보존하고
+    **docstring 이 차지한 줄만** 잘라낸다 — 잘라낼 범위는 파서가 준 `lineno`/`end_lineno`
+    라서 행 단위 휴리스틱(`grep -v '^\\s*#'`)의 오탐(블록 주석·멀티라인 문자열)이 없다.
+
+    ⚠ 주석(`#`)은 **남긴다**. 「X 가 없다」류 부재 단언이 이 헬퍼를 쓸 수 있고, 그 경우
+    리터럴·주석을 지우면 찾으려는 결함 라인을 건너뛴다(G11-a 의 부재-단언 예외). 존재
+    단언에서 주석이 문제가 되면 그 단언은 AST 로 올려야 한다 — 그것이 정답이다.
+    """
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            return ast.get_source_segment(path.read_text(encoding="utf-8"), node) or ""
+            seg = ast.get_source_segment(src, node) or ""
+            body = node.body
+            if not (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                return seg
+            # docstring 이 차지한 줄 범위를 함수 시작 기준으로 환산해 제거한다.
+            lo = body[0].lineno - node.lineno
+            hi = (body[0].end_lineno or body[0].lineno) - node.lineno
+            lines = seg.splitlines()
+            return "\n".join(lines[:lo] + lines[hi + 1:])
     raise AssertionError(f"{path.name}: 함수 {name} 를 찾지 못했다(이름이 바뀌었나?)")
 
 
@@ -981,11 +1008,18 @@ def test_catalog_gates_selector_on_server_llm_state():
         "카탈로그가 러너 신고를 읽지 않는다 — 목록의 출처가 서버로 되돌아간 것이다(P0-T 재발)")
     assert '"model_selector": "visible"' in body, "게이트 해제 시 선택기를 복원하는 분기가 없다"
     assert "from shared.llm_gate import server_llm_enabled" in src
-    # caps-trust-gate (2026-09-01): 자격 없는 러너를 **구분해서** 말한다. 이 배선이 없으면
+    # caps-trust-gate (2026-09-01): 계약 미선언 러너를 **구분해서** 말한다. 이 배선이 없으면
     # 구 러너의 목록이 「고를 것이 없음」과 뭉개져 화면이 갱신 안내를 못 한다.
-    assert "caps_trusted" in body, "능력 신고의 자격을 읽지 않는다(구 러너 목록이 그대로 나간다)"
+    #
+    # ⚠ `body` 는 이제 **docstring 을 뺀 코드**다(위 `_func_source`). 종전에는 이 단언을
+    #   핸들러 자신의 설명 문장이 통과시켰다(qa 뮤턴트 M2b 생존 실증 — §16.7 G11-a).
+    assert "caps_contract_declared" in body, (
+        "능력 신고의 계약 선언을 읽지 않는다(구 러너 목록이 그대로 나간다)")
     assert '"runner_caps_stale": runner_caps_stale' in body, (
         "구 러너라는 사실이 값으로 나가지 않는다 — 프런트가 사유 문구를 파싱하게 된다")
+    assert '"runner_mixed": runner_mixed' in body, (
+        "「옛 러너가 아직 돌고 있다」를 값으로 말하지 않는다 — 이미 갱신한 사람에게 "
+        "「갱신하세요」라는 거짓 지시가 나간다")
 
 
 def test_catalog_never_guesses_runner_models_on_failure():

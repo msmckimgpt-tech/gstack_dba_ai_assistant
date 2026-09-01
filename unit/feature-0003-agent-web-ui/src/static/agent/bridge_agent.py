@@ -1692,11 +1692,23 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
 
     ## 목록은 **그 AI 가 정한다** (P0-Z4, 사용자 결정 2026-08-28)
 
-    각 런타임에 한 번 물어(`probe_runtime_caps`) 답을 그대로 쓴다. 실패하면 내장 표
-    (`_RUNTIME_SPECS`)로 폴백한다 — 물어보지 못했다고 화면에서 사라지면, 종전에 잘 되던
-    사용자가 이유 없이 기능을 잃는다.
+    각 런타임에 한 번 물어(`probe_runtime_caps`) 답을 그대로 쓴다.
+
+    ⚠ **실패하면 그 런타임은 신고에서 통째로 빠진다** (2026-08-31 개정 · 이 docstring 은
+    2026-09-01 에야 본문을 따라잡았다 — backend·qa 적대리뷰 C3). 종전에는 내장 표
+    (`_RUNTIME_SPECS`)로 폴백했는데, 그 표가 곧 `gpt-5.1-codex`(폐기 세대)를 사용자 화면에
+    올린 경로였다. 물어보지 못한 것을 「이것을 쓸 수 있다」로 말하면 사용자는 없는 모델을
+    고르고 CLI 가 거부한다. 내장 값을 계속 쓰는 것은 **호출법(argv·플래그)뿐**이다 — 그것은
+    값이 아니라 형태라 틀린 선택지를 만들지 않고, 없으면 실행 자체가 불가능하다.
+    ollama 는 예외: 그 목록은 HTTP **실조회** 결과라 우리가 적어 둔 값이 아니다.
+
+    이 동작이 곧 `shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT` 가 선언하는 계약이다.
+    **폴백을 되살리면서 그 선언을 남기지 마라** — 선언이 거짓이 되고 서버는 검증 수단이 없다.
+    신고 항목의 `source`(provenance)가 런타임 단위의 두 번째 자물쇠다(`_REPORTABLE_SOURCES`).
 
     `cached` 를 주면 묻지 않고 그것을 쓴다(매 기동마다 사용자 토큰을 태우지 않기 위해).
+    캐시 항목도 **provenance 검사를 다시 통과해야** 신고된다 — `config.json` 은 사용자가 쓸
+    수 있는 파일이고, 캐시 포맷이 바뀌는 날 그 경로로 폴백이 되돌아오는 것을 막는다.
     """
     names = list(_RUNTIME_SPECS.keys())
     if only and only in _RUNTIME_SPECS:
@@ -1824,9 +1836,27 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 "efforts": [],
                 "model": spec.get("model"),
                 "effort": spec.get("effort"),
-                "source": "builtin",
+                # ⚠ ollama 의 목록은 **HTTP 실조회 결과**라 우리가 적어 둔 값이 아니다 —
+                #   provenance 도 그렇게 말해야 아래 게이트가 그것을 살린다. 이 분기를
+                #   통째로 `builtin` 으로 적으면 ollama 사용자의 선택기가 통째로 사라진다.
+                "source": "ollama" if (name == "ollama" and models) else "builtin",
             }
 
+        # ── provenance 게이트 (qa 적대리뷰 §3, 2026-09-01) ────────────────────────
+        #
+        # 목록이 **어떻게 얻어졌는지**를 여기서 한 번 더 본다. 자격 신고(`caps_self_report`)는
+        # 「이 빌드가 계약을 아는가」에 답하는 전역 불리언이라, 신고 포맷이 다음에 바뀌면
+        # 다섯 번째 이름이 필요하고 그 사이 잘못 조립한 신고도 「신뢰」된다. provenance 는
+        # 런타임 **단위**로 「이 목록이 라이브 답인가」에 답해 그 클래스를 실제로 닫는다.
+        #
+        # ⚠ 캐시 경로가 이 검사의 요점이다. `caps = probed.get(name) or cached.get(name)`
+        #   에서 `cached` 는 사용자가 쓸 수 있는 `config.json` 이고, 종전에는 그 항목의
+        #   `source` 를 아무도 다시 보지 않았다 — 오늘은 안전하지만(폴백 캐싱 금지 가드가
+        #   같은 커밋에 있었다) 캐시 포맷이 바뀌는 날 다시 열린다. 커밋 고고학이 아니라
+        #   코드가 그것을 붙들게 한다.
+        _prov = str(caps.get("source") or "")
+        if _prov not in _REPORTABLE_SOURCES:
+            continue
         if not caps.get("models"):
             # 고를 것이 없는 런타임은 신고하지 않는다 — 화면에 빈 그룹만 남는다.
             continue
@@ -1853,8 +1883,21 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
             # 플래그가 없으면 등급도 신고하지 않는다: 지정 수단이 없는데 목록을 주면
             # 다시 "고를 수 있는데 반영은 안 되는" 상태가 된다(P0-T 가 지운 바로 그것).
             "efforts": [_pair(o) for o in (caps.get("efforts") or [])] if caps.get("effort") else [],
+            # **이 목록이 어떻게 얻어졌는가.** 서버가 런타임 단위로 다시 거른다 — 전역
+            # 불리언 하나보다 엄격하고, 나쁜 런타임 하나만 숨고 나머지는 남는다.
+            # 호출법(플래그)과 달리 이것은 **값이 아니라 출처**라 서버로 나가도 무해하다.
+            "source": _prov,
         })
     return out
+
+
+#: 서버에 신고해도 되는 목록 **출처**. 「그 AI 가 라이브로 답한 것」과 그것의 캐시,
+#: 그리고 HTTP 실조회(ollama)뿐이다. `builtin`(우리가 소스에 적어 둔 표)은 여기 없다 —
+#: 그것이 `gpt-5.1-codex` 가 화면에 뜬 경로였다.
+#:
+#: ⚠ **여기에 `builtin` 을 추가하지 마라.** 추가하는 순간 `caps_self_report` 선언이 거짓이
+#: 되고, 서버는 그 거짓을 검증할 수단이 없다. 정본 대조: 서버 `_SANITIZE_SOURCE_ALLOW`.
+_REPORTABLE_SOURCES: frozenset[str] = frozenset({"probe", "cache", "ollama"})
 
 
 def resolve_caps(only: str | None, cached: dict | None,

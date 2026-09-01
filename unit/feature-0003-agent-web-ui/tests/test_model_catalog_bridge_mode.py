@@ -49,6 +49,9 @@ _REPORT = [
      "models": [{"value": "gpt-5.1-codex", "label": "GPT-5.1 Codex"}],
      "efforts": [{"value": "high", "label": "높음"}]},
 ]
+# 저장된 신고는 이미 sanitize 를 통과한 값이라 `source` 를 싣지 않는다(저장 스키마는
+# `{runtime,label,models,efforts}` 4키). provenance 는 **수신 시점** 게이트다 —
+# 그 축은 `test_sanitizer_drops_runtimes_without_live_provenance` 가 따로 잠근다.
 
 
 class _FakeCursor:
@@ -69,6 +72,12 @@ class _FakeCursor:
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        # `account_runner_profile` 은 계정당 여러 러너 행을 읽는다(다중 러너 fail-closed).
+        # 더블이 이것을 빠뜨리면 AttributeError 가 호출측 fail-soft 에 삼켜져 **선택기가
+        # 조용히 숨겨진다** — 실패가 조용하다는 것이 이 더블의 반복된 함정이다.
+        return [self._row] if self._row else []
 
     def close(self) -> None:
         return None
@@ -377,9 +386,18 @@ def test_missing_fingerprint_is_stale_not_current():
 def test_staleness_predicate_has_exactly_one_home():
     """지문 판정은 **한 함수**뿐이다 — 하트비트와 연결 칩이 같은 것을 부른다 (§16.7 G8-a).
 
-    같은 술어가 두 곳에 복제돼 있었고, 복제는 한쪽만 고쳐지는 순간 갈린다. 갈리면 「칩은
-    초록인데 하트비트는 구버전이라 한다」는, 사용자가 어느 쪽도 믿을 수 없는 화면이 된다.
+    ⚠ 이 테스트는 처음에 **아무것도 잠그지 않았다**(qa 적대리뷰 M4b 생존 실증). 슬라이스
+    앵커가 컬럼 0 의 `"\nreturn JSONResponse"` 였는데 `oauth_as.py` 의 모든
+    `return JSONResponse` 는 들여쓰기돼 있어 무매치 → `fn` 이 함수가 아니라 **파일 하단
+    687줄**이 됐고, 부재 단언은 diff 가 이미 지운 죽은 식별자(`!= _deployed`)를 grep 했다.
+    그 상태에서 「판정을 한 번 부르고 곧바로 로컬 재파생으로 덮어쓰는」 뮤턴트가 통과했다.
+
+    그래서 텍스트가 아니라 **AST** 로 본다: `connect_status` 안에서 `runner_stale` 에 대한
+    대입이 정확히 하나이고, 그 값이 `runner_build_is_stale(...)` 호출임을 단정한다. 예외
+    블록의 `runner_stale = False`(거짓 경고 방지)는 판정이 아니라 fallback 이므로 허용하되,
+    **판정 호출은 하나**여야 한다.
     """
+    import ast
     import pathlib
 
     import routers.ai_tools as ai_tools
@@ -387,11 +405,32 @@ def test_staleness_predicate_has_exactly_one_home():
     assert callable(getattr(ai_tools, "runner_build_is_stale", None)), "단일 판정 함수가 없다"
     src = (pathlib.Path(__file__).resolve().parents[1]
            / "src" / "routers" / "oauth_as.py").read_text(encoding="utf-8")
-    fn = src[src.index("def connect_status("):]
-    fn = fn[:fn.index("\nreturn JSONResponse") if "\nreturn JSONResponse" in fn else len(fn)]
-    assert "runner_build_is_stale(" in fn, "연결 칩이 자기 판정을 다시 적는다"
-    # 복제의 흔적(직접 비교)이 남아 있으면 두 판정이 다시 갈린다.
-    assert "!= _deployed" not in fn, "지문 비교가 이 파일에 다시 적혀 있다"
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+              and n.name == "connect_status")
+
+    assigns = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == "runner_stale" for t in n.targets)]
+    calls = [n for n in assigns if isinstance(n.value, ast.Call)]
+    assert len(calls) == 1, (
+        f"`runner_stale` 을 만드는 호출이 {len(calls)}개다 — 판정이 하나여야 한다")
+    called = calls[0].value.func
+    name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+    assert name == "runner_build_is_stale", (
+        f"연결 칩이 자기 판정을 다시 적는다(호출 대상: {name})")
+    # 나머지 대입은 전부 **상수 fallback** 이어야 한다(재파생 금지).
+    for n in assigns:
+        if n in calls:
+            continue
+        assert isinstance(n.value, ast.Constant), (
+            "판정을 부른 뒤 로컬 재파생으로 덮어쓰고 있다 — 두 판정이 갈릴 준비를 마쳤다")
+    # 함수 안 어디에도 배포본 지문을 직접 읽어 비교하는 코드가 없어야 한다.
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call):
+            f = n.func
+            nm = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+            assert nm != "_deployed_runner_build", (
+                "연결 칩이 배포본 지문을 직접 읽는다 — 판정이 두 벌이 된다")
 
 
 def test_deployed_fingerprint_unknown_is_not_a_false_alarm(monkeypatch):
@@ -430,7 +469,11 @@ def test_untrusted_runner_report_is_not_rendered(client, signed_in, monkeypatch)
     payload = client.get(ENDPOINT).json()
 
     assert payload["models"] == [], "자격 없는 러너의 목록이 화면에 나갔다"
-    assert not any("gpt-5.1" in json.dumps(m) for m in payload["models"])
+    # ⚠ 스캔 대상은 **전체 응답 본문**이다. 종전엔 방금 비었다고 단정한 `models` 를 순회해
+    #   구조적으로 vacuous 였다(qa 적대리뷰) — `models` 가 잘못 채워져도 통과했을 것이다.
+    #   사용자가 실제로 제보한 그 문자열을, 비어 있지 **않은** 페이로드에서 찾는다.
+    assert "gpt-5.1" not in json.dumps(payload, ensure_ascii=False), (
+        "사용자가 제보한 폐기 세대가 응답 어딘가에 남아 있다")
     assert payload["model_selector"] == "hidden"
     assert payload["default_model"] is None, "고를 수 없는데 기본값을 말한다"
 
@@ -500,13 +543,13 @@ def test_gate_lives_in_the_store_so_every_consumer_inherits_it():
 
     untrusted = _st.account_runner_profile(
         _Cur((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")), 1)
-    assert untrusted["capabilities"] == [] and untrusted["caps_trusted"] is False
+    assert untrusted["capabilities"] == [] and untrusted["caps_contract_declared"] is False
     assert untrusted["listening"] is True, "능력 게이트가 «연결됨» 까지 껐다"
     assert untrusted["features"] == ["console_jobs"], "능력 게이트가 콘솔 위임 자격까지 껐다"
 
     trusted = _st.account_runner_profile(
         _Cur((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")), 1)
-    assert trusted["caps_trusted"] is True
+    assert trusted["caps_contract_declared"] is True
     assert [r["runtime"] for r in trusted["capabilities"]] == ["claude", "codex"]
 
     # 얇은 래퍼와 저장 선택 복원이 같은 관문을 지난다.
@@ -550,23 +593,212 @@ def test_frontend_actually_renders_the_hidden_reason():
     `model_selector_reason` 은 2026-08-28 부터 응답에 있었지만 **소비처가 0개**였다(실측).
     그래서 선택기가 사라진 화면은 이유를 말하지 못했고, 그 침묵이 앞선 cycle 의 제보
     (「모델·추론 강도가 안 보인다」)를 만들었다. 값의 존재와 도달은 다른 사실이다.
+
+    ⚠ **이 저장소 CI 는 pytest 전용이라 JS 를 실행하지 않는다**(테스트 컨테이너에 node 부재 —
+    실측). 그래서 여기서는 «렌더된 결과» 가 아니라 «그 결과를 만드는 구조» 를 본다. 동작
+    자체는 `tests/verify_selector_note.mjs`(jsdom, 10 케이스)가 잡고, 그것이 M3(극성 반전)·
+    M8(빈 행 잔존)·링크 미배선 세 뮤턴트를 **실제로 죽인다는 것을 실증**했다.
+
+    아래 단언은 그 하네스가 CI 밖이라는 사실을 메우는 최소 구조 게이트다 — 특히 **극성**을
+    본다(종전 `assert "hidden ?" in fn or "hidden\n" in fn` 은 어느 극성에도 매치하는
+    자유 통과권이었다).
     """
     import pathlib
+    import re
 
     base = pathlib.Path(__file__).resolve().parents[1] / "src" / "static"
     js = (base / "app" / "composer.js").read_text(encoding="utf-8")
     assert "composerActionsSelectorNote" in js, "사유를 그리는 코드가 없다"
+
     fn = js[js.index("function _applyComposerSelectorNote("):]
     fn = fn[:fn.index("\nfunction ")] if "\nfunction " in fn else fn
     assert "model_selector_reason" in fn, "서버 사유를 읽지 않는다(프론트가 문구를 짓는다)"
-    # 숨김을 반영하는 경로에서 **실제로 불린다** (정의만 있고 호출이 없으면 영영 안 뜬다).
+
+    # 극성: **보이는 상태에서 조기 반환하며 비운다.** `!hidden` 가드가 사라지거나 뒤집히면
+    # 안내가 목록이 돌아온 화면에 남는다 — 그 자체가 거짓말이다(mjs M3 가 잡는 것).
+    early = re.search(r"if \(!hidden\)\s*\{(.*?)\}", fn, re.S)
+    assert early, "보이는 상태를 조기 반환으로 가르지 않는다(극성이 뒤집혀도 통과하게 된다)"
+    assert 'textContent = ""' in early.group(1) and '"hidden"' in early.group(1), (
+        "보이는 상태에서 안내를 비우지 않는다")
+
+    # 빈 사유는 **숨긴다** — 상수 `false` 로 굳으면 빈 패딩 행이 메뉴에 영구히 남는다(M8).
+    assert 'toggle("hidden", !reason)' in fn, "빈 사유일 때 안내 행을 숨기지 않는다"
+
+    # 받을 곳까지 준다 — 응답에만 있고 소비처가 0 이던 필드를 실제로 읽는다(적대리뷰 C2).
+    assert "runner_download_url" in fn, "「최신 실행 파일」을 말하면서 받을 곳을 주지 않는다"
+    assert "createElement" in fn and "href" in fn, "다운로드 경로가 링크로 그려지지 않는다"
+
+    # 카탈로그를 못 받은 상태에도 말을 한다(가장 흔한 실패에서 선택기가 설명 없이 사라졌다).
+    assert "COMPOSER_NOTE_NO_CATALOG" in js, "카탈로그 부재 시 안내가 비어 조용히 사라진다"
+
+    # 숨김을 반영하는 경로에서 **실제로 불린다**(정의만 있고 호출이 없으면 영영 안 뜬다).
     apply_fn = js[js.index("function _applyComposerSelectorVisibility("):]
     apply_fn = apply_fn[:apply_fn.index("\n// feature-0043 caps-trust-gate")]
     assert "_applyComposerSelectorNote(" in apply_fn, "사유 갱신이 배선되지 않았다"
-    # 보이는 상태에서는 비운다 — 목록이 돌아왔는데 "고를 수 없다" 가 남으면 그 자체가 거짓.
-    assert "hidden ?" in fn or "hidden\n" in fn, "보이는 상태에서 사유를 지우지 않는다"
-    # DOM 자리와 스타일이 실재한다(클래스만 있고 스타일이 없으면 항목처럼 보인다).
+
+    # DOM 자리와 스타일이 실재하고, ARIA role 이 `role="menu"` 에 유효하다.
     html = (base / "index.html").read_text(encoding="utf-8")
     assert 'id="composerActionsSelectorNote"' in html, "사유를 담을 자리가 DOM 에 없다"
+    i = html.index('id="composerActionsSelectorNote"')
+    note_tag = html[html.rindex("<", 0, i):html.index(">", i) + 1]
+    assert 'role="note"' not in note_tag, (
+        "`role=note` 는 `role=menu` 의 owned element 로 무효 — 보조기술이 이 줄을 건너뛴다")
+    assert 'aria-live="polite"' in note_tag, "카탈로그 리로드 후 나타나는 안내를 알리지 않는다"
     css = (base / "css" / "chat.css").read_text(encoding="utf-8")
     assert ".composer-actions-note {" in css, "사유 스타일이 없어 메뉴 항목처럼 보인다"
+
+    # 동작 하네스가 **실재해야** 이 테스트의 «CI 밖에서 잡는다» 는 주장이 참이 된다.
+    assert (pathlib.Path(__file__).parent / "verify_selector_note.mjs").exists(), (
+        "동작 하네스가 사라졌다 — 이 테스트의 구조 단언만으로는 렌더 결과를 보지 못한다")
+
+
+# -- 적대 패널 2026-09-01 조치 회귀 (security·backend·qa) ---------------------------
+
+
+def test_untrusted_write_does_not_leave_a_fossil_list(monkeypatch):
+    """능력을 싣지 못한 신고는 **이전 능력을 무효화**한다 (backend B1).
+
+    `COALESCE(%s, t.RunnerCapabilities)` 는 `capabilities is None` 일 때 과거를 남기는데
+    같은 문장이 `RunnerFeatures` 는 새 값으로 덮는다. 그 조합이면 구 러너가 저장한
+    `gpt-5.1-codex` 가 새 러너의 계약 선언을 얻어 「쓸 수 있는 모델」로 인증된다 —
+    읽기 게이트를 우회해 **쓰기 경로로** 결함이 부활하는 형태다.
+    """
+    seen = {}
+
+    class _Cur:
+        rowcount = 1
+
+        def execute(self, sql, params=None):
+            seen["sql"] = sql
+            seen["params"] = params
+
+        def close(self):
+            return None
+
+    store.set_runner_report(_Cur(), "mat_x", None, ["console_jobs", "caps_self_report"],
+                            "2026.09.01", "abcdef123456")
+    assert seen["params"][0] == "[]", (
+        "능력 미탑재 신고가 `None` 으로 나가 COALESCE 가 옛 목록을 남긴다(화석)")
+    # 반대로 실제 목록이 있으면 그대로 나간다 — 가드가 정상 경로를 삼키지 않는다.
+    store.set_runner_report(_Cur(), "mat_x", '[{"runtime":"claude"}]',
+                            ["console_jobs", "caps_self_report"], "2026.09.01", "abcdef123456")
+    assert seen["params"][0] == '[{"runtime":"claude"}]'
+
+
+def test_mixed_runners_fail_closed_and_say_which_action(client, signed_in, monkeypatch):
+    """옛 러너와 새 러너가 함께 살아 있으면 **감추고, 옛 것을 끄라고** 말한다 (B4).
+
+    종전엔 가장 최근 하트비트 한 행만 봐서 선택기가 30초마다 깜빡였다 — 사용자는 안내가
+    시킨 대로 새 러너를 실행했는데 화면이 계속 낡았다고 말한다. 신뢰된 행을 *선호*하는
+    대안은 기각했다: 그 목록으로 고른 모델을 실제로 가져가는 것이 미선언 러너일 수 있고,
+    그러면 「고를 수 있는데 반영은 안 되는」 상태가 정확히 되돌아온다.
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    rows = [
+        (json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.09.01"),
+        (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31"),
+    ]
+
+    class _MultiCursor(_FakeCursor):
+        def __init__(self):
+            super().__init__(rows[0])
+
+        def fetchall(self):
+            return rows
+
+    class _MultiConn(_FakeConn):
+        def cursor(self):
+            return _MultiCursor()
+
+    monkeypatch.setattr(appmod, "_connect_memory", lambda: _MultiConn())
+    payload = client.get(ENDPOINT).json()
+    assert payload["models"] == [], "미선언 러너가 함께 있는데 목록이 나갔다"
+    assert payload["runner_mixed"] is True
+    assert "종료" in payload["model_selector_reason"], (
+        "이미 갱신한 사용자에게 「갱신하세요」라는 (그에겐 거짓인) 지시가 나간다")
+
+
+def test_malformed_features_are_not_a_declaration(monkeypatch):
+    """`RunnerFeatures` 가 NULL·비CSV 여도 **선언으로 읽지 않는다**.
+
+    `parse_runner_features` 가 malformed 이름을 조용히 버리므로, 게이트가 그 빈 결과를
+    선언으로 오독하면 미선언 러너의 목록이 통과한다.
+    """
+    for raw in (None, "", "   ", "!!!", "caps_self_reportX", ",,,"):
+        assert store.declares_caps_contract(store.parse_runner_features(raw)) is False, raw
+    assert store.declares_caps_contract(
+        store.parse_runner_features("console_jobs,caps_self_report")) is True
+
+
+def test_token_profile_shares_the_same_gate():
+    """두 번째 관문(`token_runner_profile`)도 같은 게이트를 지난다 (C1).
+
+    per-runner 정확성이 필요한 다음 소비자는 자연스럽게 이쪽으로 손을 뻗는다 — 저장소가
+    이미 그쪽이 authz 에 더 옳다고 가르치고 있기 때문이다. 그때 미게이트 목록을 받으면
+    이번에 닫은 경로가 조용히 다시 열린다.
+    """
+    row = (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.09.01")
+
+    class _Cur(_FakeCursor):
+        pass
+
+    got = store.token_runner_profile(_Cur(row), "mat_x")
+    assert got["capabilities"] == [] and got["caps_contract_declared"] is False
+    assert got["listening"] is True and got["features"] == ["console_jobs"], (
+        "능력 게이트가 콘솔 위임 자격·연결 표시까지 껐다")
+
+
+def test_every_capabilities_producer_passes_the_gate():
+    """`RunnerCapabilities` 를 투영하는 **모든** 함수가 게이트를 지난다 (§16.7 G8-a).
+
+    「여기가 유일한 관문」이라는 주장은 호출 그래프의 우연으로만 참이었다(적대리뷰 C1).
+    관문이 load-bearing 이면 서술이 아니라 **구조로** 강제한다.
+    """
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "src" / "oauth_store.py")
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    offenders = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = ast.unparse(fn)
+        if "RunnerCapabilities" not in body:
+            continue
+        if "'capabilities'" not in body and '"capabilities"' not in body:
+            continue          # 컬럼은 읽지만 목록을 투영하지 않는다(쓰기·집계 등)
+        if "declares_caps_contract" not in body:
+            offenders.append(fn.name)
+    assert not offenders, (
+        f"게이트를 지나지 않고 capabilities 를 투영하는 함수: {offenders}")
+
+
+def test_sanitizer_drops_runtimes_without_live_provenance():
+    """런타임별 provenance 가 없는 신고는 **수신 시점에** 떨어진다 (qa §3).
+
+    자격 신고는 「이 빌드가 계약을 아는가」에 답하는 전역 불리언이라, 다음 신고 포맷이
+    바뀌면 다섯 번째 이름이 필요하고 그 사이 잘못 조립한 신고도 통째로 신뢰된다.
+    provenance 는 런타임 단위로 「이 목록이 라이브 답인가」에 답해 그 클래스를 닫는다.
+    """
+    import routers.ai_tools as ai_tools
+
+    def _rt(source):
+        item = {"runtime": "codex", "label": "Codex",
+                "models": [{"value": "gpt-5.1-codex", "label": "x"}], "efforts": []}
+        if source is not None:
+            item["source"] = source
+        return [item]
+
+    assert ai_tools._sanitize_runtimes(_rt(None)) == [], "출처 미신고(구 러너)가 통과했다"
+    assert ai_tools._sanitize_runtimes(_rt("builtin")) == [], (
+        "내장 표 출처가 통과했다 — `gpt-5.1-codex` 가 화면에 뜬 그 경로다")
+    for good in ("probe", "cache", "ollama"):
+        got = ai_tools._sanitize_runtimes(_rt(good))
+        assert len(got) == 1 and got[0]["runtime"] == "codex", good
+        assert "source" not in got[0], "저장 스키마에 출처가 새어 들어갔다(4키 계약)"
+    # 섞여 있으면 **나쁜 것만** 떨어진다 — 전역 불리언보다 우아하게 열화한다.
+    mixed = ai_tools._sanitize_runtimes(_rt("probe") + [
+        {"runtime": "claude", "label": "Claude", "source": "builtin",
+         "models": [{"value": "opus", "label": "Opus"}], "efforts": []}])
+    assert [r["runtime"] for r in mixed] == ["codex"]

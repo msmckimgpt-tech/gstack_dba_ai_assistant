@@ -2467,3 +2467,51 @@ end-to-end 통과. 서버측 상주 러너도 배포본으로 교체·재기동�
 **16건 전부 FAIL** 확인 후 복원. 구조 단정
 `test_builtin_model_table_never_reaches_the_report` 는 git 이력의 실제 결함 빌드
 (`82f3a160^` = `8766f0e6f32c`)에 걸어 `gpt-5.1-codex` 누출을 재현했다(내가 만든 뮤턴트 아님).
+
+
+---
+
+## CHG-20260901T140000-ai-claude-feature-0043-caps-trust-gate-r2 — 적대 패널 조치 (P1 7 · concern 8)
+
+§18.8 패널 3인이 **CONCERN / BLOCK / BLOCK** 을 냈고, 그중 셋은 뮤턴트로 실증됐다. 전건 조치.
+
+**저장 계층 (`oauth_store.py`)**
+- `set_runner_report`: 능력을 싣지 못한 신고(`None`)를 `"[]"` 로 바꿔 **이전 능력을 무효화**
+  한다. `COALESCE` 가 옛 목록을 남기는 동안 같은 문장이 `RunnerFeatures` 는 덮어써서, 구
+  러너의 `gpt-5.1-codex` 가 새 러너의 계약 선언을 얻어 인증되던 경로(backend B1).
+- `account_runner_build`: `str | None` **tri-state**. 조회 실패·컬럼 부재는 `None`(모름)이고
+  로그를 남긴다. 종전엔 셋이 모두 `""` 라, 「지문 부재 = 더 오래됨」 판정을 켠 순간
+  `RunnerBuild` 컬럼 없는 배포의 **최신 러너 사용자 전원**에게 거짓 갱신 지시가 나갔다.
+- `account_runner_profile`: 살아 있는 행을 `RUNNER_ROWS_SCAN_MAX`(8)까지 읽고 **하나라도
+  계약 미선언이면 능력을 내지 않는다**(fail-closed). 신뢰된 행 *선호* 는 기각 — 그 목록으로
+  고른 모델을 실제로 가져가는 것이 미선언 러너일 수 있다. `mixed_runners` 로 「갱신은 했고
+  옛 것을 안 껐다」를 구분한다.
+- `token_runner_profile`: 같은 게이트 적용(두 번째 관문). `_parse_caps_column` 공용화.
+- `_caps_trusted` → **`declares_caps_contract`** rename + **모듈 레벨 import**(미테스트
+  `except` 분기 소멸). docstring 에 「인가 경계가 아니라 호환성 자기신고」를 명시.
+
+**provenance 축 신설 (재발 클래스 봉인 — qa §3)**
+- 러너 `detect_runtimes`: 신고 항목마다 `source` 를 싣고, **캐시 경로 포함** 신고 직전에
+  `_REPORTABLE_SOURCES`(`probe`/`cache`/`ollama`)로 거른다. ollama 실조회는 `builtin` 이
+  아니라 `ollama` 로 표기(아니면 게이트가 그 사용자 선택기를 지운다).
+- 서버 `_sanitize_runtimes`: 같은 집합 `_SANITIZE_SOURCE_ALLOW` 로 **수신 시점** 거름.
+  저장 스키마는 4키 유지(`source` 는 게이트용이지 저장값이 아니다). 구조 테스트가 양쪽
+  집합의 동일성과 `builtin` 부재를 잠근다.
+
+**표면·문서**
+- `system.py`: `caps_contract_declared` 반영 + `runner_mixed` 응답 + 사유 3분기.
+- `index.html`/`chat.css`/`composer.js`: `role="presentation"` + `aria-live`(무효 role 제거),
+  **다운로드 링크 배선**(소비처 0 이던 필드), **카탈로그 부재 시에도 말한다**.
+- `_console_llm.py`: `runner` dict 키 집합을 성공/실패 분기에서 동일하게.
+- 러너 `detect_runtimes` docstring: 없는 폴백을 현재 동작으로 서술하던 문단 재작성(양 미러).
+
+**테스트**
+- `_func_source` 가 **docstring 줄만** 제거(자기 설명이 자기 단언을 통과시키던 구멍).
+  `ast.unparse` 재출력은 포맷 정규화로 무관한 단언 15건을 깨 **불채택**.
+- 이름 정합·단일 판정은 AST(`ImportFrom` 노드 · `connect_status` 안 단일 대입)로 격상.
+- 프런트는 `tests/verify_selector_note.mjs`(jsdom 10케이스)로 동작 검증. **CI 는 pytest
+  전용이라 이 하네스를 실행하지 않는다**(컨테이너에 node 부재) — 그 사실을 증적에 명시.
+- 신규 커버리지: 화석 가드 · 다중 러너 · malformed features · 두 번째 관문 · 투영 함수 전수 ·
+  provenance(수신·신고 양쪽) · cached/probe 두 분기 · ollama 실조회.
+- **단언별 G11-b**: qa 가 생존시킨 뮤턴트 8종(M1b·M2b·M3·M4b·M7·M8·M9b·M-C2)을 다시 넣어
+  **전부 FAILED** 확인. 하네스가 처음 M8 을 놓친 사실과 그 원인(빠진 경계 케이스)도 기록.

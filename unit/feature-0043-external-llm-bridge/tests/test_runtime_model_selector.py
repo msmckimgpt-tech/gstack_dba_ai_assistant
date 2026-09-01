@@ -269,7 +269,8 @@ def test_sanitizer_separates_no_report_from_empty_report():
 def test_sanitizer_rejects_runtime_names_that_are_not_names(bad):
     """런타임 이름은 러너에서 **실행 파일 조회 키**가 된다 — 이름처럼 생긴 것만 통과."""
     ns = _load_sanitizer()
-    got = ns["_sanitize_runtimes"]([{"runtime": bad, "models": [{"value": "opus"}]}])
+    got = ns["_sanitize_runtimes"]([{"runtime": bad, "source": "probe",
+                                   "models": [{"value": "opus"}]}])
     assert got == [], f"거부되지 않은 런타임 이름: {bad!r}"
 
 
@@ -277,7 +278,7 @@ def test_sanitizer_drops_only_the_bad_option_not_the_whole_runtime():
     """어긋난 항목 **하나**가 정상 런타임을 통째로 지우지 않는다."""
     ns = _load_sanitizer()
     got = ns["_sanitize_runtimes"]([{
-        "runtime": "claude",
+        "runtime": "claude", "source": "probe",
         "models": [{"value": "--evil"}, {"value": "opus", "label": "Opus"}, {"value": "x y"}],
         "efforts": [{"value": "low"}, {"value": "hi;gh"}],
     }])
@@ -289,7 +290,7 @@ def test_sanitizer_flattens_labels_to_one_line():
     """라벨은 화면에 그려진다 — 줄바꿈·제어문자가 레이아웃을 깨지 않게 한 줄로 접는다."""
     ns = _load_sanitizer()
     got = ns["_sanitize_runtimes"]([{
-        "runtime": "claude", "label": "Cla\nude\t2",
+        "runtime": "claude", "label": "Cla\nude\t2", "source": "probe",
         "models": [{"value": "opus", "label": "O\n\np\tus"}],
     }])
     assert got[0]["label"] == "Cla ude 2"
@@ -300,7 +301,8 @@ def test_sanitizer_flattens_labels_to_one_line():
 def test_sanitizer_caps_the_report_size():
     """개수 상한 — 30초마다 오는 신호가 저장소·화면을 임의로 채우지 못하게."""
     ns = _load_sanitizer()
-    huge = [{"runtime": f"rt{i}", "models": [{"value": f"m{j}"} for j in range(200)]}
+    huge = [{"runtime": f"rt{i}", "source": "probe",
+             "models": [{"value": f"m{j}"} for j in range(200)]}
             for i in range(50)]
     got = ns["_sanitize_runtimes"](huge)
     assert len(got) <= ns["_CAPS_MAX_RUNTIMES"]
@@ -313,15 +315,19 @@ def test_sanitizer_keeps_a_realistic_report_intact():
     ns = _load_sanitizer()
     # 러너가 실제로 만드는 모양을 그대로 넣는다(두 쪽의 계약이 같은지 확인).
     real = [
-        {"runtime": "claude", "label": "Claude",
+        {"runtime": "claude", "label": "Claude", "source": "probe",
          "models": list(mod._RUNTIME_SPECS["claude"]["models"]),
          "efforts": list(mod._RUNTIME_SPECS["claude"]["efforts"])},
-        {"runtime": "codex", "label": "Codex",
+        {"runtime": "codex", "label": "Codex", "source": "probe",
          "models": list(mod._RUNTIME_SPECS["codex"]["models"]),
          "efforts": list(mod._RUNTIME_SPECS["codex"]["efforts"])},
     ]
     got = ns["_sanitize_runtimes"](real)
-    assert got == real, "정상 신고가 변형됐다 — 러너와 서버의 계약이 갈렸다"
+    # `source` 는 **수신 시점 게이트**용이고 저장 스키마는 4키로 유지한다 — 화면에 그릴
+    # 것만 저장한다는 계약이 그대로다. 나머지는 한 글자도 변형되지 않아야 한다.
+    expected = [{k: v for k, v in rt.items() if k != "source"} for rt in real]
+    assert got == expected, "정상 신고가 변형됐다 — 러너와 서버의 계약이 갈렸다"
+    assert all("source" not in rt for rt in got), "출처가 저장 스키마로 새어 들어갔다"
 
 
 def test_capability_write_is_skipped_when_unchanged():
@@ -359,8 +365,10 @@ def test_capability_read_shares_the_freshness_rule_with_listening():
     for fragment in ("_LIVE_TOKEN_PREDICATE", "LastHeartbeatAt IS NOT NULL", "DATE_SUB"):
         assert fragment in read_fn and fragment in listen_fn, (
             f"신선도 술어가 갈렸다: {fragment}")
-    # 러너가 여럿이면 가장 최근 것 하나 — 합치면 실제로 가져가는 러너에 없는 모델이 섞인다.
-    assert "ORDER BY t.LastHeartbeatAt DESC LIMIT 1" in read_fn
+    # 러너가 여럿이면 **하나라도 계약 미선언이면 감춘다**(2026-09-01, fail-closed). 종전엔
+    # 가장 최근 한 행만 봐서 옛·새 러너 공존 시 선택기가 30초마다 깜빡였다.
+    assert "ORDER BY t.LastHeartbeatAt DESC LIMIT" in read_fn
+    assert "RUNNER_ROWS_SCAN_MAX" in read_fn, "계정당 한 행만 보면 혼재 상태를 못 본다"
     # 래퍼가 **자기 질의를 갖지 않는다** — 가지면 두 벌이 되고, 그 순간 이 검사가 보는
     # 쪽만 옳고 실제로 쓰이는 쪽은 갈릴 수 있다.
     wrapper = src[src.index("def account_runner_capabilities("):]
@@ -372,14 +380,16 @@ def test_capability_read_shares_the_freshness_rule_with_listening():
 def test_capability_read_survives_corrupted_json():
     """저장된 값이 깨져도 답변 경로는 멀쩡해야 한다(선택기가 숨겨질 뿐)."""
     # TASK-20260831T100000: 파싱도 `account_runner_profile` 로 옮겼다(위 테스트와 같은 이유).
-    src = _OAUTH_STORE.read_text(encoding="utf-8")
-    fn = src[src.index("def account_runner_profile("):]
-    fn = fn[:fn.index("\ndef ")]
-    assert "except (TypeError, ValueError)" in fn, "JSON 파싱 실패가 요청을 500 으로 만든다"
-    # 구조가 아니라 **결과**를 잠근다: 리스트가 아닌 저장값은 화면으로 나가지 않는다.
-    # (종전 검사는 `return parsed if isinstance(...)` 라는 한 줄의 형태를 요구해, 같은 계약을
-    #  다른 형태로 쓰기만 해도 FAIL 했다.)
-    assert "isinstance(parsed, list)" in fn, "리스트가 아닌 저장값이 그대로 화면으로 나간다"
+    # 2026-09-01: 파싱이 두 프로필 함수 공용 헬퍼(`_parse_caps_column`)로 옮겼다 — 두 곳이
+    # 각자 파싱하면 한쪽만 고쳐진다. 계약은 그대로이므로 **결과**로 잠근다.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_store_json", _OAUTH_STORE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._parse_caps_column("{not json") == [], "JSON 파싱 실패가 요청을 500 으로 만든다"
+    assert mod._parse_caps_column('{"a": 1}') == [], "리스트가 아닌 저장값이 그대로 화면으로 나간다"
+    assert mod._parse_caps_column(None) == [] and mod._parse_caps_column("") == []
+    assert mod._parse_caps_column('[{"runtime": "claude"}]') == [{"runtime": "claude"}]
 
 
 # ── 화면: 런타임마다 다른 어휘를 어떻게 그리는가 ─────────────────────────────
@@ -583,7 +593,8 @@ def test_sanitizer_survives_wrong_types_in_nested_fields(bad_models):
     연결을 지키려는 신호가 연결을 끊는 장치가 되면 안 된다.
     """
     ns = _load_sanitizer()
-    got = ns["_sanitize_runtimes"]([{"runtime": "claude", "models": bad_models}])
+    got = ns["_sanitize_runtimes"]([{"runtime": "claude", "source": "probe",
+                                     "models": bad_models}])
     assert got == [], f"models={bad_models!r} 에서 예외 없이 빈 목록이어야 한다"
 
 
@@ -596,7 +607,7 @@ def test_sanitizer_strips_bidi_and_control_characters():
     ns = _load_sanitizer()
     rlo, rlm, nul, esc = "\u202e", "\u200f", "\u0000", "\u001b"
     got = ns["_sanitize_runtimes"]([{
-        "runtime": "claude", "label": f"Op{rlo}us{rlm}",
+        "runtime": "claude", "label": f"Op{rlo}us{rlm}", "source": "probe",
         "models": [{"value": "opus", "label": f"A{nul}B{esc}C"}],
     }])
     label = got[0]["label"]
@@ -616,10 +627,12 @@ def test_runtime_name_cannot_contain_the_pair_separator():
     """
     ns = _load_sanitizer()
     assert ns["_sanitize_runtimes"](
-        [{"runtime": "ollama:spoof", "models": [{"value": "bar"}]}]) == []
+        [{"runtime": "ollama:spoof", "source": "probe",
+          "models": [{"value": "bar"}]}]) == []
     # 모델 **값**에는 `:` 가 필요하다(`llama3:8b` 류) - 그쪽은 계속 허용한다.
     got = ns["_sanitize_runtimes"](
-        [{"runtime": "ollama", "models": [{"value": "llama3:8b"}]}])
+        [{"runtime": "ollama", "source": "ollama",
+          "models": [{"value": "llama3:8b"}]}])
     assert got[0]["models"][0]["value"] == "llama3:8b"
 
 
@@ -779,8 +792,10 @@ def test_flags_never_leave_the_machine(monkeypatch):
     blob = json.dumps(reported, ensure_ascii=False)
     for leak in ("--model", "--effort", "{model}", "{effort}", "model_flag"):
         assert leak not in blob, f"호출법이 신고에 실렸다: {leak}"
-    # 신고에는 사람이 고를 것만 있다.
-    assert set(reported[0]) == {"runtime", "label", "models", "efforts"}
+    # 신고에는 사람이 고를 것 + **출처**만 있다. `source` 는 값이 아니라 「이 목록이 어떻게
+    # 얻어졌는가」라 호출법과 성격이 다르고, 서버가 런타임 단위로 다시 거르는 데 쓴다.
+    assert set(reported[0]) == {"runtime", "label", "models", "efforts", "source"}
+    assert reported[0]["source"] == "probe"
 
 
 def test_probe_result_is_cached_so_startup_does_not_burn_tokens():
@@ -811,7 +826,10 @@ def test_builtin_table_falls_back_for_invocation_only(monkeypatch):
     src = _RUNNER.read_text(encoding="utf-8")
     fn = src[src.index("def detect_runtimes("):]
     fn = fn[:fn.index("\ndef ")]
-    assert '"source": "builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
+    assert '"builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
+    # 2026-09-01: 그 자리는 삼항이다 — ollama 의 **실조회** 목록은 `builtin` 이 아니어야
+    # provenance 게이트가 그것을 살린다(아니면 ollama 사용자 선택기가 통째로 사라진다).
+    assert '"ollama" if' in fn, "실조회 목록이 내장 표와 같은 출처로 신고된다"
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
     # 질의도 캐시도 없다 → **신고하지 않는다**(빈 목록으로 그룹만 남기지 않는다).
     assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 아직 신고된다"
@@ -1491,7 +1509,13 @@ def test_capability_name_has_a_single_source_of_truth():
 
     한쪽 오타는 「아무도 자격을 못 얻음」(전 사용자 선택기 소멸) 또는 그 반대로 갈리는데,
     둘 다 조용하다 — 화면만 보고는 오타인지 정책인지 구별되지 않는다.
+
+    ⚠ 종전 판본은 `_caps_trusted` 소스를 문자열로 grep 했고, **그 함수 자신의 docstring**
+    (「정본: shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT」)이 단언을 통과시켰다 —
+    본문을 `_n = "caps" "_self_report"` 로 바꾼 뮤턴트가 생존했다(qa M1b, §16.7 G11-a).
+    그래서 텍스트가 아니라 **import 노드와 비교 피연산자**를 AST 로 확인한다.
     """
+    import ast
     import sys
 
     mod = _load_runner()
@@ -1501,12 +1525,57 @@ def test_capability_name_has_a_single_source_of_truth():
     finally:
         sys.path.pop(0)
     assert _name in mod.AGENT_FEATURES, "러너가 신고하는 이름이 서버 정본과 다르다"
-    # 서버 관문도 같은 정본을 읽는다(리터럴을 다시 적지 않는다).
-    store_src = _OAUTH_STORE.read_text(encoding="utf-8")
-    gate = store_src[store_src.index("def _caps_trusted("):]
-    gate = gate[:gate.index("\n\n\ndef ") if "\n\n\ndef " in gate else len(gate)]
-    assert "RUNNER_FEATURE_CAPS_SELF_REPORT" in gate, "서버가 이름을 리터럴로 다시 적는다"
-    assert '"caps_self_report"' not in gate, "서버가 자격 이름을 하드코딩했다"
+
+    tree = ast.parse(_OAUTH_STORE.read_text(encoding="utf-8"))
+    imported = [
+        a.asname or a.name
+        for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+        and (n.module or "").endswith("bridge_tasks")
+        for a in n.names
+    ]
+    assert "RUNNER_FEATURE_CAPS_SELF_REPORT" in imported, (
+        "서버가 자격 이름을 정본에서 import 하지 않는다 — 리터럴로 다시 적었거나 사라졌다")
+
+    gate = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "declares_caps_contract"), None)
+    assert gate is not None, "계약 선언 판정 함수가 없다"
+    # 비교 피연산자가 **그 import 된 이름**이어야 한다 — 리터럴이면 두 곳이 갈린다.
+    names = {n.id for n in ast.walk(gate) if isinstance(n, ast.Name)}
+    assert "RUNNER_FEATURE_CAPS_SELF_REPORT" in names, (
+        "게이트가 정본 상수를 쓰지 않는다(리터럴로 되돌아갔다)")
+    consts = {n.value for n in ast.walk(gate)
+              if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    assert "caps_self_report" not in consts, "게이트가 자격 이름을 하드코딩했다"
+
+
+def test_report_provenance_allowlists_match_on_both_sides():
+    """런타임별 provenance 허용집합이 러너와 서버에서 **같다**.
+
+    두 곳이 갈리면 한쪽이 조용히 느슨해진다 — 그리고 느슨한 쪽이 사용자가 보는 진실이 된다
+    (이 feature 가 P0-R 에서 이미 겪은 형태). 특히 `builtin` 이 어느 한쪽에라도 들어오면
+    `caps_self_report` 선언이 거짓이 되고 서버는 그것을 검증할 수단이 없다.
+    """
+    import ast
+
+    mod = _load_runner()
+    tree = ast.parse(_AI_TOOLS.read_text(encoding="utf-8"))
+    server = None
+    for n in ast.walk(tree):
+        tgt = None
+        if isinstance(n, ast.Assign):
+            tgt = [t for t in n.targets if isinstance(t, ast.Name)]
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+            tgt = [n.target]          # `X: frozenset = frozenset({...})` 는 AnnAssign 이다
+        if tgt and any(t.id == "_SANITIZE_SOURCE_ALLOW" for t in tgt):
+            v = n.value
+            # `frozenset({...})` 는 리터럴이 아니라 Call 이라 `literal_eval` 이 거부한다.
+            inner = v.args[0] if isinstance(v, ast.Call) and v.args else v
+            server = set(ast.literal_eval(ast.unparse(inner)))
+    assert server is not None, "서버에 provenance allowlist 가 없다"
+    assert set(mod._REPORTABLE_SOURCES) == server, (
+        f"양쪽 허용집합이 다르다: 러너 {sorted(mod._REPORTABLE_SOURCES)} vs 서버 {sorted(server)}")
+    assert "builtin" not in server, (
+        "내장 표 출처가 허용집합에 들어왔다 — `gpt-5.1-codex` 가 화면에 뜬 경로가 다시 열린다")
 
 
 def test_heartbeat_carries_the_capability_every_time():
@@ -1552,3 +1621,58 @@ def test_builtin_model_table_never_reaches_the_report(monkeypatch):
     assert not (reported_values & builtin_values), (
         f"내장 표의 모델이 신고에 실렸다: {sorted(reported_values & builtin_values)}")
     assert reported == [], "물어보지 못한 런타임이 신고에 남았다"
+
+
+def test_builtin_table_never_reaches_the_report_on_any_branch(monkeypatch):
+    """내장 표가 신고에 닿지 않는다 — **cached·probe 두 분기 모두** (qa M9b).
+
+    종전 판본은 `detect_runtimes(cached={})` 만 불렀고 `probe` 기본값이 `False` 라
+    monkeypatch 한 `probe_runtime_caps` 가 **한 번도 호출되지 않았다** — docstring 이
+    서술한 「probe 를 전부 실패시킨다」는 진입하지 않는 분기였다. 그리고 러너의 정상 기동
+    경로는 바로 그 *cached* 경로다(`--refresh-caps` 가 예외). 그 사이로 뮤턴트 M9b
+    (빈 cached 항목을 `_RUNTIME_SPECS` 로 다시 채움)가 생존했다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
+    monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
+
+    builtin = {m["value"] for n, s in mod._RUNTIME_SPECS.items() if n != "ollama"
+               for m in (s.get("models") or [])}
+    assert builtin, "표가 비어 이 단정이 아무것도 검사하지 않는다(자기충족 방지)"
+
+    stale_cache = {"codex": {"label": "Codex", "models": [], "efforts": [],
+                             "model": ["-m", "{model}"], "effort": None, "source": "cache"}}
+    for label, kwargs in (("cached-empty", {"cached": {}}),
+                          ("cached-stale", {"cached": stale_cache}),
+                          ("probe-fail", {"cached": {}, "probe": True})):
+        got = mod.detect_runtimes(**kwargs)
+        values = {m["value"] for rt in got for m in rt["models"]}
+        assert not (values & builtin), f"{label}: 내장 표 모델이 신고에 실렸다 {sorted(values & builtin)}"
+        assert got == [], f"{label}: 물어보지 못한 런타임이 신고에 남았다"
+
+
+def test_report_carries_runtime_provenance(monkeypatch):
+    """신고 항목마다 **출처**가 실린다 — 서버가 런타임 단위로 다시 거른다."""
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
+    caps = {"claude": {"label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
+                       "efforts": [], "model": ["--model", "{model}"], "effort": None,
+                       "source": "probe"}}
+    got = mod.detect_runtimes(cached=caps)
+    assert [r["runtime"] for r in got] == ["claude"]
+    assert got[0]["source"] == "probe", "출처가 신고에 실리지 않는다"
+
+
+def test_ollama_live_lookup_is_not_labelled_builtin(monkeypatch):
+    """ollama 의 **실조회** 목록은 `builtin` 이 아니다 — 아니면 게이트가 그것을 지운다."""
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "ollama" else None)
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
+    got = mod.detect_runtimes(cached={})
+    assert [r["runtime"] for r in got] == ["ollama"], "실조회 목록이 provenance 게이트에 걸렸다"
+    assert got[0]["source"] == "ollama"
+    # 반대로 조회가 비면 신고 자체가 없다(빈 그룹을 남기지 않는다).
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
+    assert mod.detect_runtimes(cached={}) == []
