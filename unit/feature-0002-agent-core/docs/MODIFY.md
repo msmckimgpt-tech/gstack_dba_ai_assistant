@@ -3127,3 +3127,38 @@ Task-Cycle: feature-0002-agent-core
 - 증적: `feature-0003/docs/test-runs.d/20260901T160000-kb-external-reach-visual.md` Run 8.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T190000-kb-grounding-match — grounding 매칭: 한도는 «후보»에, 판정은 «낱말»로
+
+설계·AC 정본은 같은 feature 의 `docs/FUNCTION.md` `## grounding 매칭 — 한도는 «후보»에`.
+**발견 경로가 중요하다**: 직전 cycle 을 배포한 뒤 사용자 요청으로 **GZ_QA_G 라이브 실측**을
+하다 나왔다. 코드 리뷰·단위 테스트로는 안 나왔을 결함이다 — 둘 다 「데이터가 어떤 규모·모양일
+때만」 드러난다(scope 가 200 을 넘을 때 / 질문에 특정 합성어가 있을 때).
+
+- **`term_occurs_as_word(term, msg_lower) -> bool` 신설**. 낱말 경계 판정. 경계 규칙이
+  **비대칭**인 이유는 한국어 조사다(FUNCTION 표 참조) — 뒤쪽 한글을 막으면 `파티셔닝 키도`·
+  `증분 복제와` 같은 정상 등장이 전부 깨진다. 앞만 막고 뒤는 연다.
+- **`_fetch_glossary(conn, scopes, message=None, role_key=None)`** — `message` 를 주면
+  `position(lower(term) in %s) > 0` 로 SQL 이 후보를 좁힌다. 그래야 `LIMIT` 이 「scope 전체」가
+  아니라 「매칭 후보」에 걸린다. `_fetch_enums(conn, scopes, message=None)` 도 동형
+  (`column_name` OR `table_name`). 미지정 시 종전 동작(하위호환).
+- **한도 도달 로그** `glossary_read_limit_hit` / `enum_read_limit_hit`. 무음 절단 금지.
+- **`load_glossary_enum_context`** — 두 fetch 에 질문 전달 + 판정을 `term_occurs_as_word` 로.
+
+**기존 테스트 1건 갱신**: `test_role_scoped_read_sql` 이 역할 파라미터를 **위치**(`params[1]`)로
+집고 있었는데, 질문 후보필터가 앞에 끼어들며 깨졌다. 위치가 아니라 **내용**으로 찾도록 고쳤다 —
+이 테스트가 보려는 것은 「역할 캐스케이드가 실렸는가」이지 파라미터 순서가 아니다.
+
+**비변경**: 스키마 0 · 권한/인가 0 · 라우트 0 · 주입 cap(`_INJECT_TERM_CAP` 40 /
+`_INJECT_ENUM_CAP` 200) 0 · 한도값(200/500) 0 — 한도를 **올리지 않고 걸리는 대상을 바꿨다**.
+
+**검증**: 컨테이너 `make test` **rc=0 · FAILED 0 · 6,904 tests** · ruff clean · 뮤테이션
+**9/9 KILL** · **라이브 전후 대조**(배포본 vs 수정본, 같은 GZ_QA_G 질문):
+
+| | 수정 전 | 수정 후 |
+|---|---|---|
+| `증분 복제`(질문에 있음) | **누락**(한도 밖) | **회복** |
+| `Achievement.Type`(DK온라인, 질문에 없음) | **유입** | **차단** |
+| 정상 매칭 3건 | 유지 | 유지 |
+
+Task-Cycle: feature-0002-agent-core
