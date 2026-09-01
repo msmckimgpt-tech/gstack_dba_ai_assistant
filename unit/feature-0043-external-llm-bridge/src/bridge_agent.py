@@ -2405,6 +2405,103 @@ def resolve_caps(only: str | None, cached: dict | None,
 CANCELED = "__canceled__"
 
 
+#: 실패 사유로 실어 보낼 자식 출력의 최대 길이(문자).
+_FAIL_DETAIL_MAX = 400
+
+#: **stderr 에 있어도 실패 원인이 아닌** 줄 — 이것만 남으면 stderr 는 «비었다» 로 본다.
+#:
+#: 라이브에서 관측된 형태: claude CLI 는 파이프 stdin 을 3초 기다린 뒤 그 사실을 stderr 로
+#: 알린다. 그 줄은 종료코드와 무관한 안내인데, 그것만 보고 "stderr 가 비지 않았다" 로 판단하면
+#: 진짜 사유(stdout 에 있다)를 덮어쓴다.
+_STDERR_NOISE = (
+    re.compile(r"^\s*warning:\s*no stdin data received", re.I),
+    re.compile(r"^\s*$"),
+)
+
+#: 자식 CLI 의 실패 출력 → **사용자가 다음에 할 행동**. 런타임 이름이 아니라 *증상 어휘* 로
+#: 잡는다 — 어느 CLI 든 같은 부류의 실패는 같은 말을 쓰기 때문이고, 새 런타임이 붙어도 표를
+#: 고칠 필요가 없다. 하나도 안 맞으면 안내 없이 원문만 전달한다(추측해 오도하지 않는다).
+_FAILURE_HINTS: tuple[tuple[object, str], ...] = (
+    (re.compile(r"usage limit|session limit|quota|rate.?limit|too many requests|"
+                r"사용 한도|한도에 도달", re.I),
+     "연결된 AI 의 사용 한도에 걸렸습니다. 위에 적힌 초기화 시각이 지난 뒤 같은 질문을 다시 "
+     "보내면 처리됩니다(질문은 그대로 다시 보내면 됩니다)."),
+    (re.compile(r"not logged in|not authenticated|please\s+(run\s+)?/?log\s?in|"
+                r"unauthorized|invalid api key|\b401\b", re.I),
+     "연결된 AI 에 로그인돼 있지 않습니다. 러너를 띄운 컴퓨터에서 그 CLI 에 로그인한 뒤 "
+     "다시 질문해 주세요."),
+    (re.compile(r"unknown option|unrecognized (option|argument)|"
+                r"invalid (option|argument)|unexpected argument", re.I),
+     "연결된 AI 가 이 호출의 옵션을 알지 못합니다(구버전일 수 있습니다). 그 CLI 를 업데이트하거나 "
+     "웹의 「연결 준비」로 러너를 최신 사본으로 다시 받아 실행해 주세요."),
+    (re.compile(r"command not found|no such file or directory|not recognized as", re.I),
+     "연결된 AI 의 실행 파일을 찾지 못했습니다. 러너를 띄운 컴퓨터에 그 CLI 가 설치돼 있고 "
+     "PATH 에서 보이는지 확인해 주세요."),
+)
+
+#: 실패 원문에 섞여 나갈 수 있는 자격증명 형태. 사유를 살리려다 토큰을 대화에 흘리지 않는다.
+_SECRET_PATTERNS = (
+    re.compile(r"\bmat_[A-Za-z0-9_\-]{4,}"),
+    re.compile(r"(?i)\b(bearer|authorization:\s*bearer)\s+\S+"),
+    re.compile(r"(?i)\b(sk|api)[-_][A-Za-z0-9_\-]{8,}"),
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """실패 원문에서 자격증명 형태를 지운다. 사유를 살리는 일이 토큰 유출이 되면 안 된다."""
+    out = text or ""
+    for pat in _SECRET_PATTERNS:
+        out = pat.sub("<가려짐>", out)
+    return out
+
+
+def _meaningful_lines(text: str) -> str:
+    """잡음 줄을 걷어낸 나머지. 전부 잡음이면 빈 문자열."""
+    keep = [ln for ln in (text or "").splitlines()
+            if not any(p.search(ln) for p in _STDERR_NOISE)]
+    return "\n".join(keep).strip()
+
+
+def describe_cli_failure(returncode: int, out: str, err: str) -> str:
+    """자식 CLI 가 0 이 아닌 코드로 끝났을 때 **사용자에게 나갈 한 덩어리**를 만든다.
+
+    ## 왜 stdout 도 보는가 (라이브 실측 2026-09-01)
+
+    종전에는 stderr 만 실어 보냈다. 그런데 실패 사유를 **stdout 으로 내는 CLI 가 있다** —
+    claude 는 사용 한도에 걸리면 `You've hit your session limit · resets 5:30pm` 을 stdout 에
+    쓰고 exit 1 로 끝나며, stderr 에는 stdin 안내만 남는다. 그래서 사용자가 받은 답은
+
+        AI 가 오류로 끝났습니다(exit 1):
+
+    — 콜론 뒤가 **빈** 문장이었다. 원인이 화면에 없으니 사용자는 같은 질문을 그대로 다시
+    보냈고(대화 `…d7010dcf`, 15:38 · 15:39), 같은 빈 문장을 다시 받은 뒤 대화를 떠났다.
+    한도는 몇 분 뒤 풀리는 **회복 가능한** 상태였다.
+
+    즉 고칠 것은 한도 자체가 아니라 **사유를 버리는 경로**다. 채널(어느 파이프로 나오는가)은
+    CLI 마다 다르고 버전마다 바뀌므로, 채널을 맞히려 들지 않고 **둘 다 보고 의미 있는 쪽을
+    고른다** — 이 선택은 CLI 가 무엇이든 성립한다.
+
+    ## 무엇을 어떤 순서로 담나
+
+    1. `exit <코드>` — 기계적 사실.
+    2. 사유 원문(잡음 제거 · 자격증명 마스킹 · `_FAIL_DETAIL_MAX` 자름). stderr 에 의미 있는
+       줄이 있으면 그것, 없으면 stdout. 둘 다 없으면 "출력이 없었다" 를 **명시**한다 —
+       빈 콜론으로 끝내지 않는다(그게 이 결함의 표면이었다).
+    3. 다음 행동 1줄(`_FAILURE_HINTS` 가 맞을 때만). 맞는 것이 없으면 붙이지 않는다.
+    """
+    detail = _meaningful_lines(err) or _meaningful_lines(out)
+    detail = _redact_secrets(detail)
+    if len(detail) > _FAIL_DETAIL_MAX:
+        detail = detail[:_FAIL_DETAIL_MAX] + "…"
+    head = f"AI 가 오류로 끝났습니다(exit {returncode})."
+    body = f" 연결된 AI 가 남긴 사유: {detail}" if detail else \
+        " 연결된 AI 가 아무 출력도 남기지 않아 사유를 알 수 없습니다."
+    for pat, hint in _FAILURE_HINTS:
+        if detail and pat.search(detail):
+            return head + body + "\n\n" + hint
+    return head + body
+
+
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                         env: dict | None = None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
@@ -2464,13 +2561,19 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
 
     _dur = int((time.monotonic() - _t0) * 1000)
     if proc.returncode != 0:
-        # ⚠ 자식의 stderr **전문**(상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
+        # ⚠ 자식의 출력 **전문**(각 상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
         #   잘려 있어서, 정작 원인이 적힌 뒷부분이 사라지는 일이 잦았다.
+        # ⚠ stderr 뿐 아니라 **stdout 꼬리도** 남긴다 (TASK-20260901T160000): 사용 한도 같은
+        #   정책성 실패의 사유를 stdout 으로 내는 CLI 가 있고, stderr 만 적는 원장은 그 실패를
+        #   「사유 없음」으로 기록한다 — 사용자 화면에서 사라진 것과 같은 정보가 원장에서도
+        #   사라지면 사후 진단이 불가능해진다.
         log_event(_EV_AI_FAIL, "AI 가 오류로 끝났다", level="ERROR",
                   exe=_exe, exit=proc.returncode, dur_ms=_dur,
                   stdout_bytes=len(box.get("out") or ""),
-                  stderr_tail=(box.get("err") or "")[-2000:])
-        return False, f"AI 가 오류로 끝났습니다(exit {proc.returncode}): {box.get('err', '')[:400]}"
+                  stdout_tail=_redact_secrets((box.get("out") or "")[-2000:]),
+                  stderr_tail=_redact_secrets((box.get("err") or "")[-2000:]))
+        return False, describe_cli_failure(int(proc.returncode), box.get("out", ""),
+                                           box.get("err", ""))
     log_event("ai.ok", level="DEBUG", exe=_exe, exit=0, dur_ms=_dur,
               stdout_bytes=len(box.get("out") or ""))
     return True, (box.get("out") or "").strip()
@@ -3373,13 +3476,21 @@ def _arm_exit_release(api: Api) -> None:
     """
     global _ACTIVE_API
     _ACTIVE_API = api
-    atexit.register(release_own_claims_on_exit)
-    # 종료 요약도 **같은 출구**에 건다 (TASK-20260901T163000). 종전에는 러너가 사라진 뒤
+    # 종료 요약을 **같은 출구**에 건다 (TASK-20260901T163000). 종전에는 러너가 사라진 뒤
     # 로그의 마지막 줄이 무엇이든 그것이 마지막 사건인지, 그냥 거기서 잘린 것인지 알 수
     # 없었다 — 87분 고아 사고에서 「12:47 종료」를 다른 증거로 짜맞춰야 했던 이유다.
-    # ⚠ `release_own_claims_on_exit` **뒤에** 등록한다: atexit 는 역순 실행이라, 이러면
-    #   요약이 해제 결과까지 반영한 뒤 마지막 줄로 찍힌다.
+    #
+    # ⚠ 등록 순서가 곧 **역순 실행 순서**다: atexit 는 나중에 등록한 것을 먼저 부른다.
+    #   그래서 요약을 **먼저** 등록해야 그것이 **마지막에** 실행되어, 자기 점유 해제까지
+    #   끝난 뒤의 진짜 마지막 줄이 된다.
+    #
+    #   라이브 실측(2026-09-01, 배포본 a17b8f5ea7f6)에서 반대로 걸려 있었다 — `--check`
+    #   종료 로그가 `run.stop`(seq 4) → `api.fail`(seq 5, 해제 호출의 401) 순으로 남았다.
+    #   요약이 마지막 줄이 아니면 그 요약은 **해제 결과를 세지 못하고**, 「여기서 끝났다」의
+    #   표지 구실도 못 한다(뒤에 줄이 더 있으니 잘린 것과 구분되지 않는다). 종료 요약의
+    #   두 가지 쓸모가 동시에 죽는, 한 줄짜리 순서 결함이었다.
     atexit.register(_log_run_stop)
+    atexit.register(release_own_claims_on_exit)
     try:
         import signal as _signal
 

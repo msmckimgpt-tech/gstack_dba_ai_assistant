@@ -2284,6 +2284,56 @@ codex 판정은 미산출이므로 「독립 검증을 받았다」고 적지 �
 - **범위**: 문서 3파일(TASK·REPORT·MODIFY) + test-runs.d fragment 2사본. **코드 변경 0**.
 - **판정**: 적대 패널 비대상 — 라이브 실측 결과를 옮겨 적은 기록이며 새 동작을 도입하지 않는다.
   선행 cycle 의 검토 기록은 `REV-20260901T150000 [SKIPPED:tool-quota:codex]`.
+## REV-20260901T160000-ai-claude-feature-0043-cli-failure-reason [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-01
+- **범위**: `src/bridge_agent.py`(+ `static/agent/` 배포 사본) · 신규
+  `tests/test_cli_failure_reason.py` 11건 · unit docs.
+- **Trigger** (§18.8 dispatch 키워드 매칭): `credential`(사유 원문의 토큰 마스킹) → **security**.
+  `schema`/`query`/UI/`API contract`/`perf` 키워드 **0건** — 서버 API·스키마·화면 마크업은
+  변경 없음. 표 매칭이 security 단일이라 렌즈를 임의로 넓히지 않고, 대신 회귀·정직성 렌즈를
+  더해 3렌즈로 수행.
+- **수행 형태**: 인라인 적대 검토(본 세션). 별도 subagent 패널은 이 세션의 도구 제약으로
+  미수행 — 대신 **뮤테이션 3종으로 테스트의 실효를 실증**했다(아래).
+
+### 렌즈 1 — security: 사유를 살리는 일이 유출이 되는가
+
+- **P1 후보(수정함)**: 초기 구현은 `401` 을 경계 없이 매칭해 `1401 rows` 같은 무관한 숫자에
+  인증 안내를 붙였다 → `\b401\b` 로 좁히고 회귀 테스트 추가
+  (`test_hint_matching_does_not_fire_on_incidental_digits`).
+- **accepted risk (기록)**: 실패 시 stdout 을 싣게 되므로, 자식 CLI 가 오류와 함께 프롬프트를
+  되받아 찍는다면 그 일부(≤400자)가 답변에 실릴 수 있다. 완화 3중 — ① stderr 우선 ②
+  `_FAIL_DETAIL_MAX` 400자 상한 ③ `_redact_secrets`. 실릴 수 있는 내용은 **그 대화의 맥락**이고
+  수신자도 같은 대화의 참여자라 신뢰경계를 넘지 않는다. `ANCHOR.md` §1~§3 의 경계는 이동하지
+  않는다(오히려 마스킹이 추가된다).
+- 토큰은 여전히 `BRIDGE_TOKEN` 환경변수로만 전달된다 — 이번 변경이 그 결정을 되돌리지 않는다.
+
+### 렌즈 2 — 회귀: 종전에 동작하던 것이 죽는가
+
+- 성공 경로(`returncode == 0`)는 **한 줄도 바뀌지 않았다**.
+- stderr 에 의미 있는 사유가 있던 기존 케이스는 그대로 stderr 가 이긴다
+  (`test_real_stderr_reason_still_wins`).
+- `test_bridge_agent_sync` 의 `_run_cli_cancelable` 계약 슬라이스(`cancel_check()`·`pump.join`)
+  는 새 함수를 **앞에** 정의해 보존 — 취소·비블로킹 계약 불변.
+- 인접 테스트 전량 재실행: feature-0043 · feature-0003 · feature-0041 컨테이너 PASS,
+  잔여 3건은 **main 기준선과 동일한 pre-existing**(테스트 순서 의존 `test_llm_gate` 3건).
+
+### 렌즈 3 — 정직성: 안내가 사실보다 앞서는가
+
+- 부류가 맞지 않으면 안내를 **붙이지 않는다**(`test_unknown_failure_gets_no_invented_advice`).
+- 출력이 아예 없으면 「알 수 없습니다」를 명시한다 — 이번 결함의 표면이 정확히 «모른다는 사실도
+  말하지 않는 것» 이었다.
+- 자동 재시도를 넣지 않았고, 넣지 않은 이유를 TASK 노트 §6 에 남겼다.
+
+### 뮤테이션 (테스트가 실제로 잡는가) — 3/3 KILL
+
+| # | 주입 | 결과 |
+|---|---|---|
+| M1 | stdout 폴백 제거(= 원 결함 재주입) | **KILL** 3건 |
+| M2 | `_STDERR_NOISE` 필터 제거 | **KILL** 2건 |
+| M3 | `_redact_secrets` 호출 제거 | **KILL** 1건 |
+
+- **판정**: **APPROVED** — P1 1건 적발·수정, 잔여 BLOCKING/MAJOR 0.
 ## REV-20260901T163000-runner-log-structure [SKIPPED:no-subagent-this-session] — 자체 검증 PASS (조치 4건 후)
 
 - **범위**: `bridge_agent.py` 관측 계층(가산) · `bridge_setup.{sh,ps1}` 로그 회전·안내 ·
@@ -2389,7 +2439,15 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 ### codex 가 통과시킨 것
 
 교차 계정 `last_os` 노출 없음 — 미로그인 상태 응답에는 값이 없고, 두 응답 모두 현재 계정에 묶인다.
+## REV-20260901T170000-runner-log-atexit-order [SKIPPED:trivial-order-fix] — 자체 검증 PASS
 
+- **범위**: `atexit` 등록 두 줄 순서 + 회귀 2건. 동작 변경은 「종료 로그의 줄 순서」뿐.
+- **판정 근거**: 결함을 **라이브가 먼저 잡았고**(배포본 `--check` 종료 로그), 수정은 구코드에서
+  FAIL 재현 → 신코드 PASS 로 양방향 확인했다. 적대 패널이 더할 것이 없는 크기다.
+- **부수 소득**: 첫 회귀 테스트가 vacuous 했던 것을 자체 검토가 잡았다 — 테스트가 제품 경로
+  (`_arm_exit_release`)를 타지 않고 자기 등록 순서를 검사해 구코드에서도 통과했다.
+  「테스트가 통과한다」와 「테스트가 그 결함을 잡는다」는 다른 사실이고, 후자는 **구코드에서
+  실패시켜 봐야** 안다.
 ## REV-20260901T170000-ai-claude-feature-0043-connect-os-postdeploy [SKIPPED:non-policy-doc] — 문서 전용
 
 - **일시**: 2026-09-01
@@ -2399,3 +2457,11 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
   `REV-20260901T163000` (codex, P1 3건·P2 2건 전건 조치) 로 이미 리뷰됐다.
 - 기록의 근거는 라이브 관측값 자체이며, 그 값들은 fragment 에 명령·응답 단위로 남아 있다
   (재현 가능). 미검증 항목(구 러너·동시 2러너)은 fragment 에 **명시**했다 — 통과로 위장하지 않는다.
+
+## REV-20260901T170000-ai-claude-feature-0043-cli-failure-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- **일시**: 2026-09-01
+- **범위**: 문서 3파일(MODIFY·TASK·원장) + test-runs.d fragment 2사본. **코드 변경 0**.
+- **판정**: 적대 패널 비대상 — 라이브 실측 결과를 옮겨 적은 기록이며 새 동작을 도입하지 않는다.
+  검증 대상 코드는 `REV-20260901T160000 [AGENT-TEAM:inline-adversarial]` 에서 이미 3렌즈 검토
+  (P1 1건 적발·수정)를 거쳤다.

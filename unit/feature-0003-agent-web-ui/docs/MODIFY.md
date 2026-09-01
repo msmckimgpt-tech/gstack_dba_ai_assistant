@@ -5372,6 +5372,17 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
 
 **검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
+## CHG-20260901T160000-ai-claude-feature-0003-runner-mirror-sync — 러너 배포 사본 동기화 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Minor (파일 소유만 이쪽 — 로직 변경의 정본은 feature-0043)
+- **cross-ref**: feature-0043 마찰 `FR-cli-failure-reason-discarded-on-stdout` →
+  코드 수정 `CHG-20260901T160000-ai-claude-feature-0043-cli-failure-reason`.
+
+`static/agent/bridge_agent.py` 는 사용자가 「연결 준비」로 내려받는 **실물**이며 정본
+(`unit/feature-0043-external-llm-bridge/src/bridge_agent.py`)과 바이트 동일해야 한다
+(`test_bridge_agent_sync`). 이번 변경은 그 동기화뿐 — 웹 앱이 import 하지 않는 정적 자산이라
+서버·프론트 동작 변화 0(HTML·CSS·JS 변경 0).
 ## CHG-20260901T163000-attach-lineage-uploader 공유 대화 계보 업로더 식별 + 그룹 카드 되풀이 제거
 - **payload 에 업로더를 싣는다** — `_serialize_attachment_for_api` 에 `account_id`, 목록 엔드포인트에 `uploader_username`(WebAccounts IN 조회 1회). 종전에는 목록이 `AccountId` 를 직렬화에서 버려, 화면이 사람이 올린 계보를 전부 「사용자 계보」로 뭉뚱그렸다 — 공유 대화에서 서로 다른 멤버의 동명 계보가 **글자 하나 다르지 않았다**(라이브 실측: 대화 20260813083932 의 계정 10·50 동명 계보 4쌍 = 8행). 선행 cycle 의 "소유권 단정 금지" 계약은 *데이터가 없어서* 였지 원칙이 아니었다.
 - ⭐ **같은 사실을 assistant 는 이미 알고 있었다** — `## FILE VERSION LINEAGES` 가 `uploaded by jmkimmasangsoft.com` / `uploaded by admin` 으로 계보를 이름으로 가른다(라이브 프롬프트 렌더로 확인). 결함은 「모델이 모른다」가 아니라 **「같은 사실이 화면에 도달하지 않는다」** 였다. 그 원천 계약을 회귀로 함께 잠갔다.

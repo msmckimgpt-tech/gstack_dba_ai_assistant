@@ -2560,6 +2560,54 @@ TASK 체크박스 + TEST Run 행만.
 
 증적: `docs/test-runs.d/TASK-20260901T140000-injection-false-positive-postdeploy.md`
 (feature-0003 사본 동반 — check #13 대상 파일 소유 feature).
+## CHG-20260901T160000-ai-claude-feature-0043-cli-failure-reason — 자식 AI 의 실패 사유를 버리지 않는다
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-cli-failure-reason (`/_dqa:conversation_audit` 대화 한정 호출)
+- **위험도**: Major (§12.3 — 사용자 대면 실패 피드백 경로. 다만 **더하기만 하는 변경**이고
+  성공 경로·프롬프트·가드·권한은 한 줄도 건드리지 않는다)
+- **RC**: `FR-cli-failure-reason-discarded-on-stdout` (원장)
+
+### 배경 — 콜론 뒤가 비어 있었다
+
+대화 `…d7010dcf` (「253서버 프리미엄 포인트 누적·사용로그 집계」) 에서 사용자는 같은 질문을
+두 번 보내고 두 번 다 `AI 가 오류로 끝났습니다(exit 1):` 만 받은 뒤 대화를 떠났다. 실제 사유는
+연결된 `claude` CLI 가 **stdout** 으로 낸 사용 한도 안내였고, 러너는 **stderr 만** 실어 보냈다.
+그 stderr 에는 종료코드와 무관한 stdin 안내 한 줄뿐이었다.
+
+한도는 몇 분 뒤 풀리는 회복 가능한 상태였다. 화면에 그 사실이 없었을 뿐이다.
+
+### 변경 내용
+
+**1. `describe_cli_failure()` — 사유 조립 단일 지점** (`src/bridge_agent.py`)
+
+stderr 에 **의미 있는** 줄이 있으면 그것, 없으면 stdout. 둘 다 없으면 「사유를 알 수 없습니다」를
+명시한다 — 빈 콜론으로 끝나지 않는다. 채널을 맞히려 들지 않는 것이 요점이다: 어느 파이프로
+나오는가는 CLI·버전마다 다르고 앞으로도 바뀐다.
+
+**2. `_STDERR_NOISE`** — 종료코드와 무관한 안내가 사유 자리를 차지하지 못하게. (이번 사고의
+정확한 기전이 이것이다 — stderr 가 «비지 않아» 보여서 stdout 을 보지 않았다.)
+
+**3. `_FAILURE_HINTS`** — 런타임 이름이 아니라 **증상 어휘**로 회복 가능한 부류(한도·미로그인·
+미지원 옵션·미설치)를 잡아 「다음에 할 행동」 1줄을 붙인다. 맞는 부류가 없으면 붙이지 않는다 —
+근거 없는 안내는 침묵보다 나쁘다. 새 런타임이 붙어도 표를 고칠 필요가 없다.
+
+**4. `_redact_secrets`** — 사유 원문의 토큰 형태(`mat_…`·Bearer·`sk-…`)를 가리고 길이를
+`_FAIL_DETAIL_MAX`(400자)로 자른다. 답변은 대화에 영구 저장되므로 사유를 살리는 일이 유출이
+되면 안 된다.
+
+**5. 러너 로그에 실패 첫 줄 기록** — 종전에는 이 실패가 `bridge.log` 에 **한 줄도** 남지 않아
+운영자도 사용자 화면의 빈 콜론 말고는 볼 것이 없었다.
+
+**6. 배포본 사본 동기화** — `unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`
+(사용자가 「연결 준비」로 내려받는 실물). `test_bridge_agent_sync` 가 해시로 잠근다.
+
+### 범위 밖 (의도적)
+
+자동 재시도·보류는 넣지 않았다. 한도 실패를 러너가 되돌리려면 해제 시각을 파싱해 작업을
+붙들어야 하고, 그동안 화면은 다시 무진전 구간이 된다 — 원장
+`FR-llm-attempt-cap-inside-latency-tail` 이 다룬 바로 그 마찰이다. 이번 cycle 은 **사실을 정확히
+전달**하는 데까지다.
 ## CHG-20260901T163000-runner-log-structure — 러너 로그를 감사 가능한 구조로
 
 - **날짜**: 2026-09-01
@@ -2650,7 +2698,19 @@ TASK 체크박스 + TEST Run 행만.
 그래서 (a) ALTER 를 fast path 도 타는 `_ensure_bridge_heartbeat_schema` 로 옮기고, (b) 토큰 행
 `RunnerOs` 를 한 겹 두어 **연결 사건일 때만** 계정에 반영하도록 바꿨다. (b) 는 덤으로 폐기 토큰의
 계정 쓰기(P2-5)까지 막는다 — 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문이다.
+## CHG-20260901T170000-runner-log-atexit-order — 종료 요약을 진짜 마지막 줄로
 
+- **날짜**: 2026-09-01
+- **REQ**: CHG-20260901T163000 의 POST-DEPLOY 실측이 적발
+- **위험도**: Minor (`atexit` 등록 두 줄 순서 + 회귀 2건)
+- **변경 파일**: `bridge_agent.py`(+배포 사본) · `tests/test_bridge_log_structure.py`
+
+`atexit` 역순 실행을 주석에 **반대로** 적어 두고 그대로 등록했다. 배포본 `--check` 종료
+로그가 `run.stop` → `api.fail` 순으로 남아 드러났다. 요약을 먼저 등록해 마지막에 실행되게 한다.
+
+교훈 하나 더: 이 결함의 첫 회귀 테스트가 vacuous 했다(테스트 스크립트가 핸들러를 직접
+등록해 제품 경로를 안 탔다 — 구코드에서도 통과). 순서는 `_arm_exit_release` 의 성질이므로
+그 함수를 불러야 관측된다. **구코드에서 FAIL 을 재현하고 나서야** 그 테스트를 믿었다.
 ## CHG-20260901T170000-ai-claude-feature-0043-connect-os-postdeploy — POST-DEPLOY 실측 기록
 
 - **날짜**: 2026-09-01
@@ -2665,3 +2725,18 @@ TASK 체크박스 + TEST Run 행만.
 PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로
 생겼다**는 증거이기도 하다 — codex P1-1 의 수정이 라이브에서 성립했다는 뜻이고, 안 생겼다면 값은
 영원히 `""` 로 남아 «테스트는 전통과하는데 기능은 없는» 상태가 됐을 것이다.
+
+## CHG-20260901T170000-ai-claude-feature-0043-cli-failure-postdeploy — 실패 사유 소실 해소 POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-cli-failure-reason (CHG-20260901T160000 의 사후 검증)
+- **위험도**: Minor (문서만 — **코드 변경 0**)
+- **배포 대상**: `4521a7e1` (scope=all)
+
+배포 게이트 5/5 + **배포 실물 런타임 실증 3/3**. 가장 중요한 것은 R3 — 서빙되는 러너 사본을
+그대로 import 해 라이브 실측 입력을 넣으니 사용자가 받게 될 문장이 **사유와 다음 행동까지 갖춘
+형태로** 생성됐다(종전: 콜론 뒤 빈 문장). 원장 status 를 `fixed:undeployed` →
+`fixed:deployed:unverified-live` 로 갱신. 잔여는 러너 갱신 후 사용자 왕복 1건.
+
+증적: `docs/test-runs.d/TASK-20260901T160000-cli-failure-reason-postdeploy.md`
+(feature-0003 사본 동반).

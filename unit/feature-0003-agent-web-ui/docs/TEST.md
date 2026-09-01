@@ -3671,3 +3671,5 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   AI 수정본 계보 행 39px(두 줄) — 필요 268 / 가용 206, **62px 부족**을 수치로 확정.
 - 캡처가 결함 1건 포착: 글리프만 남은 파선 pill 이 «빈 동그라미» → 테두리 제거.
 - 증적: `docs/test-runs.d/TASK-20260901T170000-lineage-row-compaction.md`
+
+| TEST-20260901T170000-runner-log-postdeploy | `static/agent/bridge_agent.py` (Windows-browser) | POST-DEPLOY — 실 Windows 브라우저 fetch 로 배달 지문 `a17b8f5ea7f6` (main 일치·PRE 에서 갱신) + 서빙 본문에 구조화 로그 존재. 배포본을 실제 구동해 원장 4사건·토큰 마스킹 0건 확인. **화면 렌더 변경 0**. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |
