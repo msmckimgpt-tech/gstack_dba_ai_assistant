@@ -2284,3 +2284,67 @@ codex 판정은 미산출이므로 「독립 검증을 받았다」고 적지 �
 - **범위**: 문서 3파일(TASK·REPORT·MODIFY) + test-runs.d fragment 2사본. **코드 변경 0**.
 - **판정**: 적대 패널 비대상 — 라이브 실측 결과를 옮겨 적은 기록이며 새 동작을 도입하지 않는다.
   선행 cycle 의 검토 기록은 `REV-20260901T150000 [SKIPPED:tool-quota:codex]`.
+
+## REV-20260901T163000-ai-claude-feature-0043-connect-os-default [CODEX:staged-diff] — CHANGES-REQUESTED → 반영 완료
+
+- **일시**: 2026-09-01
+- **범위**: staged diff 중 소스 411줄 (`feature-0003/src` · `feature-0043/src`)
+- **모델**: gpt-5.6-sol (`codex exec -s read-only`, effort=high)
+- **판정**: **BLOCK — P1 3건 · P2 2건**. 전 건 코드로 재확인 후 수정, 각 건에 회귀 테스트 부여.
+
+### P1-1 — 기존 운영 DB 에는 컬럼이 **생기지 않는다** (확인됨)
+
+`ALTER` 를 slow path(`_ensure_web_tables`)에만 뒀다. 기존 배포는 `_runtime_tables_available()`
+이 참이라 fast path(`_ensure_seed_catchup`)만 돌고 slow path 를 타지 않는다. 읽기·쓰기가 Unknown
+column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으로 남는다 — 테스트는 전통과한다.
+「방어를 넣었다 ≠ 방어가 성립한다」의 교과서적 사례.
+
+- 수정: 두 ALTER 를 `_ensure_bridge_heartbeat_schema` 로 옮김(그 함수만이 fast path 에서도 불린다).
+- 잠금: `test_schema_adds_the_columns_where_existing_deployments_reach_them` — ALTER 가 그 함수
+  **안에** 있고, `_ensure_seed_catchup` 이 그 함수를 **부르는지**까지 본다.
+- **부수 관측(이번 범위 밖)**: `BridgeDefaultModel`·`BridgeDefaultEffort`(2026-08-31)가 같은
+  함정에 걸려 있다 — slow path 에만 ALTER 가 있다. `REPORT.md §8` 에 기록(§8.1 — 기록만).
+
+### P1-2 — 러너가 둘이면 값이 30초마다 뒤집힌다 (확인됨)
+
+계정 값 하나에 "다르면 쓴다" 만 두면, 같은 계정의 WSL·Windows 러너가 서로를 매 하트비트마다
+덮는다. 가드가 항상 통과하므로 쓰기 증폭도 남고, 무엇보다 **사용자가 PowerShell 로 다시 등록해도
+옆에 살아 있는 WSL 러너가 30초 안에 되돌린다** — 요청의 시나리오가 정확히 깨진다.
+
+- 수정: 2단계로 분리. ① 토큰 행 `RunnerOs` 를 먼저 쓰고 ② 그 UPDATE 가 **실제로 행을 바꿨을 때만**
+  (= 이 러너가 처음/바뀐 계열로 자기를 밝힌 **연결 사건**) 계정에 반영. 두 러너가 각자 한 번씩 쓰고
+  나면 이후는 양쪽 다 no-op 이라 진동이 없고, 계정 값은 가장 나중에 연결한 쪽으로 남는다.
+- 잠금: `test_same_runner_repeating_itself_is_not_a_connection_event`(계정 UPDATE 미발생 단언).
+
+### P1-3 — 모달의 늦은 발급 응답이 **다른 창**을 덮는다 (확인됨, 선재 결함)
+
+`_make()` 가 창 세대를 잡지 않았다. A 창 발급 중 닫기 → B 창 재오픈 → A 응답 도착이면 B 의
+토큰·명령이 A 것으로 바뀌고, 닫힌 채 도착하면 close 가 지운 bearer 명령이 숨은 DOM 에 되살아난다
+("닫으면 다시 볼 수 없습니다" 가 거짓이 되는 경로). 상태 조회는 이미 같은 검사를 하고 있었고
+**발급만** 빠져 있었다 — 이번 변경이 만든 결함은 아니나 같은 함수를 손대는 cycle 이라 함께 닫는다.
+
+- 수정: `epochAtStart` 를 fetch 출발 시점에 잡고, 성공·실패 두 경로 모두에서 낡은 응답을 버린다.
+- 잠금: `test_modal_discards_a_late_token_response_from_another_window` — 검사가 **그리기 전**에
+  오는지(위치)까지 본다.
+
+### P2-4 — 단독 페이지의 상태/발급 응답 순서 미정의 (확인됨)
+
+로드 직후 발급을 누르면 상태 조회가 더 늦게 도착할 수 있고, 그때 이미 그려진 명령의 탭이 손 밑에서
+바뀐다. 수동 클릭 전에는 pin 도 없다.
+
+- 수정: 근거 등급(0 추측 / 1 상태 / 2 발급) 도입 — 낮은 등급의 늦은 응답은 무시.
+- 잠금: `test_page_orders_status_and_token_responses`.
+
+### P2-5 — 폐기된 토큰이 계정 필드를 바꿀 수 있었다 (확인됨)
+
+계정 UPDATE 가 `heartbeat()` 의 유효성 재판정(`result is None` → 401)보다 **앞**에 있었고,
+`set_runner_report` 와 달리 토큰 생존 술어도 없었다. 로그아웃과 경합해 최종 401 을 받는 요청이
+토큰보다 오래 사는 값을 남길 수 있다.
+
+- 수정: P1-2 의 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌므로, 죽은 토큰은 1단계에서 걸러져 계정
+  반영에 도달하지 못한다. 술어는 `set_runner_report` 와 **같은 상수**를 쓴다(따로 세면 뒷문).
+- 잠금: `test_token_row_is_written_first_and_gated_on_a_live_token`.
+
+### codex 가 통과시킨 것
+
+교차 계정 `last_os` 노출 없음 — 미로그인 상태 응답에는 값이 없고, 두 응답 모두 현재 계정에 묶인다.

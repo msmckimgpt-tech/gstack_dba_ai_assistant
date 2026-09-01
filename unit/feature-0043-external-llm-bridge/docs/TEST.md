@@ -174,3 +174,15 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 
 | TEST-20260901T140000-pb0008 | 라이브 화면 (Windows-browser) | PRE-DEPLOY baseline — 배포본에 무진행 축 0건 · 제보 대화 말풍선 6건 실측 · 별건(인젝션 거부) 발견. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim.md` | AC-20260901T140000-orphan-claim-reclaim-4 |
 | TEST-20260901T140000-postdeploy | 배포본 `9c04b52c` (Windows-browser) | POST-DEPLOY — 코드 도달 6축 · 배포본 함수 구동 · 국면표 6케이스 ALL PASS · **실 MySQL 에서 점유자 술어 4형식**(P1 회귀 차단) · 자산 스탬프 갱신. 미검증 2건 명시. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md` | AC-20260901T140000-orphan-claim-reclaim-1~5 |
+| TEST-20260901T160000-os-closed-set | `normalize_bridge_os` | 표 밖 값(`linux`·`darwin`·`nt`·숫자·`None`)은 전부 `""` — 화면의 키로 쓰이므로 닫힌 집합이어야 한다 | AC-20260901T160000-connect-os-default-1 |
+| TEST-20260901T160000-os-no-erase | `set_account_bridge_os` | 「모른다」(빈값·표 밖)로는 **UPDATE 자체가 나가지 않는다** — 구 러너의 하트비트가 기존 값을 지우지 않는다 | AC-20260901T160000-connect-os-default-4 |
+| TEST-20260901T160000-os-write-guard | `set_account_bridge_os` | `NOT (BridgeLastOs <=> %s)` NULL-safe 가드 · rowcount 0 이면 「썼다」고 하지 않는다 · 컬럼 부재 예외를 삼킨다 | AC-20260901T160000-connect-os-default-5 |
+| TEST-20260901T160000-os-read-freshness | `account_bridge_os` | 질의에 `LastHeartbeatAt` 이 **없다** — 신선도를 얹으면 연결이 끊긴 뒤(=이 화면을 여는 때) 항상 빈 값 | AC-20260901T160000-connect-os-default-3 |
+| TEST-20260901T160000-os-wiring | 러너·하트비트·API | `os.name` 판정 · `body["agent_os"]` · `set_account_bridge_os` 호출과 예외 격리 · 두 응답의 `last_os` | AC-20260901T160000-connect-os-default-1,2 |
+| TEST-20260901T160000-os-front | `ai-connect.js` · `connect-modal.js` | 서버 값이 추측을 이긴다(두 화면) · 발급 응답도 반영 · 탭을 누르면 고정되어 늦은 응답이 덮지 않는다 | AC-20260901T160000-connect-os-default-2,6 |
+| TEST-20260901T160000-os-keys-align | `compose_launch_commands` | 정규화 표의 이름이 서버가 만드는 명령의 키와 같다 — 갈리면 화면이 빈 명령을 그린다 | AC-20260901T160000-connect-os-default-2 |
+| TEST-20260901T160000-os-schema-reach | `_ensure_bridge_heartbeat_schema` | ALTER 가 **fast path 에서도 불리는** 함수 안에 있고 `_ensure_seed_catchup` 이 그것을 부른다 (codex P1-1 — 기존 운영 DB 컬럼 미생성) | AC-20260901T160000-connect-os-default-1 |
+| TEST-20260901T160000-os-connection-event | `set_account_bridge_os` | 토큰 행이 이미 같은 계열이면 **계정 UPDATE 가 나가지 않는다** — 두 러너 진동 차단 (codex P1-2) | AC-20260901T160000-connect-os-default-5 |
+| TEST-20260901T160000-os-live-token | `set_account_bridge_os` | 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돈다 — 폐기 토큰이 계정 필드를 못 바꾼다 (codex P2-5) | AC-20260901T160000-connect-os-default-5 |
+| TEST-20260901T160000-modal-epoch | `connect-modal._make` | 발급 응답에 창 세대 검사 — 닫힌/다른 창에 토큰·명령을 되살리지 않는다 (codex P1-3) | AC-20260901T160000-connect-os-default-6 |
+| TEST-20260901T160000-page-rank | `ai-connect.adoptLastOs` | 근거 등급(추측<상태<발급) — 늦게 온 상태 조회가 그려진 명령을 덮지 않는다 (codex P2-4) | AC-20260901T160000-connect-os-default-6 |

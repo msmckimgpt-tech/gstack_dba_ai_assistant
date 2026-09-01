@@ -27,6 +27,31 @@ let _lastFocus = null;
 // 무결성 값(CA 지문·체크섬)이 빠지고 — 브라우저는 그 값을 모른다 — 대조 없는 설치가 된다.
 let _launch = null;      //: 서버가 준 {posix, windows, protocol}
 let _osTab = "posix";    //: 지금 보여 주는 명령 (사용자가 탭으로 바꾼다)
+//: 서버가 아는 「마지막으로 연결됐던 명령 계열」 (`""` = 모른다). 상태 조회가 실어 온다.
+//:
+//: 왜 브라우저 추측을 쓰지 않는가: `navigator.platform` 은 **브라우저가 도는 OS** 이고, 러너는
+//: 다른 곳에서 돈다. WSL 안에서 러너를 띄우는 사용자는 Windows 브라우저로 이 창을 열므로 늘
+//: PowerShell 명령이 먼저 뽑혔다 — 매번 탭을 바꿔야 했다(사용자 요청 2026-09-01).
+let _lastOs = "";
+//: 이번에 열린 창에서 사용자가 탭을 직접 눌렀는가. 눌렀으면 늦게 도착한 서버 값이 그 선택을
+//: 덮지 않는다 — 화면이 손 밑에서 바뀌면 방금 고른 것과 다른 명령을 복사하게 된다.
+let _osTabPinned = false;
+
+/** 서버가 아는 「마지막으로 연결된 OS」를 받아 둔다. 창이 열려 있고 사용자가 탭을 만지지
+ *  않았으면 즉시 반영한다 — 창을 연 직후 도착하는 첫 조회가 이 경로로 들어온다.
+ *
+ *  값이 닫힌 집합 밖이거나 비어 있으면 **아무것도 하지 않는다**. 「모른다」를 「posix」로 바꾸면
+ *  한 번도 연결한 적 없는 Windows 사용자에게 틀린 명령을 먼저 보이게 된다.
+ */
+function _adoptLastOs(value) {
+  const v = String(value || "");
+  if (v !== "posix" && v !== "windows") return;
+  _lastOs = v;
+  if (_modalOpen && !_osTabPinned && _osTab !== v) {
+    _osTab = v;
+    _paintOsTab();
+  }
+}
 
 // ── 연결이 성립하면 알리고 닫는다 (사용자 요청 2026-08-31) ────────────────────
 //
@@ -87,9 +112,14 @@ export function openConnectModal() {
   if (launchBtn) launchBtn.hidden = true;
   const make = $("connectModalMake");
   if (make) make.disabled = false;
-  // 사용자의 OS 를 미리 골라 둔다. 틀려도 탭으로 바꿀 수 있으므로 추측이 손해를 만들지 않고,
+  // 어느 명령을 먼저 보일지 미리 골라 둔다. 틀려도 탭으로 바꿀 수 있으므로 손해가 없고,
   // 맞으면 클릭 하나를 아낀다.
-  _osTab = /win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix";
+  //
+  // **아는 사실이 추측을 이긴다**: 마지막으로 연결됐던 계열(`_lastOs`, 서버가 러너 신고로 안다)이
+  // 있으면 그것을 쓰고, 없을 때만 브라우저 OS 로 추측한다 — 브라우저가 도는 OS 는 러너가 도는
+  // OS 가 아니다(WSL).
+  _osTabPinned = false;
+  _osTab = _lastOs || (/win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix");
   _paintOsTab();
   _status("");
   // 기준선을 따로 고정하지 않는다 — 판정은 **직전 관측 대비 변화**로 한다(`_lastObs`).
@@ -207,16 +237,25 @@ async function _make() {
   const btn = $("connectModalMake");
   if (btn) btn.disabled = true;
   _status("만드는 중…");
+  //: 이 발급이 출발한 시점의 창 세대. 돌아왔을 때 그 창이 아직 그 창인지 가른다 —
+  //: 발급 중에 창을 닫고 다시 열면(또는 닫아 둔 채로) 늦게 온 응답이 **다른 창의 토큰·명령을
+  //: 덮어쓰거나**, 닫으면서 지운 bearer 명령을 숨은 DOM 에 되살린다(codex 적대 리뷰 P1-3).
+  //: 상태 조회는 이미 같은 검사를 한다 — 발급만 빠져 있었다.
+  const epochAtStart = _modalEpoch;
   let res;
   try {
     res = await fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" });
   } catch (err) {
+    if (!_modalOpen || epochAtStart !== _modalEpoch) return;
     if (btn) btn.disabled = false;
     _status("만들지 못했습니다: " + err, "error");
     return;
   }
   let body = {};
   try { body = await res.json(); } catch (_) { body = {}; }
+  // 창이 바뀌었으면(닫혔거나 다시 열렸으면) **아무것도 반영하지 않는다.** 이 응답에는 토큰이
+  // 실려 있어, 늦게 그려 넣으면 "닫으면 다시 볼 수 없습니다" 가 거짓이 된다.
+  if (!_modalOpen || epochAtStart !== _modalEpoch) return;
   if (btn) btn.disabled = false;
   if (!res.ok) {
     _status(body.error_description || body.error || "만들지 못했습니다.", "error");
@@ -241,6 +280,8 @@ async function _make() {
     const box = probeEl.closest("details");
     if (box) box.hidden = !probe;
   }
+  // 발급 응답이 실어 온 값이 더 최신이다 — 창을 열어 둔 사이에 연결했을 수 있다.
+  _adoptLastOs(body.last_os);
   _paintOsTab();
   const launchBtn = $("connectModalLaunch");
   // 실행 버튼은 **프로토콜 URL 이 있을 때만** 보인다. 없는데 보이면 누른 뒤 아무 일도 일어나지
@@ -447,8 +488,12 @@ export function bindConnectModal() {
   $("connectModalCopyProbe")?.addEventListener("click",
     () => _copyFrom("connectModalProbe", "복사했습니다. 내 컴퓨터의 AI에 붙여넣으세요."));
   $("connectModalLaunch")?.addEventListener("click", _launchRunner);
-  $("connectModalTabPosix")?.addEventListener("click", () => { _osTab = "posix"; _paintOsTab(); });
-  $("connectModalTabWin")?.addEventListener("click", () => { _osTab = "windows"; _paintOsTab(); });
+  $("connectModalTabPosix")?.addEventListener("click", () => {
+    _osTab = "posix"; _osTabPinned = true; _paintOsTab();
+  });
+  $("connectModalTabWin")?.addEventListener("click", () => {
+    _osTab = "windows"; _osTabPinned = true; _paintOsTab();
+  });
   overlay.addEventListener("click", (ev) => {
     if (ev.target === overlay) closeConnectModal();   // 바깥 클릭으로 닫기
   });
@@ -709,6 +754,9 @@ export async function refreshConnState() {
     }
     _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale);
     _paintGate(b);
+    // 마지막으로 연결됐던 명령 계열 — 창을 열 때 어느 탭을 먼저 보일지 정한다 (2026-09-01).
+    // 세대·순번 검사를 이미 통과한 응답만 여기 온다.
+    _adoptLastOs(b.last_os);
     return b;
   } catch (_) {
     // 조회 실패는 **표시하지 않는다** — 틀린 상태를 보이느니 아무 말도 안 하는 편이 낫다.
