@@ -2956,3 +2956,11 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 - 코드 변경 0 (doc-only) — 리뷰 패널 대상 아님. ANCHOR 무충돌.
 - 근거: `docker compose ps` 실물 태그 `cceb2984` · caddy 로그 0 · 배포본에서 직접 구동한
   매칭 결과(약어 5종 회복 · 오탐 4종 차단 · 동일 질문 전후 대조).
+
+## REV-20260901T194500-glossary-sweep-applied [SKIPPED:non-policy-doc] — 소급 정리 실적용 기록
+
+- Cross-ref: CHG-20260901T194500-glossary-sweep-applied · 원천 cycle 1 REV-20260901T120000.
+- 코드 변경 0 (데이터 정리 + 기록) — 리뷰 패널 대상 아님. ANCHOR 무충돌.
+- 근거: 적용 전후 `kb_glossary` 카운트(739→634) · `skipped_general` 57 · 사용자 지적
+  범용어 9종 정규화 표면형 전건 부재 · 매니페스트 105행과 `restore()` 키 일치 확인 ·
+  정리 후 GZ_QA_G 재실측(약어 회복분 생존 · DK온라인 ENUM 미유입).
