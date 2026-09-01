@@ -204,14 +204,56 @@ $hint
 #: 실존 검사만 두면 `BRIDGE_PROBED_AI=rm` 이 통과해 러너가 그것을 AI 로 실행한다(codex 실측).
 #: 표 밖 CLI 는 사람 칸(`$env:BRIDGE_ARGS='--ai mycli'`)으로.
 $KnownAiClis = @('claude', 'codex', 'gemini', 'ollama')
+
+#: AI CLI 가 이 컴퓨터에 있는가. **PATH 밖 표준 설치 위치까지** 본다 — 러너의 `_which_ai`
+#: 와 같은 계약이다. 두 곳이 갈리면 설치기는 「없다」 하고 러너는 「있다」 하는(또는 그 반대)
+#: 상태가 되고, 사용자는 어느 쪽을 믿어야 할지 알 수 없다.
+#:
+#: ⚠ 실측 2026-09-01: Claude Code 의 Windows native installer 는
+#:   `%USERPROFILE%\.local\bin\claude.exe` 에 넣는데 **그 폴더가 사용자 PATH 에 없었다**.
+#:   `Get-Command claude` 도 못 찾았고, 그래서 설치기·러너 양쪽이 「AI 없음」이라 봤다 —
+#:   정작 그 파일을 직접 실행하면 `2.1.70 (Claude Code)` 를 멀쩡히 답했다.
+function Get-AiDirs {
+  $dirs = @()
+  if ($HOME)                { $dirs += (Join-Path $HOME '.local\bin') }           # Claude Code · Codex 설치기
+  if ($env:APPDATA)         { $dirs += (Join-Path $env:APPDATA 'npm') }           # npm -g
+  if ($env:LOCALAPPDATA)    { $dirs += (Join-Path $env:LOCALAPPDATA 'Programs\Ollama') }
+  return $dirs
+}
+
+#: ⚠ **`.cmd`·`.bat` 는 목록에 없다** — 러너와 같은 이유다(codex 적대 리뷰 P1). 배치 파일은
+#: `cmd.exe` 파싱을 한 번 더 거쳐 질문 본문의 `&`·`|` 가 메타문자가 되므로, 러너가 직접
+#: 실행하지 않는다. 여기서 「있다」고 하면 설치기는 통과시키고 러너가 exit 4 를 내는
+#: 비대칭이 생긴다 — 두 곳이 다른 답을 내면 사용자는 어느 쪽도 믿을 수 없다.
+$AiExecExts = @('.exe', '.com')
+
+function Test-AiPresent([string]$name) {
+  if (-not $name) { return $false }
+  # `Get-Command` 는 PATHEXT 를 보므로 이름만으로도 `.exe` 를 찾는다. 단 그 결과가
+  # 배치·스크립트면 러너는 실행하지 않으므로 여기서도 인정하지 않는다.
+  $cmd = Get-Command $name -ErrorAction SilentlyContinue
+  if ($cmd) {
+    $src = $cmd.Source
+    if (-not $src) { return $true }                     # 함수·별칭 — 판정 대상 아님
+    if ([System.IO.Path]::GetExtension($src).ToLower() -in $AiExecExts) { return $true }
+  }
+  foreach ($d in (Get-AiDirs)) {
+    foreach ($ext in $AiExecExts) {
+      # `-PathType Leaf` — 같은 이름의 **디렉터리**를 실행 파일로 읽지 않는다.
+      if (Test-Path -LiteralPath (Join-Path $d ($name + $ext)) -PathType Leaf) { return $true }
+    }
+  }
+  return $false
+}
+
 $AiArgs = @()
 if ($ProbedAi) {
   if ($ProbedAi -notin $KnownAiClis) {
-    Drop "BRIDGE_PROBED_AI='$ProbedAi' 는 알려진 AI CLI 가 아닙니다($($KnownAiClis -join ' ')). 다른 CLI 는 BRIDGE_ARGS='--ai <이름>' 로 직접 주세요"
-  } elseif (Get-Command $ProbedAi -ErrorAction SilentlyContinue) {
+    Drop "BRIDGE_PROBED_AI='$ProbedAi' 는 알려진 AI CLI 가 아닙니다($($KnownAiClis -join ' '))"
+  } elseif (Test-AiPresent $ProbedAi) {
     $AiArgs = @('--ai', $ProbedAi); Say "AI 런타임: $ProbedAi (조사값)"
   } else {
-    Drop "BRIDGE_PROBED_AI='$ProbedAi' 가 PATH 에 없습니다"
+    Drop "BRIDGE_PROBED_AI='$ProbedAi' 를 이 컴퓨터에서 찾지 못했습니다"
   }
 }
 
@@ -564,7 +606,23 @@ try {
 Say '연결을 확인하는 중…'
 $env:BRIDGE_TOKEN = $Token
 & $Py $AgentPath --base $Base --ca $CaPath --check
-if ($LASTEXITCODE -ne 0) {
+$CheckCode = $LASTEXITCODE
+# ⚠ **연결과 AI 는 다른 축이다** (사용자 제보 2026-09-01). 종전에는 러너가 AI 를 못 찾으면
+#   연결 확인 앞에서 죽었고, 이 자리가 그것을 통째로 「연결 확인에 실패했습니다. 토큰이
+#   만료됐다면…」 으로 옮겼다 — 토큰도 CA 도 네트워크도 멀쩡한 사용자가 그 셋을 뒤졌다.
+#   러너는 이제 exit 4 로 「연결은 됐는데 답할 AI 가 없다」를 따로 말한다.
+if ($CheckCode -eq 4) {
+  Die @"
+서버 연결은 정상인데, 이 컴퓨터에서 쓸 수 있는 AI 를 찾지 못했습니다.
+
+  이 브리지는 이 컴퓨터에 설치된 AI 프로그램(Claude Code 등)으로 답합니다.
+  · 아직 설치하지 않았다면 설치한 뒤 이 명령을 다시 실행하세요.
+  · 이미 설치했다면 설치 폴더가 시스템 PATH 에 등록되지 않은 것입니다 — 설치 프로그램의
+    「PATH 에 추가」 를 켜고 다시 설치하거나, 컴퓨터를 다시 로그인한 뒤 실행하세요.
+  (위에 러너가 찾아본 위치가 모두 적혀 있습니다.)
+"@
+}
+if ($CheckCode -ne 0) {
   Die '연결 확인에 실패했습니다. 토큰이 만료됐다면 웹에서 [연결 명령 복사] 를 다시 누르세요.'
 }
 

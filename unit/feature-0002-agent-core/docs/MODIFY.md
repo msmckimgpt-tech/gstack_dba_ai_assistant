@@ -2969,3 +2969,16 @@ LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
 해소해 push 하면 원격 판정이 `MERGEABLE` 로 바뀐다.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T133000-glossary-term-tier-merge2 — origin/main(#1462) 재병합 해소
+
+병렬 세션이 같은 파일(`bridge_agent.py`)을 먼저 머지해 재병합. 코드 변경 0.
+
+- `bridge_agent.py`(정본·배포본): 서로 다른 구간이라 **3-way clean**. 자동 병합 결과를 그대로
+  믿지 않고 양쪽 기능 생존을 확인했다 — 내 `#GLOSSARY` 축 6개 심볼 · 상대 `win-ai-detect` 축
+  19개 심볼 · AST PASS · **두 사본 sha256 동치**(`test_bridge_agent_sync` 계약).
+- `unit/feature-0043-external-llm-bridge/docs/MODIFY.md`: 양쪽 신규 `## CHG-` 블록 충돌.
+  driver 가 「본문 변경 감지」로 `git merge-file` 에 위임해 표준 마커가 남았고, §16.4 자율
+  해결 표 1행에 따라 **양쪽 유지 + 시간순 정렬**(`T110000` → `T120000`)로 해소. 마커 잔존 0.
+
+Task-Cycle: feature-0002-agent-core
