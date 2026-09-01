@@ -5537,3 +5537,11 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 **기록 내용**: 선행 cycle `side-panel-exclusive` 의 라이브 배포본(`d3ead999`) 실측 —
 배포 판정 4축(머지 커밋 포함관계 · 컨테이너 `GIT_COMMIT` · 파일 실재 · healthz/엣지) +
 PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔류물 정리 확인.
+
+## CHG-20260901T183000-ai-claude-feature-0003-newest-runner-wins — 판정축 정정 + 모달 진동 해소 (cross-ref)
+
+- **날짜**: 2026-09-01 · **위험도**: Major · **정본 TASK**: feature-0043
+  `TASK-20260901T183000-newest-runner-wins.md`
+- `oauth_store.stale_runner_must_yield` 축을 **연결 순서**(토큰 `Id`)로 교체 ·
+  `account_runner_build` 를 `ORDER BY t.Id DESC` 로(=`runner_stale` 진동 해소 → 연결 모달이
+  닫히지 않던 결함) · `routers/ai_tools.py` 안내 문구·게이트 정정. 화면 마크업 변경 0.
