@@ -30,6 +30,7 @@ import app
 from routers import admin_metadata
 import shared.db as _dbmod
 import modules.kb_glossary as _kg
+import modules.kb_metadata as _km
 
 
 # ── Fakes ──────────────────────────────────────────────────────────────────────
@@ -380,3 +381,138 @@ def test_enum_list_serializes(monkeypatch):
     it = out["items"][0]
     assert it["id"] == 10 and it["table_name"] == "orders" and it["code"] == "1" and it["label"] == "결제완료"
     assert it["source"] == "manual"
+
+
+# ── F4 (2026-09-01): 전역 상속 노출이 **4축 전부**에 있는가 ────────────────────────
+#
+# 용어사전만 고치고 나머지를 두면 같은 중복이 그 축에서 계속 생산된다 — 실측이 그것을
+# 보여줬다(`column_descriptions` 833 컬럼 다중 scope 중복, 826개는 설명 텍스트까지 동일 —
+# 단 그 중복은 제품↔제품 축이라 이 변경이 정리하지 않는다. 막는 것은 재생산이다).
+def _inherit_env(monkeypatch):
+    _allow_scopes(monkeypatch)
+    acct = _admin(monkeypatch)
+    monkeypatch.setattr(_dbmod, "_pg_connect_ro", lambda: _PgConn())
+    return acct
+
+
+def test_enum_list_exposes_inherited_global(monkeypatch):
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    own = [(1, "default", "dbo", "T", "status", "1", "대기", "manual", ts, ts)]
+    glob = [(2, "common", "", "T2", "flag", "0", "정상", "manual", ts, ts)]
+    monkeypatch.setattr(_kg, "list_enum_admin", lambda conn, scope_key, **k: own)
+    monkeypatch.setattr(_kg, "list_global_enum_for_scope", lambda conn, **k: glob)
+    resp = admin_metadata.admin_list_enums(
+        _FakeRequest(query={"scope_key": "default"}), account=acct)
+    assert resp.status_code == 200
+    out = _body(resp)
+    assert out["inherited_count"] == 1 and out["count"] == 2
+    assert out["items"][0]["inherited"] is False and out["items"][1]["inherited"] is True
+
+
+def test_table_desc_list_exposes_inherited_global(monkeypatch):
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    monkeypatch.setattr(_km, "list_table_desc_admin",
+                        lambda conn, scope_key, **k: [(1, "default", "s", "T", "설명", "manual", ts, ts)])
+    monkeypatch.setattr(_km, "list_global_table_desc_for_scope",
+                        lambda conn, **k: [(2, "common", "s", "G", "전역 설명", "manual", ts, ts)])
+    resp = admin_metadata.admin_list_table_desc(
+        _FakeRequest(query={"scope_key": "default"}), account=acct)
+    out = _body(resp)
+    assert out["inherited_count"] == 1 and out["items"][1]["inherited"] is True
+
+
+def test_column_desc_list_exposes_inherited_global(monkeypatch):
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    monkeypatch.setattr(_km, "list_column_desc_admin",
+                        lambda conn, scope_key, **k: [(1, "default", "s", "T", "c", "설명", "manual", ts, ts, 1)])
+    monkeypatch.setattr(_km, "list_global_column_desc_for_scope",
+                        lambda conn, **k: [(2, "common", "s", "T", "c2", "전역", "manual", ts, ts, 2)])
+    resp = admin_metadata.admin_list_column_desc(
+        _FakeRequest(query={"scope_key": "default"}), account=acct)
+    out = _body(resp)
+    assert out["inherited_count"] == 1 and out["items"][1]["inherited"] is True
+
+
+def test_common_scope_does_not_duplicate_itself(monkeypatch):
+    """`common` 을 보고 있으면 전역 상속분을 붙이지 않는다 — 자기 자신이라 중복이다."""
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    monkeypatch.setattr(_kg, "list_enum_admin",
+                        lambda conn, scope_key, **k: [(1, "common", "", "T", "c", "1", "L", "manual", ts, ts)])
+    monkeypatch.setattr(_kg, "list_global_enum_for_scope",
+                        lambda conn, **k: (_ for _ in ()).throw(
+                            AssertionError("common 조회에서 전역 상속분을 또 읽었다")))
+    resp = admin_metadata.admin_list_enums(
+        _FakeRequest(query={"scope_key": "common"}), account=acct)
+    assert _body(resp)["inherited_count"] == 0
+
+
+def test_inherited_load_failure_does_not_kill_the_list(monkeypatch):
+    """상속분은 **보조 정보**다 — 조회 실패가 목록 자체를 503 으로 만들지 않는다."""
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    monkeypatch.setattr(_kg, "list_enum_admin",
+                        lambda conn, scope_key, **k: [(1, "default", "", "T", "c", "1", "L", "manual", ts, ts)])
+    monkeypatch.setattr(_kg, "list_global_enum_for_scope",
+                        lambda conn, **k: (_ for _ in ()).throw(RuntimeError("pg down")))
+    resp = admin_metadata.admin_list_enums(
+        _FakeRequest(query={"scope_key": "default"}), account=acct)
+    assert resp.status_code == 200
+    out = _body(resp)
+    assert out["count"] == 1 and out["inherited_count"] == 0
+
+
+# ── 자체 적대 리뷰 시정분 (2026-09-01) ────────────────────────────────────────
+def test_inherited_load_failure_is_reported_not_folded_to_empty(monkeypatch):
+    """전역 상속분 조회 실패를 **빈 목록으로 접지 않는다**.
+
+    접으면 화면이 「전역에 아무것도 없다」와 「조회가 깨졌다」를 같게 보여주고, 관리자는
+    전자로 읽어 같은 항목을 제품 scope 에 다시 등록한다 — 이번 cycle 이 고치는 중복이
+    그 경로로 그대로 재생산된다(§16.7 G9-b 조용한 누락 금지).
+    """
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    own = [(1, "default", "dbo", "T", "status", "1", "대기", "manual", ts, ts)]
+
+    def _boom(conn, **k):
+        raise RuntimeError("replica down")
+
+    monkeypatch.setattr(_kg, "list_enum_admin", lambda conn, scope_key, **k: own)
+    monkeypatch.setattr(_kg, "list_global_enum_for_scope", _boom)
+    resp = admin_metadata.admin_list_enums(
+        _FakeRequest(query={"scope_key": "default"}), account=acct)
+    assert resp.status_code == 200, "상속분 실패가 목록 자체를 죽였다(fail-soft 아님)"
+    out = _body(resp)
+    assert out["count"] == 1, "자기 scope 목록은 살아 있어야 한다"
+    assert out["inherited_error"] is True, "실패가 '전역에 없음'과 구별되지 않는다"
+
+
+def test_inherited_error_false_on_normal_path(monkeypatch):
+    """정상 경로에서는 `False` — 항상 참이면 경고가 배경 소음이 된다."""
+    acct = _inherit_env(monkeypatch)
+    ts = datetime.datetime(2026, 9, 1, 10, 0, 0)
+    monkeypatch.setattr(_kg, "list_enum_admin", lambda conn, scope_key, **k: [])
+    monkeypatch.setattr(_kg, "list_global_enum_for_scope", lambda conn, **k: [])
+    out = _body(admin_metadata.admin_list_enums(
+        _FakeRequest(query={"scope_key": "default"}), account=acct))
+    assert out["inherited_error"] is False
+
+
+def test_common_scope_is_not_treated_as_inherited_failure(monkeypatch):
+    """`common` 을 보고 있으면 상속분을 안 붙이지만 그건 **실패가 아니다**."""
+    acct = _inherit_env(monkeypatch)
+    called = {"n": 0}
+
+    def _loader(conn, **k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(_kg, "list_enum_admin", lambda conn, scope_key, **k: [])
+    monkeypatch.setattr(_kg, "list_global_enum_for_scope", _loader)
+    out = _body(admin_metadata.admin_list_enums(
+        _FakeRequest(query={"scope_key": "common"}), account=acct))
+    assert called["n"] == 0, "common 을 보면서 자기 자신을 상속분으로 또 조회했다"
+    assert out["inherited_error"] is False and out["inherited_count"] == 0

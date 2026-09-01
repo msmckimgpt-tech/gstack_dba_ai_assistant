@@ -102,6 +102,29 @@ def list_samples_admin(conn, scope_key, limit=_SAMPLE_ADMIN_LIMIT):
         cur.close()
 
 
+#: 전역 scope — 읽기 캐스케이드(`_kb_scope_candidates`)의 두 번째 티어. kb_glossary 와 같은 값.
+GLOBAL_SCOPE = "common"
+
+
+def list_global_samples_for_scope(conn, limit=_SAMPLE_ADMIN_LIMIT):
+    """전역 샘플쿼리 — 제품 목록에 **읽기 전용 상속분**으로 함께 보이기 위한 조회.
+
+    검색(`search_samples`)은 이미 `[제품, common]` 캐스케이드인데 관리 목록만 1단이었다 —
+    화면이 주입 범위보다 좁으면 관리자는 같은 것을 다시 등록한다(용어사전에서 실측된 경로).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, nl_question, sql, domain, weight, approved, status, "
+            "source_type, created_at, updated_at FROM sample_queries WHERE scope_key = %s "
+            "ORDER BY updated_at DESC, id DESC LIMIT %s",
+            (GLOBAL_SCOPE, int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
 def update_sample(conn, sample_id, scope_key, *, nl_question=None, sql=None, domain=None,
                   weight=None, approved=None, embedding=_EMBED_SENTINEL) -> int:
     """샘플 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404).

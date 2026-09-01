@@ -753,6 +753,41 @@ def _graph_columns_cache_put(scope_key: str, fqn: str, payload) -> None:
         _COLUMNS_CACHE[(scope_key, fqn)] = (now + ttl, payload)
 
 
+#: 전역(`common`) 상속분을 목록에 덧붙이는 공통 규약 (2026-09-01, glossary 에서 이식).
+#:
+#: 읽기 캐스케이드는 `[제품, common]` 2단인데 관리 목록이 1단이면, 관리자는 「이 제품에 없다」로
+#: 읽고 같은 항목을 제품 scope 에 다시 등록한다. 라이브 실측이 그 경로를 확인해 줬다 —
+#: `column_descriptions` 833개 컬럼이 2개 이상 scope 중복이고 그중 826개(99.2%)는 **설명 텍스트까지
+#: 동일**. ⚠ 그 중복은 **제품↔제품** 축이라 이 변경으로 정리되지 **않는다** — 여기서 막는 것은
+#: 「전역에 올려도 안 보이니 아무도 안 올린다」는 **재생산 경로**다.
+#:
+#: 상속분은 `inherited: true` 로 내려보내고 **편집 대상이 아니다**(편집·삭제는 단일 scope 정확일치
+#: 유지). 화면이 그 값 하나로 읽기 전용을 판정한다 — 프론트가 scope 를 비교해 스스로 판정하면
+#: 두 벌이 되고, 한쪽이 낡으면 「눌러도 404 나는 편집 버튼」이 남는다.
+def _with_inherited(rows, inherited_rows, to_item):
+    """(자기 scope 행, 전역 상속 행) → 직렬화된 items. 상속분은 뒤에 붙는다."""
+    return ([to_item(r, False) for r in rows]
+            + [to_item(r, True) for r in inherited_rows])
+
+
+def _load_inherited(pg, scope_key, loader, label):
+    """전역 상속분 조회 — **fail-soft**. 상속분은 보조 정보라 실패가 목록 자체를 죽이지 않는다.
+
+    반환 `(rows, failed)`. 실패를 **빈 목록으로 접지 않는다** — 접으면 화면이 「전역에 아무것도
+    없다」와 「조회가 깨졌다」를 같게 보여주고, 관리자는 전자로 읽어 같은 항목을 제품 scope 에
+    다시 등록한다(이번 cycle 이 고치는 중복이 그 경로로 재생산된다, §16.7 G9-b).
+
+    `common` 을 보고 있으면 자기 자신이므로 붙이지 않는다(중복 표시 방지 — 실패 아님).
+    """
+    if str(scope_key or "") == "common":
+        return [], False
+    try:
+        return loader(pg), False
+    except Exception:
+        logging.getLogger(__name__).warning("%s 전역 상속분 조회 실패", label, exc_info=True)
+        return [], True
+
+
 @router.get("/api/admin/metadata/glossary")
 def admin_list_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.read'))) -> JSONResponse:
     """용어 목록 — 선택 scope + **전역(common) 상속분**. 권한 kb.ingest.manual.
@@ -1192,8 +1227,12 @@ def admin_list_enums(request: Request, account=Depends(app.require_permission('m
         pg = _pg_connect_ro()
     except Exception:
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    inherited_rows: list = []
+    inherited_failed = False
     try:
         rows = _kg.list_enum_admin(pg, scope_key)
+        inherited_rows, inherited_failed = _load_inherited(
+            pg, scope_key, _kg.list_global_enum_for_scope, "ENUM")
     except Exception:
         logging.getLogger(__name__).warning("admin_list_enums 조회 실패", exc_info=True)
         return app._json_error("ENUM 목록 조회 실패", 503)
@@ -1203,13 +1242,18 @@ def admin_list_enums(request: Request, account=Depends(app.require_permission('m
         except Exception:
             pass
     # row: (id, scope_key, schema_name, table_name, column_name, code, label, source, created_at, updated_at)
-    items = [{
-        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
-        "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
-        "code": str(r[5] or ""), "label": str(r[6] or ""), "source": str(r[7] or "manual"),
-        "created_at": _metadata_iso(r[8]), "updated_at": _metadata_iso(r[9]),
-    } for r in rows]
-    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+    def _item(r, inherited):
+        return {
+            "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+            "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
+            "code": str(r[5] or ""), "label": str(r[6] or ""), "source": str(r[7] or "manual"),
+            "created_at": _metadata_iso(r[8]), "updated_at": _metadata_iso(r[9]),
+            "inherited": bool(inherited),
+        }
+    items = _with_inherited(rows, inherited_rows, _item)
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key,
+                         "inherited_count": len(inherited_rows),
+                         "inherited_error": inherited_failed})
 
 @router.post("/api/admin/metadata/enums")
 async def admin_create_enum(request: Request, account=Depends(app.require_permission('metadata.enum.create'))) -> JSONResponse:
@@ -1536,8 +1580,12 @@ def admin_list_table_desc(request: Request, account=Depends(app.require_permissi
         pg = _pg_connect_ro()
     except Exception:
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    inherited_rows: list = []
+    inherited_failed = False
     try:
         rows = _km.list_table_desc_admin(pg, scope_key)
+        inherited_rows, inherited_failed = _load_inherited(
+            pg, scope_key, _km.list_global_table_desc_for_scope, "테이블 설명")
     except Exception:
         logging.getLogger(__name__).warning("admin_list_table_desc 조회 실패", exc_info=True)
         return app._json_error("테이블 설명 목록 조회 실패", 503)
@@ -1547,12 +1595,17 @@ def admin_list_table_desc(request: Request, account=Depends(app.require_permissi
         except Exception:
             pass
     # row: (id, scope_key, schema_name, table_name, description, source, created_at, updated_at)
-    items = [{
-        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
-        "table_name": str(r[3] or ""), "description": str(r[4] or ""), "source": str(r[5] or ""),
-        "created_at": _metadata_iso(r[6]), "updated_at": _metadata_iso(r[7]),
-    } for r in rows]
-    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+    def _item(r, inherited):
+        return {
+            "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+            "table_name": str(r[3] or ""), "description": str(r[4] or ""), "source": str(r[5] or ""),
+            "created_at": _metadata_iso(r[6]), "updated_at": _metadata_iso(r[7]),
+            "inherited": bool(inherited),
+        }
+    items = _with_inherited(rows, inherited_rows, _item)
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key,
+                         "inherited_count": len(inherited_rows),
+                         "inherited_error": inherited_failed})
 
 @router.post("/api/admin/metadata/tables")
 async def admin_create_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.create'))) -> JSONResponse:
@@ -1698,8 +1751,12 @@ def admin_list_column_desc(request: Request, account=Depends(app.require_permiss
         pg = _pg_connect_ro()
     except Exception:
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    inherited_rows: list = []
+    inherited_failed = False
     try:
         rows = _km.list_column_desc_admin(pg, scope_key)
+        inherited_rows, inherited_failed = _load_inherited(
+            pg, scope_key, _km.list_global_column_desc_for_scope, "컬럼 설명")
     except Exception:
         logging.getLogger(__name__).warning("admin_list_column_desc 조회 실패", exc_info=True)
         return app._json_error("컬럼 설명 목록 조회 실패", 503)
@@ -1709,14 +1766,19 @@ def admin_list_column_desc(request: Request, account=Depends(app.require_permiss
         except Exception:
             pass
     # row: (id, scope_key, schema_name, table_name, column_name, description, source, created_at, updated_at, ordinal)
-    items = [{
-        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
-        "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
-        "description": str(r[5] or ""), "source": str(r[6] or ""),
-        "created_at": _metadata_iso(r[7]), "updated_at": _metadata_iso(r[8]),
-        "ordinal": (int(r[9]) if len(r) > 9 and r[9] is not None else None),
-    } for r in rows]
-    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+    def _item(r, inherited):
+        return {
+            "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+            "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
+            "description": str(r[5] or ""), "source": str(r[6] or ""),
+            "created_at": _metadata_iso(r[7]), "updated_at": _metadata_iso(r[8]),
+            "ordinal": (int(r[9]) if len(r) > 9 and r[9] is not None else None),
+            "inherited": bool(inherited),
+        }
+    items = _with_inherited(rows, inherited_rows, _item)
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key,
+                         "inherited_count": len(inherited_rows),
+                         "inherited_error": inherited_failed})
 
 @router.post("/api/admin/metadata/columns")
 async def admin_create_column_desc(request: Request, account=Depends(app.require_permission('metadata.column.create'))) -> JSONResponse:
@@ -2535,8 +2597,12 @@ def admin_list_samples(request: Request, account=Depends(app.require_permission(
         pg = _pg_connect_ro()
     except Exception:
         return app._json_error("샘플 저장소(PG) 연결 실패", 503)
+    inherited_rows: list = []
+    inherited_failed = False
     try:
         rows = _sq.list_samples_admin(pg, scope_key)
+        inherited_rows, inherited_failed = _load_inherited(
+            pg, scope_key, _sq.list_global_samples_for_scope, "샘플쿼리")
     except Exception:
         logging.getLogger(__name__).warning("admin_list_samples 조회 실패", exc_info=True)
         return app._json_error("샘플 목록 조회 실패", 503)
@@ -2546,13 +2612,18 @@ def admin_list_samples(request: Request, account=Depends(app.require_permission(
         except Exception:
             pass
     # row: (id, scope_key, nl_question, sql, domain, weight, approved, status, source_type, created_at, updated_at)
-    items = [{
-        "id": int(r[0]), "scope_key": str(r[1] or ""), "nl_question": str(r[2] or ""),
-        "sql": str(r[3] or ""), "domain": str(r[4] or ""), "weight": int(r[5] or 0),
-        "approved": bool(r[6]), "status": str(r[7] or ""), "source_type": str(r[8] or ""),
-        "created_at": _metadata_iso(r[9]), "updated_at": _metadata_iso(r[10]),
-    } for r in rows]
-    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+    def _item(r, inherited):
+        return {
+            "id": int(r[0]), "scope_key": str(r[1] or ""), "nl_question": str(r[2] or ""),
+            "sql": str(r[3] or ""), "domain": str(r[4] or ""), "weight": int(r[5] or 0),
+            "approved": bool(r[6]), "status": str(r[7] or ""), "source_type": str(r[8] or ""),
+            "created_at": _metadata_iso(r[9]), "updated_at": _metadata_iso(r[10]),
+            "inherited": bool(inherited),
+        }
+    items = _with_inherited(rows, inherited_rows, _item)
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key,
+                         "inherited_count": len(inherited_rows),
+                         "inherited_error": inherited_failed})
 
 @router.put("/api/admin/metadata/samples/{sample_id}")
 async def admin_update_sample(sample_id: int, request: Request, account=Depends(app.require_permission('kb.sample.curate'))) -> JSONResponse:

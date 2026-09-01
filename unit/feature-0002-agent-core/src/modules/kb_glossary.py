@@ -351,6 +351,27 @@ def list_enum_admin(conn, scope_key, limit=_ENUM_ADMIN_LIMIT):
         cur.close()
 
 
+def list_global_enum_for_scope(conn, limit=_ENUM_ADMIN_LIMIT):
+    """전역(`common`) ENUM — **제품 목록 화면에 함께 보여주기 위한** 읽기 전용 조회.
+
+    `list_global_glossary_for_scope` 와 같은 이유다: 답변에 실제로 주입되는 것은
+    `[제품, common]` 둘 다인데 목록이 제품 행만 보여주면 관리자는 「이 제품에 이 코드가 없다」로
+    읽고 같은 항목을 제품 scope 에 또 등록한다. 편집·삭제는 여전히 단일 scope 정확일치로만
+    동작하고, 화면이 이 행들을 읽기 전용으로 그린다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, schema_name, table_name, column_name, code, label, "
+            "source, created_at, updated_at FROM enum_dictionary WHERE scope_key = %s "
+            "ORDER BY table_name, column_name, code, id LIMIT %s",
+            (GLOBAL_SCOPE, int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
 def update_glossary_term(conn, term_id, scope_key, term, definition, role_key=None,
                          term_tier=None) -> int:
     """용어 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404).
@@ -1102,6 +1123,50 @@ def _enum_feedback_status(conn, scope_key, schema_name, table_name, column_name,
         cur.close()
 
 
+def _settled_enum_status(conn, scopes, schema_name, table_name, column_name, code):
+    """이 (schema, table, column, code) 가 **어느 scope 에서든** 판정된 적이 있는가.
+
+    반환: `(status, scope_key)` 또는 None.
+
+    용어 축(`_settled_feedback_status`)의 ENUM 대칭이다. 종전 `_enum_feedback_status` 는
+    `(scope, schema, table, column, code)` 정확일치라, 제품 A 에서 거부한 코드가 **제품 B 에서
+    다시 자동등록**될 수 있었다 — 거부·승급은 그 코드 자체에 대한 판정이므로 scope 를 넘어
+    존중해야 한다.
+
+    ⚠ 지금 라이브에 교차 scope ENUM 중복은 0건이다(키에 schema·table 이 들어가 제품마다 갈리기
+    때문). 그러니 이 함수는 관측된 사고를 고치는 게 아니라, **용어 축에서 실제로 터진 구멍의
+    같은 형태를 ENUM 축에서 미리 닫는다** — 두 축이 같은 코드 패턴을 공유하는데 한쪽만 고치면
+    다음 사람이 「여긴 왜 다르지」에서 시작한다.
+    """
+    sn, tb = str(schema_name or "").strip(), str(table_name or "").strip()
+    col, cd = str(column_name or "").strip(), str(code or "").strip()
+    if not tb or not col or not cd:
+        return None
+    scope_list: list = []
+    for s in (scopes or []):
+        if not str(s or "").strip():
+            continue
+        norm = _normalize_scope_key(s)
+        if norm not in scope_list:      # 호출부가 sk == GLOBAL_SCOPE 를 넘기면 중복이 된다.
+            scope_list.append(norm)
+    if GLOBAL_SCOPE not in scope_list:
+        scope_list.append(GLOBAL_SCOPE)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT status, scope_key FROM enum_feedback "
+            "WHERE scope_key = ANY(%s) AND schema_name = %s AND table_name = %s "
+            "  AND column_name = %s AND code = %s AND status = ANY(%s) "
+            "ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (scope_list, sn, tb, col, cd,
+             ["rejected", "promoted", "auto_promoted"]),
+        )
+        row = cur.fetchone()
+        return (str(row[0]), str(row[1])) if row else None
+    finally:
+        cur.close()
+
+
 def _insert_enum_auto(conn, scope_key, schema_name, table_name, column_name, code, label):
     """자동승급 — enum_dictionary 에 INSERT(source='auto'). 이미 있으면 보존(수동 큐레이션 우선).
     반환: enum id(신규 또는 기존) 또는 None."""
@@ -1153,8 +1218,13 @@ def auto_promote_or_queue_enum(conn, scope_key, schema_name, table_name, column_
         conf = 0.0
     # ⚠ 거부/처리 선검사 (glossary auto_promote_or_queue 동형 — REV-20260629 BLOCKER): enum_dictionary
     # 자동 INSERT 는 거부 가드보다 반드시 먼저 차단돼야 한다(거부 후보 재유입·중복 자동 INSERT 방지).
-    existing = _enum_feedback_status(conn, sk, sn, tb, col, cd)
-    if existing in ("rejected", "promoted", "auto_promoted"):
+    #
+    # 2026-09-01: 그 검사를 **scope 를 넘어** 본다(`_settled_enum_status`). 종전 정확일치는
+    # 제품 A 의 거부가 제품 B 에 전달되지 않아, 용어 축에서 실제로 터진 것과 같은 구멍이었다.
+    settled = _settled_enum_status(conn, [sk, GLOBAL_SCOPE], sn, tb, col, cd)
+    if settled is not None:
+        _log.debug("enum_candidate_settled key=%s.%s=%s status=%s scope=%s",
+                   tb, col, cd, settled[0], settled[1])
         return "skipped"
     if conf >= float(threshold):
         eid = _insert_enum_auto(conn, sk, sn, tb, col, cd, lb)

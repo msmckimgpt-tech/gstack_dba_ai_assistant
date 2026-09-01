@@ -1523,7 +1523,7 @@ defined AND **how reusable**" 로 정의해 **범용일수록 점수가 올라 �
 ### 표기변형 정규화 계약
 
 `normalize_term_surface()`: ① 첫 여는 괄호(`(`/`（`) 이후 절단 ② 공백·하이픈·언더스코어 제거
-③ 소문자화. **alembic 0057 의 `ix_kb_glossary_term_norm` 함수 인덱스 식과 같아야 한다** —
+③ 소문자화. **alembic 0058 의 `ix_kb_glossary_term_norm` 함수 인덱스 식과 같아야 한다** —
 갈리면 인덱스 미사용(느림) 또는 조회 키 불일치(중복 미검출).
 
 ### 코드 거주 (cross-cut)
@@ -1531,8 +1531,72 @@ defined AND **how reusable**" 로 정의해 **범용일수록 점수가 올라 �
 - feature-0002: `modules/kb_glossary.py`(tier 상수·정규화·분류·중복조회·라우터) ·
   `modules/llm.py`(`GLOSSARY_SUGGEST_PROMPT` 개정 — tier 축 신설, confidence 에서 재사용성 제거) ·
   `agent_core._glossary_autopropose`(tier 전달 + `suggestions` 주입 인자) ·
-  alembic 0057 · `src/scripts/agent_kb_schema.sql` 미러 · `src/scripts/glossary_tier_sweep.py`(소급 정리)
+  alembic 0058 · `src/scripts/agent_kb_schema.sql` 미러 · `src/scripts/glossary_tier_sweep.py`(소급 정리)
 - feature-0003: `routers/admin_metadata.py`(tier CRUD·전역 상속분 노출) ·
   `routers/ai_tools.py`(`submit_answer` 의 `glossary_terms` 수신) ·
   `routers/_console_llm.py`(미적용 표면 등재) · `static/admin/metadata.js` · `static/agent/bridge_agent.py`
 - feature-0043: `src/bridge_agent.py`(러너 정본 — 배포본과 byte-동치)
+
+
+## 외부 AI 도달 범위 — 지식베이스가 실제로 프롬프트에 실린다 (2026-09-01)
+
+**REQ-20260901-kb-external-reach (Major §12.3)**: 「용어사전을 포함한 다른 모든 메타데이터가
+현재 변경된 LLM 호출 구조(외부 AI)와 정합하게 작동하는지」 검토 결과의 시정. 위 term_tier
+cycle 이 **무엇을 저장할지**를 고쳤다면, 이 cycle 은 **저장한 것이 실제로 읽히는지**를 고친다.
+
+### 근본 원인 — 큐레이션의 소비자가 사라졌다
+
+feature-0043 외부 AI 전환 전, 서버 계정 AI 는 `agent_core._build_knowledge_context()` 로
+**9개 grounding 층**(용어사전·ENUM·테이블/컬럼 설명·샘플쿼리·관계·클러스터 요약·통계·규칙·
+계정 인사이트)을 받았다. 전환 후 외부 AI 의 유일한 컨텍스트 진입점은 MCP `get_task_context`
+인데, 이 도구는 **클러스터 요약 1개 층만** 실었다.
+
+결과: 관리 콘솔에서 큐레이션한 메타데이터가 저장은 되지만 **답변을 만드는 쪽에 도달하지
+않는다.** 「등록했는데 AI 가 모른다」는 마찰이 여기서 나온다. 자율수집 역시 같은 구조다 —
+수집→저장→**미사용**이면 사전은 커지는데 답변은 그대로다.
+
+`metadata_stats`(L0 증거층)는 더 나쁜 형태였다. LLM 과 **무관한** 카탈로그·표본 통계 수집인데
+유일한 호출부가 `node_analysis._build_payload` 였고, 그 앞의 `enqueue_change_analysis` 가
+게이트로 early-return 하면서 **큐에 잡이 안 들어가 → 수집도 통째로 멈췄다**. 전환일
+(2026-08-26) 이후 `metadata_table_stats`·`metadata_column_stats` 신규 0행 — 반면 직접 호출
+경로를 가진 `table_relationships` 는 같은 기간 719건 갱신(대조군).
+
+### AC (수용 기준)
+
+- **AC-20260901T140000-reach-1** — `get_task_context` 는 클러스터 요약에 더해 **용어사전 ·
+  ENUM 코드 · 테이블/컬럼 설명 · 샘플 쿼리 · 관계** 층을 번들에 싣는다. 각 층은 독립적으로
+  fail-soft 이고, 빠진 층은 **이름을 밝혀** notes 에 남긴다(조용한 누락 금지 §16.7 G9-b).
+- **AC-20260901T140000-reach-2** — 축을 섞지 않는다. 용어사전·ENUM·설명·샘플은 **product 축**
+  (`product.<key>`), 관계는 **datasource 축**(`ds:<key>`). product scope 는 **그 task 의
+  ProductId 에서** 해석한다 — 주변 상태(`cfg.get_active_product_scope()`)를 읽으면 A 계정의
+  질문에 B 제품 사전이 실린다.
+- **AC-20260901T140000-reach-3** — 번들에는 상한(`_CTX_BUNDLE_MAX_CHARS`)이 있고, 잘렸으면
+  **잘렸다고 적는다**. 상한 없는 주입은 토큰 초과로 호출 자체를 실패시킨다.
+- **AC-20260901T140000-reach-4** — L0 통계 수집은 **LLM 게이트와 분리**된다. planner 의 우선
+  대상 선정(LLM 무관) 직후에 수집하며, `enqueue_change_analysis` 의 성패에 좌우되지 않는다.
+  사이클 payload 에 `stats_collect_attempted` 를 **0 으로 초기화**해 「멈췄다」와 「대상이
+  없었다」를 구별한다.
+- **AC-20260901T140000-reach-5** — 관리 콘솔의 **네 축 모두**(용어/ENUM/테이블·컬럼 설명/샘플)
+  가 전역(`common`) 상속분을 `inherited` 표시와 함께 노출한다. 용어 축에만 있으면 다른 축은
+  「없다」로 보여 같은 항목을 제품마다 다시 등록하게 된다.
+  ⚠ 라이브의 제품↔제품 중복(컬럼 833행 중 826행 텍스트 동일)은 이 변경으로 **자동 정리되지
+  않는다** — 그건 별도 큐레이션이다. 이 AC 가 막는 건 **재생산**이다. 실측 시점 `common` 의
+  테이블/컬럼 설명·샘플쿼리는 0행이라, 배포 직후 그 세 축의 상속 표시는 정당하게 0 으로 보인다.
+- **AC-20260901T140000-reach-6** — ENUM 자율수집의 판정 이력 조회도 **scope 를 넘는다**
+  (`_settled_enum_status`). 용어 축 AC-...-term-tier-4(a) 의 ENUM 대칭.
+
+- **AC-20260901T140000-reach-7** — **「없음」과 「실패」를 같은 값으로 접지 않는다**. 제품 scope
+  해소는 3값(`product.<key>` / `""` 제품 없음 / `None` 해소 실패)을 돌려주고, 쓰기 축은 `None`
+  이면 **중단**한다(실패를 전역으로 접으면 제품 전용 용어가 전 제품 프롬프트에 주입되는 전역
+  사전 후보가 된다). 전역 상속분 조회도 실패를 `inherited_error` 로 화면에 알린다 — 빈 목록으로
+  접으면 「전역에 없다」로 읽혀 이 cycle 이 고치는 중복이 재생산된다.
+
+### 코드 거주 (cross-cut)
+
+- feature-0002: `modules/insight.py`(`_collect_priority_stats` + `_seed_coverage_targets` 배선) ·
+  `modules/kb_glossary.py`(`list_global_enum_for_scope`·`_settled_enum_status`) ·
+  `modules/kb_metadata.py`(`GLOBAL_SCOPE`·`list_global_table_desc_for_scope`·
+  `list_global_column_desc_for_scope`) · `modules/sample_queries.py`(`list_global_samples_for_scope`)
+- feature-0003: `routers/ai_tools.py`(`_bridge_product_scope_key`·`_kb_grounding_sections`·
+  `get_task_context` 번들 확장·상한) · `routers/admin_metadata.py`(`_with_inherited`·
+  `_load_inherited` + 4축 배선) · `static/admin/metadata.js`(상속 배지를 용어 전용 블록 밖으로)
