@@ -1596,3 +1596,11 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       (점유자·open·미제출·상태 불변), 빈 신고 no-op, 국면 전이 실구동, 임계 상·하한, 배선
 - [x] 테스트 더블 서명 경화 — `heartbeat(self, timeout=…)` 더블이 실물 서명 확장에 죽어
       **다른 파일의 실패**로 나타났다(`*args/**kwargs` 로 교체)
+- [x] **라이브 실측 (배포본 `9c04b52c`)** — 코드 도달 6축 · 배포본 함수 직접 구동 ·
+      국면표 6케이스 **ALL PASS** · **실 MySQL 에서 점유자 술어 4형식 검증**(인스턴스 접미·
+      구 러너·다른 세션·NULL → P1-1/P1-2 회귀 차단선) · 자산 스탬프 `da49561ff923`→`cd84170acd28` ·
+      엣지 무중단 0건. **미검증 2건 명시**(러너 설치본이 구버전이라 회수 end-to-end 불가 ·
+      `stalled` 말풍선은 라이브 조건 부재 + 병렬 세션 6곳 동시 작업으로 제품 경로 주입 회피).
+      증적 `docs/test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md`
+- [x] 별건(인젝션 오판)은 `ai/claude/feature-0043-bridge-injection-falsepositive` 가 이미 담당 —
+      중복 cycle 열지 않음

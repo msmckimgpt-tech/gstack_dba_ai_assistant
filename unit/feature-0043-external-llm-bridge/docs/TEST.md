@@ -173,3 +173,4 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 | TEST-20260901T140000-front | `_applyBridgePhase` | `stalled` 에 이력을 다시 읽고 **종결로 다루지 않는다**(러너가 켜지면 답이 온다) | AC-20260901T140000-orphan-claim-reclaim-4 |
 
 | TEST-20260901T140000-pb0008 | 라이브 화면 (Windows-browser) | PRE-DEPLOY baseline — 배포본에 무진행 축 0건 · 제보 대화 말풍선 6건 실측 · 별건(인젝션 거부) 발견. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim.md` | AC-20260901T140000-orphan-claim-reclaim-4 |
+| TEST-20260901T140000-postdeploy | 배포본 `9c04b52c` (Windows-browser) | POST-DEPLOY — 코드 도달 6축 · 배포본 함수 구동 · 국면표 6케이스 ALL PASS · **실 MySQL 에서 점유자 술어 4형식**(P1 회귀 차단) · 자산 스탬프 갱신. 미검증 2건 명시. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md` | AC-20260901T140000-orphan-claim-reclaim-1~5 |

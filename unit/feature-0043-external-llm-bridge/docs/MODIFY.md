@@ -2466,3 +2466,22 @@ lease 는 도구 호출마다 갱신된다 — 「진행하고 있으니 살아 
 종전 형식으로 돌아가므로 `SUBSTRING_INDEX`·`claimed_client_matches` 는 그대로 둬도 무해 —
 구분자가 없으면 전체를 앞자리로 본다). 표시 축만 끄려면 `_bridge_phase` 의 `stalled` 분기
 하나를 지운다. 러너 쪽은 `init_runner_instance()`·`_arm_exit_release()` 두 호출을 뺀다.
+
+## CHG-20260901T150000-orphan-claim-postdeploy — 고아 점유 회수 라이브 실측 (문서만)
+
+`CHG-20260901T140000-orphan-claim-reclaim` 의 배포 후 검증. **코드 변경 0** — 증적 문서 +
+TASK 체크박스 + TEST Run 행만.
+
+배포본 `9c04b52c`(전 서비스 이미지 일치 · soak 통과 · 대화 스모크 PASS · 엣지 무중단 0건):
+
+1. **코드 도달 6축** — 서버 `stalled` 4건 · 프론트 분기 1건 · 러너 사본 `init_runner_instance`
+   2건 · `SUBSTRING_INDEX` 2건 · 매-tick 가드 7건 · lease 상한 1건 (배포 전 전부 0)
+2. **배포본 함수 직접 구동** — 합성·해석·호환·메타문자 무시·임계 창·회수 경계·빈 신고 no-op
+3. **국면표** — 배포본 `_bridge_phase` 를 라이브 컨테이너에서 실행, 6케이스 ALL PASS
+4. **실 MySQL 점유자 술어** — 4형식(인스턴스 접미·구 러너·다른 세션·NULL) 평가로
+   **P1-1(제출 전면 거절)·P1-2(첨부 읽기 전면 409) 회귀 차단** 실증
+5. **프론트 실물** — 브라우저가 받은 `composer.js?v=cd84170acd28` 안에 분기·문구 존재
+
+**미검증 2건을 남긴 이유까지 기록했다** — 러너는 사용자 머신 파일이라 우리 배포로 갱신되지
+않고(서버가 `runner_update.stale_build` 로 알린다), `stalled` 말풍선은 그 상태를 만들 라이브
+조건이 없고 인위 조성은 병렬 세션 6곳과 충돌한다. **모른다고 적는 것이 통과로 적는 것보다 낫다.**

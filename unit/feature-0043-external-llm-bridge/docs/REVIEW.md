@@ -2199,3 +2199,10 @@ AI 출력이 코드블록 도중 잘리고 CLI 가 exit 0 이면 러너는 `ok=T
 **BLOCK → 조치 후 PASS.** P1 4건 전건 수정 + 회귀 테스트(총 28건, `test_orphan_claim_reclaim.py`).
 codex 판정은 미산출이므로 「독립 검증을 받았다」고 적지 않는다 — 위 결함은 **자체 검증**의
 산물이다.
+
+## REV-20260901T150000-orphan-claim-postdeploy [SKIPPED:evidence-only] — 라이브 실측 기록
+
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260901T140000-orphan-claim-reclaim
+- Reason: 코드 변경 0 — POST-DEPLOY 증적 문서 + TASK 체크박스 + TEST Run 행만. 검증 대상 코드는
+  `REV-20260901T144500-orphan-claim-reclaim` 에서 이미 적대 검토(P1 4건 적발·전건 수정)를 거쳤다.
+- Timestamp: 2026-09-01T15:00:00+09:00
