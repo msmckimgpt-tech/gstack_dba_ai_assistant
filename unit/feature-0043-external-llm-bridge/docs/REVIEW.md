@@ -1786,7 +1786,74 @@ clamp 배치도 별도로 기록했다. **경계 양측(§16.7 G4)을 측정 설
   기계적 검증은 테스트 자체가 수행한다(집합 동일성 + 항진통과 방지 + 수정 전 FAIL 실증).
 - **Timestamp**: 2026-09-01T10:15:00+09:00
 - **Human Approval Needed**: no
+## REV-20260901T110000-ai-claude-aiops-external-realign [CODEX:ai-ops+self-review] — 관제 재편 + 자가 검증
 
+- **Related TASK**: TASK-20260901T110000-aiops-external-realign (feature-0043)
+- **Timestamp**: 2026-09-01T15:20:00+09:00
+- **Human Approval Needed**: no (Major — 사용자가 AskUserQuestion 4문으로 설계를 승인, §7.1)
+
+### 외부 리뷰: **수행 불가** (정직 기록)
+
+`/codex review` 를 **두 번** 시도했고 둘 다 판정을 얻지 못했다:
+
+1. 전체 diff(31파일) 대상 — 330초 wrapper 타임아웃(exit 124), 출력 0바이트
+2. 최고위험 4파일로 범위 축소 재시도 — `ERROR: You've hit your usage limit … try again at 3:44 PM`
+
+**결과를 지어내지 않는다.** "codex 통과" 로 적으면 이 cycle 이 없애려던 바로 그 형태(하지
+않은 검증을 했다고 말하는 것)를 리뷰 원장에서 되풀이하게 된다. 아래는 **자체 적대 검토**이며
+외부 교차검증이 아니다.
+
+### 자체 적대 검토 — P1 1건 발견·수정
+
+**[P1] `list_live_runners` 가 조회 실패와 「러너 0대」를 둘 다 빈 목록으로 돌려줬다.**
+
+`_runner_roster` 는 그 빈 목록에 `available: True` 를 붙였고, 화면은 그것을
+**"연결된 개인 AI 가 없습니다 — 들어오는 질문을 아무도 처리하지 못합니다"** 라는 빨간
+단정으로 그렸다. 즉 **질의 하나가 실패하면 관제가 장애를 선언한다.**
+
+가장 나쁜 점은 이것이 **이 cycle 이 없애려던 결함과 같은 형태**라는 것이다 — 「모르는 것」을
+「나쁜 사실」로 바꿔 말하는 것. 게다가 그 함수의 docstring 은 요구를 정확히 적어 두고 있었다
+("빈 목록이지 '러너 없음' 이 아니므로, 호출측이 그 차이를 화면에 표현한다") — **주석이 계약을
+말하는데 코드가 지키지 않는** 부류라, 다음 사람은 주석을 읽고 지켜지는 줄 안다.
+
+수정:
+- 질의 실패는 **위로 올린다**(`_runner_roster` 가 `available:False` + 사유로 표면화)
+- 단, `RunnerBuild`(2026-08-31 추가 컬럼) 부재는 **한 단계 내려가 나머지를 살린다** —
+  지문 대조는 이 명부가 답하는 네 질문 중 하나일 뿐인데, 그것 하나로 구 배포에서 화면이
+  통째로 비면 안 된다(`_query_activity` 의 컬럼 사다리와 같은 규율)
+- 회귀 2건 추가. **직전 커밋 코드(`33e00e0e`)에서 둘 다 FAIL 실증** — 자기충족 아님
+
+### 함께 점검하고 통과시킨 축
+
+| 축 | 판정 근거 |
+|---|---|
+| 외부 페이로드 주입 | `self_review.sanitize` 가 축·심각도 allowlist + 길이 상한 + 건수 상한. 미지 축은 **버린다**(라벨 없는 축이 화면에 외부 문자열로 새는 경로 차단) |
+| verdict 위조 | 선언값을 믿지 않고 findings 에서 재도출 — BLOCK 을 적고 `pass` 를 돌려줘도 `revise` |
+| SQL 주입 | 신규 3 엔드포인트의 사용자 입력(kind/origin/status/limit/offset/days)은 전부 바인딩 또는 int-clamp. `days` 는 `int()` 후 1~90 clamp 뒤에만 f-string 삽입 |
+| 커넥션 누수 | `_record_external_review` 가 `finally` 에서 close(`_pg()` 는 호출마다 새 연결) · `_self_review_stats`·`_attach_reviews` 동일 · `_attach_usernames` 는 MySQL 핸들을 `finally` 에서 close |
+| 500 회피 | 관측 조회 전부 부분 degrade. `admin_ai_ops_tools` 는 질의별 try + **rollback**(없으면 뒤따르는 질의가 전부 25P02 로 죽는다) |
+| 각인 유출 | 작업 원장 목록이 `Answer` 본문을 SELECT 하지 않는다(보존 여부 boolean 만). 질문도 160자 머리만 |
+| 하위호환 | 검증 없는 제출을 거절하지 않음 — 구 러너 사용자의 답변이 막히지 않는다 |
+
+### 남는 위험 (수용)
+
+- **외부 교차검증 부재.** 위 표는 자기 코드에 대한 자기 판정이다. codex 쿼터가 회복되면
+  같은 4파일로 재실행할 값어치가 있다.
+- **자가 검증 end-to-end 미검증** — 마이그 0057 미적용 + 라이브 러너 구버전. 화면은 그
+  사실을 `미지원`·`—` 로 정확히 표시하며, 실측은 POST-DEPLOY 로 이월.
+
+## REV-20260901T152000-ai-claude-runner-roster-honesty [SKIPPED:self-review-followup] — P1 수정 반영
+
+- **Related TASK**: TASK-20260901T110000-aiops-external-realign (feature-0043)
+- **Reason**: 바로 위 `REV-20260901T110000-…` 의 자체 적대 검토에서 나온 P1 1건을 수정한
+  커밋이다. 변경은 그 리뷰가 이미 감사한 범위 안(`list_live_runners` 단일 함수 + 회귀 2건)
+  이고, 새 도메인 키워드(auth/schema/UI/API/perf)를 도입하지 않는다.
+- **역검증 근거**: 신규 회귀 2건이 **수정 전 커밋 `33e00e0e` 에서 실제로 FAIL** 한다.
+  내가 만든 뮤턴트가 아니라 출하 직전 코드에서 죽는 것을 확인했다.
+- **외부 리뷰는 여전히 없다** — codex 쿼터 소진(15:44 리셋). 위 리뷰의 「남는 위험」이
+  그대로 유효하다.
+- **Timestamp**: 2026-09-01T15:20:00+09:00
+- **Human Approval Needed**: no
 ## REV-20260901T104500-ai-claude-feature-0043-steps-result-split [CODEX:staged-diff] — P1 0건 (2R 수렴) · 1R P2 2건 (1 반영 · 1 근거 기각)
 
 **대상**: 상세의 단계/결과셋 범위 분리 + 스크롤 대상을 단계 목록으로 한정.
