@@ -1771,3 +1771,29 @@ Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다�
       직접 `atexit.register` 해서 «제품의 등록 순서»가 아니라 «테스트 자신의 순서»를 검사했고,
       구코드에서도 통과했다. `_arm_exit_release` 를 거치도록 고친 뒤 **구코드에서 FAIL 재현**
       (`['run.stop','exit.release','log']`) → 신코드 PASS 를 양방향 확인
+
+## 20260901T1730-stale-runner-yield — 낡은 러너가 최신 러너의 질문을 가로챈다 (사용자 재보고)
+
+**요청 (2026-09-01)**: 「웹페이지 새로고침, 연결 준비를 통해 러너를 다시 연결한 후 요청을
+보냈지만 같은 이슈가 확인되어 조치가 필요합니다」 + 「오래된 러너 측에서 … 다른 신규 러너에
+연결되는 부분이 확인된다면 오래된 러너는 프로세스를 종료 처리 … 다만 계정이 다를 경우는 예외」.
+
+근본원인·설계·AC 는 `TASK-20260901T173000-stale-runner-yield.md`.
+**위험도 Major** — 점유 집행 경로(판정이 상대라 단독 러너 동작은 불변).
+
+<!-- PLAN-APPROVED by mckim on 2026-09-01 (러너 자가 종료 · 계정 예외 명시) -->
+
+- [x] 라이브 진단 — 같은 계정에 러너 2개(배포본 `d0ac1263d454` vs 옛 `0a4ba732366c`),
+      옛 러너가 17:20:03 질문을 먼저 집어 옛 형식으로 답한 것을 `WebOAuthTokens` + 러너 로그로 확정
+- [x] 즉시 조치 — 옛 러너 프로세스 SIGTERM 정상 종료(라이브 복구)
+- [x] `stale_runner_must_yield` — **상대** 판정(같은 계정에 최신 러너가 실제로 들을 때만),
+      fail-open, 인증과 같은 `_LIVE_TOKEN_PREDICATE`
+- [x] 집행 `claim_request` 409 + 억제 `list_open_requests`·`wait_for_request`
+      (busy-loop 금지 · 취소 통보는 유지)
+- [x] 러너 자가 종료 — `runner_update.superseded`(`stale_build` 와 별개 필드) →
+      `shutdown_after_drain` 로 하던 일 마치고 종료, 판정은 대기 호출 앞
+- [x] 계정 경계 — 판정이 `AccountId` 스코프라 다른 계정 러너 병존 허용(사용자 예외 요구 충족)
+- [x] 신규 20건 · **뮤테이션 5종 KILL** · 4 feature 전량 rc=0 · ruff clean
+- [x] 인라인 적대 3렌즈 — P1 1건 자체 적발·수정(대기 즉시반환 → busy-loop) `REV-20260901T173000`
+- [ ] 배포 후 라이브 실측 — 서버 축은 즉시 발효(옛 러너 재등장 시 관측), **자가 종료는 러너가
+      새 사본으로 갱신된 뒤**에만 발효

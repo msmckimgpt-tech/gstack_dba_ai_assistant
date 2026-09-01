@@ -795,6 +795,8 @@ _EV_CONN_RETRY = "conn.retry"
 _EV_HB_FAIL = "hb.fail"
 _EV_HB_UNAUTH = "hb.unauthorized"
 _EV_HB_STALE = "hb.stale_build"
+#: 같은 계정에 최신 러너가 붙어서 이 러너가 물러나는 사건 (TASK-20260901T173000).
+_EV_HB_SUPERSEDED = "hb.superseded"
 _EV_TASK_CLAIM_SKIP = "task.claim.skip"
 _EV_TASK_CLAIM_FAIL = "task.claim.fail"
 _EV_TASK_DISPATCH = "task.dispatch"
@@ -3447,6 +3449,17 @@ def release_own_claims_on_exit() -> None:
 #: atexit) 각자 찍으면 원장에 종료가 두 번 나오고, 그러면 「러너가 두 번 죽었나」로 읽힌다.
 _RUN_STOPPED = threading.Event()
 
+#: **같은 계정**에 배포본과 같은 러너가 붙어서, 이 러너가 물러나야 한다는 서버 판정
+#: (TASK-20260901T173000, 사용자 결정 2026-09-01).
+#:
+#: 왜 Event 인가: 이 사실을 아는 것은 하트비트 스레드이고, 물러날 수 있는 것은 대기 루프다
+#: (진행 중 작업을 마치고 끝내는 절차가 거기 있다). 스레드에서 곧바로 죽이면 처리 중이던
+#: 답변이 통째로 사라진다 — 로그아웃 종료가 이미 같은 이유로 `shutdown_after_drain` 을 쓴다.
+#:
+#: ⚠ **계정이 다르면 이 신호는 오지 않는다.** 서버 판정이 `AccountId` 로 묶여 있어, 한 머신에서
+#:   서로 다른 계정으로 러너를 여럿 띄우는 구조는 그대로 허용된다(사용자 결정 2026-09-01).
+_SUPERSEDED = threading.Event()
+
 
 def _log_run_stop(reason: str = "exit") -> None:
     """이 세션이 **무엇을 했는지** 한 줄로 닫는다. 여러 번 불러도 한 번만 남는다.
@@ -3582,6 +3595,17 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 # 버전(날짜)은 셋 다 같아서 어디에도 그 사실이 드러나지 않았다. 30초마다
                 # 반복하면 소음이라 세션당 한 번만 남긴다(그 뒤로는 화면 쪽 안내가 맡는다).
                 _u = res.get("runner_update") or {}
+                # 같은 계정에 최신 러너가 붙었다 — **이 러너는 물러난다** (사용자 결정
+                # 2026-09-01). 남아 있으면 선착순 점유로 사용자 답변을 옛 동작으로 되돌린다.
+                # 여기서 죽이지 않고 신호만 세운다: 진행 중 작업을 마치고 끝내는 절차는
+                # 대기 루프의 `shutdown_after_drain` 한 곳이 정본이다.
+                if _u.get("superseded") and not _SUPERSEDED.is_set():
+                    _SUPERSEDED.set()
+                    log_event(_EV_HB_SUPERSEDED,
+                              "같은 계정에 최신 러너가 연결됐습니다 — 이 러너는 하던 일을 마치고 "
+                              "물러납니다(질문은 최신 러너가 처리합니다).",
+                              level="WARN", local_build=_self_build(),
+                              peer_build=str(_u.get("superseded_by_build") or "") or None)
                 if _u.get("stale_build") and not _stale_said:
                     _stale_said = True
                     log_event(_EV_HB_STALE,
@@ -3918,6 +3942,21 @@ def main() -> int:
         #
         # 그래서 **대기는 항상** 하고, 자리는 디스패치 직전에 **비차단으로** 잡는다.
         # ⚠ 대기 자체에는 여전히 sleep 이 없다 — 대기는 서버가 한다.
+        # 같은 계정에 최신 러너가 붙었으면 **여기서 물러난다** (TASK-20260901T173000).
+        #
+        # 대기 호출 **앞**에 둔다: 뒤에 두면 최대 대기시간(수십 초) 동안 새 질문을 자기 쪽으로
+        # 끌어와 놓고 물러나게 되고, 그 사이 사용자는 이미 최신 러너를 띄워 두고도 옛 답을
+        # 한 번 더 받는다. 종료 절차는 로그아웃과 **같은 한 곳**(`shutdown_after_drain`)이다 —
+        # 하던 일은 마치고 나간다.
+        if _SUPERSEDED.is_set():
+            heartbeat_stop.set()
+            idle = shutdown_after_drain(active, cancels)
+            log_event(_EV_HB_SUPERSEDED,
+                      "최신 러너에 자리를 넘기고 종료합니다.",
+                      level="WARN", idle=idle, active=active.count())
+            _log("  이 러너는 더 이상 필요하지 않습니다 — 웹 화면의 「연결 준비」로 받은")
+            _log("  최신 러너가 이미 같은 계정에 연결돼 질문을 처리합니다.")
+            return 0
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
         if code == 401:

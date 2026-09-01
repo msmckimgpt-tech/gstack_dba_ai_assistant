@@ -5437,3 +5437,14 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 - Verification: pytest `feature-0003`+`feature-0002`+`feature-0023` **5177 passed / 5 skipped**(신규 4 + 계약 이전 6) · `node --check` · **PB-0008** 폭 4구간(240/260/280/320) 행 높이 실측.
 - Files: `static/app/composer.js`, `static/css/chat.css`, `tests/{test_attach_lineage_uploader,test_attach_lineage_group_ui,test_attach_lineage_ui}.py`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/TASK-20260901T170000-lineage-row-compaction.md`(신규)
 - Timestamp: 2026-09-01T17:00:00+09:00
+
+## CHG-20260901T173000-ai-claude-feature-0003-stale-runner-yield — 낡은 러너 양보 판정·집행 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Major (점유 집행 경로 — `claim_request` 409 추가)
+- **cross-ref**: 마찰 `FR-stale-runner-outraces-fresh-one` / 정본 TASK 노트는 feature-0043 의
+  `TASK-20260901T173000-stale-runner-yield.md`.
+
+`oauth_store.stale_runner_must_yield`(상대 판정) + `routers/ai_tools.py` 집행 1지점
+(`claim_request` 409) · 억제 2지점(`list_open_requests`·`wait_for_request`) ·
+하트비트 응답 `runner_update.superseded` 신설. 화면(HTML·CSS·JS) 변경 0.
