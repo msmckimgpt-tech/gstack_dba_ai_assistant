@@ -6959,3 +6959,14 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
   `listening` 이 계정 단위 판정이라 화면은 러너 소유를 구분할 수 없다.
 - `_gateInFlight` 해제 전용 단언 없음 — 변동 없음.
 - `ux`/`design` 도메인 심사 미수행 — 세션 도구 제약.
+
+## REV-20260901T061000-transition-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0530-connect-modal-transition`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T06:10:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `17d36ad8` 에서 A(명령 재연결)·B(«업데이트 필요» 갱신) 두 경로 모두 닫힘 확인.
+  B 의 문구가 «최신으로 갱신되었습니다» 로 나와 상황과 일치한다.
+- **미수행(정직 표기)**: 실 러너 기동·갱신 end-to-end. 조회·토큰 응답을 가로챈 프론트엔드 계약
+  검증이며 검증 후 브라우저를 원상 복구했다.
