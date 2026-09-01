@@ -237,9 +237,6 @@ def test_comment_stripper_removes_comments_but_keeps_strings():
 
 ACTIVITY_ROW = _strip_js_comments(_js_func(APP, "_buildStepActivityRow"))
 MESSAGES = (WEB_SRC / "static" / "app" / "messages.js").read_text(encoding="utf-8")
-VISIBLE_FN = _strip_js_comments(_js_func(MESSAGES, "bubbleVisibleSteps"))
-DETAILS_FN = _strip_js_comments(_js_func(MESSAGES, "renderMessageDetails"))
-STEP_BLOCKS = _strip_js_comments(_js_func(MESSAGES, "buildStepBlocks"))
 
 
 def test_activity_rows_do_not_use_the_card_container():
@@ -325,26 +322,10 @@ def test_truncated_window_gets_no_live_cumulative():
 
 
 # ── 말풍선 목록에서 내부 동작 제외 ────────────────────────────────────────────
-
-def test_bubble_step_list_excludes_activity_steps():
-    """말풍선 목록엔 소요시간 칸이 없어 내부 동작 행은 문장 한 줄만 남고 연달아 쌓인다."""
-    assert '!== "activity"' in VISIBLE_FN, "말풍선 목록이 내부 동작을 그대로 나열한다"
-    # 필터가 SQL/비-SQL 양쪽 분기에 **모두** 적용돼야 한다 — 한쪽만 걸면 다시 새어 나온다.
-    assert STEP_BLOCKS.count("shown.filter(") == 2, (
-        "필터된 목록을 두 분기가 함께 쓰지 않는다")
-    assert "steps.filter(" not in STEP_BLOCKS, (
-        "원본 `steps` 를 직접 거르는 분기가 남아 있다(제외가 우회된다)")
-
-
-def test_disclosure_and_body_agree_on_what_is_displayable():
-    """전량이 내부 동작인 시점(브리지 착수 직후)에 여닫이만 생기면 **빈 확장**이 노출된다.
-
-    codex 적대 리뷰 P2. 여닫이 존재 판정과 본문 조립이 **같은 집합**을 봐야 한다.
-    """
-    assert "bubbleVisibleSteps(meta?.steps)" in DETAILS_FN, (
-        "여닫이 판정이 필터 전 목록(`meta.steps`)을 본다 — 빈 확장이 만들어진다")
-    assert "meta.steps.length" not in DETAILS_FN and "meta?.steps.length" not in DETAILS_FN, (
-        "원본 길이로 여닫이를 판정하는 경로가 남아 있다")
+#
+# 2026-09-01: 말풍선 목록 자체가 사라졌으므로(여닫이 제거) 「거기서 내부 동작을 뺀다」는
+# 계약도 함께 소멸했다 — 걸러야 할 목록이 없다. 내부 동작의 값(구간 길이)은 원래부터
+# 사이드 패널이 담당했고, 그 축만 남는다. 아래 단언이 그 잔존 축을 지킨다.
 
 
 def test_side_panel_still_shows_activity_steps():
@@ -352,17 +333,19 @@ def test_side_panel_still_shows_activity_steps():
     assert "_buildStepActivityRow" in PANEL, "사이드 패널에서도 내부 동작이 사라졌다"
 
 
-# ── 단계/결과셋 범위 분리 · 스크롤 대상은 단계뿐 (사용자 제보 2026-09-01) ─────
+# ── 말풍선 여닫이 제거 · 표시면은 「단계 보기」 패널 하나 (사용자 결정 2026-09-01) ──
 #
-#   "'▼ 쿼리 결과' 를 펼쳤을 때, 각 단계와 결과셋 범위를 분리해주세요.
-#    스크롤 대상은 각 단계 뿐입니다."
+#   "`▼ 쿼리 결과` 펼치기에 대한 UI는 더 이상 의미없는 구조로 확인됩니다.
+#    (이미 `단계 보기` 기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능)"
 #
-# 직전(2026-08-31)에는 상세 본문 전체가 한 개의 스크롤 패널이었다 — 페이지 과대 증가는
-# 잡혔지만 정작 보려던 결과셋까지 그 스크롤 안에 갇혔다.
+# 직전 두 판(2026-08-31 바깥 스크롤 캡, 2026-09-01 단계/결과셋 범위 분리)은 **그 여닫이를
+# 다듬는** 작업이었다. 사용자가 여닫이 자체를 걷어내기로 결정했으므로 그 계약들은 잠글 대상이
+# 아니라 **되살아나면 안 되는 것**이 됐다. 아래는 그 전환을 잠근다.
+#
+# ⚠ 사용자 결정으로 함께 사라진 것: 말풍선의 CSV 다운로드 링크·「전체 데이터 보기」.
+#   되살릴 일이 있으면 자리는 말풍선이 아니라 「단계 보기」 패널 카드다.
 
 CSS_TEXT = (WEB_SRC / "static" / "css" / "chat.css").read_text(encoding="utf-8")
-NAVIGATOR = _strip_js_comments(_js_func(MESSAGES, "buildSqlNavigator"))
-STEP_BLOCKS2 = _strip_js_comments(_js_func(MESSAGES, "buildStepBlocks"))
 
 
 def _css_rule(selector: str) -> str:
@@ -383,95 +366,57 @@ def _min_caps(rule: str) -> tuple[int, int]:
     return int(m.group(1)), int(m.group(2))
 
 
-def test_only_the_step_list_scrolls():
-    """스크롤 대상은 **각 단계 뿐**이다 — 결과셋을 스크롤에 가두지 않는다."""
-    steps_rule = _css_rule(".step-detail-list")
-    assert "overflow-y: auto" in steps_rule, "단계 목록이 스크롤하지 않는다"
-    assert "max-height:" in steps_rule, "단계 목록의 최대 높이가 고정되지 않았다"
-    assert "min-height" not in steps_rule, "최소 높이를 제한했다(짧으면 짧은 대로여야 한다)"
-    assert "overscroll-behavior: contain" in steps_rule, "목록 끝에서 페이지로 스크롤이 샌다"
+@pytest.mark.parametrize("gone", [
+    "function renderMessageDetails(",
+    "function buildStepBlocks(",
+    "function buildSqlNavigator(",
+    "function buildSqlStepPanel(",
+    "function appendDetailBlock(",
+    "function loadFullCsvIntoTable(",
+])
+def test_bubble_disclosure_assembly_is_gone(gone: str):
+    """조립 경로가 하나라도 남으면 그것이 곧 되살아난 표시면이다."""
+    assert gone not in MESSAGES, f"제거된 말풍선 조립 경로가 남아 있다: {gone}"
 
 
-def test_details_body_is_no_longer_a_scroller():
-    """상세 본문이 계속 스크롤하면 결과셋이 다시 그 안에 갇힌다."""
-    body_rule = _css_rule(".message-details-body")
-    assert "overflow-y" not in body_rule, "상세 본문이 아직 스크롤러다"
-    assert "max-height" not in body_rule, "상세 본문에 상한이 남아 결과셋이 갇힌다"
+def test_nothing_calls_the_removed_assembly():
+    """호출부가 남으면 배포 순간 `undefined is not a function` 으로 말풍선 렌더가 통째로 죽는다."""
+    for path in (WEB_SRC / "static" / "app.js", COMPOSER_JS):
+        src = path.read_text(encoding="utf-8")
+        assert "renderMessageDetails" not in src, (
+            f"{path.name} 가 제거된 함수를 여전히 부르거나 import 한다")
 
 
-def test_result_range_is_not_capped_by_a_scoped_override():
-    """결과 표를 상세 안에서만 좁히던 규칙은 제거돼야 한다 — 결과셋에 온전한 높이를 준다."""
-    assert not re.search(r"^\.message-details-body \.result-table-wrap \{", CSS_TEXT, re.M), (
-        "상세 안 결과 표를 여전히 좁히고 있다(결과셋이 작아진다)")
+@pytest.mark.parametrize("selector", [
+    ".message-details", ".message-details-body", ".message-detail-block",
+    ".step-detail-list", ".sql-navigator", ".sql-result-group",
+])
+def test_dead_css_rules_are_removed(selector: str):
+    """마크업이 사라진 규칙을 남기면 다음 사람이 그 자리를 아직 살아 있는 것으로 읽는다."""
+    assert not re.search(r"^%s[\s{,:]" % re.escape(selector), CSS_TEXT, re.M), (
+        f"생산자가 없는 CSS 규칙이 남아 있다: {selector}")
+
+
+def test_the_remaining_surface_keeps_its_own_caps():
+    """여닫이가 사라져도 **남은 표시면**의 상한은 유지돼야 한다 — 페이지가 다시 늘어나지 않게.
+
+    바깥 캡을 걷어도 원래 증상(페이지 과대 증가)으로 돌아가지 않는 근거는 각 부분이 자기
+    상한을 갖는다는 것이다. 「단계 보기」 패널 카드의 SQL 블록·결과 표가 그 상한을 진다.
+    """
     glob_vh, glob_px = _min_caps(_css_rule(".result-table-wrap"))
     assert (glob_vh, glob_px) == (60, 460), "전역 결과 표 상한이 바뀌었다"
+    panel_css = (WEB_SRC / "static" / "css" / "profile.css").read_text(encoding="utf-8")
+    sql_rule = panel_css[panel_css.index("\n.step-sql {"):]
+    sql_rule = sql_rule[:sql_rule.index("\n}") + 2]
+    assert "max-height:" in sql_rule and "overflow-y: auto" in sql_rule, (
+        ".step-sql 이 자기 상한을 잃었다 — 긴 쿼리가 패널을 밀어낸다")
 
 
-def test_page_growth_stays_bounded_without_the_outer_cap():
-    """바깥 캡을 걷어도 원래 증상(페이지 과대 증가)으로 돌아가지 않아야 한다.
-
-    근거는 **각 부분이 자기 상한을 갖는다**는 것 — 단계 목록·SQL 블록·결과 표 셋 다.
-    이 중 하나라도 상한을 잃으면 그 부분이 페이지를 다시 밀어낸다.
-    """
-    for selector in (".step-detail-list", ".sql-block", ".result-table-wrap"):
-        rule = _css_rule(selector)
-        assert "max-height:" in rule and "overflow" in rule, (
-            f"{selector} 가 자기 상한·스크롤을 잃었다 — 페이지가 다시 늘어난다")
-
-
-def test_two_ranges_are_separate_labelled_blocks():
-    """"각 단계와 결과셋 범위를 분리" — 같은 블록 구조로 감싸 경계가 눈에 보이게."""
-    assert '"단계"' in STEP_BLOCKS2, "단계 범위 제목이 없다"
-    assert '"쿼리 결과"' in STEP_BLOCKS2, "결과셋 범위 제목이 없다"
-    assert STEP_BLOCKS2.count("appendDetailBlock(") == 2, (
-        "두 범위가 같은 블록 구조로 나뉘지 않았다")
-    assert "is-result-range" in STEP_BLOCKS2, "결과셋 범위를 식별할 표식이 없다"
-
-
-def test_single_and_multi_sql_share_the_result_range():
-    """SQL 1건이든 N건이든 **같은 결과셋 범위** 안에 놓여야 모양이 갈리지 않는다."""
-    assert STEP_BLOCKS2.count("resultBox.appendChild(") == 2, (
-        "단일/복수 SQL 이 서로 다른 자리에 그려진다")
-
-
-# ── 페이징 · 죽은 코드 금지 ──────────────────────────────────────────────────
-
-def test_paging_reveal_is_removed_not_left_as_a_noop():
-    """결과셋이 스크롤 밖으로 나온 뒤 그 이동 코드는 **영구 no-op** 이다 — 남기면 죽은 코드.
-
-    codex 적대 리뷰 P2. 2026-08-31 의 「페이징 시 스크롤 이동」 요구는 이제 **구조가**
-    만족시킨다 — 결과 범위가 단계 목록(고정 상한) 바로 아래 고정 위치라 자리가 안 움직인다.
-    """
-    assert "revealInPanel" not in NAVIGATOR, (
-        "어떤 조상도 스크롤하지 않는데 이동 코드가 남아 있다(동작하는 척하는 죽은 코드)")
-    assert "_NAV_REVEAL_MARGIN_PX" not in MESSAGES, "쓰이지 않는 상수가 남아 있다"
-    # 되살릴 조건을 코드가 스스로 말하고 있어야 한다 — 나중 사람이 근거 없이 지웠다고 읽지 않게.
-    raw = _js_func(MESSAGES, "buildSqlNavigator")
-    assert "되살려야 한다" in raw, "제거 근거·복원 조건이 코드에 남지 않았다"
-
-
-def test_paging_goes_through_a_single_transition_path():
-    """◀▶·키보드(←/→/Home/End)가 모두 같은 전환 함수를 거쳐야 한 곳만 고치면 된다."""
-    assert "function pageTo(" in NAVIGATOR, "전환 경로가 하나로 모이지 않았다"
-    reassigns = re.findall(r"(?<!let )activeIdx\s*=\s*(?!=)", NAVIGATOR)
-    assert len(reassigns) == 1, f"전환 지점이 {len(reassigns)}곳이다"
-
-
-def test_paging_never_scrolls_ancestors():
-    assert "scrollIntoView" not in NAVIGATOR, "조상 스크롤러 전부를 움직인다"
-
-
-def test_focus_does_not_scroll_ancestors():
-    assert NAVIGATOR.count("preventScroll: true") == 2, (
-        "◀▶ 두 버튼 모두 preventScroll 로 포커스하지 않는다")
-    assert "root.focus();" not in NAVIGATOR, "preventScroll 없는 focus 가 남아 있다"
-
-
-def test_live_rerender_preserves_the_step_list_scroll():
-    """보존 대상도 **단계 목록**으로 옮겨야 한다 — 옛 선택자면 보존이 조용히 no-op 이 된다."""
+def test_live_update_touches_the_panel_only():
+    """진행 갱신이 말풍선 본문을 다시 그리면, 그 순간 표시면이 두 벌로 돌아온다."""
     render = _strip_js_comments(_js_func(COMPOSER, "_renderBridgeSteps"))
-    assert '.step-detail-list' in render, "보존 대상이 옛 선택자(상세 본문)에 남아 있다"
-    assert "cancelAnimationFrame" in render, "직전 복원 예약을 취소하지 않는다"
-    assert "nextBody.scrollTop === 0" in render, "사용자가 이미 옮긴 목록을 덮어쓴다"
-    assert "requestAnimationFrame" in render, (
-        "layout 확정 전에 복원하면 실 브라우저가 0 으로 clamp 한다")
+    assert "refreshStepSidePanelForRun(" in render, "패널을 갱신하지 않는다"
+    assert "renderMessageDetails" not in render, "말풍선 본문을 다시 조립한다"
+    # 말풍선에 남는 것은 패널 입구뿐이고, 없으면 만든다(placeholder 는 meta.steps 가 없다).
+    assert "bubble.appendChild(fresh)" in render, (
+        "입구가 없는 말풍선에 입구를 만들지 않는다 — 진행 중 단계에 도달할 수 없다")

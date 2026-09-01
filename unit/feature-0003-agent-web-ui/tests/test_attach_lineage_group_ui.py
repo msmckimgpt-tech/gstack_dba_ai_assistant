@@ -215,20 +215,53 @@ def test_group_compare_fetches_lineages_before_opening():
 
 # ── G4. 서수 → 정체성 ──────────────────────────────────────────────────────
 
-def test_lineage_badge_states_identity_not_ordinal():
-    """배지가 **누구의 갈래인가**를 말한다 — `계보 1/2` 같은 서수를 화면에 두지 않는다."""
+def test_lineage_identity_is_the_row_label_not_an_ordinal():
+    """행의 1차 라벨이 **누구의 갈래인가**를 말한다 — 서수도, 되풀이되는 파일명도 아니다.
+
+    REQ-20260901: 정체성이 배지에서 **행 라벨**로 올라왔다. 그룹 카드가 파일명을 이미 한 번
+    말하므로, 행에서 파일명을 되풀이하는 대신 그 자리를 정체성에 준다(위계 역전).
+    """
     body = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
-    # `let linBadge = "";` 초기화가 아니라 **실제 조립부**를 본다.
-    m = re.search(r"linBadge\s*=\s*(`?[^;]*attach-list-item-lineage[^;]*);", body, re.S)
-    assert m, "계보 배지 조립을 찾지 못했다"
-    badge = m.group(1)
-    assert "_linWho" in badge, "배지가 정체성 문구를 쓰지 않는다"
-    assert not re.search(r"계보 \$\{_linIdx\}/\$\{_linTotal\}", badge), (
-        "서수가 아직 화면 문구로 남아 있다")
-    assert re.search(r'_linWho\s*=\s*isAi\s*\?\s*"AI 계보"\s*:\s*"사용자 계보"', body), (
-        "작성 주체 문구가 없다")
+    m = re.search(r"_rowLabel\s*=\s*(.+?);\n", body, re.S)
+    assert m, "행 라벨 조립을 찾지 못했다"
+    label = m.group(1)
+    assert "_hasSiblings" in label, "그룹 밖에서도 라벨을 바꾼다 — 단독 첨부는 파일명이 맞다"
+    assert "original_filename" in label, "그룹이 아닐 때 파일명으로 돌아가지 않는다"
+    assert "_identityLabel" in label, "라벨이 계보 정체성을 쓰지 않는다"
+    ident = re.search(r"_identityOf\s*=\s*\(x\)\s*=>(.+?);\n", body, re.S)
+    assert ident and "is_assistant_generated" in ident.group(1) and "uploader_username" in ident.group(1), (
+        "정체성이 작성 주체·업로더를 말하지 않는다")
+    # 서수는 **기본 라벨**이 아니다. 다만 정체성이 겹치는 경계(같은 사람이 같은 이름을 독립
+    # 업로드)에서는 서수가 유일한 구분 수단이라 그때만 덧붙인다(codex P2) — 그 분기 안에만
+    # 있어야 한다.
+    ordinal = re.search(r"계보 \$\{_linIdx\}/\$\{_linTotal\}", body)
+    if ordinal:
+        gated = re.search(
+            r"_identityLabel\s*=\s*_identityCollides\s*\?[^;]*계보 \$\{_linIdx\}/\$\{_linTotal\}",
+            body, re.S)
+        assert gated, "서수가 충돌 분기 밖에서 기본 라벨로 쓰인다"
     # 서수를 **버리지는 않는다** — title 로 내린다(정보를 없애는 것이 목적이 아니다).
-    assert "_linTitle" in badge and "_linIdx" in body, "서수를 title 에서도 잃었다"
+    assert "_linTitle" in body and "_linIdx" in body, "서수를 title 에서도 잃었다"
+
+
+def test_branch_chip_carries_only_the_branch_fact():
+    """분기 칩은 **갈라졌다는 사실만** 진다 — 정체성은 라벨이 이미 말했다.
+
+    둘을 한 칩에 담으면 같은 행에서 같은 사실이 두 번 나온다(사용자가 지적한 중복 축).
+    갈라지지 않은 계보에는 칩 자체가 붙지 않는다 — 늘 뜨는 배지는 정보가 아니다.
+    """
+    body = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
+    m = re.search(r"linBadge\s*=\s*(_branched[^;]*);", body, re.S)
+    assert m, "분기 칩 조립을 찾지 못했다"
+    chip = m.group(1)
+    assert "⤷" in chip, "분기 사실을 말하지 않는다"
+    # 화면은 글리프 한 자, 말로 된 설명은 title 과 접근성 이름이 진다(한 줄 간소화).
+    # 글리프는 AT 에서 중복이라 감춘다 — `_srWho` 가 이미 「, 갈라져 나옴」을 읽는다.
+    assert 'aria-hidden="true"' in chip, "AT 가 글리프를 이름 뒤에 한 번 더 읽는다"
+    assert "_linTitle" in chip, "말로 된 설명(title)을 잃었다"
+    assert "_upName" not in chip and "_linWho" not in chip, (
+        "칩이 정체성을 되풀이한다 — 라벨과 겹친다")
+    assert chip.rstrip().endswith('""'), "갈라지지 않은 계보에도 칩이 붙는다"
 
 
 def test_identity_badge_still_does_not_claim_ownership():
@@ -247,8 +280,12 @@ def test_branched_lineage_is_marked_in_the_badge():
     body = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
     assert re.search(r"_branched\s*=\s*_originId\s*>\s*0", body), "분기 판정이 없다"
     assert '"⤷ "' in body or "⤷" in body, "분기 글리프가 없다"
-    rule = _css_rule(_src(CSS), ".attach-list-item-lineage.branched")
-    assert "dashed" in rule, "색·글리프 외의 형태 신호가 없다(색각 이상 사용자에게 소실)"
+    # 형태 신호는 이제 **글리프 자체**가 진다(REQ-20260901). 파선 테두리는 글리프 한 자만
+    # 남으면서 «빈 동그라미» 로 읽혀 걷어냈다 — 색 단독 의존이 아니라는 요건은 유지된다.
+    rule = _css_rule(_src(CSS), ".attach-lineage-group .attach-list-item-lineage.branched")
+    assert "border: none" in rule, "글리프 표식에 pill 껍데기가 남아 빈 배지로 보인다"
+    body2 = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
+    assert "⤷" in body2, "색 외의 형태 신호(글리프)가 사라졌다"
 
 
 # ── G5. 변경 규모 — 열기 전에 알린다 ───────────────────────────────────────
@@ -477,19 +514,15 @@ def test_size_delta_does_not_claim_content_difference():
 
 # ── G6. 카피 예산 — 같은 낱말이 서로 다른 뜻으로 흩어지지 않는다 ───────────
 
-def test_versions_box_note_is_compressed():
-    """버전 박스 안내가 짧아졌다 — 그룹 카드가 파일명·계보 수·비교를 이미 이고 있다.
+def test_versions_box_has_no_lineage_note_left():
+    """압축이 아니라 **제거**다 — 네 사실이 전부 카드 머리·행 칩으로 옮겨갔다(사용자 지적).
 
-    종전 문구는 한 줄에 네 사실("이 계보: 누구 · 갈라짐 · 파일 N개 / 같은 이름의 다른 계보 M개")
-    을 담아 240px 폭에서 세 줄로 접혔다 (§16.8 사용자 대면 텍스트 예산).
+    이 테스트의 앞선 형태는 「문구를 짧게 유지」였다. 그 문구 자체가 되풀이임이 드러났으므로
+    계약을 «없음» 으로 올린다.
     """
     body = _code_only(_fn_body(_src(COMPOSER), "_renderAttachmentVersionsBox"))
-    m = re.search(r"note\.textContent\s*=\s*(.+?);\n", body, re.S)
-    assert m, "계보 안내 문구를 찾지 못했다"
-    txt = m.group(1)
-    assert "이 계보:" not in txt, "박스 안에서 '이 계보:' 를 다시 말한다(스코프 중복)"
-    assert "같은 이름의 다른 계보" not in txt, "파일명 스코프를 문장에서 되풀이한다"
-    assert "다른 계보" in txt, "다른 계보의 존재를 말하지 않는다(선행 cycle 계약)"
+    assert not re.search(r"note\.textContent\s*=", body), "계보 안내문이 남아 있다"
+    assert "attach-list-versions-lineage" not in body, "안내문 요소가 남아 있다"
 
 
 def test_group_head_says_filename_once():
@@ -529,8 +562,12 @@ def test_author_color_axis_is_actually_applied():
     assert "--text-2" in rule, "실재 토큰으로 중립색을 주지 않는다(대비 상향분 반영)"
     ai = _css_rule(css, ".attach-lineage-group .attach-list-item-lineage.ai")
     assert "#2563eb" in ai, "AI 계보 색이 없다 — 두 주체가 같은 색이면 축이 성립하지 않는다"
+    # REQ-20260901: 그룹 안 행 라벨은 이제 **파일명이 아니라 정체성**이라 낮추지 않고 올린다.
     name = _css_rule(css, ".attach-lineage-group .attach-list-item-name-text")
-    assert "#6b6960" in name, "그룹 안 파일명이 낮춰지지 않는다(위계 역전 실패)"
+    assert "font-weight: 600" in name, "정체성 라벨이 1순위로 올라오지 않았다"
+    assert "--text-2" in name, "정체성 라벨이 AA 미달 색이다"
+    ai = _css_rule(css, ".attach-lineage-group .attach-list-item-name-text.is-ai-lineage")
+    assert "#2563eb" in ai, "작성 주체 색축이 라벨로 옮겨오지 않았다"
 
 
 def test_group_head_wraps_instead_of_clipping():

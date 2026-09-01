@@ -257,7 +257,11 @@ def test_snapshot_carries_steps_omitted(monkeypatch, claimed_by, expect_query):
             pass
 
         def fetchone(self):
-            return ("open", claimed_by, None, 0)
+            # 실물 SELECT 는 6열이다: Status · ClaimedBy · SubmittedAt · Delivered ·
+            # ClaimedAt · ConversationId (뒤 둘은 TASK-20260901T140000 무진행 판정용).
+            # 더블이 열 수를 줄이면 스냅샷이 IndexError 로 죽고, 그 죽음이 이 계약과
+            # 무관한 실패로 나타난다 — 같은 부류를 이번 cycle 에 두 번 겪었다.
+            return ("open", claimed_by, None, 0, None, "c1")
 
         def close(self):
             pass

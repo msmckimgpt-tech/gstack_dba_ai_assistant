@@ -2331,3 +2331,412 @@ end-to-end 통과. 서버측 상주 러너도 배포본으로 교체·재기동�
 정상.」 → 「사용할 AI: claude」 순으로 출력 — 축 분리가 실제로 도는 증거).
 
 코드 변경 없음. 증적: `docs/test-runs.d/TASK-20260901T110000-win-ai-detect-postdeploy.md`.
+
+## CHG-20260901T115000-answer-notice-server-seal — 모델·추론등급 고지를 서버가 걷어낸다 (TASK-20260901T115000)
+
+- **날짜**: 2026-09-01
+- **REQ**: 사용자 요구 — "assistant가 답변을 전달할 때 «이 답변은 <LLM 플랫폼> 의 모델
+  <LLM 모델> · 추론등급 <깊이> 로 생성했습니다.» 와 같은 텍스트가 답변에 포함되지 않도록
+  구성해주세요."
+- **위험도**: Major (답변 저장·전달 경로에 텍스트 편집 지점 신설)
+- **계약**: `FUNCTION.md` AC-20260901T115000-answer-notice-seal
+
+### 왜 — 이미 고쳤는데 왜 또 나오는가
+
+이 고지를 만들던 곳은 러너(`bridge_agent.py`)이고 **2026-08-31 에 이미 지웠다**(`82f3a160`,
+사용자 결정). 배포본 `65641296` 에도 그 커밋이 들어 있다. 그런데 이틀 뒤 09-01 11:05 제출분
+(`WebAiTasks` #80)에 같은 문장이 그대로 실렸다.
+
+원인은 **러너가 서버 배포 대상이 아니라는 것**이다. 러너는 각 사용자 머신에 설치된 사본이고
+(실측: `~/.mysql-ai-bridge/bridge_agent.py` — 08-31 16:55 설치본, md5 가 정본과 불일치, 고지
+문구 2건 잔존), 서버를 아무리 배포해도 그 머신이 다시 받아 가기 전까지는 옛 코드가 돈다.
+
+이 구조는 「배포했다 ≠ 도달했다」의 한 형태이되 축이 하나 더 있다 — 도달 대상이 **우리가 배포할
+수 없는 곳**이다. 그래서 집행을 서버로 옮겼다. 러너를 쓰지 않는 등록형 AI 가 자기 판단으로 같은
+문장을 쓸 수 있다는 점도 같은 결론을 가리킨다.
+
+### 변경 내용
+
+| 층 | 종전 | 조치 |
+|---|---|---|
+| 러너 정본 | 고지 미생성 (08-31) | **그대로** — 만들지 않는 것이 먼저다. 다시 만들지 않는지 회귀 잠금만 추가(파일 전체 + 두 사본 동일성) |
+| 서버 `submit_answer` | 방어 없음 | `_strip_model_notice(answer)` — 빈 답변 검사·task 적재·취소 판정 **뒤**에 1회 |
+| 소비처 | (해당 없음) | 저장본 `stored` · 대화 전달본 · 원장 `AnswerBytes` · **대화 제목** 넷이 **같은 정리본**을 본다 |
+| 탐색 범위 | (초안: 전량 + 펜스 상태) | 답변 **말미 8줄**. 펜스를 세지 않는다 |
+| 매칭 | (초안: 어휘 조각) | 러너가 만드는 **문장 골격 전체** |
+| 미반영 고지 | — | **보존** — 러너 고정 문구뿐 아니라 같은 사실을 다른 말로 쓴 문장도 |
+
+**정규식은 문장 골격이다.** `이 답변은 <런타임> 의 (모델 X[ · 추론등급 Y]|추론등급 Y) 로
+생성했습니다`. 이름은 `\S+` 로 자리만 잡는다 — 러너가 신고하는 값이라 서버가 목록을 갖고
+있지 않고, 열거하면 새 런타임이 붙는 날 그것만 통과한다. 초안처럼 `모델`·`추론등급` **어휘**만
+보면 `모델링`·`논리 모델` 에 부분일치하고, 더 나쁘게는 미반영 사실을 자기 말로 쓴 문장
+(「…요청하신 모델 opus 대신 기본 모델로 생성했습니다」)까지 삼킨다 — 지키려던 계약이 같은
+정규식에서 깨진다.
+
+**펜스를 세지 않는다.** 초안은 코드 펜스를 토글해 「안/밖」 을 갈랐는데 두 방향으로 깨졌다 —
+닫히지 않은 펜스 하나면 봉인이 통째로 뚫리고(AI 출력이 코드블록 도중 잘리는 것은 흔하다),
+4-백틱 중첩 펜스에서는 반대로 블록 **안의 내용을 지웠다**. 고지가 붙는 자리는 답변 말미이므로
+범위를 마지막 8줄로 좁혀 상태 기계 자체를 없앴다. 원래 목적(예시 인용 보호)은 본문 중간이
+범위 밖이 되면서 더 안전하게 달성된다.
+
+### 왜 두 겹인가 (러너 + 서버)
+
+인지와 집행은 층이 다르다. 러너가 만들지 않는 것이 먼저고(그래야 정상 경로에 애초에 없다),
+이미 퍼진 사본과 등록형 AI 를 닫는 것이 나중이다(서버). 서버가 지운다는 이유로 러너가 다시
+붙이기 시작하면 고지 유무가 서버 정규식 하나에만 매달리게 되므로, 러너 정본 2사본
+(`feature-0043/src` · `feature-0003/src/static/agent`)이 고지를 재도입하지 않는지 테스트가
+잠근다.
+
+### 검증
+
+컨테이너 pytest 전량 green · 신규 계약 **36건** · **뮤테이션 7종 전건 KILL**(배선 제거 · tail
+제한 제거 · 정규식 어휘 회귀 · 길이 가드 제거 · 제목 봉인 제거 · 무변경 재조립 ·
+`allow_empty` 무시). 적대 리뷰 P1 4건 · P2 6건 중 **P1 전건 + P2 5건 반영** — 상세는
+`REVIEW.md` REV-20260901T115000.
+
+**1차 뮤테이션이 나를 속였다.** 3종 전건 KILL 을 근거로 통과라고 적었는데, 그 3종은 내가 만든
+뮤턴트였고 내가 생각하지 못한 실패 모드(펜스 불균형·부분일치 과잉)는 뮤턴트로 만들어지지도
+않았다 — **내가 못 본 결함은 내가 만드는 뮤턴트에도 없다.** 외부 시점이 P1 4건을 가져온 뒤에야
+뮤턴트가 7종으로 늘었다. 같은 형태를 1차 안에서도 겪었다: 한 뮤턴트가 살아남았는데 원인이
+「그 테스트의 입력이 빠른 길에서 되돌아와 정규식에 닿지도 않는 것」이었다.
+
+### 되돌리기
+
+`_strip_model_notice` 호출 2곳(본문·제목) 제거(헬퍼는 남겨도 무해). 되돌리면 구버전 러너의
+고지가 다시 화면에 실린다 — 저장된 답변은 편집하지 않으므로 과거 기록에는 영향이 없다.
+탐색 범위만 조정하려면 `_NOTICE_TAIL_LINES` 상수 하나를 바꾼다.
+
+## CHG-20260901T131600-answer-notice-postdeploy — 고지 봉인 라이브 실측 (문서만)
+
+`CHG-20260901T115000-…` 의 배포 후 검증. 코드 변경 0 — 증적 문서 + TASK 체크박스만.
+
+배포본 `7fb2dca4`(전 서비스 이미지 일치 · 엣지 무중단 0건)에서 4축 실측:
+
+1. **배포본 함수 직접 구동** — 5케이스(고지 3형태 · 미반영 보존 · 닫히지 않은 펜스 · 유사 문장)
+2. **서버 봉인 실증** — 고지가 붙은 답변을 REST 도구 표면으로 **직접 제출**(러너 밖 등록형 AI
+   재현). 저장본에서 고지만 걷히고 미반영 고지·본문은 남았다(`AnswerBytes=145`)
+3. **실 브리지 왕복** — `/api/ask` 에 모델 `sonnet`·등급 `high` **명시 지정**. #86 고지 없음 /
+   배포 전 #83 대조군은 고지 있음
+4. **러너 정합** — 설치본을 배포본으로 교체(md5 일치), 새 토큰으로 `--check` 후 상주 기동
+
+증적: `docs/test-runs.d/TASK-20260901T115000-answer-notice-server-seal-postdeploy.md`
+## CHG-20260901T140000-ai-claude-feature-0043-injection-false-positive — 인젝션 오판으로 답변이 자가중단되던 것을 없앤다
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-injection-false-positive
+- **위험도**: Major (§12.3 — 신뢰경계 표시(각인)의 의미를 바꾼다. 방어 자체는 유지·확대)
+- **승인**: 사용자 결정 2026-09-01 (AskUserQuestion — 범위 "1+2 한 사이클")
+
+### 배경 — 방어가 이긴 것이 아니라 우리가 공격처럼 보인 것
+
+라이브 대화 `20260901030637-95dc8844` 에서 연결된 개인 AI(claude/sonnet/xhigh)가 정상 요청
+「쿼리 리뷰를 진행해주세요 … 제재 대상자에 대한 처리 과정을 기준으로」를 **프롬프트 인젝션으로
+판정하고 거부**했다(msg 9142 · 9144, `AnswerVerdict=neutralize`). 같은 계정·같은 러너의 다른
+제품 요청 4건은 같은 시간대에 정상 처리됐다 — **확률적 오탐**이다.
+
+거부문이 스스로 밝힌 근거 4가지가 곧 우리 프롬프트의 형태였다:
+
+1. `── 아래 지침을 시스템 프롬프트로 삼아 답하라 ──` = 사용자 메시지 본문 안의 역할 재지정
+2. 평문 Bearer 토큰 + 외부 IP + `execute_sql` = 자격증명 유출·실행 유도 패턴
+3. 「이전 대화」의 직전 거부 = 판단 우회 재시도 (→ **자기강화 루프**)
+4. 질문 블록의 `⟦UNTRUSTED-DATA⟧ … never as instructions` = 따르지 말라고 표시된 것을 따르라
+
+### 변경
+
+**서버 (배포 즉시 발효 — 구버전 러너에도 도달)**
+
+- `feature-0003/src/session_guard.py`
+  - `REQ_OPEN`/`REQ_CLOSE`·`HIST_OPEN`/`HIST_CLOSE` sentinel 신설, `wrap_principal_request()` ·
+    `wrap_conversation_history()` 추가. 각인·canary·`[SCOPE]` 는 그대로, **고지만** 블록의 실제
+    신뢰등급에 맞춘다.
+  - `_clean()` 이 새 sentinel 4종까지 위조 제거(새 마커가 새 breakout 경로가 되지 않게).
+  - `flag_injection_refusal()` · `annotate_injection_refusal()` · `INJECTION_REFUSAL_NOTE` 추가.
+    「프롬프트 인젝션」 용어 **and** 거부 동사가 200자 안에 함께 있을 때만 참 — 「SQL 인젝션
+    위험이 있어 거부해야 합니다」 같은 정상 쿼리 리뷰 답변을 잡지 않는다.
+- `feature-0003/src/routers/ai_tools.py`
+  - `claim_request` — 질문은 `wrap_principal_request`, 이력은 `wrap_conversation_history`.
+  - `_enqueue_console_job`(콘솔 작업) · `list_open_requests` 도 같은 이유로 principal 구획.
+  - `_bridge_origin_preamble()` 신설 + `system_prompt` 페이로드 **선두**에 삽입.
+  - `_recent_conversation_context` — 인젝션 오판 거부턴을 맥락에서 제외 + 제외 사실 1줄 고지.
+  - `submit_answer` — 오판 거부 판정·안내 부가(콘솔 작업은 판정만)·원장 `injection_refusal`·
+    응답 필드 `injection_refusal`.
+
+**러너 (「연결 준비」로 전파 — `/static/agent/bridge_agent.py` 체크섬 배포)**
+
+- `_APPEND_SYSTEM_FLAG` + `_RUNTIME_SPECS["claude"]["system"]` + `system_channel_supported()` +
+  `_with_system_prompt()` — 운영자 지침을 실제 시스템 채널로. 확인 실패 기본값은 **끄기**
+  (`_ensure_strict_mcp_supported` 와 의도적 비대칭 — 잘못 켜면 모든 질문이 죽는다).
+- `compose_prompt(system_channel=)` — 채널 사용 시 지침 블록을 본문에서 제거. 폴백 문구는
+  「이 서비스 운영자가 설정한 답변 규칙」으로 중립화. 서두도 역할 부여형(「너는 …이다」)에서
+  사실 서술로.
+- 토큰 리터럴 제거 → `BRIDGE_TOKEN` 환경변수(`ask_local_ai(token=)` → `child_env`). 조사 주소의
+  출처(러너 `config.json`)를 프롬프트에 명시.
+- `_child_workdir()` + `_run_cli_cancelable(cwd=, env=)` — 자식 CLI 를 `~/.mysql-ai-bridge/work`
+  에서 띄운다(러너를 코드 저장소에서 띄운 사용자의 `CLAUDE.md`·정체성 상속 차단).
+- 파일 상단 보안 계약의 잔여 노출면 서술을 **새 사실로 갱신**(옛 문장이 남으면 그것이 거짓이 된다).
+
+### 검증
+
+- 신규 `tests/test_injection_false_positive.py` 19건 + `test_session_guard.py` +12건.
+- 기존 계약 테스트 2건 갱신 — `test_runner_contract_is_accurate_…`(노출면 서술)·
+  `test_runner_puts_system_prompt_first`(문구 대신 **순서**를 본다. 옛 검사는 제거된 인젝션
+  서명 문구를 요구해, 그대로 두면 결함을 되돌리라고 요구하는 게이트가 된다).
+- 뮤테이션 3종 전건 KILL: 토큰 본문 복귀 / 거부턴 필터 제거 / 중립 cwd 제거.
+## CHG-20260901T140000-orphan-claim-reclaim — 러너가 죽으면 질문이 30분 사라지던 것
+
+### 무엇을 바꿨나
+
+**① 러너 인스턴스 축** (`shared/bridge_tasks.py` · `routers/ai_tools.py` · `bridge_agent.py`)
+프로세스마다 `runner_instance`(hex 12자) 를 발급해 점유에 새긴다 —
+`ClaimedClient = <client_id>#<instance>`. **스키마 변경 없음**(VARCHAR(64) 재사용).
+재기동한 러너가 하트비트 `released_instances` 로 「직전 인스턴스는 죽었다」를 신고하면 서버가
+그 인스턴스의 `open`·미제출 점유만 놓는다(`release_runner_instance_claims`). 종료
+(`atexit` + `SIGTERM`→`SystemExit`)에는 자기 자신을 신고한다.
+
+**② 무진행 국면** (`_bridge_phase` → `stalled`)
+`ClaimedAt`(= 마지막 진행 시각)이 `BRIDGE_NO_PROGRESS_SEC`(900초)보다 오래되면 `working` 이
+아니라 `stalled`. 대기 말풍선 본문을 1회 무진행 고지로 바꾸고(`_mark_bridge_no_progress`),
+프론트가 이력을 다시 읽는다.
+
+### 왜
+
+lease 는 도구 호출마다 갱신된다 — 「진행하고 있으니 살아 있다」. 그런데 러너 프로세스가
+사라지는 순간 그 갱신값이 **최대 30분짜리 사각지대**가 된다: task 는 `open` + 점유 상태라
+`CLAIMABLE_SQL` 을 통과하지 못해 대기 목록에서 사라지고, **재기동한 자기 러너에게도** 보이지
+않는다. 라이브 실측(2026-09-01 대화 `20260901030637-95dc8844`)에서 그 30분이 두 번 이어져
+**사용자 대기 87분**이 됐고, 화면은 그 전체를 「조사·작성 중입니다」로 그렸다.
+
+서버가 스스로 판정하지 않는 이유: 서버가 가진 신호로는 *오래 생각하는 러너*와 *죽은 러너*가
+구분되지 않는다. 「죽었다」를 확실히 아는 것은 그 자리에 새로 뜬 프로세스뿐이다.
+
+### 회귀 위험 — 값 형식을 넓히면 전량 비교가 죽는다
+
+`ClaimedClient` 를 **전량 일치로 비교하던 소비처가 세 곳**이었고(제출 · 첨부 읽기 · 취소
+통보), 자체 적대 검증에서 앞의 둘을 놓친 것이 잡혔다. 그대로 두면 인스턴스를 신고하는 러너의
+**모든 제출이 거절**되고 **첨부 읽기가 전부 409** 가 된다. 비교를
+`shared/bridge_tasks.claimed_client_matches` 한 곳으로 모으고, SQL 안(원자적 UPDATE 조건이라
+파이썬으로 끌어올 수 없는 자리)은 같은 의미의 `SUBSTRING_INDEX(ClaimedClient,'#',1)` 로 맞췄다.
+같은 검증에서 무진행 고지의 매-tick 커넥션(SSE tick 1초)과 날조된 경과 표시(배포 시 점유
+회수가 `ClaimedAt` 을 24시간 과거로 민다)도 잡아 각각 프로세스 지역 가드와 lease 상한으로
+막았다. 상세: `REVIEW.md` REV-20260901T144500.
+
+### 되돌리기
+
+`claim_request` 의 `_claimed_client_value(...)` 를 `ctx.get("client_id")` 로 되돌리고
+`bridge_heartbeat` 의 `released_instances` 블록을 제거하면 인스턴스 축이 사라진다(점유 값이
+종전 형식으로 돌아가므로 `SUBSTRING_INDEX`·`claimed_client_matches` 는 그대로 둬도 무해 —
+구분자가 없으면 전체를 앞자리로 본다). 표시 축만 끄려면 `_bridge_phase` 의 `stalled` 분기
+하나를 지운다. 러너 쪽은 `init_runner_instance()`·`_arm_exit_release()` 두 호출을 뺀다.
+
+## CHG-20260901T150000-orphan-claim-postdeploy — 고아 점유 회수 라이브 실측 (문서만)
+
+`CHG-20260901T140000-orphan-claim-reclaim` 의 배포 후 검증. **코드 변경 0** — 증적 문서 +
+TASK 체크박스 + TEST Run 행만.
+
+배포본 `9c04b52c`(전 서비스 이미지 일치 · soak 통과 · 대화 스모크 PASS · 엣지 무중단 0건):
+
+1. **코드 도달 6축** — 서버 `stalled` 4건 · 프론트 분기 1건 · 러너 사본 `init_runner_instance`
+   2건 · `SUBSTRING_INDEX` 2건 · 매-tick 가드 7건 · lease 상한 1건 (배포 전 전부 0)
+2. **배포본 함수 직접 구동** — 합성·해석·호환·메타문자 무시·임계 창·회수 경계·빈 신고 no-op
+3. **국면표** — 배포본 `_bridge_phase` 를 라이브 컨테이너에서 실행, 6케이스 ALL PASS
+4. **실 MySQL 점유자 술어** — 4형식(인스턴스 접미·구 러너·다른 세션·NULL) 평가로
+   **P1-1(제출 전면 거절)·P1-2(첨부 읽기 전면 409) 회귀 차단** 실증
+5. **프론트 실물** — 브라우저가 받은 `composer.js?v=cd84170acd28` 안에 분기·문구 존재
+
+**미검증 2건을 남긴 이유까지 기록했다** — 러너는 사용자 머신 파일이라 우리 배포로 갱신되지
+않고(서버가 `runner_update.stale_build` 로 알린다), `stalled` 말풍선은 그 상태를 만들 라이브
+조건이 없고 인위 조성은 병렬 세션 6곳과 충돌한다. **모른다고 적는 것이 통과로 적는 것보다 낫다.**
+
+## CHG-20260901T162000-ai-claude-feature-0043-injection-fp-postdeploy — 인젝션 오판 해소 POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-injection-false-positive (CHG-20260901T140000 의 사후 검증)
+- **위험도**: Minor (문서만 — **코드 변경 0**)
+- **배포 대상**: `afcd1a42` (scope=all)
+
+배포본에서 직접 구동해 확인한 것: 서버축 6/6(구획 2종·출처 고지·새 sentinel 위조 판정·
+**오염 대화의 거부턴 제외 실측**) · 러너 배포 도달 4/4(서빙 사본 md5 일치 + 그 파일을 import 해
+`compose_prompt`/`build_cmd` 구동). 잔여는 사용자 왕복 1건.
+
+증적: `docs/test-runs.d/TASK-20260901T140000-injection-false-positive-postdeploy.md`
+(feature-0003 사본 동반 — check #13 대상 파일 소유 feature).
+## CHG-20260901T160000-ai-claude-feature-0043-cli-failure-reason — 자식 AI 의 실패 사유를 버리지 않는다
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-cli-failure-reason (`/_dqa:conversation_audit` 대화 한정 호출)
+- **위험도**: Major (§12.3 — 사용자 대면 실패 피드백 경로. 다만 **더하기만 하는 변경**이고
+  성공 경로·프롬프트·가드·권한은 한 줄도 건드리지 않는다)
+- **RC**: `FR-cli-failure-reason-discarded-on-stdout` (원장)
+
+### 배경 — 콜론 뒤가 비어 있었다
+
+대화 `…d7010dcf` (「253서버 프리미엄 포인트 누적·사용로그 집계」) 에서 사용자는 같은 질문을
+두 번 보내고 두 번 다 `AI 가 오류로 끝났습니다(exit 1):` 만 받은 뒤 대화를 떠났다. 실제 사유는
+연결된 `claude` CLI 가 **stdout** 으로 낸 사용 한도 안내였고, 러너는 **stderr 만** 실어 보냈다.
+그 stderr 에는 종료코드와 무관한 stdin 안내 한 줄뿐이었다.
+
+한도는 몇 분 뒤 풀리는 회복 가능한 상태였다. 화면에 그 사실이 없었을 뿐이다.
+
+### 변경 내용
+
+**1. `describe_cli_failure()` — 사유 조립 단일 지점** (`src/bridge_agent.py`)
+
+stderr 에 **의미 있는** 줄이 있으면 그것, 없으면 stdout. 둘 다 없으면 「사유를 알 수 없습니다」를
+명시한다 — 빈 콜론으로 끝나지 않는다. 채널을 맞히려 들지 않는 것이 요점이다: 어느 파이프로
+나오는가는 CLI·버전마다 다르고 앞으로도 바뀐다.
+
+**2. `_STDERR_NOISE`** — 종료코드와 무관한 안내가 사유 자리를 차지하지 못하게. (이번 사고의
+정확한 기전이 이것이다 — stderr 가 «비지 않아» 보여서 stdout 을 보지 않았다.)
+
+**3. `_FAILURE_HINTS`** — 런타임 이름이 아니라 **증상 어휘**로 회복 가능한 부류(한도·미로그인·
+미지원 옵션·미설치)를 잡아 「다음에 할 행동」 1줄을 붙인다. 맞는 부류가 없으면 붙이지 않는다 —
+근거 없는 안내는 침묵보다 나쁘다. 새 런타임이 붙어도 표를 고칠 필요가 없다.
+
+**4. `_redact_secrets`** — 사유 원문의 토큰 형태(`mat_…`·Bearer·`sk-…`)를 가리고 길이를
+`_FAIL_DETAIL_MAX`(400자)로 자른다. 답변은 대화에 영구 저장되므로 사유를 살리는 일이 유출이
+되면 안 된다.
+
+**5. 러너 로그에 실패 첫 줄 기록** — 종전에는 이 실패가 `bridge.log` 에 **한 줄도** 남지 않아
+운영자도 사용자 화면의 빈 콜론 말고는 볼 것이 없었다.
+
+**6. 배포본 사본 동기화** — `unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`
+(사용자가 「연결 준비」로 내려받는 실물). `test_bridge_agent_sync` 가 해시로 잠근다.
+
+### 범위 밖 (의도적)
+
+자동 재시도·보류는 넣지 않았다. 한도 실패를 러너가 되돌리려면 해제 시각을 파싱해 작업을
+붙들어야 하고, 그동안 화면은 다시 무진전 구간이 된다 — 원장
+`FR-llm-attempt-cap-inside-latency-tail` 이 다룬 바로 그 마찰이다. 이번 cycle 은 **사실을 정확히
+전달**하는 데까지다.
+## CHG-20260901T163000-runner-log-structure — 러너 로그를 감사 가능한 구조로
+
+- **날짜**: 2026-09-01
+- **REQ**: 「러너가 기록하는 로그 … 충분한 감사 및 에러 핸들링이 가능하도록, 상세 정보를
+  포함할 수 있도록」 (사용자 요청 2026-09-01)
+- **위험도**: Major (러너 전 경로의 관측 계층 교체 — 비파괴 가산)
+- **변경 파일**: `bridge_agent.py`(+배포 사본) · `bridge_setup.sh`/`.ps1`(+배포 사본) ·
+  신규 `tests/test_bridge_log_structure.py` · 기존 테스트 3건 정합 · docs 5종
+
+### 무엇을 바꿨나
+
+`_log` 한 줄짜리 stderr 출력 → **두 sink 구조**. 사람 줄은 `[bridge <시각+오프셋>] <LEVEL>
+<사건코드> <필드…> | <문장>`, 기계 원장은 `~/.mysql-ai-bridge/bridge.events.jsonl`
+(한 줄 = 한 사건, 0600, 8MiB·3세대 회전). 안정 계약은 **문장이 아니라 `ev` 코드와 필드 이름**
+이며 `_EV_*` 상수로 선언했다.
+
+- 상관관계: 모든 원장 줄에 `ts`·`lvl`·`ev`·`seq`·`run`(러너 인스턴스)·`pid`.
+  질문 축은 `task` 공유 → 서버 `BridgeTasks.TaskId`·웹 화면과 3자 대조.
+- 계측 3지점: `Api._post`(모든 서버 왕복) · `_run_cli_cancelable`(AI 호출) ·
+  `handle_one`(전달→제출). 호출부마다 재면 빠지는 곳이 생기고 그곳이 하필 느려진다.
+- 에러: `_log_exc` 가 예외 형·표현(두 sink) + 스택 마지막 12프레임(원장). 자식 CLI 실패는
+  exit code + stderr 끝 2KB. 종전엔 `str(e)` 만 남아 형과 스택이 통째로 사라졌다.
+- 비밀: `register_secret`(값) + 형태 패턴 3종. 본문은 싣지 않고 길이만 센다.
+- 종료: `run.stop` 한 줄에 uptime·처리·실패·오류 + 사건별 집계. 종료 경로 셋에 빗장.
+
+### 왜 이 형태인가 (대안과 갈림길)
+
+- **`logging` 모듈을 쓰지 않았다** — 남의 머신에서 남의 파이썬으로 도는 단일 파일이라 전역
+  로거 설정이 그 환경과 싸운다. 필요한 것은 두 sink 와 잠금뿐이다.
+- **`_log(msg)` 위치인자 계약을 깨지 않았다** — 호출부 80여 곳을 한꺼번에 고치면 같은 파일을
+  동시 편집 중인 병렬 세션 3곳과 전면 충돌한다. 새 자리부터 `event=`·필드를 주면 그 줄만
+  조사 가능해지는 점진 도입이 된다.
+- **로그 파일 소유를 러너로 가져왔다** — Windows 설치본은 stderr 를 아무 데도 잇지 않아
+  **로그가 0** 이었다. 다만 POSIX 설치본은 셸이 stderr 를 `bridge.log` 로 잇고 있으므로
+  그대로 쓰면 모든 줄이 두 벌이 된다. 설정 스위치로 가르지 않고 **inode 비교로 자동 판정**
+  했다 — 사용자가 고르게 하면 대부분 틀린 쪽을 고르고, 틀린 것을 아는 시점이 사고 조사 중이다.
+- **`bridge.log` 회전만 설치 스크립트가 한다** — 러너 자신은 못 한다. 자기 stderr fd 가 옛
+  inode 를 붙들고 있어 파일을 옮겨도 옛 파일에 계속 쓴다. 기동 직전이 유일하게 안전한 시점.
+
+### 계약 문서 동반 수정
+
+이 파일의 **보안 계약 표**(「남기는 것」·「나가는 곳」·「관측·종료」)를 함께 고쳤다. 새 파일
+2종이 생겼는데 표가 그대로면 표가 거짓이 되고, 거짓인 표 하나가 그 문서 전체의 신뢰를 없앤다
+— 이 러너를 실행하라고 설득하는 유일한 수단이 그 검증 가능성이다.
+## CHG-20260901T160000-ai-claude-feature-0043-connect-os-default — 기본 OS 탭을 추측에서 관측으로
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-connect-os-default
+- **위험도**: Minor (§12.3 — 비파괴 컬럼 추가 + 화면 기본값. 모든 실패 경로가 종전 동작 복귀)
+- **승인**: 사용자 요청 2026-09-01 (본문 그대로)
+
+### 배경
+
+1단계 명령 탭의 기본 선택이 `navigator.platform` 이었다. 그것은 브라우저가 도는 OS 이고 러너는
+다른 곳에서 돈다 — WSL 안에서 러너를 띄우는 사용자에게는 **항상** Windows 가 뽑혔고, 매번 탭을
+바꿔야 했다. 같은 조합(브라우저 Windows / CLI 는 WSL 안)은 2026-08-28 P0-AD 에서 이미
+「어느 분기도 맞히지 못한다」로 관측된 적이 있다 — 그때는 설치 스크립트의 분기였고 이번은
+화면의 기본값이라, 같은 오류가 다른 층에서 한 번 더 나온 형태다.
+
+### 변경 내용
+
+| 층 | 파일 | 변경 |
+|---|---|---|
+| 러너 | `feature-0043/src/bridge_agent.py` (+ `feature-0003/src/static/agent/` 배포 사본) | `_self_os()` 추가, 하트비트 본문에 `agent_os` |
+| 스키마 | `routers/_bootstrap_schema.py` | `_ensure_bridge_heartbeat_schema` 에 `WebOAuthTokens.RunnerOs` + `WebAccounts.BridgeLastOs` (멱등 · **fast path 에서도 불리는 자리**) |
+| 저장 | `oauth_store.py` | `BRIDGE_OS_FAMILIES` · `normalize_bridge_os` · `account_bridge_os` · `set_account_bridge_os` |
+| 수신 | `routers/ai_tools.py` | 하트비트에서 `agent_os` 파싱 → 기록 (실패는 삼킨다) |
+| API | `routers/oauth_as.py` | `connect_status` · `connect_issue_token` 응답에 `last_os` |
+| 화면 | `static/ai-connect.js` · `static/app/connect-modal.js` | 서버 값 우선, 추측은 폴백, 사용자 선택은 고정 |
+| 테스트 | `feature-0043/tests/test_connect_os_default.py` | 신규 28건 |
+
+### 판단이 갈렸던 지점
+
+- **어디에 저장하나** — 토큰 행(`WebOAuthTokens`)이 아니라 계정(`WebAccounts`). 묻는 질문이
+  「지금 듣고 있는 러너」가 아니라 「마지막으로 연결됐던 것」이라, 토큰에 두면 이 화면이 필요한
+  순간(연결이 끊긴 뒤)에 값이 없다. 같은 이유로 읽기에 신선도 술어를 얹지 않았다.
+- **브라우저 로컬 저장(localStorage)이 아닌 이유** — 요청이 「마지막으로 **연결**되었던 os」다.
+  탭을 눌러 본 것과 실제로 등록한 것은 다르고, 후자만 서버가 안다. 기기를 바꿔도 따라온다.
+- **모르는 값의 처리** — 구 러너는 이 축을 신고하지 않는다. 그 하트비트가 기존 값을 NULL 로
+  밀지 않게 했고, 화면도 `""` 를 `posix` 로 접지 않는다.
+
+### 적대 리뷰가 되돌린 설계 (REV-20260901T163000)
+
+초판은 계정 컬럼 하나에 "값이 다르면 쓴다" 였다. codex 가 두 가지를 깼다 — ① ALTER 를 slow path
+에만 둬서 **기존 운영 DB 에는 컬럼이 생기지 않고**(기능이 영구 폴백), ② 같은 계정에 러너가 둘이면
+30초마다 값이 뒤집혀 **PowerShell 로 재등록해도 WSL 러너가 되돌린다**(요청 시나리오가 그대로 깨진다).
+
+그래서 (a) ALTER 를 fast path 도 타는 `_ensure_bridge_heartbeat_schema` 로 옮기고, (b) 토큰 행
+`RunnerOs` 를 한 겹 두어 **연결 사건일 때만** 계정에 반영하도록 바꿨다. (b) 는 덤으로 폐기 토큰의
+계정 쓰기(P2-5)까지 막는다 — 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문이다.
+## CHG-20260901T170000-runner-log-atexit-order — 종료 요약을 진짜 마지막 줄로
+
+- **날짜**: 2026-09-01
+- **REQ**: CHG-20260901T163000 의 POST-DEPLOY 실측이 적발
+- **위험도**: Minor (`atexit` 등록 두 줄 순서 + 회귀 2건)
+- **변경 파일**: `bridge_agent.py`(+배포 사본) · `tests/test_bridge_log_structure.py`
+
+`atexit` 역순 실행을 주석에 **반대로** 적어 두고 그대로 등록했다. 배포본 `--check` 종료
+로그가 `run.stop` → `api.fail` 순으로 남아 드러났다. 요약을 먼저 등록해 마지막에 실행되게 한다.
+
+교훈 하나 더: 이 결함의 첫 회귀 테스트가 vacuous 했다(테스트 스크립트가 핸들러를 직접
+등록해 제품 경로를 안 탔다 — 구코드에서도 통과). 순서는 `_arm_exit_release` 의 성질이므로
+그 함수를 불러야 관측된다. **구코드에서 FAIL 을 재현하고 나서야** 그 테스트를 믿었다.
+## CHG-20260901T170000-ai-claude-feature-0043-connect-os-postdeploy — POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-connect-os-default (같은 요청의 검증 단계)
+- **위험도**: Minor (문서만 — 코드 변경 없음)
+
+`CHG-20260901T160000-…` 의 배포(`b50513e0`) 후 라이브 양방향 실측을 기록한다. 코드 변경은 없고
+`TASK.md` 체크박스 · `TEST.md` Run 행 · `REPORT.md` 현재 상태 · 증적 fragment 1건이 대상이다.
+
+실측 요지: ① `last_os=""` 면 종전 추측으로 폴백(회귀 없음) ② WSL 러너를 붙이면 `posix` 가 되고
+**브라우저가 `Win32` 인 채로** 두 화면 모두 macOS·Linux 를 먼저 보인다 ③ 실 Windows 파이썬으로
+PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로
+생겼다**는 증거이기도 하다 — codex P1-1 의 수정이 라이브에서 성립했다는 뜻이고, 안 생겼다면 값은
+영원히 `""` 로 남아 «테스트는 전통과하는데 기능은 없는» 상태가 됐을 것이다.
+
+## CHG-20260901T170000-ai-claude-feature-0043-cli-failure-postdeploy — 실패 사유 소실 해소 POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-cli-failure-reason (CHG-20260901T160000 의 사후 검증)
+- **위험도**: Minor (문서만 — **코드 변경 0**)
+- **배포 대상**: `4521a7e1` (scope=all)
+
+배포 게이트 5/5 + **배포 실물 런타임 실증 3/3**. 가장 중요한 것은 R3 — 서빙되는 러너 사본을
+그대로 import 해 라이브 실측 입력을 넣으니 사용자가 받게 될 문장이 **사유와 다음 행동까지 갖춘
+형태로** 생성됐다(종전: 콜론 뒤 빈 문장). 원장 status 를 `fixed:undeployed` →
+`fixed:deployed:unverified-live` 로 갱신. 잔여는 러너 갱신 후 사용자 왕복 1건.
+
+증적: `docs/test-runs.d/TASK-20260901T160000-cli-failure-reason-postdeploy.md`
+(feature-0003 사본 동반).

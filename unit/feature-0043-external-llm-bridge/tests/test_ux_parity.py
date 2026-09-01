@@ -1389,7 +1389,17 @@ def test_task_persists_role_for_prompt_composition():
 
 
 def test_runner_puts_system_prompt_first():
-    """지침을 **맨 앞**에 둔다 — 뒤에 두면 앞의 지시가 이기고 운영자 설정이 무시된다."""
+    """운영자 지침이 기본 지시를 **이긴다**.
+
+    계약은 그대로이나 **이기는 방법이 둘**이 됐다 (TASK-20260901T140000):
+
+      (a) 시스템 채널 — `--append-system-prompt`. 본문 밖이라 애초에 경쟁하지 않는다.
+      (b) 폴백(미지원 런타임·`--cmd`) — 종전대로 본문 **맨 앞**.
+
+    옛 검사는 (b)의 머리말 문자열 하나만 봤다. 그 문구(「시스템 프롬프트로 삼아 답하라」)는
+    본문 속 역할 재지정이라 인젝션 서명과 동형이어서 제거됐고, 문구를 그대로 요구하면 이
+    검사가 **결함을 되돌리라고 요구하는** 게이트가 된다. 그래서 문구가 아니라 **순서**를 본다.
+    """
     src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(
         encoding="utf-8")
     body = src[src.index("def compose_prompt("):src.index("# ── 한 건 처리")]
@@ -1399,8 +1409,12 @@ def test_runner_puts_system_prompt_first():
     #   그대로 두고, 판정 대상만 코드로 좁힌다.
     body = "\n".join(_l for _l in body.split("\n") if not _l.lstrip().startswith("#"))
     assert "system_prompt" in body
-    assert body.index("시스템 프롬프트로 삼아") < body.index("너는 사내 DB 질의 어시스턴트다"), (
+    # (b) 폴백 순서 — 운영자 지침 블록이 기본 지시보다 **먼저** 조립된다.
+    assert body.index("관리 콘솔 설정값") < body.index("이 요청은 사내 DB 질의다"), (
         "운영자 지침이 기본 지시보다 뒤에 온다")
+    # (a) 시스템 채널 — 지원 런타임에서는 본문에 싣지 않고 플래그로 넘긴다.
+    assert "system_channel" in body, "시스템 채널 분기가 사라졌다(폴백만 남으면 오탐이 돌아온다)"
+    assert '"system": [_APPEND_SYSTEM_FLAG' in src, "claude 명세에 시스템 채널이 없다"
 
 
 def test_prompt_failure_does_not_block_the_answer():
