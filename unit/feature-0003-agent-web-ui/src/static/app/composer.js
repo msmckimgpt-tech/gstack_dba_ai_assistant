@@ -68,6 +68,9 @@ import {
   state,
 } from "../app.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
+// side-panel-exclusive: 우측 오버레이 패널은 한 번에 하나. 등록부는 의존성 없는 별 모듈이라
+// app.js 를 경유하지 않고 직접 import 한다(순환 한 겹 추가 회피).
+import { registerSidePanel, openSidePanel } from "./side-panels.js?v=dev";
 // feature-0043 P0-AB: 브리지 연결 게이트. 잠금 판정은 서버가 내고(`compose_blocked`) 여기서는
 // 그 결과만 읽는다 — 조건을 다시 조립하지 않는다(두 벌이 되면 화면과 서버가 갈린다).
 import { isComposeBlocked, refreshConnState } from "./connect-modal.js?v=dev";
@@ -105,6 +108,105 @@ let _attachListState = "active";
 function _attachPanelMaxW() {
   return Math.max(ATTACH_PANEL_MIN_W, Math.floor(window.innerWidth * 0.92));
 }
+
+/** 배타 닫힘(사용자가 닫은 것이 아님)으로 잃는 상태의 1회용 스냅샷.
+ *
+ *  이 패널은 «닫힘 = 상태 파기» 다 — 다시 열면 목록 모드가 active 로 리셋되고 목록을
+ *  서버에서 통째로 다시 그린다(스크롤 최상단). 사용자가 × 로 닫았을 때는 그것이 의도지만,
+ *  「단계 보기」를 한 번 눌러 **자동으로** 닫힌 경우까지 그러면 휴지통을 훑던 화면이
+ *  이유 없이 사라진다. 그 손실은 배타 규칙이 새로 만든 것이므로 여기서 되돌린다. */
+let _attachAutoCloseSnapshot = null;
+
+/** 첨부 사이드 패널 닫기 — 닫기 버튼·빈 목록·다른 패널 열림이 모두 이 한 곳을 쓴다.
+ *  (`hidden` 부착을 호출부마다 복제하면 닫기 규칙이 여러 벌이 되어 갈린다.)
+ *
+ *  @param {object}  [opts]
+ *  @param {boolean} [opts.auto]  배타 닫힘(사용자 의사 아님) — 복원용 스냅샷을 남긴다. */
+function closeAttachSidePanel({ auto = false } = {}) {
+  const panel = document.getElementById("attachSidePanel");
+  if (auto && panel && !panel.classList.contains("hidden")) {
+    const list = document.getElementById("attachSidePanelList");
+    // ⚠ `convId` 를 함께 적는다 — 이 스냅샷은 «그 대화의 뷰» 다. 대화 축의 소유자
+    //   (`resetAttachListStateForConversationSwitch`)가 이 상태를 알게 만드는 대신 스냅샷이
+    //   **스스로 무효화**하게 한다: 그러지 않으면 앞으로 생길 다른 전환 경로(로그아웃·공유창
+    //   진입·딥링크 복원)마다 같은 한 줄을 복제해야 하고, 한 곳이라도 빠지면 REQ-20260806
+    //   -attach-manage 가 없앤 «다른 대화가 휴지통 모드로 열려 첨부가 없어 보이는» 결함이
+    //   그 통로로 되살아난다.
+    _attachAutoCloseSnapshot = {
+      convId: state.activeConversationId || null,
+      listState: _attachListState,
+      scrollTop: list ? list.scrollTop : 0,
+    };
+  }
+  if (panel) panel.classList.add("hidden");
+}
+
+/** 닫기 버튼용 래퍼 — 두 배선 지점이 **같은 함수 참조**를 쓰도록 이름을 준다
+ *  (익명 화살표를 두 번 넘기면 리스너가 둘로 등록된다). Event 인자가 옵션 객체 자리에
+ *  들어가지 않게 하는 역할도 겸한다. */
+function _onAttachClosePressed() { closeAttachSidePanel(); }
+
+/** 배타 닫힘 전의 상태를 1회 꺼낸다. 꺼내면 소진되며, **다른 대화의 스냅샷은 버린다**. */
+function _consumeAttachAutoCloseSnapshot() {
+  const snap = _attachAutoCloseSnapshot;
+  _attachAutoCloseSnapshot = null;
+  if (!snap) return null;
+  // 대화가 바뀌었으면 되돌릴 자격이 사라진다 — 그 화면은 이 대화의 것이 아니다.
+  if ((snap.convId || null) !== (state.activeConversationId || null)) return null;
+  return snap;
+}
+
+/** 업로드 중이거나 실패한 로컬 항목이 있는가 — 그 항목은 **서버 목록에 없다**.
+ *  (실패 pill 의 × 는 그 뷰에서만 닿는 회수 경로라, 안 보이면 회수도 못 한다.) */
+function _hasPendingComposerAttachments() {
+  const bucket = state.composerAttachments.byConv[_composerAttachmentKey(state.activeConversationId)];
+  return (bucket?.items || []).some((it) => it.status === "uploading" || it.status === "failed" || it.status === "staged");
+}
+
+/** 배타 닫힘 복원의 **꼬리** — 서버 목록 로드가 끝난 뒤 pill 뷰·스크롤을 되돌린다.
+ *
+ *  인라인 콜백이 아니라 이름 있는 함수인 이유: 이 축(무엇을 되돌리는가)을 검사할 수 있게
+ *  하기 위해서다. 클릭 핸들러 안에 두면 어떤 게이트도 구동할 수 없다.
+ *
+ *  @param {{listState: string, scrollTop: number} | null} restore 소비한 스냅샷
+ *  @param {string|null} cid 복원 요청 시점의 대화 id
+ *  @returns {boolean} 실제로 복원을 적용했는가
+ */
+function _applyAttachRestoreAfterLoad(restore, cid) {
+  if (!restore) return false;
+  // 왕복 중 대화가 바뀌었으면 이 복원은 **남의 대화**에 적용된다 — 스냅샷 생성·소비와
+  // 같은 정규화 규칙으로 꼬리도 자기무효화시킨다(동일성 판정이 세 지점에서 같은 술어를 쓴다).
+  if ((state.activeConversationId || null) !== (cid || null)) return false;
+  // 업로드 중·실패 항목은 **서버 목록에 없다** — 자동 닫힘으로 사라진 pill 뷰를 되돌린다
+  // (실패 항목의 회수 × 가 그 뷰에만 있다).
+  // 단 **휴지통 모드로 복원한 경우는 건너뛴다** — 두 렌더러가 같은 `#attachSidePanelList` 를
+  // 쓰므로 pill 이 삭제분 목록을 덮으면 헤더는 휴지통인데 본문은 활성 첨부가 되어 화면이
+  // 자기를 부정한다(휴지통에 업로드 중 항목은 존재하지 않는다).
+  if (restore.listState !== "deleted" && _hasPendingComposerAttachments()) _renderAttachmentPills();
+  const list = document.getElementById("attachSidePanelList");
+  if (list && restore.scrollTop) list.scrollTop = restore.scrollTop;
+  return true;
+}
+
+/** 첨부 사이드 패널 열기 — 너비 복원까지 포함한 단일 열기 경로.
+ *  side-panel-exclusive: 모든 열기는 등록부의 문을 통과한다(다른 우측 패널을 먼저 닫는다).
+ *  @returns {{listState: string, scrollTop: number} | null} 배타 닫힘 스냅샷(있으면) */
+function openAttachSidePanel() {
+  const panel = document.getElementById("attachSidePanel");
+  // 열 수 있는지 **먼저** 확인한다 — 열지도 못하면서 남의 패널만 닫지 않는다.
+  if (!panel) return null;
+  const restore = _consumeAttachAutoCloseSnapshot();
+  openSidePanel("attach", () => {
+    setupAttachSidePanelResize();
+    _applyAttachSidePanelWidth(panel);
+    panel.classList.remove("hidden");
+  });
+  return restore;
+}
+
+// side-panel-exclusive: 다른 패널이 열릴 때 이 패널을 닫을 수 있도록 등록한다.
+// `auto: true` — 이 경로의 닫힘은 사용자 의사가 아니므로 복원 스냅샷을 남긴다.
+registerSidePanel("attach", { close: () => closeAttachSidePanel({ auto: true }), elementId: "attachSidePanel" });
 
 function _applyAttachSidePanelWidth(panel) {
   let saved;
@@ -1039,7 +1141,7 @@ async function _syncConversationAttachmentsToBucket(convId) {
 
 function _renderAttachmentPills() {
   // 오른쪽 사이드 패널(#attachSidePanel)에 렌더. (TASK-0161: 죽은 #composerAttachments 숨김 코드 제거)
-  const sidePanel = document.getElementById("attachSidePanel");
+  // 패널 자체를 여닫는 일은 closeAttachSidePanel/openAttachSidePanel 이 소유한다.
   const sidePanelList = document.getElementById("attachSidePanelList");
 
   const key = _composerAttachmentKey(state.activeConversationId);
@@ -1063,7 +1165,7 @@ function _renderAttachmentPills() {
   const countBadge = document.getElementById("composerAttachCountBadge");
   if (!items.length) {
     sidePanelList.innerHTML = "";
-    if (sidePanel) sidePanel.classList.add("hidden");
+    closeAttachSidePanel();
     if (countBadge) countBadge.textContent = "";
     return;
   }
@@ -1729,29 +1831,23 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
   //
   // 아래 버전 행들이 곧 구성이지만, 같은 이름의 다른 계보가 함께 있을 때 그 행들만 보면
   // "이게 이 파일의 전부" 로 읽힌다 — 실제로는 옆에 다른 계보가 더 있다(사용자 제보).
-  if (hasLineageAxis) {
-    const cur = linHeads.find((l) => l.is_current_lineage) || null;
-    const others = linHeads.filter((l) => !l.is_current_lineage);
-    const note = document.createElement("div");
-    note.className = "attach-list-versions-lineage";
-    // 같은 이유로 소유권을 말하지 않는다 — 그룹 대화에서 남의 업로드를 "내" 것이라 하게 된다.
-    const who = cur && cur.is_assistant_generated ? "AI가 만든 계보" : "사용자가 올린 계보";
-    const from = cur && Number(cur.branched_from_attachment_id || 0)
-      ? " · 다른 파일에서 갈라짐" : "";
-    // REQ-20260831-attach-lineage-visibility: 그룹 카드가 파일명·계보 수·비교를 이미 이고
-    // 있으므로 여기서는 **이 갈래의 정체성**만 짧게 말한다. 종전 문구("이 계보: … / 같은
-    // 이름의 다른 계보 N개")는 한 줄에 네 사실을 담아 240px 폭에서 세 줄로 접혔다(§16.8).
-    note.textContent = `${who}${from} · 파일 ${versions.length}개 · 다른 계보 ${others.length}개`;
-    note.title = others
-      .map((l) => `#${l.head_attachment_id} v${l.version_number}`
-        + ` (${l.is_assistant_generated ? "AI" : "사용자"})`)
-      .join("\n") || "";
-    box.appendChild(note);
-  }
+  // REQ-20260901-lineage-row-compaction: **계보 구성 안내문을 걷어낸다**(사용자 지적 — 되풀이).
+  //
+  // 이 문구가 이고 있던 네 사실이 이제 전부 화면 다른 곳에 **먼저** 있다:
+  //   · 「AI가 만든 계보」      → 행의 1차 라벨 `AI 수정본`
+  //   · 「다른 파일에서 갈라짐」 → 행의 분기 칩 `⤷ 갈라짐`
+  //   · 「파일 N개」            → 펼침 토글 `버전 N개`
+  //   · 「다른 계보 M개」        → 그룹 카드 머리의 `계보 M`
+  // REQ-20260828 이 이 문구를 넣은 이유(옆 계보의 존재가 화면에 없다)는 그때는 참이었으나
+  // 그룹 카드가 그 사실을 **구조로** 말하게 되면서 사라졌다. 같은 사실을 두 번 말하지 않는다.
+  // 계보 head 상세(id·버전)는 「⇄ 계보 비교」가 선택지로 이미 열거한다.
 
   ordered.forEach((v) => {
-    // 목록 행과 같은 이유로 2줄 구조 — 버전 박스는 좌측 들여쓰기(28px)까지 먹어 한 줄에
-    // 몰면 파일명이 2자로 남는다(§18.8 design 패널 실측 240/280/360px 전 구간 잘림).
+    // REQ-20260901-lineage-row-compaction: **한 줄로 되돌린다.**
+    //
+    // 2줄이던 이유는 파일명이었다 — "한 줄에 몰면 파일명이 2자로 남는다"(§18.8 design 실측).
+    // 그 파일명이 이 cycle 에서 사라졌으므로(그룹 카드 머리가 이미 한 번 말한다) 2줄일 이유도
+    // 함께 사라진다. 남는 것은 `v2` · 역할·시각 · 액션뿐이라 240px 에서도 한 줄에 들어간다.
     const row = document.createElement("div");
     row.className = "attach-list-version-row";
     const vnum = Number(v.version_number || 1);
@@ -1760,13 +1856,16 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId, lineages) {
     const tag = document.createElement("span");
     tag.className = "attach-list-version-tag" + (isAi ? " ai-edited" : "");
     tag.textContent = `v${vnum}`;
-    const nameEl = document.createElement("span");
-    nameEl.className = "attach-list-version-name";
-    nameEl.title = v.original_filename || "";
-    nameEl.textContent = v.original_filename || "파일";
+    // REQ-20260901-lineage-row-compaction: **파일명을 되풀이하지 않는다**(사용자 지적).
+    //
+    // 이 박스는 언제나 한 계보 안이고, 그 계보의 파일명은 그룹 카드 머리(계보가 여럿일 때)나
+    // 목록 행(단독 계보일 때)이 이미 말했다. 버전 행마다 또 적으면 같은 이름이 화면에
+    // 세 번·네 번 실린다 — 좁은 패널에서 그 반복이 정작 버전을 가르는 정보를 밀어낸다.
+    // 행 전체의 `title` 로는 남겨, 마우스로는 어느 파일인지 여전히 확인된다.
+    row.title = v.original_filename || "";
     const head = document.createElement("div");
     head.className = "attach-list-version-head";
-    head.append(tag, nameEl);
+    head.append(tag);
 
     const roleEl = document.createElement("span");
     roleEl.className = "attach-list-version-role";
@@ -2274,7 +2373,7 @@ async function _runBulkDownload(convId, format, scope, progressEl) {
  * @param {number} count     계보 수
  * @returns {{el: HTMLElement, body: HTMLElement, cmpBtn: HTMLButtonElement}}
  */
-function _attachLineageGroupCard(filename, count) {
+function _attachLineageGroupCard(filename, count, icon) {
   const el = document.createElement("div");
   el.className = "attach-lineage-group";
   // codex P2: **시각적 enclosure 를 접근성 트리에도 전달한다**. 카드가 맨 `div` 면 스크린리더는
@@ -2284,6 +2383,12 @@ function _attachLineageGroupCard(filename, count) {
   el.setAttribute("aria-label", `${filename || "파일"} — 같은 이름의 계보 ${count}개`);
   const head = document.createElement("div");
   head.className = "attach-lineage-group-head";
+  // REQ-20260901-attach-lineage-uploader: 종류 아이콘도 **카드 머리에서 한 번**. 멤버 행마다
+  // 같은 아이콘을 되풀이하던 것을 여기로 올렸다(행은 갈래를 가르는 정보만 진다).
+  const iconEl = document.createElement("span");
+  iconEl.className = "attach-lineage-group-icon";
+  iconEl.setAttribute("aria-hidden", "true");   // 장식 — 접근성 이름은 카드 aria-label 이 진다
+  iconEl.textContent = icon || "📎";
   const nameEl = document.createElement("span");
   nameEl.className = "attach-lineage-group-name";
   nameEl.textContent = filename || "파일";
@@ -2300,7 +2405,13 @@ function _attachLineageGroupCard(filename, count) {
   cmpBtn.textContent = "⇄ 계보 비교";
   cmpBtn.title = `${filename} 의 계보 ${count}개를 나란히 비교합니다`;
   cmpBtn.setAttribute("aria-label", `${filename || "파일"} 의 계보 비교`);
-  head.append(nameEl, countEl, cmpBtn);
+  // 아이콘과 파일명은 **한 덩어리**로 묶는다. 따로 두면 머리가 wrap 될 때 아이콘만 자기 줄로
+  // 떨어져 나가 파일명과 분리된다(라이브 실측 240~300px). 묶으면 그 덩어리가 통째로 줄고
+  // 파일명이 말줄임되며, 칩들은 오른쪽에 붙어 있다가 정말 좁을 때만 다음 줄로 접힌다.
+  const titleEl = document.createElement("span");
+  titleEl.className = "attach-lineage-group-title";
+  titleEl.append(iconEl, nameEl);
+  head.append(titleEl, countEl, cmpBtn);
   const body = document.createElement("div");
   body.className = "attach-lineage-group-body";
   el.append(head, body);
@@ -2345,6 +2456,9 @@ async function _loadConversationAttachmentList(convId) {
   try {
     const resp = await apiFetch(
       `/api/conversations/${encodeURIComponent(convId)}/attachments${isTrash ? "?state=deleted" : ""}`);
+    // codex P2: **늦게 온 응답은 버린다.** 대화를 옮긴 뒤 이전 대화의 첨부가 새 화면에
+    // 그려지면, 목록 자체가 남의 대화 것이 된다(계보 라벨의 공유/1:1 판정만의 문제가 아니다).
+    if (state.activeConversationId !== convId) return;
     const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
     if (arr.length === 0) {
       // 0건일 때는 안내를 띄우지 않는다 — "삭제한 첨부입니다" 와 "삭제한 첨부가 없습니다"
@@ -2410,6 +2524,15 @@ async function _loadConversationAttachmentList(convId) {
     }
     // 파일명 → 그 그룹의 카드(첫 멤버에서 만들고 나머지 멤버가 재사용).
     const _groupCards = new Map();
+    // REQ-20260901-attach-lineage-uploader: 업로더 이름은 **공유 대화에서만** 뜻이 있다
+    // (1:1 은 늘 자기 자신 — 이름을 붙이면 정보 0 인 문자열이 좁은 이름줄을 먹는다).
+    // 판정은 저장소 단일 술어를 쓴다 — 사이드바 그룹 배지·전송 라우팅과 같은 신호.
+    //
+    // ⚠ codex P2: 판정 대상은 **이 응답이 속한 대화**(`convId`)이지 «지금 화면의 대화» 가
+    //   아니다. 응답이 늦게 오는 사이 대화를 옮기면, 그룹 A 의 행이 1:1 B 의 성격으로 분류돼
+    //   업로더명이 사라지거나(반대로) 1:1 목록에 이름이 붙는다.
+    const _convForList = (state.conversations || []).find((c) => c && c.id === convId) || null;
+    const _isShared = isGroupConversation(_convForList);
     for (const a of _orderedArr) {
       // ② TASK-0285: 각 첨부의 버전 현황 표면화. wrapper(entry)로 감싸 가로 row(item) 아래에
       // 버전 이력 펼침 박스를 둔다(item 은 flex 가로 정렬이라 직접 자식으로 두면 깨짐).
@@ -2420,7 +2543,18 @@ async function _loadConversationAttachmentList(convId) {
       // REQ-20260831-attach-lineage-visibility: 이 행이 들어갈 자리. 형제 계보가 있으면
       // 그룹 카드 안(공통영역), 없으면 종전처럼 목록 직속이다.
       let _hostEl = listEl;
-      const statusLabel = a.status === "ingested" ? "읽기 완료" : a.status === "failed" ? "오류" : a.status || "";
+      // REQ-20260901-lineage-row-compaction: 상태는 **말할 것이 있을 때만** 적는다.
+      //
+      // 종전 fallback 은 서버 enum 을 그대로 흘려 화면에 `uploaded` 라는 영문 내부값이 상시로
+      // 떴다(스크린샷 실측). 그 값은 «저장은 됐고 샌드박스 적재는 안 됨» 인데, .sql 같은 텍스트
+      // 첨부에서는 그것이 **정상이자 영구 상태**라 모든 행에 붙는 상수다 — 사용자가 할 수 있는
+      // 것도 없다. 한 줄로 합치는 이 cycle 에서 그 상수는 정작 갈래를 가르는 정보를 밀어낸다.
+      // 뜻이 있는 두 상태만 남긴다: 읽기 완료(AI 가 적재함) · 오류(실패). 모르는 enum 이 새로
+      // 생기면 그때는 원문을 보여 준다 — 조용히 삼키면 새 실패 상태가 화면에서 사라진다.
+      const statusLabel = a.status === "ingested" ? "읽기 완료"
+        : a.status === "failed" ? "오류"
+        : a.status === "uploaded" ? ""
+        : (a.status || "");
       const verNum = Number(a.version_number || 1);
       const isAi = Boolean(a.is_assistant_generated);
       const verCount = Number(a.version_count || 1);
@@ -2435,6 +2569,9 @@ async function _loadConversationAttachmentList(convId) {
       const _linTotal = _sibs.length;
       const _linIdx = Math.max(1, _sibs.findIndex((x) => Number(x.id) === Number(a.id)) + 1);
       const _hasSiblings = _linTotal > 1;
+      // 업로더 표시명. 서버가 해소하지 못하면 빈 값 — 호출부가 「업로더 미상」으로 적는다
+      // (없는 이름을 만들지 않는다).
+      const _upName = String(a.uploader_username || "").trim();
       // codex P1: **파생 관계는 데이터가 뒷받침할 때만 주장한다**.
       //
       // 목록을 파일명으로 묶는 것 자체는 옳다 — 목록은 계보당 head 한 행이고, 사용자가 찾는
@@ -2457,14 +2594,15 @@ async function _loadConversationAttachmentList(convId) {
         const _fromRow = _rowById.get(_originId);
         // 분기 부모를 **사람이 아는 말**로 되짚는다. 부모가 목록에 없으면(삭제·중간 버전)
         // 아는 만큼만 말한다 — 모르는 것을 지어내지 않는다.
-        // ⚠ 소유권을 단정하지 않는다(codex P2). 목록 payload 에는 업로더 account_id 가 없어
-        //   그룹 대화에서 **다른 멤버가 올린 파일도 "내 파일"** 이라고 말하게 된다.
-        //   아는 것은 "사람이 올렸나 / AI 가 만들었나" 뿐이므로 딱 그만큼만 말한다.
+        // REQ-20260901-attach-lineage-uploader: 이제 **누가 올렸는지 안다**(payload
+        //   `uploader_username`). 선행 cycle 의 "소유권 단정 금지" 는 *데이터가 없어서* 였지
+        //   원칙이 아니었다 — 사실이 생겼으니 그 사실만큼 말한다. 여전히 지어내지는 않는다:
+        //   이름이 해소되지 않으면 「업로더 미상」이지 「내 파일」이 아니다.
         const _origin = _originId
           ? (_fromRow
             ? `${_fromRow.is_assistant_generated ? "AI 파일" : "업로드한 파일"}에서 갈라진 계보`
             : "다른 파일에서 갈라진 계보")
-          : (isAi ? "AI가 만든 계보" : "사용자가 올린 계보");
+          : (isAi ? "AI가 만든 계보" : (_upName ? `${_upName} 님이 올린 계보` : "사용자가 올린 계보"));
         const _linTitle =
           `같은 이름의 계보 ${_linTotal}개 중 ${_linIdx}번째 — ${_origin} · 파일 ${verCount}개`;
         // REQ-20260831-attach-lineage-visibility: 서수(`계보 1/2`)를 **정체성**으로 바꾼다.
@@ -2474,11 +2612,27 @@ async function _loadConversationAttachmentList(convId) {
         // 이름줄을 먹고, 순서가 바뀌면 같은 계보가 어제와 다른 번호로 보인다.
         // 서수는 title 로 내리고(`_linTitle` 이 이미 담고 있다), 화면에는 정체성을 올린다.
         //
-        // ⚠ 소유권은 여전히 단정하지 않는다 — 목록 payload 에 업로더 account_id 가 없어
-        //   그룹 대화에서 남의 업로드를 "내 것" 이라 말하게 된다(선행 cycle 이 세운 계약).
-        const _linWho = isAi ? "AI 계보" : "사용자 계보";
-        linBadge = ` <span class="attach-list-item-lineage${isAi ? " ai" : ""}${_branched ? " branched" : ""}"`
-          + ` title="${escapeHtml(_linTitle)}">${_branched ? "⤷ " : ""}${escapeHtml(_linWho)}</span>`;
+        // REQ-20260901-attach-lineage-uploader: **공유 대화에서는 이름으로 가른다.**
+        //
+        // 종전에는 사람이 올린 계보가 전부 「사용자 계보」였다 — 서로 다른 멤버가 같은 이름의
+        // 파일을 올리면 두 행이 **글자 하나 다르지 않았다**(라이브 실측: 대화 20260813083932 의
+        // 계정 10·50 동명 계보 4쌍). 같은 화면에서 assistant 는 이미 `uploaded by admin` 으로
+        // 구분하고 있었으니, 사용자만 못 보던 셈이다.
+        //
+        // 1:1 대화에서는 이름을 붙이지 않는다 — 업로더가 늘 자기 자신이라 정보가 0 이면서
+        // 240px 이름줄만 먹는다(§16.8). 그룹 여부는 저장소 단일 술어 `isGroupConversation`.
+        // 정체성은 **행의 1차 라벨**(`_rowLabel`)이 진다 — 아래 마크업 참조. 그래서 이 칩은
+        // 정체성을 되풀이하지 않고 **분기 사실만** 진다: 「누구의 갈래인가」(라벨)와 「갈라져
+        // 나왔는가」(이 칩)는 서로 다른 사실이고, 둘을 한 칩에 담으면 라벨과 겹친다.
+        // 갈라지지 않은 계보에는 칩 자체가 붙지 않는다 — 늘 뜨는 배지는 정보가 아니다.
+        // REQ-20260901-lineage-row-compaction: 칩을 **글리프 한 자**로 줄인다(한 줄 간소화).
+        // 「갈라짐」 세 글자가 좁은 패널에서 34px 을 먹어 행을 두 줄로 밀어냈다. `⤷` 는 이미
+        // 분기를 뜻하고, 말로 된 설명은 title 과 접근성 이름(`_srWho`)이 그대로 진다 —
+        // 사실을 지운 것이 아니라 **화면 문구만** 줄였다.
+        linBadge = _branched
+          ? ` <span class="attach-list-item-lineage${isAi ? " ai" : ""} branched"`
+            + ` title="${escapeHtml(_linTitle)}" aria-hidden="true">⤷</span>`
+          : "";
       }
       // REQ-20260831-attach-lineage-visibility: 계보 그룹 카드(공통영역)에 이 행을 태운다.
       //
@@ -2488,7 +2642,12 @@ async function _loadConversationAttachmentList(convId) {
         const _gname = String(a.original_filename || "");
         let _card = _groupCards.get(_gname);
         if (!_card) {
-          _card = _attachLineageGroupCard(_gname, _linTotal);
+          // codex P3: 행 아이콘을 걷어냈으므로 머리 아이콘이 **그룹 전체**를 대표하게 된다.
+          // 형제들의 kind 가 갈리는 경계 데이터에서 첫 행의 종류만 남으면 카드가 나머지를
+          // 잘못 대표한다 — 갈리면 중립 클립으로 되돌린다(모르는 것을 단정하지 않는다).
+          const _kinds = new Set(_sibs.map((x) => String(x?.kind || "")));
+          _card = _attachLineageGroupCard(
+            _gname, _linTotal, _kinds.size === 1 ? kindIcon(a.kind) : "📎");
           _groupCards.set(_gname, _card);
           listEl.appendChild(_card.el);
           // 그룹 레벨 비교 — **계보를 펼치지 않고** 바로 계보 간 비교로 들어간다.
@@ -2550,7 +2709,10 @@ async function _loadConversationAttachmentList(convId) {
         const _base = _sibs[0]?.size;
         const _delta = _attachSizeDelta(a.size, _base);
         if (_delta) {
-          sizeDeltaChip = ` · <span class="attach-list-item-sizedelta"`
+          // REQ-20260901-lineage-row-compaction: 크기와 델타를 **한 토막**으로 붙인다.
+          // `9KB · +8KB` 는 구분점·공백이 두 번 들어가 좁은 폭에서 그만큼 행을 밀어낸다 —
+          // `9KB +8KB` 로 붙여도 읽히는 사실은 같다(둘 다 크기 축이라 묶이는 것이 자연스럽다).
+          sizeDeltaChip = ` <span class="attach-list-item-sizedelta"`
             + ` title="첫 계보(${fmtSize(_base)}) 대비 파일 크기 차이입니다 — 내용이 얼마나 다른지는 비교에서 확인하세요">`
             + `${escapeHtml(_delta)}</span>`;
         }
@@ -2580,10 +2742,39 @@ async function _loadConversationAttachmentList(convId) {
       const whenChip = _fmtAttachWhen(a.created_at)
         ? ` · <span class="attach-list-item-when"${whenTitle ? ` title="${escapeHtml(whenTitle)}"` : ""}>${escapeHtml(_fmtAttachWhen(a.created_at))}</span>`
         : "";
+      // REQ-20260901-attach-lineage-uploader: **그룹 카드 안에서는 되풀이를 걷어낸다.**
+      //
+      // 카드 머리가 이미 아이콘 1개 + 파일명 1개를 말한다. 그런데 멤버 행마다 같은 아이콘과 같은
+      // 파일명이 또 나와, 계보 2개짜리 카드 하나에 같은 이름이 **3번** 실렸다(사용자 지적).
+      // 좁은 패널에서 그 반복이 정작 갈래를 가르는 정보(누가·언제·몇 개)를 밀어낸다.
+      //   · 아이콘 — 그룹 안에서는 렌더하지 않는다(카드 머리가 이미 종류를 말한다).
+      //   · 파일명 — 행의 1차 라벨을 **계보 정체성**으로 바꾼다. 이 요소는 「원문 보기」 클릭
+      //     대상이므로 지우지 않고 **문구만** 바꾸며, 접근성 이름·title 은 파일명을 유지한다.
+      // 그 결과 정체성이 이름줄의 1순위가 되고(위계 역전), linBadge 는 **분기 표식 전용**으로
+      // 좁아진다 — 같은 사실을 두 번 말하지 않는다.
+      // codex P2: **라벨이 겹치면 계보가 다시 구분되지 않는다.** 같은 사람이 같은 이름을
+      // 독립으로 두 번 올리면 두 행 모두 「Alice」 이고, 독립 업로드라 `⤷ 갈라짐` 칩도 없다.
+      // 겹칠 때만 서수를 덧붙인다 — 흔한 2계보(사람↔AI)에서는 군더더기가 붙지 않는다.
+      const _identityOf = (x) => (x && x.is_assistant_generated)
+        ? "AI 수정본"
+        : (_isShared ? (String(x?.uploader_username || "").trim() || "업로더 미상") : "사용자 업로드");
+      const _selfIdentity = _identityOf(a);
+      const _identityCollides = _hasSiblings
+        && _sibs.filter((x) => _identityOf(x) === _selfIdentity).length > 1;
+      const _identityLabel = _identityCollides
+        ? `${_selfIdentity} · 계보 ${_linIdx}/${_linTotal}`
+        : _selfIdentity;
+      const _rowLabel = _hasSiblings
+        ? _identityLabel
+        : (a.original_filename || "알 수 없음");
+      // 그룹 안에서는 버전 배지도 「v2 · AI 수정」의 뒤쪽을 버린다 — 라벨이 이미 AI 라고 말했다.
+      const _verBadgeRow = (_hasSiblings && isAi && verBadge)
+        ? ` <span class="attach-list-item-ver ai-edited" title="AI가 수정한 최신 버전">v${verNum}</span>`
+        : verBadge;
       item.innerHTML = `
-        <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
+        ${_hasSiblings ? "" : `<span class="attach-list-item-icon">${kindIcon(a.kind)}</span>`}
         <div class="attach-list-item-info">
-          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}${linBadge}</div>
+          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text${_hasSiblings ? (isAi ? " is-ai-lineage" : " is-user-lineage") : ""}">${escapeHtml(_rowLabel)}</span>${_verBadgeRow}${linBadge}</div>
           <div class="attach-list-item-meta">
             <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${sizeDeltaChip}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
             <span class="attach-list-item-actions">
@@ -2629,8 +2820,12 @@ async function _loadConversationAttachmentList(convId) {
       // 세 행이 모두 "report.csv 원문 보기" 로 읽혀 어느 갈래인지 구분할 수 없다. 화면에서는
       // 칩과 들여쓰기가 그 구분을 하지만 칩은 포커스 대상이 아니라 title 이 읽히지 않는다.
       // 그래서 **행의 접근성 이름 자체에** 정체성을 싣는다(시각·비시각 표면의 정보량 정합).
+      // codex P2: 접근성 이름이 **화면과 같은 사실**을 말해야 한다. 화면에는 `Alice`/`Bob` 이
+      // 보이는데 여기서 둘 다 「사용자 계보」로 읽으면, 이 cycle 이 연 구분이 스크린리더·
+      // 음성 명령 사용자에게는 **닫힌 채**다(시각 표면만 고친 반쪽 개선).
+      // 파일명은 유지한다 — 행에서 문구만 뺐지 그 사실을 AT 에서까지 뺀 것이 아니다.
       const _srWho = _hasSiblings
-        ? ` (${isAi ? "AI 계보" : "사용자 계보"}${_branched ? ", 갈라져 나옴" : ""}` +
+        ? ` (${_selfIdentity}${_branched ? ", 갈라져 나옴" : ""}` +
           `, ${_linTotal}개 중 ${_linIdx}번째)`
         : "";
       nameBtn.setAttribute("aria-label", `${a.original_filename || "첨부"}${_srWho} 원문 보기`);
@@ -2857,10 +3052,7 @@ function _bindComposerAttachmentEvents() {
   // UX-COMPACT: 첨부 사이드 패널 닫기 버튼
   const attachSidePanelClose = document.getElementById("attachSidePanelClose");
   if (attachSidePanelClose) {
-    attachSidePanelClose.addEventListener("click", () => {
-      const sidePanel = document.getElementById("attachSidePanel");
-      if (sidePanel) sidePanel.classList.add("hidden");
-    });
+    attachSidePanelClose.addEventListener("click", _onAttachClosePressed);
   }
 
   // UX-COMPACT: 단계 사이드 패널 닫기 버튼
@@ -3437,27 +3629,24 @@ function _bindComposerActionsEvents() {
       ev.preventDefault();
       ev.stopPropagation();
       _closeComposerActionsMenus();
-      const panel = document.getElementById("attachSidePanel");
-      if (panel) {
-        setupAttachSidePanelResize();
-        _applyAttachSidePanelWidth(panel);
-        panel.classList.remove("hidden");
-      }
+      const restore = openAttachSidePanel();
       // REQ-20260806-attach-manage: 패널을 열 때마다 목록 모드를 active 로 되돌린다 —
       // 휴지통 상태가 남아 있으면 다른 대화에서 열었을 때 첨부가 없는 것처럼 보인다.
+      // **예외**: 배타 닫힘으로 닫혔던 경우는 사용자가 닫은 것이 아니므로 그 모드를 되돌린다
+      // (대화 전환 축은 `resetAttachListStateForConversationSwitch` 가 따로 소유한다).
       // reload:false — 아래 한 줄이 어차피 로드한다(같은 목록을 두 번 가져오지 않는다).
-      _setAttachListState("active", { reload: false });
+      _setAttachListState(restore ? restore.listState : "active", { reload: false });
       _bindAttachPanelManageControls();
       const cid = state.activeConversationId;
-      if (cid) _loadConversationAttachmentList(cid);
+      if (cid) {
+        const done = _loadConversationAttachmentList(cid);
+        if (restore) Promise.resolve(done).then(() => _applyAttachRestoreAfterLoad(restore, cid));
+      }
     });
   }
   const sidePanelClose = document.getElementById("attachSidePanelClose");
   if (sidePanelClose) {
-    sidePanelClose.addEventListener("click", () => {
-      const panel = document.getElementById("attachSidePanel");
-      if (panel) panel.classList.add("hidden");
-    });
+    sidePanelClose.addEventListener("click", _onAttachClosePressed);
   }
   if (modelItem) {
     modelItem.addEventListener("click", (ev) => {

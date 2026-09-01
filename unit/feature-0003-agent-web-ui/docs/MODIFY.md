@@ -5253,3 +5253,198 @@ Run 추가. **런타임 코드 변경 0** — 배포본 `40340f53` 에서 실측
 떠 변수가 넘어가지 않는다). 아는 함정을 호출을 나눠 쓰며 그대로 밟았다.
 
 - 증적: `docs/test-runs.d/TASK-20260901T110000-aiops-external-realign-postdeploy.md`
+
+## CHG-20260901T115300-side-panel-exclusive
+
+**변경**: 우측 오버레이 사이드 패널(첨부·실행 단계·유저 프로필)을 **한 번에 하나만** 열리게 한다.
+
+**파일**:
+- `src/static/app/side-panels.js` — **신규**. 단일 등록부 choke point.
+  `registerSidePanel(key, {close, elementId})` / `closeOtherSidePanels(exceptKey)` /
+  `registeredSidePanelKeys()` / `registeredSidePanelElementIds()`. 의존성 0 (app.js ↔ app/*.js
+  순환에 한 겹 더 얹지 않기 위해).
+- `src/static/app.js` — `openStepSidePanel` 이 `panel` 존재 확인 직후 `closeOtherSidePanels("step")`
+  호출. `closeStepSidePanel` 정의 뒤에 `registerSidePanel("step", …)`.
+- `src/static/app/profile.js` — `openProfile` 선두에 `closeOtherSidePanels("profile")`.
+  `closeProfile` 뒤에 `registerSidePanel("profile", …)`.
+- `src/static/app/composer.js` — `openAttachSidePanel()` / `closeAttachSidePanel()` 신설로
+  흩어져 있던 열기 1곳·닫기 3곳(닫기 버튼 2 + 빈 목록 자동 닫기)을 모으고 등록.
+  `_renderAttachmentPills` 의 미사용 `sidePanel` 지역변수 제거.
+- `tests/verify_side_panel_exclusive.mjs` — **신규**. jsdom 위에서 **정본 함수 본문**을 실행하는
+  행위 하네스 (27 케이스, 음성 대조군 포함).
+- `tests/test_side_panel_exclusive.py` — **신규**. CI(pytest) 구조 가드 S1~S5 + 음성 대조군 N1~N3.
+- `src/scenario.side-panel-exclusive.json` — **신규**. PB-0008 실 브라우저 시나리오 14 step.
+
+**동작 변화(사용자 관점)**: 첨부 목록 → 단계 보기 → 프로필 순으로 열면, 매 시점 화면에 보이는
+우측 패널이 정확히 하나다. 종전에는 앞의 패널이 **열린 채 뒤에 가려져** 닫기 버튼·리사이즈
+핸들에 접근할 수 없었다.
+
+**비변경**: 좌측 대화목록 `<aside class="sidebar">`(in-flow 컬럼) · 백엔드/RBAC/스키마/엔드포인트
+· 패널 각각의 렌더 내용 · 너비 영속화(localStorage) 규칙.
+
+## CHG-20260901T130000-side-panel-exclusive-r2 (§18.8 패널 BLOCK ×2 수용)
+
+**변경**: 위 CHG 의 후속 — ux·design 적대 패널이 실측으로 BLOCK 한 제품 3건 · 가드 3건 해소.
+
+**제품**:
+- `src/static/app/side-panels.js` — ① `openSidePanel(key, openFn)` 신설, **모든 열기가 이 문을
+  통과**한다(배타 호출을 opener 가 기억하는 구조 폐기). ② `hidden` ↔ `inert`/`aria-hidden`
+  동기화 — 배타 경로는 동기, 나머지 닫기 경로는 `MutationObserver` 그물. 이 패널들의
+  `.hidden` 은 `display:flex !important; translateX(100%)` 라 **숨겨도 포커스 가능**했다.
+  ③ 등록 실패·close 실패·중첩 요청 무시를 콘솔로 보고(조용한 no-op 폐기). ④ 순회 후
+  **사후 단언** — 닫히지 않은 패널이 남으면 보고(정적 스캔이 못 잡는 우회를 결과로 잡는다).
+- `src/static/app/composer.js` — `closeAttachSidePanel({auto})` 가 배타 닫힘일 때만 목록
+  모드·스크롤을 스냅샷하고, 재개방이 1회 소비해 복원한다. pending(업로드 중·실패) 항목이
+  있으면 pill 뷰로 되돌린다(그 항목은 서버 목록에 없다).
+- `src/static/app/profile.js` — 가드 순서 정정(핸들 확인 → 배타 → 열기).
+- `src/static/index.html` — 세 패널에 `data-side-panel` 표식(census 축을 태그에서 분리).
+
+**가드**:
+- `tests/test_side_panel_exclusive.py` — 스캐너를 **모드 스택 파서**로 교체(중첩 템플릿
+  리터럴 오독 해소 · 미종료 리터럴은 예외) · «없다» 축은 리터럴 마스크 미사용 ·
+  우회 스캔에 `querySelector("#…")` 와 **핸들 import** 축 추가 · 소유 면제를 자기 패널로
+  한정 · 등록 **형태** 검증(`close`/`elementId` 정확 일치, 줄머리 앵커) · 등록부 leaf
+  불변식 · census 를 `data-side-panel` 기준으로 · S6(하네스 실행 또는 CI gap 기록 단언).
+- `tests/verify_side_panel_exclusive.mjs` — 등록부를 **jsdom realm 안에서** 평가(Node realm
+  에서는 `document`·`MutationObserver` 부재로 접근성 축이 vacuous 했다) · 접근성·등록실패
+  보고·사후 단언·상태복원 케이스 추가(27 → **49**).
+
+**검증**: `make test` 6464 outcome 0 FAIL · jsdom 49 PASS · 뮤테이션 **12종 전건 KILL** ·
+PB-0008 **15 step ok**.
+
+## CHG-20260901T133000-side-panel-exclusive-r3 (§18.8 확인 라운드 BLOCK ×2 수용)
+
+**변경**: 확인 라운드가 재현한 회귀 1건 + 문서 정본 drift 1건 + 가드 6축 보강.
+
+- `src/static/app/composer.js` — 스냅샷에 `convId` 기록, `_consumeAttachAutoCloseSnapshot` 이
+  **다른 대화의 스냅샷을 폐기**한다. 휴지통 모드로 복원할 때는 pill 복원을 건너뛴다(두
+  렌더러가 같은 목록 슬롯을 다퉈 헤더와 본문이 서로를 부정하던 것).
+- `src/static/app/profile.js` — `closeProfile` 에 `openProfile` 과 같은 null 가드.
+- `src/static/app/side-panels.js` — `inert` **기능 검출**(`"inert" in HTMLElement.prototype`)로
+  교체(미지원 엔진에서 대입은 예외를 던지지 않아 기존 try/catch 는 도달 불가 코드였다) ·
+  미지원이면 `aria-hidden` 도 걸지 않음 · 등록 시 요소 부재를 콘솔 보고(마지막 무음 경로) ·
+  세 패널의 숨김 규칙이 한 벌이 아니라는 사실로 주석 정정.
+- `src/static/css/chat.css` — `.attach-side-panel.hidden`·`.step-side-panel.hidden` 에
+  `visibility: hidden; pointer-events: none` (전환 후 적용) — `inert` 미지원 엔진의 실효 폴백.
+- `docs/FUNCTION.md` — 계약·AC 를 현 설계(`openSidePanel` 중앙 열기 · 검사 축 6종 · census 두
+  축)와 **각 축의 한계**까지 재작성. 실행 단계 패널에 복원 장치가 없는 **비대칭의 사유**를 명시.
+- `tests/test_side_panel_exclusive.py` — S7(형태-무관 `hidden` 해제 위치) · S8(표식 강제) ·
+  S9(CSS 폴백) 추가, 우회 축 6종으로 확대, `app.js` 면제를 핸들 선언 줄로 한정,
+  `vendor/` 제외 + 스캔 캐시 + 예외 메시지에 파일 경로, 스캐너 `i++ /`·`}/` 오판 해소,
+  축약 속성·꼬리 주석 관용.
+- `tests/verify_side_panel_exclusive.mjs` — jsdom 에 `inert` 능력 주입(미주입 시 정본의 기능
+  검출 때문에 접근성 축이 **vacuous** 하게 통과) · C8b(미지원 분기) · C13/C14(대화 전환 후
+  스냅샷 폐기·복귀) 추가 (49 → **54**).
+- `src/scenario.side-panel-exclusive.json` — 대화 전환 후 재개방 step 추가 (15 → **16**).
+
+**검증**: `make test` 6464 outcome 0 FAIL · jsdom 54 PASS · 뮤테이션 20종 전건 KILL ·
+PB-0008 16 step ok.
+
+## CHG-20260901T145000-side-panel-exclusive-r4 (§18.8 확인 라운드 반영)
+
+**제품**: `side-panels.js` — 사후 단언의 열거 출처를 `[data-side-panel]` DOM 표식으로(등록
+누락 패널도 결과 축에서 잡힌다) · `openFn()` try/catch + 보고. `composer.js` — 복원 비동기
+꼬리를 `_applyAttachRestoreAfterLoad(restore, cid)` 로 추출하고 **대화 동일성 가드**를 적용
+(스냅샷 생성·소비·적용 세 지점이 같은 술어를 쓴다).
+
+**가드**: `scan_file` 배선(dead code 해소) · S7 을 수신 표현식 판정으로 · S8 후보를 class
+토큰 + `HTMLParser` attrs 로 · `_HANDLE_DECL` 포맷 관대화 · mjs 등록문 규약 정렬 + 내용 단언 ·
+하네스 C15~C18 추가(66 PASS) · `test_n5b`(경로가 실린 예외) · N6/N7 실측 형태로 확장.
+
+**문서**: FUNCTION.md 의 «없는 보장» 문장 3곳 정정(사후 단언이 못 덮는 것, S8 의 실제 한계,
+S7 이 형태-무관이 아니라는 사실) + AC-7 확장 · AC-8 신설.
+
+**검증**: `make test` 6465 outcome 0 FAIL · jsdom 66 PASS · pytest 가드 22 · PB-0008 16 step ok ·
+신규 5축 뮤테이션(async 가드 · pill deleted 가드 · scrollTop · 사후단언 출처 · openFn try) 전건 KILL.
+
+## CHG-20260901T160000-side-panel-exclusive-r5 (§18.8 확인 라운드 — 사용자 연장 승인)
+
+**제품**: `side-panels.js` — 사후 단언이 **id 없는 표식 패널**도 라벨로 보고 · 열기 실패
+경로에서도 `_syncInteractivity` 를 돌려 「`hidden` 여부와 `inert` 가 항상 일치」를 불변식으로.
+
+**가드**: 함수 경계 파서를 **시그니처 괄호 선매칭 + 화살표 함수 인정**으로 교체하고 경계
+미상은 offender 대신 **«보류»**(거짓 FAIL 제거 — 실측: 구조분해 파라미터만으로 같은 코드가
+red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(따옴표 비대칭이 미등록
+패널을 두 축 모두 통과시키던 것) · `scan_file`/`_SCAN_CACHE` 삭제 · `looksLikeRegistration`
+술어를 «다음 문장을 삼켰는가» 로 · **S10**(복원 꼬리 배선 단언) · C17 을 결과 축으로.
+
+**문서**: `FUNCTION.md` AC-4 를 출하 규칙(class 토큰 + HTMLParser)과 **실제 한계**로 재기술 —
+종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
+
+**검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
+## CHG-20260901T160000-ai-claude-feature-0003-runner-mirror-sync — 러너 배포 사본 동기화 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Minor (파일 소유만 이쪽 — 로직 변경의 정본은 feature-0043)
+- **cross-ref**: feature-0043 마찰 `FR-cli-failure-reason-discarded-on-stdout` →
+  코드 수정 `CHG-20260901T160000-ai-claude-feature-0043-cli-failure-reason`.
+
+`static/agent/bridge_agent.py` 는 사용자가 「연결 준비」로 내려받는 **실물**이며 정본
+(`unit/feature-0043-external-llm-bridge/src/bridge_agent.py`)과 바이트 동일해야 한다
+(`test_bridge_agent_sync`). 이번 변경은 그 동기화뿐 — 웹 앱이 import 하지 않는 정적 자산이라
+서버·프론트 동작 변화 0(HTML·CSS·JS 변경 0).
+## CHG-20260901T163000-attach-lineage-uploader 공유 대화 계보 업로더 식별 + 그룹 카드 되풀이 제거
+- **payload 에 업로더를 싣는다** — `_serialize_attachment_for_api` 에 `account_id`, 목록 엔드포인트에 `uploader_username`(WebAccounts IN 조회 1회). 종전에는 목록이 `AccountId` 를 직렬화에서 버려, 화면이 사람이 올린 계보를 전부 「사용자 계보」로 뭉뚱그렸다 — 공유 대화에서 서로 다른 멤버의 동명 계보가 **글자 하나 다르지 않았다**(라이브 실측: 대화 20260813083932 의 계정 10·50 동명 계보 4쌍 = 8행). 선행 cycle 의 "소유권 단정 금지" 계약은 *데이터가 없어서* 였지 원칙이 아니었다.
+- ⭐ **같은 사실을 assistant 는 이미 알고 있었다** — `## FILE VERSION LINEAGES` 가 `uploaded by jmkimmasangsoft.com` / `uploaded by admin` 으로 계보를 이름으로 가른다(라이브 프롬프트 렌더로 확인). 결함은 「모델이 모른다」가 아니라 **「같은 사실이 화면에 도달하지 않는다」** 였다. 그 원천 계약을 회귀로 함께 잠갔다.
+- **공유 대화에서만 이름을 쓴다** — 판정은 저장소 단일 술어 `isGroupConversation`. 1:1 은 업로더가 늘 자기 자신이라 이름이 정보 0 이면서 240px 이름줄만 먹는다(§16.8). 이름 해소 실패는 「업로더 미상」 — 「내 파일」로 격하하지 않는다(없는 사실을 만들지 않는다).
+- **되풀이 제거** — 그룹 카드 하나에 같은 파일명이 3회(머리 1 + 행 2), 같은 아이콘이 3회 실렸다(사용자 지적). 아이콘은 카드 머리로 통합하고, 행의 1차 라벨을 파일명 → **계보 정체성**으로 바꿨다. ⚠ 요소 자체는 지우지 않는다 — 「원문 보기」 클릭 대상이자 접근성 이름이라 `title`·`aria-label` 은 파일명을 유지한다(화면에서 지운 것을 AT 에서도 지우지 않는다).
+- 정체성이 라벨로 올라갔으므로 **분기 칩은 분기 사실 전용**(`⤷ 갈라짐`)으로 좁혔다 — 라벨과 칩이 같은 사실을 두 번 말하지 않는다. 갈라지지 않은 계보엔 칩이 붙지 않는다. 작성 주체 색축도 라벨로 이전(`.is-ai-lineage`). 그룹 안 버전 배지는 `v2` 로 축약(라벨이 이미 「AI 수정본」이라 말한다).
+- 카드 머리의 아이콘+파일명은 **한 덩어리**(`.attach-lineage-group-title`, `min-width: 0`) — 따로 두면 머리가 접힐 때 아이콘만 자기 줄로 떨어져 나간다(라이브 캡처가 포착해 수정).
+- Verification: pytest `feature-0003`+`feature-0002`+`feature-0023` **5167 passed / 5 skipped**(신규 11건) · `node --check` · `ast.parse` · **PB-0008** 3경로 실측 — 공유(라벨 이름 분리 · 행 아이콘 0 · 머리 아이콘 4) / 1:1(`사용자 업로드`·`AI 수정본`, 이름 없음) / 단독 계보(카드 없음 · 아이콘 2/2 · 라벨 = 파일명) + 240px 폭 무손실.
+- ⚠ 기존 실패 2건(`test_query_embed_visibility.py`)은 **main 기준선에서도 동일 재현** — 전체 스위트 실행 시 web-ui 테스트의 `sys.modules` 스텁 미정리로 agent-core 테스트의 `parents[3]` 가 IndexError. 본 변경 무관, 별도 cycle 대상.
+- Files: `routers/_conv_store.py`, `routers/conversations.py`, `static/app/composer.js`, `static/css/chat.css`, `tests/test_attach_lineage_uploader.py`(신규), `tests/test_attach_lineage_group_ui.py`, `docs/{TASK,MODIFY,REVIEW,REPORT,FUNCTION,TEST}.md`, `docs/test-runs.d/TASK-20260901T163000-attach-lineage-uploader.md`(신규)
+- **부수 복구 — 무력화돼 있던 게이트 1개**: `docs/TASK.md` 의 다른 세션 항목(2026-09-01 interrupt-preserve)에 **닫는 코드펜스만 있고 여는 펜스가 없었다**. `verify-completion` check #18(§16.7 G1 Requested Scope)의 펜스 파서가 그 시점부터 파일 끝까지를 "코드펜스 안" 으로 보아 **모든 Requested Scope 섹션을 인식하지 못했다**(feature-0003 전 cycle 영향 — 이 cycle 진입 시 `WARN: 섹션이 없습니다`). 여는 펜스 + 저장소 표준 라벨을 복원하니 **117 항목** 인식으로 돌아왔다. 이력의 의미는 건드리지 않은 포맷 복구다(§16.4 «주석·포맷» 자율 해결).
+- Timestamp: 2026-09-01T16:30:00+09:00
+## CHG-20260901T053000-connect-modal-transition 판정 축 교체 — 명령 경로·업데이트 갱신도 닫는다
+- `static/app/connect-modal.js`: 모달 자동 닫기의 판정을 «창을 열 때 **고정한** 기준선 대비
+  `listening` 전이» 에서 «**직전 관측** 대비 **쓸 수 있는 상태**(`listening && !runner_stale`)
+  전이» 로 바꿨다. 사용자 요청 2건이 같은 뿌리였다:
+  - 기준선을 고정하므로 열 때 «대기 중» 이면 그 뒤 끊겼다 다시 이어져도 전이가 아니다 →
+    「연결 준비」 명령으로 재연결한 창이 영영 닫히지 않았다.
+  - 갱신 중 `listening` 은 줄곧 참이고 `runner_stale` 만 풀린다 → «업데이트 필요» 갱신을
+    `listening` 만 보는 축이 통째로 놓쳤다.
+- 실행 버튼 경로(`_isListeningNow`·`_lastObserved.ok`)도 같은 축으로 통일 — 두 경로가 다른 축을
+  쓰면 실행 버튼만 «됐다» 고 말한다.
+- 문구 분기 신설(`MSG_CONNECTED` / `MSG_UPDATED`) — 업데이트하러 온 사용자가 자기가 한 일과
+  다른 말을 듣지 않게. 실행 경로는 시작 시점의 상태(`wasStale`)로 문구를 고른다.
+- 제거: `_openBaselineListening` · `_lastKnownListening`(→ `_lastObs` 로 통합) ·
+  `_noteListeningForModal`(→ `_noteConnForModal`).
+- Verification: **37/0 PASS**(I1 명령 재연결 · I2 업데이트 갱신 · I3 실행으로 갱신 · I4 낡은 채
+  이어진 것은 성공 아님 · H5 실행했는데 낡은 러너) · **라이브 배포본에서 6건 FAIL**(제보 재현
+  확인) · 뮤테이션 stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→H5 / msg-flat-auto→I2d·I3b.
+- 미잠금 명시: 실행 경로의 문구 분기와 `_lastObserved.ok` stale 검사는 뮤턴트 생존(자동 경로가
+  먼저 판정을 끝내 도달 희박 — 방어적 중복).
+- Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
+  `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…-transition.md`.
+- Timestamp: 2026-09-01T05:30:00+09:00
+
+## CHG-20260901T061000-transition-postdeploy POST-DEPLOY 실측 증적 (docs-only)
+- 배포본 `17d36ad8` 에서 요청 두 경로 확인 — A(명령 재연결) 재연결 후 닫힘 + 「연결되었습니다」 /
+  B(«업데이트 필요» 갱신) 갱신 후 닫힘 + 「최신으로 갱신되었습니다」. 무중단 blip 0.
+- Files: `docs/{TASK,REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-transition-postdeploy.md`,
+  `docs/evidence/connect-modal-autoclose/pd3-*.png`. 코드 변경 0.
+- Timestamp: 2026-09-01T06:10:00+09:00
+
+## CHG-20260901T173000-ai-claude-feature-0003-stale-runner-yield — 낡은 러너 양보 판정·집행 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Major (점유 집행 경로 — `claim_request` 409 추가)
+- **cross-ref**: 마찰 `FR-stale-runner-outraces-fresh-one` / 정본 TASK 노트는 feature-0043 의
+  `TASK-20260901T173000-stale-runner-yield.md`.
+
+`oauth_store.stale_runner_must_yield`(상대 판정) + `routers/ai_tools.py` 집행 1지점
+(`claim_request` 409) · 억제 2지점(`list_open_requests`·`wait_for_request`) ·
+하트비트 응답 `runner_update.superseded` 신설. 화면(HTML·CSS·JS) 변경 0.
+
+## CHG-20260901T170000-lineage-row-compaction 계보 내부 되풀이 제거 + 행 한 줄 간소화
+- **버전 행에서 파일명 제거** — 이 박스는 언제나 한 계보 안이고 파일명은 카드 머리(계보 여럿)나 목록 행(단독)이 이미 말했다. 행마다 또 적어 카드 하나에 같은 이름이 **6회** 실렸다(머리 1 + 계보행 2 + 버전행 3). 확인 경로는 행 `title` 로 남긴다.
+- **2줄 → 1줄** — 버전 행이 2줄이던 **근거가 파일명이었다**("한 줄에 몰면 240px 에서 이름 가용폭 23.2px ≈ 2자"). 그 파일명이 사라졌으므로 근거도 사라진다. 라이브 실측: 버전 행 **전 폭에서 20px(한 줄)**.
+- **계보 안내문 제거** — 「AI가 만든 계보 · 다른 파일에서 갈라짐 · 파일 N개 · 다른 계보 M개」의 네 사실이 이제 전부 화면 다른 곳에 **먼저** 있다(행 라벨 · `⤷` 칩 · 토글 `버전 N개` · 카드 머리 `계보 M`). REQ-20260828 이 이 문구를 넣은 이유(옆 계보의 존재가 화면에 없다)는 그룹 카드가 그 사실을 **구조로** 말하게 되면서 소멸했다.
+- **계보 행을 한 행으로** — `.attach-list-item-meta` 를 `display: contents` 로 투명화해 정보 텍스트와 액션이 행의 직접 flex 항목이 되게 했다. 래퍼로 두면 액션이 메타 **안에서** 텍스트와 폭을 다퉈 이름이 길수록 텍스트가 2~3줄로 접혔다(실측: info 205px 중 메타 62px).
+- **폭 되찾기(정보 손실 0)** — 행 간격 8→4px · 액션/배지 여백 축소 · 레일 들여쓰기 12→9px · 카드 좌우 패딩 7→5px · 분기 칩 `⤷ 갈라짐`→`⤷`(말은 title·aria 가 유지, `aria-hidden` 으로 AT 중복 제거) · `9KB · +8KB`→`9KB +8KB`. 그 결과 **사람 업로드 행이 280px 에서 두 줄 → 한 줄**로 넘어갔다.
+- **한 줄 불가 지점을 수치로 남긴다** — AI 수정본 행은 필요폭 **268px** vs 가용 **206px** 로 **62px 부족**하다(정체성 79 + 정보 135 + 액션 46 + 간격 8). 되찾으려면 토막을 빼야 하고(`버전 2개 ▾` ≈52 · `+8KB` ≈34 · `8/31` ≈30) 어느 것도 정보 손실이라 **임의로 빼지 않았다** — 선택은 사용자 몫.
+- **raw 상태 비노출** — `uploaded` 는 텍스트 첨부에서 정상이자 영구 상태라 모든 행에 붙는 영문 상수였다(사용자도 할 것이 없다). 뜻이 있는 `읽기 완료`·`오류` 는 유지하고, **모르는 enum 은 계속 원문 노출**한다(조용히 삼키면 새 실패 상태가 화면에서 사라진다).
+- **캡처가 잡은 결함 1건** — 분기 칩을 글리프 한 자로 줄이자 파선 pill 안에 `⤷` 만 남아 «빈 동그라미» 로 보였다. 테두리·배경을 걷어 글리프 자체를 표식으로 삼았다(「색 단독 의존 금지」는 파선 대신 **글리프**가 충족).
+- Verification: pytest `feature-0003`+`feature-0002`+`feature-0023` **5177 passed / 5 skipped**(신규 4 + 계약 이전 6) · `node --check` · **PB-0008** 폭 4구간(240/260/280/320) 행 높이 실측.
+- Files: `static/app/composer.js`, `static/css/chat.css`, `tests/{test_attach_lineage_uploader,test_attach_lineage_group_ui,test_attach_lineage_ui}.py`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/TASK-20260901T170000-lineage-row-compaction.md`(신규)
+- Timestamp: 2026-09-01T17:00:00+09:00

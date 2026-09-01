@@ -491,6 +491,10 @@ def _ensure_web_tables():
             cur.execute("ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultEffort VARCHAR(16) NULL")
         except Exception:
             pass
+        # feature-0043 (2026-09-01): 마지막으로 연결된 명령 계열은 `_ensure_bridge_heartbeat_schema`
+        # 가 만든다 — 그쪽은 **fast path(`_ensure_seed_catchup`)에서도** 불리므로 기존 배포에
+        # 실제로 컬럼이 생긴다. 여기(slow path)에만 두면 신규 설치에만 생기고 운영 DB 에는
+        # 영원히 없다 (codex 적대 리뷰 P1-1 — 위 `BridgeDefaultModel` 이 그 상태다).
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebPermissions (
@@ -2764,6 +2768,9 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
         → 그 상태에서는 화면의 모델 선택기가 종전대로 숨겨진다.
       - RunnerFeatures / RunnerAgentVersion : 그 러너가 **다룰 줄 아는 작업 종류**와 버전
         (TASK-20260831T100000). 콘솔 작업 배급 자격과 갱신 유도의 근거.
+      - RunnerOs (+ WebAccounts.BridgeLastOs) : 그 러너의 **명령 계열**과, 그것을 계정 단위로
+        접은 「마지막으로 연결됐던 OS」 (2026-09-01). 연결 화면 1단계의 기본 탭을 정한다.
+        계정 컬럼을 여기서 함께 만드는 이유: 이 함수만이 fast path 에서도 불린다.
 
     능력을 같은 행에 두는 이유는 위와 같다 — "살아 있는가" 와 "무엇을 쓸 수 있는가" 는 같은
     러너의 두 면이라, 나누면 한쪽만 낡아 화면이 없는 모델을 보여주게 된다. 하트비트가 끊기면
@@ -2807,6 +2814,18 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # 바뀌었고, 사용자는 재설치하고도 옛 모델 목록을 봤다("고쳤다는데 그대로").
             # 지문은 "정확히 그 파일인가" 라는 다른 질문에 답한다(버전=호환성, 지문=동일성).
             "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerBuild VARCHAR(16) NULL",
+            # ── 연결 화면 1단계의 기본 OS 탭 (2026-09-01, 사용자 요청) ────────────────
+            #
+            # `RunnerOs`(토큰 행): 이 러너가 신고한 명령 계열. **연결 사건을 가르는 축**이다 —
+            # 값이 이미 같으면 그 하트비트는 새 연결이 아니므로 계정 값을 건드리지 않는다.
+            # 이 한 겹이 없으면 같은 계정에 두 러너(WSL·Windows)가 붙었을 때 30초마다 값이
+            # 뒤집히고, 「마지막으로 연결된」이 「마지막으로 도착한 하트비트」가 된다
+            # (codex 적대 리뷰 P1-2).
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerOs VARCHAR(16) NULL",
+            # `BridgeLastOs`(계정): 화면이 읽는 값. **토큰이 아니라 계정에 둔다** — 묻는 질문이
+            # 「지금 듣고 있는 러너」가 아니라 「마지막으로 연결됐던 것」이라, 토큰에 두면 이
+            # 화면이 필요한 순간(연결이 끊긴 뒤)에 값이 사라진다.
+            "ALTER TABLE WebAccounts ADD COLUMN BridgeLastOs VARCHAR(16) NULL",
         ):
             try:
                 cur.execute(ddl)

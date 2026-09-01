@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (라이브 배포 `0b2b4435` 완료 · 실측 PASS · PB-0008 화면 검증만 잔여)
+- State: in-progress (인젝션 오판 해소 cycle 진행 — TASK-20260901T140000)
 - Owner: AI (계획·구현) / Human (승인)
 - Priority: high
-- Last Updated: 2026-08-27
+- Last Updated: 2026-09-01
 
 ## 2. Implementation Plan
 
@@ -1604,6 +1604,199 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       증적 `docs/test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md`
 - [x] 별건(인젝션 오판)은 `ai/claude/feature-0043-bridge-injection-falsepositive` 가 이미 담당 —
       중복 cycle 열지 않음
+## 20260901T1400-injection-false-positive — 브리지 프롬프트가 인젝션으로 오판되는 문제
+
+**요청 (2026-09-01)**: 「assistant가 프롬프트 인젝션 시도로 처리하여 요청사항을 자가중단하는
+현상이 확인되었습니다. 보안적으로 안정적이지만, 요구사항이 충족되지 않은 상태라 개선이
+필요합니다」.
+
+계획·근본원인·라이브 근거·AC 는 `TASK-20260901T140000-injection-false-positive.md`.
+**위험도 Major** — 신뢰경계 표시(각인)의 의미 변경. 사용자 승인 2026-09-01(범위 "1+2").
+
+<!-- PLAN-APPROVED by mckim on 2026-09-01 -->
+
+- [x] S1~S4 — `session_guard`: principal 요청 구획 · 대화이력 구획 · 위조 제거 확대 ·
+      인젝션-거부 탐지(양방향 오탐 계약)
+- [x] S5~S8 — `ai_tools`: claim_request 각인 교체 · 거부턴 맥락 제외 · 출처 preamble ·
+      submit_answer 탐지·안내
+- [x] R1~R4 — `bridge_agent`: 운영자 지침을 `--append-system-prompt` 실채널로 · 토큰을
+      `BRIDGE_TOKEN` 환경변수로 · 자식 CLI 중립 cwd · 역할변경 문형 제거
+- [x] 단위 테스트 + 전량 pytest rc=0 (신규 35건 · 뮤테이션 3종 KILL) · ruff clean
+- [x] 자체 적대 검토 P1 1건 적발·수정(새 sentinel 위조가 들어오는 쪽 판정에서 누락)
+      — 독립 패널은 codex 사용량 한도로 미수행(`REV-20260901T150000 [SKIPPED:tool-quota:codex]`)
+- [x] 배포 `afcd1a42` (scope=all · 엣지 무중단 0건) + **POST-DEPLOY 실측 서버축 6/6 ·
+      러너 배포 도달 4/4** — ⭐ 오염됐던 그 대화(`20260901030637-95dc8844`)의 맥락 조립에서
+      거부턴 2건이 실제로 빠지고 제외 고지가 실린다(고착 해제 실증)
+- [ ] 사용자 왕복 1건 — 같은 대화 재질문이 거부문이 아닌 실제 리뷰인지(러너를 띄운 본인만 가능).
+      러너측 효과는 화면 「연결 준비」 재실행 후 발효
+## 20260901T1600-cli-failure-reason — 연결된 AI 의 실패 사유가 사용자에게 도달하지 않는다
+
+**요청 (2026-09-01)**: 「프로젝트 내 서비스의 assistant 가 동작하지 않는 부분이 확인되어 수정이
+필요합니다. 대화 제목은 "253서버 프리미엄 포인트 누적·사용로그 집계" 입니다」
+(`/_dqa:conversation_audit` 대화 한정).
+
+근본원인·라이브 근거·AC 는 `TASK-20260901T160000-cli-failure-reason.md`.
+**위험도 Major** — 사용자 대면 실패 피드백 경로(단, 더하기만 하는 변경·성공 경로 불변).
+
+- [x] 라이브 진단 — 전사 4턴 + `WebAiTasks` 2건(claim→submit 4초·8초) + 러너 로그 무기록 +
+      **동일 명령 재현**(exit 1, 사유는 **stdout**, stderr 는 stdin 안내뿐)
+- [x] `describe_cli_failure` — stderr 우선 · 잡음 제외 · stdout 폴백 · 없으면 「알 수 없습니다」
+      명시(빈 콜론 금지)
+- [x] `_FAILURE_HINTS` — 증상 어휘 기반 회복 안내(한도·미로그인·미지원 옵션·미설치),
+      모르는 실패엔 안내 없음
+- [x] `_redact_secrets` + 400자 상한 — 사유를 살리는 일이 유출·범람이 되지 않게
+- [x] 러너 로그에 실패 첫 줄 기록(종전 무기록)
+- [x] 배포본 사본 동기화 + 해시 잠금 테스트 PASS
+- [x] 신규 11건 · **뮤테이션 3종 KILL** · ruff clean · 인접 feature 회귀 0(기준선 동일)
+- [x] 인라인 적대 검토 3렌즈 — P1 1건(`401` 경계 없는 매칭) 적발·수정
+      (`REV-20260901T160000`)
+- [x] 배포 `4521a7e1` (scope=all · 7서비스 SHA 일치 · 엣지 무중단 0건 · surge 잔존 0 ·
+      대화 스모크 PASS) + **POST-DEPLOY 실물 실증** — 서빙되는 러너 사본(md5 = 배포 SHA 블롭)을
+      그대로 import 해 라이브 실측 입력을 넣으니 **사유 + 다음 행동을 갖춘 문장이 생성**된다
+      (종전: 콜론 뒤 빈 문장)
+- [ ] 사용자 왕복 1건 — 그 사용자의 **다음 실패**에서 사유가 실제로 보이는지.
+      러너는 사용자 머신 파일이라 화면 「연결 준비」 재실행으로 갱신돼야 발효
+## 20260901T1630-runner-log-structure — 러너 로그를 감사·에러핸들링 가능한 구조로
+
+**요청 (2026-09-01)**: 「'내 AI 연결하기' 를 통해 러너가 실행될 때 기록하는 로그에서 보다
+명확한 정보 기록을 위한 구조가 필요합니다. 충분한 감사 및 에러 핸들링이 가능하도록,
+상세 정보를 포함할 수 있도록 구성해주세요.」
+
+**위험도 Major** — 러너 전 경로의 관측 계층 교체(비파괴 가산). 사용자 머신에 새 파일 2종을
+남기므로 이 파일의 **보안 계약 표**도 함께 갱신했다(계약과 사실이 갈리면 그 문서 전체가 죽는다).
+
+### 무엇이 없었나 (착수 근거 — 전부 현 코드 실측)
+
+- 형식이 `[bridge <시각>] <한국어 문장>` 하나뿐 → **심각도 없음**(참고와 제출 실패가 같은 모양,
+  `grep` 로 오류만 볼 수 없다), **사건 코드 없음**(문장 매칭이 유일한 판별 수단이라 문구를
+  다듬는 순간 조사 방법이 깨진다).
+- `task_id` 는 있는 줄·없는 줄이 섞여 있고 **러너 인스턴스는 어디에도 없다** — 87분 고아 사고
+  (`TASK-20260901T140000`)의 시간축을 파일 mtime·DB 하트비트로 짜맞춰야 했던 이유.
+- **소요 시간 없음** — 두 줄의 시각 차로 구해야 하는데 동시 처리면 인터리브되어 그 뺄셈도 틀린다.
+- `except Exception as e: _log(f"…: {e}")` **18곳** — 예외 형과 스택이 통째로 버려진다.
+  `FileNotFoundError`(미설치)와 `PermissionError`(권한)가 같은 문장이 된다.
+- `Api._post` 는 실패를 **반환만** 하고 로그를 남기지 않았다 — 호출측이 남기는 곳도, 안 남기는
+  곳도 있어 서버 왕복 실패에 구멍이 있었다.
+- 자식 AI CLI 의 stderr 는 답변에 실리는 **400자만** 남고 원문은 사라졌다(원인은 대개 뒷부분).
+- **Windows 러너는 로그가 아예 없었다** — 설치본이 `Start-Process -WindowStyle Hidden` 로
+  띄우며 stderr 를 아무 데도 잇지 않는다. 그 머신의 사고는 증거가 0이었다.
+- 회전 없음 — 상주 프로세스가 몇 달을 도는데 `bridge.log` 상한이 없었다.
+
+### 한 일
+
+- [x] **두 sink** — 사람 줄(stderr·`bridge.log`)과 사건 원장(`bridge.events.jsonl`, 한 줄 = 한
+      사건). 안정 계약은 **문장이 아니라 `ev` 코드와 필드 이름**이다(`_EV_*` 상수로 선언).
+- [x] **상관관계 키** — 모든 원장 줄에 `ts`(오프셋 포함)·`lvl`·`ev`·`seq`·`run`(러너 인스턴스)·
+      `pid`. `task` 는 질문 한 건의 일생을 묶고, 그 값은 서버 `BridgeTasks.TaskId`·웹 화면과
+      같아 **3자 대조**가 된다.
+- [x] **소요 계측을 한 자리에** — `Api._post`(모든 서버 왕복)·`_run_cli_cancelable`(AI 호출)·
+      `handle_one`(전달→제출 전체). 호출부마다 재면 빠지는 곳이 생기고 그곳이 하필 느려진다.
+- [x] **예외를 잃지 않는다** — `_log_exc` 가 형·표현을 두 sink 에, 스택(마지막 12프레임)을
+      원장에. 자식 CLI 실패는 exit code + stderr 끝 2KB 를 원장에 남긴다.
+- [x] **토큰 마스킹** — 값 등록(`register_secret`, `Api.__init__` 에서 즉시) + 형태 패턴 3종.
+      이 파일은 사용자가 우리에게 **붙여 보내는** 물건이라 새면 그대로 유출이다.
+- [x] **Windows 로그 복구** — 러너가 자기 로그 파일을 직접 쓴다. POSIX 설치본은 셸이 stderr 를
+      `bridge.log` 로 잇고 있으므로 **inode 비교로 같은 파일이면 쓰지 않는다**(이중 기록 방지).
+      설정으로 가르지 않는 이유: 대부분 틀린 쪽을 고르고, 틀린 것을 아는 시점이 사고 조사 중이다.
+- [x] **회전** — 원장은 러너가(8MiB·3세대), `bridge.log` 는 **설치 스크립트가 기동 직전에**.
+      후자를 러너가 못 하는 이유: 자기 stderr fd 가 옛 inode 를 붙들고 있어 옮겨도 옛 파일에 쓴다.
+- [x] **종료 요약** — `run.stop` 한 줄에 uptime·처리·실패·오류 수 + 사건별 집계표.
+      집계는 `log_event` 가 중앙에서 세므로 새 사건이 생겨도 요약에서 빠지지 않는다.
+      종료 경로 셋(반환·Ctrl+C·SIGTERM→atexit)에 빗장을 걸어 **한 번만** 남긴다.
+- [x] **하위호환** — `_log("문장")` 위치인자 계약 유지. 호출부 80여 곳을 건드리지 않았다
+      (같은 파일을 동시 편집 중인 병렬 세션 3곳과의 충돌면을 좁히려는 의도이기도 하다).
+- [x] 계약 테스트 **18건** (`test_bridge_log_structure.py`) — 두 sink·상관관계 키·오프셋·
+      순번 단조·예외 형/스택·요약·빗장·토큰 2종·본문 미기록·하위호환·이중기록 방지(실
+      서브프로세스)·Windows 경로·끄기·회전·권한 0600·사건 코드 상수·task 키 공유
+- [x] 기존 테스트 3건 정합 — `test_bridge_agent_sync`(stdlib 허용목록에 `traceback`),
+      `test_wsl_scheme_handler`(정규식으로 `_log` 를 오려 exec 하던 방식 → 모듈째 실행.
+      검사하려던 성질(시각)과 무관한 이유로 깨지는 검사였다),
+      `test_bridge_interrupt_stream`(`"WARN"` 글자 → 심각도 성질 + 사건 코드)
+- [x] 러너 스위트 **1045 passed / 1 skipped** · ruff clean · `bash -n` · 배포본 동기화
+## 20260901T1600-connect-os-default — 1단계 기본 OS 탭을 「마지막으로 연결됐던 OS」로
+
+**요청 (2026-09-01)**: 「'내 AI 연결하기' 의 1단계에서 명령문이 처음 선택된 os가, 실행중인
+os가 아니라 마지막으로 연결되었던 os를 기준으로 선택되도록 구성해주세요. 현재는 주로
+linux(wsl) 내 명령문을 사용하고 있지만 windows가 항상 기본적으로 선택된 상태입니다. 이후
+powershell 테스트를 진행하며 해당 명령문으로 다시 등록했을 때 windows로 선택되어야 합니다」.
+
+**근본 원인**: 기본 탭을 `navigator.platform` 이 정했다 — 그것은 **브라우저가 도는 OS** 이고
+러너는 다른 곳에서 돈다. WSL 사용자는 Windows 브라우저로 화면을 보므로 판정이 구조적으로 틀렸다
+(운이 아니라 매번).
+
+**위험도: Minor** (§12.3 — 비파괴적 컬럼 추가 + 화면 기본값. 인증·인가·데이터 파괴 없음.
+실패 경로는 전부 「종전 동작으로 복귀」다). §7.1 계획 = 본 절.
+
+**완료 판정 기준 (다의어 고지 §7.1)**: WSL 러너가 붙어 있는 계정으로 `/ai/connect` 를 열면
+1단계 기본 탭이 **macOS·Linux** 이고 명령이 `curl … bridge_setup.sh` 로 보인다 (종전에는
+Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다시 등록하면 그 다음 열람에서
+**Windows** 가 먼저 뽑힌다.
+
+- [x] 러너: `_self_os()` (= `os.name`) 신고를 하트비트에 추가 · 배포 사본 동기화
+- [x] 서버: `WebOAuthTokens.RunnerOs` + `WebAccounts.BridgeLastOs` 컬럼(fast-path 멱등 ALTER) · `normalize_bridge_os`/
+      `account_bridge_os`/`set_account_bridge_os` · 하트비트 기록(실패는 삼킨다)
+- [x] API: `/api/ai/connect/status` · `/api/ai/connect/token` 응답에 `last_os`
+- [x] 화면: 단독 페이지·대화 모달 둘 다 서버 값 우선 + 추측 폴백 + 사용자 선택 고정
+- [x] 계약 테스트 28건 (`test_connect_os_default.py`) — 닫힌 집합 · 「모른다」가 안 지운다 ·
+      연결-사건 가드 · 토큰 생존 술어 · 신선도 술어 부재 · 배선 · 두 화면 · 응답 경합
+- [x] 적대 리뷰 (codex, effort=high) — **P1 3건 · P2 2건 전건 확인·수정·회귀 잠금**
+      (`REV-20260901T163000`): 기존 DB 컬럼 미생성 · 두 러너 값 진동 · 모달 늦은 발급 응답 ·
+      단독 페이지 응답 순서 · 폐기 토큰의 계정 쓰기
+- [x] PB-0008 PRE-DEPLOY baseline — 라이브에서 결함 재현(Windows 탭 + PowerShell 명령 고정,
+      `last_os` 키 부재). 증적 `test-runs.d/…-pb0008.md`
+- [x] 라이브 재배포 `b50513e0` (scope=all · 엣지 무중단 0건 · 대화 스모크 PASS)
+- [x] **PB-0008 POST-DEPLOY 양방향 실측** — ① `last_os=""` 면 종전 추측 폴백(회귀 없음)
+      ② WSL 러너 연결 → `posix` → 두 화면 모두 **macOS·Linux** 를 먼저(브라우저는 `Win32`)
+      ③ 실 Windows 파이썬으로 PowerShell 재등록 → `windows` → 화면도 Windows.
+      ②가 곧 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로 생겼다**는 증거(codex P1-1 라이브 성립).
+      증적 `docs/test-runs.d/TASK-20260901T160000-connect-os-default-postdeploy.md`
+- [ ] 사용자 확인 1건 — 본인 계정·본인 러너에서 같은 동작(러너는 화면 「연결 준비」 재실행으로 갱신)
+- [ ] PB-0008 POST-DEPLOY — 러너를 실제로 붙여 `posix` 신고 → 화면이 macOS·Linux 를 먼저
+- [ ] 라이브 재배포 + POST-DEPLOY 실측
+
+## 20260901T1700-runner-log-atexit-order — 종료 요약이 마지막 줄이 아니었다
+
+**위험도 Minor** (한 줄 순서 + 회귀 테스트 2건). 직전 cycle(`TASK-20260901T163000`)이 심은
+결함을 **그 cycle 의 POST-DEPLOY 라이브 실측이 잡았다**.
+
+배포본 `a17b8f5ea7f6` 를 내려받아 `--check` 로 돌린 종료 로그가 `run.stop`(seq 4) →
+`api.fail`(seq 5) 순이었다. `atexit` 는 나중에 등록한 것을 먼저 부르는데 요약을 자기 점유
+해제 **뒤에** 등록해 둔 탓이다(주석에는 정반대로 적혀 있었다 — 근거 없이 쓴 문장이 코드를
+검토에서 지켜 준 형태). 그러면 종료 요약의 두 쓸모가 동시에 죽는다: ① 해제 결과를 집계하지
+못하고 ② 「여기서 끝났다」의 표지가 못 된다(뒤에 줄이 더 있으니 로그가 잘린 것과 구분되지 않음).
+
+- [x] 등록 순서 교체 — 요약을 **먼저** 등록해 역순에서 **마지막에** 실행되게
+- [x] 회귀 2건: 실 프로세스 종료로 마지막 줄 단정 + 소스 등록 순서 고정
+- [x] ⭐ 첫 실동작 테스트가 **vacuous** 했던 것을 스스로 잡아 고침 — 스크립트가 두 핸들러를
+      직접 `atexit.register` 해서 «제품의 등록 순서»가 아니라 «테스트 자신의 순서»를 검사했고,
+      구코드에서도 통과했다. `_arm_exit_release` 를 거치도록 고친 뒤 **구코드에서 FAIL 재현**
+      (`['run.stop','exit.release','log']`) → 신코드 PASS 를 양방향 확인
+
+## 20260901T1730-stale-runner-yield — 낡은 러너가 최신 러너의 질문을 가로챈다 (사용자 재보고)
+
+**요청 (2026-09-01)**: 「웹페이지 새로고침, 연결 준비를 통해 러너를 다시 연결한 후 요청을
+보냈지만 같은 이슈가 확인되어 조치가 필요합니다」 + 「오래된 러너 측에서 … 다른 신규 러너에
+연결되는 부분이 확인된다면 오래된 러너는 프로세스를 종료 처리 … 다만 계정이 다를 경우는 예외」.
+
+근본원인·설계·AC 는 `TASK-20260901T173000-stale-runner-yield.md`.
+**위험도 Major** — 점유 집행 경로(판정이 상대라 단독 러너 동작은 불변).
+
+<!-- PLAN-APPROVED by mckim on 2026-09-01 (러너 자가 종료 · 계정 예외 명시) -->
+
+- [x] 라이브 진단 — 같은 계정에 러너 2개(배포본 `d0ac1263d454` vs 옛 `0a4ba732366c`),
+      옛 러너가 17:20:03 질문을 먼저 집어 옛 형식으로 답한 것을 `WebOAuthTokens` + 러너 로그로 확정
+- [x] 즉시 조치 — 옛 러너 프로세스 SIGTERM 정상 종료(라이브 복구)
+- [x] `stale_runner_must_yield` — **상대** 판정(같은 계정에 최신 러너가 실제로 들을 때만),
+      fail-open, 인증과 같은 `_LIVE_TOKEN_PREDICATE`
+- [x] 집행 `claim_request` 409 + 억제 `list_open_requests`·`wait_for_request`
+      (busy-loop 금지 · 취소 통보는 유지)
+- [x] 러너 자가 종료 — `runner_update.superseded`(`stale_build` 와 별개 필드) →
+      `shutdown_after_drain` 로 하던 일 마치고 종료, 판정은 대기 호출 앞
+- [x] 계정 경계 — 판정이 `AccountId` 스코프라 다른 계정 러너 병존 허용(사용자 예외 요구 충족)
+- [x] 신규 20건 · **뮤테이션 5종 KILL** · 4 feature 전량 rc=0 · ruff clean
+- [x] 인라인 적대 3렌즈 — P1 1건 자체 적발·수정(대기 즉시반환 → busy-loop) `REV-20260901T173000`
+- [ ] 배포 후 라이브 실측 — 서버 축은 즉시 발효(옛 러너 재등장 시 관측), **자가 종료는 러너가
+      새 사본으로 갱신된 뒤**에만 발효
 
 ## TASK-20260901T143000-selfreview-envelope — 자가 검증이 **한 건도 저장되지 않던** 결함 + 콘솔 경량 모델 (P0-AI)
 
