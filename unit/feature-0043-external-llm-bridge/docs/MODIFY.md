@@ -2084,7 +2084,6 @@ CSS 두 규칙(`.step-detail-list` 캡 / `.message-details-body` 캡 복원)과 
 컨테이너 pytest 전량 green(신규·개정 13건) · node 하네스 18/18 무회귀 ·
 codex 적대 리뷰 2R **P1 0건 수렴**(1R P2 2건 — 1건 반영·1건 근거 기각) ·
 PB-0008 실 Windows 브라우저 POST-DEPLOY.
-
 ## CHG-20260901T110000-win-ai-detect — 설치된 AI 를 찾아낸다 (윈도우 확장자 · PATH 밖 · 축 분리)
 
 ### 무엇이 있었나
@@ -2173,3 +2172,19 @@ PB-0008 실 Windows 브라우저 POST-DEPLOY.
   `-f`(sh) 로 동명 디렉터리도 배제.
 
 신규 회귀 8건 추가(총 34건). 상세는 `REVIEW.md` REV-20260901T114500.
+## CHG-20260901T110500-ai-claude-feature-0043-split-evidence — 범위 분리 POST-DEPLOY 실측 증적
+
+`CHG-20260901T104500-…` 의 라이브 검증. 코드 변경 0 — 증적 문서만.
+
+배포본(`65641296`) 서빙 자산 도달 대조(messages.js `is-result-range` 1 · chat.css
+`min(38vh,300px)` 1) 후, 페이지가 로드한 모듈 URL 로 `import()` 해 실측:
+
+- `.step-detail-list` 300/631 **스크롤** · `.message-details-body` 1256/1256 **비스크롤**(overflow visible)
+- 결과표 상한 460px(상세 전용 380 축소 제거 확인) · 두 범위 제목 `["단계","쿼리 결과"]`
+- 페이징(▶·ArrowRight): 단계 목록·대화 로그·문서 scrollTop **전부 불변**, 결과 위치 424px 고정
+- 상세 전체 1295px = 단계 323 + 결과 921 (부분 상한 합 안, 유계)
+
+**정직 표기**: 종전 바깥 캡(680)보다 높다 — 결과셋을 스크롤에서 뺀 대가다. 조정 지점은
+CSS 세 줄(단계 300 · SQL 320 · 결과표 460)이며 구조 변경 없이 바꿀 수 있다.
+
+캡처: `artifacts/pb0008-steps-result-split/` (git 밖, §2). 검증 DOM 제거 확인.
