@@ -8,6 +8,70 @@ source_of_truth: true
 
 # Task
 
+## 20260901T0315-interrupt-preserve-bridge — 중단 보존을 «사용자가 실제로 타는 경로»(브리지)까지 (Minor §12.3 — 비파괴 텍스트 추가)
+
+**앞 cycle 의 미완 부분을 잇는다.** `REQ-20260901T020746-interrupt-context-preserve` 는 **서버 run
+경로**의 중단 보존을 고쳤다. 그 cycle 의 배포 스모크가 사실 하나를 드러냈다:
+
+```
+[smoke-conv] [llm-gate] 서버 계정 LLM 호출 차단 caller=modules.llm._get_llm_client
+             — feature-0043 전환(추론은 사용자 개인 AI 런타임이 수행)
+```
+
+**라이브는 서버 LLM 이 꺼진 브리지(개인 AI) 모드다.** 즉 사용자가 실제로 누르는 '중단' 은
+서버 run 이 아니라 브리지 경로를 탄다 — 앞 cycle 이 고친 지점을 지나가지 않는다.
+
+**브리지 경로의 축별 실태 (전수 확인)**:
+
+| 축 | 상태 | 근거 |
+|---|---|---|
+| 화면·이력 | **되고 있었다** | `_mark_bridge_placeholders_canceled` 가 대기 말풍선을 취소 안내로 바꿔 남긴다 |
+| 단계(접이식) | **되고 있었다** | 그 말풍선이 `run_id = task_id` 각인을 유지하고(취소 UPDATE 는 `bridge.canceled`/`placeholder` 만 건드린다), `_record_bridge_step` 이 개인 AI 의 도구 호출을 인자·사유까지 담아 `agent_runtime.steps` 에 쌓아 둔다 |
+| **다음 요청의 맥락** | **안 되고 있었다** | 브리지가 개인 AI 에게 넘기는 대화 맥락(`ai_tools._recent_conversation_context`)은 표시 store 의 **content 텍스트만** 읽는다 — steps 도 meta 도 보지 않는다 |
+
+그래서 중단 뒤 "아까 그거 이어서" 라고 물으면 개인 AI 는 자기가 직전에 무엇을 조사했는지
+모른 채 처음부터 다시 시작했다. **요청의 세 요소 중 «맥락» 이 라이브 경로에서 미충족**이었다.
+
+**REQ-20260901T031500-interrupt-preserve-bridge**
+
+### 2.1 Implementation Plan
+
+| 파일 | 심볼 | 변경 | 완료 판정 |
+|---|---|---|---|
+| `feature-0002/src/agent_core.py` | `_build_interrupted_note` | `header` 파라미터 추가(기본 = 기존 라벨, `""` = 본문만) | 서버 경로 기본 동작 무변경 · 브리지가 자기 머리말로 같은 빌더 재사용 |
+| `feature-0003/src/routers/conversations.py` | `_bridge_progress_tail` 신설 + `_mark_bridge_placeholders_canceled` | 취소 말풍선 본문에 그 task 의 진행 단계를 **task 별로** 덧붙인다 | 중단 후 다음 질문의 개인 AI 맥락에 진행 단계가 텍스트로 들어간다 |
+| `feature-0003/src/routers/conversations.py` | `_BRIDGE_PROGRESS_TAIL_HEADER` | 진행 단계 머리말 = **미완 라벨** | 개인 AI 가 중간 조사를 확정 결론으로 읽지 않는다 |
+| `feature-0003/tests/test_bridge_cancel_preserves_progress.py` | — | 신규 12건 | PASS + 뮤테이션 KILL |
+
+**완료 판정 기준의 구체 예시**: 개인 AI 가 `describe_table` → `execute_sql` 2건을 부른 뒤
+사용자가 '중단' 을 누르면 — 취소 안내 말풍선 본문이 「취소 안내 + (미완 라벨) + `진행 단계:`
+2줄」이 되고, 이어서 보낸 질문을 개인 AI 가 열었을 때 그 텍스트가 대화 맥락에 포함돼 있다.
+
+- **빌더를 공유한 이유**: 형식이 두 벌이 되면 서버·브리지 두 경로의 화면이 갈리고, 갈리는 쪽
+  중 약한 것이 사용자가 보는 진실이 된다(이 저장소가 P0-R 에서 이미 겪은 부류).
+- **꼬리를 task 루프 «안» 에서 만드는 이유**: `notice` 는 호출자가 하나만 주는데 단계는 task
+  마다 다르다. 루프 밖에서 만들면 모든 말풍선이 같은 단계를 갖는다.
+- **단계가 없으면 붙이지 않는다**: 도구를 한 번도 안 부른 채 중단됐으면 붙일 것이 없다.
+  "진행된 내용" 을 단정하는 문구가 거짓이 되지 않도록 머리말도 꼬리와 함께만 붙인다.
+- **부분 추론 자체는 여전히 미커버**(구조적): 개인 AI 의 사고 과정은 러너 쪽에 있고 우리는
+  관측하지 못한다. 우리가 남길 수 있는 것은 **우리 도구로 관측한 사실**(무엇을 왜 조회했는가)뿐이다.
+- 위험도: **Minor** (§12.3 — 스키마·RBAC·엔드포인트 0. 이미 쓰던 UPDATE 의 본문 문자열이
+  길어질 뿐이고, 조회 실패·단계 부재는 모두 종전 동작으로 degrade).
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다 (AC-20260901T031500-interrupt-preserve-bridge-1 ~ -3)
+- [x] 자동 테스트가 통과한다 — `make test` 전건 green(ruff clean) + 신규 12 PASS + 뮤테이션 1종 KILL
+- [ ] 웹/UI 브라우저 검증 — **POST-DEPLOY**(앞 cycle fragment 의 측정 항목과 함께 수행)
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md — `docs/test-runs.d/` fragment
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md 갱신 (`bin/gen-status.sh`)
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+
 ## 20260901T0207-interrupt-context-preserve — 중단(interrupt)이 추론·맥락·단계를 통째로 버리던 결함 (Minor §12.3 — 비파괴 추가, 스키마·RBAC 변경 0)
 
 **사용자 요청(2026-09-01)**: "프로젝트 내 서비스에서, 대화 중 assistant에게 요청했던 작업을

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T031500-interrupt-note-header (보존 본문 빌더에 header 파라미터, Minor)
+
+- **왜**: 브리지(개인 AI) 취소 경로가 **같은 본문 형식**을 자기 문맥의 머리말로 재사용해야 했다
+  (feature-0003 `CHG-20260901T031500-interrupt-preserve-bridge`). 브리지 전용 렌더러를 따로 두면
+  같은 사실이 두 벌이 되고, 두 경로의 화면이 갈리는 순간 약한 쪽이 사용자가 보는 진실이 된다.
+- `src/agent_core.py`: `_build_interrupted_note(..., header: str | None = None)` — `None`(기본)은
+  기존 `_INTERRUPT_NOTE_HEADER` 유지(서버 경로 **동작 무변경**), 문자열이면 그것을 첫 문단으로,
+  `""` 면 본문만(호출자가 이미 자기 안내를 갖고 있을 때). 남길 것이 없으면 header 유무와 무관하게
+  여전히 빈 문자열 — 헤더만 남은 말풍선 금지.
+- 무회귀: `tests/test_interrupt_preserves_context.py` 19건 그대로 PASS(실호출 검증).
+
 ## CHG-20260901T020746-interrupt-preserved-note (중단된 run 의 진행분을 단계 목록까지 보존, Minor)
 
 - **왜**: 중단(interrupt) 시 사용자가 잃던 것이 화면·이력·다음 맥락 **세 축 동시**였다. 보존 축
