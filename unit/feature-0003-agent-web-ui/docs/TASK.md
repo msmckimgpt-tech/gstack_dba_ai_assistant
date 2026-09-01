@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Task
 
+## 20260901T1210-interrupt-preserve-postdeploy — 중단 보존 2 cycle 의 POST-DEPLOY 실측 (doc-only)
+
+**배포 도달 4/4 PASS · 중단 왕복 12항목 미수행(블로커 확정).**
+
+- 대상 배포 `b793e7ea`(scope=all, 엣지 `no upstreams available` 0건) / 선행 `3490cf73`.
+- **도달 확인**(실 Windows Chrome, 서빙 사본 직접 fetch): `app.js?v=3c9d838b3ed0` 에
+  `_reloadForPreservedInterrupt` · `preserve_reasoning: true` · 새 토스트 문구 3종 존재.
+  `/api/ai/manifest` · `/api/ai/openapi.json` 양쪽에 파라미터 + `"default": true`.
+- **왕복 미수행 사유(실측)**: `#sendBtn` 이 `aria-disabled="true" class="send-btn is-access-blocked"`
+  — "내 AI 가 연결되어 있지 않습니다". 질문 전송이 차단되어 **진행 중 run 을 만들 수 없다**.
+  라이브는 feature-0043 전환 모드라 답변을 개인 AI 러너가 만드는데 러너 프로세스가 0개이고,
+  재기동에는 사람이 웹에서 발급하는 새 `mat_` 토큰이 필요하다(러너는 토큰을 저장하지 않는다).
+- 측정 항목 12건은 앞 두 fragment 에 **사전 열거된 채로 유효**하다 — 개인 AI 연결 후 수행.
+- 코드 변경 **0**(doc-only). 배포 불필요.
+
+### 7. Completion Checklist
+
+- [x] POST-DEPLOY 도달 확인 4/4 기록 (`test-runs.d/TASK-20260901T121000-…md` §1)
+- [x] 미수행 항목과 그 **실측 사유**를 숨기지 않고 기록 (§2)
+- [x] "무엇이 검증됐고 무엇이 안 됐는가" 를 축별로 분리 표기 (§3)
+- [ ] 중단 왕복 12항목 — **개인 AI 러너 연결 후 수행**(측정 항목은 앞 두 fragment 에 사전 열거)
+- [x] MODIFY.md · REPORT.md 반영
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+
 ## 20260901T1200-ai-conn-chip-to-profile-row — 연결 칩을 입력창에서 사이드바 프로필 행으로 (Minor §12.3 — 프론트 배치 단독)
 
 **사용자 요청(2026-09-01)**: "'내 AI 대기 중' 과 같은 연결 버튼을 프로필 버튼 여백에 위치하도록
