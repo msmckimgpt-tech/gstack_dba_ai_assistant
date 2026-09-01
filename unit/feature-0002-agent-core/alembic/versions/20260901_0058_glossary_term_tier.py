@@ -1,5 +1,9 @@
 """kb_glossary/glossary_feedback 에 term_tier(전역 vs 제품) 축 추가.
 
+⚠ 리비전 번호 0057 → **0058 재번호**(§13.1 감지-후-재번호): 병렬 세션이 같은 날
+`0057_redteam_review_source` 를 먼저 머지해 번호가 충돌했다. down_revision 을 그
+리비전으로 걸어 체인을 직렬로 잇는다 — 두 head 가 생기면 `upgrade head` 가 모호해진다.
+
 ## 왜 이 컬럼이 필요한가 (2026-09-01 사용자 신고)
 
 「관리 콘솔 > 메타데이터 > 용어 사전」에 **일반적인 DB 용어**(복제 이벤트·Online DDL·
@@ -53,8 +57,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0057_glossary_term_tier"
-down_revision: Union[str, None] = "0056_llm_usage_cache_tokens"
+revision: str = "0058_glossary_term_tier"
+down_revision: Union[str, None] = "0057_redteam_review_source"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

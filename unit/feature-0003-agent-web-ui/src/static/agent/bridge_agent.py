@@ -362,7 +362,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 #: 버전은 그 형식 변경을 표현할 수 있는 유일한 축이다. 서버의 하한은
 #: `shared/bridge_tasks.RUNNER_MIN_AGENT_VERSION` — 여기 값이 그보다 낮으면 콘솔 작업이
 #: 배급되지 않고, 하트비트 응답의 `runner_update` 가 그 사실을 말한다.
-AGENT_VERSION = "2026.08.31"
+AGENT_VERSION = "2026.09.01"
 
 
 def _self_build() -> str:
@@ -389,7 +389,11 @@ def _self_build() -> str:
 #:   배급하지 않는다. 신고 없이 받으면 대화용 프레이밍으로 감싸 산출물이 조용히 망가진다.
 #: `batch_jobs` — 배경 배치까지 받겠다는 **별도 동의**. 기본 포함이 아니다: 그 작업은 이
 #:   사람이 요청한 적 없고 자기 계정 토큰을 태운다. `--batch` 로 켠다.
-AGENT_FEATURES: tuple[str, ...] = ("console_jobs",)
+#: `self_review` — 답변 초안을 자기가 5축으로 검증할 줄 안다. **자격이 아니라 관측 축**이라
+#:   기본 포함이다: 신고하지 않으면 콘솔이 「검증할 줄 모르는 러너」와 「검증했는데 통과」를
+#:   구분하지 못하고, 구분하지 못하면 운영자는 전자를 후자로 읽는다. 실제 수행 여부는
+#:   서버 설정(`REDTEAM_ENABLED`)이 정하며 `--no-self-review` 로 이 머신에서 끌 수 있다.
+AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "self_review")
 
 
 def _transport_is_safe(base: str) -> bool:
@@ -2339,6 +2343,58 @@ def split_glossary(answer: str) -> "tuple[str, list]":
     if not isinstance(parsed, list):
         return rest, []
     return rest, parsed[:_GLOSSARY_MAX]
+# ── 자가 검증 (TASK-20260901T110000) ─────────────────────────────────────────
+#
+# 답변을 내보내기 전에 **같은 AI 에게 검증자 역할로 한 번 더** 묻는다. 전환 전에는 서버가
+# 이 일을 했고(`modules/redteam.py`), 게이트가 닫힌 뒤 아무도 하지 않게 됐다 — 그런데
+# 관리 콘솔은 여전히 "본인 AI 가 검증한다" 고 말하고 있었다.
+#
+# **축·형식은 서버가 준다**(`claim_request` 응답의 `self_review.instruction`). 여기에 적어
+# 두면 규약을 고칠 때마다 전 사용자가 재설치해야 하고, 재설치하지 않은 러너는 낡은 축의
+# 판정을 같은 컬럼에 쓴다.
+
+
+def run_self_review(directive: dict, draft: str, kind: str, argv: list[str],
+                    custom: str | None, cancel_check=None,
+                    model: str | None = None, effort: str | None = None,
+                    runtimes: list | None = None, caps: dict | None = None) -> dict | None:
+    """초안을 자기 AI 에게 되물어 5축 판정을 받는다. 실패·미수행이면 `None`.
+
+    **답변을 만든 것과 같은 (런타임·모델·등급)** 으로 묻는다. 더 싼 모델로 검증하면 그
+    검증은 답변을 만든 사고를 따라가지 못하고, 따라가지 못하는 검증은 표면적인 지적만 낸다
+    (서버 시절에도 리뷰어를 별도 저비용 모델로 두었을 때 같은 성질이 관측됐다).
+
+    ⚠ **실패를 위로 던지지 않는다.** 검증은 관측이고 답변은 사용자의 것이다 — 검증이
+    실패했다고 이미 만들어 둔 답을 버리면, 관측을 위해 서비스를 끊는 셈이 된다.
+    """
+    if not isinstance(directive, dict) or not directive.get("enabled"):
+        return None
+    instruction = str(directive.get("instruction") or "")
+    slot = str(directive.get("draft_slot") or "")
+    if not instruction or not slot or slot not in instruction:
+        # 서버가 준 지시문에 초안 자리가 없다 = 계약이 어긋났다. 지어내서 이어 붙이면
+        # 검증자가 무엇을 검증하는지 모르는 채로 답한다.
+        _log("자가 검증: 서버 지시문에 초안 자리가 없어 건너뜁니다.")
+        return None
+    if callable(cancel_check) and cancel_check():
+        return None
+    t0 = time.time()
+    ok, raw = ask_local_ai(kind, argv, instruction.replace(slot, draft), custom,
+                           cancel_check, model=model, effort=effort,
+                           runtimes=runtimes, caps=caps)
+    if not ok or raw == CANCELED or not str(raw or "").strip():
+        return None
+    # **파싱은 서버가 한다.** 여기서 JSON 을 뜯어 스키마를 강제하면 그 스키마가 러너에
+    # 박히고, 서버의 것과 갈리는 순간 어느 쪽이 정본인지 알 수 없어진다. 러너는 원문을
+    # 그대로 나른다 — 서버의 `self_review.sanitize` 가 형태를 못 갖춘 응답을 버린다.
+    return {
+        "raw": str(raw),
+        "latency_ms": int((time.time() - t0) * 1000),
+        # 무엇으로 검증했는지. 콘솔이 「답변 모델 ≠ 검증 모델」을 구분해야 할 날을 위해
+        # 지금 남긴다(지금은 같지만, 같다는 사실도 기록되어야 확인할 수 있다).
+        "model": model or "",
+        "reasoning_level": effort or "",
+    }
 
 
 # ── 한 건 처리 ───────────────────────────────────────────────────────────────
@@ -2346,7 +2402,8 @@ def split_glossary(answer: str) -> "tuple[str, list]":
 
 def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str],
                custom: str | None, cancels: "CancelRegistry | None" = None,
-               runtimes: list | None = None, caps: dict | None = None) -> bool:
+               runtimes: list | None = None, caps: dict | None = None,
+               self_review: bool = True) -> bool:
     """이미 **점유된** task 하나를 처리한다.
 
     점유(`claim_request`)를 여기서 하지 않고 호출측(대기 루프)이 하는 이유: 점유가 늦으면 그
@@ -2465,6 +2522,21 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
              "(연결된 AI 가 도구 호출 실패를 권한 문제로 오해한 신호. "
              f"claude 라면 {_STRICT_MCP_FLAG} 적용 여부와 토큰 유효성을 확인하라)")
 
+    # 자가 검증 — 제출 **직전**, 취소 검사 뒤. 여기 두는 이유: 취소된 답을 검증하는 것은
+    # 남의 계정 토큰을 이유 없이 태우는 일이고, 제출 뒤에 두면 검증 결과를 실을 자리가 없다.
+    #
+    # ⚠ 검증은 답변을 **바꾸지 않는다.** 서버 시절에는 BLOCK 결함이면 초안을 고쳐 다시
+    #   물었지만(`REDTEAM_MAX_REVISIONS`), 그 반복은 개인 머신 AI 호출을 몇 배로 늘린다 —
+    #   남의 자원이라 우리가 임의로 결정할 축이 아니다. 지금은 **판정을 기록**하고 그
+    #   판정을 콘솔이 보이게 하는 데까지다(수정 반복은 별도 결정 사항).
+    review = None
+    if self_review:
+        review = run_self_review(claimed.get("self_review") or {}, answer, run_kind, run_argv,
+                                 custom, _canceled, model=want_model, effort=want_effort,
+                                 runtimes=runtimes, caps=caps)
+        if review:
+            _log(f"{task_id}: 자가 검증 완료 ({review['latency_ms']}ms) — 제출에 동봉")
+
     payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
     if title:
         payload["title"] = title
@@ -2472,6 +2544,12 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         # 빈 목록은 싣지 않는다 — 서버가 `None` 과 `[]` 를 구분해 「규약을 모르는 러너」와
         # 「담을 것이 없던 턴」을 로그에서 가를 수 있게 한다.
         payload["glossary_terms"] = glossary_terms
+    if review:
+        # 서버 계약: `review.raw` 는 검증자가 낸 원문이다(우리가 뜯지 않는다).
+        payload["review"] = {
+            "raw": review["raw"], "latency_ms": review["latency_ms"],
+            "model": review["model"], "reasoning_level": review["reasoning_level"],
+        }
     res = api.call("submit_answer", payload, timeout=120.0)
     if res.get("_http") == 409:
         # 취소 신호를 못 본 채 여기까지 왔다(서버가 마지막 관문). 정상 흐름이다.
@@ -2615,6 +2693,10 @@ def main() -> int:
                     help="배경 배치 작업(인사이트·클러스터 라벨)까지 받는다. "
                          "기본은 받지 않는다 — 그 작업은 당신이 요청한 적 없고 당신 계정의 "
                          "AI 사용량을 쓴다.")
+    ap.add_argument("--no-self-review", action="store_true",
+                    help="답변을 내보내기 전 **자기 검증**(5축)을 하지 않는다. 기본은 서버 "
+                         "설정을 따라 수행 — 검증은 AI 호출을 한 번 더 쓰므로 "
+                         "이 머신에서 끄고 싶을 때 사용한다.")
     ap.add_argument("--once", action="store_true", help="한 건만 처리하고 종료")
     ap.add_argument("--check", action="store_true", help="연결만 확인하고 종료")
     ap.add_argument("--resume", action="store_true",
@@ -2689,10 +2771,19 @@ def main() -> int:
         return 2
 
     api = Api(args.base, args.token, args.ca)
+    # 신고는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 두 축을 한 번에 조립한다 —
+    # 따로 대입하면 나중 대입이 앞의 것을 지운다(`--batch --no-self-review` 조합에서
+    # 배치 동의가 사라지던 형태의 결함).
+    _feats = list(AGENT_FEATURES)
     if getattr(args, "batch", False):
-        # 배치 동의는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 서버는 이 신고를
-        # 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을 가져가지는 않는다.
-        api.features = tuple(AGENT_FEATURES) + ("batch_jobs",)
+        # 서버는 이 신고를 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을
+        # 가져가지는 않는다.
+        _feats.append("batch_jobs")
+    if getattr(args, "no_self_review", False):
+        # 끈 사실을 **신고에서도 지운다** — 신고를 남긴 채 수행만 건너뛰면 콘솔은 이 러너를
+        # "검증할 줄 아는데 결과가 없다"(= 통과)로 읽는다. 그 오독이 이 축을 만든 이유다.
+        _feats = [f for f in _feats if f != "self_review"]
+    api.features = tuple(_feats)
 
     # 저장하는 `ai` 는 **사용자가 명시한 것만**이다(위 상속 주석과 같은 이유). 자동 감지
     # 결과를 저장하면 그것이 다음 실행의 제한으로 승격된다.
@@ -2981,7 +3072,8 @@ def main() -> int:
 
         def _work(tid: str = task_id, payload: dict = claimed, slot: int = sid) -> None:
             try:
-                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes, caps)
+                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes, caps,
+                           self_review=not getattr(args, "no_self_review", False))
             finally:
                 cancels.forget(tid)
                 active.leave(tid)

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T031500-interrupt-note-header (보존 본문 빌더에 header 파라미터, Minor)
+
+- **왜**: 브리지(개인 AI) 취소 경로가 **같은 본문 형식**을 자기 문맥의 머리말로 재사용해야 했다
+  (feature-0003 `CHG-20260901T031500-interrupt-preserve-bridge`). 브리지 전용 렌더러를 따로 두면
+  같은 사실이 두 벌이 되고, 두 경로의 화면이 갈리는 순간 약한 쪽이 사용자가 보는 진실이 된다.
+- `src/agent_core.py`: `_build_interrupted_note(..., header: str | None = None)` — `None`(기본)은
+  기존 `_INTERRUPT_NOTE_HEADER` 유지(서버 경로 **동작 무변경**), 문자열이면 그것을 첫 문단으로,
+  `""` 면 본문만(호출자가 이미 자기 안내를 갖고 있을 때). 남길 것이 없으면 header 유무와 무관하게
+  여전히 빈 문자열 — 헤더만 남은 말풍선 금지.
+- 무회귀: `tests/test_interrupt_preserves_context.py` 19건 그대로 PASS(실호출 검증).
+
 ## CHG-20260901T020746-interrupt-preserved-note (중단된 run 의 진행분을 단계 목록까지 보존, Minor)
 
 - **왜**: 중단(interrupt) 시 사용자가 잃던 것이 화면·이력·다음 맥락 **세 축 동시**였다. 보존 축
@@ -2980,5 +2991,24 @@ Task-Cycle: feature-0002-agent-core
 - `unit/feature-0043-external-llm-bridge/docs/MODIFY.md`: 양쪽 신규 `## CHG-` 블록 충돌.
   driver 가 「본문 변경 감지」로 `git merge-file` 에 위임해 표준 마커가 남았고, §16.4 자율
   해결 표 1행에 따라 **양쪽 유지 + 시간순 정렬**(`T110000` → `T120000`)로 해소. 마커 잔존 0.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T143000-glossary-term-tier-merge3 — origin/main(#1463·#1464) 재병합 + 마이그 재번호
+
+고병렬 창(§13.2.5-A)에서 세 번째 재병합. **코드 로직 변경 0**, 리비전 번호만 이동.
+
+- **alembic 리비전 충돌 → 재번호 (§13.1)**: 병렬 세션이 같은 날 `0057_redteam_review_source`
+  를 먼저 머지해 내 `0057_glossary_term_tier` 와 번호가 겹쳤다. 점유된 최대 번호 + 1 로
+  **0058 로 1-step 재번호**하고 `down_revision` 을 `0057_redteam_review_source` 로 걸어
+  체인을 직렬로 이었다(두 head 가 생기면 `upgrade head` 가 모호해진다).
+  파일명·`MAX_MIGRATION.txt`·`agent_kb_schema.sql` 미러 주석 동반 정정.
+- **`routers/ai_tools.py`**: 양쪽이 `submit_answer` 반환 dict 에 필드 1개씩(`glossary` /
+  `review_recorded`)과 헬퍼 1개씩(`_absorb_bridge_glossary_terms` / `_record_external_review`)
+  을 추가 — 순수 가산이라 **양쪽 병존**(§16.4 「서로 다른 섹션 변경 → 양쪽 반영」).
+- **`bridge_agent.py`(정본·배포본)**: 같은 성질의 충돌 2건(용어 축 `split_glossary` /
+  자가 검증 축 `run_self_review`) 양쪽 병존. 해소 후 확인 — 용어축 9 심볼 · 검증축 6 심볼 ·
+  `handle_one` 의 `split_glossary` 호출부 생존 · AST PASS · **두 사본 sha256 동치**.
+- 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
 
 Task-Cycle: feature-0002-agent-core

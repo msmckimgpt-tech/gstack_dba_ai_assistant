@@ -2525,3 +2525,41 @@
   white-space: nowrap;
   border-bottom: 1px solid var(--border);
 }
+
+/* ── '기록' 탭 섹션 (feature-0043 TASK-20260901T110000) ──────────────────────────
+ *
+ * 전환 이전 서버 지표(토큰·비용·서버 red-team·활동 이력)를 담는 접이식 섹션. 기본 접힘인
+ * 이유는 조회 비용이다 — 세 섹션이 각각 별도 API 를 부르고, 그중 사용량 집계는 콘솔에서
+ * 가장 무거운 질의다. 자주 열리지 않는 기록에 그 비용을 상시로 물리지 않는다.
+ *
+ * 색은 토큰만 쓴다(feature-0003 docs/AGENTS.md §10 — 인라인 하드코딩 색상값 금지). */
+.admin-archive-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+.admin-archive-section > summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  list-style: none;              /* 기본 삼각형 제거 — 아래 ::before 로 통일 */
+  user-select: none;
+}
+.admin-archive-section > summary::-webkit-details-marker { display: none; }
+.admin-archive-section > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 14px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+.admin-archive-section[open] > summary::before { content: "▾"; }
+.admin-archive-section[open] > summary { border-bottom: 1px solid var(--border-subtle); }
+/* 본문은 자기 안에서 가로 스크롤한다 — 안에 들어오는 것이 폭이 넓은 차트·표라, 새어 나가면
+ * 관리 콘솔 전체가 가로로 밀린다. */
+.admin-archive-section-body {
+  padding: 14px;
+  overflow-x: auto;
+}

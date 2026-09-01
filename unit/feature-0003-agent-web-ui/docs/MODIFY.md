@@ -11,6 +11,32 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260901T031500-interrupt-preserve-bridge — 중단 보존을 브리지(개인 AI) 경로까지
+
+**왜**: 앞 cycle(`CHG-20260901T020746`)은 **서버 run** 경로를 고쳤는데, 그 배포 스모크가
+라이브는 `feature-0043` 전환 모드(서버 계정 LLM 차단 · 답변은 개인 AI 가 생성)임을 드러냈다.
+사용자가 실제로 누르는 '중단' 은 브리지 경로를 탄다. 그 경로는 화면·이력·단계(접이식)는
+이미 남기고 있었으나 — 취소 안내 말풍선이 `run_id = task_id` 각인을 유지하고
+`_record_bridge_step` 이 개인 AI 의 도구 호출을 steps 에 쌓으므로 — **다음 요청의 맥락**만
+비어 있었다: 브리지가 개인 AI 에게 넘기는 대화 맥락(`ai_tools._recent_conversation_context`)은
+표시 store 의 **content 텍스트만** 읽고 steps·meta 는 보지 않는다.
+
+**변경**:
+
+| 파일 | 변경 |
+|---|---|
+| `src/routers/conversations.py` | `_bridge_progress_tail` 신설 — 그 task 의 steps 를 `agent_core._build_interrupted_note(header=...)` 로 렌더. `_mark_bridge_placeholders_canceled` 가 **task 루프 안에서** 취소 안내 뒤에 덧붙인다 |
+| `src/routers/conversations.py` | `_BRIDGE_PROGRESS_TAIL_HEADER` 신설 — 진행 단계의 머리말이자 **미완 라벨**(개인 AI 가 중간 조사를 확정 결론으로 읽지 않게) |
+| `tests/test_bridge_cancel_preserves_progress.py` | 신규 12 PASS + 뮤테이션 1종 KILL |
+
+feature-0002 동반: `_build_interrupted_note` 에 `header` 파라미터(기본 = 기존 라벨 유지) —
+`CHG-20260901T031500-interrupt-note-header`.
+
+**degrade 규칙**: 단계 조회 실패·단계 부재는 모두 **종전 안내 그대로**로 떨어진다. 단계가
+없으면 머리말도 붙이지 않아 "진행된 내용" 이 거짓이 되지 않는다. **부분 추론 자체는 여전히
+미커버**(구조적 — 개인 AI 의 사고는 러너 쪽에 있다). 우리가 남기는 것은 우리 도구로 관측한
+사실뿐이다.
+
 ## CHG-20260901T020746-interrupt-context-preserve — 중단(interrupt)이 진행분을 버리지 않는다
 
 **요청(2026-09-01)**: "대화 중 assistant에게 요청했던 작업을 중단(interrupt) 하더라도 추론했던

@@ -45,10 +45,13 @@ function _renderUsageScopeNote() {
     note.className = "admin-llm-inactive-note";
     anchor.parentElement.insertBefore(note, anchor);
   }
+  // ⚠ 안내가 가리키는 탭 이름은 **실제 서브탭과 같아야 한다.** TASK-20260901T110000 재편
+  //   전까지 이 문장은 '외부 AI 작업' 을 가리켰는데 그 탭은 '브리지 작업' 으로 흡수됐다 —
+  //   없는 곳을 가리키는 안내는 안내가 아니라 다음 마찰이다.
   note.textContent =
     "이 집계는 서버가 직접 호출한 LLM 사용분입니다. 현재 대화 답변은 각자 연결한 본인 AI 가"
     + " 만들므로 여기에 잡히지 않습니다 — 값이 0 에 가까운 것은 사용이 없다는 뜻이 아닙니다."
-    + " 실제 처리 내역은 '외부 AI 작업' 과 '운영 현황' 에서 확인하세요.";
+    + " 실제 처리 내역은 '운영 현황' · '브리지 작업' · '도구 사용량' 에서 확인하세요.";
 }
 
 async function loadUsage(opts) {

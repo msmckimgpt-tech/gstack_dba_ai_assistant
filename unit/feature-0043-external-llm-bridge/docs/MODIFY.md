@@ -2041,7 +2041,125 @@ chat.css 2 hits) 후, 페이지가 로드한 모듈 URL 로 `import()` 해 실�
 
 - 신규 5건 **PASS** · **수정 전 `ci.yml`(HEAD) 사본에서 4/5 FAIL** 실증 (§16.7 G11-b)
 - 등재한 3디렉토리는 직전 cycle 의 컨테이너 전수 실행에서 이미 `rc=0` (근거 선행 확보)
+## CHG-20260901T110000-aiops-external-realign — 「AI 운영 현황」을 외부AI 운영축으로 전면 재편 + 외부 AI 자가 검증 구현
 
+**요청 (2026-09-01)**: "assistant 가 작동하는 구조가 변경됨에 따라 '관리 콘솔 > AI 운영 현황'
+내부의 **모든 작동 사항들은 외부AI 작동에 정합한 구조로** 변경해주세요. 이제 **내부 AI 는
+사용하지 않습니다**."
+
+### 근본 원인 — 지표가 침묵으로 거짓말하고 있었다
+
+이 탭의 거의 모든 수치가 `agent_runtime.llm_usage`(서버 계정 호출) 출처였다. 게이트가 닫힌 뒤
+그 원장에는 새 행이 쌓이지 않으므로 화면이 0 으로 수렴했고, 그 0 은 **"아무도 AI 를 안 쓴다"**
+로 읽혔다 — 실제로는 우리가 세지 않는 곳(각자의 개인 AI)에서 쓰고 있었고, 우리 쪽에 남는
+활동은 도구 호출과 브리지 작업이었다.
+
+`LLM 제공자` 축은 더 나빴다. 아무도 그 경로를 쓰지 않는데 그 축의 `degraded` 가 종합 배너의
+worst-of 에 참여해 **쓰지 않는 provider 의 제한 하나가 화면 전체를 '저하' 로 물들이고**,
+운영자가 실제로 봐야 할 브리지 신호를 같은 색으로 덮었다.
+
+그리고 콘솔은 **없는 기능을 있다고 말하고 있었다** — `_console_llm.INACTIVE_SURFACES` 의
+"답변을 만든 본인 AI 가 같은 5축으로 자기 답변을 검증하고 결과를 함께 제출합니다" 에 해당하는
+경로가 코드에 없었다(러너도, `submit_answer` 도, 저장 컬럼도). 확인할 방법이 없는 종류의
+거짓이다 — 원장이 비어 있으면 "결함이 없었나 보다" 로 읽힌다.
+
+### 사용자 결정 (AskUserQuestion 4문, 2026-09-01)
+
+전면 재편 · 과거 지표는 「기록」으로 격리 · 신규 지표 3종(도구 사용량 · 브리지 작업 대기열 ·
+러너 현황 상세) · **자가 검증 제출까지 구현**.
+
+### 변경 — 서브탭 재편
+
+| AS-IS | TO-BE |
+|---|---|
+| `[LLM 사용량 · 운영 현황 · 추론 · 외부 AI 작업]` | `[운영 현황 · 브리지 작업 · 도구 사용량 · 기록]` |
+
+- `static/admin.html` — 4 subpane 재배치(기존 블록은 **본문 무수정 이동**). `usage`·`reasoning`
+  pane 은 「기록」 안 접이식 섹션으로, 서버 활동 이력 섹션 신설
+- `static/admin/tasks.js`(신규) — 브리지 작업 통합 원장. `exttasks.js` 흡수(삭제)
+- `static/admin/tools.js`(신규) — `tool_call_usage` 집계
+- `static/admin/aiops.js` — 브리지·자가검증 KPI 를 앞으로, 러너 명부 신설,
+  `llm_usage` 3블록을 `serverActivityHtml()` 로 분리해 **운영 현황·기록이 같은 함수**를 부른다
+- `static/admin.js` — 서브탭 키 재편 + `_AI_SUBTAB_ALIAS` 를 모듈 스코프로 올려
+  `switchTab`·`activateAiConsoleSubtab` **두 진입점이 같은 표**를 읽게 함
+- `css/admin.css` — `.admin-archive-section` (토큰만 사용)
+
+### 변경 — 서버
+
+- `routers/ai_ops.py` — `_provider_axis` 차단 시 `na`(롤업 제외, `raw_state` 는 보존) ·
+  `_runner_roster` · `_self_review_stats` · 신규 `GET /api/admin/ai-ops/{tools,tasks,runners}` ·
+  `_COVERAGE_EXTERNAL`(하지 않는 일을 '계측됨' 으로 나열하지 않는다)
+- `oauth_store.py` — `list_live_runners()`. 계정 중복 제거를 **파이썬에서** 한다(상관 서브쿼리는
+  술어 사본을 하나 더 만들고, MySQL 느슨한 GROUP BY 는 실재하지 않는 러너를 만든다)
+- `routers/admin_usage.py` — 활동 피드 정본 위치 주석 정정(차단 배포에서는 '기록' 안)
+
+### 변경 — 자가 검증(5축) 실구현
+
+- `shared/self_review.py`(신규) — 축·심각도·상한·지시문·`sanitize` 의 **단일 정본**.
+  지시문 전문을 서버가 `claim_request` 로 내려보낸다 — 러너에 축을 박으면 갱신하지 않은 러너가
+  낡은 축의 판정을 같은 컬럼에 쓴다(스키마는 같고 의미만 갈리는 어긋남)
+- `alembic 0057` — `redteam_reviews.source`(server/external, 기본 `server`) · `task_id` additive
+- `routers/ai_tools.py` — `claim_request` 가 지시 하달, `submit_answer` 가 `review` 수용 →
+  `_record_external_review()`. **검증 없는 제출은 거절하지 않는다**(구 러너 보호 — 관측을 위해
+  서비스를 끊는 거래는 성립하지 않는다)
+- `static/agent/bridge_agent.py` — `run_self_review()` · `--no-self-review` ·
+  `AGENT_FEATURES` 에 `self_review` · `AGENT_VERSION` `2026.09.01`
+- `shared/bridge_tasks.py` — `RUNNER_FEATURE_SELF_REVIEW`
+- `routers/_console_llm.py` — 문구를 **구현 범위까지만** 정정(검증은 하되 자동 수정 반복은
+  하지 않음 · 최소 추론 강도는 적용 불가) + `delegated_feature` 로 **기능 단위** 판정
+
+### 지어내지 않는 규율 (이 변경의 핵심)
+
+- 형태를 못 갖춘 리뷰 응답은 **기록하지 않는다** — 빈 `pass` 로 접으면 "검증했고 문제없었다"
+  는 주장이 되는데, 실제로는 러너의 AI 가 JSON 을 못 냈을 뿐이다
+- 「고치라」고 했는데 살아남은 지적이 0건이면(우리가 전부 버렸다) **역시 기록하지 않는다** —
+  `pass` 로 접으면 결함을 지적한 검증이 통과로 기록된다
+- 원장 미준비(`available:false`)와 0건을 **가른다** — 전자를 0 으로 그리면 마이그레이션 상태가
+  운영 상태에 대한 거짓말이 된다
+- 화면의 「검증 없음(`—`)」과 「통과」를 가르고, 러너 명부가 그 이유(`미지원`)를 말한다
+
+### 검증
+
+- `make test` 전량 **PASS** · ruff clean · migrate-lint **expand-safe** · ROUTEMAP 264 routes
+- 신규 회귀 **54건** + 기존 계약 3건 갱신(축 정정 — 근거는 test-runs fragment §1)
+- **PB-0008 실 Windows 브라우저**(bind-mount 격리, 라이브 무접촉) 9항목 전건 PASS.
+  **자체 발견 1건**: 커버리지 문구의 마크다운 강조가 평문 렌더라 별표가 화면에 그대로 떴다
+  (소스 검사로는 잡히지 않는 부류) — 제거 후 재확인
+- 증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260901T110000-aiops-external-realign.md`
+
+## CHG-20260901T152000-runner-roster-honesty — 조회 실패를 「러너 0대」로 단정하던 결함
+
+앞 CHG 의 자체 적대 검토에서 나온 **P1 1건**.
+
+`oauth_store.list_live_runners` 가 질의 실패를 `return []` 로 삼켰고, `_runner_roster` 는
+그 빈 목록에 `available: True` 를 붙였다. 화면은 빈 목록을 **"연결된 개인 AI 가 없습니다 —
+들어오는 질문을 아무도 처리하지 못합니다"** 라는 빨간 단정으로 그린다. 즉 **질의 하나가
+실패하면 관제가 장애를 선언한다.**
+
+이것이 나쁜 이유는 두 가지다:
+
+1. **이 cycle 이 없애려던 결함과 같은 형태다** — 「모르는 것」을 「나쁜 사실」로 바꿔 말하는 것.
+2. **그 함수의 docstring 이 계약을 정확히 적어 두고 있었다** ("빈 목록이지 '러너 없음' 이
+   아니므로, 호출측이 그 차이를 화면에 표현한다"). 주석이 계약을 말하는데 코드가 지키지 않으면
+   다음 사람은 주석을 읽고 지켜지는 줄 안다 — 가장 늦게 발견되는 부류다.
+
+### 변경
+
+- `oauth_store.list_live_runners` — 질의 실패를 **위로 올린다**. 호출측(`_runner_roster`)이
+  이미 `except` 로 감싸 `available:False` + 사유를 화면에 표면화한다.
+- 단 `RunnerBuild`(2026-08-31 추가) 부재는 **컬럼 사다리로 한 단계 내려간다** — 지문 대조는
+  이 명부가 답하는 네 질문 중 하나일 뿐인데, 그것 하나로 구 배포에서 화면이 통째로 비면
+  안 된다(`_query_activity` 가 `target`·`cache_*` 에 쓰는 것과 같은 규율).
+- 지문을 모르면 `stale_build` 를 **False 로 둔다** — 모르는 것을 stale 로 적으면 멀쩡한
+  러너에게 재설치를 시킨다.
+
+### 검증
+
+- 회귀 2건 (`test_runner_roster_query_failure_is_not_reported_as_zero_runners` ·
+  `test_runner_roster_survives_missing_runner_build_column`)
+- **역검증**: 직전 커밋(`33e00e0e`)의 `oauth_store.py` 를 되돌려 실행 → **둘 다 FAIL**.
+  내가 만든 뮤턴트가 아니라 **실제 출하 직전 코드**에서 죽는 것을 확인했다(자기충족 아님).
+- `make test` 전량 PASS · ruff clean
 ## CHG-20260901T104500-ai-claude-feature-0043-steps-result-split — 단계/결과셋 범위 분리 · 스크롤은 단계만
 
 **요청 (2026-09-01)**: 「'▼ 쿼리 결과' 를 펼쳤을 때, 각 단계와 결과셋 범위를 분리해주세요.

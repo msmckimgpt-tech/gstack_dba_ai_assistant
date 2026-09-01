@@ -276,7 +276,7 @@ ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ux_kb_glossary_scope_term;
 ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ux_kb_glossary_scope_role_term;
 ALTER TABLE kb_glossary ADD  CONSTRAINT ux_kb_glossary_scope_role_term UNIQUE (scope_key, role_key, term);
 CREATE INDEX IF NOT EXISTS ix_kb_glossary_scope_role ON kb_glossary (scope_key, role_key);
--- 0057 미러(용어 통용범위 축): term_tier = product|org|general. 쓰기 축이 제품 하나뿐이라 범용 DB 용어가
+-- 0058 미러(용어 통용범위 축): term_tier = product|org|general. 쓰기 축이 제품 하나뿐이라 범용 DB 용어가
 -- 제품 scope 에 갇히고 제품마다 중복되던 마찰(2026-09-01)의 해소축. 읽기 캐스케이드는 이미 2단
 -- (제품 → common) 이었다 — 쓰기에 그 축을 만든다. 미러 누락 시 boot 정본 배포에서 컬럼 부재 →
 -- upsert 의 term_tier 바인딩이 UndefinedColumn 으로 죽는다(0023 미러 트랩과 동형).
@@ -333,7 +333,7 @@ CREATE TABLE IF NOT EXISTS glossary_feedback (
 );
 CREATE INDEX IF NOT EXISTS ix_glossary_feedback_status ON glossary_feedback (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_glossary_feedback_scope  ON glossary_feedback (scope_key, role_key);
--- 0057 미러: 통용범위 축 + 'skipped_general'(범용 판정으로 미등록 — 조용히 버리지 않고 사유를 남긴다).
+-- 0058 미러: 통용범위 축 + 'skipped_general'(범용 판정으로 미등록 — 조용히 버리지 않고 사유를 남긴다).
 -- CREATE TABLE 은 IF NOT EXISTS 라 기존 배치에서는 위 본문이 실행되지 않는다 → ALTER 미러가 필수.
 ALTER TABLE glossary_feedback ADD COLUMN IF NOT EXISTS term_tier varchar(16) NOT NULL DEFAULT 'product';
 ALTER TABLE glossary_feedback DROP CONSTRAINT IF EXISTS ck_glossary_feedback_term_tier;

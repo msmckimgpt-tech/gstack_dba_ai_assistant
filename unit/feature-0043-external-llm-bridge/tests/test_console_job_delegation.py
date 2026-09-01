@@ -140,21 +140,66 @@ def _iter_positions(hay: str, needle: str):
 # ── 러너: 콘솔 작업에 대화 프레이밍을 씌우지 않는다 ─────────────────────────────────
 
 def test_runner_declares_features_and_version():
-    """러너가 기능·버전을 신고한다 — 그것이 서버의 배급 자격이다."""
+    """러너가 기능·버전을 신고한다 — 그것이 서버의 배급 자격이다.
+
+    ⚠ 버전은 하한과 **같아야 하는 것이 아니라 하한 이상**이어야 한다
+    (TASK-20260901T110000). 종전 단언은 등호였는데, 그러면 러너를 고칠 때마다 서버 하한을
+    함께 올리도록 강제되고 — 하한이 오르는 순간 **아직 갱신하지 않은 전 사용자의 콘솔 작업이
+    끊긴다.** 두 값은 다른 질문에 답한다: 하한은 "무엇을 거절하는가", 버전은 "이 파일이
+    무엇인가". 판정은 서버의 비교 함수(`_console_llm.version_at_least`)를 그대로 쓴다 —
+    여기서 새로 비교하면 두 곳의 순서 규칙이 갈릴 준비를 마친다.
+    """
     src = _RUNNER.read_text(encoding="utf-8")
-    assert 'AGENT_FEATURES: tuple[str, ...] = ("console_jobs",)' in src
-    assert f'AGENT_VERSION = "{bt.RUNNER_MIN_AGENT_VERSION}"' in src, (
-        "러너 버전이 서버 하한과 다르다 — 자기 배포본이 자격 미달이 된다")
+    feats_line = src.split("AGENT_FEATURES: tuple")[1].split("\n")[0]
+    assert '"console_jobs"' in feats_line, "콘솔 작업 자격을 신고하지 않는다"
+
+    import importlib.util
+    import pathlib as _pl
+    _cl = _pl.Path(__file__).resolve().parents[2] / "feature-0003-agent-web-ui" / "src" / \
+        "routers" / "_console_llm.py"
+    spec = importlib.util.spec_from_file_location("_cl_ver", _cl)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    version = src.split('AGENT_VERSION = "')[1].split('"')[0]
+    assert mod.version_at_least(version, bt.RUNNER_MIN_AGENT_VERSION), (
+        f"러너 버전 {version} 이 서버 하한 {bt.RUNNER_MIN_AGENT_VERSION} 미만 — "
+        "자기 배포본이 자격 미달이 된다")
     assert 'body["features"] = list(self.features)' in src
     assert 'body["agent_version"] = AGENT_VERSION' in src
 
 
 def test_batch_consent_is_opt_in_on_the_runner():
-    """배치 동의는 **기본이 아니다** — 그 작업은 사용자가 요청한 적 없고 자기 토큰을 쓴다."""
+    """배치 동의는 **기본이 아니다** — 그 작업은 사용자가 요청한 적 없고 자기 토큰을 쓴다.
+
+    소스 한 줄을 문자열로 박제하지 않는다(TASK-20260901T110000 에서 신고 조립이 두 축
+    (`--batch` · `--no-self-review`)으로 늘며 그 줄이 사라졌다). 잠글 것은 **결과**다:
+    기본 신고에 배치가 없고, 플래그를 켜면 들어오고, 다른 축을 꺼도 배치가 살아남는다
+    (따로 대입하던 형태에서는 나중 대입이 앞의 것을 지웠다).
+    """
     src = _RUNNER.read_text(encoding="utf-8")
-    assert '"batch_jobs"' not in src.split("AGENT_FEATURES: tuple")[1].split("\n")[0]
+    assert '"batch_jobs"' not in src.split("AGENT_FEATURES: tuple")[1].split("\n")[0], (
+        "기본 신고에 배치가 들어 있다 — 동의 없이 남의 작업을 가져간다")
     assert 'ap.add_argument("--batch"' in src, "배치 동의를 켤 방법이 없다"
-    assert 'api.features = tuple(AGENT_FEATURES) + ("batch_jobs",)' in src
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_runner_batch_test", _RUNNER)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    def build(batch: bool, no_self_review: bool):
+        feats = list(runner.AGENT_FEATURES)
+        if batch:
+            feats.append("batch_jobs")
+        if no_self_review:
+            feats = [f for f in feats if f != "self_review"]
+        return set(feats)
+
+    assert "batch_jobs" not in build(False, False)
+    assert "batch_jobs" in build(True, False)
+    assert "batch_jobs" in build(True, True), "다른 축을 끄면서 배치 동의가 함께 지워졌다"
+    # main() 이 실제로 이 형태로 조립하는지 — 조립부가 사라지면 위 재현은 무의미해진다.
+    assert "_feats = list(AGENT_FEATURES)" in src and "api.features = tuple(_feats)" in src
 
 
 def test_runner_does_not_wrap_console_jobs_in_chat_framing():
