@@ -6703,6 +6703,18 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - **칩이 화살표 뒤에 선다** — 사용자 스크린샷이 지목한 자리는 화살표 앞이었으나, 그 배치는
   긴 계정명이 화살표 밑으로 들어가는 실측 결함을 낳아 되돌렸다. 완료 보고에 명시한다.
 
+## REV-20260901T124500-ai-conn-chip-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T1200-ai-conn-chip-to-profile-row`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T12:45:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `40340f53` 에서 주입 없이 16조합 재측정 — 배포 전 실측치와 전부 일치.
+  `.composer-footer` 전 조합 `display: none`(사용자가 지적한 입력창 아래 여백 해소).
+- **선행 cycle 의 잔여 해소**: `REV-20260901T120000-…` 이 "배포본 자산 재확인 잔여" 로 남긴
+  항목이 본 Run 으로 닫혔다. **`ux`/`design` 도메인 심사 미수행은 그대로 잔여** — 칩 글꼴
+  10.88px 의 가독성 판단은 여전히 전문 심사를 거치지 않았다.
+
 ## REV-20260901T125600-ai-claude-glossary-tier-postdeploy [SKIPPED:non-policy-doc] — 증적 기록 전용
 
 - Related TASK: feature-0003-agent-web-ui (`20260901T1256-glossary-tier-postdeploy`)

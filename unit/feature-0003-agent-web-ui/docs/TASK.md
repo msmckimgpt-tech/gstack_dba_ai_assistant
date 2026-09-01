@@ -240,6 +240,12 @@ source_of_truth: true
       있고, 배치 규칙과 wrap fallback 이 존재하는지). 조건이 남으면 여백이 돌아온다.
 - [x] 라벨 계약 테스트는 문구가 아니라 **네 상태가 갈리는가** + 접두를 뺀 자리를 title 이
       받는가(`js.count("내 AI") >= 3`)로 재정의
+- [x] **POST-DEPLOY 재실측 PASS** (배포본 `40340f53`, PR #1465 `6fac965e` 조상) — 주입 없이
+      서빙 자산 그대로 16조합 재측정, **배포 전 실측치와 전부 일치**. `.composer-footer` 전
+      조합 `display: none`(제보 여백 해소). 서빙 `chat.css` 의 접힘 규칙에 `.ai-conn` 잔여 0건,
+      칩의 런타임 부모가 `.sidebar-profile` 임을 측정 가드로 확인.
+      증적: `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md` +
+      `docs/evidence/ai-conn-badge-sidebar/postdeploy-admin-waiting.png`
 
 ## 20260901T0315-interrupt-preserve-bridge — 중단 보존을 «사용자가 실제로 타는 경로»(브리지)까지 (Minor §12.3 — 비파괴 텍스트 추가)
 
