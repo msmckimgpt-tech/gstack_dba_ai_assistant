@@ -151,6 +151,18 @@ fi
 #: 지목하는 것은 신뢰의 층이 다르다.
 _KNOWN_AI_CLIS="claude codex gemini ollama"
 
+#: AI CLI 가 이 컴퓨터에 있는가. **PATH 밖 표준 설치 위치까지** 본다 — 러너의 `_which_ai`
+#: 와 같은 계약이다(두 곳이 갈리면 설치기와 러너가 서로 다른 답을 낸다).
+#: Windows 판(`bridge_setup.ps1` 의 `Test-AiPresent`)과도 같은 목록을 본다.
+_ai_present() {
+  command -v "$1" >/dev/null 2>&1 && return 0
+  for _d in "$HOME/.local/bin" "$HOME/.npm-global/bin" /usr/local/bin /opt/homebrew/bin; do
+    # `-x` 는 디렉터리에도 참이다 — 같은 이름의 폴더를 실행 파일로 읽지 않도록 `-f` 를 함께 본다.
+    [ -f "$_d/$1" ] && [ -x "$_d/$1" ] && return 0
+  done
+  return 1
+}
+
 AI_ARGS=""
 if [ -n "$BRIDGE_PROBED_AI" ]; then
   _ai_known=0
@@ -158,12 +170,12 @@ if [ -n "$BRIDGE_PROBED_AI" ]; then
     [ "$BRIDGE_PROBED_AI" = "$_k" ] && _ai_known=1 && break
   done
   if [ "$_ai_known" != "1" ]; then
-    drop "BRIDGE_PROBED_AI='$BRIDGE_PROBED_AI' 는 알려진 AI CLI 가 아닙니다($_KNOWN_AI_CLIS). 다른 CLI 는 BRIDGE_ARGS=\"--ai <이름>\" 로 직접 주세요"
-  elif command -v "$BRIDGE_PROBED_AI" >/dev/null 2>&1; then
+    drop "BRIDGE_PROBED_AI='$BRIDGE_PROBED_AI' 는 알려진 AI CLI 가 아닙니다($_KNOWN_AI_CLIS)"
+  elif _ai_present "$BRIDGE_PROBED_AI"; then
     AI_ARGS="--ai $BRIDGE_PROBED_AI"
     say "AI 런타임: $BRIDGE_PROBED_AI (조사값)"
   else
-    drop "BRIDGE_PROBED_AI='$BRIDGE_PROBED_AI' 가 PATH 에 없습니다"
+    drop "BRIDGE_PROBED_AI='$BRIDGE_PROBED_AI' 를 이 컴퓨터에서 찾지 못했습니다"
   fi
 fi
 
@@ -762,8 +774,22 @@ fi
 
 # ── 4. 연결 확인 → 상주 ──────────────────────────────────────────────────────
 say "연결을 확인하는 중…"
+_check_code=0
 BRIDGE_TOKEN="$BRIDGE_TOKEN" "$PY" "$AGENT_PATH" \
-  --base "$BRIDGE_BASE" --ca "$CA_PATH" --check \
+  --base "$BRIDGE_BASE" --ca "$CA_PATH" --check || _check_code=$?
+# ⚠ **연결과 AI 는 다른 축이다** (사용자 제보 2026-09-01). 종전에는 러너가 AI 를 못 찾으면
+#   연결 확인 앞에서 죽었고, 이 자리가 그것을 통째로 「연결 확인에 실패했습니다. 토큰이
+#   만료됐다면…」 으로 옮겼다 — 토큰도 CA 도 네트워크도 멀쩡한 사용자가 그 셋을 뒤졌다.
+#   러너는 이제 exit 4 로 「연결은 됐는데 답할 AI 가 없다」를 따로 말한다.
+if [ "$_check_code" = "4" ]; then
+  die "서버 연결은 정상인데, 이 컴퓨터에서 쓸 수 있는 AI 를 찾지 못했습니다.
+
+  이 브리지는 이 컴퓨터에 설치된 AI 프로그램(Claude Code 등)으로 답합니다.
+  · 아직 설치하지 않았다면 설치한 뒤 이 명령을 다시 실행하세요.
+  · 이미 설치했다면 설치 폴더가 PATH 에 없는 것입니다 — 새 터미널을 열고 다시 실행하세요.
+  (위에 러너가 찾아본 위치가 모두 적혀 있습니다.)"
+fi
+[ "$_check_code" = "0" ] \
   || die "연결 확인에 실패했습니다. 토큰이 만료됐다면 웹에서 [연결 명령 복사] 를 다시 누르세요."
 
 # 이미 떠 있는 러너는 정리한다. 두 개가 같은 계정으로 대기하면 같은 질문을 두 번 집으려다

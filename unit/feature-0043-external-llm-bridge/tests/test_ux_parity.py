@@ -1178,7 +1178,9 @@ def test_runner_only_accepts_models_it_itself_offered():
         "런타임 전환이 신고를 보지 않는다 — 표에 있고 PATH 에 있으면 전환된다")
     # P0-Z4: 표 밖 CLI 도 지원하므로 조건이 "표에 있는가" 에서 "아는 호출법이 있는가" 로
     # 넓어졌다. 넓어진 만큼 **신고 대조와 PATH 실재**가 그대로 남아야 한다.
-    assert "_known or _learned" in handle and "_which(want_runtime)" in handle, (
+    # `_which` → `_which_ai` (2026-09-01): 실재 확인의 범위가 PATH 밖 표준 설치 위치까지
+    # 넓어졌다. 「검증 없이 실행하지 않는다」는 계약은 그대로다.
+    assert "_known or _learned" in handle and "_which_ai(want_runtime)" in handle, (
         "서버가 준 런타임 이름을 검증 없이 실행한다")
     # ollama 는 `build_cmd` 를 타지 않는다 — 그 경로에도 대조가 있어야 한다.
     ask = _func_source(runner, "ask_local_ai")
