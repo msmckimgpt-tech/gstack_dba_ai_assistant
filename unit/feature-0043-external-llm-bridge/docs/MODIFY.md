@@ -2650,3 +2650,18 @@ TASK 체크박스 + TEST Run 행만.
 그래서 (a) ALTER 를 fast path 도 타는 `_ensure_bridge_heartbeat_schema` 로 옮기고, (b) 토큰 행
 `RunnerOs` 를 한 겹 두어 **연결 사건일 때만** 계정에 반영하도록 바꿨다. (b) 는 덤으로 폐기 토큰의
 계정 쓰기(P2-5)까지 막는다 — 1단계가 `_LIVE_TOKEN_PREDICATE` 위에서 돌기 때문이다.
+
+## CHG-20260901T170000-ai-claude-feature-0043-connect-os-postdeploy — POST-DEPLOY 실측 기록
+
+- **날짜**: 2026-09-01
+- **REQ**: REQ-20260901-connect-os-default (같은 요청의 검증 단계)
+- **위험도**: Minor (문서만 — 코드 변경 없음)
+
+`CHG-20260901T160000-…` 의 배포(`b50513e0`) 후 라이브 양방향 실측을 기록한다. 코드 변경은 없고
+`TASK.md` 체크박스 · `TEST.md` Run 행 · `REPORT.md` 현재 상태 · 증적 fragment 1건이 대상이다.
+
+실측 요지: ① `last_os=""` 면 종전 추측으로 폴백(회귀 없음) ② WSL 러너를 붙이면 `posix` 가 되고
+**브라우저가 `Win32` 인 채로** 두 화면 모두 macOS·Linux 를 먼저 보인다 ③ 실 Windows 파이썬으로
+PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` 컬럼이 **기존 운영 DB 에 실제로
+생겼다**는 증거이기도 하다 — codex P1-1 의 수정이 라이브에서 성립했다는 뜻이고, 안 생겼다면 값은
+영원히 `""` 로 남아 «테스트는 전통과하는데 기능은 없는» 상태가 됐을 것이다.
