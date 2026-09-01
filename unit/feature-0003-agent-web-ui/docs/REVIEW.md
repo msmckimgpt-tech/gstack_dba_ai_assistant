@@ -6661,3 +6661,23 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - 기록된 사실의 근거: `alembic_version=0058_glossary_term_tier` · 제품 목록 239건 중 상속 7건 ·
   폼 select 3선택지 · 큐 필터 6선택지 · 캡처 3장(`artifacts/pb0008-glossary-term-tier/`) ·
   배포 체크리스트 [1][2][1b][2b][5] 통과(`no upstreams available` 0건).
+
+## REV-20260901T160000-kb-external-reach [CODEX:kb-external-reach] — 지식베이스 외부 AI 도달 범위 (web 거주분)
+
+리뷰 정본은 `unit/feature-0002-agent-core/docs/REVIEW.md` REV-20260901T160000-kb-external-reach
+(cross-cut cycle — 코어·web 을 한 번에 판정). Cross-ref: CHG-20260901T160000-kb-external-reach
+(양 feature) · ANCHOR 무충돌.
+
+web 거주분에 한정한 요점:
+
+- **[BLOCKING·해소] product scope 를 주변 상태에서 읽으면 계정 경계를 넘는다.** MCP 는 계정
+  결속 도구다 — `cfg.get_active_product_scope()` 는 **서버 프로세스의** 활성 제품이라 A 계정
+  질문에 B 제품 사전을 실을 수 있다. task 의 ProductId 에서만 해석하도록 봉인하고
+  (`_bridge_product_scope_key`), 해석 불가 시 **빈 문자열**(= 제품 층 미주입)로 접었다.
+- **[MINOR·해소] 헬퍼를 `@router.post` 데코레이터와 함수 사이에 끼워 SyntaxError.** 데코레이터
+  아래로 이동. (즉시 발현이라 무해했지만, 편집 위치가 문법을 바꾸는 지점이다.)
+- **도구 시그니처 불변이 설계 제약이었다.** `get_task_context` 의 이름·인자를 그대로 두고
+  **반환 본문만** 넓혔기 때문에 러너(개인 AI) 재배포 없이 도달한다. 새 도구를 만들었다면
+  러너가 그 도구를 부르도록 갱신될 때까지 아무 효과가 없었을 것이다.
+
+Verdict: PASS (정본 판정에 종속).

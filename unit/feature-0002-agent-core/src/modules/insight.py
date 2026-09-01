@@ -651,6 +651,69 @@ _AUTO_BLOCKED_STATUSES = frozenset({"ineligible", "cooldown", "busy", "disabled"
 _AUTO_INFO_STATUSES = frozenset({"baseline", "absorbed_only"})
 
 
+def _collect_priority_stats(scope_key, targets, report) -> int:
+    """선정된 우선순위 테이블의 **L0 통계 증거**를 수집한다. 반환: 시도한 테이블 수.
+
+    LLM 을 부르지 않는다 — 운영 DB 에서 카탈로그·표본 통계만 읽는다. 수집 깊이·주기·시간창
+    판정과 운영 DB 연결의 `ds` 자원 예산 게이트는 전부 `metadata_stats.ensure_stats` 안에
+    있으므로 여기서 다시 만들지 않는다(안전장치가 두 벌이 되면 서로를 모른다).
+
+    ## 왜 별 스케줄러를 두지 않는가
+
+    `metadata_stats` 의 원 설계는 「분석되는 테이블만 본다 — 쓰이지 않을 통계를 미리 모으는
+    낭비가 없다」였다. 그 원칙을 지키려면 **분석 대상 선정**에 붙어야 하는데, 그 선정
+    (`analysis_planner.select_priority_targets`)은 LLM 무관이고 지금도 정상 동작한다. 게이트에
+    막힌 것은 그 뒤의 *분석*뿐이다. 그래서 선정에 붙이고 분석에는 붙이지 않는다.
+
+    ## 실패
+
+    테이블 단위 fail-soft. 한 테이블의 수집 실패가 나머지·상위 사이클을 막지 않는다
+    (`ensure_stats` 자체가 이미 모든 예외를 삼키지만, 연결·해소 단계도 여기서 감싼다).
+    """
+    attempted = 0
+    try:
+        from . import metadata_stats as _ms
+        if not _ms.enabled():
+            return 0
+        from . import node_analysis as _na
+        ds = _na._resolve_datasource_by_scope(scope_key)
+        if not ds:
+            return 0
+        from shared import db as _db
+        # RW 연결 — `collect_table` 이 `metadata_*_stats` 에 upsert 한다(RO 로는 실패).
+        c = _db._pg_connect(autocommit=True)
+        if c is None:
+            return 0
+        try:
+            for node_key in targets:
+                # node_key = `<datasource>:<eff_schema>.<table>` (planner 반환 규약).
+                try:
+                    _scope, _rest = str(node_key).split(":", 1)
+                    _schema, _table = _rest.split(".", 1)
+                except ValueError:
+                    continue
+                if not _schema or not _table:
+                    continue
+                _ms.ensure_stats(ds, c, _scope, _schema, _table)
+                attempted += 1
+        finally:
+            try:
+                c.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        logging.getLogger("insight").debug(
+            "priority_stats_failed scope=%s err=%r", scope_key, exc)
+    finally:
+        # 계측은 **finally 에서** 한다 — 중간에 터지면 그때까지 시도한 수도 잃는 게 종전이었고,
+        # 그러면 「부분 실패」가 「아예 안 돌았다」로 보인다(§16.7 G9 — 계측이 사실보다 어두우면
+        # 재발 신호를 놓친다). 이 값이 0 으로 굳으면 증거층이 다시 멈춘 것이다.
+        if attempted and isinstance(report, dict):
+            report["stats_collect_attempted"] = int(
+                report.get("stats_collect_attempted", 0)) + attempted
+    return attempted
+
+
 def _seed_coverage_targets(scope_key, schema_key, schema_label, report) -> None:
     """중요도 상위 미분석 테이블을 자동 시드(feature-0035 ITEM-11). 전 경로 예외 흡수.
 
@@ -694,6 +757,19 @@ def _seed_coverage_targets(scope_key, schema_key, schema_label, report) -> None:
                 pass
         if not targets:
             return
+        # ⚠ **증거 수집을 큐잉보다 먼저, 그리고 큐잉 성패와 무관하게** 한다 (2026-09-01).
+        #
+        #   L0 통계 증거층(feature-0031)은 설계상 LLM 무관이다 — 운영 DB 에서 "통계만" 읽는다.
+        #   그런데 유일한 호출부가 `node_analysis._build_payload` 였고, 그 앞의
+        #   `enqueue_change_analysis` 가 feature-0043 게이트로 early-return 하면서 **큐에 잡이
+        #   안 들어가 → 분석이 안 돌고 → 증거 수집도 통째로 멈췄다.** 라이브 실측(2026-09-01):
+        #   `metadata_table_stats` 243행 · `metadata_column_stats` 2,252행이 전환일(08-26) 이후
+        #   신규 0. 대조군인 `table_relationships`(LLM 무관 + 직접 호출)는 같은 기간 719건 갱신.
+        #
+        #   즉 LLM 과 무관한 기능이 **호출 위치 하나 때문에** LLM 게이트에 딸려 죽은 것이다.
+        #   여기서 부르면 게이트와 무관하게 증거가 쌓이고, 게이트가 열리는 날 분석이 곧바로
+        #   증거 위에서 시작한다(§16.7 G8-a — 결정의 적용면은 호출 경로 전체다).
+        _collect_priority_stats(scope_key, targets, report)
         from . import node_analysis as _na
         rep = _na.enqueue_change_analysis(
             scope_key, schema_key, targets, reason="coverage_priority",
@@ -3059,6 +3135,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         # (cycle 내: 첫 perm_failed 뒤 같은 scope 의 나머지 DB / cycle 간: cooldown 중 datasource 통째 skip).
         # db_failed_perm(실제 시도해 실패)과 분리 — 이 값이 클수록 반복 재연결·I/O 를 성공적으로 억제한 것.
         "db_skipped_auth": 0,
+        # L0 통계 증거 수집 시도 수(2026-09-01). **0 으로 굳으면 증거층이 다시 멈춘 것**이다 —
+        # 이 카운터가 없던 동안 `metadata_*_stats` 는 전환일 이후 신규 0 이었는데 사이클 payload
+        # 어디에도 그 사실이 드러나지 않았다(§16.7 G9 — 보지 않는 면은 조용히 죽는다).
+        "stats_collect_attempted": 0,
     }
     timing = _timing_breakdown_template(
         cycle_run_id, AGENT_INSIGHT_WORKER_CONVERSATION_ID, "__insight_worker__"

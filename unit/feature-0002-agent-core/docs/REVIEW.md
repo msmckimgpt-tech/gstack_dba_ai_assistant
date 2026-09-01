@@ -2753,3 +2753,123 @@ surge 0 · caddy blip 0 · 대화 스모크 PASS · 배포본 런타임 심볼·
 
 PASS — Blocking 2건 in-cycle 해소, cross-domain 1건 해소. `make test` rc=0 · ruff clean ·
 뮤테이션 4/4 KILL. 보안 표면(권한 코드·인가 경계·신규 라우트) 변경 0.
+
+## REV-20260901T160000-kb-external-reach [SKIPPED:codex-usage-limit] — 지식베이스 외부 AI 도달 범위 (F1·F2·F4·F5)
+
+- Related TASK: feature-0002-agent-core (`20260901T160000-kb-external-reach`) + feature-0003 거주분
+- Trigger: schema 무변경이나 계정/제품 **경계**와 외부 AI 컨텍스트 주입이 걸려 backend·security 렌즈.
+  §18.8.2 1번 「제약 없는 채널 우선」에 따라 **codex 를 먼저 시도**했다 — 세션 도구 제약
+  (AgentTool 미요청)에 걸리지 않는 독립 채널이기 때문이다. 결과 `ERROR: You've hit your usage
+  limit ... try again at 3:44 PM`(2026-09-01 14:35 KST 시점, exit 0 이라 조용히 지나갈 뻔했다).
+  저장소 선례(`REV-20260831T110000 [SKIPPED:codex-timeout] + 자체 적대 3렌즈`)에 맞춰 **자체
+  적대 검증 + 뮤테이션 실증**으로 수행. ⚠ 독립 채널이 아니므로 **내가 놓친 것을 내가 놓친 채로**
+  둘 수 있다 — 아래 4·5번 항목은 그 한계를 명시한다.
+- Timestamp: 2026-09-01T16:00:00+09:00
+- Verdict: PASS (Blocking 2 + Major 1 + Minor 3 전건 in-cycle 해소)
+
+**Scope**: feature-0002 `modules/{insight,kb_glossary,kb_metadata,sample_queries}.py` ·
+feature-0003 `routers/{ai_tools,admin_metadata}.py` · `static/admin/metadata.js` · 테스트 4파일.
+Cross-ref: CHG-20260901T160000-kb-external-reach(양 feature) · FUNCTION `## 외부 AI 도달 범위` ·
+선행 cycle REV-20260901T120000-glossary-term-tier.
+
+### 1. 뮤테이션 실증 (§16.7 G11-b) — 5종 전건 KILL
+
+뮤턴트는 **적용 여부를 파일 비교로 확인한 뒤** 실행했다(적용 실패를 KILL 로 오독하지 않기 위해).
+테스트는 정본을 쓰고 코드만 뮤턴트로 바꾼다.
+
+| # | 뮤턴트 | 판정 | 죽인 테스트 |
+|---|---|---|---|
+| M1 | `get_task_context` 에서 `_kb_grounding_sections` **호출 삭제** | KILL | `test_handler_actually_calls_kb_grounding` |
+| M2 | 관계 층을 product 축 scope 로 조회 | KILL | `test_all_curated_layers_are_included_with_correct_axis` |
+| M3 | `_seed_coverage_targets` 에서 `_collect_priority_stats` **호출 삭제** | KILL | `test_seed_path_collects_stats_even_when_enqueue_is_gated` |
+| M4 | ENUM 축 상속 노출 제거 | KILL | `test_enum_list_exposes_inherited_global` |
+| M5* | ENUM 판정 이력을 자기 scope 로 **완전** 축소 | KILL | `test_enum_settled_verdict_crosses_scope` 외 3 |
+| M6 | 제품 해소 **실패**를 「제품 없음」과 동일 취급(전역으로 접기) | KILL | `test_absorb_aborts_when_product_resolution_fails` |
+| M7 | 상속분 조회 실패를 빈 목록으로 접기 | KILL | `test_inherited_load_failure_is_reported_not_folded_to_empty` |
+| M8 | 안내 분기를 `not sections and not notes` 로 원복 | KILL | `test_guidance_survives_alongside_failure_notes` |
+| M9 | 계측을 `finally` → 성공 경로로 되돌림 | KILL | `test_partial_progress_is_counted_when_collection_blows_up` |
+| M10 | scope 목록 dedup 제거 | KILL | `test_settled_enum_helper_dedupes_scope_list` |
+| M11 | 제품 축 3층을 ds scope 로 조회 | KILL | `test_all_curated_layers_are_included_with_correct_axis` |
+| M5′ | `_settled_enum_status` 내부 전역 보장선 제거 | KILL | `test_settled_enum_helper_self_defends_when_caller_omits_global` |
+
+**등가 뮤턴트 2건(정직)**: 「호출부가 `GLOBAL_SCOPE` 를 안 넘김」과 「dedup 이 전역을 걸러냄」은
+각각 단독으로는 **관측 가능한 동작을 바꾸지 않는다** — 헬퍼 안의 보장선이 되메우기 때문이다.
+처음엔 이걸 테스트 구멍으로 오독했다. 실제 계약(「조회는 항상 전역을 본다」)은 두 지점을 함께
+지운 M5* 가 검사하고, 보장선 자체는 헬퍼를 직접 부르는 M5′ 가 검사한다. **뮤턴트가 살아남았다고
+곧바로 테스트를 늘리면 안 된다 — 먼저 그 뮤턴트가 동작을 바꾸는지 확인해야 한다.**
+
+### 2. Findings
+
+- **[BLOCKING·해소] M1·M3 최초 생존 — 헬퍼만 보고 배선을 안 봤다.** 첫 뮤테이션 라운드에서
+  M1·M3 이 살아남았다. 테스트가 `_kb_grounding_sections` 와 `_collect_priority_stats` 를
+  **직접** 호출해 검사했기 때문이다 — 헬퍼는 옳은데 **아무도 부르지 않는 상태**를 통과시킨다.
+  그리고 그 상태가 바로 이 cycle 이 고치는 결함(F1·F2) 그 자체다.
+  **Action**: 진입점(`get_task_context` 핸들러 / `_seed_coverage_targets`)을 실제로 구동하는
+  배선 테스트 3건 추가. `helper-wiring-vs-helper-correctness` 패턴의 재발 — 「헬퍼 정확성」과
+  「진입점이 그 헬퍼를 쓰는가」는 서로를 대신하지 못한다.
+- **[BLOCKING·해소] 기존 ENUM 테스트 2건 실패 — 로컬 pytest 는 초록.** `_settled_enum_status`
+  가 반환을 `status` → `(status, scope_key)` 로 넓히면서 `test_kb_enum_feedback.py` 의
+  1-tuple 스크립트가 IndexError. **컨테이너 `make test` 가 잡았고 내 대상 테스트만 돌린
+  로컬 실행은 못 잡았다** — 게이트가 실효했다는 증거(cycle 1 의 `test_bridge_agent_sync` 와
+  같은 형태의 두 번째 사례).
+- **[BLOCKING·해소] 리팩터링이 실패 의미론을 조용히 바꿨다.** `_absorb_bridge_glossary_terms`
+  안의 제품 조회를 `_bridge_product_scope_key` 로 합치면서, 종전 「조회 실패 → 흡수 중단」이
+  「조회 실패 → `""` → **전역 검토 큐**」로 바뀌었다. **Failure scenario**: WebProducts 조회가
+  일시 실패하면 제품 A 전용 용어가 전역 큐로 들어간다 — 전역 사전은 모든 제품 프롬프트에
+  주입되므로 blast radius 가 제품의 N배이고, 이건 직전 cycle 의 AC-...-term-tier-5 가 막으려던
+  방향 그 자체다. **Action**: 반환을 3값으로 갈랐다 — `"product.x"`(해소) / `""`(제품 없음) /
+  `None`(해소 실패). 읽기 축은 둘을 같게(제품 층 비움), 쓰기 축은 `None` 이면 중단.
+  ⚠ 이건 **중복 제거가 결함을 만든** 사례다. 「두 벌이 갈린다」를 고치려다 두 호출자의 서로
+  다른 실패 요구를 한 벌로 뭉갰다(`reuse-inherits-defects` 의 역방향).
+- **[MAJOR·해소] 상속분 조회 실패를 빈 목록으로 접었다.** `_load_inherited` 가 실패와
+  「전역에 없음」을 같은 `[]` 로 돌려줬다. **Failure scenario**: replica 가 흔들리면 콘솔이
+  「전역에 아무것도 없다」로 보이고, 관리자는 같은 항목을 제품 scope 에 다시 등록한다 —
+  **이 cycle 이 여는 전역 티어가 그 경로로 다시 안 보이게 된다.** **Action**: `(rows, failed)`
+  로 갈라 `inherited_error` 로 응답에 싣고, 콘솔이 목록 위에 경고를 띄운다(빈 상태 분기보다
+  **앞**이라 0건일 때도 사유가 보인다).
+- **[MINOR·해소] 행동 안내가 사유에 밀려 사라졌다.** 최종 분기가 `not sections and not notes`
+  라, 층 하나가 실패하거나 제품이 없어 notes 가 차는 순간 「`focus` 로 다시 부르라」가 통째로
+  빠졌다 — 정작 그 안내가 가장 필요한 상황이다. `not sections` 로 바꿔 **사유와 안내를 둘 다**
+  준다.
+- **[MINOR·해소] 계측이 부분 진행을 잃었다.** `_collect_priority_stats` 가 성공 경로에서만
+  `report` 를 갱신해, 중간에 터지면 그때까지 수집한 수가 사라졌다 — 「부분 실패」가 「아예 안
+  돌았다」로 보이면 이 cycle 이 심은 재발 신호(0 으로 굳음)가 거짓 경보를 낸다. `finally` 로 이동.
+- **[MINOR·해소] 연결 획득이 `try` 밖에 있었다.** `_kb_grounding_sections` 의 `_pg_connect_ro()`
+  가 `finally` 를 가진 블록 **밖**이었다. 지금 그 사이엔 리터럴만 있어 실제 누수는 없지만,
+  이 저장소가 4 cycle 반복한 형태라 패턴 자체를 없앴다(`resource-acquire-outside-try-repeat`).
+- **[MINOR·해소] scope 목록 중복.** `auto_promote_or_queue_enum` 이 `[sk, GLOBAL_SCOPE]` 를
+  넘기는데 `sk` 가 이미 `common` 이면 `= ANY(['common','common'])`. 결과는 같지만 로그·계획이
+  지저분하다. 순서 보존 dedup 추가 + 테스트로 봉인.
+- **[MINOR·해소] 번들 무제한 주입.** 5개 층을 더하면 컨텍스트가 얼마든 커진다.
+  `_CTX_BUNDLE_MAX_CHARS = 24_000` 상한 + **잘렸다는 명시 고지**(조용한 절단 금지 §16.7 G9-b).
+
+### 3. Challenge to current spec
+
+- **9층 중 5층만 옮겼다(의도·정직)**. `_build_knowledge_context` 의 나머지(계정 인사이트·
+  DB 규칙·통계 요약)는 이번 범위 밖이다. 계정 인사이트는 **계정 경계**를 넘길 위험이 있어
+  MCP 토큰의 account 결속과 함께 따로 설계해야 하고, 통계 요약은 F2 가 되살린 수집이 라이브에
+  쌓인 뒤라야 실을 내용이 생긴다. 지금 옮기면 빈 섹션만 늘어난다.
+- **F5 는 예방적이다(관측 사고 0건)**. 위 MODIFY 에 근거를 적었다 — 축 대칭이 이유고, 비용은
+  scope 목록 1개 확장이다.
+- **미검증(정직)**: 외부 AI 가 **실제로 그 층들을 읽고 답이 좋아지는지**는 코드로 증명할 수
+  없다. 이 cycle 이 증명하는 것은 「번들에 실린다」까지이고, 답변 품질 변화는 배포 후 실사용
+  대화에서 관측한다. F3(그래프 유령 정점)·F6(산출 없는 스캔)은 별 cycle 로 남긴다.
+
+### 4. 이 리뷰가 **증명하지 못하는 것** (자체 검증의 한계)
+
+독립 채널(codex)이 막힌 채 수행했으므로, 아래는 「확인했다」가 아니라 「확인하지 못했다」로 읽어야 한다.
+
+- **내 설계 전제 자체의 오류**. 위 6건은 전부 「내가 세운 계약 대비 코드가 어긋난 곳」이다.
+  계약 자체가 틀렸다면 같은 눈으로는 안 보인다.
+- **라이브 성능**. 층 5개 추가로 `get_task_context` 의 쿼리 수가 늘었다(요청당 RO 연결 1 + 층당
+  조회). 대역 테스트는 이걸 재지 않는다 — 배포 후 응답 시간으로 관측한다.
+- **외부 AI 의 실제 소비**. 「번들에 실린다」까지만 증명한다(§3 참조).
+
+codex 한도는 15:44 KST 에 풀린다. 이 cycle 을 막아 세우진 않되, **다음 cycle 첫 작업으로 이
+diff 를 codex 에 다시 태우는 것**을 후속에 남긴다.
+
+### 5. Verdict
+
+PASS — Blocking 2 · Major 1 · Minor 4 전건 in-cycle 해소. 컨테이너 `make test` **rc=0 · FAILED 0 ·
+6,672 tests** · ruff clean · 뮤테이션 **12종 KILL + 등가 2종 식별**. 권한 코드·인가 경계·신규
+라우트·스키마 변경 0.

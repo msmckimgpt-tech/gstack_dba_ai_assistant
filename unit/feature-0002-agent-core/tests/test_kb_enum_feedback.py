@@ -93,7 +93,8 @@ def test_enum_auto_promote_low_confidence_queues_pending():
 
 def test_enum_auto_promote_skips_rejected():
     # poisoning 방어 회귀: 과거 거부된 코드가 고신뢰로 재추론돼도 enum_dictionary 재유입 금지.
-    conn = _ScriptedConn(fetchone_queue=[("rejected",)], rowcount=1)
+    # 2026-09-01: 판정 조회가 `(status, scope_key)` 를 돌려준다(어느 scope 의 판정인지 로그에 남긴다).
+    conn = _ScriptedConn(fetchone_queue=[("rejected", "common")], rowcount=1)
     res = G.auto_promote_or_queue_enum(conn, "common", "", "orders", "status", "X", "재유입",
                                        confidence=0.99, threshold=0.9)
     assert res == "skipped"
@@ -103,12 +104,31 @@ def test_enum_auto_promote_skips_rejected():
 
 
 def test_enum_auto_promote_skips_already_promoted():
-    conn = _ScriptedConn(fetchone_queue=[("auto_promoted",)], rowcount=1)
+    conn = _ScriptedConn(fetchone_queue=[("auto_promoted", "common")], rowcount=1)
     res = G.auto_promote_or_queue_enum(conn, "common", "", "orders", "status", "P", "결제대기",
                                        confidence=0.99, threshold=0.9)
     assert res == "skipped"
     joined = " ".join(sql for (sql, _) in conn.captured)
     assert "INSERT INTO enum_dictionary" not in joined
+
+
+def test_enum_auto_promote_honors_verdict_from_another_scope():
+    """제품 A 에서 거부된 코드가 제품 B 의 자율수집으로 되살아나지 않는다.
+
+    ⚠ `_ScriptedConn` 은 SQL 과 무관하게 큐의 다음 값을 돌려준다 — 그래서 "skipped 가 나왔다"
+      만으로는 **교차 scope 를 실제로 조회했는지** 증명되지 않는다(scope 를 좁힌 뮤턴트도 통과).
+      조회에 실린 scope 목록 자체를 검사한다.
+    """
+    conn = _ScriptedConn(fetchone_queue=[("rejected", "product.a")], rowcount=1)
+    res = G.auto_promote_or_queue_enum(conn, "product.b", "dbSales", "orders", "status", "X",
+                                       "재유입", confidence=0.99, threshold=0.9)
+    assert res == "skipped"
+    sql, params = conn.captured[0]
+    assert "FROM enum_feedback" in sql and "scope_key = ANY(" in sql
+    scopes = params[0]
+    assert "product.b" in scopes and G.GLOBAL_SCOPE in scopes, (
+        f"판정 조회가 자기 scope 에 갇혀 있다: {scopes}")
+    assert len(scopes) == len(set(scopes)), f"scope 목록에 중복이 있다: {scopes}"
 
 
 def test_enum_auto_promote_skips_incomplete_key():

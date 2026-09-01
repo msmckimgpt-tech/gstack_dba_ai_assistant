@@ -2922,7 +2922,7 @@ LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
 
 ## CHG-20260901T120000-glossary-term-tier — 용어 통용범위 축 + 브리지 자율수집 복원
 
-- **alembic 0057** `20260901_0057_glossary_term_tier.py` (신규): `kb_glossary.term_tier` ·
+- **alembic 0058** `20260901_0058_glossary_term_tier.py` (신규; 최초 0057 로 작성했다가 병렬 세션의 `0057_redteam_review_source` 선머지로 §13.1 재번호): `kb_glossary.term_tier` ·
   `glossary_feedback.term_tier`(각 `varchar(16)` NOT NULL DEFAULT 'product' + CHECK 3값) ·
   `glossary_feedback.status` CHECK 에 `skipped_general` 추가 · 인덱스 3(`ix_kb_glossary_tier` ·
   `ix_glossary_feedback_tier` · `ix_kb_glossary_term_norm` 함수 인덱스). downgrade 는
@@ -3010,5 +3010,58 @@ Task-Cycle: feature-0002-agent-core
   자가 검증 축 `run_self_review`) 양쪽 병존. 해소 후 확인 — 용어축 9 심볼 · 검증축 6 심볼 ·
   `handle_one` 의 `split_glossary` 호출부 생존 · AST PASS · **두 사본 sha256 동치**.
 - 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T160000-kb-external-reach — 지식베이스가 외부 AI 프롬프트에 실린다 (F1·F2·F4·F5)
+
+term_tier cycle 이 「무엇을 저장할지」를 고쳤다면, 이 cycle 은 **「저장한 것이 실제로 읽히는지」**
+를 고친다. 설계·AC 정본은 같은 feature 의 `docs/FUNCTION.md`
+`## 외부 AI 도달 범위 — 지식베이스가 실제로 프롬프트에 실린다`.
+
+**feature-0002 거주분** (web 측은 `unit/feature-0003-agent-web-ui/docs/MODIFY.md` 동명 CHG):
+
+- **F2 — L0 통계 수집을 LLM 게이트 밖으로**. `modules/insight.py` 에 `_collect_priority_stats
+  (scope_key, targets, report) -> int` 신설: planner 가 고른 `<ds>:<schema>.<table>` 키를 파싱해
+  `metadata_stats.ensure_stats` 를 호출한다. `_seed_coverage_targets` 에서 **게이트된
+  `enqueue_change_analysis` 보다 먼저** 부른다 — 순서가 계약이다. 규약 이탈 키는 건너뛰고,
+  datasource 미해석·knob off·수집 예외는 모두 fail-soft(사이클이 본체, 증거는 보조물).
+  `run_insight_cycle` 의 scan_report 템플릿에 `"stats_collect_attempted": 0` 초기화.
+- **F1 지원 — 전역 상속 로더**(web 라우터와 MCP 번들이 함께 쓴다):
+  - `modules/kb_glossary.py`: `list_global_enum_for_scope(conn, scope_key)` — `common` 에만 있고
+    해당 scope 에 (schema,table,column,code) 로 없는 ENUM 행.
+  - `modules/kb_metadata.py`: `GLOBAL_SCOPE = "common"` 상수 · `list_global_table_desc_for_scope` ·
+    `list_global_column_desc_for_scope`.
+  - `modules/sample_queries.py`: `GLOBAL_SCOPE` · `list_global_samples_for_scope`.
+  세 모듈 모두 용어 축의 `list_global_glossary_for_scope` 와 **같은 반환 형태**를 지킨다 —
+  갈리면 호출부가 축마다 다른 분기를 갖게 된다.
+- **F5 — ENUM 판정 이력 cross-scope**. `_settled_enum_status(conn, scopes, schema, table,
+  column, code) -> (status, scope_key) | None` 신설, `auto_promote_or_queue_enum` 이 종전
+  정확일치 `_enum_feedback_status` 대신 이것을 쓴다. scope 목록은 **중복 제거**한다(호출부가
+  `sk == GLOBAL_SCOPE` 를 넘기면 `['common','common']` 이 된다).
+  ⚠ **지금 라이브에 교차 scope ENUM 중복은 0건**이다 — 관측된 사고를 고치는 게 아니라 용어
+  축에서 실제로 터진 구멍의 같은 형태를 미리 닫는다. 두 축이 같은 코드 패턴을 공유하는데
+  한쪽만 고치면 다음 사람이 「여긴 왜 다르지」에서 시작한다.
+- **계약 확장에 따른 기존 테스트 갱신**: `_settled_enum_status` 가 `(status, scope_key)` 를
+  돌려주므로 `test_kb_enum_feedback.py` 의 스크립트 행을 2-tuple 로 갱신. 동시에
+  `test_enum_auto_promote_honors_verdict_from_another_scope` 를 추가해 **조회에 실린 scope
+  목록 자체**를 검사한다(`_ScriptedConn` 은 SQL 무관하게 큐를 돌려주므로 "skipped 가 나왔다"
+  만으로는 scope 를 좁힌 뮤턴트가 통과한다 — `self-fulfilling-mutation-testing` 교훈).
+- **문서 stale 정정**: cycle 1 이 §13.1 재번호로 `0058` 이 됐는데 docs 4곳이 `0057` 로 남아
+  있었다(FUNCTION 2 · TASK 1 · REPORT 1 · MODIFY 1). 마이그레이션 번호는 운영 대조 키라
+  틀리면 「어느 리비전이 라이브인지」 확인이 어긋난다.
+
+**비변경**: 권한 코드·인가 경계·신규 라우트 0 · 스키마/마이그레이션 0(이 cycle 은 DDL 없음) ·
+LLM 게이트(`shared/llm_gate.py`) 자체 0 · 자율수집 임계값 0.
+
+- **자체 적대 리뷰 시정(코어 거주분)**: `_collect_priority_stats` 의 계측을 `finally` 로 옮겼다
+  — 성공 경로에만 두면 중간에 터졌을 때 그때까지 시도한 수가 사라져 「부분 실패」가 「아예 안
+  돌았다」로 보이고, 이 cycle 이 심은 재발 신호가 거짓 경보를 낸다.
+  `_settled_enum_status` 의 전역 보장선(`if GLOBAL_SCOPE not in scope_list`)은 유일 호출부가
+  이미 전역을 넘겨 **등가 뮤턴트**였다 — 헬퍼를 직접 부르는 테스트를 추가해 그 줄이 방어로서
+  의미를 갖게 했다(두 번째 호출부가 생기는 날 조용히 자기 scope 에 갇히는 것을 막는다).
+
+**검증**: 컨테이너 `make test` **rc=0 · FAILED 0 · 6,672 tests** · ruff clean · 뮤테이션
+**12종 KILL + 등가 2종 식별**(배선 뮤턴트 3종 포함 — 아래 REVIEW 참조).
 
 Task-Cycle: feature-0002-agent-core

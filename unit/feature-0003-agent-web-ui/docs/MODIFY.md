@@ -5205,3 +5205,53 @@ Run 추가. **런타임 코드 변경 0** — 배포본 `40340f53` 에서 실측
 떠 변수가 넘어가지 않는다). 아는 함정을 호출을 나눠 쓰며 그대로 밟았다.
 
 - 증적: `docs/test-runs.d/TASK-20260901T110000-aiops-external-realign-postdeploy.md`
+
+## CHG-20260901T160000-kb-external-reach — 지식베이스가 외부 AI 프롬프트에 실린다 (web 거주분)
+
+설계·AC 정본은 `unit/feature-0002-agent-core/docs/FUNCTION.md` 의
+`## 외부 AI 도달 범위 — 지식베이스가 실제로 프롬프트에 실린다`. 코어 거주분은 같은 feature 의
+`docs/MODIFY.md` 동명 CHG.
+
+- **F1 — `routers/ai_tools.py` `get_task_context` 확장**(사용자 선택: 새 MCP 도구 신설 아닌
+  기존 도구 확장 — 러너 갱신 없이 즉시 도달한다).
+  - `_bridge_product_scope_key(conn, product_id) -> str`: **그 task 의 ProductId 로** product
+    scope 를 해석한다. 해석 불가면 `""` 를 돌려주고 **주변 상태
+    (`cfg.get_active_product_scope()`)를 절대 읽지 않는다** — 읽으면 A 계정 질문에 B 제품 사전이
+    실린다. `_absorb_bridge_glossary_terms` 의 중복 로직도 이 헬퍼로 합쳤다.
+  - `_kb_grounding_sections(question, product_scope, ds_scopes, notes) -> list`: 용어사전 ·
+    ENUM · 테이블/컬럼 설명 · 샘플 쿼리(= **product 축**) + 관계(= **datasource 축**, 첫 ds
+    하나) 를 조립한다. `_layer(label, module, func, scope)` 로 `importlib` lazy import,
+    **연결 1개 공유**, 층별 fail-soft + 실패 시 **층 이름을 notes 에 남긴다**.
+  - 번들 상한 `_CTX_BUNDLE_MAX_CHARS = 24_000` + 절단 시 **명시 고지**.
+- **F4 — `routers/admin_metadata.py` 전역 상속 노출 3축 확대**. `_with_inherited(rows,
+  inherited_rows, to_item)` · `_load_inherited(pg, scope_key, loader, label)` 헬퍼 신설 후
+  ENUM · 테이블 설명 · 컬럼 설명 · 샘플 쿼리 목록 엔드포인트에 배선 — 각 항목에 `inherited`
+  플래그와 응답에 `inherited_count`. 종전엔 **용어 축에만** 있었고, 그래서 다른 축은 전역에
+  있어도 콘솔에서 「없다」로 보여 제품마다 다시 등록됐다. ⚠ 라이브의 제품↔제품 중복(컬럼
+  833행 중 826행 텍스트 동일)은 이 변경으로 **정리되지 않는다** — 재생산을 막을 뿐이다.
+- **F4 프론트 — `static/admin/metadata.js`**: 상속 배지 렌더가 `sub === "glossary"` 블록
+  **안**에 있었다. 공통 블록으로 끌어내 4개 하위탭 모두에 적용. UI 는 그대로고 조건만 넓혔다.
+
+- **자체 적대 리뷰 시정(web 거주분)** — 전부 「조용한 접힘」을 갈라낸 것:
+  - `_bridge_product_scope_key` 반환을 **3값**으로: `"product.x"`(해소) / `""`(제품 없음) /
+    `None`(해소 **실패**). 종전 리팩터링이 `_absorb_bridge_glossary_terms` 의 「조회 실패 →
+    중단」을 「실패 → 전역 검토 큐」로 바꿔 놨었다 — 일시적 DB 오류가 제품 전용 용어를 모든
+    제품 프롬프트에 주입되는 전역 사전 후보로 밀어 넣는 경로다. 읽기 축은 두 경우를 같게
+    (제품 층 비움), 쓰기 축은 `None` 이면 중단.
+  - `_load_inherited` 반환을 `(rows, failed)` 로 갈라 `inherited_error` 를 4개 목록 응답에
+    싣고, `metadata.js` 가 목록 **위**(빈 상태 분기보다 앞)에 경고를 띄운다. 실패를 빈 목록으로
+    접으면 「전역에 없다」로 읽혀 이 cycle 이 고치는 중복이 그대로 재생산된다.
+  - 최종 안내 분기를 `not sections and not notes` → `not sections` 로. 사유(notes)가 있다는
+    이유로 행동 안내가 사라지면, 정작 안내가 가장 필요한 상황에서 빠진다.
+  - `_kb_grounding_sections` 의 RO 연결 획득을 `finally` 를 가진 `try` **안**으로 이동
+    (`resource-acquire-outside-try-repeat` 패턴 제거 — 현재 실누수는 없었다).
+
+**비변경**: 권한 코드·인가 경계·신규 라우트 0 · MCP 도구 **이름·인자 시그니처 0**(반환 본문만
+확장 — 러너 재배포 불필요) · 스키마 0. 관리 API 는 응답에 `inherited_error` **가산**만 (기존
+필드·상태코드 불변).
+
+**검증**: 컨테이너 `make test` rc=0 · FAILED 0 · 6,672 tests · ruff clean · `node --check` PASS ·
+뮤테이션 12종 KILL. 상세는
+`unit/feature-0002-agent-core/docs/REVIEW.md` REV-20260901T160000-kb-external-reach.
+
+Task-Cycle: feature-0003-agent-web-ui
