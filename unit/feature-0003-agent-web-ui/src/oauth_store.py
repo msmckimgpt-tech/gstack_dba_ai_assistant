@@ -931,6 +931,104 @@ def count_live_runners(cur, feature: str | None = None,
             "with_feature": int(row[2] or 0)}
 
 
+def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> list[dict]:
+    """관제용 **러너 명부** — 살아 있는 토큰을 가진 계정별로 한 줄 (TASK-20260901T110000).
+
+    ## 왜 집계(`count_live_runners`)로 부족한가
+
+    수만 보면 "러너 3대" 는 알아도 **누가 왜 못 받는지**는 알 수 없다. 서버가 추론하지 않는
+    배포에서 운영자가 실제로 받는 질문은 "이 사람 질문이 왜 처리가 안 되나" 이고, 그 답은
+    계정 단위 사실이다 — 토큰은 있는데 듣지 않는가(러너 종료), 듣는데 기능 신고가 없는가
+    (구버전), 신고했는데 지문이 배포본과 다른가(재설치 안 됨).
+
+    ## 계정당 한 줄인 이유
+
+    같은 계정에 러너가 여럿일 수 있지만 **가장 최근에 말한 것**만 쓴다 — `account_runner_profile`
+    과 같은 규율이다. 합치면 실재하지 않는 조합(A 의 버전 + B 의 기능)이 만들어지고, 질문을
+    실제로 가져가는 것은 그중 하나뿐이다.
+
+    Returns:
+        `[{account_id, username, listening, last_heartbeat_at, age_sec,
+           features: list[str], agent_version, runner_build, model_count}]`
+        — `listening=False` 는 **토큰은 살아 있는데 하트비트가 창 밖**이라는 뜻이다
+        (연결은 했고 지금 프로세스가 없다). 그 구분이 조치를 가른다.
+
+    Raises:
+        Exception: 질의 자체가 실패하면 **그대로 올린다**(빈 목록으로 삼키지 않는다).
+
+        ⚠ 첫 작성본은 실패를 `return []` 로 삼켰다. 그러면 호출측이 「러너 0대」와
+        「조회 실패」를 구분할 수 없고, 화면은 빈 목록을 **"연결된 개인 AI 가 없습니다 —
+        들어오는 질문을 아무도 처리하지 못합니다"** 라는 빨간 단정으로 그린다. 조회 실패를
+        장애 선언으로 바꾸는 것은 이 cycle 이 없애려던 오독과 정확히 같은 형태다.
+    """
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    # **계정 중복 제거는 파이썬에서 한다.** SQL 로 접으려면 상관 서브쿼리에 같은 술어를
+    # alias 만 바꿔 한 번 더 써야 하는데(또는 MySQL 의 느슨한 GROUP BY 에 기대야 하는데),
+    # 전자는 술어 사본이 하나 더 생겨 갈릴 준비를 마치고 후자는 여러 컬럼이 **서로 다른
+    # 행**에서 와 실재하지 않는 러너를 만든다. 정렬이 이미 최신순이라 첫 등장만 취하면 같다.
+    def _sql(cols: str) -> str:
+        return (
+            f"SELECT t.AccountId, a.Username, t.LastHeartbeatAt, "
+            f"       TIMESTAMPDIFF(SECOND, t.LastHeartbeatAt, {_SQL_NOW}), "
+            f"       t.RunnerFeatures, t.RunnerAgentVersion, {cols} "
+            "FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            "LEFT JOIN WebAccounts a ON a.Id = t.AccountId "
+            f"WHERE {_LIVE_TOKEN_PREDICATE} "
+            # NULL 하트비트(한 번도 안 온 러너)를 뒤로 — 앞에 오면 '가장 최근' 이 뒤집힌다.
+            "ORDER BY t.LastHeartbeatAt IS NULL, t.LastHeartbeatAt DESC, t.Id DESC "
+            "LIMIT %s"
+        )
+
+    # 계정당 토큰이 여럿일 수 있어 넉넉히 읽고 접는다. 상한이 있는 이유는 관제 조회 하나가
+    # 토큰 테이블을 통째로 끌어오지 않게 하기 위해서다.
+    params = (max(int(limit), 1) * 8,)
+    try:
+        cur.execute(_sql("t.RunnerBuild, t.RunnerCapabilities"), params)
+        rows = cur.fetchall() or []
+    except Exception:
+        # `RunnerBuild` 는 뒤늦게 추가된 컬럼이다(2026-08-31). 그 컬럼 하나가 없다고 명부
+        # 전체를 잃으면 **구 배포에서 이 화면이 통째로 비는데**, 지문 대조는 이 명부가
+        # 답하는 네 질문 중 하나일 뿐이다 — 한 단계 내려가 나머지를 살린다
+        # (`_query_activity` 의 컬럼 사다리와 같은 규율). 그래도 실패하면 위로 올린다.
+        rows = []
+        cur.execute(_sql("'' AS RunnerBuild, t.RunnerCapabilities"), params)
+        rows = cur.fetchall() or []
+    out: list[dict] = []
+    seen_accounts: set[int] = set()
+    for r in rows:
+        acct = int(r[0] or 0)
+        if acct in seen_accounts:
+            continue
+        seen_accounts.add(acct)
+        if len(out) >= max(int(limit), 1):
+            break
+        age = r[3]
+        age_sec = int(age) if age is not None else None
+        caps_n = 0
+        if r[7]:
+            try:
+                parsed = json.loads(r[7])
+                if isinstance(parsed, list):
+                    # 신고 형태는 런타임 묶음이라, 「고를 수 있는 모델 총수」로 접는다.
+                    caps_n = sum(len(rt.get("models") or [])
+                                 for rt in parsed if isinstance(rt, dict))
+            except (TypeError, ValueError):
+                caps_n = 0
+        out.append({
+            "account_id": int(r[0] or 0),
+            "username": str(r[1] or ""),
+            "listening": bool(age_sec is not None and age_sec <= window),
+            "last_heartbeat_at": (r[2].isoformat() if hasattr(r[2], "isoformat") else ""),
+            "age_sec": age_sec,
+            "features": parse_runner_features(r[4]),
+            "agent_version": str(r[5] or "").strip(),
+            "runner_build": str(r[6] or "").strip(),
+            "model_count": caps_n,
+        })
+    return out
+
+
 def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str:
     """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. 없으면 빈 문자열.
 

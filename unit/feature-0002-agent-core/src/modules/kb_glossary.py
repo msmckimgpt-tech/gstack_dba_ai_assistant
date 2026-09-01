@@ -17,6 +17,7 @@ product-scope (metadata-product-scope): scope_key = **활성 제품**( cfg.get_a
 from __future__ import annotations
 
 import logging
+import re
 from collections import OrderedDict
 
 from modules.utils import _normalize_scope_key, _kb_scope_candidates, _kb_scope_key
@@ -33,11 +34,195 @@ _FEEDBACK_ADMIN_LIMIT = 500
 # 비정규화 복제(glossary=PG, WebRoles=MySQL cross-DB 라 FK 불가). 읽기 시 [현재 역할, '*'] 캐스케이드.
 COMMON_ROLE = "*"
 
+#: 전역 사전 scope. `_kb_scope_candidates()` 읽기 캐스케이드의 두 번째 티어이자, `org` 용어의 저장처.
+GLOBAL_SCOPE = "common"
+
 
 def _normalize_role_key(role_key) -> str:
     """role_key 정규화 — 공백/None → '*'(공용), 그 외 소문자 trim(WebRoles.RoleKey 와 동일 표기)."""
     rk = str(role_key or "").strip().lower()
     return rk or COMMON_ROLE
+
+
+# ── 용어 통용범위(term_tier) — 0057 ─────────────────────────────────────────────
+#
+# ## 왜 이 축이 생겼나 (사용자 신고 2026-09-01)
+#
+# 읽기(`_kb_scope_candidates`)는 `[제품, (레거시 ds), common, '']` **2단** 캐스케이드인데
+# 쓰기(`agent_core._glossary_autopropose`)는 **항상 제품 scope 하나**였다. 전역 티어가 읽기에만
+# 있고 쓰기에는 없었다 — 그래서 범용 DB 용어(복제 이벤트·Online DDL·시점 복구·트랜잭션·CTE)가
+# 제품 scope 에 갇히고, 같은 개념이 제품 수만큼 복제됐다(라이브 실측: 34개 용어가 2~4 scope,
+# `멱등성` 한 개념이 표기변형까지 7행).
+#
+# 프롬프트가 그 비대칭을 증폭했다: confidence 를 "how clearly defined AND **how reusable**" 로
+# 정의해 **범용일수록 점수가 올라 자동승급 임계를 넘고, 그렇게 가장 좁은 scope 에 박혔다.**
+# 재사용성이 저장 위치를 좁히는 방향으로 작동한 것이 근본 원인이다.
+#
+# 그래서 두 축을 **직교**시킨다:
+#   - `confidence` = 이 턴이 그 용어를 **얼마나 명확히 정의했는가** (등록/보류 판정)
+#   - `term_tier`  = 그 용어가 **어디까지 통용되는가** (저장 위치 판정)
+TIER_PRODUCT = "product"   #: 이 제품 고유 도메인 어휘 → `product.<key>` 에 저장
+TIER_ORG = "org"           #: 제품 무관하되 이 조직/서비스 고유 → `common` 전역 사전
+TIER_GENERAL = "general"   #: 범용 RDBMS·업계 표준 지식 → **저장하지 않는다**
+TERM_TIERS = (TIER_PRODUCT, TIER_ORG, TIER_GENERAL)
+
+#: `general` 판정 후보의 큐 상태. 조용히 버리지 않는 이유 — 「요즘 용어가 안 쌓인다」와 구별되지
+#: 않고, 오분류를 되돌릴 방법도 사라진다. 큐에 남기면 관리자가 사유를 보고 promote 로 되살린다.
+STATUS_SKIPPED_GENERAL = "skipped_general"
+
+#: 이 상태들은 이미 사람/시스템의 판정이 끝난 후보 — 재제안해도 되살리지 않는다(poisoning 방어).
+_SETTLED_STATUSES = ("rejected", "promoted", "auto_promoted", STATUS_SKIPPED_GENERAL)
+
+_PAREN_TAIL_RE = re.compile(r"\s*[(（].*$", re.S)
+_SURFACE_STRIP_RE = re.compile(r"[\s_\-]+")
+
+
+def normalize_term_tier(tier) -> str:
+    """tier 정규화. 미지정·오타·미지원 값은 `product`(가장 좁은 범위)로 접는다.
+
+    **모르면 좁게** — 잘못해서 전역(`org`)에 넣으면 모든 제품 프롬프트가 오염되지만, 잘못해서
+    제품에 넣으면 그 제품 하나에 머문다. 판정 불가일 때 피해가 작은 쪽이 기본값이다.
+    """
+    t = str(tier or "").strip().lower()
+    return t if t in TERM_TIERS else TIER_PRODUCT
+
+
+def normalize_term_surface(term) -> str:
+    """표기변형 흡수용 정규화 표면형.
+
+    `멱등성` / `멱등성(Idempotency)` / `멱등성(idempotent)` / `복합 PK` / `복합 PK (Composite
+    Primary Key)` 처럼 **같은 개념의 다른 표기**를 한 키로 접는다. 라이브에서 이 변형들이 서로
+    다른 행으로 공존해 사전을 부풀렸다(`멱등성` 7행 · `DeleteFlag` 4행 · `CTE` 3표기).
+
+    규칙 (순서 고정):
+      1. 첫 여는 괄호(`(` 또는 전각 `（`) 이후를 잘라낸다 — 괄호는 관례적으로 원어·부연이다.
+      2. 공백·하이픈·언더스코어 제거 — `복합 PK`↔`복합PK`, `user_id`↔`userID`.
+      3. 소문자화.
+
+    ⚠ **이 규칙은 alembic 0057 의 `ix_kb_glossary_term_norm` 함수 인덱스 식과 같아야 한다.**
+    갈리면 인덱스가 안 쓰여 느려지거나(양성), 조회 키가 어긋나 중복을 못 잡는다(음성).
+    """
+    s = _PAREN_TAIL_RE.sub("", str(term or "").strip())
+    return _SURFACE_STRIP_RE.sub("", s).lower()
+
+
+#: 결정적 백스톱 — 이 표면형은 LLM 이 무엇이라 하든 `general` 로 강등한다.
+#:
+#: ⚠ **부분일치가 아니라 정규화 전체일치다.** 라이브에는 `튜닝인덱스`(무기 강화 단계)·`인덱스
+#: 비중`(테이블 인덱스 용량 비율) 같은 **제품 고유** 용어가 있어서, "인덱스" 부분일치로 걸면
+#: 정당한 도메인 어휘를 통째로 잃는다. 그래서 개념 하나당 표기를 명시 열거한다.
+#:
+#: 여기 없는 범용 용어는 LLM 판정에 맡긴다 — 이 목록은 **완전성이 목표가 아니라**, 라이브에서
+#: 실제로 오등록된 클래스를 구조적으로 봉인하는 것이 목표다(§16.7 G10 재발 클래스 가드).
+_GENERAL_TERM_SURFACES: frozenset = frozenset(
+    normalize_term_surface(t) for t in (
+        # 트랜잭션·동시성
+        "트랜잭션", "transaction", "트랜잭션 롤백", "롤백", "rollback", "커밋", "commit",
+        "암묵적 커밋", "implicit commit", "자동 커밋", "autocommit",
+        "격리 수준", "isolation level", "트랜잭션 격리 수준", "MVCC",
+        "교착 상태", "데드락", "deadlock", "락", "lock", "잠금", "낙관적 잠금", "비관적 잠금",
+        # 인덱스·실행계획
+        "인덱스", "index", "복합 인덱스", "composite index", "B-tree 인덱스", "B-tree",
+        "DESC 인덱스", "내림차순 인덱스", "커버링 인덱스", "covering index",
+        "클러스터드 인덱스", "clustered index", "논클러스터드 인덱스", "유니크 인덱스",
+        "풀 스캔", "full scan", "full table scan", "테이블 풀 스캔",
+        "실행 계획", "execution plan", "explain", "explain plan", "filesort", "카디널리티",
+        "cardinality", "선택도", "selectivity", "인덱스 역순 스캔",
+        # 복제·백업·복구
+        "복제", "replication", "복제 이벤트", "replication event", "증분 복제",
+        "incremental replication", "비동기 복제", "반동기 복제", "마스터", "슬레이브",
+        "레플리카", "replica", "복제 지연", "replication lag",
+        "바이너리 로그", "binlog", "binary log", "GTID",
+        "백업", "backup", "전체 백업", "증분 백업", "논리 백업", "물리 백업",
+        "복구", "restore", "recovery", "시점 복구", "point in time recovery", "PITR",
+        "장애 조치", "failover", "스위치오버", "switchover",
+        # DDL·스키마 운영
+        "online DDL", "온라인 DDL", "DDL", "DML", "DCL", "TCL",
+        "스키마", "schema", "테이블", "table", "뷰", "view", "머티리얼라이즈드 뷰",
+        "파티션", "partition", "파티셔닝", "partitioning", "샤딩", "sharding",
+        "기본키", "primary key", "복합 PK", "복합 기본 키", "composite primary key",
+        "외래키", "foreign key", "참조 무결성", "referential integrity",
+        "제약 조건", "constraint", "유니크 제약", "체크 제약",
+        "정규화", "normalization", "반정규화", "denormalization",
+        # 쿼리 문법
+        "CTE", "공통 테이블 표현식", "common table expression",
+        "서브쿼리", "subquery", "윈도우 함수", "window function",
+        "조인", "join", "내부 조인", "외부 조인", "inner join", "outer join",
+        "집계 함수", "aggregate function", "GROUP BY", "ORDER BY", "HAVING",
+        "저장 프로시저", "stored procedure", "트리거", "trigger", "커서", "cursor",
+        "CONTINUE HANDLER", "EXIT HANDLER FOR SQLEXCEPTION", "핸들러",
+        # 엔진·성능 일반
+        "InnoDB", "MyISAM", "버퍼 풀", "buffer pool", "슬로우 쿼리", "slow query",
+        "쿼리 캐시", "커넥션 풀", "connection pool", "N+1", "N+1 문제",
+        "논리적 삭제", "logical deletion", "소프트 삭제", "soft delete",
+        "멱등성", "idempotency", "idempotent",
+        "배치 처리", "batch processing", "벌크 인서트", "bulk insert",
+        # 표준 카탈로그 객체 (제품 고유가 아님)
+        "information_schema", "performance_schema", "sys 스키마",
+        "TABLE_ROWS", "ROW_COUNT()", "lower_case_table_names", "collation", "charset",
+        "문자셋", "정렬 규칙",
+    )
+)
+
+#: 결정적 강등의 두 번째 축 — 순수 SQL 키워드/구문 토큰. 위 열거에 없어도 이 패턴이면 general.
+#: (`SELECT`·`LEFT JOIN`·`ALTER TABLE` 처럼 대문자 SQL 토큰만으로 이뤄진 표면.)
+_SQL_KEYWORD_RE = re.compile(
+    r"^(?:select|insert|update|delete|merge|truncate|alter|create|drop|rename|grant|revoke|"
+    r"union|intersect|except|distinct|limit|offset|where|from|set|values|into|as|on|using|"
+    r"left|right|full|cross|natural|inner|outer|join|case|when|then|else|end|null|not|and|or|"
+    r"in|between|like|exists|all|any|some|order|by|group|having|with|recursive|table|column|"
+    r"index|view|database|begin|start|rollback|commit|savepoint|lock|unlock|explain|analyze|"
+    r"describe|show|desc|asc)(?:\s+(?:select|insert|update|delete|merge|truncate|alter|create|"
+    r"drop|rename|grant|revoke|union|intersect|except|distinct|limit|offset|where|from|set|"
+    r"values|into|as|on|using|left|right|full|cross|natural|inner|outer|join|case|when|then|"
+    r"else|end|null|not|and|or|in|between|like|exists|all|any|some|order|by|group|having|with|"
+    r"recursive|table|column|index|view|database|begin|start|rollback|commit|savepoint|lock|"
+    r"unlock|explain|analyze|describe|show|desc|asc))*$",
+    re.I,
+)
+
+
+def classify_term_tier(term, suggested_tier=None) -> "tuple[str, str]":
+    """(tier, reason) — 이 용어가 어디까지 통용되는가.
+
+    판정 순서와 그 이유:
+
+    1. **결정적 강등이 먼저다.** LLM 이 `product` 라 해도 `_GENERAL_TERM_SURFACES` 또는 순수 SQL
+       키워드에 걸리면 `general` 로 내린다. 라이브에서 오등록된 것이 바로 이 클래스이고, LLM
+       판정만 믿으면 프롬프트를 고쳐도 같은 실수가 다시 통과한다(§16.7 G10 — 재발 클래스는
+       점수정이 아니라 구조 가드로 잠근다).
+    2. 걸리지 않으면 **LLM 판정을 그대로 쓴다.** `org` ↔ `product` 의 구분은 조직 맥락 판단이라
+       리터럴 목록으로 대신할 수 없다.
+    3. LLM 이 아무 말도 안 했으면 `product` — 「모르면 좁게」(`normalize_term_tier` 참조).
+
+    ⚠ **강등이 곧 폐기가 아니다.** `general` 후보도 `glossary_feedback` 에
+    `status='skipped_general'` 로 남아 관리자가 promote 로 되살릴 수 있다. 그래서 이 결정적
+    목록이 과잉 차단하더라도 복구 경로가 있고, 반대로 오염은 즉시 막힌다 — 비대칭이 옳은
+    방향으로 서 있다.
+    """
+    surface = normalize_term_surface(term)
+    if not surface:
+        return TIER_PRODUCT, "empty-surface"
+    if surface in _GENERAL_TERM_SURFACES:
+        return TIER_GENERAL, "lexicon"
+    raw = _PAREN_TAIL_RE.sub("", str(term or "").strip())
+    if raw and _SQL_KEYWORD_RE.match(raw):
+        return TIER_GENERAL, "sql-keyword"
+    if suggested_tier is None:
+        return TIER_PRODUCT, "default"
+    return normalize_term_tier(suggested_tier), "llm"
+
+
+def scope_for_tier(tier, product_scope_key) -> str:
+    """tier → 저장 scope. `org` 는 전역(`common`), 그 외는 주어진 제품 scope.
+
+    `general` 은 저장하지 않으므로 호출측이 여기 오기 전에 걸러야 한다 — 그래도 방어적으로
+    `common` 을 돌려준다(큐 기록의 scope 로 쓰인다: 전역 개념이므로 제품마다 중복 기록되지 않게).
+    """
+    t = normalize_term_tier(tier)
+    if t in (TIER_ORG, TIER_GENERAL):
+        return GLOBAL_SCOPE
+    return _normalize_scope_key(product_scope_key)
 
 
 def _ro_conn(conn):
@@ -47,16 +232,26 @@ def _ro_conn(conn):
 
 
 # ── 저장(RW) — 등록/큐레이션 경로 ────────────────────────────────────────────
-def upsert_glossary_term(conn, scope_key, term, definition, role_key=COMMON_ROLE, source="manual") -> None:
+def upsert_glossary_term(conn, scope_key, term, definition, role_key=COMMON_ROLE, source="manual",
+                         term_tier=TIER_PRODUCT) -> None:
+    """용어 등록/갱신(단일 scope). `term_tier` 는 통용범위 축(0057) — 저장 scope 는 호출측 책임.
+
+    ⚠ 이 함수는 **주어진 scope 에 그대로 쓴다** — tier 로 scope 를 바꾸지 않는다. 관리자가 콘솔에서
+    「이 제품에 이 용어를 전역으로 표시해 등록」하는 것과 「전역 사전에 등록」은 다른 조작이고,
+    여기서 자동 재라우팅하면 관리자가 고른 scope 와 저장된 scope 가 갈린다(§16.7 G7 — 화면이 말한
+    것과 저장된 것이 달라지는 형태). 자율수집 경로의 라우팅은 `auto_promote_or_queue` 가 한다.
+    """
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO kb_glossary (scope_key, role_key, term, definition, source) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "INSERT INTO kb_glossary (scope_key, role_key, term, definition, source, term_tier) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (scope_key, role_key, term) "
-            "DO UPDATE SET definition = EXCLUDED.definition, source = EXCLUDED.source, updated_at = now()",
+            "DO UPDATE SET definition = EXCLUDED.definition, source = EXCLUDED.source, "
+            "              term_tier = EXCLUDED.term_tier, updated_at = now()",
             (_normalize_scope_key(scope_key), _normalize_role_key(role_key),
-             str(term).strip(), str(definition).strip(), str(source or "manual").strip()),
+             str(term).strip(), str(definition).strip(), str(source or "manual").strip(),
+             normalize_term_tier(term_tier)),
         )
     finally:
         cur.close()
@@ -104,8 +299,35 @@ def list_glossary_admin(conn, scope_key, limit=_GLOSSARY_ADMIN_LIMIT, role_key=N
     cur = conn.cursor()
     try:
         cur.execute(
-            "SELECT id, scope_key, role_key, term, definition, source, created_at, updated_at "
-            "FROM kb_glossary WHERE " + " AND ".join(clauses) + " "
+            "SELECT id, scope_key, role_key, term, definition, source, created_at, updated_at, "
+            "term_tier FROM kb_glossary WHERE " + " AND ".join(clauses) + " "
+            "ORDER BY updated_at DESC, id DESC LIMIT %s",
+            tuple(params) + (int(limit),),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
+def list_global_glossary_for_scope(conn, limit=_GLOSSARY_ADMIN_LIMIT, role_key=None):
+    """전역 사전(`common`) 의 용어 — **제품 목록 화면에 함께 보여주기 위한** 읽기 전용 조회.
+
+    왜 필요한가: `list_glossary_admin` 은 단일 scope 만 본다(편집·삭제가 정확히 그 scope 행에만
+    적용돼야 하므로 — 캐스케이드 금지는 유지한다). 그런데 답변에 실제로 주입되는 것은
+    `[제품, common]` **둘 다**다. 목록이 제품 행만 보여주면 관리자는 「이 제품에 이 용어가 없다」고
+    읽고 같은 용어를 제품 scope 에 또 등록한다 — 지금의 중복이 만들어진 경로 그 자체다.
+    화면은 이 결과를 **읽기 전용 배지**로 구분해 표시한다(편집은 전역 scope 를 선택해야 가능).
+    """
+    clauses = ["scope_key = %s"]
+    params: list = [GLOBAL_SCOPE]
+    if role_key is not None:
+        clauses.append("role_key = ANY(%s)")
+        params.append([_normalize_role_key(role_key), COMMON_ROLE])
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, role_key, term, definition, source, created_at, updated_at, "
+            "term_tier FROM kb_glossary WHERE " + " AND ".join(clauses) + " "
             "ORDER BY updated_at DESC, id DESC LIMIT %s",
             tuple(params) + (int(limit),),
         )
@@ -129,29 +351,103 @@ def list_enum_admin(conn, scope_key, limit=_ENUM_ADMIN_LIMIT):
         cur.close()
 
 
-def update_glossary_term(conn, term_id, scope_key, term, definition, role_key=None) -> int:
+def update_glossary_term(conn, term_id, scope_key, term, definition, role_key=None,
+                         term_tier=None) -> int:
     """용어 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404).
 
-    role_key 지정 시 역할 귀속까지 변경(공용↔역할 이동). UNIQUE(scope,role,term) 충돌 시
-    호출측이 IntegrityError 를 409 로 변환. 수동 수정은 source='manual' 로 마킹(큐레이션 표시).
+    role_key 지정 시 역할 귀속까지 변경(공용↔역할 이동). `term_tier` 지정 시 통용범위 표기 변경
+    (저장 scope 는 옮기지 않는다 — scope 이동은 삭제+재등록 또는 소급 정리 스크립트의 몫).
+    UNIQUE(scope,role,term) 충돌 시 호출측이 IntegrityError 를 409 로 변환.
+    수동 수정은 source='manual' 로 마킹(큐레이션 표시).
     """
+    sets = ["term = %s", "definition = %s"]
+    params: list = [str(term).strip(), str(definition).strip()]
+    if role_key is not None:
+        sets.append("role_key = %s")
+        params.append(_normalize_role_key(role_key))
+    if term_tier is not None:
+        sets.append("term_tier = %s")
+        params.append(normalize_term_tier(term_tier))
+    sets.append("source = 'manual'")
+    sets.append("updated_at = now()")
     cur = conn.cursor()
     try:
-        if role_key is not None:
-            cur.execute(
-                "UPDATE kb_glossary SET term = %s, definition = %s, role_key = %s, "
-                "source = 'manual', updated_at = now() WHERE id = %s AND scope_key = %s",
-                (str(term).strip(), str(definition).strip(), _normalize_role_key(role_key),
-                 int(term_id), _normalize_scope_key(scope_key)),
-            )
-        else:
-            cur.execute(
-                "UPDATE kb_glossary SET term = %s, definition = %s, "
-                "source = 'manual', updated_at = now() WHERE id = %s AND scope_key = %s",
-                (str(term).strip(), str(definition).strip(),
-                 int(term_id), _normalize_scope_key(scope_key)),
-            )
+        cur.execute(
+            "UPDATE kb_glossary SET " + ", ".join(sets) + " WHERE id = %s AND scope_key = %s",
+            tuple(params) + (int(term_id), _normalize_scope_key(scope_key)),
+        )
         return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
+# ── 표기변형·교차 scope 중복 조회 (0057) ───────────────────────────────────────
+#
+# 종전 중복 억제는 `(scope_key, role_key, term)` **정확일치** 하나뿐이었다. 그래서
+#   (a) 같은 용어가 제품마다 따로 등록되고(34개 용어 × 2~4 scope),
+#   (b) 같은 개념이 표기만 달라도 별 행이 됐다(`멱등성` 7행 · `CTE` 3표기 · `복합 PK` 4행).
+# 아래 두 함수가 등록 **직전**에 그 둘을 함께 본다.
+
+def find_glossary_duplicate(conn, scopes, term, role_key=COMMON_ROLE):
+    """주어진 scope 목록에서 이 용어의 **정규화 표면형** 중복 행을 찾는다.
+
+    반환: `(id, scope_key, role_key, term, definition, source, term_tier)` 또는 None.
+    정렬은 **전역(common) 우선 → 정확일치 우선 → 최신** — 전역에 이미 있으면 제품 등록을
+    막는 것이 목적이므로 그쪽을 먼저 본다.
+
+    정규화식은 `normalize_term_surface()` 와 동일해야 하며 alembic 0057 의
+    `ix_kb_glossary_term_norm` 이 이 조회를 인덱스로 받는다.
+    """
+    surface = normalize_term_surface(term)
+    if not surface:
+        return None
+    scope_list = [_normalize_scope_key(s) for s in (scopes or []) if str(s or "").strip()]
+    if GLOBAL_SCOPE not in scope_list:
+        scope_list.append(GLOBAL_SCOPE)
+    roles = [_normalize_role_key(role_key), COMMON_ROLE]
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, role_key, term, definition, source, term_tier "
+            "FROM kb_glossary "
+            "WHERE scope_key = ANY(%s) AND role_key = ANY(%s) "
+            "  AND lower(regexp_replace(regexp_replace(term, '\\s*[(（].*$', '', 'g'), "
+            "                           '[[:space:]_-]', '', 'g')) = %s "
+            "ORDER BY (scope_key = %s) DESC, (lower(term) = %s) DESC, updated_at DESC, id DESC "
+            "LIMIT 1",
+            (scope_list, roles, surface, GLOBAL_SCOPE, str(term or "").strip().lower()),
+        )
+        return cur.fetchone()
+    finally:
+        cur.close()
+
+
+def _settled_feedback_status(conn, scopes, term, role_key=COMMON_ROLE):
+    """이 용어가 **어느 scope 에서든** 이미 판정된 적이 있는가 → (status, scope_key) 또는 None.
+
+    종전 `_feedback_status` 는 `(scope, role, term)` 정확일치라, 제품 A 에서 거부한 용어가
+    제품 B 에서 다시 자동등록됐다. 거부·승급·범용판정은 **용어 자체에 대한 판정**이므로
+    scope 를 넘어 존중한다(표기변형도 함께 접는다).
+    """
+    surface = normalize_term_surface(term)
+    if not surface:
+        return None
+    scope_list = [_normalize_scope_key(s) for s in (scopes or []) if str(s or "").strip()]
+    if GLOBAL_SCOPE not in scope_list:
+        scope_list.append(GLOBAL_SCOPE)
+    roles = [_normalize_role_key(role_key), COMMON_ROLE]
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT status, scope_key FROM glossary_feedback "
+            "WHERE scope_key = ANY(%s) AND role_key = ANY(%s) AND status = ANY(%s) "
+            "  AND lower(regexp_replace(regexp_replace(term, '\\s*[(（].*$', '', 'g'), "
+            "                           '[[:space:]_-]', '', 'g')) = %s "
+            "ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (scope_list, roles, list(_SETTLED_STATUSES), surface),
+        )
+        row = cur.fetchone()
+        return (str(row[0]), str(row[1])) if row else None
     finally:
         cur.close()
 
@@ -309,11 +605,11 @@ def load_glossary_enum_context(user_message, scope_key=None, conn=None, role_key
 def record_glossary_suggestion(conn, scope_key, role_key, term, suggested_definition, *,
                                confidence=0.5, status="pending", source_run_id=None,
                                conversation_id=None, promoted_glossary_id=None,
-                               approved_by=None) -> bool:
+                               approved_by=None, term_tier=TIER_PRODUCT) -> bool:
     """glossary_feedback 큐에 후보 적재/갱신(upsert by scope/role/term).
 
-    같은 (scope,role,term) 기존 행이 'rejected'/'promoted'/'auto_promoted' 면 갱신하지 않는다
-    (curator 결정 존중·중복 등록 방지) — ON CONFLICT DO UPDATE WHERE status='pending'.
+    같은 (scope,role,term) 기존 행이 'rejected'/'promoted'/'auto_promoted'/'skipped_general' 이면
+    갱신하지 않는다 (curator 결정 존중·중복 등록 방지) — ON CONFLICT DO UPDATE WHERE status='pending'.
     신규 term 은 항상 INSERT(주어진 status). 반환: 적재/갱신됨 True, 무시(이미 처리됨) False.
     """
     cur = conn.cursor()
@@ -321,8 +617,8 @@ def record_glossary_suggestion(conn, scope_key, role_key, term, suggested_defini
         cur.execute(
             "INSERT INTO glossary_feedback "
             "(scope_key, role_key, term, suggested_definition, confidence, status, "
-            " source_run_id, conversation_id, promoted_glossary_id, approved_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            " source_run_id, conversation_id, promoted_glossary_id, approved_by, term_tier) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (scope_key, role_key, term) DO UPDATE SET "
             "  suggested_definition = EXCLUDED.suggested_definition, "
             "  confidence = EXCLUDED.confidence, "
@@ -331,11 +627,13 @@ def record_glossary_suggestion(conn, scope_key, role_key, term, suggested_defini
             "  conversation_id = EXCLUDED.conversation_id, "
             "  promoted_glossary_id = EXCLUDED.promoted_glossary_id, "
             "  approved_by = EXCLUDED.approved_by, "
+            "  term_tier = EXCLUDED.term_tier, "
             "  updated_at = now() "
             "WHERE glossary_feedback.status = 'pending'",
             (_normalize_scope_key(scope_key), _normalize_role_key(role_key),
              str(term).strip(), str(suggested_definition).strip(), float(confidence),
-             str(status), source_run_id, conversation_id, promoted_glossary_id, approved_by),
+             str(status), source_run_id, conversation_id, promoted_glossary_id, approved_by,
+             normalize_term_tier(term_tier)),
         )
         return int(cur.rowcount or 0) > 0
     finally:
@@ -357,16 +655,16 @@ def _feedback_status(conn, scope_key, role_key, term):
         cur.close()
 
 
-def _insert_glossary_auto(conn, scope_key, role_key, term, definition):
+def _insert_glossary_auto(conn, scope_key, role_key, term, definition, term_tier=TIER_PRODUCT):
     """자동승급 — kb_glossary 에 INSERT(source='auto'). 이미 있으면 보존(덮어쓰지 않음 — 수동
     큐레이션/기존 정의 우선). 반환: glossary id(신규 또는 기존) 또는 None."""
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO kb_glossary (scope_key, role_key, term, definition, source) "
-            "VALUES (%s, %s, %s, %s, 'auto') "
+            "INSERT INTO kb_glossary (scope_key, role_key, term, definition, source, term_tier) "
+            "VALUES (%s, %s, %s, %s, 'auto', %s) "
             "ON CONFLICT (scope_key, role_key, term) DO NOTHING RETURNING id",
-            (scope_key, role_key, term, definition),
+            (scope_key, role_key, term, definition, normalize_term_tier(term_tier)),
         )
         row = cur.fetchone()
         if row:
@@ -383,17 +681,40 @@ def _insert_glossary_auto(conn, scope_key, role_key, term, definition):
 
 def auto_promote_or_queue(conn, scope_key, term, definition, *, confidence,
                           role_key=COMMON_ROLE, source_run_id=None, conversation_id=None,
-                          threshold=None) -> str:
-    """하이브리드 자동승급 라우터(단일 후보). 반환: 'auto_promoted' | 'pending' | 'skipped'.
+                          threshold=None, term_tier=None) -> str:
+    """하이브리드 자동승급 라우터(단일 후보).
 
-    'skipped' = 빈 입력이거나 이미 거부/처리된 후보(재제안 무시).
+    반환: `'auto_promoted'` | `'pending'` | `'skipped_general'` | `'duplicate'` | `'skipped'`.
+
+    ## 판정 순서 (0057 — 순서 자체가 계약이다)
+
+    1. **빈 입력** → `skipped`.
+    2. **통용범위 판정** (`classify_term_tier`) — LLM 제안 + 결정적 강등.
+    3. **`general`** → `kb_glossary` 에 **쓰지 않고** 큐에 `skipped_general` 로만 남긴다.
+       조용히 버리면 「요즘 용어가 안 쌓인다」와 구별되지 않고 오분류를 되돌릴 방법도 없다.
+    4. **저장 scope 결정** — `org` 는 전역(`common`), `product` 는 주어진 제품 scope.
+    5. **판정 이력 선검사(cross-scope)** — 다른 제품에서 이미 거부·승급·범용판정된 용어는
+       여기서 멈춘다. 종전엔 `(scope, role, term)` 정확일치라 **제품 A 에서 거부한 용어가 제품
+       B 에서 다시 자동등록**됐다(REV-20260629 가 닫은 poisoning 구멍의 scope 축 확장).
+    6. **표기변형·교차 scope 중복 선검사** — 이미 전역에 있거나 같은 개념이 다른 표기로 있으면
+       `duplicate`. 라이브에서 `멱등성` 이 7행(4 scope)까지 불어난 경로를 여기서 끊는다.
+    7. **`org` 는 자동승급하지 않는다** — 전역 사전은 **모든 제품** 프롬프트에 주입되므로 blast
+       radius 가 제품의 N배다. 「고신뢰=자동등록」을 더 넓은 면에 그대로 반복하면 지금 고치는
+       실수를 규모만 키워 재현한다. 전역 후보는 항상 검토 큐(`pending`)를 거친다.
+    8. `product` 는 종전대로 confidence 임계로 자동승급/보류.
     """
-    sk = _normalize_scope_key(scope_key)
     rk = _normalize_role_key(role_key)
     t = str(term or "").strip()
     d = str(definition or "").strip()
     if not t or not d:
         return "skipped"
+
+    tier, tier_reason = classify_term_tier(t, term_tier)
+    product_scope = _normalize_scope_key(scope_key)
+    target_scope = scope_for_tier(tier, product_scope)
+    # 선검사 대상 scope — 제품 + 전역. 판정 이력·중복은 두 축을 함께 봐야 한다.
+    lookup_scopes = [product_scope, GLOBAL_SCOPE]
+
     if threshold is None:
         from shared import config as _cfg
         threshold = getattr(_cfg, "AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD", 0.85)
@@ -401,25 +722,63 @@ def auto_promote_or_queue(conn, scope_key, term, definition, *, confidence,
         conf = float(confidence)
     except (TypeError, ValueError):
         conf = 0.0
-    # ⚠ 거부/처리 선검사 (REV-20260629 BLOCKER): kb_glossary 자동 INSERT 는 거부 가드보다 반드시
-    # 먼저 차단돼야 한다. 과거에 거부(rejected)된 용어가 고신뢰로 재추론될 때 _insert_glossary_auto 가
-    # 먼저 라이브에 써넣으면 poisoning 방어가 본체에서 무력화된다(거부 용어 재유입). 또한 이미 등록된
-    # (promoted/auto_promoted) 용어의 중복 자동 INSERT 도 무의미. → 삽입 전에 status 로 게이트.
-    existing = _feedback_status(conn, sk, rk, t)
-    if existing in ("rejected", "promoted", "auto_promoted"):
+
+    # (5) 판정 이력 — scope 를 넘어 존중한다(표기변형 포함).
+    settled = _settled_feedback_status(conn, lookup_scopes, t, role_key=rk)
+    if settled is not None:
+        _log.debug("glossary_candidate_settled term=%r status=%s scope=%s", t, settled[0], settled[1])
         return "skipped"
-    # 여기 도달 = existing 이 None(신규) 또는 'pending'(아직 미검수) — 둘 다 진행 가능.
-    if conf >= float(threshold):
-        gid = _insert_glossary_auto(conn, sk, rk, t, d)
-        ok = record_glossary_suggestion(
-            conn, sk, rk, t, d, confidence=conf, status="auto_promoted",
+
+    # (3) 범용 지식 — 저장하지 않되 사유는 남긴다.
+    if tier == TIER_GENERAL:
+        record_glossary_suggestion(
+            conn, target_scope, rk, t, d, confidence=conf, status=STATUS_SKIPPED_GENERAL,
             source_run_id=source_run_id, conversation_id=conversation_id,
-            promoted_glossary_id=gid, approved_by="auto",
+            approved_by=f"auto:{tier_reason}", term_tier=TIER_GENERAL,
+        )
+        return STATUS_SKIPPED_GENERAL
+
+    # (6) 표기변형·교차 scope 중복.
+    dup = find_glossary_duplicate(conn, lookup_scopes, t, role_key=rk)
+    if dup is not None:
+        _log.debug("glossary_candidate_duplicate term=%r existing_id=%s scope=%s",
+                   t, dup[0], dup[1])
+        return "duplicate"
+
+    # (7) 전역 후보는 임계와 무관하게 검토 큐.
+    if tier == TIER_ORG:
+        ok = record_glossary_suggestion(
+            conn, target_scope, rk, t, d, confidence=conf, status="pending",
+            source_run_id=source_run_id, conversation_id=conversation_id,
+            term_tier=TIER_ORG,
+        )
+        return "pending" if ok else "skipped"
+
+    # (8) 제품 고유 용어 — 종전 하이브리드 자동승급.
+    #
+    # ⚠ 단 **제품이 해소되지 않은 대화**(제품 없는 1:1·CLI)에서는 `scope_key` 가 'common' 으로
+    #   들어온다. 그 상태로 자동승급하면 «제품 고유» 로 판정한 용어를 **전역 사전에** 써넣는
+    #   것이 되어, 지금 고치는 오염을 반대 방향으로 재현한다. 이 경우엔 검토 큐로 보낸다 —
+    #   관리자가 어느 제품 것인지 보고 옮길 수 있다.
+    if target_scope == GLOBAL_SCOPE:
+        ok = record_glossary_suggestion(
+            conn, GLOBAL_SCOPE, rk, t, d, confidence=conf, status="pending",
+            source_run_id=source_run_id, conversation_id=conversation_id,
+            term_tier=TIER_PRODUCT,
+        )
+        return "pending" if ok else "skipped"
+    if conf >= float(threshold):
+        gid = _insert_glossary_auto(conn, target_scope, rk, t, d, term_tier=TIER_PRODUCT)
+        ok = record_glossary_suggestion(
+            conn, target_scope, rk, t, d, confidence=conf, status="auto_promoted",
+            source_run_id=source_run_id, conversation_id=conversation_id,
+            promoted_glossary_id=gid, approved_by="auto", term_tier=TIER_PRODUCT,
         )
         return "auto_promoted" if ok else "skipped"
     ok = record_glossary_suggestion(
-        conn, sk, rk, t, d, confidence=conf, status="pending",
+        conn, target_scope, rk, t, d, confidence=conf, status="pending",
         source_run_id=source_run_id, conversation_id=conversation_id,
+        term_tier=TIER_PRODUCT,
     )
     return "pending" if ok else "skipped"
 
@@ -444,7 +803,7 @@ def list_glossary_feedback(conn, status="pending", scope_key=None, role_key=None
         cur.execute(
             "SELECT id, scope_key, role_key, term, suggested_definition, confidence, status, "
             "source_run_id, conversation_id, promoted_glossary_id, approved_by, "
-            "created_at, updated_at FROM glossary_feedback" + where +
+            "created_at, updated_at, term_tier FROM glossary_feedback" + where +
             " ORDER BY created_at DESC, id DESC LIMIT %s",
             tuple(params) + (int(limit),),
         )
@@ -475,28 +834,35 @@ def count_glossary_feedback(conn, status="pending", scope_key=None) -> int:
 
 
 def promote_glossary_feedback(conn, feedback_id, *, approved_by=None):
-    """검토 큐(pending) → 용어사전 승급(by id, FOR UPDATE 동시승인 차단).
+    """검토 큐 → 용어사전 승급(by id, FOR UPDATE 동시승인 차단).
+
+    승급 대상 상태는 `pending` 과 **`skipped_general`** 둘이다. 후자를 포함하는 이유: 범용 판정은
+    결정적 목록·LLM 판정의 산물이라 오분류가 가능하고(제품 고유 어휘가 범용 낱말과 겹치는 경우),
+    그때 관리자가 되살릴 경로가 없으면 그 판정이 사실상 영구 삭제가 된다. 승급분은 큐 행에 기록된
+    `term_tier` 를 그대로 옮겨 「무엇으로 판정됐고 무엇으로 등록됐는지」가 갈리지 않게 한다.
 
     반환: 승급된 glossary id, 또는 None(없음/이미 처리됨). 승급분은 source='manual'(검수 완료).
     """
     cur = conn.cursor()
     try:
         cur.execute(
-            "SELECT scope_key, role_key, term, suggested_definition FROM glossary_feedback "
-            "WHERE id = %s AND status = 'pending' FOR UPDATE",
-            (int(feedback_id),),
+            "SELECT scope_key, role_key, term, suggested_definition, term_tier "
+            "FROM glossary_feedback "
+            "WHERE id = %s AND status IN ('pending', %s) FOR UPDATE",
+            (int(feedback_id), STATUS_SKIPPED_GENERAL),
         )
         row = cur.fetchone()
         if not row:
             return None
-        sk, rk, term, definition = row
+        sk, rk, term, definition, tier = row
         cur.execute(
-            "INSERT INTO kb_glossary (scope_key, role_key, term, definition, source) "
-            "VALUES (%s, %s, %s, %s, 'manual') "
+            "INSERT INTO kb_glossary (scope_key, role_key, term, definition, source, term_tier) "
+            "VALUES (%s, %s, %s, %s, 'manual', %s) "
             "ON CONFLICT (scope_key, role_key, term) "
-            "DO UPDATE SET definition = EXCLUDED.definition, source = 'manual', updated_at = now() "
+            "DO UPDATE SET definition = EXCLUDED.definition, source = 'manual', "
+            "              term_tier = EXCLUDED.term_tier, updated_at = now() "
             "RETURNING id",
-            (sk, rk, term, definition),
+            (sk, rk, term, definition, normalize_term_tier(tier)),
         )
         gid = int(cur.fetchone()[0])
         cur.execute(
@@ -542,18 +908,22 @@ def reject_glossary_feedback(conn, feedback_id) -> int:
 # 역할별 비중복 namespace 라도, 유사 의미 용어는 glossary_relations 로 교차 참조한다(역할 경계 횡단 허용).
 
 def get_glossary_term(conn, term_id, scope_key=None):
-    """단일 용어 행(id). scope_key 주면 가드. 반환: (id, scope_key, role_key, term, definition, source) 또는 None."""
+    """단일 용어 행(id). scope_key 주면 가드.
+
+    반환: `(id, scope_key, role_key, term, definition, source, term_tier)` 또는 None.
+    """
     cur = conn.cursor()
     try:
         if scope_key:
             cur.execute(
-                "SELECT id, scope_key, role_key, term, definition, source FROM kb_glossary "
-                "WHERE id = %s AND scope_key = %s",
+                "SELECT id, scope_key, role_key, term, definition, source, term_tier "
+                "FROM kb_glossary WHERE id = %s AND scope_key = %s",
                 (int(term_id), _normalize_scope_key(scope_key)),
             )
         else:
             cur.execute(
-                "SELECT id, scope_key, role_key, term, definition, source FROM kb_glossary WHERE id = %s",
+                "SELECT id, scope_key, role_key, term, definition, source, term_tier "
+                "FROM kb_glossary WHERE id = %s",
                 (int(term_id),),
             )
         return cur.fetchone()
@@ -607,10 +977,49 @@ def list_glossary_relations(conn, term_id):
         cur.close()
 
 
-def infer_terminology_suggestions(user_message, assistant_answer, *, max_terms=None) -> list:
-    """대화 한 턴(질문+답변)에서 용어사전 후보 추론(LLM 위임). 반환: [{term, definition, confidence}].
+def normalize_suggestion_items(items, *, max_terms) -> list:
+    """LLM(또는 브리지 러너)이 준 용어 후보 목록을 검증·정규화한다.
 
-    미가용/실패/빈 입력 → [] (호출측 ask 경로 차단 금지). term 길이 cap·개수 cap 적용.
+    반환 항목: `{term, definition, confidence, term_tier}`. 스키마 위반 항목은 조용히 버린다
+    (부분 성공 허용 — 한 항목이 망가졌다고 나머지를 잃지 않는다).
+
+    **왜 별도 함수인가**: 후보의 출처가 둘이 됐다 — 서버 LLM(`llm_glossary_suggest`)과 **개인 AI
+    러너**(feature-0043 브리지의 `submit_answer` 동봉). 검증을 각자 하면 한쪽만 느슨해지고, 느슨한
+    쪽이 사용자에게 도달하는 진실이 된다(§16.7 G8-a — 결정은 모든 진입점에 적용돼야 한다).
+    특히 러너 입력은 **통제 밖 LLM 의 산물**이라 신뢰 경계 밖이다 — 길이·타입·tier 화이트리스트를
+    여기 한 곳에서 강제한다.
+    """
+    out: list = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        term = str(it.get("term", "")).strip()
+        definition = str(it.get("definition", "")).strip()
+        if not term or not definition or len(term) > 128:
+            continue
+        try:
+            conf = float(it.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            conf = 0.5
+        conf = min(1.0, max(0.0, conf))
+        out.append({
+            "term": term,
+            # 정의는 프롬프트에 실리므로 상한을 둔다(러너가 문서 한 편을 보내는 것을 막는다).
+            "definition": definition[:2000],
+            "confidence": conf,
+            # `tier` 는 LLM 스키마 키, `term_tier` 는 저장 컬럼명 — 양쪽 표기를 모두 받는다.
+            "term_tier": normalize_term_tier(it.get("term_tier") or it.get("tier") or it.get("scope")),
+        })
+        if len(out) >= int(max_terms):
+            break
+    return out
+
+
+def infer_terminology_suggestions(user_message, assistant_answer, *, max_terms=None) -> list:
+    """대화 한 턴(질문+답변)에서 용어사전 후보 추론(LLM 위임).
+
+    반환: `[{term, definition, confidence, term_tier}]`. 미가용/실패/빈 입력 → []
+    (호출측 ask 경로 차단 금지). term 길이 cap·개수 cap 적용.
     """
     if not str(user_message or "").strip() or not str(assistant_answer or "").strip():
         return []
@@ -629,19 +1038,7 @@ def infer_terminology_suggestions(user_message, assistant_answer, *, max_terms=N
     except Exception as exc:
         _log.debug("glossary_infer_failed err=%r", exc)
         return []
-    out: list = []
-    for it in (items or []):
-        if not isinstance(it, dict):
-            continue
-        term = str(it.get("term", "")).strip()
-        definition = str(it.get("definition", "")).strip()
-        if not term or not definition or len(term) > 128:
-            continue
-        out.append({"term": term, "definition": definition,
-                    "confidence": it.get("confidence", 0.5)})
-        if len(out) >= int(max_terms):
-            break
-    return out
+    return normalize_suggestion_items(items, max_terms=max_terms)
 
 
 # ── ENUM 코드사전 대화 자율수집 큐 + 하이브리드 자동승급 (0039) ────────────────────

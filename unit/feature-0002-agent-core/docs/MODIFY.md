@@ -8,6 +8,48 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T031500-interrupt-note-header (보존 본문 빌더에 header 파라미터, Minor)
+
+- **왜**: 브리지(개인 AI) 취소 경로가 **같은 본문 형식**을 자기 문맥의 머리말로 재사용해야 했다
+  (feature-0003 `CHG-20260901T031500-interrupt-preserve-bridge`). 브리지 전용 렌더러를 따로 두면
+  같은 사실이 두 벌이 되고, 두 경로의 화면이 갈리는 순간 약한 쪽이 사용자가 보는 진실이 된다.
+- `src/agent_core.py`: `_build_interrupted_note(..., header: str | None = None)` — `None`(기본)은
+  기존 `_INTERRUPT_NOTE_HEADER` 유지(서버 경로 **동작 무변경**), 문자열이면 그것을 첫 문단으로,
+  `""` 면 본문만(호출자가 이미 자기 안내를 갖고 있을 때). 남길 것이 없으면 header 유무와 무관하게
+  여전히 빈 문자열 — 헤더만 남은 말풍선 금지.
+- 무회귀: `tests/test_interrupt_preserves_context.py` 19건 그대로 PASS(실호출 검증).
+
+## CHG-20260901T020746-interrupt-preserved-note (중단된 run 의 진행분을 단계 목록까지 보존, Minor)
+
+- **왜**: 중단(interrupt) 시 사용자가 잃던 것이 화면·이력·다음 맥락 **세 축 동시**였다. 보존 축
+  자체는 `composer-nonblock-interrupt` R3 가 만들었으나 **명시 '중단' 버튼만 거기서 빠져** 있었고
+  (`/api/cancel` 기본값 — feature-0003 `CHG-20260901T020746-interrupt-context-preserve`),
+  보존 본문의 근거인 `steps` 는 **도구 step 만** 담아(`steps.append` 는 tool 분기 1곳) 도구 호출
+  전 중단은 보존 경로에 태워도 남길 문장이 0 이었다. 사용자 요청 2026-09-01: "요청했던 작업을
+  중단(interrupt) 하더라도 추론했던 내용, 맥락, 단계가 손실되지는 않도록."
+- `src/agent_core.py`:
+  - `_build_interrupted_note(steps, rationale, activity_trail, partial_answer)` 신설 — 보존 본문을
+    **① 미완 라벨 ② 진행 단계 ③ 단계별 근거**(+ 진행 중이던 답변) 세 구획으로 만든다. 남길 것이
+    전무하면 **빈 문자열**을 반환해 호출부가 저장을 건너뛴다(헤더만 남은 말풍선 금지).
+    보조: `_interrupted_step_lines`(activity 제외 · 라벨 우선순위 work→intent→sql · 개행 접기 ·
+    160자 컷), 상수 `_INTERRUPT_NOTE_HEADER`·`_INTERRUPT_STEP_LINES_MAX`(20)·
+    `_INTERRUPT_ACTIVITY_LINES_MAX`(8)·`_INTERRUPT_LINE_CHARS_MAX`(160).
+  - `_append_activity_trail(trail, label, cap=40)` 신설 + `_run_agent_core` 의 `_emit_activity` 가
+    호출 — 진행 라벨을 in-process 로 적재(꼬리 우선). DB(`agent_runtime.steps`)를 되읽지 않는
+    이유는 취소 경로에 왕복을 더하지 않기 위해서다(그 경로는 이미 KV·큐·브리지 3축을 건드린다).
+    적재 규칙을 모듈 레벨로 뺀 것은 중첩 함수 인라인이면 경계(공백·상한)를 단위 검증할 수 없어서다.
+  - 취소 분기(`if canceled_by_user:`) — 종전 `rationale or answer` 한 줄 대신 위 빌더를 호출하고
+    `activity_trail` 을 넘긴다. 저장은 종전과 동일하게 `_save_message`(다음 run 맥락) +
+    `_mirror_message`(화면, `meta={"interrupted": True, ...}`) 2곳.
+- **미완 라벨이 본문에 있어야 하는 이유**: 보존분은 `core_messages` 를 타고 다음 run 의 recall 에
+  실리는데 모델이 보는 것은 본문 텍스트뿐이다 — mirror meta 의 `interrupted: true` 는 화면 렌더
+  전용이다. 라벨이 없으면 중간 기록이 확정 결론으로 읽혀, 방향을 바꾸려 중단한 사용자에게 폐기된
+  가설 위에서 답을 잇는다(사용자 결정 2026-09-01).
+- **단계 UI 는 이 메시지 1건이 앵커**: 취소해도 `agent_runtime.steps` 행은 남고(`_purge_run_steps`
+  호출부 0) feature-0003 history 조립부가 assistant 메시지마다 그 run 의 steps 를 붙인다 —
+  별도 스냅샷 저장 경로를 만들지 않았다.
+- 테스트: `tests/test_interrupt_preserves_context.py` 19건(실호출 17 + 배선 2), 뮤테이션 3종 KILL.
+
 ## CHG-20260831T144500-conv-activity-touch (대화 활동 시각 전진을 표시 store 쓰기에 붙임, Minor)
 
 - **왜**: `agent_runtime.core_conversations.updated_at` 을 움직이는 write 가 **자동 제목 부여
@@ -2877,3 +2919,96 @@ LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
   "경로가 열려 있고 이름이 보존된다" 까지만 증명하며, 행동 변화는 다음 audit corroboration
   (msdb/sys 차단 후 `search_db_objects` 호출 전환율) 재측정으로 판정한다.
 
+
+## CHG-20260901T120000-glossary-term-tier — 용어 통용범위 축 + 브리지 자율수집 복원
+
+- **alembic 0057** `20260901_0057_glossary_term_tier.py` (신규): `kb_glossary.term_tier` ·
+  `glossary_feedback.term_tier`(각 `varchar(16)` NOT NULL DEFAULT 'product' + CHECK 3값) ·
+  `glossary_feedback.status` CHECK 에 `skipped_general` 추가 · 인덱스 3(`ix_kb_glossary_tier` ·
+  `ix_glossary_feedback_tier` · `ix_kb_glossary_term_norm` 함수 인덱스). downgrade 는
+  `skipped_general` 행을 `rejected` 로 접은 뒤 제약을 되돌린다(그러지 않으면 재추가 실패로
+  downgrade 자체가 막힌다). `MAX_MIGRATION.txt` 갱신.
+- **`src/scripts/agent_kb_schema.sql`**: 0057 ALTER 미러 추가(boot 정본 — `CREATE TABLE IF NOT
+  EXISTS` 라 기존 배치에서는 본문이 실행되지 않으므로 ALTER 미러가 필수. 0023 트랩 동형).
+- **`src/modules/kb_glossary.py`**: `TIER_*` 상수 · `GLOBAL_SCOPE` · `STATUS_SKIPPED_GENERAL` ·
+  `normalize_term_tier` · `normalize_term_surface` · `_GENERAL_TERM_SURFACES`(정규화 전체일치
+  사전) · `_SQL_KEYWORD_RE` · `classify_term_tier` · `scope_for_tier` ·
+  `find_glossary_duplicate` · `_settled_feedback_status` · `list_global_glossary_for_scope` ·
+  `normalize_suggestion_items` 신설. `auto_promote_or_queue` 를 8단 판정으로 재작성
+  (반환값에 `skipped_general` · `duplicate` 추가). `upsert_glossary_term` ·
+  `update_glossary_term` · `list_glossary_admin` · `get_glossary_term` ·
+  `record_glossary_suggestion` · `_insert_glossary_auto` · `list_glossary_feedback` ·
+  `promote_glossary_feedback` 에 `term_tier` 배선(promote 는 `skipped_general` 도 승급 대상).
+- **`src/modules/llm.py`**: `GLOSSARY_SUGGEST_PROMPT` 개정 — `tier` 필드 신설(3값 + 예시),
+  confidence 정의에서 **재사용성 제거**("Reusability … MUST NOT affect this number"),
+  한 개념 한 표기 지시 추가. `llm_glossary_suggest` 가 `tier` 를 원문 그대로 실어 보낸다
+  (화이트리스트 강제는 `normalize_suggestion_items` 한 곳).
+- **`src/agent_core.py`**: `_glossary_autopropose` 가 `term_tier` 를 전달하고, `suggestions`
+  인자를 받아 **LLM 추론을 건너뛸 수 있게** 확장(브리지 경로 진입점). 결과 집계 반환 +
+  `glossary_autopropose_done` 로깅(조용한 0건과 「등록될 용어 없음」을 가른다).
+- **`src/scripts/glossary_tier_sweep.py`** (신규): 소급 정리 — dry-run 기본, `--apply` 는
+  `--manifest` 필수(매니페스트를 못 쓰면 삭제하지 않는다), `--restore` 로 되돌리기.
+  `source='manual'` 무접촉. 교차 제품은 **보고만**.
+- **cross-cut feature-0003**: `routers/ai_tools.py` `submit_answer` 에 `glossary_terms` 옵션
+  수신 + `_absorb_bridge_glossary_terms`(제품 귀속을 task 행에서 해소·fail-closed) ·
+  `routers/_console_llm.py` `INACTIVE_SURFACES` 에 용어/ENUM 자율수집 2항목 ·
+  `routers/admin_metadata.py` tier CRUD + 전역 상속분(`inherited`) + `skipped_general` 조회 ·
+  `static/admin/metadata.js` select 필드 타입·배지·상속 읽기전용·큐 상태 필터 ·
+  `static/agent/bridge_agent.py` `_GLOSSARY_MARK`·`split_glossary`·프롬프트 규약.
+- **cross-cut feature-0043**: `src/bridge_agent.py` 정본 동기화(배포본과 byte-동치 —
+  `test_bridge_agent_sync` 가 이 계약을 잠근다. 실제로 첫 실행에서 이 테스트가 누락을 잡았다).
+- **테스트**: `tests/test_glossary_term_tier.py`(신규 20건) ·
+  `unit/feature-0003-agent-web-ui/tests/test_bridge_glossary_terms.py`(신규 14건) ·
+  기존 `test_kb_glossary_enum.py`·`test_metadata_glossary_{enum,autoreg}.py` 계약 갱신.
+- **검증**: `make test` PASS(rc=0, ruff clean). 뮤테이션 4종(결정적 강등 제거 · general 미등록
+  가드 제거 · 판정이력 단일 scope 회귀 · 러너 파싱 제거) **전건 KILL**(§16.7 G11-b).
+
+## CHG-20260901T130000-glossary-term-tier-merge — origin/main 병합 해소 기록
+
+`ai/claude/metadata-term-scope` 에 `origin/main`(#1459·#1460 머지분)을 병합. 코드 변경 0.
+
+- `unit/feature-0043-external-llm-bridge/docs/MODIFY.md` — 양쪽이 append-only 문서 말미에 각각
+  신규 `## CHG-` 블록을 추가. `bin/merge-append-doc.sh` driver 가 블록 단위로 병존시켰다
+  (AGENTS.md §16.4 자율 해결 표 1행 「append-only 문서 양쪽 신규 항목 추가 → 양쪽 유지」).
+  중복 헤더 0 · 충돌 마커 잔존 0 확인.
+- `src/agent_core.py` · 두 `MODIFY.md` — 서로 다른 구간이라 3-way clean.
+- 병합 후 `make test` 재실행 **PASS**(rc=0, FAILED 0) — 낡은 base 로 통과한 결과로 머지하지
+  않는다는 §13.2.5 신선도 계약 이행.
+
+⚠ GitHub 이 이 PR 을 `CONFLICTING` 으로 표시한 것은 **원격에 이 저장소의 custom merge driver 가
+없기 때문**이다(driver 등록은 clone-로컬 — `bin/setup-git-parallel.sh`). 로컬에서 driver 로
+해소해 push 하면 원격 판정이 `MERGEABLE` 로 바뀐다.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T133000-glossary-term-tier-merge2 — origin/main(#1462) 재병합 해소
+
+병렬 세션이 같은 파일(`bridge_agent.py`)을 먼저 머지해 재병합. 코드 변경 0.
+
+- `bridge_agent.py`(정본·배포본): 서로 다른 구간이라 **3-way clean**. 자동 병합 결과를 그대로
+  믿지 않고 양쪽 기능 생존을 확인했다 — 내 `#GLOSSARY` 축 6개 심볼 · 상대 `win-ai-detect` 축
+  19개 심볼 · AST PASS · **두 사본 sha256 동치**(`test_bridge_agent_sync` 계약).
+- `unit/feature-0043-external-llm-bridge/docs/MODIFY.md`: 양쪽 신규 `## CHG-` 블록 충돌.
+  driver 가 「본문 변경 감지」로 `git merge-file` 에 위임해 표준 마커가 남았고, §16.4 자율
+  해결 표 1행에 따라 **양쪽 유지 + 시간순 정렬**(`T110000` → `T120000`)로 해소. 마커 잔존 0.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T143000-glossary-term-tier-merge3 — origin/main(#1463·#1464) 재병합 + 마이그 재번호
+
+고병렬 창(§13.2.5-A)에서 세 번째 재병합. **코드 로직 변경 0**, 리비전 번호만 이동.
+
+- **alembic 리비전 충돌 → 재번호 (§13.1)**: 병렬 세션이 같은 날 `0057_redteam_review_source`
+  를 먼저 머지해 내 `0057_glossary_term_tier` 와 번호가 겹쳤다. 점유된 최대 번호 + 1 로
+  **0058 로 1-step 재번호**하고 `down_revision` 을 `0057_redteam_review_source` 로 걸어
+  체인을 직렬로 이었다(두 head 가 생기면 `upgrade head` 가 모호해진다).
+  파일명·`MAX_MIGRATION.txt`·`agent_kb_schema.sql` 미러 주석 동반 정정.
+- **`routers/ai_tools.py`**: 양쪽이 `submit_answer` 반환 dict 에 필드 1개씩(`glossary` /
+  `review_recorded`)과 헬퍼 1개씩(`_absorb_bridge_glossary_terms` / `_record_external_review`)
+  을 추가 — 순수 가산이라 **양쪽 병존**(§16.4 「서로 다른 섹션 변경 → 양쪽 반영」).
+- **`bridge_agent.py`(정본·배포본)**: 같은 성질의 충돌 2건(용어 축 `split_glossary` /
+  자가 검증 축 `run_self_review`) 양쪽 병존. 해소 후 확인 — 용어축 9 심볼 · 검증축 6 심볼 ·
+  `handle_one` 의 `split_glossary` 호출부 생존 · AST PASS · **두 사본 sha256 동치**.
+- 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
+
+Task-Cycle: feature-0002-agent-core

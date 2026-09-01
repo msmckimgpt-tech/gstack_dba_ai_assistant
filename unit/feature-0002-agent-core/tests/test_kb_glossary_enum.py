@@ -240,9 +240,14 @@ def test_record_glossary_suggestion_sql():
 
 def test_auto_promote_high_confidence_registers():
     # confidence ≥ threshold → kb_glossary 자동 등록(source='auto') + glossary_feedback(auto_promoted).
-    # fetchone_queue: [_feedback_status=None(신규), _insert_glossary_auto RETURNING=(123,)].
-    conn = _ScriptedConn(fetchone_queue=[None, (123,)], rowcount=1)
-    res = G.auto_promote_or_queue(conn, "common", "리드", "영업 잠재고객",
+    #
+    # 0057 로 선검사가 둘 늘었다 — fetchone_queue:
+    #   [_settled_feedback_status=None(신규), find_glossary_duplicate=None(중복 없음),
+    #    _insert_glossary_auto RETURNING=(123,)]
+    # 그리고 scope 는 **제품 scope** 여야 한다: 'common' 을 주면 0057 의 「귀속처 없는 제품 용어는
+    # 자동승급하지 않는다」 가드에 걸려 pending 이 된다(전역 사전 오염 방지 — 의도된 동작).
+    conn = _ScriptedConn(fetchone_queue=[None, None, (123,)], rowcount=1)
+    res = G.auto_promote_or_queue(conn, "product.sales", "리드", "영업 잠재고객",
                                   confidence=0.95, threshold=0.85)
     assert res == "auto_promoted"
     joined = " ".join(sql for (sql, _) in conn.captured)
@@ -263,8 +268,12 @@ def test_auto_promote_low_confidence_queues_pending():
 
 def test_auto_promote_skips_rejected_term():
     # REV-20260629 BLOCKER 회귀: 과거 거부된 용어가 고신뢰로 재추론돼도 라이브 kb_glossary 에
-    # 재유입되면 안 된다(poisoning 방어). _feedback_status='rejected' → kb_glossary INSERT 미발생.
-    conn = _ScriptedConn(fetchone_queue=[("rejected",)], rowcount=1)
+    # 재유입되면 안 된다(poisoning 방어). 판정 이력 있음 → kb_glossary INSERT 미발생.
+    #
+    # 0057: 선검사가 `_settled_feedback_status` 로 바뀌며 **scope 를 넘어** 본다 —
+    # 반환이 `(status, scope_key)` 2-튜플이다. 제품 A 에서 거부한 용어가 제품 B 에서
+    # 되살아나던 구멍을 그 확장이 닫는다(아래 test_auto_promote_skips_rejected_cross_scope).
+    conn = _ScriptedConn(fetchone_queue=[("rejected", "common")], rowcount=1)
     res = G.auto_promote_or_queue(conn, "common", "거부된용어", "재유입 시도 정의",
                                   confidence=0.99, threshold=0.85)
     assert res == "skipped"
@@ -273,9 +282,34 @@ def test_auto_promote_skips_rejected_term():
     assert "INSERT INTO glossary_feedback" not in joined  # 큐 재적재도 안 함
 
 
+def test_auto_promote_skips_rejected_cross_scope():
+    """0057 신규 — 다른 제품에서 거부된 용어도 재유입되지 않는다.
+
+    ⚠ **결과(`skipped`)만 보면 이 테스트는 아무것도 검사하지 않는다.** `_ScriptedConn` 은 어떤
+    SQL 이든 큐의 다음 값을 돌려주므로, 조회가 단일 scope 로 좁혀져 있어도(=0057 이전 동작)
+    이 fake 는 여전히 'rejected' 를 답한다 — 뮤테이션 실증에서 실제로 그렇게 살아남았다.
+    그래서 **조회가 나간 scope 집합**을 파라미터로 직접 단언한다.
+    """
+    conn = _ScriptedConn(fetchone_queue=[("rejected", "product.other")], rowcount=1)
+    res = G.auto_promote_or_queue(conn, "product.sales", "거부된용어", "재유입 시도 정의",
+                                  confidence=0.99, threshold=0.85)
+    assert res == "skipped"
+    joined = " ".join(sql for (sql, _) in conn.captured)
+    assert "INSERT INTO kb_glossary" not in joined
+    settled = [(s, p) for (s, p) in conn.captured
+               if "FROM glossary_feedback" in s and "status = ANY" in s]
+    assert settled, "판정 이력 선검사가 수행되지 않았다"
+    scopes = settled[0][1][0]
+    assert "product.sales" in scopes and G.GLOBAL_SCOPE in scopes, (
+        f"판정 이력 조회가 scope 를 넘지 않는다(scopes={scopes!r}) — "
+        "제품 A 에서 거부한 용어가 제품 B 에서 되살아난다")
+    # 표기변형까지 접어야 `멱등성` ↔ `멱등성(Idempotency)` 재유입도 막힌다.
+    assert settled[0][1][3] == G.normalize_term_surface("거부된용어")
+
+
 def test_auto_promote_skips_already_promoted():
     # 이미 등록(promoted/auto_promoted)된 용어는 중복 자동 INSERT 안 함.
-    conn = _ScriptedConn(fetchone_queue=[("auto_promoted",)], rowcount=1)
+    conn = _ScriptedConn(fetchone_queue=[("auto_promoted", "common")], rowcount=1)
     res = G.auto_promote_or_queue(conn, "common", "기존용어", "정의",
                                   confidence=0.99, threshold=0.85)
     assert res == "skipped"
@@ -302,12 +336,29 @@ def test_reject_pending_no_live_delete():
 
 def test_promote_glossary_feedback_inserts_and_marks():
     # pending → kb_glossary upsert(source='manual') + feedback status='promoted'.
-    conn = _ScriptedConn(fetchone_queue=[("common", "*", "리드", "정의"), (321,)], rowcount=1)
+    # 0057: 큐 행에서 `term_tier` 도 함께 읽어 그대로 옮긴다(판정과 등록이 갈리지 않게).
+    conn = _ScriptedConn(fetchone_queue=[("common", "*", "리드", "정의", "org"), (321,)],
+                         rowcount=1)
     gid = G.promote_glossary_feedback(conn, 3, approved_by="curator")
     assert gid == 321
     joined = " ".join(sql for (sql, _) in conn.captured)
     assert "INSERT INTO kb_glossary" in joined and "'manual'" in joined
     assert "status='promoted'" in joined
+    ins = [(s, p) for (s, p) in conn.captured if "INSERT INTO kb_glossary" in s]
+    assert ins[-1][1][-1] == "org", "큐의 term_tier 가 등록 행으로 옮겨지지 않았다"
+
+
+def test_promote_glossary_feedback_accepts_skipped_general():
+    """0057 신규 — 범용 판정으로 제외된 후보도 관리자가 되살릴 수 있어야 한다.
+
+    되살릴 경로가 없으면 결정적 목록의 오분류가 그대로 영구 삭제가 된다.
+    """
+    conn = _ScriptedConn(fetchone_queue=[("common", "*", "튜닝인덱스", "정의", "general"), (9,)],
+                         rowcount=1)
+    assert G.promote_glossary_feedback(conn, 5) == 9
+    sel = [s for (s, _) in conn.captured if "FROM glossary_feedback" in s]
+    assert sel and "skipped_general" in str(conn.captured[0][1]), \
+        "승급 조회가 skipped_general 을 대상에 넣지 않았다"
 
 
 # ── 0021: 유사어 관계 ────────────────────────────────────────────────────────

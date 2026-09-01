@@ -38,6 +38,7 @@ from typing import Any
 from shared.bridge_tasks import (
     RUNNER_FEATURE_BATCH_JOBS,
     RUNNER_FEATURE_CONSOLE_JOBS,
+    RUNNER_FEATURE_SELF_REVIEW,
     RUNNER_MIN_AGENT_VERSION,
 )
 from shared.llm_gate import SERVER_LLM_ENABLED_ENV, server_llm_enabled
@@ -136,11 +137,25 @@ INACTIVE_SURFACES: tuple[dict[str, Any], ...] = (
         "panel": "redteam-review",
         "label": "AI 자가 리뷰(적대 검증)",
         "why": "서버가 답변을 만들지 않으므로 서버 측 검증 단계가 실행되지 않습니다.",
-        # red-team 은 위임으로 되살아나지만 **다른 주체**가 한다 — 그 사실을 여기서 말한다.
-        # 되살아난 뒤에도 이 설정(축·강도)이 서버 검증을 지배하지는 않기 때문이다.
-        "instead": "답변을 만든 본인 AI 가 같은 5축으로 자기 답변을 검증하고 결과를 함께 제출합니다.",
-        "restore": f"{_GATE_ENV}=1 로 되돌리면 서버 측 검증이 다시 실행됩니다.",
-        "delegated": False,
+        # red-team 은 위임으로 되살아나지만 **다른 주체가 · 일부만** 한다.
+        #
+        # ⚠ 2026-09-01 까지 이 칸은 "본인 AI 가 같은 5축으로 검증하고 결과를 함께 제출합니다"
+        #   라고 적혀 있었는데 **그 경로가 코드에 없었다** — 화면이 하지 않는 일을 한다고
+        #   말하고 있었다. TASK-20260901T110000 이 그 경로를 실제로 만들었고, 문구는 이제
+        #   구현된 범위까지만 말한다: 검증은 하지만 **수정 반복은 하지 않는다**(서버 시절의
+        #   `REDTEAM_MAX_REVISIONS` 는 개인 머신 AI 호출을 몇 배로 늘리므로 남의 자원을
+        #   우리가 임의로 결정하지 않는다). 그 차이를 적지 않으면 다음 사람이 같은 착각을 한다.
+        "instead": ("답변을 만든 본인 AI 가 같은 5축으로 자기 답변을 검증해 결과를 함께 제출하고, "
+                    "판정은 'AI 운영 현황 > 브리지 작업' 에서 답변 옆에 표시됩니다. "
+                    "다만 BLOCK 결함이 나와도 답변을 자동으로 고쳐 다시 묻지는 않습니다"
+                    "(수정 반복은 연결된 AI 의 호출을 여러 배로 늘리므로 수행하지 않습니다). "
+                    "'리뷰 최소 추론 강도' 는 러너마다 강도 어휘가 달라 적용되지 않습니다."),
+        "restore": f"{_GATE_ENV}=1 로 되돌리면 서버 측 검증(수정 반복 포함)이 다시 실행됩니다.",
+        # 위임으로 되살아나는 항목이다 — 다만 **그 기능을 신고한 러너에 한해서**다.
+        # `delegation == ready`(콘솔 작업 자격)만 보고 지우면, `--no-self-review` 로 끈
+        # 사용자에게 "적용 중" 으로 보인다. 위임이 작업 종류 단위로만 참인 것과 같은 규율.
+        "delegated": True,
+        "delegated_feature": RUNNER_FEATURE_SELF_REVIEW,
     },
     {
         "key": "model-access-rbac",
@@ -160,6 +175,38 @@ INACTIVE_SURFACES: tuple[dict[str, Any], ...] = (
         "restore": f"{_GATE_ENV}=1 로 되돌리면 다시 적용됩니다.",
         "delegated": False,
     },
+    # ── 메타데이터 자율수집 2축 (2026-09-01) ────────────────────────────────────────
+    #
+    # ⚠ **이 두 항목이 없어서 정지가 3개월 가까이 보이지 않았다.** 전환(2026-08-26)이 대화 축과
+    #   콘솔 조작면은 따라갔는데, 답변 직후에 돌던 **배경 큐레이션**은 어느 레지스트리에도 없었다.
+    #   `run_post_answer_curation` 은 `run_agent` 안에서만 호출되고 브리지 `submit_answer` 는
+    #   그것을 부르지 않으므로, 게이트가 닫힌 순간 조용히 0건이 됐다(라이브 마지막 자동등록 =
+    #   전환 당일). 화면에는 「검토 큐 0건」만 보여서 「요즘 등록될 용어가 없다」로 읽혔다.
+    #   §16.7 G8-a(결정의 적용면 전수감사)가 말하는 누락의 정확한 형태다.
+    {
+        "key": "glossary-autocollect",
+        "panel": "metadata-glossary",
+        "label": "용어사전 자율수집",
+        "why": "대화 답변에서 용어 후보를 뽑던 일을 서버 계정 AI 가 했습니다.",
+        # 되살아난다 — 답한 그 AI 가 후보를 답변에 동봉한다(0057). 다만 **그 규약을 아는
+        # 러너**여야 하므로 구 실행 파일을 쓰면 여전히 안 온다. 그 사실을 함께 말한다.
+        "instead": "답변을 만든 본인 AI 가 용어 후보를 함께 보내 검토 큐에 쌓입니다. "
+                   "후보가 오지 않으면 연결 안내에서 최신 실행 파일을 받아 다시 실행해 주세요.",
+        "restore": f"{_GATE_ENV}=1 로 되돌리면 서버 측 추출도 다시 실행됩니다.",
+        "delegated": True,
+    },
+    {
+        "key": "enum-autocollect",
+        "panel": "metadata-enums",
+        "label": "ENUM 코드사전 자율수집",
+        "why": "답변에서 코드↔라벨 매핑을 뽑던 일을 서버 계정 AI 가 했습니다.",
+        # **비워 둔다** — 용어 축과 달리 아직 대체 경로가 없다. 「없다」를 없다고 말하는 것이
+        # 이 필드의 용도다(있는 척하면 관리자가 오지 않을 후보를 기다린다).
+        "instead": "",
+        "restore": f"{_GATE_ENV}=1 로 되돌리면 다시 실행됩니다. "
+                   "코드↔라벨은 메타데이터 > ENUM 에서 직접 등록할 수 있습니다.",
+        "delegated": False,
+    },
 )
 
 
@@ -167,14 +214,25 @@ def inactive_surfaces(state: dict | None) -> list[dict[str, Any]]:
     """지금 실제로 **미적용인** 표면만. 게이트가 열려 있으면 빈 목록.
 
     `delegated` 항목은 위임이 성립한 상태에서 제외한다 — 되살아난 기능을 "미적용" 이라
-    표시하면 그 표시 자체가 다음 거짓말이 된다. (현재 레지스트리에는 해당 항목이 없지만,
-    위임 범위가 넓어질 때 이 필터가 그 확장을 자동으로 따라간다.)
+    표시하면 그 표시 자체가 다음 거짓말이 된다.
+
+    ⚠ `delegated_feature` 가 있으면 **그 기능을 실제로 신고한 러너**여야 제외한다
+    (TASK-20260901T110000). 콘솔 작업 자격(`ready`)만 보고 지우면, 그 기능을 끈 사용자
+    (`--no-self-review`)에게 "적용 중" 으로 보인다 — 위임이 작업 종류 단위로만 참인 것과
+    같은 규율이고, 부분 배선을 참으로 적지 않는다는 이 feature 의 원칙이기도 하다.
     """
     if not state or not state.get("server_llm_blocked"):
         return []
     ready = state.get("delegation") == DELEGATION_READY
-    return [dict(item) for item in INACTIVE_SURFACES
-            if not (item.get("delegated") and ready)]
+    features = set((state.get("runner") or {}).get("features") or [])
+    out: list[dict[str, Any]] = []
+    for item in INACTIVE_SURFACES:
+        if item.get("delegated") and ready:
+            need = item.get("delegated_feature")
+            if not need or need in features:
+                continue        # 되살아났다 — 미적용 목록에서 뺀다
+        out.append(dict(item))
+    return out
 
 
 def version_at_least(actual: Any, minimum: str) -> bool:

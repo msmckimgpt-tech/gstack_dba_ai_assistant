@@ -580,6 +580,93 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
     return JSONResponse({"task_id": task_id, "context": marked})
 
 
+#: 「이 답변은 claude 의 모델 opus · 추론등급 xhigh 로 생성했습니다.」 — 답변 본문에 실리는
+#: 모델·추론등급 고지 한 줄.
+#:
+#: **문장 구조 전체로 좁힌다.** 종전 초안은 「`이 답변은` … `모델`|`추론등급` … `로
+#: 생성했습니다.`」 로만 봤는데, 그러면 `모델` 이 `모델링`·`논리 모델` 에 부분일치해 정상
+#: 문장을 지우고, 더 나쁘게는 **미반영 사실을 자기 말로 쓴 문장**(「…요청하신 모델 opus 대신
+#: 기본 모델로 생성했습니다」)까지 삼킨다 — 우리가 지키려던 계약이 같은 정규식에서 깨진다
+#: (적대 리뷰 P1-4). 러너가 만드는 형태는 `f"이 답변은 {런타임} 의 {축} 로 생성했습니다."`
+#: 이고 `{축}` 은 `모델 X` · `추론등급 Y` · 둘의 `·` 결합 셋뿐이므로, 그 골격을 그대로 쓴다.
+#:
+#: 런타임·모델 이름은 러너가 **신고**하는 값이라 서버가 목록을 갖고 있지 않다 — `\S+` 로
+#: 자리만 잡는다(이름을 열거하면 새 런타임이 붙는 날 그것만 통과한다).
+#:
+#: `[\s>\-*]*` 접두는 인용(`>`·`>>`)·목록(`-`) 부착을 함께 받는다. `\s` 는 전각 공백·NBSP·
+#: `\r` 을 포함하므로 CRLF 와 폭 넓은 공백이 자동으로 덮인다.
+_ANSWER_MODEL_NOTICE_RE = re.compile(
+    r"^[\s>\-*]*이 답변은\s+\S+\s*의\s+"
+    r"(?:모델\s+\S+(?:\s*·\s*추론등급\s+\S+)?|추론등급\s+\S+)"
+    r"\s*로 생성했습니다\.?\s*$")
+
+#: 고지를 찾는 범위 — 답변 **말미** 몇 줄.
+#:
+#: 러너는 본문 뒤에 고지 1줄을 붙이고, 그 뒤에 미반영 고지·승인 안내가 각각 최대 1줄 더 올 수
+#: 있다(빈 줄 포함해도 여유롭게 8줄 안이다). 전량을 훑지 않는 이유가 이 값의 존재 이유다:
+#:
+#: - **펜스 상태를 추적하지 않기 위해서.** 코드 펜스를 세어 「안/밖」 을 가르는 방식은 닫히지
+#:   않은 펜스 하나로 **봉인이 통째로 뚫린다**(AI 출력이 코드블록 도중 잘리는 것은 흔하다).
+#:   4-백틱 중첩 펜스에서는 반대로 블록 **안의 내용을 지운다**. 둘 다 적대 리뷰가 실측했다.
+#: - **예시로 인용된 같은 문장을 지키기 위해서.** 본문 중간의 인용은 범위 밖이다.
+#:
+#: 남는 트레이드오프: 말미 8줄 **안**에 이 문장을 예시로 두면 지워진다. 짧은 답변에서 그
+#: 문장이 본문일 확률보다, 그 자리에 실제 고지가 있을 확률이 훨씬 높다.
+_NOTICE_TAIL_LINES = 8
+
+#: 검사할 줄 길이 상한. 고지는 100자 안팎이다.
+#:
+#: 길이를 안 막으면 아주 긴 **한 줄**이 정규식 backtracking 으로 이벤트 루프를 초 단위로
+#: 세운다(적대 리뷰 P1-1 은 종전 초안에서 180KB 한 줄에 36초를 실측했다). 지금 정규식은 lazy
+#: 중첩이 없어 그 형태는 아니지만, 상한은 **입력이 아무리 이상해도** 비용을 상수로 묶는
+#: 값싼 보험이다 — 그리고 이 함수는 async 핸들러 안에서 동기로 돈다.
+_NOTICE_MAX_LINE = 300
+
+
+def _strip_model_notice(answer: str, *, allow_empty: bool = False) -> str:
+    """답변 말미에서 모델·추론등급 고지 줄을 걷어낸다 (사용자 결정 2026-09-01).
+
+    **왜 서버가 하는가.** 이 고지를 만들던 곳은 러너(`bridge_agent.py`)이고 정본에서는 이미
+    지웠다(2026-08-31). 그런데 러너는 서버가 배포하는 코드가 아니라 **각 사용자 머신에 설치된
+    사본**이다 — 우리가 고쳐도 그 머신이 다시 받아 가기 전까지는 계속 붙는다(라이브 실측:
+    수정·배포 이틀 뒤인 2026-09-01 제출분에도 그대로 실려 있었다). 게다가 러너를 쓰지 않는
+    등록형 AI 는 애초에 그 코드를 지나지 않으므로 자기 판단으로 같은 문장을 쓸 수 있다.
+
+    답변이 대화로 가는 문은 `submit_answer` 하나뿐이므로, 거기서 한 번 걷어내면 구버전 러너·
+    등록형 AI·AI 자발 부착이 **같은 한 지점**에서 닫힌다. 러너 쪽 제거는 그대로 두되(만들지
+    않는 것이 낫다), 집행은 서버가 한다 — 인지와 집행은 층이 다르다.
+
+    **미반영 고지는 건드리지 않는다.** 「요청하신 모델 X 은(는) 이 AI 에서 쓸 수 없어 기본
+    설정으로 답했습니다」 는 다른 사실이다 — 고른 값이 반영되지 않았다는 것은 화면 어디에도
+    드러나지 않아 답변이 유일한 통로다(사용자 결정 2026-08-31·2026-09-01 재확인). 그래서
+    정규식은 **문장 골격 전체**로 좁혔고, 같은 사실을 다른 말로 쓴 문장도 남는다.
+
+    **본문은 정리 결과가 비면 정리하지 않는다.** 답변 전체가 고지 한 줄인 제출은 병리적이지만,
+    그때 우리가 할 수 있는 최선은 사용자가 **무언가를** 보게 하는 것이다 — 빈 답변으로 만들면
+    위쪽 검사가 400 을 돌려주고, 그 task 는 점유된 채 lease 만료까지 대기 말풍선으로 남는다.
+
+    `allow_empty=True` 는 그 예외를 끈다. **제목** 축이 그렇다 — 제목은 한 줄이라 고지를 걷으면
+    항상 비고, 빈 제목은 「제목을 바꾸지 않는다」로 안전하게 흡수된다(`_deliver_web_bridge_answer`
+    가 빈 값을 건너뛴다). 본문 규칙을 그대로 쓰면 제목만은 언제나 원문으로 되돌아와 봉인이
+    제목 축에서만 뚫린다.
+    """
+    if "생성했습니다" not in answer:
+        return answer            # 빠른 길 — 거의 모든 답변이 여기서 끝난다
+    lines = answer.split("\n")
+    head = max(0, len(lines) - _NOTICE_TAIL_LINES)
+    kept = lines[:head]
+    dropped = 0
+    for line in lines[head:]:
+        if len(line) <= _NOTICE_MAX_LINE and _ANSWER_MODEL_NOTICE_RE.match(line):
+            dropped += 1
+            continue
+        kept.append(line)
+    if not dropped:
+        return answer            # 원문을 그대로 돌려준다(재조립이 여백을 흔들지 않게)
+    cleaned = "\n".join(kept).rstrip()
+    return cleaned if (cleaned or allow_empty) else answer
+
+
 @router.post("/api/ai/tools/submit_answer")
 async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                         conn=Depends(app.get_conn)) -> JSONResponse:
@@ -626,6 +713,15 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         _safe_record(account, ctx, tool="submit_answer", outcome="denied",
                      detail="task_canceled", task_id=task_id)
         return _json_err(409, _CANCELED_SUBMIT_MSG)
+
+    # ⚠ 고지 제거는 **여기 한 번**. 아래의 교차오염 대조·저장본(`stored`)·대화 전달본
+    #   (`_deliver_web_bridge_answer`)·원장 바이트수가 전부 이 변수를 보므로, 한 곳에서 정리하면
+    #   경로가 갈릴 수 없다. 소비처마다 정리하면 그중 하나를 빠뜨리는 날 화면에만 남는다.
+    #
+    #   자리가 **빈 답변 검사·`_load_task`·취소 판정 뒤**인 것도 계약이다: 앞에 두면 (a) 존재하지
+    #   않거나 점유하지 않은 task 로도 정리 비용을 태울 수 있고 (b) 정리로 답변이 비는 순간 위쪽
+    #   400("answer 가 필요합니다")이 **실제로 answer 를 보낸** 클라이언트에게 거짓말을 하게 된다.
+    answer = _strip_model_notice(answer)
 
     foreign = _sibling_tasks(conn, account, ctx.get("client_id"), exclude=task_id)
     findings = _guard.detect_cross_session(
@@ -760,14 +856,49 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     # 사용자 결정(2026-08-31 "관리 콘솔에 입력되는 값 또한 자율적으로 입력"): 위임은 **기존
     # 경로의 쓰기 의미를 보존**한다 — 검토형(`apply='review'`)은 폼이 가져갈 수 있게 두고,
     # 자동기입형(`apply='store'`)은 서버가 그 자리에서 저장까지 한다.
+    # ── 자가 검증 결과 보존 (TASK-20260901T110000) ──────────────────────────────────
+    #
+    # **답변 확정 뒤, 전달 전**에 둔다. 뒤에 두면 전달 실패 경로에서 검증 기록이 통째로
+    # 빠지고(그 답변이야말로 왜 실패했는지 알아야 하는 것이다), 앞(UPDATE 전)에 두면
+    # 제출이 409 로 거절된 답변의 검증이 원장에 남는다.
+    #
+    # **best-effort 다**(`_ledger.record` 의 fail-closed 와 다르다). 원장은 상한의 원천이라
+    # 못 쓰면 거절해야 하지만, 검증은 관측이다 — 관측을 못 남긴다고 이미 확정된 답변을
+    # 사용자에게서 빼앗을 이유가 없다. 대신 **성공 여부를 응답에 실어** 러너가 침묵으로
+    # "기록됐다" 고 믿지 않게 한다.
+    review_recorded = _record_external_review(
+        task_id, body.get("review"), conversation_id=task.get("conversation_id"))
+
     is_job = str(task.get("kind") or _KIND_CHAT) == _KIND_JOB
     applied, apply_error = False, ""
     delivered = False
     if is_job:
         applied, apply_error = _apply_console_job_result(conn, task_id, answer)
     else:
-        delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
-                                               title=str(body.get("title") or ""))
+        # 제목도 같은 봉인을 지난다 — 사용자 대면 표면은 본문만이 아니다. 러너는 `split_title`
+        # 이 먼저 돌아 여기 닿지 않지만, 등록형 AI 는 `title` 을 직접 싣고 그 값은 사이드바
+        # 대화 제목으로 박힌다(적대 리뷰 P2-4).
+        delivered = _deliver_web_bridge_answer(
+            conn, task_id, account, answer,
+            title=_strip_model_notice(str(body.get("title") or ""), allow_empty=True))
+
+    # ── 용어사전 자율수집 — 답변에 동봉된 후보를 태운다 (0057) ─────────────────────────
+    #
+    # feature-0043 이 서버 계정 LLM 을 닫으면서 `run_agent` 가 돌지 않게 됐고, 답변 직후
+    # 큐레이션(`run_post_answer_curation` → `_glossary_autopropose`)은 그 안에서만 호출됐다.
+    # 그래서 **용어 자율수집이 통째로 멈췄다** — 라이브 마지막 자동등록이 전환일(2026-08-26)이다.
+    #
+    # 되살리는 방법으로 「러너에게 별도 콘솔 작업을 위임」이 아니라 **답변에 동봉**을 고른 이유:
+    # red-team 을 같은 방식으로 처리한 선례가 있고(사용자 결정 2026-08-31 — 「요청 당시의
+    # 호출자가 스스로의 대화내역을 알 수 있으므로」), 추가 LLM 호출이 0 이며, 별도 task 로
+    # 만들면 그 AI 가 자기 답변의 맥락을 잃는다.
+    #
+    # **옵션이다** — 러너가 안 실으면 종전대로 아무 일도 없다(additive, 구 러너 무회귀).
+    # 실패는 흡수한다: 용어 수집은 보조물이고, 답변은 이미 확정·전달됐다.
+    glossary_stats: dict[str, int] = {}
+    if not is_job and body.get("glossary_terms") is not None:
+        glossary_stats = _absorb_bridge_glossary_terms(
+            conn, task=task, task_id=task_id, raw_terms=body.get("glossary_terms"))
 
     # ⚠ 원장 호출은 **한 곳뿐이다.** 분기마다 두면 (a) 「전달이 원장보다 먼저」라는 계약이
     #   분기 하나에서만 성립하고 (b) 그 계약을 지키는 회귀 가드가 소스 순서를 보므로 조용히
@@ -789,10 +920,174 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                              # 실패가 러너에게 성공으로 보이고, 그 러너는 재시도하지 않는다.
                              "applied": applied,
                              "apply_error": apply_error,
+                             "review_recorded": review_recorded,
                              "cross_session_findings": findings})
     return JSONResponse({"task_id": task_id, "recorded": True,
                          "delivered_to_conversation": delivered,
+                         # 무엇이 등록/보류/범용판정/중복으로 갈렸는지 러너에게 돌려준다 —
+                         # 조용한 성공은 「하나도 안 실렸다」와 구별되지 않는다.
+                         "glossary": glossary_stats,
+                         # 검증을 보냈는데 저장되지 않았다는 사실을 러너가 알아야 한다 —
+                         # 모르면 로그에 "검증 포함 제출 완료" 만 남고 원장은 비어 있다.
+                         "review_recorded": review_recorded,
                          "cross_session_findings": findings})
+
+
+#: 한 답변이 실을 수 있는 용어 후보 수 상한. 서버 LLM 경로의 `AGENT_GLOSSARY_SUGGEST_MAX`(5)와
+#: 같은 값을 기본으로 하되, 러너는 **통제 밖 LLM** 이므로 여기서 별도로 잠근다(신뢰 경계).
+_BRIDGE_GLOSSARY_MAX = 5
+
+
+def _absorb_bridge_glossary_terms(conn, *, task: dict, task_id: str, raw_terms) -> dict:
+    """개인 AI 가 답변에 동봉한 용어 후보를 용어사전 라우터에 태운다. 반환: `{outcome: count}`.
+
+    ## 신뢰 경계
+
+    `raw_terms` 는 **우리가 통제하지 않는 LLM 의 산출물**이다. 그래서:
+    - 검증은 `kb_glossary.normalize_suggestion_items` **한 곳**을 쓴다 — 서버 LLM 경로와 같은
+      필터를 타야 한쪽만 느슨해지지 않는다(§16.7 G8-a).
+    - 개수 상한을 여기서 다시 건다(`_BRIDGE_GLOSSARY_MAX`).
+    - `term_tier` 는 러너가 제안할 수 있지만 **결정적 강등**(`classify_term_tier`)이 그 위에
+      있다 — 러너가 「이건 제품 고유다」라고 우겨도 범용 어휘 목록에 걸리면 등록되지 않는다.
+
+    ## 제품 귀속
+
+    scope 는 **task 행의 `ProductId`** 에서 해소한다. `cfg.get_active_product_scope()` 같은
+    주변 상태를 읽지 않는다 — 이 요청은 웹 요청 스레드라 그 값이 이 대화의 제품이라는 보장이
+    없다(§16.7 G7-a — 이름·주변값은 근거가 아니다). 제품을 못 읽으면 **아무것도 하지 않는다**
+    (fail-closed): 귀속처를 모르는 채 등록하면 그 제품 용어가 전역이나 남의 제품으로 샌다.
+    """
+    stats: dict[str, int] = {}
+    log = logging.getLogger(__name__)
+    if not isinstance(raw_terms, list) or not raw_terms:
+        return stats
+    try:
+        from modules import kb_glossary as _kg
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[bridge] 용어 모듈 로드 실패 task=%s: %r", task_id, exc)
+        return stats
+
+    items = _kg.normalize_suggestion_items(raw_terms, max_terms=_BRIDGE_GLOSSARY_MAX)
+    if not items:
+        return stats
+
+    product_key = ""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1",
+                        (int(task.get("product_id") or 0),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        product_key = str((row or [""])[0] or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[bridge] 용어 귀속 제품 조회 실패 task=%s: %r", task_id, exc)
+        return stats
+    if not product_key:
+        # 제품 없는 대화(1:1·제품 미지정)에서 온 후보. 라우터가 전역 scope 로 받아 **검토 큐**에
+        # 넣는다(자동등록 아님) — 귀속처가 없는 용어를 전역 사전에 자동으로 앉히지 않는다.
+        scope_key = _kg.GLOBAL_SCOPE
+    else:
+        scope_key = f"product.{product_key}".lower()
+
+    pg = None
+    try:
+        from shared.db import _pg_available, _pg_connect
+
+        if not _pg_available():
+            return stats
+        pg = _pg_connect(autocommit=False)
+        for it in items:
+            outcome = _kg.auto_promote_or_queue(
+                pg, scope_key, it.get("term"), it.get("definition"),
+                confidence=it.get("confidence", 0.5), role_key=_kg.COMMON_ROLE,
+                source_run_id=task_id, conversation_id=str(task.get("conversation_id") or "") or None,
+                term_tier=it.get("term_tier"),
+            )
+            stats[outcome] = stats.get(outcome, 0) + 1
+        pg.commit()
+        log.info("[bridge] 용어 후보 %d건 처리 task=%s scope=%s %s",
+                 len(items), task_id, scope_key, stats)
+    except Exception as exc:  # noqa: BLE001
+        if pg is not None:
+            try:
+                pg.rollback()
+            except Exception:
+                pass
+        log.warning("[bridge] 용어 후보 처리 실패 task=%s: %r", task_id, exc)
+        return {}
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    return stats
+
+
+def _record_external_review(task_id: str, raw: Any, *, conversation_id: Any = None) -> bool:
+    """러너가 실어 보낸 5축 자가 검증을 `redteam_reviews(source='external')` 에 보존.
+
+    Returns:
+        저장했으면 True. **검증이 없었던 경우도 False** 다 — 호출측이 그 둘을 구분할 필요가
+        없기 때문이다(둘 다 "원장에 행이 없다"). 구분이 필요한 축은 러너의 기능 신고
+        (`RUNNER_FEATURE_SELF_REVIEW`)이고, 그것은 하트비트가 따로 나른다.
+
+    `sanitize` 가 `None` 을 돌려주면 **아무것도 쓰지 않는다.** 형태를 못 갖춘 응답을
+    `verdict='pass'` 로 접어 넣으면 "검증했고 문제없었다" 는 주장이 되는데, 실제로 일어난
+    일은 러너의 AI 가 JSON 을 못 냈다는 것뿐이다 — 그 침묵이 곧 거짓 안심이 된다.
+    """
+    if raw is None:
+        return False
+    try:
+        from shared import self_review as _sr
+
+        clean = _sr.sanitize(_sr.parse_review_text(raw))
+    except Exception:
+        logging.getLogger(__name__).debug("자가 검증 파싱 실패 task=%s", task_id, exc_info=True)
+        return False
+    if not clean:
+        return False
+    pg = _pg()
+    if pg is None:
+        return False
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "INSERT INTO agent_runtime.redteam_reviews "
+                "(conversation_id, run_id, task_id, source, verdict, findings, "
+                " block_count, warn_count, model, latency_ms, reasoning_level) "
+                # `findings` 는 JSONB — psycopg3 는 str 을 text 로 바인딩하므로 명시
+                # `::jsonb` cast 가 없으면 42804 로 거부되고 판정이 조용히 유실된다
+                # (`modules/redteam.record_review` 와 같은 규약).
+                #
+                # `run_id` 는 NULL 이다 — 서버 요청 식별자라 외부 경로에 존재하지 않는다.
+                # 없는 값을 task_id 로 채우면 두 세계의 식별자가 한 컬럼에서 섞여, 콘솔이
+                # 어느 쪽 원장과 조인해야 하는지 판단할 근거를 잃는다.
+                "VALUES (%s, NULL, %s, 'external', %s, %s::jsonb, %s, %s, %s, %s, %s)",
+                (str(conversation_id or "") or None, str(task_id or "")[:64],
+                 clean["verdict"], json.dumps(clean["findings"], ensure_ascii=False),
+                 clean["block_count"], clean["warn_count"],
+                 clean.get("model"), clean.get("latency_ms"), clean.get("reasoning_level")))
+        pg.commit()
+        return True
+    except Exception:
+        # 이미 확정된 답변을 관측 실패로 되돌리지 않는다(위 호출부 주석 참조).
+        logging.getLogger(__name__).warning(
+            "자가 검증 기록 실패 task=%s", task_id, exc_info=True)
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        # `_pg()` 는 호출마다 새 연결을 연다 — 닫지 않으면 제출마다 하나씩 샌다
+        # (`record_review` 가 같은 이유로 finally 에서 닫는다).
+        try:
+            pg.close()
+        except Exception:
+            pass
 
 
 #: 브리지에만 있는 도구의 (무엇을, 왜). 내부 경로에는 대응 도구가 없어 `_derive_step_*` 이
@@ -1918,12 +2213,73 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             "model": str(row[8] or ""),
             "reasoning_level": str(row[9] or ""),
         },
+        # 자가 검증 지시 (TASK-20260901T110000). 러너는 이 지시문을 초안과 함께 자기 AI 에게
+        # 한 번 더 넘기고, 받은 JSON 을 `submit_answer` 의 `review` 로 실어 보낸다.
+        # **지시문 전문을 서버가 준다** — 축·심각도·출력형식은 우리 규약이라, 러너에 박아 두면
+        # 축을 고칠 때마다 전 사용자가 재설치해야 하고 재설치하지 않은 러너는 낡은 축으로
+        # 판정한 결과를 같은 컬럼에 쓴다(스키마는 같고 의미만 갈리는 어긋남).
+        "self_review": _self_review_directive(question),
         "next": ("조사 후 submit_answer 로 제출하세요. source_tasks 에 근거로 쓴 task_id 를 "
                  "선언합니다." + (
                      f" 이 질문에는 첨부 {len(attachments)}건이 있습니다 — "
                      f"read_task_attachment(task_id, attachment_id) 로 본문을 읽고 나서 답하세요."
                      if attachments else "")),
     })
+
+
+def _self_review_enabled() -> bool:
+    """운영자의 `REDTEAM_ENABLED` 스위치 하나가 외부 자가 검증도 지배한다.
+
+    같은 knob 을 쓰는 이유: 운영자에게 「서버 자가 리뷰」와 「외부 자가 검증」은 같은 질문이다
+    (답변을 내보내기 전에 검증하는가). 두 스위치로 나누면 하나를 끄고 다른 하나가 도는 상태가
+    생기고, 콘솔의 그 패널은 어느 쪽을 말하는지 알 수 없게 된다.
+
+    ⚠ `REDTEAM_MIN_LEVEL`(최소 추론 강도)은 **적용하지 않는다.** 그 게이트는 서버 카탈로그의
+    강도 어휘(low/normal/high/max)로 판정하는데, 브리지의 강도는 **러너가 신고한 자기 어휘**라
+    (`Low`/`medium`/`xhigh`/`5` …) 같은 사다리 위에 있지 않다. 억지로 매핑하면 어떤 러너에게는
+    항상 skip, 다른 러너에게는 항상 수행이 되고 그 차이는 화면 어디에도 드러나지 않는다.
+    적용하지 못하는 설정을 적용한 척하지 않는다 — 그 사실은 `_console_llm.INACTIVE_SURFACES`
+    가 콘솔에 표시한다.
+
+    조회 실패는 **끔**(False). 검증은 관측 축이고, 알 수 없을 때 켜면 사용자의 개인 AI 에
+    호출 하나를 더 태우게 된다 — 우리가 확신 없이 남의 자원을 쓰지 않는다.
+    """
+    try:
+        from shared import runtime_settings as _rs
+
+        return int(_rs.get_int("REDTEAM_ENABLED")) > 0
+    except Exception:
+        return False
+
+
+def _self_review_directive(question: str) -> dict:
+    """`claim_request` 응답에 싣는 자가 검증 지시.
+
+    `enabled: False` 여도 **키 자체는 보낸다** — 키가 없으면 러너는 "이 서버는 자가 검증을
+    모르는 구버전" 과 "검증을 끈 서버" 를 구분할 수 없고, 구분하지 못하면 로그에 무엇을 쓸지도
+    정하지 못한다.
+    """
+    if not _self_review_enabled():
+        return {"enabled": False, "reason": "운영자 설정에서 자가 검증이 꺼져 있습니다."}
+    try:
+        from shared import self_review as _sr
+
+        return {
+            "enabled": True,
+            # 초안 자리는 러너가 채운다(`{{DRAFT}}` 치환이 아니라 조립 함수를 서버가 이미
+            # 실행했으므로, 여기서는 질문만 박힌 지시문에 러너가 초안을 이어 붙인다).
+            "instruction": _sr.build_instruction(question, _SELF_REVIEW_DRAFT_SLOT),
+            "draft_slot": _SELF_REVIEW_DRAFT_SLOT,
+            "max_findings": _sr.MAX_FINDINGS,
+        }
+    except Exception:
+        logging.getLogger(__name__).debug("self-review directive 조립 실패", exc_info=True)
+        return {"enabled": False, "reason": "검증 지시문을 준비하지 못했습니다."}
+
+
+#: 러너가 초안을 끼워 넣을 자리 표시. **본문에 나타날 리 없는 문자열**이어야 한다 —
+#: 사용자가 우연히 같은 글자를 쓰면 초안이 엉뚱한 위치에 두 번 들어간다.
+_SELF_REVIEW_DRAFT_SLOT = "⁣[[BRIDGE_SELF_REVIEW_DRAFT]]⁣"
 
 
 # (P0-T, 2026-08-28) `_REASONING_INTENT` 와 `_requested_quality()` 는 제거됐다.

@@ -212,6 +212,16 @@ _UA = "mysql-ai-bridge-agent/1"
 #: 없다 — 제출 전에 이 줄을 떼어내므로 사용자 화면에는 남지 않는다.
 _TITLE_MARK = "#TITLE:"
 
+#: 같은 계열의 두 번째 한 줄 규약 — 이 턴에서 배운 **도메인 용어 후보**를 실어 온다.
+#:
+#: 왜 별도 task 가 아니라 답변 동봉인가: 서버가 자기 계정 LLM 을 닫으면서(feature-0043) 답변
+#: 직후 큐레이션이 통째로 멈췄다. 되살리는 방법으로 「러너에게 용어 추출 작업을 따로 위임」이
+#: 아니라 동봉을 고른 이유는 red-team 과 같다 — **답한 그 AI 가 이미 맥락을 갖고 있고**, 별도
+#: 작업으로 만들면 대화를 한 번 더 넘겨야 하며 개인 계정 토큰을 두 번 태운다.
+_GLOSSARY_MARK = "#GLOSSARY:"
+#: 한 답변이 실을 수 있는 후보 수. 서버도 같은 상한을 다시 건다(러너 신뢰 경계 — 이 값은 예의일 뿐).
+_GLOSSARY_MAX = 5
+
 #: 서버가 최대 55초 보류한다. 그보다 넉넉히 잡아야 **정상 대기**를 타임아웃으로 오인하지 않는다.
 _WAIT_TIMEOUT_SEC = 90.0
 #: 조사·응답 생성 상한. **0 = 상한 없음(기본)** — 사용자 요구 2026-08-28:
@@ -352,7 +362,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 #: 버전은 그 형식 변경을 표현할 수 있는 유일한 축이다. 서버의 하한은
 #: `shared/bridge_tasks.RUNNER_MIN_AGENT_VERSION` — 여기 값이 그보다 낮으면 콘솔 작업이
 #: 배급되지 않고, 하트비트 응답의 `runner_update` 가 그 사실을 말한다.
-AGENT_VERSION = "2026.08.31"
+AGENT_VERSION = "2026.09.01"
 
 
 def _self_build() -> str:
@@ -387,7 +397,11 @@ def _self_build() -> str:
 #:   ⚠ 이 이름을 `_RUNTIME_SPECS` 폴백을 되살리면서 함께 남기지 마라 — 그 순간 자격 신고가
 #:   거짓이 되고, 서버는 그 거짓을 검증할 수단이 없다(그것이 이 자격의 유일한 전제다).
 #:   정본: `shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT`.
-AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "caps_self_report")
+#: `self_review` — 답변 초안을 자기가 5축으로 검증할 줄 안다. **자격이 아니라 관측 축**이라
+#:   기본 포함이다: 신고하지 않으면 콘솔이 「검증할 줄 모르는 러너」와 「검증했는데 통과」를
+#:   구분하지 못하고, 구분하지 못하면 운영자는 전자를 후자로 읽는다. 실제 수행 여부는
+#:   서버 설정(`REDTEAM_ENABLED`)이 정하며 `--no-self-review` 로 이 머신에서 끌 수 있다.
+AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "self_review", "caps_self_report")
 
 
 def _transport_is_safe(base: str) -> bool:
@@ -846,21 +860,236 @@ _CLI_ADAPTERS: list[tuple[str, list[str]]] = [
 ]
 
 
+#: Windows 에서 **우리가 `Popen` 으로 띄울 수 있는** 확장자. `PATHEXT` 에는 `.VBS`·`.JS` 도
+#: 있지만 그것들은 스크립트 호스트가 여는 것이지 CLI 실행 파일이 아니다.
+#: 확장자 없는 파일은 여기 없다 — npm 이 함께 깔아 두는 확장자 없는 sh shim 은 Windows 의
+#: `CreateProcess` 로 실행되지 않아서, 그것을 「찾았다」고 하면 감지는 성공하고 호출만 죽는다.
+#: Windows 에서 우리가 **직접 띄우는** 확장자.
+#:
+#: ⚠ **`.cmd`·`.bat` 는 의도적으로 빠져 있다** (codex 적대 리뷰 P1, 2026-09-01).
+#:
+#: 배치 파일은 `CreateProcess` 가 `cmd.exe` 로 넘겨 실행한다. 그 순간 인자는 Windows 의
+#: argv 인용 규칙이 아니라 **`cmd.exe` 의 파싱 규칙**을 한 번 더 통과하고, 거기서는
+#: `&` · `|` · `>` · `^` 가 메타문자다. 우리는 **사용자 질문 본문을 그대로 인자로** 넘기므로
+#: (`{prompt}` 치환), 배치 shim 을 직접 실행하면 `shell=False` 와 리스트 argv 를 쓰고도
+#: 명령 주입 경로가 열린다 — 2024년 여러 런타임을 한꺼번에 때린 그 결함(BatBadBut)과
+#: 같은 모양이다. 취소 시 `proc.kill()` 이 래퍼만 죽이고 그 아래 실제 프로세스를 남기는
+#: 문제도 배치 shim 에서만 생긴다.
+#:
+#: 잃는 것: npm 전역 설치(`%APPDATA%\npm\claude.cmd`)는 감지되지 않는다. 그러나 이것은
+#: 회귀가 아니다 — 수정 전에는 확장자를 아예 안 붙였으므로 그 사용자도 못 찾았다. 우리가
+#: 겨냥한 native installer(`.exe`)는 그대로 찾는다. 안전하게 부를 방법이 서기 전까지
+#: 배치 shim 은 「찾았다」고 말하지 않는다.
+_WIN_EXEC_EXTS = (".exe", ".com")
+
+#: 「실행 가능하지는 않지만 실행 파일처럼 이름이 붙는」 확장자. 이름에 이것이 이미 달려
+#: 있으면 `name + ".exe"` 로 늘리지 않고 **그 이름 그대로** 판정한다(아래 `_which` 참조).
+_WIN_KNOWN_EXTS = _WIN_EXEC_EXTS + (".cmd", ".bat", ".ps1")
+
+
+def _exec_exts() -> list[str]:
+    """이 OS 에서 실행 파일 이름에 붙을 수 있는 확장자. POSIX 는 `[""]`.
+
+    ⚠ 구분자는 `;` 다 — `os.pathsep` 이 아니다. 두 값이 같은 것은 Windows 뿐이고, 여기서
+    쪼개는 것은 PATH 가 아니라 `PATHEXT` 다(의미가 다른 것을 같은 상수로 쓰면, 그 둘이
+    갈리는 환경에서 조용히 틀린다).
+
+    `PATHEXT` 는 **거르는 데 쓰지 않는다** — 순서만 참고하고, 우리 목록은 항상 전부 본다.
+    거르면 `PATHEXT` 를 손댄 머신에서 설치 스크립트(고정 목록)와 러너의 답이 갈린다
+    (codex 적대 리뷰 P2). 두 곳이 다른 답을 내면 사용자는 어느 쪽도 믿을 수 없다.
+
+    소문자로 돌려준다. Windows 의 파일 이름은 대소문자를 가리지 않으므로 실물이
+    `CLAUDE.EXE` 여도 `claude.exe` 로 열린다.
+    """
+    if os.name != "nt":
+        return [""]
+    raw = [e.strip().lower() for e in os.environ.get("PATHEXT", "").split(";") if e.strip()]
+    ordered = [e for e in raw if e in _WIN_EXEC_EXTS]
+    return ordered + [e for e in _WIN_EXEC_EXTS if e not in ordered]
+
+
+def _is_exec(p: str) -> bool:
+    if not os.path.isfile(p):
+        return False
+    if os.name == "nt":
+        # ⚠ Windows 의 `os.access(X_OK)` 는 **존재 여부만** 본다(모든 파일이 True 다).
+        #   실행 가능 여부는 확장자가 가른다.
+        return os.path.splitext(p)[1].lower() in _WIN_EXEC_EXTS
+    return os.access(p, os.X_OK)
+
+
+def _name_candidates(name: str) -> list[str]:
+    """이 이름으로 찾아볼 파일 이름들. POSIX 는 `[name]`.
+
+    Windows 에서 이름에 **이미 확장자가 달려 있으면** 그대로 쓴다. 붙이기만 하면
+    `my-ai.exe` 가 `my-ai.exe.exe` 를 찾게 되어, 수정 전에는 되던 `--ai my-ai.exe` 가
+    조용히 무시된다(codex 적대 리뷰 P2). 이미 달린 것이 `.cmd`·`.bat` 면 후보가 비는데,
+    그것이 맞는 결과다 — 우리는 배치 shim 을 직접 실행하지 않는다.
+    """
+    if os.name != "nt":
+        return [name]
+    if os.path.splitext(name)[1].lower() in _WIN_KNOWN_EXTS:
+        return [name]
+    return [name + ext for ext in _exec_exts()]
+
+
 def _which(name: str) -> str | None:
+    """PATH 에서 실행 파일을 찾아 **경로**를 준다. 없으면 None.
+
+    ⚠ **Windows 는 확장자를 붙이지 않으면 아무것도 못 찾는다** (사용자 실측 2026-09-01).
+    종전 구현은 `os.path.join(d, name)` 만 봤다 — 그 머신에는 `claude.exe` 가 멀쩡히 있었고
+    직접 실행하면 `2.1.70 (Claude Code)` 를 답했는데, 확장자 없는 `claude` 라는 파일은
+    존재하지 않으므로 감지가 **구조적으로 실패**했다. 그리고 그 실패는 화면에서
+    「연결 확인에 실패했습니다」로 보였다 — 연결은 멀쩡했는데.
+
+    `os.curdir` 은 보지 않는다. Windows 의 `shutil.which` 는 현재 디렉토리를 먼저 보는데,
+    그러면 러너를 띄운 폴더에 놓인 동명 파일이 사용자의 AI 를 가로챌 수 있다.
+    """
+    if os.path.dirname(name):
+        # 경로가 실려 있으면 PATH 를 훑지 않는다 — 사용자가 지목한 그 파일이다.
+        # 확장자는 여기서도 붙여 본다: `\\server\share\claude` 처럼 경로만 주고 확장자를
+        # 생략한 지목이 실패하지 않도록(codex 적대 리뷰 P2).
+        for cand in _name_candidates(name):
+            if _is_exec(cand):
+                return cand
+        return None
     for d in os.environ.get("PATH", "").split(os.pathsep):
-        p = os.path.join(d, name)
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
+        if not d:
+            continue
+        for cand in _name_candidates(name):
+            p = os.path.join(d, cand)
+            if _is_exec(p):
+                return p
     return None
+
+
+#: 알려진 AI CLI 이름 — 아래 「PATH 밖 표준 설치 위치」 탐색의 **allowlist** 다.
+#: 이 집합 밖의 이름은 PATH 안에서만 찾는다. 홈 디렉토리를 임의 이름으로 뒤져 실행하면,
+#: 오타나 서버가 준 값 하나가 우리가 의도한 적 없는 프로그램의 실행이 된다.
+def _known_ai_names() -> set[str]:
+    return set(_RUNTIME_SPECS.keys())
+
+
+def _ai_install_dirs() -> list[str]:
+    """AI CLI 가 **PATH 에 없어도** 놓여 있는 표준 설치 위치.
+
+    설치기가 PATH 를 갱신하지 못하거나, 갱신했어도 이미 열려 있던 셸에는 반영되지 않는 일이
+    흔하다. 실측(2026-09-01): Claude Code 의 Windows native installer 는
+    `%USERPROFILE%\\.local\\bin` 에 넣는데 그 폴더가 사용자 PATH 에 **없었다** —
+    `Get-Command claude` 도 못 찾았고, 그래서 설치 스크립트도 러너도 「AI 없음」이라 봤다.
+
+    설치는 이미 돼 있는데 폴더 하나가 PATH 에 없다는 이유로 사용자에게 옵션을 요구하는 것은
+    (그 사용자가 `--ai` 가 무엇인지 알 이유가 없다) 이 기능이 없애려는 마찰 그 자체다.
+    파이썬 감지는 이미 「PATH 가 아직 안 잡혔을 수 있다 — 표준 설치 위치를 직접 본다」를
+    하고 있었고(`bridge_setup.ps1`), 이것은 AI 축에 없던 그 대칭이다.
+    """
+    home = os.path.expanduser("~")
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        localapp = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        return [
+            os.path.join(home, ".local", "bin"),            # Claude Code · Codex native installer
+            os.path.join(appdata, "npm"),                   # npm -g (claude.cmd · gemini.cmd)
+            os.path.join(localapp, "Programs", "Ollama"),   # Ollama 설치기
+        ]
+    return [
+        os.path.join(home, ".local", "bin"),
+        os.path.join(home, ".npm-global", "bin"),
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+    ]
+
+
+def _which_ai(name: str) -> str | None:
+    """AI CLI 하나를 찾는다 — PATH 우선, 없으면 **표준 설치 위치**(알려진 이름만)."""
+    p = _which(name)
+    if p:
+        return p
+    if name not in _known_ai_names():
+        return None
+    exts = _exec_exts()
+    for d in _ai_install_dirs():
+        for ext in exts:
+            cand = os.path.join(d, name + ext)
+            if _is_exec(cand):
+                return cand
+    return None
+
+
+def _resolve_exe(argv: list[str]) -> list[str]:
+    """argv[0] 을 **실제 실행 파일 경로**로 바꾼다. 못 찾으면 그대로 둔다.
+
+    이름만 담긴 argv 를 `Popen` 하면 그 이름이 PATH 에 있을 때만 통한다. 우리는 PATH 밖의
+    표준 설치 위치도 감지 대상으로 삼으므로, 여기서 맞춰 두지 않으면 **「찾았다」와
+    「실행할 수 있다」가 갈린다** — 감지는 성공하고 호출만 조용히 죽는 형태다.
+
+    셸이 하던 PATH 해석을 대신하는 것이라 명령의 의미는 바뀌지 않는다. 그래서 `--cmd` 로
+    받은 명령에도 적용한다(그 사용자도 Windows 에서 이름만 적을 수 있다).
+    """
+    if not argv:
+        return list(argv)
+    exe = _which_ai(argv[0])
+    return ([exe] + list(argv[1:])) if exe else list(argv)
 
 
 def detect_ai() -> tuple[str, list[str]] | None:
     for name, argv in _CLI_ADAPTERS:
-        if _which(name):
+        if _which_ai(name):
             return name, argv
-    if _which("ollama"):
+    if _which_ai("ollama"):
         return "ollama", []
     return None
+
+
+def pick_ai(ai: str, cmd: str | None) -> tuple[str, list[str]] | None:
+    """이 실행에서 쓸 AI. 없으면 None.
+
+    ⚠ **`--ai` 로 지목한 이름도 실재를 확인한다** (codex 적대 리뷰 P2, 2026-09-01).
+    종전에는 우리 표 안의 이름(`claude` 등)이면 파일이 있든 없든 통과했다. 그러면
+    `--check` 가 「사용할 AI: claude」와 종료코드 0 을 내고, 그 말을 믿은 사용자의 러너가
+    상주해 질문을 가져간 뒤 **매번 실행 실패로 답한다** — 화면에는 「연결됨」인 채로.
+
+    지목이 실재하지 않으면 **자동 감지로 갈아치우지 않는다.** 사용자가 세운 제한을 서버도
+    우리도 넘어서지 않는다(codex P2-2, 2026-08-28 과 같은 계약). 대신 없다고 말한다.
+    """
+    if cmd:
+        return "custom", []
+    if ai:
+        if not _which_ai(ai):
+            _log(f"지정한 AI '{ai}' 를 이 컴퓨터에서 찾지 못했습니다(다른 AI 로 대신하지 않습니다).")
+            return None
+        if ai == "ollama":
+            return "ollama", []
+        known = dict(_CLI_ADAPTERS).get(ai)
+        # 표 밖 이름은 호출 형태를 모른다 — 가장 흔한 모양으로 두고, 능력 질의가 통한
+        # 형태를 알아내면 그것으로 교체된다(main 의 `_learned` 경로).
+        return ai, list(known) if known else [ai, "-p", "{prompt}"]
+    return detect_ai()
+
+
+#: AI 설치 안내에 쓰는 주소. 깨지면 안내가 막다른 길이 되므로 한 자리에 모아 둔다.
+_AI_SETUP_URL = "https://docs.claude.com/en/docs/claude-code/setup"
+
+
+def _no_ai_message() -> list[str]:
+    """AI 를 못 찾았을 때 사용자에게 낼 말.
+
+    ⚠ **옵션 이름을 요구하지 않는다** (사용자 결정 2026-09-01). 종전 문구는
+    「`--ai` 또는 `--cmd` 로 지정하세요」였는데, 웹 콘솔의 명령을 복사해 붙인 사용자가
+    그 두 옵션의 의미도 사용법도 알 이유가 없다 — 알아야 할 사람에게만 통하는 안내는
+    나머지 전원에게 막다른 길이다. 대신 **무엇이 필요한지**와 **어디를 찾아봤는지**를 말한다.
+    「어디를 봤는지」가 load-bearing 이다: 이번 사용자의 AI 는 실제로 설치돼 있었고 그 폴더가
+    PATH 에 없었을 뿐이라, 목록을 보면 자기 설치 위치가 빠졌다는 것을 바로 알 수 있다.
+    """
+    names = " · ".join((_RUNTIME_SPECS.get(n) or {}).get("label") or n
+                       for n in _RUNTIME_SPECS)
+    return [
+        "  이 브리지는 이 컴퓨터에 설치된 AI 프로그램으로 답합니다.",
+        f"  쓸 수 있는 것: {names}",
+        f"  아직 없다면 Claude Code 를 설치한 뒤 이 명령을 다시 실행하세요: {_AI_SETUP_URL}",
+        "  이미 설치했다면 설치 폴더가 시스템 PATH 에 등록되지 않았을 수 있습니다.",
+        "  아래를 모두 찾아봤습니다:",
+    ] + [f"    · {d}" for d in (["PATH 에 등록된 폴더 전부"] + _ai_install_dirs())]
 
 
 #: AI 가 답한 **값**(모델·등급)에 요구하는 모양. 서버 쪽 `_CAPS_VALUE_RE` 와 같은 집합이다.
@@ -1194,7 +1423,8 @@ def _ask_json(argv: list[str], prompt: str, timeout: float) -> dict | None:
     `probe_runtime_caps` 의 1차 질의와 축 재질의가 같은 절차를 쓴다 — 두 벌로 두면
     한쪽만 고쳐지고, 그때 어느 쪽이 실제로 쓰이는지가 코드에서 안 보인다.
     """
-    cmd = [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv]
+    cmd = _resolve_exe(
+        [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv])
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=(timeout if timeout and timeout > 0
@@ -1221,7 +1451,7 @@ def _cli_help_text(name: str, timeout: float = _CAPS_HELP_TIMEOUT_SEC) -> str | 
     에러 경로가 같은 문으로 들어온다. 못 읽으면 "모른다" 로 남는 편이 안전하다.
     """
     try:
-        proc = subprocess.run([name, "--help"], capture_output=True, text=True,
+        proc = subprocess.run(_resolve_exe([name, "--help"]), capture_output=True, text=True,
                               timeout=(timeout if timeout and timeout > 0
                                        else _CAPS_HELP_TIMEOUT_SEC))
     except Exception:  # noqa: BLE001
@@ -1474,10 +1704,10 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
     elif only:
         # 표에 없는 런타임도 사용자가 지목했으면 물어본다 — 우리가 모르는 CLI 여도
         # 자기 능력은 스스로 말할 수 있다(그것이 P0-Z4 의 요지다).
-        names = [only] if _which(only) else names
+        names = [only] if _which_ai(only) else names
 
     cached = cached or {}
-    present = [n for n in names if _which(n)]
+    present = [n for n in names if _which_ai(n)]
     # 우리 표에 없는 CLI 도 물어본다 (P0-Z4 — "플랫폼에 관계없이"). 호출법을 모르므로 가장
     # 흔한 두 형태를 시도한다: `<cli> -p <프롬프트>` 와 `<cli> <프롬프트>`. 둘 다 실패하면
     # 그 런타임은 신고에서 빠진다(사용자는 `--cmd` 로 직접 줄 수 있다).
@@ -1665,7 +1895,8 @@ def _run_cli_cancelable(cmd: list[str], cancel_check) -> tuple[bool, str]:
     그 반환 틈에 취소를 확인할 뿐이다. 서버를 두드리지 않으므로 폴링이 아니다.
     """
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True)
     except Exception as e:  # noqa: BLE001
         return False, f"AI 실행 실패: {e}"
 
@@ -1802,7 +2033,8 @@ def _ensure_strict_mcp_supported(kind: str, exe: str = "claude") -> bool:
     if _STRICT_MCP_FLAG not in spec_argv:
         return False
     try:
-        proc = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(_resolve_exe([exe, "--help"]), capture_output=True,
+                              text=True, timeout=30)
         helptext = (proc.stdout or "") + (proc.stderr or "")
     except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "확인 못 했다" 로 같다)
         _log(f"참고: {exe} --help 로 {_STRICT_MCP_FLAG} 지원을 확인하지 못했습니다. "
@@ -1990,6 +2222,20 @@ def compose_prompt(api: Api, task: dict) -> str:
         # 삼고 제출 전에 떼어낸다 — 마커가 없으면 답변은 그대로다(파싱 실패가 답을 망치지 않음).
         f"답변의 **맨 마지막 줄**에 `{_TITLE_MARK} <이 대화를 요약한 30자 안팎의 제목>` 을"
         " 한 줄 덧붙여라. 이 줄은 사용자에게 보이지 않고 대화 제목으로만 쓰인다.",
+        # 용어 축: 제목 바로 **앞** 줄. 순서를 고정하는 이유는 `split_title` 이 「맨 마지막 줄」을
+        # 계약으로 갖고 있고 그 계약에 회귀 가드가 걸려 있어서다(둘 다 마지막을 요구하면 하나가
+        # 반드시 진다). 파서는 순서가 뒤바뀐 경우도 흡수하지만, 지시는 한 가지로 준다.
+        f"그 제목 줄 **바로 앞 줄**에 `{_GLOSSARY_MARK} <JSON 배열>` 을 한 줄 덧붙여라 —"
+        " 이 턴에서 **정의가 분명해진 도메인 용어**만 담는다. 사용자에게 보이지 않는다.",
+        '  형식: [{"term":"용어","definition":"1~2문장 한국어 정의",'
+        '"tier":"product|org|general","confidence":0.0~1.0}]',
+        '  tier — 그 용어가 **어디까지 통용되는가**: "product"=이 제품 고유(테이블·컬럼·코드값·'
+        '서비스 내부 개념) / "org"=제품 무관하되 이 조직 고유 관례 / "general"=범용 RDBMS·SQL'
+        " 표준 지식(트랜잭션·복합 인덱스·CTE·실행 계획·복제·Online DDL·시점 복구 등).",
+        '  confidence — **이 턴이 그 용어를 얼마나 명확히 정의했는가**만 본다. 용어가 얼마나'
+        " 일반적인지·중요한지는 이 숫자에 반영하지 마라(그건 tier 가 답한다).",
+        f"  한 개념당 표기는 하나만(`멱등성` 과 `멱등성(Idempotency)` 를 함께 넣지 마라)."
+        f" 최대 {_GLOSSARY_MAX}개. 담을 것이 없으면 `{_GLOSSARY_MARK} []` 로 적어라.",
     ]
     if ctxt:
         parts += ["", "── 이전 대화 ──", ctxt]
@@ -2076,12 +2322,96 @@ def split_title(answer: str) -> tuple[str, str]:
     return rest, title[:120]
 
 
+def split_glossary(answer: str) -> "tuple[str, list]":
+    """답변에서 `#GLOSSARY:` 마지막 줄을 떼어 `(본문, 후보목록)` 으로 가른다.
+
+    `split_title` 과 같은 계약: 마커가 없거나 JSON 이 깨졌으면 **본문을 손대지 않고** 빈 목록을
+    돌려준다. 규약을 모르는 런타임이나 잘못 만든 JSON 이 답변을 상하게 하면 안 된다 — 용어
+    수집은 보조물이고 답변이 본체다.
+
+    떼어낸 뒤 본문이 비면 포기한다(제목 규약과 동일 이유: 빈 답변은 서버가 400 으로 거절한다).
+    """
+    body = str(answer or "")
+    lines = body.rstrip().split("\n")
+    if not lines:
+        return body, []
+    tail = lines[-1].strip()
+    if not tail.upper().startswith(_GLOSSARY_MARK.upper()):
+        return body, []
+    rest = "\n".join(lines[:-1]).rstrip()
+    if not rest:
+        return body, []
+    raw = tail[len(_GLOSSARY_MARK):].strip().strip("`").strip()
+    try:
+        parsed = json.loads(raw) if raw else []
+    except Exception:
+        # 형식을 못 지킨 것은 그 AI 의 사정이고, 그 대가를 사용자 답변이 치르게 하지 않는다.
+        # 다만 줄은 떼어낸다 — 남기면 화면에 `#GLOSSARY: [...` 가 그대로 보인다.
+        return rest, []
+    if not isinstance(parsed, list):
+        return rest, []
+    return rest, parsed[:_GLOSSARY_MAX]
+# ── 자가 검증 (TASK-20260901T110000) ─────────────────────────────────────────
+#
+# 답변을 내보내기 전에 **같은 AI 에게 검증자 역할로 한 번 더** 묻는다. 전환 전에는 서버가
+# 이 일을 했고(`modules/redteam.py`), 게이트가 닫힌 뒤 아무도 하지 않게 됐다 — 그런데
+# 관리 콘솔은 여전히 "본인 AI 가 검증한다" 고 말하고 있었다.
+#
+# **축·형식은 서버가 준다**(`claim_request` 응답의 `self_review.instruction`). 여기에 적어
+# 두면 규약을 고칠 때마다 전 사용자가 재설치해야 하고, 재설치하지 않은 러너는 낡은 축의
+# 판정을 같은 컬럼에 쓴다.
+
+
+def run_self_review(directive: dict, draft: str, kind: str, argv: list[str],
+                    custom: str | None, cancel_check=None,
+                    model: str | None = None, effort: str | None = None,
+                    runtimes: list | None = None, caps: dict | None = None) -> dict | None:
+    """초안을 자기 AI 에게 되물어 5축 판정을 받는다. 실패·미수행이면 `None`.
+
+    **답변을 만든 것과 같은 (런타임·모델·등급)** 으로 묻는다. 더 싼 모델로 검증하면 그
+    검증은 답변을 만든 사고를 따라가지 못하고, 따라가지 못하는 검증은 표면적인 지적만 낸다
+    (서버 시절에도 리뷰어를 별도 저비용 모델로 두었을 때 같은 성질이 관측됐다).
+
+    ⚠ **실패를 위로 던지지 않는다.** 검증은 관측이고 답변은 사용자의 것이다 — 검증이
+    실패했다고 이미 만들어 둔 답을 버리면, 관측을 위해 서비스를 끊는 셈이 된다.
+    """
+    if not isinstance(directive, dict) or not directive.get("enabled"):
+        return None
+    instruction = str(directive.get("instruction") or "")
+    slot = str(directive.get("draft_slot") or "")
+    if not instruction or not slot or slot not in instruction:
+        # 서버가 준 지시문에 초안 자리가 없다 = 계약이 어긋났다. 지어내서 이어 붙이면
+        # 검증자가 무엇을 검증하는지 모르는 채로 답한다.
+        _log("자가 검증: 서버 지시문에 초안 자리가 없어 건너뜁니다.")
+        return None
+    if callable(cancel_check) and cancel_check():
+        return None
+    t0 = time.time()
+    ok, raw = ask_local_ai(kind, argv, instruction.replace(slot, draft), custom,
+                           cancel_check, model=model, effort=effort,
+                           runtimes=runtimes, caps=caps)
+    if not ok or raw == CANCELED or not str(raw or "").strip():
+        return None
+    # **파싱은 서버가 한다.** 여기서 JSON 을 뜯어 스키마를 강제하면 그 스키마가 러너에
+    # 박히고, 서버의 것과 갈리는 순간 어느 쪽이 정본인지 알 수 없어진다. 러너는 원문을
+    # 그대로 나른다 — 서버의 `self_review.sanitize` 가 형태를 못 갖춘 응답을 버린다.
+    return {
+        "raw": str(raw),
+        "latency_ms": int((time.time() - t0) * 1000),
+        # 무엇으로 검증했는지. 콘솔이 「답변 모델 ≠ 검증 모델」을 구분해야 할 날을 위해
+        # 지금 남긴다(지금은 같지만, 같다는 사실도 기록되어야 확인할 수 있다).
+        "model": model or "",
+        "reasoning_level": effort or "",
+    }
+
+
 # ── 한 건 처리 ───────────────────────────────────────────────────────────────
 
 
 def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str],
                custom: str | None, cancels: "CancelRegistry | None" = None,
-               runtimes: list | None = None, caps: dict | None = None) -> bool:
+               runtimes: list | None = None, caps: dict | None = None,
+               self_review: bool = True) -> bool:
     """이미 **점유된** task 하나를 처리한다.
 
     점유(`claim_request`)를 여기서 하지 않고 호출측(대기 루프)이 하는 이유: 점유가 늦으면 그
@@ -2107,7 +2437,7 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         _offered = any(str(rt.get("runtime") or "") == want_runtime for rt in (runtimes or []))
         _known = (_RUNTIME_SPECS.get(want_runtime) or {}).get("argv")
         _learned = ((caps or {}).get(want_runtime) or {}).get("argv")
-        if _offered and (_known or _learned) and _which(want_runtime):
+        if _offered and (_known or _learned) and _which_ai(want_runtime):
             run_kind = want_runtime
             run_argv = list(_known or _learned)
         else:
@@ -2162,8 +2492,15 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         _log(f"{task_id}: 답변 완료 직전에 취소됨 — 제출하지 않는다")
         return False
 
-    # 제목 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
+    # 제목·용어 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
+    #
+    # 순서: title → glossary → title 한 번 더. 지시는 「용어 줄, 그 다음 제목 줄」 하나로 주지만,
+    # 두 줄을 뒤바꿔 내는 런타임이 있으면 첫 `split_title` 이 실패하고 그 줄이 본문에 남는다.
+    # 두 번째 호출은 그 경우를 흡수한다(마커가 없으면 no-op 이라 정상 경로에는 무영향).
     answer, title = split_title(answer)
+    answer, glossary_terms = split_glossary(answer)
+    if not title:
+        answer, title = split_title(answer)
 
     # 반영하지 못한 지정을 **밝힌다**(codex REV-20260828T170000 P1-4). 조용히 기본값으로
     # 답하면 사용자는 자기가 고른 모델로 답이 나온 줄 안다 — 그 오해는 화면 어디에도 드러나지
@@ -2193,9 +2530,34 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
              "(연결된 AI 가 도구 호출 실패를 권한 문제로 오해한 신호. "
              f"claude 라면 {_STRICT_MCP_FLAG} 적용 여부와 토큰 유효성을 확인하라)")
 
+    # 자가 검증 — 제출 **직전**, 취소 검사 뒤. 여기 두는 이유: 취소된 답을 검증하는 것은
+    # 남의 계정 토큰을 이유 없이 태우는 일이고, 제출 뒤에 두면 검증 결과를 실을 자리가 없다.
+    #
+    # ⚠ 검증은 답변을 **바꾸지 않는다.** 서버 시절에는 BLOCK 결함이면 초안을 고쳐 다시
+    #   물었지만(`REDTEAM_MAX_REVISIONS`), 그 반복은 개인 머신 AI 호출을 몇 배로 늘린다 —
+    #   남의 자원이라 우리가 임의로 결정할 축이 아니다. 지금은 **판정을 기록**하고 그
+    #   판정을 콘솔이 보이게 하는 데까지다(수정 반복은 별도 결정 사항).
+    review = None
+    if self_review:
+        review = run_self_review(claimed.get("self_review") or {}, answer, run_kind, run_argv,
+                                 custom, _canceled, model=want_model, effort=want_effort,
+                                 runtimes=runtimes, caps=caps)
+        if review:
+            _log(f"{task_id}: 자가 검증 완료 ({review['latency_ms']}ms) — 제출에 동봉")
+
     payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
     if title:
         payload["title"] = title
+    if glossary_terms:
+        # 빈 목록은 싣지 않는다 — 서버가 `None` 과 `[]` 를 구분해 「규약을 모르는 러너」와
+        # 「담을 것이 없던 턴」을 로그에서 가를 수 있게 한다.
+        payload["glossary_terms"] = glossary_terms
+    if review:
+        # 서버 계약: `review.raw` 는 검증자가 낸 원문이다(우리가 뜯지 않는다).
+        payload["review"] = {
+            "raw": review["raw"], "latency_ms": review["latency_ms"],
+            "model": review["model"], "reasoning_level": review["reasoning_level"],
+        }
     res = api.call("submit_answer", payload, timeout=120.0)
     if res.get("_http") == 409:
         # 취소 신호를 못 본 채 여기까지 왔다(서버가 마지막 관문). 정상 흐름이다.
@@ -2216,7 +2578,9 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     if res.get("_http"):
         _log(f"{task_id}: 제출 실패 {res.get('_http')} {res.get('error')}")
         return False
-    _log(f"{task_id}: 제출 완료 (대화 반영={res.get('delivered_to_conversation')})")
+    _gl = res.get("glossary") or {}
+    _log(f"{task_id}: 제출 완료 (대화 반영={res.get('delivered_to_conversation')})"
+         + (f" 용어 {_gl}" if _gl else ""))
     return True
 
 
@@ -2337,6 +2701,10 @@ def main() -> int:
                     help="배경 배치 작업(인사이트·클러스터 라벨)까지 받는다. "
                          "기본은 받지 않는다 — 그 작업은 당신이 요청한 적 없고 당신 계정의 "
                          "AI 사용량을 쓴다.")
+    ap.add_argument("--no-self-review", action="store_true",
+                    help="답변을 내보내기 전 **자기 검증**(5축)을 하지 않는다. 기본은 서버 "
+                         "설정을 따라 수행 — 검증은 AI 호출을 한 번 더 쓰므로 "
+                         "이 머신에서 끄고 싶을 때 사용한다.")
     ap.add_argument("--once", action="store_true", help="한 건만 처리하고 종료")
     ap.add_argument("--check", action="store_true", help="연결만 확인하고 종료")
     ap.add_argument("--resume", action="store_true",
@@ -2411,35 +2779,20 @@ def main() -> int:
         return 2
 
     api = Api(args.base, args.token, args.ca)
+    # 신고는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 두 축을 한 번에 조립한다 —
+    # 따로 대입하면 나중 대입이 앞의 것을 지운다(`--batch --no-self-review` 조합에서
+    # 배치 동의가 사라지던 형태의 결함).
+    _feats = list(AGENT_FEATURES)
     if getattr(args, "batch", False):
-        # 배치 동의는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 서버는 이 신고를
-        # 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을 가져가지는 않는다.
-        api.features = tuple(AGENT_FEATURES) + ("batch_jobs",)
+        # 서버는 이 신고를 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을
+        # 가져가지는 않는다.
+        _feats.append("batch_jobs")
+    if getattr(args, "no_self_review", False):
+        # 끈 사실을 **신고에서도 지운다** — 신고를 남긴 채 수행만 건너뛰면 콘솔은 이 러너를
+        # "검증할 줄 아는데 결과가 없다"(= 통과)로 읽는다. 그 오독이 이 축을 만든 이유다.
+        _feats = [f for f in _feats if f != "self_review"]
+    api.features = tuple(_feats)
 
-    if args.cmd:
-        kind, argv = "custom", []
-    else:
-        picked = (args.ai, dict(_CLI_ADAPTERS).get(args.ai, [])) if args.ai else None
-        if picked and args.ai == "ollama":
-            picked = ("ollama", [])
-        if not picked or (args.ai and args.ai not in dict(_CLI_ADAPTERS) and args.ai != "ollama"):
-            # ⚠ 표 밖 이름을 여기서 자동 감지로 갈아치우면, 사용자가 `--ai mycli` 로 지목한
-            #   것이 조용히 claude/codex 로 바뀐다(codex P2-2). 그러면 runtime 지정이 없는
-            #   요청이 사용자가 고르지 않은 AI 로 처리되고, 캐시에도 틀린 `kind` 가 남는다.
-            #   PATH 에 실재하면 그 이름을 그대로 쓴다 — 호출 형태는 질의가 알아낸다.
-            if args.ai and _which(args.ai):
-                picked = (args.ai, [args.ai, "-p", "{prompt}"])
-            else:
-                picked = detect_ai()
-        if not picked:
-            _log("FATAL: 쓸 수 있는 AI 를 찾지 못했습니다. --ai 또는 --cmd 로 지정하세요.")
-            return 2
-        kind, argv = picked
-    _log(f"AI = {kind}" + (f" ({args.cmd})" if args.cmd else ""))
-    # 구버전 claude 는 `--strict-mcp-config` 를 모른다 — 그러면 **모든 질문이** unknown option
-    # 으로 실패한다 (codex P2-2). 기동 시 한 번 확인해서, 없으면 플래그를 빼고 그 사실을 크게
-    # 말한다. 조용히 빼면 원 결함(만료 MCP 토큰 경합)이 아무 표시 없이 돌아온다.
-    _ensure_strict_mcp_supported(kind)
     # 저장하는 `ai` 는 **사용자가 명시한 것만**이다(위 상속 주석과 같은 이유). 자동 감지
     # 결과를 저장하면 그것이 다음 실행의 제한으로 승격된다.
     save_conf(args.base, args.ca, (args.ai or ""), args.cmd)
@@ -2461,6 +2814,20 @@ def main() -> int:
     if probe.get("_http") == 401:
         _log("FATAL: 토큰이 무효합니다(발급자가 로그아웃했거나 만료). 재발급이 필요합니다.")
         return 3
+
+    # ── AI 는 **연결을 확인한 뒤에** 고른다 ──────────────────────────────────────
+    #
+    # ⚠ 종전에는 이 선택이 위쪽에 있었고, 실패하면 곧장 FATAL 이었다. 그래서 AI 를 못 찾은
+    #   사용자는 연결이 멀쩡해도 설치 스크립트로부터 「연결 확인에 실패했습니다. 토큰이
+    #   만료됐다면…」 을 받았다 (사용자 제보 2026-09-01) — 토큰도 CA 도 네트워크도 정상인데
+    #   그 세 곳을 뒤지게 만드는 오진이다. 연결과 AI 는 다른 축이므로 판정도 따로 낸다.
+    #
+    #   순서까지 바꾼 이유(codex 적대 리뷰 P2): 「실패해도 안 끝낸다」만으로는 부족하다.
+    #   AI 탐색은 파일시스템을 훑으므로 응답 없는 네트워크 드라이브가 PATH 에 있으면 여기서
+    #   오래 멈춘다. 그러면 연결 확인이 그만큼 늦어진다 — 확인이 먼저 끝나야 「연결은 된다」를
+    #   빨리 말할 수 있다.
+    picked = pick_ai(args.ai, args.cmd)
+
     if args.check:
         # `_http` 만 보면 **연결 실패(0)를 성공으로 읽는다** — 사설 CA 미지정 상태에서 실제로
         # "연결 정상." 을 출력했다. `--check` 가 거짓 안심을 주면 사용자는 러너가 왜 아무 일도
@@ -2472,7 +2839,28 @@ def main() -> int:
                 _log("  사설 CA 를 쓰는 서버라면 --ca <rootCA.pem> 을 지정하세요.")
             return 1
         _log("연결 정상.")
+        # 연결은 됐다. 그런데 **답할 AI 가 없으면** 이 설치는 아직 쓸 수 없다 — 그 사실을
+        # 연결 실패로 뭉치지 않고 따로 낸다(설치 스크립트가 exit 4 로 구분해 안내한다).
+        if not picked:
+            for line in _no_ai_message():
+                _log(line)
+            return 4
+        _log(f"사용할 AI: {picked[0]}")
         return 0
+
+    # 여기서부터는 상주다 — 답할 AI 가 없으면 **시작하지 않는다**. 질문을 가져가 놓고 답하지
+    # 못하면 사용자는 「대기 중」 표시만 보며 기다리게 된다(침묵보다 나쁘다).
+    if not picked:
+        _log("FATAL: 이 컴퓨터에서 쓸 수 있는 AI 를 찾지 못했습니다.")
+        for line in _no_ai_message():
+            _log(line)
+        return 4
+    kind, argv = picked
+    _log(f"AI = {kind}" + (f" ({args.cmd})" if args.cmd else ""))
+    # 구버전 claude 는 `--strict-mcp-config` 를 모른다 — 그러면 **모든 질문이** unknown option
+    # 으로 실패한다 (codex P2-2). 기동 시 한 번 확인해서, 없으면 플래그를 빼고 그 사실을 크게
+    # 말한다. 조용히 빼면 원 결함(만료 MCP 토큰 경합)이 아무 표시 없이 돌아온다.
+    _ensure_strict_mcp_supported(kind)
 
     # 이 머신이 무엇을 쓸 수 있는가 (P0-Z3). `--cmd` 로 명령을 통째로 준 사용자는 신고하지
     # 않는다 — 그 명령에 모델·등급이 이미 박혀 있고, 웹에서 고른 값은 반영되지 않는다.
@@ -2692,7 +3080,8 @@ def main() -> int:
 
         def _work(tid: str = task_id, payload: dict = claimed, slot: int = sid) -> None:
             try:
-                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes, caps)
+                handle_one(api, tid, payload, kind, argv, args.cmd, cancels, runtimes, caps,
+                           self_review=not getattr(args, "no_self_review", False))
             finally:
                 cancels.forget(tid)
                 active.leave(tid)

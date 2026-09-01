@@ -40,6 +40,88 @@ function bridgeKpis(bridge, kpi, fmtNum) {
           stale ? `10분 넘게 미점유 ${stale}건` : "질문 대기열");
 }
 
+/** 자가 검증 KPI (TASK-20260901T110000).
+ *
+ *  **원장이 준비되지 않은 것**(마이그레이션 대기)과 **검증이 0건인 것**은 다른 사실이므로
+ *  전자는 아예 그리지 않는다 — 0 으로 그리면 "아무도 검증을 안 한다" 로 읽힌다. */
+function selfReviewKpi(sr, kpi, fmtNum) {
+  if (!sr || sr.available !== true) return "";
+  const n = Number(sr.reviews || 0);
+  if (!n) {
+    return kpi("자가 검증", "0건",
+               "제출된 답변에 검증 결과가 동봉되지 않았습니다 — 러너 갱신이 필요할 수 있습니다");
+  }
+  const revise = Number(sr.revise_count || 0);
+  return kpi("자가 검증", `${fmtNum(n)}건`,
+             `결함 지적 ${fmtNum(revise)} · BLOCK ${fmtNum(sr.block_count)} · WARN ${fmtNum(sr.warn_count)}`);
+}
+
+/** 자가 검증 축별 분포 — "어디가 반복해서 걸리나" 는 프롬프트·데이터 어느 쪽을 고칠지의 신호다. */
+function selfReviewAxes(sr) {
+  const rows = (sr && sr.by_axis) || [];
+  if (!rows.length) return "";
+  return `<div style="margin-bottom:18px">`
+    + `<div style="font-weight:700;margin-bottom:6px">자가 검증 축별 지적`
+    + `<span style="font-weight:400;color:var(--text-2);font-size:12px;margin-left:8px">`
+    + `답변을 만든 본인 AI 가 자기 답변에서 찾은 것</span></div>`
+    + `<div style="overflow-x:auto"><table class="admin-llm-jobs-table">`
+    + `<thead><tr><th>축</th><th>BLOCK</th><th>WARN</th></tr></thead><tbody>`
+    + rows.map((r) => `<tr><td>${_e(r.label || r.axis)}</td>`
+        + `<td style="color:var(--tag-danger-fg)">${Number(r.block || 0).toLocaleString()}</td>`
+        + `<td style="color:var(--tag-warn-fg)">${Number(r.warn || 0).toLocaleString()}</td></tr>`).join("")
+    + `</tbody></table></div></div>`;
+}
+
+/**
+ * 연결된 AI 명부 — 「러너 N대」로는 답할 수 없는 "이 사람 질문이 왜 안 되나".
+ *
+ * 상태마다 **조치가 다르다**: 미수신(러너 기동) · 기능 미신고(갱신) · 지문 불일치(재설치).
+ * 한 칸으로 합치면 운영자가 무엇을 시켜야 하는지 알 수 없다.
+ */
+function runnerRoster(roster) {
+  if (!roster) return "";
+  if (roster.available !== true) {
+    return `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">연결된 AI</div>`
+      + `<div style="color:var(--text-2);font-size:13px">${_e(roster.reason || "러너 명부를 조회할 수 없습니다.")}</div></div>`;
+  }
+  const items = roster.items || [];
+  if (!items.length) {
+    return `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">연결된 AI</div>`
+      + `<div style="color:var(--tag-danger-fg);font-size:13px">연결된 개인 AI 가 없습니다 — `
+      + `들어오는 질문을 아무도 처리하지 못합니다.</div></div>`;
+  }
+  const rows = items.map((r) => {
+    // 상태는 **가장 바깥 원인부터** 판정한다(`_console_llm._classify` 와 같은 순서) —
+    // 듣지 않는 사람에게 "갱신하세요" 라고 말하면 그는 갱신할 러너가 돌고 있지 않다.
+    let chip;
+    if (!r.listening) chip = _jobChip("neutral", "대기 중 아님");
+    else if (!r.console_capable) chip = _jobChip("warn", "구버전");
+    else if (r.stale_build) chip = _jobChip("warn", "갱신 필요");
+    else chip = _jobChip("ok", "수신 중");
+    const age = (r.age_sec == null) ? "—"
+      : (r.age_sec < 120 ? `${r.age_sec}초 전` : `${Math.round(r.age_sec / 60)}분 전`);
+    return `<tr>`
+      + `<td>${_e(r.username || `#${r.account_id}`)}</td>`
+      + `<td>${chip}</td>`
+      + `<td style="color:var(--text-2)">${_e(age)}</td>`
+      + `<td>${_e(r.agent_version || "—")}`
+      + (r.stale_build ? ` <span style="color:var(--tag-warn-fg);font-size:11px">배포본과 다름</span>` : "")
+      + `</td>`
+      // 검증 가능 여부를 명시한다 — 이것이 없으면 「검증 결과 없음」이 통과인지 무능인지
+      // 구분되지 않고, 운영자는 전자로 읽는다.
+      + `<td>${r.self_review_capable ? _jobChip("ok", "가능") : _jobChip("neutral", "미지원")}</td>`
+      + `<td style="color:var(--text-2)">${Number(r.model_count || 0)}종</td>`
+      + `</tr>`;
+  }).join("");
+  return `<div style="margin-bottom:18px">`
+    + `<div style="font-weight:700;margin-bottom:6px">연결된 AI`
+    + `<span style="font-weight:400;color:var(--text-2);font-size:12px;margin-left:8px">`
+    + `계정별 러너 상태 — 답변을 실제로 만드는 주체</span></div>`
+    + `<div style="overflow-x:auto"><table class="admin-llm-jobs-table">`
+    + `<thead><tr><th>계정</th><th>상태</th><th>마지막 신호</th><th>러너 버전</th>`
+    + `<th>자가 검증</th><th>고를 수 있는 모델</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
 const _JOB_STATUS_TOKEN = {
   open: "warn", submitted: "ok", canceled: "neutral",
   deferred: "neutral", expired: "neutral",
@@ -239,6 +321,10 @@ function renderAiOps(data) {
   const fmtNum = (v) => (v == null ? "0" : Number(v).toLocaleString());
   const b = data.banner || {}, k = data.kpis || {}, lat = k.latency || {}, a24 = k.activity_24h || {};
   const axes = data.axes || [];
+  // 이 배포가 서버 계정으로 LLM 을 부르는가. **서버가 준 단일 필드**를 읽는다 — `axes` 를
+  // 뒤져 찾으면 축 순서를 바꾸는 날 이 판정이 조용히 뒤집힌다(ai_ops.py 가 순서 고정을
+  // 주석으로 지키고 있다는 것 자체가 그 취약함의 증거다).
+  const serverLlm = data.server_llm_blocked !== true;
   let h = "";
   // 상태 배너
   h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">`
@@ -251,19 +337,26 @@ function renderAiOps(data) {
   // KPI 타일
   const kpi = (label, value, sub) => `<div style="flex:1 1 150px;border:1px solid #d0d7de;border-radius:8px;padding:10px 12px"><div style="color:#57606a;font-size:12px">${esc(label)}</div><div style="font-size:18px;font-weight:700;margin-top:2px">${value}</div>${sub ? `<div style="color:#57606a;font-size:11px;margin-top:2px">${esc(sub)}</div>` : ""}</div>`;
   h += `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px">`
-    + kpi("워커 정상", `${esc(k.workers_ok)}/${esc(k.workers_total)}`, "요청·인사이트 워커")
-    + kpi("24시간 활동", fmtNum(a24.calls) + "회", (a24.requests || 0) + "개 요청")
-    + kpi("단계 간 간격 p50 / p95", fmtMs(lat.p50_ms) + " / " + fmtMs(lat.p95_ms), "추론 단계 사이(도구·오케스트레이션) · 다단계 요청 " + (lat.multistep_requests || 0) + "/" + (lat.agent_requests || 0) + " · 간격 " + (lat.measured_calls || 0) + "건")
-    // feature-0043 TASK-20260831T100000 — 브리지 KPI.
+    // feature-0043 TASK-20260901T110000 — **순서가 곧 우선순위다.**
     //
-    // 서버가 추론하지 않는 배포에서는 **이 두 수가 서비스의 생사**다. 종전 KPI(워커·활동·
-    // 지연)는 전부 서버 측 지표라, 러너가 0대여도 화면은 "정상" 만 보여 줬다.
-    // 값은 `data.bridge`(구조화)에서 읽는다 — 축의 `detail` 문자열을 파싱하면 문구를
-    // 고치는 순간 KPI 가 조용히 깨진다.
+    // 서버가 추론하지 않는 배포에서 브리지 KPI 두 장은 **서비스의 생사**이고, 종전 앞자리를
+    // 차지하던 KPI(24시간 활동·단계 간 간격)는 전부 `llm_usage` 출처라 이제 늘 0 이다.
+    // 0 인 타일을 맨 앞에 두면 화면 첫인상이 "아무 일도 일어나지 않는 서비스" 가 된다 —
+    // 그래서 차단 배포에서는 그 둘을 아예 그리지 않고(기록 탭이 이력을 보존한다),
+    // 게이트가 열린 배포에서는 종전 그대로 둔다.
     + bridgeKpis(data.bridge || {}, kpi, fmtNum)
+    + selfReviewKpi(data.self_review, kpi, fmtNum)
+    + kpi("워커 정상", `${esc(k.workers_ok)}/${esc(k.workers_total)}`, "요청·인사이트 워커")
+    + (serverLlm
+        ? kpi("24시간 활동", fmtNum(a24.calls) + "회", (a24.requests || 0) + "개 요청")
+          + kpi("단계 간 간격 p50 / p95", fmtMs(lat.p50_ms) + " / " + fmtMs(lat.p95_ms), "추론 단계 사이(도구·오케스트레이션) · 다단계 요청 " + (lat.multistep_requests || 0) + "/" + (lat.agent_requests || 0) + " · 간격 " + (lat.measured_calls || 0) + "건")
+        : "")
     + `</div>`;
+  // 연결된 AI 명부 — 「러너 N대」로는 답할 수 없는 "이 사람 질문이 왜 안 되나".
+  h += runnerRoster(data.runners);
   // feature-0043 TASK-20260831T100000 — 위임 작업 현황.
   h += delegatedJobsTable(data.delegated_jobs || []);
+  h += selfReviewAxes(data.self_review);
   // Attention
   const att = data.attention || [];
   if (att.length) {
@@ -271,6 +364,41 @@ function renderAiOps(data) {
       + att.map((x) => `<div style="display:flex;gap:8px;align-items:center;border-left:3px solid ${SC[x.level] || "#9a6700"};background:#f6f8fa;padding:6px 10px;border-radius:4px;margin-bottom:4px">${chip(x.level)}<b>${esc(x.label)}</b><span style="color:#57606a;font-size:12px">${esc(x.detail || "")}</span></div>`).join("")
       + `</div>`;
   }
+  // ── 서버 LLM 활동(카테고리·최근 활동·토큰 예산) ──────────────────────────────
+  //
+  // 이 세 블록의 출처는 전부 `agent_runtime.llm_usage` — **서버가 직접 호출한 것**뿐이다.
+  // 게이트가 닫힌 배포에서는 새 행이 쌓이지 않으므로 여기 두면 화면 대부분이 "0" 과
+  // "기록 없음" 이 되고, 그 침묵이 곧 오독이 된다("아무도 AI 를 안 쓴다").
+  //
+  // 그래서 **차단 배포에서는 '기록' 탭이 이 블록을 그린다**(`serverActivityHtml` 재사용).
+  // 지우지 않는 이유: 과거 기록은 그때의 사실이고 감사 대상이다.
+  h += serverLlm ? serverActivityHtml(data, { esc, fmtMs, fmtUsd, fmtNum }) : "";
+  // T0b(worker-ds-budget): 워커 공유 자원 예산·계측. 데이터는 워커가 공유 볼륨에 flush 한 스냅샷을
+  //   백엔드가 읽어 실어 준다(worker_resources). 거절이 0 이면 게이트 미발동(정상)이므로 조용히
+  //   현황만 보이고, 거절이 있으면 위 attention 에 병목 신호가 함께 뜬다.
+  h += workerResourcesHtml(data, { esc, fmtNum });
+  // 계측 커버리지 (정직 노출)
+  const cov = data.coverage || {};
+  h += `<div style="border-top:1px solid #d0d7de;padding-top:10px;font-size:12px;color:#57606a">`
+    + `<div style="font-weight:700;color:#24292f;margin-bottom:4px">계측 커버리지</div>`
+    + `<div>계측됨: ${esc((cov.instrumented || []).join(", "))}</div>`
+    + `<div style="margin-top:3px">미계측: ${(cov.uninstrumented || []).map((u) => esc(u.name) + " (" + esc(u.reason) + ")").join("; ")}</div>`
+    + (cov.note ? `<div style="margin-top:3px;font-style:italic">${esc(cov.note)}</div>` : "")
+    + `</div>`;
+  body.innerHTML = h;
+  bindActivityControls();
+}
+
+/**
+ * 서버 LLM 활동 3블록(카테고리 · 최근 활동 피드 · 백그라운드 토큰 예산).
+ *
+ * 게이트가 열린 배포에서는 '운영 현황' 이, 닫힌 배포에서는 '기록' 탭이 그린다 —
+ * **같은 함수**를 부른다. 두 벌로 두면 한쪽을 고칠 때 다른 쪽이 낡고, 그 낡음은 사람이
+ * 잘 가지 않는 '기록' 쪽에서 먼저 일어나 아무도 눈치채지 못한다.
+ */
+function serverActivityHtml(data, f) {
+  const { esc, fmtMs, fmtUsd, fmtNum } = f;
+  let h = "";
   // 카테고리 드릴다운
   const cats = data.categories || [];
   h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">AI 활동 카테고리 (최근 ${esc(data.window_days)}일)</div>`;
@@ -321,9 +449,14 @@ function renderAiOps(data) {
     }
   }
   h += `<div style="color:#57606a;font-size:12px;margin-top:4px">대화 답변·자가검증·제목 생성처럼 사용자가 기다리는 호출은 이 예산에서 제외되며 상한과 무관하게 항상 나갑니다.</div></div>`;
-  // T0b(worker-ds-budget): 워커 공유 자원 예산·계측. 데이터는 워커가 공유 볼륨에 flush 한 스냅샷을
-  //   백엔드가 읽어 실어 준다(worker_resources). 거절이 0 이면 게이트 미발동(정상)이므로 조용히
-  //   현황만 보이고, 거절이 있으면 위 attention 에 병목 신호가 함께 뜬다.
+  return h;
+}
+
+/** 워커 공유 자원 예산·계측 (T0b worker-ds-budget). 서버 LLM 차단 여부와 **무관**하다 —
+ *  인사이트·요청 워커는 게이트와 상관없이 계속 도는 서버 측 자원이다. */
+function workerResourcesHtml(data, f) {
+  const { esc, fmtNum } = f;
+  let h = "";
   const wres = data.worker_resources || {};
   h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">워커 공유 자원</div>`;
   const wlist = wres.workers || [];
@@ -362,21 +495,53 @@ function renderAiOps(data) {
       + `<div style="margin-top:4px;font-size:11px;color:#57606a">거절 0 = 상한이 병목이 아님(정상). 커넥션은 누적 생성 횟수이며 동시 점유가 아닙니다.</div>`;
   }
   h += `</div>`;
-  // 계측 커버리지 (정직 노출)
-  const cov = data.coverage || {};
-  h += `<div style="border-top:1px solid #d0d7de;padding-top:10px;font-size:12px;color:#57606a">`
-    + `<div style="font-weight:700;color:#24292f;margin-bottom:4px">계측 커버리지</div>`
-    + `<div>계측됨: ${esc((cov.instrumented || []).join(", "))}</div>`
-    + `<div style="margin-top:3px">미계측: ${(cov.uninstrumented || []).map((u) => esc(u.name) + " (" + esc(u.reason) + ")").join("; ")}</div>`
-    + (cov.note ? `<div style="margin-top:3px;font-style:italic">${esc(cov.note)}</div>` : "")
-    + `</div>`;
-  body.innerHTML = h;
-  // '더 보기' 배선(innerHTML 재설정 후이므로 매 렌더마다 재바인딩).
+  return h;
+}
+
+/** 활동 피드의 '더 보기' + 행 상세 토글 배선. `innerHTML` 재설정 뒤라 **매 렌더마다** 부른다.
+ *  운영 현황과 기록 탭 두 곳이 같은 피드를 그리므로 배선도 한 함수에서 나온다. */
+function bindActivityControls() {
   const _moreBtn = $("aiOpsActivityMore");
   if (_moreBtn) _moreBtn.addEventListener("click", loadAiOpsMoreActivity);
   // TASK-20260702-audit-nav-ux: 활동 행 클릭 상세 확장 위임 배선(페이징 append 행도 커버).
   const _actList = $("aiOpsActivityList");
   if (_actList) bindAiOpsActivityToggle(_actList);
+}
+
+/**
+ * '기록' 탭의 **서버 AI 활동 이력** 섹션. `/api/admin/ai-ops` 를 그대로 재사용한다 —
+ * 같은 사실이므로 엔드포인트를 새로 만들지 않는다.
+ *
+ * 게이트가 열린 배포에서는 이 블록을 '운영 현황' 이 이미 그리고 있으므로 여기서는
+ * **그 사실을 말하고 비운다**. 두 곳이 같은 표를 그리면 운영자는 어느 쪽이 현행인지
+ * 판단할 근거가 없다.
+ */
+export async function loadArchiveServerActivity() {
+  const body = $("archiveActivityBody");
+  if (!body) return;
+  body.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
+  let data = adminState.aiOps && adminState.aiOps.data;
+  if (!data) {
+    try {
+      data = await apiFetch("/api/admin/ai-ops");
+      if (adminState.aiOps) adminState.aiOps.data = data;
+    } catch (e) {
+      const msg = _e(String((e && e.message) || e));
+      body.innerHTML = '<div class="admin-detail-empty">불러오지 못했습니다: ' + msg + "</div>";
+      return;
+    }
+  }
+  if (data.server_llm_blocked !== true) {
+    body.innerHTML = '<div class="admin-detail-empty">이 배포는 서버 계정 LLM 을 사용 중입니다 — '
+      + '해당 지표는 현행이므로 <b>운영 현황</b> 탭에 표시됩니다.</div>';
+    return;
+  }
+  const esc = _e;
+  const fmtMs = (v) => (v == null ? "—" : (v >= 1000 ? (v / 1000).toFixed(2) + "s" : Math.round(v) + "ms"));
+  const fmtUsd = (v) => (v == null ? "—" : "$" + Number(v).toFixed(Number(v) < 1 ? 4 : 2));
+  const fmtNum = (v) => (v == null ? "0" : Number(v).toLocaleString());
+  body.innerHTML = serverActivityHtml(data, { esc, fmtMs, fmtUsd, fmtNum });
+  bindActivityControls();
 }
 
 export { loadAiOps };

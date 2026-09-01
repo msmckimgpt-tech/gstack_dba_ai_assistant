@@ -1,8 +1,13 @@
 // feature-0003 ITEM-09 — 그래프 뷰는 graph/graph.js 로 분리(순환 import). type=module 전환.
 import { _metaShowGraph, _metaGraphLoadRoots, _metaRoleLegendTips, _metaGraph } from "./graph/graph.js?v=dev";
 import { loadUsage } from "./admin/usage.js?v=dev";
-import { loadAiOps } from "./admin/aiops.js?v=dev";
-import { loadExtTasks } from "./admin/exttasks.js?v=dev";
+import { loadAiOps, loadArchiveServerActivity } from "./admin/aiops.js?v=dev";
+// feature-0043 TASK-20260901T110000 — 외부AI 운영축 재편.
+//   `admin/exttasks.js`(외부 AI 작업)는 `admin/tasks.js`(브리지 작업)로 흡수됐다 — 같은
+//   표(`WebAiTasks`)를 두 화면이 반쪽씩 보고 있어 대화 질문의 대기 상태가 어디에도
+//   나오지 않았다.
+import { loadBridgeTasks } from "./admin/tasks.js?v=dev";
+import { loadToolUsage } from "./admin/tools.js?v=dev";
 // feature-0043 TASK-20260831T100000 — 콘솔 LLM 상태 표면화(미적용 배지·사유·조작면 게이트).
 import {
   applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
@@ -2332,12 +2337,31 @@ export function bindPaneSubtabs(root, attr, onActivate, opts) {
   }
 }
 
+// feature-0043 TASK-20260901T110000 — 서브탭이 재편되면서 옛 키 두 개가 사라졌다
+// (`usage`·`reasoning` → '기록' 안 섹션, `exttasks` → '브리지 작업'). 서버·대시보드 위젯이
+// 보내는 옛 키를 흡수하지 않으면 그 deep-link 는 빈 pane 에 착지한다 — feature-0021 이 같은
+// 이유로 이 표를 만들었고, 그때 적대검증 MAJOR#1 로 잡힌 결함이 정확히 이것이다.
+//
+// `switchTab`(최상위 탭 키)과 `activateAiConsoleSubtab`(서브탭 키)이 **같은 표**를 읽는다:
+// 한쪽만 고치면 그쪽으로 오지 않는 호출부가 조용히 아무것도 하지 않는다.
+const _AI_SUBTAB_ALIAS = {
+  usage: "archive", "ai-ops": "ops", reasoning: "archive",
+  // feature-0041 의 '외부 AI 작업' 은 '브리지 작업' 으로 흡수됐다.
+  exttasks: "tasks",
+  // 신규 키도 자기 자신으로 매핑해 둔다 — 위젯이 새 키를 보내기 시작해도 동작한다.
+  ops: "ops", tasks: "tasks", tools: "tools", archive: "archive",
+};
+
 // deep-link 로 지정된 ai-console 서브탭을 활성화(보이는 서브탭일 때만). 버튼 click 으로 트리거해
 // bindPaneSubtabs 의 activate(권한 게이팅·lazy load 포함)를 재사용한다.
 export function activateAiConsoleSubtab(sub) {
   const pane = document.querySelector('.admin-pane[data-admin-pane="ai-console"]');
   if (!pane) return;
-  const btn = pane.querySelector('[data-ai-subtab="' + sub + '"]');
+  // 옛 키(`usage`/`reasoning`/`exttasks`)를 여기서도 흡수한다 — `switchTab` 만 고치면
+  // 그쪽으로 오지 않는 호출부(`usage.js` 의 그래프 네비게이션 등)가 조용히 아무것도 하지
+  // 않는다. 별칭 판정은 **한 표**에서 나온다.
+  const key = _AI_SUBTAB_ALIAS[sub] || sub;
+  const btn = pane.querySelector('[data-ai-subtab="' + key + '"]');
   if (btn && btn.style.display !== "none") btn.click();
 }
 
@@ -2345,23 +2369,61 @@ export function activateAiConsoleSubtab(sub) {
 function initAiConsoleSubtabs() {
   const pane = document.querySelector('.admin-pane[data-admin-pane="ai-console"]');
   if (!pane) return;
+  // feature-0043 TASK-20260901T110000 — 외부AI 운영축 4서브탭.
+  //
+  // 표시 게이트는 종전 권한 축을 그대로 쓴다(신규 권한을 만들지 않는다):
+  //   ops·tasks·tools = `console.aiops.read`(운영 관제)
+  //   archive         = `console.usage.read`(토큰·비용) **또는** `console.reasoning.read`
+  //                     (서버 자가 리뷰) — 기록 탭이 두 성격을 함께 담으므로 OR 이고,
+  //                     섹션별 실제 조회는 각 API 의 권한이 집행한다.
+  // ⚠ `can()` 은 display-permissive 라 **판정에 쓰지 않는다** — 실제 스코프 집행은
+  //   백엔드(`require_permission` · `_task_scope_clause`)가 한다.
   const visible = [];
-  if (can("console.usage.read")) visible.push("usage");
-  if (can("console.aiops.read")) visible.push("ops");
-  if (can("console.reasoning.read")) visible.push("reasoning");
-  // feature-0041 AC-7: 외부 AI 작업 원장. 표시 게이트는 운영 현황과 같은 축(console.aiops.read)
-  // 이며, **실제 스코프 집행은 백엔드**(`_task_scope_clause`)가 한다 — `can()` 은 표시-관대라
-  // 판정에 쓰지 않는다(이 저장소의 기존 회귀 사례).
-  if (can("console.aiops.read")) visible.push("exttasks");
+  if (can("console.aiops.read")) visible.push("ops", "tasks", "tools");
+  if (can("console.usage.read") || can("console.reasoning.read")) visible.push("archive");
   bindPaneSubtabs(pane, "ai", (key) => {
-    if (key === "usage" && !adminState.usage.initialized) { adminState.usage.initialized = true; loadUsage(); }
-    else if (key === "ops" && !adminState.aiOps.initialized) { adminState.aiOps.initialized = true; loadAiOps(); }
-    else if (key === "reasoning" && !(adminState.reasoning && adminState.reasoning.initialized)) {
-      adminState.reasoning = { initialized: true, redteamCursor: null }; loadReasoning();
-    } else if (key === "exttasks" && !(adminState.extTasks && adminState.extTasks.initialized)) {
-      adminState.extTasks = { initialized: true }; loadExtTasks();
+    if (key === "ops" && !adminState.aiOps.initialized) {
+      adminState.aiOps.initialized = true; loadAiOps();
+    } else if (key === "tasks" && !(adminState.bridgeTasks && adminState.bridgeTasks.initialized)) {
+      adminState.bridgeTasks = { initialized: true }; loadBridgeTasks();
+    } else if (key === "tools" && !(adminState.toolUsage && adminState.toolUsage.initialized)) {
+      adminState.toolUsage = { initialized: true }; loadToolUsage();
+    } else if (key === "archive") {
+      bindArchiveSections();
     }
   }, { visibleKeys: visible });
+}
+
+/**
+ * '기록' 탭의 세 섹션을 **펼칠 때** 조회한다 (TASK-20260901T110000).
+ *
+ * 진입과 동시에 셋을 다 부르면 이 탭이 콘솔에서 가장 무거워진다 — 그런데 전환 이전
+ * 기록이라 자주 열리지 않는다. 비용을 실제 열람에만 붙인다.
+ *
+ * 각 섹션의 권한이 다르므로 **보유하지 않은 섹션은 숨긴다**(열어 봐야 403 인 자리를
+ * 남기면 사용자는 그것을 고장으로 읽는다).
+ */
+function bindArchiveSections() {
+  const sections = [
+    ["archiveActivitySection", "console.usage.read", () => loadArchiveServerActivity()],
+    ["archiveUsageSection", "console.usage.read", () => {
+      if (adminState.usage.initialized) return;
+      adminState.usage.initialized = true; loadUsage();
+    }],
+    ["archiveReasoningSection", "console.reasoning.read", () => {
+      if (adminState.reasoning && adminState.reasoning.initialized) return;
+      adminState.reasoning = { initialized: true, redteamCursor: null }; loadReasoning();
+    }],
+  ];
+  sections.forEach(([id, perm, load]) => {
+    const el = $(id);
+    if (!el) return;
+    if (!can(perm)) { el.style.display = "none"; return; }
+    if (el.dataset.bound === "1") return;
+    el.dataset.bound = "1";
+    // `toggle` 은 열림/닫힘 양쪽에 온다 — 닫을 때 재조회하지 않도록 `open` 을 본다.
+    el.addEventListener("toggle", () => { if (el.open) load(); });
+  });
 }
 
 export function switchTab(tabName) {
@@ -2369,7 +2431,6 @@ export function switchTab(tabName) {
   // 'AI 운영 현황'(ai-console) 단일 탭 + 서브탭으로 통합됨. 대시보드 위젯 deep-link("열기 →")
   // 등 서버가 옛 키(tab:"usage"/"ai-ops")를 보내는 경로가 남아 있어, 여기서 통합 탭으로 매핑하고
   // 대응 서브탭을 활성화한다(빈 pane 착지 방지 — 적대검증 MAJOR#1).
-  const _AI_SUBTAB_ALIAS = { usage: "usage", "ai-ops": "ops", reasoning: "reasoning" };
   if (_AI_SUBTAB_ALIAS[tabName]) {
     const _sub = _AI_SUBTAB_ALIAS[tabName];
     tabName = "ai-console";
