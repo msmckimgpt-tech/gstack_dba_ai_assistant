@@ -37,6 +37,8 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from shared import bridge_consent, bridge_tasks
+
 # 인가 코드 TTL. 짧을수록 좋다 — 코드는 브라우저 리다이렉트 한 번을 건너는 데만 쓰인다.
 AUTH_CODE_TTL_SEC = 60
 # access token 은 "세션 실재" 요구의 집행 주기다. 길게 잡으면 로그아웃이 늦게 반영된다.
@@ -469,19 +471,19 @@ HEARTBEAT_MIN_WRITE_SEC = max(1, HEARTBEAT_INTERVAL_SEC // 3)
 #: 그 결과가 정확히 P0-R 이 없애려던 갈림이었다: 발급 3시간 뒤부터 **화면은 '연결 안 됨'**
 #: (SQL 술어가 KST 로 비교) **인데 인증은 통과**(파이썬이 UTC 로 비교)했다. 같은 질문에 두 개의
 #: 답이 있으면 갈리고, 여기서는 **엄격한 쪽이 화면**이라 사용자가 멀쩡한 연결을 끊긴 것으로 봤다.
-_SQL_NOW = "UTC_TIMESTAMP()"
+#: **정본은 `shared.bridge_tasks.SQL_NOW`** — 워커도 같은 시각 함수로 러너를 판정한다.
+_SQL_NOW = bridge_tasks.SQL_NOW
 
 #: 살아 있는 access token 의 조건. `resolve_access_token` 이 인증에서 집행하는 것과 **같은
 #: 술어**를 SQL 로 옮긴 것이다 — 토큰 미폐기·미만료 + (세션 결합이면) 세션 실재·미폐기·미만료.
 #: 문자열 하나로 두는 이유: 아래 두 판정이 각자 쓰면 언제든 갈리고, 갈리는 순간 느슨한 쪽이
 #: 사용자가 보는 진실이 된다(P0-R 에서 이미 겪었다).
-_LIVE_TOKEN_PREDICATE = (
-    "t.TokenType = 'access' AND t.RevokedAt IS NULL "
-    f"AND (t.ExpiresAt IS NULL OR t.ExpiresAt > {_SQL_NOW}) "
-    "AND (t.SessionId IS NULL OR "
-    "     (s.Id IS NOT NULL AND s.IsRevoked = 0 "
-    f"      AND (s.ExpiresAt IS NULL OR s.ExpiresAt > {_SQL_NOW})))"
-)
+#: **정본은 `shared.bridge_tasks.LIVE_TOKEN_PREDICATE`** (TASK-20260901T190000).
+#: 워커(insight-worker)도 이 술어로 「지금 일을 줄 수 있는 러너」를 고른다 — 그쪽은 다른
+#: 컨테이너라 이 모듈을 import 하지 못하므로 술어를 shared 로 올렸다. 두 벌로 두면
+#: 로그아웃한 세션의 러너를 워커만 자격 있다고 보는 창이 열리고, 그 창에서 적재된 작업은
+#: 아무도 집지 않는다(유령 작업).
+_LIVE_TOKEN_PREDICATE = bridge_tasks.LIVE_TOKEN_PREDICATE
 
 
 def heartbeat(cur, raw_token: str) -> dict[str, Any] | None:
@@ -571,32 +573,16 @@ RUNNER_CAPS_MAX_BYTES = 8 * 1024
 #: 러너 기능 신고의 상한 — 개수와 한 항목의 길이. `RunnerFeatures` 는 VARCHAR(255) 라
 #: 넘치면 잘리는데, 잘린 CSV 의 마지막 토큰은 **다른 기능 이름의 접두사**가 되어 배급 자격이
 #: 오판될 수 있다. 저장 전에 잘라 그 상황 자체를 만들지 않는다.
-RUNNER_FEATURES_MAX = 12
-RUNNER_FEATURE_MAX_LEN = 32
+#: **정본은 `shared.bridge_tasks`** 다(웹·워커가 같은 값을 쓴다).
+RUNNER_FEATURES_MAX = bridge_tasks.RUNNER_FEATURES_MAX
+RUNNER_FEATURE_MAX_LEN = bridge_tasks.RUNNER_FEATURE_MAX_LEN
 
-
-def parse_runner_features(raw: Any) -> list[str]:
-    """저장된 CSV 를 기능 이름 목록으로 — **읽기·쓰기가 같은 정규화를 쓴다**.
-
-    한쪽만 소문자화하거나 공백을 다르게 다루면 `"Console_Jobs"` 를 신고한 러너가 배급에서
-    빠진다. 그 실패는 조용하다(작업이 그냥 안 간다) — 그래서 정규화를 한 함수에 둔다.
-    """
-    if not raw:
-        return []
-    out: list[str] = []
-    for part in str(raw).split(","):
-        name = part.strip().lower()
-        # 이름처럼 생긴 것만 받는다. 이 값은 SQL LIKE 나 화면 표시로 흘러가므로, 모양을
-        # 여기서 잠근다(P0-Z4 의 "요구는 정확히, 수용은 관대하게" 중 모양 축).
-        if not name or len(name) > RUNNER_FEATURE_MAX_LEN:
-            continue
-        if not all(c.isalnum() or c in "_-" for c in name):
-            continue
-        if name not in out:
-            out.append(name)
-        if len(out) >= RUNNER_FEATURES_MAX:
-            break
-    return out
+#: 저장된 CSV → 기능 이름 목록. **정본은 `shared.bridge_tasks.parse_runner_features`** 다.
+#:
+#: 여기 다시 구현하지 않는 이유(TASK-20260901T190000): 같은 신고 문자열을 **워커도** 읽게
+#: 됐다(그래프 능동 분석·인사이트 배치 위임). 정규화가 두 벌이면 한쪽만 소문자화하는 날
+#: 같은 러너가 웹에서는 자격이 있고 워커에서는 없다 — 그 갈림은 조용하다(작업이 그냥 안 간다).
+parse_runner_features = bridge_tasks.parse_runner_features
 
 
 #: `RunnerFeatures` 컬럼 폭. **직렬화 결과가 이 값을 넘지 않아야 한다.**
@@ -855,38 +841,11 @@ def account_runner_profile(cur, account_id: int,
         `{"capabilities": list, "features": list[str], "agent_version": str,
           "listening": bool}` — 러너가 없으면 전부 빈 값 + `listening=False`.
     """
-    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
-    if not account_id:
-        return empty
-    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
-    cur.execute(
-        "SELECT t.RunnerCapabilities, t.RunnerFeatures, t.RunnerAgentVersion "
-        "FROM WebOAuthTokens t "
-        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
-        f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
-        "  AND t.LastHeartbeatAt IS NOT NULL "
-        f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
-        "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
-        (int(account_id), window),
-    )
-    row = cur.fetchone()
-    if not row:
-        return empty
-    caps: list = []
-    if row[0]:
-        try:
-            parsed = json.loads(row[0])
-        except (TypeError, ValueError):
-            # 저장된 값이 깨졌다 — 빈 목록으로 다룬다(선택기가 숨겨질 뿐, 답변 경로는 멀쩡하다).
-            parsed = None
-        if isinstance(parsed, list):
-            caps = parsed
-    return {
-        "capabilities": caps,
-        "features": parse_runner_features(row[1]),
-        "agent_version": str(row[2] or "").strip(),
-        "listening": True,
-    }
+    # **질의 정본은 `shared.bridge_tasks.runner_profile_for_account`** (TASK-20260901T190000).
+    # 워커도 같은 질의로 러너를 고른다 — 두 벌이면 자격 판정이 프로세스마다 갈린다.
+    return bridge_tasks.runner_profile_for_account(
+        cur, account_id,
+        window_sec=(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC))
 
 
 def account_runner_capabilities(cur, account_id: int,
@@ -1219,6 +1178,41 @@ def set_account_bridge_os(cur, raw_token: str, account_id: int, os_family: objec
         )
     except Exception:
         return False
+    return int(getattr(cur, "rowcount", -1) or 0) != 0
+
+
+def account_batch_consent(cur, account_id: int) -> bool:
+    """이 계정이 **배경 배치**를 자기 AI 로 받겠다고 했는가 (TASK-20260901T190000).
+
+    컬럼이 아직 없는 배포 창·조회 실패는 **동의하지 않음**으로 떨어진다. 여기서 관대하면
+    남의 계정 토큰을 태우는 쪽으로 실패한다 — 이 축에서 fail-open 은 선택지가 아니다.
+    """
+    if not account_id:
+        return bridge_consent.DEFAULT_BATCH_CONSENT
+    try:
+        cur.execute("SELECT BridgeBatchConsent FROM WebAccounts WHERE Id = %s", (int(account_id),))
+        row = cur.fetchone()
+    except Exception:
+        return bridge_consent.DEFAULT_BATCH_CONSENT
+    if not row:
+        return bridge_consent.DEFAULT_BATCH_CONSENT
+    return bridge_consent.normalize_consent(row[0])
+
+
+def set_account_batch_consent(cur, account_id: int, enabled: object) -> bool:
+    """배경 배치 동의를 켜거나 끈다. 실제로 값이 바뀌었으면 True.
+
+    ⚠ **실패를 삼키지 않는다** — 이 함수는 사용자가 화면에서 토글을 누른 결과이고, 조용히
+    실패하면 화면은 켜진 채로 남는데 러너는 영영 배치를 받지 않는다(그리고 사용자는 "켰는데
+    안 된다" 만 본다). 컬럼 부재·쓰기 실패는 예외로 올려 호출측이 사유를 말하게 한다.
+    `set_account_bridge_os` 가 삼키는 것과 갈리는 이유: 그쪽은 화면 기본값 편의라 틀려도
+    사용자가 탭을 한 번 더 누르면 되지만, 이쪽은 **동의**라 틀리면 되돌릴 근거가 없다.
+    """
+    on = 1 if bridge_consent.normalize_consent(enabled) else 0
+    cur.execute(
+        "UPDATE WebAccounts SET BridgeBatchConsent = %s "
+        "WHERE Id = %s AND NOT (BridgeBatchConsent <=> %s)",
+        (on, int(account_id), on))
     return int(getattr(cur, "rowcount", -1) or 0) != 0
 
 

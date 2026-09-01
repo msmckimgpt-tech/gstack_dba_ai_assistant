@@ -879,6 +879,285 @@ def _build_payload(node: dict, ctx: dict) -> dict:
 
 
 # ── enqueue (웹 트리거) ──────────────────────────────────────────────────────
+# ── 개인 AI 위임 (TASK-20260901T190000, P0-AK) ────────────────────────────────────
+#
+# 서버 계정 LLM 게이트가 닫힌 뒤 이 기능은 통째로 막혀 있었다 — `enqueue_*` 가 적재 **전에**
+# 거절했다. 그것 자체는 정직한 선택이었다(큐에 넣으면 잡마다 재시도 상한을 태우고 실패한다).
+# 빠져 있던 것은 **위임 경로**다: 사용자 결정(2026-09-01) "서비스 내 AI 관련 모든 작동사항을
+# 다시 활성화 후, 연결한 AI를 통해 작동하도록 배선".
+#
+# ## 워커는 기다리지 않는다
+#
+# 개인 AI 의 왕복은 분 단위이고 러너가 꺼져 있으면 영영 오지 않는다. 워커 스레드가 그것을
+# 기다리면 배경 처리가 통째로 멎는다. 그래서 워커는 **적재만 하고 그 잡을 놓아준다**:
+#
+#     워커 → enqueue_console_job(payload={job_id,…}) → 잡은 `running` 유지(error_kind='delegated')
+#     러너가 답하면 → submit_answer → apply_console_job_result → apply_external_node_analysis
+#                   → payload.job_id 로 그 행을 찾아 analysis 기입 + status='done'
+#
+# 스키마 변경이 없다. 러너가 끝내 답하지 않으면 기존 stale-`running` 회수(lease)가 그 잡을
+# `pending` 으로 되돌리고 다음 cycle 이 다시 위임한다 — **자가 치유**이지 영구 고착이 아니다.
+
+#: 위임 적재에 성공한 잡의 표식. `_run_llm` 이 이 값을 돌려주면 `_persist` 가 적재를 수행한다.
+#: 예외나 `None` 과 구분되는 **세 번째 결과**라 별도 센티넬이 필요하다 — `None` 은 "LLM 이
+#: 빈 응답을 냈다"(실패)이고, 이것은 "다른 곳에서 처리 중"(성공도 실패도 아님)이다.
+_DELEGATE = object()
+
+#: `error_kind` 에 남기는 값. 진행 패널이 「실패」와 구분해 「연결된 AI 처리 중」으로 읽는다.
+DELEGATED_ERROR_KIND = "delegated"
+
+
+def _memory_conn():
+    """제어면(MySQL `MEMORY_DB`) 연결. `WebAiTasks`·`WebAccounts` 가 거기 있다."""
+    from shared import db as _db
+
+    return _db.connect(database=_cfg.MEMORY_DB)
+
+
+def _delegation_account_id(mem, requested_by) -> int:
+    """`node_analysis_runs.requested_by`(사용자명) → 계정 id. 모르면 0.
+
+    분석을 **요청한 사람의** AI 가 그 분석을 한다. 아무 러너에게나 주지 않는 이유: 이 작업은
+    그 사람이 화면에서 눌러 시작한 것이고, 남의 계정 토큰을 태울 근거가 없다(배경 배치는
+    별도 동의 축으로 따로 다룬다).
+    """
+    name = str(requested_by or "").strip()
+    if not name:
+        return 0
+    cur = mem.cursor()
+    try:
+        cur.execute("SELECT Id FROM WebAccounts WHERE Username = %s LIMIT 1", (name,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+    return int((row or [0])[0] or 0)
+
+
+def _delegation_ready(mem, account_id: int) -> bool:
+    """그 계정에 **지금 이 작업을 집을 수 있는** 러너가 있는가.
+
+    판정은 웹 콘솔과 **같은 함수**(`shared.bridge_tasks.runner_can_take`)를 쓴다 — 따로 세면
+    화면은 "맡길 수 있다" 고 하는데 워커는 안 맡기는(또는 그 반대) 상태가 된다.
+    """
+    from shared import bridge_tasks as _bt
+
+    if not account_id:
+        return False
+    cur = mem.cursor()
+    try:
+        profile = _bt.runner_profile_for_account(cur, account_id)
+    finally:
+        cur.close()
+    return bool(_bt.runner_can_take(profile) and _bt.JOB_SPECS["node_analysis"].get("wired"))
+
+
+def delegation_possible(requested_by) -> bool:
+    """이 요청자의 AI 에게 분석을 맡길 수 있는가 — `enqueue_*` 게이트가 읽는 값.
+
+    **조회 실패는 False**(fail-closed). 낙관하면 적재까지 해 버리고 아무도 집지 않는 잡이
+    쌓인다 — 표시의 오류는 한 줄이고 적재의 오류는 유령 작업이다(`_console_llm` 과 같은 규율).
+    """
+    mem = None
+    try:
+        mem = _memory_conn()
+        return _delegation_ready(mem, _delegation_account_id(mem, requested_by))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("node_analysis 위임 가능 판정 실패 requested_by=%r err=%r", requested_by, exc)
+        return False
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+
+
+def _analysis_gate(requested_by) -> str:
+    """분석을 시작해도 되는가. `""` = 진행 · 그 외 = 사용자에게 보일 거절 사유.
+
+    두 경로 중 **하나라도** 서 있으면 진행한다: 서버 계정 LLM(되돌린 운영) 또는 개인 AI 위임.
+    둘 다 없을 때만 종전처럼 시작 전에 멈춘다 — 시작했다가 한참 뒤 실패하는 것보다 정직하다.
+    """
+    from shared.llm_gate import server_llm_enabled
+
+    if server_llm_enabled():
+        return ""
+    if delegation_possible(requested_by):
+        return ""
+    # 여기서 `feature_blocked_message` 를 쓰지 않는다: 그 문구는 "운영자에게 문의하세요" 로
+    # 끝나는데, 지금은 **사용자 자신이 할 수 있는 일**(내 AI 연결)이 있다. 할 수 있는 일을
+    # 두고 문의를 안내하면 그 사람은 아무것도 못 하고 기다린다.
+    return ("그래프 AI 능동 분석은 연결된 본인 AI 가 수행합니다 — 지금 대기 중인 러너가 "
+            "없습니다. 화면 우상단 '내 AI 연결하기' 로 연결한 뒤 다시 시도하세요.")
+
+
+def _run_requester(cur, run_id: str) -> str:
+    """이 run 을 시작한 사용자명. 모르면 빈 문자열(→ 위임 불가)."""
+    try:
+        cur.execute("SELECT requested_by FROM node_analysis_runs WHERE run_id=%s", (run_id,))
+        return str((cur.fetchone() or [""])[0] or "").strip()
+    except Exception:
+        return ""
+
+
+def _delegate_job(cur, w: dict, rep: dict) -> None:
+    """잡 1건을 요청자의 개인 AI 대기열에 올린다. **단일 스레드에서만 호출**(cur/rep).
+
+    실패는 삼키지 않는다 — 잡을 짧게 재예약(`error_kind='delegate'`)해 다음 cycle 이 다시
+    시도하게 한다. 그 사이 사용자가 러너를 켜면 저절로 흘러간다(자가 치유).
+
+    ⚠ **`attempts` 를 소모하지 않는다.** 러너가 잠깐 꺼져 있는 것은 이 잡의 잘못이 아니고,
+    소모하면 사용자가 AI 를 켜기 전에 run 이 통째로 `failed` 로 굳는다. 대신 상한을 두는 것은
+    `_record_failure` 의 budget 분기와 같은 이유다(영원히 대기하는 잡은 run 을 영구 running
+    으로 만들고, 그러면 enqueue dedup 이 사용자의 재트리거를 막는다).
+    """
+    from shared import bridge_tasks as _bt
+    from modules import llm as _llm_mod
+
+    jid = w["jid"]
+    run_id = w["run_id"]
+    mem = None
+    try:
+        mem = _memory_conn()
+        account_id = _delegation_account_id(mem, _run_requester(cur, run_id))
+        if not _delegation_ready(mem, account_id):
+            raise RuntimeError("연결된 AI 러너가 대기 중이 아닙니다")
+        task_id = _bt.enqueue_console_job(
+            mem, account_id=account_id, job_kind="node_analysis",
+            # 프롬프트 조립은 **서버 호출과 같은 정본**을 쓴다(`node_analysis_messages`).
+            # 여기서 새로 쓰면 같은 분석이 경로에 따라 다른 규칙으로 산출된다.
+            prompt=_bt.messages_to_prompt(_llm_mod.node_analysis_messages(w["payload"]), "json"),
+            # 되돌아올 때 **어느 행에 쓸지**를 payload 가 들고 간다. 노드 키로 찾지 않는 이유:
+            # 같은 노드가 여러 run 에 동시에 있을 수 있고, 그러면 다른 run 의 결과가 섞인다.
+            payload={"job_id": int(jid), "run_id": str(run_id),
+                     "scope_key": str(w.get("scope_key") or ""),
+                     "node_key": str(w.get("node_key") or "")},
+            datasource_key=(str(w.get("scope_key") or "") or None))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("node_analysis job=%s 위임 적재 실패 err=%r", jid, exc)
+        try:
+            cur.execute(
+                "UPDATE node_analysis_jobs SET status='pending', "
+                "  next_attempt_at = now() + make_interval(secs => %s), "
+                "  error_kind=%s, error=%s WHERE id=%s",
+                (_DELEGATE_DEFER_SEC, "delegate",
+                 ("연결된 AI 에 맡기지 못했습니다: " + str(exc))[:500], jid))
+        except Exception:
+            # `error_kind`/`next_attempt_at` 부재(0049 미적용 창) — 그 창에서는 그냥 pending
+            # 으로 되돌린다. 즉시 재시도가 되지만 이 창은 이미 지난 마이그레이션이다.
+            try:
+                cur.execute("UPDATE node_analysis_jobs SET status='pending' WHERE id=%s", (jid,))
+            except Exception:
+                pass
+        return
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    # 성공: 이 잡은 `running` 인 채로 남는다. `updated_at` 을 밀어 lease 회수가 곧바로
+    # 빼앗아 가지 않게 하고, 무엇을 기다리는지 행에 적는다(조용한 대기는 진단 불가).
+    try:
+        cur.execute(
+            "UPDATE node_analysis_jobs SET status='running', updated_at=now(), "
+            "  error_kind=%s, error=%s WHERE id=%s",
+            (DELEGATED_ERROR_KIND, f"연결된 AI 처리 중 (task {task_id})", jid))
+    except Exception:
+        cur.execute("UPDATE node_analysis_jobs SET status='running' WHERE id=%s", (jid,))
+    rep["delegated"] += 1
+    _log.info("node_analysis job=%s 위임 run=%s task=%s", jid, run_id, task_id)
+
+
+#: 위임 적재에 실패했을 때 다시 시도하기까지의 대기(초). 러너가 켜지기를 기다리는 시간이라
+#: 예산 거절(30초)보다 길게 잡는다 — 사람이 브라우저에서 '내 AI 연결' 을 마치는 데 드는 시간.
+_DELEGATE_DEFER_SEC = 60
+
+#: 위임 결과에 새기는 모델 라벨. 실제 모델 이름은 러너가 고르고 우리에게 돌려주지 않으므로
+#: **아는 것만 적는다** — 지어내면 상세 패널이 돌지 않은 모델을 표시한다.
+EXTERNAL_MODEL_LABEL = "external-ai"
+
+
+def apply_external_node_analysis(conn, payload, result) -> None:
+    """개인 AI 가 낸 노드 분석을 **원래 저장 경로**에 기입한다 (`_STORE_ROUTES` 대상).
+
+    Args:
+        conn: 호출측(웹)의 **MySQL** 커넥션. 여기서는 쓰지 않는다 — 분석 원장은 PostgreSQL
+            이라 자체 연결을 연다. 인자를 받는 이유는 `_store_result` 의 공통 규약이기 때문.
+        payload: 적재 시 우리가 실어 보낸 것 — `{"job_id", "run_id", "scope_key", "node_key"}`.
+        result: 러너 답변에서 추출된 JSON 객체.
+
+    실패는 **예외로 올린다**. `apply_console_job_result` 가 그것을 잡아 작업 행에 사유를
+    남기므로(`JobApplyError`), 화면이 "제출됐지만 반영 실패" 를 사유와 함께 말한다.
+    조용히 성공으로 접으면 값은 어디에도 없는데 콘솔은 완료라고 한다.
+    """
+    job_id = int((payload or {}).get("job_id") or 0)
+    run_id = str((payload or {}).get("run_id") or "")
+    if not job_id or not run_id:
+        raise ValueError("위임 payload 에 job_id/run_id 가 없습니다 — 어느 행에 쓸지 알 수 없습니다.")
+    if not isinstance(result, dict):
+        raise ValueError("노드 분석 결과가 JSON 객체가 아닙니다.")
+    analysis_text = json.dumps({
+        "summary": str(result.get("summary") or "").strip(),
+        "relationships": str(result.get("relationships") or "").strip(),
+        "usage": str(result.get("usage") or "").strip(),
+        "caveats": str(result.get("caveats") or "").strip(),
+    }, ensure_ascii=False)
+    c, owned = _rw_conn(None)
+    if c is None:
+        raise RuntimeError("분석 원장(PG)에 연결할 수 없습니다.")
+    try:
+        cur = c.cursor()
+        try:
+            # 그 행이 **아직 이 위임을 기다리고 있는가**. lease 회수로 이미 `pending` 이 됐거나
+            # 다른 경로로 `done` 이 된 뒤에 늦은 답이 오면 덮어쓰지 않는다 — 덮어쓰면 사용자가
+            # 이미 본 최신 분석이 낡은 답으로 되돌아간다.
+            cur.execute(
+                "SELECT node_label, node_name, node_fqn, status FROM node_analysis_jobs "
+                "WHERE id=%s AND run_id=%s", (job_id, run_id))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"분석 대상 행을 찾을 수 없습니다(job={job_id}).")
+            if str(row[3] or "") != "running":
+                # 실패로 올리지 않는다 — 제출은 정상이었고 우리 쪽 상태가 앞서 갔을 뿐이다.
+                _log.info("node_analysis job=%s 위임 결과 도착했으나 상태=%s — 기입하지 않음",
+                          job_id, row[3])
+                return
+            role = _resolve_role((row[0] or ""), result, (row[1] or ""), (row[2] or ""))
+            try:
+                cur.execute("UPDATE node_analysis_jobs SET status='done', analysis=%s, model=%s, "
+                            "role=%s, error=NULL, error_kind=NULL, next_attempt_at=NULL "
+                            "WHERE id=%s",
+                            (analysis_text, EXTERNAL_MODEL_LABEL, role, job_id))
+            except Exception as role_exc:
+                _warn_role_column_once("apply_external_node_analysis", role_exc)
+                cur.execute("UPDATE node_analysis_jobs SET status='done', analysis=%s, model=%s, "
+                            "error=NULL WHERE id=%s",
+                            (analysis_text, EXTERNAL_MODEL_LABEL, job_id))
+            cur.execute("UPDATE node_analysis_runs SET done = done + 1 WHERE run_id=%s", (run_id,))
+            # ⚠ **run 마감을 여기서 한다.** 워커의 마감 판정은 그 cycle 에 잡을 집은 run 만
+            #   훑는다(`touched_runs`). 마지막 잡이 위임으로 끝난 run 은 워커가 다시 건드릴
+            #   일이 없어, 여기서 닫지 않으면 영원히 `running` 으로 남는다 — 그 상태는
+            #   enqueue dedup 이 읽어 사용자의 재트리거까지 막는다.
+            cur.execute("SELECT COUNT(*) FROM node_analysis_jobs "
+                        "WHERE run_id=%s AND status IN ('pending','running')", (run_id,))
+            if int((cur.fetchone() or [0])[0]) == 0:
+                cur.execute("SELECT done, failed FROM node_analysis_runs WHERE run_id=%s", (run_id,))
+                r = cur.fetchone() or (0, 0)
+                cur.execute("UPDATE node_analysis_runs SET status=%s WHERE run_id=%s "
+                            "AND status='running'",
+                            ("done" if int(r[0]) > 0 else "failed", run_id))
+        finally:
+            cur.close()
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    _log.info("node_analysis 위임 결과 기입 job=%s run=%s", job_id, run_id)
+
+
 def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budget=None,
                      requested_by=None, user_prompt=None, conn=None) -> dict:
     """루트 노드로 분석 run 생성 + 루트 pending 잡 삽입. 반환 {ok, run_id, status, reason?}.
@@ -892,13 +1171,13 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
     """
     if not _cfg_enabled():
         return {"ok": False, "reason": "disabled"}
-    # feature-0043 사용감 패리티: 분석문 생성은 서버 계정 LLM 이 한다. 차단 중에 큐에 넣으면
-    # 잡마다 재시도 상한(max_attempts)을 태우고 `failed` 로 끝난다 — 사용자에게는 "시작됐다가
-    # 한참 뒤 알 수 없는 이유로 실패" 로 보인다. 시작 전에 사유를 말하고 멈추는 쪽이 정직하다.
-    from shared.llm_gate import feature_blocked_message, server_llm_enabled
-
-    if not server_llm_enabled():
-        return {"ok": False, "reason": feature_blocked_message("그래프 뷰 AI 능동 분석")}
+    # feature-0043: 분석문 생성은 **서버 계정 LLM 또는 요청자의 개인 AI** 가 한다. 둘 다 없이
+    # 큐에 넣으면 잡마다 재시도 상한(max_attempts)을 태우고 `failed` 로 끝난다 — 사용자에게는
+    # "시작됐다가 한참 뒤 알 수 없는 이유로 실패" 로 보인다. 시작 전에 사유를 말하고 멈춘다.
+    # TASK-20260901T190000: 위임 경로가 서면서 「차단」에서 「둘 중 하나라도 있으면 진행」이 됐다.
+    _blocked = _analysis_gate(requested_by)
+    if _blocked:
+        return {"ok": False, "reason": _blocked}
     if not node_key:
         return {"ok": False, "reason": "node_key 필수"}
     depth_budget = _clamp(depth_budget if depth_budget is not None else _cfg.AGENT_NODE_ANALYSIS_DEFAULT_DEPTH,
@@ -989,13 +1268,13 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
     진행 중 run(root=schema_key) 존재 시 재사용(reused) — 노드 분석과 동일 dedup 규약."""
     if not _cfg_enabled():
         return {"ok": False, "reason": "disabled"}
-    # feature-0043 사용감 패리티: 분석문 생성은 서버 계정 LLM 이 한다. 차단 중에 큐에 넣으면
-    # 잡마다 재시도 상한(max_attempts)을 태우고 `failed` 로 끝난다 — 사용자에게는 "시작됐다가
-    # 한참 뒤 알 수 없는 이유로 실패" 로 보인다. 시작 전에 사유를 말하고 멈추는 쪽이 정직하다.
-    from shared.llm_gate import feature_blocked_message, server_llm_enabled
-
-    if not server_llm_enabled():
-        return {"ok": False, "reason": feature_blocked_message("그래프 뷰 AI 능동 분석")}
+    # feature-0043: 분석문 생성은 **서버 계정 LLM 또는 요청자의 개인 AI** 가 한다. 둘 다 없이
+    # 큐에 넣으면 잡마다 재시도 상한(max_attempts)을 태우고 `failed` 로 끝난다 — 사용자에게는
+    # "시작됐다가 한참 뒤 알 수 없는 이유로 실패" 로 보인다. 시작 전에 사유를 말하고 멈춘다.
+    # TASK-20260901T190000: 위임 경로가 서면서 「차단」에서 「둘 중 하나라도 있으면 진행」이 됐다.
+    _blocked = _analysis_gate(requested_by)
+    if _blocked:
+        return {"ok": False, "reason": _blocked}
     if not schema_key or ":" not in str(schema_key):
         return {"ok": False, "reason": "schema_key 필수"}
     sk = (scope_key or str(schema_key).split(":", 1)[0] or "common")[:96]
@@ -1461,7 +1740,11 @@ def _cfg_enabled() -> bool:
 def _empty_rep() -> dict:
     """처리 0건 telemetry (진입 게이트에서 조기 반환할 때 사용 — 키 집합을 한 곳에 고정)."""
     return {"claimed": 0, "done": 0, "failed": 0, "retry_pending": 0, "enqueued": 0,
-            "links": 0, "refined": 0, "budget_deferred": 0}
+            "links": 0, "refined": 0, "budget_deferred": 0,
+            # TASK-20260901T190000 — 연결된 개인 AI 에게 넘긴 잡. **done 도 failed 도 아니다**:
+            # 결과는 `apply_external_node_analysis` 가 나중에 기입한다. 셋을 한 칸으로 접으면
+            # 운영자가 "처리됐다" 와 "넘겨 놓고 아직" 을 구분하지 못한다.
+            "delegated": 0}
 
 
 def process_pending(max_nodes=None, conn=None) -> dict:
@@ -1702,6 +1985,13 @@ def _process_pending_inner(max_nodes=None, conn=None) -> dict:
             만** 쓰므로(공유 dict 아님) 병렬에서도 안전하다."""
             if w["err"] is not None or w["payload"] is None:
                 return None
+            # TASK-20260901T190000 — 서버 계정 LLM 이 닫혀 있으면 **여기서 호출하지 않는다.**
+            # 적재는 DB 를 쓰므로 단일 스레드인 `_persist` 가 한다(이 함수는 DB 미접근 계약).
+            # env 읽기 하나뿐이라 그 계약을 깨지 않는다.
+            from shared.llm_gate import server_llm_enabled
+
+            if not server_llm_enabled():
+                return _DELEGATE
             # T0: 공유 LLM 예산 최종 게이트. claim 단계에서 여유만큼만 집어왔지만 다른 워커
             #   (cluster_label·분류 제안)와 예산을 공유하므로 실행 시점에 여유가 사라질 수 있다.
             #   비차단 — 거절되면 kind='budget' 으로 표시해 **attempts 를 소모하지 않고** 짧게
@@ -1820,6 +2110,18 @@ def _process_pending_inner(max_nodes=None, conn=None) -> dict:
                     raise w["err"]
                 if isinstance(obj, Exception):
                     raise obj
+                if obj is _DELEGATE:
+                    # 연결된 개인 AI 에게 넘긴다 (TASK-20260901T190000). 이 잡은 `running` 인
+                    # 채로 남고, 결과는 `apply_external_node_analysis` 가 나중에 기입한다.
+                    #
+                    # 이웃 재큐는 **그대로 한다** — 그래프 구조는 분석 성공과 독립이고(기존
+                    # 계약), 여기서 멈추면 재귀 전개가 통째로 사라져 run 이 루트 한 개짜리가
+                    # 된다. lease 회수로 이 잡이 다시 돌아와도 `ON CONFLICT DO NOTHING` 이라
+                    # 이웃이 중복 적재되지 않는다.
+                    _delegate_job(cur, w, rep)
+                    rep["enqueued"] += _enqueue_neighbors(c, cur, run_id, scope_key, ctx, depth,
+                                                          anchor, anchor_key=(anchor_key or ""))
+                    return
                 if isinstance(obj, dict):
                     analysis_text = json.dumps({
                         "summary": str(obj.get("summary") or "").strip(),

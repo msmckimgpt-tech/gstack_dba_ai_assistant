@@ -1879,3 +1879,92 @@ Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다�
 - [x] 배포 게이트 전건 — 전 서비스 동일 SHA · 스모크 PASS · 503 0건 · surge 0 · 코드 도달
 - [x] **테스트 위생**: 이 세션이 만든 검증 토큰 11개가 살아 있어 질문이 갈렸다 → 폐기해
       해소(사용자 `admin` 토큰 무접촉). 제품 축 개선(낡은 러너 양보)은 병렬 세션이 랜딩
+
+## TASK-20260901T190000-ai-jobs-rewire — 남은 AI 기능 3종을 연결한 AI 로 배선 (P0-AK)
+
+**요청 (2026-09-01)**: "'그래프 뷰' 내 'AI 능동 분석'에 대한 기능이 막혀있는것으로 확인되었습니다.
+서비스 내 AI 관련 **모든 작동사항을 다시 활성화** 후, **연결한 AI를 통해 작동하도록 배선**해주세요."
+
+**사용자 결정 (AskUserQuestion 3문)**:
+1. 대량 분석 비용 가드 = **상한 없음**(기존 캡만 — 종전 서버 LLM 시절과 동일 사용감)
+2. 배경 배치 = **배선 + 안내 표면화**, 그리고 **`--batch` 같은 CLI 접근성 문제는 웹 토글로 구성**
+3. 검증 = **라이브 end-to-end 필수**
+
+### 진단 (실측)
+
+| 종류 | `wired` | 무엇이 막나 |
+|---|---|---|
+| `node_analysis` (그래프 능동 분석) | False | `enqueue_analysis`/`enqueue_schema_analysis` 가 게이트 확인 후 **적재 전에** 거절 |
+| `insight_summary` (인사이트 배치) | False | 동일 계열 |
+| `cluster_label` (클러스터 라벨링) | False | `modules/llm._get_llm_client` 단일 출구에서 차단 |
+
+반영 함수 3종(`apply_external_*`)은 `_STORE_ROUTES` 에 **선언만 있고 구현이 없다**.
+
+규모 실측: runs 89 · jobs 13,491 · **run 당 최대 2,594 노드** · 중앙값 16.
+
+### 2.1 Implementation Plan
+
+**위험도: Major** (§12.3 — 워커 구조·대기열·반영 경로 동시 변경. 파괴적 데이터 없음,
+스키마 변경 없음, 인증/인가 무변경. 다만 **남의 계정 토큰을 태우는 축**이라 동의 모델이 핵심.)
+
+#### 다의어 고지 — "연결한 AI 를 통해 작동" 이 무엇으로 판정되는가 (§7.1 · §16.7 G1)
+
+> **입력**: 그래프 뷰에서 노드 하나를 골라 「AI 능동 분석」 실행 (러너 연결 상태).
+> **기대**: (1) 202 로 run 시작 — 종전의 "제공되지 않습니다" 안내가 **뜨지 않는다**,
+> (2) 러너 로그에 `task.dispatch … kind=job model=haiku`,
+> (3) `node_analysis_jobs.status='done'` + `analysis` 채워짐, (4) 그래프 화면에 분석문 표시.
+> **수치 1개**: 그 run 의 `node_analysis_jobs` 중 `error_kind='delegated'` 로 남은 것 = 0.
+
+#### 설계 — 워커는 **기다리지 않는다**
+
+`apply: store` + `_STORE_ROUTES` 가 이미 그 의도다. 워커가 응답을 기다리면 스레드가 분 단위로
+묶이고, 개인 AI 가 느린 날 워커가 통째로 멎는다.
+
+```
+워커 _run_llm_inner
+  └ 게이트 닫힘 + 위임 가능 → enqueue_console_job(payload={job_id,…}) → 센티넬 반환
+      node job 은 status='running' 유지(updated_at 갱신) · error_kind='delegated'
+                                   ↓ (러너가 답할 때)
+submit_answer → apply_console_job_result → apply_external_node_analysis(conn, payload, result)
+      payload.job_id 로 그 행을 찾아 analysis 기입 + status='done'
+```
+
+**스키마 변경이 없다**: 기존 stale-`running` 회수(lease)가 「러너가 끝내 답하지 않음」의
+backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(자가 치유).
+
+#### 배치 동의를 **웹 토글**로 (사용자 결정)
+
+`--batch` 는 CLI 플래그라 접근성이 떨어진다. 동의의 주체는 그대로 계정 소유자로 두되,
+**표현 수단을 웹으로** 옮긴다:
+
+- 서버: 계정별 동의 값 저장 + **하트비트 응답**에 실어 보냄
+- 러너: 하트비트 응답을 읽어 `features` 를 **동적 갱신**(`batch_jobs` 추가/제거).
+  `--batch`/`--no-batch` 는 그 머신에서의 **명시 override** 로 남긴다(서버가 켜도 그 머신에서
+  끌 수 있어야 한다 — 동의는 두 겹이지 이중 정의가 아니다)
+- 웹: '내 AI 연결' 화면에 토글 + 무엇을 태우는지 1줄 고지
+
+#### 영향받는 파일 · symbol
+
+| 경로 | 변경 |
+|---|---|
+| `shared/bridge_tasks.py` | `node_analysis`·`insight_summary`·`cluster_label` → `wired: True` |
+| `modules/node_analysis.py` | `enqueue_*` 게이트를 「위임 가능하면 통과」로 · `_run_llm_inner` 위임 분기 · `apply_external_node_analysis` |
+| `modules/insight.py` | `apply_external_insight_summary` |
+| `modules/semantic_cluster.py` | `apply_external_cluster_labels` |
+| `shared/bridge_consent.py` | **신규** — 계정별 배치 동의 저장·조회 단일 정본 |
+| `routers/ai_tools.py` | 하트비트 응답에 `batch_consent` · claim 시 동의 재확인 |
+| `static/agent/bridge_agent.py` | 하트비트 응답으로 `features` 동적 갱신 + `--no-batch` |
+| `static/ai-connect.js` · `admin/*.js` | 배치 동의 토글 + 고지 |
+
+#### 완료 판정 기준
+
+- `AC-20260901T190000-ai-jobs-rewire-1`: 러너 연결 상태에서 그래프 노드 분석이 **시작되고**
+  (202) 종전 차단 안내가 뜨지 않는다.
+- `-2`: 그 분석이 **연결된 AI 에서** 돌고(러너 로그 `kind=job`), 결과가 `node_analysis_jobs`
+  에 `done` 으로 기입되어 화면에 뜬다.
+- `-3`: 러너가 끝내 답하지 않으면 lease 회수로 `pending` 복귀 — 영구 고착되지 않는다.
+- `-4`: 배치 동의를 **웹에서 토글**할 수 있고, 끄면 러너가 배치를 더 이상 신고하지 않는다.
+- `-5`: 동의한 러너가 0명이면 콘솔이 그 사실을 말한다(배선만 하고 침묵하지 않는다).
+- `-6`: 게이트를 되돌리면(`AGENT_SERVER_LLM_ENABLED=1`) 종전 서버 경로가 그대로 돈다.
+
+<!-- PLAN-APPROVED by user on 2026-09-01 (AskUserQuestion 3문 응답) -->

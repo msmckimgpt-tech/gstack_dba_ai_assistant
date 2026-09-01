@@ -46,6 +46,8 @@ __all__ = [
     "llm_update_summary",
     "llm_validate_step",
     "messages_for_provider",
+    # TASK-20260901T190000: 노드 분석 프롬프트 조립 — 서버 호출과 **위임**이 함께 읽는 정본.
+    "node_analysis_messages",
 ]
 
 
@@ -2033,6 +2035,21 @@ def _sink_failure(sink, info: dict[str, Any]) -> None:
         sink.update(info)
 
 
+def node_analysis_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
+    """노드 분석 1건의 `messages` — **서버 호출과 위임이 함께 읽는 정본**.
+
+    왜 분리했나 (TASK-20260901T190000): 게이트가 닫힌 지금 이 분석은 사용자의 개인 AI 가
+    수행한다(`_console_jobs.messages_to_prompt` 가 이 목록을 프롬프트 한 덩어리로 편다).
+    그 자리에서 프롬프트를 **새로 쓰면** 같은 기능이 경로에 따라 다른 규칙으로 산출되고,
+    그때부터 한쪽은 반드시 낡는다 — 이 feature 가 P0-P(시스템 프롬프트)·P0-U(제목·단계)에서
+    이미 두 번 밟은 함정이다. 조립은 여기 한 곳, 소비는 두 곳.
+    """
+    return [
+        {"role": "system", "content": NODE_ANALYSIS_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
 def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None,
                       error_sink: "dict[str, Any] | None" = None) -> dict[str, Any] | None:
     """feature-0016 graphux5: 그래프 노드 1개 + 이웃을 능동 분석한다(재귀 워커가 노드마다 호출).
@@ -2062,10 +2079,7 @@ def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None,
             #   가장 크다. deadline chokepoint 를 경유하지 않는 직접 호출이라 여기서 명시 적용한다.
             # cc-identity-chokepoint(2026-08-25): 관문으로 교체 — 노드 분석 모델이 frontier 로
             #   바뀌면 identity 없이 나가 429 가 된다(이 경로는 배경 워커라 실패가 조용히 쌓인다).
-            messages=prepare_provider_messages([
-                {"role": "system", "content": NODE_ANALYSIS_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ], _insight_model),
+            messages=prepare_provider_messages(node_analysis_messages(payload), _insight_model),
             **_max_tokens_kwargs(_insight_model, "insight"),
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),

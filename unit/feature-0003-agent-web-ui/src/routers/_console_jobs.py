@@ -30,7 +30,10 @@ import re
 from typing import Any
 
 from shared.bridge_tasks import (
-    job_label, job_spec, load_console_job, mark_console_job_applied, store_console_job_result,
+    FORMAT_NOTE as _bt_format_note,
+    job_label, job_spec, load_console_job, mark_console_job_applied,
+    messages_to_prompt as _bt_messages_to_prompt,
+    store_console_job_result,
 )
 
 __all__ = [
@@ -217,43 +220,12 @@ def _store_result(conn, kind: str, result: Any, payload: Any) -> None:
 # 같은 기능이 경로에 따라 다른 규칙으로 산출되고, 그때부터 한쪽은 반드시 낡는다
 # (P0-P 가 시스템 프롬프트 축에서, P0-U 가 제목·단계 축에서 이미 겪은 형태).
 
-#: 출력 형식 지시. 러너는 자기 CLI 의 stdout 만 돌려주므로, 형식을 프롬프트로 못박지 않으면
-#: 머리말·맺음말이 섞여 파서가 빈 결과를 낸다. 관대한 수용(`extract_json_object`)은 그 다음
-#: 방어선이지 이것의 대체가 아니다 — 요구는 정확히, 수용은 관대하게(P0-Z4).
-_FORMAT_NOTE = {
-    "json": ("답변은 **JSON 하나만** 출력하라. 코드펜스·머리말·맺음말 없이 객체 또는 배열만."),
-    "text": ("답변 본문만 출력하라. 머리말·맺음말·따옴표 감싸기 없이."),
-}
-
-
-def messages_to_prompt(messages: Any, response_format: str = "text") -> str:
-    """`messages` 를 러너가 받을 단일 프롬프트로 편다.
-
-    system 은 앞에, user/assistant 는 순서대로. 역할 라벨을 남기는 이유: 조립부가 system 에
-    제약(길이·금지어·스키마)을 넣는 경우가 있어, 평문으로 뭉개면 그 제약이 본문과 구분되지
-    않아 모델이 지시가 아니라 참고로 읽는다.
-    """
-    # 두 목록으로 나눠 담고 마지막에 잇는다.
-    #
-    # 한 목록에 담으며 system 을 `insert(계산된 위치)` 하는 방식도 같은 결과를 내지만,
-    # 그 위치 계산이 **왜 옳은지**를 읽는 사람이 매번 재구성해야 한다. 「system 먼저」는
-    # 이 함수의 계약이므로 자료구조가 그것을 말하게 둔다 — 리팩터가 순서를 조용히 뒤집는
-    # 부류의 사고를 구조로 막는다(러너가 지침을 맨 앞에 두는 이유와 같은 축, P0-P).
-    systems: list[str] = []
-    others: list[str] = []
-    for m in (messages or []):
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "user").lower()
-        content = str(m.get("content") or "").strip()
-        if not content:
-            continue
-        if role == "system":
-            systems.append(f"── 지침 ──\n{content}\n── 지침 끝 ──")
-        else:
-            others.append(content)
-    note = _FORMAT_NOTE.get(str(response_format or "text"), _FORMAT_NOTE["text"])
-    return "\n\n".join([*systems, *others, note])
+#: 출력 형식 지시 · `messages` → 단일 프롬프트 편성. **정본은 `shared.bridge_tasks`** 다
+#: (TASK-20260901T190000). 옮긴 이유: 그래프 능동 분석·인사이트 배치를 **워커**가 위임하게
+#: 됐고, 그쪽은 다른 컨테이너라 이 모듈을 import 하지 못한다. 여기 남겨 두고 워커가 자기
+#: 편성을 새로 쓰면 같은 작업이 경로에 따라 다른 프롬프트로 나가고, 그때부터 한쪽은 낡는다.
+_FORMAT_NOTE = _bt_format_note
+messages_to_prompt = _bt_messages_to_prompt
 
 
 def maybe_delegate(request, account, *, job_kind: str, messages: Any,

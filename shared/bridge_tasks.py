@@ -60,6 +60,16 @@ __all__ = [
     "RUNNER_FEATURE_BATCH_JOBS",
     "RUNNER_FEATURE_SELF_REVIEW",
     "RUNNER_MIN_AGENT_VERSION",
+    # ── 러너 자격 판정 — 웹과 워커가 함께 읽는다 (TASK-20260901T190000) ──
+    "SQL_NOW",
+    "LIVE_TOKEN_PREDICATE",
+    "RUNNER_HEARTBEAT_WINDOW_SEC",
+    "parse_runner_features",
+    "runner_profile_for_account",
+    "runner_can_take",
+    "version_at_least",
+    "FORMAT_NOTE",
+    "messages_to_prompt",
     "JOB_SPECS",
     "job_spec",
     "job_label",
@@ -386,7 +396,10 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
     "node_analysis": {
         "label": "그래프 AI 능동 분석",
         "origin": ORIGIN_WEB, "response": "json", "apply": "store",
-        "wired": False,
+        # TASK-20260901T190000 — 전 구간이 섰다: 적재(`node_analysis._delegate_job`) ·
+        # 프롬프트(`llm.node_analysis_messages`, 서버 호출과 같은 정본) ·
+        # 반영(`node_analysis.apply_external_node_analysis`).
+        "wired": True,
     },
     "prompt_generate": {
         "label": "시스템 프롬프트 자동작성",
@@ -478,6 +491,204 @@ def pick_console_job_model(capabilities: Any) -> tuple[str, str]:
                 if needle.lower() in value.lower():
                     return runtime, value
     return "", ""
+
+
+# ── 「이 계정에 지금 일을 줄 수 있는 러너가 있는가」 — 웹과 **워커**가 함께 읽는 판정 ────
+#
+# 종전에 이 판정은 웹 프로세스에만 있었다(`oauth_store.account_runner_profile` +
+# `_console_llm._classify`). 그런데 그래프 능동 분석·인사이트 배치를 위임하려면 **insight-worker**
+# 가 같은 질문에 답해야 한다 — 그쪽은 다른 컨테이너라 `oauth_store` 를 import 하지 못한다.
+#
+# 그래서 질의와 술어를 여기로 올린다. 워커 쪽에 술어를 **다시 적으면** 로그아웃한 세션의 러너를
+# 워커만 자격 있다고 보는 창이 열리고, 그 창에서 적재된 작업은 아무도 집지 않는다.
+# `oauth_store` 는 이 상수를 그대로 재수출해 종전 호출부를 유지한다.
+
+#: ⚠ SQL 의 현재 시각은 `UTC_TIMESTAMP()` 다 — `NOW()` 가 아니다. 만료 시각은 파이썬이 UTC 로
+#: 넣는데 컨테이너 TZ 는 `Asia/Seoul` 이라 `NOW()` 와는 9시간이 어긋난다(라이브 실측 2026-08-28).
+SQL_NOW = "UTC_TIMESTAMP()"
+
+#: 살아 있는 access token 의 조건 — 토큰 미폐기·미만료 + (세션 결합이면) 세션 실재·미폐기·미만료.
+#: 별칭 계약: 토큰 테이블 `t`, 세션 테이블 `s` 로 조인해 두고 쓴다.
+LIVE_TOKEN_PREDICATE = (
+    "t.TokenType = 'access' AND t.RevokedAt IS NULL "
+    f"AND (t.ExpiresAt IS NULL OR t.ExpiresAt > {SQL_NOW}) "
+    "AND (t.SessionId IS NULL OR "
+    "     (s.Id IS NOT NULL AND s.IsRevoked = 0 "
+    f"      AND (s.ExpiresAt IS NULL OR s.ExpiresAt > {SQL_NOW})))"
+)
+
+#: 하트비트 신선도 창(초). 러너 주기(30초)의 3배 — 한 번 놓친 신호는 흡수된다.
+#: `oauth_store.HEARTBEAT_WINDOW_SEC` 와 같은 값이어야 하며 계약 테스트가 그것을 대조한다.
+RUNNER_HEARTBEAT_WINDOW_SEC = 90
+
+
+#: 러너 신고 목록의 모양 제한. 이 값은 클라이언트가 준 것이고 화면·SQL 로 흘러간다.
+RUNNER_FEATURES_MAX = 12
+RUNNER_FEATURE_MAX_LEN = 32
+
+
+def parse_runner_features(raw: Any) -> list[str]:
+    """저장된 CSV 를 기능 이름 목록으로 — **읽기·쓰기·자격판정이 같은 정규화를 쓴다**.
+
+    한쪽만 소문자화하거나 공백을 다르게 다루면 `"Console_Jobs"` 를 신고한 러너가 배급에서
+    빠진다. 그 실패는 조용하다(작업이 그냥 안 간다) — 그래서 정규화를 한 함수에 둔다.
+    `oauth_store.parse_runner_features` 는 이 함수를 그대로 재수출한다.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        raw = ",".join(str(x or "") for x in raw)
+    out: list[str] = []
+    for part in str(raw).split(","):
+        name = part.strip().lower()
+        # 이름처럼 생긴 것만 받는다. 이 값은 SQL LIKE 나 화면 표시로 흘러가므로, 모양을
+        # 여기서 잠근다(P0-Z4 의 "요구는 정확히, 수용은 관대하게" 중 모양 축).
+        if not name or len(name) > RUNNER_FEATURE_MAX_LEN:
+            continue
+        if not all(c.isalnum() or c in "_-" for c in name):
+            continue
+        if name not in out:
+            out.append(name)
+        if len(out) >= RUNNER_FEATURES_MAX:
+            break
+    return out
+
+
+def runner_profile_for_account(cur, account_id: Any, *,
+                               window_sec: int | None = None) -> dict[str, Any]:
+    """이 계정의 **지금 듣고 있는** 러너 한 대의 프로필. 없으면 전부 빈 값 + `listening=False`.
+
+    능력(`capabilities`)과 기능(`features`)을 **한 질의로** 읽는다 — 따로 읽으면 두 질의 사이에
+    하트비트가 도착해 "A 머신의 모델 목록 + B 머신의 기능" 이라는 실재하지 않는 조합이 나온다.
+
+    러너가 여럿이면 **가장 최근에 말한 것** 하나를 쓴다(합치지 않는다 — 합친 목록에서 고른
+    모델이 실제로 가져가는 러너에 없을 수 있다).
+    """
+    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
+    try:
+        aid = int(account_id or 0)
+    except (TypeError, ValueError):
+        aid = 0
+    if not aid:
+        return empty
+    window = int(window_sec if window_sec is not None else RUNNER_HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT t.RunnerCapabilities, t.RunnerFeatures, t.RunnerAgentVersion "
+        "FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.AccountId = %s AND {LIVE_TOKEN_PREDICATE} "
+        "  AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({SQL_NOW}, INTERVAL %s SECOND) "
+        "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+        (aid, window))
+    row = cur.fetchone()
+    if not row:
+        return empty
+    caps: list = []
+    if row[0]:
+        try:
+            parsed = json.loads(row[0])
+        except (TypeError, ValueError):
+            parsed = None   # 저장 값이 깨졌다 — 빈 목록(선택기만 숨고 답변 경로는 멀쩡하다)
+        if isinstance(parsed, list):
+            caps = parsed
+    return {
+        "capabilities": caps,
+        "features": parse_runner_features(row[1]),
+        "agent_version": str(row[2] or "").strip(),
+        "listening": True,
+    }
+
+
+def version_at_least(actual: Any, minimum: str) -> bool:
+    """`actual >= minimum` 을 점(.) 구분 정수 튜플로 비교한다.
+
+    **판정 불가는 False**(=구버전 취급)로 본다. 버전을 모르는 러너에 콘솔 작업을 주면
+    프레이밍이 어긋나 산출물이 조용히 망가지는데, 그 실패는 사용자에게 "AI 가 이상한 답을
+    했다" 로만 보인다. 모르는 채로 "충족한다" 고 우길 근거가 없다.
+
+    자릿수가 다르면 짧은 쪽을 0 으로 채운다(`2026.9` vs `2026.9.1`).
+    """
+    def _parts(v: Any) -> list[int] | None:
+        s = str(v or "").strip()
+        if not s:
+            return None
+        out: list[int] = []
+        for chunk in s.split("."):
+            chunk = chunk.strip()
+            if not chunk.isdigit():
+                return None
+            out.append(int(chunk))
+        return out or None
+
+    got, want = _parts(actual), _parts(minimum)
+    if got is None or want is None:
+        return False
+    width = max(len(got), len(want))
+    got += [0] * (width - len(got))
+    want += [0] * (width - len(want))
+    return got >= want
+
+
+def runner_can_take(profile: Any, *, need_batch: bool = False) -> bool:
+    """이 러너에게 콘솔·배경 작업을 **줘도 되는가**. 판정 순서가 곧 의미다.
+
+    기능 신고가 1차 자격이고 버전이 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가
+    자격을 유지한다. `need_batch` 는 배경 배치의 **별도 동의**까지 요구한다.
+
+    ⚠ 이 함수는 **사유를 말하지 않는다**. 화면은 왜 안 되는지를 말해야 하므로
+    `_console_llm._classify` 가 같은 순서로 사유까지 낸다 — 그쪽이 이 함수를 부르고,
+    계약 테스트가 두 판정이 갈리지 않음을 대조한다.
+    """
+    if not isinstance(profile, dict) or not profile.get("listening"):
+        return False
+    features = profile.get("features") or []
+    if RUNNER_FEATURE_CONSOLE_JOBS not in features:
+        return False
+    if not version_at_least(profile.get("agent_version"), RUNNER_MIN_AGENT_VERSION):
+        return False
+    if need_batch and RUNNER_FEATURE_BATCH_JOBS not in features:
+        return False
+    return True
+
+
+#: 출력 형식 지시. 러너는 자기 CLI 의 stdout 만 돌려주므로, 형식을 프롬프트로 못박지 않으면
+#: 머리말·맺음말이 섞여 파서가 빈 결과를 낸다. 관대한 수용(`extract_json_object`)은 그 다음
+#: 방어선이지 이것의 대체가 아니다 — 요구는 정확히, 수용은 관대하게(P0-Z4).
+FORMAT_NOTE = {
+    "json": ("답변은 **JSON 하나만** 출력하라. 코드펜스·머리말·맺음말 없이 객체 또는 배열만."),
+    "text": ("답변 본문만 출력하라. 머리말·맺음말·따옴표 감싸기 없이."),
+}
+
+
+def messages_to_prompt(messages: Any, response_format: str = "text") -> str:
+    """`messages` 를 러너가 받을 단일 프롬프트로 편다.
+
+    system 은 앞에, user/assistant 는 순서대로. 역할 라벨을 남기는 이유: 조립부가 system 에
+    제약(길이·금지어·스키마)을 넣는 경우가 있어, 평문으로 뭉개면 그 제약이 본문과 구분되지
+    않아 모델이 지시가 아니라 참고로 읽는다.
+    """
+    # 두 목록으로 나눠 담고 마지막에 잇는다.
+    #
+    # 한 목록에 담으며 system 을 `insert(계산된 위치)` 하는 방식도 같은 결과를 내지만,
+    # 그 위치 계산이 **왜 옳은지**를 읽는 사람이 매번 재구성해야 한다. 「system 먼저」는
+    # 이 함수의 계약이므로 자료구조가 그것을 말하게 둔다 — 리팩터가 순서를 조용히 뒤집는
+    # 부류의 사고를 구조로 막는다(러너가 지침을 맨 앞에 두는 이유와 같은 축, P0-P).
+    systems: list[str] = []
+    others: list[str] = []
+    for m in (messages or []):
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "user").lower()
+        content = str(m.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "system":
+            systems.append(f"── 지침 ──\n{content}\n── 지침 끝 ──")
+        else:
+            others.append(content)
+    note = FORMAT_NOTE.get(str(response_format or "text"), FORMAT_NOTE["text"])
+    return "\n\n".join([*systems, *others, note])
 
 
 def job_spec(job_kind: Any) -> dict[str, Any] | None:
