@@ -2290,6 +2290,22 @@ PB-0008 실 Windows 브라우저 POST-DEPLOY.
   `-f`(sh) 로 동명 디렉터리도 배제.
 
 신규 회귀 8건 추가(총 34건). 상세는 `REVIEW.md` REV-20260901T114500.
+
+## CHG-20260901T120000-glossary-term-tier (cross-cut, 정본 feature-0002)
+
+`src/bridge_agent.py`(러너 정본): 답변 동봉 `#GLOSSARY:` 한 줄 규약 추가 — 이 턴에서 정의가
+분명해진 도메인 용어 후보를 `[{term, definition, tier, confidence}]` 로 싣는다.
+
+**왜 별도 콘솔 작업이 아니라 답변 동봉인가**: red-team 을 같은 방식으로 처리한 선례와 동형
+(사용자 결정 2026-08-31 — 「요청 당시의 호출자가 스스로의 대화내역을 알 수 있으므로」).
+답한 그 AI 가 이미 맥락을 갖고 있어 **추가 LLM 호출이 0** 이고, 별도 task 로 만들면 대화를 한 번
+더 넘기며 개인 계정 토큰을 두 번 태운다.
+
+**additive** — 규약을 모르는 구 실행 파일은 `glossary_terms` 를 싣지 않고, 서버는 `None` 과
+`[]` 를 구분해 「규약 미지원 러너」와 「담을 것이 없던 턴」을 로그에서 가른다. 파싱 실패·형식
+위반은 **답변을 상하게 하지 않는다**(줄만 떼고 빈 목록).
+
+배포본(`unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`)과 byte-동치 유지.
 ## CHG-20260901T110500-ai-claude-feature-0043-split-evidence — 범위 분리 POST-DEPLOY 실측 증적
 
 `CHG-20260901T104500-…` 의 라이브 검증. 코드 변경 0 — 증적 문서만.

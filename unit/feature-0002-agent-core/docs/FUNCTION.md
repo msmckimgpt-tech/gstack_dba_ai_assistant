@@ -1479,3 +1479,60 @@ feature-0040 의 두 도구가 누락돼 있던 drift 의 재발 봉인). 확장
 `database_name` 제품 경계 필터는 그대로다. 시스템 DB 차단에 붙는 것은 **안내 문자열뿐**이며,
 그 안내가 가리키는 경로는 이미 존재하던 고정 투영 도구다(임의 msdb 조회로 확장되지 않는다).
 
+
+## 용어 통용범위(term_tier) 축 — 전역 용어와 제품 용어의 분리 (0057, 2026-09-01)
+
+**REQ-20260901-glossary-term-tier (Major §12.3)**: 「관리 콘솔 > 메타데이터 > 용어 사전」에
+자율 등록되는 용어 중 **범용 DB 용어**(복제 이벤트·Online DDL·시점 복구 등)가 특정 제품 scope
+로 제한 등록되고, 같은 개념이 제품마다·표기마다 중복되는 마찰을 해소한다.
+
+### 근본 원인 (라이브 실측 2026-09-01)
+
+**축이 비대칭이었다.** 읽기(`modules/utils._kb_scope_candidates`)는 `[제품, (레거시 ds),
+common, '']` **2단 캐스케이드**인데, 쓰기(`agent_core._glossary_autopropose`)는 **항상 제품
+scope 하나**였다 — 전역 티어가 읽기에만 존재하고 쓰기에는 없었다.
+
+프롬프트가 그 비대칭을 증폭했다: `GLOSSARY_SUGGEST_PROMPT` 가 confidence 를 "how clearly
+defined AND **how reusable**" 로 정의해 **범용일수록 점수가 올라 자동승급 임계(0.85)를 넘고,
+그렇게 가장 좁은 scope 에 박혔다.** 재사용성이 저장 위치를 좁히는 방향으로 작동한 것이다.
+
+실측: `kb_glossary` 732행 중 `source='auto'` 722행이 11개 제품 scope 에 흩어져 있고, 그 안에
+`트랜잭션`·`트랜잭션 롤백`·`복합 인덱스`·`CTE`·`실행 계획(EXPLAIN)`·`B-tree 인덱스`·`암묵적
+커밋`·`증분 복제` 가 있었다. 34개 용어가 2~4 scope 중복, 표기변형까지 세면 `멱등성` 한 개념이
+7행(4 scope).
+
+### AC (수용 기준)
+
+- **AC-20260901T120000-term-tier-1** — `kb_glossary.term_tier` ∈ {`product`, `org`, `general`}.
+  `product` → `product.<key>` 저장 / `org` → `common`(전역) / `general` → **저장하지 않음**.
+  판정 불가·미지원 값은 `product`(가장 좁게)로 접는다.
+- **AC-20260901T120000-term-tier-2** — `general` 판정 후보는 `glossary_feedback` 에
+  `status='skipped_general'` 로 남고, 관리자가 콘솔에서 **「그래도 등록」으로 되살릴 수 있다**.
+  조용히 버리면 「등록될 용어가 없다」와 구별되지 않고 오분류의 복구 경로가 사라진다.
+- **AC-20260901T120000-term-tier-3** — `classify_term_tier` 의 결정적 강등이 LLM 판정을 이긴다.
+  `_GENERAL_TERM_SURFACES`(정규화 **전체일치**) 또는 순수 SQL 키워드면 `general`.
+  부분일치를 쓰지 않는 이유: `튜닝인덱스`·`인덱스 비중` 같은 **제품 고유** 용어를 잃는다.
+- **AC-20260901T120000-term-tier-4** — 등록 전 중복 억제가 **scope 를 넘고 표기변형을 접는다**:
+  (a) 판정 이력(`rejected`/`promoted`/`auto_promoted`/`skipped_general`)은 어느 scope 것이든
+  존중 (b) 전역 또는 같은 scope 에 같은 정규화 표면형이 있으면 `duplicate` 로 반환.
+- **AC-20260901T120000-term-tier-5** — `org` 후보는 confidence 와 무관하게 **항상 검토 큐**.
+  전역 사전은 모든 제품 프롬프트에 주입되므로 blast radius 가 제품의 N배다.
+- **AC-20260901T120000-term-tier-6** — 제품이 해소되지 않은 대화의 `product` 후보도 자동승급
+  하지 않는다(전역 사전에 제품 용어가 앉는 역방향 오염 차단).
+
+### 표기변형 정규화 계약
+
+`normalize_term_surface()`: ① 첫 여는 괄호(`(`/`（`) 이후 절단 ② 공백·하이픈·언더스코어 제거
+③ 소문자화. **alembic 0057 의 `ix_kb_glossary_term_norm` 함수 인덱스 식과 같아야 한다** —
+갈리면 인덱스 미사용(느림) 또는 조회 키 불일치(중복 미검출).
+
+### 코드 거주 (cross-cut)
+
+- feature-0002: `modules/kb_glossary.py`(tier 상수·정규화·분류·중복조회·라우터) ·
+  `modules/llm.py`(`GLOSSARY_SUGGEST_PROMPT` 개정 — tier 축 신설, confidence 에서 재사용성 제거) ·
+  `agent_core._glossary_autopropose`(tier 전달 + `suggestions` 주입 인자) ·
+  alembic 0057 · `src/scripts/agent_kb_schema.sql` 미러 · `src/scripts/glossary_tier_sweep.py`(소급 정리)
+- feature-0003: `routers/admin_metadata.py`(tier CRUD·전역 상속분 노출) ·
+  `routers/ai_tools.py`(`submit_answer` 의 `glossary_terms` 수신) ·
+  `routers/_console_llm.py`(미적용 표면 등재) · `static/admin/metadata.js` · `static/agent/bridge_agent.py`
+- feature-0043: `src/bridge_agent.py`(러너 정본 — 배포본과 byte-동치)

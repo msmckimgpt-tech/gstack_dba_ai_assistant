@@ -5110,7 +5110,32 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Files: `docs/{REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-launch-close-postdeploy.md`,
   `docs/evidence/connect-modal-autoclose/pd2-*.png`. 코드 변경 0.
 - Timestamp: 2026-09-01T04:05:00+09:00
+## CHG-20260901T120000-glossary-term-tier (cross-cut, 정본 feature-0002)
 
+용어 통용범위(term_tier) 축 + 브리지 자율수집 복원의 **web 측 거주분**. 설계·AC 정본은
+`unit/feature-0002-agent-core/docs/FUNCTION.md` 의 `## 용어 통용범위(term_tier) 축`.
+
+- `routers/ai_tools.py`: `submit_answer` 가 `glossary_terms` 옵션을 받고
+  `_absorb_bridge_glossary_terms` 로 라우터에 태운다. 제품 귀속은 **task 행의 `ProductId`**
+  에서 해소한다(주변 상태 `get_active_product_scope` 미사용 — 웹 요청 스레드에서 그 값이 이
+  대화의 제품이라는 보장이 없다, §16.7 G7-a). 제품 조회 실패는 fail-closed(아무것도 안 함),
+  제품 없는 대화는 전역 scope 로 넘겨 라우터가 **검토 큐**로 받는다. 응답에 `glossary` 집계 추가.
+- `routers/_console_llm.py`: `INACTIVE_SURFACES` 에 `glossary-autocollect`(위임으로 복원 —
+  `delegated: True`) · `enum-autocollect`(대체 없음 — `instead` 를 의도적으로 비움) 등재.
+  두 항목이 없어서 전환 이후 자율수집 정지가 화면 어디에도 표시되지 않았다.
+- `routers/admin_metadata.py`: `_metadata_check_term_tier` 신설(PUT 은 미지정 시 **기존 유지**
+  — 사용자가 고치지 않은 축을 조용히 바꾸지 않는다). 목록에 **전역 상속분**(`inherited: true`,
+  읽기 전용)을 함께 내려보낸다 — 제품 행만 보여 온 것이 같은 용어를 제품마다 다시 등록하게
+  만든 경로다. 검토 큐 status 필터에 `skipped_general` 허용, 응답에 `term_tier` 추가.
+- `static/admin/metadata.js`: 폼 `select` 필드 타입 신설 + 「통용 범위」 필드(기본값은 보고 있는
+  scope 가 답한다 — 서버 기본값과 같은 규칙), 목록 배지(전역/일반/전역 상속), 상속 행 편집 차단
+  (`canEdit=false` — 서버 판정을 그대로 쓴다), 검토 큐 상태 필터 + `그래도 등록` 버튼.
+- `static/agent/bridge_agent.py`: `_GLOSSARY_MARK`·`_GLOSSARY_MAX`·`split_glossary` + 프롬프트
+  규약(제목 줄 **바로 앞** 줄). 파싱 순서는 title→glossary→title 로 순서 뒤바뀜도 흡수.
+  ⚠ 이 파일은 `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` 와 **byte-동치**
+  여야 한다(`test_bridge_agent_sync`). 이번 cycle 에서 실제로 그 테스트가 누락을 잡았다.
+- 테스트: `tests/test_bridge_glossary_terms.py`(신규 14건) ·
+  `tests/test_metadata_glossary_{enum,autoreg}.py` 계약 갱신.
 ## CHG-20260901T120000-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행
 - `static/index.html`: `#aiConnState` 를 `.composer-footer` 에서 `.sidebar-profile` 로 이동
   (`.profile-trigger` 의 **형제** — `<button>` 중첩 금지). 연결 모달 안내 문구도 "이 화면의 상태
