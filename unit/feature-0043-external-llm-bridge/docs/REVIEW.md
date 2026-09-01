@@ -1777,3 +1777,12 @@ clamp 배치도 별도로 기록했다. **경계 양측(§16.7 G4)을 측정 설
 **정직한 잔여**: 상한 수치(`70vh/680px`·`46vh/380px`)는 판단이다. 실측 화면에서 자연스러웠고
 불변식(안쪽 ≤ 바깥 × 0.75)은 테스트가 잠그지만, 사용자 취향·다른 화면 비율에서 어긋나면 CSS
 두 값만 조정하면 된다.
+
+## REV-20260901T101500-ai-claude-corp-feature-0043-ci-testpath-parity [SKIPPED:non-policy-doc] — CI 설정 + 테스트
+
+- **Related TASK**: feature-0043-external-llm-bridge
+- **Reason**: 변경은 CI 워크플로 경로 목록 + 그것을 잠그는 테스트뿐 — 제품 코드·정책 doc 변경
+  0건이라 §18.8 dispatch 표의 도메인 키워드(auth/schema/UI/API/perf) 어디에도 매칭되지 않는다.
+  기계적 검증은 테스트 자체가 수행한다(집합 동일성 + 항진통과 방지 + 수정 전 FAIL 실증).
+- **Timestamp**: 2026-09-01T10:15:00+09:00
+- **Human Approval Needed**: no

@@ -2007,3 +2007,37 @@ chat.css 2 hits) 후, 페이지가 로드한 모듈 URL 로 `import()` 해 실�
 - 키보드(`ArrowRight`) 동일 경로 · 짧은 상세(단계 1건) `81px` 비스크롤
 
 캡처: `artifacts/pb0008-details-scroll-panel/` (git 밖, §2). 검증 DOM 은 제거 확인.
+
+## CHG-20260901T101500-ai-claude-corp-feature-0043-ci-testpath-parity — CI 미등재 3디렉토리 등재 + 재발 클래스 구조 잠금
+
+- **날짜**: 2026-09-01
+- **REQ**: 사용자 결정 2026-09-01 (AskUserQuestion — «미등재 3디렉토리 등재»)
+- **위험도**: Minor (CI 커버리지 확대 — 제품 코드 무변경)
+
+### 무엇이 문제였나
+
+`pytest.ini` 의 `testpaths` 는 **인자를 명시하면 무시된다.** `Makefile` `test` 와 `ci.yml` 이
+각자 경로를 나열하므로 한쪽에만 추가하면 «로컬 green + CI 사각» 이 **아무 신호 없이** 생긴다.
+실측(2026-09-01): `feature-0041` · `feature-0043` · `feature-0008` 이 Makefile 에만 있었다 —
+즉 그 스위트들은 CI 에서 **한 번도 돈 적이 없다**. 직전 cycle 이 feature-0043 에 추가한 회귀
+18건도 마찬가지였다.
+
+### 왜 점수정으로 끝내지 않았나 (§16.7 G10)
+
+같은 클래스가 **네 번째** 재발이다 — feature-0014·0020 → 0023 → 0041·0043·0008. 세 번째까지의
+대응은 매번 «그 경로를 목록에 추가» 였고, ci.yml 에는 이미 이 함정을 경계하는 주석까지 있었다.
+**주석이 있는 채로 세 번 더 반복됐다.** 재발 관측이 쌓였으므로 구조 테스트로 승격한다.
+
+### 변경
+
+- `.github/workflows/ci.yml` — pytest 목록에 3디렉토리 추가 + 「두 목록은 같은 집합이어야
+  한다」 규약 주석
+- `unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py` (신규 5건) —
+  `Makefile` `test` ↔ `ci.yml` 의 `unit/*/tests` **집합 동일성**을 단언. 파서가 0개를 뽑아
+  `set()==set()` 로 항진 통과하는 것을 막는 sanity 단언 + 등재 3건 되돌림 방지 단언 포함.
+  주석 라인을 제거하고 비교한다(두 파일 주석에 feature 이름이 등장 — §16.7 G11-a).
+
+### 검증
+
+- 신규 5건 **PASS** · **수정 전 `ci.yml`(HEAD) 사본에서 4/5 FAIL** 실증 (§16.7 G11-b)
+- 등재한 3디렉토리는 직전 cycle 의 컨테이너 전수 실행에서 이미 `rc=0` (근거 선행 확보)
