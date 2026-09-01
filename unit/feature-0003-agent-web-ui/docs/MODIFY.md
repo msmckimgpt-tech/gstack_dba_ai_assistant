@@ -5179,3 +5179,21 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Cross-ref: TASK.md `20260901T1200-ai-conn-chip-to-profile-row` · 칩 도입 cycle
   `feature-0043 P0-AB`(2026-08-28)
 - Timestamp: 2026-09-01T12:00:00+09:00
+
+## CHG-20260901T124500-ai-conn-chip-postdeploy 연결 칩 프로필 행 이동 POST-DEPLOY 증적 (docs-only)
+- 배포본 `40340f53`(PR #1465 `6fac965e` 가 조상)에서 **주입 없이 서빙 자산 그대로** 재실측.
+  배포 전 Run 은 라이브 페이지에 변경본 CSS 를 주입한 상태였고, 본 Run 이 그 예측을 검증한다.
+- **서빙 자산 확인**: `profile.css` 의 `.sidebar-profile > .ai-conn` 1건 · `flex-wrap` 5건 ·
+  `chat.css` footer 접힘 규칙의 `.ai-conn` 잔여 **0건** · `index.html` 칩이 `.sidebar-profile`
+  안 144행(`composer-footer` 406행보다 앞) · 라벨 4종 접두 없음.
+- **16조합 전부 배포 전 실측치와 일치** — `admin`/`mckim` 네 상태 같은 줄·행 높이 65px 고정·
+  화살표→칩 18px·이름 잘림 0, 15자/21자 계정 네 상태 아래 줄(90px)·가로 넘침 0, 칩 글꼴
+  10.88px, `.composer-footer` **전 조합 `display: none`**(제보 여백 해소).
+- 측정 가드: 칩의 런타임 부모가 `.sidebar-profile` 이 아니면 측정을 중단하도록 스크립트에
+  조기 반환을 뒀다 — 통과했으므로 배포본 마크업이 실제로 그 자리다.
+- Files: `docs/MODIFY.md`, `docs/TEST.md`, `docs/REVIEW.md`,
+  `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md`(신규),
+  `docs/evidence/ai-conn-badge-sidebar/postdeploy-admin-waiting.png`(신규). 코드 변경 0.
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Cross-ref: `CHG-20260901T120000-ai-conn-chip-to-profile-row` · PR #1465
+- Timestamp: 2026-09-01T12:45:00+09:00

@@ -116,6 +116,14 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260901T1245-ai-conn-chip-postdeploy 연결 칩 프로필 행 이동 POST-DEPLOY 재실측 (docs-only, 2026-09-01) — **Environment: Windows-browser (PASS — 배포본 `40340f53` 자산 그대로, 주입 없음 — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md`)**
+
+- 서빙 자산 확인: `profile.css` 배치 규칙 1건 · `chat.css` footer 접힘 규칙의 `.ai-conn` 잔여
+  **0건** · 칩이 `.sidebar-profile` 안(144행, `composer-footer` 406행보다 앞) · 라벨 4종 접두 없음.
+- **16조합 전부 배포 전 실측치와 일치** — `.composer-footer` 전 조합 `display: none`(제보 여백
+  해소), `admin`/`mckim` 네 상태 같은 줄·행 높이 65px 고정, 15자/21자 계정 아래 줄·가로 넘침 0.
+- 측정 가드: 칩의 런타임 부모가 `.sidebar-profile` 이 아니면 조기 반환 — 통과.
+
 ### 20260901T1200-ai-conn-chip-to-profile-row 연결 칩을 입력창 하단 → 사이드바 프로필 행 여백 (Minor §12.3, 2026-09-01, feature-0003 프론트 배치 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row.md` · 배포 전 단계는 라이브 페이지에 변경본 CSS 주입 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
 
 - **제보 재현**: 배포본 실측에서 `.composer-footer` 의 computed display 가 `flex` — 상태·힌트가
