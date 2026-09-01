@@ -6905,3 +6905,57 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
   않았음을 검증(핵심 심볼 `openSidePanel`·`registerSidePanel`·`_applyAttachRestoreAfterLoad`·
   `data-side-panel`·`visibility: hidden` 전수 잔존 확인).
 
+
+## REV-20260901T053000-ai-claude-corp-connect-modal-transition [CODEX:connect-modal-transition] — PASS (2R P1 0)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T0530-connect-modal-transition`
+- Source: codex exec (codex-cli 0.146.0) — 2 라운드
+- Trigger: UI/모달 키워드(§18.8 표 3행). 세션 도구 제약으로 §18.8.1 경량 경로 —
+  `ux`/`design` 은 이전 cycle 들과 같이 `[SKIPPED:tool-restricted:*]` 범위.
+- Timestamp: 2026-09-01T05:30:00+09:00
+- Verdict: **PASS** — 1R **P1 1** → 2R **P1 0**
+- Human Approval Needed: no
+
+### 사용자 요청 2건이 같은 뿌리였다
+
+종전 판정 = «창을 열 때 **고정한** 기준선 대비 `listening` 의 false→true 전이».
+
+- **명령 경로**: 기준선을 고정하므로, 열 때 «대기 중» 이었으면 그 뒤 실제로 끊겼다가 명령으로
+  다시 이어져도 전이로 세지 않는다 — 그 창은 영영 닫히지 않는다.
+- **«업데이트 필요» 갱신**: 갱신 중 `listening` 은 줄곧 참이고 `runner_stale` 만 풀린다.
+  `listening` 만 보는 축은 이 경로를 **통째로** 놓친다.
+
+기준을 **직전 관측**으로, 축을 **«쓸 수 있는 상태»**(`listening && !stale`)로 올려 둘을 한
+규칙으로 덮었다. 실행 버튼 경로도 같은 축으로 통일했다 — 두 경로가 다른 축을 쓰면 실행 버튼만
+«됐다» 고 말한다.
+
+### codex 1R — P1 1건 (수정이 만든 새 결함)
+
+> `_paintConn()` 이 `epoch` 검증 전에 `_lastObs` 를 갱신한다. 이전 모달의 늦은 응답이 현재
+> 모달의 직전 관측으로 오염되면 `!ok → ok` 로 오판해 현재 모달을 **즉시 닫고 명령을 잃을 수
+> 있다.**
+
+정확한 지적이다. **판정을 «직전 관측» 기준으로 바꾸면 그 값 자체가 자산이 된다** — 남의 창
+응답이 거기 섞이면 일어나지 않은 전이가 만들어진다. 창 세대가 다르면 **기록조차 하지 않도록**
+고쳤고(갱신·판정을 함께 세대 검사 안으로), 그 경합을 겨누는 **J1** 을 신설했다.
+
+**2R: P1 0** — 「epoch 불일치 응답은 `_lastObs` 갱신과 전이 판정 모두에 도달하지 않는다.」
+
+### 검증
+
+- **39/0 PASS**. 신설: I1(명령 재연결) · I2(업데이트 갱신) · I3(실행으로 갱신) · I4(낡은 채
+  이어진 것은 성공 아님) · H5(실행했는데 낡은 러너) · J1·J2(오염 방지).
+- **라이브 배포본에서 6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4) — 제보 두 경로가 실재함을 배포본으로
+  확인.
+- 뮤테이션: stale-blind-auto→I2c·I2d·I4 / stale-blind-launch→**H5** / msg-flat-auto→I2d·I3b /
+  obs-pollution(P1 되돌림)→**J1**.
+
+### 남은 위험 (정직 표기)
+
+- **실행 경로의 문구 분기**와 **`_lastObserved.ok` 의 stale 검사**는 뮤턴트가 생존한다 — 자동
+  관측 경로가 거의 항상 먼저 판정을 끝내 그 분기에 도달하지 않기 때문이다(방어적 중복,
+  낡은-응답 경합에서만 쓰인다). 커버리지 구멍임을 숨기지 않는다.
+- 남의 러너로 인한 오닫힘(직전 cycle 의 수용한 트레이드오프)은 그대로 남는다 — 서버의
+  `listening` 이 계정 단위 판정이라 화면은 러너 소유를 구분할 수 없다.
+- `_gateInFlight` 해제 전용 단언 없음 — 변동 없음.
+- `ux`/`design` 도메인 심사 미수행 — 세션 도구 제약.
