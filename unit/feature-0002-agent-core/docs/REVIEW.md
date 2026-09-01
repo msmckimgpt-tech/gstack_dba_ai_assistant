@@ -2949,3 +2949,10 @@ PASS — Blocking 2 · Major 1 · Minor 4 전건 in-cycle 해소. 컨테이너 `
 
 PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 tests · ruff clean ·
 뮤테이션 9/9 KILL · 라이브 전후 대조 확인. 권한·인가·라우트·스키마 변경 0.
+
+## REV-20260901T193000-kb-grounding-match-postdeploy [SKIPPED:non-policy-doc] — 배포 실증 기록 전용
+
+- Cross-ref: CHG-20260901T193000-kb-grounding-match-postdeploy · 원천 REV-20260901T190000-kb-grounding-match.
+- 코드 변경 0 (doc-only) — 리뷰 패널 대상 아님. ANCHOR 무충돌.
+- 근거: `docker compose ps` 실물 태그 `cceb2984` · caddy 로그 0 · 배포본에서 직접 구동한
+  매칭 결과(약어 5종 회복 · 오탐 4종 차단 · 동일 질문 전후 대조).

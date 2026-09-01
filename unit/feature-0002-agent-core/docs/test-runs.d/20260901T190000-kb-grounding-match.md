@@ -51,4 +51,32 @@ verdict: PASS
 
 **정상 매칭을 하나도 잃지 않고** 누락 1건 회복 + 오탐 1건 차단.
 
-### Run 5 — POST-DEPLOY (배포 후 기록)
+### Run 5 — POST-DEPLOY 라이브 재실측 (배포 `cceb2984`, 2026-09-01 19:2x KST) — **PASS**
+
+- 배포: `sudo -E bin/deploy-web.sh` rc=0 · web-a/b `mysql-ai-web:cceb2984` · 워커 3종
+  `mysql-ai-agent:cceb2984`(실물 `ps` 확인, 부분 완료 0) · 대화 스모크 PASS ·
+  caddy `no upstreams available` **0건**(무중단).
+- **동일 질문 재실측** (배포본 `repo-web-a-1`):
+  - 용어 4건 — `steam_billing_log` · `billingsummary` · `파티셔닝 키` · **`증분 복제`(회복)**
+  - ENUM 3건 — `billingsummary.BillingType` · `steam_billing_log.status` ·
+    `steambillinglog.status`. **`Achievement.Type`(DK온라인) 없음(차단)**
+- **한도 밖이라 영영 안 나오던 약어 회복** — 배포 전에는 로드 자체가 안 되던 항목들:
+
+  | 질문 | 매칭 |
+  |---|---|
+  | `AID 가 뭐야` | `AID` |
+  | `CCU 지표 설명해줘` | `CCU` |
+  | `PvE 매칭 로그` | `PvE` |
+  | `재화를 정산해줘` | `재화` (조사 뒤에 붙어도 매칭) |
+  | `복합키 규칙` | `복합키` |
+
+- **오탐 차단 재확인** — 전건 매칭 0:
+  `acidity 컬럼 의미`(→`CID` 아님) · `pverr 로그`(→`PvE` 아님) ·
+  `아이템 소재화 처리`(→`재화` 아님) · `raidlog 테이블`(→`AID` 아님).
+
+### Run 6 — 미수행분 (정직)
+- **답변 품질 변화**: `bootstrap_admin` 은 AI 미연결이라 대화 완주를 못 했다. 증명한 것은
+  「프롬프트에 실리는 근거가 정확해졌다」까지다. AI 연결 계정에서의 완주 실측은 후속 항목.
+- **`common` 의 DK온라인 전용 ENUM 9건**은 그대로다. 낱말 경계가 오탐 *경로*는 막았지만,
+  DK 관련 어휘가 실제로 등장하는 다른 제품 질문에는 여전히 실린다 — 데이터 큐레이션 문제라
+  cycle 1 소급 정리와 함께 다룬다.

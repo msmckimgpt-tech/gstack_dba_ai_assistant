@@ -3162,3 +3162,20 @@ Task-Cycle: feature-0002-agent-core
 | 정상 매칭 3건 | 유지 | 유지 |
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T193000-kb-grounding-match-postdeploy — 배포 `cceb2984` 라이브 재실측 (doc-only)
+
+코드 변경 0. PR #1496 머지 후 배포·검증 기록.
+
+- **배포**: rc=0 · web/워커 전부 `cceb2984`(실물 `ps` 확인) · 대화 스모크 PASS ·
+  caddy `no upstreams available` **0건**.
+- **G1 회복 실증**: 배포 전에는 한도 밖이라 **로드 자체가 안 되던** 약어들이 매칭된다 —
+  `AID`·`CCU`·`PvE`·`재화`·`복합키` 전건. `재화를` 처럼 조사가 붙어도 매칭된다(비대칭 규칙).
+- **G2 차단 실증**: `acidity`·`pverr`·`소재화`·`raidlog` 전건 매칭 0.
+  동일 질문 재실측에서 `Achievement.Type`(DK온라인) 사라지고 `증분 복제` 살아났다.
+- **미해결로 남긴 것(정직)**: `common` 의 DK온라인 전용 ENUM 9건은 그대로다. 낱말 경계는 오탐
+  *경로*를 막았을 뿐, DK 어휘가 실제 등장하는 질문에는 여전히 실린다 — 데이터 큐레이션 축이라
+  cycle 1 소급 정리와 함께 다룬다.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 5.
+
+Task-Cycle: feature-0002-agent-core
