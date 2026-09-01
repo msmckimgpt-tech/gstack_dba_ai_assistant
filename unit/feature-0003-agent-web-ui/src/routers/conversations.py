@@ -107,6 +107,41 @@ def _cancel_bridge_tasks_for(conn, account: Any, *, conversation_id: str | None 
     )
 
 
+def _bridge_progress_tail(conn, conversation_id: str, task_id: str) -> str:
+    """중단 시점까지 개인 AI 가 **우리 도구로 조사한 단계**를 안내 아래에 붙일 본문. 없으면 "".
+
+    REQ-20260901T031500-interrupt-preserve-bridge. 브리지 답변은 러너가 자기 쪽에서 추론하므로
+    **부분 추론 자체는 우리 안에 없다**. 그러나 그 AI 가 우리 도구를 부른 내역은 호출 시점에
+    `_record_bridge_step` 이 인자·사유까지 담아 `agent_runtime.steps` 에 `run_id = task_id` 로
+    남긴다 — 서버 run 경로와 같은 밀도의 단계다.
+
+    **왜 화면 접이식만으로 부족한가**: 취소 안내 말풍선은 `run_id` 각인을 유지하므로 단계는
+    이미 접이식으로 보인다. 그러나 브리지의 다음 요청이 개인 AI 에게 넘기는 맥락
+    (`ai_tools._recent_conversation_context`)은 **표시 store 의 content 텍스트만** 읽는다 —
+    steps 도 meta 도 보지 않는다. 그래서 단계를 본문에 적어 두지 않으면, 사용자가 중단 뒤
+    "아까 그거 이어서" 라고 물어도 개인 AI 는 자기가 직전에 무엇을 조사했는지 모른 채 처음부터
+    다시 시작한다(맥락 축 손실 — 서버 run 경로는 같은 cycle 에서 이미 해소됐다).
+    """
+    if not conversation_id or not task_id:
+        return ""
+    try:
+        steps = app._load_steps_for_run(conn, str(conversation_id), str(task_id)) or []
+    except Exception:
+        return ""   # 단계 조회 실패가 취소 안내 자체를 막지 않는다
+    if not steps:
+        return ""
+    try:
+        import agent_core as _core   # 지연 import — 라우터 import 시점 순환 회피(ai_tools 와 동형)
+
+        # 본문 형식(진행 단계 목록·상한·라벨)은 **같은 빌더**를 써 서버 경로와 한 벌로 유지하고,
+        # 첫 문단만 브리지 문맥으로 바꾼다. 이 문단이 **미완 라벨** 역할을 한다 — 다음 요청의
+        # 개인 AI 는 이 텍스트를 대화 맥락으로 받으므로, 라벨이 없으면 중간 조사를 확정 결론으로
+        # 읽어 사용자가 방향을 바꾸려 중단한 경우에도 폐기된 가설 위에서 답을 잇는다.
+        return _core._build_interrupted_note(steps, header=_BRIDGE_PROGRESS_TAIL_HEADER)
+    except Exception:
+        return ""
+
+
 def _mark_bridge_placeholders_canceled(conn, conversation_id: str, task_ids: list[str],
                                        notice: str = "") -> int:
     """취소된 task 의 **대기 말풍선을 취소 안내로 바꾼다**. 반환 = 바뀐 말풍선 수.
@@ -131,6 +166,12 @@ def _mark_bridge_placeholders_canceled(conn, conversation_id: str, task_ids: lis
             changed = 0
             with pg.cursor() as cur:
                 for tid in task_ids:
+                    # 안내 문구는 task 마다 다르다 — 그때까지의 진행 단계를 뒤에 붙이기 때문.
+                    # (supersede 경로처럼 호출자가 `notice` 를 지정했으면 그것을 머리로 쓴다.)
+                    _body = str(notice or _BRIDGE_NOTICE_CANCELED)
+                    _tail = _bridge_progress_tail(conn, str(conversation_id), str(tid))
+                    if _tail:
+                        _body = f"{_body}\n\n{_tail}"
                     cur.execute(
                         "UPDATE agent_runtime.messages "
                         "SET content = %s, "
@@ -140,7 +181,7 @@ def _mark_bridge_placeholders_canceled(conn, conversation_id: str, task_ids: lis
                         "WHERE conversation_id = %s AND role = 'assistant' "
                         "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
                         "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true'",
-                        (notice or _BRIDGE_NOTICE_CANCELED, str(conversation_id), str(tid)))
+                        (_body, str(conversation_id), str(tid)))
                     changed += int(cur.rowcount or 0)
             pg.commit()
             return changed
@@ -239,6 +280,13 @@ _BRIDGE_NOTICE_CANCELED = (
     "요청을 취소했습니다. 이 질문의 답변은 표시되지 않습니다.\n\n"
     "이미 AI 가 가져간 뒤였다면 그쪽 작업이 잠시 더 이어질 수 있지만, 그 결과가 "
     "이 대화에 반영되지는 않습니다."
+)
+
+#: REQ-20260901T031500-interrupt-preserve-bridge — 취소 안내 뒤에 붙는 진행 단계의 머리말.
+#: 단계가 **있을 때만** 붙으므로 위 안내와 달리 "진행된 내용" 을 단정해도 거짓이 되지 않는다.
+_BRIDGE_PROGRESS_TAIL_HEADER = (
+    "(아래는 중단 시점까지 개인 AI 가 조사한 내용입니다 — 완료된 답변이 아니라 중간 기록이며, "
+    "이어지는 지시가 이와 다른 방향이면 그 지시를 따르세요.)"
 )
 
 #: 답변을 기다리는 중에 사용자가 **새 질문을 보내** 대체된 요청.
@@ -1217,10 +1265,17 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
         "conversation.cancel.any",
     ):
         return app._json_error("권한이 없습니다.", 403)
-    # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청은 preserve_reasoning=true 로 취소 →
-    # agent_core 가 이 run 의 부분 추론을 메시지로 보존(가시 + 다음 run 맥락). 명시 '중단' 버튼(미지정)
-    # 은 기존대로 폐기 — 동작 무변경.
-    _preserve_reasoning = bool(data.get("preserve_reasoning"))
+    # REQ-20260901T020746-interrupt-context-preserve: **미지정 = 보존** 으로 기본값을 뒤집는다.
+    #
+    # 종전엔 `bool(data.get(...))` 이라 플래그를 안 보내는 쪽 — 즉 **명시 '중단' 버튼** — 이
+    # 전부 폐기였다. 그 결과 사용자가 보던 진행 단계는 프런트가 지우고, 앵커가 될 assistant
+    # 메시지가 없어 이력에도 남지 않으며, `core_messages` 에 아무것도 쓰지 않아 다음 요청의
+    # LLM 맥락에서도 사라졌다(화면·이력·다음 맥락 세 축 동시 소실 — 사용자 신고 2026-09-01).
+    #
+    # 기본을 보존으로 두면 **웹 UI 와 외부 AI 도구 표면(`ai_discovery.py` 의 `/api/cancel`)이
+    # 한 규칙을 공유**한다. 프런트만 고치면 외부 경로는 계속 폐기하기 때문이다.
+    # 폐기를 원하는 호출자는 `preserve_reasoning: false` 를 **명시**한다(향후 '버리고 중단' UI 여지).
+    _preserve_reasoning = bool(data.get("preserve_reasoning", True))
 
     # feature-0043: **브리지 대기 취소** — 서버 LLM 이 잠긴 동안 이 대화의 "진행 중" 은 서버 run
     # 이 아니라 `WebAiTasks` 의 대기 작업이다. 아래 KV/큐 취소는 그 축을 전혀 건드리지 않으므로,
