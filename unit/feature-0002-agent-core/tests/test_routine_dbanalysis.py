@@ -464,11 +464,15 @@ def test_enqueue_refuses_when_there_is_nowhere_to_run(monkeypatch, call):
 def test_enqueue_proceeds_when_a_personal_ai_is_connected(monkeypatch, call):
     """연결된 개인 AI 가 있으면 **게이트가 막지 않는다** — 제보된 결함이 고쳐진 지점.
 
-    적재 자체는 PG 가 없어 실패하지만, 그 사유가 **게이트 문구가 아니어야** 한다.
-    (게이트가 아직 막고 있으면 여기서 '내 AI 연결' 안내가 되돌아온다.)
+    ⚠ `_rw_conn` 을 「PG 없음」으로 **막아 둔다**. 막지 않으면 이 테스트가 게이트를 통과한 뒤
+    실제 원장에 연결을 시도한다 — 컨테이너에서는 호스트 미해석 예외로 죽고, 개발 머신에서는
+    **라이브 PG 에 실제로 run 을 만든다**(더 나쁘다: 조용히 통과하면서 원장을 더럽힌다).
+    확인하려는 것은 「게이트가 통과시키는가」이지 적재의 성패가 아니다.
     """
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
     monkeypatch.setattr(na, "delegation_possible", lambda who: True)
+    monkeypatch.setattr(na, "_rw_conn", lambda conn: (None, False))
     res = call()
-    assert "내 AI 연결" not in str(res.get("reason") or ""), (
-        "연결된 AI 가 있는데도 게이트가 막고 있다 — 사용자 제보의 그 상태다")
+    assert res.get("reason") == "PG 미가용", (
+        f"게이트를 통과하지 못했다(사유={res.get('reason')!r}) — 연결된 AI 가 있는데도 "
+        "막고 있으면 그것이 사용자 제보의 그 상태다")
