@@ -2583,3 +2583,14 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 | M5 | 러너 자가 종료 신호 수신 제거 | **KILL** |
 
 - **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
+
+## REV-20260901T181500-ai-claude-selfreview-postdeploy [SKIPPED:evidence-only] — 라이브 실측 기록
+
+- **Related TASK**: TASK-20260901T143000-selfreview-envelope (feature-0043)
+- **Reason**: 코드 변경 0건 — 배포본 `fe60866c` 실측 증적만. 검증 대상 코드는
+  `REV-20260901T143000-…` 에서 이미 감사됐고 본 cycle 은 그 결과의 라이브 확인이다.
+- **이 실측이 없었으면 몰랐을 것**: 직전 배포는 자가 검증이 **0건 저장**인 상태였다.
+  단위·시각검증 전건 PASS 가 「동작한다」를 뜻하지 않는다는 것을 두 번 연속 확인했다 —
+  배포 후 실 경로를 한 번 태우는 것이 이 feature 의 완료 조건에 들어가야 한다.
+- **Timestamp**: 2026-09-01T18:15:00+09:00
+- **Human Approval Needed**: no

@@ -2868,3 +2868,20 @@ PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` �
 ### 즉시 조치 (코드 밖)
 
 문제를 일으키던 옛 러너 프로세스를 SIGTERM 으로 정상 종료시켜 라이브를 복구했다.
+
+## CHG-20260901T181500-selfreview-postdeploy — 봉투 수정·경량 모델 라이브 실측 증적
+
+코드 변경 0(증적만). 배포본 `fe60866c` 실측.
+
+**직전 배포에서 0 rows 였던 자리에 행이 앉았다** — `redteam_reviews id=399 source=external`.
+봉투 미해제 결함이 실제로 라이브를 막고 있었고 이 배포가 뚫었다는 확인이다. 검증은 이번에도
+실제 결함(답변 생성 실패로 나간 안내문)을 지목했고, 설계대로 답변은 그대로 전달됐다.
+
+경량 모델도 같은 러너·같은 창에서 갈렸다: 콘솔 작업 `haiku` / 대화 `fable`.
+
+**테스트 위생 관측**: 이 세션이 검증 중 만든 bootstrap_admin 토큰 11개가 살아 있어 첫 시도의
+질문을 구 러너가 가로챘다(`task.claim.skip http=409`). 폐기해 해소했다 — 사용자 `admin`
+토큰은 계정 조건으로 배제해 무접촉이다. 「같은 계정에 러너가 여럿이면 누가 집을지 모른다」는
+제품 축의 성질이며, 그 개선은 병렬 세션이 `stale-runner-yield` 로 이미 랜딩했다.
+
+- 증적: `docs/test-runs.d/TASK-20260901T143000-selfreview-envelope-postdeploy.md`
