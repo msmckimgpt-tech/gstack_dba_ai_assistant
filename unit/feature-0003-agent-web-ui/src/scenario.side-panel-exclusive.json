@@ -1,0 +1,77 @@
+{
+  "name": "side-panel-exclusive — 우측 사이드 패널 단독 열림 (feature-0003 / REQ-20260901-side-panel-exclusive)",
+  "base_url": "https://localhost:18098",
+  "shot_dir": "/tmp/claude-0/-root-download-docker-mysql-ai-delegated-dev/58e515c4-7fce-4655-8cc5-49da534bda32/scratchpad/pb0008-side-panel",
+  "steps": [
+    {
+      "action": "goto",
+      "url": "/?conversation=20260831025448-12af0eb5"
+    },
+    {
+      "action": "wait_for",
+      "selector": ".bubble-steps-btn",
+      "timeout_ms": 30000
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  // evidence identity (§16.6 c) — 이 페이지가 **내 빌드**를 로드했는지 대조.\n  const loaded = performance.getEntriesByType('resource').map((r) => r.name).filter((n) => /app\\/side-panels\\.js/.test(n));\n  if (!loaded.length) throw new Error('PB0008 FAIL: side-panels.js 미로드 — 검증 대상이 내 빌드가 아니다');\n  const marked = ids.slice(0, 3).map((i) => document.getElementById(i).dataset.sidePanel);\n  if (marked.join(',') !== 'attach,step,profile') throw new Error('PB0008 FAIL: data-side-panel 표식 불일치 ' + marked);\n  const s = snap();\n  if (Object.values(s).some(Boolean)) throw new Error('PB0008 FAIL: baseline 에서 이미 열린 패널 ' + JSON.stringify(s));\n  // 접근성: 닫힌 패널은 조작 대상이 아니어야 한다(등록 시점에 동기화).\n  const a = ids.slice(0, 3).map(a11y);\n  if (!a.every((x) => x.ariaHidden === 'true' && x.inert)) throw new Error('PB0008 FAIL: 닫힌 패널이 aria-hidden/inert 아님 ' + JSON.stringify(a));\n  return JSON.stringify({ sidePanelsModule: loaded[0], baseline: s, a11yClosed: a });\n})()"
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  // ⚠ 환경 조건 해제(제품 결함 아님): 이 격리 검증 컨테이너에는 개인 AI 브리지 연결이 없어\n  //    composer 가 `is-bridge-locked` 로 잠겨 첨부 메뉴 진입점이 pointer-events 로 막힌다.\n  //    검증 대상은 **패널 단독 열림 계약**이므로 그 잠금만 해제하고, 이후는 실제 메뉴 → 실제\n  //    핸들러 경로를 그대로 탄다(핸들러를 우회하거나 hidden 을 직접 벗기지 않는다).\n  const wrap = document.querySelector('.composer-wrap.is-bridge-locked');\n  if (wrap) { wrap.classList.remove('is-bridge-locked'); window.__pbRelocked = true; }\n  document.getElementById('composerActionsBtn').click();\n  document.getElementById('composerActionsListItem').click();\n  return JSON.stringify({ clicked: 'composerActionsListItem', bridgeLockReleased: !!wrap });\n})()"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#attachSidePanel:not(.hidden)",
+      "timeout_ms": 10000
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  const s = snap();\n  if (!s.attachSidePanel) throw new Error('PB0008 FAIL: 첨부 패널이 열리지 않았다 ' + JSON.stringify(s));\n  if (s.stepSidePanel || s.profileDrawer || s.profileBackdrop) throw new Error('PB0008 FAIL: 첨부만 열려야 한다 ' + JSON.stringify(s));\n  const a = a11y('attachSidePanel');\n  if (a.ariaHidden !== null || a.inert) throw new Error('PB0008 FAIL: 열린 패널이 여전히 inert/aria-hidden ' + JSON.stringify(a));\n  // 휴지통 모드로 바꿔 둔다 — 다음 단계의 «배타 닫힘이 상태를 파기하는가» 측정용.\n  document.getElementById('attachSidePanelTrashToggle').click();\n  return JSON.stringify({ after_attach_open: s, a11yOpen: a });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "01_attach_only.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  const trashBefore = document.getElementById('attachSidePanelTrashToggle').getAttribute('aria-pressed');\n  const btn = document.querySelector('.bubble-steps-btn');\n  if (!btn) throw new Error('PB0008 FAIL: 단계 보기 버튼 없음');\n  const before = snap();\n  btn.click();\n  const after = snap();\n  // 핵심 회귀: 수정 전에는 첨부가 열린 채 단계 패널이 그 위를 덮었다.\n  if (!after.stepSidePanel) throw new Error('PB0008 FAIL: 단계 패널 미개방 ' + JSON.stringify(after));\n  if (after.attachSidePanel) throw new Error('PB0008 FAIL: 단계 열림 후에도 첨부가 열려 있다(겹침) ' + JSON.stringify(after));\n  if (after.profileDrawer || after.profileBackdrop) throw new Error('PB0008 FAIL: 프로필 잔존 ' + JSON.stringify(after));\n  // 접근성: 배타로 닫힌 패널은 Tab·스크린리더에서도 빠진다.\n  const a = a11y('attachSidePanel');\n  if (a.ariaHidden !== 'true' || !a.inert) throw new Error('PB0008 FAIL: 배타로 닫힌 패널이 조작 가능 상태 ' + JSON.stringify(a));\n  window.__pbTrashBefore = trashBefore;\n  return JSON.stringify({ before, after, a11yAutoClosed: a, trashBefore });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "02_step_only_attach_closed.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  const before = snap();\n  document.getElementById('openProfileBtn').click();\n  const after = snap();\n  if (!after.profileDrawer || !after.profileBackdrop) throw new Error('PB0008 FAIL: 프로필 드로어/backdrop 미개방 ' + JSON.stringify(after));\n  if (after.stepSidePanel || after.attachSidePanel) throw new Error('PB0008 FAIL: 프로필 열림 후 다른 패널 잔존 ' + JSON.stringify(after));\n  return JSON.stringify({ before, after });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "03_profile_only_step_closed.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  // 프로필을 **닫기 버튼**으로 닫는다(실 사용자 조작). backdrop 합성 click 은 저장소 표준\n  // primitive(`modal-dismiss.js`)가 `isTrusted` 로 배제하는 형태라 «실 사용자 경로» 로\n  // 부를 수 없다 — 그 라벨을 쓰지 않는다.\n  document.getElementById('closeProfileBtn').click();\n  const mid = snap();\n  if (mid.profileDrawer || mid.profileBackdrop) throw new Error('PB0008 FAIL: 닫기 버튼으로 프로필이 닫히지 않음 ' + JSON.stringify(mid));\n  document.getElementById('composerActionsBtn').click();\n  document.getElementById('composerActionsListItem').click();\n  const after = snap();\n  if (!after.attachSidePanel) throw new Error('PB0008 FAIL: 첨부 재개방 실패 ' + JSON.stringify(after));\n  if (after.stepSidePanel || after.profileDrawer || after.profileBackdrop) throw new Error('PB0008 FAIL: 첨부 재개방 후 다른 패널 잔존 ' + JSON.stringify(after));\n  return JSON.stringify({ mid, after });\n})()"
+    },
+    {
+      "action": "screenshot",
+      "path": "04_attach_again_profile_closed.png",
+      "full_page": false
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  // 배타 닫힘은 상태를 파기하지 않는다 — 휴지통 모드로 열어 두었다가 「단계 보기」로 자동\n  // 닫힌 뒤 다시 열면 그 모드가 살아 있어야 한다(사용자가 × 로 닫은 것이 아니므로).\n  const trashNow = document.getElementById('attachSidePanelTrashToggle').getAttribute('aria-pressed');\n  if (window.__pbTrashBefore !== 'true') throw new Error('PB0008 SETUP FAIL: 자동 닫힘 전 휴지통 모드가 아니었다 ' + window.__pbTrashBefore);\n  if (trashNow !== 'true') throw new Error('PB0008 FAIL: 배타 닫힘이 휴지통 모드를 파기했다 (before=' + window.__pbTrashBefore + ', now=' + trashNow + ')');\n  return JSON.stringify({ trashBefore: window.__pbTrashBefore, trashAfterRestore: trashNow });\n})()"
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  // 배타 닫힘 스냅샷은 **대화 전환을 넘어 살아남지 않는다** — 살아남으면 다른 대화가\n  // 휴지통 모드로 열려 «첨부가 없는 것처럼» 보인다(REQ-20260806-attach-manage 가 없앤 결함).\n  const trash = document.getElementById('attachSidePanelTrashToggle');\n  // 직전 step 이 복원한 상태에 따라 이미 켜져 있을 수 있다 — 멱등하게 «켜짐» 으로 맞춘다.\n  if (trash.getAttribute('aria-pressed') !== 'true') trash.click();\n  if (trash.getAttribute('aria-pressed') !== 'true') throw new Error('PB0008 SETUP FAIL: 휴지통 토글 실패');\n  document.querySelector('.bubble-steps-btn').click();   // 배타 닫힘 → 스냅샷 생성\n  document.getElementById('newConversationBtn').click(); // 대화 전환\n  const cid = window.__pbConvAfterNew = null;\n  document.getElementById('composerActionsBtn').click();\n  document.getElementById('composerActionsListItem').click();\n  const after = trash.getAttribute('aria-pressed');\n  if (after !== 'false') throw new Error('PB0008 FAIL: 대화 전환 후에도 휴지통 스냅샷이 복원됐다 (aria-pressed=' + after + ')');\n  return JSON.stringify({ trashAfterConversationSwitch: after });\n})()"
+    },
+    {
+      "action": "eval",
+      "script": "(() => {\n  \nconst ids = ['attachSidePanel','stepSidePanel','profileDrawer','profileBackdrop'];\nconst open = (id) => { const e = document.getElementById(id); return !!e && !e.classList.contains('hidden'); };\nconst snap = () => Object.fromEntries(ids.map((i) => [i, open(i)]));\nconst a11y = (id) => { const e = document.getElementById(id); return { ariaHidden: e.getAttribute('aria-hidden'), inert: e.inert === true }; };\n\n  // 사용자가 **직접** 닫으면 종전대로 모드가 초기화된다(그 리셋은 의도된 동작).\n  document.getElementById('attachSidePanelClose').click();\n  document.getElementById('composerActionsBtn').click();\n  document.getElementById('composerActionsListItem').click();\n  const trashNow = document.getElementById('attachSidePanelTrashToggle').getAttribute('aria-pressed');\n  if (trashNow !== 'false') throw new Error('PB0008 FAIL: 사용자 닫기 후에도 휴지통 모드가 남았다 ' + trashNow);\n  // 정리 — 검증이 바꾼 DOM 상태를 되돌린다(§16.6 f 잔류물).\n  document.getElementById('attachSidePanelClose').click();\n  if (window.__pbRelocked) {\n    const w = document.querySelector('.composer-wrap');\n    if (w) w.classList.add('is-bridge-locked');\n    delete window.__pbRelocked;\n  }\n  delete window.__pbTrashBefore;\n  const s = snap();\n  if (Object.values(s).some(Boolean)) throw new Error('PB0008 FAIL: 정리 후에도 열린 패널 ' + JSON.stringify(s));\n  return JSON.stringify({ userCloseResetsTrash: trashNow, cleaned: true, final: s,\n                          bridgeLockRestored: !!document.querySelector('.composer-wrap.is-bridge-locked') });\n})()"
+    }
+  ]
+}

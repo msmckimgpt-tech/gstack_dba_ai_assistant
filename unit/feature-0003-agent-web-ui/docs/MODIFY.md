@@ -5057,3 +5057,123 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Files: `docs/{REPORT,MODIFY,REVIEW}.md`, `docs/test-runs.d/…-launch-close-postdeploy.md`,
   `docs/evidence/connect-modal-autoclose/pd2-*.png`. 코드 변경 0.
 - Timestamp: 2026-09-01T04:05:00+09:00
+
+## CHG-20260901T115300-side-panel-exclusive
+
+**변경**: 우측 오버레이 사이드 패널(첨부·실행 단계·유저 프로필)을 **한 번에 하나만** 열리게 한다.
+
+**파일**:
+- `src/static/app/side-panels.js` — **신규**. 단일 등록부 choke point.
+  `registerSidePanel(key, {close, elementId})` / `closeOtherSidePanels(exceptKey)` /
+  `registeredSidePanelKeys()` / `registeredSidePanelElementIds()`. 의존성 0 (app.js ↔ app/*.js
+  순환에 한 겹 더 얹지 않기 위해).
+- `src/static/app.js` — `openStepSidePanel` 이 `panel` 존재 확인 직후 `closeOtherSidePanels("step")`
+  호출. `closeStepSidePanel` 정의 뒤에 `registerSidePanel("step", …)`.
+- `src/static/app/profile.js` — `openProfile` 선두에 `closeOtherSidePanels("profile")`.
+  `closeProfile` 뒤에 `registerSidePanel("profile", …)`.
+- `src/static/app/composer.js` — `openAttachSidePanel()` / `closeAttachSidePanel()` 신설로
+  흩어져 있던 열기 1곳·닫기 3곳(닫기 버튼 2 + 빈 목록 자동 닫기)을 모으고 등록.
+  `_renderAttachmentPills` 의 미사용 `sidePanel` 지역변수 제거.
+- `tests/verify_side_panel_exclusive.mjs` — **신규**. jsdom 위에서 **정본 함수 본문**을 실행하는
+  행위 하네스 (27 케이스, 음성 대조군 포함).
+- `tests/test_side_panel_exclusive.py` — **신규**. CI(pytest) 구조 가드 S1~S5 + 음성 대조군 N1~N3.
+- `src/scenario.side-panel-exclusive.json` — **신규**. PB-0008 실 브라우저 시나리오 14 step.
+
+**동작 변화(사용자 관점)**: 첨부 목록 → 단계 보기 → 프로필 순으로 열면, 매 시점 화면에 보이는
+우측 패널이 정확히 하나다. 종전에는 앞의 패널이 **열린 채 뒤에 가려져** 닫기 버튼·리사이즈
+핸들에 접근할 수 없었다.
+
+**비변경**: 좌측 대화목록 `<aside class="sidebar">`(in-flow 컬럼) · 백엔드/RBAC/스키마/엔드포인트
+· 패널 각각의 렌더 내용 · 너비 영속화(localStorage) 규칙.
+
+## CHG-20260901T130000-side-panel-exclusive-r2 (§18.8 패널 BLOCK ×2 수용)
+
+**변경**: 위 CHG 의 후속 — ux·design 적대 패널이 실측으로 BLOCK 한 제품 3건 · 가드 3건 해소.
+
+**제품**:
+- `src/static/app/side-panels.js` — ① `openSidePanel(key, openFn)` 신설, **모든 열기가 이 문을
+  통과**한다(배타 호출을 opener 가 기억하는 구조 폐기). ② `hidden` ↔ `inert`/`aria-hidden`
+  동기화 — 배타 경로는 동기, 나머지 닫기 경로는 `MutationObserver` 그물. 이 패널들의
+  `.hidden` 은 `display:flex !important; translateX(100%)` 라 **숨겨도 포커스 가능**했다.
+  ③ 등록 실패·close 실패·중첩 요청 무시를 콘솔로 보고(조용한 no-op 폐기). ④ 순회 후
+  **사후 단언** — 닫히지 않은 패널이 남으면 보고(정적 스캔이 못 잡는 우회를 결과로 잡는다).
+- `src/static/app/composer.js` — `closeAttachSidePanel({auto})` 가 배타 닫힘일 때만 목록
+  모드·스크롤을 스냅샷하고, 재개방이 1회 소비해 복원한다. pending(업로드 중·실패) 항목이
+  있으면 pill 뷰로 되돌린다(그 항목은 서버 목록에 없다).
+- `src/static/app/profile.js` — 가드 순서 정정(핸들 확인 → 배타 → 열기).
+- `src/static/index.html` — 세 패널에 `data-side-panel` 표식(census 축을 태그에서 분리).
+
+**가드**:
+- `tests/test_side_panel_exclusive.py` — 스캐너를 **모드 스택 파서**로 교체(중첩 템플릿
+  리터럴 오독 해소 · 미종료 리터럴은 예외) · «없다» 축은 리터럴 마스크 미사용 ·
+  우회 스캔에 `querySelector("#…")` 와 **핸들 import** 축 추가 · 소유 면제를 자기 패널로
+  한정 · 등록 **형태** 검증(`close`/`elementId` 정확 일치, 줄머리 앵커) · 등록부 leaf
+  불변식 · census 를 `data-side-panel` 기준으로 · S6(하네스 실행 또는 CI gap 기록 단언).
+- `tests/verify_side_panel_exclusive.mjs` — 등록부를 **jsdom realm 안에서** 평가(Node realm
+  에서는 `document`·`MutationObserver` 부재로 접근성 축이 vacuous 했다) · 접근성·등록실패
+  보고·사후 단언·상태복원 케이스 추가(27 → **49**).
+
+**검증**: `make test` 6464 outcome 0 FAIL · jsdom 49 PASS · 뮤테이션 **12종 전건 KILL** ·
+PB-0008 **15 step ok**.
+
+## CHG-20260901T133000-side-panel-exclusive-r3 (§18.8 확인 라운드 BLOCK ×2 수용)
+
+**변경**: 확인 라운드가 재현한 회귀 1건 + 문서 정본 drift 1건 + 가드 6축 보강.
+
+- `src/static/app/composer.js` — 스냅샷에 `convId` 기록, `_consumeAttachAutoCloseSnapshot` 이
+  **다른 대화의 스냅샷을 폐기**한다. 휴지통 모드로 복원할 때는 pill 복원을 건너뛴다(두
+  렌더러가 같은 목록 슬롯을 다퉈 헤더와 본문이 서로를 부정하던 것).
+- `src/static/app/profile.js` — `closeProfile` 에 `openProfile` 과 같은 null 가드.
+- `src/static/app/side-panels.js` — `inert` **기능 검출**(`"inert" in HTMLElement.prototype`)로
+  교체(미지원 엔진에서 대입은 예외를 던지지 않아 기존 try/catch 는 도달 불가 코드였다) ·
+  미지원이면 `aria-hidden` 도 걸지 않음 · 등록 시 요소 부재를 콘솔 보고(마지막 무음 경로) ·
+  세 패널의 숨김 규칙이 한 벌이 아니라는 사실로 주석 정정.
+- `src/static/css/chat.css` — `.attach-side-panel.hidden`·`.step-side-panel.hidden` 에
+  `visibility: hidden; pointer-events: none` (전환 후 적용) — `inert` 미지원 엔진의 실효 폴백.
+- `docs/FUNCTION.md` — 계약·AC 를 현 설계(`openSidePanel` 중앙 열기 · 검사 축 6종 · census 두
+  축)와 **각 축의 한계**까지 재작성. 실행 단계 패널에 복원 장치가 없는 **비대칭의 사유**를 명시.
+- `tests/test_side_panel_exclusive.py` — S7(형태-무관 `hidden` 해제 위치) · S8(표식 강제) ·
+  S9(CSS 폴백) 추가, 우회 축 6종으로 확대, `app.js` 면제를 핸들 선언 줄로 한정,
+  `vendor/` 제외 + 스캔 캐시 + 예외 메시지에 파일 경로, 스캐너 `i++ /`·`}/` 오판 해소,
+  축약 속성·꼬리 주석 관용.
+- `tests/verify_side_panel_exclusive.mjs` — jsdom 에 `inert` 능력 주입(미주입 시 정본의 기능
+  검출 때문에 접근성 축이 **vacuous** 하게 통과) · C8b(미지원 분기) · C13/C14(대화 전환 후
+  스냅샷 폐기·복귀) 추가 (49 → **54**).
+- `src/scenario.side-panel-exclusive.json` — 대화 전환 후 재개방 step 추가 (15 → **16**).
+
+**검증**: `make test` 6464 outcome 0 FAIL · jsdom 54 PASS · 뮤테이션 20종 전건 KILL ·
+PB-0008 16 step ok.
+
+## CHG-20260901T145000-side-panel-exclusive-r4 (§18.8 확인 라운드 반영)
+
+**제품**: `side-panels.js` — 사후 단언의 열거 출처를 `[data-side-panel]` DOM 표식으로(등록
+누락 패널도 결과 축에서 잡힌다) · `openFn()` try/catch + 보고. `composer.js` — 복원 비동기
+꼬리를 `_applyAttachRestoreAfterLoad(restore, cid)` 로 추출하고 **대화 동일성 가드**를 적용
+(스냅샷 생성·소비·적용 세 지점이 같은 술어를 쓴다).
+
+**가드**: `scan_file` 배선(dead code 해소) · S7 을 수신 표현식 판정으로 · S8 후보를 class
+토큰 + `HTMLParser` attrs 로 · `_HANDLE_DECL` 포맷 관대화 · mjs 등록문 규약 정렬 + 내용 단언 ·
+하네스 C15~C18 추가(66 PASS) · `test_n5b`(경로가 실린 예외) · N6/N7 실측 형태로 확장.
+
+**문서**: FUNCTION.md 의 «없는 보장» 문장 3곳 정정(사후 단언이 못 덮는 것, S8 의 실제 한계,
+S7 이 형태-무관이 아니라는 사실) + AC-7 확장 · AC-8 신설.
+
+**검증**: `make test` 6465 outcome 0 FAIL · jsdom 66 PASS · pytest 가드 22 · PB-0008 16 step ok ·
+신규 5축 뮤테이션(async 가드 · pill deleted 가드 · scrollTop · 사후단언 출처 · openFn try) 전건 KILL.
+
+## CHG-20260901T160000-side-panel-exclusive-r5 (§18.8 확인 라운드 — 사용자 연장 승인)
+
+**제품**: `side-panels.js` — 사후 단언이 **id 없는 표식 패널**도 라벨로 보고 · 열기 실패
+경로에서도 `_syncInteractivity` 를 돌려 「`hidden` 여부와 `inert` 가 항상 일치」를 불변식으로.
+
+**가드**: 함수 경계 파서를 **시그니처 괄호 선매칭 + 화살표 함수 인정**으로 교체하고 경계
+미상은 offender 대신 **«보류»**(거짓 FAIL 제거 — 실측: 구조분해 파라미터만으로 같은 코드가
+red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(따옴표 비대칭이 미등록
+패널을 두 축 모두 통과시키던 것) · `scan_file`/`_SCAN_CACHE` 삭제 · `looksLikeRegistration`
+술어를 «다음 문장을 삼켰는가» 로 · **S10**(복원 꼬리 배선 단언) · C17 을 결과 축으로.
+
+**문서**: `FUNCTION.md` AC-4 를 출하 규칙(class 토큰 + HTMLParser)과 **실제 한계**로 재기술 —
+종전 문장은 코드가 잡는 형태를 «census 밖» 이라 적고 있었다.
+
+**검증**: jsdom **67 PASS** · pytest 구조 가드 **23** · `make test` 0 FAIL · PB-0008 16 step ok.
+

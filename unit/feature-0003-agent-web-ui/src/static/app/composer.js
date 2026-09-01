@@ -70,6 +70,9 @@ import {
 } from "../app.js?v=dev";
 import { renderMessageDetails } from "./messages.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
+// side-panel-exclusive: 우측 오버레이 패널은 한 번에 하나. 등록부는 의존성 없는 별 모듈이라
+// app.js 를 경유하지 않고 직접 import 한다(순환 한 겹 추가 회피).
+import { registerSidePanel, openSidePanel } from "./side-panels.js?v=dev";
 // feature-0043 P0-AB: 브리지 연결 게이트. 잠금 판정은 서버가 내고(`compose_blocked`) 여기서는
 // 그 결과만 읽는다 — 조건을 다시 조립하지 않는다(두 벌이 되면 화면과 서버가 갈린다).
 import { isComposeBlocked, refreshConnState } from "./connect-modal.js?v=dev";
@@ -107,6 +110,105 @@ let _attachListState = "active";
 function _attachPanelMaxW() {
   return Math.max(ATTACH_PANEL_MIN_W, Math.floor(window.innerWidth * 0.92));
 }
+
+/** 배타 닫힘(사용자가 닫은 것이 아님)으로 잃는 상태의 1회용 스냅샷.
+ *
+ *  이 패널은 «닫힘 = 상태 파기» 다 — 다시 열면 목록 모드가 active 로 리셋되고 목록을
+ *  서버에서 통째로 다시 그린다(스크롤 최상단). 사용자가 × 로 닫았을 때는 그것이 의도지만,
+ *  「단계 보기」를 한 번 눌러 **자동으로** 닫힌 경우까지 그러면 휴지통을 훑던 화면이
+ *  이유 없이 사라진다. 그 손실은 배타 규칙이 새로 만든 것이므로 여기서 되돌린다. */
+let _attachAutoCloseSnapshot = null;
+
+/** 첨부 사이드 패널 닫기 — 닫기 버튼·빈 목록·다른 패널 열림이 모두 이 한 곳을 쓴다.
+ *  (`hidden` 부착을 호출부마다 복제하면 닫기 규칙이 여러 벌이 되어 갈린다.)
+ *
+ *  @param {object}  [opts]
+ *  @param {boolean} [opts.auto]  배타 닫힘(사용자 의사 아님) — 복원용 스냅샷을 남긴다. */
+function closeAttachSidePanel({ auto = false } = {}) {
+  const panel = document.getElementById("attachSidePanel");
+  if (auto && panel && !panel.classList.contains("hidden")) {
+    const list = document.getElementById("attachSidePanelList");
+    // ⚠ `convId` 를 함께 적는다 — 이 스냅샷은 «그 대화의 뷰» 다. 대화 축의 소유자
+    //   (`resetAttachListStateForConversationSwitch`)가 이 상태를 알게 만드는 대신 스냅샷이
+    //   **스스로 무효화**하게 한다: 그러지 않으면 앞으로 생길 다른 전환 경로(로그아웃·공유창
+    //   진입·딥링크 복원)마다 같은 한 줄을 복제해야 하고, 한 곳이라도 빠지면 REQ-20260806
+    //   -attach-manage 가 없앤 «다른 대화가 휴지통 모드로 열려 첨부가 없어 보이는» 결함이
+    //   그 통로로 되살아난다.
+    _attachAutoCloseSnapshot = {
+      convId: state.activeConversationId || null,
+      listState: _attachListState,
+      scrollTop: list ? list.scrollTop : 0,
+    };
+  }
+  if (panel) panel.classList.add("hidden");
+}
+
+/** 닫기 버튼용 래퍼 — 두 배선 지점이 **같은 함수 참조**를 쓰도록 이름을 준다
+ *  (익명 화살표를 두 번 넘기면 리스너가 둘로 등록된다). Event 인자가 옵션 객체 자리에
+ *  들어가지 않게 하는 역할도 겸한다. */
+function _onAttachClosePressed() { closeAttachSidePanel(); }
+
+/** 배타 닫힘 전의 상태를 1회 꺼낸다. 꺼내면 소진되며, **다른 대화의 스냅샷은 버린다**. */
+function _consumeAttachAutoCloseSnapshot() {
+  const snap = _attachAutoCloseSnapshot;
+  _attachAutoCloseSnapshot = null;
+  if (!snap) return null;
+  // 대화가 바뀌었으면 되돌릴 자격이 사라진다 — 그 화면은 이 대화의 것이 아니다.
+  if ((snap.convId || null) !== (state.activeConversationId || null)) return null;
+  return snap;
+}
+
+/** 업로드 중이거나 실패한 로컬 항목이 있는가 — 그 항목은 **서버 목록에 없다**.
+ *  (실패 pill 의 × 는 그 뷰에서만 닿는 회수 경로라, 안 보이면 회수도 못 한다.) */
+function _hasPendingComposerAttachments() {
+  const bucket = state.composerAttachments.byConv[_composerAttachmentKey(state.activeConversationId)];
+  return (bucket?.items || []).some((it) => it.status === "uploading" || it.status === "failed" || it.status === "staged");
+}
+
+/** 배타 닫힘 복원의 **꼬리** — 서버 목록 로드가 끝난 뒤 pill 뷰·스크롤을 되돌린다.
+ *
+ *  인라인 콜백이 아니라 이름 있는 함수인 이유: 이 축(무엇을 되돌리는가)을 검사할 수 있게
+ *  하기 위해서다. 클릭 핸들러 안에 두면 어떤 게이트도 구동할 수 없다.
+ *
+ *  @param {{listState: string, scrollTop: number} | null} restore 소비한 스냅샷
+ *  @param {string|null} cid 복원 요청 시점의 대화 id
+ *  @returns {boolean} 실제로 복원을 적용했는가
+ */
+function _applyAttachRestoreAfterLoad(restore, cid) {
+  if (!restore) return false;
+  // 왕복 중 대화가 바뀌었으면 이 복원은 **남의 대화**에 적용된다 — 스냅샷 생성·소비와
+  // 같은 정규화 규칙으로 꼬리도 자기무효화시킨다(동일성 판정이 세 지점에서 같은 술어를 쓴다).
+  if ((state.activeConversationId || null) !== (cid || null)) return false;
+  // 업로드 중·실패 항목은 **서버 목록에 없다** — 자동 닫힘으로 사라진 pill 뷰를 되돌린다
+  // (실패 항목의 회수 × 가 그 뷰에만 있다).
+  // 단 **휴지통 모드로 복원한 경우는 건너뛴다** — 두 렌더러가 같은 `#attachSidePanelList` 를
+  // 쓰므로 pill 이 삭제분 목록을 덮으면 헤더는 휴지통인데 본문은 활성 첨부가 되어 화면이
+  // 자기를 부정한다(휴지통에 업로드 중 항목은 존재하지 않는다).
+  if (restore.listState !== "deleted" && _hasPendingComposerAttachments()) _renderAttachmentPills();
+  const list = document.getElementById("attachSidePanelList");
+  if (list && restore.scrollTop) list.scrollTop = restore.scrollTop;
+  return true;
+}
+
+/** 첨부 사이드 패널 열기 — 너비 복원까지 포함한 단일 열기 경로.
+ *  side-panel-exclusive: 모든 열기는 등록부의 문을 통과한다(다른 우측 패널을 먼저 닫는다).
+ *  @returns {{listState: string, scrollTop: number} | null} 배타 닫힘 스냅샷(있으면) */
+function openAttachSidePanel() {
+  const panel = document.getElementById("attachSidePanel");
+  // 열 수 있는지 **먼저** 확인한다 — 열지도 못하면서 남의 패널만 닫지 않는다.
+  if (!panel) return null;
+  const restore = _consumeAttachAutoCloseSnapshot();
+  openSidePanel("attach", () => {
+    setupAttachSidePanelResize();
+    _applyAttachSidePanelWidth(panel);
+    panel.classList.remove("hidden");
+  });
+  return restore;
+}
+
+// side-panel-exclusive: 다른 패널이 열릴 때 이 패널을 닫을 수 있도록 등록한다.
+// `auto: true` — 이 경로의 닫힘은 사용자 의사가 아니므로 복원 스냅샷을 남긴다.
+registerSidePanel("attach", { close: () => closeAttachSidePanel({ auto: true }), elementId: "attachSidePanel" });
 
 function _applyAttachSidePanelWidth(panel) {
   let saved;
@@ -1065,7 +1167,7 @@ async function _syncConversationAttachmentsToBucket(convId) {
 
 function _renderAttachmentPills() {
   // 오른쪽 사이드 패널(#attachSidePanel)에 렌더. (TASK-0161: 죽은 #composerAttachments 숨김 코드 제거)
-  const sidePanel = document.getElementById("attachSidePanel");
+  // 패널 자체를 여닫는 일은 closeAttachSidePanel/openAttachSidePanel 이 소유한다.
   const sidePanelList = document.getElementById("attachSidePanelList");
 
   const key = _composerAttachmentKey(state.activeConversationId);
@@ -1089,7 +1191,7 @@ function _renderAttachmentPills() {
   const countBadge = document.getElementById("composerAttachCountBadge");
   if (!items.length) {
     sidePanelList.innerHTML = "";
-    if (sidePanel) sidePanel.classList.add("hidden");
+    closeAttachSidePanel();
     if (countBadge) countBadge.textContent = "";
     return;
   }
@@ -2883,10 +2985,7 @@ function _bindComposerAttachmentEvents() {
   // UX-COMPACT: 첨부 사이드 패널 닫기 버튼
   const attachSidePanelClose = document.getElementById("attachSidePanelClose");
   if (attachSidePanelClose) {
-    attachSidePanelClose.addEventListener("click", () => {
-      const sidePanel = document.getElementById("attachSidePanel");
-      if (sidePanel) sidePanel.classList.add("hidden");
-    });
+    attachSidePanelClose.addEventListener("click", _onAttachClosePressed);
   }
 
   // UX-COMPACT: 단계 사이드 패널 닫기 버튼
@@ -3463,27 +3562,24 @@ function _bindComposerActionsEvents() {
       ev.preventDefault();
       ev.stopPropagation();
       _closeComposerActionsMenus();
-      const panel = document.getElementById("attachSidePanel");
-      if (panel) {
-        setupAttachSidePanelResize();
-        _applyAttachSidePanelWidth(panel);
-        panel.classList.remove("hidden");
-      }
+      const restore = openAttachSidePanel();
       // REQ-20260806-attach-manage: 패널을 열 때마다 목록 모드를 active 로 되돌린다 —
       // 휴지통 상태가 남아 있으면 다른 대화에서 열었을 때 첨부가 없는 것처럼 보인다.
+      // **예외**: 배타 닫힘으로 닫혔던 경우는 사용자가 닫은 것이 아니므로 그 모드를 되돌린다
+      // (대화 전환 축은 `resetAttachListStateForConversationSwitch` 가 따로 소유한다).
       // reload:false — 아래 한 줄이 어차피 로드한다(같은 목록을 두 번 가져오지 않는다).
-      _setAttachListState("active", { reload: false });
+      _setAttachListState(restore ? restore.listState : "active", { reload: false });
       _bindAttachPanelManageControls();
       const cid = state.activeConversationId;
-      if (cid) _loadConversationAttachmentList(cid);
+      if (cid) {
+        const done = _loadConversationAttachmentList(cid);
+        if (restore) Promise.resolve(done).then(() => _applyAttachRestoreAfterLoad(restore, cid));
+      }
     });
   }
   const sidePanelClose = document.getElementById("attachSidePanelClose");
   if (sidePanelClose) {
-    sidePanelClose.addEventListener("click", () => {
-      const panel = document.getElementById("attachSidePanel");
-      if (panel) panel.classList.add("hidden");
-    });
+    sidePanelClose.addEventListener("click", _onAttachClosePressed);
   }
   if (modelItem) {
     modelItem.addEventListener("click", (ev) => {

@@ -414,7 +414,7 @@
   </div><!-- /app-shell -->
 
   <!-- UX-COMPACT: 첨부 파일 사이드 패널 -->
-  <aside class="attach-side-panel hidden" id="attachSidePanel" aria-label="첨부 파일">
+  <aside class="attach-side-panel hidden" id="attachSidePanel" data-side-panel="attach" aria-label="첨부 파일">
     <div class="attach-side-panel-resizer" id="attachSidePanelResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절"></div>
     <div class="attach-side-panel-header">
       <span class="attach-side-panel-title">첨부 파일</span>
@@ -448,7 +448,7 @@
   </aside>
 
   <!-- 실행 단계 사이드 패널 (처리 중 / 완료 후 단계 조회) -->
-  <aside class="step-side-panel hidden" id="stepSidePanel" aria-label="실행 단계">
+  <aside class="step-side-panel hidden" id="stepSidePanel" data-side-panel="step" aria-label="실행 단계">
     <div class="step-side-panel-resizer" id="stepSidePanelResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절"></div>
     <div class="step-side-panel-header">
       <div class="step-side-panel-title-row">
@@ -469,7 +469,7 @@
        BEDROCK_GATEWAY_API_KEY 보유, 사용자 입력 불필요. TASK-0105: 내 감사 로그 탭 비노출 제거.)
   -->
   <div class="drawer-bg hidden" id="profileBackdrop"></div>
-  <aside class="drawer hidden" id="profileDrawer">
+  <aside class="drawer hidden" id="profileDrawer" data-side-panel="profile">
     <!-- 좌측 가장자리 너비 조절 핸들 (단계 보기 패널 #stepSidePanelResizer 과 동일 패턴) -->
     <div class="drawer-resizer" id="profileDrawerResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절"></div>
 

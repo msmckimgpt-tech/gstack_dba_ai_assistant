@@ -2297,7 +2297,17 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
 .attach-side-panel:not(.hidden) {
   transform: translateX(0);
 }
-.attach-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* side-panel-exclusive: `display:flex` 를 유지하는 이유는 슬라이드 아웃 전환 때문인데,
+   그대로 두면 화면 밖 패널이 **여전히 Tab 대상이고 aria-live 도 계속 읽힌다**. 전환이 끝난
+   뒤 `visibility:hidden` 으로 넘겨 모든 엔진에서 포커스·접근성 트리 양쪽에서 제거한다
+   (JS 의 `inert` 동기화는 그 위의 보강이며, `inert` 미지원 엔진에서는 이 규칙만 남는다). */
+.attach-side-panel.hidden {
+  display: flex !important;
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform .2s ease, visibility 0s linear .2s;
+}
 /* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
 .attach-side-panel.is-resizing { transition: none; user-select: none; }
 /* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
@@ -2529,7 +2539,14 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   transition: transform .2s ease;
 }
 .step-side-panel:not(.hidden) { transform: translateX(0); }
-.step-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* side-panel-exclusive: 위 .attach-side-panel.hidden 과 같은 이유 — 전환 후 포커스 제거. */
+.step-side-panel.hidden {
+  display: flex !important;
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform .2s ease, visibility 0s linear .2s;
+}
 /* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
 .step-side-panel.is-resizing { transition: none; user-select: none; }
 /* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
