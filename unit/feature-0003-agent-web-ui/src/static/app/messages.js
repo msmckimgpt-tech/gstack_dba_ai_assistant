@@ -603,9 +603,6 @@ function buildSqlStepPanel(step) {
   return panel;
 }
 
-//: 페이징 시 결과셋 위에 남기는 여백(px). 0 으로 두면 헤더가 패널 상단에 딱 붙어 잘린 듯 보인다.
-const _NAV_REVEAL_MARGIN_PX = 6;
-
 function buildSqlNavigator(sqlSteps) {
   const root = document.createElement("div");
   root.className = "sql-navigator";
@@ -679,37 +676,26 @@ function buildSqlNavigator(sqlSteps) {
     // 들어오는 패널이 더 크면 floor 를 키운다(축소만 방지, 확장은 허용).
     preserveHeight();
   }
-  //: 페이징한 결과셋을 **자기 스크롤 패널의 맨 위**로 올린다.
+  //: 전환은 이 한 곳을 거친다 — ◀▶ 도, ←/→/Home/End 도. 갈라 두면 한쪽만 고치게 된다.
   //:
-  //: 사용자 제보 2026-08-31: "쿼리데이터 결과셋을 페이징 할 때 마다 해당 위치로 내부 패널의
-  //: 스크롤이 이동되도록". 상세가 `max-height` 패널이 된 뒤로는 ◀▶ 로 넘긴 결과가 패널
-  //: 스크롤 아래에 가려 있을 수 있다 — 넘겼는데 화면이 안 바뀐 것처럼 보인다.
+  //: ## 「페이징 시 스크롤 이동」 은 이제 **구조가** 만족시킨다 (2026-09-01)
   //:
-  //: ⚠ `scrollIntoView` 를 쓰지 않는다. 그것은 **조상 스크롤러 전부**를 움직여 대화 로그와
-  //:   페이지까지 끌고 간다 — 이 cycle 이 없애려는 바로 그 증상이다. 자기 패널의 `scrollTop`
-  //:   만 계산해서 옮긴다.
-  function revealInPanel() {
-    const scroller = root.closest(".message-details-body");
-    if (!scroller) return;   // 아직 DOM 에 붙기 전(빌드 중 첫 update) — 옮길 패널이 없다
-    const delta = root.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    scroller.scrollTop += delta - _NAV_REVEAL_MARGIN_PX;
-  }
-  //: 전환 후 레이아웃(패널 교체 + minHeight floor)이 확정된 뒤에 재야 한다 — 같은 프레임에
-  //: 재면 교체 전 높이로 계산해 어긋난다.
+  //: 2026-08-31 요구는 "쿼리데이터 결과셋을 페이징 할 때 마다 해당 위치로 내부 패널의
+  //: 스크롤이 이동" 이었고, 당시엔 상세 본문 전체가 스크롤 패널이라 넘긴 결과가 스크롤
+  //: 아래에 가려질 수 있었다. 그래서 패널의 `scrollTop` 을 옮기는 코드가 있었다.
   //:
-  //: **두 프레임에 걸쳐 재적용**한다. 표 렌더·폰트 적용·동적 높이가 다음 프레임 이후에
-  //: 확정되면 첫 계산이 수 px~수십 px 어긋나 헤더가 가려진다(codex 적대 리뷰 P2). 이
-  //: 저장소의 사이드 패널 스크롤 복원(`_scheduleStepPanelScroll`)도 같은 규약이다.
+  //: 지금은 결과셋이 **스크롤 밖**에 있다(스크롤 대상은 단계 목록뿐 — 2026-09-01 요구).
+  //: 결과 범위는 단계 목록(고정 상한) 바로 아래 **고정 위치**라 페이징해도 자리가 움직이지
+  //: 않는다 — 옮길 스크롤이 없다. 그 코드를 남겨 두면 어떤 조상도 스크롤하지 않으므로
+  //: 영구 no-op, 즉 **동작하는 척하는 죽은 코드**가 된다(codex 적대 리뷰 P2). 그래서 지운다.
+  //:
+  //: ⚠ 결과 범위를 다시 스크롤러 안에 넣는다면 그 이동 코드도 **함께 되살려야 한다**.
+  //:   `.step-detail-list` 만 스크롤한다는 계약은 회귀 테스트가 잠그고 있다.
   function pageTo(nextIdx) {
     const next = Math.min(Math.max(nextIdx, 0), sqlSteps.length - 1);
     if (next === activeIdx) return;
     activeIdx = next;
     update();
-    revealInPanel();
-    requestAnimationFrame(() => {
-      revealInPanel();
-      requestAnimationFrame(revealInPanel);
-    });
   }
   function go(delta) {
     pageTo(activeIdx + delta);
@@ -777,6 +763,18 @@ function bubbleVisibleSteps(steps) {
     .filter((s) => String((s && s.action) || "") !== "activity");
 }
 
+/** 상세 본문을 **두 범위**로 나눠 그린다 — 「단계」와 「쿼리 결과」.
+ *
+ *  사용자 제보 2026-09-01: "'▼ 쿼리 결과' 를 펼쳤을 때, 각 단계와 결과셋 범위를 분리해주세요.
+ *  **스크롤 대상은 각 단계 뿐입니다.**"
+ *
+ *  종전에는 상세 본문(`.message-details-body`) 전체가 하나의 스크롤 패널이었다. 그러면 정작
+ *  보려던 결과셋까지 그 스크롤 안에 갇혀, 단계가 많을수록 결과셋을 찾아 굴려야 했다. 이제
+ *  **단계 목록만** 자기 상한을 갖고 스크롤하며(`.step-detail-list`), 결과셋은 그 아래에
+ *  **온전한 높이로** 놓인다(자기 내부 상한 — SQL 블록·결과 표 — 은 그대로).
+ *
+ *  두 범위는 각각 제목을 가진 `.message-detail-block` 이라 경계가 눈에 보인다.
+ */
 function buildStepBlocks(shown, containerEl) {
   // execute_sql 단계는 SQL + 결과 테이블 + CSV 링크로 묶어 표시
   // 나머지 단계는 요약 목록으로 표시. 2개 이상이면 Navigator로 압축.
@@ -789,6 +787,8 @@ function buildStepBlocks(shown, containerEl) {
     // 사이드바·진행 표시와 **같은 카드**로 그린다(`buildStepDetailEl`). 종전에는 여기서만
     // `작업 — 근거` 를 한 줄 `<li>` 로 이어 붙여, 같은 단계가 패널에서는 카드로 말풍선에서는
     // 평문 목록으로 보였다(사용자 제보 2026-08-28). 표시층이 한 벌이어야 구조가 안 갈린다.
+    //
+    // 이 목록이 **유일한 스크롤 대상**이다(CSS `.step-detail-list`).
     const box = document.createElement("div");
     box.className = "step-detail-list";
     nonSqlSteps.forEach((step, idx) => {
@@ -798,15 +798,16 @@ function buildStepBlocks(shown, containerEl) {
   }
 
   if (!sqlSteps.length) return;
+  // 결과셋 범위 — 단계와 **같은 블록 구조**로 감싸 제목·간격이 대칭이 되게 한다.
+  // 이 범위는 스크롤 대상이 아니다(안쪽 SQL 블록·결과 표의 자체 상한만 유지).
+  const resultBox = document.createElement("div");
+  resultBox.className = "sql-result-group is-result-range";
   if (sqlSteps.length === 1) {
-    const label = document.createElement("div");
-    label.className = "sql-result-label";
-    label.textContent = "SQL 쿼리";
-    containerEl.appendChild(label);
-    containerEl.appendChild(buildSqlStepPanel(sqlSteps[0]));
-    return;
+    resultBox.appendChild(buildSqlStepPanel(sqlSteps[0]));
+  } else {
+    resultBox.appendChild(buildSqlNavigator(sqlSteps));
   }
-  containerEl.appendChild(buildSqlNavigator(sqlSteps));
+  appendDetailBlock(containerEl, "쿼리 결과", resultBox);
 }
 
 function renderMessageDetails(meta = {}) {
