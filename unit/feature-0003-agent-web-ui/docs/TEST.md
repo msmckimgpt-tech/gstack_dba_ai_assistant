@@ -116,6 +116,21 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260901T0330-connect-modal-launch-close 실행 성공인데 창이 안 닫히던 회귀 정정 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (배포 후 POST-DEPLOY 실측 — `docs/test-runs.d/TASK-20260901T0330-connect-modal-launch-close.md` · 배포 전 단계는 순수 node 행위 테스트 + 라이브 배포본 대비)**
+
+- **제보 재현**: 「내 AI가 대기 중입니다…」 를 받았는데 모달이 안 닫힌다는 제보를 시나리오 H 로
+  고정했고, **현재 라이브 배포본에서 H3·H4 가 FAIL** 한다(제보 실재 확인). 수정본 **25/0 PASS**.
+- **원인**: 직전 cycle 에서 codex P1-2 수용 범위를 넓혀 사용자가 직접 누른 실행까지 자동 경로의
+  기준선에 묶었다 — 창을 열 때 이미 «대기 중» 이면 전이가 아니므로 아무도 닫지 않았다.
+- **뮤테이션 8종**: revert→H3·H4 / success-epoch→**F4** / loop-epoch→F2a·F2b·F4 /
+  response-epoch만→생존(`_connSeq` 가 1차) / seq+resp 둘 다→F3a·F3b·F3c / baseline→G1 /
+  announced-guard→E3 / clearinterval→E2b.
+- **제거한 단언**: 구 F1(「남의 러너로 닫히지 않는다」) — 그 단언이 이 회귀를 «올바름» 으로
+  잠그고 있었다. 같은 상황을 H 가 반대 기대로 잠근다.
+- **codex 독립 확인**: 트레이드오프 타당 · P1 0.
+- **남은 위험(정직 표기)**: 남의 러너로 인한 오닫힘은 원리적으로 남는다(서버가 러너 소유를
+  구분해 주지 않는 한). 의식적 트레이드오프이며 「연결 준비」 재클릭으로 복구된다.
+
 ### 20260831T1827-connect-modal-autoclose 연결 성립 시 토스트 + 모달 자동 닫기 (Minor §12.3, 2026-08-31, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260831T1827-connect-modal-autoclose.md`)**
 
 - **라이브 결함 재현(배포본 `1c0864dc`)**: 배지가 «내 AI 대기 중» 으로 바뀌어도 모달이 그대로

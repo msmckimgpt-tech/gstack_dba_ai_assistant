@@ -5028,3 +5028,23 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/TEST.md`, `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md`(신규).
 - Reason: changed paths are docs only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-09-01T10:15:00+09:00
+
+## CHG-20260901T033000-connect-modal-launch-close 실행 성공인데 창이 안 닫히던 회귀 정정
+- `static/app/connect-modal.js`: `_launchRunner` 성공 분기가 다시 `_announceConnected()` 를
+  호출한다(토스트 + 닫기). 직전 cycle 에서 codex P1-2 를 수용해 이 자리의 닫기를 포기했었고,
+  그것이 라이브 회귀를 냈다 — 창을 열 때 이미 «대기 중» 으로 알려져 있으면 자동 관측 경로가
+  «전이 아님» 으로 판정하므로, 사용자가 실행을 눌러 성공을 확인해도 아무도 닫지 않았다.
+  사용자에게 남은 것은 「이제 질문을 보낼 수 있습니다」 라는 성공 문구와 그대로 있는 창이다.
+- 같은 분기에 **창-세대 검사**(`epoch !== _modalEpoch`) 추가 — 회귀 정정이 «남의 창을 닫는»
+  새 결함을 만들지 않게. 이 검사는 F4 가 단독으로 겨눈다.
+- **판단 근거**: 명령 손실은 「연결 준비」 재클릭으로 복구되고 애초에 대기 중이면 그 명령은
+  필요 없다. 반면 «성공을 말하면서 아무것도 하지 않는» 것은 복구 경로가 없고 실측 제보가
+  그쪽이다. 기준선 판정은 자동 관측 경로에만 남긴다(원래 목적인 «열자마자 닫히는 창» 방지는 유지).
+- 테스트: H(제보 재현) 신설 — 현재 라이브 배포본에서 H3·H4 FAIL 로 제보 재현 확인.
+  F4(닫은 뒤 도착한 성공이 토스트를 띄우지 않는다) 신설. 구 F1(「남의 러너로 닫히지 않는다」)
+  제거 — 그 단언이 이 회귀를 «올바름» 으로 잠그고 있었다. **25/0 PASS**, 뮤테이션 8종 역검증.
+- Files: `static/app/connect-modal.js`, `tests/verify_connect_modal_autoclose.mjs`,
+  `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…-launch-close.md`.
+- Cross-ref: TASK.md `20260901T0330-connect-modal-launch-close` · 직전 cycle
+  `CHG-20260831T1827-connect-modal-autoclose`
+- Timestamp: 2026-09-01T03:30:00+09:00
