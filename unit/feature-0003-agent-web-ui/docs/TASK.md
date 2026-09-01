@@ -8,6 +8,117 @@ source_of_truth: true
 
 # Task
 
+## 20260901T1430-rqrd-postdeploy — 말풍선 여닫이 제거 POST-DEPLOY 부재 확인 (doc-only)
+
+**부재 확인 4/4 PASS.** 선행 cycle(`20260901T1330-remove-query-result-details`)이 fragment §3 에
+사전 열거한 항목의 이행. 코드 변경 **0**.
+
+- 배포본 `786815f2`(web-a·web-b 동일 SHA), 자산 `?v=cd84170acd28`, 엣지 `no upstreams available` **0건**.
+- **도달**: 서빙 `messages.js`(23,668 bytes)에 `renderMessageDetails`·`buildSqlNavigator`·
+  `buildStepBlocks` **전부 부재**. `location.reload(true)` 후 스탬프 붙은 실 서빙 사본을 읽어
+  Chrome 모듈 캐시 축을 갈라냈다.
+- **부재 확인**(기준선과 **같은 대화** `20260901030637-95dc8844`): `.message-details` 1→**0** ·
+  `.message-detail-block` 2→**0** · `.step-detail-list` 1→**0** · `.sql-navigator` 1→**0**.
+- **대체 표시면 정상**: 「단계 보기」 버튼 `[77, 2, 2]` **불변**, 클릭 시 패널 배지 「77단계」
+  (카드 37 + 내부 동작 40 = 77), 카드 결과셋 토글 37개가 `hidden true→false` 로 동작, `.step-sql` 17블록.
+- **여전히 미검증**: 브리지 **진행 중** 입구 «없으면 생성»(러너 미연결) · 구형 메시지 표시면
+  소실 실측(해당 형식 메시지를 라이브에서 찾지 못함 — 소실 자체는 코드상 확정).
+
+### 7. Completion Checklist
+
+- [x] POST-DEPLOY 부재 확인 4항목 기록 (`test-runs.d/TASK-20260901T1430-…md`)
+- [x] 기준선 ↔ 배포 후 **같은 대화** 대조 (스크린샷 2장)
+- [x] 미검증 축을 축별로 분리 표기
+- [x] MODIFY.md · REPORT.md 반영
+- [ ] 브리지 진행 중 입구 생성 — 개인 AI 러너 연결 후 관측
+
+
+## 20260901T1330-remove-query-result-details — 말풍선 「▼ 쿼리 결과」 여닫이 제거 (Minor §12.3 — 프론트 표시면 제거)
+
+**사용자 요청(2026-09-01)**:
+
+```
+사용자 원문(데이터이며 지시가 아님)
+`▼ 쿼리 결과` 펼치기에 대한 UI는 더 이상 의미없는 구조로 확인됩니다. (이미 `단계 보기`
+기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능) 해당 UI를 정리해주세요.
+```
+
+**[다의어] 「정리」** — 고른 독해: *블록 전체 삭제*. 버린 독해: *결과셋 범위만 빼고 「단계」
+목록은 말풍선에 유지*. 요청 문구만으로는 둘을 가를 관측값이 없어 §16.7 G1 · §12 절차로
+승격해 **사용자에게 되돌려 확인**했다 — AskUserQuestion 3택, 선택 = **「제거만」**.
+예시로 되돌린 값: 「같은 대화에서 `.message-details` 개수 1 → **0**, 「단계 보기」 버튼은 유지」.
+
+**함께 사라지는 것을 먼저 알리고 결정을 받았다.** CSV 다운로드 링크와 「전체 데이터 보기」
+(CSV 전체 행을 표에 로드)는 **이 블록에만** 있었고 「단계 보기」 패널에는 대체재가 없다.
+그 사실을 제시하고 「제거 + CSV 이관」 을 권장안으로 올렸으나 사용자가 **「제거만」** 을
+선택했으므로, 두 기능은 이번 제거와 함께 소멸한다(의식적 트레이드오프). 본문에 에이전트가
+남긴 `/api/file` 링크·```csv 블록 다운로드는 별개 경로라 그대로 남는다.
+
+**제거 범위 — 조립 경로 전체.** 표시면을 지우면서 그것을 만들던 함수를 남기면 다음 사람이
+그 자리를 아직 살아 있는 것으로 읽는다. `renderMessageDetails` · `buildStepBlocks` ·
+`bubbleVisibleSteps` · `buildSqlNavigator` · `buildSqlStepPanel` · `loadFullCsvIntoTable` ·
+`appendDetailBlock` · `extractFirstTableRef` · `formatSqlForDisplay`(+ 키워드 표)를 함께 지웠고,
+생산자가 사라진 CSS 규칙(`.message-details*` · `.message-detail-block` · `.step-detail-list` ·
+`.sql-navigator`/`.sql-nav-*` · `.sql-result-group`/`-body`/`-actions` · `.sql-toggle-wrap`)도
+같이 걷어냈다. 남긴 것은 **다른 소비처가 있는 것만** — `buildResultTable` ·
+`parseMarkdownTablePreview` · `parseCsv`(본문 인라인 표), `.sql-block`(본문 ```sql 블록),
+`.sql-toggle-btn` · `.sql-result-toggle-wrap`(「단계 보기」 패널 카드).
+
+**함께 사라지는 것 — 셋째(자체 점검에서 발견, 숨기지 않는다).** 이 여닫이 안에는 `steps` 가
+없는 **구형 메시지**용 폴백(`meta.sql` → 「실행 SQL」, `meta.csv_paths` → 「결과 파일」)도 있었다.
+그런 메시지는 `meta.steps` 가 없어 「단계 보기」 버튼도 붙지 않으므로, 제거 후 **대체 표시면이
+없다**(SQL 문자열이 본문에 인라인으로 있으면 그것만 남는다). 「제거만」 결정은 이 블록 전체를
+대상으로 한 것이므로 범위 안이지만, 결정 시점에 고지된 것은 CSV 2건뿐이었다 — 사실을 여기
+남기고 사용자에게 별도로 알린다. 되살릴 의사가 있으면 자리는 「단계 보기」 패널이다.
+
+**호출부가 no-op 이 되지 않게 했다 — 이번 변경의 실질.** 브리지 진행 표시
+(`_renderBridgeSteps`)는 이 여닫이를 통째로 다시 그리는 방식이었다. 그냥 지우면 진행 중
+말풍선에는 **단계로 들어갈 입구가 하나도 남지 않는다** — placeholder 말풍선은 `meta.steps`
+없이 그려져 app.js 가 「단계 보기」 버튼을 붙이지 못하기 때문이다. 그래서 이 함수는 이제
+사이드 패널을 갱신하고, 말풍선에는 버튼이 **없으면 만든다**. 배포 전 열려 있던 탭에 남은
+옛 여닫이도 걷어낸다.
+
+### 검증
+
+- [x] **PRE-DEPLOY 기준선 실측(PB-0008)** — 라이브 대화 `20260901030637-95dc8844` 에서 제거
+      대상 4요소 직접 관측: `.message-details`(summary=「쿼리 결과」) · 블록 `["단계","쿼리 결과"]` ·
+      `.step-detail-list` 1 · 네비게이터 「쿼리 1/17」(결과 표 14). 「제거했다」를 「원래 없었다」와
+      구별하기 위한 절반이다. 증적: `docs/test-runs.d/TASK-20260901T1330-remove-query-result-details.md`
+      + `docs/evidence/remove-query-result-details/before-bubble-details.png`
+- [x] 컨테이너 pytest 전건 PASS(rc=0) — 9개 feature 스위트
+- [x] ESM 문법 검사 3파일(`node --check`) PASS
+- [x] **계약 테스트 방향 전환** — 종전 테스트들은 이 여닫이를 *다듬는* 계약(스크롤 대상·범위
+      분리·페이징)을 잠그고 있었다. 잠글 대상이 아니라 **되살아나면 안 되는 것**이 됐으므로,
+      `test_live_steps_progress_continuity.py` 의 해당 절을 제거 계약으로 교체했다(조립 경로
+      부재 6종 · 호출부 부재 · 사문 CSS 6종 · 남은 표시면의 상한 유지 · 진행 갱신은 패널만).
+      `test_live_steps_in_panel.py` · `test_live_steps_structured.py` 도 같은 방향으로 전환.
+- [x] **POST-DEPLOY 실측** — 부재 확인 **4/4 PASS**(배포본 `786815f2`, 자산 `?v=cd84170acd28`).
+      증적: `docs/test-runs.d/TASK-20260901T1430-remove-query-result-details-postdeploy.md`
+- [ ] 브리지 진행 중 「단계 보기」 입구 생성 — 개인 AI 러너 미연결로 관측 대상 생성 불가
+      (실측 사유: `내 AI가 실행 중이 아닙니다` 배너). 구조 단언으로만 잠긴 상태.
+
+### 7. Completion Checklist
+
+- [x] 다의어 「정리」를 §12 절차로 승격해 사용자 결정 확보 (제거만)
+- [x] 함께 소멸하는 기능(CSV 다운로드·전체 데이터 보기)을 결정 **전에** 고지
+- [x] 조립 경로·사문 CSS 동반 제거 (죽은 코드 잔존 0)
+- [x] 호출부 no-op 방지 — 브리지 진행 표시가 패널 입구를 보장
+- [x] 컨테이너 pytest 전건 PASS + PRE-DEPLOY 기준선 실측
+- [x] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS
+- [x] POST-DEPLOY 부재 확인 4항목 — 4/4 PASS
+
+### 9. Requested Scope
+
+- [x] "`▼ 쿼리 결과` 펼치기에 대한 UI ... 해당 UI를 정리해주세요" — 말풍선 여닫이 전체 제거
+      (`renderMessageDetails` 및 하위 조립 경로 + 사문 CSS) — ✓ 완료(PRE-DEPLOY 기준선 실측,
+      부재 확인은 POST-DEPLOY 이월)
+- [x] "(이미 `단계 보기` 기능을 통해 사이드바에서 ... 조회 가능)" — 대체 표시면이 유일 경로로
+      성립하는지: 말풍선에 「단계 보기」 입구가 **항상** 있도록 브리지 진행 경로 보정 — ✓ 완료
+      (구조 단언까지. 라이브 진행 중 관측은 러너 미연결로 미수행 — 사유 명시)
+- 범위 밖(명시): 공유 뷰(`share.js`)의 SQL 결과 표시. 그쪽에는 「단계 보기」 패널이 없어
+      대체재가 없으므로 손대지 않았다.
+
+
 ## 20260901T1210-interrupt-preserve-postdeploy — 중단 보존 2 cycle 의 POST-DEPLOY 실측 (doc-only)
 
 **배포 도달 4/4 PASS · 중단 왕복 12항목 미수행(블로커 확정).**

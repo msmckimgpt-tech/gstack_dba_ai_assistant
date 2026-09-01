@@ -57,6 +57,11 @@ from shared.bridge_tasks import (
     RUNNER_FEATURE_BATCH_JOBS as _FEATURE_BATCH_JOBS,
     RUNNER_FEATURE_CONSOLE_JOBS as _FEATURE_CONSOLE_JOBS,
     RUNNER_MIN_AGENT_VERSION as _RUNNER_MIN_AGENT_VERSION,
+    # TASK-20260901T140000 — 러너 인스턴스 축·고아 점유 회수.
+    BRIDGE_NO_PROGRESS_SEC as _BRIDGE_NO_PROGRESS_SEC,
+    claimed_client_value as _claimed_client_value,
+    claimed_client_matches as _claimed_client_matches,
+    release_runner_instance_claims as _release_runner_instance_claims,
 )
 
 
@@ -813,9 +818,16 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
             # (취소 말풍선은 `placeholder=false` 라 덮어쓰기 대상에서도 빠져 append 로 떨어진다).
             # 조건을 같은 UPDATE 안에 두면 그 창이 사라진다 — 바로 위 `SubmittedAt IS NULL`
             # 가드가 같은 이유로 SQL 안에 있다.
+            #
+            # ⚠ **앞자리(client)만 비교한다** (TASK-20260901T140000). `ClaimedClient` 는 이제
+            # `<client_id>#<러너 instance>` 형태일 수 있다(고아 점유 회수 축). 전량 일치로
+            # 두면 인스턴스를 신고하는 러너의 **모든 제출이 rowcount 0** 이 되어 "점유자가
+            # 아니다" 로 거절된다 — 조사를 다 끝낸 답변이 통째로 버려지는 형태다.
+            # 앞자리 비교는 인스턴스 축이 없던 때와 **정확히 같은 범위**다.
             "WHERE TaskId = %s AND SubmittedAt IS NULL AND Status <> %s "
             "AND (Origin <> 'web' OR (ClaimedBy = %s "
-            "     AND (ClaimedClient IS NULL OR ClaimedClient = %s)))",
+            "     AND (ClaimedClient IS NULL "
+            "          OR SUBSTRING_INDEX(ClaimedClient, '#', 1) = %s)))",
             (stored, len(answer.encode("utf-8")), answer_verdict["verdict"], truncated,
              ",".join(str(d) for d in declared)[:4000], task_id, _STATUS_CANCELED,
              int(account.get("id") or 0), ctx.get("client_id")))
@@ -1985,12 +1997,24 @@ async def wait_for_request(request: Request, ctx=Depends(require_ai_token),
                 # 먼저 받아 소비해 버린다(아래에서 점유를 놓으므로 A 는 **영원히 못 듣는다**).
                 # A 는 생성이 끝날 때까지 계속 태우고 제출 단계에서야 409 를 본다.
                 # `ClaimedClient` 가 NULL 인 행은 컬럼 추가 이전 점유라 호환을 위해 통과시킨다.
+                #
+                # ⚠ **앞자리(client)만 본다** (TASK-20260901T140000). `ClaimedClient` 는
+                #   이제 `<client_id>#<러너 instance>` 형태일 수 있어(고아 점유 회수 축),
+                #   전량 일치로 비교하면 인스턴스를 신고하는 러너의 취소 통보가 **한 건도
+                #   매칭되지 않는다** — 취소를 눌러도 러너가 계속 태우는 종전 결함의 재현.
+                #   앞자리 비교는 인스턴스 축이 없던 때와 **정확히 같은 범위**다(그때는 같은
+                #   client_id 의 러너들이 모두 같은 값을 가졌다).
+                #   `LIKE` 가 아니라 `SUBSTRING_INDEX` 로 앞자리를 꺼내 **동등 비교**한다 —
+                #   `client_id` 는 사람이 정하는 이름이라 `_`·`%` 가 섞이면 LIKE 가 의도보다
+                #   넓게 매칭된다.
                 cur.execute(
                     "SELECT TaskId FROM WebAiTasks "
                     "WHERE AccountId=%s AND Origin='web' AND Status=%s AND ClaimedBy=%s "
-                    "  AND (ClaimedClient IS NULL OR ClaimedClient=%s) "
+                    "  AND (ClaimedClient IS NULL "
+                    "       OR SUBSTRING_INDEX(ClaimedClient, '#', 1) = %s) "
                     "ORDER BY CreatedAt ASC LIMIT 20",
-                    (account_id, _STATUS_CANCELED, account_id, ctx.get("client_id")))
+                    (account_id, _STATUS_CANCELED, account_id,
+                     str(ctx.get("client_id") or "")))
                 canceled = [str(r[0]) for r in (cur.fetchall() or [])]
                 if canceled:
                     # **한 번만 알린다** — 알린 뒤 점유를 놓는다(2026-08-28 라이브 실측 P1).
@@ -2111,7 +2135,17 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             "UPDATE WebAiTasks SET ClaimedBy=%s, ClaimedAt=NOW(), ClaimedClient=%s "
             "WHERE TaskId=%s AND " + _claim_scope_sql + " AND Status='open' "
             "AND " + _CLAIMABLE_SQL,
-            (account_id, ctx.get("client_id"), task_id, *_claim_scope_params))
+            # TASK-20260901T140000: 점유에 **러너 인스턴스**를 함께 새긴다.
+            #
+            # 토큰의 `client_id` 만으로는 "어느 프로세스가 들고 있나" 를 답하지 못한다 — 러너가
+            # 재기동해도 같은 값이라, 죽은 프로세스의 점유와 살아 있는 프로세스의 점유가
+            # 구분되지 않았다. 그래서 재기동한 러너가 **자기가 두고 온 작업**조차 회수하지
+            # 못하고 lease(30분)를 기다렸다(라이브 실측 2026-09-01: 실 대기 87분 / 실 작업 80초).
+            # 인스턴스를 새겨 두면 `bridge_heartbeat` 의 사망 신고가 그 점유만 정확히 놓는다.
+            # 신고하지 않는 구 러너는 종전과 같은 값이 들어간다(호환).
+            (account_id,
+             _claimed_client_value(ctx.get("client_id"), body.get("runner_instance")),
+             task_id, *_claim_scope_params))
         claimed = int(cur.rowcount or 0)
         conn.commit()
         if claimed != 1:
@@ -2330,17 +2364,46 @@ _SELF_REVIEW_DRAFT_SLOT = "⁣[[BRIDGE_SELF_REVIEW_DRAFT]]⁣"
 # 되돌리는 방법은 git 이력이지 주석 처리된 코드가 아니다.
 
 
-def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
-    """대기 말풍선을 **'처리 중'** 으로 바꾼다. 점유 직후 1회.
+#: 대기 말풍선의 「가져갔다 · 진행 중」 본문. **상수로 둔다** — 무진행 고지
+#: (`_mark_bridge_no_progress`)가 "아직 이 문구인가" 를 조건으로 삼아 딱 한 번만 덮어쓰므로,
+#: 두 곳에 같은 문자열을 적어 두면 한쪽만 고쳐지는 순간 고지가 영영 안 뜬다.
+_BRIDGE_WORKING_TEXT = (
+    "연결된 AI 가 이 질문을 가져갔습니다. 조사·작성 중입니다.\n\n"
+    "완료되면 이 자리에 답변이 표시됩니다."
+)
 
-    사용자 제보(2026-08-27): "AI 가 연결이 완수되었는지, 답변을 진행중인건지 알 방법이 없다."
-    맞다 — 전송 직후의 안내는 "가져가면 표시됩니다" 에서 멈춰 있었고, 실제로 누가 가져갔는지는
-    화면에 아무 흔적이 없었다.
+#: 무진행 고지 본문. 사용자가 **할 수 있는 일**로 끝난다 — 상태만 알리고 출구를 주지 않으면
+#: 그것은 더 정확해진 대기 화면일 뿐이다.
+_BRIDGE_NO_PROGRESS_TEXT = (
+    "연결된 AI 가 이 질문을 가져간 뒤 **{minutes}분째 진행 신호가 없습니다.**\n\n"
+    "조사 도구를 부를 때마다 진행이 갱신되는데, 그 갱신이 멈췄습니다 — 개인 AI 러너가"
+    " 종료됐거나(재설치·재부팅·토큰 만료) 멈춰 있을 수 있습니다.\n\n"
+    "- 러너가 켜져 있는지 확인해 주세요(터미널의 `bridge_agent` 창).\n"
+    "- 러너를 다시 켜면 이 질문은 **자동으로 다시 배달됩니다** — 새로 보내지 않아도 됩니다.\n"
+    "- 기다리지 않으시려면 중단 후 다시 질문해 주세요."
+)
 
-    토스트가 아니라 **말풍선 본문을 바꾼다**: 토스트는 몇 초 뒤 사라지고 새로고침하면 없다.
-    사용자가 알고 싶은 것은 "지금 어떤 상태인가" 이고, 그건 화면에 남아 있어야 한다.
 
-    실패는 흡수한다 — 진행 표시는 편의이지 점유의 조건이 아니다.
+def _mark_bridge_no_progress(task_id: str, conversation_id, minutes: int) -> bool:
+    """대기 말풍선을 **'진행 신호 없음'** 으로 바꾼다. 무진행 판정 후 딱 1회.
+
+    ## 왜 화면 본문인가 (라이브 실측 2026-09-01)
+
+    러너가 죽어도 화면은 「조사·작성 중입니다」에서 멈춰 있었다. 그 문구는 **가져간 시점의
+    사실**이고 그 뒤로 갱신되지 않으므로, 시간이 지날수록 점점 덜 참이 된다 — 사용자는 그것을
+    「추론이 길어지고 있다」로 읽고 87분을 기다렸다.
+
+    토스트가 아니라 본문인 이유는 `_mark_bridge_working` 과 같다: 토스트는 사라지고
+    새로고침하면 없다. **지금 어떤 상태인가**는 화면에 남아 있어야 한다.
+
+    ## 왜 조회 경로에서 쓰는가
+
+    무진행은 시간이 만드는 사실이라 알려 줄 이벤트가 없다 — 아무 일도 **일어나지 않는 것**이
+    그 사건이다. 그래서 국면을 계산하는 자리(상태 폴링·SSE tick)가 그 전환을 본다. 매 tick
+    쓰지 않도록 UPDATE 조건에 **현재 본문이 아직 '진행 중' 문구일 것**을 건다 — 두 번째
+    tick 부터는 0행이라 사실상 no-op 이고, 답변이 도착해 본문이 바뀐 뒤에는 절대 덮지 않는다.
+
+    실패는 흡수한다 — 고지는 편의이지 국면 판정의 조건이 아니다.
     """
     if not conversation_id or not task_id:
         return False
@@ -2358,10 +2421,96 @@ def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
                     "WHERE conversation_id = %s AND role = 'assistant' "
                     "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
                     "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
+                    "  AND content = %s "
                     "RETURNING id",
-                    ("연결된 AI 가 이 질문을 가져갔습니다. 조사·작성 중입니다.\n\n"
-                     "완료되면 이 자리에 답변이 표시됩니다.",
-                     str(conversation_id), str(task_id)))
+                    (_BRIDGE_NO_PROGRESS_TEXT.format(minutes=max(1, int(minutes))),
+                     str(conversation_id), str(task_id), _BRIDGE_WORKING_TEXT))
+                hit = cur.fetchone() is not None
+            pg.commit()
+            return hit
+        finally:
+            pg.close()
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "[bridge] 무진행 고지 갱신 실패 task=%s: %r", task_id, exc)
+        return False
+
+
+#: 무진행 고지를 **이미 시도한** task. SSE tick 이 1초이므로 이 가드가 없으면 무진행이
+#: 이어지는 동안 매초 PG 커넥션을 새로 연다(30분이면 1,800회) — SQL 쪽 조건이 두 번째부터
+#: 0행이라 *쓰기* 는 없지만, **연결 비용은 그대로 든다**. 자체 적대 검증에서 잡힌 지점.
+#:
+#: 프로세스 지역이라 replica·재기동 경계에서 다시 한 번 시도될 수 있는데, 그것은 무해하다
+#: (SQL 조건이 「아직 진행 중 문구일 것」이라 이미 적힌 뒤에는 no-op). 상한을 두는 이유는
+#: 이 집합이 프로세스 수명 동안 자라기 때문이다 — 넘으면 통째로 비운다(다시 한 번 시도할
+#: 뿐이고, 오래된 task 는 어차피 종결돼 SQL 에서 걸러진다).
+_NO_PROGRESS_ANNOUNCED: set[str] = set()
+_NO_PROGRESS_ANNOUNCED_MAX = 4096
+
+
+def _announce_no_progress(phase: str, task_id: str, conversation_id,
+                          claimed_age_sec: float | None) -> None:
+    """국면이 `stalled` 면 대기 말풍선에 무진행을 적는다 — **두 국면 계산 지점의 공통 후행**.
+
+    폴링(`bridge_status`)과 스트리밍(`_bridge_stream_snapshot`)이 각자 적으면 문구·조건이
+    갈리고, 그러면 전송 방식에 따라 화면이 달라진다(이 파일이 `_bridge_phase` 를 한 곳에 둔
+    것과 같은 이유). 판정은 이미 한 곳이므로 **후행 동작도 한 곳**에 둔다.
+    """
+    if phase != "stalled" or claimed_age_sec is None:
+        return
+    # ⚠ lease 를 **넘긴 경과는 고지하지 않는다** (자체 적대 검증). 두 가지 이유가 겹친다.
+    #
+    #   ① 그 숫자가 참이 아닐 수 있다: 무중단 배포의 점유 회수(`system.release_claims`)는
+    #      `ClaimedAt` 을 **24시간 과거로 밀어** 재점유를 유도한다. 그 창에서 고지하면 화면에
+    #      「1440분째 진행 신호가 없습니다」가 뜬다 — 관측이 아니라 날조다.
+    #   ② 그 시점엔 이미 대기열로 돌아가 재배달 대상이다. 「멈췄다」가 아니라 「다시 집힐
+    #      차례」이므로 고지가 사용자에게 줄 것이 없다(재점유가 곧 본문을 되돌린다).
+    if claimed_age_sec > _BRIDGE_CLAIM_LEASE_MIN * 60:
+        return
+    key = str(task_id or "")
+    if not key or key in _NO_PROGRESS_ANNOUNCED:
+        return
+    if len(_NO_PROGRESS_ANNOUNCED) >= _NO_PROGRESS_ANNOUNCED_MAX:
+        _NO_PROGRESS_ANNOUNCED.clear()
+    # 시도했다는 사실을 **먼저** 남긴다 — 갱신이 실패해도 매초 다시 두드리지 않는다
+    # (실패가 반복되는 상황이 정확히 커넥션이 비싼 상황이다).
+    _NO_PROGRESS_ANNOUNCED.add(key)
+    _mark_bridge_no_progress(task_id, conversation_id, int(claimed_age_sec // 60))
+
+
+def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
+    """대기 말풍선을 **'처리 중'** 으로 바꾼다. 점유 직후 1회.
+
+    사용자 제보(2026-08-27): "AI 가 연결이 완수되었는지, 답변을 진행중인건지 알 방법이 없다."
+    맞다 — 전송 직후의 안내는 "가져가면 표시됩니다" 에서 멈춰 있었고, 실제로 누가 가져갔는지는
+    화면에 아무 흔적이 없었다.
+
+    토스트가 아니라 **말풍선 본문을 바꾼다**: 토스트는 몇 초 뒤 사라지고 새로고침하면 없다.
+    사용자가 알고 싶은 것은 "지금 어떤 상태인가" 이고, 그건 화면에 남아 있어야 한다.
+
+    실패는 흡수한다 — 진행 표시는 편의이지 점유의 조건이 아니다.
+    """
+    if not conversation_id or not task_id:
+        return False
+    # 재점유(회수 뒤 다시 집힘)면 무진행 고지를 **다시 할 수 있게** 표지를 지운다. 남겨 두면
+    # 두 번째로 멈췄을 때 화면이 「조사·작성 중」에 다시 박제된다 — 이 cycle 이 없애려던 상태다.
+    _NO_PROGRESS_ANNOUNCED.discard(str(task_id))
+    try:
+        if not app._runtime_backend_is_pg():
+            return False
+        from shared.db import _pg_connect
+
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "UPDATE agent_runtime.messages "
+                    "SET content = %s "
+                    "WHERE conversation_id = %s AND role = 'assistant' "
+                    "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
+                    "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
+                    "RETURNING id",
+                    (_BRIDGE_WORKING_TEXT, str(conversation_id), str(task_id)))
                 hit = cur.fetchone() is not None
             pg.commit()
             return hit
@@ -2692,7 +2841,11 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
         _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
                      detail="not_claimed", task_id=task_id)
         return _json_err(409, "먼저 claim_request 로 이 질문을 점유해야 첨부를 읽을 수 있습니다.")
-    if claimed_client is not None and str(claimed_client) != str(ctx.get("client_id") or ""):
+    # ⚠ **앞자리(client)만 비교한다** (TASK-20260901T140000) — `ClaimedClient` 는 이제
+    #   `<client_id>#<러너 instance>` 형태일 수 있다. 전량 일치로 두면 인스턴스를 신고하는
+    #   러너의 첨부 읽기가 전부 409 로 막힌다(첨부가 붙은 질문은 그 자리에서 죽는다).
+    #   판정은 `shared.bridge_tasks.claimed_client_matches` 한 곳 — 제출 경계와 같은 술어.
+    if not _claimed_client_matches(claimed_client, ctx.get("client_id")):
         _safe_record(account, ctx, tool="read_task_attachment", outcome="denied",
                      detail="foreign_client", task_id=task_id)
         return _json_err(409, "이 질문은 다른 세션이 점유 중입니다. 해당 세션에서 처리하세요.")
@@ -3290,7 +3443,8 @@ def _age_sec(ts: Any) -> float | None:
 
 def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool,
                   listening: bool = True, delivered: bool = True,
-                  submitted_age_sec: float | None = None) -> str:
+                  submitted_age_sec: float | None = None,
+                  claimed_age_sec: float | None = None) -> str:
     """국면을 **한 단어**로 — 서버가 정한다(프런트가 조합하면 화면마다 갈린다).
 
     | phase | 뜻 |
@@ -3299,6 +3453,7 @@ def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool
     | `expired` | 연결 후 최근 1건만 승격돼 이 질문은 밀렸다. **답변은 오지 않는다** |
     | `done` | 제출됨 |
     | `working` | 누군가 가져가 처리 중 |
+    | `stalled` | 가져갔는데 **진행 신호가 끊겼다** — 러너가 죽었을 수 있다 |
     | `deferred` | 아직 연결이 없어 보관 중 — 연결하면 이 질문부터 올라간다 |
     | `waiting` | 연결도 있고 러너도 붙어 있다 — 곧 집힌다 |
     | `not_listening` | 토큰은 살아 있는데 **대기 중인 러너가 없다**(재부팅 등) |
@@ -3331,6 +3486,19 @@ def _bridge_phase(status: str, claimed_by: Any, submitted: bool, connected: bool
             return "working"
         return "done"
     if claimed_by is not None:
+        # 「가져갔다」 와 「진행하고 있다」 는 **다른 사실**이다 (TASK-20260901T140000).
+        #
+        # 종전에는 점유돼 있기만 하면 무조건 `working` 이라, 러너 프로세스가 사라져도 화면은
+        # lease(30분)가 끝날 때까지 「처리 중」을 그렸다 — 라이브에서 그 상태가 두 번 이어져
+        # 사용자가 87분을 기다렸고, 정작 살아 있는 러너에 닿자 80초에 끝났다(2026-09-01).
+        # `ClaimedAt` 은 도구 호출마다 갱신되므로(`_renew_claim_lease`) **마지막 진행 시각**
+        # 그 자체다. 그것이 임계보다 오래됐으면 진행이 아니라 무진행이라고 말한다.
+        #
+        # 판정 불가(`None`)면 `working` 을 유지한다 — 관측하지 못한 것을 「멈췄다」로 단정하면
+        # 정상 조사 중인 사용자에게 틀린 경고를 준다(`listening` 기본값 True 와 같은 방향).
+        if (claimed_age_sec is not None
+                and claimed_age_sec > _BRIDGE_NO_PROGRESS_SEC):
+            return "stalled"
         return "working"
     # 보류는 "연결이 없다" 와 같은 뜻이되, 질문이 **보관돼 있다**는 사실이 더 있다.
     if str(status or "") == _STATUS_DEFERRED:
@@ -3679,7 +3847,11 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
         cur = conn.cursor()
         try:
             cur.execute(
-                "SELECT Status, ClaimedBy, SubmittedAt, Delivered FROM WebAiTasks "
+                # `ClaimedAt` 은 무진행 판정용이다 (TASK-20260901T140000) — 도구 호출마다
+                # 갱신되므로 「마지막 진행 시각」 그 자체다. 폴링 경로(`bridge_status`)와
+                # **같은 컬럼**을 읽어야 두 전송 방식이 같은 국면을 말한다.
+                "SELECT Status, ClaimedBy, SubmittedAt, Delivered, ClaimedAt, ConversationId "
+                "FROM WebAiTasks "
                 "WHERE TaskId=%s AND AccountId=%s AND Origin='web'",
                 (task_id, account_id))
             row = cur.fetchone()
@@ -3712,10 +3884,14 @@ def _bridge_stream_snapshot(conn, task_id: str, account_id: int) -> dict[str, An
         # 아직 아무도 안 집었으면 조사 내역이 있을 수 없다 — 매 tick 단계를 뒤지지 않는다.
         live_steps, steps_omitted = (
             _bridge_live_steps(task_id) if claimed_by is not None else ([], 0))
+        _claimed_age = _age_sec(row[4])
+        _phase = _bridge_phase(status, claimed_by, bool(row[2]), connected, listening,
+                               delivered=bool(row[3]),
+                               submitted_age_sec=_age_sec(row[2]),
+                               claimed_age_sec=_claimed_age)
+        _announce_no_progress(_phase, task_id, row[5], _claimed_age)
         return {
-            "phase": _bridge_phase(status, claimed_by, bool(row[2]), connected, listening,
-                                   delivered=bool(row[3]),
-                                   submitted_age_sec=_age_sec(row[2])),
+            "phase": _phase,
             "answered": submitted,
             "delivered": bool(row[3]),
             "connected": connected,
@@ -3891,6 +4067,29 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     features = (payload or {}).get("features")
     agent_version = str((payload or {}).get("agent_version") or "").strip()
     agent_build = str((payload or {}).get("agent_build") or "").strip()
+    # ── 죽은 러너 인스턴스의 사망 신고 (TASK-20260901T140000) ──────────────────────
+    #
+    # 러너가 기동하면서 "직전 프로세스는 죽었다" 를, 종료하면서 "나는 지금 죽는다" 를 여기에
+    # 싣는다. 그 인스턴스가 점유한 미제출 작업은 **즉시** 대기열로 돌아간다 — 종전에는
+    # lease(30분)가 끝날 때까지 아무도 그 작업을 볼 수 없었고, 화면은 그 30분을 「처리 중」
+    # 으로 그렸다(라이브 실측 2026-09-01, 실 대기 87분 / 실 작업 80초).
+    #
+    # 왜 하트비트인가: 러너가 **이미 매 30초 부르는 채널**이고 인증도 같다. 전용 도구를 만들면
+    # 러너가 채널을 하나 더 돌봐야 하고, 도구 표면의 "노출 = 가이드 = capabilities" 계약(P0-I)
+    # 까지 끌어들이게 된다 — 회수는 조사 도구가 아니다.
+    released_claims: list[str] = []
+    _released_instances = (payload or {}).get("released_instances")
+    if isinstance(_released_instances, list) and _released_instances:
+        try:
+            released_claims = _release_runner_instance_claims(
+                conn, account_id=account_id,
+                # 상한을 둔다 — 이 본문은 클라이언트가 준 값이다. 정상 러너는 1건(직전 또는
+                # 자기 자신)만 싣고, 많이 실어 봐야 자기 인스턴스가 아니면 아무것도 안 걸린다.
+                instances=[str(x) for x in _released_instances[:8]])
+        except Exception as exc:  # noqa: BLE001
+            # 회수 실패가 연결을 끊지 않는다 — 최악이 **종전 동작**(lease 만료 대기)이다.
+            logging.getLogger(__name__).warning(
+                "[bridge] 고아 점유 회수 실패 account=%s: %r", account_id, exc)
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
@@ -3911,6 +4110,9 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # 장치가 된다. 다만 수명은 밀리지 않았으므로 그 사실을 응답에 싣는다.
         return JSONResponse({"ok": False, "extended": False,
                              "interval_sec": int(_store.HEARTBEAT_INTERVAL_SEC),
+                             # 회수는 하트비트 기록과 **별개 트랜잭션**으로 이미 끝났다.
+                             # 여기서 빼면 러너는 "회수됐는지" 를 영영 모른다.
+                             "released_claims": released_claims,
                              "error": "하트비트를 기록하지 못했습니다(연결은 유지)."})
     finally:
         cur.close()
@@ -3940,6 +4142,10 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # 우리가 말없이 바꾸는 것이고, 이 feature 가 지켜 온 경계("러너를 띄운 사람의 설정을
         # 낮추지 않는다")를 넘는다.
         "runner_update": _runner_update_hint(agent_version, features, agent_build),
+        # 사망 신고로 실제 놓아준 작업들 (TASK-20260901T140000). 러너가 로그로 남겨
+        # "재기동 뒤 무엇이 되살아났는지" 를 사람이 볼 수 있게 한다 — 조용한 회수는
+        # 다음에 같은 증상이 나왔을 때 진단 근거가 되지 못한다.
+        "released_claims": released_claims,
     })
 
 
@@ -4053,6 +4259,12 @@ def bridge_status(request: Request) -> JSONResponse:
             connected = True   # 판정 실패는 '연결됨' 으로(틀렸을 때 덜 성가신 방향)
         listening = account_is_listening(int(account.get("id") or 0), conn)
         live_steps, steps_omitted = _bridge_live_steps(task_id)
+        _poll_claimed_age = _age_sec(row[5])
+        _poll_phase = _bridge_phase(status, row[1], bool(row[2]), connected, listening,
+                                    delivered=delivered,
+                                    submitted_age_sec=_age_sec(row[2]),
+                                    claimed_age_sec=_poll_claimed_age)
+        _announce_no_progress(_poll_phase, task_id, row[3], _poll_claimed_age)
         return JSONResponse({
             "task_id": task_id,
             "status": status,
@@ -4065,9 +4277,7 @@ def bridge_status(request: Request) -> JSONResponse:
             # 화면이 한 단어로 말할 수 있게 서버가 국면을 정한다(프런트가 조합하면 갈린다).
             # 판정은 `_bridge_phase` 한 곳 — 폴링(여기)과 스트리밍(`_bridge_stream_snapshot`)이
             # 각자 조합하면 전송 방식에 따라 화면이 달라져 폴백이 곧 UX 회귀가 된다.
-            "phase": _bridge_phase(status, row[1], bool(row[2]), connected, listening,
-                                   delivered=delivered,
-                                   submitted_age_sec=_age_sec(row[2])),
+            "phase": _poll_phase,
             # `answered` 는 **제출됐다** 는 뜻이고, `delivered` 는 **대화에 실렸다** 는 뜻이다.
             # 둘을 합치면 저장 실패 시 화면엔 아무것도 없는데 "답변 도착" 이라 말하게 된다
             # (codex 재리뷰 P1). 프런트는 delivered=false 면 그 사실을 사용자에게 알린다.

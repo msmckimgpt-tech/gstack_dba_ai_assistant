@@ -199,9 +199,11 @@ AI 는 자동 감지한다(claude → codex → gemini → ollama 순). 고정�
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import re
+import secrets
 import shlex
 import ssl
 import subprocess
@@ -292,6 +294,15 @@ def save_conf(base: str, ca: str | None, ai: str, cmd: str | None,
     try:
         os.makedirs(_CONF_DIR, exist_ok=True)
         payload = {"base": base, "ca": ca, "ai": ai, "cmd": cmd}
+        # ⚠ 이 함수는 파일을 **통째로 다시 쓴다**. 여기서 이어 나르지 않는 키는 사라진다 —
+        #   `runner_instance` 가 사라지면 다음 기동이 "직전 프로세스" 를 몰라 고아 점유 회수가
+        #   조용히 죽는다(그리고 그 죽음은 30분 뒤에야 증상으로 나타나 원인을 짚기 어렵다).
+        if _RUNNER_INSTANCE:
+            payload["runner_instance"] = _RUNNER_INSTANCE
+        else:
+            _prev_inst = load_conf().get("runner_instance")
+            if _prev_inst:
+                payload["runner_instance"] = _prev_inst
         if caps is not None:
             payload["caps"] = caps
         else:
@@ -313,6 +324,62 @@ def load_conf() -> dict:
             return json.load(f) or {}
     except Exception:
         return {}
+
+
+# ── 러너 인스턴스 — 「이 프로세스」의 신원 (TASK-20260901T140000) ──────────────────
+#
+# ## 무엇을 고치는가 (라이브 실측 2026-09-01)
+#
+# 러너가 질문을 점유한 뒤 **프로세스가 사라지면**(재설치·재부팅·토큰 만료로 인한 종료·크래시)
+# 그 점유는 서버에 그대로 남는다. 서버의 lease 는 도구 호출마다 갱신되므로 마지막 갱신값에서
+# 30분을 더 기다려야 풀리고, 그동안 그 질문은 대기 목록에서 보이지 않는다 — **재기동한 자기
+# 자신조차 되찾지 못한다.** 사용자 화면은 그 30분을 「처리 중」으로 그린다.
+#
+# 실측: 12:07 전달 → 12:13 러너 재기동 → 12:43 lease 만료로 재배달 → 재조사 중 토큰 만료로
+# 또 종료 → 또 고아 → 13:34 사용자가 포기하고 재전송 → **80초 만에 완료**. 대기 87분.
+#
+# ## 어떻게 고치는가
+#
+# 프로세스마다 고유 id 를 만들어 **점유에 새기고**(`claim_request`), 설정 파일에 남긴다.
+# 다음 기동이 그 값을 읽어 "직전 프로세스는 죽었다" 를 하트비트에 실으면, 서버는 그 id 로
+# 점유된 미제출 작업만 정확히 놓아준다. 30분이 **다음 하트비트까지**로 줄어든다.
+#
+# 왜 서버가 알아서 못 하는가: 서버가 볼 수 있는 것은 "언제 마지막으로 도구를 불렀나" 뿐이고,
+# 그것만으로는 **오래 생각하는 러너**와 **죽은 러너**가 구분되지 않는다. 살아 있는 쪽을 끊으면
+# 조사가 통째로 버려지므로 서버는 보수적으로 기다릴 수밖에 없다. 「죽었다」는 사실을 확실히
+# 아는 것은 그 자리에 새로 뜬 프로세스뿐이다.
+
+#: 이 프로세스의 id. 서버의 `_sanitize_instance` 가 영숫자만 받으므로 hex 로 만든다.
+_RUNNER_INSTANCE = ""
+
+#: 직전 프로세스의 id(설정 파일에서 읽은 값). 없으면 빈 문자열 — 첫 실행이거나 인스턴스 축이
+#: 없던 버전에서 올라온 것이다. 그때는 회수할 것이 없으므로 아무 일도 하지 않는다.
+_PREV_RUNNER_INSTANCE = ""
+
+
+def init_runner_instance() -> tuple[str, str]:
+    """이 프로세스의 id 를 발급하고 직전 id 를 돌려준다. `(현재, 직전)`.
+
+    **설정을 읽은 직후·서버와 말을 트기 전에** 부른다 — 점유에 새길 값이 준비돼 있어야 하고,
+    직전 id 는 이 함수가 덮어쓰기 전에만 읽을 수 있다.
+
+    파일 저장이 실패해도 진행한다: 그때 잃는 것은 *다음* 기동의 회수뿐이고, 이번 실행의 점유
+    표시와 종료 시 자기 해제는 메모리 값만으로 동작한다.
+    """
+    global _RUNNER_INSTANCE, _PREV_RUNNER_INSTANCE
+    prev = str(load_conf().get("runner_instance") or "").strip()
+    _PREV_RUNNER_INSTANCE = prev if (prev.isalnum() and prev.isascii()) else ""
+    _RUNNER_INSTANCE = secrets.token_hex(6)   # 12자 — 서버 상한(16) 안
+    try:
+        conf = load_conf()
+        conf["runner_instance"] = _RUNNER_INSTANCE
+        os.makedirs(_CONF_DIR, exist_ok=True)
+        with open(_CONF_PATH, "w", encoding="utf-8") as f:
+            json.dump(conf, f, ensure_ascii=False)
+        os.chmod(_CONF_PATH, 0o600)
+    except Exception as e:  # noqa: BLE001
+        _log(f"러너 인스턴스 저장 실패(무시): {e}")
+    return _RUNNER_INSTANCE, _PREV_RUNNER_INSTANCE
 
 #: 연결이 **끊겼을 때만** 쓰는 복구 간격(feature-0045). 서버가 배포로 교체되는 몇 초 동안
 #: 연결이 실패하는데, 그때 쉬지 않고 재시도하면 초당 수천 번을 두드려 사용자 머신의 CPU 를
@@ -439,7 +506,8 @@ class Api:
         return self._post(f"/api/ai/tools/{tool}", payload, timeout)
 
     def heartbeat(self, runtimes: list | None = None,
-                  timeout: float = _HEARTBEAT_TIMEOUT_SEC) -> dict:
+                  timeout: float = _HEARTBEAT_TIMEOUT_SEC,
+                  released_instances: "list[str] | None" = None) -> dict:
         """"살아 있다" + **"이런 걸 쓸 수 있다"**. 도구가 아니라 연결 유지 경로다.
 
         도구 목록에 넣지 않는 이유는 그것이 조사 도구의 목록이기 때문이다 — 거기 끼면 AI 에게
@@ -460,6 +528,11 @@ class Api:
         # 콘솔 작업 배급 자격을 정하고, 낡은 버전이면 응답으로 갱신 경로를 알려 준다.
         body["features"] = list(self.features)
         body["agent_version"] = AGENT_VERSION
+        # 죽은 인스턴스의 **사망 신고** (TASK-20260901T140000). 기동 첫 신호에는 직전
+        # 프로세스를, 종료 시에는 자기 자신을 싣는다. 서버는 그 id 로 점유된 미제출 작업만
+        # 놓아준다 — 다른 러너(다른 머신)의 작업은 id 를 알 수 없어 애초에 걸리지 않는다.
+        if released_instances:
+            body["released_instances"] = [str(x) for x in released_instances if x]
         # 지문은 **동일성** 축이다 (2026-08-31). 날짜 버전이 같아도 파일이 다르면 서버가
         # 「배포본과 다른 러너가 돌고 있다」를 알 수 있고, 그 사실을 화면이 말해 줄 수 있다.
         body["agent_build"] = _self_build()
@@ -2732,6 +2805,67 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
 
+#: 종료 시 자기 점유를 놓아 줄 대상. 전역인 이유: `atexit`·시그널 핸들러는 인자를 받지 않고,
+#: main 의 지역 변수에 닿을 방법이 없다.
+_ACTIVE_API: "Api | None" = None
+
+
+def release_own_claims_on_exit() -> None:
+    """이 프로세스가 종료한다 — **붙들고 있던 질문을 대기열로 돌려놓는다**.
+
+    ## 왜 필요한가 (TASK-20260901T140000)
+
+    다음 기동의 사망 신고(`_PREV_RUNNER_INSTANCE`)만으로도 회수는 된다. 그러나 그것은 **누군가
+    러너를 다시 켤 때까지** 기다린다는 뜻이고, 그 사이 질문은 lease(30분)가 끝날 때까지 아무
+    러너에게도 보이지 않는다 — 같은 계정에 **다른 머신의 러너가 붙어 있어도** 그렇다.
+    종료하는 쪽이 스스로 놓으면 그 창이 사라진다.
+
+    ## 왜 best-effort 인가
+
+    `SIGKILL`·전원 차단·크래시에서는 이 코드가 돌지 않는다. 그것이 바로 다음 기동의 사망
+    신고가 필요한 이유다 — 두 경로는 **대체가 아니라 보완**이다. 여기서 실패해도 조용히
+    넘어간다: 종료 중에 예외를 올리면 사용자가 보는 것은 회수 실패가 아니라 종료 스택이다.
+
+    타임아웃을 짧게 두는 이유: 서버가 죽어 있으면 종료가 그만큼 늦어지고, 사용자는 Ctrl+C 가
+    먹지 않는다고 읽는다. 5초 안에 못 닿으면 다음 기동의 신고에 맡긴다.
+    """
+    api = _ACTIVE_API
+    if api is None or not _RUNNER_INSTANCE:
+        return
+    try:
+        # `runtimes=None` 으로 부른다 — 종료하면서 능력 목록을 다시 신고할 이유가 없고,
+        # `[]` 를 보내면 서버가 "고를 것 없음" 으로 읽어 화면의 모델 목록을 지운다.
+        res = api.heartbeat(None, timeout=5.0, released_instances=[_RUNNER_INSTANCE])
+        n = len(res.get("released_claims") or [])
+        if n:
+            _log(f"종료 — 처리 중이던 질문 {n}건을 대기열로 돌려놨습니다"
+                 f"(러너를 다시 켜면 곧바로 이어서 처리합니다).")
+    except Exception:  # noqa: BLE001  (종료 경로 — 무엇이든 조용히 넘어간다)
+        pass
+
+
+def _arm_exit_release(api: Api) -> None:
+    """종료 경로 세 갈래(정상 반환·Ctrl+C·SIGTERM)를 모두 자기 해제로 모은다.
+
+    `atexit` 는 정상 종료와 `sys.exit`·전파된 `KeyboardInterrupt` 를 덮지만 **시그널은 덮지
+    못한다**. 설치 스크립트가 옛 러너를 정리할 때 쓰는 것이 정확히 그 시그널이므로(재설치가
+    이번 결함의 발단이었다), `SIGTERM` 을 `SystemExit` 으로 바꿔 같은 출구로 보낸다.
+    """
+    global _ACTIVE_API
+    _ACTIVE_API = api
+    atexit.register(release_own_claims_on_exit)
+    try:
+        import signal as _signal
+
+        def _term(_signum, _frame):  # noqa: ANN001
+            raise SystemExit(0)
+
+        _signal.signal(_signal.SIGTERM, _term)
+    except Exception:  # noqa: BLE001
+        # 시그널을 못 다는 환경(비-메인 스레드·플랫폼 차이)에서도 나머지는 그대로 동작한다.
+        pass
+
+
 def start_heartbeat(api: Api, stop: threading.Event,
                     runtimes: list | None = None) -> threading.Thread:
     """연결 유지 신호를 보내는 데몬 스레드 (TASK-20260828T150000).
@@ -2749,15 +2883,20 @@ def start_heartbeat(api: Api, stop: threading.Event,
     여전히 서버 보류(`wait_for_request`)가 하고, 그 즉시성은 이 주기와 무관하다.
     """
     _stale_said = False
+    #: 직전 프로세스의 사망 신고는 **성공할 때까지** 싣는다 (TASK-20260901T140000).
+    #: 첫 신호 한 번만 싣고 말면, 그 한 번이 배포 교대·순단에 걸렸을 때 회수가 통째로
+    #: 유실되고 사용자는 종전과 같은 30분 공백을 겪는다. 서버 쪽은 멱등이라(이미 놓은 것은
+    #: 0행) 반복해도 비용이 없고, 신고가 받아들여지면 그 다음부터 빠진다.
+    _pending_release = [_PREV_RUNNER_INSTANCE] if _PREV_RUNNER_INSTANCE else []
 
     def _loop() -> None:
-        nonlocal _stale_said
+        nonlocal _stale_said, _pending_release
         interval = _HEARTBEAT_INTERVAL_SEC
         while not stop.is_set():
             # 능력은 **매번** 싣는다. 처음 한 번만 보내면 서버가 재시작하거나 토큰 행이 갈릴 때
             # 화면의 목록이 영영 비고, 그 빈 목록은 "러너가 없다" 와 구분되지 않는다.
             # 서버는 값이 그대로면 쓰지 않으므로(쓰기 증폭 없음) 매번 싣는 비용이 없다.
-            res = api.heartbeat(runtimes)
+            res = api.heartbeat(runtimes, released_instances=_pending_release)
             code = res.get("_http")
             if code == 401:
                 # 복귀 안내는 여기서 하지 않는다 — 대기 루프 한 곳이 정본이다(두 곳에서
@@ -2768,6 +2907,13 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 # 순단·배포 교대. 서버의 판정 창이 주기의 3배라 한 번 놓친 것은 흡수된다.
                 _log(f"하트비트 실패 {code}: {str(res.get('error') or '')[:120]}")
             else:
+                # 사망 신고가 서버에 닿았다 — 다음 신호부터는 싣지 않는다.
+                if _pending_release:
+                    _released = res.get("released_claims") or []
+                    if _released:
+                        _log(f"직전 러너가 붙들고 있던 질문 {len(_released)}건을 되살렸습니다 "
+                             f"— 곧 다시 처리합니다: {', '.join(str(x) for x in _released[:5])}")
+                    _pending_release = []
                 # 주기는 **서버가 정한다**(P0-J 의 환경 차이 금지와 같은 축). 하한을 두는 것은
                 # 서버가 0 을 주는 등의 사고로 신호가 폭주하지 않게 하기 위해서다.
                 try:
@@ -2924,6 +3070,11 @@ def main() -> int:
         return 2
 
     api = Api(args.base, args.token, args.ca)
+    # 이 프로세스의 신원을 세우고 **직전 프로세스의 id 를 회수**한다 (TASK-20260901T140000).
+    # 서버와 첫 말을 트기 전이어야 한다 — 점유(`claim_request`)에 새길 값이 이미 있어야 하고,
+    # 직전 id 는 이 호출이 파일을 덮어쓰기 전에만 읽을 수 있다.
+    init_runner_instance()
+    _arm_exit_release(api)
     # 신고는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 두 축을 한 번에 조립한다 —
     # 따로 대입하면 나중 대입이 앞의 것을 지운다(`--batch --no-self-review` 조합에서
     # 배치 동의가 사라지던 형태의 결함).
@@ -3199,7 +3350,11 @@ def main() -> int:
         # 점유는 **여기서** 한다(값싸고 즉시 끝난다). 점유하는 순간 그 task 는 다음
         # `wait_for_request` 결과에서 빠지므로, 워커가 다 찼을 때 같은 것을 다시 받지 않는다.
         task_id = pending[0]
-        claimed = api.call("claim_request", {"task_id": task_id})
+        # `runner_instance` — 이 점유를 **어느 프로세스**가 들고 있는지 서버에 새긴다
+        # (TASK-20260901T140000). 이 값이 있어야 다음 기동의 사망 신고가 정확히 이 점유만
+        # 놓아준다. 없으면 종전 동작(lease 30분 대기)으로 자연 degrade 한다.
+        claimed = api.call("claim_request",
+                           {"task_id": task_id, "runner_instance": _RUNNER_INSTANCE})
         if claimed.get("_http") == 409:
             _log(f"{task_id}: 이미 다른 세션이 가져갔다 — 건너뜀")
             skip.add(task_id)

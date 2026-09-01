@@ -155,3 +155,22 @@ source_of_truth: true
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).
+
+| TEST-20260901T140000-cc-compose | `claimed_client_value` | 인스턴스를 새기되 **미신고 러너는 종전 값 그대로** · 잘릴 땐 인스턴스를 지킨다 | AC-20260901T140000-orphan-claim-reclaim-1 |
+| TEST-20260901T140000-cc-sanitize | `claimed_client_value` | 영숫자 아닌 인스턴스는 무시 — `LIKE` 메타문자가 회수 범위를 넓히지 못한다 | AC-20260901T140000-orphan-claim-reclaim-1 |
+| TEST-20260901T140000-release-scope | `release_runner_instance_claims` | 경계 = **점유자**(`ClaimedBy`) · `open` · 미제출 · 상태 불변 · 커밋됨 | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-release-noop | `release_runner_instance_claims` | 빈·무효 신고는 **SQL 을 한 줄도 쏘지 않는다**(빈 목록이 「전부」로 번역되지 않음) | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-release-nomatch | `release_runner_instance_claims` | 0건 매칭이면 UPDATE 를 건너뛴다(무조건절 사고 차단) | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-phase-fresh | `_bridge_phase` (실구동) | 진행 신호가 신선하면 `working` — 임계 직전까지 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-phase-stalled | `_bridge_phase` (실구동) | 임계를 넘으면 `stalled` — 「가져갔다」와 「진행한다」를 가른다 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-phase-unknown | `_bridge_phase` (실구동) | 판정 불가는 `working` 유지(관측 못 한 것을 「멈췄다」로 단정 안 함) | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-phase-terminal | `_bridge_phase` (실구동) | 종결(`canceled`·`expired`·`done`)이 무진행보다 앞선다 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-threshold | `BRIDGE_NO_PROGRESS_SEC` | 임계가 **정상 무도구 최대치(621초) < x < lease(1800초)** 안에 있다 | AC-20260901T140000-orphan-claim-reclaim-3 |
+| TEST-20260901T140000-wiring | `ai_tools.py` | 폴링·스트리밍 **두 호출부** 모두 판정 인자·후행 고지를 탄다(전송 방식이 화면을 바꾸지 않게) | AC-20260901T140000-orphan-claim-reclaim-4 |
+| TEST-20260901T140000-cancel-prefix | `wait_for_request` | 취소 통보 대조가 **앞자리 비교** — 인스턴스가 붙어도 통보가 끊기지 않는다 | AC-20260901T140000-orphan-claim-reclaim-5 |
+| TEST-20260901T140000-runner | `bridge_agent.py` | 발급·점유 각인·첫 신호 사망신고·종료 세 갈래(`atexit`+`SIGTERM`) 배선 | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-confkeep | `save_conf` | 설정 전체 재작성이 `runner_instance` 를 **이어 나른다**(잃으면 회수가 조용히 죽는다) | AC-20260901T140000-orphan-claim-reclaim-2 |
+| TEST-20260901T140000-front | `_applyBridgePhase` | `stalled` 에 이력을 다시 읽고 **종결로 다루지 않는다**(러너가 켜지면 답이 온다) | AC-20260901T140000-orphan-claim-reclaim-4 |
+
+| TEST-20260901T140000-pb0008 | 라이브 화면 (Windows-browser) | PRE-DEPLOY baseline — 배포본에 무진행 축 0건 · 제보 대화 말풍선 6건 실측 · 별건(인젝션 거부) 발견. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim.md` | AC-20260901T140000-orphan-claim-reclaim-4 |
+| TEST-20260901T140000-postdeploy | 배포본 `9c04b52c` (Windows-browser) | POST-DEPLOY — 코드 도달 6축 · 배포본 함수 구동 · 국면표 6케이스 ALL PASS · **실 MySQL 에서 점유자 술어 4형식**(P1 회귀 차단) · 자산 스탬프 갱신. 미검증 2건 명시. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md` | AC-20260901T140000-orphan-claim-reclaim-1~5 |

@@ -2146,7 +2146,6 @@ AI 출력이 코드블록 도중 잘리고 CLI 가 exit 0 이면 러너는 `ok=T
 우리가 배포할 수 없는 곳**이라는 형태였다 — 러너는 각 사용자 머신의 사본이다. 정본을 고치고
 배포까지 마쳤는데 이틀 뒤 제출분에 같은 문구가 실렸고, 그 사이 어떤 게이트도 울리지 않았다.
 집행을 우리가 배포할 수 있는 층(서버)으로 옮긴 것이 이 cycle 의 실질이다.
-
 ## REV-20260901T140000-ai-claude-feature-0043-bridge-injection-falsepositive — 판단 근거
 
 - **일시**: 2026-09-01
@@ -2219,3 +2218,62 @@ AI 출력이 코드블록 도중 잘리고 CLI 가 exit 0 이면 러너는 `ok=T
 - **독립 관점 검증 미수행**. 위 표는 같은 작성자의 검토이므로, 자체검토가 구조적으로 놓치는
   부류(특히 배선/신호 비대칭)에 대한 보증이 없다. codex 한도가 회복되면 같은 diff 로
   재검토하고 그 결과를 새 REV 로 추가할 것을 권고한다.
+## REV-20260901T144500-orphan-claim-reclaim [SKIPPED:codex-quota-exhausted] — 자체 적대 검증으로 대체
+
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260901T140000-orphan-claim-reclaim
+- Timestamp: 2026-09-01T14:45:00+09:00
+- Trigger: §18.8 — schema/query·API contract·러너 프로토콜 변경
+- 시도한 경로: `codex exec --skip-git-repo-check` (v0.146.0, gpt-5.6-luna, xhigh) 에
+  staged diff 전문(103KB)을 직접 전달. **한도 초과로 판정 미산출** —
+  `ERROR: You've hit your usage limit … try again at 3:44 PM` (프롬프트만 echo 되고 응답 0줄).
+  본 세션은 subagent 호출이 금지돼 있어 패널 대체 경로도 없다.
+- 대체: 같은 프롬프트의 검사축(회수 범위 확대 · 확정 답변 부활 · `ClaimedClient` 소비처 ·
+  임계 오탐 · 조회 경로의 쓰기 · 버전 스큐 · SQL 주입/메타문자 · 배선-신호 비대칭)을
+  **직접 순회**하고, 찾은 결함을 같은 cycle 안에서 수정 + 회귀 테스트로 잠갔다.
+
+### 1. Blocking issues — 자체 검증에서 **P1 4건 적발, 전건 수정**
+
+| # | 결함 | 재현 조건 | 왜 P1 인가 | 조치 |
+|---|---|---|---|---|
+| P1-1 | `submit_answer` 의 점유자 대조가 `ClaimedClient = %s` **전량 일치** | 인스턴스를 신고하는 러너가 답변 제출 | `ClaimedClient='cli#abc'` vs `'cli'` → rowcount 0 → 「점유자가 아니다」. **조사를 다 끝낸 답변이 통째로 버려진다** (전 사용자 영향) | SQL 을 `SUBSTRING_INDEX(ClaimedClient,'#',1) = %s` 로 |
+| P1-2 | `read_task_attachment` 도 같은 전량 일치 | 첨부가 붙은 질문 처리 | 409 「다른 세션이 점유 중」 → 첨부 읽기가 그 자리에서 죽는다. **이번 제보 대화의 첫 단계가 정확히 이 도구다** | `shared.claimed_client_matches` 단일 술어로 |
+| P1-3 | 무진행 고지가 **조회 경로에서 매 tick** PG 커넥션을 연다 | SSE 감시 중 무진행 지속 | tick=1.0초 → 30분이면 커넥션 1,800회. SQL 조건 덕에 *쓰기* 는 1회지만 **연결 비용은 매번** | 프로세스 지역 `_NO_PROGRESS_ANNOUNCED` 가드(상한 4096, 시도 기록을 갱신보다 **먼저**) |
+| P1-4 | 고지가 **날조된 숫자**를 쓸 수 있다 | 무중단 배포의 점유 회수(`system.release_claims`)가 `ClaimedAt` 을 24시간 과거로 민 직후 | 화면에 「1440분째 진행 신호가 없습니다」 — 관측이 아니다 | lease 초과 경과는 고지하지 않는다(그 시점엔 이미 재배달 대상) |
+
+> P1-1·P1-2 는 같은 뿌리다 — **값 형식을 넓히면서 그 값을 전량 비교하던 소비처를 세지
+> 않았다.** 취소 통보 1곳은 구현 중 인지했으나 나머지 둘은 놓쳤다. 그래서 비교를
+> `shared/bridge_tasks.claimed_client_matches` 한 곳으로 모으고, SQL 안(원자적 UPDATE 조건이라
+> 파이썬으로 끌어올 수 없는 자리)은 같은 의미의 `SUBSTRING_INDEX` 로 맞췄다.
+
+### 2. Cross-domain concerns
+
+- **버전 스큐** — 구 러너(미신고)는 `ClaimedClient` 가 종전 값 그대로라 회수만 못 받고 나머지
+  동작은 불변. 신 러너 + 구 서버는 미지 본문 키를 서버가 무시하므로 종전 동작으로 degrade.
+  두 방향 모두 서비스 정지 없음(테스트로 고정).
+- **한 머신 2러너(설정 공유)** — 뒤에 뜬 쪽이 앞의 instance 를 「직전 것」으로 오인해 해제할 수
+  있다. 최악은 **중복 조사 1회**이고 중복 제출은 `submit_answer` 확정 불변이 막는다. 설치
+  경로는 머신당 1러너 전제 — `shared/bridge_tasks.py` 상단에 명시.
+- **`stalled` 오탐** — 15분 넘게 도구 없이 답을 쓰는 러너는 무진행으로 표시된다(실측 최대
+  621초라 여유는 있다). 끊지 않고 **말하기만** 하며, 답이 도착하면 본문이 덮인다.
+- **미해결 이월** — `SIGKILL`·전원 차단은 종료 훅이 돌지 않아 다음 기동의 사망 신고에 의존한다.
+  그 사이(러너를 다시 켜지 않는 동안)는 종전 lease 창이 그대로다. 구조상 남는 창이며
+  `stalled` 표시가 그 창을 사용자에게 알린다.
+
+### 3. Challenge to current spec
+
+「서버가 스스로 판정해 회수한다」를 채택하지 않았다 — 서버가 가진 신호(`ClaimedAt`)로는
+*오래 생각하는 러너*와 *죽은 러너*가 구분되지 않고, 살아 있는 쪽을 끊으면 조사가 버려진다.
+그 회색지대를 `stalled` 국면이 **끊지 않고 표시만** 하는 것으로 나눈 것이 이 설계의 축이다.
+
+### 4. Verdict
+
+**BLOCK → 조치 후 PASS.** P1 4건 전건 수정 + 회귀 테스트(총 28건, `test_orphan_claim_reclaim.py`).
+codex 판정은 미산출이므로 「독립 검증을 받았다」고 적지 않는다 — 위 결함은 **자체 검증**의
+산물이다.
+
+## REV-20260901T150000-orphan-claim-postdeploy [SKIPPED:evidence-only] — 라이브 실측 기록
+
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260901T140000-orphan-claim-reclaim
+- Reason: 코드 변경 0 — POST-DEPLOY 증적 문서 + TASK 체크박스 + TEST Run 행만. 검증 대상 코드는
+  `REV-20260901T144500-orphan-claim-reclaim` 에서 이미 적대 검토(P1 4건 적발·전건 수정)를 거쳤다.
+- Timestamp: 2026-09-01T15:00:00+09:00

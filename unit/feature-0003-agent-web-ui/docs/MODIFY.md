@@ -9,6 +9,54 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T1430-rqrd-postdeploy (POST-DEPLOY 부재 확인, doc-only)
+
+**변경**: 문서만 — `docs/{TASK,REPORT}.md` + 신규 fragment·스크린샷. 코드 **0**.
+
+**기록 내용**: 배포 `786815f2`(자산 `?v=cd84170acd28`, 엣지 blip 0)에서 부재 확인 **4/4 PASS**.
+기준선과 **같은 대화**에서 `.message-details` 1→0, 「단계 보기」 버튼 `[77,2,2]` 불변, 패널
+배지 「77단계」·결과셋 토글 37개 정상. 제거 변경의 시각검증은 **전·후 두 번**이라야 성립한다 —
+「없다」만 보면 애초에 없던 것과 구별되지 않는다. 미검증 2축(브리지 진행 중 입구 생성 ·
+구형 메시지 소실 실측)은 사유와 함께 남겼다.
+
+## CHG-20260901T1330-remove-query-result-details — 말풍선 「▼ 쿼리 결과」 여닫이 제거
+
+**왜**: 사용자 요청 — "「▼ 쿼리 결과」 펼치기 UI 는 더 이상 의미없는 구조. 이미 「단계 보기」
+기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능. 해당 UI 를 정리해주세요."
+라이브 실측이 그 판단을 뒷받침한다 — 같은 답변에서 여닫이는 SQL 17건 + 비-SQL 일부를 보였고
+「단계 보기」 패널은 **77단계 전부**를 소요시간과 함께 보였다. 중복이면서 덜 보여주는 쪽이
+여닫이였다.
+
+**「정리」는 다의어라 §12 로 승격**(AGENTS.md §16.7 G1) — 고른 독해 *블록 전체 삭제* / 버린 독해
+*결과셋 범위만 제거*. 요청 문구만으로 가를 관측값이 없어 사용자에게 되돌렸고, **「제거만」**
+결정을 받았다. 함께 소멸하는 것(**CSV 다운로드 링크 · 「전체 데이터 보기」** — 이 블록에만
+있었고 패널에 대체재 없음)을 결정 **전에** 고지했으며, 권장안이던 「CSV 이관」은 사용자가
+선택하지 않았다(의식적 트레이드오프).
+
+**변경**:
+- `static/app/messages.js` — `renderMessageDetails` · `buildStepBlocks` · `bubbleVisibleSteps` ·
+  `buildSqlNavigator` · `buildSqlStepPanel` · `loadFullCsvIntoTable` · `appendDetailBlock` ·
+  `extractFirstTableRef` · `formatSqlForDisplay`(+`SQL_FORMAT_KEYWORDS`) 제거. export 축소.
+- `static/app.js` — 말풍선 조립에서 여닫이 부착 제거 + import 축소.
+- `static/app/composer.js` — `_renderBridgeSteps` 를 **패널 갱신 + 말풍선 입구 보장**으로 재구성.
+- `static/css/chat.css` — 생산자가 사라진 12규칙 제거(`.message-details*` · `.message-detail-block` ·
+  `.step-detail-list` · `.sql-navigator`/`.sql-nav-*` · `.sql-result-group`/`-body`/`-actions` ·
+  `.sql-toggle-wrap` · 이미 사문이던 `.sql-result-label`).
+- 계약 테스트 3종 방향 전환 — feature-0043 `test_live_steps_{in_panel,structured,progress_continuity}.py`.
+
+**남긴 것은 다른 소비처가 있는 것만**: `buildResultTable` · `parseMarkdownTablePreview` ·
+`parseCsv`(본문 인라인 표 로더), `.sql-block`(본문 ```sql 블록), `.sql-toggle-btn` ·
+`.sql-result-toggle-wrap`(「단계 보기」 패널 카드).
+
+**함정 — 호출부가 조용히 no-op 이 된다**: 브리지 진행 표시는 이 여닫이를 통째로 다시 그리는
+방식이었다. 그냥 지우면 진행 중 말풍선에 단계로 들어갈 **입구가 하나도 남지 않는다** —
+placeholder 말풍선은 `meta.steps` 없이 그려져 `app.js` 가 「단계 보기」 버튼을 붙이지 못하기
+때문이다. `_renderBridgeSteps` 가 버튼을 **없으면 만들도록** 바꾼 것이 이 변경의 실질이다.
+
+**검증**: 컨테이너 pytest 9스위트 rc=0 · `node --check` ESM 3파일 · PRE-DEPLOY 기준선 실측
+(PB-0008, 제거 대상 4요소 라이브 관측 — 「제거했다」를 「원래 없었다」와 구별하기 위한 절반).
+POST-DEPLOY 부재 확인 4항목은 이월(사전 열거).
+
 ## CHG-20260901T121000-interrupt-preserve-postdeploy (POST-DEPLOY 실측 기록, doc-only)
 
 **변경**: 문서만 — `docs/{TASK,REPORT}.md` + 신규 `docs/test-runs.d/TASK-20260901T121000-…md`. 코드 0.

@@ -2420,7 +2420,6 @@ end-to-end 통과. 서버측 상주 러너도 배포본으로 교체·재기동�
 4. **러너 정합** — 설치본을 배포본으로 교체(md5 일치), 새 토큰으로 `--check` 후 상주 기동
 
 증적: `docs/test-runs.d/TASK-20260901T115000-answer-notice-server-seal-postdeploy.md`
-
 ## CHG-20260901T140000-ai-claude-feature-0043-injection-false-positive — 인젝션 오판으로 답변이 자가중단되던 것을 없앤다
 
 - **날짜**: 2026-09-01
@@ -2483,3 +2482,67 @@ end-to-end 통과. 서버측 상주 러너도 배포본으로 교체·재기동�
   `test_runner_puts_system_prompt_first`(문구 대신 **순서**를 본다. 옛 검사는 제거된 인젝션
   서명 문구를 요구해, 그대로 두면 결함을 되돌리라고 요구하는 게이트가 된다).
 - 뮤테이션 3종 전건 KILL: 토큰 본문 복귀 / 거부턴 필터 제거 / 중립 cwd 제거.
+## CHG-20260901T140000-orphan-claim-reclaim — 러너가 죽으면 질문이 30분 사라지던 것
+
+### 무엇을 바꿨나
+
+**① 러너 인스턴스 축** (`shared/bridge_tasks.py` · `routers/ai_tools.py` · `bridge_agent.py`)
+프로세스마다 `runner_instance`(hex 12자) 를 발급해 점유에 새긴다 —
+`ClaimedClient = <client_id>#<instance>`. **스키마 변경 없음**(VARCHAR(64) 재사용).
+재기동한 러너가 하트비트 `released_instances` 로 「직전 인스턴스는 죽었다」를 신고하면 서버가
+그 인스턴스의 `open`·미제출 점유만 놓는다(`release_runner_instance_claims`). 종료
+(`atexit` + `SIGTERM`→`SystemExit`)에는 자기 자신을 신고한다.
+
+**② 무진행 국면** (`_bridge_phase` → `stalled`)
+`ClaimedAt`(= 마지막 진행 시각)이 `BRIDGE_NO_PROGRESS_SEC`(900초)보다 오래되면 `working` 이
+아니라 `stalled`. 대기 말풍선 본문을 1회 무진행 고지로 바꾸고(`_mark_bridge_no_progress`),
+프론트가 이력을 다시 읽는다.
+
+### 왜
+
+lease 는 도구 호출마다 갱신된다 — 「진행하고 있으니 살아 있다」. 그런데 러너 프로세스가
+사라지는 순간 그 갱신값이 **최대 30분짜리 사각지대**가 된다: task 는 `open` + 점유 상태라
+`CLAIMABLE_SQL` 을 통과하지 못해 대기 목록에서 사라지고, **재기동한 자기 러너에게도** 보이지
+않는다. 라이브 실측(2026-09-01 대화 `20260901030637-95dc8844`)에서 그 30분이 두 번 이어져
+**사용자 대기 87분**이 됐고, 화면은 그 전체를 「조사·작성 중입니다」로 그렸다.
+
+서버가 스스로 판정하지 않는 이유: 서버가 가진 신호로는 *오래 생각하는 러너*와 *죽은 러너*가
+구분되지 않는다. 「죽었다」를 확실히 아는 것은 그 자리에 새로 뜬 프로세스뿐이다.
+
+### 회귀 위험 — 값 형식을 넓히면 전량 비교가 죽는다
+
+`ClaimedClient` 를 **전량 일치로 비교하던 소비처가 세 곳**이었고(제출 · 첨부 읽기 · 취소
+통보), 자체 적대 검증에서 앞의 둘을 놓친 것이 잡혔다. 그대로 두면 인스턴스를 신고하는 러너의
+**모든 제출이 거절**되고 **첨부 읽기가 전부 409** 가 된다. 비교를
+`shared/bridge_tasks.claimed_client_matches` 한 곳으로 모으고, SQL 안(원자적 UPDATE 조건이라
+파이썬으로 끌어올 수 없는 자리)은 같은 의미의 `SUBSTRING_INDEX(ClaimedClient,'#',1)` 로 맞췄다.
+같은 검증에서 무진행 고지의 매-tick 커넥션(SSE tick 1초)과 날조된 경과 표시(배포 시 점유
+회수가 `ClaimedAt` 을 24시간 과거로 민다)도 잡아 각각 프로세스 지역 가드와 lease 상한으로
+막았다. 상세: `REVIEW.md` REV-20260901T144500.
+
+### 되돌리기
+
+`claim_request` 의 `_claimed_client_value(...)` 를 `ctx.get("client_id")` 로 되돌리고
+`bridge_heartbeat` 의 `released_instances` 블록을 제거하면 인스턴스 축이 사라진다(점유 값이
+종전 형식으로 돌아가므로 `SUBSTRING_INDEX`·`claimed_client_matches` 는 그대로 둬도 무해 —
+구분자가 없으면 전체를 앞자리로 본다). 표시 축만 끄려면 `_bridge_phase` 의 `stalled` 분기
+하나를 지운다. 러너 쪽은 `init_runner_instance()`·`_arm_exit_release()` 두 호출을 뺀다.
+
+## CHG-20260901T150000-orphan-claim-postdeploy — 고아 점유 회수 라이브 실측 (문서만)
+
+`CHG-20260901T140000-orphan-claim-reclaim` 의 배포 후 검증. **코드 변경 0** — 증적 문서 +
+TASK 체크박스 + TEST Run 행만.
+
+배포본 `9c04b52c`(전 서비스 이미지 일치 · soak 통과 · 대화 스모크 PASS · 엣지 무중단 0건):
+
+1. **코드 도달 6축** — 서버 `stalled` 4건 · 프론트 분기 1건 · 러너 사본 `init_runner_instance`
+   2건 · `SUBSTRING_INDEX` 2건 · 매-tick 가드 7건 · lease 상한 1건 (배포 전 전부 0)
+2. **배포본 함수 직접 구동** — 합성·해석·호환·메타문자 무시·임계 창·회수 경계·빈 신고 no-op
+3. **국면표** — 배포본 `_bridge_phase` 를 라이브 컨테이너에서 실행, 6케이스 ALL PASS
+4. **실 MySQL 점유자 술어** — 4형식(인스턴스 접미·구 러너·다른 세션·NULL) 평가로
+   **P1-1(제출 전면 거절)·P1-2(첨부 읽기 전면 409) 회귀 차단** 실증
+5. **프론트 실물** — 브라우저가 받은 `composer.js?v=cd84170acd28` 안에 분기·문구 존재
+
+**미검증 2건을 남긴 이유까지 기록했다** — 러너는 사용자 머신 파일이라 우리 배포로 갱신되지
+않고(서버가 `runner_update.stale_build` 로 알린다), `stalled` 말풍선은 그 상태를 만들 라이브
+조건이 없고 인위 조성은 병렬 세션 6곳과 충돌한다. **모른다고 적는 것이 통과로 적는 것보다 낫다.**
