@@ -3706,14 +3706,16 @@ def _sanitize_runtimes(raw: object) -> list | None:
         seen_runtimes.add(name)
         # ── provenance allowlist (qa 적대리뷰 §3, 2026-09-01) ──────────────────────
         #
-        # 「이 목록이 어떻게 얻어졌는가」를 런타임 **단위**로 본다. `caps_self_report` 는
-        # 「이 빌드가 계약을 아는가」에 답하는 전역 불리언이라, 다음번 신고 포맷이 바뀌면
-        # 다섯 번째 이름이 필요하고 그 사이 잘못 조립한 신고도 통째로 「신뢰」된다.
-        # provenance 는 그 클래스를 실제로 닫는다 — 나쁜 런타임 하나만 숨고 나머지는 남는다.
+        # 「이 목록이 어떻게 얻어졌는가」를 런타임 **단위**로 본다 — 이것이 「화면 목록의
+        # 출처는 연결된 AI」 계약의 **집행 지점**이다.
         #
-        # ⚠ 두 게이트는 **대체가 아니라 보완**이다. 지문·자격을 아예 모르는 구 러너는
-        #   `source` 도 안 보내므로 여기서 전부 떨어지고(그것이 이번 결함의 모집단),
-        #   자격은 아는데 특정 런타임만 내장 표로 채운 미래 빌드는 여기서 그 런타임만 떨어진다.
+        # 구 러너는 `source` 를 아예 보내지 않으므로 여기서 전부 떨어진다 — 그것이 이번
+        # 결함의 모집단이고, 그래서 화석 목록은 **첫 하트비트에** 빈 목록으로 대체된다.
+        # 특정 런타임만 내장 표로 채운 미래 빌드는 **그 런타임만** 떨어진다(우아한 열화).
+        #
+        # ⚠ 한때 여기 더해 읽기 시점 전역 게이트를 뒀다가 철회했다(2026-09-01, 적대 패널
+        #   3인 확인 라운드) — 수신 시점이 이미 짐을 다 지는데 전역 게이트는 다중 러너
+        #   fail-closed 라는 제품 안에서 풀 수 없는 잠금만 더했다.
         if str(item.get("source") or "") not in _SANITIZE_SOURCE_ALLOW:
             continue
         # ⚠ 중첩 필드도 **타입을 확인한다**(codex REV-20260828T170000 P2-2). `models: 1` 처럼
@@ -3738,11 +3740,10 @@ def _sanitize_runtimes(raw: object) -> list | None:
 #:
 #: - `probe`  — 그 AI 에게 직접 물어 받은 답
 #: - `cache`  — 위 답을 `config.json` 에 남긴 것(폴백은 캐시되지 않는다)
-#: - `ollama` — HTTP 실조회 결과 (우리가 적어 둔 값이 아니다)
 #:
 #: ⚠ **`builtin` 을 넣지 마라.** 러너 소스에 적혀 있던 표가 그 이름이고, 그것이
 #: `gpt-5.1-codex` 가 사용자 화면에 뜬 경로다 (사용자 제보 4회, 2026-08-31~09-01).
-_SANITIZE_SOURCE_ALLOW: frozenset = frozenset({"probe", "cache", "ollama"})
+_SANITIZE_SOURCE_ALLOW: frozenset = frozenset({"probe", "cache"})
 
 
 def _capped_list(raw: object, cap: int) -> list:

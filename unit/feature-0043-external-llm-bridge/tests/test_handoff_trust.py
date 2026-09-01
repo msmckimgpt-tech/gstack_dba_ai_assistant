@@ -632,14 +632,22 @@ def test_runner_contract_is_accurate_about_what_it_receives_and_leaves(path):
     초판은 세 군데가 틀렸고 셋 다 grep 한 번에 깨졌다:
       · "명령도 코드도 받지 않는다" ← `system_prompt` 를 받아 프롬프트 맨 앞에 놓는다
       · "토큰을 디스크에 쓰지 않는다" ← `save_conf` 한정으론 참이나, 프롬프트·argv 로 나간다
-      · "나가는 곳 한 곳 … 유일한 자리" ← `BRIDGE_OLLAMA_URL` 이 두 번째 URL 생성 지점이다
+      · "나가는 곳 한 곳 … 유일한 자리" ← 종전엔 `BRIDGE_OLLAMA_URL` 이 두 번째 URL 생성
+        지점이었다. 2026-09-01 로컬 LLM 어댑터 제거로 **실제로 한 곳**이 됐고, 그러면
+        문서가 그렇게 적어야 한다(거짓이 아니라 참이 된 문장을 계속 부정하지 않는다).
       · "끝나면 아무것도 남지 않는다" ← 같은 표가 `config.json` 을 남긴다고 적고 있다(자기모순)
     """
     head = path.read_text(encoding="utf-8")[:6000]
     assert "운영자 시스템 지침" in head, "받는 것 목록이 운영자 지침을 빠뜨렸다"
     assert "실행 가능한 코드나 셸 명령은 받지 않는다" in head, "무엇을 안 받는지가 부정확하다"
     assert "구획되지 않는다" in head, "그 지침이 구획 없이 온다는 사실을 말하지 않는다"
-    assert "BRIDGE_OLLAMA_URL" in head, "두 번째 URL 생성 지점을 감췄다"
+    # 2026-09-01: 로컬 LLM HTTP 어댑터를 제거해 URL 생성 지점이 **하나**가 됐다.
+    # 그러면 문서의 「한 곳」이 참이 되므로, 두 번째 지점을 요구하던 단언을 뒤집는다 —
+    # 되살아나면 문서가 다시 거짓이 되므로 그것을 잡는다.
+    assert "BRIDGE_OLLAMA_URL" not in head, (
+        "제거한 로컬 LLM URL 이 되살아났다 — 「나가는 곳 한 곳」이 다시 거짓이 된다")
+    assert "하나뿐이다" in head or "**하나뿐**" in head, (
+        "URL 생성 지점이 하나가 됐는데 문서가 그렇게 말하지 않는다")
     assert "프롬프트 안에도 들어간다" in head, "토큰의 실제 노출면을 말하지 않는다"
     assert "BRIDGE_TOKEN" in head, "노출을 줄이는 수단을 알려주지 않는다"
     # 자기모순 금지: 같은 표 안에서 "아무것도 안 남는다" 와 "config.json 을 남긴다" 가 공존했다.

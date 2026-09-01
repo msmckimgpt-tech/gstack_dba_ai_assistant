@@ -167,15 +167,23 @@ def test_runner_declares_features_and_version():
         f"러너 버전 {version} 이 서버 하한 {bt.RUNNER_MIN_AGENT_VERSION} 미만 — "
         "자기 배포본이 자격 미달이 된다")
 
-    # caps-trust-gate (2026-09-01) + qa 적대리뷰 M7: 멤버십만 보면 **감사되지 않은 임의
-    # capability** 가 기본 선언에 섞여도 아무도 반대하지 않는다(뮤턴트 M7 생존 실증).
-    # 기본 신고는 사용자가 준 적 없는 동의이므로 **정확집합**을 정본 상수와 대조한다.
-    _declared = set(re.findall(r'"([a-z_]+)"', feats_line))
-    assert _declared == {bt.RUNNER_FEATURE_CONSOLE_JOBS,
-                         bt.RUNNER_FEATURE_SELF_REVIEW,
-                         bt.RUNNER_FEATURE_CAPS_SELF_REPORT}, (
-        f"기본 신고 집합이 정본과 다르다: {sorted(_declared)} — 감사되지 않은 자격이 섞였거나 "
-        "필요한 자격이 빠졌다(능력 신고 자격이 없으면 서버가 모델 목록을 화면에 그리지 않는다)")
+    # qa 적대리뷰 M7 (2026-09-01): 멤버십만 보면 **감사되지 않은 임의 capability** 가 기본
+    # 선언에 섞여도 아무도 반대하지 않는다. 기본 신고는 사용자가 준 적 없는 동의이므로
+    # **정확집합**으로 잠근다.
+    #
+    # ⚠ 소스 라인이 아니라 **로드된 모듈의 실제 튜플**을 본다 (M7-v2 생존 실증). 라인 하나를
+    #   scrape 하면 그 아래에 `AGENT_FEATURES = AGENT_FEATURES + ("admin_jobs",)` 를 덧붙이는
+    #   것만으로 런타임 값이 바뀌는데 단정은 green 이다. 잠글 것은 **러너가 실제로 보내는
+    #   값**이지 그것이 어느 줄에 적혔는가가 아니다. 정규식 `[a-z_]+` 이 숫자 있는 이름을
+    #   못 잡는 취약성도 함께 사라진다.
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("_runner_features_probe", _RUNNER)
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    assert set(_mod.AGENT_FEATURES) == {bt.RUNNER_FEATURE_CONSOLE_JOBS,
+                                        bt.RUNNER_FEATURE_SELF_REVIEW}, (
+        f"기본 신고 집합이 정본과 다르다: {sorted(_mod.AGENT_FEATURES)} — 감사되지 않은 "
+        "자격이 섞였거나 필요한 것이 빠졌다")
     assert 'body["features"] = list(self.features)' in src
     assert 'body["agent_version"] = AGENT_VERSION' in src
 

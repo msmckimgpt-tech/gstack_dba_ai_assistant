@@ -356,18 +356,16 @@
                   <path d="M4.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
-              <!-- feature-0043 caps-trust-gate: 모델·추론 항목이 숨겨진 **이유**. 서버가
-                   실어 준 `model_selector_reason` 만 그린다(프론트가 문구를 짓지 않는다).
-                   사유 없이 항목만 사라지면 사용자는 기능이 없어진 것으로 읽고, 다음 행동
-                   (러너 다시 실행)을 어디서도 듣지 못한다.
-                   ⚠ role="presentation" 이다 — `role="menu"` 는 owned element 로
-                   menuitem/group/separator/none/presentation 만 허용하고 `note` 는 그중에
-                   없다(security 적대리뷰). 무효 role 을 두면 보조기술이 이 줄을 통째로
-                   건너뛰어, 숨김의 유일한 설명이 스크린리더 사용자에게 도달하지 않는다.
-                   카탈로그 리로드 후 나타나므로 aria-live 로 알린다. -->
-              <p class="composer-actions-note hidden" id="composerActionsSelectorNote"
-                 role="presentation" aria-live="polite"></p>
             </div>
+            <!-- feature-0043: 모델·추론 항목이 숨겨진 **이유**. 서버가 실어 준
+                 `model_selector_reason` 만 그린다(프론트가 문구를 짓지 않는다).
+                 ⚠ **`role="menu"` 밖에 둔다.** 안에 두면 `note`/`paragraph` 가 허용되지 않는
+                 owned child 가 되고, `role="presentation"` 으로 덮으려 해도 `aria-live` 같은
+                 global 속성이 있으면 presentation 이 무시돼 암묵 role 이 되돌아온다
+                 (ARIA presentational-roles-conflict-resolution — security 적대리뷰 B4).
+                 밖에 두면 `aria-live` 를 그대로 쓸 수 있고, 메뉴를 열지 않아도 읽힌다. -->
+            <p class="composer-actions-note hidden" id="composerActionsSelectorNote"
+               aria-live="polite"></p>
             <!-- Secondary popup (모델 선택 — description 포함). hidden 으로 시작. -->
             <div class="composer-model-menu hidden" id="composerModelMenu" role="menu" aria-label="LLM 모델 선택"></div>
             <!-- feature-0003: 추론 강도 secondary popup (모델 메뉴와 동일 스타일). hidden 으로 시작. -->

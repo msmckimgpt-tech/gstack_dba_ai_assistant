@@ -117,10 +117,7 @@ def test_token_profile_shares_the_live_predicate():
 def test_token_profile_is_empty_without_a_token():
     """토큰이 없으면 자격도 없다(fail-closed)."""
     assert store.token_runner_profile(None, "") == {
-        "capabilities": [], "features": [], "agent_version": "", "listening": False,
-        # 능력 게이트가 이 dict 에도 상태를 싣는다 — 성공/실패 분기가 같은
-        # 키 집합을 갖지 않으면 소비자가 `False` 와 `undefined` 를 구별 못 한다.
-        "caps_contract_declared": False}
+        "capabilities": [], "features": [], "agent_version": "", "listening": False}
 
 
 # ── P1-2: 배치 점유분 조회는 제출 경로만 ────────────────────────────────────────────

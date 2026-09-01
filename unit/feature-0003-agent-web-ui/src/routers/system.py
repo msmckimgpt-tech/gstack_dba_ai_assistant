@@ -487,23 +487,31 @@ def get_api_vault_options(request: Request) -> JSONResponse:
 
     | 상태 | 응답 |
     |---|---|
-    | 서버 LLM 차단 + 자격 있는 러너 신고 | 신고 목록 + `model_selector: "visible"` (그룹 = 런타임) |
-    | 서버 LLM 차단 + 신고 없음 | 빈 목록 + `"hidden"` — 종전 P0-T 동작 그대로 |
-    | 서버 LLM 차단 + **자격 없는 러너**(구 빌드) | 빈 목록 + `"hidden"` + **갱신 안내 사유** |
+    | 서버 LLM 차단 + 러너 신고 있음 | 신고 목록 + `model_selector: "visible"` (그룹 = 런타임) |
+    | 서버 LLM 차단 + 러너 없음 | 빈 목록 + `"hidden"` + 「연결된 러너가 없어…」 |
+    | 서버 LLM 차단 + 러너는 듣는데 고를 것 없음 | 빈 목록 + `"hidden"` + **다음 행동 + 받을 곳** |
     | 서버 LLM 활성 | 원래 서버 카탈로그 (게이트 되돌리기 경로, 불변) |
 
     "신고 없음" 이 곧 숨김인 것이 이 설계의 안전판이다 — 러너가 없거나(고를 주체가 없다),
     구 러너이거나(신고를 모른다), `--cmd` 로 명령을 직접 준 사용자(고른 값이 무시된다)일 때
     선택기가 나타나지 않는다. **반영되지 않을 조작면은 어느 경로로도 생기지 않는다.**
 
-    caps-trust-gate (사용자 제보 2026-09-01, 4차 재발): 위 세 번째 행이 이번에 더해졌다.
-    폴백을 제거한 러너를 배포해도 **사용자 머신의 러너를 우리가 갱신할 수는 없어서**, 낡은
-    빌드가 자기 소스의 내장 표(`gpt-5.1-codex`)를 계속 신고했고 이 카탈로그가 그것을 그대로
-    그렸다. 이제 러너가 목록 출처 계약을 선언하지 않았으면(저장 계층의
-    `declares_caps_contract`) 목록을 비우고, 그 사실을 `runner_caps_stale` 로 말한다.
-    **빈 목록만 내리지 않고 사유를 함께 내리는 것**이 이 행의 핵심이다 — 사유 없이 감추면
-    선택기가 이유 없이 사라진 것으로 보이고(그 자체가 앞선 cycle 의 마찰이었다), 사용자는
-    다음 행동(러너 다시 실행)을 어디서도 듣지 못한다.
+    caps-trust-gate (사용자 제보 2026-09-01, 4차 재발 · 같은 날 재설계): 폴백을 제거한 러너를
+    배포해도 **사용자 머신의 러너를 우리가 갱신할 수는 없어서**, 낡은 빌드가 자기 소스의 내장
+    표(`gpt-5.1-codex`)를 계속 신고했고 이 카탈로그가 그것을 그대로 그렸다.
+
+    막는 지점은 **수신 시점**이다 — `ai_tools._sanitize_runtimes` 가 출처(`source`)가 라이브
+    답이 아닌 런타임을 저장 전에 떨어뜨린다. 그래서 구 러너의 신고는 **첫 하트비트에** 빈
+    목록이 되고, 이 함수는 그 결과를 그대로 읽기만 하면 된다.
+
+    ⚠ 한때 여기 읽기 시점 전역 게이트(러너가 계약을 선언했는가 + 다중 러너 fail-closed)를
+    더 뒀다가 **철회**했다(적대 패널 3인 확인 라운드). 수신 시점 게이트가 이미 짐을 다 지는데,
+    전역 게이트가 더한 고유 효과는 「살아 있는 러너 하나라도 미선언이면 감춘다」뿐이었고 그
+    대가가 **제품 안에서 풀 수 없는 무기한 잠금**이었다 — 다른 머신에 잊고 켜 둔 러너 하나가
+    선택기를 무기한 감추는데 화면은 그 러너를 지목하지도, 끊지도 못한다.
+
+    **빈 목록만 내리지 않고 사유를 함께 내리는 것**은 유지한다 — 사유 없이 감추면 선택기가
+    이유 없이 사라진 것으로 보이고, 사용자는 다음 행동을 어디서도 듣지 못한다.
 
     이 분기는 **인증 확인 뒤**에 둔다 — 미인증 응답은 종전대로 빈 카탈로그이고, 게이트 상태라는
     운영 사실조차 익명에게 싣지 않는다(위 api-exposure-hardening 과 같은 방향).
@@ -513,9 +521,11 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     runner_caps: list = []
     # 러너는 듣고 있는데 능력 신고 자격이 없다(구 빌드) — "고를 것이 없다" 와 구분해야
     # 화면이 다음 행동을 말할 수 있다. 기본 False: 러너가 아예 없을 때와 섞지 않는다.
-    runner_caps_stale = False
-    # 선언한 러너도 함께 있는가(= 옛 것을 안 껐다). 안내 문구가 이 축으로 갈린다.
-    runner_mixed = False
+    # 러너가 **듣고 있는데 고를 모델이 없는가**. 이 한 축이 안내 문구와 링크를 가른다 —
+    # 종전에 이 자리에 있던 `caps_contract_declared`·`mixed_runners` 두 축은 철회했다
+    # (2026-09-01 재설계: 수신 시점 provenance 가 짐을 다 지고, 읽기 시점 전역 게이트는
+    # 제품 안에서 풀 수 없는 잠금만 남겼다 — 적대 패널 3인 확인 라운드).
+    runner_listening = False
     account_bridge_model = ""
     account_bridge_effort = ""
     conn = None
@@ -537,12 +547,7 @@ def get_api_vault_options(request: Request) -> JSONResponse:
                     _profile = _store.account_runner_profile(
                         cur, int(account.get("id") or 0))
                     runner_caps = list(_profile.get("capabilities") or [])
-                    runner_caps_stale = bool(
-                        _profile.get("listening")
-                        and not _profile.get("caps_contract_declared"))
-                    # 「갱신은 했는데 옛 것을 안 껐다」와 「아직 갱신 안 했다」는 다른 지시를
-                    # 요구한다 — 전자에게 「다시 실행하세요」는 이미 한 일이라 거짓이다.
-                    runner_mixed = bool(_profile.get("mixed_runners"))
+                    runner_listening = bool(_profile.get("listening"))
                     # 계정 기본값도 **같은 커넥션에서** 읽는다 — 별개 연결을 열면 목록과
                     # 기본값이 서로 다른 순간의 사실이 되고, 그 틈에서 "목록에 없는 기본값"
                     # 이 나온다.
@@ -566,10 +571,9 @@ def get_api_vault_options(request: Request) -> JSONResponse:
         #   없는 모델일 수 있고, 그것을 고른 요청은 반영되지 않는다(P0-T 가 지운 상태의 재발).
         #   빈 목록은 선택기가 숨겨질 뿐이고, 답변 경로는 그대로 동작한다.
         runner_caps = []
-        # 조회가 실패했으면 선언 여부도 **모르는** 것이다 — 모르는 것을 "구 러너" 로 단정해
+        # 조회가 실패했으면 러너가 듣고 있는지도 **모르는** 것이다 — 모르는 것을 근거로
         # 갱신 안내를 띄우면, 일시적 DB 오류가 멀쩡한 사용자에게 틀린 지시를 준다.
-        runner_caps_stale = False
-        runner_mixed = False
+        runner_listening = False
         # 기본값도 같이 버린다 — 목록 없이 남은 기본값은 대조할 곳이 없어 그대로 쓰이거나
         # (없는 값이 선택돼 보이거나) 어차피 아래 `visible=False` 로 무시된다. 두 사실을
         # 함께 버려 "목록은 실패했는데 기본값만 살아 있는" 중간 상태를 만들지 않는다.
@@ -641,22 +645,24 @@ def get_api_vault_options(request: Request) -> JSONResponse:
             "reasoning_levels_by_runtime": reasoning_by_runtime,
             # 숨김의 **이유**를 값으로 말한다 (§16.8 예산: 1문장). 구 러너는 다음 행동이
             # 있으므로 그것을 적고, 그 밖의 숨김은 종전 문구를 유지한다.
+            # 숨김의 **이유**를 값으로 말한다 (§16.8 예산: 1문장). 두 상태뿐이다 —
+            # 러너가 없거나(고를 주체 없음), 듣고 있는데 고를 모델이 없거나.
+            # 후자는 「러너가 오래됐거나 AI 에게 물어보지 못했다」가 둘 다 참일 수 있으므로
+            # 원인을 단정하지 않고 **다음 행동**만 말한다(§16.7 G7-c: 미확보는 단정하지 않는다).
             "model_selector_reason": (
                 "연결된 본인 AI 가 쓸 수 있는 모델입니다."
                 if visible else
-                "옛 러너가 아직 실행 중입니다 — 그것을 종료하면 모델을 고를 수 있습니다."
-                if runner_mixed else
-                "연결된 러너가 오래된 버전이라 모델 목록을 신뢰할 수 없습니다 —"
-                " 최신 실행 파일로 다시 실행해 주세요."
-                if runner_caps_stale else
-                "답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가 알려준 모델이 없어"
-                " 이 화면에서는 지정할 수 없습니다."
+                "연결된 러너가 알려준 모델이 없습니다 — 최신 실행 파일로 다시 실행해 보세요."
+                if runner_listening else
+                "답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가 없어"
+                " 이 화면에서는 모델을 지정할 수 없습니다."
             ),
             # 프론트가 사유 문구를 파싱하지 않게 상태를 **별도 값**으로 준다.
-            "runner_caps_stale": runner_caps_stale,
+            "runner_listening": runner_listening,
             # 프런트가 안내 안 **링크로 그린다**(소비처 0 이던 것을 배선 — 적대리뷰 C2).
+            # 링크는 러너가 듣고 있을 때만 의미가 있다: 러너가 아예 없으면 받을 파일이
+            # 아니라 연결 흐름이 먼저다.
             "runner_download_url": "/static/agent/bridge_agent.py",
-            "runner_mixed": runner_mixed,
         })
     return JSONResponse(
         {

@@ -54,10 +54,9 @@ if (fnEnd < 0) fnEnd = composerJs.length;
 const source = composerJs.slice(constStart, fnEnd);
 
 const dom = new JSDOM(`<!doctype html><body>
-  <div id="composerActionsMenu" role="menu">
-    <p class="composer-actions-note hidden" id="composerActionsSelectorNote"
-       role="presentation" aria-live="polite"></p>
-  </div></body>`);
+  <div id="composerActionsMenu" role="menu"></div>
+  <p class="composer-actions-note hidden" id="composerActionsSelectorNote"
+     aria-live="polite"></p></body>`);
 const { document } = dom.window;
 
 // `state` 를 주입해 함수를 평가한다. 실제 모듈의 다른 전역은 이 함수가 쓰지 않는다.
@@ -77,15 +76,15 @@ ok("visible → 안내 비움", el().textContent === "" && isHidden(),
 
 // ── 2. 구 러너 = 사유 + **받을 곳 링크** (C2 배선) ────────────────────────────────
 state.modelCatalog = {
-  model_selector: "hidden", runner_caps_stale: true, runner_mixed: false,
+  model_selector: "hidden", runner_listening: true,
   runner_download_url: "/static/agent/bridge_agent.py",
   model_selector_reason:
-    "연결된 러너가 오래된 버전이라 모델 목록을 신뢰할 수 없습니다 — 최신 실행 파일로 다시 실행해 주세요.",
+    "연결된 러너가 알려준 모델이 없습니다 — 최신 실행 파일로 다시 실행해 보세요.",
 };
 applyNote(true);
-ok("stale → 사유 렌더", el().textContent.includes("오래된 버전") && !isHidden());
+ok("듣는 러너 + 목록 없음 → 사유 렌더", el().textContent.includes("알려준 모델이 없습니다") && !isHidden());
 const link = el().querySelector("a");
-ok("stale → 받을 곳 링크 도달",
+ok("듣는 러너 → 받을 곳 링크 도달",
    !!link && link.getAttribute("href") === "/static/agent/bridge_agent.py",
    link ? link.getAttribute("href") : "(링크 없음)");
 
@@ -94,25 +93,18 @@ applyNote(false);
 ok("visible 복귀 → 링크·텍스트 소멸",
    el().textContent === "" && !el().querySelector("a") && isHidden());
 
-// ── 4. 러너 없음 = 종전 문구, **갱신 지시 없음** ──────────────────────────────────
+// ── 4. 러너 없음 = 다른 문구, **다운로드 링크 없음** ─────────────────────────────
+//   러너가 아예 없으면 다음 행동은 파일을 받는 것이 아니라 **연결**이다. 이 상태에
+//   다운로드를 들이미는 것은 다음 행동을 잘못 지목하는 것이다(security 적대리뷰 C1 과 동형).
 state.modelCatalog = {
-  model_selector: "hidden", runner_caps_stale: false, runner_mixed: false,
+  model_selector: "hidden", runner_listening: false,
   runner_download_url: "/static/agent/bridge_agent.py",
   model_selector_reason:
-    "답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가 알려준 모델이 없어 이 화면에서는 지정할 수 없습니다.",
+    "답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가 없어 이 화면에서는 모델을 지정할 수 없습니다.",
 };
 applyNote(true);
-ok("러너 없음 → 갱신 지시 없음",
-   !el().textContent.includes("다시 실행") && !el().querySelector("a"));
-
-// ── 5. 옛 러너 혼재 = 「종료하라」 (이미 갱신한 사람에게 「갱신하라」는 거짓) ──────
-state.modelCatalog = {
-  model_selector: "hidden", runner_caps_stale: true, runner_mixed: true,
-  runner_download_url: "/static/agent/bridge_agent.py",
-  model_selector_reason: "옛 러너가 아직 실행 중입니다 — 그것을 종료하면 모델을 고를 수 있습니다.",
-};
-applyNote(true);
-ok("혼재 → 종료 안내", el().textContent.includes("종료"));
+ok("러너 없음 → 다운로드 링크 없음", !el().querySelector("a"));
+ok("러너 없음 → 갱신 지시 없음", !el().textContent.includes("다시 실행"));
 
 // ── 6. 카탈로그 부재(fetch 실패) = **말을 한다** ────────────────────────────────
 state.modelCatalog = null; state.apiVaultOptions = null;

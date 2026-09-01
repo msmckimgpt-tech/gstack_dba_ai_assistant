@@ -356,7 +356,9 @@ def test_named_ai_is_not_replaced_by_another_one(ba, monkeypatch):
 def test_named_ai_that_exists_is_used_with_its_known_argv(ba, monkeypatch):
     monkeypatch.setattr(ba, "_which_ai", lambda name: f"/somewhere/{name}")
     assert ba.pick_ai("claude", None) == ("claude", list(ba._RUNTIME_SPECS["claude"]["argv"]))
-    assert ba.pick_ai("ollama", None) == ("ollama", [])
+    # 2026-09-01: 로컬 LLM(ollama) 런타임은 제거됐다 — 표 밖 이름과 같은 취급을 받는다
+    # (실재하면 가장 흔한 CLI 모양으로 시작). 특례 분기가 되살아나면 이 단언이 잡는다.
+    assert ba.pick_ai("ollama", None) == ("ollama", ["ollama", "-p", "{prompt}"])
     # 표 밖 이름 — 실재하면 그대로 쓰되 호출 형태는 가장 흔한 모양으로 시작한다.
     assert ba.pick_ai("mycli", None) == ("mycli", ["mycli", "-p", "{prompt}"])
     # `--cmd` 는 언제나 이긴다(탐색조차 하지 않는다).

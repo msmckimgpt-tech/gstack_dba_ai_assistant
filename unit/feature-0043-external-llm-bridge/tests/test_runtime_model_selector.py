@@ -66,7 +66,7 @@ def test_runtime_specs_declare_everything_the_pipeline_needs():
     반쪽으로 동작한다(예: 목록엔 뜨는데 인자가 안 붙는다).
     """
     mod = _load_runner()
-    assert set(mod._RUNTIME_SPECS) >= {"claude", "codex", "gemini", "ollama"}, (
+    assert set(mod._RUNTIME_SPECS) >= {"claude", "codex", "gemini"}, (
         "알려진 플랫폼이 표에서 빠졌다")
     for name, spec in mod._RUNTIME_SPECS.items():
         assert spec.get("label"), f"{name}: 화면에 쓸 이름이 없다"
@@ -106,22 +106,23 @@ def test_detect_runtimes_reports_only_what_is_installed(monkeypatch):
 
 
 def test_detect_runtimes_omits_runtimes_with_no_models(monkeypatch):
-    """모델 목록이 비면 그 런타임을 통째로 뺀다(화면에 빈 그룹만 남기지 않는다).
+    """고를 모델이 없는 런타임은 **신고에서 빠진다** — 화면에 빈 그룹을 남기지 않는다.
 
-    ollama 가 이 경로다 — 실조회가 실패하거나 받아 둔 모델이 없으면 신고에서 빠진다.
+    probe 가 답을 주지 못한 런타임이 이 경로다(2026-09-01 이전엔 ollama 실조회 실패도
+    여기 있었으나 그 런타임은 제거됐다 — 로컬 LLM 미사용, 사용자 결정).
     """
     mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "ollama" else None)
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
-    assert mod.detect_runtimes() == []
+    monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "claude" else None)
+    monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
+    assert mod.detect_runtimes(cached={}, probe=True) == [], "빈 런타임이 신고에 남았다"
 
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
-    got = mod.detect_runtimes()
-    assert [r["runtime"] for r in got] == ["ollama"]
-    assert got[0]["models"] == [{"value": "llama3", "label": "llama3"}]
-    # ollama 에는 추론등급 플래그가 없다 — 신고에도 없어야 한다.
+    caps = {"claude": {"label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
+                       "efforts": [], "model": ["--model", "{model}"], "effort": None,
+                       "source": "probe"}}
+    got = mod.detect_runtimes(cached=caps)
+    assert [r["runtime"] for r in got] == ["claude"]
+    # 등급 플래그가 없으면 신고에도 등급이 없다.
     assert got[0]["efforts"] == []
-
 
 def test_heartbeat_carries_capabilities_every_time():
     """능력을 **매번** 싣는다.
@@ -365,10 +366,10 @@ def test_capability_read_shares_the_freshness_rule_with_listening():
     for fragment in ("_LIVE_TOKEN_PREDICATE", "LastHeartbeatAt IS NOT NULL", "DATE_SUB"):
         assert fragment in read_fn and fragment in listen_fn, (
             f"신선도 술어가 갈렸다: {fragment}")
-    # 러너가 여럿이면 **하나라도 계약 미선언이면 감춘다**(2026-09-01, fail-closed). 종전엔
-    # 가장 최근 한 행만 봐서 옛·새 러너 공존 시 선택기가 30초마다 깜빡였다.
-    assert "ORDER BY t.LastHeartbeatAt DESC LIMIT" in read_fn
-    assert "RUNNER_ROWS_SCAN_MAX" in read_fn, "계정당 한 행만 보면 혼재 상태를 못 본다"
+    # 러너가 여럿이면 **가장 최근에 말한 것** 하나를 쓴다. 합치면 실제로 가져가는 러너에
+    # 없는 모델이 섞인다. (2026-09-01: 한때 여러 행을 훑어 「하나라도 미선언이면 감춘다」로
+    # 바꿨다가 철회 — 그 규칙이 제품 안에서 풀 수 없는 잠금을 만들었다.)
+    assert "ORDER BY t.LastHeartbeatAt DESC LIMIT 1" in read_fn
     # 래퍼가 **자기 질의를 갖지 않는다** — 가지면 두 벌이 되고, 그 순간 이 검사가 보는
     # 쪽만 옳고 실제로 쓰이는 쪽은 갈릴 수 있다.
     wrapper = src[src.index("def account_runner_capabilities("):]
@@ -511,48 +512,6 @@ def test_build_cmd_checks_the_actual_report_not_the_static_table():
     # 신고를 주지 않으면 정적 표로 폴백한다(단위 테스트·구 호출부 호환).
     assert mod.build_cmd("claude", "Q", "opus", None) == \
         _claude[:-1] + ["--model", "opus", "Q"]
-
-
-def test_ollama_path_also_validates_against_the_report():
-    """ollama 는 `build_cmd` 를 타지 않는다 - 그 경로에도 대조가 있어야 한다 (P1-5).
-
-    없으면 서버가 준 임의 문자열이 그대로 생성 요청의 모델명이 되어, 이 머신에 없는 모델을
-    부르거나 (여러 모델을 받아 둔 머신에서) 사용자가 고르지 않은 모델을 부른다.
-    """
-    mod = _load_runner()
-    captured: dict = {}
-
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_a):
-            return False
-
-        def read(self):
-            return b'{"response": "ok"}'
-
-    def _fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode("utf-8"))
-        return _Resp()
-
-    report = [{"runtime": "ollama", "label": "Ollama",
-               "models": [{"value": "llama3", "label": "llama3"}], "efforts": []}]
-
-    import urllib.request as _u
-    orig = _u.urlopen
-    _u.urlopen = _fake_urlopen
-    try:
-        # 신고에 있는 모델 -> 그대로 쓴다.
-        mod.ask_local_ai("ollama", [], "Q", None, None, model="llama3", runtimes=report)
-        assert captured["body"]["model"] == "llama3"
-        # 신고 밖 모델 -> 환경 기본값으로 떨어진다(서버 값을 그대로 쓰지 않는다).
-        mod.ask_local_ai("ollama", [], "Q", None, None, model="mistral-evil", runtimes=report)
-        assert captured["body"]["model"] != "mistral-evil"
-    finally:
-        _u.urlopen = orig
-
-
 def test_unhonored_picks_are_disclosed_in_the_answer():
     """반영 못 한 지정을 **밝힌다** (P1-4).
 
@@ -631,7 +590,7 @@ def test_runtime_name_cannot_contain_the_pair_separator():
           "models": [{"value": "bar"}]}]) == []
     # 모델 **값**에는 `:` 가 필요하다(`llama3:8b` 류) - 그쪽은 계속 허용한다.
     got = ns["_sanitize_runtimes"](
-        [{"runtime": "ollama", "source": "ollama",
+        [{"runtime": "ollama", "source": "probe",
           "models": [{"value": "llama3:8b"}]}])
     assert got[0]["models"][0]["value"] == "llama3:8b"
 
@@ -827,9 +786,10 @@ def test_builtin_table_falls_back_for_invocation_only(monkeypatch):
     fn = src[src.index("def detect_runtimes("):]
     fn = fn[:fn.index("\ndef ")]
     assert '"builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
-    # 2026-09-01: 그 자리는 삼항이다 — ollama 의 **실조회** 목록은 `builtin` 이 아니어야
-    # provenance 게이트가 그것을 살린다(아니면 ollama 사용자 선택기가 통째로 사라진다).
-    assert '"ollama" if' in fn, "실조회 목록이 내장 표와 같은 출처로 신고된다"
+    # 2026-09-01: 그 자리는 **항상 `builtin`** 이다. 다른 이름으로 바꾸면 바로 아래 캐시
+    # 쓰기 가드(`!= "builtin"`)가 뒤집혀 폴백이 영구 캐시된다 — 한 번 그렇게 만들었고
+    # 목록이 굳는 결함이 됐다(security 적대리뷰 B1).
+    assert '"source": "builtin",' in fn, "폴백 출처가 builtin 이 아니다(캐시 가드가 뒤집힌다)"
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
     # 질의도 캐시도 없다 → **신고하지 않는다**(빈 목록으로 그룹만 남기지 않는다).
     assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 아직 신고된다"
@@ -1322,21 +1282,7 @@ def test_unprobed_runtime_is_not_reported_at_all(monkeypatch):
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
-    # ollama 만 예외 경로(실조회)라 여기서는 비워 둔다 — 아래 별도 테스트가 그쪽을 본다.
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
     assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 신고에 남아 있다"
-
-
-def test_ollama_still_reports_because_it_is_a_real_lookup(monkeypatch):
-    """ollama 는 예외 — 그 목록은 우리가 적은 값이 아니라 **실조회 결과**다."""
-    mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "ollama" else None)
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
-    got = mod.detect_runtimes(cached={})
-    assert [r["runtime"] for r in got] == ["ollama"]
-    assert [m["value"] for m in got[0]["models"]] == ["llama3"]
-
-
 def test_builtin_invocation_survives_so_execution_still_works(monkeypatch):
     """모델 목록은 빼도 **호출법은 남는다** — 없으면 실행 자체가 불가능해진다."""
     mod = _load_runner()
@@ -1485,67 +1431,17 @@ def test_stale_build_is_announced_once_not_every_beat():
     assert "다시 받아" in fn or "다시 실행" in fn, "재설치 경로를 안내하지 않는다"
 
 
-# -- 2026-09-01 (4차): 「연결한 AI 에 없는 모델이 뜬다」 — 능력 신고 자격 -----------
+# -- 2026-09-01 (4차): 「연결한 AI 에 없는 모델이 뜬다」 — 런타임별 provenance ---------
 #
 # 폴백 제거(08-31 2차)와 지문 신고(3차)를 배포하고도 같은 제보가 돌아왔다. 원인은 **우리가
 # 사용자 머신의 러너를 갱신할 수 없다**는 것이다: 낡은 빌드가 자기 소스의 내장 표를 계속
-# 신고했고 서버는 그것을 그대로 화면에 그렸다. 라이브 실증(2026-09-01) — 08-31 16:55 빌드가
-# `codex: 응답을 받지 못해 내장 기본값을 씁니다` 를 로그에 남기며 `gpt-5.1-codex` 를 신고,
-# 서버 행 `RunnerCapabilities` 에 그대로 저장, `RunnerBuild=''` 라 구버전 경고도 안 떴다.
+# 신고했고 서버는 그것을 그대로 화면에 그렸다.
 #
-# 그래서 자격을 **러너가 선언**하게 하고, 서버는 그 선언이 없는 신고를 그리지 않는다.
-
-
-def test_runner_declares_the_caps_self_report_capability():
-    """러너가 「목록의 출처는 AI 자신뿐」이라는 자격을 신고한다."""
-    mod = _load_runner()
-    assert "caps_self_report" in mod.AGENT_FEATURES, "능력 신고 자격이 없다"
-    # 콘솔 작업 자격은 그대로 — 축이 다르다(무엇을 다루는가 vs 목록의 출처가 무엇인가).
-    assert "console_jobs" in mod.AGENT_FEATURES
-
-
-def test_capability_name_has_a_single_source_of_truth():
-    """자격 이름을 러너와 서버가 **각자 짓지 않는다**.
-
-    한쪽 오타는 「아무도 자격을 못 얻음」(전 사용자 선택기 소멸) 또는 그 반대로 갈리는데,
-    둘 다 조용하다 — 화면만 보고는 오타인지 정책인지 구별되지 않는다.
-
-    ⚠ 종전 판본은 `_caps_trusted` 소스를 문자열로 grep 했고, **그 함수 자신의 docstring**
-    (「정본: shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT」)이 단언을 통과시켰다 —
-    본문을 `_n = "caps" "_self_report"` 로 바꾼 뮤턴트가 생존했다(qa M1b, §16.7 G11-a).
-    그래서 텍스트가 아니라 **import 노드와 비교 피연산자**를 AST 로 확인한다.
-    """
-    import ast
-    import sys
-
-    mod = _load_runner()
-    sys.path.insert(0, str(_UNIT.parent))
-    try:
-        from shared.bridge_tasks import RUNNER_FEATURE_CAPS_SELF_REPORT as _name
-    finally:
-        sys.path.pop(0)
-    assert _name in mod.AGENT_FEATURES, "러너가 신고하는 이름이 서버 정본과 다르다"
-
-    tree = ast.parse(_OAUTH_STORE.read_text(encoding="utf-8"))
-    imported = [
-        a.asname or a.name
-        for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
-        and (n.module or "").endswith("bridge_tasks")
-        for a in n.names
-    ]
-    assert "RUNNER_FEATURE_CAPS_SELF_REPORT" in imported, (
-        "서버가 자격 이름을 정본에서 import 하지 않는다 — 리터럴로 다시 적었거나 사라졌다")
-
-    gate = next((n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == "declares_caps_contract"), None)
-    assert gate is not None, "계약 선언 판정 함수가 없다"
-    # 비교 피연산자가 **그 import 된 이름**이어야 한다 — 리터럴이면 두 곳이 갈린다.
-    names = {n.id for n in ast.walk(gate) if isinstance(n, ast.Name)}
-    assert "RUNNER_FEATURE_CAPS_SELF_REPORT" in names, (
-        "게이트가 정본 상수를 쓰지 않는다(리터럴로 되돌아갔다)")
-    consts = {n.value for n in ast.walk(gate)
-              if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-    assert "caps_self_report" not in consts, "게이트가 자격 이름을 하드코딩했다"
+# 처음 조치는 러너가 **전역 자격**(`caps_self_report`)을 선언하고 서버가 그 선언 없는 신고를
+# 통째로 감추는 것이었다. 적대 패널 3인 확인 라운드가 그 설계를 기각했다 — 전역 불리언은
+# 「이 빌드가 계약을 아는가」에만 답해 다음 포맷 변경에 다섯 번째 이름이 필요하고, 다중 러너
+# fail-closed 라는 **제품 안에서 풀 수 없는 잠금**을 만들었다. 남은 것은 런타임 **단위**
+# provenance 하나이며, 그것이 같은 클래스를 더 좁게·우아하게 닫는다.
 
 
 def test_report_provenance_allowlists_match_on_both_sides():
@@ -1553,7 +1449,7 @@ def test_report_provenance_allowlists_match_on_both_sides():
 
     두 곳이 갈리면 한쪽이 조용히 느슨해진다 — 그리고 느슨한 쪽이 사용자가 보는 진실이 된다
     (이 feature 가 P0-R 에서 이미 겪은 형태). 특히 `builtin` 이 어느 한쪽에라도 들어오면
-    `caps_self_report` 선언이 거짓이 되고 서버는 그것을 검증할 수단이 없다.
+    「목록의 출처는 연결된 AI」 계약이 그 자리에서 깨지고, 서버는 검증 수단이 없다.
     """
     import ast
 
@@ -1576,25 +1472,6 @@ def test_report_provenance_allowlists_match_on_both_sides():
         f"양쪽 허용집합이 다르다: 러너 {sorted(mod._REPORTABLE_SOURCES)} vs 서버 {sorted(server)}")
     assert "builtin" not in server, (
         "내장 표 출처가 허용집합에 들어왔다 — `gpt-5.1-codex` 가 화면에 뜬 경로가 다시 열린다")
-
-
-def test_heartbeat_carries_the_capability_every_time():
-    """자격은 **매 하트비트**에 실린다 — 서버가 언제든 판정할 수 있어야 한다."""
-    mod = _load_runner()
-    sent: list = []
-
-    class _Api(mod.Api):
-        def __init__(self):
-            super().__init__("https://x", "t", None)
-
-        def _post(self, path, payload=None, timeout=60.0):
-            sent.append(payload)
-            return {"ok": True}
-
-    _Api().heartbeat([{"runtime": "claude", "models": [{"value": "opus"}], "efforts": []}])
-    assert "caps_self_report" in (sent[0].get("features") or []), "자격이 하트비트에 없다"
-
-
 def test_builtin_model_table_never_reaches_the_report(monkeypatch):
     """자격 신고가 **참이어야 한다** — 내장 표의 모델 이름은 신고에 닿지 않는다.
 
@@ -1606,7 +1483,6 @@ def test_builtin_model_table_never_reaches_the_report(monkeypatch):
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
     # probe 를 전부 실패시킨다 = 폴백만 남는 조건(라이브에서 codex 가 정확히 이 상태였다).
     monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
 
@@ -1634,7 +1510,6 @@ def test_builtin_table_never_reaches_the_report_on_any_branch(monkeypatch):
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
     monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
 
     builtin = {m["value"] for n, s in mod._RUNTIME_SPECS.items() if n != "ollama"
@@ -1656,23 +1531,9 @@ def test_report_carries_runtime_provenance(monkeypatch):
     """신고 항목마다 **출처**가 실린다 — 서버가 런타임 단위로 다시 거른다."""
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
     caps = {"claude": {"label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
                        "efforts": [], "model": ["--model", "{model}"], "effort": None,
                        "source": "probe"}}
     got = mod.detect_runtimes(cached=caps)
     assert [r["runtime"] for r in got] == ["claude"]
     assert got[0]["source"] == "probe", "출처가 신고에 실리지 않는다"
-
-
-def test_ollama_live_lookup_is_not_labelled_builtin(monkeypatch):
-    """ollama 의 **실조회** 목록은 `builtin` 이 아니다 — 아니면 게이트가 그것을 지운다."""
-    mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "ollama" else None)
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
-    got = mod.detect_runtimes(cached={})
-    assert [r["runtime"] for r in got] == ["ollama"], "실조회 목록이 provenance 게이트에 걸렸다"
-    assert got[0]["source"] == "ollama"
-    # 반대로 조회가 비면 신고 자체가 없다(빈 그룹을 남기지 않는다).
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
-    assert mod.detect_runtimes(cached={}) == []

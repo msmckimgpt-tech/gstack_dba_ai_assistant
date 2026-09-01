@@ -33,12 +33,13 @@ import oauth_store as store
 
 ENDPOINT = "/api/api-vault/options"
 
-#: 능력 신고 자격을 갖춘 러너의 `RunnerFeatures` 컬럼 값 (caps-trust-gate, 2026-09-01).
+#: 러너가 신고하는 `RunnerFeatures` 컬럼 값.
 #:
-#: 이 목록에 `caps_self_report` 가 없으면 서버는 능력 신고를 **화면에 그리지 않는다** —
-#: 그것이 이 게이트의 요지다. 아래 대부분의 케이스는 「자격 있는 러너」를 전제하므로 여기서
-#: 한 번 정의하고 공유한다(문자열을 케이스마다 적으면 게이트를 켜는 날 절반만 고쳐진다).
-_TRUSTED_FEATURES = "console_jobs,caps_self_report"
+#: ⚠ 한때 여기에 `caps_self_report` 를 요구하는 **읽기 시점 전역 게이트**가 걸려 있었다.
+#: 2026-09-01 재설계에서 철회했다 — 능력 축의 게이트는 **수신 시점**(`_sanitize_runtimes`
+#: 의 provenance allowlist)에 있고, 읽기 쪽 전역 게이트는 다중 러너 fail-closed 라는
+#: 제품 안에서 풀 수 없는 잠금만 더했다(적대 패널 3인 확인 라운드).
+_RUNNER_FEATURES = "console_jobs,self_review"
 
 #: 러너가 실제로 신고하는 모양(= `bridge_agent.detect_runtimes()` 의 반환).
 _REPORT = [
@@ -138,7 +139,7 @@ def test_blocked_gate_with_a_runner_offers_what_the_runner_reported(
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31")))
     payload = client.get(ENDPOINT).json()
 
     assert payload["model_selector"] == "visible", "신고가 있는데 선택기가 숨겨진다"
@@ -189,13 +190,13 @@ def test_blocked_gate_does_not_guess_when_the_report_is_unreadable(
     monkeypatch.setattr(store, "account_runner_profile", _boom)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31")))
     payload = client.get(ENDPOINT).json()
     assert payload["models"] == [], "조회 실패인데 목록이 채워졌다(추측)"
     assert payload["model_selector"] == "hidden"
-    # 조회 실패는 「구 러너」가 **아니다** — 모르는 것을 단정해 갱신 안내를 띄우면, 일시적
-    # DB 오류가 멀쩡한 사용자에게 틀린 지시를 준다.
-    assert payload["runner_caps_stale"] is False, "조회 실패를 구 러너로 단정했다"
+    # 조회 실패는 「러너가 듣고 있다」가 **아니다** — 모르는 것을 단정해 갱신 안내를 띄우면,
+    # 일시적 DB 오류가 멀쩡한 사용자에게 틀린 지시(+다운로드 링크)를 준다.
+    assert payload["runner_listening"] is False, "조회 실패를 «듣고 있음» 으로 단정했다"
 
 
 def test_reopened_gate_restores_selector(client, signed_in, monkeypatch):
@@ -254,7 +255,7 @@ def _with_defaults(monkeypatch, defaults_row):
     monkeypatch.setattr(
         appmod, "_connect_memory",
         lambda: _DefaultsConn(
-            (json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31"),
+            (json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31"),
             defaults_row))
 
 
@@ -302,7 +303,7 @@ def test_defaults_failure_does_not_empty_the_catalog(client, signed_in, monkeypa
 
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31")))
     monkeypatch.setattr(store, "account_bridge_defaults", _boom)
     payload = client.get(ENDPOINT).json()
     assert payload["model_selector"] == "visible", "기본값 실패가 선택기를 통째로 지웠다"
@@ -384,18 +385,16 @@ def test_missing_fingerprint_is_stale_not_current():
 
 
 def test_staleness_predicate_has_exactly_one_home():
-    """지문 판정은 **한 함수**뿐이다 — 하트비트와 연결 칩이 같은 것을 부른다 (§16.7 G8-a).
+    """지문 판정은 **한 함수**뿐이다 — 하트비트·연결 칩·운영 명부가 같은 것을 부른다 (G8-a).
 
-    ⚠ 이 테스트는 처음에 **아무것도 잠그지 않았다**(qa 적대리뷰 M4b 생존 실증). 슬라이스
-    앵커가 컬럼 0 의 `"\nreturn JSONResponse"` 였는데 `oauth_as.py` 의 모든
-    `return JSONResponse` 는 들여쓰기돼 있어 무매치 → `fn` 이 함수가 아니라 **파일 하단
-    687줄**이 됐고, 부재 단언은 diff 가 이미 지운 죽은 식별자(`!= _deployed`)를 grep 했다.
-    그 상태에서 「판정을 한 번 부르고 곧바로 로컬 재파생으로 덮어쓰는」 뮤턴트가 통과했다.
+    ⚠ 첫 판본은 텍스트 슬라이스라 아무것도 잠그지 않았고, 두 번째 판본은 `ast.Assign` 만
+    모아 **동작을 바꾸는 변형 셋이 생존**했다(qa 적대리뷰 M4b-v1/v2/v3):
+      · `runner_stale: bool = False` — `AnnAssign` 이라 수집되지 않음
+      · `if (runner_stale := False): pass` — `NamedExpr` 라 수집되지 않음
+      · `runner_build_is_stale(None)` — 인자를 안 봐서 상수 `None`(=항상 최신)이 통과
+    셋 다 연결 칩을 **영구 초록**으로 만든다 — 이 테스트가 이름 붙인 바로 그 fail-open.
 
-    그래서 텍스트가 아니라 **AST** 로 본다: `connect_status` 안에서 `runner_stale` 에 대한
-    대입이 정확히 하나이고, 그 값이 `runner_build_is_stale(...)` 호출임을 단정한다. 예외
-    블록의 `runner_stale = False`(거짓 경고 방지)는 판정이 아니라 fallback 이므로 허용하되,
-    **판정 호출은 하나**여야 한다.
+    그래서 **모든 바인딩 형태**를 모으고 **인자가 리터럴이 아님**까지 본다.
     """
     import ast
     import pathlib
@@ -403,28 +402,57 @@ def test_staleness_predicate_has_exactly_one_home():
     import routers.ai_tools as ai_tools
 
     assert callable(getattr(ai_tools, "runner_build_is_stale", None)), "단일 판정 함수가 없다"
-    src = (pathlib.Path(__file__).resolve().parents[1]
-           / "src" / "routers" / "oauth_as.py").read_text(encoding="utf-8")
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "routers"
+    src = (root / "oauth_as.py").read_text(encoding="utf-8")
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
               and n.name == "connect_status")
 
-    assigns = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)
-               and any(isinstance(t, ast.Name) and t.id == "runner_stale" for t in n.targets)]
-    calls = [n for n in assigns if isinstance(n.value, ast.Call)]
+    binds = []
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "runner_stale"
+                   for tgt in n.targets for t in ast.walk(tgt)):
+                binds.append((n, n.value))
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            if isinstance(n.target, ast.Name) and n.target.id == "runner_stale":
+                binds.append((n, n.value))
+
+    calls = [(n, v) for n, v in binds if isinstance(v, ast.Call)]
     assert len(calls) == 1, (
         f"`runner_stale` 을 만드는 호출이 {len(calls)}개다 — 판정이 하나여야 한다")
-    called = calls[0].value.func
+    called = calls[0][1].func
     name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
-    assert name == "runner_build_is_stale", (
-        f"연결 칩이 자기 판정을 다시 적는다(호출 대상: {name})")
-    # 나머지 대입은 전부 **상수 fallback** 이어야 한다(재파생 금지).
-    for n in assigns:
-        if n in calls:
+    assert name == "runner_build_is_stale", f"연결 칩이 자기 판정을 다시 적는다(호출: {name})"
+    # 인자가 **리터럴이면** 판정이 아니라 상수다 — `None` 하나로 영구 초록이 된다.
+    args = calls[0][1].args
+    assert args and not isinstance(args[0], ast.Constant), (
+        "판정 함수에 상수를 넘긴다 — 호출 모양만 남기고 판정을 없앤 것이다")
+    # 나머지 바인딩은 전부 **상수 fallback** 이어야 한다(재파생·재대입 금지).
+    for n, v in binds:
+        if any(n is cn for cn, _ in calls):
             continue
-        assert isinstance(n.value, ast.Constant), (
-            "판정을 부른 뒤 로컬 재파생으로 덮어쓰고 있다 — 두 판정이 갈릴 준비를 마쳤다")
-    # 함수 안 어디에도 배포본 지문을 직접 읽어 비교하는 코드가 없어야 한다.
+        assert v is None or isinstance(v, ast.Constant), (
+            "판정을 부른 뒤 다른 값으로 덮어쓰고 있다 — 두 판정이 갈릴 준비를 마쳤다")
+    # ⚠ 「나머지는 상수」만으로는 **판정 뒤에 상수를 덧대는** 변형을 못 막는다 — 이 자리로
+    #   qa 의 M4b-v1(`runner_stale: bool = False`)·v2(`if (runner_stale := False): pass`)가
+    #   실제로 생존했다(실측: 봉인 전 두 변형 모두 EXIT=0). 형태를 다 모아도 **순서**를 안
+    #   보면 마지막 값이 판정을 이긴다. 그래서 위치까지 본다 —
+    #     · 판정 호출은 자기 갈래(try body)의 **마지막 문장**이고
+    #     · 다른 상수 바인딩은 호출 **앞**(초기값)이거나 같은 try 의 **except 갈래**뿐이다.
+    #   두 조건이 함께여야 「호출 뒤 덧대기」가 닫힌다.
+    call_node = calls[0][0]
+    owner = next((t for t in ast.walk(fn)
+                  if isinstance(t, ast.Try) and any(s is call_node for s in t.body)), None)
+    assert owner is not None, "판정 호출이 try 갈래 안에 없다 — 실패가 거짓 경고로 나간다"
+    assert owner.body[-1] is call_node, (
+        "판정 호출이 자기 갈래의 마지막이 아니다 — 뒤에 온 값이 판정을 덮는다(fail-open)")
+    _in_handler = {id(x) for h in owner.handlers for x in ast.walk(h)}
+    for n, _v in binds:
+        if n is call_node:
+            continue
+        assert id(n) in _in_handler or n.lineno < owner.lineno, (
+            "판정 호출 **뒤에** `runner_stale` 을 다시 묶는다 — 판정이 장식이 됐다")
     for n in ast.walk(fn):
         if isinstance(n, ast.Call):
             f = n.func
@@ -432,129 +460,41 @@ def test_staleness_predicate_has_exactly_one_home():
             assert nm != "_deployed_runner_build", (
                 "연결 칩이 배포본 지문을 직접 읽는다 — 판정이 두 벌이 된다")
 
+    # 세 번째 소비처(운영 명부)도 같은 함수를 부른다 — 한 곳만 놓쳐도 그 화면만 조용해진다
+    # (backend 적대리뷰 B2-R1: 그 상태에서 이 버그를 분류할 콘솔만 경고를 안 띄웠다).
+    ops_tree = ast.parse((root / "ai_ops.py").read_text(encoding="utf-8"))
+    roster = next(n for n in ast.walk(ops_tree)
+                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and n.name == "_runner_roster")
+    roster_calls = {(c.func.id if isinstance(c.func, ast.Name) else getattr(c.func, "attr", ""))
+                    for c in ast.walk(roster) if isinstance(c, ast.Call)}
+    assert "runner_build_is_stale" in roster_calls, "운영 명부가 자기 판정을 다시 적는다"
+    # ⚠ 텍스트로 `"!= deployed" not in ops` 를 보면 **이 변경을 설명하는 주석**이 그 문자열을
+    #   인용해 거짓 FAIL 이 난다(실측). 부재는 **AST 로** 본다 — `deployed` 를 피연산자로 쓰는
+    #   비교가 함수 안에 남아 있으면 판정이 다시 두 벌이 된 것이다.
+    for cmp_node in (n for n in ast.walk(roster) if isinstance(n, ast.Compare)):
+        names = {x.id for x in ast.walk(cmp_node) if isinstance(x, ast.Name)}
+        assert "deployed" not in names, (
+            "운영 명부가 배포본 지문을 직접 비교한다 — 복제된 판정이 되살아났다")
+
 
 def test_deployed_fingerprint_unknown_is_not_a_false_alarm(monkeypatch):
     """배포본 지문을 **못 읽으면** 판정하지 않는다 — 모르는 것을 stale 로 부르지 않는다.
 
-    이 방향의 fail-safe 는 위 fail-closed 와 모순되지 않는다: 게이트가 요구하는 것은 「기준을
-    아는가」이고, 기준이 없으면 어떤 러너도 구버전으로 단정할 근거가 없다. 이것이 없으면
-    파일 권한 하나로 전 사용자에게 거짓 갱신 지시가 나간다.
+    이것이 없으면 파일 권한 하나로 전 사용자에게 거짓 갱신 지시가 나간다. 신고 쪽 unknown
+    (`None`)도 같은 방향이다 — 조회 실패·컬럼 부재는 「구버전」이 아니라 「모름」이다.
     """
     import routers.ai_tools as ai_tools
 
     monkeypatch.setattr(ai_tools, "_deployed_runner_build", lambda: "")
     assert ai_tools.runner_build_is_stale("") is False
     assert ai_tools.runner_build_is_stale("0" * 12) is False
+    assert ai_tools.runner_build_is_stale(None) is False
 
-
-# -- 능력 신고 자격 게이트 (사용자 제보 2026-09-01: 「연결한 AI 에 없는 모델이 뜬다」) ----
-#
-# 폴백을 제거한 러너를 배포해도 **사용자 머신의 러너를 우리가 갱신할 수는 없다.** 낡은 빌드가
-# 자기 소스의 내장 표(`gpt-5.1-codex`)를 계속 신고했고 카탈로그가 그것을 그대로 그렸다.
-# 이제 `caps_self_report` 를 신고한 러너의 목록만 화면에 나간다.
-
-
-def test_untrusted_runner_report_is_not_rendered(client, signed_in, monkeypatch):
-    """자격 없는 러너(구 빌드)의 목록은 **화면에 나가지 않는다**.
-
-    저장된 값이 멀쩡한 JSON 이어도 그렇다 — 문제는 모양이 아니라 **출처**다. 그 목록이 AI 의
-    응답인지 러너 소스에 적혀 있던 내장 표인지 서버는 구별할 수 없고, 구별할 수 없으면
-    「목록의 출처는 연결된 AI」라는 이 기능의 계약이 화면에서 거짓이 된다.
-    """
-    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
-    monkeypatch.setattr(
-        appmod, "_connect_memory",
-        # 구 러너: `console_jobs` 만 신고한다(`caps_self_report` 를 모른다).
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
-    payload = client.get(ENDPOINT).json()
-
-    assert payload["models"] == [], "자격 없는 러너의 목록이 화면에 나갔다"
-    # ⚠ 스캔 대상은 **전체 응답 본문**이다. 종전엔 방금 비었다고 단정한 `models` 를 순회해
-    #   구조적으로 vacuous 였다(qa 적대리뷰) — `models` 가 잘못 채워져도 통과했을 것이다.
-    #   사용자가 실제로 제보한 그 문자열을, 비어 있지 **않은** 페이로드에서 찾는다.
-    assert "gpt-5.1" not in json.dumps(payload, ensure_ascii=False), (
-        "사용자가 제보한 폐기 세대가 응답 어딘가에 남아 있다")
-    assert payload["model_selector"] == "hidden"
-    assert payload["default_model"] is None, "고를 수 없는데 기본값을 말한다"
-
-
-def test_untrusted_runner_says_why_and_what_to_do(client, signed_in, monkeypatch):
-    """감추기만 하지 않고 **이유와 다음 행동**을 말한다.
-
-    사유 없이 항목만 사라지면 사용자는 기능이 없어진 것으로 읽는다 — 앞선 cycle 이 정확히 그
-    마찰(「모델·추론 강도가 안 보인다」)로 되돌아왔다. 상태는 문구가 아니라 **별도 불리언**으로
-    준다(프런트가 문구를 파싱하면 문구를 다듬는 날 조용히 어긋난다).
-    """
-    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
-    monkeypatch.setattr(
-        appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
-    payload = client.get(ENDPOINT).json()
-
-    assert payload["runner_caps_stale"] is True, "구 러너라는 사실이 값으로 나가지 않는다"
-    assert payload["runner_download_url"].endswith("/static/agent/bridge_agent.py")
-    reason = payload["model_selector_reason"]
-    assert "다시 실행" in reason, "다음 행동을 말하지 않는다"
-    # §16.8 UI copy budget — 안내는 한 문장이다(설명문으로 자라지 않게).
-    assert len(reason) <= 80, f"안내가 예산을 넘었다({len(reason)}자)"
-
-
-def test_no_runner_keeps_the_old_message_not_the_update_notice(client, signed_in, monkeypatch):
-    """러너가 **없는** 것과 러너가 **낡은** 것은 다른 사실이다.
-
-    둘을 한 문구로 뭉개면, 러너를 아예 켜지 않은 사람에게 「최신 실행 파일로 다시 실행」이라는
-    (그 사람에게는 틀린) 지시가 나간다.
-    """
-    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
-    payload = client.get(ENDPOINT).json()  # signed_in 기본 커넥션 = 러너 없음
-    assert payload["runner_caps_stale"] is False
-    assert "다시 실행" not in payload["model_selector_reason"]
-
-
-def test_trusted_runner_is_unaffected(client, signed_in, monkeypatch):
-    """자격 있는 러너는 **종전 그대로** 보인다 (§16.7 G9-c 정상 경로 실측).
-
-    차단 게이트를 신설할 때 「정확히 발동하는가」만 보면, 정상 사용자를 막아 놓고 통과를
-    선언하게 된다. 거짓양성의 대가는 정의상 정상 사용자가 치른다.
-    """
-    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
-    monkeypatch.setattr(
-        appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
-    payload = client.get(ENDPOINT).json()
-    assert payload["model_selector"] == "visible"
-    assert payload["runner_caps_stale"] is False
-    assert [m["value"] for m in payload["models"]] == [
-        "claude:opus", "claude:sonnet", "codex:gpt-5.1-codex"]
-
-
-def test_gate_lives_in_the_store_so_every_consumer_inherits_it():
-    """게이트는 **저장 계층의 관문**에 있다 — 소비처마다 걸지 않는다 (§16.7 G8-a).
-
-    능력 소비처가 셋이다(카탈로그 · 저장 선택 복원 · 얇은 래퍼). 소비처마다 걸면 하나를
-    빠뜨리는 순간 그 경로로 낡은 목록이 되살아난다 — 실제로 저장 선택 복원
-    (`_bridge_model_offered`)은 카탈로그와 다른 파일에 있어 눈에 잘 띄지 않는다.
-    """
-    import oauth_store as _st
-
-    # 자격 없는 features 를 준 행은 목록이 비어 나온다.
-    class _Cur(_FakeCursor):
-        pass
-
-    untrusted = _st.account_runner_profile(
-        _Cur((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")), 1)
-    assert untrusted["capabilities"] == [] and untrusted["caps_contract_declared"] is False
-    assert untrusted["listening"] is True, "능력 게이트가 «연결됨» 까지 껐다"
-    assert untrusted["features"] == ["console_jobs"], "능력 게이트가 콘솔 위임 자격까지 껐다"
-
-    trusted = _st.account_runner_profile(
-        _Cur((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")), 1)
-    assert trusted["caps_contract_declared"] is True
-    assert [r["runtime"] for r in trusted["capabilities"]] == ["claude", "codex"]
-
-    # 얇은 래퍼와 저장 선택 복원이 같은 관문을 지난다.
-    assert _st.account_runner_capabilities(
-        _Cur((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")), 1) == []
+    monkeypatch.setattr(ai_tools, "_deployed_runner_build", lambda: "abcdef123456")
+    assert ai_tools.runner_build_is_stale(None) is False, "신고 쪽 «모름» 을 stale 로 단정했다"
+    assert ai_tools.runner_build_is_stale("") is True, "지문 미신고(구 빌드)를 최신으로 읽는다"
+    assert ai_tools.runner_build_is_stale("abcdef123456") is False
 
 
 def test_connect_status_exposes_staleness_as_a_single_boolean():
@@ -585,195 +525,6 @@ def test_chip_shows_a_distinct_state_for_stale_runner():
     assert "!!b.runner_stale" in js, "서버 값이 칩까지 도달하지 않는다"
     css = (base / "css" / "search-audit.css").read_text(encoding="utf-8")
     assert '.ai-conn[data-state="stale"]' in css, "스타일이 없어 정상 상태와 같아 보인다"
-
-
-def test_frontend_actually_renders_the_hidden_reason():
-    """사유가 **화면까지 도달한다** — 서버가 내려보내기만 하고 아무도 안 읽으면 무행위다.
-
-    `model_selector_reason` 은 2026-08-28 부터 응답에 있었지만 **소비처가 0개**였다(실측).
-    그래서 선택기가 사라진 화면은 이유를 말하지 못했고, 그 침묵이 앞선 cycle 의 제보
-    (「모델·추론 강도가 안 보인다」)를 만들었다. 값의 존재와 도달은 다른 사실이다.
-
-    ⚠ **이 저장소 CI 는 pytest 전용이라 JS 를 실행하지 않는다**(테스트 컨테이너에 node 부재 —
-    실측). 그래서 여기서는 «렌더된 결과» 가 아니라 «그 결과를 만드는 구조» 를 본다. 동작
-    자체는 `tests/verify_selector_note.mjs`(jsdom, 10 케이스)가 잡고, 그것이 M3(극성 반전)·
-    M8(빈 행 잔존)·링크 미배선 세 뮤턴트를 **실제로 죽인다는 것을 실증**했다.
-
-    아래 단언은 그 하네스가 CI 밖이라는 사실을 메우는 최소 구조 게이트다 — 특히 **극성**을
-    본다(종전 `assert "hidden ?" in fn or "hidden\n" in fn` 은 어느 극성에도 매치하는
-    자유 통과권이었다).
-    """
-    import pathlib
-    import re
-
-    base = pathlib.Path(__file__).resolve().parents[1] / "src" / "static"
-    js = (base / "app" / "composer.js").read_text(encoding="utf-8")
-    assert "composerActionsSelectorNote" in js, "사유를 그리는 코드가 없다"
-
-    fn = js[js.index("function _applyComposerSelectorNote("):]
-    fn = fn[:fn.index("\nfunction ")] if "\nfunction " in fn else fn
-    assert "model_selector_reason" in fn, "서버 사유를 읽지 않는다(프론트가 문구를 짓는다)"
-
-    # 극성: **보이는 상태에서 조기 반환하며 비운다.** `!hidden` 가드가 사라지거나 뒤집히면
-    # 안내가 목록이 돌아온 화면에 남는다 — 그 자체가 거짓말이다(mjs M3 가 잡는 것).
-    early = re.search(r"if \(!hidden\)\s*\{(.*?)\}", fn, re.S)
-    assert early, "보이는 상태를 조기 반환으로 가르지 않는다(극성이 뒤집혀도 통과하게 된다)"
-    assert 'textContent = ""' in early.group(1) and '"hidden"' in early.group(1), (
-        "보이는 상태에서 안내를 비우지 않는다")
-
-    # 빈 사유는 **숨긴다** — 상수 `false` 로 굳으면 빈 패딩 행이 메뉴에 영구히 남는다(M8).
-    assert 'toggle("hidden", !reason)' in fn, "빈 사유일 때 안내 행을 숨기지 않는다"
-
-    # 받을 곳까지 준다 — 응답에만 있고 소비처가 0 이던 필드를 실제로 읽는다(적대리뷰 C2).
-    assert "runner_download_url" in fn, "「최신 실행 파일」을 말하면서 받을 곳을 주지 않는다"
-    assert "createElement" in fn and "href" in fn, "다운로드 경로가 링크로 그려지지 않는다"
-
-    # 카탈로그를 못 받은 상태에도 말을 한다(가장 흔한 실패에서 선택기가 설명 없이 사라졌다).
-    assert "COMPOSER_NOTE_NO_CATALOG" in js, "카탈로그 부재 시 안내가 비어 조용히 사라진다"
-
-    # 숨김을 반영하는 경로에서 **실제로 불린다**(정의만 있고 호출이 없으면 영영 안 뜬다).
-    apply_fn = js[js.index("function _applyComposerSelectorVisibility("):]
-    apply_fn = apply_fn[:apply_fn.index("\n// feature-0043 caps-trust-gate")]
-    assert "_applyComposerSelectorNote(" in apply_fn, "사유 갱신이 배선되지 않았다"
-
-    # DOM 자리와 스타일이 실재하고, ARIA role 이 `role="menu"` 에 유효하다.
-    html = (base / "index.html").read_text(encoding="utf-8")
-    assert 'id="composerActionsSelectorNote"' in html, "사유를 담을 자리가 DOM 에 없다"
-    i = html.index('id="composerActionsSelectorNote"')
-    note_tag = html[html.rindex("<", 0, i):html.index(">", i) + 1]
-    assert 'role="note"' not in note_tag, (
-        "`role=note` 는 `role=menu` 의 owned element 로 무효 — 보조기술이 이 줄을 건너뛴다")
-    assert 'aria-live="polite"' in note_tag, "카탈로그 리로드 후 나타나는 안내를 알리지 않는다"
-    css = (base / "css" / "chat.css").read_text(encoding="utf-8")
-    assert ".composer-actions-note {" in css, "사유 스타일이 없어 메뉴 항목처럼 보인다"
-
-    # 동작 하네스가 **실재해야** 이 테스트의 «CI 밖에서 잡는다» 는 주장이 참이 된다.
-    assert (pathlib.Path(__file__).parent / "verify_selector_note.mjs").exists(), (
-        "동작 하네스가 사라졌다 — 이 테스트의 구조 단언만으로는 렌더 결과를 보지 못한다")
-
-
-# -- 적대 패널 2026-09-01 조치 회귀 (security·backend·qa) ---------------------------
-
-
-def test_untrusted_write_does_not_leave_a_fossil_list(monkeypatch):
-    """능력을 싣지 못한 신고는 **이전 능력을 무효화**한다 (backend B1).
-
-    `COALESCE(%s, t.RunnerCapabilities)` 는 `capabilities is None` 일 때 과거를 남기는데
-    같은 문장이 `RunnerFeatures` 는 새 값으로 덮는다. 그 조합이면 구 러너가 저장한
-    `gpt-5.1-codex` 가 새 러너의 계약 선언을 얻어 「쓸 수 있는 모델」로 인증된다 —
-    읽기 게이트를 우회해 **쓰기 경로로** 결함이 부활하는 형태다.
-    """
-    seen = {}
-
-    class _Cur:
-        rowcount = 1
-
-        def execute(self, sql, params=None):
-            seen["sql"] = sql
-            seen["params"] = params
-
-        def close(self):
-            return None
-
-    store.set_runner_report(_Cur(), "mat_x", None, ["console_jobs", "caps_self_report"],
-                            "2026.09.01", "abcdef123456")
-    assert seen["params"][0] == "[]", (
-        "능력 미탑재 신고가 `None` 으로 나가 COALESCE 가 옛 목록을 남긴다(화석)")
-    # 반대로 실제 목록이 있으면 그대로 나간다 — 가드가 정상 경로를 삼키지 않는다.
-    store.set_runner_report(_Cur(), "mat_x", '[{"runtime":"claude"}]',
-                            ["console_jobs", "caps_self_report"], "2026.09.01", "abcdef123456")
-    assert seen["params"][0] == '[{"runtime":"claude"}]'
-
-
-def test_mixed_runners_fail_closed_and_say_which_action(client, signed_in, monkeypatch):
-    """옛 러너와 새 러너가 함께 살아 있으면 **감추고, 옛 것을 끄라고** 말한다 (B4).
-
-    종전엔 가장 최근 하트비트 한 행만 봐서 선택기가 30초마다 깜빡였다 — 사용자는 안내가
-    시킨 대로 새 러너를 실행했는데 화면이 계속 낡았다고 말한다. 신뢰된 행을 *선호*하는
-    대안은 기각했다: 그 목록으로 고른 모델을 실제로 가져가는 것이 미선언 러너일 수 있고,
-    그러면 「고를 수 있는데 반영은 안 되는」 상태가 정확히 되돌아온다.
-    """
-    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
-    rows = [
-        (json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.09.01"),
-        (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31"),
-    ]
-
-    class _MultiCursor(_FakeCursor):
-        def __init__(self):
-            super().__init__(rows[0])
-
-        def fetchall(self):
-            return rows
-
-    class _MultiConn(_FakeConn):
-        def cursor(self):
-            return _MultiCursor()
-
-    monkeypatch.setattr(appmod, "_connect_memory", lambda: _MultiConn())
-    payload = client.get(ENDPOINT).json()
-    assert payload["models"] == [], "미선언 러너가 함께 있는데 목록이 나갔다"
-    assert payload["runner_mixed"] is True
-    assert "종료" in payload["model_selector_reason"], (
-        "이미 갱신한 사용자에게 「갱신하세요」라는 (그에겐 거짓인) 지시가 나간다")
-
-
-def test_malformed_features_are_not_a_declaration(monkeypatch):
-    """`RunnerFeatures` 가 NULL·비CSV 여도 **선언으로 읽지 않는다**.
-
-    `parse_runner_features` 가 malformed 이름을 조용히 버리므로, 게이트가 그 빈 결과를
-    선언으로 오독하면 미선언 러너의 목록이 통과한다.
-    """
-    for raw in (None, "", "   ", "!!!", "caps_self_reportX", ",,,"):
-        assert store.declares_caps_contract(store.parse_runner_features(raw)) is False, raw
-    assert store.declares_caps_contract(
-        store.parse_runner_features("console_jobs,caps_self_report")) is True
-
-
-def test_token_profile_shares_the_same_gate():
-    """두 번째 관문(`token_runner_profile`)도 같은 게이트를 지난다 (C1).
-
-    per-runner 정확성이 필요한 다음 소비자는 자연스럽게 이쪽으로 손을 뻗는다 — 저장소가
-    이미 그쪽이 authz 에 더 옳다고 가르치고 있기 때문이다. 그때 미게이트 목록을 받으면
-    이번에 닫은 경로가 조용히 다시 열린다.
-    """
-    row = (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.09.01")
-
-    class _Cur(_FakeCursor):
-        pass
-
-    got = store.token_runner_profile(_Cur(row), "mat_x")
-    assert got["capabilities"] == [] and got["caps_contract_declared"] is False
-    assert got["listening"] is True and got["features"] == ["console_jobs"], (
-        "능력 게이트가 콘솔 위임 자격·연결 표시까지 껐다")
-
-
-def test_every_capabilities_producer_passes_the_gate():
-    """`RunnerCapabilities` 를 투영하는 **모든** 함수가 게이트를 지난다 (§16.7 G8-a).
-
-    「여기가 유일한 관문」이라는 주장은 호출 그래프의 우연으로만 참이었다(적대리뷰 C1).
-    관문이 load-bearing 이면 서술이 아니라 **구조로** 강제한다.
-    """
-    import ast
-    import pathlib
-
-    src = (pathlib.Path(__file__).resolve().parents[1] / "src" / "oauth_store.py")
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    offenders = []
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        body = ast.unparse(fn)
-        if "RunnerCapabilities" not in body:
-            continue
-        if "'capabilities'" not in body and '"capabilities"' not in body:
-            continue          # 컬럼은 읽지만 목록을 투영하지 않는다(쓰기·집계 등)
-        if "declares_caps_contract" not in body:
-            offenders.append(fn.name)
-    assert not offenders, (
-        f"게이트를 지나지 않고 capabilities 를 투영하는 함수: {offenders}")
-
-
 def test_sanitizer_drops_runtimes_without_live_provenance():
     """런타임별 provenance 가 없는 신고는 **수신 시점에** 떨어진다 (qa §3).
 
@@ -793,7 +544,7 @@ def test_sanitizer_drops_runtimes_without_live_provenance():
     assert ai_tools._sanitize_runtimes(_rt(None)) == [], "출처 미신고(구 러너)가 통과했다"
     assert ai_tools._sanitize_runtimes(_rt("builtin")) == [], (
         "내장 표 출처가 통과했다 — `gpt-5.1-codex` 가 화면에 뜬 그 경로다")
-    for good in ("probe", "cache", "ollama"):
+    for good in ("probe", "cache"):
         got = ai_tools._sanitize_runtimes(_rt(good))
         assert len(got) == 1 and got[0]["runtime"] == "codex", good
         assert "source" not in got[0], "저장 스키마에 출처가 새어 들어갔다(4키 계약)"
