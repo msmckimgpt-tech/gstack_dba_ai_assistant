@@ -3503,6 +3503,34 @@ def _deployed_runner_build() -> str:
 _DEPLOYED_RUNNER_BUILD: str | None = None
 
 
+def runner_build_is_stale(reported_build: str) -> bool:
+    """이 러너가 배포본과 **다른 파일**로 돌고 있는가. 판정은 여기 하나뿐이다.
+
+    ## 왜 함수인가 (§16.7 G8-a)
+
+    같은 술어가 `_runner_update_hint`(하트비트 응답)와 `oauth_as.connect_status`(연결 칩)에
+    복제돼 있었다. 복제된 판정은 한쪽만 고쳐지는 순간 갈리고, 갈린 뒤에는 「칩은 초록인데
+    하트비트는 구버전이라 한다」 같은 상태가 된다 — 이 feature 가 인증 축(P0-R)에서 이미
+    한 번 겪은 형태다. 술어를 하나로 두면 그 갈림이 구조적으로 불가능해진다.
+
+    ## 지문 부재는 «같음» 이 아니라 «더 오래됨» 이다 (사용자 제보 2026-09-01, 4차 재발)
+
+    종전 판정은 `deployed and reported and reported != deployed` 였다 — 지문을 신고하지 않는
+    러너를 조용히 «최신» 으로 통과시켰다. 그런데 **지문 신고 자체가 배포본의 일부**이므로,
+    신고가 없다는 것은 그 변경 이전 빌드라는 증거다. 즉 fail-open 이 걸린 모집단이 정확히
+    「낡은 러너」였다. 라이브 실측(2026-09-01): 08-31 16:55 빌드가 `RunnerBuild=''` 로 돌며
+    `runner_update.current=True` 를 받는 동안, 화면에는 그 러너가 내장 표에서 신고한
+    `gpt-5.1-codex`(그 계정이 쓸 수 없는 폐기 세대)가 떠 있었다.
+
+    판정의 유일한 전제는 **배포본 지문을 우리가 아는가**다. 못 읽으면(파일 부재·권한) 대조
+    기준이 없으므로 판정하지 않는다 — 모르는 것을 stale 로 부르면 거짓 경고가 된다.
+    """
+    deployed = _deployed_runner_build()
+    if not deployed:
+        return False
+    return str(reported_build or "") != deployed
+
+
 def _runner_update_hint(agent_version: str, features: object,
                         agent_build: str = "") -> dict:
     """러너가 최신인가 — 아니면 무엇을 하면 되는가.
@@ -3524,10 +3552,9 @@ def _runner_update_hint(agent_version: str, features: object,
         ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
     fresh = version_at_least(agent_version, RUNNER_MIN_AGENT_VERSION)
     supports = RUNNER_FEATURE_CONSOLE_JOBS in declared
-    deployed = _deployed_runner_build()
-    # 양쪽 지문을 다 아는 경우에만 판정한다 — 한쪽이라도 비면 "다르다" 고 말할 근거가 없다
-    # (구 러너는 지문을 아예 신고하지 않는다).
-    stale_build = bool(deployed and agent_build and agent_build != deployed)
+    # 판정은 `runner_build_is_stale` 하나뿐이다 — 연결 칩(`oauth_as.connect_status`)도
+    # 같은 함수를 부른다(§16.7 G8-a: 복제된 술어는 한쪽만 고쳐지는 순간 갈린다).
+    stale_build = runner_build_is_stale(agent_build)
     return {
         "current": bool(fresh and supports and not stale_build),
         "min_version": RUNNER_MIN_AGENT_VERSION,

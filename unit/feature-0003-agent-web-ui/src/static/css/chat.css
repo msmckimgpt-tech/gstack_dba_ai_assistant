@@ -1463,6 +1463,18 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
 .composer-actions-caret {
   color: var(--muted, #9ca3af);
 }
+/* feature-0043 caps-trust-gate: 모델·추론 항목이 숨겨진 이유 1줄. 항목이 아니라 안내라
+   버튼 높이·hover 를 갖지 않는다(누를 것이 없는데 누를 수 있어 보이면 안 된다). */
+.composer-actions-note {
+  margin: 2px 0 0;
+  padding: 6px 10px 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted, #6b7280);
+  white-space: normal;
+  word-break: keep-all;
+}
+.composer-actions-note.hidden { display: none; }
 
 /* Secondary popup — 모델 선택 (description 포함). primary 우측 fixed 로 띄움. */
 .composer-model-menu {

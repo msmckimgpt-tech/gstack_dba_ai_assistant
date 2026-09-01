@@ -2101,3 +2101,51 @@ PB-0008 실 Windows 브라우저 POST-DEPLOY.
 CSS 세 줄(단계 300 · SQL 320 · 결과표 460)이며 구조 변경 없이 바꿀 수 있다.
 
 캡처: `artifacts/pb0008-steps-result-split/` (git 밖, §2). 검증 DOM 제거 확인.
+
+---
+
+## CHG-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 능력 신고 자격 게이트 (4차 재발 봉인)
+
+**제보 (2026-09-01)**: 「연결한 AI에 정합하지 않은 모델 목록이 나타나는 이슈 (gpt-5.1 등)」.
+08-31 에 같은 제보를 세 번 받아 폴백 제거·재시도·지문 신고를 배포했는데 네 번째로 돌아왔다.
+
+**원인**: 세 수정 모두 **러너 안**에서 계약을 지켰다. 그런데 러너는 사용자 머신의 파일이고
+우리는 그것을 갱신할 수 없다 — 낡은 빌드가 자기 소스의 내장 표를 계속 신고했고, 서버는
+그 신고의 **출처를 검증할 수단이 없어** 그대로 화면에 그렸다. 게다가 3차 수정의 지문 대조가
+`deployed and reported and ...` 라 **지문을 신고하지 않는 러너**(= 결함을 가진 바로 그
+모집단)를 조용히 «최신» 으로 통과시켰다.
+
+라이브 3중 대조: 러너 파일 `af7c3fe19808`(폴백 제거 이전) · 로그 「codex: 응답을 받지 못해
+내장 기본값을 씁니다」 · DB `WebOAuthTokens.Id=83` 의 `RunnerCapabilities` 에
+`gpt-5.1-codex`·`-mini`, `RunnerBuild=''`.
+
+**변경**
+
+- `shared/bridge_tasks.py`: `RUNNER_FEATURE_CAPS_SELF_REPORT = "caps_self_report"` 신설
+  (자격 이름의 단일 정본). 버전·지문이 아니라 **기능 신고**를 축으로 고른 이유를 주석에 명시 —
+  버전은 날짜 단위라 같은 날을 못 가르고(3차 재발의 원인), 지문은 동일성 축이라 게이트로 쓰면
+  러너 파일을 고치는 **모든 배포**가 멀쩡한 사용자의 선택기까지 지운다.
+- `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` (+ 서빙 미러
+  `unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`): `AGENT_FEATURES` 에
+  `caps_self_report` 추가.
+- `unit/feature-0003-agent-web-ui/src/oauth_store.py`: `_caps_trusted()` 신설 +
+  `account_runner_profile` 이 자격 없는 신고의 `capabilities` 를 빈 목록으로 내리고
+  `caps_trusted` 를 함께 반환. **관문을 저장 계층에 둔 이유**는 능력 소비처가 셋
+  (카탈로그·저장 선택 복원·얇은 래퍼)이고 뒤 둘이 모두 이 함수를 지나기 때문(§16.7 G8-a).
+  `features`·`agent_version`·`listening` 축은 불변 — 콘솔 위임까지 끊지 않는다.
+- `unit/feature-0003-agent-web-ui/src/routers/system.py`: `account_runner_capabilities` →
+  `account_runner_profile` 로 바꿔 목록과 자격을 **한 행에서** 읽는다. `runner_caps_stale` ·
+  `runner_download_url` 을 응답에 추가하고 `model_selector_reason` 을 상태별로 가른다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py`: `runner_build_is_stale()` 신설 —
+  지문 판정의 **단일 정본**. 지문 부재를 stale 로 판정(fail-closed). 배포본 지문을 못 읽으면
+  판정하지 않는다(거짓 경고 방지).
+- `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py`: `connect_status` 가 자기 비교를
+  버리고 위 단일 판정을 호출 — 종전엔 같은 술어가 2벌이었다.
+- 프런트 `static/index.html`·`css/chat.css`·`app/composer.js`: 숨김 사유를 그리는
+  `#composerActionsSelectorNote` 신설. `model_selector_reason` 은 2026-08-28 부터 응답에
+  있었으나 **소비처가 0개**였다 — 값의 존재와 도달은 다른 사실이다.
+
+**테스트**: 신규 12건 + 갱신 4건. §16.7 G11-b 실증 — 소스만 `main` 으로 되돌린 상태에서
+**16건 전부 FAIL** 확인 후 복원. 구조 단정
+`test_builtin_model_table_never_reaches_the_report` 는 git 이력의 실제 결함 빌드
+(`82f3a160^` = `8766f0e6f32c`)에 걸어 `gpt-5.1-codex` 누출을 재현했다(내가 만든 뮤턴트 아님).

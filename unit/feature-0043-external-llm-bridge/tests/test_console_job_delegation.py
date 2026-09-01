@@ -140,9 +140,18 @@ def _iter_positions(hay: str, needle: str):
 # ── 러너: 콘솔 작업에 대화 프레이밍을 씌우지 않는다 ─────────────────────────────────
 
 def test_runner_declares_features_and_version():
-    """러너가 기능·버전을 신고한다 — 그것이 서버의 배급 자격이다."""
+    """러너가 기능·버전을 신고한다 — 그것이 서버의 배급 자격이다.
+
+    ⚠ 튜플 **전체**를 리터럴로 못박지 않는다 (caps-trust-gate, 2026-09-01). 자격이 하나 더
+    늘 때마다(`caps_self_report`) 이 단언이 회귀로 보고되는데, 여기서 지키려는 계약은
+    「콘솔 작업 자격을 신고하는가」이지 「자격이 정확히 하나인가」가 아니다. 배치 동의가
+    기본에 섞이지 않는 것은 아래 `test_batch_consent_is_opt_in_on_the_runner` 가 따로 잠근다.
+    """
     src = _RUNNER.read_text(encoding="utf-8")
-    assert 'AGENT_FEATURES: tuple[str, ...] = ("console_jobs",)' in src
+    decl = src.split("AGENT_FEATURES: tuple")[1].split("\n")[0]
+    assert f'"{bt.RUNNER_FEATURE_CONSOLE_JOBS}"' in decl, "콘솔 작업 자격을 신고하지 않는다"
+    assert f'"{bt.RUNNER_FEATURE_CAPS_SELF_REPORT}"' in decl, (
+        "능력 신고 자격이 없다 — 서버가 이 러너의 모델 목록을 화면에 그리지 않는다")
     assert f'AGENT_VERSION = "{bt.RUNNER_MIN_AGENT_VERSION}"' in src, (
         "러너 버전이 서버 하한과 다르다 — 자기 배포본이 자격 미달이 된다")
     assert 'body["features"] = list(self.features)' in src

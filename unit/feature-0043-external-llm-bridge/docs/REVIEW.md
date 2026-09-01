@@ -1835,3 +1835,70 @@ FAIL 한다. 기각을 「무시」로 끝내지 않고 **불변식으로 승격
 수치가 보여 준다 — 그리고 판단이 바뀔 수 있는 조정 지점 세 곳을 증적에 적어 두었다.
 **지적을 기각할 때는 그 지적이 옳았을 경우의 수치를 함께 남긴다** — 그래야 나중 사람이
 재판단할 수 있다.
+
+---
+
+## REV-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 왜 이 축을 골랐나
+
+**대안 3개를 놓고 골랐다.**
+
+1. **지문 일치(`agent_build == deployed`)를 게이트로** — 가장 엄격하지만 러너 파일을 고치는
+   **모든 배포**가 전 사용자의 선택기를 지운다. 목록이 멀쩡한(probe 로 얻은) 러너까지 함께
+   막히므로 거짓양성의 대가가 정상 사용자에게 간다(§16.7 G9-c 가 금지하는 형태). **기각.**
+2. **버전 하한(`RUNNER_MIN_AGENT_VERSION`) 상향** — `AGENT_VERSION` 이 날짜 단위라 같은 날
+   세 번 바뀐 러너를 못 가른다. 그것이 3차 재발의 원인이었다. 게다가 하한을 올리면 콘솔 작업
+   배급이라는 **무관한 축**까지 함께 끊긴다. **기각.**
+3. **기능 신고(`caps_self_report`)** — 「이 빌드가 그 계약을 지키는가」라는 정확히 그 질문에
+   답하고, 한 번 참이면 이후 배포에도 참이다. 낡은 러너는 이 이름을 모르므로 신고할 수 없어
+   자격의 부재가 **구조적으로** 보장된다. **채택.**
+
+**자격의 전제와 그 전제를 지키는 것**: 서버는 신고 내용의 출처를 검증할 수 없다 — 러너가
+「내 목록은 AI 가 답한 것뿐」이라 말한 것을 믿는다. 그래서 그 선언이 거짓이 되지 않도록
+`test_builtin_model_table_never_reaches_the_report` 로 잠갔다(§16.7 G11 — 게이트로 쓰는 검사
+자체의 진위). 폴백을 되살리면서 자격 이름을 남기면 게이트가 거짓을 통과시킨다.
+
+**감추는 것만으로는 부족하다**: 앞선 cycle 이 「모델·추론 강도가 안 보인다」로 되돌아온 적이
+있다. 그래서 사유를 화면까지 배선했다. `model_selector_reason` 은 08-28 부터 응답에 실려
+있었는데 **소비처가 0개**였다 — 「값이 있다」와 「사용자에게 도달한다」는 다른 사실이고,
+후자를 테스트로 잠갔다(§16.7 G9-d 소비 경로 완주와 같은 축).
+
+**정직 표기 — 이 수정이 하지 못하는 것**: 이미 도는 낡은 러너를 우리가 갱신하지는 못한다.
+바뀌는 것은 **화면이 거짓말을 멈추고 다음 행동을 말한다**는 것뿐이다. 그 사용자는 여전히
+러너를 다시 받아야 모델을 고를 수 있다. 이것이 이 문제의 실제 경계이고, 그 경계를 넘으려면
+서버가 사용자 머신의 프로세스를 말없이 교체해야 하는데 그것은 이 feature 가 지켜 온 경계
+(「러너를 띄운 사람의 설정을 낮추지 않는다」)를 넘는다.
+
+**부수 확인**: 라이브 러너가 12:13 에 재설치되어(빌드 `5aa59fe9904a`) 그 계정의 증상은
+사라졌고, `Id=83` 행에서 `gpt-5.1` 이 0건이 됐다 — 진단(「낡은 빌드가 원인」)의 대조군이다.
+증상 소멸이 **수정의 근거가 아니라 진단의 확인**이라는 점을 명시한다.
+
+- Verdict: 자체 검토 PASS. §18.8 dispatch — 아래 별도 entry 참조.
+
+---
+
+## REV-20260901T130500-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:security] — CONCERN
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint/contract · auth/token/session keyword matched (능력 신고 자격 게이트)
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-security.md
+- Critical issue: 지문 판정이 「신고 쪽 unknown」을 stale 로 단정 — `RunnerBuild` 컬럼 부재·쿼리 실패 배포에서 최신 러너 전원에게 거짓 갱신 지시
+- Human Approval Needed: no
+
+## REV-20260901T130501-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:backend] — BLOCK
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint/contract · schema/query keyword matched (저장 경로·관문·판정 술어)
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-backend.md
+- Critical issue: `set_runner_report` 의 `COALESCE` 가 능력만 낙오시키고 features 는 덮어써, 옛 `gpt-5.1` 목록이 새 러너의 자격 도장을 받아 서빙된다(결함이 쓰기 경로로 부활)
+- Human Approval Needed: no
+
+## REV-20260901T130502-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:qa] — BLOCK
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 검증 주장·테스트 계약 (§16.7 G9-c·G10·G11) — 뮤턴트 실증 기반
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-qa.md
+- Critical issue: 새 소스검사 단언 중 G11-b 가 실증된 것이 0건(16 FAILED 가 선행 단언에서 단락) + 생존 뮤턴트 6종 실증 + 브랜치가 main 대비 39 behind 라 머지 시 스위트 적색
+- Human Approval Needed: no

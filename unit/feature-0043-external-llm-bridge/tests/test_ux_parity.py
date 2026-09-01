@@ -977,10 +977,15 @@ def test_catalog_gates_selector_on_server_llm_state():
     assert '"visible" if visible else "hidden"' in body, (
         "차단 상태의 숨김/노출이 러너 신고 유무로 갈리지 않는다 — 한쪽으로 굳으면 "
         "'고를 게 없는데 선택기가 뜨거나' '신고했는데 영영 숨는다'")
-    assert "account_runner_capabilities" in body, (
+    assert "account_runner_profile(" in body, (
         "카탈로그가 러너 신고를 읽지 않는다 — 목록의 출처가 서버로 되돌아간 것이다(P0-T 재발)")
     assert '"model_selector": "visible"' in body, "게이트 해제 시 선택기를 복원하는 분기가 없다"
     assert "from shared.llm_gate import server_llm_enabled" in src
+    # caps-trust-gate (2026-09-01): 자격 없는 러너를 **구분해서** 말한다. 이 배선이 없으면
+    # 구 러너의 목록이 「고를 것이 없음」과 뭉개져 화면이 갱신 안내를 못 한다.
+    assert "caps_trusted" in body, "능력 신고의 자격을 읽지 않는다(구 러너 목록이 그대로 나간다)"
+    assert '"runner_caps_stale": runner_caps_stale' in body, (
+        "구 러너라는 사실이 값으로 나가지 않는다 — 프런트가 사유 문구를 파싱하게 된다")
 
 
 def test_catalog_never_guesses_runner_models_on_failure():

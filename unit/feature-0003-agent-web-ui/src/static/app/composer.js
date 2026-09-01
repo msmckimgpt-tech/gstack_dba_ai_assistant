@@ -3070,7 +3070,25 @@ function _applyComposerSelectorVisibility() {
       if (menu) menu.classList.add("hidden");
     });
   }
+  _applyComposerSelectorNote(hidden);
   return hidden;
+}
+
+// feature-0043 caps-trust-gate: 모델·추론 항목이 **왜** 없는지를 한 줄로 말한다.
+//
+// 서버가 실어 준 `model_selector_reason` 을 그대로 그린다 — 프론트가 문구를 지으면 서버가
+// 판정을 바꾼 날 그 문구만 낡아, 화면과 서버가 서로 다른 사실을 말한다. 문구를 파싱하지도
+// 않는다(상태는 `runner_caps_stale` 이라는 별도 값으로 온다).
+//
+// 보이는 상태에서는 안내를 **비운다** — 목록이 돌아왔는데 "고를 수 없다" 가 남아 있으면
+// 그 자체가 거짓이다.
+function _applyComposerSelectorNote(hidden) {
+  const el = document.getElementById("composerActionsSelectorNote");
+  if (!el) return;
+  const catalog = state.modelCatalog || state.apiVaultOptions;
+  const reason = hidden ? String(catalog?.model_selector_reason || "") : "";
+  el.textContent = reason;
+  el.classList.toggle("hidden", !reason);
 }
 
 function _updateComposerModelLabel() {

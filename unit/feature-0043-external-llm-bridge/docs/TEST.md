@@ -147,10 +147,20 @@ source_of_truth: true
 | TEST-20260831T183000-fingerprint | `_self_build` | 러너가 **자기 파일** 지문을 신고한다(파일이 바뀌면 지문도 바뀐다) | AC-20260831T183000-runner-version-sync-1 |
 | TEST-20260831T183000-hbcarry | `Api.heartbeat` | 지문·버전을 **매번** 싣는다(두 축 모두) | AC-20260831T183000-runner-version-sync-1 |
 | TEST-20260831T183000-once | `start_heartbeat` | 구버전 경고는 세션당 한 번 · 다음 행동까지 말한다 | AC-20260831T183000-runner-version-sync-2 |
-| TEST-20260831T183000-compare | `_deployed_runner_build`·`_runner_update_hint` | 배포본과 대조 · **양쪽을 다 알 때만** 판정(미신고를 구버전으로 단정하지 않음) | AC-20260831T183000-runner-version-sync-2 |
+| TEST-20260831T183000-compare | `_deployed_runner_build`·`_runner_update_hint` | 배포본과 대조(2026-09-01 개정: **미신고도 stale** — TEST-20260901T123000-nofp) | AC-20260831T183000-runner-version-sync-2 |
 | TEST-20260831T183000-status | `connect_status` | 프런트는 불리언 하나만 읽는다 · 듣고 있을 때만 판정 · 실패가 거짓 경고가 되지 않음 | AC-20260831T183000-runner-version-sync-2 |
 | TEST-20260831T183000-chip | `connect-modal.js`·CSS | 칩이 정상과 **구분되는** 상태를 보인다 · 서버 값이 칩까지 배선됨 | AC-20260831T183000-runner-version-sync-3 |
 | TEST-20260831T183000-recatalog | `app.js` 게이트 콜백 | 잠금이 풀리면 **카탈로그를 먼저 다시 받고** 그린다(순서 고정) | AC-20260831T183000-runner-version-sync-4 |
+| TEST-20260901T123000-untrusted | `/api/api-vault/options` | 자격(`caps_self_report`) 없는 러너의 목록은 **화면에 나가지 않는다**(`gpt-5.1` 소멸) | AC-20260901T123000-caps-trust-gate-1 |
+| TEST-20260901T123000-reason | 같은 엔드포인트 | 감추되 **사유·다음 행동**을 값으로 말한다(`runner_caps_stale`·`model_selector_reason` ≤80자) | AC-20260901T123000-caps-trust-gate-2 |
+| TEST-20260901T123000-norunner | 같은 엔드포인트 | 「러너 없음」과 「러너 낡음」을 **다른 문구**로 가른다 | AC-20260901T123000-caps-trust-gate-2 |
+| TEST-20260901T123000-normal | 같은 엔드포인트 | 자격 있는 러너는 **종전 그대로**(차단 로직의 정상 경로 실측 — §16.7 G9-c) | AC-20260901T123000-caps-trust-gate-1 |
+| TEST-20260901T123000-chokepoint | `account_runner_profile` | 관문이 **저장 계층 한 곳** — 소비처 셋이 함께 상속(§16.7 G8-a) · `features`·`listening` 은 불변 | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-nofp | `_runner_update_hint` | 지문 **부재 = stale**(fail-open 해소) · 배포본 지문을 모르면 판정 안 함 | AC-20260901T123000-caps-trust-gate-4 |
+| TEST-20260901T123000-onepredicate | `runner_build_is_stale` | 지문 판정이 **단일 정본** — 연결 칩이 자기 비교를 다시 적지 않음 | AC-20260901T123000-caps-trust-gate-4 |
+| TEST-20260901T123000-declare | `AGENT_FEATURES`·`Api.heartbeat` | 러너가 자격을 신고 · 이름의 정본은 `shared/bridge_tasks` 하나 | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-nofallback | `detect_runtimes` | 내장 표 모델이 **신고에 닿지 않는다**(자격 선언의 전제 — §16.7 G11) | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-uireason | `composer.js`·`index.html`·`chat.css` | 사유가 **화면까지 도달**한다(종전 소비처 0개) | AC-20260901T123000-caps-trust-gate-2 |
 
 ## 3. Run 기록
 

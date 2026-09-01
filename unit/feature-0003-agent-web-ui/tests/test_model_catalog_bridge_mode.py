@@ -33,6 +33,13 @@ import oauth_store as store
 
 ENDPOINT = "/api/api-vault/options"
 
+#: 능력 신고 자격을 갖춘 러너의 `RunnerFeatures` 컬럼 값 (caps-trust-gate, 2026-09-01).
+#:
+#: 이 목록에 `caps_self_report` 가 없으면 서버는 능력 신고를 **화면에 그리지 않는다** —
+#: 그것이 이 게이트의 요지다. 아래 대부분의 케이스는 「자격 있는 러너」를 전제하므로 여기서
+#: 한 번 정의하고 공유한다(문자열을 케이스마다 적으면 게이트를 켜는 날 절반만 고쳐진다).
+_TRUSTED_FEATURES = "console_jobs,caps_self_report"
+
 #: 러너가 실제로 신고하는 모양(= `bridge_agent.detect_runtimes()` 의 반환).
 _REPORT = [
     {"runtime": "claude", "label": "Claude",
@@ -122,7 +129,7 @@ def test_blocked_gate_with_a_runner_offers_what_the_runner_reported(
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
     payload = client.get(ENDPOINT).json()
 
     assert payload["model_selector"] == "visible", "신고가 있는데 선택기가 숨겨진다"
@@ -170,13 +177,16 @@ def test_blocked_gate_does_not_guess_when_the_report_is_unreadable(
     def _boom(*_args, **_kwargs):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(store, "account_runner_capabilities", _boom)
+    monkeypatch.setattr(store, "account_runner_profile", _boom)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
     payload = client.get(ENDPOINT).json()
     assert payload["models"] == [], "조회 실패인데 목록이 채워졌다(추측)"
     assert payload["model_selector"] == "hidden"
+    # 조회 실패는 「구 러너」가 **아니다** — 모르는 것을 단정해 갱신 안내를 띄우면, 일시적
+    # DB 오류가 멀쩡한 사용자에게 틀린 지시를 준다.
+    assert payload["runner_caps_stale"] is False, "조회 실패를 구 러너로 단정했다"
 
 
 def test_reopened_gate_restores_selector(client, signed_in, monkeypatch):
@@ -235,7 +245,7 @@ def _with_defaults(monkeypatch, defaults_row):
     monkeypatch.setattr(
         appmod, "_connect_memory",
         lambda: _DefaultsConn(
-            (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31"),
+            (json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31"),
             defaults_row))
 
 
@@ -283,7 +293,7 @@ def test_defaults_failure_does_not_empty_the_catalog(client, signed_in, monkeypa
 
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
     monkeypatch.setattr(store, "account_bridge_defaults", _boom)
     payload = client.get(ENDPOINT).json()
     assert payload["model_selector"] == "visible", "기본값 실패가 선택기를 통째로 지웠다"
@@ -339,15 +349,169 @@ def test_server_compares_the_deployed_runner_fingerprint():
 
     deployed = ai_tools._deployed_runner_build()
     assert deployed, "배포본 지문을 못 읽는다 — 대조 자체가 성립하지 않는다"
-    # 같은 지문이면 최신, 다르면 stale. **양쪽을 다 알 때만** 판정한다 —
-    # 구 러너는 지문을 아예 신고하지 않고, 그때 "다르다" 고 말할 근거는 없다.
+    # 같은 지문이면 최신, 다르면 stale. 판정의 유일한 전제는 **배포본 지문을 아는가**다.
     same = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], deployed)
     diff = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "0" * 12)
-    none = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "")
     assert same["stale_build"] is False and same["current"] is True
     assert diff["stale_build"] is True and diff["current"] is False
     assert diff["reason"], "다르다고만 하고 무엇을 할지 말하지 않는다"
-    assert none["stale_build"] is False, "신고하지 않은 러너를 구버전으로 단정한다"
+
+
+def test_missing_fingerprint_is_stale_not_current():
+    """지문 **부재**는 «같음» 이 아니라 «더 오래됨» 이다 (사용자 제보 2026-09-01, 4차 재발).
+
+    종전 계약은 「양쪽을 다 알 때만 판정한다」였고 그래서 지문을 신고하지 않는 러너를
+    `current: True` 로 통과시켰다. 그런데 **지문 신고 자체가 배포본의 일부**이므로 신고가
+    없다는 것은 그 변경 이전 빌드라는 증거다 — fail-open 이 걸린 모집단이 정확히 「낡은
+    러너」였다. 라이브 실측(2026-09-01): `RunnerBuild=''` 러너가 `current=True` 를 받는 동안
+    화면에는 그 러너가 내장 표에서 신고한 `gpt-5.1-codex` 가 떠 있었다.
+    """
+    import routers.ai_tools as ai_tools
+
+    none = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "")
+    assert none["stale_build"] is True, "지문을 신고하지 않는 구 러너를 최신으로 읽는다"
+    assert none["current"] is False
+    assert none["reason"], "구버전이라고 하면서 다음 행동을 말하지 않는다"
+
+
+def test_staleness_predicate_has_exactly_one_home():
+    """지문 판정은 **한 함수**뿐이다 — 하트비트와 연결 칩이 같은 것을 부른다 (§16.7 G8-a).
+
+    같은 술어가 두 곳에 복제돼 있었고, 복제는 한쪽만 고쳐지는 순간 갈린다. 갈리면 「칩은
+    초록인데 하트비트는 구버전이라 한다」는, 사용자가 어느 쪽도 믿을 수 없는 화면이 된다.
+    """
+    import pathlib
+
+    import routers.ai_tools as ai_tools
+
+    assert callable(getattr(ai_tools, "runner_build_is_stale", None)), "단일 판정 함수가 없다"
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "src" / "routers" / "oauth_as.py").read_text(encoding="utf-8")
+    fn = src[src.index("def connect_status("):]
+    fn = fn[:fn.index("\nreturn JSONResponse") if "\nreturn JSONResponse" in fn else len(fn)]
+    assert "runner_build_is_stale(" in fn, "연결 칩이 자기 판정을 다시 적는다"
+    # 복제의 흔적(직접 비교)이 남아 있으면 두 판정이 다시 갈린다.
+    assert "!= _deployed" not in fn, "지문 비교가 이 파일에 다시 적혀 있다"
+
+
+def test_deployed_fingerprint_unknown_is_not_a_false_alarm(monkeypatch):
+    """배포본 지문을 **못 읽으면** 판정하지 않는다 — 모르는 것을 stale 로 부르지 않는다.
+
+    이 방향의 fail-safe 는 위 fail-closed 와 모순되지 않는다: 게이트가 요구하는 것은 「기준을
+    아는가」이고, 기준이 없으면 어떤 러너도 구버전으로 단정할 근거가 없다. 이것이 없으면
+    파일 권한 하나로 전 사용자에게 거짓 갱신 지시가 나간다.
+    """
+    import routers.ai_tools as ai_tools
+
+    monkeypatch.setattr(ai_tools, "_deployed_runner_build", lambda: "")
+    assert ai_tools.runner_build_is_stale("") is False
+    assert ai_tools.runner_build_is_stale("0" * 12) is False
+
+
+# -- 능력 신고 자격 게이트 (사용자 제보 2026-09-01: 「연결한 AI 에 없는 모델이 뜬다」) ----
+#
+# 폴백을 제거한 러너를 배포해도 **사용자 머신의 러너를 우리가 갱신할 수는 없다.** 낡은 빌드가
+# 자기 소스의 내장 표(`gpt-5.1-codex`)를 계속 신고했고 카탈로그가 그것을 그대로 그렸다.
+# 이제 `caps_self_report` 를 신고한 러너의 목록만 화면에 나간다.
+
+
+def test_untrusted_runner_report_is_not_rendered(client, signed_in, monkeypatch):
+    """자격 없는 러너(구 빌드)의 목록은 **화면에 나가지 않는다**.
+
+    저장된 값이 멀쩡한 JSON 이어도 그렇다 — 문제는 모양이 아니라 **출처**다. 그 목록이 AI 의
+    응답인지 러너 소스에 적혀 있던 내장 표인지 서버는 구별할 수 없고, 구별할 수 없으면
+    「목록의 출처는 연결된 AI」라는 이 기능의 계약이 화면에서 거짓이 된다.
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    monkeypatch.setattr(
+        appmod, "_connect_memory",
+        # 구 러너: `console_jobs` 만 신고한다(`caps_self_report` 를 모른다).
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+    payload = client.get(ENDPOINT).json()
+
+    assert payload["models"] == [], "자격 없는 러너의 목록이 화면에 나갔다"
+    assert not any("gpt-5.1" in json.dumps(m) for m in payload["models"])
+    assert payload["model_selector"] == "hidden"
+    assert payload["default_model"] is None, "고를 수 없는데 기본값을 말한다"
+
+
+def test_untrusted_runner_says_why_and_what_to_do(client, signed_in, monkeypatch):
+    """감추기만 하지 않고 **이유와 다음 행동**을 말한다.
+
+    사유 없이 항목만 사라지면 사용자는 기능이 없어진 것으로 읽는다 — 앞선 cycle 이 정확히 그
+    마찰(「모델·추론 강도가 안 보인다」)로 되돌아왔다. 상태는 문구가 아니라 **별도 불리언**으로
+    준다(프런트가 문구를 파싱하면 문구를 다듬는 날 조용히 어긋난다).
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    monkeypatch.setattr(
+        appmod, "_connect_memory",
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+    payload = client.get(ENDPOINT).json()
+
+    assert payload["runner_caps_stale"] is True, "구 러너라는 사실이 값으로 나가지 않는다"
+    assert payload["runner_download_url"].endswith("/static/agent/bridge_agent.py")
+    reason = payload["model_selector_reason"]
+    assert "다시 실행" in reason, "다음 행동을 말하지 않는다"
+    # §16.8 UI copy budget — 안내는 한 문장이다(설명문으로 자라지 않게).
+    assert len(reason) <= 80, f"안내가 예산을 넘었다({len(reason)}자)"
+
+
+def test_no_runner_keeps_the_old_message_not_the_update_notice(client, signed_in, monkeypatch):
+    """러너가 **없는** 것과 러너가 **낡은** 것은 다른 사실이다.
+
+    둘을 한 문구로 뭉개면, 러너를 아예 켜지 않은 사람에게 「최신 실행 파일로 다시 실행」이라는
+    (그 사람에게는 틀린) 지시가 나간다.
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    payload = client.get(ENDPOINT).json()  # signed_in 기본 커넥션 = 러너 없음
+    assert payload["runner_caps_stale"] is False
+    assert "다시 실행" not in payload["model_selector_reason"]
+
+
+def test_trusted_runner_is_unaffected(client, signed_in, monkeypatch):
+    """자격 있는 러너는 **종전 그대로** 보인다 (§16.7 G9-c 정상 경로 실측).
+
+    차단 게이트를 신설할 때 「정확히 발동하는가」만 보면, 정상 사용자를 막아 놓고 통과를
+    선언하게 된다. 거짓양성의 대가는 정의상 정상 사용자가 치른다.
+    """
+    monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
+    monkeypatch.setattr(
+        appmod, "_connect_memory",
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")))
+    payload = client.get(ENDPOINT).json()
+    assert payload["model_selector"] == "visible"
+    assert payload["runner_caps_stale"] is False
+    assert [m["value"] for m in payload["models"]] == [
+        "claude:opus", "claude:sonnet", "codex:gpt-5.1-codex"]
+
+
+def test_gate_lives_in_the_store_so_every_consumer_inherits_it():
+    """게이트는 **저장 계층의 관문**에 있다 — 소비처마다 걸지 않는다 (§16.7 G8-a).
+
+    능력 소비처가 셋이다(카탈로그 · 저장 선택 복원 · 얇은 래퍼). 소비처마다 걸면 하나를
+    빠뜨리는 순간 그 경로로 낡은 목록이 되살아난다 — 실제로 저장 선택 복원
+    (`_bridge_model_offered`)은 카탈로그와 다른 파일에 있어 눈에 잘 띄지 않는다.
+    """
+    import oauth_store as _st
+
+    # 자격 없는 features 를 준 행은 목록이 비어 나온다.
+    class _Cur(_FakeCursor):
+        pass
+
+    untrusted = _st.account_runner_profile(
+        _Cur((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")), 1)
+    assert untrusted["capabilities"] == [] and untrusted["caps_trusted"] is False
+    assert untrusted["listening"] is True, "능력 게이트가 «연결됨» 까지 껐다"
+    assert untrusted["features"] == ["console_jobs"], "능력 게이트가 콘솔 위임 자격까지 껐다"
+
+    trusted = _st.account_runner_profile(
+        _Cur((json.dumps(_REPORT, ensure_ascii=False), _TRUSTED_FEATURES, "2026.08.31")), 1)
+    assert trusted["caps_trusted"] is True
+    assert [r["runtime"] for r in trusted["capabilities"]] == ["claude", "codex"]
+
+    # 얇은 래퍼와 저장 선택 복원이 같은 관문을 지난다.
+    assert _st.account_runner_capabilities(
+        _Cur((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")), 1) == []
 
 
 def test_connect_status_exposes_staleness_as_a_single_boolean():
@@ -378,3 +542,31 @@ def test_chip_shows_a_distinct_state_for_stale_runner():
     assert "!!b.runner_stale" in js, "서버 값이 칩까지 도달하지 않는다"
     css = (base / "css" / "search-audit.css").read_text(encoding="utf-8")
     assert '.ai-conn[data-state="stale"]' in css, "스타일이 없어 정상 상태와 같아 보인다"
+
+
+def test_frontend_actually_renders_the_hidden_reason():
+    """사유가 **화면까지 도달한다** — 서버가 내려보내기만 하고 아무도 안 읽으면 무행위다.
+
+    `model_selector_reason` 은 2026-08-28 부터 응답에 있었지만 **소비처가 0개**였다(실측).
+    그래서 선택기가 사라진 화면은 이유를 말하지 못했고, 그 침묵이 앞선 cycle 의 제보
+    (「모델·추론 강도가 안 보인다」)를 만들었다. 값의 존재와 도달은 다른 사실이다.
+    """
+    import pathlib
+
+    base = pathlib.Path(__file__).resolve().parents[1] / "src" / "static"
+    js = (base / "app" / "composer.js").read_text(encoding="utf-8")
+    assert "composerActionsSelectorNote" in js, "사유를 그리는 코드가 없다"
+    fn = js[js.index("function _applyComposerSelectorNote("):]
+    fn = fn[:fn.index("\nfunction ")] if "\nfunction " in fn else fn
+    assert "model_selector_reason" in fn, "서버 사유를 읽지 않는다(프론트가 문구를 짓는다)"
+    # 숨김을 반영하는 경로에서 **실제로 불린다** (정의만 있고 호출이 없으면 영영 안 뜬다).
+    apply_fn = js[js.index("function _applyComposerSelectorVisibility("):]
+    apply_fn = apply_fn[:apply_fn.index("\n// feature-0043 caps-trust-gate")]
+    assert "_applyComposerSelectorNote(" in apply_fn, "사유 갱신이 배선되지 않았다"
+    # 보이는 상태에서는 비운다 — 목록이 돌아왔는데 "고를 수 없다" 가 남으면 그 자체가 거짓.
+    assert "hidden ?" in fn or "hidden\n" in fn, "보이는 상태에서 사유를 지우지 않는다"
+    # DOM 자리와 스타일이 실재한다(클래스만 있고 스타일이 없으면 항목처럼 보인다).
+    html = (base / "index.html").read_text(encoding="utf-8")
+    assert 'id="composerActionsSelectorNote"' in html, "사유를 담을 자리가 DOM 에 없다"
+    css = (base / "css" / "chat.css").read_text(encoding="utf-8")
+    assert ".composer-actions-note {" in css, "사유 스타일이 없어 메뉴 항목처럼 보인다"

@@ -1448,3 +1448,90 @@ def test_stale_build_is_announced_once_not_every_beat():
     assert "배포본과 다릅니다" in fn, "무엇이 문제인지 말하지 않는다"
     # 다음 행동까지 말한다 — "다르다" 만으로는 사용자가 할 일을 모른다.
     assert "다시 받아" in fn or "다시 실행" in fn, "재설치 경로를 안내하지 않는다"
+
+
+# -- 2026-09-01 (4차): 「연결한 AI 에 없는 모델이 뜬다」 — 능력 신고 자격 -----------
+#
+# 폴백 제거(08-31 2차)와 지문 신고(3차)를 배포하고도 같은 제보가 돌아왔다. 원인은 **우리가
+# 사용자 머신의 러너를 갱신할 수 없다**는 것이다: 낡은 빌드가 자기 소스의 내장 표를 계속
+# 신고했고 서버는 그것을 그대로 화면에 그렸다. 라이브 실증(2026-09-01) — 08-31 16:55 빌드가
+# `codex: 응답을 받지 못해 내장 기본값을 씁니다` 를 로그에 남기며 `gpt-5.1-codex` 를 신고,
+# 서버 행 `RunnerCapabilities` 에 그대로 저장, `RunnerBuild=''` 라 구버전 경고도 안 떴다.
+#
+# 그래서 자격을 **러너가 선언**하게 하고, 서버는 그 선언이 없는 신고를 그리지 않는다.
+
+
+def test_runner_declares_the_caps_self_report_capability():
+    """러너가 「목록의 출처는 AI 자신뿐」이라는 자격을 신고한다."""
+    mod = _load_runner()
+    assert "caps_self_report" in mod.AGENT_FEATURES, "능력 신고 자격이 없다"
+    # 콘솔 작업 자격은 그대로 — 축이 다르다(무엇을 다루는가 vs 목록의 출처가 무엇인가).
+    assert "console_jobs" in mod.AGENT_FEATURES
+
+
+def test_capability_name_has_a_single_source_of_truth():
+    """자격 이름을 러너와 서버가 **각자 짓지 않는다**.
+
+    한쪽 오타는 「아무도 자격을 못 얻음」(전 사용자 선택기 소멸) 또는 그 반대로 갈리는데,
+    둘 다 조용하다 — 화면만 보고는 오타인지 정책인지 구별되지 않는다.
+    """
+    import sys
+
+    mod = _load_runner()
+    sys.path.insert(0, str(_UNIT.parent))
+    try:
+        from shared.bridge_tasks import RUNNER_FEATURE_CAPS_SELF_REPORT as _name
+    finally:
+        sys.path.pop(0)
+    assert _name in mod.AGENT_FEATURES, "러너가 신고하는 이름이 서버 정본과 다르다"
+    # 서버 관문도 같은 정본을 읽는다(리터럴을 다시 적지 않는다).
+    store_src = _OAUTH_STORE.read_text(encoding="utf-8")
+    gate = store_src[store_src.index("def _caps_trusted("):]
+    gate = gate[:gate.index("\n\n\ndef ") if "\n\n\ndef " in gate else len(gate)]
+    assert "RUNNER_FEATURE_CAPS_SELF_REPORT" in gate, "서버가 이름을 리터럴로 다시 적는다"
+    assert '"caps_self_report"' not in gate, "서버가 자격 이름을 하드코딩했다"
+
+
+def test_heartbeat_carries_the_capability_every_time():
+    """자격은 **매 하트비트**에 실린다 — 서버가 언제든 판정할 수 있어야 한다."""
+    mod = _load_runner()
+    sent: list = []
+
+    class _Api(mod.Api):
+        def __init__(self):
+            super().__init__("https://x", "t", None)
+
+        def _post(self, path, payload=None, timeout=60.0):
+            sent.append(payload)
+            return {"ok": True}
+
+    _Api().heartbeat([{"runtime": "claude", "models": [{"value": "opus"}], "efforts": []}])
+    assert "caps_self_report" in (sent[0].get("features") or []), "자격이 하트비트에 없다"
+
+
+def test_builtin_model_table_never_reaches_the_report(monkeypatch):
+    """자격 신고가 **참이어야 한다** — 내장 표의 모델 이름은 신고에 닿지 않는다.
+
+    이 단정이 자격의 유일한 전제다: 서버는 신고 내용의 출처를 검증할 수단이 없고, 러너가
+    「내 목록은 AI 가 답한 것뿐」이라 말한 것을 믿는다. 폴백이 되살아나면 그 선언이 거짓이
+    되고, 서버 게이트는 거짓을 통과시킨다(§16.7 G11 — 게이트로 쓰는 검사 자체의 진위).
+
+    ollama 는 예외다 — 그 목록은 우리가 적은 값이 아니라 HTTP **실조회** 결과다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
+    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
+    # probe 를 전부 실패시킨다 = 폴백만 남는 조건(라이브에서 codex 가 정확히 이 상태였다).
+    monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
+
+    reported = mod.detect_runtimes(cached={})
+    reported_values = {m["value"] for rt in reported for m in rt["models"]}
+    builtin_values = {
+        m["value"]
+        for name, spec in mod._RUNTIME_SPECS.items() if name != "ollama"
+        for m in (spec.get("models") or [])
+    }
+    assert builtin_values, "표가 비어 이 단정이 아무것도 검사하지 않는다(자기충족 방지)"
+    assert not (reported_values & builtin_values), (
+        f"내장 표의 모델이 신고에 실렸다: {sorted(reported_values & builtin_values)}")
+    assert reported == [], "물어보지 못한 런타임이 신고에 남았다"

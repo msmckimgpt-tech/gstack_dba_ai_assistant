@@ -379,7 +379,15 @@ def _self_build() -> str:
 #:   배급하지 않는다. 신고 없이 받으면 대화용 프레이밍으로 감싸 산출물이 조용히 망가진다.
 #: `batch_jobs` — 배경 배치까지 받겠다는 **별도 동의**. 기본 포함이 아니다: 그 작업은 이
 #:   사람이 요청한 적 없고 자기 계정 토큰을 태운다. `--batch` 로 켠다.
-AGENT_FEATURES: tuple[str, ...] = ("console_jobs",)
+#: `caps_self_report` — **모델 목록의 출처가 AI 자신의 응답뿐**임을 선언한다(2026-09-01).
+#:   이 빌드는 `detect_runtimes` 에서 내장 표(`_RUNTIME_SPECS[*]["models"]`)를 신고에 쓰지
+#:   않는다 — 물어보지 못한 런타임은 목록에서 통째로 빠진다. 서버는 이 이름이 없는 러너의
+#:   능력 신고를 **화면에 그리지 않는다**: 낡은 러너는 이 이름을 모르므로 신고할 수 없고,
+#:   그래서 「우리가 갱신을 강제할 수 없는 러너」가 없는 모델을 계속 보여주던 경로가 닫힌다.
+#:   ⚠ 이 이름을 `_RUNTIME_SPECS` 폴백을 되살리면서 함께 남기지 마라 — 그 순간 자격 신고가
+#:   거짓이 되고, 서버는 그 거짓을 검증할 수단이 없다(그것이 이 자격의 유일한 전제다).
+#:   정본: `shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT`.
+AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "caps_self_report")
 
 
 def _transport_is_safe(base: str) -> bool:

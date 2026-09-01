@@ -797,11 +797,29 @@ def account_runner_profile(cur, account_id: int,
     신고해도 **행 자체가 안 잡혀** 기능이 없는 것으로 보인다. 두 축은 수명이 다르므로
     행 선택은 **하트비트 신선도**로만 하고, 각 축의 부재는 각자 빈 값으로 표현한다.
 
+    ## 능력 축의 자격 게이트 (2026-09-01, 사용자 제보 4차)
+
+    `capabilities` 는 **`caps_self_report` 를 신고한 러너의 것만** 통과시킨다
+    (`_caps_trusted`). 자격이 없으면 저장된 값이 있어도 빈 목록으로 내리고 `caps_trusted`
+    를 `False` 로 말한다 — 「목록이 없다」와 「믿을 수 없어 감췄다」는 다른 사실이고, 화면은
+    후자에 대해 다음 행동(러너 갱신)을 말해야 하기 때문이다.
+
+    **게이트를 여기 두는 이유**: 능력 소비처가 셋이다 — 카탈로그(`routers/system.py`),
+    저장 선택 복원(`routers/conversations._bridge_model_offered`), 그리고 얇은 래퍼
+    `account_runner_capabilities`. 소비처마다 걸면 하나를 빠뜨리는 순간 그 경로로 낡은
+    목록이 되살아난다(§16.7 G8-a). 뒤 둘이 모두 이 함수를 지나므로 **여기가 유일한 관문**이다.
+
+    `features`·`agent_version`·`listening` 축은 **건드리지 않는다** — 콘솔 작업 배급 자격과
+    「연결됨」 표시는 능력 신고와 수명이 다른 사실이고, 함께 접으면 구 러너의 콘솔 위임까지
+    끊는 무관한 회귀가 된다.
+
     Returns:
         `{"capabilities": list, "features": list[str], "agent_version": str,
-          "listening": bool}` — 러너가 없으면 전부 빈 값 + `listening=False`.
+          "listening": bool, "caps_trusted": bool}` — 러너가 없으면 전부 빈 값 +
+        `listening=False`.
     """
-    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
+    empty = {"capabilities": [], "features": [], "agent_version": "",
+             "listening": False, "caps_trusted": False}
     if not account_id:
         return empty
     window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
@@ -827,12 +845,38 @@ def account_runner_profile(cur, account_id: int,
             parsed = None
         if isinstance(parsed, list):
             caps = parsed
+    features = parse_runner_features(row[1])
+    trusted = _caps_trusted(features)
     return {
-        "capabilities": caps,
-        "features": parse_runner_features(row[1]),
+        # 자격 없는 신고는 **여기서** 떨어뜨린다 — 아래 소비처가 각자 판정하지 않게.
+        "capabilities": caps if trusted else [],
+        "features": features,
         "agent_version": str(row[2] or "").strip(),
         "listening": True,
+        "caps_trusted": trusted,
     }
+
+
+def _caps_trusted(features: list[str]) -> bool:
+    """이 러너의 능력 신고를 화면에 그려도 되는가 (사용자 제보 2026-09-01, 4차 재발).
+
+    참인 조건은 하나다 — 러너가 `caps_self_report` 를 신고했는가. 그 이름은 「모델 목록의
+    출처가 AI 자신의 응답뿐」이라는 계약을 지키는 빌드만 안다(정본:
+    `shared/bridge_tasks.RUNNER_FEATURE_CAPS_SELF_REPORT`).
+
+    ⚠ **이름을 여기에 리터럴로 적지 않는다.** 두 곳이 각자 문자열을 지으면 한쪽 오타가
+    「아무도 자격을 못 얻는」(전 사용자 선택기 소멸) 또는 그 반대로 조용히 갈린다. 지연
+    import 인 이유는 이 모듈이 저장 계층이라 `shared` 에 모듈 로드 의존을 만들지 않기
+    위해서다(`routers/ai_tools._runner_update_hint` 와 같은 패턴).
+
+    import 실패는 **자격 없음**으로 다룬다 — 이 방향의 대가는 선택기가 감춰지는 것이고,
+    반대 방향의 대가는 없는 모델을 확신 있게 보여주는 것이다. 후자가 이 §의 결함이다.
+    """
+    try:
+        from shared.bridge_tasks import RUNNER_FEATURE_CAPS_SELF_REPORT
+    except Exception:  # noqa: BLE001
+        return False
+    return RUNNER_FEATURE_CAPS_SELF_REPORT in (features or [])
 
 
 def account_runner_capabilities(cur, account_id: int,
