@@ -3641,3 +3641,5 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
   `사용자 업로드 v1 · 현재` → `AI 수정본 v2` · `+182 / -21`.
 - 배포 상태: 전 서비스 이미지 **동일 SHA** · surge 잔존 0 · `no upstreams available` **0건**.
 - 증적: `docs/test-runs.d/TASK-20260901T101500-attach-lineage-postdeploy.md`
+
+| TEST-20260901T163000-runner-log-delivery | `static/agent/bridge_agent.py` (Windows-browser) | 러너 로그 구조화 cycle 의 시각검증. **화면 렌더 변경 0** (이 파일은 렌더 자산이 아니라 사용자가 내려받아 실행하는 스크립트) — 대신 실 Windows 브라우저에서 `/static/agent/bridge_agent.py` **배달 지문**을 실측했다. PRE-DEPLOY `served_build=0a4ba732366c` / 214,898 bytes. Environment: Windows-browser. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |

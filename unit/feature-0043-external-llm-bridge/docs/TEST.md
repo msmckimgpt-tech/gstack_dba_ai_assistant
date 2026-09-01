@@ -174,3 +174,16 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 
 | TEST-20260901T140000-pb0008 | 라이브 화면 (Windows-browser) | PRE-DEPLOY baseline — 배포본에 무진행 축 0건 · 제보 대화 말풍선 6건 실측 · 별건(인젝션 거부) 발견. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim.md` | AC-20260901T140000-orphan-claim-reclaim-4 |
 | TEST-20260901T140000-postdeploy | 배포본 `9c04b52c` (Windows-browser) | POST-DEPLOY — 코드 도달 6축 · 배포본 함수 구동 · 국면표 6케이스 ALL PASS · **실 MySQL 에서 점유자 술어 4형식**(P1 회귀 차단) · 자산 스탬프 갱신. 미검증 2건 명시. 증적 `test-runs.d/TASK-20260901T140000-orphan-claim-reclaim-postdeploy.md` | AC-20260901T140000-orphan-claim-reclaim-1~5 |
+
+| TEST-20260901T163000-both-sinks | `log_event` | 사람 줄 + JSONL 원장 양쪽에 나오고, 원장에 `ts`·`lvl`·`ev`·`seq`·`run`·`pid` 가 **항상** 있다 | AC-20260901T163000-runner-log-1 |
+| TEST-20260901T163000-offset | `_tz_suffix` | 지역시각에 UTC 오프셋 동반 — 서버 로그와 같은 사건임을 계산으로 확인할 수 있다 | AC-20260901T163000-runner-log-1 |
+| TEST-20260901T163000-seq | `log_event` | 순번 단조 — 같은 초에 여러 줄이 나도 인터리브 순서를 잃지 않는다 | AC-20260901T163000-runner-log-1 |
+| TEST-20260901T163000-exc | `_log_exc` | 예외 **형**과 스택이 원장에 남고, 사람 줄에는 요약만(스택이 화면을 덮지 않게) | AC-20260901T163000-runner-log-2 |
+| TEST-20260901T163000-summary | `_log_run_stop` | 종료 한 줄에 uptime·처리·오류 + 사건별 집계 · 종료 경로가 여럿이어도 **한 번만** | AC-20260901T163000-runner-log-2 |
+| TEST-20260901T163000-scrub | `_scrub` | 등록 토큰과 **미등록 토큰 형태** 둘 다 두 sink 에서 마스킹 | AC-20260901T163000-runner-log-3 |
+| TEST-20260901T163000-nobody | `log_event` | 질문·답변 본문을 싣지 않고 길이만 센다(보안 계약 표와 정합) | AC-20260901T163000-runner-log-3 |
+| TEST-20260901T163000-legacy | `_log` | 종전 위치인자 호출이 그대로 동작 — 호출부 80여 곳 무변경 계약 | AC-20260901T163000-runner-log-4 |
+| TEST-20260901T163000-nodup | `_human_log_path` (실 서브프로세스) | stderr 가 이미 그 파일이면 **이중 기록하지 않는다**(POSIX 설치본 리다이렉트) | AC-20260901T163000-runner-log-5 |
+| TEST-20260901T163000-windows | `_human_log_path` (실 서브프로세스) | stderr 가 다른 곳이면 러너가 직접 쓴다 — Windows 설치본의 «증거 0» 복구 | AC-20260901T163000-runner-log-5 |
+| TEST-20260901T163000-rotate | `_rotate_if_needed` | 상한 초과 시 회전 + 세대 정리 · 원장 권한 0600 | AC-20260901T163000-runner-log-6 |
+| TEST-20260901T163000-codes | `_EV_*` | 사건 코드가 상수로 선언되고 `계층.동작` 형태 · task 축 이벤트가 `task` 키를 공유 | AC-20260901T163000-runner-log-1 |

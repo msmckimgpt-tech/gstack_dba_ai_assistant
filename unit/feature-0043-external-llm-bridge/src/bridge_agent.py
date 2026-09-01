@@ -54,9 +54,9 @@
                         → `grep -nE 'eval[(]|exec[(]|compile[(]|__import__' bridge_agent.py`
                           (매칭되는 줄은 **이 안내문 자신뿐**이어야 한다. 코드에는 없다.)
     설치물 없음         표준 라이브러리만 쓴다(`pip install` 불필요). 부팅 등록·crontab·서비스
-                        설치를 하지 않는다. 남기는 것은 `~/.mysql-ai-bridge/config.json`
-                        (0600) 과 자식 CLI 를 띄우는 **빈 폴더** `~/.mysql-ai-bridge/work`
-                        뿐이고, config 에 **토큰은 넣지 않는다** → `save_conf`·`_child_workdir`.
+                        설치를 하지 않는다. 남기는 것은 `~/.mysql-ai-bridge/` 안의 넷뿐 —
+                        `config.json`(0600, **토큰 없음**) · 빈 폴더 `work` · `bridge.log` ·
+                        `bridge.events.jsonl`(0600) → `save_conf`·`_log_dir`.
     나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`) 와
                         `/api/ai/bridge_heartbeat` (→ `Api.heartbeat`, 30초마다 1회 —
                         본문은 이 머신에서 **쓸 수 있는 런타임·모델 이름 목록**뿐이다.
@@ -65,8 +65,11 @@
                         `127.0.0.1:11434`) — 그 경로를 쓰지 않으면 호출되지 않는다
                         (모델 목록 조회 `/api/tags` 도 같은 호스트다).
                         URL 을 만드는 자리는 `Api._post` 와 ollama 어댑터 **둘뿐**이다.
-    관측·종료           하는 일은 전부 stderr 로그에 남는다. `Ctrl+C` 또는 `kill <pid>` 로 끝나고,
-                        끝난 뒤 남는 것은 위 `config.json` 과 네가 리다이렉트한 로그 파일뿐이다.
+    관측·종료           하는 일은 전부 로그에 남는다 — 사람이 읽는 줄(stderr·`bridge.log`)과
+                        기계가 읽는 사건 원장(한 줄 = 한 사건: 코드·심각도·질문 id·소요·예외
+                        형·스택). 질문·답변 **본문은 싣지 않고** 길이만 센다. 실패한 CLI 의
+                        stderr 끝부분은 남긴다(그게 없으면 실패 원인에 닿을 길이 없다)
+                        → `log_event`. `Ctrl+C`·`kill <pid>` 로 끝난다.
 
 **정직하게 적는 잔여 노출면 둘** — 숨기면 소스를 읽는 순간 드러나고, 그때 잃는 것이 더 크다.
 
@@ -315,7 +318,10 @@ def save_conf(base: str, ca: str | None, ai: str, cmd: str | None,
             json.dump(payload, f, ensure_ascii=False)
         os.chmod(_CONF_PATH, 0o600)
     except Exception as e:  # noqa: BLE001
-        _log(f"설정 저장 실패(무시): {e}")
+        # 여기 실패는 **다음 기동**을 망친다(주소·CA·능력 캐시를 잃는다). 그런데 증상은
+        # 지금이 아니라 다음에 나타나므로, 예외 형까지 남겨 두지 않으면 그때 원인에
+        # 닿지 못한다 — 권한(PermissionError)과 디스크 가득(OSError)은 조치가 다르다.
+        _log_exc("conf.save_fail", "설정 저장 실패(무시)", e, path=_CONF_PATH)
 
 
 def load_conf() -> dict:
@@ -378,7 +384,9 @@ def init_runner_instance() -> tuple[str, str]:
             json.dump(conf, f, ensure_ascii=False)
         os.chmod(_CONF_PATH, 0o600)
     except Exception as e:  # noqa: BLE001
-        _log(f"러너 인스턴스 저장 실패(무시): {e}")
+        _log_exc("conf.instance_save_fail",
+                 "러너 인스턴스 저장 실패(무시) — 다음 기동의 고아 점유 회수가 동작하지 않는다",
+                 e, path=_CONF_PATH)
     return _RUNNER_INSTANCE, _PREV_RUNNER_INSTANCE
 
 #: 연결이 **끊겼을 때만** 쓰는 복구 간격(feature-0045). 서버가 배포로 교체되는 몇 초 동안
@@ -411,18 +419,396 @@ _HEARTBEAT_MIN_INTERVAL_SEC = 5.0
 _SHUTDOWN_GRACE_SEC = float(os.environ.get("BRIDGE_SHUTDOWN_GRACE_SEC", "") or 120.0)
 
 
-def _log(msg: str) -> None:
-    """`bridge.log` 한 줄. **시각을 함께 적는다** (사용자 요청 2026-08-31).
+# ── 로그 — 사람이 읽는 줄 + 기계가 감사하는 원장 (TASK-20260901T163000) ─────────
+#
+# ## 왜 구조가 필요한가 (실측 근거)
+#
+# 종전 로그는 `[bridge <시각>] <한국어 문장>` 한 형태뿐이었다. 사람이 읽기엔 좋았지만
+# **사고를 조사하는 데 필요한 축이 문장 안에 녹아 있어** 꺼낼 수 없었다:
+#
+#   - 「이 줄이 무슨 사건인가」를 한국어 문장 매칭으로만 판별했다. 문장을 한 글자만 고쳐도
+#     그동안 쓰던 조사 방법이 조용히 깨진다.
+#   - 심각도가 없다. 「참고」와 「제출 실패」가 같은 모양이라 `grep` 로 오류만 볼 수 없었다.
+#   - `task_id` 는 있는 줄과 없는 줄이 섞여 있고, **어느 프로세스가 쓴 줄인지**(러너 인스턴스)
+#     는 어디에도 없다. 재기동이 잦은 러너에서 이건 치명적이다 — 실제 87분 고아 사고(§
+#     `init_runner_instance` 주석)의 시간축을 파일 mtime·DB 하트비트로 복원해야 했다.
+#   - 소요 시간이 없다. 「전달」과 「제출 완료」 사이가 몇 초였는지 두 줄의 시각을 빼서 구해야
+#     하는데, 동시 처리(`--workers`)면 두 줄이 인터리브되어 그 뺄셈조차 틀린다.
+#   - 예외는 `except Exception as e: _log(f"…: {e}")` 형태라 **예외 형(type)과 스택이 통째로
+#     버려진다**. `e` 문자열만으로는 같은 문장을 내는 다른 원인을 가를 수 없다.
+#   - Windows 는 로그 자체가 없었다. 설치 스크립트가 `Start-Process -WindowStyle Hidden` 으로
+#     띄우면서 stderr 를 어디에도 잇지 않아, 그 머신의 사고는 **증거가 0** 이었다.
+#
+# ## 무엇을 하는가
+#
+# 한 번의 `_log`/`log_event` 호출이 **두 곳**에 간다:
+#
+#   1. **사람 sink** — stderr(그리고 필요하면 `bridge.log`). 종전 형식을 잃지 않되 심각도와
+#      사건 코드·핵심 필드를 앞에 세운다:
+#        `[bridge 2026-09-01 16:30:11+0900] ERROR task.submit.fail task=ab12 http=500 | 제출 실패 …`
+#   2. **감사 sink** — `bridge.events.jsonl` 한 줄 JSON. 사람이 읽는 줄이 버리는 것(예외 형,
+#      스택, 자식 stderr 전문, 밀리초 단위 소요)을 여기 남긴다. 기계가 읽으므로 문장을 고쳐도
+#      조사 방법이 깨지지 않는다 — 안정 계약은 **문장이 아니라 `ev` 코드와 필드 이름**이다.
+#
+# ## 하지 않는 것
+#
+#   - `logging` 모듈을 쓰지 않는다. 이 파일은 남의 머신에서 남의 파이썬으로 도는 단일 파일이고,
+#     전역 로거 설정은 그 환경의 다른 설정과 싸운다. 필요한 것은 두 sink 와 잠금뿐이다.
+#   - 서버로 로그를 보내지 않는다. 이 파일의 보안 계약(`나가는 곳`)을 넓히지 않는다 —
+#     서버와의 대조는 `task_id`·`run`(러너 인스턴스) 키로 사후에 한다.
 
-    종전엔 시각이 없어서, 로그만 보고는 「러너가 언제 떴는지 · 어디서 멈췄는지 · 이 줄이
-    방금 것인지 어제 것인지」를 가릴 수 없었다 — 실제로 이 파일로 사고를 조사할 때
-    파일 mtime 과 DB 하트비트를 대조해야 겨우 시간을 복원했다.
+#: 심각도. 사람 sink 와 감사 sink 가 각각 다른 하한을 가질 수 있다 — 화면은 조용하되 원장은
+#: 상세해야 하기 때문이다(그 반대는 쓸모가 없다).
+_LOG_LEVELS = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40, "FATAL": 50}
 
-    지역시각을 쓴다: 이 로그를 읽는 사람은 자기 화면의 시계와 대조한다. UTC 로 적으면
-    "웹은 15:35 인데 로그는 06:35" 가 되어 같은 사건이 다른 사건으로 보인다.
+
+def _level_from_env(name: str, default: str) -> int:
+    raw = (os.environ.get(name) or "").strip().upper()
+    return _LOG_LEVELS.get(raw, _LOG_LEVELS[default])
+
+
+#: 사람이 보는 줄의 하한. 기본 INFO — DEBUG 는 조사할 때만 켠다.
+_LOG_LEVEL_MIN = _level_from_env("BRIDGE_LOG_LEVEL", "INFO")
+#: 감사 원장의 하한. 기본 DEBUG — **원장은 빠짐없는 것이 목적**이라 화면보다 낮게 둔다.
+_AUDIT_LEVEL_MIN = _level_from_env("BRIDGE_AUDIT_LEVEL", "DEBUG")
+
+def _int_from_env(name: str, default: int, minimum: int) -> int:
+    """환경변수 정수. **깨진 값으로 러너가 죽지 않게** 한다.
+
+    로그 설정 오타(`BRIDGE_LOG_KEEP=three`)로 상주 러너가 기동조차 못 하면, 관측을 좋게
+    하려던 축이 가용성을 깎는다. 못 읽으면 기본값을 쓰고 그 사실만 남긴다.
     """
-    sys.stderr.write(f"[bridge {time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    sys.stderr.flush()
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+#: 원장 파일이 이 크기를 넘으면 회전한다. 상주 프로세스가 몇 달을 도는 것이 정상이므로
+#: 상한이 없으면 디스크를 조용히 먹는다(그리고 그 조용함이 정확히 이 파일이 고치려는 병이다).
+_LOG_MAX_BYTES = _int_from_env("BRIDGE_LOG_MAX_BYTES", 8 * 1024 * 1024, 64 * 1024)
+#: 보관 세대 수. 사고 조사는 보통 직전 며칠이면 되고, 무한 보관은 위 상한을 무의미하게 만든다.
+_LOG_KEEP = _int_from_env("BRIDGE_LOG_KEEP", 3, 1)
+
+#: 두 sink 와 순번을 함께 지키는 잠금. 워커 스레드·하트비트 스레드가 동시에 쓴다.
+_LOG_LOCK = threading.RLock()
+#: 이 프로세스 안에서의 사건 순번. 같은 초에 여러 줄이 나도 **순서**를 잃지 않게 한다
+#: (동시 처리에서 시각만으로는 인터리브 순서를 복원할 수 없다).
+_LOG_SEQ = 0
+
+#: 사건 코드별 발생 횟수. 종료 요약(`run.stop`)이 이 표를 그대로 싣는다 — 「이번 세션에서
+#: 질문 몇 건을 처리했고 몇 번 실패했나」를 로그 전체를 훑지 않고 마지막 한 줄로 알 수 있다.
+_STATS: dict[str, int] = {}
+#: 프로세스 시작 시각(단조). 종료 요약의 `uptime_sec`.
+_RUN_T0 = time.monotonic()
+
+#: 로그에서 마스킹할 비밀 문자열(토큰 등). 값을 **아는 채로** 지우는 것이 패턴 추측보다 확실하다.
+_LOG_SECRETS: set[str] = set()
+#: 값을 모를 때를 위한 패턴 방어. 위 등록이 누락돼도 형태로 잡는다.
+_SECRET_PATTERNS = (
+    re.compile(r"\bmat_[A-Za-z0-9_\-]{6,}"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]{8,}"),
+    re.compile(r"(?i)\b(BRIDGE_TOKEN|token)\s*[=:]\s*[\"']?[A-Za-z0-9._\-]{8,}"),
+)
+
+
+def register_secret(value: str | None) -> None:
+    """이 값이 로그에 나타나면 지운다. 토큰을 손에 쥔 **직후** 부른다.
+
+    패턴만으로 막지 않는 이유: 토큰 형식은 바뀔 수 있고, 바뀐 그날의 로그가 새는 것을
+    나중에 알아채는 방법이 없다. 값을 알고 있을 때 등록해 두는 편이 확실하다.
+    """
+    v = (value or "").strip()
+    if len(v) >= 8:
+        _LOG_SECRETS.add(v)
+
+
+def _scrub(text: str) -> str:
+    """비밀을 지운 문자열. 두 sink 모두 이 함수를 거친 것만 쓴다.
+
+    ⚠ 집합을 **스냅샷으로** 돈다: 다른 스레드가 `register_secret` 하는 순간 집합을 순회 중이면
+    `RuntimeError: Set changed size during iteration` 이 나고, 그 예외가 하필 **로그를 쓰는
+    도중** 터진다(= 그 사건이 통째로 사라진다).
+    """
+    out = str(text)
+    for s in tuple(_LOG_SECRETS):
+        if s and s in out:
+            out = out.replace(s, "***")
+    for pat in _SECRET_PATTERNS:
+        out = pat.sub(lambda m: m.group(0)[:6] + "***", out)
+    return out
+
+
+def _log_dir() -> str:
+    """로그가 사는 곳. 기본은 설정과 같은 폴더 — 사고 조사에서 둘을 함께 본다.
+
+    `BRIDGE_LOG_DIR` 로 옮길 수 있게 두되 **설정 경로(`_CONF_DIR`)는 건드리지 않는다**:
+    그쪽을 움직이면 이미 저장된 설정이 보이지 않게 되어, 로그를 좋게 하려다 연결을 깬다.
+    """
+    return (os.environ.get("BRIDGE_LOG_DIR") or "").strip() or _CONF_DIR
+
+
+def _audit_path() -> str:
+    return os.path.join(_log_dir(), "bridge.events.jsonl")
+
+
+#: `_human_log_path` 의 1회 판정 결과. `Event` 를 쓰는 이유는 「아직 안 정했다」와
+#: 「정했는데 None(=쓰지 않는다)」을 구분해야 하기 때문이다.
+_HUMAN_LOG_RESOLVED = threading.Event()
+_HUMAN_LOG_PATH: str | None = None
+
+
+def _human_log_path() -> str | None:
+    """사람 줄을 **파일로도** 적어야 하는가. 적어야 하면 그 경로, 아니면 `None`.
+
+    ## 왜 자동 판정인가
+
+    POSIX 설치 스크립트는 러너의 stderr 를 `bridge.log` 로 잇는다. 그 상태에서 이 함수가
+    같은 파일을 또 열면 **모든 줄이 두 번** 남는다. 반대로 Windows 설치본은 stderr 를 아무
+    데도 잇지 않아 **한 줄도 남지 않았다** — 그 머신의 사고는 증거가 없었다.
+
+    두 경우를 사용자가 설정으로 구분하게 만들면 대부분 틀린 쪽을 고른다(그리고 틀린 것을
+    알아채는 시점은 사고 조사 중이다). 그래서 **stderr 가 이미 그 파일인지**를 직접 본다 —
+    같은 파일이면 우리가 또 쓰지 않고, 아니면 우리가 쓴다.
+
+    `BRIDGE_LOG_FILE` 로 명시할 수 있다(`-` 는 파일 기록 끔).
+
+    판정은 **한 번만** 한다: 프로세스가 도는 동안 stderr 가 갈아끼워지는 일은 없고, 줄마다
+    `stat` 을 두 번 부르면 로그가 곧 비용이 된다(DEBUG 를 켜면 서버 왕복마다 한 줄이다).
+    """
+    global _HUMAN_LOG_PATH
+    if _HUMAN_LOG_RESOLVED.is_set():
+        return _HUMAN_LOG_PATH
+    override = (os.environ.get("BRIDGE_LOG_FILE") or "").strip()
+    path: str | None = override or os.path.join(_log_dir(), "bridge.log")
+    if override == "-":
+        path = None
+    else:
+        try:
+            st_err = os.fstat(sys.stderr.fileno())
+            st_log = os.stat(path)
+            # 같은 파일이면 stderr 쪽이 이미 적고 있다. `st_ino` 는 Windows(NTFS)에서도 유효하다.
+            if (st_err.st_ino and st_err.st_ino == st_log.st_ino
+                    and st_err.st_dev == st_log.st_dev):
+                path = None
+        except Exception:  # noqa: BLE001  (콘솔·파이프·파일 부재 — 그때는 우리가 적는다)
+            pass
+    _HUMAN_LOG_PATH = path
+    _HUMAN_LOG_RESOLVED.set()
+    return path
+
+
+def _rotate_if_needed(path: str) -> None:
+    """상한을 넘으면 `.1` 로 밀어내고 세대를 정리한다. 실패해도 로그는 계속 쓴다."""
+    try:
+        if os.path.getsize(path) < _LOG_MAX_BYTES:
+            return
+    except OSError:
+        return
+    try:
+        oldest = f"{path}.{_LOG_KEEP}"
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        for n in range(_LOG_KEEP - 1, 0, -1):
+            src, dst = f"{path}.{n}", f"{path}.{n + 1}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+        os.replace(path, f"{path}.1")
+    except Exception:  # noqa: BLE001  (회전 실패로 기록을 멈추지는 않는다)
+        pass
+
+
+def _append_line(path: str, line: str) -> None:
+    """한 줄 append. 디렉토리·권한을 함께 챙긴다(원장에는 대화 조각이 실릴 수 있다)."""
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        _rotate_if_needed(path)
+        new = not os.path.exists(path)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+        if new:
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+    except Exception:  # noqa: BLE001  (기록 실패가 러너를 멈추게 하지 않는다)
+        pass
+
+
+#: 사람 줄에서 **앞에 세울** 필드와 순서. 나머지는 이 뒤에 이름순으로 붙는다.
+#: 조사할 때 가장 먼저 찾는 순서다 — 어느 질문(task)의, 어느 AI(runtime)로, 얼마나 걸렸고,
+#: 서버가 뭐라 했나(http).
+_FIELD_ORDER = ("task", "conv", "runtime", "model", "effort", "dur_ms", "http", "exit", "attempt")
+#: 사람 줄에 붙이는 필드 값의 길이 상한. 원장에는 전문이 남으므로 여기서는 읽기 쉬움이 우선이다.
+_FIELD_VALUE_MAX = 80
+
+
+def _render_fields(fields: dict) -> str:
+    def _key(item):
+        k = item[0]
+        return (_FIELD_ORDER.index(k) if k in _FIELD_ORDER else len(_FIELD_ORDER), k)
+
+    parts = []
+    for k, v in sorted(fields.items(), key=_key):
+        if v is None or isinstance(v, (dict, list, tuple)):
+            continue          # 구조값은 원장에만 — 사람 줄에서는 소음이다
+        s = _scrub(str(v)).replace("\n", " ")
+        if len(s) > _FIELD_VALUE_MAX:
+            s = s[:_FIELD_VALUE_MAX] + "…"
+        parts.append(f"{k}={s}")
+    return " ".join(parts)
+
+
+def log_event(event: str, msg: str = "", *, level: str = "INFO",
+              exc: BaseException | None = None, **fields) -> None:
+    """사건 하나를 두 sink 에 남긴다.
+
+    `event` 는 **안정 계약**이다 — 문장(`msg`)은 자유롭게 고쳐도 되지만 이 코드는 조사
+    스크립트가 의존하므로 바꿀 때는 그 사실을 알고 바꾼다. 코드 목록은 `_EV_*` 상수.
+
+    `exc` 를 주면 예외 형·표현·스택이 **원장에만** 실린다. 사람 줄에는 요약 한 조각만 —
+    스택이 화면을 덮으면 정작 읽어야 할 다음 줄이 밀려난다.
+    """
+    global _LOG_SEQ
+    lvl = level.upper() if level.upper() in _LOG_LEVELS else "INFO"
+    sev = _LOG_LEVELS[lvl]
+    if exc is not None:
+        fields = {**fields,
+                  "err_type": type(exc).__name__,
+                  "err": _scrub(str(exc))[:400]}
+    now = time.time()
+    with _LOG_LOCK:
+        _LOG_SEQ += 1
+        seq = _LOG_SEQ
+        # 집계를 **여기 한 자리**에서 한다. 호출부마다 세면 새 경로가 생길 때 빠지고, 빠진
+        # 그 경로가 하필 조사하려는 것이다. 종료 시 이 표가 「이번 세션이 무엇을 했나」가 된다.
+        # ⚠ 잠금 **안**이어야 한다 — `d[k] = d.get(k,0)+1` 은 원자적이지 않아, 워커 스레드가
+        #   여럿이면 집계가 조용히 적게 세어진다(그리고 그 오차는 아무도 눈치채지 못한다).
+        _STATS[event] = _STATS.get(event, 0) + 1
+        if sev >= _LOG_LEVELS["ERROR"]:
+            _STATS["_errors"] = _STATS.get("_errors", 0) + 1
+        # ── 사람 sink ────────────────────────────────────────────────────────
+        if sev >= _LOG_LEVEL_MIN:
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S") + _tz_suffix()
+            rendered = _render_fields(fields)
+            head = f"[bridge {stamp}] {lvl:<5} {event}"
+            line = head + (f" {rendered}" if rendered else "") + \
+                (f" | {_scrub(msg)}" if msg else "") + "\n"
+            try:
+                sys.stderr.write(line)
+                sys.stderr.flush()
+            except Exception:  # noqa: BLE001  (닫힌 stderr — 파일 sink 는 계속 간다)
+                pass
+            human = _human_log_path()
+            if human:
+                _append_line(human, line)
+        # ── 감사 sink ────────────────────────────────────────────────────────
+        if sev >= _AUDIT_LEVEL_MIN:
+            rec = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
+                      + f".{int((now % 1) * 1000):03d}" + _tz_suffix(),
+                "lvl": lvl,
+                "ev": event,
+                "seq": seq,
+                "run": _RUNNER_INSTANCE or None,
+                "pid": os.getpid(),
+            }
+            for k, v in fields.items():
+                if v is None:
+                    continue
+                rec[k] = _scrub(v) if isinstance(v, str) else v
+            if msg:
+                rec["msg"] = _scrub(msg)
+            if exc is not None:
+                rec["tb"] = _scrub(_short_traceback(exc))
+            try:
+                _append_line(_audit_path(),
+                             json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _tz_suffix() -> str:
+    """`+0900` 같은 오프셋. 지역시각만 적으면 다른 표준시의 서버 로그와 대조할 수 없다.
+
+    사람이 자기 시계와 대조하기 위해 지역시각을 쓰되(사용자 요청 2026-08-31), 기계가 UTC 로
+    환산할 수 있게 오프셋을 함께 적는다 — 「웹은 15:35 인데 로그는 06:35」 는 오프셋이 있으면
+    같은 사건임이 계산으로 나온다.
+    """
+    off = -(time.altzone if time.daylight and time.localtime().tm_isdst else time.timezone)
+    sign = "+" if off >= 0 else "-"
+    off = abs(int(off))
+    return f"{sign}{off // 3600:02d}{(off % 3600) // 60:02d}"
+
+
+def _short_traceback(exc: BaseException, frames: int = 12) -> str:
+    """스택 **마지막 N 프레임**. 전문을 남기면 원장 한 줄이 화면 하나만큼 커진다.
+
+    마지막을 남기는 이유: 터진 자리가 거기다. 위쪽 프레임(진입점·루프)은 매번 같아서
+    구분에 기여하지 않는다.
+    """
+    try:
+        import traceback
+
+        tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        # [0] 은 "Traceback (most recent call last):" 머리, 마지막은 예외 문장이다.
+        body = tb[1:-1][-frames:] if len(tb) > 2 else tb[1:]
+        return "".join([tb[0]] + body + tb[-1:])[-4000:]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _log(msg: str, *, event: str = "log", level: str = "INFO", **fields) -> None:
+    """종전 그대로 쓸 수 있는 한 줄 기록 (`_log("…")`).
+
+    호출부 80여 곳을 한꺼번에 고치지 않기 위해 **위치인자 하나**의 계약을 유지한다. 새로
+    쓰는 자리는 `event=`·필드를 함께 주는 편이 좋고, 그러면 그 줄만 조사 가능해진다.
+    """
+    log_event(event, msg, level=level, **fields)
+
+
+def _log_exc(event: str, msg: str, exc: BaseException, **fields) -> None:
+    """예외를 **버리지 않고** 남긴다 — 형·표현은 두 sink, 스택은 원장."""
+    log_event(event, msg, level="ERROR", exc=exc, **fields)
+
+
+# ── 사건 코드 (안정 계약) ─────────────────────────────────────────────────────
+#
+# 조사 스크립트·감사가 의존하는 이름이다. 문장은 자유롭게 고쳐도 되지만 이 값은 계약이므로
+# 바꿀 때는 소비처를 함께 본다. 접두사가 곧 계층이다:
+#
+#   run.*    프로세스 수명        conn.*  서버 연결·인증
+#   caps.*   능력 신고            hb.*    하트비트
+#   task.*   질문 한 건의 일생     ai.*    로컬 AI CLI 호출
+#   api.*    서버 호출 실패        log.*   로그층 자신
+_EV_RUN_START = "run.start"
+_EV_RUN_READY = "run.ready"
+_EV_RUN_STOP = "run.stop"
+_EV_RUN_FATAL = "run.fatal"
+_EV_CONN_OK = "conn.ok"
+_EV_CONN_FAIL = "conn.fail"
+_EV_CONN_UNAUTH = "conn.unauthorized"
+_EV_CONN_RETRY = "conn.retry"
+_EV_HB_FAIL = "hb.fail"
+_EV_HB_UNAUTH = "hb.unauthorized"
+_EV_HB_STALE = "hb.stale_build"
+_EV_TASK_CLAIM_SKIP = "task.claim.skip"
+_EV_TASK_CLAIM_FAIL = "task.claim.fail"
+_EV_TASK_DISPATCH = "task.dispatch"
+_EV_TASK_UNMET = "task.unmet"
+_EV_TASK_CANCEL = "task.cancel"
+_EV_TASK_REVIEW = "task.review"
+_EV_TASK_SUBMIT_OK = "task.submit.ok"
+_EV_TASK_SUBMIT_RETRY = "task.submit.retry"
+_EV_TASK_SUBMIT_FAIL = "task.submit.fail"
+_EV_TASK_SUBMIT_REJECT = "task.submit.reject"
+_EV_AI_FAIL = "ai.fail"
+_EV_AI_TIMEOUT = "ai.timeout"
+_EV_AI_SPAWN_FAIL = "ai.spawn_fail"
+_EV_API_FAIL = "api.fail"
 
 
 #: 평문이 허용되는 유일한 대상. 이름이 아니라 **호스트**로 판정한다.
@@ -501,6 +887,9 @@ class Api:
         self.base = base.rstrip("/")
         self.token = token
         self.ctx = ssl.create_default_context(cafile=ca) if ca else None
+        # 로그에 이 값이 실릴 자리를 미리 막는다 — 서버 오류 본문·자식 CLI stderr·`--cmd`
+        # 문자열 어디에도 토큰이 섞여 나올 수 있고, 그 로그는 사용자가 우리에게 붙여 보낸다.
+        register_secret(token)
 
     def call(self, tool: str, payload: dict | None = None, timeout: float = 60.0) -> dict:
         return self._post(f"/api/ai/tools/{tool}", payload, timeout)
@@ -544,19 +933,40 @@ class Api:
             f"{self.base}{path}", data=body, method="POST",
             headers={"Authorization": f"Bearer {self.token}",
                      "Content-Type": "application/json", "User-Agent": _UA})
+        # 서버 왕복은 **여기 한 자리**에서 계측한다 (TASK-20260901T163000). 호출측마다 재는
+        # 것은 빠지는 곳이 생기고, 빠진 곳이 하필 느려지는 곳이다. `dur_ms` 가 원장에 있으면
+        # 「러너가 느린가 · 서버가 느린가 · AI 가 느린가」를 로그만으로 가를 수 있다.
+        _t0 = time.monotonic()
+
+        def _ms() -> int:
+            return int((time.monotonic() - _t0) * 1000)
+
         try:
             with urllib.request.urlopen(req, timeout=timeout, context=self.ctx) as resp:
-                return json.loads(resp.read().decode("utf-8", "replace") or "{}")
+                out = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+                log_event("api.ok", level="DEBUG", path=path, dur_ms=_ms())
+                return out
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:400]
             # 상태코드를 뭉개지 않는다 — 401(재발급 필요)·409(남이 점유)·429(상한)는
             # 호출측이 서로 다르게 대응해야 하는 신호다.
+            #
+            # ⚠ 여기서 기록만 하고 **판정하지 않는다**. 409 는 정상 흐름(취소·경합)이고 401 은
+            #   사고다 — 그 구분은 호출측이 문맥과 함께 한다. 심각도는 그래서 WARN 이 상한이다.
+            log_event(_EV_API_FAIL, "서버가 오류로 답했다", level="WARN",
+                      path=path, http=e.code, dur_ms=_ms(), detail=detail)
             return {"_http": e.code, "error": detail}
         except Exception as e:  # noqa: BLE001
             # ⚠ `_http: 0` = **연결 자체가 안 됐다**(TLS·DNS·거부). 0 은 falsy 라
             #   `if not r.get("_http")` / `if code:` 같은 진위 검사에서 **성공으로 읽힌다** —
             #   실제로 `--check` 가 사설 CA 미지정 상태에서 "연결 정상" 을 출력했다(라이브 실측
             #   2026-08-28). 호출측이 실수하지 않도록 명시 플래그를 함께 싣는다.
+            #
+            # 연결 실패는 **예외 형이 곧 원인**이다 — `SSLCertVerificationError`(사설 CA 미지정)
+            # 와 `URLError`(DNS·거부)와 `timeout`(서버 지연)은 사용자가 할 일이 전혀 다른데,
+            # `str(e)` 만 남기면 그 셋이 비슷하게 보인다. 형과 스택을 원장에 남긴다.
+            log_event(_EV_API_FAIL, "서버에 닿지 못했다", level="WARN", exc=e,
+                      path=path, http=0, dur_ms=_ms())
             return {"_http": 0, "_failed": True, "error": str(e)[:300]}
 
 
@@ -1981,11 +2391,19 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     ⚠ 여기에도 sleep 은 없다. 자식이 끝나기를 `Thread.join(timeout)` 으로 **블로킹 대기**하고,
     그 반환 틈에 취소를 확인할 뿐이다. 서버를 두드리지 않으므로 폴링이 아니다.
     """
+    # 이 호출의 **소요와 결말**을 남긴다 (TASK-20260901T163000). 종전에는 자식이 실패해도
+    # 사유 400자가 사용자 답변에 실려 나갈 뿐, 로그에는 아무것도 남지 않았다 — 「내 AI 가
+    # 오류로 끝났습니다」를 받은 사용자가 원인을 물어와도 우리 쪽에 볼 것이 없었다.
+    _t0 = time.monotonic()
+    _exe = (cmd[0] if cmd else "")
     try:
         proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True,
                                 cwd=cwd, env=env)
     except Exception as e:  # noqa: BLE001
+        # 여기서 터지는 것은 대개 「그 실행 파일이 없다·권한이 없다」이고, 예외 형이 그
+        # 둘을 정확히 가른다(FileNotFoundError vs PermissionError). 문자열로 뭉개지 않는다.
+        _log_exc(_EV_AI_SPAWN_FAIL, "AI 를 실행하지 못했다", e, exe=_exe, cwd=cwd or "")
         return False, f"AI 실행 실패: {e}"
 
     # 파이프를 비우는 일은 별도 스레드에 맡긴다. 여기서 직접 읽으면 자식이 큰 출력을 낼 때
@@ -2007,14 +2425,29 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         if cancel_check():
             _kill(proc)
             pump.join(5.0)
+            log_event("ai.canceled", "취소되어 AI 를 중단했다", level="WARN",
+                      exe=_exe, dur_ms=int((time.monotonic() - _t0) * 1000))
             return False, CANCELED
         if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:
             _kill(proc)
             pump.join(5.0)
+            log_event(_EV_AI_TIMEOUT, "AI 호출이 상한을 넘겨 중단했다", level="ERROR",
+                      exe=_exe, limit_sec=int(_AI_TIMEOUT_SEC),
+                      dur_ms=int((time.monotonic() - _t0) * 1000),
+                      stderr_tail=(box.get("err") or "")[-2000:])
             return False, f"AI 호출이 {int(_AI_TIMEOUT_SEC)}초를 넘겨 중단했습니다."
 
+    _dur = int((time.monotonic() - _t0) * 1000)
     if proc.returncode != 0:
+        # ⚠ 자식의 stderr **전문**(상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
+        #   잘려 있어서, 정작 원인이 적힌 뒷부분이 사라지는 일이 잦았다.
+        log_event(_EV_AI_FAIL, "AI 가 오류로 끝났다", level="ERROR",
+                  exe=_exe, exit=proc.returncode, dur_ms=_dur,
+                  stdout_bytes=len(box.get("out") or ""),
+                  stderr_tail=(box.get("err") or "")[-2000:])
         return False, f"AI 가 오류로 끝났습니다(exit {proc.returncode}): {box.get('err', '')[:400]}"
+    log_event("ai.ok", level="DEBUG", exe=_exe, exit=0, dur_ms=_dur,
+              stdout_bytes=len(box.get("out") or ""))
     return True, (box.get("out") or "").strip()
 
 
@@ -2682,12 +3115,20 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     _use_sys_channel = bool(_sysp) and system_channel_supported(run_kind, custom)
     prompt = compose_prompt(api, {**claimed, "task_id": task_id},
                             system_channel=_use_sys_channel)
-    _picked = "".join([
-        f", 모델 {want_model}" if want_model else "",
-        f", 추론 {want_effort}" if want_effort else "",
-    ])
-    _log(f"{task_id}: 내 AI({run_kind})에게 전달{_picked}"
-         + (f" — 미반영: {', '.join(unmet)}" if unmet else ""))
+    # 이 질문 한 건의 **일생**을 같은 키(`task`)로 묶는다 (TASK-20260901T163000). 동시 처리에서
+    # 줄이 인터리브되어도 `task=` 로 걸러내면 한 건의 흐름이 그대로 복원되고, 그 키는 서버
+    # DB(`BridgeTasks.TaskId`)·웹 화면과도 같은 값이라 3자 대조가 된다.
+    _t_task = time.monotonic()
+    log_event(_EV_TASK_DISPATCH, "내 AI 에게 전달", task=task_id, runtime=run_kind,
+              model=want_model, effort=want_effort,
+              kind=str(claimed.get("kind") or "conversation"),
+              conv=str(claimed.get("conversation_id") or "") or None,
+              prompt_chars=len(prompt), sys_channel=_use_sys_channel)
+    if unmet:
+        # 「고른 값이 반영되지 않았다」는 **답변에도 적히지만 로그에도 남겨야** 한다 — 답변은
+        # 사용자가 지우면 사라지고, 같은 계정에 러너가 여럿일 때의 재현 조사는 로그로 한다.
+        log_event(_EV_TASK_UNMET, "요청한 지정을 반영하지 못했다", level="WARN",
+                  task=task_id, runtime=run_kind, unmet=list(unmet))
     ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
                               model=want_model, effort=want_effort, runtimes=runtimes,
                               caps=caps,
@@ -2696,9 +3137,17 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     if answer == CANCELED:
         # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
         # 토큰과 왕복을 아끼는 지점이다.
-        _log(f"{task_id}: 사용자가 취소했다 — 중단(제출 안 함)")
+        log_event(_EV_TASK_CANCEL, "사용자가 취소했다 — 제출하지 않는다", level="WARN",
+                  task=task_id, runtime=run_kind, at="during_ai",
+                  dur_ms=int((time.monotonic() - _t_task) * 1000))
         return False
     if not ok or not answer.strip():
+        # 「AI 가 실패했다」와 「AI 가 빈 답을 냈다」는 사용자에게는 같아 보이지만 원인이 다르다
+        # (전자는 exit≠0 · 후자는 exit=0 에 출력 0바이트 — 프롬프트 거절이 대표적이다).
+        log_event("task.answer.degraded", "실패·빈 응답을 안내문으로 대체해 제출한다",
+                  level="WARN", task=task_id, runtime=run_kind,
+                  reason=("ai_failed" if not ok else "empty_answer"),
+                  dur_ms=int((time.monotonic() - _t_task) * 1000))
         # 실패해도 **답을 제출한다** — 제출하지 않으면 사용자 화면은 30분간 대기 말풍선인 채로
         # 남고, 무엇이 잘못됐는지 아무도 모른다. 실패를 말하는 것이 침묵보다 낫다.
         answer = (answer or "내 AI 가 빈 응답을 돌려주었습니다.") + \
@@ -2707,7 +3156,9 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     # 답을 만드는 동안 취소됐을 수 있다 — 제출 **직전**에 한 번 더 본다.
     # 제목 분리보다 **앞**에 둔다: 어차피 버릴 답이면 가공할 이유가 없다.
     if _canceled():
-        _log(f"{task_id}: 답변 완료 직전에 취소됨 — 제출하지 않는다")
+        log_event(_EV_TASK_CANCEL, "답변 완료 직전에 취소됨 — 제출하지 않는다", level="WARN",
+                  task=task_id, runtime=run_kind, at="before_submit",
+                  dur_ms=int((time.monotonic() - _t_task) * 1000))
         return False
 
     # 제목·용어 줄은 답변에서 떼어 별도 필드로 보낸다 — 본문에 남기면 사용자가 규약 문자열을 본다.
@@ -2744,9 +3195,11 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     # 막는다 (codex P1-4). 답을 지우지 않고 「할 일이 없다」를 덧붙인다. 제목 분리 **뒤**다.
     answer, _asked_approval = annotate_approval_request(answer)
     if _asked_approval:
-        _log(f"{task_id}: 답변이 사용자에게 도구 승인을 요구했다 — 안내를 덧붙였다. "
-             "(연결된 AI 가 도구 호출 실패를 권한 문제로 오해한 신호. "
-             f"claude 라면 {_STRICT_MCP_FLAG} 적용 여부와 토큰 유효성을 확인하라)")
+        log_event("task.answer.approval_request",
+                  "답변이 사용자에게 도구 승인을 요구했다 — 안내를 덧붙였다. "
+                  "(연결된 AI 가 도구 호출 실패를 권한 문제로 오해한 신호. "
+                  f"claude 라면 {_STRICT_MCP_FLAG} 적용 여부와 토큰 유효성을 확인하라)",
+                  level="WARN", task=task_id, runtime=run_kind)
 
     # 자가 검증 — 제출 **직전**, 취소 검사 뒤. 여기 두는 이유: 취소된 답을 검증하는 것은
     # 남의 계정 토큰을 이유 없이 태우는 일이고, 제출 뒤에 두면 검증 결과를 실을 자리가 없다.
@@ -2761,7 +3214,9 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
                                  custom, _canceled, model=want_model, effort=want_effort,
                                  runtimes=runtimes, caps=caps)
         if review:
-            _log(f"{task_id}: 자가 검증 완료 ({review['latency_ms']}ms) — 제출에 동봉")
+            log_event(_EV_TASK_REVIEW, "자가 검증 완료 — 제출에 동봉", task=task_id,
+                      dur_ms=review["latency_ms"], model=review.get("model"),
+                      effort=review.get("reasoning_level"))
 
     payload = {"task_id": task_id, "answer": answer, "source_tasks": [task_id]}
     if title:
@@ -2779,26 +3234,42 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     res = api.call("submit_answer", payload, timeout=120.0)
     if res.get("_http") == 409:
         # 취소 신호를 못 본 채 여기까지 왔다(서버가 마지막 관문). 정상 흐름이다.
-        _log(f"{task_id}: 서버가 제출을 거절했다(취소된 요청) — 버린다")
+        log_event(_EV_TASK_SUBMIT_REJECT, "서버가 제출을 거절했다(취소된 요청) — 버린다",
+                  level="WARN", task=task_id, http=409,
+                  dur_ms=int((time.monotonic() - _t_task) * 1000))
         return False
     if res.get("_failed"):
         # ⚠ 연결 실패는 `_http == 0` 이라 아래 진위 검사에 걸리지 않는다 (codex P2-2).
         #   그대로 두면 **저장 여부를 모르는데 "제출 완료" 라고 기록**한다. 답변은 이미 만들어
         #   놓았으므로 한 번 더 시도할 값어치가 있다 — 서버의 `SubmittedAt IS NULL` 가드가
         #   중복 제출을 409 로 막으므로 재시도는 안전하다(멱등).
-        _log(f"{task_id}: 제출 중 연결 실패 — 한 번 더 시도합니다: {res.get('error')}")
+        log_event(_EV_TASK_SUBMIT_RETRY, "제출 중 연결 실패 — 한 번 더 시도한다",
+                  level="WARN", task=task_id, attempt=1, http=0,
+                  detail=str(res.get("error") or ""))
         time.sleep(_RECONNECT_BACKOFF_START)
         res = api.call("submit_answer", payload, timeout=120.0)
         if res.get("_failed") or res.get("_http"):
-            _log(f"{task_id}: 제출 실패(재시도 후) {res.get('_http')} {res.get('error')} — "
-                 "이 답변은 전달되지 않았다. lease 만료 뒤 다시 제안된다.")
+            log_event(_EV_TASK_SUBMIT_FAIL,
+                      "이 답변은 전달되지 않았다 — lease 만료 뒤 다시 제안된다",
+                      level="ERROR", task=task_id, attempt=2,
+                      http=res.get("_http"), detail=str(res.get("error") or ""),
+                      answer_chars=len(answer or ""),
+                      dur_ms=int((time.monotonic() - _t_task) * 1000))
             return False
     if res.get("_http"):
-        _log(f"{task_id}: 제출 실패 {res.get('_http')} {res.get('error')}")
+        log_event(_EV_TASK_SUBMIT_FAIL, "제출 실패", level="ERROR", task=task_id,
+                  attempt=1, http=res.get("_http"), detail=str(res.get("error") or ""),
+                  answer_chars=len(answer or ""),
+                  dur_ms=int((time.monotonic() - _t_task) * 1000))
         return False
     _gl = res.get("glossary") or {}
-    _log(f"{task_id}: 제출 완료 (대화 반영={res.get('delivered_to_conversation')})"
-         + (f" 용어 {_gl}" if _gl else ""))
+    # 한 건의 **종결**. `dur_ms` 는 전달→제출 완료 전체이고, 그 안의 AI 호출 몫은 `ai.ok`
+    # 줄이 따로 갖고 있다 — 두 값의 차가 곧 러너·서버가 쓴 시간이다.
+    log_event(_EV_TASK_SUBMIT_OK, "제출 완료", task=task_id, runtime=run_kind,
+              delivered=bool(res.get("delivered_to_conversation")),
+              answer_chars=len(answer or ""), has_title=bool(title),
+              glossary=(_gl or None),
+              dur_ms=int((time.monotonic() - _t_task) * 1000))
     return True
 
 
@@ -2844,6 +3315,30 @@ def release_own_claims_on_exit() -> None:
         pass
 
 
+#: `run.stop` 을 두 번 찍지 않기 위한 빗장. 종료 경로가 여럿이라(정상 반환·Ctrl+C·SIGTERM →
+#: atexit) 각자 찍으면 원장에 종료가 두 번 나오고, 그러면 「러너가 두 번 죽었나」로 읽힌다.
+_RUN_STOPPED = threading.Event()
+
+
+def _log_run_stop(reason: str = "exit") -> None:
+    """이 세션이 **무엇을 했는지** 한 줄로 닫는다. 여러 번 불러도 한 번만 남는다.
+
+    집계는 `log_event` 가 사건 코드별로 모아 둔 것을 그대로 쓴다 — 따로 세지 않으므로
+    새 사건이 생겨도 요약에서 빠지지 않는다. 사람 줄에는 핵심 셋(처리·실패·오류)만,
+    원장에는 전체 표를 싣는다.
+    """
+    if _RUN_STOPPED.is_set():
+        return
+    _RUN_STOPPED.set()
+    tally = {k: v for k, v in _STATS.items() if not k.startswith("_")}
+    log_event(_EV_RUN_STOP, "브리지 러너 종료", reason=reason,
+              uptime_sec=int(time.monotonic() - _RUN_T0),
+              submitted=_STATS.get(_EV_TASK_SUBMIT_OK, 0),
+              failed=(_STATS.get(_EV_TASK_SUBMIT_FAIL, 0) + _STATS.get(_EV_AI_FAIL, 0)),
+              errors=_STATS.get("_errors", 0),
+              tally=tally)
+
+
 def _arm_exit_release(api: Api) -> None:
     """종료 경로 세 갈래(정상 반환·Ctrl+C·SIGTERM)를 모두 자기 해제로 모은다.
 
@@ -2854,6 +3349,12 @@ def _arm_exit_release(api: Api) -> None:
     global _ACTIVE_API
     _ACTIVE_API = api
     atexit.register(release_own_claims_on_exit)
+    # 종료 요약도 **같은 출구**에 건다 (TASK-20260901T163000). 종전에는 러너가 사라진 뒤
+    # 로그의 마지막 줄이 무엇이든 그것이 마지막 사건인지, 그냥 거기서 잘린 것인지 알 수
+    # 없었다 — 87분 고아 사고에서 「12:47 종료」를 다른 증거로 짜맞춰야 했던 이유다.
+    # ⚠ `release_own_claims_on_exit` **뒤에** 등록한다: atexit 는 역순 실행이라, 이러면
+    #   요약이 해제 결과까지 반영한 뒤 마지막 줄로 찍힌다.
+    atexit.register(_log_run_stop)
     try:
         import signal as _signal
 
@@ -2883,6 +3384,10 @@ def start_heartbeat(api: Api, stop: threading.Event,
     여전히 서버 보류(`wait_for_request`)가 하고, 그 즉시성은 이 주기와 무관하다.
     """
     _stale_said = False
+    #: 연속 실패 횟수. 리스트로 두는 이유는 `nonlocal` 없이 중첩 함수가 고칠 수 있게 하려는
+    #: 것이고, **연속** 을 세는 이유는 한 번의 실패(배포 교대·순단)와 진짜 단절이 로그에서
+    #: 같은 모양이면 조사할 때 그 둘을 가릴 수 없기 때문이다.
+    _hb_fail_streak = [0]
     #: 직전 프로세스의 사망 신고는 **성공할 때까지** 싣는다 (TASK-20260901T140000).
     #: 첫 신호 한 번만 싣고 말면, 그 한 번이 배포 교대·순단에 걸렸을 때 회수가 통째로
     #: 유실되고 사용자는 종전과 같은 30분 공백을 겪는다. 서버 쪽은 멱등이라(이미 놓은 것은
@@ -2901,18 +3406,32 @@ def start_heartbeat(api: Api, stop: threading.Event,
             if code == 401:
                 # 복귀 안내는 여기서 하지 않는다 — 대기 루프 한 곳이 정본이다(두 곳에서
                 # 안내하면 문구가 갈리고, 한쪽만 고쳐지는 순간 틀린 안내가 남는다).
-                _log("하트비트 401 — 토큰이 무효해졌습니다(로그아웃 또는 만료). "
-                     "곧 대기 루프가 재발급 방법을 안내합니다.")
+                log_event(_EV_HB_UNAUTH,
+                          "하트비트 401 — 토큰이 무효해졌습니다(로그아웃 또는 만료). "
+                          "곧 대기 루프가 재발급 방법을 안내합니다.",
+                          level="ERROR", http=401)
             elif code or res.get("_failed"):
                 # 순단·배포 교대. 서버의 판정 창이 주기의 3배라 한 번 놓친 것은 흡수된다.
-                _log(f"하트비트 실패 {code}: {str(res.get('error') or '')[:120]}")
+                # WARN 인 이유: 한 번의 실패는 정상 범위다. **연속** 실패를 세어 원장에
+                # 남기므로, 조사할 때 `streak` 로 진짜 단절과 순단을 가를 수 있다.
+                _hb_fail_streak[0] += 1
+                log_event(_EV_HB_FAIL, "하트비트 실패", level="WARN", http=code,
+                          streak=_hb_fail_streak[0],
+                          detail=str(res.get("error") or "")[:200])
             else:
+                if _hb_fail_streak[0]:
+                    # 끊겼다 이어진 사실 자체가 조사 단서다 — 몇 번 만에 돌아왔는지 남긴다.
+                    log_event("hb.recovered", "하트비트가 다시 통했다",
+                              streak=_hb_fail_streak[0])
+                    _hb_fail_streak[0] = 0
                 # 사망 신고가 서버에 닿았다 — 다음 신호부터는 싣지 않는다.
                 if _pending_release:
                     _released = res.get("released_claims") or []
                     if _released:
-                        _log(f"직전 러너가 붙들고 있던 질문 {len(_released)}건을 되살렸습니다 "
-                             f"— 곧 다시 처리합니다: {', '.join(str(x) for x in _released[:5])}")
+                        log_event("task.reclaim",
+                                  "직전 러너가 붙들고 있던 질문을 되살렸습니다 — 곧 다시 처리합니다",
+                                  count=len(_released), prev_run=_PREV_RUNNER_INSTANCE,
+                                  tasks=[str(x) for x in _released[:20]])
                     _pending_release = []
                 # 주기는 **서버가 정한다**(P0-J 의 환경 차이 금지와 같은 축). 하한을 두는 것은
                 # 서버가 0 을 주는 등의 사고로 신호가 폭주하지 않게 하기 위해서다.
@@ -2929,9 +3448,12 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 _u = res.get("runner_update") or {}
                 if _u.get("stale_build") and not _stale_said:
                     _stale_said = True
-                    _log("⚠ 실행 중인 러너가 서버 배포본과 다릅니다 — 최신 파일로 다시 받아 "
-                         "실행하세요(웹의 '내 AI 연결하기' → 원클릭 명령). "
-                         "그 전까지는 옛 동작·옛 모델 목록이 그대로 보입니다.")
+                    log_event(_EV_HB_STALE,
+                              "⚠ 실행 중인 러너가 서버 배포본과 다릅니다 — 최신 파일로 다시 받아 "
+                              "실행하세요(웹의 '내 AI 연결하기' → 원클릭 명령). "
+                              "그 전까지는 옛 동작·옛 모델 목록이 그대로 보입니다.",
+                              level="WARN", local_build=_self_build(), ver=AGENT_VERSION,
+                              min_version=str(_u.get("min_version") or "") or None)
             stop.wait(interval)
 
     t = threading.Thread(target=_loop, name="bridge-heartbeat", daemon=True)
@@ -3062,11 +3584,13 @@ def main() -> int:
     conf_caps = sanitize_caps(load_conf().get("caps"))
 
     if not args.base or not args.token:
-        _log("FATAL: --base 와 --token 이 필요합니다.")
+        log_event(_EV_RUN_FATAL, "--base 와 --token 이 필요합니다.", level="FATAL",
+                  reason="missing_args")
         return 2
     if not _transport_is_safe(args.base):
         # 토큰이 이 채널로 나간다. loopback 만 예외.
-        _log("FATAL: --base 는 https 여야 합니다(loopback 예외).")
+        log_event(_EV_RUN_FATAL, "--base 는 https 여야 합니다(loopback 예외).", level="FATAL",
+                  reason="insecure_transport")
         return 2
 
     api = Api(args.base, args.token, args.ca)
@@ -3074,6 +3598,28 @@ def main() -> int:
     # 서버와 첫 말을 트기 전이어야 한다 — 점유(`claim_request`)에 새길 값이 이미 있어야 하고,
     # 직전 id 는 이 호출이 파일을 덮어쓰기 전에만 읽을 수 있다.
     init_runner_instance()
+    # ── 세션 머리글 (TASK-20260901T163000) ────────────────────────────────────
+    #
+    # 사고 조사는 **이 프로세스가 무엇이었는가** 에서 시작한다. 종전 로그로는 그것을 알 수
+    # 없어서, 사용자에게 「파이썬 버전이 뭔가요 · 러너를 언제 받으셨나요 · 인자를 어떻게
+    # 주셨나요」를 되물어야 했고 그 왕복이 조사 시간의 대부분이었다. 한 줄로 끝낸다.
+    #
+    # ⚠ 여기 실리는 것에 **비밀은 없다** — 토큰은 물론, `--cmd` 도 사용자가 그 안에 자격증명을
+    #   넣었을 수 있어 `_scrub` 를 거친다. 주소는 호스트만 남긴다.
+    _host = ""
+    try:
+        _host = urllib.parse.urlparse(args.base).hostname or ""
+    except Exception:  # noqa: BLE001
+        _host = ""
+    log_event(_EV_RUN_START, "브리지 러너 시작",
+              ver=AGENT_VERSION, build=_self_build(),
+              run=_RUNNER_INSTANCE, prev_run=_PREV_RUNNER_INSTANCE or None,
+              host=_host, ca=bool(args.ca),
+              py=".".join(str(x) for x in sys.version_info[:3]),
+              platform=sys.platform, pid=os.getpid(),
+              workers=workers, max_workers=max_workers,
+              ai=(args.ai or "auto"), cmd=(args.cmd or None),
+              audit_log=_audit_path(), human_log=(_human_log_path() or "stderr"))
     _arm_exit_release(api)
     # 신고는 **이 실행의 선택**이다(모듈 상수를 바꾸지 않는다). 두 축을 한 번에 조립한다 —
     # 따로 대입하면 나중 대입이 앞의 것을 지운다(`--batch --no-self-review` 조합에서
@@ -3108,7 +3654,9 @@ def main() -> int:
     #   한다. `list_open_requests` 는 같은 인증·같은 경로를 쓰면서 바로 돌아온다.
     probe = api.call("list_open_requests", {"limit": 1}, timeout=20.0)
     if probe.get("_http") == 401:
-        _log("FATAL: 토큰이 무효합니다(발급자가 로그아웃했거나 만료). 재발급이 필요합니다.")
+        log_event(_EV_CONN_UNAUTH,
+                  "토큰이 무효합니다(발급자가 로그아웃했거나 만료). 재발급이 필요합니다.",
+                  level="FATAL", http=401, reason="token_invalid")
         return 3
 
     # ── AI 는 **연결을 확인한 뒤에** 고른다 ──────────────────────────────────────
@@ -3130,11 +3678,12 @@ def main() -> int:
         # 안 하는지 알 수 없다.
         failed = bool(probe.get("_http")) or bool(probe.get("_failed"))
         if failed:
-            _log(f"연결 실패: {probe.get('error')}")
+            log_event(_EV_CONN_FAIL, "연결 실패", level="ERROR",
+                      http=probe.get("_http"), detail=str(probe.get("error") or ""))
             if probe.get("_failed"):
                 _log("  사설 CA 를 쓰는 서버라면 --ca <rootCA.pem> 을 지정하세요.")
             return 1
-        _log("연결 정상.")
+        log_event(_EV_CONN_OK, "연결 정상.", host=_host)
         # 연결은 됐다. 그런데 **답할 AI 가 없으면** 이 설치는 아직 쓸 수 없다 — 그 사실을
         # 연결 실패로 뭉치지 않고 따로 낸다(설치 스크립트가 exit 4 로 구분해 안내한다).
         if not picked:
@@ -3147,7 +3696,8 @@ def main() -> int:
     # 여기서부터는 상주다 — 답할 AI 가 없으면 **시작하지 않는다**. 질문을 가져가 놓고 답하지
     # 못하면 사용자는 「대기 중」 표시만 보며 기다리게 된다(침묵보다 나쁘다).
     if not picked:
-        _log("FATAL: 이 컴퓨터에서 쓸 수 있는 AI 를 찾지 못했습니다.")
+        log_event(_EV_RUN_FATAL, "이 컴퓨터에서 쓸 수 있는 AI 를 찾지 못했습니다.",
+                  level="FATAL", reason="no_local_ai")
         for line in _no_ai_message():
             _log(line)
         return 4
@@ -3214,9 +3764,13 @@ def main() -> int:
     #: 연결이 끊겼을 때의 복구 간격(feature-0045). 대기가 아니라 재연결이므로 sleep 이 있다.
     backoff = 0.0
 
-    _log(f"대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. "
-         f"(동시 {workers}건에서 시작 · 수요 시 최대 {max_workers} · "
-         f"{int(idle_sec)}초 유휴 시 회수 · Ctrl+C 로 종료)")
+    log_event(_EV_RUN_READY,
+              "대기 시작 — 웹에서 질문이 오면 즉시 처리합니다. "
+              f"(동시 {workers}건에서 시작 · 수요 시 최대 {max_workers} · "
+              f"{int(idle_sec)}초 유휴 시 회수 · Ctrl+C 로 종료)",
+              runtime=kind, workers=workers, max_workers=max_workers,
+              idle_sec=int(idle_sec),
+              startup_ms=int((time.monotonic() - _RUN_T0) * 1000))
     while True:
         # ⚠ **여기서 워커 자리를 잡지 않는다** (codex P1-2, 2026-08-28).
         #
@@ -3234,7 +3788,8 @@ def main() -> int:
             # 연결이 **명시적으로** 해제됐다(로그아웃, 또는 러너가 오래 멈춰 있어 만료).
             # 사용자 요구(2026-08-28): 이때 러너도 안전하게 종료된다 — 다만 하던 일을 먼저
             # 마친다. 종료 절차는 `shutdown_after_drain` 한 곳이 정본이다.
-            _log("토큰이 무효해졌습니다(로그아웃 또는 만료).")
+            log_event(_EV_CONN_UNAUTH, "토큰이 무효해졌습니다(로그아웃 또는 만료).",
+                      level="ERROR", http=401, active=active.count())
             # 죽은 토큰으로 30초마다 계속 두드리지 않는다.
             heartbeat_stop.set()
             shutdown_after_drain(active, cancels)
@@ -3255,7 +3810,9 @@ def main() -> int:
             # 정확히 반대로 작용했다). **대기에는 여전히 sleep 이 없다** — 여기서 쉬는 것은 대기가
             # 아니라 **연결 복구**다. 두 가지는 다른 일이고, 다르게 다뤄야 한다.
             backoff = min(_RECONNECT_BACKOFF_MAX, (backoff * 2) or _RECONNECT_BACKOFF_START)
-            _log(f"대기 실패 {code}: {res.get('error')} — {backoff:.0f}초 뒤 다시 연결합니다.")
+            log_event(_EV_CONN_RETRY, "대기 실패 — 잠시 뒤 다시 연결합니다", level="WARN",
+                      http=code, backoff_sec=round(backoff, 1),
+                      detail=str(res.get("error") or "")[:200])
             time.sleep(backoff)
             continue
         backoff = 0.0
@@ -3266,7 +3823,8 @@ def main() -> int:
             # 재호출하면 초당 수십~수백 회가 되어 계정 시간당 호출 상한을 태우고 429 락아웃을
             # 만든다 — 실패 경로에서 없앤 hot loop 를 성공 경로에 다시 만드는 셈이다.
             # 인지 지연이 무시할 만큼 짧은 하한만 둔다(백오프가 아니다 — 자라지 않는다).
-            _log("서버 인스턴스 교대 중 — 곧바로 다시 대기합니다.")
+            log_event("conn.draining", "서버 인스턴스 교대 중 — 곧바로 다시 대기합니다.",
+                      level="DEBUG")
             time.sleep(_DRAINING_RETRY_FLOOR_SEC)
             continue
 
@@ -3274,7 +3832,8 @@ def main() -> int:
         # 취소에도 그대로 적용된다). 진행 중인 워커가 다음 확인 시점에 이것을 보고 하차한다.
         fresh = cancels.add_many(res.get("canceled_task_ids") or [])
         if fresh:
-            _log(f"취소 통보: {', '.join(fresh)} — 진행 중이면 중단합니다.")
+            log_event(_EV_TASK_CANCEL, "취소 통보 — 진행 중이면 중단합니다", level="WARN",
+                      at="notified", count=len(fresh), tasks=list(fresh))
 
         # ── 유휴 슬롯 회수 ─────────────────────────────────────────────────
         # 여기가 **tick 이다.** 서버가 대기를 최대 55초 보류하므로 이 루프는 적어도 그 간격으로
@@ -3318,9 +3877,11 @@ def main() -> int:
             if res.get("task_ids"):
                 stalled += 1
                 if stalled == _MAX_STALLED_ROUNDS:
-                    _log(f"WARN: 대기 질문 {len(res.get('task_ids') or [])}건을 {stalled}회 연속 "
-                         "처리하지 못했습니다(점유 실패 반복). 서버 상태와 토큰 권한을 "
-                         "확인하세요 — 러너는 계속 대기합니다.")
+                    log_event("task.stalled",
+                              "대기 질문을 연속으로 처리하지 못했습니다(점유 실패 반복). "
+                              "서버 상태와 토큰 권한을 확인하세요 — 러너는 계속 대기합니다.",
+                              level="ERROR", pending=len(res.get("task_ids") or []),
+                              rounds=stalled)
                 # 쉬는 것은 대기가 아니라 **재시도 간격**이다(hot loop 차단, 상한 있음).
                 time.sleep(min(_RECONNECT_BACKOFF_MAX, _DRAINING_RETRY_FLOOR_SEC * stalled))
             continue
@@ -3356,7 +3917,8 @@ def main() -> int:
         claimed = api.call("claim_request",
                            {"task_id": task_id, "runner_instance": _RUNNER_INSTANCE})
         if claimed.get("_http") == 409:
-            _log(f"{task_id}: 이미 다른 세션이 가져갔다 — 건너뜀")
+            log_event(_EV_TASK_CLAIM_SKIP, "이미 다른 세션이 가져갔다 — 건너뜀",
+                      level="DEBUG", task=task_id, http=409)
             skip.add(task_id)
             pool.release(sid)
             continue
@@ -3364,7 +3926,9 @@ def main() -> int:
             # ⚠ `_failed`(연결 실패, `_http == 0`)를 함께 본다 (codex P2-2, 2026-08-28).
             #   앞선 수정은 대기 루프만 고쳤고 여기는 그대로였다 — claim 도중 TCP/TLS 가 끊기면
             #   **빈 응답을 정상 점유로 읽고** AI 를 돌려, 아무도 기다리지 않는 답을 만든다.
-            _log(f"{task_id}: 점유 실패 {claimed.get('_http')} {claimed.get('error')}")
+            log_event(_EV_TASK_CLAIM_FAIL, "점유 실패", level="WARN", task=task_id,
+                      http=claimed.get("_http"),
+                      detail=str(claimed.get("error") or "")[:200])
             # 일시 장애(연결 실패·5xx·429)는 **영구 skip 하지 않는다** — 그 task 는 정상이고
             # 잠시 뒤면 집을 수 있다. 영구 skip 은 "이미 남이 가져갔다"(409) 처럼 재시도해도
             # 달라지지 않는 경우에만 쓴다(codex P1-4 의 blast radius 축소와 같은 취지).
@@ -3394,7 +3958,9 @@ def main() -> int:
         except (RuntimeError, OSError) as e:  # 스레드 한도·메모리 부족
             # 여기서 그냥 터지면 **슬롯과 서버 점유가 함께 샌다** — 슬롯은 busy 인 채로,
             # task 는 lease 만료까지 남의 눈에 안 보인 채로 묶인다(codex 리뷰 P2).
-            _log(f"{task_id}: 워커 스레드를 시작하지 못했습니다({e}) — 자리를 반납하고 건너뜁니다.")
+            _log_exc("task.worker.spawn_fail",
+                     "워커 스레드를 시작하지 못했습니다 — 자리를 반납하고 건너뜁니다.",
+                     e, task=task_id, in_use=pool.in_use)
             pool.release(sid)
             continue
         if args.once:
@@ -3408,5 +3974,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        _log("종료합니다.")
+        _log_run_stop("keyboard_interrupt")
         sys.exit(0)

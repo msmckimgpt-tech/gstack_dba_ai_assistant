@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -517,16 +518,19 @@ def test_l16_logs_carry_a_timestamp():
     assert re.search(r"\[bridge-setup \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]", proc.stdout), \
         f"설치 로그에 시각이 없다: {proc.stdout!r}"
 
-    # 러너 로그: 정본 `_log` 를 그대로 실행한다.
-    agent = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py").read_text(encoding="utf-8")
-    m = re.search(r"def _log\(msg: str\) -> None:.*?sys\.stderr\.flush\(\)", agent, re.S)
-    assert m, "_log 정의를 찾지 못했다"
-    ns: dict = {}
-    exec("import sys, time\n" + m.group(0), ns)
-    import io as _io
-    import contextlib
-    buf = _io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        ns["_log"]("AI = claude")
-    assert re.match(r"\[bridge \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] AI = claude", buf.getvalue()), \
-        f"러너 로그에 시각이 없다: {buf.getvalue()!r}"
+    # 러너 로그: 정본 `_log` 를 **모듈째 불러** 그대로 실행한다.
+    #
+    # ⚠ 종전에는 소스에서 `_log` 정의를 정규식으로 오려 내 `exec` 했다. 그 방식은 함수의
+    #   **모양**에 묶여 있어서, 로그가 구조화되며 시그니처가 바뀌자(TASK-20260901T163000)
+    #   「시각이 없다」가 아니라 「정의를 찾지 못했다」로 깨졌다 — 검사하려던 성질(시각)과
+    #   무관한 이유로 실패하는 검사는 신호가 아니라 소음이다. 실물을 부른다.
+    agent_dir = _UNIT / "feature-0043-external-llm-bridge" / "src"
+    env = {**os.environ, "PYTHONPATH": str(agent_dir),
+           "BRIDGE_LOG_FILE": "-"}   # 이 검사는 stderr 만 본다 — 파일은 남기지 않는다
+    got = subprocess.run(
+        [sys.executable, "-c", "import bridge_agent as B; B._log('AI = claude')"],
+        capture_output=True, text=True, timeout=60, env=env).stderr
+    # 형식: `[bridge <지역시각><오프셋>] <레벨> <사건코드> | <문장>`
+    assert re.match(
+        r"\[bridge \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{4}\] \w+\s+\S+ \| AI = claude",
+        got), f"러너 로그에 시각이 없다: {got!r}"
