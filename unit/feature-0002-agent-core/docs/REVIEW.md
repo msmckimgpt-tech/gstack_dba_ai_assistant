@@ -2700,3 +2700,56 @@ Trigger: 코드 변경 **0**(배포 결과·원장·학습 기록 전용). 선�
 Verdict: **SKIPPED** — 패널 미실시. 기록된 사실의 근거: 7서비스 실물 이미지 `7e512eb8` ·
 surge 0 · caddy blip 0 · 대화 스모크 PASS · 배포본 런타임 심볼·메시지·실 datasource 반환 실측.
 
+
+## REV-20260901T120000-ai-claude-metadata-term-scope [SUBAGENT:self-adversarial] — CONCERN→해소
+
+- Related TASK: feature-0002-agent-core (`20260901T1200-glossary-term-tier`)
+- Trigger: schema/스키마 · migration/마이그레이션 keyword matched (§18.8) — backend·qa 렌즈.
+  세션 도구 제약(AgentTool 미요청)으로 §18.8.2 1번 「제약 없는 채널 우선」을 적용해 **자체
+  적대 검증 + 뮤테이션 실증 + 라이브 dry-run** 으로 수행. 미검증 도메인 없음(보안 표면 무변경).
+- Timestamp: 2026-09-01T12:00:00+09:00
+- Verdict: PASS (아래 BLOCKER 2건은 in-cycle 수정)
+
+### 1. Blocking issues (in-cycle 수정 완료)
+
+- **Evidence**: 소급 정리 초판이 정규화 표면형만 보고 scope 를 넘어 병합했고, 라이브 dry-run
+  에서 `[product.dk_dev] SponsorCode → 대표 [product.gz_dev] SponsorCode` · `[product.dk_dev]
+  CharacterID → [product.gz_qa_kr]` 등 교차 제품 병합 69건이 나왔다.
+  **Location**: `src/scripts/glossary_tier_sweep.py:plan`
+  **Reason**: 읽기 캐스케이드가 `[그 제품, common]` 이라 **한 제품은 다른 제품 scope 를 읽지
+  않는다** — 병합하면 그 제품에서 용어가 소실된다. 같은 이름이 제품마다 다른 뜻일 수도 있다.
+  **Action**: 삭제를 «읽기 경로가 보장될 때» 로 한정(같은 scope 표기변형 · 전역이 덮는 행).
+  교차 제품은 `cross_scope` 보고 전용으로 분리. 재실행 결과 삭제 69→36, 교차 28건은 보고만.
+
+- **Evidence**: `test_auto_promote_skips_rejected_cross_scope` 가 뮤턴트 M3(판정 이력 조회를
+  단일 scope 로 회귀)에서 **통과**했다.
+  **Location**: `tests/test_kb_glossary_enum.py:test_auto_promote_skips_rejected_cross_scope`
+  **Reason**: `_ScriptedConn` 이 어떤 SQL 에든 큐의 다음 값을 돌려주므로 결과(`skipped`)만
+  보면 조회 범위를 구별하지 못한다 — vacuous pass.
+  **Action**: 조회에 실린 **scope 집합과 정규화 표면형을 파라미터로 직접 단언**. 재실행에서
+  M3 가 KILL 됨.
+
+### 2. Cross-domain concerns
+
+- **Evidence**: `static/agent/bridge_agent.py` 만 고쳤고 `feature-0043/src/bridge_agent.py`
+  정본이 갈렸다. **Location**: `unit/feature-0043-external-llm-bridge/src/bridge_agent.py`
+  **Reason**: 러너는 2벌이고 byte-동치가 계약이다 — 갈리면 사용자가 받는 것과 테스트한 것이
+  다르다. **Action**: 동기화. (이 결함은 `make test` 의 `test_bridge_agent_sync` 가 잡았다 —
+  로컬 pytest 로는 안 걸렸다. 컨테이너 게이트가 실효했다는 증거.)
+
+### 3. Challenge to current spec
+
+- **결정적 사전은 완전하지 않다(의도)**. `_GENERAL_TERM_SURFACES` 는 라이브에서 실제로
+  오등록된 클래스를 봉인할 뿐이고, 새 범용 어휘는 LLM 판정에 맡긴다. 완전성을 목표로 삼으면
+  목록이 무한히 자라고 `튜닝인덱스` 같은 제품 용어를 잘못 삼킬 위험이 함께 커진다.
+  비대칭이 옳은 방향으로 서 있다 — 강등은 `skipped_general` 큐에 남아 되살릴 수 있다.
+- **`general` 미등록은 사용자 결정이다**(AskUserQuestion 2026-09-01). 「전역 자동등록」도
+  선택지였으나, 범용 상식이 전역 사전을 채우면 모든 제품 프롬프트에 토큰만 실린다.
+- **미검증(정직)**: `#GLOSSARY:` 규약의 **라이브 왕복**은 러너 갱신 후에만 관측된다. 코드·
+  테스트는 「서버가 받으면 올바르게 라우팅한다」와 「러너가 만들면 올바르게 뗀다」까지만
+  증명하며, 실제 개인 AI 가 그 줄을 만들어 내는지는 다음 실사용 turn 에서 판정한다.
+
+### 4. Verdict
+
+PASS — Blocking 2건 in-cycle 해소, cross-domain 1건 해소. `make test` rc=0 · ruff clean ·
+뮤테이션 4/4 KILL. 보안 표면(권한 코드·인가 경계·신규 라우트) 변경 0.

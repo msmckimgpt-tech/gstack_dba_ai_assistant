@@ -91,6 +91,15 @@ const _METADATA_FIELDS = {
     //   role_key 는 _metaSubmitForm 에서 주입한다(생성=툴바 역할 컨텍스트, 전체→공용 '*'; 수정=기존 보존).
     { key: "term", label: "용어", required: true, type: "text", placeholder: "예: 활성 사용자" },
     { key: "definition", label: "정의", required: true, type: "textarea", placeholder: "이 용어의 의미/판정 기준" },
+    // 통용범위 축(0057). 저장 위치를 정하는 값이므로 등록 폼에 노출한다 — 감춰 두면 관리자는
+    // 자기가 고른 scope 만 보고 「이 용어가 어디까지 쓰이는가」를 표현할 방법이 없다.
+    // 값 미지정 시 서버가 보고 있는 scope 로 기본값을 정한다(공용→org / 제품→product).
+    { key: "term_tier", label: "통용 범위", required: false, type: "select",
+      options: [
+        { value: "product", label: "이 제품 전용" },
+        { value: "org", label: "전역(모든 제품)" },
+        { value: "general", label: "일반 DB 용어" },
+      ] },
   ],
   enums: [
     { key: "schema_name", label: "스키마(선택)", required: false, type: "text", placeholder: "단일 스키마면 비워둠" },
@@ -910,6 +919,33 @@ function _metaRenderForm() {
       wrap.appendChild(field);
       continue;
     }
+    if (f.type === "select") {
+      // 고정 선택지 필드(통용 범위 등). 자유 입력이면 서버 화이트리스트가 400 을 내는데,
+      // 그 400 을 사용자가 오타로 만나게 두지 않는다.
+      const field = document.createElement("label");
+      field.className = "admin-meta-field";
+      const cap = document.createElement("span");
+      cap.className = "admin-meta-field-label";
+      cap.textContent = f.label + (f.required ? " *" : "");
+      field.appendChild(cap);
+      const sel = document.createElement("select");
+      sel.className = "admin-meta-input";
+      sel.name = f.key;
+      for (const o of (f.options || [])) {
+        const opt = document.createElement("option");
+        opt.value = String(o.value);
+        opt.textContent = String(o.label);   // textContent 기반(XSS 안전)
+        sel.appendChild(opt);
+      }
+      // 수정이면 기존 값, 신규면 **보고 있는 scope 가 답한다**(서버 기본값과 같은 규칙 —
+      // 두 곳이 갈리면 화면이 보여준 값과 저장된 값이 달라진다).
+      const cur = (editing && editing[f.key] != null) ? String(editing[f.key])
+        : ((adminState.metadata.productScope || "common") === "common" ? "org" : "product");
+      if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+      field.appendChild(sel);
+      wrap.appendChild(field);
+      continue;
+    }
     const field = document.createElement("label");
     // B6: 긴 필드(textarea: 정의/설명/질문/SQL)는 전폭, 짧은 식별 필드는 2열 grid 셀.
     field.className = "admin-meta-field" + (f.type === "textarea" ? " admin-meta-field-wide" : "");
@@ -1119,6 +1155,14 @@ function _metaListRow(it, sub, canEdit, grouped) {
   row.className = "admin-meta-row";
   if (it.id != null) row.dataset.metaId = String(it.id);
   if (md.selectedId != null && String(it.id) === String(md.selectedId)) row.classList.add("is-active");
+  // 전역 상속분(0057)은 **읽기 전용**이다 — 서버가 `inherited` 로 판정해 내려보내고 화면은
+  // 그 값만 본다. 프론트가 scope 를 비교해 스스로 판정하면 두 벌이 되고, 한쪽이 낡으면
+  // 「눌러도 404 나는 편집 버튼」이 남는다(§16.7 G6 와 같은 계열의 wiring 불일치).
+  // 편집을 열면 PUT 이 그 scope 에서 행을 못 찾아 404 로 끝난다 — 그 왕복을 여기서 없앤다.
+  if (it.inherited) {
+    row.classList.add("is-inherited");
+    canEdit = false;
+  }
   if (canEdit) {
     row.setAttribute("role", "button");
     row.setAttribute("tabindex", "0");
@@ -1179,6 +1223,16 @@ function _metaListRow(it, sub, canEdit, grouped) {
     const rk = String(it.role_key || "*");
     tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`,
       rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
+    // 통용 범위(0057) — 이 배지가 없으면 「왜 이 용어가 다른 제품에도 뜨는가」를 화면에서
+    // 설명할 방법이 없다. 전역 상속분은 **편집 불가**임을 함께 말한다(버튼만 감추면 왜
+    // 안 되는지 모른다).
+    if (it.inherited) {
+      tags.appendChild(mkTag("전역 상속 · 여기서 편집 불가", "admin-meta-tag-warn"));
+    } else if (String(it.term_tier || "") === "org") {
+      tags.appendChild(mkTag("전역(모든 제품)", "admin-meta-tag-role"));
+    } else if (String(it.term_tier || "") === "general") {
+      tags.appendChild(mkTag("일반 DB 용어", "admin-meta-tag-neutral"));
+    }
     const src = String(it.source || "manual");
     if (src === "auto") tags.appendChild(mkTag("자동등록", "admin-meta-tag-neutral"));
     else if (src === "auto_promoted") tags.appendChild(mkTag("자동승급", "admin-meta-tag-neutral"));
@@ -1473,6 +1527,13 @@ function _metaResetInputs() {
     if (el.type === "checkbox") el.checked = false;
     else el.value = "";
   });
+  // select 는 `value=""` 로 비우면 **없는 옵션**이 되어 브라우저가 첫 옵션으로 되돌린다 —
+  // 그 첫 옵션이 우연히 맞는 기본값이라는 보장이 없다(제품 scope 에서 'product' 인 것은
+  // 지금 배치의 우연이다). 폼 조립부와 같은 규칙으로 명시 복원한다.
+  wrap.querySelectorAll("select").forEach((el) => {
+    if (el.name !== "term_tier") { el.selectedIndex = 0; return; }
+    el.value = (adminState.metadata.productScope || "common") === "common" ? "org" : "product";
+  });
   _metaClearFieldErrors();   // B6: 폼 초기화 시 인라인 오류 제거.
 }
 
@@ -1662,13 +1723,20 @@ function renderFeedbackQueue(kind) {
   const sel = document.createElement("select");
   sel.className = "admin-meta-scope-select";
   sel.setAttribute("aria-label", "검토 큐 상태 필터");
-  for (const o of [
+  const _statusOpts = [
     { value: "pending", label: "검토 대기(pending)" },
     { value: "auto_promoted", label: "자동 등록(auto)" },
     { value: "promoted", label: "승급됨" },
     { value: "rejected", label: "거부됨" },
     { value: "all", label: "전체" },
-  ]) {
+  ];
+  // 범용 판정으로 **등록하지 않은** 후보(0057). 용어 축에만 있다 — ENUM 은 통용범위 축이 없다.
+  // 이 선택지가 없으면 그 판정은 조회 불가라 사실상 영구 삭제가 된다(promote 로 되살리는 것이
+  // 오분류의 유일한 복구 경로다).
+  if (kind !== "enum") {
+    _statusOpts.splice(4, 0, { value: "skipped_general", label: "일반 용어로 제외됨" });
+  }
+  for (const o of _statusOpts) {
     const opt = document.createElement("option");
     opt.value = o.value; opt.textContent = o.label;
     if (o.value === (adminState.metadata.feedback.status || "pending")) opt.selected = true;
@@ -1745,11 +1813,16 @@ function renderFeedbackQueue(kind) {
     if (kind === "glossary") {
       const rk = String(it.role_key || "*");
       tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
+      // 통용 범위(0057) — 왜 이 후보가 전역 scope 에 들어왔는지, 왜 제외됐는지를 여기서 말한다.
+      const tier = String(it.term_tier || "");
+      if (tier === "org") tags.appendChild(mkTag("전역(모든 제품)", "admin-meta-tag-role"));
+      else if (tier === "general") tags.appendChild(mkTag("일반 DB 용어", "admin-meta-tag-neutral"));
     }
     if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`, "admin-meta-tag-neutral"));
     if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`, "admin-meta-tag-conf"));  /* 폴리시 #5: 신뢰도 accent. */
     const st = String(it.status || "");
-    const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;
+    const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨",
+                      rejected: "거부됨", skipped_general: "일반 용어로 제외됨" }[st] || st;
     // L7: 자동 등록(auto_promoted=provenance)=neutral 회색(경고 아님), 승급=ok, 거부=danger, 검토 대기=neutral.
     const stCls = st === "promoted" ? "admin-meta-tag-ok"
       : st === "rejected" ? "admin-meta-tag-danger"
@@ -1768,11 +1841,14 @@ function renderFeedbackQueue(kind) {
     if (canCurate) {
       const actions = document.createElement("div");
       actions.className = "admin-meta-row-actions";
-      if (st === "pending") {
+      // `skipped_general` 도 승급 대상이다(0057) — 결정적 목록·LLM 판정은 오분류할 수 있고,
+      // 되살릴 경로가 없으면 그 판정이 영구 삭제가 된다. 서버 `promote_glossary_feedback` 이
+      // 같은 두 상태를 받는다(화면과 서버가 같은 집합을 봐야 「눌러도 안 되는 버튼」이 없다).
+      if (st === "pending" || st === "skipped_general") {
         const promoteBtn = document.createElement("button");
         promoteBtn.type = "button";
         promoteBtn.className = "btn-primary admin-meta-edit";
-        promoteBtn.textContent = "승급";
+        promoteBtn.textContent = (st === "skipped_general") ? "그래도 등록" : "승급";
         promoteBtn.addEventListener("click", (e) => { e.stopPropagation(); _feedbackQueueAction(kind, it.id, "promote", promoteBtn); });
         actions.appendChild(promoteBtn);
       }

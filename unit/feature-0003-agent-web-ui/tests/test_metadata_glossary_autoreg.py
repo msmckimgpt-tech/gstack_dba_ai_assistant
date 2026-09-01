@@ -136,14 +136,20 @@ def test_create_glossary_with_role(monkeypatch):
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     captured = {}
+    # 0057: 시그니처에 term_tier 추가(통용범위 축) — 대역도 함께 받는다.
     monkeypatch.setattr(_kg, "upsert_glossary_term",
-                        lambda conn, scope_key, term, definition, role_key="*", source="manual":
-                        captured.update({"role_key": role_key, "term": term}))
+                        lambda conn, scope_key, term, definition, role_key="*", source="manual",
+                        term_tier="product":
+                        captured.update({"role_key": role_key, "term": term,
+                                         "term_tier": term_tier}))
     _audit_capture(monkeypatch)
     resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest(
         {"scope_key": "common", "role_key": "Operator", "term": "리드", "definition": "영업 잠재고객"}), account=acct))
     assert resp.status_code == 200
     assert captured["role_key"] == "operator"   # 정규화
+    # 0057: tier 미지정 등록의 기본값은 **보고 있는 scope** 가 답한다 — 전역 scope 에 손으로
+    # 넣는 것은 곧 「전역 용어」 선언이다(제품 scope 였다면 'product').
+    assert captured["term_tier"] == "org"
 
 
 def test_create_glossary_invalid_role_400(monkeypatch):
@@ -169,8 +175,10 @@ def test_feedback_list_serializes(monkeypatch):
     monkeypatch.setattr(_dbmod, "_pg_connect_ro", lambda: _PgConn())
     ts = datetime.datetime(2026, 6, 29, 10, 0, 0)
     # row: (id, scope_key, role_key, term, suggested_definition, confidence, status,
-    #       source_run_id, conversation_id, promoted_glossary_id, approved_by, created_at, updated_at)
-    rows = [(5, "common", "*", "리드", "영업 잠재고객", 0.7, "pending", "run1", "c1", None, None, ts, ts)]
+    #       source_run_id, conversation_id, promoted_glossary_id, approved_by,
+    #       created_at, updated_at, term_tier)   ← 0057 로 term_tier 추가
+    rows = [(5, "common", "*", "리드", "영업 잠재고객", 0.7, "pending", "run1", "c1", None, None,
+             ts, ts, "product")]
     monkeypatch.setattr(_kg, "list_glossary_feedback", lambda conn, **k: rows)
     monkeypatch.setattr(_kg, "count_glossary_feedback", lambda conn, status="pending", scope_key=None: 3)
     resp = admin_metadata.admin_list_glossary_feedback(_FakeRequest(query={"status": "pending"}), account=acct)
@@ -180,6 +188,7 @@ def test_feedback_list_serializes(monkeypatch):
     it = out["items"][0]
     assert it["id"] == 5 and it["term"] == "리드" and it["status"] == "pending"
     assert it["role_key"] == "*" and abs(it["confidence"] - 0.7) < 1e-6
+    assert it["term_tier"] == "product"   # 0057: 통용범위 축이 응답에 실린다
 
 
 # ── FP: promote ──────────────────────────────────────────────────────────────

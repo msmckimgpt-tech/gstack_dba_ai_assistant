@@ -782,6 +782,24 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
         delivered = _deliver_web_bridge_answer(conn, task_id, account, answer,
                                                title=str(body.get("title") or ""))
 
+    # ── 용어사전 자율수집 — 답변에 동봉된 후보를 태운다 (0057) ─────────────────────────
+    #
+    # feature-0043 이 서버 계정 LLM 을 닫으면서 `run_agent` 가 돌지 않게 됐고, 답변 직후
+    # 큐레이션(`run_post_answer_curation` → `_glossary_autopropose`)은 그 안에서만 호출됐다.
+    # 그래서 **용어 자율수집이 통째로 멈췄다** — 라이브 마지막 자동등록이 전환일(2026-08-26)이다.
+    #
+    # 되살리는 방법으로 「러너에게 별도 콘솔 작업을 위임」이 아니라 **답변에 동봉**을 고른 이유:
+    # red-team 을 같은 방식으로 처리한 선례가 있고(사용자 결정 2026-08-31 — 「요청 당시의
+    # 호출자가 스스로의 대화내역을 알 수 있으므로」), 추가 LLM 호출이 0 이며, 별도 task 로
+    # 만들면 그 AI 가 자기 답변의 맥락을 잃는다.
+    #
+    # **옵션이다** — 러너가 안 실으면 종전대로 아무 일도 없다(additive, 구 러너 무회귀).
+    # 실패는 흡수한다: 용어 수집은 보조물이고, 답변은 이미 확정·전달됐다.
+    glossary_stats: dict[str, int] = {}
+    if not is_job and body.get("glossary_terms") is not None:
+        glossary_stats = _absorb_bridge_glossary_terms(
+            conn, task=task, task_id=task_id, raw_terms=body.get("glossary_terms"))
+
     # ⚠ 원장 호출은 **한 곳뿐이다.** 분기마다 두면 (a) 「전달이 원장보다 먼저」라는 계약이
     #   분기 하나에서만 성립하고 (b) 그 계약을 지키는 회귀 가드가 소스 순서를 보므로 조용히
     #   무력화된다(실제로 이 수정 전에 그 가드가 FAIL 했다). 결과 필드만 분기로 나눈다.
@@ -806,10 +824,106 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                              "cross_session_findings": findings})
     return JSONResponse({"task_id": task_id, "recorded": True,
                          "delivered_to_conversation": delivered,
+                         # 무엇이 등록/보류/범용판정/중복으로 갈렸는지 러너에게 돌려준다 —
+                         # 조용한 성공은 「하나도 안 실렸다」와 구별되지 않는다.
+                         "glossary": glossary_stats,
                          # 검증을 보냈는데 저장되지 않았다는 사실을 러너가 알아야 한다 —
                          # 모르면 로그에 "검증 포함 제출 완료" 만 남고 원장은 비어 있다.
                          "review_recorded": review_recorded,
                          "cross_session_findings": findings})
+
+
+#: 한 답변이 실을 수 있는 용어 후보 수 상한. 서버 LLM 경로의 `AGENT_GLOSSARY_SUGGEST_MAX`(5)와
+#: 같은 값을 기본으로 하되, 러너는 **통제 밖 LLM** 이므로 여기서 별도로 잠근다(신뢰 경계).
+_BRIDGE_GLOSSARY_MAX = 5
+
+
+def _absorb_bridge_glossary_terms(conn, *, task: dict, task_id: str, raw_terms) -> dict:
+    """개인 AI 가 답변에 동봉한 용어 후보를 용어사전 라우터에 태운다. 반환: `{outcome: count}`.
+
+    ## 신뢰 경계
+
+    `raw_terms` 는 **우리가 통제하지 않는 LLM 의 산출물**이다. 그래서:
+    - 검증은 `kb_glossary.normalize_suggestion_items` **한 곳**을 쓴다 — 서버 LLM 경로와 같은
+      필터를 타야 한쪽만 느슨해지지 않는다(§16.7 G8-a).
+    - 개수 상한을 여기서 다시 건다(`_BRIDGE_GLOSSARY_MAX`).
+    - `term_tier` 는 러너가 제안할 수 있지만 **결정적 강등**(`classify_term_tier`)이 그 위에
+      있다 — 러너가 「이건 제품 고유다」라고 우겨도 범용 어휘 목록에 걸리면 등록되지 않는다.
+
+    ## 제품 귀속
+
+    scope 는 **task 행의 `ProductId`** 에서 해소한다. `cfg.get_active_product_scope()` 같은
+    주변 상태를 읽지 않는다 — 이 요청은 웹 요청 스레드라 그 값이 이 대화의 제품이라는 보장이
+    없다(§16.7 G7-a — 이름·주변값은 근거가 아니다). 제품을 못 읽으면 **아무것도 하지 않는다**
+    (fail-closed): 귀속처를 모르는 채 등록하면 그 제품 용어가 전역이나 남의 제품으로 샌다.
+    """
+    stats: dict[str, int] = {}
+    log = logging.getLogger(__name__)
+    if not isinstance(raw_terms, list) or not raw_terms:
+        return stats
+    try:
+        from modules import kb_glossary as _kg
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[bridge] 용어 모듈 로드 실패 task=%s: %r", task_id, exc)
+        return stats
+
+    items = _kg.normalize_suggestion_items(raw_terms, max_terms=_BRIDGE_GLOSSARY_MAX)
+    if not items:
+        return stats
+
+    product_key = ""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1",
+                        (int(task.get("product_id") or 0),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        product_key = str((row or [""])[0] or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[bridge] 용어 귀속 제품 조회 실패 task=%s: %r", task_id, exc)
+        return stats
+    if not product_key:
+        # 제품 없는 대화(1:1·제품 미지정)에서 온 후보. 라우터가 전역 scope 로 받아 **검토 큐**에
+        # 넣는다(자동등록 아님) — 귀속처가 없는 용어를 전역 사전에 자동으로 앉히지 않는다.
+        scope_key = _kg.GLOBAL_SCOPE
+    else:
+        scope_key = f"product.{product_key}".lower()
+
+    pg = None
+    try:
+        from shared.db import _pg_available, _pg_connect
+
+        if not _pg_available():
+            return stats
+        pg = _pg_connect(autocommit=False)
+        for it in items:
+            outcome = _kg.auto_promote_or_queue(
+                pg, scope_key, it.get("term"), it.get("definition"),
+                confidence=it.get("confidence", 0.5), role_key=_kg.COMMON_ROLE,
+                source_run_id=task_id, conversation_id=str(task.get("conversation_id") or "") or None,
+                term_tier=it.get("term_tier"),
+            )
+            stats[outcome] = stats.get(outcome, 0) + 1
+        pg.commit()
+        log.info("[bridge] 용어 후보 %d건 처리 task=%s scope=%s %s",
+                 len(items), task_id, scope_key, stats)
+    except Exception as exc:  # noqa: BLE001
+        if pg is not None:
+            try:
+                pg.rollback()
+            except Exception:
+                pass
+        log.warning("[bridge] 용어 후보 처리 실패 task=%s: %r", task_id, exc)
+        return {}
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    return stats
 
 
 def _record_external_review(task_id: str, raw: Any, *, conversation_id: Any = None) -> bool:

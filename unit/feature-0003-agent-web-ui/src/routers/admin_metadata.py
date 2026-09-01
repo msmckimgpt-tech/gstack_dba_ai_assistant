@@ -311,6 +311,22 @@ def _metadata_check_role_key(role_key, *, default=app._GLOSSARY_COMMON_ROLE):
         return None, app._json_error("허용되지 않은 role_key 입니다 (등록된 역할 또는 '*' 공용).", 400)
     return rk, None
 
+def _metadata_check_term_tier(value, *, default=None):
+    """term_tier 검증 → (normalized|None, None) 또는 (None, JSONResponse[400]).
+
+    빈값이면 `default` 를 돌려준다. `None` 이 기본인 이유: 수정(PUT)에서 「본문에 없으면 기존
+    유지」를 표현해야 하는데, 여기서 임의로 'product' 로 접으면 **전역으로 표시해 둔 용어를
+    수정만 해도 제품으로 되돌린다**(사용자가 고치지 않은 필드를 조용히 바꾸는 형태).
+    """
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default, None
+    from modules import kb_glossary as _kg
+    if raw not in _kg.TERM_TIERS:
+        return None, app._json_error(
+            "허용되지 않은 term_tier 입니다 (product | org | general).", 400)
+    return raw, None
+
 def _metadata_str_field(data: dict, key: str, *, required: bool = True):
     """문자열 필드 추출+trim+cap 검증 → (value, None) 또는 (None, JSONResponse[400])."""
     val = str((data or {}).get(key) or "").strip()
@@ -739,10 +755,20 @@ def _graph_columns_cache_put(scope_key: str, fqn: str, payload) -> None:
 
 @router.get("/api/admin/metadata/glossary")
 def admin_list_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.read'))) -> JSONResponse:
-    """용어 목록 — 단일 scope(역할 차원 포함). 권한 kb.ingest.manual.
+    """용어 목록 — 선택 scope + **전역(common) 상속분**. 권한 kb.ingest.manual.
 
     ?scope_key= (기본 'common'). ?role_key= 지정 시 그 역할 행만(공용 '*' 미포함) 필터 — 역할별
     조회. 미지정이면 scope 의 모든 역할 행(role_key 필드로 구분 표시).
+
+    ## 왜 전역분을 함께 내려보내는가 (0057)
+
+    답변에 실제로 주입되는 것은 `[제품, common]` **둘 다**인데(`_kb_scope_candidates`), 목록은
+    제품 행만 보여 왔다. 그래서 관리자는 「이 제품에 이 용어가 없다」고 읽고 같은 용어를 제품
+    scope 에 또 등록했다 — 라이브에서 34개 용어가 2~4개 scope 로 번진 경로가 정확히 이것이다.
+
+    전역분은 `inherited: true` 로 표시해 내려보낸다. **편집 대상이 아니다** — 편집·삭제는 여전히
+    단일 scope 정확일치로만 동작하고(캐스케이드 금지 유지), 화면이 그것을 읽기 전용으로 그린다.
+    제품 scope 를 보고 있을 때만 붙인다(`common` 을 보고 있으면 자기 자신이라 중복이다).
     """
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -759,8 +785,16 @@ def admin_list_glossary(request: Request, account=Depends(app.require_permission
         pg = _pg_connect_ro()
     except Exception:
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    inherited_rows: list = []
     try:
         rows = _kg.list_glossary_admin(pg, scope_key, role_key=role_filter)
+        if scope_key != _kg.GLOBAL_SCOPE:
+            # 실패해도 목록 자체는 살린다 — 상속분은 보조 정보다(fail-soft).
+            try:
+                inherited_rows = _kg.list_global_glossary_for_scope(pg, role_key=role_filter)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "admin_list_glossary 전역 상속분 조회 실패", exc_info=True)
     except Exception:
         logging.getLogger(__name__).warning("admin_list_glossary 조회 실패", exc_info=True)
         return app._json_error("용어 목록 조회 실패", 503)
@@ -769,14 +803,24 @@ def admin_list_glossary(request: Request, account=Depends(app.require_permission
             pg.close()
         except Exception:
             pass
-    # row: (id, scope_key, role_key, term, definition, source, created_at, updated_at)
-    items = [{
-        "id": int(r[0]), "scope_key": str(r[1] or ""), "role_key": str(r[2] or "*"),
-        "term": str(r[3] or ""), "definition": str(r[4] or ""), "source": str(r[5] or "manual"),
-        "created_at": _metadata_iso(r[6]), "updated_at": _metadata_iso(r[7]),
-    } for r in rows]
+
+    # row: (id, scope_key, role_key, term, definition, source, created_at, updated_at, term_tier)
+    def _row(r, inherited):
+        return {
+            "id": int(r[0]), "scope_key": str(r[1] or ""), "role_key": str(r[2] or "*"),
+            "term": str(r[3] or ""), "definition": str(r[4] or ""),
+            "source": str(r[5] or "manual"),
+            "created_at": _metadata_iso(r[6]), "updated_at": _metadata_iso(r[7]),
+            "term_tier": str(r[8] or "product"),
+            # 화면이 편집 가능 여부를 이 값 하나로 판정한다 — 프론트가 scope 를 비교해 스스로
+            # 판정하면 두 벌이 되고, 한쪽이 낡으면 「지워지지 않는 삭제 버튼」이 남는다.
+            "inherited": bool(inherited),
+        }
+
+    items = [_row(r, False) for r in rows] + [_row(r, True) for r in inherited_rows]
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key,
-                         "role_key": role_filter})
+                         "role_key": role_filter,
+                         "inherited_count": len(inherited_rows)})
 
 @router.post("/api/admin/metadata/glossary")
 async def admin_create_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.create'))) -> JSONResponse:
@@ -795,13 +839,21 @@ async def admin_create_glossary(request: Request, account=Depends(app.require_pe
     if derr:
         return derr
     from modules import kb_glossary as _kg
+    # 등록 화면이 tier 를 보내지 않으면 **보고 있는 scope 가 답한다** — 전역 scope 에 손으로
+    # 넣는 것은 곧 「전역 용어」 선언이고, 제품 scope 는 「제품 고유」다. 여기서 'product' 로
+    # 고정하면 전역 사전 항목이 전부 product 로 표기돼 tier 축이 첫날부터 거짓이 된다.
+    _tier_default = _kg.TIER_ORG if scope_key == _kg.GLOBAL_SCOPE else _kg.TIER_PRODUCT
+    term_tier, tierr = _metadata_check_term_tier(data.get("term_tier"), default=_tier_default)
+    if tierr:
+        return tierr
     from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
-        _kg.upsert_glossary_term(pg, scope_key, term, definition, role_key=role_key)
+        _kg.upsert_glossary_term(pg, scope_key, term, definition, role_key=role_key,
+                                 term_tier=term_tier)
         pg.commit()
     except Exception:
         try:
@@ -817,8 +869,10 @@ async def admin_create_glossary(request: Request, account=Depends(app.require_pe
             pass
     _metadata_audit(request, account, action="glossary.term.create",
                     resource_id=f"{scope_key}:{role_key}:{term}",
-                    change_json={"scope_key": scope_key, "role_key": role_key, "term": term})
-    return JSONResponse({"ok": True, "scope_key": scope_key, "role_key": role_key, "term": term})
+                    change_json={"scope_key": scope_key, "role_key": role_key, "term": term,
+                                 "term_tier": term_tier})
+    return JSONResponse({"ok": True, "scope_key": scope_key, "role_key": role_key, "term": term,
+                         "term_tier": term_tier})
 
 @router.put("/api/admin/metadata/glossary/{term_id}")
 async def admin_update_glossary(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.update'))) -> JSONResponse:
@@ -839,6 +893,10 @@ async def admin_update_glossary(term_id: int, request: Request, account=Depends(
     definition, derr = _metadata_str_field(data, "definition")
     if derr:
         return derr
+    # 본문에 없으면 **기존 유지**(default=None) — 사용자가 고치지 않은 축을 바꾸지 않는다.
+    term_tier, tierr = _metadata_check_term_tier(data.get("term_tier"))
+    if tierr:
+        return tierr
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect
     try:
@@ -847,7 +905,7 @@ async def admin_update_glossary(term_id: int, request: Request, account=Depends(
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
         affected = _kg.update_glossary_term(pg, int(term_id), scope_key, term, definition,
-                                            role_key=role_key)
+                                            role_key=role_key, term_tier=term_tier)
         if affected <= 0:
             pg.rollback()
             return app._json_error("해당 용어를 찾을 수 없습니다.", 404)
@@ -869,7 +927,8 @@ async def admin_update_glossary(term_id: int, request: Request, account=Depends(
             pass
     _metadata_audit(request, account, action="glossary.term.update",
                     resource_id=int(term_id),
-                    change_json={"scope_key": scope_key, "role_key": role_key, "term": term})
+                    change_json={"scope_key": scope_key, "role_key": role_key, "term": term,
+                                 "term_tier": term_tier})
     return JSONResponse({"ok": True, "id": int(term_id)})
 
 @router.delete("/api/admin/metadata/glossary/{term_id}")
@@ -911,7 +970,9 @@ def admin_list_glossary_feedback(request: Request, account=Depends(app.require_p
     status = str(request.query_params.get("status") or "pending").strip().lower()
     if status in ("all", ""):
         status = None
-    elif status not in ("pending", "auto_promoted", "promoted", "rejected"):
+    # 'skipped_general' — 범용 DB 용어로 판정돼 **등록하지 않은** 후보(0057). 목록에서 볼 수
+    # 있어야 오분류를 관리자가 promote 로 되살린다. 조회할 수 없으면 그 판정은 사실상 영구 삭제다.
+    elif status not in ("pending", "auto_promoted", "promoted", "rejected", "skipped_general"):
         return app._json_error("허용되지 않은 status 입니다.", 400)
     scope_filter = None
     sk_param = request.query_params.get("scope_key")
@@ -938,7 +999,8 @@ def admin_list_glossary_feedback(request: Request, account=Depends(app.require_p
         except Exception:
             pass
     # row: (id, scope_key, role_key, term, suggested_definition, confidence, status,
-    #       source_run_id, conversation_id, promoted_glossary_id, approved_by, created_at, updated_at)
+    #       source_run_id, conversation_id, promoted_glossary_id, approved_by,
+    #       created_at, updated_at, term_tier)
     items = [{
         "id": int(r[0]), "scope_key": str(r[1] or ""), "role_key": str(r[2] or "*"),
         "term": str(r[3] or ""), "suggested_definition": str(r[4] or ""),
@@ -948,6 +1010,7 @@ def admin_list_glossary_feedback(request: Request, account=Depends(app.require_p
         "promoted_glossary_id": (int(r[9]) if r[9] is not None else None),
         "approved_by": (str(r[10]) if r[10] is not None else None),
         "created_at": app._glossary_feedback_iso(r[11]), "updated_at": app._glossary_feedback_iso(r[12]),
+        "term_tier": str(r[13] or "product"),
     } for r in rows]
     return JSONResponse({"items": items, "count": len(items),
                          "pending_count": int(pending_count), "status": status})
