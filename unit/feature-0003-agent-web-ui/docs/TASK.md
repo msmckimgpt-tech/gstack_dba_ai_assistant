@@ -13026,3 +13026,21 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
 - [x] reconcile-first(커밋 직전 재측정 01:57:17): 서빙 `release-notes-data.js` 200 · md5 `4c150bcc…` = `origin/main` blob → **파리티 갭 0**. `repo/` clean · HEAD == origin/main == `a2933614`
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(정본 `docs/CONVENTIONS.md` — `bin/deploy-web.sh` 의 ABORT 가드가 baked `?v=dev` 잔존으로 주입 누락을 판정하므로 수기 실값은 그 가드를 무력화한다. wrapper 지시문의 'bump 포함' 은 저장소 정본과 충돌)
+
+## TASK-20260902T110000-kb-prompt-grounding — 점유 응답에 KB 근거 동봉 (web 거주분)
+
+정본은 `unit/feature-0002-agent-core/docs/TASK.md` 동명 항목.
+라이브 대화 완주 실측에서 「AI 가 `get_task_context` 를 부르지 않아 0 기여」가 드러난 것의 시정.
+
+### 완료 체크리스트
+
+- [x] `claim_request` 응답에 `kb_context`·`kb_notes` 가산 (기존 필드 불변)
+- [x] 원문 `question` 으로 매칭 (가드 래퍼 `marked` 아님)
+- [x] 상한 + 절단 고지
+- [x] 러너 `compose_prompt` 가 질문보다 **앞**에 배치 + 재조사 금지 안내
+- [x] 근거 없으면 블록 생략(서버·러너 버전 불일치 내성)
+- [x] 러너 두 사본 sha256 동치
+- [x] 라이브 대화 전후 대조 PASS — "없습니다" → 코드값 정확 답변
+- [ ] 배포 후 라이브 재실측
+
+Task-Cycle: feature-0003-agent-web-ui

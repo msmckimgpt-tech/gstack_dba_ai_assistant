@@ -2567,6 +2567,54 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                 product_name=str(scope.get("product_name") or "")),
         system_prompt.strip(),
     ) if x)
+    # ── 큐레이션 KB 근거를 **점유 응답에 실어 보낸다** (2026-09-02) ────────────────────
+    #
+    # ⚠ 왜 도구(`get_task_context`)로 충분하지 않았나 — 라이브 실증
+    #
+    #   2026-09-01 에 `get_task_context` 를 5개 층으로 넓혔다(용어사전·ENUM·설명·샘플·관계).
+    #   서버 쪽은 옳았다: 실제 GZ_QA_G task 로 부르면 200 OK 로 정확한 근거가 나온다.
+    #   그런데 **라이브 대화에서 AI 는 그 도구를 한 번도 부르지 않았고**, "steam_billing_log
+    #   라는 테이블 자체가 등록 메타데이터 어디에도 없습니다" 라고 답했다 — 번들에는 그 정의가
+    #   분명히 들어 있는데도.
+    #
+    #   원인: 러너가 AI 에게 안내하는 도구 목록(`compose_prompt`)에 `get_task_context` 가
+    #   **없다**. list_schemas·describe_table·search_tables·execute_sql 등 **조사** 도구만
+    #   나열한다. 없는 도구는 부를 수 없다.
+    #
+    # ⚠ 왜 러너를 고치지 않고 서버에서 고치나
+    #
+    #   러너 목록에 `get_task_context` 를 추가하는 쪽이 더 작은 변경이지만, 그러면 여전히
+    #   **AI 가 부를지에 의존**한다. 서버가 실어 보내면 그 의존이 사라진다 — 근거는 무조건 온다.
+    #
+    #   ⚠ 정직하게: 이 변경은 **러너도 새 필드를 읽어야** 효과가 난다(`compose_prompt` 가
+    #     `kb_context` 를 배치한다). 실측에서 구버전 러너로 붙였더니 서버는 필드를 보냈는데
+    #     프롬프트는 그대로였다. 「서버에만 두면 러너 버전과 무관하다」는 **사실이 아니다**.
+    #     다만 (a) 러너가 낡으면 서버가 이미 `hb.stale_build` 로 갱신을 안내하고,
+    #     (b) 필드가 없거나 러너가 낡아도 **깨지지 않는다**(양쪽 다 생략으로 접힌다).
+    #     이 필드를 `system_prompt` 에 섞으면 구버전에도 닿지만, 질문마다 달라지는 데이터를
+    #     시스템 채널에 넣는 것이라 프롬프트 캐시를 깨고 채널 성격도 흐린다 — 그래서 안 한다.
+    #
+    #   전환 전 서버 계정 AI 는 `_build_knowledge_context()` 가 시스템 프롬프트에 **무조건**
+    #   주입했다. 외부 AI 전환이 그 성격을 「자동 주입」에서 「AI 가 부르면 받음」으로 바꿨고,
+    #   그 차이가 라이브에서 0 기여로 나타났다. 자동 주입 쪽으로 되돌린다.
+    kb_notes: list = []
+    try:
+        import agent_core as _core_kb   # 지연 import — 라우터 로드 시점 순환 회피
+        _ds_scopes = _authz.datasource_scope_keys(
+            _core_kb, conn, int(row[2] or 0))
+    except Exception:
+        _ds_scopes = []
+    # ⚠ **각인·canary 가 붙지 않은 원문**(`question`)으로 매칭한다. `marked` 는 가드 래퍼
+    #   문구가 섞여 있어, 그걸로 매칭하면 래퍼 안의 낱말이 용어에 걸린다.
+    kb_sections = _kb_grounding_sections(
+        question, _bridge_product_scope_key(conn, row[2]) or "", _ds_scopes, kb_notes)
+    kb_context = "\n\n".join(s for s in kb_sections if s)
+    if len(kb_context) > _CTX_BUNDLE_MAX_CHARS:
+        _dropped = len(kb_context) - _CTX_BUNDLE_MAX_CHARS
+        kb_context = (kb_context[:_CTX_BUNDLE_MAX_CHARS]
+                      + f"\n\n(⚠ 등록 근거가 상한을 넘어 {_dropped:,}자 잘렸습니다 — "
+                        "`get_task_context` 에 `focus` 로 좁혀 다시 받을 수 있습니다.)")
+
     # 사용자에게 "지금 처리 중" 을 보인다(제보 2026-08-27 — 상황을 알 방법이 없었다).
     _mark_bridge_working(conn, task_id, conversation_id)
     # 조사가 시작됐다는 **내부 동작** 단계. 도구 호출만 남기면 실행 단계가 "DB 를 뒤진 기록"
@@ -2585,6 +2633,11 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
+        # 관리 콘솔이 큐레이션한 KB 근거(용어사전·ENUM·설명·샘플·관계). **도구를 부르지 않아도**
+        # 받는다 — 위 주석 참조(라이브에서 AI 가 `get_task_context` 를 안 불러 0 기여였다).
+        # 빈 문자열이면 매칭된 근거가 없다는 뜻이고, 러너는 이 블록을 통째로 생략한다.
+        "kb_context": kb_context,
+        "kb_notes": kb_notes,
         # 사용자가 웹에서 고른 (런타임·모델·추론등급) (P0-Z3). 러너의 **자기 신고 목록**에서
         # 고른 값이므로 그대로 CLI 인자가 된다. 고르지 않았으면 빈 값 — 러너는 그때 자기
         # 기본 설정으로 답한다. AI 에게 지시로 주지 않는 이유: 이건 프롬프트가 아니라

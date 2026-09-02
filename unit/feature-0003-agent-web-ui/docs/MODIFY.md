@@ -5591,7 +5591,29 @@ PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔�
 - 재발 명시 3건 + 기능 소멸 고지 1건(쿼리 결과 접이판 제거로 CSV 내려받기·전체 데이터 보기·구형 메시지 실행 SQL/결과 파일 3종 동반 소멸) + 미검증 고지 5건.
 - Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
 - Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+## CHG-20260902T110000-kb-prompt-grounding — KB 근거를 점유 응답에 실어 자동 주입
 
+설계·AC 정본은 `unit/feature-0002-agent-core/docs/FUNCTION.md`
+`## KB 근거는 «자동 주입»이다 — 도구 호출에 기대지 않는다`.
+
+- **`routers/ai_tools.py` `claim_request`**: `_kb_grounding_sections(question, product_scope,
+  ds_scopes, notes)` 로 근거를 조립해 응답에 `kb_context`·`kb_notes` 추가. 상한
+  `_CTX_BUNDLE_MAX_CHARS` + 절단 고지. 매칭은 **원문 `question`** 으로 한다(가드 래퍼 `marked`
+  는 canary·각인이 섞여 있어 래퍼 문구가 용어에 걸린다).
+- **`static/agent/bridge_agent.py` `compose_prompt`** + **feature-0043 정본**(byte-동치):
+  받은 `kb_context` 를 **질문 앞**에 놓고 「이미 조회된 것이니 다시 조사하지 마라」를 덧붙인다.
+  값이 없으면 블록 자체를 생략 — 빈 머리글은 「등록된 게 없다」로 오독되고, 이 생략이 **옛 서버
+  호환**(필드를 안 보내는 버전)도 함께 지킨다.
+- **왜 러너가 아니라 서버인가**: 러너는 사용자 머신 설치본이라 프롬프트만 고치면 이미 도는
+  러너에 닿지 않는다. 점유 응답은 매번 서버가 만든다.
+
+**비변경**: 도구 시그니처 0 · 권한·인가 0 · 스키마 0 · `get_task_context` 자체 0(그대로 두고
+`focus` 재조회 경로로 남는다).
+
+**검증**: `make test` rc=0 · FAILED 0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL ·
+러너 두 사본 sha256 동치.
+
+Task-Cycle: feature-0003-agent-web-ui
 ## CHG-20260902T100000-ai-claude-feature-0003-autolaunch-runner — 자동 [내 AI 실행] (cross-ref)
 
 - **날짜**: 2026-09-02 · **위험도**: Major · **정본 TASK**: feature-0043
