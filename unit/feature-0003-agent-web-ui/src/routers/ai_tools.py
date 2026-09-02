@@ -4347,6 +4347,20 @@ def _sanitize_runtimes(raw: object) -> list | None:
         if name in seen_runtimes:
             continue
         seen_runtimes.add(name)
+        # ── provenance allowlist (qa 적대리뷰 §3, 2026-09-01) ──────────────────────
+        #
+        # 「이 목록이 어떻게 얻어졌는가」를 런타임 **단위**로 본다 — 이것이 「화면 목록의
+        # 출처는 연결된 AI」 계약의 **집행 지점**이다.
+        #
+        # 구 러너는 `source` 를 아예 보내지 않으므로 여기서 전부 떨어진다 — 그것이 이번
+        # 결함의 모집단이고, 그래서 화석 목록은 **첫 하트비트에** 빈 목록으로 대체된다.
+        # 특정 런타임만 내장 표로 채운 미래 빌드는 **그 런타임만** 떨어진다(우아한 열화).
+        #
+        # ⚠ 한때 여기 더해 읽기 시점 전역 게이트를 뒀다가 철회했다(2026-09-01, 적대 패널
+        #   3인 확인 라운드) — 수신 시점이 이미 짐을 다 지는데 전역 게이트는 다중 러너
+        #   fail-closed 라는 제품 안에서 풀 수 없는 잠금만 더했다.
+        if str(item.get("source") or "") not in _SANITIZE_SOURCE_ALLOW:
+            continue
         # ⚠ 중첩 필드도 **타입을 확인한다**(codex REV-20260828T170000 P2-2). `models: 1` 처럼
         #   리스트가 아닌 값이 오면 슬라이스에서 TypeError 가 나고, 그 예외는 하트비트 전체를
         #   500 으로 만든다 — 연결을 지키려는 신호가 연결을 끊는 장치가 된다.
@@ -4362,6 +4376,17 @@ def _sanitize_runtimes(raw: object) -> list | None:
         out.append({"runtime": name, "label": _sanitize_label(item.get("label"), name),
                     "models": models, "efforts": efforts})
     return out
+
+
+#: 화면에 그려도 되는 목록 **출처**. 러너 `_REPORTABLE_SOURCES` 와 같은 집합이어야 하며
+#: 구조 테스트가 두 값을 대조한다(두 곳이 갈리면 한쪽이 조용히 느슨해진다).
+#:
+#: - `probe`  — 그 AI 에게 직접 물어 받은 답
+#: - `cache`  — 위 답을 `config.json` 에 남긴 것(폴백은 캐시되지 않는다)
+#:
+#: ⚠ **`builtin` 을 넣지 마라.** 러너 소스에 적혀 있던 표가 그 이름이고, 그것이
+#: `gpt-5.1-codex` 가 사용자 화면에 뜬 경로다 (사용자 제보 4회, 2026-08-31~09-01).
+_SANITIZE_SOURCE_ALLOW: frozenset = frozenset({"probe", "cache"})
 
 
 def _capped_list(raw: object, cap: int) -> list:
@@ -4579,6 +4604,51 @@ def _deployed_runner_build() -> str:
 _DEPLOYED_RUNNER_BUILD: str | None = None
 
 
+def runner_build_is_stale(reported_build: str | None) -> bool:
+    """이 러너가 배포본과 **다른 파일**로 돌고 있는가. 판정은 여기 하나뿐이다.
+
+    ## 입력은 tri-state 다 (security·backend 적대리뷰 B2, 2026-09-01)
+
+    | `reported_build` | 판정 |
+    |---|---|
+    | `"<hex>"` ≠ 배포본 | **stale** |
+    | `"<hex>"` = 배포본 | 최신 |
+    | `""` (러너가 신고 안 함) | **stale** — 지문 신고 자체가 배포본의 일부이므로 그 이전 빌드다 |
+    | `None` (**우리가 모른다**) | 판정 없음 — 조회 실패·컬럼 부재. 모르는 것을 stale 로 부르지 않는다 |
+
+    ⚠ `""` 와 `None` 을 `if not x` 로 뭉개면 이 함수의 요점이 사라진다. 종전에 셋이 모두
+    `""` 였고, 그 뭉갬 때문에 「`RunnerBuild` 컬럼이 없는 배포에서 최신 러너 사용자 전원에게
+    거짓 갱신 지시」가 성립했다.
+
+    ## 왜 함수인가 (§16.7 G8-a)
+
+    같은 술어가 `_runner_update_hint`(하트비트 응답)와 `oauth_as.connect_status`(연결 칩)에
+    복제돼 있었다. 복제된 판정은 한쪽만 고쳐지는 순간 갈리고, 갈린 뒤에는 「칩은 초록인데
+    하트비트는 구버전이라 한다」 같은 상태가 된다 — 이 feature 가 인증 축(P0-R)에서 이미
+    한 번 겪은 형태다. 술어를 하나로 두면 그 갈림이 구조적으로 불가능해진다.
+
+    ## 지문 부재는 «같음» 이 아니라 «더 오래됨» 이다 (사용자 제보 2026-09-01, 4차 재발)
+
+    종전 판정은 `deployed and reported and reported != deployed` 였다 — 지문을 신고하지 않는
+    러너를 조용히 «최신» 으로 통과시켰다. 그런데 **지문 신고 자체가 배포본의 일부**이므로,
+    신고가 없다는 것은 그 변경 이전 빌드라는 증거다. 즉 fail-open 이 걸린 모집단이 정확히
+    「낡은 러너」였다. 라이브 실측(2026-09-01): 08-31 16:55 빌드가 `RunnerBuild=''` 로 돌며
+    `runner_update.current=True` 를 받는 동안, 화면에는 그 러너가 내장 표에서 신고한
+    `gpt-5.1-codex`(그 계정이 쓸 수 없는 폐기 세대)가 떠 있었다.
+
+    판정의 두 전제는 **배포본 지문을 우리가 아는가**와 **신고 쪽이 unknown 이 아닌가**다.
+    어느 한쪽이라도 모르면 판정하지 않는다 — 모르는 것을 stale 로 부르면 거짓 경고가 된다.
+    """
+    deployed = _deployed_runner_build()
+    if not deployed:
+        return False
+    if reported_build is None:
+        # 신고 쪽 unknown — 조회 실패·컬럼 부재·듣고 있는 러너 없음. 대조 대상이 없다.
+        return False
+    # 여기부터 `""` 는 「행은 있고 러너가 지문을 신고하지 않았다」만 뜻한다 = 지문 축 이전 빌드.
+    return str(reported_build) != deployed
+
+
 def _runner_update_hint(agent_version: str, features: object,
                         agent_build: str = "") -> dict:
     """러너가 최신인가 — 아니면 무엇을 하면 되는가.
@@ -4600,10 +4670,9 @@ def _runner_update_hint(agent_version: str, features: object,
         ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
     fresh = version_at_least(agent_version, RUNNER_MIN_AGENT_VERSION)
     supports = RUNNER_FEATURE_CONSOLE_JOBS in declared
-    deployed = _deployed_runner_build()
-    # 양쪽 지문을 다 아는 경우에만 판정한다 — 한쪽이라도 비면 "다르다" 고 말할 근거가 없다
-    # (구 러너는 지문을 아예 신고하지 않는다).
-    stale_build = bool(deployed and agent_build and agent_build != deployed)
+    # 판정은 `runner_build_is_stale` 하나뿐이다 — 연결 칩(`oauth_as.connect_status`)도
+    # 같은 함수를 부른다(§16.7 G8-a: 복제된 술어는 한쪽만 고쳐지는 순간 갈린다).
+    stale_build = runner_build_is_stale(agent_build)
     return {
         "current": bool(fresh and supports and not stale_build),
         "min_version": RUNNER_MIN_AGENT_VERSION,

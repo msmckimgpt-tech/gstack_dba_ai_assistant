@@ -303,16 +303,22 @@ def _runner_roster(conn, limit: int = 100) -> dict:
         # 서버가 **배포 중인** 러너 파일의 지문. 하트비트의 지문과 다르면 그 사용자는
         # 옛 파일을 돌리고 있다. 판정은 이미 `ai_tools` 가 하고 있으므로 그 함수를 부른다 —
         # 여기서 다시 계산하면 두 곳의 "배포본" 이 갈릴 준비를 마친다.
-        from routers.ai_tools import _deployed_runner_build
+        from routers.ai_tools import _deployed_runner_build, runner_build_is_stale
 
         deployed = str(_deployed_runner_build() or "")
     except Exception:
         deployed = ""
+        runner_build_is_stale = None       # 판정 불가 — 아래에서 대조하지 않는다
     for it in items:
-        build = str(it.get("runner_build") or "")
-        # 둘 중 하나라도 모르면 **대조하지 않는다**(False). 모르는 것을 'stale' 로 적으면
-        # 멀쩡한 러너에게 재설치를 시킨다.
-        it["stale_build"] = bool(deployed and build and build != deployed)
+        # ⚠ 판정은 **`ai_tools.runner_build_is_stale` 하나**다 (backend 적대리뷰 B2-R1,
+        #   2026-09-01). 여기 종전에 `bool(deployed and build and build != deployed)` 가
+        #   복제돼 있었고, 그 식은 하트비트·연결 칩 두 곳에서 이미 제거된 바로 그것이다 —
+        #   지문을 신고하지 않는 구 러너(`RunnerBuild=''`)를 **최신으로 읽었다.** 그래서
+        #   이 버그를 분류할 **운영 콘솔만** 경고를 안 띄우는 상태가 됐다.
+        #   복제된 판정은 한쪽만 고쳐지는 순간 갈리고, 갈리면 어느 화면도 못 믿는다.
+        it["stale_build"] = bool(
+            runner_build_is_stale(it.get("runner_build"))
+            if runner_build_is_stale is not None else False)
         it["console_capable"] = _CONSOLE_JOBS_FEATURE in (it.get("features") or [])
         it["self_review_capable"] = _SELF_REVIEW_FEATURE in (it.get("features") or [])
     out["available"] = True

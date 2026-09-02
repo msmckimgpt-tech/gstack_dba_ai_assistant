@@ -66,7 +66,7 @@ def test_runtime_specs_declare_everything_the_pipeline_needs():
     반쪽으로 동작한다(예: 목록엔 뜨는데 인자가 안 붙는다).
     """
     mod = _load_runner()
-    assert set(mod._RUNTIME_SPECS) >= {"claude", "codex", "gemini", "ollama"}, (
+    assert set(mod._RUNTIME_SPECS) >= {"claude", "codex", "gemini"}, (
         "알려진 플랫폼이 표에서 빠졌다")
     for name, spec in mod._RUNTIME_SPECS.items():
         assert spec.get("label"), f"{name}: 화면에 쓸 이름이 없다"
@@ -106,22 +106,23 @@ def test_detect_runtimes_reports_only_what_is_installed(monkeypatch):
 
 
 def test_detect_runtimes_omits_runtimes_with_no_models(monkeypatch):
-    """모델 목록이 비면 그 런타임을 통째로 뺀다(화면에 빈 그룹만 남기지 않는다).
+    """고를 모델이 없는 런타임은 **신고에서 빠진다** — 화면에 빈 그룹을 남기지 않는다.
 
-    ollama 가 이 경로다 — 실조회가 실패하거나 받아 둔 모델이 없으면 신고에서 빠진다.
+    probe 가 답을 주지 못한 런타임이 이 경로다(2026-09-01 이전엔 ollama 실조회 실패도
+    여기 있었으나 그 런타임은 제거됐다 — 로컬 LLM 미사용, 사용자 결정).
     """
     mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "ollama" else None)
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
-    assert mod.detect_runtimes() == []
+    monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "claude" else None)
+    monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
+    assert mod.detect_runtimes(cached={}, probe=True) == [], "빈 런타임이 신고에 남았다"
 
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
-    got = mod.detect_runtimes()
-    assert [r["runtime"] for r in got] == ["ollama"]
-    assert got[0]["models"] == [{"value": "llama3", "label": "llama3"}]
-    # ollama 에는 추론등급 플래그가 없다 — 신고에도 없어야 한다.
+    caps = {"claude": {"label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
+                       "efforts": [], "model": ["--model", "{model}"], "effort": None,
+                       "source": "probe"}}
+    got = mod.detect_runtimes(cached=caps)
+    assert [r["runtime"] for r in got] == ["claude"]
+    # 등급 플래그가 없으면 신고에도 등급이 없다.
     assert got[0]["efforts"] == []
-
 
 def test_heartbeat_carries_capabilities_every_time():
     """능력을 **매번** 싣는다.
@@ -273,7 +274,8 @@ def test_sanitizer_separates_no_report_from_empty_report():
 def test_sanitizer_rejects_runtime_names_that_are_not_names(bad):
     """런타임 이름은 러너에서 **실행 파일 조회 키**가 된다 — 이름처럼 생긴 것만 통과."""
     ns = _load_sanitizer()
-    got = ns["_sanitize_runtimes"]([{"runtime": bad, "models": [{"value": "opus"}]}])
+    got = ns["_sanitize_runtimes"]([{"runtime": bad, "source": "probe",
+                                   "models": [{"value": "opus"}]}])
     assert got == [], f"거부되지 않은 런타임 이름: {bad!r}"
 
 
@@ -281,7 +283,7 @@ def test_sanitizer_drops_only_the_bad_option_not_the_whole_runtime():
     """어긋난 항목 **하나**가 정상 런타임을 통째로 지우지 않는다."""
     ns = _load_sanitizer()
     got = ns["_sanitize_runtimes"]([{
-        "runtime": "claude",
+        "runtime": "claude", "source": "probe",
         "models": [{"value": "--evil"}, {"value": "opus", "label": "Opus"}, {"value": "x y"}],
         "efforts": [{"value": "low"}, {"value": "hi;gh"}],
     }])
@@ -293,7 +295,7 @@ def test_sanitizer_flattens_labels_to_one_line():
     """라벨은 화면에 그려진다 — 줄바꿈·제어문자가 레이아웃을 깨지 않게 한 줄로 접는다."""
     ns = _load_sanitizer()
     got = ns["_sanitize_runtimes"]([{
-        "runtime": "claude", "label": "Cla\nude\t2",
+        "runtime": "claude", "label": "Cla\nude\t2", "source": "probe",
         "models": [{"value": "opus", "label": "O\n\np\tus"}],
     }])
     assert got[0]["label"] == "Cla ude 2"
@@ -304,7 +306,8 @@ def test_sanitizer_flattens_labels_to_one_line():
 def test_sanitizer_caps_the_report_size():
     """개수 상한 — 30초마다 오는 신호가 저장소·화면을 임의로 채우지 못하게."""
     ns = _load_sanitizer()
-    huge = [{"runtime": f"rt{i}", "models": [{"value": f"m{j}"} for j in range(200)]}
+    huge = [{"runtime": f"rt{i}", "source": "probe",
+             "models": [{"value": f"m{j}"} for j in range(200)]}
             for i in range(50)]
     got = ns["_sanitize_runtimes"](huge)
     assert len(got) <= ns["_CAPS_MAX_RUNTIMES"]
@@ -317,15 +320,19 @@ def test_sanitizer_keeps_a_realistic_report_intact():
     ns = _load_sanitizer()
     # 러너가 실제로 만드는 모양을 그대로 넣는다(두 쪽의 계약이 같은지 확인).
     real = [
-        {"runtime": "claude", "label": "Claude",
+        {"runtime": "claude", "label": "Claude", "source": "probe",
          "models": list(mod._RUNTIME_SPECS["claude"]["models"]),
          "efforts": list(mod._RUNTIME_SPECS["claude"]["efforts"])},
-        {"runtime": "codex", "label": "Codex",
+        {"runtime": "codex", "label": "Codex", "source": "probe",
          "models": list(mod._RUNTIME_SPECS["codex"]["models"]),
          "efforts": list(mod._RUNTIME_SPECS["codex"]["efforts"])},
     ]
     got = ns["_sanitize_runtimes"](real)
-    assert got == real, "정상 신고가 변형됐다 — 러너와 서버의 계약이 갈렸다"
+    # `source` 는 **수신 시점 게이트**용이고 저장 스키마는 4키로 유지한다 — 화면에 그릴
+    # 것만 저장한다는 계약이 그대로다. 나머지는 한 글자도 변형되지 않아야 한다.
+    expected = [{k: v for k, v in rt.items() if k != "source"} for rt in real]
+    assert got == expected, "정상 신고가 변형됐다 — 러너와 서버의 계약이 갈렸다"
+    assert all("source" not in rt for rt in got), "출처가 저장 스키마로 새어 들어갔다"
 
 
 def test_capability_write_is_skipped_when_unchanged():
@@ -529,48 +536,6 @@ def test_build_cmd_checks_the_actual_report_not_the_static_table():
     # 신고를 주지 않으면 정적 표로 폴백한다(단위 테스트·구 호출부 호환).
     assert mod.build_cmd("claude", "Q", "opus", None) == \
         _claude[:-1] + ["--model", "opus", "Q"]
-
-
-def test_ollama_path_also_validates_against_the_report():
-    """ollama 는 `build_cmd` 를 타지 않는다 - 그 경로에도 대조가 있어야 한다 (P1-5).
-
-    없으면 서버가 준 임의 문자열이 그대로 생성 요청의 모델명이 되어, 이 머신에 없는 모델을
-    부르거나 (여러 모델을 받아 둔 머신에서) 사용자가 고르지 않은 모델을 부른다.
-    """
-    mod = _load_runner()
-    captured: dict = {}
-
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_a):
-            return False
-
-        def read(self):
-            return b'{"response": "ok"}'
-
-    def _fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode("utf-8"))
-        return _Resp()
-
-    report = [{"runtime": "ollama", "label": "Ollama",
-               "models": [{"value": "llama3", "label": "llama3"}], "efforts": []}]
-
-    import urllib.request as _u
-    orig = _u.urlopen
-    _u.urlopen = _fake_urlopen
-    try:
-        # 신고에 있는 모델 -> 그대로 쓴다.
-        mod.ask_local_ai("ollama", [], "Q", None, None, model="llama3", runtimes=report)
-        assert captured["body"]["model"] == "llama3"
-        # 신고 밖 모델 -> 환경 기본값으로 떨어진다(서버 값을 그대로 쓰지 않는다).
-        mod.ask_local_ai("ollama", [], "Q", None, None, model="mistral-evil", runtimes=report)
-        assert captured["body"]["model"] != "mistral-evil"
-    finally:
-        _u.urlopen = orig
-
-
 def test_unhonored_picks_are_disclosed_in_the_answer():
     """반영 못 한 지정을 **밝힌다** (P1-4).
 
@@ -611,7 +576,8 @@ def test_sanitizer_survives_wrong_types_in_nested_fields(bad_models):
     연결을 지키려는 신호가 연결을 끊는 장치가 되면 안 된다.
     """
     ns = _load_sanitizer()
-    got = ns["_sanitize_runtimes"]([{"runtime": "claude", "models": bad_models}])
+    got = ns["_sanitize_runtimes"]([{"runtime": "claude", "source": "probe",
+                                     "models": bad_models}])
     assert got == [], f"models={bad_models!r} 에서 예외 없이 빈 목록이어야 한다"
 
 
@@ -624,7 +590,7 @@ def test_sanitizer_strips_bidi_and_control_characters():
     ns = _load_sanitizer()
     rlo, rlm, nul, esc = "\u202e", "\u200f", "\u0000", "\u001b"
     got = ns["_sanitize_runtimes"]([{
-        "runtime": "claude", "label": f"Op{rlo}us{rlm}",
+        "runtime": "claude", "label": f"Op{rlo}us{rlm}", "source": "probe",
         "models": [{"value": "opus", "label": f"A{nul}B{esc}C"}],
     }])
     label = got[0]["label"]
@@ -644,10 +610,12 @@ def test_runtime_name_cannot_contain_the_pair_separator():
     """
     ns = _load_sanitizer()
     assert ns["_sanitize_runtimes"](
-        [{"runtime": "ollama:spoof", "models": [{"value": "bar"}]}]) == []
+        [{"runtime": "ollama:spoof", "source": "probe",
+          "models": [{"value": "bar"}]}]) == []
     # 모델 **값**에는 `:` 가 필요하다(`llama3:8b` 류) - 그쪽은 계속 허용한다.
     got = ns["_sanitize_runtimes"](
-        [{"runtime": "ollama", "models": [{"value": "llama3:8b"}]}])
+        [{"runtime": "ollama", "source": "probe",
+          "models": [{"value": "llama3:8b"}]}])
     assert got[0]["models"][0]["value"] == "llama3:8b"
 
 
@@ -807,8 +775,10 @@ def test_flags_never_leave_the_machine(monkeypatch):
     blob = json.dumps(reported, ensure_ascii=False)
     for leak in ("--model", "--effort", "{model}", "{effort}", "model_flag"):
         assert leak not in blob, f"호출법이 신고에 실렸다: {leak}"
-    # 신고에는 사람이 고를 것만 있다.
-    assert set(reported[0]) == {"runtime", "label", "models", "efforts"}
+    # 신고에는 사람이 고를 것 + **출처**만 있다. `source` 는 값이 아니라 「이 목록이 어떻게
+    # 얻어졌는가」라 호출법과 성격이 다르고, 서버가 런타임 단위로 다시 거르는 데 쓴다.
+    assert set(reported[0]) == {"runtime", "label", "models", "efforts", "source"}
+    assert reported[0]["source"] == "probe"
 
 
 def test_probe_result_is_cached_so_startup_does_not_burn_tokens():
@@ -839,7 +809,11 @@ def test_builtin_table_falls_back_for_invocation_only(monkeypatch):
     src = _RUNNER.read_text(encoding="utf-8")
     fn = src[src.index("def detect_runtimes("):]
     fn = fn[:fn.index("\ndef ")]
-    assert '"source": "builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
+    assert '"builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
+    # 2026-09-01: 그 자리는 **항상 `builtin`** 이다. 다른 이름으로 바꾸면 바로 아래 캐시
+    # 쓰기 가드(`!= "builtin"`)가 뒤집혀 폴백이 영구 캐시된다 — 한 번 그렇게 만들었고
+    # 목록이 굳는 결함이 됐다(security 적대리뷰 B1).
+    assert '"source": "builtin",' in fn, "폴백 출처가 builtin 이 아니다(캐시 가드가 뒤집힌다)"
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
     # 질의도 캐시도 없다 → **신고하지 않는다**(빈 목록으로 그룹만 남기지 않는다).
     assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 아직 신고된다"
@@ -1332,21 +1306,7 @@ def test_unprobed_runtime_is_not_reported_at_all(monkeypatch):
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
-    # ollama 만 예외 경로(실조회)라 여기서는 비워 둔다 — 아래 별도 테스트가 그쪽을 본다.
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [])
     assert mod.detect_runtimes(cached={}) == [], "내장 모델 이름이 신고에 남아 있다"
-
-
-def test_ollama_still_reports_because_it_is_a_real_lookup(monkeypatch):
-    """ollama 는 예외 — 그 목록은 우리가 적은 값이 아니라 **실조회 결과**다."""
-    mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "ollama" else None)
-    monkeypatch.setattr(mod, "_ollama_models", lambda: [{"value": "llama3", "label": "llama3"}])
-    got = mod.detect_runtimes(cached={})
-    assert [r["runtime"] for r in got] == ["ollama"]
-    assert [m["value"] for m in got[0]["models"]] == ["llama3"]
-
-
 def test_builtin_invocation_survives_so_execution_still_works(monkeypatch):
     """모델 목록은 빼도 **호출법은 남는다** — 없으면 실행 자체가 불가능해진다."""
     mod = _load_runner()
@@ -1493,3 +1453,231 @@ def test_stale_build_is_announced_once_not_every_beat():
     assert "배포본과 다릅니다" in fn, "무엇이 문제인지 말하지 않는다"
     # 다음 행동까지 말한다 — "다르다" 만으로는 사용자가 할 일을 모른다.
     assert "다시 받아" in fn or "다시 실행" in fn, "재설치 경로를 안내하지 않는다"
+
+
+# -- 2026-09-01 (4차): 「연결한 AI 에 없는 모델이 뜬다」 — 런타임별 provenance ---------
+#
+# 폴백 제거(08-31 2차)와 지문 신고(3차)를 배포하고도 같은 제보가 돌아왔다. 원인은 **우리가
+# 사용자 머신의 러너를 갱신할 수 없다**는 것이다: 낡은 빌드가 자기 소스의 내장 표를 계속
+# 신고했고 서버는 그것을 그대로 화면에 그렸다.
+#
+# 처음 조치는 러너가 **전역 자격**(`caps_self_report`)을 선언하고 서버가 그 선언 없는 신고를
+# 통째로 감추는 것이었다. 적대 패널 3인 확인 라운드가 그 설계를 기각했다 — 전역 불리언은
+# 「이 빌드가 계약을 아는가」에만 답해 다음 포맷 변경에 다섯 번째 이름이 필요하고, 다중 러너
+# fail-closed 라는 **제품 안에서 풀 수 없는 잠금**을 만들었다. 남은 것은 런타임 **단위**
+# provenance 하나이며, 그것이 같은 클래스를 더 좁게·우아하게 닫는다.
+
+
+def test_report_provenance_allowlists_match_on_both_sides():
+    """런타임별 provenance 허용집합이 러너와 서버에서 **같다**.
+
+    두 곳이 갈리면 한쪽이 조용히 느슨해진다 — 그리고 느슨한 쪽이 사용자가 보는 진실이 된다
+    (이 feature 가 P0-R 에서 이미 겪은 형태). 특히 `builtin` 이 어느 한쪽에라도 들어오면
+    「목록의 출처는 연결된 AI」 계약이 그 자리에서 깨지고, 서버는 검증 수단이 없다.
+    """
+    import ast
+
+    mod = _load_runner()
+    tree = ast.parse(_AI_TOOLS.read_text(encoding="utf-8"))
+    server = None
+    for n in ast.walk(tree):
+        tgt = None
+        if isinstance(n, ast.Assign):
+            tgt = [t for t in n.targets if isinstance(t, ast.Name)]
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+            tgt = [n.target]          # `X: frozenset = frozenset({...})` 는 AnnAssign 이다
+        if tgt and any(t.id == "_SANITIZE_SOURCE_ALLOW" for t in tgt):
+            v = n.value
+            # `frozenset({...})` 는 리터럴이 아니라 Call 이라 `literal_eval` 이 거부한다.
+            inner = v.args[0] if isinstance(v, ast.Call) and v.args else v
+            server = set(ast.literal_eval(ast.unparse(inner)))
+    assert server is not None, "서버에 provenance allowlist 가 없다"
+    assert set(mod._REPORTABLE_SOURCES) == server, (
+        f"양쪽 허용집합이 다르다: 러너 {sorted(mod._REPORTABLE_SOURCES)} vs 서버 {sorted(server)}")
+    assert "builtin" not in server, (
+        "내장 표 출처가 허용집합에 들어왔다 — `gpt-5.1-codex` 가 화면에 뜬 경로가 다시 열린다")
+def test_builtin_model_table_never_reaches_the_report(monkeypatch):
+    """자격 신고가 **참이어야 한다** — 내장 표의 모델 이름은 신고에 닿지 않는다.
+
+    이 단정이 자격의 유일한 전제다: 서버는 신고 내용의 출처를 검증할 수단이 없고, 러너가
+    「내 목록은 AI 가 답한 것뿐」이라 말한 것을 믿는다. 폴백이 되살아나면 그 선언이 거짓이
+    되고, 서버 게이트는 거짓을 통과시킨다(§16.7 G11 — 게이트로 쓰는 검사 자체의 진위).
+
+    ollama 는 예외다 — 그 목록은 우리가 적은 값이 아니라 HTTP **실조회** 결과다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
+    # probe 를 전부 실패시킨다 = 폴백만 남는 조건(라이브에서 codex 가 정확히 이 상태였다).
+    monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
+
+    reported = mod.detect_runtimes(cached={})
+    reported_values = {m["value"] for rt in reported for m in rt["models"]}
+    builtin_values = {
+        m["value"]
+        for name, spec in mod._RUNTIME_SPECS.items() if name != "ollama"
+        for m in (spec.get("models") or [])
+    }
+    assert builtin_values, "표가 비어 이 단정이 아무것도 검사하지 않는다(자기충족 방지)"
+    assert not (reported_values & builtin_values), (
+        f"내장 표의 모델이 신고에 실렸다: {sorted(reported_values & builtin_values)}")
+    assert reported == [], "물어보지 못한 런타임이 신고에 남았다"
+
+
+def test_builtin_table_never_reaches_the_report_on_any_branch(monkeypatch):
+    """내장 표가 신고에 닿지 않는다 — **cached·probe 두 분기 모두** (qa M9b).
+
+    종전 판본은 `detect_runtimes(cached={})` 만 불렀고 `probe` 기본값이 `False` 라
+    monkeypatch 한 `probe_runtime_caps` 가 **한 번도 호출되지 않았다** — docstring 이
+    서술한 「probe 를 전부 실패시킨다」는 진입하지 않는 분기였다. 그리고 러너의 정상 기동
+    경로는 바로 그 *cached* 경로다(`--refresh-caps` 가 예외). 그 사이로 뮤턴트 M9b
+    (빈 cached 항목을 `_RUNTIME_SPECS` 로 다시 채움)가 생존했다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x")
+    monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
+
+    builtin = {m["value"] for n, s in mod._RUNTIME_SPECS.items() if n != "ollama"
+               for m in (s.get("models") or [])}
+    assert builtin, "표가 비어 이 단정이 아무것도 검사하지 않는다(자기충족 방지)"
+
+    stale_cache = {"codex": {"label": "Codex", "models": [], "efforts": [],
+                             "model": ["-m", "{model}"], "effort": None, "source": "cache"}}
+    for label, kwargs in (("cached-empty", {"cached": {}}),
+                          ("cached-stale", {"cached": stale_cache}),
+                          ("probe-fail", {"cached": {}, "probe": True})):
+        got = mod.detect_runtimes(**kwargs)
+        values = {m["value"] for rt in got for m in rt["models"]}
+        assert not (values & builtin), f"{label}: 내장 표 모델이 신고에 실렸다 {sorted(values & builtin)}"
+        assert got == [], f"{label}: 물어보지 못한 런타임이 신고에 남았다"
+
+
+def test_report_carries_runtime_provenance(monkeypatch):
+    """신고 항목마다 **출처**가 실린다 — 서버가 런타임 단위로 다시 거른다."""
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which", lambda n: "/usr/bin/x" if n == "claude" else None)
+    caps = {"claude": {"label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
+                       "efforts": [], "model": ["--model", "{model}"], "effort": None,
+                       "source": "probe"}}
+    got = mod.detect_runtimes(cached=caps)
+    assert [r["runtime"] for r in got] == ["claude"]
+    assert got[0]["source"] == "probe", "출처가 신고에 실리지 않는다"
+
+
+# ── codex 적대리뷰 (2026-09-02) — 재설계 뒤에도 남아 있던 fail-open 셋 ──────────────
+
+
+class _BuildColumnlessCursor:
+    """`RunnerBuild` 컬럼이 **없는** 배포를 흉내낸다 — 그 컬럼을 건드리는 문장만 실패한다."""
+
+    def __init__(self):
+        self.sql: list = []
+        self.rowcount = 0
+
+    def execute(self, sql, params=None):
+        flat = " ".join(str(sql).split())
+        self.sql.append(flat)
+        if "RunnerBuild" in flat:
+            raise RuntimeError("Unknown column 't.RunnerBuild' in 'field list'")
+        self.rowcount = 1
+
+    def fetchone(self):
+        return None
+
+    def close(self):
+        pass
+
+
+def test_report_write_degrades_when_the_fingerprint_column_is_absent():
+    """지문 컬럼이 없는 배포에서도 **능력·기능·버전은 새겨진다** (codex P1).
+
+    이 설계의 전제는 「화석 목록은 **첫 하트비트에** 지워진다」이고, 그 지움은
+    `set_runner_report` 가 정제된 목록(`[]`)을 쓰는 것으로만 일어난다. 그런데 지문 축은
+    `account_runner_build` 가 **컬럼 없는 배포를 명시적으로 지원**(`None` = 판정 안 함)하는데
+    쓰기 축이 그 배포에서 통째로 실패하면, 하트비트 핸들러가 예외를 삼키는 동안
+    `LastHeartbeatAt` 만 갱신되고 **옛 builtin 목록이 영구히 화면에 남는다** — 이 cycle 이
+    닫으려는 바로 그 결함이 그 모집단에서만 살아남는 형태다.
+
+    그래서 한 단 내려가 재시도한다. 「지문을 못 새김」이 「목록을 못 지움」이 되어서는 안 된다.
+    """
+    import oauth_store as store
+
+    cur = _BuildColumnlessCursor()
+    wrote = store.set_runner_report(cur, "tok", "[]", ["console_jobs"], "2026.09.02", "abc123")
+
+    assert len(cur.sql) == 2, f"강등 재시도가 없다 — 실행된 문장 {len(cur.sql)}개"
+    assert "RunnerBuild" in cur.sql[0], "첫 시도가 지문을 쓰지 않는다(정상 배포 경로 소실)"
+    assert "RunnerBuild" not in cur.sql[1], "재시도가 여전히 지문 컬럼을 건드린다"
+    # 나머지 세 축은 **반드시** 남아야 한다 — 그것이 화석을 지우는 유일한 경로다.
+    for col in ("RunnerCapabilities", "RunnerFeatures", "RunnerAgentVersion"):
+        assert col in cur.sql[1], f"강등 문장이 {col} 을 빠뜨렸다 — 화석이 그대로 남는다"
+    assert wrote is True, "강등 경로가 '쓰지 않았다'로 보고한다"
+
+
+def test_roster_never_calls_a_token_that_never_ran_a_runner_stale():
+    """하트비트가 **한 번도 없던** 토큰은 지문 판정 대상이 아니다 (codex P2).
+
+    운영 명부는 러너가 아닌 토큰(등록형 MCP 클라이언트 등)도 일부러 포함한다. 그 행의
+    `RunnerBuild` 는 NULL 이고, 「지문 미신고 = 구 러너」 규칙이 그것을 구버전으로 읽으면
+    **러너를 띄운 적도 없는 계정**에 「최신 실행 파일로 다시 실행하세요」가 붙는다 —
+    모르는 것을 stale 로 부르지 않는다는 이 cycle 자신의 규칙 위반이다.
+    """
+    import oauth_store as store
+
+    class _RosterCursor:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def execute(self, sql, params=None):
+            pass
+
+        def fetchall(self):
+            return self._rows
+
+        def close(self):
+            pass
+
+    # (AccountId, Username, LastHeartbeatAt, age_sec, features, version, build, caps)
+    rows = [
+        (7, "runner_user", "2026-09-02T00:00:00", 10, "console_jobs", "2026.09.02", "", "[]"),
+        (9, "mcp_only", None, None, None, None, None, None),
+    ]
+    got = store.list_live_runners(_RosterCursor(rows), limit=10)
+    by_acct = {r["account_id"]: r for r in got}
+
+    assert by_acct[7]["runner_build"] == "", "실제 러너의 «지문 미신고» 가 «모름» 으로 뭉개졌다"
+    assert by_acct[9]["runner_build"] is None, (
+        "하트비트가 없던 토큰에 빈 지문을 주고 있다 — 명부가 그것을 구버전으로 적는다")
+
+    from routers.ai_tools import runner_build_is_stale
+    import routers.ai_tools as ai_tools
+
+    orig = ai_tools._deployed_runner_build
+    ai_tools._deployed_runner_build = lambda: "deadbeefcafe"
+    try:
+        assert runner_build_is_stale(by_acct[7]["runner_build"]) is True
+        assert runner_build_is_stale(by_acct[9]["runner_build"]) is False, (
+            "러너를 띄운 적 없는 계정에 갱신 지시가 나간다")
+    finally:
+        ai_tools._deployed_runner_build = orig
+
+
+def test_missing_catalog_hides_the_selector_through_the_real_entry_point():
+    """카탈로그를 못 받으면 **선택기를 숨긴다** — 진입점(`_composerModelSelectorHidden`)에서 (codex P2).
+
+    종전 판본은 `undefined !== "hidden"` 이라는 이유로 「보임」을 돌려줬다. 그러면
+    `/api/api-vault/options` 실패 화면이 **목록 없는 선택기 + 서버 기본값 라벨**을 그대로
+    내보내고, 같은 이유로 「모델 목록을 불러오지 못했습니다」 안내 분기가 **도달 불가능한
+    죽은 코드**가 된다.
+
+    ⚠ 그 분기는 jsdom 하네스가 **직접 호출**해 통과시키고 있었다 — 헬퍼가 옳은 것과
+    진입점이 그 헬퍼를 그렇게 부르는 것은 다른 사실이다. 그래서 여기서는 **진입점**을 본다.
+    """
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "feature-0003-agent-web-ui" / "src" / "static" / "app" / "composer.js"
+           ).read_text(encoding="utf-8")
+    fn = src[src.index("function _composerModelSelectorHidden("):]
+    fn = fn[:fn.index("\nfunction ")]
+    body = "\n".join(ln for ln in fn.split("\n") if not ln.strip().startswith("//"))
+    assert "if (!catalog) return true;" in body, (
+        "카탈로그 부재를 «보임» 으로 읽는다 — 안내 분기가 도달 불가능해진다")

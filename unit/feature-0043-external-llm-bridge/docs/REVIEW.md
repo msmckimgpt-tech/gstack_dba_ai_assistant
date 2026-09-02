@@ -2766,3 +2766,166 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
   풀거나 창을 열지 않음(일련번호) ③ 자동끼리의 중복은 종전대로 억제.
 - **뮤테이션**: 클릭 우선 규칙 제거 → **KILL 2건**.
 - **판정**: **APPROVED** — 잔여 BLOCKING/MAJOR 0.
+
+---
+
+## REV-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 왜 이 축을 골랐나
+
+**대안 3개를 놓고 골랐다.**
+
+1. **지문 일치(`agent_build == deployed`)를 게이트로** — 가장 엄격하지만 러너 파일을 고치는
+   **모든 배포**가 전 사용자의 선택기를 지운다. 목록이 멀쩡한(probe 로 얻은) 러너까지 함께
+   막히므로 거짓양성의 대가가 정상 사용자에게 간다(§16.7 G9-c 가 금지하는 형태). **기각.**
+2. **버전 하한(`RUNNER_MIN_AGENT_VERSION`) 상향** — `AGENT_VERSION` 이 날짜 단위라 같은 날
+   세 번 바뀐 러너를 못 가른다. 그것이 3차 재발의 원인이었다. 게다가 하한을 올리면 콘솔 작업
+   배급이라는 **무관한 축**까지 함께 끊긴다. **기각.**
+3. **기능 신고(`caps_self_report`)** — 「이 빌드가 그 계약을 지키는가」라는 정확히 그 질문에
+   답하고, 한 번 참이면 이후 배포에도 참이다. 낡은 러너는 이 이름을 모르므로 신고할 수 없어
+   자격의 부재가 **구조적으로** 보장된다. **채택.**
+
+**자격의 전제와 그 전제를 지키는 것**: 서버는 신고 내용의 출처를 검증할 수 없다 — 러너가
+「내 목록은 AI 가 답한 것뿐」이라 말한 것을 믿는다. 그래서 그 선언이 거짓이 되지 않도록
+`test_builtin_model_table_never_reaches_the_report` 로 잠갔다(§16.7 G11 — 게이트로 쓰는 검사
+자체의 진위). 폴백을 되살리면서 자격 이름을 남기면 게이트가 거짓을 통과시킨다.
+
+**감추는 것만으로는 부족하다**: 앞선 cycle 이 「모델·추론 강도가 안 보인다」로 되돌아온 적이
+있다. 그래서 사유를 화면까지 배선했다. `model_selector_reason` 은 08-28 부터 응답에 실려
+있었는데 **소비처가 0개**였다 — 「값이 있다」와 「사용자에게 도달한다」는 다른 사실이고,
+후자를 테스트로 잠갔다(§16.7 G9-d 소비 경로 완주와 같은 축).
+
+**정직 표기 — 이 수정이 하지 못하는 것**: 이미 도는 낡은 러너를 우리가 갱신하지는 못한다.
+바뀌는 것은 **화면이 거짓말을 멈추고 다음 행동을 말한다**는 것뿐이다. 그 사용자는 여전히
+러너를 다시 받아야 모델을 고를 수 있다. 이것이 이 문제의 실제 경계이고, 그 경계를 넘으려면
+서버가 사용자 머신의 프로세스를 말없이 교체해야 하는데 그것은 이 feature 가 지켜 온 경계
+(「러너를 띄운 사람의 설정을 낮추지 않는다」)를 넘는다.
+
+**부수 확인**: 라이브 러너가 12:13 에 재설치되어(빌드 `5aa59fe9904a`) 그 계정의 증상은
+사라졌고, `Id=83` 행에서 `gpt-5.1` 이 0건이 됐다 — 진단(「낡은 빌드가 원인」)의 대조군이다.
+증상 소멸이 **수정의 근거가 아니라 진단의 확인**이라는 점을 명시한다.
+
+- Verdict: 자체 검토 PASS. §18.8 dispatch — 아래 별도 entry 참조.
+
+---
+
+## REV-20260901T130500-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:security] — CONCERN
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint/contract · auth/token/session keyword matched (능력 신고 자격 게이트)
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-security.md
+- Critical issue: 지문 판정이 「신고 쪽 unknown」을 stale 로 단정 — `RunnerBuild` 컬럼 부재·쿼리 실패 배포에서 최신 러너 전원에게 거짓 갱신 지시
+- Human Approval Needed: no
+
+## REV-20260901T130501-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:backend] — BLOCK
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint/contract · schema/query keyword matched (저장 경로·관문·판정 술어)
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-backend.md
+- Critical issue: `set_runner_report` 의 `COALESCE` 가 능력만 낙오시키고 features 는 덮어써, 옛 `gpt-5.1` 목록이 새 러너의 자격 도장을 받아 서빙된다(결함이 쓰기 경로로 부활)
+- Human Approval Needed: no
+
+## REV-20260901T130502-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:qa] — BLOCK
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 검증 주장·테스트 계약 (§16.7 G9-c·G10·G11) — 뮤턴트 실증 기반
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-qa.md
+- Critical issue: 새 소스검사 단언 중 G11-b 가 실증된 것이 0건(16 FAILED 가 선행 단언에서 단락) + 생존 뮤턴트 6종 실증 + 브랜치가 main 대비 39 behind 라 머지 시 스위트 적색
+- Human Approval Needed: no
+
+---
+
+## REV-20260901T142000-ai-claude-feature-0043-caps-trust-gate [REJECTED:all-subagents]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: §18.8 수렴 계약 (a) 확인 라운드(security·backend·qa 3인)를 조치 후 착수했으나 **세 에이전트 모두 세션 사용량 한도로 조기 종료**(`You've hit your session limit · resets 5:30pm (Asia/Seoul)`). 대체 채널 `/codex review` 도 같은 시점 OpenAI 쿼터 소진(`try again at 3:44 PM`)이라 두 경로가 동시에 막혔다. 산출물 0건.
+- Rejected agents: security, backend, qa (전원 — accepted artifact 0)
+- Timestamp: 2026-09-01T14:20:00+09:00
+
+> ⚠ **이 entry 는 check #9 를 만족하지 않는다** (§18.9 — `[REJECTED:all-subagents]` 는 시도
+> 흔적이지 accepted review 가 아니다). 의도적이다: 라운드 1 이 **BLOCK 2건**을 냈고, 그
+> 조치가 새 결함을 만들지 않았는지는 **확인 라운드만이** 답할 수 있다. 수정한 라운드 자체는
+> 종결 근거가 아니라는 것이 §18.8 (a) 이고, 조치 규모(P1 7 · concern 8 · 설계축 신설 1 ·
+> main 39커밋 머지)를 생각하면 여기서 통과시키는 것이 정확히 그 계약이 막으려는 형태다.
+>
+> **잔여 위험 (명시)** — 확인 라운드가 우선 볼 지점:
+> - 다중 러너 fail-closed 가 **정상 사용자의 선택기를 지우는** 경우(만료 직전 유령 토큰 행,
+>   잠자던 노트북)가 있는가. 거짓양성의 대가는 정의상 정상 사용자가 치른다(§16.7 G9-c).
+> - 쓰기 시점 `"[]"` 가드가 `--cmd` 모드·8KiB 초과에서 **정상 목록을 30초마다 지우는가**.
+> - `oauth_store` 의 모듈 레벨 `shared` import 가 단독 import 경로(alembic·워커·스크립트)를
+>   깨는가.
+> - provenance allowlist 가 정당한 런타임(ollama 실조회·구 빌드가 남긴 캐시)을 떨어뜨리는가.
+> - `_func_source` 의 docstring 행 제거가 데코레이터·다중행 시그니처 함수에서 정확한가.
+
+---
+
+## REV-20260902T000000-ai-claude-feature-0043-caps-trust-gate-r3 — §18.8 (b) 재설계 판단 근거
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 확인 라운드 3인이 CONCERN/BLOCK/BLOCK · P1 비단조 (security 3→4, backend 4→4)
+- Timestamp: 2026-09-02T00:00:00+09:00
+- Verdict: SELF-REVIEW (조치 기록 — 확인 라운드 대체 아님)
+- Human Approval Needed: no
+
+**왜 또 한 번 패치하지 않았나.** §18.8 수렴 계약 (b) 는 「라운드에 걸친 P1 비단조 = 재설계
+신호」다. 이 cycle 은 정확히 그 모양이었고, 결정적인 것은 개수가 아니라 **출처**였다 —
+2라운드 P1 중 넷이 1라운드에서 **내가 넣은 수정이 만든 결함**이었다. 그중 하나는 내가 직접
+실증했다: ollama 폴백의 `source` 를 `"builtin"`→`"ollama"` 로 바꾸자 캐시 쓰기 가드
+(`!= "builtin"`)의 극성이 뒤집혀 그 목록이 영구히 굳었다.
+
+**위 REV-20260901T142000 이 「확인 라운드가 우선 볼 지점」으로 적은 5개 중 4개가 철회로
+소멸했다.** 다중 러너 fail-closed · 쓰기 시점 `"[]"` 가드 · 모듈 레벨 import · ollama
+provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코드를 되돌렸다**. 남은 하나
+(`_func_source` 의 docstring 행 제거)는 `ast.unparse` 로 바꾸려다 **무관한 단언 15건이
+깨져** 되돌렸고(포맷 정규화가 원인), 행 단위 제거 + 빈 결과 가드로 유지한다.
+
+**내가 스스로 적발한 것 (자기 검증)**
+1. 내 경험적 결론 ④(「구 러너의 캐시가 provenance 게이트를 통과한다」)를 **좋은 신호로
+   읽었다**. backend 적대리뷰가 그것이 「기본값이 곧 유일한 값 = fail-open」임을 보였다.
+   `sanitize_caps` 의 `"cache"` 기본값을 제거해 fail-closed 로 뒤집었다.
+2. 뮤턴트 봉인이 **불완전했다**. 「모든 바인딩 형태를 모으고 나머지는 상수」까지 봐도
+   `M4b-v1`(`AnnAssign`)·`v2`(`NamedExpr`)가 EXIT=0 으로 살아남는다 — **순서**를 안 보면
+   판정 뒤에 상수를 덧대는 변형이 통과한다. 호출이 자기 갈래의 마지막인지까지 보도록 격상.
+3. 증적 §3 의 뮤턴트 표 수치가 **산술적으로 불가능**했다(10케이스인데 합이 9). 재측정해
+   정정하고, 그 검사법(합계 확인)을 증적에 남겼다.
+
+**남은 위험 (확인 라운드가 볼 곳)**
+- provenance 는 자기신고다 — 로컬 파일을 고친 러너는 여전히 거짓을 말한다(수용, blast
+  radius = 그 사용자 드롭다운 하나).
+- `_sanitize_runtimes` 가 유일한 관문이므로 **저장 경로가 하나 더 생기면** 그 경로로
+  되살아난다. AST 단언이 투영 함수 전수를 보지만, 새 writer 는 그 단언 밖이다.
+- 캐시가 비면 러너 기동마다 실제 CLI 질의가 다시 일어난다(claude 23초 · codex 112초, 병렬).
+  출처를 모르는 캐시를 버리는 규칙이 **구 러너 사용자에게 한 번** 그 비용을 물린다.
+
+---
+
+## REV-20260902T113000-ai-claude-feature-0043-caps-trust-gate-r3 [CODEX:review]
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: §18.8 확인 라운드 — 사용자 결정으로 **codex 채널 대체**(Agent 패널 1회 허용은 소진)
+- Timestamp: 2026-09-02T11:30:00+09:00
+- Channel: `codex review` (codex-cli 0.146.0 · `gpt-5.6-sol` · `model_reasoning_effort=high`)
+- Scope: `git diff origin/main...HEAD -- '*.py' '*.js' '*.html'` (34 files, +2499/−312)
+- Verdict: **P1 1 · P2 2 — 전건 in-cycle 수정 + 뮤턴트 실증**
+- Human Approval Needed: no
+
+### 지적과 조치 (전건 내가 재현 확인 후 수정)
+
+| # | 지적 | 확인 | 조치 |
+|---|---|---|---|
+| **P1** | `set_runner_report` 가 `RunnerBuild` 를 무조건 쓴다 → 그 컬럼이 없는 배포에서 UPDATE 전체가 실패하고, 하트비트 핸들러가 예외를 삼키는 동안 `LastHeartbeatAt` 만 갱신돼 **옛 builtin 목록이 영구히 남는다** | **재현 확인** — `account_runner_build` 는 그 배포를 명시적으로 지원(`None`)하는데 쓰기 축만 지원하지 않는 **비대칭**이었다. 이 설계의 전제(「화석은 첫 하트비트에 지워진다」)가 정확히 그 모집단에서 깨진다 | 지문 컬럼 없이 **재시도**한다 — 능력·기능·버전 세 축은 반드시 새긴다 |
+| **P2** | 운영 명부(`list_live_runners`)가 하트비트 없는 토큰(등록형 MCP 등)까지 포함하는데 그 행의 빈 지문을 「구 러너」로 읽는다 | **재현 확인** — 판정 통합 전에는 복제된 식이 `""` 를 stale 이 아니라고 봤으므로, 이것은 **내 통합이 만든 오탐**이다 | 하트비트가 한 번도 없던 행은 `runner_build = None`(모름) |
+| **P2** | `_composerModelSelectorHidden()` 이 카탈로그 부재를 「보임」으로 읽어, 「모델 목록을 불러오지 못했습니다」 분기가 **도달 불가능한 죽은 코드** | **재현 확인** — 그 분기를 jsdom 하네스가 **직접 호출**해 통과시키고 있었다(진입점을 통과하지 않는 vacuous pass) | 카탈로그 부재 = 숨김. 하네스도 진입점(`_applyComposerSelectorVisibility`)을 통과하도록 재작성(10 → 11 케이스) |
+
+### 왜 이 라운드가 값을 했나
+
+셋 다 **재설계 이후에 남은** 결함이고, 셋 다 「모르는 것을 단정하지 마라」는 이 cycle 자신의
+규칙을 내가 다른 자리에서 어긴 것이다. 특히 세 번째는 내 검증 도구가 **없는 동작을 있다고
+말하고 있었다** — `helper-wiring-vs-helper-correctness` 의 정확한 재발이다.
+
+### 실증 (§16.7 G11-b, exit code)
+
+| 뮤턴트 | 결과 |
+|---|---|
+| 강등 재시도 제거 | **KILLED** |
+| `age_sec is not None` 조건 제거 | **KILLED** |
+| `if (!catalog) return true;` 제거 | **KILLED** (pytest · jsdom 양쪽) |
+| 정상 소스 | PASS |
