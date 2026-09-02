@@ -203,7 +203,9 @@ $hint
 #: LLM 칸이 지목할 수 있는 AI CLI — **알려진 이름만** (POSIX 판과 같은 목록).
 #: 실존 검사만 두면 `BRIDGE_PROBED_AI=rm` 이 통과해 러너가 그것을 AI 로 실행한다(codex 실측).
 #: 표 밖 CLI 는 사람 칸(`$env:BRIDGE_ARGS='--ai mycli'`)으로.
-$KnownAiClis = @('claude', 'codex', 'gemini', 'ollama')
+#: ⚠ **정본은 러너의 `_RUNTIME_SPECS`(`src/agent/runtimes.py`) 다** — POSIX 판과 같은 이유.
+#:   넓으면 설치는 통과하고 런타임에서 실패한다. `test_ai_cli_allowlist_sync.py` 가 잠근다.
+$KnownAiClis = @('claude', 'codex', 'gemini')
 
 #: AI CLI 가 이 컴퓨터에 있는가. **PATH 밖 표준 설치 위치까지** 본다 — 러너의 `_which_ai`
 #: 와 같은 계약이다. 두 곳이 갈리면 설치기는 「없다」 하고 러너는 「있다」 하는(또는 그 반대)
@@ -217,7 +219,9 @@ function Get-AiDirs {
   $dirs = @()
   if ($HOME)                { $dirs += (Join-Path $HOME '.local\bin') }           # Claude Code · Codex 설치기
   if ($env:APPDATA)         { $dirs += (Join-Path $env:APPDATA 'npm') }           # npm -g
-  if ($env:LOCALAPPDATA)    { $dirs += (Join-Path $env:LOCALAPPDATA 'Programs\Ollama') }
+  # ⚠ `%LOCALAPPDATA%\Programs\Ollama` 는 여기 있었다 — 러너는 P0-Z6.1 에서 이 경로를 함께
+  #   지웠는데(`agent/discovery.py` 의 같은 자리 주석) 설치 스크립트에만 남아 있었다.
+  #   런타임을 걷어낸 뒤에도 설치 경로만 남으면 「없앴다는데 아직 찾아다닌다」가 된다.
   return $dirs
 }
 

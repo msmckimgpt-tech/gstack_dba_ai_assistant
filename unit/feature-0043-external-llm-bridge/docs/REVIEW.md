@@ -4099,3 +4099,19 @@ CI(비-root)가 red 로 드러냈고, 그 red 는 제품이 아니라 검사 조
 한 번 더 붙이는 것보다 **그 신호를 그대로 반영하는 것**이 이 변경의 전부다.
 
 ⚠ 이 항이 새로 주장하는 것은 없다. 직전 항의 「PowerShell 실행 축 미검증」 한계도 그대로다.
+
+## REV-20260902T193000-ai-claude-ai-cli-allowlist-sync [CODEX:allowlist-canon-sync] — ACCEPTED-WITH-CHANGES
+- Related TASK: TASK-20260902T193000 (ROADMAP ITEM-05)
+- Source: codex review (v0.152.1, `codex exec -s read-only`, staged diff 인라인)
+- Trigger: docs/코드 혼합 소변경 + 세션 상위지시로 AgentTool 금지 → §18.8.2-1 «제약 없는 채널» 로 codex 선택
+- Timestamp: 2026-09-02T19:30:00+09:00
+- Verdict: **PASS (P1 0건)** / P2 3건 — **전건 수정 후 재검증**
+- P2 처리 (셋 다 원 결함과 같은 «가드에 구멍» 클래스라 수용):
+  1. **스캔 모수 부족** — 제거 런타임 전수 스캔이 설치 스크립트 둘에만 걸려 있었다. `oauth_as.py` 의 안내 문구에 `claude·ollama` 를 쓰면 ① 허용목록 파싱은 정상 ② census 는 정본 이름만 세 hit 1개로 통과 → **아무 테스트도 잡지 못했다**(원 결함이 정확히 그 형태였다). 세 파일 전체로 확대(`test_removed_runtimes_absent_from_whole_file`). 뮤턴트 M9 로 KILL 확인.
+  2. **표기 변형 취약** — 따옴표 종류·`readonly`·타입 주석 변경으로 파싱이 깨진다. 패턴을 넓히고, 그래도 못 읽으면 `assert m` 이 **fail-loud** 로 죽는다는 점(=fail-open 아님)을 주석에 명시. 뮤턴트 M12~M14(정상 표기 변형)가 **통과**해 내성 확인.
+  3. **면제 범위 과대** — `"ALLOWLIST" not in line` 면제라 `_OTHER_ALLOWLIST = "claude codex gemini"` 가 통째로 면제됐다(**막으려던 것이 면제 조건이 된 형태**). 면제를 **정본 선언 라인 정규식 매치**로 축소. 뮤턴트 M10 으로 KILL 확인.
+- 자체 검증: census 가 **초판 진단(3자리)보다 3자리 더** 찾아냈고(ps1 설치경로 · 사용자 대면 문장 2), 그중 핸드오프 문장은 **외부 AI 가 읽는 안내**라 가장 비쌌다. 신설 테스트가 **첫 실행에서 6번째 자리를 스스로 적발**했다.
+- 뮤테이션 14종: 결함 뮤턴트 11종 전건 KILL · 표기변형 3종은 SURVIVED가 정답(거짓 실패 방지).
+  ⚠ 1차 뮤테이션 하네스가 pytest 의 `FAILED`(대문자)를 소문자로 매칭해 **전건을 SURVIVED 로 오분류**했다. 분류기 수정 후 재실행 — 거짓 신호를 결과로 보고하지 않았다.
+- 회귀: feature-0043 · feature-0003 양쪽 **main 기준선과 실패집합 동일**. ⚠ 1차 기준선 측정은 `/tmp` 쓰기 거부로 **실행되지 않은 채 남의 파일을 읽었다** — 스크래치패드로 재측정해 정정.
+- Human Approval Needed: 아니오 (Minor · 비파괴 · 허용목록 축소 방향).

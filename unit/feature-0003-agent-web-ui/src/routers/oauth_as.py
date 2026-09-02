@@ -1089,7 +1089,13 @@ _PROBED_ARG_ALLOWLIST = (
 
 #: LLM 칸이 지목할 수 있는 AI CLI — 설치 스크립트의 `_KNOWN_AI_CLIS` 와 **같은 목록**이어야
 #: 한다. 여기서 더 넓게 안내하면 AI 가 그 이름을 채우고 스크립트가 버린다.
-_PROBED_AI_ALLOWLIST = ("claude", "codex", "gemini", "ollama")
+#:
+#: ⚠ **정본은 그 둘이 아니라 러너의 `_RUNTIME_SPECS` 다.** 종전 주석은 「설치 스크립트와 같아야
+#: 한다」까지만 말했고, 실제로 세 자리가 서로 일치한 채 **셋 다 러너와 갈렸다**(`ollama` 가
+#: P0-Z6.1 로 러너에서만 제거됨 → 설치는 통과하고 런타임에서 실패). 서로 대조하는 계약은
+#: 정본을 지목하지 않으면 «함께 틀린» 상태를 잡지 못한다.
+#: 잠금: `unit/feature-0043-external-llm-bridge/tests/test_ai_cli_allowlist_sync.py`
+_PROBED_AI_ALLOWLIST = ("claude", "codex", "gemini")
 
 
 def compose_probe_setup_instruction(*, posix: str, windows: str) -> str:
@@ -1329,7 +1335,9 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         f"      소스 열람: {agent_url}",
         "      · 서버에서 받는 것: 질문 텍스트·대화 맥락·첨부 목록·운영자 시스템 지침.",
         "        실행 가능한 코드나 셸 명령은 받지 않는다.",
-        "      · 실행하는 것: 소스에 하드코딩된 로컬 AI CLI(claude/codex/gemini) 하나뿐이고,",
+        # 이 줄도 파생시킨다 — 값은 지금 맞지만 «또 낡을 자리» 다. 동기화 테스트가 이 자리를
+        # 6번째 열거 지점으로 적발했다(2026-09-02, 첫 실행).
+        f"      · 실행하는 것: 소스에 하드코딩된 로컬 AI CLI({'/'.join(_PROBED_AI_ALLOWLIST)}) 하나뿐이고,",
         "        셸을 거치지 않는다(프롬프트는 argv 로 전달). eval·exec 로 받은 것을 돌리지 않는다.",
         "      · 파이썬 표준 라이브러리만 쓴다 — 설치물이 없다.",
         "      · 남기는 파일은 `~/.mysql-ai-bridge/config.json`(0600) 하나이고 **토큰은 안 들어간다.**",
@@ -1356,7 +1364,11 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         "      종료: kill <pid> (포그라운드로 띄웠으면 Ctrl+C)",
         "      로그: bridge.log — 하는 일이 전부 여기 남으므로 무엇을 처리했는지 이 파일로 확인한다.",
         "",
-        "   러너는 네 머신의 AI(claude·codex·gemini·ollama)를 자동으로 찾아 쓴다.",
+        # ⚠ 이름을 **손으로 적지 않는다** — 이 줄은 외부 AI 가 읽는 사용자 대면 안내인데,
+        #   종전에는 `ollama` 를 하드코딩해 러너가 지원하지 않는 런타임을 «자동으로 찾아 쓴다»
+        #   고 말하고 있었다(P0-Z6.1 제거 뒤에도). 목록을 지목하는 자리가 넷이면 넷 다 따로
+        #   틀린다 — 하나에서 파생시킨다.
+        f"   러너는 네 머신의 AI({'·'.join(_PROBED_AI_ALLOWLIST)})를 자동으로 찾아 쓴다.",
         "   고르려면 --ai claude, 직접 지정하려면 --cmd 'my-ai -p {prompt}'.",
         "   동시 처리는 **1개로 시작해 대기 질문 수만큼 자동으로 늘고**(상한 --max-workers, 기본 8),",
         "   --worker-idle-sec(기본 300초) 넘게 쉰 자리는 오래된 것부터 회수한다. 조정하고 싶을 때만",
