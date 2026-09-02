@@ -107,3 +107,44 @@ if os.environ.get("AGENT_TEST_ALLOW_LIVE_BACKENDS", "").strip() not in ("1", "tr
             )
 
     _assert_live_stack_unreachable()
+
+
+# ── 브리지 러너 배포 산출물 배치 (feature-0043 모듈 분할) ──────────────────────────
+#
+# 러너의 소스는 `unit/feature-0043-external-llm-bridge/src/agent/` 패키지이고, 내려받는
+# 실물(단일 파일)과 배포본은 **빌드 생성물**이다(AGENTS.md §13.1 v3.35.1 «1순위» — 생성물을
+# 소스에 커밋하지 않는다). 이미지에서는 Dockerfile 이 만들지만, 테스트는 이미지 밖에서 돌므로
+# 여기서 같은 스크립트로 같은 산출물을 만든다.
+#
+# **왜 fixture 가 아니라 import 시점인가**: 러너 계약 테스트 37개가 모듈 수준에서 이 경로를
+# 상수로 잡는다. fixture 는 그보다 늦다. 또 collection 단계에서 실패하면 「배포본이 없어서
+# 통과한 것처럼 보이는」 상태가 원천적으로 생기지 않는다.
+#
+# 실패는 **조용히 넘기지 않는다** — 산출물이 없으면 러너 계약 테스트가 전부 무의미해지고,
+# 그 무의미함은 「초록불」로 보인다.
+def _stage_bridge_runner() -> None:
+    import subprocess
+    import sys
+
+    root = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(root, "unit", "feature-0002-agent-core", "src", "scripts",
+                          "build_bridge_agent.py")
+    bridge_src = os.path.join(root, "unit", "feature-0043-external-llm-bridge", "src")
+    served = os.path.join(root, "unit", "feature-0003-agent-web-ui", "src", "static", "agent")
+    if not os.path.isfile(script):
+        return  # 빌드 스크립트가 없는 트리(부분 체크아웃 등) — 러너 테스트도 없다
+
+    for out, extra in ((os.path.join(bridge_src, "bridge_agent.py"), []),
+                       (os.path.join(served, "bridge_agent.py"),
+                        ["--stage-assets", bridge_src])):
+        r = subprocess.run(
+            [sys.executable, script, "--src", os.path.join(bridge_src, "agent"),
+             "--out", out, *extra],
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(
+                "브리지 러너 배포 산출물 빌드 실패 — 러너 계약 테스트가 검증할 실물이 없다.\n"
+                f"  {r.stdout.strip()}\n  {r.stderr.strip()}")
+
+
+_stage_bridge_runner()

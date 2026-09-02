@@ -154,7 +154,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `feature-0016-metadata-graph` / `feature-0016-zd-pg-pause-caddy` | 메타데이터 그래프 · PG-pause/Caddy 무중단 | (feature dir 2개) |
 | `feature-0017-deploy-build-gate` | 배포 빌드 게이트 | (feature dir) |
 | `feature-0039-ops-scheduler` | **운영 정기 잡 인-컨테이너 스케줄러** — 백업·복원 리허설·AGE 그래프 sync 를 호스트 root crontab 에서 `ops-scheduler` 서비스로 이관(docker 소켓 의존 제거) | 코드 거주: feature-0002 `src/scripts/ops_scheduler.py`·`ops_backup.sh`·`ops_restore_rehearsal.sh`·`ops_graph_sync.sh`·`healthcheck_ops_scheduler.py` + repo-level `docker-compose.yml`(`ops-scheduler`)·`bin/{backup,restore-rehearsal,metadata-graph-sync}.sh`(수동 래퍼) |
-| `feature-0043-external-llm-bridge` | **서버 계정 LLM 차단 + 웹 대화 pull 브리지** — 추론 주체를 개인 머신 AI 로 반전 | `src/bridge_runner.py`(표준 라이브러리 전용 러너) · `src/bridge_agent.py` · `src/bridge_setup.sh`/`src/bridge_setup.ps1`(결정론적 원클릭 진입점, 2026-08-28 신설) + 코드 거주: `shared/llm_gate.py`·`shared/bridge_tasks.py`·feature-0003 `routers/ai_tools.py` |
+| `feature-0043-external-llm-bridge` | **서버 계정 LLM 차단 + 웹 대화 pull 브리지** — 추론 주체를 개인 머신 AI 로 반전 | `src/agent/`(**러너 정본 18 모듈** — 2026-09-02 분할, `__init__.py` 의 `_EMIT_ORDER` 가 번들 순서 정본) · `src/bridge_runner.py`(표준 라이브러리 전용 수동 보조 러너) · `src/bridge_setup.sh`/`src/bridge_setup.ps1`(결정론적 원클릭 진입점, 2026-08-28 신설) · 빌드 `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py`(패키지→단일 파일; 배포본 `src/bridge_agent.py`·`feature-0003/src/static/agent/*` 는 **생성물이라 커밋 대상 아님**) + 코드 거주: `shared/llm_gate.py`·`shared/bridge_tasks.py`·feature-0003 `routers/ai_tools.py` |
 | `_template` | 신규 feature 템플릿 | `docs/AGENTS.md`, `docs/TASK.md`, `docs/FUNCTION.md`, `docs/REPORT.md`, 등 |
 
 각 feature는 `docs/`(AGENTS, FUNCTION, TASK, TEST, REPORT, MODIFY, REVIEW), `src/`, `tests/` 구조를 따른다.

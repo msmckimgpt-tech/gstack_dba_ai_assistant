@@ -284,8 +284,10 @@ def test_runner_wires_instance_axis():
     # 기동: 발급 + 직전 회수
     assert "def init_runner_instance()" in src
     assert "init_runner_instance()" in src.split("def init_runner_instance()", 1)[1]
-    # 점유에 새긴다
-    assert '"runner_instance": _RUNNER_INSTANCE' in src
+    # 점유에 새긴다. 값은 `state` 모듈의 접근자로 읽는다 — 러너가 모듈로 쪼개진 뒤
+    # `from .state import _RUNNER_INSTANCE` 는 import 시점 값(빈 문자열)에 묶여 갱신을
+    # 못 보므로, 전역을 직접 읽으면 이 축이 조용히 죽는다(state.py 모듈 docstring 참조).
+    assert '"runner_instance": runner_instance()' in src
     # 기동 첫 신호에 직전 인스턴스를 싣고, 닿을 때까지 재시도한다
     assert "released_instances=_pending_release" in src
     # 종료 세 갈래를 한 출구로
