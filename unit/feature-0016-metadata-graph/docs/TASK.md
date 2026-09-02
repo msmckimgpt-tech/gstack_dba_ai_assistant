@@ -4229,3 +4229,25 @@ AC-5 의 상한과 §16.6 CDP 실-paint 실측으로 다룬다(헤드리스 rAF-
 - [x] EA.9 **POST-FIX 라이브 재검증**(배포 f9cfd2a0) — 회귀 재현본과 **같은 조작·같은 스키마**에서
       펼쳐진 9개가 전부 화면에 보임을 확인(증적 `07`→`08`). 같은 조작에서 재배치 트윈도 정상
       동작(`move items 6`) — 중앙 이동과 애니메이션이 상충하지 않는다. 잔여 미측정 2건은 변동 없음.
+
+## TASK-20260902T140000-graph-sync-retract — sync 회수 단계 (F3 근본)
+
+F3 누적분 회수(7,242 + 2,132 정점)는 **청소**였고 원인은 남아 있었다. 그 원인을 없앤다.
+
+### 완료 체크리스트
+
+- [x] `_step_glossary_retract` 신설 + 투영 뒤 배선
+- [x] 증분(`since`) 가드 — 부분 조회로 삭제 판단 금지 + 건너뛴 사실 기록
+- [x] scope 지정 실행은 그 scope 안에서만
+- [x] 투영과 같은 키 생성기(`_vkey`) · `_cq` 이스케이프
+- [x] `glossary_retracted` 계측 초기화
+- [x] 뮤테이션 7/7 KILL · `make test` rc=0
+- [x] codex 리뷰 P3 조치 — AGE key 를 `json.loads` 로 파싱(strip 은 특수문자 오판)
+- [ ] 배포 후 회수 동작 확인 (`glossary_retracted` · 그래프 vs DB 수 일치 유지)
+
+### 남긴 범위
+
+- 물리 스키마 축(Table·Column·Routine) 회수는 별 설계 — 운영 DB 조회가 필요하고 접속 실패를
+  「없다」로 오판하면 안 된다.
+
+Task-Cycle: feature-0016-metadata-graph
