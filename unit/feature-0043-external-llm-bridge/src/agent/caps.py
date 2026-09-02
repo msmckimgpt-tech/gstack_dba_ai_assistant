@@ -691,10 +691,21 @@ _BASELINE_MAX_RUNTIMES = 8
 _BASELINE_MAX_MODELS = 40
 _BASELINE_MAX_EFFORTS = 12
 
-#: 확인 질의에 실을 «이전 목록» 문단의 최대 길이. 초과하면 확인을 건너뛰고 열린 질의로
+#: 확인 질의에 실을 «이전 목록» 블록의 최대 길이. 초과하면 확인을 건너뛰고 열린 질의로
 #: 흐른다 — 프롬프트 크기가 **서버 통제 하에** 들어가면 Windows 명령줄 상한
 #: (`[WinError 206]`, TASK-20260902T140000)이 그 경로로 되살아난다.
-_BASELINE_RENDER_MAX_CHARS = 4000
+#:
+#: ⚠ **도달 가능한 값이어야 가드다** (확인 라운드 2026-09-02). 초판은 4,000 이었는데
+#: `baseline_index` 상한(모델 40×64자 + 등급 12×64자)으로 만들 수 있는 최대 블록이 실측
+#: **3,533자** 라 이 가드는 결코 발동하지 않았다 — 리뷰어가 가드를 통째로 삭제한 뮤턴트도
+#: 41/41 통과했다. 「존재하지만 도달하지 못하는 방어」는 없는 것과 같고(§16.7 G14-e),
+#: 그 상태의 주석은 갖지 못한 성질을 주장한다.
+#:
+#: 값의 근거(경계 양측 — §16.7 G4): 이 질의는 **좁은 확인** 이고 정상 페이로드는 런타임당
+#: 수백 바이트다(실측 모델 2종 + 등급 1종 = 약 130자). 상한을 1,600 으로 두면 ① 정상 경로는
+#: 여유가 10배 이상이고 ② 정제 상한을 가득 채운 적대적 입력(3,533자)은 **실제로 걸린다**.
+#: 걸렸을 때의 동작은 실패가 아니라 **종전 경로(열린 질의)로의 강등**이라 대가가 작다.
+_BASELINE_RENDER_MAX_CHARS = 1600
 
 
 def baseline_index(raw: object) -> dict:
@@ -968,8 +979,15 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 left = deadline - time.monotonic()
                 if left > 5.0:
                     _why0: dict = {}
+                    # ⚠ 남은 시간을 **절반만** 준다 (확인 라운드 2026-09-02 §3).
+                    #   `left` 전부를 주면 hung verify 가 열린 질의의 재시도 예산을 통째로
+                    #   먹는다 — TASK-2026-08-31 이 「codex 는 성공과 실패를 오간다 … 한 번의
+                    #   실패가 그 런타임이 화면에서 통째로 사라짐을 뜻한다」를 근거로 넣은
+                    #   2회 재시도가 그 경우 유효하지 않게 된다. 확인은 좁은 질의라 절반으로
+                    #   충분하고, 남긴 절반이 폴백의 몫이다.
                     got0 = verify_runtime_caps(nm, attempts[0], _base,
-                                               timeout=left, reason_out=_why0)
+                                               timeout=max(5.0, left / 2.0),
+                                               reason_out=_why0)
                     if got0:
                         got0["argv"] = attempts[0]
                         probed[nm] = got0

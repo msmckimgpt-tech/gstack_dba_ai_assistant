@@ -251,8 +251,6 @@ def normalize_baseline(raw: object) -> dict:
             # 만료 판정 축. 부재는 「모른다」로 남긴다 — 여기서 «지금» 을 채우면
             # 손상된 항목이 영원히 만료되지 않는다(위 `_parse_iso` 주석과 같은 이유).
             "last_used_at": str(entry.get("last_used_at") or ""),
-            # 조사 축. 만료 판정에는 쓰지 않는다.
-            "confirmed_at": str(entry.get("confirmed_at") or ""),
             # **앵커 축** — 마지막 «열린 열거»(`source == "probe"`) 시각.
             # `baseline_for_runner` 가 이 값으로 「확인 대상으로 제시해도 되는가」를 가른다
             # (`BASELINE_ANCHOR_MAX_DAYS`). 부재는 「모른다」 = 제시하지 않는다.
@@ -378,9 +376,14 @@ def merge_baseline(baseline: object, reported: object, *,
         #   출처를 매 하트비트에 다시 싣기 때문에, throttle 없이 매번 새로 찍으면 내용이
         #   같아도 문서가 30초마다 바뀌어 저장 게이트가 다시 무력화된다(이 축을 추가하면서
         #   실제로 그렇게 깨졌고, 회귀 테스트 2건이 그것을 잡았다).
-        # 출처는 **out-of-band** 로 온다 — 저장 스키마(`_sanitize_runtimes` 4키 계약)에는
-        # 출처가 없다. 항목 안에 있으면 그것도 받아 준다(직접 호출·테스트 편의).
-        src = str((sources or {}).get(name) or item.get("source") or "")
+        # 출처는 **out-of-band 한 채널로만** 온다 — 저장 스키마(`_sanitize_runtimes`
+        # 4키 계약)에는 출처가 없으므로 항목 안을 볼 이유가 없다.
+        #
+        # ⚠ 초판은 `or item.get("source")` 폴백을 뒀다(「직접 호출·테스트 편의」). 그것이
+        #   **운영에서는 죽은 경로이면서 테스트에서만 살아** 판별력을 가렸다 — `sources={}`
+        #   (= 배선이 끊긴 상태)를 넣어도 항목에 실린 `source` 가 앵커를 세워, 확인 경로가
+        #   꺼진 사실을 단정이 관측하지 못했다. 채널을 하나로 두면 그 단정이 실제로 판별한다.
+        src = str((sources or {}).get(name) or "")
         prev_probed_raw = str((prev or {}).get("probed_at") or "")
         if src == "probe":
             _prev_probed = _parse_iso(prev_probed_raw)
@@ -395,7 +398,11 @@ def merge_baseline(baseline: object, reported: object, *,
             "models": models,
             "efforts": efforts,
             "last_used_at": stamp,
-            "confirmed_at": stamp,
+            # ⚠ `confirmed_at` 은 **두지 않는다** (확인 라운드 2026-09-02 §2). 초판에 있었고
+            #   값이 항상 `last_used_at` 과 동일했으며 **읽는 코드가 하나도 없었다** — 같은
+            #   라운드가 `system.py` 에서 제거하라고 지적한 「소비처 0 필드」와 같은 클래스다.
+            #   30초마다 나가는 페이로드와 `BASELINE_MAX_BYTES` 예산만 잠식했다.
+            #   「언제 라이브로 확인됐나」가 필요해지면 그때 소비처와 함께 넣는다.
             "probed_at": probed_at,
             "build": str(build or (prev or {}).get("build") or "")[:BASELINE_BUILD_MAX_LEN],
         }

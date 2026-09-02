@@ -4476,31 +4476,43 @@ def _sanitize_runtimes(raw: object) -> list | None:
     return out
 
 
-def _report_sources(raw: object) -> dict:
+def _report_sources(raw: object, stored: object) -> dict:
     """신고 항목별 **출처** `{runtime: source}` (TASK-20260902T140200).
+
+    Args:
+        raw: 하트비트 payload 의 `runtimes` **원문** — 출처가 살아 있는 유일한 곳.
+        stored: `_sanitize_runtimes(raw)` 의 결과(4키 목록) — 판정의 **모수**.
 
     계정 원장의 **앵커 축**만 이 값을 쓴다 — 「이 목록이 열린 열거(`probe`)에서 왔는가」를
     알아야 앵커 나이를 셀 수 있고, 확인(`verified`)이 앵커를 밀면 「앵커된 답이 앵커를
     갱신」하는 자기강화 루프가 된다(`BASELINE_ANCHOR_MAX_DAYS` 를 둔 이유).
 
-    ⚠ **판정을 다시 쓰지 않는다 — `_sanitize_runtimes` 의 결과를 모수로 삼는다.**
-    두 함수가 같은 raw 를 각자 훑으면 판정이 갈릴 준비를 마친다. 실측으로 실제 괴리를
-    확인했다(2026-09-02): 모델이 하나도 유효하지 않아 **정제에 떨어진** 런타임이 출처맵에는
-    남아 앵커를 세웠다. 지금은 원장이 그 런타임을 만들지 않으므로 무해하지만, 그 무해함은
-    `merge_baseline` 쪽 구현에 기대는 것이고 — 판정이 두 벌인 상태가 바로 이 저장소가 반복해
-    봉인해 온 형태다. 정제를 통과한 이름만 키로 남긴다.
+    ⚠ **두 인자를 요구하는 것이 이 함수의 안전장치다** (확인 라운드 뮤테이션 2026-09-02).
+    한 인자 버전에서는 호출부가 실수로 **정제된 목록**(출처가 없는 4키)을 넘겨도 조용히
+    `{}` 를 돌려준다. 그러면 `probed_at` 이 영구히 비어 `baseline_for_runner` 가 전부
+    걸러 **확인 질의가 한 번도 발화하지 않는다** — 화면·지문·`caps_pending` 은 모두 정상으로
+    보이는데 제보 ②(「실행마다 목록이 다르다」)가 그대로 남는다. 리뷰어가 그 뮤턴트를 심었을
+    때 **41/41 이 전부 통과**했다. 인자를 둘로 나누면 그 오류가 `TypeError` 가 되어
+    **테스트가 아니라 인터프리터가** 잡는다(부분집합 단정으로는 `{}` 가 항진 통과한다).
+
+    ⚠ **판정을 다시 쓰지 않는다 — 정제 결과를 모수로 삼는다.** 두 함수가 같은 raw 를 각자
+    훑으면 판정이 갈릴 준비를 마친다. 실측으로 실제 괴리를 확인했다(2026-09-02): 모델이
+    하나도 유효하지 않아 **정제에 떨어진** 런타임이 출처맵에는 남아 앵커를 세웠다.
     """
-    stored = {str(r.get("runtime") or "") for r in (_sanitize_runtimes(raw) or [])}
-    if not stored:
+    names = {str(r.get("runtime") or "") for r in (stored or [])
+             if isinstance(r, dict)} - {""}
+    if not names or not isinstance(raw, list):
         return {}
     out: dict = {}
-    for item in raw if isinstance(raw, list) else []:
+    # 상한은 정제와 **같은 슬라이스**다 — `names` 가 앞 8개에서만 나오므로 뒤를 훑을 이유가
+    # 없고, 하트비트 경로에서 클라이언트가 정하는 n 을 전부 도는 형태를 남기지 않는다.
+    for item in raw[:_CAPS_MAX_RUNTIMES]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("runtime") or "").strip()
         # `name in out` — 중복 신고는 **첫 항목만** (정제와 같은 규칙). 뒤 항목이 앵커를
         # 덮으면 화면에 오른 목록과 앵커의 출처가 서로 다른 항목에서 오게 된다.
-        if not name or name not in stored or name in out:
+        if not name or name not in names or name in out:
             continue
         src = str(item.get("source") or "")
         if src not in _SANITIZE_SOURCE_ALLOW:
@@ -4670,7 +4682,9 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
             #   검증하고 다른 writer 는 안 하는 비대칭을 남기지 않는다.
             caps_baseline = _store.merge_account_caps_baseline(
                 cur, account_id, caps, build=_store.normalize_runner_build(agent_build),
-                sources=_report_sources((payload or {}).get("runtimes")))
+                # 원문 + 정제결과 둘 다 넘긴다 — 한 인자였다면 정제결과만 넘기는 실수가
+                # 조용히 확인 경로를 껐다(위 docstring 의 뮤테이션 실측).
+                sources=_report_sources((payload or {}).get("runtimes"), caps))
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] 능력 baseline 병합 실패 account=%s: %r", account_id, exc)

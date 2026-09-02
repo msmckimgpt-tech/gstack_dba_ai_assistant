@@ -808,9 +808,16 @@ function _paintCaps(body) {
   const pending = body.caps_pending === true;
   if (pending !== _capsPending) {
     _capsPending = pending;
-    // 창의 기준점은 **처음 참이 된 시각**이다. 매 관측마다 갱신하면 상한이 영원히
-    // 미래로 밀려 상한이 없는 것과 같아진다.
-    _capsPendingSince = pending ? Date.now() : 0;
+    if (!pending) {
+      _capsPendingSince = 0;
+    } else if (_capsPendingArms < _CAPS_PENDING_MAX_ARMS) {
+      // 무장은 **셈이 있는 행위**다 — 진동이 창을 무한히 되살리지 못하게(위 상수 주석).
+      _capsPendingArms += 1;
+      _capsPendingSince = Date.now();
+    } else {
+      // 상한 초과 — pending 은 그대로 두되(문구·표시는 그 값을 쓴다) 창은 열지 않는다.
+      _capsPendingSince = 0;
+    }
     _syncGatePoll();
   }
   // ② 목록이 바뀌었는가.
@@ -859,9 +866,24 @@ let _gateInFlight = false;   //: 폴링이 띄운 조회가 아직 도는 중인
 //   아니라 러너 쪽 조치이고, 화면은 이미 사유를 말하고 있다.
 const _CAPS_PENDING_POLL_MAX_MS = 5 * 60 * 1000;
 let _capsPending = false;
-//: 「확인 중」을 **처음 관측한** 시각. 창의 기준점이다. 매 관측마다 갱신하면 상한이
-//: 영원히 미래로 밀려 상한이 없는 것과 같아진다.
+//: 지금 창의 기준점. `false→true` 전이에서 찍는다.
 let _capsPendingSince = 0;
+
+//: 창을 **다시 무장한 횟수**. 페이지당 상한이 있다.
+//:
+//: ⚠ 확인 라운드(2026-09-02)가 잡은 축이다. 초판 주석은 기준점을 「**처음** 참이 된 시각」
+//: 이라 주장했지만 코드는 매 `false→true` 전이에서 다시 찍었고, 둘은 다른 동작이다.
+//: 그리고 진동이 실제로 가능하다 — `caps_pending` 의 두 입력이 **서로 다른 축의 질의**로
+//: 온다(`_reported` 는 `LastHeartbeatAt DESC`, `runner_stale` 은 `t.Id DESC`
+//: — TASK-20260901T183000 이 의도적으로 나눈 비대칭). 한 계정에 러너 둘(하나는 협상 실패로
+//: caps 없음, 하나는 정상)이면 `_reported` 가 30초마다 교대해 pending 이 진동하고, 그때마다
+//: 창이 리셋되면 상한이 사실상 사라진다.
+//:
+//: 그래서 **재무장 횟수를 센다.** 정상 흐름에서 필요한 무장은 1회(연결 → 확인 → 완료)이고,
+//: 탭 복귀·재연결까지 넉넉히 봐도 3회면 충분하다. 초과하면 더 무장하지 않는다 — 그 상태에서
+//: 사용자가 할 일은 폴링이 아니라 러너 쪽 조치이고, 화면은 이미 사유를 말하고 있다.
+const _CAPS_PENDING_MAX_ARMS = 3;
+let _capsPendingArms = 0;
 
 function _capsPollWanted() {
   if (!_capsPending) return false;
