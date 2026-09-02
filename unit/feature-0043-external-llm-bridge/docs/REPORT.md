@@ -18,8 +18,12 @@ source_of_truth: true
 §13.1 «1순위» — `inject_asset_stamp.py` 와 같은 계층). 커밋 대상 사본은 러너·설치 스크립트
 합쳐 **4개 → 0개**. 산출물 diff 는 4,267행 중 57행이며 전부 ① 접근자 전환 12곳 ② `state`
 블록 이동 ③ PEP8 빈 줄이라 **사용자가 받는 동작은 그대로**다. 전체 6,956건 rc=0 ·
-적대 뮤테이션 8/8 KILL(`REV-20260902T113000-…`). **잔여: 라이브 다운로드→실행 왕복은
-POST-DEPLOY**(`docs/test-runs.d/TASK-20260902T110000-runner-modularization.md` §5).
+적대 뮤테이션 8/8 KILL(`REV-20260902T113000-…`). **POST-DEPLOY 실측 완료**(`ae02c3e1`): 새 배포 게이트 `bridge_runner_verify` 가 배포
+이미지에서 PASS · 러너 없는 대조 이미지에서 exit 1(판별력 실증) · 다운로드 3경로 **200** ·
+서빙본 sha256 = 이미지 산출물 일치 · 내려받은 러너 `--help` **실행 확인** · `no upstreams
+available` 0건. 소스에 커밋된 사본이 0인 상태에서 실물이 서빙된다 = 빌드가 유일 출처로
+동작한다(`docs/test-runs.d/TASK-20260902T120000-runner-modularization-postdeploy.md`).
+잔여: 실사용자 머신의 러너 재기동 왕복 1회(사용자 조작 필요).
 
 **2026-09-01 (TASK-20260901T160000)**: 연결 화면 1단계의 기본 OS 탭을 **추측에서 관측으로** 옮겼다.
 종전에는 `navigator.platform`(= 브라우저가 도는 OS)이 정해서, WSL 안에서 러너를 띄우는 사용자에게는
