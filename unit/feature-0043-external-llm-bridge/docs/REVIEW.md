@@ -2754,7 +2754,58 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 
 - **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
   **잔여**: 로그인 진입 경로가 크롬 활성화 정책에 걸리는지는 **배포 후 실측**(추측하지 않는다).
+## REV-20260902T110000-ai-claude-feature-0043-console-job-model-effort [AGENT-TEAM:inline-adversarial] — APPROVED
 
+### 렌즈 1 — security/인가
+
+- 신규 표면 `GET`·`PUT /api/profile/console-jobs` 는 **계정 파라미터가 없다** — 읽는 것도 쓰는
+  것도 세션 계정(`account["id"]`)뿐이라 남의 설정을 건드릴 경로가 구조적으로 없다. 신규 권한
+  코드 0(로그인만), 신규 테이블 0, 마이그레이션 0(additive 컬럼 1).
+- PUT 본문은 임의 JSON 이지만 `normalize_console_job_prefs` 가 **닫힌 키**(`JOB_SPECS`)와 길이
+  상한으로 접는다. 화면 렌더는 저장값까지 `escapeHtml` 을 지난다.
+- `_release_claim` 의 WHERE 를 `AccountId` **또는** `ClaimedBy` 로 넓혔다. 두 조건 모두 「이
+  계정이 손댈 자격이 있다」는 사실이므로 권한이 넓어지지 않는다 — 넓히지 않으면 배치 작업
+  (`AccountId=0`)은 자기가 방금 점유한 것조차 되돌리지 못해 lease 30분 잠긴다.
+- 거절 응답이 노출하는 `required_model` 은 **그 계정 자신의 설정값**이다(타 계정 정보 아님).
+
+### 렌즈 2 — 정합성/배선 (P1 1건 자체 적발)
+
+- **P1(자체 적발·수정)**: claim 이 능력을 `account_runner_capabilities`(= 계정의 최신 하트비트
+  러너 **한 대**)로 읽고 있었다. 같은 계정에 러너가 둘이면 「A 가 신고한 목록으로 판정해 B 에게
+  보내는」 조합이 만들어진다. 표시 축에서는 기존 코드도 이 위험을 주석으로 인정하고 고지로
+  갈음했지만, **이 cycle 이 그 판정에 거절을 붙였으므로** 같은 어긋남이 「멀쩡한 러너가 자기가
+  가진 모델 때문에 거절당하는」 장애로 승격된다. → `runner_capabilities_for_session` 신설:
+  claim 은 그 요청을 보낸 토큰의 세션으로 러너를 특정하고, 세션 비결합 토큰만 계정 축 폴백.
+- 거절 판정이 **세 곳**(적재 게이트·목록 필터·claim)에서 같은 정본을 쓴다. 갈리면 「목록에는
+  보이는데 집으면 거절」 또는 「화면은 맡겼다는데 아무도 안 집는」 상태가 되고, 그 두 형태가
+  이 feature 가 P0-T·P0-M 에서 이미 밟은 함정이다.
+- 워커 3경로(node_analysis·cluster_label·insight_summary)가 같은 판정을 쓴다. 질의는 `shared`
+  한 벌 — insight-worker 는 `oauth_store` 를 import 하지 못하는 별 컨테이너다.
+
+### 렌즈 3 — qa/회귀
+
+- **미설정 계정 무회귀**가 이 변경의 급소다. 거절은 «고른 것이 있는데 없을 때»만이고, 아무것도
+  고르지 않은 계정은 종전 경량 폴백 그대로 돈다 — 새 규칙이 기존 사용자의 분석을 통째로 막으면
+  그것은 해소가 아니라 새 장애다. 테스트 3건이 이 방향을 잠근다.
+- 신규 31건 · **역검증 28/29 FAIL@main**(통과 1건은 무회귀 검증용이라 통과가 정상).
+- 기존 계약 1건 갱신 — `test_claim_console_job_actually_ships_the_light_model` 이 리터럴
+  `pick_console_job_model` 호출을 요구해 **개선을 되돌리라고 말하는 게이트**였다. 계약의 뜻
+  (경량 폴백이 실린다)은 유지하고 잠그는 대상을 함수 이름 → 관계로 옮겼다.
+- route 골든 +2/-0 · ROUTEMAP 재생성 · codenav-lint OK · ruff clean · 9 feature 컨테이너 rc=0.
+
+### 뮤테이션 — 5/5 KILL
+
+| # | 주입 | 결과 |
+|---|---|---|
+| M1 | 거절 무력화(`blocked` 항상 False) | **KILL** |
+| M2 | `reasoning_level` 을 빈 값 고정으로 되돌림(제보 증상 재주입) | **KILL** |
+| M3 | 신규 컬럼 ALTER 를 fast path 에서 제거(라이브 미생성 함정 재주입) | **KILL** |
+| M4 | 워커 게이트에서 모델 요구 제거(웹만 거절 → 유령 작업) | **KILL** |
+| M5 | 미설정 계정까지 거절(무회귀 위반 방향) | **KILL** |
+
+- **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
+  **잔여**: 배포 후 라이브 실측 3건(TASK.md) — 특히 거절 사유가 **화면에 실제로 도달하는지**는
+  설정 실수로 분석이 멈추는 방향이라 눈으로 확인해야 한다.
 ## REV-20260902T110000-ai-claude-feature-0043-click-beats-entry [AGENT-TEAM:inline-adversarial] — APPROVED
 
 - **일시**: 2026-09-02 · **범위**: `static/app/connect-modal.js`(+배포 사본) · 테스트 3건 추가.

@@ -40,6 +40,7 @@ from fastapi.responses import JSONResponse
 # feature-0043: 브리지 task 의 점유·취소 술어 **단일 정본**. 지역 별칭(`_CLAIMABLE_SQL` 등)은
 # 아래 "브리지 상태 술어" 절에서 붙인다 — 정의가 아니라 참조다.
 from shared import bridge_consent as _consent
+from shared import bridge_tasks as _bridge_tasks
 from shared.bridge_tasks import (
     BRIDGE_CLAIM_LEASE_MIN as _BRIDGE_CLAIM_LEASE_MIN,
     CLAIMABLE_SQL as _CLAIMABLE_SQL,
@@ -181,26 +182,63 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
     출력 규약(`response_format`)을 함께 준다 — 러너가 `json` 을 요구받았는지 알아야 프롬프트
     말미에 형식 지시를 붙이고, 회수 쪽 파서와 짝이 맞는다.
     """
-    from shared.bridge_tasks import job_label, job_spec, pick_console_job_model
+    from shared.bridge_tasks import job_label, job_spec, resolve_console_job_request
 
     spec = job_spec(job_kind) or {}
     account_id = int((account or {}).get("id") or 0)
 
-    # 이 러너가 고를 수 있다고 신고한 목록에서 경량 모델을 고른다(아래 `requested` 참조).
-    # 조회 실패는 빈 값 — 관측용 편의가 작업 자체를 막지 않는다.
-    _light_runtime, _light_model = "", ""
+    # 이 작업을 **무엇으로 돌릴 것인가** — 계정이 항목별로 고른 모델·추론등급이 1순위이고,
+    # 고른 것이 없으면 종전 경량 선호로 떨어진다 (TASK-20260902T110000).
+    # 조회 실패는 빈 설정 = 미설정과 같이 다룬다(관측용 편의가 작업 자체를 막지 않는다).
+    _req = {"runtime": "", "model": "", "effort": "", "blocked": False, "unmet": [], "source": ""}
     try:
         import oauth_store as _store
 
         _cur = conn.cursor()
         try:
-            _light_runtime, _light_model = pick_console_job_model(
-                _store.account_runner_capabilities(_cur, account_id))
+            # 능력은 **이 요청을 보낸 러너**의 것으로 읽는다(세션 결합 토큰 행) — 계정 최신을
+            # 보면 같은 계정에 러너가 둘일 때 「A 의 목록으로 판정해 B 에게 보내는」 조합이
+            # 되고, 여기에 거절이 붙은 이상 그 어긋남은 멀쩡한 러너를 막는 장애가 된다.
+            # 세션을 특정할 수 없는 토큰(비결합)은 종전대로 계정 축으로 폴백한다.
+            _caps = _bridge_tasks.runner_capabilities_for_session(
+                _cur, account_id, ctx.get("session_id"))
+            if not _caps:
+                _caps = _store.account_runner_capabilities(_cur, account_id)
+            _req = resolve_console_job_request(
+                job_kind, _store.account_console_job_prefs(_cur, account_id), _caps)
         finally:
             _cur.close()
     except Exception:
         logging.getLogger(__name__).debug(
-            "콘솔 작업 경량 모델 선택 실패 task=%s", task_id, exc_info=True)
+            "콘솔 작업 모델·등급 해석 실패 task=%s", task_id, exc_info=True)
+
+    if _req.get("blocked"):
+        # 계정이 고른 모델을 이 러너가 신고하지 않았다 → **위임하지 않는다**(사용자 결정
+        # 2026-09-02). 점유를 되돌려 다른(또는 갱신된) 러너가 집을 수 있게 남긴다 — 붙들고
+        # 거절하면 lease 30분 동안 그 작업은 아무에게도 보이지 않는다.
+        #
+        # 이 방어는 **마지막 겹**이다. 정상 경로에서는 적재 게이트(`runner_can_take`)와 대기
+        # 목록 필터가 먼저 걸러 여기 도달하지 않는다. 그래도 두는 이유: 목록을 거치지 않고
+        # task_id 로 직접 claim 하는 경로가 열려 있고, 그 경로만 규칙을 비껴가면 「설정한 모델로
+        # 돈다」는 계약이 우회 가능한 권고가 된다.
+        _release_claim(conn, task_id, account_id)
+        logging.getLogger(__name__).info(
+            "[console-job] 위임 거절 task=%s kind=%s 사유=선택 모델 미보유(%s)",
+            task_id, job_kind, _req.get("required_model") or "?")
+        return _json_err(
+            409,
+            f"프로필에서 고른 모델({_req.get('required_model') or '?'})을 이 AI 가 제공하지 "
+            "않아 이 작업을 맡기지 않았습니다. 프로필 > AI 작업 에서 모델을 바꾸거나 그 모델을 "
+            "쓸 수 있는 AI 로 연결하세요.")
+    _light_runtime = str(_req.get("runtime") or "")
+    _light_model = str(_req.get("model") or "")
+    _req_effort = str(_req.get("effort") or "")
+    if _req.get("unmet"):
+        # 반영하지 못한 축은 **조용히 버리지 않는다**. 등급은 실행을 막지 않으므로 진행하되,
+        # 그 사실이 어디에도 남지 않으면 사용자는 자기가 고른 등급으로 돌았다고 믿는다.
+        logging.getLogger(__name__).info(
+            "[console-job] 지정 일부 미반영 task=%s kind=%s unmet=%s",
+            task_id, job_kind, ",".join(str(u) for u in _req.get("unmet") or []))
     # 대화 축과 같은 이유로 `wrap_principal_request` 다 (TASK-20260901T140000) — 이 본문은
     # 조사로 얻은 비신뢰 데이터가 아니라 **사용자가 콘솔에서 눌러 발생시킨 작업 지시**다.
     marked = _guard.wrap_principal_request(
@@ -215,6 +253,30 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
             # 적재한 것이 깨졌다 — 작업 자체는 프롬프트만으로도 수행 가능하므로 계속한다.
             # (payload 는 회수 시점의 write-through 대상 식별용이라 서버가 다시 읽는다.)
             payload = None
+    # 무엇으로 돌렸는지를 **작업 행에 남긴다** (TASK-20260902T110000).
+    #
+    # 컬럼(`RequestedRuntime`/`RequestedModel`/`ReasoningLevel`)은 대화 축이 쓰려고 이미 있었고
+    # 콘솔 작업만 NULL 로 두고 있었다(라이브 실측: 최근 job 전량 NULL). 그래서 「fable/opus 로
+    # 돌았다」는 제보를 서버에서 확인할 방법이 없었고, 개인 머신의 러너 로그를 봐야만 했다 —
+    # 이 결함을 진단하는 과정 자체가 그 공백의 비용이었다.
+    #
+    # 대화 축과 방향이 다르다: 그쪽은 **요청 시점에 굳힌 값**을 claim 이 읽고, 이쪽은 claim
+    # 시점에 확정하므로 여기서 쓴다. 쓰기 실패는 작업을 막지 않는다(관측이 실행을 인질로
+    # 잡지 않는다).
+    try:
+        _cur = conn.cursor()
+        try:
+            _cur.execute(
+                "UPDATE WebAiTasks SET RequestedRuntime=%s, RequestedModel=%s, ReasoningLevel=%s "
+                "WHERE TaskId=%s",
+                (_light_runtime or None, _light_model or None, _req_effort or None, task_id))
+            conn.commit()
+        finally:
+            _cur.close()
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "콘솔 작업 실행 지정 기록 실패 task=%s", task_id, exc_info=True)
+
     try:
         _ledger.record(_pg(), account_id=account_id, tool="claim_request",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -241,18 +303,22 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
         "system_prompt": "",
         "scope": {},
         "attachments": [],
-        # 콘솔·배경 작업은 **경량 모델**로 돈다 (사용자 결정 2026-09-01).
+        # 콘솔·배경 작업이 **무엇으로 도는가** (사용자 결정 2026-09-01 → 2026-09-02 확장).
         #
-        # 이 산출물은 기계적이다(설명 한 줄·프롬프트 초안·라벨) — 그런데 호출은 **사용자
-        # 개인 계정의 토큰**을 태운다. 남의 자원을 우리가 쓰는 자리에서 상위 모델을 기본으로
-        # 둘 근거가 없다. 대화 축은 건드리지 않는다(그건 사용자가 화면에서 고른 값이다).
+        # 1순위는 **계정이 프로필에서 항목별로 고른 값**이다. 고른 것이 없으면 경량 선호로
+        # 떨어진다 — 이 산출물은 기계적인데(설명 한 줄·프롬프트 초안·라벨) 호출은 사용자
+        # 개인 계정의 토큰을 태우므로, 미설정 기본이 상위 모델일 근거가 없다.
         #
-        # 값은 **그 러너가 신고한 목록에서만** 고른다 — 대조 실패면 빈 값이고 러너 기본값이
-        # 쓰인다. 없는 이름을 지어 보내면 러너가 그것을 인자로 넘겨 실행이 실패한다.
+        # 값은 **그 러너가 신고한 목록에서만** 고른다 — 없는 이름을 지어 보내면 러너가 그것을
+        # 인자로 넘겨 실행이 실패한다(P0-T 가 겪은 형태).
+        #
+        # ⚠ 추론등급을 **더 이상 비우지 않는다** (TASK-20260902T110000). 종전 주석은 "등급
+        #   어휘는 러너마다 달라 추측하면 「고른 적 없는 값이 반영됐다」가 된다" 였는데, 그
+        #   전제는 등급을 **우리가 지어낼 때**만 성립한다. 지금 보내는 값은 사용자가 프로필에서
+        #   고른 것이고 러너 신고 목록과 대조까지 마쳤으므로 추측이 아니다. 비워 두면 실행은
+        #   그 머신 CLI 기본값을 따르고, 그것이 low 인 환경에서 능동 분석이 low 로 돌았다.
         "requested": {"runtime": _light_runtime, "model": _light_model,
-                      # 추론 등급은 비운다 — 등급 어휘는 러너마다 다르고(P0-Z3), 여기서
-                      # 추측하면 「고른 적 없는 값이 반영됐다」가 된다. 모델만 낮춘다.
-                      "reasoning_level": ""},
+                      "reasoning_level": _req_effort},
         "next": ("조사 없이 요청된 형식으로만 답하세요. 완료되면 submit_answer 로 제출합니다"
                  " (source_tasks 에는 이 task_id 만 넣으면 됩니다)."),
     })
@@ -2139,15 +2205,36 @@ async def list_open_requests(request: Request, ctx=Depends(require_ai_token),
             "WHERE " + scope_sql + " AND Status='open' AND " + _CLAIMABLE_SQL +
             " ORDER BY CreatedAt ASC LIMIT %s",
             (*scope_params, limit))
-        for r in cur.fetchall() or []:
+        fetched = cur.fetchall() or []
+        # 계정이 항목별로 고른 모델을 이 러너가 못 주면 그 작업은 **목록에서도 뺀다**
+        # (TASK-20260902T110000). claim 이 거절하는 것만으로는 러너가 매 주기 집었다 409 를
+        # 받는 공회전을 하고, 그 공회전은 계정 공용 상한(`_ledger`)을 태운다 — 낡은 러너
+        # 양보(위 `_stale_runner_yield_to`)에서 이미 확인된 형태다.
+        _prefs, _caps = {}, []
+        if any(str(r[3] or _KIND_CHAT) == _KIND_JOB for r in fetched):
+            try:
+                import oauth_store as _store
+
+                _prefs = _store.account_console_job_prefs(cur, account_id)
+                _caps = _store.account_runner_capabilities(cur, account_id)
+            except Exception:
+                # 조회 실패는 **필터 없음**(종전 동작). 여기서 fail-closed 로 가면 설정과
+                # 무관한 DB 오류가 모든 작업을 목록에서 지운다.
+                _prefs, _caps = {}, []
+        for r in fetched:
+            kind = str(r[3] or _KIND_CHAT)
+            job_kind = str(r[4] or "")
+            if kind == _KIND_JOB and _prefs and _bridge_tasks.resolve_console_job_request(
+                    job_kind, _prefs, _caps).get("blocked"):
+                continue
             rows.append({
                 "task_id": str(r[0]),
                 "question": str(r[1] or ""),
                 "asked_at": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2] or ""),
                 # 작업 종류를 함께 준다 — 러너가 목록만 보고 "이건 대화가 아니다" 를 알아야
                 # 프레이밍을 고를 수 있다(claim 까지 가서야 알면 한 번 더 왕복한다).
-                "kind": str(r[3] or _KIND_CHAT),
-                "job_kind": str(r[4] or ""),
+                "kind": kind,
+                "job_kind": job_kind,
             })
     finally:
         cur.close()
@@ -3333,14 +3420,19 @@ def _release_claim(conn, task_id: str, account_id: int) -> None:
     """점유 해제 — 실패 경로에서 작업을 대기열로 되돌린다.
 
     `Status='open'` 인 것만 되돌린다: 이미 제출된(`submitted`) 작업을 되살리면 확정 불변이 깨진다.
+
+    ⚠ 소유(`AccountId`) **또는** 점유(`ClaimedBy`) 로 잡는다 (TASK-20260902T110000). 배경 배치
+    작업은 소유 계정이 없어(`AccountId=0`) 소유 조건만으로는 **자기가 방금 점유한 작업조차
+    되돌리지 못한다** — 그러면 실패 경로에서 그 작업이 lease 30분 동안 아무에게도 보이지 않는다.
+    두 조건 모두 「이 계정이 손댈 자격이 있다」는 사실을 말하므로 권한이 넓어지지 않는다.
     """
     try:
         cur = conn.cursor()
         try:
             cur.execute(
                 "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL "
-                "WHERE TaskId=%s AND AccountId=%s AND Status='open'",
-                (task_id, account_id))
+                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)",
+                (task_id, account_id, account_id))
             conn.commit()
         finally:
             cur.close()

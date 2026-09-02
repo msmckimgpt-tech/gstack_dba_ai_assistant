@@ -513,6 +513,10 @@
       <!-- gc-settings-notif: 릴리즈 노트를 최좌측으로 이동(모든 로그인 사용자 노출, 콘텐츠는 release-notes-data.js). -->
       <button type="button" class="drawer-tab" data-profile-tab="release-notes">릴리즈 노트</button>
       <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
+      <!-- TASK-20260902T110000: 콘솔·배경 작업을 **무엇으로 돌릴지**를 계정이 항목별로 고른다.
+           대화 축 선택기와 별도인 이유: 그쪽은 «지금 이 질문» 의 선택이고 이쪽은 «내가 없는
+           동안 도는 작업» 의 상시 설정이다. 한 자리에 합치면 한쪽을 고를 때 다른 쪽이 바뀐다. -->
+      <button type="button" class="drawer-tab" data-profile-tab="ai-jobs">AI 작업</button>
       <!-- gc-settings-notif: '보안 및 계정' → '계정'. 사용 내역(TASK-0184) + 알림 환경설정을 이 탭으로 병합.
            탭 키(data-profile-tab)는 switchProfileTab 디스패치/패널 매칭 호환을 위해 security-and-account 유지. -->
       <button type="button" class="drawer-tab" data-profile-tab="security-and-account">계정</button>
@@ -660,6 +664,23 @@
         <button type="button" class="btn-secondary" id="clearPromptBtn">비우기</button>
       </div>
     </div><!-- /prompt -->
+
+    <!-- TASK-20260902T110000: AI 작업 — 콘솔·배경 작업 항목별 모델·추론등급.
+         목록·선택지는 서버가 준다(`/api/profile/console-jobs`): 항목은 JOB_SPECS,
+         선택지는 **지금 연결된 러너가 신고한 것**뿐이다. 화면이 목록을 자체 보유하면
+         러너가 못 쓰는 모델을 고를 수 있게 되고 그 작업은 실행에서 실패한다(P0-T). -->
+    <div class="drawer-pane hidden" data-profile-pane="ai-jobs">
+      <div class="helper-text" id="aiJobsIntro">
+        관리 콘솔·배경 작업을 연결된 내 AI 가 처리할 때 쓸 모델과 추론 강도를 항목별로 정합니다.
+        고른 모델을 지금 연결된 AI 가 제공하지 않으면 그 작업은 <b>맡기지 않습니다</b>.
+      </div>
+      <div id="aiJobsList" class="ai-jobs-list"></div>
+      <div class="drawer-actions">
+        <button type="button" class="btn-primary" id="saveAiJobsBtn">저장</button>
+        <button type="button" class="btn-secondary" id="resetAiJobsBtn">모두 기본값</button>
+      </div>
+      <div class="helper-text" id="aiJobsMeta"></div>
+    </div><!-- /ai-jobs -->
 
     <!-- 릴리즈 노트 — 일자별 그룹(접기/탐색). 렌더는 release-notes.js 의 ReleaseNotes.render. -->
     <div class="drawer-pane hidden" data-profile-pane="release-notes">
