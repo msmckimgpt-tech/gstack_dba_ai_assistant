@@ -566,6 +566,12 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     # 이 값은 «같은 것이 다시 떴는가» 라는 **동일성** 축에만 쓴다.
     # `None` = 모른다(조회 실패·듣고 있는 러너 없음) · `""` = 러너가 지문을 신고하지 않았다.
     runner_build: str | None = None
+    # 그 러너가 **스스로 갱신할 줄 아는가** (TASK-20260902T140000, 사용자 결정 2026-09-02).
+    # 낡음 판정은 그대로 엄격하되, 스스로 고치는 러너의 낡음은 **조치 요구로 그리지 않는다** —
+    # 러너 파일은 거의 모든 배포에서 바뀌므로 그 요구가 하루에 몇 번씩 뜨는데 사용자가 할 일은
+    # 없다. 모르면 `False`(=종전 안내)로 떨어진다: 반대 방향은 스스로 못 고치는 러너의
+    # 사용자에게 아무 말도 없이 낡은 동작만 남긴다.
+    runner_self_updating = False
     if listening:
         try:
             from routers.ai_tools import runner_build_is_stale
@@ -576,6 +582,12 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             finally:
                 cur2.close()
             runner_build = _reported
+            cur2b = conn.cursor()
+            try:
+                runner_self_updating = bool(
+                    _store.account_runner_self_updating(cur2b, int(account.get("id") or 0)))
+            finally:
+                cur2b.close()
             # 판정은 `ai_tools.runner_build_is_stale` **하나**다 — 하트비트 응답
             # (`runner_update`)과 같은 술어를 쓴다. 여기 다시 적으면 두 판정이 갈릴
             # 준비를 마치고, 갈리면 「칩은 초록인데 하트비트는 구버전」이 된다.
@@ -592,6 +604,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             # 동일성 축도 함께 «모른다» 로 되돌린다 — 판정이 실패한 조회에서 지문만 살려 두면
             # 화면이 그 반쪽 사실로 「같은 파일이 다시 떴다」를 단정하게 된다.
             runner_build = None
+            # 자기갱신 신고도 같이 거둔다. 여기만 남기면 「낡음 판정은 실패했는데 조치는
+            # 감춰진」 상태가 되어, 조치가 필요한 사용자가 아무 안내도 받지 못한다.
+            runner_self_updating = False
             logging.getLogger(__name__).debug("runner build 대조 실패", exc_info=True)
     # 마지막으로 연결됐던 명령 계열 (2026-09-01, 사용자 요청). 화면 1단계의 기본 탭이 이것으로
     # 정해진다 — 종전의 `navigator.platform` 추측은 **브라우저가 도는 OS** 라, WSL 안에서
@@ -650,6 +665,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         # 「다시 띄웠는데 같은 파일이 다시 떴다」를 가려내는 데만 쓴다(그 상태에서는 실행
         # 버튼을 아무리 눌러도 풀리지 않으므로, 다른 것을 말해야 한다).
         "runner_build": runner_build,
+        # 낡음을 **조치로 그릴 것인가**를 정하는 값. 참이면 화면은 「업데이트 필요」를 띄우지
+        # 않는다 — 그 러너가 유휴가 되는 대로 스스로 최신본으로 다시 뜨기 때문이다.
+        "runner_self_updating": runner_self_updating,
         # ── 배경 배치 동의 (TASK-20260901T190000, 사용자 결정 "웹에서 토글") ────────────
         # 종전 표현 수단은 러너 CLI 플래그 `--batch` 하나였다 — 웹 어디에서도 켤 수 없고,
         # 바꾸려면 러너를 다시 띄워야 하며, 온보딩 명령을 복사해 붙인 사람은 그런 플래그가

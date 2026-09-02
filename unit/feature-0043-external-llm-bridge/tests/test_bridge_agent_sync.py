@@ -219,6 +219,11 @@ def test_runner_has_no_third_party_imports():
         # TASK-20260901T163000: 예외 스택을 사건 원장에 남긴다(`_short_traceback`). 종전엔
         # `str(e)` 만 남아 예외 형과 터진 자리가 통째로 버려졌다. 표준 라이브러리.
         "traceback",
+        # TASK-20260902T140000: 자기 갱신 — 받은 파일이 **파이썬인지** 검사하고(`ast`)
+        # 같은 디렉토리 임시 파일로 원자 교체한다(`tempfile`). 둘 다 표준 라이브러리라
+        # 무설치 계약은 그대로다. `ast` 는 실행 없이 문법만 본다 — 받은 것을 실행해 보고
+        # 판정하면 그 자체가 이 검사가 막으려는 일이다.
+        "ast", "tempfile",
         "urllib", "urllib.error", "urllib.parse", "urllib.request", "__future__",
     }
     external = []
