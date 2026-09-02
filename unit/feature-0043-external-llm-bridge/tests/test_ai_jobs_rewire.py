@@ -368,3 +368,48 @@ def test_enqueue_console_job_proceeds_when_no_duplicate_and_stores_the_key():
     stored = " ".join(str(x) for x in inserts[0][1])
     assert "dedupe_key" in stored and "k1" in stored, (
         "저장한 payload 에 키가 없다 — 다음 pass 의 조회가 이 행을 못 찾아 중복이 돌아온다")
+
+
+# ── 6b. 사람이 시작하지 않은 run 도 맡길 곳이 있다 (라이브 실측 2026-09-02) ──────
+
+
+def test_auto_generated_runs_fall_back_to_the_batch_consenting_pool():
+    """`requested_by` 가 계정이 아닌 run(`auto:insight-change`)도 위임된다.
+
+    라이브에서 실제로 발견했다: `node_analysis_runs.requested_by` 는 사용자명이 아닐 수 있고
+    (워커가 스스로 여는 run), 그런 run 을 요청자 스코프로만 다루면 **영원히 위임되지 못한 채**
+    매 cycle 재시도만 돌며 run 이 `running` 으로 굳는다 — 그 상태는 enqueue dedup 을 통해
+    사용자의 재트리거까지 막는다.
+
+    사람이 시작하지 않은 분석은 성질상 배경 작업이므로 **배경 작업에 동의한 러너 풀**로
+    넘긴다(동의하지 않은 사람의 토큰은 여전히 태우지 않는다).
+    """
+    src = (_CORE / "modules" / "node_analysis.py").read_text(encoding="utf-8")
+    assert "_batch_consenting_account" in _calls_in("modules/node_analysis.py", "_delegate_job"), (
+        "요청자 계정이 없을 때의 폴백이 없다 — auto run 이 영원히 pending 을 맴돈다")
+    assert "need_batch=True" in (_CORE / "modules" / "semantic_cluster.py").read_text(
+        encoding="utf-8"), "배경 동의 없이 배경 작업을 배급하면 동의 축이 무의미해진다"
+    assert "delegate_exhausted" in src, (
+        "위임 실패가 무한 재시도로 남는다 — 맡길 곳이 영영 없으면 run 이 굳는다")
+
+
+def test_delegation_deferral_is_bounded():
+    """위임 실패의 **연속** 횟수가 상한에 닿으면 terminal 로 종결한다.
+
+    첫 실패는 무료다(러너가 잠깐 꺼진 것은 이 잡의 잘못이 아니다). 그러나 영원히 무료로 두면
+    맡길 곳이 없는 잡이 무한히 pending 을 맴돈다 — 예산 분기와 같은 규율을 쓴다.
+    """
+    body = _func_src_of("modules/node_analysis.py", "_delegate_job")
+    assert "attempts + CASE WHEN error_kind = 'delegate' THEN 1 ELSE 0 END" in body, (
+        "연속 실패를 세지 않는다 — 첫 실패만 무료여야 하고 그 뒤는 소모돼야 한다")
+    assert "max_attempts" in body
+
+
+def _func_src_of(rel_path: str, func_name: str) -> str:
+    """그 함수의 소스 조각 (AST 로 경계를 잡는다 — 문자열 슬라이싱은 동명 접두에 걸린다)."""
+    src = (_CORE / rel_path).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            return ast.get_source_segment(src, node) or ""
+    raise AssertionError(f"{func_name} 를 찾지 못했다")

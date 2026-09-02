@@ -1000,7 +1000,7 @@ def _run_requester(cur, run_id: str) -> str:
         return ""
 
 
-def _delegate_job(cur, w: dict, rep: dict) -> None:
+def _delegate_job(cur, w: dict, rep: dict, rcfg: dict) -> None:
     """잡 1건을 요청자의 개인 AI 대기열에 올린다. **단일 스레드에서만 호출**(cur/rep).
 
     실패는 삼키지 않는다 — 잡을 짧게 재예약(`error_kind='delegate'`)해 다음 cycle 이 다시
@@ -1013,6 +1013,7 @@ def _delegate_job(cur, w: dict, rep: dict) -> None:
     """
     from shared import bridge_tasks as _bt
     from modules import llm as _llm_mod
+    from modules.semantic_cluster import _batch_consenting_account
 
     jid = w["jid"]
     run_id = w["run_id"]
@@ -1021,7 +1022,20 @@ def _delegate_job(cur, w: dict, rep: dict) -> None:
         mem = _memory_conn()
         account_id = _delegation_account_id(mem, _run_requester(cur, run_id))
         if not _delegation_ready(mem, account_id):
-            raise RuntimeError("연결된 AI 러너가 대기 중이 아닙니다")
+            # ── 사람이 시작하지 않은 run (라이브 실측 2026-09-02) ────────────────────
+            #
+            # `node_analysis_runs.requested_by` 는 사용자명이 아닐 수 있다. 워커가 스스로
+            # 여는 run(`auto:insight-change`)이 실재하고, 그 이름에 대응하는 계정은 없다.
+            # 그런 run 을 요청자 스코프로만 다루면 **영원히 위임되지 못하고** 매 cycle
+            # 재시도만 돌며 run 이 `running` 으로 굳는다 — 그 상태는 enqueue dedup 을 통해
+            # 사용자의 재트리거까지 막는다(라이브에서 2건이 그 상태였다).
+            #
+            # 사람이 시작하지 않은 분석은 **성질상 배경 작업**이다. 그래서 배경 작업에
+            # 동의한 러너 풀로 넘긴다 — 동의하지 않은 사람의 토큰은 여전히 태우지 않는다
+            # (`_batch_consenting_account` 가 `need_batch=True` 로 고른다).
+            account_id = _batch_consenting_account(mem)
+            if not account_id:
+                raise RuntimeError("연결된 AI 러너가 대기 중이 아닙니다")
         task_id = _bt.enqueue_console_job(
             mem, account_id=account_id, job_kind="node_analysis",
             # 프롬프트 조립은 **서버 호출과 같은 정본**을 쓴다(`node_analysis_messages`).
@@ -1036,11 +1050,25 @@ def _delegate_job(cur, w: dict, rep: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         _log.warning("node_analysis job=%s 위임 적재 실패 err=%r", jid, exc)
         try:
+            # **연속** 실패는 attempts 를 소모한다 (예산 분기와 같은 규율).
+            #
+            # 첫 실패는 무료다 — 러너가 잠깐 꺼진 것은 이 잡의 잘못이 아니고, 사용자가
+            # AI 를 켜기 전에 run 이 통째로 굳으면 안 된다. 그러나 **영원히** 무료로 두면
+            # 맡길 곳이 없는 잡(예: 아무도 배경 작업에 동의하지 않은 상태의 auto run)이
+            # 무한히 pending 을 맴돌고, 그 run 은 `running` 으로 굳어 재트리거를 막는다.
+            # 상한에 닿으면 terminal 로 종결해 표면화한다.
             cur.execute(
-                "UPDATE node_analysis_jobs SET status='pending', "
-                "  next_attempt_at = now() + make_interval(secs => %s), "
-                "  error_kind=%s, error=%s WHERE id=%s",
-                (_DELEGATE_DEFER_SEC, "delegate",
+                "UPDATE node_analysis_jobs SET "
+                "  attempts = attempts + CASE WHEN error_kind = 'delegate' THEN 1 ELSE 0 END, "
+                "  status = CASE WHEN error_kind = 'delegate' AND attempts + 1 >= %s "
+                "                THEN 'failed' ELSE 'pending' END, "
+                "  next_attempt_at = CASE WHEN error_kind = 'delegate' AND attempts + 1 >= %s "
+                "                THEN NULL ELSE now() + make_interval(secs => %s) END, "
+                "  error_kind = CASE WHEN error_kind = 'delegate' AND attempts + 1 >= %s "
+                "                THEN 'delegate_exhausted' ELSE 'delegate' END, "
+                "  error=%s WHERE id=%s",
+                (rcfg["max_attempts"], rcfg["max_attempts"], _DELEGATE_DEFER_SEC,
+                 rcfg["max_attempts"],
                  ("연결된 AI 에 맡기지 못했습니다: " + str(exc))[:500], jid))
         except Exception:
             # `error_kind`/`next_attempt_at` 부재(0049 미적용 창) — 그 창에서는 그냥 pending
@@ -2118,7 +2146,7 @@ def _process_pending_inner(max_nodes=None, conn=None) -> dict:
                     # 계약), 여기서 멈추면 재귀 전개가 통째로 사라져 run 이 루트 한 개짜리가
                     # 된다. lease 회수로 이 잡이 다시 돌아와도 `ON CONFLICT DO NOTHING` 이라
                     # 이웃이 중복 적재되지 않는다.
-                    _delegate_job(cur, w, rep)
+                    _delegate_job(cur, w, rep, rcfg)
                     rep["enqueued"] += _enqueue_neighbors(c, cur, run_id, scope_key, ctx, depth,
                                                           anchor, anchor_key=(anchor_key or ""))
                     return
