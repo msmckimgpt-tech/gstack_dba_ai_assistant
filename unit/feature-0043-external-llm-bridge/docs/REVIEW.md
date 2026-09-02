@@ -3054,7 +3054,6 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
 
 - **판정**: **APPROVED** — 자체 적발 1건(패키지 형태 검증 부재) 신설 테스트로 해소,
   하네스 함정 2건 제거 후 재실측, 잔여 BLOCKING/MAJOR 0.
-
 ## REV-20260902T120000-ai-claude-corp-feature-0043-relaunch-dead-end [AGENT-TEAM:inline-adversarial] — APPROVED
 
 ### 뮤테이션이 잡아낸 것 (설계 결함 1건)
@@ -3098,3 +3097,12 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
 | M8 지문을 `String(x \|\| "")` 로 눌러 담음 | **KILLED** (2건) |
 | M9 발급 in-flight 잠금 제거 | **KILLED** |
 | 정상 소스 | PASS (16/16) |
+## REV-20260902T120000-ai-claude-feature-0043-runner-modularization-postdeploy [SKIPPED:non-policy-doc] — 문서 전용
+
+- **일시**: 2026-09-02
+- **범위**: `docs/test-runs.d/` fragment 1건 신설 + `TASK.md`·`REPORT.md` 기록 갱신. **코드 변경 0**.
+- **Trigger** (§18.8): 비정책 doc-only → panel SKIP.
+- 실측 근거는 fragment 본문에 있다. 특기할 점 하나 — 게이트 대조군 최초 결과(SURVIVE)가
+  **하네스 결함에서 온 오보**였다. 이 cycle 계열에서 같은 부류가 세 번째다(pytest 미설치 ·
+  집계 줄 유실 · `die` 스텁). 판정을 내기 전에 **하네스가 실패를 실제로 잡는지 먼저 실증**하지
+  않으면, 「게이트가 무력하다」와 「하네스가 안 돌았다」가 같은 모양으로 나온다.

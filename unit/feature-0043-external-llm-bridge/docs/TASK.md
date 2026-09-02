@@ -2327,3 +2327,23 @@ fable 및 opus 로 진행되는 이슈가 확인되었습니다. effort 또한 l
 > 9·8커밋으로 분할 이득이 작다. 설치 스크립트는 **사본 제거만** 적용했다.
 > 예시: `agent/caps.py` 만 고친 세션과 `agent/handler.py` 만 고친 세션이 같은 파일을
 > 건드리지 않아 git 이 충돌을 내지 않는다.
+
+## 20260902T1200-runner-modularization-postdeploy — 모듈 분할 POST-DEPLOY 실측
+
+배포 `ae02c3e1` 후 잔여로 남겼던 라이브 확인을 수행했다. 상세 증적은
+`docs/test-runs.d/TASK-20260902T120000-runner-modularization-postdeploy.md`.
+
+### 4. Requested Scope (요청 범위)
+
+직전 cycle(`20260902T1100-runner-modularization`)의 §5 POST-DEPLOY 항목 이행.
+
+- [x] **새 배포 게이트가 실제로 작동하는가** — 배포 이미지 PASS · 러너 없는 대조 이미지 exit 1.
+      ⚠ 최초 대조는 SURVIVE 였는데 **하네스의 `die` 스텁이 `exit` 아닌 `return`** 이라 생긴
+      오보였다(실제 `deploy-web.sh:164` 는 `exit 1`, 호출부는 평문 문장). 충실한 `die` 로 재실행
+- [x] **빌드가 유일 출처로 동작하는가** — 소스 커밋 사본 0인 상태에서 baked 이미지에 러너
+      269,768B + 설치 스크립트 2종 실재 · `py_compile` OK
+- [x] **사용자 도달성** — 다운로드 3경로 **200** · 서빙본 sha256 = 이미지 산출물 일치 ·
+      내려받은 러너 `--help` **실행 확인**(파일 존재가 아니라 실행으로 연접 무결성 확인)
+- [x] **무중단** — `no upstreams available` **0건**
+- [ ] **실사용자 머신 러너 재기동 왕복** — 사용자 조작 필요(이월). 기존 상주 러너는 지문 변경으로
+      다음 하트비트에서 `runner_update` 안내를 받는다(동작 변경 아님 — 재설치로 해소)
