@@ -249,10 +249,17 @@ def test_indicator_shows_both_states():
 
 
 def test_indicator_opens_the_modal():
-    """표시가 곧 조치 경로여야 한다 — '연결 안 됨' 만 보이고 방법이 없으면 소용없다."""
+    """표시가 곧 조치 경로여야 한다 — '연결 안 됨' 만 보이고 방법이 없으면 소용없다.
+
+    ⚠ 2026-09-02: 조치는 «창 열기» 하나가 아니다(이미 연결해 본 사용자는 바로 실행). 잠그는
+    것은 «표시 → 조치» 라는 관계이지 특정 함수 이름이 아니다.
+    """
     js = MODAL_JS.read_text(encoding="utf-8")
     seg = js[js.index("export function bindConnState("):]
-    assert "openConnectModal()" in seg
+    assert "_connectEntry" in seg, "칩이 아무 조치로도 이어지지 않는다"
+    entry = js[js.index("function _connectEntry("):]
+    entry = entry[:entry.index("\nexport function")]
+    assert "openConnectModal()" in entry, "실행이 안 되는 사용자에게 남는 경로가 없다"
 
 
 def test_indicator_refreshes_after_connecting():

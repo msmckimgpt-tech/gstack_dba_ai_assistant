@@ -406,6 +406,31 @@ BRIDGE_TOKEN="\$TOKEN" $PY "\$BRIDGE_HOME/bridge_agent.py" \\
   --base '$BRIDGE_BASE' --ca "\$BRIDGE_HOME/rootCA.crt" --check >/dev/null 2>&1 \\
   || bail "토큰이 유효하지 않습니다(만료·로그아웃) — 실행 중인 러너를 그대로 둡니다.
 웹 화면에서 [연결 준비] 를 다시 누르고 [내 AI 실행] 을 눌러 주세요." 3
+# ── 러너 최신화 (TASK-20260902T100000) ────────────────────────────────────────
+#
+# 종전 이 스크립트는 **디스크에 있는 파일을 그대로** 다시 띄웠다. 그래서 화면이 「업데이트
+# 필요」일 때 [내 AI 실행] 을 눌러도 같은 낡은 러너가 다시 떴고, 사용자는 갱신하려고 눌렀는데
+# 아무것도 달라지지 않는 것을 봤다 — 갱신 경로가 여기서 끊겨 있었다(사용자 요청 2026-09-02:
+# 「버튼 클릭만으로 러너가 재구성될 수 있도록」).
+#
+# 무결성: 이 시점에는 CA 를 **이미 신뢰**하므로 https + `--cacert` 로 받는다. 설치 때의 평문
+# HTTP + 체크섬 대조와 목적은 같고(바꿔치기 방지) 수단만 더 강하다.
+#
+# ⚠ 실패는 **종전 동작**으로 떨어진다: 못 받았거나·빈 파일이거나·문법이 깨졌으면 있던 파일을
+#   그대로 쓴다. 갱신하려다 멀쩡한 러너를 못 띄우게 만드는 것이 가장 나쁜 결말이다.
+_new="\$BRIDGE_HOME/.bridge_agent.new.\$\$"
+if command -v curl >/dev/null 2>&1 \\
+   && curl -fsS --max-time 30 --cacert "\$BRIDGE_HOME/rootCA.crt" \\
+        -o "\$_new" '$BRIDGE_BASE/static/agent/bridge_agent.py' 2>/dev/null \\
+   && [ -s "\$_new" ] \\
+   && $PY -c 'import ast,sys; ast.parse(open(sys.argv[1],"rb").read())' "\$_new" 2>/dev/null
+then
+  if ! cmp -s "\$_new" "\$BRIDGE_HOME/bridge_agent.py" 2>/dev/null; then
+    mv -f "\$_new" "\$BRIDGE_HOME/bridge_agent.py" \\
+      && printf '[bridge-launch %s] 러너를 최신본으로 갱신했습니다.\\n' "\$(_ts)"
+  fi
+fi
+rm -f "\$_new" 2>/dev/null || true
 pkill -f 'bridge_agent.py' >/dev/null 2>&1 || true
 # ⚠ **부모가 즉시 끝나면 wsl.exe 가 이 자식까지 죽인다** (실측 2026-08-31). 이 스크립트는
 #   Windows 핸들러에서 \`wsl.exe -- launch.sh\` 로 불리는데, 그 명령이 끝나는 순간 WSL 이
