@@ -946,9 +946,15 @@ def _delegation_ready(mem, account_id: int) -> bool:
     cur = mem.cursor()
     try:
         profile = _bt.runner_profile_for_account(cur, account_id)
+        # 계정이 이 항목에 모델을 골랐으면 그것을 **가진 러너에게만** 맡긴다 (사용자 결정
+        # 2026-09-02). 여기서 걸러야 «고른 적 없는 모델로 조용히 도는» 경로가 애초에 생기지
+        # 않는다 — claim 단계 방어는 마지막 겹이고, 그때는 이미 작업이 쌓인 뒤다.
+        required = _bt.console_job_model_required(
+            "node_analysis", _bt.console_job_prefs_for_account(cur, account_id))
     finally:
         cur.close()
-    return bool(_bt.runner_can_take(profile) and _bt.JOB_SPECS["node_analysis"].get("wired"))
+    return bool(_bt.runner_can_take(profile, required_model=required)
+                and _bt.JOB_SPECS["node_analysis"].get("wired"))
 
 
 def delegation_possible(requested_by) -> bool:

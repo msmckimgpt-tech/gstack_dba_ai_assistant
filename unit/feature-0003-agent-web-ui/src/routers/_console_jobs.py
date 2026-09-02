@@ -255,7 +255,10 @@ def maybe_delegate(request, account, *, job_kind: str, messages: Any,
         import app as _app
 
         conn = _app._connect_memory()
-        state = console_llm_state(conn, account)
+        # `job_kind` 를 넘겨 **그 항목에 고른 모델**까지 자격에 넣는다 (TASK-20260902T110000).
+        # 넘기지 않으면 화면은 "맡겼습니다" 라고 말하고 claim 이 거절해, 사용자는 결과를
+        # 영영 기다린다 — 표시와 집행이 갈리는 그 형태가 이 feature 가 반복해 고쳐 온 결함이다.
+        state = console_llm_state(conn, account, job_kind=job_kind)
         if not delegation_available(state):
             return None
         prompt = messages_to_prompt(messages, spec.get("response") or "text")

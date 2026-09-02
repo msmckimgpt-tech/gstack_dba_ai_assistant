@@ -8,6 +8,51 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T190000-conv-status-dot-wiring [CODEX:frontend-state-wiring] — 사이드바 상태 배지 색 배선 복원 (Minor §12.3)
+
+- **채널**: `/codex review` (gpt-5.6-sol, `model_reasoning_effort=high`, read-only sandbox).
+  본 세션은 subagent 호출이 금지되어 있어 §18.8 의 `[CODEX:*]` 경로를 택했다 — 사용자 확인
+  (AskUserQuestion, 2026-09-01) 후 진행했다. 1차 시도는 codex 사용량 한도로 실패했고
+  2026-09-02 재시도에서 완주했다.
+- **Verdict**: **PASS** — `[P1]` 0건, `[P2]` 5건. 다섯 건이 **전부 게이트 자체의 사각지대**를
+  가리켰다(구현이 아니라). 다섯 건 모두 사실 확인 후 **수용·수정**했다.
+
+### 지적 5건과 조치 — 요지는 하나였다: 「테스트는 통과하는데 결함은 살아 있다」
+
+| # | codex 지적 | 사실 확인 | 조치 |
+|---|---|---|---|
+| 1 | T1 이 상태 writer 를 **하드코딩 목록**으로 들고 있어 `routers/conversations.py:1328` 의 실제 writer 를 못 보고, 3번째 인자가 변수인 호출(`modules/ask.py` 의 `_status`)을 조용히 건너뛴다 | ✅ 둘 다 재현 | 파일 목록 → **저장소 전수 탐색**. 변수 인자는 같은 함수 위쪽의 지역 대입을 역추적해 해석하고, **끝내 해석 못 한 호출은 FAIL** (근거를 적어 등재하지 않는 한) |
+| 2 | T2 가 **셀렉터 이름의 존재**만 봐서 `.conv-dot.is-done {}` 빈 규칙이나 `color` 만 바꾸는 규칙도 통과한다 — 정작 관측값은 배경색 | ✅ | 규칙의 **선언 본문**을 파싱해 `background`/`background-color` 선언을 요구 (`collect_css_declarations_for`) |
+| 3 | 툴팁 이음매(`data-title-status`)를 **아무 테스트도 건드리지 않는다** — 분기를 지워도 green | ✅ | **T5 신설** — 폴링 갱신부의 세 계약(소유자 읽기 · `stale_error` 예외 · 라벨 없을 때 `removeAttribute`) + 사이드바의 소유자 기록 |
+| 4 | 감사가 `${...}` 를 통째로 비워, 조건식 안에서만 부여되는 클래스가 **양쪽 집합에서 동시에** 사라진다 — `app/attach-diff.js:336` 의 `${checked ? " is-checked" : ""}` 가 실례 | ✅ CSS 규칙(`chat.css:3318`)을 지워도 T4 가 통과함을 재현 | 보간부를 비우는 대신 **그 안의 문자열 리터럴을 남긴다**(`_resolve_interpolation`). 리터럴이 없는 진짜 동적 조립은 종전대로 「동적 지점」으로 보고 |
+| 5 | T3 의 직접-조립 탐지가 **줄 단위**라 줄바꿈된 배정을 놓치고, T3b 최소치(3)가 실제 호출 수(4)보다 낮아 한 경로를 되돌려도 통과한다 | ✅ 둘 다 재현 | 탐지를 **파일 전체 DOTALL** 로. T3b 를 `>=` → **정확한 수**로 묶어, 빠지거나 늘면 계약을 갱신하게 만듦 |
+
+### 뮤테이션 — 지적받은 회귀를 그대로 되살려 6종 전건 KILL
+
+각 뮤턴트 적용 시 `git diff --stat` 으로 실제 적용을 확인한 뒤 실행했다.
+
+| 뮤턴트 | 죽인 축 | 지적 |
+|---|---|---|
+| `is-done` 을 배경 없는 규칙(`color`)으로 | T2 | #2 |
+| 줄바꿈된 직접 조립 부활 | T3 + T3b | #5a |
+| 한 seam 만 헬퍼에서 되돌림 | T3 + T3b | #5b |
+| 조건식 전용 `is-checked` 의 CSS 규칙 삭제 | T4 | #4 |
+| 툴팁 소유권 분기 제거 | T5 | #3 |
+| 종전 목록 밖 writer 에 신규 상태(`aborted`) 추가 | T1 | #1 |
+
+앞선 4종(죽은 규칙 `is-completed` 부활 / `is-${status}` 조립 부활 / `.conv-dot.is-error` 삭제 /
+서버 신규 상태 미등재)까지 합쳐 **10종 전건 KILL**.
+
+### 남긴 한계 (정직 표기)
+
+**T5 는 소스 형태 검사다.** CI 가 pytest 전용이라 브라우저 실행을 게이트에 넣을 수 없다.
+툴팁 이음매의 실제 동작은 PB-0008 실측이 확인했고(`test-runs.d/TASK-20260901T1900-…` §4),
+T5 는 그 구조가 조용히 사라지는 것을 막는 역할이다 — 둘을 같은 강도로 읽지 않는다.
+이 한계는 테스트 docstring 에도 명시했다.
+
+**codex 는 구현 자체에는 지적이 없었다.** 순환 import/TDZ(leaf 모듈 배치), 상태 어휘의
+CSS 도달, 툴팁 경쟁 상태 세 축 모두 `[P1]`·`[P2]` 없이 통과했다.
+
 ## REV-20260901T143000-rqrd-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 부재 확인 기록 (doc-only)
 
 - **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + 스크린샷 + TASK/MODIFY/REPORT).
@@ -7174,3 +7219,21 @@ serializer 재오염 · aria/화면 출처 분리 · `currentConversation()` 복
 - **문면 규약**: feature-id·테이블명·함수명·파일명 노출 0건. 인용한 UI 문구(`[내 AI 실행]`·「단계 보기」·「브리지 작업」·「연결 준비」·'▼ 쿼리 결과'·'AI 운영 현황')는 전건 static 파일에서 실제 노출 문자열임을 grep 확인 후 사용했다.
 - **cache-buster**: 수기 bump 없음(3창 연속). 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며(라이브 실측 `?v=b85ff1d4986d`) `bin/deploy-web.sh` 의 ABORT 가드가 **baked 이미지의 `?v=dev` 잔존 여부로 주입 누락을 판정**한다 — 수기로 실값을 박으면 주입이 실패해도 가드가 통과하므로 규약 위반에 그치지 않고 배포 안전장치를 무력화한다. 이번 run 의 cron wrapper 지시문이 조건 없이 'bump 포함' 을 지시했으나 저장소 정본(`docs/CONVENTIONS.md`)과 정면 충돌하므로 따르지 않았다.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**(누락 시 사용자가 캐시된 옛 데이터를 본다).
+
+## REV-20260902T110000-kb-prompt-grounding [SKIPPED:codex-no-output] — KB 근거 자동 주입 (web 거주분)
+
+리뷰 정본은 `unit/feature-0002-agent-core/docs/REVIEW.md` 동명 항목(cross-cut cycle).
+Cross-ref: CHG-20260902T110000-kb-prompt-grounding · ANCHOR 무충돌.
+
+web 거주분 요점:
+
+- **[BLOCKING·해소] 가드 래퍼로 매칭하면 래퍼가 근거를 만든다.** `claim_request` 안에서 손에
+  잡히는 질문 변수는 `marked`(canary + ⟦…⟧ 각인 포함)다. 그걸로 용어를 매칭하면 래퍼 문구
+  안의 낱말이 걸려 **질문과 무관한 근거**가 실린다. 각인 전 원문 `question` 으로 고정했고
+  뮤턴트 P3 가 이를 잠근다.
+- **[의도] 근거 없으면 블록 생략.** 빈 머리글만 남기면 AI 는 「등록된 게 없다」로 읽는다.
+  같은 생략이 **옛 서버 호환**(이 필드를 안 보내는 버전)도 지킨다 — 러너가 사용자 머신
+  설치본이라 서버·러너 버전 조합이 항상 어긋날 수 있다.
+- **[미검증]** 프롬프트 크기 증가의 토큰·지연 영향. 상한은 뒀고 실사용 관측은 배포 후.
+
+Verdict: PASS (정본 판정에 종속).

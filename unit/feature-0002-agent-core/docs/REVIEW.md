@@ -2971,3 +2971,64 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 - 근거: `enum_dictionary` scope 별 카운트(common 9→0 · 제품 6 scope 15) · 매니페스트 9행 ·
   제품 격리 실측(같은 질문에 scope 별로 자기 것만, 무관 제품은 0).
 - 남긴 위험: 제품군 티어 부재로 형제 제품 간 복제 발생(9→15). 대안 대비 우위는 MODIFY 에 기록.
+## REV-20260902T120000-ds-health-persist [SKIPPED:codex-no-output] — health 텔레메트리 유실 수정
+
+- Verdict: PASS. 뮤테이션 **5/5 KILL**(baseline green 확인 후).
+- **[BLOCKING·해소] Q3 생존 — 부분 단언이 부분 결함을 못 잡았다.** `"::double precision" in sql`
+  은 한쪽만 `::text` 로 바꾼 뮤턴트를 통과시킨다. **모든** 캐스트의 타입 집합을 단언하도록 강화.
+  직전 cycle 의 `OR TRUE` 뮤턴트와 같은 형태 — 「포함 검사」로 「전건 계약」을 대신하지 말 것.
+- **[관측] fail-soft 가 결함을 3개월 가려 줬다.** `soft telemetry, cycle 계속` 이라 사이클은
+  계속 돌았고 로그 한 줄만 남았다. fail-soft 는 옳지만, **무엇이 유실됐는지**가 payload 로
+  드러나지 않으면 아무도 안 본다.
+- **미검증**: 배포 후 그 로그가 실제로 사라지는지. TASK 체크리스트에 남겼다.
+## REV-20260902T110000-kb-prompt-grounding [SKIPPED:codex-no-output] — KB 근거 자동 주입
+
+- Trigger: 프롬프트 조립·계정 경계 → backend·security 렌즈. codex 는 직전 cycle 에서 4회 전건
+  무산출(형태 문제 미해결)이라 자체 적대 검증 + 뮤테이션 + 라이브 실측으로 수행.
+- Verdict: PASS
+
+### 1. 뮤테이션 (baseline GREEN 확인 후) — 7/7 KILL
+
+| # | 뮤턴트 | 죽인 테스트 |
+|---|---|---|
+| P1 | 응답에서 `kb_context` 제거 | `test_claim_response_declares_kb_fields` |
+| P2 | 근거 조립 미호출 | 〃 + `test_claim_matches_on_plain_question…` |
+| P3 | 래핑된 질문(`marked`)으로 매칭 | `test_claim_matches_on_plain_question_not_wrapped` |
+| P4 | 상한/절단 고지 제거 | `test_claim_bundle_has_cap` |
+| P5 | 러너가 근거 블록 미배치 | `test_kb_context_is_placed_in_prompt` |
+| P6 | 근거를 질문 뒤로 | `test_kb_block_precedes_the_question` |
+| P7 | 재조사 금지 문구 제거 | `test_kb_block_tells_ai_not_to_reinvestigate` |
+
+### 2. Findings
+
+- **[설계 판단] 서버 주입 vs 러너 도구 목록 보강.** 러너 목록에 `get_task_context` 를 추가하는
+  쪽이 더 작은 변경이지만, **이미 돌고 있는 러너에 닿지 않는다**(사용자 머신 설치본). 게다가
+  「AI 가 부를지」에 여전히 의존한다. 서버 주입은 두 문제를 함께 없앤다.
+- **[의도] `get_task_context` 는 그대로 둔다.** 자동 주입은 **질문에 이름이 등장한 것**만 싣는다
+  — 탐색 후 `focus` 로 좁혀 다시 받는 경로는 여전히 유효하고, MCP 클라이언트로 붙는 사용자에겐
+  그쪽이 정식 경로다. 두 경로가 같은 조립 함수를 쓰므로 갈릴 일이 없다.
+
+### 3. 이 리뷰가 증명하지 못하는 것
+
+- **답변이 실제로 좋아지는지**는 배포 후 같은 질문을 다시 던져야 안다. 이번 cycle 의 증명은
+  「근거가 프롬프트에 놓인다」까지다. ⚠ 직전 두 cycle 도 각자의 층위에서는 옳았는데 라이브에서
+  0 기여였다 — **그래서 배포 후 재실측을 완료 조건으로 남긴다**(TASK 체크리스트 미완 항목).
+- **프롬프트 크기 증가**의 실사용 영향(토큰·지연)은 배포 후 관측 대상이다. 상한은 뒀다.
+
+### 4. Verdict
+
+PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL · 러너 사본 동치.
+권한·인가·라우트·스키마 변경 0.
+
+## REV-20260902T123000-ds-health-merge [SKIPPED:non-policy-doc] — 재병합 해소 기록
+
+- Cross-ref: CHG-20260902T123000-ds-health-merge. 코드 변경 0 — 리뷰 패널 대상 아님.
+- 해소 근거: 양쪽 다 FUNCTION 말미 **신규 섹션 추가**(서로 다른 섹션) → §16.4 양쪽 유지.
+  마커 잔존 0 확인 · 두 섹션 헤딩 실재 확인 · `make test` 재실행.
+- ⚠ 마커가 남은 채 push 된 사고를 CHG 에 그대로 기록했다. 감추면 다음 사람이 같은 정규식을 쓴다.
+
+## REV-20260902T140000-postdeploy-live [SKIPPED:non-policy-doc] — 배포 실증 기록
+
+- Cross-ref: CHG-20260902T140000-postdeploy-live. 코드 변경 0.
+- 근거: 러너 로그 `prompt_chars`(4,611 / 7,145) · 배포본 답변 본문 · 컨테이너 태그
+  `be01e28f` · caddy 0건 · health 실패 로그 0건.

@@ -147,10 +147,22 @@ source_of_truth: true
 | TEST-20260831T183000-fingerprint | `_self_build` | 러너가 **자기 파일** 지문을 신고한다(파일이 바뀌면 지문도 바뀐다) | AC-20260831T183000-runner-version-sync-1 |
 | TEST-20260831T183000-hbcarry | `Api.heartbeat` | 지문·버전을 **매번** 싣는다(두 축 모두) | AC-20260831T183000-runner-version-sync-1 |
 | TEST-20260831T183000-once | `start_heartbeat` | 구버전 경고는 세션당 한 번 · 다음 행동까지 말한다 | AC-20260831T183000-runner-version-sync-2 |
-| TEST-20260831T183000-compare | `_deployed_runner_build`·`_runner_update_hint` | 배포본과 대조 · **양쪽을 다 알 때만** 판정(미신고를 구버전으로 단정하지 않음) | AC-20260831T183000-runner-version-sync-2 |
+| TEST-20260831T183000-compare | `_deployed_runner_build`·`_runner_update_hint` | 배포본과 대조(2026-09-01 개정: **미신고도 stale** — TEST-20260901T123000-nofp) | AC-20260831T183000-runner-version-sync-2 |
 | TEST-20260831T183000-status | `connect_status` | 프런트는 불리언 하나만 읽는다 · 듣고 있을 때만 판정 · 실패가 거짓 경고가 되지 않음 | AC-20260831T183000-runner-version-sync-2 |
 | TEST-20260831T183000-chip | `connect-modal.js`·CSS | 칩이 정상과 **구분되는** 상태를 보인다 · 서버 값이 칩까지 배선됨 | AC-20260831T183000-runner-version-sync-3 |
 | TEST-20260831T183000-recatalog | `app.js` 게이트 콜백 | 잠금이 풀리면 **카탈로그를 먼저 다시 받고** 그린다(순서 고정) | AC-20260831T183000-runner-version-sync-4 |
+| TEST-20260901T123000-untrusted | `_sanitize_runtimes` | 출처(`source`)가 `probe`·`cache` 가 아닌 신고는 **수신 시점에** 떨어진다 — `builtin`·미신고 둘 다(`gpt-5.1-codex` 가 뜬 경로) | AC-20260901T123000-caps-trust-gate-1 |
+| TEST-20260901T123000-reason | `/api/api-vault/options` | 감추되 **사유·다음 행동**을 값으로 말한다(`model_selector_reason` · `runner_listening` · 러너 없을 때는 다운로드 링크 없음) | AC-20260901T123000-caps-trust-gate-2 |
+| TEST-20260901T123000-norunner | 같은 엔드포인트 | 「러너 없음」과 「러너 낡음」을 **다른 문구**로 가른다 | AC-20260901T123000-caps-trust-gate-2 |
+| TEST-20260901T123000-normal | 같은 엔드포인트 | 자격 있는 러너는 **종전 그대로**(차단 로직의 정상 경로 실측 — §16.7 G9-c) | AC-20260901T123000-caps-trust-gate-1 |
+| TEST-20260901T123000-chokepoint | `_sanitize_runtimes` · `_REPORTABLE_SOURCES` | 관문이 **수신 시점 한 곳** — 낡은 목록은 첫 하트비트에 지워지고 읽는 쪽 셋이 함께 상속(§16.7 G8-a) · `features`·`listening` 은 불변 | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-nofp | `_runner_update_hint` | 지문 **부재 = stale**(fail-open 해소) · 배포본 지문을 모르면 판정 안 함 | AC-20260901T123000-caps-trust-gate-4 |
+| TEST-20260901T123000-onepredicate | `runner_build_is_stale` | 지문 판정이 **단일 정본** — 연결 칩이 자기 비교를 다시 적지 않음 | AC-20260901T123000-caps-trust-gate-4 |
+| TEST-20260901T123000-allowlists | 러너 `_REPORTABLE_SOURCES` · 서버 `_SANITIZE_SOURCE_ALLOW` | 양쪽 allowlist 가 **같다** — 한쪽만 있으면 낡은 러너가 통과하거나 신고가 헛돈다 | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-nofallback | `detect_runtimes` | 내장 표 모델이 **신고에 닿지 않는다** · 출처를 모르는 캐시는 「캐시 없음」으로 다시 묻는다 · `sanitize_caps` 기본값 fail-closed(기본값을 `cache` 로 두면 게이트 전체가 fail-open) | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-uireason | `composer.js`·`index.html`·`chat.css` | 사유가 **화면까지 도달**한다(종전 소비처 0개) | AC-20260901T123000-caps-trust-gate-2 |
+| TEST-20260901T123000-noollama | `bridge_agent.py`·`test_handoff_trust` | 로컬 LLM(ollama) 런타임이 되살아나지 않는다 — 「나가는 곳은 `Api._post` 한 곳」이 참이 됨 | AC-20260901T123000-caps-trust-gate-3 |
+| TEST-20260901T123000-onehome-pos | `oauth_as.connect_status` (AST) | 지문 판정 호출이 자기 갈래의 **마지막**이고, 뒤에 상수를 덧대지 못한다 — 형태만 보던 판본을 4변형이 통과했다(실증) | AC-20260901T123000-caps-trust-gate-4 |
 
 | TEST-20260901T160000-live-repro | `describe_cli_failure` | **stdout 에만 있는 사유**가 사용자 문장에 실린다(라이브 실측 문자열로 고정) | AC-20260901T160000-cli-failure-reason-1 |
 | TEST-20260901T160000-no-empty-colon | `describe_cli_failure` | 어떤 조합에서도 «빈 콜론» 으로 끝나지 않는다 — 사용자가 실제로 본 표면 | AC-20260901T160000-cli-failure-reason-2 |
@@ -178,6 +190,15 @@ source_of_truth: true
 | TEST-20260901T183000-nowobble | `account_runner_build` | 화면 정본이 **연결 순서** 축 — `runner_stale` 진동 소멸(모달 닫힘) | AC-20260901T183000-newest-runner-wins-5 |
 | TEST-20260901T183000-sameaxis | 화면·양보 | 두 판정이 **같은 축**을 쓴다(갈리면 하나는 거짓말) | AC-20260901T183000-newest-runner-wins-6 |
 | TEST-20260901T183000-account | 후보 질의 | 계정 스코프 — 다른 계정 러너 병존 허용 | AC-20260901T183000-newest-runner-wins-7 |
+
+| TEST-20260902T100000-history | `_everConnected` | 이력 판정은 **서버 `last_os`** — 브라우저 저장 금지(기기마다 다른 취급 방지) | AC-20260902T100000-autolaunch-1 |
+| TEST-20260902T100000-eligible | `_autoLaunchEligible` | 이력 없음·이미 사용 가능이면 실행하지 않는다 · stale 은 **대상** | AC-20260902T100000-autolaunch-2·3 |
+| TEST-20260902T100000-activation | `autoLaunch` | 이동 앞에 `await` 없음(사용자 활성화 보존) — 이 기능이 죽는 유일한 방식 | AC-20260902T100000-autolaunch-4 |
+| TEST-20260902T100000-prefetch | `_prefetchLaunch` | 자격 확인 뒤에만 · 중복 발급 억제 · 쓴 URL 폐기 | AC-20260902T100000-autolaunch-4·5 |
+| TEST-20260902T100000-entrypoint | `_connectEntry` | 칩·게이트가 한 진입점 · 창으로 떨어질 경로 존재 | AC-20260902T100000-autolaunch-6 |
+| TEST-20260902T100000-entryonce | `_maybeAutoEntry` | 세션당 1회 · **창을 열지 않는다** | AC-20260902T100000-autolaunch-7 |
+| TEST-20260902T100000-verdict | `_awaitUsable` | 자동·수동이 같은 판정 · «무응답» ≠ «서비스 응답 없음» | AC-20260902T100000-autolaunch-8 |
+| TEST-20260902T100000-launcher | `bridge_setup.{sh,ps1}` | 런처가 러너를 최신본으로 교체 — **토큰 검증 뒤** · 실패는 기동을 막지 않음 · 양판 동일 | AC-20260902T100000-autolaunch-9 |
 
 ## 3. Run 기록
 
@@ -230,3 +251,57 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 
 | TEST-20260901T170000-stop-last | `_arm_exit_release` (실 프로세스 종료) | `run.stop` 이 **마지막 줄** · 해제가 그 앞 · 집계에 해제가 실림. 구코드 FAIL 재현 확인 | AC-20260901T163000-runner-log-2 |
 | TEST-20260901T170000-stop-order | `bridge_agent.py` 소스 | 요약 등록이 해제 등록보다 **앞**(atexit 역순 계약을 이름으로 고정) | AC-20260901T163000-runner-log-2 |
+
+| TEST-20260902T110000-normalize | `normalize_console_job_prefs` | 모르는 항목 키·빈 항목을 버린다 · JSON 문자열/깨진 값 모두 예외 없이 빈 설정 | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-resolve-prefs | `resolve_console_job_request` | 고른 모델·등급이 그대로 나간다(`source='prefs'`) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-resolve-block | `resolve_console_job_request` | 고른 모델이 신고에 없으면 `blocked` — **상위 모델로 대체하지 않는다**(제보된 결함 자체) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-resolve-effort | `resolve_console_job_request` | 등급 미보유는 거절이 아니라 빈 값 + `unmet` 기록(실행 가능성을 좌우하지 않는다) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-resolve-unset | `resolve_console_job_request` | 미설정 계정은 경량 폴백 · **절대 blocked 되지 않는다**(무회귀) | AC-20260902T110000-console-job-model-prefs-3 |
+| TEST-20260902T110000-resolve-runtime | `resolve_console_job_request` | 런타임 없는 모델 이름은 선택으로 인정 안 함(러너가 자기 런타임과 대조해 떨어뜨린다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-cantake | `runner_can_take` | `required_model` 없으면 종전 판정 그대로 · 있으면 신고 목록 대조(런타임까지) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-required | `console_job_model_required` | 그 항목의 모델만 본다(다른 항목·등급 전용 설정은 요구로 번역되지 않는다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-claim-effort | `_claim_console_job` | `reasoning_level` 이 **고정 빈 문자열이 아니다** — 제보 증상의 절반이 이 하드코딩이었다 | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-claim-reject | `_claim_console_job` | 미충족이면 409 + **점유 반환**(붙들고 거절하면 lease 30분 잠긴다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-claim-record | `_claim_console_job` | 확정한 `(runtime, model, effort)` 를 작업 행에 기록 — 진단이 개인 머신 로그에 의존하지 않게 | AC-20260902T110000-console-job-model-prefs-4 |
+| TEST-20260902T110000-claim-session | `_claim_console_job` | 능력을 **이 요청을 보낸 러너**(세션 결합)의 것으로 읽고, 세션 미특정이면 계정 축 폴백 | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-session-caps | `runner_capabilities_for_session` | 조회 실패·세션 미지정은 빈 목록(fail-closed 로 가면 비결합 토큰 러너가 굶는다) | AC-20260902T110000-console-job-model-prefs-3 |
+| TEST-20260902T110000-release | `_release_claim` | 점유자(`ClaimedBy`) 기준도 해제 — 배치는 `AccountId=0` 이라 소유 조건만으론 자기 점유도 못 되돌린다 | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-listfilter | `list_open_requests` | 막힌 작업은 목록에서도 뺀다(claim 거절만으론 러너가 공회전하며 공용 상한을 태운다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-reason | `_console_llm` | 사유 `model_unavailable` 신설 — 조치가 「갱신」이 아니라 「설정」이다 | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-enqueue | `_console_jobs` | 웹 적재가 `job_kind` 를 자격 판정에 넘긴다(표시와 집행이 갈리지 않게) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-workers | 워커 3경로 | node_analysis·cluster_label·insight_summary 가 같은 판정을 쓴다(웹만 거절하면 유령 작업) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-shared-query | `oauth_store` · `bridge_tasks` | 설정 질의가 **한 벌**(워커는 `oauth_store` 를 import 하지 못한다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-fastpath | `_ensure_bridge_heartbeat_schema` | 신규 컬럼 + 이동한 `BridgeDefault*` 가 fast path 에 있다(라이브에 없던 것이 이 규칙의 근거) | AC-20260902T110000-console-job-model-prefs-5 |
+| TEST-20260902T110000-api-scope | `profile.py` | 계정 파라미터 없음 — 남의 설정을 건드릴 표면 자체를 만들지 않는다 | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-front | `index.html` · `profile.js` | 탭·pane·로더가 함께 있다(하나만 있으면 빈 탭이 열린다) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T120000-same | node 하네스 (`connect-modal` 실행) | 같은 지문으로 재기동되면 사유를 바꾸고 **1단계 명령까지 준비**해 보여 준다 | AC-20260902T120000-relaunch-1 |
+| TEST-20260902T120000-noburn | node 하네스 | 증거를 잡은 뒤의 클릭은 실행을 다시 쏘지 않는다(30초 반복 소모 제거) | AC-20260902T120000-relaunch-2 |
+| TEST-20260902T120000-changed | node 하네스 | 지문이 **바뀌었으면** «그대로» 라고 하지 않는다 — 축은 낡음이 아니라 동일성 | AC-20260902T120000-relaunch-1 |
+| TEST-20260902T120000-unknown | node 하네스 | `null`(모른다) 둘을 같음으로 읽지 않는다 — 조회 실패가 「재설치하세요」로 둔갑하지 않게 | AC-20260902T120000-relaunch-3 |
+| TEST-20260902T120000-empty | node 하네스 | `""`(지문 신고 없는 구 러너)는 **아는 값** — 이 결함의 모집단이 판정에서 빠지지 않는다 | AC-20260902T120000-relaunch-3 |
+| TEST-20260902T120000-expire-build | node 하네스 | 파일이 실제로 바뀌면 증거가 풀려 실행 경로가 되살아난다 | AC-20260902T120000-relaunch-4 |
+| TEST-20260902T120000-expire-ok | node 하네스 | 한 번 최신에 도달한 컴퓨터는 증거가 무효 — 그 뒤의 낡음은 재실행으로 푼다 | AC-20260902T120000-relaunch-4 |
+| TEST-20260902T120000-impatient | node 하네스 | 연달아 눌러도 토큰이 하나씩 쌓이지 않는다(안내 경로가 발급을 동반한다) | AC-20260902T120000-relaunch-1 |
+| TEST-20260902T120000-server | `connect_status` 소스 | 지문이 응답에 실리고, 판정 실패 시 지문도 함께 거둔다 | AC-20260902T120000-relaunch-3 |
+| TEST-20260902T120000-parity | `connect-modal.js` 소스 | 자동·수동 두 실행 경로가 **같은 판정 함수**를 쓴다 | AC-20260902T120000-relaunch-2 |
+| TEST-20260902T120000-layout | `index.html` 조상 사슬 | 안내 문단이 `.composer-box`(플렉스 한 줄) **밖** — 입력창을 밀어내지 않는다 | AC-20260902T120000-note-1 |
+| TEST-20260902T120000-aria | `index.html` 조상 사슬 | 그러면서 `role="menu"` 안에는 여전히 없다(앞 cycle 계약 미회귀) | AC-20260902T120000-note-1 |
+
+| TEST-20260902T123000-apifetch-contract | 작업 화면 번들 전역 | `apiFetch` 결과에 `.json()`·`.ok` 를 쓰지 않는다(주석 제외 · `.status` 는 본문 필드라 축 제외) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T123000-loader-payload | `loadAiJobs`·`saveAiJobs` | payload 를 직접 소비 — 정상 200 에서 예외가 나 「불러오지 못했습니다」가 뜨던 자리 | AC-20260902T110000-console-job-model-prefs-1 |
+
+| TEST-20260902T140000-devtree | `running_bundle_path` | 지문이 다르면 «단일 파일» 이 아니다 — 개발자 소스를 배포본으로 덮어쓰지 않는다 | AC-20260902T140000-selfupdate-1 |
+| TEST-20260902T140000-bundle | 빌드된 배포본 실물 | 그 파일로 실행하면 스스로를 배포본으로 인식하고 `self_update` 를 신고한다 | AC-20260902T140000-selfupdate-1 |
+| TEST-20260902T140000-fixedurl | `selfupdate` 소스 | 받을 곳이 모듈 상수 — 하트비트의 `download_url` 을 따르지 않는다 | AC-20260902T140000-selfupdate-2 |
+| TEST-20260902T140000-plaintext | `fetch_deployed_agent` | 평문 주소에서는 **요청조차 나가지 않는다**(대조군: https 는 통과) | AC-20260902T140000-selfupdate-2 |
+| TEST-20260902T140000-payload | `fetch_deployed_agent` | 빈 응답·너무 작음·파이썬 아님·200 아님 전부 거절 | AC-20260902T140000-selfupdate-2 |
+| TEST-20260902T140000-atomic | `install_agent_file` | 같은 디렉토리 임시 파일 → `os.replace` · 권한 보존 · 잔재 없음 · 실패 시 원본 유지 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-busy | `try_self_update` | 진행 중 작업이 있으면 미룬다 — 취소하지 않는다 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-loop | `try_self_update` | 지문이 같으면 재기동하지 않는다(대조가 교체 **앞**) + 최소 간격 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-cleanup | `try_self_update` | 재기동 전 하트비트 정지 → 점유 해제 순서(`os.execv` 는 `atexit` 미호출) | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-order | `main` 대기 루프 | 물러남 → 갱신 → 대기 순서 — 대기 뒤면 질문을 끌어와 놓고 나간다 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-declare | `main` | 신고와 실제 능력이 같은 식에서 나온다(못 하면 신고도 빠진다) | AC-20260902T140000-selfupdate-4 |
+| TEST-20260902T140000-server | `account_runner_self_updating` | 정본 러너 축이 `account_runner_build` 와 동일(`Id DESC`) · 조회 실패는 fail-closed | AC-20260902T140000-selfupdate-4 |
+| TEST-20260902T140000-fold | `connect-modal.js` | 접는 식이 **한 곳**뿐 · 원시 낡음 직접 읽는 곳 없음 · 구 서버 응답은 종전 안내로 폴백 | AC-20260902T140000-selfupdate-5 |
+| TEST-20260902T140000-emit | `agent/__init__.py` | `_EMIT_ORDER` 등재 — 빠지면 배포본에서 **조용히 사라진다** | AC-20260902T140000-selfupdate-1 |
+| TEST-20260902T140000-stdlib | 배포본 | 표준 라이브러리 밖 import 0 — 무설치 계약 유지 | AC-20260902T140000-selfupdate-1 |

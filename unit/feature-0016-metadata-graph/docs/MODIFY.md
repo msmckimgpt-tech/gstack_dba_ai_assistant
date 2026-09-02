@@ -532,3 +532,50 @@ combo 가 뷰포트보다 커져 중심 기준 판정이 "이동 0" 을 냈고, 
 - 증적: `docs/test-runs.d/20260901T203000-f3-graph-retract.md`.
 
 Task-Cycle: feature-0016-metadata-graph
+
+## CHG-20260902T140000-graph-sync-retract — sync 에 용어 회수 단계 추가 (재발 방지)
+
+설계·AC 정본은 같은 feature 의 `docs/FUNCTION.md` `## 그래프 sync 는 «회수»한다`.
+
+- `modules/metadata_graph.py` `sync_graph` 에 `_step_glossary_retract` 신설,
+  `_run_step("kb_glossary_retract", ...)` 로 **투영 뒤에** 배선.
+- **증분 실행에서는 즉시 반환**하고 `glossary_retract_skipped="incremental"` 를 남긴다 —
+  부분 조회로 삭제를 판단하면 멀쩡한 용어를 전부 지운다. 이 가드가 이 변경에서 가장 중요하다.
+- 살아있는 키는 투영과 같은 `_vkey`, 삭제는 `_cypher` + `_cq`(이스케이프 통일).
+- report 템플릿에 `glossary_retracted: 0` · `glossary_retract_skipped: ""` 초기화.
+
+**비변경**: 투영 로직 0 · 물리 스키마 축 회수 없음(판정 방식이 달라 별 설계 필요 — FUNCTION 참조).
+
+**검증**: `make test` rc=0 · FAILED 0 · ruff clean · 뮤테이션 **7/7 KILL**(baseline green 확인 후) —
+증분 가드 제거 · 미배선 · 투영보다 앞 · 키 생성기 불일치 · scope 필터 제거 · 이스케이프 우회 ·
+카운터 초기화 제거.
+
+Task-Cycle: feature-0016-metadata-graph
+
+## CHG-20260902T150000-graph-retract-p3 — codex 리뷰 P3 조치 (AGE key JSON 파싱)
+
+**codex 채널 복구 후 첫 지적의 조치.** 호출 형태를 「실행 금지 + 코드 인라인 + 3줄 출력」으로
+바꾸자 무산출 4연속을 끊고 결함 3건을 냈다(REV §0 참조).
+
+- **P3(실증 확인)**: `str(r[0]).strip('"')` 은 AGE 가 JSON 직렬화해 돌려주는 key 를 복원하지
+  못한다. 용어에 `"`·`\` 가 있으면 `live` 집합과 어긋나 **멀쩡한 정점이 stale 로 판정돼
+  삭제된다**. `json.loads` 로 교체하고, **파싱 실패한 키는 건너뛴다**(삭제 쪽으로 접으면
+  되돌릴 수 없다) + `glossary_retract_unparsed` 계측.
+- 라이브 특수문자 용어는 작은따옴표 3건뿐이라 아직 안 터졌을 뿐이다 — 자율수집이 임의 용어를
+  쓰므로 언제든 들어올 수 있었다. **내 자체 리뷰는 이걸 못 찾았다.**
+
+Task-Cycle: feature-0016-metadata-graph
+
+## CHG-20260902T160000-graph-retract-postdeploy — 회수 단계 라이브 실증 (doc-only)
+
+코드 변경 0. 배포 `3e26527c` 후 실측.
+
+- **의도적 유령 정점을 심어** 실증했다 — 관측만으로는 「지울 게 없어서 0」과 「단계가 안 돌아서
+  0」이 구별되지 않는다. 프로브 1건 심음(638→639) → 전건 sync → **`glossary_retracted=1`** ·
+  프로브 제거 · GZ_QA_G 정상 용어 **199=199 손실 0** · 전체 **638=638**.
+- **증분 가드 실증**: `since` 지정 시 `glossary_retracted=0` ·
+  `glossary_retract_skipped='incremental'` · 용어 **199 전건 보존**. 가드가 없었다면 그 실행이
+  변경분 2건만 live 로 보고 **197건을 지웠을 것**이다.
+- 증적: `docs/test-runs.d/20260902T140000-graph-sync-retract.md` Run 3·4.
+
+Task-Cycle: feature-0016-metadata-graph

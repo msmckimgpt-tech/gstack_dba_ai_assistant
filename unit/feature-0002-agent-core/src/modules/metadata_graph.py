@@ -930,6 +930,11 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
     """
     rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
            "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "routines": 0,
+           # 회수 계측 — 이 값이 계속 0 이고 그래프 GlossaryTerm 수가 kb_glossary 를
+           # 넘어서면 회수가 다시 멈춘 것이다(2026-09-02 이전 상태). 증분 실행에서는
+           # 회수를 건너뛰므로 그 사실을 `glossary_retract_skipped` 로 남긴다.
+           "glossary_retracted": 0, "glossary_retract_skipped": "",
+           "glossary_retract_unparsed": 0,
            # feature-0040: 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스) 투영 건수.
            # 미리 키를 두어야 0054 미적용 배포에서도 리포트 shape 가 동일하다(소비처 KeyError 방지).
            "db_objects": 0,
@@ -1284,6 +1289,60 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 else:
                     rep["errors"] += 1
         _run_step("kb_glossary", _step_glossary)
+
+        # 4b) kb_glossary 회수 — **AGE 는 MERGE-only 라 원본이 사라져도 정점이 남는다.**
+        #
+        # 라이브 실측(2026-09-01~02): 소급 정리로 `kb_glossary` 105행을 지웠는데 그 용어들이
+        # 그래프에 그대로 살아 있었다(`트랜잭션`·`복합 인덱스`·`정규화`·`멱등성`). 누적분은
+        # 수동 회수했지만, **회수 단계가 없으면 다음 삭제에서 그대로 재발한다** — 청소는
+        # 원인 제거가 아니다.
+        #
+        # ⚠ **증분(`since`) 실행에서는 돌지 않는다.** 증분은 「그 시각 이후 변경분」만 조회하므로
+        #   그 결과에 없다는 것이 「DB 에 없다」를 뜻하지 않는다. 전건 조회일 때만 판단할 수 있다.
+        # ⚠ scope_key 를 지정한 실행이면 **그 scope 안에서만** 회수한다(다른 scope 는 조회 범위
+        #   밖이라 역시 판단 근거가 없다).
+        def _step_glossary_retract():
+            if since:
+                rep["glossary_retract_skipped"] = "incremental"
+                return
+            _w, _a = _scope_since_where()
+            cur.execute("SELECT scope_key, term FROM kb_glossary" + _w, _a)
+            live = {_vkey(str(sc), f"term:{t}") for sc, t in cur.fetchall()}
+            # 정점 식별자는 `key`(= `_vkey`) 다. 리터럴 이스케이프는 `_cq` 로 통일한다 —
+            # 손으로 따옴표를 이어 붙이면 용어에 `'` 가 섞이는 순간 cypher 가 깨진다.
+            scope_filter = (f"WHERE g.scope_key = {_cq(str(scope_key))} "
+                            if scope_key is not None else "")
+            rows = _cypher(cur, "MATCH (g:GlossaryTerm) " + scope_filter + "RETURN g.key", 1)
+            # ⚠ **`strip('"')` 로 벗기면 안 된다** (codex 리뷰 P3, 2026-09-02). AGE 는 agtype
+            #   문자열을 **JSON 으로 직렬화**해 돌려준다 — 용어에 `"` 나 `\` 가 있으면
+            #   `\"`·`\\` 로 이스케이프된 채 온다. 그때 strip 은 원본 키를 복원하지 못하고,
+            #   `live` 집합(파이썬 raw 문자열)과 어긋나 **멀쩡한 정점이 stale 로 판정돼 삭제된다.**
+            #   실측: `He said "hi"` · `back\slash` 에서 strip 불일치, json.loads 는 일치.
+            #   (현재 라이브 용어의 특수문자는 작은따옴표 3건뿐이라 아직 안 터졌을 뿐이다 —
+            #    자율수집이 임의 용어를 쓰므로 언제든 들어올 수 있다.)
+            stale = []
+            for r in (rows or []):
+                raw = str(r[0])
+                try:
+                    key = json.loads(raw)
+                except Exception:
+                    # 파싱 실패한 키는 **건너뛴다**. 못 읽은 것을 지우는 쪽으로 접으면
+                    # 되돌릴 수 없다(회수는 파괴적이다).
+                    rep["glossary_retract_unparsed"] = int(
+                        rep.get("glossary_retract_unparsed", 0)) + 1
+                    continue
+                if isinstance(key, str) and key not in live:
+                    stale.append(key)
+            for k in stale:
+                def _row(k=k):
+                    _cypher(cur, f"MATCH (g:GlossaryTerm {{key: {_cq(k)}}}) "
+                                 "DETACH DELETE g RETURN 1", 1)
+                if _sync_row_guard(cur, owned, _err_samples, "glossary_retract", _row, rep):
+                    rep["glossary_retracted"] = int(rep.get("glossary_retracted", 0)) + 1
+                    _pending[0] += 1; _tick()
+                else:
+                    rep["errors"] += 1
+        _run_step("kb_glossary_retract", _step_glossary_retract)
 
         # 5) glossary_relations (term id → term 매핑) — updated_at 부재(created_at only) + 소규모라
         #    증분 대상에서 제외하고 항상 full 투영(작아서 batching 만으로 충분).

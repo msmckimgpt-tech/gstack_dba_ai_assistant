@@ -483,18 +483,16 @@ def _ensure_web_tables():
         #
         # 값은 `runtime:model` 형태(예: `claude:opus`)라 대화별 저장값과 같은 어휘를 쓴다.
         # 길이는 러너 신고의 상한(런타임 32 + 모델 64 + 구분자)을 담을 수 있게 잡는다.
-        try:
-            cur.execute("ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultModel VARCHAR(112) NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultEffort VARCHAR(16) NULL")
-        except Exception:
-            pass
+        # ⚠ 위 두 컬럼(`BridgeDefaultModel`/`BridgeDefaultEffort`)의 ALTER 는
+        # **`_ensure_bridge_heartbeat_schema` 로 옮겼다** (TASK-20260902T110000). 여기 남은 것은
+        # 신규 설치 경로의 중복이며 멱등이라 무해하다 — 실제로 기존 배포에 컬럼을 만드는 것은
+        # fast path 쪽이다(라이브에 이 컬럼이 없던 것이 그 증거였다).
+        #
         # feature-0043 (2026-09-01): 마지막으로 연결된 명령 계열은 `_ensure_bridge_heartbeat_schema`
         # 가 만든다 — 그쪽은 **fast path(`_ensure_seed_catchup`)에서도** 불리므로 기존 배포에
         # 실제로 컬럼이 생긴다. 여기(slow path)에만 두면 신규 설치에만 생기고 운영 DB 에는
-        # 영원히 없다 (codex 적대 리뷰 P1-1 — 위 `BridgeDefaultModel` 이 그 상태다).
+        # 영원히 없다 (codex 적대 리뷰 P1-1 — 그 지적의 대상이던 `BridgeDefaultModel` 은 위에서
+        # 해소했다).
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebPermissions (
@@ -2834,6 +2832,26 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # NULL = 아직 정하지 않음 → `bridge_consent.DEFAULT_BATCH_CONSENT`(=끔).
             # 종전 표현 수단이던 `--batch` 는 그 머신의 명시 override 로 남는다.
             "ALTER TABLE WebAccounts ADD COLUMN BridgeBatchConsent TINYINT(1) NULL",
+            # ── 대화 축 계정 기본값 — **fast path 로 이동** (TASK-20260902T110000) ──────
+            #
+            # 이 둘은 2026-08-31 에 `_ensure_web_tables`(slow path)에만 놓였고, 그래서
+            # **운영 DB 에 컬럼이 생긴 적이 없다**(라이브 실측 2026-09-02: `WebAccounts` 에
+            # `BridgeLastOs`·`BridgeBatchConsent` 만 존재). `set_account_bridge_defaults` 가
+            # 예외를 삼키므로 저장은 조용히 실패했고, 사용자는 새 대화마다 모델을 다시 골랐다.
+            # 같은 파일의 아래 주석이 이미 이 결함을 자기 이름으로 지목하고 있었다(codex P1-1)
+            # — 지적만 있고 이동은 없던 상태를 여기서 닫는다.
+            "ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultModel VARCHAR(112) NULL",
+            "ALTER TABLE WebAccounts ADD COLUMN BridgeDefaultEffort VARCHAR(16) NULL",
+            # ── 콘솔 작업 항목별 모델·추론등급 (TASK-20260902T110000, 사용자 결정) ──────
+            #
+            # `ConsoleJobPrefs`(계정): `{job_kind: {model, effort}}` JSON. **계정에 두는** 이유는
+            # BridgeBatchConsent 와 같다 — 의도의 주체는 계정 소유자이지 러너 프로세스가 아니고,
+            # 토큰에 두면 재연결마다 설정이 사라진다.
+            #
+            # 컬럼 6개(항목당 2축) 대신 JSON 한 칸인 이유: 항목 목록은 `JOB_SPECS` 가 정하고
+            # 그 표는 앞으로도 늘어난다. 축이 늘 때마다 ALTER 를 더하면 스키마가 레지스트리를
+            # 뒤따라가야 하고, 뒤따라가지 못한 배포에서 그 항목만 조용히 저장되지 않는다.
+            "ALTER TABLE WebAccounts ADD COLUMN ConsoleJobPrefs TEXT NULL",
         ):
             try:
                 cur.execute(ddl)

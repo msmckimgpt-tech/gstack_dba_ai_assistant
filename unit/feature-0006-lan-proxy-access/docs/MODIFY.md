@@ -236,3 +236,164 @@ CRL 을 도입하면 폐기가 가능해지지만 **완화 플래그(feature-004
   CA 단독 임박 → CRITICAL · cert 부재 → 비-0(fail-open 아님) · `--leaf-warn 5` → exit 3 거절.
 - 실환경 1회: leaf/rootCA/live 3축 OK(exit 0) — `--live` 경로 포함.
 - 신규 테스트 9건 PASS · `bash -n` OK · cron 설치기는 `--print` 로만 확인(**crontab 미변경**).
+
+## CHG-20260902T113500-ai-claude-feature-0006-lan-proxy-access — 포트프록시 동기화를 idempotent 로 (2026-09-02)
+
+REQ-20260902-portproxy-idempotent-sync / TASK-20260902T113500-ai-claude-feature-0006-lan-proxy-access
+/ AC-20260902T113500-portproxy-idempotent-1~3 / **Major** §12.3
+
+### 무엇이 문제였나
+
+`src/windows/sync_mysql_ai_web_portproxy.ps1` 는 Windows 예약작업으로 **5분마다** 실행되는데,
+매 실행이 조건 없이 `netsh interface portproxy delete` → `add` 였다. `delete` 는 그 리스너를
+내리므로 **해당 포트를 지나던 기존 TCP 연결이 전부 끊긴다**. WSL IP 가 바뀌지 않은 평상시에도
+5분마다 80/443 의 모든 연결이 한 번씩 끊긴 것이다.
+
+브라우저처럼 짧은 요청은 재시도에 가려 보이지 않았지만, **오래 유지되는 연결**은 그대로 드러났다:
+개인 AI 브리지 러너의 대기 호출(`wait_for_request` — 서버가 55초 보류)이 5분 주기로
+`RemoteDisconnected` 를 맞았다.
+
+### 실측 근거 (2026-09-02)
+
+- 러너 원장 `bridge.events.jsonl` 19시간분: `api.fail` 289건 · `conn.retry` 209건. 안정 러너
+  기준 **시간당 정확히 12건**(= 5분당 1건).
+- 실패 시각이 **벽시계 5분 경계**(:04/:09/:14/:19…)에 정렬. 시작 시각이 다른 별개 러너
+  프로세스들이 **모두 같은 위상** → 프로세스 내부 타이머가 아니라 외부 스케줄 이벤트.
+- 예약작업 heartbeat(`C:\Users\Public\mysqlai_sync.log`)와 대조: WARN 14건 중 **13건이 sync 실행
+  후 3~19초 이내**. 나머지 1건은 heartbeat 로그에 해당 실행 줄이 누락된 구간.
+- 실패한 대기 호출의 소요는 3~55초 **균등 분포** — 절단이 연결 수명이 아니라 절대 시각에
+  걸린다는 신호(55초 주기와 300초 주기는 위상이 무관하다).
+- 양쪽 관측이 모두 "상대가 끊었다": Caddy 액세스 로그는 `status:0`(응답 미전송), 러너는
+  `RemoteDisconnected`. 중간 단이 끊었다는 뜻이며 그 중간 단이 portproxy 다.
+
+### 무엇을 바꿨나
+
+- `Get-PortProxyEntries` 신설 — `netsh interface portproxy show v4tov4` 를 파싱해
+  `listen:port → connect:port` 맵을 만든다. **헤더 문구가 아니라 데이터 행의 «IPv4 포트 IPv4 포트»
+  패턴**만 뽑아 로케일 의존을 없앴다(한국어 Windows 는 헤더가 "수신 대기").
+- 메인 루프: 원하는 매핑이 **이미 그대로면 `delete`/`add` 를 건너뛴다**. 다르면 종전대로 재설정.
+  legacy 포트 삭제도 실제로 존재할 때만 호출한다.
+- 출력 JSON 에 관측 필드 추가: `portproxy_changed` · `ports[].portproxy_action` ·
+  `portproxy_state_known` · `legacy_ports_deleted`. 기존 필드는 그대로 두었다(스키마 추가만).
+- 파일에 **UTF-8 BOM** 추가 — 한글 주석을 넣었기 때문. `bridge_setup.ps1`(한글 260줄 + BOM)이
+  이 저장소의 선례다.
+
+### 안전 설계 — 모르면 종전대로 한다
+
+현재 상태를 **읽지 못하면** `Get-PortProxyEntries` 가 `$null` 을 돌려주고, 호출측은 종전처럼
+무조건 재설정한다. 빈 딕셔너리("등록된 것이 없다" → 추가해야 한다)와 `$null`("상태를 모른다")을
+구분하는 이유가 여기 있다 — 둘을 뭉개면 파싱이 깨진 날 포트포워딩이 조용히 사라진다.
+**안전한 실패 방향은 «불필요한 재설정»이지 «필요한 재설정 누락»이 아니다.**
+
+### 검증 (Windows PowerShell 5.1 실측)
+
+| 항목 | 결과 |
+|---|---|
+| 구문 파싱 (`Parser::ParseFile`) | 오류 0 |
+| 한글 주석 인코딩 무결성 | BOM 있음 839자 / **BOM 없음 515자** → BOM 필요 확인 |
+| 실 netsh 출력 파싱 (한국어 로케일) | 4개 매핑 전부 정확, `112.185.196.20:443 → 172.26.154.233:443` 포함 |
+| 멱등 판정 | 현재 상태 = 원하는 상태 → `delete/add` **SKIPPED** |
+
+라이브 효과 검증(배포 후 관측)은 `TEST.md` Run 기록 참조.
+
+### 후속 수정 — `-IgnoreExitCode` 가 $null 계약을 무력화하고 있었다 (같은 cycle, 자체 적대 검토)
+
+첫 구현은 `Get-PortProxyEntries` 안에서 `Invoke-Netsh ... -IgnoreExitCode` 로 호출했다. 그러면
+netsh 가 **비-0 로 끝나도 예외가 오르지 않고 오류 텍스트가 그대로 넘어오고**, 그 텍스트는 행
+정규식에 하나도 매칭되지 않아 **빈 맵**이 된다 — "읽지 못했다"가 "등록된 것이 없다"로 둔갑한다.
+
+동작 자체는 안전한 쪽(재설정)으로 떨어지지만, `portproxy_state_known` 이 `true` 라고 **거짓
+보고**하게 되어 위에서 문서화한 $null 계약이 실제로는 성립하지 않았다. 「방어를 넣었다」와
+「방어가 성립한다」는 다르다. `-IgnoreExitCode` 를 제거해 실패가 실패로 오르게 했다.
+
+**이 수정은 판별력 있는 대조로 확인했다** — 수정 전 사본과 수정본에 «netsh 비-0 종료» 를 주입해
+서로 다른 결과가 나오는지 봤다:
+
+| | netsh 비-0 종료 시 결과 |
+|---|---|
+| 수정 전 | `MAP Count=0` — 상태를 안다고 거짓 주장 |
+| 수정 후 | `NULL` — 상태 모름, 종전대로 재설정 |
+
+(첫 시도의 주입 하네스는 stub 이 무조건 throw 해서 **수정 전에도 통과**했다 — 판별력이 없었다.
+stub 이 `-IgnoreExitCode` 유무에 따라 다르게 행동하도록 실제 계약을 모사한 뒤에야 두 버전이
+갈렸다.)
+
+## CHG-20260902T124500-ai-claude-feature-0006-lan-proxy-access — codex 적대 리뷰 P2 반영 (2026-09-02)
+
+직전 cycle(CHG-20260902T113500) 산출물에 대한 `codex exec` 적대 리뷰 결과를 반영한다.
+**Minor** §12.3 (관측 정확성 + 되돌림, 동작 축소 없음).
+
+### P1 — 이미 고쳐져 있었다 (독립 확인)
+
+`-IgnoreExitCode` 가 netsh 비-0 종료를 삼켜 $null 계약이 성립하지 않는다는 지적. **같은 cycle
+자체 적대 검토가 먼저 적발해 수정**한 것과 동일 결함이며, codex 자신도 리포트 말미에 "현재
+worktree 의 unstaged 변경에는 이미 -IgnoreExitCode 제거가 들어가 있다" 고 적었다. 서로 다른
+경로가 같은 결함에 도달했다는 점에서 **독립 확인**으로 기록한다.
+
+### P2-3·P2-4 — legacy skip 최적화를 되돌렸다
+
+직전 cycle 은 legacy 포트 삭제에도 "이미 없으면 건너뛴다" 를 넣었다. 되돌린다:
+
+- **이득이 없다.** legacy 포트는 더 이상 쓰지 않는 포트라 활성 연결이 없고, 없는 매핑에 대한
+  `delete` 는 아무 연결도 끊지 않는다. 이 수정이 겨냥한 「기존 연결 절단」은 public 포트에서만
+  일어난다.
+- **위험은 있다.** netsh 는 `connectaddress` 에 hostname 도 허용하는데(`127.0.0.1 18080
+  localhost 18080`), 그런 행은 IPv4 정규식에 안 걸려 `ContainsKey` 가 false → **영영 삭제되지
+  않는다**.
+
+즉 skip 은 위험만 도입한 최적화였다. "무해한 호출도 남기지 않는다" 는 동기는 이 자리에서는
+근거가 약했다.
+
+또한 삭제 **성공한 것만** `legacy_ports_deleted` 에 기록하도록 `try/catch` 로 감쌌다. 종전에는
+netsh 가 실패해도 즉시 목록에 넣어 "지웠다" 는 원장이 거짓이 됐다.
+
+### P2-2 — `portproxy_changed` 가 legacy 삭제를 세지 않았다
+
+public 포트만 세면 18080 을 지운 실행이 `legacy_ports_deleted:[18080]` 과
+`portproxy_changed:false` 를 **동시에** 보고해 필드 의미가 자기모순이 된다. legacy 삭제를
+포함하도록 고쳤다.
+
+### P2-5 — TOCTOU: 수용하고 주석으로 남겼다
+
+조회 후 판정까지의 창에 다른 도구가 매핑을 지우면 `unchanged` 로 건너뛰어 최대 5분 접근이
+끊길 수 있다. netsh 에 원자적 비교-교체가 없어 창을 구조적으로 없앨 수 없고, 이 스크립트 외에
+portproxy 를 건드리는 주체가 없는 것이 전제다. **확률적 5분 창과 확정적 5분 절단을 맞바꾼
+것**이며, verify 단계의 `Test-NetConnection` 결과가 JSON 에 남아 사후 판별이 가능하다.
+
+### 검증 (PS 5.1 재실행)
+
+구문 0 오류 · 인코딩 무결 · 실 netsh 4매핑 파싱 · legacy 기록이 `try` 안에만 있음 ·
+상태 기반 skip 제거됨 · `portproxy_changed` 가 legacy 를 셈 — **6축 PASS**.
+
+## CHG-20260902T140000-ai-claude-feature-0006-lan-proxy-access — 라이브 검증 결과 기록 (2026-09-02)
+
+docs-only. 코드 변경 없음. deploy-backed 완료 기준(§16.3)의 마지막 단계인 **라이브 실측**을 기록한다.
+
+### 배포
+
+`C:\ProgramData\mysql_ai_web_portproxy\sync_mysql_ai_web_portproxy.ps1` 를 main 본으로 교체.
+**관리자 권한이 필요했다** — WSL 에서는 기존 파일의 수정·삭제가 ACL 로 거부되고(`Permission
+denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉토리 신규 파일 생성만 가능).
+사용자가 관리자 PowerShell 로 `Copy-Item ... -Force` 실행 후 sha256 대조 일치를 확인했다.
+
+### 결과 — 목표 지표 0건
+
+| 구간 (각 22분) | `conn.retry` + `api.fail` |
+|---|---|
+| 10:30~10:52 · 11:00~11:22 · 11:22~11:44 (배포 전) | 8 · 8 · 8건 |
+| 11:44~12:06 (배포 전) | 12건 |
+| **13:33~13:55 (배포 후)** | **0건** |
+
+같은 구간에 예약작업은 **5회 정상 실행**(`LastTaskResult=0`)됐다 — 「작업이 멈춰서 0건」이 아니라
+「돌면서도 끊지 않은」 것이다. 이 대조가 없으면 두 상태가 같은 숫자로 보인다.
+
+**관통 증거**: 완주한 `wait_for_request` 22건 중 21건이 55초 보류 완주(median 55,402ms).
+13:34:00 시작분(55,366ms)은 13:34:34 sync 실행을 관통했다.
+
+### 잔존 WARN 2건은 무관 (은폐하지 않음)
+
+`hb.stale_build`(러너 버전 안내, 1회성) · `ai.cmdline.stdin`(명령줄 상한 초과 시 stdin 전달 —
+정상 동작 로그). 사용자가 보고한 3종이 아니다.
+
+⚠ **관측 하네스의 판정이 부정확했다** — 목표 지표가 아니라 모든 `lvl=WARN` 을 세어
+`VERDICT: WARN 잔존` 을 냈다. 그대로 받아썼다면 해소된 것을 미해소로 보고했을 것이다.

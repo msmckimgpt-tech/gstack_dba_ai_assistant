@@ -1,6 +1,6 @@
 {
-  "total_routes": 265,
-  "api_routes": 264,
+  "total_routes": 267,
+  "api_routes": 266,
   "ordered": [
     {
       "path": "/static",
@@ -921,6 +921,20 @@
       "path": "/api/admin/metadata/bootstrap/describe",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/profile/console-jobs",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/profile/console-jobs",
+      "methods": [
+        "PUT"
       ],
       "type": "APIRoute"
     },

@@ -1,28 +1,198 @@
-"""러너 배포본이 정본과 **같은 파일**인가.
+"""러너 **배포본이 소스에서 재현되는가** — 그리고 그 빌드가 실제로 배선돼 있는가.
 
-`static/agent/bridge_agent.py` 는 AI 가 내려받는 실물이고, `src/bridge_agent.py` 는 정본이다.
-둘이 갈리면 **사용자가 받는 것과 우리가 테스트한 것이 달라진다** — 그 순간 모든 검증이 무의미해진다.
+## 계약이 바뀐 이유 (feature-0043 모듈 분할)
+
+종전 계약은 「배포본(`static/agent/`)과 정본(`src/bridge_agent.py`)이 같은 파일인가」였다.
+둘 다 **커밋된 바이트 동일 사본**이었기 때문이다. 그 배치는 최근 90일 49개 커밋이 **예외 없이
+둘 다** 고치게 만들었고(49/49), 관심사가 서로 다른 두 세션도 264KB 짜리 같은 파일에서 반드시
+만나 충돌했다.
+
+이제 소스는 `src/agent/` 패키지 하나이고 **둘 다 빌드 생성물**이다 — 그래서 「둘이 같은가」는
+동어반복이 됐다(같은 스크립트가 같은 소스로 만든다). 대신 이 파일이 지키는 것은 그 전환이
+만든 **새 실패 모드**들이다:
+
+  - 빌드가 결정적이지 않으면 배포마다 지문이 흔들려 「구버전으로 돌고 있다」 판정이 무의미해진다.
+  - 모듈을 추가하고 `_EMIT_ORDER` 에 넣지 않으면 그 코드가 배포본에서 **조용히 사라진다**.
+  - Dockerfile 의 빌드 RUN 이 빠지면 **배포는 성공하고 러너 다운로드만 404** 가 된다.
+    healthz·soak·대화 스모크는 전부 초록불이다(서버는 멀쩡하므로) — 그 침묵을 여기서 끊는다.
+  - 생성물이 다시 커밋되면 충돌 표면이 원상 복구된다.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import pathlib
+import subprocess
+import sys
 
 _UNIT = pathlib.Path(__file__).resolve().parents[2]
+_ROOT = _UNIT.parent
 CANON = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_agent.py"
 SERVED = _UNIT / "feature-0003-agent-web-ui" / "src" / "static" / "agent" / "bridge_agent.py"
+PKG = _UNIT / "feature-0043-external-llm-bridge" / "src" / "agent"
+BUILDER = _UNIT / "feature-0002-agent-core" / "src" / "scripts" / "build_bridge_agent.py"
+DOCKERFILE = _UNIT / "feature-0002-agent-core" / "src" / "Dockerfile"
+DEPLOY = _ROOT / "bin" / "deploy-web.sh"
 
 
 def _sha(p: pathlib.Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def test_served_runner_is_identical_to_canonical():
-    assert SERVED.exists(), "배포본이 없다 — AI 가 내려받을 파일이 존재하지 않는다"
-    assert _sha(SERVED) == _sha(CANON), (
-        "배포본과 정본이 다르다. 정본을 고쳤으면 배포본도 갱신해야 한다 — "
-        "cp unit/feature-0043-external-llm-bridge/src/bridge_agent.py "
-        "unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py")
+def test_built_runner_matches_the_source_package(tmp_path):
+    """배포본이 **지금의 소스**에서 나온 것인가 (재현 가능한가).
+
+    실패하면 「우리가 테스트한 것」과 「사용자가 내려받는 것」이 갈렸다는 뜻이다. 루트
+    `conftest.py` 가 collection 전에 배치하므로 정상 경로에서는 항상 통과한다 — 실패는
+    빌드 스크립트나 소스 패키지가 깨졌다는 신호다.
+    """
+    assert SERVED.is_file(), "배포본이 없다 — AI 가 내려받을 파일이 존재하지 않는다"
+    out = tmp_path / "bridge_agent.py"
+    r = subprocess.run([sys.executable, str(BUILDER), "--src", str(PKG), "--out", str(out)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, f"빌드 실패: {r.stderr}"
+    assert _sha(out) == _sha(SERVED), (
+        "배포본이 소스 패키지에서 재현되지 않는다 — `make bridge-agent` 로 재빌드하라")
+    assert _sha(CANON) == _sha(SERVED), "정본 경로와 배포 경로의 산출물이 다르다"
+
+
+def test_build_is_deterministic(tmp_path):
+    """같은 소스 → 같은 바이트. 흔들리면 지문(`_self_build`) 대조가 무의미해진다.
+
+    러너는 자기 파일 해시를 서버에 신고하고, 서버는 그것으로 「정확히 그 파일인가」를 판정한다
+    (`ai_tools._served_runner_build`). 빌드가 비결정적이면 재빌드마다 지문이 바뀌어 사용자가
+    「재설치했는데 구버전이라고 나온다」를 겪는다.
+    """
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    for out in (a, b):
+        assert subprocess.run(
+            [sys.executable, str(BUILDER), "--src", str(PKG), "--out", str(out)],
+            capture_output=True, text=True).returncode == 0
+    assert _sha(a) == _sha(b), "같은 소스로 두 번 빌드했는데 바이트가 다르다"
+
+
+def test_every_module_is_in_the_emit_order():
+    """패키지에 있는 모듈은 **전부** 번들에 실린다.
+
+    `_EMIT_ORDER` 에서 빠진 모듈은 오류를 내지 않는다 — 그냥 배포본에 없다. 그 침묵이 가장
+    비싸므로 여기서 집합 동일성으로 못박는다. (빌드 스크립트도 같은 검사를 하지만, 그건
+    빌드를 돌려야 드러난다. 이 테스트는 CI 가 매번 본다.)
+    """
+    init = PKG / "__init__.py"
+    order = None
+    for node in ast.parse(init.read_text(encoding="utf-8")).body:
+        targets = (node.targets if isinstance(node, ast.Assign)
+                   else [node.target] if isinstance(node, ast.AnnAssign) else [])
+        if any(isinstance(t, ast.Name) and t.id == "_EMIT_ORDER" for t in targets):
+            order = list(ast.literal_eval(node.value))
+    assert order, "__init__.py 에 _EMIT_ORDER 가 없다"
+    on_disk = {p.stem for p in PKG.glob("*.py")} - {"__init__"}
+    assert set(order) == on_disk, (
+        f"_EMIT_ORDER 와 패키지 파일이 어긋난다 — 목록에만={sorted(set(order) - on_disk)} "
+        f"파일만={sorted(on_disk - set(order))}. 목록에서 빠진 모듈은 배포본에서 사라진다")
+    assert len(order) == len(set(order)), "_EMIT_ORDER 에 중복이 있다(코드가 두 번 실린다)"
+
+
+def test_module_graph_has_no_cycles():
+    """패키지 내부 import 가 비순환인가.
+
+    번들(단일 네임스페이스)에서는 순환이 드러나지 않지만 패키지 형태에서는 `ImportError` 가
+    된다 — 그러면 모듈 단위 lint·단위테스트라는 분할의 이득이 사라진다. 가변 전역을 공유하는
+    모듈은 `state.py` 처럼 접근자로 분리한다(그 모듈 docstring 참조).
+    """
+    dep = {}
+    for p in sorted(PKG.glob("*.py")):
+        if p.stem == "__init__":
+            continue
+        dep[p.stem] = {n.module for n in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
+                       if isinstance(n, ast.ImportFrom) and n.level == 1 and n.module}
+    state, cycles = {}, []
+
+    def visit(n, path):
+        state[n] = 1
+        for m in sorted(dep.get(n, ())):
+            if state.get(m) == 1:
+                cycles.append(" → ".join(path[path.index(m):] + [m]))
+            elif not state.get(m):
+                visit(m, path + [m])
+        state[n] = 2
+
+    for n in sorted(dep):
+        if not state.get(n):
+            visit(n, [n])
+    assert not cycles, f"모듈 순환 의존: {cycles}"
+
+
+def test_package_form_imports_cleanly():
+    """`agent/` 를 **패키지로도** import 할 수 있는가 — 모듈 분할의 이득이 걸린 지점.
+
+    번들은 단일 네임스페이스라 패키지 형태의 import 오류를 **덮어 버린다**: `from .x import y`
+    의 `y` 를 오타내도 번들러가 그 줄을 지우므로 배포본은 멀쩡히 돈다. 그러면 「모듈 단위로
+    lint·테스트한다」는 분할의 목적이 조용히 죽는다 — 아무도 패키지를 import 하지 않으므로
+    깨진 사실이 드러나지 않는다.
+
+    비순환 검사(`test_module_graph_has_no_cycles`)는 **순환** 축만 본다. 이 테스트는 이름
+    해석까지 포함해 「패키지가 실제로 살아 있는가」를 본다.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_bridge_agent_pkg", PKG / "__init__.py",
+        submodule_search_locations=[str(PKG)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_bridge_agent_pkg"] = mod
+    try:
+        spec.loader.exec_module(mod)
+        assert getattr(mod, "_EMIT_ORDER", None), "_EMIT_ORDER 가 노출되지 않는다"
+        # 각 모듈이 실제로 적재됐는가 (import 문만 있고 이름이 안 붙는 경우 방지)
+        for name in mod._EMIT_ORDER:
+            assert hasattr(mod, name), f"패키지에 {name} 모듈이 붙지 않았다"
+    finally:
+        for k in [k for k in sys.modules if k.startswith("_bridge_agent_pkg")]:
+            del sys.modules[k]
+
+
+def test_image_build_wires_the_runner_build():
+    """Dockerfile 이 러너를 **실제로 만드는가**.
+
+    생성물을 커밋하지 않기로 한 이상, 이 RUN 이 배포본의 유일한 출처다. 빠지면 배포는
+    성공하고 러너 다운로드만 404 가 된다 — 서버가 멀쩡하므로 어떤 헬스체크도 울지 않는다.
+    (2026-08-12 교훈의 재적용: COPY 되지 않는 경로에 코드를 두면 repo 테스트는 통과하고
+    배포만 죽는다.)
+    """
+    df = DOCKERFILE.read_text(encoding="utf-8")
+    assert "build_bridge_agent.py" in df, "Dockerfile 이 러너 배포본을 만들지 않는다"
+    assert "COPY unit/feature-0043-external-llm-bridge/src" in df, (
+        "러너 소스 패키지가 이미지로 COPY 되지 않는다 — 빌드가 읽을 것이 없다")
+    assert df.index("build_bridge_agent.py") < df.index("inject_asset_stamp.py"), (
+        "러너 빌드가 자산 스탬프 계산보다 뒤에 있다 — 러너가 static 트리 content-hash 에서 "
+        "빠져 종전 동작과 달라진다")
+
+
+def test_deploy_gate_verifies_the_runner_exists():
+    """배포 파이프라인이 baked 이미지의 러너를 검증하는가 (하드 게이트)."""
+    sh = DEPLOY.read_text(encoding="utf-8")
+    assert "bridge_runner_verify" in sh, "deploy-web.sh 에 러너 배포본 검증 게이트가 없다"
+    assert sh.count("bridge_runner_verify") >= 2, (
+        "게이트가 정의만 되고 **호출되지 않는다** — 정의는 검증이 아니다")
+
+
+def test_generated_artifacts_are_ignored():
+    """생성물이 다시 커밋되면 충돌 표면이 원상 복구된다.
+
+    이 전환의 목적 자체가 「생성물을 커밋하지 않는다」이므로(AGENTS.md §13.1 «1순위»),
+    무시 규칙이 사라지면 90일 49/49 이중 커밋이 그대로 돌아온다.
+
+    `git ls-files` 가 아니라 `.gitignore` 를 읽는 이유: 테스트는 git 이 없는 컨테이너에서도
+    돈다(`make test` 의 agent 이미지에 git 이 없다). 도구 부재로 조용히 통과하는 검사보다
+    규칙 자체를 보는 편이 확실하다.
+    """
+    ignored = {l.strip() for l in (_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()}
+    for rel in ("unit/feature-0043-external-llm-bridge/src/bridge_agent.py",
+                "unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py",
+                "unit/feature-0003-agent-web-ui/src/static/agent/bridge_setup.sh",
+                "unit/feature-0003-agent-web-ui/src/static/agent/bridge_setup.ps1"):
+        assert rel in ignored, f".gitignore 에 빌드 생성물 {rel} 이 없다 — 다시 커밋된다"
 
 
 def test_runner_has_no_third_party_imports():
@@ -49,6 +219,11 @@ def test_runner_has_no_third_party_imports():
         # TASK-20260901T163000: 예외 스택을 사건 원장에 남긴다(`_short_traceback`). 종전엔
         # `str(e)` 만 남아 예외 형과 터진 자리가 통째로 버려졌다. 표준 라이브러리.
         "traceback",
+        # TASK-20260902T140000: 자기 갱신 — 받은 파일이 **파이썬인지** 검사하고(`ast`)
+        # 같은 디렉토리 임시 파일로 원자 교체한다(`tempfile`). 둘 다 표준 라이브러리라
+        # 무설치 계약은 그대로다. `ast` 는 실행 없이 문법만 본다 — 받은 것을 실행해 보고
+        # 판정하면 그 자체가 이 검사가 막으려는 일이다.
+        "ast", "tempfile",
         "urllib", "urllib.error", "urllib.parse", "urllib.request", "__future__",
     }
     external = []
@@ -191,11 +366,18 @@ def test_runner_kills_the_child_on_cancel():
 
 
 def test_runner_covers_every_runtime():
-    """claude·codex·gemini·로컬 LLM 을 모두 다룬다(AI 종류에 무관해야 한다)."""
+    """claude·codex·gemini 를 모두 다룬다(AI 종류에 무관해야 한다).
+
+    ⚠ 로컬 LLM(ollama) 어댑터는 2026-09-01 에 제거했다 — 사용자 결정(미사용). 그 분기는
+    HTTP 라 명령 템플릿 하나로 덮이지 않아 자기 몫의 결함을 계속 만들었고, 마지막은
+    provenance 라벨을 바꾸다 캐시 쓰기 가드를 뒤집어 목록이 굳은 것이었다.
+    """
     src = CANON.read_text(encoding="utf-8")
-    for name in ("claude", "codex", "gemini", "ollama"):
+    for name in ("claude", "codex", "gemini"):
         assert f'"{name}"' in src, f"{name} 어댑터가 없다"
     assert "--cmd" in src, "임의 런타임을 위한 수동 지정 경로가 없다"
+    assert '"ollama"' not in src, (
+        "제거한 로컬 LLM 어댑터가 되살아났다 — 되살리려면 provenance 두 집합부터 보라")
 
 
 def test_runner_passes_prompt_as_argv_not_shell():
@@ -290,8 +472,9 @@ def test_timeout_check_is_skipped_when_unlimited():
     src = CANON.read_text(encoding="utf-8")
     assert "if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:" in src, (
         "상한 0(무제한)일 때 검사를 건너뛰지 않는다 — 모든 호출이 즉시 중단된다")
-    assert "timeout=(_AI_TIMEOUT_SEC or None)" in src, (
-        "ollama HTTP 경로가 0 을 그대로 넘긴다 — urllib 이 즉시 타임아웃한다")
+    # (종전 두 번째 단언은 ollama HTTP 경로의 `timeout=(_AI_TIMEOUT_SEC or None)` 을
+    #  요구했다. 그 경로는 2026-09-01 에 제거됐다 — 남은 것은 CLI `Popen` 경로뿐이고
+    #  그쪽 무제한 계약은 위 단언 하나가 잠근다.)
 
 
 def test_cancel_still_works_without_a_timeout():

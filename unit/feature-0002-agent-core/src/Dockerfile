@@ -54,6 +54,22 @@ COPY unit/feature-0003-agent-web-ui/src /app/web
 #   COPY 되지 않는 경로에 서버 코드를 두면 repo 테스트는 통과하고 배포만 죽는다).
 COPY unit/feature-0041-external-ai-tool-surface/src/external_tool_mcp_http.py /app/ext_tools/external_tool_mcp_http.py
 
+# feature-0043: 브리지 러너 **소스 패키지**. 배포되는 실물(단일 파일)은 아래 빌드가 만든다.
+# ⚠ 설치 스크립트(bridge_setup.sh/.ps1)도 같은 디렉터리에 있어야 한다 — 다음 RUN 의
+#   `--stage-assets` 가 여기서 읽어 static/agent/ 로 배치한다.
+COPY unit/feature-0043-external-llm-bridge/src /app/bridge_src
+
+# AGENTS.md §13.1 v3.35.1 «1순위»: 브리지 러너 배포본을 빌드가 만든다.
+# 종전엔 정본과 배포본이 바이트 동일한 두 커밋 대상이었고 90일 49커밋이 예외 없이 둘 다
+# 고쳤다(49/49) — 관심사가 다른 두 세션도 264KB 짜리 같은 파일에서 반드시 만났다. 이제
+# 소스는 `agent/` 패키지 하나이고, 내려받는 단일 파일은 여기서 연접해 만든다.
+# deploy-web.sh 의 bridge_runner_verify 가 baked 이미지에 산출물 존재·정합을 검증한다.
+RUN python3 /app/scripts/build_bridge_agent.py \
+      --src /app/bridge_src/agent \
+      --out /app/web/static/agent/bridge_agent.py \
+      --stage-assets /app/bridge_src \
+ && rm -rf /app/bridge_src
+
 # ITEM-09 what#3 (AGENTS.md §13.1 v3.35.1 1순위): 정적 자산 ?v= 스탬프 빌드 주입.
 # 소스는 고정 placeholder(?v=dev — hand-edit 커밋 금지·병렬 충돌 표면 제거), 빌드가
 # static 트리 content-hash 를 계산해 HTML/JS 의 전 ?v= 참조를 일괄 치환한다(멱등).

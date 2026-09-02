@@ -40,6 +40,15 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
   (`openssl -fingerprint`)과 비교 → 항상 불일치. → 인증서 DER SHA-256(Windows X509Certificate2
   RawData, macOS `openssl x509 -fingerprint`)으로 통일.
 
+- REQ-20260902-portproxy-idempotent-sync (TASK-20260902T113500-ai-claude-feature-0006-lan-proxy-access,
+  **Major** §12.3 — 5분 주기 포트프록시 재설정이 라이브 연결을 끊는 문제 해소): Windows 예약작업
+  `mysql_ai_web_portproxy_sync` 가 매 실행마다 조건 없이 `netsh interface portproxy delete` → `add`
+  를 수행해, WSL IP 가 바뀌지 않은 평상시에도 **5분마다 80/443 의 기존 TCP 연결을 전부 끊었다**.
+  짧은 요청(브라우저)은 재시도로 가려지지만 오래 유지되는 연결은 그대로 드러난다 — 개인 AI 브리지
+  러너의 대기 호출(`wait_for_request`, 서버가 55초 보류)이 5분 주기로 `RemoteDisconnected` 를 맞고
+  `conn.retry` WARN 을 남겼다. 스크립트를 **현재 매핑이 이미 원하는 값이면 아무것도 하지 않도록**
+  (idempotent) 바꿔, 목적(WSL 재부팅 후 바뀐 IP 추종)은 유지하고 부작용만 제거한다.
+
 ## 3. In Scope
 - `src/caddy/Caddyfile`
 - `src/windows/*`
@@ -108,6 +117,38 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - AC-20260617T083954-ai-claude-bat-encoding-fix-01 (REQ-0286 / TASK-20260617T083954-ai-claude-bat-encoding-fix): `install-trust-windows.bat` 는 **ASCII 전용 + CRLF 줄바꿈 + `chcp` 없음**. `bin/trust-bundle.sh` 가 .bat 를 CRLF 로 출력하고 비-ASCII 바이트 검출 시 die. cmd.exe 가 라인 파싱 붕괴(`echo`→`cho`, base64 가 명령 실행) 없이 실행한다(실측: cmd.exe 로 echo/지문표시/base64 디코드/지문검증 전 구간 정상). `.command`/​`index.html` 은 LF 유지.
 - AC-20260617T083954-ai-claude-bat-encoding-fix-02 (REQ-0286): 설치 스크립트의 지문 재검증은 인증서 **DER SHA-256**(= `openssl x509 -fingerprint -sha256`, 브라우저 표시 지문)을 비교한다 — PEM **파일** 해시가 아님. Windows = `X509Certificate2.RawData` 의 SHA-256, macOS = `openssl x509 -noout -fingerprint -sha256`. 정상 인증서에서 `ACTUAL == FP_HEX` 로 통과(이전엔 항상 불일치로 중단되던 잠복 버그 수정).
 
+- AC-20260902T113500-portproxy-idempotent-1 (REQ-20260902-portproxy-idempotent-sync):
+  `src/windows/sync_mysql_ai_web_portproxy.ps1` 는 실행 전에 `netsh interface portproxy show v4tov4`
+  로 현재 매핑을 읽고, `listenaddress:listenport` → `connectaddress:connectport` 가 **이미 원하는
+  값과 같으면 `delete`/`add` 를 호출하지 않는다**. 출력 JSON 의 `ports[].portproxy_action` 이
+  `unchanged` 이고 `portproxy_changed` 가 `false` 다. 값이 다르거나 없으면 종전대로 재설정한다
+  (`recreated` / `created`).
+- AC-20260902T113500-portproxy-idempotent-2 (REQ-20260902-portproxy-idempotent-sync): 현재 매핑을
+  **읽지 못하면 종전 동작(무조건 재설정)으로 폴백**한다 — `Get-PortProxyEntries` 가 `$null` 을
+  돌려주고 `portproxy_state_known` 이 `false` 다. 빈 딕셔너리("등록된 것이 없다")와 `$null`("상태를
+  모른다")을 구분한다. 안전한 실패 방향은 «불필요한 재설정»이지 «필요한 재설정 누락»이 아니다.
+- AC-20260902T113500-portproxy-idempotent-3 (REQ-20260902-portproxy-idempotent-sync): 매핑 파싱은
+  **로케일 무관**이다 — `netsh` 출력 헤더 문구(한국어 Windows 는 "수신 대기" 등)가 아니라 데이터
+  행의 «IPv4 포트 IPv4 포트» 패턴만 정규식으로 뽑는다. 한국어 로케일 실호스트에서 4개 매핑
+  (`112.185.196.20:443 → 172.26.154.233:443` 포함)이 정확히 파싱된다. 파일은 한글 주석을 담으므로
+  **UTF-8 BOM** 을 갖는다 (`bridge_setup.ps1` 선례) — BOM 없이 PS 5.1 이 읽으면 한글 839자 중
+  324자가 손실된다(실측).
+
+- AC-20260902T124500-portproxy-idempotent-4 (REQ-20260902-portproxy-idempotent-sync, codex P2 반영):
+  **legacy 포트 삭제에는 멱등 skip 을 적용하지 않는다** — 조건 없이 `delete` 를 시도하고, 성공한
+  것만 `legacy_ports_deleted` 에 기록한다. 근거: legacy 포트에는 활성 연결이 없어 skip 의 이득이
+  없고, netsh 가 허용하는 hostname 형태 매핑(`127.0.0.1 18080 localhost 18080`)은 IPv4 정규식에
+  잡히지 않아 skip 하면 **영영 삭제되지 않는다**. 삭제 실패(대상 없음 포함)는 기록하지 않는다.
+- AC-20260902T124500-portproxy-idempotent-5 (REQ-20260902-portproxy-idempotent-sync, codex P2 반영):
+  `portproxy_changed` 는 public 포트 재설정 **또는** legacy 삭제 중 하나라도 있으면 `true` 다.
+  둘 중 하나만 세면 `legacy_ports_deleted: [18080]` 과 `portproxy_changed: false` 가 동시에
+  보고되어 필드 의미가 자기모순이 된다.
+- **알려진 한계 (수용, codex P2-5)**: 상태 조회와 판정 사이에 다른 주체가 매핑을 바꾸면 이 실행은
+  조회 시점 값으로 `unchanged` 를 판정한다(TOCTOU). netsh 에 원자적 비교-교체가 없어 창을 없앨 수
+  없고, 이 스크립트 외에 portproxy 를 건드리는 주체가 없는 것이 전제다. **확률적 5분 창**과
+  종전의 **확정적 5분 절단**을 맞바꾼 것이며, verify 단계 `Test-NetConnection` 결과가 JSON 에
+  남아 사후 판별이 가능하다.
+
 ## 12. Observability
 - Caddy 로그: `docker compose logs caddy`
 - 인증서 위치: `../../../../artifacts/certs`
@@ -117,6 +158,30 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - caddy 설정 검증: `docker run --rm -v <Caddyfile>:/etc/caddy/Caddyfile:ro -v <certs>:/certs:ro caddy:2 caddy validate --config /etc/caddy/Caddyfile`
 - 테스터 설치 번들 갱신: `bash bin/trust-bundle.sh` → `artifacts/trust-bundle/`. 서빙: `http://<host>/trust/`
 - 번들 라이브 검증: `curl http://<host>/trust/install-trust-windows.bat` → 200
+
+### 포트프록시 동기화가 «무엇을 했는지» 보는 법 (2026-09-02)
+
+- 실행 heartbeat: `C:\Users\Public\mysqlai_sync.log` (예약작업이 뜰 때마다 1줄, UTF-16).
+- 이번 실행이 포트프록시를 건드렸는지: 스크립트 표준출력 JSON 의 `portproxy_changed`
+  (평상시 `false` 여야 정상) · `ports[].portproxy_action` (`unchanged` / `recreated` / `created`) ·
+  `portproxy_state_known` (`false` = 현재 상태를 못 읽어 안전측으로 전부 재설정했다는 뜻).
+- 절단이 실제로 멈췄는지: 브리지 러너 원장 `~/.mysql-ai-bridge/bridge.events.jsonl` 에서
+  `ev=conn.retry` / `ev=api.fail` 의 시각이 sync 실행 시각 직후(3~19초)에 몰리는지 대조한다.
+  수정 전에는 **5분마다 1건**이 규칙적으로 찍혔다.
+
+```bash
+# 러너 원장에서 5분 주기 절단 여부 확인 (수정 후에는 0건이어야 한다)
+python3 - <<'PY'
+import json, collections
+c = collections.Counter()
+for line in open('/home/claude-corp/.mysql-ai-bridge/bridge.events.jsonl', errors='replace'):
+    if not line.strip(): continue
+    d = json.loads(line)
+    if d.get('ev') in ('conn.retry', 'api.fail'):
+        c[d['ts'][:13]] += 1
+print(sorted(c.items())[-6:])
+PY
+```
 
 ### 만료 감시 — 게이트와 감시는 다른 축이다 (2026-09-01)
 

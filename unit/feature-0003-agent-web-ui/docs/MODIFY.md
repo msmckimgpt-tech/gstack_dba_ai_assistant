@@ -9,6 +9,44 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T1900-conv-status-dot-wiring (사이드바 상태 배지 색 배선 복원 + 배선 게이트, Minor §12.3)
+
+**변경**:
+
+- **신규** `src/static/app/conv-status.js` — 대화 상태 → dot 클래스·라벨의 **단일 정본**(leaf,
+  의존 0). `app.js` ↔ `app/sidebar.js` 가 서로 import 하므로 공용 헬퍼를 둘 중 하나에 두면
+  순환 TDZ 가 난다.
+- `src/static/app/sidebar.js` — 조립 지점 3곳(일반 행 · 인라인 이름변경 행 · in-flight 항목) +
+  무상태 placeholder 1곳을 헬퍼 호출로 교체. in-flight **실패** 행의 dot 을 `pending` →
+  `failed` 로 바로잡음(행은 실패를 아는데 점만 대기 색이던 비대칭). 상태 라벨을 `title` 로 부여
+  + `data-title-status` 이음매 기록.
+- `src/static/app.js` — `_updateConversationStatusDot`(폴링 tick 경로)을 헬퍼로 교체. 툴팁은
+  `data-title-status` 로 「사이드바가 넣은 stale 구체 문구 보존」과 「낡은 툴팁 제거」를 함께 만족.
+- `src/static/css/shell.css` — 죽은 `.conv-dot.is-completed` 제거, 7상태 규칙 신설,
+  `is-pending-inflight`/`is-pending-failed` 규칙 신설. `profile.css` 의 `is-stale-error` 를
+  이리로 통합(정의가 두 파일로 갈린 것이 어휘 drift 의 온상이었다).
+- `src/static/css/profile.css` — 위 규칙 이동에 따른 제거 + 이동 사유 주석.
+- `src/static/css/search-audit.css` — `.admin-meta-row.is-inherited`(읽기 전용 상속 행) 규칙 신설.
+- **신규** `scripts/audit_state_class_wiring.py` — 상태 modifier 배선 감사 + 판정
+  화이트리스트(`ALLOWED_UNSTYLED`, 항목마다 근거 필수).
+- **신규** `tests/test_conv_status_dot_wiring.py` — 계약 9건(T1 서버 어휘 커버리지 / T2 CSS
+  커버리지 + 죽은 규칙 금지 / T3 단일 조립 지점 + 진입점 실제 호출 + 언더스코어 금지 /
+  T4 상태 modifier 전수 게이트 + 판정 목록 신선도).
+
+**사유**: 상태값이 화면 색으로 도달하지 않았다 — 배포본 실측에서 사이드바 133개 항목이 상태를
+정확히 알면서 전부 같은 회색이었다. 조립이 세 곳으로 갈리고 CSS 어휘가 따로 자란 결과다.
+
+**영향 범위**: 프론트 표시면 한정. 데이터·권한·API·스키마 변경 **0**. 롤백 = 되돌려 재배포.
+
+**게이트 보강 (§18.8 `/codex review` 수용, 2026-09-02)**: 초판 게이트가 다섯 갈래로 새고 있었다 —
+상태 writer 하드코딩 목록 · 셀렉터 이름만 보는 CSS 검사 · 미검증 툴팁 이음매 · `${…}` 를 통째로
+비우는 감사 · 줄 단위 직접-조립 탐지와 낮은 호출 수 최소치. 다섯 건 모두 재현 확인 후 수정했다.
+
+**검증**: `make test` 6829 passed / 15 skipped / 0 failed(3회) · 계약 10건 PASS · 회귀 뮤턴트
+**10종 전건 KILL** · PB-0008 Windows-browser 실측
+(`docs/test-runs.d/TASK-20260901T1900-conv-status-dot-wiring.md`) ·
+`REVIEW.md` REV-20260901T190000-conv-status-dot-wiring.
+
 ## CHG-20260901T1430-rqrd-postdeploy (POST-DEPLOY 부재 확인, doc-only)
 
 **변경**: 문서만 — `docs/{TASK,REPORT}.md` + 신규 fragment·스크린샷. 코드 **0**.
@@ -5553,3 +5591,64 @@ PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔�
 - 재발 명시 3건 + 기능 소멸 고지 1건(쿼리 결과 접이판 제거로 CSV 내려받기·전체 데이터 보기·구형 메시지 실행 SQL/결과 파일 3종 동반 소멸) + 미검증 고지 5건.
 - Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
 - Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+## CHG-20260902T110000-kb-prompt-grounding — KB 근거를 점유 응답에 실어 자동 주입
+
+설계·AC 정본은 `unit/feature-0002-agent-core/docs/FUNCTION.md`
+`## KB 근거는 «자동 주입»이다 — 도구 호출에 기대지 않는다`.
+
+- **`routers/ai_tools.py` `claim_request`**: `_kb_grounding_sections(question, product_scope,
+  ds_scopes, notes)` 로 근거를 조립해 응답에 `kb_context`·`kb_notes` 추가. 상한
+  `_CTX_BUNDLE_MAX_CHARS` + 절단 고지. 매칭은 **원문 `question`** 으로 한다(가드 래퍼 `marked`
+  는 canary·각인이 섞여 있어 래퍼 문구가 용어에 걸린다).
+- **`static/agent/bridge_agent.py` `compose_prompt`** + **feature-0043 정본**(byte-동치):
+  받은 `kb_context` 를 **질문 앞**에 놓고 「이미 조회된 것이니 다시 조사하지 마라」를 덧붙인다.
+  값이 없으면 블록 자체를 생략 — 빈 머리글은 「등록된 게 없다」로 오독되고, 이 생략이 **옛 서버
+  호환**(필드를 안 보내는 버전)도 함께 지킨다.
+- **왜 러너가 아니라 서버인가**: 러너는 사용자 머신 설치본이라 프롬프트만 고치면 이미 도는
+  러너에 닿지 않는다. 점유 응답은 매번 서버가 만든다.
+
+**비변경**: 도구 시그니처 0 · 권한·인가 0 · 스키마 0 · `get_task_context` 자체 0(그대로 두고
+`focus` 재조회 경로로 남는다).
+
+**검증**: `make test` rc=0 · FAILED 0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL ·
+러너 두 사본 sha256 동치.
+
+Task-Cycle: feature-0003-agent-web-ui
+## CHG-20260902T100000-ai-claude-feature-0003-autolaunch-runner — 자동 [내 AI 실행] (cross-ref)
+
+- **날짜**: 2026-09-02 · **위험도**: Major · **정본 TASK**: feature-0043
+  `TASK-20260902T100000-autolaunch-runner.md`
+- `static/app/connect-modal.js` — 자격 판정(`last_os`)·실행 URL 프리페치(사용자 활성화 보존)·
+  단일 진입점(`_connectEntry`)·로그인 진입 1회 자동 시도·대기 판정 단일화(`_awaitUsable`).
+  `static/agent/` 배포 사본 3종 동기화.
+
+## CHG-20260902T120000 — (feature-0043 cycle) 컴포저 안내 문단이 입력창을 밀어내던 결함
+
+`static/index.html` · `static/css/chat.css` · `static/app/connect-modal.js` ·
+`routers/oauth_as.py` 를 편집. 정본은
+`unit/feature-0043-external-llm-bridge/docs/TASK-20260902T120000-relaunch-dead-end.md`.
+
+`#composerActionsSelectorNote` 는 `.composer-box`(`display:flex` 한 줄)의 **정적 자식**이라
+형제 팝업들(`absolute`/`fixed`)과 달리 **플렉스 항목**으로 섰다 — 안내가 켜지는 순간 `+`
+버튼과 제품 칩 사이에 끼어 입력창을 오른쪽으로 밀어냈다(사용자 스크린샷 2026-09-02).
+앞 cycle 이 `role="menu"` owned-child 제약을 피해 문단을 메뉴 밖으로 꺼냈지만 **배치까지
+옮겨 주지는 않았다.** `.composer-wrap` 안 입력창 바로 위로 옮기고(잠금 안내와 같은 근거)
+단독 줄에 맞는 여백으로 바꿨다. ARIA 계약은 조상 사슬 검사로 함께 잠갔다.
+
+`connect_status` 응답에 `runner_build`(러너 지문)를 추가 — 화면이 재기동 전후를 대조해
+「재실행으로는 풀리지 않는」 상태를 가려내는 **동일성 축**에만 쓴다(표시하지 않는다).
+
+## CHG-20260902T140000 — (feature-0043 cycle) 자기 갱신 러너의 낡음은 화면에 그리지 않는다
+
+`oauth_store.py`(`account_runner_self_updating`) · `routers/oauth_as.py`
+(`connect_status.runner_self_updating`) · `static/app/connect-modal.js`(`_actionableStaleOf`)
+편집. 정본은 `unit/feature-0043-external-llm-bridge/docs/TASK-20260902T140000-runner-self-update.md`.
+
+낡음 판정(`runner_stale`)은 그대로 엄격하되, **스스로 갱신할 줄 아는 러너의 낡음은 조치
+요구로 그리지 않는다**(사용자 결정 2026-09-02, 웹 리서치 후 선택). 접는 자리는 `_actionableStaleOf()`
+한 곳 — 칩·모달 성공 조건·자동 실행 자격·「재실행해도 그대로」 판정이 모두 이 축을 읽으므로
+두 벌이면 하나만 고쳐지는 순간 화면이 자기 안에서 갈린다. 모르면 종전 안내로 폴백.
+
+기존 계약 `test_chip_shows_a_distinct_state_for_stale_runner` 의 리터럴 단언(`!!b.runner_stale`)은
+**관계**(서버 값 → 접는 함수 → `_paintConn`)로 갱신했다 — 리터럴을 그대로 두면 이 계약이
+「개선을 되돌리라」고 요구하는 게이트가 된다.

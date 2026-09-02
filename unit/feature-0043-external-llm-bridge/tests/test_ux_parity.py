@@ -48,11 +48,45 @@ MCP_STDIO = _UNIT / "feature-0041-external-ai-tool-surface" / "src" / "external_
 
 
 def _func_source(path: pathlib.Path, name: str) -> str:
-    """모듈에서 함수 하나의 소스만 떼어낸다(파일 전역 검색이 남의 코드를 오검출하지 않게)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    """모듈에서 함수 하나의 소스만 떼어낸다 — **docstring 과 주석을 뺀 코드만**.
+
+    ⚠ 종전에는 `ast.get_source_segment` 결과를 그대로 돌려줬고 거기엔 **docstring 이
+    포함**됐다. 그래서 이 헬퍼를 경유하는 모든 「X 가 있다」 단언을 그 함수 자신의 설명
+    문장이 통과시켰다 — qa 적대리뷰가 뮤턴트로 실증했다: `_profile.get("caps" "_trusted")`
+    (동작 동일, 토큰은 코드에서 사라짐)를 넣어도 `assert "caps_trusted" in body` 가 green.
+    §16.7 **G11-a** 가 「가장 위험한 형태」로 지목한 바로 그것이다.
+
+    ⚠ **`ast.unparse` 로 재출력하지 않는다.** 그러면 포맷이 정규화돼(따옴표·줄바꿈·괄호)
+    이 헬퍼를 쓰는 **무관한 단언들이 무더기로 깨진다**(실측: 15건). 원문 형식은 보존하고
+    **docstring 이 차지한 줄만** 잘라낸다 — 잘라낼 범위는 파서가 준 `lineno`/`end_lineno`
+    라서 행 단위 휴리스틱(`grep -v '^\\s*#'`)의 오탐(블록 주석·멀티라인 문자열)이 없다.
+
+    ⚠ 주석(`#`)은 **남긴다**. 「X 가 없다」류 부재 단언이 이 헬퍼를 쓸 수 있고, 그 경우
+    리터럴·주석을 지우면 찾으려는 결함 라인을 건너뛴다(G11-a 의 부재-단언 예외). 존재
+    단언에서 주석이 문제가 되면 그 단언은 AST 로 올려야 한다 — 그것이 정답이다.
+    """
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            return ast.get_source_segment(path.read_text(encoding="utf-8"), node) or ""
+            seg = ast.get_source_segment(src, node) or ""
+            body = node.body
+            if not (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                return seg
+            # docstring 이 차지한 줄 범위를 함수 시작 기준으로 환산해 제거한다.
+            lo = body[0].lineno - node.lineno
+            hi = (body[0].end_lineno or body[0].lineno) - node.lineno
+            lines = seg.splitlines()
+            out = "\n".join(lines[:lo] + lines[hi + 1:])
+            # ⚠ `def f(): """doc"""` 처럼 docstring 이 **시그니처와 같은 줄**이면 `lo == hi == 0`
+            #   이라 위 슬라이스가 시그니처까지 지워 **빈 문자열**을 돌려준다. 그러면 이 헬퍼를
+            #   쓰는 「X 가 없다」 단언이 전부 vacuous 하게 통과한다(qa 적대리뷰 — 검사 대상이
+            #   비어 있을 때 PASS). 그런 함수는 잘라낼 것이 없으므로 원문을 그대로 준다.
+            if not out.strip() or f"def {name}" not in out:
+                return seg
+            return out
     raise AssertionError(f"{path.name}: 함수 {name} 를 찾지 못했다(이름이 바뀌었나?)")
 
 
@@ -1010,10 +1044,15 @@ def test_catalog_gates_selector_on_server_llm_state():
     assert '"visible" if visible else "hidden"' in body, (
         "차단 상태의 숨김/노출이 러너 신고 유무로 갈리지 않는다 — 한쪽으로 굳으면 "
         "'고를 게 없는데 선택기가 뜨거나' '신고했는데 영영 숨는다'")
-    assert "account_runner_capabilities" in body, (
+    assert "account_runner_profile(" in body, (
         "카탈로그가 러너 신고를 읽지 않는다 — 목록의 출처가 서버로 되돌아간 것이다(P0-T 재발)")
     assert '"model_selector": "visible"' in body, "게이트 해제 시 선택기를 복원하는 분기가 없다"
     assert "from shared.llm_gate import server_llm_enabled" in src
+    # 숨김의 **이유**를 값으로 말한다 — 프런트가 사유 문구를 파싱하지 않게.
+    # (2026-09-01 재설계: 종전 `caps_contract_declared`·`runner_mixed` 두 축은 철회하고
+    #  「러너가 듣고 있는가」 한 축만 남겼다. 능력 게이트는 수신 시점에 있다.)
+    assert '"runner_listening": runner_listening' in body, (
+        "숨김의 이유를 값으로 말하지 않는다 — 프런트가 사유 문구를 파싱하게 된다")
 
 
 def test_catalog_never_guesses_runner_models_on_failure():
@@ -1201,8 +1240,7 @@ def test_runner_only_accepts_models_it_itself_offered():
     build = _func_source(runner, "build_cmd")
     assert "_valid(" in build, "표 대조 없이 값을 인자로 만든다"
     # 대조 대상이 **실제 신고 목록**이어야 한다. 정적 표(`_RUNTIME_SPECS`)만 보면 `--ai` 로
-    # 좁힌 사용자의 제한을 서버 응답이 넘어서고, ollama 의 실조회 목록과도 갈린다
-    # (codex REV-20260828T170000 P1-5).
+    # 좁힌 사용자의 제한을 서버 응답이 넘어선다 (codex REV-20260828T170000 P1-5).
     assert "offered_options(runtimes, runtime)" in build, (
         "대조가 신고 목록이 아니라 정적 표를 본다")
     # 런타임 전환도 신고를 거친다 — 표 + PATH 만으로는 `--ai` 제한을 넘어선다.
@@ -1217,8 +1255,11 @@ def test_runner_only_accepts_models_it_itself_offered():
         "서버가 준 런타임 이름을 검증 없이 실행한다")
     # ollama 는 `build_cmd` 를 타지 않는다 — 그 경로에도 대조가 있어야 한다.
     ask = _func_source(runner, "ask_local_ai")
-    assert 'offered_options(runtimes, "ollama")' in ask, (
-        "ollama 경로가 서버 값을 검증 없이 모델명으로 쓴다")
+    # 2026-09-01: ollama HTTP 경로가 제거돼 `build_cmd` 를 우회하는 분기가 **없다** —
+    # 그래서 대조를 따로 심을 자리도 없어졌다(경로가 하나면 게이트도 하나). 되살아나면
+    # `build_cmd` 밖에서 모델명을 쓰게 되므로 그 사실을 잡는다.
+    assert '"ollama"' not in ask, (
+        "제거한 ollama 분기가 되살아났다 — build_cmd 를 우회하면 대조가 사라진다")
     # 반영 못 한 지정은 조용히 버리지 않는다(사용자가 오해하지 않게).
     assert "unmet" in handle, "미반영 지정을 사용자에게 알리지 않는다"
     # 사용자가 명령을 통째로 고정하는 길은 그대로 남는다(기능을 없애지 않았다).

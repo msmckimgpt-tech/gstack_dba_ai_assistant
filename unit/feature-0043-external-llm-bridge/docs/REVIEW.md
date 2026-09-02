@@ -2712,3 +2712,819 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 
 - **판정**: **APPROVED** — 자체 적발 2건(테스트 공백) 수정, 잔여 BLOCKING/MAJOR 0.
 - **Human Approval Needed**: no
+## REV-20260902T100000-ai-claude-feature-0043-autolaunch-runner [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-02 · **범위**: `static/app/connect-modal.js` · `bridge_setup.{sh,ps1}`(+배포
+  사본 3종) · 신규 테스트 19건 · 기존 계약 2건 갱신.
+- **Trigger** (§18.8): `credential`/`session`(토큰 자동 발급) → **security** · UI 흐름 → **ux** ·
+  회귀 → **qa**. 3렌즈.
+
+### 렌즈 1 — security: 자동 발급이 경계를 넓히는가
+
+- 발급 경로·수명·스코프는 **기존과 동일**하다. 달라지는 것은 그 클릭을 사람이 하느냐 화면이
+  하느냐뿐이고, 트리거는 **로그인 세션**이라 인증 경계를 넘지 않는다.
+- 남용 방지 3중: 자격 확인 뒤에만·중복 발급 억제(`_prefetching`)·이미 쓸 수 있으면 아예 안 함.
+- **P1 후보(설계 중 자체 적발)**: 런처의 갱신을 토큰 검증 **앞**에 두면, 이 스킴은 아무
+  웹페이지나 열 수 있으므로 임의 사이트가 남의 러너 파일을 갈아치우는 통로가 된다(기존
+  `pkill` 이 검증 뒤에 있는 것과 정확히 같은 논거). 검증 뒤로 고정하고 회귀 테스트로 잠갔다.
+- 다운로드는 https + 이미 신뢰된 CA — 설치 때의 평문+체크섬보다 강하다.
+
+### 렌즈 2 — ux/가용성: 나빠지는 사람이 있는가
+
+- 이력 없는 사용자(설치 필요)는 네 경로 모두 **종전과 동일**. 자동 실행은 «더하기» 다.
+- 명시 클릭은 실패해도 창으로 떨어져 막다른 길이 없다. 로그인 진입은 조용히 실패한다 —
+  창을 열면 그건 개선이 아니라 방해다.
+- 런처 갱신 실패가 기동을 막지 않는다(가장 나쁜 결말 회피).
+
+### 렌즈 3 — qa/회귀
+
+- **기존 계약 2건이 이 개선을 되돌리라고 요구하는 게이트**였다(리터럴 `openConnectModal()` 을
+  칩 바인딩에서 요구). 계약의 뜻은 유지하고 잠그는 대상을 함수 이름 → **관계**로 옮겼다.
+- 4 feature 전량 컨테이너 rc=0 · ruff clean · ps1 BOM 보존 · 배포 사본 3종 동일.
+- **수정 전 실 브라우저 실측**으로 문제 상태를 고정했다(칩 `업데이트 필요` 클릭 → 창만 열림).
+
+### 뮤테이션 — 4/4 KILL
+
+| # | 주입 | 결과 |
+|---|---|---|
+| M1 | 프리페치 제거(클릭이 await 뒤 이동 = 활성화 상실) | **KILL** |
+| M2 | 로그인 진입 실패 시 모달 열기 | **KILL** |
+| M3 | 런처 갱신 제거(종전 결함 재주입) | **KILL** |
+| M4 | 갱신을 토큰 검증 앞으로 이동 | **KILL** |
+
+- **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
+  **잔여**: 로그인 진입 경로가 크롬 활성화 정책에 걸리는지는 **배포 후 실측**(추측하지 않는다).
+## REV-20260902T110000-ai-claude-feature-0043-console-job-model-effort [AGENT-TEAM:inline-adversarial] — APPROVED
+
+### 렌즈 1 — security/인가
+
+- 신규 표면 `GET`·`PUT /api/profile/console-jobs` 는 **계정 파라미터가 없다** — 읽는 것도 쓰는
+  것도 세션 계정(`account["id"]`)뿐이라 남의 설정을 건드릴 경로가 구조적으로 없다. 신규 권한
+  코드 0(로그인만), 신규 테이블 0, 마이그레이션 0(additive 컬럼 1).
+- PUT 본문은 임의 JSON 이지만 `normalize_console_job_prefs` 가 **닫힌 키**(`JOB_SPECS`)와 길이
+  상한으로 접는다. 화면 렌더는 저장값까지 `escapeHtml` 을 지난다.
+- `_release_claim` 의 WHERE 를 `AccountId` **또는** `ClaimedBy` 로 넓혔다. 두 조건 모두 「이
+  계정이 손댈 자격이 있다」는 사실이므로 권한이 넓어지지 않는다 — 넓히지 않으면 배치 작업
+  (`AccountId=0`)은 자기가 방금 점유한 것조차 되돌리지 못해 lease 30분 잠긴다.
+- 거절 응답이 노출하는 `required_model` 은 **그 계정 자신의 설정값**이다(타 계정 정보 아님).
+
+### 렌즈 2 — 정합성/배선 (P1 1건 자체 적발)
+
+- **P1(자체 적발·수정)**: claim 이 능력을 `account_runner_capabilities`(= 계정의 최신 하트비트
+  러너 **한 대**)로 읽고 있었다. 같은 계정에 러너가 둘이면 「A 가 신고한 목록으로 판정해 B 에게
+  보내는」 조합이 만들어진다. 표시 축에서는 기존 코드도 이 위험을 주석으로 인정하고 고지로
+  갈음했지만, **이 cycle 이 그 판정에 거절을 붙였으므로** 같은 어긋남이 「멀쩡한 러너가 자기가
+  가진 모델 때문에 거절당하는」 장애로 승격된다. → `runner_capabilities_for_session` 신설:
+  claim 은 그 요청을 보낸 토큰의 세션으로 러너를 특정하고, 세션 비결합 토큰만 계정 축 폴백.
+- 거절 판정이 **세 곳**(적재 게이트·목록 필터·claim)에서 같은 정본을 쓴다. 갈리면 「목록에는
+  보이는데 집으면 거절」 또는 「화면은 맡겼다는데 아무도 안 집는」 상태가 되고, 그 두 형태가
+  이 feature 가 P0-T·P0-M 에서 이미 밟은 함정이다.
+- 워커 3경로(node_analysis·cluster_label·insight_summary)가 같은 판정을 쓴다. 질의는 `shared`
+  한 벌 — insight-worker 는 `oauth_store` 를 import 하지 못하는 별 컨테이너다.
+
+### 렌즈 3 — qa/회귀
+
+- **미설정 계정 무회귀**가 이 변경의 급소다. 거절은 «고른 것이 있는데 없을 때»만이고, 아무것도
+  고르지 않은 계정은 종전 경량 폴백 그대로 돈다 — 새 규칙이 기존 사용자의 분석을 통째로 막으면
+  그것은 해소가 아니라 새 장애다. 테스트 3건이 이 방향을 잠근다.
+- 신규 31건 · **역검증 28/29 FAIL@main**(통과 1건은 무회귀 검증용이라 통과가 정상).
+- 기존 계약 1건 갱신 — `test_claim_console_job_actually_ships_the_light_model` 이 리터럴
+  `pick_console_job_model` 호출을 요구해 **개선을 되돌리라고 말하는 게이트**였다. 계약의 뜻
+  (경량 폴백이 실린다)은 유지하고 잠그는 대상을 함수 이름 → 관계로 옮겼다.
+- route 골든 +2/-0 · ROUTEMAP 재생성 · codenav-lint OK · ruff clean · 9 feature 컨테이너 rc=0.
+
+### 뮤테이션 — 5/5 KILL
+
+| # | 주입 | 결과 |
+|---|---|---|
+| M1 | 거절 무력화(`blocked` 항상 False) | **KILL** |
+| M2 | `reasoning_level` 을 빈 값 고정으로 되돌림(제보 증상 재주입) | **KILL** |
+| M3 | 신규 컬럼 ALTER 를 fast path 에서 제거(라이브 미생성 함정 재주입) | **KILL** |
+| M4 | 워커 게이트에서 모델 요구 제거(웹만 거절 → 유령 작업) | **KILL** |
+| M5 | 미설정 계정까지 거절(무회귀 위반 방향) | **KILL** |
+
+- **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
+  **잔여**: 배포 후 라이브 실측 3건(TASK.md) — 특히 거절 사유가 **화면에 실제로 도달하는지**는
+  설정 실수로 분석이 멈추는 방향이라 눈으로 확인해야 한다.
+## REV-20260902T110000-ai-claude-feature-0043-click-beats-entry [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-02 · **범위**: `static/app/connect-modal.js`(+배포 사본) · 테스트 3건 추가.
+- **Trigger** (§18.8): UI 흐름 → ux · 회귀 → qa.
+- **성격**: 직전 cycle 의 **회귀 수정**. 적발 수단은 단위 테스트가 아니라 **배포 후 실 브라우저
+  왕복**이었다 — 그 사실 자체를 REPORT·test-run 에 남긴다(다음에 같은 부류를 설계할 때의 근거).
+- **검토**: ① 클릭이 자동 시도를 대체하되 클릭끼리는 여전히 중복 방어 ② 대체된 시도가 잠금을
+  풀거나 창을 열지 않음(일련번호) ③ 자동끼리의 중복은 종전대로 억제.
+- **뮤테이션**: 클릭 우선 규칙 제거 → **KILL 2건**.
+- **판정**: **APPROVED** — 잔여 BLOCKING/MAJOR 0.
+
+---
+
+## REV-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 왜 이 축을 골랐나
+
+**대안 3개를 놓고 골랐다.**
+
+1. **지문 일치(`agent_build == deployed`)를 게이트로** — 가장 엄격하지만 러너 파일을 고치는
+   **모든 배포**가 전 사용자의 선택기를 지운다. 목록이 멀쩡한(probe 로 얻은) 러너까지 함께
+   막히므로 거짓양성의 대가가 정상 사용자에게 간다(§16.7 G9-c 가 금지하는 형태). **기각.**
+2. **버전 하한(`RUNNER_MIN_AGENT_VERSION`) 상향** — `AGENT_VERSION` 이 날짜 단위라 같은 날
+   세 번 바뀐 러너를 못 가른다. 그것이 3차 재발의 원인이었다. 게다가 하한을 올리면 콘솔 작업
+   배급이라는 **무관한 축**까지 함께 끊긴다. **기각.**
+3. **기능 신고(`caps_self_report`)** — 「이 빌드가 그 계약을 지키는가」라는 정확히 그 질문에
+   답하고, 한 번 참이면 이후 배포에도 참이다. 낡은 러너는 이 이름을 모르므로 신고할 수 없어
+   자격의 부재가 **구조적으로** 보장된다. **채택.**
+
+**자격의 전제와 그 전제를 지키는 것**: 서버는 신고 내용의 출처를 검증할 수 없다 — 러너가
+「내 목록은 AI 가 답한 것뿐」이라 말한 것을 믿는다. 그래서 그 선언이 거짓이 되지 않도록
+`test_builtin_model_table_never_reaches_the_report` 로 잠갔다(§16.7 G11 — 게이트로 쓰는 검사
+자체의 진위). 폴백을 되살리면서 자격 이름을 남기면 게이트가 거짓을 통과시킨다.
+
+**감추는 것만으로는 부족하다**: 앞선 cycle 이 「모델·추론 강도가 안 보인다」로 되돌아온 적이
+있다. 그래서 사유를 화면까지 배선했다. `model_selector_reason` 은 08-28 부터 응답에 실려
+있었는데 **소비처가 0개**였다 — 「값이 있다」와 「사용자에게 도달한다」는 다른 사실이고,
+후자를 테스트로 잠갔다(§16.7 G9-d 소비 경로 완주와 같은 축).
+
+**정직 표기 — 이 수정이 하지 못하는 것**: 이미 도는 낡은 러너를 우리가 갱신하지는 못한다.
+바뀌는 것은 **화면이 거짓말을 멈추고 다음 행동을 말한다**는 것뿐이다. 그 사용자는 여전히
+러너를 다시 받아야 모델을 고를 수 있다. 이것이 이 문제의 실제 경계이고, 그 경계를 넘으려면
+서버가 사용자 머신의 프로세스를 말없이 교체해야 하는데 그것은 이 feature 가 지켜 온 경계
+(「러너를 띄운 사람의 설정을 낮추지 않는다」)를 넘는다.
+
+**부수 확인**: 라이브 러너가 12:13 에 재설치되어(빌드 `5aa59fe9904a`) 그 계정의 증상은
+사라졌고, `Id=83` 행에서 `gpt-5.1` 이 0건이 됐다 — 진단(「낡은 빌드가 원인」)의 대조군이다.
+증상 소멸이 **수정의 근거가 아니라 진단의 확인**이라는 점을 명시한다.
+
+- Verdict: 자체 검토 PASS. §18.8 dispatch — 아래 별도 entry 참조.
+
+---
+
+## REV-20260901T130500-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:security] — CONCERN
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint/contract · auth/token/session keyword matched (능력 신고 자격 게이트)
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-security.md
+- Critical issue: 지문 판정이 「신고 쪽 unknown」을 stale 로 단정 — `RunnerBuild` 컬럼 부재·쿼리 실패 배포에서 최신 러너 전원에게 거짓 갱신 지시
+- Human Approval Needed: no
+
+## REV-20260901T130501-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:backend] — BLOCK
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint/contract · schema/query keyword matched (저장 경로·관문·판정 술어)
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-backend.md
+- Critical issue: `set_runner_report` 의 `COALESCE` 가 능력만 낙오시키고 features 는 덮어써, 옛 `gpt-5.1` 목록이 새 러너의 자격 도장을 받아 서빙된다(결함이 쓰기 경로로 부활)
+- Human Approval Needed: no
+
+## REV-20260901T130502-ai-claude-feature-0043-caps-trust-gate [SUBAGENT:qa] — BLOCK
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 검증 주장·테스트 계약 (§16.7 G9-c·G10·G11) — 뮤턴트 실증 기반
+- Timestamp: 2026-09-01T13:05:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260901T130500-qa.md
+- Critical issue: 새 소스검사 단언 중 G11-b 가 실증된 것이 0건(16 FAILED 가 선행 단언에서 단락) + 생존 뮤턴트 6종 실증 + 브랜치가 main 대비 39 behind 라 머지 시 스위트 적색
+- Human Approval Needed: no
+
+---
+
+## REV-20260901T142000-ai-claude-feature-0043-caps-trust-gate [REJECTED:all-subagents]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: §18.8 수렴 계약 (a) 확인 라운드(security·backend·qa 3인)를 조치 후 착수했으나 **세 에이전트 모두 세션 사용량 한도로 조기 종료**(`You've hit your session limit · resets 5:30pm (Asia/Seoul)`). 대체 채널 `/codex review` 도 같은 시점 OpenAI 쿼터 소진(`try again at 3:44 PM`)이라 두 경로가 동시에 막혔다. 산출물 0건.
+- Rejected agents: security, backend, qa (전원 — accepted artifact 0)
+- Timestamp: 2026-09-01T14:20:00+09:00
+
+> ⚠ **이 entry 는 check #9 를 만족하지 않는다** (§18.9 — `[REJECTED:all-subagents]` 는 시도
+> 흔적이지 accepted review 가 아니다). 의도적이다: 라운드 1 이 **BLOCK 2건**을 냈고, 그
+> 조치가 새 결함을 만들지 않았는지는 **확인 라운드만이** 답할 수 있다. 수정한 라운드 자체는
+> 종결 근거가 아니라는 것이 §18.8 (a) 이고, 조치 규모(P1 7 · concern 8 · 설계축 신설 1 ·
+> main 39커밋 머지)를 생각하면 여기서 통과시키는 것이 정확히 그 계약이 막으려는 형태다.
+>
+> **잔여 위험 (명시)** — 확인 라운드가 우선 볼 지점:
+> - 다중 러너 fail-closed 가 **정상 사용자의 선택기를 지우는** 경우(만료 직전 유령 토큰 행,
+>   잠자던 노트북)가 있는가. 거짓양성의 대가는 정의상 정상 사용자가 치른다(§16.7 G9-c).
+> - 쓰기 시점 `"[]"` 가드가 `--cmd` 모드·8KiB 초과에서 **정상 목록을 30초마다 지우는가**.
+> - `oauth_store` 의 모듈 레벨 `shared` import 가 단독 import 경로(alembic·워커·스크립트)를
+>   깨는가.
+> - provenance allowlist 가 정당한 런타임(ollama 실조회·구 빌드가 남긴 캐시)을 떨어뜨리는가.
+> - `_func_source` 의 docstring 행 제거가 데코레이터·다중행 시그니처 함수에서 정확한가.
+
+---
+
+## REV-20260902T000000-ai-claude-feature-0043-caps-trust-gate-r3 — §18.8 (b) 재설계 판단 근거
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 확인 라운드 3인이 CONCERN/BLOCK/BLOCK · P1 비단조 (security 3→4, backend 4→4)
+- Timestamp: 2026-09-02T00:00:00+09:00
+- Verdict: SELF-REVIEW (조치 기록 — 확인 라운드 대체 아님)
+- Human Approval Needed: no
+
+**왜 또 한 번 패치하지 않았나.** §18.8 수렴 계약 (b) 는 「라운드에 걸친 P1 비단조 = 재설계
+신호」다. 이 cycle 은 정확히 그 모양이었고, 결정적인 것은 개수가 아니라 **출처**였다 —
+2라운드 P1 중 넷이 1라운드에서 **내가 넣은 수정이 만든 결함**이었다. 그중 하나는 내가 직접
+실증했다: ollama 폴백의 `source` 를 `"builtin"`→`"ollama"` 로 바꾸자 캐시 쓰기 가드
+(`!= "builtin"`)의 극성이 뒤집혀 그 목록이 영구히 굳었다.
+
+**위 REV-20260901T142000 이 「확인 라운드가 우선 볼 지점」으로 적은 5개 중 4개가 철회로
+소멸했다.** 다중 러너 fail-closed · 쓰기 시점 `"[]"` 가드 · 모듈 레벨 import · ollama
+provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코드를 되돌렸다**. 남은 하나
+(`_func_source` 의 docstring 행 제거)는 `ast.unparse` 로 바꾸려다 **무관한 단언 15건이
+깨져** 되돌렸고(포맷 정규화가 원인), 행 단위 제거 + 빈 결과 가드로 유지한다.
+
+**내가 스스로 적발한 것 (자기 검증)**
+1. 내 경험적 결론 ④(「구 러너의 캐시가 provenance 게이트를 통과한다」)를 **좋은 신호로
+   읽었다**. backend 적대리뷰가 그것이 「기본값이 곧 유일한 값 = fail-open」임을 보였다.
+   `sanitize_caps` 의 `"cache"` 기본값을 제거해 fail-closed 로 뒤집었다.
+2. 뮤턴트 봉인이 **불완전했다**. 「모든 바인딩 형태를 모으고 나머지는 상수」까지 봐도
+   `M4b-v1`(`AnnAssign`)·`v2`(`NamedExpr`)가 EXIT=0 으로 살아남는다 — **순서**를 안 보면
+   판정 뒤에 상수를 덧대는 변형이 통과한다. 호출이 자기 갈래의 마지막인지까지 보도록 격상.
+3. 증적 §3 의 뮤턴트 표 수치가 **산술적으로 불가능**했다(10케이스인데 합이 9). 재측정해
+   정정하고, 그 검사법(합계 확인)을 증적에 남겼다.
+
+**남은 위험 (확인 라운드가 볼 곳)**
+- provenance 는 자기신고다 — 로컬 파일을 고친 러너는 여전히 거짓을 말한다(수용, blast
+  radius = 그 사용자 드롭다운 하나).
+- `_sanitize_runtimes` 가 유일한 관문이므로 **저장 경로가 하나 더 생기면** 그 경로로
+  되살아난다. AST 단언이 투영 함수 전수를 보지만, 새 writer 는 그 단언 밖이다.
+- 캐시가 비면 러너 기동마다 실제 CLI 질의가 다시 일어난다(claude 23초 · codex 112초, 병렬).
+  출처를 모르는 캐시를 버리는 규칙이 **구 러너 사용자에게 한 번** 그 비용을 물린다.
+
+---
+
+## REV-20260902T113000-ai-claude-feature-0043-caps-trust-gate-r3 [CODEX:review]
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: §18.8 확인 라운드 — 사용자 결정으로 **codex 채널 대체**(Agent 패널 1회 허용은 소진)
+- Timestamp: 2026-09-02T11:30:00+09:00
+- Channel: `codex review` (codex-cli 0.146.0 · `gpt-5.6-sol` · `model_reasoning_effort=high`)
+- Scope: `git diff origin/main...HEAD -- '*.py' '*.js' '*.html'` (34 files, +2499/−312)
+- Verdict: **P1 1 · P2 2 — 전건 in-cycle 수정 + 뮤턴트 실증**
+- Human Approval Needed: no
+
+### 지적과 조치 (전건 내가 재현 확인 후 수정)
+
+| # | 지적 | 확인 | 조치 |
+|---|---|---|---|
+| **P1** | `set_runner_report` 가 `RunnerBuild` 를 무조건 쓴다 → 그 컬럼이 없는 배포에서 UPDATE 전체가 실패하고, 하트비트 핸들러가 예외를 삼키는 동안 `LastHeartbeatAt` 만 갱신돼 **옛 builtin 목록이 영구히 남는다** | **재현 확인** — `account_runner_build` 는 그 배포를 명시적으로 지원(`None`)하는데 쓰기 축만 지원하지 않는 **비대칭**이었다. 이 설계의 전제(「화석은 첫 하트비트에 지워진다」)가 정확히 그 모집단에서 깨진다 | 지문 컬럼 없이 **재시도**한다 — 능력·기능·버전 세 축은 반드시 새긴다 |
+| **P2** | 운영 명부(`list_live_runners`)가 하트비트 없는 토큰(등록형 MCP 등)까지 포함하는데 그 행의 빈 지문을 「구 러너」로 읽는다 | **재현 확인** — 판정 통합 전에는 복제된 식이 `""` 를 stale 이 아니라고 봤으므로, 이것은 **내 통합이 만든 오탐**이다 | 하트비트가 한 번도 없던 행은 `runner_build = None`(모름) |
+| **P2** | `_composerModelSelectorHidden()` 이 카탈로그 부재를 「보임」으로 읽어, 「모델 목록을 불러오지 못했습니다」 분기가 **도달 불가능한 죽은 코드** | **재현 확인** — 그 분기를 jsdom 하네스가 **직접 호출**해 통과시키고 있었다(진입점을 통과하지 않는 vacuous pass) | 카탈로그 부재 = 숨김. 하네스도 진입점(`_applyComposerSelectorVisibility`)을 통과하도록 재작성(10 → 11 케이스) |
+
+### 왜 이 라운드가 값을 했나
+
+셋 다 **재설계 이후에 남은** 결함이고, 셋 다 「모르는 것을 단정하지 마라」는 이 cycle 자신의
+규칙을 내가 다른 자리에서 어긴 것이다. 특히 세 번째는 내 검증 도구가 **없는 동작을 있다고
+말하고 있었다** — `helper-wiring-vs-helper-correctness` 의 정확한 재발이다.
+
+### 실증 (§16.7 G11-b, exit code)
+
+| 뮤턴트 | 결과 |
+|---|---|
+| 강등 재시도 제거 | **KILLED** |
+| `age_sec is not None` 조건 제거 | **KILLED** |
+| `if (!catalog) return true;` 제거 | **KILLED** (pytest · jsdom 양쪽) |
+| 정상 소스 | PASS |
+## REV-20260902T113000-ai-claude-feature-0043-runner-modularization [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-02
+- **범위**: `src/agent/` 18 모듈 신설(러너 분할) · `scripts/build_bridge_agent.py` 번들러 ·
+  `Dockerfile`(소스 COPY + 빌드 RUN) · `bin/deploy-web.sh`(`bridge_runner_verify`) ·
+  루트 `conftest.py`(산출물 배치) · `Makefile`(`bridge-agent`) · `.gitignore`(생성물 4) ·
+  `tests/test_bridge_agent_sync.py`(계약 8종 교체) · `tests/test_orphan_claim_reclaim.py`.
+- **Trigger** (§18.8): 키워드 매칭 0건 + code change → 본래 full panel. 본 세션은 사용자
+  지시로 subagent 호출이 차단되어(§3.1 우선순위 1) **inline adversarial + 뮤테이션 실측**
+  으로 대체. 렌즈는 아래 3종.
+
+### 렌즈 1 — 이 변경이 «사용자가 받는 것» 을 바꾸는가
+
+러너는 라이브 다운로드 산출물이라, 리팩터가 조용히 동작을 바꾸면 전 사용자의 러너가 깨진다.
+근거는 주장이 아니라 **diff 실측**으로 세웠다 — 번들 산출물 vs 종전 커밋본 = **4,267행 중 57행**,
+전부 셋뿐:
+
+| 부류 | 건수 | 성격 |
+|---|---:|---|
+| `_RUNNER_INSTANCE`/`_PREV_RUNNER_INSTANCE` → 접근자 호출 | 12 | 분할이 **강제**하는 변경(아래 렌즈 2) |
+| `state` 블록 위치 이동 | 1 블록 | 모듈 수준 문장이 아니므로 의미 무관 |
+| PEP8 빈 줄 | 2 | 무해 |
+
+러너 계약 테스트(AST 기반 40파일·1,191건)는 **배포 산출물을 대상으로** 그대로 유지된다 —
+검증 대상이 바뀌지 않았으므로 계약 회귀 0. 전체 스위트 6,956건 rc=0.
+
+### 렌즈 2 — 분할이 만든 «새» 실패 모드 (자체 적발)
+
+- **가변 전역**: `_RUNNER_INSTANCE` 는 `global` 로 재바인딩되고 `conf`·`logs` 가 읽는다.
+  그대로 쪼개면 `from .identity import _RUNNER_INSTANCE` 가 **import 시점 값(빈 문자열)에
+  묶여** 갱신을 못 본다 → 감사 원장 `run` 필드와 설정 `runner_instance` 가 통째로 비고,
+  87분 고아 점유 사고를 고친 회수 경로가 **조용히** 되돌아간다(증상은 30분 뒤). `state.py`
+  + 접근자로 봉인. 이것이 위 12곳 변경의 전부이자 이유다.
+- **모듈 순환**: `conf ↔ identity ↔ logs` 3건이 실재했고 전부 이 전역 하나에서 나왔다.
+  `state` 추출로 소멸(비순환 DAG 확인).
+- **번들 면역의 함정 (⚠ 자체 적발)**: 최초 뮤테이션 M2 는 「접근자를 import 바인딩으로
+  되돌리기」였는데 **SURVIVE** 했다. 원인은 게이트 부실이 아니라 **번들이 그 결손에 면역**
+  이기 때문이다 — 연접 시 `from .x import y` 줄이 지워져 flat 네임스페이스로 해소된다.
+  즉 「패키지 형태가 살아 있는가」를 보는 테스트가 **하나도 없었다**. 분할의 이득(모듈 단위
+  lint·테스트)이 조용히 죽을 수 있는 구멍이라, `test_package_form_imports_cleanly` 를
+  신설하고 M2 를 그 축으로 재설계했다.
+
+### 렌즈 3 — 게이트가 «실제로» 잡는가 (하네스 자체 검증 포함)
+
+⚠ **하네스 함정 2건을 먼저 걷어냈다.** 첫 실행은 8/8 SURVIVE 였는데 게이트가 무력해서가
+아니라 컨테이너에 `pytest` 가 없어 **아무것도 실행되지 않은** 것이었다(문자열 매칭이 그
+사실을 통과시켰다). 두 번째는 이 스위트에서 pytest 최종 집계 줄이 유실되어(러너 종료 훅)
+출력 매칭이 판별력을 갖지 못했다 — 판정을 **종료 코드**로 옮기고, 무결 상태 rc=0 과
+의도적 실패 테스트 rc=1 로 하네스 판별력을 먼저 실증한 뒤 본 실행을 했다.
+
+### 뮤테이션 — 8/8 KILL
+
+| # | 주입 결손 | 실제 위험 | 결과 |
+|---|---|---|---|
+| M1 | `_EMIT_ORDER` 에서 `caps` 누락 | 784행이 배포본에서 **조용히** 소실 | **KILL** (conftest fail-loud 가 세션 전체 차단) |
+| M2 | 패키지 내부 import 이름 파손 | 번들은 면역 · 패키지 형태 사망(분할 이득 소실) | **KILL** |
+| M3 | Dockerfile 빌드 RUN 제거 | 배포는 성공하고 **러너 다운로드만 404** | **KILL** |
+| M4 | `deploy-web.sh` 게이트 호출 제거(정의만 잔존) | 「정의는 검증이 아니다」 | **KILL** |
+| M5 | `base → lifecycle` 순환 주입 | 패키지 `ImportError` | **KILL** |
+| M6 | 번들 비결정성 주입 | 재빌드마다 지문 변동 → 「구버전으로 돌고 있다」 판정 무의미 | **KILL** |
+| M7 | `.gitignore` 에서 배포본 제거 | 이중 커밋(49/49) 원상 복구 | **KILL** |
+| M8 | claim 페이로드에서 러너 인스턴스 제거 | 87분 고아 점유 회수 사망 | **KILL** |
+
+### 잔여 위험 (숨기지 않음)
+
+1. **라이브 러너 실행 미검증** — 본 cycle 은 단위·구조 검증까지다. 배포 후 실제 다운로드
+   → 실행 → 하트비트 왕복은 POST-DEPLOY 항목으로 남긴다(`TEST.md` §5).
+2. **기존 러너의 지문 변경** — `_self_build()` 값이 바뀌므로 상주 중인 러너는 다음
+   하트비트에서 `runner_update` 안내를 받는다. 동작 변경이 아니라 정상 경로(재설치로 해소)
+   이나, 사용자에게는 「또 갱신하라는 안내」로 보인다.
+3. **`bridge_setup.sh`/`.ps1` 는 분할하지 않았다** — 사본 제거만 적용. 근거는 실측(9·8커밋
+   으로 분할 이득이 작다). 커밋 빈도가 오르면 재검토 대상.
+
+- **판정**: **APPROVED** — 자체 적발 1건(패키지 형태 검증 부재) 신설 테스트로 해소,
+  하네스 함정 2건 제거 후 재실측, 잔여 BLOCKING/MAJOR 0.
+## REV-20260902T120000-ai-claude-corp-feature-0043-relaunch-dead-end [AGENT-TEAM:inline-adversarial] — APPROVED
+
+### 뮤테이션이 잡아낸 것 (설계 결함 1건)
+
+**M6 「증거 해제를 제거한다」가 처음엔 SURVIVED 했다.** 시나리오가 «갱신 성공 → 러너 꺼짐»
+으로 끝나 `_isStaleNow` 가 거짓이 되면서, 해제가 없어도 실행 경로가 살아 있었다 — 즉 그
+테스트는 **해제를 검사하고 있지 않았다**. 해제가 실제로 필요한 상태는 따로 있다:
+
+- 재설치해서 파일은 바뀌었는데 **그 사이 서버가 또 배포돼 여전히 낡은** 경우
+- 한 번 최신에 도달했다가 다시 낡아진 경우
+
+둘 다 「이 컴퓨터는 갱신할 수 있다」가 증명된 뒤이므로 재실행이 의미를 갖는다. 시나리오를
+그 둘로 바꿔 쓰니 M6 이 **양쪽에서 KILLED**. 통과하던 테스트가 «항진명제» 였던 형태다.
+
+### 자체 검토에서 고친 것
+
+**토큰 남발** — 안내 경로는 1단계 명령을 세우려고 발급(`_make`)을 동반한다. 답답해서 연달아
+누르면 클릭 수만큼 토큰이 생긴다. in-flight 잠금(`_showingNoUpdate`)을 두고, 그 잠금을
+뮤테이션(M9)으로 잠갔다.
+
+### 검토했고 문제 없다고 판단한 것
+
+| 축 | 판단 |
+|---|---|
+| 대체된 시도가 증거를 세우는가 | 세우지 않는다 — `seq !== _launchSeq` 조기 반환이 증거 설정보다 **앞**이다 |
+| 지문 노출 | `bridge_agent.py` 는 공개 경로로 받을 수 있는 파일이다. 지문은 그 파일의 것이고 사용자 자신의 러너다 |
+| 자식 선택자 의존 | `.composer-box >` 계열 선택자·`composerBox` 참조 **0건** — 문단 이동이 다른 규칙을 건드리지 않는다 |
+| `role="menu"` 계약 | 조상 사슬 검사로 잠갔다 — 자리를 옮기며 깨기 가장 쉬운 것이 이 계약이다 |
+
+### 실증 (§16.7 G11-b, exit code)
+
+| 뮤턴트 | 결과 |
+|---|---|
+| M1 동일성 무시(낡으면 무조건 «그대로») | **KILLED** |
+| M2 `null` 둘을 같음으로 | **KILLED** |
+| M3 `""` 를 「모른다」와 뭉갬 | **KILLED** |
+| M4 말은 하되 명령 발급 안 함 | **KILLED** (실행·구조 양쪽) |
+| M5 증거가 있어도 클릭이 또 대기창을 태움 | **KILLED** |
+| M6 증거 해제 제거 | **KILLED** (시나리오 재작성 후 2건) |
+| M7 안내 문단을 다시 입력창 줄 안으로 | **KILLED** |
+| M8 지문을 `String(x \|\| "")` 로 눌러 담음 | **KILLED** (2건) |
+| M9 발급 in-flight 잠금 제거 | **KILLED** |
+| 정상 소스 | PASS (16/16) |
+## REV-20260902T120000-ai-claude-feature-0043-runner-modularization-postdeploy [SKIPPED:non-policy-doc] — 문서 전용
+
+- **일시**: 2026-09-02
+- **범위**: `docs/test-runs.d/` fragment 1건 신설 + `TASK.md`·`REPORT.md` 기록 갱신. **코드 변경 0**.
+- **Trigger** (§18.8): 비정책 doc-only → panel SKIP.
+- 실측 근거는 fragment 본문에 있다. 특기할 점 하나 — 게이트 대조군 최초 결과(SURVIVE)가
+  **하네스 결함에서 온 오보**였다. 이 cycle 계열에서 같은 부류가 세 번째다(pytest 미설치 ·
+  집계 줄 유실 · `die` 스텁). 판정을 내기 전에 **하네스가 실패를 실제로 잡는지 먼저 실증**하지
+  않으면, 「게이트가 무력하다」와 「하네스가 안 돌았다」가 같은 모양으로 나온다.
+
+
+## REV-20260902T123000-ai-claude-feature-0043-console-jobs-apifetch [AGENT-TEAM:inline-adversarial] — APPROVED
+
+### 렌즈 1 — 무엇이 이 결함을 숨겼나
+
+서버·소스 **어느 쪽도 틀리지 않았다.** API 는 200 + 정상 JSON, 프런트 코드는 문법·구조 모두
+정상, 단위 테스트 31건 전부 green, headless 로도 잡히지 않는다. 틀린 것은 **두 층의 계약
+접합**뿐이고, 그 어긋남은 예외 → catch → 안내 문구로 흡수되어 서버 로그에도 흔적이 없었다.
+직전 cycle 의 REVIEW 가 「거절 사유가 화면에 실제로 도달하는지는 눈으로 확인해야 한다」고
+남긴 잔여 항목이, 정확히 그 자리에서 다른 결함을 잡았다.
+
+### 렌즈 2 — 재발 방지의 층위 선택
+
+이 결함을 개별 자리에서 고치면 다음 소비 지점이 같은 함정을 밟는다. 그래서 잠그는 대상을
+**소비 계약**으로 올렸다 — 작업 화면 번들 전역에서 `apiFetch` 결과에 `.json()`·`.ok` 를
+쓰지 않는다. 스캐너는 두 번 자체 교정했다:
+
+- **주석 제외** — 「이렇게 쓰지 말라」고 적은 주석 문장 자체가 위반으로 잡혔다. 구조 단언은
+  코드만 봐야 한다는 이 저장소의 기존 규약(§구조단언은 주석 제외)의 재확인이다.
+- **`.status` 축 제거** — `/api/progress` 는 **응답 본문 필드**로 `status` 를 쓴다(진행 상태).
+  그것을 위반으로 잡으면 정당한 코드를 되돌리라고 요구하는 게이트가 된다. HTTP 상태 오인은
+  `.json()`·`.ok` 중 하나를 반드시 동반하므로 두 축으로 충분하다.
+
+### 렌즈 3 — 회귀
+
+- 역검증: 수정 전(`main`) profile.js 로 새 계약 2건 **모두 FAIL** 확인.
+- 전역 스캔 결과 기존 위반 **0건** — 이 규약은 저장소가 이미 지키고 있었고 새 코드만 어겼다.
+- feature-0043 + feature-0003 전량 rc=0 · ruff clean.
+
+- **판정**: **APPROVED**. 잔여: 배포 후 화면 재실측(항목 렌더·저장 왕복·사유 표시).
+
+## REV-20260902T130000-ai-claude-corp-feature-0043-relaunch-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용 변경(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
+직전 항 `REV-20260902T120000-…-relaunch-dead-end` 의 검토 결과가 그대로 유효하다.
+
+기록한 사실은 전부 **관측값**이다(배포 `293a20c8` 실 Windows 브라우저 · 서빙 파일 해시 대조).
+닫지 못한 축(라이브 낡은 러너 부재)은 추정으로 메우지 않고 그대로 남겼다.
+## REV-20260902T140000-ai-claude-corp-feature-0043-winargv-cmdline-limit [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
+
+> **왜 SKIPPED 인가**: 본 세션의 운영 지시가 사용자 명시 요청 없는 `Agent` 도구 호출을
+> 금지한다(§18.8 패널을 subagent 로 돌릴 수 없다). 조용히 건너뛰지 않고 **대체 검증**을
+> 뒀다 — 고친 자리마다 결손을 주입하는 적대 뮤테이션 **12종**(아래 렌즈 3). 그 방식이
+> 실제로 판별력을 보였다: 1차에서 **2종이 살아남았고 그 둘이 진짜 커버리지 구멍**이었다.
+> codex 독립 관점은 미수행이며 그 사실을 잔여로 남긴다.
+
+### 렌즈 1 — 진단이 추측이 아니라는 근거
+
+이 결함은 **코드를 읽어서 찾은 것이 아니라 사용자 머신의 원장에서 읽었다.** 세 출처를
+교차했다: 러너 로그·감사 원장(`bridge.log` / `bridge.events.jsonl`) · 서버 DB(`WebAiTasks` #130,
+`WebOAuthTokens` 계정 10) · 그 머신에서 직접 실행한 경계 측정.
+
+가장 중요한 한 걸음은 **경계를 그 머신에서 실제로 재 본 것**이다 — 32,600자 성공 /
+33,000자 `[WinError 206]`. 러너 원장의 예외와 문자열까지 같으므로 「지침 길이가 상한을 넘었다」는
+추론이 아니라 관측이 됐다. 지침 길이(34,962자)도 서버에서 `compose_system_prompt` 를 그 계정
+인자로 직접 불러 얻었다. 셋 중 하나라도 없으면 이 진단은 그럴듯한 가설에 머문다.
+
+### 렌즈 2 — 왜 이 결함이 그동안 안 잡혔나 (같은 부류의 재발 방지)
+
+`ARG_MAX` 2MB 인 POSIX 에서는 **같은 코드가 멀쩡히 돈다.** 즉 이 저장소의 모든 단위 테스트와
+컨테이너 `make test` 는 이 결함을 **구조적으로** 볼 수 없었다. 그래서 회귀 테스트를 `os.name`
+분기에 직접 물리지 않고 **예산 함수를 통해** 재도록 짰다 — 리눅스 CI 에서도 Windows 쪽 판정
+경로가 돈다. 여기에 「예산 함수 자체」를 `os.name='nt'` 로 한 번 재는 테스트를 따로 뒀다
+(그것이 없으면 «Windows 예산을 크게 잡는» 회귀가 통째로 통과한다 — 뮤테이션 M1 이 실증).
+
+### 렌즈 3 — 적대 뮤테이션 12종 전건 KILL
+
+방어를 **넣었다** 와 방어가 **성립한다** 는 다르다. 그래서 고친 자리마다 결손을 주입했다.
+1차에서 **2종이 살아남았고 그 둘이 실제 커버리지 구멍이었다**:
+
+| 뮤테이션 | 1차 | 조치 |
+|---|---|---|
+| M1 Windows 예산을 무제한으로 | **SURVIVED** | 다른 테스트가 예산을 patch 해서 실제 분기를 안 봤다 → 예산 함수 직접 측정 테스트 추가 |
+| M5 `overflow` 를 종전처럼 그대로 spawn | **SURVIVED** | 판정만 보고 **배선**(spawn 여부)을 안 봤다 → 행위 단정 추가 |
+| M2·M6 stdin 선언/자리표시자 훼손 | KILLED | — |
+| M3 `system_channel_fits` 항진 | KILLED | — |
+| M4·M7 stdin 파이프·`input=` 제거 | KILLED | — |
+| M8·M9 판정을 실행에 미전달 / `_fit_cmdline` 우회 | KILLED | — |
+| N1 협상을 다시 앞으로(종전 동작) | KILLED | — |
+| N2 배경 협상 제거 | KILLED | — |
+| N3 제자리 갱신 대신 재대입 | KILLED | — |
+
+M5 가 살아남은 형태가 이 저장소가 반복해 겪은 **「로직은 맞는데 배선이 없다」** 그 부류다.
+판정 함수를 단정하는 것으로는 그것을 못 잡는다 — 그래서 «자식을 띄웠는가» 를 잠갔다.
+
+### 렌즈 4 — 의도적으로 하지 않은 것
+
+- **두 번째 폴딩 구현을 만들지 않았다.** 초안은 `invoke` 안에서 지침을 본문에 접었는데, 그
+  문형은 `prompt.compose_prompt` 가 소유한다 — 그리고 그 문형은 *인젝션 오판을 피하려고
+  일부러 고른 것*(`TASK-20260901T140000`: 「지침을 시스템 프롬프트로 삼아」 문형이 오판
+  근거 1번이었다)이다. 두 벌이면 한쪽만 고쳐지는 날 경로에 따라 AI 가 지침을 다르게 읽는다.
+  그래서 폴딩 **판정**만 `handler` 로 올리고 문형은 기존 소유자에게 남겼다.
+- **`gemini` 에 stdin 을 선언하지 않았다.** 확인하지 않은 것을 선언하면 「감지는 성공하고
+  호출만 죽는」 상태가 된다 — 이 파일이 이미 두 번 겪은 형태다.
+- **그 머신의 `claude` 401 을 고치지 않았다.** 사용자 자격증명 영역이다. 대신 사유가
+  **보이게** 만들었다(종전에는 4분 기다린 끝에 사유 없는 「답을 받지 못했습니다」뿐이었다).
+
+### 렌즈 5 — 잃는 것을 숨기지 않는다
+
+지침을 본문으로 접으면 시스템 채널이 얻어 준 인젝션 오판 방지를 **잃는다**. 그럼에도 접는
+이유는 접지 않으면 그 계정이 답을 한 건도 받지 못하기 때문이고, 폴백은 **넘칠 때만** 발동한다.
+양방향(평범한 크기는 채널 유지 / POSIX 는 실측 크기에서도 채널 유지)을 테스트가 잠근다.
+
+### 렌즈 6 — 회귀
+
+- feature-0043 컨테이너 **1,283건 수집 · 신규 실패 0** — `main` 기준선과 FAILED 집합이 동일
+  (`test_roster_never_calls_a_token_that_never_ran_a_runner_stale` 1건은 `app.get_conn`
+  AttributeError 로 **양쪽 동일** 하게 실패하는 환경성 항목).
+- 호스트 전량 실행의 나머지 실패 10건도 기준선과 동일(0041·0043 동시 실행 시 `sys.modules`
+  오염 — REPORT §9 「환경성(무관)」에 이미 기록된 항목).
+- ruff: 신규 지적 0 (기존 `F821 CancelRegistry` 1건은 `main` 에도 동일).
+- 테스트 더블 2곳의 시그니처를 새 인자에 맞췄다 — **production 시그니처를 약화시키지 않았다**
+  (더블 arity 미검증이 seed 를 조용히 무력화한 선례가 이 저장소에 있다).
+- 소스-문자열 단정 1건(`--cmd` 분기를 `else:` 까지 잘라 문자열 검사)은 분기 모양이 바뀌자
+  `ValueError` 로 깨졌다. **삭제·skip 하지 않고 행위 단정으로 재작성**했다(하트비트가 빈 목록을
+  받고 능력 질의가 일어나지 않는가) — 삭제하면 그 자리의 방어가 영구히 vacuous 가 된다.
+
+- **판정**: **APPROVED**. 잔여: 사용자 머신 러너 재기동 1회 후 라이브 왕복(사용자 조작 필요) ·
+  그 머신 `claude` 재로그인(사용자 영역).
+## REV-20260902T130000-ai-claude-feature-0043-console-jobs-evidence [SKIPPED:evidence-only] — 라이브 실측 기록
+
+코드 변경 없음. `CHG-20260902T123000` 배포 후 재실측 증적만 기록한다(항목 6종 렌더 · 저장 왕복 ·
+사유 표시 PASS). 미재현 축(러너 연결 상태의 선택지 렌더)은 증적 문서에 정직 표기했다.
+## REV-20260902T160000-ai-claude-feature-0043-ai-jobs-perm-gate [SUBAGENT:security-review] — PASS
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: `UI/화면 + 권한/auth keyword matched → security` (§18.8 dispatch)
+- Timestamp: 2026-09-02T14:20:00+09:00
+- Source: Claude Code 내장 `/security-review` 프로토콜을 **main session 이 직접 수행**
+  (§18.8 「위임 세션 내 built-in review 직접 호출」). 본 세션은 subagent 호출이 금지된
+  운영 조건이라 패널 fan-out 대신 같은 체크리스트를 인라인으로 밟았다 — 그 사실을 여기
+  적는다(수행 형태를 실제와 다르게 적지 않는다).
+- 병행 채널: `codex exec` 독립 적대 리뷰 **2 라운드**(§18.8.1 대안 경로 · §18.8 패널 수렴
+  계약). 1R = P1 0 · P2 2 · P3 1 → **전건 조치** · 2R = 확인 라운드(아래 §적대 리뷰 원장).
+- Verdict: **PASS** — 보안 축 HIGH/MEDIUM 0건 · codex P1(GATE) 0건.
+- Human Approval Needed: no
+
+### 적대 리뷰 원장 (codex, 2 라운드)
+
+**1R — P1 0 · P2 2 · P3 1. 전건 조치했다.**
+
+| # | 지적 | 판정 | 조치 |
+|---|---|---|---|
+| P2-a | 빈/부분 PUT 가 기존 «보이는» 설정을 삭제. 깨진 JSON 도 200 + 삭제 | **부분 유효** | 「빈 `jobs` = 비우기」는 [모두 기본값] 후 저장이 보내는 **정당한 입력**이라 유지한다. 그러나 codex 가 정확히 짚은 부분 — **파싱 실패·`jobs` 키 부재가 그것과 같은 모양**이 되어 사고가 200 을 받고 조용히 지우던 경로 — 는 실재했다. 본문/`jobs` 가 dict 가 아니면 **400** 으로 거절하도록 갈랐다 |
+| P2-b | 권한 판정 예외가 500 으로 전파돼 탭 전체가 죽는다 | **유효** | `_safe_has_permission` 이 **코드 단위**로 가둔다(예외→False). 전면 실패해도 「요구 없는 종류만」으로 축소되고 화면은 산다 — 이 엔드포인트가 이미 선언한 「조회 실패는 화면을 막지 않는다」 원칙과 같은 자리 |
+| P3 | PUT 회귀가 **소스 문자열 단정**에만 의존해, 실제로 값이 지워져도 통과한다 | **유효** | 병합을 순수 함수 `merge_visible_console_job_prefs` 로 떼고 **실 dict 행위 테스트 12건** 추가(교체·보존·비우기·표기 변형·비-dict·판정기 예외). 소스 단정은 **배선 확인**으로 역할을 좁혔다 — 둘이 함께여야 「함수는 맞는데 그 자리에 없다」를 막는다 |
+
+**정직 표기**: 1R 은 최초 실행에서 15분 가까이 출력이 버퍼에 잠겨 「산출 0」으로 보였다. 그
+상태로 종결했다면 위 3건을 놓쳤을 것이다 — codex 채널의 판정은 **프로세스 종료 후** 읽는다.
+
+**2R — 확인 라운드. 실제 데이터 손실 후보 2건을 더 잡았다.** (§18.8 패널 수렴 계약 (a) 가
+확인 라운드를 필수로 둔 이유가 그대로 실증됐다 — 1R 수정만으로 종결했다면 아래 둘이 남았다.)
+
+| # | 지적 | 판정 | 조치 |
+|---|---|---|---|
+| 2R-a | **저장 baseline 이 조회 실패를 «미설정» 으로 오인**. `account_console_job_prefs` 는 조회 실패를 `{}` 로 돌려주는데(읽기 경로에서는 옳다 — 컬럼 없는 배포가 화면을 막지 않게), 그것을 **쓰기 baseline** 으로 쓰면 병합이 「보존할 것이 없다」고 판단해 숨겨진 항목을 지운 문서를 쓰고 **200 을 돌려준다**. 잃은 값이 화면에 없던 것이라 사용자는 알아채지 못한다 | **유효** | `read_console_job_prefs_strict` 신설 — 실패를 예외로 올려 저장 자체를 포기한다. **모르는 상태 위에 쓰지 않는다.** 정상 경로 동치는 테스트가 대조 |
+| 2R-b | **첫 로딩 «중» 에도 [저장] 이 «전부 지우기»**. 행이 그려지기 전에는 `_collectAiJobs` 가 `{}` 를 만들고 서버는 그것을 정당한 비우기로 처리한다(그 의미는 [모두 기본값] 에 필요하다) | **유효** | 첫 성공 렌더 전까지 [저장]·[모두 기본값] 비활성(`_aiJobsState.loaded` 게이트 + 배선 시점 초기 비활성). 「비우려는 것」과 「아직 못 받은 것」을 프런트가 가른다 |
+
+| 2R-c | **재진입 중 비동기 새로고침** (codex 가 「별도 취약점으로 보인다」고 지목했으나 15분 상한(rc=124)에 걸려 **확정하지 못한 항목** — 우리가 현재 코드로 직접 확정했다) | **유효** | `switchProfileTab` 이 탭 진입마다 · `saveAiJobs` 가 저장 뒤 다시 `loadAiJobs` 를 부르므로 요청이 겹치고 응답 순서는 보장되지 않는다. 늦게 온 **옛 응답**이 상태를 덮으면 화면이 방금 저장한 값을 잃은 것처럼 되돌아가고, 그 상태에서 다시 저장하면 **stale 값이 서버에 굳는다**. 요청 세대 토큰(`_aiJobsReqSeq`)으로 마지막 요청의 응답만 반영 — 성공·실패 **양쪽** 경로에 적용 |
+
+> **미확정 지적을 어떻게 다뤘나**: codex 는 타임아웃으로 2R-c 를 「보인다」까지만 남겼다. 그
+> 상태의 지적을 근거 없이 기각하지도, 그대로 인용하지도 않았다 — **현재 코드에서 경로를 직접
+> 따라가 재현 조건을 확정**한 뒤 조치하고, 확정 주체가 우리임을 여기 적는다.
+>
+> 함께 남긴 「테스트의 정적 단정」은 **의도된 역할 분리**로 유지한다: 병합·읽기·권한 판정의
+> **행위**는 순수 함수 테스트가 실 dict 로 검사하고, 소스 단정은 「그 규칙이 라우터에 실제로
+> 꽂혀 있는가」(배선)만 본다. 웹 라우터는 이 conftest 에서 import 할 수 없다는 기존 제약
+> (`test_console_job_model_prefs.py` 서두에 명시)이 그 분리의 이유다.
+
+> **1R 조치가 2R 지적을 만든 관계**: 2R-a 는 1R 에서 baseline 읽기를 **새로 도입**하면서 생긴
+> 표면이다. 이것이 「수정한 라운드 자체는 종결 근거가 아니다」의 정확한 실례다.
+
+**수렴**: 2R 지적 3건을 수정한 뒤 신규 테스트 **40건 PASS**(2R 조치분 5건 포함) · ruff clean ·
+회귀 FAILED 집합 `main` 동일. 2R 조치는 **읽기·프런트 게이트** 두 지점의 국소 변경이라
+새 표면을 만들지 않는다(1R→2R 처럼 새 읽기 경로를 도입하지 않았다).
+
+### 보안 축 판정 (근거)
+
+| 축 | 판정 | 근거 |
+|---|---|---|
+| 권한 우회·상승 | 없음 | 변경은 응답에서 항목을 **빼고** PUT 이 쓸 수 있는 키를 **좁힌다**. 허용 집합은 하드코딩 레지스트리(`JOB_SPECS`)에서만 나오므로 사용자 입력이 그 집합에 들어갈 수 없다 |
+| 주입(SQL·명령·템플릿) | 신규 sink 0 | `merged` 는 기존 `set_account_console_job_prefs` 로만 흐르고 그 경로는 `UPDATE … SET ConsoleJobPrefs=%s WHERE Id=%s` 파라미터 바인딩 |
+| 키 혼동(mass assignment) | 차단됨 | 필터가 **정규화 뒤**에 온다 — `" node_analysis "` 같은 표기 변형은 `normalize_console_job_prefs` 의 닫힌 집합 검사에서 먼저 떨어진다. 순서가 반대였으면 우회 가능했다 |
+| 정보 노출 | 감소 | 응답 필드가 늘지 않고 줄었다. PUT 응답도 가시 범위로 필터해 숨긴 종류의 이름·값이 되돌아가지 않는다. 오류 문구는 사용자 입력 미보간 정적 문자열 |
+| XSS | 신규 sink 0 | 빈 상태 렌더는 `createElement` + `textContent`(정적 리터럴). 기존 `row.innerHTML` 경로는 무변경이며 `escapeHtml` 유지 |
+| 클라이언트 게이트 의존 | 없음 | 버튼 비활성은 UX 이고 집행은 서버다. 프런트가 게이트가 아니다 |
+| API 토큰 인증 경로 | 안전측 | `_account_permissions` 의 토큰 scope allowlist + `.any`/관리 네임스페이스 denylist 가 그대로 적용돼 목록이 **더 좁아진다** |
+| 선언 누락 시 기본값 | 보안 무영향 | `perms` 누락 → 노출(display-permissive). 집행은 각 엔드포인트가 계속 하므로 authz 구멍이 아니라 표시 회귀일 뿐 |
+
+### 렌즈 1 — 게이트가 «집행의 거울» 인가 (§16.7 G6)
+
+`Trigger: UI/화면 + auth/권한 keyword matched → ux·design·security` (§18.8). 변경이
+표시 축 한정(신규 권한 코드 0 · 집행 경로 무변경)이고 단일 화면·2 엔드포인트라
+`/review`(built-in) 자체 검토 + 아래 렌즈로 갈음한다.
+
+### 렌즈 1 — 게이트가 «집행의 거울» 인가 (§16.7 G6)
+
+선언한 권한 코드가 실제 집행 지점에서 읽는 코드와 같은지 호출 경로를 따라가 확인했다:
+`_METADATA_SUGGEST_PERM`(서브뷰 5종) · `require_permission('metadata.table.update')` ·
+`require_permission('metadata.graph.analyze')`. `prompt_generate` 는 세 진입점 중
+**개인 프롬프트 자동작성이 로그인만 요구**하므로 `()` 가 맞다 — 관리 권한을 적었으면 정작
+모든 사용자가 쓰는 진입점을 가진 계정의 항목이 사라졌을 것이다. 배경 배치 2종은
+`_batch_consenting_account` 가 **동의한 러너**에서 계정을 고르므로 RBAC 축 자체가 없다.
+
+### 렌즈 1-b — 레거시 묶음 함의 (가장 그럴듯한 fail-closed 경로)
+
+이 저장소의 권한은 **묶음이 원자 단위를 transitive 로 함의**한다
+(`kb.ingest.manual` → `metadata.*.manage` → 각 `read/create/update/delete`). 그래서 「묶음만
+보유한 계정에게 항목이 사라지는가」가 이 변경의 가장 그럴듯한 회귀였다.
+
+전개가 **어디서** 일어나는지 확인했다: `_apply_permission_overrides` 안, 즉 `_account_permissions`
+가 읽는 **effective map** 안이다 — `require_permission` 안이 아니다. 따라서 우리 필터는 집행과
+**같은 사실**을 본다. 라이브 검증도 했다:
+
+```
+kb.ingest.manual 단독 → metadata.table.update = True
+visible = (metadata_suggest, metadata_bulk, prompt_generate, insight_summary, cluster_label)
+```
+
+`node_analysis` 가 함께 새지 않는 것도 확인했다(graph-perm-split 2026-07-13 이 그래프 권한을
+묶음 함의에서 뺐다). 두 사실 모두 `test_legacy_bundle_permission_still_reveals_metadata_jobs`
+가 잠근다. 선언에 묶음 코드를 쓰지 않는 규약도 별 테스트로 고정했다 — 묶음을 적으면 이번엔
+반대로 **원자 단위만 받은 계정**이 항목을 잃는다.
+
+### 렌즈 2 — 조용한 소실 (fail-closed 회귀)
+
+이 변경의 고유 위험은 fail-open 이 아니라 **fail-closed** 다. 권한 코드에 오타가 나면
+`_account_has_permission` 이 언제나 False 로 답해 그 항목이 **관리자를 포함한 전 계정에서**
+사라지는데, 화면에서 사라진 것은 오류로 보이지 않아 신고가 늦다. 그래서
+`test_declared_perms_exist_in_permission_catalog` 가 `web_context.PERMISSION_DEFINITIONS`
+를 AST 로 읽어 대조한다. 추출기 자체가 파손되면 빈 집합으로 vacuous PASS 가 나므로
+`assert codes` 로 추출기도 함께 잠갔다.
+
+또한 `console_job_perms` 의 **선언 누락 기본값은 «노출»** 이다 — 감추는 쪽을 기본으로 두면
+새 종류를 추가하며 선언을 빠뜨렸을 때 그 항목이 조용히 사라진다. 집행은 서버가 계속 하므로
+노출 기본값이 위험을 만들지 않는다. 누락 자체는 `test_every_job_declares_perms` 가 잡는다.
+
+### 렌즈 3 — 표시-집행 정합 양방향 (§16.6 (3))
+
+- **fail-open(1차)**: 권한 없는 계정이 숨겨진 종류를 PUT 본문에 실어도 저장되지 않는다
+  (`if k in visible`). 표시만 감추고 저장을 열어 두면 게이트가 장식이 된다.
+- **fail-closed(2차)**: 권한 있는 계정에 기대 개수(6행)가 그대로 렌더되는가 — 라이브 실측.
+
+### 렌즈 4 — 데이터 손실
+
+`PUT` 의 「통째 교체」를 전체 집합에 적용하면 권한이 빠진 계정의 저장 한 번이 비가시 항목의
+기존 선택을 지운다. 정규화 **뒤** 필터해 병합하도록 배선했고(원본 키를 먼저 거르면 표기 차이로
+숨긴 항목을 덮어쓸 수 있다), 그 순서를 `test_put_endpoint_scopes_replacement_to_visible` 이
+인덱스 비교로 잠갔다.
+
+### 렌즈 5 — 프런트 판정 금지
+
+권한 분기를 `can()` 으로 하지 않았다. `can()` 은 인자를 무시하고 로그인만 확인하는
+display-permissive 헬퍼라 **분기 판정에 쓰면 한쪽 갈래가 영구히 죽는다**(2026-08-13 멤버
+'나가기' 경로 소실). 프런트는 서버가 판정한 결과(=목록)를 그대로 그리고,
+`test_frontend_does_not_gate_ai_jobs_with_can` 이 그 규약을 잠근다.
+
+### 렌즈 5-b — 적용면 전수감사 (§16.7 G8)
+
+`JOB_SPECS` 를 **사용자에게 열거하는** 표면이 이 엔드포인트뿐인지 전수 확인했다
+(`grep -rn JOB_SPECS` — 코드 9개소):
+
+| 소비처 | 성격 | 조치 |
+|---|---|---|
+| `routers/profile.py` GET·PUT | **사용자 대면 열거** | 본 cycle 이 필터 |
+| `_console_llm.delegable_job_kinds` → `admin/llm-state.js` | 관리 콘솔 버튼의 «이 기능을 위임할 수 있는가» 플래그. `origin==web ∧ wired` 만 | 대상 아님 — 이미 `console.access` + 각 조작의 RBAC 뒤에 있고, 목록이 아니라 개별 버튼의 가부다 |
+| `node_analysis.py` · `_console_jobs.py` · `oauth_store.py` · `_bootstrap_schema.py` | `wired` 판정 · 정규화 · 스키마 주석 | 사용자 열거 아님 |
+
+→ 미적용 경로 0. ADR 예외 기록 불요.
+
+### 렌즈 6 — 회귀
+
+- 신규 **42건 PASS**(구조 25 + 병합 행위 12 + 묶음 함의 2 + 읽기 엄격성 3). **역검증**: 변경 전 코드(main)에 같은 스위트를 걸어 **16/17 FAIL** 확인
+  (통과한 1건은 `can()` 미사용 가드로, 양쪽 모두 성립하는 것이 정상).
+- 컨테이너 회귀(0002·0003·0043) — `main` 기준선과 FAILED 집합 동일(아래 §POST 기록).
+- **판정**: **APPROVED**.
+## REV-20260902T150000-ai-claude-corp-feature-0043-winargv-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용 변경(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
+직전 항 `REV-20260902T140000-…-winargv-cmdline-limit` 의 검토 결과가 그대로 유효하다.
+
+기록한 사실은 전부 **관측값**이다. 특히 이 기록의 load-bearing 부분은 「심볼이 있다」가 아니라
+**「엣지에서 내려받은 바이트가 라이브 실측 크기에서 실제로 그렇게 동작한다」**이며, 그중
+④(자식이 읽은 38,456자)는 단위 단정으로는 대체되지 않는 축이다 — 인자에서 뺀 본문이 자식에
+도달하지 못하면 질문이 조용히 사라져 원 결함보다 나쁜 상태가 된다.
+
+닫지 못한 축(사용자 머신 재기동·`claude` 재로그인)은 추정으로 메우지 않고 그대로 남겼다.
+## REV-20260902T160000-ai-claude-corp-feature-0043-child-io-encoding [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
+
+> **왜 SKIPPED 인가**: 본 세션의 운영 지시가 사용자 명시 요청 없는 `Agent` 도구 호출을 금지한다.
+> 대체로 적대 뮤테이션 **6종**(렌즈 3)과 **실 Windows 대조 검증**을 뒀다.
+
+### 렌즈 1 — 내가 만든 결함이다 (귀책 명시)
+
+이 결함은 `TASK-20260902T140000`(내 직전 cycle)이 프롬프트를 argv 에서 stdin 으로 옮기면서
+**처음 열린 경로**다. argv 경로는 `CreateProcessW`(UTF-16)라 로케일이 개입하지 않는데, stdin
+경로는 `text=True` 의 로케일 인코딩(cp949)을 탄다. 직전 cycle 은 「그 계정의 모든 질문이 죽는」
+결함을 고쳤지만 **같은 사용자에게 답변이 오지 않는 상태를 유지**시켰다 — 결과 기준으로 그
+cycle 은 사용자 문제를 해결하지 못했고, 이 항은 그 사실을 감추지 않는다.
+
+교훈은 **stdin 전환의 검증 환경**에 있었다. 직전 cycle 은 stdin 왕복을 POSIX(UTF-8 로케일)에서
+실증했고 그것으로 충분하다고 판단했다. 그런데 고치던 결함 자체가 **Windows 전용**이었으므로,
+그 수정의 검증도 Windows 에서 해야 했다 — 「결함이 사는 환경에서 수정도 검증한다」.
+`test_cmdline_length_limit.py` 가 `os.name` 대신 예산 함수를 patch 한 것도 같은 구멍이었다
+(그 설계는 판정 로직에는 옳았지만 **인코딩 축을 전혀 건드리지 않았다**).
+
+### 렌즈 2 — `exit` 필드의 부재가 유일한 단서였다
+
+`ai.fail` 에 `exit` 이 없다는 것 하나로 「자식 실패」와 「입출력 실패」를 갈랐다. 그 축이
+없었다면(`_render_fields` 가 `None` 을 생략하지 않았거나 `exit` 을 안 실었다면) 이 진단은
+불가능했다. 그래서 이번 수정은 **그 단서를 우연에 맡기지 않게** 만든다 — 파이프 예외는
+`ai.io_fail` 로 사유와 함께 보고되고, `returncode is None` 은 전용 분기를 갖는다.
+다음 사고에서는 부재를 추리하지 않아도 된다.
+
+### 렌즈 3 — 적대 뮤테이션 6종 전건 KILL
+
+| 뮤테이션 | 결과 |
+|---|---|
+| E1 인코딩 명시 제거(로케일 회귀) | KILLED |
+| E2 `errors=strict` 회귀 | KILLED |
+| E3 파이프 예외 재삼킴 | KILLED |
+| E4 예외 보고 분기 제거 | KILLED |
+| E5 `returncode None` 을 성공으로 | KILLED |
+| E6 caps 호출만 로케일로 되돌림 | KILLED |
+
+E6 를 넣은 이유: 규약을 만들어도 **한 호출만 빠지면** 그 경로에서 결함이 되살아나고, 하필 그
+경로가 조사에 쓰이는 경로(능력 협상·`--help`)다. 전수 적용을 소스 스캔으로도 잠갔다
+(`text=True` 직접 사용 0건 · `CHILD_TEXT_IO` ≥ 5회).
+
+### 렌즈 4 — 실 Windows 대조 검증 (이번 cycle 의 정본 증거)
+
+빌드된 러너를 **사용자 머신에서 그 로케일로** 직접 돌렸다:
+
+```
+locale.getencoding() = cp949
+CHILD_TEXT_IO = {'text': True, 'encoding': 'utf-8', 'errors': 'replace'}
+payload 40,000자 (U+27E6 포함)
+_run_cli_cancelable ok=True → LEN:40000 MARK:yes 한글응답⟦끝⟧   ← PASS
+대조군(text=True 로케일): UnicodeEncodeError                    ← 수정 전이 죽던 지점
+```
+
+대조군이 load-bearing 이다 — 그것 없이는 「PASS 가 수정 덕분」임을 말할 수 없다.
+
+### 렌즈 5 — 잃는 것
+
+`errors="replace"` 는 깨진 바이트를 대체 기호로 남긴다(무손실 아님). 대안 `strict` 는 그
+바이트 하나로 답변 전체를 잃는다 — 사용자에게 더 나쁜 쪽을 피했고, 테스트가 그 계약을 잠근다.
+읽기 인코딩을 UTF-8 로 고정하는 것은 「자식이 cp949 로 출력하는 경우」를 포기하는 선택이나,
+`claude`·`codex` 모두 UTF-8 이고 그 반대 사례는 관측된 바 없다.
+
+### 렌즈 6 — 회귀
+
+- 컨테이너 feature-0043 **신규 실패 0** (`main` FAILED 집합과 동일 — 1건은 환경성 기존 항목).
+- 신규 8건 전건 green · ruff 신규 지적 0.
+
+- **판정**: **APPROVED**. 잔여: 그 머신 `claude` 인증(사용자 영역) — 이제 도달 후 실패가
+  「로그인돼 있지 않습니다」로 안내된다.
+## REV-20260902T140000-ai-claude-corp-feature-0043-runner-self-update [AGENT-TEAM:inline-adversarial] — APPROVED
+
+### 뮤테이션이 잡아낸 헛통과 2건
+
+12종 중 **2종이 처음에 SURVIVED** 했고, 둘 다 테스트가 «다른 이유로» 통과하고 있었다.
+
+- **M2 (평문 http 허용)**: `fetch_deployed_agent("http://…")` 를 부르고 `None` 을 확인했는데,
+  가드를 지워도 **DNS 가 실패해** `None` 이 나왔다. 가드를 검사한 적이 없었다.
+  → 「성공했을 응답」을 물려 놓고 **호출 자체가 없었음**을 단정하도록 재작성 + https 대조군.
+- **M11 (서버 조회 실패 fail-open)**: except 블록을 «빈 줄까지» 로 잘랐더니 그 뒤의
+  `if not row: return False` 가 딸려 들어와 `return True` 로 바꿔도 통과했다.
+  → 들여쓰기가 풀리는 지점까지만 블록으로 본다.
+
+두 결함의 공통 형태: **단언이 참이 되는 경로가 하나가 아니었다.** 그 경우 뮤테이션이 없으면
+영원히 모른다.
+
+### 보안 축 — 이 파일은 다음 순간 실행된다
+
+| 축 | 판단 |
+|---|---|
+| 받을 곳 | **모듈 상수**. 하트비트의 `download_url` 을 따르면 응답을 바꿀 수 있는 누구든 실행할 파일을 지목한다 |
+| 전송 | https 강제 + **기동 때 정한 CA**(`Api.ca`). 새 앵커를 만들지 않는다 |
+| 내용 | 크기 하한 + `ast.parse`(실행 없이 문법만) — 로그인 페이지·잘린 응답을 걸러낸다 |
+| 쓰기 | 같은 디렉토리 임시 파일 → `os.replace`. 권한은 원본 승계 |
+| 범위 | **단일 파일로 돌 때만**. 지문 일치로 판정하므로 개발 트리는 구조적으로 배제 |
+
+### 자체 검토에서 고친 것
+
+- **번들 평탄화 함정**: `from . import selfupdate` 는 번들러가 벗겨 내 `NameError` 가 된다
+  (테스트 5건이 그 형태로 죽었다). 이름 직접 import 로 바꾸고, 평탄한 4,800줄 네임스페이스에서
+  충돌하지 않도록 `install`·`digest`·`reexec` 를 도메인 접두로 개명했다.
+- **닫힌 집합 계약 2건이 제 역할을 했다**: 러너 stdlib allowlist(`ast`·`tempfile` 누락)와
+  기본 신고 집합 감사. 둘 다 「새 항목을 의식적으로 등재하라」는 게이트라 그대로 확장했다.
+
+### 실증 (§16.7 G11-b, exit code)
+
+M1~M12 **12/12 KILLED** · 정상 소스 PASS(30/30). 3 feature 전량 실행 결과가 main 기준선과
+**정확히 동일**(잔여 2건은 main 에도 있는 순서 의존 기존 실패).
+## REV-20260902T173000-ai-claude-feature-0043-ai-jobs-perm-postdeploy [SKIPPED:evidence-only] — 라이브 실측 기록
+
+코드 변경 없음(문서·증적만). `CHG-20260902T173000` 배포 후 재실측 — 전 항목 PASS.
+§18.8 dispatch 대상 아님(비정책 doc-only). 판정 근거는 위 증적 문서.
+
+## REV-20260902T150000-ai-claude-corp-feature-0043-selfupdate-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
+직전 항 `REV-20260902T140000-…-runner-self-update` 의 검토 결과가 그대로 유효하다.
+
+기록은 전부 관측값이다. 닫지 못한 축(부트스트랩 1회 전이의 사용자 눈 확인)과 불리한 관측
+(배포 창 `no upstreams` 16건)을 **함께** 남겼다 — 유리한 것만 적으면 그 기록은 다음 조사에서
+쓸모가 없다.
+
+## REV-20260902T170000-ai-claude-corp-feature-0043-child-io-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용 변경(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
+직전 항 `REV-20260902T160000-…-child-io-encoding` 의 검토 결과가 그대로 유효하다.
+
+이 기록의 load-bearing 부분은 **대조군**이다. 「배포본이 통과했다」만으로는 그 통과가 수정
+덕분인지 환경 변화 덕분인지 가릴 수 없으므로, 같은 머신·같은 로케일·같은 payload 에서
+수정 전 경로가 죽는 것을 함께 관측했다.
+
+완료 고도(altitude)도 정직하게 적었다 — 이 cycle 이 보장하는 것은 「파이프라인이 AI 에
+도달하고 실패 사유가 표시된다」까지이며, 「정상 답변이 온다」는 사용자 머신의 `claude` 인증에
+달려 있다. 그 구분을 흐리면 사용자는 재로그인 전에 완료를 기대하게 된다.

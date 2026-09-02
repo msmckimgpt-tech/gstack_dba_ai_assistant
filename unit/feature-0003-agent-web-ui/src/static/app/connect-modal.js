@@ -74,7 +74,7 @@ let _announced = false;             //: 이번에 열린 동안 이미 알렸는
 //: 창의 세대. 열 때마다 오른다 — 창보다 오래 사는 비동기 루프(`[내 AI 실행]` 대기)가 자기가
 //: 시작한 창이 아직 그 창인지 확인하는 유일한 수단이다.
 let _modalEpoch = 0;
-//: 마지막으로 **화면에 반영된** 관측 `{listening, stale}`. 판정의 기준은 «창을 열 때 고정한
+//: 마지막으로 **화면에 반영된** 관측 `{listening, stale, build}`. 판정의 기준은 «창을 열 때 고정한
 //: 값» 이 아니라 **직전 관측**이다 — 고정하면 한 번 «정상» 으로 잡힌 창은 그 뒤 실제로 끊겼다가
 //: 다시 이어져도 영영 닫히지 않는다(사용자 제보 2026-09-01: 러너를 갱신했는데 창이 남는다).
 //: 창을 열 때 이 값을 그대로 기준으로 쓰므로 첫 조회가 실패해도 그 뒤의 진짜 변화를 놓치지
@@ -208,6 +208,92 @@ function _announceConnected(msgOverride) {
  */
 function _connOk(o) {
   return !!(o && o.listening === true && o.stale !== true);
+}
+
+/** 서버 응답의 낡음을 **사용자 축**으로 접는다 (2026-09-02, 사용자 결정).
+ *
+ *  `runner_stale` 은 «파일이 배포본과 다른가» 이고 그 판정은 엄격하게 유지한다. 그런데 러너
+ *  파일은 거의 모든 배포에서 바뀌므로 그 값은 **러너와 무관한 배포**에도 하루 몇 번씩 참이
+ *  된다. 스스로 갱신할 줄 아는 러너에게 그것은 곧 풀리는 일시적 상태이지 사용자가 할 일이
+ *  아니다 — 그런 낡음을 화면에 내보내면 누를 것이 없는 「업데이트 필요」가 반복해서 뜬다.
+ *
+ *  ⚠ 접는 식은 **이 함수 하나**여야 한다. 칩 문구·모달 성공 조건·자동 실행 자격·「재실행해도
+ *  그대로」 판정이 모두 이 축을 읽으므로, 두 벌이 되면 그중 하나만 고쳐지는 순간 화면이
+ *  자기 안에서 갈린다(이 파일이 `runner_stale` 축에서 이미 한 번 겪은 형태다).
+ */
+function _actionableStaleOf(body) {
+  return !!(body && body.runner_stale === true && body.runner_self_updating !== true);
+}
+
+/** 지금 «연결은 됐는데 러너가 낡은» 상태인가 — 화면의 「업데이트 필요」와 같은 축. */
+function _isStaleNow(o) {
+  return !!(o && o.listening === true && o.stale === true);
+}
+
+// ── 「업데이트 필요」가 **재실행으로는 풀리지 않는** 경우 (사용자 제보 2026-09-02) ─────────
+//
+// 실행 스킴은 그 컴퓨터의 런처(`launch.sh` / `launch.ps1`)를 부르고, 런처가 러너 파일을
+// 띄운다. 런처가 기동 직전 최신본을 받아 교체하게 된 것은 **2026-09-02 10:44** 배포부터다 —
+// 그 이전에 설치한 사람의 런처는 **디스크에 있는 파일을 그대로** 다시 띄운다.
+//
+// 그 조합에서 지금 화면은 막다른 길이 된다: 「업데이트 필요」를 누르면 자동 실행이 나가고,
+// 같은 낡은 러너가 그대로 다시 떠서, 30초를 기다린 끝에 여전히 「업데이트 필요」다. 몇 번을
+// 눌러도 결과가 같은데 화면은 매번 같은 것을 권한다.
+//
+// 런처의 나이를 서버가 알 방법은 없다(런처는 그 사람 컴퓨터의 파일이고 아무것도 신고하지
+// 않는다). 그래서 **나이를 묻지 않고 결과를 본다** — 재기동 전후의 러너 지문이 같으면,
+// 그 사실 하나로 «이 컴퓨터에서는 재실행이 파일을 바꾸지 못한다» 가 증명된다. 런처 버전을
+// 추측하는 것보다 강한 근거이고, 앞으로 어떤 이유로 갱신이 막히든(권한·오프라인·차단) 같은
+// 결론에 도달한다.
+//
+//: 그 증거를 잡았는가. 잡은 뒤로는 재실행을 권하지 않고 **다시 설치하는 1단계 명령**으로 보낸다.
+let _relaunchNoUpdate = false;
+
+const MSG_RELAUNCH_NO_UPDATE =
+  "다시 실행했지만 러너 파일이 그대로입니다 — 이 컴퓨터의 실행 스크립트가 예전 것이라 "
+  + "스스로 갱신하지 못합니다. 아래 1단계 명령을 한 번만 다시 실행해 주세요. "
+  + "그다음부터는 실행할 때마다 자동으로 갱신됩니다.";
+
+/** 재기동을 했는데 **같은 파일이 다시 떴는가**.
+ *
+ *  `before` 는 실행을 쏘기 직전의 지문. 판정에는 세 가지가 모두 필요하다 —
+ *  지금도 낡았고(`stale`), 양쪽 지문을 **둘 다 알며**, 그 둘이 같다.
+ *
+ *  ⚠ `null`/`undefined`(=「모른다」)는 같음으로 치지 않는다. 조회가 실패해 둘 다 모르는 것을
+ *  «같다» 로 읽으면, 잠깐 네트워크가 흔들린 사용자에게 「재설치하세요」를 말하게 된다.
+ *  `""`(러너가 지문을 신고하지 않음)는 **아는 값**이다 — 지문 신고 이전 빌드라는 뜻이고,
+ *  그것이 전후로 같다면 역시 같은 파일이다.
+ */
+function _relaunchChangedNothing(before, now) {
+  if (!_isStaleNow(now)) return false;
+  if (typeof before !== "string" || typeof now.build !== "string") return false;
+  return before === now.build;
+}
+
+/** 「재실행으로는 안 된다」를 말하고 **되돌아갈 곳까지 준비해** 보여 준다.
+ *
+ *  ⚠ 창만 여는 것으로는 부족하다. 1단계 명령에는 토큰이 실려 있어 **[연결 준비] 를 눌러야**
+ *  비로소 화면에 생긴다 — "아래 1단계 명령을 실행하세요" 라고 말하면서 그 자리가 비어 있으면,
+ *  막다른 길을 한 칸 뒤로 옮겼을 뿐이다. 그래서 여기서 발급까지 대신 눌러 준다.
+ */
+//: 그 안내가 지금 준비 중인가. 이 경로는 토큰을 **발급**하므로, 답답해서 여러 번 누르는
+//: 것만으로 계정에 토큰이 쌓인다.
+let _showingNoUpdate = false;
+
+async function _showRelaunchNoUpdate() {
+  if (_showingNoUpdate) return;
+  _showingNoUpdate = true;
+  openConnectModal();
+  const epochAtStart = _modalEpoch;
+  try {
+    try { await _make(); } catch (_) { /* 발급 실패해도 사유는 말한다 */ }
+    // 기다리는 사이에 사용자가 창을 닫았거나 다시 열었으면 남의 창에 쓰지 않는다.
+    if (!_modalOpen || epochAtStart !== _modalEpoch) return;
+    _status(MSG_RELAUNCH_NO_UPDATE, "error");
+    _revealCommand();
+  } finally {
+    _showingNoUpdate = false;
+  }
 }
 
 /** 이번 조회를 모달 판정에 반영한다 (`_paintConn` 에서 호출).
@@ -356,6 +442,181 @@ function _raceTimeout(p, ms) {
  *  즉 iframe 은 얻는 것 없이 판정 경로만 흐린다. 최상위 이동은 클릭 핸들러 안에서
  *  **동기적으로** 해야 사용자 활성화가 유지된다 — 그래서 await 보다 먼저 실행한다.
  */
+// ── 자동 실행 (사용자 요청 2026-09-02) ────────────────────────────────────────
+//
+// 「이미 한 번 연결한 사람에게는 [내 AI 실행] 을 자동으로」. 판정 근거는 **서버가 이미 아는
+// 사실**이다 — `last_os` 는 러너가 *실제로 연결됐을 때만* 기록되므로 그 존재가 곧 연결 이력이다
+// (브라우저 로컬 저장에 두지 않는 이유: 다른 브라우저·기기에서 로그인하면 이력이 사라지고,
+// 그러면 「한 번 연결한 사용자」 라는 조건이 브라우저마다 다른 뜻이 된다).
+//
+// ## 사용자 활성화를 잃지 않기 위해 **미리 받아 둔다**
+//
+// 실행은 `location.href = <스킴 URL>` 이고, 그 URL 에는 토큰이 실린다. 토큰 발급은 네트워크
+// 왕복이라 «클릭 → await 발급 → 이동» 순서로 짜면 이동 시점에 **사용자 활성화가 이미 끊겨**
+// 크롬이 조용히 거른다(`_launchRunner` 의 첫 줄 주석과 같은 이유). 그래서 자격이 확인되는
+// 순간(상태 조회 응답) 미리 발급받아 두고, 클릭은 **동기적으로** 이동만 한다.
+//
+//: 서버가 아는 연결 이력. `last_os` 가 채워져 있으면 참.
+let _everConnected = false;
+//: 프리페치해 둔 실행 URL (`{protocol}`). 클릭이 동기적으로 쓸 수 있어야 한다.
+let _prefetched = null;
+//: 진행 중인 프리페치 — 겹쳐 부르면 토큰만 여러 개 발급된다.
+let _prefetching = null;
+//: 이번 문서에서 «로그인 진입» 자동 실행을 이미 시도했는가. 페이지당 1회로 묶는다.
+let _autoEntryTried = false;
+//: 실행 대기 루프가 도는 중인가 — 겹치면 서로의 판정을 흐린다.
+let _launchBusy = false;
+//: 그 진행 중인 시도가 **무엇이었나**(`entry` = 로그인 진입 자동 · `click` = 사용자가 누름).
+let _launchBusyReason = "";
+//: 시도 일련번호. 나중 시도가 앞선 시도를 **대체**했는지 판정한다 — 대체된 쪽이 `finally` 에서
+//: 잠금을 풀거나 창을 열면, 그것은 이미 남의 시도에 대고 하는 행동이다.
+let _launchSeq = 0;
+
+/** 실행 URL 을 미리 받아 둔다. 실패는 조용히 `null` — 자동 실행은 «더하기» 이므로 실패가
+ *  기존 경로를 막지 않는다.
+ *
+ *  ⚠ 토큰을 발급하므로 **자격이 확인된 뒤에만** 부른다(연결 이력 있음 + 지금 쓸 수 없음).
+ *  조건 없이 부르면 화면을 열 때마다 토큰이 하나씩 늘어난다.
+ */
+function _prefetchLaunch() {
+  if (_prefetched) return Promise.resolve(_prefetched);
+  if (_prefetching) return _prefetching;
+  _prefetching = (async () => {
+    try {
+      const r = await fetch("/api/ai/connect/token",
+                            { method: "POST", credentials: "same-origin" });
+      if (!r || !r.ok) return null;
+      const b = await r.json();
+      const p = b && b.launch && typeof b.launch === "object" ? String(b.launch.protocol || "") : "";
+      _adoptLastOs(b && b.last_os);
+      _prefetched = p ? { protocol: p } : null;
+      return _prefetched;
+    } catch (_) {
+      return null;
+    } finally {
+      _prefetching = null;
+    }
+  })();
+  return _prefetching;
+}
+
+/** 지금 이 사용자에게 자동 실행이 **의미 있는가**.
+ *
+ *  - 연결 이력이 없으면 아니다 — 실행할 것이 그 컴퓨터에 아직 없다(설치부터 해야 한다).
+ *  - 이미 «쓸 수 있는» 상태면 아니다 — 멀쩡히 도는 러너를 굳이 갈아치우지 않는다.
+ *  - `runner_stale` 은 **대상이다**: 「업데이트 필요」를 누르는 것만으로 풀리게 하려는 것이
+ *    이 요청의 절반이다.
+ */
+function _autoLaunchEligible() {
+  if (!_everConnected) return false;
+  return !_connOk(_lastObs);
+}
+
+/** 자동/원클릭 실행. `opts.fallbackModal` 이면 실패했을 때 연결 창을 연다.
+ *
+ *  반환값은 «실행을 실제로 쏘았는가» — 호출측(칩·게이트 버튼)이 «그럼 창을 열어야 하나» 를
+ *  판정한다. 실행조차 못 쏘았으면 종전 경로(창 열기)로 그대로 떨어져야 한다.
+ */
+async function autoLaunch(reason, opts) {
+  const fallbackModal = !!(opts && opts.fallbackModal);
+  // ⚠ 진행 중이어도 **사용자의 클릭은 이긴다** (라이브 실측 2026-09-02).
+  //
+  //   진입 자동 시도는 최대 ~30초 동안 «쓸 수 있게 됐는가» 를 지켜본다. 그 창 안에 사용자가
+  //   칩을 누르면 종전 코드는 `_launchBusy` 로 **조용히 삼켰다** — 실행도 안 되고 창도 안 열려,
+  //   사용자에게는 «눌렀는데 아무 일도 일어나지 않음» 이 된다. 그건 이 변경 이전(무조건 창
+  //   열기)보다 **나쁘다**. 자동 시도는 사용자를 돕는 장치이지 사용자를 막는 장치가 아니다.
+  //
+  //   자동끼리·클릭끼리의 중복은 그대로 막는다(러너를 두 번 재기동할 이유가 없다).
+  if (_launchBusy && !(reason === "click" && _launchBusyReason !== "click")) return true;
+  const ready = _prefetched || (fallbackModal ? await _prefetchLaunch() : null);
+  if (!ready || !ready.protocol) {
+    if (fallbackModal) openConnectModal();
+    return false;
+  }
+  // ⚠ 프리페치가 있으면 이 줄까지 **await 가 하나도 없다** — 클릭의 사용자 활성화가 살아 있다.
+  try {
+    window.location.href = ready.protocol;
+  } catch (_) {
+    if (fallbackModal) openConnectModal();
+    return false;
+  }
+  // 한 번 쓴 URL 은 버린다. 다음 시도는 새 토큰으로 — 같은 토큰을 재사용하면 그 사이 로그아웃·
+  // 만료된 값으로 조용히 실패한다.
+  _prefetched = null;
+  const wasStale = _isStaleNow(_lastObs);
+  //: 실행을 쏘기 **직전**의 러너 지문. 돌아왔을 때 같은 값이면 재실행이 파일을 바꾸지 못했다.
+  const beforeBuild = _lastObs ? _lastObs.build : undefined;
+  const attempt = ++_launchAttempt;
+  const epoch = _modalEpoch;
+  _lastObserved = null;
+  //: 이 시도의 일련번호. 뒤에 온 시도가 나를 대체했으면 나는 아무것도 되돌리지 않는다.
+  const seq = ++_launchSeq;
+  _launchBusy = true;
+  _launchBusyReason = reason;
+  try {
+    const ok = await _awaitUsable(attempt, epoch);
+    // 나를 대체한 시도가 이미 돌고 있다 — 그 시도의 결과가 사용자가 볼 답이다.
+    if (seq !== _launchSeq) return true;
+    if (ok === true) {
+      // ⚠ `_announced` 는 **모달이 열릴 때만** 초기화된다. 이 경로는 창 없이도 도므로, 여기서
+      //   풀지 않으면 «자동 실행으로 한 번 알린 뒤로는 다시는 알리지 않는» 상태가 된다 —
+      //   러너가 꺼졌다 다시 붙는 것은 한 세션에서도 여러 번 일어난다.
+      //   푼 직후 동기적으로 다시 잠그므로 겹친 관측이 토스트를 두 번 띄우지는 않는다.
+      _announced = false;
+      _announceConnected(wasStale ? MSG_UPDATED : MSG_CONNECTED);
+      return true;
+    }
+    // 실패했다 — **왜** 실패했는지에 따라 다음에 할 말이 다르다.
+    //
+    // 갱신하려고 눌렀는데 같은 파일이 다시 떴으면, 그건 «응답이 없다» 가 아니라 «이 경로로는
+    // 영영 안 된다» 다. 그 사실을 기억해 두고(다음 클릭은 30초를 다시 버리지 않는다) 되돌아갈
+    // 곳을 지목한다.
+    if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) _relaunchNoUpdate = true;
+    // 로그인 진입에서는 창을 열지 않는다 — 로그인하자마자 창이 튀어나오는 것은 방해다.
+    // 증거는 위에서 이미 남았으므로, 사용자가 다음에 누르는 순간 곧바로 명령으로 간다.
+    if (fallbackModal) {
+      if (_relaunchNoUpdate) _showRelaunchNoUpdate();
+      else {
+        openConnectModal();
+        _status("자동 실행에 응답이 없었습니다 — 아래 명령으로 직접 실행하거나 [연결 준비] 를 "
+                + "다시 눌러 주세요.", "error");
+      }
+    }
+    return true;
+  } finally {
+    // ⚠ **내가 아직 최신 시도일 때만** 잠금을 푼다. 대체된 시도가 풀면 그 순간 새 시도의
+    //   중복 방어가 사라지고, 그 뒤 도착하는 클릭이 러너를 한 번 더 재기동한다.
+    if (seq === _launchSeq) {
+      _launchBusy = false;
+      _launchBusyReason = "";
+      // 다음 시도를 위해 미리 받아 둔다(자격이 아직 남아 있을 때만).
+      if (_autoLaunchEligible()) { try { _prefetchLaunch(); } catch (_) { /* 무시 */ } }
+    }
+  }
+}
+
+/** 「지금 쓸 수 있는 상태」가 될 때까지 지켜본다. 실행을 쏜 쪽이 결과를 판정하는 단일 지점.
+ *
+ *  `true` = 쓸 수 있게 됐다 · `false` = 창 안에서 응답 없음 · `null` = 서버 응답 자체를 못 받음
+ *  (셋을 뭉치면 서비스 장애가 「설치가 잘못됐다」 는 안내로 둔갑한다).
+ */
+async function _awaitUsable(attempt, epoch) {
+  const deadline = Date.now() + _LAUNCH_DEADLINE_MS;
+  let observed = 0;
+  for (const ms of _LAUNCH_WAIT_MS) {
+    if (Date.now() >= deadline) break;
+    if (epoch !== _modalEpoch) return true;   // 남의 창 이야기 — 조용히 물러난다
+    await _sleep(ms);
+    if (epoch !== _modalEpoch) return true;
+    let body = null;
+    try { body = await _raceTimeout(refreshConnState(), _STATUS_FETCH_TIMEOUT_MS); }
+    catch (_) { body = null; }
+    if (body) observed += 1;
+    if (_isListeningNow(body, attempt)) return true;
+  }
+  return observed === 0 ? null : false;
+}
+
 async function _launchRunner() {
   if (!_launch || !_launch.protocol) return;
   // ⚠ 이 줄이 첫 await 앞에 있어야 한다. 뒤로 밀리면 사용자 활성화가 끊겨 크롬이 조용히 거른다.
@@ -377,60 +638,45 @@ async function _launchRunner() {
   const epoch = _modalEpoch;
   //: 이 실행이 **무엇을 풀려는 것인가** — 대기 중인데 러너만 낡았으면 «갱신», 아니면 «연결».
   //: 성공한 뒤에 보면 이미 풀려 있어 구분할 수 없으므로 여기서 잡아 둔다.
-  const wasStale = !!(_lastObs && _lastObs.listening === true && _lastObs.stale === true);
+  const wasStale = _isStaleNow(_lastObs);
+  //: 자동 실행과 **같은 대조**를 한다 — 눌러서 실행한 사람이 같은 막다른 길에서 다른 안내를
+  //: 받으면, 두 경로가 같은 상황을 다르게 설명하는 것이다.
+  const beforeBuild = _lastObs ? _lastObs.build : undefined;
   _lastObserved = null;
-  // 벽시계 상한 — 요청별 상한만으로는 최악(대기 30초 + 8×8초)이 90초를 넘고, Abort API 가
-  // 없는 환경에서는 아예 안 끝난다(codex 2R P1-3·P2). 루프 자체에 마감을 둔다.
-  const deadline = Date.now() + _LAUNCH_DEADLINE_MS;
   try {
-    let observed = 0;   //: 실제로 답을 받아 본 횟수 (조회 실패와 «아직 아님» 을 가른다)
-    for (const ms of _LAUNCH_WAIT_MS) {
-      if (Date.now() >= deadline) break;
-      // ⚠ 이 루프는 창보다 오래 산다. 그 사이 창이 닫혔거나 **다시 열렸으면** 이 대기는 남의
-      //   창에 대고 말하는 것이 된다 — 조용히 물러난다 (codex 1R P1-1).
-      if (epoch !== _modalEpoch) return;
-      await _sleep(ms);
-      if (epoch !== _modalEpoch) return;
-      let body = null;
-      // 조회 자체에도 상한을 씌운다 — `fetch` 가 어떤 이유로든 안 끝나면 여기서 끊는다.
-      try { body = await _raceTimeout(refreshConnState(), _STATUS_FETCH_TIMEOUT_MS); }
-      catch (_) { body = null; }
-      if (body) observed += 1;
-      // ⚠ 이 회차의 응답이 **낡아서 버려졌을 수 있다**(겹친 폴링과 세대 경쟁 — codex P1).
-      //   그때 `null` 을 «대기 안 함» 으로 읽으면, 다른 요청이 이미 «대기 중» 을 반영했는데도
-      //   마지막 회차가 실패 문구를 씌운다. 그래서 직전에 **관측된** 값도 함께 본다.
-      if (_isListeningNow(body, attempt)) {
-        // 창이 그 사이 바뀌었으면 이 성공은 **지금 열려 있는 창의 것이 아니다** — 남의 창을
-        // 닫으며 그 창의 명령을 지운다.
-        if (epoch !== _modalEpoch) return;
-        // ⚠ **여기서 닫는다.** 사용자가 직접 누른 실행의 결과이기 때문이다.
-        //
-        //   한때 이 자리에서 닫기를 포기했었다 — 「다른 컴퓨터의 러너가 이미 대기 중이면 남의
-        //   러너 때문에 거짓 성공으로 닫혀 방금 받은 명령을 잃는다」는 우려였다. 그 우려는
-        //   이론적으로 옳지만, 그 대가로 **훨씬 흔한 경로가 망가졌다**: 창을 열 때 이미 «대기
-        //   중» 으로 알려져 있으면 자동 관측 경로는 «전이 아님» 으로 판정하므로, 사용자가 실행을
-        //   눌러 성공을 확인해도 아무도 닫지 않는다. 사용자에게 남는 것은 「이제 질문을 보낼 수
-        //   있습니다」라는 성공 문구와 **그대로 있는 창**이다 (제보 2026-09-01).
-        //
-        //   말과 행동이 어긋나는 쪽이 더 나쁘다. 명령을 잃는 것은 「연결 준비」를 다시 눌러
-        //   복구되고, 애초에 대기 중이면 그 명령은 필요 없다. 반면 «됐다고 말하면서 아무것도
-        //   하지 않는» 것은 복구할 경로가 없다.
-        //
-        //   전이 판정(`_noteConnForModal`)은 **자동 관측 경로에만** 남는다 — 그것은
-        //   «열자마자 닫히는 창» 을 막기 위한 것이지 사용자의 명시적 클릭을 막으려는 것이 아니다.
-        _announceConnected(wasStale ? MSG_UPDATED : MSG_CONNECTED);
-        return;
-      }
+    // 대기·판정은 **자동 실행과 같은 함수**를 쓴다 (2026-09-02). 두 벌로 두면 한쪽만 고쳐지고,
+    // 그 순간 「눌러서 실행」과 「자동 실행」이 같은 상황에 다른 답을 하게 된다.
+    const ok = await _awaitUsable(attempt, epoch);
+    if (epoch !== _modalEpoch) return;   // 남의 창 이야기 — 조용히 물러난다
+    if (ok === true) {
+      // ⚠ **여기서 닫는다.** 사용자가 직접 누른 실행의 결과이기 때문이다.
+      //
+      //   한때 이 자리에서 닫기를 포기했었다 — 「다른 컴퓨터의 러너가 이미 대기 중이면 남의
+      //   러너 때문에 거짓 성공으로 닫혀 방금 받은 명령을 잃는다」는 우려였다. 그 우려는
+      //   이론적으로 옳지만, 그 대가로 **훨씬 흔한 경로가 망가졌다**: 창을 열 때 이미 «대기
+      //   중» 으로 알려져 있으면 자동 관측 경로는 «전이 아님» 으로 판정하므로, 사용자가 실행을
+      //   눌러 성공을 확인해도 아무도 닫지 않는다 (제보 2026-09-01).
+      _announceConnected(wasStale ? MSG_UPDATED : MSG_CONNECTED);
+      return;
     }
-    if (observed === 0) {
-      // 8회 내내 서버 응답을 못 받았다. 이때 "핸들러가 없을 수 있습니다" 라고 말하면 사용자는
+    if (ok === null) {
+      // 내내 서버 응답을 못 받았다. 이때 "핸들러가 없을 수 있습니다" 라고 말하면 사용자는
       // 멀쩡한 설치를 다시 하게 된다 — 원인은 이쪽(서비스 조회)에 있다.
       _status("연결 상태를 확인하지 못했습니다(서비스 응답 없음). 잠시 후 다시 시도하거나 "
               + "관리자에게 알려 주세요.", "error");
       return;
     }
-    // 여기까지 왔으면 «요청은 갔지만 아무도 응답하지 않았다». 원인은 여럿이지만(핸들러 미등록·
-    // 확인 대화상자를 닫음·러너 기동 실패) 사용자가 할 일은 하나다 — 터미널 명령.
+    // 갱신하려고 눌렀는데 **같은 파일이 다시 떴다** — 핸들러도 러너도 멀쩡하다. 이 경로로는
+    // 풀리지 않는다는 사실 자체가 답이므로, 원인을 다르게 짚는다(아래 일반 안내는 핸들러
+    // 미등록을 의심하게 만들어, 멀쩡한 설치를 다시 하게 한다).
+    if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) {
+      _relaunchNoUpdate = true;
+      _status(MSG_RELAUNCH_NO_UPDATE, "error");
+      _revealCommand();
+      return;
+    }
+    // «요청은 갔지만 아무도 응답하지 않았다». 원인은 여럿이지만(핸들러 미등록·확인 대화상자를
+    // 닫음·러너 기동 실패) 사용자가 할 일은 하나다 — 터미널 명령.
     _status("아직 응답이 없습니다. 이 컴퓨터에 실행 핸들러가 없거나 브라우저 확인 창을 "
             + "닫았을 수 있습니다 — 강조된 1단계 명령을 터미널에 붙여넣어 실행하세요.", "error");
     _revealCommand();
@@ -448,7 +694,8 @@ async function _launchRunner() {
 function _isListeningNow(body, attempt) {
   // 자동 경로와 **같은 축**으로 본다 — 대기 중이어도 러너가 배포본과 다르면 사용자가 풀려던
   // 문제(«업데이트 필요»)는 그대로다. 두 경로가 다른 축을 쓰면 실행 버튼만 «됐다» 고 말한다.
-  if (body && body.logged_in !== false && body.listening === true && body.runner_stale !== true) {
+  if (body && body.logged_in !== false && body.listening === true
+      && !_actionableStaleOf(body)) {
     return true;
   }
   // 낡아서 버려진 응답(null)이어도, **이번 시도 안에서** 다른 요청이 «쓸 수 있음» 을 반영했으면
@@ -623,7 +870,7 @@ function _paintGate(body) {
   }
 }
 
-function _paintConn(connected, listening, epoch, runnerStale) {
+function _paintConn(connected, listening, epoch, runnerStale, runnerBuild) {
   // 배지 요소가 없어도 «연결됨» 판정은 살아 있어야 한다 — 모달의 성공 감지가 배지의 존재에
   // 얹혀 있으면, 배지를 감추는 화면에서 연결이 조용히 알려지지 않는다.
   // ⚠ 창이 바뀐 뒤 도착한 응답은 **기록조차 하지 않는다** (codex 2026-09-01 P1). 판정만
@@ -631,8 +878,19 @@ function _paintConn(connected, listening, epoch, runnerStale) {
   //   만들어낸다 — 새로 연 창이 명령을 받자마자 닫히고, 그 명령은 다시 볼 수 없다.
   if (epoch === undefined || epoch === _modalEpoch) {
     const _prevObs = _lastObs;
-    _lastObs = { listening: !!listening, stale: !!runnerStale };
+    // 지문은 **온 그대로** 싣는다(`null`/`undefined` 를 `""` 로 눌러 담지 않는다) — 「모른다」와
+    // 「러너가 신고하지 않았다」는 동일성 판정에서 다르게 취급돼야 한다.
+    _lastObs = { listening: !!listening, stale: !!runnerStale, build: runnerBuild };
     _noteConnForModal(_prevObs, _lastObs, epoch);
+    // 러너가 실제로 바뀌었거나 갱신이 끝났으면 그 증거는 낡았다 — 다음 클릭은 다시 실행부터.
+    // (재설치를 마친 사용자가 이 세션에서 영영 「재설치하세요」만 보게 되지 않도록.)
+    if (_relaunchNoUpdate
+        && (_connOk(_lastObs)
+            || (_prevObs && typeof _prevObs.build === "string"
+                && typeof _lastObs.build === "string"
+                && _prevObs.build !== _lastObs.build))) {
+      _relaunchNoUpdate = false;
+    }
   }
   const el = $("aiConnState");
   if (!el) return;
@@ -742,7 +1000,8 @@ export async function refreshConnState() {
     // 반영되는 응답만, 그리고 **출발했을 때와 같은 시도**의 것만 관측으로 남긴다.
     if (atStart === _launchAttempt) {
       _lastObserved = { attempt: atStart,
-                        ok: !!(b && b.logged_in !== false && b.listening && !b.runner_stale) };
+                        ok: !!(b && b.logged_in !== false && b.listening
+                              && !_actionableStaleOf(b)) };
     }
     if (!b || b.logged_in === false) {
       const el = $("aiConnState");
@@ -752,11 +1011,27 @@ export async function refreshConnState() {
       _paintGate({ compose_blocked: false });
       return b || null;
     }
-    _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale);
+    // ⚠ 낡음을 **여기서 한 번** 사용자 축으로 접는다 (2026-09-02, 사용자 결정).
+    //
+    //   서버의 `runner_stale` 은 «파일이 배포본과 다른가» 이고, 그 판정은 그대로 엄격하다.
+    //   그런데 러너 파일은 거의 모든 배포에서 바뀌므로 그 값은 **러너와 무관한 배포**에도
+    //   하루에 몇 번씩 참이 된다. 스스로 갱신할 줄 아는 러너라면 그것은 곧 풀리는 일시적
+    //   상태이지 사용자가 할 일이 아니다 — 그런 낡음을 화면에 내보내면 「업데이트 필요」가
+    //   반복해서 뜨는데 정작 누를 것이 없다.
+    //
+    //   접는 자리를 **여기 하나**로 두는 이유: 칩 문구·모달 성공 조건·자동 실행 자격·
+    //   「재실행해도 그대로」 판정이 모두 `_lastObs.stale` 을 읽는다. 각자 따로 접으면 그중
+    //   하나만 고쳐지는 순간 화면이 자기 안에서 갈린다.
+    const _actionableStale = _actionableStaleOf(b);
+    _paintConn(!!b.connected, !!b.listening, epochAtStart, _actionableStale, b.runner_build);
     _paintGate(b);
     // 마지막으로 연결됐던 명령 계열 — 창을 열 때 어느 탭을 먼저 보일지 정한다 (2026-09-01).
     // 세대·순번 검사를 이미 통과한 응답만 여기 온다.
     _adoptLastOs(b.last_os);
+    // 연결 이력 (2026-09-02). `last_os` 는 러너가 **실제로 연결됐을 때만** 기록되므로 그
+    // 존재가 곧 「이 사람은 이미 한 번 연결해 봤다」다 — 자동 실행의 자격 판정이 이 값이다.
+    _everConnected = !!String(b.last_os || "");
+    _maybeAutoEntry();
     return b;
   } catch (_) {
     // 조회 실패는 **표시하지 않는다** — 틀린 상태를 보이느니 아무 말도 안 하는 편이 낫다.
@@ -768,12 +1043,65 @@ export async function refreshConnState() {
   }
 }
 
+/** 로그인 진입 자동 실행 (사용자 요청 2026-09-02) — 페이지당 **1회**.
+ *
+ *  ## 왜 여기(상태 조회 응답)인가
+ *
+ *  자격 판정에 필요한 두 사실(연결 이력·지금 쓸 수 있는가)이 **둘 다 이 응답에** 있다. 로드
+ *  시점에 미리 쏘면 두 값을 모르는 채로 쏘는 것이고, 그러면 한 번도 연결한 적 없는 사람에게
+ *  «알 수 없는 프로그램을 열까요?» 대화상자를 띄우게 된다.
+ *
+ *  ## 이 경로는 사용자 제스처가 없다
+ *
+ *  크롬은 사용자 활성화 없는 외부 스킴 이동을 거를 수 있다. 그래서 이 경로는 **best-effort**
+ *  다 — 걸러지면 아무 일도 일어나지 않고 화면은 종전과 똑같이 「연결 안 됨」을 보인다(지금보다
+ *  나빠지지 않는다). 실패해도 창을 열지 않는 이유도 같다: 로그인하자마자 창이 튀어나오는 것은
+ *  «접근성 개선» 이 아니라 방해다.
+ */
+function _maybeAutoEntry() {
+  if (!_autoLaunchEligible()) return;
+  // 재실행이 이 컴퓨터에서 파일을 바꾸지 못한다는 증거가 이미 있으면 자동으로 쏘지 않는다 —
+  // 결과가 정해진 시도를 로그인할 때마다 반복하는 것은 사용자에게도 서버에도 낭비다.
+  if (_relaunchNoUpdate && _isStaleNow(_lastObs)) return;
+  // 자격이 있으면 **일단 받아 둔다** — 사용자가 칩을 누르는 순간 동기적으로 이동해야 하고,
+  // 그때 발급을 시작하면 활성화가 끊긴다.
+  try { _prefetchLaunch(); } catch (_) { /* 무시 */ }
+  if (_autoEntryTried) return;
+  _autoEntryTried = true;
+  // 프리페치가 끝난 뒤 쏜다. 이 경로는 어차피 제스처가 없으므로 await 가 손해를 만들지 않는다.
+  _prefetchLaunch().then((ready) => {
+    if (!ready || !_autoLaunchEligible()) return;
+    autoLaunch("entry", { fallbackModal: false });
+  }).catch(() => { /* 자동 경로의 실패는 조용하다 */ });
+}
+
+/** 칩·게이트 버튼의 단일 진입 (2026-09-02).
+ *
+ *  종전에는 **무조건 연결 창**이었다. 이미 설치를 마친 사람에게 그 창은 «만들기 → 실행» 두 번의
+ *  클릭과 읽을 것이 가득한 화면이고, 정작 그 사람이 원하는 것은 하나뿐이다 — 다시 띄우기.
+ *  그래서 이력이 있으면 **바로 실행**하고, 없으면(=설치부터 필요) 종전대로 창을 연다.
+ */
+function _connectEntry() {
+  // 이 컴퓨터에서는 재실행이 러너 파일을 바꾸지 못한다는 것을 **이미 봤다**. 같은 것을 다시
+  // 권하면 사용자는 또 30초를 버리고 같은 화면으로 돌아온다 — 곧바로 되돌아갈 곳으로 보낸다.
+  if (_relaunchNoUpdate && _isStaleNow(_lastObs)) {
+    _showRelaunchNoUpdate();
+    return;
+  }
+  if (_autoLaunchEligible()) {
+    // 실행조차 못 쏘면 `autoLaunch` 가 창을 연다(폴백은 그쪽 한 곳에만 둔다).
+    autoLaunch("click", { fallbackModal: true });
+    return;
+  }
+  openConnectModal();
+}
+
 export function bindConnState() {
   const el = $("aiConnState");
   if (!el) return;
-  el.addEventListener("click", () => { openConnectModal(); });
-  // 잠금 패널의 버튼도 같은 모달로 간다 — 표시가 곧 조치 경로여야 한다(P0-T).
-  $("composerGateBtn")?.addEventListener("click", () => { openConnectModal(); });
+  el.addEventListener("click", _connectEntry);
+  // 잠금 패널의 버튼도 같은 경로로 간다 — 표시가 곧 조치 경로여야 한다(P0-T).
+  $("composerGateBtn")?.addEventListener("click", _connectEntry);
   // 다른 탭에서 연결하고 돌아오는 경로 — 돌아왔을 때 낡은 표시를 남기지 않는다.
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refreshConnState();

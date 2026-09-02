@@ -35,6 +35,10 @@ function switchProfileTab(tab) {
     // 콘텐츠(2FA·알림·화면 효과·사용량)는 그 하위 탭 활성화 시점에 lazy 렌더(switchAccountSubtab).
     // 마지막 선택 하위 탭을 복원(기본 'account'). 과거엔 4개 콘텐츠를 이 탭 진입 시 한 번에 렌더.
     switchAccountSubtab(state.accountSubtab || "account");
+  } else if (tab === "ai-jobs") {
+    // 진입 시마다 다시 읽는다 — 선택지의 출처가 «지금 연결된 러너» 라 탭을 여는 사이에
+    // 바뀐다(러너를 껐다 켜면 목록이 달라진다). 캐시하면 없는 모델을 고르게 된다.
+    loadAiJobs().catch(() => {});
   } else if (tab === "release-notes") {
     // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
     // 작업 화면은 '관리 콘솔' 영역 노트를 숨긴다(work/common 만 노출).
@@ -781,6 +785,7 @@ function openProfile(tab = "prompt") {
   // 가려** 버린다(닫기 버튼까지 가린다). 모든 열기는 등록부의 문을 통과한다.
   openSidePanel("profile", () => {
     renderProfile();
+    setupAiJobsTab();                    // AI 작업 탭 버튼 1회 배선 (switchProfileTab 앞)
     switchProfileTab(tab);
     setupProfileDrawerResize();          // 너비 조절 핸들 1회 배선
     _applyProfileDrawerWidth(profileDrawerEl); // 저장된 너비 복원
@@ -882,4 +887,226 @@ function setupProfileDrawerResize() {
   handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
 }
 
-export { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange };
+// ── AI 작업 탭 (TASK-20260902T110000) ──────────────────────────────────────────
+//
+// 콘솔·배경 작업(그래프 능동 분석·메타데이터 자동완성·인사이트 배치…)을 연결된 내 AI 가
+// 처리할 때 쓸 **모델·추론 강도**를 항목별로 고른다.
+//
+// ## 선택지를 서버에서만 받는 이유
+//
+// 목록을 프런트가 들고 있으면 러너가 못 쓰는 모델을 고를 수 있게 되고, 그 작업은 실행 단계에
+// 가서야 실패한다(P0-T 가 겪은 형태 — 그때는 서버 alias 를 보여줬다). 여기 그려지는 값은
+// 전부 **지금 연결된 러너가 하트비트로 신고한 것**이다.
+//
+// 러너가 없으면 선택지가 비지만 **저장된 값은 지우지 않는다** — 연결이 끊겼다고 설정이
+// 사라지면 사용자는 자기가 고른 것을 잃는다.
+//
+// ## 항목 자체도 서버가 고른다 (TASK-20260902T160000)
+//
+// 목록에는 **이 계정이 실제로 열 수 있는 작업**만 온다. 권한이 없어 그 기능을 부를 수 없는
+// 항목까지 그리면, 사용자는 모델을 고르고 저장한 뒤에도 그 작업이 오지 않는 이유를 알 수
+// 없다 — 화면은 「설정됨」이라고 말하는데 기능은 403 이다.
+//
+// 판정을 프런트에서 하지 않는 이유: `can()` 은 인자를 무시하고 로그인만 확인하는
+// display-permissive 헬퍼라 **분기 판정에 쓰면 한쪽 갈래가 영구히 죽는다**. 권한 축의
+// 판정은 서버가 한 결과(=목록)를 그대로 그린다.
+
+let _aiJobsState = { jobs: [], runtimes: [], listening: false, loaded: false };
+
+// 진행 중 요청의 세대. `switchProfileTab` 이 **탭 진입마다** `loadAiJobs` 를 쏘고
+// `saveAiJobs` 도 저장 뒤 다시 부르므로 요청이 겹칠 수 있고, 응답 순서는 보장되지 않는다.
+// 늦게 도착한 **오래된** 응답이 최신 상태를 덮으면 화면이 방금 저장한 값을 잃은 것처럼
+// 되돌아가고, 그 상태에서 다시 저장하면 stale 값이 서버에 굳는다(조용한 되돌림).
+// 그래서 **마지막으로 시작한 요청의 응답만** 상태에 반영한다.
+let _aiJobsReqSeq = 0;
+
+function _aiJobsSetEmpty(empty) {
+  // 고를 항목이 하나도 없으면 [저장]·[모두 기본값] 은 아무 것도 하지 않는 버튼이다 —
+  // 누르면 반응하는 것처럼 보이는 표면을 남기지 않는다.
+  ["saveAiJobsBtn", "resetAiJobsBtn"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!empty;
+  });
+}
+
+function _aiJobsModelOptions(runtimes) {
+  // `runtime:model` 한 축으로 편다 — 모델 이름은 런타임 종속이라(`haiku` 는 claude 의 것)
+  // 둘을 따로 고르게 하면 존재하지 않는 조합이 만들어진다.
+  const out = [];
+  (runtimes || []).forEach((rt) => {
+    (rt.models || []).forEach((m) => {
+      out.push({ value: `${rt.runtime}:${m.value}`, label: `${rt.label || rt.runtime} · ${m.label || m.value}` });
+    });
+  });
+  return out;
+}
+
+function _aiJobsEffortOptions(runtimes, modelValue) {
+  // 등급 어휘는 런타임마다 다르다. 고른 모델의 런타임 것만 보여준다 — 섞으면 그 런타임에
+  // 없는 등급을 고르게 되고, 서버가 대조에서 떨어뜨려 조용히 러너 기본값으로 돈다.
+  const rtName = String(modelValue || "").split(":")[0];
+  const rt = (runtimes || []).find((r) => r.runtime === rtName)
+    || ((runtimes || []).length === 1 ? runtimes[0] : null);
+  return (rt && rt.efforts) ? rt.efforts : [];
+}
+
+function renderAiJobs() {
+  const box = document.getElementById("aiJobsList");
+  const meta = document.getElementById("aiJobsMeta");
+  if (!box) return;
+  const st = _aiJobsState;
+  const models = _aiJobsModelOptions(st.runtimes);
+  box.innerHTML = "";
+  // 서버가 권한으로 추린 결과가 비면 «불러오지 못했다» 가 아니라 «해당 없음» 이다. 빈 상자를
+  // 그대로 두면 두 상태가 화면에서 같은 모양이 되고, 사용자는 오류로 읽는다.
+  _aiJobsSetEmpty(!st.jobs.length);
+  if (!st.jobs.length) {
+    const none = document.createElement("div");
+    none.className = "helper-text";
+    none.id = "aiJobsEmpty";
+    none.textContent = "이 계정에서 내 AI 에 맡길 수 있는 작업이 없습니다. 권한이 부여되면 여기에 나타납니다.";
+    box.appendChild(none);
+  }
+  st.jobs.forEach((job) => {
+    const row = document.createElement("div");
+    row.className = "ai-jobs-row";
+    row.dataset.kind = job.kind;
+    const opts = (sel, list, placeholder) => {
+      const parts = [`<option value=""${sel ? "" : " selected"}>${escapeHtml(placeholder)}</option>`];
+      let found = false;
+      list.forEach((o) => {
+        const on = o.value === sel;
+        if (on) found = true;
+        parts.push(`<option value="${escapeHtml(o.value)}"${on ? " selected" : ""}>${escapeHtml(o.label)}</option>`);
+      });
+      // 저장된 값이 지금 선택지에 없으면(러너 미연결·목록 변경) 그 값을 **직접 넣어** 보존한다.
+      // 빼 버리면 저장 버튼 한 번에 사용자의 설정이 조용히 지워진다.
+      if (sel && !found) {
+        parts.push(`<option value="${escapeHtml(sel)}" selected>${escapeHtml(sel)} (지금 연결된 AI 에 없음)</option>`);
+      }
+      return parts.join("");
+    };
+    const efforts = _aiJobsEffortOptions(st.runtimes, job.model);
+    const warn = (job.model && !job.available)
+      ? `<div class="ai-jobs-warn">고른 모델을 지금 연결된 AI 가 제공하지 않아 이 작업은 맡기지 않습니다.</div>`
+      : "";
+    row.innerHTML = `
+      <div class="ai-jobs-name">${escapeHtml(job.label)}${job.wired ? "" : ' <span class="ai-jobs-off">위임 불가</span>'}</div>
+      <div class="ai-jobs-fields">
+        <label class="field"><span>모델</span>
+          <select data-ai-job-model="${escapeHtml(job.kind)}"${job.wired ? "" : " disabled"}>
+            ${opts(job.model, models, "기본값 (경량 모델 자동 선택)")}
+          </select>
+        </label>
+        <label class="field"><span>추론 강도</span>
+          <select data-ai-job-effort="${escapeHtml(job.kind)}"${job.wired ? "" : " disabled"}>
+            ${opts(job.effort, efforts, "기본값 (연결된 AI 설정)")}
+          </select>
+        </label>
+      </div>${warn}`;
+    box.appendChild(row);
+  });
+  if (meta) {
+    meta.textContent = st.listening
+      ? "선택지는 지금 연결된 내 AI 가 신고한 목록입니다."
+      : "지금 듣고 있는 AI 가 없어 선택지를 불러오지 못했습니다. 저장된 설정은 그대로 유지됩니다.";
+  }
+}
+
+async function loadAiJobs() {
+  const box = document.getElementById("aiJobsList");
+  if (box && !_aiJobsState.loaded) box.textContent = "불러오는 중…";
+  // ⚠ **한 번도 못 받은 동안 [저장] 은 «전부 지우기»다.** 그리기 전에는 `_collectAiJobs` 가
+  //   읽을 행이 없어 `{}` 를 만들고, 서버는 그것을 정당한 «보이는 항목 비우기» 로 처리한다
+  //   (그 의미는 [모두 기본값] 을 위해 필요하다). 그래서 «비우려는 것» 과 «아직 못 받은 것» 을
+  //   프런트가 갈라야 한다 — 첫 성공 렌더 전까지는 누를 수 없게 둔다.
+  if (!_aiJobsState.loaded) _aiJobsSetEmpty(true);
+  const seq = ++_aiJobsReqSeq;
+  try {
+    // ⚠ `apiFetch` 는 **이미 파싱된 payload** 를 돌려준다(Response 가 아니다) — 비-2xx 는
+    //   그 안에서 throw 한다. `res.json()` 을 부르면 정상 200 응답에서도 예외가 나고, 화면은
+    //   서버가 멀쩡히 답했는데 "불러오지 못했습니다" 를 띄운다(POST-DEPLOY 실측으로 적발).
+    const data = await apiFetch("/api/profile/console-jobs");
+    // 내가 마지막 요청이 아니면 **아무 것도 하지 않는다** — 뒤에 시작한 요청이 이미 더 새로운
+    // 상태를 그렸을 수 있다(위 `_aiJobsReqSeq` 주석).
+    if (seq !== _aiJobsReqSeq) return;
+    _aiJobsState = {
+      jobs: Array.isArray(data.jobs) ? data.jobs : [],
+      runtimes: Array.isArray(data.runtimes) ? data.runtimes : [],
+      listening: !!data.listening,
+      loaded: true,
+    };
+    renderAiJobs();
+  } catch (e) {
+    // 실패도 최신 요청의 것만 화면에 반영한다 — 지난 요청의 실패로 성공한 목록을 지우지 않는다.
+    if (seq !== _aiJobsReqSeq) return;
+    if (box) box.textContent = "설정을 불러오지 못했습니다.";
+    // 목록을 못 받은 상태에서 [저장] 은 **빈 본문**을 보낸다 — 서버가 그것을 「보이는 항목을
+    // 전부 비웠다」로 읽어 사용자의 선택이 사라진다. 불러오지 못했으면 저장도 막는다.
+    _aiJobsSetEmpty(true);
+  }
+}
+
+function _collectAiJobs() {
+  const out = {};
+  document.querySelectorAll("[data-ai-job-model]").forEach((sel) => {
+    const kind = sel.dataset.aiJobModel;
+    const model = String(sel.value || "").trim();
+    const eff = document.querySelector(`[data-ai-job-effort="${kind}"]`);
+    const effort = eff ? String(eff.value || "").trim() : "";
+    if (model || effort) out[kind] = { model, effort };
+  });
+  return out;
+}
+
+async function saveAiJobs() {
+  const jobs = _collectAiJobs();
+  try {
+    // `apiFetch` 규약 — payload 를 직접 돌려주고 비-2xx 는 throw 한다(위 `loadAiJobs` 참조).
+    await apiFetch("/api/profile/console-jobs", {
+      method: "PUT",
+      body: JSON.stringify({ jobs }),
+    });
+    showToast("AI 작업 설정을 저장했습니다.");
+    // 저장 뒤 다시 읽는다 — 서버 정규화 결과와 `available` 판정이 화면과 같아야 한다.
+    await loadAiJobs();
+  } catch (e) {
+    showToast(e && e.message ? e.message : "저장하지 못했습니다.");
+  }
+}
+
+let _aiJobsBound = false;
+
+function setupAiJobsTab() {
+  // 1회 배선. `openProfile` 이 매 열기마다 부르므로 가드가 없으면 핸들러가 쌓여, 저장 한 번에
+  // PUT 이 여러 번 나간다(`setupProfileDrawerResize` 와 같은 자리·같은 이유).
+  if (_aiJobsBound) return;
+  _aiJobsBound = true;
+  // 배선 시점엔 아직 목록을 받은 적이 없다 — 첫 성공 렌더가 열어 준다(위 `loadAiJobs` 참조).
+  _aiJobsSetEmpty(true);
+  const save = document.getElementById("saveAiJobsBtn");
+  if (save) save.addEventListener("click", () => { saveAiJobs().catch(() => {}); });
+  const reset = document.getElementById("resetAiJobsBtn");
+  if (reset) {
+    reset.addEventListener("click", () => {
+      document.querySelectorAll("[data-ai-job-model],[data-ai-job-effort]").forEach((sel) => { sel.value = ""; });
+    });
+  }
+  const box = document.getElementById("aiJobsList");
+  // 모델을 바꾸면 등급 선택지가 그 런타임의 것으로 갈린다 — 즉시 다시 그린다.
+  if (box) {
+    box.addEventListener("change", (e) => {
+      const t = e.target;
+      if (!t || !t.dataset || !t.dataset.aiJobModel) return;
+      const kind = t.dataset.aiJobModel;
+      const job = _aiJobsState.jobs.find((j) => j.kind === kind);
+      if (!job) return;
+      job.model = String(t.value || "");
+      const effSel = document.querySelector(`[data-ai-job-effort="${kind}"]`);
+      job.effort = effSel ? String(effSel.value || "") : "";
+      renderAiJobs();
+    });
+  }
+}
+
+export { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange, loadAiJobs, setupAiJobsTab };

@@ -19,6 +19,8 @@ import {
 } from "../app.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
+// conv-status-dot-wiring: 상태 dot 의 클래스·라벨 정본(leaf 모듈 — 순환 없음).
+import { conversationDotClass, conversationDotLabel, normalizeConvStatus } from "./conv-status.js?v=dev";
 
 // ── feature-0024-conversation-folders: 폴더(프로젝트) UI ─────────────────────
 async function loadFolders() {
@@ -1259,7 +1261,9 @@ function _renderConversationListDom(reorderFocusKey) {
     button.disabled = true;
     button.title = "첫 메시지를 입력하면 대화가 만들어집니다.";
     const dot = document.createElement("span");
-    dot.className = "conv-dot";
+    // 아직 run 이 없는 placeholder 라 상태가 **없는 것이 정상**이다. 그래도 정본을 거쳐
+    // 무상태(기본 회색)를 받는다 — 클래스 조립이 이 한 곳만 남아야 어휘가 다시 안 갈라진다.
+    dot.className = conversationDotClass("");
     const titleEl = document.createElement("span");
     titleEl.className = "conv-item-title";
     titleEl.textContent = "새 대화 (작성 중)";
@@ -1282,8 +1286,12 @@ function _renderConversationListDom(reorderFocusKey) {
       button.title = entry.status === "failed"
         ? "전송에 실패했습니다."
         : "응답을 기다리는 중입니다.";
+      // conv-status-dot-wiring: 실패한 전송을 '대기 중'(파랑)으로 칠하던 것을 바로잡는다 —
+      // 행 자체는 is-pending-failed 로 이미 실패를 알고 있었는데 dot 만 대기 색이었다.
+      const dotStatus = entry.status === "failed" ? "failed" : "pending";
       const dot = document.createElement("span");
-      dot.className = "conv-dot is-pending";
+      dot.className = conversationDotClass(dotStatus);
+      dot.title = conversationDotLabel(dotStatus);
       const titleEl = document.createElement("span");
       titleEl.className = "conv-item-title";
       titleEl.textContent = (entry.message || "새 대화").slice(0, 60);
@@ -1315,8 +1323,9 @@ function _renderConversationListDom(reorderFocusKey) {
       row.className = rowClasses.join(" ");
       row.dataset.conversationId = String(item.id);
       const dotEl = document.createElement("span");
-      const st = String(item.display_status || item.status || "").trim().toLowerCase();
-      dotEl.className = `conv-dot${st ? ` is-${st}` : ""}`;
+      const st = normalizeConvStatus(item.display_status || item.status);
+      dotEl.className = conversationDotClass(st);
+      if (conversationDotLabel(st)) dotEl.title = conversationDotLabel(st);
       row.append(dotEl, _buildInlineRenameInput({
         key: `conv:${item.id}`,
         value: item.topic || "",
@@ -1363,9 +1372,9 @@ function _renderConversationListDom(reorderFocusKey) {
     });
 
     // 상태 dot
-    const normalizedStatus = String(item.display_status || item.status || "").trim().toLowerCase();
+    const normalizedStatus = normalizeConvStatus(item.display_status || item.status);
     const dot = document.createElement("span");
-    dot.className = `conv-dot${normalizedStatus ? ` is-${normalizedStatus}` : ""}`;
+    dot.className = conversationDotClass(normalizedStatus);
     if (normalizedStatus === "stale_error") {
       // conv-audit FR-stale-threshold-below-llm-attempt-cap 봉인 B: 판정이 실제로 본 마지막
       // 활동 시각을 우선 표시한다(없으면 종전 필드 폴백). last_activity_at 은 요청 접수 시각에
@@ -1374,7 +1383,14 @@ function _renderConversationListDom(reorderFocusKey) {
       dot.title = lastActivity
         ? `작업이 중단된 것으로 보입니다 — 마지막 활동: ${formatDateTime(lastActivity)}`
         : "작업이 중단된 것으로 보입니다";
+    } else if (conversationDotLabel(normalizedStatus)) {
+      // conv-status-dot-wiring: 색만으로 상태를 전달하면 색각 이상 사용자가 읽지 못한다.
+      // stale_error 는 위에서 더 구체적인 문구(마지막 활동 시각)를 이미 넣으므로 덮지 않는다.
+      dot.title = conversationDotLabel(normalizedStatus);
     }
+    // 지금 붙은 툴팁이 어느 상태의 것인지 남긴다 — 폴링(_updateConversationStatusDot)이
+    // 위 stale_error 구체 문구를 덮지 않으면서도 낡은 툴팁은 지울 수 있게 하는 이음매다.
+    dot.dataset.titleStatus = normalizedStatus;
 
     // 제목
     const titleEl = document.createElement("span");

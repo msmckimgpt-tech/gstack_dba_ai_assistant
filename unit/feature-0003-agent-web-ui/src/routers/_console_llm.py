@@ -40,6 +40,8 @@ from shared.bridge_tasks import (
     RUNNER_FEATURE_CONSOLE_JOBS,
     RUNNER_FEATURE_SELF_REVIEW,
     RUNNER_MIN_AGENT_VERSION,
+    console_job_model_required as _bridge_console_job_model_required,
+    console_job_prefs_for_account as _bridge_console_job_prefs_for_account,
     runner_can_take,
     version_at_least as _bridge_version_at_least,
 )
@@ -52,6 +54,7 @@ __all__ = [
     "DELEGATION_RUNNER_IDLE",
     "DELEGATION_UNSUPPORTED",
     "DELEGATION_OUTDATED",
+    "DELEGATION_MODEL_UNAVAILABLE",
     "INACTIVE_SURFACES",
     "console_llm_state",
     "delegable_job_kinds",
@@ -82,6 +85,14 @@ DELEGATION_RUNNER_IDLE = "runner_idle"
 DELEGATION_UNSUPPORTED = "unsupported"
 #: 기능은 신고했는데 버전이 하한 미만 — 갱신 유도(사용자 결정 2026-08-31).
 DELEGATION_OUTDATED = "outdated"
+#: 러너 자격은 갖췄는데 **계정이 프로필에서 고른 모델**을 그 러너가 신고하지 않았다
+#: (TASK-20260902T110000, 사용자 결정 2026-09-02 「선택했던 모델 미보유 시 위임 거절」).
+#:
+#: `unsupported` 와 나누는 이유는 `runner_idle` 을 `no_connection` 과 나눈 이유와 같다 —
+#: **조치가 다르다.** 저쪽은 러너를 갱신하라는 말이고 이쪽은 「설정을 바꾸거나 그 모델을 쓰는
+#: AI 로 연결하라」는 말이다. 합치면 최신 러너를 쓰는 사용자에게 갱신하라고 말하게 되고, 그는
+#: 갱신해도 아무것도 달라지지 않는 것을 보게 된다.
+DELEGATION_MODEL_UNAVAILABLE = "model_unavailable"
 
 #: 조치까지 함께 말한다. 상태만 주면 화면이 문구를 각자 지어 여섯 곳이 갈린다.
 #: **"고장" 어휘를 쓰지 않는다** — 이것은 운영 결정이고, 장애로 읽히면 사용자는 무한히
@@ -97,6 +108,9 @@ _REASON: dict[str, str] = {
         "연결된 AI 가 관리 콘솔 작업을 아직 다루지 못합니다. 연결 안내에서 최신 실행 파일을 받아 다시 실행해 주세요.",
     DELEGATION_OUTDATED:
         "연결된 AI 가 구버전입니다. 연결 안내에서 최신 실행 파일을 받아 다시 실행하면 이 작업을 맡길 수 있습니다.",
+    DELEGATION_MODEL_UNAVAILABLE:
+        "프로필 > AI 작업 에서 고른 모델을 지금 연결된 AI 가 제공하지 않아 이 작업을 맡기지 "
+        "않습니다. 설정에서 모델을 바꾸거나 그 모델을 쓸 수 있는 AI 로 연결해 주세요.",
 }
 
 #: 조치 경로가 있는 상태만 링크를 준다 — "연결 안 됨" 만 보이고 방법이 없으면 소용없다(P0-T).
@@ -105,6 +119,8 @@ _ACTION_URL: dict[str, str] = {
     DELEGATION_RUNNER_IDLE: "/ai/connect",
     DELEGATION_UNSUPPORTED: "/ai/connect",
     DELEGATION_OUTDATED: "/ai/connect",
+    # 조치는 연결이 아니라 **설정**이다 — 작업 화면 프로필 drawer 의 그 탭으로 보낸다.
+    DELEGATION_MODEL_UNAVAILABLE: "/?profile=ai-jobs",
 }
 
 
@@ -243,10 +259,14 @@ def inactive_surfaces(state: dict | None) -> list[dict[str, Any]]:
 version_at_least = _bridge_version_at_least
 
 
-def _classify(profile: dict, has_token: bool, *, need_batch: bool = False) -> str:
+def _classify(profile: dict, has_token: bool, *, need_batch: bool = False,
+              required_model: str = "") -> str:
     """러너 신고 → 위임 상태. **순서가 의미다** — 가장 바깥 원인부터 판정한다.
 
     연결이 없는 사람에게 "러너를 갱신하세요" 라고 말하면 그는 갱신할 러너가 없다.
+
+    `required_model`: 계정이 그 항목에 고른 `runtime:model`. 러너 자격을 다 갖췄는데 그 모델만
+    없으면 **갱신이 아니라 설정**이 조치이므로 사유를 따로 낸다(TASK-20260902T110000).
     """
     if not has_token:
         return DELEGATION_NO_CONNECTION
@@ -259,11 +279,16 @@ def _classify(profile: dict, has_token: bool, *, need_batch: bool = False) -> st
         return DELEGATION_OUTDATED
     if need_batch and RUNNER_FEATURE_BATCH_JOBS not in features:
         return DELEGATION_UNSUPPORTED
+    # 모델 축은 **버전·기능 뒤**다. 구 러너는 모델 목록 자체를 신고하지 않으므로 여기를 앞에
+    # 두면 갱신이 필요한 사용자에게 "설정을 바꾸라" 고 말하게 된다(바꿔도 달라지지 않는다).
+    if required_model and not runner_can_take(profile, need_batch=need_batch,
+                                              required_model=required_model):
+        return DELEGATION_MODEL_UNAVAILABLE
     # ⚠ 위 사유 분기는 **말하기 위한 것**이고, 배급 자격의 정본은 `runner_can_take` 다
     #   (워커도 그것을 부른다, TASK-20260901T190000). 여기서 READY 를 내는데 그쪽이 거절하면
     #   화면은 "맡길 수 있다" 고 하고 워커는 안 맡기는 상태가 된다 — 두 판정이 갈리지 않도록
     #   마지막에 정본에 되묻는다(순서가 같으므로 정상 경로에서는 항상 참이다).
-    if not runner_can_take(profile, need_batch=need_batch):
+    if not runner_can_take(profile, need_batch=need_batch, required_model=required_model):
         return DELEGATION_UNSUPPORTED
     return DELEGATION_READY
 
@@ -280,7 +305,8 @@ def delegation_available(state: dict | None) -> bool:
     return bool(state) and state.get("delegation") == DELEGATION_READY
 
 
-def console_llm_state(conn, account: Any, *, need_batch: bool = False) -> dict:
+def console_llm_state(conn, account: Any, *, need_batch: bool = False,
+                      job_kind: str = "") -> dict:
     """관리 콘솔이 읽는 LLM 상태 — **이 판정의 유일한 출처**.
 
     Args:
@@ -288,6 +314,9 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False) -> dict:
             두 트랜잭션이 생기면 방금 쓴 행을 못 보는 창이 열린다(`bridge_tasks` 와 동일 규율).
         account: 인증된 계정 dict. 없으면 위임 판정 불가 → 연결 없음으로 본다.
         need_batch: 배경 배치 자격까지 요구하는가(`batch_jobs` 동의 필요).
+        job_kind: 판정 대상 작업 종류. 주어지면 **그 항목에 계정이 고른 모델**까지 요구한다
+            (TASK-20260902T110000). 빈 값이면 모델 축은 판정하지 않는다 — 종전 호출부
+            (일반 상태 조회)의 동작이 바뀌지 않는다.
 
     Returns:
         `{"server_llm_blocked", "delegation", "reason", "action_url",
@@ -299,7 +328,12 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False) -> dict:
     쌓인다. 표시의 오류는 한 줄이고 적재의 오류는 유령 작업이다.
     """
     blocked = not server_llm_enabled()
-    runner = {"listening": False, "agent_version": "", "features": []}
+    runner = {"listening": False, "agent_version": "", "features": [],
+              # 성공 분기가 돌려주는 프로필과 **같은 키 집합**을 유지한다 (security
+              # 적대리뷰 §3): 실패 분기만 좁으면 소비자가 성공 시 `false`, 실패 시
+              # `undefined` 를 받아 두 상태를 구별하지 못한다.
+              "capabilities": [], "caps_contract_declared": False,
+              "mixed_runners": False}
     if not blocked:
         # 게이트가 열려 있으면 러너를 조회하지 않는다 — 쓰이지 않을 사실을 위해 매 요청
         # 토큰 테이블을 두드릴 이유가 없다.
@@ -318,6 +352,7 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False) -> dict:
         account_id = 0
 
     has_token = False
+    required_model = ""
     if account_id and conn is not None:
         try:
             import oauth_store as _store
@@ -327,15 +362,26 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False) -> dict:
                 has_token = bool(_store.account_has_live_token(cur, account_id))
                 if has_token:
                     runner = _store.account_runner_profile(cur, account_id)
+                    if job_kind:
+                        # 같은 커넥션·같은 스냅샷에서 읽는다 — 설정과 러너 신고를 다른
+                        # 트랜잭션에서 읽으면 「방금 바꾼 설정 + 옛 신고」 조합으로 판정한다.
+                        required_model = _bridge_console_job_model_required(
+                            job_kind, _bridge_console_job_prefs_for_account(cur, account_id))
             finally:
                 cur.close()
         except Exception as exc:  # noqa: BLE001
             # 조용히 낙관하지 않는다 — 사유를 남기고 위임 불가로 간다(위 docstring).
             _log.warning("[console-llm] 러너 상태 조회 실패 account=%s: %r", account_id, exc)
             has_token = False
-            runner = {"listening": False, "agent_version": "", "features": []}
+            required_model = ""
+            runner = {"listening": False, "agent_version": "", "features": [],
+              # 성공 분기가 돌려주는 프로필과 **같은 키 집합**을 유지한다 (security
+              # 적대리뷰 §3): 실패 분기만 좁으면 소비자가 성공 시 `false`, 실패 시
+              # `undefined` 를 받아 두 상태를 구별하지 못한다.
+              "capabilities": [], "caps_contract_declared": False,
+              "mixed_runners": False}
 
-    state = _classify(runner, has_token, need_batch=need_batch)
+    state = _classify(runner, has_token, need_batch=need_batch, required_model=required_model)
     return {
         "server_llm_blocked": True,
         "delegation": state,

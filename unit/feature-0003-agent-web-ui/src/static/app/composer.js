@@ -3219,7 +3219,15 @@ function _composerModelLabelFor(value) {
 // 않는다 — 일시적 네트워크 실패가 조작면을 지우면, 사용자는 기능이 사라진 것으로 읽는다.
 function _composerModelSelectorHidden() {
   const catalog = state.modelCatalog || state.apiVaultOptions;
-  return String(catalog?.model_selector || "") === "hidden";
+  // ⚠ **카탈로그가 없으면 숨김이다** (codex 적대리뷰 P2, 2026-09-02). 종전엔 `undefined`
+  //   가 `"hidden"` 과 다르다는 이유로 `false`(=보임)를 돌려줬고, 그래서
+  //   `/api/api-vault/options` 가 실패한 화면은 **목록 없는 선택기 + 서버 기본값 라벨**을
+  //   그대로 내보였다 — 사용자가 고른 값이 어디에도 없는 상태다. 같은 이유로
+  //   `_applyComposerSelectorNote` 의 「카탈로그를 불러오지 못했습니다」 분기가 **도달
+  //   불가능한 죽은 코드**였다(그 분기를 하네스가 직접 호출해 통과시켰다 — 진입점을 통과하지
+  //   않는 검증의 전형적인 vacuous pass).
+  if (!catalog) return true;
+  return String(catalog.model_selector || "") === "hidden";
 }
 
 // 숨김 상태를 DOM 에 반영한다 — 항목 자체를 감춘다(비활성 회색 줄을 남기지 않는다).
@@ -3236,7 +3244,55 @@ function _applyComposerSelectorVisibility() {
       if (menu) menu.classList.add("hidden");
     });
   }
+  _applyComposerSelectorNote(hidden);
   return hidden;
+}
+
+// feature-0043 caps-trust-gate: 모델·추론 항목이 **왜** 없는지를 한 줄로 말한다.
+//
+// 서버가 실어 준 `model_selector_reason` 을 그대로 그린다 — 프론트가 문구를 지으면 서버가
+// 판정을 바꾼 날 그 문구만 낡아, 화면과 서버가 서로 다른 사실을 말한다. 문구를 파싱하지도
+// 않는다(상태는 `runner_listening` 이라는 별도 값으로 온다).
+//
+// 보이는 상태에서는 안내를 **비운다** — 목록이 돌아왔는데 "고를 수 없다" 가 남아 있으면
+// 그 자체가 거짓이다.
+//
+// ⚠ 카탈로그를 못 받은 상태(fetch 실패 → 둘 다 null)에도 **말을 한다**(적대리뷰). 종전엔
+//   그 경우 `reason` 이 빈 문자열이라 선택기가 설명 없이 사라졌다 — 이 cycle 이 닫으려는
+//   바로 그 마찰이 가장 흔한 실패(일시적 네트워크)에서 그대로 남아 있었다.
+//
+// ⚠ **받을 곳까지** 준다(`runner_download_url`). 종전엔 그 필드가 응답에만 있고 소비처가
+//   0 이라, 안내가 "최신 실행 파일" 을 말하면서 링크가 없었다 — `model_selector_reason` 이
+//   08-28 에 겪은 「출하 ≠ 도달」을 새 필드가 반복한 것이다.
+//   링크는 **러너가 듣고 있을 때만** 붙인다: 러너가 아예 없으면 받을 파일이 아니라 연결
+//   흐름이 먼저이고, 그 상태에 다운로드를 들이미는 것은 다음 행동을 잘못 지목하는 것이다.
+const COMPOSER_NOTE_NO_CATALOG =
+  "모델 목록을 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요.";
+
+function _applyComposerSelectorNote(hidden) {
+  const el = document.getElementById("composerActionsSelectorNote");
+  if (!el) return;
+  if (!hidden) {
+    el.textContent = "";
+    el.classList.add("hidden");
+    return;
+  }
+  const catalog = state.modelCatalog || state.apiVaultOptions;
+  const reason = catalog
+    ? String(catalog.model_selector_reason || "")
+    : COMPOSER_NOTE_NO_CATALOG;
+  el.textContent = reason;
+  const url = String(catalog?.runner_download_url || "");
+  if (reason && url && catalog?.runner_listening) {
+    // 링크는 안내 **뒤에** 붙인다 — 문장이 먼저 읽히고, 받을 곳은 그 다음이다.
+    el.appendChild(document.createTextNode(" "));
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = "실행 파일 받기";
+    a.setAttribute("download", "bridge_agent.py");
+    el.appendChild(a);
+  }
+  el.classList.toggle("hidden", !reason);
 }
 
 function _updateComposerModelLabel() {
