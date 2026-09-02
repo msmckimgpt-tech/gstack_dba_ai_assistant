@@ -47,6 +47,8 @@ sources:
 
 사용자 요청 → Caddy (TLS termination) → web (FastAPI) → agent loop (LLM tool-call) → MySQL replica + Postgres (KB + runtime) + MinIO storage 의 데이터 흐름을 정본 doc 의 §4 (기능 맵) + feature FUNCTION.md 의 *Main Flow* 섹션 mirror 로 시각화한다.
 
+> **기능 단위 순서도는 [[../Flows/_Index|Flows/]] 에 있다.** 본 문서는 *컴포넌트 축* 의 한 장짜리 흐름이고, "로그인 한 번 / 질문 한 번 / 첨부 한 개가 어떤 관문을 어떤 순서로 지나는가" 는 아래 5 문서가 다룬다 — [[../Flows/Auth-and-Session|로그인·인증·세션]] · [[../Flows/External-AI-Bridge|외부 AI 연계 동작]] · [[../Flows/Security-Controls|보안 처리 과정]] · [[../Flows/User-Journeys|사용자 화면 흐름]] · [[../Flows/Feature-Operations|세부 기능 동작]].
+
 > **2026-05-27 아키텍처 변경**: `agent_memory` DB 의 `agent*` 10 테이블 (runtime state) 이 Postgres `agent_runtime` schema 로 완전 이관. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존.
 >
 > **2026-06 멀티 데이터소스**: data plane 이 단일 MySQL replica → **N 개 데이터소스 (MySQL·MSSQL)** 로 일반화 (§2.5). 자격증명은 envelope 암호화 저장, 접근은 DB-단위 allowlist. agent 실행은 **ask-worker out-of-process 큐**로 cutover.
@@ -172,6 +174,7 @@ AR-M1 schema → AR-M2 dual-write → AR-M3 backfill
 ## 4. 둘러보기
 
 - 상위: [[Architecture/Overview|Overview]]
+- 하위 (기능 단위 순서도): [[../Flows/_Index|Flows MOC]] — [[../Flows/Auth-and-Session]] · [[../Flows/External-AI-Bridge]] · [[../Flows/Security-Controls]] · [[../Flows/User-Journeys]] · [[../Flows/Feature-Operations]]
 - sibling: [[Architecture/Module-Map|Module-Map]]
 - 관련 feature: [[../Features/feature-0002-agent-core]] · [[../Features/feature-0003-agent-web-ui]] · [[../Features/feature-0007-bedrock-llm-provider]]
 
