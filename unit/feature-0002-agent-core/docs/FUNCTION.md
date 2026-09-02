@@ -1649,3 +1649,30 @@ DBA 질문에서 가장 자주 쓰는 약어가 구조적으로 제외됐고, �
 feature-0002 `modules/kb_glossary.py`: `term_occurs_as_word` 신설 ·
 `_fetch_glossary(conn, scopes, message=None, role_key=None)` ·
 `_fetch_enums(conn, scopes, message=None)` · `load_glossary_enum_context` 배선.
+
+
+## datasource health 텔레메트리 — 한 행이 batch 를 죽이지 않는다 (2026-09-02)
+
+**REQ-20260902-ds-health-persist (Minor §12.3)**: insight 사이클이 남겨야 할 datasource health
+가 **매번 유실**되고 있었다(`datasource_health_persist_failed err=AmbiguousParameter`).
+fail-soft 라 사이클은 계속 돌았고, 로그 한 줄 외에는 아무 표가 나지 않았다.
+
+### 근본 원인 — 같은 파라미터, 두 타입 문맥
+
+`_DS_HEALTH_UPSERT_SQL` 한 줄에서 `%(last_checked_at)s` 가 `IS NULL`(타입 미상)과
+`to_timestamp()`(double precision) 두 문맥에 쓰인다. 값이 float 이면 드라이버가 타입을 실어
+보내 통과하지만, **`None` 이면 타입 없는 NULL** 이 가고 Postgres 가 추론에 실패한다(42P08).
+
+즉 **한 번도 체크되지 않은 datasource 가 섞인 사이클에서만** 터졌고 — 그 한 행이 batch 전체를
+되돌려 health 가 통째로 유실됐다. 「가끔 되고 가끔 안 되는」 형태라 더 안 보였다.
+
+### AC
+
+- **AC-20260902T120000-health-1** — `%(last_checked_at)s` 는 **모든 문맥에서**
+  `::double precision` 으로 캐스트된다. 한쪽만 하면 그 문맥에서 추론이 다시 애매해진다.
+- **AC-20260902T120000-health-2** — upsert 멱등 계약(`ON CONFLICT (scope_key) DO UPDATE`)과
+  나머지 파라미터는 불변. 이 수정의 범위는 한 컬럼이다.
+
+### 코드 거주
+
+feature-0002 `modules/insight.py` `_DS_HEALTH_UPSERT_SQL`.

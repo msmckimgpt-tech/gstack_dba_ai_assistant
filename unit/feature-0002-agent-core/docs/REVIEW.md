@@ -2971,3 +2971,14 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 - 근거: `enum_dictionary` scope 별 카운트(common 9→0 · 제품 6 scope 15) · 매니페스트 9행 ·
   제품 격리 실측(같은 질문에 scope 별로 자기 것만, 무관 제품은 0).
 - 남긴 위험: 제품군 티어 부재로 형제 제품 간 복제 발생(9→15). 대안 대비 우위는 MODIFY 에 기록.
+
+## REV-20260902T120000-ds-health-persist [SKIPPED:codex-no-output] — health 텔레메트리 유실 수정
+
+- Verdict: PASS. 뮤테이션 **5/5 KILL**(baseline green 확인 후).
+- **[BLOCKING·해소] Q3 생존 — 부분 단언이 부분 결함을 못 잡았다.** `"::double precision" in sql`
+  은 한쪽만 `::text` 로 바꾼 뮤턴트를 통과시킨다. **모든** 캐스트의 타입 집합을 단언하도록 강화.
+  직전 cycle 의 `OR TRUE` 뮤턴트와 같은 형태 — 「포함 검사」로 「전건 계약」을 대신하지 말 것.
+- **[관측] fail-soft 가 결함을 3개월 가려 줬다.** `soft telemetry, cycle 계속` 이라 사이클은
+  계속 돌았고 로그 한 줄만 남았다. fail-soft 는 옳지만, **무엇이 유실됐는지**가 payload 로
+  드러나지 않으면 아무도 안 본다.
+- **미검증**: 배포 후 그 로그가 실제로 사라지는지. TASK 체크리스트에 남겼다.
