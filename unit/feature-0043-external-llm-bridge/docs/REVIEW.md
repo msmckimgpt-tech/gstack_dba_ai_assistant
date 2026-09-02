@@ -3145,7 +3145,6 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
 
 기록한 사실은 전부 **관측값**이다(배포 `293a20c8` 실 Windows 브라우저 · 서빙 파일 해시 대조).
 닫지 못한 축(라이브 낡은 러너 부재)은 추정으로 메우지 않고 그대로 남겼다.
-
 ## REV-20260902T140000-ai-claude-corp-feature-0043-winargv-cmdline-limit [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
 
 > **왜 SKIPPED 인가**: 본 세션의 운영 지시가 사용자 명시 요청 없는 `Agent` 도구 호출을
@@ -3227,3 +3226,7 @@ M5 가 살아남은 형태가 이 저장소가 반복해 겪은 **「로직은 �
 
 - **판정**: **APPROVED**. 잔여: 사용자 머신 러너 재기동 1회 후 라이브 왕복(사용자 조작 필요) ·
   그 머신 `claude` 재로그인(사용자 영역).
+## REV-20260902T130000-ai-claude-feature-0043-console-jobs-evidence [SKIPPED:evidence-only] — 라이브 실측 기록
+
+코드 변경 없음. `CHG-20260902T123000` 배포 후 재실측 증적만 기록한다(항목 6종 렌더 · 저장 왕복 ·
+사유 표시 PASS). 미재현 축(러너 연결 상태의 선택지 렌더)은 증적 문서에 정직 표기했다.
