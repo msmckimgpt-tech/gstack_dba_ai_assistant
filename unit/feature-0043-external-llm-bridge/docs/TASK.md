@@ -2532,3 +2532,15 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 병합 변형 점검 — 형제 `selfupdate.py` 는 전 구간 바이너리 모드(상호작용 없음)
 - [ ] **사용자 머신 재기동 1회 + `claude` 재로그인** — 이월(사용자 영역).
       재기동 후에는 형제 cycle 의 자동 갱신(`try_self_update`)이 이어받는다
+
+### 완료 체크리스트 — 라이브 실측 후속 (2026-09-02)
+
+- [x] AC-1 라이브 — `enqueue_analysis(requested_by='admin')` → `{'ok': True, 'status': 'running'}`
+- [x] AC-2 라이브 — `delegated: 1` → 러너 `task.dispatch kind=job model=haiku` →
+      job `done` + 분석문 297자 + `role=stats` + **run 마감** + `JobAppliedAt` 기록
+- [x] AC-4 라이브 — 실제 체크박스 클릭 → DB 기입 / 50초 뒤 러너 신고에 `batch_jobs`
+- [x] 라이브 결함 3건 수정(사람이 안 연 run 위임 · 문구 실측 정합 · 배포 프리플라이트 오진단)
+- [ ] 후속 배포 후: auto run 2건이 실제로 흘러가는가
+- [ ] 배경 배치 2종(테이블 인사이트·클러스터 라벨) 라이브 실측
+- [ ] AC-3(lease 회수) · AC-5(동의 0명 표면화) · AC-6(게이트 되돌림)
+- [ ] 검증용 동의 값 원복(`bootstrap_admin`·`admin`)

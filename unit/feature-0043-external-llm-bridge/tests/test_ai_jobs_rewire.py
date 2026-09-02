@@ -368,3 +368,86 @@ def test_enqueue_console_job_proceeds_when_no_duplicate_and_stores_the_key():
     stored = " ".join(str(x) for x in inserts[0][1])
     assert "dedupe_key" in stored and "k1" in stored, (
         "저장한 payload 에 키가 없다 — 다음 pass 의 조회가 이 행을 못 찾아 중복이 돌아온다")
+
+
+# ── 6b. 사람이 시작하지 않은 run 도 맡길 곳이 있다 (라이브 실측 2026-09-02) ──────
+
+
+def test_auto_generated_runs_fall_back_to_the_batch_consenting_pool():
+    """`requested_by` 가 계정이 아닌 run(`auto:insight-change`)도 위임된다.
+
+    라이브에서 실제로 발견했다: `node_analysis_runs.requested_by` 는 사용자명이 아닐 수 있고
+    (워커가 스스로 여는 run), 그런 run 을 요청자 스코프로만 다루면 **영원히 위임되지 못한 채**
+    매 cycle 재시도만 돌며 run 이 `running` 으로 굳는다 — 그 상태는 enqueue dedup 을 통해
+    사용자의 재트리거까지 막는다.
+
+    사람이 시작하지 않은 분석은 성질상 배경 작업이므로 **배경 작업에 동의한 러너 풀**로
+    넘긴다(동의하지 않은 사람의 토큰은 여전히 태우지 않는다).
+    """
+    src = (_CORE / "modules" / "node_analysis.py").read_text(encoding="utf-8")
+    assert "_batch_consenting_account" in _calls_in("modules/node_analysis.py", "_delegate_job"), (
+        "요청자 계정이 없을 때의 폴백이 없다 — auto run 이 영원히 pending 을 맴돈다")
+    assert "need_batch=True" in (_CORE / "modules" / "semantic_cluster.py").read_text(
+        encoding="utf-8"), "배경 동의 없이 배경 작업을 배급하면 동의 축이 무의미해진다"
+    assert "delegate_exhausted" in src, (
+        "위임 실패가 무한 재시도로 남는다 — 맡길 곳이 영영 없으면 run 이 굳는다")
+
+
+def test_delegation_deferral_is_bounded():
+    """위임 실패의 **연속** 횟수가 상한에 닿으면 terminal 로 종결한다.
+
+    첫 실패는 무료다(러너가 잠깐 꺼진 것은 이 잡의 잘못이 아니다). 그러나 영원히 무료로 두면
+    맡길 곳이 없는 잡이 무한히 pending 을 맴돈다 — 예산 분기와 같은 규율을 쓴다.
+    """
+    body = _func_src_of("modules/node_analysis.py", "_delegate_job")
+    assert "attempts + CASE WHEN error_kind = 'delegate' THEN 1 ELSE 0 END" in body, (
+        "연속 실패를 세지 않는다 — 첫 실패만 무료여야 하고 그 뒤는 소모돼야 한다")
+    assert "max_attempts" in body
+
+
+def _func_src_of(rel_path: str, func_name: str) -> str:
+    """그 함수의 소스 조각 (AST 로 경계를 잡는다 — 문자열 슬라이싱은 동명 접두에 걸린다)."""
+    src = (_CORE / rel_path).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            return ast.get_source_segment(src, node) or ""
+    raise AssertionError(f"{func_name} 를 찾지 못했다")
+
+
+# ── 7. 문구가 실측과 일치하는가 · 배포 가드가 「모름」을 「불일치」로 말하지 않는가 ──
+
+
+def test_consent_message_matches_the_measured_latency():
+    """토글 성공 문구가 **실측 반영 시간**과 어긋나지 않는다.
+
+    반영에는 하트비트가 **두 번** 필요하다 — 러너가 값을 읽고(①), 그 다음 신고에 실어야(②)
+    서버의 배급 자격이 바뀐다. 주기가 30초이므로 최대 두 주기다(라이브 실측 50초).
+    한 주기로 적으면 사용자는 정상 동작을 지연으로 오해하고 토글을 다시 누른다.
+    """
+    src = (_WEB / "routers" / "oauth_as.py").read_text(encoding="utf-8")
+    body = src[src.index("async def connect_batch_consent("):]
+    body = body[:body.index("\n@router") if "\n@router" in body else len(body)]
+    assert "30초 안에 반영" not in body, (
+        "실측(50초)보다 짧게 약속한다 — 사용자가 정상 동작을 고장으로 읽는다")
+    assert "1분 안에 반영" in body
+
+
+def test_tls_preflight_does_not_call_an_unreadable_ca_a_mismatch():
+    """배포 프리플라이트가 「읽지 못했다」와 「달랐다」를 가른다 (라이브 실측 2026-09-02).
+
+    `docker compose exec` 는 실패 메시지를 **stdout 으로** 뱉는다. 종전 가드는 stderr 만 막고
+    그 stdout 을 그대로 해시해, exec 을 못 여는 컨테이너에서 **오류 문구를 CA 로 취급**하고
+    「CA 회전 불일치」라는 사실이 아닌 사유로 배포를 막았다(실제 CA 는 동일, 서비스도 정상).
+
+    ⚠ 그리고 양쪽 해시를 **같은 방식으로** 내야 한다 — `$( )` 가 후행 개행을 지우므로 한쪽만
+    파일에서 직접 해시하면 내용이 같아도 값이 갈린다(고치다 만든 두 번째 오진단).
+    """
+    src = (_REPO / "bin" / "deploy-web.sh").read_text(encoding="utf-8")
+    i = src.index("Caddy 컨테이너의 rootCA 가 호스트와 불일치")
+    block = src[max(0, i - 2000):i]
+    assert "BEGIN CERTIFICATE" in block, (
+        "내용이 PEM 인지 확인하지 않는다 — exec 오류 문구가 CA 로 취급된다")
+    assert "CA 대조 skip" in block, "판정 불가를 skip 하지 않는다(best-effort 계약 위반)"
+    assert 'host_ca="$(printf' in block, (
+        "호스트 해시를 파일에서 직접 낸다 — 후행 개행 때문에 컨테이너 쪽과 영원히 어긋난다")
