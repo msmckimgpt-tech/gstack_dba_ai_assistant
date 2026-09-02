@@ -3356,10 +3356,22 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         scan_report["domain_synthesis"] = _ds_rep
                 except Exception as _dse:
                     logging.getLogger("insight").debug("domain_synthesis_failed err=%r", _dse)
-            # 잡 처리는 순수 LLM 작업이다 — 차단 중에는 claim 해서 실패시키지 않는다(claim 된
-            # 잡은 재시도 상한을 태우고 `failed` 로 굳는다). 적재 자체도 게이트로 막혀 있으므로
-            # 정상 운영에서 대기 잡은 생기지 않고, 전환 전에 남은 잡만 그대로 보존된다.
-            _na_rep = _node_analysis.process_pending() if _llm_open else {}
+            # ⚠ **게이트로 감싸지 않는다** (라이브 실측 2026-09-02, TASK-20260901T190000).
+            #
+            # 종전 주석은 이랬다: "차단 중에는 claim 해서 실패시키지 않는다 — 적재 자체도
+            # 게이트로 막혀 있으므로 정상 운영에서 대기 잡은 생기지 않는다." 그 전제가
+            # **깨졌다.** 이제 게이트가 닫혀 있어도 적재된다(연결된 개인 AI 가 처리하므로).
+            # 그런데 이 줄이 `if _llm_open` 으로 남아 있으면:
+            #
+            #   · 그래프 능동 분석이 적재돼도 **아무도 처리하지 않는다** — 사용자가 제보한
+            #     "막혀 있다" 가 형태만 바꿔 되돌아온다(202 는 뜨는데 결과가 영영 안 온다).
+            #   · stale `running` 회수가 **영원히 돌지 않는다** — 러너가 끝내 답하지 않은 잡이
+            #     pending 으로 복귀하지 못하고, 그 run 은 `running` 으로 굳어 재트리거를 막는다.
+            #     (실측: lease 900초를 1424초까지 넘겼는데 회수되지 않았다.)
+            #
+            # 판정은 **잡 단위로 함수 안에서** 한다: 게이트가 열렸으면 직접 호출, 닫혔으면
+            # 위임, 맡길 곳이 없으면 상한 있는 유예. 그러므로 여기서는 언제나 부른다.
+            _na_rep = _node_analysis.process_pending()
             if _na_rep.get("claimed"):
                 scan_report["node_analysis"] = _na_rep
             # node-role-viz: role 도입(0031) 이전 done Table 잡 역할 휴리스틱 백필 — 잔여 0 이면
