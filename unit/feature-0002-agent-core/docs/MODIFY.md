@@ -3269,3 +3269,18 @@ Task-Cycle: feature-0002-agent-core
 한다 — 마커 형식은 `merge.conflictStyle`·driver 에 따라 달라진다.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260902T140000-postdeploy-live — 배포 `2ffe054d`/`be01e28f` 제품별 라이브 실증 (doc-only)
+
+코드 변경 0. PR #1501(KB 근거 자동 주입) · #1503(health 42P08) 배포 후 실측.
+
+- **GZ_QA_G**(프롬프트 4,611자): `steam_billing_log.status` = Approved/Refunded/Succeeded,
+  `billingsummary.BillingType` = Payment/Refund. 관계 층까지 스스로 인용.
+- **DK_QA**(7,145자): `Achievement.Type` 1=특수/2=일반, `AchievementReward.PaymentType` 구분.
+  ⚠ **이 근거는 오늘 `common` → `product.dk_qa` 로 옮긴 그 4행**이다 — 귀속 정정과 자동 주입이
+  함께 작동함을 한 화면에서 확인했다.
+- **F6**: 배포 후 20분간 `datasource_health_persist_failed` **0건**(수정 전 사이클마다 발생).
+- 무중단: 두 배포 창 모두 caddy `no upstreams available` 0건.
+- 증적: `feature-0003/docs/test-runs.d/20260902T110000-kb-prompt-grounding.md` Run 7·8.
+
+Task-Cycle: feature-0002-agent-core
