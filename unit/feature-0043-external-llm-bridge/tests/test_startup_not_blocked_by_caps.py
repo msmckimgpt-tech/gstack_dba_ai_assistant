@@ -77,6 +77,10 @@ def _run_main_until_wait(ba, monkeypatch, tmp_path, caps_gate: threading.Event):
 
     def _fake_start_heartbeat(_api, _stop, _runtimes=None, **_k):
         timeline.append("heartbeat")
+        # 위 대역과 같은 이유로 첫-시도-완료 신호를 낸다 (TASK-20260902T140200).
+        _ready = _k.get("baseline_ready")
+        if _ready is not None:
+            _ready.set()
         return threading.Thread(target=lambda: None)
 
     def _fake_call(_self, tool, args=None, timeout=None):  # noqa: ANN001
@@ -144,6 +148,13 @@ def test_negotiation_still_runs_and_updates_the_reported_list(ba, monkeypatch, t
 
     def _fake_start_heartbeat(_api, _stop, runtimes=None, **_k):
         seen["runtimes"] = runtimes       # 하트비트가 매 tick 읽는 그 객체
+        # 하트비트는 TASK-20260902T140200 부터 **첫 시도가 끝났다는 신호**도 낸다 —
+        # 협상이 서버 baseline 을 짧게 기다리는 축이다. 대역이 그 책임을 빼먹으면 협상이
+        # 상한(≈16초)까지 멈춰 이 테스트가 «협상이 안 돌았다» 로 오진한다(실측: 그래서
+        # 처음 빨갰다). 대역은 대상의 **계약을 따라가야** 한다.
+        _ready = _k.get("baseline_ready")
+        if _ready is not None:
+            _ready.set()
         return threading.Thread(target=lambda: None)
 
     def _fake_resolve_caps(*_a, **_k):

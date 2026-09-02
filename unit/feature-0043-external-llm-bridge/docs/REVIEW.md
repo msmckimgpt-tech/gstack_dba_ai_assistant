@@ -3528,7 +3528,391 @@ M1~M12 **12/12 KILLED** · 정상 소스 PASS(30/30). 3 feature 전량 실행 �
 완료 고도(altitude)도 정직하게 적었다 — 이 cycle 이 보장하는 것은 「파이프라인이 AI 에
 도달하고 실패 사유가 표시된다」까지이며, 「정상 답변이 온다」는 사용자 머신의 `claude` 인증에
 달려 있다. 그 구분을 흐리면 사용자는 재로그인 전에 완료를 기대하게 된다.
+## REV-20260902T144000-ai-claude-corp-feature-0043-caps-live-sync [SUBAGENT:security] — BLOCK
 
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint · caching keyword matched (§18.8 dispatch)
+- Timestamp: 2026-09-02T14:40:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/2026-09-02T14-40-00-security.md
+- Critical issue: 서버가 준 baseline 값이 정제 없이 자식 AI 프롬프트가 된다(주입·크기폭증) ·
+  원장 조회 실패가 «빈 원장» 으로 접혀 다른 머신 항목을 삭제 · 미검증 `agent_build` 가 원장을
+  영구 NULL 화
+- Human Approval Needed: no
+
+## REV-20260902T144001-ai-claude-corp-feature-0043-caps-live-sync [SUBAGENT:backend] — BLOCK
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: schema/migration · caching keyword matched (§18.8 dispatch)
+- Timestamp: 2026-09-02T14:40:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/2026-09-02T14-40-00-backend.md
+- Critical issue: 5분 폴링 상한이 발동하지 않음(비교에 도달하는 실행 경로 부재) ·
+  `caps_pending` 이 두 응답에서 다른 술어인데 주석은 동일 단정 · `verified` 가 캐시 로드 시
+  강등되지 않아 라이브 질의 0회로 재신고 · 다중 머신 계정에서 30초 UPDATE·원장 진동
+- Human Approval Needed: no
+
+### 1차 라운드 조치 (전 지적 수용 — 기각 0)
+
+두 패널의 지적을 **전부** 수정했다. 기각한 항목은 없다.
+
+| 지적 | 조치 | 회귀 잠금 |
+|---|---|---|
+| 폴링 상한 미발동 | `setInterval` 콜백 tail 에서 `_syncGatePoll()` 무조건 재호출 | `test_poll_condition_is_reevaluated_every_tick` (콜백 **본문**을 슬라이스해 검사 — 정의부 통과 함정 회피) |
+| `caps_pending` 술어 분기 | `oauth_as` 판정식에 `and not runner_stale` | `test_status_response_carries_revision_and_pending` 이 AST 이름 집합으로 구 빌드 축 강제 |
+| `verified` 미강등 | `_CREATION_SOURCES` 신설 + `sanitize_caps` 전량 강등 | `test_cached_verified_is_downgraded_on_load` · `test_every_creation_source_is_covered_by_the_downgrade_table` |
+| 다중 머신 진동 | `_union_options` 합집합 누적(값 축) | `test_two_machines_converge_instead_of_flapping` · `test_union_is_capped_and_prefers_the_fresh_report` |
+| 읽기 실패 → 삭제 | `account_caps_baseline` → `None`(모른다), 그때 쓰기 skip | `test_store_read_failure_does_not_overwrite_the_ledger` |
+| lost update | compare-and-set (`RunnerCapsBaseline <=> %s`) | `test_store_write_is_compare_and_set` |
+| `agent_build` 미검증 | `normalize_runner_build` 공유 헬퍼 + `BASELINE_BUILD_MAX_LEN` | `test_oversized_build_cannot_empty_the_ledger` · `test_heartbeat_normalizes_the_client_supplied_build`(정규화 **1벌** 강제) |
+| baseline 값 무정제 | `baseline_index` 가 `_coerce_options`·`_CAPS_VALUE_RE` 적용 · 이름·라벨 상한 | `test_runner_sanitizes_the_server_baseline` |
+| 프롬프트 신뢰 경계 | `⟦UNTRUSTED-DATA⟧` 구획 + sentinel 제거 + 크기 상한(초과 시 확인 skip) | `test_rendered_previous_block_is_marked_untrusted_and_bounded` |
+| 빈 목록을 성공으로 반환 | `verify_runtime_caps` → `None` | `test_verify_without_model_flag_falls_through_to_open_probe` |
+| 소비처 0 필드 | 카탈로그 `caps_pending` 제거 + 주장도 삭제 | `test_catalog_reason_…` 이 그 키 부재를 단정 |
+| 「곧 표시됩니다」 약속 | 진행 사실 + 지속 시 다음 행동으로 교체 | 같은 테스트가 그 문구 부재를 단정 |
+
+**§3 challenge 도 수용했다** — 두 패널이 독립적으로 같은 축을 지적했다: 「확인-후-표시」의
+만료 절반이 실효 없다(`last_used_at` 이 계속 갱신돼 TTL 도달 불가 → 잘못된 값이 확인 질의
+앵커로 영구 재사용). `probed_at` **앵커 축**을 신설해 열린 열거만 앵커를 세우고,
+`BASELINE_ANCHOR_MAX_DAYS` 를 넘은 항목은 확인 대상으로 **제시하지 않는다** — 러너는 종전
+경로대로 열린 질의를 하고 그 답이 앵커 없이 원장을 교정한다. 사용자가 아무것도 몰라도
+화석이 스스로 빠진다. 잠금: `test_anchor_age_bounds_how_long_a_value_can_be_re_anchored` ·
+`test_anchorless_entries_are_never_offered`.
+
+앵커 축이 throttle 을 깨뜨린 것(회귀 2건 red)은 그 자리에서 잡았다 — 앵커도 같은 throttle 을
+타게 하고, 열린 열거가 왔는데 앵커가 낡았을 때만 예외로 갱신한다.
+
+**정직 표기 — 수용하되 이 cycle 범위 밖으로 남긴 것 1건**: 「협상 종료(성공/실패)를 러너가
+신고하고 서버가 그 사실로 pending 을 닫는다」는 축은 새 payload 필드 + 영속이 필요하다.
+이번에는 **문구에서 약속을 제거**하는 것으로 가두고(사용자가 다음 행동을 잃지 않게), 축 자체는
+REPORT §잔여에 남긴다.
+
+**«사용일» 의 의미**: 두 패널이 「사용일 = 러너가 켜져 있었는지 기준이지 사용자가 그 런타임을
+고른 사실이 아니다」를 지적했다. 그 정의는 계획 §3.4 에서 착수 **전에** 명시하고 근거를 적은
+것(하트비트가 능력을 매번 싣기 때문)이며, 사용자 결정 문구(「사용일 기준으로 만료를 갱신 및
+판단」)에 대한 해석이다. 코드·문서가 그 정의를 명시하도록 유지하고, 해석 사실을 완료 보고에
+표면화한다.
+
+## REV-20260902T160000-ai-claude-corp-feature-0043-caps-live-sync [SUBAGENT:confirm-round] — CONCERN
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: §18.8 패널 수렴 계약 (a) — P1 수정 후 확인 라운드 1회 필수
+- Timestamp: 2026-09-02T16:00:00+09:00
+- Verdict: CONCERN
+- Critical issue: **뮤테이션 검증으로 제 fix 2건이 항진명제로만 보호됨을 적발** — ①
+  `_report_sources` 호출 인자를 정제결과로 바꾼 뮤턴트에서 확인 질의가 영구 미발화하는데
+  41/41 통과 ② `verify_runtime_caps` 의 model_flag 분기 단정이 `_ask_json` 미주입으로
+  앞선 분기에서 끝나 초판 뮤턴트도 통과
+- Human Approval Needed: no
+
+### 확인 라운드 조치 (전건 수용)
+
+**뮤테이션이 잡은 항진명제 2건 — 테스트가 아니라 구조로 닫았다**
+
+- `_report_sources(raw, stored)` **2인자 시그니처**. 한 인자였다면 「정제결과를 넘기는」
+  실수가 조용히 `{}` 를 내고 확인 경로가 꺼진다 — 지금은 `TypeError` 라 **인터프리터가**
+  잡는다. 부분집합 단정(`mapped <= stored`)은 `{}` 를 항진 통과시키므로 **정상 신고에서
+  동등**(`==`)을 요구하도록 바꾸고, store 수준 end-to-end 단정
+  (`sources={"claude":"probe"}` → 서빙 / `sources={}` → 빈 목록)을 추가했다.
+- `merge_baseline` 의 **item 수준 출처 폴백 제거**. 그 폴백은 운영에서는 죽은 경로이면서
+  (저장 스키마 4키에 `source` 가 없다) 테스트에서만 살아 **판별력을 가렸다** — `sources={}`
+  를 넣어도 항목의 `source` 가 앵커를 세워 「확인 경로가 꺼진 사실」을 관측할 수 없었다.
+  채널을 하나로 두니 그 단정이 실제로 판별한다.
+- `verify_runtime_caps` 분기 단정을 `_ask_json` 주입으로 **분기에 실제 도달**시키고
+  대조군(플래그 있는 응답 → 성공)을 함께 뒀다.
+
+**도달 불가능한 가드 1건**
+
+- `_BASELINE_RENDER_MAX_CHARS` 4,000 → **1,600**. 정제 상한으로 만들 수 있는 최대 블록이
+  3,533자라 초판 가드는 **결코 발동하지 않았고** 삭제 뮤턴트도 통과했다. 상한을 도달 가능한
+  값으로 내리고, fixture 를 정제 상한(64자×40종)을 채운 입력으로 바꿔 가드가 실제로
+  발동함을 단정한다. 정상 페이로드(수백 바이트)는 여유 10배.
+
+**주석이 코드와 달랐던 1건**
+
+- `_capsPendingSince` 는 주석이 「처음 참이 된 시각」이라 주장했으나 매 `false→true` 전이에서
+  다시 찍혔다. `caps_pending` 의 두 입력이 **서로 다른 축의 질의**로 오므로(`LastHeartbeatAt
+  DESC` vs `t.Id DESC` — TASK-20260901T183000 의 의도적 비대칭) 러너 둘이면 진동이 실재한다.
+  재무장 횟수 상한(`_CAPS_PENDING_MAX_ARMS = 3`)을 두고, 단정은 **무장 지점이 그 상수로
+  가드되는지**를 본다(상수 존재만 보는 형태는 1차 라운드에서 이미 실패했다).
+
+**소비처 0 필드 1건**
+
+- `confirmed_at` 제거. 값이 항상 `last_used_at` 과 동일했고 **읽는 코드가 없었다** —
+  같은 라운드가 `system.py` 에서 제거하라고 지적한 클래스와 동일. 30초마다 나가는 페이로드와
+  문서 예산만 잠식했다.
+
+**예산 교환 1건**
+
+- 확인 질의의 timeout 을 `left` 전부 → **절반**. `left` 전부를 주면 hung verify 가 열린
+  질의의 재시도 예산을 먹어, TASK-2026-08-31 이 「codex 는 성공과 실패를 오간다」를 근거로
+  넣은 2회 재시도가 무효가 된다.
+
+**뮤테이션 재확인 (4종 전건 KILL)**: M-A(앵커 배선 끊기) · M-B(verify 초판 복원) ·
+M-D(렌더 가드 삭제) · M-E(재무장 상한 제거). 격리 사본에서 수행, 사본 삭제.
+
+### 수용하되 이 cycle 범위 밖으로 남긴 것 (REPORT §잔여 에 기록)
+
+1. **기존 사용자(로컬 캐시 보유)에게는 확인 경로가 발화하지 않는다.** 앵커는 **열린 열거만**
+   세우고, 유효한 캐시를 가진 머신은 애초에 묻지 않는다. 따라서 제보 ②의 해소는 「캐시가
+   없는 기동」부터이며, 단일 머신 사용자는 다음 열린 열거(새 머신·홈 초기화·`--refresh-caps`)
+   까지 종전 동작이다. 리뷰어 실측으로 확인했고 FUNCTION·REPORT 에 모집단을 명시했다.
+2. **앵커 상한과 만료 상한을 같은 14일로 둔 것** — 두 축의 실패 방향이 반대라는 지적은
+   타당하다(만료가 짧으면 데이터 손실, 앵커가 짧으면 기능이 꺼짐). 다만 앵커 만료의 결과는
+   **종전 동작(열린 질의)으로의 강등**이라 기능 파손이 아니다. 리뷰어가 제안한 「재앵커 횟수
+   카운터」는 더 나은 축이나 새 필드·소비처가 필요해 이월한다.
+3. **`_caps_first` 경로(표 밖 CLI)는 baseline 을 받지 못한다** — 협상이 하트비트보다 먼저
+   동기 실행되기 때문이다(argv 를 협상에서 배우므로 순서를 바꾸면 질문에 답하지 못한다).
+   목록이 가장 불안정한 모집단이 확인 경로에서 빠지는 것은 사실이며, 코드가 그 이유를
+   말하도록 주석을 남기고 이월한다.
+
+### 리뷰 무결성 (프로세스 기록)
+
+리뷰어가 「확인 라운드 도중 워크트리가 3회 변경됐다」를 지적했다 — 사실이다. 그 창에서
+사용량 한도 중단이 있었고, 재개 시점에 이 worktree 의 스테이징된 24파일이 사라졌다
+(reflog `reset: moving to HEAD` ×3). 같은 시각의 stash(`rt2`)로 전량 복원하고 즉시 보호
+커밋(`ee4abe53`)을 만들었다. 이후 수정은 커밋 위에서 진행했으므로 다음 라운드는 고정
+스냅샷을 본다.
+
+> **⚠ 귀책 정정 (2026-09-02, R4)**: 보호 커밋 `ee4abe53` 의 메시지와 이 절의 초판은
+> 원인을 **「외부 주체」**로 적었다. **틀렸다.** 실제 행위자는 **2차 라운드 리뷰
+> subagent 가 실행한 `git stash push -u`** 다 — 그 명령이 워킹트리를 HEAD 로 되돌리면서
+> 스테이징이 사라졌고, 복원에 쓴 stash(`rt2`)가 바로 그 명령이 만든 것이다. 즉 유실과
+> 복원이 **같은 원인**이었다. 커밋 메시지는 `--amend` 금지(§16.3 Step 3)라 그대로
+> 남으므로, 정정은 여기가 정본이다. 남는 교훈은 「외부 침입」이 아니라
+> **「read-only 로 부른 리뷰 subagent 가 트리를 변경할 수 있다」** — 다음 라운드부터
+> 리뷰는 커밋된 스냅샷 위에서만 돌린다(이번 라운드가 그렇게 했다).
+
+
+## REV-20260902T163000-ai-claude-corp-feature-0043-caps-live-sync [SELF:confirm-round-2] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: §18.8 패널 수렴 계약 (a) — 직전 라운드가 CONCERN 이므로 P1 0 까지 반복
+- Timestamp: 2026-09-02T16:30:00+09:00
+- Verdict: APPROVED (이 라운드에서 새로 적발한 P1 3건을 **모두 닫은 뒤**의 판정)
+- Human Approval Needed: no
+
+### ⭐ 이 라운드의 가장 중요한 발견 — **주입 하네스가 뮤턴트를 적용하지 않고 있었다**
+
+직전 라운드(REV-…T160000)의 마지막 문단은 「M-A·M-B·M-D·M-E 4종 전건 KILL」이라고
+적었다. **그 중 러너측 2건(M-B `verify` 초판 복원, M-D 렌더 가드 삭제)의 결과는 무효다.**
+
+근본 원인: 러너의 실물은 `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` 이고
+그것은 **빌드 생성물**이다 — 루트 `conftest.py:_stage_bridge_runner()` 가 collection 시점에
+`agent/` 패키지에서 조립한다. 뮤테이션용 격리 사본에 **`conftest.py` 를 복사하지 않았으므로**
+재조립이 일어나지 않았고, `cp -a` 로 함께 넘어온 **고친 조립본**이 그대로 실행됐다. 즉
+`agent/caps.py` 에 무엇을 주입해도 테스트는 **원본을 보고 통과**했다.
+
+이 결함의 성질이 나쁘다: 실패가 「뮤턴트 생존」이 아니라 **「전건 KILL」로 위장**한다.
+검증이 통과했다는 신호를 주면서 실제로는 아무것도 검증하지 않는다 — 이 저장소가 반복해
+겪은 「초록불인데 무의미」 클래스이고, 하필 그 클래스를 잡으려고 만든 도구에서 났다.
+
+**하네스 수정 + 자기검사 추가**: 사본에 `conftest.py` 와 빌드 스크립트를 함께 넣고,
+매 세션 첫 실행으로 **`agent/caps.py` 에 구문 오류를 주입해 collection 이 실패하는지**
+확인한다(= 주입이 실물에 도달함의 증거). 실패하지 않으면 그 세션의 뮤테이션 결과는 버린다.
+
+### 고친 하네스로 재측정 — **살아 있는 결함 3건 적발 (전부 P1)**
+
+세 건 모두 **출하 직전 트리에 실재**했고, 러너 스위트 137건 중 **어느 것도 잡지 못했다**.
+
+1. **[P1] `_CAPS_RUNTIME_NAME_RE` 가 아무 단정에도 걸려 있지 않았다.** `^.*$` 로 풀어도,
+   값 집합(`_CAPS_VALUE_RE`)으로 되돌려도 전건 통과. 이 정규식은 장식이 아니다 — 이 축의
+   설계 전제가 「**서버 응답은 비신뢰**」이고(그래서 `⟦UNTRUSTED-DATA⟧` 봉투가 있다), 이
+   키는 그 봉투 안 프롬프트 문장이 되며 `_which_ai` 조회 키가 된다. 서버측
+   `_CAPS_RUNTIME_RE` 와 폭이 갈리면 **서버가 막아 둔 `:` 재해석이 서버→러너 방향으로
+   되열린다**. → `test_baseline_index_bounds_the_runtime_name_like_the_server_does`:
+   8종 입력의 통과/탈락을 단정하고, **두 정규식 패턴을 직접 대조**해 한쪽만 넓어지는 날을
+   잡는다(서버측만 넓힌 뮤턴트도 KILL).
+2. **[P1] `--refresh-caps` 의 baseline 폐기가 lifecycle 배선에서 무단정.** 기존
+   `test_refresh_caps_ignores_baseline` 은 `detect_runtimes` **인자**를 본다 — 한 층 아래다.
+   그래서 `lifecycle._negotiate_caps` 의 `_base` 를 무조건 전달로 바꾼 뮤턴트가 전건 통과.
+   사용자가 「버리고 다시 묻겠다」고 명시한 플래그인데 배선이 직전 목록을 계속 먹이면 그
+   플래그가 고치려던 상태에서 **영구히 못 벗어난다** = 화석의 정의. §16.7 G14-e 의 층 간
+   판본. → `test_refresh_caps_wiring_drops_the_baseline_too`: `_base` 대입식에
+   `refresh_caps` 가 있어야 하고, **캐시와 폐기 조건이 같아야** 한다(한쪽만 버리면 사용자가
+   본 것은 여전히 직전 목록이다).
+3. **[P1] `baseline_ready.set()` 이 무단정 — 지워도 전건 통과.** 기존
+   `test_startup_not_blocked_by_caps.py` 는 `start_heartbeat` 를 **가짜로 바꾸고 그 가짜가
+   신호를 세운다**. 진짜 코드의 `set()` 은 어디서도 실행되지 않았다. 없으면
+   `_negotiate_caps(wait_baseline=True)` 가 매 기동마다 `_CAPS_BASELINE_WAIT_SEC`(16초)를
+   **꽉 채워** 기다린다 — 이 cycle 이 줄이려고 착수한 「체감 대기」를 새로 만드는 회귀다.
+   → `test_heartbeat_signals_baseline_ready_on_every_outcome`: **진짜 `start_heartbeat`** 를
+   돌리고 전송만 대역화해, 4가지 결과(baseline 수신 / 키 없음 / 401 / 순단) **전부**에서
+   신호가 서는지 본다. 성공 분기 한정 뮤턴트·발화 지연 뮤턴트 모두 KILL.
+
+### R3 지적 잔여 4건 — 전건 조치
+
+- **[R3 §3] CAS predicate 가 컬럼 원문이 아니라 «정규화 재직렬화» 였다.** 원문이 정규형과
+  한 바이트라도 다르면 `RunnerCapsBaseline <=> %s` 가 **영구 0행**이 되고 그 계정의 원장은
+  다시 갱신되지 않는다 — 그리고 **조용하다**(하트비트 200, 러너는 목록 수신, 화면 정상,
+  저장만 멈춤). 원문이 갈라지는 경로는 실재한다: 스키마 변경(이 cycle 이 실제로
+  `confirmed_at` 을 뺐다)·다른 직렬화기·수동 보정. → `_account_caps_baseline_row()` 가
+  `(정규화, 원문)` 을 함께 돌려주고, **「쓸 필요가 있나」는 정규형·「누가 먼저 썼나」는
+  원문**으로 나눠 본다. 초판의 `before if current else None` 도 같은 함정이었다
+  (`'{}'` 처럼 비어 있지 않은데 정규화가 빈 dict 를 내는 값에서 predicate 만 NULL).
+  4종 원문 파라미터로 실행 단정(뮤턴트 3종 KILL).
+- **[R3 §2] 확인 질의 예산이 `left / 2` 였다.** 240초에서 확인이 120초를 쥐면 남는 120초가
+  실측 codex 열린 질의(112.3초)에 너무 빠듯해, TASK-2026-08-31 의 2회 시도가 무력화된다 —
+  **안정화를 위해 넣은 확인이 가용성 장치를 죽여 순 효과가 음수**가 된다. → 절대 상한
+  `_CAPS_VERIFY_TIMEOUT_SEC = 60.0`. 240 − 60 = **180초가 열린 질의의 몫**이고, 재시도가
+  겨냥한 실패 모양(**빠른** 실패)에서 두 번째 시도가 실제로 성립한다. 가짜 시계로 각 질의가
+  받은 예산을 재는 실행 단정(초판 복귀·과대 상한·재시도 제거 뮤턴트 전부 KILL).
+- **[R3 §2] 렌더 상한이 세 상수의 관계 없이 홀로 서 있었다.** 실측으로 부등식을 못박고
+  (정제 최악치 **3,493자** ↔ 상한 1,600 ↔ 현장 입력 40종 중 31종 유지), 그 부등식을
+  `test_render_budget_is_reachable_and_not_starving` 이 **양쪽 끝에서** 실행으로 잠근다 —
+  4,000(죽은 가드)과 300(정상 입력 굶김) 뮤턴트 모두 KILL.
+- **[R3 §2] 건너뛴 사유가 사실과 달랐다.** 자르기 도입 뒤 그 분기에 남는 경우는 「항목
+  하나로도 예산 초과」인데 문구는 「이전 목록이 없습니다」였다 — 목록은 **있다**. 사용자에게
+  보이는 유일한 단서라 조사자를 서버 저장·만료로 오도한다. 두 사유를 갈랐다.
+- **[R3 M2] 문서·주석이 코드와 상충했다.** `confirmed_at` 잔재(스키마 주석·FUNCTION JSON·
+  테스트 fixture) 제거, 문구 표 3행을 **코드 verbatim** 으로 교체(초판이 명세로 적은
+  「곧 표시됩니다」는 코드가 의도적으로 제거하고 테스트가 **부재를 단정**하던 문장이라
+  명세와 테스트가 정면 충돌이었다), 승인된 계획 문서에는 **구현 이탈 블록**을 명시
+  (계획 자체는 승인 마커가 있어 재작성하지 않는다).
+- **[R3 §2] `reasons[nm]` 주석이 거짓이었다.** 「열린 질의가 성공하면 덮인다」고 적었는데
+  성공 경로는 사유를 넣지 않고 곧바로 `return` 한다. 무해한 진짜 이유는 **`reasons` 를
+  아무것도 얻지 못한 런타임에서만 읽기** 때문이며, 그 불변식을 주석에 적었다.
+
+### 뮤테이션 총괄 (고친 하네스, 격리 사본, 사본 삭제)
+
+**KILL 21종** — 앵커 배선(2인자: `None`·`[]`·무관 변수) · 재무장 상한(가드 반전·상한 0·
+리스너 미발화·진행 리셋 제거) · verified 강등 제거 · UNTRUSTED 봉투 제거 · 렌더 상한
+(4,000·300·자르기 제거) · `baseline_index` 정제 제거 · 이름 정규식(무제한·값집합 복귀·
+서버측만 확장) · refresh 배선 · `baseline_ready`(미발화·성공분기 한정·지연) · CAS
+(정규화 predicate·`if current` 함정·CAS 제거) · verify 예산(초판 복귀·과대·재시도 제거) ·
+사유 단일화. **생존 0.**
+
+⚠ AST 단정 한 건은 초판이 `ast.unparse(...).isidentifier()` 였는데 `None` 의 unparse 가
+`"None"` 이어서 통과했다 — **노드 타입**(`ast.Name`)으로 바꿔야 `None`·`[]` 가 함께 걸린다.
+「문자열로 뽑아 검사」가 리터럴 앞에서 무력해지는 부류이므로 여기 남긴다.
+
+
+## REV-20260902T173000-ai-claude-corp-feature-0043-caps-live-sync [CODEX:adversarial] — BLOCK→해소
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: §18.8 적대 패널 (codex CLI) + §18.8 (a) 수렴 계약 — 직전 라운드가 새 P1 을 냈으므로 반복
+- Timestamp: 2026-09-02T17:30:00+09:00
+- Reviewer: `codex exec` (codex-cli 0.152.1, reasoning=high) — diff 3종(구현·테스트·병합 해소) 전달
+- Verdict: **BLOCK** (P1 4 · P2 5 · P3 1) → 조치 후 **해소**
+- Human Approval Needed: no
+
+### 판정 요약
+
+| # | codex 판정 | 제 검토 | 조치 |
+|---|---|---|---|
+| 1 | P1 `verified` 출처 위조 가능 | **설계 경계** (아래) | 문서화 |
+| 2 | P1 `verify_streak` 이 하트비트를 셈 | **타당 — 실측 재현** | 수정 |
+| 3 | P1 baseline 조회 실패가 원장을 지움 | **타당** | 수정 |
+| 4 | P1 카탈로그 실패가 지문 소비 후 정지 | **타당** | 수정 |
+| 5 | P2 첫 `caps_rev` 관측 경합 | **타당** | 수정 |
+| 6 | P2 합집합이 사라진 모델을 남김 | 기존 기록 + 새 사실 | 기록 보강 |
+| 7 | P2 행(hang) 시 재시도 미보장 | **이미 기록됨** (독립 확인) | 없음 |
+| 8 | P2 `self_update` 자기신고 | 이 cycle 밖 | 기록 |
+| 9 | P2 자기갱신이 협상을 죽임 | **타당** | 수정 |
+| 10 | P3 CAS rowcount 미확인 | 타당(자기수렴) | 기록 |
+
+### ⭐ P1-2 — `verify_streak` 이 확인 «횟수» 가 아니라 **신고 횟수**를 셌다
+
+이 라운드의 최대 발견이고, **R3 S1 수정을 정면으로 무력화**했다. 실측 재현:
+
+```
+t=  0s  streak=1  러너에게 제시=['claude']
+t= 30s  streak=2  ...
+t=120s  streak=5  러너에게 제시=[]      ← 2.5분이면 원장이 꺼진다
+```
+
+능력은 매 하트비트(30초)에 실리는데 출처(`source`)가 그대로였다. 서버 `merge_baseline` 은
+`verified` 신고마다 streak 을 1 올리므로, **한 번의 확인이 30초마다 새 확인으로 세어진다**.
+R3 S1 이 「몇 달이 지나도 유효한 원장」을 위해 벽시계를 버리고 도입한 횟수축이 **2.5분
+타이머**로 변질됐고, 새 머신은 안정된 원장 대신 열린 열거로 떨어져 **제보 ②가 그대로
+되돌아온다**. 부수 효과로 streak 이 매번 달라져 저장측 「값이 그대로면 쓰지 않는다」가 항상
+거짓이 되어 **쓰기 증폭도 재발**했다(같은 cycle 이 이미 한 번 고친 결함).
+
+왜 기존 단정이 놓쳤나: `test_verify_streak_bounds_…` 는 `merge_baseline` 을 직접 부르며
+매번 `sources={"claude":"verified"}` 를 준다 — 즉 **「매 호출이 새 확인」이라는 전제 자체를
+재현**하므로 상한 도달이 정상으로 보인다. 계층 하나 위(러너가 실제로 무엇을 반복 전송하는가)
+를 보지 않은 것이 구멍이었다.
+
+수정: 신고가 서버에 닿은 뒤 **같은 값의 다음 신고는 `cache` 로 강등**한다. 두 번째 신고부터
+이 값의 출처는 라이브 응답이 아니라 **그 프로세스의 메모리**이므로 그것이 정확한 표기이고,
+같은 규율이 이미 `config.json` 적재 경로에 있다(`sanitize_caps`). `cache` 도 신고 가능
+출처라 화면 목록은 유지된다. 새 단정은 **진짜 하트비트 루프를 돌려** 전송 스냅샷을 모으고
+그것을 실제 병합기에 흘린다.
+
+### P1-3 — 「비었다」와 「모른다」가 응답 경계에서 평평해졌다
+
+`merge_account_caps_baseline` 이 조회 실패에도 `[]` 를 돌려주고, 응답이 그것을 실었다.
+러너 수신부는 `if "caps_baseline" in res` 라 **키가 있으면 자기 원장을 교체**하므로, 조회
+실패 한 번이 그 프로세스의 확인 경로를 끄고 그 회차는 열린 열거로 떨어진다. 이 cycle 이
+`account_caps_baseline`(`None` vs `{}`)에서 세운 구분이 바로 그 위 계층에서 무너졌다.
+
+수정: 저장층이 `None`(모른다)을 돌려주고, 응답은 그때 **키를 싣지 않는다**. 초판 주석은
+「키를 빼면 구·신 러너 해석이 갈린다」를 근거로 들었는데 **사실이 아니다** — 구 러너는 이
+키를 읽지 않으므로 부재와 존재를 구분할 코드가 없다.
+
+### P1-4 — 소비처 실패가 지문을 소비해 **영구 정지**
+
+리스너 호출 **전에** `_lastCapsRev` 를 덮고 있었다. 카탈로그 재조회가 503·타임아웃이면
+`loadVaultOptions` 가 오류를 삼키고 `state.modelCatalog = null` 로 두고 정상 반환하므로,
+같은 지문으로 재시도할 경로가 없다 — 목록은 빈 채 고정되고 전체 새로고침만 남는다.
+**이 cycle 이 없애려던 「새로고침해야 보인다」가 실패 경로로 되살아나는 형태다.**
+
+수정: 지문은 **소비처가 성공한 뒤에** 소비한다. `_refreshModelCatalogSurface` 가 프라미스를
+돌려주고 `state.modelCatalog` 결과로 실패를 말하며, 실패면 직전 지문을 유지해 다음 폴링이
+재시도한다(그 폴링은 새 `caps_settling` 창이 열어 둔다). 같은 지문 중복 적용은
+`_capsApplying` 가 막는다.
+
+### P1-1 — «위조 가능» 은 이 축의 **설계 경계**다 (수정하지 않음, 근거 기록)
+
+지적한 기전은 사실이다: 출처는 클라이언트 payload 에서 오고 서버는 nonce·검증 세션이 없다.
+그러나 그것이 이 게이트의 위협 모델이 **아니다**:
+
+- 러너는 **사용자 자신의 머신**에서 **사용자 자신의 토큰**으로 돈다. 적대적 러너는 이미
+  질문에 아무 답이나 돌려줄 수 있고, 영향 범위는 **그 계정 자신의 화면**이다. 서버가 원격
+  머신의 CLI 가 무엇을 할 수 있는지 검증할 수단은 존재하지 않는다(그래서 이 제품은 추론을
+  그 머신에 위임한다).
+- provenance 게이트의 목적은 **화석**이다 — 「우리가 소스에 적어 둔 표(`builtin`)가 화면에
+  도달하는 것」. 그 경로는 실제로 사용자 제보 4회를 만들었고, 게이트가 막는 것은 그것이다.
+  `_REPORTABLE_SOURCES` 주석이 그 목적을 명시한다.
+
+「`probe` 를 반복하면 streak 이 0으로 유지된다」도 결함이 아니다 — `probe` 는 열린 열거를
+했다는 뜻이고, 그것이 **교정 경로 자체**다.
+
+### P2-6 — 합집합의 대가: 기록을 **보강**한다 (구조 변경 없음)
+
+「사라진 모델이 후보로 남는다」는 REPORT §알려진 한계에 이미 있다. codex 가 더한 새 사실은
+**`last_used_at` 이 런타임 단위라 개별 모델은 TTL 로 빠지지 않는다**는 것 — 타당하다.
+그런데 합집합은 제거할 수 없다: 한 계정이 여러 머신에서 러너를 띄우고 플랜이 다르면, `probe`
+에서 교체하는 순간 두 머신의 목록이 30초마다 진동한다(그것을 막는 회귀 테스트가 이미 있다:
+`test_two_machines_converge_instead_of_flapping`). 남는 탈출구는 확인 질의가 「빼라」고 묻는
+것이고, 그 답이 부정이면 **신고에서 빠져 화면에 오르지 않는다** — 후보 목록에만 남는다.
+모델 단위 나이 축은 새 상태·소비처가 필요해 이월(REPORT §11-C).
+
+### P2-7 — **독립 확인**으로 기록
+
+행(hang) 시 재시도가 성립하지 않는다는 지적은 제가 이미 같은 결론을 코드 주석
+(`_CAPS_VERIFY_TIMEOUT_SEC`)과 REPORT §11-B 에 적어 두었다. 산술도 일치한다
+(112.3×2 + 60 = 285 > 240). 독립적으로 같은 결론에 도달했다는 사실을 여기 남긴다 —
+총예산 상향은 기동 체감과 직접 교환이라 사용자 결정 사안이다.
+
+### P2-8 · P3-10 — 이 cycle 밖 / 자기수렴
+
+- `self_update` 자기신고: TASK-20260902T140000 의 축이고 이 cycle 이 만들지 않았다. 타당한
+  지적이라 REPORT §11-C 에 이월 기록.
+- CAS rowcount 미확인: 0행이면 그 회차 신고가 저장되지 않지만 다음 하트비트(30초)가 다시
+  시도해 수렴한다. 러너가 그 사이에 종료되는 좁은 창만 손실이고, 손실 내용은 「다음 연결에서
+  다시 확인받는 것」이다. REPORT §11-C 이월.
+
+### 뮤테이션 (고친 하네스, 자기검사 통과)
+
+**KILL 5/5** — J1(지문을 리스너 전에 소비) · J2(소비처가 실패를 `true` 로 보고) ·
+J3(`verified` 강등 제거 → 하트비트가 streak 태움) · J4(실패에 `[]` 를 실음) ·
+J5(저장층이 실패를 `[]` 로 접음). 생존 0.
+
+⚠ J2 는 **초판에서 생존**했다: 프런트 판정 하네스가 리스너를 대역으로 두므로 「소비처가
+실패를 말하는가」라는 절반을 검사하지 않았다 — 방어는 성립한 채 **아무 일도 하지 않는**
+상태다. 하네스에 `app.js` 의 `_refreshModelCatalogSurface` 를 **직접 실행**하는 절을 더해
+닫았다. 「방어를 넣었다 ≠ 방어가 성립한다」의 재발이다.
 ## REV-20260902T172500-ai-claude-feature-0043-bridge-answer-duration [SKIPPED:minor-additive] — APPROVED
 
 - **일시**: 2026-09-02

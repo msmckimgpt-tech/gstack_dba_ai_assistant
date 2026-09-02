@@ -451,3 +451,56 @@ def test_tls_preflight_does_not_call_an_unreadable_ca_a_mismatch():
     assert "CA 대조 skip" in block, "판정 불가를 skip 하지 않는다(best-effort 계약 위반)"
     assert 'host_ca="$(printf' in block, (
         "호스트 해시를 파일에서 직접 낸다 — 후행 개행 때문에 컨테이너 쪽과 영원히 어긋난다")
+
+
+# ── 8. 반영 함수의 **성공 경로**를 실제로 돌린다 (라이브 실측 2026-09-02) ──────────
+#
+# ⚠ 이 절이 생긴 이유: 종전 테스트는 `apply_external_*` 의 **거절 경로만** 돌렸다
+#   (payload 없음 → ValueError). 그래서 성공 경로에 있던 `NameError: _log is not defined`
+#   가 전건 green 인 채로 배포됐고, **라이브에서만** 드러났다(`저장 중 오류: name '_log' is
+#   not defined`). 예외를 던지는지 보는 것과 끝까지 도는지 보는 것은 다른 검사다.
+
+
+def test_insight_apply_success_path_actually_runs(monkeypatch):
+    """정상 결과가 들어오면 **끝까지 돌아 KV 에 쓴다** — 로깅 한 줄에서 죽지 않는다."""
+    from modules import insight as ins
+
+    saved: dict = {}
+    monkeypatch.setattr(ins, "save_memory_kv",
+                        lambda conn, cid, key, val: saved.__setitem__(key, val))
+    monkeypatch.setattr(ins, "_load_delegated_insight_raw", lambda key: saved.get(key, ""))
+    ins.apply_external_insight_summary(
+        None, {"kv_key": "delegated_table_insight:abc", "table_key": "s.t"},
+        {"summary": "요약", "columns": []})
+    assert "delegated_table_insight:abc" in saved, "KV 쓰기가 일어나지 않았다"
+
+
+def test_insight_apply_refuses_when_the_write_did_not_land(monkeypatch):
+    """**썼다고 믿지 않는다** — 되읽어 없으면 예외.
+
+    `save_memory_kv` 는 실패해도 경고만 남기고 조용히 넘어간다(다른 소비처엔 그 관대함이
+    맞다). 여기서 그대로 성공으로 접으면 콘솔은 "완료" 라 말하는데 값은 어디에도 없고,
+    다음 cycle 이 같은 작업을 사용자 계정 토큰으로 **다시 산다**.
+    """
+    from modules import insight as ins
+
+    monkeypatch.setattr(ins, "save_memory_kv", lambda *a, **k: None)   # 조용히 실패
+    monkeypatch.setattr(ins, "_load_delegated_insight_raw", lambda key: "")
+    with pytest.raises(RuntimeError):
+        ins.apply_external_insight_summary(
+            None, {"kv_key": "k", "table_key": "s.t"}, {"summary": "x"})
+
+
+def test_node_analysis_apply_success_path_actually_runs(monkeypatch):
+    """노드 분석 반영도 성공 경로가 끝까지 돈다 — done 기입 + run 마감까지."""
+    from modules import node_analysis as na
+
+    cur = _FakeCursor([("Table", "t", "db.t", "running"), (0,), (1, 0)])
+    monkeypatch.setattr(na, "_rw_conn", lambda _c: (_FakeConn(cur), True))
+    na.apply_external_node_analysis(
+        None, {"job_id": 5, "run_id": "r9"}, {"summary": "S", "relationships": "R"})
+    sqls = [s for s, _ in cur.executed]
+    assert any(s.startswith("UPDATE node_analysis_jobs SET status='done'") for s in sqls), \
+        "done 기입이 없다"
+    assert any("UPDATE node_analysis_runs SET status=" in s for s in sqls), \
+        "run 마감이 없다 — 마지막 잡이 위임으로 끝난 run 이 영원히 running 으로 남는다"

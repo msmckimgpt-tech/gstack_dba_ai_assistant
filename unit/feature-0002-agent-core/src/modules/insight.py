@@ -283,9 +283,10 @@ def _delegate_table_insight(mem_conn, table_key, tfp, payload, schema, table) ->
             dedupe_key=_delegated_insight_kv_key(table_key, tfp))
         return True
     except _bt.ConsoleJobRejected as exc:
-        _log.info("insight_summary 위임 미적재 %s.%s: %s", schema, table, exc)
+        logging.getLogger("insight").info("insight_summary 위임 미적재 %s.%s: %s", schema, table, exc)
     except Exception as exc:  # noqa: BLE001
-        _log.warning("insight_summary 위임 적재 실패 %s.%s: %r", schema, table, exc)
+        logging.getLogger("insight").warning(
+            "insight_summary 위임 적재 실패 %s.%s: %r", schema, table, exc)
     return False
 
 
@@ -301,11 +302,27 @@ def apply_external_insight_summary(conn, payload, result) -> None:
         raise ValueError("위임 payload 에 kv_key 가 없습니다 — 어디에 쓸지 알 수 없습니다.")
     if not isinstance(result, dict) or not result:
         raise ValueError("테이블 인사이트 결과가 JSON 객체가 아닙니다.")
-    if conn is None:
-        raise RuntimeError("제어면 연결이 없습니다.")
-    save_memory_kv(conn, GLOBAL_CONVERSATION_ID, kv_key,
-                   json.dumps(result, ensure_ascii=False))
-    _log.info("insight_summary 위임 결과 기입 %s", (payload or {}).get("table_key"))
+    body = json.dumps(result, ensure_ascii=False)
+    save_memory_kv(conn, GLOBAL_CONVERSATION_ID, kv_key, body)
+    # ⚠ **썼는지 되읽어 확인한다.**
+    #
+    # `save_memory_kv` 는 `conn` 을 쓰지 않고 자기 PG 연결을 열며, 실패하면 경고만 남기고
+    # **조용히 넘어간다**(그 함수의 다른 소비처들은 heartbeat·topic 처럼 유실돼도 다음 주기에
+    # 덮어써지는 값이라 그 관대함이 맞다). 그러나 여기는 **쓰기 축**이다 — 반영하지 못했는데
+    # 성공으로 접으면 콘솔은 "완료" 라 말하고 값은 어디에도 없으며, 다음 cycle 이 같은 작업을
+    # 사용자 계정 토큰으로 **다시 산다**. 되읽어 없으면 예외로 올려 작업 행에 사유를 남긴다.
+    if not _load_delegated_insight_raw(kv_key):
+        raise RuntimeError("KV 기입을 확인하지 못했습니다(런타임 저장소 쓰기 실패).")
+    logging.getLogger("insight").info(
+        "insight_summary 위임 결과 기입 %s", (payload or {}).get("table_key"))
+
+
+def _load_delegated_insight_raw(kv_key: str) -> str:
+    """그 키의 원문. 되읽기 확인 전용 — 실패는 빈 문자열(= 확인 못 함)."""
+    try:
+        return str(load_memory_kv(None, GLOBAL_CONVERSATION_ID, kv_key) or "")
+    except Exception:
+        return ""
 
 
 def _publish_table_insight(

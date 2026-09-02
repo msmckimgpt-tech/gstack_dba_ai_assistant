@@ -526,6 +526,12 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     # (2026-09-01 재설계: 수신 시점 provenance 가 짐을 다 지고, 읽기 시점 전역 게이트는
     # 제품 안에서 풀 수 없는 잠금만 남겼다 — 적대 패널 3인 확인 라운드).
     runner_listening = False
+    # 그 러너가 **배포본과 다른 파일**인가 (TASK-20260902T140200). 목록이 빈 이유를
+    # 「아직 확인 중」과 「구 빌드라 물어보지 못한다」로 가르는 **근거 있는** 축이다 —
+    # 종전에는 두 상태를 한 문구로 뭉개 정상 진행 중인 사용자에게 「다시 실행하라」고
+    # 오안내했고(§16.7 G7-c: 미확보는 단정하지 않는다), 그 오안내가 정상 대기를 고장으로
+    # 읽히게 만들었다(사용자 제보 2026-09-02).
+    runner_stale = False
     account_bridge_model = ""
     account_bridge_effort = ""
     conn = None
@@ -560,6 +566,18 @@ def get_api_vault_options(request: Request) -> JSONResponse:
                             _store.account_bridge_defaults(cur, int(account.get("id") or 0))
                     except Exception:
                         account_bridge_model, account_bridge_effort = "", ""
+                    # 빌드 대조도 **같은 커넥션에서**, 그리고 실패를 **여기서** 삼킨다 —
+                    # 위 기본값과 같은 규율이다(안내 문구를 고르는 편의 축 하나가 목록
+                    # 전체를 지우면 안 된다). 판정은 `ai_tools.runner_build_is_stale`
+                    # **하나**를 쓴다: 연결 칩(`oauth_as.connect_status`)·하트비트 응답과
+                    # 같은 술어여야 「칩은 업데이트 필요인데 문구는 확인 중」이 생기지 않는다.
+                    try:
+                        from routers.ai_tools import runner_build_is_stale
+
+                        runner_stale = bool(runner_build_is_stale(
+                            _store.account_runner_build(cur, int(account.get("id") or 0))))
+                    except Exception:
+                        runner_stale = False
                 finally:
                     cur.close()
     except Exception:
@@ -574,6 +592,9 @@ def get_api_vault_options(request: Request) -> JSONResponse:
         # 조회가 실패했으면 러너가 듣고 있는지도 **모르는** 것이다 — 모르는 것을 근거로
         # 갱신 안내를 띄우면, 일시적 DB 오류가 멀쩡한 사용자에게 틀린 지시를 준다.
         runner_listening = False
+        # 빌드 대조도 「모른다」로 되돌린다 — 위와 같은 이유다. 모르는 것을 근거로
+        # 「최신 실행 파일로 다시 실행하라」고 말하면 그 지시 자체가 틀린 지시다.
+        runner_stale = False
         # 기본값도 같이 버린다 — 목록 없이 남은 기본값은 대조할 곳이 없어 그대로 쓰이거나
         # (없는 값이 선택돼 보이거나) 어차피 아래 `visible=False` 로 무시된다. 두 사실을
         # 함께 버려 "목록은 실패했는데 기본값만 살아 있는" 중간 상태를 만들지 않는다.
@@ -643,16 +664,34 @@ def get_api_vault_options(request: Request) -> JSONResponse:
             "model_selector": "visible" if visible else "hidden",
             "model_selector_source": "runner" if visible else "",
             "reasoning_levels_by_runtime": reasoning_by_runtime,
-            # 숨김의 **이유**를 값으로 말한다 (§16.8 예산: 1문장). 구 러너는 다음 행동이
-            # 있으므로 그것을 적고, 그 밖의 숨김은 종전 문구를 유지한다.
-            # 숨김의 **이유**를 값으로 말한다 (§16.8 예산: 1문장). 두 상태뿐이다 —
-            # 러너가 없거나(고를 주체 없음), 듣고 있는데 고를 모델이 없거나.
-            # 후자는 「러너가 오래됐거나 AI 에게 물어보지 못했다」가 둘 다 참일 수 있으므로
-            # 원인을 단정하지 않고 **다음 행동**만 말한다(§16.7 G7-c: 미확보는 단정하지 않는다).
+            # 숨김의 **이유**를 값으로 말한다 (§16.8 예산: 1문장). 상태는 셋이다 —
+            # 러너가 없거나(고를 주체 없음), 듣고 있는데 **구 빌드**이거나, 듣고 있고
+            # 빌드도 최신인데 아직 목록이 없거나.
+            #
+            # 마지막 상태가 이번 수정의 표면이다 (TASK-20260902T140200). 러너는 능력 협상을
+            # **배경에서** 돌리므로(질문 처리를 먼저 살리려고) 연결 직후 수십 초 동안 정상적으로
+            # 목록이 비어 있다 — 실측 claude 22.7초 · codex 112.3초. 종전 문구는 그 창에
+            # 「최신 실행 파일로 다시 실행해 보세요」라고 말했는데, 그것은 **근거 없는 지시**이고
+            # (§16.7 G7-c) 정상 대기를 고장으로 읽히게 만들었다. 지금은 빌드 대조로 두 상태를
+            # 가른다 — 「구 빌드」는 실측된 사실이므로 그때만 재실행을 권한다.
+            # ⚠ 세 번째 문구에서 **「곧 표시됩니다」를 약속하지 않는다** (적대 리뷰
+            #   2026-09-02 §3). 러너의 능력 협상은 **1회**만 돌고, 라이브에서 관측된 실제
+            #   실패 사유는 `OAuth access token has expired` 였다 — 그 경우 목록은 영원히
+            #   오지 않는데 화면이 「곧 온다」고 말하면, 이 cycle 은 근거 없는 *지시*를
+            #   근거 없는 *약속*으로 바꾼 것이 된다(사용자는 다음 행동을 아예 잃는다).
+            #   그래서 진행 사실 + **지속될 때의 다음 행동**을 함께 말한다(§16.8 예산:
+            #   빈 상태·에러는 1~2문장).
+            #
+            #   이 문구는 `runner_stale` **조회가 실패한** 경우(모른다 → False)도 덮는다 —
+            #   그때 화면이 두 상태 중 하나를 단정하면 안 되고, 이 문장은 단정하지 않는다.
             "model_selector_reason": (
                 "연결된 본인 AI 가 쓸 수 있는 모델입니다."
                 if visible else
-                "연결된 러너가 알려준 모델이 없습니다 — 최신 실행 파일로 다시 실행해 보세요."
+                "연결된 러너가 서버 배포본과 달라 모델 목록을 받지 못했습니다"
+                " — 최신 실행 파일로 다시 실행해 보세요."
+                if runner_listening and runner_stale else
+                "연결된 본인 AI 에게 쓸 수 있는 모델을 확인하는 중입니다."
+                " 잠시 후에도 비어 있으면 그 AI 의 로그인·네트워크를 확인해 주세요."
                 if runner_listening else
                 "답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가 없어"
                 " 이 화면에서는 모델을 지정할 수 없습니다."
