@@ -396,7 +396,7 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 **Recurse via (literal grep)**:
 - 드레인 소비자: `grep -rn "bridge_drain\|_drain\." unit/feature-0003-agent-web-ui/src/`
 - 스파인 seam: `grep -n "PREDRAIN_\|DRAINED_SVC\|MCP_REPLICAS\|bridge" bin/deploy-web.sh`
-- 러너 쪽: `grep -n "draining\|_RECONNECT_BACKOFF\|_DRAINING_RETRY_FLOOR" unit/feature-0043-external-llm-bridge/src/bridge_agent.py`
+- 러너 쪽: `grep -rn "draining\|_RECONNECT_BACKOFF\|_DRAINING_RETRY_FLOOR" unit/feature-0043-external-llm-bridge/src/agent/` (주로 `lifecycle.py`. 2026-09-02 모듈 분할 이후 단일 파일 `src/bridge_agent.py` 는 **빌드 생성물**이라 저장소에 없다 — 종전 경로로 grep 하면 0건이다)
 
 **Verify**: `unit/feature-0045-zd-bridge-continuity/tests/`(60건 — 드레인 상태기계·게이트 실행·
 토폴로지·내부 창구) · `caddy validate --adapter caddyfile` · 배포 로그의 `bridge_continuity_summary`

@@ -203,7 +203,7 @@ flowchart TD
     큐레이션 --> CTX["get_task_context 5층<br/>→ 개인 AI 답변의 접지"]
 ```
 
-큐레이션이 실제로 **답변에 도달하는 유일한 경로**가 `get_task_context` 라는 점이 중요하다([[External-AI-Bridge#27-접지-지식--get_task_context-5층|Bridge §2.7]]). 그래프 동기화는 증분(30분)과 전량(04:17) 두 스케줄로 돌고, 호스트에 남아 있는 `bin/routine-backfill.sh` 와 **`flock` 으로 상호배제**된다.
+큐레이션이 실제로 **답변에 도달하는 주 경로**가 `get_task_context` 라는 점이 중요하다 — 2026-09-02 부터는 점유 응답(`claim_request`)에 접지 근거를 함께 싣는 **자동 주입**이 더해져 「유일한 경로」가 아니다([[External-AI-Bridge#27-접지-지식--get_task_context-5층|Bridge §2.7]]). 그래프 동기화는 증분(30분)과 전량(04:17) 두 스케줄로 돌고, 호스트에 남아 있는 `bin/routine-backfill.sh` 와 **`flock` 으로 상호배제**된다.
 
 ### 2.9 실행 큐와 워커
 

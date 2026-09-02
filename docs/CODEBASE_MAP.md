@@ -44,7 +44,7 @@ repo/
 │   ├── ROUTEMAP.md         # route → router:handler → auth 인덱스 (L0, 자동 생성)
 │   └── CODEBASE_MAP.md     # 이 문서
 ├── playbooks/              # PB-0001 ~ PB-0006, PB-0008
-├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유, `ls shared/*.py` 실측 16): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters·hangul_qwerty·llm_budget·llm_gate·resource_budget·share_window·bridge_tasks·attachment_write·self_review (2026-09-01 신설) (feature-0011 추출 + 0018/0026 외 후속 feature 편입)
+├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유, `ls shared/*.py` 실측 18): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters·hangul_qwerty·llm_budget·llm_gate·resource_budget·share_window·bridge_tasks·attachment_write·self_review·bridge_consent·bridge_caps (뒤 3종 2026-09-01~09-02 신설) (feature-0011 추출 + 0018/0026 외 후속 feature 편입)
 ├── tests/integration/      # 통합 테스트
 └── unit/                   # 기능 단위
     ├── _template/
@@ -61,7 +61,7 @@ repo/
     │       └── static/          # 프론트 자산 — ?v= 는 전부 `?v=dev` placeholder(빌드가 content-hash 주입, §13.1)
     │           ├── admin.js     # 관리 콘솔(4,831줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
     │           ├── app.js       # 작업 화면(8,562줄) · css/ 7분할 · share.js/css · index/admin/share.html
-    │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress·connect-modal·next-target
+    │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress·connect-modal·next-target·conv-status
     │           │               #   + attach-diff = 첨부 버전 diff 비교 모달, 2026-08-06
     │           │               #   + side-panels = 우측 오버레이 패널 단독 열림 등록부, 2026-09-01)
     │           ├── admin/      # 관리 콘솔 도메인 모듈 11
@@ -124,10 +124,13 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `shared/runtime_settings.py` | 관리 콘솔 `시스템 > 설정` 런타임 설정 레지스트리 + resolver + 프로세스 간 전파 스냅샷 (feature-0018) | feature-0002·0003 |
 | `shared/llm_budget.py` | 백그라운드 LLM 토큰 예산 — rolling 집계·게이트 (feature-0032) | feature-0002·0003 |
 | `shared/llm_gate.py` | 서버 보유 계정 LLM 호출 **fail-closed 게이트 단일 정본** (feature-0043 · SECURITY §49) | feature-0002 (`modules/llm`·`agent_core`)·feature-0003 |
-| `shared/bridge_tasks.py` | 웹 브리지 대기 작업(`WebAiTasks`) **상태 술어 단일 정본** — 집을 수 있는가/취소됐는가 (feature-0043, 2026-08-28) | feature-0003 (`routers/ai_tools.py`·`routers/conversations.py`) |
+| `shared/bridge_tasks.py` | 웹 브리지 대기 작업(`WebAiTasks`) **상태 술어 단일 정본** — 집을 수 있는가/취소됐는가. **+ 콘솔·배경 작업 카탈로그와 위임 판정 정본으로 확장(2026-09-02)** — `JOB_SPECS`·`console_job_perms`·`visible_console_job_kinds`·`normalize_console_job_prefs`·`pick_console_job_model`·`resolve_console_job_request`·`runner_capabilities_for_session` 를 여기 두어 적재 게이트·대기 목록 필터·claim 최종 방어 **세 겹이 같은 술어**를 쓰게 한다 (feature-0043, 2026-08-28 → 2026-09-02) | feature-0003 (`routers/ai_tools.py`·`routers/conversations.py`·`routers/profile.py`·`routers/ai_ops.py`·`routers/admin_console.py`·`routers/_console_jobs.py`·`routers/_console_llm.py`·`src/oauth_store.py`) |
 | `shared/resource_budget.py` | 공유 자원 예산·격리 + 워커 자원 계측 (feature-0025 T0) | feature-0002 워커 루프 |
 | `shared/share_window.py` | 공유(그룹) 대화 첨부 참조 스코프 **판정 정본** — 그룹 여부 + 공유창 window 게이트 (feature-0009 · SECURITY §47) | feature-0002 (`agent_core`)·feature-0003 |
 | `shared/hangul_qwerty.py` | 한글 ↔ QWERTY 자판 상호 변환 **서버측 정본** (프론트 정본 `static/hangul-qwerty.js` 와 매핑표 동치 · 회귀 잠금 테스트 2종) | feature-0002·0003 (SQL LIKE 검색 경로) |
+| `shared/self_review.py` | 외부 AI **자가 검증(5축) 계약 정본** — 축·심각도·출력 형식은 서버가 정해 `claim_request` 응답에 지시문 전문으로 실어 보낸다(러너에 박으면 축 하나 고칠 때마다 전 사용자가 재설치해야 하고, 낡은 러너가 같은 컬럼에 다른 의미를 쓴다) (feature-0043, 2026-09-01) | feature-0003 (`routers/ai_tools.py`·`routers/ai_ops.py`) |
+| `shared/bridge_consent.py` | **배경 배치 동의**(인사이트 요약·클러스터 라벨) 단일 정본 — 러너 CLI 플래그 `--batch` 였던 동의를 계정 단위 웹 토글로 옮기고 하트비트 응답으로 러너 `features` 신고에 반영 (feature-0043, 2026-09-01) | feature-0003 (`routers/ai_tools.py`·`routers/oauth_as.py`) |
+| `shared/bridge_caps.py` | 러너 **능력 신고의 리비전 지문 + 계정·런타임별 baseline 원장** 순수 정본 — 「목록이 바뀌었는가」를 값 하나로 판정한다(문구 파싱·전체 비교는 서버·프런트 두 벌 판정이 되고 갈리는 순간 느슨한 쪽이 진실이 된다). DB 접근·JSON 컬럼 I/O 는 두지 않는다(`oauth_store` 소유 — `bridge_tasks` 와 같은 규율) (feature-0043, 2026-09-02) | feature-0003 (`routers/ai_tools.py`·`routers/oauth_as.py`·`src/oauth_store.py`) |
 
 > 아직 추출되지 않은 cross-feature 공통 후보(cred_crypto·memory·llm 등)는 feature-0002 `modules/` 에 잔존(후속 step). 신규 공용 모듈 추가는 PB-0002 참조.
 > **web_context.py 는 shared/ 아님** — feature-0003 web 전용 leaf helper 다 (§4a). 여러 feature 가 아닌 web-ui 내부만 소비한다.
@@ -154,7 +157,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `feature-0016-metadata-graph` / `feature-0016-zd-pg-pause-caddy` | 메타데이터 그래프 · PG-pause/Caddy 무중단 | (feature dir 2개) |
 | `feature-0017-deploy-build-gate` | 배포 빌드 게이트 | (feature dir) |
 | `feature-0039-ops-scheduler` | **운영 정기 잡 인-컨테이너 스케줄러** — 백업·복원 리허설·AGE 그래프 sync 를 호스트 root crontab 에서 `ops-scheduler` 서비스로 이관(docker 소켓 의존 제거) | 코드 거주: feature-0002 `src/scripts/ops_scheduler.py`·`ops_backup.sh`·`ops_restore_rehearsal.sh`·`ops_graph_sync.sh`·`healthcheck_ops_scheduler.py` + repo-level `docker-compose.yml`(`ops-scheduler`)·`bin/{backup,restore-rehearsal,metadata-graph-sync}.sh`(수동 래퍼) |
-| `feature-0043-external-llm-bridge` | **서버 계정 LLM 차단 + 웹 대화 pull 브리지** — 추론 주체를 개인 머신 AI 로 반전 | `src/agent/`(**러너 정본 18 모듈** — 2026-09-02 분할, `__init__.py` 의 `_EMIT_ORDER` 가 번들 순서 정본) · `src/bridge_runner.py`(표준 라이브러리 전용 수동 보조 러너) · `src/bridge_setup.sh`/`src/bridge_setup.ps1`(결정론적 원클릭 진입점, 2026-08-28 신설) · 빌드 `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py`(패키지→단일 파일; 배포본 `src/bridge_agent.py`·`feature-0003/src/static/agent/*` 는 **생성물이라 커밋 대상 아님**) + 코드 거주: `shared/llm_gate.py`·`shared/bridge_tasks.py`·feature-0003 `routers/ai_tools.py` |
+| `feature-0043-external-llm-bridge` | **서버 계정 LLM 차단 + 웹 대화 pull 브리지** — 추론 주체를 개인 머신 AI 로 반전 | `src/agent/`(**러너 정본 19 모듈** — 2026-09-02 분할 18 + 자기 갱신 `selfupdate.py` 1, `__init__.py` 의 `_EMIT_ORDER` 가 번들 순서 정본) · `src/bridge_runner.py`(표준 라이브러리 전용 수동 보조 러너) · `src/bridge_setup.sh`/`src/bridge_setup.ps1`(결정론적 원클릭 진입점, 2026-08-28 신설) · 빌드 `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py`(패키지→단일 파일; 배포본 `src/bridge_agent.py`·`feature-0003/src/static/agent/*` 는 **생성물이라 커밋 대상 아님**) + 코드 거주: `shared/llm_gate.py`·`shared/bridge_tasks.py`·feature-0003 `routers/ai_tools.py` |
 | `_template` | 신규 feature 템플릿 | `docs/AGENTS.md`, `docs/TASK.md`, `docs/FUNCTION.md`, `docs/REPORT.md`, 등 |
 
 각 feature는 `docs/`(AGENTS, FUNCTION, TASK, TEST, REPORT, MODIFY, REVIEW), `src/`, `tests/` 구조를 따른다.

@@ -57,6 +57,13 @@ wiki/
 │   ├── Overview.md
 │   ├── Data-Flow.md
 │   └── Module-Map.md
+├── Flows/                    # 기능 동작 순서도 (mermaid · Data-Flow 아래 층)
+│   ├── _Index.md
+│   ├── Auth-and-Session.md
+│   ├── External-AI-Bridge.md
+│   ├── Security-Controls.md
+│   ├── User-Journeys.md
+│   └── Feature-Operations.md
 ├── Features/                 # feature 카드 (unit/<id> 와 cross-link)
 │   ├── _Index.md
 │   └── _template-card.md
