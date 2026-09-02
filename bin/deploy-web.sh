@@ -1631,6 +1631,30 @@ asset_stamp_verify() {  # $1 = sha
   log "OK — baked 자산 스탬프 주입 확인(*.html/*.js 내 ?v=dev 잔존 0)."
 }
 
+# ── 브리지 러너 배포본 존재 검증 (feature-0043 모듈 분할, AGENTS.md §13.1 «1순위») ──
+# 러너는 `unit/feature-0043-external-llm-bridge/src/agent/` 패키지가 소스이고, 사용자가
+# 내려받는 단일 파일은 Dockerfile 의 build_bridge_agent.py 가 만든다. 그 RUN 이 빠지거나
+# 실패하면 **배포는 성공하고 러너 다운로드만 404** 가 된다 — 개인 AI 연결이 통째로 죽는데
+# healthz·soak·대화 스모크는 전부 초록불이다(서버는 멀쩡하므로). 그 침묵을 여기서 끊는다.
+#
+# 존재만이 아니라 **실행 가능성**까지 본다: 연접이 깨진 파일도 파일로는 존재하기 때문이다.
+# `py_compile` 은 사용자 머신에서 `python3 bridge_agent.py` 가 첫 줄에서 죽는 경우를 잡는다.
+bridge_runner_verify() {  # $1 = sha
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local runner="/app/web/static/agent/bridge_agent.py"
+  local missing
+  missing="$(docker run --rm --entrypoint sh "$IMAGE_REPO:$1" -c \
+    "for f in $runner /app/web/static/agent/bridge_setup.sh /app/web/static/agent/bridge_setup.ps1; do
+       [ -s \"\$f\" ] || echo \"\$f\"; done" 2>/dev/null || true)"
+  if [ -n "$missing" ]; then
+    die "브리지 러너 배포본 누락 — baked 이미지에 없음: $(printf '%s' "$missing" | tr '\n' ' '). Dockerfile 의 build_bridge_agent.py RUN 확인. ABORT (배포는 성공해도 개인 AI 연결이 죽는다)."
+  fi
+  if ! docker run --rm --entrypoint python3 "$IMAGE_REPO:$1" -m py_compile "$runner" >/dev/null 2>&1; then
+    die "브리지 러너 배포본이 컴파일되지 않는다($runner) — 번들 연접이 깨졌다. ABORT (사용자 머신에서 첫 줄부터 실패한다)."
+  fi
+  log "OK — 브리지 러너 배포본 존재·컴파일 확인(러너 + 설치 스크립트 2종)."
+}
+
 # ── 대화 경로 스모크 (2026-08-26 신설 — healthz/soak 가 못 보는 공백) ─────────
 # 왜: 게이트웨이 의존성 갱신으로 요청 조립 계약이 깨져 **모든 대화가 실패**했는데, 배포는 성공했고
 #   /healthz 는 ok, soak 도 통과했다. 시스템이 자기 고장을 몰랐고 사용자 신고로만 발견됐다(≈20시간).
@@ -1816,6 +1840,7 @@ main() {
     [ "$SCOPE" = "web" ] || build_agent_image "$TARGET_SHA"
     migrate_phase
     asset_stamp_verify "$TARGET_SHA"
+    bridge_runner_verify "$TARGET_SHA"
 
     step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
     # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.

@@ -2962,7 +2962,6 @@ AI 관련 모든 작동사항을 다시 활성화 후, 연결한 AI를 통해 �
 
 `AGENT_SERVER_LLM_ENABLED=1` — 게이트가 열리면 세 경로 모두 **종전 서버 LLM 직접 호출**로
 돌아간다(위임 분기는 게이트가 닫혔을 때만 탄다). 계약 테스트가 그 경로를 함께 잠근다.
-
 ## CHG-20260902T100000-ai-claude-feature-0043-autolaunch-runner — 이미 연결해 본 사용자에게는 [내 AI 실행] 을 자동으로
 
 - **날짜**: 2026-09-02 · **REQ**: REQ-20260902-autolaunch (사용자 요청 — 접근성)
@@ -3241,3 +3240,37 @@ backend 4→4), 2라운드 P1 중 **넷은 1라운드에서 내가 넣은 수정
 ### 발효
 
 서버 축은 배포 즉시. 러너 파일은 이 항에서 바뀌지 않는다(재다운로드 불필요).
+## CHG-20260902T110000-ai-claude-runner-modularization — 러너 모듈 분할 + 배포본 이중화 제거
+
+**요청**: 브리지 러너 개발 시 작업자AI 간 충돌이 빈번 → 관련 스크립트 모듈화 (사용자, 2026-09-02)
+
+### 변경
+
+| 경로 | 변경 |
+|---|---|
+| `unit/feature-0043-external-llm-bridge/src/agent/` | **신설** — 러너 정본 18 모듈 (`__init__` 포함). `_EMIT_ORDER` 가 번들 방출 순서 단일 정본 |
+| `unit/feature-0043-external-llm-bridge/src/agent/state.py` | **신설** — 러너 인스턴스 가변 전역 + 접근자 3종 (`runner_instance`/`prev_runner_instance`/`set_runner_instance`) |
+| `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py` | **신설** — 패키지 → 단일 파일 번들러 (`--stage-assets`·`--check`) |
+| `unit/feature-0002-agent-core/src/Dockerfile` | 러너 소스 COPY + 빌드 RUN 추가 (자산 스탬프 계산 **앞**에 배치 — 종전 content-hash 범위 보존) |
+| `bin/deploy-web.sh` | `bridge_runner_verify` 게이트 신설 + 롤링 직전 호출 |
+| `conftest.py` (루트) | collection 전 배포 산출물 배치 (테스트 37개가 모듈 수준에서 경로를 상수로 잡으므로 fixture 로는 늦다) |
+| `Makefile` | `bridge-agent` 타깃 신설 (`.PHONY` 등재) |
+| `.gitignore` | 생성물 4개 등재 |
+| `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` | **git 추적 해제** (생성물) |
+| `unit/feature-0003-agent-web-ui/src/static/agent/{bridge_agent.py,bridge_setup.sh,bridge_setup.ps1}` | **git 추적 해제** (생성물) |
+| `unit/feature-0043-external-llm-bridge/tests/test_bridge_agent_sync.py` | 계약 교체 — 「정본↔배포본 동일」(동어반복화)  → 재현성·결정성·`_EMIT_ORDER` 전수·비순환·Dockerfile 배선·배포 게이트·무시 규칙 7종 |
+| `unit/feature-0043-external-llm-bridge/tests/test_orphan_claim_reclaim.py` | 점유 인스턴스 축 단언을 접근자 표현으로 갱신 (계약 동일) |
+| `unit/feature-0043-external-llm-bridge/src/README.md` | 소스 레이아웃·편집 절차·제약 문서화 |
+
+### 발효
+
+즉시(빌드 시점). 사용자가 내려받는 러너의 **동작은 변하지 않는다** — 산출물 diff 는
+4,267행 중 57행이고 전부 ① 접근자 전환 12곳 ② `state` 블록 이동 ③ PEP8 빈 줄 2곳이다.
+`_self_build()` 지문은 바뀌므로 기존 러너는 다음 하트비트에서 `runner_update` 안내를 받는다
+(정상 경로 — 재설치하면 해소).
+
+### 되돌리기
+
+`git revert` 로 충분하다. 생성물이 커밋되지 않으므로 되돌린 트리에서도 `make bridge-agent`
+(또는 이미지 빌드)가 종전과 같은 단일 파일을 만든다. 단 revert 시 `.gitignore` 항목이 함께
+사라지므로 로컬 생성물을 먼저 지운다(`rm` 후 체크아웃).

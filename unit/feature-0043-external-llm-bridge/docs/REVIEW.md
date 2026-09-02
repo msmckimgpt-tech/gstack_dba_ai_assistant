@@ -2712,7 +2712,6 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 
 - **판정**: **APPROVED** — 자체 적발 2건(테스트 공백) 수정, 잔여 BLOCKING/MAJOR 0.
 - **Human Approval Needed**: no
-
 ## REV-20260902T100000-ai-claude-feature-0043-autolaunch-runner [AGENT-TEAM:inline-adversarial] — APPROVED
 
 - **일시**: 2026-09-02 · **범위**: `static/app/connect-modal.js` · `bridge_setup.{sh,ps1}`(+배포
@@ -2980,3 +2979,78 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
 | `age_sec is not None` 조건 제거 | **KILLED** |
 | `if (!catalog) return true;` 제거 | **KILLED** (pytest · jsdom 양쪽) |
 | 정상 소스 | PASS |
+## REV-20260902T113000-ai-claude-feature-0043-runner-modularization [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-02
+- **범위**: `src/agent/` 18 모듈 신설(러너 분할) · `scripts/build_bridge_agent.py` 번들러 ·
+  `Dockerfile`(소스 COPY + 빌드 RUN) · `bin/deploy-web.sh`(`bridge_runner_verify`) ·
+  루트 `conftest.py`(산출물 배치) · `Makefile`(`bridge-agent`) · `.gitignore`(생성물 4) ·
+  `tests/test_bridge_agent_sync.py`(계약 8종 교체) · `tests/test_orphan_claim_reclaim.py`.
+- **Trigger** (§18.8): 키워드 매칭 0건 + code change → 본래 full panel. 본 세션은 사용자
+  지시로 subagent 호출이 차단되어(§3.1 우선순위 1) **inline adversarial + 뮤테이션 실측**
+  으로 대체. 렌즈는 아래 3종.
+
+### 렌즈 1 — 이 변경이 «사용자가 받는 것» 을 바꾸는가
+
+러너는 라이브 다운로드 산출물이라, 리팩터가 조용히 동작을 바꾸면 전 사용자의 러너가 깨진다.
+근거는 주장이 아니라 **diff 실측**으로 세웠다 — 번들 산출물 vs 종전 커밋본 = **4,267행 중 57행**,
+전부 셋뿐:
+
+| 부류 | 건수 | 성격 |
+|---|---:|---|
+| `_RUNNER_INSTANCE`/`_PREV_RUNNER_INSTANCE` → 접근자 호출 | 12 | 분할이 **강제**하는 변경(아래 렌즈 2) |
+| `state` 블록 위치 이동 | 1 블록 | 모듈 수준 문장이 아니므로 의미 무관 |
+| PEP8 빈 줄 | 2 | 무해 |
+
+러너 계약 테스트(AST 기반 40파일·1,191건)는 **배포 산출물을 대상으로** 그대로 유지된다 —
+검증 대상이 바뀌지 않았으므로 계약 회귀 0. 전체 스위트 6,956건 rc=0.
+
+### 렌즈 2 — 분할이 만든 «새» 실패 모드 (자체 적발)
+
+- **가변 전역**: `_RUNNER_INSTANCE` 는 `global` 로 재바인딩되고 `conf`·`logs` 가 읽는다.
+  그대로 쪼개면 `from .identity import _RUNNER_INSTANCE` 가 **import 시점 값(빈 문자열)에
+  묶여** 갱신을 못 본다 → 감사 원장 `run` 필드와 설정 `runner_instance` 가 통째로 비고,
+  87분 고아 점유 사고를 고친 회수 경로가 **조용히** 되돌아간다(증상은 30분 뒤). `state.py`
+  + 접근자로 봉인. 이것이 위 12곳 변경의 전부이자 이유다.
+- **모듈 순환**: `conf ↔ identity ↔ logs` 3건이 실재했고 전부 이 전역 하나에서 나왔다.
+  `state` 추출로 소멸(비순환 DAG 확인).
+- **번들 면역의 함정 (⚠ 자체 적발)**: 최초 뮤테이션 M2 는 「접근자를 import 바인딩으로
+  되돌리기」였는데 **SURVIVE** 했다. 원인은 게이트 부실이 아니라 **번들이 그 결손에 면역**
+  이기 때문이다 — 연접 시 `from .x import y` 줄이 지워져 flat 네임스페이스로 해소된다.
+  즉 「패키지 형태가 살아 있는가」를 보는 테스트가 **하나도 없었다**. 분할의 이득(모듈 단위
+  lint·테스트)이 조용히 죽을 수 있는 구멍이라, `test_package_form_imports_cleanly` 를
+  신설하고 M2 를 그 축으로 재설계했다.
+
+### 렌즈 3 — 게이트가 «실제로» 잡는가 (하네스 자체 검증 포함)
+
+⚠ **하네스 함정 2건을 먼저 걷어냈다.** 첫 실행은 8/8 SURVIVE 였는데 게이트가 무력해서가
+아니라 컨테이너에 `pytest` 가 없어 **아무것도 실행되지 않은** 것이었다(문자열 매칭이 그
+사실을 통과시켰다). 두 번째는 이 스위트에서 pytest 최종 집계 줄이 유실되어(러너 종료 훅)
+출력 매칭이 판별력을 갖지 못했다 — 판정을 **종료 코드**로 옮기고, 무결 상태 rc=0 과
+의도적 실패 테스트 rc=1 로 하네스 판별력을 먼저 실증한 뒤 본 실행을 했다.
+
+### 뮤테이션 — 8/8 KILL
+
+| # | 주입 결손 | 실제 위험 | 결과 |
+|---|---|---|---|
+| M1 | `_EMIT_ORDER` 에서 `caps` 누락 | 784행이 배포본에서 **조용히** 소실 | **KILL** (conftest fail-loud 가 세션 전체 차단) |
+| M2 | 패키지 내부 import 이름 파손 | 번들은 면역 · 패키지 형태 사망(분할 이득 소실) | **KILL** |
+| M3 | Dockerfile 빌드 RUN 제거 | 배포는 성공하고 **러너 다운로드만 404** | **KILL** |
+| M4 | `deploy-web.sh` 게이트 호출 제거(정의만 잔존) | 「정의는 검증이 아니다」 | **KILL** |
+| M5 | `base → lifecycle` 순환 주입 | 패키지 `ImportError` | **KILL** |
+| M6 | 번들 비결정성 주입 | 재빌드마다 지문 변동 → 「구버전으로 돌고 있다」 판정 무의미 | **KILL** |
+| M7 | `.gitignore` 에서 배포본 제거 | 이중 커밋(49/49) 원상 복구 | **KILL** |
+| M8 | claim 페이로드에서 러너 인스턴스 제거 | 87분 고아 점유 회수 사망 | **KILL** |
+
+### 잔여 위험 (숨기지 않음)
+
+1. **라이브 러너 실행 미검증** — 본 cycle 은 단위·구조 검증까지다. 배포 후 실제 다운로드
+   → 실행 → 하트비트 왕복은 POST-DEPLOY 항목으로 남긴다(`TEST.md` §5).
+2. **기존 러너의 지문 변경** — `_self_build()` 값이 바뀌므로 상주 중인 러너는 다음
+   하트비트에서 `runner_update` 안내를 받는다. 동작 변경이 아니라 정상 경로(재설치로 해소)
+   이나, 사용자에게는 「또 갱신하라는 안내」로 보인다.
+3. **`bridge_setup.sh`/`.ps1` 는 분할하지 않았다** — 사본 제거만 적용. 근거는 실측(9·8커밋
+   으로 분할 이득이 작다). 커밋 빈도가 오르면 재검토 대상.
+
+- **판정**: **APPROVED** — 자체 적발 1건(패키지 형태 검증 부재) 신설 테스트로 해소,
+  하네스 함정 2건 제거 후 재실측, 잔여 BLOCKING/MAJOR 0.
