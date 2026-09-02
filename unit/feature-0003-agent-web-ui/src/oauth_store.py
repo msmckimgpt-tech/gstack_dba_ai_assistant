@@ -38,7 +38,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from shared import bridge_consent, bridge_tasks
+from shared import bridge_caps, bridge_consent, bridge_tasks
 
 _log = logging.getLogger(__name__)
 
@@ -719,6 +719,24 @@ def stale_runner_must_yield(cur, raw_token: str, account_id: int,
 
 
 
+def normalize_runner_build(raw: object) -> str:
+    """러너가 신고한 **파일 지문**을 모양만 강제한다(16진 6~16자). 어긋나면 빈 문자열.
+
+    값의 의미는 해석하지 않는다 — 대조(「같은 파일인가」)에만 쓴다.
+
+    **왜 공유 함수인가** (적대 리뷰 2026-09-02): 이 값은 클라이언트가 준 문자열이고, 같은
+    하트비트 본문이 이제 **두 writer** 를 거친다 — 토큰 행(`set_runner_report`)과 계정
+    원장(`merge_account_caps_baseline`). 한쪽만 좁히면 좁히지 않은 쪽이 통로가 된다:
+    40KB `agent_build` 를 신고하는 러너가 자기 계정의 원장을 문서 예산 초과로 **NULL 로
+    고정**시키고, 그 뒤로는 `before == after` 라 쓰기조차 없어 조용하고 영구적이다.
+    「정제는 단일 게이트」라는 이 feature 의 규율을 값 축에도 적용한다.
+    """
+    got = str(raw or "").strip().lower()[:16]
+    if got and not re.fullmatch(r"[0-9a-f]{6,16}", got):
+        return ""
+    return got
+
+
 def set_runner_report(cur, raw_token: str, capabilities: str | None,
                       features: Any, agent_version: str | None = None,
                       agent_build: str | None = None) -> bool:
@@ -763,10 +781,7 @@ def set_runner_report(cur, raw_token: str, capabilities: str | None,
             len(capabilities.encode("utf-8")), RUNNER_CAPS_MAX_BYTES)
         capabilities = None
     ver = str(agent_version or "").strip()[:32]
-    # 지문은 **모양만** 강제한다(16진 6~16자) — 값의 의미는 해석하지 않고 대조에만 쓴다.
-    bld = str(agent_build or "").strip().lower()[:16]
-    if bld and not re.fullmatch(r"[0-9a-f]{6,16}", bld):
-        bld = ""
+    bld = normalize_runner_build(agent_build)
     def _sql(with_build: bool) -> str:
         build_set = "    t.RunnerBuild = %s, " if with_build else ""
         build_cmp = "       OR t.RunnerBuild IS NULL OR t.RunnerBuild <> %s " if with_build else ""
@@ -1205,6 +1220,95 @@ def set_account_console_job_prefs(cur, account_id: int, prefs: Any) -> dict:
     cur.execute("UPDATE WebAccounts SET ConsoleJobPrefs = %s WHERE Id = %s",
                 (payload, int(account_id)))
     return normalized
+
+
+def account_caps_baseline(cur, account_id: int) -> dict | None:
+    """이 계정의 **런타임별 마지막 확인 능력** 원장 (TASK-20260902T140200).
+
+    Returns:
+        `{runtime: {...}}` — 저장된 원장. 컬럼이 비었으면 `{}`.
+        **조회에 실패하면 `None`** = 「모른다」.
+
+    ⚠ **「원장 없음」(`{}`)과 「읽지 못했다」(`None`)를 값으로 가른다** (적대 리뷰
+    2026-09-02, high). 실패를 `{}` 로 접으면 그 값이 그대로 되쓰기의 **기준**이 되어,
+    락 타임아웃 한 번이 다른 머신이 쌓아 둔 항목을 **삭제**한다(실측: codex 러너의
+    하트비트 1회가 claude 항목을 지웠다). 그러면 「신고에 없는 런타임은 건드리지 않는다」는
+    이 모듈의 핵심 불변식이 **읽기 실패 한 번**으로 무효화되고, 오프라인 머신의 항목은
+    그 머신이 다시 붙을 때까지 복구되지 않는다 — 이 feature 가 존재하는 이유(머신·토큰
+    교체를 넘어 살아남는 목록)를 그대로 무너뜨린다.
+
+    ⚠ **만료를 여기서 적용하지 않는다.** 이 함수는 저장된 사실을 그대로 돌려주고, 만료
+    (`prune_stale`)는 그 값을 *쓰는* 두 지점 — 러너에게 내려보낼 때(`baseline_for_runner`)와
+    신고를 병합해 되쓸 때(`merge_baseline`) — 가 적용한다. 조회에서 미리 잘라 버리면
+    「읽은 것」과 「저장된 것」이 달라져, 되쓰기가 조용히 만료 항목을 **삭제**한다(읽기가
+    쓰기의 의미를 바꾸는 형태다).
+    """
+    if not account_id:
+        return {}
+    try:
+        cur.execute("SELECT RunnerCapsBaseline FROM WebAccounts WHERE Id = %s",
+                    (int(account_id),))
+        row = cur.fetchone()
+    except Exception:
+        # 컬럼이 아직 없는 배포도 여기로 온다. 그 경우와 락 타임아웃을 구분할 수단이
+        # 없으므로 **둘 다 「모른다」**로 다룬다 — 안전한 방향은 쓰지 않는 쪽이다.
+        # 가용성 손실은 없다: 러너는 빈 목록을 받아 종전 열린 질의로 흐른다.
+        return None
+    if not row:
+        return {}
+    return bridge_caps.normalize_baseline(row[0])
+
+
+def merge_account_caps_baseline(cur, account_id: int, reported: object,
+                                build: str = "", sources: dict | None = None) -> list:
+    """신고를 원장에 병합·저장하고 **러너에게 줄 목록**을 돌려준다.
+
+    `reported` 가 `None`(신고할 처지가 아닌 러너 — 구 빌드·`--cmd`)이면 **읽기만** 하고
+    쓰지 않는다. 그 러너의 침묵을 「이 계정은 아무것도 쓸 수 없다」로 해석하면, 같은 계정의
+    다른 머신이 확인해 둔 목록이 침묵 하나로 지워진다.
+
+    **읽기가 실패하면(`None`) 쓰지 않는다** — 위 `account_caps_baseline` 참조. 그때 러너에게
+    주는 것은 빈 목록이고, 러너는 그것을 「baseline 없음」으로 읽어 열린 질의로 흐른다.
+
+    값이 그대로면 쓰지 않는다 — 이 함수는 **하트비트 경로**(계정당 30초)에서 불린다.
+
+    ⚠ 그 스킵이 성립하려면 **세 계약이 함께** 필요하다. 직렬화 결정성
+    (`bridge_caps.dumps_baseline`)만으로는 부족하다 — `merge_baseline` 이 신고마다
+    `last_used_at` 을 새로 찍으면 내용이 같아도 바이트가 달라져 이 비교가 **항상 참**이
+    된다(초판이 그 상태였고, 계정당 30초마다 UPDATE 였다). 나머지 둘은
+    `BASELINE_TOUCH_MIN_SEC` throttle 과 `_union_options` 합집합 누적이다(후자가 없으면
+    한 계정의 두 머신이 서로 다른 목록을 신고해 내용이 매번 바뀐다). 하나만 보고
+    「결정적이니 안전」으로 읽지 않도록 여기 함께 적는다.
+
+    쓰기는 **compare-and-set** 이다 — 같은 blob 을 두 러너가 동시에 read-modify-write 하면
+    나중 쓰기가 앞 쓰기를 통째로 덮는다(lost update). 읽은 값이 그대로일 때만 쓴다.
+    """
+    current = account_caps_baseline(cur, account_id)
+    if current is None:
+        return []
+    if reported is None or not isinstance(reported, list):
+        return bridge_caps.baseline_for_runner(current)
+    merged = bridge_caps.merge_baseline(current, reported, build=build, sources=sources)
+    if not account_id:
+        return bridge_caps.baseline_for_runner(merged)
+    before = bridge_caps.dumps_baseline(current)
+    after = bridge_caps.dumps_baseline(merged)
+    if before == after:
+        return bridge_caps.baseline_for_runner(merged)
+    try:
+        # `<=>` 는 NULL-safe 비교 — 아직 NULL 인 계정(첫 저장)도 걸러지지 않는다.
+        # 조건이 어긋나면(다른 러너가 먼저 썼다) 0행이고, 그 신고는 30초 뒤 다시 온다.
+        cur.execute(
+            "UPDATE WebAccounts SET RunnerCapsBaseline = %s "
+            "WHERE Id = %s AND (RunnerCapsBaseline <=> %s)",
+            (after if merged else None, int(account_id),
+             before if current else None))
+    except Exception:
+        # 원장 저장 실패가 **연결을 끊지 않는다** — 최악이 종전 동작(baseline 없음)이고,
+        # 다음 하트비트가 30초 뒤에 다시 시도한다. 이 규율은 같은 핸들러의
+        # `set_runner_report`·`set_account_bridge_os` 와 동일하다.
+        pass
+    return bridge_caps.baseline_for_runner(merged)
 
 
 def set_account_bridge_defaults(cur, account_id: int, model: str | None,

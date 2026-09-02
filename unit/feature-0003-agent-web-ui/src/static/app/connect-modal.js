@@ -775,6 +775,61 @@ export function onComposeGateChange(fn) {
   if (typeof fn === "function") _gateListeners.add(fn);
 }
 
+// ── 능력 목록이 바뀌면 알려 준다 (TASK-20260902T140200) ───────────────────────
+//
+// ## 왜 잠금 전이와 **다른 신호**인가
+//
+// 종전에는 모델·추론등급 목록을 다시 받는 계기가 `onComposeGateChange` 하나였다. 그런데
+// 러너는 능력 협상을 **배경에서** 돌리므로(질문 처리를 먼저 살리려고) 목록은 잠금이 풀린
+// **뒤에** 도착한다 — 그 시점에 `compose_blocked` 는 이미 바뀌지 않으니 리스너가 발화하지
+// 않고, 아무도 카탈로그를 다시 받지 않았다. 사용자는 새로고침해야 선택기를 봤고, 그것이
+// 제보의 「체감 대기시간」이다 (2026-09-02).
+//
+// 두 축은 사실 자체가 다르다: 잠금은 **질문을 보낼 수 있는가**, 목록은 **무엇을 고를 수
+// 있는가**. 한 신호에 얹으면 둘 중 하나는 반드시 자기 시점을 놓친다 — 그래서 신호를 나눈다.
+//
+// 판정 근거는 서버가 주는 `caps_rev`(목록 내용 지문)다. 프런트가 목록을 직접 비교하지
+// 않는 이유: 그러려면 이 응답이 목록 전체를 실어야 하고, 그러면 상태 조회가 카탈로그
+// 조회를 겸하게 되어 같은 사실을 두 응답이 두 벌로 말한다.
+const _capsListeners = new Set();
+
+//: 마지막으로 관측한 능력 지문. `null` = 아직 한 번도 못 봤다(첫 관측은 «변화» 가 아니다 —
+//: 페이지 로드가 이미 카탈로그를 받았으므로 여기서 또 받으면 매 진입에 헛 왕복이 하나 늘어난다).
+let _lastCapsRev = null;
+
+/** 능력 목록이 바뀌면 알려 준다(모델·추론등급 선택기 재조회용). */
+export function onCapsChange(fn) {
+  if (typeof fn === "function") _capsListeners.add(fn);
+}
+
+function _paintCaps(body) {
+  // ① 확인이 도는 중인가 — 폴링 창의 근거. 상태가 바뀌는 순간 타이머를 다시 맞춘다
+  //    (상태를 바꾼 쪽이 그 결과를 책임진다 — `_paintGate` 와 같은 규율).
+  const pending = body.caps_pending === true;
+  if (pending !== _capsPending) {
+    _capsPending = pending;
+    // 창의 기준점은 **처음 참이 된 시각**이다. 매 관측마다 갱신하면 상한이 영원히
+    // 미래로 밀려 상한이 없는 것과 같아진다.
+    _capsPendingSince = pending ? Date.now() : 0;
+    _syncGatePoll();
+  }
+  // ② 목록이 바뀌었는가.
+  //
+  // 빈 문자열은 **「모른다」**다(러너 없음 · 조회 실패). 「목록이 비었다」와 다른 사실이므로
+  // 변화로 세지 않는다 — 일시적 DB 오류가 카탈로그를 헛되게 다시 받게 만들지 않는다.
+  const rev = typeof body.caps_rev === "string" ? body.caps_rev : "";
+  if (!rev) return;
+  const prev = _lastCapsRev;
+  _lastCapsRev = rev;
+  // 첫 관측은 **변화가 아니다** — 페이지 로드가 이미 카탈로그를 받았으므로 여기서 또 받으면
+  // 매 진입마다 헛 왕복이 하나 늘어난다. 연결이 이 세션에서 처음 성립하는 경로는
+  // `onComposeGateChange`(잠금 전이)가 이미 카탈로그를 다시 받게 한다.
+  if (prev === null || prev === rev) return;
+  for (const fn of _capsListeners) {
+    try { fn(rev); } catch (_) { /* 한 소비자의 실패가 나머지를 막지 않는다 */ }
+  }
+}
+
 // ── 잠긴 동안에만 재조회한다 ─────────────────────────────────────────────────
 //
 // 갱신 시점 셋(로드·연결 생성 직후·탭 복귀)만으로는 **러너 기동을 감지하지 못한다** — 사용자는
@@ -788,10 +843,37 @@ const _GATE_POLL_MS = 5000;
 let _gatePollTimer = null;
 let _gateInFlight = false;   //: 폴링이 띄운 조회가 아직 도는 중인가 (겹침 방지 — codex 1R P2-4)
 
+// ── 능력 확인이 도는 창 (TASK-20260902T140200) ────────────────────────────────
+//
+// 잠금이 풀리고 창을 닫으면 위 두 사유가 모두 거짓이 되어 폴링이 **멎는다**. 그런데 능력
+// 목록은 정확히 그 시점 이후에 도착하므로(협상이 배경에서 돈다), 종전 조건만으로는 도착을
+// 관측할 경로가 하나도 없었다 — 새로고침이 유일한 수단이었다.
+//
+// 그래서 세 번째 사유를 더한다: **서버가 「확인이 도는 중」이라고 말하는 동안**. 이 축의
+// 비용은 그 창에만 발생하고, 목록이 도착하면 서버가 `caps_pending: false` 를 내므로 폴링은
+// 스스로 멎는다 — 정상 상태 사용자의 요청 수는 **여전히 0** 이다(회귀 잠금 대상).
+//
+// ⚠ 상한을 둔다. 서버가 어떤 이유로 `caps_pending` 을 영구히 참으로 말하는 환경(협상이
+//   끝내 실패한 러너가 계속 붙어 있는 경우가 정확히 그렇다)에서 상한이 없으면 그 탭은
+//   **종일 5초 폴링**을 한다. 창을 닫는 쪽이 옳다 — 그 상태에서 사용자가 할 일은 폴링이
+//   아니라 러너 쪽 조치이고, 화면은 이미 사유를 말하고 있다.
+const _CAPS_PENDING_POLL_MAX_MS = 5 * 60 * 1000;
+let _capsPending = false;
+//: 「확인 중」을 **처음 관측한** 시각. 창의 기준점이다. 매 관측마다 갱신하면 상한이
+//: 영원히 미래로 밀려 상한이 없는 것과 같아진다.
+let _capsPendingSince = 0;
+
+function _capsPollWanted() {
+  if (!_capsPending) return false;
+  if (!_capsPendingSince) return false;
+  return (Date.now() - _capsPendingSince) < _CAPS_PENDING_POLL_MAX_MS;
+}
+
 function _syncGatePoll() {
-  // 지켜볼 사유는 둘 — 컴포저가 잠겨 있거나(원래 축), 연결 모달이 열려 있거나(성립 감지).
-  // 어느 쪽도 아니면 즉시 멎는다: 잠기지 않고 창도 닫은 사용자에게는 요청이 0이다.
-  const wantPoll = _composeBlocked || _modalOpen;
+  // 지켜볼 사유는 셋 — 컴포저가 잠겨 있거나(원래 축), 연결 모달이 열려 있거나(성립 감지),
+  // 능력 확인이 도는 중이거나(목록 도착 감지). 어느 것도 아니면 즉시 멎는다:
+  // 연결·목록이 모두 성립한 사용자에게는 요청이 0이다.
+  const wantPoll = _composeBlocked || _modalOpen || _capsPollWanted();
   if (wantPoll && !_gatePollTimer) {
     _gatePollTimer = setInterval(() => {
       // 탭이 안 보이면 건너뛴다 — 배경 탭이 종일 요청을 보내지 않게. 돌아오는 순간은
@@ -809,7 +891,21 @@ function _syncGatePoll() {
       //   나쁜 실패다.
       _raceTimeout(Promise.resolve(refreshConnState()).catch(() => null),
                    _STATUS_FETCH_TIMEOUT_MS + 2000)
-        .then(() => { _gateInFlight = false; }, () => { _gateInFlight = false; });
+        .then(() => { _gateInFlight = false; }, () => { _gateInFlight = false; })
+        // ⚠ **매 tick 조건을 다시 읽는다** (적대 리뷰 2026-09-02, high).
+        //
+        //   `_capsPollWanted()` 는 시간이 지나면 저절로 거짓이 되는 조건인데(상한 5분),
+        //   그것을 읽는 곳이 `_syncGatePoll()` 하나이고 그 함수는 **상태가 바뀔 때만**
+        //   불렸다 — `_paintCaps` 는 `pending` 값이 바뀔 때, `_paintGate` 는 잠금이 바뀔
+        //   때. `caps_pending` 이 계속 참인 러너(협상이 끝내 실패한 채 붙어 있는 경우가
+        //   정확히 그렇다)에서는 두 가드가 모두 거짓이라 **아무도 상한을 확인하지 않고**
+        //   타이머가 종일 살아남았다. 상수는 있고 비교도 있는데 그 비교에 **도달하는
+        //   실행 경로가 없던** 형태다(이 저장소가 반복해 겪은 「방어를 넣었다 ≠ 방어가
+        //   성립한다」).
+        //
+        //   자기 콜백 안에서 `clearInterval` 을 부르는 것은 안전하다(이 tick 이 끝나면
+        //   다시 예약되지 않는다).
+        .then(() => { _syncGatePoll(); });
     }, _GATE_POLL_MS);
   } else if (!wantPoll && _gatePollTimer) {
     clearInterval(_gatePollTimer);
@@ -992,9 +1088,17 @@ export async function refreshConnState() {
       // 미로그인은 브리지 게이트의 관심사가 아니다(인증 층이 따로 막는다). 잠금은 푼다 —
       // 안 그러면 로그인 화면 뒤의 컴포저가 "AI 를 연결하세요" 로 잘못 안내한다.
       _paintGate({ compose_blocked: false });
+      // 능력 확인 창도 함께 닫는다 — 세션이 없는데 폴링이 남으면 로그인 화면이 5초마다
+      // 401 을 받는다(그리고 그 401 은 위 `r.ok === false` 에서 조용히 버려져 영원히 돈다).
+      _paintCaps({ caps_pending: false });
       return b || null;
     }
     _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale, b.runner_build);
+    // 능력 축은 **잠금 축보다 먼저** 반영한다 — `_paintGate` 가 `_syncGatePoll()` 을 부를 때
+    // `_capsPending` 이 이미 최신이어야, 잠금이 풀리는 그 응답에서 확인 창이 함께 열린다
+    // (순서가 반대면 그 한 번의 응답에서 창이 열리지 않고 다음 관측까지 미뤄지는데, 폴링이
+    //  방금 멎었으므로 «다음 관측» 이 오지 않는다).
+    _paintCaps(b);
     _paintGate(b);
     // 마지막으로 연결됐던 명령 계열 — 창을 열 때 어느 탭을 먼저 보일지 정한다 (2026-09-01).
     // 세대·순번 검사를 이미 통과한 응답만 여기 온다.

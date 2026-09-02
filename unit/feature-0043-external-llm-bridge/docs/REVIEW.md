@@ -3242,3 +3242,68 @@ M5 가 살아남은 형태가 이 저장소가 반복해 겪은 **「로직은 �
 도달하지 못하면 질문이 조용히 사라져 원 결함보다 나쁜 상태가 된다.
 
 닫지 못한 축(사용자 머신 재기동·`claude` 재로그인)은 추정으로 메우지 않고 그대로 남겼다.
+
+## REV-20260902T144000-ai-claude-corp-feature-0043-caps-live-sync [SUBAGENT:security] — BLOCK
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: API/endpoint · caching keyword matched (§18.8 dispatch)
+- Timestamp: 2026-09-02T14:40:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/2026-09-02T14-40-00-security.md
+- Critical issue: 서버가 준 baseline 값이 정제 없이 자식 AI 프롬프트가 된다(주입·크기폭증) ·
+  원장 조회 실패가 «빈 원장» 으로 접혀 다른 머신 항목을 삭제 · 미검증 `agent_build` 가 원장을
+  영구 NULL 화
+- Human Approval Needed: no
+
+## REV-20260902T144001-ai-claude-corp-feature-0043-caps-live-sync [SUBAGENT:backend] — BLOCK
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: schema/migration · caching keyword matched (§18.8 dispatch)
+- Timestamp: 2026-09-02T14:40:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/2026-09-02T14-40-00-backend.md
+- Critical issue: 5분 폴링 상한이 발동하지 않음(비교에 도달하는 실행 경로 부재) ·
+  `caps_pending` 이 두 응답에서 다른 술어인데 주석은 동일 단정 · `verified` 가 캐시 로드 시
+  강등되지 않아 라이브 질의 0회로 재신고 · 다중 머신 계정에서 30초 UPDATE·원장 진동
+- Human Approval Needed: no
+
+### 1차 라운드 조치 (전 지적 수용 — 기각 0)
+
+두 패널의 지적을 **전부** 수정했다. 기각한 항목은 없다.
+
+| 지적 | 조치 | 회귀 잠금 |
+|---|---|---|
+| 폴링 상한 미발동 | `setInterval` 콜백 tail 에서 `_syncGatePoll()` 무조건 재호출 | `test_poll_condition_is_reevaluated_every_tick` (콜백 **본문**을 슬라이스해 검사 — 정의부 통과 함정 회피) |
+| `caps_pending` 술어 분기 | `oauth_as` 판정식에 `and not runner_stale` | `test_status_response_carries_revision_and_pending` 이 AST 이름 집합으로 구 빌드 축 강제 |
+| `verified` 미강등 | `_CREATION_SOURCES` 신설 + `sanitize_caps` 전량 강등 | `test_cached_verified_is_downgraded_on_load` · `test_every_creation_source_is_covered_by_the_downgrade_table` |
+| 다중 머신 진동 | `_union_options` 합집합 누적(값 축) | `test_two_machines_converge_instead_of_flapping` · `test_union_is_capped_and_prefers_the_fresh_report` |
+| 읽기 실패 → 삭제 | `account_caps_baseline` → `None`(모른다), 그때 쓰기 skip | `test_store_read_failure_does_not_overwrite_the_ledger` |
+| lost update | compare-and-set (`RunnerCapsBaseline <=> %s`) | `test_store_write_is_compare_and_set` |
+| `agent_build` 미검증 | `normalize_runner_build` 공유 헬퍼 + `BASELINE_BUILD_MAX_LEN` | `test_oversized_build_cannot_empty_the_ledger` · `test_heartbeat_normalizes_the_client_supplied_build`(정규화 **1벌** 강제) |
+| baseline 값 무정제 | `baseline_index` 가 `_coerce_options`·`_CAPS_VALUE_RE` 적용 · 이름·라벨 상한 | `test_runner_sanitizes_the_server_baseline` |
+| 프롬프트 신뢰 경계 | `⟦UNTRUSTED-DATA⟧` 구획 + sentinel 제거 + 크기 상한(초과 시 확인 skip) | `test_rendered_previous_block_is_marked_untrusted_and_bounded` |
+| 빈 목록을 성공으로 반환 | `verify_runtime_caps` → `None` | `test_verify_without_model_flag_falls_through_to_open_probe` |
+| 소비처 0 필드 | 카탈로그 `caps_pending` 제거 + 주장도 삭제 | `test_catalog_reason_…` 이 그 키 부재를 단정 |
+| 「곧 표시됩니다」 약속 | 진행 사실 + 지속 시 다음 행동으로 교체 | 같은 테스트가 그 문구 부재를 단정 |
+
+**§3 challenge 도 수용했다** — 두 패널이 독립적으로 같은 축을 지적했다: 「확인-후-표시」의
+만료 절반이 실효 없다(`last_used_at` 이 계속 갱신돼 TTL 도달 불가 → 잘못된 값이 확인 질의
+앵커로 영구 재사용). `probed_at` **앵커 축**을 신설해 열린 열거만 앵커를 세우고,
+`BASELINE_ANCHOR_MAX_DAYS` 를 넘은 항목은 확인 대상으로 **제시하지 않는다** — 러너는 종전
+경로대로 열린 질의를 하고 그 답이 앵커 없이 원장을 교정한다. 사용자가 아무것도 몰라도
+화석이 스스로 빠진다. 잠금: `test_anchor_age_bounds_how_long_a_value_can_be_re_anchored` ·
+`test_anchorless_entries_are_never_offered`.
+
+앵커 축이 throttle 을 깨뜨린 것(회귀 2건 red)은 그 자리에서 잡았다 — 앵커도 같은 throttle 을
+타게 하고, 열린 열거가 왔는데 앵커가 낡았을 때만 예외로 갱신한다.
+
+**정직 표기 — 수용하되 이 cycle 범위 밖으로 남긴 것 1건**: 「협상 종료(성공/실패)를 러너가
+신고하고 서버가 그 사실로 pending 을 닫는다」는 축은 새 payload 필드 + 영속이 필요하다.
+이번에는 **문구에서 약속을 제거**하는 것으로 가두고(사용자가 다음 행동을 잃지 않게), 축 자체는
+REPORT §잔여에 남긴다.
+
+**«사용일» 의 의미**: 두 패널이 「사용일 = 러너가 켜져 있었는지 기준이지 사용자가 그 런타임을
+고른 사실이 아니다」를 지적했다. 그 정의는 계획 §3.4 에서 착수 **전에** 명시하고 근거를 적은
+것(하트비트가 능력을 매번 싣기 때문)이며, 사용자 결정 문구(「사용일 기준으로 만료를 갱신 및
+판단」)에 대한 해석이다. 코드·문서가 그 정의를 명시하도록 유지하고, 해석 사실을 완료 보고에
+표면화한다.

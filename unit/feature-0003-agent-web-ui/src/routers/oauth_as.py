@@ -53,6 +53,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+from shared import bridge_caps as _bridge_caps
 from shared import bridge_consent as _consent
 
 import app
@@ -617,6 +618,53 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             cur4.close()
     except Exception:
         batch_consent = _consent.DEFAULT_BATCH_CONSENT   # fail-closed(남의 토큰을 태우는 축)
+    # ── 능력 리비전 (TASK-20260902T140200, 사용자 제보 「새로고침해야 목록이 갱신된다」) ──
+    #
+    # ## 왜 이 응답에 싣는가
+    #
+    # 능력 신고는 **연결이 성립한 뒤에** 도착한다 — 러너가 그렇게 설계돼 있다(협상을 배경에서
+    # 돌려 질문 처리를 먼저 살린다). 그런데 프런트가 모델 카탈로그를 다시 받는 유일한 계기가
+    # 「컴포저 잠금 **전이**」였고, 능력 도착 시점에는 그 값이 이미 안 바뀌므로 아무도 다시
+    # 받지 않았다. 새로고침이 유일한 수단이었고 그것이 제보의 「체감 대기시간」이다.
+    #
+    # 그래서 「목록이 바뀌었다」를 **값으로** 말한다. 목록 자체를 여기 실으면 이 응답이
+    # 카탈로그 조회를 겸하게 되고, 같은 사실을 두 응답이 두 벌로 말하게 된다(갈리는 날 화면은
+    # 어느 쪽을 믿을지 정해야 한다). 지문 12자면 프런트가 같은지만 보면 된다.
+    #
+    # `caps_pending` 은 **「지금 질의가 도는 중」**이다. 이 축이 없으면 프런트가 그 상태를
+    # 「러너가 알려준 모델이 없음」과 구분하지 못하고, 화면은 정상 진행 중인 사용자에게
+    # 「최신 실행 파일로 다시 실행해 보세요」라고 오안내한다(실측 — 그 오안내가 대기를
+    # 고장으로 읽히게 만든다).
+    #
+    # `listening` 이 아니면 두 값 모두 의미가 없다 — 신고할 주체가 없다.
+    caps_rev = ""
+    caps_pending = False
+    if listening:
+        try:
+            cur5 = conn.cursor()
+            try:
+                _reported = _store.account_runner_capabilities(
+                    cur5, int(account.get("id") or 0))
+            finally:
+                cur5.close()
+            caps_rev = _bridge_caps.caps_revision(_reported)
+            # 「연결됐고 듣고 있는데 고를 것이 없다」 = 협상이 아직 안 끝났다. 러너가 능력을
+            # 매 하트비트에 싣기 때문에, 끝나면 이 값은 자연히 False 가 된다.
+            #
+            # ⚠ **구 빌드는 제외한다** (적대 리뷰 2026-09-02, high). 지문을 신고하지 않는
+            #   러너(`runner_stale`)는 `source` 도 신고하지 않으므로 수신 시점 정제가 신고를
+            #   **전부** 떨어뜨린다 — 그 계정의 목록은 **영구히** 비어 있고, 그러면 이 값이
+            #   영구 true 가 되어 그 탭이 종일 5초 폴링을 한다(AC-3 가 막으려던 결과).
+            #   그 상태는 「확인 중」이 아니라 「갱신 필요」이고, 화면의 사유 문구도
+            #   (`system.py`) 그렇게 말한다 — 두 응답이 같은 사실을 다르게 말하면 안 된다.
+            caps_pending = bool(connected) and not _reported and not runner_stale
+        except Exception:
+            # 조회 실패는 **「모른다」**다. 지문을 빈 문자열로 두면 프런트는 「직전과 같다」로
+            # 보고 아무것도 하지 않는다 — 일시 장애가 카탈로그를 헛되게 다시 받게 만들지
+            # 않는다. `caps_pending` 을 True 로 두지 않는 이유도 같다: 모르는 것을 근거로
+            # 폴링 창을 열면 DB 순단이 전 사용자의 폴링을 켠다.
+            caps_rev = ""
+            caps_pending = False
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -656,6 +704,17 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         # 있는 줄도 몰랐다. 값과 고지 문구를 함께 싣는다(화면이 문구를 따로 지으면 갈린다).
         "batch_consent": batch_consent,
         "batch_consent_notice": _consent.CONSENT_NOTICE,
+        # ── 능력 리비전 (TASK-20260902T140200) ────────────────────────────────────────
+        #
+        # `caps_rev`: 지금 신고된 목록의 내용 지문 12자. **프런트는 이 값만 비교**해
+        # 카탈로그(`/api/api-vault/options`)를 다시 받을지 정한다. 빈 문자열은 「모른다」
+        # (러너 없음 · 조회 실패)이고, 프런트는 그때 아무것도 하지 않는다.
+        #
+        # `caps_pending`: 연결·대기는 성립했는데 신고 목록이 아직 비었다 = **협상이 도는 중**.
+        # 화면은 이 값으로 (a) 「확인하는 중」 문구를 고르고 (b) 그 창에서만 상태 폴링을
+        # 유지한다. 정상 상태(목록 있음)에서는 False 라 폴링이 0으로 돌아간다.
+        "caps_rev": caps_rev,
+        "caps_pending": caps_pending,
     })
 
 

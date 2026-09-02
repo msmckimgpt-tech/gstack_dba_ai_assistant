@@ -3395,3 +3395,78 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 닫지 못한 것도 그대로 적었다 — 러너는 **사용자 머신의 파일**이라 새 사본을 받아 재기동해야
 발효하고(서버가 바꿀 통로 없음), 그 머신 `claude` 는 로그인 만료 상태다(사용자 영역).
 코드 변경 없음.
+
+## CHG-20260902T140200-caps-live-sync — 능력 신고의 라이브 도착 + 계정 원장
+
+사용자 제보 2건(2026-09-02): ① 러너가 신고한 모델·추론등급 목록이 새로고침 전까지 화면에
+갱신되지 않아 체감 대기가 길다 ② 러너 실행마다 모델 종류가 일정하지 않다(플랫폼별 캐시 +
+재연결 시 검증 요청).
+
+### 무엇을 고쳤나
+
+**① 갱신 신호를 «전이» 에서 «변화» 로.** 카탈로그 재조회 계기가 `onComposeGateChange`
+(컴포저 잠금 **전이**) 하나였다. 러너는 능력 협상을 배경에서 돌리므로(질문 처리를 먼저
+살린다 — `agent/lifecycle.py` 「협상은 뒤에서 한다」) 목록은 그 전이 **뒤** 20~120초에
+도착하고, 그때 `compose_blocked` 는 안 바뀌므로 리스너가 발화하지 않았다. 잠금이 풀리며
+상태 폴링까지 멎어(`wantPoll = _composeBlocked || _modalOpen`) **도착을 관측할 경로가 하나도
+없었다.**
+
+- 서버: `connect_status` → `caps_rev`(목록 내용 지문 12자)·`caps_pending`
+- 프런트: `_paintCaps` 가 지문 변화를 관측 → `onCapsChange` → 카탈로그 재조회 + 재렌더.
+  폴링 조건에 `_capsPollWanted()`(확인 창, 상한 5분) 추가 — 정상 상태 요청은 여전히 0
+- 인라인 콜백을 `_refreshModelCatalogSurface` 로 추출 — 두 신호가 같은 절차를 공유
+
+**② 사유 문구의 근거 없는 지시 제거.** 협상이 도는 정상 창(실측 claude 22.7초 · codex
+112.3초)에 「최신 실행 파일로 다시 실행해 보세요」라고 말하고 있었다(§16.7 G7-c). 빌드
+대조(`runner_build_is_stale`)로 셋을 가르고, 구 빌드가 아닐 때는 「…확인하는 중입니다」.
+
+**③ 계정·런타임 단위 원장.** 신규 `WebAccounts.RunnerCapsBaseline`(JSON, additive).
+`_ensure_bridge_heartbeat_schema`(fast path 에서도 불리는 유일한 자리) ALTER —
+`BridgeDefaultModel` 이 slow path 전용이라 라이브에서 죽어 있던 선례를 반복하지 않는다.
+종전 저장은 `WebOAuthTokens.RunnerCapabilities`(토큰 행)뿐이라 재연결 = 새 행 = NULL 이었다.
+
+**④ 확인-후-표시.** 하트비트 응답 `caps_baseline` → 러너 `verify_runtime_caps`
+(`_CAPS_VERIFY_PROMPT`: 「이 중 지금 쓸 수 있는 것 + 빠진 것」) → 통과분만 `verified` 출처로
+신고. baseline **그대로**는 화면에 도달하지 않는다(사용자 결정). provenance allowlist 는
+러너·서버 양쪽을 함께 넓혔고 구조 테스트가 동일성을 잠근다 — `baseline` 같은 «확인 전»
+이름은 넣지 않는다(그것이 `gpt-5.1-codex` 화석과 같은 형태다).
+
+**⑤ 사용일 기준 만료 14일** (사용자 결정) — `last_used_at` 갱신형. 생성일 기준이면 매일
+쓰는 런타임도 14일마다 전면 재질의로 떨어져, 안정성을 얻으려고 만든 원장이 주기적으로
+불안정을 재생산한다.
+
+### 구현 중 자체 적발 (셋)
+
+- **쓰기 증폭**: `merge_baseline` 이 신고마다 timestamp 를 새로 찍어 내용이 같아도 바이트가
+  달라졌고, 그래서 저장 게이트의 「값이 그대로면 쓰지 않는다」가 **항상 거짓**이었다
+  (계정당 30초마다 `UPDATE WebAccounts`). 같은 파일 주석이 갖지 못한 성질을 주장하고 있었다.
+  → `BASELINE_TOUCH_MIN_SEC`(1시간) throttle. 내용 동일 + 직전 기록이 창 안이면 무접촉.
+  실측: throttle=0 이면 30초 뒤 문서 불일치, 3600 이면 일치.
+- **baseline 대기 위치**: 신호를 하트비트 **성공 분기**에만 뒀더니 서버에 닿지 못한 사용자가
+  상한(≈16초)을 통째로 더 기다렸다 → 분기 체인 **뒤**(성공·실패 무관, baseline 파싱 이후).
+- **자기 단정의 거짓 PASS**: 결손 주입에서 폴링 조건 단정이 **정의부**를 보고 통과했다
+  (호출을 지웠는데 초록 — §16.7 G14-e 가 검사 자체에 되돌아온 형태). 호출 지점을 보게 재작성.
+
+### 파일
+
+| 파일 | 변경 |
+|---|---|
+| `shared/bridge_caps.py` | **신규** — 지문·병합·사용일 만료·throttle 순수 정본 |
+| `routers/_bootstrap_schema.py` | `RunnerCapsBaseline` fast-path ALTER |
+| `oauth_store.py` | `account_caps_baseline` · `merge_account_caps_baseline` |
+| `routers/oauth_as.py` | `connect_status` → `caps_rev` · `caps_pending` |
+| `routers/ai_tools.py` | 하트비트 원장 병합·`caps_baseline` 전달 · `verified` 허용 |
+| `routers/system.py` | 사유 문구 3분기 + `caps_pending` |
+| `static/app/connect-modal.js` | `onCapsChange` · `_paintCaps` · 폴링 창 |
+| `static/app.js` | `_refreshModelCatalogSurface` 추출 + `onCapsChange` 소비 |
+| `agent/caps.py` | `_CAPS_VERIFY_PROMPT` · `verify_runtime_caps` · `baseline_index` |
+| `agent/lifecycle.py` | baseline 수신 · 협상 대기 · 출처 로그 분리 |
+| `agent/timing.py` | `_CAPS_BASELINE_WAIT_SEC` |
+
+신규 권한 코드 0 · 신규 route path 0 · 파괴적 변경 0. `shared/bridge_tasks.py` 무접촉
+(활성 세션 2개가 hot_path 로 선언 중 — §13.2.5-A).
+
+### 검증
+
+신규 25건 + 결손 주입 8종 전건 FAIL 확인(G11-b, 격리 사본). `main` 기준선과 실패 집합 동일.
+회귀 2건은 계약을 유지한 채 정합화(인라인 형태 결합 해제 · 하트비트 대역에 신규 책임 반영).
