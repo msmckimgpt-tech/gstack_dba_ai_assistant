@@ -2962,7 +2962,6 @@ AI 관련 모든 작동사항을 다시 활성화 후, 연결한 AI를 통해 �
 
 `AGENT_SERVER_LLM_ENABLED=1` — 게이트가 열리면 세 경로 모두 **종전 서버 LLM 직접 호출**로
 돌아간다(위임 분기는 게이트가 닫혔을 때만 탄다). 계약 테스트가 그 경로를 함께 잠근다.
-
 ## CHG-20260902T100000-ai-claude-feature-0043-autolaunch-runner — 이미 연결해 본 사용자에게는 [내 AI 실행] 을 자동으로
 
 - **날짜**: 2026-09-02 · **REQ**: REQ-20260902-autolaunch (사용자 요청 — 접근성)
@@ -2989,7 +2988,35 @@ AI 관련 모든 작동사항을 다시 활성화 후, 연결한 AI를 통해 �
 런처는 사용자 머신 파일이라 5번은 «다음에 설치·재설치한 사람» 부터 발효한다. 그 전까지 D 는
 갱신 없이 실행만 되고, 대기 판정이 `runner_stale` 을 계속 보므로 **연결 창으로 떨어져 최신
 명령을 받는다**(종전 경로 — 나빠지지 않는다). 한 번 그 경로를 지나면 이후는 클릭만으로 갱신된다.
+## CHG-20260902T110000 — 콘솔 작업의 모델·추론등급을 계정이 정한다 (제보 대응)
 
+**계기**: 사용자 제보 — 「그래프 뷰 능동 분석이 경량모델이 아닌 fable/opus 로, effort 도 low 로
+진행된다」. 라이브 실측 결과 두 축의 성질이 달랐다(REPORT 20260902T1100 참조).
+
+**변경**
+
+1. **추론등급을 서버가 보낸다** — `_claim_console_job` 이 `"reasoning_level": ""` 를 고정으로
+   싣던 것을 계정 설정 기반 값으로 바꿨다. 종전 근거(「등급 어휘는 러너마다 다르니 추측하지
+   않는다」)는 등급을 *우리가 지어낼 때*만 성립한다 — 지금 값은 사용자가 고른 것이고 러너 신고
+   목록과 대조를 마쳤다.
+2. **조용한 상위 폴백 → 거절** — 계정이 그 항목에 고른 모델을 러너가 신고하지 않으면 위임하지
+   않는다(사용자 결정). 적재 게이트·목록 필터·claim 세 겹이 같은 정본을 쓴다. **미설정 계정은
+   종전 경량 폴백 그대로**이며 거절 대상이 아니다.
+3. **계정 설정 표면 신설** — `WebAccounts.ConsoleJobPrefs`(JSON) + `GET`·`PUT
+   /api/profile/console-jobs` + 프로필 drawer 「AI 작업」 탭. 선택지는 **연결된 러너가 신고한
+   목록만** 그린다.
+4. **실행 지정을 작업 행에 기록** — `RequestedRuntime`/`RequestedModel`/`ReasoningLevel` 은
+   이미 있던 컬럼인데 콘솔 작업만 NULL 로 두어, 제보를 서버에서 검증할 방법이 없었다.
+5. **능력 판독을 세션 축으로** — claim 이 「계정 최신 러너」가 아니라 **그 요청을 보낸 러너**의
+   신고를 본다. 거절이 붙은 이상 그 어긋남은 멀쩡한 러너를 막는 장애가 된다(자체 적발 P1).
+
+**동반 수정 (범위 밖·같은 함정)**: `BridgeDefaultModel`/`BridgeDefaultEffort` ALTER 가 slow
+path 에만 있어 **운영 DB 에 컬럼이 없었다**(대화 축 계정 기본값이 조용히 저장 실패). 신규 컬럼이
+같은 자리에 놓이므로 함께 fast path 로 옮겼다.
+
+**발효 범위 (정직 표기)**: 설정을 저장한 계정부터 발효한다. 그 전까지는 종전 경량 선호로 돌고
+등급은 러너 기본을 따른다 — 즉 **제보 증상의 등급 축은 사용자가 프로필에서 값을 고른 뒤에**
+해소된다. 미설정 상태를 자동으로 어떤 등급에 묶지 않은 것은 사용자 결정(항목별 지정)에 따른다.
 ## CHG-20260902T110000-ai-claude-feature-0043-click-beats-entry — 진입 자동 시도가 사용자의 클릭을 삼키던 결함
 
 - **날짜**: 2026-09-02 · **위험도**: Major (직전 cycle 의 **회귀 수정**)
@@ -3213,6 +3240,40 @@ backend 4→4), 2라운드 P1 중 **넷은 1라운드에서 내가 넣은 수정
 ### 발효
 
 서버 축은 배포 즉시. 러너 파일은 이 항에서 바뀌지 않는다(재다운로드 불필요).
+## CHG-20260902T110000-ai-claude-runner-modularization — 러너 모듈 분할 + 배포본 이중화 제거
+
+**요청**: 브리지 러너 개발 시 작업자AI 간 충돌이 빈번 → 관련 스크립트 모듈화 (사용자, 2026-09-02)
+
+### 변경
+
+| 경로 | 변경 |
+|---|---|
+| `unit/feature-0043-external-llm-bridge/src/agent/` | **신설** — 러너 정본 18 모듈 (`__init__` 포함). `_EMIT_ORDER` 가 번들 방출 순서 단일 정본 |
+| `unit/feature-0043-external-llm-bridge/src/agent/state.py` | **신설** — 러너 인스턴스 가변 전역 + 접근자 3종 (`runner_instance`/`prev_runner_instance`/`set_runner_instance`) |
+| `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py` | **신설** — 패키지 → 단일 파일 번들러 (`--stage-assets`·`--check`) |
+| `unit/feature-0002-agent-core/src/Dockerfile` | 러너 소스 COPY + 빌드 RUN 추가 (자산 스탬프 계산 **앞**에 배치 — 종전 content-hash 범위 보존) |
+| `bin/deploy-web.sh` | `bridge_runner_verify` 게이트 신설 + 롤링 직전 호출 |
+| `conftest.py` (루트) | collection 전 배포 산출물 배치 (테스트 37개가 모듈 수준에서 경로를 상수로 잡으므로 fixture 로는 늦다) |
+| `Makefile` | `bridge-agent` 타깃 신설 (`.PHONY` 등재) |
+| `.gitignore` | 생성물 4개 등재 |
+| `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` | **git 추적 해제** (생성물) |
+| `unit/feature-0003-agent-web-ui/src/static/agent/{bridge_agent.py,bridge_setup.sh,bridge_setup.ps1}` | **git 추적 해제** (생성물) |
+| `unit/feature-0043-external-llm-bridge/tests/test_bridge_agent_sync.py` | 계약 교체 — 「정본↔배포본 동일」(동어반복화)  → 재현성·결정성·`_EMIT_ORDER` 전수·비순환·Dockerfile 배선·배포 게이트·무시 규칙 7종 |
+| `unit/feature-0043-external-llm-bridge/tests/test_orphan_claim_reclaim.py` | 점유 인스턴스 축 단언을 접근자 표현으로 갱신 (계약 동일) |
+| `unit/feature-0043-external-llm-bridge/src/README.md` | 소스 레이아웃·편집 절차·제약 문서화 |
+
+### 발효
+
+즉시(빌드 시점). 사용자가 내려받는 러너의 **동작은 변하지 않는다** — 산출물 diff 는
+4,267행 중 57행이고 전부 ① 접근자 전환 12곳 ② `state` 블록 이동 ③ PEP8 빈 줄 2곳이다.
+`_self_build()` 지문은 바뀌므로 기존 러너는 다음 하트비트에서 `runner_update` 안내를 받는다
+(정상 경로 — 재설치하면 해소).
+
+### 되돌리기
+
+`git revert` 로 충분하다. 생성물이 커밋되지 않으므로 되돌린 트리에서도 `make bridge-agent`
+(또는 이미지 빌드)가 종전과 같은 단일 파일을 만든다. 단 revert 시 `.gitignore` 항목이 함께
+사라지므로 로컬 생성물을 먼저 지운다(`rm` 후 체크아웃).
 
 ## CHG-20260902T120000 — 재실행이 파일을 바꾸지 못하는 상태를 이름 붙여 내보낸다
 

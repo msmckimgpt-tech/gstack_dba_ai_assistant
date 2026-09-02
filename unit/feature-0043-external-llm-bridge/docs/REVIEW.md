@@ -2712,7 +2712,6 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 
 - **판정**: **APPROVED** — 자체 적발 2건(테스트 공백) 수정, 잔여 BLOCKING/MAJOR 0.
 - **Human Approval Needed**: no
-
 ## REV-20260902T100000-ai-claude-feature-0043-autolaunch-runner [AGENT-TEAM:inline-adversarial] — APPROVED
 
 - **일시**: 2026-09-02 · **범위**: `static/app/connect-modal.js` · `bridge_setup.{sh,ps1}`(+배포
@@ -2755,7 +2754,58 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 
 - **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
   **잔여**: 로그인 진입 경로가 크롬 활성화 정책에 걸리는지는 **배포 후 실측**(추측하지 않는다).
+## REV-20260902T110000-ai-claude-feature-0043-console-job-model-effort [AGENT-TEAM:inline-adversarial] — APPROVED
 
+### 렌즈 1 — security/인가
+
+- 신규 표면 `GET`·`PUT /api/profile/console-jobs` 는 **계정 파라미터가 없다** — 읽는 것도 쓰는
+  것도 세션 계정(`account["id"]`)뿐이라 남의 설정을 건드릴 경로가 구조적으로 없다. 신규 권한
+  코드 0(로그인만), 신규 테이블 0, 마이그레이션 0(additive 컬럼 1).
+- PUT 본문은 임의 JSON 이지만 `normalize_console_job_prefs` 가 **닫힌 키**(`JOB_SPECS`)와 길이
+  상한으로 접는다. 화면 렌더는 저장값까지 `escapeHtml` 을 지난다.
+- `_release_claim` 의 WHERE 를 `AccountId` **또는** `ClaimedBy` 로 넓혔다. 두 조건 모두 「이
+  계정이 손댈 자격이 있다」는 사실이므로 권한이 넓어지지 않는다 — 넓히지 않으면 배치 작업
+  (`AccountId=0`)은 자기가 방금 점유한 것조차 되돌리지 못해 lease 30분 잠긴다.
+- 거절 응답이 노출하는 `required_model` 은 **그 계정 자신의 설정값**이다(타 계정 정보 아님).
+
+### 렌즈 2 — 정합성/배선 (P1 1건 자체 적발)
+
+- **P1(자체 적발·수정)**: claim 이 능력을 `account_runner_capabilities`(= 계정의 최신 하트비트
+  러너 **한 대**)로 읽고 있었다. 같은 계정에 러너가 둘이면 「A 가 신고한 목록으로 판정해 B 에게
+  보내는」 조합이 만들어진다. 표시 축에서는 기존 코드도 이 위험을 주석으로 인정하고 고지로
+  갈음했지만, **이 cycle 이 그 판정에 거절을 붙였으므로** 같은 어긋남이 「멀쩡한 러너가 자기가
+  가진 모델 때문에 거절당하는」 장애로 승격된다. → `runner_capabilities_for_session` 신설:
+  claim 은 그 요청을 보낸 토큰의 세션으로 러너를 특정하고, 세션 비결합 토큰만 계정 축 폴백.
+- 거절 판정이 **세 곳**(적재 게이트·목록 필터·claim)에서 같은 정본을 쓴다. 갈리면 「목록에는
+  보이는데 집으면 거절」 또는 「화면은 맡겼다는데 아무도 안 집는」 상태가 되고, 그 두 형태가
+  이 feature 가 P0-T·P0-M 에서 이미 밟은 함정이다.
+- 워커 3경로(node_analysis·cluster_label·insight_summary)가 같은 판정을 쓴다. 질의는 `shared`
+  한 벌 — insight-worker 는 `oauth_store` 를 import 하지 못하는 별 컨테이너다.
+
+### 렌즈 3 — qa/회귀
+
+- **미설정 계정 무회귀**가 이 변경의 급소다. 거절은 «고른 것이 있는데 없을 때»만이고, 아무것도
+  고르지 않은 계정은 종전 경량 폴백 그대로 돈다 — 새 규칙이 기존 사용자의 분석을 통째로 막으면
+  그것은 해소가 아니라 새 장애다. 테스트 3건이 이 방향을 잠근다.
+- 신규 31건 · **역검증 28/29 FAIL@main**(통과 1건은 무회귀 검증용이라 통과가 정상).
+- 기존 계약 1건 갱신 — `test_claim_console_job_actually_ships_the_light_model` 이 리터럴
+  `pick_console_job_model` 호출을 요구해 **개선을 되돌리라고 말하는 게이트**였다. 계약의 뜻
+  (경량 폴백이 실린다)은 유지하고 잠그는 대상을 함수 이름 → 관계로 옮겼다.
+- route 골든 +2/-0 · ROUTEMAP 재생성 · codenav-lint OK · ruff clean · 9 feature 컨테이너 rc=0.
+
+### 뮤테이션 — 5/5 KILL
+
+| # | 주입 | 결과 |
+|---|---|---|
+| M1 | 거절 무력화(`blocked` 항상 False) | **KILL** |
+| M2 | `reasoning_level` 을 빈 값 고정으로 되돌림(제보 증상 재주입) | **KILL** |
+| M3 | 신규 컬럼 ALTER 를 fast path 에서 제거(라이브 미생성 함정 재주입) | **KILL** |
+| M4 | 워커 게이트에서 모델 요구 제거(웹만 거절 → 유령 작업) | **KILL** |
+| M5 | 미설정 계정까지 거절(무회귀 위반 방향) | **KILL** |
+
+- **판정**: **APPROVED** — P1 1건 자체 적발·수정, 잔여 BLOCKING/MAJOR 0.
+  **잔여**: 배포 후 라이브 실측 3건(TASK.md) — 특히 거절 사유가 **화면에 실제로 도달하는지**는
+  설정 실수로 분석이 멈추는 방향이라 눈으로 확인해야 한다.
 ## REV-20260902T110000-ai-claude-feature-0043-click-beats-entry [AGENT-TEAM:inline-adversarial] — APPROVED
 
 - **일시**: 2026-09-02 · **범위**: `static/app/connect-modal.js`(+배포 사본) · 테스트 3건 추가.
@@ -2929,6 +2979,81 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
 | `age_sec is not None` 조건 제거 | **KILLED** |
 | `if (!catalog) return true;` 제거 | **KILLED** (pytest · jsdom 양쪽) |
 | 정상 소스 | PASS |
+## REV-20260902T113000-ai-claude-feature-0043-runner-modularization [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-02
+- **범위**: `src/agent/` 18 모듈 신설(러너 분할) · `scripts/build_bridge_agent.py` 번들러 ·
+  `Dockerfile`(소스 COPY + 빌드 RUN) · `bin/deploy-web.sh`(`bridge_runner_verify`) ·
+  루트 `conftest.py`(산출물 배치) · `Makefile`(`bridge-agent`) · `.gitignore`(생성물 4) ·
+  `tests/test_bridge_agent_sync.py`(계약 8종 교체) · `tests/test_orphan_claim_reclaim.py`.
+- **Trigger** (§18.8): 키워드 매칭 0건 + code change → 본래 full panel. 본 세션은 사용자
+  지시로 subagent 호출이 차단되어(§3.1 우선순위 1) **inline adversarial + 뮤테이션 실측**
+  으로 대체. 렌즈는 아래 3종.
+
+### 렌즈 1 — 이 변경이 «사용자가 받는 것» 을 바꾸는가
+
+러너는 라이브 다운로드 산출물이라, 리팩터가 조용히 동작을 바꾸면 전 사용자의 러너가 깨진다.
+근거는 주장이 아니라 **diff 실측**으로 세웠다 — 번들 산출물 vs 종전 커밋본 = **4,267행 중 57행**,
+전부 셋뿐:
+
+| 부류 | 건수 | 성격 |
+|---|---:|---|
+| `_RUNNER_INSTANCE`/`_PREV_RUNNER_INSTANCE` → 접근자 호출 | 12 | 분할이 **강제**하는 변경(아래 렌즈 2) |
+| `state` 블록 위치 이동 | 1 블록 | 모듈 수준 문장이 아니므로 의미 무관 |
+| PEP8 빈 줄 | 2 | 무해 |
+
+러너 계약 테스트(AST 기반 40파일·1,191건)는 **배포 산출물을 대상으로** 그대로 유지된다 —
+검증 대상이 바뀌지 않았으므로 계약 회귀 0. 전체 스위트 6,956건 rc=0.
+
+### 렌즈 2 — 분할이 만든 «새» 실패 모드 (자체 적발)
+
+- **가변 전역**: `_RUNNER_INSTANCE` 는 `global` 로 재바인딩되고 `conf`·`logs` 가 읽는다.
+  그대로 쪼개면 `from .identity import _RUNNER_INSTANCE` 가 **import 시점 값(빈 문자열)에
+  묶여** 갱신을 못 본다 → 감사 원장 `run` 필드와 설정 `runner_instance` 가 통째로 비고,
+  87분 고아 점유 사고를 고친 회수 경로가 **조용히** 되돌아간다(증상은 30분 뒤). `state.py`
+  + 접근자로 봉인. 이것이 위 12곳 변경의 전부이자 이유다.
+- **모듈 순환**: `conf ↔ identity ↔ logs` 3건이 실재했고 전부 이 전역 하나에서 나왔다.
+  `state` 추출로 소멸(비순환 DAG 확인).
+- **번들 면역의 함정 (⚠ 자체 적발)**: 최초 뮤테이션 M2 는 「접근자를 import 바인딩으로
+  되돌리기」였는데 **SURVIVE** 했다. 원인은 게이트 부실이 아니라 **번들이 그 결손에 면역**
+  이기 때문이다 — 연접 시 `from .x import y` 줄이 지워져 flat 네임스페이스로 해소된다.
+  즉 「패키지 형태가 살아 있는가」를 보는 테스트가 **하나도 없었다**. 분할의 이득(모듈 단위
+  lint·테스트)이 조용히 죽을 수 있는 구멍이라, `test_package_form_imports_cleanly` 를
+  신설하고 M2 를 그 축으로 재설계했다.
+
+### 렌즈 3 — 게이트가 «실제로» 잡는가 (하네스 자체 검증 포함)
+
+⚠ **하네스 함정 2건을 먼저 걷어냈다.** 첫 실행은 8/8 SURVIVE 였는데 게이트가 무력해서가
+아니라 컨테이너에 `pytest` 가 없어 **아무것도 실행되지 않은** 것이었다(문자열 매칭이 그
+사실을 통과시켰다). 두 번째는 이 스위트에서 pytest 최종 집계 줄이 유실되어(러너 종료 훅)
+출력 매칭이 판별력을 갖지 못했다 — 판정을 **종료 코드**로 옮기고, 무결 상태 rc=0 과
+의도적 실패 테스트 rc=1 로 하네스 판별력을 먼저 실증한 뒤 본 실행을 했다.
+
+### 뮤테이션 — 8/8 KILL
+
+| # | 주입 결손 | 실제 위험 | 결과 |
+|---|---|---|---|
+| M1 | `_EMIT_ORDER` 에서 `caps` 누락 | 784행이 배포본에서 **조용히** 소실 | **KILL** (conftest fail-loud 가 세션 전체 차단) |
+| M2 | 패키지 내부 import 이름 파손 | 번들은 면역 · 패키지 형태 사망(분할 이득 소실) | **KILL** |
+| M3 | Dockerfile 빌드 RUN 제거 | 배포는 성공하고 **러너 다운로드만 404** | **KILL** |
+| M4 | `deploy-web.sh` 게이트 호출 제거(정의만 잔존) | 「정의는 검증이 아니다」 | **KILL** |
+| M5 | `base → lifecycle` 순환 주입 | 패키지 `ImportError` | **KILL** |
+| M6 | 번들 비결정성 주입 | 재빌드마다 지문 변동 → 「구버전으로 돌고 있다」 판정 무의미 | **KILL** |
+| M7 | `.gitignore` 에서 배포본 제거 | 이중 커밋(49/49) 원상 복구 | **KILL** |
+| M8 | claim 페이로드에서 러너 인스턴스 제거 | 87분 고아 점유 회수 사망 | **KILL** |
+
+### 잔여 위험 (숨기지 않음)
+
+1. **라이브 러너 실행 미검증** — 본 cycle 은 단위·구조 검증까지다. 배포 후 실제 다운로드
+   → 실행 → 하트비트 왕복은 POST-DEPLOY 항목으로 남긴다(`TEST.md` §5).
+2. **기존 러너의 지문 변경** — `_self_build()` 값이 바뀌므로 상주 중인 러너는 다음
+   하트비트에서 `runner_update` 안내를 받는다. 동작 변경이 아니라 정상 경로(재설치로 해소)
+   이나, 사용자에게는 「또 갱신하라는 안내」로 보인다.
+3. **`bridge_setup.sh`/`.ps1` 는 분할하지 않았다** — 사본 제거만 적용. 근거는 실측(9·8커밋
+   으로 분할 이득이 작다). 커밋 빈도가 오르면 재검토 대상.
+
+- **판정**: **APPROVED** — 자체 적발 1건(패키지 형태 검증 부재) 신설 테스트로 해소,
+  하네스 함정 2건 제거 후 재실측, 잔여 BLOCKING/MAJOR 0.
 
 ## REV-20260902T120000-ai-claude-corp-feature-0043-relaunch-dead-end [AGENT-TEAM:inline-adversarial] — APPROVED
 

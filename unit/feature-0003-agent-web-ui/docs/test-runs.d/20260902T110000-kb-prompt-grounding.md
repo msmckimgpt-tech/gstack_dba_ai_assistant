@@ -57,4 +57,21 @@ Fable 5 로 라우팅된 시도 2건이 `safeguards flagged this message` 로 ex
 되돌리자 정상 완주. 프롬프트 내용이 아니라 **모델 선택**의 문제이며, 컴포저의 모델 선택이
 새 대화에 승계되지 않는 동작도 함께 관측했다(별건).
 
-### Run 7 — POST-DEPLOY (배포 후 기록)
+### Run 7 — POST-DEPLOY 제품별 라이브 실측 (배포 `2ffe054d` → `be01e28f`) — **PASS**
+
+배포본 러너(stale 경고 없음)로 **제품을 바꿔 가며** 실제 대화를 완주시켰다.
+
+| 제품 | 프롬프트 | 질문 | 답변 |
+|---|---|---|---|
+| **GZ_QA_G** | 4,611자 | `steam_billing_log.status` · `billingsummary.BillingType` | `Approved`=승인 · `Refunded`=환불 · `Succeeded`=결제성공 / 관계 층(`billing_rep.steambillinglog → billing_web.steam_billing_log`)까지 인용해 두 테이블 대응 설명 |
+| **DK_QA** | 7,145자 | `Achievement.Type` · `AchievementReward.PaymentType` | `1`=특수 업적(이교도 토벌 등 상위 보상) · `2`=일반 업적 / `PaymentType` 지급 방식 구분 |
+
+⚠ **DK_QA 답변의 근거는 오늘 `common` → `product.dk_qa` 로 옮긴 바로 그 4행**이다
+(CHG-20260902T… 전역 ENUM 귀속 정정). 귀속 정정과 자동 주입이 **함께** 작동함을 한 화면에서
+확인한 셈이다.
+
+배포 무중단: caddy `no upstreams available` **0건**(양 배포 창).
+
+### Run 8 — F6(health 텔레메트리) 배포 후 확인
+`insight-worker` = `mysql-ai-agent:be01e28f`. 배포 후 20분간
+`datasource_health_persist_failed` 로그 **0건**(수정 전에는 사이클마다 발생).

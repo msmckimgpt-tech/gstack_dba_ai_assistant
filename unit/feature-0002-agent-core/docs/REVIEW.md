@@ -3026,3 +3026,9 @@ PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL 
 - 해소 근거: 양쪽 다 FUNCTION 말미 **신규 섹션 추가**(서로 다른 섹션) → §16.4 양쪽 유지.
   마커 잔존 0 확인 · 두 섹션 헤딩 실재 확인 · `make test` 재실행.
 - ⚠ 마커가 남은 채 push 된 사고를 CHG 에 그대로 기록했다. 감추면 다음 사람이 같은 정규식을 쓴다.
+
+## REV-20260902T140000-postdeploy-live [SKIPPED:non-policy-doc] — 배포 실증 기록
+
+- Cross-ref: CHG-20260902T140000-postdeploy-live. 코드 변경 0.
+- 근거: 러너 로그 `prompt_chars`(4,611 / 7,145) · 배포본 답변 본문 · 컨테이너 태그
+  `be01e28f` · caddy 0건 · health 실패 로그 0건.

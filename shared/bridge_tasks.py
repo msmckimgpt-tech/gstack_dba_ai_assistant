@@ -76,6 +76,13 @@ __all__ = [
     "BATCH_JOB_KINDS",
     "CONSOLE_JOB_LIGHT_MODELS",
     "pick_console_job_model",
+    # ── 계정이 고른 콘솔 작업 모델·등급 (TASK-20260902T110000) ──
+    "CONSOLE_JOB_PREF_MAX_CHARS",
+    "normalize_console_job_prefs",
+    "console_job_prefs_for_account",
+    "runner_capabilities_for_session",
+    "console_job_model_required",
+    "resolve_console_job_request",
     "BATCH_PENDING_MAX",
     "BATCH_TASK_MAX_AGE_MIN",
     "CONSOLE_PROMPT_MAX_CHARS",
@@ -502,6 +509,232 @@ def pick_console_job_model(capabilities: Any) -> tuple[str, str]:
     return "", ""
 
 
+# ── 계정이 항목별로 고른 모델·추론등급 (TASK-20260902T110000) ──────────────────
+#
+# 사용자 결정 2026-09-02: 「계정 별 프로필 탭에 관련 설정 탭을 신설하여, 각 항목에 따라 등급을
+# 따로 지정」 + 「선택했던 모델 미보유 시 위임 거절」.
+#
+# ## 왜 계정 설정인가
+#
+# 종전에는 서버가 «경량» 이라는 **한 가지 의도**만 갖고 있었고, 그 의도가 러너 신고와 어긋나면
+# 조용히 러너 기본값(상위 모델)으로 샜다 — 그리고 그 사실이 화면·원장 어디에도 남지 않았다.
+# 의도를 사람이 항목별로 적어 두면 (a) 무엇이 의도인지가 조회 가능한 값이 되고 (b) 어긋남을
+# 「거절」로 다룰 수 있다(거절은 사유를 말할 수 있지만, 조용한 폴백은 말할 것이 없다).
+#
+# ## 어휘
+#
+# 모델 값은 대화 축과 **같은 `runtime:model`** 이다(예: `claude:haiku`). 그 값은 러너가
+# 하트비트로 신고한 자기 어휘라 그대로 CLI 인자가 된다 — 서버 alias(`claude-haiku-4`)를 쓰면
+# 러너가 모르는 이름을 인자로 넘겨 실행이 실패한다(P0-T 가 겪은 형태).
+
+#: 저장 문자열 상한. 항목 6종 × (모델 112 + 등급 16) 에 JSON 구조를 더해도 남는 여유.
+CONSOLE_JOB_PREF_MAX_CHARS = 2048
+
+#: 한 항목이 가질 수 있는 축. 여기 없는 키는 정규화에서 버린다.
+_CONSOLE_JOB_PREF_AXES = ("model", "effort")
+
+
+def normalize_console_job_prefs(raw: Any) -> dict[str, dict[str, str]]:
+    """저장·조회가 **함께 쓰는** 정규화. 모르는 것은 버리고, 아는 것만 남긴다.
+
+    닫힌 집합으로 두는 이유: 이 값은 화면이 준 것이고 claim 응답으로 러너에게 나간다. 임의
+    키를 통과시키면 「고른 적 없는 항목이 설정된 것처럼 보이는」 상태가 만들어지고, 그 항목은
+    어느 화면에서도 지울 수 없다(목록이 `JOB_SPECS` 기준이라 렌더되지 않는다).
+
+    Args:
+        raw: JSON 문자열 또는 이미 파싱된 dict.
+
+    Returns:
+        `{job_kind: {"model": str, "effort": str}}` — 두 축이 모두 빈 항목은 통째로 뺀다
+        (빈 항목을 남기면 「설정했다」와 「설정하지 않았다」가 같은 모양이 된다).
+    """
+    if isinstance(raw, (str, bytes)):
+        try:
+            raw = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            raw = None
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for kind, entry in raw.items():
+        key = str(kind or "").strip()
+        if key not in JOB_SPECS or not isinstance(entry, dict):
+            continue
+        item: dict[str, str] = {}
+        for axis in _CONSOLE_JOB_PREF_AXES:
+            value = str(entry.get(axis) or "").strip()
+            if value:
+                item[axis] = value[:112 if axis == "model" else 16]
+        if item:
+            out[key] = item
+    return out
+
+
+def runner_capabilities_for_session(cur, account_id: Any, session_id: Any) -> list:
+    """**그 세션에 묶인 러너**가 신고한 능력. 세션을 특정할 수 없으면 빈 목록.
+
+    ## 왜 계정 최신이 아니라 세션인가 (TASK-20260902T110000)
+
+    `runner_profile_for_account` 는 「가장 최근에 말한 러너 한 대」를 고른다. 표시용으로는 그것이
+    맞지만, **claim 은 다르다** — 지금 이 요청을 보낸 러너가 누구인지 우리가 알고 있다(그 토큰으로
+    인증했다). 계정 최신을 보면 같은 계정에 러너가 둘일 때 「A 가 신고한 목록으로 판정해 B 에게
+    보내는」 조합이 만들어지고, 이 cycle 이 그 판정에 **거절**을 붙였으므로 그 어긋남은 이제
+    「멀쩡한 러너가 자기가 가진 모델 때문에 거절당하는」 장애가 된다.
+
+    기존 코드도 이 위험을 주석으로 인정하고 있었다(「목록을 신고한 러너와 질문을 가져간 러너가
+    다를 수 있다」). 표시 축에서는 고지로 갈음했지만 집행 축에서는 갈음할 수 없다.
+
+    빈 목록을 돌려주는 경우(세션 비결합 토큰·조회 실패)는 호출측이 계정 축으로 폴백한다 —
+    여기서 fail-closed 로 가면 세션 없는 토큰의 러너가 아무 작업도 못 받는다.
+    """
+    try:
+        aid = int(account_id or 0)
+    except (TypeError, ValueError):
+        aid = 0
+    sid = str(session_id or "").strip()
+    if not aid or not sid:
+        return []
+    try:
+        cur.execute(
+            "SELECT t.RunnerCapabilities FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            f"WHERE t.AccountId = %s AND t.SessionId = %s AND {LIVE_TOKEN_PREDICATE} "
+            "  AND t.RunnerCapabilities IS NOT NULL "
+            "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+            (aid, sid))
+        row = cur.fetchone()
+    except Exception:
+        return []
+    if not row or not row[0]:
+        return []
+    try:
+        parsed = json.loads(row[0])
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def console_job_prefs_for_account(cur, account_id: Any) -> dict[str, dict[str, str]]:
+    """그 계정의 콘솔 작업 설정을 읽는다 — **웹과 워커가 같은 질의를 쓴다**.
+
+    `runner_profile_for_account` 를 여기 둔 것과 같은 이유다: 배급 자격을 판정하는 쪽이 웹
+    프로세스만이 아니다. insight-worker 는 `oauth_store` 를 import 하지 못하는 별 컨테이너라,
+    거기에 질의를 다시 적으면 「웹은 거절하는데 워커는 적재하는」 창이 열리고 그 창에 쌓인
+    작업은 아무도 집지 않는다.
+
+    **조회 실패는 빈 설정**(컬럼이 없는 배포 = 미설정과 동일) — 배포 순서가 작업을 막지 않는다.
+    """
+    try:
+        aid = int(account_id or 0)
+    except (TypeError, ValueError):
+        aid = 0
+    if not aid:
+        return {}
+    try:
+        cur.execute("SELECT ConsoleJobPrefs FROM WebAccounts WHERE Id = %s", (aid,))
+        row = cur.fetchone()
+    except Exception:
+        return {}
+    return normalize_console_job_prefs(row[0]) if row else {}
+
+
+def console_job_model_required(job_kind: str, prefs: Any) -> str:
+    """이 계정이 **이 항목에 모델을 골랐는가**. 골랐으면 그 `runtime:model`, 아니면 빈 문자열.
+
+    배급 자격(`runner_can_take`)과 claim 이 같은 질문을 하므로 술어를 하나만 둔다 — 두 벌이면
+    「목록에는 보이는데 집으면 거절되는」 상태가 열린다(P0-T 가 반영 축에서 겪은 형태).
+    """
+    return str((normalize_console_job_prefs(prefs).get(str(job_kind or "")) or {}).get("model") or "")
+
+
+def _split_model_ref(value: Any) -> tuple[str, str]:
+    """`runtime:model` 을 가른다. 구분자가 없으면 런타임을 모르는 것이므로 `("", "")`.
+
+    런타임 없는 모델 이름을 통과시키지 않는 이유는 `pick_console_job_model` 과 같다 — 모델
+    이름은 런타임에 종속이고, 런타임 없이 보내면 러너가 자기 현재 런타임과 대조해 「미반영」
+    으로 떨어뜨린다.
+    """
+    text = str(value or "").strip()
+    if ":" not in text:
+        return "", ""
+    runtime, _, model = text.partition(":")
+    return runtime.strip(), model.strip()
+
+
+def _capability_options(capabilities: Any, runtime: str) -> tuple[list[str], list[str]]:
+    """그 런타임으로 러너가 신고한 `(모델 값들, 등급 값들)`. 없으면 빈 목록 둘."""
+    if not isinstance(capabilities, list) or not runtime:
+        return [], []
+    for entry in capabilities:
+        if not isinstance(entry, dict) or str(entry.get("runtime") or "").strip() != runtime:
+            continue
+        def _values(field: str) -> list[str]:
+            out = []
+            for item in (entry.get(field) or []):
+                value = str((item or {}).get("value") or "") if isinstance(item, dict) else str(item or "")
+                if value:
+                    out.append(value)
+            return out
+        return _values("models"), _values("efforts")
+    return [], []
+
+
+def resolve_console_job_request(job_kind: str, prefs: Any,
+                                capabilities: Any) -> dict[str, Any]:
+    """claim 응답이 실을 `(런타임, 모델, 등급)` 과 **위임 가능 여부**를 함께 낸다.
+
+    Returns:
+        ``{"runtime", "model", "effort", "blocked", "required_model", "unmet", "source"}``
+
+        - ``blocked=True`` = 계정이 고른 모델을 이 러너가 신고하지 않았다 → **위임하지 않는다**
+          (사용자 결정 2026-09-02). 이때 나머지 축은 의미가 없다.
+        - ``source='prefs'`` = 계정 설정에서 왔다 / ``'light'`` = 설정이 없어 경량 선호 폴백.
+
+    ## 설정이 없는 계정은 종전 그대로다
+
+    거절은 **고른 것이 있는데 없을 때**만이다. 아무것도 고르지 않은 사용자의 작업까지 새 규칙이
+    막으면 그것은 해소가 아니라 새 장애다 — 그쪽은 종전대로 경량 선호(`pick_console_job_model`)
+    로 돌고, 대조에 실패해도 러너 기본값으로 진행한다.
+
+    ## 등급은 거절 사유가 아니다
+
+    고른 등급을 러너가 신고하지 않으면 **빈 값**으로 보낸다(러너 기본). 등급은 실행 가능성을
+    좌우하지 않으므로 그것 때문에 분석을 멈추면 잃는 것이 더 크다. 대신 반영하지 못했다는
+    사실을 `unmet` 에 남겨 호출측이 로그·원장에 적을 수 있게 한다.
+    """
+    entry = normalize_console_job_prefs(prefs).get(str(job_kind or "")) or {}
+    want_runtime, want_model = _split_model_ref(entry.get("model"))
+    want_effort = str(entry.get("effort") or "").strip()
+    unmet: list[str] = []
+
+    if want_model:
+        models, efforts = _capability_options(capabilities, want_runtime)
+        if want_model not in models:
+            # 고른 모델이 이 러너에 없다. **여기서 멈춘다** — 상위 모델로 조용히 갈아타면
+            # 사용자는 자기가 고른 것으로 돌았다고 믿는다(이 cycle 이 고치는 결함 그 자체).
+            return {"runtime": want_runtime, "model": want_model, "effort": "",
+                    "blocked": True, "required_model": f"{want_runtime}:{want_model}",
+                    "unmet": [f"모델 {want_runtime}:{want_model}"], "source": "prefs"}
+        if want_effort and want_effort not in efforts:
+            unmet.append(f"추론등급 {want_effort}")
+            want_effort = ""
+        return {"runtime": want_runtime, "model": want_model, "effort": want_effort,
+                "blocked": False, "required_model": f"{want_runtime}:{want_model}",
+                "unmet": unmet, "source": "prefs"}
+
+    # 모델 미설정 — 종전 경량 선호. 등급만 고른 계정은 그 등급을 **경량 폴백 런타임 기준**으로
+    # 대조한다(고른 런타임이 없으므로 폴백이 고른 런타임이 유일한 기준이다).
+    light_runtime, light_model = pick_console_job_model(capabilities)
+    if want_effort:
+        _, efforts = _capability_options(capabilities, light_runtime)
+        if want_effort not in efforts:
+            unmet.append(f"추론등급 {want_effort}")
+            want_effort = ""
+    return {"runtime": light_runtime, "model": light_model, "effort": want_effort,
+            "blocked": False, "required_model": "", "unmet": unmet,
+            "source": ("light" if light_model else "")}
+
+
 # ── 「이 계정에 지금 일을 줄 수 있는 러너가 있는가」 — 웹과 **워커**가 함께 읽는 판정 ────
 #
 # 종전에 이 판정은 웹 프로세스에만 있었다(`oauth_store.account_runner_profile` +
@@ -639,11 +872,17 @@ def version_at_least(actual: Any, minimum: str) -> bool:
     return got >= want
 
 
-def runner_can_take(profile: Any, *, need_batch: bool = False) -> bool:
+def runner_can_take(profile: Any, *, need_batch: bool = False,
+                    required_model: str = "") -> bool:
     """이 러너에게 콘솔·배경 작업을 **줘도 되는가**. 판정 순서가 곧 의미다.
 
     기능 신고가 1차 자격이고 버전이 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가
     자격을 유지한다. `need_batch` 는 배경 배치의 **별도 동의**까지 요구한다.
+
+    `required_model`(`runtime:model`, TASK-20260902T110000): 계정이 그 항목에 모델을 **골랐을
+    때만** 넘어온다. 고른 모델을 이 러너가 신고하지 않으면 자격이 아니다 — 사용자 결정
+    2026-09-02 「선택했던 모델 미보유 시 위임 거절」. 빈 값이면 이 축은 판정하지 않는다
+    (미설정 계정 무회귀).
 
     ⚠ 이 함수는 **사유를 말하지 않는다**. 화면은 왜 안 되는지를 말해야 하므로
     `_console_llm._classify` 가 같은 순서로 사유까지 낸다 — 그쪽이 이 함수를 부르고,
@@ -658,6 +897,11 @@ def runner_can_take(profile: Any, *, need_batch: bool = False) -> bool:
         return False
     if need_batch and RUNNER_FEATURE_BATCH_JOBS not in features:
         return False
+    if required_model:
+        want_runtime, want_model = _split_model_ref(required_model)
+        models, _ = _capability_options(profile.get("capabilities"), want_runtime)
+        if not want_model or want_model not in models:
+            return False
     return True
 
 

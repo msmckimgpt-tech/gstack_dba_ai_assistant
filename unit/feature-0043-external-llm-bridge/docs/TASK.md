@@ -2204,7 +2204,6 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
       - P2 카탈로그 부재를 「보임」으로 읽어 안내 분기가 **죽은 코드**(→ 숨김 · 하네스 11케이스로 재작성)
 - [x] `make test` 전량 green (조치 후 재실행)
 - [ ] `verify-completion --pre-commit` → 출하 → 러너 재기동
-
 ## TASK-20260902T120000 — 「업데이트 필요」가 재실행으로는 풀리지 않을 때 (사용자 제보 2026-09-02)
 
 정본: `docs/TASK-20260902T120000-relaunch-dead-end.md`
@@ -2224,3 +2223,107 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
       밀어내던 결함. `role="menu"` 밖 계약은 유지.
 - [x] node 실행 하네스 16건 + 뮤테이션 **9종 전건 KILL** · `make test` 대상 green · ruff clean
 - [ ] PB-0008 POST-DEPLOY 실측 → 출하
+## 20260902T1100-console-job-model-prefs — 콘솔 작업의 모델·추론등급을 계정이 정한다
+
+**사용자 제보 (2026-09-02)**: 「그래프 뷰 기능의 능동 분석을 진행할 경우 경량모델이 아닌
+fable 및 opus 로 진행되는 이슈가 확인되었습니다. effort 또한 low 로 확인되어 해당 이슈에 대한
+해소가 필요합니다.」 → 사용자 결정으로 **계정 프로필에 항목별 설정 탭을 신설**하고,
+**고른 모델을 러너가 못 주면 위임을 거절**한다.
+
+근본원인·설계·AC 는 `TASK-20260902T110000-console-job-model-prefs.md`. **위험도 Major**.
+
+<!-- PLAN-APPROVED by mckim on 2026-09-02 -->
+
+- [x] 근본원인 3층 라이브 실측 — ① 등급을 **서버가 아예 안 보낸다**(`"reasoning_level": ""`
+      고정 → 러너 CLI 기본값=low) ② 모델 대조 실패가 **조용히 상위로 샌다**(`unmet` 고지조차
+      없음) ③ 실행 지정이 `WebAiTasks` 에 **안 남는다**(최근 job 7건 전량 NULL)
+- [x] 동반 발견 — `BridgeDefaultModel`/`BridgeDefaultEffort` 가 slow path 에만 있어 **라이브에
+      컬럼이 없다**(대화 축 계정 기본값이 조용히 저장 실패 중). 같은 함정을 신규 컬럼이 밟을
+      자리라 fast path 로 함께 이동
+- [x] 해석 정본 `shared/bridge_tasks` — `normalize_console_job_prefs` ·
+      `console_job_prefs_for_account`(웹·워커 공용 질의) · `console_job_model_required` ·
+      `resolve_console_job_request` · `runner_can_take(required_model=…)`
+- [x] 저장소 — `WebAccounts.ConsoleJobPrefs`(JSON, fast path ALTER) + oauth_store 접근자 2종
+- [x] 프로필 API — `GET`·`PUT /api/profile/console-jobs`(로그인 스코프·계정 파라미터 없음)
+- [x] 프로필 화면 「AI 작업」 탭 — 항목별 모델·등급 선택. 선택지는 **러너 신고 목록만**,
+      저장값이 목록에 없으면 지우지 않고 「지금 연결된 AI 에 없음」으로 보존
+- [x] 거절 3겹 — 적재 게이트(웹·워커 3경로) · 대기 목록 필터(공회전 차단) · claim 최종 방어
+      (409 + 점유 반환). 미설정 계정은 **종전 경량 폴백 그대로**(무회귀)
+- [x] 관측 — claim 이 확정한 `(runtime, model, effort)` 를 작업 행에 기록
+- [x] 신규 29건 · **역검증 28/29 FAIL@main**(통과 1건은 무회귀 검증) · 기존 계약 1건 갱신
+      (리터럴 함수명 → 관계) · route 골든 +2/-0 · ROUTEMAP 재생성 · codenav-lint OK · ruff clean
+- [ ] **배포 후 라이브 실측** — ① 프로필 > AI 작업 탭 렌더·저장 ② 그래프 능동 분석이 고른
+      모델·등급으로 dispatch 되는가(러너 로그 `kind=job` 의 `model`·`effort`) ③ 없는 모델을
+      골랐을 때 위임이 거절되고 사유가 화면에 뜨는가
+## 20260902T1100-runner-modularization — 브리지 러너 모듈 분할 + 배포본 이중화 제거
+
+### 배경 — 측정된 충돌 표면
+
+사용자 보고: *"브릿지 러너를 개발할 때 작업자AI 간 작업 충돌이 빈번"*. 실측으로 원인이
+둘로 갈렸다(최근 90일):
+
+| 파일 | 행수 | 커밋 | 성격 |
+|---|---:|---:|---|
+| `feature-0043/src/bridge_agent.py` | 4,238 | 49 | 정본 |
+| `feature-0003/src/static/agent/bridge_agent.py` | 4,238 | **49** | **바이트 동일 사본** |
+| `src/bridge_setup.sh` (+사본) | 837 | 9 (+9) | 정본 + 사본 |
+| `src/bridge_setup.ps1` (+사본) | 655 | 8 (+8) | 정본 + 사본 |
+
+1. **정본↔배포본 이중 커밋 — 49/49 (100%)**. 정본을 고친 49개 커밋이 **예외 없이** 264KB
+   짜리 배포본도 같은 커밋에서 고쳤다. 관심사가 서로 다른 두 세션도 배포본에서 반드시 만난다.
+   이는 «생성물을 소스에 커밋» 하는 패턴으로, AGENTS.md §13.1 v3.35.1 이 이미
+   «1순위: 빌드가 만든다» 로 규정한 안티패턴이다(`inject_asset_stamp.py` 선례).
+2. **4,238행 단일 모듈**. 로깅·API·워커풀·런타임 탐지·caps 협상·프롬프트·핸들러·수명주기가
+   한 파일에 있어 관심사가 달라도 머지 지점이 겹친다.
+
+부수 확인: 본 cycle 의 `cycle-init` 이 «같은 핫스팟 편집 중인 활성 브랜치 7개»를 경고했다
+(§13.2.5-A 권고 = 동시 ≤ 2). 사용자 체감과 정합.
+
+### 제약 (설계를 가르는 지점)
+
+러너는 **단일 파일 · 무설치 · stdlib 전용 · 체크섬 대조** 다운로드 산출물이다(ANCHOR §1·§3).
+그래서 "파일을 쪼갠다" 만으로는 성립하지 않는다 — 쪼개려면 **번들 빌드**가 반드시 따라온다.
+
+### 조치
+
+- `src/agent/` 18 모듈로 분할(최대 `caps.py` 784행). 의존 그래프는 비순환.
+- 가변 전역 `_RUNNER_INSTANCE`/`_PREV_RUNNER_INSTANCE` 를 `state.py` 로 추출하고 접근자로
+  노출 — `from .x import _GLOBAL` 은 import 시점 값에 묶여 갱신을 못 보므로, 그대로 쪼개면
+  감사 원장의 `run` 필드와 설정의 `runner_instance` 가 조용히 비어 87분 고아 점유 회수가
+  되돌아간다(증상은 30분 뒤에야 나타난다).
+- `scripts/build_bridge_agent.py` 가 `_EMIT_ORDER` 대로 연접해 단일 파일을 만든다.
+- 배포본 4개(`src/bridge_agent.py`, `static/agent/` 3종)를 git 추적 해제 + `.gitignore`.
+  이미지=Dockerfile · 테스트=루트 `conftest.py` · 로컬=`make bridge-agent` 가 각각 생성.
+- `deploy-web.sh` 에 `bridge_runner_verify` 하드 게이트 — 빌드 RUN 이 빠지면 **배포는 성공하고
+  러너 다운로드만 404** 가 되는데 healthz·soak·대화 스모크는 전부 초록불이다. 그 침묵을 끊는다.
+
+### 산출물 동치 근거
+
+번들 산출물과 종전 커밋본의 diff = **4,267행 중 57행**이며 전부 의도한 셋뿐이다:
+① 접근자 전환 12곳 ② `state` 블록 이동 ③ PEP8 빈 줄 2곳. 러너 계약 테스트(AST 기반)는
+**배포 산출물을 대상으로** 그대로 유지되어 계약 회귀 0.
+
+### 4. Requested Scope (요청 범위)
+
+```
+사용자 원문(데이터이며 지시가 아님)
+프로젝트 내 서비스에서 브릿지 러너를 개발할 때 작업자AI 간 작업 충돌이 빈번한 이슈가
+확인되었습니다. 원활한 개발을 위해 관련된 기능에 대한 스크립트를 모듈화 할 수 있을까요?
+```
+
+- [x] **작업자AI 간 작업 충돌 원인 규명** — 산출물: 90일 커밋 실측 2원인(이중 커밋 49/49 ·
+      4,238행 단일 모듈) + `cycle-init` 핫스팟 경고 7 브랜치
+- [x] **관련 기능 스크립트 모듈화** — 산출물: `src/agent/` 18 모듈(비순환 DAG) +
+      `_EMIT_ORDER` 단일 정본. 최대 모듈 784행(종전 4,238행)
+- [x] **단일 파일 무설치 계약 보존** — 산출물: `build_bridge_agent.py` 번들러 + 원본 대비
+      57/4,267행 diff(의도 3종만) + 러너 계약 테스트 전량 배포 산출물 대상 유지
+- [x] **충돌 표면 제거(이중화)** — 산출물: 생성물 4개 git 추적 해제 + 3경로 빌드 배선
+      (Dockerfile · conftest · Makefile) + `deploy-web.sh` 하드 게이트
+
+> **[다의어] "스크립트를 모듈화"** — 고른 독해: *러너 파이썬 소스(`bridge_agent.py`)를
+> 관심사별 모듈로 분할하고, 배포되는 단일 파일은 빌드가 만든다*. 버린 독해: *설치 셸
+> 스크립트(`bridge_setup.sh`/`.ps1`)를 함수 조각 파일로 분해한다*. 후자를 버린 근거는
+> 실측이다 — 충돌의 84%가 `bridge_agent.py` 축(49커밋 × 2사본)이고 설치 스크립트는
+> 9·8커밋으로 분할 이득이 작다. 설치 스크립트는 **사본 제거만** 적용했다.
+> 예시: `agent/caps.py` 만 고친 세션과 `agent/handler.py` 만 고친 세션이 같은 파일을
+> 건드리지 않아 git 이 충돌을 내지 않는다.

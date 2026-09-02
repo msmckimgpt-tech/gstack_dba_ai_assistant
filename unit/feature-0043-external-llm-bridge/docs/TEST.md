@@ -252,6 +252,28 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 | TEST-20260901T170000-stop-last | `_arm_exit_release` (실 프로세스 종료) | `run.stop` 이 **마지막 줄** · 해제가 그 앞 · 집계에 해제가 실림. 구코드 FAIL 재현 확인 | AC-20260901T163000-runner-log-2 |
 | TEST-20260901T170000-stop-order | `bridge_agent.py` 소스 | 요약 등록이 해제 등록보다 **앞**(atexit 역순 계약을 이름으로 고정) | AC-20260901T163000-runner-log-2 |
 
+| TEST-20260902T110000-normalize | `normalize_console_job_prefs` | 모르는 항목 키·빈 항목을 버린다 · JSON 문자열/깨진 값 모두 예외 없이 빈 설정 | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-resolve-prefs | `resolve_console_job_request` | 고른 모델·등급이 그대로 나간다(`source='prefs'`) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-resolve-block | `resolve_console_job_request` | 고른 모델이 신고에 없으면 `blocked` — **상위 모델로 대체하지 않는다**(제보된 결함 자체) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-resolve-effort | `resolve_console_job_request` | 등급 미보유는 거절이 아니라 빈 값 + `unmet` 기록(실행 가능성을 좌우하지 않는다) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-resolve-unset | `resolve_console_job_request` | 미설정 계정은 경량 폴백 · **절대 blocked 되지 않는다**(무회귀) | AC-20260902T110000-console-job-model-prefs-3 |
+| TEST-20260902T110000-resolve-runtime | `resolve_console_job_request` | 런타임 없는 모델 이름은 선택으로 인정 안 함(러너가 자기 런타임과 대조해 떨어뜨린다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-cantake | `runner_can_take` | `required_model` 없으면 종전 판정 그대로 · 있으면 신고 목록 대조(런타임까지) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-required | `console_job_model_required` | 그 항목의 모델만 본다(다른 항목·등급 전용 설정은 요구로 번역되지 않는다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-claim-effort | `_claim_console_job` | `reasoning_level` 이 **고정 빈 문자열이 아니다** — 제보 증상의 절반이 이 하드코딩이었다 | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-claim-reject | `_claim_console_job` | 미충족이면 409 + **점유 반환**(붙들고 거절하면 lease 30분 잠긴다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-claim-record | `_claim_console_job` | 확정한 `(runtime, model, effort)` 를 작업 행에 기록 — 진단이 개인 머신 로그에 의존하지 않게 | AC-20260902T110000-console-job-model-prefs-4 |
+| TEST-20260902T110000-claim-session | `_claim_console_job` | 능력을 **이 요청을 보낸 러너**(세션 결합)의 것으로 읽고, 세션 미특정이면 계정 축 폴백 | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-session-caps | `runner_capabilities_for_session` | 조회 실패·세션 미지정은 빈 목록(fail-closed 로 가면 비결합 토큰 러너가 굶는다) | AC-20260902T110000-console-job-model-prefs-3 |
+| TEST-20260902T110000-release | `_release_claim` | 점유자(`ClaimedBy`) 기준도 해제 — 배치는 `AccountId=0` 이라 소유 조건만으론 자기 점유도 못 되돌린다 | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-listfilter | `list_open_requests` | 막힌 작업은 목록에서도 뺀다(claim 거절만으론 러너가 공회전하며 공용 상한을 태운다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-reason | `_console_llm` | 사유 `model_unavailable` 신설 — 조치가 「갱신」이 아니라 「설정」이다 | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-enqueue | `_console_jobs` | 웹 적재가 `job_kind` 를 자격 판정에 넘긴다(표시와 집행이 갈리지 않게) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-workers | 워커 3경로 | node_analysis·cluster_label·insight_summary 가 같은 판정을 쓴다(웹만 거절하면 유령 작업) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-shared-query | `oauth_store` · `bridge_tasks` | 설정 질의가 **한 벌**(워커는 `oauth_store` 를 import 하지 못한다) | AC-20260902T110000-console-job-model-prefs-2 |
+| TEST-20260902T110000-fastpath | `_ensure_bridge_heartbeat_schema` | 신규 컬럼 + 이동한 `BridgeDefault*` 가 fast path 에 있다(라이브에 없던 것이 이 규칙의 근거) | AC-20260902T110000-console-job-model-prefs-5 |
+| TEST-20260902T110000-api-scope | `profile.py` | 계정 파라미터 없음 — 남의 설정을 건드릴 표면 자체를 만들지 않는다 | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T110000-front | `index.html` · `profile.js` | 탭·pane·로더가 함께 있다(하나만 있으면 빈 탭이 열린다) | AC-20260902T110000-console-job-model-prefs-1 |
 | TEST-20260902T120000-same | node 하네스 (`connect-modal` 실행) | 같은 지문으로 재기동되면 사유를 바꾸고 **1단계 명령까지 준비**해 보여 준다 | AC-20260902T120000-relaunch-1 |
 | TEST-20260902T120000-noburn | node 하네스 | 증거를 잡은 뒤의 클릭은 실행을 다시 쏘지 않는다(30초 반복 소모 제거) | AC-20260902T120000-relaunch-2 |
 | TEST-20260902T120000-changed | node 하네스 | 지문이 **바뀌었으면** «그대로» 라고 하지 않는다 — 축은 낡음이 아니라 동일성 | AC-20260902T120000-relaunch-1 |

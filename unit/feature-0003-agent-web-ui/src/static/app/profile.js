@@ -35,6 +35,10 @@ function switchProfileTab(tab) {
     // 콘텐츠(2FA·알림·화면 효과·사용량)는 그 하위 탭 활성화 시점에 lazy 렌더(switchAccountSubtab).
     // 마지막 선택 하위 탭을 복원(기본 'account'). 과거엔 4개 콘텐츠를 이 탭 진입 시 한 번에 렌더.
     switchAccountSubtab(state.accountSubtab || "account");
+  } else if (tab === "ai-jobs") {
+    // 진입 시마다 다시 읽는다 — 선택지의 출처가 «지금 연결된 러너» 라 탭을 여는 사이에
+    // 바뀐다(러너를 껐다 켜면 목록이 달라진다). 캐시하면 없는 모델을 고르게 된다.
+    loadAiJobs().catch(() => {});
   } else if (tab === "release-notes") {
     // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
     // 작업 화면은 '관리 콘솔' 영역 노트를 숨긴다(work/common 만 노출).
@@ -781,6 +785,7 @@ function openProfile(tab = "prompt") {
   // 가려** 버린다(닫기 버튼까지 가린다). 모든 열기는 등록부의 문을 통과한다.
   openSidePanel("profile", () => {
     renderProfile();
+    setupAiJobsTab();                    // AI 작업 탭 버튼 1회 배선 (switchProfileTab 앞)
     switchProfileTab(tab);
     setupProfileDrawerResize();          // 너비 조절 핸들 1회 배선
     _applyProfileDrawerWidth(profileDrawerEl); // 저장된 너비 복원
@@ -882,4 +887,175 @@ function setupProfileDrawerResize() {
   handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
 }
 
-export { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange };
+// ── AI 작업 탭 (TASK-20260902T110000) ──────────────────────────────────────────
+//
+// 콘솔·배경 작업(그래프 능동 분석·메타데이터 자동완성·인사이트 배치…)을 연결된 내 AI 가
+// 처리할 때 쓸 **모델·추론 강도**를 항목별로 고른다.
+//
+// ## 선택지를 서버에서만 받는 이유
+//
+// 목록을 프런트가 들고 있으면 러너가 못 쓰는 모델을 고를 수 있게 되고, 그 작업은 실행 단계에
+// 가서야 실패한다(P0-T 가 겪은 형태 — 그때는 서버 alias 를 보여줬다). 여기 그려지는 값은
+// 전부 **지금 연결된 러너가 하트비트로 신고한 것**이다.
+//
+// 러너가 없으면 선택지가 비지만 **저장된 값은 지우지 않는다** — 연결이 끊겼다고 설정이
+// 사라지면 사용자는 자기가 고른 것을 잃는다.
+
+let _aiJobsState = { jobs: [], runtimes: [], listening: false, loaded: false };
+
+function _aiJobsModelOptions(runtimes) {
+  // `runtime:model` 한 축으로 편다 — 모델 이름은 런타임 종속이라(`haiku` 는 claude 의 것)
+  // 둘을 따로 고르게 하면 존재하지 않는 조합이 만들어진다.
+  const out = [];
+  (runtimes || []).forEach((rt) => {
+    (rt.models || []).forEach((m) => {
+      out.push({ value: `${rt.runtime}:${m.value}`, label: `${rt.label || rt.runtime} · ${m.label || m.value}` });
+    });
+  });
+  return out;
+}
+
+function _aiJobsEffortOptions(runtimes, modelValue) {
+  // 등급 어휘는 런타임마다 다르다. 고른 모델의 런타임 것만 보여준다 — 섞으면 그 런타임에
+  // 없는 등급을 고르게 되고, 서버가 대조에서 떨어뜨려 조용히 러너 기본값으로 돈다.
+  const rtName = String(modelValue || "").split(":")[0];
+  const rt = (runtimes || []).find((r) => r.runtime === rtName)
+    || ((runtimes || []).length === 1 ? runtimes[0] : null);
+  return (rt && rt.efforts) ? rt.efforts : [];
+}
+
+function renderAiJobs() {
+  const box = document.getElementById("aiJobsList");
+  const meta = document.getElementById("aiJobsMeta");
+  if (!box) return;
+  const st = _aiJobsState;
+  const models = _aiJobsModelOptions(st.runtimes);
+  box.innerHTML = "";
+  st.jobs.forEach((job) => {
+    const row = document.createElement("div");
+    row.className = "ai-jobs-row";
+    row.dataset.kind = job.kind;
+    const opts = (sel, list, placeholder) => {
+      const parts = [`<option value=""${sel ? "" : " selected"}>${escapeHtml(placeholder)}</option>`];
+      let found = false;
+      list.forEach((o) => {
+        const on = o.value === sel;
+        if (on) found = true;
+        parts.push(`<option value="${escapeHtml(o.value)}"${on ? " selected" : ""}>${escapeHtml(o.label)}</option>`);
+      });
+      // 저장된 값이 지금 선택지에 없으면(러너 미연결·목록 변경) 그 값을 **직접 넣어** 보존한다.
+      // 빼 버리면 저장 버튼 한 번에 사용자의 설정이 조용히 지워진다.
+      if (sel && !found) {
+        parts.push(`<option value="${escapeHtml(sel)}" selected>${escapeHtml(sel)} (지금 연결된 AI 에 없음)</option>`);
+      }
+      return parts.join("");
+    };
+    const efforts = _aiJobsEffortOptions(st.runtimes, job.model);
+    const warn = (job.model && !job.available)
+      ? `<div class="ai-jobs-warn">고른 모델을 지금 연결된 AI 가 제공하지 않아 이 작업은 맡기지 않습니다.</div>`
+      : "";
+    row.innerHTML = `
+      <div class="ai-jobs-name">${escapeHtml(job.label)}${job.wired ? "" : ' <span class="ai-jobs-off">위임 불가</span>'}</div>
+      <div class="ai-jobs-fields">
+        <label class="field"><span>모델</span>
+          <select data-ai-job-model="${escapeHtml(job.kind)}"${job.wired ? "" : " disabled"}>
+            ${opts(job.model, models, "기본값 (경량 모델 자동 선택)")}
+          </select>
+        </label>
+        <label class="field"><span>추론 강도</span>
+          <select data-ai-job-effort="${escapeHtml(job.kind)}"${job.wired ? "" : " disabled"}>
+            ${opts(job.effort, efforts, "기본값 (연결된 AI 설정)")}
+          </select>
+        </label>
+      </div>${warn}`;
+    box.appendChild(row);
+  });
+  if (meta) {
+    meta.textContent = st.listening
+      ? "선택지는 지금 연결된 내 AI 가 신고한 목록입니다."
+      : "지금 듣고 있는 AI 가 없어 선택지를 불러오지 못했습니다. 저장된 설정은 그대로 유지됩니다.";
+  }
+}
+
+async function loadAiJobs() {
+  const box = document.getElementById("aiJobsList");
+  if (box && !_aiJobsState.loaded) box.textContent = "불러오는 중…";
+  try {
+    const res = await apiFetch("/api/profile/console-jobs");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data && data.error ? data.error : "조회 실패");
+    _aiJobsState = {
+      jobs: Array.isArray(data.jobs) ? data.jobs : [],
+      runtimes: Array.isArray(data.runtimes) ? data.runtimes : [],
+      listening: !!data.listening,
+      loaded: true,
+    };
+    renderAiJobs();
+  } catch (e) {
+    if (box) box.textContent = "설정을 불러오지 못했습니다.";
+  }
+}
+
+function _collectAiJobs() {
+  const out = {};
+  document.querySelectorAll("[data-ai-job-model]").forEach((sel) => {
+    const kind = sel.dataset.aiJobModel;
+    const model = String(sel.value || "").trim();
+    const eff = document.querySelector(`[data-ai-job-effort="${kind}"]`);
+    const effort = eff ? String(eff.value || "").trim() : "";
+    if (model || effort) out[kind] = { model, effort };
+  });
+  return out;
+}
+
+async function saveAiJobs() {
+  const jobs = _collectAiJobs();
+  try {
+    const res = await apiFetch("/api/profile/console-jobs", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobs }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data && data.error ? data.error : "저장 실패");
+    showToast("AI 작업 설정을 저장했습니다.");
+    // 저장 뒤 다시 읽는다 — 서버 정규화 결과와 `available` 판정이 화면과 같아야 한다.
+    await loadAiJobs();
+  } catch (e) {
+    showToast(e && e.message ? e.message : "저장하지 못했습니다.");
+  }
+}
+
+let _aiJobsBound = false;
+
+function setupAiJobsTab() {
+  // 1회 배선. `openProfile` 이 매 열기마다 부르므로 가드가 없으면 핸들러가 쌓여, 저장 한 번에
+  // PUT 이 여러 번 나간다(`setupProfileDrawerResize` 와 같은 자리·같은 이유).
+  if (_aiJobsBound) return;
+  _aiJobsBound = true;
+  const save = document.getElementById("saveAiJobsBtn");
+  if (save) save.addEventListener("click", () => { saveAiJobs().catch(() => {}); });
+  const reset = document.getElementById("resetAiJobsBtn");
+  if (reset) {
+    reset.addEventListener("click", () => {
+      document.querySelectorAll("[data-ai-job-model],[data-ai-job-effort]").forEach((sel) => { sel.value = ""; });
+    });
+  }
+  const box = document.getElementById("aiJobsList");
+  // 모델을 바꾸면 등급 선택지가 그 런타임의 것으로 갈린다 — 즉시 다시 그린다.
+  if (box) {
+    box.addEventListener("change", (e) => {
+      const t = e.target;
+      if (!t || !t.dataset || !t.dataset.aiJobModel) return;
+      const kind = t.dataset.aiJobModel;
+      const job = _aiJobsState.jobs.find((j) => j.kind === kind);
+      if (!job) return;
+      job.model = String(t.value || "");
+      const effSel = document.querySelector(`[data-ai-job-effort="${kind}"]`);
+      job.effort = effSel ? String(effSel.value || "") : "";
+      renderAiJobs();
+    });
+  }
+}
+
+export { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange, loadAiJobs, setupAiJobsTab };

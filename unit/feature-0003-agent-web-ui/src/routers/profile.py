@@ -20,6 +20,119 @@ INCLUDE_ORDER = 130  # 등록 순서 고정 — 2026-07-10 현행 include 순서
 router = APIRouter()
 
 
+@router.get("/api/profile/console-jobs")
+def get_profile_console_jobs(request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """TASK-20260902T110000: 콘솔·배경 작업 항목별 **모델·추론등급** 설정 조회.
+
+    로그인만 필요하고 **본인 계정으로 스코프가 강제**된다(신규 권한 코드 0) — 읽는 것도 쓰는
+    것도 `account["id"]` 뿐이라 계정 파라미터가 없다. 이 설정이 남의 것을 건드릴 표면 자체를
+    만들지 않는다.
+
+    Returns:
+        - `jobs`: `JOB_SPECS` 순서의 항목 목록(kind·label·origin·wired) + 저장된 model/effort
+          + `available`(지금 연결된 러너가 그 모델을 주는가).
+        - `runtimes`: 지금 러너가 신고한 `[{runtime, label, models[], efforts[]}]`. **화면의
+          선택지는 이것뿐이다** — 우리가 아는 이름이 아니라 그 러너가 고를 수 있다고 말한
+          이름만 고르게 해야, 없는 모델을 골라 실행이 실패하는 경로(P0-T)가 생기지 않는다.
+        - `listening`: 러너가 지금 듣고 있는가. False 면 `runtimes` 가 비고, 화면은 저장된
+          값을 **지우지 않고** 그대로 보여준다(연결이 끊겼다고 설정이 사라지면 안 된다).
+    """
+    from shared import bridge_tasks as _bt
+
+    aid = int((account or {}).get("id") or 0)
+    if aid <= 0:
+        return app._json_error("계정 식별 실패", 403)
+    prefs, profile = {}, {"capabilities": [], "listening": False}
+    try:
+        import oauth_store as _store
+
+        cur = conn.cursor()
+        try:
+            prefs = _store.account_console_job_prefs(cur, aid)
+            profile = _store.account_runner_profile(cur, aid)
+        finally:
+            cur.close()
+    except Exception:
+        # 설정 조회 실패는 화면을 막지 않는다 — 빈 설정으로 그린다(저장은 여전히 가능).
+        logging.getLogger(__name__).warning("console-jobs prefs load failed", exc_info=True)
+    caps = profile.get("capabilities") or []
+    jobs = []
+    for kind, spec in _bt.JOB_SPECS.items():
+        entry = prefs.get(kind) or {}
+        resolved = _bt.resolve_console_job_request(kind, prefs, caps)
+        jobs.append({
+            "kind": kind,
+            "label": spec.get("label") or kind,
+            "origin": spec.get("origin") or "",
+            "wired": bool(spec.get("wired")),
+            "model": str(entry.get("model") or ""),
+            "effort": str(entry.get("effort") or ""),
+            # 「고른 모델을 지금 러너가 주는가」 — False 면 그 항목은 위임되지 않는다
+            #  (사용자 결정 2026-09-02). 화면이 그 사실을 그 자리에서 말해야, 저장해 두고
+            #  왜 분석이 안 도는지 모르는 상태가 만들어지지 않는다.
+            "available": not resolved.get("blocked"),
+            "effective_model": (f"{resolved.get('runtime')}:{resolved.get('model')}"
+                                if resolved.get("model") and not resolved.get("blocked") else ""),
+            "source": str(resolved.get("source") or ""),
+        })
+    runtimes = []
+    for item in (caps if isinstance(caps, list) else []):
+        if not isinstance(item, dict):
+            continue
+        rt = str(item.get("runtime") or "").strip()
+        if not rt:
+            continue
+        def _opts(field: str) -> list[dict[str, str]]:
+            out = []
+            for opt in (item.get(field) or []):
+                value = str((opt or {}).get("value") or "") if isinstance(opt, dict) else str(opt or "")
+                label = str((opt or {}).get("label") or value) if isinstance(opt, dict) else value
+                if value:
+                    out.append({"value": value, "label": label})
+            return out
+        runtimes.append({"runtime": rt, "label": str(item.get("label") or rt),
+                         "models": _opts("models"), "efforts": _opts("efforts")})
+    return JSONResponse({"jobs": jobs, "runtimes": runtimes,
+                         "listening": bool(profile.get("listening"))})
+
+
+@router.put("/api/profile/console-jobs")
+async def put_profile_console_jobs(request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """TASK-20260902T110000: 콘솔·배경 작업 항목별 모델·추론등급 저장(본인 계정 전용).
+
+    본문: `{"jobs": {"<job_kind>": {"model": "runtime:model", "effort": "medium"}, ...}}`.
+    **통째 교체**다(부분 갱신 아님) — 화면이 항목 전체를 그리므로, 화면에 없는 항목이 서버에만
+    남으면 사용자가 그것을 지울 방법이 없다.
+
+    저장 값은 **검증하지 않고 정규화만** 한다. 「지금 러너가 그 모델을 주는가」는 저장 시점이
+    아니라 배급 시점의 질문이고(러너는 껐다 켜며 목록이 바뀐다), 저장 시점에 걸면 러너를 끈
+    채로는 설정을 못 하게 된다.
+    """
+    aid = int((account or {}).get("id") or 0)
+    if aid <= 0:
+        return app._json_error("계정 식별 실패", 403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    payload = (body or {}).get("jobs") if isinstance(body, dict) else None
+    try:
+        import oauth_store as _store
+
+        cur = conn.cursor()
+        try:
+            saved = _store.set_account_console_job_prefs(cur, aid, payload)
+            conn.commit()
+        finally:
+            cur.close()
+    except ValueError as exc:
+        return app._json_error(str(exc), 400)
+    except Exception:
+        logging.getLogger(__name__).warning("console-jobs prefs save failed", exc_info=True)
+        return app._json_error("설정을 저장하지 못했습니다.", 500)
+    return JSONResponse({"saved": True, "jobs": saved})
+
+
 @router.get("/api/profile/usage/conversations")
 def profile_usage_conversations(request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """TASK-0263: 본인 사용량 차트 클릭 → 본인 대화목록(작업 화면 프로필 모달).
