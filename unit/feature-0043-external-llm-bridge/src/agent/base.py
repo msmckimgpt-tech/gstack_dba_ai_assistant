@@ -9,6 +9,29 @@ import os
 
 _UA = "mysql-ai-bridge-agent/1"
 
+# ── 자식 프로세스 텍스트 입출력 인코딩 (TASK-20260902T160000) ─────────────────
+#
+# ## 무엇이 깨져 있었나 (사용자 머신 실측 2026-09-02)
+#
+# `subprocess` 에 `text=True` 만 주면 파이썬은 **로케일 인코딩**을 쓴다. 한국어 Windows 에서
+# 그 값은 `cp949` 이고, 우리 프롬프트에는 `⟦USER-REQUEST⟧`(U+27E6/U+27E7)가 들어 있다 —
+# cp949 로 **인코딩할 수 없는 문자**다.
+#
+#   locale.getencoding() = cp949
+#   "⟦".encode("cp949")  → UnicodeEncodeError: illegal multibyte sequence
+#
+# 종전에는 프롬프트가 **argv** 로 갔고 그 경로는 `CreateProcessW`(UTF-16)라 이 문제가 드러나지
+# 않았다. 명령줄 상한 때문에 프롬프트를 **stdin 으로** 옮긴 순간(TASK-20260902T140000) 그
+# 인코딩 경로가 처음 열려, 그 계정의 질문이 **46ms 만에 출력 0으로** 죽었다.
+#
+# 읽기 쪽도 같은 지뢰다: `claude`·`codex` 는 **UTF-8** 로 출력하는데 cp949 `strict` 로 디코드하면
+# 한글·기호가 섞인 답변에서 터지거나 깨진다. 그래서 **양방향 모두** 여기서 못박는다.
+#
+# `errors="replace"` 인 이유: 답변을 **잃지 않는다**. 예상 못 한 바이트 하나가 사용자의 답변
+# 전체를 예외로 날리는 것보다, 그 문자만 대체 기호로 남기고 나머지를 전하는 편이 낫다.
+#: 자식 CLI 와 주고받는 텍스트 규약. **로케일에 맡기지 않는다** — `subprocess` 호출은 전부 이것을 쓴다.
+CHILD_TEXT_IO = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
 #: 답변 끝에서 대화 제목을 실어 오는 한 줄 규약. CLI 런타임은 stdout 하나뿐이라 별도 채널이
 #: 없다 — 제출 전에 이 줄을 떼어내므로 사용자 화면에는 남지 않는다.
 _TITLE_MARK = "#TITLE:"

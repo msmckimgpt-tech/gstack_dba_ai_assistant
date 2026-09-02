@@ -10,6 +10,19 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
+**2026-09-02 (TASK-20260902T160000)**: 직전 cycle 이 **연 새 실패면**을 닫았다. 그 수정의 두 축은
+라이브에서 동작했지만(`startup_ms=811` · 지침 접기 · stdin 전환), 그 자리에서
+`ai.fail dur_ms=46 stdout_bytes=0` 로 죽어 **사용자에게는 여전히 답변이 오지 않았다**.
+단서는 `exit` 필드의 **부재** — `returncode is None` = 자식 실패가 아니라 **파이프 예외**.
+원인은 `subprocess(text=True)` 가 **로케일 인코딩**(그 머신 `cp949`)을 쓰는데 프롬프트의
+`⟦USER-REQUEST⟧`(U+27E6)가 cp949 로 인코딩 불가라는 것. 종전엔 프롬프트가 argv
+(`CreateProcessW`, UTF-16)로 가서 닫혀 있던 경로가 **stdin 전환으로 처음 열렸다**. 조치는
+자식 입출력을 **UTF-8 로 명시**(`base.CHILD_TEXT_IO`, 자식 호출 5곳 전부 · `errors="replace"`)
++ **파이프 예외 보존**(`ai.io_fail`) + `returncode is None` 전용 분기. **실 Windows(cp949)
+대조 검증**: 수정본 40,000자(U+27E6 포함) 왕복 PASS · 한글 무손상 / 수정 전 대조군
+`UnicodeEncodeError`. 신규 8건 + 뮤테이션 6종 전건 KILL · 컨테이너 신규 실패 0.
+**잔여: 그 머신 `claude` 재로그인**(사용자 영역 — 이제 도달 후 실패가 안내문으로 표시된다).
+
 **2026-09-02 (TASK-20260902T140000)**: 사용자 제보 *"powershell 로 연결은 됐는데 답변도 러너
 로그도 없다"* 의 두 절반이 **서로 다른 결함**이었고 둘 다 닫았다.
 

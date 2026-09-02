@@ -2426,6 +2426,16 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 신규 30건 · 뮤테이션 **12종 전건 KILL**(⚠ 2건 최초 생존 — 헛통과 발견) ·
       3 feature 기준선 동일 · ruff clean
 - [ ] PB-0008 POST-DEPLOY 실측 → 출하
+
+## Cycle — TASK-20260902T160000 자식 입출력 인코딩 (직전 수정이 연 실패면)
+
+- [x] 원인 확정 — `ai.fail` 의 **`exit` 부재**로 「자식 실패」가 아니라 「파이프 예외」임을 가름.
+      사용자 머신 `locale.getencoding()=cp949` · `"⟦".encode("cp949")` 불가 실측
+- [x] `base.CHILD_TEXT_IO` 로 자식 입출력 UTF-8 명시 (자식 호출 **5곳 전부**)
+- [x] 파이프 예외 보존(`ai.io_fail`) · `returncode is None` 전용 분기
+- [x] **실 Windows(cp949) 대조 검증** — 수정본 40,000자 왕복 PASS / 수정 전 `UnicodeEncodeError`
+- [x] 신규 8건 + 적대 뮤테이션 6종 전건 KILL · 컨테이너 신규 실패 0
+- [ ] **그 머신 `claude` 재로그인** — 이월(사용자 영역). 도달 후 실패는 안내문으로 표시된다
 ## Cycle — TASK-20260902T160000 프로필 'AI 작업' 탭 — 열 수 있는 작업만 보인다
 
 ### 배경 — 죽은 설정칸

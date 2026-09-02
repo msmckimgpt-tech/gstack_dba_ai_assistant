@@ -3394,7 +3394,76 @@ display-permissive 헬퍼라 **분기 판정에 쓰면 한쪽 갈래가 영구�
 도달하지 못하면 질문이 조용히 사라져 원 결함보다 나쁜 상태가 된다.
 
 닫지 못한 축(사용자 머신 재기동·`claude` 재로그인)은 추정으로 메우지 않고 그대로 남겼다.
+## REV-20260902T160000-ai-claude-corp-feature-0043-child-io-encoding [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
 
+> **왜 SKIPPED 인가**: 본 세션의 운영 지시가 사용자 명시 요청 없는 `Agent` 도구 호출을 금지한다.
+> 대체로 적대 뮤테이션 **6종**(렌즈 3)과 **실 Windows 대조 검증**을 뒀다.
+
+### 렌즈 1 — 내가 만든 결함이다 (귀책 명시)
+
+이 결함은 `TASK-20260902T140000`(내 직전 cycle)이 프롬프트를 argv 에서 stdin 으로 옮기면서
+**처음 열린 경로**다. argv 경로는 `CreateProcessW`(UTF-16)라 로케일이 개입하지 않는데, stdin
+경로는 `text=True` 의 로케일 인코딩(cp949)을 탄다. 직전 cycle 은 「그 계정의 모든 질문이 죽는」
+결함을 고쳤지만 **같은 사용자에게 답변이 오지 않는 상태를 유지**시켰다 — 결과 기준으로 그
+cycle 은 사용자 문제를 해결하지 못했고, 이 항은 그 사실을 감추지 않는다.
+
+교훈은 **stdin 전환의 검증 환경**에 있었다. 직전 cycle 은 stdin 왕복을 POSIX(UTF-8 로케일)에서
+실증했고 그것으로 충분하다고 판단했다. 그런데 고치던 결함 자체가 **Windows 전용**이었으므로,
+그 수정의 검증도 Windows 에서 해야 했다 — 「결함이 사는 환경에서 수정도 검증한다」.
+`test_cmdline_length_limit.py` 가 `os.name` 대신 예산 함수를 patch 한 것도 같은 구멍이었다
+(그 설계는 판정 로직에는 옳았지만 **인코딩 축을 전혀 건드리지 않았다**).
+
+### 렌즈 2 — `exit` 필드의 부재가 유일한 단서였다
+
+`ai.fail` 에 `exit` 이 없다는 것 하나로 「자식 실패」와 「입출력 실패」를 갈랐다. 그 축이
+없었다면(`_render_fields` 가 `None` 을 생략하지 않았거나 `exit` 을 안 실었다면) 이 진단은
+불가능했다. 그래서 이번 수정은 **그 단서를 우연에 맡기지 않게** 만든다 — 파이프 예외는
+`ai.io_fail` 로 사유와 함께 보고되고, `returncode is None` 은 전용 분기를 갖는다.
+다음 사고에서는 부재를 추리하지 않아도 된다.
+
+### 렌즈 3 — 적대 뮤테이션 6종 전건 KILL
+
+| 뮤테이션 | 결과 |
+|---|---|
+| E1 인코딩 명시 제거(로케일 회귀) | KILLED |
+| E2 `errors=strict` 회귀 | KILLED |
+| E3 파이프 예외 재삼킴 | KILLED |
+| E4 예외 보고 분기 제거 | KILLED |
+| E5 `returncode None` 을 성공으로 | KILLED |
+| E6 caps 호출만 로케일로 되돌림 | KILLED |
+
+E6 를 넣은 이유: 규약을 만들어도 **한 호출만 빠지면** 그 경로에서 결함이 되살아나고, 하필 그
+경로가 조사에 쓰이는 경로(능력 협상·`--help`)다. 전수 적용을 소스 스캔으로도 잠갔다
+(`text=True` 직접 사용 0건 · `CHILD_TEXT_IO` ≥ 5회).
+
+### 렌즈 4 — 실 Windows 대조 검증 (이번 cycle 의 정본 증거)
+
+빌드된 러너를 **사용자 머신에서 그 로케일로** 직접 돌렸다:
+
+```
+locale.getencoding() = cp949
+CHILD_TEXT_IO = {'text': True, 'encoding': 'utf-8', 'errors': 'replace'}
+payload 40,000자 (U+27E6 포함)
+_run_cli_cancelable ok=True → LEN:40000 MARK:yes 한글응답⟦끝⟧   ← PASS
+대조군(text=True 로케일): UnicodeEncodeError                    ← 수정 전이 죽던 지점
+```
+
+대조군이 load-bearing 이다 — 그것 없이는 「PASS 가 수정 덕분」임을 말할 수 없다.
+
+### 렌즈 5 — 잃는 것
+
+`errors="replace"` 는 깨진 바이트를 대체 기호로 남긴다(무손실 아님). 대안 `strict` 는 그
+바이트 하나로 답변 전체를 잃는다 — 사용자에게 더 나쁜 쪽을 피했고, 테스트가 그 계약을 잠근다.
+읽기 인코딩을 UTF-8 로 고정하는 것은 「자식이 cp949 로 출력하는 경우」를 포기하는 선택이나,
+`claude`·`codex` 모두 UTF-8 이고 그 반대 사례는 관측된 바 없다.
+
+### 렌즈 6 — 회귀
+
+- 컨테이너 feature-0043 **신규 실패 0** (`main` FAILED 집합과 동일 — 1건은 환경성 기존 항목).
+- 신규 8건 전건 green · ruff 신규 지적 0.
+
+- **판정**: **APPROVED**. 잔여: 그 머신 `claude` 인증(사용자 영역) — 이제 도달 후 실패가
+  「로그인돼 있지 않습니다」로 안내된다.
 ## REV-20260902T140000-ai-claude-corp-feature-0043-runner-self-update [AGENT-TEAM:inline-adversarial] — APPROVED
 
 ### 뮤테이션이 잡아낸 헛통과 2건
