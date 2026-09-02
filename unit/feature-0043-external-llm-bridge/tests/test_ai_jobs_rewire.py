@@ -504,3 +504,48 @@ def test_node_analysis_apply_success_path_actually_runs(monkeypatch):
         "done 기입이 없다"
     assert any("UPDATE node_analysis_runs SET status=" in s for s in sqls), \
         "run 마감이 없다 — 마지막 잡이 위임으로 끝난 run 이 영원히 running 으로 남는다"
+
+
+# ── 9. 진입점이 실제로 부르는가 (라이브 실측 2026-09-02 — 이 cycle 최대의 결함) ────
+#
+# 헬퍼가 옳은 것과 **진입점이 그것을 부르는 것**은 다른 사실이다. 위임·반영·회수가 전부
+# 옳게 서 있었는데, 워커의 호출부가 `if _llm_open` 으로 감싸여 있어 **게이트가 닫힌 운영에서
+# 한 번도 실행되지 않았다.** 라이브 검증이 통과한 것은 내가 손으로 불렀기 때문이었다.
+
+
+def test_worker_tick_calls_process_pending_unconditionally():
+    """워커 틱이 `process_pending` 을 **게이트 없이** 부른다.
+
+    `if server_llm_enabled()` 로 감싸면:
+      · 그래프 분석이 적재돼도 아무도 처리하지 않는다(사용자 제보가 형태만 바꿔 되돌아온다)
+      · stale `running` 회수가 영원히 돌지 않는다 — run 이 굳어 재트리거까지 막힌다
+        (실측: lease 900초를 1424초까지 넘겼는데 회수되지 않았다)
+
+    판정은 **잡 단위로 함수 안에서** 한다(열림=직접 · 닫힘=위임 · 맡길 곳 없음=상한 있는 유예).
+    """
+    tree = ast.parse((_CORE / "modules" / "insight.py").read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "process_pending"]
+    assert calls, "워커가 process_pending 을 부르지 않는다"
+    # 그 호출이 조건식(IfExp)의 분기 안에 있으면 게이트로 감싼 것이다.
+    gated = [n for n in ast.walk(tree)
+             if isinstance(n, ast.IfExp)
+             and any(isinstance(c, ast.Call) and getattr(c.func, "attr", "") == "process_pending"
+                     for c in ast.walk(n))]
+    assert not gated, (
+        "process_pending 호출이 조건식으로 감싸여 있다 — 게이트가 닫힌 운영에서 "
+        "위임도 회수도 한 번도 돌지 않는다")
+
+
+def test_reclaim_runs_before_claiming():
+    """stale `running` 회수가 **claim 보다 먼저** 돈다.
+
+    순서가 뒤바뀌면 되살린 잡을 그 틱이 놓치고, 다음 틱까지 한 주기를 더 기다린다.
+    구현부는 `_process_pending_inner` 다(`process_pending` 은 연결 소유만 다루는 껍데기) —
+    이름이 아니라 **회수 SQL 이 실제로 있는 함수**를 찾아 검사한다.
+    """
+    body = _func_src_of("modules/node_analysis.py", "_process_pending_inner")
+    i_reclaim = body.index("status='running' AND updated_at <")
+    i_claim = body.index("SKIP LOCKED")
+    assert i_reclaim < i_claim, "회수가 claim 뒤에 있다 — 되살린 잡을 그 틱이 못 집는다"
+    assert "make_interval(secs => %s)" in body, "lease 창이 파라미터가 아니다"
