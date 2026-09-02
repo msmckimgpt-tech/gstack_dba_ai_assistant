@@ -981,9 +981,10 @@ async function loadAiJobs() {
   const box = document.getElementById("aiJobsList");
   if (box && !_aiJobsState.loaded) box.textContent = "불러오는 중…";
   try {
-    const res = await apiFetch("/api/profile/console-jobs");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data && data.error ? data.error : "조회 실패");
+    // ⚠ `apiFetch` 는 **이미 파싱된 payload** 를 돌려준다(Response 가 아니다) — 비-2xx 는
+    //   그 안에서 throw 한다. `res.json()` 을 부르면 정상 200 응답에서도 예외가 나고, 화면은
+    //   서버가 멀쩡히 답했는데 "불러오지 못했습니다" 를 띄운다(POST-DEPLOY 실측으로 적발).
+    const data = await apiFetch("/api/profile/console-jobs");
     _aiJobsState = {
       jobs: Array.isArray(data.jobs) ? data.jobs : [],
       runtimes: Array.isArray(data.runtimes) ? data.runtimes : [],
@@ -1011,13 +1012,11 @@ function _collectAiJobs() {
 async function saveAiJobs() {
   const jobs = _collectAiJobs();
   try {
-    const res = await apiFetch("/api/profile/console-jobs", {
+    // `apiFetch` 규약 — payload 를 직접 돌려주고 비-2xx 는 throw 한다(위 `loadAiJobs` 참조).
+    await apiFetch("/api/profile/console-jobs", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jobs }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data && data.error ? data.error : "저장 실패");
     showToast("AI 작업 설정을 저장했습니다.");
     // 저장 뒤 다시 읽는다 — 서버 정규화 결과와 `available` 판정이 화면과 같아야 한다.
     await loadAiJobs();
