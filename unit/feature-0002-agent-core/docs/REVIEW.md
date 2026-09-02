@@ -3019,3 +3019,10 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 
 PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL · 러너 사본 동치.
 권한·인가·라우트·스키마 변경 0.
+
+## REV-20260902T123000-ds-health-merge [SKIPPED:non-policy-doc] — 재병합 해소 기록
+
+- Cross-ref: CHG-20260902T123000-ds-health-merge. 코드 변경 0 — 리뷰 패널 대상 아님.
+- 해소 근거: 양쪽 다 FUNCTION 말미 **신규 섹션 추가**(서로 다른 섹션) → §16.4 양쪽 유지.
+  마커 잔존 0 확인 · 두 섹션 헤딩 실재 확인 · `make test` 재실행.
+- ⚠ 마커가 남은 채 push 된 사고를 CHG 에 그대로 기록했다. 감추면 다음 사람이 같은 정규식을 쓴다.

@@ -3540,6 +3540,7 @@ Task-Cycle: feature-0002-agent-core
 - [x] `%(last_checked_at)s` 양쪽에 `::double precision` 명시 캐스트
 - [x] 라이브 PG 로 재현·수정 확인(float/None 양쪽)
 - [x] 뮤테이션 5/5 KILL (Q3 생존 → 단언 강화 후 재실행)
+- [x] origin/main 재병합 해소(FUNCTION 말미 양쪽 유지) + 마커 잔존 사고 정정
 - [ ] 배포 후 `datasource_health_persist_failed` 로그가 사라지는지 확인
 
 ### F6 의 나머지 (이 cycle 밖)

@@ -3255,3 +3255,17 @@ ON CONFLICT 제거·파라미터 유실.
 못 잡는 형태 — 직전 cycle 의 `OR TRUE` 와 같은 종류).
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260902T123000-ds-health-merge — origin/main 재병합 해소 + 마커 잔존 사고 정정
+
+**코드 변경 0.** `docs/FUNCTION.md` 말미에 양쪽이 각각 신규 섹션을 붙여 충돌.
+§16.4 「서로 다른 섹션 → 양쪽 반영」으로 시간순 유지(`KB 근거 자동 주입` → `datasource health`).
+
+⚠ **내 사고 1건 정정**: 1차 해소 스크립트의 정규식이 `<<<<<<< ours` / `>>>>>>> theirs` 를
+찾았는데 실제 마커는 `<<<<<<< HEAD` / `>>>>>>> origin/main` 이었다. 매칭 실패로 예외가 났고,
+`&&` 체인이 아니라 개별 명령이라 **그 뒤 `git add`·commit·push 가 그대로 실행돼 마커가 남은
+채 원격에 올라갔다**. post-commit CHECK#14 가 즉시 잡아 줬고 다음 커밋으로 바로잡았다.
+교훈: **해소 스크립트는 성공을 단언(`assert`)하고, 실패하면 그 뒤 단계가 돌지 않게** 묶어야
+한다 — 마커 형식은 `merge.conflictStyle`·driver 에 따라 달라진다.
+
+Task-Cycle: feature-0002-agent-core
