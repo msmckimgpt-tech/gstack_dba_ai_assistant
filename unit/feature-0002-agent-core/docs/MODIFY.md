@@ -3200,3 +3200,26 @@ cycle 1(`term_tier`)에서 dry-run 리포트 후 재승인을 받기로 한 항�
 - 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 7·8.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T200000-common-enum-reattribute — 전역 ENUM 9행 귀속 정정 (데이터 변경, 코드 0)
+
+사용자 승인(2026-09-01)으로 적용. **코드 변경 0 — 데이터 정정이다.**
+
+- **문제**: `common` ENUM 9행이 전부 제품 고유 내용(`[DK온라인]`·`[건즈]`·`[마이크로볼츠 PvE]`).
+  전역은 모든 제품 프롬프트에 주입되므로 G2(낱말 경계) 이후에도 테이블명이 질문에 나오면
+  남의 제품이 받는다. GZ_QA_G 실측에서 실제로 관측된 형태다.
+- ⚠ **9행 전부 `source='manual'`** 이라 자율 이동하지 않고 **승인 후** 진행했다(소급 정리
+  스크립트의 「manual 불가침」 원칙과 정합).
+- **귀속은 라벨이 아니라 데이터로 확정**했다 — `table_descriptions`/`column_descriptions` +
+  AGE 그래프 `(:Table)` scope + `WebProductDatasources` 조인.
+  `Achievement`·`AchievementReward`→DK_QA / `Mission`→GZ 3제품 / `pverewardinfo`→MV 2제품.
+- **결과**: 제품 scope 15행 등록 · `common` 9행 삭제(전역 ENUM 0행).
+  매니페스트 `/shared/glossary-sweep/20260901T200000-common-enum-reattribute.json`(먼저 기록).
+- **9→15 로 늘어난 것은 의도**다. 읽기 캐스케이드에 **제품군 티어가 없어** 형제 제품마다 한 벌씩
+  둘 수밖에 없다. 대안(전역 유지)은 무관한 제품까지 받아 더 나쁘다. 근본 해소는
+  `product-family` 티어 신설 — 범위 밖으로 남긴다.
+- **부수 발견**: `pverewardinfo` 가 해소 불가 scope(`mysql-a4f572f222a2`, 삭제된 datasource)의
+  그래프에도 있다 — **F3(유령 정점 회수)의 실물 사례**.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 9~12.
+
+Task-Cycle: feature-0002-agent-core
