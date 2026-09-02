@@ -8,6 +8,51 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260901T190000-conv-status-dot-wiring [CODEX:frontend-state-wiring] — 사이드바 상태 배지 색 배선 복원 (Minor §12.3)
+
+- **채널**: `/codex review` (gpt-5.6-sol, `model_reasoning_effort=high`, read-only sandbox).
+  본 세션은 subagent 호출이 금지되어 있어 §18.8 의 `[CODEX:*]` 경로를 택했다 — 사용자 확인
+  (AskUserQuestion, 2026-09-01) 후 진행했다. 1차 시도는 codex 사용량 한도로 실패했고
+  2026-09-02 재시도에서 완주했다.
+- **Verdict**: **PASS** — `[P1]` 0건, `[P2]` 5건. 다섯 건이 **전부 게이트 자체의 사각지대**를
+  가리켰다(구현이 아니라). 다섯 건 모두 사실 확인 후 **수용·수정**했다.
+
+### 지적 5건과 조치 — 요지는 하나였다: 「테스트는 통과하는데 결함은 살아 있다」
+
+| # | codex 지적 | 사실 확인 | 조치 |
+|---|---|---|---|
+| 1 | T1 이 상태 writer 를 **하드코딩 목록**으로 들고 있어 `routers/conversations.py:1328` 의 실제 writer 를 못 보고, 3번째 인자가 변수인 호출(`modules/ask.py` 의 `_status`)을 조용히 건너뛴다 | ✅ 둘 다 재현 | 파일 목록 → **저장소 전수 탐색**. 변수 인자는 같은 함수 위쪽의 지역 대입을 역추적해 해석하고, **끝내 해석 못 한 호출은 FAIL** (근거를 적어 등재하지 않는 한) |
+| 2 | T2 가 **셀렉터 이름의 존재**만 봐서 `.conv-dot.is-done {}` 빈 규칙이나 `color` 만 바꾸는 규칙도 통과한다 — 정작 관측값은 배경색 | ✅ | 규칙의 **선언 본문**을 파싱해 `background`/`background-color` 선언을 요구 (`collect_css_declarations_for`) |
+| 3 | 툴팁 이음매(`data-title-status`)를 **아무 테스트도 건드리지 않는다** — 분기를 지워도 green | ✅ | **T5 신설** — 폴링 갱신부의 세 계약(소유자 읽기 · `stale_error` 예외 · 라벨 없을 때 `removeAttribute`) + 사이드바의 소유자 기록 |
+| 4 | 감사가 `${...}` 를 통째로 비워, 조건식 안에서만 부여되는 클래스가 **양쪽 집합에서 동시에** 사라진다 — `app/attach-diff.js:336` 의 `${checked ? " is-checked" : ""}` 가 실례 | ✅ CSS 규칙(`chat.css:3318`)을 지워도 T4 가 통과함을 재현 | 보간부를 비우는 대신 **그 안의 문자열 리터럴을 남긴다**(`_resolve_interpolation`). 리터럴이 없는 진짜 동적 조립은 종전대로 「동적 지점」으로 보고 |
+| 5 | T3 의 직접-조립 탐지가 **줄 단위**라 줄바꿈된 배정을 놓치고, T3b 최소치(3)가 실제 호출 수(4)보다 낮아 한 경로를 되돌려도 통과한다 | ✅ 둘 다 재현 | 탐지를 **파일 전체 DOTALL** 로. T3b 를 `>=` → **정확한 수**로 묶어, 빠지거나 늘면 계약을 갱신하게 만듦 |
+
+### 뮤테이션 — 지적받은 회귀를 그대로 되살려 6종 전건 KILL
+
+각 뮤턴트 적용 시 `git diff --stat` 으로 실제 적용을 확인한 뒤 실행했다.
+
+| 뮤턴트 | 죽인 축 | 지적 |
+|---|---|---|
+| `is-done` 을 배경 없는 규칙(`color`)으로 | T2 | #2 |
+| 줄바꿈된 직접 조립 부활 | T3 + T3b | #5a |
+| 한 seam 만 헬퍼에서 되돌림 | T3 + T3b | #5b |
+| 조건식 전용 `is-checked` 의 CSS 규칙 삭제 | T4 | #4 |
+| 툴팁 소유권 분기 제거 | T5 | #3 |
+| 종전 목록 밖 writer 에 신규 상태(`aborted`) 추가 | T1 | #1 |
+
+앞선 4종(죽은 규칙 `is-completed` 부활 / `is-${status}` 조립 부활 / `.conv-dot.is-error` 삭제 /
+서버 신규 상태 미등재)까지 합쳐 **10종 전건 KILL**.
+
+### 남긴 한계 (정직 표기)
+
+**T5 는 소스 형태 검사다.** CI 가 pytest 전용이라 브라우저 실행을 게이트에 넣을 수 없다.
+툴팁 이음매의 실제 동작은 PB-0008 실측이 확인했고(`test-runs.d/TASK-20260901T1900-…` §4),
+T5 는 그 구조가 조용히 사라지는 것을 막는 역할이다 — 둘을 같은 강도로 읽지 않는다.
+이 한계는 테스트 docstring 에도 명시했다.
+
+**codex 는 구현 자체에는 지적이 없었다.** 순환 import/TDZ(leaf 모듈 배치), 상태 어휘의
+CSS 도달, 툴팁 경쟁 상태 세 축 모두 `[P1]`·`[P2]` 없이 통과했다.
+
 ## REV-20260901T143000-rqrd-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 부재 확인 기록 (doc-only)
 
 - **Trigger**: 코드 변경 **0** — 실측 결과 기록만(`test-runs.d/` fragment + 스크린샷 + TASK/MODIFY/REPORT).

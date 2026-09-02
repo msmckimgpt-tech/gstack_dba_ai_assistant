@@ -9,6 +9,44 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260901T1900-conv-status-dot-wiring (사이드바 상태 배지 색 배선 복원 + 배선 게이트, Minor §12.3)
+
+**변경**:
+
+- **신규** `src/static/app/conv-status.js` — 대화 상태 → dot 클래스·라벨의 **단일 정본**(leaf,
+  의존 0). `app.js` ↔ `app/sidebar.js` 가 서로 import 하므로 공용 헬퍼를 둘 중 하나에 두면
+  순환 TDZ 가 난다.
+- `src/static/app/sidebar.js` — 조립 지점 3곳(일반 행 · 인라인 이름변경 행 · in-flight 항목) +
+  무상태 placeholder 1곳을 헬퍼 호출로 교체. in-flight **실패** 행의 dot 을 `pending` →
+  `failed` 로 바로잡음(행은 실패를 아는데 점만 대기 색이던 비대칭). 상태 라벨을 `title` 로 부여
+  + `data-title-status` 이음매 기록.
+- `src/static/app.js` — `_updateConversationStatusDot`(폴링 tick 경로)을 헬퍼로 교체. 툴팁은
+  `data-title-status` 로 「사이드바가 넣은 stale 구체 문구 보존」과 「낡은 툴팁 제거」를 함께 만족.
+- `src/static/css/shell.css` — 죽은 `.conv-dot.is-completed` 제거, 7상태 규칙 신설,
+  `is-pending-inflight`/`is-pending-failed` 규칙 신설. `profile.css` 의 `is-stale-error` 를
+  이리로 통합(정의가 두 파일로 갈린 것이 어휘 drift 의 온상이었다).
+- `src/static/css/profile.css` — 위 규칙 이동에 따른 제거 + 이동 사유 주석.
+- `src/static/css/search-audit.css` — `.admin-meta-row.is-inherited`(읽기 전용 상속 행) 규칙 신설.
+- **신규** `scripts/audit_state_class_wiring.py` — 상태 modifier 배선 감사 + 판정
+  화이트리스트(`ALLOWED_UNSTYLED`, 항목마다 근거 필수).
+- **신규** `tests/test_conv_status_dot_wiring.py` — 계약 9건(T1 서버 어휘 커버리지 / T2 CSS
+  커버리지 + 죽은 규칙 금지 / T3 단일 조립 지점 + 진입점 실제 호출 + 언더스코어 금지 /
+  T4 상태 modifier 전수 게이트 + 판정 목록 신선도).
+
+**사유**: 상태값이 화면 색으로 도달하지 않았다 — 배포본 실측에서 사이드바 133개 항목이 상태를
+정확히 알면서 전부 같은 회색이었다. 조립이 세 곳으로 갈리고 CSS 어휘가 따로 자란 결과다.
+
+**영향 범위**: 프론트 표시면 한정. 데이터·권한·API·스키마 변경 **0**. 롤백 = 되돌려 재배포.
+
+**게이트 보강 (§18.8 `/codex review` 수용, 2026-09-02)**: 초판 게이트가 다섯 갈래로 새고 있었다 —
+상태 writer 하드코딩 목록 · 셀렉터 이름만 보는 CSS 검사 · 미검증 툴팁 이음매 · `${…}` 를 통째로
+비우는 감사 · 줄 단위 직접-조립 탐지와 낮은 호출 수 최소치. 다섯 건 모두 재현 확인 후 수정했다.
+
+**검증**: `make test` 6829 passed / 15 skipped / 0 failed(3회) · 계약 10건 PASS · 회귀 뮤턴트
+**10종 전건 KILL** · PB-0008 Windows-browser 실측
+(`docs/test-runs.d/TASK-20260901T1900-conv-status-dot-wiring.md`) ·
+`REVIEW.md` REV-20260901T190000-conv-status-dot-wiring.
+
 ## CHG-20260901T1430-rqrd-postdeploy (POST-DEPLOY 부재 확인, doc-only)
 
 **변경**: 문서만 — `docs/{TASK,REPORT}.md` + 신규 fragment·스크린샷. 코드 **0**.

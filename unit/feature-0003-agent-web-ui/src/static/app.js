@@ -11,6 +11,8 @@ import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSi
 // modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
 export { bindBackdropDismiss };
+// conv-status-dot-wiring: 대화 상태 dot 의 클래스·라벨 정본(leaf 모듈 — 순환 없음).
+import { conversationDotClass, conversationDotLabel, normalizeConvStatus } from "./app/conv-status.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 전환을 잊고 친 검색어(`ㅈ듀` ↔ `web`)도 찾아주는 저장소
 //   단일 primitive. 관리 콘솔(admin.js) 번들과 공유하며 매핑표를 복제하지 않는다.
 import { matchesAnyVariant, searchVariants } from "./hangul-qwerty.js?v=dev";
@@ -4936,8 +4938,24 @@ export function _updateConversationStatusDot(convId, status) {
   if (!btn) return;
   const dot = btn.querySelector(".conv-dot");
   if (!dot) return;
-  const normalized = String(status || "").trim().toLowerCase();
-  dot.className = `conv-dot${normalized ? ` is-${normalized}` : ""}`;
+  // conv-status-dot-wiring: 클래스 조립은 app/conv-status.js 하나만 한다. 여기서 따로
+  // `is-${status}` 를 만들던 것이 사이드바 렌더 경로와 어휘가 갈리는 통로였다.
+  const normalized = normalizeConvStatus(status);
+  dot.className = conversationDotClass(normalized);
+  // 툴팁에는 두 요구가 겹친다 (둘 다 라이브 실측에서 드러났다):
+  //   ① 사이드바 렌더가 stale_error 에 넣는 "마지막 활동: <시각>" 은 폴링이 모르는 정보라
+  //      덮으면 매 tick 마다 "작업 중단 감지" 로 퇴화한다.
+  //   ② 그렇다고 손대지 않으면, 상태가 바뀔 때 **직전 상태의 툴팁이 거짓으로 남는다**
+  //      (색은 회색인데 글씨는 "완료" 라고 말하는 상태).
+  // `titleStatus` 로 "지금 붙어 있는 툴팁이 어느 상태의 것인가" 를 기억해 둘을 함께 만족시킨다.
+  const titleOwner = dot.dataset.titleStatus || "";
+  const keepDetailedStaleTitle = normalized === "stale_error" && titleOwner === "stale_error";
+  if (!keepDetailedStaleTitle) {
+    const label = conversationDotLabel(normalized);
+    if (label) dot.title = label;
+    else dot.removeAttribute("title");
+    dot.dataset.titleStatus = normalized;
+  }
 }
 
 // (ITEM-P5b B3) startProgressPolling — app/progress.js 로 이동.

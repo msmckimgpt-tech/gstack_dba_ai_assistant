@@ -1646,6 +1646,16 @@ select.admin-meta-input {
   border-color: var(--primary);
   box-shadow: inset 3px 0 0 0 var(--primary);
 }
+/* conv-status-dot-wiring: 전역 상속분(읽기 전용) 행. 코드는 `is-inherited` 를 부여하고 편집을
+   막는데 CSS 규칙이 없어, 사용자에겐 "왜 이 행만 안 눌리는지" 단서가 전혀 없었다(hover·커서
+   차이는 role 미부여로 생기는 부작용일 뿐 긍정적 신호가 아니다). 배경을 낮추고 좌측 rail 을
+   중립색으로 둬 "여기서는 편집하지 않는다" 를 눈으로 읽히게 한다. */
+.admin-meta-row.is-inherited {
+  background: color-mix(in srgb, var(--text-muted) 5%, var(--surface));
+  border-style: dashed;
+  box-shadow: inset 3px 0 0 0 var(--border);
+}
+.admin-meta-row.is-inherited .admin-meta-row-title { color: var(--text-2); }
 .admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 /* B5: 제목↔본문 계층 강화 — 제목 15/700, 본문 13/muted. ux2 #1: 밀집 완화 — line-height 로 가독성. */
 .admin-meta-row-title { font-size: 15px; font-weight: 700; color: var(--text); word-break: break-word; line-height: 1.35; }

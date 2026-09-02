@@ -116,6 +116,34 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260901T1900-conv-status-dot-wiring 사이드바 대화 상태 배지 색 배선 복원 + 동종 배선 게이트 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1900-conv-status-dot-wiring.md` · 배포 전 단계는 수정본 `src/static` 을 read-only bind-mount 한 별도 컨테이너 `https://localhost:18098/` 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
+
+- **제보 재현(배포본 `mysql-ai-web:5a4d49fc`)**: 사이드바 151개 항목 중 `is-done` **110건** ·
+  `is-error` **21건** · `is-canceled` **2건** — **133개가 상태를 정확히 알면서 computed
+  `background-color` 가 전부 `rgb(196,196,201)`(기본 회색)**. 툴팁도 전부 빈 문자열.
+  배포본이 가진 `.conv-dot.is-*` 규칙은 3개뿐이고 그중 `is-completed` 는 **아무도 만들지 않는
+  죽은 규칙**(서버 어휘는 `done`), `is-stale-error` 는 코드가 만드는 `is-stale_error` 와
+  구분자가 어긋나 있었다.
+- **수정본 실측**: 같은 데이터에서 `is-done` → **`rgb(22,163,74)`**, `is-error` →
+  `rgb(220,38,38)`, `is-canceled` → `rgb(128,125,114)`, 툴팁 `완료`/`오류`/`취소됨`.
+  스크린샷 2장 동일 화면 대조(`evidence/convdot-live-defect.png` ↔ `evidence/convdot-fixed-sidebar.png`).
+- **전송 시나리오 전이**: 폴링이 매 tick 부르는 `_updateConversationStatusDot` 를 실 대화 행에
+  구동 — `pending`(파랑 .55) → `starting`(파랑 .55) → `processing`(주황) → **`done`(초록)**.
+  `stale_error` 는 하이픈 클래스 + 링, 미지 상태는 modifier 없이 기본 회색으로 degrade.
+- **in-flight 행**: 전송 중 `is-pending-inflight`(이탤릭·파랑 dot) / 전송 실패
+  `is-pending-failed`(opacity .7 · 제목 빨강 · **dot `is-error`**). 두 클래스 모두 종전 CSS 0건.
+  실패 행의 dot 이 `is-pending`(대기 색)이던 비대칭도 함께 정정.
+- **실측이 잡은 초판 결함 2건**: ① 미지 상태 전이 시 직전 툴팁 잔존 ② 폴링이 사이드바의
+  stale 구체 문구("마지막 활동: `<시각>`")를 일반 라벨로 퇴화. `data-title-status` 이음매로 해소 후 재실측 PASS.
+- **자동 검증**: 컨테이너 `make test` **6829 passed / 15 skipped / 0 failed**(코드·게이트 변경
+  전후 3회, 매번 실패 0) · 배선 계약 테스트 **10건 PASS**(컨테이너 내 개별 실행 포함) ·
+  **회귀 뮤턴트 10종 전건 KILL** · node 실행 검증 · `node --check` 3파일.
+- **§18.8 검증(`/codex review`)이 게이트의 사각지대 5건을 잡았다** — `[P1]` 0, `[P2]` 5.
+  전부 「테스트는 통과하는데 결함은 살아 있다」 형태였고 다섯 건 모두 재현 확인 후 수정했다.
+  근거·조치·뮤턴트 대조는 `REVIEW.md` REV-20260901T190000-conv-status-dot-wiring 참조.
+- **잔여**: 실 LLM run end-to-end 전이는 개인 AI 브리지 러너 미연결로 미실측(전송 버튼
+  `is-access-blocked`) — 폴링 함수 실 구동으로 같은 배선을 덮었고, 실 run 은 POST-DEPLOY 잔여.
+
 ### 20260901T0530-connect-modal-transition 명령 경로·«업데이트 필요» 갱신도 닫히도록 판정 축 교체 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (배포 후 POST-DEPLOY 실측 — `docs/test-runs.d/TASK-20260901T0530-connect-modal-transition.md`)**
 
 - **제보 재현**: 같은 테스트를 **현재 라이브 배포본**에 태우면 **6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4)
