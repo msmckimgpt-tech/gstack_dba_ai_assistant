@@ -149,7 +149,10 @@ fi
 #: 표 밖 CLI 를 쓰는 길은 남아 있다 — 사람 칸(`BRIDGE_ARGS="--ai mycli"`)이다. LLM 칸은
 #: 좁게, 사람 칸은 넓게. 자기 머신에서 자기가 지목하는 것과, 서버가 준 텍스트를 읽은 AI 가
 #: 지목하는 것은 신뢰의 층이 다르다.
-_KNOWN_AI_CLIS="claude codex gemini ollama"
+#: ⚠ **정본은 러너의 `_RUNTIME_SPECS`(`src/agent/runtimes.py`) 다.** 이 목록이 그보다 넓으면
+#:   설치는 통과하고 **런타임에서 실패**한다 — 실제로 `ollama` 가 P0-Z6.1(2026-09-01)로 러너에서
+#:   제거된 뒤에도 여기 남아 그 상태였다. `test_ai_cli_allowlist_sync.py` 가 세 자리를 잠근다.
+_KNOWN_AI_CLIS="claude codex gemini"
 
 #: AI CLI 가 이 컴퓨터에 있는가. **PATH 밖 표준 설치 위치까지** 본다 — 러너의 `_which_ai`
 #: 와 같은 계약이다(두 곳이 갈리면 설치기와 러너가 서로 다른 답을 낸다).
