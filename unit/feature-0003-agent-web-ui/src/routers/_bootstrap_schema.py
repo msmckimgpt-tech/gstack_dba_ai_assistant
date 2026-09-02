@@ -2769,6 +2769,10 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
       - RunnerOs (+ WebAccounts.BridgeLastOs) : 그 러너의 **명령 계열**과, 그것을 계정 단위로
         접은 「마지막으로 연결됐던 OS」 (2026-09-01). 연결 화면 1단계의 기본 탭을 정한다.
         계정 컬럼을 여기서 함께 만드는 이유: 이 함수만이 fast path 에서도 불린다.
+      - WebAccounts.RunnerCapsBaseline : 위 `RunnerCapabilities` 를 **계정 단위로 누적**한
+        원장 (TASK-20260902T140200). 토큰 행은 재연결마다 갈리므로 그 축만으로는 목록이
+        연결마다 처음부터 다시 만들어진다. 화면에 직행하지 않으며(러너 확인 필수) 만료는
+        사용일 기준 — 계약 정본 `shared/bridge_caps.py`.
 
     능력을 같은 행에 두는 이유는 위와 같다 — "살아 있는가" 와 "무엇을 쓸 수 있는가" 는 같은
     러너의 두 면이라, 나누면 한쪽만 낡아 화면이 없는 모델을 보여주게 된다. 하트비트가 끊기면
@@ -2852,6 +2856,26 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # 그 표는 앞으로도 늘어난다. 축이 늘 때마다 ALTER 를 더하면 스키마가 레지스트리를
             # 뒤따라가야 하고, 뒤따라가지 못한 배포에서 그 항목만 조용히 저장되지 않는다.
             "ALTER TABLE WebAccounts ADD COLUMN ConsoleJobPrefs TEXT NULL",
+            # ── 계정·런타임 단위 능력 baseline (TASK-20260902T140200, 사용자 결정) ──────
+            #
+            # `RunnerCapsBaseline`(계정): `{runtime: {label, models, efforts,
+            # last_used_at, probed_at, verify_streak, build}}` JSON. 「이 계정의 이
+            # 플랫폼은 마지막으로 무엇을 쓸 수 있었나」를 계정 수명 동안 보관한다.
+            # 항목 모양의 정본은 `shared/bridge_caps.py:merge_baseline` 이다 — 이 주석은
+            # 그 요약이므로, 키가 늘거나 줄면 **양쪽을 함께** 고친다(초판에 있던
+            # `confirmed_at` 이 코드에서 빠진 뒤 이 주석에만 남아 상충했다).
+            #
+            # **왜 계정인가**: 능력 신고는 종전에 `WebOAuthTokens.RunnerCapabilities`(토큰 행)
+            # 에만 남았다. 재연결 = 새 토큰 행 = 능력 NULL 이라, 목록이 매 연결마다 처음부터
+            # 다시 만들어졌다 — 그것이 「러너가 실행될 때마다 모델 종류가 다르다」의 절반이다
+            # (제보 2026-09-02). 계정에 두면 토큰 교체·머신 교체를 넘어 살아남는다.
+            #
+            # ⚠ **이 값은 화면에 직행하지 않는다.** 러너가 라이브 확인(`verify`)을 통과시킨
+            # 것만 신고가 되고, 신고만이 카탈로그가 된다(사용자 결정 2026-09-02
+            # 「확인-후-표시」). 서버 보관 목록을 그대로 그리는 것은 caps-trust-gate 사고
+            # (`gpt-5.1-codex` 화석, 제보 4회)와 같은 형태이므로 그 경로를 열지 않는다.
+            # 만료는 **사용일**(`last_used_at`) 기준 14일 — 정본 `shared/bridge_caps.py`.
+            "ALTER TABLE WebAccounts ADD COLUMN RunnerCapsBaseline TEXT NULL",
         ):
             try:
                 cur.execute(ddl)
