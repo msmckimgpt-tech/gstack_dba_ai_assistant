@@ -818,39 +818,144 @@ export function onCapsChange(fn) {
   if (typeof fn === "function") _capsListeners.add(fn);
 }
 
-function _paintCaps(body) {
-  // ① 확인이 도는 중인가 — 폴링 창의 근거. 상태가 바뀌는 순간 타이머를 다시 맞춘다
-  //    (상태를 바꾼 쪽이 그 결과를 책임진다 — `_paintGate` 와 같은 규율).
-  const pending = body.caps_pending === true;
-  if (pending !== _capsPending) {
-    _capsPending = pending;
-    if (!pending) {
-      _capsPendingSince = 0;
-    } else if (_capsPendingArms < _CAPS_PENDING_MAX_ARMS) {
-      // 무장은 **셈이 있는 행위**다 — 진동이 창을 무한히 되살리지 못하게(위 상수 주석).
-      _capsPendingArms += 1;
-      _capsPendingSince = Date.now();
-    } else {
-      // 상한 초과 — pending 은 그대로 두되(문구·표시는 그 값을 쓴다) 창은 열지 않는다.
-      _capsPendingSince = 0;
-    }
-    _syncGatePoll();
-  }
-  // ② 목록이 바뀌었는가.
+/** 능력 축의 **판정만** 하는 순수 함수 (확인 라운드 R3 B2, 2026-09-02).
+ *
+ *  ## 왜 순수 함수로 뽑는가
+ *
+ *  R3 리뷰어가 결손 주입 8종을 돌려 보니 **전부 텍스트 삭제형**이라 잠근 것은 「배선이
+ *  적혀 있다」이고 「배선이 동작한다」가 아니었다. 논리 뮤턴트 2종이 44/44 초록으로 통과했다:
+ *
+ *    - `if (prev === null || prev === rev) return;` → `return;`   (리스너 영구 미발화)
+ *    - `_CAPS_PENDING_MAX_ARMS = 3` → `= 0`                        (창 영구 미개방)
+ *
+ *  둘 다 이 cycle 의 1번 제보를 그대로 되살리는데 어떤 단정도 잡지 못했다 — DOM 에 묶인
+ *  함수라 단위로 돌릴 수 없었기 때문이다. 판정을 상태 없는 함수로 분리하면 전이를 직접
+ *  돌려 잠글 수 있고, 그 단정이 위 두 뮤턴트를 잡는다.
+ *
+ *  @param body 상태 응답 (`caps_rev` · `caps_pending`)
+ *  @param st   직전 상태 `{rev, watch, since, arms}` — `rev: null` = 아직 관측 없음
+ *  @param now  현재 시각(ms) — 주입 가능해야 창 판정을 시간 없이 테스트할 수 있다
+ *  @returns `{fire, state}` — `fire` 면 리스너를 부른다
+ */
+export function decideCaps(body, st, now) {
+  // ── 창을 여는 근거는 **두 사실의 합**이다 (사용자 제보 2026-09-02, 3차) ──────────
+  //
+  //   `caps_pending`  = 연결됐는데 목록이 아직 비었다
+  //   `caps_settling` = 신고가 방금 바뀌었다 → 플랫폼이 더 올 수 있다
+  //
+  // 러너가 플랫폼 하나씩 신고하므로 `caps_pending` 은 **첫 플랫폼이 도착하면 false** 다.
+  // 그 하나만 보면 창이 그 순간 닫히고, 90초 뒤 오는 두 번째 플랫폼(실측 claude 22.7초 →
+  // codex 112.3초)을 관측할 경로가 다시 하나도 없다 — 제보 ①의 결함이 「첫 플랫폼 이후」로
+  // 옮겨 앉을 뿐이다.
+  //
+  // ⚠ 프런트가 「직전 폴링과 지문이 다르다」로 대신 세우지 **않는다**. 그러면 새로 로드한
+  //   탭이 놓친다(비교할 직전 값이 없고 `caps_pending` 은 이미 false) — 새로고침한
+  //   사용자가 제보의 증상을 그대로 다시 겪는 형태다. 판정은 서버가 사실로 낸다.
+  const watch = (body || {}).caps_pending === true
+    || (body || {}).caps_settling === true;
+  const rawRev = typeof (body || {}).caps_rev === "string" ? body.caps_rev : "";
+  let { rev, since, arms } = st;
+  const wasWatching = st.watch === true;
+
+  // ── ① 목록이 바뀌었는가 ────────────────────────────────────────────────────
   //
   // 빈 문자열은 **「모른다」**다(러너 없음 · 조회 실패). 「목록이 비었다」와 다른 사실이므로
   // 변화로 세지 않는다 — 일시적 DB 오류가 카탈로그를 헛되게 다시 받게 만들지 않는다.
-  const rev = typeof body.caps_rev === "string" ? body.caps_rev : "";
-  if (!rev) return;
-  const prev = _lastCapsRev;
-  _lastCapsRev = rev;
-  // 첫 관측은 **변화가 아니다** — 페이지 로드가 이미 카탈로그를 받았으므로 여기서 또 받으면
-  // 매 진입마다 헛 왕복이 하나 늘어난다. 연결이 이 세션에서 처음 성립하는 경로는
-  // `onComposeGateChange`(잠금 전이)가 이미 카탈로그를 다시 받게 한다.
-  if (prev === null || prev === rev) return;
-  for (const fn of _capsListeners) {
-    try { fn(rev); } catch (_) { /* 한 소비자의 실패가 나머지를 막지 않는다 */ }
+  //
+  // 첫 관측도 **변화가 아니다** — 페이지 로드가 이미 카탈로그를 받았다. 연결이 이 세션에서
+  // 처음 성립하는 경로는 `onComposeGateChange`(잠금 전이)가 이미 카탈로그를 받게 한다.
+  //
+  // ⚠ **협상이 도는 중이면 첫 관측도 발화한다** (codex R4 P2-5). 「첫 관측은 변화가 아니다」
+  //   의 근거는 「페이지 로드가 이미 카탈로그를 받았다」인데, 그 두 요청 사이에 능력이
+  //   도착하면 그 근거가 깨진다: 카탈로그는 **도착 전** 값이고, 첫 상태 조회는 **도착 후**
+  //   지문을 갖고 오므로 비교 대상이 없어 발화하지 않는다. 이미 연결된 상태라
+  //   `onComposeGateChange` 도 발화하지 않는다 — 그 탭은 빈 목록으로 굳고 새로고침만 남는다.
+  //   창이 열려 있다는 것 자체가 「목록이 지금 움직이고 있다」는 뜻이므로, 그때는 한 번
+  //   받아 오는 편이 옳다(비용은 카탈로그 조회 1회, 창이 닫힌 정상 상태에서는 발화하지 않는다).
+  let fire = false;
+  if (rawRev) {
+    fire = rev !== null ? rev !== rawRev : watch;
+    rev = rawRev;
   }
+
+  // ── ② 확인 창 ─────────────────────────────────────────────────────────────
+  //
+  // ⚠ 상한은 «페이지당 총 무장 횟수» 가 아니라 **«진행 없는 연속 재무장»** 에 적용한다
+  //   (R3 B1). 총량을 세면 정상 흐름 1회가 1 arm 을 소비하므로, 러너를 3번 정상 재기동한
+  //   탭은 **4번째부터 창을 못 연다** — 그 시점 잠금은 이미 풀려 있어(러너가 붙었으므로)
+  //   `wantPoll` 이 거짓이 되고, 20~120초 뒤 도착하는 목록을 관측할 경로가 다시 하나도
+  //   없다 = 제보 ① 원상복귀. 하필 4회 이상 재기동하는 모집단이, 새 문구가 「그 AI 의
+  //   로그인·네트워크를 확인해 주세요」로 재시도를 지시하는 그 사용자다.
+  //
+  //   그래서 **진행이 관측되면 셈을 되돌린다**. 진행의 정의는 **지문 변화(`fire`)** 하나다 —
+  //   「`watch` 가 false 가 됐다」는 진행이 아니다. 해소는 목록이 도착해서일 수도 있고
+  //   러너가 사라져서일 수도 있는데, 후자까지 성공으로 세면 진동 한 사이클마다 셈이
+  //   되돌아가 **상한이 도달 불가**가 된다(초판이 그랬고 실행 검증이 그것을 잡았다).
+  //   목록이 실제로 도착하면 서버 지문이 바뀌므로 `fire` 가 그 사건의 정확한 신호다.
+  if (fire) arms = 0;
+  if (!watch) {
+    since = 0;
+  } else if (!wasWatching) {
+    if (arms < _CAPS_PENDING_MAX_ARMS) {
+      arms += 1;
+      since = now;
+    } else {
+      // 진행 없이 상한까지 진동했다 — `watch` 는 그대로 두되(다음 전이 판정이 쓴다)
+      // 창은 열지 않는다.
+      since = 0;
+    }
+  }
+  return { fire, state: { rev, watch, since, arms } };
+}
+
+/** 지금 확인 창이 열려 있는가. `decideCaps` 의 산출 상태만 본다(순수). */
+export function capsWindowOpen(st, now) {
+  if (!st || st.watch !== true) return false;
+  if (!st.since) return false;
+  return (now - st.since) < _CAPS_PENDING_POLL_MAX_MS;
+}
+
+function _paintCaps(body) {
+  const before = { rev: _lastCapsRev, watch: _capsWatch,
+                   since: _capsPendingSince, arms: _capsPendingArms };
+  const { fire, state } = decideCaps(body, before, Date.now());
+  const windowChanged = state.watch !== before.watch || state.since !== before.since;
+  _capsWatch = state.watch;
+  _capsPendingSince = state.since;
+  _capsPendingArms = state.arms;
+  // 상태를 바꾼 쪽이 그 결과를 책임진다 (`_paintGate` 와 같은 규율).
+  if (windowChanged) _syncGatePoll();
+  if (!fire) {
+    // 발화가 없으면 지문은 그대로 받아 적는다 — 비교 기준을 최신으로 유지해야
+    // 다음 변화가 «변화» 로 보인다.
+    _lastCapsRev = state.rev;
+    return;
+  }
+  // ── 지문은 **소비처가 성공한 뒤에** 소비한다 (codex R4 P1-4) ──────────────────
+  //
+  // 초판은 리스너 호출 **전에** `_lastCapsRev` 를 새 값으로 덮었다. 그러면 카탈로그
+  // 재조회가 503·타임아웃으로 실패했을 때 — `loadVaultOptions` 는 오류를 삼키고
+  // `state.modelCatalog = null` 로 두고 정상 반환한다 — **같은 지문으로 다시 시도하는
+  // 경로가 없다**. 목록은 빈 채 고정되고, 사용자에게는 전체 새로고침만 남는다. 이 cycle 이
+  // 없애려던 「새로고침해야 보인다」가 실패 경로로 되살아나는 형태다.
+  //
+  // 그래서 실패하면 **직전 지문을 유지**한다. 다음 폴링이 같은 변화를 다시 관측해 재시도하고,
+  // 그 폴링은 `caps_settling` 창이 열어 둔다(마지막 신고 후 150초).
+  const applied = state.rev;
+  if (_capsApplying === applied) return;   // 같은 지문 적용이 이미 진행 중
+  _capsApplying = applied;
+  const results = [];
+  for (const fn of _capsListeners) {
+    // 한 소비자의 실패가 나머지 호출을 막지 않는다 — 다만 «성공했다» 고 세지도 않는다.
+    try { results.push(Promise.resolve(fn(applied))); }
+    catch (err) { results.push(Promise.reject(err)); }
+  }
+  Promise.all(results).then((vals) => {
+    // 소비처가 `false` 를 돌려주면 실패다(예외를 삼키고 정상 반환하는 기존 코드를
+    // 고치지 않고도 실패를 말할 수 있게 하는 규약).
+    if (vals.every((v) => v !== false)) _lastCapsRev = applied;
+  }).catch(() => { /* 지문을 소비하지 않는다 — 다음 폴링이 다시 시도한다 */ })
+    .then(() => { if (_capsApplying === applied) _capsApplying = null; });
 }
 
 // ── 잠긴 동안에만 재조회한다 ─────────────────────────────────────────────────
@@ -881,7 +986,10 @@ let _gateInFlight = false;   //: 폴링이 띄운 조회가 아직 도는 중인
 //   **종일 5초 폴링**을 한다. 창을 닫는 쪽이 옳다 — 그 상태에서 사용자가 할 일은 폴링이
 //   아니라 러너 쪽 조치이고, 화면은 이미 사유를 말하고 있다.
 const _CAPS_PENDING_POLL_MAX_MS = 5 * 60 * 1000;
-let _capsPending = false;
+let _capsWatch = false;
+//: 지금 적용을 시도하고 있는 지문. 실패 시 지문을 소비하지 않으므로(위 `_paintCaps`) 폴링이
+//: 같은 변화를 반복 관측하는데, 이 값이 없으면 5초마다 카탈로그 재조회가 겹쳐 쌓인다.
+let _capsApplying = null;
 //: 지금 창의 기준점. `false→true` 전이에서 찍는다.
 let _capsPendingSince = 0;
 
@@ -902,9 +1010,9 @@ const _CAPS_PENDING_MAX_ARMS = 3;
 let _capsPendingArms = 0;
 
 function _capsPollWanted() {
-  if (!_capsPending) return false;
-  if (!_capsPendingSince) return false;
-  return (Date.now() - _capsPendingSince) < _CAPS_PENDING_POLL_MAX_MS;
+  // 판정은 `capsWindowOpen` **하나**다 — 여기서 다시 조립하면 단위로 잠근 판정과 실제
+  // 폴링 조건이 갈릴 준비를 마친다(이 feature 가 P0-R 에서 이미 겪은 형태).
+  return capsWindowOpen({ watch: _capsWatch, since: _capsPendingSince }, Date.now());
 }
 
 function _syncGatePoll() {
@@ -934,7 +1042,7 @@ function _syncGatePoll() {
         //
         //   `_capsPollWanted()` 는 시간이 지나면 저절로 거짓이 되는 조건인데(상한 5분),
         //   그것을 읽는 곳이 `_syncGatePoll()` 하나이고 그 함수는 **상태가 바뀔 때만**
-        //   불렸다 — `_paintCaps` 는 `pending` 값이 바뀔 때, `_paintGate` 는 잠금이 바뀔
+        //   불렸다 — `_paintCaps` 는 `watch` 값이 바뀔 때, `_paintGate` 는 잠금이 바뀔
         //   때. `caps_pending` 이 계속 참인 러너(협상이 끝내 실패한 채 붙어 있는 경우가
         //   정확히 그렇다)에서는 두 가드가 모두 거짓이라 **아무도 상한을 확인하지 않고**
         //   타이머가 종일 살아남았다. 상수는 있고 비교도 있는데 그 비교에 **도달하는
@@ -1144,7 +1252,7 @@ export async function refreshConnState() {
     const _actionableStale = _actionableStaleOf(b);
     _paintConn(!!b.connected, !!b.listening, epochAtStart, _actionableStale, b.runner_build);
     // 능력 축은 **잠금 축보다 먼저** 반영한다 (TASK-20260902T140200) — `_paintGate` 가
-    // `_syncGatePoll()` 을 부를 때 `_capsPending` 이 이미 최신이어야, 잠금이 풀리는 그
+    // `_syncGatePoll()` 을 부를 때 `_capsWatch` 가 이미 최신이어야, 잠금이 풀리는 그
     // 응답에서 확인 창이 함께 열린다(순서가 반대면 그 한 번의 응답에서 창이 열리지 않고
     // 다음 관측까지 미뤄지는데, 폴링이 방금 멎었으므로 «다음 관측» 이 오지 않는다).
     _paintCaps(b);

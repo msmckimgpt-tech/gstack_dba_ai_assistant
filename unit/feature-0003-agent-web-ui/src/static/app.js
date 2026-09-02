@@ -7639,15 +7639,25 @@ export async function _sendGroupChatMessage(cid, message) {
  *  실패는 삼킨다 — 목록 갱신이 안 돼도 잠금 해제·답변 경로까지 막을 이유는 없다.
  */
 function _refreshModelCatalogSurface() {
-  (async () => {
+  // ⚠ **프라미스를 돌려주고 실패를 말한다** (codex R4 P1-4). 호출측(`_paintCaps`)은 이
+  //   결과로 「능력 지문을 소비할지」를 정한다 — 실패인데 성공으로 보고하면 그 지문은
+  //   소비되고, 같은 변화를 다시 시도하는 경로가 없어져 목록이 빈 채 고정된다.
+  //   `loadVaultOptions` 는 예외를 삼키고 `state.modelCatalog = null` 로 두므로,
+  //   실패 여부는 **그 결과 상태**로 판정한다(그 함수의 기존 계약을 건드리지 않는다).
+  return (async () => {
+    let ok = true;
     try {
       await loadVaultOptions();
-    } catch (_) { /* 목록 갱신 실패가 잠금 해제를 막지 않는다 */ }
+      ok = !!state.modelCatalog;
+    } catch (_) {
+      ok = false;                       // 목록 갱신 실패가 잠금 해제를 막지는 않는다
+    }
     try {
       renderComposer();
       _updateComposerModelLabel();      // 항목 표시/숨김·라벨 (내부에서 추론 라벨도 갱신)
       _renderComposerModelMenu();
-    } catch (_) { /* 치명 아님 */ }
+    } catch (_) { /* 치명 아님 — 렌더 실패는 지문 소비 판정에 넣지 않는다 */ }
+    return ok;
   })();
 }
 

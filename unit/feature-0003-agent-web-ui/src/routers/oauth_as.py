@@ -654,15 +654,27 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     # `listening` 이 아니면 두 값 모두 의미가 없다 — 신고할 주체가 없다.
     caps_rev = ""
     caps_pending = False
+    caps_settling = False
     if listening:
         try:
             cur5 = conn.cursor()
             try:
-                _reported = _store.account_runner_capabilities(
+                # ⚠ 이름을 **재사용하지 않는다** (확인 라운드 R3 C2) — 같은 핸들러 위쪽에서
+                #   `_reported` 가 빌드 지문을 담는다. 오늘은 블록 순서 덕에 옳지만, 능력
+                #   블록이 위로 옮겨지거나 빌드 블록에 early-return 이 생기는 순간
+                #   `runner_stale` 이 능력 목록을 읽어 `caps_pending` 이 영구 true 가 된다 —
+                #   이번 라운드 수정이 막으려던 바로 그 결과다. 정합성을 순서에 기대지 않는다.
+                _reported_caps = _store.account_runner_capabilities(
+                    cur5, int(account.get("id") or 0))
+                # 「신고가 방금 바뀌었나」 — 플랫폼별 실시간 갱신의 **관측 축**
+                # (`_store.CAPS_SETTLING_SEC` 주석에 근거). `None`(모른다)은 아래에서
+                # `False` 로 고른다: 창을 여는 근거로 「모른다」를 쓰면 DB 순단이 전
+                # 사용자의 폴링을 켠다(같은 블록의 except 가 쓰는 규율과 동일 방향).
+                _settling = _store.account_caps_settling(
                     cur5, int(account.get("id") or 0))
             finally:
                 cur5.close()
-            caps_rev = _bridge_caps.caps_revision(_reported)
+            caps_rev = _bridge_caps.caps_revision(_reported_caps)
             # 「연결됐고 듣고 있는데 고를 것이 없다」 = 협상이 아직 안 끝났다. 러너가 능력을
             # 매 하트비트에 싣기 때문에, 끝나면 이 값은 자연히 False 가 된다.
             #
@@ -672,7 +684,13 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             #   영구 true 가 되어 그 탭이 종일 5초 폴링을 한다(AC-3 가 막으려던 결과).
             #   그 상태는 「확인 중」이 아니라 「갱신 필요」이고, 화면의 사유 문구도
             #   (`system.py`) 그렇게 말한다 — 두 응답이 같은 사실을 다르게 말하면 안 된다.
-            caps_pending = bool(connected) and not _reported and not runner_stale
+            caps_pending = bool(connected) and not _reported_caps and not runner_stale
+            # ⚠ **`runner_stale` 을 여기도 적용한다.** 구 빌드는 신고가 전부 정제에서
+            #   떨어지는데 `CapabilitiesAt` 은 (기능·버전 축 때문에) 갱신될 수 있다 —
+            #   그러면 이 값이 영구 true 가 되어 `caps_pending` 에서 막은 종일 폴링이
+            #   **이 축으로 되열린다**. 같은 사실에 같은 게이트를 쓴다.
+            caps_settling = (bool(connected) and not runner_stale
+                             and _settling is True)
         except Exception:
             # 조회 실패는 **「모른다」**다. 지문을 빈 문자열로 두면 프런트는 「직전과 같다」로
             # 보고 아무것도 하지 않는다 — 일시 장애가 카탈로그를 헛되게 다시 받게 만들지
@@ -680,6 +698,7 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             # 폴링 창을 열면 DB 순단이 전 사용자의 폴링을 켠다.
             caps_rev = ""
             caps_pending = False
+            caps_settling = False
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -731,8 +750,16 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         # `caps_pending`: 연결·대기는 성립했는데 신고 목록이 아직 비었다 = **협상이 도는 중**.
         # 화면은 이 값으로 (a) 「확인하는 중」 문구를 고르고 (b) 그 창에서만 상태 폴링을
         # 유지한다. 정상 상태(목록 있음)에서는 False 라 폴링이 0으로 돌아간다.
+        #
+        # `caps_settling`: 신고가 **방금 바뀌었다** = 플랫폼이 더 올 수 있다
+        # (사용자 제보 2026-09-02, 3차 — 근거는 `_store.CAPS_SETTLING_SEC` 주석).
+        # 러너가 플랫폼마다 신고하므로 `caps_pending` 은 **첫 플랫폼이 도착하면 false** 가
+        # 되고, 그 하나만으로 창을 닫으면 90초 뒤 오는 두 번째 플랫폼을 관측할 경로가
+        # 없어진다(실측 claude 22.7초 → codex 112.3초). 프런트는 두 값의 **합**으로 창을
+        # 연다. 이 값도 마지막 신고 후 150초면 false 가 되어 폴링은 0으로 돌아간다.
         "caps_rev": caps_rev,
         "caps_pending": caps_pending,
+        "caps_settling": caps_settling,
     })
 
 

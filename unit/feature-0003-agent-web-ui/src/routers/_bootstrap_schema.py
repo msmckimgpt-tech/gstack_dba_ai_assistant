@@ -2859,8 +2859,11 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # ── 계정·런타임 단위 능력 baseline (TASK-20260902T140200, 사용자 결정) ──────
             #
             # `RunnerCapsBaseline`(계정): `{runtime: {label, models, efforts,
-            # last_used_at, confirmed_at, build}}` JSON. 「이 계정의 이 플랫폼은 마지막으로
-            # 무엇을 쓸 수 있었나」를 계정 수명 동안 보관한다.
+            # last_used_at, probed_at, verify_streak, build}}` JSON. 「이 계정의 이
+            # 플랫폼은 마지막으로 무엇을 쓸 수 있었나」를 계정 수명 동안 보관한다.
+            # 항목 모양의 정본은 `shared/bridge_caps.py:merge_baseline` 이다 — 이 주석은
+            # 그 요약이므로, 키가 늘거나 줄면 **양쪽을 함께** 고친다(초판에 있던
+            # `confirmed_at` 이 코드에서 빠진 뒤 이 주석에만 남아 상충했다).
             #
             # **왜 계정인가**: 능력 신고는 종전에 `WebOAuthTokens.RunnerCapabilities`(토큰 행)
             # 에만 남았다. 재연결 = 새 토큰 행 = 능력 NULL 이라, 목록이 매 연결마다 처음부터

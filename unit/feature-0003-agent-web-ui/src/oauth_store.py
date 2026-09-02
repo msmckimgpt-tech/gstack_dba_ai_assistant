@@ -464,6 +464,30 @@ HEARTBEAT_WINDOW_SEC = 3 * HEARTBEAT_INTERVAL_SEC
 #: 통과하고, 폭주만 no-op 이 된다. 통과하지 못한 호출이 잃는 것은 없다 — 이미 연장돼 있다.
 HEARTBEAT_MIN_WRITE_SEC = max(1, HEARTBEAT_INTERVAL_SEC // 3)
 
+#: 신고가 마지막으로 바뀐 뒤 **「아직 더 올 수 있다」**로 볼 시간 (사용자 제보 2026-09-02, 3차).
+#:
+#: ## 이 축이 없으면 플랫폼별 실시간 갱신이 **두 번째 플랫폼에서 멈춘다**
+#:
+#: 러너는 플랫폼 하나가 끝날 때마다 신고한다(`agent/caps.py` `on_settled`). 그런데
+#: `caps_pending`(=「연결됐는데 목록이 비었다」)은 **첫 플랫폼이 도착한 순간 false** 가 되고,
+#: 그러면 프런트의 폴링 창이 닫힌다 — 90초 뒤 도착하는 두 번째 플랫폼(실측 codex 112.3초
+#: vs claude 22.7초)을 관측할 경로가 다시 하나도 없다. 즉 제보 ①의 결함이 「첫 플랫폼
+#: 이후」로 옮겨 앉을 뿐이다.
+#:
+#: ## 왜 서버가 말하는가 (프런트 추측이 아니라)
+#:
+#: 「방금 신고가 바뀌었다」는 **사실**이고 그 사실은 `WebOAuthTokens.CapabilitiesAt` 에 이미
+#: 있다. 프런트가 「직전 폴링과 지문이 다르다」로 대신 세울 수도 있지만, 그러면 **새로
+#: 로드한 탭**이 놓친다: 신고가 3초 전에 바뀌었어도 그 탭에는 비교할 직전 값이 없고
+#: `caps_pending` 은 이미 false 다. 페이지를 새로고침한 사용자가 정확히 제보의 증상을
+#: 다시 겪는 형태이므로, 판정은 서버가 사실로 낸다.
+#:
+#: 값의 근거(경계 양측 — §16.7 G4): 연속 신고 사이의 실측 최악 간격이 약 90초다
+#: (claude 22.7초 → codex 112.3초). 150초면 그 간격을 여유로 덮고, 그러면서 전체 질의
+#: 예산(`agent/caps.py` `_CAPS_PROBE_TIMEOUT_SEC` 240초)보다 짧아 **협상이 끝나면 반드시
+#: 닫힌다** — 열린 채 남으면 그 탭이 종일 5초 폴링을 한다(AC-3 가 막으려는 결과).
+CAPS_SETTLING_SEC = 150
+
 #: ⚠ **SQL 의 현재 시각은 `UTC_TIMESTAMP()` 다 — `NOW()` 가 아니다** (라이브 실측 2026-08-28).
 #:
 #: 만료 시각은 파이썬이 `_utcnow()` 로 **UTC** 를 넣는데(`issue_token_pair`·`issue_console_token`),
@@ -929,6 +953,44 @@ def _parse_caps_column(raw: Any) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def account_caps_settling(cur, account_id: int,
+                          settling_sec: int | None = None) -> bool | None:
+    """이 계정의 러너 신고가 **방금 바뀌었나** (사용자 제보 2026-09-02, 3차). 모르면 `None`.
+
+    「방금」의 정의 = `CapabilitiesAt` 이 `CAPS_SETTLING_SEC` 안 — 즉 러너가 최근에
+    무언가를 새로 신고했다는 **사실**이다(그 상수 주석에 왜 이 축이 필요한지 적었다).
+
+    ## 왜 별 질의인가
+
+    `account_runner_profile`(→ `shared/bridge_tasks.runner_profile_for_account`)에 컬럼을
+    더하는 것이 자연스럽지만, 그 모듈은 지금 **다른 활성 세션들이 hot_path 로 선언**해 두었다
+    (§13.2.5-A). 같은 파일을 동시에 고치면 병합이 두 기능 중 하나를 조용히 죽인다 — 이
+    cycle 이 이미 그 부류(병합 변형)를 한 번 검증했다. 그래서 여기 얇은 질의를 따로 둔다.
+
+    ## `None` = 「모른다」
+
+    조회 실패(락 타임아웃·컬럼 부재)를 `False` 로 접으면 「신고가 안 바뀌었다」는 **단정**이
+    되어 폴링 창이 닫히고, 그 순간 두 번째 플랫폼이 화면에서 사라진다. 반대로 `True` 로
+    접으면 DB 순단이 전 사용자의 폴링을 켠다. 둘 다 틀리므로 호출측이 고르게 한다
+    (`account_caps_baseline` 이 같은 규율을 쓴다).
+    """
+    if not account_id:
+        return False
+    window = int(settling_sec if settling_sec is not None else CAPS_SETTLING_SEC)
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
+            "  AND t.CapabilitiesAt IS NOT NULL "
+            f"  AND t.CapabilitiesAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+            "LIMIT 1",
+            (int(account_id), window))
+        return cur.fetchone() is not None
+    except Exception:
+        return None
+
+
 def account_runner_capabilities(cur, account_id: int,
                                 window_sec: int | None = None) -> list:
     """이 계정의 **지금 듣고 있는** 러너가 쓸 수 있는 것 (P0-Z3). 없으면 빈 목록.
@@ -1293,8 +1355,25 @@ def account_caps_baseline(cur, account_id: int) -> dict | None:
     「읽은 것」과 「저장된 것」이 달라져, 되쓰기가 조용히 만료 항목을 **삭제**한다(읽기가
     쓰기의 의미를 바꾸는 형태다).
     """
+    got = _account_caps_baseline_row(cur, account_id)
+    return None if got is None else got[0]
+
+
+def _account_caps_baseline_row(cur, account_id: int) -> tuple | None:
+    """`(정규화된 원장, **컬럼 원문**)`. 실패는 `None` = 「모른다」.
+
+    ⚠ **원문을 함께 돌려주는 이유** (확인 라운드 R3 §3). `merge_account_caps_baseline` 의
+    compare-and-set 은 초판이 «정규화 재직렬화» 를 predicate 로 썼다 —
+    `dumps_baseline(normalize_baseline(원문))`. 그 값이 컬럼 원문과 한 바이트라도 다르면
+    `RunnerCapsBaseline <=> %s` 가 **영구히 0행**이 되고, 원장은 그 계정에서 다시는
+    갱신되지 않는다. 그 상태는 조용하다: 하트비트는 200 을 받고, 러너는 목록을 받고,
+    화면도 정상으로 보인다 — 저장만 멈춘다.
+    원문이 정규형과 갈라지는 경로는 실제로 있다: 키를 더하거나 빼는 스키마 변경, 다른
+    직렬화기가 쓴 값, 수동 보정. 그때 CAS 가 막아야 하는 것은 **동시 쓰기**뿐인데
+    정규화 비교는 **자기 자신**까지 막는다. 그래서 predicate 는 원문으로 본다.
+    """
     if not account_id:
-        return {}
+        return ({}, None)
     try:
         cur.execute("SELECT RunnerCapsBaseline FROM WebAccounts WHERE Id = %s",
                     (int(account_id),))
@@ -1305,20 +1384,20 @@ def account_caps_baseline(cur, account_id: int) -> dict | None:
         # 가용성 손실은 없다: 러너는 빈 목록을 받아 종전 열린 질의로 흐른다.
         return None
     if not row:
-        return {}
-    return bridge_caps.normalize_baseline(row[0])
+        return ({}, None)
+    return (bridge_caps.normalize_baseline(row[0]), row[0])
 
 
 def merge_account_caps_baseline(cur, account_id: int, reported: object,
-                                build: str = "", sources: dict | None = None) -> list:
+                                build: str = "", sources: dict | None = None) -> list | None:
     """신고를 원장에 병합·저장하고 **러너에게 줄 목록**을 돌려준다.
 
     `reported` 가 `None`(신고할 처지가 아닌 러너 — 구 빌드·`--cmd`)이면 **읽기만** 하고
     쓰지 않는다. 그 러너의 침묵을 「이 계정은 아무것도 쓸 수 없다」로 해석하면, 같은 계정의
     다른 머신이 확인해 둔 목록이 침묵 하나로 지워진다.
 
-    **읽기가 실패하면(`None`) 쓰지 않는다** — 위 `account_caps_baseline` 참조. 그때 러너에게
-    주는 것은 빈 목록이고, 러너는 그것을 「baseline 없음」으로 읽어 열린 질의로 흐른다.
+    **읽기가 실패하면(`None`) 쓰지 않고 `None` 을 돌려준다** — 위 `account_caps_baseline`
+    참조. 호출측은 그때 응답에서 이 키를 **빼야** 한다(러너가 직전 원장을 유지한다).
 
     값이 그대로면 쓰지 않는다 — 이 함수는 **하트비트 경로**(계정당 30초)에서 불린다.
 
@@ -1333,26 +1412,40 @@ def merge_account_caps_baseline(cur, account_id: int, reported: object,
     쓰기는 **compare-and-set** 이다 — 같은 blob 을 두 러너가 동시에 read-modify-write 하면
     나중 쓰기가 앞 쓰기를 통째로 덮는다(lost update). 읽은 값이 그대로일 때만 쓴다.
     """
-    current = account_caps_baseline(cur, account_id)
-    if current is None:
-        return []
+    got = _account_caps_baseline_row(cur, account_id)
+    if got is None:
+        # ⚠ **`None`(모른다)을 돌려준다 — `[]` 가 아니다** (codex R4 P1-3). `[]` 는
+        #   「이 계정의 원장은 비었다」는 **단정**이고, 호출측(하트비트 응답)이 그것을
+        #   그대로 실으면 러너가 자기 원장을 **지운다** — 조회 실패 한 번이 그 프로세스의
+        #   확인 경로를 끄고 그 회차는 열린 열거로 떨어져 제보 ②를 재현한다. 위
+        #   `_account_caps_baseline_row` 가 세운 구분을 여기서 평평하게 만들면 그 구분이
+        #   무의미해진다(같은 파일의 `account_caps_baseline` 이 같은 규율을 쓴다).
+        return None
+    current, raw = got
     if reported is None or not isinstance(reported, list):
         return bridge_caps.baseline_for_runner(current)
     merged = bridge_caps.merge_baseline(current, reported, build=build, sources=sources)
     if not account_id:
         return bridge_caps.baseline_for_runner(merged)
-    before = bridge_caps.dumps_baseline(current)
     after = bridge_caps.dumps_baseline(merged)
-    if before == after:
+    # 「쓸 필요가 있나」는 **내용**으로 본다 (정규형 비교). 원문이 정규형과 달라도 내용이
+    # 같으면 쓰지 않는다 — 그 차이는 무해하고, 하트비트마다 재직렬화하려고 UPDATE 를
+    # 내면 이 함수가 막으려는 쓰기 증폭이 그대로 돌아온다.
+    if bridge_caps.dumps_baseline(current) == after:
         return bridge_caps.baseline_for_runner(merged)
+    # 「누가 먼저 썼나」는 **원문**으로 본다 (위 `_account_caps_baseline_row` 주석).
+    before = raw if (raw is not None and str(raw).strip()) else None
     try:
         # `<=>` 는 NULL-safe 비교 — 아직 NULL 인 계정(첫 저장)도 걸러지지 않는다.
         # 조건이 어긋나면(다른 러너가 먼저 썼다) 0행이고, 그 신고는 30초 뒤 다시 온다.
         cur.execute(
             "UPDATE WebAccounts SET RunnerCapsBaseline = %s "
             "WHERE Id = %s AND (RunnerCapsBaseline <=> %s)",
-            (after if merged else None, int(account_id),
-             before if current else None))
+            (after if merged else None, int(account_id), before))
+        # ⚠ predicate 에 `before if current else None` 을 쓰면 안 된다 (초판 형태).
+        #   `current` 는 정규화 결과라, 컬럼이 `'{}'`·`'null'`·깨진 JSON 처럼
+        #   **비어 있지 않은데 정규화가 빈 dict 를 내는** 값이면 predicate 만 `NULL` 이
+        #   되어 영구 0행이 된다. 원문은 원문으로만 비교한다.
     except Exception:
         # 원장 저장 실패가 **연결을 끊지 않는다** — 최악이 종전 동작(baseline 없음)이고,
         # 다음 하트비트가 30초 뒤에 다시 시도한다. 이 규율은 같은 핸들러의

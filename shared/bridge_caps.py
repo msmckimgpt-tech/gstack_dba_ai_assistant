@@ -48,6 +48,7 @@ from datetime import datetime, timedelta, timezone
 
 __all__ = [
     "BASELINE_TTL_DAYS",
+    "BASELINE_MAX_VERIFY_STREAK",
     "BASELINE_MAX_RUNTIMES",
     "caps_revision",
     "normalize_baseline",
@@ -94,25 +95,31 @@ BASELINE_MAX_BYTES = 16 * 1024
 #: 더 늘리면 얻는 것이 없고(쓰기는 이미 시간당 1회), 줄이면 그만큼 무의미한 쓰기가 는다.
 BASELINE_TOUCH_MIN_SEC = 3600
 
-#: **앵커 없는 재열거 없이** 원장 항목이 확인 대상으로 제시될 수 있는 최대 기간 (14일).
+#: 열린 열거 없이 **연속으로 확인만** 통과할 수 있는 횟수 (기본 5).
 #:
-#: ## 이 상수가 없으면 만료가 실효적으로 작동하지 않는다 (적대 리뷰 2026-09-02, §3)
+#: ## 왜 이 축이 필요한가 (적대 리뷰 2026-09-02 §3)
 #:
 #: `last_used_at` 은 러너가 붙어 있는 동안 계속 갱신되므로 **TTL 14일에 결코 도달하지
 #: 않는다.** 그러면 한 번 원장에 든 잘못된 값이 (a) 새 머신마다 확인 질의의 **앵커**로 다시
 #: 제시되고 (b) 순응적인 답으로 `verified` 를 다시 받고 (c) 다시 갱신된다 — 자기강화 루프고,
-#: 탈출구가 사용자가 `--refresh-caps` 를 아는 것 하나였다. 「출처와 만료만 다르다」는
-#: 이 모듈의 계약 중 **만료 절반이 비어 있던** 셈이다.
+#: 탈출구가 사용자가 `--refresh-caps` 를 아는 것 하나였다.
 #:
-#: 그래서 **앵커의 나이**를 따로 센다: 마지막 «열린 열거»(`source == "probe"`)로부터 이
-#: 기간이 지난 항목은 `baseline_for_runner` 가 **내려보내지 않는다**. 받지 못한 러너는
-#: 종전 경로대로 열린 질의를 하고, 그 답이 앵커 없이 원장을 교정한다 — 사용자가 아무것도
-#: 몰라도 화석이 스스로 빠진다.
+#: ## 왜 «벽시계 나이» 가 아니라 «횟수» 인가 (확인 라운드 R3 S1 수용)
 #:
-#: 값의 근거: 만료(TTL)와 같은 14일로 둔다. 두 축은 서로 다른 질문에 답하지만
-#: (「아직 쓰나」 vs 「그 근거가 얼마나 오래됐나」), 둘 다 「한 스프린트」 감각의 기간이고
-#: 서로 다른 숫자를 두면 다음 사람이 어느 쪽이 발동한 것인지 구분하지 못한다.
-BASELINE_ANCHOR_MAX_DAYS = 14
+#: 초판은 「마지막 열린 열거로부터 14일」로 두었다. 그런데 러너는 로컬 캐시가 있으면 다시
+#: 열거하지 않으므로(그게 캐시의 목적이다) 앵커는 **마지막 캐시 소실 시점**에 고정되고
+#: 14일 뒤 죽는다. 제보 ②의 표제 시나리오는 «머신 교체» 이고 그 주기는 수개월이라, 3개월
+#: 뒤 새 노트북이 붙으면 원장은 이미 서빙 불가여서 **열린 열거 1회(=불안정 목록 1회)를
+#: 그대로 겪는다** — 원장이 값을 하는 창이 정작 필요한 시점을 비껄러 간다.
+#:
+#: 횟수로 세면 그 결합이 끊긴다: 원장은 **몇 달이 지나도** 유효하고, 대신 열린 열거 없이
+#: 확인만 N회 통과하면 다음은 강제로 열린 열거가 된다. 자기강화 루프를 끊는 성질은 같고
+#: (무한히 재앵커될 수 없다), 유효 창은 사용 빈도에 따라 자연히 결정된다.
+#:
+#: 값의 근거(경계 양측 — §16.7 G4): 새 머신 첫 연결이 1회를 쓰므로 5면 머신 4대를 새로
+#: 붙이는 동안 원장이 유효하다. 그보다 크면 잘못된 값이 더 오래 재사용되고, 1~2면 머신 두
+#: 대만 바꿔도 원장이 꺼져 초판과 같은 문제가 된다.
+BASELINE_MAX_VERIFY_STREAK = 5
 
 #: 원장 항목의 `build` 지문 최대 길이. 러너 신고값(`agent_build`)은 클라이언트가 주는
 #: 문자열이고, 검증 없이 넣으면 그 한 필드가 문서 예산(`BASELINE_MAX_BYTES`)을 통째로
@@ -251,10 +258,17 @@ def normalize_baseline(raw: object) -> dict:
             # 만료 판정 축. 부재는 「모른다」로 남긴다 — 여기서 «지금» 을 채우면
             # 손상된 항목이 영원히 만료되지 않는다(위 `_parse_iso` 주석과 같은 이유).
             "last_used_at": str(entry.get("last_used_at") or ""),
-            # **앵커 축** — 마지막 «열린 열거»(`source == "probe"`) 시각.
-            # `baseline_for_runner` 가 이 값으로 「확인 대상으로 제시해도 되는가」를 가른다
-            # (`BASELINE_ANCHOR_MAX_DAYS`). 부재는 「모른다」 = 제시하지 않는다.
+            # **앵커 축** — 마지막 «열린 열거»(`source == "probe"`) 시각. 조사용이며 제시
+            # 판정에는 쓰지 않는다(그 판정은 아래 `verify_streak` 이 한다 — R3 S1).
             "probed_at": str(entry.get("probed_at") or ""),
+            # **제시 판정 축** — 열린 열거 없이 확인만 연속 통과한 횟수.
+            # `baseline_for_runner` 가 이 값으로 「확인 대상으로 제시해도 되는가」를 가른다.
+            # 열린 열거가 오면 0으로 되돌아간다. 부재·비정수는 「모른다」 = 상한으로 취급해
+            # 제시하지 않는다(만료 축에서 부재를 만료로 다루는 것과 같은 방향).
+            "verify_streak": (int(entry["verify_streak"])
+                              if isinstance(entry.get("verify_streak"), int)
+                              and entry["verify_streak"] >= 0
+                              else BASELINE_MAX_VERIFY_STREAK),
             # 클라이언트가 주는 값이라 **길이를 좁힌다** — 좁히지 않으면 이 한 필드가
             # 문서 예산을 잠식해 원장을 비운다(위 `BASELINE_BUILD_MAX_LEN` 주석).
             "build": str(entry.get("build") or "")[:BASELINE_BUILD_MAX_LEN],
@@ -385,6 +399,18 @@ def merge_baseline(baseline: object, reported: object, *,
         #   꺼진 사실을 단정이 관측하지 못했다. 채널을 하나로 두면 그 단정이 실제로 판별한다.
         src = str((sources or {}).get(name) or "")
         prev_probed_raw = str((prev or {}).get("probed_at") or "")
+        # 연속 확인 횟수 — 열린 열거는 **0으로 되돌리고**, 확인은 **1 올린다**. 그 밖의
+        # 출처(`cache`)는 건드리지 않는다: 캐시 신고는 그 머신이 이미 확인해 둔 사실의
+        # 반복이지 새 확인이 아니다(그것까지 세면 한 머신이 계속 붙어 있기만 해도 원장이
+        # 꺼진다 — R3 S1 이 지적한 「벽시계」 문제의 횟수판 재현).
+        prev_streak = (prev or {}).get("verify_streak")
+        prev_streak = prev_streak if isinstance(prev_streak, int) and prev_streak >= 0 else 0
+        if src == "probe":
+            streak = 0
+        elif src == "verified":
+            streak = prev_streak + 1
+        else:
+            streak = prev_streak
         if src == "probe":
             _prev_probed = _parse_iso(prev_probed_raw)
             _fresh_enough = (_prev_probed is not None
@@ -404,10 +430,12 @@ def merge_baseline(baseline: object, reported: object, *,
             #   30초마다 나가는 페이로드와 `BASELINE_MAX_BYTES` 예산만 잠식했다.
             #   「언제 라이브로 확인됐나」가 필요해지면 그때 소비처와 함께 넣는다.
             "probed_at": probed_at,
+            "verify_streak": streak,
             "build": str(build or (prev or {}).get("build") or "")[:BASELINE_BUILD_MAX_LEN],
         }
         if prev is not None and _content_key(prev) == _content_key(fresh) \
-                and str(prev.get("probed_at") or "") == probed_at:
+                and str(prev.get("probed_at") or "") == probed_at \
+                and prev_streak == streak:
             prev_used = _parse_iso(prev.get("last_used_at"))
             if prev_used is not None and (ref - prev_used).total_seconds() < max(0, int(touch_min_sec)):
                 # 내용 동일 + 앵커 동일 + 직전 기록이 충분히 최근 → **손대지 않는다**(쓰기 0).
@@ -461,26 +489,27 @@ def baseline_for_runner(baseline: object, *, now: datetime | None = None) -> lis
     변환하지 않아도 되게. `last_used_at` 같은 원장 메타는 러너에게 쓸 곳이 없으므로 뺀다
     (러너가 만료를 판정하지 않는다 — 그건 서버 몫이다).
 
-    ## 앵커가 오래된 항목은 **제시하지 않는다** (적대 리뷰 2026-09-02 §3)
+    ## 확인만 반복된 항목은 **제시하지 않는다** (적대 리뷰 §3 · 확인 라운드 R3 S1)
 
     `last_used_at` 은 러너가 붙어 있는 동안 갱신되므로 TTL 에 도달하지 않는다. 그래서
     만료만으로는 「한 번 잘못 든 값이 확인 질의의 앵커로 영원히 되풀이되는」 자기강화
-    루프를 끊지 못한다. 마지막 **열린 열거**(`probed_at`)로부터 `BASELINE_ANCHOR_MAX_DAYS`
-    가 지난 항목은 여기서 빠지고, 받지 못한 러너는 종전 경로대로 열린 질의를 한다 —
-    그 답이 앵커 없이 원장을 교정한다.
+    루프를 끊지 못한다. 열린 열거 없이 확인만 `BASELINE_MAX_VERIFY_STREAK` 회 통과한
+    항목은 여기서 빠지고, 받지 못한 러너는 종전 경로대로 열린 질의를 한다 — 그 답이 앵커
+    없이 원장을 교정하고 streak 을 0으로 되돌린다.
 
-    `probed_at` **부재도 제시하지 않는다.** 「모른다」를 제시하면 앵커 나이를 모르는 항목이
-    영구 후보가 되어 이 축이 그대로 무력화된다(만료 축에서 `last_used_at` 부재를 만료로
-    다루는 것과 같은 방향).
+    ⚠ **벽시계가 아니라 횟수다.** 「마지막 열린 열거로부터 N일」로 두면 러너가 캐시를 쓰는
+    동안 앵커가 전진하지 않으므로 원장의 유효 창이 «마지막 캐시 소실 시점 + N일» 에 고정되고,
+    제보의 표제 시나리오(머신 교체, 주기 수개월)는 대부분 그 창 밖으로 떨어진다 — 원장이
+    정작 필요한 시점에 꺼져 있게 된다.
+
+    `verify_streak` **부재·비정수는 상한으로** 취급해 제시하지 않는다(만료 축에서
+    `last_used_at` 부재를 만료로 다루는 것과 같은 방향 — 모르는 것을 근거로 제시하지 않는다).
     """
     entries = prune_stale(baseline, now=now)
-    ref = now or _utcnow()
-    anchor_cutoff = ref - timedelta(days=max(1, int(BASELINE_ANCHOR_MAX_DAYS)))
     out: list[dict] = []
     for name in sorted(entries):
         entry = entries[name]
-        probed = _parse_iso(entry.get("probed_at"))
-        if probed is None or probed < anchor_cutoff:
+        if int(entry.get("verify_streak") or 0) >= BASELINE_MAX_VERIFY_STREAK:
             continue
         out.append({
             "runtime": name,

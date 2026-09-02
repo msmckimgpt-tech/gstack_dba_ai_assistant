@@ -175,6 +175,16 @@ edit_policy: append-only
 - `confirmed_at` 도 함께 남긴다(만료 판정에는 쓰지 않는다) — 「언제 라이브로 확인됐는가」는
   사고 조사에서 `last_used_at` 과 다른 사실이다.
 
+> **⚠ 구현 이탈 (2026-09-02, 확인 라운드 R2·R3)** — 위 §3.2·§3.4 의 `confirmed_at` 은
+> **출하되지 않았다.** 구현해 보니 값이 언제나 `last_used_at` 과 동일했고 **읽는 코드가
+> 하나도 없었다** — 같은 라운드가 `system.py` 에서 지적한 「소비처 0 필드」와 같은
+> 클래스여서, 30초마다 나가는 페이로드와 `BASELINE_MAX_BYTES` 예산만 잠식했다.
+> 사고 조사축은 대신 **`probed_at`**(열린 열거를 마지막으로 돌린 시각)이 맡는다 — 그것은
+> `last_used_at` 과 실제로 다른 사실이고, `verify_streak` 상한의 근거로 **읽힌다**.
+> 출하된 항목 모양: `{label, models, efforts, last_used_at, probed_at, verify_streak, build}`
+> (정본 = `shared/bridge_caps.py:merge_baseline`). §3.4 의 **사용일 기준 만료**라는 사용자
+> 결정 자체는 그대로 지켜졌다 — 만료 축은 `last_used_at` 이다.
+
 ## 4. 완료 판정 기준 (AC)
 
 - **AC-1** (이슈 A): 러너를 새로 띄운 뒤 **새로고침 없이**, 능력 질의가 끝나는 시점부터

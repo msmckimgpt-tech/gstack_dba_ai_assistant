@@ -4633,9 +4633,19 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     batch_consent = _consent.DEFAULT_BATCH_CONSENT
     #: 이 계정의 런타임별 «마지막 확인» 원장 (TASK-20260902T140200). 러너가 다음 기동에서
     #: **확인할 대상**이다 — 그대로 신고할 목록이 아니다(사용자 결정 「확인-후-표시」).
-    #: 여기서 미리 비워 두는 이유: 아래 `try` 가 어느 지점에서 새더라도 응답 조립이
-    #: `NameError` 로 500 이 되지 않게. 연결 유지 신호가 원장 하나로 죽으면 안 된다.
-    caps_baseline: list = []
+    #: 여기서 미리 **`None`(=「모른다」)** 으로 두는 이유 두 가지.
+    #:
+    #: ① 아래 `try` 가 어느 지점에서 새더라도 응답 조립이 `NameError` 로 500 이 되지 않게.
+    #:    연결 유지 신호가 원장 하나로 죽으면 안 된다.
+    #: ② ⚠ **`[]` 로 두면 「원장이 비었다」는 단정이 된다** (codex R4 P1-3). 러너 수신부는
+    #:    「키가 **없으면** 건드리지 않는다」는 규율으로 되어 있는데(구 서버 호환), `[]` 를
+    #:    보내면 키가 **있으므로** 러너가 자기 원장을 지운다 — 조회 실패 한 번이 그 프로세스의
+    #:    확인 경로를 끄고, 그 회차는 열린 열거로 떨어져 제보 ②(실행마다 목록이 다르다)를
+    #:    그대로 재현한다. 「모른다」면 **키를 싣지 않는다** — 그러면 러너는 직전 값을
+    #:    유지하고 다음 30초에 다시 받는다. 이 저장소는 같은 구분을
+    #:    `account_caps_baseline`(`None` vs `{}`)에서 이미 세웠고, 여기서 그것을 평평하게
+    #:    만들면 그 층의 구분이 응답 경계에서 무의미해진다.
+    caps_baseline: list | None = None
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
@@ -4688,7 +4698,8 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] 능력 baseline 병합 실패 account=%s: %r", account_id, exc)
-            caps_baseline = []
+            # 실패는 「모른다」 — 빈 목록으로 접으면 러너가 직전 원장을 지운다(위 주석 ②).
+            caps_baseline = None
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "[bridge] 하트비트 기록 실패 account=%s: %r", account_id, exc)
@@ -4769,10 +4780,20 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         #   출처로 신고되고, 그것만 화면에 오른다(사용자 결정 2026-09-02 「확인-후-표시」).
         #   그대로 신고하는 경로를 열면 서버 보관 목록이 확인 없이 화면에 도달하는데, 그것은
         #   `gpt-5.1-codex` 화석(제보 4회)과 구조적으로 같은 형태다.
-        # ⚠ 실패했을 때 이 키가 **빈 목록**으로 실린다는 사실이 계약이다 — 러너는 빈 목록을
-        #   「baseline 없음」으로 읽고 종전 경로(열린 질의)로 흐른다. 키 자체를 빼면 구 러너와
-        #   신 러너가 같은 응답을 다르게 해석할 여지가 생긴다.
-        "caps_baseline": caps_baseline,
+        # ⚠ **「비었다」와 「모른다」를 키의 유무로 가른다** (codex R4 P1-3).
+        #
+        #   - 빈 목록 `[]` = 「이 계정의 원장은 실제로 비었다」(첫 연결). 러너는 그것을 읽고
+        #     종전 경로(열린 질의)로 흐른다 — 이 값은 **단정이며 참**이다.
+        #   - 키 **부재** = 「지금은 모른다」(조회·병합 실패). 러너 수신부가
+        #     `if "caps_baseline" in res` 로 되어 있으므로 직전 원장을 **유지**하고 다음
+        #     30초에 다시 받는다.
+        #
+        #   초판은 실패에도 `[]` 를 실었다. 그러면 실패가 「비었다」는 단정으로 위장해
+        #   러너가 원장을 **지우고**, 그 회차의 확인 경로가 꺼져 제보 ②(실행마다 목록이
+        #   다르다)가 그대로 재현된다. 초판 주석은 「키를 빼면 구·신 러너 해석이 갈린다」를
+        #   근거로 들었는데 **사실이 아니다** — 구 러너는 이 키를 아예 읽지 않으므로
+        #   부재와 존재를 구분할 코드가 없다.
+        **({} if caps_baseline is None else {"caps_baseline": caps_baseline}),
     })
 
 
