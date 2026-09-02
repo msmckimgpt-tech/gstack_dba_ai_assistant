@@ -13,6 +13,7 @@ import subprocess
 import threading
 import time
 
+from .base import CHILD_TEXT_IO
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log
 from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS
@@ -369,7 +370,7 @@ def _ask_json(argv: list[str], prompt: str, timeout: float,
     cmd = _resolve_exe(
         [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv])
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
+        proc = subprocess.run(cmd, capture_output=True, **CHILD_TEXT_IO,
                               timeout=(timeout if timeout and timeout > 0
                                        else _CAPS_PROBE_TIMEOUT_SEC))
     except Exception as exc:  # noqa: BLE001  (미설치·타임아웃·권한)
@@ -408,7 +409,8 @@ def _cli_help_text(name: str, timeout: float = _CAPS_HELP_TIMEOUT_SEC) -> str | 
     에러 경로가 같은 문으로 들어온다. 못 읽으면 "모른다" 로 남는 편이 안전하다.
     """
     try:
-        proc = subprocess.run(_resolve_exe([name, "--help"]), capture_output=True, text=True,
+        proc = subprocess.run(_resolve_exe([name, "--help"]), capture_output=True,
+                              **CHILD_TEXT_IO,
                               timeout=(timeout if timeout and timeout > 0
                                        else _CAPS_HELP_TIMEOUT_SEC))
     except Exception:  # noqa: BLE001

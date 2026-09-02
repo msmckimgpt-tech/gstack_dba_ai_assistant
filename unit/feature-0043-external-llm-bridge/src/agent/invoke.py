@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from .base import _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC
+from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC
 from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
@@ -274,7 +274,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     _exe = (cmd[0] if cmd else "")
     try:
         proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True,
+                                stderr=subprocess.PIPE, **CHILD_TEXT_IO,
                                 # ⚠ `stdin_text` 가 없을 때는 **파이프를 만들지 않는다** —
                                 #   종전대로 러너의 stdin 을 상속한다. 여기서 무조건 PIPE 를
                                 #   열면 그것을 닫아 주기 전까지 claude 가 stdin 을 기다리는
@@ -291,11 +291,28 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     # 파이프를 비우는 일은 별도 스레드에 맡긴다. 여기서 직접 읽으면 자식이 큰 출력을 낼 때
     # 파이프 버퍼가 차서 서로 기다리는 교착이 된다(고전적인 Popen 함정).
     box: dict[str, str] = {}
+    #: 파이프 스레드가 **예외로** 죽었을 때 그 예외. `None` = 정상.
+    #:
+    #: ⚠ 이 칸이 없으면 그 예외가 통째로 사라진다 (실측 2026-09-02). `communicate` 가
+    #:   `UnicodeEncodeError` 로 죽자 `box` 는 비고 `proc.returncode` 는 **None** 이 됐는데,
+    #:   아래 판정이 `!= 0` 이라 그것을 「자식이 오류로 끝났다」로 보고했다 — 원장에는
+    #:   `dur_ms=46 stdout_bytes=0 stderr_tail=`(빈 값)만 남아 사용자도 우리도 원인을 알 수
+    #:   없었다. 실패를 **다른 실패로 위장하는** 것이 침묵보다 나쁘다.
+    pump_exc: list[BaseException] = []
 
     def _drain() -> None:
         # `input=` 은 쓰고 나서 stdin 을 닫는다 — 닫지 않으면 CLI 가 입력이 더 올 줄 알고
         # 끝나지 않는다. `communicate` 가 쓰기·읽기를 함께 하므로 교착도 없다.
-        out, err = proc.communicate(input=stdin_text)
+        try:
+            out, err = proc.communicate(input=stdin_text)
+        except BaseException as e:  # noqa: BLE001  (여기서 삼키면 사유가 사라진다)
+            pump_exc.append(e)
+            # 자식이 남아 있으면 정리한다 — 우리가 파이프를 놓았으므로 그것은 고아가 된다.
+            try:
+                _kill(proc)
+            except Exception:  # noqa: BLE001
+                pass
+            return
         box["out"] = out or ""
         box["err"] = err or ""
 
@@ -322,6 +339,20 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
             return False, f"AI 호출이 {int(_AI_TIMEOUT_SEC)}초를 넘겨 중단했습니다."
 
     _dur = int((time.monotonic() - _t0) * 1000)
+    if pump_exc:
+        # 자식과의 **입출력 자체**가 실패했다 — 자식의 종료코드로 설명할 수 있는 일이 아니다.
+        # 종전에는 이 경로가 `returncode is None` 을 타고 아래 「AI 가 오류로 끝났다」로
+        # 흘러가, 원인이 적힌 예외를 버리고 빈 사유를 남겼다.
+        _log_exc("ai.io_fail", "AI 와의 입출력이 실패했다", pump_exc[0],
+                 exe=_exe, dur_ms=_dur, stdin_chars=len(stdin_text or ""))
+        return False, (f"내 AI 와 데이터를 주고받는 중 오류가 났습니다: "
+                       f"{type(pump_exc[0]).__name__}: {pump_exc[0]}")
+    if proc.returncode is None:
+        # 파이프는 멀쩡한데 종료코드를 못 얻었다(관측된 적 없음). **성공으로 읽지 않는다** —
+        # 그러면 빈 답이 정상 답으로 제출된다.
+        log_event(_EV_AI_FAIL, "AI 의 종료 상태를 확인하지 못했다", level="ERROR",
+                  exe=_exe, dur_ms=_dur, stdout_bytes=len(box.get("out") or ""))
+        return False, "내 AI 의 종료 상태를 확인하지 못했습니다."
     if proc.returncode != 0:
         # ⚠ 자식의 출력 **전문**(각 상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
         #   잘려 있어서, 정작 원인이 적힌 뒷부분이 사라지는 일이 잦았다.
@@ -444,7 +475,7 @@ def _ensure_strict_mcp_supported(kind: str, exe: str = "claude") -> bool:
         return False
     try:
         proc = subprocess.run(_resolve_exe([exe, "--help"]), capture_output=True,
-                              text=True, timeout=30)
+                              **CHILD_TEXT_IO, timeout=30)
         helptext = (proc.stdout or "") + (proc.stderr or "")
     except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "확인 못 했다" 로 같다)
         _log(f"참고: {exe} --help 로 {_STRICT_MCP_FLAG} 지원을 확인하지 못했습니다. "
@@ -489,7 +520,7 @@ def system_channel_supported(kind: str, custom: str | None = None,
         return _system_channel_cache[exe]
     try:
         proc = subprocess.run(_resolve_exe([exe, "--help"]), capture_output=True,
-                              text=True, timeout=30)
+                              **CHILD_TEXT_IO, timeout=30)
         helptext = (proc.stdout or "") + (proc.stderr or "")
     except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "확인 못 했다")
         _system_channel_cache[exe] = False

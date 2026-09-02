@@ -3395,3 +3395,29 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 닫지 못한 것도 그대로 적었다 — 러너는 **사용자 머신의 파일**이라 새 사본을 받아 재기동해야
 발효하고(서버가 바꿀 통로 없음), 그 머신 `claude` 는 로그인 만료 상태다(사용자 영역).
 코드 변경 없음.
+
+## CHG-20260902T160000 — 자식 입출력 인코딩을 로케일에 맡기지 않는다 (직전 수정이 연 실패면)
+
+**계기**: 사용자 재보고 — 재연결 후에도 답변 미수신. 직전 cycle(`CHG-20260902T140000`)의 두
+수정은 라이브에서 동작했으나(`startup_ms=811` · `system_channel.folded` · `cmdline.stdin`),
+그 자리에서 `ai.fail dur_ms=46 stdout_bytes=0` 로 죽었다.
+
+**진단 단서**: `ai.fail` 에 **`exit` 필드가 없다** = `proc.returncode is None` = 자식이 실패한
+것이 아니라 **파이프 스레드가 예외로 죽었다**.
+
+**원인**: `subprocess(text=True)` 는 로케일 인코딩을 쓴다. 사용자 머신
+`locale.getencoding()=cp949` 이고 프롬프트의 `⟦USER-REQUEST⟧`(U+27E6)는 cp949 로 인코딩
+불가 → `UnicodeEncodeError`. 종전에는 프롬프트가 argv(`CreateProcessW`, UTF-16)로 가서 이
+경로가 닫혀 있었고, **직전 cycle 이 stdin 으로 옮기며 처음 열렸다**.
+
+**변경**:
+
+| 파일 | 무엇 |
+|---|---|
+| `src/agent/base.py` | **신규** `CHILD_TEXT_IO = {text, encoding="utf-8", errors="replace"}` — 자식 호출 규약 단일 정본 |
+| `src/agent/invoke.py` | 자식 호출 3곳 적용 + `pump_exc`(파이프 예외 보존 → `ai.io_fail`) + `returncode is None` 전용 분기 |
+| `src/agent/caps.py` | 능력 협상·`--help` 2곳 적용(읽기 축의 같은 지뢰) |
+| `tests/test_child_io_encoding.py` | **신규 8건** — 규약·전수 적용·실 왕복·한글 무손상·깨진 바이트 관용·예외 비위장·rc None |
+
+**실 Windows(cp949) 대조 검증**: 수정본은 40,000자(U+27E6 포함) 왕복 PASS + 한글 무손상,
+수정 전 `text=True` 대조군은 같은 지점에서 `UnicodeEncodeError`.
