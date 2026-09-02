@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 import sys
 import types
 
@@ -66,23 +67,47 @@ def test_breakdown_keys_match_frontend_reader():
 
 
 def test_unclaimed_task_reports_total_without_a_fake_split():
-    """점유 시각이 없으면(구 task·외부 origin) 구간을 **꾸미지 않는다**."""
+    """점유 시각이 없으면(구 task·외부 origin) 분해를 **아예 싣지 않는다**.
+
+    총량 하나만 남는다. 「실행 = 총량」 분해를 실으면 화면에 같은 숫자가 괄호로 한 번 더
+    나올 뿐이다(라이브 관측 2026-09-02 — 대기 0 인 답변이 `36초 (추론 36초)` 로 보였다).
+    """
     got = ai_tools._bridge_answer_duration_meta(4_500.0, None)
-    assert got["duration_ms"] == 4_500.0
-    assert got["duration_breakdown"] == {"total_ms": 4_500.0, "inference_ms": 4_500.0}
+    assert got == {"duration_ms": 4_500.0}
 
 
 @pytest.mark.parametrize("queued", [
     -1.0,        # ClaimedAt < CreatedAt (시계 역행)
     9_999.0,     # ClaimedAt > SubmittedAt (총량과 모순)
     "abc",       # 드라이버가 준 비수치
+    0.0,         # 즉시 점유 — 가를 것이 없다 (라이브 실측: 초 해상도라 흔하다)
+    100.0,       # 프런트 표시 임계(250ms) 미만 — 그려지지 않을 분해는 각인하지 않는다
 ])
-def test_contradictory_wait_is_dropped_not_propagated(queued):
-    """대기 구간이 총량과 모순되면 그 축만 버린다 — 총량은 살린다(표시 자체가 사라지면 안 된다)."""
+def test_wait_that_cannot_be_shown_yields_total_only(queued):
+    """대기 축을 못 쓰거나 보여줄 수 없으면 **총량만** 남긴다 — 표시가 사라지면 안 된다."""
     got = ai_tools._bridge_answer_duration_meta(5_000.0, queued)
-    assert got["duration_ms"] == 5_000.0
-    assert "queued_ms" not in got["duration_breakdown"]
-    assert got["duration_breakdown"]["inference_ms"] == 5_000.0
+    assert got == {"duration_ms": 5_000.0}
+
+
+def test_segment_threshold_matches_the_frontend():
+    """서버의 구간 임계가 프런트 표시 임계와 **같은 숫자**여야 한다.
+
+    갈리면 두 방향으로 조용히 틀린다 — 서버가 더 관대하면 화면에 아무것도 못 그리는 분해를
+    각인하고(툴팁이 비어 보인다), 서버가 더 엄하면 프런트가 그릴 수 있는 구간을 미리 버린다.
+    """
+    js = (pathlib.Path(ai_tools.__file__).resolve().parents[1]
+          / "static" / "app.js").read_text(encoding="utf-8")
+    m = re.search(r"if \(Number\(ms \|\| 0\) >= (\d+)\) parts\.push", js)
+    assert m, "프런트 formatDurationBreakdown 의 표시 임계를 찾지 못했다(구현이 바뀌었나?)"
+    assert float(m.group(1)) == ai_tools._BRIDGE_SEGMENT_MIN_MS, (
+        f"프런트 임계 {m.group(1)}ms ≠ 서버 임계 {ai_tools._BRIDGE_SEGMENT_MIN_MS}ms")
+
+
+def test_showable_wait_still_produces_a_breakdown():
+    """보여줄 수 있는 대기(임계 이상)는 그대로 분해된다 — 위 게이트가 과잉이 아님을 잠근다."""
+    got = ai_tools._bridge_answer_duration_meta(5_000.0, 250.0)
+    assert got["duration_breakdown"] == {
+        "total_ms": 5_000.0, "queued_ms": 250.0, "inference_ms": 4_750.0}
 
 
 @pytest.mark.parametrize("total", [None, 0, 0.0, -12.0, "", "nan-ish"])
@@ -236,10 +261,10 @@ def test_delivered_answer_carries_the_duration(monkeypatch):
 
 
 def test_unclaimed_delivery_still_carries_a_total(monkeypatch):
-    """점유 시각이 없는 task 도 총량은 각인된다(구 task 도 수행시간을 본다)."""
+    """점유 시각이 없는 task 도 총량은 각인된다(구 task 도 수행시간을 본다) — 분해는 없다."""
     seen = _run_deliver(monkeypatch, _FakeConn(duration_row=(4_500.0, None)))
     assert seen["meta"]["duration_ms"] == 4_500.0
-    assert "queued_ms" not in seen["meta"]["duration_breakdown"]
+    assert "duration_breakdown" not in seen["meta"]
 
 
 def test_duration_failure_does_not_cost_the_answer(monkeypatch):

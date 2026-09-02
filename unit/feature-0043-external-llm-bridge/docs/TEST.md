@@ -206,6 +206,9 @@ source_of_truth: true
 | TEST-20260902T172500-basis | `_bridge_task_duration_meta` (소스) | 측정 기준이 `CreatedAt → SubmittedAt` — 기준이 바뀌면 표시 숫자가 조용히 줄어든다 | AC-20260902T172500-bridge-answer-duration-1 |
 | TEST-20260902T172500-wiring | `_deliver_web_bridge_answer` (실구동) | 저장 경로에 넘어가는 meta 에 수행시간이 실린다 · 기존 각인(제품·run_id) 무손상 | AC-20260902T172500-bridge-answer-duration-1 |
 | TEST-20260902T172500-failopen | `_deliver_web_bridge_answer` (실구동) | 소요 조회가 깨져도 **답변은 전달된다** · 소요 SELECT 를 주 SELECT 에 합치지 않는다 | AC-20260902T172500-bridge-answer-duration-3 |
+| TEST-20260902T180500-nosplit | `_bridge_answer_duration_meta` | 가를 것 없으면 분해 미탑재 — `36초 (추론 36초)` 중복 제거 | AC-20260902T180500-bridge-answer-duration-postdeploy-1 |
+| TEST-20260902T180500-threshold | 서버·프런트 임계 | `app.js` 의 표시 임계 숫자를 읽어 대조 — 갈리면 FAIL | AC-20260902T180500-bridge-answer-duration-postdeploy-2 |
+| TEST-20260902T180500-showable | `_bridge_answer_duration_meta` | 보여줄 수 있는 대기(임계 이상)는 그대로 분해 — 게이트가 과잉이 아님 | AC-20260902T180500-bridge-answer-duration-postdeploy-1 |
 
 ## 3. Run 기록
 
