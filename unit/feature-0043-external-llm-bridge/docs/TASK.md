@@ -2523,3 +2523,12 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] **admin 저장 무회귀** — `metadata_bulk` 200 · 6행 유지
 - [x] **배포 검증** — 전 서비스 SHA 일치 · healthz 200 · `no upstreams available` 0 · RestartCount 0
 - [x] **검증 계정 정리** — override 제거 + 비활성화 (감사 참조 보존 위해 행 유지)
+
+### POST-DEPLOY — TASK-20260902T160000 (배포 1e394a14)
+
+- [x] 전 서비스 SHA 일치 · blip 0 · 대화 스모크 PASS · 서빙 러너에 수정 심볼 전건
+- [x] **실 Windows(cp949) 대조 검증** — 배포본 40,000자(U+27E6) 왕복 PASS ·
+      한글 무손상 / 수정 전 대조군 `UnicodeEncodeError`
+- [x] 병합 변형 점검 — 형제 `selfupdate.py` 는 전 구간 바이너리 모드(상호작용 없음)
+- [ ] **사용자 머신 재기동 1회 + `claude` 재로그인** — 이월(사용자 영역).
+      재기동 후에는 형제 cycle 의 자동 갱신(`try_self_update`)이 이어받는다

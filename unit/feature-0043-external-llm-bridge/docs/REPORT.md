@@ -21,7 +21,7 @@ source_of_truth: true
 + **파이프 예외 보존**(`ai.io_fail`) + `returncode is None` 전용 분기. **실 Windows(cp949)
 대조 검증**: 수정본 40,000자(U+27E6 포함) 왕복 PASS · 한글 무손상 / 수정 전 대조군
 `UnicodeEncodeError`. 신규 8건 + 뮤테이션 6종 전건 KILL · 컨테이너 신규 실패 0.
-**잔여: 그 머신 `claude` 재로그인**(사용자 영역 — 이제 도달 후 실패가 안내문으로 표시된다).
+**POST-DEPLOY 실측 완료**(`1e394a14`): 전 서비스 SHA 일치 · blip 0 · 대화 스모크 PASS · 그리고 **내려받은 배포본을 사용자 머신에서 cp949 로 실행**해 40,000자(U+27E6) 왕복 PASS · 한글 무손상 / 수정 전 대조군은 같은 조건에서 `UnicodeEncodeError`(대조군이 load-bearing). **잔여: 그 머신 재기동 1회 + `claude` 재로그인**(사용자 영역 — 이제 도달 후 실패가 안내문으로 표시되고, 재기동 이후의 러너 갱신은 형제 cycle 의 `try_self_update` 가 맡는다).
 
 **2026-09-02 (TASK-20260902T140000)**: 사용자 제보 *"powershell 로 연결은 됐는데 답변도 러너
 로그도 없다"* 의 두 절반이 **서로 다른 결함**이었고 둘 다 닫았다.
