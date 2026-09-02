@@ -5621,3 +5621,19 @@ Task-Cycle: feature-0003-agent-web-ui
 - `static/app/connect-modal.js` — 자격 판정(`last_os`)·실행 URL 프리페치(사용자 활성화 보존)·
   단일 진입점(`_connectEntry`)·로그인 진입 1회 자동 시도·대기 판정 단일화(`_awaitUsable`).
   `static/agent/` 배포 사본 3종 동기화.
+
+## CHG-20260902T120000 — (feature-0043 cycle) 컴포저 안내 문단이 입력창을 밀어내던 결함
+
+`static/index.html` · `static/css/chat.css` · `static/app/connect-modal.js` ·
+`routers/oauth_as.py` 를 편집. 정본은
+`unit/feature-0043-external-llm-bridge/docs/TASK-20260902T120000-relaunch-dead-end.md`.
+
+`#composerActionsSelectorNote` 는 `.composer-box`(`display:flex` 한 줄)의 **정적 자식**이라
+형제 팝업들(`absolute`/`fixed`)과 달리 **플렉스 항목**으로 섰다 — 안내가 켜지는 순간 `+`
+버튼과 제품 칩 사이에 끼어 입력창을 오른쪽으로 밀어냈다(사용자 스크린샷 2026-09-02).
+앞 cycle 이 `role="menu"` owned-child 제약을 피해 문단을 메뉴 밖으로 꺼냈지만 **배치까지
+옮겨 주지는 않았다.** `.composer-wrap` 안 입력창 바로 위로 옮기고(잠금 안내와 같은 근거)
+단독 줄에 맞는 여백으로 바꿨다. ARIA 계약은 조상 사슬 검사로 함께 잠갔다.
+
+`connect_status` 응답에 `runner_build`(러너 지문)를 추가 — 화면이 재기동 전후를 대조해
+「재실행으로는 풀리지 않는」 상태를 가려내는 **동일성 축**에만 쓴다(표시하지 않는다).

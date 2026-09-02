@@ -559,6 +559,13 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     # 다를 수 있고, 그 차이가 곧 "고쳤다는데 화면은 그대로" 다 — 사용자가 그 이유를 알 수
     # 있는 자리가 화면 어디에도 없었다. 판정은 서버가 내고 프런트는 불리언 하나만 읽는다.
     runner_stale = False
+    # 그 러너가 **어느 파일**인가 (2026-09-02, 사용자 제보). `runner_stale` 만으로는 「다시
+    # 띄웠는데 같은 파일이 다시 떴다」와 「다른 파일로 바뀌었는데 그것도 낡았다」가 구별되지
+    # 않는다 — 전자는 **재실행으로는 영영 풀리지 않는** 상태이고, 그것을 말할 수 있으려면
+    # 화면이 재기동 전후의 지문을 대조할 수 있어야 한다. 판정은 여전히 서버가 내고(`runner_stale`),
+    # 이 값은 «같은 것이 다시 떴는가» 라는 **동일성** 축에만 쓴다.
+    # `None` = 모른다(조회 실패·듣고 있는 러너 없음) · `""` = 러너가 지문을 신고하지 않았다.
+    runner_build: str | None = None
     if listening:
         try:
             from routers.ai_tools import runner_build_is_stale
@@ -568,6 +575,7 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
                 _reported = _store.account_runner_build(cur2, int(account.get("id") or 0))
             finally:
                 cur2.close()
+            runner_build = _reported
             # 판정은 `ai_tools.runner_build_is_stale` **하나**다 — 하트비트 응답
             # (`runner_update`)과 같은 술어를 쓴다. 여기 다시 적으면 두 판정이 갈릴
             # 준비를 마치고, 갈리면 「칩은 초록인데 하트비트는 구버전」이 된다.
@@ -581,6 +589,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             #  것이었는데, 그것을 **배제하는 데만** 여러 왕복이 들었다 — 로그 한 줄이
             #  있었으면 첫 시도에 갈라졌다).
             runner_stale = False
+            # 동일성 축도 함께 «모른다» 로 되돌린다 — 판정이 실패한 조회에서 지문만 살려 두면
+            # 화면이 그 반쪽 사실로 「같은 파일이 다시 떴다」를 단정하게 된다.
+            runner_build = None
             logging.getLogger(__name__).debug("runner build 대조 실패", exc_info=True)
     # 마지막으로 연결됐던 명령 계열 (2026-09-01, 사용자 요청). 화면 1단계의 기본 탭이 이것으로
     # 정해진다 — 종전의 `navigator.platform` 추측은 **브라우저가 도는 OS** 라, WSL 안에서
@@ -635,6 +646,10 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         # 연결은 성립했는데 **그 러너가 배포본과 다르다** — 잠금 사유는 아니고(답변은 온다)
         # 안내 사유다. 이 값이 없으면 사용자는 옛 동작을 보면서 이유를 알 방법이 없다.
         "runner_stale": runner_stale,
+        # 그 러너의 **지문**. 화면은 이 값을 표시하지 않는다 — 재기동 전후를 대조해
+        # 「다시 띄웠는데 같은 파일이 다시 떴다」를 가려내는 데만 쓴다(그 상태에서는 실행
+        # 버튼을 아무리 눌러도 풀리지 않으므로, 다른 것을 말해야 한다).
+        "runner_build": runner_build,
         # ── 배경 배치 동의 (TASK-20260901T190000, 사용자 결정 "웹에서 토글") ────────────
         # 종전 표현 수단은 러너 CLI 플래그 `--batch` 하나였다 — 웹 어디에서도 켤 수 없고,
         # 바꾸려면 러너를 다시 띄워야 하며, 온보딩 명령을 복사해 붙인 사람은 그런 플래그가

@@ -251,3 +251,16 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 
 | TEST-20260901T170000-stop-last | `_arm_exit_release` (실 프로세스 종료) | `run.stop` 이 **마지막 줄** · 해제가 그 앞 · 집계에 해제가 실림. 구코드 FAIL 재현 확인 | AC-20260901T163000-runner-log-2 |
 | TEST-20260901T170000-stop-order | `bridge_agent.py` 소스 | 요약 등록이 해제 등록보다 **앞**(atexit 역순 계약을 이름으로 고정) | AC-20260901T163000-runner-log-2 |
+
+| TEST-20260902T120000-same | node 하네스 (`connect-modal` 실행) | 같은 지문으로 재기동되면 사유를 바꾸고 **1단계 명령까지 준비**해 보여 준다 | AC-20260902T120000-relaunch-1 |
+| TEST-20260902T120000-noburn | node 하네스 | 증거를 잡은 뒤의 클릭은 실행을 다시 쏘지 않는다(30초 반복 소모 제거) | AC-20260902T120000-relaunch-2 |
+| TEST-20260902T120000-changed | node 하네스 | 지문이 **바뀌었으면** «그대로» 라고 하지 않는다 — 축은 낡음이 아니라 동일성 | AC-20260902T120000-relaunch-1 |
+| TEST-20260902T120000-unknown | node 하네스 | `null`(모른다) 둘을 같음으로 읽지 않는다 — 조회 실패가 「재설치하세요」로 둔갑하지 않게 | AC-20260902T120000-relaunch-3 |
+| TEST-20260902T120000-empty | node 하네스 | `""`(지문 신고 없는 구 러너)는 **아는 값** — 이 결함의 모집단이 판정에서 빠지지 않는다 | AC-20260902T120000-relaunch-3 |
+| TEST-20260902T120000-expire-build | node 하네스 | 파일이 실제로 바뀌면 증거가 풀려 실행 경로가 되살아난다 | AC-20260902T120000-relaunch-4 |
+| TEST-20260902T120000-expire-ok | node 하네스 | 한 번 최신에 도달한 컴퓨터는 증거가 무효 — 그 뒤의 낡음은 재실행으로 푼다 | AC-20260902T120000-relaunch-4 |
+| TEST-20260902T120000-impatient | node 하네스 | 연달아 눌러도 토큰이 하나씩 쌓이지 않는다(안내 경로가 발급을 동반한다) | AC-20260902T120000-relaunch-1 |
+| TEST-20260902T120000-server | `connect_status` 소스 | 지문이 응답에 실리고, 판정 실패 시 지문도 함께 거둔다 | AC-20260902T120000-relaunch-3 |
+| TEST-20260902T120000-parity | `connect-modal.js` 소스 | 자동·수동 두 실행 경로가 **같은 판정 함수**를 쓴다 | AC-20260902T120000-relaunch-2 |
+| TEST-20260902T120000-layout | `index.html` 조상 사슬 | 안내 문단이 `.composer-box`(플렉스 한 줄) **밖** — 입력창을 밀어내지 않는다 | AC-20260902T120000-note-1 |
+| TEST-20260902T120000-aria | `index.html` 조상 사슬 | 그러면서 `role="menu"` 안에는 여전히 없다(앞 cycle 계약 미회귀) | AC-20260902T120000-note-1 |

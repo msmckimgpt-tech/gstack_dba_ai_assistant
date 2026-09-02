@@ -6,6 +6,67 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-relaunch-cannot-update-a-pre-refresh-launcher — fixed:deployed:unverified-live (L7↔L4 경계; 「업데이트 필요」가 재실행으로는 영영 풀리지 않는데 화면이 매번 재실행을 권함)
+
+- **status**: `fixed:deployed:unverified-live`
+- **source**: 사용자 제보 (2026-09-02) — "자동연결이 진행되고 나서 … '업데이트 필요' 에 대한
+  부분이 확인되었습니다. 자동연결 전 러너의 버전의 갱신이 필요하다면, 해당 과정도 수행되어야
+  합니다." + 컴포저 스크린샷.
+- **last_seen**: 2026-09-02 · **seen_count**: 1 · **seen_distinct_conv**: n/a(제품 표면)
+- **modality**: 제품 UI(컴포저·연결 칩) · **conv(마스킹)**: n/a
+- **symptom_confidence**: high · **rootcause_confidence**: high
+  (설치 파일 mtime **10:16** · 갱신 블록 커밋 **10:44:26** · 러너 로그 `hb.stale_build` 고정 지문
+  `937b18be70eb` · 라이브 `bridge_setup.sh` 에 블록 존재 — 4중 대조)
+- **suspected_layers**: **L7**(막다른 길을 화면이 반복 권유) ↔ **L4**(재실행 결과를 판정하는 축 부재)
+
+- **증상(signal)**: 직전 cycle 의 자동 실행은 **정확히 동작했다**. 그런데 결과가 같았다 —
+  「업데이트 필요」를 누르면 실행이 나가고, 30초 뒤 여전히 「업데이트 필요」다.
+- **confirmed_root_cause**: 스킴은 사용자 머신의 런처(`launch.sh`)를 부르고, 런처가 러너 파일을
+  띄운다. **런처 자기 갱신은 10:44 배포**인데 사용자의 런처는 **10:16 설치본**이라 그 블록이
+  없다 — 디스크의 파일을 그대로 다시 띄운다. 그리고 **이미 설치된 런처를 서버가 원격으로 바꿀
+  통로는 없다**(러너에 자기 갱신 기능 0건). 재발경로 = **출하 ≠ 도달**(사용자 머신에 복사되는
+  산출물의 자기 갱신 장치는 «그 장치가 들어간 버전부터» 발효한다).
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님 — 옛 모델 목록·옛 동작이 그대로 보인다.
+  **F2** 사용자 오류 아님(안내대로 눌렀다). **F3** 기수정 아님 — 직전 cycle 은 *자동 실행* 축이고
+  이건 *그 실행이 파일을 바꾸지 못하는* 별개 구조. **F4** 의도된 동작 아님. **F5** ANCHOR 충돌
+  없음. **F6** 외부 기인 아님 — 판정도 안내도 우리 화면에 있다.
+- **triage**: S=4 · F=4 · L=3 · C=3 · R=4 → **18**, disposition=**fix-now**. 위험등급 **Minor**
+  (화면 판정·안내 축, 인증·데이터 경계 무관).
+- **봉인**: 런처 나이를 묻지 않고 **재기동 전후 러너 지문**을 대조한다(`connect_status.runner_build`,
+  화면은 동일성 축에만 사용·표시 안 함). 같으면 문구를 바꾸고 **1단계 명령을 발급까지 해서**
+  같은 화면에 세운다. 그 뒤로는 클릭·로그인 진입 모두 실행을 다시 쏘지 않고, 증거는 지문 변화·
+  최신 도달로 해제된다. `null`(모른다)은 동일성 근거가 아니고 `""`(지문 미신고 구 러너)는 아는 값.
+- **교훈(일반화)**: 원격 복구 통로가 정말 없을 때 할 수 있는 일은 (a) 그 상태를 **관측으로 판별**
+  하고 (b) 남은 단 하나의 행동을 **막다른 길이 아닌 형태로** 제시하는 것이다. 없는 능력을 있는
+  것처럼 말하지 않는 것이 첫 번째 정직함이다. → [[LRN-20260902-0001]]
+- **범위 밖(의도)**: 러너 자기 갱신 — 같은 부트스트랩 한계라 **지금 겪는 사용자에게 도움이 되지
+  않고**, `bridge_agent.py` 는 현재 `feature-0043-runner-modularization` 세션의 hot path 다.
+
+---
+
+## FR-composer-notice-shrinks-the-input — fixed:deployed:unverified-live (L7; 안내가 켜지는 순간 입력창이 34% 줄어듦)
+
+- **status**: `fixed:deployed:unverified-live`
+- **source**: 사용자 제보 (2026-09-02) — "대화창 UI가 무너진것으로 확인되어 수정이 필요합니다."
+- **last_seen**: 2026-09-02 · **seen_count**: 1 · **modality**: 제품 UI(컴포저)
+- **symptom_confidence**: high · **rootcause_confidence**: high
+  (배포본 실 브라우저 정량: 안내 꺼짐 **1393px** → 켜짐 **922px**, 문단이 같은 줄에서 464px)
+- **suspected_layers**: **L7**(표시 요소가 조작면을 잠식)
+- **confirmed_root_cause**: `#composerActionsSelectorNote` 가 `.composer-box`(`display:flex` 한 줄)의
+  **정적 자식**. 형제인 두 팝업은 `absolute`/`fixed` 라 줄에서 빠져 있는데 이 `<p>` 만 흐름에 남아
+  **플렉스 항목**이 됐다. 앞 cycle 이 `role="menu"` owned-child 제약을 피해 문단을 메뉴 **밖으로**
+  꺼냈지만 **그 이동이 배치까지 옮겨 주지는 않았다**. 재발경로 = **제약 충족과 배치의 분리**.
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님(입력 조작면 34% 잠식). **F4** 의도된 동작 아님 —
+  CSS 주석이 «메뉴 항목 아님» 을 말할 뿐 자리를 규정하지 않았다. **F6** 외부 기인 아님.
+- **triage**: S=3 · F=4 · L=2 · C=2 · R=3 → **14**, disposition=**fix-now**. 위험등급 **Minor**.
+- **봉인**: `.composer-wrap` 안 **입력창 바로 위**로 이동(잠금 안내 `#composerGate` 와 같은 근거) +
+  단독 줄 여백. ARIA 계약(`role=menu` 밖)은 **조상 사슬 검사**로 함께 잠갔다 — 둘 다 «관계» 이므로
+  한쪽을 고치며 다른 쪽을 깨는 일이 구조적으로 막힌다.
+- **신호(일반화)**: 이 요소를 참조하는 테스트가 **0건**이었다. 새 DOM 요소에는 「무엇이 이 요소의
+  자리를 잠그고 있나」를 묻는다. → [[LRN-20260902-0002]]
+
+---
+
 ## FR-stale-runner-outraces-fresh-one — fixed:deployed:unverified-live (L4↔L7 경계; 여러 러너 중 «누가 정본인가» 에 답이 없어 옛 연결이 질문을 가로채고 연결 모달도 완수되지 않음)
 
 - **status**: `fixed:deployed:unverified-live` — **2단계**로 해소.
