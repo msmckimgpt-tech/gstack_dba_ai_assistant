@@ -294,10 +294,21 @@ def test_guide_distinguishes_missing_token_from_stopped_process():
 
 
 def test_gate_button_opens_the_connect_modal():
+    """안내 버튼이 **조치로 이어진다**.
+
+    ⚠ 2026-09-02 부터 그 조치는 «무조건 창 열기» 가 아니다 — 이미 연결해 본 사용자에게는 바로
+    실행을 쏘고, 실패했을 때·이력이 없을 때만 창으로 간다(사용자 요청: 접근성). 그래서 이
+    계약은 **버튼이 그 단일 진입점으로 간다**는 것과, **그 진입점이 창으로 떨어질 수 있다**는
+    것을 잠근다. 리터럴 `openConnectModal()` 을 이 자리에서 요구하면 개선을 되돌리라는 게이트가
+    된다(그 함수 이름은 계약이 아니라 구현 세부다).
+    """
     code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
     bind = code[code.index("export function bindConnState("):]
-    assert 'composerGateBtn' in bind and "openConnectModal()" in bind, (
+    assert "composerGateBtn" in bind and "_connectEntry" in bind, (
         "안내 버튼이 연결 흐름으로 이어지지 않는다")
+    entry = code[code.index("function _connectEntry("):]
+    entry = entry[:entry.index("\nexport function")]
+    assert "openConnectModal()" in entry, "막다른 길이 된다 — 창으로 떨어질 경로가 없다"
 
 
 def test_send_button_tooltip_prioritises_the_bridge_reason():
