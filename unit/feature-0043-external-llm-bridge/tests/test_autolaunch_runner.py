@@ -251,3 +251,39 @@ def test_refresh_runs_after_token_validation():
     body = _sh_code(_launcher_block(sh, 'cat > "$LAUNCH_SH"', "\nLAUNCHEOF"))
     assert body.index("--check") < body.index("_new="), "검증 전에 러너 파일을 교체한다"
     assert body.index("_new=") < body.index("pkill"), "교체가 종료보다 뒤면 낡은 파일로 다시 뜬다"
+
+
+# ── 6. 진입 자동 시도가 사용자의 클릭을 삼키지 않는다 (라이브 실측 2026-09-02) ──
+
+
+def test_user_click_beats_an_in_flight_entry_attempt():
+    """진입 자동 시도의 ~30초 대기창 안에 누른 클릭이 **조용히 삼켜지면 안 된다**.
+
+    배포 후 실 브라우저에서 정확히 그것이 관측됐다 — 칩을 눌렀는데 실행도 안 되고 창도 안
+    열렸다. 그건 이 개선 **이전**(무조건 창 열기)보다 나쁘다. 자동 시도는 사용자를 돕는
+    장치이지 막는 장치가 아니다.
+    """
+    body = _fn("autoLaunch")
+    guard = body[:body.index("const ready")]
+    assert "_launchBusyReason" in guard, "진행 중 시도의 성격을 구분하지 않는다(클릭도 함께 막힌다)"
+    assert 'reason === "click"' in guard, "클릭이 자동 시도를 대체할 길이 없다"
+
+
+def test_duplicate_clicks_are_still_suppressed():
+    """클릭끼리의 중복은 그대로 막는다 — 러너를 두 번 재기동할 이유가 없다."""
+    guard = _fn("autoLaunch")
+    guard = guard[:guard.index("const ready")]
+    assert '_launchBusyReason !== "click"' in guard, "클릭 중복까지 통과시킨다"
+
+
+def test_superseded_attempt_does_not_undo_the_newer_one():
+    """대체된 시도는 잠금을 풀지도, 창을 열지도 않는다.
+
+    풀면 새 시도의 중복 방어가 사라지고, 창을 열면 사용자가 방금 시작한 흐름 위로 남의 시도가
+    만든 창이 덮인다.
+    """
+    body = _fn("autoLaunch")
+    assert "const seq = ++_launchSeq" in body
+    assert "if (seq !== _launchSeq) return true;" in body, "대체 판정 없이 결과를 반영한다"
+    fin = body[body.index("} finally {"):]
+    assert "if (seq === _launchSeq)" in fin, "대체된 시도가 잠금을 푼다"
