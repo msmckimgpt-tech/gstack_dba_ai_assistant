@@ -39,6 +39,7 @@ BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FI
 .PHONY: help \
         check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db \
         up down start stop restart status build test backup gc embed ps logs init clean clear \
+        bridge-agent \
         sh repl ask mysql out dump session-info dc-build \
         migrate migrate-stamp migrate-new \
         mcp-up mcp-down mcp-test \
@@ -269,6 +270,17 @@ TEST_ISOLATION_ENV := \
 # 빌드는 증분). 라이브 스택의 이미지·컨테이너·네트워크에는 손대지 않는다.
 TEST_COMPOSE_PROJECT := repo-unittest
 DC_TEST := COMPOSE_BAKE=false docker compose -p $(TEST_COMPOSE_PROJECT) --ansi=never
+
+bridge-agent:  ## dev: 브리지 러너 배포본 빌드 (src/agent/ 패키지 → 단일 파일 + static/agent 배치)
+	@# 이미지 빌드(Dockerfile)와 테스트(conftest.py)는 각자 같은 스크립트를 부른다.
+	@# 이 타깃은 **컨테이너 없이 로컬 트리만** 갱신하고 싶을 때 쓴다(산출물은 .gitignore 대상).
+	@python3 unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py \
+	  --src unit/feature-0043-external-llm-bridge/src/agent \
+	  --out unit/feature-0043-external-llm-bridge/src/bridge_agent.py
+	@python3 unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py \
+	  --src unit/feature-0043-external-llm-bridge/src/agent \
+	  --out unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py \
+	  --stage-assets unit/feature-0043-external-llm-bridge/src
 
 test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — 전용 compose 프로젝트(라이브 네트워크 미참여) + 라이브 DB/스냅샷 차단 env
 	@$(MAKE) -s dc-build SERVICE=agent DC_QUIET="$(DC_TEST)"
