@@ -2769,7 +2769,6 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
       로컬은 root 라 조작이 무효였고 `skipif(root)` 가 그 모순을 가렸다. L10 은 정적 계약만
       남기고, 「갱신 실패해도 러너는 뜬다」는 L3 이 실물로 본다(rc=0 검사 추가)
 - [ ] PB-0008 실 Windows POST-DEPLOY 실측
-
 ## 20260902T1900-caps-probe-fast — 능력 질의가 «신속»해야 한다 (사용자 제보 4차)
 
 ### 4. Requested Scope (요청 범위)
@@ -2817,3 +2816,16 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 **합집합 누적**이다: 회차마다 조금씩 달라도 원장은 넓어지고 사용자가 보는 목록은 좁아지지
 않는다. 그리고 codex 는 **종전에 아무것도 신고하지 못했다**(타임아웃) — 1종이라도 받는 것이
 엄격히 개선이다. 반대 방향(가드 없이 66초를 기다려 3종을 더 얻기)은 이 제보의 반대다.
+## Cycle — TASK-20260902T193000 AI CLI 허용목록 정본 동기화 (ROADMAP ITEM-05)
+
+- [x] census 전수 — 잔재가 3자리가 아니라 **6자리**임을 실측 (허용목록 3 + ps1 설치경로 1 + 사용자 대면 문장 2)
+- [x] `bridge_setup.sh` `_KNOWN_AI_CLIS` 에서 `ollama` 제거
+- [x] `bridge_setup.ps1` `$KnownAiClis` + `Programs\Ollama` 설치경로 제거
+- [x] `oauth_as.py` `_PROBED_AI_ALLOWLIST` 제거
+- [x] 핸드오프·보안계약 문장 2곳을 `_PROBED_AI_ALLOWLIST` 파생으로 전환 (하드코딩 제거)
+- [x] `tests/test_ai_cli_allowlist_sync.py` 신설 — 정본 대조 + 전수 스캔 + 신규 열거 census (11건)
+- [x] 적대 뮤테이션 14종 — 결함 뮤턴트 11종 전건 KILL / 표기변형 3종 정상 통과(내성 확인)
+- [x] codex 적대 리뷰 P1 0건 · P2 3건 전건 수정 (스캔 모수 확대 · 표기 내성 · 면제 범위 축소)
+- [x] 회귀: feature-0043 · feature-0003 모두 **main 기준선과 실패집합 동일**(신규 실패 0)
+- [x] ps1 BOM 보존 확인 (없으면 CP949 파싱 붕괴 — 회귀 이력 있음)
+- [ ] POST-DEPLOY 라이브 실측 — 미수행 (웹 자산 변경 0 · 설치 스크립트는 다음 배포 빌드에 반영)

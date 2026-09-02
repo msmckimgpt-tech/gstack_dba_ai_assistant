@@ -4138,8 +4138,6 @@ docstring 에 한계로 명시했다(컬럼을 `DATETIME(3)` 으로 올리는 �
 [1] web-a·web-b 대상 SHA + soak 통과 · [1b] 대화 스모크 PASS · [2] 전 서비스 이미지
 `mysql-ai-agent:e894cd86` · [2b] surge 잔존 0 · [3] 스탬프 `?v=4d097724eb22` 갱신 및 서빙
 JS 에서 신 심볼 확인 · [4] PB-0008 위 결과 · [5] 무중단 실측 `no upstreams available` **0건**.
-
-
 ## CHG-20260902T190000-caps-probe-fast — 능력 질의 응답 시간의 근본 원인 해소
 
 사용자 제보 4차: 「모델 목록 호출은 어려운 작업이 아니므로 신속해야 한다. 응답 시간이 오래
@@ -4228,3 +4226,14 @@ FAILED 0 · ruff F821 기준선 동일(1건).
 가드는 한 회차의 응답을 **짧게** 만들 수 있다(실측 claude 6종 → 3종). 계정 원장의 합집합
 누적이 그것을 흡수하고, codex 는 종전에 **아무것도** 신고하지 못했으므로(타임아웃) 1종이라도
 받는 것이 엄격히 개선이다.
+## CHG-20260902T193000-ai-claude-ai-cli-allowlist-sync — AI CLI 허용목록을 러너 정본에서 파생 (ITEM-05)
+- Timestamp: 2026-09-02T19:30:00+09:00
+- 배경: P0-Z6.1 이 러너에서 `ollama` 를 제거했으나 소비처 6자리에 잔존 → **설치 통과 후 런타임 실패**.
+- 변경:
+  - `src/bridge_setup.sh:152` `_KNOWN_AI_CLIS` → `"claude codex gemini"` (+ 정본 지목 주석)
+  - `src/bridge_setup.ps1:206` `$KnownAiClis` → 3종 / `:220` `Programs\Ollama` 설치경로 삭제
+  - `feature-0003 routers/oauth_as.py` `_PROBED_AI_ALLOWLIST` → 3종 + **정본이 러너임을 주석에 명시**
+  - 같은 파일 사용자 대면 문장 **2곳**을 `'·'.join(...)` / `'/'.join(...)` 파생으로 전환
+  - `tests/test_ai_cli_allowlist_sync.py` 신설 (11건)
+- 검증: 뮤테이션 14종(결함 11 KILL · 표기변형 3 정상통과) · codex P1 0 · 기준선 대비 신규 실패 0 · BOM 보존.
+- 잔여: 설치 스크립트 배포본(`static/agent/`)은 **빌드 생성물**이라 다음 배포 빌드에서 갱신된다.
