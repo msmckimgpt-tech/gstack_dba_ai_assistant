@@ -1007,3 +1007,9 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
 
 - **미검증**: 배포 후 실제 회수 동작. 재발 신호는 `glossary_retracted` 가 0 인 채 그래프
   GlossaryTerm 수가 `kb_glossary` 를 넘어서는 것이다.
+
+## REV-20260902T160000-graph-retract-postdeploy [SKIPPED:non-policy-doc] — 회수 라이브 실증 기록
+
+- Cross-ref: CHG-20260902T160000-graph-retract-postdeploy. 코드 변경 0.
+- 근거: 배포본 소스 검사(회수 단계 배선 True) · 프로브 심기→전건 sync→`glossary_retracted=1` ·
+  정상 용어 199=199 · 증분 실행 `skipped='incremental'` + 199 보존.

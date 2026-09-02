@@ -4243,7 +4243,7 @@ F3 누적분 회수(7,242 + 2,132 정점)는 **청소**였고 원인은 남아 �
 - [x] `glossary_retracted` 계측 초기화
 - [x] 뮤테이션 7/7 KILL · `make test` rc=0
 - [x] codex 리뷰 P3 조치 — AGE key 를 `json.loads` 로 파싱(strip 은 특수문자 오판)
-- [ ] 배포 후 회수 동작 확인 (`glossary_retracted` · 그래프 vs DB 수 일치 유지)
+- [x] 배포 후 회수 동작 확인 — 프로브 실증 `glossary_retracted=1` · 증분 가드 `skipped=incremental` · 그래프 638 = DB 638
 
 ### 남긴 범위
 

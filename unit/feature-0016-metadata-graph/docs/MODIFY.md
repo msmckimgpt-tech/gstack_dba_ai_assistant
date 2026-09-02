@@ -565,3 +565,17 @@ Task-Cycle: feature-0016-metadata-graph
   쓰므로 언제든 들어올 수 있었다. **내 자체 리뷰는 이걸 못 찾았다.**
 
 Task-Cycle: feature-0016-metadata-graph
+
+## CHG-20260902T160000-graph-retract-postdeploy — 회수 단계 라이브 실증 (doc-only)
+
+코드 변경 0. 배포 `3e26527c` 후 실측.
+
+- **의도적 유령 정점을 심어** 실증했다 — 관측만으로는 「지울 게 없어서 0」과 「단계가 안 돌아서
+  0」이 구별되지 않는다. 프로브 1건 심음(638→639) → 전건 sync → **`glossary_retracted=1`** ·
+  프로브 제거 · GZ_QA_G 정상 용어 **199=199 손실 0** · 전체 **638=638**.
+- **증분 가드 실증**: `since` 지정 시 `glossary_retracted=0` ·
+  `glossary_retract_skipped='incremental'` · 용어 **199 전건 보존**. 가드가 없었다면 그 실행이
+  변경분 2건만 live 로 보고 **197건을 지웠을 것**이다.
+- 증적: `docs/test-runs.d/20260902T140000-graph-sync-retract.md` Run 3·4.
+
+Task-Cycle: feature-0016-metadata-graph
