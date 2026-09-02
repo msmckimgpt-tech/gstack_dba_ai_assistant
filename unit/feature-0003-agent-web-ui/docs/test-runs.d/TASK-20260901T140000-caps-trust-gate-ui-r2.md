@@ -97,3 +97,44 @@ $ node unit/feature-0003-agent-web-ui/tests/verify_selector_note.mjs
 - 검증 컨테이너 `web-verify-capsgate2` · 스탬프 트리 `/var/tmp/capsgate2` **제거 완료**.
 - 내가 만든 토큰 `Id=95` **revoke 완료**. 타 세션 자원 무접촉.
 - 포트 18091 반납.
+
+---
+
+## 6. 정정 (2026-09-02, 재설계 후 재측정)
+
+**이 Run 의 관측 대상 설계는 §18.8 (b) 로 철회됐다.** 위 §2 가 실화면으로 확인한
+`runner_caps_stale` · `runner_mixed` 응답 필드와 「구 러너 = 전역 숨김」 규칙은 더 이상
+존재하지 않는다. 관측 자체는 그때 참이었으므로 지우지 않고, 무엇이 승계되고 무엇이
+사라졌는지만 여기에 적는다.
+
+| §2 의 관측 | 현재 |
+|---|---|
+| `runner_caps_stale = true` | **필드 없음** — 선택기 축은 `runner_listening` 하나 |
+| `runner_mixed = false` | **필드 없음** — 다중 러너 fail-closed 철회 |
+| 「러너가 오래된 버전이라…」 문구 | 「연결된 러너가 알려준 모델이 없습니다 — 최신 실행 파일로 다시 실행해 보세요」 |
+| 링크 `href=/static/agent/bridge_agent.py` · `role=presentation` · `aria-live=polite` | **승계** (단, `<p>` 가 `role="menu"` **밖으로** 이동 — 메뉴 자식이면 role 이 무효화된다) |
+| 모델 항목 hidden | 승계 |
+
+### 6.1 §3 하네스 수치 정정 — 위 표는 틀렸다
+
+qa 적대리뷰가 지적한 대로 위 §3 표의 수치는 **산술적으로 불가능**했다. 하네스는 10케이스인데
+`M3: 3+6=9`, `M-C2: 8+1=9` 로 하나가 사라져 있다. 재설계 빌드에서 다시 측정한 값:
+
+```
+$ node unit/feature-0003-agent-web-ui/tests/verify_selector_note.mjs
+  10 passed, 0 failed          ← 기준선
+
+M3  (`if (!hidden)` → `if (hidden)`, 극성 반전)        5 passed, 5 failed
+M8  (`toggle("hidden", !reason)` → `..., false`)       9 passed, 1 failed
+M-C2(링크 조건을 `if (false)` 로)                       9 passed, 1 failed
+복원                                                    10 passed, 0 failed
+```
+
+**교훈**: 「전부 죽었다」는 결론이 맞았어도 **수치를 옮겨 적는 과정에서 틀렸고**, 틀린 수치는
+합이 케이스 수와 안 맞는다는 것만으로 드러난다. 뮤턴트 표를 적을 때는 합계를 확인한다.
+
+### 6.2 실행 환경 (§3 의 「CI 밖」 조건 정정)
+
+`verify_selector_note.mjs` 는 **호스트에서 실행된다**(WSL `node v18.19.1` + `jsdom@22`,
+`npm i jsdom@22 --prefix /tmp`). 테스트 컨테이너에는 node 가 없어 `make test` 는 이 파일을
+실행하지 않는다 — 그 사실은 변하지 않았고, 위 수치는 전부 호스트 실행분이다.

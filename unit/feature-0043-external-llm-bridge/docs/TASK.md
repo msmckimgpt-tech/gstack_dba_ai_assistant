@@ -1976,4 +1976,40 @@ Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다�
       읽을 뻔함). (b)혼재·(c)정상 상태는 타 세션 러너가 같은 계정에 붙어 있어 실화면 재확인
       **미수행** — pytest 2행 fixture + jsdom 하네스가 덮는다(증적에 분리 표기).
       증적 `feature-0003 docs/test-runs.d/TASK-20260901T140000-caps-trust-gate-ui-r2.md`
-- [ ] §18.8 확인 라운드 1회 (P1 0)
+- [x] **§18.8 확인 라운드 1회** — security CONCERN / backend BLOCK / qa BLOCK.
+      P1 이 **줄지 않았다**(security 3→4, backend 4→4)이고 2라운드 P1 중 넷은 1라운드에서
+      내가 넣은 수정이 만든 결함이었다 → §18.8 수렴 계약 **(b) 재설계 신호**
+
+### Run 3 — 재설계 (2026-09-01~02, §18.8 (b))
+
+> 위 Run 2 항목 중 **B1(화석 가드) · C1(읽기 시점 전체 투영 게이트) · B4/S3(다중 러너
+> fail-closed) · S §3(`declares_caps_contract`)** 은 이 Run 에서 **철회**했다. 체크가
+> 「그때 그렇게 했다」는 사실 기록으로 남고, 현행 설계가 아니다 —
+> MODIFY.md `CHG-20260901T190000-…-r3` 의 「철회」 표가 정본.
+
+- [x] **사용자 결정** — 로컬 LLM(ollama) 미사용 → 러너에서 런타임 전면 제거(스펙·모델조회·
+      감지 분기·HTTP 어댑터·`BRIDGE_OLLAMA_URL`·Windows PATH 후보). URL 생성 지점이
+      `Api._post` 하나가 되어 핸드오프 문서의 「나가는 곳 한 곳」이 참이 됨
+- [x] 읽기 시점 전역 게이트 철회 — 수신 시점 provenance 가 첫 하트비트에 낡은 목록을 지운다
+- [x] 다중 러너 fail-closed·`mixed_runners`·`RUNNER_ROWS_SCAN_MAX` 철회 — 제품 안에 해제
+      수단이 없는 잠금이었다
+- [x] 화석 가드 철회 → 잘라 저장 + `warning` 로그 (저장 거부는 직전 목록을 **보존**한다)
+- [x] `caps_self_report` 자격 축 철회 — `AGENT_FEATURES` 원복 · `shared/bridge_tasks` 상수 제거
+- [x] **provenance 기본값 fail-closed** — `sanitize_caps` 가 출처를 지어내지 않는다.
+      종전 판본은 `"cache"` 를 기본값으로 넣었고 **아무 writer 도 그 값을 쓰지 않아**
+      게이트 전체가 fail-open 이었다(backend 적대리뷰가 실증)
+- [x] 출처를 모르는 캐시는 「캐시 없음」 — `detect_runtimes` 진입부에서 걸러 다시 묻는다
+- [x] **B2-R1** 지문 판정 세 번째 사본(`ai_ops._runner_roster`) 통합 → 3벌 → 1벌
+- [x] `system.py` 단일 축(`runner_listening`) + 사유 3분기 · 러너 없을 때 다운로드 링크 없음
+- [x] 안내 `<p>` 를 `role="menu"` 밖으로 — ARIA presentational-roles-conflict-resolution 으로
+      메뉴 자식의 `role`·`aria-live` 가 **무효화**되고 있었다
+- [x] **뮤턴트 봉인 (§16.7 G11-b, exit code 실측)** — `M4b-v1`(`AnnAssign`)·`v2`(`NamedExpr`)가
+      봉인 전 **실제로 생존**(EXIT=0). 「모든 바인딩 형태를 모은다」로는 판정 뒤에 상수를
+      덧대는 변형을 못 막는다 → 호출이 자기 갈래의 **마지막**인지까지 보도록 격상.
+      5변형 + `M7-v2` 전건 KILLED, 정상 소스 PASS
+- [x] `origin/main` 68커밋 재병합 · `make test` **6,913건 / 6,898 passed · 15 skipped · 0 failed**
+- [x] 문서 재작성 — FUNCTION §P0-Z6(철회 사유 표 포함) · TEST.md 행 · MODIFY(신규 CHG) ·
+      REPORT · TASK · 증적 수치 정정
+- [ ] PB-0008 재검증 (재설계 빌드)
+- [ ] §18.8 확인 라운드 (축소 범위) → P1 0
+- [ ] `verify-completion --pre-commit` → 출하 → 러너 재기동

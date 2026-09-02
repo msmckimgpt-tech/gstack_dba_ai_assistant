@@ -211,3 +211,22 @@ $ node unit/feature-0003-agent-web-ui/tests/verify_selector_note.mjs  →  10 pa
 가 1회 붉었다가 단독 3/3·전량 재실행에서 통과했다. 부하 하 타이밍 flake 로 판정하며
 (이 저장소의 알려진 monotonic/uptime flake 계열) 본 변경과 접점이 없다 — 그러나 **관측 사실
 자체는 남긴다**(조용한 skip 금지).
+
+---
+
+## 정정 (2026-09-02, §18.8 (b) 재설계 후)
+
+**이 Run 이 검증한 설계의 절반은 철회됐다.** 위 §3.1 의 「되돌림 후 FAIL」 목록 중
+`test_gate_lives_in_the_store_so_every_consumer_inherits_it` ·
+`test_runner_declares_the_caps_self_report_capability` 외 2 는 **테스트 자체가 사라졌다** —
+읽기 시점 전역 게이트와 `caps_self_report` 자격 축을 철회했기 때문이다.
+
+승계된 것: 지문 tri-state · 단일 판정(`runner_build_is_stale`, 소비처 3개) · 사유의 화면 도달 ·
+「내장 표가 신고에 닿지 않는다」. 여기에 **런타임별 provenance**(수신 시점 필터)가 대신 들어와
+같은 재발 클래스를 닫는다.
+
+§3.2 의 「실제 결함 빌드(`82f3a160^`)에 걸어 `gpt-5.1-codex` 누출 재현」은 **그대로 유효**하다 —
+그 단정은 자격 축이 아니라 「내장 표가 신고에 닿는가」를 본다.
+
+무엇을 왜 되돌렸는지는 `docs/MODIFY.md` 의
+`CHG-20260901T190000-ai-claude-feature-0043-caps-trust-gate-r3` 「철회」 표가 정본이다.

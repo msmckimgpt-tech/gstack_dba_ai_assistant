@@ -3012,3 +3012,72 @@ PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` �
   provenance(수신·신고 양쪽) · cached/probe 두 분기 · ollama 실조회.
 - **단언별 G11-b**: qa 가 생존시킨 뮤턴트 8종(M1b·M2b·M3·M4b·M7·M8·M9b·M-C2)을 다시 넣어
   **전부 FAILED** 확인. 하네스가 처음 M8 을 놓친 사실과 그 원인(빠진 경계 케이스)도 기록.
+
+---
+
+## CHG-20260901T190000-ai-claude-feature-0043-caps-trust-gate-r3 — §18.8 (b) 재설계: 전역 게이트 철회, provenance 로 수렴
+
+> **위 두 항(`caps-trust-gate` · `-r2`)이 서술하는 설계는 이 항으로 대체됐다.**
+> 무엇을 왜 되돌렸는지는 아래 「철회」 표에 있고, 남은 설계는 FUNCTION.md §P0-Z6 이다.
+
+### 왜 패치가 아니라 재설계인가
+
+§18.8 확인 라운드 3인(security·backend·qa)이 **CONCERN / BLOCK / BLOCK** 을 냈다. 결정적인
+것은 판정 자체가 아니라 **모양**이었다 — P1 개수가 라운드에 걸쳐 줄지 않았고(security 3→4,
+backend 4→4), 2라운드 P1 중 **넷은 1라운드에서 내가 넣은 수정이 만든 결함**이었다. §18.8
+수렴 계약 (b) 는 이 모양을 「또 한 번 패치할 신호가 아니라 재설계 신호」로 정의한다.
+
+내가 스스로 실증한 예 하나를 적는다: ollama 폴백 항목의 `source` 를 `"builtin"` 에서
+`"ollama"` 로 바꾼 순간, 캐시 쓰기 가드(`!= "builtin"`)의 극성이 뒤집혀 **그 목록이 영구히
+굳는** 새 결함이 생겼다(security B1). 고칠수록 결함이 생기는 자리였다.
+
+### 철회
+
+| 철회한 것 | 대체 | 사유 |
+|---|---|---|
+| 전역 자격 선언 `caps_self_report`(`AGENT_FEATURES`·`shared/bridge_tasks` 상수) | 런타임별 `source` | 「이 빌드가 계약을 아는가」에 답하는 불리언 하나라 다음 포맷 변경에 다섯 번째 이름이 필요하다 — 재발 클래스를 닫는 게 아니라 한 iteration 미룬다 |
+| 읽기 시점 게이트(`oauth_store.account_runner_profile` 의 자격 판정 · `token_runner_profile` 게이트) | 수신 시점 `_sanitize_runtimes` | 수신 시점 필터가 **첫 하트비트에** 낡은 목록을 지운다. 읽기 시점 게이트가 추가로 만드는 것은 「목록이 멀쩡한데도 잠기는」 상태뿐이었다 |
+| 다중 러너 fail-closed + `mixed_runners`·`runner_caps_stale` 응답 필드 | — (제거) | 그 잠금에 **제품 안의 해제 수단이 없었다**. 옛 러너를 끄는 것은 사용자 머신에서만 가능하다 |
+| `RUNNER_ROWS_SCAN_MAX` 다중 행 스캔 | 단일 행(`LastHeartbeatAt DESC LIMIT 1`) 복귀 | 위 규칙이 사라지면 여러 행을 읽을 이유가 없다 |
+| 과대 신고 화석 가드(`set_runner_report` 의 저장 거부) | 잘라 저장 + `warning` 로그 | 저장하지 않으면 **직전 목록이 그대로 남는다** — 화석을 막으려던 가드가 화석을 보존한다 |
+| 로컬 LLM(ollama) 런타임 전체 | — (제거, 사용자 결정) | 로컬 LLM 미사용. 남겨 두는 비용이 문서적이지 않았다(위 B1) |
+
+### 남긴 것 · 고친 것
+
+1. **런타임별 provenance 가 유일한 자물쇠다.** 러너가 항목마다 `source`(`probe`/`cache`/
+   `builtin`)를 싣고, 러너(`_REPORTABLE_SOURCES`)와 서버(`_SANITIZE_SOURCE_ALLOW`)가 같은
+   allowlist `{probe, cache}` 로 거른다. 단위가 런타임 하나라 나쁜 것만 떨어진다.
+2. **기본값 fail-closed.** `sanitize_caps` 는 출처가 없으면 지어내지 않는다. 종전 판본은
+   `"cache"` 를 기본값으로 넣었는데 **아무 writer 도 그 값을 쓰지 않아** 기본값이 곧 유일한
+   값이었다 — 게이트 전체가 fail-open 이었다(backend 적대리뷰가 실증).
+3. **출처를 모르는 캐시는 「캐시 없음」이다** — `detect_runtimes` 진입부에서 걸러 다시 묻는다.
+4. **지문 판정 사본 3 → 1.** `ai_ops._runner_roster` 가 `deployed` 를 직접 비교하던 세 번째
+   사본을 `runner_build_is_stale` 호출로 바꿨다(backend B2-R1: 그 상태에서 이 결함을 분류할
+   운영 콘솔만 경고를 안 띄우고 있었다).
+5. **사유는 러너가 듣고 있는가 하나로 갈린다** — `system.py` 3분기(표시 / 듣는데 목록 없음 /
+   러너 없음). 러너가 없을 때는 **다운로드 링크를 주지 않는다**(다음 행동은 연결이다).
+6. **안내 `<p>` 를 `role="menu"` 밖으로.** 메뉴 자식의 `role="note"`·`aria-live` 는 ARIA
+   presentational-roles-conflict-resolution 으로 **무효화된다** — 배선은 됐는데 보조기술에는
+   도달하지 않는 상태였다.
+
+### 파일
+
+- `unit/feature-0043-external-llm-bridge/src/bridge_agent.py`(+ 미러 `…/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`, byte-동일): ollama 전면 제거 · `AGENT_FEATURES` 원복 · provenance 게이트 · `sanitize_caps` fail-closed · 캐시 필터
+- `unit/feature-0003-agent-web-ui/src/oauth_store.py`: 읽기 시점 게이트·화석 가드 철회 · `account_runner_build` tri-state · 과대 신고 경고 로그
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py`: `runner_build_is_stale` 단일 판정 · `_SANITIZE_SOURCE_ALLOW`
+- `unit/feature-0003-agent-web-ui/src/routers/system.py`: 단일 축(`runner_listening`) + 사유 3분기
+- `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`: 세 번째 사본 통합
+- `unit/feature-0003-agent-web-ui/src/static/{index.html,app/composer.js}`: ARIA 자리 이동 · 사유·링크 배선
+- `shared/bridge_tasks.py`: `RUNNER_FEATURE_CAPS_SELF_REPORT` 제거
+
+### 검증
+
+- `make test` — **6,913건 수집 / 6,898 passed · 15 skipped · 0 failed** · ruff `All checks passed!`
+  (origin/main 68 커밋 재병합 후 실행).
+- **뮤턴트 봉인 (§16.7 G11-b, 실측)**: qa 적대리뷰가 생존시킨 변형을 다시 넣어 exit code 로 확인.
+  `M4b-v1`(`runner_stale: bool = False`) · `M4b-v2`(`if (runner_stale := False): pass`) 는
+  **봉인 전 EXIT=0(생존)** 이었다 — 「모든 바인딩 형태를 모으고 나머지는 상수」까지 봐도
+  **순서**를 안 보면 마지막 값이 판정을 이긴다. 호출이 자기 갈래의 마지막인지까지 보도록
+  고친 뒤 4변형(`AnnAssign`·`NamedExpr`·상수 인자·주석 처리) + 꼬리 덮어쓰기 1종이 **전건
+  EXIT=1(KILLED)**, 정상 소스는 EXIT=0. `M7-v2`(`AGENT_FEATURES + ("admin_jobs",)`)도 KILLED.
+- 미러 byte-동일성은 `test_bridge_agent_sync` 가 잠근다.
