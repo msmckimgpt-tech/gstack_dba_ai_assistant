@@ -551,3 +551,17 @@ Task-Cycle: feature-0016-metadata-graph
 카운터 초기화 제거.
 
 Task-Cycle: feature-0016-metadata-graph
+
+## CHG-20260902T150000-graph-retract-p3 — codex 리뷰 P3 조치 (AGE key JSON 파싱)
+
+**codex 채널 복구 후 첫 지적의 조치.** 호출 형태를 「실행 금지 + 코드 인라인 + 3줄 출력」으로
+바꾸자 무산출 4연속을 끊고 결함 3건을 냈다(REV §0 참조).
+
+- **P3(실증 확인)**: `str(r[0]).strip('"')` 은 AGE 가 JSON 직렬화해 돌려주는 key 를 복원하지
+  못한다. 용어에 `"`·`\` 가 있으면 `live` 집합과 어긋나 **멀쩡한 정점이 stale 로 판정돼
+  삭제된다**. `json.loads` 로 교체하고, **파싱 실패한 키는 건너뛴다**(삭제 쪽으로 접으면
+  되돌릴 수 없다) + `glossary_retract_unparsed` 계측.
+- 라이브 특수문자 용어는 작은따옴표 3건뿐이라 아직 안 터졌을 뿐이다 — 자율수집이 임의 용어를
+  쓰므로 언제든 들어올 수 있었다. **내 자체 리뷰는 이걸 못 찾았다.**
+
+Task-Cycle: feature-0016-metadata-graph

@@ -934,6 +934,7 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
            # 넘어서면 회수가 다시 멈춘 것이다(2026-09-02 이전 상태). 증분 실행에서는
            # 회수를 건너뛰므로 그 사실을 `glossary_retract_skipped` 로 남긴다.
            "glossary_retracted": 0, "glossary_retract_skipped": "",
+           "glossary_retract_unparsed": 0,
            # feature-0040: 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스) 투영 건수.
            # 미리 키를 두어야 0054 미적용 배포에서도 리포트 shape 가 동일하다(소비처 KeyError 방지).
            "db_objects": 0,
@@ -1312,8 +1313,26 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
             scope_filter = (f"WHERE g.scope_key = {_cq(str(scope_key))} "
                             if scope_key is not None else "")
             rows = _cypher(cur, "MATCH (g:GlossaryTerm) " + scope_filter + "RETURN g.key", 1)
-            stale = [str(r[0]).strip('"') for r in (rows or [])
-                     if str(r[0]).strip('"') not in live]
+            # ⚠ **`strip('"')` 로 벗기면 안 된다** (codex 리뷰 P3, 2026-09-02). AGE 는 agtype
+            #   문자열을 **JSON 으로 직렬화**해 돌려준다 — 용어에 `"` 나 `\` 가 있으면
+            #   `\"`·`\\` 로 이스케이프된 채 온다. 그때 strip 은 원본 키를 복원하지 못하고,
+            #   `live` 집합(파이썬 raw 문자열)과 어긋나 **멀쩡한 정점이 stale 로 판정돼 삭제된다.**
+            #   실측: `He said "hi"` · `back\slash` 에서 strip 불일치, json.loads 는 일치.
+            #   (현재 라이브 용어의 특수문자는 작은따옴표 3건뿐이라 아직 안 터졌을 뿐이다 —
+            #    자율수집이 임의 용어를 쓰므로 언제든 들어올 수 있다.)
+            stale = []
+            for r in (rows or []):
+                raw = str(r[0])
+                try:
+                    key = json.loads(raw)
+                except Exception:
+                    # 파싱 실패한 키는 **건너뛴다**. 못 읽은 것을 지우는 쪽으로 접으면
+                    # 되돌릴 수 없다(회수는 파괴적이다).
+                    rep["glossary_retract_unparsed"] = int(
+                        rep.get("glossary_retract_unparsed", 0)) + 1
+                    continue
+                if isinstance(key, str) and key not in live:
+                    stale.append(key)
             for k in stale:
                 def _row(k=k):
                     _cypher(cur, f"MATCH (g:GlossaryTerm {{key: {_cq(k)}}}) "

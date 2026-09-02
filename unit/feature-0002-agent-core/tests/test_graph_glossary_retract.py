@@ -76,3 +76,35 @@ def test_counter_initialized_in_report_template():
     """`glossary_retracted` 가 **0 으로 초기화**돼야 「회수 0건」과 「단계가 안 돌았다」가 갈린다."""
     src = inspect.getsource(G.sync_graph)
     assert '"glossary_retracted": 0' in src
+
+
+# ── codex 리뷰 P3 (2026-09-02) — AGE key 는 JSON 이다 ─────────────────────────
+def test_key_is_json_parsed_not_stripped():
+    """AGE 가 돌려준 key 를 **JSON 으로 파싱**한다. `strip('"')` 은 이스케이프를 못 되돌린다.
+
+    실측: 용어에 `"` 나 `\\` 가 있으면 AGE 는 `\\"`·`\\\\` 로 이스케이프해 돌려준다.
+    `strip('"')` 은 그것을 복원하지 못하고 `live` 집합(파이썬 raw)과 어긋나
+    **멀쩡한 정점이 stale 로 판정돼 삭제된다.**
+
+        'He said "hi"'  → strip 불일치 · json.loads 일치
+        'back\\slash'   → strip 불일치 · json.loads 일치
+    """
+    body = _retract_src()
+    assert "json.loads(raw)" in body, "AGE key 를 JSON 으로 파싱하지 않는다"
+    # 주석에는 「strip 쓰지 마라」가 적혀 있으므로 **코드 줄만** 본다.
+    code = "\n".join(l for l in body.splitlines() if not l.strip().startswith("#"))
+    assert "strip(" not in code, "strip 으로 벗기면 특수문자 용어가 오판된다"
+
+
+def test_unparsable_key_is_skipped_not_deleted():
+    """파싱 실패한 키는 **건너뛴다** — 못 읽은 것을 지우는 쪽으로 접으면 되돌릴 수 없다."""
+    body = _retract_src()
+    i = body.index("except Exception")
+    tail = body[i:i + 300]
+    assert "continue" in tail, "파싱 실패 시 삭제 쪽으로 흐른다"
+    assert "glossary_retract_unparsed" in tail, "파싱 실패를 조용히 넘긴다"
+
+
+def test_unparsed_counter_initialized():
+    src = inspect.getsource(G.sync_graph)
+    assert '"glossary_retract_unparsed": 0' in src
