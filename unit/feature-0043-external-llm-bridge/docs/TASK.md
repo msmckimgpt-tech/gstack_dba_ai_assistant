@@ -2043,3 +2043,15 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
 - [x] 라이브 오염 확인 — 게이트 통과 테스트가 실제 PG 에 닿던 것을 고치고 `ds1` 잔재 0건 실측
 - [ ] **배포 후 라이브 end-to-end**(사용자 요구) — AC-1~-5. 그래프에서 실제로 눌러 202 →
       러너 로그 `kind=job` → 원장 `done` → 화면 · 웹 토글 ≤30초 반영 · 동의 0명 표면화
+
+### 완료 체크리스트 — 라이브 실측 후속 (2026-09-02)
+
+- [x] AC-1 라이브 — `enqueue_analysis(requested_by='admin')` → `{'ok': True, 'status': 'running'}`
+- [x] AC-2 라이브 — `delegated: 1` → 러너 `task.dispatch kind=job model=haiku` →
+      job `done` + 분석문 297자 + `role=stats` + **run 마감** + `JobAppliedAt` 기록
+- [x] AC-4 라이브 — 실제 체크박스 클릭 → DB 기입 / 50초 뒤 러너 신고에 `batch_jobs`
+- [x] 라이브 결함 3건 수정(사람이 안 연 run 위임 · 문구 실측 정합 · 배포 프리플라이트 오진단)
+- [ ] 후속 배포 후: auto run 2건이 실제로 흘러가는가
+- [ ] 배경 배치 2종(테이블 인사이트·클러스터 라벨) 라이브 실측
+- [ ] AC-3(lease 회수) · AC-5(동의 0명 표면화) · AC-6(게이트 되돌림)
+- [ ] 검증용 동의 값 원복(`bootstrap_admin`·`admin`)

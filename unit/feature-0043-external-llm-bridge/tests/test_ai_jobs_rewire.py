@@ -413,3 +413,41 @@ def _func_src_of(rel_path: str, func_name: str) -> str:
         if isinstance(node, ast.FunctionDef) and node.name == func_name:
             return ast.get_source_segment(src, node) or ""
     raise AssertionError(f"{func_name} 를 찾지 못했다")
+
+
+# ── 7. 문구가 실측과 일치하는가 · 배포 가드가 「모름」을 「불일치」로 말하지 않는가 ──
+
+
+def test_consent_message_matches_the_measured_latency():
+    """토글 성공 문구가 **실측 반영 시간**과 어긋나지 않는다.
+
+    반영에는 하트비트가 **두 번** 필요하다 — 러너가 값을 읽고(①), 그 다음 신고에 실어야(②)
+    서버의 배급 자격이 바뀐다. 주기가 30초이므로 최대 두 주기다(라이브 실측 50초).
+    한 주기로 적으면 사용자는 정상 동작을 지연으로 오해하고 토글을 다시 누른다.
+    """
+    src = (_WEB / "routers" / "oauth_as.py").read_text(encoding="utf-8")
+    body = src[src.index("async def connect_batch_consent("):]
+    body = body[:body.index("\n@router") if "\n@router" in body else len(body)]
+    assert "30초 안에 반영" not in body, (
+        "실측(50초)보다 짧게 약속한다 — 사용자가 정상 동작을 고장으로 읽는다")
+    assert "1분 안에 반영" in body
+
+
+def test_tls_preflight_does_not_call_an_unreadable_ca_a_mismatch():
+    """배포 프리플라이트가 「읽지 못했다」와 「달랐다」를 가른다 (라이브 실측 2026-09-02).
+
+    `docker compose exec` 는 실패 메시지를 **stdout 으로** 뱉는다. 종전 가드는 stderr 만 막고
+    그 stdout 을 그대로 해시해, exec 을 못 여는 컨테이너에서 **오류 문구를 CA 로 취급**하고
+    「CA 회전 불일치」라는 사실이 아닌 사유로 배포를 막았다(실제 CA 는 동일, 서비스도 정상).
+
+    ⚠ 그리고 양쪽 해시를 **같은 방식으로** 내야 한다 — `$( )` 가 후행 개행을 지우므로 한쪽만
+    파일에서 직접 해시하면 내용이 같아도 값이 갈린다(고치다 만든 두 번째 오진단).
+    """
+    src = (_REPO / "bin" / "deploy-web.sh").read_text(encoding="utf-8")
+    i = src.index("Caddy 컨테이너의 rootCA 가 호스트와 불일치")
+    block = src[max(0, i - 2000):i]
+    assert "BEGIN CERTIFICATE" in block, (
+        "내용이 PEM 인지 확인하지 않는다 — exec 오류 문구가 CA 로 취급된다")
+    assert "CA 대조 skip" in block, "판정 불가를 skip 하지 않는다(best-effort 계약 위반)"
+    assert 'host_ca="$(printf' in block, (
+        "호스트 해시를 파일에서 직접 낸다 — 후행 개행 때문에 컨테이너 쪽과 영원히 어긋난다")

@@ -280,9 +280,28 @@ preflight_tls() {
   # 블록에 진입시키고, 부재 컨테이너 exec 파이프라인이 pipefail+set-e 로 **무메시지 exit 1**
   # 을 냈다(잠복 — cold host/worktree dry-run 실측). ps -q 비어있음으로 실존 확인.
   if [ -n "$("${DC[@]}" ps -q caddy 2>/dev/null)" ]; then
-    local host_ca caddy_ca
-    host_ca="$(sha256sum "$ROOT_CA" 2>/dev/null | awk '{print $1}')"
-    caddy_ca="$("${DC[@]}" exec -T caddy cat /certs/rootCA.pem 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}' || true)"
+    local host_ca caddy_ca caddy_pem
+    # ⚠ 양쪽을 **같은 방식으로** 해시한다. `$( )` 는 후행 개행을 지우므로, 한쪽만 파일에서
+    #   직접 해시하면 내용이 같아도 값이 갈린다(그 자체가 또 다른 오진단이 된다).
+    host_ca="$(printf '%s' "$(cat "$ROOT_CA" 2>/dev/null)" | sha256sum 2>/dev/null | awk '{print $1}')"
+    # ⚠ **exec 이 실패하면 판정하지 않는다** (라이브 실측 2026-09-02).
+    #
+    # `docker compose exec` 는 실패 메시지를 **stdout 으로** 뱉는다. 종전 코드는 `2>/dev/null`
+    # 로 stderr 만 막고 그 stdout 을 그대로 해시했다 — 그래서 컨테이너가 exec 을 못 여는 상태
+    # (`procReady not received`, 장기 기동 컨테이너에서 실재)에서 **"OCI runtime exec failed…"
+    # 라는 97바이트 텍스트가 CA 인증서로 취급되어** 호스트 해시와 달랐고, 배포가
+    # 「CA 회전 불일치」라는 **사실이 아닌 사유**로 중단됐다. 실제로 CA 는 동일했고 서비스도
+    # 정상(HTTPS 200)이었다 — 운영자를 멀쩡한 것을 고치러 보내는 오진단이다.
+    #
+    # 이 검사는 스스로 best-effort 라고 적어 두었으므로 **판정 불가는 skip 이 옳다.**
+    # 내용이 PEM 인지 먼저 확인해, 「읽지 못했다」와 「달랐다」를 가른다.
+    caddy_pem="$("${DC[@]}" exec -T caddy cat /certs/rootCA.pem 2>/dev/null || true)"
+    if ! printf '%s' "$caddy_pem" | head -1 | grep -q -- "-----BEGIN CERTIFICATE-----"; then
+      warn "Caddy 컨테이너의 rootCA 를 읽지 못했다(exec 불가 등) — CA 대조 skip. 배포는 계속."
+      caddy_ca=""
+    else
+      caddy_ca="$(printf '%s' "$caddy_pem" | sha256sum 2>/dev/null | awk '{print $1}' || true)"
+    fi
     if [ -n "$caddy_ca" ] && [ "$host_ca" != "$caddy_ca" ]; then
       die "Caddy 컨테이너의 rootCA 가 호스트와 불일치(회전 후 reload 누락). 'docker compose exec caddy ... reload' 또는 caddy 재시작 필요. ABORT."
     fi
