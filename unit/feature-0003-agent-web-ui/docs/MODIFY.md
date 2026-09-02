@@ -5545,3 +5545,11 @@ PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔�
 - `oauth_store.stale_runner_must_yield` 축을 **연결 순서**(토큰 `Id`)로 교체 ·
   `account_runner_build` 를 `ORDER BY t.Id DESC` 로(=`runner_stale` 진동 해소 → 연결 모달이
   닫히지 않던 결함) · `routers/ai_tools.py` 안내 문구·게이트 정정. 화면 마크업 변경 0.
+
+## CHG-20260902T010304-doc-sync-rn-0902 (2026-09-01 블록 신설) 릴리즈노트 콘텐츠 — 125커밋 창 사용자향 17항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 **신규 `date: "2026-09-01"` 블록 prepend** — items **17** + `summary`. `releases` 57→**58** · `generated` "2026-08-31"→**"2026-09-01"**(== `releases[0].date`) · 총 항목 424→**441** · **08-31 이하 전 블록 바이트 불변**.
+- 항목 골자: 연결 경로 복구(설치 후 「쓸 수 있는 AI 를 찾지 못했습니다」 해소) · 낡은 러너가 최신 러너 질문을 가로채던 결함 → 판정축을 「연결 순서」로 · 고아 점유 즉시 회수 + 무진행 국면 표면화 · 연결된 AI 의 실패 사유가 사용자에게 도달 · 정상 요청을 인젝션으로 오판해 답변이 자가중단되던 문제 · 연결 1단계 기본 OS 탭을 「마지막으로 연결됐던 OS」로 · 우측 패널 한 번에 하나만 · 말풍선 「▼ 쿼리 결과」 여닫이 제거(대체 입구 「단계 보기」) · 공유 대화 계보를 「누가 올렸는지」 축으로 · 중단해도 진행분을 버리지 않는 보존 메시지 · 'AI 운영 현황' 네 갈래 재편 + 답변 자가 점검 · 용어사전 전역/제품 통용범위 분리 · 지식베이스가 외부 AI 답변에 실제로 반영.
+- 블록 귀속: 창 125 커밋 중 **123 건이 2026-09-01 착륙**이고 그 date 블록이 **부재**(최신 08-31)하므로 append 가 아니라 **신규 블록 prepend**.
+- 재발 명시 3건 + 기능 소멸 고지 1건(쿼리 결과 접이판 제거로 CSV 내려받기·전체 데이터 보기·구형 메시지 실행 SQL/결과 파일 3종 동반 소멸) + 미검증 고지 5건.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
+- Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.

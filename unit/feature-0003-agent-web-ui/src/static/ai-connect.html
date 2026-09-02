@@ -76,6 +76,20 @@
         </details>
       </div>
 
+      <!-- 배경 작업 동의 (TASK-20260901T190000, 사용자 결정 "웹페이지에서 토글").
+           종전 표현 수단은 러너 CLI 플래그 `--batch` 뿐이라, 온보딩 명령을 복사해 붙인
+           사람은 그런 선택지가 있는 줄도 몰랐다. 여기서 켜고 끈다. -->
+      <section id="batchConsentBox" class="aic-note aic-hidden" style="margin-top:16px">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="batchConsent" style="margin-top:3px">
+          <span>
+            <strong>배경 작업도 내 AI 가 처리</strong>
+            <span id="batchConsentNotice" style="display:block;margin-top:4px;opacity:.85"></span>
+          </span>
+        </label>
+        <p id="batchConsentStatus" class="aic-status" style="margin:8px 0 0"></p>
+      </section>
+
       <div class="aic-note">
         <p>연결 정보에는 <strong>토큰</strong>이 들어갑니다. 내 권한으로 데이터를 조회하므로
            비밀번호처럼 다루고 남에게 주지 마세요.</p>

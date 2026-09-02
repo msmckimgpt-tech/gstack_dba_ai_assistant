@@ -1620,6 +1620,20 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
     except Exception:
         _cl_conc = 1
 
+    # ── 서버 계정 LLM 이 닫혀 있으면 **동의한 개인 AI 에게 넘긴다** (TASK-20260901T190000) ──
+    #
+    # 이 pass 는 라벨을 얻지 못하고 그대로 끝난다(affix 폴백 — 기존 실패 경로와 같다). 결과는
+    # `apply_external_cluster_labels` 가 kv 캐시에 기입하고, **다음 pass 가 캐시 적중으로**
+    # 그것을 쓴다. 워커가 러너의 왕복을 기다리지 않는 것이 핵심이다 — 기다리면 배경 처리가
+    # 개인 AI 의 속도에 묶이고, 러너가 꺼져 있는 날 통째로 멎는다.
+    try:
+        from shared.llm_gate import server_llm_enabled as _sle
+    except Exception:  # noqa: BLE001
+        _sle = None
+    if _sle is not None and not _sle():
+        _delegate_cluster_labels(datasource_key, eff_schema, batches, _payload_for)
+        return out
+
     if _cl_conc <= 1 or len(batches) <= 1:
         # 직렬(기존 byte-동치): 배치 순차, LLM 실패/부적합 응답 시 남은 배치 중단(affix 폴백).
         for batch in batches:
@@ -1706,6 +1720,168 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
                     out[cl["idx"]] = lab
                     _kv_put(cur, kv_key, lab)
     return out
+
+
+# ── 클러스터 라벨의 개인 AI 위임 (TASK-20260901T190000, P0-AK) ──────────────────────
+#
+# 배경 배치는 **그 사람이 요청한 적 없는 일**이라 `batch_jobs` 별도 동의를 요구한다(웹 토글).
+# 동의한 러너가 하나도 없으면 적재하지 않는다 — 아무도 못 집는 작업을 쌓지 않는다(P0-S).
+
+#: 라벨 배치 프롬프트에 붙는 출력 규약. `llm.CLUSTER_LABEL_PROMPT` 가 이미 형식을 지시하므로
+#: 여기서는 **전달만** 한다(프롬프트를 새로 쓰면 서버 경로와 산출 규약이 갈린다).
+
+
+def _batch_consenting_account(mem) -> int:
+    """지금 **배경 배치까지 받겠다고 신고한** 러너의 계정 id 하나. 없으면 0.
+
+    여러 명이 동의했으면 가장 최근에 하트비트한 쪽을 쓴다 — 나눠 주는 것이 공평해 보이지만,
+    그러려면 "누가 얼마나 태웠는가" 를 우리가 관리해야 하고 그건 이 축의 설계 범위를 넘는다.
+    """
+    from shared import bridge_tasks as _bt
+
+    cur = mem.cursor()
+    try:
+        cur.execute(
+            "SELECT t.AccountId FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            f"WHERE {_bt.LIVE_TOKEN_PREDICATE} AND t.LastHeartbeatAt IS NOT NULL "
+            f"  AND t.LastHeartbeatAt > DATE_SUB({_bt.SQL_NOW}, INTERVAL %s SECOND) "
+            "  AND t.RunnerFeatures IS NOT NULL "
+            "ORDER BY t.LastHeartbeatAt DESC LIMIT 20",
+            (_bt.RUNNER_HEARTBEAT_WINDOW_SEC,))
+        rows = cur.fetchall() or []
+        for row in rows:
+            aid = int(row[0] or 0)
+            if not aid:
+                continue
+            # 자격 판정은 **웹과 같은 함수**로 한다(features 정규화·버전 하한 포함).
+            if _bt.runner_can_take(_bt.runner_profile_for_account(cur, aid), need_batch=True):
+                return aid
+    finally:
+        cur.close()
+    return 0
+
+
+def _delegate_cluster_labels(datasource_key, eff_schema, batches, payload_for) -> int:
+    """라벨 배치를 개인 AI 대기열에 올린다. 반환 = 적재 건수. **fail-soft**(0 = 이번 pass 없음).
+
+    같은 배치를 매 pass 다시 적재하지 않도록 `dedupe_key`(멤버셋 해시들의 해시)를 건다 —
+    없으면 결과가 오기 전까지 같은 답을 사용자 계정 토큰으로 **여러 번 사게 된다**.
+    """
+    from shared import bridge_tasks as _bt
+
+    mem = None
+    made = 0
+    try:
+        from shared import db as _db
+
+        mem = _db.connect(database=_cfg.MEMORY_DB)
+        account_id = _batch_consenting_account(mem)
+        if not account_id:
+            _log.info("cluster_label 위임 보류 — 배경 작업에 동의한 AI 러너가 없습니다"
+                      "(웹 '내 AI 연결' 토글).")
+            return 0
+        for batch in batches:
+            payload = payload_for(batch)
+            entries = [{"idx": int(cl["idx"]), "kv_key": str(kv_key)} for (cl, kv_key) in batch]
+            key = _member_set_hash([e["kv_key"] for e in entries])
+            try:
+                _bt.enqueue_console_job(
+                    mem, account_id=account_id, job_kind="cluster_label",
+                    prompt=_bt.messages_to_prompt(
+                        _cluster_label_messages(payload), "json"),
+                    payload={"entries": entries, "datasource_key": str(datasource_key or ""),
+                             "eff_schema": str(eff_schema or "")},
+                    dedupe_key=f"cluster_label:{key}",
+                    datasource_key=(str(datasource_key or "") or None))
+                made += 1
+            except _bt.ConsoleJobRejected as exc:
+                # 중복·대기열 포화는 정상 상태다(이 pass 는 affix 폴백으로 끝난다).
+                _log.info("cluster_label 위임 미적재: %s", exc)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("cluster_label 위임 적재 실패: %r", exc)
+                break
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("cluster_label 위임 준비 실패: %r", exc)
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    if made:
+        _log.info("cluster_label 위임 %d배치 ds=%s schema=%s", made, datasource_key, eff_schema)
+    return made
+
+
+def _cluster_label_messages(payload) -> list:
+    """라벨 배치의 `messages` — **서버 호출과 같은 프롬프트**(`llm.CLUSTER_LABEL_PROMPT`)."""
+    from . import llm as _llm
+
+    return [
+        {"role": "system", "content": _llm.CLUSTER_LABEL_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def apply_external_cluster_labels(conn, payload, result) -> None:
+    """개인 AI 가 낸 클러스터 라벨을 **기존 kv 캐시**에 기입한다 (`_STORE_ROUTES` 대상).
+
+    저장 경로를 새로 쓰지 않는 것이 요점이다 — 캐시 키·위생 규칙(`_valid_label`)·상한이 전부
+    기존 함수에 있고, 다음 pass 가 그것을 그대로 읽는다(캐시 적중 = LLM 재호출 0).
+
+    실패는 예외로 올린다 — `apply_console_job_result` 가 작업 행에 사유를 남긴다.
+    """
+    entries = (payload or {}).get("entries") or []
+    if not entries:
+        raise ValueError("위임 payload 에 entries 가 없습니다 — 어느 캐시 키에 쓸지 알 수 없습니다.")
+    labels = (result or {}).get("labels") if isinstance(result, dict) else None
+    if not isinstance(labels, list):
+        raise ValueError("클러스터 라벨 결과가 {labels: [...]} 형식이 아닙니다.")
+    by_idx: dict[int, str] = {}
+    for item in labels:
+        if not isinstance(item, dict):
+            continue
+        lab = _valid_label(item.get("label"))
+        try:
+            idx = int(item.get("idx"))
+        except (TypeError, ValueError):
+            continue
+        if lab:
+            by_idx[idx] = lab
+    # 쓸 것을 **먼저 정하고** 그 다음에 연결한다. 순서가 반대면 유효한 라벨이 하나도 없는
+    # 응답에도 PG 를 열게 되고, 무엇보다 「빈 결과」와 「PG 미가용」이 같은 자리에서 갈려
+    # 실패 사유가 뒤바뀐다(작업 행에 남는 문구가 사용자 진단의 전부다).
+    writes = []
+    for e in entries:
+        try:
+            lab = by_idx.get(int(e.get("idx")))
+        except (TypeError, ValueError):
+            continue
+        if lab and e.get("kv_key"):
+            writes.append((str(e["kv_key"]), lab))
+    if not writes:
+        # 「제출됐지만 아무것도 반영되지 않음」을 성공으로 접지 않는다 — 그러면 콘솔은 완료라
+        # 말하는데 라벨은 그대로 affix 이고, 다음 pass 가 같은 작업을 또 산다.
+        raise ValueError("유효한 라벨이 하나도 없습니다(형식 또는 위생 규칙 불일치).")
+    c, owned = _rw_conn(None)
+    if c is None:
+        raise RuntimeError("클러스터 원장(PG)에 연결할 수 없습니다.")
+    try:
+        cur = c.cursor()
+        try:
+            for kv_key, lab in writes:
+                _kv_put(cur, kv_key, lab)
+        finally:
+            cur.close()
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    _log.info("cluster_label 위임 결과 기입 %d건 ds=%s", len(writes),
+              (payload or {}).get("datasource_key"))
 
 
 def _parse_embedding(emb):

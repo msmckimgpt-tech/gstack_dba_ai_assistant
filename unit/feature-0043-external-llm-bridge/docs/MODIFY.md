@@ -2917,6 +2917,52 @@ PowerShell 재등록하면 `windows` 로 뒤집힌다. ② 는 `BridgeLastOs` �
 **발효**: 서버 축은 즉시. 러너 자가 종료는 `superseded` 를 아는 빌드에서 발효하며, 라이브의 두
 러너는 이미 그 빌드라 **재다운로드 없이** 오래된 쪽이 물러난다.
 
+## CHG-20260901T190000-ai-claude-ai-jobs-rewire — 남은 AI 기능 3종을 연결한 개인 AI 로 배선
+
+**제보**: *"'그래프 뷰' 내 'AI 능동 분석'에 대한 기능이 막혀있는것으로 확인되었습니다. 서비스 내
+AI 관련 모든 작동사항을 다시 활성화 후, 연결한 AI를 통해 작동하도록 배선해주세요."*
+
+### 원인
+
+`enqueue_analysis`/`enqueue_schema_analysis` 가 **적재 전에** 거절했다 — 서버 계정 LLM 게이트가
+닫혀 있다는 이유만으로. 거절 자체는 옳았다(큐에 넣으면 잡마다 재시도 상한을 태우고 실패하고,
+사용자에겐 "시작됐다가 한참 뒤 알 수 없는 이유로 실패" 로 보인다). **빠져 있던 것은 위임
+경로**다. 그래서 판정을 뒤집지 않고 판정 **대상**을 바꿨다: 「서버 LLM 이 닫혔는가」 →
+「둘 중 하나라도(서버 LLM · 연결된 개인 AI) 있는가」.
+
+같은 상태가 배경 배치 2종에도 있었고, 반영 함수 3종은 `_STORE_ROUTES` 에 **선언만** 있었다.
+
+### 변경 내용
+
+1. **`shared/bridge_consent.py`(신규)** — 배경 배치 동의의 진리표·정규화·고지 문구 단일 정본.
+2. **자격 판정을 `shared/bridge_tasks` 로 승격** — 러너 프로필 질의 · 토큰 생존 술어 ·
+   버전 하한 · 기능 정규화 · 프롬프트 편성(`messages_to_prompt`). 위임 판단을 **insight-worker**
+   가 하게 되면서 다른 컨테이너가 같은 질문에 답해야 했기 때문. `oauth_store`·`_console_llm`·
+   `_console_jobs` 는 이제 그것을 **재수출**한다(두 벌을 만들지 않는다).
+3. **`node_analysis`** — 게이트 완화 · `_delegate_job`(워커는 기다리지 않는다: 잡을 `running`
+   으로 두고 `error_kind='delegated'`) · `apply_external_node_analysis`(늦은 답이 최신 값을
+   덮지 않음 + **run 마감**) · `_run_llm` 이 게이트를 보고 센티넬 반환(예산 슬롯 밖).
+4. **`semantic_cluster`** — 라벨 배치 위임 + `apply_external_cluster_labels`(기존 kv 캐시).
+5. **`insight`** — 테이블 인사이트 위임 + `apply_external_insight_summary`(KV 이음매 → 다음
+   cycle 의 상속 경로가 **기존대로** 발행. 발행 로직을 두 벌로 만들지 않는다).
+6. **`dedupe_key`** — 결과가 오기 전 재적재로 같은 답을 여러 번 사는 것을 막는다.
+7. **배치 동의 웹 토글** — `WebAccounts.BridgeBatchConsent`(idempotent ALTER) · 하트비트 응답의
+   `batch_consent` · 러너가 그것으로 `features` 를 동적 갱신 · `/api/ai/connect/batch-consent`
+   (세션 인증) · '내 AI 연결' 체크박스 + 고지 · 콘솔 KPI `배경 작업 동의 N`.
+   `--batch`/`--no-batch` 는 그 머신의 명시 override 로 남는다(양방향으로 서버 값을 이긴다).
+8. `insight_summary` 라벨을 **"테이블 인사이트 배치"** 로 좁힘 — 배선된 축만 이름에 담는다.
+
+### 발효
+
+서버·워커 축은 배포 즉시. **웹 토글 → 러너 신고 갱신은 ≤30초**(다음 하트비트)이며, 그 응답을
+읽을 줄 아는 빌드의 러너에서만 발효한다 — 구 러너는 종전대로 `--batch` 로만 켤 수 있고,
+그 사실은 콘솔의 `배경 작업 동의 0` 과 러너 갱신 안내로 표면화된다.
+
+### 되돌리기
+
+`AGENT_SERVER_LLM_ENABLED=1` — 게이트가 열리면 세 경로 모두 **종전 서버 LLM 직접 호출**로
+돌아간다(위임 분기는 게이트가 닫혔을 때만 탄다). 계약 테스트가 그 경로를 함께 잠근다.
+
 ---
 
 ## CHG-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 능력 신고 자격 게이트 (4차 재발 봉인)

@@ -349,52 +349,72 @@ def test_capability_write_is_skipped_when_unchanged():
         "유효성 술어가 하트비트와 다르다 — 폐기된 러너의 목록이 화면에 남는다")
 
 
+class _SqlSpyCursor:
+    """실행된 SQL 을 그대로 모으는 커서. 반환 행은 생성자가 정한다."""
+
+    def __init__(self, row=None):
+        self.sql: list = []
+        self._row = row
+
+    def execute(self, sql, params=None):
+        self.sql.append(" ".join(str(sql).split()))
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
 def test_capability_read_shares_the_freshness_rule_with_listening():
     """'연결됨' 판정과 '고를 수 있는 목록' 이 **같은 신선도**를 쓴다.
 
     갈리면 "연결 안 됨인데 모델은 고를 수 있는"(또는 그 반대) 화면이 되고, 둘 중 하나는
     반드시 사용자를 속인다.
+
+    ## 왜 소스 문자열을 보지 않는가 (2026-09-01 재작성)
+
+    이 검사는 두 번 옮겨졌다 — 질의가 `account_runner_capabilities` → `account_runner_profile`
+    → `shared.bridge_tasks.runner_profile_for_account` 로 이동할 때마다 **계약은 그대로인데
+    검사만 FAIL** 했다. 검사가 계약이 아니라 **구조를 잠그고** 있었던 것이다.
+
+    그래서 이제 **실제로 나가는 SQL** 을 본다. 정의가 어느 모듈로 옮겨가든, 두 판정이 같은
+    술어로 행을 고르는 한 통과한다 — 그리고 술어가 진짜로 갈리면 반드시 실패한다.
     """
-    # TASK-20260831T100000: 질의는 `account_runner_profile` 로 옮겼다(능력·기능·버전을 한
-    # 행에서 함께 읽어야 서로 다른 러너의 사실이 섞이지 않는다). `account_runner_capabilities`
-    # 는 그 결과의 한 축을 꺼내는 얇은 래퍼다.
-    #
-    # 그래서 이 검사가 보는 자리를 **질의가 실제로 사는 함수**로 옮긴다. 계약은 그대로다 —
-    # "읽기와 듣기가 같은 신선도를 쓴다". 래퍼를 계속 보면 정의가 옮겨간 것만으로 FAIL 이
-    # 나고, 그 FAIL 은 계약 위반이 아니라 **검사가 구조를 잠근** 결과다.
-    src = _OAUTH_STORE.read_text(encoding="utf-8")
-    read_fn = src[src.index("def account_runner_profile("):]
-    read_fn = read_fn[:read_fn.index("\ndef ")]
-    listen_fn = src[src.index("def account_is_heartbeating("):]
-    listen_fn = listen_fn[:listen_fn.index("\ndef ")]
-    for fragment in ("_LIVE_TOKEN_PREDICATE", "LastHeartbeatAt IS NOT NULL", "DATE_SUB"):
-        assert fragment in read_fn and fragment in listen_fn, (
+    import oauth_store as store
+
+    read_cur = _SqlSpyCursor(row=None)
+    store.account_runner_profile(read_cur, 7)
+    listen_cur = _SqlSpyCursor(row=(0,))
+    store.account_is_heartbeating(listen_cur, 7)
+    read_sql = " ".join(read_cur.sql)
+    listen_sql = " ".join(listen_cur.sql)
+    assert read_sql and listen_sql, "질의가 나가지 않았다 — 검사가 vacuous 하다"
+    for fragment in ("t.TokenType = 'access'", "t.RevokedAt IS NULL",
+                     "LastHeartbeatAt IS NOT NULL", "DATE_SUB"):
+        assert fragment in read_sql and fragment in listen_sql, (
             f"신선도 술어가 갈렸다: {fragment}")
-    # 러너가 여럿이면 **가장 최근에 말한 것** 하나를 쓴다. 합치면 실제로 가져가는 러너에
-    # 없는 모델이 섞인다. (2026-09-01: 한때 여러 행을 훑어 「하나라도 미선언이면 감춘다」로
-    # 바꿨다가 철회 — 그 규칙이 제품 안에서 풀 수 없는 잠금을 만들었다.)
-    assert "ORDER BY t.LastHeartbeatAt DESC LIMIT 1" in read_fn
-    # 래퍼가 **자기 질의를 갖지 않는다** — 가지면 두 벌이 되고, 그 순간 이 검사가 보는
-    # 쪽만 옳고 실제로 쓰이는 쪽은 갈릴 수 있다.
-    wrapper = src[src.index("def account_runner_capabilities("):]
-    wrapper = wrapper[:wrapper.index("\ndef ")]
-    assert "cur.execute" not in wrapper, "래퍼가 별도 질의를 갖는다(판정 이중화)"
-    assert "account_runner_profile(" in wrapper, "래퍼가 정본을 부르지 않는다"
+    # 러너가 여럿이면 가장 최근 것 하나 — 합치면 실제로 가져가는 러너에 없는 모델이 섞인다.
+    assert "ORDER BY t.LastHeartbeatAt DESC LIMIT 1" in read_sql
+    # 래퍼(`account_runner_capabilities`)가 **자기 질의를 갖지 않는다** — 가지면 두 벌이 된다.
+    wrap_cur = _SqlSpyCursor(row=None)
+    store.account_runner_capabilities(wrap_cur, 7)
+    assert wrap_cur.sql == read_cur.sql, "래퍼가 다른 질의를 쓴다(판정 이중화)"
 
 
 def test_capability_read_survives_corrupted_json():
-    """저장된 값이 깨져도 답변 경로는 멀쩡해야 한다(선택기가 숨겨질 뿐)."""
-    # TASK-20260831T100000: 파싱도 `account_runner_profile` 로 옮겼다(위 테스트와 같은 이유).
-    # 2026-09-01: 파싱이 두 프로필 함수 공용 헬퍼(`_parse_caps_column`)로 옮겼다 — 두 곳이
-    # 각자 파싱하면 한쪽만 고쳐진다. 계약은 그대로이므로 **결과**로 잠근다.
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("_store_json", _OAUTH_STORE)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert mod._parse_caps_column("{not json") == [], "JSON 파싱 실패가 요청을 500 으로 만든다"
-    assert mod._parse_caps_column('{"a": 1}') == [], "리스트가 아닌 저장값이 그대로 화면으로 나간다"
-    assert mod._parse_caps_column(None) == [] and mod._parse_caps_column("") == []
-    assert mod._parse_caps_column('[{"runtime": "claude"}]') == [{"runtime": "claude"}]
+    """저장된 값이 깨져도 답변 경로는 멀쩡해야 한다(선택기가 숨겨질 뿐).
+
+    소스가 아니라 **결과**를 잠근다: 깨진 값·리스트 아닌 값을 실제로 넣고 돌려 본다.
+    """
+    import oauth_store as store
+
+    for stored in ('{"not": "a list"}', "이건 JSON 이 아니다", "[", '"문자열"'):
+        cur = _SqlSpyCursor(row=(stored, "console_jobs", "2026.09.01"))
+        got = store.account_runner_profile(cur, 7)
+        assert got["capabilities"] == [], f"깨진 값이 화면으로 나갔다: {stored!r}"
+        # 능력이 비어도 **기능·버전은 살아 있다** — 두 축은 수명이 다르다.
+        assert got["features"] == ["console_jobs"] and got["listening"] is True
 
 
 # ── 화면: 런타임마다 다른 어휘를 어떻게 그리는가 ─────────────────────────────

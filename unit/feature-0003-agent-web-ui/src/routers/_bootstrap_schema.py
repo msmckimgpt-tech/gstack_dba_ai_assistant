@@ -2826,6 +2826,14 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # 「지금 듣고 있는 러너」가 아니라 「마지막으로 연결됐던 것」이라, 토큰에 두면 이
             # 화면이 필요한 순간(연결이 끊긴 뒤)에 값이 사라진다.
             "ALTER TABLE WebAccounts ADD COLUMN BridgeLastOs VARCHAR(16) NULL",
+            # ── 배경 배치 동의 (TASK-20260901T190000, 사용자 결정 "웹에서 토글") ────────
+            #
+            # `BridgeBatchConsent`(계정): 배경 배치(인사이트·클러스터 라벨링)를 내 AI 가
+            # 받아도 되는가. **토큰이 아니라 계정에 둔다** — 동의의 주체는 계정 소유자이지
+            # 특정 러너 프로세스가 아니고, 토큰에 두면 재연결마다 동의가 리셋된다.
+            # NULL = 아직 정하지 않음 → `bridge_consent.DEFAULT_BATCH_CONSENT`(=끔).
+            # 종전 표현 수단이던 `--batch` 는 그 머신의 명시 override 로 남는다.
+            "ALTER TABLE WebAccounts ADD COLUMN BridgeBatchConsent TINYINT(1) NULL",
         ):
             try:
                 cur.execute(ddl)

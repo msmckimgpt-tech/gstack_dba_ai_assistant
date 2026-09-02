@@ -318,13 +318,46 @@ def test_console_features_say_why_not_just_failure(path, label):
         "장애 문구를 통째로 대체했다 — 게이트를 되돌린 뒤 진짜 장애를 차단으로 오인하게 된다")
 
 
-def test_node_analysis_refuses_before_enqueue():
-    """분석은 **큐에 넣기 전에** 거절한다 — 넣으면 재시도를 태우고 알 수 없는 실패로 끝난다."""
-    src = NODE_ANALYSIS.read_text(encoding="utf-8")
-    assert src.count("feature_blocked_message(") >= 2, "노드·스키마 두 진입점 모두 게이트가 필요하다"
+def test_node_analysis_refuses_before_enqueue_only_when_nowhere_to_delegate(monkeypatch):
+    """분석은 **큐에 넣기 전에** 판정한다 — 그러나 판정 대상이 바뀌었다.
+
+    ## 무엇이 바뀌었나 (TASK-20260901T190000)
+
+    종전 계약은 「서버 계정 LLM 이 닫혀 있으면 거절」이었다. 그 계약대로 라이브는 그래프
+    'AI 능동 분석' 을 **통째로 막고 있었고**, 사용자가 그것을 제보했다:
+
+    > "'그래프 뷰' 내 'AI 능동 분석'에 대한 기능이 막혀있는것으로 확인되었습니다.
+    >  서비스 내 AI 관련 모든 작동사항을 다시 활성화 후, 연결한 AI를 통해 작동하도록 배선"
+
+    새 계약은 「**두 경로 중 하나라도** 있으면 진행, 둘 다 없으면 시작 전에 거절」이다.
+    지켜야 할 것은 그대로다 — *큐에 넣어 놓고 한참 뒤 알 수 없는 실패로 끝내지 않는다.*
+
+    소스가 아니라 **판정 결과**를 본다: 게이트 함수를 실제로 돌려 세 경우를 모두 확인한다.
+    """
+    import sys
+
+    sys.path.insert(0, str(NODE_ANALYSIS.parents[2]))
+    from modules import node_analysis as na
+
+    # (1) 서버 LLM 닫힘 + 위임할 곳 없음 → **거절**(종전 계약의 핵심은 여기서 유지된다)
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "")
+    monkeypatch.setattr(na, "delegation_possible", lambda who: False)
+    reason = na._analysis_gate("alice")
+    assert reason, "위임할 곳도 없는데 통과시키면 잡마다 재시도를 태우고 실패로 끝난다"
+
+    # (2) 서버 LLM 닫힘 + 연결된 AI 있음 → **진행**(제보된 결함이 고쳐진 지점)
+    monkeypatch.setattr(na, "delegation_possible", lambda who: True)
+    assert na._analysis_gate("alice") == "", "연결된 AI 가 있는데도 막고 있다"
+
+    # (3) 게이트를 되돌린 운영 → 진행
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
+    monkeypatch.setattr(na, "delegation_possible", lambda who: False)
+    assert na._analysis_gate("alice") == ""
+
+    # 두 진입점 모두 **그 판정 함수를 부른다**(한쪽만 고치면 스키마 단위 분석이 계속 막힌다).
     for func in ("enqueue_analysis", "enqueue_schema_analysis"):
         body = _func_source(NODE_ANALYSIS, func)
-        assert "server_llm_enabled()" in body, f"{func}: 게이트 검사 없음"
+        assert "_analysis_gate(" in body, f"{func}: 게이트 판정을 부르지 않는다"
 
 
 # ── provider 제한 배너 ───────────────────────────────────────────────────────

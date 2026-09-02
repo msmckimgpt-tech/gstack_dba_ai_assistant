@@ -1,6 +1,6 @@
 {
-  "total_routes": 264,
-  "api_routes": 263,
+  "total_routes": 265,
+  "api_routes": 264,
   "ordered": [
     {
       "path": "/static",
@@ -1684,6 +1684,13 @@
       "path": "/api/ai/connect/status",
       "methods": [
         "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/connect/batch-consent",
+      "methods": [
+        "POST"
       ],
       "type": "APIRoute"
     },

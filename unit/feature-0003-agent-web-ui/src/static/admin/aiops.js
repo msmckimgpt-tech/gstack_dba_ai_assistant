@@ -32,8 +32,15 @@ function bridgeKpis(bridge, kpi, fmtNum) {
   const open = Number(bridge.open_tasks || 0);
   const working = Number(bridge.working_tasks || 0);
   const stale = Number(bridge.stale_tasks || 0);
+  const batchCapable = Number(bridge.batch_capable || 0);
+  // 배경 작업(테이블 인사이트·클러스터 라벨)은 **별도 동의**라 「콘솔은 되는데 배치만 0」이
+  // 정상 상태로 존재한다. 그 0 을 침묵으로 두면 운영자는 배경 처리가 왜 멎어 있는지 화면
+  // 어디에서도 알 수 없다 — 배선만 하고 침묵하지 않는다(TASK-20260901T190000 AC-5).
+  const batchNote = batchCapable
+    ? ` · 배경 작업 동의 ${batchCapable}`
+    : " · 배경 작업 동의 0 (사용자가 '내 AI 연결' 에서 켤 수 있습니다)";
   return kpi("연결된 AI", `${fmtNum(listening)}`,
-             `연결 계정 ${connected} · 콘솔 작업 가능 ${capable}`)
+             `연결 계정 ${connected} · 콘솔 작업 가능 ${capable}${batchNote}`)
     + kpi("대기 / 처리중", `${fmtNum(open)} / ${fmtNum(working)}`,
           // 정체 건수는 **0 일 때 말하지 않는다** — 상시 표시하면 "0건 정체" 가 배경 소음이
           // 되어 실제로 1건이 생겼을 때 눈에 띄지 않는다.

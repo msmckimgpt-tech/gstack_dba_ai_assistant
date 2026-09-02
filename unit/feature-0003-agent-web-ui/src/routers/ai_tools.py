@@ -39,6 +39,7 @@ from fastapi.responses import JSONResponse
 
 # feature-0043: 브리지 task 의 점유·취소 술어 **단일 정본**. 지역 별칭(`_CLAIMABLE_SQL` 등)은
 # 아래 "브리지 상태 술어" 절에서 붙인다 — 정의가 아니라 참조다.
+from shared import bridge_consent as _consent
 from shared.bridge_tasks import (
     BRIDGE_CLAIM_LEASE_MIN as _BRIDGE_CLAIM_LEASE_MIN,
     CLAIMABLE_SQL as _CLAIMABLE_SQL,
@@ -4423,9 +4424,19 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
             # 회수 실패가 연결을 끊지 않는다 — 최악이 **종전 동작**(lease 만료 대기)이다.
             logging.getLogger(__name__).warning(
                 "[bridge] 고아 점유 회수 실패 account=%s: %r", account_id, exc)
+    # 배경 배치 동의 (TASK-20260901T190000). 아래 `try` 안에서 읽어 응답에 싣는다 —
+    # 러너는 이 값으로 자기 `features` 신고를 갱신하므로, 웹 토글이 **재기동 없이** 반영된다.
+    batch_consent = _consent.DEFAULT_BATCH_CONSENT
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
+        try:
+            batch_consent = _store.account_batch_consent(cur, account_id)
+        except Exception as exc:  # noqa: BLE001
+            # 읽기 실패는 **동의하지 않음**으로 떨어진다(fail-closed). 연결은 유지한다 —
+            # 다음 30초에 다시 읽으므로 일시 실패는 자연히 복구된다.
+            logging.getLogger(__name__).warning(
+                "[bridge] 배치 동의 조회 실패 account=%s: %r", account_id, exc)
         # 신고 기록 실패는 하트비트를 실패시키지 않는다 — 연결 유지가 주 목적이고,
         # 신고는 다음 30초에 다시 온다(매번 싣기 때문에 자연히 복구된다).
         try:
@@ -4473,6 +4484,20 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         "interval_sec": int(result.get("interval_sec") or _store.HEARTBEAT_INTERVAL_SEC),
         "expires_in": int(result.get("expires_in") or 0),
         "window_sec": int(_store.HEARTBEAT_WINDOW_SEC),
+        # ── 배경 배치 동의 (TASK-20260901T190000, 사용자 결정 "웹에서 토글") ─────────────
+        #
+        # 러너는 이 값으로 `batch_jobs` 신고를 켜고 끈다 — 종전에는 `--batch` 를 붙여 **다시
+        # 띄워야만** 바뀌던 것이다(진행 중 작업이 끊기고, 그런 플래그가 있는 줄 모르는
+        # 사용자에겐 사실상 없는 기능이었다).
+        #
+        # ⚠ 이 키는 **하트비트 기록이 성공한 응답에만** 실린다. 실패 응답에 관습적으로
+        # `False` 를 실으면 서버가 잠깐 흔들릴 때마다 러너가 동의를 껐다 켰다 하고, 그 진동이
+        # 배급 자격을 30초 단위로 뒤집는다. 모르면 말하지 않는 쪽이 옳다 —
+        # 러너는 키가 없으면 **직전 값을 유지**한다.
+        "batch_consent": bool(batch_consent),
+        # 무엇에 동의하는지 말하는 문구도 서버가 준다. 화면·러너 로그가 각자 지으면 같은
+        # 사실을 두 가지로 말하게 된다.
+        "batch_consent_notice": _consent.CONSENT_NOTICE,
         # ── 갱신 유도 (사용자 결정 2026-08-31, TASK-20260831T100000) ────────────────
         #
         # 러너는 사용자 머신에 설치된 파일이라 우리가 갱신을 **강제할 수 없다.** 그런데

@@ -2964,3 +2964,10 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 - 근거: 적용 전후 `kb_glossary` 카운트(739→634) · `skipped_general` 57 · 사용자 지적
   범용어 9종 정규화 표면형 전건 부재 · 매니페스트 105행과 `restore()` 키 일치 확인 ·
   정리 후 GZ_QA_G 재실측(약어 회복분 생존 · DK온라인 ENUM 미유입).
+
+## REV-20260901T200000-common-enum-reattribute [SKIPPED:non-policy-doc] — 전역 ENUM 귀속 정정 기록
+
+- Cross-ref: CHG-20260901T200000-common-enum-reattribute. 코드 변경 0 — 리뷰 패널 대상 아님.
+- 근거: `enum_dictionary` scope 별 카운트(common 9→0 · 제품 6 scope 15) · 매니페스트 9행 ·
+  제품 격리 실측(같은 질문에 scope 별로 자기 것만, 무관 제품은 0).
+- 남긴 위험: 제품군 티어 부재로 형제 제품 간 복제 발생(9→15). 대안 대비 우위는 MODIFY 에 기록.

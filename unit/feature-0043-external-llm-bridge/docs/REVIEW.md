@@ -2636,6 +2636,83 @@ column 을 조용히 삼키므로 **기능이 영구히 `last_os=""` 폴백**으
 
 - **판정**: **APPROVED** — 자체 적발 1건(테스트 판별력) 수정, 잔여 BLOCKING/MAJOR 0.
 
+## REV-20260901T190000-ai-claude-ai-jobs-rewire-external [AGENT-TEAM:inline-adversarial] — APPROVED
+
+- **일시**: 2026-09-01
+- **범위**: `shared/bridge_consent.py`(신규) · `shared/bridge_tasks.py`(자격 판정·프롬프트 편성
+  승격 + `dedupe_key`) · `modules/{node_analysis,insight,semantic_cluster,llm}.py`(위임·반영) ·
+  `oauth_store.py`·`routers/{oauth_as,ai_tools,ai_ops,_console_llm,_console_jobs}.py` ·
+  `bridge_agent.py`(+거울) · `ai-connect.{html,js}`·`admin/aiops.js`.
+- **Trigger** (§18.8): `session`/`credential`(토큰 술어·동의) → security · `query`/`schema`
+  (자격 질의·`BridgeBatchConsent` ALTER) → backend + qa · `form`/`toggle` → ux.
+- **패널 형태**: 세션 지시(`Do not call the AgentTool unless the user requested it`)로 subagent
+  패널을 띄우지 않고 **인라인 3렌즈 + 뮤테이션**으로 수행했다. 자체 SKIP 이 아니라 대체 수행이며,
+  그 사실을 여기 적어 둔다(§18.8 의 목적은 결함 적발이지 호출 형식이 아니다).
+
+### 렌즈 1 — security: 남의 계정 토큰을 누가, 무슨 근거로 태우는가
+
+- 배경 배치는 **그 사람이 요청한 적 없는 일**이다. 동의 축을 `console_jobs` 와 분리해 유지했고,
+  기본값·파싱 실패·컬럼 부재·조회 실패를 **전부 「받지 않음」**으로 떨어뜨렸다
+  (`DEFAULT_BATCH_CONSENT=False`, `account_batch_consent` 의 except 경로).
+- `"0"` 같은 값을 참으로 읽으면 동의하지 않은 계정이 배치를 태운다 — 진리표에 그 케이스를
+  넣었다(비어 있지 않은 문자열을 참으로 보는 순진한 구현은 여기서 죽는다).
+- 토글은 **세션 인증**이다. `mat_` 토큰 인증으로 뒀다면 러너 프로세스가 자기 동의를 스스로
+  바꿀 수 있게 되는데, 그건 정확히 이 축이 막으려는 것이다.
+- 노드 분석 위임은 **요청자 계정**으로만 간다(`requested_by` → account). 아무 러너에게나 주면
+  화면에서 누른 적 없는 사람의 토큰을 태운다.
+- 러너 자격 술어를 shared 로 **옮겼지** 복사하지 않았다. 복사했다면 로그아웃한 세션의 러너를
+  워커만 자격 있다고 보는 창이 열린다(인증과 관제가 갈리던 P0-R 의 형태).
+
+### 렌즈 2 — backend/가용성: 무엇이 멎고, 무엇이 스스로 낫는가
+
+- **워커가 러너를 기다리지 않는다.** 기다리면 배경 처리가 개인 AI 속도에 묶이고 러너가 꺼진
+  날 통째로 멎는다. 위임 잡은 `running` 으로 남고 lease 회수가 backstop 이다(자가 치유).
+- 위임 실패는 `attempts` 를 **소모하지 않는다**. 소모하면 사용자가 AI 를 켜기 전에 run 이
+  통째로 `failed` 로 굳는다. 대신 `_DELEGATE_DEFER_SEC=60` 재예약(예산 분기와 같은 규율).
+- **run 마감을 반영 함수가 한다.** 워커 마감 판정은 그 cycle 에 잡을 집은 run 만 훑으므로
+  (`touched_runs`), 마지막 잡이 위임으로 끝난 run 은 여기서 닫지 않으면 영원히 `running` 이고
+  그 상태가 enqueue dedup 을 통해 **사용자의 재트리거까지 막는다**. 실제로 놓칠 뻔한 지점.
+- 이웃 재큐는 위임 시에도 그대로 한다 — 멈추면 재귀 전개가 사라져 run 이 루트 한 개짜리가
+  된다. lease 회수 후 재위임돼도 `ON CONFLICT DO NOTHING` 이라 중복되지 않는다.
+- `dedupe_key` 가 없으면 배경 배치는 결과가 올 때까지 매 pass 재적재하고, **그 중복은 전부
+  실제로 처리된다**(= 같은 답을 여러 번 산다). 대기열 상한은 폭주만 막는다.
+
+### 렌즈 3 — qa: 테스트가 실제로 잡는가 (뮤테이션)
+
+⚠ **자체 적발 2건.** 처음 5종을 돌렸을 때 M3·M5 가 생존했다.
+
+| # | 주입 | 결과 |
+|---|---|---|
+| M1 | `_analysis_gate` 에서 위임 분기 제거(= **제보된 결함 복원**) | **KILL** (3건) |
+| M2 | 늦은 답 가드 제거(이미 지나간 잡을 덮어쓴다) | **KILL** |
+| M3 | `enqueue_console_job` 의 dedupe 확인 제거 | ⚠ 최초 **생존** → 행위 테스트 추가 후 **KILL** |
+| M3b | dedupe 키를 payload 에 넣지 않음(다음 조회가 못 찾는다) | **KILL** (2건) |
+| M4 | 러너 override 를 단방향으로(`--no-batch` 가 서버 동의를 못 이김) | **KILL** (이음매 진리표) |
+| M5 | `_classify` 의 `runner_can_take` 재질의 제거 | **등가**(아래) |
+| M5b | 선행 `console_jobs` 분기 제거 | **등가**(아래) |
+| M5c | 재질의 + 선행 분기 **동시** 제거 | **KILL** (2건) |
+| M6 | 배치 별도 동의 제거(「할 줄 안다」 → 「해도 된다」 승격) | **KILL** |
+
+- **M3 생존의 실체**: 테스트가 「호출부가 `dedupe_key` 를 **넘기는가**」만 봤고 「그것이
+  **작동하는가**」를 안 봤다. 넘기기만 검사하면 함수 안의 확인이 통째로 사라져도 통과한다.
+  가짜 MySQL 커넥션으로 적재를 **돌려서** 결과를 보는 테스트 2건을 추가해 KILL.
+- **M5/M5b 는 등가 뮤턴트다** — 둘이 서로를 되메운다(재질의를 지우면 선행 분기가, 선행 분기를
+  지우면 재질의가 같은 답을 낸다). 되메우는 지점까지 함께 지운 M5c 가 KILL 되는 것으로 그
+  등가성을 실증했다. **그러나** 그 과정에서 이 판정에 **행위 테스트가 아예 없었다**는 사실이
+  드러나, `test_console_delegation_eligibility.py`(8건)를 신설했다 — 40조합 전수로 화면 판정과
+  배급 정본이 갈리지 않음을 잠근다. 등가라고 넘어갔으면 그 공백은 그대로 남았다.
+
+### 잔여 리스크 (배포 후 확인)
+
+- `insight_summary` 는 **테이블 축만** 배선됐다(라벨을 그렇게 좁혔다). 스키마·계정 인사이트는
+  서버 경로뿐이고, 게이트가 닫힌 지금 그 둘은 계속 `invalid_response` 로 스킵된다.
+- 배치 위임 대상 계정은 「동의한 러너 중 가장 최근 하트비트」 하나다. 여러 명이 동의하면
+  분산하지 않는다 — 분산하려면 "누가 얼마나 태웠는가" 를 관리해야 하고 그건 이 축의 범위 밖.
+- **라이브 end-to-end 미수행** — 사용자 요구 사항이며 배포·러너 갱신 후에 수행한다.
+
+- **판정**: **APPROVED** — 자체 적발 2건(테스트 공백) 수정, 잔여 BLOCKING/MAJOR 0.
+- **Human Approval Needed**: no
+
 ---
 
 ## REV-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 왜 이 축을 골랐나

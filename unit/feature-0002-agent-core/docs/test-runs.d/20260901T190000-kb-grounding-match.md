@@ -108,3 +108,53 @@ verdict: PASS
   전자는 **버그**(짧다는 이유로 잘림), 후자는 **정책**(범용어는 제품 scope 에 두지 않는다,
   사용자 결정 2026-09-01). 지금은 `common` 큐에 `skipped_general` 로 있으므로,
   GZ_QA_G 의 정의가 제품 고유하다고 판단되면 관리자가 콘솔에서 되살릴 수 있다.
+
+---
+
+## 전역 ENUM 귀속 정정 (사용자 승인, 2026-09-01 20:00 KST)
+
+### Run 9 — 진단
+`common`(전역) ENUM **9행이 전부 제품 고유 내용**이었다 — 라벨에 `[DK온라인]`·`[건즈]`·
+`[마이크로볼츠 PvE]` 가 명시돼 있다. 전역은 **모든 제품 프롬프트에 주입**되므로, G2(낱말 경계)
+이후에도 그 테이블명이 질문에 실제로 나오면 남의 제품이 받는다.
+
+⚠ **9행 전부 `source='manual'`**(2026-07-03 동일자). 사람이 의도해 전역에 넣은 것이라
+소급 정리 스크립트의 원칙(「manual 행은 절대 건드리지 않는다」)에 따라 **자율 이동하지 않고
+사용자 승인을 받았다**.
+
+### Run 10 — 귀속을 데이터로 확정 (추측 금지)
+라벨의 제품명은 **근거가 아니다**(이름은 실체를 안 따라온다). 세 축을 교차했다:
+
+| 테이블 | 근거 | 귀속 |
+|---|---|---|
+| `Achievement` · `AchievementReward` | `table_descriptions`·`column_descriptions` 에 `product.dk_qa` | **DK_QA** |
+| `Mission` | AGE 그래프에 `mysql-gz-qa-global`·`mysql-gz-qa-kr`·`mysql-gz-dev` | **GZ_QA_G · GZ_QA_KR · GZ_DEV** |
+| `pverewardinfo` | AGE 그래프에 `mysql-mv-qa-game`·`mysql-mv-dev` | **MV_QA · MV_DEV** |
+
+datasource→제품 매핑은 `WebProductDatasources` 조인으로 해소했다.
+⚠ `pverewardinfo` 가 **해소되지 않는 scope**(`mysql-a4f572f222a2`)에도 있었다 — 삭제된
+datasource 의 그래프 잔재다. F3(유령 정점 회수)의 실물 사례.
+
+### Run 11 — 적용
+- 되돌리기 매니페스트 **먼저** 기록(fail-closed):
+  `/shared/glossary-sweep/20260901T200000-common-enum-reattribute.json`(원본 9행 + 계획).
+- 결과: 제품 scope 등록 **15행** · `common` 삭제 **9행** → `common` ENUM **0행**.
+  `dk_qa` 4 · `mv_qa` 4 · `mv_dev` 4 · `gz_qa_g` 1 · `gz_qa_kr` 1 · `gz_dev` 1.
+- ⚠ **9행 → 15행으로 늘었다.** 읽기 캐스케이드가 `[제품, common]` 2단이라 **제품군 티어가
+  없기 때문**이다 — 형제 제품 3개가 같은 테이블을 쓰면 3벌을 두는 수밖에 없다.
+  중복을 늘리는 방향이지만, 대안(전역 유지)은 **무관한 제품까지** 받는 것이라 더 나쁘다.
+  근본 해소는 `product-family` 티어 신설이고 이 cycle 범위 밖이다.
+
+### Run 12 — 제품 격리 실측 (같은 질문, scope 만 바꿔서)
+
+    질문: "Achievement 와 Mission, pverewardinfo 설명해줘"
+
+| scope | 받은 ENUM |
+|---|---|
+| `product.gz_qa_g` | `Mission.MissionState` |
+| `product.dk_qa` | `Achievement.Type` |
+| `product.mv_qa` | `pverewardinfo.ri_reward_grade` |
+| `product.kr_live` | **(없음)** |
+
+각 제품이 **자기 것만** 받고 무관한 제품은 아무것도 받지 않는다. 정정 전에는 이 질문에
+**네 scope 전부가 9행 전체**를 받았다.

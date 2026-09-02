@@ -99,6 +99,16 @@ _CLAIMED = [(11, _RUN, _SCOPE, _NODE, "Table", "player_log", "log_v2.player_log"
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
+    # ⚠ **게이트를 명시적으로 연다** (feature-0043, TASK-20260901T190000 — autouse 라 파일 전역).
+    #
+    # 이 파일이 검사하는 것은 게이트 **뒤** 의 재시도·분류 로직이다. 게이트가 닫혀 있으면
+    # `process_pending` 이 LLM 을 부르지 않고 **개인 AI 에게 위임**하므로(그것이 지금의 옳은
+    # 동작이다) 여기 주입한 fake LLM 결과가 아예 소비되지 않는다 — 그러면 이 파일은 실패하거나,
+    # 더 나쁘게는 계약을 아무것도 안 보면서 통과한다(vacuous pass).
+    #
+    # `shared/llm_gate` 의 이중 계약 그대로: 게이트 뒤 로직은 픽스처가 열고, 게이트 자체는
+    # 별도 테스트가 **반환값으로** 검사한다(`feature-0043/tests/test_ai_jobs_rewire.py`).
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
     monkeypatch.setattr(_cfg(), "AGENT_NODE_ANALYSIS_ENABLED", True, raising=False)
     monkeypatch.setattr(_cfg(), "AGENT_NODE_ANALYSIS_MAX_ATTEMPTS", 4, raising=False)
     monkeypatch.setattr(_cfg(), "AGENT_NODE_ANALYSIS_RETRY_BASE_SEC", 60, raising=False)

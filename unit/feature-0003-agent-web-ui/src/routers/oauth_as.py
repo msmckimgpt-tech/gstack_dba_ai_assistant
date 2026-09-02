@@ -53,6 +53,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+from shared import bridge_consent as _consent
+
 import app
 
 INCLUDE_ORDER = 9_400  # ai_discovery(9_500) 직전 — /api/ai/* 네임스페이스 인접
@@ -594,6 +596,16 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             cur3.close()
     except Exception:
         last_os = ""   # 「모른다」 — 화면은 종전 추측으로 돌아간다
+    # 배경 배치 동의 (TASK-20260901T190000). 하트비트가 러너에게 주는 값과 **같은 함수**로
+    # 읽는다 — 화면과 러너가 각자 세면 토글이 켜진 화면 옆에서 러너가 받지 않는다.
+    try:
+        cur4 = conn.cursor()
+        try:
+            batch_consent = _store.account_batch_consent(cur4, int(account.get("id") or 0))
+        finally:
+            cur4.close()
+    except Exception:
+        batch_consent = _consent.DEFAULT_BATCH_CONSENT   # fail-closed(남의 토큰을 태우는 축)
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -623,6 +635,62 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         # 연결은 성립했는데 **그 러너가 배포본과 다르다** — 잠금 사유는 아니고(답변은 온다)
         # 안내 사유다. 이 값이 없으면 사용자는 옛 동작을 보면서 이유를 알 방법이 없다.
         "runner_stale": runner_stale,
+        # ── 배경 배치 동의 (TASK-20260901T190000, 사용자 결정 "웹에서 토글") ────────────
+        # 종전 표현 수단은 러너 CLI 플래그 `--batch` 하나였다 — 웹 어디에서도 켤 수 없고,
+        # 바꾸려면 러너를 다시 띄워야 하며, 온보딩 명령을 복사해 붙인 사람은 그런 플래그가
+        # 있는 줄도 몰랐다. 값과 고지 문구를 함께 싣는다(화면이 문구를 따로 지으면 갈린다).
+        "batch_consent": batch_consent,
+        "batch_consent_notice": _consent.CONSENT_NOTICE,
+    })
+
+
+@router.post("/api/ai/connect/batch-consent")
+async def connect_batch_consent(request: Request, conn=Depends(app.get_conn)) -> JSONResponse:
+    """배경 배치 동의를 켜거나 끈다 (TASK-20260901T190000).
+
+    ## 왜 세션 인증인가 (`mat_` 토큰이 아니라)
+
+    동의의 주체는 **계정 소유자**다. 토큰 인증을 쓰면 러너 프로세스가 자기 동의를 스스로
+    바꿀 수 있게 되는데, 그건 정확히 이 축이 막으려는 것이다 — 배경 작업은 그 사람이 요청한
+    적 없는 일이고 그 사람 계정의 사용량을 태운다. 브라우저에 로그인한 사람만 바꾼다.
+
+    ## 반영까지의 시차를 숨기지 않는다
+
+    서버가 값을 바꿔도 **배급 자격은 러너 신고(`RunnerFeatures`)가 정한다**. 러너는 다음
+    하트비트(≤30초)에 이 값을 읽어 자기 신고를 갱신하므로, 응답은 "바꿨다" 까지만 말하고
+    "이제 받는다" 라고 말하지 않는다. 두 사실을 합치면 화면이 아직 오지 않은 상태를 단언한다.
+    """
+    if conn is None:
+        return _no_db()
+    account = app._get_authenticated_account(conn, request)
+    if not account:
+        return app._json_error("로그인이 필요합니다.", 401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not isinstance(body, dict) or "enabled" not in body:
+        return app._json_error("enabled(true/false)가 필요합니다.", 400)
+    want = _consent.normalize_consent(body.get("enabled"))
+    cur = conn.cursor()
+    try:
+        # 실패를 삼키지 않는다 — 조용히 실패하면 화면은 켜진 채 남고 러너는 영영 받지 않는다.
+        _store.set_account_batch_consent(cur, int(account.get("id") or 0), want)
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "[bridge] 배치 동의 저장 실패 account=%s: %r", account.get("id"), exc)
+        return app._json_error("동의 설정을 저장하지 못했습니다. 잠시 후 다시 시도하세요.", 503)
+    finally:
+        cur.close()
+    return JSONResponse({
+        "ok": True,
+        "batch_consent": want,
+        # 러너가 다음 하트비트에 읽는다. 「이제 받는다」가 아니라 「곧 반영된다」 —
+        # 러너가 꺼져 있으면 영영 반영되지 않고, 그 사실을 여기서 단언할 근거가 없다.
+        "message": ("배경 작업을 받도록 설정했습니다 — 연결된 AI 에 30초 안에 반영됩니다."
+                    if want else
+                    "배경 작업을 받지 않도록 설정했습니다 — 연결된 AI 에 30초 안에 반영됩니다."),
     })
 
 
