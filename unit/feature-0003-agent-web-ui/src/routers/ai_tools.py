@@ -39,6 +39,7 @@ from fastapi.responses import JSONResponse
 
 # feature-0043: 브리지 task 의 점유·취소 술어 **단일 정본**. 지역 별칭(`_CLAIMABLE_SQL` 등)은
 # 아래 "브리지 상태 술어" 절에서 붙인다 — 정의가 아니라 참조다.
+from shared import bridge_caps as _bridge_caps
 from shared import bridge_consent as _consent
 from shared import bridge_tasks as _bridge_tasks
 from shared.bridge_tasks import (
@@ -4555,20 +4556,78 @@ def _sanitize_runtimes(raw: object) -> list | None:
         efforts = [o for o in (
             _sanitize_option(e) for e in _capped_list(item.get("efforts"), _CAPS_MAX_EFFORTS)
         ) if o]
+        # ⚠ **출처를 저장 스키마에 넣지 않는다 (4키 계약).** 이 목록은 그대로
+        #   `RunnerCapabilities` JSON 이 되고 카탈로그가 읽는다 — 거기 출처가 들어가면
+        #   다음 reader 가 그 값을 신뢰 근거로 쓸 여지가 생긴다. 원장의 앵커 축이 필요한
+        #   출처는 아래 `_report_sources` 가 **out-of-band** 로 준다
+        #   (TASK-20260902T140200).
         out.append({"runtime": name, "label": _sanitize_label(item.get("label"), name),
                     "models": models, "efforts": efforts})
+    return out
+
+
+def _report_sources(raw: object, stored: object) -> dict:
+    """신고 항목별 **출처** `{runtime: source}` (TASK-20260902T140200).
+
+    Args:
+        raw: 하트비트 payload 의 `runtimes` **원문** — 출처가 살아 있는 유일한 곳.
+        stored: `_sanitize_runtimes(raw)` 의 결과(4키 목록) — 판정의 **모수**.
+
+    계정 원장의 **앵커 축**만 이 값을 쓴다 — 「이 목록이 열린 열거(`probe`)에서 왔는가」를
+    알아야 앵커 나이를 셀 수 있고, 확인(`verified`)이 앵커를 밀면 「앵커된 답이 앵커를
+    갱신」하는 자기강화 루프가 된다(`BASELINE_ANCHOR_MAX_DAYS` 를 둔 이유).
+
+    ⚠ **두 인자를 요구하는 것이 이 함수의 안전장치다** (확인 라운드 뮤테이션 2026-09-02).
+    한 인자 버전에서는 호출부가 실수로 **정제된 목록**(출처가 없는 4키)을 넘겨도 조용히
+    `{}` 를 돌려준다. 그러면 `probed_at` 이 영구히 비어 `baseline_for_runner` 가 전부
+    걸러 **확인 질의가 한 번도 발화하지 않는다** — 화면·지문·`caps_pending` 은 모두 정상으로
+    보이는데 제보 ②(「실행마다 목록이 다르다」)가 그대로 남는다. 리뷰어가 그 뮤턴트를 심었을
+    때 **41/41 이 전부 통과**했다. 인자를 둘로 나누면 그 오류가 `TypeError` 가 되어
+    **테스트가 아니라 인터프리터가** 잡는다(부분집합 단정으로는 `{}` 가 항진 통과한다).
+
+    ⚠ **판정을 다시 쓰지 않는다 — 정제 결과를 모수로 삼는다.** 두 함수가 같은 raw 를 각자
+    훑으면 판정이 갈릴 준비를 마친다. 실측으로 실제 괴리를 확인했다(2026-09-02): 모델이
+    하나도 유효하지 않아 **정제에 떨어진** 런타임이 출처맵에는 남아 앵커를 세웠다.
+    """
+    names = {str(r.get("runtime") or "") for r in (stored or [])
+             if isinstance(r, dict)} - {""}
+    if not names or not isinstance(raw, list):
+        return {}
+    out: dict = {}
+    # 상한은 정제와 **같은 슬라이스**다 — `names` 가 앞 8개에서만 나오므로 뒤를 훑을 이유가
+    # 없고, 하트비트 경로에서 클라이언트가 정하는 n 을 전부 도는 형태를 남기지 않는다.
+    for item in raw[:_CAPS_MAX_RUNTIMES]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("runtime") or "").strip()
+        # `name in out` — 중복 신고는 **첫 항목만** (정제와 같은 규칙). 뒤 항목이 앵커를
+        # 덮으면 화면에 오른 목록과 앵커의 출처가 서로 다른 항목에서 오게 된다.
+        if not name or name not in names or name in out:
+            continue
+        src = str(item.get("source") or "")
+        if src not in _SANITIZE_SOURCE_ALLOW:
+            continue
+        out[name] = src
     return out
 
 
 #: 화면에 그려도 되는 목록 **출처**. 러너 `_REPORTABLE_SOURCES` 와 같은 집합이어야 하며
 #: 구조 테스트가 두 값을 대조한다(두 곳이 갈리면 한쪽이 조용히 느슨해진다).
 #:
-#: - `probe`  — 그 AI 에게 직접 물어 받은 답
-#: - `cache`  — 위 답을 `config.json` 에 남긴 것(폴백은 캐시되지 않는다)
+#: - `probe`    — 그 AI 에게 직접 물어 받은 답
+#: - `cache`    — 위 답을 `config.json` 에 남긴 것(폴백은 캐시되지 않는다)
+#: - `verified` — 서버 baseline(`WebAccounts.RunnerCapsBaseline`)을 러너가 **라이브 확인
+#:                질의로 통과시킨** 것 (TASK-20260902T140200). baseline **그대로**는 이
+#:                이름을 얻지 못한다 — 확인을 통과한 항목만 러너가 이 출처로 신고한다
+#:                (사용자 결정 2026-09-02 「확인-후-표시」).
 #:
 #: ⚠ **`builtin` 을 넣지 마라.** 러너 소스에 적혀 있던 표가 그 이름이고, 그것이
 #: `gpt-5.1-codex` 가 사용자 화면에 뜬 경로다 (사용자 제보 4회, 2026-08-31~09-01).
-_SANITIZE_SOURCE_ALLOW: frozenset = frozenset({"probe", "cache"})
+#:
+#: ⚠ **`baseline` 같은 «확인 전» 출처도 넣지 마라.** 서버가 보관한 목록을 확인 없이 그리는
+#: 것은 위 화석과 **구조적으로 같은 형태**다(출처만 우리 소스 → 우리 DB 로 바뀐다). 서버
+#: baseline 이 화면에 도달하는 경로는 `verified` 하나뿐이어야 한다.
+_SANITIZE_SOURCE_ALLOW: frozenset = frozenset({"probe", "cache", "verified"})
 
 
 def _capped_list(raw: object, cap: int) -> list:
@@ -4662,6 +4721,21 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     # 배경 배치 동의 (TASK-20260901T190000). 아래 `try` 안에서 읽어 응답에 싣는다 —
     # 러너는 이 값으로 자기 `features` 신고를 갱신하므로, 웹 토글이 **재기동 없이** 반영된다.
     batch_consent = _consent.DEFAULT_BATCH_CONSENT
+    #: 이 계정의 런타임별 «마지막 확인» 원장 (TASK-20260902T140200). 러너가 다음 기동에서
+    #: **확인할 대상**이다 — 그대로 신고할 목록이 아니다(사용자 결정 「확인-후-표시」).
+    #: 여기서 미리 **`None`(=「모른다」)** 으로 두는 이유 두 가지.
+    #:
+    #: ① 아래 `try` 가 어느 지점에서 새더라도 응답 조립이 `NameError` 로 500 이 되지 않게.
+    #:    연결 유지 신호가 원장 하나로 죽으면 안 된다.
+    #: ② ⚠ **`[]` 로 두면 「원장이 비었다」는 단정이 된다** (codex R4 P1-3). 러너 수신부는
+    #:    「키가 **없으면** 건드리지 않는다」는 규율으로 되어 있는데(구 서버 호환), `[]` 를
+    #:    보내면 키가 **있으므로** 러너가 자기 원장을 지운다 — 조회 실패 한 번이 그 프로세스의
+    #:    확인 경로를 끄고, 그 회차는 열린 열거로 떨어져 제보 ②(실행마다 목록이 다르다)를
+    #:    그대로 재현한다. 「모른다」면 **키를 싣지 않는다** — 그러면 러너는 직전 값을
+    #:    유지하고 다음 30초에 다시 받는다. 이 저장소는 같은 구분을
+    #:    `account_caps_baseline`(`None` vs `{}`)에서 이미 세웠고, 여기서 그것을 평평하게
+    #:    만들면 그 층의 구분이 응답 경계에서 무의미해진다.
+    caps_baseline: list | None = None
     cur = conn.cursor()
     try:
         result = _store.heartbeat(cur, _bearer(request))
@@ -4689,6 +4763,33 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] 러너 OS 기록 실패 account=%s: %r", account_id, exc)
+        # ── 계정·런타임 단위 능력 baseline (TASK-20260902T140200) ─────────────────────
+        #
+        # 신고를 계정 원장에 **누적**하고, 그 원장을 응답에 실어 러너에게 돌려준다.
+        # 두 방향이 같은 왕복에 있는 이유: 러너가 다음 기동에서 확인할 대상이 곧 지금
+        # 신고한 것의 누적이고, 나누면 「보관은 됐는데 못 받는」 상태가 생긴다.
+        #
+        # ⚠ 신고가 `None`(구 러너·`--cmd`)이면 **쓰지 않고 읽기만** 한다 — 그 러너의 침묵을
+        #   「이 계정은 아무것도 쓸 수 없다」로 읽으면 다른 머신이 확인해 둔 목록이 지워진다.
+        # ⚠ 실패는 삼킨다 — 최악이 종전 동작(baseline 없음)이고, 이 축은 연결 유지의
+        #   전제가 아니다(위 두 기록과 같은 규율).
+        try:
+            # ⚠ `agent_build` 는 **클라이언트가 준 문자열**이다. 정규화 없이 원장에 넣으면
+            #   그 한 필드가 문서 예산을 잠식해 원장을 **영구히 비운다**(실측: 40KB 신고 →
+            #   문서 NULL 고정, 그 뒤로는 `before == after` 라 쓰기조차 없어 조용하다 —
+            #   적대 리뷰 2026-09-02). 같은 핸들러의 형제 writer(`set_runner_report`)가
+            #   이미 hex 6~16자로 좁히므로 **같은 정규화를 공유**한다 — 한 값을 한 writer 는
+            #   검증하고 다른 writer 는 안 하는 비대칭을 남기지 않는다.
+            caps_baseline = _store.merge_account_caps_baseline(
+                cur, account_id, caps, build=_store.normalize_runner_build(agent_build),
+                # 원문 + 정제결과 둘 다 넘긴다 — 한 인자였다면 정제결과만 넘기는 실수가
+                # 조용히 확인 경로를 껐다(위 docstring 의 뮤테이션 실측).
+                sources=_report_sources((payload or {}).get("runtimes"), caps))
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] 능력 baseline 병합 실패 account=%s: %r", account_id, exc)
+            # 실패는 「모른다」 — 빈 목록으로 접으면 러너가 직전 원장을 지운다(위 주석 ②).
+            caps_baseline = None
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "[bridge] 하트비트 기록 실패 account=%s: %r", account_id, exc)
@@ -4758,6 +4859,31 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # "재기동 뒤 무엇이 되살아났는지" 를 사람이 볼 수 있게 한다 — 조용한 회수는
         # 다음에 같은 증상이 나왔을 때 진단 근거가 되지 못한다.
         "released_claims": released_claims,
+        # ── 능력 baseline (TASK-20260902T140200, 사용자 제보 「실행할 때마다 목록이 다르다」) ──
+        #
+        # 이 계정이 **런타임별로 마지막에 확인받은** 목록. 러너는 로컬 캐시가 없을 때 이것을
+        # 열린 질의("무엇을 쓸 수 있나") 대신 **좁은 확인 질의**("이 중 지금 쓸 수 있는 것 +
+        # 빠진 것")의 입력으로 쓴다 — 열린 열거는 LLM 답변이라 회차마다 흔들리고, 그 흔들림이
+        # 곧 제보의 증상이었다.
+        #
+        # ⚠ 러너는 이 목록을 **그대로 신고하지 않는다.** 확인을 통과한 항목만 `verified`
+        #   출처로 신고되고, 그것만 화면에 오른다(사용자 결정 2026-09-02 「확인-후-표시」).
+        #   그대로 신고하는 경로를 열면 서버 보관 목록이 확인 없이 화면에 도달하는데, 그것은
+        #   `gpt-5.1-codex` 화석(제보 4회)과 구조적으로 같은 형태다.
+        # ⚠ **「비었다」와 「모른다」를 키의 유무로 가른다** (codex R4 P1-3).
+        #
+        #   - 빈 목록 `[]` = 「이 계정의 원장은 실제로 비었다」(첫 연결). 러너는 그것을 읽고
+        #     종전 경로(열린 질의)로 흐른다 — 이 값은 **단정이며 참**이다.
+        #   - 키 **부재** = 「지금은 모른다」(조회·병합 실패). 러너 수신부가
+        #     `if "caps_baseline" in res` 로 되어 있으므로 직전 원장을 **유지**하고 다음
+        #     30초에 다시 받는다.
+        #
+        #   초판은 실패에도 `[]` 를 실었다. 그러면 실패가 「비었다」는 단정으로 위장해
+        #   러너가 원장을 **지우고**, 그 회차의 확인 경로가 꺼져 제보 ②(실행마다 목록이
+        #   다르다)가 그대로 재현된다. 초판 주석은 「키를 빼면 구·신 러너 해석이 갈린다」를
+        #   근거로 들었는데 **사실이 아니다** — 구 러너는 이 키를 아예 읽지 않으므로
+        #   부재와 존재를 구분할 코드가 없다.
+        **({} if caps_baseline is None else {"caps_baseline": caps_baseline}),
     })
 
 

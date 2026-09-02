@@ -840,8 +840,22 @@ def test_builtin_table_falls_back_for_invocation_only(monkeypatch):
     """
     mod = _load_runner()
     src = _RUNNER.read_text(encoding="utf-8")
-    fn = src[src.index("def detect_runtimes("):]
-    fn = fn[:fn.index("\ndef ")]
+
+    # ⚠ **함수 이름에 결합하지 않는다** (2026-09-02). 초판은 `detect_runtimes` 본문만
+    #   떼어 봤는데, 신고 목록 조립이 `_assemble` 로 분리되자(플랫폼 단위 중간 신고를
+    #   위해 여러 번 불려야 했다) 이 단정이 **동작 변경 없이** 빨개졌다. 검사하려는 사실은
+    #   「폴백 경로가 존재하고 그 출처가 `builtin` 이다」이므로, 그 사실이 사는 함수를
+    #   후보로 두고 **하나라도** 만족하면 통과시킨다.
+    def _body(name: str) -> str:
+        i = src.find(f"def {name}(")
+        if i < 0:
+            return ""
+        rest = src[i:]
+        j = rest.find("\ndef ")
+        return rest[:j] if j > 0 else rest
+
+    fn = "\n".join(_body(n) for n in ("detect_runtimes", "_assemble"))
+    assert fn.strip(), "폴백 경로가 사는 함수를 하나도 찾지 못했다 — 이 단정은 무의미하다"
     assert '"builtin"' in fn, "폴백 경로가 사라졌다(호출법까지 잃는다)"
     # 2026-09-01: 그 자리는 **항상 `builtin`** 이다. 다른 이름으로 바꾸면 바로 아래 캐시
     # 쓰기 가드(`!= "builtin"`)가 뒤집혀 폴백이 영구 캐시된다 — 한 번 그렇게 만들었고

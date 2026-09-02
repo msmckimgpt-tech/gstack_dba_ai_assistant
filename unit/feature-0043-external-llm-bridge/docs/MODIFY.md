@@ -3566,6 +3566,253 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 병합 변형 점검: 형제 cycle(#1522)의 `selfupdate.py` 가 전 구간 바이너리 모드임을 확인해
 인코딩 축과 상호작용이 없음을 검증. 코드 변경 없음.
 
+## CHG-20260902T140200-caps-live-sync — 능력 신고의 라이브 도착 + 계정 원장
+
+사용자 제보 2건(2026-09-02): ① 러너가 신고한 모델·추론등급 목록이 새로고침 전까지 화면에
+갱신되지 않아 체감 대기가 길다 ② 러너 실행마다 모델 종류가 일정하지 않다(플랫폼별 캐시 +
+재연결 시 검증 요청).
+
+### 무엇을 고쳤나
+
+**① 갱신 신호를 «전이» 에서 «변화» 로.** 카탈로그 재조회 계기가 `onComposeGateChange`
+(컴포저 잠금 **전이**) 하나였다. 러너는 능력 협상을 배경에서 돌리므로(질문 처리를 먼저
+살린다 — `agent/lifecycle.py` 「협상은 뒤에서 한다」) 목록은 그 전이 **뒤** 20~120초에
+도착하고, 그때 `compose_blocked` 는 안 바뀌므로 리스너가 발화하지 않았다. 잠금이 풀리며
+상태 폴링까지 멎어(`wantPoll = _composeBlocked || _modalOpen`) **도착을 관측할 경로가 하나도
+없었다.**
+
+- 서버: `connect_status` → `caps_rev`(목록 내용 지문 12자)·`caps_pending`
+- 프런트: `_paintCaps` 가 지문 변화를 관측 → `onCapsChange` → 카탈로그 재조회 + 재렌더.
+  폴링 조건에 `_capsPollWanted()`(확인 창, 상한 5분) 추가 — 정상 상태 요청은 여전히 0
+- 인라인 콜백을 `_refreshModelCatalogSurface` 로 추출 — 두 신호가 같은 절차를 공유
+
+**② 사유 문구의 근거 없는 지시 제거.** 협상이 도는 정상 창(실측 claude 22.7초 · codex
+112.3초)에 「최신 실행 파일로 다시 실행해 보세요」라고 말하고 있었다(§16.7 G7-c). 빌드
+대조(`runner_build_is_stale`)로 셋을 가르고, 구 빌드가 아닐 때는 「…확인하는 중입니다」.
+
+**③ 계정·런타임 단위 원장.** 신규 `WebAccounts.RunnerCapsBaseline`(JSON, additive).
+`_ensure_bridge_heartbeat_schema`(fast path 에서도 불리는 유일한 자리) ALTER —
+`BridgeDefaultModel` 이 slow path 전용이라 라이브에서 죽어 있던 선례를 반복하지 않는다.
+종전 저장은 `WebOAuthTokens.RunnerCapabilities`(토큰 행)뿐이라 재연결 = 새 행 = NULL 이었다.
+
+**④ 확인-후-표시.** 하트비트 응답 `caps_baseline` → 러너 `verify_runtime_caps`
+(`_CAPS_VERIFY_PROMPT`: 「이 중 지금 쓸 수 있는 것 + 빠진 것」) → 통과분만 `verified` 출처로
+신고. baseline **그대로**는 화면에 도달하지 않는다(사용자 결정). provenance allowlist 는
+러너·서버 양쪽을 함께 넓혔고 구조 테스트가 동일성을 잠근다 — `baseline` 같은 «확인 전»
+이름은 넣지 않는다(그것이 `gpt-5.1-codex` 화석과 같은 형태다).
+
+**⑤ 사용일 기준 만료 14일** (사용자 결정) — `last_used_at` 갱신형. 생성일 기준이면 매일
+쓰는 런타임도 14일마다 전면 재질의로 떨어져, 안정성을 얻으려고 만든 원장이 주기적으로
+불안정을 재생산한다.
+
+### 구현 중 자체 적발 (셋)
+
+- **쓰기 증폭**: `merge_baseline` 이 신고마다 timestamp 를 새로 찍어 내용이 같아도 바이트가
+  달라졌고, 그래서 저장 게이트의 「값이 그대로면 쓰지 않는다」가 **항상 거짓**이었다
+  (계정당 30초마다 `UPDATE WebAccounts`). 같은 파일 주석이 갖지 못한 성질을 주장하고 있었다.
+  → `BASELINE_TOUCH_MIN_SEC`(1시간) throttle. 내용 동일 + 직전 기록이 창 안이면 무접촉.
+  실측: throttle=0 이면 30초 뒤 문서 불일치, 3600 이면 일치.
+- **baseline 대기 위치**: 신호를 하트비트 **성공 분기**에만 뒀더니 서버에 닿지 못한 사용자가
+  상한(≈16초)을 통째로 더 기다렸다 → 분기 체인 **뒤**(성공·실패 무관, baseline 파싱 이후).
+- **자기 단정의 거짓 PASS**: 결손 주입에서 폴링 조건 단정이 **정의부**를 보고 통과했다
+  (호출을 지웠는데 초록 — §16.7 G14-e 가 검사 자체에 되돌아온 형태). 호출 지점을 보게 재작성.
+
+### 파일
+
+| 파일 | 변경 |
+|---|---|
+| `shared/bridge_caps.py` | **신규** — 지문·병합·사용일 만료·throttle 순수 정본 |
+| `routers/_bootstrap_schema.py` | `RunnerCapsBaseline` fast-path ALTER |
+| `oauth_store.py` | `account_caps_baseline` · `merge_account_caps_baseline` |
+| `routers/oauth_as.py` | `connect_status` → `caps_rev` · `caps_pending` |
+| `routers/ai_tools.py` | 하트비트 원장 병합·`caps_baseline` 전달 · `verified` 허용 |
+| `routers/system.py` | 사유 문구 3분기 + `caps_pending` |
+| `static/app/connect-modal.js` | `onCapsChange` · `_paintCaps` · 폴링 창 |
+| `static/app.js` | `_refreshModelCatalogSurface` 추출 + `onCapsChange` 소비 |
+| `agent/caps.py` | `_CAPS_VERIFY_PROMPT` · `verify_runtime_caps` · `baseline_index` |
+| `agent/lifecycle.py` | baseline 수신 · 협상 대기 · 출처 로그 분리 |
+| `agent/timing.py` | `_CAPS_BASELINE_WAIT_SEC` |
+
+신규 권한 코드 0 · 신규 route path 0 · 파괴적 변경 0. `shared/bridge_tasks.py` 무접촉
+(활성 세션 2개가 hot_path 로 선언 중 — §13.2.5-A).
+
+### 검증
+
+신규 25건 + 결손 주입 8종 전건 FAIL 확인(G11-b, 격리 사본). `main` 기준선과 실패 집합 동일.
+회귀 2건은 계약을 유지한 채 정합화(인라인 형태 결합 해제 · 하트비트 대역에 신규 책임 반영).
+
+
+## CHG-20260902T163000-caps-live-sync-confirm2 — 확인 라운드 2회차 조치
+
+정본 판정: `REVIEW.md` → `REV-20260902T163000-…[SELF:confirm-round-2]`.
+
+### 왜 이 항목이 따로 있나
+
+직전 라운드(CONCERN)의 P1 수정을 뮤테이션으로 재확인하려다 **주입 하네스 자체의 결함**을
+찾았다 — 러너 실물(`src/bridge_agent.py`)은 루트 `conftest.py` 가 collection 시점에
+`agent/` 패키지에서 조립하는 **빌드 생성물**인데, 격리 사본에 그 `conftest.py` 를 넣지
+않아 재조립이 없었다. `cp -a` 로 함께 넘어온 **고친 조립본**이 실행되어, `agent/caps.py`
+에 무엇을 주입해도 테스트는 원본을 보고 통과했다. 그래서 직전 라운드가 「M-B·M-D KILL」로
+기록한 두 건은 **무효**이고, 그 기록을 이 항목이 정정한다.
+
+이 결함의 성질: 실패가 「뮤턴트 생존」이 아니라 **「전건 KILL」로 위장**한다 — 검증했다는
+신호를 주면서 아무것도 검증하지 않는다. 하필 그 부류를 잡는 도구에서 났다.
+
+### 무엇을 고쳤나
+
+**하네스** — 사본에 `conftest.py` + 빌드 스크립트를 포함하고, 세션 첫 실행으로 **구문 오류를
+주입해 collection 이 실패하는지** 확인한다(주입이 실물에 도달함의 증거). 실패하지 않으면
+그 세션의 뮤테이션 결과는 버린다.
+
+**고친 하네스가 즉시 적발한 무단정 3건** (전부 출하 직전 트리에 실재, 러너 스위트 137건
+전부 미포착):
+
+| 결손 | 지웠을 때의 실제 결과 |
+|---|---|
+| `_CAPS_RUNTIME_NAME_RE` (서버 응답 런타임 **이름** 폭) | 서버가 막아 둔 `:` 재해석이 **서버→러너 방향으로** 되열림. 이 키는 `⟦UNTRUSTED-DATA⟧` 봉투 안 프롬프트 문장이자 `_which_ai` 조회 키다 |
+| `--refresh-caps` 의 baseline 폐기 **배선** | 「버리고 다시 묻겠다」는 플래그가 직전 목록을 계속 먹임 = 화석에서 영구히 못 벗어남. 기존 테스트는 한 층 아래(`detect_runtimes` 인자)만 봤다 |
+| `baseline_ready.set()` | 매 기동 `_CAPS_BASELINE_WAIT_SEC`(16초) 전액 대기 — 이 cycle 이 줄이려던 「체감 대기」의 재생산. 기존 테스트는 `start_heartbeat` 를 **가짜로 대체**해 진짜 코드가 한 번도 안 돌았다 |
+
+**R3 잔여 4건**
+
+- `oauth_store.py` — CAS predicate 를 **컬럼 원문**으로. 정규화 재직렬화를 쓰면 원문이
+  갈라진 계정에서 `UPDATE` 가 **영구 0행**이 되고 그 고장이 **조용하다**(하트비트 200 ·
+  러너 목록 수신 · 화면 정상, 저장만 멈춤). `_account_caps_baseline_row()` 신설:
+  「쓸 필요가 있나」는 정규형, 「누가 먼저 썼나」는 원문.
+- `agent/caps.py` — 확인 예산 `left/2` → 절대 상한 `_CAPS_VERIFY_TIMEOUT_SEC = 60.0`.
+  240 − 60 = 180초가 열린 질의의 몫이고, 재시도가 겨냥한 **빠른** 실패에서 두 번째 시도가
+  성립한다(초판은 남는 120초가 실측 codex 112.3초에 빠듯해 재시도가 사라졌다).
+- `agent/caps.py` — 렌더 상한의 부등식을 **실측으로** 못박고(정제 최악치 3,493자 ↔ 상한
+  1,600 ↔ 현장 입력 40종 중 31종 유지) 양쪽 끝을 실행으로 잠금. 건너뛴 **사유**도 둘로
+  가름(「없습니다」 vs 「너무 길어 담지 못했습니다」 — 자르기 도입 뒤 남는 경우는 목록이
+  **있는** 쪽이라 초판 문구가 조사자를 오도했다).
+- 문서·주석 — `confirmed_at` 잔재 제거(스키마 주석 · `FUNCTION.md` JSON · 테스트 fixture),
+  문구 표 3행을 **코드 verbatim** 으로(초판은 테스트가 **부재를 단정**하는 문장을 명세로
+  적어 정면 충돌이었다), 승인 계획 문서엔 **구현 이탈 블록** 명시, `reasons` 주석의 거짓
+  기술 정정.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `oauth_store.py` | `_account_caps_baseline_row` 신설 · CAS 를 원문 비교로 |
+| `agent/caps.py` | `_CAPS_VERIFY_TIMEOUT_SEC` · 렌더 상한 부등식 · 사유 2분기 · 주석 정정 |
+| `routers/_bootstrap_schema.py` | 항목 모양 주석을 실제 키로 |
+| `docs/FUNCTION.md` · `docs/TASK*.md` · `docs/REVIEW.md` | 상충 해소 · 귀책 정정 |
+| `tests/test_caps_live_sync.py` | 신규 6건(이름 폭 · refresh 배선 · ready 신호 · CAS 원문 4종 · 렌더 예산 · 사유) + AST 단정을 노드 타입으로 |
+
+신규 권한 코드 0 · 신규 route path 0 · 파괴적 변경 0.
+
+### 검증
+
+**신규 57건 통과** · **뮤테이션 21종 KILL / 생존 0**(고친 하네스, 자기검사 통과, 사본 삭제).
+
+⚠ AST 단정 한 건은 초판이 `ast.unparse(...).isidentifier()` 여서 `None`(unparse `"None"`)을
+통과시켰다 — **노드 타입**(`ast.Name`)으로 바꿔야 `None`·`[]` 가 함께 걸린다. 「문자열로
+뽑아 검사」가 리터럴 앞에서 무력해지는 부류.
+
+### 프로세스 정정
+
+보호 커밋 `ee4abe53` 의 메시지는 스테이징 유실을 **「외부 주체」**의 `git reset --hard` 로
+적었다. **틀렸다** — 실제 행위자는 2차 라운드 리뷰 subagent 의 `git stash push -u` 이고,
+복원에 쓴 stash 가 바로 그 명령이 만든 것이다(유실과 복원이 같은 원인). `--amend` 금지
+(§16.3 Step 3)라 커밋 메시지는 그대로 남으므로 정정은 `REVIEW.md` 가 정본이다. 교훈은
+「외부 침입」이 아니라 **read-only 로 부른 리뷰 subagent 가 트리를 변경할 수 있다**.
+
+
+## CHG-20260902T173000-caps-per-platform-live — 플랫폼마다 실시간 갱신 + codex 라운드 조치
+
+사용자 3차 제보(같은 turn): 「모든 AI 플랫폼의 모델·추론수준을 확인할 때까지 웹에서 갱신이
+이루어지지 않는다. 탐색은 백그라운드로 두되 **각 플랫폼이 완수될 때마다** 실시간 갱신되게」.
+
+### 근본 원인
+
+능력 협상은 런타임마다 스레드를 띄우고 **전부 `join` 한 뒤** 결과를 1회 게시했다. 실측
+claude 22.7초 · codex 112.3초이므로 그것은 **claude 의 목록이 90초를 기다린다**는 뜻이고,
+거기에 하트비트 주기 30초가 더해진다. 사용자에게는 그 합이 「갱신이 안 된다」로 보인다.
+
+### 무엇을 고쳤나
+
+**① 조립을 함수로 분리 — 여러 번 불려도 안전하게.** `detect_runtimes` 의 신고 조립 루프를
+`_assemble(present, probed, cached, detail_out)` 로 뺐다. 스레드가 `probed` 에 쓰는 동안
+불리므로 **`probed` 를 순회하지 않고** 고정 목록 `present` 를 순회한다(순회 중 삽입은
+`RuntimeError` 를 내고 그 예외가 협상 스레드를 죽인다).
+
+**② 플랫폼 단위 중간 신고.** `detect_runtimes(on_settled=…)` → `resolve_caps` 통과 →
+`lifecycle._publish_caps`. 최종 게시도 **같은 경로**를 쓴다 — 두 경로를 따로 두면 한쪽만
+고쳐지는 날 「부분은 되는데 최종이 안 되는」 상태가 되고 그 차이는 라이브에서만 드러난다.
+부분 신고가 안전한 근거: 계정 원장 병합이 합집합 누적이고 같은 프로세스의 `probed` 는
+누적되므로 목록은 **자라기만** 한다. 콜백 예외는 삼키고 `caps.partial_report_failed` 로
+남긴다(부가 경로가 본 경로를 죽이지 않는다).
+
+**③ 하트비트 즉시 깨우기.** `start_heartbeat(nudge=…)`. 주기만 기다리면 플랫폼이 끝나도
+최대 30초를 더 기다린다. **종료 신호도 같은 대기를 깨워야** 한다 — `nudge` 만 기다리면
+`try_self_update` 가 `os.execv` 직전에 하트비트를 끊는 경로가 한 주기 밀린다
+(`_HEARTBEAT_NUDGE_POLL_SEC = 0.5` 로 두 축을 번갈아 본다).
+
+**④ ⭐ 관측 축 `caps_settling` — ①~③만으로는 두 번째 플랫폼에서 멈춘다.**
+`caps_pending`(=「연결됐는데 목록이 비었다」)은 **첫 플랫폼이 도착하면 false** 가 되고,
+그러면 프런트 폴링 창이 닫혀 90초 뒤 오는 codex 를 관측할 경로가 다시 하나도 없다 —
+제보 ①의 결함이 「첫 플랫폼 이후」로 옮겨 앉을 뿐이다. 서버가 「신고가 방금 바뀌었다」를
+**사실로** 낸다(`WebOAuthTokens.CapabilitiesAt` 이 `CAPS_SETTLING_SEC`=150초 안).
+
+- 왜 서버인가: 프런트가 「직전 폴링과 지문이 다르다」로 대신 세우면 **새로 로드한 탭**이
+  놓친다(비교할 직전 값이 없고 `caps_pending` 은 이미 false) — 새로고침한 사용자가 제보의
+  증상을 그대로 다시 겪는 형태다.
+- 왜 별 질의인가: 자연스러운 자리(`shared/bridge_tasks.runner_profile_for_account`)는 지금
+  **다른 활성 세션들이 hot_path 로 선언**해 두었다(§13.2.5-A). 같은 파일을 동시에 고치면
+  병합이 두 기능 중 하나를 조용히 죽인다 — 이 cycle 이 이미 그 부류를 한 번 검증했다.
+- 값의 근거: 연속 신고 사이 실측 최악 간격 ≈90초 < **150** < 전체 질의 예산 240초 →
+  간격을 덮으면서 **협상이 끝나면 반드시 닫힌다**(열린 채 남으면 종일 폴링).
+- `runner_stale` 게이트를 **이 축에도** 적용한다 — 구 빌드는 신고가 정제에서 전부 떨어지는데
+  `CapabilitiesAt` 은 기능·버전 축으로 갱신될 수 있어, 없으면 `caps_pending` 에서 막은
+  종일 폴링이 이 축으로 되열린다.
+
+**⑤ `pending` → `watch` 개명.** 그 값이 이제 pending ∪ settling 을 뜻하므로 낡은 이름을
+남기지 않는다(이 cycle 이 반복해 고친 부류).
+
+### codex 적대 라운드 조치 (REV-20260902T173000 — 판정 근거는 그쪽)
+
+- **P1-2** `verify_streak` 이 확인 «횟수» 가 아니라 **하트비트 횟수**를 셌다 → 2.5분이면
+  원장이 꺼진다(실측 재현). 신고가 닿은 뒤 같은 값의 다음 신고는 **`cache` 로 강등**한다.
+- **P1-3** baseline 조회 실패가 `[]` 로 나가 러너가 자기 원장을 지웠다 → 저장층이 `None`
+  (모른다)을 돌려주고 응답은 그때 **키를 싣지 않는다**.
+- **P1-4** 카탈로그 재조회 실패가 지문을 소비해 영구 정지 → 지문은 **소비처가 성공한 뒤에**
+  소비한다(`_refreshModelCatalogSurface` 가 프라미스로 실패를 말한다).
+- **P2-5** 협상 중 로드된 탭이 첫 관측을 변화로 세지 않아 빈 목록으로 굳음 → 창이 열려 있으면
+  첫 관측도 발화한다(정상 상태의 첫 관측은 여전히 무발화).
+- **P2-9** 자기갱신이 진행 중인 협상을 `os.execv` 로 죽임 → `_CAPS_NEGOTIATING` 가드
+  (`finally` 로 반드시 내린다 — 새면 그 프로세스가 자기갱신을 영구히 못 한다).
+
+### 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `agent/caps.py` | `_assemble` 분리 · `on_settled` · `log_event` import |
+| `agent/lifecycle.py` | `_publish_caps` · `_caps_nudge` · `verified`→`cache` 강등 · `_CAPS_NEGOTIATING` |
+| `agent/timing.py` | `_HEARTBEAT_NUDGE_POLL_SEC` |
+| `oauth_store.py` | `CAPS_SETTLING_SEC` · `account_caps_settling` · 조회 실패 `None` |
+| `routers/oauth_as.py` | `caps_settling` (게이트는 `caps_pending` 과 동일) |
+| `routers/ai_tools.py` | 「모른다」면 `caps_baseline` 키 부재 |
+| `static/app/connect-modal.js` | `watch` 개명 · 두 축 합 · 지문 지연 소비 · 첫 관측 발화 |
+| `static/app.js` | `_refreshModelCatalogSurface` 가 실패를 반환 |
+| `tests/test_caps_live_sync.py` | 신규 6건 + 하네스 24검사(⑤~⑨) |
+| `tests/test_runtime_model_selector.py` | 함수 경계 결합 해제(`_assemble` 분리로 빨개진 단정) |
+
+신규 권한 코드 0 · 신규 route path 0 · 파괴적 변경 0 · 새 컬럼 0(`CapabilitiesAt` 재사용).
+
+### 검증
+
+컨테이너(py3.11) CI 전 경로 **rc=0 · FAILED 0**. ruff F821 은 **main 기준선과 동일**(1건
+`CancelRegistry` — 조립 전 모듈 특성). 뮤테이션 **13종 추가 KILL / 생존 0**
+(중간 신고 제거·콜백 예외 전파·nudge 무시·nudge 단독 대기·settling 축 제거·stale 게이트
+누락·「모른다」를 참으로 접음·상한 60초·지문 선소비·소비처가 실패를 참으로 보고·강등 제거·
+실패에 `[]`·저장층이 실패를 `[]`).
+
+⚠ 이 라운드도 **자기 단정 2건이 항진명제**였다: ① 콜백 실패 단정이 반환 목록만 봤는데
+`probed` 쓰기가 콜백보다 앞이라 뮤턴트도 통과했다(→ 구조화 로그 + 스레드 미처리 예외 부재로
+전환) ② 프런트 하네스가 리스너를 대역으로 둬 「소비처가 실패를 말하는가」를 검사하지 않았다
+(→ `app.js` 함수를 하네스에서 직접 실행). 「방어를 넣었다 ≠ 방어가 성립한다」.
 ## CHG-20260902T172500-ai-claude-feature-0043-bridge-answer-duration — 답변 완수 시 사라진 총 수행시간 복구
 
 - **날짜**: 2026-09-02
