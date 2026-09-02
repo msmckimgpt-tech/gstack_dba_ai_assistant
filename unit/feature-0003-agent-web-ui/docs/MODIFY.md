@@ -5652,3 +5652,11 @@ Task-Cycle: feature-0003-agent-web-ui
 기존 계약 `test_chip_shows_a_distinct_state_for_stale_runner` 의 리터럴 단언(`!!b.runner_stale`)은
 **관계**(서버 값 → 접는 함수 → `_paintConn`)로 갱신했다 — 리터럴을 그대로 두면 이 계약이
 「개선을 되돌리라」고 요구하는 게이트가 된다.
+
+## CHG-20260903T010309-doc-sync-rn-0903 (2026-09-02 블록 신설) 릴리즈노트 콘텐츠 — 151커밋 창 사용자향 15항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 **신규 `date: "2026-09-02"` 블록 prepend** — items **15** + `summary`. `releases` 58→**59** · `generated` "2026-09-01"→**"2026-09-02"**(== `releases[0].date`) · 총 항목 441→**456**.
+- 블록 귀속: 착륙일 09-02 의 date 블록이 **부재**(최신 09-01 · grep 히트 0)하므로 append 가 아니라 **신규 블록 prepend**. `date: "2026-09-01"` 이하 전 구간 바이트 동일.
+- 항목 골자: 「업데이트 필요」가 눌러도 안 풀리던 것 + 러너 자기 갱신 · [내 AI 실행] 자동화와 클릭 삼킴 회귀 · Windows 명령줄 상한/기동 240초 침묵 · 한글 윈도우 문자표 · 없는 모델 4차 봉인 · 플랫폼별 실시간 목록 갱신 · 능력 질의 5분→10초와 추론축 복구 · 답변 총 수행시간 각인 복구 · 포트프록시 5분 절단 해소 · 지식베이스 근거 자동 주입 · 사이드바 상태 점 색 · 프로필 「AI 작업」 탭 · 남은 AI 기능 3종 배선 · 관계도 유령 용어 회수.
+- 재발·반증 명시 4건 + 미검증 고지 9건(`summary`·`detail` 양쪽).
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측 · 누출 스캔 47패턴 0건.
+- Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.

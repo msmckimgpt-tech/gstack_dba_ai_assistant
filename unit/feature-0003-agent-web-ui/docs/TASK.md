@@ -13044,3 +13044,24 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [ ] 배포 후 라이브 재실측
 
 Task-Cycle: feature-0003-agent-web-ui
+
+## 20260903T010309-doc-sync-rn-0903 — 릴리즈노트 2026-09-02 블록 신설(15항목 + summary) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+
+### Requested Scope (요청 범위)
+- 델타 창 `d2d43b1f`..`5d984b75`(74 non-merge / 77 merge · 착륙 2026-09-02 02:03~21:52)의 **사용자 체감 변화**를 사용자향 릴리즈노트에 반영한다. 내부 리팩터·테스트·문서·측정 전용은 제외.
+- 착륙일 `2026-09-02` 의 date 블록이 **부재**(최신 09-01, grep 히트 0)하므로 기존 블록 append 가 아니라 **신규 블록 prepend** + `generated` 전진.
+- 정본(`unit/*/docs/*`) 변경 없음 — 본 cycle 은 릴리즈노트 콘텐츠 데이터와 그 companion 문서만 다룬다.
+
+### 결과
+- `static/release-notes-data.js` — 신규 `date: "2026-09-02"` 블록 prepend. `releases` 58→**59** · `items` **15** + `summary` · 총 항목 441→**456** · `generated` "2026-09-01"→**"2026-09-02"**. `date: "2026-09-01"` 이하 전 구간 **바이트 동일**(순증 전량이 신규 블록) · 헤더 주석 구간 불변 · 과거 블록 문장 무수정.
+- 재발·반증 명시 **4건** — 직전 09-01/08-31 블록이 단정했던 ①「업데이트 필요」 클릭 갱신 ②연결한 AI 에 없는 모델(4차 재발) ③콘솔 작업 가벼운 모델 ④용어·표 설명 전달이 이 창에서 반증·재발했다. 과거 블록은 그 시점 기록이므로 고치지 않고 새 항목에서 경위를 밝혔다.
+- 미검증 고지 **9건** — `summary` 와 각 `detail` 양쪽(접힌 상태에선 summary 만 보인다). 적대검증이 잡은 1건(능력 질의 배포 후 재측정은 두 런타임 중 **한쪽만** 성공 — 다른 쪽은 그 머신 사용량 한도 소진)을 추가 보강했다.
+- Pass/Fail: **PASS**.
+
+### Completion Checklist (doc-sync-rn-0903)
+- [x] 델타 창 사용자 체감 변화 선별 + 정본 대조(배포·검증 상태 확인)
+- [x] 신규 `2026-09-02` 블록 prepend + `generated` 전진 (과거 블록 무수정)
+- [x] 재발·반증 4건 명시 · 미검증 고지 9건(`summary`·`detail` 양쪽)
+- [x] `node --check` PASS · `verify_release_notes.mjs` 34/0(편집 전 baseline 동일 = 회귀 0)
+- [x] 누출 스캔 47패턴 0건 + 인용 UI 문구 `static/` grep 실측
+- [ ] 라이브 서빙 확인 — wrapper 소유(post-merge 배포 후 `?v=` content-hash 재주입 · committed ≠ serving)

@@ -3718,3 +3718,13 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 누출 스캔(19패턴 — feature-id / 러너·워커·핸들러 / `bridge_*` / payload·JSON / 폴링 / `Kind=` / `wired` / 파일확장자 `.py`·`.js` / MCP · `get_task_context` / WSL / endpoint / API): 신규 17항목 + summary 구간 **실질 0건**. 유일 히트인 「브리지 작업」 2건은 `admin.html` 에 5회 · `admin/tasks.js` 3회 · `admin/usage.js` 2회 노출되는 **실제 화면 탭 라벨**이므로 내부용어 노출이 아니다(grep 실측).
 - reconcile-first 실측(커밋 직전 재측정 01:57:17): 서빙 `https://mysql-ai.company.local/static/release-notes-data.js` 200 · md5 `4c150bcc…` = `origin/main` blob 과 동일 → 파리티 갭 0. `repo/` main checkout clean · HEAD == `origin/main` == `a2933614` · 배포 실패 마커 0. 서빙 캐시토큰 `?v=b85ff1d4986d`(content-hash 자동 주입 — 수기 bump 하지 않았다).
 - **Pass/Fail: PASS**.
+
+## TASK-20260903T010309-doc-sync-rn-0903 — 릴리즈노트 2026-09-02 블록 신설 검증
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면에 새 내용이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
+- `node --check static/release-notes-data.js` → PASS.
+- `node tests/verify_release_notes.mjs` → **ALL PASS 34 / 0**. 편집 **전** 동일 스크립트를 cycle 초반에 실행해 34/0 을 측정했으므로 **회귀 0** 을 실증한다(jsdom 은 `/tmp/node_modules` 에 선재).
+- 구조 단언: `releases` 58→**59**(신규 date 블록 1개) · `generated`=="2026-09-02"==`releases[0].date` · `releases[0].items` **15** + `summary` 보유 · `releases[1]`(2026-09-01) 불변 · 총 항목 441→**456** · **`date: "2026-09-01"` 이하 전 구간 바이트 동일** · 헤더 주석 구간 바이트 동일 · `type` ∈ {new,improved,fixed} · `area` ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0.
+- 누출 스캔(47패턴 — feature-id / TASK-·CHG-·REV-·AC- / `.py`·`.js`·`.ps1`·`.sh` / `/api/` / 테이블명 / 러너·브리지·하트비트·provenance·lease / 모델명 / `netsh`·`portproxy`·SQL·PowerShell 등): 신규 15항목 + summary 구간 **0건**. 인용한 UI 문구(「내 AI 실행」·「업데이트 필요」·「연결 안 됨」·「AI 작업」·「AI 능동 분석」·「단계 보기」·「추론 강도」)는 `static/` grep 으로 **실제 렌더 경로에서 실측** 확인. 초안의 '연결 필요'·'제공되지 않습니다' 2건은 소스 grep 0 으로 반증돼 실제 라벨로 교체·삭제했다.
+- 적대검증 교정 1건 반영: item#8 의 「배포된 프로그램을 내려받아 다시 재니 10.9초」가 배포 후 재측정 **전면 성공**으로 읽히나 정본은 두 런타임 중 **한쪽만** 측정됐다고 적는다(다른 쪽은 그 머신 사용량 한도 소진, rc=1) — 그 사실을 detail 에 보강했다.
+- reconcile-first 실측(커밋 직전 재측정 2026-09-03T01:55:08+09:00): 서빙 `release-notes-data.js` md5 `d6876ca9…` = `origin/main` blob 동일 → 파리티 갭 0. `repo/` main clean · HEAD == `origin/main` == `5d984b75` · 배포 실패 마커 0. 캐시버스터 수기 bump **없음** — 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며, `bin/deploy-web.sh` ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정하므로 수기 실값은 그 안전장치를 무력화한다.
+- **Pass/Fail: PASS**.
