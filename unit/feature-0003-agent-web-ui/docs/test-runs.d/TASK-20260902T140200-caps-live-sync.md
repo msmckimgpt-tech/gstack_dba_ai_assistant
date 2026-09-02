@@ -2,7 +2,7 @@
 run_at: 2026-09-02T15:20:00+09:00
 session: ai/claude-corp/feature-0043-caps-live-sync
 scope: caps-live-sync 웹 자산 (app.js · app/connect-modal.js · routers/{oauth_as,system,ai_tools})
-verdict: PENDING-POSTDEPLOY
+verdict: PASS (부분 — AC-4 후반은 미관측, 사유 명시)
 ---
 
 # TASK-20260902T140200 — feature-0003 웹 자산 시각검증 기록
@@ -86,3 +86,97 @@ verdict: PENDING-POSTDEPLOY
 - **정직 표기**: AC-4~7 은 **미검증**이다. 단위·node 실행 검증은 통과했으나 그것은 판정
   로직이고, 「실제 두 CLI 가 다른 시각에 끝날 때 화면이 두 번 갱신되는가」는 라이브에서만
   관측된다.
+
+
+## Run — Environment: Windows-browser (POST-DEPLOY 실측, 2026-09-02T18:30+09:00)
+
+- **배포**: `e894cd86` (scope=all · 대화 스모크 PASS · 무중단 실측 `no upstreams available` **0건** ·
+  전 서비스 이미지 `mysql-ai-agent:e894cd86` · surge 잔존 0)
+- **브리지**: `Chrome/151.0.7922.170` · bridge_mode=relay · `eval "1+1"` → 2
+- **배포 자산이 신 코드임을 확인**: 서빙 URL 로 직접 받아 grep — `connect-modal.js` 에
+  `caps_settling` 3곳 · `_capsApplying` 4곳, `app.js` 에 `_refreshModelCatalogSurface` 3곳
+  (스탬프 `?v=4d097724eb22`).
+- **러너**: 배포된 `static/agent/bridge_agent.py` 를 그대로 받아 실행(신 코드 17곳 확인).
+  토큰은 **제품 경로**(`POST /api/ai/connect/token`)로 발급, CA 도 제품 경로
+  (`http://localhost/trust/rootCA.crt`, 지문이 launch 명령의 `BRIDGE_CA_SHA256` 와 일치).
+  검증 후 러너 종료 · 토큰 파일 폐기 · 기존 `config.json` 복원.
+
+### PASS — AC-1 «새로고침 없이 목록이 나타난다»
+
+빈 상태(`itemHidden:true` · `menuItems:0` · 라벨 `…`)를 화면에 얹고 **관찰자를 무장한 뒤**
+러너를 띄웠다. 관찰 결과(2초 간격 38 샘플):
+
+```
+t=0      itemHidden=true   menuItems=0   label="…"     navCount=1
+t=40.0s  itemHidden=false  menuItems=4   label="Opus"  navCount=1   ← 전이
+t=74.0s  itemHidden=false  menuItems=4   label="Opus"  navCount=1
+```
+
+`navCount` 가 **1로 유지** — 무장 이후 새로고침이 **0회**다. 이것이 제보 ①의 직접 판정이다.
+
+러너 로그 기준 분해: 기동 → `run.ready` **0.8초**(질문 처리는 즉시 살아 있다) → 협상
+**25초**(claude 4종 · 추론 5단계) → **화면 반영 약 14초 후**. ⚠ 제가 적어 둔 AC-1 문턱은
+「협상 종료 후 ≤10초」였는데 **실측 약 14초**다 — 초과분은 하트비트 깨움 → 서버 쓰기 →
+프런트 폴링 주기 → 카탈로그 조회 → 렌더의 합이고, 관찰 샘플 간격 2초의 오차를 포함한다.
+문턱을 충족했다고 적지 않고 **측정값을 그대로 남긴다**.
+
+### PASS — AC-2 «오안내 제거»
+
+`caps_pending` 창에서 8회 연속 관측한 사유 문구:
+
+> 연결된 본인 AI 에게 쓸 수 있는 모델을 확인하는 중입니다. 잠시 후에도 비어 있으면 그 AI 의
+> 로그인·네트워크를 확인해 주세요.
+
+종전의 「최신 실행 파일로 다시 실행해 보세요」가 **나오지 않았다**(`runner_stale:false`).
+러너 없음 상태의 문구도 정본과 일치: 「답변은 연결된 본인 AI 가 생성합니다 — 연결된 러너가
+없어 이 화면에서는 모델을 지정할 수 없습니다.」
+
+### PASS — 3차 제보의 **중간 신고** (플랫폼별 도착)
+
+`claude` + `codex` 둘을 동시에 협상시킨 회차의 서버 상태 추적(5초 간격):
+
+```
+t=+2s    caps_rev=4f53cda1  pending=true   settling=true   카탈로그 0
+t=+15s   caps_rev=a691985d  pending=false  settling=true   카탈로그 4  ← claude 도착
+t=+155s  caps_rev=a691985d  pending=false  settling=true   카탈로그 4
+t=+161s  caps_rev=a691985d  pending=false  settling=false  카탈로그 4  ← 창 닫힘
+```
+
+⭐ **claude 의 목록이 `t=+15s` 에 서버에 도달했고, 그 시점 codex 는 아직 협상 중이었다**
+(codex 는 `18:20:20` 에 끝났다 = `t≈+270s`). 종전 동작이라면 서버는 **둘 다 끝날 때까지**
+아무것도 받지 못했으므로, 이 한 관측이 중간 신고가 라이브에서 작동한다는 직접 증거다.
+
+### PASS — AC-5 «정착 후 폴링 0»
+
+`caps_settling` 이 마지막 신고 후 **약 150초**(t=+155s true → t=+161s false)에 내려갔다.
+`CAPS_SETTLING_SEC = 150` 과 일치하며, 그 시점부터 폴링 창이 닫힌다.
+
+⚠ AC-3 의 초판 표현(「정상 상태에서 폴링 0」)을 이 실측으로 **정정**한다: 정확히는
+「**마지막 신고 후 150초 경과** 상태에서 0」이다. 그 150초 동안은 의도적으로 폴링한다 —
+그것이 두 번째 플랫폼을 관측하는 창이다.
+
+### PASS — 픽셀-클래스 (확대 캡처)
+
+모델 메뉴를 열어 캡처: 그룹 머리 `CLAUDE`, 항목 `Opus`(✓ 선택)·`Sonnet`·`Haiku`·`Fable`,
+액션 팝오버에 「모델: Opus」·「추론 강도: High」. 컴포저 레이아웃 밀림 없음, 겹침 없음.
+좌하단 「● 대기 중」 배지가 러너 수신을 표시한다.
+
+### 미관측 — AC-4 후반 «두 번째 플랫폼이 이어서 나타난다»
+
+이 머신의 `codex` 가 **TimeoutExpired** 로 끝났다 — 240초 예산을 전부 태우고 답을 내지
+못했다(러너 로그: `codex: 사유 — TimeoutExpired`). 그래서 **두 번째 도착 사건 자체가
+발생하지 않았고**, 화면이 두 번 갱신되는 장면은 라이브에서 관측하지 못했다.
+
+관측된 것과 못 한 것을 가른다:
+
+- **관측됨**: 첫 플랫폼이 다른 플랫폼을 기다리지 않고 도달한다(위 `t=+15s`). 그리고 두 번째
+  도착을 받을 **관측 창이 그 구간에 실제로 열려 있었다**(`settling=true` 가 `t=+15s`~`+155s`).
+  즉 두 번째 도착의 **전제 조건 둘**이 라이브에서 성립했다.
+- **미관측**: 그 창 안에서 두 번째 목록이 도착해 화면이 다시 갱신되는 장면.
+  판정 로직 자체는 node 실행 검증(하네스 시나리오 ⑤ — 「첫 플랫폼 도착에도 창 유지」 ·
+  「두 번째 플랫폼도 발화」)으로 잠겨 있으나, 그것은 코드이고 라이브가 아니다.
+
+⚠ 이 라운드의 codex 타임아웃은 **별개 사실로도 의미가 있다**: 제가 REPORT §11-B 에 적고
+codex 리뷰가 P2-7 로 독립 확인한 「행(hang) 시 재시도 불가」가 라이브에서 그대로 재현됐다
+(112.3초 × 2 + 확인 60초 = 285초 > 예산 240초). 총예산 상향은 기동 체감과 직접 교환이라
+사용자 결정 사안으로 남긴다.
