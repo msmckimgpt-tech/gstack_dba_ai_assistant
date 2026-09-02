@@ -5591,3 +5591,11 @@ PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔�
 - 재발 명시 3건 + 기능 소멸 고지 1건(쿼리 결과 접이판 제거로 CSV 내려받기·전체 데이터 보기·구형 메시지 실행 SQL/결과 파일 3종 동반 소멸) + 미검증 고지 5건.
 - Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
 - Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+
+## CHG-20260902T100000-ai-claude-feature-0003-autolaunch-runner — 자동 [내 AI 실행] (cross-ref)
+
+- **날짜**: 2026-09-02 · **위험도**: Major · **정본 TASK**: feature-0043
+  `TASK-20260902T100000-autolaunch-runner.md`
+- `static/app/connect-modal.js` — 자격 판정(`last_os`)·실행 URL 프리페치(사용자 활성화 보존)·
+  단일 진입점(`_connectEntry`)·로그인 진입 1회 자동 시도·대기 판정 단일화(`_awaitUsable`).
+  `static/agent/` 배포 사본 3종 동기화.

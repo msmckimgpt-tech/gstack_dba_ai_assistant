@@ -571,6 +571,20 @@ if (`$tok -notlike 'mat_*') { exit 2 }
 & '$Py' (Join-Path `$home_ 'bridge_agent.py') --base '$Base' ``
   --ca (Join-Path `$home_ 'rootCA.crt') --check | Out-Null
 if (`$LASTEXITCODE -ne 0) { exit 3 }
+# ── 러너 최신화 (TASK-20260902T100000) ────────────────────────────────────────
+# 종전에는 디스크의 파일을 그대로 다시 띄워, 「업데이트 필요」에서 눌러도 같은 낡은 러너가
+# 떴다. CA 는 이미 신뢰하므로 https 로 받고, 실패·빈 파일·문법 깨짐이면 있던 파일을 그대로
+# 쓴다(갱신하려다 못 띄우게 만드는 것이 가장 나쁜 결말이다). POSIX 판과 같은 계약.
+`$new = Join-Path `$home_ ('.bridge_agent.new.' + `$PID)
+try {
+  Invoke-WebRequest -Uri '$Base/static/agent/bridge_agent.py' -OutFile `$new ``
+    -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+  if ((Test-Path `$new) -and ((Get-Item `$new).Length -gt 0)) {
+    & '$Py' -c 'import ast,sys; ast.parse(open(sys.argv[1],"rb").read())' `$new | Out-Null
+    if (`$LASTEXITCODE -eq 0) { Move-Item -Force `$new (Join-Path `$home_ 'bridge_agent.py') }
+  }
+} catch { }
+Remove-Item -Force -ErrorAction SilentlyContinue `$new
 Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
   Where-Object { `$_.CommandLine -like '*bridge_agent.py*' } |
   ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }
