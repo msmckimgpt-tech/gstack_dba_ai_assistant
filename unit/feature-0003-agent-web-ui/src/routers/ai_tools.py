@@ -2010,6 +2010,90 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
             edited, created)
 
 
+def _bridge_task_duration_meta(conn, task_id: str) -> dict[str, Any]:
+    """task 원장의 시각들로 **총 수행시간 각인**을 조회한다. 실패는 빈 dict (fail-open).
+
+    **본 SELECT 를 답변 전달의 주 SELECT 에 얹지 않는다.** `ClaimedAt`/`SubmittedAt` 은
+    부트스트랩 ALTER 로 추가되는 컬럼이라(그 ALTER 가 실패한 환경이 실제로 상정돼 있다 —
+    `submit_answer` 의 503 분기 주석) 한 쿼리로 묶으면 컬럼 부재가 **답변 전달 자체를**
+    실패시킨다. 수행시간은 관측이고 답변은 사용자 대면 산출물이다 — 관측을 못 얻는 대가로
+    답변을 잃지 않는다(제품 귀속 각인의 fail-open 과 동일 규약).
+
+    소요 계산은 **SQL 이** 한다: `CreatedAt`(DEFAULT CURRENT_TIMESTAMP)과 `SubmittedAt`
+    (호출 직전 UPDATE 의 `NOW()`)이 같은 서버 시계에서 나오므로 차이가 안전하다. 파이썬으로
+    끌어와 `datetime` 산술을 하면 드라이버·세션 tz 설정에 따라 어긋난다(MySQL `datetime`
+    은 tz-naive). `COALESCE(SubmittedAt, NOW())` 는 다른 호출 경로가 생겨도 각인이 조용히
+    사라지지 않게 하는 방어다.
+    """
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT TIMESTAMPDIFF(MICROSECOND, CreatedAt, COALESCE(SubmittedAt, NOW()))/1000.0, "
+                "       TIMESTAMPDIFF(MICROSECOND, CreatedAt, ClaimedAt)/1000.0 "
+                "FROM WebAiTasks WHERE TaskId=%s", (task_id,))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[bridge] 수행시간 조회 실패 task=%s — 각인 없이 저장한다: %r", task_id, exc)
+        return {}
+    if not row:
+        return {}
+    return _bridge_answer_duration_meta(row[0], row[1])
+
+
+def _bridge_answer_duration_meta(total_ms: Any, queued_ms: Any) -> dict[str, Any]:
+    """브리지 답변의 **총 수행시간** 각인을 만든다 (`duration_ms` + `duration_breakdown`).
+
+    ## 왜 필요한가 (사용자 제보 2026-09-02)
+
+    답변 말풍선 메타의 수행시간은 프런트가 `meta.duration_ms` 로만 그린다(`app.js`
+    renderMessages). 서버 LLM 경로는 `agent_core` 가 답변마다 그 값을 굳혔지만
+    (`_compute_duration_breakdown` → `mirror_meta`), 브리지 경로는 각인하지 않았다 —
+    feature-0043 이 브리지를 주 경로로 승격한 2026-08-27 부터 **표시가 통째로 사라졌다**
+    (라이브 실측: 그 이후 답변 104건 전량 `duration_ms` 부재).
+
+    ## 계약
+
+    - **end-to-end 를 각인한다** — `CreatedAt`(요청 적재) → `SubmittedAt`(답변 제출).
+      「러너가 실행한 시간」만 각인하면 대기 구간이 빠져, 대기 중 사용자가 보던 경과
+      타이머(`startElapsedTimer`)보다 **작은 숫자로 줄어든다**. 서버 LLM 경로가
+      TASK-0289 에서 같은 이유로 `run_start` 기준을 버렸다 — 기준을 맞춘다.
+    - 키 이름은 서버 LLM 경로와 **같다**(`total_ms`·`queued_ms`·`inference_ms`).
+      프런트 `formatDurationBreakdown` 이 그 세 키만 읽으므로 새 라벨은 표시를 갈라 놓는다.
+    - 브리지에 없는 구간(`init_ms` — 서버측 준비)은 **싣지 않는다**. 0 을 실으면 재지도
+      않은 계측을 있다고 말하는 셈이다(프런트는 250ms 미만 구간을 생략하므로 표시도 동일).
+    - 값을 못 구하면 **빈 dict** 를 돌려 각인을 생략한다 — 거짓 `0초` 를 그리는 것보다
+      아무것도 안 그리는 쪽이 정직하고, 종전(미각인) 동작과 같아 회귀가 없다.
+
+    Args:
+        total_ms: `CreatedAt → SubmittedAt` 밀리초 (SQL `TIMESTAMPDIFF` 산출값).
+        queued_ms: `CreatedAt → ClaimedAt` 밀리초. 미점유(구 task·외부 origin)면 None.
+    """
+    try:
+        total = round(float(total_ms), 2)
+    except (TypeError, ValueError):
+        return {}
+    if not total > 0:
+        # 0 이하(시계 역행·같은 초 반올림)는 각인하지 않는다 — `duration_ms > 0` 가
+        # 프런트의 표시 게이트이므로 0 을 실어도 그려지지 않고, 원장만 오염된다.
+        return {}
+    breakdown: dict[str, Any] = {"total_ms": total}
+    try:
+        queued = round(float(queued_ms), 2)
+    except (TypeError, ValueError):
+        queued = None
+    if queued is not None and 0.0 <= queued <= total:
+        breakdown["queued_ms"] = queued
+        breakdown["inference_ms"] = round(total - queued, 2)
+    else:
+        # 점유 시각이 없거나 총량과 모순되면 구간을 **꾸미지 않는다** — 전체를 실행으로 본다.
+        breakdown["inference_ms"] = total
+    return {"duration_ms": total, "duration_breakdown": breakdown}
+
+
 def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str,
                                *, title: str = "") -> bool:
     """`Origin='web'` task 의 답변을 원 대화에 assistant 메시지로 저장한다.
@@ -2057,6 +2141,12 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "[bridge] 제품 귀속 각인 실패 task=%s — 각인 없이 저장한다: %r", task_id, exc)
+
+        # 답변 말풍선의 **총 수행시간 각인**(사용자 제보 2026-09-02 — 표시가 사라졌다).
+        # 프런트는 `meta.duration_ms` 로만 그리므로, 이 각인이 없으면 대기 중 보였던 경과
+        # 타이머가 답변 도착 순간 그냥 사라진다. 서버 LLM 경로가 답변마다 굳히는 값과 같은
+        # 키·같은 기준(end-to-end)을 쓴다 — `_bridge_task_duration_meta` 주석 참조.
+        _meta.update(_bridge_task_duration_meta(conn, task_id))
 
         # placeholder 각인은 지운다 — 남겨두면 이 답변이 다음 전달의 덮어쓰기 대상이 된다.
         _meta["bridge"]["placeholder"] = False
