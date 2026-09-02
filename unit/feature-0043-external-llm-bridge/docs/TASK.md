@@ -2705,3 +2705,6 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 호출부 게이트 제거 — 판정은 잡 단위로 함수 안에서
 - [x] 계약 테스트 2건(진입점 무조건 호출 · 회수가 claim 보다 먼저) + 뮤테이션 M11·M12 KILL
 - [ ] 배포 후 AC-3 재관찰 + `insight_summary` 재검증
+
+- [x] 결함을 계약으로 못박던 테스트(`test_insight_skips_only_llm_work`) 재작성
+- [x] FUNCTION: 게이트를 바꾸는 변경은 그 게이트를 지키던 테스트를 다시 읽는다
