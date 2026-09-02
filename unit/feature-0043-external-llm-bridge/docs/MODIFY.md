@@ -3127,3 +3127,37 @@ backend 4→4), 2라운드 P1 중 **넷은 1라운드에서 내가 넣은 수정
   고친 뒤 4변형(`AnnAssign`·`NamedExpr`·상수 인자·주석 처리) + 꼬리 덮어쓰기 1종이 **전건
   EXIT=1(KILLED)**, 정상 소스는 EXIT=0. `M7-v2`(`AGENT_FEATURES + ("admin_jobs",)`)도 KILLED.
 - 미러 byte-동일성은 `test_bridge_agent_sync` 가 잠근다.
+
+---
+
+## CHG-20260902T113000-ai-claude-feature-0043-caps-trust-gate-r4 — codex 확인 라운드 조치 (P1 1 · P2 2)
+
+§18.8 확인 라운드를 **codex 채널**로 대체했다(사용자 결정 — Agent 패널 1회 허용은 소진).
+지적 3건 모두 **재현 확인 후** 수정했고, 각각 뮤턴트로 실증했다. 판단 근거는
+`REVIEW.md` 의 `REV-20260902T113000-…-r3 [CODEX:review]`.
+
+### 변경 내용
+
+1. **`oauth_store.set_runner_report` — 지문 컬럼 없이 재시도** (P1).
+   `RunnerBuild` 컬럼이 없는 배포에서 통합 UPDATE 가 통째로 실패하면, 하트비트 핸들러가
+   예외를 삼키는 동안 `LastHeartbeatAt` 만 갱신되고 **`RunnerCapabilities` 는 옛 값 그대로**
+   남는다 — 이 cycle 이 닫으려는 화석 목록이 그 모집단에서만 영구히 살아남는 형태다.
+   지문 축(`account_runner_build`)은 그 배포를 **명시적으로 지원**(`None` = 판정 안 함)하는데
+   쓰기 축만 지원하지 않던 비대칭을 없앤다. 한 단 내려가 **능력·기능·버전 세 축은 반드시**
+   새긴다 — provenance 필터의 전제가 여기 걸려 있다.
+2. **`oauth_store.list_live_runners` — 하트비트 없던 행은 `None`** (P2).
+   운영 명부는 러너가 아닌 토큰(등록형 MCP 클라이언트 등)도 일부러 포함하는데, 그 행의 빈
+   지문을 「구 러너」로 읽어 **러너를 띄운 적도 없는 계정**에 갱신 지시가 붙었다. 판정 통합
+   전에는 복제된 식이 `""` 를 stale 로 보지 않았으므로 **내 통합이 만든 오탐**이다.
+3. **`composer.js._composerModelSelectorHidden` — 카탈로그 부재 = 숨김** (P2).
+   종전엔 `undefined !== "hidden"` 이라 「보임」이었고, 그래서 카탈로그 fetch 실패 화면이
+   **목록 없는 선택기 + 서버 기본값 라벨**을 내보냈다. 같은 이유로 「모델 목록을 불러오지
+   못했습니다」 분기가 **도달 불가능한 죽은 코드**였다 — 그 분기를 jsdom 하네스가 **직접
+   호출**해 통과시키고 있었다(진입점을 통과하지 않는 vacuous pass).
+4. **jsdom 하네스 재작성** — 진입점(`_applyComposerSelectorVisibility`)을 함께 들고 와
+   케이스 6 을 그 경로로 구동한다. 10 → **11 케이스**.
+5. 신규 테스트 3건 + 뮤턴트 3종 KILLED 실증(exit code).
+
+### 발효
+
+서버 축은 배포 즉시. 러너 파일은 이 항에서 바뀌지 않는다(재다운로드 불필요).

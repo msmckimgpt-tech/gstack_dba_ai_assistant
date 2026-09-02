@@ -767,25 +767,45 @@ def set_runner_report(cur, raw_token: str, capabilities: str | None,
     bld = str(agent_build or "").strip().lower()[:16]
     if bld and not re.fullmatch(r"[0-9a-f]{6,16}", bld):
         bld = ""
-    cur.execute(
-        "UPDATE WebOAuthTokens t "
-        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
-        "SET t.RunnerCapabilities = COALESCE(%s, t.RunnerCapabilities), "
-        f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, t.RunnerBuild = %s, "
-        f"    t.CapabilitiesAt = {_SQL_NOW} "
-        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
-        # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 축마다 분기한다.
-        "  AND ((%s IS NOT NULL "
-        "        AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s)) "
-        "       OR t.RunnerFeatures IS NULL OR t.RunnerFeatures <> %s "
-        "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s "
-        "       OR t.RunnerBuild IS NULL OR t.RunnerBuild <> %s) "
-        # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
-        f"  AND (t.CapabilitiesAt IS NULL "
-        f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))",
-        (capabilities, csv, ver, bld, token_hash(raw_token),
-         capabilities, capabilities, csv, ver, bld, int(HEARTBEAT_MIN_WRITE_SEC)),
-    )
+    def _sql(with_build: bool) -> str:
+        build_set = "    t.RunnerBuild = %s, " if with_build else ""
+        build_cmp = "       OR t.RunnerBuild IS NULL OR t.RunnerBuild <> %s " if with_build else ""
+        return (
+            "UPDATE WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            "SET t.RunnerCapabilities = COALESCE(%s, t.RunnerCapabilities), "
+            f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, {build_set}"
+            f"    t.CapabilitiesAt = {_SQL_NOW} "
+            f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+            # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 축마다 분기.
+            "  AND ((%s IS NOT NULL "
+            "        AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s)) "
+            "       OR t.RunnerFeatures IS NULL OR t.RunnerFeatures <> %s "
+            "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s "
+            f"{build_cmp}) "
+            # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
+            f"  AND (t.CapabilitiesAt IS NULL "
+            f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))")
+
+    try:
+        cur.execute(_sql(True),
+                    (capabilities, csv, ver, bld, token_hash(raw_token),
+                     capabilities, capabilities, csv, ver, bld, int(HEARTBEAT_MIN_WRITE_SEC)))
+    except Exception as exc:  # noqa: BLE001
+        # ⚠ **`RunnerBuild` 컬럼이 아직 없는 배포**(2026-08-31 이전 스키마)에서는 위 문장이
+        #   통째로 실패한다. 호출부(하트비트)는 그 예외를 삼켜 연결을 지키는데, 그러면
+        #   `LastHeartbeatAt` 만 갱신되고 **`RunnerCapabilities` 는 옛 값 그대로 남는다** —
+        #   즉 이 cycle 이 닫으려는 화석 목록이 정확히 그 배포에서만 영구히 살아남는다
+        #   (codex 적대리뷰 P1, 2026-09-02).
+        #
+        #   지문 축은 `account_runner_build` 가 이미 그 배포를 **명시적으로 지원**한다
+        #   (컬럼 부재 = `None` = 판정 안 함). 그런데 쓰기 축만 그 배포를 지원하지 않으면
+        #   설계의 두 축이 서로 다른 세계를 가정하게 된다. 한 단 내려가 **나머지 세 값은
+        #   반드시 새긴다** — provenance 필터의 전제(「첫 하트비트에 지워진다」)가 여기 걸려 있다.
+        _log.warning("[bridge] 러너 신고 UPDATE 실패 — 지문 컬럼 없이 재시도: %r", exc)
+        cur.execute(_sql(False),
+                    (capabilities, csv, ver, token_hash(raw_token),
+                     capabilities, capabilities, csv, ver, int(HEARTBEAT_MIN_WRITE_SEC)))
     return int(getattr(cur, "rowcount", -1) or 0) != 0
 
 
@@ -1044,7 +1064,14 @@ def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> l
             #   경우 `''` 는 「러너가 신고 안 함」이 아니라 **「우리가 못 읽음」**이다. 둘을
             #   같은 값으로 두면 `runner_build_is_stale` 이 컬럼 없는 배포의 **전 러너를**
             #   구버전으로 적고, 명부 화면이 멀쩡한 사람들에게 재설치를 시킨다.
-            "runner_build": (str(r[6] or "").strip() if build_known else None),
+            #
+            # ⚠ **하트비트가 한 번도 없던 행도 `None` 이다** (codex 적대리뷰 P2, 2026-09-02).
+            #   이 질의는 러너가 아닌 토큰(등록형 MCP 클라이언트 등)도 일부러 포함하는데,
+            #   그 행의 `RunnerBuild` 는 NULL → `''` 이고 「지문 미신고 = 구 러너」 규칙이
+            #   그것을 구버전으로 읽는다. 러너를 **한 번도 띄운 적 없는** 계정에 「최신
+            #   실행 파일로 다시 실행하세요」는 참이 아니다 — 모르는 것은 모른다고 적는다.
+            "runner_build": (str(r[6] or "").strip()
+                             if (build_known and age_sec is not None) else None),
             "model_count": caps_n,
         })
     return out

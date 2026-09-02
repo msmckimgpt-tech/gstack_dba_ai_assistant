@@ -3219,7 +3219,15 @@ function _composerModelLabelFor(value) {
 // 않는다 — 일시적 네트워크 실패가 조작면을 지우면, 사용자는 기능이 사라진 것으로 읽는다.
 function _composerModelSelectorHidden() {
   const catalog = state.modelCatalog || state.apiVaultOptions;
-  return String(catalog?.model_selector || "") === "hidden";
+  // ⚠ **카탈로그가 없으면 숨김이다** (codex 적대리뷰 P2, 2026-09-02). 종전엔 `undefined`
+  //   가 `"hidden"` 과 다르다는 이유로 `false`(=보임)를 돌려줬고, 그래서
+  //   `/api/api-vault/options` 가 실패한 화면은 **목록 없는 선택기 + 서버 기본값 라벨**을
+  //   그대로 내보였다 — 사용자가 고른 값이 어디에도 없는 상태다. 같은 이유로
+  //   `_applyComposerSelectorNote` 의 「카탈로그를 불러오지 못했습니다」 분기가 **도달
+  //   불가능한 죽은 코드**였다(그 분기를 하네스가 직접 호출해 통과시켰다 — 진입점을 통과하지
+  //   않는 검증의 전형적인 vacuous pass).
+  if (!catalog) return true;
+  return String(catalog.model_selector || "") === "hidden";
 }
 
 // 숨김 상태를 DOM 에 반영한다 — 항목 자체를 감춘다(비활성 회색 줄을 남기지 않는다).

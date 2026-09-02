@@ -40,18 +40,22 @@ function ok(name, cond, detail) {
 
 // 함수 하나만 떼어 온다 — composer.js 전체는 모듈 그래프가 커서 여기서 들 수 없다.
 const composerJs = readFileSync(join(STATIC, "app", "composer.js"), "utf8");
-const NOTE_CONST = "const COMPOSER_NOTE_NO_CATALOG";
-const FN = "function _applyComposerSelectorNote(";
-const constStart = composerJs.indexOf(NOTE_CONST);
-const fnStart = composerJs.indexOf(FN);
-if (constStart < 0 || fnStart < 0) {
-  console.error("대상 코드를 찾지 못했다 — 이름이 바뀌었나?");
-  process.exit(2);
+// ⚠ **진입점까지 들고 온다** (codex 적대리뷰 P2, 2026-09-02). 종전 하네스는
+//   `_applyComposerSelectorNote` 만 떼어 와 `applyNote(true)` 를 **직접** 불렀고, 그래서
+//   「카탈로그 부재」 케이스가 통과했다 — 그런데 제품의 진입점
+//   `_composerModelSelectorHidden()` 은 그 상태에서 `false`(=보임)를 돌려주고 있었다.
+//   헬퍼가 옳은 것과 진입점이 그 헬퍼를 그렇게 부르는 것은 다른 사실이다.
+//   세 조각은 파일에서 **연속**이다(hidden → visibility → const+note). 조각마다 잘라
+//   이어붙이면 그 사이의 `const` 가 두 번 들어와 재선언으로 죽는다 — 한 덩어리로 뜬다.
+const _from = composerJs.indexOf("function _composerModelSelectorHidden(");
+const _noteFn = composerJs.indexOf("function _applyComposerSelectorNote(");
+if (_from < 0 || _noteFn < 0) { console.error("대상 코드를 찾지 못했다 — 이름이 바뀌었나?"); process.exit(2); }
+let _to = composerJs.indexOf("\nfunction ", _noteFn + 10);
+if (_to < 0) _to = composerJs.length;
+const source = composerJs.slice(_from, _to);
+if (!source.includes("const COMPOSER_NOTE_NO_CATALOG")) {
+  console.error("추출 범위에 안내 상수가 없다 — 파일 배치가 바뀌었다."); process.exit(2);
 }
-// 함수 끝: 다음 최상위 `\nfunction ` 또는 `\n// ` 주석 블록 앞
-let fnEnd = composerJs.indexOf("\nfunction ", fnStart + FN.length);
-if (fnEnd < 0) fnEnd = composerJs.length;
-const source = composerJs.slice(constStart, fnEnd);
 
 const dom = new JSDOM(`<!doctype html><body>
   <div id="composerActionsMenu" role="menu"></div>
@@ -61,8 +65,9 @@ const { document } = dom.window;
 
 // `state` 를 주입해 함수를 평가한다. 실제 모듈의 다른 전역은 이 함수가 쓰지 않는다.
 const state = { modelCatalog: null, apiVaultOptions: null };
-const factory = new Function("document", "state", `${source}\n; return _applyComposerSelectorNote;`);
-const applyNote = factory(document, state);
+const factory = new Function("document", "state",
+  `${source}\n; return {applyNote: _applyComposerSelectorNote, applyVisibility: _applyComposerSelectorVisibility};`);
+const { applyNote, applyVisibility } = factory(document, state);
 
 const el = () => document.getElementById("composerActionsSelectorNote");
 const isHidden = () => el().classList.contains("hidden");
@@ -106,9 +111,14 @@ applyNote(true);
 ok("러너 없음 → 다운로드 링크 없음", !el().querySelector("a"));
 ok("러너 없음 → 갱신 지시 없음", !el().textContent.includes("다시 실행"));
 
-// ── 6. 카탈로그 부재(fetch 실패) = **말을 한다** ────────────────────────────────
+// ── 6. 카탈로그 부재(fetch 실패) = **말을 한다** — 진입점을 통과시킨다 ───────────
+//   `applyNote(true)` 를 직접 부르면 「진입점이 그 상태를 숨김으로 보는가」를 못 본다.
+//   실제로 그 자리가 뚫려 있었다(codex P2): `undefined !== "hidden"` 이라 보임으로 읽혔고,
+//   이 분기는 **도달 불가능한 죽은 코드**였다. 이제 `applyVisibility()` 로 구동한다.
 state.modelCatalog = null; state.apiVaultOptions = null;
-applyNote(true);
+const hiddenNoCatalog = applyVisibility();
+ok("카탈로그 부재 → 진입점이 숨김으로 판정", hiddenNoCatalog === true,
+   `hidden=${hiddenNoCatalog}`);
 ok("카탈로그 부재 → 사유 있음", el().textContent.length > 0 && !isHidden(),
    `text=${JSON.stringify(el().textContent)}`);
 ok("카탈로그 부재 → 러너 갱신 지시가 아님", !el().textContent.includes("다시 실행"));

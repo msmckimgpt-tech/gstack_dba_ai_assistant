@@ -2154,6 +2154,18 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
 - [x] `origin/main` 68커밋 재병합 · `make test` **6,913건 / 6,898 passed · 15 skipped · 0 failed**
 - [x] 문서 재작성 — FUNCTION §P0-Z6(철회 사유 표 포함) · TEST.md 행 · MODIFY(신규 CHG) ·
       REPORT · TASK · 증적 수치 정정
-- [ ] PB-0008 재검증 (재설계 빌드)
-- [ ] §18.8 확인 라운드 (축소 범위) → P1 0
+- [x] **PB-0008 재검증** (재설계 빌드, asset stamp `1f703ee2a0f2`) — 상태 (a) 최신 러너
+      (claude=probe 만 보이고 codex=builtin 은 떨어짐 · 모델 메뉴 `gpt-5.1` 0건) · 상태 (b)
+      구 러너(사유 + 「실행 파일 받기」 링크가 **메뉴 밖**에서 렌더 · 모델 항목 숨김) 실화면
+      PASS. 상태 (c) 는 사용자의 실 러너가 계정 정본이라 실화면 미수행(분리 표기).
+      ⚠ 하네스 자체 결함 적발 — `?v=dev` 를 HTML 만 치환해 `app.js` 가 **두 번** 평가되고
+      `+` 메뉴가 죽었다. 대조군(무변경 배포본)으로 갈라내고 배포와 같은
+      `inject_asset_stamp.py` 로 고쳤다.
+      증적 `feature-0003 docs/test-runs.d/TASK-20260902T100000-caps-trust-gate-ui-r3.md`
+- [x] **§18.8 확인 라운드 — codex 채널 대체** (사용자 결정 2026-09-02): P1 1 · P2 2 **전건
+      in-cycle 수정** + 뮤턴트 3종 KILLED 실증. `REV-20260902T113000-…-r3 [CODEX:review]`
+      - P1 지문 컬럼 없는 배포에서 신고 UPDATE 전체 실패 → **화석 목록 영구 잔존**(강등 재시도로 해소)
+      - P2 하트비트 없던 토큰을 구 러너로 오탐(→ `None`)
+      - P2 카탈로그 부재를 「보임」으로 읽어 안내 분기가 **죽은 코드**(→ 숨김 · 하네스 11케이스로 재작성)
+- [x] `make test` 전량 green (조치 후 재실행)
 - [ ] `verify-completion --pre-commit` → 출하 → 러너 재기동

@@ -2841,3 +2841,37 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
   되살아난다. AST 단언이 투영 함수 전수를 보지만, 새 writer 는 그 단언 밖이다.
 - 캐시가 비면 러너 기동마다 실제 CLI 질의가 다시 일어난다(claude 23초 · codex 112초, 병렬).
   출처를 모르는 캐시를 버리는 규칙이 **구 러너 사용자에게 한 번** 그 비용을 물린다.
+
+---
+
+## REV-20260902T113000-ai-claude-feature-0043-caps-trust-gate-r3 [CODEX:review]
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: §18.8 확인 라운드 — 사용자 결정으로 **codex 채널 대체**(Agent 패널 1회 허용은 소진)
+- Timestamp: 2026-09-02T11:30:00+09:00
+- Channel: `codex review` (codex-cli 0.146.0 · `gpt-5.6-sol` · `model_reasoning_effort=high`)
+- Scope: `git diff origin/main...HEAD -- '*.py' '*.js' '*.html'` (34 files, +2499/−312)
+- Verdict: **P1 1 · P2 2 — 전건 in-cycle 수정 + 뮤턴트 실증**
+- Human Approval Needed: no
+
+### 지적과 조치 (전건 내가 재현 확인 후 수정)
+
+| # | 지적 | 확인 | 조치 |
+|---|---|---|---|
+| **P1** | `set_runner_report` 가 `RunnerBuild` 를 무조건 쓴다 → 그 컬럼이 없는 배포에서 UPDATE 전체가 실패하고, 하트비트 핸들러가 예외를 삼키는 동안 `LastHeartbeatAt` 만 갱신돼 **옛 builtin 목록이 영구히 남는다** | **재현 확인** — `account_runner_build` 는 그 배포를 명시적으로 지원(`None`)하는데 쓰기 축만 지원하지 않는 **비대칭**이었다. 이 설계의 전제(「화석은 첫 하트비트에 지워진다」)가 정확히 그 모집단에서 깨진다 | 지문 컬럼 없이 **재시도**한다 — 능력·기능·버전 세 축은 반드시 새긴다 |
+| **P2** | 운영 명부(`list_live_runners`)가 하트비트 없는 토큰(등록형 MCP 등)까지 포함하는데 그 행의 빈 지문을 「구 러너」로 읽는다 | **재현 확인** — 판정 통합 전에는 복제된 식이 `""` 를 stale 이 아니라고 봤으므로, 이것은 **내 통합이 만든 오탐**이다 | 하트비트가 한 번도 없던 행은 `runner_build = None`(모름) |
+| **P2** | `_composerModelSelectorHidden()` 이 카탈로그 부재를 「보임」으로 읽어, 「모델 목록을 불러오지 못했습니다」 분기가 **도달 불가능한 죽은 코드** | **재현 확인** — 그 분기를 jsdom 하네스가 **직접 호출**해 통과시키고 있었다(진입점을 통과하지 않는 vacuous pass) | 카탈로그 부재 = 숨김. 하네스도 진입점(`_applyComposerSelectorVisibility`)을 통과하도록 재작성(10 → 11 케이스) |
+
+### 왜 이 라운드가 값을 했나
+
+셋 다 **재설계 이후에 남은** 결함이고, 셋 다 「모르는 것을 단정하지 마라」는 이 cycle 자신의
+규칙을 내가 다른 자리에서 어긴 것이다. 특히 세 번째는 내 검증 도구가 **없는 동작을 있다고
+말하고 있었다** — `helper-wiring-vs-helper-correctness` 의 정확한 재발이다.
+
+### 실증 (§16.7 G11-b, exit code)
+
+| 뮤턴트 | 결과 |
+|---|---|
+| 강등 재시도 제거 | **KILLED** |
+| `age_sec is not None` 조건 제거 | **KILLED** |
+| `if (!catalog) return true;` 제거 | **KILLED** (pytest · jsdom 양쪽) |
+| 정상 소스 | PASS |

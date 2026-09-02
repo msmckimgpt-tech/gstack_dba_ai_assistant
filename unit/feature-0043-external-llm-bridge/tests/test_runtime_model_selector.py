@@ -1561,3 +1561,123 @@ def test_report_carries_runtime_provenance(monkeypatch):
     got = mod.detect_runtimes(cached=caps)
     assert [r["runtime"] for r in got] == ["claude"]
     assert got[0]["source"] == "probe", "출처가 신고에 실리지 않는다"
+
+
+# ── codex 적대리뷰 (2026-09-02) — 재설계 뒤에도 남아 있던 fail-open 셋 ──────────────
+
+
+class _BuildColumnlessCursor:
+    """`RunnerBuild` 컬럼이 **없는** 배포를 흉내낸다 — 그 컬럼을 건드리는 문장만 실패한다."""
+
+    def __init__(self):
+        self.sql: list = []
+        self.rowcount = 0
+
+    def execute(self, sql, params=None):
+        flat = " ".join(str(sql).split())
+        self.sql.append(flat)
+        if "RunnerBuild" in flat:
+            raise RuntimeError("Unknown column 't.RunnerBuild' in 'field list'")
+        self.rowcount = 1
+
+    def fetchone(self):
+        return None
+
+    def close(self):
+        pass
+
+
+def test_report_write_degrades_when_the_fingerprint_column_is_absent():
+    """지문 컬럼이 없는 배포에서도 **능력·기능·버전은 새겨진다** (codex P1).
+
+    이 설계의 전제는 「화석 목록은 **첫 하트비트에** 지워진다」이고, 그 지움은
+    `set_runner_report` 가 정제된 목록(`[]`)을 쓰는 것으로만 일어난다. 그런데 지문 축은
+    `account_runner_build` 가 **컬럼 없는 배포를 명시적으로 지원**(`None` = 판정 안 함)하는데
+    쓰기 축이 그 배포에서 통째로 실패하면, 하트비트 핸들러가 예외를 삼키는 동안
+    `LastHeartbeatAt` 만 갱신되고 **옛 builtin 목록이 영구히 화면에 남는다** — 이 cycle 이
+    닫으려는 바로 그 결함이 그 모집단에서만 살아남는 형태다.
+
+    그래서 한 단 내려가 재시도한다. 「지문을 못 새김」이 「목록을 못 지움」이 되어서는 안 된다.
+    """
+    import oauth_store as store
+
+    cur = _BuildColumnlessCursor()
+    wrote = store.set_runner_report(cur, "tok", "[]", ["console_jobs"], "2026.09.02", "abc123")
+
+    assert len(cur.sql) == 2, f"강등 재시도가 없다 — 실행된 문장 {len(cur.sql)}개"
+    assert "RunnerBuild" in cur.sql[0], "첫 시도가 지문을 쓰지 않는다(정상 배포 경로 소실)"
+    assert "RunnerBuild" not in cur.sql[1], "재시도가 여전히 지문 컬럼을 건드린다"
+    # 나머지 세 축은 **반드시** 남아야 한다 — 그것이 화석을 지우는 유일한 경로다.
+    for col in ("RunnerCapabilities", "RunnerFeatures", "RunnerAgentVersion"):
+        assert col in cur.sql[1], f"강등 문장이 {col} 을 빠뜨렸다 — 화석이 그대로 남는다"
+    assert wrote is True, "강등 경로가 '쓰지 않았다'로 보고한다"
+
+
+def test_roster_never_calls_a_token_that_never_ran_a_runner_stale():
+    """하트비트가 **한 번도 없던** 토큰은 지문 판정 대상이 아니다 (codex P2).
+
+    운영 명부는 러너가 아닌 토큰(등록형 MCP 클라이언트 등)도 일부러 포함한다. 그 행의
+    `RunnerBuild` 는 NULL 이고, 「지문 미신고 = 구 러너」 규칙이 그것을 구버전으로 읽으면
+    **러너를 띄운 적도 없는 계정**에 「최신 실행 파일로 다시 실행하세요」가 붙는다 —
+    모르는 것을 stale 로 부르지 않는다는 이 cycle 자신의 규칙 위반이다.
+    """
+    import oauth_store as store
+
+    class _RosterCursor:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def execute(self, sql, params=None):
+            pass
+
+        def fetchall(self):
+            return self._rows
+
+        def close(self):
+            pass
+
+    # (AccountId, Username, LastHeartbeatAt, age_sec, features, version, build, caps)
+    rows = [
+        (7, "runner_user", "2026-09-02T00:00:00", 10, "console_jobs", "2026.09.02", "", "[]"),
+        (9, "mcp_only", None, None, None, None, None, None),
+    ]
+    got = store.list_live_runners(_RosterCursor(rows), limit=10)
+    by_acct = {r["account_id"]: r for r in got}
+
+    assert by_acct[7]["runner_build"] == "", "실제 러너의 «지문 미신고» 가 «모름» 으로 뭉개졌다"
+    assert by_acct[9]["runner_build"] is None, (
+        "하트비트가 없던 토큰에 빈 지문을 주고 있다 — 명부가 그것을 구버전으로 적는다")
+
+    from routers.ai_tools import runner_build_is_stale
+    import routers.ai_tools as ai_tools
+
+    orig = ai_tools._deployed_runner_build
+    ai_tools._deployed_runner_build = lambda: "deadbeefcafe"
+    try:
+        assert runner_build_is_stale(by_acct[7]["runner_build"]) is True
+        assert runner_build_is_stale(by_acct[9]["runner_build"]) is False, (
+            "러너를 띄운 적 없는 계정에 갱신 지시가 나간다")
+    finally:
+        ai_tools._deployed_runner_build = orig
+
+
+def test_missing_catalog_hides_the_selector_through_the_real_entry_point():
+    """카탈로그를 못 받으면 **선택기를 숨긴다** — 진입점(`_composerModelSelectorHidden`)에서 (codex P2).
+
+    종전 판본은 `undefined !== "hidden"` 이라는 이유로 「보임」을 돌려줬다. 그러면
+    `/api/api-vault/options` 실패 화면이 **목록 없는 선택기 + 서버 기본값 라벨**을 그대로
+    내보내고, 같은 이유로 「모델 목록을 불러오지 못했습니다」 안내 분기가 **도달 불가능한
+    죽은 코드**가 된다.
+
+    ⚠ 그 분기는 jsdom 하네스가 **직접 호출**해 통과시키고 있었다 — 헬퍼가 옳은 것과
+    진입점이 그 헬퍼를 그렇게 부르는 것은 다른 사실이다. 그래서 여기서는 **진입점**을 본다.
+    """
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "feature-0003-agent-web-ui" / "src" / "static" / "app" / "composer.js"
+           ).read_text(encoding="utf-8")
+    fn = src[src.index("function _composerModelSelectorHidden("):]
+    fn = fn[:fn.index("\nfunction ")]
+    body = "\n".join(ln for ln in fn.split("\n") if not ln.strip().startswith("//"))
+    assert "if (!catalog) return true;" in body, (
+        "카탈로그 부재를 «보임» 으로 읽는다 — 안내 분기가 도달 불가능해진다")
