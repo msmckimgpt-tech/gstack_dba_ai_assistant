@@ -3380,7 +3380,55 @@ Response 로 오인해 `res.json()` 을 불렀다. **정상 200 에서 예외**�
 
 **정직 표기**: 이 계정의 러너 토큰이 만료돼 「러너 연결 상태의 선택지 렌더」는 재현하지 못했다.
 서버 판정은 살아 있는 러너의 실 신고로 검증했고, 화면 축은 「러너 없음」 상태만 실측했다.
+## CHG-20260902T160000 — 프로필 'AI 작업' 탭을 계정 권한으로 추린다
 
+사용자 요청(2026-09-02): 「'AI 작업' 탭에서 **실제로 해당 계정이 접근할 수 있는 기능**에 대해
+권한을 소유한 경우에만 노출」.
+
+종전 `GET /api/profile/console-jobs` 는 `JOB_SPECS` **전량**을 무조건 돌려줬다. `metadata.*` 나
+`metadata.graph.analyze` 가 없는 계정에도 그 항목이 보였고, 모델을 골라 저장까지 되지만 정작
+그 기능을 여는 엔드포인트가 403 이라 **작업이 오지 않는다** — 화면은 「설정됨」이라고 말하고
+사용자는 원인을 알 수 없다.
+
+| 파일 | 변경 |
+|---|---|
+| `shared/bridge_tasks.py` | `JOB_SPECS[*]["perms"]`(any-of) 6종 전수 선언 + `console_job_perms` · `visible_console_job_kinds` 신규 (+`__all__`) |
+| `unit/feature-0003-agent-web-ui/src/routers/profile.py` | `_visible_console_job_kinds(account)` 헬퍼 · GET 은 추린 목록만 순회 · PUT 은 가시 범위로 교체 한정 + 비가시 종류 보존 + 응답 필터 |
+| `unit/feature-0003-agent-web-ui/src/static/app/profile.js` | 0 항목 빈 상태 문구 + `_aiJobsSetEmpty`([저장]·[모두 기본값] 비활성) · **로드 실패 시에도 저장 차단** |
+| `unit/feature-0043-external-llm-bridge/tests/test_ai_jobs_perm_gate.py` | **신규 42건** — 선언 전수·카탈로그 대조·any-of·순서 · **병합 행위 12건**(실 dict) · **레거시 묶음 함의 2건** · GET/PUT 배선 · 프런트 |
+
+**권한 매핑**(집행 지점의 거울 — 새 권한 코드 0):
+
+| 종류 | perms (any-of) | 집행 지점 |
+|---|---|---|
+| `metadata_suggest` | `metadata.{glossary,enum,table,column}.update` · `kb.sample.curate` | `_METADATA_SUGGEST_PERM` (서브뷰별) |
+| `metadata_bulk` | `metadata.table.update` | `admin_metadata_bootstrap_describe` |
+| `node_analysis` | `metadata.graph.analyze` | `admin_metadata_graph_analyze` |
+| `prompt_generate` | **()** | 개인 프롬프트 자동작성은 로그인만 요구(`_collect_account_prompt_context`) |
+| `insight_summary` · `cluster_label` | **()** | 배경 배치 — `_batch_consenting_account`(RBAC 아닌 **동의** 축) |
+
+**PUT 이 「통째 교체」를 가시 범위로 좁힌 이유**: 전체 집합에 적용하면 권한이 빠진 계정의 저장
+버튼 한 번이 숨겨진 항목의 기존 선택을 지운다. 권한은 되돌아올 수 있지만 설정은 돌아오지 않는다.
+화면은 자기가 그린 것만 소유한다.
+
+
+**동반 수정 (같은 불변식, 1줄)**: `loadAiJobs` 의 실패 경로도 저장을 막는다. 목록을 못 받은
+상태의 [저장] 은 **빈 본문**을 보내는데, 서버는 그것을 「보이는 항목을 전부 비웠다」로 읽어
+사용자의 선택을 지운다. 「보이는 것이 저장되는 것」 계약에서 «아무것도 못 봤다» 와 «전부 비웠다»
+가 같은 모양이 되는 지점이라, 막는 자리는 프런트다. (변경 전에도 있던 경로지만, 이 cycle 이
+세우는 「빈 목록에서 저장 버튼이 해를 끼치지 않는다」 불변식과 같은 자리라 함께 닫았다.)
+
+**적대 리뷰(codex) 1R 조치 3건** — 상세는 `REVIEW.md` 의 적대 리뷰 원장:
+
+| 파일 | 변경 |
+|---|---|
+| `shared/bridge_tasks.py` | `merge_visible_console_job_prefs`(정규화→가시성 필터 순서를 담은 정본 병합) · `_safe_has_permission`(권한 판정 예외를 **코드 단위**로 가둠 — 전면 실패해도 「요구 없는 종류만」으로 축소되고 화면은 산다) |
+| `shared/bridge_tasks.py` (2R) | `read_console_job_prefs_strict` — 저장 baseline 전용 **엄격 읽기**. lenient 판은 조회 실패를 `{}` 로 돌려주는데(읽기 경로에서는 옳다) 그것을 쓰기 baseline 으로 쓰면 「보존할 것이 없다」로 오인해 숨긴 항목을 지운 문서를 쓰고 200 을 준다 |
+| `.../static/app/profile.js` (2R) | 첫 성공 렌더 전까지 [저장]·[모두 기본값] 비활성 — 로딩 **중** 에도 `{}`(=전부 지우기)가 나갈 수 있었다 · **요청 세대 토큰**(`_aiJobsReqSeq`)으로 겹친 요청의 stale 응답 무시(옛 응답이 방금 저장한 값을 되돌리고, 그 상태의 재저장이 stale 을 굳혔다) |
+| `.../routers/profile.py` | PUT 이 본문·`jobs` 의 dict 여부를 검사해 **400 거절**. 파싱 실패를 `{}` 로 흘리지 않는다 — 「의도한 비우기」와 「깨진 본문」이 서버에서 같은 모양이면 사고가 200 을 받고 조용히 지운다. 병합은 정본 함수에 위임(라우터 중복 구현 제거) |
+
+**표시 축이지 집행이 아니다**: 각 기능의 서버 게이트는 종전 그대로다. 이 필터가 무엇을
+통과시키든 권한 없는 계정이 그 기능을 부를 수는 없다.
 ## CHG-20260902T150000 — POST-DEPLOY 실측 기록 (문서 전용)
 
 `CHG-20260902T140000` 의 배포 후 검증을 test-run 조각에 기록. 배포 `66769688` — 전 서비스

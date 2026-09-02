@@ -900,8 +900,34 @@ function setupProfileDrawerResize() {
 //
 // 러너가 없으면 선택지가 비지만 **저장된 값은 지우지 않는다** — 연결이 끊겼다고 설정이
 // 사라지면 사용자는 자기가 고른 것을 잃는다.
+//
+// ## 항목 자체도 서버가 고른다 (TASK-20260902T160000)
+//
+// 목록에는 **이 계정이 실제로 열 수 있는 작업**만 온다. 권한이 없어 그 기능을 부를 수 없는
+// 항목까지 그리면, 사용자는 모델을 고르고 저장한 뒤에도 그 작업이 오지 않는 이유를 알 수
+// 없다 — 화면은 「설정됨」이라고 말하는데 기능은 403 이다.
+//
+// 판정을 프런트에서 하지 않는 이유: `can()` 은 인자를 무시하고 로그인만 확인하는
+// display-permissive 헬퍼라 **분기 판정에 쓰면 한쪽 갈래가 영구히 죽는다**. 권한 축의
+// 판정은 서버가 한 결과(=목록)를 그대로 그린다.
 
 let _aiJobsState = { jobs: [], runtimes: [], listening: false, loaded: false };
+
+// 진행 중 요청의 세대. `switchProfileTab` 이 **탭 진입마다** `loadAiJobs` 를 쏘고
+// `saveAiJobs` 도 저장 뒤 다시 부르므로 요청이 겹칠 수 있고, 응답 순서는 보장되지 않는다.
+// 늦게 도착한 **오래된** 응답이 최신 상태를 덮으면 화면이 방금 저장한 값을 잃은 것처럼
+// 되돌아가고, 그 상태에서 다시 저장하면 stale 값이 서버에 굳는다(조용한 되돌림).
+// 그래서 **마지막으로 시작한 요청의 응답만** 상태에 반영한다.
+let _aiJobsReqSeq = 0;
+
+function _aiJobsSetEmpty(empty) {
+  // 고를 항목이 하나도 없으면 [저장]·[모두 기본값] 은 아무 것도 하지 않는 버튼이다 —
+  // 누르면 반응하는 것처럼 보이는 표면을 남기지 않는다.
+  ["saveAiJobsBtn", "resetAiJobsBtn"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!empty;
+  });
+}
 
 function _aiJobsModelOptions(runtimes) {
   // `runtime:model` 한 축으로 편다 — 모델 이름은 런타임 종속이라(`haiku` 는 claude 의 것)
@@ -931,6 +957,16 @@ function renderAiJobs() {
   const st = _aiJobsState;
   const models = _aiJobsModelOptions(st.runtimes);
   box.innerHTML = "";
+  // 서버가 권한으로 추린 결과가 비면 «불러오지 못했다» 가 아니라 «해당 없음» 이다. 빈 상자를
+  // 그대로 두면 두 상태가 화면에서 같은 모양이 되고, 사용자는 오류로 읽는다.
+  _aiJobsSetEmpty(!st.jobs.length);
+  if (!st.jobs.length) {
+    const none = document.createElement("div");
+    none.className = "helper-text";
+    none.id = "aiJobsEmpty";
+    none.textContent = "이 계정에서 내 AI 에 맡길 수 있는 작업이 없습니다. 권한이 부여되면 여기에 나타납니다.";
+    box.appendChild(none);
+  }
   st.jobs.forEach((job) => {
     const row = document.createElement("div");
     row.className = "ai-jobs-row";
@@ -980,11 +1016,20 @@ function renderAiJobs() {
 async function loadAiJobs() {
   const box = document.getElementById("aiJobsList");
   if (box && !_aiJobsState.loaded) box.textContent = "불러오는 중…";
+  // ⚠ **한 번도 못 받은 동안 [저장] 은 «전부 지우기»다.** 그리기 전에는 `_collectAiJobs` 가
+  //   읽을 행이 없어 `{}` 를 만들고, 서버는 그것을 정당한 «보이는 항목 비우기» 로 처리한다
+  //   (그 의미는 [모두 기본값] 을 위해 필요하다). 그래서 «비우려는 것» 과 «아직 못 받은 것» 을
+  //   프런트가 갈라야 한다 — 첫 성공 렌더 전까지는 누를 수 없게 둔다.
+  if (!_aiJobsState.loaded) _aiJobsSetEmpty(true);
+  const seq = ++_aiJobsReqSeq;
   try {
     // ⚠ `apiFetch` 는 **이미 파싱된 payload** 를 돌려준다(Response 가 아니다) — 비-2xx 는
     //   그 안에서 throw 한다. `res.json()` 을 부르면 정상 200 응답에서도 예외가 나고, 화면은
     //   서버가 멀쩡히 답했는데 "불러오지 못했습니다" 를 띄운다(POST-DEPLOY 실측으로 적발).
     const data = await apiFetch("/api/profile/console-jobs");
+    // 내가 마지막 요청이 아니면 **아무 것도 하지 않는다** — 뒤에 시작한 요청이 이미 더 새로운
+    // 상태를 그렸을 수 있다(위 `_aiJobsReqSeq` 주석).
+    if (seq !== _aiJobsReqSeq) return;
     _aiJobsState = {
       jobs: Array.isArray(data.jobs) ? data.jobs : [],
       runtimes: Array.isArray(data.runtimes) ? data.runtimes : [],
@@ -993,7 +1038,12 @@ async function loadAiJobs() {
     };
     renderAiJobs();
   } catch (e) {
+    // 실패도 최신 요청의 것만 화면에 반영한다 — 지난 요청의 실패로 성공한 목록을 지우지 않는다.
+    if (seq !== _aiJobsReqSeq) return;
     if (box) box.textContent = "설정을 불러오지 못했습니다.";
+    // 목록을 못 받은 상태에서 [저장] 은 **빈 본문**을 보낸다 — 서버가 그것을 「보이는 항목을
+    // 전부 비웠다」로 읽어 사용자의 선택이 사라진다. 불러오지 못했으면 저장도 막는다.
+    _aiJobsSetEmpty(true);
   }
 }
 
@@ -1032,6 +1082,8 @@ function setupAiJobsTab() {
   // PUT 이 여러 번 나간다(`setupProfileDrawerResize` 와 같은 자리·같은 이유).
   if (_aiJobsBound) return;
   _aiJobsBound = true;
+  // 배선 시점엔 아직 목록을 받은 적이 없다 — 첫 성공 렌더가 열어 준다(위 `loadAiJobs` 참조).
+  _aiJobsSetEmpty(true);
   const save = document.getElementById("saveAiJobsBtn");
   if (save) save.addEventListener("click", () => { saveAiJobs().catch(() => {}); });
   const reset = document.getElementById("resetAiJobsBtn");
