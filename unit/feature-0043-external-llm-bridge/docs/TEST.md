@@ -289,3 +289,19 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 
 | TEST-20260902T123000-apifetch-contract | 작업 화면 번들 전역 | `apiFetch` 결과에 `.json()`·`.ok` 를 쓰지 않는다(주석 제외 · `.status` 는 본문 필드라 축 제외) | AC-20260902T110000-console-job-model-prefs-1 |
 | TEST-20260902T123000-loader-payload | `loadAiJobs`·`saveAiJobs` | payload 를 직접 소비 — 정상 200 에서 예외가 나 「불러오지 못했습니다」가 뜨던 자리 | AC-20260902T110000-console-job-model-prefs-1 |
+
+| TEST-20260902T140000-devtree | `running_bundle_path` | 지문이 다르면 «단일 파일» 이 아니다 — 개발자 소스를 배포본으로 덮어쓰지 않는다 | AC-20260902T140000-selfupdate-1 |
+| TEST-20260902T140000-bundle | 빌드된 배포본 실물 | 그 파일로 실행하면 스스로를 배포본으로 인식하고 `self_update` 를 신고한다 | AC-20260902T140000-selfupdate-1 |
+| TEST-20260902T140000-fixedurl | `selfupdate` 소스 | 받을 곳이 모듈 상수 — 하트비트의 `download_url` 을 따르지 않는다 | AC-20260902T140000-selfupdate-2 |
+| TEST-20260902T140000-plaintext | `fetch_deployed_agent` | 평문 주소에서는 **요청조차 나가지 않는다**(대조군: https 는 통과) | AC-20260902T140000-selfupdate-2 |
+| TEST-20260902T140000-payload | `fetch_deployed_agent` | 빈 응답·너무 작음·파이썬 아님·200 아님 전부 거절 | AC-20260902T140000-selfupdate-2 |
+| TEST-20260902T140000-atomic | `install_agent_file` | 같은 디렉토리 임시 파일 → `os.replace` · 권한 보존 · 잔재 없음 · 실패 시 원본 유지 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-busy | `try_self_update` | 진행 중 작업이 있으면 미룬다 — 취소하지 않는다 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-loop | `try_self_update` | 지문이 같으면 재기동하지 않는다(대조가 교체 **앞**) + 최소 간격 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-cleanup | `try_self_update` | 재기동 전 하트비트 정지 → 점유 해제 순서(`os.execv` 는 `atexit` 미호출) | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-order | `main` 대기 루프 | 물러남 → 갱신 → 대기 순서 — 대기 뒤면 질문을 끌어와 놓고 나간다 | AC-20260902T140000-selfupdate-3 |
+| TEST-20260902T140000-declare | `main` | 신고와 실제 능력이 같은 식에서 나온다(못 하면 신고도 빠진다) | AC-20260902T140000-selfupdate-4 |
+| TEST-20260902T140000-server | `account_runner_self_updating` | 정본 러너 축이 `account_runner_build` 와 동일(`Id DESC`) · 조회 실패는 fail-closed | AC-20260902T140000-selfupdate-4 |
+| TEST-20260902T140000-fold | `connect-modal.js` | 접는 식이 **한 곳**뿐 · 원시 낡음 직접 읽는 곳 없음 · 구 서버 응답은 종전 안내로 폴백 | AC-20260902T140000-selfupdate-5 |
+| TEST-20260902T140000-emit | `agent/__init__.py` | `_EMIT_ORDER` 등재 — 빠지면 배포본에서 **조용히 사라진다** | AC-20260902T140000-selfupdate-1 |
+| TEST-20260902T140000-stdlib | 배포본 | 표준 라이브러리 밖 import 0 — 무설치 계약 유지 | AC-20260902T140000-selfupdate-1 |

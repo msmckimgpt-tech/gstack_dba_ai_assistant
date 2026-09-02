@@ -21,13 +21,16 @@ from .cancel import CancelRegistry
 from .caps import resolve_caps, sanitize_caps
 from .conf import load_conf, save_conf
 from .discovery import _no_ai_message, pick_ai
-from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
+from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_SELFUPDATE, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
 from .handler import handle_one
 from .identity import init_runner_instance
 from .invoke import _ensure_strict_mcp_supported
 from .logs import _RUN_T0, _STATS, _audit_path, _human_log_path, _log, _log_exc, log_event
 from .pool import ActiveTasks, WorkerPool
 from .runtimes import _RUNTIME_SPECS
+from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
+                         fetch_deployed_agent, install_agent_file, reexec_self,
+                         running_bundle_path)
 from .state import prev_runner_instance, runner_instance
 from .timing import _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
@@ -88,6 +91,22 @@ _RUN_STOPPED = threading.Event()
 #: ⚠ **계정이 다르면 이 신호는 오지 않는다.** 서버 판정이 `AccountId` 로 묶여 있어, 한 머신에서
 #:   서로 다른 계정으로 러너를 여럿 띄우는 구조는 그대로 허용된다(사용자 결정 2026-09-01).
 _SUPERSEDED = threading.Event()
+
+#: 서버가 「이 러너는 배포본과 다른 파일이다」라고 알려 왔다 (TASK-20260902T140000).
+#:
+#: `_SUPERSEDED` 와 같은 이유로 Event 다 — 아는 것은 하트비트 스레드이고, **자기를 갈아 끼우고
+#: 다시 뜰 수 있는 것은 대기 루프**다(진행 중 작업이 없음을 그곳이 안다). 갱신하겠다고 답변
+#: 중인 자식 AI 를 죽이면, 사용자는 최신 러너를 얻는 대신 방금 던진 질문을 잃는다.
+_SELF_UPDATE = threading.Event()
+
+#: 마지막 자기 갱신 **시도** 시각(monotonic). 배포가 몰리는 날 재기동이 연달아 일어나지
+#: 않게 하는 바닥이다. `0.0` = 아직 시도한 적 없음.
+_SELF_UPDATE_LAST = [0.0]
+
+#: 이 실행이 자기 갱신을 할 수 있는가 — `main()` 이 실제 능력(단일 파일로 도는가)과 사용자
+#: 선택(`--no-self-update`)을 함께 판정해 세운다. 신고(`self_update` feature)와 **같은 값**이다:
+#: 못 하면서 신고하면 화면이 오지 않을 갱신을 기다린다.
+_SELF_UPDATE_OK = [False]
 
 
 def _log_run_stop(reason: str = "exit") -> None:
@@ -262,19 +281,106 @@ def start_heartbeat(api: Api, stop: threading.Event,
                               "계정이 다른 러너는 영향받지 않습니다.",
                               level="WARN", local_build=_self_build(),
                               peer_build=str(_u.get("superseded_by_build") or "") or None)
-                if _u.get("stale_build") and not _stale_said:
-                    _stale_said = True
-                    log_event(_EV_HB_STALE,
-                              "⚠ 실행 중인 러너가 서버 배포본과 다릅니다 — 최신 파일로 다시 받아 "
-                              "실행하세요(웹의 '내 AI 연결하기' → 원클릭 명령). "
-                              "그 전까지는 옛 동작·옛 모델 목록이 그대로 보입니다.",
-                              level="WARN", local_build=_self_build(), ver=AGENT_VERSION,
-                              min_version=str(_u.get("min_version") or "") or None)
+                if _u.get("stale_build"):
+                    # 스스로 고칠 수 있으면 **신호만 세우고 조용히 넘어간다** (사용자 결정
+                    # 2026-09-02). 러너 파일은 거의 모든 배포에서 바뀌므로, 이 사실을 매번
+                    # 경고로 찍으면 로그가 «사용자가 할 일» 로 가득 차는데 정작 할 일은 없다.
+                    # 갱신은 대기 루프가 유휴일 때 수행한다.
+                    if _SELF_UPDATE_OK[0]:
+                        _SELF_UPDATE.set()
+                    elif not _stale_said:
+                        # 스스로 못 고친다 — 이때는 사람이 할 일이 실제로 있으므로 말한다.
+                        _stale_said = True
+                        log_event(_EV_HB_STALE,
+                                  "⚠ 실행 중인 러너가 서버 배포본과 다릅니다 — 최신 파일로 다시 받아 "
+                                  "실행하세요(웹의 '내 AI 연결하기' → 원클릭 명령). "
+                                  "그 전까지는 옛 동작·옛 모델 목록이 그대로 보입니다.",
+                                  level="WARN", local_build=_self_build(), ver=AGENT_VERSION,
+                                  min_version=str(_u.get("min_version") or "") or None)
             stop.wait(interval)
 
     t = threading.Thread(target=_loop, name="bridge-heartbeat", daemon=True)
     t.start()
     return t
+
+
+def try_self_update(api: Api, active: ActiveTasks) -> bool:
+    """배포본과 다르면 **스스로 갈아 끼우고 다시 뜬다**. 성공하면 돌아오지 않는다.
+
+    반환값은 「이번 회차에 무언가 미뤘는가」가 아니라 **「갱신을 포기했는가」**다 —
+    `False` 면 대기 루프는 평소대로 계속 돈다. 성공하면 `os.execv` 라 반환 자체가 없다.
+
+    ## 순서가 곧 안전이다
+
+    1. **유휴일 때만.** 진행 중인 답변이 있으면 이번 회차는 그냥 넘긴다(취소하지 않는다).
+       최신이 되자고 사용자가 방금 던진 질문을 죽이는 것은 거래가 성립하지 않는다.
+    2. **바닥 간격.** 배포가 몰리는 날 재기동이 연달아 일어나지 않게 한다.
+    3. **받아서 검사한 뒤에만 교체.** `fetch_deployed_agent` 가 https·CA·크기·문법을
+       모두 통과시킨 것만 돌려준다.
+    4. **바뀌는 것이 없으면 재기동하지 않는다.** 받은 것이 지금 나와 같은 파일이면 그대로 둔다 —
+       이 한 줄이 「배포본을 못 따라잡는 러너가 영원히 재기동하는」 고리를 끊는다.
+    5. **교체 실패는 조용히 넘긴다.** 있던 파일로 계속 도는 것이 언제나 차선이다.
+
+    ⚠ 재기동 직전에 **하트비트를 멈추고 점유를 놓아준다**. `os.execv` 는 `atexit` 를 부르지
+    않으므로(프로세스 이미지가 통째로 갈린다), 여기서 하지 않으면 서버는 이 러너를 «살아 있는데
+    응답 없음» 으로 30분간 붙들고 있게 된다.
+    """
+    if not _SELF_UPDATE_OK[0]:
+        return False
+    if active.count() > 0:
+        return False           # 일하는 중 — 다음 하트비트가 다시 알려 준다
+    now = time.monotonic()
+    if _SELF_UPDATE_LAST[0] and (now - _SELF_UPDATE_LAST[0]) < SELF_UPDATE_MIN_INTERVAL_SEC:
+        return False
+    _SELF_UPDATE_LAST[0] = now
+    # 신호는 여기서 내린다 — 실패해도 다음 하트비트가 다시 세운다(재시도는 그 주기를 탄다).
+    _SELF_UPDATE.clear()
+    mine = _self_build()
+    path = running_bundle_path(mine)
+    if not path:
+        # 단일 파일이 아니다(개발 트리) — 여기까지 오면 안 되지만, 판정을 한 번 더 한다.
+        return False
+    payload = fetch_deployed_agent(api.base, api.ca)
+    if payload is None:
+        log_event(_EV_SELFUPDATE, "최신 러너 파일을 받지 못했습니다 — 있던 파일로 계속합니다.",
+                  level="WARN", phase="fetch", local_build=mine)
+        return False
+    new_build = agent_digest(payload)
+    if new_build == mine:
+        # 서버가 낡았다고 했는데 받아 보니 같은 파일이다. 배포 교대 중이거나(엣지가 옛 replica 를
+        # 잡음) 판정이 흔들린 것 — 어느 쪽이든 **바꿀 것이 없다**.
+        return False
+    if not install_agent_file(path, payload):
+        log_event(_EV_SELFUPDATE, "최신 러너 파일을 저장하지 못했습니다(권한·디스크) — "
+                                  "있던 파일로 계속합니다.",
+                  level="WARN", phase="install", local_build=mine, new_build=new_build)
+        return False
+    log_event(_EV_SELFUPDATE,
+              "러너를 최신본으로 갱신했습니다 — 지금 다시 시작합니다(하던 일은 없었습니다).",
+              local_build=mine, new_build=new_build, path=path)
+    # 재기동 전 정리. 순서: 하트비트를 먼저 멈춰 «살아 있다» 는 신호를 끊고, 그다음 점유를 놓는다.
+    try:
+        _SELF_UPDATE_STOP[0]()
+    except Exception:  # noqa: BLE001
+        pass
+    release_own_claims_on_exit()
+    _log_run_stop(reason="selfupdate")
+    try:
+        reexec_self(path)
+    except Exception:  # noqa: BLE001
+        # `execv` 가 실패했다 — 파일은 이미 최신이므로 그냥 끝낸다. 런처가 다시 띄우거나,
+        # 사용자가 다음에 실행할 때 최신본이 뜬다. 여기서 계속 돌면 **옛 코드가 새 파일을
+        # 들고** 도는 상태가 되어 로그와 실제가 어긋난다.
+        log_event(_EV_SELFUPDATE, "재시작에 실패했습니다 — 러너를 종료합니다"
+                                  "(다음 실행부터 최신본이 뜹니다).",
+                  level="ERROR", phase="reexec", new_build=new_build)
+        raise SystemExit(0) from None
+    return True
+
+
+#: 재기동 직전에 하트비트를 멈추는 손잡이. `main()` 이 자기 `heartbeat_stop.set` 을 넣는다 —
+#: `try_self_update` 가 그 지역 변수를 볼 수 없기 때문이다(기본값은 아무것도 안 함).
+_SELF_UPDATE_STOP = [lambda: None]
 
 
 def shutdown_after_drain(active: ActiveTasks, cancels: CancelRegistry,
@@ -336,6 +442,10 @@ def main() -> int:
                     help="답변을 내보내기 전 **자기 검증**(5축)을 하지 않는다. 기본은 서버 "
                          "설정을 따라 수행 — 검증은 AI 호출을 한 번 더 쓰므로 "
                          "이 머신에서 끄고 싶을 때 사용한다.")
+    ap.add_argument("--no-self-update", action="store_true",
+                    help="배포본과 달라져도 **스스로 갱신하지 않는다**. 기본은 유휴일 때 최신 "
+                         "파일을 받아 조용히 다시 시작 — 이 머신에서 실행 파일을 직접 관리할 때 "
+                         "끈다. 끄면 웹 화면이 종전대로 「업데이트 필요」를 보여 준다.")
     ap.add_argument("--once", action="store_true", help="한 건만 처리하고 종료")
     ap.add_argument("--check", action="store_true", help="연결만 확인하고 종료")
     ap.add_argument("--resume", action="store_true",
@@ -455,6 +565,15 @@ def main() -> int:
         # 끈 사실을 **신고에서도 지운다** — 신고를 남긴 채 수행만 건너뛰면 콘솔은 이 러너를
         # "검증할 줄 아는데 결과가 없다"(= 통과)로 읽는다. 그 오독이 이 축을 만든 이유다.
         _feats = [f for f in _feats if f != "self_review"]
+    # 자기 갱신은 **할 수 있을 때만** 신고한다 (TASK-20260902T140000). 두 조건의 곱이다:
+    #   (a) 사용자가 끄지 않았고, (b) 지금 도는 것이 실제로 **배포된 단일 파일**이다.
+    # (b) 가 빠지면 개발 트리에서 모듈로 띄운 러너가 「곧 스스로 최신이 됩니다」라고 신고하고,
+    # 화면은 그 말을 믿고 조치 요구를 감춘 채 **오지 않을 갱신**을 기다린다. 신고와 실제
+    # 능력을 같은 식으로 세워 그 괴리를 구조적으로 없앤다.
+    _SELF_UPDATE_OK[0] = (not getattr(args, "no_self_update", False)
+                          and bool(running_bundle_path(_self_build())))
+    if not _SELF_UPDATE_OK[0]:
+        _feats = [f for f in _feats if f != "self_update"]
     api.features = tuple(_feats)
 
     # 저장하는 `ai` 는 **사용자가 명시한 것만**이다(위 상속 주석과 같은 이유). 자동 감지
@@ -610,6 +729,10 @@ def main() -> int:
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
     heartbeat_stop = threading.Event()
     start_heartbeat(api, heartbeat_stop, runtimes, batch_override=_batch_override)
+    # 자기 갱신이 재기동 직전에 하트비트를 끊을 수 있게 손잡이를 건넨다 — `os.execv` 는
+    # `atexit` 를 부르지 않으므로, 여기서 끊지 않으면 서버는 사라진 프로세스를 계속 «대기 중»
+    # 으로 읽는다.
+    _SELF_UPDATE_STOP[0] = heartbeat_stop.set
 
     if not args.cmd and not _caps_first:
         # 협상은 **뒤에서** 한다. 끝나면 위 `runtimes` 가 제자리로 갱신되고 다음 하트비트가
@@ -665,6 +788,15 @@ def main() -> int:
             _log("  이 러너는 더 이상 필요하지 않습니다 — 같은 계정에 더 나중에 연결된")
             _log("  러너가 이미 질문을 처리하고 있습니다(한 계정에는 러너 하나만 남깁니다).")
             return 0
+        # 배포본과 달라졌으면 **여기서** 갈아 끼우고 다시 뜬다 (TASK-20260902T140000).
+        #
+        # 자리는 `_SUPERSEDED` 바로 뒤, 대기 호출 **앞**이다. 물러남이 갱신보다 먼저인 이유:
+        # 이미 자리를 넘기기로 한 러너를 최신으로 만들 이유가 없다(곧 종료된다). 대기보다
+        # 앞인 이유는 같다 — 뒤에 두면 수십 초짜리 대기에서 질문 하나를 끌어와 놓고 갱신하러
+        # 나가게 되고, 그러면 «옛 코드가 그 질문을 처리» 하거나 «점유만 하고 사라진다».
+        # 진행 중 작업이 있으면 `try_self_update` 가 알아서 이번 회차를 넘긴다.
+        if _SELF_UPDATE.is_set():
+            try_self_update(api, active)
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
         if code == 401:

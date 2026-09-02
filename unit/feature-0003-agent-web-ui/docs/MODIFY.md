@@ -5637,3 +5637,18 @@ Task-Cycle: feature-0003-agent-web-ui
 
 `connect_status` 응답에 `runner_build`(러너 지문)를 추가 — 화면이 재기동 전후를 대조해
 「재실행으로는 풀리지 않는」 상태를 가려내는 **동일성 축**에만 쓴다(표시하지 않는다).
+
+## CHG-20260902T140000 — (feature-0043 cycle) 자기 갱신 러너의 낡음은 화면에 그리지 않는다
+
+`oauth_store.py`(`account_runner_self_updating`) · `routers/oauth_as.py`
+(`connect_status.runner_self_updating`) · `static/app/connect-modal.js`(`_actionableStaleOf`)
+편집. 정본은 `unit/feature-0043-external-llm-bridge/docs/TASK-20260902T140000-runner-self-update.md`.
+
+낡음 판정(`runner_stale`)은 그대로 엄격하되, **스스로 갱신할 줄 아는 러너의 낡음은 조치
+요구로 그리지 않는다**(사용자 결정 2026-09-02, 웹 리서치 후 선택). 접는 자리는 `_actionableStaleOf()`
+한 곳 — 칩·모달 성공 조건·자동 실행 자격·「재실행해도 그대로」 판정이 모두 이 축을 읽으므로
+두 벌이면 하나만 고쳐지는 순간 화면이 자기 안에서 갈린다. 모르면 종전 안내로 폴백.
+
+기존 계약 `test_chip_shows_a_distinct_state_for_stale_runner` 의 리터럴 단언(`!!b.runner_stale`)은
+**관계**(서버 값 → 접는 함수 → `_paintConn`)로 갱신했다 — 리터럴을 그대로 두면 이 계약이
+「개선을 되돌리라」고 요구하는 게이트가 된다.

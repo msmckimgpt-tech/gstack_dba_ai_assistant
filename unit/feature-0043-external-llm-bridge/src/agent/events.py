@@ -32,6 +32,9 @@ _EV_HB_UNAUTH = "hb.unauthorized"
 _EV_HB_STALE = "hb.stale_build"
 #: 같은 계정에 최신 러너가 붙어서 이 러너가 물러나는 사건 (TASK-20260901T173000).
 _EV_HB_SUPERSEDED = "hb.superseded"
+#: 스스로 최신본으로 갈아 끼우고 재기동하는 사건 (TASK-20260902T140000).
+#: 세 갈래를 **한 코드**로 남긴다 — 갱신했다 / 못 했다 / 지금은 미룬다(작업 중).
+_EV_SELFUPDATE = "run.selfupdate"
 _EV_TASK_CLAIM_SKIP = "task.claim.skip"
 _EV_TASK_CLAIM_FAIL = "task.claim.fail"
 _EV_TASK_DISPATCH = "task.dispatch"
@@ -112,7 +115,12 @@ def _self_os() -> str:
 #:   기본 포함이다: 신고하지 않으면 콘솔이 「검증할 줄 모르는 러너」와 「검증했는데 통과」를
 #:   구분하지 못하고, 구분하지 못하면 운영자는 전자를 후자로 읽는다. 실제 수행 여부는
 #:   서버 설정(`REDTEAM_ENABLED`)이 정하며 `--no-self-review` 로 이 머신에서 끌 수 있다.
-AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "self_review")
+#: `self_update` — 배포본과 다른 파일로 돌고 있으면 **스스로 받아 재기동**할 줄 안다
+#:   (TASK-20260902T140000). 이것도 자격이 아니라 **화면이 무엇을 말할지 정하는 축**이다:
+#:   신고하면 낡음은 곧 스스로 풀리므로 화면이 조치를 요구하지 않고, 신고가 없으면 종전대로
+#:   「업데이트 필요」와 되돌아갈 명령을 보여 준다. `--no-self-update` 로 끄면 신고도 빠진다 —
+#:   끈 러너를 「할 줄 안다」로 신고하면 화면이 오지 않을 갱신을 기다리게 된다.
+AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "self_review", "self_update")
 
 #: 배경 배치 동의의 기능 이름. 서버 `shared/bridge_consent.BATCH_FEATURE` 와 같은 값이어야 한다.
 BATCH_FEATURE = "batch_jobs"

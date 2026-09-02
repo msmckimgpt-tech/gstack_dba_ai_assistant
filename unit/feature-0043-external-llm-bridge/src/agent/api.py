@@ -29,6 +29,10 @@ class Api:
     def __init__(self, base: str, token: str, ca: str | None):
         self.base = base.rstrip("/")
         self.token = token
+        # 경로도 들고 있는다 — 자기 갱신(TASK-20260902T140000)이 **같은 신뢰 앵커**로 파일을
+        # 받아야 하는데, `ctx` 만 남기면 그 사실을 다시 인자로 실어 날라야 하고 그러면 두 곳이
+        # 갈릴 준비를 마친다(한쪽만 CA 를 바꾸면 갱신이 조용히 OS 신뢰 저장소로 떨어진다).
+        self.ca = ca or None
         self.ctx = ssl.create_default_context(cafile=ca) if ca else None
         # 로그에 이 값이 실릴 자리를 미리 막는다 — 서버 오류 본문·자식 CLI stderr·`--cmd`
         # 문자열 어디에도 토큰이 섞여 나올 수 있고, 그 로그는 사용자가 우리에게 붙여 보낸다.

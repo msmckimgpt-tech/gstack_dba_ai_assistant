@@ -181,7 +181,12 @@ def test_runner_declares_features_and_version():
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     assert set(_mod.AGENT_FEATURES) == {bt.RUNNER_FEATURE_CONSOLE_JOBS,
-                                        bt.RUNNER_FEATURE_SELF_REVIEW}, (
+                                        bt.RUNNER_FEATURE_SELF_REVIEW,
+                                        # TASK-20260902T140000: 스스로 최신본으로 갈아
+                                        # 끼울 줄 안다. 자격이 아니라 **화면이 무엇을
+                                        # 말할지** 정하는 축 — 신고하면 낡음을 조치
+                                        # 요구로 그리지 않는다(조용한 자동 갱신).
+                                        bt.RUNNER_FEATURE_SELF_UPDATE}, (
         f"기본 신고 집합이 정본과 다르다: {sorted(_mod.AGENT_FEATURES)} — 감사되지 않은 "
         "자격이 섞였거나 필요한 것이 빠졌다")
     assert 'body["features"] = list(self.features)' in src
