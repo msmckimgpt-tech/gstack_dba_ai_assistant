@@ -1771,7 +1771,6 @@ Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다�
       직접 `atexit.register` 해서 «제품의 등록 순서»가 아니라 «테스트 자신의 순서»를 검사했고,
       구코드에서도 통과했다. `_arm_exit_release` 를 거치도록 고친 뒤 **구코드에서 FAIL 재현**
       (`['run.stop','exit.release','log']`) → 신코드 PASS 를 양방향 확인
-
 ## 20260901T1730-stale-runner-yield — 낡은 러너가 최신 러너의 질문을 가로챈다 (사용자 재보고)
 
 **요청 (2026-09-01)**: 「웹페이지 새로고침, 연결 준비를 통해 러너를 다시 연결한 후 요청을
@@ -1797,3 +1796,250 @@ Windows 탭 + PowerShell 명령). 같은 계정이 PowerShell 명령으로 다�
 - [x] 인라인 적대 3렌즈 — P1 1건 자체 적발·수정(대기 즉시반환 → busy-loop) `REV-20260901T173000`
 - [ ] 배포 후 라이브 실측 — 서버 축은 즉시 발효(옛 러너 재등장 시 관측), **자가 종료는 러너가
       새 사본으로 갱신된 뒤**에만 발효
+
+## TASK-20260901T143000-selfreview-envelope — 자가 검증이 **한 건도 저장되지 않던** 결함 + 콘솔 경량 모델 (P0-AI)
+
+**발견 경위**: 직전 cycle 배포 후 실 러너로 end-to-end 를 확인하다 드러났다. 러너는 "자가 검증
+완료 — 제출에 동봉" 을 로그하는데 `redteam_reviews` 는 0 rows 였고, 서버 경고도 없었다.
+
+**원인**: 러너가 보내는 것은 판정이 아니라 **봉투**(`{"raw": "<원문>", "latency_ms": …}`)인데
+서버가 그것을 `parse_review_text` 에 그대로 넣었다. 그 함수는 dict 를 「이미 파싱된 판정」으로
+보고 그대로 돌려주므로 `sanitize` 가 `None` 을 냈다 — **모든 검증이 조용히 버려졌다.**
+
+**왜 테스트가 못 잡았나**: 양쪽을 각각만 검사했다(서버는 원문 문자열을 직접, 러너는 봉투 조립만).
+**이음매**를 아무도 안 봤다 — 27건 green 인 채로 기능이 0% 동작했다.
+
+- [x] `shared/self_review.from_runner_payload()` — 봉투 규약을 계약 모듈 한 곳에.
+      관측 메타는 **봉투가 이긴다**(판정 본문의 같은 키는 AI 자기신고라 신뢰 등급이 다르다)
+- [x] 버린 사실을 `info` 로 남긴다 — 이 결함이 오래 숨은 이유가 **침묵**이었다
+- [x] **이음매 테스트 6건** — 봉투 모양을 러너 소스에서 읽어 재현(손으로 적으면 러너가 바꾸는
+      날 이 테스트만 낡아 같은 형태로 다시 깨진다)
+- [x] **역검증**: 수정 전(`origin/main`) 사본에서 **8건 FAIL** 실증 — 출하된 코드에서 죽는다
+- [x] **실 러너 end-to-end PASS** — `id=397 source=external verdict=revise block_count=1`.
+      검증이 **실제 결함을 잡았다**(답변 생성이 exit 1 로 실패해 안내문이 나간 것을
+      `[BLOCK/completeness]` 로 정확히 지목). 설계대로 답변은 그대로 전달되고 판정만 남았다
+- [x] 콘솔 3자리 표시 확인(KPI · 축별 표 · 브리지 작업 행 `BLOCK 1`)
+
+### 콘솔 작업 경량 모델 (사용자 결정 2026-09-01)
+
+> "관리 콘솔에서 이용될 모델은 모두 경량 모델로 구성해주세요. claude는 haiku, codex는 luna
+>  모델과 같은 경량 모델로 작동해야 합니다."
+
+- [x] `CONSOLE_JOB_LIGHT_MODELS` + `pick_console_job_model()` — **러너가 신고한 목록에서만**
+      고른다. 대조 실패면 빈 값(러너 기본값) — 없는 이름을 지어 보내면 실행이 실패한다(P0-T)
+- [x] 런타임 순서는 **러너 신고 순서**를 따른다 — 서버가 우열을 정하면 `--ai` 로 제한한
+      사용자 의도를 넘어선다
+- [x] 대화 축 **불변** — 사용자가 화면에서 고른 값이다
+- [x] 회귀 6건 + **실측**: 콘솔 작업 `모델 haiku` · 대화 `모델 fable` (같은 러너, 같은 창)
+- [x] `make test` 전량 green · ruff clean
+
+#### 잔여
+
+- [ ] codex `luna` 는 **단위로만** 확인(이 머신 codex 쿼터 소진). 선택 로직은 실 신고 형태
+      (`gpt-5.6-luna` 접두)로 테스트했다
+- [ ] 추론 등급은 낮추지 않았다 — 등급 어휘가 러너마다 달라(P0-Z3) 서버 추측은
+      「고른 적 없는 값이 반영됐다」가 된다
+## 20260901T1730-stale-runner-yield — 낡은 러너가 최신 러너의 질문을 가로챈다 (사용자 재보고)
+
+**요청 (2026-09-01)**: 「웹페이지 새로고침, 연결 준비를 통해 러너를 다시 연결한 후 요청을
+보냈지만 같은 이슈가 확인되어 조치가 필요합니다」 + 「오래된 러너 측에서 … 다른 신규 러너에
+연결되는 부분이 확인된다면 오래된 러너는 프로세스를 종료 처리 … 다만 계정이 다를 경우는 예외」.
+
+근본원인·설계·AC 는 `TASK-20260901T173000-stale-runner-yield.md`.
+**위험도 Major** — 점유 집행 경로(판정이 상대라 단독 러너 동작은 불변).
+
+<!-- PLAN-APPROVED by mckim on 2026-09-01 (러너 자가 종료 · 계정 예외 명시) -->
+
+- [x] 라이브 진단 — 같은 계정에 러너 2개(배포본 `d0ac1263d454` vs 옛 `0a4ba732366c`),
+      옛 러너가 17:20:03 질문을 먼저 집어 옛 형식으로 답한 것을 `WebOAuthTokens` + 러너 로그로 확정
+- [x] 즉시 조치 — 옛 러너 프로세스 SIGTERM 정상 종료(라이브 복구)
+- [x] `stale_runner_must_yield` — **상대** 판정(같은 계정에 최신 러너가 실제로 들을 때만),
+      fail-open, 인증과 같은 `_LIVE_TOKEN_PREDICATE`
+- [x] 집행 `claim_request` 409 + 억제 `list_open_requests`·`wait_for_request`
+      (busy-loop 금지 · 취소 통보는 유지)
+- [x] 러너 자가 종료 — `runner_update.superseded`(`stale_build` 와 별개 필드) →
+      `shutdown_after_drain` 로 하던 일 마치고 종료, 판정은 대기 호출 앞
+- [x] 계정 경계 — 판정이 `AccountId` 스코프라 다른 계정 러너 병존 허용(사용자 예외 요구 충족)
+- [x] 신규 20건 · **뮤테이션 5종 KILL** · 4 feature 전량 rc=0 · ruff clean
+- [x] 인라인 적대 3렌즈 — P1 1건 자체 적발·수정(대기 즉시반환 → busy-loop) `REV-20260901T173000`
+- [ ] 배포 후 라이브 실측 — 서버 축은 즉시 발효(옛 러너 재등장 시 관측), **자가 종료는 러너가
+      새 사본으로 갱신된 뒤**에만 발효
+
+### POST-DEPLOY 실측 (배포본 `fe60866c`, 2026-09-01 18:15)
+
+- [x] **자가 검증이 라이브 원장에 앉는다** — `id=399 source=external verdict=revise
+      block_count=1 warn_count=1 latency_ms=15155`. **직전 배포에서는 같은 자리가 0 rows**
+      였다 — 봉투 결함이 실제로 라이브를 막고 있었다는 실측
+- [x] 검증이 또 실제 결함을 잡았다 — 답변 생성이 `ai.fail exit=1` 로 실패해 나간 안내문을
+      지목. 설계대로 답변은 그대로 전달되고 판정만 남았다
+- [x] **콘솔 작업 `haiku` · 대화 `fable`** — 한 러너·같은 창에서 두 축이 갈린다(대화 축
+      불변 계약 실측)
+- [x] 콘솔 3자리 표시 — KPI `자가 검증 3건 · BLOCK 2 · WARN 5` · 축별 표 4축 · 브리지 작업
+      행(콘솔 작업 `—` / 대화 `BLOCK 1 WARN 1`)
+- [x] 배포 게이트 전건 — 전 서비스 동일 SHA · 스모크 PASS · 503 0건 · surge 0 · 코드 도달
+- [x] **테스트 위생**: 이 세션이 만든 검증 토큰 11개가 살아 있어 질문이 갈렸다 → 폐기해
+      해소(사용자 `admin` 토큰 무접촉). 제품 축 개선(낡은 러너 양보)은 병렬 세션이 랜딩
+## TASK-20260901T190000-ai-jobs-rewire — 남은 AI 기능 3종을 연결한 AI 로 배선 (P0-AK)
+
+**요청 (2026-09-01)**: "'그래프 뷰' 내 'AI 능동 분석'에 대한 기능이 막혀있는것으로 확인되었습니다.
+서비스 내 AI 관련 **모든 작동사항을 다시 활성화** 후, **연결한 AI를 통해 작동하도록 배선**해주세요."
+
+**사용자 결정 (AskUserQuestion 3문)**:
+1. 대량 분석 비용 가드 = **상한 없음**(기존 캡만 — 종전 서버 LLM 시절과 동일 사용감)
+2. 배경 배치 = **배선 + 안내 표면화**, 그리고 **`--batch` 같은 CLI 접근성 문제는 웹 토글로 구성**
+3. 검증 = **라이브 end-to-end 필수**
+
+### 진단 (실측)
+
+| 종류 | `wired` | 무엇이 막나 |
+|---|---|---|
+| `node_analysis` (그래프 능동 분석) | False | `enqueue_analysis`/`enqueue_schema_analysis` 가 게이트 확인 후 **적재 전에** 거절 |
+| `insight_summary` (인사이트 배치) | False | 동일 계열 |
+| `cluster_label` (클러스터 라벨링) | False | `modules/llm._get_llm_client` 단일 출구에서 차단 |
+
+반영 함수 3종(`apply_external_*`)은 `_STORE_ROUTES` 에 **선언만 있고 구현이 없다**.
+
+규모 실측: runs 89 · jobs 13,491 · **run 당 최대 2,594 노드** · 중앙값 16.
+
+### 2.1 Implementation Plan
+
+**위험도: Major** (§12.3 — 워커 구조·대기열·반영 경로 동시 변경. 파괴적 데이터 없음,
+스키마 변경 없음, 인증/인가 무변경. 다만 **남의 계정 토큰을 태우는 축**이라 동의 모델이 핵심.)
+
+#### 다의어 고지 — "연결한 AI 를 통해 작동" 이 무엇으로 판정되는가 (§7.1 · §16.7 G1)
+
+> **입력**: 그래프 뷰에서 노드 하나를 골라 「AI 능동 분석」 실행 (러너 연결 상태).
+> **기대**: (1) 202 로 run 시작 — 종전의 "제공되지 않습니다" 안내가 **뜨지 않는다**,
+> (2) 러너 로그에 `task.dispatch … kind=job model=haiku`,
+> (3) `node_analysis_jobs.status='done'` + `analysis` 채워짐, (4) 그래프 화면에 분석문 표시.
+> **수치 1개**: 그 run 의 `node_analysis_jobs` 중 `error_kind='delegated'` 로 남은 것 = 0.
+
+#### 설계 — 워커는 **기다리지 않는다**
+
+`apply: store` + `_STORE_ROUTES` 가 이미 그 의도다. 워커가 응답을 기다리면 스레드가 분 단위로
+묶이고, 개인 AI 가 느린 날 워커가 통째로 멎는다.
+
+```
+워커 _run_llm_inner
+  └ 게이트 닫힘 + 위임 가능 → enqueue_console_job(payload={job_id,…}) → 센티넬 반환
+      node job 은 status='running' 유지(updated_at 갱신) · error_kind='delegated'
+                                   ↓ (러너가 답할 때)
+submit_answer → apply_console_job_result → apply_external_node_analysis(conn, payload, result)
+      payload.job_id 로 그 행을 찾아 analysis 기입 + status='done'
+```
+
+**스키마 변경이 없다**: 기존 stale-`running` 회수(lease)가 「러너가 끝내 답하지 않음」의
+backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(자가 치유).
+
+#### 배치 동의를 **웹 토글**로 (사용자 결정)
+
+`--batch` 는 CLI 플래그라 접근성이 떨어진다. 동의의 주체는 그대로 계정 소유자로 두되,
+**표현 수단을 웹으로** 옮긴다:
+
+- 서버: 계정별 동의 값 저장 + **하트비트 응답**에 실어 보냄
+- 러너: 하트비트 응답을 읽어 `features` 를 **동적 갱신**(`batch_jobs` 추가/제거).
+  `--batch`/`--no-batch` 는 그 머신에서의 **명시 override** 로 남긴다(서버가 켜도 그 머신에서
+  끌 수 있어야 한다 — 동의는 두 겹이지 이중 정의가 아니다)
+- 웹: '내 AI 연결' 화면에 토글 + 무엇을 태우는지 1줄 고지
+
+#### 영향받는 파일 · symbol
+
+| 경로 | 변경 |
+|---|---|
+| `shared/bridge_tasks.py` | `node_analysis`·`insight_summary`·`cluster_label` → `wired: True` |
+| `modules/node_analysis.py` | `enqueue_*` 게이트를 「위임 가능하면 통과」로 · `_run_llm_inner` 위임 분기 · `apply_external_node_analysis` |
+| `modules/insight.py` | `apply_external_insight_summary` |
+| `modules/semantic_cluster.py` | `apply_external_cluster_labels` |
+| `shared/bridge_consent.py` | **신규** — 계정별 배치 동의 저장·조회 단일 정본 |
+| `routers/ai_tools.py` | 하트비트 응답에 `batch_consent` · claim 시 동의 재확인 |
+| `static/agent/bridge_agent.py` | 하트비트 응답으로 `features` 동적 갱신 + `--no-batch` |
+| `static/ai-connect.js` · `admin/*.js` | 배치 동의 토글 + 고지 |
+
+#### 완료 판정 기준
+
+- `AC-20260901T190000-ai-jobs-rewire-1`: 러너 연결 상태에서 그래프 노드 분석이 **시작되고**
+  (202) 종전 차단 안내가 뜨지 않는다.
+- `-2`: 그 분석이 **연결된 AI 에서** 돌고(러너 로그 `kind=job`), 결과가 `node_analysis_jobs`
+  에 `done` 으로 기입되어 화면에 뜬다.
+- `-3`: 러너가 끝내 답하지 않으면 lease 회수로 `pending` 복귀 — 영구 고착되지 않는다.
+- `-4`: 배치 동의를 **웹에서 토글**할 수 있고, 끄면 러너가 배치를 더 이상 신고하지 않는다.
+- `-5`: 동의한 러너가 0명이면 콘솔이 그 사실을 말한다(배선만 하고 침묵하지 않는다).
+- `-6`: 게이트를 되돌리면(`AGENT_SERVER_LLM_ENABLED=1`) 종전 서버 경로가 그대로 돈다.
+
+<!-- PLAN-APPROVED by user on 2026-09-01 (AskUserQuestion 3문 응답) -->
+
+### 2.2 구현 기록 (2026-09-01)
+
+계획과 **다르게 간 곳**과 그 이유:
+
+| 계획 | 실제 | 왜 |
+|---|---|---|
+| `_run_llm_inner` 에 위임 분기 | `_run_llm`(바깥) 에 센티넬 + `_persist` 가 적재 | `_run_llm_inner` 는 예산 슬롯 **안**이다. 거기서 위임하면 개인 AI 가 도는 동안 서버 LLM 예산 슬롯을 붙든다. 그리고 적재는 DB 를 쓰므로 「DB 미접근」 계약인 스레드 본체에서 할 수 없다 |
+| `routers/ai_tools.py` claim 시 동의 재확인 | 재확인 **안 함** | 배급 자격은 러너 신고(`RunnerFeatures`) 하나가 정본이다. claim 자리에서 계정 동의를 또 보면 같은 질문에 두 개의 답이 생기고, 갈리는 순간 느슨한 쪽이 사실이 된다 |
+| `insight_summary` = "인사이트 배치" | **"테이블 인사이트 배치"** 로 이름을 좁힘 | 배선된 것은 테이블 축이다. 스키마·계정 인사이트는 서버 경로뿐 — 넓은 이름에 `wired: True` 를 달면 그것들까지 배선됐다고 말하게 된다(레지스트리가 금지하는 부분 배선) |
+
+계획에 **없었는데 필요했던 것**:
+
+- **`shared/bridge_tasks` 로 승격 4종** — 러너 자격 질의(`runner_profile_for_account`)·생존
+  술어(`LIVE_TOKEN_PREDICATE`)·버전 하한(`version_at_least`)·기능 정규화
+  (`parse_runner_features`) + 프롬프트 편성(`messages_to_prompt`). 종전엔 전부 웹 프로세스
+  안에 있었는데, 위임 판단을 **insight-worker** 가 하게 되면서 다른 컨테이너가 같은 질문에
+  답해야 했다. 워커 쪽에 다시 적으면 로그아웃한 세션의 러너를 워커만 자격 있다고 보는 창이
+  열리고, 그 창에서 적재된 작업은 아무도 집지 않는다.
+- **`dedupe_key`** (`enqueue_console_job`) — 배경 배치는 결과가 오기 전까지 매 pass 「아직
+  값이 없다」로 판단해 **같은 작업을 다시 적재**한다. 그 중복은 전부 실제로 처리되므로
+  같은 답을 사용자 계정 토큰으로 여러 번 사는 것이 된다. 대기열 상한은 폭주만 막는다.
+- **`apply_external_node_analysis` 안의 run 마감** — 워커의 마감 판정은 그 cycle 에 잡을 집은
+  run 만 훑는다(`touched_runs`). 마지막 잡이 위임으로 끝난 run 은 워커가 다시 건드릴 일이
+  없어, 여기서 닫지 않으면 영원히 `running` 이고 그 상태가 사용자의 재트리거까지 막는다.
+
+낡은 계약 테스트 **3건을 행위 기반으로 재작성**(구조를 잠그고 있던 것):
+
+- `test_node_analysis_refuses_before_enqueue` → `…_only_when_nowhere_to_delegate`.
+  종전 계약(「닫혔으면 거절」)이 곧 사용자가 제보한 결함이었다. 지켜야 할 것(큐에 넣어 놓고
+  한참 뒤 실패로 끝내지 않는다)은 그대로 두고 판정 대상만 바꿨다.
+- `test_capability_read_shares_the_freshness_rule_with_listening` / `…_survives_corrupted_json`
+  — 소스 문자열을 보던 검사라 질의가 shared 로 옮겨가자 계약은 그대로인데 FAIL 했다(같은
+  검사가 이미 두 번 옮겨졌다는 주석이 남아 있었다). **실제로 나가는 SQL** 과 **반환값**을
+  보도록 고쳐, 정의가 어디로 가든 술어가 진짜로 갈릴 때만 실패한다.
+## 20260901T1830-newest-runner-wins — 판정축 정정: 빌드 지문 → 연결 순서 (사용자 재현)
+
+**요청 (2026-09-01)**: 「'root' → 'claude-corp' 순서로 연속 연결했는데 더 오래된 연결에서
+연결이 끊겼다는 로그가 남지 않았으며, 'claude-corp' 연결 이후에도 모달이 닫히지 않는(연결이
+완수되지 않는) 현상」.
+
+근본원인·설계·AC 는 `TASK-20260901T183000-newest-runner-wins.md`. **위험도 Major**.
+
+- [x] 라이브 진단 — 두 러너 **지문이 동일**(`05d75225aded`)이라 직전 축(빌드)이 무판정.
+      모달 미닫힘은 `account_runner_build` 의 하트비트 정렬이 만든 `runner_stale` 진동
+- [x] 축 교체 — 같은 계정의 **더 나중에 발급된 토큰**(연결 순서)이 하트비트 중이면 양보
+- [x] 등록형 MCP 클라이언트 보호 — 양쪽 모두 하트비트 이력 필요(당사자 한정)
+- [x] 화면 정본 `ORDER BY t.Id DESC` — 화면과 점유가 같은 축(진동 소멸)
+- [x] 안내 문구·러너 로그 축 정정 · 지문 판독 실패가 기능을 끄던 게이트 제거
+- [x] 23건 · **뮤테이션 4종 KILL**(⚠ 최초 M1 생존 → 테스트 더블 판별력 보강 후 KILL) ·
+      4 feature rc=0 · ruff clean
+- [x] 인라인 적대 3렌즈 `REV-20260901T183000`
+- [ ] 배포 후 라이브 실측 — ① 오래된 러너 프로세스가 실제 종료되는가 ② 연속 연결 시 모달이
+      닫히는가
+
+### 완료 체크리스트 — TASK-20260901T190000-ai-jobs-rewire (P0-AK)
+
+- [x] 진단 — `enqueue_*` 가 적재 **전에** 거절(거절 자체는 옳고, **위임 경로가 없었다**) ·
+      반영 함수 3종은 `_STORE_ROUTES` 에 **선언만** 있고 구현 부재
+- [x] `shared/bridge_consent.py` 신설 — 진리표 · `normalize_consent` · 고지 문구 단일 정본
+- [x] 러너 자격 판정을 `shared/bridge_tasks` 로 승격(질의·생존 술어·버전 하한·기능 정규화·
+      프롬프트 편성) — 웹과 **insight-worker** 가 같은 판정을 읽는다
+- [x] `node_analysis` — 게이트를 「둘 중 하나라도」로 · `_delegate_job`(워커는 기다리지 않는다) ·
+      `apply_external_node_analysis`(늦은 답이 최신 값을 덮지 않음 + run 마감)
+- [x] `cluster_label` — 라벨 배치 위임 + 기존 kv 캐시에 기입(다음 pass 캐시 적중)
+- [x] `insight_summary` — 테이블 인사이트 위임 + KV 이음매(다음 cycle 상속 경로가 기존대로 발행).
+      **이름을 "테이블 인사이트 배치" 로 좁혔다** — 스키마·계정 축은 아직 서버 경로뿐이다
+- [x] `dedupe_key` — 결과 오기 전 재적재로 **같은 답을 여러 번 사는 것**을 막는다
+- [x] 배치 동의 웹 토글 — `WebAccounts.BridgeBatchConsent` · 하트비트 응답 · 러너 동적 신고 ·
+      `/api/ai/connect/batch-consent` · '내 AI 연결' 체크박스 + 고지 · 콘솔 `배경 작업 동의 N`
+- [x] 신규 계약 21건(이음매 진리표 포함) · 역검증 13건 FAIL@`d1b2a688`
+- [x] 낡은 계약 테스트 4파일 재작성(3건은 구조를 잠그고 있었고, 1건은 계약 자체가 제보된 결함)
+- [x] `make test` green(컨테이너) · ruff clean · route 골든 +1/-0 · ROUTEMAP 재생성
+- [x] 라이브 오염 확인 — 게이트 통과 테스트가 실제 PG 에 닿던 것을 고치고 `ds1` 잔재 0건 실측
+- [ ] **배포 후 라이브 end-to-end**(사용자 요구) — AC-1~-5. 그래프에서 실제로 눌러 202 →
+      러너 로그 `kind=job` → 원장 `done` → 화면 · 웹 토글 ≤30초 반영 · 동의 0명 표면화

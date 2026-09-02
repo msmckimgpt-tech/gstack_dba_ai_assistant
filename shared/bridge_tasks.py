@@ -60,10 +60,22 @@ __all__ = [
     "RUNNER_FEATURE_BATCH_JOBS",
     "RUNNER_FEATURE_SELF_REVIEW",
     "RUNNER_MIN_AGENT_VERSION",
+    # ── 러너 자격 판정 — 웹과 워커가 함께 읽는다 (TASK-20260901T190000) ──
+    "SQL_NOW",
+    "LIVE_TOKEN_PREDICATE",
+    "RUNNER_HEARTBEAT_WINDOW_SEC",
+    "parse_runner_features",
+    "runner_profile_for_account",
+    "runner_can_take",
+    "version_at_least",
+    "FORMAT_NOTE",
+    "messages_to_prompt",
     "JOB_SPECS",
     "job_spec",
     "job_label",
     "BATCH_JOB_KINDS",
+    "CONSOLE_JOB_LIGHT_MODELS",
+    "pick_console_job_model",
     "BATCH_PENDING_MAX",
     "BATCH_TASK_MAX_AGE_MIN",
     "CONSOLE_PROMPT_MAX_CHARS",
@@ -384,7 +396,10 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
     "node_analysis": {
         "label": "그래프 AI 능동 분석",
         "origin": ORIGIN_WEB, "response": "json", "apply": "store",
-        "wired": False,
+        # TASK-20260901T190000 — 전 구간이 섰다: 적재(`node_analysis._delegate_job`) ·
+        # 프롬프트(`llm.node_analysis_messages`, 서버 호출과 같은 정본) ·
+        # 반영(`node_analysis.apply_external_node_analysis`).
+        "wired": True,
     },
     "prompt_generate": {
         "label": "시스템 프롬프트 자동작성",
@@ -392,14 +407,23 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
         "wired": True,
     },
     "insight_summary": {
-        "label": "인사이트 배치",
+        # 이름을 좁혔다(TASK-20260901T190000): 배선된 것은 **테이블 인사이트**다. 스키마·계정
+        # 인사이트는 아직 서버 경로뿐이고, 넓은 이름을 두면 `wired: True` 가 그것들까지
+        # 배선됐다고 말하게 된다 — 이 레지스트리가 금지하는 부분 배선의 전형이다.
+        "label": "테이블 인사이트 배치",
         "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
-        "wired": False,
+        # 적재(`insight._delegate_table_insight`) · 프롬프트(`llm.table_insight_messages`,
+        # 서버 호출과 같은 정본) · 반영(`insight.apply_external_insight_summary` → 기존
+        # KV 이음매 → 다음 cycle 의 상속 경로가 발행).
+        "wired": True,
     },
     "cluster_label": {
         "label": "클러스터 라벨링",
         "origin": ORIGIN_BATCH, "response": "json", "apply": "store",
-        "wired": False,
+        # TASK-20260901T190000 — 적재(`semantic_cluster._delegate_cluster_labels`) ·
+        # 프롬프트(`_cluster_label_messages`, `llm.CLUSTER_LABEL_PROMPT` 그대로) ·
+        # 반영(`semantic_cluster.apply_external_cluster_labels` → 기존 kv 캐시).
+        "wired": True,
     },
     # red-team 은 대기열에 따로 적재되지 않는다 — **답변한 그 러너**가 자기 답변을 검증해
     # `submit_answer` 에 함께 싣는다(사용자 결정 2026-08-31: "요청 당시의 호출자가 스스로의
@@ -409,6 +433,271 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
 
 #: 워커가 여는 종류(배급 자격이 `batch_jobs` 동의를 추가로 요구한다).
 BATCH_JOB_KINDS = tuple(k for k, v in JOB_SPECS.items() if v["origin"] == ORIGIN_BATCH)
+
+
+#: 콘솔·배경 작업에 쓸 **경량 모델** 선호 (사용자 결정 2026-09-01).
+#:
+#: > "관리 콘솔에서 이용될 모델은 모두 경량 모델로 구성해주세요. claude는 haiku, codex는 luna
+#: >  모델과 같은 경량 모델로 작동해야 합니다."
+#:
+#: ## 왜 콘솔 작업만인가
+#:
+#: 콘솔 작업은 **기계적 산출물**이다 — 테이블 설명 한 줄, 프롬프트 초안, 클러스터 라벨.
+#: 대화 답변처럼 사용자가 읽고 판단할 추론이 아니다. 그런데 그 호출은 **사용자 개인 계정의
+#: 토큰**을 태운다. 남의 자원을 우리가 쓰는 자리에서 상위 모델을 기본으로 두는 것은 근거가 없다.
+#: 대화 축은 건드리지 않는다 — 그건 사용자가 화면에서 직접 고른 값이다.
+#:
+#: ## 값은 **후보**이지 지시가 아니다
+#:
+#: 여기 적힌 문자열은 러너가 신고한 모델 이름과 **부분일치로 대조**할 후보다. 대조에 실패하면
+#: 아무 것도 보내지 않고 러너 기본값에 맡긴다 — 없는 모델 이름을 지어 보내면 러너가 그 값을
+#: 인자로 넘겨 실행이 실패한다(P0-T 가 겪은 형태). **우리가 아는 이름이 아니라 그 러너가
+#: 고를 수 있다고 말한 이름만** 나간다.
+#:
+#: 순서가 선호도다(앞이 더 가볍다).
+CONSOLE_JOB_LIGHT_MODELS: dict[str, tuple[str, ...]] = {
+    "claude": ("haiku",),
+    "codex": ("luna", "mini"),
+    # 로컬 런타임은 모델 이름 규약이 제각각이라 후보를 적지 않는다 — 대조 실패로 떨어져
+    # 러너 기본값을 쓴다(그쪽은 애초에 자기 머신 자원이라 과금 축이 다르다).
+}
+
+
+def pick_console_job_model(capabilities: Any) -> tuple[str, str]:
+    """러너 신고 목록에서 콘솔 작업용 **경량 (런타임, 모델)** 을 고른다. 없으면 `("", "")`.
+
+    Args:
+        capabilities: 러너가 하트비트로 신고한 목록.
+            `[{"runtime": "claude", "models": [{"value": "haiku", ...}, ...]}, ...]`
+
+    ## 왜 런타임까지 함께 돌려주는가
+
+    모델 이름은 런타임에 종속이다(`haiku` 는 claude 의 것이다). 모델만 보내면 러너는 그것을
+    **자기 현재 런타임**의 목록과 대조하고, 다르면 「미반영」으로 떨어뜨린다. 둘을 함께 보내야
+    러너가 그 런타임으로 옮겨 실행한다.
+
+    ## 순서
+
+    **러너가 신고한 순서**를 따른다 — 그 순서가 그 머신의 선호다. 우리가 런타임 간 우열을
+    정하면 `--ai` 로 제한한 사용자의 의도를 서버가 넘어선다.
+    """
+    if not isinstance(capabilities, list):
+        return "", ""
+    for entry in capabilities:
+        if not isinstance(entry, dict):
+            continue
+        runtime = str(entry.get("runtime") or "").strip()
+        wanted = CONSOLE_JOB_LIGHT_MODELS.get(runtime)
+        if not runtime or not wanted:
+            continue
+        values = [str((m or {}).get("value") or "") if isinstance(m, dict) else str(m or "")
+                  for m in (entry.get("models") or [])]
+        values = [v for v in values if v]
+        for needle in wanted:
+            for value in values:
+                # 부분일치 — 신고 값은 런타임마다 형태가 다르다(`haiku` vs `gpt-5.6-luna`).
+                # 완전일치를 요구하면 이름 규약이 바뀌는 날 조용히 대조에 실패한다.
+                if needle.lower() in value.lower():
+                    return runtime, value
+    return "", ""
+
+
+# ── 「이 계정에 지금 일을 줄 수 있는 러너가 있는가」 — 웹과 **워커**가 함께 읽는 판정 ────
+#
+# 종전에 이 판정은 웹 프로세스에만 있었다(`oauth_store.account_runner_profile` +
+# `_console_llm._classify`). 그런데 그래프 능동 분석·인사이트 배치를 위임하려면 **insight-worker**
+# 가 같은 질문에 답해야 한다 — 그쪽은 다른 컨테이너라 `oauth_store` 를 import 하지 못한다.
+#
+# 그래서 질의와 술어를 여기로 올린다. 워커 쪽에 술어를 **다시 적으면** 로그아웃한 세션의 러너를
+# 워커만 자격 있다고 보는 창이 열리고, 그 창에서 적재된 작업은 아무도 집지 않는다.
+# `oauth_store` 는 이 상수를 그대로 재수출해 종전 호출부를 유지한다.
+
+#: ⚠ SQL 의 현재 시각은 `UTC_TIMESTAMP()` 다 — `NOW()` 가 아니다. 만료 시각은 파이썬이 UTC 로
+#: 넣는데 컨테이너 TZ 는 `Asia/Seoul` 이라 `NOW()` 와는 9시간이 어긋난다(라이브 실측 2026-08-28).
+SQL_NOW = "UTC_TIMESTAMP()"
+
+#: 살아 있는 access token 의 조건 — 토큰 미폐기·미만료 + (세션 결합이면) 세션 실재·미폐기·미만료.
+#: 별칭 계약: 토큰 테이블 `t`, 세션 테이블 `s` 로 조인해 두고 쓴다.
+LIVE_TOKEN_PREDICATE = (
+    "t.TokenType = 'access' AND t.RevokedAt IS NULL "
+    f"AND (t.ExpiresAt IS NULL OR t.ExpiresAt > {SQL_NOW}) "
+    "AND (t.SessionId IS NULL OR "
+    "     (s.Id IS NOT NULL AND s.IsRevoked = 0 "
+    f"      AND (s.ExpiresAt IS NULL OR s.ExpiresAt > {SQL_NOW})))"
+)
+
+#: 하트비트 신선도 창(초). 러너 주기(30초)의 3배 — 한 번 놓친 신호는 흡수된다.
+#: `oauth_store.HEARTBEAT_WINDOW_SEC` 와 같은 값이어야 하며 계약 테스트가 그것을 대조한다.
+RUNNER_HEARTBEAT_WINDOW_SEC = 90
+
+
+#: 러너 신고 목록의 모양 제한. 이 값은 클라이언트가 준 것이고 화면·SQL 로 흘러간다.
+RUNNER_FEATURES_MAX = 12
+RUNNER_FEATURE_MAX_LEN = 32
+
+
+def parse_runner_features(raw: Any) -> list[str]:
+    """저장된 CSV 를 기능 이름 목록으로 — **읽기·쓰기·자격판정이 같은 정규화를 쓴다**.
+
+    한쪽만 소문자화하거나 공백을 다르게 다루면 `"Console_Jobs"` 를 신고한 러너가 배급에서
+    빠진다. 그 실패는 조용하다(작업이 그냥 안 간다) — 그래서 정규화를 한 함수에 둔다.
+    `oauth_store.parse_runner_features` 는 이 함수를 그대로 재수출한다.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        raw = ",".join(str(x or "") for x in raw)
+    out: list[str] = []
+    for part in str(raw).split(","):
+        name = part.strip().lower()
+        # 이름처럼 생긴 것만 받는다. 이 값은 SQL LIKE 나 화면 표시로 흘러가므로, 모양을
+        # 여기서 잠근다(P0-Z4 의 "요구는 정확히, 수용은 관대하게" 중 모양 축).
+        if not name or len(name) > RUNNER_FEATURE_MAX_LEN:
+            continue
+        if not all(c.isalnum() or c in "_-" for c in name):
+            continue
+        if name not in out:
+            out.append(name)
+        if len(out) >= RUNNER_FEATURES_MAX:
+            break
+    return out
+
+
+def runner_profile_for_account(cur, account_id: Any, *,
+                               window_sec: int | None = None) -> dict[str, Any]:
+    """이 계정의 **지금 듣고 있는** 러너 한 대의 프로필. 없으면 전부 빈 값 + `listening=False`.
+
+    능력(`capabilities`)과 기능(`features`)을 **한 질의로** 읽는다 — 따로 읽으면 두 질의 사이에
+    하트비트가 도착해 "A 머신의 모델 목록 + B 머신의 기능" 이라는 실재하지 않는 조합이 나온다.
+
+    러너가 여럿이면 **가장 최근에 말한 것** 하나를 쓴다(합치지 않는다 — 합친 목록에서 고른
+    모델이 실제로 가져가는 러너에 없을 수 있다).
+    """
+    empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
+    try:
+        aid = int(account_id or 0)
+    except (TypeError, ValueError):
+        aid = 0
+    if not aid:
+        return empty
+    window = int(window_sec if window_sec is not None else RUNNER_HEARTBEAT_WINDOW_SEC)
+    cur.execute(
+        "SELECT t.RunnerCapabilities, t.RunnerFeatures, t.RunnerAgentVersion "
+        "FROM WebOAuthTokens t "
+        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+        f"WHERE t.AccountId = %s AND {LIVE_TOKEN_PREDICATE} "
+        "  AND t.LastHeartbeatAt IS NOT NULL "
+        f"  AND t.LastHeartbeatAt > DATE_SUB({SQL_NOW}, INTERVAL %s SECOND) "
+        "ORDER BY t.LastHeartbeatAt DESC LIMIT 1",
+        (aid, window))
+    row = cur.fetchone()
+    if not row:
+        return empty
+    caps: list = []
+    if row[0]:
+        try:
+            parsed = json.loads(row[0])
+        except (TypeError, ValueError):
+            parsed = None   # 저장 값이 깨졌다 — 빈 목록(선택기만 숨고 답변 경로는 멀쩡하다)
+        if isinstance(parsed, list):
+            caps = parsed
+    return {
+        "capabilities": caps,
+        "features": parse_runner_features(row[1]),
+        "agent_version": str(row[2] or "").strip(),
+        "listening": True,
+    }
+
+
+def version_at_least(actual: Any, minimum: str) -> bool:
+    """`actual >= minimum` 을 점(.) 구분 정수 튜플로 비교한다.
+
+    **판정 불가는 False**(=구버전 취급)로 본다. 버전을 모르는 러너에 콘솔 작업을 주면
+    프레이밍이 어긋나 산출물이 조용히 망가지는데, 그 실패는 사용자에게 "AI 가 이상한 답을
+    했다" 로만 보인다. 모르는 채로 "충족한다" 고 우길 근거가 없다.
+
+    자릿수가 다르면 짧은 쪽을 0 으로 채운다(`2026.9` vs `2026.9.1`).
+    """
+    def _parts(v: Any) -> list[int] | None:
+        s = str(v or "").strip()
+        if not s:
+            return None
+        out: list[int] = []
+        for chunk in s.split("."):
+            chunk = chunk.strip()
+            if not chunk.isdigit():
+                return None
+            out.append(int(chunk))
+        return out or None
+
+    got, want = _parts(actual), _parts(minimum)
+    if got is None or want is None:
+        return False
+    width = max(len(got), len(want))
+    got += [0] * (width - len(got))
+    want += [0] * (width - len(want))
+    return got >= want
+
+
+def runner_can_take(profile: Any, *, need_batch: bool = False) -> bool:
+    """이 러너에게 콘솔·배경 작업을 **줘도 되는가**. 판정 순서가 곧 의미다.
+
+    기능 신고가 1차 자격이고 버전이 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가
+    자격을 유지한다. `need_batch` 는 배경 배치의 **별도 동의**까지 요구한다.
+
+    ⚠ 이 함수는 **사유를 말하지 않는다**. 화면은 왜 안 되는지를 말해야 하므로
+    `_console_llm._classify` 가 같은 순서로 사유까지 낸다 — 그쪽이 이 함수를 부르고,
+    계약 테스트가 두 판정이 갈리지 않음을 대조한다.
+    """
+    if not isinstance(profile, dict) or not profile.get("listening"):
+        return False
+    features = profile.get("features") or []
+    if RUNNER_FEATURE_CONSOLE_JOBS not in features:
+        return False
+    if not version_at_least(profile.get("agent_version"), RUNNER_MIN_AGENT_VERSION):
+        return False
+    if need_batch and RUNNER_FEATURE_BATCH_JOBS not in features:
+        return False
+    return True
+
+
+#: 출력 형식 지시. 러너는 자기 CLI 의 stdout 만 돌려주므로, 형식을 프롬프트로 못박지 않으면
+#: 머리말·맺음말이 섞여 파서가 빈 결과를 낸다. 관대한 수용(`extract_json_object`)은 그 다음
+#: 방어선이지 이것의 대체가 아니다 — 요구는 정확히, 수용은 관대하게(P0-Z4).
+FORMAT_NOTE = {
+    "json": ("답변은 **JSON 하나만** 출력하라. 코드펜스·머리말·맺음말 없이 객체 또는 배열만."),
+    "text": ("답변 본문만 출력하라. 머리말·맺음말·따옴표 감싸기 없이."),
+}
+
+
+def messages_to_prompt(messages: Any, response_format: str = "text") -> str:
+    """`messages` 를 러너가 받을 단일 프롬프트로 편다.
+
+    system 은 앞에, user/assistant 는 순서대로. 역할 라벨을 남기는 이유: 조립부가 system 에
+    제약(길이·금지어·스키마)을 넣는 경우가 있어, 평문으로 뭉개면 그 제약이 본문과 구분되지
+    않아 모델이 지시가 아니라 참고로 읽는다.
+    """
+    # 두 목록으로 나눠 담고 마지막에 잇는다.
+    #
+    # 한 목록에 담으며 system 을 `insert(계산된 위치)` 하는 방식도 같은 결과를 내지만,
+    # 그 위치 계산이 **왜 옳은지**를 읽는 사람이 매번 재구성해야 한다. 「system 먼저」는
+    # 이 함수의 계약이므로 자료구조가 그것을 말하게 둔다 — 리팩터가 순서를 조용히 뒤집는
+    # 부류의 사고를 구조로 막는다(러너가 지침을 맨 앞에 두는 이유와 같은 축, P0-P).
+    systems: list[str] = []
+    others: list[str] = []
+    for m in (messages or []):
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "user").lower()
+        content = str(m.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "system":
+            systems.append(f"── 지침 ──\n{content}\n── 지침 끝 ──")
+        else:
+            others.append(content)
+    note = FORMAT_NOTE.get(str(response_format or "text"), FORMAT_NOTE["text"])
+    return "\n\n".join([*systems, *others, note])
 
 
 def job_spec(job_kind: Any) -> dict[str, Any] | None:
@@ -442,9 +731,42 @@ class ConsoleJobRejected(Exception):
     """
 
 
+def open_job_exists(conn, job_kind: str, dedupe_key: str) -> bool:
+    """같은 일이 **이미 대기·처리 중인가** (TASK-20260901T190000).
+
+    배경 배치는 워커 루프가 주기적으로 도는데, 위임한 결과가 아직 안 왔으면 그 pass 도
+    "아직 값이 없다" 로 판단해 **같은 작업을 다시 적재한다**. 그렇게 쌓인 중복은 전부 실제로
+    개인 AI 가 처리하고 — 즉 **같은 답을 사용자 계정 토큰으로 여러 번 산다**.
+
+    대기열 상한(`BATCH_PENDING_MAX`)은 폭주만 막을 뿐 중복 자체를 막지 못한다. 그래서 적재
+    전에 같은 `dedupe_key` 의 미완 작업이 있는지 본다(`open` = 대기 · 점유 중 포함).
+
+    ⚠ 조회 실패는 **False**(적재 진행)로 떨어진다. 여기서 fail-closed 하면 일시적 DB 오류가
+    배경 처리를 통째로 멈추는데, 그 대가는 최악의 경우 중복 1건이다 — 방향이 반대다.
+    """
+    key = str(dedupe_key or "").strip()
+    if not key:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebAiTasks "
+            "WHERE Kind = %s AND JobKind = %s AND Status = %s "
+            "  AND JSON_UNQUOTE(JSON_EXTRACT(JobPayload, '$.dedupe_key')) = %s LIMIT 1",
+            (KIND_JOB, str(job_kind), STATUS_OPEN, key))
+        return cur.fetchone() is not None
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "[console-job] 중복 확인 실패 kind=%s key=%s: %r", job_kind, key, exc)
+        return False
+    finally:
+        cur.close()
+
+
 def enqueue_console_job(conn, *, account_id: int, job_kind: str, prompt: str,
                         payload: Any = None, product_id: Any = None,
-                        datasource_key: str | None = None) -> str:
+                        datasource_key: str | None = None,
+                        dedupe_key: str | None = None) -> str:
     """관리 콘솔·배경 작업을 개인 AI 가 가져갈 **대기 작업**으로 적재한다. 반환 = `task_id`.
 
     ## 대화 브리지와 같은 테이블을 쓰는 이유
@@ -482,6 +804,15 @@ def enqueue_console_job(conn, *, account_id: int, job_kind: str, prompt: str,
     if origin == ORIGIN_WEB and not account_id:
         # 관리자 작업은 **그 사람의** AI 가 처리한다(계정 스코프가 곧 배급 경계).
         raise ConsoleJobRejected("작업을 요청한 계정을 알 수 없습니다.")
+
+    if dedupe_key:
+        # 같은 일을 두 번 사지 않는다. `payload` 에 키를 접어 넣어 **조회 대상과 저장 대상이
+        # 같은 값**이 되게 한다 — 따로 두면 한쪽만 갱신되는 날 중복이 조용히 돌아온다.
+        if open_job_exists(conn, job_kind, dedupe_key):
+            raise ConsoleJobRejected(
+                f"{spec['label']}: 같은 작업이 이미 대기 중입니다(중복 적재 안 함).")
+        payload = {**(payload if isinstance(payload, dict) else {"value": payload}),
+                   "dedupe_key": str(dedupe_key)}
 
     cur = conn.cursor()
     try:

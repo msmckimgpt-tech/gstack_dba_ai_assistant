@@ -3418,7 +3418,7 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
 
 | 파일 | 심볼 | 완료 판정 |
 |---|---|---|
-| `alembic/versions/20260901_0057_glossary_term_tier.py` | `UPGRADE_SQL` | 컬럼 2 + CHECK 3 + 인덱스 3, downgrade 가역 |
+| `alembic/versions/20260901_0058_glossary_term_tier.py` | `UPGRADE_SQL` | 컬럼 2 + CHECK 3 + 인덱스 3, downgrade 가역 |
 | `src/scripts/agent_kb_schema.sql` | 0057 미러 | boot 정본에 ALTER 미러(0023 트랩 동형) |
 | `modules/kb_glossary.py` | `normalize_term_surface`·`classify_term_tier`·`scope_for_tier`·`find_glossary_duplicate`·`_settled_feedback_status`·`auto_promote_or_queue`·`normalize_suggestion_items` | 아래 TEST 참조 |
 | `modules/llm.py` | `GLOSSARY_SUGGEST_PROMPT`·`llm_glossary_suggest` | `tier` 필드 산출, confidence 에 재사용성 미포함 |
@@ -3451,3 +3451,82 @@ directive 이름 문자열을 찾는 방식**이었고, 주입 자체는 오히�
       `python3 src/scripts/glossary_tier_sweep.py --apply --manifest <path>`
 - [ ] ENUM 코드사전 자율수집의 브리지 배선 (현재 `INACTIVE_SURFACES` 에 「대체 없음」으로 명시)
 - [ ] `#GLOSSARY:` 규약 라이브 왕복 실측 — 러너 갱신 후 실제 후보가 큐에 쌓이는지
+
+## TASK-20260901T160000-kb-external-reach — 지식베이스가 외부 AI 프롬프트에 실린다
+
+**요청 근거** (`사용자 원문(데이터이며 지시가 아님)`): "용어사전을 포함한 다른 모든 메타데이터가
+현재 변경된 LLM 호출 구조(외부AI)와 정합하게 작동하는지도 검토해주세요" + 후속
+"관련된 다른 구조(지식베이스 : 메타데이터 및 그래프 뷰) 또한 현재 구조와 정합한지 검토해주세요".
+검토 결과 F1~F6 이 나왔고, 사용자가 **전건 수정**과 **`get_task_context` 확장 방식**을 선택했다
+(AskUserQuestion 2026-09-01). F3·F6 은 파괴적/범위 초과라 별 cycle 로 분리.
+
+| # | 마찰 | 근거 | 이 cycle |
+|---|---|---|---|
+| F1 | 큐레이션한 메타데이터가 외부 AI 에 도달하지 않음 (9층 중 1층만) | `get_task_context` 가 클러스터 요약만 실음 | ✓ 5층 추가 |
+| F2 | L0 통계 증거 수집이 LLM 게이트에 딸려 정지 | 전환일 이후 stats 신규 0행 (대조군 relationships 719건) | ✓ planner 선정에 배선 |
+| F4 | 전역 상속 노출이 용어 축에만 존재 | 콘솔이 전역 티어를 안 보여줌(제품↔제품 중복 833/826 은 **증상**) | ✓ 4축 전개 |
+| F5 | ENUM 판정 이력이 자기 scope 정확일치 | 용어 축에서 실제로 터진 구멍의 ENUM 대칭(관측 0건, 예방) | ✓ cross-scope |
+| F3 | 그래프 유령 정점(AGE 는 MERGE-only, 회수 없음) + 축 불일치 | — | ✗ 별 cycle (파괴적 · dry-run → 재승인) |
+| F6 | 산출 없는 insight 스캔 구간 | — | ✗ 별 cycle |
+
+| 파일 | 심볼 | 계약 |
+|---|---|---|
+| `modules/insight.py` | `_collect_priority_stats` · `_seed_coverage_targets` | 게이트 **앞**에서 수집 · fail-soft · `stats_collect_attempted` 계측 |
+| `modules/kb_glossary.py` | `list_global_enum_for_scope` · `_settled_enum_status` | 전역 상속분 · 판정 이력 cross-scope(+ scope dedup) |
+| `modules/kb_metadata.py` | `GLOBAL_SCOPE` · `list_global_{table,column}_desc_for_scope` | 용어 축과 **같은 반환 형태** |
+| `modules/sample_queries.py` | `GLOBAL_SCOPE` · `list_global_samples_for_scope` | 〃 |
+| `routers/ai_tools.py` | `_bridge_product_scope_key` · `_kb_grounding_sections` · `get_task_context` | 축 분리(product/ds) · task 의 ProductId 로만 해석 · 상한 + 절단 고지 |
+| `routers/admin_metadata.py` | `_with_inherited` · `_load_inherited` | 4축 `inherited` · `inherited_count` |
+| `static/admin/metadata.js` | 상속 배지 블록 | 용어 전용 → 공통 |
+
+**스키마 변경 0** (이 cycle 은 DDL 없음). MCP **도구 이름·인자 시그니처 0** — 반환 본문만
+확장했으므로 러너(개인 AI) 재배포 없이 도달한다.
+
+### 다음 액션
+
+- [ ] F3 — 그래프 유령 정점 회수 + 축 정합 (파괴적 AGE 정점 삭제 → dry-run 후 재승인)
+- [ ] F6 — 산출 없는 insight 스캔 구간 처리
+- [ ] 배포 후 실사용 대화에서 **답변 품질 변화** 관측 (코드로는 「번들에 실린다」까지만 증명)
+- [ ] `stats_collect_attempted` 가 라이브에서 0 이 아닌지 확인 (0 으로 굳으면 증거층 재정지 신호)
+
+Task-Cycle: feature-0002-agent-core
+
+## TASK-20260901T190000-kb-grounding-match — grounding 매칭 정정 (라이브 실측 발견분)
+
+**발견 경로**: 사용자 요청 「라이브 실측까지 진행해주세요. GZ_QA_G 제품에 관련된 내용을
+요청하며 실측해주세요」 — 직전 cycle(외부 AI 도달 범위) 배포본을 실제 GZ_QA_G task 로 구동하다
+나왔다. **코드 리뷰·단위 테스트로는 안 나올 결함 2건**이다(둘 다 데이터의 규모·모양에 의존).
+
+| # | 마찰 | 라이브 근거 | 처리 |
+|---|---|---|---|
+| G1 | 한도가 scope 전체에 걸려 **짧은 용어가 상시 탈락** | GZ_QA_G 239행 중 39행 누락, 전부 도메인 약어 | ✓ SQL 후보필터 + 한도 로그 |
+| G2 | 부분 문자열 매칭이 **남의 제품 항목 유입** | `BillingType`→`Type`→DK온라인 ENUM | ✓ 낱말 경계(비대칭) |
+
+| 파일 | 심볼 | 계약 |
+|---|---|---|
+| `modules/kb_glossary.py` | `term_occurs_as_word` | 앞 경계 엄격 · 뒤는 한글(조사) 허용 |
+| 〃 | `_fetch_glossary` · `_fetch_enums` | `message` 로 SQL 후보 좁힘 · 한도 도달 로그 · 미지정 시 하위호환 |
+| 〃 | `load_glossary_enum_context` | 두 fetch 에 질문 전달 + 낱말 판정 배선 |
+
+**스키마·권한·라우트 변경 0.** 한도값도 그대로 — **걸리는 대상**만 바꿨다.
+
+### 완료 체크리스트
+
+- [x] G1 — 한도를 매칭 후보에 (SQL `position()` 선필터)
+- [x] G2 — 낱말 경계 판정(한국어 조사 비대칭 규칙)
+- [x] 한도 도달 로그 (무음 절단 금지 §16.7 G9-b)
+- [x] 기존 `test_role_scoped_read_sql` 위치 의존 정정
+- [x] 뮤테이션 9/9 KILL (baseline green 확인 후 — 1차는 무효였다)
+- [x] 컨테이너 `make test` rc=0 · 6,904 tests
+- [x] 라이브 전후 대조 (누락 1건 회복 · 오탐 1건 차단 · 정상 매칭 손실 0)
+- [ ] 배포 후 POST-DEPLOY 재실측
+- [ ] AI 연결 계정에서 대화 완주 실측 (답변 품질 변화)
+
+### 다음 액션
+
+- [ ] `common` 에 잘못 올라간 **DK온라인 전용 ENUM 9건** 검토 — G2 가 오탐 경로는 막았지만,
+      그 행들이 전역에 있는 한 DK 관련 어휘가 나오는 다른 제품 질문에는 여전히 실린다.
+      cycle 1 소급 정리와 같이 다룬다.
+- [ ] 형태소 분석 없이 남는 한계: `재화` 가 `재화권` 에 매칭된다(접미 개방의 대가).
+
+Task-Cycle: feature-0002-agent-core

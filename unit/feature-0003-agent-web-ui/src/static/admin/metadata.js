@@ -1090,8 +1090,13 @@ async function loadMetadata() {
     }
     const data = await apiFetch(url);
     adminState.metadata.items = (data && data.items) || [];
+    // 전역 상속분 조회가 깨졌으면 목록은 살아 있어도 「전역에 없다」로 보인다 — 그 오독이
+    // 이번 cycle 이 고치는 제품별 중복 등록을 그대로 재생산한다. 서버가 내려준 사실을 쓴다
+    // (화면이 스스로 추정하지 않는다).
+    adminState.metadata.inheritedError = !!(data && data.inherited_error);
   } catch (err) {
     adminState.metadata.items = [];
+    adminState.metadata.inheritedError = false;
     listEl.replaceChildren();
     const e = document.createElement("div");
     e.className = "admin-list-empty";
@@ -1215,6 +1220,15 @@ function _metaListRow(it, sub, canEdit, grouped) {
     t.textContent = text;
     return t;
   };
+  // 전역 상속 배지 — **모든 서브탭 공통** (2026-09-01). 종전엔 glossary 블록 안에만 있어서,
+  // ENUM·테이블/컬럼 설명·샘플에 상속분을 내려보내도 화면이 그것을 「이 제품 것」으로 그렸다
+  // (배지 없이 편집만 막히면 사용자는 왜 안 되는지 모른다).
+  if (it.inherited) {
+    const inh = document.createElement("div");
+    inh.className = "admin-meta-row-tags";
+    inh.appendChild(mkTag("전역 상속 · 여기서 편집 불가", "admin-meta-tag-warn"));
+    main.appendChild(inh);
+  }
   // glossary 전용 — 역할/출처 배지. L7: 역할=blue(info 톤), provenance(자동등록/자동승급)=중립 회색
   //   (role 파랑·attention warn/danger 와 시각적으로 구분 — 경고로 오인 금지).
   if (sub === "glossary") {
@@ -1224,13 +1238,10 @@ function _metaListRow(it, sub, canEdit, grouped) {
     tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`,
       rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
     // 통용 범위(0057) — 이 배지가 없으면 「왜 이 용어가 다른 제품에도 뜨는가」를 화면에서
-    // 설명할 방법이 없다. 전역 상속분은 **편집 불가**임을 함께 말한다(버튼만 감추면 왜
-    // 안 되는지 모른다).
-    if (it.inherited) {
-      tags.appendChild(mkTag("전역 상속 · 여기서 편집 불가", "admin-meta-tag-warn"));
-    } else if (String(it.term_tier || "") === "org") {
+    // 설명할 방법이 없다(상속 배지는 위에서 공통 처리).
+    if (!it.inherited && String(it.term_tier || "") === "org") {
       tags.appendChild(mkTag("전역(모든 제품)", "admin-meta-tag-role"));
-    } else if (String(it.term_tier || "") === "general") {
+    } else if (!it.inherited && String(it.term_tier || "") === "general") {
       tags.appendChild(mkTag("일반 DB 용어", "admin-meta-tag-neutral"));
     }
     const src = String(it.source || "manual");
@@ -1367,6 +1378,14 @@ function renderMetadataList() {
   if (countEl) countEl.textContent = q ? `${items.length}/${allItems.length}건` : `${items.length}건`;
   _metaUpdateKpi(allItems, sub);   // B10: KPI 는 전체 로드분 기준.
   listEl.replaceChildren();
+  // 상속분 조회 실패는 목록 위에 **먼저** 말한다 — 빈 상태 분기보다 앞이라 「항목 0건」일 때도
+  // 사유가 보인다(조용히 비면 관리자는 「전역에 없다」로 읽고 중복 등록한다).
+  if (adminState.metadata.inheritedError) {
+    const w = document.createElement("div");
+    w.className = "admin-list-empty";
+    w.textContent = "⚠ 전역(common) 상속분을 불러오지 못했습니다 — 아래 목록에 전역 항목이 빠져 있을 수 있습니다. 새로고침해 보세요.";
+    listEl.appendChild(w);
+  }
   if (!items.length) {
     if (q) {
       listEl.appendChild(_metaEmptyState("검색 결과가 없습니다.", "다른 검색어를 시도하세요."));

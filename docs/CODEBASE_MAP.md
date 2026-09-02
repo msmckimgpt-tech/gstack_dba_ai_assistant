@@ -44,7 +44,7 @@ repo/
 │   ├── ROUTEMAP.md         # route → router:handler → auth 인덱스 (L0, 자동 생성)
 │   └── CODEBASE_MAP.md     # 이 문서
 ├── playbooks/              # PB-0001 ~ PB-0006, PB-0008
-├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유, `ls shared/*.py` 실측 15): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters·hangul_qwerty·llm_budget·llm_gate·resource_budget·share_window·bridge_tasks·attachment_write (feature-0011 추출 + 0018/0026 외 후속 feature 편입)
+├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유, `ls shared/*.py` 실측 16): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters·hangul_qwerty·llm_budget·llm_gate·resource_budget·share_window·bridge_tasks·attachment_write·self_review (2026-09-01 신설) (feature-0011 추출 + 0018/0026 외 후속 feature 편입)
 ├── tests/integration/      # 통합 테스트
 └── unit/                   # 기능 단위
     ├── _template/
@@ -62,7 +62,8 @@ repo/
     │           ├── admin.js     # 관리 콘솔(4,831줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
     │           ├── app.js       # 작업 화면(8,562줄) · css/ 7분할 · share.js/css · index/admin/share.html
     │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress·connect-modal·next-target
-    │           │               #   + attach-diff = 첨부 버전 diff 비교 모달, 2026-08-06)
+    │           │               #   + attach-diff = 첨부 버전 diff 비교 모달, 2026-08-06
+    │           │               #   + side-panels = 우측 오버레이 패널 단독 열림 등록부, 2026-09-01)
     │           ├── admin/      # 관리 콘솔 도메인 모듈 11
     │           ├── modal-dismiss.js  # 배경 dismiss 저장소 단일 primitive(양 ESM 번들 공유)
     │           └── graph/       # 그래프 뷰 ES 모듈 (ITEM-09 batch3, 2026-07-12) — CODE_NAVIGATION §8 참조

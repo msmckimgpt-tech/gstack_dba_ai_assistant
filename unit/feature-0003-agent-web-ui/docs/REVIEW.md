@@ -6748,6 +6748,18 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - **칩이 화살표 뒤에 선다** — 사용자 스크린샷이 지목한 자리는 화살표 앞이었으나, 그 배치는
   긴 계정명이 화살표 밑으로 들어가는 실측 결함을 낳아 되돌렸다. 완료 보고에 명시한다.
 
+## REV-20260901T124500-ai-conn-chip-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 증적 (docs-only)
+
+- Related TASK: feature-0003-agent-web-ui / `20260901T1200-ai-conn-chip-to-profile-row`
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Timestamp: 2026-09-01T12:45:00+09:00
+- Human Approval Needed: no
+- **실측**: 배포본 `40340f53` 에서 주입 없이 16조합 재측정 — 배포 전 실측치와 전부 일치.
+  `.composer-footer` 전 조합 `display: none`(사용자가 지적한 입력창 아래 여백 해소).
+- **선행 cycle 의 잔여 해소**: `REV-20260901T120000-…` 이 "배포본 자산 재확인 잔여" 로 남긴
+  항목이 본 Run 으로 닫혔다. **`ux`/`design` 도메인 심사 미수행은 그대로 잔여** — 칩 글꼴
+  10.88px 의 가독성 판단은 여전히 전문 심사를 거치지 않았다.
+
 ## REV-20260901T125600-ai-claude-glossary-tier-postdeploy [SKIPPED:non-policy-doc] — 증적 기록 전용
 
 - Related TASK: feature-0003-agent-web-ui (`20260901T1256-glossary-tier-postdeploy`)
@@ -6758,6 +6770,27 @@ KILL 을 확인했다. codex 2R 이 지적했던 형태(방어는 넣었는데 �
 - 기록된 사실의 근거: `alembic_version=0058_glossary_term_tier` · 제품 목록 239건 중 상속 7건 ·
   폼 select 3선택지 · 큐 필터 6선택지 · 캡처 3장(`artifacts/pb0008-glossary-term-tier/`) ·
   배포 체크리스트 [1][2][1b][2b][5] 통과(`no upstreams available` 0건).
+
+## REV-20260901T160000-kb-external-reach [SKIPPED:codex-no-output] — 지식베이스 외부 AI 도달 범위 (web 거주분)
+
+리뷰 정본은 `unit/feature-0002-agent-core/docs/REVIEW.md` REV-20260901T160000-kb-external-reach
+(cross-cut cycle — 코어·web 을 한 번에 판정). Cross-ref: CHG-20260901T160000-kb-external-reach
+(양 feature) · ANCHOR 무충돌.
+
+web 거주분에 한정한 요점:
+
+- **[BLOCKING·해소] product scope 를 주변 상태에서 읽으면 계정 경계를 넘는다.** MCP 는 계정
+  결속 도구다 — `cfg.get_active_product_scope()` 는 **서버 프로세스의** 활성 제품이라 A 계정
+  질문에 B 제품 사전을 실을 수 있다. task 의 ProductId 에서만 해석하도록 봉인하고
+  (`_bridge_product_scope_key`), 해석 불가 시 **빈 문자열**(= 제품 층 미주입)로 접었다.
+- **[MINOR·해소] 헬퍼를 `@router.post` 데코레이터와 함수 사이에 끼워 SyntaxError.** 데코레이터
+  아래로 이동. (즉시 발현이라 무해했지만, 편집 위치가 문법을 바꾸는 지점이다.)
+- **도구 시그니처 불변이 설계 제약이었다.** `get_task_context` 의 이름·인자를 그대로 두고
+  **반환 본문만** 넓혔기 때문에 러너(개인 AI) 재배포 없이 도달한다. 새 도구를 만들었다면
+  러너가 그 도구를 부르도록 갱신될 때까지 아무 효과가 없었을 것이다.
+
+Verdict: PASS (정본 판정에 종속).
+
 ## REV-20260901T115300-side-panel-exclusive [SUBAGENT:ux+design] — BLOCK ×2 → 수정 → 확인 라운드
 
 - **Trigger**: `Code change` + §18.8 dispatch 표의 `UI, layout, dialog / 화면, 레이아웃` 매칭 →
@@ -7161,3 +7194,28 @@ serializer 재오염 · aria/화면 출처 분리 · `currentConversation()` 복
 
 신규 4건 + 계약 이전 6건. pytest **5177 passed / 5 skipped**.
 ⚠ `test_query_embed_visibility.py` 2건은 main 기준선 동일 실패(본 변경 무관).
+
+## REV-20260901T174000-side-panel-exclusive-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 기록
+
+- **Trigger**: 비정책 doc-only (test-runs.d fragment + TASK/MODIFY/REPORT). §18.8 dispatch 표의
+  「비정책 doc-only」 행 → panel SKIP.
+- **내용**: 선행 cycle 의 §16.3 deploy-backed 완료 조건 2 를 기록. 코드·계약 변경 0.
+- **정직 기록**: `bin/deploy-web.sh` 는 **멱등 no-op** 으로 끝났다 — 병렬 세션이 이미 내 머지를
+  포함하는 상위 커밋(`d3ead999`)으로 배포한 뒤였다. 그래서 완료 근거를 「내가 배포 명령을
+  돌렸다」가 아니라 **「라이브가 내 커밋을 담고 있다」** 4축 실측으로 세웠다(§16.7 G7-a —
+  이름·명령 이력이 아니라 실 resolve).
+
+## REV-20260902T010304-doc-sync-rn-0902 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-01 블록 신설(17항목) doc_sync 정합
+- Related TASK: feature-0003-agent-web-ui / `20260902T010304-doc-sync-rn-0902`
+- Reason: changed paths are docs + 비-정책 static data only — 코드·스키마·권한 변경 0(릴리즈노트 콘텐츠 데이터 + companion 문서).
+- Timestamp: 2026-09-02T01:03:04+09:00
+- Human Approval Needed: no
+- **타깃별 실질 검증**: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **08-31 이하 tail 바이트 동일**(순증 25,734B) · type/area enum 위반 0 · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 실질 **0건**.
+- **적대검증**: ULTRACODE 워크플로 `wf_53f46008-931` — 6 에이전트 / **1,076,425 토큰** / 320 tool-use / 42분. 4축 병렬 스윕 → 2조 교차검증(정본대조 렌즈 / 기계적용 렌즈, 각자 MISS 능동 탐색). **60 findings · 120 verdict**(58/60 · 57/60 CONFIRMED · 56 이중 confirm) · 신규 MISS 5건.
+- **블록 귀속**: 창 125 커밋 중 **123 건이 2026-09-01 착륙**(나머지 2건은 08-31 20:29~20:30 — 직전 창 컷 19:40 이후에 들어온 경계분)이고 09-01 date 블록이 **부재**하므로(최신 2026-08-31) 기존 블록 append 가 아니라 **신규 블록 prepend**. 경계 2건(첨부 계보 「비교 가시성」 재설계)은 09-01 의 후속 2 cycle(업로더 식별 · 행 압축)과 한 서사로 묶이므로 09-01 블록에 함께 실었다 — 08-31 블록을 소급 수정하지 않는다(과거 블록 불가침).
+- **미러 vs 정본 수렴 — 재발 3건**: 직전 08-31 블록이 ① 「'답변 모델'·'추론 강도' 를 고르는 칸에서 바로 보이므로 **없앴습니다**」 ② 연결 창이 「스스로 **닫힙니다**」 ③ 쿼리 결과가 「그 안에서만 스크롤되도록 **가뒀습니다**」로 단정했으나, 창이 셋 다 다시 고쳤다(①은 사용자 머신 설치본이 옛 사본이라 계속 노출 · ②는 실행 성공·명령 경로·업데이트 갱신 세 갈래 미작동 · ③은 그 접이판 자체를 제거). 과거 블록은 그 시점 사실의 기록이므로 고치지 않고 새 항목에서 재발을 명시해 수렴했다.
+- **기능 소멸 고지**: ③의 접이판 제거로 **CSV 내려받기 · 전체 데이터 보기 · 구형 메시지의 실행 SQL/결과 파일** 3종이 함께 사라졌다 — 개선 항목 뒤에 숨기지 않고 손실로 명시했다.
+- **미검증 고지**: 이번 창 코드는 전부 라이브 도달을 실측했으나(`merge-base --is-ancestor` 로 창 주요 커밋이 배포본 조상임을 확인), **행위 실측**을 못 한 5축(중단 왕복 · 실패 사유 사용자 왕복 · 낡은 러너 겹침 · 인젝션 오판 왕복 · 경량 모델 일부 AI)은 각 항목 detail 과 **접힌 summary 양쪽**에 그 사실을 노출했다.
+- **문면 규약**: feature-id·테이블명·함수명·파일명 노출 0건. 인용한 UI 문구(`[내 AI 실행]`·「단계 보기」·「브리지 작업」·「연결 준비」·'▼ 쿼리 결과'·'AI 운영 현황')는 전건 static 파일에서 실제 노출 문자열임을 grep 확인 후 사용했다.
+- **cache-buster**: 수기 bump 없음(3창 연속). 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며(라이브 실측 `?v=b85ff1d4986d`) `bin/deploy-web.sh` 의 ABORT 가드가 **baked 이미지의 `?v=dev` 잔존 여부로 주입 누락을 판정**한다 — 수기로 실값을 박으면 주입이 실패해도 가드가 통과하므로 규약 위반에 그치지 않고 배포 안전장치를 무력화한다. 이번 run 의 cron wrapper 지시문이 조건 없이 'bump 포함' 을 지시했으나 저장소 정본(`docs/CONVENTIONS.md`)과 정면 충돌하므로 따르지 않았다.
+- **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**(누락 시 사용자가 캐시된 옛 데이터를 본다).

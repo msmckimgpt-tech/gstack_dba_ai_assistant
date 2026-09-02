@@ -2922,7 +2922,7 @@ LEARNINGS 갱신(문서 전용, 코드 변경 **0**).
 
 ## CHG-20260901T120000-glossary-term-tier — 용어 통용범위 축 + 브리지 자율수집 복원
 
-- **alembic 0057** `20260901_0057_glossary_term_tier.py` (신규): `kb_glossary.term_tier` ·
+- **alembic 0058** `20260901_0058_glossary_term_tier.py` (신규; 최초 0057 로 작성했다가 병렬 세션의 `0057_redteam_review_source` 선머지로 §13.1 재번호): `kb_glossary.term_tier` ·
   `glossary_feedback.term_tier`(각 `varchar(16)` NOT NULL DEFAULT 'product' + CHECK 3값) ·
   `glossary_feedback.status` CHECK 에 `skipped_general` 추가 · 인덱스 3(`ix_kb_glossary_tier` ·
   `ix_glossary_feedback_tier` · `ix_kb_glossary_term_norm` 함수 인덱스). downgrade 는
@@ -3010,5 +3010,216 @@ Task-Cycle: feature-0002-agent-core
   자가 검증 축 `run_self_review`) 양쪽 병존. 해소 후 확인 — 용어축 9 심볼 · 검증축 6 심볼 ·
   `handle_one` 의 `split_glossary` 호출부 생존 · AST PASS · **두 사본 sha256 동치**.
 - 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T160000-kb-external-reach — 지식베이스가 외부 AI 프롬프트에 실린다 (F1·F2·F4·F5)
+
+term_tier cycle 이 「무엇을 저장할지」를 고쳤다면, 이 cycle 은 **「저장한 것이 실제로 읽히는지」**
+를 고친다. 설계·AC 정본은 같은 feature 의 `docs/FUNCTION.md`
+`## 외부 AI 도달 범위 — 지식베이스가 실제로 프롬프트에 실린다`.
+
+**feature-0002 거주분** (web 측은 `unit/feature-0003-agent-web-ui/docs/MODIFY.md` 동명 CHG):
+
+- **F2 — L0 통계 수집을 LLM 게이트 밖으로**. `modules/insight.py` 에 `_collect_priority_stats
+  (scope_key, targets, report) -> int` 신설: planner 가 고른 `<ds>:<schema>.<table>` 키를 파싱해
+  `metadata_stats.ensure_stats` 를 호출한다. `_seed_coverage_targets` 에서 **게이트된
+  `enqueue_change_analysis` 보다 먼저** 부른다 — 순서가 계약이다. 규약 이탈 키는 건너뛰고,
+  datasource 미해석·knob off·수집 예외는 모두 fail-soft(사이클이 본체, 증거는 보조물).
+  `run_insight_cycle` 의 scan_report 템플릿에 `"stats_collect_attempted": 0` 초기화.
+- **F1 지원 — 전역 상속 로더**(web 라우터와 MCP 번들이 함께 쓴다):
+  - `modules/kb_glossary.py`: `list_global_enum_for_scope(conn, scope_key)` — `common` 에만 있고
+    해당 scope 에 (schema,table,column,code) 로 없는 ENUM 행.
+  - `modules/kb_metadata.py`: `GLOBAL_SCOPE = "common"` 상수 · `list_global_table_desc_for_scope` ·
+    `list_global_column_desc_for_scope`.
+  - `modules/sample_queries.py`: `GLOBAL_SCOPE` · `list_global_samples_for_scope`.
+  세 모듈 모두 용어 축의 `list_global_glossary_for_scope` 와 **같은 반환 형태**를 지킨다 —
+  갈리면 호출부가 축마다 다른 분기를 갖게 된다.
+- **F5 — ENUM 판정 이력 cross-scope**. `_settled_enum_status(conn, scopes, schema, table,
+  column, code) -> (status, scope_key) | None` 신설, `auto_promote_or_queue_enum` 이 종전
+  정확일치 `_enum_feedback_status` 대신 이것을 쓴다. scope 목록은 **중복 제거**한다(호출부가
+  `sk == GLOBAL_SCOPE` 를 넘기면 `['common','common']` 이 된다).
+  ⚠ **지금 라이브에 교차 scope ENUM 중복은 0건**이다 — 관측된 사고를 고치는 게 아니라 용어
+  축에서 실제로 터진 구멍의 같은 형태를 미리 닫는다. 두 축이 같은 코드 패턴을 공유하는데
+  한쪽만 고치면 다음 사람이 「여긴 왜 다르지」에서 시작한다.
+- **계약 확장에 따른 기존 테스트 갱신**: `_settled_enum_status` 가 `(status, scope_key)` 를
+  돌려주므로 `test_kb_enum_feedback.py` 의 스크립트 행을 2-tuple 로 갱신. 동시에
+  `test_enum_auto_promote_honors_verdict_from_another_scope` 를 추가해 **조회에 실린 scope
+  목록 자체**를 검사한다(`_ScriptedConn` 은 SQL 무관하게 큐를 돌려주므로 "skipped 가 나왔다"
+  만으로는 scope 를 좁힌 뮤턴트가 통과한다 — `self-fulfilling-mutation-testing` 교훈).
+- **문서 stale 정정**: cycle 1 이 §13.1 재번호로 `0058` 이 됐는데 docs 4곳이 `0057` 로 남아
+  있었다(FUNCTION 2 · TASK 1 · REPORT 1 · MODIFY 1). 마이그레이션 번호는 운영 대조 키라
+  틀리면 「어느 리비전이 라이브인지」 확인이 어긋난다.
+
+**비변경**: 권한 코드·인가 경계·신규 라우트 0 · 스키마/마이그레이션 0(이 cycle 은 DDL 없음) ·
+LLM 게이트(`shared/llm_gate.py`) 자체 0 · 자율수집 임계값 0.
+
+- **자체 적대 리뷰 시정(코어 거주분)**: `_collect_priority_stats` 의 계측을 `finally` 로 옮겼다
+  — 성공 경로에만 두면 중간에 터졌을 때 그때까지 시도한 수가 사라져 「부분 실패」가 「아예 안
+  돌았다」로 보이고, 이 cycle 이 심은 재발 신호가 거짓 경보를 낸다.
+  `_settled_enum_status` 의 전역 보장선(`if GLOBAL_SCOPE not in scope_list`)은 유일 호출부가
+  이미 전역을 넘겨 **등가 뮤턴트**였다 — 헬퍼를 직접 부르는 테스트를 추가해 그 줄이 방어로서
+  의미를 갖게 했다(두 번째 호출부가 생기는 날 조용히 자기 scope 에 갇히는 것을 막는다).
+
+**검증**: 컨테이너 `make test` **rc=0 · FAILED 0 · 6,672 tests** · ruff clean · 뮤테이션
+**12종 KILL + 등가 2종 식별**(배선 뮤턴트 3종 포함 — 아래 REVIEW 참조).
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T180000-kb-external-reach-merge — origin/main(50 commit) 재병합 해소
+
+고병렬 창(§13.2.5-A). **코드 로직 변경 0** — 문서 말미 블록 충돌만.
+
+- `feature-0003/docs/{MODIFY,REVIEW}.md`: 양쪽 다 **말미 신규 블록 추가**. append-doc driver 가
+  「본문 변경 감지」로 `git merge-file` 에 위임해 표준 마커가 남았고, §16.4 자율 해결 표 1행
+  (「서로 다른 섹션 변경 → 양쪽 반영」)에 따라 **양쪽 유지 + 시간순 정렬**로 해소. 마커 잔존 0.
+- `routers/ai_tools.py`: 3-way clean. 자동 병합을 그대로 믿지 않고 확인 —
+  `_kb_grounding_sections`·`_bridge_product_scope_key` 참조 7건 생존 · AST PASS.
+- ⚠ **식별자 충돌 아님**: main 에 `CHG-20260901T160000-side-panel-exclusive-r5` ·
+  `-runner-mirror-sync` 가 있어 타임스탬프 접두가 겹치지만, §13.1 이 보는 것은 **전체 식별자**
+  이고 슬러그가 달라 유일하다. 재번호하지 않았다.
+- 병합 후 `make test` **rc=0 · FAILED 0** (§13.2.5 「최신 base 합산 green 만 main」).
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T182000-kb-external-reach-postdeploy — 배포 `5a4d49fc` 라이브 실증 (doc-only)
+
+코드 변경 0. PR #1493 머지 후 배포·검증 기록.
+
+- **배포**: `sudo -E bin/deploy-web.sh` rc=0 — web-a/b `mysql-ai-web:5a4d49fc`,
+  워커 3종 + ext-tool-mcp 2종 `mysql-ai-agent:5a4d49fc`(실물 `ps` 확인, 부분 완료 0) ·
+  대화 스모크 PASS · surge 잔존 0 · **caddy `no upstreams available` 0건**(무중단 실측).
+- **F4 라이브 PASS**: `https://localhost` 관리 콘솔 ENUM 탭(`product.dk_qa`)에서 전역 상속
+  **9건 + 배지** 렌더 — 배포 전 bind-mount 검증과 동일 결과.
+- **F2 라이브 PASS**: 배포 이미지 안에서 실제 호출 순서가 수집(55행) → 게이트(57행)임을
+  확인했고, 같은 경로를 배포본에서 직접 구동해 **전환일 이후 처음으로 L0 증거가 쌓였다** —
+  `metadata_table_stats` 243→**252** · `metadata_column_stats` 2,252→**2,392** ·
+  `collected_at` 2026-08-26 14:09 → **2026-09-01 18:26**. 같은 시각 로그에
+  `[llm-gate] 서버 계정 LLM 호출 차단` 이 함께 찍혔다 — **게이트가 닫힌 채로 수집이 됐다**는
+  것이 이 변경의 계약이다.
+  ⚠ 자연 사이클 유입은 아직 0인데, 원인은 코드가 아니라 **호출 조건**이다:
+  `_seed_coverage_targets` 는 「구조 변경 없는」 사이클의 else 분기에서만 불리고 그 앞에 성공한
+  datasource 스캔이 필요한데, 라이브 datasource 다수가 접속 실패 상태다(이 cycle 과 무관한
+  기존 환경 문제). 그 빈도 축은 F6(산출 없는 스캔 구간)이 다룬다.
+- **러너 재기동 불필요**: 이 cycle 은 `bridge_agent.py` 를 건드리지 않았고(변경 0건) MCP 도구
+  이름·인자도 불변이라, 사용자 머신 러너는 그대로 두고도 확장된 번들을 받는다.
+- ⚠ **자기 검증 함정**: 배선 순서를 `src.index()` 비교로 봤다가 **False** 가 나왔는데, 코드가
+  아니라 검사가 틀렸다 — 내가 쓴 주석이 `enqueue_change_analysis` 를 먼저 언급한다.
+  문자열 인덱스로 호출 순서를 판정하면 주석·독스트링이 답을 바꾼다.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T183000-kb-external-reach-f2-live — F2 L0 증거층 라이브 실증 (doc-only)
+
+코드 변경 0. 직전 POST-DEPLOY 기록에서 **보류**로 남겼던 F2 실효를 실측으로 확정한 기록.
+
+- 배포본(`insight-worker`, `GIT_COMMIT=5a4d49fc`) 안에서 planner → 수집 경로를 그대로 구동:
+  `select_priority_targets('mssql-06656002eda6','atum2_db_1')` → 9 대상 →
+  `_collect_priority_stats(...)` → 반환 9 · `report['stats_collect_attempted'] == 9`.
+- 결과: `metadata_table_stats` **243→252** · `metadata_column_stats` **2,252→2,392** ·
+  `collected_at` **2026-08-26 14:09 → 2026-09-01 18:26**. **전환일 이후 첫 수집**이며,
+  같은 시각 `[llm-gate] 서버 계정 LLM 호출 차단` 로그가 함께 찍혔다 — **게이트가 닫힌 채로
+  수집이 됐다**는 것이 이 변경의 계약이다.
+- ⚠ 자연 사이클 유입은 아직 0. 원인은 코드가 아니라 **호출 조건**이다 —
+  `_seed_coverage_targets` 는 「구조 변경 없는」 사이클의 else 분기에서만 불리고 그 앞에 성공한
+  datasource 스캔이 필요한데, 라이브 datasource 다수가 접속 실패다(기존 환경 문제).
+  「경로가 작동한다」와 「그 경로가 얼마나 자주 불리는가」는 다른 축이고, 후자는 F6 의 몫이다.
+- 증적: `feature-0003/docs/test-runs.d/20260901T160000-kb-external-reach-visual.md` Run 8.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T190000-kb-grounding-match — grounding 매칭: 한도는 «후보»에, 판정은 «낱말»로
+
+설계·AC 정본은 같은 feature 의 `docs/FUNCTION.md` `## grounding 매칭 — 한도는 «후보»에`.
+**발견 경로가 중요하다**: 직전 cycle 을 배포한 뒤 사용자 요청으로 **GZ_QA_G 라이브 실측**을
+하다 나왔다. 코드 리뷰·단위 테스트로는 안 나왔을 결함이다 — 둘 다 「데이터가 어떤 규모·모양일
+때만」 드러난다(scope 가 200 을 넘을 때 / 질문에 특정 합성어가 있을 때).
+
+- **`term_occurs_as_word(term, msg_lower) -> bool` 신설**. 낱말 경계 판정. 경계 규칙이
+  **비대칭**인 이유는 한국어 조사다(FUNCTION 표 참조) — 뒤쪽 한글을 막으면 `파티셔닝 키도`·
+  `증분 복제와` 같은 정상 등장이 전부 깨진다. 앞만 막고 뒤는 연다.
+- **`_fetch_glossary(conn, scopes, message=None, role_key=None)`** — `message` 를 주면
+  `position(lower(term) in %s) > 0` 로 SQL 이 후보를 좁힌다. 그래야 `LIMIT` 이 「scope 전체」가
+  아니라 「매칭 후보」에 걸린다. `_fetch_enums(conn, scopes, message=None)` 도 동형
+  (`column_name` OR `table_name`). 미지정 시 종전 동작(하위호환).
+- **한도 도달 로그** `glossary_read_limit_hit` / `enum_read_limit_hit`. 무음 절단 금지.
+- **`load_glossary_enum_context`** — 두 fetch 에 질문 전달 + 판정을 `term_occurs_as_word` 로.
+
+**기존 테스트 1건 갱신**: `test_role_scoped_read_sql` 이 역할 파라미터를 **위치**(`params[1]`)로
+집고 있었는데, 질문 후보필터가 앞에 끼어들며 깨졌다. 위치가 아니라 **내용**으로 찾도록 고쳤다 —
+이 테스트가 보려는 것은 「역할 캐스케이드가 실렸는가」이지 파라미터 순서가 아니다.
+
+**비변경**: 스키마 0 · 권한/인가 0 · 라우트 0 · 주입 cap(`_INJECT_TERM_CAP` 40 /
+`_INJECT_ENUM_CAP` 200) 0 · 한도값(200/500) 0 — 한도를 **올리지 않고 걸리는 대상을 바꿨다**.
+
+**검증**: 컨테이너 `make test` **rc=0 · FAILED 0 · 6,904 tests** · ruff clean · 뮤테이션
+**9/9 KILL** · **라이브 전후 대조**(배포본 vs 수정본, 같은 GZ_QA_G 질문):
+
+| | 수정 전 | 수정 후 |
+|---|---|---|
+| `증분 복제`(질문에 있음) | **누락**(한도 밖) | **회복** |
+| `Achievement.Type`(DK온라인, 질문에 없음) | **유입** | **차단** |
+| 정상 매칭 3건 | 유지 | 유지 |
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T193000-kb-grounding-match-postdeploy — 배포 `cceb2984` 라이브 재실측 (doc-only)
+
+코드 변경 0. PR #1496 머지 후 배포·검증 기록.
+
+- **배포**: rc=0 · web/워커 전부 `cceb2984`(실물 `ps` 확인) · 대화 스모크 PASS ·
+  caddy `no upstreams available` **0건**.
+- **G1 회복 실증**: 배포 전에는 한도 밖이라 **로드 자체가 안 되던** 약어들이 매칭된다 —
+  `AID`·`CCU`·`PvE`·`재화`·`복합키` 전건. `재화를` 처럼 조사가 붙어도 매칭된다(비대칭 규칙).
+- **G2 차단 실증**: `acidity`·`pverr`·`소재화`·`raidlog` 전건 매칭 0.
+  동일 질문 재실측에서 `Achievement.Type`(DK온라인) 사라지고 `증분 복제` 살아났다.
+- **미해결로 남긴 것(정직)**: `common` 의 DK온라인 전용 ENUM 9건은 그대로다. 낱말 경계는 오탐
+  *경로*를 막았을 뿐, DK 어휘가 실제 등장하는 질문에는 여전히 실린다 — 데이터 큐레이션 축이라
+  cycle 1 소급 정리와 함께 다룬다.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 5.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T194500-glossary-sweep-applied — 용어사전 소급 정리 실적용 (데이터 변경, 코드 0)
+
+cycle 1(`term_tier`)에서 dry-run 리포트 후 재승인을 받기로 한 항목. 사용자 승인
+(2026-09-01)으로 라이브 적용했다. **코드 변경 0 — 데이터 정리다.**
+
+- 실행: `glossary_tier_sweep.py --apply --manifest /shared/glossary-sweep/20260901T194500-*.json`
+- 적용 전 dry-run 이 **승인 시점 수치와 동일**함을 확인(범용 69 · 중복 36 · 교차제품 28 보고만).
+- 결과: `kb_glossary` 739 → **634행**(105행 삭제) · `glossary_feedback` 의
+  `skipped_general` **57행**(되살리기 경로 보존).
+- **교차 제품 28종은 삭제하지 않았다**(cycle 1 결정 유지) — 읽기 캐스케이드가
+  `[그 제품, common]` 이라 한 제품은 다른 제품 scope 를 읽지 않는다. 지우면 그 제품에서
+  그냥 사라지고, 같은 이름이 제품마다 다른 뜻일 수 있다(`CharacterID`·`AID`·`LogType`).
+- **되돌리기 검증**: 매니페스트 행 키가 `restore()` 가 읽는 키와 일치하고 105행이 모두 담겨
+  있음을 확인했다. 파괴적 작업의 안전망은 「파일이 생겼다」가 아니라 「그 파일로 되돌아간다」다.
+- ⚠ **주의할 상호작용**: 같은 날 G1 수정이 한도 밖이던 `증분 복제` 를 회복시켰는데, 이 정리가
+  같은 용어를 범용어로 판정해 회수했다. 모순이 아니라 원인이 다르다 — 전자는 버그(짧다는
+  이유로 잘림), 후자는 정책(범용어 미등록). 큐에 남아 있으므로 되살릴 수 있다.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 7·8.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T200000-common-enum-reattribute — 전역 ENUM 9행 귀속 정정 (데이터 변경, 코드 0)
+
+사용자 승인(2026-09-01)으로 적용. **코드 변경 0 — 데이터 정정이다.**
+
+- **문제**: `common` ENUM 9행이 전부 제품 고유 내용(`[DK온라인]`·`[건즈]`·`[마이크로볼츠 PvE]`).
+  전역은 모든 제품 프롬프트에 주입되므로 G2(낱말 경계) 이후에도 테이블명이 질문에 나오면
+  남의 제품이 받는다. GZ_QA_G 실측에서 실제로 관측된 형태다.
+- ⚠ **9행 전부 `source='manual'`** 이라 자율 이동하지 않고 **승인 후** 진행했다(소급 정리
+  스크립트의 「manual 불가침」 원칙과 정합).
+- **귀속은 라벨이 아니라 데이터로 확정**했다 — `table_descriptions`/`column_descriptions` +
+  AGE 그래프 `(:Table)` scope + `WebProductDatasources` 조인.
+  `Achievement`·`AchievementReward`→DK_QA / `Mission`→GZ 3제품 / `pverewardinfo`→MV 2제품.
+- **결과**: 제품 scope 15행 등록 · `common` 9행 삭제(전역 ENUM 0행).
+  매니페스트 `/shared/glossary-sweep/20260901T200000-common-enum-reattribute.json`(먼저 기록).
+- **9→15 로 늘어난 것은 의도**다. 읽기 캐스케이드에 **제품군 티어가 없어** 형제 제품마다 한 벌씩
+  둘 수밖에 없다. 대안(전역 유지)은 무관한 제품까지 받아 더 나쁘다. 근본 해소는
+  `product-family` 티어 신설 — 범위 밖으로 남긴다.
+- **부수 발견**: `pverewardinfo` 가 해소 불가 scope(`mysql-a4f572f222a2`, 삭제된 datasource)의
+  그래프에도 있다 — **F3(유령 정점 회수)의 실물 사례**.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 9~12.
 
 Task-Cycle: feature-0002-agent-core

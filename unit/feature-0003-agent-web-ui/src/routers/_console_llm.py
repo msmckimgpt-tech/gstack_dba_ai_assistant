@@ -40,6 +40,8 @@ from shared.bridge_tasks import (
     RUNNER_FEATURE_CONSOLE_JOBS,
     RUNNER_FEATURE_SELF_REVIEW,
     RUNNER_MIN_AGENT_VERSION,
+    runner_can_take,
+    version_at_least as _bridge_version_at_least,
 )
 from shared.llm_gate import SERVER_LLM_ENABLED_ENV, server_llm_enabled
 
@@ -235,34 +237,10 @@ def inactive_surfaces(state: dict | None) -> list[dict[str, Any]]:
     return out
 
 
-def version_at_least(actual: Any, minimum: str) -> bool:
-    """`actual >= minimum` 을 점(.) 구분 정수 튜플로 비교한다.
-
-    **판정 불가는 False**(=구버전 취급)로 본다. 버전을 모르는 러너에 콘솔 작업을 주면
-    프레이밍이 어긋나 산출물이 조용히 망가지는데, 그 실패는 사용자에게 "AI 가 이상한 답을
-    했다" 로만 보인다. 모르는 채로 "충족한다" 고 우길 근거가 없다.
-
-    자릿수가 다르면 짧은 쪽을 0 으로 채운다(`2026.9` vs `2026.9.1`).
-    """
-    def _parts(v: Any) -> list[int] | None:
-        s = str(v or "").strip()
-        if not s:
-            return None
-        out: list[int] = []
-        for chunk in s.split("."):
-            chunk = chunk.strip()
-            if not chunk.isdigit():
-                return None
-            out.append(int(chunk))
-        return out or None
-
-    got, want = _parts(actual), _parts(minimum)
-    if got is None or want is None:
-        return False
-    width = max(len(got), len(want))
-    got += [0] * (width - len(got))
-    want += [0] * (width - len(want))
-    return got >= want
+#: `actual >= minimum` 을 점(.) 구분 정수 튜플로 비교한다. **판정 불가는 False**(=구버전 취급).
+#: **정본은 `shared.bridge_tasks.version_at_least`** (TASK-20260901T190000) — 워커도 같은 하한을
+#: 집행한다. 이름은 여기서도 유지한다(기존 호출부·테스트가 이 이름으로 들어온다).
+version_at_least = _bridge_version_at_least
 
 
 def _classify(profile: dict, has_token: bool, *, need_batch: bool = False) -> str:
@@ -280,6 +258,12 @@ def _classify(profile: dict, has_token: bool, *, need_batch: bool = False) -> st
     if not version_at_least(profile.get("agent_version"), RUNNER_MIN_AGENT_VERSION):
         return DELEGATION_OUTDATED
     if need_batch and RUNNER_FEATURE_BATCH_JOBS not in features:
+        return DELEGATION_UNSUPPORTED
+    # ⚠ 위 사유 분기는 **말하기 위한 것**이고, 배급 자격의 정본은 `runner_can_take` 다
+    #   (워커도 그것을 부른다, TASK-20260901T190000). 여기서 READY 를 내는데 그쪽이 거절하면
+    #   화면은 "맡길 수 있다" 고 하고 워커는 안 맡기는 상태가 된다 — 두 판정이 갈리지 않도록
+    #   마지막에 정본에 되묻는다(순서가 같으므로 정상 경로에서는 항상 참이다).
+    if not runner_can_take(profile, need_batch=need_batch):
         return DELEGATION_UNSUPPORTED
     return DELEGATION_READY
 
@@ -377,6 +361,10 @@ def delegable_job_kinds() -> list[str]:
     화면이 자기 목록을 갖지 않게 서버가 내려보낸다 — 프론트에 종류 이름을 적어 두면
     배선을 끄는 날 그 목록만 낡아, 없는 경로를 여는 버튼이 남는다.
     """
-    from shared.bridge_tasks import JOB_SPECS
+    from shared.bridge_tasks import JOB_SPECS, ORIGIN_WEB
 
-    return [k for k, v in JOB_SPECS.items() if v.get("wired")]
+    # **관리자가 화면에서 누르는 종류만** 내려보낸다(`origin == web`). 배경 배치는 워커가
+    # 열고 자격도 다르다(`batch_jobs` 별도 동의) — 여기 섞으면 화면은 배치까지 "맡길 수 있다"
+    # 고 말하는데 그 자격은 확인하지 않은 상태가 된다(TASK-20260901T190000).
+    return [k for k, v in JOB_SPECS.items()
+            if v.get("wired") and v.get("origin") == ORIGIN_WEB]

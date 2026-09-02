@@ -98,6 +98,24 @@ CSS 규칙 0건 — 보내는 중인지 실패했는지가 일반 항목과 똑�
 - [x] 잔여 무스타일 76건 + `is-group` 제거 후보를 REPORT §8 로 이월
 - [ ] POST-DEPLOY — 배포본 자산으로 재확인 + 브리지 러너 연결 환경에서 실 run 전이 실측
 
+## 20260901T1740-side-panel-exclusive-postdeploy — 라이브 배포본 실측 (doc-only)
+
+선행 cycle `20260901T1153-side-panel-exclusive` 의 **§16.3 deploy-backed 완료 조건 2**
+(라이브 재배포 검증)를 기록한다. 코드 변경 0.
+
+- [x] 배포 판정 4축 실측 — PR #1475 머지 커밋 `cce7df5e` ⊂ 라이브 배포본 `d3ead999`(web-a·b
+      `GIT_COMMIT` 동일) · 컨테이너 내 `side-panels.js` 실재 · `/healthz` 200 ·
+      엣지 `no upstreams available` 0건
+- [x] **PB-0008 POST-DEPLOY 16 step ok** — 라이브 자산 스탬프 `9763bcf30835` 가 붙은 배포본
+      모듈로 실행(PRE-DEPLOY 는 `?v=dev` 격리 컨테이너라 서로 다른 빌드)
+- [x] 검증 잔류물 정리 — 격리 컨테이너 2개 제거 · 임시 env 삭제 · 브라우저 종료 · DOM 원복
+- [x] 정직 기록 — `deploy-web.sh` 는 **멱등 no-op** 이었다(병렬 세션이 이미 상위 커밋으로
+      배포). 「내가 배포했다」가 아니라 「라이브가 내 커밋을 담고 있다」를 4축으로 확인
+
+### 9. Requested Scope
+
+- [x] 선행 cycle 의 deploy-backed 완료 조건 2(라이브 재배포 검증) 기록 — ✓ 완료
+
 ## 20260901T1153-side-panel-exclusive — 우측 사이드 패널은 한 번에 하나만 (Minor §12.3 — frontend-only, 비파괴)
 ## 20260901T1430-rqrd-postdeploy — 말풍선 여닫이 제거 POST-DEPLOY 부재 확인 (doc-only)
 
@@ -312,6 +330,12 @@ CSS 규칙 0건 — 보내는 중인지 실패했는지가 일반 항목과 똑�
       있고, 배치 규칙과 wrap fallback 이 존재하는지). 조건이 남으면 여백이 돌아온다.
 - [x] 라벨 계약 테스트는 문구가 아니라 **네 상태가 갈리는가** + 접두를 뺀 자리를 title 이
       받는가(`js.count("내 AI") >= 3`)로 재정의
+- [x] **POST-DEPLOY 재실측 PASS** (배포본 `40340f53`, PR #1465 `6fac965e` 조상) — 주입 없이
+      서빙 자산 그대로 16조합 재측정, **배포 전 실측치와 전부 일치**. `.composer-footer` 전
+      조합 `display: none`(제보 여백 해소). 서빙 `chat.css` 의 접힘 규칙에 `.ai-conn` 잔여 0건,
+      칩의 런타임 부모가 `.sidebar-profile` 임을 측정 가드로 확인.
+      증적: `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md` +
+      `docs/evidence/ai-conn-badge-sidebar/postdeploy-admin-waiting.png`
 
 ## 20260901T0315-interrupt-preserve-bridge — 중단 보존을 «사용자가 실제로 타는 경로»(브리지)까지 (Minor §12.3 — 비파괴 텍스트 추가)
 
@@ -12986,3 +13010,19 @@ fallback 이 이 **끝난 답변의 기록**을 "방금 생긴 step = 진행 중
 - [x] 폭 되찾기(정보 손실 0): 간격·여백·들여쓰기·분기 칩 글리프화·크기 델타 한 토막화
 - [x] **PB-0008** 폭 4구간(240/260/280/320) 행 높이 실측 + 한 줄 불가 지점의 **부족 폭 수치화**
 - [x] 캡처가 잡은 결함 1건 수정(글리프만 남은 파선 pill 이 «빈 동그라미» 로 보임)
+
+## 20260902T010304-doc-sync-rn-0902 — 릴리즈노트 2026-09-01 블록 신설(17항목 + summary) (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+
+### Requested Scope (요청 범위)
+- [x] 델타 창 `d1a32fc4`..`a2933614`(**58 non-merge / 67 merge** · PR #1452~#1496 · 착륙 2026-08-31 20:29~09-01 19:31, 123 커밋이 09-01)의 **사용자 체감 변화**를 릴리즈노트에 반영 — 산출물: 신규 `2026-09-01` 블록 items **17** + summary
+- [x] 블록 귀속: 창 커밋 착륙일이 압도적으로 2026-09-01 이고 그 date 블록이 **부재**하므로(최신 08-31) **신규 블록 prepend** — 산출물: `releases` 57→**58** · `generated` "2026-08-31"→**"2026-09-01"**(== `releases[0].date`)
+- [x] 과거 블록 불가침 — 산출물: **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록)
+- [x] 사용자향 평이화·내부동작 비노출 검증 — 산출물: 19패턴 누출 스캔 **0건**. 유일 히트 「브리지 작업」 2건은 `admin.html` 에 5회 노출되는 실제 **화면 탭 라벨**임을 grep 실측 후 인용
+- [x] 회귀 0 실증 — 산출물: `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일**
+- [x] **재발 명시 3건**: 직전 08-31 블록이 「없앴습니다」(모델·추론등급 고지) · 「닫힙니다」(연결 창 자동 닫힘) · 「가뒀습니다」(쿼리 결과 스크롤)로 단정한 세 항목을 이번 창이 다시 고쳤다. 과거 블록을 고치지 않고 새 항목에서 재발 경위를 밝혀 수렴
+- [x] **기능 소멸 고지 1건**: 쿼리 결과 접이판 제거로 CSV 내려받기 · 전체 데이터 보기 · 구형 메시지의 실행 SQL/결과 파일 **3종이 함께 사라진 사실**을 손실로 명시
+- [x] **미검증 고지 5건**: 라이브에서 행위 실측을 못 한 축(중단 왕복 · 실패 사유 사용자 왕복 · 낡은 러너 겹침 · 인젝션 오판 왕복 · 경량 모델 일부)을 각 항목 detail 과 접힌 summary 양쪽에 노출
+- [x] 제외(사용자 표면 0): POST-DEPLOY 증적 커밋 · merge 67건 · 문서 self-add · 「단계/결과셋 범위 분리」(표시면 미세조정) · 「인증서 만료 감시」(운영자 축)
+- [x] 검증: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
+- [x] reconcile-first(커밋 직전 재측정 01:57:17): 서빙 `release-notes-data.js` 200 · md5 `4c150bcc…` = `origin/main` blob → **파리티 갭 0**. `repo/` clean · HEAD == origin/main == `a2933614`
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → **로컬 commit 까지만**. push/merge/deploy 는 wrapper 소유(v3). **캐시버스터 수기 bump 없음**(정본 `docs/CONVENTIONS.md` — `bin/deploy-web.sh` 의 ABORT 가드가 baked `?v=dev` 잔존으로 주입 누락을 판정하므로 수기 실값은 그 가드를 무력화한다. wrapper 지시문의 'bump 포함' 은 저장소 정본과 충돌)

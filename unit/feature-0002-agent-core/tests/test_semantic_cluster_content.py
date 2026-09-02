@@ -18,6 +18,20 @@ import pytest
 from modules import semantic_cluster as sc
 
 
+@pytest.fixture(autouse=True)
+def _open_server_llm_gate(monkeypatch):
+    """⚠ **게이트를 명시적으로 연다** (feature-0043, TASK-20260901T190000 — autouse, 파일 전역).
+
+    이 파일이 검사하는 것은 게이트 **뒤** 의 라벨 배치·캐시 로직이다. 게이트가 닫혀 있으면
+    `_llm_content_labels` 는 LLM 을 부르지 않고 **동의한 개인 AI 에게 위임**하므로(그것이 지금의
+    옳은 동작이다) 여기 주입한 fake `llm_cluster_label` 이 아예 소비되지 않는다.
+
+    `shared/llm_gate` 의 이중 계약 그대로 — 게이트 뒤 로직은 픽스처가 열고, 게이트 자체는
+    아래 `test_labels_delegate_when_server_llm_is_blocked` 가 **반환값·부수효과로** 검사한다.
+    """
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
+
+
 # ── fakes ─────────────────────────────────────────────────────────────────────
 class FakeCursor:
     """substring 패턴 → fetch 결과 매핑. raise_on 패턴은 execute 시 예외."""
@@ -176,6 +190,32 @@ def test_llm_labels_gate_off(monkeypatch):
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", False, raising=False)
     out = sc._llm_content_labels(FakeCursor(), "ds1", "db", _label_clusters())
     assert out == {}
+
+
+def test_labels_delegate_when_server_llm_is_blocked(monkeypatch):
+    """서버 계정 LLM 이 닫히면 **호출하지 않고 위임한다** (TASK-20260901T190000).
+
+    이 pass 는 라벨을 얻지 못하고 끝난다(affix 폴백 — 기존 실패 경로와 같다). 결과는
+    `apply_external_cluster_labels` 가 kv 캐시에 기입하고 **다음 pass 가 캐시 적중**으로 쓴다.
+    워커가 러너의 왕복을 기다리지 않는 것이 핵심이다 — 기다리면 배경 처리가 개인 AI 의 속도에
+    묶이고, 러너가 꺼져 있는 날 통째로 멎는다.
+    """
+    from modules import llm as llm_mod
+
+    monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "")   # 위 autouse 를 이 테스트만 되돌린다
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
+
+    def _must_not_call(*_a, **_kw):
+        raise AssertionError("게이트가 닫혔는데 서버 계정 LLM 을 불렀다")
+
+    monkeypatch.setattr(llm_mod, "llm_cluster_label", _must_not_call)
+    seen = []
+    monkeypatch.setattr(sc, "_delegate_cluster_labels",
+                        lambda ds, schema, batches, payload_for: seen.append(
+                            (ds, schema, len(batches))) or len(batches))
+    out = sc._llm_content_labels(FakeCursor(), "ds1", "cc_data_main", _label_clusters())
+    assert out == {}, "이번 pass 는 affix 폴백 — 라벨을 지어내지 않는다"
+    assert seen == [("ds1", "cc_data_main", 1)], "위임 적재가 일어나지 않았다"
 
 
 def _cfgattr():

@@ -5265,6 +5265,25 @@ terminal 통과) · `/api/ask_status`·`/api/ask_result` 의 terminal 계약 · 
 - Cross-ref: TASK.md `20260901T1200-ai-conn-chip-to-profile-row` · 칩 도입 cycle
   `feature-0043 P0-AB`(2026-08-28)
 - Timestamp: 2026-09-01T12:00:00+09:00
+
+## CHG-20260901T124500-ai-conn-chip-postdeploy 연결 칩 프로필 행 이동 POST-DEPLOY 증적 (docs-only)
+- 배포본 `40340f53`(PR #1465 `6fac965e` 가 조상)에서 **주입 없이 서빙 자산 그대로** 재실측.
+  배포 전 Run 은 라이브 페이지에 변경본 CSS 를 주입한 상태였고, 본 Run 이 그 예측을 검증한다.
+- **서빙 자산 확인**: `profile.css` 의 `.sidebar-profile > .ai-conn` 1건 · `flex-wrap` 5건 ·
+  `chat.css` footer 접힘 규칙의 `.ai-conn` 잔여 **0건** · `index.html` 칩이 `.sidebar-profile`
+  안 144행(`composer-footer` 406행보다 앞) · 라벨 4종 접두 없음.
+- **16조합 전부 배포 전 실측치와 일치** — `admin`/`mckim` 네 상태 같은 줄·행 높이 65px 고정·
+  화살표→칩 18px·이름 잘림 0, 15자/21자 계정 네 상태 아래 줄(90px)·가로 넘침 0, 칩 글꼴
+  10.88px, `.composer-footer` **전 조합 `display: none`**(제보 여백 해소).
+- 측정 가드: 칩의 런타임 부모가 `.sidebar-profile` 이 아니면 측정을 중단하도록 스크립트에
+  조기 반환을 뒀다 — 통과했으므로 배포본 마크업이 실제로 그 자리다.
+- Files: `docs/MODIFY.md`, `docs/TEST.md`, `docs/REVIEW.md`,
+  `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md`(신규),
+  `docs/evidence/ai-conn-badge-sidebar/postdeploy-admin-waiting.png`(신규). 코드 변경 0.
+- Reason: changed paths are docs + 스크린샷 자산만 — 코드·스키마·권한 변경 0.
+- Cross-ref: `CHG-20260901T120000-ai-conn-chip-to-profile-row` · PR #1465
+- Timestamp: 2026-09-01T12:45:00+09:00
+
 ## CHG-20260901T125600-glossary-tier-postdeploy — 통용범위 축 POST-DEPLOY 증적
 
 `docs/test-runs.d/CHG-20260901T120000-glossary-term-tier.md` 에 `Environment: Windows-browser`
@@ -5291,6 +5310,56 @@ Run 추가. **런타임 코드 변경 0** — 배포본 `40340f53` 에서 실측
 떠 변수가 넘어가지 않는다). 아는 함정을 호출을 나눠 쓰며 그대로 밟았다.
 
 - 증적: `docs/test-runs.d/TASK-20260901T110000-aiops-external-realign-postdeploy.md`
+
+## CHG-20260901T160000-kb-external-reach — 지식베이스가 외부 AI 프롬프트에 실린다 (web 거주분)
+
+설계·AC 정본은 `unit/feature-0002-agent-core/docs/FUNCTION.md` 의
+`## 외부 AI 도달 범위 — 지식베이스가 실제로 프롬프트에 실린다`. 코어 거주분은 같은 feature 의
+`docs/MODIFY.md` 동명 CHG.
+
+- **F1 — `routers/ai_tools.py` `get_task_context` 확장**(사용자 선택: 새 MCP 도구 신설 아닌
+  기존 도구 확장 — 러너 갱신 없이 즉시 도달한다).
+  - `_bridge_product_scope_key(conn, product_id) -> str`: **그 task 의 ProductId 로** product
+    scope 를 해석한다. 해석 불가면 `""` 를 돌려주고 **주변 상태
+    (`cfg.get_active_product_scope()`)를 절대 읽지 않는다** — 읽으면 A 계정 질문에 B 제품 사전이
+    실린다. `_absorb_bridge_glossary_terms` 의 중복 로직도 이 헬퍼로 합쳤다.
+  - `_kb_grounding_sections(question, product_scope, ds_scopes, notes) -> list`: 용어사전 ·
+    ENUM · 테이블/컬럼 설명 · 샘플 쿼리(= **product 축**) + 관계(= **datasource 축**, 첫 ds
+    하나) 를 조립한다. `_layer(label, module, func, scope)` 로 `importlib` lazy import,
+    **연결 1개 공유**, 층별 fail-soft + 실패 시 **층 이름을 notes 에 남긴다**.
+  - 번들 상한 `_CTX_BUNDLE_MAX_CHARS = 24_000` + 절단 시 **명시 고지**.
+- **F4 — `routers/admin_metadata.py` 전역 상속 노출 3축 확대**. `_with_inherited(rows,
+  inherited_rows, to_item)` · `_load_inherited(pg, scope_key, loader, label)` 헬퍼 신설 후
+  ENUM · 테이블 설명 · 컬럼 설명 · 샘플 쿼리 목록 엔드포인트에 배선 — 각 항목에 `inherited`
+  플래그와 응답에 `inherited_count`. 종전엔 **용어 축에만** 있었고, 그래서 다른 축은 전역에
+  있어도 콘솔에서 「없다」로 보여 제품마다 다시 등록됐다. ⚠ 라이브의 제품↔제품 중복(컬럼
+  833행 중 826행 텍스트 동일)은 이 변경으로 **정리되지 않는다** — 재생산을 막을 뿐이다.
+- **F4 프론트 — `static/admin/metadata.js`**: 상속 배지 렌더가 `sub === "glossary"` 블록
+  **안**에 있었다. 공통 블록으로 끌어내 4개 하위탭 모두에 적용. UI 는 그대로고 조건만 넓혔다.
+
+- **자체 적대 리뷰 시정(web 거주분)** — 전부 「조용한 접힘」을 갈라낸 것:
+  - `_bridge_product_scope_key` 반환을 **3값**으로: `"product.x"`(해소) / `""`(제품 없음) /
+    `None`(해소 **실패**). 종전 리팩터링이 `_absorb_bridge_glossary_terms` 의 「조회 실패 →
+    중단」을 「실패 → 전역 검토 큐」로 바꿔 놨었다 — 일시적 DB 오류가 제품 전용 용어를 모든
+    제품 프롬프트에 주입되는 전역 사전 후보로 밀어 넣는 경로다. 읽기 축은 두 경우를 같게
+    (제품 층 비움), 쓰기 축은 `None` 이면 중단.
+  - `_load_inherited` 반환을 `(rows, failed)` 로 갈라 `inherited_error` 를 4개 목록 응답에
+    싣고, `metadata.js` 가 목록 **위**(빈 상태 분기보다 앞)에 경고를 띄운다. 실패를 빈 목록으로
+    접으면 「전역에 없다」로 읽혀 이 cycle 이 고치는 중복이 그대로 재생산된다.
+  - 최종 안내 분기를 `not sections and not notes` → `not sections` 로. 사유(notes)가 있다는
+    이유로 행동 안내가 사라지면, 정작 안내가 가장 필요한 상황에서 빠진다.
+  - `_kb_grounding_sections` 의 RO 연결 획득을 `finally` 를 가진 `try` **안**으로 이동
+    (`resource-acquire-outside-try-repeat` 패턴 제거 — 현재 실누수는 없었다).
+
+**비변경**: 권한 코드·인가 경계·신규 라우트 0 · MCP 도구 **이름·인자 시그니처 0**(반환 본문만
+확장 — 러너 재배포 불필요) · 스키마 0. 관리 API 는 응답에 `inherited_error` **가산**만 (기존
+필드·상태코드 불변).
+
+**검증**: 컨테이너 `make test` rc=0 · FAILED 0 · 6,672 tests · ruff clean · `node --check` PASS ·
+뮤테이션 12종 KILL. 상세는
+`unit/feature-0002-agent-core/docs/REVIEW.md` REV-20260901T160000-kb-external-reach.
+
+Task-Cycle: feature-0003-agent-web-ui
 
 ## CHG-20260901T115300-side-panel-exclusive
 
@@ -5463,6 +5532,17 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
   `docs/evidence/connect-modal-autoclose/pd3-*.png`. 코드 변경 0.
 - Timestamp: 2026-09-01T06:10:00+09:00
 
+## CHG-20260901T173000-ai-claude-feature-0003-stale-runner-yield — 낡은 러너 양보 판정·집행 (cross-ref)
+
+- **날짜**: 2026-09-01
+- **위험도**: Major (점유 집행 경로 — `claim_request` 409 추가)
+- **cross-ref**: 마찰 `FR-stale-runner-outraces-fresh-one` / 정본 TASK 노트는 feature-0043 의
+  `TASK-20260901T173000-stale-runner-yield.md`.
+
+`oauth_store.stale_runner_must_yield`(상대 판정) + `routers/ai_tools.py` 집행 1지점
+(`claim_request` 409) · 억제 2지점(`list_open_requests`·`wait_for_request`) ·
+하트비트 응답 `runner_update.superseded` 신설. 화면(HTML·CSS·JS) 변경 0.
+
 ## CHG-20260901T170000-lineage-row-compaction 계보 내부 되풀이 제거 + 행 한 줄 간소화
 - **버전 행에서 파일명 제거** — 이 박스는 언제나 한 계보 안이고 파일명은 카드 머리(계보 여럿)나 목록 행(단독)이 이미 말했다. 행마다 또 적어 카드 하나에 같은 이름이 **6회** 실렸다(머리 1 + 계보행 2 + 버전행 3). 확인 경로는 행 `title` 로 남긴다.
 - **2줄 → 1줄** — 버전 행이 2줄이던 **근거가 파일명이었다**("한 줄에 몰면 240px 에서 이름 가용폭 23.2px ≈ 2자"). 그 파일명이 사라졌으므로 근거도 사라진다. 라이브 실측: 버전 행 **전 폭에서 20px(한 줄)**.
@@ -5486,3 +5566,28 @@ red/green 으로 갈렸다) · census 를 `HTMLParser` 단일 경로로 통일(�
 `oauth_store.stale_runner_must_yield`(상대 판정) + `routers/ai_tools.py` 집행 1지점
 (`claim_request` 409) · 억제 2지점(`list_open_requests`·`wait_for_request`) ·
 하트비트 응답 `runner_update.superseded` 신설. 화면(HTML·CSS·JS) 변경 0.
+
+## CHG-20260901T174000-side-panel-exclusive-postdeploy (doc-only)
+
+**변경**: 문서만 — `docs/test-runs.d/TASK-20260901T1740-side-panel-exclusive-postdeploy.md`
+신규 + `docs/{TASK,REVIEW,REPORT}.md`. **코드 0**.
+
+**기록 내용**: 선행 cycle `side-panel-exclusive` 의 라이브 배포본(`d3ead999`) 실측 —
+배포 판정 4축(머지 커밋 포함관계 · 컨테이너 `GIT_COMMIT` · 파일 실재 · healthz/엣지) +
+PB-0008 **16 step ok**(라이브 자산 스탬프 `9763bcf30835` 모듈) + 잔류물 정리 확인.
+
+## CHG-20260901T183000-ai-claude-feature-0003-newest-runner-wins — 판정축 정정 + 모달 진동 해소 (cross-ref)
+
+- **날짜**: 2026-09-01 · **위험도**: Major · **정본 TASK**: feature-0043
+  `TASK-20260901T183000-newest-runner-wins.md`
+- `oauth_store.stale_runner_must_yield` 축을 **연결 순서**(토큰 `Id`)로 교체 ·
+  `account_runner_build` 를 `ORDER BY t.Id DESC` 로(=`runner_stale` 진동 해소 → 연결 모달이
+  닫히지 않던 결함) · `routers/ai_tools.py` 안내 문구·게이트 정정. 화면 마크업 변경 0.
+
+## CHG-20260902T010304-doc-sync-rn-0902 (2026-09-01 블록 신설) 릴리즈노트 콘텐츠 — 125커밋 창 사용자향 17항목
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 **신규 `date: "2026-09-01"` 블록 prepend** — items **17** + `summary`. `releases` 57→**58** · `generated` "2026-08-31"→**"2026-09-01"**(== `releases[0].date`) · 총 항목 424→**441** · **08-31 이하 전 블록 바이트 불변**.
+- 항목 골자: 연결 경로 복구(설치 후 「쓸 수 있는 AI 를 찾지 못했습니다」 해소) · 낡은 러너가 최신 러너 질문을 가로채던 결함 → 판정축을 「연결 순서」로 · 고아 점유 즉시 회수 + 무진행 국면 표면화 · 연결된 AI 의 실패 사유가 사용자에게 도달 · 정상 요청을 인젝션으로 오판해 답변이 자가중단되던 문제 · 연결 1단계 기본 OS 탭을 「마지막으로 연결됐던 OS」로 · 우측 패널 한 번에 하나만 · 말풍선 「▼ 쿼리 결과」 여닫이 제거(대체 입구 「단계 보기」) · 공유 대화 계보를 「누가 올렸는지」 축으로 · 중단해도 진행분을 버리지 않는 보존 메시지 · 'AI 운영 현황' 네 갈래 재편 + 답변 자가 점검 · 용어사전 전역/제품 통용범위 분리 · 지식베이스가 외부 AI 답변에 실제로 반영.
+- 블록 귀속: 창 125 커밋 중 **123 건이 2026-09-01 착륙**이고 그 date 블록이 **부재**(최신 08-31)하므로 append 가 아니라 **신규 블록 prepend**.
+- 재발 명시 3건 + 기능 소멸 고지 1건(쿼리 결과 접이판 제거로 CSV 내려받기·전체 데이터 보기·구형 메시지 실행 SQL/결과 파일 3종 동반 소멸) + 미검증 고지 5건.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측(`releases` 57→**58** · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + summary · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · type ∈ {new,improved,fixed} · area ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0) · 누출 스캔 19패턴 **0건**(유일 히트 「브리지 작업」 2건은 `admin.html` 실측 5회 노출되는 **화면 탭 라벨**이라 내부용어 아님)
+- Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.

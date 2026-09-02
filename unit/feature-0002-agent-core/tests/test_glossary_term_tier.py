@@ -32,7 +32,19 @@ class _FakeCursor:
         self._state["captured"].append((sql, params))
         up = sql.strip().upper()
         self._one, self._rows = None, []
-        if up.startswith("SELECT") and "GLOSSARY_FEEDBACK" in up:
+        # ⚠ ENUM 분기를 **먼저** 본다 — `ENUM_FEEDBACK` 은 `GLOSSARY_FEEDBACK` 을 포함하지
+        #   않지만, 두 축이 같은 상태 키(`settled`/`duplicate`)를 공유하므로 라우팅을 한
+        #   곳에 모아 두 축의 테스트가 같은 fake 를 쓰게 한다(대역이 갈리면 한쪽만 검사된다).
+        if up.startswith("SELECT") and "ENUM_FEEDBACK" in up:
+            self._one = self._state.get("settled")
+        elif up.startswith("INSERT INTO ENUM_DICTIONARY"):
+            self._state["inserted"].append(params)
+            self._one = (self._state["next_id"],)
+        elif up.startswith("SELECT") and "ENUM_DICTIONARY" in up:
+            self._one = self._state.get("duplicate")
+        elif up.startswith("INSERT INTO ENUM_FEEDBACK"):
+            self._state["queued"].append(params)
+        elif up.startswith("SELECT") and "GLOSSARY_FEEDBACK" in up:
             self._one = self._state.get("settled")
         elif up.startswith("SELECT") and "KB_GLOSSARY" in up:
             self._one = self._state.get("duplicate")
@@ -278,3 +290,60 @@ def test_normalize_suggestion_items_caps_definition_length():
     items = G.normalize_suggestion_items(
         [{"term": "t", "definition": "x" * 5000}], max_terms=5)
     assert len(items[0]["definition"]) == 2000
+
+
+# ── F5 (2026-09-01): ENUM 판정 이력도 scope 를 넘는다 ────────────────────────────
+def test_enum_settled_verdict_crosses_scope():
+    """제품 A 에서 거부한 ENUM 코드가 제품 B 에서 되살아나지 않는다.
+
+    ⚠ 결과(`skipped`)만 보면 이 테스트는 아무것도 검사하지 않는다 — fake 는 어떤 SQL 에든
+    같은 값을 돌려주므로 조회가 단일 scope 여도 통과한다(용어 축에서 실제로 그렇게 살아남은
+    뮤턴트가 있었다). **조회에 실린 scope 집합**을 파라미터로 직접 단언한다.
+    """
+    conn = _FakeConn(settled=("rejected", "product.other"))
+    out = G.auto_promote_or_queue_enum(
+        conn, "product.sales", "dbo", "T_Order", "status", "9", "취소됨",
+        confidence=0.99, threshold=0.9)
+    assert out == "skipped"
+    assert conn.state["inserted"] == [] and conn.state["queued"] == []
+    hits = [c for c in conn.state["captured"]
+            if "FROM enum_feedback" in c[0] and "status = ANY" in c[0]]
+    assert hits, "ENUM 판정 이력 선검사가 수행되지 않았다"
+    scopes = hits[0][1][0]
+    assert "product.sales" in scopes and G.GLOBAL_SCOPE in scopes, (
+        f"판정 이력 조회가 scope 를 넘지 않는다(scopes={scopes!r})")
+
+
+def test_enum_new_candidate_auto_promotes():
+    """판정 이력이 없으면 종전대로 임계 기반 자동승급 — 가드 추가가 정상 경로를 막지 않는다."""
+    conn = _FakeConn(settled=None)
+    out = G.auto_promote_or_queue_enum(
+        conn, "product.sales", "dbo", "T_Order", "status", "1", "대기",
+        confidence=0.95, threshold=0.9)
+    assert out == "auto_promoted"
+    assert conn.state["inserted"], "정상 후보가 enum_dictionary 에 기록되지 않았다"
+
+
+def test_settled_enum_helper_self_defends_when_caller_omits_global():
+    """헬퍼 **자신이** 전역 scope 를 보장한다 — 호출부가 빠뜨려도.
+
+    ⚠ 이 테스트가 없으면 헬퍼 안의 `if GLOBAL_SCOPE not in scope_list: append` 는 **등가
+    뮤턴트**가 된다(유일 호출부가 이미 `common` 을 넘기므로 지워도 결과가 같다, 2026-09-01
+    뮤테이션 라운드에서 실증). 그 줄이 방어로서 의미를 가지려면 호출부 없이도 검사돼야 한다 —
+    안 그러면 두 번째 호출부가 생기는 날 조용히 자기 scope 에 갇힌다.
+    """
+    conn = _FakeConn(settled=("rejected", "common"))
+    out = G._settled_enum_status(conn, ["product.sales"], "dbo", "T_Order", "status", "9")
+    assert out == ("rejected", "common")
+    hits = [c for c in conn.state["captured"] if "FROM enum_feedback" in c[0]]
+    assert hits and G.GLOBAL_SCOPE in hits[0][1][0], (
+        f"호출부가 전역을 빠뜨리자 헬퍼도 전역을 안 봤다(scopes={hits[0][1][0]!r})")
+
+
+def test_settled_enum_helper_dedupes_scope_list():
+    """`sk == common` 인 호출부가 `['common','common']` 을 만들지 않는다."""
+    conn = _FakeConn(settled=None)
+    G._settled_enum_status(conn, ["common", "common", "COMMON"], "dbo", "T", "c", "1")
+    hits = [c for c in conn.state["captured"] if "FROM enum_feedback" in c[0]]
+    scopes = hits[0][1][0]
+    assert scopes == [G.GLOBAL_SCOPE], f"scope 목록에 중복이 남았다: {scopes!r}"

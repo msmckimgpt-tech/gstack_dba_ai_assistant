@@ -144,6 +144,14 @@ docker compose run --rm \
 - **잔여**: 실 LLM run end-to-end 전이는 개인 AI 브리지 러너 미연결로 미실측(전송 버튼
   `is-access-blocked`) — 폴링 함수 실 구동으로 같은 배선을 덮었고, 실 run 은 POST-DEPLOY 잔여.
 
+### 20260901T1245-ai-conn-chip-postdeploy 연결 칩 프로필 행 이동 POST-DEPLOY 재실측 (docs-only, 2026-09-01) — **Environment: Windows-browser (PASS — 배포본 `40340f53` 자산 그대로, 주입 없음 — `docs/test-runs.d/TASK-20260901T1200-ai-conn-chip-to-profile-row-postdeploy.md`)**
+
+- 서빙 자산 확인: `profile.css` 배치 규칙 1건 · `chat.css` footer 접힘 규칙의 `.ai-conn` 잔여
+  **0건** · 칩이 `.sidebar-profile` 안(144행, `composer-footer` 406행보다 앞) · 라벨 4종 접두 없음.
+- **16조합 전부 배포 전 실측치와 일치** — `.composer-footer` 전 조합 `display: none`(제보 여백
+  해소), `admin`/`mckim` 네 상태 같은 줄·행 높이 65px 고정, 15자/21자 계정 아래 줄·가로 넘침 0.
+- 측정 가드: 칩의 런타임 부모가 `.sidebar-profile` 이 아니면 조기 반환 — 통과.
+
 ### 20260901T0530-connect-modal-transition 명령 경로·«업데이트 필요» 갱신도 닫히도록 판정 축 교체 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (배포 후 POST-DEPLOY 실측 — `docs/test-runs.d/TASK-20260901T0530-connect-modal-transition.md`)**
 
 - **제보 재현**: 같은 테스트를 **현재 라이브 배포본**에 태우면 **6건 FAIL**(I1c·I1d·I2c·I2d·I3b·I4)
@@ -3701,3 +3709,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - 증적: `docs/test-runs.d/TASK-20260901T170000-lineage-row-compaction.md`
 
 | TEST-20260901T170000-runner-log-postdeploy | `static/agent/bridge_agent.py` (Windows-browser) | POST-DEPLOY — 실 Windows 브라우저 fetch 로 배달 지문 `a17b8f5ea7f6` (main 일치·PRE 에서 갱신) + 서빙 본문에 구조화 로그 존재. 배포본을 실제 구동해 원장 4사건·토큰 마스킹 0건 확인. **화면 렌더 변경 0**. 증적 `docs/test-runs.d/TASK-20260901T163000-runner-log-structure.md` | feature-0043 AC-20260901T163000-runner-log-1~6 |
+
+## TASK-20260902T010304-doc-sync-rn-0902 — 릴리즈노트 2026-09-01 블록 신설 검증
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유: 본 changeset 은 릴리즈노트 **콘텐츠 데이터 + 그 companion 문서** 전용이고 렌더 로직(`release-notes.js`)·마크업(`index.html`/`admin.html`)·CSS 델타가 **0** 이다. 무인 cron run 이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper 소유(v3)라 이 커밋 시점에 라이브 화면에 새 내용이 존재하지 않는다. 대체로 아래 DOM 테스트 + 구조 단언을 수행했다).
+- `node --check static/release-notes-data.js` → PASS.
+- `node tests/verify_release_notes.mjs` → **ALL PASS 34 / 0**. 편집 **전** 동일 스크립트를 cycle 초반에 실행해 34/0 을 측정했으므로 **회귀 0** 을 실증한다(jsdom 은 `/tmp/node_modules` 에 선재 — 스크립트가 그 경로를 하드코딩하므로 미설치 세션에서는 실행 불가).
+- 구조 단언: `releases` 57→**58**(신규 date 블록 1개) · `generated`=="2026-09-01"==`releases[0].date` · `releases[0].items` **17** + `summary` 보유 · `releases[1]`(2026-08-31) 불변 · 총 항목 424→**441** · **`date: "2026-08-31"` 이하 전 구간 바이트 동일**(순증 25,734B 전량이 신규 블록) · `window.RELEASE_NOTES` 앞 head 구간도 바이트 동일 · `type` ∈ {new,improved,fixed} · `area` ∈ {work,admin,common} · 스키마 외 키 0 · date 중복 0.
+- 누출 스캔(19패턴 — feature-id / 러너·워커·핸들러 / `bridge_*` / payload·JSON / 폴링 / `Kind=` / `wired` / 파일확장자 `.py`·`.js` / MCP · `get_task_context` / WSL / endpoint / API): 신규 17항목 + summary 구간 **실질 0건**. 유일 히트인 「브리지 작업」 2건은 `admin.html` 에 5회 · `admin/tasks.js` 3회 · `admin/usage.js` 2회 노출되는 **실제 화면 탭 라벨**이므로 내부용어 노출이 아니다(grep 실측).
+- reconcile-first 실측(커밋 직전 재측정 01:57:17): 서빙 `https://mysql-ai.company.local/static/release-notes-data.js` 200 · md5 `4c150bcc…` = `origin/main` blob 과 동일 → 파리티 갭 0. `repo/` main checkout clean · HEAD == `origin/main` == `a2933614` · 배포 실패 마커 0. 서빙 캐시토큰 `?v=b85ff1d4986d`(content-hash 자동 주입 — 수기 bump 하지 않았다).
+- **Pass/Fail: PASS**.

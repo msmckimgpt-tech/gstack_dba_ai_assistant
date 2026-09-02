@@ -6,10 +6,20 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-stale-runner-outraces-fresh-one — fixed:undeployed (L4↔L7 경계; 서버가 «낡았다» 를 알고도 점유를 내줘 사용자의 갱신 조치가 무효화)
+## FR-stale-runner-outraces-fresh-one — fixed:deployed:unverified-live (L4↔L7 경계; 여러 러너 중 «누가 정본인가» 에 답이 없어 옛 연결이 질문을 가로채고 연결 모달도 완수되지 않음)
 
-- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 20 · 뮤테이션 5종 KILL · 4 feature 전량
-  rc=0 · ruff clean). 배포·라이브 실측 미수행.
+- **status**: `fixed:deployed:unverified-live` — **2단계**로 해소.
+  - **1차**(PR #1491, 배포 `0f89132e`): 양보 판정 + 집행(`claim_request` 409) + 억제(목록·대기)
+    + 러너 자가 종료 신호. 단 판정축을 **빌드 지문**으로 잡았다.
+  - **2차 축 정정**(`CHG-20260901T183000`): 사용자 재현(`root` → `claude-corp` 연속 연결)에서
+    **두 러너의 지문이 같아** 1차 판정이 무판정이었다. 사용자가 준 규칙은 처음부터 «연결 순서»
+    였다 → 축을 **토큰 발급 순서**로 교체. 같은 뿌리의 두 번째 증상(연결 모달이 닫히지 않음)은
+    `account_runner_build` 의 하트비트 정렬이 만든 `runner_stale` **진동**이었고, 화면 정본도
+    같은 축(`ORDER BY t.Id DESC`)으로 옮겨 해소했다.
+  - 검증: 23건 · 뮤테이션 4종 KILL(⚠ 최초 M1 생존 → 테스트 더블 판별력 보강 후 KILL) ·
+    4 feature rc=0 · ruff clean.
+- **교훈(일반화)**: 사고 하나에서 축을 뽑으면 그 사고의 **우연한 속성**이 규칙에 섞인다.
+  사용자가 규칙을 문장으로 줬을 때는 그 문장을 축으로 삼아야 한다.
 - **source**: 사용자 재보고 (2026-09-01) — "웹페이지 새로고침, 연결 준비를 통해 러너를 다시
   연결한 후 요청을 보냈지만 같은 이슈가 확인되어 조치가 필요합니다".
 - **last_seen**: 2026-09-01 · **seen_count**: 1 · **seen_distinct_conv**: 1
@@ -2467,6 +2477,46 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   corroboration(msdb/sys 차단 후 `search_db_objects` 호출 전환율) 재측정 시 `verified`.
 
 ---
+
+## FR-stale-runner-outraces-fresh-one — fixed:undeployed (L4↔L7 경계; 서버가 «낡았다» 를 알고도 점유를 내줘 사용자의 갱신 조치가 무효화)
+
+- **status**: `fixed:undeployed` — 코드/테스트 완료(신규 20 · 뮤테이션 5종 KILL · 4 feature 전량
+  rc=0 · ruff clean). 배포·라이브 실측 미수행.
+- **source**: 사용자 재보고 (2026-09-01) — "웹페이지 새로고침, 연결 준비를 통해 러너를 다시
+  연결한 후 요청을 보냈지만 같은 이슈가 확인되어 조치가 필요합니다".
+- **last_seen**: 2026-09-01 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **modality**: 1:1 · **conv(마스킹)**: `…d7010dcf` · task `t_SGLPV3…` (17:20:03)
+- **symptom_confidence**: high · **rootcause_confidence**: high
+  (`WebOAuthTokens` 두 토큰 지문 + 러너 로그 처리 시각 + 배포본 지문 직접 산출 3중 대조)
+- **suspected_layers**: **L4**(점유 술어에 러너 신선도 축 부재) ↔ **L7**(사용자가 지시받은 조치가
+  무효화되는데 화면에 그 사실이 없음)
+
+- **증상(signal)**: `E-USR` 재보고 — **직전 cycle 의 안내를 그대로 따랐는데 결과가 같음**.
+  이 부류는 이탈보다 나쁘다: 안내를 지켰는데 같으면 다음 안내를 믿을 이유가 사라진다.
+- **confirmed_root_cause**: 같은 계정(`account 10`)에 러너 2개가 하트비트 중이었고
+  (배포본 `d0ac1263d454` vs 옛 `0a4ba732366c`), 점유가 선착순 원자 UPDATE 라 옛 러너가 17:20:03
+  질문을 먼저 집어 옛 코드로 답했다. 서버는 `runner_update.stale_build` 로 그 사실을 **알고
+  있었지만 안내만 하고 점유를 내줬다** — 「안다」와 「막는다」 사이가 비어 있었다.
+  재발경로 = **ux contract**(러너는 우리가 갱신할 수 없는 사용자 머신 파일 → 「사용자가 갱신하면
+  된다」는 계약 자체가 다중 러너 앞에서 성립하지 않았다).
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님(사용자 조치가 무효화). **F2** 사용자 오류 아님 —
+  지시받은 대로 했다. **F3** 기수정 아님 — 직전 cycle 은 *사유 소실* 축이고 이건 *그 수정이
+  도달하지 못하게 막는* 별개 구조. **F4** 의도된 동작 아님(선착순은 단일 러너 전제의 설계였다).
+  **F5** ANCHOR 충돌 없음. **F6** 외부 기인 아님 — 판정도 집행도 우리 서버에 있다.
+- **corroboration**: 단일 대화지만 Phase 7.4 **명백한 구조결함** 충족 — 삼각측량이 코드 정본까지
+  `confirmed` 이고, 다중 러너는 이 제품의 정상 사용 형태(사용자가 예외로 명시 요구)라 재발이
+  구조적으로 보장된다.
+- **triage**: S=4 · F=2 · L=4 · C=5 · R=3 → **20**, disposition=**fix-now**. 위험등급 **Major**
+  (§12.3 점유 집행 경로). 사용자 승인 2026-09-01(러너 자가 종료 + 계정 예외 명시).
+- **fix**: `CHG-20260901T173000-ai-claude-feature-0043-stale-runner-yield` /
+  **코드 거주 `feature-0043-external-llm-bridge`**(서버측은 feature-0003 cross-ref) /
+  `REV-20260901T173000` (인라인 적대 3렌즈 — P1 1건 자체 적발·수정).
+- **핵심 설계**: 판정은 **상대**다(같은 계정에 배포본 지문 러너가 실제로 들을 때만 양보) —
+  절대 판정은 배포 직후 전 사용자 중단이 된다. 서버 축은 **러너 갱신 없이 즉시 발효**하고,
+  러너 자가 종료는 그 위의 정리 축이다(옛 프로세스에는 그 코드가 없으므로).
+- **라이브 실측 필요분**: 서버 축은 배포 후 옛 러너 재등장 시 즉시 관측 가능. 자가 종료는 러너가
+  새 사본으로 갱신된 뒤에만. 재측정 축 = 같은 `AccountId` 에 서로 다른 지문 러너가 동시
+  하트비트하는 창의 지속 시간.
 
 ## FR-agent-job-name-mangled-by-ident-sanitizer — fixed:deployed:unverified-live (L2 capability gap; 식별자 정제기를 리터럴 값에 오적용해 88% 작업이 조회 불가)
 

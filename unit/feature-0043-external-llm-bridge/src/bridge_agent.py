@@ -871,12 +871,64 @@ def _self_os() -> str:
 #: `console_jobs` — 관리 콘솔 작업(대화가 아닌 프롬프트 한 덩어리). 신고하지 않으면 서버가
 #:   배급하지 않는다. 신고 없이 받으면 대화용 프레이밍으로 감싸 산출물이 조용히 망가진다.
 #: `batch_jobs` — 배경 배치까지 받겠다는 **별도 동의**. 기본 포함이 아니다: 그 작업은 이
-#:   사람이 요청한 적 없고 자기 계정 토큰을 태운다. `--batch` 로 켠다.
+#:   사람이 요청한 적 없고 자기 계정 토큰을 태운다. 이제 동의는 **웹에서 켠다**(하트비트
+#:   응답의 `batch_consent`) — `--batch`/`--no-batch` 는 이 머신의 명시 override 로 남는다.
 #: `self_review` — 답변 초안을 자기가 5축으로 검증할 줄 안다. **자격이 아니라 관측 축**이라
 #:   기본 포함이다: 신고하지 않으면 콘솔이 「검증할 줄 모르는 러너」와 「검증했는데 통과」를
 #:   구분하지 못하고, 구분하지 못하면 운영자는 전자를 후자로 읽는다. 실제 수행 여부는
 #:   서버 설정(`REDTEAM_ENABLED`)이 정하며 `--no-self-review` 로 이 머신에서 끌 수 있다.
 AGENT_FEATURES: tuple[str, ...] = ("console_jobs", "self_review")
+
+#: 배경 배치 동의의 기능 이름. 서버 `shared/bridge_consent.BATCH_FEATURE` 와 같은 값이어야 한다.
+BATCH_FEATURE = "batch_jobs"
+
+
+def normalize_consent(value: object) -> bool:
+    """서버가 준 동의 값을 bool 로 굳힌다. **모르면 False**(남의 토큰을 태우는 축).
+
+    ⚠ 이 함수는 서버 `shared/bridge_consent.normalize_consent` 의 **거울**이다. 러너는
+    사용자 머신에 홀로 놓이는 단일 파일이라 그 모듈을 import 할 수 없다. 이음매 테스트가
+    두 구현을 같은 입력표로 돌려 대조한다 — 손으로 맞춰 둔 두 구현은 한쪽만 고쳐지는 날
+    조용히 갈리고, 그 갈림은 양쪽을 각각 검사하는 테스트로는 보이지 않는다.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if not text:
+        return False
+    return text in {"1", "true", "yes", "on", "t", "y"}
+
+
+def apply_consent(base_features, *, server_consent, local_override=None) -> tuple:
+    """신고할 `features` 를 만든다 — `shared/bridge_consent.apply_consent` 의 **거울**.
+
+    `local_override`: `True`=`--batch`(이 머신에서 명시 허용) · `False`=`--no-batch`(이 머신만
+    예외) · `None`=지시 없음(서버 값을 따른다). override 가 서버 값을 **양방향으로** 이긴다.
+    """
+    feats = [str(f) for f in (base_features or []) if str(f) and str(f) != BATCH_FEATURE]
+    want = normalize_consent(server_consent) if local_override is None else bool(local_override)
+    if want:
+        feats.append(BATCH_FEATURE)
+    return tuple(feats)
+
+
+def _batch_override_from_args(args) -> "bool | None":
+    """`--batch` / `--no-batch` 를 3-값 override 로 읽는다. 지시가 없으면 `None`.
+
+    둘 다 준 경우는 **끄는 쪽**을 택한다. 모순된 지시에서 남의 계정 사용량을 태우는 방향으로
+    기우는 것은 근거가 없다 — argparse 의 상호배타(`add_mutually_exclusive_group`)를 쓰지 않는
+    이유는, 옛 온보딩 명령이 `--batch` 를 달고 있는 사람이 새 스크립트를 덧붙였을 때 러너가
+    **기동조차 못 하는** 것보다 조용히 안전한 쪽을 고르는 편이 낫기 때문이다.
+    """
+    if getattr(args, "no_batch", False):
+        return False
+    if getattr(args, "batch", False):
+        return True
+    return None
 
 
 def _transport_is_safe(base: str) -> bool:
@@ -3449,8 +3501,9 @@ def release_own_claims_on_exit() -> None:
 #: atexit) 각자 찍으면 원장에 종료가 두 번 나오고, 그러면 「러너가 두 번 죽었나」로 읽힌다.
 _RUN_STOPPED = threading.Event()
 
-#: **같은 계정**에 배포본과 같은 러너가 붙어서, 이 러너가 물러나야 한다는 서버 판정
-#: (TASK-20260901T173000, 사용자 결정 2026-09-01).
+#: **같은 계정**에 더 나중에 연결된 러너가 붙어서, 이 러너가 물러나야 한다는 서버 판정
+#: (TASK-20260901T183000, 사용자 결정 2026-09-01 — 「연결된 계정에서 다른 신규 러너에 연결되는
+#: 부분이 확인된다면 오래된 러너는 프로세스를 종료 … 계정이 다를 경우는 예외」).
 #:
 #: 왜 Event 인가: 이 사실을 아는 것은 하트비트 스레드이고, 물러날 수 있는 것은 대기 루프다
 #: (진행 중 작업을 마치고 끝내는 절차가 거기 있다). 스레드에서 곧바로 죽이면 처리 중이던
@@ -3517,7 +3570,8 @@ def _arm_exit_release(api: Api) -> None:
 
 
 def start_heartbeat(api: Api, stop: threading.Event,
-                    runtimes: list | None = None) -> threading.Thread:
+                    runtimes: list | None = None,
+                    batch_override: "bool | None" = None) -> threading.Thread:
     """연결 유지 신호를 보내는 데몬 스레드 (TASK-20260828T150000).
 
     **대기 스레드와 분리한 것이 이 기능의 핵심이다.** 대기(`wait_for_request`)는 빈 워커 자리를
@@ -3594,6 +3648,30 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 # 사용자는 「재설치했는데 목록이 그대로」를 겪었다 — 그날 러너가 세 번 바뀌었고
                 # 버전(날짜)은 셋 다 같아서 어디에도 그 사실이 드러나지 않았다. 30초마다
                 # 반복하면 소음이라 세션당 한 번만 남긴다(그 뒤로는 화면 쪽 안내가 맡는다).
+                # ── 배경 배치 동의를 **웹 토글에서 따라온다** (TASK-20260901T190000) ──────
+                #
+                # 종전에는 `--batch` 뿐이라 바꾸려면 러너를 다시 띄워야 했다(진행 중 작업이
+                # 끊긴다). 이제 서버가 계정별 동의를 하트비트에 실어 주고, 여기서 신고를
+                # 갱신한다 — 다음 하트비트에 서버가 그 신고를 저장하면 배급 자격이 바뀐다.
+                #
+                # ⚠ 키가 **없으면 건드리지 않는다.** 구 서버·기록 실패 응답에는 이 키가 없고,
+                # 없는 것을 `False` 로 읽으면 그때마다 동의가 꺼졌다 켜졌다 진동한다.
+                if "batch_consent" in res:
+                    _want = apply_consent(api.features,
+                                          server_consent=res.get("batch_consent"),
+                                          local_override=batch_override)
+                    if _want != tuple(api.features):
+                        api.features = _want
+                        # 남의 계정 사용량을 태우는 축이라 **바뀐 사실을 반드시 말한다** —
+                        # 조용히 켜지면 사용자는 자기 AI 가 무엇을 하고 있는지 알 수 없다.
+                        log_event(
+                            "hb.batch_consent",
+                            ("배경 작업(인사이트·클러스터 라벨)을 받도록 켜졌습니다 — "
+                             "웹의 '내 AI 연결' 토글에서 끌 수 있습니다."
+                             if BATCH_FEATURE in _want else
+                             "배경 작업을 더 이상 받지 않습니다."),
+                            source=("local" if batch_override is not None else "web"),
+                            features=list(_want))
                 _u = res.get("runner_update") or {}
                 # 같은 계정에 최신 러너가 붙었다 — **이 러너는 물러난다** (사용자 결정
                 # 2026-09-01). 남아 있으면 선착순 점유로 사용자 답변을 옛 동작으로 되돌린다.
@@ -3602,8 +3680,9 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 if _u.get("superseded") and not _SUPERSEDED.is_set():
                     _SUPERSEDED.set()
                     log_event(_EV_HB_SUPERSEDED,
-                              "같은 계정에 최신 러너가 연결됐습니다 — 이 러너는 하던 일을 마치고 "
-                              "물러납니다(질문은 최신 러너가 처리합니다).",
+                              "같은 계정에 더 나중에 연결된 러너가 있습니다 — 이 러너는 하던 일을 "
+                              "마치고 물러납니다(질문은 그 최신 연결이 처리합니다). "
+                              "계정이 다른 러너는 영향받지 않습니다.",
                               level="WARN", local_build=_self_build(),
                               peer_build=str(_u.get("superseded_by_build") or "") or None)
                 if _u.get("stale_build") and not _stale_said:
@@ -3671,9 +3750,11 @@ def main() -> int:
     ap.add_argument("--cmd", default=os.environ.get("BRIDGE_CMD", "") or None,
                     help="직접 지정할 AI 명령. {prompt} 자리에 질문이 들어간다")
     ap.add_argument("--batch", action="store_true",
-                    help="배경 배치 작업(인사이트·클러스터 라벨)까지 받는다. "
-                         "기본은 받지 않는다 — 그 작업은 당신이 요청한 적 없고 당신 계정의 "
-                         "AI 사용량을 쓴다.")
+                    help="배경 배치 작업(인사이트·클러스터 라벨)까지 받는다 — **이 머신에서 "
+                         "명시 허용**. 지정하지 않으면 웹의 '내 AI 연결' 토글을 따른다.")
+    ap.add_argument("--no-batch", action="store_true",
+                    help="웹 토글이 켜져 있어도 **이 머신에서는** 배경 배치를 받지 않는다. "
+                         "그 작업은 당신이 요청한 적 없고 당신 계정의 AI 사용량을 쓴다.")
     ap.add_argument("--no-self-review", action="store_true",
                     help="답변을 내보내기 전 **자기 검증**(5축)을 하지 않는다. 기본은 서버 "
                          "설정을 따라 수행 — 검증은 AI 호출을 한 번 더 쓰므로 "
@@ -3785,10 +3866,14 @@ def main() -> int:
     # 따로 대입하면 나중 대입이 앞의 것을 지운다(`--batch --no-self-review` 조합에서
     # 배치 동의가 사라지던 형태의 결함).
     _feats = list(AGENT_FEATURES)
-    if getattr(args, "batch", False):
-        # 서버는 이 신고를 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을
-        # 가져가지는 않는다.
-        _feats.append("batch_jobs")
+    # 배치 동의: `--batch`/`--no-batch` 는 **이 머신의 명시 override**, 없으면 웹 토글을 따른다
+    # (TASK-20260901T190000). 기동 시점에는 아직 하트비트를 받지 못했으므로 서버 값을 모른다 —
+    # 모르면 받지 않는다(fail-closed). 첫 하트비트(≤30초)가 오면 아래 `_loop` 가 갱신한다.
+    #
+    # 서버는 이 신고를 권한과 함께 확인해야 배급하므로, 동의만으로 남의 조직 작업을
+    # 가져가지는 않는다.
+    _batch_override = _batch_override_from_args(args)
+    _feats = list(apply_consent(_feats, server_consent=False, local_override=_batch_override))
     if getattr(args, "no_self_review", False):
         # 끈 사실을 **신고에서도 지운다** — 신고를 남긴 채 수행만 건너뛰면 콘솔은 이 러너를
         # "검증할 줄 아는데 결과가 없다"(= 통과)로 읽는다. 그 오독이 이 축을 만든 이유다.
@@ -3907,7 +3992,7 @@ def main() -> int:
     # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
     heartbeat_stop = threading.Event()
-    start_heartbeat(api, heartbeat_stop, runtimes)
+    start_heartbeat(api, heartbeat_stop, runtimes, batch_override=_batch_override)
 
     cancels = CancelRegistry()
     #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.
@@ -3952,10 +4037,10 @@ def main() -> int:
             heartbeat_stop.set()
             idle = shutdown_after_drain(active, cancels)
             log_event(_EV_HB_SUPERSEDED,
-                      "최신 러너에 자리를 넘기고 종료합니다.",
+                      "더 나중에 연결된 러너에 자리를 넘기고 종료합니다.",
                       level="WARN", idle=idle, active=active.count())
-            _log("  이 러너는 더 이상 필요하지 않습니다 — 웹 화면의 「연결 준비」로 받은")
-            _log("  최신 러너가 이미 같은 계정에 연결돼 질문을 처리합니다.")
+            _log("  이 러너는 더 이상 필요하지 않습니다 — 같은 계정에 더 나중에 연결된")
+            _log("  러너가 이미 질문을 처리하고 있습니다(한 계정에는 러너 하나만 남깁니다).")
             return 0
         res = api.call("wait_for_request", {}, timeout=_WAIT_TIMEOUT_SEC)
         code = res.get("_http")
