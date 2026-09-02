@@ -210,6 +210,21 @@ function _connOk(o) {
   return !!(o && o.listening === true && o.stale !== true);
 }
 
+/** 서버 응답의 낡음을 **사용자 축**으로 접는다 (2026-09-02, 사용자 결정).
+ *
+ *  `runner_stale` 은 «파일이 배포본과 다른가» 이고 그 판정은 엄격하게 유지한다. 그런데 러너
+ *  파일은 거의 모든 배포에서 바뀌므로 그 값은 **러너와 무관한 배포**에도 하루 몇 번씩 참이
+ *  된다. 스스로 갱신할 줄 아는 러너에게 그것은 곧 풀리는 일시적 상태이지 사용자가 할 일이
+ *  아니다 — 그런 낡음을 화면에 내보내면 누를 것이 없는 「업데이트 필요」가 반복해서 뜬다.
+ *
+ *  ⚠ 접는 식은 **이 함수 하나**여야 한다. 칩 문구·모달 성공 조건·자동 실행 자격·「재실행해도
+ *  그대로」 판정이 모두 이 축을 읽으므로, 두 벌이 되면 그중 하나만 고쳐지는 순간 화면이
+ *  자기 안에서 갈린다(이 파일이 `runner_stale` 축에서 이미 한 번 겪은 형태다).
+ */
+function _actionableStaleOf(body) {
+  return !!(body && body.runner_stale === true && body.runner_self_updating !== true);
+}
+
 /** 지금 «연결은 됐는데 러너가 낡은» 상태인가 — 화면의 「업데이트 필요」와 같은 축. */
 function _isStaleNow(o) {
   return !!(o && o.listening === true && o.stale === true);
@@ -679,7 +694,8 @@ async function _launchRunner() {
 function _isListeningNow(body, attempt) {
   // 자동 경로와 **같은 축**으로 본다 — 대기 중이어도 러너가 배포본과 다르면 사용자가 풀려던
   // 문제(«업데이트 필요»)는 그대로다. 두 경로가 다른 축을 쓰면 실행 버튼만 «됐다» 고 말한다.
-  if (body && body.logged_in !== false && body.listening === true && body.runner_stale !== true) {
+  if (body && body.logged_in !== false && body.listening === true
+      && !_actionableStaleOf(body)) {
     return true;
   }
   // 낡아서 버려진 응답(null)이어도, **이번 시도 안에서** 다른 요청이 «쓸 수 있음» 을 반영했으면
@@ -984,7 +1000,8 @@ export async function refreshConnState() {
     // 반영되는 응답만, 그리고 **출발했을 때와 같은 시도**의 것만 관측으로 남긴다.
     if (atStart === _launchAttempt) {
       _lastObserved = { attempt: atStart,
-                        ok: !!(b && b.logged_in !== false && b.listening && !b.runner_stale) };
+                        ok: !!(b && b.logged_in !== false && b.listening
+                              && !_actionableStaleOf(b)) };
     }
     if (!b || b.logged_in === false) {
       const el = $("aiConnState");
@@ -994,7 +1011,19 @@ export async function refreshConnState() {
       _paintGate({ compose_blocked: false });
       return b || null;
     }
-    _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale, b.runner_build);
+    // ⚠ 낡음을 **여기서 한 번** 사용자 축으로 접는다 (2026-09-02, 사용자 결정).
+    //
+    //   서버의 `runner_stale` 은 «파일이 배포본과 다른가» 이고, 그 판정은 그대로 엄격하다.
+    //   그런데 러너 파일은 거의 모든 배포에서 바뀌므로 그 값은 **러너와 무관한 배포**에도
+    //   하루에 몇 번씩 참이 된다. 스스로 갱신할 줄 아는 러너라면 그것은 곧 풀리는 일시적
+    //   상태이지 사용자가 할 일이 아니다 — 그런 낡음을 화면에 내보내면 「업데이트 필요」가
+    //   반복해서 뜨는데 정작 누를 것이 없다.
+    //
+    //   접는 자리를 **여기 하나**로 두는 이유: 칩 문구·모달 성공 조건·자동 실행 자격·
+    //   「재실행해도 그대로」 판정이 모두 `_lastObs.stale` 을 읽는다. 각자 따로 접으면 그중
+    //   하나만 고쳐지는 순간 화면이 자기 안에서 갈린다.
+    const _actionableStale = _actionableStaleOf(b);
+    _paintConn(!!b.connected, !!b.listening, epochAtStart, _actionableStale, b.runner_build);
     _paintGate(b);
     // 마지막으로 연결됐던 명령 계열 — 창을 열 때 어느 탭을 먼저 보일지 정한다 (2026-09-01).
     // 세대·순번 검사를 이미 통과한 응답만 여기 온다.
