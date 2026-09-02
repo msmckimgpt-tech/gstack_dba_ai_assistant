@@ -3506,3 +3506,12 @@ M1~M12 **12/12 KILLED** · 정상 소스 PASS(30/30). 3 feature 전량 실행 �
 
 코드 변경 없음(문서·증적만). `CHG-20260902T173000` 배포 후 재실측 — 전 항목 PASS.
 §18.8 dispatch 대상 아님(비정책 doc-only). 판정 근거는 위 증적 문서.
+
+## REV-20260902T150000-ai-claude-corp-feature-0043-selfupdate-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
+직전 항 `REV-20260902T140000-…-runner-self-update` 의 검토 결과가 그대로 유효하다.
+
+기록은 전부 관측값이다. 닫지 못한 축(부트스트랩 1회 전이의 사용자 눈 확인)과 불리한 관측
+(배포 창 `no upstreams` 16건)을 **함께** 남겼다 — 유리한 것만 적으면 그 기록은 다음 조사에서
+쓸모가 없다.

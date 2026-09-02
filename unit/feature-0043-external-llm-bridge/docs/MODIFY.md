@@ -3500,3 +3500,17 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 **비가시 항목 보존**(권한 부여→저장→회수→빈 저장→재부여 왕복에서 `claude:haiku/high` 생존).
 검증 계정 `dqa_permgate_probe` 는 override 제거 + 비활성화로 정리했다.
 증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260902T160000-ai-jobs-perm-gate.md §2`.
+
+## CHG-20260902T150000 — POST-DEPLOY 실측 기록 (문서 전용)
+
+`CHG-20260902T140000` 의 배포 후 검증. 배포 `a46727a2`.
+
+- 화면·API 축: `runner_self_updating` 필드 존재 · 서빙 JS 심볼 5건 · 배포 러너에 자기 갱신
+  코드 전량 적재.
+- ⭐ **라이브 서버 상대 갱신 경로 5단계 실측**(수신·평문 거절·원자 교체·자기 인식·무한 고리
+  차단). `/static/agent/bridge_agent.py` 가 공개 정적 경로라 **토큰 없이, 사용자 러너에
+  영향 없이** 전 구간을 돌릴 수 있었다.
+- ⚠ 배포 창에 `no upstreams available` **16건(12초)**. soak 는 통과 보고 — 그 게이트는 blip 을
+  관용하므로 「성공 = 무중단」이 아니다. 코드 변경과 무관한 엣지/롤링 축이나 사실로 남긴다.
+
+코드 변경 없음.
