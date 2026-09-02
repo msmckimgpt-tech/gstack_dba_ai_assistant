@@ -2044,6 +2044,13 @@ def _bridge_task_duration_meta(conn, task_id: str) -> dict[str, Any]:
     return _bridge_answer_duration_meta(row[0], row[1])
 
 
+#: 구간 하나를 «분해로 보여줄 가치가 있다» 고 볼 최소 길이(ms). **프런트 표시 임계와 같은
+#: 값이어야 한다** — `app.js` 의 `formatDurationBreakdown` 이 `>= 250` 인 구간만 그리므로,
+#: 여기서 더 관대하면 화면에 아무것도 못 그리는 분해를 각인하고(정보 0), 더 엄하면 프런트가
+#: 그릴 수 있는 구간을 서버가 미리 버린다. 두 숫자의 정합은 회귀 테스트가 잠근다.
+_BRIDGE_SEGMENT_MIN_MS = 250.0
+
+
 def _bridge_answer_duration_meta(total_ms: Any, queued_ms: Any) -> dict[str, Any]:
     """브리지 답변의 **총 수행시간** 각인을 만든다 (`duration_ms` + `duration_breakdown`).
 
@@ -2067,6 +2074,17 @@ def _bridge_answer_duration_meta(total_ms: Any, queued_ms: Any) -> dict[str, Any
       않은 계측을 있다고 말하는 셈이다(프런트는 250ms 미만 구간을 생략하므로 표시도 동일).
     - 값을 못 구하면 **빈 dict** 를 돌려 각인을 생략한다 — 거짓 `0초` 를 그리는 것보다
       아무것도 안 그리는 쪽이 정직하고, 종전(미각인) 동작과 같아 회귀가 없다.
+    - **가를 것이 없으면 분해를 싣지 않는다** (라이브 관측 2026-09-02): 대기가 0 이면
+      분해가 실행 한 구간뿐이고 그 값은 총량과 같다. 프런트는 분해를 괄호로 덧붙이므로
+      화면에 `36초 (추론 36초)` 처럼 같은 숫자가 두 번 나온다. 정보가 0인 괄호다.
+
+    ## 해상도 한계 (라이브 실측 2026-09-02)
+
+    `WebAiTasks` 의 세 시각은 `DATETIME`(소수부 없음)이라 **초 해상도**가 상한이다 —
+    `TIMESTAMPDIFF(MICROSECOND, …)` 를 써도 소수부가 0 으로 나온다(실측: 140000.0 ·
+    36000.0). 서버 LLM 경로는 `perf_counter` 기반이라 밀리초까지 정확하지만, 이쪽은
+    원장 시각에서 파생하므로 그 이상을 주장할 수 없다. 총 수행시간 표시(초 단위 이상)에는
+    충분하고, 더 필요해지면 컬럼을 `DATETIME(3)` 으로 올리는 별건이다.
 
     Args:
         total_ms: `CreatedAt → SubmittedAt` 밀리초 (SQL `TIMESTAMPDIFF` 산출값).
@@ -2080,18 +2098,23 @@ def _bridge_answer_duration_meta(total_ms: Any, queued_ms: Any) -> dict[str, Any
         # 0 이하(시계 역행·같은 초 반올림)는 각인하지 않는다 — `duration_ms > 0` 가
         # 프런트의 표시 게이트이므로 0 을 실어도 그려지지 않고, 원장만 오염된다.
         return {}
-    breakdown: dict[str, Any] = {"total_ms": total}
     try:
         queued = round(float(queued_ms), 2)
     except (TypeError, ValueError):
         queued = None
-    if queued is not None and 0.0 <= queued <= total:
-        breakdown["queued_ms"] = queued
-        breakdown["inference_ms"] = round(total - queued, 2)
-    else:
-        # 점유 시각이 없거나 총량과 모순되면 구간을 **꾸미지 않는다** — 전체를 실행으로 본다.
-        breakdown["inference_ms"] = total
-    return {"duration_ms": total, "duration_breakdown": breakdown}
+    # 점유 시각이 없거나 총량과 모순되면 구간을 **꾸미지 않는다**. 대기가 표시 임계
+    # (프런트 250ms) 미만이면 «가를 것이 없다» — 분해를 실으면 총량과 같은 숫자가
+    # 괄호로 반복될 뿐이다.
+    if queued is None or not (_BRIDGE_SEGMENT_MIN_MS <= queued <= total):
+        return {"duration_ms": total}
+    return {
+        "duration_ms": total,
+        "duration_breakdown": {
+            "total_ms": total,
+            "queued_ms": queued,
+            "inference_ms": round(total - queued, 2),
+        },
+    }
 
 
 def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answer: str,

@@ -3893,7 +3893,6 @@ claude 22.7초 · codex 112.3초이므로 그것은 **claude 의 목록이 90초
 
 - 신규 스위트 `test_bridge_answer_duration.py` **18 passed** — helper 값 계약 + `_deliver_web_bridge_answer` 실구동(가짜 DB) 양쪽.
 - **결손 주입 3종 전건 FAIL 확인**: 각인 호출 제거 → 3 FAIL · 총량 기준을 `ClaimedAt` 으로 → 1 FAIL · 소요 조회를 주 SELECT 로 합침 → 4 FAIL(fail-open 파괴 포함).
-
 ## CHG-20260902T183000-worker-tick-gate — 워커가 잡 처리를 **아예 안 부르고 있었다**
 
 이 cycle 최대의 결함이고, 라이브 관찰(AC-3)이 실패해서야 드러났다.
@@ -3928,3 +3927,43 @@ AC-1·AC-2 를 확인할 때 `process_pending` 을 **직접 호출**했다. 그 
 호출, 닫혔으면 위임, 맡길 곳이 없으면 상한 있는 유예. 회수는 어느 쪽이든 돌아야 한다.
 
 계약 테스트가 그 호출이 **조건식 안에 있지 않음**을 AST 로 잠근다(뮤테이션 M11 KILL).
+## CHG-20260902T180500-ai-claude-feature-0043-duration-postdeploy — 수행시간 각인 POST-DEPLOY 실측 + 표시 중복 제거
+
+- **날짜**: 2026-09-02
+- **REQ**: REQ-20260902-bridge-answer-duration (후속)
+- **위험도**: Minor (§12.3 — 각인 형태 조정 1건. 프런트 무변경)
+- **승인**: `deploy_scope: included` (전역, FIRST_REQUEST.md)
+
+### POST-DEPLOY 실측 — 라이브에서 실제로 각인됐다
+
+배포 `ec649a6e`: 전 서비스 SHA 일치 · `no upstreams available` **0건** · surge 0 · healthz 200 ·
+대화 스모크 PASS · 서빙 컨테이너에 신규 심볼 5 hits.
+
+정본 증거는 **실 답변 2건**이다(사용자 머신 러너가 제출한 실제 대화 답변):
+
+| 메시지 | 각인 | 원장 시각 대조 |
+|---|---|---|
+| 2623 (17:51:39) | 140000.0 · `{queued:40000, inference:100000}` | created 17:51:39 → claimed 17:52:19 → submitted 17:53:59 = **140s / 40s** ✓ |
+| 2621 (17:50:30) | 36000.0 | created 17:50:30 → submitted 17:51:06 = **36s** ✓ |
+| 2619 (배포 전) | **없음** | 경계가 배포 시점과 일치 — 대조군 |
+
+### 라이브가 드러낸 것을 고쳤다
+
+**표시 중복**: 대기가 0 인 답변의 분해는 실행 한 구간뿐이고 그 값이 총량과 같다. 프런트가
+분해를 괄호로 덧붙이므로 화면에 `36초 (추론 36초)` 로 같은 숫자가 두 번 나왔다 — 정보가 0인
+괄호다. 가를 것이 없으면(대기가 프런트 표시 임계 250ms 미만이거나 없음) `duration_breakdown`
+을 **싣지 않는다**. 프런트 무변경으로 `36초` 만 남는다.
+
+서버 임계가 프런트 임계와 갈리면 두 방향으로 조용히 틀린다(서버가 관대하면 그려지지 않는
+분해를 각인, 엄하면 그릴 수 있는 구간을 미리 버림). `app.js` 의 숫자를 읽어 대조하는 테스트로
+두 값을 묶었다.
+
+**초 해상도가 상한**(관측): `WebAiTasks` 의 세 시각이 `DATETIME`(소수부 없음)이라
+`TIMESTAMPDIFF(MICROSECOND, …)` 도 소수부가 0 이다 — 실측값이 전부 1000ms 배수인 이유다.
+docstring 에 한계로 명시했다(컬럼을 `DATETIME(3)` 으로 올리는 것은 별건).
+
+### 검증
+
+`test_bridge_answer_duration.py` **22 passed**(기존 18 + 임계 정합·표시 가능 대기·즉시 점유
+4건) · 관련 스위트 실패 0. 상세 증거는
+`docs/test-runs.d/TASK-20260902T172500-bridge-answer-duration-postdeploy.md`.
