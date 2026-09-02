@@ -24,7 +24,9 @@ scope: feature
    - 항목 ID: `LRN-YYYYMMDD-NNNN`
    - Source: 커밋 해시 또는 TASK-ID 포함
    - Applies to: 영향 받는 경로/파일 명시
-8. BLOCKED 항목이 있으면 `REPORT.md`에 정리하여 사람에게 전달한다.
+8. BLOCKED 항목이 있으면 `REPORT.md`에 정리하고, 그중 **사용자 결정이 필요한 항목은
+   AGENTS.md §18.12 「미결정 제시 채널」대로 AskUserQuestion 으로 묻는다** — 기록만으로
+   전달을 갈음하지 않는다.
 9. AGENTS.md §16.5 Git 동기화 절차를 수행한다.
    - Step 1: `verify-completion` pre-commit 검증
    - Step 2: AI가 커밋 수행 (완료 가능한 cycle에서 사용자 결정 대기 금지)
