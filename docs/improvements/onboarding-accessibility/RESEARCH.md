@@ -366,18 +366,146 @@ status: draft
 
 ---
 
-## 7. 다음 단계
+## 7. 다음 단계 — **superseded by §9 (사용자 결정 2026-09-02)**
 
-1. **사용자 결정 필요 (블로킹)**
-   - F-004: 사내 MDM(Intune/GPO)이 존재하는가? 존재하면 이것이 최대 레버이고 제품 트랙 우선순위가 바뀐다.
-   - F-005: AI 미보유 사용자를 위한 폴백을 만들 것인가? (a) 조직 API 키+virtual key / (b) Team 좌석 지급 / (c) 만들지 않음.
-2. **승인 불요 · 즉시 착수 가능**: F-001 · F-006 · F-007 · F-010.
-3. **로드맵화**: 본 문서를 입력으로 `/_dqa:improve_listup` 실행 → `ROADMAP.md`(정합성 6축 review +
-   종속성 순서 + feature_id 배정). 본 문서는 그 입력이지 로드맵이 아니다.
+> 아래는 결정 **이전**의 제안이다. 기록으로 남긴다 — §9 가 무엇을 닫았는지 읽으려면 필요하다.
+
+1. ~~**사용자 결정 필요 (블로킹)**~~ → §9 에서 응답됨
+2. **승인 불요 · 즉시 착수 가능**: F-001 · F-006 · F-007 · F-010 — §9 이후에도 유효.
+3. **로드맵화**: 본 문서를 입력으로 `ROADMAP.md` 산출 → **완료** (`./ROADMAP.md`).
 
 ---
 
-## 8. 출처
+## 9. 사용자 결정 (2026-09-02) — 범위 재확정
+
+초판(§0~§7)은 온보딩 벽 5겹 전체를 다뤘다. 사용자 결정으로 **범위가 「AI 연결」 축 하나로 좁혀졌다.**
+
+| 축 | 결정 | 본 문서에 미치는 영향 |
+|---|---|---|
+| 추론 주체 | **개인 AI(자기 계정) 방식 보존.** 서버 추론 복원은 **보류** | F-005 **보류**(기각 아님 — 되살아날 수 있다). 서버측 폴백 티어는 로드맵에서 제외 |
+| 미터링 | 서버 추론 복원이 보류이므로 **해당 없음** | LiteLLM virtual key 항목 제외 |
+| TLS 신뢰 (W1) | **논외** — 아직 배포 전이며 현재 병목이 아니다 | F-009 **논외**. 단 MCPB 번들은 `NODE_EXTRA_CA_CERTS` 를 manifest `env` 로 주입할 수 있어 **부수적으로** AI 클라이언트 측 CA 마찰을 흡수한다(그것을 목적으로 삼지는 않는다) |
+| 사내 MDM 존재 여부 | 미응답 | F-004 **미판정 보류** — 존재하면 최대 레버라는 판단은 유효하나 확인 전까지 로드맵에 넣지 않는다 |
+| 착수 순서 | **로드맵 먼저** | `./ROADMAP.md` 산출 |
+
+> **사용자 원문**: *"기본적으로 자기 계정을 사용하는 방법은 보존되어야 합니다. 다만, 사용자가 이
+> 방법으로 어떻게 손쉽게 접근할 수 있는지를 검토해주세요."* / *"현재 가장 큰 걸림돌은 'AI 연결'
+> 입니다."*
+
+### 9.1 「AI 연결」 축의 근본 원인 — 우리는 **배포 포맷을 발명했다**
+
+BYO-AI 를 보존한다는 전제에서 §0 의 벽을 다시 보면, W3·W4 와 재발성 마찰의 원인은 하나로 수렴한다:
+
+> **연결을 우리가 만든 배포물(파이썬 상주 러너 + 셸 설치 스크립트 1,506줄)로 구현했다.**
+> AI 클라이언트 생태계는 같은 문제를 위한 **1급 배포 포맷**을 이미 갖고 있고(MCPB `.mcpb` ·
+> Claude Code 플러그인), 그 포맷은 **런타임 · 설치 UX · 설정 UI · 업데이트 채널을 함께 가져온다.**
+> 우리는 그 넷을 전부 자체 구현했고, **넷 모두가 각각 마찰이 됐다.**
+
+| 우리가 자체 구현한 것 | 포맷이 이미 주는 것 | 현재 마찰 |
+|---|---|---|
+| 셸 설치 스크립트 (`bridge_setup.sh` 837줄 + `.ps1` 669줄) | 더블클릭 / 드래그드롭 설치 UI | **W3 터미널 필수** |
+| Python 3.8+ 확보 (winget 설치 대행까지) | **Node.js 가 Claude Desktop 에 동봉** — 별도 런타임 불요 | **W4** |
+| 토큰 전달 (URL·환경변수·스킴, 1회 노출) | `user_config` 자동 설정 UI (민감정보 처리 포함) | 재발급 왕복 |
+| 러너 갱신 (`try_self_update`·supersede·지문 대조) | 확장 버전·업데이트 채널 | **C3 / P0-Z6 4차 재발** |
+| CA 주입 안내 (`NODE_EXTRA_CA_CERTS` 를 사람이) | manifest `env` 주입 | (TLS 논외이나 부수 해소) |
+
+**Anthropic 공식 문서가 우리 사례를 정확히 MCPB 권장 케이스로 열거한다** — *"Access to systems
+behind your firewall (… private databases)"* · *"Zero-trust compliance inside corporate network
+boundaries"* · *"No cloud infrastructure, VPN configuration, or firewall rules"* ·
+*"Organization-level admin controls"* · *"One-click install with bundled Node.js runtime, no
+dependencies to manage"* · *"Full control over authentication, authorization, and audit logs"*.
+
+### 9.2 그렇다고 러너가 사라지지는 않는다 — 축을 갈라야 한다
+
+러너의 **고유** 존재 이유는 P0-K 한 줄이다: *"블로킹 대기는 AI 가 켜져 있는 동안만 동작한다.
+자리를 비워도 처리하려면 상주 프로세스가 필요하다."*
+
+| 사용 상황 | 필요한 것 | 등록형(MCPB) | 러너 |
+|---|---|---|---|
+| **지금 화면 앞에 있다** — 질문하고 답을 기다린다 | MCP 도구 접근 | ✅ 충분 (설치물 0) | ✅ (과잉) |
+| **자리를 비웠다** — 나중에 답이 와 있기를 원한다 | 무인 pull 루프 | ❌ — MCP 서버는 도구만 제공하고, 답을 만드는 것은 사용자가 말을 걸어야 도는 세션이다 | ✅ 고유 |
+
+**현재 결함은 이 두 축이 갈라져 있지 않다는 것이다.** 「지금 답 받기」만 원하는 사용자(대부분)도
+무인 처리를 위해 만든 상주 러너의 설치 벽을 통과해야 한다. **필요하지 않은 사람에게 부과된
+비용**이며, 이것이 「AI 연결이 가장 큰 걸림돌」의 구조적 정체다.
+
+## 10. 신규 Findings (「AI 연결」 축)
+
+### F-011 · MCPB 번들(`.mcpb`) — 무터미널·무런타임 등록 경로
+- **dimension**: structural
+- **source**: https://claude.com/docs/connectors/building/mcpb
+- **무엇을**: 얇은 stdio↔HTTP 프록시(Node + MCP SDK)를 `.mcpb` 로 패키징해 `/ai/connect` 에서
+  배포. 사용자는 **더블클릭 → 설정 UI 에 토큰 붙여넣기 → 끝**. manifest `user_config` 가 서버
+  주소·토큰 입력 UI 를 자동 생성하고(민감정보 처리 포함), `env` 로 `NODE_EXTRA_CA_CERTS` 를 준다.
+- **현재 상태**: 없음. 등록형 경로는 사람이 JSON 을 손으로 편집하거나 AI 에게 시켜야 한다.
+- **핵심 이득**: **W3(터미널)·W4(Python) 동시 소멸.** Node 는 Claude Desktop 이 들고 온다.
+- **raw_impact**: ★5 / **confidence**: high
+- **note**: ⚠ **Claude Desktop 전용**(macOS·Windows). codex·gemini 사용자는 미커버 → F-013.
+  ⚠ 프록시는 여전히 「우리 코드」다 — 다만 배포·설치·설정 UI·업데이트를 포맷이 가져간다.
+
+### F-012 · 비-러너 클라이언트의 연결 수명 — F-011 의 **전제**
+- **dimension**: structural
+- **source**: 코드 실측
+- **무엇을**: 확장에 붙여넣은 토큰은 **최대 12시간 뒤 죽는다.** 수명 연장은
+  `POST /api/ai/bridge_heartbeat` (`ai_tools.py:4489`) 가 `ExpiresAt` 를 미는 것으로만 일어나고
+  (`oauth_store.heartbeat` :492, `HEARTBEAT_EXTEND_SEC`), **하트비트를 보내는 것은 러너뿐**이다.
+  → MCPB 프록시가 30초 주기로 같은 엔드포인트를 호출하면 **서버 변경 없이** 수명이 유지되고,
+  `/api/ai/connect/status` 의 `listening` 도 참이 된다.
+- **⚠ 이 항목이 없으면 F-011 은 「하루 두 번 끊기는 확장」이 된다.** 하드 종속.
+- **⚠ 최대 위험 — 러너 축출**: supersede 판정(`_stale_runner_yield_to`, `ai_tools.py:327`)은
+  **하트비트 이력이 있는 행끼리 연결 순서(토큰 Id)로** 승자를 정한다. 프록시가 하트비트를
+  시작하는 순간 「당사자」가 되어, 같은 계정에서 돌던 **사용자의 러너를 축출**할 수 있다.
+  FUNCTION.md P0-K 가 *"하트비트를 모르는 등록형 MCP 클라이언트는 이 판정에 걸리지 않는다"* 로
+  안전을 보장하던 전제를 F-012 가 **직접 깬다.** → 하트비트 payload 에 클라이언트 종류를
+  선언하고 supersede 를 `runner` 끼리로 한정하는 가드가 **필수**.
+- **raw_impact**: ★5 (F-011 의 전제) / **confidence**: high
+
+### F-013 · Claude Code 플러그인 — CLI·비-Desktop 사용자 경로
+- **dimension**: functional
+- **source**: https://www.morphllm.com/claude-code-marketplace
+- **무엇을**: 플러그인이 MCP 서버를 번들하고 `/plugin marketplace add <repo>` + `/plugin install`
+  **두 명령**으로 팀 전체가 동일 설정을 받는다. 터미널을 쓰지만 **우리 스크립트가 아니라 Claude 의
+  명령**이고, 설정 파일 손편집이 사라진다.
+- **현재 상태**: 없음.
+- **raw_impact**: ★3 / **confidence**: med
+- **note**: Claude Code 사용자 한정. codex·gemini 는 여전히 기존 경로.
+
+### F-014 · 무인 처리를 「선택」으로 분리 + Desktop 스케줄 태스크
+- **dimension**: functional
+- **source**: https://code.claude.com/docs/en/desktop-scheduled-tasks
+- **무엇을**: `/ai/connect` 가 **두 축을 나눠 묻는다** — 「지금 답을 받는다」(등록형, 설치물 0) /
+  「자리를 비워도 처리한다」(러너 또는 Desktop 스케줄 태스크). 러너를 **필수에서 선택으로** 강등.
+- **Desktop 로컬 스케줄 태스크 실측 사양**: 최소 간격 **1분** · **열린 세션 불요** · MCP 커넥터
+  사용 가능 · 재시작 후에도 유지 · 권한 always-allow 저장. 단 **앱이 열려 있고 컴퓨터가 깨어
+  있어야** 한다.
+- **⚠ 정직한 한계 — 비용**: 스케줄 태스크는 질문이 없어도 **매 실행마다 새 세션**을 띄운다 =
+  사용자 구독 쿼터 소모. 러너는 HTTP long-poll 만 하고 질문이 있을 때만 CLI 를 부른다. 그래서
+  스케줄 태스크는 러너의 **대체재가 아니라 낮은 빈도(시간 단위) 대안**이다. 1분 주기로 두면
+  P0-J 의 「환경 차이 금지」는 만족하지만 사용자 쿼터를 태운다 — **권장 기본값은 러너**.
+- **raw_impact**: ★4 / **confidence**: high
+
+### F-015 · 연결 퍼널 계측 — 다른 모든 항목의 **측정 선행**
+- **dimension**: operational
+- **source**: 정합 축 6(측정 가능성) — 측정 수단이 없으면 선행 항목으로 끌어올린다
+- **무엇을**: `/ai/connect` 진입 → 경로 선택 → 설치 완료 → **첫 하트비트** → **첫 답변** 각
+  단계 도달률을 `WebAuditEvents` 에 적재. 현재 `/api/ai/connect/status` (`oauth_as.py:533`)가
+  `connected`·`listening` 을 이미 계산하므로 **판정 로직은 재사용**하고 기록만 더한다.
+- **현재 상태**: 없음 — 「어느 단계에서 사람들이 떨어지는가」를 아무도 모른다. F-011·F-014 를
+  하고도 나아졌는지 증명할 수 없다.
+- **raw_impact**: ★4 / **confidence**: high
+- **note**: 개인정보 최소 — 계정 id + 단계 + 타임스탬프. 토큰·명령문 미기록.
+
+---
+
+## 11. 출처
+
+> 문서 순서상 §8 이었으나 §9·§10 추가로 말미에 오도록 번호를 옮겼다(본문 참조는 「출처」로 지칭).
+
+**§9·§10 (「AI 연결」 축) 추가 출처**
+- [Build a desktop extension with MCPB](https://claude.com/docs/connectors/building/mcpb) — MCPB 권장 케이스 표 · Node.js 동봉 · `user_config` 자동 UI · 설치 3경로
+- [Schedule recurring tasks in Claude Code Desktop](https://code.claude.com/docs/en/desktop-scheduled-tasks) — 로컬 태스크 사양(최소 1분 · 열린 세션 불요 · MCP 커넥터 · 앱 열림 필요)
+- [Claude Code Plugins and Marketplaces (2026)](https://www.morphllm.com/claude-code-marketplace) · [Claude Code Plugins Complete Guide](https://hidekazu-konishi.com/entry/claude_code_plugins_complete_guide.html) — 플러그인이 MCP 서버를 번들해 팀 배포
+- [MCPB Files (.mcpb): Format Reference](https://www.mcpbundles.com/docs/concepts/mcpb-files) — 「로컬 stdio 프록시 + 원격 HTTP」 번들 패턴의 상용 선례
 
 **Anthropic 공식**
 - [Build a desktop extension with MCPB](https://claude.com/docs/connectors/building/mcpb)
