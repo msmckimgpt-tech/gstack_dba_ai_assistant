@@ -34,6 +34,7 @@ sources:
 2. [상세](#2-상세)
      - [2.1 도메인](#21-도메인)
      - [2.2 핵심 영역 입구](#22-핵심-영역-입구)
+     - [2.2.1 기능 동작 순서도 (Flows)](#221-기능-동작-순서도-flows)
      - [2.3 Feature 카드](#23-feature-카드)
      - [2.4 Decisions (ADR mirror)](#24-decisions-adr-mirror)
      - [2.5 Concepts / Entities / Sources / Syntheses](#25-concepts--entities--sources--syntheses)
@@ -60,6 +61,17 @@ DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `d
 - [[Architecture/Overview|시스템 개요]] — 정책·기능·shared·artifacts 4-layer 책임 분리
 - [[Architecture/Data-Flow|데이터 흐름]] — 사용자 → web → ask-worker → agent loop → 데이터소스 N / Postgres / MinIO
 - [[Architecture/Module-Map|모듈 맵]] — 디렉토리 ↔ 책임 매핑
+
+### 2.2.1 기능 동작 순서도 (Flows)
+
+시스템 한 장짜리 흐름(`Architecture/Data-Flow`) **아래 층** — 개별 기능 하나가 시작부터 끝까지 무엇을 지나는지를 mermaid 순서도로 펼친 영역.
+
+- [[Flows/_Index|Flows MOC]] — 5 문서의 입구 + 읽는 순서
+- [[Flows/Auth-and-Session|로그인·인증·세션]] — 가입 → 로그인 → 2단계 인증 → 세션 수명 → 권한 판정 → 로그아웃
+- [[Flows/External-AI-Bridge|외부 AI(개인 머신) 연계 동작]] — 서버 LLM 차단 → 대기 작업 → 개인 AI 점유 → 답변 반영 (+ 관리 콘솔 위임)
+- [[Flows/Security-Controls|보안 처리 과정]] — 관문 사슬 · RBAC · SQL 3축 가드 · 자격증명 봉인 · 감사 체인 · 인젝션 방어 · 공유 window
+- [[Flows/User-Journeys|사용자 화면 흐름 (UI/UX)]] — 일반 사용자가 보는 화면·조작·상태 안내
+- [[Flows/Feature-Operations|세부 기능 동작]] — 첨부 · 편집/브랜치 · 그룹 대화 · 폴더 · 공유 · 검색 · 메타데이터 · 워커 · 배포
 
 ### 2.3 Feature 카드
 
@@ -105,7 +117,7 @@ DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `d
 ## 5. 둘러보기
 
 - 상위: 없음 (vault 루트)
-- 하위: `Architecture/`, `Features/`, `Decisions/`, `Glossary/`, `concepts/`, `entities/`, `sources/`, `syntheses/`
+- 하위: `Architecture/`, `Flows/`, `Features/`, `Decisions/`, `Glossary/`, `concepts/`, `entities/`, `sources/`, `syntheses/`
 - sibling: [[overview|overview.md]] · [[Log|Log.md]] · [[README|README]]
 
 ## 6. 외부 link
