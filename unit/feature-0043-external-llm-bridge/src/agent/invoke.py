@@ -68,6 +68,138 @@ _SECRET_PATTERNS = (
 )
 
 
+# ── 명령줄 길이 상한 — Windows 전용 divergence (TASK-20260902T140000) ──────────
+#
+# ## 무엇이 깨져 있었나 (라이브 실측 2026-09-02)
+#
+# 운영자 지침(5단계 시스템 프롬프트)은 `--append-system-prompt <지침>` 으로 **인자에** 실린다.
+# 그 지침이 34,962자였고, Windows `CreateProcess` 의 명령줄 상한은 **32,767자**다. 그래서
+# 그 계정의 **모든** 질문이 spawn 단계에서 죽었다:
+#
+#   ai.spawn_fail exe=claude err=[WinError 206] 파일 이름이나 확장명이 너무 깁니다
+#
+# 사용자 화면에는 답변 자리에 그 예외 문자열이 그대로 실려 나갔다. POSIX 는 `ARG_MAX` 가
+# 2MB 대라 같은 코드가 멀쩡히 돈다 — **Windows 에서만** 나타나는 divergence이고, 그래서
+# POSIX 로 검증한 모든 cycle 을 통과했다.
+#
+# ## 어떻게 고쳤나
+#
+# 예산을 넘으면 순서대로 물러난다. 「지침을 온전히 넘기는 것」보다 **「답이 오는 것」이
+# 먼저다** — 지금은 답이 아예 없다.
+#
+#   1. 지침이 예산을 넘으면 시스템 채널을 **본문 폴백**으로 접는다. 그 판정은 여기가 아니라
+#      **`handler.system_channel_fits`** 가 프롬프트를 조립하기 전에 한다 — 접은 지침의 문형은
+#      `prompt.compose_prompt` 가 소유하고(인젝션 오판을 피하려고 고른 문형이다), 그것을 여기서
+#      다시 쓰면 두 벌이 되어 한쪽만 고쳐지는 날 경로에 따라 AI 가 지침을 다르게 읽는다.
+#   2. 그렇게 커진 본문도 인자로는 못 실으므로 프롬프트를 **stdin 으로** 옮긴다
+#      (`stdin_ok` 를 선언한 런타임만). 실측 2026-09-02:
+#      `printf … | claude -p --strict-mcp-config` · `codex exec --skip-git-repo-check -`.
+#   3. 그래도 넘치면 **정직하게 실패**한다 — WinError 206 을 그대로 맞아 예외 문자열을
+#      사용자 답변으로 내보내는 것보다, 무엇이 왜 안 되는지 말하는 편이 낫다.
+
+#: Windows `CreateProcess` 의 `lpCommandLine` 상한. 실측(사용자 머신 Python 3.14.0):
+#: 32,600자 성공 · 33,000자 `[WinError 206]`.
+_WIN_CMDLINE_MAX = 32767
+
+#: 예산에서 미리 떼어 두는 여유. 실행 파일 절대경로 치환(`_resolve_exe`)이 이름보다 길어지고,
+#: 우리가 세는 길이와 커널이 세는 길이가 완전히 같다고 가정하지 않는다.
+_CMDLINE_MARGIN = 2048
+
+
+def _cmdline_len(cmd: list) -> int:
+    """이 argv 가 만들 **실제 명령줄 길이**.
+
+    Windows 는 `subprocess` 자신이 쓰는 `list2cmdline` 으로 잰다 — 따옴표·역슬래시 이스케이프가
+    길이를 늘리므로 단순 합산은 과소 추정이고, 과소 추정한 예산은 정확히 우리가 막으려는
+    실패를 통과시킨다. POSIX 는 인자 배열을 그대로 넘기므로 합산으로 충분하다.
+    """
+    parts = [str(a) for a in (cmd or [])]
+    if os.name == "nt":
+        try:
+            return len(subprocess.list2cmdline(parts))
+        except Exception:  # noqa: BLE001  (못 재면 아래 보수적 합산으로)
+            pass
+    return sum(len(a) + 1 for a in parts)
+
+
+def _cmdline_budget() -> int:
+    """이 플랫폼에서 명령줄에 실을 수 있는 안전 길이.
+
+    POSIX 는 `ARG_MAX`(보통 2MB) 에서 환경변수 몫을 넉넉히 뺀다. 못 읽으면 보수적 기본값을
+    쓴다 — 이 값이 커서 생기는 문제는 종전과 같은 실패이고, 작아서 생기는 문제는 «필요 없는
+    폴백» 뿐이라 작게 트는 편이 안전하다.
+    """
+    if os.name == "nt":
+        return _WIN_CMDLINE_MAX - _CMDLINE_MARGIN
+    try:
+        limit = int(os.sysconf("SC_ARG_MAX"))
+    except (ValueError, OSError, AttributeError):
+        limit = 128 * 1024
+    return max(32 * 1024, limit // 2)
+
+
+def _stdin_form(kind: str, cmd: list[str], prompt: str) -> list[str] | None:
+    """프롬프트를 stdin 으로 옮긴 argv. 그 런타임이 stdin 을 지원하지 않으면 `None`.
+
+    프롬프트와 **바이트 동일한** 인자를 찾아 바꾼다 — 위치로 찾지 않는 이유는 `build_cmd` 가
+    플래그를 프롬프트 앞에 끼우고 `_with_system_prompt` 가 그 앞에 또 끼워서, 「마지막 인자」
+    라는 가정이 조립 순서가 바뀌는 날 조용히 어긋나기 때문이다. 못 찾으면 바꾸지 않는다.
+    """
+    spec = _RUNTIME_SPECS.get(kind) or {}
+    if not spec.get("stdin_ok"):
+        return None
+    replacement = str(spec.get("stdin_arg") or "")
+    out: list[str] = []
+    swapped = False
+    for a in cmd:
+        if not swapped and str(a) == prompt:
+            swapped = True
+            if replacement:
+                out.append(replacement)
+            continue
+        out.append(a)
+    return out if swapped else None
+
+
+#: 명령줄이 상한을 넘었는데 줄일 수단이 없을 때 사용자에게 내는 말. 예외 문자열
+#: (`[WinError 206] 파일 이름이나 확장명이 너무 깁니다`)을 그대로 답변에 싣던 자리를 대체한다 —
+#: 그 문장은 사용자가 무엇을 해야 하는지 하나도 알려주지 않았다.
+_CMDLINE_OVERFLOW_MSG = (
+    "운영자 지침과 질문을 합친 길이가 이 컴퓨터 운영체제의 명령 길이 상한을 넘어 "
+    "연결된 AI 를 실행하지 못했습니다.\n\n"
+    "관리 콘솔에서 이 제품·역할에 설정된 답변 규칙을 줄이면 해결됩니다. "
+    "(표준입력으로 넘길 수 있는 AI — Claude·Codex — 를 쓰면 이 제한을 받지 않습니다.)"
+)
+
+
+def _fit_cmdline(kind: str, cmd: list[str],
+                 prompt: str) -> tuple[list[str], str | None, str]:
+    """예산 안에 드는 (argv, stdin 본문, 물러난 사유) 를 만든다.
+
+    반환 `[1]` 이 `None` 이면 종전대로 프롬프트가 인자에 실린다 — **정상 경로는 무회귀다.**
+    반환 `[2]` 가 `"overflow"` 면 줄일 수단이 없다(호출측이 정직하게 실패한다).
+    """
+    budget = _cmdline_budget()
+    size = _cmdline_len(cmd)
+    if size <= budget:
+        return cmd, None, ""
+
+    piped = _stdin_form(kind, cmd, prompt)
+    if piped is not None and _cmdline_len(piped) <= budget:
+        log_event("ai.cmdline.stdin",
+                  "명령줄이 이 운영체제의 상한을 넘어 질문을 표준입력으로 전달합니다.",
+                  level="WARN", exe=(cmd[0] if cmd else ""), runtime=kind,
+                  cmd_chars=size, budget=budget, prompt_chars=len(prompt))
+        return piped, prompt, "stdin"
+
+    log_event("ai.cmdline.overflow",
+              "명령줄이 이 운영체제의 상한을 넘었고 줄일 방법이 없습니다.",
+              level="ERROR", exe=(cmd[0] if cmd else ""), runtime=kind,
+              cmd_chars=size, budget=budget, prompt_chars=len(prompt),
+              stdin_ok=bool((_RUNTIME_SPECS.get(kind) or {}).get("stdin_ok")))
+    return cmd, None, "overflow"
+
+
 def _redact_secrets(text: str) -> str:
     """실패 원문에서 자격증명 형태를 지운다. 사유를 살리는 일이 토큰 유출이 되면 안 된다."""
     out = text or ""
@@ -124,7 +256,8 @@ def describe_cli_failure(returncode: int, out: str, err: str) -> str:
 
 
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
-                        env: dict | None = None) -> tuple[bool, str]:
+                        env: dict | None = None,
+                        stdin_text: str | None = None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
@@ -142,6 +275,12 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     try:
         proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True,
+                                # ⚠ `stdin_text` 가 없을 때는 **파이프를 만들지 않는다** —
+                                #   종전대로 러너의 stdin 을 상속한다. 여기서 무조건 PIPE 를
+                                #   열면 그것을 닫아 주기 전까지 claude 가 stdin 을 기다리는
+                                #   경로가 생겨(`warning: no stdin data received`), 인자로
+                                #   프롬프트를 받은 정상 호출까지 느려진다.
+                                stdin=(subprocess.PIPE if stdin_text is not None else None),
                                 cwd=cwd, env=env)
     except Exception as e:  # noqa: BLE001
         # 여기서 터지는 것은 대개 「그 실행 파일이 없다·권한이 없다」이고, 예외 형이 그
@@ -154,7 +293,9 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     box: dict[str, str] = {}
 
     def _drain() -> None:
-        out, err = proc.communicate()
+        # `input=` 은 쓰고 나서 stdin 을 닫는다 — 닫지 않으면 CLI 가 입력이 더 올 줄 알고
+        # 끝나지 않는다. `communicate` 가 쓰기·읽기를 함께 하므로 교착도 없다.
+        out, err = proc.communicate(input=stdin_text)
         box["out"] = out or ""
         box["err"] = err or ""
 
@@ -364,6 +505,32 @@ def system_channel_supported(kind: str, custom: str | None = None,
     return ok
 
 
+def system_channel_fits(kind: str, system: str, prompt_chars: int = 0) -> bool:
+    """지침을 **인자로** 넘겨도 이 운영체제의 명령줄 상한 안에 드는가 (TASK-20260902T140000).
+
+    `system_channel_supported` 와 **다른 축**이다 — 저쪽은 「그 CLI 가 이 플래그를 아는가」,
+    이쪽은 「이 운영체제가 이 길이를 받아 주는가」. 둘을 한 함수로 뭉치면 Windows 에서만
+    나는 실패가 「구버전 CLI」로 오진된다.
+
+    넘치면 호출측이 지침을 **본문으로** 접고, 그 본문은 stdin 으로 나간다. 잃는 것은 인젝션
+    오판 방지(TASK-20260901T140000)이고 얻는 것은 **답변 자체**다 — 지금 넘치는 계정은 답을
+    한 건도 받지 못한다(라이브: 34,962자 지침 → 전 질문 `[WinError 206]`).
+
+    프롬프트 몫은 stdin 으로 갈 수 있는 런타임에서는 세지 않는다. 못 가는 런타임에서는
+    함께 세야 판정이 참이 된다 — 그쪽은 프롬프트도 인자에 남기 때문이다.
+    """
+    spec = _RUNTIME_SPECS.get(kind) or {}
+    tmpl = list(spec.get("system") or [])
+    if not system or not tmpl:
+        return True                      # 채널을 쓰지 않으므로 이 축과 무관하다
+    probe = [str(a) for a in (spec.get("argv") or []) if str(a) != "{prompt}"]
+    probe += [a.replace("{system}", system) for a in tmpl]
+    if not spec.get("stdin_ok"):
+        probe.append("x" * max(0, int(prompt_chars)))
+    # 모델·등급 플래그 몫은 예산의 여유(`_CMDLINE_MARGIN`)가 흡수한다 — 수십 자다.
+    return _cmdline_len(probe) <= _cmdline_budget()
+
+
 def _with_system_prompt(cmd: list[str], kind: str, system: str | None) -> list[str]:
     """조립된 명령에 `--append-system-prompt <지침>` 을 끼운다. 자리는 **프롬프트 바로 앞**.
 
@@ -467,6 +634,13 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     # 판정해 `system` 을 넘겼을 때만 실린다 — 여기서 다시 판정하면 프롬프트를 만든 판정과
     # 갈릴 수 있고, 그러면 지침이 **두 벌**이거나 **한 벌도 없는** 상태가 된다.
     cmd = _with_system_prompt(cmd, kind, system)
+    # 명령줄 상한 (TASK-20260902T140000). Windows 는 32,767자에서 `CreateProcess` 가 거절하고,
+    # 그 거절이 라이브에서 **그 계정의 모든 질문**을 죽였다(운영자 지침 34,962자).
+    cmd, _stdin_text, _fit = _fit_cmdline(kind, cmd, prompt)
+    if _fit == "overflow":
+        # 예외를 맞으러 가지 않는다 — 종전에는 그대로 `Popen` 해 `[WinError 206]` 문자열이
+        # 사용자 답변에 실렸고, 그 문장으로는 아무도 다음 행동을 알 수 없었다.
+        return False, _CMDLINE_OVERFLOW_MSG
     if _canceled():
         return False, CANCELED
     # 토큰은 **환경변수로** 준다 (TASK-20260901T140000). 프롬프트 본문에 실린 평문 자격증명이
@@ -475,4 +649,5 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     child_env = None
     if token:
         child_env = {**os.environ, "BRIDGE_TOKEN": str(token)}
-    return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env)
+    return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
+                               stdin_text=_stdin_text)

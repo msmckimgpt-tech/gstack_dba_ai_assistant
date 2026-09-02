@@ -10,7 +10,7 @@ import time
 from .api import Api
 from .discovery import _which_ai
 from .events import _EV_TASK_CANCEL, _EV_TASK_DISPATCH, _EV_TASK_REVIEW, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _EV_TASK_SUBMIT_REJECT, _EV_TASK_SUBMIT_RETRY, _EV_TASK_UNMET
-from .invoke import CANCELED, ask_local_ai, offered_options, system_channel_supported
+from .invoke import CANCELED, ask_local_ai, offered_options, system_channel_fits, system_channel_supported
 from .logs import log_event
 from .prompt import annotate_approval_request, compose_prompt, split_glossary, split_title
 from .review import run_self_review
@@ -82,7 +82,16 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
     # 두 벌이 되거나(본문 + 플래그) 한 벌도 없는 상태가 된다.
     # 콘솔 작업(`kind='job'`)은 서버가 완성된 지시문을 보내므로 운영자 지침 자체가 없다.
     _sysp = str(claimed.get("system_prompt") or "")
-    _use_sys_channel = bool(_sysp) and system_channel_supported(run_kind, custom)
+    # 두 축을 **따로** 묻는다 (TASK-20260902T140000): ① 그 CLI 가 이 플래그를 아는가
+    # ② 이 운영체제가 이 길이를 인자로 받아 주는가. ②가 거짓이면 지침을 본문으로 접는다 —
+    # 인젝션 오판 방지를 잃지만, 접지 않으면 Windows 에서 **답이 아예 오지 않는다**
+    # (라이브 2026-09-02: 지침 34,962자 → `[WinError 206]` 로 전 질문 사망).
+    _sys_supported = bool(_sysp) and system_channel_supported(run_kind, custom)
+    _use_sys_channel = _sys_supported and system_channel_fits(run_kind, _sysp)
+    if _sys_supported and not _use_sys_channel:
+        log_event("task.system_channel.folded",
+                  "운영자 지침이 이 운영체제의 명령줄 상한을 넘어 본문으로 전달합니다.",
+                  level="WARN", task=task_id, runtime=run_kind, system_chars=len(_sysp))
     prompt = compose_prompt(api, {**claimed, "task_id": task_id},
                             system_channel=_use_sys_channel)
     # 이 질문 한 건의 **일생**을 같은 키(`task`)로 묶는다 (TASK-20260901T163000). 동시 처리에서

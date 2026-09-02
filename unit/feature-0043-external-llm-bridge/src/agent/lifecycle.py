@@ -537,17 +537,49 @@ def main() -> int:
     # 다음 기동은 묻지 않는다 — 그 질의는 사용자 계정의 토큰을 쓰고 수십 초가 걸린다.
     # 갱신은 `--refresh-caps` 로 명시할 때만(모델 목록이 바뀌는 일은 드물다).
     caps: dict = {}
-    if args.cmd:
-        runtimes = []
-        _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
-    else:
+    #: 신고 목록. **하트비트 스레드와 워커가 이 같은 객체를 읽는다** — 협상이 끝나면 제자리로
+    #: 갱신(`[:]`)해서 다음 하트비트가 저절로 새 목록을 싣게 한다. 새 리스트를 대입하면
+    #: 하트비트가 잡아 둔 옛 객체를 계속 보내 목록이 영영 비어 보인다.
+    runtimes: list = []
+
+    # ── 협상을 기다릴 것인가 (TASK-20260902T140000) ───────────────────────────
+    #
+    # ## 무엇이 깨져 있었나 (라이브 실측 2026-09-02)
+    #
+    # 능력 협상이 하트비트·대기 루프보다 **앞**에 있었고, 협상은 실패해도 데드라인
+    # (`_CAPS_PROBE_TIMEOUT_SEC` = 240초)을 전부 소진한다. 그래서 기동 후 4분 동안:
+    # 하트비트 0건(웹은 「연결 안 됨」) · 로그 0줄 · 질문 미수령. 그런데 설치 스크립트는
+    # `--check` 성공 뒤 2초만 보고 **「완료」** 를 선언한다.
+    #
+    #   run.start 12:27:53 → (침묵 4분) → run.ready 12:31:53  startup_ms=240896
+    #   12:28:12 에 온 질문은 12:31:54 에야 점유됐다.
+    #
+    # 사용자 제보가 정확히 그 구간이었다 — "연결은 됐다는데 답도 없고 로그도 안 쌓인다".
+    #
+    # ## 무엇이 협상을 정말로 기다리는가
+    #
+    # **호출 형태(`argv`)뿐이다.** 표 안 런타임(claude·codex·gemini)은 `_RUNTIME_SPECS` 에
+    # argv 가 이미 있으므로 협상 없이도 답할 수 있다 — 협상이 정하는 것은 «화면 선택기에
+    # 무엇을 띄울까» 이고, 그것은 나중에 도착해도 된다. 표 **밖** CLI 만 argv 를 협상에서
+    # 배우므로 그때만 기다린다.
+    _caps_first = (not args.cmd) and (kind not in _RUNTIME_SPECS)
+
+    def _negotiate_caps() -> None:
+        """능력 협상 1회. 결과는 `runtimes`·`caps` 를 **제자리** 갱신한다."""
         _cached = None if args.refresh_caps else (conf_caps or None)
-        runtimes, caps = resolve_caps(args.ai or None, _cached, args.refresh_caps)
-        if runtimes:
+        _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps)
+        runtimes[:] = _got
+        # ⚠ `clear()` 후 `update()` 로 쓰지 않는다 — 그 사이에 워커가 읽으면 **빈 caps** 를
+        #   보고 호출법을 잃는다. 먼저 덮어쓰고 없어진 키만 지우면, 그 틈에 보이는 것은
+        #   기껏해야 «방금 사라진 항목이 남아 있는» 상태다(빈 것보다 훨씬 무해하다).
+        caps.update(_detail or {})
+        for _gone in [k for k in caps if k not in (_detail or {})]:
+            caps.pop(_gone, None)
+        if _got:
             _log("고를 수 있는 것: " + " · ".join(
                 f"{r['label']}({len(r['models'])}종"
                 + (f", 추론 {len(r['efforts'])}단계" if r["efforts"] else "")
-                + ")" for r in runtimes))
+                + ")" for r in _got))
             # 출처 표기에서 「내장 기본값」을 뺀다 (2026-08-31). 모델 목록 폴백이 없어졌으므로
             # 여기 오른 런타임은 **전부** 그 AI 가 답한 것이다. 없는 출처를
             # 이름으로 남겨 두면 다음 사람이 그 경로가 아직 있다고 읽는다.
@@ -555,21 +587,35 @@ def main() -> int:
             _log("  출처: " + ("본인 응답 " + ", ".join(_by_probe) if _by_probe else "실조회")
                  + ("" if args.refresh_caps or not _cached else " (캐시 — 갱신은 --refresh-caps)"))
         else:
-            _log("고를 수 있는 AI 를 찾지 못했습니다 — 웹 선택기는 표시되지 않습니다.")
+            _log("고를 수 있는 AI 를 찾지 못했습니다 — 웹 선택기는 표시되지 않습니다."
+                 " (질문 처리는 이 머신의 AI 기본 설정으로 계속 진행됩니다.)")
         # 물어서 얻은 답을 남긴다(다음 기동은 묻지 않는다). 저장 실패는 기동을 막지 않는다 —
         # 그때는 다음에 다시 묻게 될 뿐이다.
         # 표 밖 CLI 는 질의가 **통한 호출 형태**를 알아냈다 — 실제 질문도 그 형태로 보낸다
         # (기본 추정 `-p` 가 아니라). 이것이 없으면 질의는 성공했는데 답변만 실패한다.
+        # ⚠ 제자리 갱신이다 — 대기 루프가 이 리스트를 워커에 그대로 넘긴다.
         _learned = (caps.get(kind) or {}).get("argv")
         if _learned and kind not in _RUNTIME_SPECS:
-            argv = list(_learned)
+            argv[:] = list(_learned)
         if caps:
             save_conf(args.base, args.ca, (args.ai or ""), args.cmd, caps=caps)
+
+    if args.cmd:
+        _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
+    elif _caps_first:
+        # 이 CLI 는 호출 형태를 협상에서 배운다 — 배우기 전에 질문을 받으면 답하지 못한다.
+        _negotiate_caps()
 
     # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
     heartbeat_stop = threading.Event()
     start_heartbeat(api, heartbeat_stop, runtimes, batch_override=_batch_override)
+
+    if not args.cmd and not _caps_first:
+        # 협상은 **뒤에서** 한다. 끝나면 위 `runtimes` 가 제자리로 갱신되고 다음 하트비트가
+        # 새 목록을 싣는다 — 그때까지 웹 선택기만 비어 있고, 질문 처리는 이미 살아 있다.
+        threading.Thread(target=_negotiate_caps, name="bridge-caps",
+                         daemon=True).start()
 
     cancels = CancelRegistry()
     #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.

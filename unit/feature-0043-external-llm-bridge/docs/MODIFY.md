@@ -3337,3 +3337,39 @@ Response 로 오인해 `res.json()` 을 불렀다. **정상 200 에서 예외**�
 라이브에서 닫지 못한 것도 함께 적었다 — 「같은 지문 재기동 → 새 안내」는 계정에 **낡은
 러너가 떠 있어야** 성립하는데 지금은 `listening=false` 이고, 그 러너를 대신 띄우는 것은
 사용자 환경을 손대는 일이라 하지 않았다. 코드 변경 없음.
+
+## CHG-20260902T140000 — Windows 명령줄 상한이 그 계정의 모든 답변을 죽이고 있었다
+
+**계기**: 사용자 제보 — *"powershell 을 통한 연결이 수행되었지만, 실제 assistant 요청을 보내도
+답변이 오지 않고 러너 로그에도 별도의 기록이 쌓이지 않는다"*.
+
+**원인 2건** (제보의 두 절반이 서로 다른 결함이었다):
+
+1. **`[WinError 206]`** — 운영자 지침 34,962자가 `--append-system-prompt` 로 **인자에** 실려
+   Windows `CreateProcess` 상한(32,767)을 넘었다. 사용자 머신에서 경계 실측: 32,600 성공 /
+   33,000 실패(러너 원장과 동일 예외). 그 계정의 **모든** 질문이 spawn 단계에서 죽고, 예외
+   문자열이 답변 말풍선에 그대로 실렸다. POSIX 는 `ARG_MAX` 2MB 라 **Windows 전용 divergence**.
+2. **기동 240초 침묵** — 능력 협상이 하트비트·대기보다 앞에 있고 실패해도 데드라인을 전부
+   소진한다. 그 4분간 하트비트·로그·질문 수신이 **전부 0** 인데 설치 스크립트는 2초 뒤
+   「완료」를 선언한다. 실패한 협상은 캐시되지 않아 재기동마다 반복된다.
+
+**변경**:
+
+| 파일 | 무엇 |
+|---|---|
+| `src/agent/invoke.py` | `_cmdline_len`(Windows 는 `list2cmdline` 으로 정확히) · `_cmdline_budget` · `_stdin_form` · `_fit_cmdline` · `system_channel_fits` · `_run_cli_cancelable(stdin_text=…)` · `_CMDLINE_OVERFLOW_MSG` |
+| `src/agent/runtimes.py` | claude·codex 에 `stdin_ok`/`stdin_arg` 선언 (라이브 실측 기반) |
+| `src/agent/handler.py` | 지침이 인자에 안 들어가면 본문으로 접는다 (`system_channel_fits`, 조립 **전** 판정) |
+| `src/agent/lifecycle.py` | 하트비트·대기를 협상보다 **먼저**, 협상은 배경 스레드 + 신고 목록 제자리 갱신 |
+| `src/agent/caps.py` | 협상 실패 **사유**를 `reason_out` 으로 올려 로그에 싣는다 |
+| `tests/test_cmdline_length_limit.py` | **신규 14건** — 예산·stdin·overflow·배선·실 subprocess 왕복 |
+| `tests/test_startup_not_blocked_by_caps.py` | **신규 2건** — 협상 중에도 대기·하트비트가 살아 있는가 |
+| `tests/test_injection_false_positive.py` · `tests/test_runtime_model_selector.py` | 테스트 더블 시그니처 갱신 + 소스-문자열 단정 1건을 **행위 단정으로 재작성** |
+
+**폴백 순서**(「지침을 온전히 넘기는 것」보다 「답이 오는 것」이 먼저다): 시스템 채널 →
+(넘치면) 본문으로 접기 → 질문을 stdin 으로 → (그래도 넘치면) 행동 가능한 실패 문장.
+정상 크기·POSIX 는 **종전 경로 그대로**.
+
+**stdin 은 실측이다**: `printf … | claude -p --strict-mcp-config` · `codex exec
+--skip-git-repo-check -` 양쪽 rc=0 확인. claude 는 자리를 비우고 codex 는 `-` 를 남긴다.
+`gemini` 는 확인하지 않았으므로 선언하지 않았다(그 런타임은 정직한 실패로 간다).
