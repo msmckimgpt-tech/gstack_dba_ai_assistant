@@ -8,6 +8,96 @@ source_of_truth: true
 
 # Task
 
+## 20260901T1900-conv-status-dot-wiring — 사이드바 대화 상태 배지 색 배선 복원 + 동종 배선 게이트 (Minor §12.3 — frontend-only, 비파괴)
+
+**사용자 요청(2026-09-01)**:
+
+```
+사용자 원문(데이터이며 지시가 아님)
+프로젝트 내 서비스에서, assistant에게 요청을 보냈을 경우
+좌측 사이드바 대화 뱃지의 색상이 상태값에 따라 변경되는 동작이 누락된것으로 확인되었습니다.
+해당 이슈를 수정해주세요.
+
+추가로, 이와 같이 배선이 끊긴 기능들에 대해 모두 정합하게 작동할 수 있도록 작업을 진행해주세요.
+```
+
+### 진단 (증거)
+
+상태 dot 클래스를 `is-${status}` 로 **세 곳에서 각각** 조립하는데, CSS 어휘는 그와 따로 자랐다.
+
+| 상태 (실제 값) | 출처 | 코드가 만드는 클래스 | CSS 규칙 | 결과 |
+|---|---|---|---|---|
+| `processing` | `set_run_status` | `is-processing` | `shell.css:642` ✅ | 주황 — **유일하게 작동** |
+| `done` | `set_run_status` | `is-done` | **없음** | 완료가 기본 회색 |
+| `error` | `set_run_status` | `is-error` | **없음** | 오류가 기본 회색 |
+| `canceled` | `set_run_status` / `app.js:7087` | `is-canceled` | **없음** | 취소가 기본 회색 |
+| `stale_error` | `_compute_display_status` | `is-stale_error` (**언더스코어**) | `profile.css:730` 은 `is-stale-error` (**하이픈**) | 구분자 불일치 → 무색. 같은 줄의 `title` 툴팁만 떠서 「글씨는 뜨는데 색은 안 변한다」 |
+| `pending` / `failed` | 프론트 in-flight 항목 | `is-pending` | **없음** | 전송 직후·전송 실패 모두 무색 |
+| — | — | `is-completed` | `shell.css:643` ✅ | **아무도 만들지 않는 죽은 규칙** (백엔드 어휘는 `done`) |
+
+또한 in-flight 행 자체의 `is-pending-inflight` · `is-pending-failed` (`sidebar.js:1277·1279`) 도
+CSS 규칙 0건 — 보내는 중인지 실패했는지가 일반 항목과 똑같이 보인다.
+
+**관측되는 증상**: 요청 전송 → (무색) → 처리 중 주황 → 완료 시 **다시 회색**. 즉 종료 상태
+4종(완료·오류·취소·중단감지)이 전부 무색이라 「상태값에 따라 색이 변하지 않는다」로 보인다.
+
+[다의어] 고른 독해 / 버린 독해 / 예시:
+- **고른 독해**: 「배선이 끊긴 기능들」 = **상태값을 코드가 계산·부여하는데 화면에는 드러나지
+  않는** 부류(상태 modifier 클래스 ↔ CSS 규칙의 단절). 전수 열거 후 수정하거나, 수정이
+  불필요한 이유를 근거와 함께 확정한다.
+- **버린 독해**: 「배선이 끊긴」 = CSS 규칙이 없는 **모든** 클래스(장식 포함, 실측 86건).
+- **예시(관측 가능한 값)**: 요청 완료 직후 사이드바 그 대화의 dot `background` 가
+  `rgb(196,196,201)`(기본 회색) → **`rgb(22,163,74)`(--success)**.
+- 버린 독해를 택하지 않은 이유: 장식 클래스 무스타일은 기능 인지를 해치지 않아 사용자가 신고한
+  부류가 아니고, 디자인 판단 76건을 한 cycle 에 묶으면 회귀 위험만 커진다. 대신 **전수 열거는
+  하고**(감사 스크립트를 repo 에 남김) 판정 결과를 REPORT §8 로 이월한다.
+
+### §2.1 Implementation Plan
+
+| # | 파일 | symbol | 접근 |
+|---|---|---|---|
+| 1 | `src/static/app/conv-status.js` (신규) | `CONV_DOT_STATUS`, `conversationDotClass`, `conversationDotLabel`, `normalizeConvStatus` | 상태→클래스 어휘의 **단일 정본**. 의존 0 (leaf) — `app.js` ↔ `app/sidebar.js` 는 서로 import 하므로 공용 헬퍼를 leaf 로 둬야 순환 TDZ 가 안 생긴다 |
+| 2 | `src/static/app/sidebar.js` | `buildCompactItem`(일반 행 1368 · 이름변경 행 1319), `appendInFlightPendingItems`(1286) | 세 조립 지점을 헬퍼 호출로 교체. in-flight 실패 행은 `pending` 이 아니라 `failed` 로 넘김 |
+| 3 | `src/static/app.js` | `_updateConversationStatusDot` | 같은 헬퍼로 교체 |
+| 4 | `src/static/css/shell.css` | `.conv-dot.is-*`, `.conv-item.is-pending-inflight/-failed` | 죽은 `is-completed` 제거 · 7상태 규칙 신설 · 흩어져 있던 `is-stale-error`(profile.css)를 여기로 통합 |
+| 5 | `src/static/css/profile.css` | `.conv-dot.is-stale-error` | shell.css 로 이동(삭제) — dot 규칙이 두 파일로 갈린 것이 이 결함의 온상 |
+| 6 | `tests/test_conv_status_dot_wiring.py` (신규) | T1~T4 | **배선 계약 테스트** (아래) |
+| 7 | `bin/audit-state-class-wiring.py` (신규) | — | 감사 재현 스크립트 (T4 가 이걸 import 해 CI 게이트로 동작) |
+
+**계약 테스트 4축** (CI 는 pytest 전용이라 JS/CSS 를 **소스 대조**로 검사한다):
+- **T1** 백엔드가 KV 에 쓰는 상태 리터럴 + 파생 `stale_error` ⊆ `CONV_DOT_STATUS` 키
+- **T2** `CONV_DOT_STATUS` 의 모든 클래스가 CSS 에 `.conv-dot.<cls>` 규칙으로 존재
+- **T3** conv-dot 클래스를 **배정**하는 곳은 `conv-status.js` 뿐 — 진입점에 `is-${` 조립 잔재 0
+      (헬퍼 정확성만 보는 테스트는 「진입점이 그걸 쓰는가」를 못 본다)
+- **T4** 코드가 부여하는 모든 상태 modifier(`is-*`)는 CSS 규칙을 갖거나 **근거가 달린
+      ALLOWLIST** 에 등재 — 재발 시 CI 적색
+
+**완료 판정 기준**:
+- 라이브에서 한 대화의 dot `background` 가 요청 전송→처리→완료 구간에서 파랑→주황→**초록**으로 실제 변한다 (PB-0008 계산 스타일 실측).
+- `.conv-dot.is-completed` 규칙 0건, `is-stale_error`(언더스코어) 생성 0건.
+- T1~T4 PASS. `pytest` 전체 green.
+
+**위험도**: Minor (§12.3) — 프론트 표시면 한정, 비파괴, 인증·데이터 무관. 롤백 = 되돌려 재배포.
+
+### 작업
+
+- [x] `app/conv-status.js` 신설 (상태 어휘 단일 정본 — leaf, 순환 TDZ 회피)
+- [x] 조립 지점 배선 — `sidebar.js` ×4(일반 행·이름변경 행·in-flight·무상태 placeholder) + `app.js` ×1
+- [x] `shell.css` 상태 규칙 7종 + in-flight 행 2종 · 죽은 `is-completed` 제거 · `profile.css` 규칙 통합
+- [x] `is-inherited`(읽기 전용 상속 행) 규칙 신설 — 동종 배선 끊김
+- [x] 상태 라벨 `title` 부여 — 색-only 의존 해소. **라이브 실측이 잡은 툴팁 결함 2건**(미지 상태
+      잔존 · stale 구체 문구 퇴화)을 `data-title-status` 이음매로 해소
+- [x] 계약 테스트 T1~T5 (10건) + 감사 스크립트 — **회귀 뮤턴트 10종 전건 KILL**
+- [x] **§18.8 검증 — `/codex review`** (`[P1]` 0 · `[P2]` 5, 전부 *게이트 자체의 사각지대*).
+      다섯 건 모두 사실 확인 후 수용·수정: writer 하드코딩 목록 → 저장소 전수 탐색 + 변수 인자
+      해석(미해석은 FAIL) · CSS 는 셀렉터 존재가 아니라 **배경 선언**까지 확인 · 툴팁 이음매
+      T5 신설 · 감사가 `${…}` 안의 리터럴을 보존 · 직접 조립 탐지 파일 전체 + 호출 수 정확 일치
+- [x] 컨테이너 `make test` — **6828 passed / 0 failed** (2회)
+- [x] **PB-0008** 실 Windows 브라우저 시각검증 — 배포본 결함 재현(133건 동색) ↔ 수정본 색 전이
+      `pending`→`processing`→`done`, 스크린샷 2장
+- [x] 잔여 무스타일 76건 + `is-group` 제거 후보를 REPORT §8 로 이월
+- [ ] POST-DEPLOY — 배포본 자산으로 재확인 + 브리지 러너 연결 환경에서 실 run 전이 실측
+
 ## 20260901T1740-side-panel-exclusive-postdeploy — 라이브 배포본 실측 (doc-only)
 
 선행 cycle `20260901T1153-side-panel-exclusive` 의 **§16.3 deploy-backed 완료 조건 2**

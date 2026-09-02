@@ -726,11 +726,9 @@
   color: var(--muted, #6b7280);
 }
 
-/* Phase 3 (REQ-20260515-0005): stale_error dot */
-.conv-dot.is-stale-error {
-  background: var(--color-danger, #dc2626);
-  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18);
-}
+/* Phase 3 (REQ-20260515-0005) 의 stale_error dot 규칙은 conv-status-dot-wiring 에서
+   shell.css 의 `.conv-dot` 블록으로 옮겼다 — dot 규칙이 두 파일로 갈려 있어서 코드가
+   만드는 어휘(`is-stale_error`)와 CSS 어휘(`is-stale-error`)의 어긋남이 오래 안 보였다. */
 
 /* Phase 4 (REQ-20260515-0006): Point rail */
 .messages-wrap {
