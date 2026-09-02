@@ -3565,3 +3565,55 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 
 병합 변형 점검: 형제 cycle(#1522)의 `selfupdate.py` 가 전 구간 바이너리 모드임을 확인해
 인코딩 축과 상호작용이 없음을 검증. 코드 변경 없음.
+
+## CHG-20260902T172500-ai-claude-feature-0043-bridge-answer-duration — 답변 완수 시 사라진 총 수행시간 복구
+
+- **날짜**: 2026-09-02
+- **REQ**: REQ-20260902-bridge-answer-duration
+- **위험도**: Minor (§12.3 — 비파괴 additive 각인 1건. 프런트·CSS 무변경, 마이그레이션 없음)
+- **승인**: 사용자 제보 2026-09-02 (「답변을 완수했을 때 총 수행시간이 출력되던 부분이 누락」)
+
+### 배경 — 표시 코드는 살아 있었고, 각인이 끊겼다
+
+프런트는 무손상이었다. `app.js` 의 답변 메타 렌더는 `message.meta.duration_ms > 0` 일 때
+수행시간과 구간 분해를 그린다 — 코드도 CSS(`.message-meta-duration`)도 그대로다.
+
+끊긴 것은 **서버가 그 값을 각인하는 배선**이다. 답변 경로가 둘인데 한쪽만 각인했다:
+서버 LLM 경로(`agent_core` 의 `mirror_meta`)는 답변마다 굳혔고, 브리지 경로
+(`_deliver_web_bridge_answer`)는 그 키를 아예 담지 않았다. feature-0043 이 브리지를 주
+경로로 승격한 뒤 답변은 전부 후자로 흘렀고, 표시는 그날부터 사라졌다.
+
+라이브 실측(`agent_runtime.messages`)이 경계를 정확히 짚는다 — `duration_ms` 를 가진 마지막
+답변은 **2026-08-26 15:26**(id 2377)이고, 그 이후 브리지 답변 **104건은 예외 없이 없다**.
+
+대기 중 표시는 정상이었다(`startElapsedTimer` 가 경과를 1초 간격으로 그린다). 그래서 사용자가
+본 것은 「처리 중엔 시간이 보이고 **답변이 도착하는 순간 그 숫자가 사라지는**」 형태다.
+
+### 변경 내용
+
+| # | 무엇 | 어디 |
+|---|---|---|
+| ① | 총 수행시간 각인 helper — **end-to-end** 기준(`CreatedAt → SubmittedAt`), 구간은 `ClaimedAt` 으로 가른다 | `ai_tools._bridge_answer_duration_meta` (신규, 순수 함수) |
+| ② | 원장 시각 조회 — 계산은 SQL(`TIMESTAMPDIFF`), 실패는 빈 dict (fail-open) | `ai_tools._bridge_task_duration_meta` (신규) |
+| ③ | 답변 meta 에 각인 1줄 | `ai_tools._deliver_web_bridge_answer` |
+
+프런트·`_replace_bridge_placeholder`·회수 store 는 **무변경** — placeholder 덮어쓰기가
+`meta_json` 전량 교체라 각인이 그대로 실린다.
+
+### 지킨 두 결정
+
+**① 기준은 end-to-end 다.** 「러너가 실행한 시간」(`ClaimedAt` 기준)만 각인하면 대기 구간이
+빠져, 대기 중 보였던 경과 타이머보다 **작은 숫자로 줄어든다**. 서버 LLM 경로가 TASK-0289 에서
+같은 이유로 `run_start` 기준을 버렸다 — 두 경로의 기준을 맞춘다. 키 이름도 그 경로와 동일하게
+뒀다(`total_ms`·`queued_ms`·`inference_ms`) — 프런트 `formatDurationBreakdown` 이 그 세 축만
+읽으므로 새 라벨을 만들면 값은 저장되는데 표시가 빈다.
+
+**② 각인 실패가 답변을 잃게 하지 않는다.** 소요 조회를 전달 경로의 주 SELECT 에 얹지 않고
+분리했다. `ClaimedAt`/`SubmittedAt` 은 부트스트랩 ALTER 로 추가되는 컬럼이고 그 ALTER 가
+실패한 환경이 이미 상정돼 있다(`submit_answer` 의 503 분기) — 한 쿼리로 묶으면 컬럼 부재가
+**답변 전달 자체를** 실패시킨다. 결손 주입으로 실증했다(주입 ③ → 전달 실패 로그).
+
+### 검증
+
+- 신규 스위트 `test_bridge_answer_duration.py` **18 passed** — helper 값 계약 + `_deliver_web_bridge_answer` 실구동(가짜 DB) 양쪽.
+- **결손 주입 3종 전건 FAIL 확인**: 각인 호출 제거 → 3 FAIL · 총량 기준을 `ClaimedAt` 으로 → 1 FAIL · 소요 조회를 주 SELECT 로 합침 → 4 FAIL(fail-open 파괴 포함).
