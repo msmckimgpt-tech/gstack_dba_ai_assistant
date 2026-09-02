@@ -74,7 +74,7 @@ let _announced = false;             //: 이번에 열린 동안 이미 알렸는
 //: 창의 세대. 열 때마다 오른다 — 창보다 오래 사는 비동기 루프(`[내 AI 실행]` 대기)가 자기가
 //: 시작한 창이 아직 그 창인지 확인하는 유일한 수단이다.
 let _modalEpoch = 0;
-//: 마지막으로 **화면에 반영된** 관측 `{listening, stale}`. 판정의 기준은 «창을 열 때 고정한
+//: 마지막으로 **화면에 반영된** 관측 `{listening, stale, build}`. 판정의 기준은 «창을 열 때 고정한
 //: 값» 이 아니라 **직전 관측**이다 — 고정하면 한 번 «정상» 으로 잡힌 창은 그 뒤 실제로 끊겼다가
 //: 다시 이어져도 영영 닫히지 않는다(사용자 제보 2026-09-01: 러너를 갱신했는데 창이 남는다).
 //: 창을 열 때 이 값을 그대로 기준으로 쓰므로 첫 조회가 실패해도 그 뒤의 진짜 변화를 놓치지
@@ -208,6 +208,77 @@ function _announceConnected(msgOverride) {
  */
 function _connOk(o) {
   return !!(o && o.listening === true && o.stale !== true);
+}
+
+/** 지금 «연결은 됐는데 러너가 낡은» 상태인가 — 화면의 「업데이트 필요」와 같은 축. */
+function _isStaleNow(o) {
+  return !!(o && o.listening === true && o.stale === true);
+}
+
+// ── 「업데이트 필요」가 **재실행으로는 풀리지 않는** 경우 (사용자 제보 2026-09-02) ─────────
+//
+// 실행 스킴은 그 컴퓨터의 런처(`launch.sh` / `launch.ps1`)를 부르고, 런처가 러너 파일을
+// 띄운다. 런처가 기동 직전 최신본을 받아 교체하게 된 것은 **2026-09-02 10:44** 배포부터다 —
+// 그 이전에 설치한 사람의 런처는 **디스크에 있는 파일을 그대로** 다시 띄운다.
+//
+// 그 조합에서 지금 화면은 막다른 길이 된다: 「업데이트 필요」를 누르면 자동 실행이 나가고,
+// 같은 낡은 러너가 그대로 다시 떠서, 30초를 기다린 끝에 여전히 「업데이트 필요」다. 몇 번을
+// 눌러도 결과가 같은데 화면은 매번 같은 것을 권한다.
+//
+// 런처의 나이를 서버가 알 방법은 없다(런처는 그 사람 컴퓨터의 파일이고 아무것도 신고하지
+// 않는다). 그래서 **나이를 묻지 않고 결과를 본다** — 재기동 전후의 러너 지문이 같으면,
+// 그 사실 하나로 «이 컴퓨터에서는 재실행이 파일을 바꾸지 못한다» 가 증명된다. 런처 버전을
+// 추측하는 것보다 강한 근거이고, 앞으로 어떤 이유로 갱신이 막히든(권한·오프라인·차단) 같은
+// 결론에 도달한다.
+//
+//: 그 증거를 잡았는가. 잡은 뒤로는 재실행을 권하지 않고 **다시 설치하는 1단계 명령**으로 보낸다.
+let _relaunchNoUpdate = false;
+
+const MSG_RELAUNCH_NO_UPDATE =
+  "다시 실행했지만 러너 파일이 그대로입니다 — 이 컴퓨터의 실행 스크립트가 예전 것이라 "
+  + "스스로 갱신하지 못합니다. 아래 1단계 명령을 한 번만 다시 실행해 주세요. "
+  + "그다음부터는 실행할 때마다 자동으로 갱신됩니다.";
+
+/** 재기동을 했는데 **같은 파일이 다시 떴는가**.
+ *
+ *  `before` 는 실행을 쏘기 직전의 지문. 판정에는 세 가지가 모두 필요하다 —
+ *  지금도 낡았고(`stale`), 양쪽 지문을 **둘 다 알며**, 그 둘이 같다.
+ *
+ *  ⚠ `null`/`undefined`(=「모른다」)는 같음으로 치지 않는다. 조회가 실패해 둘 다 모르는 것을
+ *  «같다» 로 읽으면, 잠깐 네트워크가 흔들린 사용자에게 「재설치하세요」를 말하게 된다.
+ *  `""`(러너가 지문을 신고하지 않음)는 **아는 값**이다 — 지문 신고 이전 빌드라는 뜻이고,
+ *  그것이 전후로 같다면 역시 같은 파일이다.
+ */
+function _relaunchChangedNothing(before, now) {
+  if (!_isStaleNow(now)) return false;
+  if (typeof before !== "string" || typeof now.build !== "string") return false;
+  return before === now.build;
+}
+
+/** 「재실행으로는 안 된다」를 말하고 **되돌아갈 곳까지 준비해** 보여 준다.
+ *
+ *  ⚠ 창만 여는 것으로는 부족하다. 1단계 명령에는 토큰이 실려 있어 **[연결 준비] 를 눌러야**
+ *  비로소 화면에 생긴다 — "아래 1단계 명령을 실행하세요" 라고 말하면서 그 자리가 비어 있으면,
+ *  막다른 길을 한 칸 뒤로 옮겼을 뿐이다. 그래서 여기서 발급까지 대신 눌러 준다.
+ */
+//: 그 안내가 지금 준비 중인가. 이 경로는 토큰을 **발급**하므로, 답답해서 여러 번 누르는
+//: 것만으로 계정에 토큰이 쌓인다.
+let _showingNoUpdate = false;
+
+async function _showRelaunchNoUpdate() {
+  if (_showingNoUpdate) return;
+  _showingNoUpdate = true;
+  openConnectModal();
+  const epochAtStart = _modalEpoch;
+  try {
+    try { await _make(); } catch (_) { /* 발급 실패해도 사유는 말한다 */ }
+    // 기다리는 사이에 사용자가 창을 닫았거나 다시 열었으면 남의 창에 쓰지 않는다.
+    if (!_modalOpen || epochAtStart !== _modalEpoch) return;
+    _status(MSG_RELAUNCH_NO_UPDATE, "error");
+    _revealCommand();
+  } finally {
+    _showingNoUpdate = false;
+  }
 }
 
 /** 이번 조회를 모달 판정에 반영한다 (`_paintConn` 에서 호출).
@@ -457,7 +528,9 @@ async function autoLaunch(reason, opts) {
   // 한 번 쓴 URL 은 버린다. 다음 시도는 새 토큰으로 — 같은 토큰을 재사용하면 그 사이 로그아웃·
   // 만료된 값으로 조용히 실패한다.
   _prefetched = null;
-  const wasStale = !!(_lastObs && _lastObs.listening === true && _lastObs.stale === true);
+  const wasStale = _isStaleNow(_lastObs);
+  //: 실행을 쏘기 **직전**의 러너 지문. 돌아왔을 때 같은 값이면 재실행이 파일을 바꾸지 못했다.
+  const beforeBuild = _lastObs ? _lastObs.build : undefined;
   const attempt = ++_launchAttempt;
   const epoch = _modalEpoch;
   _lastObserved = null;
@@ -478,11 +551,21 @@ async function autoLaunch(reason, opts) {
       _announceConnected(wasStale ? MSG_UPDATED : MSG_CONNECTED);
       return true;
     }
-    // 실패. **명시 클릭일 때만** 창을 연다 — 로그인 진입에서 열면 로그인하자마자 창이 튀어나온다.
+    // 실패했다 — **왜** 실패했는지에 따라 다음에 할 말이 다르다.
+    //
+    // 갱신하려고 눌렀는데 같은 파일이 다시 떴으면, 그건 «응답이 없다» 가 아니라 «이 경로로는
+    // 영영 안 된다» 다. 그 사실을 기억해 두고(다음 클릭은 30초를 다시 버리지 않는다) 되돌아갈
+    // 곳을 지목한다.
+    if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) _relaunchNoUpdate = true;
+    // 로그인 진입에서는 창을 열지 않는다 — 로그인하자마자 창이 튀어나오는 것은 방해다.
+    // 증거는 위에서 이미 남았으므로, 사용자가 다음에 누르는 순간 곧바로 명령으로 간다.
     if (fallbackModal) {
-      openConnectModal();
-      _status("자동 실행에 응답이 없었습니다 — 아래 명령으로 직접 실행하거나 [연결 준비] 를 "
-              + "다시 눌러 주세요.", "error");
+      if (_relaunchNoUpdate) _showRelaunchNoUpdate();
+      else {
+        openConnectModal();
+        _status("자동 실행에 응답이 없었습니다 — 아래 명령으로 직접 실행하거나 [연결 준비] 를 "
+                + "다시 눌러 주세요.", "error");
+      }
     }
     return true;
   } finally {
@@ -540,7 +623,10 @@ async function _launchRunner() {
   const epoch = _modalEpoch;
   //: 이 실행이 **무엇을 풀려는 것인가** — 대기 중인데 러너만 낡았으면 «갱신», 아니면 «연결».
   //: 성공한 뒤에 보면 이미 풀려 있어 구분할 수 없으므로 여기서 잡아 둔다.
-  const wasStale = !!(_lastObs && _lastObs.listening === true && _lastObs.stale === true);
+  const wasStale = _isStaleNow(_lastObs);
+  //: 자동 실행과 **같은 대조**를 한다 — 눌러서 실행한 사람이 같은 막다른 길에서 다른 안내를
+  //: 받으면, 두 경로가 같은 상황을 다르게 설명하는 것이다.
+  const beforeBuild = _lastObs ? _lastObs.build : undefined;
   _lastObserved = null;
   try {
     // 대기·판정은 **자동 실행과 같은 함수**를 쓴다 (2026-09-02). 두 벌로 두면 한쪽만 고쳐지고,
@@ -563,6 +649,15 @@ async function _launchRunner() {
       // 멀쩡한 설치를 다시 하게 된다 — 원인은 이쪽(서비스 조회)에 있다.
       _status("연결 상태를 확인하지 못했습니다(서비스 응답 없음). 잠시 후 다시 시도하거나 "
               + "관리자에게 알려 주세요.", "error");
+      return;
+    }
+    // 갱신하려고 눌렀는데 **같은 파일이 다시 떴다** — 핸들러도 러너도 멀쩡하다. 이 경로로는
+    // 풀리지 않는다는 사실 자체가 답이므로, 원인을 다르게 짚는다(아래 일반 안내는 핸들러
+    // 미등록을 의심하게 만들어, 멀쩡한 설치를 다시 하게 한다).
+    if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) {
+      _relaunchNoUpdate = true;
+      _status(MSG_RELAUNCH_NO_UPDATE, "error");
+      _revealCommand();
       return;
     }
     // «요청은 갔지만 아무도 응답하지 않았다». 원인은 여럿이지만(핸들러 미등록·확인 대화상자를
@@ -759,7 +854,7 @@ function _paintGate(body) {
   }
 }
 
-function _paintConn(connected, listening, epoch, runnerStale) {
+function _paintConn(connected, listening, epoch, runnerStale, runnerBuild) {
   // 배지 요소가 없어도 «연결됨» 판정은 살아 있어야 한다 — 모달의 성공 감지가 배지의 존재에
   // 얹혀 있으면, 배지를 감추는 화면에서 연결이 조용히 알려지지 않는다.
   // ⚠ 창이 바뀐 뒤 도착한 응답은 **기록조차 하지 않는다** (codex 2026-09-01 P1). 판정만
@@ -767,8 +862,19 @@ function _paintConn(connected, listening, epoch, runnerStale) {
   //   만들어낸다 — 새로 연 창이 명령을 받자마자 닫히고, 그 명령은 다시 볼 수 없다.
   if (epoch === undefined || epoch === _modalEpoch) {
     const _prevObs = _lastObs;
-    _lastObs = { listening: !!listening, stale: !!runnerStale };
+    // 지문은 **온 그대로** 싣는다(`null`/`undefined` 를 `""` 로 눌러 담지 않는다) — 「모른다」와
+    // 「러너가 신고하지 않았다」는 동일성 판정에서 다르게 취급돼야 한다.
+    _lastObs = { listening: !!listening, stale: !!runnerStale, build: runnerBuild };
     _noteConnForModal(_prevObs, _lastObs, epoch);
+    // 러너가 실제로 바뀌었거나 갱신이 끝났으면 그 증거는 낡았다 — 다음 클릭은 다시 실행부터.
+    // (재설치를 마친 사용자가 이 세션에서 영영 「재설치하세요」만 보게 되지 않도록.)
+    if (_relaunchNoUpdate
+        && (_connOk(_lastObs)
+            || (_prevObs && typeof _prevObs.build === "string"
+                && typeof _lastObs.build === "string"
+                && _prevObs.build !== _lastObs.build))) {
+      _relaunchNoUpdate = false;
+    }
   }
   const el = $("aiConnState");
   if (!el) return;
@@ -888,7 +994,7 @@ export async function refreshConnState() {
       _paintGate({ compose_blocked: false });
       return b || null;
     }
-    _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale);
+    _paintConn(!!b.connected, !!b.listening, epochAtStart, !!b.runner_stale, b.runner_build);
     _paintGate(b);
     // 마지막으로 연결됐던 명령 계열 — 창을 열 때 어느 탭을 먼저 보일지 정한다 (2026-09-01).
     // 세대·순번 검사를 이미 통과한 응답만 여기 온다.
@@ -925,6 +1031,9 @@ export async function refreshConnState() {
  */
 function _maybeAutoEntry() {
   if (!_autoLaunchEligible()) return;
+  // 재실행이 이 컴퓨터에서 파일을 바꾸지 못한다는 증거가 이미 있으면 자동으로 쏘지 않는다 —
+  // 결과가 정해진 시도를 로그인할 때마다 반복하는 것은 사용자에게도 서버에도 낭비다.
+  if (_relaunchNoUpdate && _isStaleNow(_lastObs)) return;
   // 자격이 있으면 **일단 받아 둔다** — 사용자가 칩을 누르는 순간 동기적으로 이동해야 하고,
   // 그때 발급을 시작하면 활성화가 끊긴다.
   try { _prefetchLaunch(); } catch (_) { /* 무시 */ }
@@ -944,6 +1053,12 @@ function _maybeAutoEntry() {
  *  그래서 이력이 있으면 **바로 실행**하고, 없으면(=설치부터 필요) 종전대로 창을 연다.
  */
 function _connectEntry() {
+  // 이 컴퓨터에서는 재실행이 러너 파일을 바꾸지 못한다는 것을 **이미 봤다**. 같은 것을 다시
+  // 권하면 사용자는 또 30초를 버리고 같은 화면으로 돌아온다 — 곧바로 되돌아갈 곳으로 보낸다.
+  if (_relaunchNoUpdate && _isStaleNow(_lastObs)) {
+    _showRelaunchNoUpdate();
+    return;
+  }
   if (_autoLaunchEligible()) {
     // 실행조차 못 쏘면 `autoLaunch` 가 창을 연다(폴백은 그쪽 한 곳에만 둔다).
     autoLaunch("click", { fallbackModal: true });
