@@ -27,9 +27,9 @@ status: draft
 |---|---|---|---|---|
 | W1 | 사내 사설 Root CA 를 PC 신뢰 저장소에 설치 (`.company.local` 내부 도메인이라 공인 CA 발급 불가) | `unit/feature-0006-lan-proxy-access/docs/FUNCTION.md` REQ-0283·REQ-0285 | 스크립트 실행 1회 | `/trust/` 다운로드 페이지 (스크립트는 여전히 실행) |
 | W2 | 로그인 → 질문 전송 → **답변 대신 「AI 연결하기」 안내** | `FUNCTION.md` P0-F·P0-G | — | ✅ 모달 |
-| W3 | `/ai/connect` [연결 준비] → **셸 명령 3줄 복사 → 터미널 붙여넣기** | `routers/oauth_as.py:965-967` (`posix`/`windows`) | **필수** | ❌ (최초 1회) |
+| W3 | `/ai/connect` [연결 준비] → **셸 명령 3줄 복사 → 터미널 붙여넣기** | `routers/oauth_as.py:1056-1058` (`posix`/`windows`) | **필수** | ❌ (최초 1회) |
 | W4 | 러너 실행에 **Python 3.8+** 필요 | `bridge_setup.ps1:191`, `bridge_setup.sh:140` | winget 설치 동의 프롬프트 | ❌ |
-| W5 | 머신에 **AI CLI 설치 + 로그인** 필요 — 없으면 `exit 4` 로 기동 거부 | `agent/lifecycle.py:639-644` (상주 거부) · `:630-633` (`--check`) · `agent/discovery.py:193` | **필수** | ❌ |
+| W5 | 머신에 **AI CLI 설치 + 로그인** 필요 — 없으면 `exit 4` 로 기동 거부 | `agent/lifecycle.py:725-728` (상주 거부) · `:714-717` (`--check`) · `agent/discovery.py:193` | **필수** | ❌ |
 
 추가 상시 조건:
 - **부팅 자동 등록을 하지 않는다** — `bridge_setup.sh` 헤더 「하지 않는 일」. 재부팅하면 러너가
@@ -392,6 +392,42 @@ status: draft
 > 방법으로 어떻게 손쉽게 접근할 수 있는지를 검토해주세요."* / *"현재 가장 큰 걸림돌은 'AI 연결'
 > 입니다."*
 
+### 9.0 2차 결정 (같은 날) — 네이티브 클라이언트 채택, MCPB 기각
+
+> *"현재 서비스는 claude 뿐만 아니라, 다른 ai 모델을 모두 수용 가능해야 합니다. 혹시, 설치 가능한
+> 클라이언트를 각 사용자 머신에 구성해두고 해당 머신에서 사용하려는 ai에 로그인 하는것만으로도
+> 접근성을 향상시킬 수 있을까요? 클라이언트가 실제 종속성 대응(powershell/wsl 에서 러너 역할 수행,
+> 로그인 oauth등 위임, 필요한 패키지 설치, 등등 모든 게이트) 하는 방법으로 해소할 수 있나요?"*
+
+| 축 | 결정 | 영향 |
+|---|---|---|
+| 주 경로 | **네이티브 설치형 클라이언트** — MCPB(F-011)를 **대체** | F-011 **기각**. MCPB 는 Claude Desktop 전용이라 「모든 AI 수용」 요구를 원리적으로 만족하지 못한다 |
+| 클라이언트 책임 범위 | **설치 + 로그인 대행** (최대 범위) | 벤더 CLI 설치기 실행 + 로그인 명령 대행 실행까지 |
+| 코드 서명 | **미정 — 조사 필요** | ROADMAP 에서 ITEM-08 의 **하드 선행**으로 못박음. 미확보 상태에서 착수 금지 |
+| 착수 방식 | **SPIKE 먼저** | SPIKE-02(타임박스 1 cycle)가 ITEM-08 spec 을 확정 |
+
+### 9.0.1 ⚠ 이 결정이 부딪히는 하드 제약 — 2026년 3사 OAuth 차단
+
+사용자가 제안한 넷 중 **셋은 허용, 하나는 3사가 모두 차단한 패턴**이다.
+
+| 제안 | 판정 | 근거 |
+|---|---|---|
+| 러너 역할 수행 (PowerShell/WSL 대체) | ✅ | `claude -p` subprocess 호출은 2026-04 중순 **명시적 허용 확인** — 금지된 것은 "OAuth 토큰을 추출해 제3자 API 클라이언트에서 쓰는 것" |
+| 필요한 패키지 설치 | ✅ | `bridge_setup.ps1:144-191` 이 winget 으로 Python 설치를 **동의 받고** 대행하는 선례 |
+| 모든 게이트 대응 (CA·스킴·자동시작·토큰) | ✅ | 설치 관리자의 표준 역할 |
+| 모든 AI 수용 | ✅ | 러너 `_RUNTIME_SPECS` 가 이미 claude·codex·gemini + P0-Z4 로 표 밖 CLI 지목 가능 |
+| **로그인 OAuth «위임»** | ❌ **금지** | Anthropic 2026-02-20 약관 → **2026-04-04 차단**(OpenClaw·OpenCode 등) · Google 2026-02 Gemini CLI 토큰 프록시 금지 + **유료 Ultra 구독자 계정 대량 정지** · OpenAI 는 "automatically or programmatically" 제약(해석 모호) |
+
+**해소**: 「위임」이 아니라 **「대행 실행」** — 클라이언트가 벤더의 공식 로그인 명령을 subprocess 로
+띄우고 **진행 상황만 GUI 로 표시**한다. 토큰은 벤더 자격증명 저장소에만 남고 우리는 보지도
+저장하지도 중계하지도 않는다. **사용자 체감은 동일**하다(버튼 클릭 → 브라우저 승인 → 끝).
+
+> **경계는 「누가 토큰을 만지는가」다.** 현행 러너가 이미 허용 쪽에 있다는 것이 이 설계의 근거이자
+> 안전판이다 — 클라이언트는 그 방식을 바꾸지 않고 껍데기만 씌운다.
+
+**부수 확인 필요**: `claude -p` subprocess 호출이 2026-06-15부터 일반 구독 한도가 아니라 **Agent
+SDK 크레딧 풀**에서 차감된다는 보고가 있다. 사용자 실질 한도에 직결되므로 SPIKE-02 항목 4 로 실측.
+
 ### 9.1 「AI 연결」 축의 근본 원인 — 우리는 **배포 포맷을 발명했다**
 
 BYO-AI 를 보존한다는 전제에서 §0 의 벽을 다시 보면, W3·W4 와 재발성 마찰의 원인은 하나로 수렴한다:
@@ -431,7 +467,13 @@ dependencies to manage"* · *"Full control over authentication, authorization, a
 
 ## 10. 신규 Findings (「AI 연결」 축)
 
-### F-011 · MCPB 번들(`.mcpb`) — 무터미널·무런타임 등록 경로
+### ~~F-011 · MCPB 번들(`.mcpb`)~~ — **기각 (사용자 결정 2026-09-02, §9.0)**
+
+> **기각 사유**: Claude Desktop 전용이라 「모든 AI 수용」 요구를 원리적으로 만족하지 못한다.
+> **네이티브 클라이언트(F-016)가 대체**한다. 아래는 기록 — 클라이언트가 코드 서명 부재로
+> 좌초할 경우의 대안 후보이므로 지우지 않는다.
+
+### F-011 (기각) · MCPB 번들(`.mcpb`) — 무터미널·무런타임 등록 경로
 - **dimension**: structural
 - **source**: https://claude.com/docs/connectors/building/mcpb
 - **무엇을**: 얇은 stdio↔HTTP 프록시(Node + MCP SDK)를 `.mcpb` 로 패키징해 `/ai/connect` 에서
@@ -447,12 +489,12 @@ dependencies to manage"* · *"Full control over authentication, authorization, a
 - **dimension**: structural
 - **source**: 코드 실측
 - **무엇을**: 확장에 붙여넣은 토큰은 **최대 12시간 뒤 죽는다.** 수명 연장은
-  `POST /api/ai/bridge_heartbeat` (`ai_tools.py:4489`) 가 `ExpiresAt` 를 미는 것으로만 일어나고
-  (`oauth_store.heartbeat` :492, `HEARTBEAT_EXTEND_SEC`), **하트비트를 보내는 것은 러너뿐**이다.
+  `POST /api/ai/bridge_heartbeat` (`ai_tools.py:4661`) 가 `ExpiresAt` 를 미는 것으로만 일어나고
+  (`oauth_store.heartbeat` :516, `HEARTBEAT_EXTEND_SEC`), **하트비트를 보내는 것은 러너뿐**이다.
   → MCPB 프록시가 30초 주기로 같은 엔드포인트를 호출하면 **서버 변경 없이** 수명이 유지되고,
   `/api/ai/connect/status` 의 `listening` 도 참이 된다.
 - **⚠ 이 항목이 없으면 F-011 은 「하루 두 번 끊기는 확장」이 된다.** 하드 종속.
-- **⚠ 최대 위험 — 러너 축출**: supersede 판정(`_stale_runner_yield_to`, `ai_tools.py:327`)은
+- **⚠ 최대 위험 — 러너 축출**: supersede 판정(`_stale_runner_yield_to`, `ai_tools.py:328`)은
   **하트비트 이력이 있는 행끼리 연결 순서(토큰 Id)로** 승자를 정한다. 프록시가 하트비트를
   시작하는 순간 「당사자」가 되어, 같은 계정에서 돌던 **사용자의 러너를 축출**할 수 있다.
   FUNCTION.md P0-K 가 *"하트비트를 모르는 등록형 MCP 클라이언트는 이 판정에 걸리지 않는다"* 로
@@ -488,18 +530,44 @@ dependencies to manage"* · *"Full control over authentication, authorization, a
 - **dimension**: operational
 - **source**: 정합 축 6(측정 가능성) — 측정 수단이 없으면 선행 항목으로 끌어올린다
 - **무엇을**: `/ai/connect` 진입 → 경로 선택 → 설치 완료 → **첫 하트비트** → **첫 답변** 각
-  단계 도달률을 `WebAuditEvents` 에 적재. 현재 `/api/ai/connect/status` (`oauth_as.py:533`)가
+  단계 도달률을 `WebAuditEvents` 에 적재. 현재 `/api/ai/connect/status` (`oauth_as.py:534`)가
   `connected`·`listening` 을 이미 계산하므로 **판정 로직은 재사용**하고 기록만 더한다.
 - **현재 상태**: 없음 — 「어느 단계에서 사람들이 떨어지는가」를 아무도 모른다. F-011·F-014 를
   하고도 나아졌는지 증명할 수 없다.
 - **raw_impact**: ★4 / **confidence**: high
 - **note**: 개인정보 최소 — 계정 id + 단계 + 타임스탬프. 토큰·명령문 미기록.
 
+### F-016 · 네이티브 설치형 클라이언트 — **주 처방** (사용자 결정 2026-09-02)
+- **dimension**: structural
+- **source_kind**: 사용자 제안 + 상용 패턴(Tailscale MSI · Ollama 설치 마법사 · LM Studio)
+- **무엇을**: 서명된 설치 파일이 ① 러너 엔진 동봉(파이썬 불요) ② CA 신뢰(프로세스 한정)
+  ③ AI CLI 감지 → 없으면 벤더 공식 설치기를 **동의 받고** 실행 ④ **로그인 대행 실행**(§9.0.1)
+  ⑤ 상주 + 로그온 자동시작 ⑥ 자동 업데이트 ⑦ 스킴으로 토큰 수령 을 한 번에 처리.
+- **현재 상태**: 없음. 같은 일을 셸 스크립트 1,531행 + 사용자의 터미널 조작이 나눠 하고 있다.
+- **왜 이것이 MCPB 보다 나은가**: 러너 `_RUNTIME_SPECS` 를 그대로 쓰므로 **claude·codex·gemini 를
+  모두 덮는다**(MCPB 는 Claude Desktop 전용). 그리고 **C3**(러너가 사용자 머신 파일이라 우리가
+  갱신할 수 없다 — P0-Z6 4차 재발의 뿌리)가 자동 업데이트로 닫힌다.
+- **재사용 지렛대 (핵심)**: 엔진 5,849행 · 런타임 감지 · caps 신고 · 무결성 대조 · 스킴 핸들러가
+  **전부 존재**한다. 신규는 GUI·설치 관리자·자동 업데이트뿐이고, 그 대가로 셸 스크립트 1,531행이
+  소멸한다 — **순 코드량이 줄 가능성이 있다.**
+- **raw_impact**: ★5 / **confidence**: med (SPIKE-02 가 확정)
+- **note**: ⚠ **하드 선행 2건** — ① 코드 서명 확보(없으면 SmartScreen/Gatekeeper 경고가 터미널
+  벽을 대체할 뿐) ② SPIKE-02 실현가능성 판정. ⚠ **제품이 하나 더 생긴다** — 3플랫폼 빌드·자동
+  업데이트 인프라·타사 설치기 파손 시 지원 부담이 영구적이다.
+
 ---
 
 ## 11. 출처
 
 > 문서 순서상 §8 이었으나 §9·§10 추가로 말미에 오도록 번호를 옮겼다(본문 참조는 「출처」로 지칭).
+
+**§9.0.1 (ToS 경계 — 2026년 3사 OAuth 차단) 출처**
+- [Anthropic clarifies ban on third-party tool access to Claude — The Register](https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access/) — 2026-02-20 약관 개정
+- [What Is the OpenClaw Ban? Why Third-Party Harnesses Were Blocked — MindStudio](https://www.mindstudio.ai/blog/anthropic-openclaw-ban-third-party-harnesses) — 2026-04-04 차단 시행
+- [Anthropic Banned Third-Party Claude Auth: Full Guide 2026 — KERSAI](https://kersai.com/anthropic-killed-third-party-claude-access-heres-every-workaround-that-still-works/) — **`claude -p` subprocess 허용 확인(2026-04 중순)** + Agent SDK 크레딧 풀(2026-06-15)
+- [Anthropic Bans OAuth Tokens from Consumer Plans in Third-Party Tools](https://openclaw.report/ecosystem/anthropic-bans-oauth-tokens-third-party-tools)
+- [Service update: mitigating abuse and prioritizing traffic — google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli/discussions/22970) — Google 2026-02 토큰 프록시 금지·계정 정지
+- [Does forking/modifying Codex CLI affect ToS when using "Sign in with ChatGPT"? — openai/codex](https://github.com/openai/codex/discussions/8338)
 
 **§9·§10 (「AI 연결」 축) 추가 출처**
 - [Build a desktop extension with MCPB](https://claude.com/docs/connectors/building/mcpb) — MCPB 권장 케이스 표 · Node.js 동봉 · `user_config` 자동 UI · 설치 3경로

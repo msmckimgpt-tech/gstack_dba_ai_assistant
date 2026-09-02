@@ -1618,7 +1618,6 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **인용 전수 기계 대조 21건 PASS** — ROADMAP 의 모든 `file:line` entry_point 가 실제 심볼을 가리키는지 `sed`+`grep` 로 확인(정정 0건). 이 문서의 성패 기준이 「다른 세션이 0 맥락으로 읽고 착수 가능」이므로 진입점 정확성이 load-bearing 이다.
 - **미검증으로 남긴 범위 (정직한 잔여)**: ① **MCPB 프록시가 실제로 우리 MCP 엔드포인트와 왕복하는지 미실측** — 그것은 ITEM-02 의 acceptance 1~3 이고 본 cycle 은 계획 문서다. 「될 것이다」를 계획에 적었지 「된다」를 주장하지 않았다. ② Claude Desktop 딥링크 가능성은 **추정조차 하지 않고** SPIKE-01 로 분리했다(실측 없이 ITEM-04 에 넣지 않는다). ③ 사내 MDM 존재 여부 미응답이라 F-004 는 보류 원장에만 남겼다.
 - **Human Approval Needed**: 문서 자체는 **아니오**. ITEM-01·ITEM-02 는 각각 **Major** 로 표기했고 해당 cycle 착수 시 §12.3 승인 게이트를 통과해야 한다.
-
 ## REV-20260902T185754-wiki-flows-feature-diagrams [SKIPPED:non-policy-doc] — 기능 동작 순서도 영역 `wiki/Flows/` 신설 (5문서 + MOC)
 - Related TASK: _meta_ (`wiki/Flows/{_Index,Auth-and-Session,External-AI-Bridge,Security-Controls,User-Journeys,Feature-Operations}.md` 신설 + `wiki/{Index,Log,hot}.md`·`wiki/Architecture/Data-Flow.md` 배선)
 - Timestamp: 2026-09-02T18:57:54+09:00
@@ -1633,3 +1632,16 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **채택하지 않은 lint 권고 (근거 명시)**: `split-suggest` 가 신규 5문서를 10~13 long sub-section 으로 분리 권장(namu 150자×5+ 기준). 흐름 문서는 소절이 많은 것이 성질이고(기존 `Features/feature-0003` 9 · `concepts/kb-postgres-pgvector` 8 도 초과), 더 쪼개면 **한 기능의 흐름이 파일 경계로 끊겨** 읽는 비용이 커지므로 유지. INFO 등급이라 게이트 아님. `missing-entity` 에 신규 문서명이 오르는 것은 기존 `Data-Flow`·`Overview`·ADR mirror 와 **같은 부류의 false-positive**(vault 내부 문서명을 entity 로 세는 휴리스틱).
 - **미검증으로 남긴 범위 (정직한 잔여)**: ① **Obsidian 실 클라이언트에서의 그래프·렌더 육안 확인 미수행** — mermaid 는 파서 통과를, wikilink 는 lint 해결을 확인했으나 Obsidian UI 에서의 최종 표시는 확인하지 않았다(웹 제품 UI 변경 0이라 PB-0008 시각검증 대상도 아니다 — check #13 SKIP). ② 서술의 **사실성은 정본 인용 시점 기준**이며, 정본이 이후 바뀌면 mirror 가 뒤처진다(`/_dqa:doc_sync` 의 정기 정합 대상). ③ `get_task_context` 5층·6관문 등 브리지 내부 순서는 정본 FUNCTION.md 서술과 라우터 코드 구조에서 재구성했고, **라이브 왕복 실측으로 층 순서를 확인하지는 않았다**.
 - **Human Approval Needed**: **아니오** (비파괴 문서 추가, 정책·코드·설정 무변경).
+## REV-20260902T183743-ai-claude-onboarding-native-client-pivot [SKIPPED:non-policy-doc] — 주 경로 교체: MCPB → 네이티브 클라이언트 (onboarding-accessibility)
+- Related TASK: _meta_ (`docs/improvements/onboarding-accessibility/{RESEARCH,ROADMAP}.md` 개정)
+- Timestamp: 2026-09-02T18:37:43+0900
+- 범위: **문서 2건 개정.** 코드·스키마·권한 변경 **0**. 로드맵의 Major 항목은 각자 cycle 에서 §12.3 게이트를 다시 통과한다.
+- **사용자 결정 반영 (2026-09-02 2차, AskUserQuestion 4문)**: ① 네이티브 설치형 클라이언트 채택 — **MCPB(ITEM-02) 기각** ② 책임 범위 = **설치 + 로그인 대행** ③ 코드 서명 **미정(조사 필요)** ④ **SPIKE 먼저**. 계기는 사용자 지적 *"현재 서비스는 claude 뿐만 아니라 다른 AI 모델을 모두 수용 가능해야 합니다"* — MCPB 는 Claude Desktop 전용이라 그 요구를 **원리적으로** 만족하지 못한다(초판이 스스로 한계로 적어 둔 지점이 결정적 기각 사유가 됐다).
+- **⚠ 이번 개정의 최대 산출 — ToS 하드 제약 발견 (ROADMAP §0.1 · RESEARCH §9.0.1)**: 사용자가 제안한 넷 중 **셋은 허용, 하나(「로그인 OAuth 위임」)는 3사가 2026년에 모두 차단**한 패턴이다. Anthropic 2026-02-20 약관 → **2026-04-04 차단**(OpenClaw·OpenCode) · Google 2026-02 Gemini CLI 토큰 프록시 금지 + **유료 구독자 계정 대량 정지** · OpenAI 는 해석 모호. **경계는 「누가 토큰을 만지는가」** 이고, `claude -p` subprocess 호출은 2026-04 중순 **명시적 허용 확인**됐다 — 즉 **현행 러너가 이미 허용 쪽에 있다.** 해소는 「위임」이 아니라 **「대행 실행」**(벤더 공식 로그인 명령을 subprocess 로 띄우고 진행만 GUI 표시, 토큰 비접촉)이며, ITEM-08 acceptance 7 이 «안 한다»를 검사하도록 못박았다. 이 제약을 못 찾고 착수했으면 **사용자 계정이 정지될 수 있었다.**
+- **6축 재판정 (클라이언트 기준)**: 구조 피벗 0(엔진 5,849행·서버 계약 무변경, 바뀌는 것은 배포 껍데기) · 제약 정합에 §0.1 신규 명문화 · 보안 신규 위험 2건(타사 설치기 실행→명시 동의 / 벤더 자격증명 접촉→acceptance 로 검사) · 비용 축 미확인 1건(Agent SDK 크레딧 풀 2026-06-15 → SPIKE-02 항목 4) · **재사용 지렛대 매우 높음**(셸 스크립트 1,531행 소멸로 순 코드량이 줄 가능성) · 측정은 ITEM-00 이 전환 **전** 기준선 확보.
+- **하드 선행 2건을 게이트로 세웠다**: SPIKE-02(실현가능성) **AND** 코드 서명 확보. 서명이 「미정」이므로 **현재 P1 진입 불가 상태**로 표기했다 — 서명 없이 배포하면 SmartScreen/Gatekeeper 경고가 터미널 벽을 그대로 대체할 뿐이다(벽의 이동 ≠ 제거).
+- **내려간 항목 4건에 「되살아날 조건」을 명시**: ITEM-02(기각·클라이언트 좌초 시) · ITEM-01(보류·등록형 경로 재도입 시 하드 선행 복귀) · ITEM-04(ITEM-08 흡수) · ITEM-07(보류·중복).
+- **인용 전수 기계 대조 21건 PASS** — **초판 대비 4건이 밀린 것을 적발·정정**했다(base main 이 PR #1533 로 전진). 그래서 두 문서에 **「행번호는 커밋 시점 기준, durable anchor 는 심볼명」** 고지를 넣었다.
+  - ⚠ **자기 결함 1건(교정 완료)**: 1차 재검증에서 21건 전건 FAIL 이 났는데 원인은 코드가 아니라 **이전 셀의 `cd` 가 승계된 cwd 드리프트**였다(AGENTS.md §13.2.7 «셸 간 cwd 승계 금지» 가 경고한 그 함정). 절대경로 앵커로 재실행해 전건 PASS 확인 — **거짓 FAIL 을 사실로 보고하지 않았다.**
+- **미검증으로 남긴 범위**: ① 3사 CLI 의 스크립트 가능 로그인 명령 **미실측**(SPIKE-02 항목 1) ② 서명 없는 설치의 실제 경고 화면 **미확인**(항목 2) ③ 기술 스택·엔진 동봉 방식 **미결정**(항목 3) ④ Agent SDK 크레딧 풀 영향 **미실측**(항목 4). 넷 다 「될 것이다」로 적었지 「된다」를 주장하지 않았고, 그래서 SPIKE-02 를 만들었다.
+- **Human Approval Needed**: 문서 자체는 **아니오**. ITEM-08 은 **Major** 이며 코드 서명 확보 확정 전까지 **blocked** 다.
