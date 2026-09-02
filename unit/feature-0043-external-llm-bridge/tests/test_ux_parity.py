@@ -432,10 +432,33 @@ def test_insight_gate_does_not_swallow_heartbeat():
     assert "_llm_open" in src, "LLM 구간 게이트가 없다"
 
 
-def test_insight_skips_only_llm_work():
-    """순수 LLM 작업(잡 처리)만 건너뛰고, LLM 무관 정비는 그대로 돈다."""
+def test_insight_tick_runs_job_processing_unconditionally():
+    """워커 틱은 잡 처리를 **게이트 없이** 부른다 (TASK-20260901T190000).
+
+    ## 이 테스트는 종전에 결함을 계약으로 못박고 있었다
+
+    옛 이름은 `test_insight_skips_only_llm_work` 였고, 단정은
+    `assert "process_pending() if _llm_open else {}" in src` 였다. 전환 이전에는 **옳았다** —
+    적재 자체가 게이트로 막혀 있었으므로 대기 잡이 생기지 않았고, 차단 중에 claim 하면
+    재시도 상한만 태웠다.
+
+    그 전제가 깨졌다. 이제 게이트가 닫혀 있어도 적재된다(연결된 개인 AI 가 처리한다).
+    그 상태에서 호출부가 게이트 안에 남아 있으면:
+
+      · 적재된 그래프 분석을 **아무도 처리하지 않는다** — 사용자 제보("막혀 있다")가 형태만
+        바꿔 되돌아온다(202 는 뜨는데 결과가 영영 안 온다)
+      · stale `running` 회수가 **영원히 돌지 않는다** — run 이 굳어 재트리거까지 막힌다
+
+    라이브 실측(2026-09-02): lease 900초를 **1424초**까지 넘겼는데 회수되지 않았다.
+
+    판정은 **잡 단위로 함수 안에서** 한다(열림=직접 호출 · 닫힘=위임 · 맡길 곳 없음=상한 있는
+    유예). 그러므로 호출부에는 조건이 없어야 한다.
+    """
     src = _func_source(NODE_ANALYSIS.parent / "insight.py", "run_insight_cycle")
-    assert "process_pending() if _llm_open else {}" in src, "LLM 잡 처리가 게이트 밖에 있다"
+    assert "process_pending()" in src, "잡 처리를 아예 부르지 않는다"
+    assert "process_pending() if " not in src, (
+        "잡 처리가 다시 게이트 안으로 들어갔다 — 위임도 회수도 영영 돌지 않는다")
+    # 종전 계약 중 **여전히 유효한 축**: LLM 무관 정비까지 끄지 않는다.
     assert "backfill_roles()" in src, "LLM 무관 backfill 까지 껐다"
 
 
