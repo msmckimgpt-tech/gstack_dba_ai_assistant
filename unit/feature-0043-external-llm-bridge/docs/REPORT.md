@@ -1494,11 +1494,24 @@ DB 에 컬럼이 생긴 적이 없다**(라이브 실측). `set_account_bridge_d
   항목). **신규 실패 0**.
 - 라이브 PRE-DEPLOY: 결함 재현 PASS (위).
 
-### 남은 것 (POST-DEPLOY)
+### POST-DEPLOY 실측 (배포 `2a910ddb` — 완료)
 
-- `operator` **3행** / `admin` **6행** 라이브 확인 + 스크린샷 2매.
-- fail-open(숨긴 종류 PUT 거부) · 비가시 항목 보존 왕복 확인.
-- 검증용 계정 `dqa_permgate_probe`(id 54) 비활성화 정리.
+전 서비스 SHA `2a910ddb` · `/healthz` 200 · `no upstreams available` **0건** · surge 잔존 0 ·
+RestartCount 전 서비스 0. 증적:
+`unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260902T160000-ai-jobs-perm-gate.md §2`.
+
+- **결함 해소 확정**: `operator` **6행 → 3행** · `admin` **6행 유지**(무회귀). 스크린샷 BEFORE/AFTER 대조.
+- **fail-open 차단**: 숨긴 `node_analysis` 를 PUT 본문에 실어도 저장·응답 어느 쪽에도 없다.
+- **입력 검증**: `jobs` 키 부재·파싱 실패 = **400** / `{"jobs": {}}` = 200 비우기(정당한 입력).
+- **⭐ 비가시 항목 보존**: 권한 **부여 → 저장 → 회수 → 빈 저장 → 재부여** 왕복에서
+  `node_analysis = claude:haiku/high` 가 **그대로 살아남았다**. 이 왕복이 없으면 4단계에서
+  조용히 증발했을 것이고, 화면에 없던 값이라 사용자는 알아채지 못한다.
+- **admin 저장 무회귀**: `metadata_bulk` 저장 200 · 6행 유지.
+
+### 남은 것
+
+- 없음. 검증용 계정 `dqa_permgate_probe`(id 54)는 override 제거 + 비활성화로 정리했다
+  (계정 행은 감사 원장 참조 보존을 위해 남긴다 — 이 저장소 관례).
 
 ### 잔여 리스크
 

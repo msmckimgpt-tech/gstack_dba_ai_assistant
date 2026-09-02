@@ -2497,3 +2497,13 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - **fail-open / fail-closed 양방향**: 권한 *없는* 계정이 숨겨진 종류를 본문에 실어 보내도
   저장되지 않는가(fail-open 차단, 1차) · 권한 *있는* 계정에 기대 개수만큼 렌더되는가
   (fail-closed 차단, 2차).
+
+### POST-DEPLOY 실측 (배포 `2a910ddb`)
+
+- [x] **권한별 노출** — `operator` **3행** / `admin` **6행**(무회귀). BEFORE 6행과 대조 스크린샷
+- [x] **fail-open 차단** — 숨긴 `node_analysis` PUT 이 저장·응답 양쪽에서 배제
+- [x] **입력 검증** — `jobs` 부재·파싱 실패 400 / `{"jobs":{}}` 200(정당한 비우기)
+- [x] **비가시 항목 보존** — 권한 부여→저장→회수→빈 저장→재부여 왕복에서 `claude:haiku/high` 생존
+- [x] **admin 저장 무회귀** — `metadata_bulk` 200 · 6행 유지
+- [x] **배포 검증** — 전 서비스 SHA 일치 · healthz 200 · `no upstreams available` 0 · RestartCount 0
+- [x] **검증 계정 정리** — override 제거 + 비활성화 (감사 참조 보존 위해 행 유지)
