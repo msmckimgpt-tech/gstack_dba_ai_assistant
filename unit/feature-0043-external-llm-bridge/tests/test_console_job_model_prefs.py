@@ -301,3 +301,78 @@ def test_profile_tab_is_wired_in_frontend():
     js = _src(PROFILE_JS)
     assert 'tab === "ai-jobs"' in js and "loadAiJobs" in js
     assert "/api/profile/console-jobs" in js
+
+
+# ── 5. 프런트 API 소비 계약 (POST-DEPLOY 실측이 적발한 결함) ──────────────────
+#
+# 배포 후 실 브라우저에서 「탭은 열리는데 항목이 0개」가 관측됐다. 서버는 200 + 정상 JSON 을
+# 주고 있었고, 프런트가 `apiFetch` 의 반환을 **Response 로 오인**해 `res.json()` 을 부르면서
+# 정상 응답에서 예외가 났다 — 그리고 그 예외가 catch 되어 "불러오지 못했습니다" 로만 보였다.
+#
+# 이 부류는 단위 테스트와 headless 로는 잡히지 않는다(서버·소스 어느 쪽도 틀리지 않았다).
+# 재발을 막는 지점은 **소비 계약**이다: `apiFetch` 는 파싱된 payload 를 돌려주고 비-2xx 는
+# 자기가 throw 한다.
+
+
+def _strip_js_comments(text: str) -> str:
+    """주석을 지운다 — 구조 단언은 **코드**만 봐야 한다.
+
+    이 규칙이 없으면 「이렇게 쓰지 말라」고 적은 주석 자체가 위반으로 잡힌다(실제로 이 스위트를
+    처음 돌렸을 때 그렇게 됐다). 문자열 리터럴 안의 `//` 는 이 코드베이스의 소비 지점에
+    나타나지 않으므로 간이 제거로 충분하다.
+    """
+    import re
+
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return "\n".join(re.sub(r"//.*$", "", line) for line in text.splitlines())
+
+
+def _js_calls_json_on_apifetch(text: str) -> list[str]:
+    """`apiFetch` 결과를 Response 처럼 다루는 자리를 찾는다(간이 스캐너).
+
+    `await apiFetch(...)` 로 받은 이름에 `.json()` 또는 `.ok` 를 쓰면 위반이다.
+
+    ⚠ `.status` 는 보지 않는다 — 여러 API 가 **응답 본문에 `status` 필드**를 담고
+    (`/api/progress` 의 진행 상태가 그렇다), 그것은 정당한 사용이다. HTTP 상태로 오인하는
+    자리는 `.json()`·`.ok` 중 하나를 반드시 함께 쓰므로 두 축으로 충분히 잡힌다.
+    """
+    import re
+
+    text = _strip_js_comments(text)
+    bad = []
+    for m in re.finditer(r"(?:const|let|var)\s+(\w+)\s*=\s*await\s+apiFetch\(", text):
+        name = m.group(1)
+        tail = text[m.end(): m.end() + 900]
+        for probe in (f"{name}.json()", f"{name}.ok"):
+            if probe in tail:
+                bad.append(probe)
+    return bad
+
+
+def test_frontend_treats_apifetch_result_as_payload():
+    """`apiFetch` 반환은 **payload** 다 — Response 가 아니다.
+
+    작업 화면 번들 전체를 훑는다. 이 규약을 어긴 자리는 서버가 정상 200 을 줘도 화면이
+    「불러오지 못했습니다」를 띄우고, 그 상태는 서버 로그·단위 테스트 어디에도 흔적이 없다.
+    """
+    import pathlib as _p
+
+    app_dir = WEB_SRC / "static" / "app"
+    offenders = {}
+    for js in sorted(app_dir.glob("*.js")):
+        bad = _js_calls_json_on_apifetch(js.read_text(encoding="utf-8"))
+        if bad:
+            offenders[js.name] = bad
+    assert not offenders, f"apiFetch 결과를 Response 처럼 다루는 자리: {offenders}"
+
+
+def test_ai_jobs_loader_consumes_payload_directly():
+    """AI 작업 탭 로더·저장이 payload 를 직접 쓴다(이 결함이 난 바로 그 자리)."""
+    js = _strip_js_comments(_src(PROFILE_JS))
+    start = js.index("async function loadAiJobs")
+    body = js[start: js.index("function _collectAiJobs")]
+    assert "res.json()" not in body and "res.ok" not in body
+    assert 'await apiFetch("/api/profile/console-jobs")' in body
+    save_start = js.index("async function saveAiJobs")
+    save = js[save_start: js.index("function setupAiJobsTab")]
+    assert "res.json()" not in save and "res.ok" not in save

@@ -286,3 +286,6 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 | TEST-20260902T120000-parity | `connect-modal.js` 소스 | 자동·수동 두 실행 경로가 **같은 판정 함수**를 쓴다 | AC-20260902T120000-relaunch-2 |
 | TEST-20260902T120000-layout | `index.html` 조상 사슬 | 안내 문단이 `.composer-box`(플렉스 한 줄) **밖** — 입력창을 밀어내지 않는다 | AC-20260902T120000-note-1 |
 | TEST-20260902T120000-aria | `index.html` 조상 사슬 | 그러면서 `role="menu"` 안에는 여전히 없다(앞 cycle 계약 미회귀) | AC-20260902T120000-note-1 |
+
+| TEST-20260902T123000-apifetch-contract | 작업 화면 번들 전역 | `apiFetch` 결과에 `.json()`·`.ok` 를 쓰지 않는다(주석 제외 · `.status` 는 본문 필드라 축 제외) | AC-20260902T110000-console-job-model-prefs-1 |
+| TEST-20260902T123000-loader-payload | `loadAiJobs`·`saveAiJobs` | payload 를 직접 소비 — 정상 200 에서 예외가 나 「불러오지 못했습니다」가 뜨던 자리 | AC-20260902T110000-console-job-model-prefs-1 |
