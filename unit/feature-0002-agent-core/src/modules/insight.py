@@ -271,7 +271,7 @@ def _delegate_table_insight(mem_conn, table_key, tfp, payload, schema, table) ->
         from modules.semantic_cluster import _batch_consenting_account
         from modules.llm import table_insight_messages
 
-        account_id = _batch_consenting_account(mem_conn)
+        account_id = _batch_consenting_account(mem_conn, "insight_summary")
         if not account_id:
             # 매 테이블 로그를 남기면 소음이라 호출측이 cycle 당 한 번만 말한다.
             return False

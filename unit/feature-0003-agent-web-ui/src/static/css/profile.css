@@ -1209,3 +1209,20 @@
 .grant-health-detail { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); }
 .grant-health-detail code { font-family: var(--mono); }
 
+
+/* TASK-20260902T110000: 프로필 > AI 작업 — 콘솔·배경 작업 항목별 모델·추론등급.
+   기존 `.field`(라벨+컨트롤 세로) 를 그대로 쓰고, 이 파일은 **행 배치만** 정의한다 —
+   폼 컨트롤 모양을 여기서 다시 지으면 같은 drawer 안에서 프롬프트 탭과 갈린다. */
+.ai-jobs-list { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.ai-jobs-row {
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 10px 12px; background: var(--surface-2);
+}
+.ai-jobs-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+/* 두 선택기를 나란히 두되 좁은 drawer(리사이즈 가능)에서는 접힌다 — 고정 2열로 두면
+   사용자가 폭을 줄였을 때 select 가 라벨을 밀어낸다. */
+.ai-jobs-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-jobs-fields .field { flex: 1 1 160px; min-width: 0; }
+.ai-jobs-fields .field select { width: 100%; }
+.ai-jobs-off { font-size: 11px; font-weight: 500; color: var(--text-2); }
+.ai-jobs-warn { margin-top: 6px; font-size: 12px; color: var(--danger); }

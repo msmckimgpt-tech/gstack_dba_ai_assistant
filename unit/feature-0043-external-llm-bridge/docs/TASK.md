@@ -2067,3 +2067,36 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
       임의 사이트가 러너 파일을 교체)
 - [ ] **배포 후 라이브 실측** — ① 업데이트 필요 클릭이 실제 발사되는가 ② **로그인 진입 자동
       실행이 크롬 활성화 정책에 걸리는가**(추측하지 않고 잰다) ③ 이력 있는 미연결 계정 칩 클릭
+
+## 20260902T1100-console-job-model-prefs — 콘솔 작업의 모델·추론등급을 계정이 정한다
+
+**사용자 제보 (2026-09-02)**: 「그래프 뷰 기능의 능동 분석을 진행할 경우 경량모델이 아닌
+fable 및 opus 로 진행되는 이슈가 확인되었습니다. effort 또한 low 로 확인되어 해당 이슈에 대한
+해소가 필요합니다.」 → 사용자 결정으로 **계정 프로필에 항목별 설정 탭을 신설**하고,
+**고른 모델을 러너가 못 주면 위임을 거절**한다.
+
+근본원인·설계·AC 는 `TASK-20260902T110000-console-job-model-prefs.md`. **위험도 Major**.
+
+<!-- PLAN-APPROVED by mckim on 2026-09-02 -->
+
+- [x] 근본원인 3층 라이브 실측 — ① 등급을 **서버가 아예 안 보낸다**(`"reasoning_level": ""`
+      고정 → 러너 CLI 기본값=low) ② 모델 대조 실패가 **조용히 상위로 샌다**(`unmet` 고지조차
+      없음) ③ 실행 지정이 `WebAiTasks` 에 **안 남는다**(최근 job 7건 전량 NULL)
+- [x] 동반 발견 — `BridgeDefaultModel`/`BridgeDefaultEffort` 가 slow path 에만 있어 **라이브에
+      컬럼이 없다**(대화 축 계정 기본값이 조용히 저장 실패 중). 같은 함정을 신규 컬럼이 밟을
+      자리라 fast path 로 함께 이동
+- [x] 해석 정본 `shared/bridge_tasks` — `normalize_console_job_prefs` ·
+      `console_job_prefs_for_account`(웹·워커 공용 질의) · `console_job_model_required` ·
+      `resolve_console_job_request` · `runner_can_take(required_model=…)`
+- [x] 저장소 — `WebAccounts.ConsoleJobPrefs`(JSON, fast path ALTER) + oauth_store 접근자 2종
+- [x] 프로필 API — `GET`·`PUT /api/profile/console-jobs`(로그인 스코프·계정 파라미터 없음)
+- [x] 프로필 화면 「AI 작업」 탭 — 항목별 모델·등급 선택. 선택지는 **러너 신고 목록만**,
+      저장값이 목록에 없으면 지우지 않고 「지금 연결된 AI 에 없음」으로 보존
+- [x] 거절 3겹 — 적재 게이트(웹·워커 3경로) · 대기 목록 필터(공회전 차단) · claim 최종 방어
+      (409 + 점유 반환). 미설정 계정은 **종전 경량 폴백 그대로**(무회귀)
+- [x] 관측 — claim 이 확정한 `(runtime, model, effort)` 를 작업 행에 기록
+- [x] 신규 29건 · **역검증 28/29 FAIL@main**(통과 1건은 무회귀 검증) · 기존 계약 1건 갱신
+      (리터럴 함수명 → 관계) · route 골든 +2/-0 · ROUTEMAP 재생성 · codenav-lint OK · ruff clean
+- [ ] **배포 후 라이브 실측** — ① 프로필 > AI 작업 탭 렌더·저장 ② 그래프 능동 분석이 고른
+      모델·등급으로 dispatch 되는가(러너 로그 `kind=job` 의 `model`·`effort`) ③ 없는 모델을
+      골랐을 때 위임이 거절되고 사유가 화면에 뜨는가

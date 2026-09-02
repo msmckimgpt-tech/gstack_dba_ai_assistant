@@ -1731,11 +1731,17 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
 #: 여기서는 **전달만** 한다(프롬프트를 새로 쓰면 서버 경로와 산출 규약이 갈린다).
 
 
-def _batch_consenting_account(mem) -> int:
+def _batch_consenting_account(mem, job_kind: str = "") -> int:
     """지금 **배경 배치까지 받겠다고 신고한** 러너의 계정 id 하나. 없으면 0.
 
     여러 명이 동의했으면 가장 최근에 하트비트한 쪽을 쓴다 — 나눠 주는 것이 공평해 보이지만,
     그러려면 "누가 얼마나 태웠는가" 를 우리가 관리해야 하고 그건 이 축의 설계 범위를 넘는다.
+
+    `job_kind`(TASK-20260902T110000): 주어지면 그 계정이 **이 항목에 고른 모델**까지 러너가
+    신고해야 자격이다(사용자 결정 2026-09-02 「선택했던 모델 미보유 시 위임 거절」). 고른 것이
+    없는 계정은 종전대로 통과한다 — 거절은 «고른 것이 있는데 없을 때»만이다.
+
+    빈 값으로 두면 종전 동작(모델 축 무판정)이라 기존 호출부가 그대로 안전하다.
     """
     from shared import bridge_tasks as _bt
 
@@ -1755,7 +1761,10 @@ def _batch_consenting_account(mem) -> int:
             if not aid:
                 continue
             # 자격 판정은 **웹과 같은 함수**로 한다(features 정규화·버전 하한 포함).
-            if _bt.runner_can_take(_bt.runner_profile_for_account(cur, aid), need_batch=True):
+            required = (_bt.console_job_model_required(
+                job_kind, _bt.console_job_prefs_for_account(cur, aid)) if job_kind else "")
+            if _bt.runner_can_take(_bt.runner_profile_for_account(cur, aid),
+                                   need_batch=True, required_model=required):
                 return aid
     finally:
         cur.close()
@@ -1776,10 +1785,11 @@ def _delegate_cluster_labels(datasource_key, eff_schema, batches, payload_for) -
         from shared import db as _db
 
         mem = _db.connect(database=_cfg.MEMORY_DB)
-        account_id = _batch_consenting_account(mem)
+        account_id = _batch_consenting_account(mem, "cluster_label")
         if not account_id:
-            _log.info("cluster_label 위임 보류 — 배경 작업에 동의한 AI 러너가 없습니다"
-                      "(웹 '내 AI 연결' 토글).")
+            _log.info("cluster_label 위임 보류 — 배경 작업에 동의하고 "
+                      "(설정했다면) 고른 모델을 제공하는 AI 러너가 없습니다"
+                      "(웹 '내 AI 연결' 토글 · 프로필 > AI 작업).")
             return 0
         for batch in batches:
             payload = payload_for(batch)

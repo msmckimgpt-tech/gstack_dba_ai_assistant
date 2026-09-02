@@ -512,9 +512,18 @@ def test_claim_console_job_actually_ships_the_light_model():
     이 cycle 이 고친 자가 검증 결함이 정확히 그 간극이었다(양쪽 green + 이음매 실패).
     """
     body = _func_src(AI_TOOLS_PY, "_claim_console_job")
-    assert "pick_console_job_model" in body, "경량 선택을 부르지 않는다"
+    # TASK-20260902T110000: 선택이 한 겹 위로 갔다 — 계정이 항목별로 고른 값이 1순위이고
+    # 미설정일 때만 경량 폴백이다. **함수 이름이 아니라 관계로** 잠근다: claim 이 해석 정본을
+    # 부르고, 그 정본이 경량 폴백을 품는다. 리터럴 호출명을 요구하면 이 게이트가 「개선을
+    # 되돌리라」고 말하게 된다(같은 함정을 이 feature 가 autolaunch cycle 에서 겪었다).
+    assert "resolve_console_job_request" in body, "모델·등급 해석 정본을 부르지 않는다"
+    from shared import bridge_tasks as _bt
+    import inspect as _inspect
+    assert "pick_console_job_model" in _inspect.getsource(_bt.resolve_console_job_request), (
+        "해석 정본이 경량 폴백을 잃었다 — 미설정 계정이 상위 모델로 돌게 된다")
     assert '"runtime": _light_runtime' in body and '"model": _light_model' in body, (
         "고른 값을 `requested` 에 싣지 않는다 — 러너는 여전히 자기 기본 모델로 돈다")
     # 대화 축은 건드리지 않았는지(사용자가 화면에서 고른 값이다).
     chat = _func_src(AI_TOOLS_PY, "claim_request")
     assert "pick_console_job_model" not in chat, "대화 축까지 경량으로 낮췄다"
+    assert "resolve_console_job_request" not in chat, "대화 축이 콘솔 작업 해석기를 탄다"

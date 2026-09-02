@@ -1069,6 +1069,50 @@ def account_bridge_defaults(cur, account_id: int) -> tuple[str, str]:
     return (str(row[0] or "").strip(), str(row[1] or "").strip())
 
 
+def account_console_job_prefs(cur, account_id: int) -> dict:
+    """이 계정이 **콘솔 작업 항목별로 고른** 모델·추론등급 (TASK-20260902T110000).
+
+    Returns:
+        `{job_kind: {"model": "runtime:model", "effort": str}}` — 없으면 빈 dict.
+
+    ⚠ 여기서도 유효성을 판정하지 않는다(`account_bridge_defaults` 와 같은 이유). 「지금 연결된
+    러너가 그 모델을 주는가」는 배급 자격(`bridge_tasks.runner_can_take`)과 claim 이 판정한다 —
+    저장소가 미리 걸러 버리면 화면이 「고른 적 없다」고 말하게 되고, 사용자는 자기가 저장한
+    값을 잃은 것으로 본다.
+
+    **조회 실패는 빈 설정**(컬럼이 아직 없는 배포). 빈 설정은 «미설정» 과 같은 뜻이라
+    종전 경량 선호 폴백으로 흐른다 — 배포 순서 때문에 작업이 막히지 않는다.
+
+    **질의 정본은 `shared.bridge_tasks.console_job_prefs_for_account`** — 워커도 같은 질의로
+    배급 자격을 판정한다(두 벌이면 프로세스마다 판정이 갈린다).
+    """
+    return bridge_tasks.console_job_prefs_for_account(cur, account_id)
+
+
+def set_account_console_job_prefs(cur, account_id: int, prefs: Any) -> dict:
+    """콘솔 작업 설정을 **통째로 교체**한다. 정규화 결과를 돌려준다.
+
+    부분 갱신(PATCH)이 아니라 교체인 이유: 화면이 항목 전체를 보여주고 저장하므로, 화면에 없는
+    항목이 서버에만 남아 있으면 사용자는 그것을 지울 방법이 없다. 「보이는 것이 저장되는 것」을
+    유지한다.
+
+    빈 설정은 `NULL` 로 저장한다 — 빈 JSON 객체(`{}`)를 남기면 「설정한 적 있는데 비웠다」와
+    「설정한 적 없다」가 저장값에서 갈리지 않는데, 두 상태의 동작은 같으므로 표현도 하나로 둔다.
+    """
+    normalized = bridge_tasks.normalize_console_job_prefs(prefs)
+    if not account_id:
+        return normalized
+    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":")) if normalized else None
+    if payload is not None and len(payload) > bridge_tasks.CONSOLE_JOB_PREF_MAX_CHARS:
+        # 정규화가 항목·길이를 이미 닫으므로 정상 경로에서는 도달하지 않는다. 도달했다면 그것은
+        # `JOB_SPECS` 가 커진 것이고, 그때 조용히 잘린 JSON 을 저장하면 다음 조회가 통째로
+        # 실패해 **모든 항목**을 잃는다 — 저장을 거절하는 편이 손실이 작다.
+        raise ValueError("콘솔 작업 설정이 저장 한도를 넘었습니다.")
+    cur.execute("UPDATE WebAccounts SET ConsoleJobPrefs = %s WHERE Id = %s",
+                (payload, int(account_id)))
+    return normalized
+
+
 def set_account_bridge_defaults(cur, account_id: int, model: str | None,
                                 effort: str | None) -> None:
     """계정 기본값을 갱신한다. **명시 선택만** 호출할 것 (2026-08-31).
