@@ -413,16 +413,67 @@ BRIDGE_TOKEN="\$TOKEN" $PY "\$BRIDGE_HOME/bridge_agent.py" \\
 # 아무것도 달라지지 않는 것을 봤다 — 갱신 경로가 여기서 끊겨 있었다(사용자 요청 2026-09-02:
 # 「버튼 클릭만으로 러너가 재구성될 수 있도록」).
 #
-# 무결성: 이 시점에는 CA 를 **이미 신뢰**하므로 https + `--cacert` 로 받는다. 설치 때의 평문
+# 무결성: 이 시점에는 CA 를 **이미 신뢰**하므로 https + \`--cacert\` 로 받는다. 설치 때의 평문
 # HTTP + 체크섬 대조와 목적은 같고(바꿔치기 방지) 수단만 더 강하다.
 #
 # ⚠ 실패는 **종전 동작**으로 떨어진다: 못 받았거나·빈 파일이거나·문법이 깨졌으면 있던 파일을
 #   그대로 쓴다. 갱신하려다 멀쩡한 러너를 못 띄우게 만드는 것이 가장 나쁜 결말이다.
+#
+# curl 이 없거나 막히면 **파이썬으로 받는다**(TASK-20260902T170000). 종전에는 curl 하나뿐이라
+# curl 부재 머신에서는 갱신이 통째로 조용히 건너뛰어졌다 — Windows 판이 IWR 로 겪은 것과
+# 같은 «조용한 미갱신» 의 약한 판이다. 파이썬은 러너가 \`--ca\` 로 쓰는 것과 같은 신뢰 평가기라
+# 폴백이 아니라 **같은 계약의 두 번째 손**이다.
 _new="\$BRIDGE_HOME/.bridge_agent.new.\$\$"
+_dl="\$BRIDGE_HOME/.selfupdate_dl.\$\$.py"
+_got=0
+# ⚠ 크기 바닥은 **두 손 모두**에 있어야 한다. curl 쪽에 \`[ -s ]\`(비어 있지 않음)만 두면,
+#   잘린 응답·스텁 한 줄이 문법만 맞으면 러너 자리에 들어간다 — 그리고 curl 은 거의 모든
+#   실사용 머신에 있으므로 그쪽이 **기본 경로**다. 파이썬 쪽에만 바닥을 두고 「검사한다」고
+#   적으면 계약이 코드보다 넓어진다(적대 리뷰 실측: 31바이트가 통과했다).
+_floor_ok() { [ -f "\$1" ] && [ "\$(wc -c < "\$1" 2>/dev/null || echo 0)" -ge 20000 ]; }
 if command -v curl >/dev/null 2>&1 \\
    && curl -fsS --max-time 30 --cacert "\$BRIDGE_HOME/rootCA.crt" \\
         -o "\$_new" '$BRIDGE_BASE/static/agent/bridge_agent.py' 2>/dev/null \\
-   && [ -s "\$_new" ] \\
+   && _floor_ok "\$_new"
+then
+  _got=1
+else
+  # ⚠ \`|| true\` 가 있어야 한다. 이 자리는 \`else\` 본문이라 \`set -e\` 가 그대로 걸리고,
+  #   디스크 가득참·쿼터·읽기전용 홈에서 리다이렉션이 실패하면 **런처가 여기서 죽는다** —
+  #   갱신하려다 러너를 못 띄우는 것이 이 블록이 막겠다고 적은 바로 그 결말이다.
+  cat > "\$_dl" <<'DLEOF' || true
+import ast, ssl, sys, urllib.request
+url, dest, ca = sys.argv[1], sys.argv[2], sys.argv[3]
+if not url.lower().startswith("https://"):
+    sys.exit("refuse plaintext: " + url)
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+ctx = ssl.create_default_context(cafile=ca)
+op = urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=ctx), NoRedirect)
+req = urllib.request.Request(url, headers={"User-Agent": "mysql-ai-bridge-launch"})
+with op.open(req, timeout=30) as r:
+    if int(getattr(r, "status", 0) or 0) != 200:
+        sys.exit("http status")
+    body = r.read()
+if len(body) < 20000:
+    sys.exit("too small: %d bytes" % len(body))
+ast.parse(body)
+with open(dest, "wb") as f:
+    f.write(body)
+DLEOF
+  if [ -s "\$_dl" ] \\
+     && $PY "\$_dl" '$BRIDGE_BASE/static/agent/bridge_agent.py' "\$_new" \\
+          "\$BRIDGE_HOME/rootCA.crt" 2>/dev/null \\
+     && _floor_ok "\$_new"
+  then
+    _got=1
+  else
+    printf '[bridge-launch %s] 러너 갱신을 받지 못했습니다 — 있던 파일로 계속합니다.\\n' "\$(_ts)" >&2
+  fi
+fi
+if [ "\$_got" = 1 ] \\
    && $PY -c 'import ast,sys; ast.parse(open(sys.argv[1],"rb").read())' "\$_new" 2>/dev/null
 then
   if ! cmp -s "\$_new" "\$BRIDGE_HOME/bridge_agent.py" 2>/dev/null; then
@@ -430,7 +481,7 @@ then
       && printf '[bridge-launch %s] 러너를 최신본으로 갱신했습니다.\\n' "\$(_ts)"
   fi
 fi
-rm -f "\$_new" 2>/dev/null || true
+rm -f "\$_new" "\$_dl" 2>/dev/null || true
 pkill -f 'bridge_agent.py' >/dev/null 2>&1 || true
 # ⚠ **부모가 즉시 끝나면 wsl.exe 가 이 자식까지 죽인다** (실측 2026-08-31). 이 스크립트는
 #   Windows 핸들러에서 \`wsl.exe -- launch.sh\` 로 불리는데, 그 명령이 끝나는 순간 WSL 이

@@ -2,6 +2,7 @@
 doc_type: DQA_ROADMAP
 initiative: onboarding-accessibility
 created_at: 2026-09-02
+revised_at: 2026-09-02
 source_research: ./RESEARCH.md
 status: active
 schema_version: 1
@@ -10,28 +11,67 @@ schema_version: 1
 # 개발 로드맵 — onboarding-accessibility (「AI 연결」 축)
 
 > **다른 세션이 0 맥락으로 읽고 착수 가능**하도록 쓴다. 각 항목 = worktree cycle 1개.
+>
+> **개정 이력**: 초판(2026-09-02 오전)은 MCPB 번들을 주 경로로 삼았다. 같은 날 사용자 지적
+> *"현재 서비스는 claude 뿐만 아니라 다른 AI 모델을 모두 수용 가능해야 합니다"* + **네이티브
+> 클라이언트 채택 결정**으로 주 경로가 교체됐다. 무엇이 왜 바뀌었는지는 §5 보류·기각에 남긴다.
 
 ## 0. 맥락 (context-free 진입)
 
-**대상 제품**: 사내 LAN 전용 DB 질의 어시스턴트(Database Query Assistant). 서버는 도구·컨텍스트·
-데이터만 제공하고, **추론은 각 사용자의 개인 머신 AI 런타임이 자기 계정으로** 수행한다
-(feature-0041 도구 표면 + feature-0043 pull 브리지). 서버측 LLM 은 `shared/llm_gate.py` 에서
-fail-closed 차단이며 **본 로드맵은 그것을 건드리지 않는다.**
+**대상 제품**: 사내 LAN 전용 DB 질의 어시스턴트. 서버는 도구·컨텍스트·데이터만 제공하고,
+**추론은 각 사용자의 개인 머신 AI 런타임이 자기 계정으로** 수행한다(feature-0041 도구 표면 +
+feature-0043 pull 브리지). 서버측 LLM 은 `shared/llm_gate.py` 에서 fail-closed 차단이며
+**본 로드맵은 그것을 건드리지 않는다.**
 
 **왜 이 로드맵이 존재하는가**: 사용자 제보(2026-09-02) — *"각 사용자들이 처음 사용하는 입장에서
-접근성이 너무 떨어진다"*, 후속 결정에서 *"현재 가장 큰 걸림돌은 'AI 연결'"*. `RESEARCH.md` §9.1 이
-근본 원인을 확정했다: **연결을 우리가 만든 배포물(파이썬 상주 러너 + 셸 설치 스크립트 1,506줄)로
-구현했고, AI 클라이언트 생태계가 이미 가진 1급 배포 포맷(MCPB `.mcpb` · 플러그인)을 쓰지 않았다.**
-그 포맷은 런타임·설치 UX·설정 UI·업데이트 채널을 함께 가져오는데, 우리는 넷을 전부 자체 구현했고
-넷 모두가 마찰이 됐다.
+접근성이 너무 떨어진다"* → *"현재 가장 큰 걸림돌은 'AI 연결'"*. `RESEARCH.md` §9.1 이 근본 원인을
+확정했다: **연결을 우리가 만든 배포물(파이썬 상주 러너 + 셸 설치 스크립트 1,531줄)로 구현했고,
+런타임·설치 UX·설정 UI·업데이트 채널을 전부 자체 구현해 넷 모두가 마찰이 됐다.**
 
-**사용자 결정으로 범위 밖 (RESEARCH §9)**: 서버 추론 복원·미터링(**보류**) · 공인 인증서 전환
-(**논외**) · Intune/GPO(**MDM 존재 여부 미응답 — 보류**).
+**주 처방 (사용자 결정 2026-09-02)**: **네이티브 설치형 클라이언트**. 사용자가 하는 일은
+「설치 파일 더블클릭 → 쓸 AI 선택 → 로그인 클릭」이 전부가 되고, 터미널·Python·CLI 설치 명령·
+토큰 복사가 모두 사라진다.
+
+### 0.1 불변 제약 — ToS 경계 (**위반 시 사용자 계정이 정지된다**)
+
+2026년에 3사가 모두 구독 OAuth 의 제3자 사용을 차단했다. **이 경계를 넘는 설계는 자동 기각이다.**
+
+| | 허용 ✅ | 금지 ❌ |
+|---|---|---|
+| **무엇** | 벤더의 **공식 CLI 바이너리를 그대로 실행**한다. `claude -p` subprocess 호출은 2026-04 중순 명시적으로 허용 확인 | 구독 **OAuth 토큰을 추출·보관·중계**해 우리 클라이언트가 직접 API 를 부른다 |
+| **누가 토큰을 만지나** | 벤더 CLI 만. 우리는 보지도 저장하지도 않는다 | 우리가 만진다 |
+| **선례** | 현행 러너가 이미 이 방식이다 | Anthropic 2026-02-20 약관 → **2026-04-04 차단**(OpenClaw·OpenCode 등) · Google 2026-02 Gemini CLI 토큰 프록시 금지 + **유료 구독자 계정 정지** |
+
+> **따라서 「로그인 OAuth 위임」은 「대행 실행」으로만 구현한다** — 클라이언트가 벤더의 공식
+> 로그인 명령을 subprocess 로 띄우고 **진행 상황만 GUI 로 표시**한다. 사용자 체감은 동일하고
+> (버튼 클릭 → 브라우저 승인 → 끝), 토큰은 벤더 자격증명 저장소에만 남는다.
+> **이 문장을 어기는 구현은 리뷰에서 차단한다.**
+
+### 0.2 재사용 지렛대 — 엔진은 이미 있다
+
+클라이언트는 **새 제품이 아니라 기존 러너의 껍데기 교체**다.
+
+| 이미 있는 것 | 위치 | 클라이언트에서의 역할 |
+|---|---|---|
+| 러너 엔진 5,849행 (18모듈) | `unit/feature-0043-external-llm-bridge/src/agent/` | 그대로 내장 |
+| 런타임 3종 지원 (claude·codex·gemini) + 표 밖 CLI 지목 | `src/agent/runtimes.py` `_RUNTIME_SPECS` · P0-Z4 | 그대로 |
+| CLI 감지 (Windows `.exe`·PATH 밖 표준 위치) | `src/agent/discovery.py` | 그대로 |
+| 능력 질의(모델·추론등급 신고) | `src/agent/caps.py` | 그대로 |
+| 무결성 대조(CA 지문·체크섬) | `bridge_setup.sh`/`.ps1` | **설치 관리자로 이관** |
+| 자기 갱신 | `src/agent/selfupdate.py` | **자동 업데이트로 승격** |
+| 셸 설치 스크립트 1,531행 | `bridge_setup.sh` 862 + `.ps1` 669 | **소멸** |
 
 **정본 진입**: `repo/AGENTS.md` · `repo/docs/PROJECT.md` · `repo/docs/SECURITY.md` ·
 `unit/feature-0043-external-llm-bridge/docs/FUNCTION.md`(P0-H · P0-K · P0-J · P0-Z3~Z6)
 
-**측정 기반**: **없음 — ITEM-00 이 만든다.** 그래서 ITEM-00 이 전 항목의 선행이다.
+**범위 밖 (사용자 결정, RESEARCH §9)**: 서버 추론 복원·미터링(**보류**) · 공인 인증서 전환
+(**논외**) · Intune/GPO(**MDM 존재 여부 미응답 — 보류**).
+
+**측정 기반**: **없음 — ITEM-00 이 만든다.**
+
+> ⚠ **`file:line` 앵커는 `main` `2eda1169`(2026-09-02) 기준이다.** 초판 작성 후 하루도 안 돼 4건이
+> 밀렸다(PR #1533 병합). **행번호가 아니라 함께 적은 심볼명이 durable anchor** 이므로, 어긋나면
+> `grep -n '<심볼>'` 으로 다시 잡는다.
 
 ---
 
@@ -40,233 +80,196 @@ fail-closed 차단이며 **본 로드맵은 그것을 건드리지 않는다.**
 ```
 ITEM-00 (연결 퍼널 계측) ──enables──▶ (전 항목 — 효과 증명 수단)
 
-ITEM-01 (하트비트 클라이언트 종류 분리)
-      └──requires──▶ ITEM-02 (MCPB 번들)          ← 수명·축출 가드가 선행
-                          └──enables──▶ ITEM-04 (연결 축 2분할)
-ITEM-03 (연결 진행·진단 웹 표시) ──enables──▶ ITEM-04
+SPIKE-02 (클라이언트 실현가능성) ──requires──▶ ITEM-08 (네이티브 클라이언트)
+                                                    ▲
+[조직 작업] 코드 서명 확보 ──── hard precondition ───┘
 
-ITEM-05 (AI CLI 허용목록 3자리 정합)  — 독립
-ITEM-06 (「AI 없음」 안내 분기 정확화) — 독립
-ITEM-07 (Claude Code 플러그인 배포)   ──requires──▶ ITEM-01
+ITEM-08 ──enables──▶ ITEM-03 (웹 연결 진단 — 클라이언트 상태 반영)
+        ──enables──▶ ITEM-06 (「AI 없음」 → 클라이언트 유도로 전환)
 
-SPIKE-01 (Claude Desktop 딥링크 조사) ──enables──▶ ITEM-04 (사용감 상향, 선택)
+ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ```
 
-**DAG 검증**: 순환 없음. 측정 수단(ITEM-00)은 모든 효과 항목의 선행으로 끌어올렸다
-(`improve_listup` 정합 축 6 — 측정 없이 성능·UX 항목 채택 금지).
+**DAG 검증**: 순환 없음. 측정 수단(ITEM-00)을 전 항목 선행으로 두었고, **실현가능성(SPIKE-02)과
+코드 서명(조직 작업)을 ITEM-08 의 하드 선행**으로 세웠다 — 「될 것 같다」로 Major 항목을 열지 않는다.
 
 ## 2. Phase 시퀀스
 
-| Phase | 포함 ITEM | 병렬? | 진입 조건 | 왜 이 순서인가 |
+| Phase | 포함 | 병렬? | 진입 조건 | 왜 이 순서인가 |
 |---|---|---|---|---|
-| **P0** | ITEM-00 · ITEM-05 · ITEM-06 | ✅ 병렬 | (없음) | 계측이 없으면 P1 의 효과를 증명할 수 없다. ITEM-05·06 은 독립·저위험이라 같은 창에서 처리 |
-| **P1** | ITEM-01 → ITEM-02 | ❌ 순차 | ITEM-00 done | ITEM-01 없이 ITEM-02 를 내면 「하루 두 번 끊기고 남의 러너를 축출하는 확장」이 된다 |
-| **P2** | ITEM-03 · ITEM-07 | ✅ 병렬 | ITEM-02 done | 등록형 경로가 생긴 뒤라야 진단 화면이 덮을 상태 집합이 확정된다 |
-| **P3** | ITEM-04 | ❌ | ITEM-02·03 done | 두 축을 나눠 제시하려면 양쪽 경로가 모두 실재해야 한다 |
-| **선택** | SPIKE-01 | ✅ | (없음) | 결과가 ITEM-04 의 사용감을 바꾸지만 차단하지는 않는다 |
+| **P0** | ITEM-00 · ITEM-05 · **SPIKE-02** | ✅ 병렬 | (없음) | SPIKE 가 ITEM-08 의 spec 을 확정한다. 계측이 없으면 「쉬워졌다」를 반증할 수 없다. ITEM-05 는 독립·저위험 |
+| **게이트** | — | — | SPIKE-02 done **AND** 코드 서명 확보 | **둘 중 하나라도 미충족이면 P1 진입 금지.** 서명 없이 배포하면 SmartScreen/Gatekeeper 경고가 터미널 벽을 그대로 대체한다 |
+| **P1** | ITEM-08 [Major] | ❌ | 위 게이트 통과 | 클라이언트가 나머지 항목의 전제를 바꾼다 |
+| **P2** | ITEM-03 · ITEM-06 | ✅ 병렬 | ITEM-08 done | 클라이언트가 실재해야 웹이 표시할 상태 집합과 안내 문안이 확정된다 |
+
+> **코드 서명이 「미정 — 조사 필요」이므로 현재 P1 은 진입 불가 상태다** (사용자 결정 2026-09-02).
+> 조사 결과가 「확보 불가」면 ITEM-08 을 재검토한다 — 대안은 사내 MDM 배포이며, 그것도 없으면
+> 클라이언트 방향 자체를 되돌려야 한다(§5 참조).
 
 ---
 
 ## 3. 항목
 
+### SPIKE-02 · 네이티브 클라이언트 실현가능성 (타임박스 1 cycle)
+- **status**: pending
+- **feature_id**: `feature-0046-native-client`
+- **dimension**: structural
+- **risk_grade**: Minor (조사 — 제품 코드 변경 0)
+- **depends_on**: []
+- **enables**: [ITEM-08]
+- **why**: ITEM-08 은 Major 이고 «제품이 하나 더 생기는» 규모다. 그 결정을 **추정 위에 세우지
+  않는다.** 아래 4가지는 전부 실측 가능하고, 어느 하나가 부정이면 spec 이나 방향이 바뀐다.
+- **fit_verdict**: adopt
+- **what** — 네 가지를 실측하고 판정 문서 1건을 남긴다:
+  1. **3사 CLI 의 스크립트 가능 로그인**: `claude` · `codex` · `gemini` 각각에 대해
+     ① 비대화형/GUI 에서 띄울 수 있는 로그인 명령이 있는가 ② 브라우저 플로우를 subprocess 로
+     감쌌을 때 성공/실패를 **종료코드나 출력으로 판정**할 수 있는가 ③ 이미 로그인돼 있는지
+     확인하는 명령이 있는가. **없으면 그 런타임은 「대행 실행」 대신 「안내」로 강등**된다.
+  2. **서명 없는 설치의 실제 경고**: 서명하지 않은 더미 설치 파일로 Windows SmartScreen ·
+     macOS Gatekeeper 화면을 **캡처**한다. 「경고가 뜬다」가 아니라 **비개발자가 통과할 수 있는
+     경고인가**를 화면으로 판정한다(벽이 이동만 하는지 실제로 낮아지는지).
+  3. **기술 스택 선정**: Tauri / Electron / Go+트레이 중 택1. 판정 기준 = 번들 크기 ·
+     3플랫폼 빌드 난이도 · **파이썬 러너 엔진 5,849행을 어떻게 동봉하는가**(임베드 인터프리터 vs
+     PyInstaller 동결 vs 포팅). **포팅은 기각 후보** — 엔진 재작성은 재사용 지렛대를 버린다.
+  4. **Agent SDK 크레딧 풀 영향**: `claude -p` subprocess 호출이 2026-06-15부터 일반 구독 한도가
+     아니라 Agent SDK 크레딧 풀에서 차감된다는 보고를 **실측 확인**한다(우리 사용자 실질 한도에
+     직결). 사실이면 `/ai/connect` 안내에 반영해야 하고, 다른 두 벤더도 같은 축을 확인한다.
+- **entry_points**: 조사 — 제품 코드 변경 없음. 산출물
+  `docs/improvements/onboarding-accessibility/SPIKE-02-native-client.md`
+- **acceptance**:
+  1. 네 항목 각각에 **판정 + 근거(명령 출력·스크린샷·문서 링크)** 가 문서에 있다.
+  2. 「가능」뿐 아니라 **「불가능」도 근거와 함께** 기록된다(되살아나지 않게).
+  3. ITEM-08 의 `what` 에 붙일 spec 초안(스택·로그인 대행 범위·런타임별 커버리지)이 나온다.
+  4. **추정과 실측이 구분 표기**된다 — 실측하지 못한 항목은 「미실측」으로 명시.
+- **guards**: 타임박스 1 cycle. 초과하면 **부분 판정으로 종결**하고 미실측 범위를 명시한다
+  (조사가 무한 확장해 착수를 막는 것을 방지).
+- **effort**: 中
+
+---
+
+### ITEM-08 · 네이티브 클라이언트 — 설치·로그인 대행·러너 내장
+- **status**: pending (**blocked: 코드 서명 미확보**)
+- **feature_id**: `feature-0046-native-client` (**신규**)
+- **dimension**: structural
+- **risk_grade**: **Major** — 새 배포 아티팩트 + 사용자 머신에 상주물 + 타사 설치기 실행
+- **depends_on**: [ITEM-00, SPIKE-02, **코드 서명 확보(조직 작업)**]
+- **enables**: [ITEM-03, ITEM-06]
+- **why**: RESEARCH §9.1 · 사용자 결정 2026-09-02. **터미널·Python·CLI 설치 명령·토큰 복사를
+  한 번에 없애는 유일한 항목**이며, MCPB 와 달리 **claude·codex·gemini 를 모두 덮는다**
+  (러너 `_RUNTIME_SPECS` 를 그대로 쓰기 때문). 덤으로 **C3**(러너가 사용자 머신 파일이라 우리가
+  갱신할 수 없다 — P0-Z6 4차 재발의 뿌리)가 자동 업데이트로 닫힌다.
+- **fit_verdict**: **adopt-with-guard**
+- **what** — 서명된 설치 파일(Windows `.exe`/`.msi` · macOS `.pkg`/`.dmg`)이 하는 일:
+  1. **러너 엔진 동봉** — `src/agent/` 를 그대로 싣는다(SPIKE-02 가 정한 방식). 파이썬 설치 불요.
+  2. **CA 신뢰** — 현행 스크립트와 **같은 계약**: 지문 대조 후 **이 프로세스에만** 적용, OS 신뢰
+     저장소 미변경. (설치 관리자라고 해서 전역 설치로 바꾸지 않는다 — 그 절제가 외부 AI 거절
+     사유를 해소한 근거였다.)
+  3. **AI CLI 감지 → 없으면 벤더 공식 설치기를 «동의를 받고» 실행** (`bridge_setup.ps1` 의
+     winget 동의 패턴과 동형 — 말없이 설치하지 않는다).
+  4. **로그인 대행 실행** — 벤더 공식 로그인 명령을 subprocess 로 띄우고 GUI 로 진행 표시.
+     **§0.1 경계 준수: 토큰을 읽지도 저장하지도 중계하지도 않는다.**
+  5. **상주 + 로그온 자동시작** — 트레이 아이콘 + 상태창. 재부팅 후 자동 기동.
+  6. **자동 업데이트** — 서명 검증 후 교체. 실패 시 **있던 버전 그대로** 기동(갱신하려다 못
+     띄우는 것이 가장 나쁜 결말 — 현행 `try_self_update` 와 같은 규약).
+  7. **토큰 수령** — 기존 `mysql-ai-bridge://` 스킴 재사용(웹 [내 AI 실행] 경로 보존).
+- **entry_points**:
+  - 신규: `unit/feature-0046-native-client/src/`
+  - 엔진 재사용: `unit/feature-0043-external-llm-bridge/src/agent/` (18모듈, 5,849행)
+  - 빌드: `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py` 와 **같은 계층**
+    (소스는 커밋, 배포본은 빌드 생성물)
+  - 서빙·체크섬: `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py` `_setup_checksum()` ·
+    `compose_launch_commands()`
+  - 배포 게이트: `bin/deploy-web.sh:1661` `bridge_runner_verify()` 와 같은 형태로 설치 파일 검증
+- **acceptance**:
+  1. **실 Windows + 실 macOS 에서, 터미널을 한 번도 열지 않고**: 설치 → AI 선택 → 로그인 →
+     웹에서 질문 → 답변 수신까지 완주한다. (**PB-0008** 실 Windows 브라우저 + 실 설치 왕복)
+  2. **claude · codex · gemini 각각**에 대해 1 을 통과한다(하나라도 실패면 그 런타임은
+     「감지·안내」로 강등하고 화면이 그 사실을 말한다 — 커버리지 과장 금지, P0-I 계약).
+  3. **서명 검증** — 설치 파일이 서명돼 있고 SmartScreen/Gatekeeper 경고 없이 설치된다.
+  4. 재부팅 후 자동 기동하고 `/api/ai/connect/status` 가 `listening: true` 를 낸다.
+  5. 자동 업데이트가 **서명 검증 실패 시 교체하지 않고 기존 버전으로 기동**한다.
+  6. 서빙 sha256 = 빌드 산출물 sha256.
+  7. **토큰 비접촉 증명** — 클라이언트가 벤더 자격증명 파일·키체인을 읽지 않음을 소스·테스트로
+     보인다(§0.1 경계가 load-bearing 이므로 «안 한다»를 검사한다).
+- **guards**:
+  - **§0.1 ToS 경계** — OAuth 토큰 접촉 금지. 위반 구현은 리뷰 차단.
+  - **CA 는 프로세스 한정** — 전역 신뢰 저장소 변경 금지(현행 계약 유지).
+  - **타사 설치기 실행은 명시 동의 후에만.** 비대화형이면 명령만 알려 주고 멈춘다.
+  - **모델 선택기**: 클라이언트는 러너이므로 caps 신고가 그대로 동작한다 → P0-Z3~Z6 축 보존.
+    신고 출처는 `probe`/`cache` 만 허용하는 기존 게이트를 우회하지 않는다.
+  - **기존 러너와 공존** — 클라이언트도 `client_kind=runner` 이므로 「나중에 연결된 쪽이 이긴다」
+    가 그대로 적용된다(사용자가 갈아타면 새 것이 이긴다 = 의도된 동작). 별도 가드 불요.
+- **effort**: **大**
+- **notes**: ⚠ **제품이 하나 더 생긴다** — 3플랫폼 × 아키텍처 빌드, 자동 업데이트 인프라,
+  타사 설치기가 깨질 때의 지원 부담이 영구적이다. SPIKE-02 판정 없이 착수하지 않는다.
+
+---
+
 ### ITEM-00 · 연결 퍼널 계측
 - **status**: pending
-- **feature_id**: `feature-0043-external-llm-bridge` (기존 확장 — 연결 축 코드가 여기 거주)
+- **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: operational
 - **risk_grade**: Minor
 - **depends_on**: []
-- **enables**: [ITEM-01, ITEM-02, ITEM-03, ITEM-04, ITEM-07]
-- **why**: RESEARCH F-015. 「어느 단계에서 사람들이 떨어지는가」를 아무도 모른다. 이 로드맵의 모든
-  항목이 «연결이 쉬워졌다»를 주장하는데, 그 주장을 반증할 수단이 저장소에 없다.
+- **enables**: [ITEM-03, ITEM-06, ITEM-08]
+- **why**: RESEARCH F-015. 「어느 단계에서 사람들이 떨어지는가」를 아무도 모른다. **클라이언트
+  전환의 효과를 증명할 수단이 저장소에 없으면, 大 규모 항목을 하고도 나아졌는지 말할 수 없다.**
+  전환 **전** 기준선을 잡아야 하므로 ITEM-08 보다 반드시 먼저다.
 - **fit_verdict**: adopt
-- **what**: 연결 퍼널 5단계를 `WebAuditEvents` 에 `action='ai.connect.funnel'` 로 적재한다.
-  단계 = `page_view`(`/ai/connect` 또는 모달 열림) · `handoff_issued`(토큰 발급) ·
-  `first_heartbeat`(그 계정의 최초 하트비트) · `first_claim`(최초 `claim_request`) ·
-  `first_answer`(최초 `submit_answer`). `ChangeJson` = `{step, path_kind, account_id, ts}`.
-  `path_kind` ∈ `{runner_posix, runner_windows, connector, probe, handoff}` — **경로별 이탈률을
-  가르는 것이 이 계측의 목적**이므로 단계만 세면 가치의 절반을 잃는다.
+- **what**: 연결 퍼널 5단계를 `WebAuditEvents` 에 `action='ai.connect.funnel'` 로 적재.
+  단계 = `page_view` · `handoff_issued` · `first_heartbeat` · `first_claim` · `first_answer`.
+  `ChangeJson` = `{step, path_kind, account_id, ts}`.
+  `path_kind` ∈ `{runner_posix, runner_windows, native_client, connector, probe, handoff}`
+  — **경로별 이탈률을 가르는 것이 목적**이므로 단계만 세면 가치의 절반을 잃는다.
 - **entry_points**:
-  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:533` `connect_status()` — `connected`/
-    `listening` 판정이 이미 여기 있다. **판정 로직을 복제하지 말고 재사용**한다.
-  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:1296` `POST /api/ai/connect/token` — `handoff_issued`
-  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:4489` `bridge_heartbeat` — `first_heartbeat`
-  - `claim_request` · `submit_answer` 핸들러 (`routers/ai_tools.py`) — `first_claim`/`first_answer`
+  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:534` `connect_status()` —
+    `connected`/`listening` 판정이 이미 여기 있다. **복제하지 말고 재사용**한다.
+  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:1387` `POST /api/ai/connect/token`
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:4661` `bridge_heartbeat`
+  - `claim_request` · `submit_answer` 핸들러 (`routers/ai_tools.py`)
 - **acceptance**:
-  1. 신규 계정으로 연결을 완주하면 5단계가 시간순으로 `WebAuditEvents` 에 정확히 1행씩 남는다.
-  2. 중도 이탈(토큰만 발급하고 설치 안 함) 계정은 2단계까지만 남는다.
-  3. **재실행 멱등** — 같은 계정이 재연결해도 `first_*` 는 중복 적재되지 않는다(계정당 1회).
-  4. `path_kind` 가 러너(posix/windows)·등록형·probe 를 구분한다.
-  5. 토큰 원문·명령문·프롬프트는 **적재하지 않는다** (`docs/SECURITY.md` D12 정합).
-- **guards**: 계측 실패가 연결을 막지 않는다 — 적재 예외는 삼키고 로그만 남긴다(fail-open).
-  하트비트는 30초마다 오므로 `first_heartbeat` 판정에 **계정당 1회 가드**가 없으면 원장이 폭주한다.
+  1. 신규 계정이 연결을 완주하면 5단계가 시간순으로 정확히 1행씩 남는다.
+  2. 중도 이탈 계정은 그 지점까지만 남는다.
+  3. **재실행 멱등** — `first_*` 는 계정당 1회.
+  4. `path_kind` 가 경로를 구분한다(`native_client` 값을 미리 정의해 ITEM-08 이 그대로 쓴다).
+  5. 토큰 원문·명령문·프롬프트는 **적재하지 않는다**(`docs/SECURITY.md` D12).
+- **guards**: 계측 실패가 연결을 막지 않는다(fail-open). 하트비트는 30초마다 오므로
+  `first_heartbeat` 에 **계정당 1회 가드**가 없으면 원장이 폭주한다.
 - **effort**: 中
-- **notes**: 웹 자산 변경이 있으면 PB-0008 대상. 서버 전용이면 비대상.
 
 ---
 
-### ITEM-01 · 하트비트에 클라이언트 종류를 선언하고 supersede 를 러너로 한정
-- **status**: pending
-- **feature_id**: `feature-0043-external-llm-bridge`
-- **dimension**: structural
-- **risk_grade**: **Major** — 잘못하면 사용자의 러너가 조용히 굶는다 (라이브 실측 이력 있는 축)
-- **depends_on**: [ITEM-00]
-- **enables**: [ITEM-02, ITEM-07]
-- **why**: RESEARCH F-012. ITEM-02(MCPB)의 **하드 전제**다. 두 결함을 동시에 닫는다:
-  1. **수명** — 확장에 붙여넣은 토큰은 **최대 12시간**이면 죽는다. 수명 연장은
-     `bridge_heartbeat` 가 `ExpiresAt` 를 미는 것으로만 일어나고, 하트비트를 보내는 것은 러너뿐이다.
-  2. **축출** — 그래서 프록시가 하트비트를 보내기 시작하면, supersede 판정
-     (`_stale_runner_yield_to`)이 **하트비트 이력이 있는 행끼리 연결 순서로** 승자를 정하므로
-     **같은 계정에서 돌던 사용자의 러너를 축출**한다. FUNCTION.md P0-K 가
-     *"하트비트를 모르는 등록형 MCP 클라이언트는 이 판정에 걸리지 않는다"* 로 보장하던 안전이
-     **F-012 를 넣는 순간 깨진다.**
-- **fit_verdict**: **adopt-with-guard**
-- **what**:
-  - `POST /api/ai/bridge_heartbeat` payload 에 `client_kind` ∈ `{runner, connector}` 를 받는다.
-    **부재 = `runner`** (구 러너 호환 — 사용자 머신의 옛 사본을 우리가 갱신할 수 없다, C3).
-  - `WebOAuthTokens` 에 `ClientKind` 컬럼 추가(멱등 ALTER, 기본값 `runner`).
-  - `stale_runner_must_yield()` 의 후보 집합을 **`ClientKind='runner'` 로 한정**한다.
-    `connector` 행은 승자로도 패자로도 판정에 들어가지 않는다.
-  - `connector` 하트비트도 **`ExpiresAt` 연장은 동일하게** 받는다 — 그것이 이 항목의 절반이다.
-- **entry_points**:
-  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:4489` `bridge_heartbeat()`
-  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:327` `_stale_runner_yield_to()`
-  - `unit/feature-0003-agent-web-ui/src/oauth_store.py:492` `heartbeat()` ·
-    `:544` `account_is_heartbeating()` · `stale_runner_must_yield()`
-- **acceptance**:
-  1. `client_kind` 미지정 하트비트가 종전과 **바이트 동일하게** 동작한다(구 러너 무회귀).
-  2. `connector` 하트비트가 `ExpiresAt` 를 `HEARTBEAT_EXTEND_SEC` 만큼 민다.
-  3. **같은 계정에 러너(먼저) + connector(나중)** 가 공존할 때 러너가 **양보하지 않는다**
-     — `claim_request` 가 409 를 내지 않고, 목록·대기가 억제되지 않는다.
-  4. 러너 2개(먼저/나중)의 기존 supersede 동작은 **불변**이다(회귀 잠금).
-  5. `connector` 만 있는 계정의 `/api/ai/connect/status` 가 `listening: true` 를 낸다.
-  6. 뮤테이션: `ClientKind` 필터를 제거하면 acceptance 3 이 **FAIL** 해야 한다(가드가 load-bearing).
-- **guards**: 판정 실패는 **fail-open(양보 없음)** 을 유지한다 — `_stale_runner_yield_to` 의 기존
-  규약이며, 뒤집으면 멀쩡한 러너가 굶는다. 새 컬럼이 없는 배포에서도 읽기 축이 동작해야 한다
-  (`one-axis-supports-a-deployment-all-must` — 쓰기 축도 같은 배포를 알아야 한다).
-- **effort**: 中
-- **notes**: alembic/멱등 ALTER 는 `docs/CONVENTIONS.md §12` expand/contract 준수 · `bin/migrate-lint.sh` 통과.
-
----
-
-### ITEM-02 · MCPB 번들(`.mcpb`) 배포 — 터미널·Python 없는 등록 경로
-- **status**: pending
-- **feature_id**: `feature-0046-mcpb-connector-bundle` (**신규** — 언어(Node)·배포 포맷·수명주기가
-  러너와 다르다. `feature-0043` 에 넣으면 이미 4,267행인 러너 축과 머지 지점이 겹친다)
-- **dimension**: structural
-- **risk_grade**: **Major** — 새 배포 아티팩트 + 토큰을 다루는 새 클라이언트 표면
-- **depends_on**: [ITEM-00, ITEM-01]
-- **enables**: [ITEM-04]
-- **why**: RESEARCH F-011 · §9.1. **W3(터미널)·W4(Python)를 동시에 소멸**시키는 유일한 항목이다.
-  Node.js 가 Claude Desktop 에 동봉되므로 사용자 머신에 런타임을 요구하지 않는다. Anthropic 공식
-  문서가 *"Access to systems behind your firewall (private databases)"* · *"Zero-trust compliance
-  inside corporate network boundaries"* 를 MCPB 권장 케이스로 명시한다 — 우리 배치 그대로다.
-- **fit_verdict**: **adopt-with-guard**
-- **what**:
-  - `src/` 에 얇은 **stdio↔HTTP 프록시**(Node + `@modelcontextprotocol/sdk`). 하는 일은 셋뿐:
-    ① stdio MCP 요청을 `{base}/api/ai/mcp` 로 `Authorization: Bearer` 와 함께 중계
-    ② 30초 주기로 `POST /api/ai/bridge_heartbeat` `{client_kind:"connector"}` (ITEM-01)
-    ③ 종료 시 정리. **답변 생성·CLI 실행·파일 쓰기를 하지 않는다** (러너와의 경계).
-  - `manifest.json`: `user_config` 로 `base_url`(문자열) · `token`(**sensitive**) 를 받고,
-    `env` 로 `NODE_EXTRA_CA_CERTS` 를 지정한다. `compatibility` 에 `darwin`·`win32`.
-  - `mcpb pack` 산출물을 `/static/agent/mysql-ai.mcpb` 로 서빙하고 **sha256 을 서버가 계산해**
-    `/ai/connect` 가 표시(기존 `_setup_checksum` 과 같은 규약).
-  - `/ai/connect` 에 **[확장 파일 받기]** 를 추가한다 — 순서·문안은 ITEM-04 가 정한다.
-- **entry_points**:
-  - 신규: `unit/feature-0046-mcpb-connector-bundle/src/{proxy.js,manifest.json}`
-  - 빌드: `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py` 와 **같은 계층**에 번들
-    빌드를 둔다(소스는 커밋, 배포본은 빌드 생성물 — 2026-09-02 러너 모듈화와 동일 규약)
-  - 서빙·체크섬: `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py`
-    `_setup_checksum()` · `compose_launch_commands()`
-  - 배포 게이트: `bin/deploy-web.sh:1642` `bridge_runner_verify()` 와 같은 형태로 번들 검증 추가
-- **acceptance**:
-  1. 실 Windows 와 macOS 에서 `.mcpb` **더블클릭 → 설정 UI 에 주소·토큰 입력 → 설치 완료**까지
-     터미널을 한 번도 열지 않고 성공한다. (**PB-0008 실 Windows 브라우저 + 실 설치 왕복**)
-  2. 설치 직후 `/api/ai/connect/status` 가 `listening: true` 를 낸다(프록시 하트비트 도달).
-  3. 웹에서 질문 → Claude Desktop 세션이 `claim_request` → `submit_answer` → **같은 말풍선이
-     답변으로 덮어써진다**(P0-F 계약 유지).
-  4. **12시간을 넘겨도 연결이 유지된다** — 하트비트가 `ExpiresAt` 를 밀고 있음을 DB 로 확인.
-  5. 서빙 sha256 = 빌드 산출물 sha256 (갈리면 사용자가 받는 것과 테스트한 것이 다르다).
-  6. 같은 계정에 러너가 함께 떠 있어도 **러너가 축출되지 않는다**(ITEM-01 acceptance 3 재확인).
-- **guards**:
-  - **토큰은 `user_config` 의 sensitive 필드로만 받는다** — 번들 파일에 굽지 않는다(배포물이
-    자격증명을 담으면 파일 하나가 계정 탈취 경로가 된다).
-  - 프록시는 **`{base}/api/ai/mcp` 와 `/api/ai/bridge_heartbeat` 외 어떤 URL 도 만들지 않는다**
-    (러너의 「나가는 곳은 한 곳」 계약과 동형 — 테스트로 잠근다).
-  - **모델 선택기는 뜨지 않는다** — 프록시는 CLI 를 호출하지 않아 caps 를 신고할 수 없고,
-    P0-Z6 규칙대로 신고 없음 = `hidden` + 사유 표시가 **정상 동작**이다. 이것을 결함으로
-    오인해 폴백 목록을 만들지 않는다(그 폴백이 `gpt-5.1-codex` 를 화면에 띄운 그 경로다).
-- **effort**: 大
-- **notes**: ⚠ **Claude Desktop 전용**(macOS·Windows). codex·gemini 사용자는 ITEM-07 또는 기존
-  러너. 이 한계를 `/ai/connect` 가 **표시해야** 한다 — 안 하면 codex 사용자가 받아서 안 되는
-  파일을 받는다. Node 의존성은 번들에 포함하되 크기를 보고한다.
-
----
-
-### ITEM-03 · 연결 진행·진단을 웹 화면이 끝까지 표시
+### ITEM-03 · 연결 상태·진단을 웹 화면이 표시
 - **status**: pending
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: functional
 - **risk_grade**: Minor
-- **depends_on**: [ITEM-00, ITEM-02]
-- **enables**: [ITEM-04]
-- **why**: RESEARCH F-006. GUI 편향 사용자에게 가장 직접적인 처방 — *"터미널을 안 봐도 된다"* 를
-  참으로 만든다. 실측 최악 사례: 능력 협상 실패로 **240초 침묵**, 그동안 하트비트·로그·질문 수신이
-  0인데 설치 스크립트는 2초 뒤 「완료」를 선언했다(`REPORT.md` TASK-20260902T140000 ②).
-  **등록형 경로에서는 러너 로그조차 없으므로 이 항목이 더 필요하다.**
+- **depends_on**: [ITEM-00, ITEM-08]
+- **enables**: []
+- **why**: RESEARCH F-006. 클라이언트가 자기 트레이에 상태를 그려도 **웹 화면은 여전히 알아야
+  한다** — 사용자가 질문하는 곳이 웹이고, 「연결됨」만 보이면 아무도 없는 곳에 질문하게 된다
+  (제보 2026-08-27). 실측 최악 사례: 능력 협상 실패로 **240초 침묵**(`REPORT.md`
+  TASK-20260902T140000 ②).
 - **fit_verdict**: adopt
-- **what**: `/ai/connect` 와 연결 모달에 **단계 체크리스트**를 그린다 — 각 행에 ✅/⏳/❌ +
-  **실패 시 다음 행동 1개**. 데이터는 `/api/ai/connect/status` 를 확장해 싣는다(새 엔드포인트
-  금지 — 두 엔드포인트가 갈리면 0ms 재로드 순환이 난다).
-  행: `설치됨` · `연결됨`(토큰 유효) · `듣는 중`(하트비트 최근성) · `답할 AI 있음`(러너 caps 신고
-  또는 connector) · `첫 답변 완료`.
+- **what**: `/ai/connect` 와 연결 모달에 **단계 체크리스트** — 각 행에 ✅/⏳/❌ + **실패 시 다음
+  행동 1개**. 데이터는 `/api/ai/connect/status` 를 확장해 싣는다(**새 엔드포인트 금지** — 두
+  엔드포인트가 갈리면 0ms 재로드 순환이 난다).
+  행: `클라이언트 설치됨` · `연결됨`(토큰 유효) · `듣는 중`(하트비트 최근성) ·
+  `답할 AI 있음`(caps 신고) · `첫 답변 완료`.
 - **entry_points**:
-  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:533` `connect_status()` — **여기를 확장**
+  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:534` `connect_status()` — **확장**
   - `unit/feature-0003-agent-web-ui/src/static/ai-connect.js` · `src/static/app/connect-modal.js`
   - 판정 상수: `oauth_store.HEARTBEAT_WINDOW_SEC`(=90) 재사용
 - **acceptance**:
-  1. 러너가 `exit 4`(AI 없음)로 죽은 계정의 화면이 **`답할 AI 있음: ❌` + 다음 행동**을 보인다
-     — 터미널을 열지 않고 원인을 안다.
-  2. 재부팅으로 러너가 사라진 계정이 `연결됨 ✅ / 듣는 중 ❌` 로 **갈라져** 보인다(현재는
-     「연결됨」만 보여 아무도 없는 곳에 질문하게 된다 — 제보 2026-08-27).
-  3. 단독 페이지와 모달이 **같은 판정**을 쓴다(두 벌이면 갈린다 — P0-L 계약).
+  1. AI 로그인 만료로 답변이 실패하는 계정의 화면이 **`답할 AI 있음: ❌` + 다음 행동**을 보인다.
+  2. 재부팅으로 클라이언트가 안 뜬 계정이 `연결됨 ✅ / 듣는 중 ❌` 로 **갈라져** 보인다.
+  3. 단독 페이지와 모달이 **같은 판정**을 쓴다(P0-L 계약).
   4. 상태 갱신이 국면당 1회로 수렴한다(재로드 순환 금지).
-  5. **PB-0008** 실 Windows 브라우저로 3상태(미연결/정상/AI없음) 시각 확인.
-- **guards**: 판정 실패는 기존 fail-open(「연결됨」)을 유지 — 확신 없이 「연결 없음」을 단정하면
-  이미 연결한 사용자에게 매번 설정하라고 떠든다(P0-G).
+  5. **PB-0008** 실 Windows 브라우저로 3상태 시각 확인.
+- **guards**: 판정 실패는 기존 fail-open(「연결됨」)을 유지(P0-G).
 - **effort**: 中
-- **notes**: 웹 자산 변경 → **PB-0008 필수**(`FIRST_REQUEST.md` `visual_verification_scope: always`).
-
----
-
-### ITEM-04 · 연결을 두 축으로 나눠 묻는다 — 러너를 필수에서 선택으로
-- **status**: pending
-- **feature_id**: `feature-0043-external-llm-bridge`
-- **dimension**: functional
-- **risk_grade**: Minor
-- **depends_on**: [ITEM-02, ITEM-03]
-- **enables**: []
-- **why**: RESEARCH F-014 · §9.2. **현재 결함의 정체** — 「지금 답 받기」만 원하는 사용자(대부분)도,
-  무인 처리를 위해 만든 상주 러너의 설치 벽을 통과해야 한다. 필요하지 않은 사람에게 부과된 비용이다.
-- **fit_verdict**: adopt
-- **what**: `/ai/connect` 첫 화면이 **질문 하나**를 묻는다 — *"자리를 비운 사이에도 답이 와 있어야
-  하나요?"*
-  - **아니오(기본)** → 확장 설치(ITEM-02). 설치물 0, 터미널 0.
-  - **예** → 러너 설치(현행 경로). 「이 경우 터미널을 한 번 씁니다」를 **미리** 말한다.
-  - 부가: Desktop 스케줄 태스크 안내를 접힌 항목으로. **비용을 반드시 병기** — 질문이 없어도
-    매 실행마다 새 세션이 뜨므로 사용자 구독 쿼터를 태운다. **권장 기본값은 러너**.
-- **entry_points**:
-  - `unit/feature-0003-agent-web-ui/src/static/ai-connect.html` — 현재 `<details>` 「터미널을 쓸 수
-    없다면」(:66-76)에 접혀 있는 등록형 경로를 **1급으로 끌어올린다**
-  - `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py:1071` `compose_connect_handoff()` ·
-    `:865` `compose_launch_commands()` — **조립은 서버 한 곳** 규약 유지(화면이 조립하면 갈린다)
-- **acceptance**:
-  1. 「아니오」 경로를 고른 신규 사용자가 **터미널을 열지 않고** 첫 답변을 받는다(라이브 왕복 1건).
-  2. 「예」 경로가 현행 러너 설치와 **동작 동일**(회귀 0).
-  3. 두 경로의 트레이드오프(자리 비움 처리 / 터미널 1회 / 모델 선택기 유무)가 화면에 **명시**된다.
-  4. JS 가 잡는 **DOM id 13개 불변**(P0-G 테스트 계약 — 문안 수정이 버튼을 죽이지 않게).
-  5. **PB-0008** 실 Windows 브라우저 시각검증.
-- **guards**: 기존 러너 사용자의 [내 AI 실행] 자동 진행(`BridgeLastOs` 기반)을 **깨지 않는다**.
-- **effort**: 中
+- **notes**: 웹 자산 변경 → **PB-0008 필수**(`<project_root>/FIRST_REQUEST.md`
+  `visual_verification_scope: always`).
 
 ---
 
@@ -279,7 +282,8 @@ SPIKE-01 (Claude Desktop 딥링크 조사) ──enables──▶ ITEM-04 (사�
 - **enables**: []
 - **why**: RESEARCH F-010 · §1.1. `ollama` 가 설치 스크립트·서버 안내에는 남아 있는데 러너
   `_RUNTIME_SPECS` 에는 P0-Z6.1 로 제거됐다(`_CLI_ADAPTERS` 는 그 파생). **설치는 통과하고
-  런타임에서 실패**한다.
+  런타임에서 실패**한다. **클라이언트도 같은 목록을 쓰므로 먼저 정리해야 그 결함을 물려받지 않는다**
+  (`reuse-inherits-defects`).
 - **fit_verdict**: adopt
 - **what**: 세 자리에서 `ollama` 제거 + **러너를 단일 출처로 삼는 동기화 테스트** 추가.
 - **entry_points**:
@@ -290,117 +294,80 @@ SPIKE-01 (Claude Desktop 딥링크 조사) ──enables──▶ ITEM-04 (사�
 - **acceptance**:
   1. 세 목록이 `_RUNTIME_SPECS` 키 집합과 **정확히 일치**한다.
   2. 테스트가 세 파일을 파싱해 정본과 대조하고, **어느 한 곳에 이름을 더하면 FAIL** 한다.
-  3. `BRIDGE_PROBED_AI='ollama'` 가 설치 단계에서 거부된다(런타임까지 가지 않는다).
-- **guards**: **제거만 하고 동기화 테스트를 안 걸면 다음 런타임 추가 때 같은 드리프트가 재발**한다
-  (AGENTS.md §16.7 G10 — 재발 관측된 결함 클래스는 구조 테스트로 잠근다).
+  3. `BRIDGE_PROBED_AI='ollama'` 가 설치 단계에서 거부된다.
+- **guards**: **제거만 하고 동기화 테스트를 안 걸면 다음 런타임 추가 때 재발**한다
+  (AGENTS.md §16.7 G10).
 - **effort**: 小
 
 ---
 
-### ITEM-06 · 「AI 없음」 안내를 데스크톱 앱 ↔ CLI 로 분기
+### ITEM-06 · 「AI 없음」 안내를 클라이언트 유도로 전환
 - **status**: pending
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: functional
 - **risk_grade**: Minor
-- **depends_on**: []
+- **depends_on**: [ITEM-08]
 - **enables**: []
-- **why**: RESEARCH F-007. 현재 안내(`_AI_SETUP_URL`)는 **CLI 설치 문서 한 곳**만 가리킨다.
-  비개발자에게는 GUI 설치 관리자가 정답이다.
+- **why**: RESEARCH F-007. 현재 안내(`_AI_SETUP_URL`)는 **CLI 설치 문서 한 곳**만 가리키고, 그 끝은
+  터미널이다. 클라이언트가 설치를 대행하면 안내의 정답이 바뀐다 — *"클라이언트를 받으세요"*.
 - **fit_verdict**: **adopt-with-guard**
-- **what**: 안내를 두 갈래로 나눈다.
-  - **러너 경로 사용자** → `claude` **CLI** 설치(러너가 `Popen` 으로 띄울 바이너리가 필요)
-  - **등록형 경로 사용자** → **데스크톱 앱** GUI 설치 관리자
-  구독 요건(Pro/Max/Team/Enterprise)을 함께 표시한다.
+- **what**: 「쓸 수 있는 AI 를 찾지 못했습니다」 경로를 **클라이언트 다운로드로** 유도한다.
+  클라이언트가 커버하지 못하는 런타임(SPIKE-02 판정 결과)만 종전 CLI 안내를 남긴다.
+  구독 요건(Pro/Max/Team/Enterprise 등)을 함께 표시한다.
 - **entry_points**:
   - `unit/feature-0043-external-llm-bridge/src/agent/discovery.py:190` `_AI_SETUP_URL` ·
     `:193` `_no_ai_message()`
   - `unit/feature-0003-agent-web-ui/src/static/ai-connect.html`
 - **acceptance**:
-  1. 러너 안내가 **CLI** 를, 등록형 안내가 **데스크톱 앱**을 가리킨다.
-  2. 「데스크톱 앱만 설치하면 러너가 뜬다」로 읽히는 문장이 **없다**.
+  1. AI 미보유 사용자가 보는 안내의 **첫 행동이 클라이언트 다운로드**다.
+  2. 클라이언트가 덮지 못하는 런타임은 **그 사실과 함께** 종전 안내를 준다(커버리지 과장 금지).
   3. 구독 요건이 표시된다.
-- **guards**: ⚠ **분기 정확도가 이 항목의 전부다.** 데스크톱 앱은 `claude` CLI 를 설치하지
-  **않는다**(공식 문서 명시). 뭉뚱그리면 사용자는 설치를 마치고도 러너가 안 뜨는 상태를 만난다 —
-  현재보다 나쁜 결말이다.
+- **guards**: ⚠ **커버리지 정확도가 이 항목의 전부다.** SPIKE-02 가 「대행 실행 불가」로 판정한
+  런타임을 클라이언트가 덮는 것처럼 안내하면, 그 사용자는 설치를 마치고도 막힌다 — 현재보다
+  나쁜 결말이며 P0-I 가 닫은 결함 클래스의 재발이다.
 - **effort**: 小
 
 ---
 
-### ITEM-07 · Claude Code 플러그인 배포 (CLI·비-Desktop 사용자)
-- **status**: pending
-- **feature_id**: `feature-0046-mcpb-connector-bundle` (같은 배포-포맷 축)
-- **dimension**: functional
-- **risk_grade**: Minor
-- **depends_on**: [ITEM-01]
-- **enables**: []
-- **why**: RESEARCH F-013. ITEM-02 는 Claude Desktop 전용이라 CLI 사용자를 덮지 못한다. 플러그인은
-  `/plugin marketplace add` + `/plugin install` **두 명령**으로 MCP 서버를 등록한다 — 터미널을
-  쓰지만 **우리 스크립트가 아니라 Claude 의 명령**이고 설정 파일 손편집이 사라진다.
-- **fit_verdict**: **adopt-with-guard**
-- **what**: 사내 마켓플레이스 저장소에 플러그인 정의를 두고 MCP 서버 항목(`{base}/api/ai/mcp` +
-  Bearer)을 번들. `/ai/connect` 가 두 명령을 복사 가능하게 표시.
-- **entry_points**: 신규 `unit/feature-0046-mcpb-connector-bundle/src/plugin/` ·
-  `unit/feature-0003-agent-web-ui/src/static/ai-connect.html`
-- **acceptance**:
-  1. 두 명령만으로 Claude Code CLI 에 MCP 서버가 등록되고 `list_open_requests` 가 200 을 낸다.
-  2. 토큰이 마켓플레이스 저장소에 **커밋되지 않는다**(사용자가 설치 후 주입).
-  3. 12시간 초과 연결 유지가 확인된다(ITEM-01 하트비트 축).
-- **guards**: **codex·gemini 사용자는 여전히 미커버**임을 화면이 말한다 — 커버리지를 과장하면
-  그 사용자는 안내를 따라갔다가 막힌다(P0-I 가 닫은 결함 클래스).
-- **effort**: 中
-
----
-
-### SPIKE-01 · Claude Desktop 딥링크 가능성 조사 (선택, 타임박스)
-- **status**: pending
-- **feature_id**: `feature-0046-mcpb-connector-bundle`
-- **dimension**: functional
-- **risk_grade**: Minor (조사 — 코드 변경 0)
-- **depends_on**: []
-- **enables**: [ITEM-04]
-- **why**: 등록형 경로의 남은 약점은 **「사용자가 자기 AI 앱에 가서 말을 걸어야 한다」**는 것이다.
-  Claude Desktop 이 프로토콜 핸들러(딥링크)를 노출한다면, 웹에서 [내 AI 로 보내기] 한 번으로 앱을
-  깨우고 프롬프트를 채울 수 있다 — 우리는 이미 `mysql-ai-bridge://` 로 같은 패턴을 구현해 봤다.
-- **fit_verdict**: adopt (조사 항목)
-- **what**: ① Claude Desktop 이 등록하는 URL 스킴 실측(Windows 레지스트리 / macOS
-  `LSCopyDefaultHandlerForURLScheme`) ② 프롬프트 프리필 파라미터 유무 ③ 공식 문서·릴리스노트 근거
-  ④ 없으면 대안(OS 알림 → 기존 스킴) 판정. **타임박스 1 cycle, 산출물은 판정 문서 1건.**
-- **acceptance**: 「가능/불가능 + 근거 + 가능 시 ITEM-04 에 붙일 spec」이 문서로 남는다.
-  **불가 판정도 성공적 산출물**이다(되살아나지 않게 기록).
-- **effort**: 小
-- **notes**: 실측 없이 「될 것 같다」로 ITEM-04 에 넣지 않는다.
-
----
-
-## 4. 정합성 6축 review 요약
-
-각 항목을 `improve_listup` 정합 축으로 판정했다. **코드 근거는 각 항목 `entry_points` 에 인용**했다.
+## 4. 정합성 6축 review 요약 (클라이언트 기준 재판정)
 
 | 축 | 판정 요지 |
 |---|---|
-| **1. 아키텍처 정합** | 전 항목이 기존 구조에 **얹힌다** — MCP 도구 표면(feature-0041)·pull 브리지(0043)·하트비트 채널·`connect_status` 판정을 그대로 쓴다. **구조 피벗 0.** ITEM-02 만 새 배포 아티팩트를 더하나, 서버 계약(`/api/ai/mcp` + Bearer)은 **무변경**이다 |
-| **2. 제약 정합** | `PROJECT.md §6` 과 충돌 없음. 온프레미스·폐쇄망 유지(MCPB 는 **로컬 실행**이라 클라우드 왕복이 없다 — 오히려 `claude.ai` 원격 커넥터보다 정합적이다). 비밀정보 비-VCS: ITEM-02·07 의 토큰 비-커밋을 guards 에 못박음 |
-| **3. 보안·RBAC 정합** | 신규 권한 **0**. 인증은 기존 `require_ai_token` 단일 해석기를 그대로 통과한다(P0-I 의 「두 벌이면 갈린다」 회피). **신규 위험 1건 식별 — ITEM-01 의 러너 축출**, 이것이 ITEM-01 이 ITEM-02 의 선행인 이유다. ITEM-00 계측은 토큰·프롬프트 미기록(D12) |
-| **4. 성능·비용 정합** | 서버 부하 증가 = 하트비트 1행/30초/클라이언트(기존 러너와 동일 규모, `HEARTBEAT_MIN_WRITE_SEC` 쓰기증폭 방어 존재). **LLM 비용 증가 0** — 서버는 추론하지 않는다. ⚠ ITEM-04 의 Desktop 스케줄 태스크 안내만 **사용자 쿼터**를 태우므로 비용 고지를 acceptance 에 넣었다 |
-| **5. 재사용 지렛대** | 매우 높다. ITEM-01 은 **서버 엔드포인트를 새로 만들지 않는다**(기존 `bridge_heartbeat` 에 필드 1개). ITEM-03 은 **기존 `connect_status` 판정 재사용**. ITEM-00 은 `WebAuditEvents` 재사용. 신규 코드가 실제로 큰 것은 ITEM-02 프록시 하나뿐 |
-| **6. 측정 가능성** | **여기가 가장 약했다** — 초안에는 측정 수단이 아예 없었다. 그래서 **ITEM-00 을 신설해 P0 선행으로 끌어올렸다.** 이것이 없으면 ITEM-02·04 의 「쉬워졌다」를 반증할 수단이 저장소에 없다 |
+| **1. 아키텍처 정합** | **구조 피벗 0.** 클라이언트는 러너 엔진(5,849행)을 그대로 내장하고 서버 계약(`/api/ai/mcp` · `bridge_heartbeat` · 스킴)은 **무변경**이다. 바뀌는 것은 «배포·설치·업데이트 껍데기» 뿐이며 셸 스크립트 1,531행이 그 자리에서 사라진다 |
+| **2. 제약 정합** | `PROJECT.md §6` 충돌 없음. 온프레미스·폐쇄망 유지(클라이언트는 로컬 실행). **신규 제약 1건 명문화 — §0.1 ToS 경계**: 3사가 2026년에 구독 OAuth 의 제3자 사용을 차단했으므로 「로그인 위임」은 「대행 실행」으로만 구현한다. 위반 시 **사용자 계정 정지** 사례가 실재한다(Google, 유료 구독자 대량 정지) |
+| **3. 보안·RBAC 정합** | 신규 서버 권한 **0**. 인증은 기존 `require_ai_token` 단일 해석기 그대로. **신규 위험 2건**: ⓐ 타사 설치기 실행 → 명시 동의 가드 ⓑ 벤더 자격증명 접촉 → ITEM-08 acceptance 7 이 «안 한다»를 검사한다. CA 는 **프로세스 한정** 계약 유지(전역 설치로 바꾸지 않는다) |
+| **4. 성능·비용 정합** | 서버 부하 변화 **없음**(하트비트 규모 동일). **LLM 비용 증가 0**(서버는 추론하지 않는다). ⚠ **사용자 쿼터 축 변화 미확인** — `claude -p` 가 2026-06-15부터 Agent SDK 크레딧 풀에서 차감된다는 보고 → SPIKE-02 항목 4 |
+| **5. 재사용 지렛대** | **매우 높다.** 엔진·런타임 감지·caps 신고·무결성 대조·스킴 핸들러가 전부 존재한다. 신규는 GUI·설치 관리자·자동 업데이트뿐이고, 그 대가로 셸 스크립트 1,531행이 소멸한다. **순 코드량이 줄 가능성이 있다** |
+| **6. 측정 가능성** | ITEM-00 이 전환 **전** 기준선을 잡는다. `path_kind` 에 `native_client` 를 미리 정의해 ITEM-08 이 그대로 쓰게 했다 — 전후 비교가 같은 축에서 성립한다 |
 
 ## 5. 보류·기각 (재논의 방지)
 
+### 5.1 이번 개정에서 내려간 항목
+
+| 항목 | verdict | 사유 |
+|---|---|---|
+| **ITEM-02 MCPB 번들(`.mcpb`)** | **기각(reject)** | 사용자 지적 2026-09-02: *"현재 서비스는 claude 뿐만 아니라 다른 AI 모델을 모두 수용 가능해야 합니다."* MCPB 는 **Claude Desktop 전용**이라 그 요구를 원리적으로 만족하지 못한다. 클라이언트와 병행하면 화면이 다시 «내가 어느 쪽인가»를 묻게 되는데, 그것은 P0-H 가 이미 기각한 모양이다(*"사용자는 자기 AI 가 어느 쪽에 해당하는지 판정할 수 없다"*). **되살아날 조건**: 클라이언트 방향이 코드 서명 부재로 좌초하고 Claude Desktop 사용자 비중이 지배적일 때 |
+| **ITEM-01 client_kind 분리 + supersede 한정** | **보류(defer)** | 존재 이유가 «MCPB 프록시가 하트비트를 보내면 사용자 러너를 축출한다» 였다. 클라이언트는 **러너 자체**라 `client_kind=runner` 이고 「나중에 연결된 쪽이 이긴다」가 의도된 동작이 된다 → 동기 소멸. **되살아날 조건**: 등록형(비-러너) 경로를 다시 도입할 때 **하드 선행**으로 복귀 |
+| **ITEM-04 연결 축 2분할** | **ITEM-08 에 흡수** | 「지금 답 받기 / 자리 비워도 처리」를 나눠 물으려던 이유는 러너 설치가 비쌌기 때문이다. 클라이언트가 상주까지 기본 제공하면 **나눌 이유가 사라지고** `/ai/connect` 는 「클라이언트를 받으세요」 한 줄이 된다 — 그것이 접근성의 최선이다 |
+| **ITEM-07 Claude Code 플러그인** | **보류(defer)** | 클라이언트가 CLI 사용자까지 덮으므로 중복이다. 플러그인은 **이미 Claude Code CLI 를 능숙하게 쓰는 사용자**에게만 더 가벼운데, 그 층은 지금도 막히지 않는다(원 마찰은 비개발자다) |
+
+### 5.2 이전 개정에서 내려간 항목 (유지)
+
 | finding | verdict | 사유 |
 |---|---|---|
-| F-005 서버측 폴백 티어(API 키·virtual key) | **보류(defer)** | 사용자 결정 2026-09-02 *"서버 추론 복원은 보류"*. 기각 아님 — BYO-AI 로 덮이지 않는 사용자가 실제로 관측되면 재개 |
-| F-009 공인 인증서 전환 | **논외(out-of-scope)** | 사용자 결정 *"아직 배포가 이루어지지 않았고, 현재 가장 큰 걸림돌은 AI 연결"* |
-| F-004 Intune/GPO 배포 | **보류(미판정)** | 사내 MDM 존재 여부 미응답. 존재하면 최대 레버라는 판단은 유효 — 확인되면 재평가 |
-| F-002 러너 단일 실행파일(PyInstaller) | **보류** | ITEM-02 가 **터미널·Python 을 둘 다 없애므로** 러너 동결의 한계효용이 크게 준다. ITEM-02 배포 후 러너 잔존 사용자 비율(ITEM-00 계측)을 보고 재판정 |
-| F-003 네이티브 설치 관리자(.msi/.pkg) | **보류** | 같은 이유 + 코드 서명 인증서 확보가 선행. MCPB 는 서명 없이도 Claude Desktop 이 설치 UI 를 제공한다 |
-| F-008 로그온 자동시작 | **보류** | 기존 설계 결정(「하지 않는 일」)의 명시적 번복이라 `docs/DECISIONS.md` ADR 경유가 선행. ITEM-04 가 러너를 「선택」으로 만들면 대상 인원이 줄어 우선순위도 내려간다 |
-| `claude.ai` 원격 커스텀 커넥터 | **기각(reject)** | LAN + `.company.local` 사설 CA 라 Anthropic 인프라가 우리 서버로 아웃바운드할 수 없다. F-009 가 논외로 확정된 이상 이 경로는 열리지 않는다 |
-| 로컬 LLM(ollama) 어댑터 복원 | **기각** | P0-Z6.1 사용자 결정으로 제거됨. 그 축은 *"고칠수록 결함을 만드는 자리"* 로 실증됨. ITEM-05 는 그 결정의 **잔재 정리**이지 복원이 아니다 |
+| F-005 서버측 폴백 티어 | **보류** | 사용자 결정 *"서버 추론 복원은 보류"*. BYO-AI 로 덮이지 않는 사용자가 관측되면 재개 |
+| F-009 공인 인증서 전환 | **논외** | 사용자 결정 *"아직 배포 전이며 현재 병목이 아니다"* |
+| F-004 Intune/GPO 배포 | **보류(미판정)** | MDM 존재 여부 미응답. ⚠ **코드 서명 확보 불가 시 이 항목이 유일한 대안**이 되므로 그때 우선 재질의 |
+| F-002 러너 단일 실행파일 · F-003 네이티브 설치 관리자 · F-008 자동시작 | **ITEM-08 에 흡수** | 셋 다 클라이언트가 하는 일의 부분집합이다 |
+| `claude.ai` 원격 커스텀 커넥터 | **기각** | LAN + 사설 CA 라 Anthropic 인프라가 우리 서버로 아웃바운드할 수 없다. F-009 논외 확정으로 열리지 않는다 |
+| 로컬 LLM(ollama) 어댑터 복원 | **기각** | P0-Z6.1 사용자 결정으로 제거. ITEM-05 는 그 결정의 **잔재 정리**이지 복원이 아니다 |
+| **클라이언트가 OAuth 를 자체 구현/토큰 보관** | **기각(하드)** | §0.1. 3사가 2026년에 차단했고 Google 은 유료 구독자 계정을 정지했다. 어떤 편의도 이 선을 넘는 근거가 되지 않는다 |
 
 ## 6. 진행 현황
 
-- 총 **8** (ITEM 7 + SPIKE 1) · done 0 · in-progress 0 · pending 8 · blocked 0
-- **다음 ready**: `ITEM-00` · `ITEM-05` · `ITEM-06` (P0 병렬 — 선행 의존 없음)
-- 신규 feature 배정: `feature-0046-mcpb-connector-bundle` (2026-09-02 기준 최대 = `feature-0045`,
-  타 worktree·ROADMAP 점유 없음 확인)
+- 총 **5** (ITEM 4 + SPIKE 1) · done 0 · in-progress 0 · pending 4 · **blocked 1**(ITEM-08 — 코드 서명)
+- **다음 ready**: `SPIKE-02` · `ITEM-00` · `ITEM-05` (P0 병렬 — 선행 의존 없음)
+- **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
+  「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.
+- 신규 feature 배정: `feature-0046-native-client` (초판의 `feature-0046-mcpb-connector-bundle`
+  을 **재명명** — 해당 `unit/` 디렉토리가 아직 생성되지 않아 참조 파손 없음을 확인)
