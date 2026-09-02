@@ -380,6 +380,11 @@ let _prefetching = null;
 let _autoEntryTried = false;
 //: 실행 대기 루프가 도는 중인가 — 겹치면 서로의 판정을 흐린다.
 let _launchBusy = false;
+//: 그 진행 중인 시도가 **무엇이었나**(`entry` = 로그인 진입 자동 · `click` = 사용자가 누름).
+let _launchBusyReason = "";
+//: 시도 일련번호. 나중 시도가 앞선 시도를 **대체**했는지 판정한다 — 대체된 쪽이 `finally` 에서
+//: 잠금을 풀거나 창을 열면, 그것은 이미 남의 시도에 대고 하는 행동이다.
+let _launchSeq = 0;
 
 /** 실행 URL 을 미리 받아 둔다. 실패는 조용히 `null` — 자동 실행은 «더하기» 이므로 실패가
  *  기존 경로를 막지 않는다.
@@ -428,7 +433,15 @@ function _autoLaunchEligible() {
  */
 async function autoLaunch(reason, opts) {
   const fallbackModal = !!(opts && opts.fallbackModal);
-  if (_launchBusy) return true;          // 이미 돌고 있다 — 중복 발사는 러너를 두 번 재기동한다
+  // ⚠ 진행 중이어도 **사용자의 클릭은 이긴다** (라이브 실측 2026-09-02).
+  //
+  //   진입 자동 시도는 최대 ~30초 동안 «쓸 수 있게 됐는가» 를 지켜본다. 그 창 안에 사용자가
+  //   칩을 누르면 종전 코드는 `_launchBusy` 로 **조용히 삼켰다** — 실행도 안 되고 창도 안 열려,
+  //   사용자에게는 «눌렀는데 아무 일도 일어나지 않음» 이 된다. 그건 이 변경 이전(무조건 창
+  //   열기)보다 **나쁘다**. 자동 시도는 사용자를 돕는 장치이지 사용자를 막는 장치가 아니다.
+  //
+  //   자동끼리·클릭끼리의 중복은 그대로 막는다(러너를 두 번 재기동할 이유가 없다).
+  if (_launchBusy && !(reason === "click" && _launchBusyReason !== "click")) return true;
   const ready = _prefetched || (fallbackModal ? await _prefetchLaunch() : null);
   if (!ready || !ready.protocol) {
     if (fallbackModal) openConnectModal();
@@ -448,9 +461,14 @@ async function autoLaunch(reason, opts) {
   const attempt = ++_launchAttempt;
   const epoch = _modalEpoch;
   _lastObserved = null;
+  //: 이 시도의 일련번호. 뒤에 온 시도가 나를 대체했으면 나는 아무것도 되돌리지 않는다.
+  const seq = ++_launchSeq;
   _launchBusy = true;
+  _launchBusyReason = reason;
   try {
     const ok = await _awaitUsable(attempt, epoch);
+    // 나를 대체한 시도가 이미 돌고 있다 — 그 시도의 결과가 사용자가 볼 답이다.
+    if (seq !== _launchSeq) return true;
     if (ok === true) {
       // ⚠ `_announced` 는 **모달이 열릴 때만** 초기화된다. 이 경로는 창 없이도 도므로, 여기서
       //   풀지 않으면 «자동 실행으로 한 번 알린 뒤로는 다시는 알리지 않는» 상태가 된다 —
@@ -468,9 +486,14 @@ async function autoLaunch(reason, opts) {
     }
     return true;
   } finally {
-    _launchBusy = false;
-    // 다음 시도를 위해 미리 받아 둔다(자격이 아직 남아 있을 때만).
-    if (_autoLaunchEligible()) { try { _prefetchLaunch(); } catch (_) { /* 무시 */ } }
+    // ⚠ **내가 아직 최신 시도일 때만** 잠금을 푼다. 대체된 시도가 풀면 그 순간 새 시도의
+    //   중복 방어가 사라지고, 그 뒤 도착하는 클릭이 러너를 한 번 더 재기동한다.
+    if (seq === _launchSeq) {
+      _launchBusy = false;
+      _launchBusyReason = "";
+      // 다음 시도를 위해 미리 받아 둔다(자격이 아직 남아 있을 때만).
+      if (_autoLaunchEligible()) { try { _prefetchLaunch(); } catch (_) { /* 무시 */ } }
+    }
   }
 }
 
