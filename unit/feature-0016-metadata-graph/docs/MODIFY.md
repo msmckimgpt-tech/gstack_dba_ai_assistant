@@ -532,3 +532,22 @@ combo 가 뷰포트보다 커져 중심 기준 판정이 "이동 0" 을 냈고, 
 - 증적: `docs/test-runs.d/20260901T203000-f3-graph-retract.md`.
 
 Task-Cycle: feature-0016-metadata-graph
+
+## CHG-20260902T140000-graph-sync-retract — sync 에 용어 회수 단계 추가 (재발 방지)
+
+설계·AC 정본은 같은 feature 의 `docs/FUNCTION.md` `## 그래프 sync 는 «회수»한다`.
+
+- `modules/metadata_graph.py` `sync_graph` 에 `_step_glossary_retract` 신설,
+  `_run_step("kb_glossary_retract", ...)` 로 **투영 뒤에** 배선.
+- **증분 실행에서는 즉시 반환**하고 `glossary_retract_skipped="incremental"` 를 남긴다 —
+  부분 조회로 삭제를 판단하면 멀쩡한 용어를 전부 지운다. 이 가드가 이 변경에서 가장 중요하다.
+- 살아있는 키는 투영과 같은 `_vkey`, 삭제는 `_cypher` + `_cq`(이스케이프 통일).
+- report 템플릿에 `glossary_retracted: 0` · `glossary_retract_skipped: ""` 초기화.
+
+**비변경**: 투영 로직 0 · 물리 스키마 축 회수 없음(판정 방식이 달라 별 설계 필요 — FUNCTION 참조).
+
+**검증**: `make test` rc=0 · FAILED 0 · ruff clean · 뮤테이션 **7/7 KILL**(baseline green 확인 후) —
+증분 가드 제거 · 미배선 · 투영보다 앞 · 키 생성기 불일치 · scope 필터 제거 · 이스케이프 우회 ·
+카운터 초기화 제거.
+
+Task-Cycle: feature-0016-metadata-graph
