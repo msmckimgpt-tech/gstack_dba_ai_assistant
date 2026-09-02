@@ -95,6 +95,12 @@ _RUNTIME_SPECS: dict[str, dict] = {
         "argv": (["claude", "-p"]
                  + ([] if _KEEP_MCP else [_STRICT_MCP_FLAG])
                  + ["{prompt}"]),
+        # 프롬프트를 **stdin 으로** 넘길 수 있다 — `claude -p` 는 위치 인자가 없으면 stdin 을
+        # 읽는다(라이브 실측 2026-09-02: `printf … | claude -p --strict-mcp-config` → 정상 응답).
+        # 이 자리가 Windows 명령줄 32,767자 상한의 탈출구다 (`_fit_cmdline`).
+        "stdin_ok": True,
+        #: `{prompt}` 자리에 무엇을 남기는가. `""` = 그 인자를 **뺀다**.
+        "stdin_arg": "",
         "model": ["--model", "{model}"],
         "effort": ["--effort", "{effort}"],
         # 운영자 지침을 본문이 아니라 이 플래그로 넘긴다 (TASK-20260901T140000).
@@ -121,6 +127,10 @@ _RUNTIME_SPECS: dict[str, dict] = {
         #   끊지 못하고**, `compose_prompt` 의 「이 토큰이 유일한 자격증명이다」 문장만이
         #   방어선이다. 없는 플래그를 있는 것처럼 넣으면 CLI 가 통째로 실패해 답이 오지 않는다.
         "argv": ["codex", "exec", "--skip-git-repo-check", "{prompt}"],
+        # 라이브 실측 2026-09-02: `printf … | codex exec --skip-git-repo-check -` → 정상 응답.
+        # claude 와 달리 자리를 **비우면 안 되고** `-` 를 남겨야 한다(빼면 대화형으로 뜬다).
+        "stdin_ok": True,
+        "stdin_arg": "-",
         "model": ["-m", "{model}"],
         # config override 로 넘긴다 — codex 에는 전용 effort 플래그가 없다.
         "effort": ["-c", "model_reasoning_effort={effort}"],

@@ -350,11 +350,21 @@ def sanitize_caps(raw: object) -> dict:
     return out
 
 
-def _ask_json(argv: list[str], prompt: str, timeout: float) -> dict | None:
+#: 협상 실패 사유로 사용자에게 보여 줄 자식 출력의 최대 길이.
+_PROBE_REASON_MAX = 300
+
+
+def _ask_json(argv: list[str], prompt: str, timeout: float,
+              reason_out: dict | None = None) -> dict | None:
     """이 CLI 에 프롬프트 하나를 주고 답에서 JSON 객체를 꺼낸다. 못 얻으면 None.
 
     `probe_runtime_caps` 의 1차 질의와 축 재질의가 같은 절차를 쓴다 — 두 벌로 두면
     한쪽만 고쳐지고, 그때 어느 쪽이 실제로 쓰이는지가 코드에서 안 보인다.
+
+    `reason_out` 에 **왜 못 얻었는지**를 남긴다 (TASK-20260902T140000). 종전에는 실패가
+    전부 `None` 한 값으로 뭉개져, 사용자는 수십 초~4분을 기다린 끝에 「답을 받지 못했습니다」
+    만 받았다 — 라이브에서 그 실제 사유는 *"OAuth access token has expired. Re-authenticate
+    to continue."* 였고, 그 한 줄만 보였으면 사용자가 바로 고칠 수 있는 것이었다.
     """
     cmd = _resolve_exe(
         [prompt if a == "{prompt}" else a.replace("{prompt}", prompt) for a in argv])
@@ -362,12 +372,26 @@ def _ask_json(argv: list[str], prompt: str, timeout: float) -> dict | None:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=(timeout if timeout and timeout > 0
                                        else _CAPS_PROBE_TIMEOUT_SEC))
-    except Exception:  # noqa: BLE001  (미설치·타임아웃·권한 — 전부 "못 물었다" 로 같다)
+    except Exception as exc:  # noqa: BLE001  (미설치·타임아웃·권한)
+        # 예외 형이 셋을 가른다 — 문자열로 뭉개면 「설치 안 됨」과 「너무 느림」이 같아 보인다.
+        if reason_out is not None:
+            reason_out["reason"] = f"{type(exc).__name__}: {exc}"[:_PROBE_REASON_MAX]
         return None
     if proc.returncode != 0:
+        if reason_out is not None:
+            # 사유는 stdout 에 있을 수도, stderr 에 있을 수도 있다(claude 는 stdout 에 낸다).
+            tail = ((proc.stderr or "").strip() or (proc.stdout or "").strip())
+            reason_out["reason"] = (f"exit {proc.returncode}"
+                                    + (f": {tail}" if tail else ""))[:_PROBE_REASON_MAX]
         return None
     # 출력이 아무리 커도 여기서 자른다 — `capture_output` 은 전부 메모리에 담는다.
-    return _extract_json((proc.stdout or "")[:_CAPS_PROBE_MAX_BYTES])
+    got = _extract_json((proc.stdout or "")[:_CAPS_PROBE_MAX_BYTES])
+    if got is None and reason_out is not None:
+        # 종료코드는 0인데 JSON 이 없다 — 실패와 **다른 사실**이다(거절·형식 이탈).
+        tail = (proc.stdout or "").strip()
+        reason_out["reason"] = ("정상 종료했으나 JSON 을 찾지 못했습니다"
+                                + (f": {tail}" if tail else ""))[:_PROBE_REASON_MAX]
+    return got
 
 
 def _cli_help_text(name: str, timeout: float = _CAPS_HELP_TIMEOUT_SEC) -> str | None:
@@ -537,7 +561,8 @@ def _settle_effort_axis(
 
 
 def probe_runtime_caps(name: str, argv: list[str],
-                       timeout: float | None = None) -> dict | None:
+                       timeout: float | None = None,
+                       reason_out: dict | None = None) -> dict | None:
     """그 AI 에게 **직접 물어** 능력을 받는다 (P0-Z4). 실패하면 None.
 
     실패를 조용히 삼키지 않고 None 으로 알리는 이유: 호출측이 내장 기본값으로 폴백할지
@@ -549,12 +574,14 @@ def probe_runtime_caps(name: str, argv: list[str],
     """
     budget = timeout if timeout and timeout > 0 else _CAPS_PROBE_TIMEOUT_SEC
     started = time.monotonic()
-    got = _ask_json(argv, _CAPS_PROBE_PROMPT, budget)
+    got = _ask_json(argv, _CAPS_PROBE_PROMPT, budget, reason_out=reason_out)
     if not got:
         return None
     models = _coerce_options(got.get("models"))
     if not models:
         # 모델을 하나도 못 받았으면 이 질의는 실패다 — 등급만으로는 선택기를 세울 수 없다.
+        if reason_out is not None:
+            reason_out["reason"] = "응답에 모델 목록이 없습니다."
         return None
     model_flag = _coerce_flag(got.get("model_flag"), "{model}")
     effort_flag, efforts, effort_settled = _settle_effort_axis(
@@ -650,6 +677,8 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
     # 더한 만큼 늦어진다(실측: claude 23초 + codex 112초 = 135초). 병렬이면 가장 느린 하나
     # (112초)로 끝난다 — 그리고 이건 최초 1회뿐이다(다음 기동은 캐시를 쓴다).
     probed: dict = {}
+    #: 런타임별 **실패 사유**. 성공하면 비어 있다 (TASK-20260902T140000).
+    reasons: dict = {}
     ask = [n for n in present
            if (cached.get(n) is None or _caps_axis_unsettled(cached.get(n)))
            and ((_RUNTIME_SPECS.get(n) or {}).get("argv") or n in unknown_argvs)] if probe else []
@@ -689,8 +718,13 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
             for argv in attempts:
                 left = deadline - time.monotonic()
                 if left <= 5.0:
+                    reasons.setdefault(nm, "남은 시간 안에 물어보지 못했습니다.")
                     return           # 남은 시간이 의미 없다 — 시작하지 않는 것이 유일한 절약
-                got = probe_runtime_caps(nm, argv, timeout=left)
+                _why: dict = {}
+                got = probe_runtime_caps(nm, argv, timeout=left, reason_out=_why)
+                if _why.get("reason"):
+                    # 마지막 시도의 사유를 남긴다 — 후보를 두 번 시도하므로 덮어쓴다.
+                    reasons[nm] = str(_why["reason"])
                 if got:
                     # 어느 호출 형태가 통했는지 함께 남긴다 — 실제 질문도 그 형태로 보낸다.
                     got["argv"] = argv
@@ -719,6 +753,12 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 #   답을 못 받으면 **그 런타임은 화면에 나타나지 않는다**. 로그가 종전 문구를
                 #   유지하면 사용자는 목록이 있는 줄 알고 선택기를 찾는다 — 그리고 없는 이유를
                 #   어디서도 듣지 못한다. 다음 행동(재시도 방법)까지 여기서 말한다.
+                # ⚠ **사유를 함께 낸다** (TASK-20260902T140000). 종전에는 이 줄만 남아서,
+                #   4분을 기다린 사용자가 「왜」를 어디서도 듣지 못했다 — 라이브의 실제 사유는
+                #   *"OAuth access token has expired. Re-authenticate to continue."* 였고,
+                #   그 한 줄이면 사용자가 바로 고칠 수 있었다.
+                if reasons.get(n):
+                    _log(f"  {n}: 사유 — {reasons[n]}")
                 _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
                      f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 

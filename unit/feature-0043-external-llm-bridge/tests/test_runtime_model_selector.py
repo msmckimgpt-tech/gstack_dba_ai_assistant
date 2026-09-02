@@ -21,6 +21,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -143,21 +145,52 @@ def test_heartbeat_carries_capabilities_every_time():
     assert loop.index(call) > while_at, "능력 신고가 루프 밖에 있다"
 
 
-def test_runner_does_not_offer_a_selector_it_cannot_honor():
+def test_runner_does_not_offer_a_selector_it_cannot_honor(monkeypatch, tmp_path):
     """`--cmd` 로 명령을 통째로 준 사용자는 **신고하지 않는다**.
 
     그 명령에 모델·등급이 이미 박혀 있어 웹에서 고른 값이 반영되지 않는다. 신고하면 화면에
     선택기가 뜨고, 고른 값은 무시된다 — P0-T 가 지운 상태가 이 경로로 되살아난다.
+
+    ⚠ **행위로 잠근다** (2026-09-02 재작성). 종전에는 `main()` 소스를 «마지막 `if args.cmd:`
+    부터 다음 `else:` 까지» 로 잘라 그 안에 `runtimes = []` 이 있는지 문자열로 봤다. 그
+    단정은 분기 모양이 바뀌자(`if/elif`, 협상을 배경으로 미룸 — TASK-20260902T140000) 코드가
+    여전히 옳은데도 `ValueError` 로 깨졌다. 잠글 것은 «그렇게 쓰였는가» 가 아니라
+    «그렇게 동작하는가» 다: 하트비트가 **빈 목록**을 받고, 능력 질의가 **일어나지 않는다**.
     """
-    main_src = _RUNNER.read_text(encoding="utf-8")
-    body = main_src[main_src.index("def main("):]
-    # `--cmd` 분기에서 신고를 비운다(그 명령에 모델이 박혀 있어 웹 선택이 무시되므로).
-    # `if args.cmd:` 는 main 에 두 번 나온다(호출 형태 결정 · 신고 결정). 뒤의 것이 대상이다.
-    cmd_branch = body[body.rindex("if args.cmd:"):]
-    cmd_branch = cmd_branch[:cmd_branch.index("else:")]
-    assert "runtimes = []" in cmd_branch, (
-        "--cmd 사용자에게도 선택기가 뜬다(반영되지 않을 조작면)")
-    assert "resolve_caps(" not in cmd_branch, "--cmd 인데 AI 에게 능력을 묻는다(토큰 낭비)"
+    mod = _load_runner()
+    seen: dict = {}
+    asked: list = []
+
+    def _fake_start_heartbeat(_api, _stop, runtimes=None, **_k):
+        seen["runtimes"] = runtimes
+        return threading.Thread(target=lambda: None)
+
+    class _Stop(Exception):
+        pass
+
+    def _fake_call(_self, tool, args=None, timeout=None):  # noqa: ANN001
+        if tool == "wait_for_request":
+            raise _Stop
+        return {}
+
+    monkeypatch.setattr(mod.Api, "call", _fake_call)
+    monkeypatch.setattr(mod, "start_heartbeat", _fake_start_heartbeat)
+    monkeypatch.setattr(mod, "resolve_caps",
+                        lambda *a, **k: asked.append(a) or ([], {}))
+    monkeypatch.setattr(mod, "_ensure_strict_mcp_supported", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "_CONF_DIR", str(tmp_path / "conf"))
+    monkeypatch.setattr(mod, "_CONF_PATH", str(tmp_path / "conf" / "config.json"))
+    monkeypatch.setattr(sys, "argv",
+                        ["bridge_agent.py", "--base", "https://example.invalid",
+                         "--token", "mat_test", "--cmd", "mycli --model big {prompt}"])
+    try:
+        mod.main()
+    except _Stop:
+        pass
+
+    assert seen.get("runtimes") == [], (
+        f"--cmd 사용자에게도 선택기가 뜬다(반영되지 않을 조작면): {seen.get('runtimes')}")
+    assert asked == [], "--cmd 인데 AI 에게 능력을 묻는다(토큰 낭비)"
 
 
 # ── 러너: 서버가 준 값을 어떻게 다루는가 (신뢰 경계) ─────────────────────────
@@ -1104,7 +1137,7 @@ def test_partial_answer_does_not_kill_the_whole_axis(monkeypatch):
     호출측이 내장 표로 폴백해, 그 AI 가 실제로 답한 모델 목록이 버려진다.
     """
     mod = _load_runner()
-    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout: (
+    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout, reason_out=None: (
         {"label": "Claude", "models": [{"value": "opus"}], "model_flag": ["--model", "{model}"]}
         if prompt is mod._CAPS_PROBE_PROMPT else None))
     # 축 재질의도 실패하고 도움말도 못 읽는 상황 → 축만 비고 모델은 남는다.
@@ -1128,7 +1161,7 @@ def test_missing_effort_flag_is_recovered_by_asking_again(monkeypatch):
     """1차에서 빠진 축을 **좁게 다시 물어** 되살린다 (실측: claude 가 이 경로로 답했다)."""
     mod = _load_runner()
 
-    def _fake(argv, prompt, timeout):
+    def _fake(argv, prompt, timeout, reason_out=None):
         if prompt is mod._CAPS_PROBE_PROMPT:
             return {"models": [{"value": "opus"}], "model_flag": ["--model", "{model}"]}
         return {"efforts": [{"value": "xhigh", "label": "매우높음"}],
@@ -1176,7 +1209,7 @@ def test_reask_answer_of_no_support_is_respected(monkeypatch):
     이 기능의 계약이므로, AI 의 명시적 부정이 우리 표를 이긴다.
     """
     mod = _load_runner()
-    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout: {
+    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout, reason_out=None: {
         "efforts": [], "effort_flag": []})
     calls: list = []
     monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: calls.append(name) or "--effort")
@@ -1187,7 +1220,7 @@ def test_reask_answer_of_no_support_is_respected(monkeypatch):
     # ⚠ 그러나 **누락·오류는 부정이 아니다** (codex P1-2). 빈 객체·필드 누락은 "지원하지
     #   않는다" 가 아니라 "답하지 않았다" 이므로, 도움말 보완 단계로 내려가야 한다.
     for vague in ({}, {"efforts": []}, {"effort_flag": []}, {"efforts": [], "effort_flag": "x"}):
-        monkeypatch.setattr(mod, "_ask_json", lambda a, p, t, _v=vague: _v)
+        monkeypatch.setattr(mod, "_ask_json", lambda a, p, t, reason_out=None, _v=vague: _v)
         monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: "  --effort <level>")
         flag, opts, settled = mod._settle_effort_axis(
             "claude", ["claude", "-p", "{prompt}"], None, [], 60.0)
@@ -1376,7 +1409,7 @@ def test_model_axis_needs_a_flag_too(monkeypatch):
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: None)
-    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout: {
+    monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout, reason_out=None: {
         "models": [{"value": "foo"}], "model_flag": []})
     # 표 밖 CLI — 우리 표에도 플래그가 없다 → 목록을 비운다(= 그 런타임은 신고되지 않는다).
     got = mod.probe_runtime_caps("mycli", ["mycli", "-p", "{prompt}"])
