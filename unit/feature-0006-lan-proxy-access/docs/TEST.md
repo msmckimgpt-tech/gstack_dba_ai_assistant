@@ -111,3 +111,18 @@ Environment: WSL Ubuntu (openssl 3.x) · 라이브 엣지 `112.185.196.20`
 
 → 테스트가 두 버전을 구분한다. 첫 하네스는 stub 이 무조건 throw 해 **양쪽 다 통과**시켰고,
 그 상태로 "고쳤다"고 보고할 뻔했다. 하네스를 실제 계약 모사로 바꾼 뒤 판별력이 생겼다.
+
+## Run — TASK-20260902T124500-ai-claude-feature-0006-lan-proxy-access (2026-09-02)
+
+- Environment: Windows PowerShell 5.1 (실호스트, 한국어 로케일)
+- Scope: codex 적대 리뷰 P2 반영
+- Verdict: **PASS (6축)**
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 구문 파싱 | PASS — 오류 0 |
+| 2 | 인코딩 무결성 (BOM) | PASS |
+| 3 | 실 netsh 파싱 | PASS — 4매핑, 브리지 경로 포함 |
+| 4 | legacy 기록이 `try` 안에만 (실패 미기록) | PASS |
+| 5 | legacy 상태기반 skip 제거 | PASS |
+| 6 | `portproxy_changed` 가 legacy 삭제 포함 | PASS |
