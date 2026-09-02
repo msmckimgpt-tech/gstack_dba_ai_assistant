@@ -3137,3 +3137,11 @@ provenance — 위험을 줄인 것이 아니라 **그 위험을 만들던 코�
 - feature-0043 + feature-0003 전량 rc=0 · ruff clean.
 
 - **판정**: **APPROVED**. 잔여: 배포 후 화면 재실측(항목 렌더·저장 왕복·사유 표시).
+
+## REV-20260902T130000-ai-claude-corp-feature-0043-relaunch-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용 변경(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
+직전 항 `REV-20260902T120000-…-relaunch-dead-end` 의 검토 결과가 그대로 유효하다.
+
+기록한 사실은 전부 **관측값**이다(배포 `293a20c8` 실 Windows 브라우저 · 서빙 파일 해시 대조).
+닫지 못한 축(라이브 낡은 러너 부재)은 추정으로 메우지 않고 그대로 남겼다.
