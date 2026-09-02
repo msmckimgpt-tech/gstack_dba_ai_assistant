@@ -3223,3 +3223,49 @@ Task-Cycle: feature-0002-agent-core
 - 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 9~12.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260902T120000-ds-health-persist — datasource health 텔레메트리 유실 수정 (42P08)
+
+**증상**: insight 사이클이 매번 `datasource_health_persist_failed err=AmbiguousParameter —
+soft telemetry, cycle 계속` 만 남기고 health 를 저장하지 못했다. fail-soft 라 사이클은 계속
+돌아서 **조용히** 지나갔다.
+
+**원인**: `_DS_HEALTH_UPSERT_SQL` 의 한 줄에서 같은 파라미터가 두 문맥에 쓰인다 —
+`%(last_checked_at)s IS NULL`(타입 미상)과 `to_timestamp(%(last_checked_at)s)`(double
+precision). 값이 float 이면 드라이버가 타입을 실어 보내 통과하지만, **`None` 이면 타입 없는
+NULL** 이 가고 Postgres 가 추론에 실패한다(42P08). 즉 **한 번도 체크되지 않은 datasource 가
+섞인 사이클에서만** 터졌고, 그 한 행이 batch 전체를 되돌려 health 가 통째로 유실됐다.
+
+라이브 PG 로 직접 재현·수정 확인:
+
+    SELECT CASE WHEN %(t)s IS NULL THEN NULL ELSE to_timestamp(%(t)s) END
+      t=1756000000.0 → OK        t=None → AmbiguousParameter
+    SELECT CASE WHEN %(t)s::double precision IS NULL THEN NULL ELSE to_timestamp(%(t)s::double precision) END
+      t=1756000000.0 → OK        t=None → OK
+
+**수정**: 두 자리표시자 모두 `::double precision` 명시 캐스트. 한쪽만 캐스트하면 그 문맥에서
+추론이 다시 애매해지므로 **양쪽 다** 해야 한다.
+
+**비변경**: upsert 멱등 계약(`ON CONFLICT (scope_key) DO UPDATE`) · 다른 파라미터 · prune 로직.
+
+**검증**: 뮤테이션 **5/5 KILL**(baseline green 확인 후) — 캐스트 원복·한쪽만·타입 오류·
+ON CONFLICT 제거·파라미터 유실.
+⚠ 1차에서 Q3(한쪽만 `::text`)가 **생존**했다. 「어딘가에 `::double precision` 이 있다」만
+단언해서다. **모든** 캐스트의 타입 집합을 단언하도록 고쳐 잡았다(부분 단언이 부분 결함을
+못 잡는 형태 — 직전 cycle 의 `OR TRUE` 와 같은 종류).
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260902T123000-ds-health-merge — origin/main 재병합 해소 + 마커 잔존 사고 정정
+
+**코드 변경 0.** `docs/FUNCTION.md` 말미에 양쪽이 각각 신규 섹션을 붙여 충돌.
+§16.4 「서로 다른 섹션 → 양쪽 반영」으로 시간순 유지(`KB 근거 자동 주입` → `datasource health`).
+
+⚠ **내 사고 1건 정정**: 1차 해소 스크립트의 정규식이 `<<<<<<< ours` / `>>>>>>> theirs` 를
+찾았는데 실제 마커는 `<<<<<<< HEAD` / `>>>>>>> origin/main` 이었다. 매칭 실패로 예외가 났고,
+`&&` 체인이 아니라 개별 명령이라 **그 뒤 `git add`·commit·push 가 그대로 실행돼 마커가 남은
+채 원격에 올라갔다**. post-commit CHECK#14 가 즉시 잡아 줬고 다음 커밋으로 바로잡았다.
+교훈: **해소 스크립트는 성공을 단언(`assert`)하고, 실패하면 그 뒤 단계가 돌지 않게** 묶어야
+한다 — 마커 형식은 `merge.conflictStyle`·driver 에 따라 달라진다.
+
+Task-Cycle: feature-0002-agent-core

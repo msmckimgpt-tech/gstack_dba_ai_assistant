@@ -3530,7 +3530,27 @@ Task-Cycle: feature-0002-agent-core
 - [ ] 형태소 분석 없이 남는 한계: `재화` 가 `재화권` 에 매칭된다(접미 개방의 대가).
 
 Task-Cycle: feature-0002-agent-core
+## TASK-20260902T120000-ds-health-persist — health 텔레메트리 유실 (F6 진단 중 발견)
 
+「산출 없는 insight 스캔 구간」(F6)을 보다가 나왔다. 스캔은 도는데 **산출물(health)이 저장되지
+않는** 구간이 있었고, 원인은 환경이 아니라 **SQL 타입 추론**이었다.
+
+### 완료 체크리스트
+
+- [x] `%(last_checked_at)s` 양쪽에 `::double precision` 명시 캐스트
+- [x] 라이브 PG 로 재현·수정 확인(float/None 양쪽)
+- [x] 뮤테이션 5/5 KILL (Q3 생존 → 단언 강화 후 재실행)
+- [x] origin/main 재병합 해소(FUNCTION 말미 양쪽 유지) + 마커 잔존 사고 정정
+- [ ] 배포 후 `datasource_health_persist_failed` 로그가 사라지는지 확인
+
+### F6 의 나머지 (이 cycle 밖)
+
+- 라이브 datasource 다수가 접속 실패라 `_seed_coverage_targets` 까지 도달하는 사이클이 드물다.
+  **코드가 아니라 환경** 문제이며, 도달했을 때 수집이 되는 것은 이미 실증했다(2026-09-01).
+- 사이클이 「아무 산출 없이 끝났다」를 payload 로 구별하는 축은 `stats_collect_attempted`(신설)
+  외에 아직 얇다. 관측 축 확충은 별 항목.
+
+Task-Cycle: feature-0002-agent-core
 ## TASK-20260902T110000-kb-prompt-grounding — KB 근거 자동 주입 (라이브 대화 실측 발견분)
 
 **발견 경로**: 사용자 요청 「부트스트랩 계정을 통해 각 제품별 대화를 통해 메타데이터 관련 대화

@@ -2971,7 +2971,16 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 - 근거: `enum_dictionary` scope 별 카운트(common 9→0 · 제품 6 scope 15) · 매니페스트 9행 ·
   제품 격리 실측(같은 질문에 scope 별로 자기 것만, 무관 제품은 0).
 - 남긴 위험: 제품군 티어 부재로 형제 제품 간 복제 발생(9→15). 대안 대비 우위는 MODIFY 에 기록.
+## REV-20260902T120000-ds-health-persist [SKIPPED:codex-no-output] — health 텔레메트리 유실 수정
 
+- Verdict: PASS. 뮤테이션 **5/5 KILL**(baseline green 확인 후).
+- **[BLOCKING·해소] Q3 생존 — 부분 단언이 부분 결함을 못 잡았다.** `"::double precision" in sql`
+  은 한쪽만 `::text` 로 바꾼 뮤턴트를 통과시킨다. **모든** 캐스트의 타입 집합을 단언하도록 강화.
+  직전 cycle 의 `OR TRUE` 뮤턴트와 같은 형태 — 「포함 검사」로 「전건 계약」을 대신하지 말 것.
+- **[관측] fail-soft 가 결함을 3개월 가려 줬다.** `soft telemetry, cycle 계속` 이라 사이클은
+  계속 돌았고 로그 한 줄만 남았다. fail-soft 는 옳지만, **무엇이 유실됐는지**가 payload 로
+  드러나지 않으면 아무도 안 본다.
+- **미검증**: 배포 후 그 로그가 실제로 사라지는지. TASK 체크리스트에 남겼다.
 ## REV-20260902T110000-kb-prompt-grounding [SKIPPED:codex-no-output] — KB 근거 자동 주입
 
 - Trigger: 프롬프트 조립·계정 경계 → backend·security 렌즈. codex 는 직전 cycle 에서 4회 전건
@@ -3010,3 +3019,10 @@ PASS — Blocking 3건 in-cycle 해소. `make test` rc=0 · FAILED 0 · 6,904 te
 
 PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL · 러너 사본 동치.
 권한·인가·라우트·스키마 변경 0.
+
+## REV-20260902T123000-ds-health-merge [SKIPPED:non-policy-doc] — 재병합 해소 기록
+
+- Cross-ref: CHG-20260902T123000-ds-health-merge. 코드 변경 0 — 리뷰 패널 대상 아님.
+- 해소 근거: 양쪽 다 FUNCTION 말미 **신규 섹션 추가**(서로 다른 섹션) → §16.4 양쪽 유지.
+  마커 잔존 0 확인 · 두 섹션 헤딩 실재 확인 · `make test` 재실행.
+- ⚠ 마커가 남은 채 push 된 사고를 CHG 에 그대로 기록했다. 감추면 다음 사람이 같은 정규식을 쓴다.
