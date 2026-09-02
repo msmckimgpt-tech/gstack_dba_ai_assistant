@@ -3230,7 +3230,159 @@ M5 가 살아남은 형태가 이 저장소가 반복해 겪은 **「로직은 �
 
 코드 변경 없음. `CHG-20260902T123000` 배포 후 재실측 증적만 기록한다(항목 6종 렌더 · 저장 왕복 ·
 사유 표시 PASS). 미재현 축(러너 연결 상태의 선택지 렌더)은 증적 문서에 정직 표기했다.
+## REV-20260902T160000-ai-claude-feature-0043-ai-jobs-perm-gate [SUBAGENT:security-review] — PASS
 
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: `UI/화면 + 권한/auth keyword matched → security` (§18.8 dispatch)
+- Timestamp: 2026-09-02T14:20:00+09:00
+- Source: Claude Code 내장 `/security-review` 프로토콜을 **main session 이 직접 수행**
+  (§18.8 「위임 세션 내 built-in review 직접 호출」). 본 세션은 subagent 호출이 금지된
+  운영 조건이라 패널 fan-out 대신 같은 체크리스트를 인라인으로 밟았다 — 그 사실을 여기
+  적는다(수행 형태를 실제와 다르게 적지 않는다).
+- 병행 채널: `codex exec` 독립 적대 리뷰 **2 라운드**(§18.8.1 대안 경로 · §18.8 패널 수렴
+  계약). 1R = P1 0 · P2 2 · P3 1 → **전건 조치** · 2R = 확인 라운드(아래 §적대 리뷰 원장).
+- Verdict: **PASS** — 보안 축 HIGH/MEDIUM 0건 · codex P1(GATE) 0건.
+- Human Approval Needed: no
+
+### 적대 리뷰 원장 (codex, 2 라운드)
+
+**1R — P1 0 · P2 2 · P3 1. 전건 조치했다.**
+
+| # | 지적 | 판정 | 조치 |
+|---|---|---|---|
+| P2-a | 빈/부분 PUT 가 기존 «보이는» 설정을 삭제. 깨진 JSON 도 200 + 삭제 | **부분 유효** | 「빈 `jobs` = 비우기」는 [모두 기본값] 후 저장이 보내는 **정당한 입력**이라 유지한다. 그러나 codex 가 정확히 짚은 부분 — **파싱 실패·`jobs` 키 부재가 그것과 같은 모양**이 되어 사고가 200 을 받고 조용히 지우던 경로 — 는 실재했다. 본문/`jobs` 가 dict 가 아니면 **400** 으로 거절하도록 갈랐다 |
+| P2-b | 권한 판정 예외가 500 으로 전파돼 탭 전체가 죽는다 | **유효** | `_safe_has_permission` 이 **코드 단위**로 가둔다(예외→False). 전면 실패해도 「요구 없는 종류만」으로 축소되고 화면은 산다 — 이 엔드포인트가 이미 선언한 「조회 실패는 화면을 막지 않는다」 원칙과 같은 자리 |
+| P3 | PUT 회귀가 **소스 문자열 단정**에만 의존해, 실제로 값이 지워져도 통과한다 | **유효** | 병합을 순수 함수 `merge_visible_console_job_prefs` 로 떼고 **실 dict 행위 테스트 12건** 추가(교체·보존·비우기·표기 변형·비-dict·판정기 예외). 소스 단정은 **배선 확인**으로 역할을 좁혔다 — 둘이 함께여야 「함수는 맞는데 그 자리에 없다」를 막는다 |
+
+**정직 표기**: 1R 은 최초 실행에서 15분 가까이 출력이 버퍼에 잠겨 「산출 0」으로 보였다. 그
+상태로 종결했다면 위 3건을 놓쳤을 것이다 — codex 채널의 판정은 **프로세스 종료 후** 읽는다.
+
+**2R — 확인 라운드. 실제 데이터 손실 후보 2건을 더 잡았다.** (§18.8 패널 수렴 계약 (a) 가
+확인 라운드를 필수로 둔 이유가 그대로 실증됐다 — 1R 수정만으로 종결했다면 아래 둘이 남았다.)
+
+| # | 지적 | 판정 | 조치 |
+|---|---|---|---|
+| 2R-a | **저장 baseline 이 조회 실패를 «미설정» 으로 오인**. `account_console_job_prefs` 는 조회 실패를 `{}` 로 돌려주는데(읽기 경로에서는 옳다 — 컬럼 없는 배포가 화면을 막지 않게), 그것을 **쓰기 baseline** 으로 쓰면 병합이 「보존할 것이 없다」고 판단해 숨겨진 항목을 지운 문서를 쓰고 **200 을 돌려준다**. 잃은 값이 화면에 없던 것이라 사용자는 알아채지 못한다 | **유효** | `read_console_job_prefs_strict` 신설 — 실패를 예외로 올려 저장 자체를 포기한다. **모르는 상태 위에 쓰지 않는다.** 정상 경로 동치는 테스트가 대조 |
+| 2R-b | **첫 로딩 «중» 에도 [저장] 이 «전부 지우기»**. 행이 그려지기 전에는 `_collectAiJobs` 가 `{}` 를 만들고 서버는 그것을 정당한 비우기로 처리한다(그 의미는 [모두 기본값] 에 필요하다) | **유효** | 첫 성공 렌더 전까지 [저장]·[모두 기본값] 비활성(`_aiJobsState.loaded` 게이트 + 배선 시점 초기 비활성). 「비우려는 것」과 「아직 못 받은 것」을 프런트가 가른다 |
+
+| 2R-c | **재진입 중 비동기 새로고침** (codex 가 「별도 취약점으로 보인다」고 지목했으나 15분 상한(rc=124)에 걸려 **확정하지 못한 항목** — 우리가 현재 코드로 직접 확정했다) | **유효** | `switchProfileTab` 이 탭 진입마다 · `saveAiJobs` 가 저장 뒤 다시 `loadAiJobs` 를 부르므로 요청이 겹치고 응답 순서는 보장되지 않는다. 늦게 온 **옛 응답**이 상태를 덮으면 화면이 방금 저장한 값을 잃은 것처럼 되돌아가고, 그 상태에서 다시 저장하면 **stale 값이 서버에 굳는다**. 요청 세대 토큰(`_aiJobsReqSeq`)으로 마지막 요청의 응답만 반영 — 성공·실패 **양쪽** 경로에 적용 |
+
+> **미확정 지적을 어떻게 다뤘나**: codex 는 타임아웃으로 2R-c 를 「보인다」까지만 남겼다. 그
+> 상태의 지적을 근거 없이 기각하지도, 그대로 인용하지도 않았다 — **현재 코드에서 경로를 직접
+> 따라가 재현 조건을 확정**한 뒤 조치하고, 확정 주체가 우리임을 여기 적는다.
+>
+> 함께 남긴 「테스트의 정적 단정」은 **의도된 역할 분리**로 유지한다: 병합·읽기·권한 판정의
+> **행위**는 순수 함수 테스트가 실 dict 로 검사하고, 소스 단정은 「그 규칙이 라우터에 실제로
+> 꽂혀 있는가」(배선)만 본다. 웹 라우터는 이 conftest 에서 import 할 수 없다는 기존 제약
+> (`test_console_job_model_prefs.py` 서두에 명시)이 그 분리의 이유다.
+
+> **1R 조치가 2R 지적을 만든 관계**: 2R-a 는 1R 에서 baseline 읽기를 **새로 도입**하면서 생긴
+> 표면이다. 이것이 「수정한 라운드 자체는 종결 근거가 아니다」의 정확한 실례다.
+
+**수렴**: 2R 지적 3건을 수정한 뒤 신규 테스트 **40건 PASS**(2R 조치분 5건 포함) · ruff clean ·
+회귀 FAILED 집합 `main` 동일. 2R 조치는 **읽기·프런트 게이트** 두 지점의 국소 변경이라
+새 표면을 만들지 않는다(1R→2R 처럼 새 읽기 경로를 도입하지 않았다).
+
+### 보안 축 판정 (근거)
+
+| 축 | 판정 | 근거 |
+|---|---|---|
+| 권한 우회·상승 | 없음 | 변경은 응답에서 항목을 **빼고** PUT 이 쓸 수 있는 키를 **좁힌다**. 허용 집합은 하드코딩 레지스트리(`JOB_SPECS`)에서만 나오므로 사용자 입력이 그 집합에 들어갈 수 없다 |
+| 주입(SQL·명령·템플릿) | 신규 sink 0 | `merged` 는 기존 `set_account_console_job_prefs` 로만 흐르고 그 경로는 `UPDATE … SET ConsoleJobPrefs=%s WHERE Id=%s` 파라미터 바인딩 |
+| 키 혼동(mass assignment) | 차단됨 | 필터가 **정규화 뒤**에 온다 — `" node_analysis "` 같은 표기 변형은 `normalize_console_job_prefs` 의 닫힌 집합 검사에서 먼저 떨어진다. 순서가 반대였으면 우회 가능했다 |
+| 정보 노출 | 감소 | 응답 필드가 늘지 않고 줄었다. PUT 응답도 가시 범위로 필터해 숨긴 종류의 이름·값이 되돌아가지 않는다. 오류 문구는 사용자 입력 미보간 정적 문자열 |
+| XSS | 신규 sink 0 | 빈 상태 렌더는 `createElement` + `textContent`(정적 리터럴). 기존 `row.innerHTML` 경로는 무변경이며 `escapeHtml` 유지 |
+| 클라이언트 게이트 의존 | 없음 | 버튼 비활성은 UX 이고 집행은 서버다. 프런트가 게이트가 아니다 |
+| API 토큰 인증 경로 | 안전측 | `_account_permissions` 의 토큰 scope allowlist + `.any`/관리 네임스페이스 denylist 가 그대로 적용돼 목록이 **더 좁아진다** |
+| 선언 누락 시 기본값 | 보안 무영향 | `perms` 누락 → 노출(display-permissive). 집행은 각 엔드포인트가 계속 하므로 authz 구멍이 아니라 표시 회귀일 뿐 |
+
+### 렌즈 1 — 게이트가 «집행의 거울» 인가 (§16.7 G6)
+
+`Trigger: UI/화면 + auth/권한 keyword matched → ux·design·security` (§18.8). 변경이
+표시 축 한정(신규 권한 코드 0 · 집행 경로 무변경)이고 단일 화면·2 엔드포인트라
+`/review`(built-in) 자체 검토 + 아래 렌즈로 갈음한다.
+
+### 렌즈 1 — 게이트가 «집행의 거울» 인가 (§16.7 G6)
+
+선언한 권한 코드가 실제 집행 지점에서 읽는 코드와 같은지 호출 경로를 따라가 확인했다:
+`_METADATA_SUGGEST_PERM`(서브뷰 5종) · `require_permission('metadata.table.update')` ·
+`require_permission('metadata.graph.analyze')`. `prompt_generate` 는 세 진입점 중
+**개인 프롬프트 자동작성이 로그인만 요구**하므로 `()` 가 맞다 — 관리 권한을 적었으면 정작
+모든 사용자가 쓰는 진입점을 가진 계정의 항목이 사라졌을 것이다. 배경 배치 2종은
+`_batch_consenting_account` 가 **동의한 러너**에서 계정을 고르므로 RBAC 축 자체가 없다.
+
+### 렌즈 1-b — 레거시 묶음 함의 (가장 그럴듯한 fail-closed 경로)
+
+이 저장소의 권한은 **묶음이 원자 단위를 transitive 로 함의**한다
+(`kb.ingest.manual` → `metadata.*.manage` → 각 `read/create/update/delete`). 그래서 「묶음만
+보유한 계정에게 항목이 사라지는가」가 이 변경의 가장 그럴듯한 회귀였다.
+
+전개가 **어디서** 일어나는지 확인했다: `_apply_permission_overrides` 안, 즉 `_account_permissions`
+가 읽는 **effective map** 안이다 — `require_permission` 안이 아니다. 따라서 우리 필터는 집행과
+**같은 사실**을 본다. 라이브 검증도 했다:
+
+```
+kb.ingest.manual 단독 → metadata.table.update = True
+visible = (metadata_suggest, metadata_bulk, prompt_generate, insight_summary, cluster_label)
+```
+
+`node_analysis` 가 함께 새지 않는 것도 확인했다(graph-perm-split 2026-07-13 이 그래프 권한을
+묶음 함의에서 뺐다). 두 사실 모두 `test_legacy_bundle_permission_still_reveals_metadata_jobs`
+가 잠근다. 선언에 묶음 코드를 쓰지 않는 규약도 별 테스트로 고정했다 — 묶음을 적으면 이번엔
+반대로 **원자 단위만 받은 계정**이 항목을 잃는다.
+
+### 렌즈 2 — 조용한 소실 (fail-closed 회귀)
+
+이 변경의 고유 위험은 fail-open 이 아니라 **fail-closed** 다. 권한 코드에 오타가 나면
+`_account_has_permission` 이 언제나 False 로 답해 그 항목이 **관리자를 포함한 전 계정에서**
+사라지는데, 화면에서 사라진 것은 오류로 보이지 않아 신고가 늦다. 그래서
+`test_declared_perms_exist_in_permission_catalog` 가 `web_context.PERMISSION_DEFINITIONS`
+를 AST 로 읽어 대조한다. 추출기 자체가 파손되면 빈 집합으로 vacuous PASS 가 나므로
+`assert codes` 로 추출기도 함께 잠갔다.
+
+또한 `console_job_perms` 의 **선언 누락 기본값은 «노출»** 이다 — 감추는 쪽을 기본으로 두면
+새 종류를 추가하며 선언을 빠뜨렸을 때 그 항목이 조용히 사라진다. 집행은 서버가 계속 하므로
+노출 기본값이 위험을 만들지 않는다. 누락 자체는 `test_every_job_declares_perms` 가 잡는다.
+
+### 렌즈 3 — 표시-집행 정합 양방향 (§16.6 (3))
+
+- **fail-open(1차)**: 권한 없는 계정이 숨겨진 종류를 PUT 본문에 실어도 저장되지 않는다
+  (`if k in visible`). 표시만 감추고 저장을 열어 두면 게이트가 장식이 된다.
+- **fail-closed(2차)**: 권한 있는 계정에 기대 개수(6행)가 그대로 렌더되는가 — 라이브 실측.
+
+### 렌즈 4 — 데이터 손실
+
+`PUT` 의 「통째 교체」를 전체 집합에 적용하면 권한이 빠진 계정의 저장 한 번이 비가시 항목의
+기존 선택을 지운다. 정규화 **뒤** 필터해 병합하도록 배선했고(원본 키를 먼저 거르면 표기 차이로
+숨긴 항목을 덮어쓸 수 있다), 그 순서를 `test_put_endpoint_scopes_replacement_to_visible` 이
+인덱스 비교로 잠갔다.
+
+### 렌즈 5 — 프런트 판정 금지
+
+권한 분기를 `can()` 으로 하지 않았다. `can()` 은 인자를 무시하고 로그인만 확인하는
+display-permissive 헬퍼라 **분기 판정에 쓰면 한쪽 갈래가 영구히 죽는다**(2026-08-13 멤버
+'나가기' 경로 소실). 프런트는 서버가 판정한 결과(=목록)를 그대로 그리고,
+`test_frontend_does_not_gate_ai_jobs_with_can` 이 그 규약을 잠근다.
+
+### 렌즈 5-b — 적용면 전수감사 (§16.7 G8)
+
+`JOB_SPECS` 를 **사용자에게 열거하는** 표면이 이 엔드포인트뿐인지 전수 확인했다
+(`grep -rn JOB_SPECS` — 코드 9개소):
+
+| 소비처 | 성격 | 조치 |
+|---|---|---|
+| `routers/profile.py` GET·PUT | **사용자 대면 열거** | 본 cycle 이 필터 |
+| `_console_llm.delegable_job_kinds` → `admin/llm-state.js` | 관리 콘솔 버튼의 «이 기능을 위임할 수 있는가» 플래그. `origin==web ∧ wired` 만 | 대상 아님 — 이미 `console.access` + 각 조작의 RBAC 뒤에 있고, 목록이 아니라 개별 버튼의 가부다 |
+| `node_analysis.py` · `_console_jobs.py` · `oauth_store.py` · `_bootstrap_schema.py` | `wired` 판정 · 정규화 · 스키마 주석 | 사용자 열거 아님 |
+
+→ 미적용 경로 0. ADR 예외 기록 불요.
+
+### 렌즈 6 — 회귀
+
+- 신규 **42건 PASS**(구조 25 + 병합 행위 12 + 묶음 함의 2 + 읽기 엄격성 3). **역검증**: 변경 전 코드(main)에 같은 스위트를 걸어 **16/17 FAIL** 확인
+  (통과한 1건은 `can()` 미사용 가드로, 양쪽 모두 성립하는 것이 정상).
+- 컨테이너 회귀(0002·0003·0043) — `main` 기준선과 FAILED 집합 동일(아래 §POST 기록).
+- **판정**: **APPROVED**.
 ## REV-20260902T150000-ai-claude-corp-feature-0043-winargv-postdeploy [SKIPPED:doc-only] — APPROVED
 
 문서 전용 변경(POST-DEPLOY 실측 기록). 코드·설정 diff 0 — 적대 검토 대상 표면이 없다.
