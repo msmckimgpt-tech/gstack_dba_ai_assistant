@@ -191,6 +191,15 @@ source_of_truth: true
 | TEST-20260901T183000-sameaxis | 화면·양보 | 두 판정이 **같은 축**을 쓴다(갈리면 하나는 거짓말) | AC-20260901T183000-newest-runner-wins-6 |
 | TEST-20260901T183000-account | 후보 질의 | 계정 스코프 — 다른 계정 러너 병존 허용 | AC-20260901T183000-newest-runner-wins-7 |
 
+| TEST-20260902T100000-history | `_everConnected` | 이력 판정은 **서버 `last_os`** — 브라우저 저장 금지(기기마다 다른 취급 방지) | AC-20260902T100000-autolaunch-1 |
+| TEST-20260902T100000-eligible | `_autoLaunchEligible` | 이력 없음·이미 사용 가능이면 실행하지 않는다 · stale 은 **대상** | AC-20260902T100000-autolaunch-2·3 |
+| TEST-20260902T100000-activation | `autoLaunch` | 이동 앞에 `await` 없음(사용자 활성화 보존) — 이 기능이 죽는 유일한 방식 | AC-20260902T100000-autolaunch-4 |
+| TEST-20260902T100000-prefetch | `_prefetchLaunch` | 자격 확인 뒤에만 · 중복 발급 억제 · 쓴 URL 폐기 | AC-20260902T100000-autolaunch-4·5 |
+| TEST-20260902T100000-entrypoint | `_connectEntry` | 칩·게이트가 한 진입점 · 창으로 떨어질 경로 존재 | AC-20260902T100000-autolaunch-6 |
+| TEST-20260902T100000-entryonce | `_maybeAutoEntry` | 세션당 1회 · **창을 열지 않는다** | AC-20260902T100000-autolaunch-7 |
+| TEST-20260902T100000-verdict | `_awaitUsable` | 자동·수동이 같은 판정 · «무응답» ≠ «서비스 응답 없음» | AC-20260902T100000-autolaunch-8 |
+| TEST-20260902T100000-launcher | `bridge_setup.{sh,ps1}` | 런처가 러너를 최신본으로 교체 — **토큰 검증 뒤** · 실패는 기동을 막지 않음 · 양판 동일 | AC-20260902T100000-autolaunch-9 |
+
 ## 3. Run 기록
 
 Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.md §5.3 fragment 규약).
