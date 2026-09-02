@@ -605,8 +605,29 @@ def _settle_effort_axis(
             #   형태 오류(거부된 플래그)까지 같이 삼킨다. 그러면 실제로는 지원하는 CLI 가
             #   빈 축으로 **확정**되어(표지까지 남아) 다시는 확인되지 않는다.
             #   두 키가 **실제로 있고 둘 다 비어 있을 때**만 "없다" 는 답으로 친다.
-            if (isinstance(got.get("efforts"), list) and not got["efforts"]
-                    and isinstance(got.get("effort_flag"), list) and not got["effort_flag"]):
+            #
+            # ⚠⚠ **그 부정도 `--help` 로 반증될 수 있다** (사용자 제보 4차 실측, 2026-09-02).
+            #   도구 금지 가드를 넣은 뒤 claude 가 `{"efforts": [], "effort_flag": []}` 로
+            #   **자신 있게 «없다»** 고 답했다 — 그런데 claude 는 `--effort` 를 실제로
+            #   지원한다(표에 있고 `--help` 에도 있다). 가드 이전에는 도구로 자기 도움말을
+            #   읽어 5단계를 답했던 것이다. 즉 가드가 「못 답함」을 「확신 있는 부정」으로
+            #   바꿨고, 이 분기가 그것을 **확정**으로 굳혀 추론 강도 선택기가 화면에서
+            #   사라졌다(라이브 실측: 5단계 → 0단계).
+            #
+            #   그래서 여기서 곧바로 돌려주지 않고 **아래 ②(도움말 검증)로 흘린다.**
+            #   근거: 우리는 그 AI 에게 **도구를 쓰지 말라고 요구했다.** 그러니 그 «없다» 는
+            #   관측이 아니라 **기억**이다. 반면 `--help` 는 그 바이너리에 직접 물은
+            #   **관측**이고, 「이 CLI 가 `--effort` 를 받는가」는 의견이 아니라 기계적
+            #   사실이다. 기계적 사실에서는 관측이 기억을 이긴다.
+            #
+            #   ⚠ 이것이 「목록은 그 AI 가 정한다」(P0-Z4)를 깨지 않는다: 반증에 쓰는 값은
+            #     **호출법(플래그 형태)과 그 짝인 등급 값**이고, 그 짝은 ②에서 `--help` 로
+            #     실재를 확인한 뒤에만 채택된다. 모델 목록은 여기서 손대지 않는다.
+            _denied = (isinstance(got.get("efforts"), list) and not got["efforts"]
+                       and isinstance(got.get("effort_flag"), list)
+                       and not got["effort_flag"])
+            if _denied and not (_RUNTIME_SPECS.get(name) or {}).get("effort"):
+                # 표에 짝이 없는 CLI 는 반증할 근거가 없다 — 그 «없다» 가 유일한 정보다.
                 return None, [], True
 
     # ② 우리 표의 짝을 그 CLI 의 도움말로 검증해서 쓴다. 남은 시간 안에서만 — 도움말 하나가

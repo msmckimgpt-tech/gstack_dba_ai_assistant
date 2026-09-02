@@ -1232,20 +1232,58 @@ def test_recovery_falls_back_to_the_builtin_pair_only_when_help_confirms_it(monk
         "claude", ["claude", "-p", "{prompt}"], None, [], 5.0) == (None, [], False)
 
 
-def test_reask_answer_of_no_support_is_respected(monkeypatch):
-    """재질의가 "지정할 수 없다" 로 명확히 답하면 **내장 표로 덮지 않는다**.
+def test_reask_answer_of_no_support_is_checked_against_help(monkeypatch):
+    """재질의의 "지정할 수 없다" 는 **`--help` 관측으로 반증될 수 있다**.
 
-    우리 표에 값이 있어도 그 CLI 버전에는 없을 수 있다. 목록의 출처는 연결된 AI 라는 것이
-    이 기능의 계약이므로, AI 의 명시적 부정이 우리 표를 이긴다.
+    ## ⚠ 이 계약은 2026-09-02 에 **의도적으로 뒤집혔다**
+
+    종전 계약: 「AI 의 명시적 부정이 우리 표를 이긴다」 — 도움말을 아예 보지 않았다
+    (그때 이 테스트는 `calls == []` 을 단정했다).
+
+    바뀐 이유: 응답 시간 해소를 위해 능력 질의에 **도구 금지 가드**를 넣었다(제보 4차).
+    그러자 claude 가 `{"efforts": [], "effort_flag": []}` 로 **자신 있게** 「없다」고
+    답했다 — 그런데 claude 는 `--effort` 를 실제로 지원한다. 가드 이전에는 도구로 자기
+    도움말을 읽어 5단계를 답했던 것이다. 라이브 실측: **5단계 → 0단계**로 추론 강도
+    선택기가 화면에서 사라졌다.
+
+    즉 **우리가 그 AI 에게 확인 수단을 금지했으므로 그 «없다» 는 관측이 아니라 기억이다.**
+    반면 `--help` 는 그 바이너리에 직접 물은 관측이고, 「이 CLI 가 `--effort` 를 받는가」는
+    의견이 아니라 **기계적 사실**이다. 기계적 사실에서는 관측이 기억을 이긴다.
+
+    ## P0-Z4 를 깨지 않는다
+
+    「목록의 출처는 연결된 AI」는 **모델 값**에 대한 계약이다(그 계정이 어떤 모델을 쓸 수
+    있는지는 우리가 관측할 수 없다). 여기서 뒤집는 것은 **플래그의 존재 여부**뿐이고, 표의
+    짝은 `--help` 로 실재를 확인한 뒤에만 채택된다 — 종전 계약이 지키려던 「그 CLI 버전에는
+    없을 수 있다」는 그 도움말 검사가 그대로 보장한다.
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_ask_json", lambda argv, prompt, timeout, reason_out=None: {
         "efforts": [], "effort_flag": []})
     calls: list = []
-    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=0: calls.append(name) or "--effort")
+    monkeypatch.setattr(mod, "_cli_help_text",
+                        lambda name, timeout=0: calls.append(name) or "  --effort <level>")
+    flag, opts, settled = mod._settle_effort_axis(
+        "claude", ["claude", "-p", "{prompt}"], None, [], 60.0)
+    assert calls == ["claude"], "도구 없이 답한 부정을 도움말로 확인하지 않았다"
+    assert flag == ["--effort", "{effort}"] and opts, (
+        f"도움말이 `--effort` 를 보여주는데 축이 비었다 — 선택기가 사라진다: {flag}/{opts}")
+    assert settled is True
+
+    # 도움말에 **없으면** 그 부정은 참이다 — 표만 보고 채택하지 않는다(버전 안전성 유지).
+    calls.clear()
+    monkeypatch.setattr(mod, "_cli_help_text",
+                        lambda name, timeout=0: calls.append(name) or "  --model <m>")
     assert mod._settle_effort_axis(
         "claude", ["claude", "-p", "{prompt}"], None, [], 60.0) == (None, [], True)
-    assert calls == [], "AI 가 '없다' 고 답했는데 도움말로 뒤집었다"
+    assert calls == ["claude"]
+
+    # 표에 짝이 **없는** CLI 는 반증 근거가 없다 — 도움말을 부르지도 않는다.
+    calls.clear()
+    assert "mycli" not in mod._RUNTIME_SPECS
+    assert mod._settle_effort_axis(
+        "mycli", ["mycli", "-p", "{prompt}"], None, [], 60.0) == (None, [], True)
+    assert calls == [], "표에 짝이 없는데 도움말을 읽었다 — 붙일 값이 없다"
 
     # ⚠ 그러나 **누락·오류는 부정이 아니다** (codex P1-2). 빈 객체·필드 누락은 "지원하지
     #   않는다" 가 아니라 "답하지 않았다" 이므로, 도움말 보완 단계로 내려가야 한다.

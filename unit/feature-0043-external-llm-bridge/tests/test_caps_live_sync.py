@@ -1977,3 +1977,71 @@ def test_probe_extra_goes_before_the_prompt_positional():
     assert mod._with_probe_extra("mycli", plain) == plain
     # 원본을 변형하지 않는다(호출측이 같은 리스트를 재사용한다).
     assert argv == ["codex", "exec", "--skip-git-repo-check", "{prompt}"]
+
+
+def test_toolless_denial_of_the_effort_axis_is_refuted_by_help(monkeypatch):
+    """도구 없이 답한 **«없다»** 는 `--help` 관측으로 반증된다 (제보 4차 실측).
+
+    도구 금지 가드를 넣은 뒤 claude 가 `{"efforts": [], "effort_flag": []}` 로 **자신 있게**
+    「없다」고 답했다. 그런데 claude 는 `--effort` 를 실제로 지원한다(표에 있고 `--help` 에도
+    있다) — 가드 이전에는 도구로 자기 도움말을 읽어 5단계를 답했던 것이다.
+
+    즉 가드가 「못 답함」을 「확신 있는 부정」으로 바꿨고, `_settle_effort_axis` 의
+    «명시적 부정» 분기가 그것을 **확정**으로 굳혀 추론 강도 선택기가 화면에서 사라졌다
+    (라이브 실측: 5단계 → 0단계). 속도를 얻고 출하된 기능 하나를 잃는 교환이었다.
+
+    근거: 우리는 그 AI 에게 **도구를 쓰지 말라고 요구했다.** 그러니 그 「없다」는 관측이
+    아니라 **기억**이다. `--help` 는 그 바이너리에 직접 물은 **관측**이고, 「이 CLI 가
+    `--effort` 를 받는가」는 의견이 아니라 기계적 사실이다.
+    """
+    mod = _load_runner()
+
+    def _deny(argv, prompt, timeout, reason_out=None):
+        # 모델은 답하고 추론축은 **두 키를 명시적으로 비운다** — 가드 이후 실제 응답 모양.
+        return {"label": "Claude",
+                "models": [{"value": "opus", "label": "Opus"}],
+                "efforts": [], "effort_flag": [],
+                "model_flag": ["--model", "{model}"]}
+
+    monkeypatch.setattr(mod, "_ask_json", _deny)
+    # ① 도움말이 플래그를 **보여주면** 표의 짝을 채택한다.
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=15.0: "  --effort <level>")
+    got = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"], timeout=120.0)
+    assert got is not None
+    assert [o["value"] for o in got["efforts"]], (
+        "도움말이 `--effort` 를 보여주는데 축이 비었다 — 추론 강도 선택기가 사라진다")
+    assert got.get("effort") == ["--effort", "{effort}"], f"짝이 어긋났다: {got.get('effort')}"
+
+    # ② 도움말에 **없으면** 그 «없다» 는 참이다 — 지어내지 않는다.
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=15.0: "  --model <m>")
+    got2 = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"], timeout=120.0)
+    assert got2 is not None and got2["efforts"] == [], (
+        "도움말에 없는 플래그를 표만 보고 채택했다 — 고른 값이 조용히 무시된다")
+
+    # ③ 도움말을 **못 읽으면** 확정하지 않는다 — 일시적 실패가 영구 미지원으로 굳지 않게.
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=15.0: None)
+    got3 = mod.probe_runtime_caps("claude", ["claude", "-p", "{prompt}"], timeout=120.0)
+    assert got3 is not None and got3["efforts"] == []
+    assert got3.get("effort_probed") is False, (
+        "도움말을 못 읽은 것을 «확정» 으로 기록했다 — 다음 기동이 다시 확인하지 않는다")
+
+    # ④ 표에 짝이 **없는** CLI 는 반증 근거가 없으므로 그 «없다» 가 유일한 정보다.
+    assert "mycli" not in mod._RUNTIME_SPECS
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=15.0: "  --effort <level>")
+    got4 = mod.probe_runtime_caps("mycli", ["mycli", "-p", "{prompt}"], timeout=120.0)
+    assert got4 is not None and got4["efforts"] == [], (
+        "표에 없는 CLI 에 우리 표의 등급 값을 붙였다 — 그 CLI 가 받지 않는 조합이 된다")
+
+    # ⑤ ④와 같은 사실을 **부정 없이** 다시 본다. ④는 ①의 이른 반환에 가려져 ②의 표 조회를
+    #    검사하지 못했다(뮤테이션 L4 가 생존했다) — 키를 아예 빼면 ①을 지나 ②에 도달한다.
+    def _silent(argv, prompt, timeout, reason_out=None):
+        return {"label": "MyCLI",
+                "models": [{"value": "m1", "label": "m1"}],
+                "model_flag": ["--model", "{model}"]}      # 추론축 키 **부재**
+
+    monkeypatch.setattr(mod, "_ask_json", _silent)
+    monkeypatch.setattr(mod, "_cli_help_text", lambda name, timeout=15.0: "  --effort <level>")
+    got5 = mod.probe_runtime_caps("mycli", ["mycli", "-p", "{prompt}"], timeout=120.0)
+    assert got5 is not None and got5["efforts"] == [], (
+        "표 밖 CLI 인데 다른 런타임의 등급 짝이 붙었다 — 고른 값이 조용히 무시된다: "
+        f"{got5['efforts']} / {got5.get('effort')}")
