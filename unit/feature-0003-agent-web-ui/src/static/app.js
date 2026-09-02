@@ -1,6 +1,6 @@
 import { renderMessageContent, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
-import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange } from "./app/connect-modal.js?v=dev";
+import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange, onCapsChange } from "./app/connect-modal.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
@@ -7627,6 +7627,40 @@ export async function _sendGroupChatMessage(cid, message) {
 
 // (ITEM-P5b B2) sendPrompt — app/composer.js 로 이동.
 
+/** 모델·추론등급 조작면을 **서버 카탈로그부터 다시** 그린다 (feature-0043).
+ *
+ *  두 신호가 이 함수를 공유한다 — 연결 잠금 전이(`onComposeGateChange`)와 능력 목록 변화
+ *  (`onCapsChange`). 사실은 다르지만 화면 갱신 절차는 같으므로, 절차를 두 벌로 두지 않는다
+ *  (두 벌이면 한쪽만 고쳐지는 날 경로에 따라 다른 화면이 나온다).
+ *
+ *  순서가 계약이다: **카탈로그를 다시 받은 뒤에** 선택기를 그린다. 반대면 옛 목록으로
+ *  그려서, 방금 도착한 목록이 다음 갱신까지 화면에 나타나지 않는다.
+ *
+ *  실패는 삼킨다 — 목록 갱신이 안 돼도 잠금 해제·답변 경로까지 막을 이유는 없다.
+ */
+function _refreshModelCatalogSurface() {
+  // ⚠ **프라미스를 돌려주고 실패를 말한다** (codex R4 P1-4). 호출측(`_paintCaps`)은 이
+  //   결과로 「능력 지문을 소비할지」를 정한다 — 실패인데 성공으로 보고하면 그 지문은
+  //   소비되고, 같은 변화를 다시 시도하는 경로가 없어져 목록이 빈 채 고정된다.
+  //   `loadVaultOptions` 는 예외를 삼키고 `state.modelCatalog = null` 로 두므로,
+  //   실패 여부는 **그 결과 상태**로 판정한다(그 함수의 기존 계약을 건드리지 않는다).
+  return (async () => {
+    let ok = true;
+    try {
+      await loadVaultOptions();
+      ok = !!state.modelCatalog;
+    } catch (_) {
+      ok = false;                       // 목록 갱신 실패가 잠금 해제를 막지는 않는다
+    }
+    try {
+      renderComposer();
+      _updateComposerModelLabel();      // 항목 표시/숨김·라벨 (내부에서 추론 라벨도 갱신)
+      _renderComposerModelMenu();
+    } catch (_) { /* 치명 아님 — 렌더 실패는 지문 소비 판정에 넣지 않는다 */ }
+    return ok;
+  })();
+}
+
 // feature-0007 (REQ-20260521-0001): loadVaultOptions 의 의미를 "model catalog
 // 만 server 에서 가져와 state 에 저장" 으로 단순화. 사용자 키 wizard 가 사라져서
 // vault 입력 element 채우기 / readiness 갱신 / Local LLM banner 등은 모두 제거.
@@ -7830,18 +7864,18 @@ async function initialize() {
   //
   //   카탈로그를 다시 받은 **뒤에** 선택기를 그린다(순서가 반대면 옛 목록으로 그린다).
   //   실패는 삼킨다 — 목록 갱신이 안 돼도 잠금 해제까지 막을 이유는 없다.
-  onComposeGateChange(() => {
-    (async () => {
-      try {
-        await loadVaultOptions();
-      } catch (_) { /* 목록 갱신 실패가 잠금 해제를 막지 않는다 */ }
-      try {
-        renderComposer();
-        _updateComposerModelLabel();      // 항목 표시/숨김·라벨 (내부에서 추론 라벨도 갱신)
-        _renderComposerModelMenu();
-      } catch (_) { /* 치명 아님 */ }
-    })();
-  });
+  onComposeGateChange(_refreshModelCatalogSurface);
+  // ⚠ 잠금 전이만으로는 **여전히 부족하다** (사용자 제보 2026-09-02, TASK-20260902T140200).
+  //   러너는 능력 협상을 **배경에서** 돌린다(질문 처리를 먼저 살리려고 — `agent/lifecycle.py`
+  //   의 「협상은 뒤에서 한다」). 그래서 목록은 잠금이 풀린 **뒤** 20~120초에 도착하고, 그
+  //   시점에는 `compose_blocked` 가 이미 바뀌지 않아 위 리스너가 발화하지 않는다. 잠금이
+  //   풀리면서 폴링까지 멎으므로 도착을 관측할 경로가 **하나도 없었다** — 새로고침이 유일한
+  //   수단이었고, 그것이 제보의 「체감 대기시간」이다.
+  //
+  //   그래서 목록 변화를 **자기 신호**로 받는다(서버 `caps_rev` 지문). 두 리스너가 같은
+  //   함수를 부르는 것은 중복이 아니다 — 같은 화면을 갱신할 **서로 다른 사실** 둘이다
+  //   (질문을 보낼 수 있게 됐다 / 고를 것이 달라졌다).
+  onCapsChange(_refreshModelCatalogSurface);
 
   // 좌측 대화 사이드바 너비 조절 핸들 배선 + 저장 너비 복원 (페이지 1회).
   setupSidebarResize();

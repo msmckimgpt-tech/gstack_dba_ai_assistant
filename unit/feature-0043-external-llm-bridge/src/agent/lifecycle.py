@@ -18,7 +18,7 @@ import urllib.request
 from .api import Api
 from .base import _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _DEFAULT_MAX_WORKERS, _DEFAULT_WORKERS, _DEFAULT_WORKER_IDLE_SEC, _MAX_STALLED_ROUNDS, _WAIT_TIMEOUT_SEC
 from .cancel import CancelRegistry
-from .caps import resolve_caps, sanitize_caps
+from .caps import _CREATION_SOURCES, baseline_index, resolve_caps, sanitize_caps
 from .conf import load_conf, save_conf
 from .discovery import _no_ai_message, pick_ai
 from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_SELFUPDATE, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
@@ -32,7 +32,7 @@ from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
                          fetch_deployed_agent, install_agent_file, reexec_self,
                          running_bundle_path)
 from .state import prev_runner_instance, runner_instance
-from .timing import _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
+from .timing import _CAPS_BASELINE_WAIT_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
@@ -103,6 +103,11 @@ _SELF_UPDATE = threading.Event()
 #: 않게 하는 바닥이다. `0.0` = 아직 시도한 적 없음.
 _SELF_UPDATE_LAST = [0.0]
 
+#: 능력 협상이 지금 돌고 있는가. 자기갱신이 이 값을 보고 미룬다 (codex R4 P2-9) — 협상은
+#: `ActiveTasks` 에 잡히지 않는 배경 스레드이고 자식 CLI 를 최대 240초 붙들기 때문에,
+#: 「유휴」로 오판해 `os.execv` 하면 그 질의가 통째로 버려진다.
+_CAPS_NEGOTIATING: list = [False]
+
 #: 이 실행이 자기 갱신을 할 수 있는가 — `main()` 이 실제 능력(단일 파일로 도는가)과 사용자
 #: 선택(`--no-self-update`)을 함께 판정해 세운다. 신고(`self_update` feature)와 **같은 값**이다:
 #: 못 하면서 신고하면 화면이 오지 않을 갱신을 기다린다.
@@ -166,7 +171,10 @@ def _arm_exit_release(api: Api) -> None:
 
 def start_heartbeat(api: Api, stop: threading.Event,
                     runtimes: list | None = None,
-                    batch_override: "bool | None" = None) -> threading.Thread:
+                    batch_override: "bool | None" = None,
+                    baseline_out: dict | None = None,
+                    baseline_ready: "threading.Event | None" = None,
+                    nudge: "threading.Event | None" = None) -> threading.Thread:
     """연결 유지 신호를 보내는 데몬 스레드 (TASK-20260828T150000).
 
     **대기 스레드와 분리한 것이 이 기능의 핵심이다.** 대기(`wait_for_request`)는 빈 워커 자리를
@@ -223,6 +231,24 @@ def start_heartbeat(api: Api, stop: threading.Event,
                     log_event("hb.recovered", "하트비트가 다시 통했다",
                               streak=_hb_fail_streak[0])
                     _hb_fail_streak[0] = 0
+                # ── 신고가 닿았다 — **같은 값의 다음 신고는 «캐시» 다** (codex R4 P1-2) ──
+                #
+                # 능력은 매 하트비트에 실린다. 그런데 출처(`source`)를 그대로 두면 한 번의
+                # 확인이 **30초마다 새 확인으로 세어진다**: 서버 `merge_baseline` 이
+                # `verified` 신고마다 `verify_streak` 을 1 올리므로, 5회 하트비트(=2.5분)면
+                # 상한에 닿아 그 계정의 원장이 러너에게 더 이상 내려가지 않는다(실측 재현).
+                # 그러면 R3 S1 이 「몇 달이 지나도 유효한 원장」을 위해 도입한 횟수축이
+                # **2.5분 타이머**로 변질되고, 새 머신은 안정된 원장 대신 열린 열거로 떨어져
+                # 제보 ②가 그대로 되돌아온다. 게다가 streak 이 매번 달라지므로 저장측
+                # 「값이 그대로면 쓰지 않는다」가 항상 거짓이 되어 **쓰기 증폭도 재발**한다.
+                #
+                # 옳은 표기는 «캐시» 다 — 두 번째 신고부터 이 값의 출처는 라이브 응답이
+                # 아니라 **이 프로세스의 메모리**다. 같은 규율이 이미 `config.json` 적재
+                # 경로에 있다(`sanitize_caps` 가 `verified` → `cache` 로 강등한다).
+                # `cache` 도 신고 가능 출처라 화면의 목록은 그대로 유지된다.
+                for _r in (runtimes or []):
+                    if _r.get("source") in _CREATION_SOURCES:
+                        _r["source"] = "cache"
                 # 사망 신고가 서버에 닿았다 — 다음 신호부터는 싣지 않는다.
                 if _pending_release:
                     _released = res.get("released_claims") or []
@@ -252,6 +278,28 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 #
                 # ⚠ 키가 **없으면 건드리지 않는다.** 구 서버·기록 실패 응답에는 이 키가 없고,
                 # 없는 것을 `False` 로 읽으면 그때마다 동의가 꺼졌다 켜졌다 진동한다.
+                # ── 서버 baseline 수신 (TASK-20260902T140200) ────────────────────────
+                #
+                # 「이 계정의 이 런타임은 마지막으로 무엇을 쓸 수 있었나」. 로컬 캐시가 없는
+                # 기동에서 열린 질의 대신 **확인 질의**의 입력으로 쓴다 — 열거는 LLM 답변이라
+                # 회차마다 흔들리고, 그것이 「실행할 때마다 목록이 다르다」의 원인이었다.
+                #
+                # ⚠ 키가 **없으면 건드리지 않는다** (`batch_consent` 와 같은 규율). 구 서버·
+                #   기록 실패 응답에는 이 키가 없고, 없는 것을 빈 목록으로 읽으면 방금 받은
+                #   baseline 이 다음 30초에 지워진다.
+                # ⚠ 제자리 갱신이다 — 협상 스레드가 이 dict 를 그대로 읽는다. `clear()` 후
+                #   `update()` 로 쓰지 않는 이유는 `_negotiate_caps` 의 caps 갱신과 같다:
+                #   그 틈에 읽으면 빈 목록을 보고 확인할 대상을 잃는다.
+                if baseline_out is not None and "caps_baseline" in res:
+                    try:
+                        _idx = baseline_index(res.get("caps_baseline"))
+                        baseline_out.update(_idx)
+                        for _gone in [k for k in baseline_out if k not in _idx]:
+                            baseline_out.pop(_gone, None)
+                    except Exception:  # noqa: BLE001
+                        # 원장 수신 실패가 연결 유지 신호를 죽이지 않는다 — 최악이 종전
+                        # 동작(baseline 없음)이고, 다음 30초에 다시 온다.
+                        pass
                 if "batch_consent" in res:
                     _want = apply_consent(api.features,
                                           server_consent=res.get("batch_consent"),
@@ -285,7 +333,6 @@ def start_heartbeat(api: Api, stop: threading.Event,
                     # 스스로 고칠 수 있으면 **신호만 세우고 조용히 넘어간다** (사용자 결정
                     # 2026-09-02). 러너 파일은 거의 모든 배포에서 바뀌므로, 이 사실을 매번
                     # 경고로 찍으면 로그가 «사용자가 할 일» 로 가득 차는데 정작 할 일은 없다.
-                    # 갱신은 대기 루프가 유휴일 때 수행한다.
                     if _SELF_UPDATE_OK[0]:
                         _SELF_UPDATE.set()
                     elif not _stale_said:
@@ -297,7 +344,36 @@ def start_heartbeat(api: Api, stop: threading.Event,
                                   "그 전까지는 옛 동작·옛 모델 목록이 그대로 보입니다.",
                                   level="WARN", local_build=_self_build(), ver=AGENT_VERSION,
                                   min_version=str(_u.get("min_version") or "") or None)
-            stop.wait(interval)
+            # ── 첫 시도가 **끝났다**는 신호 (TASK-20260902T140200) ────────────────────
+            #
+            # 협상 스레드가 이 신호를 짧게 기다린다(아래 `main`). 위치가 계약이다:
+            # - **분기 체인 뒤** — 성공 분기에서 `baseline_out` 을 채운 뒤에 풀려야 협상이
+            #   방금 받은 원장을 보고 확인 질의를 던진다.
+            # - **성공·실패 무관** — 성공 분기 안에 두면 서버에 닿지 못한 사용자가 상한
+            #   (≈16초)을 통째로 더 기다린다.
+            # - 조건에 「원장이 비어 있지 않을 때」를 넣지 않는다 — 첫 연결 계정에서 신호가
+            #   영영 오지 않는다.
+            if baseline_ready is not None and not baseline_ready.is_set():
+                baseline_ready.set()
+            # ── 주기 대기, 단 «지금 신고해라» 신호에는 즉시 깨어난다 ────────────────
+            #
+            # 협상이 플랫폼 하나를 끝낼 때마다 `nudge` 를 세운다(사용자 제보 2026-09-02,
+            # 3차). 주기만 기다리면 claude 가 22.7초에 끝나도 그 목록이 최대 30초를 더
+            # 기다리고, 사용자에게는 그 합이 「갱신이 안 된다」로 보인다.
+            #
+            # ⚠ **`stop` 도 함께 봐야 한다.** `nudge` 만 기다리면 종료 신호가 이 대기를
+            #   깨우지 못해 최대 한 주기(30초) 늦게 멈춘다 — `try_self_update` 가
+            #   `os.execv` 직전에 하트비트를 끊는 경로가 그만큼 밀린다. 그래서 둘 중
+            #   먼저 오는 것을 잡되, **`stop` 이 이미 섰으면 기다리지 않는다**.
+            if nudge is None:
+                stop.wait(interval)
+            else:
+                _left = interval
+                while _left > 0 and not stop.is_set() and not nudge.is_set():
+                    _step = min(_HEARTBEAT_NUDGE_POLL_SEC, _left)
+                    nudge.wait(_step)
+                    _left -= _step
+                nudge.clear()
 
     t = threading.Thread(target=_loop, name="bridge-heartbeat", daemon=True)
     t.start()
@@ -329,6 +405,14 @@ def try_self_update(api: Api, active: ActiveTasks) -> bool:
         return False
     if active.count() > 0:
         return False           # 일하는 중 — 다음 하트비트가 다시 알려 준다
+    # ⚠ **능력 협상도 «일하는 중»이다** (codex R4 P2-9). 협상은 `ActiveTasks` 에 잡히지
+    #   않는 배경 스레드에서 돌고 자식 CLI 를 최대 240초 붙든다. 그 동안 `os.execv` 로
+    #   프로세스를 갈아 끼우면 진행 중인 질의와 그 토큰이 통째로 버려지고, 새 프로세스가
+    #   처음부터 다시 협상한다 — 사용자에게는 **목록이 더 늦게 뜨는 것**으로 나타난다.
+    #   이 cycle 이 줄이려는 것이 정확히 그 지연이므로, 협상이 끝날 때까지 미룬다.
+    #   미루는 비용은 없다: `_SELF_UPDATE` 는 그대로 세워져 있고 다음 하트비트가 다시 온다.
+    if _CAPS_NEGOTIATING[0]:
+        return False
     now = time.monotonic()
     if _SELF_UPDATE_LAST[0] and (now - _SELF_UPDATE_LAST[0]) < SELF_UPDATE_MIN_INTERVAL_SEC:
         return False
@@ -683,10 +767,33 @@ def main() -> int:
     # 배우므로 그때만 기다린다.
     _caps_first = (not args.cmd) and (kind not in _RUNTIME_SPECS)
 
-    def _negotiate_caps() -> None:
-        """능력 협상 1회. 결과는 `runtimes`·`caps` 를 **제자리** 갱신한다."""
-        _cached = None if args.refresh_caps else (conf_caps or None)
-        _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps)
+    #: 서버가 준 계정·런타임 baseline. 하트비트 스레드가 **제자리** 갱신하고 협상이 읽는다
+    #: (TASK-20260902T140200).
+    _caps_baseline: dict = {}
+    #: 하트비트가 **첫 성공 응답**을 받았다는 신호. 협상이 이것을 짧게 기다린다 — 기다리지
+    #: 않으면 협상이 baseline 보다 먼저 출발해 확인 경로가 **사실상 발화하지 않는다**
+    #: (§16.7 G14-e: 존재는 실행이 아니다).
+    _baseline_ready = threading.Event()
+    #: 「지금 신고해라」 신호. 협상이 플랫폼 하나를 끝낼 때마다 세우고, 하트비트 루프가
+    #: 주기 대기 대신 이것을 기다린다 — 주기(30초)를 기다리면 플랫폼별 실시간 갱신이
+    #: 그만큼 늦어진다(사용자 제보 2026-09-02, 3차).
+    _caps_nudge = threading.Event()
+
+    def _publish_caps(_got: list, _detail: dict) -> None:
+        """협상 결과를 **제자리** 갱신하고 하트비트를 깨운다.
+
+        플랫폼 하나가 끝날 때마다도 불린다(`resolve_caps(on_settled=…)`) — 그래서 이 함수는
+        **부분 목록으로도 안전**해야 한다:
+
+        - `runtimes[:]` 제자리 대입은 하트비트가 다음 신호에 실을 값이다. 부분 목록이
+          앞선 목록을 «지우는» 일은 서버에서 일어나지 않는다 — 계정 원장 병합이 합집합
+          누적이고(`shared/bridge_caps.merge_baseline`), 같은 프로세스의 `probed` 는
+          누적되므로 이 목록도 협상이 진행될수록 **자라기만** 한다.
+        - `caps` 는 워커가 호출법을 읽는 사전이라 **비우지 않는다**(아래 주석).
+
+        ⚠ 이 함수는 질의 스레드 안에서 불린다 — **즉시 끝나는 일만** 한다(제자리 갱신 +
+          이벤트 set). 여기서 오래 걸리면 그 플랫폼의 협상이 그만큼 늦게 끝난다.
+        """
         runtimes[:] = _got
         # ⚠ `clear()` 후 `update()` 로 쓰지 않는다 — 그 사이에 워커가 읽으면 **빈 caps** 를
         #   보고 호출법을 잃는다. 먼저 덮어쓰고 없어진 키만 지우면, 그 틈에 보이는 것은
@@ -694,6 +801,36 @@ def main() -> int:
         caps.update(_detail or {})
         for _gone in [k for k in caps if k not in (_detail or {})]:
             caps.pop(_gone, None)
+        # ── 다음 주기를 기다리지 않고 **지금** 신고한다 (사용자 제보 2026-09-02, 3차) ──
+        #
+        # 하트비트 주기는 30초다. 깨우지 않으면 claude 가 22.7초에 끝나도 그 목록은 최대
+        # 30초를 더 기다리고, 사용자에게는 그 합이 「갱신이 안 된다」로 보인다. 여기서
+        # 깨우면 플랫폼이 끝난 **직후** 신고가 나가고, 서버 지문이 바뀌어 화면이 받는다.
+        _caps_nudge.set()
+
+    def _negotiate_caps(wait_baseline: bool = False) -> None:
+        """능력 협상 1회. 결과는 `runtimes`·`caps` 를 **제자리** 갱신한다."""
+        # baseline 은 하트비트 응답으로 온다 — 배경 협상은 그 첫 응답을 짧게 기다린다.
+        # 상한을 두는 이유: 서버가 느리거나 응답하지 않아도 협상은 **반드시** 진행돼야 한다
+        # (기다림이 곧 웹 선택기의 공백이고, 그것이 이번에 고치는 마찰이다).
+        if wait_baseline and not args.refresh_caps:
+            _baseline_ready.wait(_CAPS_BASELINE_WAIT_SEC)
+        _cached = None if args.refresh_caps else (conf_caps or None)
+        _base = None if args.refresh_caps else (dict(_caps_baseline) or None)
+        # 자기갱신이 이 창을 「유휴」로 오판해 `os.execv` 하지 않도록 표시한다
+        # (codex R4 P2-9 — `try_self_update` 의 `_CAPS_NEGOTIATING` 가드).
+        # `finally` 로 반드시 내린다: 여기서 새면 그 프로세스는 자기갱신을 **영구히**
+        # 못 하고, 낡은 러너가 낡은 동작으로 계속 돈다(고치려던 것보다 나쁜 상태다).
+        _CAPS_NEGOTIATING[0] = True
+        try:
+            _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps,
+                                         baseline=_base, on_settled=_publish_caps)
+        finally:
+            _CAPS_NEGOTIATING[0] = False
+        # 최종 게시 — 중간 신고와 같은 경로를 쓴다. 두 경로를 따로 쓰면 한쪽만 고쳐지는 날
+        # 「부분은 되는데 최종이 안 되는」(또는 반대) 상태가 되고, 그 차이는 라이브에서만
+        # 드러난다.
+        _publish_caps(_got, _detail)
         if _got:
             _log("고를 수 있는 것: " + " · ".join(
                 f"{r['label']}({len(r['models'])}종"
@@ -703,7 +840,16 @@ def main() -> int:
             # 여기 오른 런타임은 **전부** 그 AI 가 답한 것이다. 없는 출처를
             # 이름으로 남겨 두면 다음 사람이 그 경로가 아직 있다고 읽는다.
             _by_probe = [n for n, c in caps.items() if (c or {}).get("source") == "probe"]
-            _log("  출처: " + ("본인 응답 " + ", ".join(_by_probe) if _by_probe else "실조회")
+            # 확인 경로(`verified`)는 **따로 센다** (TASK-20260902T140200). 「직전 목록을
+            # 대조해 확인받았다」와 「처음부터 열거했다」는 안정성이 다른 사실이고, 둘을
+            # 한 이름으로 뭉개면 목록이 왜 안정됐는지(또는 왜 아직 흔들리는지) 조사할 수 없다.
+            _by_verify = [n for n, c in caps.items() if (c or {}).get("source") == "verified"]
+            _src = []
+            if _by_probe:
+                _src.append("본인 응답 " + ", ".join(_by_probe))
+            if _by_verify:
+                _src.append("직전 목록 확인 " + ", ".join(_by_verify))
+            _log("  출처: " + (" · ".join(_src) if _src else "실조회")
                  + ("" if args.refresh_caps or not _cached else " (캐시 — 갱신은 --refresh-caps)"))
         else:
             _log("고를 수 있는 AI 를 찾지 못했습니다 — 웹 선택기는 표시되지 않습니다."
@@ -728,7 +874,9 @@ def main() -> int:
     # 연결 유지 신호를 먼저 띄운다 — 첫 질문이 오기 전(대기만 하는 동안)에도 토큰 수명이
     # 밀려야 하고, 화면의 '대기 중' 표시도 그때부터 참이어야 한다.
     heartbeat_stop = threading.Event()
-    start_heartbeat(api, heartbeat_stop, runtimes, batch_override=_batch_override)
+    start_heartbeat(api, heartbeat_stop, runtimes, batch_override=_batch_override,
+                    baseline_out=_caps_baseline, baseline_ready=_baseline_ready,
+                    nudge=_caps_nudge)
     # 자기 갱신이 재기동 직전에 하트비트를 끊을 수 있게 손잡이를 건넨다 — `os.execv` 는
     # `atexit` 를 부르지 않으므로, 여기서 끊지 않으면 서버는 사라진 프로세스를 계속 «대기 중»
     # 으로 읽는다.
@@ -737,8 +885,15 @@ def main() -> int:
     if not args.cmd and not _caps_first:
         # 협상은 **뒤에서** 한다. 끝나면 위 `runtimes` 가 제자리로 갱신되고 다음 하트비트가
         # 새 목록을 싣는다 — 그때까지 웹 선택기만 비어 있고, 질문 처리는 이미 살아 있다.
-        threading.Thread(target=_negotiate_caps, name="bridge-caps",
-                         daemon=True).start()
+        #
+        # ⚠ 이 경로가 **웹 화면의 공백 창**을 만든다는 사실이 이번 수정의 출발점이다. 그
+        #   공백 자체는 의도된 것이고(질문 처리를 먼저 살린다), 결함이었던 것은 **공백이
+        #   끝난 사실을 화면이 모른다**는 쪽이었다 — 서버 `caps_rev` 지문과 프런트
+        #   `onCapsChange` 가 그 축을 닫는다.
+        # baseline 을 짧게 기다린 뒤 확인 질의로 간다 — 기다림 없이 출발하면 확인 경로가
+        # 사실상 발화하지 않고, 그러면 목록 안정화라는 이 cycle 의 절반이 코드로만 존재한다.
+        threading.Thread(target=lambda: _negotiate_caps(wait_baseline=True),
+                         name="bridge-caps", daemon=True).start()
 
     cancels = CancelRegistry()
     #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.

@@ -217,8 +217,21 @@ def test_unlock_triggers_a_rerender():
     # 콜백이 async 로 바뀌었다 (2026-08-31): 잠금 해제 시 **카탈로그를 먼저 다시 받고**
     # 그 뒤에 그린다 — 안 그러면 모델·추론 강도 항목이 옛 목록(빈 목록)으로 남아 사용자가
     # 새로고침해야 보였다. 계약은 그대로다 — 게이트가 바뀌면 다시 그린다.
-    _cb = app[app.index("onComposeGateChange("):]
-    _cb = _cb[:_cb.index('});')]
+    #
+    # 2026-09-02 (TASK-20260902T140200): 핸들러가 **명명 함수로 추출**됐다 — 같은 절차를
+    # 능력 목록 변화(`onCapsChange`)도 쓰기 때문이다(절차를 두 벌로 두면 한쪽만 고쳐지는
+    # 날 경로에 따라 다른 화면이 나온다). 그래서 이 검사는 **인라인 형태를 전제하지 않고**
+    # 등록된 핸들러를 이름으로 따라가 그 본문을 본다. 계약(카탈로그 → 렌더 순서)은 불변이다.
+    _reg = app[app.index("onComposeGateChange("):]
+    _arg = _reg[len("onComposeGateChange("):_reg.index(")")].strip()
+    if _arg.isidentifier():
+        # 명명 함수 — 그 정의를 찾아 본문을 본다.
+        _def = app.index(f"function {_arg}(")
+        _cb = app[_def:]
+        _cb = _cb[:_cb.index("\n}\n") + 2]
+    else:
+        # 인라인 화살표 — 종전 형태도 계속 통과시킨다(형태가 계약은 아니다).
+        _cb = _reg[:_reg.index("});")]
     assert "renderComposer()" in _cb, "잠금이 풀려도 컴포저를 다시 그리지 않는다"
     assert "loadVaultOptions()" in _cb, (
         "잠금이 풀렸는데 모델 카탈로그를 다시 받지 않는다 — 선택기가 빈 채로 남는다")
