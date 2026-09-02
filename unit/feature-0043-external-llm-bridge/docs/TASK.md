@@ -2746,4 +2746,8 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
       좁으면 「전건 KILL」은 방어 범위가 아니라 표본 크기를 말한다 — 스위트를 넓힌 뒤
       재측정한 수치를 test-runs.d 에 적는다
 - [x] 전체 테스트 green (컨테이너 `make test` — FAILED 0) · ruff clean
+- [x] **CI(비-root) 가 잡은 하네스 오류 수정** — L10 의 `chmod 500` 실패 주입이 `bridge.log`
+      까지 막아 «러너가 뜰 수 없는 조건을 만들어 놓고 러너가 떠야 한다» 고 검사하고 있었다.
+      로컬은 root 라 조작이 무효였고 `skipif(root)` 가 그 모순을 가렸다. L10 은 정적 계약만
+      남기고, 「갱신 실패해도 러너는 뜬다」는 L3 이 실물로 본다(rc=0 검사 추가)
 - [ ] PB-0008 실 Windows POST-DEPLOY 실측

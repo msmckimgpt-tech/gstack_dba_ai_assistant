@@ -271,9 +271,13 @@ def test_l3_too_small_response_is_not_installed(tmp_path: Path):
         bh = _bridge_home(tmp_path, ca)
         launch = _render_launch_sh(tmp_path, base)
         b = _stub_bin(tmp_path, with_curl=False)
-        _run_launch(launch, tmp_path / "home", b)
+        r = _run_launch(launch, tmp_path / "home", b)
         assert (bh / "bridge_agent.py").read_text() == _OLD_AGENT, (
             "러너가 아닌 응답을 러너 자리에 넣었다 — 다음 기동에서 죽는다")
+        # 그리고 **갱신이 실패해도 러너는 뜬다** — 갱신하려다 멀쩡한 러너를 못 띄우게 만드는
+        # 것이 가장 나쁜 결말이다(L10 의 정적 계약이 지키려는 것이 이 동작이다).
+        assert r.returncode == 0, (
+            f"갱신 실패가 런처를 끝냈다: rc={r.returncode} {r.stderr[-300:]!r}")
     finally:
         stop()
 
@@ -518,24 +522,14 @@ def test_l10_update_failure_never_kills_the_launcher(tmp_path: Path):
     # 받은 것이 없을 때 그것을 쓰지 않는지도 함께 본다(`|| true` 는 실패를 통과시키므로).
     assert re.search(r"\[ -s \"\\?\$_dl\" \]", blk), "쓰지 못한 다운로더를 그대로 실행한다"
 
-    if os.geteuid() == 0:
-        pytest.skip("root 는 권한 검사를 우회한다 — 실패 주입이 성립하지 않는다(위 정적 계약으로 대체)")
-
-    ca, sc, sk = _make_ca(tmp_path, "good")
-    base, stop = _https_server(sc, sk, _NEW_AGENT.encode())
-    try:
-        bh = _bridge_home(tmp_path, ca)
-        launch = _render_launch_sh(tmp_path, base)
-        b = _stub_bin(tmp_path, with_curl=False)
-        os.chmod(bh, 0o500)                           # 읽기·실행만 — 새 파일을 못 만든다
-        try:
-            r = _run_launch(launch, tmp_path / "home", b)
-        finally:
-            os.chmod(bh, 0o700)
-        assert "stub up" in (r.stdout + r.stderr) or r.returncode == 0, (
-            f"갱신이 실패했다고 런처가 러너를 못 띄웠다: rc={r.returncode} {r.stderr[-300:]!r}")
-    finally:
-        stop()
+    # ⚠ **동작 축은 여기서 만들지 않는다.** 처음 판은 `chmod 500` 으로 «임시 파일을 못 쓰는»
+    #   상황을 만들려 했는데, 그 조작은 같은 디렉토리의 `bridge.log` 도 함께 막는다 — 런처는
+    #   러너 stderr 를 그 파일로 잇기 때문에 **러너가 뜰 수 없는 상황을 만들어 놓고 러너가
+    #   떠야 한다고 검사**하는 꼴이 됐다(CI 실측: `cannot create …/bridge.log` → rc=4).
+    #   로컬은 root 라 조작 자체가 무효였고, 그래서 이 모순이 보이지 않았다.
+    #
+    #   「갱신이 실패해도 러너는 뜬다」는 L3 이 실물로 검사한다 — 잘린 응답으로 갱신을 실패시키고
+    #   런처가 rc=0 으로 끝나는지 본다. 실패 주입이 **갱신 단계에만** 걸리는 자리가 거기다.
 
 
 # ── L6 · 축 대칭 ─────────────────────────────────────────────────────────────
