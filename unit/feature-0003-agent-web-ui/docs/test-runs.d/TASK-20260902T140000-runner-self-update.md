@@ -7,17 +7,47 @@ verdict: PASS (신규 30건 · 뮤테이션 12/12 KILL · 기준선 동일) — 
 
 # Run — TASK-20260902T140000 러너 자기 갱신
 
-## Environment: Windows-browser (PB-0008) — **POST-DEPLOY 에 이 절을 채운다**
+## Environment: Windows-browser (PB-0008) — POST-DEPLOY 실측, 배포 `a46727a2`
 
-화면 축(`connect-modal.js` 의 낡음 접기)은 배포 전 확인이 **불가능**하다: JS 는 `docker cp`
-로 미리 볼 수 없고(자산 지문 미주입 + 브라우저 모듈 캐시로 구버전이 도는 함정), 서버가
-`runner_self_updating` 을 아직 싣지 않아 접는 식이 물릴 값 자체가 없다.
+| # | 관측 | 결과 |
+|---|---|---|
+| P1 | `connect_status` 응답 | `runner_self_updating` 필드 **존재**(러너 미대기라 `false` — fail-closed 계약대로) |
+| P2 | 서빙 JS | `_actionableStaleOf`/`runner_self_updating` 심볼 **5건 적재** |
+| P3 | 서빙 러너 배포본 | `running_bundle_path`·`try_self_update`·`SELF_UPDATE_PATH`·`install_agent_file`·`reexec_self` 전부 포함 · `self_update` 9회 |
 
-배포 뒤 확인할 것:
+### ⭐ 라이브 서버를 상대로 한 갱신 경로 실측 (계정 영향 0)
 
-1. `connect_status` 응답에 `runner_self_updating` 이 실린다.
-2. 새 빌드 러너의 `RunnerFeatures` 에 `self_update` 가 들어간다.
-3. 그 러너가 낡은 상태에서 칩이 **「업데이트 필요」를 보이지 않는다**.
+`/static/agent/bridge_agent.py` 는 공개 정적 경로이므로, 격리된 임시 디렉토리에서 **실제
+배포 서버를 상대로** 수신→검사→원자 교체 전 구간을 돌렸다(토큰 불필요, 사용자 러너 무영향):
+
+| # | 단계 | 결과 |
+|---|---|---|
+| 1 | 라이브 수신 + 크기·문법 검사 | **OK** — 306,768 bytes · 지문 `b1cd7b13d2b3` |
+| 2 | 같은 서버의 **평문(http)** 주소 | **거절** (요청조차 나가지 않는다) |
+| 3 | 원자 교체 | `3876fb7469f1` → `b1cd7b13d2b3` · 권한 `0700` 보존 · 임시 파일 잔재 **0** |
+| 4 | 교체본 자기 인식 | `running_bundle_path()` 가 그 경로 반환 = 다음 기동 때 자기 갱신 자격 성립 |
+| 5 | 같은 지문 재수신 | **재기동 불필요** 판정 — 무한 고리 차단이 실물에서 성립 |
+
+`os.execv` 만 이 하네스 밖이다(프로세스가 갈리므로) — 그 축은 인자 보존·정리 순서를 단위
+테스트가 잠근다.
+
+### ⚠ 배포 창 무중단 실측 — 0 이 아니었다
+
+`no upstreams available` 이 **15:09:14~15:09:26 사이 16건**(12초 창). 배포 스크립트의 soak 는
+「통과 — 배포 안정」을 보고했지만, 그 게이트는 blip 을 관용하므로 **성공 보고 = 무중단이
+아니다**(체크리스트 [5]가 그렇게 적어 둔 이유다). 영향받은 client IP 는 `172.26.144.1`
+(검증용 Windows 호스트 = 이 세션의 폴링)이고, 배포 종료 후 5분 창은 **0** 이다.
+이 cycle 의 코드 변경과 무관한 엣지/롤링 상호작용 축이라 여기 사실만 남긴다.
+
+## 이월 — 부트스트랩 한 번
+
+현재 사용자 러너는 `0c814862bea2` · `RunnerFeatures=console_jobs,self_review,batch_jobs` 로
+**`self_update` 신고가 없다**(이 기능 이전 빌드). 배포본이 `b1cd7b13d2b3` 이므로 지금은
+「낡음 ∧ ¬자기갱신」 = 종전대로 「업데이트 필요」가 뜨는 상태이고, 그것이 **의도한 동작**이다.
+
+한 번 런처가 갈아 끼우면(자동 실행 경로 — 13:36:51 라이브 실증) 새 빌드가 `self_update` 를
+신고하고, 그때부터 배포가 몇 번을 나든 화면에 조치 요구가 뜨지 않는다. 그 전이의 사용자 눈
+확인은 다음 연결이 관측 시점이다.
 
 ## 배포 전 실측
 
