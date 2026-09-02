@@ -547,12 +547,12 @@ Move-Item -Force $AgentTmp $AgentPath
 $LaunchPs = Join-Path $Home_ 'launch.ps1'
 # 핸들러가 띄우는 러너도 **같은 인자**를 받아야 한다 — 여기만 빠지면 브라우저 버튼으로 뜬
 # 러너와 이 스크립트가 띄운 러너가 다르게 동작하고, 그 차이는 화면에서 구분되지 않는다
-# (sh 판의 `$RUNNER_ARGS` 와 같은 자리). 검증을 통과한 값만 들어온다.
+# (sh 판의 «RUNNER_ARGS» 와 같은 자리). 검증을 통과한 값만 들어온다.
 $BakedArgs = @()
 if ($AiArgs.Count -gt 0)     { $BakedArgs += $AiArgs }
 if ($ProbedArgs.Count -gt 0) { $BakedArgs += $ProbedArgs }
 if ($ExtraArgs) { $BakedArgs += ($ExtraArgs -split '\s+' | Where-Object { $_ }) }
-# 리터럴 배열로 굽는다. 각 토큰을 작은따옴표로 감싸고 내부 `'` 는 이중화한다(PowerShell 규칙).
+# 리터럴 배열로 굽는다. 각 토큰을 작은따옴표로 감싸고 내부 «'» 는 이중화한다(PowerShell 규칙).
 $BakedArgsLiteral =
   if ($BakedArgs.Count -gt 0) {
     '@(' + (($BakedArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ', ') + ')'
@@ -571,20 +571,85 @@ if (`$tok -notlike 'mat_*') { exit 2 }
 & '$Py' (Join-Path `$home_ 'bridge_agent.py') --base '$Base' ``
   --ca (Join-Path `$home_ 'rootCA.crt') --check | Out-Null
 if (`$LASTEXITCODE -ne 0) { exit 3 }
-# ── 러너 최신화 (TASK-20260902T100000) ────────────────────────────────────────
-# 종전에는 디스크의 파일을 그대로 다시 띄워, 「업데이트 필요」에서 눌러도 같은 낡은 러너가
-# 떴다. CA 는 이미 신뢰하므로 https 로 받고, 실패·빈 파일·문법 깨짐이면 있던 파일을 그대로
-# 쓴다(갱신하려다 못 띄우게 만드는 것이 가장 나쁜 결말이다). POSIX 판과 같은 계약.
+# ── 러너 최신화 (TASK-20260902T100000 · 신뢰 앵커 수정 TASK-20260902T170000) ───
+# 종전 이 스크립트는 디스크에 있는 파일을 그대로 다시 띄워, 「업데이트 필요」에서 눌러도 같은
+# 낡은 러너가 떴다. 그래서 여기서 배포본을 받아 갈아 끼운다.
+#
+# ⚠ **받는 수단은 파이썬이다 — «Invoke-WebRequest» 가 아니다.** IWR 은 «rootCA.crt» 를 보지
+#   않고 **OS 신뢰 저장소**로 검증하는데, 이 설치기는 CA 를 그 저장소에 넣지 않는다(위
+#   «Get-RemoteFile» 이 curl --cacert·파이썬으로만 받는 것과 같은 이유). 그래서 IWR 판은
+#   사내 CA 머신에서 **TLS 에서 실패**했고 그 실패를 «catch { }» 가 삼켰다 — 갱신이 조용히
+#   일어나지 않는 상태로 굳는다. 사용자 화면의 「다시 실행했지만 러너 파일이 그대로입니다」가
+#   정확히 이것이었다(재설치해도 같은 자리로 돌아오므로 막다른 길이 된다, 사용자 제보
+#   2026-09-02). POSIX 판(«launch.sh»)과 «agent/selfupdate.py» 는 처음부터 pin 을 지켰고,
+#   **이 축 하나만 예외**였다.
+#
+#   파이썬을 쓰는 것은 «폴백 하나 더» 가 아니다 — 러너가 바로 아래에서 «--ca» 로 쓰는 것과
+#   **같은 신뢰 평가기**다. 다운로드만 다른 평가기(Schannel)로 하면 신뢰 경로가 둘로 갈린다.
+#
+# ⚠ 실패는 **종전 동작**으로 떨어진다: 못 받았거나·너무 작거나·문법이 깨졌으면 있던 파일을
+#   그대로 쓴다(갱신하려다 멀쩡한 러너를 못 띄우게 만드는 것이 가장 나쁜 결말이다). 다만
+#   **조용히** 떨어지지는 않는다 — 이 창은 숨겨져 있어 사유를 남기지 않으면 증거가 하나도
+#   없고, 그 침묵이 이번 결함을 여러 cycle 동안 살려 뒀다.
+#
+# ⚠ 전체를 «try { } catch { }» 로 감싼다 — «$ErrorActionPreference = 'SilentlyContinue'» 는
+#   non-terminating error 만 억제한다. 경로·권한·디스크에서 나오는 **terminating** 예외는
+#   그대로 스크립트를 끝내고, 그러면 아래 기동에 닿지 못해 **갱신하려다 러너를 못 띄운다**.
+#   기존 계약(«test_autolaunch_runner»)이 잠근 것이 정확히 이것이고, 이 cycle 이 한 번 그
+#   방어를 걷어냈다가 그 테스트에 잡혔다. 진단은 «catch» 가 아니라 **«else» 분기**에서
+#   남긴다 — 흔한 실패(수신·검증 실패)는 거기로 오고, «catch» 는 드문 사고의 최후 방어다.
 `$new = Join-Path `$home_ ('.bridge_agent.new.' + `$PID)
+`$dl  = Join-Path `$home_ ('.selfupdate_dl.' + `$PID + '.py')
 try {
-  Invoke-WebRequest -Uri '$Base/static/agent/bridge_agent.py' -OutFile `$new ``
-    -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
-  if ((Test-Path `$new) -and ((Get-Item `$new).Length -gt 0)) {
-    & '$Py' -c 'import ast,sys; ast.parse(open(sys.argv[1],"rb").read())' `$new | Out-Null
-    if (`$LASTEXITCODE -eq 0) { Move-Item -Force `$new (Join-Path `$home_ 'bridge_agent.py') }
+  # 크기·문법 검사까지 받는 쪽에서 끝낸다 — «agent/selfupdate.py» 와 같은 바닥(20000B)·같은 검사.
+  # ASCII 로 쓴다(BOM 없는 순수 바이트가 파이썬에 가장 안전하다 — 위 «Get-RemoteFile» 과 동일).
+  Set-Content -Encoding ASCII -Path `$dl -Value @(
+    'import ast, ssl, sys, urllib.request',
+    'url, dest, ca = sys.argv[1], sys.argv[2], sys.argv[3]',
+    'if not url.lower().startswith("https://"):',
+    '    sys.exit("refuse plaintext: " + url)',
+    'class NoRedirect(urllib.request.HTTPRedirectHandler):',
+    '    def redirect_request(self, *a, **k):',
+    '        return None',
+    'ctx = ssl.create_default_context(cafile=ca)',
+    'op = urllib.request.build_opener(',
+    '    urllib.request.HTTPSHandler(context=ctx), NoRedirect)',
+    'req = urllib.request.Request(url, headers={"User-Agent": "mysql-ai-bridge-launch"})',
+    'with op.open(req, timeout=30) as r:',
+    '    if int(getattr(r, "status", 0) or 0) != 200:',
+    '        sys.exit("http status")',
+    '    body = r.read()',
+    'if len(body) < 20000:',
+    '    sys.exit("too small: %d bytes" % len(body))',
+    'ast.parse(body)',
+    'with open(dest, "wb") as f:',
+    '    f.write(body)'
+  )
+  # ⚠ 초기값은 **실패값**이다. ErrorActionPreference 가 SilentlyContinue 인 이 스크립트에서
+  #   «파이썬을 실행조차 못 한 경우»(CommandNotFound)는 예외가 삼켜지고 LASTEXITCODE 가
+  #   직전 값을 그대로 유지한다 — 그 직전 값은 위 --check 게이트 때문에 **반드시 0**, 즉
+  #   정확히 «성공» 이다. 이 파일의 Invoke-NativeCapture 가 같은 함정을 실측하고 같은
+  #   처방을 쓴다(«없는 파이썬으로 불렀는데 성공 반환»).
+  `$global:LASTEXITCODE = 127
+  `$why = & '$Py' `$dl '$Base/static/agent/bridge_agent.py' `$new ``
+    (Join-Path `$home_ 'rootCA.crt') 2>&1
+  `$dlOk = (`$LASTEXITCODE -eq 0)
+  # 받는 쪽의 검사와 **독립적으로** 한 번 더 본다(POSIX 판이 같은 자리에서 그렇게 한다).
+  # 여기까지 통과한 것만 다음 기동에서 실행된다.
+  if (`$dlOk -and (Test-Path `$new) -and ((Get-Item `$new).Length -ge 20000)) {
+    `$global:LASTEXITCODE = 127
+    & '$Py' -c 'import ast,sys; ast.parse(open(sys.argv[1],"rb").read())' `$new 2>&1 | Out-Null
+    `$dlOk = (`$LASTEXITCODE -eq 0)
+  } else { `$dlOk = `$false }
+  if (`$dlOk) {
+    Move-Item -Force `$new (Join-Path `$home_ 'bridge_agent.py')
+  } else {
+    Add-Content -Path (Join-Path `$home_ 'launch.log') -Value (
+      '[bridge-launch ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') +
+      '] 러너 갱신 실패 — 있던 파일로 계속합니다: ' + (`$why -join ' '))
   }
 } catch { }
-Remove-Item -Force -ErrorAction SilentlyContinue `$new
+Remove-Item -Force -ErrorAction SilentlyContinue `$new, `$dl
 Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
   Where-Object { `$_.CommandLine -like '*bridge_agent.py*' } |
   ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }
