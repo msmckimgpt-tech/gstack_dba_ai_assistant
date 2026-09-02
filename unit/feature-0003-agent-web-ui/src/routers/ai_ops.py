@@ -124,7 +124,8 @@ def _bridge_axis(conn) -> dict:
     실패는 `unknown` — 조회 실패를 `ok` 로 접으면 관제가 침묵으로 안심시킨다.
     """
     from shared.bridge_tasks import (
-        KIND_JOB, ORIGIN_BATCH, RUNNER_FEATURE_CONSOLE_JOBS, STATUS_OPEN,
+        KIND_JOB, ORIGIN_BATCH, RUNNER_FEATURE_BATCH_JOBS,
+        RUNNER_FEATURE_CONSOLE_JOBS, STATUS_OPEN,
     )
     from shared.llm_gate import server_llm_enabled
 
@@ -141,6 +142,7 @@ def _bridge_axis(conn) -> dict:
                 "detail": "DB 미가용 — 브리지 상태를 평가할 수 없습니다", "metrics": {}}
 
     metrics = {"connected_accounts": 0, "listening_runners": 0, "console_capable": 0,
+               "batch_capable": 0,
                "open_tasks": 0, "working_tasks": 0, "stale_tasks": 0,
                "open_jobs": 0, "job_failures": 0}
     try:
@@ -155,6 +157,12 @@ def _bridge_axis(conn) -> dict:
             metrics["connected_accounts"] = runners["connected"]
             metrics["listening_runners"] = runners["listening"]
             metrics["console_capable"] = runners["with_feature"]
+            # 배경 배치에 **동의한** 러너 수 (TASK-20260901T190000). 콘솔 작업 자격과 나눠
+            # 세는 이유: 배경 작업은 별도 동의라 「콘솔은 되는데 배치만 0」 이 정상 상태로
+            # 존재한다. 합쳐 세면 운영자는 배치가 왜 안 도는지 화면에서 알 수 없다 —
+            # 배선만 하고 침묵하지 않는다(AC-5).
+            metrics["batch_capable"] = _store.count_live_runners(
+                cur, RUNNER_FEATURE_BATCH_JOBS)["with_feature"]
 
             # 대기·처리중·정체. `stale` 은 **미점유인 채로** 오래된 것 — 점유된 것은
             # 개인 머신에서 돌고 있는 정상 상태라 여기 섞으면 거짓 경보가 된다.
