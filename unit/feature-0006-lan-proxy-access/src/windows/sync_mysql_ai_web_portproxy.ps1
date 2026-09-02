@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$DistroName = "Ubuntu",
     [string]$ListenAddress = "127.0.0.1",
@@ -189,6 +189,51 @@ function Invoke-Netsh {
     return [string]::Join([Environment]::NewLine, @($output))
 }
 
+function Get-PortProxyEntries {
+    <#
+    현재 등록된 v4tov4 portproxy 매핑을 읽어 딕셔너리로 돌려준다.
+    키 = "<listen_addr>:<listen_port>", 값 = "<connect_addr>:<connect_port>".
+
+    ⚠ 헤더 문구로 파싱하지 않는다 — `netsh` 출력은 OS 표시 언어를 따라가므로(한국어 Windows 는
+      "수신 대기" 등) 헤더에 기대면 로케일이 바뀌는 순간 조용히 빈 결과가 된다. 대신 데이터 행의
+      «IPv4 포트 IPv4 포트» 형태만 뽑는다 — 이 형태는 언어와 무관하다.
+
+    읽지 못하면 **$null** 을 돌려준다. 빈 딕셔너리와 구분되어야 하기 때문이다: 빈 딕셔너리는
+    "등록된 것이 없다"(→ 추가해야 한다)이고, $null 은 "현재 상태를 모른다"(→ 종전대로 무조건
+    재설정한다)이다. 둘을 뭉개면 파싱이 깨진 날 포트포워딩이 조용히 사라진다.
+    #>
+
+    # ⚠ 여기서 `-IgnoreExitCode` 를 쓰지 않는다. 쓰면 netsh 가 실패해도 예외가 오르지 않고 오류
+    #   **텍스트**가 그대로 넘어오는데, 그 텍스트는 아래 정규식에 하나도 매칭되지 않아 «빈 맵»이
+    #   된다 — 즉 "읽지 못했다"가 "등록된 것이 없다"로 둔갑한다. 동작 자체는 재설정 쪽이라 안전
+    #   하지만, `portproxy_state_known` 이 `true` 라고 **거짓 보고**하게 되어 위 주석이 약속한
+    #   $null 계약이 실제로는 성립하지 않는다. 실패를 실패로 올려야 그 구분이 유지된다.
+    try {
+        $text = Invoke-Netsh -Arguments @("interface", "portproxy", "show", "v4tov4")
+    }
+    catch {
+        return $null
+    }
+
+    if ($null -eq $text) {
+        return $null
+    }
+
+    $map = @{}
+    $rowPattern = "^\s*(?<la>\d{1,3}(?:\.\d{1,3}){3})\s+(?<lp>\d{1,5})\s+(?<ca>\d{1,3}(?:\.\d{1,3}){3})\s+(?<cp>\d{1,5})\s*$"
+    foreach ($line in @(($text -split "\r?\n"))) {
+        $match = [regex]::Match($line, $rowPattern)
+        if (-not $match.Success) {
+            continue
+        }
+
+        $key = "{0}:{1}" -f $match.Groups["la"].Value, $match.Groups["lp"].Value
+        $map[$key] = "{0}:{1}" -f $match.Groups["ca"].Value, $match.Groups["cp"].Value
+    }
+
+    return $map
+}
+
 if (-not (Test-IsAdministrator)) {
     throw "Administrator privileges are required."
 }
@@ -233,17 +278,63 @@ $portMappings = @(
     }
 )
 
+# ── 이미 맞는 매핑은 건드리지 않는다 (2026-09-02) ────────────────────────────────
+#
+# 이 스크립트는 5분마다 예약 실행된다. 종전에는 매 실행이 조건 없이 `delete` → `add` 였고,
+# `netsh interface portproxy delete` 는 그 리스너를 내려 **해당 포트를 지나던 기존 TCP 연결을
+# 전부 끊는다**. WSL IP 가 바뀌지 않은 평상시에도 5분마다 한 번씩 모든 연결이 끊긴 것이다.
+#
+# 실측(2026-09-02): 개인 AI 브리지 러너의 대기 호출(`wait_for_request`, 서버가 55초 보류)이
+# 5분 주기로 `RemoteDisconnected` 를 맞았다 — WARN 14건 중 13건이 이 작업 실행 후 3~19초 안에
+# 발생했고, 서로 다른 시각에 뜬 러너 프로세스들이 **모두 같은 벽시계 위상**(:04/:09/:14…)에서
+# 끊겼다. 브라우저처럼 짧은 요청은 재시도로 가려지지만, 오래 유지되는 연결은 그대로 드러난다.
+#
+# 그래서 **원하는 매핑이 이미 그대로면 아무것도 하지 않는다.** 이 스크립트의 목적은 WSL 재부팅
+# 으로 바뀐 IP 를 따라가는 것이지 매번 리스너를 새로 세우는 것이 아니다 — 목적은 유지하면서
+# 부작용만 없앤다.
+#
+# ⚠ 현재 상태를 **읽지 못했을 때는 종전대로 재설정한다**(`$proxyStateKnown = $false`). 모르는
+#   것을 "맞다" 로 낙관하면 파싱이 깨진 날 포트포워딩이 조용히 사라진다 — 안전한 실패 방향은
+#   «불필요한 재설정»이지 «필요한 재설정 누락»이 아니다.
+$existingProxies = Get-PortProxyEntries
+$proxyStateKnown = ($null -ne $existingProxies)
+
 $legacyPortsToRemove = @($LegacyListenPorts | Where-Object { $_ -notin @($HttpListenPort, $HttpsListenPort) })
+$legacyPortsDeleted = New-Object System.Collections.Generic.List[int]
 foreach ($legacyPort in $legacyPortsToRemove) {
+    # 없는 것을 지우는 호출은 무해하지만, 무해한 호출도 남기지 않는다 — "매 실행마다 netsh 를
+    # 친다" 는 사실 자체가 다음 사람에게 "여기서 뭔가 바뀐다" 로 읽힌다.
+    $legacyKey = "{0}:{1}" -f $ListenAddress, $legacyPort
+    if ($proxyStateKnown -and -not $existingProxies.ContainsKey($legacyKey)) {
+        continue
+    }
+
     Invoke-Netsh -Arguments @(
         "interface", "portproxy", "delete", "v4tov4",
         "listenaddress=$ListenAddress",
         "listenport=$legacyPort",
         "protocol=tcp"
     ) -IgnoreExitCode | Out-Null
+    $legacyPortsDeleted.Add($legacyPort) | Out-Null
 }
 
+$portActions = @{}
 foreach ($mapping in $portMappings) {
+    $mappingKey = "{0}:{1}" -f $ListenAddress, $mapping.listen_port
+    $desiredTarget = "{0}:{1}" -f $ConnectAddress, $mapping.listen_port
+
+    if ($proxyStateKnown -and $existingProxies.ContainsKey($mappingKey) -and
+        $existingProxies[$mappingKey] -eq $desiredTarget) {
+        # 이미 원하는 그대로다 — 기존 연결을 살려 둔다.
+        $portActions[[string]$mapping.listen_port] = "unchanged"
+        continue
+    }
+
+    $portActions[[string]$mapping.listen_port] =
+        if ($proxyStateKnown -and -not $existingProxies.ContainsKey($mappingKey)) { "created" } else { "recreated" }
+
+    # 여기서는 지운다. `add` 는 같은 listen 조합이 이미 있으면 실패하므로, 재설정 경로에서는
+    # 선삭제가 필요하다(없으면 `-IgnoreExitCode` 로 무해하게 지나간다).
     Invoke-Netsh -Arguments @(
         "interface", "portproxy", "delete", "v4tov4",
         "listenaddress=$ListenAddress",
@@ -317,6 +408,9 @@ foreach ($mapping in $portMappings) {
         [pscustomobject]@{
             listen_port = $mapping.listen_port
             firewall_rule = if ($SkipFirewall) { "" } else { $mapping.firewall_rule }
+            # 이번 실행이 이 포트에 무엇을 했는지 — `unchanged` 면 기존 연결이 유지됐다는 뜻이다.
+            # 이 필드가 없으면 "조용히 아무것도 안 한 것" 과 "매번 재설정한 것" 이 로그에서 같아 보인다.
+            portproxy_action = $portActions[[string]$mapping.listen_port]
             verify_listen = if ($listenProbe) { [bool]$listenProbe.TcpTestSucceeded } else { $null }
             verify_connect = if ($connectProbe) { [bool]$connectProbe.TcpTestSucceeded } else { $null }
             verify_http_status = $httpStatusCode
@@ -331,6 +425,12 @@ foreach ($mapping in $portMappings) {
     remote_addresses = @($RemoteAddresses)
     ports = @($portResults.ToArray())
     removed_legacy_ports = @($legacyPortsToRemove)
+    # 실제로 지운 것 — 위 `removed_legacy_ports` 는 «대상» 목록이라 둘이 다를 수 있다.
+    legacy_ports_deleted = @($legacyPortsDeleted.ToArray())
     removed_legacy_firewall_rules = if ($SkipFirewall) { @() } else { @($LegacyFirewallRuleNames) }
+    # 현재 매핑을 읽어서 판단했는지 여부. `false` 면 안전측으로 전부 재설정했다는 뜻이다.
+    portproxy_state_known = $proxyStateKnown
+    # 이번 실행이 portproxy 를 건드렸는지. 평상시(IP 불변)에는 `false` 여야 정상이다.
+    portproxy_changed = @($portActions.Values | Where-Object { $_ -ne "unchanged" }).Count -gt 0
     portproxy = $portProxyText.Trim()
 } | ConvertTo-Json -Depth 6

@@ -12,7 +12,7 @@ source_of_truth: true
 - State: in-progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-06-17
+- Last Updated: 2026-09-02
 
 ## 2. Task Queue
 - [x] TASK-0001 Caddy 설정 이관
@@ -32,6 +32,16 @@ source_of_truth: true
   `bin/cert-expiry-check.sh`(leaf 30일 / CA 180일 · `--live` 로 서빙본 대조) + cron 설치기 추가.
   감시 임계가 게이트(14일)보다 좁으면 스크립트가 거절하고, 두 파일 상수 관계를 테스트가 잠근다.
   `unit/feature-0006-lan-proxy-access/tests` 를 Makefile·ci.yml **양쪽**에 등재(신설 규약 자가적용).
+- [x] TASK-20260902T113500-ai-claude-feature-0006-lan-proxy-access (REQ-20260902-portproxy-idempotent-sync,
+      AC-20260902T113500-portproxy-idempotent-1~3, **Major** §12.3,
+      CHG/REV-20260902T113500-ai-claude-feature-0006-lan-proxy-access — 5분 주기 포트프록시 재설정이
+      라이브 연결을 끊는 문제). 예약작업이 매 실행 조건 없이 `netsh portproxy delete`→`add` 를 해
+      WSL IP 불변 상태에서도 **5분마다 80/443 기존 연결 전면 절단**. 개인 AI 브리지 러너의 55초
+      대기 호출이 그때마다 `RemoteDisconnected`(WARN 14건 중 13건이 sync 실행 후 3~19초 내, 서로
+      다른 러너가 같은 벽시계 위상). 수정 = 현재 매핑을 읽어 **이미 원하는 값이면 delete/add 를
+      건너뛴다**(못 읽으면 종전대로 재설정하는 fail-safe). 파싱은 헤더 문구가 아닌 데이터 행 패턴
+      으로 **로케일 무관**. 한글 주석 추가에 따라 **UTF-8 BOM** 부여(대조 실측: BOM 없으면 839자 중
+      324자 손실). PS 5.1 실측 4축 PASS(구문/인코딩/실 netsh 파싱/멱등 판정).
 
 ## 8. Requested Scope (요청 범위)
 
