@@ -1148,6 +1148,56 @@ def account_runner_build(cur, account_id: int, window_sec: int | None = None) ->
     return str(row[0] or "").strip()
 
 
+def account_runner_self_updating(cur, account_id: int, window_sec: int | None = None) -> bool:
+    """이 계정의 **지금 듣고 있는** 러너가 스스로 갱신할 줄 아는가 (TASK-20260902T140000).
+
+    ## 무엇을 정하는 값인가
+
+    낡음 판정(`runner_build_is_stale`)은 그대로 엄격하다 — 러너 파일이 배포본과 1바이트만
+    달라도 참이다(사용자 결정 2026-09-02: 「현행 유지 — 지문 일치」). 러너 파일은 거의 모든
+    배포에서 바뀌므로, 그 참은 **러너와 무관한 배포**에도 하루에 몇 번씩 성립한다.
+
+    이 값이 정하는 것은 그 사실을 **사용자에게 조치로 내보낼 것인가**다:
+
+    | 신고 | 화면 |
+    |---|---|
+    | `self_update` 있음 | 낡음은 곧 스스로 풀린다 — 조치를 요구하지 않는다(조용한 자동 갱신) |
+    | 없음 | 스스로 못 고친다 — 종전대로 「업데이트 필요」와 되돌아갈 명령을 보여 준다 |
+
+    ⚠ 러너는 **할 수 있을 때만** 이 기능을 신고한다(단일 파일로 돌고, `--no-self-update` 가
+    아닐 때). 그래서 여기서 능력을 다시 추정하지 않는다 — 추정하면 신고와 갈리고, 갈리는
+    순간 화면이 오지 않을 갱신을 기다린다.
+
+    정본 러너 선택은 `account_runner_build` 와 **같은 축**(`ORDER BY t.Id DESC` = 나중에 연결된
+    쪽)이다. 다르게 고르면 「지문은 A 러너 것인데 자기갱신 여부는 B 러너 것」이 되어, 두 값을
+    함께 읽는 화면이 실재하지 않는 러너를 그리게 된다.
+
+    조회 실패·컬럼 부재·듣고 있는 러너 없음은 모두 `False` — **모르면 종전 화면**(조치 안내)
+    으로 떨어진다. 이 방향이 안전한 쪽이다: 반대로 fail-open 하면 스스로 못 고치는 러너의
+    사용자에게 아무 안내도 없이 낡은 동작만 남는다.
+    """
+    if not account_id:
+        return False
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    try:
+        cur.execute(
+            "SELECT t.RunnerFeatures FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
+            "  AND t.LastHeartbeatAt IS NOT NULL "
+            f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+            "ORDER BY t.Id DESC LIMIT 1",
+            (int(account_id), window),
+        )
+        row = cur.fetchone()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[bridge] 러너 자기갱신 신고 조회 실패 account=%s: %r", account_id, exc)
+        return False
+    if not row:
+        return False
+    return bridge_tasks.RUNNER_FEATURE_SELF_UPDATE in parse_runner_features(row[0])
+
+
 def account_bridge_defaults(cur, account_id: int) -> tuple[str, str]:
     """이 계정이 **마지막으로 고른** (모델, 추론등급). 없으면 빈 문자열 (2026-08-31).
 

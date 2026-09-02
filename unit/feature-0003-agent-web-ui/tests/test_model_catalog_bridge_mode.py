@@ -522,7 +522,17 @@ def test_chip_shows_a_distinct_state_for_stale_runner():
     assert 'el.dataset.state = "stale"' in js, "구버전 상태가 칩에 없다"
     assert "업데이트 필요" in js
     # 호출부가 서버 값을 실제로 넘긴다(배선 없이 분기만 있으면 영영 안 뜬다).
-    assert "!!b.runner_stale" in js, "서버 값이 칩까지 도달하지 않는다"
+    #
+    # ⚠ 잠그는 것은 **관계**지 표현이 아니다 (2026-09-02). 종전 단언은 리터럴
+    #   `!!b.runner_stale` 이었는데, 자기 갱신 러너의 낡음을 조치로 그리지 않게 되면서 그 값은
+    #   `_actionableStaleOf(b)` 한 곳을 거쳐 들어간다. 리터럴을 그대로 두면 이 계약이
+    #   「개선을 되돌리라」고 요구하는 게이트가 된다 — 이 저장소가 이미 두 번 겪은 형태다.
+    #   계약의 뜻(서버 값이 칩까지 **도달한다**)은 그대로 유지하고, 그 경로만 지금 것으로 읽는다.
+    assert "runner_stale" in js, "서버 값이 화면 어디에도 들어오지 않는다"
+    assert "_actionableStaleOf(b)" in js and "_paintConn(" in js, \
+        "서버 값이 칩까지 도달하지 않는다(접는 함수 → _paintConn 경로)"
+    fold = js.split("function _actionableStaleOf(body)", 1)[1].split("\n}", 1)[0]
+    assert "body.runner_stale === true" in fold, "접는 식이 서버 값을 읽지 않는다"
     css = (base / "css" / "search-audit.css").read_text(encoding="utf-8")
     assert '.ai-conn[data-state="stale"]' in css, "스타일이 없어 정상 상태와 같아 보인다"
 def test_sanitizer_drops_runtimes_without_live_provenance():

@@ -3380,7 +3380,55 @@ Response 로 오인해 `res.json()` 을 불렀다. **정상 200 에서 예외**�
 
 **정직 표기**: 이 계정의 러너 토큰이 만료돼 「러너 연결 상태의 선택지 렌더」는 재현하지 못했다.
 서버 판정은 살아 있는 러너의 실 신고로 검증했고, 화면 축은 「러너 없음」 상태만 실측했다.
+## CHG-20260902T160000 — 프로필 'AI 작업' 탭을 계정 권한으로 추린다
 
+사용자 요청(2026-09-02): 「'AI 작업' 탭에서 **실제로 해당 계정이 접근할 수 있는 기능**에 대해
+권한을 소유한 경우에만 노출」.
+
+종전 `GET /api/profile/console-jobs` 는 `JOB_SPECS` **전량**을 무조건 돌려줬다. `metadata.*` 나
+`metadata.graph.analyze` 가 없는 계정에도 그 항목이 보였고, 모델을 골라 저장까지 되지만 정작
+그 기능을 여는 엔드포인트가 403 이라 **작업이 오지 않는다** — 화면은 「설정됨」이라고 말하고
+사용자는 원인을 알 수 없다.
+
+| 파일 | 변경 |
+|---|---|
+| `shared/bridge_tasks.py` | `JOB_SPECS[*]["perms"]`(any-of) 6종 전수 선언 + `console_job_perms` · `visible_console_job_kinds` 신규 (+`__all__`) |
+| `unit/feature-0003-agent-web-ui/src/routers/profile.py` | `_visible_console_job_kinds(account)` 헬퍼 · GET 은 추린 목록만 순회 · PUT 은 가시 범위로 교체 한정 + 비가시 종류 보존 + 응답 필터 |
+| `unit/feature-0003-agent-web-ui/src/static/app/profile.js` | 0 항목 빈 상태 문구 + `_aiJobsSetEmpty`([저장]·[모두 기본값] 비활성) · **로드 실패 시에도 저장 차단** |
+| `unit/feature-0043-external-llm-bridge/tests/test_ai_jobs_perm_gate.py` | **신규 42건** — 선언 전수·카탈로그 대조·any-of·순서 · **병합 행위 12건**(실 dict) · **레거시 묶음 함의 2건** · GET/PUT 배선 · 프런트 |
+
+**권한 매핑**(집행 지점의 거울 — 새 권한 코드 0):
+
+| 종류 | perms (any-of) | 집행 지점 |
+|---|---|---|
+| `metadata_suggest` | `metadata.{glossary,enum,table,column}.update` · `kb.sample.curate` | `_METADATA_SUGGEST_PERM` (서브뷰별) |
+| `metadata_bulk` | `metadata.table.update` | `admin_metadata_bootstrap_describe` |
+| `node_analysis` | `metadata.graph.analyze` | `admin_metadata_graph_analyze` |
+| `prompt_generate` | **()** | 개인 프롬프트 자동작성은 로그인만 요구(`_collect_account_prompt_context`) |
+| `insight_summary` · `cluster_label` | **()** | 배경 배치 — `_batch_consenting_account`(RBAC 아닌 **동의** 축) |
+
+**PUT 이 「통째 교체」를 가시 범위로 좁힌 이유**: 전체 집합에 적용하면 권한이 빠진 계정의 저장
+버튼 한 번이 숨겨진 항목의 기존 선택을 지운다. 권한은 되돌아올 수 있지만 설정은 돌아오지 않는다.
+화면은 자기가 그린 것만 소유한다.
+
+
+**동반 수정 (같은 불변식, 1줄)**: `loadAiJobs` 의 실패 경로도 저장을 막는다. 목록을 못 받은
+상태의 [저장] 은 **빈 본문**을 보내는데, 서버는 그것을 「보이는 항목을 전부 비웠다」로 읽어
+사용자의 선택을 지운다. 「보이는 것이 저장되는 것」 계약에서 «아무것도 못 봤다» 와 «전부 비웠다»
+가 같은 모양이 되는 지점이라, 막는 자리는 프런트다. (변경 전에도 있던 경로지만, 이 cycle 이
+세우는 「빈 목록에서 저장 버튼이 해를 끼치지 않는다」 불변식과 같은 자리라 함께 닫았다.)
+
+**적대 리뷰(codex) 1R 조치 3건** — 상세는 `REVIEW.md` 의 적대 리뷰 원장:
+
+| 파일 | 변경 |
+|---|---|
+| `shared/bridge_tasks.py` | `merge_visible_console_job_prefs`(정규화→가시성 필터 순서를 담은 정본 병합) · `_safe_has_permission`(권한 판정 예외를 **코드 단위**로 가둠 — 전면 실패해도 「요구 없는 종류만」으로 축소되고 화면은 산다) |
+| `shared/bridge_tasks.py` (2R) | `read_console_job_prefs_strict` — 저장 baseline 전용 **엄격 읽기**. lenient 판은 조회 실패를 `{}` 로 돌려주는데(읽기 경로에서는 옳다) 그것을 쓰기 baseline 으로 쓰면 「보존할 것이 없다」로 오인해 숨긴 항목을 지운 문서를 쓰고 200 을 준다 |
+| `.../static/app/profile.js` (2R) | 첫 성공 렌더 전까지 [저장]·[모두 기본값] 비활성 — 로딩 **중** 에도 `{}`(=전부 지우기)가 나갈 수 있었다 · **요청 세대 토큰**(`_aiJobsReqSeq`)으로 겹친 요청의 stale 응답 무시(옛 응답이 방금 저장한 값을 되돌리고, 그 상태의 재저장이 stale 을 굳혔다) |
+| `.../routers/profile.py` | PUT 이 본문·`jobs` 의 dict 여부를 검사해 **400 거절**. 파싱 실패를 `{}` 로 흘리지 않는다 — 「의도한 비우기」와 「깨진 본문」이 서버에서 같은 모양이면 사고가 200 을 받고 조용히 지운다. 병합은 정본 함수에 위임(라우터 중복 구현 제거) |
+
+**표시 축이지 집행이 아니다**: 각 기능의 서버 게이트는 종전 그대로다. 이 필터가 무엇을
+통과시키든 권한 없는 계정이 그 기능을 부를 수는 없다.
 ## CHG-20260902T150000 — POST-DEPLOY 실측 기록 (문서 전용)
 
 `CHG-20260902T140000` 의 배포 후 검증을 test-run 조각에 기록. 배포 `66769688` — 전 서비스
@@ -3395,6 +3443,89 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 닫지 못한 것도 그대로 적었다 — 러너는 **사용자 머신의 파일**이라 새 사본을 받아 재기동해야
 발효하고(서버가 바꿀 통로 없음), 그 머신 `claude` 는 로그인 만료 상태다(사용자 영역).
 코드 변경 없음.
+## CHG-20260902T160000 — 자식 입출력 인코딩을 로케일에 맡기지 않는다 (직전 수정이 연 실패면)
+
+**계기**: 사용자 재보고 — 재연결 후에도 답변 미수신. 직전 cycle(`CHG-20260902T140000`)의 두
+수정은 라이브에서 동작했으나(`startup_ms=811` · `system_channel.folded` · `cmdline.stdin`),
+그 자리에서 `ai.fail dur_ms=46 stdout_bytes=0` 로 죽었다.
+
+**진단 단서**: `ai.fail` 에 **`exit` 필드가 없다** = `proc.returncode is None` = 자식이 실패한
+것이 아니라 **파이프 스레드가 예외로 죽었다**.
+
+**원인**: `subprocess(text=True)` 는 로케일 인코딩을 쓴다. 사용자 머신
+`locale.getencoding()=cp949` 이고 프롬프트의 `⟦USER-REQUEST⟧`(U+27E6)는 cp949 로 인코딩
+불가 → `UnicodeEncodeError`. 종전에는 프롬프트가 argv(`CreateProcessW`, UTF-16)로 가서 이
+경로가 닫혀 있었고, **직전 cycle 이 stdin 으로 옮기며 처음 열렸다**.
+
+**변경**:
+
+| 파일 | 무엇 |
+|---|---|
+| `src/agent/base.py` | **신규** `CHILD_TEXT_IO = {text, encoding="utf-8", errors="replace"}` — 자식 호출 규약 단일 정본 |
+| `src/agent/invoke.py` | 자식 호출 3곳 적용 + `pump_exc`(파이프 예외 보존 → `ai.io_fail`) + `returncode is None` 전용 분기 |
+| `src/agent/caps.py` | 능력 협상·`--help` 2곳 적용(읽기 축의 같은 지뢰) |
+| `tests/test_child_io_encoding.py` | **신규 8건** — 규약·전수 적용·실 왕복·한글 무손상·깨진 바이트 관용·예외 비위장·rc None |
+
+**실 Windows(cp949) 대조 검증**: 수정본은 40,000자(U+27E6 포함) 왕복 PASS + 한글 무손상,
+수정 전 `text=True` 대조군은 같은 지점에서 `UnicodeEncodeError`.
+## CHG-20260902T140000 — 러너 자기 갱신 + 화면의 낡음 접기
+
+1. **`agent/selfupdate.py`**(신규) — 배포본 수신·검사·원자 교체·재기동. 규율은 정본 TASK 노트 §3.
+2. **`agent/lifecycle.py`** — `_SELF_UPDATE` 신호(하트비트) + `try_self_update()`(대기 루프,
+   «물러남 → 갱신 → 대기» 순) + `--no-self-update` + 능력 판정(`_SELF_UPDATE_OK`).
+   `stale_build` 경고는 **스스로 못 고칠 때만** 찍는다.
+3. **`agent/api.py`** — `Api.ca` 보존. 자기 갱신이 **같은 신뢰 앵커**로 받아야 하는데
+   `ctx` 만 남기면 CA 를 다시 실어 날라야 하고, 그러면 한쪽만 바뀌었을 때 조용히 OS 신뢰
+   저장소로 떨어진다.
+4. **`shared/bridge_tasks.py`·`agent/events.py`** — `self_update` 기능 이름(양쪽 같은 값).
+5. **`oauth_store.py`·`routers/oauth_as.py`** — `account_runner_self_updating()` →
+   `connect_status.runner_self_updating`. 정본 러너 선택 축은 `account_runner_build` 와 **동일**.
+6. **`static/app/connect-modal.js`** — `_actionableStaleOf()` 한 곳에서 접는다.
+
+### 왜 «판정은 그대로, 조치만 자동화» 인가
+
+사용자가 웹 리서치 결과를 보고 고른 조합이다. 지문 일치는 정확하지만 러너 파일이 거의 모든
+배포에서 바뀌어 **무관한 배포**에도 참이 된다(실측: 재설치 3분 뒤 다른 세션 배포가 착륙해
+「업데이트 필요」 재발 + 연결 모달 고착). 판정을 무르게 하는 대신 조치를 자동화하면 두 문제가
+함께 사라지고, 엄격한 판정의 값어치(정확히 그 파일인가)는 그대로 남는다.
+
+### 발효
+
+**이 기능이 들어간 빌드부터**. 지금 도는 러너는 한 번 런처가 갈아 끼워야 하고(그 경로는
+`CHG-20260902T100000` 에서 동작 확인), 그 뒤로는 배포가 몇 번을 나든 화면에 조치 요구가 뜨지 않는다.
+## CHG-20260902T173000 — 'AI 작업' 권한 게이트 POST-DEPLOY 실측 (증적)
+
+코드 변경 없음. 배포 `2a910ddb` 후 라이브 재실측 증적만 기록한다 —
+`operator` 6행→**3행** · `admin` **6행 유지** · fail-open 차단 · 400 검증 ·
+**비가시 항목 보존**(권한 부여→저장→회수→빈 저장→재부여 왕복에서 `claude:haiku/high` 생존).
+검증 계정 `dqa_permgate_probe` 는 override 제거 + 비활성화로 정리했다.
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260902T160000-ai-jobs-perm-gate.md §2`.
+
+## CHG-20260902T150000 — POST-DEPLOY 실측 기록 (문서 전용)
+
+`CHG-20260902T140000` 의 배포 후 검증. 배포 `a46727a2`.
+
+- 화면·API 축: `runner_self_updating` 필드 존재 · 서빙 JS 심볼 5건 · 배포 러너에 자기 갱신
+  코드 전량 적재.
+- ⭐ **라이브 서버 상대 갱신 경로 5단계 실측**(수신·평문 거절·원자 교체·자기 인식·무한 고리
+  차단). `/static/agent/bridge_agent.py` 가 공개 정적 경로라 **토큰 없이, 사용자 러너에
+  영향 없이** 전 구간을 돌릴 수 있었다.
+- ⚠ 배포 창에 `no upstreams available` **16건(12초)**. soak 는 통과 보고 — 그 게이트는 blip 을
+  관용하므로 「성공 = 무중단」이 아니다. 코드 변경과 무관한 엣지/롤링 축이나 사실로 남긴다.
+
+코드 변경 없음.
+
+## CHG-20260902T170000 — 자식 입출력 인코딩 POST-DEPLOY 실측 (문서 전용)
+
+`CHG-20260902T160000` 의 배포 후 검증. 배포 `1e394a14` — 전 서비스 SHA 일치 ·
+`no upstreams available` 0건 · 대화 스모크 PASS · 서빙 러너에 수정 심볼 전건 존재.
+
+정본 증거는 **실 Windows(cp949) 대조 검증**이다: 내려받은 배포본 바이트를 사용자 머신에서
+그 로케일로 적재해 40,000자(U+27E6 포함)를 왕복시켜 PASS, 같은 조건의 수정 전 대조군은
+`UnicodeEncodeError`. 대조군이 없으면 「PASS 가 이 수정 덕분」임을 말할 수 없다.
+
+병합 변형 점검: 형제 cycle(#1522)의 `selfupdate.py` 가 전 구간 바이너리 모드임을 확인해
+인코딩 축과 상호작용이 없음을 검증. 코드 변경 없음.
 
 ## CHG-20260902T140200-caps-live-sync — 능력 신고의 라이브 도착 + 계정 원장
 

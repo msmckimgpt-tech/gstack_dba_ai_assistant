@@ -250,5 +250,8 @@ _EMIT_ORDER: tuple[str, ...] = (
     "prompt",
     "review",
     "handler",
+    # 자기 갱신(TASK-20260902T140000). `lifecycle` 이 부르므로 그 **앞**이어야 하고,
+    # 자신은 표준 라이브러리만 쓰므로 어디에 두어도 순환이 생기지 않는다.
+    "selfupdate",
     "lifecycle",
 )

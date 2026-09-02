@@ -10,6 +10,19 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
+**2026-09-02 (TASK-20260902T160000)**: 직전 cycle 이 **연 새 실패면**을 닫았다. 그 수정의 두 축은
+라이브에서 동작했지만(`startup_ms=811` · 지침 접기 · stdin 전환), 그 자리에서
+`ai.fail dur_ms=46 stdout_bytes=0` 로 죽어 **사용자에게는 여전히 답변이 오지 않았다**.
+단서는 `exit` 필드의 **부재** — `returncode is None` = 자식 실패가 아니라 **파이프 예외**.
+원인은 `subprocess(text=True)` 가 **로케일 인코딩**(그 머신 `cp949`)을 쓰는데 프롬프트의
+`⟦USER-REQUEST⟧`(U+27E6)가 cp949 로 인코딩 불가라는 것. 종전엔 프롬프트가 argv
+(`CreateProcessW`, UTF-16)로 가서 닫혀 있던 경로가 **stdin 전환으로 처음 열렸다**. 조치는
+자식 입출력을 **UTF-8 로 명시**(`base.CHILD_TEXT_IO`, 자식 호출 5곳 전부 · `errors="replace"`)
++ **파이프 예외 보존**(`ai.io_fail`) + `returncode is None` 전용 분기. **실 Windows(cp949)
+대조 검증**: 수정본 40,000자(U+27E6 포함) 왕복 PASS · 한글 무손상 / 수정 전 대조군
+`UnicodeEncodeError`. 신규 8건 + 뮤테이션 6종 전건 KILL · 컨테이너 신규 실패 0.
+**POST-DEPLOY 실측 완료**(`1e394a14`): 전 서비스 SHA 일치 · blip 0 · 대화 스모크 PASS · 그리고 **내려받은 배포본을 사용자 머신에서 cp949 로 실행**해 40,000자(U+27E6) 왕복 PASS · 한글 무손상 / 수정 전 대조군은 같은 조건에서 `UnicodeEncodeError`(대조군이 load-bearing). **잔여: 그 머신 재기동 1회 + `claude` 재로그인**(사용자 영역 — 이제 도달 후 실패가 안내문으로 표시되고, 재기동 이후의 러너 갱신은 형제 cycle 의 `try_self_update` 가 맡는다).
+
 **2026-09-02 (TASK-20260902T140000)**: 사용자 제보 *"powershell 로 연결은 됐는데 답변도 러너
 로그도 없다"* 의 두 절반이 **서로 다른 결함**이었고 둘 다 닫았다.
 
@@ -1454,6 +1467,72 @@ DB 에 컬럼이 생긴 적이 없다**(라이브 실측). `set_account_bridge_d
 배포 후 라이브 실측 3건(TASK.md 체크리스트). 특히 **없는 모델을 골랐을 때의 거절 경로**는
 설정 실수로 분석이 멈추는 방향이라, 사유가 화면에 실제로 도달하는지 눈으로 확인해야 한다.
 
+## TASK-20260902T160000 — 'AI 작업' 탭은 열 수 있는 작업만 보인다
+
+### 무엇이 문제였나
+
+프로필 「AI 작업」 탭이 `JOB_SPECS` **전량**을 무조건 그렸다. 라이브 실측 결과 **역할 8종 중
+6종**(`pending`·`operator`·`dba`·`dev_server`·`dos_web`·`sales`)이 `metadata.*.update` ·
+`kb.sample.curate` · `metadata.graph.analyze` 를 **하나도** 보유하지 않는다. 그 계정들에게
+「메타데이터 자동완성(단건/일괄)」·「그래프 AI 능동 분석」 3행은 모델을 고르고 저장까지 되지만
+정작 그 기능을 여는 엔드포인트가 403 이라 **작업이 영영 오지 않는** 죽은 설정칸이었다.
+
+수정 전 라이브 재현: `operator` 계정 화면 **6행** = `admin` 계정 화면 **6행**(동일).
+증적 `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260902T160000-ai-jobs-perm-gate.md`.
+
+### 무엇을 했나
+
+항목별 필요 권한을 `JOB_SPECS[*]["perms"]`(any-of)에 선언하고, 서버가
+`visible_console_job_kinds` 로 추려 GET·PUT **양쪽에 같은 필터**를 건다. 신규 권한 코드 0 ·
+집행 경로 무변경 — 이 필터는 **표시 축**이지 집행이 아니다.
+
+- 권한 요구가 없는 3종은 그대로 노출한다: `prompt_generate`(개인 프롬프트 자동작성이 로그인만
+  요구) · `insight_summary`·`cluster_label`(배경 배치는 RBAC 이 아니라 **동의** 축 —
+  `_batch_consenting_account`). 일반 사용자의 러너가 실제로 그 작업을 받으므로 감추면 안 된다.
+- PUT 의 「통째 교체」를 **가시 범위로 한정**했다. 전체에 적용하면 권한이 빠진 계정의 저장
+  한 번이 숨겨진 항목의 예전 선택을 지운다.
+
+### 검증
+
+- 신규 테스트 **42건 PASS**(구조 25 + **병합 행위 12** + **레거시 묶음 함의 2** + **읽기 엄격성 3**). 역검증: 변경 전 코드에 초기
+  스위트 → **16/17 FAIL**.
+- **codex 독립 적대 리뷰 2 라운드** — 1R P1 0 · P2 2 · P3 1 **전건 조치**(깨진 본문의
+  조용한 삭제 → 400 거절 · 권한 판정 예외의 500 전파 → 코드 단위 fail-closed · 소스
+  문자열 단정 → 실 dict 행위 테스트). **2R 확인 라운드가 데이터 손실 후보 2건을 더 잡아**
+  함께 조치했다(저장 baseline 의 조회 실패 오인 → 엄격 읽기 · 첫 로딩 중 [저장] 이 전부
+  지우기 → 로드 완료 전 비활성 · 겹친 요청의 stale 응답이 저장을 되돌림 → 요청 세대 토큰).
+  확인 라운드가 필수인 이유의 실증 — 2R 지적 2건은 **1R 조치가 만든 새 표면**이었다.
+- 회귀(0002·0003·0043 컨테이너 전량): FAILED 집합이 `main` 기준선과 **동일**
+  (`test_query_embed_visibility` 2건 — 파일 단독 실행 시 양쪽 모두 PASS 하는 order-dependent
+  항목). **신규 실패 0**.
+- 라이브 PRE-DEPLOY: 결함 재현 PASS (위).
+
+### POST-DEPLOY 실측 (배포 `2a910ddb` — 완료)
+
+전 서비스 SHA `2a910ddb` · `/healthz` 200 · `no upstreams available` **0건** · surge 잔존 0 ·
+RestartCount 전 서비스 0. 증적:
+`unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260902T160000-ai-jobs-perm-gate.md §2`.
+
+- **결함 해소 확정**: `operator` **6행 → 3행** · `admin` **6행 유지**(무회귀). 스크린샷 BEFORE/AFTER 대조.
+- **fail-open 차단**: 숨긴 `node_analysis` 를 PUT 본문에 실어도 저장·응답 어느 쪽에도 없다.
+- **입력 검증**: `jobs` 키 부재·파싱 실패 = **400** / `{"jobs": {}}` = 200 비우기(정당한 입력).
+- **⭐ 비가시 항목 보존**: 권한 **부여 → 저장 → 회수 → 빈 저장 → 재부여** 왕복에서
+  `node_analysis = claude:haiku/high` 가 **그대로 살아남았다**. 이 왕복이 없으면 4단계에서
+  조용히 증발했을 것이고, 화면에 없던 값이라 사용자는 알아채지 못한다.
+- **admin 저장 무회귀**: `metadata_bulk` 저장 200 · 6행 유지.
+
+### 남은 것
+
+- 없음. 검증용 계정 `dqa_permgate_probe`(id 54)는 override 제거 + 비활성화로 정리했다
+  (계정 행은 감사 원장 참조 보존을 위해 남긴다 — 이 저장소 관례).
+
+### 잔여 리스크
+
+- 이 게이트의 고유 위험은 fail-open 이 아니라 **fail-closed** 다 — 권한 코드 오타는 그 항목을
+  관리자 포함 전 계정에서 조용히 지운다. `test_declared_perms_exist_in_permission_catalog` 가
+  권한 카탈로그와 대조해 잠갔다.
+- 커스텀 역할이 앞으로 추가될 때 게이트 권한을 부여하면 항목이 자동으로 다시 보인다(카탈로그
+  기반이라 코드 수정 불요).
 ## 11. 능력 신고의 라이브 도착 + 계정 원장 (TASK-20260902T140200)
 
 사용자 제보 2건(2026-09-02)에 대응. 상세 근거는 `TASK-20260902T140200-caps-live-sync.md`,

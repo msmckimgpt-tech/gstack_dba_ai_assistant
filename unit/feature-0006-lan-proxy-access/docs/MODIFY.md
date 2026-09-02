@@ -364,3 +364,36 @@ portproxy 를 건드리는 주체가 없는 것이 전제다. **확률적 5분 �
 
 구문 0 오류 · 인코딩 무결 · 실 netsh 4매핑 파싱 · legacy 기록이 `try` 안에만 있음 ·
 상태 기반 skip 제거됨 · `portproxy_changed` 가 legacy 를 셈 — **6축 PASS**.
+
+## CHG-20260902T140000-ai-claude-feature-0006-lan-proxy-access — 라이브 검증 결과 기록 (2026-09-02)
+
+docs-only. 코드 변경 없음. deploy-backed 완료 기준(§16.3)의 마지막 단계인 **라이브 실측**을 기록한다.
+
+### 배포
+
+`C:\ProgramData\mysql_ai_web_portproxy\sync_mysql_ai_web_portproxy.ps1` 를 main 본으로 교체.
+**관리자 권한이 필요했다** — WSL 에서는 기존 파일의 수정·삭제가 ACL 로 거부되고(`Permission
+denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉토리 신규 파일 생성만 가능).
+사용자가 관리자 PowerShell 로 `Copy-Item ... -Force` 실행 후 sha256 대조 일치를 확인했다.
+
+### 결과 — 목표 지표 0건
+
+| 구간 (각 22분) | `conn.retry` + `api.fail` |
+|---|---|
+| 10:30~10:52 · 11:00~11:22 · 11:22~11:44 (배포 전) | 8 · 8 · 8건 |
+| 11:44~12:06 (배포 전) | 12건 |
+| **13:33~13:55 (배포 후)** | **0건** |
+
+같은 구간에 예약작업은 **5회 정상 실행**(`LastTaskResult=0`)됐다 — 「작업이 멈춰서 0건」이 아니라
+「돌면서도 끊지 않은」 것이다. 이 대조가 없으면 두 상태가 같은 숫자로 보인다.
+
+**관통 증거**: 완주한 `wait_for_request` 22건 중 21건이 55초 보류 완주(median 55,402ms).
+13:34:00 시작분(55,366ms)은 13:34:34 sync 실행을 관통했다.
+
+### 잔존 WARN 2건은 무관 (은폐하지 않음)
+
+`hb.stale_build`(러너 버전 안내, 1회성) · `ai.cmdline.stdin`(명령줄 상한 초과 시 stdin 전달 —
+정상 동작 로그). 사용자가 보고한 3종이 아니다.
+
+⚠ **관측 하네스의 판정이 부정확했다** — 목표 지표가 아니라 모든 `lvl=WARN` 을 세어
+`VERDICT: WARN 잔존` 을 냈다. 그대로 받아썼다면 해소된 것을 미해소로 보고했을 것이다.

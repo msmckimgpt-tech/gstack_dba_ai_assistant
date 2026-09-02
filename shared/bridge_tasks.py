@@ -59,6 +59,7 @@ __all__ = [
     "RUNNER_FEATURE_CONSOLE_JOBS",
     "RUNNER_FEATURE_BATCH_JOBS",
     "RUNNER_FEATURE_SELF_REVIEW",
+    "RUNNER_FEATURE_SELF_UPDATE",
     "RUNNER_MIN_AGENT_VERSION",
     # ── 러너 자격 판정 — 웹과 워커가 함께 읽는다 (TASK-20260901T190000) ──
     "SQL_NOW",
@@ -74,12 +75,17 @@ __all__ = [
     "job_spec",
     "job_label",
     "BATCH_JOB_KINDS",
+    # ── 항목별 필요 권한(표시 축, TASK-20260902T160000) ──
+    "console_job_perms",
+    "visible_console_job_kinds",
+    "merge_visible_console_job_prefs",
     "CONSOLE_JOB_LIGHT_MODELS",
     "pick_console_job_model",
     # ── 계정이 고른 콘솔 작업 모델·등급 (TASK-20260902T110000) ──
     "CONSOLE_JOB_PREF_MAX_CHARS",
     "normalize_console_job_prefs",
     "console_job_prefs_for_account",
+    "read_console_job_prefs_strict",
     "runner_capabilities_for_session",
     "console_job_model_required",
     "resolve_console_job_request",
@@ -351,6 +357,22 @@ RUNNER_FEATURE_BATCH_JOBS = "batch_jobs"
 #: 비었다(판정 자체가 pass). 합치면 운영자는 전자를 후자로 읽고 "다들 통과하네" 로 끝낸다.
 RUNNER_FEATURE_SELF_REVIEW = "self_review"
 
+#: 배포본과 다른 파일로 돌고 있으면 **스스로 최신본을 받아 재기동**할 줄 안다
+#: (TASK-20260902T140000, 사용자 결정 2026-09-02).
+#:
+#: 자격이 아니라 **화면이 무엇을 말할지 정하는 축**이다. 지문 판정은 그대로 엄격하게 두기로
+#: 했으므로(사용자 선택: 「현행 유지 — 지문 일치」), 러너와 무관한 배포 하나가 접속 중인 모든
+#: 러너를 「낡음」으로 뒤집는다. 그 사실을 사용자에게 조치 요구로 내보내면 하루에도 몇 번씩
+#: 「업데이트 필요」가 뜨는데, 정작 사용자가 할 일은 없다 — 러너가 곧 스스로 고친다.
+#:
+#: 그래서 화면은 이 신고를 보고 갈라 말한다:
+#:   신고함  → 낡음은 **일시적**이다. 조치 요구를 띄우지 않는다(조용한 자동 갱신).
+#:   신고 없음 → 스스로 못 고친다. 종전대로 「업데이트 필요」와 되돌아갈 명령을 보여 준다.
+#:
+#: ⚠ 이 신고가 없는 것을 「구버전」으로만 읽으면 안 된다 — 자기 갱신을 **끈** 러너
+#: (`--no-self-update`)도 여기 포함된다. 두 경우 모두 사람이 조치해야 한다는 점에서 같다.
+RUNNER_FEATURE_SELF_UPDATE = "self_update"
+
 #: 이 버전 미만의 러너에는 콘솔 작업을 주지 않고 **갱신을 지시한다**(사용자 결정 2026-08-31).
 #: 기능 신고가 1차 자격이고 버전은 2차다 — 기능만 보면 신고 형식이 바뀐 뒤에도 구 러너가
 #: 자격을 유지한다.
@@ -382,6 +404,20 @@ BATCH_TASK_MAX_AGE_MIN = 180
 #:                 전 구간이 서기 전까지는 False 가 **정직한 값**이고, 그 상태에서 화면은
 #:                 사유와 함께 비활성으로 보인다.
 #:
+#:   perms       : **이 종류를 여는 기능이 요구하는 권한 코드**(any-of). 계정이 그 중 하나도
+#:                 없으면 이 종류를 여는 경로에 애초에 도달하지 못하므로, 프로필 'AI 작업'
+#:                 화면은 그 항목을 **보여주지 않는다** (사용자 결정 2026-09-02).
+#:                 빈 튜플 `()` = **권한 요구 없음**(로그인만·또는 배경 배치라 RBAC 축이
+#:                 없음) → 모든 로그인 계정에 노출.
+#:
+#:                 ⚠ **여기 적는 코드는 그 기능의 실제 집행 지점에서 읽는 코드와 같아야
+#:                 한다.** 이 필드는 집행이 아니라 **집행의 거울**이다 — 서버 게이트는
+#:                 종전대로 각 엔드포인트가 하고, 이 값은 「그 게이트를 통과할 수 없는
+#:                 항목을 화면에서 지우는」 표시 축이다. 거울이 어긋나면 둘 중 하나가 난다:
+#:                 (a) 실제로 쓸 수 있는 항목이 사라지거나(오타 → 전 계정에서 조용히 소실),
+#:                 (b) 못 쓰는 항목이 계속 남아 이 변경이 무의미해진다.
+#:                 (a) 는 `test_ai_jobs_perm_gate.py` 가 권한 카탈로그 대조로 잠근다.
+#:
 #: `apply` 를 종류마다 굳히는 이유(사용자 결정 2026-08-31 "자율적으로 입력"): 전환은 **기존
 #: 경로의 쓰기 의미를 보존**해야 한다. 메타데이터 자동완성은 원래 검토형이었고 배치는 원래
 #: 자동기입형이었다 — 위임하면서 한쪽으로 통일하면 그 자체가 사용감 회귀다.
@@ -394,11 +430,18 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
         #   조립부와 **모순된 형식**을 요구하고, 그 모순은 AI 가 무엇을 내든 한쪽이 틀린다.
         "origin": ORIGIN_WEB, "response": "text", "apply": "review",
         "wired": True,
+        # 집행 지점: `admin_metadata.admin_metadata_suggest` 의 `_METADATA_SUGGEST_PERM`
+        # (서브뷰별). 서브뷰 하나만 열 수 있어도 이 종류는 도달하므로 **any-of** 다.
+        "perms": ("metadata.glossary.update", "metadata.enum.update",
+                  "metadata.table.update", "metadata.column.update", "kb.sample.curate"),
     },
     "metadata_bulk": {
         "label": "메타데이터 자동완성(일괄)",
         "origin": ORIGIN_WEB, "response": "json", "apply": "review",
         "wired": True,
+        # 집행 지점: `admin_metadata_bootstrap_describe` 의
+        # `Depends(require_permission('metadata.table.update'))`.
+        "perms": ("metadata.table.update",),
     },
     "node_analysis": {
         "label": "그래프 AI 능동 분석",
@@ -407,11 +450,21 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
         # 프롬프트(`llm.node_analysis_messages`, 서버 호출과 같은 정본) ·
         # 반영(`node_analysis.apply_external_node_analysis`).
         "wired": True,
+        # 집행 지점: `admin_metadata_graph_analyze` 의
+        # `Depends(require_permission('metadata.graph.analyze'))`. 워커의 위임 적재는
+        # 그 run 을 **연 사람**(`_run_requester`)의 계정으로 가므로 같은 권한 축이다.
+        "perms": ("metadata.graph.analyze",),
     },
     "prompt_generate": {
         "label": "시스템 프롬프트 자동작성",
         "origin": ORIGIN_WEB, "response": "text", "apply": "review",
         "wired": True,
+        # ⚠ **비어 있는 것이 맞다.** 이 종류의 세 진입점 중 제품(`product.update`)·역할
+        # (`system_prompt.manage.role.any`)은 권한을 요구하지만, **개인 프롬프트 자동작성**
+        # (`_collect_account_prompt_context`)은 로그인만 요구한다 — 프로필 '프롬프트' 탭의
+        # [자동 작성] 이 그것이다. 셋 중 하나라도 열리면 이 종류에 도달하므로, 관리 권한을
+        # 적으면 정작 모든 사용자가 쓰는 진입점을 가진 계정의 설정을 지우게 된다.
+        "perms": (),
     },
     "insight_summary": {
         # 이름을 좁혔다(TASK-20260901T190000): 배선된 것은 **테이블 인사이트**다. 스키마·계정
@@ -423,6 +476,11 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
         # 서버 호출과 같은 정본) · 반영(`insight.apply_external_insight_summary` → 기존
         # KV 이음매 → 다음 cycle 의 상속 경로가 발행).
         "wired": True,
+        # ⚠ **배경 배치에는 RBAC 축이 없다.** 이 작업은 사용자가 여는 것이 아니라 워커가
+        # 열고, 받을 계정은 `_batch_consenting_account` 가 **배경 작업에 동의한 러너**
+        # 중에서 고른다 — 권한이 아니라 그 계정의 동의가 자격이다. 없는 권한을 지어
+        # 적으면 실제로 이 작업을 받는 계정의 설정칸이 사라진다.
+        "perms": (),
     },
     "cluster_label": {
         "label": "클러스터 라벨링",
@@ -431,6 +489,8 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
         # 프롬프트(`_cluster_label_messages`, `llm.CLUSTER_LABEL_PROMPT` 그대로) ·
         # 반영(`semantic_cluster.apply_external_cluster_labels` → 기존 kv 캐시).
         "wired": True,
+        # 위 `insight_summary` 와 같은 이유로 비어 있다(배경 배치 = 동의 축).
+        "perms": (),
     },
     # red-team 은 대기열에 따로 적재되지 않는다 — **답변한 그 러너**가 자기 답변을 검증해
     # `submit_answer` 에 함께 싣는다(사용자 결정 2026-08-31: "요청 당시의 호출자가 스스로의
@@ -440,6 +500,80 @@ JOB_SPECS: dict[str, dict[str, Any]] = {
 
 #: 워커가 여는 종류(배급 자격이 `batch_jobs` 동의를 추가로 요구한다).
 BATCH_JOB_KINDS = tuple(k for k, v in JOB_SPECS.items() if v["origin"] == ORIGIN_BATCH)
+
+
+def console_job_perms(job_kind: str) -> tuple[str, ...]:
+    """이 종류를 여는 기능이 요구하는 권한 코드(any-of). 요구 없음이면 빈 튜플.
+
+    선언이 아예 없는 종류(`perms` 키 누락)도 빈 튜플로 본다 — 표시 축의 기본값은
+    **감추지 않는 쪽**이어야 한다. 감추는 쪽을 기본으로 두면 새 종류를 추가하면서 선언을
+    빠뜨렸을 때 그 항목이 전 계정에서 조용히 사라진다(집행은 서버가 계속 하므로 노출 기본값
+    이 위험을 만들지 않는다). 선언 누락 자체는 구조 테스트가 잡는다.
+    """
+    spec = JOB_SPECS.get(str(job_kind or "").strip())
+    if not spec:
+        return ()
+    return tuple(str(code) for code in (spec.get("perms") or ()) if str(code).strip())
+
+
+def visible_console_job_kinds(has_permission: Any) -> tuple[str, ...]:
+    """이 계정에게 프로필 'AI 작업' 화면이 **보여줄** 종류만 `JOB_SPECS` 순서로 추린다.
+
+    Args:
+        has_permission: `(permission_code: str) -> bool`. 호출측이 자기 권한 판정 함수를
+            그대로 넘긴다 — 이 모듈은 워커 컨테이너에서도 import 되므로 웹의 RBAC 헬퍼를
+            직접 import 할 수 없다(그렇게 하면 워커가 뜨지 않는다).
+
+    권한 요구가 없는 종류(`perms` 빈 튜플)는 항상 포함한다. 요구가 있으면 **하나라도**
+    보유해야 포함한다 — 메타데이터 자동완성처럼 서브뷰별로 권한이 갈리는 기능은 그중 하나만
+    열려 있어도 그 작업이 실제로 도달하기 때문이다.
+    """
+    out: list[str] = []
+    for kind in JOB_SPECS:
+        perms = console_job_perms(kind)
+        if not perms or any(_safe_has_permission(has_permission, code) for code in perms):
+            out.append(kind)
+    return tuple(out)
+
+
+def _safe_has_permission(has_permission: Any, code: str) -> bool:
+    """권한 1건 판정. **그 한 건의 예외가 화면 전체를 죽이지 않게** 코드 단위로 가둔다.
+
+    판정기가 던지면 그 코드는 False 로 본다(코드 단위 fail-closed). 전면 실패해도 결과는
+    「권한 요구가 없는 종류만」으로 수렴하고, 그것은 어떤 로그인 계정에게도 참인 부분집합이라
+    화면이 살아 있는 채로 축소된다 — 500 으로 탭이 통째로 죽는 것보다 낫다.
+
+    감추는 방향의 오차가 안전한 이유: 이 축은 **표시**이고 집행은 각 엔드포인트가 계속 한다.
+    """
+    try:
+        return bool(has_permission(code))
+    except Exception:  # noqa: BLE001 — 판정기 구현을 이 모듈이 알 수 없다
+        return False
+
+
+def merge_visible_console_job_prefs(stored: Any, incoming: Any,
+                                    visible: Any) -> dict[str, dict[str, str]]:
+    """「보이는 항목만 교체, 나머지는 보존」 병합. **저장 직전의 단일 규칙**이다.
+
+    Args:
+        stored: 지금 저장돼 있는 설정(정규화된 형태 또는 raw — 여기서 정규화한다).
+        incoming: 이번 요청이 보낸 설정(raw 가능).
+        visible: 이 계정에 노출되는 종류(집합/시퀀스).
+
+    Returns:
+        `{job_kind: {"model": str, "effort": str}}` — 비가시 종류는 `stored` 값 그대로,
+        가시 종류는 `incoming` 값으로 통째 교체(= 없으면 지워진다).
+
+    **정규화가 필터보다 먼저다.** 원본 키를 그대로 거르면 `" node_analysis "` 같은 표기
+    변형이 가시성 판정을 빠져나가 숨긴 항목을 덮어쓸 수 있다 — `normalize_console_job_prefs`
+    가 닫힌 집합으로 키를 먼저 정한 뒤에 필터해야 그 경로가 닫힌다.
+    """
+    vis = set(visible or ())
+    norm_stored = normalize_console_job_prefs(stored)
+    norm_incoming = normalize_console_job_prefs(incoming)
+    merged = {k: v for k, v in norm_stored.items() if k not in vis}
+    merged.update({k: v for k, v in norm_incoming.items() if k in vis})
+    return merged
 
 
 #: 콘솔·배경 작업에 쓸 **경량 모델** 선호 (사용자 결정 2026-09-01).
@@ -635,6 +769,32 @@ def console_job_prefs_for_account(cur, account_id: Any) -> dict[str, dict[str, s
         row = cur.fetchone()
     except Exception:
         return {}
+    return normalize_console_job_prefs(row[0]) if row else {}
+
+
+def read_console_job_prefs_strict(cur, account_id: Any) -> dict[str, dict[str, str]]:
+    """`console_job_prefs_for_account` 의 **엄격판** — 조회 실패를 예외로 올린다.
+
+    ## 왜 두 벌인가 (codex 2R)
+
+    위 lenient 판은 **읽기 경로**용이다: 컬럼이 없는 배포에서 「미설정」과 「조회 실패」를 같게
+    보아 배포 순서가 작업을 막지 않게 한다 — 화면과 배급 판정에서는 그것이 옳다.
+
+    그러나 **쓰기의 baseline** 으로 쓰면 뜻이 뒤집힌다. 저장은 「보이는 항목만 교체하고 나머지는
+    보존」인데, 실패를 `{}` 로 받으면 *보존할 것이 없다* 고 판단해 **숨겨진 항목을 통째로
+    지운 문서**를 쓴다. 사용자는 200 을 받고, 잃은 것은 화면에 없던 값이라 알아채지도 못한다.
+
+    그래서 baseline 은 **읽었다는 사실이 증명될 때만** 쓴다. 실패는 예외로 올려 호출측이 저장
+    자체를 포기하게 한다 — 모르는 상태 위에 쓰지 않는 것이 손실보다 낫다.
+    """
+    try:
+        aid = int(account_id or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("계정 식별 실패") from exc
+    if not aid:
+        raise ValueError("계정 식별 실패")
+    cur.execute("SELECT ConsoleJobPrefs FROM WebAccounts WHERE Id = %s", (aid,))
+    row = cur.fetchone()
     return normalize_console_job_prefs(row[0]) if row else {}
 
 

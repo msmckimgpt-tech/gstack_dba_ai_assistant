@@ -43,6 +43,7 @@ source_of_truth: true
       으로 **로케일 무관**. 한글 주석 추가에 따라 **UTF-8 BOM** 부여(대조 실측: BOM 없으면 839자 중
       324자 손실). PS 5.1 실측 4축 PASS(구문/인코딩/실 netsh 파싱/멱등 판정).
 - [x] TASK-20260902T124500-ai-claude-feature-0006-lan-proxy-access (REV-20260902T124500-... [CODEX:portproxy-idempotent] — 적대 리뷰 P2 반영, **Minor** §12.3). 직전 cycle 산출물에 codex 적대 리뷰 P1 1건(이미 자체 적발·수정한 `-IgnoreExitCode` — **독립 확인**) + P2 4건. P2 중 3건 수정: ①legacy 삭제 skip 최적화 **되돌림**(이득 없음 — legacy 엔 활성 연결이 없고 없는 매핑 delete 는 아무 것도 끊지 않는다 / 위험만 있음 — hostname 형태 매핑을 파서가 못 읽어 영영 미삭제) ②legacy 삭제 **성공한 것만** 기록(실패도 기록해 원장이 거짓말하던 것) ③`portproxy_changed` 가 legacy 삭제를 포함(`legacy_ports_deleted:[18080]` + `changed:false` 자기모순 해소). P2-5 TOCTOU 는 **수용 + 주석 기록**(원자적 CAS 부재 · 확률적 5분 창 vs 확정적 5분 절단의 교환). PS 5.1 재검증 6축 PASS.
+- [x] TASK-20260902T140000-ai-claude-feature-0006-lan-proxy-access (**라이브 검증 완료** — 배포 + 22분 실측). Windows 배포본 교체는 **관리자 권한 필요**(WSL 은 기존 파일 ACL 에 막힌다) — 사용자 실행 후 sha256 대조 일치. 라이브 관측 13:33:30~13:55:45(sync 5회 정상 실행, `LastTaskResult=0`)에서 **목표 지표(`conn.retry`+`api.fail`) 0건** — 배포 전 동일 길이 구간은 8·8·8·12건이었다. 완주 wait 22건 중 21건이 55초 보류 완주, 13:34:00 시작분은 13:34:34 sync 를 **관통**했다. 잔존 WARN 2건(`hb.stale_build`·`ai.cmdline.stdin`)은 이번 이슈와 무관하며 TEST.md 에 명시. ⚠ 관측 하네스가 목표 지표가 아닌 전 WARN 을 세어 오판 라벨을 냈던 것도 함께 기록.
 
 ## 8. Requested Scope (요청 범위)
 
