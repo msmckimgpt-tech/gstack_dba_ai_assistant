@@ -512,3 +512,23 @@ combo 가 뷰포트보다 커져 중심 기준 판정이 "이동 0" 을 냈고, 
 실행 코드 0줄. 배포 `f9cfd2a0` 에서 정정(스키마 펼침 중앙 focus 복원)의 효과를 회귀 재현본과 같은
 조작으로 대조 확인하고 Run 에 기록. 대상: `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260813T1121-…md`
 (POST-FIX Run 추가) · `unit/feature-0016-metadata-graph/docs/{TASK,REPORT}.md`.
+
+## CHG-20260901T203000-f3-graph-retract — 그래프 유령 정점 회수 A+B+D (데이터 변경, 코드 0)
+
+사용자 승인(2026-09-01, dry-run 리포트 후 범위 선택 A+B+D)으로 적용. **코드 변경 0.**
+
+- **문제**: AGE 는 MERGE-only 라 정점 회수 경로가 없다. 원본이 삭제돼도 그래프에 남는다.
+- **삭제**: 해소 불가 datasource 3종 **2,545** + product 축 물리 스키마 중복 **4,590** +
+  DB 부재 유령 용어 **107** = **7,242 정점**(`DETACH DELETE`). 총 78,362 → **71,120**.
+- **B 의 안전 근거는 실측이다**: product 축 Table 507/507 · Column 1,525/1,525 가 datasource
+  축에도 있고 **product 전용은 0** 이었다. 삭제 후 표본 3종이 datasource 축에 온전함을 확인했다.
+- **C(common 축 물리 스키마 1,730)는 제외** — 전용 Table 20 · Column 11 이 있어 통째 삭제 불가.
+  **D'(datasource 축 GlossaryTerm 415)도 제외** — 지우기보다 제품 축으로 옮길 대상.
+- **검증**: 그래프 GlossaryTerm(product+common) **634 = `kb_glossary` 634 완전 일치**.
+- ⚠ **재발한다**(정직). 이번은 누적분 청소이지 원인 제거가 아니다. sync 에 회수 단계를 넣는
+  것이 근본 해소이고 코드 변경이라 별도 cycle. 재발 신호 = 위 두 숫자의 괴리.
+- ⚠ **매니페스트는 원클릭 복원이 아니다**. AGE 에 정점 복원 API 가 없어, 무엇이 있었는지를
+  속성까지 남긴 기록(3.6MB)이고 복원은 재-MERGE 또는 sync 재실행이다.
+- 증적: `docs/test-runs.d/20260901T203000-f3-graph-retract.md`.
+
+Task-Cycle: feature-0016-metadata-graph
