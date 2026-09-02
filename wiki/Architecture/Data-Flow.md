@@ -96,7 +96,7 @@ flowchart LR
 
 > `web` 의 in-process 실행 (`AGENT_ASK_EXECUTION_MODE=inprocess`) 도 롤백 옵션으로 잔존하나, 운영은 ask-worker 큐 (`=worker`) 가 라이브.
 >
-> **2026-08-26(feature-0043) 이후**: 위 그림의 `agent → bedrock-gateway → Bedrock Claude` 구간은 **대화 답변 경로에서 fail-closed 로 차단**됐다(`shared/llm_gate.py` 코드 기본값 = 차단 · `litellm_config.yaml` chat alias 14종 주석). 웹 대화 질문은 `/api/ask` 가 dispatch 앞에서 `WebAiTasks`(`Origin='web'`) 대기작업으로 분기하고, 각 사용자의 **개인 머신 AI 런타임**이 `/api/ai/mcp`(엣지 → `ext-tool-mcp-a/b` 2 replica LB, feature-0045)로 붙어 `wait_for_request`(블로킹 대기)→`claim_request`→`submit_answer` 로 처리한 답변이 원 대화에 실린다. 게이트웨이로 남은 활성 경로는 로컬 임베딩(`titan-embed` → `ollama/bge-m3`) 하나뿐이다.
+> **2026-08-26(feature-0043) 이후**: 위 그림의 `agent → bedrock-gateway → Bedrock Claude` 구간은 **대화 답변 경로에서 fail-closed 로 차단**됐다(`shared/llm_gate.py` 코드 기본값 = 차단 · `litellm_config.yaml` chat alias 14종 주석). 웹 대화 질문은 `/api/ask` 가 dispatch 앞에서 `WebAiTasks`(`Origin='web'`) 대기작업으로 분기하고, 각 사용자의 **개인 머신 AI 런타임**이 `/api/ai/mcp`(엣지 → `ext-tool-mcp-a/b` 2 replica LB, feature-0045)로 붙어 `wait_for_request`(블로킹 대기)→`claim_request`→`submit_answer` 로 처리한 답변이 원 대화에 실린다. 게이트웨이로 남은 활성 경로는 로컬 임베딩(`titan-embed` → `ollama/bge-m3`) 하나뿐이다. **2026-09-01 보강**: 그 개인 AI 가 받는 접지 지식은 MCP `get_task_context` 번들이 유일한 경로이며, 전환 직후 **클러스터 요약 1개 층**만 실려 관리 콘솔 큐레이션이 답변에 도달하지 않던 것을 용어사전 · ENUM 코드 · 테이블/컬럼 설명 · 샘플 쿼리 · 관계 **5층 추가**로 이었다(층별 fail-soft · 빠진 층은 이름을 밝혀 notes · 번들 상한과 절단 표기 · product 축은 그 task 의 `ProductId` 에서 해석). L0 통계 수집(`metadata_table_stats`·`metadata_column_stats`)은 LLM 게이트에 딸려 멈춰 있었으므로 게이트와 분리했다.
 
 ### 2.2 신뢰 경계 (trust boundary)
 

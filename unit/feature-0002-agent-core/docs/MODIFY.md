@@ -3162,3 +3162,64 @@ Task-Cycle: feature-0002-agent-core
 | 정상 매칭 3건 | 유지 | 유지 |
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T193000-kb-grounding-match-postdeploy — 배포 `cceb2984` 라이브 재실측 (doc-only)
+
+코드 변경 0. PR #1496 머지 후 배포·검증 기록.
+
+- **배포**: rc=0 · web/워커 전부 `cceb2984`(실물 `ps` 확인) · 대화 스모크 PASS ·
+  caddy `no upstreams available` **0건**.
+- **G1 회복 실증**: 배포 전에는 한도 밖이라 **로드 자체가 안 되던** 약어들이 매칭된다 —
+  `AID`·`CCU`·`PvE`·`재화`·`복합키` 전건. `재화를` 처럼 조사가 붙어도 매칭된다(비대칭 규칙).
+- **G2 차단 실증**: `acidity`·`pverr`·`소재화`·`raidlog` 전건 매칭 0.
+  동일 질문 재실측에서 `Achievement.Type`(DK온라인) 사라지고 `증분 복제` 살아났다.
+- **미해결로 남긴 것(정직)**: `common` 의 DK온라인 전용 ENUM 9건은 그대로다. 낱말 경계는 오탐
+  *경로*를 막았을 뿐, DK 어휘가 실제 등장하는 질문에는 여전히 실린다 — 데이터 큐레이션 축이라
+  cycle 1 소급 정리와 함께 다룬다.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 5.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T194500-glossary-sweep-applied — 용어사전 소급 정리 실적용 (데이터 변경, 코드 0)
+
+cycle 1(`term_tier`)에서 dry-run 리포트 후 재승인을 받기로 한 항목. 사용자 승인
+(2026-09-01)으로 라이브 적용했다. **코드 변경 0 — 데이터 정리다.**
+
+- 실행: `glossary_tier_sweep.py --apply --manifest /shared/glossary-sweep/20260901T194500-*.json`
+- 적용 전 dry-run 이 **승인 시점 수치와 동일**함을 확인(범용 69 · 중복 36 · 교차제품 28 보고만).
+- 결과: `kb_glossary` 739 → **634행**(105행 삭제) · `glossary_feedback` 의
+  `skipped_general` **57행**(되살리기 경로 보존).
+- **교차 제품 28종은 삭제하지 않았다**(cycle 1 결정 유지) — 읽기 캐스케이드가
+  `[그 제품, common]` 이라 한 제품은 다른 제품 scope 를 읽지 않는다. 지우면 그 제품에서
+  그냥 사라지고, 같은 이름이 제품마다 다른 뜻일 수 있다(`CharacterID`·`AID`·`LogType`).
+- **되돌리기 검증**: 매니페스트 행 키가 `restore()` 가 읽는 키와 일치하고 105행이 모두 담겨
+  있음을 확인했다. 파괴적 작업의 안전망은 「파일이 생겼다」가 아니라 「그 파일로 되돌아간다」다.
+- ⚠ **주의할 상호작용**: 같은 날 G1 수정이 한도 밖이던 `증분 복제` 를 회복시켰는데, 이 정리가
+  같은 용어를 범용어로 판정해 회수했다. 모순이 아니라 원인이 다르다 — 전자는 버그(짧다는
+  이유로 잘림), 후자는 정책(범용어 미등록). 큐에 남아 있으므로 되살릴 수 있다.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 7·8.
+
+Task-Cycle: feature-0002-agent-core
+
+## CHG-20260901T200000-common-enum-reattribute — 전역 ENUM 9행 귀속 정정 (데이터 변경, 코드 0)
+
+사용자 승인(2026-09-01)으로 적용. **코드 변경 0 — 데이터 정정이다.**
+
+- **문제**: `common` ENUM 9행이 전부 제품 고유 내용(`[DK온라인]`·`[건즈]`·`[마이크로볼츠 PvE]`).
+  전역은 모든 제품 프롬프트에 주입되므로 G2(낱말 경계) 이후에도 테이블명이 질문에 나오면
+  남의 제품이 받는다. GZ_QA_G 실측에서 실제로 관측된 형태다.
+- ⚠ **9행 전부 `source='manual'`** 이라 자율 이동하지 않고 **승인 후** 진행했다(소급 정리
+  스크립트의 「manual 불가침」 원칙과 정합).
+- **귀속은 라벨이 아니라 데이터로 확정**했다 — `table_descriptions`/`column_descriptions` +
+  AGE 그래프 `(:Table)` scope + `WebProductDatasources` 조인.
+  `Achievement`·`AchievementReward`→DK_QA / `Mission`→GZ 3제품 / `pverewardinfo`→MV 2제품.
+- **결과**: 제품 scope 15행 등록 · `common` 9행 삭제(전역 ENUM 0행).
+  매니페스트 `/shared/glossary-sweep/20260901T200000-common-enum-reattribute.json`(먼저 기록).
+- **9→15 로 늘어난 것은 의도**다. 읽기 캐스케이드에 **제품군 티어가 없어** 형제 제품마다 한 벌씩
+  둘 수밖에 없다. 대안(전역 유지)은 무관한 제품까지 받아 더 나쁘다. 근본 해소는
+  `product-family` 티어 신설 — 범위 밖으로 남긴다.
+- **부수 발견**: `pverewardinfo` 가 해소 불가 scope(`mysql-a4f572f222a2`, 삭제된 datasource)의
+  그래프에도 있다 — **F3(유령 정점 회수)의 실물 사례**.
+- 증적: `docs/test-runs.d/20260901T190000-kb-grounding-match.md` Run 9~12.
+
+Task-Cycle: feature-0002-agent-core
