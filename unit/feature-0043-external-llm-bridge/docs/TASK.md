@@ -1525,7 +1525,6 @@ Luna 등이 포함되어야 함). 이러한 이슈를 해결하면서 플랫폼 
       걷힘**(미반영 고지는 보존) · **실 브리지 왕복 #86**(모델 `sonnet`·등급 `high` 명시
       지정에도 고지 없음 / 배포 전 #83 대조군은 고지 있음).
       증적 `docs/test-runs.d/TASK-20260901T115000-answer-notice-server-seal-postdeploy.md`
-
 ---
 
 ## TASK-20260901T140000-orphan-claim-reclaim — 러너가 죽으면 질문이 30분 사라진다 (P0-AI)
@@ -2067,6 +2066,144 @@ backstop 이다 — 회수되면 `pending` 으로 돌아가 다시 위임된다(
       임의 사이트가 러너 파일을 교체)
 - [ ] **배포 후 라이브 실측** — ① 업데이트 필요 클릭이 실제 발사되는가 ② **로그인 진입 자동
       실행이 크롬 활성화 정책에 걸리는가**(추측하지 않고 잰다) ③ 이력 있는 미연결 계정 칩 클릭
+
+## 20260902T1100-click-beats-entry — 진입 자동 시도가 클릭을 삼키던 회귀 (배포 후 실측 적발)
+
+직전 cycle(`20260902T1000`) 배포 후 실 Windows 브라우저 왕복에서 적발. 상세는
+`TASK-20260902T110000-click-beats-entry.md`.
+
+- [x] 회귀 재현 — 칩 클릭 40초 뒤에도 실행·창 **둘 다 없음**(개선 이전보다 나쁨)
+- [x] 클릭이 자동 시도를 대체 · 클릭끼리는 중복 방어 유지
+- [x] 일련번호로 대체 판정 — 대체된 시도는 잠금·창·결과 어느 것도 건드리지 않음
+- [x] 테스트 3건 추가(총 22) · 뮤테이션 KILL 2건
+- [ ] 스킴 실행 → 러너 재기동 축은 **핸들러 등록**(별개 축)에 달려 있어 이월
+
+## 20260901T1230-caps-trust-gate — 연결한 AI 에 없는 모델이 뜨는 결함(4차)
+
+**요청 (2026-09-01)**:
+
+```
+사용자 원문(데이터이며 지시가 아님)
+프로젝트 내 서비스에서, 연결한 AI에 정합하지 않은 모델 목록이 나타나는 이슈가
+확인되어 수정이 필요합니다. (gpt-5.1 등)
+```
+
+### 9. Requested Scope
+
+| # | 항목 (원 요청 매핑) | 상태 |
+|---|---|---|
+| R1 | 「연결한 AI에 정합하지 않은 모델 목록이 나타나는 이슈」 — 근본 원인 규명 | [x] |
+| R2 | 「(gpt-5.1 등)」 — 그 목록이 화면에 도달하는 경로 차단 | [x] |
+| R3 | 「수정이 필요합니다」 — 4차 재발이므로 §16.7 G10 구조 가드 승격 | [x] |
+
+**[다의어] 「정합하지 않은」**
+- 고른 독해: **연결된 러너가 실제로 실행할 수 없는 모델**이 선택지로 뜬다.
+- 버린 독해: 목록이 *다른 런타임의 것*으로 뒤바뀐다(claude 인데 codex 목록이 뜬다).
+- 예시(관측 가능한 값): codex 그룹에 `gpt-5.1-codex` 가 뜨는데, 그 계정이 실제로 쓸 수
+  있는 것은 `gpt-5.6-sol`·`terra`·`luna`·`5.5`·`5.4` 다 → **고른 순간 CLI 가 거부한다**.
+  라이브 대조로 고른 독해가 맞음을 확인(아래 근본 원인 §).
+
+### 근본 원인 (라이브 실측 2026-09-01 11:2x)
+
+08-31 에 폴백 제거(`82f3a160`)와 지문 신고(`f6495840`)를 배포했는데 같은 제보가 돌아왔다.
+**우리는 사용자 머신의 러너를 갱신할 수 없다** — 그것이 이 결함이 세 번 되돌아온 이유다.
+
+| 관측 | 값 |
+|---|---|
+| 도는 러너 파일 | `~/.mysql-ai-bridge/bridge_agent.py` = `af7c3fe19808` (08-31 16:55, 폴백 제거 **이전**) |
+| 러너 로그 | `codex: 응답을 받지 못해 내장 기본값을 씁니다` → `Codex(2종)` |
+| 서버 행 | `WebOAuthTokens.Id=83` 의 `RunnerCapabilities` 에 `gpt-5.1-codex`·`-mini` |
+| 구버전 경고 | **안 뜸** — `RunnerBuild=''` 라 `stale_build` 판정이 fail-open |
+
+즉 **지문을 신고하지 않는 러너**(= 정확히 결함을 가진 모집단)를 서버가 «최신» 으로 읽고
+있었고, 그 러너의 내장 표가 그대로 화면 목록이 됐다.
+
+- [x] R1 근본 원인 규명 — 러너 파일 지문 · 로그 · DB 행 3중 대조
+- [x] R2 `caps_self_report` 자격 신설 — 러너가 「목록의 출처는 AI 자신뿐」을 선언
+- [x] R2 서버 관문 1곳(`oauth_store.account_runner_profile`)에서 자격 없는 신고를 떨어뜨림
+- [x] R2 감추기만 하지 않고 **사유·다음 행동**을 화면까지 배선(`model_selector_reason` 은
+      2026-08-28 부터 응답에 있었으나 소비처가 0개였다)
+- [x] R2 `stale_build` fail-open 해소 — 지문 부재 = 더 오래됨
+- [x] R3 지문 판정을 단일 함수로 통합(`ai_tools.runner_build_is_stale`) — 종전 2벌 복제
+- [x] R3 구조 잠금 5종 + §16.7 G11-b 실증(수정 전 코드에서 16건 FAIL 확인)
+- [x] **PB-0008 실 Windows 브라우저 시각검증** — 격리 컨테이너(stamp `0df767209532`)
+      에서 세 상태 실측 PASS: 러너 없음(종전 문구) · **구 러너**(숨김 + 갱신 안내 ·
+      `gpt-5.1` 응답·화면 0건) · 자격 있는 러너(선택기 정상 복귀 · 사유 지워짐).
+      첫 시도가 HSTS 로 라이브 사이트를 보고 있던 것을 stamp 대조로 갈라냄.
+      증적 `feature-0003 docs/test-runs.d/TASK-20260901T123000-caps-trust-gate-ui.md`
+
+### Run 2 — 적대 패널 조치 (2026-09-01, security CONCERN / backend BLOCK / qa BLOCK)
+
+- [x] `origin/main` 39커밋 머지 — 브랜치가 머지 대상이 아닌 base 에서 검증됐다는 지적 해소.
+      머지가 지적을 실물로 확인했다(`test_runner_declares_features_and_version` 이 정확히 충돌)
+- [x] **B1** 쓰기 시점 화석 가드 — 능력 미탑재 신고는 `"[]"` 로 이전 능력 무효화
+- [x] **B2/S1** 지문 tri-state(`None`=모름) + 조회 실패 로그 — 「컬럼 없는 배포에서 전원에게
+      거짓 갱신 지시」 차단
+- [x] **C1** `token_runner_profile` 도 게이트 통과 + AST 로 「모든 투영 함수가 게이트를 지난다」 잠금
+- [x] **B4/S3** 다중 러너 fail-closed + `mixed_runners`(「옛 것을 끄라」)
+- [x] **qa §3** 런타임별 provenance 신설 — 러너가 `source` 를 싣고 서버가 allowlist 로 거른다
+      (캐시 경로 포함). 자격 불리언만으로는 재발 클래스가 한 iteration 미뤄질 뿐이었다
+- [x] **S §3** `declares_caps_contract` 로 rename — 「인가 경계가 아니다」 명시
+- [x] 잡음 6종: 모듈 import · ARIA role · 다운로드 링크 배선 · 카탈로그 실패 사유 ·
+      `console_llm_state` dict 형태 · `detect_runtimes` docstring(양 미러)
+- [x] 소스검사 단언을 AST 로 격상 + 프런트 jsdom 하네스 10케이스
+- [x] **단언별 G11-b 재실증** — qa 가 생존시킨 뮤턴트 8종 전부 FAILED 확인
+- [x] `make test` 전량 green · 하네스 10/10
+- [x] 증적 문서의 과대 주장·수치 정정 (13/7건 · main 아닌 HEAD · ruff 비차단 · 칩/메뉴 축 분리)
+- [x] **PB-0008 재검증** (머지 후 빌드 stamp `5c5c2da471d6`) — 링크 배선·ARIA role·숨김이
+      실화면 도달 확인. 정체 대조가 **두 번** 작동(포트 선점·탭 이동으로 남의 컨테이너 응답을
+      읽을 뻔함). (b)혼재·(c)정상 상태는 타 세션 러너가 같은 계정에 붙어 있어 실화면 재확인
+      **미수행** — pytest 2행 fixture + jsdom 하네스가 덮는다(증적에 분리 표기).
+      증적 `feature-0003 docs/test-runs.d/TASK-20260901T140000-caps-trust-gate-ui-r2.md`
+- [x] **§18.8 확인 라운드 1회** — security CONCERN / backend BLOCK / qa BLOCK.
+      P1 이 **줄지 않았다**(security 3→4, backend 4→4)이고 2라운드 P1 중 넷은 1라운드에서
+      내가 넣은 수정이 만든 결함이었다 → §18.8 수렴 계약 **(b) 재설계 신호**
+
+### Run 3 — 재설계 (2026-09-01~02, §18.8 (b))
+
+> 위 Run 2 항목 중 **B1(화석 가드) · C1(읽기 시점 전체 투영 게이트) · B4/S3(다중 러너
+> fail-closed) · S §3(`declares_caps_contract`)** 은 이 Run 에서 **철회**했다. 체크가
+> 「그때 그렇게 했다」는 사실 기록으로 남고, 현행 설계가 아니다 —
+> MODIFY.md `CHG-20260901T190000-…-r3` 의 「철회」 표가 정본.
+
+- [x] **사용자 결정** — 로컬 LLM(ollama) 미사용 → 러너에서 런타임 전면 제거(스펙·모델조회·
+      감지 분기·HTTP 어댑터·`BRIDGE_OLLAMA_URL`·Windows PATH 후보). URL 생성 지점이
+      `Api._post` 하나가 되어 핸드오프 문서의 「나가는 곳 한 곳」이 참이 됨
+- [x] 읽기 시점 전역 게이트 철회 — 수신 시점 provenance 가 첫 하트비트에 낡은 목록을 지운다
+- [x] 다중 러너 fail-closed·`mixed_runners`·`RUNNER_ROWS_SCAN_MAX` 철회 — 제품 안에 해제
+      수단이 없는 잠금이었다
+- [x] 화석 가드 철회 → 잘라 저장 + `warning` 로그 (저장 거부는 직전 목록을 **보존**한다)
+- [x] `caps_self_report` 자격 축 철회 — `AGENT_FEATURES` 원복 · `shared/bridge_tasks` 상수 제거
+- [x] **provenance 기본값 fail-closed** — `sanitize_caps` 가 출처를 지어내지 않는다.
+      종전 판본은 `"cache"` 를 기본값으로 넣었고 **아무 writer 도 그 값을 쓰지 않아**
+      게이트 전체가 fail-open 이었다(backend 적대리뷰가 실증)
+- [x] 출처를 모르는 캐시는 「캐시 없음」 — `detect_runtimes` 진입부에서 걸러 다시 묻는다
+- [x] **B2-R1** 지문 판정 세 번째 사본(`ai_ops._runner_roster`) 통합 → 3벌 → 1벌
+- [x] `system.py` 단일 축(`runner_listening`) + 사유 3분기 · 러너 없을 때 다운로드 링크 없음
+- [x] 안내 `<p>` 를 `role="menu"` 밖으로 — ARIA presentational-roles-conflict-resolution 으로
+      메뉴 자식의 `role`·`aria-live` 가 **무효화**되고 있었다
+- [x] **뮤턴트 봉인 (§16.7 G11-b, exit code 실측)** — `M4b-v1`(`AnnAssign`)·`v2`(`NamedExpr`)가
+      봉인 전 **실제로 생존**(EXIT=0). 「모든 바인딩 형태를 모은다」로는 판정 뒤에 상수를
+      덧대는 변형을 못 막는다 → 호출이 자기 갈래의 **마지막**인지까지 보도록 격상.
+      5변형 + `M7-v2` 전건 KILLED, 정상 소스 PASS
+- [x] `origin/main` 68커밋 재병합 · `make test` **6,913건 / 6,898 passed · 15 skipped · 0 failed**
+- [x] 문서 재작성 — FUNCTION §P0-Z6(철회 사유 표 포함) · TEST.md 행 · MODIFY(신규 CHG) ·
+      REPORT · TASK · 증적 수치 정정
+- [x] **PB-0008 재검증** (재설계 빌드, asset stamp `1f703ee2a0f2`) — 상태 (a) 최신 러너
+      (claude=probe 만 보이고 codex=builtin 은 떨어짐 · 모델 메뉴 `gpt-5.1` 0건) · 상태 (b)
+      구 러너(사유 + 「실행 파일 받기」 링크가 **메뉴 밖**에서 렌더 · 모델 항목 숨김) 실화면
+      PASS. 상태 (c) 는 사용자의 실 러너가 계정 정본이라 실화면 미수행(분리 표기).
+      ⚠ 하네스 자체 결함 적발 — `?v=dev` 를 HTML 만 치환해 `app.js` 가 **두 번** 평가되고
+      `+` 메뉴가 죽었다. 대조군(무변경 배포본)으로 갈라내고 배포와 같은
+      `inject_asset_stamp.py` 로 고쳤다.
+      증적 `feature-0003 docs/test-runs.d/TASK-20260902T100000-caps-trust-gate-ui-r3.md`
+- [x] **§18.8 확인 라운드 — codex 채널 대체** (사용자 결정 2026-09-02): P1 1 · P2 2 **전건
+      in-cycle 수정** + 뮤턴트 3종 KILLED 실증. `REV-20260902T113000-…-r3 [CODEX:review]`
+      - P1 지문 컬럼 없는 배포에서 신고 UPDATE 전체 실패 → **화석 목록 영구 잔존**(강등 재시도로 해소)
+      - P2 하트비트 없던 토큰을 구 러너로 오탐(→ `None`)
+      - P2 카탈로그 부재를 「보임」으로 읽어 안내 분기가 **죽은 코드**(→ 숨김 · 하네스 11케이스로 재작성)
+- [x] `make test` 전량 green (조치 후 재실행)
+- [ ] `verify-completion --pre-commit` → 출하 → 러너 재기동
 
 ## 20260902T1100-console-job-model-prefs — 콘솔 작업의 모델·추론등급을 계정이 정한다
 

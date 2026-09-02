@@ -31,6 +31,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import urllib.parse
@@ -38,6 +39,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from shared import bridge_consent, bridge_tasks
+
+_log = logging.getLogger(__name__)
 
 # 인가 코드 TTL. 짧을수록 좋다 — 코드는 브라우저 리다이렉트 한 번을 건너는 데만 쓰인다.
 AUTH_CODE_TTL_SEC = 60
@@ -628,6 +631,12 @@ def token_runner_profile(cur, raw_token: str) -> dict:
     라는 것이 애초의 설계였다("배치는 그 사람이 요청한 적 없는 일이다").
 
     그래서 자격은 신고한 그 토큰에서만 읽는다. 신고가 없으면 빈 값 = 자격 없음.
+
+    ## 능력 축의 게이트는 **수신 시점**이다 (2026-09-01 재설계)
+
+    여기서 다시 거르지 않는다 — `_sanitize_runtimes` 가 저장 전에 출처 없는 런타임을
+    떨어뜨리므로, 컬럼에 남아 있는 것은 이미 통과한 값이다. 읽기 쪽에 두 번째 관문을 두면
+    소비처가 늘 때마다 그것을 빠뜨릴 자리가 생긴다.
     """
     empty = {"capabilities": [], "features": [], "agent_version": "", "listening": False}
     if not raw_token:
@@ -644,15 +653,8 @@ def token_runner_profile(cur, raw_token: str) -> dict:
     row = cur.fetchone()
     if not row:
         return empty
-    caps: list = []
-    if row[0]:
-        try:
-            parsed = json.loads(row[0])
-        except (TypeError, ValueError):
-            parsed = None
-        if isinstance(parsed, list):
-            caps = parsed
-    return {"capabilities": caps, "features": parse_runner_features(row[1]),
+    return {"capabilities": _parse_caps_column(row[0]),
+            "features": parse_runner_features(row[1]),
             "agent_version": str(row[2] or "").strip(), "listening": True}
 
 
@@ -745,35 +747,65 @@ def set_runner_report(cur, raw_token: str, capabilities: str | None,
     """
     if not raw_token:
         return False
+    csv = serialize_runner_features(features)
     if capabilities is not None and len(capabilities.encode("utf-8")) > RUNNER_CAPS_MAX_BYTES:
         # 능력이 과대해도 **기능·버전은 살린다** — 한 축의 결함이 나머지를 지우지 않게
         # (P0-Z3 의 `_sanitize_runtimes` 가 항목 단위로 버리는 것과 같은 방향).
+        #
+        # ⚠ 한때 이 `None` 을 `"[]"` 로 바꿔 **이전 목록을 지우는** 가드를 뒀다가 철회했다
+        #   (2026-09-01, 적대리뷰 3인 중 2인 지적). 그 가드는 「신고했는데 못 실었다」를
+        #   「신고할 것이 없다」로 뭉개, 화면이 「러너가 알려준 모델이 없어」라는 **거짓**을
+        #   말하게 했다 — 러너는 신고했는데 서버가 버린 것이다. 화석 문제는 수신 시점
+        #   provenance(`_sanitize_runtimes`)가 **첫 하트비트에** 해소하므로 여기서 지울
+        #   이유가 없다: 구 러너의 신고는 출처가 없어 전부 떨어지고 `[]` 가 저장된다.
+        logging.getLogger(__name__).warning(
+            "[bridge] 능력 신고가 %d bytes 로 상한(%d)을 넘어 저장하지 않는다 — 이전 목록 유지",
+            len(capabilities.encode("utf-8")), RUNNER_CAPS_MAX_BYTES)
         capabilities = None
-    csv = serialize_runner_features(features)
     ver = str(agent_version or "").strip()[:32]
     # 지문은 **모양만** 강제한다(16진 6~16자) — 값의 의미는 해석하지 않고 대조에만 쓴다.
     bld = str(agent_build or "").strip().lower()[:16]
     if bld and not re.fullmatch(r"[0-9a-f]{6,16}", bld):
         bld = ""
-    cur.execute(
-        "UPDATE WebOAuthTokens t "
-        "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
-        "SET t.RunnerCapabilities = COALESCE(%s, t.RunnerCapabilities), "
-        f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, t.RunnerBuild = %s, "
-        f"    t.CapabilitiesAt = {_SQL_NOW} "
-        f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
-        # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 축마다 분기한다.
-        "  AND ((%s IS NOT NULL "
-        "        AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s)) "
-        "       OR t.RunnerFeatures IS NULL OR t.RunnerFeatures <> %s "
-        "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s "
-        "       OR t.RunnerBuild IS NULL OR t.RunnerBuild <> %s) "
-        # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
-        f"  AND (t.CapabilitiesAt IS NULL "
-        f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))",
-        (capabilities, csv, ver, bld, token_hash(raw_token),
-         capabilities, capabilities, csv, ver, bld, int(HEARTBEAT_MIN_WRITE_SEC)),
-    )
+    def _sql(with_build: bool) -> str:
+        build_set = "    t.RunnerBuild = %s, " if with_build else ""
+        build_cmp = "       OR t.RunnerBuild IS NULL OR t.RunnerBuild <> %s " if with_build else ""
+        return (
+            "UPDATE WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            "SET t.RunnerCapabilities = COALESCE(%s, t.RunnerCapabilities), "
+            f"    t.RunnerFeatures = %s, t.RunnerAgentVersion = %s, {build_set}"
+            f"    t.CapabilitiesAt = {_SQL_NOW} "
+            f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+            # NULL 비교는 `<>` 로 잡히지 않는다 — 첫 신고(NULL → 값)를 놓치지 않게 축마다 분기.
+            "  AND ((%s IS NOT NULL "
+            "        AND (t.RunnerCapabilities IS NULL OR t.RunnerCapabilities <> %s)) "
+            "       OR t.RunnerFeatures IS NULL OR t.RunnerFeatures <> %s "
+            "       OR t.RunnerAgentVersion IS NULL OR t.RunnerAgentVersion <> %s "
+            f"{build_cmp}) "
+            # 쓰기 증폭 방어 — 값 토글로도 우회되지 않는다(위 docstring).
+            f"  AND (t.CapabilitiesAt IS NULL "
+            f"       OR t.CapabilitiesAt <= DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND))")
+
+    try:
+        cur.execute(_sql(True),
+                    (capabilities, csv, ver, bld, token_hash(raw_token),
+                     capabilities, capabilities, csv, ver, bld, int(HEARTBEAT_MIN_WRITE_SEC)))
+    except Exception as exc:  # noqa: BLE001
+        # ⚠ **`RunnerBuild` 컬럼이 아직 없는 배포**(2026-08-31 이전 스키마)에서는 위 문장이
+        #   통째로 실패한다. 호출부(하트비트)는 그 예외를 삼켜 연결을 지키는데, 그러면
+        #   `LastHeartbeatAt` 만 갱신되고 **`RunnerCapabilities` 는 옛 값 그대로 남는다** —
+        #   즉 이 cycle 이 닫으려는 화석 목록이 정확히 그 배포에서만 영구히 살아남는다
+        #   (codex 적대리뷰 P1, 2026-09-02).
+        #
+        #   지문 축은 `account_runner_build` 가 이미 그 배포를 **명시적으로 지원**한다
+        #   (컬럼 부재 = `None` = 판정 안 함). 그런데 쓰기 축만 그 배포를 지원하지 않으면
+        #   설계의 두 축이 서로 다른 세계를 가정하게 된다. 한 단 내려가 **나머지 세 값은
+        #   반드시 새긴다** — provenance 필터의 전제(「첫 하트비트에 지워진다」)가 여기 걸려 있다.
+        _log.warning("[bridge] 러너 신고 UPDATE 실패 — 지문 컬럼 없이 재시도: %r", exc)
+        cur.execute(_sql(False),
+                    (capabilities, csv, ver, token_hash(raw_token),
+                     capabilities, capabilities, csv, ver, int(HEARTBEAT_MIN_WRITE_SEC)))
     return int(getattr(cur, "rowcount", -1) or 0) != 0
 
 
@@ -844,6 +876,18 @@ def account_runner_profile(cur, account_id: int,
     신고해도 **행 자체가 안 잡혀** 기능이 없는 것으로 보인다. 두 축은 수명이 다르므로
     행 선택은 **하트비트 신선도**로만 하고, 각 축의 부재는 각자 빈 값으로 표현한다.
 
+    ## 능력 축의 게이트는 **수신 시점**에 있다 (2026-09-01 재설계)
+
+    한때 여기서 「러너가 `caps_self_report` 를 선언했는가」를 보고 목록을 통째로 감췄고,
+    살아 있는 러너가 하나라도 미선언이면 fail-closed 로 닫았다. 적대 패널 확인 라운드가
+    그 설계를 기각했다 — **수신 시점 provenance 가 이미 짐을 다 진다**(구 러너의 화석
+    목록은 첫 하트비트에 지워진다). 전역 게이트가 더한 고유 효과는 다중 러너 fail-closed
+    뿐이었는데, 그 대가가 **제품 안에서 풀 수 없는 무기한 잠금**이었다: 다른 머신에 잊고
+    켜 둔 러너 하나가 무기한 선택기를 감추는데, 화면은 그 러너의 호스트·버전·마지막 접속을
+    보여주지 않고 끊을 수단도 주지 않는다. 그래서 철회했다.
+
+    남은 규칙은 종전 그대로다 — 러너가 여럿이면 **가장 최근에 말한 것** 하나를 쓴다.
+
     Returns:
         `{"capabilities": list, "features": list[str], "agent_version": str,
           "listening": bool}` — 러너가 없으면 전부 빈 값 + `listening=False`.
@@ -853,6 +897,21 @@ def account_runner_profile(cur, account_id: int,
     return bridge_tasks.runner_profile_for_account(
         cur, account_id,
         window_sec=(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC))
+
+
+def _parse_caps_column(raw: Any) -> list:
+    """`RunnerCapabilities` 컬럼 한 칸을 목록으로. 깨졌으면 빈 목록.
+
+    두 프로필 함수가 같은 파싱을 하므로 한 곳에 둔다 — 각자 적으면 한쪽만 고쳐진다.
+    빈 목록은 선택기가 숨겨질 뿐이고 답변 경로는 멀쩡하다.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def account_runner_capabilities(cur, account_id: int,
@@ -959,10 +1018,12 @@ def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> l
     # 계정당 토큰이 여럿일 수 있어 넉넉히 읽고 접는다. 상한이 있는 이유는 관제 조회 하나가
     # 토큰 테이블을 통째로 끌어오지 않게 하기 위해서다.
     params = (max(int(limit), 1) * 8,)
+    build_known = True
     try:
         cur.execute(_sql("t.RunnerBuild, t.RunnerCapabilities"), params)
         rows = cur.fetchall() or []
     except Exception:
+        build_known = False
         # `RunnerBuild` 는 뒤늦게 추가된 컬럼이다(2026-08-31). 그 컬럼 하나가 없다고 명부
         # 전체를 잃으면 **구 배포에서 이 화면이 통째로 비는데**, 지문 대조는 이 명부가
         # 답하는 네 질문 중 하나일 뿐이다 — 한 단계 내려가 나머지를 살린다
@@ -999,20 +1060,48 @@ def list_live_runners(cur, limit: int = 100, window_sec: int | None = None) -> l
             "age_sec": age_sec,
             "features": parse_runner_features(r[4]),
             "agent_version": str(r[5] or "").strip(),
-            "runner_build": str(r[6] or "").strip(),
+            # ⚠ **tri-state 다** (backend 적대리뷰 B2-R1 후속). 컬럼 사다리를 한 단 내려온
+            #   경우 `''` 는 「러너가 신고 안 함」이 아니라 **「우리가 못 읽음」**이다. 둘을
+            #   같은 값으로 두면 `runner_build_is_stale` 이 컬럼 없는 배포의 **전 러너를**
+            #   구버전으로 적고, 명부 화면이 멀쩡한 사람들에게 재설치를 시킨다.
+            #
+            # ⚠ **하트비트가 한 번도 없던 행도 `None` 이다** (codex 적대리뷰 P2, 2026-09-02).
+            #   이 질의는 러너가 아닌 토큰(등록형 MCP 클라이언트 등)도 일부러 포함하는데,
+            #   그 행의 `RunnerBuild` 는 NULL → `''` 이고 「지문 미신고 = 구 러너」 규칙이
+            #   그것을 구버전으로 읽는다. 러너를 **한 번도 띄운 적 없는** 계정에 「최신
+            #   실행 파일로 다시 실행하세요」는 참이 아니다 — 모르는 것은 모른다고 적는다.
+            "runner_build": (str(r[6] or "").strip()
+                             if (build_known and age_sec is not None) else None),
             "model_count": caps_n,
         })
     return out
 
 
-def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str:
-    """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. 없으면 빈 문자열.
+def account_runner_build(cur, account_id: int, window_sec: int | None = None) -> str | None:
+    """이 계정의 **지금 듣고 있는** 러너가 신고한 파일 지문. **tri-state.**
+
+    | 반환 | 뜻 |
+    |---|---|
+    | `"<hex>"` | 러너가 이 지문을 신고했다 |
+    | `""` | 행은 있는데 **러너가 지문을 신고하지 않았다** (= 지문 축 이전 빌드) |
+    | `None` | **우리가 모른다** — 조회 실패·컬럼 부재·듣고 있는 러너 없음 |
+
+    ## 왜 tri-state 인가 (security·backend 적대리뷰 B2, 2026-09-01)
+
+    종전엔 셋이 모두 `""` 였다. 그리고 「지문 부재 = 더 오래됨」 판정을 도입하는 순간, 그
+    뭉갬이 **`RunnerBuild` 컬럼이 아직 없는 배포에서 최신 러너를 도는 사용자 전원에게**
+    「최신 실행 파일로 다시 실행하세요」라는 거짓 지시를 보내게 된다 — 이 변경 자신이
+    「모르는 것을 stale 로 부르면 거짓 경고가 된다」고 배포본 쪽 축에 적용한 규칙을 신고
+    쪽 축에는 적용하지 않은 비대칭이었다.
+
+    ⚠ 이 함수의 반환을 `if not build:` 로 판정하지 마라 — `""` 와 `None` 이 갈리는 것이
+    이 함수의 존재 이유다. 판정은 `routers/ai_tools.runner_build_is_stale` 하나가 한다.
 
     신선도 술어는 능력 조회와 같은 것을 쓴다 — 갈리면 "연결됐다는데 지문은 옛 러너의 것"
     같은 상태가 만들어지고, 화면은 둘 중 어느 쪽을 믿을지 정해야 한다.
     """
     if not account_id:
-        return ""
+        return None
     window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
     try:
         cur.execute(
@@ -1033,10 +1122,15 @@ def account_runner_build(cur, account_id: int, window_sec: int | None = None) ->
             (int(account_id), window),
         )
         row = cur.fetchone()
-    except Exception:
-        # 컬럼이 아직 없는 배포 — "모른다" 로 다룬다(대조하지 않는다).
-        return ""
-    return str((row or [""])[0] or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        # 컬럼이 아직 없는 배포·일시적 DB 오류 — **모른다**. 침묵시키지 않는다: 이 값이
+        # `None` 인 이유를 좁힐 수 없으면 「왜 아무도 stale 로 안 잡히나」를 추적 못 한다.
+        _log.warning("[bridge] 러너 지문 조회 실패 account=%s — 대조하지 않는다: %r",
+                     account_id, exc)
+        return None
+    if not row:
+        return None            # 듣고 있는 러너가 없다 — 대조할 대상 자체가 없다
+    return str(row[0] or "").strip()
 
 
 def account_bridge_defaults(cur, account_id: int) -> tuple[str, str]:

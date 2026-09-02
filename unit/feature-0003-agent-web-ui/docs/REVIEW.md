@@ -7219,3 +7219,21 @@ serializer 재오염 · aria/화면 출처 분리 · `currentConversation()` 복
 - **문면 규약**: feature-id·테이블명·함수명·파일명 노출 0건. 인용한 UI 문구(`[내 AI 실행]`·「단계 보기」·「브리지 작업」·「연결 준비」·'▼ 쿼리 결과'·'AI 운영 현황')는 전건 static 파일에서 실제 노출 문자열임을 grep 확인 후 사용했다.
 - **cache-buster**: 수기 bump 없음(3창 연속). 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며(라이브 실측 `?v=b85ff1d4986d`) `bin/deploy-web.sh` 의 ABORT 가드가 **baked 이미지의 `?v=dev` 잔존 여부로 주입 누락을 판정**한다 — 수기로 실값을 박으면 주입이 실패해도 가드가 통과하므로 규약 위반에 그치지 않고 배포 안전장치를 무력화한다. 이번 run 의 cron wrapper 지시문이 조건 없이 'bump 포함' 을 지시했으나 저장소 정본(`docs/CONVENTIONS.md`)과 정면 충돌하므로 따르지 않았다.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 필수**(누락 시 사용자가 캐시된 옛 데이터를 본다).
+
+## REV-20260902T110000-kb-prompt-grounding [SKIPPED:codex-no-output] — KB 근거 자동 주입 (web 거주분)
+
+리뷰 정본은 `unit/feature-0002-agent-core/docs/REVIEW.md` 동명 항목(cross-cut cycle).
+Cross-ref: CHG-20260902T110000-kb-prompt-grounding · ANCHOR 무충돌.
+
+web 거주분 요점:
+
+- **[BLOCKING·해소] 가드 래퍼로 매칭하면 래퍼가 근거를 만든다.** `claim_request` 안에서 손에
+  잡히는 질문 변수는 `marked`(canary + ⟦…⟧ 각인 포함)다. 그걸로 용어를 매칭하면 래퍼 문구
+  안의 낱말이 걸려 **질문과 무관한 근거**가 실린다. 각인 전 원문 `question` 으로 고정했고
+  뮤턴트 P3 가 이를 잠근다.
+- **[의도] 근거 없으면 블록 생략.** 빈 머리글만 남기면 AI 는 「등록된 게 없다」로 읽는다.
+  같은 생략이 **옛 서버 호환**(이 필드를 안 보내는 버전)도 지킨다 — 러너가 사용자 머신
+  설치본이라 서버·러너 버전 조합이 항상 어긋날 수 있다.
+- **[미검증]** 프롬프트 크기 증가의 토큰·지연 영향. 상한은 뒀고 실사용 관측은 배포 후.
+
+Verdict: PASS (정본 판정에 종속).

@@ -2935,7 +2935,13 @@ INSERT INTO agent_runtime.datasource_health
    fail_count, last_error_tag, last_checked_at, last_scan_at, last_transition_at, run_id, updated_at)
 VALUES (%(scope_key)s, %(label)s, %(engine)s, %(host)s, %(port)s, %(status)s, %(scan_outcome)s,
         %(fail_count)s, %(last_error_tag)s,
-        CASE WHEN %(last_checked_at)s IS NULL THEN NULL ELSE to_timestamp(%(last_checked_at)s) END,
+        -- ⚠ 캐스트가 **필수**다 (2026-09-02 라이브). 같은 파라미터가 `IS NULL`(타입 미상)과
+        --   `to_timestamp()`(double precision) 두 문맥에 쓰이는데, 값이 None 이면 드라이버가
+        --   타입 없는 NULL 을 보내고 Postgres 가 추론에 실패한다 → 42P08 AmbiguousParameter.
+        --   값이 float 일 때는 통과하므로 **한 번도 체크되지 않은 datasource 가 섞일 때만**
+        --   터졌고, 그 한 행이 batch 전체를 되돌려 health 텔레메트리가 통째로 유실됐다.
+        CASE WHEN %(last_checked_at)s::double precision IS NULL THEN NULL
+             ELSE to_timestamp(%(last_checked_at)s::double precision) END,
         now(), now(), %(run_id)s, now())
 ON CONFLICT (scope_key) DO UPDATE SET
   datasource_label   = COALESCE(EXCLUDED.datasource_label, agent_runtime.datasource_health.datasource_label),

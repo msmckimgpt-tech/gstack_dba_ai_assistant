@@ -561,16 +561,19 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     runner_stale = False
     if listening:
         try:
-            from routers.ai_tools import _deployed_runner_build
+            from routers.ai_tools import runner_build_is_stale
 
-            _deployed = _deployed_runner_build()
             cur2 = conn.cursor()
             try:
                 _reported = _store.account_runner_build(cur2, int(account.get("id") or 0))
             finally:
                 cur2.close()
-            # 양쪽을 다 알 때만 "다르다" 고 말한다 — 구 러너는 지문을 아예 신고하지 않는다.
-            runner_stale = bool(_deployed and _reported and _reported != _deployed)
+            # 판정은 `ai_tools.runner_build_is_stale` **하나**다 — 하트비트 응답
+            # (`runner_update`)과 같은 술어를 쓴다. 여기 다시 적으면 두 판정이 갈릴
+            # 준비를 마치고, 갈리면 「칩은 초록인데 하트비트는 구버전」이 된다.
+            # ⚠ 지문 **부재**도 stale 이다 — 지문 신고 자체가 배포본의 일부이므로
+            #   신고가 없다는 것은 그 이전 빌드라는 증거다 (사용자 제보 2026-09-01).
+            runner_stale = runner_build_is_stale(_reported)
         except Exception:
             # 사용자에게는 조용하다(경고를 지어내지 않는다) — 그러나 **로그에는 남긴다**.
             # 이 자리를 완전히 침묵시켰더니 판정이 왜 `False` 인지 좁힐 방법이 없었다

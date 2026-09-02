@@ -33,6 +33,14 @@ import oauth_store as store
 
 ENDPOINT = "/api/api-vault/options"
 
+#: 러너가 신고하는 `RunnerFeatures` 컬럼 값.
+#:
+#: ⚠ 한때 여기에 `caps_self_report` 를 요구하는 **읽기 시점 전역 게이트**가 걸려 있었다.
+#: 2026-09-01 재설계에서 철회했다 — 능력 축의 게이트는 **수신 시점**(`_sanitize_runtimes`
+#: 의 provenance allowlist)에 있고, 읽기 쪽 전역 게이트는 다중 러너 fail-closed 라는
+#: 제품 안에서 풀 수 없는 잠금만 더했다(적대 패널 3인 확인 라운드).
+_RUNNER_FEATURES = "console_jobs,self_review"
+
 #: 러너가 실제로 신고하는 모양(= `bridge_agent.detect_runtimes()` 의 반환).
 _REPORT = [
     {"runtime": "claude", "label": "Claude",
@@ -42,6 +50,9 @@ _REPORT = [
      "models": [{"value": "gpt-5.1-codex", "label": "GPT-5.1 Codex"}],
      "efforts": [{"value": "high", "label": "높음"}]},
 ]
+# 저장된 신고는 이미 sanitize 를 통과한 값이라 `source` 를 싣지 않는다(저장 스키마는
+# `{runtime,label,models,efforts}` 4키). provenance 는 **수신 시점** 게이트다 —
+# 그 축은 `test_sanitizer_drops_runtimes_without_live_provenance` 가 따로 잠근다.
 
 
 class _FakeCursor:
@@ -62,6 +73,12 @@ class _FakeCursor:
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        # `account_runner_profile` 은 계정당 여러 러너 행을 읽는다(다중 러너 fail-closed).
+        # 더블이 이것을 빠뜨리면 AttributeError 가 호출측 fail-soft 에 삼켜져 **선택기가
+        # 조용히 숨겨진다** — 실패가 조용하다는 것이 이 더블의 반복된 함정이다.
+        return [self._row] if self._row else []
 
     def close(self) -> None:
         return None
@@ -122,7 +139,7 @@ def test_blocked_gate_with_a_runner_offers_what_the_runner_reported(
     monkeypatch.delenv("AGENT_SERVER_LLM_ENABLED", raising=False)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31")))
     payload = client.get(ENDPOINT).json()
 
     assert payload["model_selector"] == "visible", "신고가 있는데 선택기가 숨겨진다"
@@ -170,13 +187,16 @@ def test_blocked_gate_does_not_guess_when_the_report_is_unreadable(
     def _boom(*_args, **_kwargs):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(store, "account_runner_capabilities", _boom)
+    monkeypatch.setattr(store, "account_runner_profile", _boom)
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31")))
     payload = client.get(ENDPOINT).json()
     assert payload["models"] == [], "조회 실패인데 목록이 채워졌다(추측)"
     assert payload["model_selector"] == "hidden"
+    # 조회 실패는 「러너가 듣고 있다」가 **아니다** — 모르는 것을 단정해 갱신 안내를 띄우면,
+    # 일시적 DB 오류가 멀쩡한 사용자에게 틀린 지시(+다운로드 링크)를 준다.
+    assert payload["runner_listening"] is False, "조회 실패를 «듣고 있음» 으로 단정했다"
 
 
 def test_reopened_gate_restores_selector(client, signed_in, monkeypatch):
@@ -235,7 +255,7 @@ def _with_defaults(monkeypatch, defaults_row):
     monkeypatch.setattr(
         appmod, "_connect_memory",
         lambda: _DefaultsConn(
-            (json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31"),
+            (json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31"),
             defaults_row))
 
 
@@ -283,7 +303,7 @@ def test_defaults_failure_does_not_empty_the_catalog(client, signed_in, monkeypa
 
     monkeypatch.setattr(
         appmod, "_connect_memory",
-        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), "console_jobs", "2026.08.31")))
+        lambda: _FakeConn((json.dumps(_REPORT, ensure_ascii=False), _RUNNER_FEATURES, "2026.08.31")))
     monkeypatch.setattr(store, "account_bridge_defaults", _boom)
     payload = client.get(ENDPOINT).json()
     assert payload["model_selector"] == "visible", "기본값 실패가 선택기를 통째로 지웠다"
@@ -339,15 +359,142 @@ def test_server_compares_the_deployed_runner_fingerprint():
 
     deployed = ai_tools._deployed_runner_build()
     assert deployed, "배포본 지문을 못 읽는다 — 대조 자체가 성립하지 않는다"
-    # 같은 지문이면 최신, 다르면 stale. **양쪽을 다 알 때만** 판정한다 —
-    # 구 러너는 지문을 아예 신고하지 않고, 그때 "다르다" 고 말할 근거는 없다.
+    # 같은 지문이면 최신, 다르면 stale. 판정의 유일한 전제는 **배포본 지문을 아는가**다.
     same = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], deployed)
     diff = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "0" * 12)
-    none = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "")
     assert same["stale_build"] is False and same["current"] is True
     assert diff["stale_build"] is True and diff["current"] is False
     assert diff["reason"], "다르다고만 하고 무엇을 할지 말하지 않는다"
-    assert none["stale_build"] is False, "신고하지 않은 러너를 구버전으로 단정한다"
+
+
+def test_missing_fingerprint_is_stale_not_current():
+    """지문 **부재**는 «같음» 이 아니라 «더 오래됨» 이다 (사용자 제보 2026-09-01, 4차 재발).
+
+    종전 계약은 「양쪽을 다 알 때만 판정한다」였고 그래서 지문을 신고하지 않는 러너를
+    `current: True` 로 통과시켰다. 그런데 **지문 신고 자체가 배포본의 일부**이므로 신고가
+    없다는 것은 그 변경 이전 빌드라는 증거다 — fail-open 이 걸린 모집단이 정확히 「낡은
+    러너」였다. 라이브 실측(2026-09-01): `RunnerBuild=''` 러너가 `current=True` 를 받는 동안
+    화면에는 그 러너가 내장 표에서 신고한 `gpt-5.1-codex` 가 떠 있었다.
+    """
+    import routers.ai_tools as ai_tools
+
+    none = ai_tools._runner_update_hint("2026.08.31", ["console_jobs"], "")
+    assert none["stale_build"] is True, "지문을 신고하지 않는 구 러너를 최신으로 읽는다"
+    assert none["current"] is False
+    assert none["reason"], "구버전이라고 하면서 다음 행동을 말하지 않는다"
+
+
+def test_staleness_predicate_has_exactly_one_home():
+    """지문 판정은 **한 함수**뿐이다 — 하트비트·연결 칩·운영 명부가 같은 것을 부른다 (G8-a).
+
+    ⚠ 첫 판본은 텍스트 슬라이스라 아무것도 잠그지 않았고, 두 번째 판본은 `ast.Assign` 만
+    모아 **동작을 바꾸는 변형 셋이 생존**했다(qa 적대리뷰 M4b-v1/v2/v3):
+      · `runner_stale: bool = False` — `AnnAssign` 이라 수집되지 않음
+      · `if (runner_stale := False): pass` — `NamedExpr` 라 수집되지 않음
+      · `runner_build_is_stale(None)` — 인자를 안 봐서 상수 `None`(=항상 최신)이 통과
+    셋 다 연결 칩을 **영구 초록**으로 만든다 — 이 테스트가 이름 붙인 바로 그 fail-open.
+
+    그래서 **모든 바인딩 형태**를 모으고 **인자가 리터럴이 아님**까지 본다.
+    """
+    import ast
+    import pathlib
+
+    import routers.ai_tools as ai_tools
+
+    assert callable(getattr(ai_tools, "runner_build_is_stale", None)), "단일 판정 함수가 없다"
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "routers"
+    src = (root / "oauth_as.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+              and n.name == "connect_status")
+
+    binds = []
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "runner_stale"
+                   for tgt in n.targets for t in ast.walk(tgt)):
+                binds.append((n, n.value))
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            if isinstance(n.target, ast.Name) and n.target.id == "runner_stale":
+                binds.append((n, n.value))
+
+    calls = [(n, v) for n, v in binds if isinstance(v, ast.Call)]
+    assert len(calls) == 1, (
+        f"`runner_stale` 을 만드는 호출이 {len(calls)}개다 — 판정이 하나여야 한다")
+    called = calls[0][1].func
+    name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+    assert name == "runner_build_is_stale", f"연결 칩이 자기 판정을 다시 적는다(호출: {name})"
+    # 인자가 **리터럴이면** 판정이 아니라 상수다 — `None` 하나로 영구 초록이 된다.
+    args = calls[0][1].args
+    assert args and not isinstance(args[0], ast.Constant), (
+        "판정 함수에 상수를 넘긴다 — 호출 모양만 남기고 판정을 없앤 것이다")
+    # 나머지 바인딩은 전부 **상수 fallback** 이어야 한다(재파생·재대입 금지).
+    for n, v in binds:
+        if any(n is cn for cn, _ in calls):
+            continue
+        assert v is None or isinstance(v, ast.Constant), (
+            "판정을 부른 뒤 다른 값으로 덮어쓰고 있다 — 두 판정이 갈릴 준비를 마쳤다")
+    # ⚠ 「나머지는 상수」만으로는 **판정 뒤에 상수를 덧대는** 변형을 못 막는다 — 이 자리로
+    #   qa 의 M4b-v1(`runner_stale: bool = False`)·v2(`if (runner_stale := False): pass`)가
+    #   실제로 생존했다(실측: 봉인 전 두 변형 모두 EXIT=0). 형태를 다 모아도 **순서**를 안
+    #   보면 마지막 값이 판정을 이긴다. 그래서 위치까지 본다 —
+    #     · 판정 호출은 자기 갈래(try body)의 **마지막 문장**이고
+    #     · 다른 상수 바인딩은 호출 **앞**(초기값)이거나 같은 try 의 **except 갈래**뿐이다.
+    #   두 조건이 함께여야 「호출 뒤 덧대기」가 닫힌다.
+    call_node = calls[0][0]
+    owner = next((t for t in ast.walk(fn)
+                  if isinstance(t, ast.Try) and any(s is call_node for s in t.body)), None)
+    assert owner is not None, "판정 호출이 try 갈래 안에 없다 — 실패가 거짓 경고로 나간다"
+    assert owner.body[-1] is call_node, (
+        "판정 호출이 자기 갈래의 마지막이 아니다 — 뒤에 온 값이 판정을 덮는다(fail-open)")
+    _in_handler = {id(x) for h in owner.handlers for x in ast.walk(h)}
+    for n, _v in binds:
+        if n is call_node:
+            continue
+        assert id(n) in _in_handler or n.lineno < owner.lineno, (
+            "판정 호출 **뒤에** `runner_stale` 을 다시 묶는다 — 판정이 장식이 됐다")
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call):
+            f = n.func
+            nm = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+            assert nm != "_deployed_runner_build", (
+                "연결 칩이 배포본 지문을 직접 읽는다 — 판정이 두 벌이 된다")
+
+    # 세 번째 소비처(운영 명부)도 같은 함수를 부른다 — 한 곳만 놓쳐도 그 화면만 조용해진다
+    # (backend 적대리뷰 B2-R1: 그 상태에서 이 버그를 분류할 콘솔만 경고를 안 띄웠다).
+    ops_tree = ast.parse((root / "ai_ops.py").read_text(encoding="utf-8"))
+    roster = next(n for n in ast.walk(ops_tree)
+                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and n.name == "_runner_roster")
+    roster_calls = {(c.func.id if isinstance(c.func, ast.Name) else getattr(c.func, "attr", ""))
+                    for c in ast.walk(roster) if isinstance(c, ast.Call)}
+    assert "runner_build_is_stale" in roster_calls, "운영 명부가 자기 판정을 다시 적는다"
+    # ⚠ 텍스트로 `"!= deployed" not in ops` 를 보면 **이 변경을 설명하는 주석**이 그 문자열을
+    #   인용해 거짓 FAIL 이 난다(실측). 부재는 **AST 로** 본다 — `deployed` 를 피연산자로 쓰는
+    #   비교가 함수 안에 남아 있으면 판정이 다시 두 벌이 된 것이다.
+    for cmp_node in (n for n in ast.walk(roster) if isinstance(n, ast.Compare)):
+        names = {x.id for x in ast.walk(cmp_node) if isinstance(x, ast.Name)}
+        assert "deployed" not in names, (
+            "운영 명부가 배포본 지문을 직접 비교한다 — 복제된 판정이 되살아났다")
+
+
+def test_deployed_fingerprint_unknown_is_not_a_false_alarm(monkeypatch):
+    """배포본 지문을 **못 읽으면** 판정하지 않는다 — 모르는 것을 stale 로 부르지 않는다.
+
+    이것이 없으면 파일 권한 하나로 전 사용자에게 거짓 갱신 지시가 나간다. 신고 쪽 unknown
+    (`None`)도 같은 방향이다 — 조회 실패·컬럼 부재는 「구버전」이 아니라 「모름」이다.
+    """
+    import routers.ai_tools as ai_tools
+
+    monkeypatch.setattr(ai_tools, "_deployed_runner_build", lambda: "")
+    assert ai_tools.runner_build_is_stale("") is False
+    assert ai_tools.runner_build_is_stale("0" * 12) is False
+    assert ai_tools.runner_build_is_stale(None) is False
+
+    monkeypatch.setattr(ai_tools, "_deployed_runner_build", lambda: "abcdef123456")
+    assert ai_tools.runner_build_is_stale(None) is False, "신고 쪽 «모름» 을 stale 로 단정했다"
+    assert ai_tools.runner_build_is_stale("") is True, "지문 미신고(구 빌드)를 최신으로 읽는다"
+    assert ai_tools.runner_build_is_stale("abcdef123456") is False
 
 
 def test_connect_status_exposes_staleness_as_a_single_boolean():
@@ -378,3 +525,31 @@ def test_chip_shows_a_distinct_state_for_stale_runner():
     assert "!!b.runner_stale" in js, "서버 값이 칩까지 도달하지 않는다"
     css = (base / "css" / "search-audit.css").read_text(encoding="utf-8")
     assert '.ai-conn[data-state="stale"]' in css, "스타일이 없어 정상 상태와 같아 보인다"
+def test_sanitizer_drops_runtimes_without_live_provenance():
+    """런타임별 provenance 가 없는 신고는 **수신 시점에** 떨어진다 (qa §3).
+
+    자격 신고는 「이 빌드가 계약을 아는가」에 답하는 전역 불리언이라, 다음 신고 포맷이
+    바뀌면 다섯 번째 이름이 필요하고 그 사이 잘못 조립한 신고도 통째로 신뢰된다.
+    provenance 는 런타임 단위로 「이 목록이 라이브 답인가」에 답해 그 클래스를 닫는다.
+    """
+    import routers.ai_tools as ai_tools
+
+    def _rt(source):
+        item = {"runtime": "codex", "label": "Codex",
+                "models": [{"value": "gpt-5.1-codex", "label": "x"}], "efforts": []}
+        if source is not None:
+            item["source"] = source
+        return [item]
+
+    assert ai_tools._sanitize_runtimes(_rt(None)) == [], "출처 미신고(구 러너)가 통과했다"
+    assert ai_tools._sanitize_runtimes(_rt("builtin")) == [], (
+        "내장 표 출처가 통과했다 — `gpt-5.1-codex` 가 화면에 뜬 그 경로다")
+    for good in ("probe", "cache"):
+        got = ai_tools._sanitize_runtimes(_rt(good))
+        assert len(got) == 1 and got[0]["runtime"] == "codex", good
+        assert "source" not in got[0], "저장 스키마에 출처가 새어 들어갔다(4키 계약)"
+    # 섞여 있으면 **나쁜 것만** 떨어진다 — 전역 불리언보다 우아하게 열화한다.
+    mixed = ai_tools._sanitize_runtimes(_rt("probe") + [
+        {"runtime": "claude", "label": "Claude", "source": "builtin",
+         "models": [{"value": "opus", "label": "Opus"}], "efforts": []}])
+    assert [r["runtime"] for r in mixed] == ["codex"]

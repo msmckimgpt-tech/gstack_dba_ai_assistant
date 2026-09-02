@@ -132,7 +132,10 @@ def test_defaults_lookup_failure_cannot_empty_the_catalog():
     """
     src = _SYSTEM.read_text(encoding="utf-8")
     body = src[src.index("def get_api_vault_options("):]
-    seg = body[body.index("account_runner_capabilities("):body.index("if not authenticated")]
+    # 앵커는 능력을 읽는 호출이다. caps-trust-gate(2026-09-01)에서 `account_runner_capabilities`
+    # → `account_runner_profile` 로 바뀌었다 — 목록만이 아니라 **자격**(`caps_trusted`)까지
+    # 같은 행에서 읽어야 「비었다」의 이유를 잃지 않기 때문이다.
+    seg = body[body.index("account_runner_profile("):body.index("if not authenticated")]
     assert seg.count("try:") >= 1 and "account_bridge_model, account_bridge_effort = \"\", \"\"" in seg, (
         "기본값 조회가 자기 실패를 삼키지 않는다")
 

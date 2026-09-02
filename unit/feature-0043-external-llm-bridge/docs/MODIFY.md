@@ -2989,7 +2989,6 @@ AI 관련 모든 작동사항을 다시 활성화 후, 연결한 AI를 통해 �
 런처는 사용자 머신 파일이라 5번은 «다음에 설치·재설치한 사람» 부터 발효한다. 그 전까지 D 는
 갱신 없이 실행만 되고, 대기 판정이 `runner_stale` 을 계속 보므로 **연결 창으로 떨어져 최신
 명령을 받는다**(종전 경로 — 나빠지지 않는다). 한 번 그 경로를 지나면 이후는 클릭만으로 갱신된다.
-
 ## CHG-20260902T110000 — 콘솔 작업의 모델·추론등급을 계정이 정한다 (제보 대응)
 
 **계기**: 사용자 제보 — 「그래프 뷰 능동 분석이 경량모델이 아닌 fable/opus 로, effort 도 low 로
@@ -3019,3 +3018,226 @@ path 에만 있어 **운영 DB 에 컬럼이 없었다**(대화 축 계정 기�
 **발효 범위 (정직 표기)**: 설정을 저장한 계정부터 발효한다. 그 전까지는 종전 경량 선호로 돌고
 등급은 러너 기본을 따른다 — 즉 **제보 증상의 등급 축은 사용자가 프로필에서 값을 고른 뒤에**
 해소된다. 미설정 상태를 자동으로 어떤 등급에 묶지 않은 것은 사용자 결정(항목별 지정)에 따른다.
+## CHG-20260902T110000-ai-claude-feature-0043-click-beats-entry — 진입 자동 시도가 사용자의 클릭을 삼키던 결함
+
+- **날짜**: 2026-09-02 · **위험도**: Major (직전 cycle 의 **회귀 수정**)
+- **적발**: `CHG-20260902T100000` 배포 후 실 Windows 브라우저 실측.
+
+### 무엇이 잘못됐나
+
+진입 자동 시도(`reason="entry"`)는 최대 ~30초 동안 「쓸 수 있게 됐는가」를 지켜본다. 그 창 안에
+사용자가 칩을 누르면 `_launchBusy` 가드가 **조용히 삼켰다** — 실행도 안 되고 창도 안 열려,
+사용자에게는 «눌렀는데 아무 일도 일어나지 않음» 이 된다. 그건 이 개선 **이전**(무조건 창 열기)
+보다 **나쁘다**. 라이브 실측에서 그대로 관측됐다(칩 클릭 → 40초 뒤에도 모달 닫힘·상태 문구 없음).
+
+### 조치
+
+- **사용자의 클릭이 진행 중인 자동 시도를 대체한다.** 클릭끼리의 중복은 그대로 막는다.
+- **일련번호(`_launchSeq`)로 대체를 판정** — 대체된 시도는 결과를 반영하지도, 잠금을 풀지도,
+  창을 열지도 않는다. 풀면 새 시도의 중복 방어가 사라지고, 열면 사용자가 방금 시작한 흐름 위로
+  남의 시도가 만든 창이 덮인다.
+
+### 교훈
+
+자동화가 «사용자를 돕는 장치» 에서 «사용자를 막는 장치» 로 뒤집히는 형태다. 대기창을 가진 자동
+경로를 넣을 때는 **그 창 안에서 사용자가 같은 일을 하려 하면 무엇이 이기는가** 를 반드시 정해야
+한다. 단위 테스트는 이것을 보지 못했다 — 잡은 것은 배포 후 실 브라우저 왕복이다.
+
+---
+
+## CHG-20260901T123000-ai-claude-feature-0043-caps-trust-gate — 능력 신고 자격 게이트 (4차 재발 봉인)
+
+**제보 (2026-09-01)**: 「연결한 AI에 정합하지 않은 모델 목록이 나타나는 이슈 (gpt-5.1 등)」.
+08-31 에 같은 제보를 세 번 받아 폴백 제거·재시도·지문 신고를 배포했는데 네 번째로 돌아왔다.
+
+**원인**: 세 수정 모두 **러너 안**에서 계약을 지켰다. 그런데 러너는 사용자 머신의 파일이고
+우리는 그것을 갱신할 수 없다 — 낡은 빌드가 자기 소스의 내장 표를 계속 신고했고, 서버는
+그 신고의 **출처를 검증할 수단이 없어** 그대로 화면에 그렸다. 게다가 3차 수정의 지문 대조가
+`deployed and reported and ...` 라 **지문을 신고하지 않는 러너**(= 결함을 가진 바로 그
+모집단)를 조용히 «최신» 으로 통과시켰다.
+
+라이브 3중 대조: 러너 파일 `af7c3fe19808`(폴백 제거 이전) · 로그 「codex: 응답을 받지 못해
+내장 기본값을 씁니다」 · DB `WebOAuthTokens.Id=83` 의 `RunnerCapabilities` 에
+`gpt-5.1-codex`·`-mini`, `RunnerBuild=''`.
+
+**변경**
+
+- `shared/bridge_tasks.py`: `RUNNER_FEATURE_CAPS_SELF_REPORT = "caps_self_report"` 신설
+  (자격 이름의 단일 정본). 버전·지문이 아니라 **기능 신고**를 축으로 고른 이유를 주석에 명시 —
+  버전은 날짜 단위라 같은 날을 못 가르고(3차 재발의 원인), 지문은 동일성 축이라 게이트로 쓰면
+  러너 파일을 고치는 **모든 배포**가 멀쩡한 사용자의 선택기까지 지운다.
+- `unit/feature-0043-external-llm-bridge/src/bridge_agent.py` (+ 서빙 미러
+  `unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`): `AGENT_FEATURES` 에
+  `caps_self_report` 추가.
+- `unit/feature-0003-agent-web-ui/src/oauth_store.py`: `_caps_trusted()` 신설 +
+  `account_runner_profile` 이 자격 없는 신고의 `capabilities` 를 빈 목록으로 내리고
+  `caps_trusted` 를 함께 반환. **관문을 저장 계층에 둔 이유**는 능력 소비처가 셋
+  (카탈로그·저장 선택 복원·얇은 래퍼)이고 뒤 둘이 모두 이 함수를 지나기 때문(§16.7 G8-a).
+  `features`·`agent_version`·`listening` 축은 불변 — 콘솔 위임까지 끊지 않는다.
+- `unit/feature-0003-agent-web-ui/src/routers/system.py`: `account_runner_capabilities` →
+  `account_runner_profile` 로 바꿔 목록과 자격을 **한 행에서** 읽는다. `runner_caps_stale` ·
+  `runner_download_url` 을 응답에 추가하고 `model_selector_reason` 을 상태별로 가른다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py`: `runner_build_is_stale()` 신설 —
+  지문 판정의 **단일 정본**. 지문 부재를 stale 로 판정(fail-closed). 배포본 지문을 못 읽으면
+  판정하지 않는다(거짓 경고 방지).
+- `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py`: `connect_status` 가 자기 비교를
+  버리고 위 단일 판정을 호출 — 종전엔 같은 술어가 2벌이었다.
+- 프런트 `static/index.html`·`css/chat.css`·`app/composer.js`: 숨김 사유를 그리는
+  `#composerActionsSelectorNote` 신설. `model_selector_reason` 은 2026-08-28 부터 응답에
+  있었으나 **소비처가 0개**였다 — 값의 존재와 도달은 다른 사실이다.
+
+**테스트**: 신규 12건 + 갱신 4건. §16.7 G11-b 실증 — 소스만 `main` 으로 되돌린 상태에서
+**16건 전부 FAIL** 확인 후 복원. 구조 단정
+`test_builtin_model_table_never_reaches_the_report` 는 git 이력의 실제 결함 빌드
+(`82f3a160^` = `8766f0e6f32c`)에 걸어 `gpt-5.1-codex` 누출을 재현했다(내가 만든 뮤턴트 아님).
+
+
+---
+
+## CHG-20260901T140000-ai-claude-feature-0043-caps-trust-gate-r2 — 적대 패널 조치 (P1 7 · concern 8)
+
+§18.8 패널 3인이 **CONCERN / BLOCK / BLOCK** 을 냈고, 그중 셋은 뮤턴트로 실증됐다. 전건 조치.
+
+**저장 계층 (`oauth_store.py`)**
+- `set_runner_report`: 능력을 싣지 못한 신고(`None`)를 `"[]"` 로 바꿔 **이전 능력을 무효화**
+  한다. `COALESCE` 가 옛 목록을 남기는 동안 같은 문장이 `RunnerFeatures` 는 덮어써서, 구
+  러너의 `gpt-5.1-codex` 가 새 러너의 계약 선언을 얻어 인증되던 경로(backend B1).
+- `account_runner_build`: `str | None` **tri-state**. 조회 실패·컬럼 부재는 `None`(모름)이고
+  로그를 남긴다. 종전엔 셋이 모두 `""` 라, 「지문 부재 = 더 오래됨」 판정을 켠 순간
+  `RunnerBuild` 컬럼 없는 배포의 **최신 러너 사용자 전원**에게 거짓 갱신 지시가 나갔다.
+- `account_runner_profile`: 살아 있는 행을 `RUNNER_ROWS_SCAN_MAX`(8)까지 읽고 **하나라도
+  계약 미선언이면 능력을 내지 않는다**(fail-closed). 신뢰된 행 *선호* 는 기각 — 그 목록으로
+  고른 모델을 실제로 가져가는 것이 미선언 러너일 수 있다. `mixed_runners` 로 「갱신은 했고
+  옛 것을 안 껐다」를 구분한다.
+- `token_runner_profile`: 같은 게이트 적용(두 번째 관문). `_parse_caps_column` 공용화.
+- `_caps_trusted` → **`declares_caps_contract`** rename + **모듈 레벨 import**(미테스트
+  `except` 분기 소멸). docstring 에 「인가 경계가 아니라 호환성 자기신고」를 명시.
+
+**provenance 축 신설 (재발 클래스 봉인 — qa §3)**
+- 러너 `detect_runtimes`: 신고 항목마다 `source` 를 싣고, **캐시 경로 포함** 신고 직전에
+  `_REPORTABLE_SOURCES`(`probe`/`cache`/`ollama`)로 거른다. ollama 실조회는 `builtin` 이
+  아니라 `ollama` 로 표기(아니면 게이트가 그 사용자 선택기를 지운다).
+- 서버 `_sanitize_runtimes`: 같은 집합 `_SANITIZE_SOURCE_ALLOW` 로 **수신 시점** 거름.
+  저장 스키마는 4키 유지(`source` 는 게이트용이지 저장값이 아니다). 구조 테스트가 양쪽
+  집합의 동일성과 `builtin` 부재를 잠근다.
+
+**표면·문서**
+- `system.py`: `caps_contract_declared` 반영 + `runner_mixed` 응답 + 사유 3분기.
+- `index.html`/`chat.css`/`composer.js`: `role="presentation"` + `aria-live`(무효 role 제거),
+  **다운로드 링크 배선**(소비처 0 이던 필드), **카탈로그 부재 시에도 말한다**.
+- `_console_llm.py`: `runner` dict 키 집합을 성공/실패 분기에서 동일하게.
+- 러너 `detect_runtimes` docstring: 없는 폴백을 현재 동작으로 서술하던 문단 재작성(양 미러).
+
+**테스트**
+- `_func_source` 가 **docstring 줄만** 제거(자기 설명이 자기 단언을 통과시키던 구멍).
+  `ast.unparse` 재출력은 포맷 정규화로 무관한 단언 15건을 깨 **불채택**.
+- 이름 정합·단일 판정은 AST(`ImportFrom` 노드 · `connect_status` 안 단일 대입)로 격상.
+- 프런트는 `tests/verify_selector_note.mjs`(jsdom 10케이스)로 동작 검증. **CI 는 pytest
+  전용이라 이 하네스를 실행하지 않는다**(컨테이너에 node 부재) — 그 사실을 증적에 명시.
+- 신규 커버리지: 화석 가드 · 다중 러너 · malformed features · 두 번째 관문 · 투영 함수 전수 ·
+  provenance(수신·신고 양쪽) · cached/probe 두 분기 · ollama 실조회.
+- **단언별 G11-b**: qa 가 생존시킨 뮤턴트 8종(M1b·M2b·M3·M4b·M7·M8·M9b·M-C2)을 다시 넣어
+  **전부 FAILED** 확인. 하네스가 처음 M8 을 놓친 사실과 그 원인(빠진 경계 케이스)도 기록.
+
+---
+
+## CHG-20260901T190000-ai-claude-feature-0043-caps-trust-gate-r3 — §18.8 (b) 재설계: 전역 게이트 철회, provenance 로 수렴
+
+> **위 두 항(`caps-trust-gate` · `-r2`)이 서술하는 설계는 이 항으로 대체됐다.**
+> 무엇을 왜 되돌렸는지는 아래 「철회」 표에 있고, 남은 설계는 FUNCTION.md §P0-Z6 이다.
+
+### 왜 패치가 아니라 재설계인가
+
+§18.8 확인 라운드 3인(security·backend·qa)이 **CONCERN / BLOCK / BLOCK** 을 냈다. 결정적인
+것은 판정 자체가 아니라 **모양**이었다 — P1 개수가 라운드에 걸쳐 줄지 않았고(security 3→4,
+backend 4→4), 2라운드 P1 중 **넷은 1라운드에서 내가 넣은 수정이 만든 결함**이었다. §18.8
+수렴 계약 (b) 는 이 모양을 「또 한 번 패치할 신호가 아니라 재설계 신호」로 정의한다.
+
+내가 스스로 실증한 예 하나를 적는다: ollama 폴백 항목의 `source` 를 `"builtin"` 에서
+`"ollama"` 로 바꾼 순간, 캐시 쓰기 가드(`!= "builtin"`)의 극성이 뒤집혀 **그 목록이 영구히
+굳는** 새 결함이 생겼다(security B1). 고칠수록 결함이 생기는 자리였다.
+
+### 철회
+
+| 철회한 것 | 대체 | 사유 |
+|---|---|---|
+| 전역 자격 선언 `caps_self_report`(`AGENT_FEATURES`·`shared/bridge_tasks` 상수) | 런타임별 `source` | 「이 빌드가 계약을 아는가」에 답하는 불리언 하나라 다음 포맷 변경에 다섯 번째 이름이 필요하다 — 재발 클래스를 닫는 게 아니라 한 iteration 미룬다 |
+| 읽기 시점 게이트(`oauth_store.account_runner_profile` 의 자격 판정 · `token_runner_profile` 게이트) | 수신 시점 `_sanitize_runtimes` | 수신 시점 필터가 **첫 하트비트에** 낡은 목록을 지운다. 읽기 시점 게이트가 추가로 만드는 것은 「목록이 멀쩡한데도 잠기는」 상태뿐이었다 |
+| 다중 러너 fail-closed + `mixed_runners`·`runner_caps_stale` 응답 필드 | — (제거) | 그 잠금에 **제품 안의 해제 수단이 없었다**. 옛 러너를 끄는 것은 사용자 머신에서만 가능하다 |
+| `RUNNER_ROWS_SCAN_MAX` 다중 행 스캔 | 단일 행(`LastHeartbeatAt DESC LIMIT 1`) 복귀 | 위 규칙이 사라지면 여러 행을 읽을 이유가 없다 |
+| 과대 신고 화석 가드(`set_runner_report` 의 저장 거부) | 잘라 저장 + `warning` 로그 | 저장하지 않으면 **직전 목록이 그대로 남는다** — 화석을 막으려던 가드가 화석을 보존한다 |
+| 로컬 LLM(ollama) 런타임 전체 | — (제거, 사용자 결정) | 로컬 LLM 미사용. 남겨 두는 비용이 문서적이지 않았다(위 B1) |
+
+### 남긴 것 · 고친 것
+
+1. **런타임별 provenance 가 유일한 자물쇠다.** 러너가 항목마다 `source`(`probe`/`cache`/
+   `builtin`)를 싣고, 러너(`_REPORTABLE_SOURCES`)와 서버(`_SANITIZE_SOURCE_ALLOW`)가 같은
+   allowlist `{probe, cache}` 로 거른다. 단위가 런타임 하나라 나쁜 것만 떨어진다.
+2. **기본값 fail-closed.** `sanitize_caps` 는 출처가 없으면 지어내지 않는다. 종전 판본은
+   `"cache"` 를 기본값으로 넣었는데 **아무 writer 도 그 값을 쓰지 않아** 기본값이 곧 유일한
+   값이었다 — 게이트 전체가 fail-open 이었다(backend 적대리뷰가 실증).
+3. **출처를 모르는 캐시는 「캐시 없음」이다** — `detect_runtimes` 진입부에서 걸러 다시 묻는다.
+4. **지문 판정 사본 3 → 1.** `ai_ops._runner_roster` 가 `deployed` 를 직접 비교하던 세 번째
+   사본을 `runner_build_is_stale` 호출로 바꿨다(backend B2-R1: 그 상태에서 이 결함을 분류할
+   운영 콘솔만 경고를 안 띄우고 있었다).
+5. **사유는 러너가 듣고 있는가 하나로 갈린다** — `system.py` 3분기(표시 / 듣는데 목록 없음 /
+   러너 없음). 러너가 없을 때는 **다운로드 링크를 주지 않는다**(다음 행동은 연결이다).
+6. **안내 `<p>` 를 `role="menu"` 밖으로.** 메뉴 자식의 `role="note"`·`aria-live` 는 ARIA
+   presentational-roles-conflict-resolution 으로 **무효화된다** — 배선은 됐는데 보조기술에는
+   도달하지 않는 상태였다.
+
+### 파일
+
+- `unit/feature-0043-external-llm-bridge/src/bridge_agent.py`(+ 미러 `…/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py`, byte-동일): ollama 전면 제거 · `AGENT_FEATURES` 원복 · provenance 게이트 · `sanitize_caps` fail-closed · 캐시 필터
+- `unit/feature-0003-agent-web-ui/src/oauth_store.py`: 읽기 시점 게이트·화석 가드 철회 · `account_runner_build` tri-state · 과대 신고 경고 로그
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py`: `runner_build_is_stale` 단일 판정 · `_SANITIZE_SOURCE_ALLOW`
+- `unit/feature-0003-agent-web-ui/src/routers/system.py`: 단일 축(`runner_listening`) + 사유 3분기
+- `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`: 세 번째 사본 통합
+- `unit/feature-0003-agent-web-ui/src/static/{index.html,app/composer.js}`: ARIA 자리 이동 · 사유·링크 배선
+- `shared/bridge_tasks.py`: `RUNNER_FEATURE_CAPS_SELF_REPORT` 제거
+
+### 검증
+
+- `make test` — **6,913건 수집 / 6,898 passed · 15 skipped · 0 failed** · ruff `All checks passed!`
+  (origin/main 68 커밋 재병합 후 실행).
+- **뮤턴트 봉인 (§16.7 G11-b, 실측)**: qa 적대리뷰가 생존시킨 변형을 다시 넣어 exit code 로 확인.
+  `M4b-v1`(`runner_stale: bool = False`) · `M4b-v2`(`if (runner_stale := False): pass`) 는
+  **봉인 전 EXIT=0(생존)** 이었다 — 「모든 바인딩 형태를 모으고 나머지는 상수」까지 봐도
+  **순서**를 안 보면 마지막 값이 판정을 이긴다. 호출이 자기 갈래의 마지막인지까지 보도록
+  고친 뒤 4변형(`AnnAssign`·`NamedExpr`·상수 인자·주석 처리) + 꼬리 덮어쓰기 1종이 **전건
+  EXIT=1(KILLED)**, 정상 소스는 EXIT=0. `M7-v2`(`AGENT_FEATURES + ("admin_jobs",)`)도 KILLED.
+- 미러 byte-동일성은 `test_bridge_agent_sync` 가 잠근다.
+
+---
+
+## CHG-20260902T113000-ai-claude-feature-0043-caps-trust-gate-r4 — codex 확인 라운드 조치 (P1 1 · P2 2)
+
+§18.8 확인 라운드를 **codex 채널**로 대체했다(사용자 결정 — Agent 패널 1회 허용은 소진).
+지적 3건 모두 **재현 확인 후** 수정했고, 각각 뮤턴트로 실증했다. 판단 근거는
+`REVIEW.md` 의 `REV-20260902T113000-…-r3 [CODEX:review]`.
+
+### 변경 내용
+
+1. **`oauth_store.set_runner_report` — 지문 컬럼 없이 재시도** (P1).
+   `RunnerBuild` 컬럼이 없는 배포에서 통합 UPDATE 가 통째로 실패하면, 하트비트 핸들러가
+   예외를 삼키는 동안 `LastHeartbeatAt` 만 갱신되고 **`RunnerCapabilities` 는 옛 값 그대로**
+   남는다 — 이 cycle 이 닫으려는 화석 목록이 그 모집단에서만 영구히 살아남는 형태다.
+   지문 축(`account_runner_build`)은 그 배포를 **명시적으로 지원**(`None` = 판정 안 함)하는데
+   쓰기 축만 지원하지 않던 비대칭을 없앤다. 한 단 내려가 **능력·기능·버전 세 축은 반드시**
+   새긴다 — provenance 필터의 전제가 여기 걸려 있다.
+2. **`oauth_store.list_live_runners` — 하트비트 없던 행은 `None`** (P2).
+   운영 명부는 러너가 아닌 토큰(등록형 MCP 클라이언트 등)도 일부러 포함하는데, 그 행의 빈
+   지문을 「구 러너」로 읽어 **러너를 띄운 적도 없는 계정**에 갱신 지시가 붙었다. 판정 통합
+   전에는 복제된 식이 `""` 를 stale 로 보지 않았으므로 **내 통합이 만든 오탐**이다.
+3. **`composer.js._composerModelSelectorHidden` — 카탈로그 부재 = 숨김** (P2).
+   종전엔 `undefined !== "hidden"` 이라 「보임」이었고, 그래서 카탈로그 fetch 실패 화면이
+   **목록 없는 선택기 + 서버 기본값 라벨**을 내보냈다. 같은 이유로 「모델 목록을 불러오지
+   못했습니다」 분기가 **도달 불가능한 죽은 코드**였다 — 그 분기를 jsdom 하네스가 **직접
+   호출**해 통과시키고 있었다(진입점을 통과하지 않는 vacuous pass).
+4. **jsdom 하네스 재작성** — 진입점(`_applyComposerSelectorVisibility`)을 함께 들고 와
+   케이스 6 을 그 경로로 구동한다. 10 → **11 케이스**.
+5. 신규 테스트 3건 + 뮤턴트 3종 KILLED 실증(exit code).
+
+### 발효
+
+서버 축은 배포 즉시. 러너 파일은 이 항에서 바뀌지 않는다(재다운로드 불필요).

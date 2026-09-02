@@ -328,7 +328,12 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False,
     쌓인다. 표시의 오류는 한 줄이고 적재의 오류는 유령 작업이다.
     """
     blocked = not server_llm_enabled()
-    runner = {"listening": False, "agent_version": "", "features": []}
+    runner = {"listening": False, "agent_version": "", "features": [],
+              # 성공 분기가 돌려주는 프로필과 **같은 키 집합**을 유지한다 (security
+              # 적대리뷰 §3): 실패 분기만 좁으면 소비자가 성공 시 `false`, 실패 시
+              # `undefined` 를 받아 두 상태를 구별하지 못한다.
+              "capabilities": [], "caps_contract_declared": False,
+              "mixed_runners": False}
     if not blocked:
         # 게이트가 열려 있으면 러너를 조회하지 않는다 — 쓰이지 않을 사실을 위해 매 요청
         # 토큰 테이블을 두드릴 이유가 없다.
@@ -369,7 +374,12 @@ def console_llm_state(conn, account: Any, *, need_batch: bool = False,
             _log.warning("[console-llm] 러너 상태 조회 실패 account=%s: %r", account_id, exc)
             has_token = False
             required_model = ""
-            runner = {"listening": False, "agent_version": "", "features": []}
+            runner = {"listening": False, "agent_version": "", "features": [],
+              # 성공 분기가 돌려주는 프로필과 **같은 키 집합**을 유지한다 (security
+              # 적대리뷰 §3): 실패 분기만 좁으면 소비자가 성공 시 `false`, 실패 시
+              # `undefined` 를 받아 두 상태를 구별하지 못한다.
+              "capabilities": [], "caps_contract_declared": False,
+              "mixed_runners": False}
 
     state = _classify(runner, has_token, need_batch=need_batch, required_model=required_model)
     return {

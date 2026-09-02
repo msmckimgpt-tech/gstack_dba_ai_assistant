@@ -2654,6 +2654,54 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                 product_name=str(scope.get("product_name") or "")),
         system_prompt.strip(),
     ) if x)
+    # ── 큐레이션 KB 근거를 **점유 응답에 실어 보낸다** (2026-09-02) ────────────────────
+    #
+    # ⚠ 왜 도구(`get_task_context`)로 충분하지 않았나 — 라이브 실증
+    #
+    #   2026-09-01 에 `get_task_context` 를 5개 층으로 넓혔다(용어사전·ENUM·설명·샘플·관계).
+    #   서버 쪽은 옳았다: 실제 GZ_QA_G task 로 부르면 200 OK 로 정확한 근거가 나온다.
+    #   그런데 **라이브 대화에서 AI 는 그 도구를 한 번도 부르지 않았고**, "steam_billing_log
+    #   라는 테이블 자체가 등록 메타데이터 어디에도 없습니다" 라고 답했다 — 번들에는 그 정의가
+    #   분명히 들어 있는데도.
+    #
+    #   원인: 러너가 AI 에게 안내하는 도구 목록(`compose_prompt`)에 `get_task_context` 가
+    #   **없다**. list_schemas·describe_table·search_tables·execute_sql 등 **조사** 도구만
+    #   나열한다. 없는 도구는 부를 수 없다.
+    #
+    # ⚠ 왜 러너를 고치지 않고 서버에서 고치나
+    #
+    #   러너 목록에 `get_task_context` 를 추가하는 쪽이 더 작은 변경이지만, 그러면 여전히
+    #   **AI 가 부를지에 의존**한다. 서버가 실어 보내면 그 의존이 사라진다 — 근거는 무조건 온다.
+    #
+    #   ⚠ 정직하게: 이 변경은 **러너도 새 필드를 읽어야** 효과가 난다(`compose_prompt` 가
+    #     `kb_context` 를 배치한다). 실측에서 구버전 러너로 붙였더니 서버는 필드를 보냈는데
+    #     프롬프트는 그대로였다. 「서버에만 두면 러너 버전과 무관하다」는 **사실이 아니다**.
+    #     다만 (a) 러너가 낡으면 서버가 이미 `hb.stale_build` 로 갱신을 안내하고,
+    #     (b) 필드가 없거나 러너가 낡아도 **깨지지 않는다**(양쪽 다 생략으로 접힌다).
+    #     이 필드를 `system_prompt` 에 섞으면 구버전에도 닿지만, 질문마다 달라지는 데이터를
+    #     시스템 채널에 넣는 것이라 프롬프트 캐시를 깨고 채널 성격도 흐린다 — 그래서 안 한다.
+    #
+    #   전환 전 서버 계정 AI 는 `_build_knowledge_context()` 가 시스템 프롬프트에 **무조건**
+    #   주입했다. 외부 AI 전환이 그 성격을 「자동 주입」에서 「AI 가 부르면 받음」으로 바꿨고,
+    #   그 차이가 라이브에서 0 기여로 나타났다. 자동 주입 쪽으로 되돌린다.
+    kb_notes: list = []
+    try:
+        import agent_core as _core_kb   # 지연 import — 라우터 로드 시점 순환 회피
+        _ds_scopes = _authz.datasource_scope_keys(
+            _core_kb, conn, int(row[2] or 0))
+    except Exception:
+        _ds_scopes = []
+    # ⚠ **각인·canary 가 붙지 않은 원문**(`question`)으로 매칭한다. `marked` 는 가드 래퍼
+    #   문구가 섞여 있어, 그걸로 매칭하면 래퍼 안의 낱말이 용어에 걸린다.
+    kb_sections = _kb_grounding_sections(
+        question, _bridge_product_scope_key(conn, row[2]) or "", _ds_scopes, kb_notes)
+    kb_context = "\n\n".join(s for s in kb_sections if s)
+    if len(kb_context) > _CTX_BUNDLE_MAX_CHARS:
+        _dropped = len(kb_context) - _CTX_BUNDLE_MAX_CHARS
+        kb_context = (kb_context[:_CTX_BUNDLE_MAX_CHARS]
+                      + f"\n\n(⚠ 등록 근거가 상한을 넘어 {_dropped:,}자 잘렸습니다 — "
+                        "`get_task_context` 에 `focus` 로 좁혀 다시 받을 수 있습니다.)")
+
     # 사용자에게 "지금 처리 중" 을 보인다(제보 2026-08-27 — 상황을 알 방법이 없었다).
     _mark_bridge_working(conn, task_id, conversation_id)
     # 조사가 시작됐다는 **내부 동작** 단계. 도구 호출만 남기면 실행 단계가 "DB 를 뒤진 기록"
@@ -2672,6 +2720,11 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
+        # 관리 콘솔이 큐레이션한 KB 근거(용어사전·ENUM·설명·샘플·관계). **도구를 부르지 않아도**
+        # 받는다 — 위 주석 참조(라이브에서 AI 가 `get_task_context` 를 안 불러 0 기여였다).
+        # 빈 문자열이면 매칭된 근거가 없다는 뜻이고, 러너는 이 블록을 통째로 생략한다.
+        "kb_context": kb_context,
+        "kb_notes": kb_notes,
         # 사용자가 웹에서 고른 (런타임·모델·추론등급) (P0-Z3). 러너의 **자기 신고 목록**에서
         # 고른 값이므로 그대로 CLI 인자가 된다. 고르지 않았으면 빈 값 — 러너는 그때 자기
         # 기본 설정으로 답한다. AI 에게 지시로 주지 않는 이유: 이건 프롬프트가 아니라
@@ -4386,6 +4439,20 @@ def _sanitize_runtimes(raw: object) -> list | None:
         if name in seen_runtimes:
             continue
         seen_runtimes.add(name)
+        # ── provenance allowlist (qa 적대리뷰 §3, 2026-09-01) ──────────────────────
+        #
+        # 「이 목록이 어떻게 얻어졌는가」를 런타임 **단위**로 본다 — 이것이 「화면 목록의
+        # 출처는 연결된 AI」 계약의 **집행 지점**이다.
+        #
+        # 구 러너는 `source` 를 아예 보내지 않으므로 여기서 전부 떨어진다 — 그것이 이번
+        # 결함의 모집단이고, 그래서 화석 목록은 **첫 하트비트에** 빈 목록으로 대체된다.
+        # 특정 런타임만 내장 표로 채운 미래 빌드는 **그 런타임만** 떨어진다(우아한 열화).
+        #
+        # ⚠ 한때 여기 더해 읽기 시점 전역 게이트를 뒀다가 철회했다(2026-09-01, 적대 패널
+        #   3인 확인 라운드) — 수신 시점이 이미 짐을 다 지는데 전역 게이트는 다중 러너
+        #   fail-closed 라는 제품 안에서 풀 수 없는 잠금만 더했다.
+        if str(item.get("source") or "") not in _SANITIZE_SOURCE_ALLOW:
+            continue
         # ⚠ 중첩 필드도 **타입을 확인한다**(codex REV-20260828T170000 P2-2). `models: 1` 처럼
         #   리스트가 아닌 값이 오면 슬라이스에서 TypeError 가 나고, 그 예외는 하트비트 전체를
         #   500 으로 만든다 — 연결을 지키려는 신호가 연결을 끊는 장치가 된다.
@@ -4401,6 +4468,17 @@ def _sanitize_runtimes(raw: object) -> list | None:
         out.append({"runtime": name, "label": _sanitize_label(item.get("label"), name),
                     "models": models, "efforts": efforts})
     return out
+
+
+#: 화면에 그려도 되는 목록 **출처**. 러너 `_REPORTABLE_SOURCES` 와 같은 집합이어야 하며
+#: 구조 테스트가 두 값을 대조한다(두 곳이 갈리면 한쪽이 조용히 느슨해진다).
+#:
+#: - `probe`  — 그 AI 에게 직접 물어 받은 답
+#: - `cache`  — 위 답을 `config.json` 에 남긴 것(폴백은 캐시되지 않는다)
+#:
+#: ⚠ **`builtin` 을 넣지 마라.** 러너 소스에 적혀 있던 표가 그 이름이고, 그것이
+#: `gpt-5.1-codex` 가 사용자 화면에 뜬 경로다 (사용자 제보 4회, 2026-08-31~09-01).
+_SANITIZE_SOURCE_ALLOW: frozenset = frozenset({"probe", "cache"})
 
 
 def _capped_list(raw: object, cap: int) -> list:
@@ -4618,6 +4696,51 @@ def _deployed_runner_build() -> str:
 _DEPLOYED_RUNNER_BUILD: str | None = None
 
 
+def runner_build_is_stale(reported_build: str | None) -> bool:
+    """이 러너가 배포본과 **다른 파일**로 돌고 있는가. 판정은 여기 하나뿐이다.
+
+    ## 입력은 tri-state 다 (security·backend 적대리뷰 B2, 2026-09-01)
+
+    | `reported_build` | 판정 |
+    |---|---|
+    | `"<hex>"` ≠ 배포본 | **stale** |
+    | `"<hex>"` = 배포본 | 최신 |
+    | `""` (러너가 신고 안 함) | **stale** — 지문 신고 자체가 배포본의 일부이므로 그 이전 빌드다 |
+    | `None` (**우리가 모른다**) | 판정 없음 — 조회 실패·컬럼 부재. 모르는 것을 stale 로 부르지 않는다 |
+
+    ⚠ `""` 와 `None` 을 `if not x` 로 뭉개면 이 함수의 요점이 사라진다. 종전에 셋이 모두
+    `""` 였고, 그 뭉갬 때문에 「`RunnerBuild` 컬럼이 없는 배포에서 최신 러너 사용자 전원에게
+    거짓 갱신 지시」가 성립했다.
+
+    ## 왜 함수인가 (§16.7 G8-a)
+
+    같은 술어가 `_runner_update_hint`(하트비트 응답)와 `oauth_as.connect_status`(연결 칩)에
+    복제돼 있었다. 복제된 판정은 한쪽만 고쳐지는 순간 갈리고, 갈린 뒤에는 「칩은 초록인데
+    하트비트는 구버전이라 한다」 같은 상태가 된다 — 이 feature 가 인증 축(P0-R)에서 이미
+    한 번 겪은 형태다. 술어를 하나로 두면 그 갈림이 구조적으로 불가능해진다.
+
+    ## 지문 부재는 «같음» 이 아니라 «더 오래됨» 이다 (사용자 제보 2026-09-01, 4차 재발)
+
+    종전 판정은 `deployed and reported and reported != deployed` 였다 — 지문을 신고하지 않는
+    러너를 조용히 «최신» 으로 통과시켰다. 그런데 **지문 신고 자체가 배포본의 일부**이므로,
+    신고가 없다는 것은 그 변경 이전 빌드라는 증거다. 즉 fail-open 이 걸린 모집단이 정확히
+    「낡은 러너」였다. 라이브 실측(2026-09-01): 08-31 16:55 빌드가 `RunnerBuild=''` 로 돌며
+    `runner_update.current=True` 를 받는 동안, 화면에는 그 러너가 내장 표에서 신고한
+    `gpt-5.1-codex`(그 계정이 쓸 수 없는 폐기 세대)가 떠 있었다.
+
+    판정의 두 전제는 **배포본 지문을 우리가 아는가**와 **신고 쪽이 unknown 이 아닌가**다.
+    어느 한쪽이라도 모르면 판정하지 않는다 — 모르는 것을 stale 로 부르면 거짓 경고가 된다.
+    """
+    deployed = _deployed_runner_build()
+    if not deployed:
+        return False
+    if reported_build is None:
+        # 신고 쪽 unknown — 조회 실패·컬럼 부재·듣고 있는 러너 없음. 대조 대상이 없다.
+        return False
+    # 여기부터 `""` 는 「행은 있고 러너가 지문을 신고하지 않았다」만 뜻한다 = 지문 축 이전 빌드.
+    return str(reported_build) != deployed
+
+
 def _runner_update_hint(agent_version: str, features: object,
                         agent_build: str = "") -> dict:
     """러너가 최신인가 — 아니면 무엇을 하면 되는가.
@@ -4639,10 +4762,9 @@ def _runner_update_hint(agent_version: str, features: object,
         ",".join(str(f) for f in features) if isinstance(features, (list, tuple)) else features)
     fresh = version_at_least(agent_version, RUNNER_MIN_AGENT_VERSION)
     supports = RUNNER_FEATURE_CONSOLE_JOBS in declared
-    deployed = _deployed_runner_build()
-    # 양쪽 지문을 다 아는 경우에만 판정한다 — 한쪽이라도 비면 "다르다" 고 말할 근거가 없다
-    # (구 러너는 지문을 아예 신고하지 않는다).
-    stale_build = bool(deployed and agent_build and agent_build != deployed)
+    # 판정은 `runner_build_is_stale` 하나뿐이다 — 연결 칩(`oauth_as.connect_status`)도
+    # 같은 함수를 부른다(§16.7 G8-a: 복제된 술어는 한쪽만 고쳐지는 순간 갈린다).
+    stale_build = runner_build_is_stale(agent_build)
     return {
         "current": bool(fresh and supports and not stale_build),
         "min_version": RUNNER_MIN_AGENT_VERSION,

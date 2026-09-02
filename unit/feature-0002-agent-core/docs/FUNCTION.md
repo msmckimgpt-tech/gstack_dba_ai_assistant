@@ -1649,3 +1649,79 @@ DBA 질문에서 가장 자주 쓰는 약어가 구조적으로 제외됐고, �
 feature-0002 `modules/kb_glossary.py`: `term_occurs_as_word` 신설 ·
 `_fetch_glossary(conn, scopes, message=None, role_key=None)` ·
 `_fetch_enums(conn, scopes, message=None)` · `load_glossary_enum_context` 배선.
+
+
+## KB 근거는 «자동 주입»이다 — 도구 호출에 기대지 않는다 (2026-09-02)
+
+**REQ-20260902-kb-prompt-grounding (Major §12.3)**: 사용자 요청으로 부트스트랩 계정에 AI 를
+연결해 **실제 대화를 완주**시켜 보니, 직전 두 cycle 이 만든 KB 도달 경로가 **라이브에서 여전히
+0 기여**였다.
+
+### 근본 원인 — 「부를 수 있다」와 「부른다」는 다르다
+
+    질문: "steam_billing_log 의 status 코드값이 각각 무슨 뜻이고 …"
+    AI  : "steam_billing_log 라는 테이블 자체가 등록 메타데이터 어디에도 없습니다"
+
+같은 시각 같은 제품에서 `get_task_context` 를 직접 부르면 그 정의가 **분명히 나온다**. 서버는
+옳았다. 문제는 **AI 가 그 도구를 한 번도 부르지 않았다**는 것이고, 이유는 러너가 AI 에게
+안내하는 도구 목록(`compose_prompt`)에 `get_task_context` 가 **없기 때문**이다 —
+`list_schemas`·`describe_table`·`search_tables`·`execute_sql` 등 **조사** 도구만 나열한다.
+
+즉 전환이 바꾼 것은 「어디에 있느냐」가 아니라 **성격**이었다:
+
+| | 전환 전(서버 계정 AI) | 전환 후(외부 AI) |
+|---|---|---|
+| KB 근거 | `_build_knowledge_context()` 가 시스템 프롬프트에 **무조건 주입** | 도구를 **부르면** 받음 |
+| 안 부르면 | 해당 없음 | **0 기여** |
+
+### AC (수용 기준)
+
+- **AC-20260902T110000-grounding-1** — 큐레이션 KB 근거는 **점유 응답(`claim_request`)에 실려**
+  간다. AI 의 도구 호출 여부와 **무관하게** 프롬프트에 놓인다.
+- **AC-20260902T110000-grounding-2** — **근거 조립·주입 결정은 서버**가 한다. 러너 도구 목록에
+  `get_task_context` 를 추가하는 대안은 여전히 「AI 가 부를지」에 의존하지만, 서버가 실어 보내면
+  그 의존이 사라진다.
+  ⚠ **정직하게**: 러너도 새 필드를 읽어야 효과가 난다(배치가 `compose_prompt` 에 있다). 실측에서
+  구버전 러너로 붙였더니 서버는 필드를 보냈는데 프롬프트는 그대로였다 — 「서버에만 두면 러너
+  버전과 무관」은 **사실이 아니다**. 다만 (a) 낡은 러너에는 서버가 이미 `hb.stale_build` 경고를
+  띄우고, (b) 서버·러너 어느 쪽이 낡아도 **깨지지 않는다**(양쪽 다 생략으로 접힌다).
+  `system_prompt` 에 섞으면 구버전에도 닿지만, 질문마다 달라지는 데이터를 시스템 채널에 넣어
+  프롬프트 캐시를 깨고 채널 성격을 흐리므로 택하지 않았다.
+- **AC-20260902T110000-grounding-3** — 매칭은 **가드 래퍼가 붙지 않은 원문**으로 한다.
+  `marked`(canary·⟦…⟧ 각인 포함)로 매칭하면 래퍼 문구 안의 낱말이 용어에 걸린다.
+- **AC-20260902T110000-grounding-4** — 근거는 **질문보다 앞**에 놓고, 「이미 조회된 것이니 다시
+  조사하지 마라」를 함께 준다(왕복 낭비 방지). 근거가 없으면 **블록 자체를 생략**한다 —
+  빈 머리글만 남기면 「등록된 게 없다」로 오독된다. 옛 서버 호환도 이 계약이 지킨다.
+- **AC-20260902T110000-grounding-5** — 상한(`_CTX_BUNDLE_MAX_CHARS`)과 **절단 고지**를 유지한다.
+
+### 코드 거주
+
+feature-0003 `routers/ai_tools.py`(`claim_request` — 근거 조립·상한·응답 필드) ·
+`static/agent/bridge_agent.py`(`compose_prompt` — 받은 근거 배치) ·
+feature-0043 `src/bridge_agent.py`(러너 정본 — 배포본과 byte-동치).
+
+## datasource health 텔레메트리 — 한 행이 batch 를 죽이지 않는다 (2026-09-02)
+
+**REQ-20260902-ds-health-persist (Minor §12.3)**: insight 사이클이 남겨야 할 datasource health
+가 **매번 유실**되고 있었다(`datasource_health_persist_failed err=AmbiguousParameter`).
+fail-soft 라 사이클은 계속 돌았고, 로그 한 줄 외에는 아무 표가 나지 않았다.
+
+### 근본 원인 — 같은 파라미터, 두 타입 문맥
+
+`_DS_HEALTH_UPSERT_SQL` 한 줄에서 `%(last_checked_at)s` 가 `IS NULL`(타입 미상)과
+`to_timestamp()`(double precision) 두 문맥에 쓰인다. 값이 float 이면 드라이버가 타입을 실어
+보내 통과하지만, **`None` 이면 타입 없는 NULL** 이 가고 Postgres 가 추론에 실패한다(42P08).
+
+즉 **한 번도 체크되지 않은 datasource 가 섞인 사이클에서만** 터졌고 — 그 한 행이 batch 전체를
+되돌려 health 가 통째로 유실됐다. 「가끔 되고 가끔 안 되는」 형태라 더 안 보였다.
+
+### AC
+
+- **AC-20260902T120000-health-1** — `%(last_checked_at)s` 는 **모든 문맥에서**
+  `::double precision` 으로 캐스트된다. 한쪽만 하면 그 문맥에서 추론이 다시 애매해진다.
+- **AC-20260902T120000-health-2** — upsert 멱등 계약(`ON CONFLICT (scope_key) DO UPDATE`)과
+  나머지 파라미터는 불변. 이 수정의 범위는 한 컬럼이다.
+
+### 코드 거주
+
+feature-0002 `modules/insight.py` `_DS_HEALTH_UPSERT_SQL`.

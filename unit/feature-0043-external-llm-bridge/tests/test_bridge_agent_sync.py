@@ -191,11 +191,18 @@ def test_runner_kills_the_child_on_cancel():
 
 
 def test_runner_covers_every_runtime():
-    """claude·codex·gemini·로컬 LLM 을 모두 다룬다(AI 종류에 무관해야 한다)."""
+    """claude·codex·gemini 를 모두 다룬다(AI 종류에 무관해야 한다).
+
+    ⚠ 로컬 LLM(ollama) 어댑터는 2026-09-01 에 제거했다 — 사용자 결정(미사용). 그 분기는
+    HTTP 라 명령 템플릿 하나로 덮이지 않아 자기 몫의 결함을 계속 만들었고, 마지막은
+    provenance 라벨을 바꾸다 캐시 쓰기 가드를 뒤집어 목록이 굳은 것이었다.
+    """
     src = CANON.read_text(encoding="utf-8")
-    for name in ("claude", "codex", "gemini", "ollama"):
+    for name in ("claude", "codex", "gemini"):
         assert f'"{name}"' in src, f"{name} 어댑터가 없다"
     assert "--cmd" in src, "임의 런타임을 위한 수동 지정 경로가 없다"
+    assert '"ollama"' not in src, (
+        "제거한 로컬 LLM 어댑터가 되살아났다 — 되살리려면 provenance 두 집합부터 보라")
 
 
 def test_runner_passes_prompt_as_argv_not_shell():
@@ -290,8 +297,9 @@ def test_timeout_check_is_skipped_when_unlimited():
     src = CANON.read_text(encoding="utf-8")
     assert "if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:" in src, (
         "상한 0(무제한)일 때 검사를 건너뛰지 않는다 — 모든 호출이 즉시 중단된다")
-    assert "timeout=(_AI_TIMEOUT_SEC or None)" in src, (
-        "ollama HTTP 경로가 0 을 그대로 넘긴다 — urllib 이 즉시 타임아웃한다")
+    # (종전 두 번째 단언은 ollama HTTP 경로의 `timeout=(_AI_TIMEOUT_SEC or None)` 을
+    #  요구했다. 그 경로는 2026-09-01 에 제거됐다 — 남은 것은 CLI `Popen` 경로뿐이고
+    #  그쪽 무제한 계약은 위 단언 하나가 잠근다.)
 
 
 def test_cancel_still_works_without_a_timeout():
