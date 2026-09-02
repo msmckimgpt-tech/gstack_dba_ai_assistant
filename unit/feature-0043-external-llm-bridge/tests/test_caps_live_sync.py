@@ -1879,3 +1879,101 @@ def test_caps_decision_transitions_execute_correctly(tmp_path):
     assert len(results) == 24, f"검사 수가 줄었다: {len(results)}"
     failed = [name for name, good in results if not good]
     assert not failed, f"판정 전이 실패: {failed}"
+
+
+# ── 8. 능력 질의의 응답 시간 (사용자 제보 2026-09-02, 4차) ─────────────────────
+
+def test_every_caps_prompt_forbids_tool_use():
+    """세 질의 프롬프트가 **전부** 도구 사용을 금지한다.
+
+    근본 원인은 추론 강도가 아니라 **자기소개 질문을 도구 가진 에이전트에게 던진 것**이었다.
+    실측(`codex exec --json`, 2026-09-02): 한 번의 능력 질의에 `exec_command` 18회 ·
+    shell 이벤트 94회 · `web_search` 29회가 나갔고 전체 예산 240초를 태우고 타임아웃했다.
+    가드를 붙이면 codex >300초 → 47.0초, claude 66.3초 → 5.7초다.
+
+    ⚠ **세 프롬프트 전부**여야 한다. 하나라도 빠지면 그 경로만 옛 지연을 유지하고, 그
+      경로는 하필 잘 안 타는 쪽(축 재질의·확인)이라 회귀가 오래 숨는다.
+    """
+    mod = _load_runner()
+    guard = mod._CAPS_NO_TOOLS_GUARD
+    for k in ("도구를 쓰지 마라", "웹을 검색하지 마라", "명령을 실행하지 말"):
+        assert k in guard, f"가드에 «{k}» 가 없다"
+    for name in ("_CAPS_PROBE_PROMPT", "_CAPS_VERIFY_PROMPT", "_CAPS_EFFORT_PROMPT"):
+        text = getattr(mod, name)
+        assert guard in text, f"{name} 에 도구 금지 가드가 없다 — 그 경로만 느리게 남는다"
+        assert text.index(guard) == 0, (
+            f"{name} 의 가드가 앞에 없다 — 뒤에 두면 모델이 이미 탐색을 시작한 뒤다")
+
+
+def test_probe_extra_is_first_attempt_only_and_never_cached(monkeypatch):
+    """질의 전용 인자는 **첫 시도에만** 붙고 **캐시에 남지 않는다**.
+
+    두 사실이 각각 다른 것을 막는다:
+
+    - **첫 시도에만**: 그 인자가 통하지 않는 CLI 버전에서 재시도가 순수 형태로 다시 묻는다.
+      없으면 인자 하나 때문에 그 런타임이 화면에서 통째로 사라진다(속도를 얻고 가용성을 잃음).
+    - **캐시에 남지 않음**: `got["argv"]` 는 「어느 호출 형태가 통했는가」로 저장되어
+      **실제 사용자 질문에 재사용**된다. 여기 `model_reasoning_effort=low` 가 섞이면 그
+      계정의 **모든 질문이 낮은 추론으로** 돌고, 사용자가 화면에서 고른 강도가 조용히
+      무시된다 — 능력 질의를 빠르게 하려고 제품 핵심을 깎는 교환이다.
+    """
+    mod = _load_runner()
+    spec = mod._RUNTIME_SPECS.get("codex") or {}
+    extra = list(spec.get("probe_extra") or [])
+    assert extra, "codex 에 질의 전용 인자가 없다 — 이 단정은 아무것도 검사하지 않는다"
+
+    monkeypatch.setattr(mod, "_which_ai", lambda n: f"/usr/bin/{n}" if n == "codex" else None)
+    seen: list[list[str]] = []
+    answers: list = []
+
+    def _fake_ask(argv, prompt, timeout, reason_out=None):
+        seen.append(list(argv))
+        return answers.pop(0) if answers else None
+
+    monkeypatch.setattr(mod, "_ask_json", _fake_ask)
+
+    # ① 첫 시도 실패 → 두 번째 시도는 **순수** 형태여야 한다.
+    answers.clear()
+    seen.clear()
+    mod.detect_runtimes(cached=None, probe=True)
+    opens = [a for a in seen if any("{prompt}" not in x for x in a)]
+    assert len(seen) >= 2, f"재시도가 없었다: {seen}"
+    assert all(x in seen[0] for x in extra), (
+        f"첫 시도에 질의 전용 인자가 없다: {seen[0]}")
+    assert not any(x in seen[1] for x in extra), (
+        f"재시도에도 질의 전용 인자가 붙었다 — 통하지 않는 버전이 영구 탈락한다: {seen[1]}")
+
+    # ② 성공 시 캐시에 남는 argv 는 **순수** 형태여야 한다.
+    answers[:] = [{"label": "Codex",
+                   "models": [{"value": "gpt-5", "label": "gpt-5"}],
+                   "efforts": [], "model_flag": ["-m", "{model}"], "effort_flag": []}]
+    seen.clear()
+    detail: dict = {}
+    got = mod.detect_runtimes(cached=None, probe=True, detail_out=detail)
+    assert [r["runtime"] for r in got] == ["codex"], f"신고되지 않았다: {got}"
+    cached_argv = list((detail.get("codex") or {}).get("argv") or [])
+    assert cached_argv, f"호출법이 캐시되지 않았다: {detail}"
+    for x in extra:
+        assert x not in cached_argv, (
+            f"질의 전용 인자 «{x}» 가 캐시된 호출법에 남았다 — 그 계정의 모든 질문이 "
+            f"그 인자로 돈다: {cached_argv}")
+    assert all(x in seen[0] for x in extra), "첫 질의에는 붙어 있어야 한다(성능 이득의 출처)"
+
+
+def test_probe_extra_goes_before_the_prompt_positional():
+    """추가 인자는 프롬프트 위치 인자 **앞**에 끼운다.
+
+    뒤에 붙이면 CLI 가 그것을 프롬프트의 일부로 읽거나(위치 인자 하나만 받는 CLI) 파싱에
+    실패한다 — 두 경우 모두 그 런타임이 신고에서 사라진다.
+    """
+    mod = _load_runner()
+    argv = ["codex", "exec", "--skip-git-repo-check", "{prompt}"]
+    out = mod._with_probe_extra("codex", argv)
+    assert out[-1] == "{prompt}", f"프롬프트가 마지막이 아니다: {out}"
+    extra = list((mod._RUNTIME_SPECS["codex"] or {}).get("probe_extra") or [])
+    assert out[-1 - len(extra):-1] == extra, f"추가 인자가 프롬프트 앞이 아니다: {out}"
+    # 표에 없는 런타임은 **무변경** — 모르는 CLI 에 우리 플래그를 넣지 않는다.
+    plain = ["mycli", "-p", "{prompt}"]
+    assert mod._with_probe_extra("mycli", plain) == plain
+    # 원본을 변형하지 않는다(호출측이 같은 리스트를 재사용한다).
+    assert argv == ["codex", "exec", "--skip-git-repo-check", "{prompt}"]

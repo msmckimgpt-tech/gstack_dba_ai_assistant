@@ -45,7 +45,51 @@ _CAPS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,63}$")
 #: 플랫폼마다 모델·추론 지정 방법이 다르다(`--model` / `-m` / `-c key=value`). 우리가 표로
 #: 갖고 있으면 새 플랫폼은 우리 배포를 기다려야 한다. AI 가 자기 호출법을 말하면 그 종속이
 #: 사라진다 — 사용자가 어떤 CLI 를 쓰든 우리 코드는 그대로다.
-_CAPS_PROBE_PROMPT = """\
+#: 능력 질의 앞에 붙는 **도구 금지 가드** (사용자 제보 2026-09-02, 4차: 「어려운 작업이
+#: 아니므로 신속해야 한다」).
+#:
+#: ## 근본 원인은 추론 강도가 아니라 «에이전트에게 탐색거리를 준 것» 이었다
+#:
+#: 능력 질의는 **자기소개 한 문단**이다. 그런데 요즘 CLI 는 전부 에이전트라, 질문을 받으면
+#: 도구를 쓴다 — 실측(`codex exec --json`, 2026-09-02): 한 번의 능력 질의에
+#: `exec_command` **18회** · shell 관련 이벤트 94회 · `web_search` 29회가 나갔고, 100초 안에
+#: 완료된 item 이 15개였다. 자기가 무슨 모델을 쓸 수 있는지 답하려고 **작업 디렉토리를
+#: 뒤지고 웹을 검색한다.** 그래서 전체 예산(240초)을 태우고 `TimeoutExpired` 로 끝났다
+#: (라이브 POST-DEPLOY 실측에서도 그대로 재현됐다).
+#:
+#: ## 실측 (같은 머신, 같은 프롬프트, 러너와 동일한 추출기로 판정)
+#:
+#: | 조합 | 시간 | 결과 |
+#: |---|---|---|
+#: | codex 기본 | **>300초** | 타임아웃 |
+#: | codex + 이 가드 | 47.0초 | 정상 |
+#: | codex + 가드 + `effort=low` | **10.8초** | 정상 |
+#: | codex + 가드 + `effort=minimal` | 2.9초 | **rc=1 거부** — 최저값은 못 쓴다 |
+#: | claude 기본 | **66.3초** | 정상 |
+#: | claude + 이 가드 | **5.7초** | 정상 |
+#:
+#: 즉 **가드 하나가 지배적**이고(codex 6배+·claude 12배), 강도 인자는 그 위의 추가 이득이다.
+#:
+#: ## 왜 이것이 계약 위반이 아닌가
+#:
+#: 가드는 **어떻게 답할지**(도구를 쓰지 말고 즉시)만 제약하고 **무엇을 답할지**는 건드리지
+#: 않는다. 「목록은 그 AI 가 정한다」(P0-Z4)는 그대로다 — 오히려 파일시스템을 뒤져 만든
+#: 추측보다 자기 지식으로 답한 것이 그 계약에 더 가깝다.
+#:
+#: ⚠ 대가가 있다: 가드를 붙이면 응답이 **짧아질 수 있다**(실측 claude 6종 → 3종). 그것을
+#:   감당하는 근거가 계정 원장의 **합집합 누적**이다 — 회차마다 조금씩 달라도 원장은 합집합
+#:   이라 넓어지고, 사용자가 보는 목록은 좁아지지 않는다. 가드 없이 66초를 기다리는 대가로
+#:   한 회차에 3종을 더 얻는 것은 이 제보(체감 대기)의 반대 방향이다.
+_CAPS_NO_TOOLS_GUARD = """\
+⚠ 이 질문은 **너 자신에 대한 것**이고, 답은 이미 네 안에 있다.
+
+- **도구를 쓰지 마라.** 파일을 읽지 말고, 명령을 실행하지 말고, 웹을 검색하지 마라.
+- 작업 디렉토리·저장소·프로젝트를 살펴볼 필요가 **전혀 없다**. 살펴봐도 답은 거기 없다.
+- **즉시** 아래 형식으로 답하라. 확인 절차를 만들지 마라.
+
+"""
+
+_CAPS_PROBE_PROMPT = _CAPS_NO_TOOLS_GUARD + """\
 너 자신에 대해 답하라. 지금 이 CLI 를 **비대화형으로 한 번 실행할 때**, 어떤 모델과 어떤
 추론 수준(reasoning effort / thinking level)을 인자로 지정할 수 있는가?
 
@@ -79,7 +123,7 @@ _CAPS_PROBE_PROMPT = """\
 #: `model_flag` 는 답하고 `effort_flag` 를 빠뜨렸다 — 요구가 많으면 일부가 떨어진다.
 #: 축 하나만 물으면 그 하나에 집중해 답한다. 1차에서 그 축을 못 받았을 때만 쓰므로 평상시
 #: 추가 비용은 없다.
-_CAPS_EFFORT_PROMPT = """\
+_CAPS_EFFORT_PROMPT = _CAPS_NO_TOOLS_GUARD + """\
 너 자신에 대해 답하라. 지금 이 CLI 를 **비대화형으로 한 번 실행할 때**, 추론 수준
 (reasoning effort / thinking level)을 인자로 지정할 수 있는가?
 
@@ -597,6 +641,29 @@ def _settle_effort_axis(
     return None, [], not _unchecked
 
 
+def _with_probe_extra(name: str, argv: list[str]) -> list[str]:
+    """능력 질의 **전용** 추가 인자를 끼운 argv (사용자 제보 2026-09-02, 4차).
+
+    표(`_RUNTIME_SPECS[name]["probe_extra"]`)에 있는 런타임에만 붙는다. 실제 질문 처리에는
+    붙지 않는다 — 능력 질의는 자기소개라 추론이 필요 없지만 사용자 질문은 그 반대다.
+
+    ⚠ **프롬프트 위치 인자 «앞»에 끼운다.** 뒤에 붙이면 CLI 가 그 플래그를 프롬프트의
+      일부로 읽거나(위치 인자 하나만 받는 CLI) 아예 파싱에 실패한다.
+
+    ⚠ 이 인자가 통하지 않는 버전이 있을 수 있으므로 호출측은 **첫 시도에만** 붙이고
+      재시도에서는 뺀다. 인자 하나 때문에 그 런타임이 화면에서 통째로 사라지면, 속도를
+      얻으려고 가용성을 잃는 것이다(이 cycle 이 반복해 피한 교환).
+    """
+    extra = list((_RUNTIME_SPECS.get(name) or {}).get("probe_extra") or [])
+    if not extra:
+        return list(argv)
+    out = list(argv)
+    for i, a in enumerate(out):
+        if "{prompt}" in a:
+            return out[:i] + extra + out[i:]
+    return out + extra
+
+
 def probe_runtime_caps(name: str, argv: list[str],
                        timeout: float | None = None,
                        reason_out: dict | None = None) -> dict | None:
@@ -672,7 +739,7 @@ def probe_runtime_caps(name: str, argv: list[str],
 #: 그 위험이 이 질의의 핵심 설계 지점이다. 그래서 **「이 목록이 맞다」고 말하지 않는다** —
 #: 「이 중 지금 쓸 수 있는 것만 남기고, 빠진 것은 더하라」고 묻는다. 목록은 정답이 아니라
 #: 후보이고, 판정은 그 AI 가 한다. 통과하지 못한 항목은 신고되지 않으므로 화면에도 없다.
-_CAPS_VERIFY_PROMPT = """\
+_CAPS_VERIFY_PROMPT = _CAPS_NO_TOOLS_GUARD + """\
 너 자신에 대해 답하라. 아래는 이 CLI 로 **이전에 확인된** 모델·추론 수준 목록이다.
 
 {previous}
@@ -1075,7 +1142,9 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                     #   먹고, `left / 2` 로 줄여도 남는 120초가 실측 codex 열린 질의(112.3초)에
                     #   너무 빠듯해 재시도가 사라진다. 확인은 목록을 주고 대조만 시키는 좁은
                     #   질의이므로 남은 시간에 비례할 이유가 없다.
-                    got0 = verify_runtime_caps(nm, attempts[0], _base,
+                    # 확인 질의에도 붙인다 — 실패는 아래 열린 질의로 흐르므로(그 첫
+                    # 시도가 extras, 두 번째가 순수) 이 자리에서 잃는 것이 없다.
+                    got0 = verify_runtime_caps(nm, _with_probe_extra(nm, attempts[0]), _base,
                                                timeout=max(5.0, min(_CAPS_VERIFY_TIMEOUT_SEC,
                                                                     left)),
                                                reason_out=_why0)
@@ -1101,7 +1170,21 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
             # 루프 안에 이미 있어 deadline 을 넘기지 않는다.
             if len(attempts) == 1:
                 attempts = attempts * 2
-            for argv in attempts:
+            # ── 질의 전용 인자는 **첫 시도에만**, 그리고 **캐시에 남기지 않는다** ──────
+            #
+            # 첫 시도에만: 그 인자가 통하지 않는 버전이면 두 번째 시도가 순수 형태로 다시
+            # 물으므로, 속도 최적화가 가용성을 깎지 않는다(제보 4차).
+            #
+            # ⚠ **남기지 않는다가 더 중요하다.** 아래 `got["argv"]` 는 「어느 호출 형태가
+            #   통했는가」로 캐시되어 **실제 사용자 질문에 재사용**된다. 질의 전용 인자가
+            #   거기 섞이면 그 계정의 **모든 질문이 `model_reasoning_effort=low` 로** 돌게
+            #   되고, 사용자가 화면에서 고른 추론 강도가 조용히 무시된다 — 능력 질의를
+            #   빠르게 하려다 제품의 핵심 기능을 깎는 교환이다. 그래서 질의에 쓴 argv 와
+            #   캐시에 남길 argv 를 **분리해서** 들고 다닌다.
+            _pure = [list(a) for a in attempts]
+            _probe_argvs = ([_with_probe_extra(nm, _pure[0])]
+                            + [list(a) for a in _pure[1:]])
+            for _i, argv in enumerate(_probe_argvs):
                 left = deadline - time.monotonic()
                 if left <= 5.0:
                     reasons.setdefault(nm, "남은 시간 안에 물어보지 못했습니다.")
@@ -1113,7 +1196,8 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                     reasons[nm] = str(_why["reason"])
                 if got:
                     # 어느 호출 형태가 통했는지 함께 남긴다 — 실제 질문도 그 형태로 보낸다.
-                    got["argv"] = argv
+                    # **순수** 형태다(위 ⚠).
+                    got["argv"] = _pure[_i]
                     probed[nm] = got
                     return
 

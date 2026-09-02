@@ -881,7 +881,23 @@ def test_unknown_cli_is_asked_too():
     assert "unknown_argvs" in fn, "표 밖 CLI 를 물어보지 않는다"
     assert '[n, "-p", "{prompt}"]' in fn and '[n, "{prompt}"]' in fn, (
         "표 밖 CLI 의 호출 형태 후보가 없다")
-    assert 'got["argv"] = argv' in fn, "통한 호출 형태를 기억하지 않는다(실제 질문 때 못 쓴다)"
+    # ⚠ **리터럴이 아니라 의도를 검사한다** (2026-09-02). 초판은 `got["argv"] = argv` 를
+    #   그대로 찾았는데, 질의 전용 인자(`probe_extra`)를 도입하면서 그 우변이
+    #   `_pure[_i]`(순수 형태)로 **의도적으로** 바뀌었다 — 인자가 캐시에 남으면 그 계정의
+    #   모든 질문이 `model_reasoning_effort=low` 로 돌기 때문이다. 검사하려는 사실은
+    #   「통한 호출 형태를 기억한다」이므로 대입의 **존재**를 본다.
+    import ast as _ast
+    _tree = _ast.parse(src)
+    _dr = next((n for n in _ast.walk(_tree)
+                if isinstance(n, _ast.FunctionDef) and n.name == "detect_runtimes"), None)
+    assert _dr is not None, "detect_runtimes 를 찾지 못했다"
+    _stores = [_ast.unparse(a.value) for a in _ast.walk(_dr) if isinstance(a, _ast.Assign)
+               for t in a.targets
+               if isinstance(t, _ast.Subscript) and _ast.unparse(t).endswith("['argv']")]
+    assert _stores, "통한 호출 형태를 기억하지 않는다(실제 질문 때 못 쓴다)"
+    # 그리고 **질의 전용 인자가 섞이지 않은** 값이어야 한다 — 이 축이 새로 생긴 계약이다.
+    assert all("_with_probe_extra" not in v for v in _stores), (
+        f"질의 전용 인자가 캐시된 호출법에 섞인다 — 사용자 질문이 그 인자로 돈다: {_stores}")
 
 
 def test_unknown_cli_can_actually_be_invoked():
