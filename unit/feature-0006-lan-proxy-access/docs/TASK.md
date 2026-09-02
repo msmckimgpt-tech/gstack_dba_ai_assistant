@@ -42,6 +42,7 @@ source_of_truth: true
       건너뛴다**(못 읽으면 종전대로 재설정하는 fail-safe). 파싱은 헤더 문구가 아닌 데이터 행 패턴
       으로 **로케일 무관**. 한글 주석 추가에 따라 **UTF-8 BOM** 부여(대조 실측: BOM 없으면 839자 중
       324자 손실). PS 5.1 실측 4축 PASS(구문/인코딩/실 netsh 파싱/멱등 판정).
+- [x] TASK-20260902T124500-ai-claude-feature-0006-lan-proxy-access (REV-20260902T124500-... [CODEX:portproxy-idempotent] — 적대 리뷰 P2 반영, **Minor** §12.3). 직전 cycle 산출물에 codex 적대 리뷰 P1 1건(이미 자체 적발·수정한 `-IgnoreExitCode` — **독립 확인**) + P2 4건. P2 중 3건 수정: ①legacy 삭제 skip 최적화 **되돌림**(이득 없음 — legacy 엔 활성 연결이 없고 없는 매핑 delete 는 아무 것도 끊지 않는다 / 위험만 있음 — hostname 형태 매핑을 파서가 못 읽어 영영 미삭제) ②legacy 삭제 **성공한 것만** 기록(실패도 기록해 원장이 거짓말하던 것) ③`portproxy_changed` 가 legacy 삭제를 포함(`legacy_ports_deleted:[18080]` + `changed:false` 자기모순 해소). P2-5 TOCTOU 는 **수용 + 주석 기록**(원자적 CAS 부재 · 확률적 5분 창 vs 확정적 5분 절단의 교환). PS 5.1 재검증 6축 PASS.
 
 ## 8. Requested Scope (요청 범위)
 

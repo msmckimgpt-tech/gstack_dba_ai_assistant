@@ -317,3 +317,50 @@ netsh 가 **비-0 로 끝나도 예외가 오르지 않고 오류 텍스트가 �
 (첫 시도의 주입 하네스는 stub 이 무조건 throw 해서 **수정 전에도 통과**했다 — 판별력이 없었다.
 stub 이 `-IgnoreExitCode` 유무에 따라 다르게 행동하도록 실제 계약을 모사한 뒤에야 두 버전이
 갈렸다.)
+
+## CHG-20260902T124500-ai-claude-feature-0006-lan-proxy-access — codex 적대 리뷰 P2 반영 (2026-09-02)
+
+직전 cycle(CHG-20260902T113500) 산출물에 대한 `codex exec` 적대 리뷰 결과를 반영한다.
+**Minor** §12.3 (관측 정확성 + 되돌림, 동작 축소 없음).
+
+### P1 — 이미 고쳐져 있었다 (독립 확인)
+
+`-IgnoreExitCode` 가 netsh 비-0 종료를 삼켜 $null 계약이 성립하지 않는다는 지적. **같은 cycle
+자체 적대 검토가 먼저 적발해 수정**한 것과 동일 결함이며, codex 자신도 리포트 말미에 "현재
+worktree 의 unstaged 변경에는 이미 -IgnoreExitCode 제거가 들어가 있다" 고 적었다. 서로 다른
+경로가 같은 결함에 도달했다는 점에서 **독립 확인**으로 기록한다.
+
+### P2-3·P2-4 — legacy skip 최적화를 되돌렸다
+
+직전 cycle 은 legacy 포트 삭제에도 "이미 없으면 건너뛴다" 를 넣었다. 되돌린다:
+
+- **이득이 없다.** legacy 포트는 더 이상 쓰지 않는 포트라 활성 연결이 없고, 없는 매핑에 대한
+  `delete` 는 아무 연결도 끊지 않는다. 이 수정이 겨냥한 「기존 연결 절단」은 public 포트에서만
+  일어난다.
+- **위험은 있다.** netsh 는 `connectaddress` 에 hostname 도 허용하는데(`127.0.0.1 18080
+  localhost 18080`), 그런 행은 IPv4 정규식에 안 걸려 `ContainsKey` 가 false → **영영 삭제되지
+  않는다**.
+
+즉 skip 은 위험만 도입한 최적화였다. "무해한 호출도 남기지 않는다" 는 동기는 이 자리에서는
+근거가 약했다.
+
+또한 삭제 **성공한 것만** `legacy_ports_deleted` 에 기록하도록 `try/catch` 로 감쌌다. 종전에는
+netsh 가 실패해도 즉시 목록에 넣어 "지웠다" 는 원장이 거짓이 됐다.
+
+### P2-2 — `portproxy_changed` 가 legacy 삭제를 세지 않았다
+
+public 포트만 세면 18080 을 지운 실행이 `legacy_ports_deleted:[18080]` 과
+`portproxy_changed:false` 를 **동시에** 보고해 필드 의미가 자기모순이 된다. legacy 삭제를
+포함하도록 고쳤다.
+
+### P2-5 — TOCTOU: 수용하고 주석으로 남겼다
+
+조회 후 판정까지의 창에 다른 도구가 매핑을 지우면 `unchanged` 로 건너뛰어 최대 5분 접근이
+끊길 수 있다. netsh 에 원자적 비교-교체가 없어 창을 구조적으로 없앨 수 없고, 이 스크립트 외에
+portproxy 를 건드리는 주체가 없는 것이 전제다. **확률적 5분 창과 확정적 5분 절단을 맞바꾼
+것**이며, verify 단계의 `Test-NetConnection` 결과가 JSON 에 남아 사후 판별이 가능하다.
+
+### 검증 (PS 5.1 재실행)
+
+구문 0 오류 · 인코딩 무결 · 실 netsh 4매핑 파싱 · legacy 기록이 `try` 안에만 있음 ·
+상태 기반 skip 제거됨 · `portproxy_changed` 가 legacy 를 셈 — **6축 PASS**.

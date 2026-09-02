@@ -134,6 +134,21 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
   **UTF-8 BOM** 을 갖는다 (`bridge_setup.ps1` 선례) — BOM 없이 PS 5.1 이 읽으면 한글 839자 중
   324자가 손실된다(실측).
 
+- AC-20260902T124500-portproxy-idempotent-4 (REQ-20260902-portproxy-idempotent-sync, codex P2 반영):
+  **legacy 포트 삭제에는 멱등 skip 을 적용하지 않는다** — 조건 없이 `delete` 를 시도하고, 성공한
+  것만 `legacy_ports_deleted` 에 기록한다. 근거: legacy 포트에는 활성 연결이 없어 skip 의 이득이
+  없고, netsh 가 허용하는 hostname 형태 매핑(`127.0.0.1 18080 localhost 18080`)은 IPv4 정규식에
+  잡히지 않아 skip 하면 **영영 삭제되지 않는다**. 삭제 실패(대상 없음 포함)는 기록하지 않는다.
+- AC-20260902T124500-portproxy-idempotent-5 (REQ-20260902-portproxy-idempotent-sync, codex P2 반영):
+  `portproxy_changed` 는 public 포트 재설정 **또는** legacy 삭제 중 하나라도 있으면 `true` 다.
+  둘 중 하나만 세면 `legacy_ports_deleted: [18080]` 과 `portproxy_changed: false` 가 동시에
+  보고되어 필드 의미가 자기모순이 된다.
+- **알려진 한계 (수용, codex P2-5)**: 상태 조회와 판정 사이에 다른 주체가 매핑을 바꾸면 이 실행은
+  조회 시점 값으로 `unchanged` 를 판정한다(TOCTOU). netsh 에 원자적 비교-교체가 없어 창을 없앨 수
+  없고, 이 스크립트 외에 portproxy 를 건드리는 주체가 없는 것이 전제다. **확률적 5분 창**과
+  종전의 **확정적 5분 절단**을 맞바꾼 것이며, verify 단계 `Test-NetConnection` 결과가 JSON 에
+  남아 사후 판별이 가능하다.
+
 ## 12. Observability
 - Caddy 로그: `docker compose logs caddy`
 - 인증서 위치: `../../../../artifacts/certs`

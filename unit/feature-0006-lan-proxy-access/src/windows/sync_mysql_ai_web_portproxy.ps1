@@ -296,26 +296,46 @@ $portMappings = @(
 # ⚠ 현재 상태를 **읽지 못했을 때는 종전대로 재설정한다**(`$proxyStateKnown = $false`). 모르는
 #   것을 "맞다" 로 낙관하면 파싱이 깨진 날 포트포워딩이 조용히 사라진다 — 안전한 실패 방향은
 #   «불필요한 재설정»이지 «필요한 재설정 누락»이 아니다.
+#
+# ⚠ **알려진 트레이드오프 — TOCTOU** (codex 리뷰 P2, 수용): 상태를 읽은 뒤 판정하기까지의 창에
+#   다른 도구가 매핑을 지우면, 이 실행은 조회 당시 값만 보고 `unchanged` 로 건너뛴다 — 다음
+#   실행(최대 5분)까지 접근이 끊길 수 있다. 종전의 «무조건 재설정» 에는 없던 창이다.
+#   그럼에도 수용한 이유: netsh 에 원자적 비교-교체가 없어 창을 구조적으로 없앨 수 없고,
+#   **이 스크립트 외에 portproxy 를 건드리는 주체가 없는 것이 전제**다(있다면 종전 코드에서도
+#   두 주체가 서로를 덮어썼다). 반대로 무조건 재설정은 5분마다 **확실히** 연결을 끊었다 —
+#   확률적 5분 창과 확정적 5분 절단을 맞바꾼 것이다. 아래 verify 단계의 `Test-NetConnection`
+#   결과가 JSON 에 남으므로 그 창에 빠졌는지는 사후에 판별할 수 있다.
 $existingProxies = Get-PortProxyEntries
 $proxyStateKnown = ($null -ne $existingProxies)
 
 $legacyPortsToRemove = @($LegacyListenPorts | Where-Object { $_ -notin @($HttpListenPort, $HttpsListenPort) })
 $legacyPortsDeleted = New-Object System.Collections.Generic.List[int]
 foreach ($legacyPort in $legacyPortsToRemove) {
-    # 없는 것을 지우는 호출은 무해하지만, 무해한 호출도 남기지 않는다 — "매 실행마다 netsh 를
-    # 친다" 는 사실 자체가 다음 사람에게 "여기서 뭔가 바뀐다" 로 읽힌다.
-    $legacyKey = "{0}:{1}" -f $ListenAddress, $legacyPort
-    if ($proxyStateKnown -and -not $existingProxies.ContainsKey($legacyKey)) {
-        continue
+    # legacy 삭제는 **조건 없이 시도한다** — 위 public 포트와 달리 skip 최적화를 두지 않는다.
+    #
+    # 처음에는 여기도 "이미 없으면 건너뛴다" 를 넣었다가 되돌렸다(codex 리뷰 P2). 이유 둘:
+    #   ① 얻는 것이 없다. legacy 포트는 더 이상 쓰지 않는 포트라 거기 걸린 활성 연결이 없고,
+    #      없는 매핑에 대한 `delete` 는 **아무 연결도 끊지 않는다**. 이 스크립트가 고치려던
+    #      「기존 연결 절단」은 public 포트(80/443)에서만 발생한다.
+    #   ② 잃는 것이 있다. 파서가 못 읽는 형태(netsh 는 `connectaddress` 에 hostname 도 허용한다)
+    #      로 등록된 legacy 매핑은 `ContainsKey` 에 안 잡혀 **영영 삭제되지 않는다**.
+    # 즉 skip 은 위험만 도입하는 최적화였다. 안 하는 편이 낫다.
+    #
+    # 삭제 **성공한 것만** 기록한다. 없는 매핑을 지우려 하면 netsh 가 비-0 으로 끝나는데,
+    # 그것까지 목록에 넣으면 "지웠다" 는 원장이 거짓이 된다(운영자가 정리 완료로 오판).
+    # 없는 것을 못 지우는 것은 정상이므로 예외는 삼키되 기록도 하지 않는다.
+    try {
+        Invoke-Netsh -Arguments @(
+            "interface", "portproxy", "delete", "v4tov4",
+            "listenaddress=$ListenAddress",
+            "listenport=$legacyPort",
+            "protocol=tcp"
+        ) | Out-Null
+        $legacyPortsDeleted.Add($legacyPort) | Out-Null
     }
-
-    Invoke-Netsh -Arguments @(
-        "interface", "portproxy", "delete", "v4tov4",
-        "listenaddress=$ListenAddress",
-        "listenport=$legacyPort",
-        "protocol=tcp"
-    ) -IgnoreExitCode | Out-Null
-    $legacyPortsDeleted.Add($legacyPort) | Out-Null
+    catch {
+        # 대상이 없었다(정상) 또는 삭제 실패. 어느 쪽이든 "지웠다" 로 기록하지 않는다.
+    }
 }
 
 $portActions = @{}
@@ -431,6 +451,10 @@ foreach ($mapping in $portMappings) {
     # 현재 매핑을 읽어서 판단했는지 여부. `false` 면 안전측으로 전부 재설정했다는 뜻이다.
     portproxy_state_known = $proxyStateKnown
     # 이번 실행이 portproxy 를 건드렸는지. 평상시(IP 불변)에는 `false` 여야 정상이다.
-    portproxy_changed = @($portActions.Values | Where-Object { $_ -ne "unchanged" }).Count -gt 0
+    # ⚠ legacy 삭제도 «건드린 것»에 포함한다 — public 포트만 세면 18080 을 지운 실행이
+    #   `legacy_ports_deleted:[18080]` 과 `portproxy_changed:false` 를 동시에 보고해
+    #   필드 의미가 자기모순이 된다 (codex 리뷰 P2).
+    portproxy_changed = (@($portActions.Values | Where-Object { $_ -ne "unchanged" }).Count -gt 0) -or
+                        ($legacyPortsDeleted.Count -gt 0)
     portproxy = $portProxyText.Trim()
 } | ConvertTo-Json -Depth 6
