@@ -2,7 +2,7 @@
 run_at: 2026-09-02T14:05:00+09:00
 session: ai/claude/feature-0043-ai-jobs-perm-gate
 scope: 프로필 'AI 작업' 탭 — 계정 권한으로 항목 추리기 (TASK-20260902T160000)
-verdict: PRE-DEPLOY PASS (결함 재현) / POST-DEPLOY 아래 §2
+verdict: PASS (PRE-DEPLOY 결함 재현 + POST-DEPLOY 전 항목 확인)
 ---
 
 # TASK-20260902T160000 — 'AI 작업' 탭 권한 게이트
@@ -55,21 +55,73 @@ select 와 함께 판독 가능한 크기로 렌더된다. 이 계정은 그 셋
 
 **PRE-DEPLOY 판정: 결함 재현 PASS.** 두 계정의 화면이 **동일**하다는 것이 결함의 형태다.
 
-## 2. POST-DEPLOY — 수정 확인
+## 2. POST-DEPLOY — 수정 확인 (배포 `2a910ddb`)
 
-> 배포 후 같은 경로를 다시 밟아 아래를 채운다. 순서 근거: §16.3 deploy-backed 완료 기준
-> (cycle-finalize → main 기반 재배포 → 검증). 배포 전 브랜치 빌드를 공유 라이브 컨테이너에
-> 올리는 것은 §13.2.9 상 다른 5개 활성 브랜치의 checkout 을 밀어내므로 택하지 않았다.
+- **Environment: Windows-browser** (동일 브리지·동일 격리 프로필). 배포 완료 후 수행 —
+  §16.3 deploy-backed 완료 기준(cycle-finalize → main 기반 재배포 → 검증) 순서 준수.
+- 배포 검증: 전 서비스 SHA `2a910ddb`(web 2 · ext-tool-mcp 2 · insight/ask/ops 3) ·
+  `/healthz` **200** · `no upstreams available` **0건** · surge 잔존 **0** ·
+  RestartCount **전 서비스 0** · Caddyfile 무변경(blip 0).
 
-- [ ] `operator` 계정: **3행** (시스템 프롬프트 자동작성 · 테이블 인사이트 배치 · 클러스터 라벨링)
-- [ ] `admin` 계정: **6행** (무회귀 — fail-closed 아님)
-- [ ] `operator` 로 숨겨진 종류를 PUT 본문에 실어 보내도 저장되지 않는다 (fail-open 차단)
-- [ ] `operator` 저장 왕복 후 admin 이 자기 설정을 그대로 유지한다 (비가시 항목 보존)
-- [ ] 스크린샷 2매(operator 3행 · admin 6행) 첨부
+### 2-a. 권한별 노출 — **결함 해소 확정**
+
+| 계정 | 역할 | 항목 수 | kinds |
+|---|---|---|---|
+| `bootstrap_admin` | admin | **6** (무회귀) | metadata_suggest · metadata_bulk · node_analysis · prompt_generate · insight_summary · cluster_label |
+| `dqa_permgate_probe` | operator | **3** | prompt_generate · insight_summary · cluster_label |
+
+화면 실측(operator): `rowCount: 3`, 이름 = 「시스템 프롬프트 자동작성 · 테이블 인사이트 배치 ·
+클러스터 라벨링」. 스크린샷 `artifacts/permgate-20260902/after-operator-ai-jobs.png`
+(BEFORE `before-operator-ai-jobs.png` 와 대조 — 메타데이터 2행·그래프 분석 1행이 사라졌다).
+
+빈 상태 UI 는 이 계정에서 발동하지 않았다(`emptyMsg: false` · 저장 버튼 활성) — 항목이 3개
+있으므로 **정상**이다. 0-항목 경로는 단위 테스트가 덮는다(라이브에서 0 을 만들려면 권한 요구가
+없는 3종까지 없애야 하는데 그런 계정은 존재하지 않는다 — 그 사실 자체가 설계 의도다).
+
+### 2-b. fail-open 차단 — 숨긴 종류는 저장되지 않는다
+
+operator 로 `{"jobs": {"node_analysis": …, "cluster_label": …}}` PUT:
+
+```
+200 {"saved": true, "jobs": {"cluster_label": {"model":"claude:haiku","effort":"low"}}}
+재조회 kinds = [prompt_generate, insight_summary, cluster_label]   ← node_analysis 없음
+```
+
+숨긴 종류는 **저장도 응답도 되지 않았다**. 가시 종류(`cluster_label`)만 반영됐다.
+
+### 2-c. 입력 검증 — 깨진 본문과 「의도한 비우기」가 갈린다
+
+| 본문 | 결과 |
+|---|---|
+| `{"nope": 1}` (jobs 키 부재) | **400** |
+| `not-json` (파싱 실패) | **400** |
+| `{"jobs": {}}` ([모두 기본값] 후 저장) | **200** + 비우기 |
+
+### 2-d. ⭐ 비가시 항목 보존 — 권한 회수·재부여 왕복으로 증명
+
+실제 시나리오(권한이 빠졌다가 돌아오는 경우)를 라이브로 재현했다:
+
+1. admin 이 probe 에 `metadata.graph.analyze` **부여** → probe 목록 **4행**(node_analysis 등장)
+2. probe 가 `node_analysis = claude:haiku / high` **저장** (200)
+3. admin 이 권한 **회수** → probe 목록 **3행**(node_analysis 사라짐)
+4. probe 가 화면 그대로 **저장**(`{"jobs": {}}` — 「모두 기본값」 상당) → 200
+5. admin 이 권한 **재부여** → probe 목록 4행 · `node_analysis` = **`claude:haiku` / `high`**
+
+→ **숨겨진 동안의 저장이 그 설정을 지우지 않았다.** 이 왕복이 없으면 4단계에서 조용히
+증발했을 것이고, 사용자는 화면에 없던 값이라 알아채지 못한다.
+
+### 2-e. admin 저장 경로 무회귀
+
+admin 이 `metadata_bulk = claude:haiku / medium` 저장 → 200, 재조회 6행 유지·값 반영.
+
+**POST-DEPLOY 판정: 전 항목 PASS.**
 
 ## 3. 잔류물 (§16.6 (f))
 
-- `dqa_permgate_probe`(id 54) — POST-DEPLOY 확인 후 **비활성화**로 정리한다(계정 삭제는
-  감사 원장 참조를 끊으므로 이 저장소 관례대로 비활성 처리). 정리 결과는 §2 완료 시 기록.
+- `dqa_permgate_probe`(id 54) — **정리 완료**: 권한 override 제거 + `is_active: false`
+  (응답으로 확인). 계정 행 자체는 남긴다 — 감사 원장(`WebAuditEvents`)이 이 id 를 참조하므로
+  삭제하면 그 이력이 끊긴다(이 저장소 관례). 그 계정이 남긴 `ConsoleJobPrefs` 도 함께 남는다.
+- 실 사용자 계정·데이터는 **하나도 건드리지 않았다**. 검증에 쓴 자원은 전부 이 세션이 제품
+  경로로 만든 것이다(§16.6 (d)).
 - 검증 중 admin 세션을 한 번 로그아웃했다가 `win-browser.py session-login` 으로 복구했다
   (`bootstrap_admin` 재인증 확인). 다른 사용자 세션은 건드리지 않았다.

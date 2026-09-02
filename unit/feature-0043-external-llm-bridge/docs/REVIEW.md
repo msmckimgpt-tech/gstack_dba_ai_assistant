@@ -3433,3 +3433,7 @@ display-permissive 헬퍼라 **분기 판정에 쓰면 한쪽 갈래가 영구�
 
 M1~M12 **12/12 KILLED** · 정상 소스 PASS(30/30). 3 feature 전량 실행 결과가 main 기준선과
 **정확히 동일**(잔여 2건은 main 에도 있는 순서 의존 기존 실패).
+## REV-20260902T173000-ai-claude-feature-0043-ai-jobs-perm-postdeploy [SKIPPED:evidence-only] — 라이브 실측 기록
+
+코드 변경 없음(문서·증적만). `CHG-20260902T173000` 배포 후 재실측 — 전 항목 PASS.
+§18.8 dispatch 대상 아님(비정책 doc-only). 판정 근거는 위 증적 문서.

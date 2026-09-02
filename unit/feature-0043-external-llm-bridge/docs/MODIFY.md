@@ -3469,3 +3469,10 @@ gemini `overflow`(예외 대신 정직한 실패) · POSIX 무회귀. 내려받�
 
 **이 기능이 들어간 빌드부터**. 지금 도는 러너는 한 번 런처가 갈아 끼워야 하고(그 경로는
 `CHG-20260902T100000` 에서 동작 확인), 그 뒤로는 배포가 몇 번을 나든 화면에 조치 요구가 뜨지 않는다.
+## CHG-20260902T173000 — 'AI 작업' 권한 게이트 POST-DEPLOY 실측 (증적)
+
+코드 변경 없음. 배포 `2a910ddb` 후 라이브 재실측 증적만 기록한다 —
+`operator` 6행→**3행** · `admin` **6행 유지** · fail-open 차단 · 400 검증 ·
+**비가시 항목 보존**(권한 부여→저장→회수→빈 저장→재부여 왕복에서 `claude:haiku/high` 생존).
+검증 계정 `dqa_permgate_probe` 는 override 제거 + 비활성화로 정리했다.
+증적: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260902T160000-ai-jobs-perm-gate.md §2`.
