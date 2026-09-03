@@ -17,7 +17,7 @@ from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
 from .caps import schedule_health_recheck
-from .state import ai_health, note_ai_outcome
+from .state import ai_blocked, note_ai_outcome
 from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
@@ -710,8 +710,11 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     #
     # 여기가 **가장 앞**이어야 한다: 프롬프트 조립·명령 조립 뒤에 두면 그만큼 사용자가
     # 기다리고, 그 시간은 어차피 버릴 준비 작업에 쓰인 것이다.
-    _ai_ok, _ai_why = ai_health()
-    if not _ai_ok:
+    # ⚠ **`ai_blocked()` 로 묻는다** — `ai_health()` 는 3상태(`None` = 아직 확인되지 않음)라
+    #   `if not _ai_ok:` 로 읽으면 기동 직후의 「모른다」가 곧 「막는다」가 되어 **모든 첫
+    #   질문이 죽는다**. 게이트와 표시가 갈라진 이유는 `state.py` 모듈 주석에 있다.
+    _ai_blocked, _ai_why = ai_blocked()
+    if _ai_blocked:
         log_event("ai.unhealthy_fastfail",
                   "연결된 AI 가 응답하지 않는 상태로 관측됩니다 — 호출하지 않고 즉시 "
                   "안내합니다(회복은 배경에서 확인합니다).",

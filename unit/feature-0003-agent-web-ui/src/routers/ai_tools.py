@@ -4731,6 +4731,10 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     # 리눅스 러너를 띄우므로, 추측은 그 사람에게 늘 틀린다(제보 2026-09-01).
     # 「답할 수 있는가」 + 사유. **tri-state** — 키가 없으면 `None`(구 러너)이고,
     # 그때는 아무것도 쓰지 않는다(구 러너 사용자를 미연결로 만들지 않는다).
+    # ⚠ **키의 존재**와 **값**을 따로 읽는다 (TASK-20260903T200000). 러너는 「아직 확인되지
+    #   않았다」를 `null` 로 신고하고, 구 러너는 키를 아예 보내지 않는다 — 둘을 같게 다루면
+    #   재기동한 러너가 직전 세션의 「정상」을 물려받아 화면이 거짓을 말한다.
+    _ai_reported = "ai_ready" in (payload or {})
     _ai_raw = (payload or {}).get("ai_ready")
     ai_ready = None if _ai_raw is None else bool(_ai_raw)
     ai_unready_reason = str((payload or {}).get("ai_unready_reason") or "")[:300]
@@ -4808,7 +4812,8 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # 실패는 삼킨다(연결 유지가 주 목적) — 다음 30초에 다시 온다. 신고 없음(`None`)은
         # 구 러너이므로 **쓰지 않는다**(setter 가 판정).
         try:
-            _store.set_runner_ai_health(cur, _bearer(request), ai_ready, ai_unready_reason)
+            _store.set_runner_ai_health(cur, _bearer(request), ai_ready,
+                                        ai_unready_reason, reported=_ai_reported)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] AI 건강 신고 기록 실패 account=%s: %r", account_id, exc)

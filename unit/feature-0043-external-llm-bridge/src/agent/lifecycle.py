@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import os
+import shlex
 import sys
 import threading
 import time
@@ -18,7 +19,8 @@ import urllib.request
 from .api import Api
 from .base import _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _DEFAULT_MAX_WORKERS, _DEFAULT_WORKERS, _DEFAULT_WORKER_IDLE_SEC, _MAX_STALLED_ROUNDS, _WAIT_TIMEOUT_SEC
 from .cancel import CancelRegistry
-from .caps import _CREATION_SOURCES, baseline_index, resolve_caps, sanitize_caps
+from .caps import (_CREATION_SOURCES, baseline_index, confirm_ai_or_report,
+                   resolve_caps, sanitize_caps)
 from .conf import load_conf, save_conf
 from .discovery import _no_ai_message, pick_ai
 from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_SELFUPDATE, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
@@ -31,7 +33,7 @@ from .runtimes import _RUNTIME_SPECS
 from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
                          fetch_deployed_agent, install_agent_file, reexec_self,
                          running_bundle_path)
-from .state import prev_runner_instance, runner_instance
+from .state import ai_health, note_ai_probing, prev_runner_instance, runner_instance
 from .timing import _CAPS_BASELINE_WAIT_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
@@ -821,6 +823,10 @@ def main() -> int:
         # (codex R4 P2-9 — `try_self_update` 의 `_CAPS_NEGOTIATING` 가드).
         # `finally` 로 반드시 내린다: 여기서 새면 그 프로세스는 자기갱신을 **영구히**
         # 못 하고, 낡은 러너가 낡은 동작으로 계속 돈다(고치려던 것보다 나쁜 상태다).
+        # 협상에 들어가는 순간부터 **화면은 「확인 중」이어야 한다** (TASK-20260903T200000).
+        # 종전에는 이 구간이 「대기 중」(정상)으로 보였고, 그 사이 AI 가 실은 응답 불가여도
+        # 사용자는 협상이 끝날 때까지(실측 ~200초) 그 사실을 듣지 못했다.
+        note_ai_probing("연결된 AI 가 답할 수 있는지 확인하는 중입니다.")
         _CAPS_NEGOTIATING[0] = True
         try:
             _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps,
@@ -864,9 +870,25 @@ def main() -> int:
             argv[:] = list(_learned)
         if caps:
             save_conf(args.base, args.ca, (args.ai or ""), args.cmd, caps=caps)
+        # ── 「모른다」를 남기지 않는다 (TASK-20260903T200000) ─────────────────────
+        #
+        # 캐시가 있으면 위 협상은 **아무것도 묻지 않는다**(`ask` 가 빈다). 그러면 여기까지
+        # 와도 원장은 `None` 이고, 화면은 「확인 중」에 영구히 머문다 — 거짓은 아니지만
+        # 사용자에게 쓸모가 없다. 사용자 라이브가 정확히 이 경로였다: 캐시된 caps +
+        # 만료된 claude OAuth → 협상이 돌지 않아 관측 기회가 없었고 화면은 정상이었다.
+        #
+        # 그래서 짧은 생존 확인 1회로 반드시 `True`/`False` 중 하나로 떨어뜨린다.
+        if ai_health()[0] is None:
+            confirm_ai_or_report(kind, list(argv))
 
     if args.cmd:
         _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
+        # `--cmd` 는 협상을 돌지 않으므로 여기서도 원장이 `None` 으로 남는다. 같은 함수로
+        # 떨어뜨린다 — 「확인 중이 영구 상태가 되는 경로」를 하나도 남기지 않기 위함이다.
+        note_ai_probing("연결된 AI 가 답할 수 있는지 확인하는 중입니다.")
+        threading.Thread(
+            target=lambda: confirm_ai_or_report("custom", shlex.split(args.cmd)),
+            name="bridge-liveness", daemon=True).start()
     elif _caps_first:
         # 이 CLI 는 호출 형태를 협상에서 배운다 — 배우기 전에 질문을 받으면 답하지 못한다.
         _negotiate_caps()

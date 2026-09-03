@@ -2633,3 +2633,19 @@ select.admin-meta-input {
 @media (prefers-color-scheme: dark) {
   .ai-conn[data-state="stale"] { color: #93c5fd; background: rgba(147, 197, 253, .12); }
 }
+/* 러너는 살아 있으나 **그 AI 가 답한다는 것을 아직 확인하지 못한** 상태
+   (TASK-20260903T200000, 사용자 지적 2026-09-03).
+
+   종전에는 이 구간이 초록(정상)으로 보였다 — 러너 원장의 초기값이 fail-open(`true`)이라
+   확인 전에도 「대기 중」이 나갔다. 그래서 AI 가 실은 응답 불가여도 사용자는 협상이 끝날
+   때까지(실측 ~200초) 그 사실을 듣지 못했다.
+
+   색은 «중립 회색» — 실패(주황)도 정상(초록)도 아니고, 곧 둘 중 하나로 바뀌는 과도
+   상태다. 초록과 갈라지는 것이 이 규칙의 존재 이유이므로 초록 계열을 쓰지 않는다. */
+.ai-conn[data-state="checking"] {
+  color: #475569; border-color: rgba(71, 85, 105, .34); background: rgba(71, 85, 105, .08);
+}
+.ai-conn[data-state="checking"]::before { content: "◌ "; }
+@media (prefers-color-scheme: dark) {
+  .ai-conn[data-state="checking"] { color: #cbd5e1; background: rgba(203, 213, 225, .12); }
+}
