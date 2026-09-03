@@ -4454,3 +4454,10 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
   `mergeable=UNKNOWN` 으로 중단했는데, 그 사실을 확인하기 전에 `deploy-web` 을 실행했다.
   결과적으로 **내 수정이 빠진 main 을 배포**했다(무해했으나 순서가 틀렸다). 배포는 머지
   완료를 **확인한 뒤**에 한다 — §16.3 의 cycle-final 순서(머지 → 배포)가 그것을 말한다.
+
+## REV-20260903T203000-ai-claude-funnel-live-verified [SKIPPED:docs-only] — ACCEPTED
+- Timestamp: 2026-09-03T20:30:00+09:00
+- 문서만 바뀌므로 코드 리뷰 대상 없음. 대신 **기록한 숫자가 실측인지**를 자기검증했다 —
+  4행 전부를 `ChangeJson` 단위로 조회해 표를 채웠고, `client_download: null` 은 라이브
+  `/api/ai/connect/status` 응답에서 직접 읽었다(추정 아님).
+- 남긴 미확인 항목을 숨기지 않았다: `first_claim`·`first_answer` 실적재 0.
