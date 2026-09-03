@@ -4517,3 +4517,25 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 정리 대상 변수·이력 주석뿐(등록 경로 0). 무중단 실측 0건 · 전 서비스 동일 SHA.
 
 미검증 유지: 실 OS 핸들러 등록·옛 잔재 삭제(사용자 머신 setup 재실행 필요) · macOS 경로.
+## CHG-20260903T190000-ai-claude-corp-feature-0043-ai-ready-postdeploy — 연결 칩 「답할 수 없음」 POST-DEPLOY 실측 (문서 전용)
+
+`CHG-20260903T180000` 의 배포 후 검증. 배포 `8da226b5`. 직전 fragment 는 `PARTIAL` 이었다 —
+새 상태의 입력이 이 cycle 이 추가한 서버 컬럼이라 배포 전에는 원리적으로 재현 불가였다.
+
+**배선 증거(배포 전/후 대조)**: `connect_status` 의 `ai_ready` 키가 **부재 → 존재**,
+값은 `null`(모른다)로 tri-state 보존. `RunnerAiReady tinyint(1) NULL` 이 **실제 운영 DB 에
+생성** — fast-path ALTER 가 작동함을 실물 확인(`BridgeDefaultModel` 함정 회피 실증).
+
+**⭐ 인과 증명(대조군)**: 사용자 계정을 빌리지 않고 `bootstrap_admin` 에 조건을 구성했다 —
+가짜 AI 2종을 PATH 로 주입해 **같은 토큰에서 응답성만** 바꿨다.
+
+| 조건 | 러너 | 서버 | 실 브라우저 칩 |
+|---|---|---|---|
+| 응답 없음 | 협상 `TimeoutExpired` | `RunnerAiReady=0` + 사유 | **「답할 수 없음」** `state=off` |
+| 응답함(대조군) | 협상 성공 | `RunnerAiReady=1` | **「대기 중」** `state=on` |
+
+대조군이 없으면 「칩이 원래 그렇게 나오는 것」과 구분되지 않는다 — 이 세션에서 대조군 없이
+단정해 두 번 틀린 이력(「무중단」·「자동 갱신 미발동」)의 반영이다.
+
+검증 흔적 정리: 테스트 러너 0 · 가짜 AI 삭제 · 테스트 토큰 폐기(Id=238). 사용자 계정(10)의
+러너·토큰은 건드리지 않았다. 코드 변경 0.
