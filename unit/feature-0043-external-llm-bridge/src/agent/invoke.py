@@ -12,10 +12,12 @@ import subprocess
 import threading
 import time
 
-from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC
+from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _HOME_DIRNAME
 from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
+from .caps import schedule_health_recheck
+from .state import ai_health, note_ai_outcome
 from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
@@ -28,6 +30,41 @@ CANCELED = "__canceled__"
 
 #: 실패 사유로 실어 보낼 자식 출력의 최대 길이(문자).
 _FAIL_DETAIL_MAX = 400
+
+# ── 응답하지 않는 AI 는 **기다리지 않고** 즉시 정직하게 답한다 (TASK-20260903T160000) ──
+#
+# ## 왜 상한이 아니라 즉시 실패인가 (사용자 지적 2026-09-03)
+#
+# 직전 cycle(TASK-20260903T140000)은 아픈 러너에 **150초 상한**을 뒀다. 사용자 지적:
+#
+# > 「사용자 입장에서, 150는 너무 깁니다. (사실, 10초 이상 소요되는 부분도 길다고
+# >  체감됩니다.)」
+#
+# 맞는 지적이다. **이미 「응답하지 않는다」를 아는 상태에서 150초를 더 기다리게 하는 것**은
+# 설계가 뒤바뀐 것이었다 — 그 150초는 사용자를 위한 시간이 아니라 «회복을 확인하려는 우리
+# 편의»였고, 그 비용을 사용자 대기 시간으로 지불하고 있었다.
+#
+# ## 두 목적을 분리한다
+#
+#   - **사용자 답변**: AI 를 부르지 않고 **즉시** 정직하게 답한다(체감 0초).
+#   - **회복 감지**: `caps.schedule_health_recheck` 가 **배경**에서 확인한다(쿨다운 있음).
+#     성공하면 건강 상태가 돌아오고 **다음 질문**은 정상 경로(무제한)로 처리된다.
+#
+# 회복 확인을 없애지 않는 이유는 직전 cycle 과 같다 — 「못 쓴다」가 영구 잠김이 되면 실제로
+# 복구된 러너가 영원히 막힌다. 바뀐 것은 **그 확인을 누가 기다리는가** 뿐이다.
+#
+# ⚠ 건강한 러너는 여전히 **무제한**이다(회귀 0). 이 경로는 아플 때만 탄다.
+
+#: 아픈 러너가 즉시 내는 답. 사유(관측된 것)와 **다음 행동**을 함께 준다.
+def _unhealthy_notice(reason: str) -> str:
+    why = str(reason or "").strip() or "연결된 AI 가 응답하지 않습니다."
+    return (f"{why}\n\n"
+            "그 컴퓨터에서 해당 AI CLI 에 다시 로그인한 뒤(예: `claude` 재인증) 질문을 다시 "
+            "보내 주세요. 러너를 다시 띄울 필요는 없습니다 — 응답이 돌아오면 자동으로 "
+            "정상 처리됩니다.\n\n"
+            "(이 답변은 연결된 AI 를 호출하지 않고 즉시 안내한 것입니다. 응답하지 않는 것이 "
+            "이미 관측된 상태에서 기다리게 하지 않기 위함입니다.)")
+
 
 #: **stderr 에 있어도 실패 원인이 아닌** 줄 — 이것만 남으면 stderr 는 «비었다» 로 본다.
 #:
@@ -255,9 +292,24 @@ def describe_cli_failure(returncode: int, out: str, err: str) -> str:
     return head + body
 
 
+def _timeout_notice(limit_sec: int, unhealthy: bool) -> str:
+    """상한 초과를 사용자 문장으로. 아픈 러너면 **다음 행동**까지 적는다.
+
+    종전 문구는 「AI 호출이 N초를 넘겨 중단했습니다」뿐이라, 원인이 그 컴퓨터의 AI 인지
+    질문이 어려운 것인지 사용자가 알 수 없었다.
+    """
+    head = f"연결된 AI 가 {limit_sec}초 안에 응답하지 않아 중단했습니다."
+    if not unhealthy:
+        return head
+    return (head + "\n\n이 컴퓨터의 AI 가 계속 응답하지 않는 상태로 관측됩니다 — "
+            "그 컴퓨터에서 해당 CLI 에 다시 로그인한 뒤(예: `claude` 재인증) "
+            "질문을 다시 보내 주세요. 러너를 다시 띄울 필요는 없습니다.")
+
+
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                         env: dict | None = None,
-                        stdin_text: str | None = None) -> tuple[bool, str]:
+                        stdin_text: str | None = None,
+                        timeout_sec: float | None = None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
@@ -272,6 +324,8 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     # 오류로 끝났습니다」를 받은 사용자가 원인을 물어와도 우리 쪽에 볼 것이 없었다.
     _t0 = time.monotonic()
     _exe = (cmd[0] if cmd else "")
+    #: 이 호출의 상한. 호출측이 준 값(아픈 러너)이 우선이고, 없으면 종전 전역(기본 무제한).
+    _limit = float(timeout_sec) if timeout_sec else _AI_TIMEOUT_SEC
     try:
         proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, **CHILD_TEXT_IO,
@@ -286,6 +340,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 여기서 터지는 것은 대개 「그 실행 파일이 없다·권한이 없다」이고, 예외 형이 그
         # 둘을 정확히 가른다(FileNotFoundError vs PermissionError). 문자열로 뭉개지 않는다.
         _log_exc(_EV_AI_SPAWN_FAIL, "AI 를 실행하지 못했다", e, exe=_exe, cwd=cwd or "")
+        note_ai_outcome(False, "연결된 AI 를 실행하지 못했습니다.")
         return False, f"AI 실행 실패: {e}"
 
     # 파이프를 비우는 일은 별도 스레드에 맡긴다. 여기서 직접 읽으면 자식이 큰 출력을 낼 때
@@ -329,14 +384,15 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
             log_event("ai.canceled", "취소되어 AI 를 중단했다", level="WARN",
                       exe=_exe, dur_ms=int((time.monotonic() - _t0) * 1000))
             return False, CANCELED
-        if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:
+        if _limit and waited >= _limit:
             _kill(proc)
             pump.join(5.0)
             log_event(_EV_AI_TIMEOUT, "AI 호출이 상한을 넘겨 중단했다", level="ERROR",
-                      exe=_exe, limit_sec=int(_AI_TIMEOUT_SEC),
+                      exe=_exe, limit_sec=int(_limit), unhealthy=bool(timeout_sec),
                       dur_ms=int((time.monotonic() - _t0) * 1000),
                       stderr_tail=(box.get("err") or "")[-2000:])
-            return False, f"AI 호출이 {int(_AI_TIMEOUT_SEC)}초를 넘겨 중단했습니다."
+            note_ai_outcome(False, "연결된 AI 가 응답하지 않습니다(응답 대기 상한 초과).")
+            return False, _timeout_notice(int(_limit), bool(timeout_sec))
 
     _dur = int((time.monotonic() - _t0) * 1000)
     if pump_exc:
@@ -345,6 +401,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 흘러가, 원인이 적힌 예외를 버리고 빈 사유를 남겼다.
         _log_exc("ai.io_fail", "AI 와의 입출력이 실패했다", pump_exc[0],
                  exe=_exe, dur_ms=_dur, stdin_chars=len(stdin_text or ""))
+        note_ai_outcome(False, "연결된 AI 와의 입출력이 실패했습니다.")
         return False, (f"내 AI 와 데이터를 주고받는 중 오류가 났습니다: "
                        f"{type(pump_exc[0]).__name__}: {pump_exc[0]}")
     if proc.returncode is None:
@@ -352,6 +409,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 그러면 빈 답이 정상 답으로 제출된다.
         log_event(_EV_AI_FAIL, "AI 의 종료 상태를 확인하지 못했다", level="ERROR",
                   exe=_exe, dur_ms=_dur, stdout_bytes=len(box.get("out") or ""))
+        note_ai_outcome(False, "연결된 AI 의 종료 상태를 확인할 수 없습니다.")
         return False, "내 AI 의 종료 상태를 확인하지 못했습니다."
     if proc.returncode != 0:
         # ⚠ 자식의 출력 **전문**(각 상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
@@ -365,10 +423,13 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   stdout_bytes=len(box.get("out") or ""),
                   stdout_tail=_redact_secrets((box.get("out") or "")[-2000:]),
                   stderr_tail=_redact_secrets((box.get("err") or "")[-2000:]))
+        note_ai_outcome(False, "연결된 AI 가 오류로 끝났습니다.")
         return False, describe_cli_failure(int(proc.returncode), box.get("out", ""),
                                            box.get("err", ""))
     log_event("ai.ok", level="DEBUG", exe=_exe, exit=0, dur_ms=_dur,
               stdout_bytes=len(box.get("out") or ""))
+    # 한 번 통했다 = 이 러너는 쓸 수 있다. **즉시** 건강 상태를 되돌린다(자기 치유).
+    note_ai_outcome(True)
     return True, (box.get("out") or "").strip()
 
 
@@ -592,7 +653,7 @@ def _child_workdir() -> str | None:
     빈 디렉토리 하나면 그 상속이 끊긴다. 만들지 못하면 `None` 을 돌려 **종전대로** 상속한다
     (작업 디렉토리 때문에 답변 자체를 막지는 않는다).
     """
-    path = os.path.join(os.path.expanduser("~"), ".mysql-ai-bridge", "work")
+    path = os.path.join(os.path.expanduser("~"), _HOME_DIRNAME, "work")
     try:
         os.makedirs(path, exist_ok=True)
         return path
@@ -645,6 +706,19 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     돌려준다 — 실패와 구분해야 호출측이 "제출하지 않는다" 를 선택할 수 있다.
     """
     _canceled = cancel_check or (lambda: False)
+    # ── 아프면 부르지 않고 즉시 답한다 (TASK-20260903T160000) ────────────────────
+    #
+    # 여기가 **가장 앞**이어야 한다: 프롬프트 조립·명령 조립 뒤에 두면 그만큼 사용자가
+    # 기다리고, 그 시간은 어차피 버릴 준비 작업에 쓰인 것이다.
+    _ai_ok, _ai_why = ai_health()
+    if not _ai_ok:
+        log_event("ai.unhealthy_fastfail",
+                  "연결된 AI 가 응답하지 않는 상태로 관측됩니다 — 호출하지 않고 즉시 "
+                  "안내합니다(회복은 배경에서 확인합니다).",
+                  level="WARN", runtime=kind, reason=_ai_why)
+        # 회복 확인은 **배경**에서. 결과를 기다리지 않는다(기다리면 원점으로 돌아간다).
+        schedule_health_recheck(kind if kind in _RUNTIME_SPECS else None)
+        return False, _unhealthy_notice(_ai_why)
     if custom:
         argv = shlex.split(custom)
         kind = "custom"

@@ -1,4 +1,4 @@
-"""mysql-ai 브리지 상주 러너 — 웹 질문을 **내 머신의 AI** 로 처리한다.
+"""DQA Connect 상주 러너 — 웹 질문을 **내 머신의 AI** 로 처리한다.
 
 ## 무엇을 하는가
 
@@ -26,7 +26,7 @@
                         설정해 둔 자격증명은 건드리지 않는다. 우리는 `--dangerously-skip-
                         permissions` 나 `--permission-mode bypassPermissions` 를 쓰지 않는다.
                         → `_RUNTIME_SPECS["claude"]["argv"]` 를 직접 보면 된다.
-    작업 디렉토리는     자식 CLI 는 `~/.mysql-ai-bridge/work` (빈 디렉토리) 에서 돈다. 러너를
+    작업 디렉토리는     자식 CLI 는 `~/.dqa-connect/work` (빈 디렉토리) 에서 돈다. 러너를
     중립 폴더           코드 저장소 안에서 띄워도 그 저장소의 `CLAUDE.md`·정체성이 이 호출에
                         얹히지 않게 하려는 것이다. → `_child_workdir`.
     기동 시 1회 질의     각 CLI 에게 "너는 어떤 모델·추론 수준을 쓸 수 있나" 를 묻는다
@@ -53,7 +53,7 @@
                         → `grep -nE 'eval[(]|exec[(]|compile[(]|__import__' bridge_agent.py`
                           (매칭되는 줄은 **이 안내문 자신뿐**이어야 한다. 코드에는 없다.)
     설치물 없음         표준 라이브러리만 쓴다(`pip install` 불필요). 부팅 등록·crontab·서비스
-                        설치를 하지 않는다. 남기는 것은 `~/.mysql-ai-bridge/` 안의 넷뿐 —
+                        설치를 하지 않는다. 남기는 것은 `~/.dqa-connect/` 안의 넷뿐 —
                         `config.json`(0600, **토큰 없음**) · 빈 폴더 `work` · `bridge.log` ·
                         `bridge.events.jsonl`(0600) → `save_conf`·`_log_dir`.
     나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`) 와

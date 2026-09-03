@@ -2824,6 +2824,25 @@ def _ensure_bridge_heartbeat_schema(conn) -> None:
             # 뒤집히고, 「마지막으로 연결된」이 「마지막으로 도착한 하트비트」가 된다
             # (codex 적대 리뷰 P1-2).
             "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerOs VARCHAR(16) NULL",
+            # ── 「연결됐지만 답할 수 없다」 (TASK-20260903T180000, 사용자 지적) ──────────
+            #
+            # 러너가 살아 있는 것(`LastHeartbeatAt`)과 그 러너의 **AI 가 실제로 답할 수
+            # 있는 것**은 다른 사실이다. 라이브에서 그 둘이 갈렸다: 러너는 30초마다 멀쩡히
+            # 하트비트를 보내는데 그 머신의 `claude` 는 응답하지 않았고(OAuth 만료),
+            # 화면은 「내 AI 대기 중」을 계속 보여 줬다.
+            #
+            # 사용자 지적(2026-09-03): *"claude 재인증이 필요하다면 사실상 지금 claude 가
+            # 정상 작동하지 않는 상태라는 것 아닌가요? 그렇다면 DQA 에서는 정상 상태가
+            # 아니라 미연결 상태로 나타나야 합니다."* — 맞다. 화면이 「준비됨」이라 말하는
+            # 동안 사용자는 답이 오지 않는 곳에 질문을 보낸다.
+            #
+            # ⚠ **tri-state 다**: NULL = 러너가 신고하지 않음(구 러너) → 종전 동작 유지.
+            #   0 = 답할 수 없다고 신고. 1 = 답할 수 있다. NULL 을 0 으로 읽으면 구 러너를
+            #   쓰는 사용자 전원이 미연결로 보인다(`RunnerBuild` tri-state 와 같은 함정).
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerAiReady TINYINT(1) NULL",
+            # 사용자에게 보일 사유. 러너가 관측한 문장을 그대로 나른다 — 서버가 문구를 새로
+            # 지으면 러너 로그와 화면이 다른 말을 하게 되고, 그때부터 둘 중 하나는 낡는다.
+            "ALTER TABLE WebOAuthTokens ADD COLUMN RunnerAiUnreadyReason VARCHAR(300) NULL",
             # `BridgeLastOs`(계정): 화면이 읽는 값. **토큰이 아니라 계정에 둔다** — 묻는 질문이
             # 「지금 듣고 있는 러너」가 아니라 「마지막으로 연결됐던 것」이라, 토큰에 두면 이
             # 화면이 필요한 순간(연결이 끊긴 뒤)에 값이 사라진다.

@@ -117,7 +117,10 @@ Workflow: open_task(question) -> get_task_context(task_id) -> structure tools ->
 submit_answer requires source_tasks: declare which task ids you actually used as evidence.
 """.strip()
 
-mcp = _Server(f"mysql-ai-tools-{LABEL}", instructions=_INSTRUCTIONS)
+# ⚠ 이름은 `shared/dqa_identity.py` 가 정본이지만 여기서 **import 하지 않는다** — 이 모듈은
+#   최소 컨테이너에서 stdlib 만으로 뜨는 것이 계약이고, 자기 이름 하나 때문에 그 계약을 깨지
+#   않는다. 대신 `tests/test_name_ssot.py` 가 이 리터럴을 정본과 대조한다.
+mcp = _Server(f"dqa-tools-{LABEL}", instructions=_INSTRUCTIONS)
 
 
 def _name(base: str) -> str:

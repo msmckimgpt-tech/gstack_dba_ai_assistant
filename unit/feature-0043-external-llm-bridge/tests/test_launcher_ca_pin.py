@@ -48,6 +48,8 @@ from pathlib import Path
 
 import pytest
 
+import _setup_slice as _naming
+
 _UNIT = Path(__file__).resolve().parents[2]
 _SETUP_SH = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_setup.sh"
 _SETUP_PS1 = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_setup.ps1"
@@ -149,7 +151,11 @@ def _render_launch_sh(tmp: Path, base: str) -> Path:
     blk = src.split('cat > "$LAUNCH_SH" <<LAUNCHEOF\n')[1].split("\nLAUNCHEOF")[0]
     out, gen = tmp / "launch.sh", tmp / "gen.sh"
     gen.write_text(
+        _naming.naming_block() +
+        # ⚠ `BRIDGE_HOME` 은 실 스크립트에서 항상 세워져 있고, 굽힌 launch.sh 가 그 값을
+        #   bake 한다(codex P1-2). 하네스도 같은 전제를 준다 — 안 주면 `set -eu` 로 죽는다.
         f"set -eu\nPY=python3\nBRIDGE_BASE='{base}'\nRUNNER_ARGS=''\n"
+        f'BRIDGE_HOME="{tmp}/home/.dqa-connect"\n'
         f'LAUNCH_SH="{out}"\n'
         'cat > "$LAUNCH_SH" <<LAUNCHEOF\n' + blk + "\nLAUNCHEOF\n"
     )
@@ -160,7 +166,7 @@ def _render_launch_sh(tmp: Path, base: str) -> Path:
 
 
 def _bridge_home(tmp: Path, ca_crt: Path) -> Path:
-    bh = tmp / "home" / ".mysql-ai-bridge"
+    bh = tmp / "home" / ".dqa-connect"
     bh.mkdir(parents=True, exist_ok=True)
     (bh / "bridge_agent.py").write_text(_OLD_AGENT)
     (bh / "rootCA.crt").write_text(ca_crt.read_text())
@@ -198,7 +204,7 @@ def _run_launch(launch: Path, home: Path, binp: Path) -> subprocess.CompletedPro
     if not (binp / "curl").exists():
         pass
     return subprocess.run(
-        ["sh", str(launch), "mysql-ai-bridge://start/?token=mat_STUBTOKEN"],
+        ["sh", str(launch), "dqa-connect://start/?token=mat_STUBTOKEN"],
         capture_output=True, text=True, timeout=90, env=env)
 
 
@@ -372,17 +378,11 @@ def test_l5_windows_downloader_enforces_the_pin(tmp_path: Path):
     신뢰 앵커로 받는가» 한 곳이고, 그 코드는 여기서 그대로 실행할 수 있다. 문자열이
     있는지 보는 대신 **같은 코드가 같은 판정을 하는지** 본다.
     """
-    blk = _launch_ps1_block()
-    lines: list[str] = []
-    for raw in blk.split("Set-Content -Encoding ASCII -Path `$dl -Value @(", 1)[1].splitlines():
-        s = raw.strip()
-        if s.startswith(")"):
-            break
-        if s.startswith("'"):
-            lines.append(s.strip(",").strip().strip("'"))
-    assert lines, "다운로더 본문을 찾지 못했다 — 굽는 형태가 바뀌었으면 이 테스트도 따라가야 한다"
-    dl = tmp_path / "dl.py"
-    dl.write_text("\n".join(lines) + "\n")
+    # ⚠ 추출 루프를 여기 **복제하지 않는다**. 종전엔 이 함수와 `_downloader` 가 같은 루프를
+    #   각자 갖고 있었고, 2026-09-03 개명이 한 줄을 큰따옴표로 바꾸자 **고쳐진 쪽만 고쳐져**
+    #   여기서는 `req = ...` 정의 줄이 통째로 빠진 채 `NameError` 가 났다. 같은 계약은 같은
+    #   코드로 본다 (AGENTS.md §16.7 G10 — 재발 클래스는 구조로 잠근다).
+    dl = _downloader(_SETUP_PS1, tmp_path)
 
     good_ca, sc, sk = _make_ca(tmp_path, "good")
     other_ca, _, _ = _make_ca(tmp_path, "other")
@@ -410,6 +410,20 @@ def test_l5_windows_downloader_enforces_the_pin(tmp_path: Path):
 # L1·L2 로 pin 을 구동해 놓고도 이것들을 보지 못했다 — 하네스가 리다이렉트를 내지 않았고,
 # `https://` 로만 돌렸고, curl 을 죽여 놓고 크기 바닥을 검사했기 때문이다.
 
+def _ps_expand(text: str) -> str:
+    """ps1 보간 문자열 안의 `$DqaXxx` 변수를 **그 파일의 대입값**으로 전개한다.
+
+    값을 테스트가 지어내지 않는다 — `bridge_setup.ps1` 이 선언한 값을 그대로 읽는다. 그래야
+    두 축 동치 검사가 「같은 상수를 쓴다」가 아니라 「같은 바이트를 배포한다」를 본다.
+    """
+    src = _SETUP_PS1.read_text(encoding="utf-8")
+    for name in re.findall(r"\$(Dqa[A-Za-z]+)", text):
+        m = re.search(rf"^\s*\${name}\s*=\s*'([^']*)'\s*$", src, re.M)
+        assert m, f"bridge_setup.ps1 에서 ${name} 대입을 찾지 못했다"
+        text = text.replace(f"${name}", m.group(1))
+    return text
+
+
 def _downloader(path: Path, tmp: Path) -> Path:
     """굽힌 런처에서 파이썬 다운로더를 꺼낸다. 두 축 모두 **같은 본문**이어야 한다."""
     if path is _SETUP_SH:
@@ -426,6 +440,13 @@ def _downloader(path: Path, tmp: Path) -> Path:
                 break
             if s.startswith("'"):
                 lines.append(s.strip(",").strip().strip("'"))
+            elif s.startswith('"'):
+                # ⚠ 큰따옴표 줄도 걷는다. 종전엔 `'` 로 시작하는 줄만 봤는데, 보간이 필요한
+                #   줄(명칭 변수)을 `"` 로 바꾼 순간 그 줄이 **조용히 빠져** 두 축이 갈린
+                #   것처럼 보였다 — 추출기가 못 보는 코드는 이 대칭 검사의 사각이다.
+                #   PowerShell 보간 문자열이므로 `""` → `"` 를 되돌리고 변수를 전개한다.
+                lit = s.strip(",").strip().strip('"').replace('""', '"')
+                lines.append(_ps_expand(lit))
         assert lines, "ps1 축 다운로더를 찾지 못했다"
         body = "\n".join(lines)
     out = tmp / f"dl_{path.stem}_{path.suffix.lstrip('.')}.py"

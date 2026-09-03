@@ -102,16 +102,19 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 | **P1** | ITEM-08 [Major] | ❌ | 위 게이트 통과 | 클라이언트가 나머지 항목의 전제를 바꾼다 |
 | **P2** | ITEM-03 · ITEM-06 | ✅ 병렬 | ITEM-08 done | 클라이언트가 실재해야 웹이 표시할 상태 집합과 안내 문안이 확정된다 |
 
-> **코드 서명이 「미정 — 조사 필요」이므로 현재 P1 은 진입 불가 상태다** (사용자 결정 2026-09-02).
-> 조사 결과가 「확보 불가」면 ITEM-08 을 재검토한다 — 대안은 사내 MDM 배포이며, 그것도 없으면
-> 클라이언트 방향 자체를 되돌려야 한다(§5 참조).
+> **SPIKE-02 완료(2026-09-03) 로 게이트가 한쪽만 남았다** — 실현가능성은 **GO**(3사 중 claude·codex
+> 로그인 대행 실측 확인 · 러너 stdlib 전용이라 동봉 단순 · 크레딧 풀 우려는 **취소된 변경**이라 무근).
+> 남은 것은 **코드 서명 조직 결정** 하나다. 단 SPIKE §2.3 이 그 게이트를 **완화**할 것을 제안한다:
+> Windows 는 미서명 + 안내 동반으로 착수 가능(경고 2클릭, 이탈 위험 감수), **macOS 는 서명·공증
+> 없이는 Gatekeeper 가 차단**하므로 지원 대상에 넣는 순간 Apple Developer Program($99/년) 필수.
+> 즉 「확보 불가」는 **차단**이 아니라 **범위 축소**(Windows 우선)로 처리 가능하다 — 채택 여부는 사용자 결정.
 
 ---
 
 ## 3. 항목
 
 ### SPIKE-02 · 네이티브 클라이언트 실현가능성 (타임박스 1 cycle)
-- **status**: pending
+- **status**: **done** (2026-09-03) — 판정 **conditional-go**. 산출물 `./SPIKE-02-native-client.md`
 - **feature_id**: `feature-0046-native-client`
 - **dimension**: structural
 - **risk_grade**: Minor (조사 — 제품 코드 변경 0)
@@ -148,7 +151,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-08 · 네이티브 클라이언트 — 설치·로그인 대행·러너 내장
-- **status**: pending (**blocked: 코드 서명 미확보**)
+- **status**: **초판 done** (2026-09-03) — Windows 우선·미서명 (사용자 결정). 자동시작·자동업데이트·벤더 설치기 실행은 후속
 - **feature_id**: `feature-0046-native-client` (**신규**)
 - **dimension**: structural
 - **risk_grade**: **Major** — 새 배포 아티팩트 + 사용자 머신에 상주물 + 타사 설치기 실행
@@ -171,7 +174,13 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
   5. **상주 + 로그온 자동시작** — 트레이 아이콘 + 상태창. 재부팅 후 자동 기동.
   6. **자동 업데이트** — 서명 검증 후 교체. 실패 시 **있던 버전 그대로** 기동(갱신하려다 못
      띄우는 것이 가장 나쁜 결말 — 현행 `try_self_update` 와 같은 규약).
-  7. **토큰 수령** — 기존 `mysql-ai-bridge://` 스킴 재사용(웹 [내 AI 실행] 경로 보존).
+  7. **토큰 수령** — 기존 `dqa-connect://` 스킴 재사용(웹 [내 AI 실행] 경로 보존).
+     ⚠ 2026-09-03 개명: `mysql-ai-bridge` → `dqa-connect`(제품명 `DQA Connect`,
+     역-DNS `com.masangsoft.dqa-connect`). **정본은 `shared/dqa_identity.py`** 이고
+     `tests/test_name_ssot.py` 가 다섯 자리를 대조한다 — 클라이언트도 그 정본을 쓰고
+     이름을 자체 선언하지 않는다. Tauri `productName`/`identifier` 는 각각 `APP_NAME`/
+     `APP_ID` 에서 온다. 이름에 구현 형태(`bridge`·`runner`·`client`)를 넣지 않은 것이
+     이 항목을 위한 선택이다 — 러너→클라이언트 전환에 개명이 따라붙지 않게 한다.
 - **entry_points**:
   - 신규: `unit/feature-0046-native-client/src/`
   - 엔진 재사용: `unit/feature-0043-external-llm-bridge/src/agent/` (18모듈, 5,849행)
@@ -206,7 +215,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-00 · 연결 퍼널 계측
-- **status**: pending
+- **status**: **done** (2026-09-03)
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: operational
 - **risk_grade**: Minor
@@ -240,7 +249,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-03 · 연결 상태·진단을 웹 화면이 표시
-- **status**: pending
+- **status**: **done** (2026-09-03) — PB-0008 실 Windows 시각검증 완료
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -274,7 +283,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-05 · AI CLI 허용 목록 3자리 정합 (드리프트 수정)
-- **status**: pending
+- **status**: **done** (2026-09-02) — census 결과 3자리가 아니라 **6자리**였다(FUNCTION.md P0-Z6.1-a)
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: structural
 - **risk_grade**: Minor
@@ -302,7 +311,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-06 · 「AI 없음」 안내를 클라이언트 유도로 전환
-- **status**: pending
+- **status**: **done** (2026-09-03) — 단 클라이언트 **배포 채널 없음**(리눅스 파이프라인이 Windows exe 를 못 만든다) → 「있을 때만 권한다」로 구현
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -365,9 +374,60 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 
 ## 6. 진행 현황
 
-- 총 **5** (ITEM 4 + SPIKE 1) · done 0 · in-progress 0 · pending 4 · **blocked 1**(ITEM-08 — 코드 서명)
-- **다음 ready**: `SPIKE-02` · `ITEM-00` · `ITEM-05` (P0 병렬 — 선행 의존 없음)
+- 총 **5** (ITEM 4 + SPIKE 1) · **done 5** · in-progress 0 · pending 0 · blocked 0 — **로드맵 전 항목 완료**
+- **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03) · `SPIKE-02`(2026-09-03, conditional-go)
+- **P0 전량 완료 + ITEM-08 초판 완료.** 사용자 결정(2026-09-03)으로 **Windows 우선·미서명** 확정 — 서명 게이트 해소.
+- **다음 (로드맵 밖 후속)**:
+  1. **클라이언트 배포 채널** — Windows 빌드 산출물을 서버 `static/agent/` 에 놓는 경로. 이것이 없으면 ITEM-06 의 클라이언트 유도가 화면에 나타나지 않는다(현재는 정직하게 숨김).
+  2. ~~**ITEM-00 라이브 적재 실측**~~ — **2026-09-03 완료**(아래 §10.1).
+  3. 클라이언트 후속: 자동시작 · 자동 업데이트 · 벤더 설치기 동의 실행 · gemini 로그인 대행.
 - **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
   「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.
 - 신규 feature 배정: `feature-0046-native-client` (초판의 `feature-0046-mcpb-connector-bundle`
   을 **재명명** — 해당 `unit/` 디렉토리가 아직 생성되지 않아 참조 파손 없음을 확인)
+
+## 10.1 ITEM-00 라이브 적재 실측 (2026-09-03)
+
+계측을 「짰다」와 「쌓인다」는 다른 축이다. 배포 후 실제 원장을 세어 후자를 확인했다.
+
+**결함 두 겹이 순서대로 드러났다.** 계측 코드가 옳아도 적재는 0 이었다.
+
+1. `first_heartbeat` 호출부가 존재하지 않는 이름(`account`)을 넘겨 `NameError` — 퍼널 기록이
+   fail-open 이라 예외가 삼켜졌다. 화면·로그 어디에도 증상이 없었다.
+2. 1번을 고쳐도 여전히 0. 원인은 **받는 쪽**이었다 — `build_audit_change_json` 의 명시
+   허용목록에 `ai.connect.funnel` 이 없어 `unknown audit action` 으로 거부됐다(PR #1552).
+
+두 번째가 이 사이클의 교훈이다. 처음 진단할 때 `[connect-funnel]` 만 grep 해서 **보내는 쪽**만
+봤고, 실제 실패 로그는 `[TASK-0073 Phase A6] … unknown audit action` 이었다. fail-open 계측은
+**양쪽 다** 조용히 실패한다 — 보내는 쪽과 받는 쪽 로그를 함께 봐야 한다.
+
+**실측 결과** (배포 이미지 `85b6f9bb`, `WebAuditEvents`):
+
+| step | 건수 | path_kind | 출처 |
+|---|---|---|---|
+| `first_heartbeat` | 2 | `runner_windows` | 실사용 계정 2개(10·27)의 상주 러너 |
+| `page_view` | 1 | `unknown` | PB-0008 실제 Windows 브라우저 `/ai/connect` |
+| `handoff_issued` | 1 | `runner_posix` | 연결 정보 발급 |
+
+`COUNT(DISTINCT ResourceId)` = 4 = 총 행수 → dedupe 키가 계정×단계로 분리되고 있다.
+`first_claim`·`first_answer` 는 아직 0 — 해당 사건이 발생하지 않았을 뿐이고, 같은
+choke-point(`ai_tools.py`)를 쓰므로 앞 세 단계의 적재가 배선을 증명한다.
+
+**아직 확인되지 않은 것**: `first_claim`·`first_answer` 의 실적재. 다음 실사용 답변 이후 확인.
+
+## 10.2 클라이언트 배포 채널 — 서버가 실물을 못 만든다 (미해결)
+
+`/api/ai/connect/status` 의 `client_download` 는 라이브에서 `null` 이고, 화면의 「연결 프로그램
+받기」는 **숨겨져 있다**. 없는 다운로드를 안내하지 않는다는 ITEM-06 의 설계대로다.
+
+원인은 파이프라인 축이다 — 배포는 Linux 컨테이너에서 이뤄지는데 PyInstaller 는 **실행 대상
+OS 에서만** 그 OS 용 실행파일을 만든다. 즉 서버 빌드로는 `.exe` 가 나오지 않는다.
+
+초판 실행파일은 Windows 머신에서 직접 빌드해 검증했다(`mysql-ai-client.exe`, 9,174,460 B,
+sha256 `481f1ef291f42d89514301ada9e5d4f0fdf518a2d9b6fb910ccfc5a4631cf4e5`). 이것은 **1회성
+수동 산출물**이며 배포 파이프라인에 들어 있지 않다 — 지금 화면이 숨어 있는 이유가 그것이다.
+
+**필요한 후속**(택1, 조직 결정 필요):
+- Windows 러너가 있는 CI 에서 빌드 → 산출물을 서버 정적 경로에 배치
+- 사내 파일 서버/MDM 배포 → `client_download` 가 그 URL 을 가리키도록 설정
+

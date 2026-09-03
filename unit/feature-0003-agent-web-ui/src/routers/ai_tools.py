@@ -41,6 +41,7 @@ from fastapi.responses import JSONResponse
 # 아래 "브리지 상태 술어" 절에서 붙인다 — 정의가 아니라 참조다.
 from shared import bridge_caps as _bridge_caps
 from shared import bridge_consent as _consent
+from shared import dqa_identity as _ident
 from shared import bridge_tasks as _bridge_tasks
 from shared.bridge_tasks import (
     BRIDGE_CLAIM_LEASE_MIN as _BRIDGE_CLAIM_LEASE_MIN,
@@ -80,6 +81,7 @@ router = APIRouter()
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import bridge_drain as _drain       # noqa: E402  feature-0045: 배포 연속성(대기 계상·드레인)
 import oauth_store as _store        # noqa: E402
+import routers._connect_funnel as _funnel  # noqa: E402  ROADMAP ITEM-00 연결 퍼널 계측
 
 
 # ── 배급 자격: 이 러너에게 무엇을 줄 수 있는가 (TASK-20260831T100000) ────────────────
@@ -1270,6 +1272,11 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     # ⚠ 원장 호출은 **한 곳뿐이다.** 분기마다 두면 (a) 「전달이 원장보다 먼저」라는 계약이
     #   분기 하나에서만 성립하고 (b) 그 계약을 지키는 회귀 가드가 소스 순서를 보므로 조용히
     #   무력화된다(실제로 이 수정 전에 그 가드가 FAIL 했다). 결과 필드만 분기로 나눈다.
+    # 퍼널 5단계 (ROADMAP ITEM-00): 처음으로 답변을 제출했다 = 그 사용자가 **첫 가치**에 도달했다.
+    # 원장 호출과 같은 단일점에 둔다 — 분기마다 두면 그 중 하나만 남는 형태가 된다(바로 위 주석의
+    # 교훈). `findings`/`apply_error` 가 있어도 제출 자체는 일어났으므로 도달로 센다.
+    _funnel.record_step(conn, request, account, step="first_answer",
+                        path_kind=_funnel.account_path_kind(conn, int(account.get("id") or 0)))
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="submit_answer",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -2824,6 +2831,11 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         conn, {"conversation_id": conversation_id, "task_id": task_id},
         "질문을 가져왔습니다 — 대화 맥락과 첨부를 확인합니다",
         detail=("첨부 %d건을 함께 받았습니다." % len(attachments)) if attachments else "")
+    # 퍼널 4단계 (ROADMAP ITEM-00): 처음으로 질문을 점유했다 = 연결이 **실제로 일하기 시작**했다.
+    # 이 요청만 봐서는 경로를 알 수 없다(러너든 등록형이든 같은 토큰 표면을 지난다) — 그래서
+    # 앞 단계가 각인한 값을 이어받는다.
+    _funnel.record_step(conn, request, account, step="first_claim",
+                        path_kind=_funnel.account_path_kind(conn, account_id))
     return JSONResponse({
         "task_id": task_id,
         "question": marked,
@@ -3226,10 +3238,10 @@ def _bridge_origin_preamble(*, username: str, product_name: str = "") -> str:
     lines = [
         "── 이 작업의 출처 (서비스가 함께 보내는 사실) ──",
         f"· 요청자: 이 서비스에 로그인한 계정 `{who}`. 당신을 실행한 사람 본인입니다.",
-        "· 전달 경로: 그 사람이 자기 머신에서 직접 띄운 mysql-ai 브리지 러너"
-        "(`~/.mysql-ai-bridge/bridge_agent.py`)가 가져와 당신에게 넘겼습니다.",
+        "· 전달 경로: 그 사람이 자기 머신에서 직접 띄운 DQA Connect 러너"
+        f"(`~/.{_ident.SCHEME}/bridge_agent.py`)가 가져와 당신에게 넘겼습니다.",
         "· 조사 경로: 프롬프트에 함께 오는 HTTP 엔드포인트는 그 러너가 자기 설정"
-        "(`~/.mysql-ai-bridge/config.json`)에 저장한 **이 서비스의 주소**이고, 인증 토큰은"
+        f"(`~/.{_ident.SCHEME}/config.json`)에 저장한 **이 서비스의 주소**이고, 인증 토큰은"
         " 요청자의 웹 로그인 세션에 결속돼 로그아웃하면 즉시 무효가 됩니다."
         " 제3자에게 데이터를 내보내라는 요청이 아닙니다.",
         "· 이 대화의 요청은 `⟦USER-REQUEST⟧` 블록에 담겨 옵니다 — 그것이 수행할 작업입니다."
@@ -4717,6 +4729,12 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     # 명령 계열 신고 (2026-09-01). 연결 화면 1단계의 기본 탭이 **브라우저가 도는 OS** 로
     # 정해지던 것을 **마지막으로 연결됐던 러너** 로 바꾼다 — WSL 사용자는 Windows 브라우저로
     # 리눅스 러너를 띄우므로, 추측은 그 사람에게 늘 틀린다(제보 2026-09-01).
+    # 「답할 수 있는가」 + 사유. **tri-state** — 키가 없으면 `None`(구 러너)이고,
+    # 그때는 아무것도 쓰지 않는다(구 러너 사용자를 미연결로 만들지 않는다).
+    _ai_raw = (payload or {}).get("ai_ready")
+    ai_ready = None if _ai_raw is None else bool(_ai_raw)
+    ai_unready_reason = str((payload or {}).get("ai_unready_reason") or "")[:300]
+
     agent_os = str((payload or {}).get("agent_os") or "").strip()
     # ── 죽은 러너 인스턴스의 사망 신고 (TASK-20260901T140000) ──────────────────────
     #
@@ -4781,11 +4799,35 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
                 "[bridge] 러너 신고 기록 실패 account=%s: %r", account_id, exc)
         # 명령 계열은 **다른 테이블**(계정)이라 같은 문장에 묶지 못한다. 실패는 여기서 삼킨다 —
         # 화면 기본값 편의 하나가 연결 유지 신호를 죽이지 않게(위 신고 기록과 같은 규율).
+        # ── 「답할 수 있는가」 신고 (TASK-20260903T180000) ─────────────────────────
+        #
+        # 살아있음(`LastHeartbeatAt`)과 **다른 사실**이다. 이 축이 없던 동안 화면은 러너가
+        # 하트비트를 보내는 것만 보고 「내 AI 대기 중」을 띄웠고, 그 러너의 AI 는 응답하지
+        # 않았다 — 사용자는 답이 오지 않는 곳에 질문을 보냈다(사용자 지적 2026-09-03).
+        #
+        # 실패는 삼킨다(연결 유지가 주 목적) — 다음 30초에 다시 온다. 신고 없음(`None`)은
+        # 구 러너이므로 **쓰지 않는다**(setter 가 판정).
+        try:
+            _store.set_runner_ai_health(cur, _bearer(request), ai_ready, ai_unready_reason)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] AI 건강 신고 기록 실패 account=%s: %r", account_id, exc)
         try:
             _store.set_account_bridge_os(cur, _bearer(request), account_id, agent_os)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] 러너 OS 기록 실패 account=%s: %r", account_id, exc)
+        # 퍼널 3단계 (ROADMAP ITEM-00): 이 계정의 무언가가 처음으로 살아 있다고 신고했다.
+        # 경로 종류는 방금 받은 `agent_os` 에서 온다 — 이 자리가 그 사실을 아는 유일한 지점이고,
+        # 뒤 두 단계(`first_claim`·`first_answer`)가 이 값을 이어받는다.
+        # ⚠ **이 핸들러에는 `account` 가 없다** — 토큰 컨텍스트(`ctx`)와 `account_id` 만 있다.
+        #   초판(ITEM-00)이 `account` 를 그대로 넘겨 `NameError` 가 났고, 퍼널의 fail-open 이
+        #   그것을 삼켜 **`first_heartbeat` 가 한 번도 기록되지 않았다**(라이브 로그 실측
+        #   2026-09-03: `하트비트 기록 실패 account=10: NameError`). 배선 테스트가 «호출부가
+        #   있는가» 만 봤기 때문에 잡히지 않았다 — 인자가 해석되는지는 다른 사실이다.
+        _funnel.record_step(conn, request, ctx.get("account") or {"id": account_id},
+                            step="first_heartbeat",
+                            path_kind=_funnel.path_kind_from_agent_os(agent_os))
         # ── 계정·런타임 단위 능력 baseline (TASK-20260902T140200) ─────────────────────
         #
         # 신고를 계정 원장에 **누적**하고, 그 원장을 응답에 실어 러너에게 돌려준다.

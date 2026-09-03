@@ -1096,7 +1096,8 @@ function _paintGate(body) {
   }
 }
 
-function _paintConn(connected, listening, epoch, runnerStale, runnerBuild) {
+function _paintConn(connected, listening, epoch, runnerStale, runnerBuild,
+                    aiReady, aiUnreadyReason) {
   // 배지 요소가 없어도 «연결됨» 판정은 살아 있어야 한다 — 모달의 성공 감지가 배지의 존재에
   // 얹혀 있으면, 배지를 감추는 화면에서 연결이 조용히 알려지지 않는다.
   // ⚠ 창이 바뀐 뒤 도착한 응답은 **기록조차 하지 않는다** (codex 2026-09-01 P1). 판정만
@@ -1139,6 +1140,28 @@ function _paintConn(connected, listening, epoch, runnerStale, runnerBuild) {
     el.textContent = "대기 안 함";
     el.title = "내 AI 가 연결은 되어 있으나 지금 듣고 있는 AI 가 없습니다"
       + "(머신을 재시작했다면 러너가 꺼졌을 수 있습니다). 눌러서 다시 연결 정보를 받으세요.";
+  } else if (aiReady === false) {
+    // ── 「연결됐지만 답할 수 없다」 (TASK-20260903T180000, 사용자 지적) ──────────
+    //
+    // `listening` 은 **살아있음**이다 — 러너 프로세스가 하트비트를 보낸다. 그런데 그 러너의
+    // AI 가 응답하지 않으면 **답은 오지 않는다.** 종전에는 이 상태에서도 「대기 중」을
+    // 띄웠고, 사용자는 답이 오지 않는 곳에 질문을 보냈다.
+    //
+    // 사용자 지적(2026-09-03): *"claude 재인증이 필요하다면 사실상 지금 claude 가 정상
+    // 작동하지 않는 상태라는 것 아닌가요? 그렇다면 DQA 에서는 정상 상태가 아니라 미연결
+    // 상태로 나타나야 합니다."*
+    //
+    // ⚠ `=== false` 로만 판정한다. `undefined`/`null`(모른다 — 구 러너·컬럼 부재)을 잡으면
+    //   그 사용자 전원이 미연결로 보인다. 이 파일이 지문 축에서 이미 세운 규율과 같다.
+    //
+    // `runnerStale` **앞**에 두는 이유: 낡음은 「답은 오지만 옛 동작」이고 이것은 「답이 오지
+    // 않는다」다. 둘이 겹칠 때 사용자가 먼저 알아야 하는 것은 무거운 쪽이다.
+    el.dataset.state = "off";
+    el.textContent = "답할 수 없음";
+    el.title = (aiUnreadyReason || "연결된 AI 가 응답하지 않습니다.")
+      + " 러너는 실행 중이지만 그 컴퓨터의 AI 가 답하지 못하는 상태입니다 —"
+      + " 그 컴퓨터에서 해당 CLI 에 다시 로그인한 뒤 질문해 주세요."
+      + " (응답이 돌아오면 자동으로 정상으로 바뀝니다.)";
   } else if (runnerStale) {
     // 연결도 대기도 성립했는데 **그 러너가 배포본과 다른 파일**이다 (2026-08-31).
     // 잠금 사유는 아니다 — 답변은 온다. 다만 옛 동작·옛 모델 목록이 그대로 보이고,
@@ -1226,7 +1249,10 @@ export async function refreshConnState() {
     // 반영되는 응답만, 그리고 **출발했을 때와 같은 시도**의 것만 관측으로 남긴다.
     if (atStart === _launchAttempt) {
       _lastObserved = { attempt: atStart,
-                        ok: !!(b && b.logged_in !== false && b.listening
+                        // ⚠ `ai_ready === false` 는 성공이 아니다 — 러너는 살아 있지만
+                        //   답이 오지 않는다(TASK-20260903T180000). 모달이 그것을 완료로
+                        //   읽으면 사용자는 「연결됐다」는 확인을 받고 질문을 보낸다.
+                        ok: !!(b && b.logged_in !== false && b.ai_ready !== false && b.listening
                               && !_actionableStaleOf(b)) };
     }
     if (!b || b.logged_in === false) {
@@ -1250,7 +1276,8 @@ export async function refreshConnState() {
     //   접는 자리를 **여기 하나**로 두는 이유: 칩 문구·모달 성공 조건·자동 실행 자격·
     //   「재실행해도 그대로」 판정이 모두 `_lastObs.stale` 을 읽는다.
     const _actionableStale = _actionableStaleOf(b);
-    _paintConn(!!b.connected, !!b.listening, epochAtStart, _actionableStale, b.runner_build);
+    _paintConn(!!b.connected, !!b.listening, epochAtStart, _actionableStale, b.runner_build,
+               b.ai_ready, b.ai_unready_reason);
     // 능력 축은 **잠금 축보다 먼저** 반영한다 (TASK-20260902T140200) — `_paintGate` 가
     // `_syncGatePoll()` 을 부를 때 `_capsWatch` 가 이미 최신이어야, 잠금이 풀리는 그
     // 응답에서 확인 창이 함께 열린다(순서가 반대면 그 한 번의 응답에서 창이 열리지 않고
