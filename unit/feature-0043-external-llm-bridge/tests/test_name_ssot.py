@@ -126,6 +126,9 @@ _LEGACY_ALLOWED = (
     "unit/feature-0043-external-llm-bridge/tests/test_name_ssot.py",
     "unit/feature-0043-external-llm-bridge/tests/test_wsl_scheme_handler.py",   # 이력 docstring
     "unit/feature-0003-agent-web-ui/tests/test_answer_model_notice_seal.py",    # 이력 docstring
+    # 사용자 콘솔 출력을 **원문 그대로** 인용한 docstring (2026-09-03 제보). 그 경로가
+    # 당시 실제 홈이었다는 것이 증거이므로 고치면 「있었던 일」이 거짓이 된다.
+    "unit/feature-0043-external-llm-bridge/tests/test_caps_probe_exception_surfaces.py",
 )
 
 
