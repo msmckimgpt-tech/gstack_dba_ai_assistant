@@ -4220,3 +4220,19 @@ CLI 에 물려 보니** claude 가 추론축을 「없다」고 답했고, 코�
 main 0/1). 인과가 성립하지 않고 표본이 부족해 귀속을 단정하지 않는다 — **PR CI 를 정본**
 으로 삼고, 실패하면 이 항목을 먼저 조사한다. 「통과했으니 무관하다」로도, 「내 트리에서
 났으니 내 것」으로도 **결론하지 않는다**.
+
+## REV-20260903T110000-ai-claude-connect-funnel-metrics [CODEX:connect-funnel] — ACCEPTED-WITH-CHANGES
+- Related TASK: TASK-20260903T110000 (ROADMAP ITEM-00)
+- Source: codex review (v0.152.1) **2라운드**
+- Trigger: 코드 변경 + 세션 상위지시 AgentTool 금지 → §18.8.2-1 제약 없는 채널
+- Timestamp: 2026-09-03T11:00:00+09:00
+- **1라운드 P1 2건 (전건 수정)**:
+  1. **업무 트랜잭션 훼손** — `_audit_user_action` 은 `commit`/`rollback` 을 부른다. 업무 conn 으로 계측하면 **계측 예외가 사용자의 답변을 롤백**할 수 있다(초판 배선이 `claim_request` 점유 직후·`submit_answer` 저장 직후에 있었다). 예외를 삼키는 것은 fail-open 이 아니다 — 부수효과는 이미 일어난 뒤다. → `app._connect_memory()` 전용 커넥션으로 격리. 뮤턴트 M11·M12 로 KILL 확인.
+  2. **멱등이 원자적이지 않음** — SELECT 후 INSERT + `IX_WAE_Resource` 비고유. UNIQUE 를 걸면 범용 감사 원장의 다른 용도가 깨지므로 **exactly-once 를 포기하고** 소비측 dedupe 계약(`COUNT(DISTINCT ResourceId)`)으로 닫았다.
+- **2라운드 P1 2건 (전건 수정)** — 1라운드 수정이 연 새 지적:
+  1. **문서 과장** — docstring 이 `at-least-once` 라고 적었으나 조회 실패·예외 삼킴 두 경로가 기록을 건너뛰므로 실제는 **0..N**. 주장이 코드보다 넓었다 → `best-effort(0..N)` 로 정정하고, **누락이 실제로 일어남을 테스트로 고정**(`test_guarantee_is_best_effort_not_at_least_once`).
+  2. **계약이 문서에만 있음** — 경합 중복과 DISTINCT 소비가 코드/테스트로 없었다 → `dedupe_key_of()` 로 계약을 코드화하고, **스레드 2개로 경합 중복을 실제 재현**하는 테스트를 추가(숨기지 않고 고정).
+- **P2 처리**: 조회 장애 중 30초마다 커넥션·조회 반복 → **양성 전용 프로세스 캐시**(원장은 append-only 라 「있음」은 뒤집히지 않는다; 음성은 캐시 안 함). 실패 경로 커넥션 close 미검증 → 테스트 보강.
+- 뮤테이션 **18종 전건 KILL** (배선 제거·멱등 제거·계정키 제거·OS매핑 반전·커서/커넥션 누수·토큰 적재·캐시 무력화·음성 캐시 등).
+- 회귀: 컨테이너 `PYTHONPATH` 재현 구성(feature-0003+0043+0041)에서 **기준선과 실패집합 동일**(기존 7건 = share redaction, 무관 / 신규 0). ⚠ 앞서 두 feature 를 한 번에 돌린 측정은 conftest 로드 실패로 **0건 수집**이었다 — vacuous 를 결과로 보고하지 않고 재측정했다.
+- Human Approval Needed: 아니오 (Minor · 비파괴 · 읽기 전용 분석 지표 · fail-open).

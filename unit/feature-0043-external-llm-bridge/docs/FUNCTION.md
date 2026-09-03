@@ -586,6 +586,30 @@ FAIL)이고, 제거된 런타임 전수 스캔은 **세 파일 전체**를 훑�
 준다 — codex 적대 리뷰가 초판의 `"ALLOWLIST" not in line` 면제를
 `_OTHER_ALLOWLIST = "claude codex gemini"` 로 우회했다(막으려던 것이 면제 조건이 된 형태).
 
+### P0-AF 연결 퍼널 계측 — 「어느 단계에서 떨어지는가」 (ROADMAP ITEM-00, 2026-09-03)
+
+온보딩 개선 항목들(네이티브 클라이언트 등)이 전부 「쉬워졌다」를 주장하는데 **그것을 반증할
+수단이 저장소에 없었다.** 전환 **전** 기준선을 잡지 않으면 그 주장은 영원히 검증되지 않는다.
+
+5단계를 `WebAuditEvents` 에 `ActionCode='ai.connect.funnel'` 로 적재한다 —
+`page_view`(연결 화면) → `handoff_issued`(토큰 발급) → `first_heartbeat`(살아 있음 신고) →
+`first_claim`(첫 점유) → `first_answer`(첫 답변 = **첫 가치 도달**). `ChangeJson` 은
+`{step, path_kind}` 뿐이고 토큰·질문·답변 본문은 **적재하지 않는다**(`docs/SECURITY.md` D12).
+
+`path_kind` 는 **경로별 이탈률**을 가르기 위한 축이다(단계만 세면 가치의 절반을 잃는다).
+`first_claim`·`first_answer` 시점에는 요청만 봐서는 경로를 알 수 없어서(러너든 등록형이든 같은
+토큰 표면을 지난다) 앞 단계가 각인한 값을 **상속**한다.
+
+| 축 | 계약 |
+|---|---|
+| 조립 지점 | `routers/_connect_funnel.py` **한 곳**. 5개 호출부가 각자 조립하면 단계 이름이 다섯 벌이 된다(P0-Z6.1-a 가 겪은 그 형태) |
+| 커넥션 | **전용**(`app._connect_memory()`). 업무 conn 으로 쓰면 감사 헬퍼의 `commit`/`rollback` 이 **사용자의 답변을 롤백**할 수 있다 — 초판이 그 형태였고 codex 적대 리뷰가 P1 로 잡았다 |
+| 보장 등급 | **best-effort (0..N)**. exactly-once 아님(SELECT 후 INSERT + 비고유 인덱스), at-least-once 도 아님(조회 실패·예외에서 건너뜀). 소비측이 `COUNT(DISTINCT ResourceId)` 로 dedupe 한다 — `dedupe_key_of()` 가 그 계약의 코드면 |
+| 실패 | 전면 fail-open. 계측 때문에 연결이 막히지 않는다 |
+| 폭주 방지 | 계정당 단계당 1행 + **양성 전용 프로세스 캐시**(원장 append-only 라 「있음」은 뒤집히지 않는다). 하트비트 120회/시간이 1행이 된다 |
+
+**절대 수치를 SLA 로 쓰지 않는다** — 이 지표의 용도는 단계 간 **상대 비교**다.
+
 ### P0-Z6.2 기각한 설계 — 전역 「계약 선언」 게이트 (§18.8 (b) 재설계)
 
 처음 판본은 **러너가 `caps_self_report` 자격을 선언하고, 서버가 읽는 시점에 그 선언이 없는
