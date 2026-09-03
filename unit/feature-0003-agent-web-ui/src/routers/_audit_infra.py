@@ -552,6 +552,26 @@ def build_audit_change_json(
             },
             [],
         )
+    # ── ROADMAP ITEM-00 연결 퍼널 (2026-09-03) ────────────────────────────────
+    #
+    # ⚠ **이 자리를 빠뜨려 라이브에서 행이 0건이었다.** 이 빌더는 명시적 allowlist 라
+    #   등재되지 않은 ActionCode 는 `ValueError` 로 죽고, `_audit_user_action` 이 그것을
+    #   삼켜(fail-open) **아무 증상 없이 계측만 사라진다**. 배포 후 실측에서
+    #   `unknown audit action: ai.connect.funnel` 로 드러났다.
+    #
+    #   퍼널 단위 테스트가 `app._audit_user_action` 을 **가짜 더블로 대체**해 이 계약을
+    #   통째로 우회한 것이 원인이다 — 더블은 「내가 부른다」를 검사할 뿐 「받는 쪽이 받아
+    #   준다」를 검사하지 않는다. 회귀 잠금은 **이 빌더를 진짜로 호출**한다.
+    #
+    #   싣는 것은 `{step, path_kind}` 뿐이다. 토큰·질문·답변 본문은 없다(SECURITY D12).
+    if action == "ai.connect.funnel":
+        return (
+            {
+                "step": (request_ctx or {}).get("step"),
+                "path_kind": (request_ctx or {}).get("path_kind"),
+            },
+            [],
+        )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
 
