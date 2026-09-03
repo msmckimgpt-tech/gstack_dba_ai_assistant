@@ -200,6 +200,7 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 | worktree | Git worktree를 활용한 물리적 작업 디렉토리 분리. 병렬 AI 작업 시 권장 |
 | LEARNINGS.md | AI 학습 기록 문서. 실수, 패턴, 특이사항, 선호를 append-only로 누적 |
 | CODEBASE_MAP.md | 저장소 파일 구조와 주요 진입점을 AI가 빠르게 참조할 수 있도록 요약한 문서 |
+| DQA Connect | 개인 머신 AI 를 이 서비스에 연결하는 클라이언트의 제품 명칭. 명칭 정본은 `shared/dqa_identity.py` **3축** — 사람이 읽는 `APP_NAME`(`DQA Connect`) · URL 스킴 = 머신 전역 네임스페이스 `SCHEME`(`dqa-connect`) · 역-DNS `APP_ID`(`com.masangsoft.dqa-connect`). 축마다 지배하는 규약이 달라 한 토큰으로 합치지 않는다. 옛 이름 `mysql-ai-bridge` 는 하위호환 별칭 없이 하드 컷오버(2026-09-03) — 소스에 리터럴로 적지 않고 정본을 읽는다(`feature-0043/tests/test_name_ssot.py` 가 강제) |
 
 ## 10. Admin Console UI 일관성
 

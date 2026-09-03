@@ -54,7 +54,7 @@ sources:
 
 ### 2.1 도메인
 
-DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `describe_table`, `search_tables`, `get_sample_rows`) 을 핵심 loop 로 갖는 사내 DBA 자동화 도구. **멀티 데이터소스 (MySQL·MSSQL)** read-only 분석을 dialect 추상화 + envelope 암호화 registry + DB-단위 접근으로 제공. AWS Bedrock (Claude) 단일 service-managed LLM provider — **단, 2026-08-26 feature-0043 이후 서버 보유 계정의 chat 호출은 fail-closed 게이트로 전면 차단**되고 대화 추론은 각 사용자 개인 머신 AI 로 이관됐다(로컬 임베딩만 유지) — Postgres 16 + pgvector (KB + runtime 단독 정본) + MySQL 8.0 (`web*` control plane), FastAPI Web UI + ask-worker 큐 + Playwright 자동화 + MCP gateway + 그룹 대화(멤버십·`@assistant` 멘션) 의 45-feature compose.
+DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `describe_table`, `search_tables`, `get_sample_rows`) 을 핵심 loop 로 갖는 사내 DBA 자동화 도구. **멀티 데이터소스 (MySQL·MSSQL)** read-only 분석을 dialect 추상화 + envelope 암호화 registry + DB-단위 접근으로 제공. AWS Bedrock (Claude) 단일 service-managed LLM provider — **단, 2026-08-26 feature-0043 이후 서버 보유 계정의 chat 호출은 fail-closed 게이트로 전면 차단**되고 대화 추론은 각 사용자 개인 머신 AI 로 이관됐다(로컬 임베딩만 유지) — Postgres 16 + pgvector (KB + runtime 단독 정본) + MySQL 8.0 (`web*` control plane), FastAPI Web UI + ask-worker 큐 + Playwright 자동화 + MCP gateway + 그룹 대화(멤버십·`@assistant` 멘션) 의 46-feature compose.
 
 ### 2.2 핵심 영역 입구
 
@@ -75,7 +75,7 @@ DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `d
 
 ### 2.3 Feature 카드
 
-- [[Features/_Index|Features MOC]] — feature-0001 ~ feature-0045 의 카드 (feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스(feature-0003 코드 거주) → 카드 45)
+- [[Features/_Index|Features MOC]] — feature-0001 ~ feature-0046 의 카드 (feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스(feature-0003 코드 거주) → 카드 46)
 
 ### 2.4 Decisions (ADR mirror)
 

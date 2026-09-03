@@ -43,7 +43,8 @@ status: draft
 
 온보딩을 다시 설계할 때 **아래는 이미 있다**. 새로 만들지 말고 확장한다.
 
-- **원클릭 재실행 스킴**: `mysql-ai-bridge://start?token=…` 프로토콜 핸들러 + 웹 [내 AI 실행] 버튼
+- **원클릭 재실행 스킴**: `dqa-connect://start?token=…` 프로토콜 핸들러 + 웹 [내 AI 실행] 버튼
+  (리서치 시점 표기는 `mysql-ai-bridge://` 였다 — 2026-09-03 하드 컷오버로 개명했고 옛 스킴은 별칭으로 남기지 않았다)
   (`compose_launch_commands()` 의 `protocol` 키). 브라우저 샌드박스를 넘어 로컬 프로세스를 띄우는
   유일한 구현 수단. **단 최초 1회 설치 이력(`BridgeLastOs`)이 있어야 발동한다.**
 - **러너 자기 갱신**: 스킴 런처가 기동 직전 최신본으로 교체 (`agent/selfupdate.py`, `try_self_update`).

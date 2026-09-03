@@ -1676,3 +1676,21 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **미실측 4건을 표로 전수 명시**(gemini 로그인 · 실 경고 화면 · 번들 크기 · PyInstaller 동결 실동작) — 넷 다 「될 것이다」로 적었지 「된다」를 주장하지 않았고, 각각 언제 닫히는지 적었다.
 - **자기 점검**: 스택 권고(Tauri+PyInstaller sidecar)는 **추정**으로 표기했다 — 빌드 없이 번들 크기를 말할 수 없다. 근거 등급을 실측/문서/추정으로 나눠 표기하는 것이 이 문서의 형식 계약이다.
 - Human Approval Needed: 문서는 **아니오**. 단 §5 의 「서명 게이트 완화」와 ITEM-08 착수는 사용자 결정.
+
+## REV-20260904T010301-ai-claude-doc-sync-20260904-010301 [SKIPPED:cross-cutting-doc-index-sync] — doc_sync 09-04 색인·미러 정합 47건 (META-0071)
+- Related TASK: _meta_ (cross-cutting doc 정합 — 단일 feature-id 없음, `Meta-Cycle: doc-sync-20260904`)
+- Timestamp: 2026-09-04T01:03:01+09:00
+- 범위: `docs/*` 6문서 + `wiki/*` 11문서 **색인·미러 정합만**. 제품 코드 변경 **0**. 정본(`unit/<id>/docs/*`) 무접촉.
+- **[SKIPPED] 사유**: §18.8 — cross-cutting 색인 동기화. 정본을 새로 쓰지 않고 미러의 stale 값·누락 행만 정정하므로 적대 패널이 볼 새 코드/정책 표면이 없다. 대신 **타깃별 기계 검증**으로 대체했다(아래).
+- **delta window**: 직전 doc_sync META `74ba9b7e`(09-03) 이후 **63커밋(non-merge 34)**, 착륙 전량 2026-09-03. 신규 feature **1**(feature-0046-native-client).
+- **방법**: 4축 병렬 sweep(wiki 미러 / 정책문서 / 릴리즈노트 / 전역 폐기값-모순) + **2조 적대 교차검증**(cross-fault 금지 · oldString 유일성 기계 대조 · MISS 누락탐지). 제안 63건 중 **53 apply 후보 → 50 CONFIRMED / 3 REFUTED**(fail-closed 보류) + 검증자 MISS 4건. 최종 **47건 적용**(중복 앵커 6건은 선행 적용으로 흡수).
+- **검증(적용 후 실측)**:
+  - `bin/wiki-lint.sh` total **33 → 32**. **`orphan: 1 → PASS(0)`** — self-add 된 `wiki/Features/feature-0046-native-client.md` 가 어떤 색인에서도 링크되지 않던 것을 배선해 해소. `broken` 은 선재 1건(`Log.md → project_task_conv_entry_defaults`)만 유지, 신규 broken 0.
+  - `bin/ssot-lint.sh` **4 WARN**(전부 선재 tracked `.env` 백업 — rotation 사용자 선행, WARN-only) — 이 run 이 늘리지 않았다.
+  - `bin/gen-status.sh --check` **최신**(frontmatter 21 · passthrough 25 · 신규 0) — STATUS 1절 표는 생성물이라 직접 편집하지 않고 §5 prose·`sources:`·worktree note 만 수기 정합.
+  - 카운트 정합: `ls -d unit/feature-*` **46** = `wiki/Features/feature-*.md` 46 = MOC 렌더 행 46 = `Architecture/Overview` 머리표 46 = `Index` §2.3 = `overview` §2.1. glued `||` 신규 0.
+  - 신규 wikilink 대상 전건 `ls` 실재 확인. `wiki/Log.md` 는 append-only 준수(EOF H2 신규 entry).
+- **verify 한계 명시**: check #1/#5 는 v1.1 deferred 라 STATUS·wiki 정합을 보증하지 않는다 — 위 타깃별 기계 검증이 그 자리를 대신한다.
+- **적대 검증이 막은 것(fail-closed 보류 3건)**: ⓐ `docs/STATUS.md` worktree note 재서술 — oldString 밖 원문(괄호절)이 엉뚱한 주어에 붙어 거짓 명제가 된다는 지목. ⓑ **`docs/SECURITY.md` §50·§51 신설** — feature-0046 의 두 공격 표면(미서명 exe 배포·로그인 대행 실행·러너 수신 / `dqa-connect://` 딥링크 세션 토큰 + 마지막-등록자-승 스킴 + 하드 컷오버)이 SECURITY 에 **0건**임은 실측 확인됐으나 §49.3 기존 행과의 상호작용 결함이 지목되고 교정본이 제시되지 않아 적용하지 않았다. **다음 창 최우선**(`wiki/hot.md` Active Threads·`wiki/Log.md` report-only ⓒ 에 기록). ⓒ `wiki/Architecture/Overview.md` §2.3 행 초안 — 셀 꼬리가 「스킴 무변경」이라 같은 창의 개명 사실과 정면 충돌.
+- **오케스트레이터 지시문 반증 1건**: 이 run 의 지시문이 「릴리즈노트 커밋에 캐시버스터 `?v=` bump 를 포함」을 요구했으나, 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트의 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` 수기 bump 금지). 수기 실값은 그 안전장치를 무력화하므로 **stale 지시로 판정해 따르지 않았다** — `index.html`/`admin.html` 무접촉.
+- Human Approval Needed: **아니오** (색인·미러 정합, 정본·코드 무변경).

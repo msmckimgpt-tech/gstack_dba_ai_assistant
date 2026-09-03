@@ -53,13 +53,13 @@ feature-0043 pull 브리지). 서버측 LLM 은 `shared/llm_gate.py` 에서 fail
 
 | 이미 있는 것 | 위치 | 클라이언트에서의 역할 |
 |---|---|---|
-| 러너 엔진 5,849행 (18모듈) | `unit/feature-0043-external-llm-bridge/src/agent/` | 그대로 내장 |
+| 러너 엔진 (`src/agent/` 다중 모듈) | `unit/feature-0043-external-llm-bridge/src/agent/` | 그대로 쓴다 — 단 **앱에 넣지 않고** 서버에서 받아 체크섬 대조(정본 `unit/feature-0046-native-client/docs/FUNCTION.md` P0-J) |
 | 런타임 3종 지원 (claude·codex·gemini) + 표 밖 CLI 지목 | `src/agent/runtimes.py` `_RUNTIME_SPECS` · P0-Z4 | 그대로 |
 | CLI 감지 (Windows `.exe`·PATH 밖 표준 위치) | `src/agent/discovery.py` | 그대로 |
 | 능력 질의(모델·추론등급 신고) | `src/agent/caps.py` | 그대로 |
 | 무결성 대조(CA 지문·체크섬) | `bridge_setup.sh`/`.ps1` | **설치 관리자로 이관** |
 | 자기 갱신 | `src/agent/selfupdate.py` | **자동 업데이트로 승격** |
-| 셸 설치 스크립트 1,531행 | `bridge_setup.sh` 862 + `.ps1` 669 | **소멸** |
+| 셸 설치 스크립트 1,823행 (2026-09-04 실측) | `bridge_setup.sh` 1,031 + `.ps1` 792 | **소멸** |
 
 **정본 진입**: `repo/AGENTS.md` · `repo/docs/PROJECT.md` · `repo/docs/SECURITY.md` ·
 `unit/feature-0043-external-llm-bridge/docs/FUNCTION.md`(P0-H · P0-K · P0-J · P0-Z3~Z6)
@@ -93,21 +93,28 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 **DAG 검증**: 순환 없음. 측정 수단(ITEM-00)을 전 항목 선행으로 두었고, **실현가능성(SPIKE-02)과
 코드 서명(조직 작업)을 ITEM-08 의 하드 선행**으로 세웠다 — 「될 것 같다」로 Major 항목을 열지 않는다.
 
+⚠ **위 그래프의 「코드 서명 hard precondition」은 2026-09-03 사용자 결정으로 해제됐다** —
+Windows 우선 · 미서명(SmartScreen 경고 2클릭 감수)으로 진행해 ITEM-08 초판이 나왔다. 서명은
+차단 조건이 아니라 후속 개선이다(§2 게이트 · §6 · ITEM-08 status 참조). macOS 를 지원 대상에
+넣는 시점에는 Gatekeeper 때문에 서명·공증이 하드 선행으로 되살아난다.
+
 ## 2. Phase 시퀀스
 
 | Phase | 포함 | 병렬? | 진입 조건 | 왜 이 순서인가 |
 |---|---|---|---|---|
 | **P0** | ITEM-00 · ITEM-05 · **SPIKE-02** | ✅ 병렬 | (없음) | SPIKE 가 ITEM-08 의 spec 을 확정한다. 계측이 없으면 「쉬워졌다」를 반증할 수 없다. ITEM-05 는 독립·저위험 |
-| **게이트** | — | — | SPIKE-02 done **AND** 코드 서명 확보 | **둘 중 하나라도 미충족이면 P1 진입 금지.** 서명 없이 배포하면 SmartScreen/Gatekeeper 경고가 터미널 벽을 그대로 대체한다 |
+| **게이트** | — | — | SPIKE-02 done (**코드 서명 요건은 2026-09-03 해제**) | 서명 없이 배포하면 SmartScreen/Gatekeeper 경고가 터미널 벽을 그대로 대체할 위험이 있어 원래 하드 선행이었다. 사용자 결정(2026-09-03)으로 **Windows 우선·미서명**(경고 2클릭 감수)을 택해 게이트는 SPIKE-02 하나만 남았고 P1 이 진입했다 |
 | **P1** | ITEM-08 [Major] | ❌ | 위 게이트 통과 | 클라이언트가 나머지 항목의 전제를 바꾼다 |
 | **P2** | ITEM-03 · ITEM-06 | ✅ 병렬 | ITEM-08 done | 클라이언트가 실재해야 웹이 표시할 상태 집합과 안내 문안이 확정된다 |
 
-> **SPIKE-02 완료(2026-09-03) 로 게이트가 한쪽만 남았다** — 실현가능성은 **GO**(3사 중 claude·codex
-> 로그인 대행 실측 확인 · 러너 stdlib 전용이라 동봉 단순 · 크레딧 풀 우려는 **취소된 변경**이라 무근).
-> 남은 것은 **코드 서명 조직 결정** 하나다. 단 SPIKE §2.3 이 그 게이트를 **완화**할 것을 제안한다:
-> Windows 는 미서명 + 안내 동반으로 착수 가능(경고 2클릭, 이탈 위험 감수), **macOS 는 서명·공증
-> 없이는 Gatekeeper 가 차단**하므로 지원 대상에 넣는 순간 Apple Developer Program($99/년) 필수.
-> 즉 「확보 불가」는 **차단**이 아니라 **범위 축소**(Windows 우선)로 처리 가능하다 — 채택 여부는 사용자 결정.
+> **SPIKE-02 완료(2026-09-03) 로 게이트가 한쪽만 남았고, 그 한쪽도 같은 날 해제됐다** — 실현가능성은
+> **GO**(3사 중 claude·codex 로그인 대행 실측 확인 · 러너 stdlib 전용이라 동봉 단순 · 크레딧 풀
+> 우려는 **취소된 변경**이라 무근). 남아 있던 것은 **코드 서명 조직 결정**이었고, SPIKE §2.3 이 그
+> 게이트를 **완화**할 것을 제안했다: Windows 는 미서명 + 안내 동반으로 착수 가능(경고 2클릭, 이탈
+> 위험 감수), **macOS 는 서명·공증 없이는 Gatekeeper 가 차단**하므로 지원 대상에 넣는 순간 Apple
+> Developer Program($99/년) 필수. 즉 「확보 불가」는 **차단**이 아니라 **범위 축소**(Windows 우선)로
+> 처리 가능하다 — **사용자가 2026-09-03 그 범위 축소를 채택했다**(Windows 우선 · macOS 제외 ·
+> 미서명). 서명은 그 뒤로 차단 조건이 아니라 SmartScreen 경고를 없애는 후속 개선이다.
 
 ---
 
@@ -155,7 +162,8 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 - **feature_id**: `feature-0046-native-client` (**신규**)
 - **dimension**: structural
 - **risk_grade**: **Major** — 새 배포 아티팩트 + 사용자 머신에 상주물 + 타사 설치기 실행
-- **depends_on**: [ITEM-00, SPIKE-02, **코드 서명 확보(조직 작업)**]
+- **depends_on**: [ITEM-00, SPIKE-02] — **코드 서명 확보(조직 작업)** 는 2026-09-03 사용자 결정
+  (Windows 우선·미서명)으로 하드 선행에서 **해제**됐다. macOS 를 지원 대상에 넣을 때 되살아난다.
 - **enables**: [ITEM-03, ITEM-06]
 - **why**: RESEARCH §9.1 · 사용자 결정 2026-09-02. **터미널·Python·CLI 설치 명령·토큰 복사를
   한 번에 없애는 유일한 항목**이며, MCPB 와 달리 **claude·codex·gemini 를 모두 덮는다**
@@ -163,7 +171,10 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
   갱신할 수 없다 — P0-Z6 4차 재발의 뿌리)가 자동 업데이트로 닫힌다.
 - **fit_verdict**: **adopt-with-guard**
 - **what** — 서명된 설치 파일(Windows `.exe`/`.msi` · macOS `.pkg`/`.dmg`)이 하는 일:
-  1. **러너 엔진 동봉** — `src/agent/` 를 그대로 싣는다(SPIKE-02 가 정한 방식). 파이썬 설치 불요.
+  1. **파이썬 런타임 동봉** — 공식 임베더블 CPython 을 앱 폴더 옆에 둔다. 파이썬 설치 불요.
+     ⚠ 실제 구현(2026-09-03)은 **러너 엔진을 동봉하지 않는다** — `src/agent/` 배포본은 여전히
+     서버에서 받아 체크섬을 대조한다(동봉하면 서버 배포와 클라이언트 배포가 갈려 「고쳤는데
+     그대로」가 재발한다). 정본 `unit/feature-0046-native-client/docs/FUNCTION.md` P0-J.
   2. **CA 신뢰** — 현행 스크립트와 **같은 계약**: 지문 대조 후 **이 프로세스에만** 적용, OS 신뢰
      저장소 미변경. (설치 관리자라고 해서 전역 설치로 바꾸지 않는다 — 그 절제가 외부 AI 거절
      사유를 해소한 근거였다.)
@@ -381,8 +392,10 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
   1. **클라이언트 배포 채널** — Windows 빌드 산출물을 서버 `static/agent/` 에 놓는 경로. 이것이 없으면 ITEM-06 의 클라이언트 유도가 화면에 나타나지 않는다(현재는 정직하게 숨김).
   2. ~~**ITEM-00 라이브 적재 실측**~~ — **2026-09-03 완료**(아래 §10.1).
   3. 클라이언트 후속: 자동시작 · 자동 업데이트 · 벤더 설치기 동의 실행 · gemini 로그인 대행.
-- **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
-  「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.
+- **후속 조직 작업(차단 아님)**: 코드 서명 인증서 확보 여부 확정. Windows 는 미서명으로 이미
+  진행했고(SmartScreen 경고는 설치 1회로 축소), 서명은 그 경고를 없애는 개선이다. macOS 를
+  지원 대상에 넣는 시점에는 Gatekeeper 때문에 Apple Developer Program 이 하드 선행으로
+  되살아난다. 배포 채널 후속(§10.2)에서 F-004(사내 MDM 배포)는 여전히 택1 후보다.
 - 신규 feature 배정: `feature-0046-native-client` (초판의 `feature-0046-mcpb-connector-bundle`
   을 **재명명** — 해당 `unit/` 디렉토리가 아직 생성되지 않아 참조 파손 없음을 확인)
 
@@ -423,8 +436,12 @@ choke-point(`ai_tools.py`)를 쓰므로 앞 세 단계의 적재가 배선을 �
 원인은 파이프라인 축이다 — 배포는 Linux 컨테이너에서 이뤄지는데 PyInstaller 는 **실행 대상
 OS 에서만** 그 OS 용 실행파일을 만든다. 즉 서버 빌드로는 `.exe` 가 나오지 않는다.
 
-초판 실행파일은 Windows 머신에서 직접 빌드해 검증했다(`mysql-ai-client.exe`, 9,174,460 B,
-sha256 `481f1ef291f42d89514301ada9e5d4f0fdf518a2d9b6fb910ccfc5a4631cf4e5`). 이것은 **1회성
+초판 실행파일은 Windows 머신에서 직접 빌드해 검증했다(**당시 이름** `mysql-ai-client.exe`,
+9,174,460 B, sha256 `481f1ef291f42d89514301ada9e5d4f0fdf518a2d9b6fb910ccfc5a4631cf4e5`).
+그 포터블 단일 exe 형식은 같은 날 **설치 마법사 + 런타임 동봉**으로 교체됐고, 현재 산출물은
+`DQAConnect.exe`(앱)과 `DQAConnect-Setup-1.0.0.exe`(설치기)이며 서버가 기대하는 서빙 이름도
+`agent/DQAConnect.exe` 다(정본 `unit/feature-0046-native-client/docs/FUNCTION.md` P0-J ·
+`unit/feature-0003-agent-web-ui/src/routers/oauth_as.py` `_CLIENT_REL`). 어느 쪽도 **1회성
 수동 산출물**이며 배포 파이프라인에 들어 있지 않다 — 지금 화면이 숨어 있는 이유가 그것이다.
 
 **필요한 후속**(택1, 조직 결정 필요):

@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 45 (done 2 포함) |
+| Feature 수 | 46 (done 2 포함) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-45 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+46 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -90,6 +90,7 @@ sources:
 | feature-0044-qa-staging-pipeline | planned (설계 제안) | 격리망 QA 머신 CI/CD (설계 rev.3) — 빌드 머신 한 곳에서 **한 번 빌드**한 이미지를 `docker save` tar 로 사내 파일서버에 올리고, QA·라이브가 매니페스트(`url`+`sha256`+`image_id` 2중 대조)를 보고 각자 **당겨서** 설치하며, 승격은 재빌드가 아니라 매니페스트 표식(`promoted/current.json`) 이동으로 처리한다. 초판(rev.1)의 '사내 GitLab CI + 컨테이너 레지스트리' 전제는 rev.2 에서 반증돼 폐기됐고(사내 git 없음 → SVN 은 릴리즈 산출물 저장소로만), rev.3 은 로컬 LLM 실측으로 **GPU 요구를 소거**했다(권장 스펙 8~12 vCPU / 32GB / 400GB). 현행 배포 스파인(무중단 롤링·soak·last-good 롤백)은 유지하고 **이미지 획득 경로만** build → pull 로 교체(`deploy-web.sh --from-manifest`). QA 망이 사내 저장소만 도달 가능해 베이스 이미지·pip 미러화 + 버전/해시 고정이 선행 필수이며, 배포 완료 판정에 **MCP 도달성**(OAuth discovery 2종 + 도구 왕복)을 포함한다 — 사용자 진입 경로가 웹이 아니라 개인 머신 MCP 라 컨테이너 health 만으로는 "쓸 수 있음" 을 보장하지 못한다. QA 데이터는 **마스킹 없는 라이브 복제본**(사용자 결정)이라 QA 머신을 운영 등급으로 취급 (2026-08-26 신규) | [[feature-0044-qa-staging-pipeline]] | `unit/feature-0044-qa-staging-pipeline/docs/FUNCTION.md` |
 | feature-0045-zd-bridge-continuity | shipped | 웹브라우저–개인 AI 브리지가 **연결된 채 요청을 주고받는 중에도** 배포가 그 작업을 끊지 않게 만든 재구성. 깨진 것은 무중단 스파인이 아니라 **계기판**이었다 — 게이트가 보는 `active_streams`·`ask_jobs` 는 브리지 대기도 개인 AI 의 도구 호출도 세지 않아, AI 가 붙어 조사 중인 순간에도 '조용함(0)' 으로 읽고 replica 를 내렸다. 해법은 **비대칭 드레인**: 대기는 신호를 주면 즉시 정상 종료시켜 남은 replica 로 교대(끊김 아님), 진행 중 왕복은 완주 대기(상한 180s). 개인 AI 가 붙는 문(`ext-tool-mcp`)은 단일 컨테이너라 배포마다 통째로 끊겼던 것을 2 replica + LB + stateless + 전용 롤링으로 전환. 강행한 배포는 점유를 되돌리되 소유자를 보존해 **먼저 끝내는 쪽이 이기게** 한다. 첫 전환 배포에서 구 MCP 컨테이너 정리(`sweep_legacy_ext_tool_mcp`)의 조회 실패가 `set -e` 로 배포를 중단시킨 결함을 수정하고 "구 서비스 정리는 게이트가 아니다" 를 계약으로 고정했으며, 배포 중단 상태의 수동 정리 순서(엣지가 무엇을 가리키는지 먼저 확인)를 런북에 남겼다 (2026-08-27 신규 · 라이브 배포 `e7d54f70` · 끊김 0 실측) | [[feature-0045-zd-bridge-continuity]] | `unit/feature-0045-zd-bridge-continuity/docs/FUNCTION.md` |
 | feature-0042-analysis-dedup | done (조사·검증 완결) | 분석 요청 경제성 — 분석 워커 LLM 요청당 낭비(입력의 약 80%가 고정 시스템 프롬프트)를 회수할 수 있는지 실측 판정한 cycle. **산출물은 코드가 아니라 판정**(런타임 코드 변경 0건): batch 두 해석 전건 기각(Batches API 전송경로 부재·구독형이라 할인가치 0·24h SLA 불일치 / 다건 묶기 출력 미절감·per-job 상태기계 붕괴) 후 회수 후보 3개를 `docs/improvements/analysis-orchestration/ROADMAP.md` T4 로 등재하고 전제를 즉시 재실측 — ITEM-13 형제 dedup **rejected**(이름 중복률 69.3% vs 내용 distinct 99.6~100%, 차이는 부모 테이블 맥락이라 상속은 정보 손실) · ITEM-14 prompt caching **done**(4,096 토큰 미만 무음 실패 재현 → 4,463 tok 에서 cache_creation 4,422 → 2회차 cache_read 4,422) · ITEM-15 는 '축소'→'캐시 가능 재구성' 방향 반전 후 `BLOCKED: verification-sample-insufficient`(선행 안전망 = 출력 계약 회귀 테스트 신설로 확정, 구현은 별도 cycle). slug 의 `dedup` 은 기각된 1순위 후보 유래 — **실제 범위 정본은 FUNCTION.md §1** (2026-08-14 신규) | [[feature-0042-analysis-dedup]] | `unit/feature-0042-analysis-dedup/docs/FUNCTION.md` |
+| feature-0046-native-client | in-progress | Windows 네이티브 클라이언트(`DQA Connect`) — 「AI 연결」의 터미널 의존을 없앤다. `bridge_setup.ps1`(669행)이 하던 일을 **같은 계약**(사내 CA DER 지문 대조 → 러너 sha256 대조 → `--check` → 상주)으로 하되 껍데기를 tkinter GUI 로 바꿨다. 로그인은 「위임」이 아니라 **「대행 실행」** — 벤더 공식 명령을 subprocess 로 띄우고 종료코드만 보며 토큰을 읽지도 저장하지도 중계하지도 않는다. 배포 형식은 **설치 마법사 + 런타임 동봉**(Inno Setup per-user · `--onedir` · 공식 임베더블 CPython — **동봉하는 것은 인터프리터지 러너가 아니다**; 러너는 여전히 서버에서 받아 체크섬 대조). AI 는 Windows·WSL **양쪽**에서 찾고(WSL 은 러너의 `--cmd` 계약으로 넘긴다) `auth status` 가 아니라 **실제 응답**으로 가용 판정한다. 웹의 인계는 `dqa-connect://start` 딥링크가 연결 4값을 함께 실어 받고 서버 주소는 **TOFU 고정**한다. Windows 우선 · **미서명**(SmartScreen 은 설치 1회 · 사용자 결정 2026-09-03) · macOS·코드서명·자동업데이트는 범위 밖 (2026-09-03 신규) | [[feature-0046-native-client]] | `unit/feature-0046-native-client/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 
