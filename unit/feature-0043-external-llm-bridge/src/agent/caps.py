@@ -14,6 +14,7 @@ import threading
 import time
 
 from .base import CHILD_TEXT_IO
+from .state import note_ai_outcome, note_ai_unusable
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log, log_event
 from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS
@@ -1297,6 +1298,12 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 #   그 한 줄이면 사용자가 바로 고칠 수 있었다.
                 if reasons.get(n):
                     _log(f"  {n}: 사유 — {reasons[n]}")
+                # 「응답이 없다」의 **질문 전 첫 관측** (TASK-20260903T140000).
+                # 이 신고가 없으면 러너는 답할 수 없는 상태로 질문을 집어가고, 사용자는
+                # 아무 안내 없이 무한정 기다린다(사용자 지적 2026-09-03).
+                note_ai_unusable(
+                    f"이 컴퓨터의 {n} 가 응답하지 않습니다"
+                    + (f" — {reasons[n]}" if reasons.get(n) else "."))
                 _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
                      f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 
@@ -1462,3 +1469,73 @@ def resolve_caps(only: str | None, cached: dict | None,
                                baseline=(None if refresh else (baseline or None)),
                                on_settled=on_settled)
     return reported, detail
+
+
+# ── 건강 회복 재확인 — 사용자를 기다리게 하지 않고 뒤에서 (TASK-20260903T160000) ──
+#
+# ## 왜 필요한가 (사용자 지적 2026-09-03)
+#
+# > 「사용자 입장에서, 150는 너무 깁니다. (사실, 10초 이상 소요되는 부분도 길다고
+# >  체감됩니다.)」
+#
+# 맞는 지적이다. 직전 cycle 은 「응답 없음이 관측된 러너」에 150초 상한을 뒀는데, **이미
+# 못 쓴다는 것을 아는 상태에서 150초를 더 기다리게 하는 것**은 설계가 뒤바뀐 것이다.
+# 그 150초는 사용자를 위한 시간이 아니라 **회복을 확인하려는 우리 편의**였다.
+#
+# ## 두 목적을 분리한다
+#
+# 얽혀 있던 두 요구를 떼어 놓으면 둘 다 만족한다:
+#
+#   - **사용자 답변**: 아플 때는 AI 를 부르지 않고 **즉시** 정직하게 답한다(체감 0초).
+#   - **회복 감지**: 그 확인은 **배경**에서 한다 — 사용자 대기 경로에서 빼낸다.
+#
+# 회복 확인을 없애면 안 되는 이유는 직전 cycle 과 같다: 「못 쓴다」가 영구 잠김이 되면
+# 실제로 복구된 러너가 영원히 막힌다. 그래서 확인은 유지하되 **사용자 시간으로 지불하지
+# 않는다**.
+#
+# ⚠ 이 재확인은 **AI 를 실제로 호출**한다(사용자 계정 토큰을 쓴다). 그래서 쿨다운을 둔다 —
+#   아픈 동안 매 질문마다 호출하면 남의 계정 쿼터를 우리가 태우는 셈이다.
+
+#: 회복 재확인 최소 간격. 이 안에 다시 요청되면 아무것도 하지 않는다.
+_HEALTH_RECHECK_COOLDOWN_SEC = float(
+    os.environ.get("BRIDGE_HEALTH_RECHECK_COOLDOWN_SEC", "") or 60.0)
+
+_HEALTH_RECHECK_LOCK = threading.Lock()
+_HEALTH_RECHECK_AT = [0.0]
+
+
+def schedule_health_recheck(only: str | None = None) -> bool:
+    """아픈 러너의 회복을 **배경에서** 확인한다. 실제로 띄웠으면 True.
+
+    호출측(`invoke.ask_local_ai`)은 이 함수의 결과를 기다리지 않는다 — 기다리면 사용자
+    대기 경로로 되돌아온다. 성공하면 `note_ai_outcome(True)` 가 건강 상태를 되돌리고,
+    **다음 질문**은 정상 경로(무제한)로 처리된다.
+    """
+    now = time.monotonic()
+    with _HEALTH_RECHECK_LOCK:
+        if now - _HEALTH_RECHECK_AT[0] < _HEALTH_RECHECK_COOLDOWN_SEC:
+            return False
+        _HEALTH_RECHECK_AT[0] = now
+
+    def _run() -> None:
+        try:
+            # 협상 경로를 그대로 재사용한다 — 「응답하는가」를 판정하는 기준이 두 벌이 되면
+            # 한쪽은 반드시 낡는다(이 파일이 반복해 지켜 온 규율).
+            got = detect_runtimes(only, cached=None, probe=True)
+            if got:
+                note_ai_outcome(True)
+                log_event("caps.health_recovered",
+                          "연결된 AI 가 다시 응답합니다 — 다음 질문은 정상 처리됩니다.",
+                          runtimes=[r.get("runtime") or r.get("name") for r in got])
+        except Exception as exc:  # noqa: BLE001  (배경 확인 실패가 러너를 흔들지 않는다)
+            log_event("caps.health_recheck_failed",
+                      "회복 확인이 실패했습니다 — 다음 기회에 다시 확인합니다",
+                      level="WARN", exc=exc)
+
+    threading.Thread(target=_run, name="bridge-health-recheck", daemon=True).start()
+    return True
+
+
+def reset_health_recheck() -> None:
+    """테스트 전용 — 쿨다운이 케이스 간 누수되지 않게."""
+    _HEALTH_RECHECK_AT[0] = 0.0
