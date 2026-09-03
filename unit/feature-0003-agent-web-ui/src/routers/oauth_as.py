@@ -1176,7 +1176,11 @@ def compose_launch_commands(*, endpoint: str, token: str) -> dict:
         #
         # 토큰을 URL 에 싣는다: 핸들러 스크립트에는 토큰이 없고(디스크에 쓰지 않는다),
         # 세션 결합이라 로그아웃하면 즉시 무효다.
-        "protocol": _ident.scheme_url(token),
+        # ⚠ **연결에 필요한 값을 모두 싣는다.** 토큰만 실으면 네이티브 클라이언트는 서버가
+        # 어디인지 몰라 「연결 정보가 없습니다」만 띄운다 — 셸 설치본과 달리 디스크에 심어
+        # 둔 서버 주소가 없기 때문이다(실제 사용자 제보 2026-09-03).
+        "protocol": _ident.scheme_url(token, base=base, ca_sha256=ca_fp,
+                                      agent_sha256=agent_sha),
         "setup_url": {"posix": sh_url, "windows": ps_url},
         "checksums": {"setup_posix": sh_sha, "setup_windows": ps_sha,
                       "agent": agent_sha, "ca": ca_fp},

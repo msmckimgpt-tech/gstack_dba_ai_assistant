@@ -434,6 +434,54 @@ class IntegrityError(RuntimeError):
     """대조 실패 — **여기서 멈춘다. 계속 진행하는 선택지는 없다.**"""
 
 
+# ── 서버 주소 고정 (TOFU) ─────────────────────────────────────────────────────────
+
+#: 처음 연결한 서버를 적어 두는 파일. 홈 안이라 사용자별로 분리된다.
+_SERVER_PIN = "server.json"
+
+
+def pinned_server(home: Path) -> str | None:
+    """이 클라이언트가 **전에 연결한** 서버 주소. 없으면 `None`."""
+    try:
+        data = json.loads((home / _SERVER_PIN).read_text(encoding="utf-8"))
+        value = str(data.get("base") or "").strip()
+        return value or None
+    except Exception:  # noqa: BLE001 — 파일이 없거나 깨졌으면 「고정 없음」이다
+        return None
+
+
+def pin_server(home: Path, base: str) -> None:
+    """서버 주소를 고정한다. **연결에 성공한 뒤**에만 부른다.
+
+    실패한 주소를 고정하면 다음번에 그 주소가 「전에 쓰던 곳」으로 신뢰받는다.
+    """
+    base = str(base or "").strip()
+    if not base:
+        return
+    home.mkdir(parents=True, exist_ok=True)
+    (home / _SERVER_PIN).write_text(json.dumps({"base": base}), encoding="utf-8")
+
+
+def server_changed(home: Path, base: str) -> str | None:
+    """고정된 주소와 **다르면** 그 옛 주소를 돌려준다. 같거나 고정이 없으면 `None`.
+
+    ## 왜 필요한가
+
+    스킴 URL 은 브라우저를 통해 들어오므로 **남이 만든 링크를 사용자가 클릭**할 수 있다.
+    거기 실린 `base` 를 그대로 믿으면 공격자의 서버에서 러너를 받아 실행하게 된다. CA 지문
+    대조는 이 경우 방어가 되지 않는다 — 지문도 같은 URL 에서 오기 때문이다(둘 다 공격자가
+    정한다).
+
+    그래서 **처음 연결한 서버를 기억**하고, 다른 주소가 오면 사용자에게 묻는다. 첫 연결은
+    물을 근거가 없으므로 통과시킨다 — 종전 복사·붙여넣기 경로와 같은 신뢰 수준이고, 화면이
+    서버 주소를 보여 준다.
+    """
+    known = pinned_server(home)
+    if not known:
+        return None
+    return None if known == str(base or "").strip() else known
+
+
 def install_ca(plan: ConnectPlan) -> Path:
     """사내 CA 수신 + 지문 대조. 전역 신뢰 저장소는 **건드리지 않는다**.
 

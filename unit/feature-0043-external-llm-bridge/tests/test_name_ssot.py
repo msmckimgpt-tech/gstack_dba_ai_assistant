@@ -198,10 +198,18 @@ def test_scheme_reaches_every_handler_registration_site():
     assert '"HKCU:\\Software\\Classes\\$DqaScheme"' in ps, "Windows 레지스트리 키가 정본을 안 쓴다"
 
 
-def test_web_emits_the_scheme_through_the_canonical_helper():
-    """웹이 딥링크를 **정본 헬퍼**로 만든다 — 라우터가 스킴 문자열을 자체 조립하지 않는다."""
+def test_web_emits_the_scheme_through_the_canonical_helper(canon):
+    """웹이 딥링크를 **정본 헬퍼**로 만든다 — 라우터가 스킴 문자열을 자체 조립하지 않는다.
+
+    ⚠ 호출 **형태**를 못박지 않는다. 종전에는 `_ident.scheme_url(token)` 리터럴을 요구했는데,
+    딥링크에 서버 주소를 함께 싣도록 헬퍼가 인자를 받게 되자(2026-09-03) 의도는 그대로인데
+    이 단정만 깨졌다. 지켜야 하는 것은 **헬퍼를 거친다**는 것이지 인자 개수가 아니다.
+    대신 「자체 조립 금지」를 실제로 단정해 원래 의도를 더 정확히 잠근다.
+    """
     oauth = _read(_UNIT / "feature-0003-agent-web-ui" / "src" / "routers" / "oauth_as.py")
-    assert "_ident.scheme_url(token)" in oauth, "웹이 정본 헬퍼로 딥링크를 만들지 않는다"
+    assert "_ident.scheme_url(" in oauth, "웹이 정본 헬퍼로 딥링크를 만들지 않는다"
+    assert f'"{canon["SCHEME"]}://' not in oauth and f"'{canon['SCHEME']}://" not in oauth, \
+        "라우터가 스킴 URL 을 직접 조립한다 — 스킴과 경로는 정본에서 함께 바뀌어야 한다"
     assert "_ident.MCP_SERVER_KEY" in oauth, "mcpServers 키가 정본에서 오지 않는다"
 
 
