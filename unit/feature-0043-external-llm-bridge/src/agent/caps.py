@@ -14,6 +14,7 @@ import threading
 import time
 
 from .base import CHILD_TEXT_IO
+from .state import note_ai_unusable
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log, log_event
 from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS
@@ -1297,6 +1298,12 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 #   그 한 줄이면 사용자가 바로 고칠 수 있었다.
                 if reasons.get(n):
                     _log(f"  {n}: 사유 — {reasons[n]}")
+                # 「응답이 없다」의 **질문 전 첫 관측** (TASK-20260903T140000).
+                # 이 신고가 없으면 러너는 답할 수 없는 상태로 질문을 집어가고, 사용자는
+                # 아무 안내 없이 무한정 기다린다(사용자 지적 2026-09-03).
+                note_ai_unusable(
+                    f"이 컴퓨터의 {n} 가 응답하지 않습니다"
+                    + (f" — {reasons[n]}" if reasons.get(n) else "."))
                 _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
                      f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 

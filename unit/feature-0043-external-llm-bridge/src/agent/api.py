@@ -14,6 +14,7 @@ import urllib.request
 
 from .base import _UA
 from .events import AGENT_FEATURES, AGENT_VERSION, _EV_API_FAIL, _self_build, _self_os
+from .state import ai_health
 from .logs import log_event, register_secret
 from .timing import _HEARTBEAT_TIMEOUT_SEC
 
@@ -64,6 +65,13 @@ class Api:
         # 콘솔 작업 배급 자격을 정하고, 낡은 버전이면 응답으로 갱신 경로를 알려 준다.
         body["features"] = list(self.features)
         body["agent_version"] = AGENT_VERSION
+        # 「이 러너가 실제로 답할 수 있는가」 (TASK-20260903T140000). 살아 있음(`listening`)과
+        # **다른 사실**이다 — 러너는 멀쩡히 돌면서 자기 AI 만 죽어 있을 수 있고, 라이브에서
+        # 정확히 그 상태가 사용자를 무한 대기시켰다. 서버는 이 값으로 적재를 막고 사유를
+        # 화면에 낸다. 항상 싣는다(빈 사유 = 정상).
+        _ai_ok, _ai_why = ai_health()
+        body["ai_ready"] = bool(_ai_ok)
+        body["ai_unready_reason"] = _ai_why
         # 죽은 인스턴스의 **사망 신고** (TASK-20260901T140000). 기동 첫 신호에는 직전
         # 프로세스를, 종료 시에는 자기 자신을 싣는다. 서버는 그 id 로 점유된 미제출 작업만
         # 놓아준다 — 다른 러너(다른 머신)의 작업은 id 를 알 수 없어 애초에 걸리지 않는다.

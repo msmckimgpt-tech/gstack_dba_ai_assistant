@@ -45,3 +45,73 @@ def set_runner_instance(current: str, prev: str) -> None:
     """
     global _RUNNER_INSTANCE, _PREV_RUNNER_INSTANCE
     _RUNNER_INSTANCE, _PREV_RUNNER_INSTANCE = current, prev
+
+
+# ── AI 사용 가능성 — 관측된 사실로 신고한다 (TASK-20260903T140000) ─────────────
+#
+# ## 무엇이 깨져 있었나 (사용자 지적 2026-09-03)
+#
+# 능력 협상이 실패해도 그 사실은 **모델 선택기를 숨기는 데만** 쓰였다. 「이 러너는 답할 수
+# 없다」로는 취급되지 않았으므로 러너는 질문을 정상 점유했고, 그 뒤 `claude.exe` 가 무한
+# 응답 없음(실측 300초 timeout·출력 0바이트, `oauth/token 400` 반복)이라 **사용자는 아무
+# 안내도 없이 영원히 기다렸다.**
+#
+# 사용자 지적: *"모델을 탐색하는데 실패했다는 사실이 사용자에게는 알려지지 않고 영원히
+# 기다리게 됩니다. 작동에 이슈가 나타난 사실이 해소되지 않았으니 명백한 오류입니다."*
+#
+# ## 무엇을 신고하는가
+#
+# **추측이 아니라 관측**이다 — 이 러너가 실제로 AI 를 부른 결과만 반영한다:
+#
+#   - 능력 협상이 그 런타임에서 실패했다  → 「응답이 없다」의 첫 관측(질문 전에 알 수 있는 유일한 신호)
+#   - 실제 질문 처리가 연속 `_AI_FAIL_STREAK_MAX` 회 실패했다 → 계속 실패한다
+#   - **한 번이라도 성공하면 즉시 복귀한다** — 낡은 판정으로 멀쩡한 러너를 막지 않는다.
+#
+# ## fail-open 으로 시작하는 이유
+#
+# 초기값은 «사용 가능»이다. 「증명될 때까지 불가」로 두면 첫 질문을 받을 방법이 없어(성공의
+# 근거가 질문 처리뿐이라) 교착이 된다. 대신 협상 실패가 **질문 전에** 첫 관측을 준다.
+
+#: 연속 실패를 몇 번 보면 「못 쓴다」로 판정할지. 1회는 일시적 오류(순단·한도)일 수 있고,
+#: 그 한 번으로 계정의 질문을 막으면 오탐 비용이 사용자 차단이 된다.
+_AI_FAIL_STREAK_MAX = 2
+
+_AI_READY = True
+_AI_UNREADY_REASON = ""
+_AI_FAIL_STREAK = 0
+
+
+def ai_health() -> "tuple[bool, str]":
+    """(쓸 수 있는가, 못 쓰는 사유). 사유는 사용자에게 보일 수 있는 문장이다."""
+    return _AI_READY, _AI_UNREADY_REASON
+
+
+def note_ai_unusable(reason: str) -> None:
+    """질문 **전에** 얻은 관측(능력 협상 실패)으로 곧바로 「못 쓴다」로 표시한다."""
+    global _AI_READY, _AI_UNREADY_REASON
+    _AI_READY = False
+    _AI_UNREADY_REASON = str(reason or "").strip()[:300]
+
+
+def note_ai_outcome(ok: bool, reason: str = "") -> None:
+    """실제 AI 호출 결과 1건을 반영한다.
+
+    성공은 **즉시** 복귀시킨다(스트릭도 함께 지운다) — 한 번 통하면 그 러너는 쓸 수 있고,
+    낡은 실패 기록으로 계속 막는 것은 사용자에게 거짓이다.
+    """
+    global _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK
+    if ok:
+        _AI_FAIL_STREAK = 0
+        _AI_READY = True
+        _AI_UNREADY_REASON = ""
+        return
+    _AI_FAIL_STREAK += 1
+    if _AI_FAIL_STREAK >= _AI_FAIL_STREAK_MAX:
+        _AI_READY = False
+        _AI_UNREADY_REASON = str(reason or "").strip()[:300] or "연결된 AI 가 응답하지 않습니다."
+
+
+def reset_ai_health() -> None:
+    """테스트 전용 — 프로세스 전역이라 케이스 간 누수를 막는다."""
+    global _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK
+    _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK = True, "", 0
