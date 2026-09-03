@@ -129,7 +129,7 @@ globalThis.fetch = async (url) => {
       access_token: "tok-test", endpoint: "https://example.invalid/api/ai/mcp",
       handoff: "붙여넣기용 지시문",
       launch: { posix: "curl … | sh", windows: "irm … | iex",
-                protocol: "mysql-ai-bridge://connect?t=tok-test", probe: "환경 조사 지시문" },
+                protocol: "dqa-connect://connect?t=tok-test", probe: "환경 조사 지시문" },
     }) };
   }
   // ⚠ 응답 본문은 **출발 시점**에 캡처한다 — 실제 서버가 그렇듯. 지연 후에 읽으면 «날아가

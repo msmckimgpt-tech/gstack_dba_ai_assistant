@@ -153,7 +153,7 @@ export function serveState(get) {
     if (url.startsWith("/api/ai/connect/token")) {
       return { ok: true, json: async () => ({
         handoff: "설치 지시문", last_os: "posix",
-        launch: { protocol: "mysql-ai-bridge://start?token=mat_x",
+        launch: { protocol: "dqa-connect://start?token=mat_x",
                   posix: "curl … | sh", windows: "…" } }) };
     }
     return { ok: true, json: async () => ({

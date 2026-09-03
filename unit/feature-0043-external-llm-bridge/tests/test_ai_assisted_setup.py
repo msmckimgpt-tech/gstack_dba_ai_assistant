@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+import _setup_slice as _naming
+
 _UNIT = Path(__file__).resolve().parents[2]
 _SETUP_SH = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_setup.sh"
 _SETUP_PS1 = _UNIT / "feature-0043-external-llm-bridge" / "src" / "bridge_setup.ps1"
@@ -84,7 +86,8 @@ _MARK = "__RUNNER_ARGS__"
 
 def _run_probe(env: dict) -> tuple[str, str]:
     """검증 구역을 실행하고 `(RUNNER_ARGS, stderr)` 를 돌려준다."""
-    script = _slice_probe_section() + f'\nprintf "\\n{_MARK}%s" "$RUNNER_ARGS"\n'
+    script = (_naming.naming_block() + _slice_probe_section()
+              + f'\nprintf "\\n{_MARK}%s" "$RUNNER_ARGS"\n')
     # ⚠ PATH 를 고정하지 않는다. 재현성 때문에 `/usr/bin:/bin` 으로 박았더니 컨테이너
     #   (`python` 이 `/usr/local/bin`)에서 파이썬 탐색이 실패해 스크립트가 `die` 로 죽고,
     #   **37건이 환경 문제로 빨개졌다**(로컬은 green). 이 스위트가 보려는 것은 검증 로직이지
@@ -297,7 +300,12 @@ def _load_launch_ns():
     src = _OAUTH_AS.read_text(encoding="utf-8")
     start = src.index("def compose_launch_commands")
     end = src.index("def compose_connect_handoff")
-    ns = {"_ca_fingerprint": lambda: "aa" * 32,
+    # ⚠ `_ident` 는 스텁하지 **않는다** — 실제 `shared/dqa_identity.py` 를 넣는다.
+    #   스텁하면 이 하네스가 스킴 값을 지어내게 되고, 「웹이 발행하는 딥링크가 정본과 같은가」를
+    #   여기서 검증할 수 없게 된다(값 검증은 `test_name_ssot.py` 가, 도달은 여기가 본다).
+    from shared import dqa_identity as _ident
+    ns = {"_ident": _ident,
+          "_ca_fingerprint": lambda: "aa" * 32,
           "_runner_checksum": lambda: "bb" * 32,
           "_setup_checksum": lambda n: ("cc" if n.endswith(".sh") else "dd") * 32}
     exec(src[start:end], ns)  # noqa: S102 — 대상 구역을 격리 실행

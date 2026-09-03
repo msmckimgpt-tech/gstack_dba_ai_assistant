@@ -204,7 +204,9 @@ def _server_kwargs() -> "tuple[dict[str, Any], dict[str, Any]]":
 
 _INIT_KW, _RUN_KW = _server_kwargs()
 try:
-    mcp = _Server("mysql-ai-tools-http", **_INIT_KW)
+    # 이름 정본은 `shared/dqa_identity.py` — 여기 리터럴은 `tests/test_name_ssot.py` 가 대조한다
+    # (이 모듈도 stdlib-only 계약이라 import 하지 않는다).
+    mcp = _Server("dqa-tools-http", **_INIT_KW)
 except TypeError as _exc:  # pragma: no cover — SDK 계약이 또 바뀐 경우
     # **삼키지 않는다.** 조용히 stateful 로 뜨면 2-replica 에서 세션 404 가 절반씩 난다 —
     # 그 실패는 배포가 아니라 사용자 요청에서 나타나고, 원인이 여기라는 단서가 없다.

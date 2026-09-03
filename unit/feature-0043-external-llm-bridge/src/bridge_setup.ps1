@@ -1,4 +1,4 @@
-﻿# mysql-ai 브리지 설치·기동 스크립트 (Windows PowerShell).
+﻿# DQA Connect 설치·기동 스크립트 (Windows PowerShell).
 #
 # ⚠ **이 파일은 UTF-8 BOM 을 반드시 유지한다.** (사용자 제보 2026-08-31)
 #
@@ -18,7 +18,7 @@
 # 두 파일이 갈리면 OS 마다 다른 연결 절차가 되고, 그것이 정확히 이 기능이 없애려는 마찰이다.
 #
 #   1. 사내 사설 CA 수신 + 지문 대조   2. bridge_agent.py 수신 + 체크섬 대조
-#   3. mysql-ai-bridge:// 핸들러 등록   4. --check → 상주
+#   3. dqa-connect:// 핸들러 등록   4. --check → 상주
 #
 # 사용:
 #   $env:BRIDGE_BASE='https://host'; $env:BRIDGE_TOKEN='mat_...'; .\bridge_setup.ps1
@@ -35,11 +35,22 @@ function Drop([string]$m) {
   [Console]::Error.WriteLine("[bridge-setup] ⚠ $m — 이 값은 버리고 기본 동작으로 진행합니다.")
 }
 
+# ── 명칭 정본 (단일 출처 — POSIX 판 `bridge_setup.sh` 와 **같은 값**) ──────────
+#
+# 두 파일이 갈리면 OS 마다 다른 스킴이 등록되고, 웹은 하나만 발행하므로 한쪽이 조용히
+# 죽는다. 값이 어긋나지 않게 `tests/test_connect_gate.py` 가 두 파일을 파싱해 대조한다.
+$DqaAppName = 'DQA Connect'
+$DqaScheme  = 'dqa-connect'
+$DqaAppId   = 'com.masangsoft.dqa-connect'
+#: 개명 전 이름 — 잔재 정리 전용. 하위호환 별칭이 아니다(하드 컷오버).
+$DqaLegacyScheme = 'mysql-ai-bridge'
+$DqaLegacyHome   = Join-Path $HOME '.mysql-ai-bridge'
+
 $Base  = $env:BRIDGE_BASE
 $Token = $env:BRIDGE_TOKEN
 $CaSha = $env:BRIDGE_CA_SHA256
 $AgSha = $env:BRIDGE_AGENT_SHA256
-$Home_ = if ($env:BRIDGE_HOME) { $env:BRIDGE_HOME } else { Join-Path $HOME '.mysql-ai-bridge' }
+$Home_ = if ($env:BRIDGE_HOME) { $env:BRIDGE_HOME } else { Join-Path $HOME ".$DqaScheme" }
 # 사람이 직접 주는 칸 — 무검증(기존 호환).
 $ExtraArgs = if ($env:BRIDGE_ARGS) { $env:BRIDGE_ARGS } else { '' }
 
@@ -483,7 +494,7 @@ function Get-RemoteFile([string]$url, [string]$dest) {
       'import ssl, sys, urllib.request',
       'url, dest, ca = sys.argv[1], sys.argv[2], sys.argv[3]',
       'ctx = ssl.create_default_context(cafile=ca)',
-      'req = urllib.request.Request(url, headers={"User-Agent": "mysql-ai-bridge-setup"})',
+      "req = urllib.request.Request(url, headers={""User-Agent"": ""$DqaScheme-setup""})",
       'with urllib.request.urlopen(req, context=ctx, timeout=60) as r:',
       '    body = r.read()',
       'with open(dest, "wb") as f:',
@@ -562,7 +573,7 @@ $BakedArgsLiteral =
     '@(' + (($BakedArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ', ') + ')'
   } else { '@()' }
 @"
-# mysql-ai 브리지 러너 기동 (프로토콜 핸들러가 부른다).
+# DQA Connect 러너 기동 (프로토콜 핸들러가 부른다).
 # 토큰은 여기 없다 — 웹이 스킴 인자로 그때그때 넘긴다.
 param([string]`$Url)
 `$ErrorActionPreference = 'SilentlyContinue'
@@ -618,7 +629,7 @@ try {
     'ctx = ssl.create_default_context(cafile=ca)',
     'op = urllib.request.build_opener(',
     '    urllib.request.HTTPSHandler(context=ctx), NoRedirect)',
-    'req = urllib.request.Request(url, headers={"User-Agent": "mysql-ai-bridge-launch"})',
+    "req = urllib.request.Request(url, headers={""User-Agent"": ""$DqaScheme-launch""})",
     'with op.open(req, timeout=30) as r:',
     '    if int(getattr(r, "status", 0) or 0) != 200:',
     '        sys.exit("http status")',
@@ -669,14 +680,14 @@ if ($ProbedHandler -eq 'none') {
   Say '  러너에 닿지 않는다는 조사 결과). 러너가 꺼지면 이 명령을 다시 실행하세요.'
 } else {
 try {
-  $key = 'HKCU:\Software\Classes\mysql-ai-bridge'
+  $key = "HKCU:\Software\Classes\$DqaScheme"
   New-Item -Path $key -Force | Out-Null
-  Set-ItemProperty -Path $key -Name '(Default)' -Value 'URL:mysql-ai bridge'
+  Set-ItemProperty -Path $key -Name '(Default)' -Value "URL:$DqaAppName"
   Set-ItemProperty -Path $key -Name 'URL Protocol' -Value ''
   New-Item -Path "$key\shell\open\command" -Force | Out-Null
   Set-ItemProperty -Path "$key\shell\open\command" -Name '(Default)' `
     -Value "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$LaunchPs`" `"%1`""
-  Say '웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 (mysql-ai-bridge://).'
+  Say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 ($DqaScheme://)."
 } catch {
   # 등록 실패는 연결을 막지 않는다 — 러너는 아래에서 그대로 뜬다. 다만 버튼이 안 되는 사실은
   # 말해야 한다(조용히 실패하면 사용자가 버튼을 눌러 보고 고장으로 읽는다).
@@ -732,7 +743,47 @@ if ($proc -and -not $proc.HasExited) {
   Say "  감사    : $Home_\bridge.events.jsonl (한 줄 = 한 사건. 문제 보고 시 이 파일을 보내"
   Say "            주세요 — 토큰은 기록 전에 지워집니다)"
   Say "  종료   : Stop-Process -Id $($proc.Id)"
-  Say "  해제   : Remove-Item -Recurse '$Home_'  +  Remove-Item -Recurse 'HKCU:\Software\Classes\mysql-ai-bridge'"
+  Say "  해제   : Remove-Item -Recurse '$Home_'  +  Remove-Item -Recurse 'HKCU:\Software\Classes\$DqaScheme'"
+
+  # ── 개명(2026-09-03) 전 설치물 정리 — POSIX 판 `cleanup_legacy_install` 과 같은 계약 ──
+  #
+  # 러너가 **실제로 뜬 뒤에만** 실행한다. 하드 컷오버라 옛 스킴은 등록하지 않지만, 옛 등록을
+  # 남기면 죽은 핸들러가 옛 홈의 러너를 되살려 두 러너가 같은 계정으로 대기한다
+  # (`docs/TASK-20260901T173000-stale-runner-yield.md` 의 재발 조건).
+  #
+  # ⚠ 사용자가 BRIDGE_HOME 을 옛 경로로 명시했으면 그것이 현행 설치다 — 건드리지 않는다.
+  # ⚠ 문자열 그대로 비교하면 «지우면 안 되는 것을 지운다» — `BRIDGE_HOME` 을 옛 경로에 끝
+  #   구분자 포함(`...\.mysql-ai-bridge\`)으로 준 사용자는 `-ne` 가 참이 되어 **현행 홈**이
+  #   삭제 대상이 된다. POSIX 판 `norm_path` 와 같은 계약으로 정규화 후 비교한다.
+  #   `GetFullPath` 는 실존하지 않는 경로에도 동작한다(존재 검사와 분리).
+  $_legacyNorm  = [IO.Path]::GetFullPath($DqaLegacyHome).TrimEnd('\','/')
+  $_currentNorm = [IO.Path]::GetFullPath($Home_).TrimEnd('\','/')
+  if ($_legacyNorm -ieq $_currentNorm) { $DqaLegacyHome = $null }
+
+  if ($DqaLegacyHome -and (Test-Path -LiteralPath $DqaLegacyHome)) {
+    $isOurs = (Test-Path -LiteralPath (Join-Path $DqaLegacyHome 'bridge_agent.py')) -or
+              (Test-Path -LiteralPath (Join-Path $DqaLegacyHome 'launch.ps1'))
+    if ($isOurs) {
+      try {
+        Remove-Item -Recurse -Force -LiteralPath $DqaLegacyHome -ErrorAction Stop
+        Say "이전 이름의 설치 폴더를 정리했습니다 ($DqaLegacyHome)."
+      } catch {
+        Say "⚠ 이전 설치 폴더를 지우지 못했습니다 — 직접: Remove-Item -Recurse '$DqaLegacyHome'"
+      }
+    } else {
+      # 이름만 같고 내용이 우리 것이 아니다. 남의 디렉토리를 지우지 않는다.
+      Say "⚠ $DqaLegacyHome 이 있는데 이 브리지의 설치물로 보이지 않아 그대로 둡니다."
+    }
+  }
+  $legacyKey = "HKCU:\Software\Classes\$DqaLegacyScheme"
+  if (Test-Path -LiteralPath $legacyKey) {
+    try {
+      Remove-Item -Recurse -Force -LiteralPath $legacyKey -ErrorAction Stop
+      Say '이전 이름의 Windows 핸들러 등록을 정리했습니다.'
+    } catch {
+      Say "⚠ 이전 핸들러 등록을 지우지 못했습니다 — 직접: Remove-Item -Recurse '$legacyKey'"
+    }
+  }
 } else {
   Die '러너가 바로 종료됐습니다. 토큰·CA·파이썬 버전을 확인하세요.'
 }

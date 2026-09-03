@@ -41,6 +41,7 @@ from fastapi.responses import JSONResponse
 # 아래 "브리지 상태 술어" 절에서 붙인다 — 정의가 아니라 참조다.
 from shared import bridge_caps as _bridge_caps
 from shared import bridge_consent as _consent
+from shared import dqa_identity as _ident
 from shared import bridge_tasks as _bridge_tasks
 from shared.bridge_tasks import (
     BRIDGE_CLAIM_LEASE_MIN as _BRIDGE_CLAIM_LEASE_MIN,
@@ -3237,10 +3238,10 @@ def _bridge_origin_preamble(*, username: str, product_name: str = "") -> str:
     lines = [
         "── 이 작업의 출처 (서비스가 함께 보내는 사실) ──",
         f"· 요청자: 이 서비스에 로그인한 계정 `{who}`. 당신을 실행한 사람 본인입니다.",
-        "· 전달 경로: 그 사람이 자기 머신에서 직접 띄운 mysql-ai 브리지 러너"
-        "(`~/.mysql-ai-bridge/bridge_agent.py`)가 가져와 당신에게 넘겼습니다.",
+        "· 전달 경로: 그 사람이 자기 머신에서 직접 띄운 DQA Connect 러너"
+        f"(`~/.{_ident.SCHEME}/bridge_agent.py`)가 가져와 당신에게 넘겼습니다.",
         "· 조사 경로: 프롬프트에 함께 오는 HTTP 엔드포인트는 그 러너가 자기 설정"
-        "(`~/.mysql-ai-bridge/config.json`)에 저장한 **이 서비스의 주소**이고, 인증 토큰은"
+        f"(`~/.{_ident.SCHEME}/config.json`)에 저장한 **이 서비스의 주소**이고, 인증 토큰은"
         " 요청자의 웹 로그인 세션에 결속돼 로그아웃하면 즉시 무효가 됩니다."
         " 제3자에게 데이터를 내보내라는 요청이 아닙니다.",
         "· 이 대화의 요청은 `⟦USER-REQUEST⟧` 블록에 담겨 옵니다 — 그것이 수행할 작업입니다."

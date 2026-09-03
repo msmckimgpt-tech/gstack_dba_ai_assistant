@@ -357,7 +357,7 @@ def test_launch_commands_reach_the_client():
 def test_frontend_never_assembles_the_command_itself():
     """자체 조립본은 서버 문안이 개정돼도 갱신되지 않는다 — P0-X 가 실제로 겪은 결함이다."""
     code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
-    for leak in ("BRIDGE_TOKEN=", "bridge_setup.sh", "mcpServers", "mysql-ai-bridge://"):
+    for leak in ("BRIDGE_TOKEN=", "bridge_setup.sh", "mcpServers", "dqa-connect://"):
         assert leak not in code, f"프런트가 명령을 자체 조립한다({leak}) — 서버 개정이 도달하지 않는다"
 
 
@@ -409,10 +409,10 @@ def test_setup_scripts_say_when_they_skip_verification():
 def test_setup_scripts_register_the_scheme_handler():
     """브라우저는 프로세스를 못 띄운다 — 스킴 등록이 '웹에서 원클릭' 의 유일한 구현 수단이다."""
     sh = SETUP_SH_SRC.read_text(encoding="utf-8")
-    assert "x-scheme-handler/mysql-ai-bridge" in sh, "Linux 핸들러 등록이 없다"
+    assert "x-scheme-handler/$DQA_SCHEME" in sh, "Linux 핸들러 등록이 없다"
     assert "CFBundleURLSchemes" in sh, "macOS 핸들러 등록이 없다"
     ps = SETUP_PS_SRC.read_text(encoding="utf-8")
-    assert "HKCU:\\Software\\Classes\\mysql-ai-bridge" in ps, "Windows 핸들러 등록이 없다"
+    assert "HKCU:\\Software\\Classes\\$DqaScheme" in ps, "Windows 핸들러 등록이 없다"
     assert "HKLM" not in ps, "관리자 권한이 필요한 위치에 등록한다 — 사용자 계정 밖으로 나간다"
 
 
@@ -554,7 +554,7 @@ def test_scheme_handler_validates_before_killing():
     ps = SETUP_PS_SRC.read_text(encoding="utf-8")
     # 슬라이스 끝은 **핸들러 등록 시작**이다. `try {` 로 자르면 파일 앞쪽(CA 수신)의 것이
     # 먼저 걸려 슬라이스가 비고, 그러면 이 검사가 조용히 무의미해진다.
-    launcher_ps = ps[ps.index("$LaunchPs = Join-Path"):ps.index("$key = 'HKCU:")]
+    launcher_ps = ps[ps.index("$LaunchPs = Join-Path"):ps.index('$key = "HKCU:')]
     assert launcher_ps.index("notlike 'mat_*'") < launcher_ps.index("Stop-Process")
 
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# mysql-ai 브리지 설치·기동 스크립트 (POSIX — Linux · macOS · WSL).
+# DQA Connect 설치·기동 스크립트 (POSIX — Linux · macOS · WSL).
 #
 # ## 왜 이 파일이 있는가 (P0-AC, 사용자 제보 2026-08-28)
 #
@@ -17,7 +17,7 @@
 #
 #   1. 사내 사설 CA 를 받아 **지문을 대조**한다 (전역 설치 안 함 — 이 러너 프로세스 한정)
 #   2. `bridge_agent.py` 를 받아 **체크섬을 대조**한다
-#   3. `mysql-ai-bridge://` 프로토콜 핸들러를 등록한다 (웹 [내 AI 실행] 버튼용)
+#   3. `dqa-connect://` 프로토콜 핸들러를 등록한다 (웹 [내 AI 실행] 버튼용)
 #   4. `--check` 로 연결을 확인하고, 통과하면 러너를 상주시킨다
 #
 # 어느 단계든 대조에 실패하면 **거기서 멈춘다**. 계속 진행하는 선택지는 없다.
@@ -59,11 +59,38 @@
 #   LLM 칸(`BRIDGE_PROBED_ARGS`, allowlist)을 **이름으로 가른다.**
 set -eu
 
+# ── 명칭 정본 (단일 출처) ─────────────────────────────────────────────────────
+#
+# 종전에는 `mysql-ai-bridge` 리터럴이 이 파일 20곳·`.ps1` 7곳·러너 6곳·웹 4곳에 흩어져
+# 있었다. 한 곳을 고치고 다른 곳을 놓치면 **스킴은 새 이름으로 열리는데 등록은 옛 이름**
+# 이 되어 버튼이 조용히 죽는다 — 이 파일이 §3-a 에서 실측으로 기록한 바로 그 실패 모드다.
+# 그래서 세 축을 여기 한 번만 적고 아래는 전부 참조한다.
+#
+# 축을 셋으로 가르는 이유 (한 토큰을 전 표면에 복사하지 않는다):
+#   · `DQA_APP_NAME`  사람이 읽는 것 — 등록 설명·안내 문구
+#   · `DQA_SCHEME`    머신 전역 네임스페이스 — URL 스킴 · Windows 레지스트리 키 · MimeType
+#   · `DQA_APP_ID`    역-DNS — macOS 번들 id · Linux `.desktop` 파일명 (freedesktop 권장)
+#
+# ⚠ `DQA_SCHEME` 을 짧게(`dqa`) 두지 않는 것은 보안 판단이다. 이 스킴 URL 에는 **세션
+#   베어러 토큰이 실린다**(`...://start?token=mat_...`). 같은 스킴을 등록한 다른 앱이 있으면
+#   살아 있는 토큰이 그쪽으로 간다. `DQA` 는 흔한 약어(Data Quality Assurance 등)라 브랜드
+#   한정 없이 쓰면 충돌 표면이 실재한다.
+#
+# ⚠ `DQA_APP_ID` 의 역-DNS 루트는 조직 도메인이다. 다른 조직에 배포하면 이 한 줄만 바꾼다.
+DQA_APP_NAME='DQA Connect'
+DQA_SCHEME='dqa-connect'
+DQA_APP_ID='com.masangsoft.dqa-connect'
+
+#: 개명 전 이름 — 재실행 시 잔재를 걷어내는 데만 쓴다 (아래 `cleanup_legacy_install`).
+#: 하위호환 별칭이 **아니다**: 옛 스킴은 등록하지 않는다(사용자 결정 2026-09-03 하드 컷오버).
+DQA_LEGACY_SCHEME='mysql-ai-bridge'
+DQA_LEGACY_HOME="$HOME/.mysql-ai-bridge"
+
 BRIDGE_BASE="${BRIDGE_BASE:-}"
 BRIDGE_TOKEN="${BRIDGE_TOKEN:-}"
 BRIDGE_CA_SHA256="${BRIDGE_CA_SHA256:-}"
 BRIDGE_AGENT_SHA256="${BRIDGE_AGENT_SHA256:-}"
-BRIDGE_HOME="${BRIDGE_HOME:-$HOME/.mysql-ai-bridge}"
+BRIDGE_HOME="${BRIDGE_HOME:-$HOME/.$DQA_SCHEME}"
 # 사람이 직접 주는 칸 — 무검증(기존 호환). 자기 머신에서 자기가 쓰는 인자다.
 #
 # ⚠ **따옴표 그룹은 보존되지 않는다.** 이 값은 러너 명령에서 비인용 전개되므로 공백으로만
@@ -373,7 +400,7 @@ chmod 600 "$AGENT_PATH" 2>/dev/null || true
 # ── 3. 프로토콜 핸들러 ────────────────────────────────────────────────────────
 #
 # 브라우저는 샌드박스라 로컬 프로세스를 직접 띄우지 못한다. 그래서 웹의 [내 AI 실행] 버튼이
-# 하는 일은 `mysql-ai-bridge://start` 를 여는 것이고, **그 스킴을 이 단계에서 OS 에 등록**한다.
+# 하는 일은 `dqa-connect://start` 를 여는 것이고, **그 스킴을 이 단계에서 OS 에 등록**한다.
 # 이것이 "최초 1회 터미널, 이후 브라우저 원클릭" 의 실체다.
 #
 # ⚠ 러너 본체의 「설치물 없음」 계약과 다른 지점이다. 등록물은 여기(setup)에 있고 러너에는
@@ -381,10 +408,15 @@ chmod 600 "$AGENT_PATH" 2>/dev/null || true
 LAUNCH_SH="$BRIDGE_HOME/launch.sh"
 cat > "$LAUNCH_SH" <<LAUNCHEOF
 #!/bin/sh
-# mysql-ai 브리지 러너 기동 (프로토콜 핸들러가 부른다).
-# 토큰은 여기 없다 — 웹이 스킴 인자로 그때그때 넘긴다(mysql-ai-bridge://start?token=...).
+# $DQA_APP_NAME 러너 기동 (프로토콜 핸들러가 부른다).
+# 토큰은 여기 없다 — 웹이 스킴 인자로 그때그때 넘긴다($DQA_SCHEME://start?token=...).
 set -eu
-BRIDGE_HOME="\${BRIDGE_HOME:-\$HOME/.mysql-ai-bridge}"
+# ⚠ **설치 시점의 유효 홈을 그대로 굽는다.** 종전엔 여기 기본값이 \$HOME/.<scheme> 이라,
+#   BRIDGE_HOME=<다른 경로> 로 설치한 사용자는 OS 핸들러가 이 스크립트를 부를 때 그
+#   환경변수를 받지 못해 **엉뚱한 홈에서 러너를 찾다가 무음 실패**했다(codex 적대 리뷰 P1-2).
+#   개명 전에는 기본값이 우연히 옛 경로와 같아 그 사용자만 안 깨졌을 뿐, 다른 커스텀 홈은
+#   내내 깨져 있었다 — 개명이 그 선재 결함을 드러냈다.
+BRIDGE_HOME="\${BRIDGE_HOME:-$BRIDGE_HOME}"
 URL="\${1:-}"
 # ⚠ 이 스크립트는 **콘솔 창 안에서** 불릴 수 있다(Windows 핸들러가 wsl.exe 로 되부르는 경로).
 #   그 창은 스크립트가 끝나는 순간 닫히므로, 오류를 그냥 출력하면 사용자는 **깜빡임만** 본다 —
@@ -455,7 +487,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 ctx = ssl.create_default_context(cafile=ca)
 op = urllib.request.build_opener(
     urllib.request.HTTPSHandler(context=ctx), NoRedirect)
-req = urllib.request.Request(url, headers={"User-Agent": "mysql-ai-bridge-launch"})
+req = urllib.request.Request(url, headers={"User-Agent": "$DQA_SCHEME-launch"})
 with op.open(req, timeout=30) as r:
     if int(getattr(r, "status", 0) or 0) != 200:
         sys.exit("http status")
@@ -537,7 +569,8 @@ chmod 700 "$LAUNCH_SH"
 # 브라우저가 그 등록을 보지 못한다 — 그리고 종전 코드는 그 상태에서 「등록했습니다」 라고
 # 말했다. 사용자는 동작한다고 믿고 버튼을 누르고, 아무 일도 일어나지 않는다.
 #
-# 실측(2026-08-31): `HKCU\Software\Classes\mysql-ai-bridge` 키 없음 ·
+# 실측(2026-08-31 — 당시 스킴 이름 `mysql-ai-bridge`, 2026-09-03 `dqa-connect` 로 개명):
+# `HKCU\Software\Classes\mysql-ai-bridge` 키 없음 ·
 # `~/.local/share/applications/mysql-ai-bridge.desktop` 있음 · 버튼 무동작 · 같은 계정의
 # 토큰 4건이 전부 하트비트 없이 남음. 사용자 제보 "'내 AI 실행' 을 통해 연결을 시도했지만,
 # 연결이 진행되지 않는것으로 확인되었습니다."
@@ -595,7 +628,7 @@ register_handler_windows() {
   #
   #   따옴표를 못 쓰므로 공백·따옴표가 든 이름은 **표현할 수단이 없다**. 그때는 조용히
   #   생략하지 않고 등록을 포기하고 사유를 말한다 — `-u` 를 생략하면 기본 사용자로 러너가
-  #   떠서 `$HOME` 이 달라지고(`~/.mysql-ai-bridge` 없음) "왜 안 되지" 가 한 겹 더 깊어진다.
+  #   떠서 `$HOME` 이 달라지고(`~/.$DQA_SCHEME` 없음) "왜 안 되지" 가 한 겹 더 깊어진다.
   _safe_word() {
     case "${1:-}" in
       "" ) return 1 ;;
@@ -696,7 +729,7 @@ register_handler_windows() {
   #   그 PS1 안의 자기 대조는 **그 옛 값끼리** 맞으므로 통과한다 — 바깥 검사는 키 존재만 보니
   #   "현재 배포판에 등록했다" 고 보고하면서 레지스트리는 다른 명령을 가리키게 된다.
   if [ -n "$_wintmp" ]; then
-    _ps1="$_wintmp/mysql-ai-bridge-reg.$$.ps1"
+    _ps1="$_wintmp/$DQA_SCHEME-reg.$$.ps1"
   else
     # %TEMP% 를 못 얻었다 — 느리지만 되는 경로로 간다. 느려지는 사실을 말한다.
     say "  (Windows 임시 폴더를 찾지 못해 느린 경로로 등록합니다 — 1분 이상 걸릴 수 있습니다.)"
@@ -709,12 +742,12 @@ register_handler_windows() {
   #   한글 주석을 담으므로 같은 위험이 있다 — 지금 우연히 통과하는 것에 기대지 않는다.
   printf '\357\273\277' > "$_ps1" 2>/dev/null || true
   if ! cat >> "$_ps1" <<PSEOF
-# mysql-ai 브리지 — Windows 브라우저용 스킴 핸들러 등록 (HKCU, 관리자 권한 불필요).
+# $DQA_APP_NAME — Windows 브라우저용 스킴 핸들러 등록 (HKCU, 관리자 권한 불필요).
 # 이 파일은 bridge_setup.sh 가 생성하고 실행 직후 지운다.
 \$ErrorActionPreference = 'Stop'
-\$key = 'HKCU:\Software\Classes\mysql-ai-bridge'
+\$key = 'HKCU:\Software\Classes\\$DQA_SCHEME'
 New-Item -Path \$key -Force | Out-Null
-New-ItemProperty -Path \$key -Name '(default)' -Value 'URL:mysql-ai bridge' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path \$key -Name '(default)' -Value 'URL:$DQA_APP_NAME' -PropertyType String -Force | Out-Null
 New-ItemProperty -Path \$key -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
 New-Item -Path "\$key\shell\open\command" -Force | Out-Null
 New-ItemProperty -Path "\$key\shell\open\command" -Name '(default)' -Value '$_cmdline' -PropertyType String -Force | Out-Null
@@ -755,19 +788,22 @@ register_handler() {
   case "$(uname -s 2>/dev/null || echo unknown)" in
     Darwin)
       # macOS 는 .app 번들이 필요하다. 최소 번들을 만들고 LaunchServices 에 등록한다.
-      APP="$BRIDGE_HOME/MysqlAiBridge.app"
+      # ⚠ 번들 디렉토리 이름에는 공백을 넣지 않는다(`DQA Connect.app` 대신 `DQAConnect.app`).
+      #   `lsregister` 인자·셸 전개에서 공백은 조용한 실패원이고, 사용자에게 보이는 이름은
+      #   `CFBundleName` 이 정한다 — 디렉토리명이 아니다.
+      APP="$BRIDGE_HOME/DQAConnect.app"
       mkdir -p "$APP/Contents/MacOS"
-      cat > "$APP/Contents/Info.plist" <<'PLIST'
+      cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>ai.mysql.bridge.launcher</string>
-  <key>CFBundleName</key><string>MysqlAiBridge</string>
+  <key>CFBundleIdentifier</key><string>$DQA_APP_ID</string>
+  <key>CFBundleName</key><string>$DQA_APP_NAME</string>
   <key>CFBundleExecutable</key><string>launch</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleURLTypes</key><array><dict>
-    <key>CFBundleURLName</key><string>mysql-ai-bridge</string>
-    <key>CFBundleURLSchemes</key><array><string>mysql-ai-bridge</string></array>
+    <key>CFBundleURLName</key><string>$DQA_APP_ID</string>
+    <key>CFBundleURLSchemes</key><array><string>$DQA_SCHEME</string></array>
   </dict></array>
 </dict></plist>
 PLIST
@@ -794,21 +830,23 @@ MACEOF
       HANDLER_LINUX="fail"
       if command -v xdg-mime >/dev/null 2>&1; then
         DESKTOP_DIR="$HOME/.local/share/applications"
-        DESKTOP_FILE="$DESKTOP_DIR/mysql-ai-bridge.desktop"
+        # freedesktop 권장대로 파일명은 역-DNS Application ID 를 쓴다.
+        DESKTOP_NAME="$DQA_APP_ID.desktop"
+        DESKTOP_FILE="$DESKTOP_DIR/$DESKTOP_NAME"
         if mkdir -p "$DESKTOP_DIR" 2>/dev/null && cat > "$DESKTOP_FILE" <<DESKEOF
 [Desktop Entry]
 Type=Application
-Name=mysql-ai bridge launcher
+Name=$DQA_APP_NAME
 Exec=$LAUNCH_SH %u
 NoDisplay=true
 Terminal=false
-MimeType=x-scheme-handler/mysql-ai-bridge;
+MimeType=x-scheme-handler/$DQA_SCHEME;
 DESKEOF
         then
           update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
           # 파일이 실재하고 비어 있지 않은지까지 본다 — 쓰기가 조용히 잘린 경우를 거른다.
           if [ -s "$DESKTOP_FILE" ] \
-             && xdg-mime default mysql-ai-bridge.desktop x-scheme-handler/mysql-ai-bridge >/dev/null 2>&1; then
+             && xdg-mime default "$DESKTOP_NAME" "x-scheme-handler/$DQA_SCHEME" >/dev/null 2>&1; then
             HANDLER_LINUX="ok"
           fi
         fi
@@ -827,6 +865,80 @@ DESKEOF
   return 0
 }
 
+#: 개명(2026-09-03) 전 설치물을 걷어낸다 — **하위호환 별칭이 아니라 위생**이다.
+#:
+#: 하드 컷오버라 옛 스킴은 등록하지 않는다. 그런데 옛 등록을 **남겨 두면** 브라우저에는
+#: 죽은 핸들러가 남고, 그 핸들러가 가리키는 옛 `launch.sh` 는 옛 홈의 러너를 되살릴 수 있다.
+#: 이 저장소는 이미 «옛 러너가 새 러너의 질문을 가로챈다» 를 겪었다
+#: (`docs/TASK-20260901T173000-stale-runner-yield.md` — 두 홈에서 두 러너가 동시에 떴다).
+#: 그래서 개명은 옛 것을 **지우는 데까지**가 한 단위다.
+#:
+#: 파괴적 연산 계약(AGENTS.md §16.3 (a)): 대상은 아래에서 **명시 계산**하고, 우리 설치물
+#: 표지(`bridge_agent.py` 또는 `launch.sh`)가 있는 경우에만 지운다. cwd 상대 경로·와일드카드
+#: 순회를 쓰지 않는다.
+#: 경로를 비교 가능한 형태로 —  끝 슬래시 제거 + 실경로 해석.
+#:
+#: ⚠ 문자열 그대로 비교하면 **지우면 안 되는 것을 지운다**: `BRIDGE_HOME=~/.mysql-ai-bridge/`
+#:   (끝 슬래시)로 지정한 사용자는 `!=` 판정이 참이 되어 자기 **현행 홈**이 삭제 대상이 된다.
+#:   `realpath` 가 없는 환경(일부 BusyBox)도 있으므로 없으면 슬래시 제거만으로 degrade 한다 —
+#:   그 경우 심볼릭 링크로 같은 곳을 가리키는 두 경로는 구별하지 못하니, 아래 표지 검사와
+#:   「성공 후에만 삭제」 순서가 잔여 방어선이다.
+norm_path() {
+  _np=$(printf '%s' "${1:-}" | sed 's:/*$::')
+  [ -n "$_np" ] || { printf '%s' ""; return 0; }
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$_np" 2>/dev/null || printf '%s' "$_np"
+  else
+    printf '%s' "$_np"
+  fi
+}
+
+cleanup_legacy_install() {
+  # ⚠ 사용자가 `BRIDGE_HOME` 을 옛 경로로 **명시**했으면 그것은 현행 설치다 — 건드리지 않는다.
+  #   비교는 정규화 후에 한다(끝 슬래시·`..`·심볼릭 링크로 같은 곳을 다르게 쓸 수 있다).
+  _legacy_norm=$(norm_path "$DQA_LEGACY_HOME")
+  _current_norm=$(norm_path "$BRIDGE_HOME")
+  if [ "$_legacy_norm" = "$_current_norm" ]; then
+    return 0
+  fi
+  # ⚠ 옛 홈이 **심볼릭 링크**면 링크만 지운다(`rm -rf <link>` 는 대상을 따라가지 않는다).
+  #   그러나 링크가 현행 홈을 가리키는 경우는 위 정규화가 이미 걸러 낸다.
+  if [ "$DQA_LEGACY_HOME" != "$BRIDGE_HOME" ] && [ -d "$DQA_LEGACY_HOME" ]; then
+    # ⚠ 파일 **이름**만 보면 남의 디렉토리를 오인한다(codex P1-1). 우리 러너에만 있는
+    #   문자열까지 확인한다 — 다른 프로그램이 우연히 같은 이름의 파일을 두어도 걸리지 않는다.
+    if grep -q "BRIDGE_TOKEN" "$DQA_LEGACY_HOME/bridge_agent.py" 2>/dev/null \
+       || grep -q "bridge_agent.py" "$DQA_LEGACY_HOME/launch.sh" 2>/dev/null; then
+      rm -rf "$DQA_LEGACY_HOME" 2>/dev/null \
+        && say "이전 이름의 설치 폴더를 정리했습니다 ($DQA_LEGACY_HOME)." \
+        || say "⚠ 이전 설치 폴더를 지우지 못했습니다 — 직접 지워 주세요: rm -rf $DQA_LEGACY_HOME"
+    else
+      # 이름만 같고 내용이 우리 것이 아니다. 남의 디렉토리를 지우지 않는다.
+      say "⚠ $DQA_LEGACY_HOME 이 있는데 이 브리지의 설치물로 보이지 않아 그대로 둡니다."
+    fi
+  fi
+
+  # Linux — 옛 desktop 파일 + 그 파일을 가리키던 기본 핸들러 지정.
+  _legacy_desktop="$HOME/.local/share/applications/$DQA_LEGACY_SCHEME.desktop"
+  if [ -f "$_legacy_desktop" ]; then
+    rm -f "$_legacy_desktop" 2>/dev/null || true
+    update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+    say "이전 이름의 Linux 핸들러 등록을 정리했습니다."
+  fi
+
+  # Windows(HKCU) — WSL 에서만 도달 가능하고, 실패해도 진행을 막지 않는다(위생 작업이다).
+  if is_wsl; then
+    _reg=$(win_exe reg.exe 2>/dev/null || true)
+    if [ -n "$_reg" ]; then
+      if "$_reg" query "HKCU\\Software\\Classes\\$DQA_LEGACY_SCHEME" >/dev/null 2>&1; then
+        "$_reg" delete "HKCU\\Software\\Classes\\$DQA_LEGACY_SCHEME" /f >/dev/null 2>&1 \
+          && say "이전 이름의 Windows 핸들러 등록을 정리했습니다." \
+          || say "⚠ 이전 Windows 핸들러 등록을 지우지 못했습니다 — 수동:
+     reg.exe delete 'HKCU\\Software\\Classes\\$DQA_LEGACY_SCHEME' /f"
+      fi
+    fi
+  fi
+}
+
 #: 등록 결과 — `register_handler` 가 채운다. 초기값은 「시도 안 함」.
 HANDLER_WIN="na"
 HANDLER_LINUX="na"
@@ -836,13 +948,13 @@ HANDLER_WIN_DISTRO=""
 register_handler && _handler_rc=0 || _handler_rc=$?
 if [ "$_handler_rc" = "0" ]; then
   if [ "$HANDLER_WIN" = "ok" ]; then
-    say "웹 [내 AI 실행] 버튼용 핸들러를 **Windows 쪽**에 등록했습니다 (mysql-ai-bridge://)."
+    say "웹 [내 AI 실행] 버튼용 핸들러를 **Windows 쪽**에 등록했습니다 ($DQA_SCHEME://)."
     # 배포판은 **항상 확정된 상태**로만 여기 온다 — 확정 못 하면 위에서 등록 자체를 포기한다
     # (추측한 배포판에 연결하면 조용한 무동작이 형태만 바꿔 되돌아온다).
     say "  누르면 wsl.exe 가 배포판 '$HANDLER_WIN_DISTRO' 의 러너를 다시 띄웁니다."
     [ "$HANDLER_LINUX" = "ok" ] && say "  (WSL 안 브라우저용 xdg 등록도 함께 했습니다.)"
   else
-    say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 (mysql-ai-bridge://)."
+    say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 ($DQA_SCHEME://)."
   fi
 elif [ "$_handler_rc" = "2" ]; then
   # 실패가 아니라 **선택**이다. 실패 문구를 쓰면 사용자는 고칠 것을 찾는다.
@@ -902,15 +1014,18 @@ BRIDGE_TOKEN="$BRIDGE_TOKEN" nohup "$PY" "$AGENT_PATH" \
 BRIDGE_PID=$!
 sleep 2
 if kill -0 "$BRIDGE_PID" 2>/dev/null; then
+  # 새 설치가 **실제로 떴을 때만** 옛 이름의 잔재를 걷는다. 순서가 계약이다 — 먼저 지우고
+  # 새 것이 안 뜨면 사용자는 되돌아갈 곳도 없이 남는다.
+  cleanup_legacy_install
   say "완료. 웹 화면의 표시가 '내 AI 대기 중' 으로 바뀌면 질문을 보낼 수 있습니다."
   say "  로그   : $BRIDGE_HOME/bridge.log          (사람이 읽는 줄)"
   say "  감사    : $BRIDGE_HOME/bridge.events.jsonl (한 줄 = 한 사건. 문제 보고 시 이 파일을"
   say "            보내 주세요 — 토큰은 기록 전에 지워집니다)"
   say "  종료   : kill $BRIDGE_PID   (또는 pkill -f bridge_agent.py)"
   say "  해제   : rm -rf $BRIDGE_HOME  +  핸들러 등록 삭제"
-  say "           (Linux: ~/.local/share/applications/mysql-ai-bridge.desktop)"
+  say "           (Linux: ~/.local/share/applications/$DQA_APP_ID.desktop)"
   [ "$HANDLER_WIN" = "ok" ] && \
-    say "           (Windows: reg.exe delete 'HKCU\\Software\\Classes\\mysql-ai-bridge' /f)"
+    say "           (Windows: reg.exe delete 'HKCU\\Software\\Classes\\$DQA_SCHEME' /f)"
 else
   die "러너가 바로 종료됐습니다. 로그를 확인하세요: $BRIDGE_HOME/bridge.log"
 fi

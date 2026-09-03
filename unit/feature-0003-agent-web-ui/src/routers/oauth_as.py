@@ -55,6 +55,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from shared import bridge_caps as _bridge_caps
 from shared import bridge_consent as _consent
+from shared import dqa_identity as _ident
 
 import app
 
@@ -535,7 +536,10 @@ def _listening(account_id: int, conn=None) -> bool:
 
 #: 네이티브 클라이언트 배포본이 놓이는 자리. **빌드 생성물**이라 저장소에 커밋하지 않는다
 #: (feature-0046 `build_client.py` 와 러너 빌드가 같은 규약).
-_CLIENT_REL = "agent/mysql-ai-client.exe"
+#: 네이티브 클라이언트 배포물의 서빙 경로. **빌드 산출물명과 같아야 한다** —
+#: `feature-0046/src/scripts/build_client.py` 의 `_APP_NAME`(정본 `APP_NAME` 파생).
+#: 갈리면 배포는 성공하고 다운로드만 404 가 된다(러너 배포본이 이미 겪은 형태).
+_CLIENT_REL = "agent/DQAConnect.exe"
 
 
 def _client_download_url(origin: str) -> str | None:
@@ -1133,7 +1137,7 @@ def compose_launch_commands(*, endpoint: str, token: str) -> dict:
         #
         # 토큰을 URL 에 싣는다: 핸들러 스크립트에는 토큰이 없고(디스크에 쓰지 않는다),
         # 세션 결합이라 로그아웃하면 즉시 무효다.
-        "protocol": f"mysql-ai-bridge://start?token={token}",
+        "protocol": _ident.scheme_url(token),
         "setup_url": {"posix": sh_url, "windows": ps_url},
         "checksums": {"setup_posix": sh_sha, "setup_windows": ps_sha,
                       "agent": agent_sha, "ca": ca_fp},
@@ -1250,8 +1254,9 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
             base = ""
     guide = f"{base}/api/ai/guide" if base else "/api/ai/guide"
     cfg = json.dumps(
-        {"mcpServers": {"mysql-ai": {"url": endpoint,
-                                     "headers": {"Authorization": f"Bearer {token}"}}}},
+        {"mcpServers": {_ident.MCP_SERVER_KEY: {
+            "url": endpoint,
+            "headers": {"Authorization": f"Bearer {token}"}}}},
         ensure_ascii=False, indent=2)
     cfg_indented = "\n".join("  " + line for line in cfg.split("\n"))
     ca_url = f"{base}/trust/rootCA.crt" if base else "/trust/rootCA.crt"
@@ -1365,7 +1370,7 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         "  검증을 끄지는 마(NODE_TLS_REJECT_UNAUTHORIZED=0 등). CA 가 있으니 불필요하다.",
         "",
         "A. MCP 로 등록",
-        f"  claude mcp add --transport http mysql-ai {endpoint} \\",
+        f"  claude mcp add --transport http {_ident.MCP_SERVER_KEY} {endpoint} \\",
         f"    --header \"Authorization: Bearer {token}\"",
         "  헤더에 토큰을 실으면 OAuth(브라우저 승인)는 타지 않는다.",
         "  ※ 등록한 세션에서는 도구가 바로 안 잡힌다 — 재시작해야 쓸 수 있다.",
@@ -1403,7 +1408,7 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         f"      · 실행하는 것: 소스에 하드코딩된 로컬 AI CLI({'/'.join(_PROBED_AI_ALLOWLIST)}) 하나뿐이고,",
         "        셸을 거치지 않는다(프롬프트는 argv 로 전달). eval·exec 로 받은 것을 돌리지 않는다.",
         "      · 파이썬 표준 라이브러리만 쓴다 — 설치물이 없다.",
-        "      · 남기는 파일은 `~/.mysql-ai-bridge/config.json`(0600) 하나이고 **토큰은 안 들어간다.**",
+        f"      · 남기는 파일은 `~/.{_ident.SCHEME}/config.json`(0600) 하나이고 **토큰은 안 들어간다.**",
         # 정직하게: 토큰은 프롬프트 본문에도 실려 로컬 AI 의 argv·트랜스크립트로 나간다.
         # 숨기면 소스를 읽는 순간 드러나고, 그때 잃는 것이 더 크다.
         "      · 다만 토큰은 **네 AI 에게 주는 프롬프트 안에도** 들어간다(조사 도구를 직접 부르라고",

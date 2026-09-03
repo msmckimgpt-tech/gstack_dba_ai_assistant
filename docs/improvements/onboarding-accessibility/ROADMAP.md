@@ -174,7 +174,13 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
   5. **상주 + 로그온 자동시작** — 트레이 아이콘 + 상태창. 재부팅 후 자동 기동.
   6. **자동 업데이트** — 서명 검증 후 교체. 실패 시 **있던 버전 그대로** 기동(갱신하려다 못
      띄우는 것이 가장 나쁜 결말 — 현행 `try_self_update` 와 같은 규약).
-  7. **토큰 수령** — 기존 `mysql-ai-bridge://` 스킴 재사용(웹 [내 AI 실행] 경로 보존).
+  7. **토큰 수령** — 기존 `dqa-connect://` 스킴 재사용(웹 [내 AI 실행] 경로 보존).
+     ⚠ 2026-09-03 개명: `mysql-ai-bridge` → `dqa-connect`(제품명 `DQA Connect`,
+     역-DNS `com.masangsoft.dqa-connect`). **정본은 `shared/dqa_identity.py`** 이고
+     `tests/test_name_ssot.py` 가 다섯 자리를 대조한다 — 클라이언트도 그 정본을 쓰고
+     이름을 자체 선언하지 않는다. Tauri `productName`/`identifier` 는 각각 `APP_NAME`/
+     `APP_ID` 에서 온다. 이름에 구현 형태(`bridge`·`runner`·`client`)를 넣지 않은 것이
+     이 항목을 위한 선택이다 — 러너→클라이언트 전환에 개명이 따라붙지 않게 한다.
 - **entry_points**:
   - 신규: `unit/feature-0046-native-client/src/`
   - 엔진 재사용: `unit/feature-0043-external-llm-bridge/src/agent/` (18모듈, 5,849행)
