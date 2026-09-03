@@ -243,7 +243,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-03 · 연결 상태·진단을 웹 화면이 표시
-- **status**: pending
+- **status**: **done** (2026-09-03) — PB-0008 실 Windows 시각검증 완료
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -305,7 +305,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-06 · 「AI 없음」 안내를 클라이언트 유도로 전환
-- **status**: pending
+- **status**: **done** (2026-09-03) — 단 클라이언트 **배포 채널 없음**(리눅스 파이프라인이 Windows exe 를 못 만든다) → 「있을 때만 권한다」로 구현
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -368,10 +368,14 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 
 ## 6. 진행 현황
 
-- 총 **5** (ITEM 4 + SPIKE 1) · **done 4** · in-progress 0 · pending 2(ITEM-03 · ITEM-06 — 이제 진입 가능) · blocked 0
+- 총 **5** (ITEM 4 + SPIKE 1) · **done 5** · in-progress 0 · pending 0 · blocked 0 — **로드맵 전 항목 완료**
 - **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03) · `SPIKE-02`(2026-09-03, conditional-go)
 - **P0 전량 완료 + ITEM-08 초판 완료.** 사용자 결정(2026-09-03)으로 **Windows 우선·미서명** 확정 — 서명 게이트 해소.
-- **다음 ready**: `ITEM-03`(연결 진단 화면) · `ITEM-06`(「AI 없음」 안내를 클라이언트 유도로) — 둘 다 ITEM-08 선행 충족.
+- **다음 (로드맵 밖 후속)**:
+  1. **클라이언트 배포 채널** — Windows 빌드 산출물을 서버 `static/agent/` 에 놓는 경로. 이것이 없으면 ITEM-06 의 클라이언트 유도가 화면에 나타나지 않는다(현재는 정직하게 숨김).
+  2. **ITEM-00 라이브 적재 실측** — 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행 확인.
+     ⚠ 2026-09-03 라이브 검증에서 `first_heartbeat` 가 `NameError` 로 **한 번도 기록되지 않던 결함**을 잡아 고쳤다 — 배포 후 실제 적재를 반드시 확인할 것.
+  3. 클라이언트 후속: 자동시작 · 자동 업데이트 · 벤더 설치기 동의 실행 · gemini 로그인 대행.
 - ⚠ **ITEM-00 잔여**: 라이브 적재 실측 미수행 — 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행이 실제로 쌓이는지 확인 필요.
 - **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
   「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.

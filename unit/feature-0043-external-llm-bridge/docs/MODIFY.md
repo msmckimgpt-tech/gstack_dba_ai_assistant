@@ -4317,7 +4317,16 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
   2. 보장 등급을 `at-least-once` → **`best-effort(0..N)`** 로 정정 (주장이 코드보다 넓었다)
 - 소비 계약: 행이 아니라 `COUNT(DISTINCT ResourceId)` 로 센다 (`dedupe_key_of` 가 코드면).
 - 잔여: 라이브 적재 실측 미수행.
-
+## CHG-20260903T160000-ai-claude-connect-guidance — 연결 단계 체크리스트 + 클라이언트 우선 안내
+- Timestamp: 2026-09-03T16:00:00+09:00
+- 신설: `routers/_connect_steps.py` · `tests/test_connect_guidance.py`
+- 확장: `connect_status`(steps·summary·client_download) · `ai-connect.{html,js}` · `_no_ai_message`
+- **라이브 검증이 적발한 결함 2건 수정**:
+  1. `ai_tools.bridge_heartbeat` 가 존재하지 않는 `account` 를 퍼널에 넘겨 `NameError` →
+     fail-open 이 삼켜 **`first_heartbeat` 가 한 번도 기록되지 않았다**(ITEM-00 회귀, main 반영분).
+     `ctx.get("account") or {"id": account_id}` 로 교정 + **인자 해석 검사** 테스트 신설.
+  2. `oauth_as` 의 `_reported_caps` 가 조건부 블록 안에서만 대입돼 그 분기를 안 탄 요청에서
+     `NameError` → `/api/ai/connect/status` **500**. 선언 초기화로 교정.
 ## CHG-20260903T140000 — 응답하지 않는 AI 를 영원히 기다리던 구조를 닫는다
 
 **계기**: 사용자 지적 — *"모델을 탐색하는데 실패했다는 사실이 알려지지 않고 영원히 기다리게
@@ -4359,3 +4368,9 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
 
 **함께 관측(별 cycle)**: 자동 갱신 `try_self_update` 가 발동하지 않는다 — 러너 지문
 `d69d7da6928a` vs 배포본 `4669f0192526` 인데 `stale_build`·self-update 사건 **0건**.
+
+## CHG-20260903T170000-ai-claude-connect-guidance-merge — origin/main 병합 (append-doc 드라이버)
+- Timestamp: 2026-09-03T17:00:00+09:00
+- 병렬 세션이 feature-0043 을 먼저 랜딩해 PR 이 DIRTY. 충돌은 append-only 문서 4건뿐이었고
+  §13.1 머지 드라이버(`bin/setup-git-parallel.sh`)로 잔여 충돌 0 으로 해소.
+- §16.4 대로 **양측 부모 대비 검증** + **병합 후 회귀 재실행**(신규 실패 0). 상세는 REVIEW.

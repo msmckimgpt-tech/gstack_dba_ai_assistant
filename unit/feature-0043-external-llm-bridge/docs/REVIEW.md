@@ -4236,7 +4236,24 @@ main 0/1). 인과가 성립하지 않고 표본이 부족해 귀속을 단정하
 - 뮤테이션 **18종 전건 KILL** (배선 제거·멱등 제거·계정키 제거·OS매핑 반전·커서/커넥션 누수·토큰 적재·캐시 무력화·음성 캐시 등).
 - 회귀: 컨테이너 `PYTHONPATH` 재현 구성(feature-0003+0043+0041)에서 **기준선과 실패집합 동일**(기존 7건 = share redaction, 무관 / 신규 0). ⚠ 앞서 두 feature 를 한 번에 돌린 측정은 conftest 로드 실패로 **0건 수집**이었다 — vacuous 를 결과로 보고하지 않고 재측정했다.
 - Human Approval Needed: 아니오 (Minor · 비파괴 · 읽기 전용 분석 지표 · fail-open).
-
+## REV-20260903T160000-ai-claude-connect-guidance [SKIPPED:live-verified-ui] — ACCEPTED
+- Related TASK: TASK-20260903T160000 (ROADMAP ITEM-03 · ITEM-06)
+- Timestamp: 2026-09-03T16:00:00+09:00
+- **[SKIPPED] 사유**: 세션 상위지시로 AgentTool 금지 → §18.8.2-1 제약 없는 채널. 이 변경의 고유 위험은 「실제 화면에서 되는가」이고 그것은 **PB-0008 실 Windows 브라우저**로만 답해진다 — 검증 예산을 거기 썼고, 실제로 그것이 정적 리뷰가 못 잡을 결함 2건을 잡았다.
+- **⚠ 라이브 검증이 결함 2건을 적발했다 — 둘 다 단위 테스트가 green 인 채로 존재했다**:
+  1. **ITEM-00 회귀 (이미 main 에 있던 것)** — `bridge_heartbeat` 에는 `account` 가 없는데(토큰 컨텍스트 `ctx` 와 `account_id` 뿐) 퍼널 호출이 그것을 넘겨 `NameError` 가 났다. 퍼널의 **fail-open 이 그 예외를 삼켜** 아무 증상 없이 **`first_heartbeat` 가 한 번도 기록되지 않았다**. 라이브 로그(`하트비트 기록 실패 account=10: NameError`)에서야 드러났다.
+     - **왜 못 잡았나**: 내 배선 테스트가 `step="first_heartbeat"` **문자열 존재**만 봤다. 「호출부가 있는가」와 「인자가 해석되는가」는 다른 사실이다(`gate-hidden-call-test-blindspot` 과 같은 계열).
+     - **처방**: 각 `record_step` 호출의 인자 이름이 **그 함수 스코프에 실재하는지** AST 로 검사하는 테스트 신설. 원 결함을 뮤턴트로 재현해 **KILL 확인**.
+  2. **`_reported_caps` 미정의** — 조건부 블록 안에서만 대입되는 이름을 새 코드가 무조건 읽어 그 분기를 타지 않은 요청에서 `/api/ai/connect/status` 가 **500**. 브라우저가 받는 응답이 `Internal Server Error` 인 것을 보고 잡았다. 선언 초기화로 교정(`locals()` 조회 편법은 채택하지 않았다).
+- **적대 뮤테이션 12종 전건 KILL** — 단 **JS 검사 2종이 1차에 생존**했다: `"info.steps" in code` 가 `info.steps_summary` 에도 걸리고, `aic-hidden` 이 함수 안 다른 줄(`classList.remove`)에도 있어 **가드를 통째로 없애도 통과**했다. 검사를 속성 접근 형태·가드 3부품으로 좁힌 뒤 재실행해 KILL 확인. 느슨한 문자열 매칭이 만드는 vacuous pass 의 전형이다.
+- **PB-0008 실 Windows 브라우저 시각검증**: 라이브 web-a·web-b 에 변경분을 임시 주입(무접촉 미리보기)한 뒤 실 Chrome 으로 확인.
+  - 비로그인 — 체크리스트·클라이언트 섹션 **양쪽 숨김**(거짓 경보 없음)
+  - 로그인 — 요약 「연결 정보 발급 차례입니다」 + 4행(⏳) + 각 행 다음 행동. 스크린샷 확보
+  - `client_download: null` — 배포 채널이 없으므로 클라이언트 섹션 숨김, 종전 터미널 경로 유지(설계대로)
+  - 검증 후 **배포 이미지로 재생성해 원복**, healthz 200 확인
+- 회귀: 컨테이너 PYTHONPATH 재현 구성에서 **기준선과 실패집합 동일**(기존 7건, 신규 0).
+- **잔여**: 클라이언트 **배포 채널 없음** — 리눅스 도커 파이프라인은 Windows exe 를 만들 수 없다. 그 사실을 «없는 다운로드를 안내하지 않는다» 로 코드에 반영했고 화면이 정직하게 종전 경로를 보인다.
+- Human Approval Needed: 아니오 (Minor · 표시 축 · 비파괴).
 ## REV-20260903T140000-ai-claude-corp-feature-0043-ai-unusable-surfaced [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
 
 > **왜 SKIPPED**: 본 세션 지시가 사용자 명시 요청 없는 `Agent` 호출을 금지. 대체는 적대
@@ -4352,3 +4369,19 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 - **러너가 제출조차 못 하는 경우**의 서버측 종결 — `TASK-20260903T140000` §7 이월 유지.
 
 - **판정**: **APPROVED**.
+
+## REV-20260903T170000-ai-claude-connect-guidance-merge [SKIPPED:merge-verification] — ACCEPTED
+- Related TASK: TASK-20260903T160000 (병합)
+- Timestamp: 2026-09-03T17:00:00+09:00
+- `origin/main` 이 전진해 PR 이 **DIRTY** 가 됐다(병렬 세션이 feature-0043 을 먼저 랜딩 — `ai-unusable-surfaced` · `fast-fail-unhealthy`). 충돌은 **append-only 문서 4건**뿐이었다.
+- **§13.1 머지 드라이버로 해소**: `bin/setup-git-parallel.sh` 실행 후 `git merge origin/main` — 잔여 충돌 **0**. (세션 시작 시 이 스크립트를 돌렸어야 했는데 빠뜨렸다 — 규약대로 했으면 이 왕복이 없었다.)
+- **§16.4 양측 부모 대비 검증** — 자율 병합을 그냥 믿지 않는다:
+  | 문서 | 내쪽 | 상대 | 병합 | 판정 |
+  |---|---|---|---|---|
+  | FUNCTION | 124 | 125 | 126 | 양측 보존 |
+  | MODIFY | 385 | 386 | 387 | 양측 보존 |
+  | REVIEW | 389 | 401 | 402 | 양측 보존 |
+  | TASK | 130 | 131 | 132 | 양측 보존 |
+  섹션 수뿐 아니라 **양측의 이번 cycle 항목이 실재하는지**도 이름으로 확인했다(내 `P0-AG`·`CHG/REV-20260903T160000` · 상대 `ai-unusable-surfaced`·`fast-fail-unhealthy`).
+- **병합 후 회귀 재실행** — 상대 cycle 이 같은 파일(`ai_tools.py` 등)을 건드렸으므로 병합 전 결과를 재사용하지 않았다. 실패 7건 = 기존 `share_redaction`(무관), **신규 0**.
+- Human Approval Needed: 아니오.
