@@ -102,6 +102,39 @@ def which_runtime(name: str) -> str | None:
     return None
 
 
+def _wsl_exe() -> str:
+    """`wsl.exe` 의 경로. 없으면 이름 그대로 — 호출부가 `FileNotFoundError` 로 알게 된다."""
+    return shutil.which("wsl.exe") or shutil.which("wsl") or "wsl.exe"
+
+
+def wsl_available() -> bool:
+    """WSL 배포판이 **하나라도 실행 가능한가**.
+
+    `wsl.exe` 파일 존재만으로 판정하지 않는다 — Windows 는 배포판이 없어도 그 실행 파일을
+    갖고 있고, 그때 `wsl -l` 은 실패한다. 「있다」를 파일 존재로 읽으면 이후 모든 호출이
+    조용히 실패한다.
+    """
+    if os.name != "nt":
+        return False
+    if not (shutil.which("wsl.exe") or shutil.which("wsl")):
+        return False
+    rc, _ = _run([_wsl_exe(), "-l", "-q"], timeout=20)
+    return rc == 0
+
+
+def wsl_which(name: str) -> str | None:
+    """WSL 안에서 그 CLI 의 경로. 로그인 셸을 거쳐 사용자의 PATH 를 그대로 본다.
+
+    ⚠ `wsl -e <name>` 로 바로 찔러보지 않는다 — 없으면 셸이 아니라 `wsl.exe` 자체가
+    오류를 내서 「WSL 이 없다」와 「그 CLI 가 없다」가 구분되지 않는다.
+    """
+    if name not in RUNTIMES:
+        return None
+    rc, out = _run([_wsl_exe(), "-e", "bash", "-lc", f"command -v {name}"], timeout=45)
+    path = (out or "").strip().splitlines()[0].strip() if out.strip() else ""
+    return path if rc == 0 and path.startswith("/") else None
+
+
 def _is_rejected(path: str) -> bool:
     """Microsoft Store 앱 실행 별칭 스텁을 거른다.
 
@@ -111,6 +144,15 @@ def _is_rejected(path: str) -> bool:
     return "\\WindowsApps\\" in path or "/WindowsApps/" in path
 
 
+#: 이 머신에서 AI CLI 를 찾을 **자리**. 순서가 우선순위다(빠른 쪽 먼저).
+#:
+#: ⚠ `wsl` 이 왜 있는가 — 실측 2026-09-03: 이 사용자의 Windows `claude` 2.1.70 은
+#: `auth status` 가 `rc=0`·`loggedIn:true` 인데 `-p` 에 **180초 무응답**이었고, WSL 의
+#: `claude` 2.1.258 은 정상 응답했다. 즉 **실제로 답할 수 있는 유일한 AI 가 WSL 안에**
+#: 있었는데 클라이언트는 Windows 쪽만 봐서 도달하지 못했다.
+WHERES: tuple[str, ...] = ("windows", "wsl")
+
+
 @dataclass
 class RuntimeState:
     """한 런타임에 대해 화면이 알아야 하는 전부."""
@@ -118,10 +160,34 @@ class RuntimeState:
     path: str | None = None
     logged_in: bool | None = None      # None = 판정 불가(상태 명령 없음 · 실행 실패)
     detail: str = ""
+    #: 어디서 찾았는가 — `"windows"` | `"wsl"`. 실행 방법이 달라진다.
+    where: str = "windows"
+    #: **실제로 답했는가.** `None` = 아직 확인 안 함. `False` = 확인했고 못 답했다.
+    #:
+    #: ⚠ 이 축이 `logged_in` 과 **별개**인 것이 핵심이다. 위 실측에서 Windows `claude` 는
+    #: 로그인돼 있었지만 답하지 못했다 — 종전 클라이언트는 그것을 「연결할 준비가
+    #: 되었습니다」로 표시했다. **인증 상태는 가용성의 증거가 아니다.**
+    answers: bool | None = None
 
     @property
     def installed(self) -> bool:
         return bool(self.path)
+
+    @property
+    def usable(self) -> bool:
+        """이 런타임으로 **정말 답을 받을 수 있는가**. 화면·선택은 이 값을 본다."""
+        return bool(self.installed and self.answers)
+
+    def argv(self, *args: str) -> list[str]:
+        """이 런타임을 실행하는 argv. WSL 이면 `wsl.exe` 를 앞에 둔다."""
+        if self.where == "wsl":
+            return [_wsl_exe(), "-e", str(self.path), *args]
+        return [str(self.path), *args]
+
+    @property
+    def label(self) -> str:
+        """사람에게 보이는 이름. 같은 CLI 가 두 자리에 있을 수 있으므로 자리를 밝힌다."""
+        return f"{self.name} (WSL)" if self.where == "wsl" else self.name
 
     @property
     def can_login_here(self) -> bool:
@@ -148,9 +214,89 @@ def _run(argv: list[str], timeout: int = 30) -> tuple[int, str]:
         return 1, f"{exc!r}"
 
 
-def probe_runtime(name: str) -> RuntimeState:
+#: 런타임별 **질문 인자** — CLI 이름 뒤에 붙는 부분. `{prompt}` 자리에 질문이 들어간다.
+#:
+#: ⚠ **정본은 러너 `agent/runtimes.py` 의 `_RUNTIME_SPECS["<name>"]["argv"]`** 이고 여기는
+#: 그 사본이다(러너는 런타임에 서버에서 받으므로 임포트할 수 없다). 동기화는
+#: `tests/test_wsl_and_scheme.py::test_ask_argv_matches_the_runner_canon` 이 잠근다.
+#:
+#: ⚠ **하나로 뭉뚱그리면 안 된다.** 실측 2026-09-03: 모든 런타임에 `-p` 를 썼더니 WSL 의
+#: `codex` 가 0.1초에 실패했고 클라이언트는 그것을 「답하지 못한다」로 읽어 **쓸 수 있는
+#: 런타임을 배제**했다. codex 는 `exec` 하위명령을 쓴다.
+_ASK_ARGV: dict[str, tuple[str, ...]] = {
+    "claude": ("-p", "{prompt}"),
+    "codex": ("exec", "--skip-git-repo-check", "{prompt}"),
+    "gemini": ("-p", "{prompt}"),
+}
+
+
+#: 가용성 실증에 쓰는 질문. **짧을수록 좋다** — 사용자의 AI 사용량을 쓰기 때문이다.
+_PING_PROMPT = "OK 라고만 답하세요."
+#: 실증 제한시간. 실측(2026-09-03)에서 못 쓰는 런타임은 180초에도 안 끝났고, 쓸 수 있는
+#: 쪽은 수 초에 끝났다. 길게 잡을수록 사용자는 「멈춘 프로그램」을 본다.
+_PING_TIMEOUT = 60
+
+
+def verify_answers(st: RuntimeState, timeout: int = _PING_TIMEOUT) -> RuntimeState:
+    """**정말 답하는지** 한 번 물어본다. `st.answers` 를 채워 돌려준다.
+
+    ## 왜 로그인 확인으로 부족한가 (실측 2026-09-03)
+
+    이 사용자의 Windows `claude` 2.1.70 은 `auth status` 가 `rc=0` 이고 JSON 에
+    `loggedIn:true`·이메일까지 들어 있었는데, `-p` 는 **180초 무응답**이었다. 종전
+    클라이언트는 그 상태를 「claude — …로 로그인됨 / 연결할 준비가 되었습니다」로 표시했다.
+    즉 **답하지 못하는 런타임을 준비됐다고 말했다.**
+
+    인증 상태는 가용성의 증거가 아니다. 답을 받아 보는 것만이 증거다.
+
+    ## 비용을 인정한다
+
+    이 호출은 **사용자의 AI 사용량을 쓴다.** 그래서 질문을 최소로 하고(`_PING_PROMPT`),
+    결과를 홈에 캐시해 매번 묻지 않는다(`load_probe_cache`/`save_probe_cache`).
+    """
+    if not st.installed:
+        st.answers = False
+        return st
+    ask = _ASK_ARGV.get(st.name)
+    if not ask:
+        st.answers = False
+        st.detail = "이 AI 를 어떻게 부르는지 알려져 있지 않습니다."
+        return st
+    rc, out = _run(st.argv(*[a.replace("{prompt}", _PING_PROMPT) for a in ask]),
+                   timeout=timeout)
+    st.answers = (rc == 0 and bool((out or "").strip()))
+    if not st.answers:
+        st.detail = ("설치·로그인은 되어 있는데 **답을 받지 못했습니다**"
+                     if st.logged_in else st.detail or "답을 받지 못했습니다")
+        if rc == 124:
+            st.detail = f"응답이 없어 {timeout}초에 중단했습니다 — 이 런타임은 쓸 수 없습니다."
+    return st
+
+
+def discover_runtime(name: str) -> list[RuntimeState]:
+    """그 CLI 를 **찾을 수 있는 모든 자리**를 돌려준다(Windows · WSL).
+
+    ⚠ 첫 번째를 찾고 멈추지 않는다. 사용자 결정 2026-09-03: 「연결 가능한 모델 목록을
+    최대한 확보하고, 실제 가용한 플랫폼만 사용」 — 그러려면 후보를 다 모은 뒤 걸러야 한다.
+    한 자리만 보고 멈추면, 그 자리가 하필 못 쓰는 쪽일 때 **쓸 수 있는 것이 있는데도**
+    「없다」가 된다(실측에서 정확히 그랬다).
+    """
+    found: list[RuntimeState] = []
+    win = which_runtime(name)
+    if win:
+        found.append(RuntimeState(name=name, path=win, where="windows"))
+    if wsl_available():
+        inside = wsl_which(name)
+        if inside:
+            found.append(RuntimeState(name=name, path=inside, where="wsl"))
+    return found
+
+
+def probe_runtime(name: str, where: str = "windows",
+                  path: str | None = None) -> RuntimeState:
     """설치 여부 + 로그인 여부를 한 번에. **토큰은 만지지 않는다** (§0.1)."""
-    st = RuntimeState(name=name, path=which_runtime(name))
+    st = RuntimeState(name=name, where=where,
+                      path=path if path is not None else which_runtime(name))
     if not st.installed:
         st.detail = "이 컴퓨터에 설치되어 있지 않습니다."
         return st
@@ -158,7 +304,7 @@ def probe_runtime(name: str) -> RuntimeState:
     if not status:
         st.detail = "로그인 상태를 확인하는 명령이 알려져 있지 않습니다."
         return st
-    rc, out = _run([st.path, *status])
+    rc, out = _run(st.argv(*status))
     st.logged_in = (rc == 0)
     # claude 는 JSON 을 낸다 — 계정까지 보여 줄 수 있다. 못 읽어도 rc 판정은 유효하다.
     try:
@@ -171,19 +317,26 @@ def probe_runtime(name: str) -> RuntimeState:
     return st
 
 
-def login(name: str, timeout: int = 300) -> tuple[bool, str]:
+def login(target: "str | RuntimeState", timeout: int = 300) -> tuple[bool, str]:
     """**대행 실행** — 벤더 공식 로그인 명령을 띄우고 결과만 판정한다.
 
     브라우저가 열리고 사용자가 승인하는 동안 블로킹된다(기본 5분). 우리는 그 왕복에 끼어들지
     않는다 — **토큰이 어디에 저장되는지도 알 필요가 없다.**
+
+    ⚠ **어느 자리의 런타임인지까지 받는다.** 종전에는 이름만 받아 `which_runtime()` 으로
+    Windows 쪽만 찾았다. 그러면 사용자의 AI 가 WSL 에 있을 때 **로그인 대행이 아예 닿지
+    않는다** — 화면은 [로그인] 버튼을 보여 주는데 눌러도 Windows 쪽 CLI 를 건드린다.
+    문자열을 그대로 줘도 되지만(호환), 그때는 Windows 자리로 간주한다.
     """
-    path = which_runtime(name)
-    if not path:
+    st = target if isinstance(target, RuntimeState) else RuntimeState(
+        name=str(target), path=which_runtime(str(target)), where="windows")
+    if not st.installed:
         return False, "설치되어 있지 않습니다."
-    argv = _CLI.get(name, {}).get("login")
+    argv = _CLI.get(st.name, {}).get("login")
     if not argv:
-        return False, "이 AI 는 이 프로그램에서 로그인을 대신 실행할 수 없습니다. 직접 로그인한 뒤 다시 확인하세요."
-    rc, out = _run([path, *argv], timeout=timeout)
+        return False, ("이 AI 는 이 프로그램에서 로그인을 대신 실행할 수 없습니다. "
+                       "직접 로그인한 뒤 다시 확인하세요.")
+    rc, out = _run(st.argv(*argv), timeout=timeout)
     if rc == 0:
         return True, "로그인이 완료되었습니다."
     return False, (out[:400] or f"로그인이 완료되지 않았습니다(코드 {rc}).")
@@ -359,16 +512,48 @@ def runner_python() -> str:
     return sys.executable
 
 
+def _as_state(runtime: "str | RuntimeState | None") -> "RuntimeState | None":
+    """호출부가 이름만 줘도 받아 준다 — 그때는 Windows 자리로 간주한다(종전 동작)."""
+    if runtime is None or isinstance(runtime, RuntimeState):
+        return runtime
+    name = str(runtime).strip()
+    return RuntimeState(name=name, path=which_runtime(name), where="windows") if name else None
+
+
+def runner_runtime_args(st: "RuntimeState | None") -> list[str]:
+    """러너에게 **어떤 AI 를 어떻게 부를지** 알려 주는 인자.
+
+    Windows 자리면 이름만 준다(`--ai claude`) — 러너가 스스로 찾는다.
+
+    WSL 자리면 러너가 그 실행 파일에 닿지 못한다. 러너는 Windows 파이썬으로 도는데
+    `/usr/local/bin/claude` 는 Windows 경로가 아니기 때문이다. 그래서 명령을 통째로
+    넘긴다(`--cmd 'wsl.exe -e /usr/…/claude -p {prompt}'`) — 러너가 이미 지원하는 계약이다
+    (`agent/__init__.py`: ``--cmd 'my-ai -p {prompt}'``). **러너를 고치지 않는다.**
+
+    ⚠ **대가를 밝힌다**: `--cmd` 를 주면 러너는 모델·추론등급 협상을 돌지 않고 능력을
+    신고하지 않는다(`lifecycle.py`: 「--cmd 로 명령을 통째로 준 사용자는 신고하지 않는다」).
+    그래서 웹 체크리스트의 「답할 AI 있음」은 ❌ 로 남고 모델 선택기도 뜨지 않는다.
+    **답변은 정상으로 오간다** — 신고가 없을 뿐이다. 이 간극은 러너가 WSL 자리를 직접
+    아는 날 사라진다(별도 cycle).
+    """
+    if st is None:
+        return []
+    if st.where == "wsl":
+        # ⚠ 런타임마다 호출 형태가 다르다 — `-p` 로 뭉뚱그리면 codex 는 실행되지 않는다.
+        ask = " ".join(_ASK_ARGV.get(st.name, ("-p", "{prompt}")))
+        return ["--cmd", f"{_wsl_exe()} -e {st.path} {ask}"]
+    return ["--ai", st.name]
+
+
 def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
-                     runtime: str | None = None) -> tuple[int, str]:
+                     runtime: "str | RuntimeState | None" = None) -> tuple[int, str]:
     """러너의 `--check` — 상주 **전에** 연결을 확인한다.
 
     종료코드 4 = 「서버 연결은 정상인데 쓸 수 있는 AI 가 없다」. 연결 실패와 **다른 사실**이라
     화면이 갈라 말해야 한다(feature-0043 REQ-20260901-win-ai-detect).
     """
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
-    if runtime:
-        argv += ["--ai", runtime]
+    argv += runner_runtime_args(_as_state(runtime))
     env_token = dict(os.environ, BRIDGE_TOKEN=plan.token)
     try:
         p = subprocess.run(argv, capture_output=True, timeout=120,
@@ -379,11 +564,10 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
 
 
 def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
-                 runtime: str | None = None) -> subprocess.Popen:
+                 runtime: "str | RuntimeState | None" = None) -> subprocess.Popen:
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
-    if runtime:
-        argv += ["--ai", runtime]
+    argv += runner_runtime_args(_as_state(runtime))
     kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token),
                 "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT,
                 "encoding": "utf-8", "errors": "replace"}

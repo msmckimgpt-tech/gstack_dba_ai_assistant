@@ -66,5 +66,18 @@ Name: "{group}\{#MyAppName} 제거"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: startup
 
+[Registry]
+; `dqa-connect://` 스킴 핸들러 — 웹의 [내 AI 실행] 이 이 프로그램을 **연결 정보와 함께** 띄운다.
+;
+; ⚠ 이것이 없으면 실제로 일어난 일(실측 2026-09-03): 사용자가 [내 AI 실행] 을 눌러도 스킴을
+;   받는 프로그램이 없어 아무 일도 없거나, 사용자가 시작 메뉴에서 직접 켜서 「연결 정보가
+;   없습니다」만 본다. 브라우저는 **스킴 핸들러 부재를 감지하지 못하므로** 버튼은 조용히 죽는다.
+;
+; per-user 설치이므로 HKCU 에 쓴다(관리자 권한 불필요).
+Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: ""; ValueData: "URL:DQA Connect"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\dqa-connect\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExe},0"
+Root: HKCU; Subkey: "Software\Classes\dqa-connect\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExe}"" ""%1"""
+
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "지금 실행"; Flags: nowait postinstall skipifsilent
