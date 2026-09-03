@@ -99,3 +99,10 @@ edit_policy: append-only
 걸렸을 뿐이고, 같은 런타임이 17.8초에 답했다. 느린 것과 못 하는 것은 다르다 — 관측 2회로
 「불가」를 단정하면 안 된다. 그래서 `verify_answers` 는 **판정을 캐시하지 않고** 매번
 확인하며, 실패 문구도 「쓸 수 없습니다」가 아니라 시간과 함께 말한다.
+
+## CHG-20260904T020000-ai-claude-ssot-catch — 테스트가 옛 스킴을 정본에서 읽는다
+- Timestamp: 2026-09-04T02:00:00+09:00
+- CI 의 `feature-0043/tests/test_name_ssot.py` 가 새 테스트 파일의 옛 스킴 **리터럴**을
+  적발해 적색. 허용 목록 예외 대신 `shared/dqa_identity.LEGACY_SCHEME` 를 읽도록 교체.
+- ⚠ 절차 오류도 함께 남긴다: 이 수정을 밀 때 **verify-completion 통과를 확인하기 전에
+  commit·push 했다.** 게이트는 통과를 확인한 **뒤에** 커밋한다.
