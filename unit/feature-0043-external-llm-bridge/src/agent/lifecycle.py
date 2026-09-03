@@ -506,7 +506,7 @@ def shutdown_after_drain(active: ActiveTasks, cancels: CancelRegistry,
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="mysql-ai 브리지 상주 러너")
+    ap = argparse.ArgumentParser(description="DQA Connect 상주 러너")
     ap.add_argument("--base", default=os.environ.get("BRIDGE_BASE", ""), help="서비스 베이스 URL")
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""), help="mat_ 토큰")
     ap.add_argument("--ca", default=os.environ.get("BRIDGE_CA", "") or None, help="사설 CA 인증서 경로")

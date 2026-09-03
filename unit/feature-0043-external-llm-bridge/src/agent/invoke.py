@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC
+from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _HOME_DIRNAME
 from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
@@ -653,7 +653,7 @@ def _child_workdir() -> str | None:
     빈 디렉토리 하나면 그 상속이 끊긴다. 만들지 못하면 `None` 을 돌려 **종전대로** 상속한다
     (작업 디렉토리 때문에 답변 자체를 막지는 않는다).
     """
-    path = os.path.join(os.path.expanduser("~"), ".mysql-ai-bridge", "work")
+    path = os.path.join(os.path.expanduser("~"), _HOME_DIRNAME, "work")
     try:
         os.makedirs(path, exist_ok=True)
         return path

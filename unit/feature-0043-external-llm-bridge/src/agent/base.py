@@ -7,7 +7,21 @@ from __future__ import annotations
 
 import os
 
-_UA = "mysql-ai-bridge-agent/1"
+# ── 명칭 정본 (러너 측 단일 출처) ─────────────────────────────────────────────
+#
+# 설치 스크립트(`bridge_setup.sh` / `.ps1`)의 `DQA_SCHEME` 과 **같은 값**이어야 한다 —
+# 러너의 설정 홈과 설치 스크립트가 만드는 홈이 갈리면 러너는 매번 «처음 실행» 이 된다.
+# `tests/test_connect_gate.py` 가 세 파일을 파싱해 대조한다.
+#
+# 개명 2026-09-03: `mysql-ai-bridge` → `dqa-connect` (제품명 DQA — Database Query Assistant
+# 와 정합. 옛 이름은 제품명·구현 형태 두 축 모두 어긋나 있었다).
+_APP_NAME = "DQA Connect"
+_APP_SLUG = "dqa-connect"
+
+#: 사용자 홈 아래 설치 디렉토리 이름. 경로를 만드는 곳은 이 상수만 본다.
+_HOME_DIRNAME = "." + _APP_SLUG
+
+_UA = _APP_SLUG + "-agent/1"
 
 # ── 자식 프로세스 텍스트 입출력 인코딩 (TASK-20260902T160000) ─────────────────
 #
@@ -89,5 +103,5 @@ _MAX_STALLED_ROUNDS = 20
 
 #: 재시작 대비 설정 파일. **토큰은 넣지 않는다** — 비밀이고, 어차피 세션과 함께 죽는다.
 #: 저장하는 것은 다시 물어보기 번거로운 것들(주소·CA 경로·AI 선택)뿐이다.
-_CONF_DIR = os.path.join(os.path.expanduser("~"), ".mysql-ai-bridge")
+_CONF_DIR = os.path.join(os.path.expanduser("~"), _HOME_DIRNAME)
 _CONF_PATH = os.path.join(_CONF_DIR, "config.json")
