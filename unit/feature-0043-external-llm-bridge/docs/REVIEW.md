@@ -4438,6 +4438,21 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 **대응 중 자체 발견 1건**: 웹 서빙 파일명 `agent/mysql-ai-client.exe` 와 빌드 산출물명이
 갈려 있었다 — `_APP_NAME` 만 바꿨다면 **배포 성공 + 다운로드 404** 가 됐다. 양쪽을 묶는
 테스트를 추가했다(러너 배포본이 겪은 같은 클래스라 §16.7 G10 승격 대상).
+
+
+## REV-20260903T190000-ai-claude-funnel-audit-action [SKIPPED:live-root-cause-fix] — ACCEPTED
+- Related TASK: TASK-20260903T190000
+- Timestamp: 2026-09-03T19:00:00+09:00
+- **배포 후 라이브 실측이 「계측 0건」을 잡았다** — 로드맵이 ITEM-00 잔여로 못박아 둔 그 확인이다. 그것을 안 했으면 퍼널은 **영원히 빈 채로** 「측정 기반이 생겼다」고 믿었을 것이다.
+- **근본 원인**: `build_audit_change_json` 은 명시적 allowlist 이고 미등재 ActionCode 는 `ValueError` 로 죽는다. `_audit_user_action` 이 그것을 삼켜(fail-open) **증상이 전혀 없다**. 로그 문자열 `unknown audit action: ai.connect.funnel` 로 확정.
+- **왜 테스트가 못 잡았나 — 가짜 더블이 계약을 우회했다**: `test_connect_funnel.py` 는 `app._audit_user_action` 을 stub 으로 갈아끼운다. 그 더블은 「내가 부른다」만 검사하고 **「받는 쪽이 받아 준다」를 검사하지 않는다.** 호출 형태가 맞아도 수신자가 거부하면 아무것도 남지 않는데, 더블은 항상 받아 준다. → 신규 스위트는 **진짜 빌더를 호출**한다.
+- **자기 결함 2건(진단 중)**:
+  1. 라이브 컨테이너에 진단 로그를 주입하다 **재시작 루프**를 유발했다. 즉시 배포 이미지로 재생성해 복구(healthz 200, 주입 흔적 0). **운영 서비스에 임시 코드를 넣는 진단은 마지막 수단이어야 한다** — 이번엔 로그 grep 대상(`Phase A6`)을 처음부터 넓게 잡았으면 불필요했다.
+  2. 처음 grep 을 `[connect-funnel]` 로만 걸어 **감사 헬퍼의 실패 메시지를 놓쳤다.** 내 모듈의 로그만 보고 「호출이 안 된다」고 오판했다 — 실패는 **받는 쪽**에서 났다.
+- **census 모수를 두 번 좁혔다**: ① `record_audit_event` 호출까지 세어 27건을 «미등재» 로 오보고(그쪽은 change_json 을 호출자가 만들어 빌더를 안 탄다) ② `action=` 리터럴만 세어 **정작 이 결함을 낸 호출(`action=FUNNEL_ACTION` 상수 참조)을 놓쳤다** — 자기검증 단언(`assert "ai.connect.funnel" in seen`)이 그것을 잡았다. 검사에 자기검증을 넣지 않았으면 «전부 통과» 로 끝났을 것이다.
+- **기존 격차 8건**(attachment.assistant.create · attachment.version.create · conversation.member.{ban,fork_blocked,join,join_blocked,remove,unban}): 빌더가 거부하므로 호출되면 감사가 사라진다. 라이브 로그에는 아직 없는데 **그 경로가 최근 실행되지 않았기 때문이지 괜찮아서가 아니다**. 각 change_json 모양은 기능 소유자 소관이라 임의 등재하지 않고 `KNOWN_GAPS` 로 명시 + 「목록이 줄면 면제도 줄여라」 단언을 함께 걸었다(낡은 면제가 다음 결함을 숨기지 않게).
+- 뮤테이션 3종 KILL (등재 제거 = **원 결함 재현** → 8건 실패 · 민감값 통과 · allowlist 정책 무력화).
+- Human Approval Needed: 아니오.
 ## REV-20260903T180000-ai-claude-corp-feature-0043-ai-ready-surfaced [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
 
 > **왜 SKIPPED**: 세션 지시가 사용자 명시 요청 없는 `Agent` 호출 금지. 대체는 뮤테이션 8종.
@@ -4487,7 +4502,6 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 
 - **판정**: **APPROVED**. 다음: 「확인 중」 제3상태 + 호출 즉시 진행 표시.
 
-
 ## REV-20260903T150000-ai-claude-corp-ps1-scheme-colon-parse [SKIPPED:tool-restricted:backend+qa] — APPROVED
 
 - Related TASK: feature-0043-external-llm-bridge
@@ -4508,3 +4522,12 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 
 **검증**: CI 가 잡은 회귀를 그대로 재주입 → **두 게이트 모두 FAIL**, 복원 후 23건 PASS.
 Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주입 + 실 파서 실행)으로 대체했다.
+
+
+## REV-20260903T193000-ai-claude-funnel-audit-merge [SKIPPED:merge-verification] — ACCEPTED
+- Timestamp: 2026-09-03T19:30:00+09:00
+- 병합 검증은 CHG-20260903T193000 참조. 자율 병합을 그냥 믿지 않고 양측 부모 대비 + 회귀 재실행.
+- ⚠ 이 cycle 중 **머지 전에 배포를 돌렸다** — main 이 그 사이 전진했고 cycle-finalize 가
+  `mergeable=UNKNOWN` 으로 중단했는데, 그 사실을 확인하기 전에 `deploy-web` 을 실행했다.
+  결과적으로 **내 수정이 빠진 main 을 배포**했다(무해했으나 순서가 틀렸다). 배포는 머지
+  완료를 **확인한 뒤**에 한다 — §16.3 의 cycle-final 순서(머지 → 배포)가 그것을 말한다.

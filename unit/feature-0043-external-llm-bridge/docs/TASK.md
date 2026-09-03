@@ -3013,6 +3013,19 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 2026-08-31 실측이 같은 형태). MCP 를 쓰던 사용자는 `mcpServers` 키 교체 + `mcp__mysql-ai__*`
 도구 권한 **재승인**이 필요하다. 사용자 결정(2026-09-03)으로 이 비용을 택했다 — 별칭을 남기면
 두 스킴이 각각 러너를 띄울 수 있게 되어 stale-runner 사고 표면이 되살아난다.
+
+
+## Cycle — TASK-20260903T190000 퍼널 ActionCode 감사 빌더 등재 (ITEM-00 라이브 실측 후속)
+
+- [x] 라이브 실측: 배포 후 `ai.connect.funnel` 행 **0건** 확인 → 원인 추적
+- [x] 원인: `build_audit_change_json` 은 **명시적 allowlist** 인데 미등재 → `ValueError` →
+      `_audit_user_action` 의 fail-open 이 삼켜 **증상 없이 계측만 소실**
+- [x] `_audit_infra.build_audit_change_json` 에 `ai.connect.funnel` 분기 등재
+- [x] `tests/test_funnel_audit_action.py` 9건 — **진짜 빌더를 호출**(더블 없이)
+- [x] 뮤테이션 3종 KILL (원 결함 재현 포함)
+- [x] 기존 격차 8건 발견·문서화(KNOWN_GAPS) — 별 cycle 대상
+- [x] origin/main 병합 (드라이버, §16.4 검증 + 회귀 재실행)
+- [ ] 배포 후 라이브 적재 재확인
 ## Cycle — TASK-20260903T180000 화면의 「준비됨」을 「답할 수 있음」으로
 
 - [x] 근본 축 전환 — 「하트비트 살아있음」 → 「답할 수 있음」(같은 부류 4회 반복의 뿌리)

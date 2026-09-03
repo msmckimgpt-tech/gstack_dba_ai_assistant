@@ -4417,6 +4417,7 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
 **대가** — 기존 설치 사용자는 setup 재실행 전까지 `[내 AI 실행]` 무반응, MCP 도구 권한 재승인
 필요. 폴백 배선 불가(브라우저가 스킴 핸들러 부재를 감지하지 못함).
 
+
 ## CHG-20260903T133000-ai-claude-corp-runner-name-followups — 개명 후속: 모수 확장 · codex 대응
 
 **① rebase 가 드러낸 모수 밖 경로 (§16.7 G12).** base 이후 `origin/main` 에 착륙한
@@ -4436,6 +4437,14 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
 
 **테스트** — `test_name_ssot.py` 12 → **21건**(모수 조회 2 · launch bake 3 · UA 반증 1 ·
 MCP 키 1 · 파일명 1 · lookalike 1 추가). 결함 주입 **20종 전건 KILL**.
+
+
+## CHG-20260903T190000-ai-claude-funnel-audit-action — 퍼널 ActionCode 를 감사 빌더에 등재
+- Timestamp: 2026-09-03T19:00:00+09:00
+- `routers/_audit_infra.py`: `ai.connect.funnel` 분기 추가(`{step, path_kind}` 만).
+- `tests/test_funnel_audit_action.py` 신설 — 더블 없이 **진짜 빌더**를 호출한다.
+- 부수 발견: 같은 함정에 빠진 기존 ActionCode **8건**(KNOWN_GAPS). 각 change_json 모양은
+  기능 소유자가 정해야 하므로 임의 등재하지 않고 분리했다.
 ## CHG-20260903T180000 — 화면의 「준비됨」을 「답할 수 있음」으로 옮긴다
 
 **계기**: 사용자 지적 — *"claude 재인증이 필요하다면 … DQA 에서는 정상 상태가 아니라 미연결
@@ -4470,3 +4479,10 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 
 **구조 가드 추가** (§16.7 G10) — `test_name_ssot.py` 가 `.ps1` 의 `$Var:` 형태를 `pwsh` 없이
 정적으로 잡는다. 재주입 실증: CI 가 잡은 그 회귀를 그대로 되살리면 **두 게이트 모두 FAIL**.
+
+
+## CHG-20260903T193000-ai-claude-funnel-audit-merge — origin/main 병합
+- Timestamp: 2026-09-03T19:30:00+09:00
+- 병렬 세션(`ai-ready-surfaced`)이 먼저 랜딩해 PR DIRTY. append-doc 드라이버로 충돌 0.
+- §16.4 양측 부모 대비 검증(3문서 모두 양측 이상 + 양측 항목 이름 실재) + 병합 후 회귀
+  재실행(실패 7 = 기준선, 신규 0).
