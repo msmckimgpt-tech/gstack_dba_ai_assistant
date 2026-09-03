@@ -2896,6 +2896,7 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] `tests/test_funnel_audit_action.py` 9건 — **진짜 빌더를 호출**(더블 없이)
 - [x] 뮤테이션 3종 KILL (원 결함 재현 포함)
 - [x] 기존 격차 8건 발견·문서화(KNOWN_GAPS) — 별 cycle 대상
+- [x] origin/main 병합 (드라이버, §16.4 검증 + 회귀 재실행)
 - [ ] 배포 후 라이브 적재 재확인
 ## Cycle — TASK-20260903T180000 화면의 「준비됨」을 「답할 수 있음」으로
 
