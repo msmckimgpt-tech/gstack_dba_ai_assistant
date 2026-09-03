@@ -1,7 +1,7 @@
 ---
 doc_type: ANCHOR
 feature_id: feature-0046-native-client
-created_at: 2026-09-03T14:00:00Z
+created_at: 2026-09-03T02:00:00Z
 status: active
 edit_policy: mixed
 source_of_truth: true
@@ -90,27 +90,5 @@ tkinter 동작)이 그 전제를 뒤집었다. 화면이 덜 예쁜 것은 **의
   셋 중 하나라도 발생하면 이 문서를 먼저 고친다.
 
 ## §4. 외부 검증 로그 (append-only)
-<!--
-release/milestone 검토 또는 방향 전환 검증이 필요할 때 엔트리를 남긴다.
-source는 `human:<name>` 만 허용.
-AI는 §4 writer 아님. AI는 작업 시작 시 Conflict Protocol에 따라
-명백한 방향 충돌이 있을 때만 사용자에게 gstack skill 재앵커를 유도한다.
-§4는 인간이 직접 append한다. 일반 TASK cycle에서 요청 의도와 검증 결과가
-명료하면 §4 엔트리 없이 PASS다.
-
-각 엔트리 필수 필드:
-- source: human:<name>
-- timestamp: ISO8601
-- body: ≥ 200자 non-whitespace, 실제 내용
-- challenge: 한 줄 — 이 검증이 무엇을 반박하거나 확인했는지
-
-형식 예시:
-
-### 2026-04-24T10:30:00Z — source: human:alice
-**challenge:** 이 기능이 실제로 사용자 pain을 해결하는지 /office-hours로 재검증
-**body:**
-(여기에 200자 이상의 실제 검증 내용. gstack skill 실행 결과를 paste하거나
-인간 리뷰어의 판단을 기록. 카고 컬트 방지를 위해 단순 "pass"/"looks good"은 FAIL.)
--->
 
 (엔트리 없음 — 일반 TASK cycle 완료 조건은 아님)

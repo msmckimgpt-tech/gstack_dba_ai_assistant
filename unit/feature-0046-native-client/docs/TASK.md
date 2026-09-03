@@ -36,3 +36,29 @@ feature_status: in-progress
 - [x] FUNCTION/MODIFY/REVIEW/REPORT/TEST 갱신
 - [x] BLOCKED 없음
 - [ ] 라이브 배포 검증 — 웹 배포 표면 변경 0이라 이번 cycle 대상 아님
+
+## 9. Requested Scope (요청 범위 자기-열거)
+
+원 요청: *"macOS 는 아직 고려대상이 아닙니다. windows 환경을 우선으로 진행해주세요.
+windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해주세요."*
+(선행 결정: 로그인은 OAuth 위임이 아니라 **대행 실행**)
+
+- [x] `Windows 우선` — 산출물: `src/client/` · 배선 확인: 실 Windows 에서 감지·GUI·빌드·실행 실측
+- [x] `macOS 제외` — 산출물: `docs/FUNCTION.md` §4 Out of Scope 명시 · 배선 확인: 빌드 스크립트가
+      비-Windows 를 기본 차단(`--allow-non-windows` 없으면 exit 2)
+- [x] `미서명 진행(SmartScreen 2클릭 감수)` — 산출물: `build_client.py` 가 서명을 **시도하지
+      않음을 명시** · 배선 확인: 빌드 산출물이 미서명 exe 로 생성됨(9,174,548 bytes)
+- [x] `대행 실행(OAuth 위임 아님)` — 산출물: `core.login()` · 배선 확인:
+      `test_login_only_runs_vendor_official_commands` 가 실행 argv 를 포획해
+      `["claude","auth","login"]` 만임을 단언 + `test_client_never_touches_vendor_credentials`
+
+**주장 affordance 실측 (G3)**: 화면이 주장하는 것 — ① AI 감지 ② 로그인 ③ 연결.
+- `AI 감지` → 실 Windows 에서 `claude` 를 PATH 밖 `.local\bin\claude.exe` 에서 찾고 계정까지 표시. **구동 확인**
+- `로그인` → 명령 형태만 실측(`claude auth login` 존재·`auth status` 종료코드 갈림). **실제 브라우저 왕복 미구동**
+- `연결` → 서버 왕복은 **미구동**(유효 토큰 필요). CA/러너 대조·`--check` 배선은 단위 테스트로 잠금
+
+**경계변수 양측 검증 (G4)**:
+- `--check` 종료코드 — `0`(정상) / `4`(AI 없음) 양측을 테스트로 고정. 4 를 「연결 실패」로
+  뭉치지 않는 것이 이 경계의 요점
+- `sys.stdout` 유무 — `tell()` 이 콘솔 있음/없음 양측에서 죽지 않음을 테스트로 고정
+  (windowed 빌드에서 실제로 멈춘 결함의 경계)
