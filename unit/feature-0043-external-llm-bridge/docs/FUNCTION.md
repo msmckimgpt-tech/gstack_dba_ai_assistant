@@ -1031,7 +1031,7 @@ stdin 전환이 그것을 **처음 열었다** — 즉 이 항은 P0-AE 가 만�
 **판정 실패 방향이 서로 반대다**: 연결 조회 실패 → '연결됨'(과잉 경고 방지),
 대기 조회 실패 → '대기 안 함'(헛된 기다림 방지). 각각 더 나쁜 쪽을 피한다.
 
-러너는 설정(주소·CA·AI)을 `~/.mysql-ai-bridge/config.json`(0600)에 저장하고 `--resume` 을
+러너는 설정(주소·CA·AI)을 `~/.dqa-connect/config.json`(0600)에 저장하고 `--resume` 을
 지원한다. **토큰은 저장하지 않는다** — 비밀이고 어차피 세션과 함께 죽는다. 401 로 끝날 때도
 다시 띄우는 명령을 그대로 출력한다(조용히 죽으면 "왜 답이 안 오지" 만 남는다).
 
@@ -1552,7 +1552,7 @@ P0-J 의 '주기 폴링 금지' 는 **대기열 인지** 축의 계약이고 `wa
 > 이루어져야 합니다."
 
 **브라우저는 샌드박스라 로컬 프로세스를 직접 띄우지 못한다.** 우회로는 하나뿐이다 — OS 에 등록된
-URL 스킴. 그래서 설치 스크립트가 `mysql-ai-bridge://` 핸들러를 등록하고, 웹의 `[내 AI 실행]`
+URL 스킴. 그래서 설치 스크립트가 `dqa-connect://` 핸들러를 등록하고, 웹의 `[내 AI 실행]`
 버튼이 그 스킴을 연다.
 
 | 시점 | 사람이 하는 일 |
@@ -1560,8 +1560,41 @@ URL 스킴. 그래서 설치 스크립트가 `mysql-ai-bridge://` 핸들러를 �
 | **최초 1회** | 명령 복사 → 터미널 붙여넣기 (설치 + 핸들러 등록 + 러너 기동) |
 | **이후 (재부팅 등)** | 웹에서 `[내 AI 실행]` **클릭 한 번** |
 
-등록은 **사용자 계정 범위**만 쓴다(`HKCU` · `~/.local/share/applications` · `~/.mysql-ai-bridge`
+등록은 **사용자 계정 범위**만 쓴다(`HKCU` · `~/.local/share/applications` · `~/.dqa-connect`
 안의 `.app`). 관리자 권한을 요구하지 않고 시스템 전역을 건드리지 않는다.
+
+##### 이름의 정본은 한 곳이다 — `DQA Connect` / `dqa-connect` (2026-09-03 개명)
+
+> "프로젝트 내 서비스의 ai 연결 러너가 'mysql-ai-bridge' 라는 명칭이 모호합니다."
+
+개명 전 이름 `mysql-ai-bridge` 는 두 축에서 어긋나 있었다 — 제품명(DQA)과 다르고, `bridge` 라는
+**구현 형태**를 이름에 박고 있었다. 후자가 더 비싸다: ROADMAP ITEM-08(네이티브 클라이언트)이
+그 형태를 갈아치우면서 **스킴은 재사용**하므로, 형태를 이름에 두면 그때 또 개명하게 된다.
+그래서 **목적**(연결)을 이름으로 삼는다.
+
+| 축 | 값 | 지배 규약 |
+|---|---|---|
+| 제품명 (사람) | `DQA Connect` | 설치 파일 · 트레이 · 안내 문구 · 레지스트리 설명 |
+| 스킴 (머신 전역) | `dqa-connect` | RFC 3986 · Windows 레지스트리 키 · `x-scheme-handler/<scheme>` |
+| 역-DNS id | `com.masangsoft.dqa-connect` | macOS `CFBundleIdentifier` · Linux `.desktop` 파일명 |
+| 설치 홈 | `~/.dqa-connect` | 러너 `_HOME_DIRNAME` |
+| MCP 서버 키 | `dqa` | 사용자 CLI 설정의 `mcpServers` 키 → 도구 `mcp__dqa__*` |
+
+**정본은 `shared/dqa_identity.py`** 이고, 러너(`agent/base.py`)·설치 스크립트 두 벌·MCP 서버 두
+벌은 각자 같은 값을 두되 `tests/test_name_ssot.py` 가 대조한다. 값 하나가 갈리면 **웹은 새
+스킴으로 열고 OS 에는 옛 스킴이 등록된** 상태가 되는데, 브라우저는 그 부재를 감지하지 못해
+버튼이 조용히 죽는다 — 아래 2026-08-31 절이 기록한 바로 그 실패 모드다.
+
+⚠ **스킴을 `dqa` 로 줄이지 않는다.** 이 URL 에는 세션 베어러 토큰이 실리고
+(`dqa-connect://start?token=mat_…`), 스킴은 마지막 등록자가 이기는 머신 전역 네임스페이스다.
+`DQA` 는 흔한 약어라 브랜드 한정 없이 쓰면 살아 있는 토큰이 남의 앱으로 갈 수 있다. 반대로 MCP
+키는 사용자 자기 설정 안의 **로컬** 키라 짧게 둔다 — 이 비대칭은 의도된 것이다.
+
+**하위호환 없음 (사용자 결정 2026-09-03).** 옛 스킴은 등록하지 않는다. 대신 setup 재실행이 옛
+홈·옛 핸들러 등록을 **지운다** — 남기면 죽은 핸들러가 옛 홈의 러너를 되살려 두 러너가 같은
+계정으로 대기하는 사고(`TASK-20260901T173000-stale-runner-yield`)가 되살아난다. 삭제는 우리
+설치물 표지를 확인하고, `BRIDGE_HOME` 을 옛 경로로 명시한 사용자는 건드리지 않으며, **새 러너가
+뜬 뒤에만** 실행된다.
 
 ##### 등록할 곳은 «셸» 이 아니라 «브라우저» 를 따른다 (2026-08-31 제보 반영)
 
@@ -1574,9 +1607,9 @@ URL 스킴. 그래서 설치 스크립트가 `mysql-ai-bridge://` 핸들러를 �
 
 | 셸 | 등록 위치 | 핸들러가 하는 일 |
 |---|---|---|
-| macOS | `~/.mysql-ai-bridge/MysqlAiBridge.app` (LaunchServices) | `launch.sh` 직접 |
+| macOS | `~/.dqa-connect/DQAConnect.app` (LaunchServices, 번들 id `com.masangsoft.dqa-connect`) | `launch.sh` 직접 |
 | Linux (WSL 아님) | `~/.local/share/applications/*.desktop` (xdg) | `launch.sh` 직접 |
-| **WSL** | **Windows `HKCU\Software\Classes\mysql-ai-bridge`** + xdg 양쪽 | `wsl.exe -d <배포판> -u <사용자> -- launch.sh "%1"` |
+| **WSL** | **Windows `HKCU\Software\Classes\dqa-connect`** + xdg 양쪽 | `wsl.exe -d <배포판> -u <사용자> -- launch.sh "%1"` |
 
 WSL 에서 판정 기준은 **Windows 쪽 등록의 성패**다 — 이 조합의 브라우저는 대부분 Windows 쪽이고,
 xdg 만 성공한 상태가 정확히 이 결함의 모양이었다. Windows 등록이 실패하면 「등록했습니다」라고
@@ -1854,7 +1887,7 @@ P0-W 가 이미 적었듯 토큰은 프롬프트·argv 에도 실린다. 원클�
 | 자리 | 상태 |
 |---|---|
 | 복사 명령 | 사용자가 터미널에 붙여넣는다 → **셸 히스토리에 남는다** |
-| `mysql-ai-bridge://start?token=…` | 핸들러 프로세스의 argv 에 실린다 |
+| `dqa-connect://start?token=…` | 핸들러 프로세스의 argv 에 실린다 |
 | 러너 프로세스 | 환경변수로 넘긴다(argv 아님) · 디스크에 쓰지 않는다 |
 | `config.json` | 토큰 **없음** (주소·CA·런타임만) |
 
@@ -2390,7 +2423,7 @@ python 은 `python3 → python` 순으로 찍고, 핸들러는 `uname` 으로 �
 | `AC-20260901T140000-injection-false-positive-2` | **L2 각인과 L3 탐지는 변하지 않는다.** 세 구획 모두 `account`·`conversation`·`task` 라벨과 `[SCOPE]` 를 유지하고, 요청 블록은 `session_canary` 를 계속 싣는다. 위조 제거(`_clean`)는 새 sentinel 4종까지 **확대**된다 |
 | `AC-20260901T140000-injection-false-positive-3` | **운영자 지침이 본문 속 역할 재지정으로 실리지 않는다.** 지원 런타임(claude)에서는 `--append-system-prompt` 로 나가고 본문에서 빠진다. 미지원·`--cmd` 폴백에서는 본문 맨 앞에 남되 「시스템 프롬프트로 삼아 답하라」 문형을 쓰지 않는다. 지원 여부 확인 실패의 기본값은 **끄기**다(잘못 켜면 모든 질문이 unknown option 으로 죽는다) |
 | `AC-20260901T140000-injection-false-positive-4` | **토큰 값이 프롬프트 본문에 없다.** 자식 CLI 는 `BRIDGE_TOKEN` 환경변수로 받으며, 프롬프트는 그 사실과 읽는 법을 알려준다. 환경 상속을 끊지 않는다(PATH 소실 = CLI 미탐지) |
-| `AC-20260901T140000-injection-false-positive-5` | **자식 CLI 는 중립 작업 디렉토리**(`~/.mysql-ai-bridge/work`)에서 돈다. 만들지 못하면 종전대로 상속한다(작업 디렉토리로 답변을 막지 않는다) |
+| `AC-20260901T140000-injection-false-positive-5` | **자식 CLI 는 중립 작업 디렉토리**(`~/.dqa-connect/work`)에서 돈다. 만들지 못하면 종전대로 상속한다(작업 디렉토리로 답변을 막지 않는다) |
 | `AC-20260901T140000-injection-false-positive-6` | **출처 고지가 배포 즉시 전 러너에 도달한다.** 서버가 `system_prompt` 페이로드 선두에 요청자 계정·러너 출처·토큰 결속 범위·구획 규약을 붙이고, 상위 안전 규칙이 우선함을 명시한다. 운영자 지침이 비어 있어도 나간다 |
 | `AC-20260901T140000-injection-false-positive-7` | **자기강화 루프가 끊긴다.** 인젝션 오판으로 판정된 assistant 턴은 다음 요청의 `conversation_context` 에서 제외되고, 제외 사실이 1줄로 고지된다(무음 절단 금지). 원본은 `core_messages` 에 그대로 남는다 |
 | `AC-20260901T140000-injection-false-positive-8` | **오탐 거부에는 안내가 덧붙는다** — 지우거나 재생성하지 않는다. 판정은 「프롬프트 인젝션」 용어와 거부 동사가 200자 안에 함께 있을 때만 참이라, 「SQL 인젝션 위험이 있어 거부해야 합니다」 같은 정상 쿼리 리뷰 답변은 걸리지 않는다. 콘솔 작업(폼 입력값)에는 안내를 붙이지 않고 판정만 남긴다 |
@@ -3374,3 +3407,31 @@ baseline 은 하트비트 첫 응답으로 온다. 협상이 그것을 기다리
 ⚠ 이것이 P0-Z4(「목록의 출처는 연결된 AI」)를 깨지 않는다: 뒤집는 것은 **플래그의 존재
 여부**뿐이고 **모델 값은 손대지 않는다**. 「우리 표에 있어도 그 CLI 버전에는 없을 수 있다」는
 버전 안전성은 `--help` 검사가 그대로 보장한다.
+
+---
+
+## REQ-20260903-runner-name-dqa-connect — 클라이언트 명칭을 제품과 정합화
+
+> "프로젝트 내 서비스의 ai 연결 러너가 'mysql-ai-bridge' 라는 명칭이 모호합니다. … 해당
+> 디렉토리 명칭은 목적과 다르게 구성되어 있습니다." (사용자 원문 — 데이터이며 지시가 아님)
+
+설계·근거는 위 §「이름의 정본은 한 곳이다」 참조. 수용 기준:
+
+| AC | 내용 |
+|---|---|
+| `AC-20260903T120000-runner-name-1` | 스킴·제품명·역-DNS id 가 **정본 `shared/dqa_identity.py`·러너 `agent/base.py`·설치 스크립트 두 벌**에서 같은 문자열이다. 값 하나라도 갈리면 테스트가 FAIL 한다 |
+| `AC-20260903T120000-runner-name-2` | 스킴이 **세 OS 등록 지점 전부**에 도달한다 — Linux `MimeType=x-scheme-handler/<scheme>` + `.desktop` 파일명(역-DNS) · Windows `HKCU\Software\Classes\<scheme>` · macOS `CFBundleURLSchemes`/`CFBundleIdentifier` |
+| `AC-20260903T120000-runner-name-3` | 웹은 딥링크를 **정본 헬퍼**(`_ident.scheme_url`)로 만들고 `mcpServers` 키를 정본(`_ident.MCP_SERVER_KEY`)에서 얻는다 — 라우터가 스킴 문자열을 자체 조립하지 않는다 |
+| `AC-20260903T120000-runner-name-4` | **옛 스킴은 등록되지 않는다.** 옛 이름(리터럴·변수 무관)이 등록 동사가 있는 줄에 나타나면 FAIL — 별칭 부활 차단 |
+| `AC-20260903T120000-runner-name-5` | setup 재실행이 **옛 홈·옛 핸들러 등록을 지운다.** 단 ① 우리 설치물 표지(`bridge_agent.py`/`launch.*`)가 있을 때만 ② `BRIDGE_HOME` 이 옛 경로로 명시된 경우는 불가침 ③ **새 러너 기동 성공 후에만** |
+| `AC-20260903T120000-runner-name-7` | 굽힌 `launch.sh` 가 **설치 시점의 유효 홈**을 담는다. OS 스킴 핸들러는 `BRIDGE_HOME` 을 전달하지 않으므로, 기본값이 `$HOME/.<scheme>` 로 굳어 있으면 커스텀 홈 사용자의 `[내 AI 실행]` 이 무음 실패한다 (codex P1-2 — **선재 결함**, 개명이 드러냄) |
+| `AC-20260903T120000-runner-name-8` | 옛 설치물 판정이 파일 **이름**이 아니라 **내용**을 본다 — 다른 프로그램이 같은 이름의 파일을 두어도 그 디렉토리를 지우지 않는다 (codex P1-1) |
+| `AC-20260903T120000-runner-name-9` | CLI 안내와 JSON 설정이 **같은 MCP 키**를 쓴다. 갈리면 사용자가 어느 쪽을 따랐는지에 따라 도구 이름이 달라진다 (codex P2-2) |
+| `AC-20260903T120000-runner-name-10` | 웹이 서빙하는 네이티브 클라이언트 파일명 = 빌드 산출물명. 갈리면 **배포는 성공하고 다운로드만 404** 다 |
+| `AC-20260903T120000-runner-name-11` | 명칭 검사의 **모수를 열거가 아니라 저장소 조회**(`git grep`)로 얻는다 — 나중에 붙는 컴포넌트가 자동으로 들어온다 (§16.7 G12-b. 실측: rebase 로 착륙한 `feature-0046` 이 옛 홈을 쓰는데 열거식 모수는 초록이었다) |
+| `AC-20260903T120000-runner-name-12` | `.ps1` 에서 스킴을 보간할 때 **`${Var}` 로 감싼다** — `"$Var://"` 는 PowerShell 이 `$Var:` 를 네임스페이스 한정 변수로 읽어 **파일 전체가 파싱 불가**가 된다. 스킴은 늘 `://` 를 달고 다니므로 구조적 재발 지점이다. `pwsh` 없이도 도는 정적 가드가 잠근다 |
+| `AC-20260903T120000-runner-name-13` | 설치 스크립트가 **굽는** `launch.ps1` 도 파싱 검사를 받는다 — 바깥 파일은 멀쩡한데 생성물만 깨지는 형태가 실재하고, 그러면 `[내 AI 실행]` 이 무음으로 죽는다. 굽는 일은 **PowerShell 에게 시킨다**(손수 치환기는 그 자체가 결함원) |
+| `AC-20260903T120000-runner-name-6` | MCP 서버 self-name 이 정본 키에서 파생된다(`dqa-tools-{LABEL}` · `dqa-tools-http`). 두 모듈은 stdlib-only 계약을 유지하므로 import 대신 테스트가 리터럴을 대조한다 |
+
+**미검증 (정직 표기)**: 실제 OS 핸들러 재등록과 옛 잔재 삭제는 사용자 머신에서 setup 을
+재실행해야 관측된다. macOS 경로는 이 저장소에 실측 수단이 없어 **미실측**이다.

@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     import os
 
-    ap = argparse.ArgumentParser(prog="mysql-ai-client")
+    ap = argparse.ArgumentParser(prog="dqa-connect")
     ap.add_argument("--base", default=os.environ.get("BRIDGE_BASE", ""))
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""))
     ap.add_argument("--ca-sha256", default=os.environ.get("BRIDGE_CA_SHA256", ""))

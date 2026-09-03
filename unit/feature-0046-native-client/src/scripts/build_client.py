@@ -32,7 +32,9 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1]          # …/src
 _UNIT = _SRC.parent                                  # …/feature-0046-native-client
-_APP_NAME = "mysql-ai-client"
+#: 설치 산출물 이름 — 사용자가 프로그램 목록에서 보는 것. 정본 `shared/dqa_identity.APP_NAME`
+#: (`DQA Connect`) 의 파일명 형태다. 공백 없는 형태를 쓰는 이유는 PyInstaller·경로 안전.
+_APP_NAME = "DQAConnect"
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -6,6 +6,7 @@
 
     첨부 파일 접근 권한이 필요합니다.
     웹 인터페이스의 권한 승인 대화에서 `mcp__mysql-ai__read_task_attachment` 도구 사용을
+    (당시 MCP 키. 2026-09-03 `mcp__dqa__` 로 개명)
     승인해주신 후 "권한 승인했습니다" 라고 말씀해주세요.
 
 그 사용자는 승인할 방법도, 승인해야 할 이유도 없었다. **승인 대화 자체가 존재하지 않는다** —
@@ -295,7 +296,7 @@ def test_keep_mcp_env_is_an_available_escape_hatch():
 
 @pytest.mark.parametrize("answer", [
     "첨부 파일 접근 권한이 필요합니다. 웹 인터페이스에서 권한을 승인해주시면 진행하겠습니다.",
-    "mcp__mysql-ai__read_task_attachment 도구 사용을 승인해주신 후 다시 말씀해주세요.",
+    "mcp__dqa__read_task_attachment 도구 사용을 승인해주신 후 다시 말씀해주세요.",
     "권한 승인 대화에서 승인해 주세요.",
     "Please approve the tool use and try again.",
 ])

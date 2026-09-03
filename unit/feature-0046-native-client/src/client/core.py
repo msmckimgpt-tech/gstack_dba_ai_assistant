@@ -224,7 +224,11 @@ class ConnectPlan:
     token: str
     ca_sha256: str = ""
     agent_sha256: str = ""
-    home: Path = field(default_factory=lambda: Path.home() / ".mysql-ai-bridge")
+    #: 러너와 **같은 홈**이어야 한다 — 클라이언트는 러너의 껍데기 교체이고(ROADMAP §0.2),
+    #: 홈이 갈리면 설정·CA 를 서로 못 본다. 값의 정본은 `shared/dqa_identity.SCHEME` 이며
+    #: `feature-0043/tests/test_name_ssot.py` 가 이 리터럴을 대조한다(이 모듈도 배포본이
+    #: 동결되는 stdlib 경로라 import 하지 않는다).
+    home: Path = field(default_factory=lambda: Path.home() / ".dqa-connect")
 
     @property
     def host(self) -> str:

@@ -106,7 +106,7 @@ globalThis.setInterval = () => 0;
 globalThis.clearInterval = () => {};
 
 // ── fetch 스텁 ──────────────────────────────────────────────────────────────
-const PROTOCOL = "mysql-ai-bridge://start?token=mat_TESTTOKEN";
+const PROTOCOL = "dqa-connect://start?token=mat_TESTTOKEN";
 let statusBody = { logged_in: true, connected: true, listening: false, compose_blocked: true };
 const statusCalls = [];
 globalThis.fetch = async (url) => {

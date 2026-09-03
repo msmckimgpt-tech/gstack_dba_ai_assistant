@@ -4385,6 +4385,61 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
   섹션 수뿐 아니라 **양측의 이번 cycle 항목이 실재하는지**도 이름으로 확인했다(내 `P0-AG`·`CHG/REV-20260903T160000` · 상대 `ai-unusable-surfaced`·`fast-fail-unhealthy`).
 - **병합 후 회귀 재실행** — 상대 cycle 이 같은 파일(`ai_tools.py` 등)을 건드렸으므로 병합 전 결과를 재사용하지 않았다. 실패 7건 = 기존 `share_redaction`(무관), **신규 0**.
 - Human Approval Needed: 아니오.
+## REV-20260903T120000-ai-claude-corp-runner-name-dqa-connect [CODEX:runner-name-dqa-connect] — ACCEPTED-WITH-CHANGES
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: naming/scheme/credential-path 변경 — §18.8 상 security(토큰 실린 스킴)·backend·qa 대상
+- Timestamp: 2026-09-03T12:00:00+09:00
+- Verdict: PASS (codex 1R: P1 2건 · P2 4건 → 유효 4건 전건 수정 · 1건 반증 · 1건 범위 밖 명시)
+- Human Approval Needed: no (사용자가 범위·컷오버·명칭 위임을 이미 결정)
+
+**패널 채널 선택 근거 (§18.8.2)** — 본 세션에는 상위 우선순위 지시로 **Agent tool 사용 금지**가
+걸려 있다. §18.8.2 「상위 우선순위 지시 carve-out」에 따라 그 제약이 우선하므로 subagent 패널을
+호출하지 않았고, 제약 없는 채널로 가능한 검증을 수행한 뒤 미덮은 도메인을 명시한다.
+
+수행한 검증(제약 없는 채널):
+- **결함 주입 10종 전건 KILL** — 값 드리프트 5종 · 배선 누락 2종 · 컷오버 위반 2종 · 정리 가드
+  제거 1종. 1차에서 M7 생존 → 항진명제 교정 후 재주입 3종 KILL(§16.7 G11-b 실증).
+- **기계적 대조** — 변경 전후 실패집합을 `main` 과 차집합 비교(feature-0043·0041 14건,
+  feature-0003 7건 모두 차집합 0), py3.11 컨테이너 재현으로 동일 확인.
+- **파괴적 연산 감사** — `rm -rf`/`Remove-Item` 대상이 명시 계산되고, 우리 설치물 표지 확인 +
+  `BRIDGE_HOME` 명시 사용자 불가침 가드가 있으며, 성공 경로 뒤에만 실행됨을 테스트로 잠금.
+  ⭐ **이 감사가 실 결함 1건을 잡았다**: 불가침 가드가 문자열 비교라 끝 슬래시 하나로 무력화됐다
+  (`BRIDGE_HOME=~/.mysql-ai-bridge/` → 현행 홈이 삭제 대상). 경로 정규화로 교정하고 **행위
+  테스트**(소스 검사가 아니라 실제 `sh` 실행 + 디렉토리 잔존 확인)로 잠근 뒤 주입 3종 재확인.
+  소스 문자열 검사만 했다면 이 구멍을 못 봤을 것이다 — 검사 대상이 «가드가 있는가» 였고 결함은
+  «가드가 성립하는가» 였다.
+
+미덮은 도메인(정직 표기): 사람·모델에 의한 **설계 관점 리뷰**(security 렌즈의 스킴 하이재킹
+위협모델 재검토, ux 렌즈의 재설치 안내 문구)는 수행하지 않았다. 스킴 길이 결정의 근거는
+본 REVIEW 와 `shared/dqa_identity.py` docstring 에 남겨 다음 리뷰어가 검증할 수 있게 했다.
+
+**판단 근거 — 왜 별칭을 두지 않는가**: 별칭을 남기면 두 스킴이 각각 러너를 띄울 수 있고,
+그것은 `TASK-20260901T173000-stale-runner-yield` 가 닫은 「두 러너가 같은 계정으로 대기」
+표면의 부활이다. 사용자가 하드 컷오버를 택한 것과 정합하며, 대신 재실행 시 옛 잔재를 **지우는
+것**을 계약으로 넣었다.
+
+**남은 위험**: 라이브 OS 등록 실물 미검증(사용자 머신 setup 재실행 필요), macOS 경로는 이
+저장소에 실측 수단이 없어 미실측 — ROADMAP SPIKE-02 의 macOS 미실측 항목과 같은 성격이다.
+
+
+### codex 1라운드 처리 (REV-20260903T120000, `codex-cli 0.152.1` · read-only sandbox)
+
+| 지적 | 판정 | 처리 |
+|---|---|---|
+| P1-1 경로 문자열 비교로 현행 홈 삭제 | **유효 (독립 수렴)** | 자체 감사가 먼저 잡아 이미 수정됨. codex 가 덧붙인 「이름만 같은 파일 오인」은 **미해소였고** 표지를 내용 검사로 강화 |
+| P1-2 커스텀 홈 사용자의 재실행 무음 실패 | **유효·신규** | 굽힌 `launch.sh` 에 **설치 시점 유효 홈 bake**. ⚠ 선재 결함(개명이 드러냄) |
+| P2-1 heredoc UA 미전개 | **반증** | 바깥 `LAUNCHEOF` 가 unquoted → 렌더 실측 결과 `dqa-connect-launch` 정상. 반증을 테스트로 잠금 |
+| P2-2 CLI 안내가 옛 MCP 키 | **유효·신규** | `_ident.MCP_SERVER_KEY` 파생으로 수정 + 양 경로 동일성 테스트 |
+| P2-3 legacy 검사에 데이터흐름 없음 | **부분 인정** | 2줄 분할 우회는 실재. `git grep` 전수 + 등록 지점 양성 단언으로 덮되 **완전 taint 분석은 범위 밖**으로 명시 |
+| P2-4 cleanup 이 문자열만 검사 | **이미 해소** | codex 가 이전 스냅샷을 봤다. 행위 테스트 5건이 실제 `sh` 로 돌린다 |
+| 토큰 URL 위협모델 | **타당** | 개명은 노출을 없애지 않는다. 「`dqa` 충돌 가능성이 더 높다」는 **추측**임을 정본 docstring 에 명시 |
+
+**대응 중 자체 발견 1건**: 웹 서빙 파일명 `agent/mysql-ai-client.exe` 와 빌드 산출물명이
+갈려 있었다 — `_APP_NAME` 만 바꿨다면 **배포 성공 + 다운로드 404** 가 됐다. 양쪽을 묶는
+테스트를 추가했다(러너 배포본이 겪은 같은 클래스라 §16.7 G10 승격 대상).
+
+
 ## REV-20260903T190000-ai-claude-funnel-audit-action [SKIPPED:live-root-cause-fix] — ACCEPTED
 - Related TASK: TASK-20260903T190000
 - Timestamp: 2026-09-03T19:00:00+09:00
@@ -4447,6 +4502,28 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 
 - **판정**: **APPROVED**. 다음: 「확인 중」 제3상태 + 호출 즉시 진행 표시.
 
+## REV-20260903T150000-ai-claude-corp-ps1-scheme-colon-parse [SKIPPED:tool-restricted:backend+qa] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: `.ps1` 파싱 회귀 (CI `test` job FAILURE) — 코드 수정 1줄 + 테스트 커버리지 확장
+- Timestamp: 2026-09-03T15:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**무엇을 배웠나 — 검사가 도는 환경이 커버리지의 일부다.** 이 회귀는 코드가 어려워서가 아니라
+**검사가 그 환경에서 skip 됐기 때문에** 통과했다. `shutil.which("pwsh")` 게이트가 WSL 개발
+환경에서 항상 거짓이었고, 같은 머신에 Windows `pwsh.exe` 실물이 있는데 쓰지 않았다. 「테스트가
+있다」와 「테스트가 돈다」는 다르다(§16.7 G14-e 의 환경 축 변형).
+
+조치는 둘로 나눴다 — ① 그 환경을 확보(`_pwsh()` 가 WSL interop 도 탐색, 실측 skip→PASS)
+② `pwsh` **없이도** 도는 정적 구조 가드 추가(§16.7 G10 — 스킴이 늘 `://` 를 달고 다녀 재발이
+예정된 클래스). 하나만으로는 부족하다: ①은 이 머신에 pwsh 가 있을 때만, ②는 파싱 실패의
+다른 형태를 못 본다.
+
+**검증**: CI 가 잡은 회귀를 그대로 재주입 → **두 게이트 모두 FAIL**, 복원 후 23건 PASS.
+Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주입 + 실 파서 실행)으로 대체했다.
+
+
 ## REV-20260903T193000-ai-claude-funnel-audit-merge [SKIPPED:merge-verification] — ACCEPTED
 - Timestamp: 2026-09-03T19:30:00+09:00
 - 병합 검증은 CHG-20260903T193000 참조. 자율 병합을 그냥 믿지 않고 양측 부모 대비 + 회귀 재실행.
@@ -4454,6 +4531,45 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
   `mergeable=UNKNOWN` 으로 중단했는데, 그 사실을 확인하기 전에 `deploy-web` 을 실행했다.
   결과적으로 **내 수정이 빠진 main 을 배포**했다(무해했으나 순서가 틀렸다). 배포는 머지
   완료를 **확인한 뒤**에 한다 — §16.3 의 cycle-final 순서(머지 → 배포)가 그것을 말한다.
+
+## REV-20260903T160000-ai-claude-corp-generated-launch-ps1-gate [SKIPPED:tool-restricted:qa] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 검사면 공백 — 굽힌 `launch.ps1` 이 어떤 게이트에도 걸리지 않았다
+- Timestamp: 2026-09-03T16:00:00+09:00
+- Verdict: PASS · Human Approval Needed: no
+
+**왜 이 자리가 비어 있었나.** POSIX 축은 굽힌 `launch.sh` 를 **실제로 실행**하는 테스트가
+여럿인데(`test_launcher_ca_pin`), Windows 축은 설치 스크립트 **자신**만 파싱했다. 두 축이
+비대칭인 줄 아무도 몰랐던 이유는, 그 비대칭이 **초록 뒤에 있었기** 때문이다 — Windows 축도
+「파싱 테스트가 있다」로 보였다.
+
+**초판이 두 번 틀린 것을 기록한다.** here-string 을 손으로 치환했더니 ① 코드 자리
+(`$BakedArgsLiteral`)에 문자열 스텁을 넣어 구문 오류를 **자작**했고 ② `` `$ `` 이스케이프를
+처리하지 않아 또 실패했다. 두 번 다 「굽힌 파일이 깨졌다」는 **거짓 양성**이라, 그대로 뒀으면
+이 테스트는 무엇도 검사하지 않으면서 빨간불만 냈을 것이다. → 굽는 일을 PowerShell 에게 넘겼다
+(POSIX 축이 `sh` 에게 heredoc 을 맡기는 것과 같은 이유: **굽는 규칙의 정본은 셸이다**).
+
+**검증**: here-string 안에 `$Var://` 를 주입 → 이 게이트만 FAIL(바깥 파일은 계속 파싱됨 =
+기존 `test_windows_installer_parses` 는 원리적으로 못 잡는 자리). 복원 후 PASS.
+
+
+## REV-20260903T203000-ai-claude-funnel-live-verified [SKIPPED:docs-only] — ACCEPTED
+- Timestamp: 2026-09-03T20:30:00+09:00
+- 문서만 바뀌므로 코드 리뷰 대상 없음. 대신 **기록한 숫자가 실측인지**를 자기검증했다 —
+  4행 전부를 `ChangeJson` 단위로 조회해 표를 채웠고, `client_download: null` 은 라이브
+  `/api/ai/connect/status` 응답에서 직접 읽었다(추정 아님).
+- 남긴 미확인 항목을 숨기지 않았다: `first_claim`·`first_answer` 실적재 0.
+
+## REV-20260903T170000-ai-claude-corp-runner-name-postdeploy [SKIPPED:non-policy-doc] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 배포 증적 기록만 — 코드 변경 0, 라우트·권한·스키마 무변경
+- Timestamp: 2026-09-03T17:00:00+09:00 · Verdict: PASS · Human Approval Needed: no
+
+배포 전/후 **두 점 측정**으로 이 cycle 이 실제로 값을 바꿨음을 관측했다. 서빙 실물까지
+대조해 「소스는 고쳤는데 배포본은 구버전」 축도 닫았다. 남은 미검증(사용자 머신 OS 등록·
+macOS)은 이 저장소에서 원리적으로 관측할 수 없는 범위이며 그대로 표기한다.
 ## REV-20260903T190000-ai-claude-corp-feature-0043-ai-ready-postdeploy [SKIPPED:doc-only] — APPROVED
 
 문서 전용(코드·설정 diff 0). 직전 항의 `PARTIAL` 을 실측으로 승격한다.
