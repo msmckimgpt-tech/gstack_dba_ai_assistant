@@ -234,6 +234,21 @@
     .then(init)
     .catch(function (e) { say("상태를 확인하지 못했습니다: " + e, "error"); });
 
+  // [내 AI 실행] — 설치된 연결 프로그램을 **연결 정보와 함께** 띄운다. 브라우저는 샌드박스라
+  // 프로세스를 직접 못 띄우므로 스킴 URL 을 여는 것이 유일한 수단이다(모달과 같은 구현).
+  //
+  // ⚠ 스킴 핸들러가 없으면 브라우저는 **아무 일도 하지 않고 오류도 주지 않는다**. 그래서
+  //   누른 뒤 안내를 남긴다 — 조용한 실패를 사용자가 「고장」으로만 읽지 않도록.
+  var _lb = $("launchClient"); if (_lb) _lb.addEventListener("click", function () {
+    if (!(launch && launch.protocol)) {
+      say("실행할 연결 정보가 없습니다. [연결 준비] 를 먼저 눌러 주세요.", "error");
+      return;
+    }
+    say("연결 프로그램을 실행했습니다. 창이 뜨지 않으면 프로그램이 설치되지 않은 것입니다 — " +
+        "아래 [터미널로 연결하기] 를 펼쳐 주세요.", "ok");
+    try { window.location.href = launch.protocol; } catch (e) { /* 무시 */ }
+  });
+
   $("makeHandoff").addEventListener("click", function () {
     $("makeHandoff").disabled = true;
     say("만드는 중…");
@@ -262,6 +277,9 @@
         // 발급 응답이 실어 온 값이 더 최신이다 — 이 화면을 열어 둔 사이에 연결했을 수 있다.
         adoptLastOs(r.body && r.body.last_os, 2);
         paintOsTab();
+        // 모달과 같은 규약 — 프로토콜 URL 이 있을 때만 실행 버튼을 보인다.
+        var lb = $("launchClient");
+        if (lb) lb.hidden = !(launch && launch.protocol);
         $("handoffResult").classList.remove("aic-hidden");
         say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
             " · 로그아웃 시 즉시 무효.", "ok");

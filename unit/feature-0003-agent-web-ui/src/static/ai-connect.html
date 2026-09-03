@@ -48,6 +48,13 @@
 
       <div class="aic-actions" style="justify-content:flex-start">
         <button type="button" class="aic-btn aic-btn--primary" id="makeHandoff">연결 준비</button>
+        <!-- ⚠ 이 버튼이 **없었다**(2026-09-03). 대화 모달에만 있었고, 이 페이지의 안내 문구는
+             「[내 AI 실행] 을 누르면」 이라고 말했다 — 없는 버튼을 가리킨 것이다(P0-AC 가
+             닫은 결함 클래스: 「표시하는 화면 전부」가 같아야 한다).
+             모달과 **같은 규약**: 프로토콜 URL 이 있을 때만 보인다. 없는데 보이면 누른 뒤
+             아무 일도 일어나지 않고 사용자는 그것을 고장으로 읽는다. -->
+        <button type="button" class="aic-btn" id="launchClient" hidden
+                title="연결 프로그램을 실행합니다">내 AI 실행</button>
       </div>
 
       <div id="handoffResult" class="aic-hidden" style="margin-top:16px">
