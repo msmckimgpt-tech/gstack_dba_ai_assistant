@@ -4532,7 +4532,6 @@ Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주�
   결과적으로 **내 수정이 빠진 main 을 배포**했다(무해했으나 순서가 틀렸다). 배포는 머지
   완료를 **확인한 뒤**에 한다 — §16.3 의 cycle-final 순서(머지 → 배포)가 그것을 말한다.
 
-
 ## REV-20260903T160000-ai-claude-corp-generated-launch-ps1-gate [SKIPPED:tool-restricted:qa] — APPROVED
 
 - Related TASK: feature-0043-external-llm-bridge
@@ -4553,3 +4552,11 @@ Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주�
 
 **검증**: here-string 안에 `$Var://` 를 주입 → 이 게이트만 FAIL(바깥 파일은 계속 파싱됨 =
 기존 `test_windows_installer_parses` 는 원리적으로 못 잡는 자리). 복원 후 PASS.
+
+
+## REV-20260903T203000-ai-claude-funnel-live-verified [SKIPPED:docs-only] — ACCEPTED
+- Timestamp: 2026-09-03T20:30:00+09:00
+- 문서만 바뀌므로 코드 리뷰 대상 없음. 대신 **기록한 숫자가 실측인지**를 자기검증했다 —
+  4행 전부를 `ChangeJson` 단위로 조회해 표를 채웠고, `client_download: null` 은 라이브
+  `/api/ai/connect/status` 응답에서 직접 읽었다(추정 아님).
+- 남긴 미확인 항목을 숨기지 않았다: `first_claim`·`first_answer` 실적재 0.

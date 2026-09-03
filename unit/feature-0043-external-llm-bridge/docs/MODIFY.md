@@ -4500,3 +4500,11 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 맡기는 것과 같은 이유.
 
 주입 실증: here-string 안 `$Var://` → 이 게이트만 FAIL(바깥 파일은 계속 파싱된다).
+
+
+## CHG-20260903T203000-ai-claude-funnel-live-verified — ITEM-00 라이브 적재 실측 기록
+- Timestamp: 2026-09-03T20:30:00+09:00
+- 코드 변경 없음(docs only). 배포 이미지 `85b6f9bb` 에서 `WebAuditEvents` 실측:
+  `first_heartbeat` 2 / `page_view` 1 / `handoff_issued` 1, DISTINCT ResourceId = 총행수 = 4.
+- ROADMAP §10.1 에 결과와 **두 겹 결함(보내는 쪽 NameError → 받는 쪽 허용목록 누락)** 기록.
+- ROADMAP §10.2 에 클라이언트 배포 채널 미해결 기록 — 라이브 `client_download` = null 실측.
