@@ -102,16 +102,19 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 | **P1** | ITEM-08 [Major] | ❌ | 위 게이트 통과 | 클라이언트가 나머지 항목의 전제를 바꾼다 |
 | **P2** | ITEM-03 · ITEM-06 | ✅ 병렬 | ITEM-08 done | 클라이언트가 실재해야 웹이 표시할 상태 집합과 안내 문안이 확정된다 |
 
-> **코드 서명이 「미정 — 조사 필요」이므로 현재 P1 은 진입 불가 상태다** (사용자 결정 2026-09-02).
-> 조사 결과가 「확보 불가」면 ITEM-08 을 재검토한다 — 대안은 사내 MDM 배포이며, 그것도 없으면
-> 클라이언트 방향 자체를 되돌려야 한다(§5 참조).
+> **SPIKE-02 완료(2026-09-03) 로 게이트가 한쪽만 남았다** — 실현가능성은 **GO**(3사 중 claude·codex
+> 로그인 대행 실측 확인 · 러너 stdlib 전용이라 동봉 단순 · 크레딧 풀 우려는 **취소된 변경**이라 무근).
+> 남은 것은 **코드 서명 조직 결정** 하나다. 단 SPIKE §2.3 이 그 게이트를 **완화**할 것을 제안한다:
+> Windows 는 미서명 + 안내 동반으로 착수 가능(경고 2클릭, 이탈 위험 감수), **macOS 는 서명·공증
+> 없이는 Gatekeeper 가 차단**하므로 지원 대상에 넣는 순간 Apple Developer Program($99/년) 필수.
+> 즉 「확보 불가」는 **차단**이 아니라 **범위 축소**(Windows 우선)로 처리 가능하다 — 채택 여부는 사용자 결정.
 
 ---
 
 ## 3. 항목
 
 ### SPIKE-02 · 네이티브 클라이언트 실현가능성 (타임박스 1 cycle)
-- **status**: pending
+- **status**: **done** (2026-09-03) — 판정 **conditional-go**. 산출물 `./SPIKE-02-native-client.md`
 - **feature_id**: `feature-0046-native-client`
 - **dimension**: structural
 - **risk_grade**: Minor (조사 — 제품 코드 변경 0)
@@ -365,9 +368,10 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 
 ## 6. 진행 현황
 
-- 총 **5** (ITEM 4 + SPIKE 1) · **done 2** · in-progress 0 · pending 2 · **blocked 1**(ITEM-08 — 코드 서명)
-- **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03)
-- **다음 ready**: `SPIKE-02` (P0 마지막 — ITEM-08 spec 확정용)
+- 총 **5** (ITEM 4 + SPIKE 1) · **done 3** · in-progress 0 · pending 0 · **blocked 2**(ITEM-08 — 코드 서명 결정 / ITEM-03·06 — ITEM-08 종속)
+- **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03) · `SPIKE-02`(2026-09-03, conditional-go)
+- **P0 전량 완료.** 다음 진입은 `ITEM-08` 이며 **코드 서명 조직 결정**이 유일한 선행이다(SPIKE §2.3 이 완화안 제시).
+- ⚠ **ITEM-00 잔여**: 라이브 적재 실측 미수행 — 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행이 실제로 쌓이는지 확인 필요.
 - **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
   「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.
 - 신규 feature 배정: `feature-0046-native-client` (초판의 `feature-0046-mcpb-connector-bundle`
