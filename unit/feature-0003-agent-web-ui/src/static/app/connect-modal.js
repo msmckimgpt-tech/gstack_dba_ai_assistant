@@ -716,6 +716,11 @@ function _isListeningNow(body, attempt) {
 function _revealCommand() {
   const cmd = $("connectModalCmd");
   if (!cmd) return;
+  // ⚠ 터미널 경로는 **접혀 있다**(2026-09-03). 접힌 채로 강조·스크롤하면 사용자는
+  //   「강조된 1단계 명령」이라는 말만 듣고 아무것도 보지 못한다 — 되돌아갈 길을
+  //   가리키면서 그 길을 닫아 두는 셈이다. 여기서 연다.
+  const box = $("connectModalTerminal");
+  if (box && "open" in box) box.open = true;
   const anchor = $("connectModalStatus") || cmd;
   try { anchor.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (_) { /* 무시 */ }
   // 잠깐 강조 — 어느 블록을 말하는지 글로만 가리키면 찾는 데 시간이 든다.

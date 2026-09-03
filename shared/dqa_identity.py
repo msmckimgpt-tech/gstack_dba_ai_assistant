@@ -67,11 +67,36 @@ LEGACY_SCHEME = "mysql-ai-bridge"
 LEGACY_MCP_SERVER_KEY = "mysql-ai"
 
 
-def scheme_url(token: str) -> str:
+def scheme_url(token: str, base: str = "", ca_sha256: str = "",
+               agent_sha256: str = "") -> str:
     """웹 `[내 AI 실행]` 버튼이 여는 딥링크.
 
     토큰을 URL 에 싣는 것은 의도된 설계다 — 핸들러 스크립트에는 토큰이 없고(디스크에 쓰지
     않는다), 이 토큰은 웹 로그인 세션에 결속돼 로그아웃하면 즉시 무효다. 조립을 여기 두는
     이유는 스킴과 경로(`start`)가 **함께** 바뀌어야 하는 한 쌍이기 때문이다.
+
+    ## 왜 토큰만으로는 부족한가 (실측 2026-09-03)
+
+    이 URL 은 원래 **셸 설치본**을 위한 것이었다. 그 경로는 설치 때 서버 주소와 CA 를 이미
+    디스크에 심어 두므로 토큰만 받으면 된다.
+
+    네이티브 클라이언트에는 그 사전 상태가 없다. 그래서 토큰만 실린 URL 을 받으면 서버가
+    어디인지 몰라 **「연결 정보가 없습니다」**만 띄웠다 — 사용자가 바로 앞에서 [연결 준비] 를
+    누르고 [내 AI 실행] 을 눌렀는데도. 실제 제보가 그것이다.
+
+    그래서 연결에 필요한 값을 **모두** 싣는다. 지문 두 개는 비밀이 아니고(무결성 대조용),
+    셸 핸들러는 `[?&]token=([^&]+)` 로 토큰만 뽑으므로 추가 파라미터에 영향받지 않는다.
+
+    ⚠ **`base` 를 URL 로 받는다는 것은 신뢰 판단이다.** 남이 만든 링크를 사용자가 클릭하면
+    그 서버에서 러너를 받게 된다. 클라이언트는 처음 연결한 서버를 홈에 고정하고, 다른
+    주소가 오면 **사용자에게 묻는다**(`core.pinned_server`). 여기서 조립만 하고 판단은
+    받는 쪽이 한다 — 서버는 자기가 보낸 링크가 어디로 갈지 알 수 없기 때문이다.
     """
-    return f"{SCHEME}://start?token={token}"
+    import urllib.parse
+
+    params = {"token": token}
+    for key, value in (("base", base), ("ca_sha256", ca_sha256),
+                       ("agent_sha256", agent_sha256)):
+        if str(value or "").strip():
+            params[key] = str(value).strip()
+    return f"{SCHEME}://start?" + urllib.parse.urlencode(params)

@@ -23,7 +23,8 @@
            그 drift 다. 조립은 여전히 서버 한 곳(`compose_launch_commands`)이고 여기는 표시만. -->
       <p class="aic-why">
         내 AI를 이 서비스에 연결하면 질문에 답할 수 있습니다.
-        아래 <strong>연결 준비</strong>를 누르고, 나오는 명령 한 줄을 터미널에 붙여넣으면 끝입니다.
+        아래 <strong>연결 준비</strong>를 누른 뒤 <strong>내 AI 실행</strong>을 누르면
+        연결 프로그램이 열리고 나머지는 그 창에서 끝납니다.
       </p>
 
       <!-- ROADMAP ITEM-06: 클라이언트를 **받을 수 있을 때만** 보인다. 서버가 실물 존재를
@@ -50,8 +51,13 @@
       </div>
 
       <div id="handoffResult" class="aic-hidden" style="margin-top:16px">
+        <!-- 터미널 경로는 **접어 둔다** (사용자 결정 2026-09-03). 없애지는 않는다 —
+             연결 프로그램이 없는 사용자에게는 이것이 유일한 길이다. 대화 모달과 **같은
+             결정**이어야 한다(둘이 갈리면 어떤 사용자는 옛 화면을 본다). -->
+        <details id="terminalPath">
+          <summary>터미널로 연결하기 — 연결 프로그램을 아직 설치하지 않았다면</summary>
         <p class="aic-handoff-hint">
-          <strong>1단계 · 터미널에 붙여넣기</strong> — 내 컴퓨터의 터미널에 그대로 붙여넣고 실행하세요.
+          내 컴퓨터의 터미널에 그대로 붙여넣고 실행하세요.
         </p>
         <div class="aic-actions" style="justify-content:flex-start; margin-bottom:8px">
           <button type="button" class="aic-btn" id="tabPosix">macOS · Linux</button>
@@ -64,6 +70,7 @@
         <p class="aic-handoff-hint">
           실행이 끝나면 대화 화면 왼쪽 아래 계정 옆 표시가 <strong>대기 중</strong>으로 바뀌고 입력창이 열립니다.
         </p>
+        </details>
 
         <!-- 셋째 경로 (P0-AD) — 명령은 1단계와 **같고** 환경 판단만 AI 가 채운다.
              문안은 대화 화면 모달과 같아야 한다(둘이 갈리면 어떤 사용자는 옛 안내를 받는다). -->

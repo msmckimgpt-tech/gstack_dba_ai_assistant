@@ -245,6 +245,8 @@ class ClientApp:
             self._post("error", out[:400] or f"연결 확인에 실패했습니다(코드 {rc}).")
             return
         self._post("log", "연결 확인 완료 — 상주를 시작합니다.")
+        # 여기까지 왔다는 것은 이 서버가 실제로 동작했다는 뜻이다 — 이제 고정한다.
+        core.pin_server(self.plan.home, self.plan.base)
         self.runner_proc = core.spawn_runner(self.plan, runner, ca, self.runtime.get() or None)
         self._post("connected", None)
         for line in iter(self.runner_proc.stdout.readline, ""):
@@ -325,6 +327,24 @@ def parse_scheme_url(url: str) -> dict:
     return out
 
 
+def confirm(message: str, title: str = "내 AI 연결") -> bool:
+    """사용자에게 **예/아니오**를 묻는다. 창을 띄울 수 없으면 **아니오**로 읽는다.
+
+    ⚠ 물을 수 없는 환경에서 「예」로 떨어지면, 물어보려던 이유(남이 만든 링크일 수 있다)가
+    통째로 무력화된다. 확인은 **받아야** 성립하지 못 받으면 성립하지 않는다.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        answer = messagebox.askyesno(title, message)
+        root.destroy()
+        return bool(answer)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점. 값은 **스킴 링크 또는 환경변수**로 온다 — 사용자가 타이핑하지 않는다."""
     import argparse
@@ -348,5 +368,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     plan = core.ConnectPlan(base=args.base.rstrip("/"), token=args.token,
                             ca_sha256=args.ca_sha256, agent_sha256=args.agent_sha256)
+
+    # ⚠ 스킴 URL 은 브라우저를 통해 들어온다 — 남이 만든 링크일 수 있다. 전에 쓰던 서버와
+    #   다르면 **묻는다**. 첫 연결은 물을 근거가 없어 통과시킨다(core.server_changed 참조).
+    previous = core.server_changed(plan.home, plan.base)
+    if previous and not confirm(
+            f"전에 연결하던 서버와 다릅니다.\n\n"
+            f"  전:  {previous}\n"
+            f"  이번: {plan.base}\n\n"
+            "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
+        return 3
+
     ClientApp(plan).run()
     return 0
