@@ -4302,3 +4302,22 @@ claude  10.9s  모델 3종 ['opus','sonnet','haiku'] · 추론 5단계 ['low','m
 main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 — 변경 내용(caps 프롬프트·추론축)
 과 그 테스트(엣지 롤링 게이트)의 인과가 성립하지 않고, 단독 반복은 전부 통과한다.
 **PR CI 판정을 정본으로 삼는다.** CI 가 실패하면 이 항목을 먼저 조사한다.
+
+## CHG-20260903T110000 — `finally` 안의 `return` 이 협상 실패 사유를 삼켰다
+
+**계기**: 사용자 콘솔에 `bridge_agent.py:2988: SyntaxWarning: 'return' in a 'finally' block`
+가 찍혔다. 그 자리가 하필 사용자가 겪는 협상 실패가 나는 `_probe_and_report` 였다.
+
+**원인**: `finally` 안의 `return` 은 `try` 의 진행 중 예외를 **조용히 버린다**. `_probe` 가
+터지면 그 런타임이 목록에 없다는 사실만 남고 사유가 사라져, 사용자는 데드라인(수 분) 뒤
+「답을 받지 못했습니다」만 본다. 직전 cycle 이 `_ask_json` 의 **반환 기반** 실패는
+`reason_out` 으로 살렸지만 **예외 기반** 실패는 이 자리에서 여전히 버려졌다.
+
+**변경**: `src/agent/caps.py` — `_probe` 예외를 전용 `except` 로 잡아 `reasons` 기록 +
+`caps.probe_crashed`(ERROR) 원장 · `finally` 의 `return` 제거(조건 반전) · 예외는 전파하지
+않는다(한 플랫폼 사고가 나머지 협상을 죽이지 않게). `tests/test_caps_probe_exception_surfaces.py`
+신규 5건(경고 0 · AST 로 `finally`-return 0 · 요약 줄 사유 도달 · 타 런타임 생존 · 원장 코드).
+
+**뮤테이션 3종 전건 KILL** — F2「사유 기록 제거」가 1차 생존했다: `caps.probe_crashed` 의
+`exc=` 가 예외를 이미 실어 「출력 어딘가에 있는가」 단정이 헛통과했다. 사용자가 실제로 읽는
+**요약 줄만** 골라 보도록 좁혀 KILL.
