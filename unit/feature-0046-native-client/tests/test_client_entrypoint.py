@@ -140,6 +140,12 @@ def test_build_passes_paths_so_absolute_import_resolves():
         "--paths 뒤에 src 경로가 오지 않는다"
 
 
-@pytest.mark.parametrize("flag", ["--onefile", "--windowed", "--noconfirm"])
+@pytest.mark.parametrize("flag", ["--onedir", "--windowed", "--noconfirm"])
 def test_build_keeps_its_distribution_contract(flag):
+    """⚠ `--onefile` → `--onedir` 로 **의도적으로** 바꿨다(2026-09-03).
+
+    onefile 은 매 실행마다 임시폴더에 전부 풀어내므로 앱 폴더 옆에 러너용 인터프리터를
+    둘 수 없다. 러너를 실행할 진짜 `python.exe` 를 동봉하려면 onedir 이어야 한다 —
+    자세한 것은 `test_packaging.py`.
+    """
     assert f'"{flag}"' in _BUILD.read_text(encoding="utf-8")

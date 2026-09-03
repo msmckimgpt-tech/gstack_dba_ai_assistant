@@ -315,6 +315,50 @@ def install_runner(plan: ConnectPlan, ca_path: Path) -> Path:
     return out
 
 
+#: 설치본에 **동봉된** 파이썬. 앱 폴더 기준 상대 경로다(설치 위치가 어디든 따라간다).
+_BUNDLED_RUNTIME = ("runtime", "python.exe")
+
+
+def app_dir() -> Path:
+    """이 프로그램이 설치된 폴더.
+
+    동결 빌드에서는 `sys.executable` 이 `…\\DQA Connect\\DQAConnect.exe` 이므로 그 부모다.
+    소스로 돌릴 때는 이 파일 기준으로 `src/` 위를 가리킨다(그 아래에 `runtime/` 은 없다).
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def runner_python() -> str:
+    """러너를 실행할 **파이썬 인터프리터**.
+
+    ## 왜 `sys.executable` 이 아닌가 (실측 2026-09-03)
+
+    러너(`bridge_agent.py`)는 파이썬 스크립트다. 종전 코드는 `sys.executable` 로 띄웠는데,
+    **동결된 앱에서 그 값은 파이썬이 아니라 앱 실행 파일 자신**이다. 그래서 배포한 클라이언트는
+    러너를 실행하지 못했다 — 실측: 그 명령의 종료코드가 `2`(GUI argparse 오류)였고 화면에는
+    「연결 확인에 실패했습니다(코드 2)」만 떴다.
+
+    소스로 돌리면 `sys.executable` 이 진짜 파이썬이라 **이 결함이 보이지 않는다.** 소스로는
+    연결에 성공하는데 배포본으로는 실패하는 상태였다.
+
+    ## 왜 시스템 파이썬을 찾지 않는가
+
+    이 클라이언트의 존재 이유가 「파이썬·터미널을 몰라도 연결된다」이다. 시스템 파이썬 탐지는
+    셸 설치본이 이미 하던 일이고, 파이썬이 없는 사용자는 그대로 막힌다 — 없애려던 마찰을
+    그대로 두는 셈이다. 그래서 설치본에 **공식 임베더블 CPython 을 동봉**하고 그것을 쓴다
+    (사용자 결정 2026-09-03: 「대중적 배포 형식 + 종속성 이슈 없게」).
+
+    동봉본이 없으면(= 소스로 개발·테스트 중) `sys.executable` 로 떨어진다. 그때는 그 값이
+    진짜 파이썬이므로 옳다.
+    """
+    candidate = app_dir().joinpath(*_BUNDLED_RUNTIME)
+    if candidate.is_file():
+        return str(candidate)
+    return sys.executable
+
+
 def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
                      runtime: str | None = None) -> tuple[int, str]:
     """러너의 `--check` — 상주 **전에** 연결을 확인한다.
@@ -322,7 +366,7 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
     종료코드 4 = 「서버 연결은 정상인데 쓸 수 있는 AI 가 없다」. 연결 실패와 **다른 사실**이라
     화면이 갈라 말해야 한다(feature-0043 REQ-20260901-win-ai-detect).
     """
-    argv = [sys.executable, str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
+    argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
     if runtime:
         argv += ["--ai", runtime]
     env_token = dict(os.environ, BRIDGE_TOKEN=plan.token)
@@ -337,7 +381,7 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
 def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
                  runtime: str | None = None) -> subprocess.Popen:
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
-    argv = [sys.executable, str(runner), "--base", plan.base, "--ca", str(ca_path)]
+    argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
     if runtime:
         argv += ["--ai", runtime]
     kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token),
