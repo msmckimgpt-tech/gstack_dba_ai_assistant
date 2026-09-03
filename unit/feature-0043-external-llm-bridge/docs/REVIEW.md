@@ -4369,3 +4369,19 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 - **러너가 제출조차 못 하는 경우**의 서버측 종결 — `TASK-20260903T140000` §7 이월 유지.
 
 - **판정**: **APPROVED**.
+
+## REV-20260903T170000-ai-claude-connect-guidance-merge [SKIPPED:merge-verification] — ACCEPTED
+- Related TASK: TASK-20260903T160000 (병합)
+- Timestamp: 2026-09-03T17:00:00+09:00
+- `origin/main` 이 전진해 PR 이 **DIRTY** 가 됐다(병렬 세션이 feature-0043 을 먼저 랜딩 — `ai-unusable-surfaced` · `fast-fail-unhealthy`). 충돌은 **append-only 문서 4건**뿐이었다.
+- **§13.1 머지 드라이버로 해소**: `bin/setup-git-parallel.sh` 실행 후 `git merge origin/main` — 잔여 충돌 **0**. (세션 시작 시 이 스크립트를 돌렸어야 했는데 빠뜨렸다 — 규약대로 했으면 이 왕복이 없었다.)
+- **§16.4 양측 부모 대비 검증** — 자율 병합을 그냥 믿지 않는다:
+  | 문서 | 내쪽 | 상대 | 병합 | 판정 |
+  |---|---|---|---|---|
+  | FUNCTION | 124 | 125 | 126 | 양측 보존 |
+  | MODIFY | 385 | 386 | 387 | 양측 보존 |
+  | REVIEW | 389 | 401 | 402 | 양측 보존 |
+  | TASK | 130 | 131 | 132 | 양측 보존 |
+  섹션 수뿐 아니라 **양측의 이번 cycle 항목이 실재하는지**도 이름으로 확인했다(내 `P0-AG`·`CHG/REV-20260903T160000` · 상대 `ai-unusable-surfaced`·`fast-fail-unhealthy`).
+- **병합 후 회귀 재실행** — 상대 cycle 이 같은 파일(`ai_tools.py` 등)을 건드렸으므로 병합 전 결과를 재사용하지 않았다. 실패 7건 = 기존 `share_redaction`(무관), **신규 0**.
+- Human Approval Needed: 아니오.

@@ -4368,3 +4368,9 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
 
 **함께 관측(별 cycle)**: 자동 갱신 `try_self_update` 가 발동하지 않는다 — 러너 지문
 `d69d7da6928a` vs 배포본 `4669f0192526` 인데 `stale_build`·self-update 사건 **0건**.
+
+## CHG-20260903T170000-ai-claude-connect-guidance-merge — origin/main 병합 (append-doc 드라이버)
+- Timestamp: 2026-09-03T17:00:00+09:00
+- 병렬 세션이 feature-0043 을 먼저 랜딩해 PR 이 DIRTY. 충돌은 append-only 문서 4건뿐이었고
+  §13.1 머지 드라이버(`bin/setup-git-parallel.sh`)로 잔여 충돌 0 으로 해소.
+- §16.4 대로 **양측 부모 대비 검증** + **병합 후 회귀 재실행**(신규 실패 0). 상세는 REVIEW.
