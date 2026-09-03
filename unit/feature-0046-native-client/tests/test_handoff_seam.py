@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -214,3 +215,66 @@ def test_failure_path_opens_the_collapsed_block():
     body = js[fn_start:fn_start + 900]
     assert "connectModalTerminal" in body and "open = true" in body, \
         "되돌아갈 경로를 가리키면서 그 경로를 닫아 둔다"
+
+
+# ── 4. 안내가 가리키는 것이 그 화면에 **실재하는가** ──────────────────────────────
+#
+# ⚠ 실측 2026-09-03: 나는 두 화면의 안내 문구를 「[내 AI 실행] 을 누르면」 으로 바꾸면서
+#   `/ai/connect` 페이지에는 **그 버튼이 없다는 사실**을 확인하지 않았다(모달에만 있었다).
+#   테스트도 문구만 봤기 때문에 통과했다 — 문구가 있다는 것과 그것이 가리키는 것이 있다는
+#   것은 다른 축이다. P0-AC 가 닫은 결함 클래스(「표시하는 화면 전부」)의 재발이다.
+
+_STATIC = _REPO / "unit/feature-0003-agent-web-ui/src/static"
+
+
+@pytest.mark.parametrize("page, script", [
+    (_STATIC / "ai-connect.html", _STATIC / "ai-connect.js"),
+    (_STATIC / "index.html", _STATIC / "app/connect-modal.js"),
+])
+def test_launch_button_exists_where_the_text_points_at_it(page, script):
+    html = page.read_text(encoding="utf-8")
+    if "내 AI 실행" not in html:
+        pytest.skip(f"{page.name}: 이 화면은 실행을 안내하지 않는다")
+    buttons = re.findall(r'<button[^>]*id="([A-Za-z]+)"[^>]*>\s*내 AI 실행', html)
+    assert buttons, f"{page.name}: 「내 AI 실행」 을 말하면서 그 버튼이 없다"
+    js = script.read_text(encoding="utf-8")
+    for bid in buttons:
+        assert bid in js, f"{page.name}: {bid} 버튼이 어디에도 배선되지 않았다"
+
+
+@pytest.mark.parametrize("page, script", [
+    (_STATIC / "ai-connect.html", _STATIC / "ai-connect.js"),
+    (_STATIC / "index.html", _STATIC / "app/connect-modal.js"),
+])
+def test_launch_button_is_hidden_until_a_protocol_url_exists(page, script):
+    """없는데 보이면 누른 뒤 아무 일도 없고, 사용자는 그것을 고장으로 읽는다."""
+    html = page.read_text(encoding="utf-8")
+    if "내 AI 실행" not in html:
+        pytest.skip(f"{page.name}: 해당 없음")
+    bid = re.findall(r'<button[^>]*id="([A-Za-z]+)"[^>]*>\s*내 AI 실행', html)[0]
+    decl = re.search(rf'<button[^>]*id="{bid}"[^>]*>', html).group(0)
+    assert "hidden" in decl, f"{page.name}: {bid} 가 기본 숨김이 아니다"
+    js = script.read_text(encoding="utf-8")
+    assert "protocol" in js, f"{script.name}: 프로토콜 유무로 노출을 정하지 않는다"
+
+
+def test_page_handler_is_registered_once_not_per_repaint():
+    """⚠ 처음 넣을 때 `paintOsTab()` 안에 들어가 **탭을 그릴 때마다** 등록됐다.
+
+    중복 등록은 조용하다 — 화면은 멀쩡하고 클릭 한 번에 핸들러가 여러 번 돈다.
+    """
+    js = (_STATIC / "ai-connect.js").read_text(encoding="utf-8")
+    i_lb = js.find('$("launchClient")')
+    i_paint = js.find("function paintOsTab")
+    assert i_lb >= 0 and i_paint >= 0
+    end = js.find("\n  }", i_paint)
+    assert not (i_paint < i_lb < end), "실행 버튼 등록이 다시 그리는 함수 안에 있다"
+
+
+def test_silent_scheme_failure_is_explained():
+    """스킴 핸들러가 없으면 브라우저는 **아무 일도 하지 않고 오류도 주지 않는다**."""
+    js = (_STATIC / "ai-connect.js").read_text(encoding="utf-8")
+    idx = js.find('$("launchClient")')
+    body = js[idx - 800:idx + 900]
+    assert "설치되지 않은" in body or "창이 뜨지 않으면" in body, \
+        "조용한 실패를 사용자가 「고장」으로만 읽게 둔다"
