@@ -4374,10 +4374,29 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
 - 병렬 세션이 feature-0043 을 먼저 랜딩해 PR 이 DIRTY. 충돌은 append-only 문서 4건뿐이었고
   §13.1 머지 드라이버(`bin/setup-git-parallel.sh`)로 잔여 충돌 0 으로 해소.
 - §16.4 대로 **양측 부모 대비 검증** + **병합 후 회귀 재실행**(신규 실패 0). 상세는 REVIEW.
-
 ## CHG-20260903T190000-ai-claude-funnel-audit-action — 퍼널 ActionCode 를 감사 빌더에 등재
 - Timestamp: 2026-09-03T19:00:00+09:00
 - `routers/_audit_infra.py`: `ai.connect.funnel` 분기 추가(`{step, path_kind}` 만).
 - `tests/test_funnel_audit_action.py` 신설 — 더블 없이 **진짜 빌더**를 호출한다.
 - 부수 발견: 같은 함정에 빠진 기존 ActionCode **8건**(KNOWN_GAPS). 각 change_json 모양은
   기능 소유자가 정해야 하므로 임의 등재하지 않고 분리했다.
+## CHG-20260903T180000 — 화면의 「준비됨」을 「답할 수 있음」으로 옮긴다
+
+**계기**: 사용자 지적 — *"claude 재인증이 필요하다면 … DQA 에서는 정상 상태가 아니라 미연결
+상태로 나타나야 합니다"* · *"거짓이 반복되고 있어 개선이 필요합니다"*.
+
+**근본**: 이 세션의 결함 네 건이 모두 같은 부류였다 — 화면이 성립하지 않는 상태를 「성립한다」고
+말한다. 축이 **「답할 수 있음」이 아니라 「하트비트 살아있음」**이었기 때문이다. 그리고
+`CHG-20260903T140000` 은 러너가 `ai_ready` 를 신고하게만 하고 **서버가 읽지 않았다**(절반 배선).
+
+**변경(전 구간)**: `_bootstrap_schema` fast-path ALTER 2컬럼(tri-state NULL) ·
+`oauth_store.set_runner_ai_health`(throttle 없음) + `account_ai_health`(tri-state) ·
+`ai_tools.bridge_heartbeat` 수신·저장 · `oauth_as.connect_status` 노출(접지 않음) ·
+`connect-modal.js` 칩 「답할 수 없음」 + 사유 + 모달 성공 판정 제외.
+`tests/test_ai_ready_surfaced.py` 신규 12건.
+
+**뮤테이션 8종 전건 KILL** — I7(죽은 가드 `&& false`)이 1차 생존해 조건절 단정으로 좁혔다.
+초판이 낡음 판정 갈래를 침범해 기존 계약 테스트가 잡았고, 그 자리를 새 테스트로도 잠갔다.
+
+**이월(미구현)**: 「모른다」(협상 진행 중)를 여전히 준비됨으로 렌더한다 → 러너 재기동 직후
+첫 질문은 라이브 실측 **200초 침묵**. 사용자가 실제로 겪은 경로이며 갈음하지 않는다.
