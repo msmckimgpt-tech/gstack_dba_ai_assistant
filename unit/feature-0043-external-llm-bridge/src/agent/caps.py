@@ -14,7 +14,7 @@ import threading
 import time
 
 from .base import CHILD_TEXT_IO
-from .state import note_ai_outcome, note_ai_unusable
+from .state import note_ai_outcome, note_ai_probing, note_ai_unusable
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log, log_event
 from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS
@@ -1279,6 +1279,10 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
         for n in ask:
             got = probed.get(n)
             if got:
+                # 협상이 답을 받아냈다 = **그 AI 는 지금 응답한다**. 원장을 여기서
+                # `True` 로 떨어뜨려 「모른다」를 남기지 않는다 (TASK-20260903T200000) —
+                # 남기면 lifecycle 이 같은 사실을 확인하려고 생존 확인을 한 번 더 부른다.
+                note_ai_outcome(True)
                 _verified = str(got.get("source") or "") == "verified"
                 _log(f"  {n}: 모델 {len(got['models'])}종"
                      + (f" · 추론 {len(got['efforts'])}단계" if got["efforts"] else
@@ -1556,3 +1560,73 @@ def schedule_health_recheck(only: str | None = None) -> bool:
 def reset_health_recheck() -> None:
     """테스트 전용 — 쿨다운이 케이스 간 누수되지 않게."""
     _HEALTH_RECHECK_AT[0] = 0.0
+
+
+# ── 생존 확인 — 「정상」이라고 말하기 전에 **지금** 답하는지 본다 (TASK-20260903T200000) ──
+#
+# ## 왜 능력 협상만으로는 부족한가
+#
+# 능력 협상(`detect_runtimes(probe=True)`)은 **캐시가 있으면 돌지 않는다** (`ask` 가 빈다).
+# 매 기동마다 사용자 토큰을 태우지 않으려고 그렇게 만든 것이고, 그 판단 자체는 옳다.
+#
+# 문제는 그 캐시가 **「그때 답했다」의 증거일 뿐**이라는 점이다. 사용자 라이브에서 정확히
+# 이것이 터졌다: `config.json` 에 지난 성공의 caps 가 남아 있고, 그 사이 claude OAuth 가
+# 만료됐다. 러너는 협상을 건너뛰었으므로 「응답하지 않는다」를 관측할 기회가 없었고,
+# 화면은 「대기 중」(정상)을 띄웠다. 사용자는 200초를 기다린 뒤 401 을 답변으로 받았다.
+#
+# ## 그래서 기동마다 **한 번** 확인한다
+#
+# 협상과 달리 이것은 싸다 — 한 줄 답만 요구하고 상한이 짧다. 목적이 「무엇을 쓸 수 있나」가
+# 아니라 「지금 답하나」 하나여서 캐시할 수 있는 성질의 답이 아니다(어제의 생존은 오늘의
+# 생존을 뜻하지 않는다).
+#
+# ⚠ 실패를 **`note_ai_unusable` 로 올린다** — 그것이 화면의 「답할 수 없음」이 되는 유일한
+#   경로다. 여기서 로그만 남기면 관측은 했는데 사용자에게 도달하지 않는다(이 프로젝트가
+#   반복해 만든 배선 결함 부류).
+
+#: 생존 확인 1건의 상한. 협상(`_CAPS_PROBE_TIMEOUT_SEC`)보다 훨씬 짧게 둔다 — 이 확인이
+#: 길면 그 시간이 곧 화면이 「확인 중」에 머무는 시간이고, 사용자는 10초도 길다고 했다.
+_LIVENESS_TIMEOUT_SEC = float(
+    os.environ.get("BRIDGE_LIVENESS_TIMEOUT_SEC", "") or 30.0)
+
+#: 생존 확인 질문. **JSON 한 개**만 요구한다 — 자유 문장을 받으면 「답했다」의 판정이
+#: 문자열 매칭이 되고, 그 매칭은 모델이 인사말을 붙이는 날 깨진다.
+_LIVENESS_PROMPT = (
+    '아래 JSON 한 개만 출력하세요. 다른 말은 쓰지 마세요.\n{"alive": true}')
+
+
+def verify_ai_liveness(kind: str, argv: list,
+                       timeout: float | None = None) -> "tuple[bool, str]":
+    """이 CLI 가 **지금** 답하는가. (답했는가, 못 답한 사유).
+
+    `_ask_json` 을 그대로 쓴다 — 「응답하는가」의 판정 절차가 두 벌이 되면 한쪽이 낡는다.
+    """
+    _why: dict = {}
+    got = _ask_json(list(argv or []), _LIVENESS_PROMPT,
+                    float(timeout if timeout is not None else _LIVENESS_TIMEOUT_SEC),
+                    reason_out=_why)
+    if isinstance(got, dict):
+        return True, ""
+    reason = str(_why.get("reason") or "").strip()
+    return False, (f"이 컴퓨터의 {kind} 가 응답하지 않습니다"
+                   + (f" — {reason}" if reason else "."))
+
+
+def confirm_ai_or_report(kind: str, argv: list,
+                         timeout: float | None = None) -> bool:
+    """생존 확인 1회 → **원장에 반영**. 화면이 정상/답할 수 없음으로 갈리는 지점.
+
+    성공은 `note_ai_outcome(True)`(3상태 `None` → `True`), 실패는 `note_ai_unusable`.
+    어느 쪽이든 「모른다」가 남지 않는다 — 그것이 이 함수의 존재 이유다.
+    """
+    ok, why = verify_ai_liveness(kind, argv, timeout)
+    if ok:
+        note_ai_outcome(True)
+        log_event("caps.liveness_ok", "연결된 AI 가 응답합니다 — 질문을 받을 수 있습니다.",
+                  runtime=kind)
+        return True
+    note_ai_unusable(why)
+    log_event("caps.liveness_fail",
+              "연결된 AI 가 응답하지 않습니다 — 화면에 「답할 수 없음」으로 알립니다.",
+              level="WARN", runtime=kind, reason=why)
+    return False

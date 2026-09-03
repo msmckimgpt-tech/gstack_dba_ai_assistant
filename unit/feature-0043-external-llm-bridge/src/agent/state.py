@@ -67,23 +67,74 @@ def set_runner_instance(current: str, prev: str) -> None:
 #   - 실제 질문 처리가 연속 `_AI_FAIL_STREAK_MAX` 회 실패했다 → 계속 실패한다
 #   - **한 번이라도 성공하면 즉시 복귀한다** — 낡은 판정으로 멀쩡한 러너를 막지 않는다.
 #
-# ## fail-open 으로 시작하는 이유
+# ## 「게이트」와 「표시」는 다른 축이다 — 한 변수로 합치면 반드시 거짓말이 된다
 #
-# 초기값은 «사용 가능»이다. 「증명될 때까지 불가」로 두면 첫 질문을 받을 방법이 없어(성공의
-# 근거가 질문 처리뿐이라) 교착이 된다. 대신 협상 실패가 **질문 전에** 첫 관측을 준다.
+# 초판은 이 원장을 `bool` 하나로 두고 초기값을 `True`(fail-open) 로 잡았다. 이유는 게이트
+# 쪽에서는 옳았다 — 「증명될 때까지 불가」로 두면 성공의 근거가 질문 처리뿐이라 첫 질문을
+# 받을 방법이 없어 교착이 된다. 그런데 **같은 값이 하트비트로 화면에 실려 나갔다**. 그래서
+# 러너가 기동해 아직 아무것도 확인하지 못한 구간에도 화면은 「대기 중」(정상)을 띄웠고,
+# 그 순간 AI 가 실은 응답 불가여도 사용자는 그 사실을 능력 협상이 끝날 때까지(실측 ~200초)
+# 듣지 못했다.
+#
+# 사용자 지적(2026-09-03): *"연결되지 않은 상황이 정상 연결되었다고 거짓으로 출력되는
+# 부분을 수정하는 작업입니다. claude 인증 상태는 현상일 뿐입니다."*
+#
+# 그래서 세 값으로 나눈다:
+#
+#   - `None`  = **아직 확인되지 않았다** (기동 직후 · 능력 협상 진행 중)
+#   - `True`  = 실제로 답을 받아냈다 (협상 성공 또는 질문 처리 성공)
+#   - `False` = 못 쓴다는 관측이 있다
+#
+# 두 소비자는 이 세 값을 **다르게** 읽는다:
+#
+#   - 게이트(`ai_blocked`) — 「막아야 하는가」. `None` 은 막지 않는다 (fail-open 유지).
+#   - 표시(`ai_health` → 하트비트 → 칩) — 「정상이라고 말해도 되는가」. `None` 은
+#     정상이 아니다. 「확인 중」으로 나가야 한다.
+#
+# ⚠ `None` 을 `False` 로 접으면 **모든 첫 질문이 막힌다**. `if not ready:` 가 아니라
+#   `if ready is False:` 로 쓴다 — `account_runner_build` 3상태와 같은 규율이다.
 
 #: 연속 실패를 몇 번 보면 「못 쓴다」로 판정할지. 1회는 일시적 오류(순단·한도)일 수 있고,
 #: 그 한 번으로 계정의 질문을 막으면 오탐 비용이 사용자 차단이 된다.
 _AI_FAIL_STREAK_MAX = 2
 
-_AI_READY = True
+#: 3상태. `None` = 아직 확인되지 않았다 (기동 직후). 위 「게이트와 표시」 주석 참조.
+_AI_READY: "bool | None" = None
 _AI_UNREADY_REASON = ""
 _AI_FAIL_STREAK = 0
 
 
-def ai_health() -> "tuple[bool, str]":
-    """(쓸 수 있는가, 못 쓰는 사유). 사유는 사용자에게 보일 수 있는 문장이다."""
+def ai_health() -> "tuple[bool | None, str]":
+    """(정상이라고 말해도 되는가, 사유). **3상태** — `None` 은 「아직 모른다」다.
+
+    ⚠ 반환값을 `bool()` 로 눌러 담지 말 것. 그 한 줄이 「모른다」를 「정상」으로 바꾸어
+      사용자에게 거짓을 표시한 결함의 원인이었다.
+    """
     return _AI_READY, _AI_UNREADY_REASON
+
+
+def ai_blocked() -> "tuple[bool, str]":
+    """질문 처리를 **막아야 하는가**(그리고 사유).
+
+    표시 축과 갈라 두는 이유는 위 모듈 주석에 있다 — 「모른다」는 막지 않는다.
+    호출부가 `ai_health()` 를 직접 `not` 으로 읽다가 `None` 을 막아버리는 사고를
+    구조적으로 없애기 위해 별도 함수로 낸다.
+    """
+    return (_AI_READY is False), _AI_UNREADY_REASON
+
+
+def note_ai_probing(reason: str = "") -> None:
+    """능력 협상을 **시작했다** — 아직 확인되지 않은 상태로 되돌린다.
+
+    러너가 살아 있는 동안 재협상(`--refresh-caps`)에 들어가면 직전 판정은 낡은 것이다.
+    다만 **이미 `False`(못 쓴다는 관측이 있음) 인 상태는 되돌리지 않는다** — 확인 중이
+    관측을 덮으면 「답할 수 없음」이 협상마다 「확인 중」으로 세탁된다.
+    """
+    global _AI_READY, _AI_UNREADY_REASON
+    if _AI_READY is False:
+        return
+    _AI_READY = None
+    _AI_UNREADY_REASON = str(reason or "").strip()[:300]
 
 
 def note_ai_unusable(reason: str) -> None:
@@ -112,6 +163,11 @@ def note_ai_outcome(ok: bool, reason: str = "") -> None:
 
 
 def reset_ai_health() -> None:
-    """테스트 전용 — 프로세스 전역이라 케이스 간 누수를 막는다."""
+    """테스트 전용 — 프로세스 전역이라 케이스 간 누수를 막는다.
+
+    기동 직후와 **같은** 값(`None` = 아직 확인되지 않음)으로 되돌린다. 여기를 `True` 로
+    두면 테스트가 프로덕션에 없는 「이미 정상」 상태에서 출발해, 지금 고친 결함을
+    테스트가 재현할 수 없게 된다.
+    """
     global _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK
-    _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK = True, "", 0
+    _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK = None, "", 0

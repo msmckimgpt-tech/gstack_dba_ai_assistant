@@ -4534,6 +4534,56 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 정리 대상 변수·이력 주석뿐(등록 경로 0). 무중단 실측 0건 · 전 서비스 동일 SHA.
 
 미검증 유지: 실 OS 핸들러 등록·옛 잔재 삭제(사용자 머신 setup 재실행 필요) · macOS 경로.
+## CHG-20260903T200000-ai-claude-corp-feature-0043-ai-unknown-not-ready — 「모른다」를 정상으로 말하지 않는다 (연결 상태 3상태)
+
+사용자 지적(2026-09-03): *"연결되지 않은 상황이 정상 연결되었다고 거짓으로 출력되는 부분을
+수정하는 작업입니다. claude 인증 상태는 현상일 뿐입니다."*
+
+### 근본 원인 — 한 변수가 두 축을 겸했다
+
+`agent/state.py` 의 `_AI_READY` 는 `bool` 하나였고 초기값이 `True`(fail-open)였다.
+그 판단은 **게이트 축**(「질문을 막아야 하는가」)에서는 옳다 — 「증명될 때까지 불가」로 두면
+성공의 근거가 질문 처리뿐이라 첫 질문을 받을 방법이 없어 교착이 된다. 문제는 **같은 값이
+하트비트로 화면에 실려 나갔다**는 것이다:
+
+```
+러너 기동 → _AI_READY=True → api.heartbeat body["ai_ready"]=bool(True)
+         → 서버 RunnerAiReady=1 → connect_status.ai_ready=true → 칩 「대기 중」
+```
+
+그리고 **캐시된 caps 가 있으면 능력 협상은 아예 돌지 않는다**(`ask` 가 빈다). 그래서
+「응답하지 않는다」를 관측할 기회조차 없었다 — 사용자 라이브가 정확히 그 경로였다
+(`config.json` 에 지난 성공의 caps + 만료된 `claude` OAuth). 화면은 정상이었고 사용자는
+200초를 기다린 끝에 답변 자리에서 401 을 받았다.
+
+### 무엇을 바꿨나
+
+| 파일 | 변경 |
+|---|---|
+| `agent/state.py` | `_AI_READY` 를 **3상태**로(`None`/`True`/`False`). `ai_health()`(표시)와 **`ai_blocked()`(게이트)** 를 별도 함수로 분리 · `note_ai_probing()` 추가(단, **`False` 는 세탁하지 않는다**) · `reset_ai_health()` 도 프로덕션 초기값(`None`)에서 출발 |
+| `agent/invoke.py` | 게이트를 `if not _ai_ok:` → **`ai_blocked()`** 로. `None` 을 `False` 로 접으면 모든 첫 질문이 죽는다 |
+| `agent/api.py` | 하트비트 `bool(_ai_ok)` → `None if _ai_ok is None else bool(_ai_ok)` — **결함의 발원지가 정확히 그 한 줄** |
+| `agent/caps.py` | 협상 성공 시 `note_ai_outcome(True)` · **`verify_ai_liveness`/`confirm_ai_or_report` 신설**(상한 30초, `_ask_json` 재사용 — 「응답하는가」 판정을 두 벌로 두지 않는다) |
+| `agent/lifecycle.py` | 협상 시작에 `note_ai_probing` · 협상 끝에 `ai_health()[0] is None` 이면 `confirm_ai_or_report` · `--cmd` 경로도 배경 확인 |
+| `web/oauth_store.py` | `set_runner_ai_health(..., reported=)` — 「키 없음」(구 러너, 미기록)과 「`null` 신고」(확인 중, **NULL 기록**) 분리 · 변경 판정을 **NULL-safe `<=>`** 로 |
+| `web/routers/ai_tools.py` | `"ai_ready" in payload` 로 **키 존재**를 별도 판정해 전달 |
+| `web/static/app/connect-modal.js` | 칩 「확인 중」 갈래(`aiReady !== true`) · 모달 성공 판정 `!== false` → **`=== true`** |
+| `web/static/css/search-audit.css` | `[data-state="checking"]` 중립 회색 — 정상 초록과 확실히 갈린다 |
+
+### 왜 생존 확인이 필수인가 (이것이 없으면 고친 것이 아니다)
+
+3상태만 넣고 멈추면 캐시된 caps 경로에서 원장이 영원히 `None` 이다 → 화면은 「확인 중」에
+**영구 고착**한다. 거짓은 아니지만 사용자에게 쓸모가 없고, 「곧 바뀔 것」이라는 잘못된 인상만
+준다. 그래서 짧은 확인 1회로 반드시 `True`/`False` 중 하나로 떨어뜨린다.
+
+### 검증
+
+- 신규 테스트 13건(`test_unknown_is_not_ready.py`) + 서버·화면 7건 + **기존 4건 재작성**
+  (그 4건이 `assert ai_health() == (True, "")` 로 **고친 결함을 그대로 잠그고 있었다**).
+- 적대적 뮤테이션 13종 — 결함을 되살리는 최소 편집마다 테스트가 죽는지 확인.
+  1R 에서 **M6 SURVIVED**: `note_ai_probing` 호출 두 곳 중 협상 경로 하나만 지워도 통과했다
+  (제 테스트가 소스 문자열 존재만 봤다 — 이 저장소가 반복해 만든 「죽은 가드」를 테스트
+  쪽에서 재현한 것). **협상이 시작된 그 순간의 원장 값**을 보는 행위 단정으로 교체했다.
 ## CHG-20260903T190000-ai-claude-corp-feature-0043-ai-ready-postdeploy — 연결 칩 「답할 수 없음」 POST-DEPLOY 실측 (문서 전용)
 
 `CHG-20260903T180000` 의 배포 후 검증. 배포 `8da226b5`. 직전 fragment 는 `PARTIAL` 이었다 —

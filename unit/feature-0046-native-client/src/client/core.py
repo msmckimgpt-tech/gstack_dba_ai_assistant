@@ -39,6 +39,7 @@ import hashlib
 import json
 import os
 import shutil
+import re
 import ssl
 import subprocess
 import sys
@@ -210,6 +211,47 @@ def ca_fingerprint(pem_or_der: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
 
+def normalize_fingerprint(value: str) -> str:
+    """지문 표기를 **비교 가능한 한 가지 모양**으로 줄인다.
+
+    ⚠ 서버와 클라이언트는 같은 값을 **다른 모양**으로 쓴다. 서버는 OpenSSL 관례를 따라
+    대문자·콜론 구분으로 낸다(`oauth_as.py`: `hexdigest().upper()` → `":".join(...)`),
+    클라이언트는 `hashlib` 기본인 소문자·구분자 없음으로 계산한다.
+
+    **실측 2026-09-03**: 이 정규화가 없어 클라이언트는 연결에 **한 번도 성공할 수 없었다** —
+    「CA 지문이 다릅니다 / 기대: F5:B9:… / 실제: f5b9c581…」. 두 값은 같은 지문이었다.
+
+    ⚠ 이 결함이 생긴 방식을 남긴다. 셸 설치 스크립트는 이미 옳게 하고 있었다
+    (`bridge_setup.sh`: `tr 'A-Z' 'a-z' | tr -d ':'`). 클라이언트는 그 비교를 옮겨 오면서
+    **소문자화만 가져오고 콜론 제거를 빠뜨렸다**. 재사용은 가드를 통째로 가져와야 한다 —
+    절반만 가져오면 원본이 막던 것이 새 경로로 새어 나온다.
+
+    공백도 지운다 — 사용자가 웹에서 값을 복사해 붙이는 경로가 있고, 줄바꿈이 섞여 들어온다.
+    """
+    return "".join(value.split()).replace(":", "").replace("-", "").lower()
+
+
+#: SHA-256 을 16진으로 적으면 **정확히 64자**다. 그보다 짧거나 다른 문자가 섞이면 지문이 아니다.
+_HEX256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def fingerprints_match(got: str, expected: str) -> bool:
+    """표기 차이는 흡수하되 **지문이 아닌 것은 통과시키지 않는다**.
+
+    ⚠ 정규화만으로 비교하면 `«둘 다 빈 문자열»` 이 일치가 된다. 예컨대 기대값이 `":"` 이면
+    (참이라 앞의 `if expected` 가드를 통과한다) 정규화 후 `""` 가 되고, 계산값도 어떤 이유로
+    `""` 라면 두 값이 같다고 판정된다. 지금 계산 경로(`hashlib`)는 항상 64자를 내므로 도달
+    불가능하지만, **무결성 검사가 「우연히 도달 불가」에 기대는 것**은 옳지 않다 —
+    codex 적대 리뷰 지적(2026-09-03).
+
+    그래서 양쪽 모두 `^[0-9a-f]{64}$` 를 만족할 때만 비교한다. 형식이 아니면 **불일치**다.
+    """
+    a, b = normalize_fingerprint(got), normalize_fingerprint(expected)
+    if not _HEX256.match(a) or not _HEX256.match(b):
+        return False
+    return a == b
+
+
 def fetch(url: str, ca_path: str | None = None, timeout: int = 60) -> bytes:
     ctx = None
     if url.startswith("https://") and ca_path:
@@ -249,7 +291,7 @@ def install_ca(plan: ConnectPlan) -> Path:
     plan.home.mkdir(parents=True, exist_ok=True)
     raw = fetch(f"http://{plan.host}/trust/rootCA.crt")
     got = ca_fingerprint(raw)
-    if plan.ca_sha256 and got.lower() != plan.ca_sha256.strip().lower():
+    if plan.ca_sha256 and not fingerprints_match(got, plan.ca_sha256):
         raise IntegrityError(
             f"CA 지문이 다릅니다.\n  기대: {plan.ca_sha256}\n  실제: {got}\n"
             "네트워크 중간에서 바뀌었을 수 있습니다. 진행하지 말고 운영자에게 알리세요.")
@@ -262,13 +304,59 @@ def install_runner(plan: ConnectPlan, ca_path: Path) -> Path:
     """러너 수신 + 체크섬 대조. 정본은 서버가 서빙하는 것 하나다."""
     raw = fetch(f"{plan.base}/static/agent/bridge_agent.py", ca_path=str(ca_path))
     got = sha256_of(raw)
-    if plan.agent_sha256 and got.lower() != plan.agent_sha256.strip().lower():
+    # ⚠ 지금 서버는 이 값을 소문자·구분자 없이 내므로 `.lower()` 만으로도 우연히 통과한다.
+    # 그 우연에 기대지 않는다 — CA 축과 **같은 정규화**를 쓴다(둘이 갈리면 어느 한쪽만 고쳐진다).
+    if plan.agent_sha256 and not fingerprints_match(got, plan.agent_sha256):
         raise IntegrityError(
             f"러너 체크섬이 다릅니다.\n  기대: {plan.agent_sha256}\n  실제: {got}\n"
             "배포 교대 중일 수 있습니다 — 1분 뒤 다시 시도하고, 그래도 다르면 운영자에게 알리세요.")
     out = plan.home / "bridge_agent.py"
     out.write_bytes(raw)
     return out
+
+
+#: 설치본에 **동봉된** 파이썬. 앱 폴더 기준 상대 경로다(설치 위치가 어디든 따라간다).
+_BUNDLED_RUNTIME = ("runtime", "python.exe")
+
+
+def app_dir() -> Path:
+    """이 프로그램이 설치된 폴더.
+
+    동결 빌드에서는 `sys.executable` 이 `…\\DQA Connect\\DQAConnect.exe` 이므로 그 부모다.
+    소스로 돌릴 때는 이 파일 기준으로 `src/` 위를 가리킨다(그 아래에 `runtime/` 은 없다).
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def runner_python() -> str:
+    """러너를 실행할 **파이썬 인터프리터**.
+
+    ## 왜 `sys.executable` 이 아닌가 (실측 2026-09-03)
+
+    러너(`bridge_agent.py`)는 파이썬 스크립트다. 종전 코드는 `sys.executable` 로 띄웠는데,
+    **동결된 앱에서 그 값은 파이썬이 아니라 앱 실행 파일 자신**이다. 그래서 배포한 클라이언트는
+    러너를 실행하지 못했다 — 실측: 그 명령의 종료코드가 `2`(GUI argparse 오류)였고 화면에는
+    「연결 확인에 실패했습니다(코드 2)」만 떴다.
+
+    소스로 돌리면 `sys.executable` 이 진짜 파이썬이라 **이 결함이 보이지 않는다.** 소스로는
+    연결에 성공하는데 배포본으로는 실패하는 상태였다.
+
+    ## 왜 시스템 파이썬을 찾지 않는가
+
+    이 클라이언트의 존재 이유가 「파이썬·터미널을 몰라도 연결된다」이다. 시스템 파이썬 탐지는
+    셸 설치본이 이미 하던 일이고, 파이썬이 없는 사용자는 그대로 막힌다 — 없애려던 마찰을
+    그대로 두는 셈이다. 그래서 설치본에 **공식 임베더블 CPython 을 동봉**하고 그것을 쓴다
+    (사용자 결정 2026-09-03: 「대중적 배포 형식 + 종속성 이슈 없게」).
+
+    동봉본이 없으면(= 소스로 개발·테스트 중) `sys.executable` 로 떨어진다. 그때는 그 값이
+    진짜 파이썬이므로 옳다.
+    """
+    candidate = app_dir().joinpath(*_BUNDLED_RUNTIME)
+    if candidate.is_file():
+        return str(candidate)
+    return sys.executable
 
 
 def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
@@ -278,7 +366,7 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
     종료코드 4 = 「서버 연결은 정상인데 쓸 수 있는 AI 가 없다」. 연결 실패와 **다른 사실**이라
     화면이 갈라 말해야 한다(feature-0043 REQ-20260901-win-ai-detect).
     """
-    argv = [sys.executable, str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
+    argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
     if runtime:
         argv += ["--ai", runtime]
     env_token = dict(os.environ, BRIDGE_TOKEN=plan.token)
@@ -293,7 +381,7 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
 def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
                  runtime: str | None = None) -> subprocess.Popen:
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
-    argv = [sys.executable, str(runner), "--base", plan.base, "--ca", str(ca_path)]
+    argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
     if runtime:
         argv += ["--ai", runtime]
     kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token),

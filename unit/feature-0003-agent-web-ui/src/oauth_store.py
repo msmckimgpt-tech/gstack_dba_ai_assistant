@@ -1682,16 +1682,28 @@ def _as_naive(value: Any) -> datetime:
 # 번갈아 보내도 하트비트 주기(30초)당 UPDATE 1건이고 그 하트비트 자체가 이미 매번 쓴다.
 
 def set_runner_ai_health(cur, raw_token: str, ai_ready: Any,
-                         reason: str | None) -> bool:
+                         reason: str | None, *, reported: bool | None = None) -> bool:
     """러너가 신고한 **「내 AI 가 답할 수 있는가」** 를 토큰 행에 새긴다. 실제로 썼으면 True.
 
-    `ai_ready` 가 `None`(신고 없음 — 구 러너)이면 **아무것도 쓰지 않는다**. 그 러너는 이 축을
-    모르므로, 0 으로 새기면 구 러너 사용자 전원이 미연결로 보인다(`RunnerBuild` tri-state 와
-    같은 함정을 여기서 반복하지 않는다).
+    ## 「신고 없음」과 「신고했는데 모른다」는 다르다 (TASK-20260903T200000)
+
+    러너는 세 값을 보낸다: `true` · `false` · **`null`(아직 확인되지 않았다 — 기동 직후·능력
+    협상 중)**. 구 러너는 아예 키를 보내지 않는다. 이 둘을 같게 다루면 결함이 된다:
+
+      - 신고 없음(구 러너) → **아무것도 쓰지 않는다.** 0 으로 새기면 구 러너 사용자 전원이
+        미연결로 보인다(`RunnerBuild` tri-state 와 같은 함정).
+      - `null` 신고(신 러너, 확인 중) → **NULL 로 새긴다.** 쓰지 않으면 직전 세션의 `1` 이
+        그대로 남아, 재기동한 러너가 아직 아무것도 확인하지 못한 구간에도 화면은 「대기
+        중」(정상)을 띄운다 — 사용자가 지적한 그 거짓이다.
+
+    `reported` 가 그 둘을 가른다. 호출측이 `"ai_ready" in payload` 로 판정해 넘긴다.
+    생략하면 종전 의미(`ai_ready is not None` 일 때만 기록)를 유지한다.
     """
-    if ai_ready is None:
+    if reported is None:
+        reported = ai_ready is not None
+    if not reported:
         return False
-    flag = 1 if bool(ai_ready) else 0
+    flag = None if ai_ready is None else (1 if bool(ai_ready) else 0)
     why = str(reason or "").strip()[:300] or None
     try:
         cur.execute(
@@ -1699,12 +1711,13 @@ def set_runner_ai_health(cur, raw_token: str, ai_ready: Any,
             "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
             "SET t.RunnerAiReady = %s, t.RunnerAiUnreadyReason = %s "
             f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
-            # 값이 바뀔 때만 — NULL 비교는 `<>` 로 안 잡히므로 축마다 분기(위 형제 함수와 동형).
-            "  AND (t.RunnerAiReady IS NULL OR t.RunnerAiReady <> %s "
-            "       OR (t.RunnerAiUnreadyReason IS NULL AND %s IS NOT NULL) "
-            "       OR (t.RunnerAiUnreadyReason IS NOT NULL AND %s IS NULL) "
-            "       OR t.RunnerAiUnreadyReason <> %s)",
-            (flag, why, token_hash(raw_token), flag, why, why, why))
+            # 값이 바뀔 때만. ⚠ `flag` 자체가 NULL 일 수 있게 되었으므로(확인 중 신고)
+            # 축마다 분기하던 종전 형태로는 「1 → NULL」 전이를 못 잡는다 — 그 전이가
+            # 바로 「재기동 직후 직전 세션의 정상 표시가 남는」 결함이다. NULL-safe
+            # 등호(`<=>`)로 「같지 않으면 쓴다」를 한 줄로 표현한다.
+            "  AND (NOT (t.RunnerAiReady <=> %s) "
+            "       OR NOT (t.RunnerAiUnreadyReason <=> %s))",
+            (flag, why, token_hash(raw_token), flag, why))
     except Exception as exc:  # noqa: BLE001
         # 컬럼이 아직 없는 배포 — **연결을 죽이지 않는다.** 그때는 이 축을 모르는 것과 같고,
         # 읽기 쪽(`account_ai_health`)이 `None` 을 「판정 안 함」으로 다룬다.

@@ -53,13 +53,27 @@ def mod():
 
 # ── 1. 건강 상태 판정 자체 ───────────────────────────────────────────────────
 
-def test_starts_healthy(mod):
-    """초기값은 «사용 가능» — fail-open.
+def test_starts_unknown_not_healthy(mod):
+    """⭐ 초기값은 «아직 확인되지 않음»(`None`) — **«정상»이 아니다**.
 
-    「증명될 때까지 불가」로 두면 성공의 근거가 질문 처리뿐이라 첫 질문을 받을 방법이 없다
-    (교착). 대신 능력 협상이 질문 **전에** 첫 관측을 준다.
+    종전 초기값은 `True`(fail-open) 였고, 그 값이 그대로 하트비트에 실려 화면에
+    「대기 중」(정상)으로 나갔다. 그래서 러너 기동 직후 AI 가 실은 응답 불가여도 사용자는
+    협상이 끝날 때까지(실측 ~200초) 그 사실을 듣지 못했다.
+
+    사용자 지적(2026-09-03): *"연결되지 않은 상황이 정상 연결되었다고 거짓으로 출력되는
+    부분을 수정하는 작업입니다."*
     """
-    assert mod.ai_health() == (True, "")
+    assert mod.ai_health() == (None, ""), "기동 직후를 «정상»으로 신고하면 그것이 거짓이다"
+
+
+def test_unknown_does_not_block_questions(mod):
+    """⚠ 그러나 「모른다」가 **질문을 막지는 않는다** — 게이트와 표시는 다른 축이다.
+
+    `None` 을 `False` 로 접으면 성공의 근거가 질문 처리뿐이라 첫 질문이 전부 죽는다(교착).
+    표시 축만 정직해지고 게이트 축은 종전 fail-open 을 유지해야 한다.
+    """
+    assert mod.ai_health()[0] is None, "전제: 아직 확인되지 않은 상태"
+    assert mod.ai_blocked() == (False, ""), "「모른다」가 질문을 막으면 첫 질문이 전부 죽는다"
 
 
 def test_caps_failure_marks_unusable(mod):
@@ -71,9 +85,14 @@ def test_caps_failure_marks_unusable(mod):
 
 
 def test_single_failure_does_not_lock_the_account(mod):
-    """1회 실패로는 막지 않는다 — 순단·한도는 일시적이고, 오탐 비용이 사용자 차단이다."""
+    """1회 실패로는 막지 않는다 — 순단·한도는 일시적이고, 오탐 비용이 사용자 차단이다.
+
+    ⚠ 판정은 **게이트 축**(`ai_blocked`)으로 본다. 표시 축(`ai_health`)은 3상태라 여기서
+      `True` 를 요구하면 「아직 확인되지 않음」을 「정상」으로 요구하는 셈이 되고, 그것이
+      바로 이 cycle 이 없앤 거짓이다.
+    """
     mod.note_ai_outcome(False, "일시 오류")
-    assert mod.ai_health()[0] is True, "한 번의 실패로 러너를 못 쓴다고 판정했다"
+    assert mod.ai_blocked()[0] is False, "한 번의 실패로 러너를 못 쓴다고 판정했다"
 
 
 def test_consecutive_failures_mark_unusable(mod):
@@ -203,15 +222,40 @@ def test_heartbeat_carries_ai_health(mod, monkeypatch):
     assert "응답하지 않습니다" in str(sent.get("ai_unready_reason") or ""), sent
 
 
-def test_heartbeat_reports_healthy_by_default(mod, monkeypatch):
-    """정상 러너는 `ai_ready=True` + 빈 사유 — 서버가 엉뚱하게 막지 않게."""
-    sent = {}
+def _heartbeat_payload(mod, monkeypatch) -> dict:
+    sent: dict = {}
     api = mod.Api("https://example.invalid", "mat_x", None)
     monkeypatch.setattr(api, "_post", lambda path, payload=None, timeout=60.0:
                         (sent.update(payload or {}), {})[1])
     api.heartbeat([])
+    return sent
+
+
+def test_heartbeat_reports_unknown_before_verification(mod, monkeypatch):
+    """⭐ 확인 전 하트비트는 `ai_ready=None` — **`True` 를 보내지 않는다**.
+
+    이 한 줄이 사용자가 본 거짓의 발원지였다: `body["ai_ready"] = bool(_ai_ok)` 가
+    초기값 `True` 를 그대로 실어 보냈고, 서버는 그것을 `RunnerAiReady=1` 로 새겼고,
+    화면은 「대기 중」을 띄웠다.
+    """
+    sent = _heartbeat_payload(mod, monkeypatch)
+    assert "ai_ready" in sent, "키 자체가 없으면 서버가 «구 러너»로 읽어 직전 값을 남긴다"
+    assert sent["ai_ready"] is None, "확인 전인데 «정상»을 신고했다 — 화면의 거짓이 된다"
+    assert sent.get("ai_unready_reason") == ""
+
+
+def test_heartbeat_reports_healthy_after_success(mod, monkeypatch):
+    """확인이 성공하면 `ai_ready=True` — 서버가 엉뚱하게 막지 않게."""
+    mod.note_ai_outcome(True)
+    sent = _heartbeat_payload(mod, monkeypatch)
     assert sent.get("ai_ready") is True
     assert sent.get("ai_unready_reason") == ""
+
+
+def test_heartbeat_does_not_squash_unknown_into_false(mod, monkeypatch):
+    """⚠ `None` 을 `False` 로 눌러 보내면 정상 러너가 「답할 수 없음」으로 보인다."""
+    sent = _heartbeat_payload(mod, monkeypatch)
+    assert sent["ai_ready"] is not False, "「모른다」를 «못 쓴다»로 신고했다"
 
 
 # ── 4. 배선 — 판정 함수가 **실제로 불리는가** ────────────────────────────────
@@ -230,7 +274,7 @@ def test_caps_failure_actually_marks_the_runner(mod, monkeypatch):
                         lambda n: "/usr/bin/claude" if n == "claude" else None)
     # 협상이 답하지 않는다 = 라이브의 `TimeoutExpired` 와 같은 결말.
     monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: None)
-    assert mod.ai_health()[0] is True, "전제: 시작은 건강하다"
+    assert mod.ai_health()[0] is None, "전제: 시작은 «아직 확인되지 않음»"
 
     mod.detect_runtimes(cached=None, probe=True)
 
