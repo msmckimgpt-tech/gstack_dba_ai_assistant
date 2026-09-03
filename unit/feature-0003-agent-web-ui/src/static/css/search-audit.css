@@ -2614,6 +2614,21 @@ select.admin-meta-input {
 @media (prefers-color-scheme: dark) {
   .ai-conn[data-state="on"] { color: #4ade80; background: rgba(74, 222, 128, .12); }
   .ai-conn[data-state="off"] { color: #fbbf24; background: rgba(251, 191, 36, .14); }
+}
+/* ⚠ 위 `}` 가 **없어서** 이 아래 모든 칩 규칙이 dark-mode 블록 안으로 삼켜져 있었다
+   (TASK-20260903T210000 · 실 Windows 브라우저 실측으로 적발). 결과:
+
+     라이트 모드에서 `idle`(대기 안 함) · `stale`(업데이트 필요) 칩에 **스타일이 하나도
+     적용되지 않았다** — 색은 상속된 검정, 배경 투명, `::before` 표지 없음.
+
+   즉 「연결됨과 확실히 갈라야 한다」고 주석에 적어 둔 그 구분이 **주간(라이트) 화면에서는
+   성립하지 않았다.** 파일 텍스트에는 규칙이 있으니 문자열 검사 테스트는 전부 초록이었다 —
+   「넣었다」와 「성립한다」가 갈리는 자리이고, 실 렌더 + `getComputedStyle` 만이 잡는다.
+
+   ⚠ 여기에 규칙을 더 붙일 때는 **중괄호 균형**을 먼저 보라. `@media` 하나가 안 닫히면
+   그 뒤 전부가 조용히 조건부가 되고, 그 사실은 화면에서만 드러난다. 아래 테스트
+   `test_conn_chip_rules_are_not_trapped_in_a_media_block` 이 이 축을 잠근다. */
+
 /* 연결은 됐으나 아무도 듣지 않는 상태 — '연결됨' 과 뭉치면 헛되이 기다리게 된다. */
 .ai-conn[data-state="idle"] {
   color: #92400e; border-color: rgba(146, 64, 14, .35); background: rgba(146, 64, 14, .10);
