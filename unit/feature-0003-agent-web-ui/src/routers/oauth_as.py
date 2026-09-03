@@ -55,6 +55,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from shared import bridge_caps as _bridge_caps
 from shared import bridge_consent as _consent
+from shared import dqa_identity as _ident
 
 import app
 
@@ -68,6 +69,7 @@ router = APIRouter()
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import oauth_store as _store  # noqa: E402
 import routers._connect_funnel as _funnel  # noqa: E402  ROADMAP ITEM-00 연결 퍼널 계측
+import routers._connect_steps as _steps  # noqa: E402  ROADMAP ITEM-03 연결 단계 체크리스트
 
 
 def _err(exc: "_store.OAuthError") -> JSONResponse:
@@ -532,6 +534,35 @@ def _listening(account_id: int, conn=None) -> bool:
         return False
 
 
+#: 네이티브 클라이언트 배포본이 놓이는 자리. **빌드 생성물**이라 저장소에 커밋하지 않는다
+#: (feature-0046 `build_client.py` 와 러너 빌드가 같은 규약).
+#: 네이티브 클라이언트 배포물의 서빙 경로. **빌드 산출물명과 같아야 한다** —
+#: `feature-0046/src/scripts/build_client.py` 의 `_APP_NAME`(정본 `APP_NAME` 파생).
+#: 갈리면 배포는 성공하고 다운로드만 404 가 된다(러너 배포본이 이미 겪은 형태).
+_CLIENT_REL = "agent/DQAConnect.exe"
+
+
+def _client_download_url(origin: str) -> str | None:
+    """클라이언트를 **실제로 받을 수 있을 때만** URL 을 낸다. 없으면 `None`.
+
+    ⚠ **없는 다운로드를 안내하지 않는다.** 가이드가 실제와 어긋나면 사용자는 안내받은 대로
+    갔다가 막히고, 그것을 스스로 우회하지 못한다 — P0-I 가 세 지점에서 닫은 결함 클래스다.
+
+    ⚠ **배포 경로가 아직 없다 (정직한 잔여, 2026-09-03)**: 배포 파이프라인은 리눅스 도커인데
+    PyInstaller 는 크로스 컴파일을 하지 않는다. 즉 `.exe` 는 **Windows 에서 따로 빌드해 이
+    자리에 놓아야** 하고, 그 채널은 아직 없다. 그래서 이 함수는 현재 대부분의 배포에서
+    `None` 을 돌려주고, 화면은 종전 경로(터미널 명령)를 그대로 보인다 — **기능이 조용히
+    사라지는 것이 아니라 «아직 없다» 가 값으로 나타난다.**
+    """
+    try:
+        path = app.STATIC_DIR / _CLIENT_REL
+        if path.is_file() and path.stat().st_size > 0:
+            return f"{origin}/static/{_CLIENT_REL}"
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 @router.get("/api/ai/connect/status")
 def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse:
     if conn is None:
@@ -564,6 +595,13 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     # 다를 수 있고, 그 차이가 곧 "고쳤다는데 화면은 그대로" 다 — 사용자가 그 이유를 알 수
     # 있는 자리가 화면 어디에도 없었다. 판정은 서버가 내고 프런트는 불리언 하나만 읽는다.
     runner_stale = False
+    # ── 「답할 수 있는가」 (TASK-20260903T180000) ─────────────────────────────────
+    #
+    # **tri-state 로 시작한다**: `None` = 모른다(구 러너·컬럼 부재·듣고 있는 러너 없음).
+    # 아래 조회가 어디서 새더라도 이 값이 유지되어 화면이 종전 동작으로 폴백한다 —
+    # 모르는 것을 「답할 수 없다」로 단정하면 멀쩡한 사용자를 미연결로 만든다.
+    ai_ready = None
+    ai_unready_reason = ""
     # 그 러너가 **어느 파일**인가 (2026-09-02, 사용자 제보). `runner_stale` 만으로는 「다시
     # 띄웠는데 같은 파일이 다시 떴다」와 「다른 파일로 바뀌었는데 그것도 낡았다」가 구별되지
     # 않는다 — 전자는 **재실행으로는 영영 풀리지 않는** 상태이고, 그것을 말할 수 있으려면
@@ -637,6 +675,29 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             cur4.close()
     except Exception:
         batch_consent = _consent.DEFAULT_BATCH_CONSENT   # fail-closed(남의 토큰을 태우는 축)
+    # ── 「답할 수 있는가」 조회 (TASK-20260903T180000, 사용자 지적) ─────────────────
+    #
+    # ⚠ **낡음 판정 갈래 안에 두지 않는다.** 그 갈래는 「판정 호출이 자기 갈래의 마지막이어야
+    #   한다」는 계약으로 잠겨 있다(`test_staleness_predicate_has_exactly_one_home`) — 뒤에
+    #   무엇이든 오면 그 값이 판정을 덮을 수 있는 모양이 되기 때문이다. 실제로 초판에서 이
+    #   블록을 그 자리에 넣었다가 그 테스트가 잡았다. 여기 **별 블록**으로 둔다.
+    #
+    # 실패는 「모른다」(`None`)로 남는다 — 모르는 것을 「답할 수 없다」로 단정하면 멀쩡한
+    # 사용자를 미연결로 만든다(구 러너·컬럼 부재 포함).
+    if listening:
+        # 형제 축들과 **같은 커넥션·같은 idiom**(`conn.cursor()` + `finally: close()`).
+        try:
+            cur2c = conn.cursor()
+            try:
+                ai_ready, ai_unready_reason = _store.account_ai_health(
+                    cur2c, int(account.get("id") or 0))
+            finally:
+                cur2c.close()
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] AI 건강 조회 실패 — 판정하지 않는다: %r", exc)
+            ai_ready, ai_unready_reason = None, ""
+
     # ── 능력 리비전 (TASK-20260902T140200, 사용자 제보 「새로고침해야 목록이 갱신된다」) ──
     #
     # ## 왜 이 응답에 싣는가
@@ -659,6 +720,10 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     caps_rev = ""
     caps_pending = False
     caps_settling = False
+    # ⚠ 아래 능력 블록은 **조건부**로만 대입한다 — 초기화가 없으면 그 분기를 타지 않은 요청에서
+    #   `NameError` 가 나고 `/api/ai/connect/status` 가 500 이 된다(라이브 미리보기 실측
+    #   2026-09-03). 정의 여부를 블록 순서에 기대지 않는다.
+    _reported_caps = None
     if listening:
         try:
             cur5 = conn.cursor()
@@ -703,6 +768,28 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             caps_rev = ""
             caps_pending = False
             caps_settling = False
+    # ── 연결 단계 체크리스트 (ROADMAP ITEM-03) ──────────────────────────────────
+    #
+    # 판정은 **여기 한 곳**이다. 프런트가 조립하면 단독 페이지와 모달이 갈리고, 갈리는 순간
+    # 느슨한 쪽이 사용자가 보는 진실이 된다(P0-R 실측 · P0-L 계약).
+    #
+    # `has_caps` = 러너가 쓸 수 있는 모델을 신고했는가 = **답할 AI 가 실재하는가**. 이것이
+    # 없으면 「듣는 중」과 「답할 수 있음」이 한 줄로 뭉쳐 서버 연결을 의심하게 된다.
+    _has_caps = bool(_reported_caps)
+    _answered = False
+    try:
+        _cur_a = conn.cursor()
+        try:
+            _answered = _funnel.step_recorded(
+                _cur_a, int(account.get("id") or 0), "first_answer")
+        finally:
+            _cur_a.close()
+    except Exception:   # noqa: BLE001 — 계측 조회 실패가 화면을 막지 않는다
+        _answered = False
+    _steps_rows = _steps.build_steps(
+        connected=connected, listening=listening, has_caps=_has_caps,
+        answered=_answered, client_download=_client_download_url(origin))
+
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -711,6 +798,12 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "guide": f"{origin}/api/ai/guide",
         "connected": connected,
         "listening": listening,
+        # ROADMAP ITEM-03 — 화면이 「어디서 막혔는지」를 그린다.
+        "steps": _steps_rows,
+        "steps_summary": _steps.overall(_steps_rows),
+        # ROADMAP ITEM-06 — **있을 때만** 권한다. 없는 다운로드를 안내하면 사용자는 안내받은
+        # 대로 갔다가 막힌다(P0-I 가 닫은 결함 클래스).
+        "client_download": _client_download_url(origin),
         # `""` = 「연결한 적이 없거나 구 러너라 모른다」. 화면은 그때만 브라우저 OS 로 추측한다.
         "last_os": last_os,
         # ── 컴포저 잠금의 **단일 판정** (P0-AB, 사용자 결정 2026-08-28) ──────────────
@@ -731,6 +824,15 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "compose_blocked": bool(_bridge_mode() and not (connected and listening)),
         # 연결은 성립했는데 **그 러너가 배포본과 다르다** — 잠금 사유는 아니고(답변은 온다)
         # 안내 사유다. 이 값이 없으면 사용자는 옛 동작을 보면서 이유를 알 방법이 없다.
+        # ── 「연결됐지만 답할 수 없다」 (TASK-20260903T180000, 사용자 지적) ──────────
+        #
+        # `listening` 은 **살아있음**이고 이것은 **답할 수 있음**이다. 이 축이 없던 동안 화면은
+        # 전자만 보고 「내 AI 대기 중」을 띄웠고, 사용자는 답이 오지 않는 곳에 질문을 보냈다.
+        #
+        # ⚠ **tri-state 를 보존해 보낸다.** `None`(모른다 — 구 러너·컬럼 부재)을 `false` 로
+        #   접으면 구 러너 사용자 전원이 미연결로 보인다. 화면은 `=== false` 로만 판정한다.
+        "ai_ready": ai_ready,
+        "ai_unready_reason": ai_unready_reason,
         "runner_stale": runner_stale,
         # 그 러너의 **지문**. 화면은 이 값을 표시하지 않는다 — 재기동 전후를 대조해
         # 「다시 띄웠는데 같은 파일이 다시 떴다」를 가려내는 데만 쓴다(그 상태에서는 실행
@@ -1074,7 +1176,7 @@ def compose_launch_commands(*, endpoint: str, token: str) -> dict:
         #
         # 토큰을 URL 에 싣는다: 핸들러 스크립트에는 토큰이 없고(디스크에 쓰지 않는다),
         # 세션 결합이라 로그아웃하면 즉시 무효다.
-        "protocol": f"mysql-ai-bridge://start?token={token}",
+        "protocol": _ident.scheme_url(token),
         "setup_url": {"posix": sh_url, "windows": ps_url},
         "checksums": {"setup_posix": sh_sha, "setup_windows": ps_sha,
                       "agent": agent_sha, "ca": ca_fp},
@@ -1191,8 +1293,9 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
             base = ""
     guide = f"{base}/api/ai/guide" if base else "/api/ai/guide"
     cfg = json.dumps(
-        {"mcpServers": {"mysql-ai": {"url": endpoint,
-                                     "headers": {"Authorization": f"Bearer {token}"}}}},
+        {"mcpServers": {_ident.MCP_SERVER_KEY: {
+            "url": endpoint,
+            "headers": {"Authorization": f"Bearer {token}"}}}},
         ensure_ascii=False, indent=2)
     cfg_indented = "\n".join("  " + line for line in cfg.split("\n"))
     ca_url = f"{base}/trust/rootCA.crt" if base else "/trust/rootCA.crt"
@@ -1306,7 +1409,7 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         "  검증을 끄지는 마(NODE_TLS_REJECT_UNAUTHORIZED=0 등). CA 가 있으니 불필요하다.",
         "",
         "A. MCP 로 등록",
-        f"  claude mcp add --transport http mysql-ai {endpoint} \\",
+        f"  claude mcp add --transport http {_ident.MCP_SERVER_KEY} {endpoint} \\",
         f"    --header \"Authorization: Bearer {token}\"",
         "  헤더에 토큰을 실으면 OAuth(브라우저 승인)는 타지 않는다.",
         "  ※ 등록한 세션에서는 도구가 바로 안 잡힌다 — 재시작해야 쓸 수 있다.",
@@ -1344,7 +1447,7 @@ def compose_connect_handoff(*, endpoint: str, token: str, username: str = "") ->
         f"      · 실행하는 것: 소스에 하드코딩된 로컬 AI CLI({'/'.join(_PROBED_AI_ALLOWLIST)}) 하나뿐이고,",
         "        셸을 거치지 않는다(프롬프트는 argv 로 전달). eval·exec 로 받은 것을 돌리지 않는다.",
         "      · 파이썬 표준 라이브러리만 쓴다 — 설치물이 없다.",
-        "      · 남기는 파일은 `~/.mysql-ai-bridge/config.json`(0600) 하나이고 **토큰은 안 들어간다.**",
+        f"      · 남기는 파일은 `~/.{_ident.SCHEME}/config.json`(0600) 하나이고 **토큰은 안 들어간다.**",
         # 정직하게: 토큰은 프롬프트 본문에도 실려 로컬 AI 의 argv·트랜스크립트로 나간다.
         # 숨기면 소스를 읽는 순간 드러나고, 그때 잃는 것이 더 크다.
         "      · 다만 토큰은 **네 AI 에게 주는 프롬프트 안에도** 들어간다(조사 도구를 직접 부르라고",

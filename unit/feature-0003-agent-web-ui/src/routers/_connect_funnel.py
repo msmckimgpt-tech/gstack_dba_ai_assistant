@@ -259,3 +259,24 @@ def account_path_kind(conn, account_id: int) -> str:
                 cur.close()
             except Exception:
                 pass
+
+
+def step_recorded(cur, account_id: int, step: str) -> bool:
+    """이 계정이 그 단계에 도달했는가 (읽기 전용, 소비측 공개 API).
+
+    ROADMAP ITEM-03 의 체크리스트가 「첫 답변 받음」을 그릴 때 쓴다. 내부 멱등 가드와 **같은
+    조회**를 쓴다 — 두 벌이면 「기록은 됐는데 화면은 모른다」가 생긴다.
+
+    ⚠ 조회 실패는 내부 가드에서 `True`(=기록 건너뜀)로 떨어지지만, **읽기 용도에서는 `False`**
+    (=아직 도달 안 함)가 맞다. 같은 실패를 두 자리가 반대로 읽어야 하는 것은 «쓰기 안전» 과
+    «표시 정직» 이 다른 방향이기 때문이다 — 조회를 못 했는데 「도달했다」고 그리면 거짓말이다.
+    """
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebAuditEvents "
+            "WHERE ResourceType = %s AND ResourceId = %s LIMIT 1",
+            (FUNNEL_RESOURCE_TYPE, _resource_id(int(account_id), step)),
+        )
+        return cur.fetchone() is not None
+    except Exception:  # noqa: BLE001
+        return False

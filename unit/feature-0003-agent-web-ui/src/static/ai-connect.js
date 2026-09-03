@@ -132,6 +132,75 @@
       (info.display_name || info.username || "") + " 계정 · 웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
     $("connectFlow").classList.remove("aic-hidden");
     paintBatchConsent(info);
+    paintSteps(info);
+    paintClientFirst(info);
+  }
+
+  // ── 연결 단계 체크리스트 (ROADMAP ITEM-03) ─────────────────────────────────
+  //
+  // **판정을 여기서 만들지 않는다.** 서버가 준 배열을 그대로 그린다 — 조립하면 이 화면과
+  // 대화 모달이 갈리고, 갈리는 순간 느슨한 쪽이 사용자가 보는 진실이 된다(P0-R · P0-L).
+  var STEP_MARK = { ok: "✅", pending: "⏳", fail: "❌" };
+
+  function paintSteps(info) {
+    var box = $("connectSteps");
+    var list = $("stepsList");
+    if (!box || !list) { return; }
+    var rows = (info && info.steps) || null;
+    if (!rows || !rows.length) {
+      // 구 서버(이 축을 모른다) — 빈 목록을 그리지 않는다. 없는 것을 «전부 미완» 으로
+      // 보이면 멀쩡히 연결된 사용자에게 거짓 경보가 된다.
+      box.classList.add("aic-hidden");
+      return;
+    }
+    var sum = $("stepsSummary");
+    if (sum) { sum.textContent = (info.steps_summary || ""); }
+    list.textContent = "";
+    rows.forEach(function (r) {
+      var li = document.createElement("li");
+      li.style.margin = "4px 0";
+      var head = document.createElement("div");
+      head.textContent = (STEP_MARK[r.state] || "•") + " " + (r.label || "");
+      li.appendChild(head);
+      if (r.detail) {
+        var d = document.createElement("div");
+        d.style.cssText = "margin-left:1.4em;opacity:.8;font-size:.92em";
+        d.textContent = r.detail;
+        li.appendChild(d);
+      }
+      // 다음 행동이 있는 행에만 버튼을 만든다 — `action` 이 없는 행은 할 일이 없는 행이다.
+      if (r.action && r.action.href) {
+        var a = document.createElement("a");
+        a.className = "aic-btn";
+        a.style.marginLeft = "1.4em";
+        a.href = r.action.href;
+        a.textContent = r.action.label || "열기";
+        li.appendChild(a);
+      }
+      list.appendChild(li);
+    });
+    box.classList.remove("aic-hidden");
+  }
+
+  // ── 클라이언트 우선 안내 (ROADMAP ITEM-06) ─────────────────────────────────
+  function paintClientFirst(info) {
+    var box = $("clientFirst");
+    if (!box) { return; }
+    var url = info && info.client_download;
+    if (!url) {
+      // **받을 수 없으면 권하지 않는다.** 종전 터미널 경로가 그대로 보인다 —
+      // 기능이 조용히 사라지는 것이 아니라 「아직 없다」가 화면에 반영된다.
+      box.classList.add("aic-hidden");
+      return;
+    }
+    var a = $("clientDownload");
+    if (a) { a.href = url; }
+    var note = $("clientNote");
+    if (note) {
+      note.textContent = "처음 실행할 때 Windows 가 「PC 를 보호했습니다」 경고를 보일 수 있습니다 — "
+        + "[추가 정보] → [실행] 을 누르면 됩니다.";
+    }
+    box.classList.remove("aic-hidden");
   }
 
   // ── 배경 작업 동의 토글 (TASK-20260901T190000) ────────────────────────────────

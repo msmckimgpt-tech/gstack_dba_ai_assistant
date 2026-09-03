@@ -457,3 +457,36 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - **릴리즈노트는 신규 블록이었다.** 착륙일 09-02 의 date 블록이 없었으므로(최신 09-01) append 가 아니라 **prepend** — `releases` 58→59 · items 15 + summary · 총 항목 441→456 · `generated` 를 09-02 로 전진. 직전 블록이 단정했던 4건(「업데이트 필요」 클릭 갱신 · 연결한 AI 에 없는 모델 · 콘솔 작업 가벼운 모델 · 용어·표 설명 전달)이 이 창에서 반증·재발해 새 블록이 그 사실을 명시했다.
 - **reconcile-first: 배포 갭 0.** 서빙 `release-notes-data.js` md5 `d6876ca9…` = `origin/main`(`5d984b75`) blob 동일 · `repo/` clean · 배포 실패 마커 0. **캐시버스터 수기 bump 없음(4창 연속 동일 판정)** — 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며, `bin/deploy-web.sh` 의 ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정하므로 수기 실값은 그 안전장치를 무력화한다.
 - **report-only(정본·소유자 소관 — 미러만 고치면 다음 창에 재발한다)**: ⓐ feature-0043 `TASK.md` §1 이 마지막 2 cycle 을 담지 않는다(부분 해소, 위 참조). ⓑ 러너 정본 모듈 수는 분할 시 18 이었으나 같은 창의 자기 갱신 모듈 추가로 **현재 19**(`__init__._EMIT_ORDER` 19항목)다 — 이 run 은 docs·wiki 색인을 19 로 맞췄고 서사의 「18」은 분할 시점 값으로 읽어야 한다. ⓒ `wiki/Features/feature-0016-metadata-graph.md` §2 단계 목록은 07-14~07-29 구간이 여전히 미backfill 이다(카드 자신이 그렇게 명시 — 이번 창에서 메우지 않았다). ⓓ 이 파일의 제목-only self-add entry 는 이번 창에 **0건**이었다(창이 `Log.md` 에 남긴 것은 `Flows/` 신설 entry 1건 뿐이고 본문이 있다). [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0006-lan-proxy-access]] · [[Features/feature-0016-metadata-graph]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0002-agent-core]] · [[Flows/External-AI-Bridge]]
+## [2026-09-03] refactor | 개인 머신 클라이언트 명칭을 제품과 정합화 — `mysql-ai-bridge` → `dqa-connect`
+
+- **왜 지금, 왜 이 이름인가.** 사용자 지적("ai 연결 러너가 'mysql-ai-bridge' 라는 명칭이 모호…
+  프로젝트는 'Database Query Assistant'")에 더해, 검토 대상이 하나 더 있었다 — 같은 날 머지된
+  [[../docs/improvements/onboarding-accessibility/ROADMAP|ROADMAP]] ITEM-08(네이티브 클라이언트)이
+  이 스킴을 **그대로 재사용**한다고 못박고 있다. 그래서 이름에 **구현 형태를 넣지 않았다**:
+  `dqa-runner`·`dqa-bridge`·`dqa-client` 는 브랜드만 고치고 러너→클라이언트 전환 때 또 개명하게
+  만든다. 목적축 `connect` 는 웹이 이미 쓰는 어휘다(`/ai/connect`·`ai-connect.html`·「연결 퍼널」).
+- **축을 셋으로 갈랐다** — `DQA Connect`(사람) / `dqa-connect`(머신 전역 스킴·레지스트리 키·
+  MimeType) / `com.masangsoft.dqa-connect`(역-DNS: macOS 번들 id·Linux `.desktop` 파일명).
+  한 토큰을 전 표면에 복사하면 어느 한 규약을 반드시 어긴다.
+- ⭐ **의도된 비대칭 — 스킴은 길게, MCP 키는 짧게.** 스킴 URL 에 **세션 베어러 토큰이 실리고**
+  스킴은 마지막 등록자가 이기는 머신 전역 네임스페이스다. `DQA` 는 흔한 약어라 브랜드 한정
+  없이 쓰면 살아 있는 토큰이 남의 앱으로 간다. 반면 MCP 키(`dqa` → `mcp__dqa__*`)는 사용자 자기
+  CLI 설정 안의 **로컬** 키라 충돌이 없고 대신 매번 읽힌다.
+- **정본 `shared/dqa_identity.py` 신설.** 러너·설치 스크립트 2벌·MCP 서버 2벌은 stdlib-only 계약
+  때문에 import 하지 않고 각자 값을 두되 `tests/test_name_ssot.py` 가 다섯 자리를 대조한다.
+- **하드 컷오버**(사용자 결정). 옛 스킴은 등록하지 않고, setup 재실행이 옛 홈·옛 핸들러 등록을
+  **지운다** — 남기면 죽은 핸들러가 옛 홈의 러너를 되살려 「두 러너가 같은 계정으로 대기」
+  사고가 되살아난다. 대가: 기존 설치자는 재실행 전까지 `[내 AI 실행]` 무반응(브라우저가 스킴
+  부재를 감지 못해 폴백 불가), MCP 도구 권한 재승인 필요.
+- ⭐ **가드가 항진명제였다(자체 적발).** 「옛 이름이 쓰인 줄에 `LEGACY` 가 있어야 한다」로 썼는데
+  옛 이름을 담은 변수가 `DQA_LEGACY_SCHEME` 이라 **그 변수를 등록에 쓰면 그대로 통과**했다 —
+  결함 주입 M7 이 생존해 드러났다. 검사축을 이름 부분문자열 → **등록 동사**로 내려 KILL.
+  주입 라운드 하나는 **baseline 이 깨진 채**였고(내 편집이 테스트 파일을 깨뜨림) 그 회차 판정은
+  전부 폐기했다 — baseline 무결 확인이 주입 실증의 전제다.
+- **개명이 하네스 결함 3종을 드러냈다** — 셸 조각에 명칭 변수 미정의(15건이 「테스트 실패」로
+  위장) · slice-exec 의 `_ident` 미주입 · ps1 추출기가 작은따옴표 줄만 걷어 보간 줄을 조용히
+  누락(그 루프가 **두 곳에 복제**돼 한쪽만 고쳐졌다 → 복제 제거).
+- 부수: 저장소 루트 `bridge_setup.sh` 삭제(정본과 md5 불일치 stale 사본, 참조처 0).
+- 미검증: 실 OS 등록·옛 잔재 삭제(사용자 머신 setup 재실행 필요) · macOS 경로.
+
+[[Features/feature-0043-external-llm-bridge]] · [[Flows/External-AI-Bridge]]

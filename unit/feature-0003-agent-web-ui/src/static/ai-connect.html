@@ -26,6 +26,25 @@
         아래 <strong>연결 준비</strong>를 누르고, 나오는 명령 한 줄을 터미널에 붙여넣으면 끝입니다.
       </p>
 
+      <!-- ROADMAP ITEM-06: 클라이언트를 **받을 수 있을 때만** 보인다. 서버가 실물 존재를
+           확인해 `client_download` 를 낼 때만 채워진다 — 없는 다운로드를 안내하면 사용자는
+           안내받은 대로 갔다가 막힌다(P0-I). -->
+      <section id="clientFirst" class="aic-note aic-hidden" style="margin-bottom:12px">
+        <p><strong>터미널 없이 연결하기</strong> — 연결 프로그램을 받아 실행하면
+           설치·로그인·연결을 창에서 끝낼 수 있습니다.</p>
+        <div class="aic-actions" style="justify-content:flex-start">
+          <a class="aic-btn aic-btn--primary" id="clientDownload" href="#">연결 프로그램 받기</a>
+        </div>
+        <p class="aic-handoff-hint" id="clientNote"></p>
+      </section>
+
+      <!-- ROADMAP ITEM-03: 「어디서 막혔는지」를 화면이 말한다. 판정은 서버 한 곳이고
+           여기는 그린다 — 프런트가 조립하면 이 화면과 대화 모달이 갈린다(P0-L). -->
+      <section id="connectSteps" class="aic-hidden" style="margin-bottom:12px">
+        <p class="aic-handoff-hint"><strong id="stepsSummary"></strong></p>
+        <ul id="stepsList" style="list-style:none;padding-left:0;margin:8px 0"></ul>
+      </section>
+
       <div class="aic-actions" style="justify-content:flex-start">
         <button type="button" class="aic-btn aic-btn--primary" id="makeHandoff">연결 준비</button>
       </div>

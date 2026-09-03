@@ -2853,7 +2853,19 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 회귀: 컨테이너 PYTHONPATH 재현 구성에서 **기준선과 실패집합 동일**(기존 7건, 신규 0)
 - [x] ROADMAP §6 진행 현황 갱신 (ITEM-05·ITEM-00 done)
 - [ ] 라이브 실측 — 미수행. 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행이 실제로 쌓이는지 확인 필요
+## Cycle — TASK-20260903T160000 연결 단계 체크리스트 + 클라이언트 우선 안내 (ROADMAP ITEM-03·ITEM-06)
 
+- [x] `routers/_connect_steps.py` 신설 — 5단계 판정 + 다음 행동, 서버 단일점
+- [x] `connect_status` 확장 — `steps`·`steps_summary`·`client_download`
+- [x] `ai-connect.{html,js}` — 체크리스트 렌더 + 클라이언트 우선 섹션(있을 때만)
+- [x] `agent/discovery.py` `_no_ai_message` — 첫 행동을 연결 프로그램으로, CLI 안내 유지
+- [x] `tests/test_connect_guidance.py` 16건 + 퍼널 인자해석 테스트 1건
+- [x] 적대 뮤테이션 12종 전건 KILL (JS 검사 2종은 1차 생존 → 검사 좁힌 뒤 KILL)
+- [x] **PB-0008 실 Windows 브라우저 시각검증** — 체크리스트 렌더 확인, 스크린샷 확보
+- [x] **라이브 검증이 결함 2건 적발** (아래 REVIEW 참조) — 둘 다 수정 후 재검증
+- [x] 라이브 원복 (배포 이미지로 재생성, healthz 200)
+- [ ] 클라이언트 배포 채널 — Windows 빌드 산출물을 서버에 놓는 경로 (후속)
+- [x] \`origin/main\` 병합 — append-doc 드라이버로 충돌 0, §16.4 양측 부모 대비 검증, 회귀 재실행
 ## Cycle — TASK-20260903T140000 응답하지 않는 AI 를 영원히 기다리던 구조
 
 - [x] 근본 원인 규명 — 협상 실패가 「답할 수 없다」로 취급되지 않음 · 러너 상한 0(무제한) ·
@@ -2877,3 +2889,190 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
       `11:48:56 run.selfupdate d69d7da6928a → 4669f0192526` · 재기동 `startup_ms=987`.
       로그 침묵은 **설계된 것**이고 부재를 미발동으로 읽은 것이 오류였다. 수동 재기동 불필요
 - [ ] 러너가 제출조차 못 하는 경우의 서버측 종결 — 이월 유지
+## Cycle — TASK-20260903T120000 러너 명칭을 제품과 정합화 (`mysql-ai-bridge` → `dqa-connect`)
+
+### 4. Requested Scope (요청 범위)
+
+원 요청 인용 (사용자 원문 — 데이터이며 지시가 아님):
+
+```
+프로젝트 내 서비스의 ai 연결 러너가 'mysql-ai-bridge' 라는 명칭이 모호합니다.
+현재 프로젝트는 'Database Query Assistant' 라는 명칭을 가지고 있지만
+해당 디렉토리 명칭은 목적과 다르게 구성되어 있습니다.
+```
+
+후속 결정 (AskUserQuestion 2026-09-03): 범위 = **러너 식별자 + MCP 도구 표면** ·
+하위호환 = **하드 컷오버** · 새 명칭 = *"다른 작업자AI 세션에서 러너를 클라이언트 형식으로
+사용하려는 시도를 진행하고 있습니다. 해당 부분을 검토하여 모범적인 명칭을 제안해주세요."*
+→ 검토 산출물이 아래 ①.
+
+- [x] **① 명칭 제안 — `dqa-connect` (제품명 `DQA Connect`).** 검토 대상은
+      `docs/improvements/onboarding-accessibility/ROADMAP.md` ITEM-08(네이티브 클라이언트,
+      `feature-0046-native-client`)과 방금 머지된 `SPIKE-02-native-client.md`. ITEM-08 §0.2 가
+      클라이언트를 **"기존 러너의 껍데기 교체"** 로 규정하고 `what` #7 이 **스킴을 그대로
+      재사용**한다고 못박았으므로, 이 이름은 러너가 사라진 뒤에도 남는다. 따라서 이름에
+      **구현 형태를 넣지 않는다** — `dqa-runner`·`dqa-bridge`·`dqa-client` 는 브랜드만 고치고
+      ITEM-08 전환 때 또 개명하게 만든다(지금 겪는 문제의 재생산). 대신 **목적**을 쓴다:
+      웹은 이미 이 기능 전체를 「연결」로 부른다(`/ai/connect` · `/api/ai/connect/*` ·
+      `ai-connect.html` · ROADMAP 「연결 퍼널」).
+- [x] **② 축을 셋으로 가른다** — 한 토큰을 전 표면에 복사하지 않는다. 축마다 지배 규약이
+      다르고, 합치면 어느 하나를 반드시 어긴다.
+      `APP_NAME='DQA Connect'`(사람) · `SCHEME='dqa-connect'`(머신 전역) ·
+      `APP_ID='com.masangsoft.dqa-connect'`(역-DNS: macOS 번들 id · Linux `.desktop` 파일명).
+      ⚠ **스킴을 `dqa` 로 줄이지 않은 것은 보안 판단이다** — 이 URL 에 세션 베어러 토큰이
+      실리고(`dqa-connect://start?token=mat_…`), 스킴은 마지막 등록자가 이기는 머신 전역
+      네임스페이스다. `DQA` 는 흔한 약어라 브랜드 한정 없이 쓰면 **살아 있는 토큰이 남의 앱으로
+      간다**. 반대로 **MCP 키는 짧게**(`dqa`) — 사용자 자기 CLI 설정 안의 로컬 키라 전역 충돌이
+      없고 대신 모든 도구 이름에서 매번 읽힌다(`mcp__dqa__execute_sql`). 비대칭은 의도다.
+- [x] **③ 정본 신설 `shared/dqa_identity.py`** — 웹 두 라우터가 import. 러너
+      (`agent/base.py` `_APP_SLUG`/`_HOME_DIRNAME`)와 설치 스크립트 두 벌은 각자 상단 블록에
+      같은 값을 두고 **테스트가 대조**한다(러너·MCP 서버는 stdlib-only 계약이라 import 하지
+      않는다 — 예외를 두되 검사 밖으로 내보내지 않는다).
+- [x] **④ 개명 표면 전량** — 설치 홈 `~/.dqa-connect` · 스킴 `dqa-connect://` ·
+      Windows `HKCU\Software\Classes\dqa-connect` · Linux `com.masangsoft.dqa-connect.desktop`
+      + `x-scheme-handler/dqa-connect` · macOS `DQAConnect.app`(번들 id 역-DNS) ·
+      UA `dqa-connect-{agent,launch,setup}` · MCP self-name `dqa-tools-{a,b,http}` ·
+      `mcpServers` 키 `dqa`.
+- [x] **⑤ 옛 설치 잔재 정리** (하위호환 아님 — 위생). 재실행이 옛 홈·옛 핸들러 등록을
+      **지운다**. 남기면 죽은 핸들러가 옛 홈의 러너를 되살려 두 러너가 같은 계정으로 대기하는
+      상태가 되는데, 이 feature 가 이미 겪은 사고다(`TASK-20260901T173000-stale-runner-yield`).
+      파괴적 연산 계약(AGENTS.md §16.3 (a)): 대상 **명시 계산** + 우리 설치물 표지
+      (`bridge_agent.py`/`launch.*`) 확인 + `BRIDGE_HOME` 을 옛 경로로 명시한 사용자는 불가침.
+      **순서도 계약** — 새 러너가 실제로 뜬 뒤에만 지운다.
+- [x] **⑥ 부수 정리** — 루트 `bridge_setup.sh` 제거. 정본(`unit/…/src/`)과 **md5 불일치
+      stale 사본**인데 추적 중이었고, 참조처는 0이었다(빌드·서빙·테스트 전부 정본/생성물을 본다).
+
+### 검증
+
+- [x] 신규 `tests/test_name_ssot.py` **21건** — 값 동일성(정본·러너·설치 2벌·MCP 2벌) +
+      **배선 도달**(세 OS 등록 지점) + 하드 컷오버 계약(옛 이름이 등록 경로에 없음) +
+      **정리 로직을 실제로 `sh` 로 돌리는 행위 테스트 4건**.
+- [x] ⭐ **자체 감사로 실 결함 1건 발견·수정 — 끝 슬래시 하나가 사용자 데이터를 지웠다.**
+      정리 가드가 `"$DQA_LEGACY_HOME" != "$BRIDGE_HOME"` **문자열 비교**였다. 그래서
+      `BRIDGE_HOME=~/.mysql-ai-bridge/`(끝 슬래시)로 **옛 이름을 계속 쓰겠다고 명시한**
+      사용자는 `!=` 가 참이 되어 자기 **현행 홈이 삭제 대상**이 됐다 — 그 선택이 데이터
+      삭제로 처벌받는 형태다. `norm_path()`(끝 슬래시 제거 + `realpath -m`) 신설로 양측을
+      정규화 후 비교하고, Windows 판도 `[IO.Path]::GetFullPath` + `TrimEnd` 로 동형 교정.
+      회귀 잠금 2건(끝 슬래시 · `..` 경유)을 **행위 테스트로** 추가했다.
+- [x] ⭐ **rebase 가 모수 밖 신규 경로를 드러냈다 (§16.7 G12 실측).** 위 테스트를 다 쓴 뒤
+      `origin/main` 으로 rebase 하니 그 사이 **`unit/feature-0046-native-client/`(ITEM-08
+      네이티브 클라이언트)** 가 착륙해 있었고 그 `core.py` 가 **옛 홈을 그대로** 쓰고 있었다.
+      손으로 나열한 모수 밖이라 내 테스트는 **전부 초록**이었다 — 가드가 성실히 통과하면서
+      노출면 결손을 통과시키는, G12 가 기술한 그 상태다. 모수를 **저장소 조회**(`git grep`)로
+      재정의해 나중에 붙는 경로가 자동으로 들어오게 했다. 함께 흡수: 클라이언트 홈·`prog`·
+      `_APP_NAME`·패키지 docstring.
+- [x] **codex 적대 리뷰 1라운드** (`REV-20260903T120000`) — P1 2건 · P2 4건 제기.
+      - **P1-1 경로 문자열 비교** → 자체 감사와 **독립 수렴**(이미 수정됨). 다만 codex 가 더
+        지적한 「이름만 같은 파일에 속는다」는 **미해소였다** → 표지를 이름이 아니라 **내용**
+        으로 확인하도록 강화(`grep -q "BRIDGE_TOKEN"`).
+      - **P1-2 커스텀 홈 재실행 파손** → **신규·유효**. 굽힌 `launch.sh` 가 기본값
+        `$HOME/.<scheme>` 을 쓰는데 OS 핸들러는 `BRIDGE_HOME` 을 전달하지 않아, 커스텀 홈
+        사용자의 `[내 AI 실행]` 이 **무음 실패**한다. **설치 시점 유효 홈을 bake** 하도록 수정.
+        ⚠ 이 결함은 **선재**다 — 개명 전엔 기본값이 우연히 옛 경로와 같아 그 사용자만 안
+        깨졌을 뿐 다른 커스텀 홈은 내내 깨져 있었다. 개명이 그것을 드러냈다.
+      - **P2-1 heredoc UA 미전개** → **실측으로 반증**. 바깥 `LAUNCHEOF` 가 unquoted 라
+        설치 시점에 전개되어 굽힌 파일엔 `dqa-connect-launch` 가 들어간다(렌더 확인). 그
+        반증을 테스트로 잠갔다 — 바깥 heredoc 을 quoted 로 바꾸면 즉시 FAIL.
+      - **P2-2 CLI 안내가 옛 MCP 키** → **신규·유효**. JSON 은 `dqa` 인데 안내문은
+        `claude mcp add … mysql-ai` 였다(두 경로가 다른 도구 이름을 만든다). 정본 파생으로 수정.
+      - **P2-3 legacy 검사에 데이터흐름 없음** → 인정. 2줄로 쪼개면 우회 가능하다. 대신
+        `git grep` 전수 조회 + 등록 지점 **양성** 단언으로 덮었다(완전한 taint 분석은 범위 밖).
+      - **P2-4 cleanup 이 문자열만 검사** → 이미 해소(행위 테스트). codex 는 이전 스냅샷을 봤다.
+      - **토큰 URL 위협모델** → 타당한 지적. 개명이 노출을 없애지 않는다. 「`dqa` 가 더 충돌
+        가능성 높다」는 **추측**임을 문서에 명시하도록 교정했다.
+- [x] ⭐ **codex 대응 중 내가 놓친 것 1건 추가 발견** — 웹이 서빙하는 클라이언트 파일명
+      (`_CLIENT_REL = "agent/mysql-ai-client.exe"`)과 빌드 산출물명이 갈려 있었다. 내가
+      `_APP_NAME` 만 바꿨다면 **배포는 성공하고 다운로드만 404** 가 됐을 것이다(러너 배포본이
+      이미 겪은 형태). 양쪽을 묶는 테스트 추가.
+- [x] **결함 주입 20종 전건 KILL** (§16.7 G11-b) — 명칭 드리프트 10종 + 정리 가드 3종
+      (POSIX 정규화 제거 · 설치물 표지 검사 제거 · Windows 정규화 제거). ⭐ 1차에서 **M7 생존** — 「옛 이름이 쓰인
+      줄에 `LEGACY` 가 있어야 한다」로 썼는데 옛 이름을 담은 변수가 `DQA_LEGACY_SCHEME` 이라
+      **그 변수를 등록에 쓰면 검사를 그대로 통과**했다(항진명제). 검사축을 이름 부분문자열 →
+      **등록 동사**(`xdg-mime default`·`MimeType=`·`New-ItemProperty`·`CFBundleURLSchemes`…)로
+      내려 재주입 3종 KILL. ⚠ 그 다음 라운드는 **baseline 이 `1 error`** 였다(내 docstring 편집이
+      테스트 파일을 깨뜨림) — 그 상태의 KILL 은 전부 무의미해서 고치고 재실행했다.
+- [x] **테스트 하네스 회귀 3종 자체 적발·수정** — 개명이 스크립트에 변수를 도입하자
+      ① 조각을 떼어 `sh` 로 돌리는 하네스가 `parameter not set` 으로 죽었고(15건이 «테스트
+      실패» 로 위장), ② `compose_launch_commands` slice-exec 이 `_ident` 미주입으로 `NameError`,
+      ③ ps1 다운로더 추출기가 **작은따옴표 줄만** 걷어 보간용으로 바꾼 줄을 조용히 누락했다.
+      → ①은 `tests/_setup_slice.py` 신설로 **정본에서 명칭 대입을 떼어 와** 붙인다(값을 하네스가
+      지어내면 그 순간 검사가 정본을 안 보게 된다). ③은 `test_l5` 가 추출 루프를 **복제**하고
+      있어 한쪽만 고쳐진 것이라 복제를 없애고 공용 추출기로 합쳤다(§16.7 G10).
+- [x] 회귀 대조 — feature-0043·0041 합본 실패 **14건**, feature-0003 **7건**: 두 집합 모두
+      `main`(base `c7e23a68`)과 **완전히 동일**(차집합 0). 격리 실행은 양쪽 PASS = 선재
+      순서의존. **py3.11 컨테이너**에서도 같은 14건(로컬 py3.12 와 동일 집합) — 신규 실패 0.
+- [x] ruff 2건 — worktree·main 동일(선재).
+- [x] 빌드 생성물 재생성(`build_bridge_agent.py` 2 경로) — 서빙본에 새 이름 도달 확인,
+      잔여 옛 이름은 **명칭 블록의 `LEGACY_*` 와 이력 주석뿐**.
+- [ ] **라이브 미검증** — 실제 OS 핸들러 재등록·옛 잔재 삭제는 사용자 머신에서 setup 을
+      재실행해야 관측된다. 배포 후 PB-0008 로 연결 화면·`[내 AI 실행]` 딥링크 문자열까지는
+      확인하되, **OS 등록 실물과 macOS 경로는 이 cycle 에서 미실측**으로 남긴다.
+
+### 알려진 대가 (숨기지 않는다)
+
+**하드 컷오버라 기존 설치 사용자는 setup 재실행 전까지 `[내 AI 실행]` 버튼이 무반응**이다.
+브라우저는 스킴 핸들러 부재를 감지하지 못하므로 폴백을 배선할 수 없다(이 파일 §3-a 의
+2026-08-31 실측이 같은 형태). MCP 를 쓰던 사용자는 `mcpServers` 키 교체 + `mcp__mysql-ai__*`
+도구 권한 **재승인**이 필요하다. 사용자 결정(2026-09-03)으로 이 비용을 택했다 — 별칭을 남기면
+두 스킴이 각각 러너를 띄울 수 있게 되어 stale-runner 사고 표면이 되살아난다.
+
+
+## Cycle — TASK-20260903T190000 퍼널 ActionCode 감사 빌더 등재 (ITEM-00 라이브 실측 후속)
+
+- [x] 라이브 실측: 배포 후 `ai.connect.funnel` 행 **0건** 확인 → 원인 추적
+- [x] 원인: `build_audit_change_json` 은 **명시적 allowlist** 인데 미등재 → `ValueError` →
+      `_audit_user_action` 의 fail-open 이 삼켜 **증상 없이 계측만 소실**
+- [x] `_audit_infra.build_audit_change_json` 에 `ai.connect.funnel` 분기 등재
+- [x] `tests/test_funnel_audit_action.py` 9건 — **진짜 빌더를 호출**(더블 없이)
+- [x] 뮤테이션 3종 KILL (원 결함 재현 포함)
+- [x] 기존 격차 8건 발견·문서화(KNOWN_GAPS) — 별 cycle 대상
+- [x] origin/main 병합 (드라이버, §16.4 검증 + 회귀 재실행)
+- [x] 배포 후 라이브 적재 재확인 — 2026-09-03 실측 4행(heartbeat 2·page_view 1·handoff 1), ROADMAP §10.1
+## Cycle — TASK-20260903T180000 화면의 「준비됨」을 「답할 수 있음」으로
+
+- [x] 근본 축 전환 — 「하트비트 살아있음」 → 「답할 수 있음」(같은 부류 4회 반복의 뿌리)
+- [x] 전 구간 배선: fast-path 스키마 → 저장(throttle 없음) → 읽기(tri-state) → 하트비트
+      수신 → `connect_status` 노출 → 칩 「답할 수 없음」 + 사유 + 모달 성공 판정 제외
+- [x] tri-state 접힘 금지 4지점 · 낡음 판정 갈래 불가침
+- [x] 신규 12건 + 뮤테이션 8종 전건 KILL(I7 죽은 가드 1차 생존 → 조건절 단정으로 닫음)
+- [x] feature-0003 + 0043 컨테이너 FAILED 0
+- [ ] **「모른다」 창** — 협상 중 질문이 200초 침묵(사용자 실측 보고). 「확인 중」 제3상태 +
+      호출 즉시 진행 표시. **이월(미구현) — 갈음하지 않는다**
+
+## Cycle — TASK-20260903T150000 `.ps1` 파싱 회귀 + 검사 커버리지 확장 (개명 후속)
+
+- [x] **회귀 수정** — `Say "… ($DqaScheme://)."` → `${DqaScheme}://`. PowerShell 이 `$Var:` 를
+      네임스페이스 한정 변수로 읽어 **파일 전체가 파싱 불가**였다. CI `test` job 이 잡았다.
+- [x] ⭐ **왜 로컬을 통과했나 — 검사가 skip 됐다.** 파서 검사가 `shutil.which("pwsh")` 로만
+      게이트돼 이 WSL 환경에서 **항상 skip**. 같은 머신에 Windows `pwsh.exe` 실물이 있는데
+      쓰지 않고 있었다. 「테스트가 있다」 ≠ 「테스트가 돈다」.
+- [x] **환경 확보** — `_pwsh()` 가 WSL interop 경로도 탐색하고 `wslpath -w` 로 인자 변환.
+      실측: 이 축이 skip → **로컬 실행·PASS** 로 바뀌었다.
+- [x] **구조 가드** (§16.7 G10) — `pwsh` **없이도** 도는 정적 검사로 `.ps1` 의 `$Var:` 를 잡는다.
+      스킴은 늘 `://` 를 달고 다니므로 재발이 예정된 클래스다.
+- [x] **재주입 실증** — CI 가 잡은 그 회귀를 그대로 되살리면 **두 게이트 모두 FAIL**,
+      복원 후 23건 PASS.
+- [x] ⭐ **Windows 축의 빈 자리를 채웠다** — 설치 스크립트 **자신**만 파싱하고, 그것이 굽는
+      `launch.ps1` 은 아무도 파싱하지 않았다(POSIX 는 `test_launcher_ca_pin` 이 굽힌 `launch.sh`
+      를 실제로 실행하는데 Windows 만 없었다). 굽힌 파일이 깨지면 `[내 AI 실행]` 이 **무음**으로
+      죽는다. `test_generated_launch_ps1_parses` 신설 — 주입 실증에서 **바깥은 파싱되는데
+      생성물만 깨지는** 형태를 잡았다(기존 테스트로는 원리적으로 불가).
+      ⚠ 초판은 here-string 을 **손으로 치환**했다가 두 번 틀렸다(코드 자리에 문자열 스텁 ·
+      `` `$ `` 이스케이프 미처리). **굽는 규칙의 정본은 셸**이므로 PowerShell 에게 굽게 했다 —
+      POSIX 축이 `sh` 에게 heredoc 을 맡기는 것과 같은 이유.
+- [x] **POST-DEPLOY 대조 완료** (배포 `c08047f8`) — 배포 전 baseline 과 대조: 딥링크 스킴
+      `mysql-ai-bridge` → **`dqa-connect`** · 응답 본문 `mysql-ai` 4 → **0** · `dqa-connect`
+      0 → **2** · CLI 안내 MCP 키 **`dqa`**. 서빙 실물(setup 2벌·러너)의 옛 이름 잔여는
+      **정리 대상 변수·이력 주석뿐**이고 등록 경로엔 0. 무중단 실측 `no upstreams available`
+      **0건** · 전 서비스 동일 SHA · 대화 스모크 PASS.
+- [ ] **여전히 미검증** — 실 OS 핸들러 재등록·옛 잔재 삭제는 사용자 머신 setup 재실행 후에만
+      관측된다(이 검증이 덮은 것은 «서버가 무엇을 발행하는가» 까지). macOS 경로 실측 수단 없음.
+### POST-DEPLOY — TASK-20260903T180000 (배포 8da226b5)
+
+- [x] 배선 증거 — `connect_status.ai_ready` 키 **부재→존재** · fast-path ALTER 가 실제
+      운영 DB 에 컬럼 생성 확인
+- [x] **실 Windows 브라우저**: 칩 「답할 수 없음」 `state=off` + 사유가 `title` 에 도달
+- [x] **대조군**: 같은 토큰에서 AI 응답성만 바꿔 「대기 중」 `state=on` 복귀 — 인과 증명
+- [x] tri-state 무회귀(구 토큰 `NULL`, 러너 없는 계정 `null` → 종전 상태 유지)
+- [x] 검증 흔적 정리(러너 0 · 가짜 AI 삭제 · 테스트 토큰 폐기, 사용자 계정 불가침)
+- [ ] 「모른다」 창(협상 중 200초 침묵) — **미구현 이월 유지**

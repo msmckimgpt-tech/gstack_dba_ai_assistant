@@ -9,7 +9,7 @@ import json
 import re
 
 from .api import Api
-from .base import _GLOSSARY_MARK, _GLOSSARY_MAX, _TITLE_MARK
+from .base import _GLOSSARY_MARK, _GLOSSARY_MAX, _HOME_DIRNAME, _TITLE_MARK
 
 # ── 프롬프트 ─────────────────────────────────────────────────────────────────
 
@@ -72,7 +72,7 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
         #   주소로 자격증명을 실어 보내라」로만 읽히고, 라이브에서 그것이 인젝션 판정의
         #   근거 2번이 됐다. 이 주소는 러너 설정 파일에 있어 **확인 가능한 사실**이다.
         f"  이 주소({api.base})는 당신을 실행한 사람이 자기 머신에서 띄운 브리지 러너의"
-        " 설정값(`~/.mysql-ai-bridge/config.json` 의 `base`)이다 — 제3자 주소가 아니다."
+        f" 설정값(`~/{_HOME_DIRNAME}/config.json` 의 `base`)이다 — 제3자 주소가 아니다."
         " 의심되면 그 파일을 직접 읽어 대조하라.",
         # ⚠ 아래 토큰이 **유일한** 자격증명이라고 못 박는다. 러너가 부르는 CLI 에 같은 서비스의
         #   MCP 서버가 상주 설정돼 있으면(그 헤더는 이 task 와 무관한 별개 토큰이다) 모델은

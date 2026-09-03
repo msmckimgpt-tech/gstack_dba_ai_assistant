@@ -4317,7 +4317,16 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
   2. 보장 등급을 `at-least-once` → **`best-effort(0..N)`** 로 정정 (주장이 코드보다 넓었다)
 - 소비 계약: 행이 아니라 `COUNT(DISTINCT ResourceId)` 로 센다 (`dedupe_key_of` 가 코드면).
 - 잔여: 라이브 적재 실측 미수행.
-
+## CHG-20260903T160000-ai-claude-connect-guidance — 연결 단계 체크리스트 + 클라이언트 우선 안내
+- Timestamp: 2026-09-03T16:00:00+09:00
+- 신설: `routers/_connect_steps.py` · `tests/test_connect_guidance.py`
+- 확장: `connect_status`(steps·summary·client_download) · `ai-connect.{html,js}` · `_no_ai_message`
+- **라이브 검증이 적발한 결함 2건 수정**:
+  1. `ai_tools.bridge_heartbeat` 가 존재하지 않는 `account` 를 퍼널에 넘겨 `NameError` →
+     fail-open 이 삼켜 **`first_heartbeat` 가 한 번도 기록되지 않았다**(ITEM-00 회귀, main 반영분).
+     `ctx.get("account") or {"id": account_id}` 로 교정 + **인자 해석 검사** 테스트 신설.
+  2. `oauth_as` 의 `_reported_caps` 가 조건부 블록 안에서만 대입돼 그 분기를 안 탄 요청에서
+     `NameError` → `/api/ai/connect/status` **500**. 선언 초기화로 교정.
 ## CHG-20260903T140000 — 응답하지 않는 AI 를 영원히 기다리던 구조를 닫는다
 
 **계기**: 사용자 지적 — *"모델을 탐색하는데 실패했다는 사실이 알려지지 않고 영원히 기다리게
@@ -4360,6 +4369,176 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
 **함께 관측(별 cycle)**: 자동 갱신 `try_self_update` 가 발동하지 않는다 — 러너 지문
 `d69d7da6928a` vs 배포본 `4669f0192526` 인데 `stale_build`·self-update 사건 **0건**.
 
+## CHG-20260903T170000-ai-claude-connect-guidance-merge — origin/main 병합 (append-doc 드라이버)
+- Timestamp: 2026-09-03T17:00:00+09:00
+- 병렬 세션이 feature-0043 을 먼저 랜딩해 PR 이 DIRTY. 충돌은 append-only 문서 4건뿐이었고
+  §13.1 머지 드라이버(`bin/setup-git-parallel.sh`)로 잔여 충돌 0 으로 해소.
+- §16.4 대로 **양측 부모 대비 검증** + **병합 후 회귀 재실행**(신규 실패 0). 상세는 REVIEW.
+## CHG-20260903T120000-ai-claude-corp-runner-name-dqa-connect — 러너 명칭을 제품과 정합화
+
+**무엇** — 개인 머신 클라이언트의 이름을 `mysql-ai-bridge` → **`dqa-connect`**(제품명
+`DQA Connect`)로 바꾸고, 흩어져 있던 21곳 리터럴을 정본 1곳 + 대조 테스트로 대체한다.
+사용자 결정: 범위 = 러너 식별자 + MCP 도구 표면 · 하위호환 = **하드 컷오버**.
+
+**왜 `dqa-connect` 인가** — 옛 이름은 두 축에서 틀렸다: 제품명(`mysql-ai` ≠ DQA)과
+**추상화 수준**(`bridge` = 구현 형태). ROADMAP ITEM-08 이 그 형태를 네이티브 클라이언트로
+갈아치우면서 **스킴은 재사용**한다고 못박았으므로, 형태를 이름에 넣으면 그때 또 개명해야 한다.
+목적축(`connect`)은 웹이 이미 쓰는 어휘다(`/ai/connect`·`/api/ai/connect/*`·`ai-connect.html`).
+
+**변경 파일**
+
+- `shared/dqa_identity.py` **신규** — `APP_NAME`/`SCHEME`/`APP_ID`/`MCP_SERVER_KEY`/`LEGACY_*`
+  + `scheme_url()`. 문자열만 갖고 import 부작용 없음.
+- `unit/feature-0043-external-llm-bridge/src/bridge_setup.sh` — 상단 명칭 블록 신설, 홈·스킴·
+  핸들러 3종(Win 레지스트리 · Linux desktop+MimeType · macOS 번들)·UA·해제 안내를 참조로 전환.
+  `cleanup_legacy_install()` 신설(러너 기동 성공 후에만 호출).
+- `…/src/bridge_setup.ps1` — 동형. 명칭 블록 + 레지스트리 키 + 옛 홈·옛 키 정리.
+- `…/src/agent/base.py` — `_APP_NAME`/`_APP_SLUG`/`_HOME_DIRNAME` 신설, `_UA`·`_CONF_DIR` 파생.
+  `invoke.py`(작업 디렉토리)·`prompt.py`(프롬프트 문안)가 `_HOME_DIRNAME` 을 import.
+- `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py` — 딥링크를 `_ident.scheme_url(token)`
+  로, `mcpServers` 키를 `_ident.MCP_SERVER_KEY` 로. `ai_tools.py` 프롬프트 문안 동반.
+- `unit/feature-0041-external-ai-tool-surface/src/external_tool_mcp_{server,http}.py` —
+  self-name `dqa-tools-*`. stdlib-only 계약 유지 위해 import 대신 **테스트가 리터럴 대조**.
+- `bridge_setup.sh`(저장소 루트) **삭제** — 정본과 md5 불일치 stale 사본, 참조처 0.
+- 테스트: `tests/test_name_ssot.py` 신규 8건 · `tests/_setup_slice.py` 신규(조각 하네스 공용
+  부품) · 기존 단언 중 **살아 있는 계약분만** 새 값으로 교체하고 **이력 기록은 옛 값 보존**
+  (리터럴을 바꾸면 「있었던 일」이 거짓이 된다 — 주석으로 개명 사실만 병기).
+
+**옛 이름이 남는 곳 (의도)** — 명칭 블록의 `LEGACY_*`(정리 대상 식별) · 2026-08-31 실측 기록
+주석 · 테스트 이력 docstring. 그 외 0.
+
+**자체 감사 수정 1건 (같은 cycle 안)** — 정리 가드의 동일-경로 판정이 **문자열 비교**여서,
+`BRIDGE_HOME` 을 옛 경로에 **끝 슬래시 포함**으로 지정한 사용자의 **현행 홈**이 삭제 대상이
+됐다(`/h/.mysql-ai-bridge` != `/h/.mysql-ai-bridge/`). `norm_path()`(POSIX: 끝 슬래시 제거 +
+`realpath -m`) · `[IO.Path]::GetFullPath` + `TrimEnd`(Windows) 로 양측 정규화 후 비교하도록
+교정하고, 실제 `sh` 로 정리 함수를 돌리는 **행위 테스트 4건**으로 잠갔다(끝 슬래시 · `..` 경유 ·
+표지 없는 디렉토리 불가침 · 정상 경로 동작).
+
+**대가** — 기존 설치 사용자는 setup 재실행 전까지 `[내 AI 실행]` 무반응, MCP 도구 권한 재승인
+필요. 폴백 배선 불가(브라우저가 스킴 핸들러 부재를 감지하지 못함).
+
+
+## CHG-20260903T133000-ai-claude-corp-runner-name-followups — 개명 후속: 모수 확장 · codex 대응
+
+**① rebase 가 드러낸 모수 밖 경로 (§16.7 G12).** base 이후 `origin/main` 에 착륙한
+`unit/feature-0046-native-client/`(ITEM-08)가 **옛 홈을 그대로** 쓰고 있었는데, 손으로 나열한
+모수 밖이라 명칭 테스트가 전부 초록이었다. 모수를 **`git grep` 저장소 조회**로 재정의해 나중에
+붙는 경로가 자동으로 들어오게 하고, 클라이언트 4곳(홈·`prog`·`_APP_NAME`·docstring)을 흡수했다.
+
+**② codex 적대 리뷰 대응** (REV-20260903T120000 참조):
+- `bridge_setup.sh` — 굽힌 `launch.sh` 에 **설치 시점 유효 홈 bake**(P1-2, 선재 결함).
+  OS 핸들러가 `BRIDGE_HOME` 을 전달하지 않아 커스텀 홈 사용자의 재실행이 무음 실패했다.
+- `bridge_setup.sh` — 옛 설치물 표지를 **이름이 아니라 내용**으로 확인(P1-1 잔여분).
+- `oauth_as.py` — CLI 안내의 MCP 키를 `_ident.MCP_SERVER_KEY` 파생으로(P2-2).
+- `shared/dqa_identity.py` — 「`dqa` 가 충돌 가능성이 더 높다」를 **추측으로 표기**(정직성).
+
+**③ 자체 발견** — `oauth_as.py` `_CLIENT_REL` 이 `agent/mysql-ai-client.exe` 인데 빌드
+산출물명과 갈려 있었다. `_APP_NAME` 만 바꿨다면 **배포 성공 + 다운로드 404**. 양쪽을 묶었다.
+
+**테스트** — `test_name_ssot.py` 12 → **21건**(모수 조회 2 · launch bake 3 · UA 반증 1 ·
+MCP 키 1 · 파일명 1 · lookalike 1 추가). 결함 주입 **20종 전건 KILL**.
+
+
+## CHG-20260903T190000-ai-claude-funnel-audit-action — 퍼널 ActionCode 를 감사 빌더에 등재
+- Timestamp: 2026-09-03T19:00:00+09:00
+- `routers/_audit_infra.py`: `ai.connect.funnel` 분기 추가(`{step, path_kind}` 만).
+- `tests/test_funnel_audit_action.py` 신설 — 더블 없이 **진짜 빌더**를 호출한다.
+- 부수 발견: 같은 함정에 빠진 기존 ActionCode **8건**(KNOWN_GAPS). 각 change_json 모양은
+  기능 소유자가 정해야 하므로 임의 등재하지 않고 분리했다.
+## CHG-20260903T180000 — 화면의 「준비됨」을 「답할 수 있음」으로 옮긴다
+
+**계기**: 사용자 지적 — *"claude 재인증이 필요하다면 … DQA 에서는 정상 상태가 아니라 미연결
+상태로 나타나야 합니다"* · *"거짓이 반복되고 있어 개선이 필요합니다"*.
+
+**근본**: 이 세션의 결함 네 건이 모두 같은 부류였다 — 화면이 성립하지 않는 상태를 「성립한다」고
+말한다. 축이 **「답할 수 있음」이 아니라 「하트비트 살아있음」**이었기 때문이다. 그리고
+`CHG-20260903T140000` 은 러너가 `ai_ready` 를 신고하게만 하고 **서버가 읽지 않았다**(절반 배선).
+
+**변경(전 구간)**: `_bootstrap_schema` fast-path ALTER 2컬럼(tri-state NULL) ·
+`oauth_store.set_runner_ai_health`(throttle 없음) + `account_ai_health`(tri-state) ·
+`ai_tools.bridge_heartbeat` 수신·저장 · `oauth_as.connect_status` 노출(접지 않음) ·
+`connect-modal.js` 칩 「답할 수 없음」 + 사유 + 모달 성공 판정 제외.
+`tests/test_ai_ready_surfaced.py` 신규 12건.
+
+**뮤테이션 8종 전건 KILL** — I7(죽은 가드 `&& false`)이 1차 생존해 조건절 단정으로 좁혔다.
+초판이 낡음 판정 갈래를 침범해 기존 계약 테스트가 잡았고, 그 자리를 새 테스트로도 잠갔다.
+
+**이월(미구현)**: 「모른다」(협상 진행 중)를 여전히 준비됨으로 렌더한다 → 러너 재기동 직후
+첫 질문은 라이브 실측 **200초 침묵**. 사용자가 실제로 겪은 경로이며 갈음하지 않는다.
+
+## CHG-20260903T150000-ai-claude-corp-ps1-scheme-colon-parse — `.ps1` 파싱 회귀 + 검사 커버리지 확장
+
+**무엇이 깨졌나** — `Say "… ($DqaScheme://)."` 한 줄이 `bridge_setup.ps1` **전체를 파싱 불가**로
+만들었다. PowerShell 은 `$Name:` 를 네임스페이스 한정 변수(`$env:PATH` 형태)로 읽는다. 스킴
+문자열은 **늘 `://` 를 달고 다니므로** 이 자리는 구조적으로 재발한다. → `${DqaScheme}://`.
+
+**왜 로컬을 통과했나** — 파서 검사가 `shutil.which("pwsh")` 로만 게이트돼 이 개발 환경(WSL,
+Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pwsh.exe` 실물이 있는데
+쓰지 않고 있었다. → `_pwsh()` 가 WSL interop 경로도 찾고 `wslpath -w` 로 인자를 변환한다.
+이제 이 축이 **로컬에서도 돈다**(실측: skip → 실행·PASS).
+
+**구조 가드 추가** (§16.7 G10) — `test_name_ssot.py` 가 `.ps1` 의 `$Var:` 형태를 `pwsh` 없이
+정적으로 잡는다. 재주입 실증: CI 가 잡은 그 회귀를 그대로 되살리면 **두 게이트 모두 FAIL**.
+
+
+## CHG-20260903T193000-ai-claude-funnel-audit-merge — origin/main 병합
+- Timestamp: 2026-09-03T19:30:00+09:00
+- 병렬 세션(`ai-ready-surfaced`)이 먼저 랜딩해 PR DIRTY. append-doc 드라이버로 충돌 0.
+- §16.4 양측 부모 대비 검증(3문서 모두 양측 이상 + 양측 항목 이름 실재) + 병합 후 회귀
+  재실행(실패 7 = 기준선, 신규 0).
+
+## CHG-20260903T160000-ai-claude-corp-generated-launch-ps1-gate — 굽힌 `launch.ps1` 파싱 게이트 신설
+
+설치 스크립트 **자신**만 파싱하고, 그것이 here-string 으로 굽는 `launch.ps1` 은 어떤 게이트에도
+걸리지 않았다 — POSIX 축은 굽힌 `launch.sh` 를 실제로 실행하는 테스트가 여럿인데 Windows 축만
+비어 있었고, 그 비대칭이 「파싱 테스트가 있다」는 초록 뒤에 있었다. 굽힌 파일이 깨지면
+`[내 AI 실행]` 이 **무음으로** 죽는다.
+
+`test_generated_launch_ps1_parses` 신설 — **PowerShell 에게 굽게 한 뒤** 파서에 건다.
+⚠ 초판은 here-string 을 손으로 치환했다가 2회 거짓 양성을 자작했다(코드 자리에 문자열 스텁 ·
+`` `$ `` 이스케이프 미처리). 굽는 규칙의 정본은 셸이다 — POSIX 축이 `sh` 에게 heredoc 을
+맡기는 것과 같은 이유.
+
+주입 실증: here-string 안 `$Var://` → 이 게이트만 FAIL(바깥 파일은 계속 파싱된다).
+
+
+## CHG-20260903T203000-ai-claude-funnel-live-verified — ITEM-00 라이브 적재 실측 기록
+- Timestamp: 2026-09-03T20:30:00+09:00
+- 코드 변경 없음(docs only). 배포 이미지 `85b6f9bb` 에서 `WebAuditEvents` 실측:
+  `first_heartbeat` 2 / `page_view` 1 / `handoff_issued` 1, DISTINCT ResourceId = 총행수 = 4.
+- ROADMAP §10.1 에 결과와 **두 겹 결함(보내는 쪽 NameError → 받는 쪽 허용목록 누락)** 기록.
+- ROADMAP §10.2 에 클라이언트 배포 채널 미해결 기록 — 라이브 `client_download` = null 실측.
+
+## CHG-20260903T170000-ai-claude-corp-runner-name-postdeploy — POST-DEPLOY 대조 증적
+
+배포 `c08047f8` 후 배포 **전** baseline 과 대조(두 점 측정 — 한 점만 재면 「원래 그랬는지」와
+구별되지 않는다): 딥링크 스킴 `mysql-ai-bridge` → **`dqa-connect`**, 응답 본문 `mysql-ai`
+4 → **0**, `dqa-connect` 0 → **2**, CLI 안내 MCP 키 **`dqa`**. 서빙 실물 3종의 옛 이름 잔여는
+정리 대상 변수·이력 주석뿐(등록 경로 0). 무중단 실측 0건 · 전 서비스 동일 SHA.
+
+미검증 유지: 실 OS 핸들러 등록·옛 잔재 삭제(사용자 머신 setup 재실행 필요) · macOS 경로.
+## CHG-20260903T190000-ai-claude-corp-feature-0043-ai-ready-postdeploy — 연결 칩 「답할 수 없음」 POST-DEPLOY 실측 (문서 전용)
+
+`CHG-20260903T180000` 의 배포 후 검증. 배포 `8da226b5`. 직전 fragment 는 `PARTIAL` 이었다 —
+새 상태의 입력이 이 cycle 이 추가한 서버 컬럼이라 배포 전에는 원리적으로 재현 불가였다.
+
+**배선 증거(배포 전/후 대조)**: `connect_status` 의 `ai_ready` 키가 **부재 → 존재**,
+값은 `null`(모른다)로 tri-state 보존. `RunnerAiReady tinyint(1) NULL` 이 **실제 운영 DB 에
+생성** — fast-path ALTER 가 작동함을 실물 확인(`BridgeDefaultModel` 함정 회피 실증).
+
+**⭐ 인과 증명(대조군)**: 사용자 계정을 빌리지 않고 `bootstrap_admin` 에 조건을 구성했다 —
+가짜 AI 2종을 PATH 로 주입해 **같은 토큰에서 응답성만** 바꿨다.
+
+| 조건 | 러너 | 서버 | 실 브라우저 칩 |
+|---|---|---|---|
+| 응답 없음 | 협상 `TimeoutExpired` | `RunnerAiReady=0` + 사유 | **「답할 수 없음」** `state=off` |
+| 응답함(대조군) | 협상 성공 | `RunnerAiReady=1` | **「대기 중」** `state=on` |
+
+대조군이 없으면 「칩이 원래 그렇게 나오는 것」과 구분되지 않는다 — 이 세션에서 대조군 없이
+단정해 두 번 틀린 이력(「무중단」·「자동 갱신 미발동」)의 반영이다.
+
+검증 흔적 정리: 테스트 러너 0 · 가짜 AI 삭제 · 테스트 토큰 폐기(Id=238). 사용자 계정(10)의
+러너·토큰은 건드리지 않았다. 코드 변경 0.
 ## CHG-20260903T170000 — 「자동 갱신 미발동」은 오판이었다 (문서 정정, 코드 변경 0)
 
 `CHG-20260903T160000` 이 별개 결함으로 적은 「자동 갱신(`try_self_update`) 미발동」은

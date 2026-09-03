@@ -7,6 +7,7 @@
 라이브 실측으로 원인이 갈렸다:
 
   · Windows 레지스트리 `HKCU\\Software\\Classes\\mysql-ai-bridge` — **없음**
+    (당시 스킴 이름. 2026-09-03 `dqa-connect` 로 개명 — 아래 단언은 새 이름을 본다.)
   · WSL `~/.local/share/applications/mysql-ai-bridge.desktop` — **있음**
   · 러너는 WSL 안에 설치돼 정상 동작한 이력이 있고, 브라우저는 Windows
 
@@ -46,6 +47,8 @@ import os
 import subprocess
 import sys
 import textwrap
+
+import _setup_slice as _naming
 from pathlib import Path
 
 import pytest
@@ -136,6 +139,7 @@ def _run_register(tmp_path: Path, *, distro: str | None = "StubDistro",
         f'PATH="{bindir}:{extra_path or ""}:$PATH"\n'
         # `id` 를 대체해 사용자명을 고정한다 — 테스트가 도는 계정 이름에 좌우되지 않게.
         f'id() {{ printf "{user}"; }}\n'
+        + _naming.naming_block()
         + _slice_functions("is_wsl", "win_exe", "register_handler_windows")
         # ⚠ `LAUNCH_SH` 는 **env 로** 넘긴다 — 경로에 따옴표가 든 케이스(L9)를 스크립트에
         #   인라인 대입하면 하네스 자신이 문법 오류로 죽어 테스트가 결함을 못 본다.
@@ -170,7 +174,7 @@ def test_l1_wsl_registers_on_the_windows_side(tmp_path: Path):
     rc, why, cmdline = _run_register(tmp_path)
     assert rc == 0, f"Windows 등록이 실패했다: {why}"
     captured = (tmp_path / "captured.ps1").read_text(encoding="utf-8")
-    assert "HKCU:\\Software\\Classes\\mysql-ai-bridge" in captured, "HKCU 스킴 키를 만들지 않는다"
+    assert "HKCU:\\Software\\Classes\\dqa-connect" in captured, "HKCU 스킴 키를 만들지 않는다"
     assert "URL Protocol" in captured, "`URL Protocol` 값이 없으면 크롬이 스킴으로 인식하지 않는다"
     assert "wsl.exe" in cmdline, "핸들러가 WSL 러너를 되부르지 않는다"
 
@@ -251,7 +255,7 @@ def test_l5_failed_windows_registration_does_not_claim_success():
         'HANDLER_WIN_WHY="테스트 사유"\nHANDLER_WIN_DISTRO=""\n'
         "_handler_rc=3\n" + block
     )
-    proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", "-c", _naming.naming_block() + script], capture_output=True, text=True, timeout=30)
     out = proc.stdout
     assert "등록했습니다" not in out, f"실패했는데 등록 성공으로 안내한다:\n{out}"
     assert "테스트 사유" in out, f"실패 사유를 사용자에게 전달하지 않는다:\n{out}"
@@ -268,7 +272,7 @@ def test_l5b_windows_success_says_where_it_registered():
         '_handler_rc=0\nHANDLER_WIN="ok"\nHANDLER_LINUX="ok"\n'
         'HANDLER_WIN_WHY=""\nHANDLER_WIN_DISTRO="StubDistro"\n' + block
     )
-    proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["sh", "-c", _naming.naming_block() + script], capture_output=True, text=True, timeout=30)
     assert "Windows" in proc.stdout, f"어디에 등록했는지 말하지 않는다:\n{proc.stdout}"
     assert "StubDistro" in proc.stdout, f"어느 배포판을 띄우는지 말하지 않는다:\n{proc.stdout}"
 
@@ -300,9 +304,12 @@ def test_l7_launch_script_reports_bad_token_instead_of_vanishing(tmp_path: Path)
     body = (body.replace("$PY", "true").replace("$BRIDGE_BASE", "https://example.test")
                 .replace("$RUNNER_ARGS", "").replace("\\$", "$").replace("\\\\\n", "\n"))
     script = tmp_path / "launch.sh"
-    script.write_text(body)
+    # 굽지 않고 heredoc **본문을 그대로** 돌리는 경로. bake 된 기본값이 `$BRIDGE_HOME`
+    # 을 참조하므로(codex P1-2) 여기서도 세워 준다 — 실 실행에서는 설치가 세워 준 값이다.
+    script.write_text(_naming.naming_block()
+                      + f'BRIDGE_HOME="{tmp_path}/home/.dqa-connect"\n' + body)
     script.chmod(0o755)
-    proc = subprocess.run(["sh", str(script), "mysql-ai-bridge://start?token=NOT_A_MAT_TOKEN"],
+    proc = subprocess.run(["sh", str(script), "dqa-connect://start?token=NOT_A_MAT_TOKEN"],
                           capture_output=True, text=True, timeout=25)
     assert proc.returncode == 2, f"형식이 아닌 토큰을 걸러내지 못했다 (rc={proc.returncode})"
     assert "형식" in proc.stderr, f"무엇이 잘못됐는지 말하지 않는다: {proc.stderr!r}"
@@ -359,7 +366,7 @@ def test_l11_xdg_step_failures_are_not_swallowed():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         # 쓰기 대상 경로를 **디렉토리**로 만들어 `cat >` 를 실패시킨다.
-        (home / ".local" / "share" / "applications" / "mysql-ai-bridge.desktop").mkdir(parents=True)
+        (home / ".local" / "share" / "applications" / "com.masangsoft.dqa-connect.desktop").mkdir(parents=True)
         stub = home / "bin"
         stub.mkdir()
         (stub / "xdg-mime").write_text("#!/bin/sh\nexit 0\n")          # 이쪽은 성공시킨다
@@ -374,7 +381,7 @@ def test_l11_xdg_step_failures_are_not_swallowed():
             "run() {\n" + body + "\n}\nrun || true\n"
             'printf "HANDLER_LINUX=%s\\n" "$HANDLER_LINUX"\n'
         )
-        proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(["sh", "-c", _naming.naming_block() + script], capture_output=True, text=True, timeout=30)
         assert "HANDLER_LINUX=fail" in proc.stdout, (
             f"desktop 파일 쓰기가 실패했는데 등록 성공으로 처리했다:\n{proc.stdout}\n{proc.stderr}")
 
@@ -392,7 +399,10 @@ def _render_launch(tmp_path: Path) -> Path:
     out = tmp_path / "launch.sh"
     gen = tmp_path / "gen.sh"
     gen.write_text(
+        _naming.naming_block() +
         "set -eu\nPY=python3\nBRIDGE_BASE='https://example.test'\nRUNNER_ARGS=''\n"
+        # 굽힌 launch.sh 는 설치 시점 유효 홈을 bake 한다(codex P1-2) — 하네스도 준다.
+        f'BRIDGE_HOME="{tmp_path}/home/.dqa-connect"\n'
         f'LAUNCH_SH="{out}"\n'
         'cat > "$LAUNCH_SH" <<LAUNCHEOF\n' + blk + "\nLAUNCHEOF\n"
     )
@@ -404,7 +414,7 @@ def _render_launch(tmp_path: Path) -> Path:
 
 def _stub_runner(tmp_path: Path, resume_body: str) -> Path:
     """러너·pkill 스텁. `--check` 는 통과시키고 `--resume` 거동만 시나리오로 바꾼다."""
-    bh = tmp_path / "home" / ".mysql-ai-bridge"
+    bh = tmp_path / "home" / ".dqa-connect"
     bh.mkdir(parents=True, exist_ok=True)
     (bh / "bridge_agent.py").write_text("#!/bin/sh\nexit 0\n")
     (bh / "rootCA.crt").write_text("stub\n")
@@ -437,7 +447,7 @@ def test_l12_launcher_waits_until_the_runner_is_established(tmp_path: Path):
     launch = _render_launch(tmp_path)
     b = _stub_runner(tmp_path, 'sleep 2; echo "[bridge] AI = stub"; sleep 60; exit 0;')
     t0 = time.time()
-    proc = subprocess.run(["sh", str(launch), "mysql-ai-bridge://start/?token=mat_STUBTOKEN"],
+    proc = subprocess.run(["sh", str(launch), "dqa-connect://start/?token=mat_STUBTOKEN"],
                           capture_output=True, text=True, timeout=60,
                           env=dict(os.environ, HOME=str(tmp_path / "home"),
                                    PATH=f"{b}:{os.environ['PATH']}"))
@@ -452,7 +462,7 @@ def test_l13_launcher_reports_when_the_runner_dies(tmp_path: Path):
     """러너가 바로 죽으면 **그 사실을 말한다** — 조용히 성공으로 끝내지 않는다."""
     launch = _render_launch(tmp_path)
     b = _stub_runner(tmp_path, "exit 9;")
-    proc = subprocess.run(["sh", str(launch), "mysql-ai-bridge://start/?token=mat_STUBTOKEN"],
+    proc = subprocess.run(["sh", str(launch), "dqa-connect://start/?token=mat_STUBTOKEN"],
                           capture_output=True, text=True, timeout=60,
                           env=dict(os.environ, HOME=str(tmp_path / "home"),
                                    PATH=f"{b}:{os.environ['PATH']}"))
@@ -481,7 +491,7 @@ def test_l14_ps1_goes_to_a_windows_local_dir_not_a_wsl_unc_path(tmp_path: Path):
     assert rc == 0, f"등록 실패: {why}"
     used = (tmp_path / "captured.file").read_text(encoding="utf-8").strip()
     assert str(win_tmp) in used, f"PS1 을 Windows 로컬 폴더에 두지 않았다: {used!r}"
-    assert ".mysql-ai-bridge" not in used, f"WSL 홈(UNC 경로)에 두었다 — 80초 경로다: {used!r}"
+    assert ".dqa-connect" not in used, f"WSL 홈(UNC 경로)에 두었다 — 80초 경로다: {used!r}"
 
 
 def test_l15_windows_process_launches_are_minimised(tmp_path: Path):
@@ -513,7 +523,7 @@ def test_l16_logs_carry_a_timestamp():
     # 설치 로그: say/die/drop 정의 구간만 떼어 실제로 출력시킨다.
     defs = "\n".join(l for l in src.split("\n")
                      if l.startswith(("_ts()", "die()", "say()", "drop()")))
-    proc = subprocess.run(["sh", "-c", defs + '\nsay "러너 체크섬 일치."\n'],
+    proc = subprocess.run(["sh", "-c", _naming.naming_block() + defs + '\nsay "러너 체크섬 일치."\n'],
                           capture_output=True, text=True, timeout=20)
     assert re.search(r"\[bridge-setup \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]", proc.stdout), \
         f"설치 로그에 시각이 없다: {proc.stdout!r}"

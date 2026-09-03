@@ -194,7 +194,7 @@ def test_child_runs_in_a_neutral_workdir(monkeypatch, tmp_path):
                         (seen.update(cwd=cwd), (True, "a"))[1])
     monkeypatch.setenv("HOME", str(tmp_path))
     mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
-    assert seen["cwd"] == str(tmp_path / ".mysql-ai-bridge" / "work")
+    assert seen["cwd"] == str(tmp_path / ".dqa-connect" / "work")
     assert os.path.isdir(seen["cwd"])
 
 

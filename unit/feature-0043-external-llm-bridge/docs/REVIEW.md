@@ -4236,7 +4236,24 @@ main 0/1). 인과가 성립하지 않고 표본이 부족해 귀속을 단정하
 - 뮤테이션 **18종 전건 KILL** (배선 제거·멱등 제거·계정키 제거·OS매핑 반전·커서/커넥션 누수·토큰 적재·캐시 무력화·음성 캐시 등).
 - 회귀: 컨테이너 `PYTHONPATH` 재현 구성(feature-0003+0043+0041)에서 **기준선과 실패집합 동일**(기존 7건 = share redaction, 무관 / 신규 0). ⚠ 앞서 두 feature 를 한 번에 돌린 측정은 conftest 로드 실패로 **0건 수집**이었다 — vacuous 를 결과로 보고하지 않고 재측정했다.
 - Human Approval Needed: 아니오 (Minor · 비파괴 · 읽기 전용 분석 지표 · fail-open).
-
+## REV-20260903T160000-ai-claude-connect-guidance [SKIPPED:live-verified-ui] — ACCEPTED
+- Related TASK: TASK-20260903T160000 (ROADMAP ITEM-03 · ITEM-06)
+- Timestamp: 2026-09-03T16:00:00+09:00
+- **[SKIPPED] 사유**: 세션 상위지시로 AgentTool 금지 → §18.8.2-1 제약 없는 채널. 이 변경의 고유 위험은 「실제 화면에서 되는가」이고 그것은 **PB-0008 실 Windows 브라우저**로만 답해진다 — 검증 예산을 거기 썼고, 실제로 그것이 정적 리뷰가 못 잡을 결함 2건을 잡았다.
+- **⚠ 라이브 검증이 결함 2건을 적발했다 — 둘 다 단위 테스트가 green 인 채로 존재했다**:
+  1. **ITEM-00 회귀 (이미 main 에 있던 것)** — `bridge_heartbeat` 에는 `account` 가 없는데(토큰 컨텍스트 `ctx` 와 `account_id` 뿐) 퍼널 호출이 그것을 넘겨 `NameError` 가 났다. 퍼널의 **fail-open 이 그 예외를 삼켜** 아무 증상 없이 **`first_heartbeat` 가 한 번도 기록되지 않았다**. 라이브 로그(`하트비트 기록 실패 account=10: NameError`)에서야 드러났다.
+     - **왜 못 잡았나**: 내 배선 테스트가 `step="first_heartbeat"` **문자열 존재**만 봤다. 「호출부가 있는가」와 「인자가 해석되는가」는 다른 사실이다(`gate-hidden-call-test-blindspot` 과 같은 계열).
+     - **처방**: 각 `record_step` 호출의 인자 이름이 **그 함수 스코프에 실재하는지** AST 로 검사하는 테스트 신설. 원 결함을 뮤턴트로 재현해 **KILL 확인**.
+  2. **`_reported_caps` 미정의** — 조건부 블록 안에서만 대입되는 이름을 새 코드가 무조건 읽어 그 분기를 타지 않은 요청에서 `/api/ai/connect/status` 가 **500**. 브라우저가 받는 응답이 `Internal Server Error` 인 것을 보고 잡았다. 선언 초기화로 교정(`locals()` 조회 편법은 채택하지 않았다).
+- **적대 뮤테이션 12종 전건 KILL** — 단 **JS 검사 2종이 1차에 생존**했다: `"info.steps" in code` 가 `info.steps_summary` 에도 걸리고, `aic-hidden` 이 함수 안 다른 줄(`classList.remove`)에도 있어 **가드를 통째로 없애도 통과**했다. 검사를 속성 접근 형태·가드 3부품으로 좁힌 뒤 재실행해 KILL 확인. 느슨한 문자열 매칭이 만드는 vacuous pass 의 전형이다.
+- **PB-0008 실 Windows 브라우저 시각검증**: 라이브 web-a·web-b 에 변경분을 임시 주입(무접촉 미리보기)한 뒤 실 Chrome 으로 확인.
+  - 비로그인 — 체크리스트·클라이언트 섹션 **양쪽 숨김**(거짓 경보 없음)
+  - 로그인 — 요약 「연결 정보 발급 차례입니다」 + 4행(⏳) + 각 행 다음 행동. 스크린샷 확보
+  - `client_download: null` — 배포 채널이 없으므로 클라이언트 섹션 숨김, 종전 터미널 경로 유지(설계대로)
+  - 검증 후 **배포 이미지로 재생성해 원복**, healthz 200 확인
+- 회귀: 컨테이너 PYTHONPATH 재현 구성에서 **기준선과 실패집합 동일**(기존 7건, 신규 0).
+- **잔여**: 클라이언트 **배포 채널 없음** — 리눅스 도커 파이프라인은 Windows exe 를 만들 수 없다. 그 사실을 «없는 다운로드를 안내하지 않는다» 로 코드에 반영했고 화면이 정직하게 종전 경로를 보인다.
+- Human Approval Needed: 아니오 (Minor · 표시 축 · 비파괴).
 ## REV-20260903T140000-ai-claude-corp-feature-0043-ai-unusable-surfaced [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
 
 > **왜 SKIPPED**: 본 세션 지시가 사용자 명시 요청 없는 `Agent` 호출을 금지. 대체는 적대
@@ -4353,6 +4370,232 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 
 - **판정**: **APPROVED**.
 
+## REV-20260903T170000-ai-claude-connect-guidance-merge [SKIPPED:merge-verification] — ACCEPTED
+- Related TASK: TASK-20260903T160000 (병합)
+- Timestamp: 2026-09-03T17:00:00+09:00
+- `origin/main` 이 전진해 PR 이 **DIRTY** 가 됐다(병렬 세션이 feature-0043 을 먼저 랜딩 — `ai-unusable-surfaced` · `fast-fail-unhealthy`). 충돌은 **append-only 문서 4건**뿐이었다.
+- **§13.1 머지 드라이버로 해소**: `bin/setup-git-parallel.sh` 실행 후 `git merge origin/main` — 잔여 충돌 **0**. (세션 시작 시 이 스크립트를 돌렸어야 했는데 빠뜨렸다 — 규약대로 했으면 이 왕복이 없었다.)
+- **§16.4 양측 부모 대비 검증** — 자율 병합을 그냥 믿지 않는다:
+  | 문서 | 내쪽 | 상대 | 병합 | 판정 |
+  |---|---|---|---|---|
+  | FUNCTION | 124 | 125 | 126 | 양측 보존 |
+  | MODIFY | 385 | 386 | 387 | 양측 보존 |
+  | REVIEW | 389 | 401 | 402 | 양측 보존 |
+  | TASK | 130 | 131 | 132 | 양측 보존 |
+  섹션 수뿐 아니라 **양측의 이번 cycle 항목이 실재하는지**도 이름으로 확인했다(내 `P0-AG`·`CHG/REV-20260903T160000` · 상대 `ai-unusable-surfaced`·`fast-fail-unhealthy`).
+- **병합 후 회귀 재실행** — 상대 cycle 이 같은 파일(`ai_tools.py` 등)을 건드렸으므로 병합 전 결과를 재사용하지 않았다. 실패 7건 = 기존 `share_redaction`(무관), **신규 0**.
+- Human Approval Needed: 아니오.
+## REV-20260903T120000-ai-claude-corp-runner-name-dqa-connect [CODEX:runner-name-dqa-connect] — ACCEPTED-WITH-CHANGES
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: naming/scheme/credential-path 변경 — §18.8 상 security(토큰 실린 스킴)·backend·qa 대상
+- Timestamp: 2026-09-03T12:00:00+09:00
+- Verdict: PASS (codex 1R: P1 2건 · P2 4건 → 유효 4건 전건 수정 · 1건 반증 · 1건 범위 밖 명시)
+- Human Approval Needed: no (사용자가 범위·컷오버·명칭 위임을 이미 결정)
+
+**패널 채널 선택 근거 (§18.8.2)** — 본 세션에는 상위 우선순위 지시로 **Agent tool 사용 금지**가
+걸려 있다. §18.8.2 「상위 우선순위 지시 carve-out」에 따라 그 제약이 우선하므로 subagent 패널을
+호출하지 않았고, 제약 없는 채널로 가능한 검증을 수행한 뒤 미덮은 도메인을 명시한다.
+
+수행한 검증(제약 없는 채널):
+- **결함 주입 10종 전건 KILL** — 값 드리프트 5종 · 배선 누락 2종 · 컷오버 위반 2종 · 정리 가드
+  제거 1종. 1차에서 M7 생존 → 항진명제 교정 후 재주입 3종 KILL(§16.7 G11-b 실증).
+- **기계적 대조** — 변경 전후 실패집합을 `main` 과 차집합 비교(feature-0043·0041 14건,
+  feature-0003 7건 모두 차집합 0), py3.11 컨테이너 재현으로 동일 확인.
+- **파괴적 연산 감사** — `rm -rf`/`Remove-Item` 대상이 명시 계산되고, 우리 설치물 표지 확인 +
+  `BRIDGE_HOME` 명시 사용자 불가침 가드가 있으며, 성공 경로 뒤에만 실행됨을 테스트로 잠금.
+  ⭐ **이 감사가 실 결함 1건을 잡았다**: 불가침 가드가 문자열 비교라 끝 슬래시 하나로 무력화됐다
+  (`BRIDGE_HOME=~/.mysql-ai-bridge/` → 현행 홈이 삭제 대상). 경로 정규화로 교정하고 **행위
+  테스트**(소스 검사가 아니라 실제 `sh` 실행 + 디렉토리 잔존 확인)로 잠근 뒤 주입 3종 재확인.
+  소스 문자열 검사만 했다면 이 구멍을 못 봤을 것이다 — 검사 대상이 «가드가 있는가» 였고 결함은
+  «가드가 성립하는가» 였다.
+
+미덮은 도메인(정직 표기): 사람·모델에 의한 **설계 관점 리뷰**(security 렌즈의 스킴 하이재킹
+위협모델 재검토, ux 렌즈의 재설치 안내 문구)는 수행하지 않았다. 스킴 길이 결정의 근거는
+본 REVIEW 와 `shared/dqa_identity.py` docstring 에 남겨 다음 리뷰어가 검증할 수 있게 했다.
+
+**판단 근거 — 왜 별칭을 두지 않는가**: 별칭을 남기면 두 스킴이 각각 러너를 띄울 수 있고,
+그것은 `TASK-20260901T173000-stale-runner-yield` 가 닫은 「두 러너가 같은 계정으로 대기」
+표면의 부활이다. 사용자가 하드 컷오버를 택한 것과 정합하며, 대신 재실행 시 옛 잔재를 **지우는
+것**을 계약으로 넣었다.
+
+**남은 위험**: 라이브 OS 등록 실물 미검증(사용자 머신 setup 재실행 필요), macOS 경로는 이
+저장소에 실측 수단이 없어 미실측 — ROADMAP SPIKE-02 의 macOS 미실측 항목과 같은 성격이다.
+
+
+### codex 1라운드 처리 (REV-20260903T120000, `codex-cli 0.152.1` · read-only sandbox)
+
+| 지적 | 판정 | 처리 |
+|---|---|---|
+| P1-1 경로 문자열 비교로 현행 홈 삭제 | **유효 (독립 수렴)** | 자체 감사가 먼저 잡아 이미 수정됨. codex 가 덧붙인 「이름만 같은 파일 오인」은 **미해소였고** 표지를 내용 검사로 강화 |
+| P1-2 커스텀 홈 사용자의 재실행 무음 실패 | **유효·신규** | 굽힌 `launch.sh` 에 **설치 시점 유효 홈 bake**. ⚠ 선재 결함(개명이 드러냄) |
+| P2-1 heredoc UA 미전개 | **반증** | 바깥 `LAUNCHEOF` 가 unquoted → 렌더 실측 결과 `dqa-connect-launch` 정상. 반증을 테스트로 잠금 |
+| P2-2 CLI 안내가 옛 MCP 키 | **유효·신규** | `_ident.MCP_SERVER_KEY` 파생으로 수정 + 양 경로 동일성 테스트 |
+| P2-3 legacy 검사에 데이터흐름 없음 | **부분 인정** | 2줄 분할 우회는 실재. `git grep` 전수 + 등록 지점 양성 단언으로 덮되 **완전 taint 분석은 범위 밖**으로 명시 |
+| P2-4 cleanup 이 문자열만 검사 | **이미 해소** | codex 가 이전 스냅샷을 봤다. 행위 테스트 5건이 실제 `sh` 로 돌린다 |
+| 토큰 URL 위협모델 | **타당** | 개명은 노출을 없애지 않는다. 「`dqa` 충돌 가능성이 더 높다」는 **추측**임을 정본 docstring 에 명시 |
+
+**대응 중 자체 발견 1건**: 웹 서빙 파일명 `agent/mysql-ai-client.exe` 와 빌드 산출물명이
+갈려 있었다 — `_APP_NAME` 만 바꿨다면 **배포 성공 + 다운로드 404** 가 됐다. 양쪽을 묶는
+테스트를 추가했다(러너 배포본이 겪은 같은 클래스라 §16.7 G10 승격 대상).
+
+
+## REV-20260903T190000-ai-claude-funnel-audit-action [SKIPPED:live-root-cause-fix] — ACCEPTED
+- Related TASK: TASK-20260903T190000
+- Timestamp: 2026-09-03T19:00:00+09:00
+- **배포 후 라이브 실측이 「계측 0건」을 잡았다** — 로드맵이 ITEM-00 잔여로 못박아 둔 그 확인이다. 그것을 안 했으면 퍼널은 **영원히 빈 채로** 「측정 기반이 생겼다」고 믿었을 것이다.
+- **근본 원인**: `build_audit_change_json` 은 명시적 allowlist 이고 미등재 ActionCode 는 `ValueError` 로 죽는다. `_audit_user_action` 이 그것을 삼켜(fail-open) **증상이 전혀 없다**. 로그 문자열 `unknown audit action: ai.connect.funnel` 로 확정.
+- **왜 테스트가 못 잡았나 — 가짜 더블이 계약을 우회했다**: `test_connect_funnel.py` 는 `app._audit_user_action` 을 stub 으로 갈아끼운다. 그 더블은 「내가 부른다」만 검사하고 **「받는 쪽이 받아 준다」를 검사하지 않는다.** 호출 형태가 맞아도 수신자가 거부하면 아무것도 남지 않는데, 더블은 항상 받아 준다. → 신규 스위트는 **진짜 빌더를 호출**한다.
+- **자기 결함 2건(진단 중)**:
+  1. 라이브 컨테이너에 진단 로그를 주입하다 **재시작 루프**를 유발했다. 즉시 배포 이미지로 재생성해 복구(healthz 200, 주입 흔적 0). **운영 서비스에 임시 코드를 넣는 진단은 마지막 수단이어야 한다** — 이번엔 로그 grep 대상(`Phase A6`)을 처음부터 넓게 잡았으면 불필요했다.
+  2. 처음 grep 을 `[connect-funnel]` 로만 걸어 **감사 헬퍼의 실패 메시지를 놓쳤다.** 내 모듈의 로그만 보고 「호출이 안 된다」고 오판했다 — 실패는 **받는 쪽**에서 났다.
+- **census 모수를 두 번 좁혔다**: ① `record_audit_event` 호출까지 세어 27건을 «미등재» 로 오보고(그쪽은 change_json 을 호출자가 만들어 빌더를 안 탄다) ② `action=` 리터럴만 세어 **정작 이 결함을 낸 호출(`action=FUNNEL_ACTION` 상수 참조)을 놓쳤다** — 자기검증 단언(`assert "ai.connect.funnel" in seen`)이 그것을 잡았다. 검사에 자기검증을 넣지 않았으면 «전부 통과» 로 끝났을 것이다.
+- **기존 격차 8건**(attachment.assistant.create · attachment.version.create · conversation.member.{ban,fork_blocked,join,join_blocked,remove,unban}): 빌더가 거부하므로 호출되면 감사가 사라진다. 라이브 로그에는 아직 없는데 **그 경로가 최근 실행되지 않았기 때문이지 괜찮아서가 아니다**. 각 change_json 모양은 기능 소유자 소관이라 임의 등재하지 않고 `KNOWN_GAPS` 로 명시 + 「목록이 줄면 면제도 줄여라」 단언을 함께 걸었다(낡은 면제가 다음 결함을 숨기지 않게).
+- 뮤테이션 3종 KILL (등재 제거 = **원 결함 재현** → 8건 실패 · 민감값 통과 · allowlist 정책 무력화).
+- Human Approval Needed: 아니오.
+## REV-20260903T180000-ai-claude-corp-feature-0043-ai-ready-surfaced [SKIPPED:tool-restricted:adversarial-subagent] — APPROVED
+
+> **왜 SKIPPED**: 세션 지시가 사용자 명시 요청 없는 `Agent` 호출 금지. 대체는 뮤테이션 8종.
+
+### 렌즈 1 — 사용자가 «반복되는 거짓» 이라 이름 붙인 것이 맞다
+
+이 세션에서 고친 결함 네 건이 **한 축의 증상**이었다: 화면의 「준비됨」이 「답할 수 있음」이
+아니라 「하트비트 살아있음」에서 파생된다. 나는 매번 **그 회차의 표면만** 고쳤고(예외 문자열
+제거 → 침묵 제거 → 대기시간 단축), 축은 그대로 뒀다. 그래서 다음 형태로 계속 나왔다.
+
+사용자 지적이 그 패턴을 명명해 준 덕에 축을 바꿨다. 교훈: **같은 부류가 세 번 나오면 개별
+수정을 멈추고 파생 축을 본다.**
+
+### 렌즈 2 — 내가 절반만 배선해 두었다
+
+`CHG-20260903T140000` 은 러너가 `ai_ready` 를 신고하게 만들고 **소비자를 만들지 않았다**
+(실측: `ai_ready` 가 빌드 산출물에만 존재, 서버 코드에 0건). 「신고하게 했다」를 「해소했다」로
+보고한 것이 그 cycle 의 과오다 — 생산자만 있고 소비자가 없으면 사용자에게 도달하는 것은 0 이다.
+
+### 렌즈 3 — tri-state 를 세 번째로 지켰다
+
+`None`(모른다)을 `false` 로 접으면 구 러너 사용자 전원이 미연결로 보인다. `RunnerBuild` 축이
+이미 그 함정에 빠져 멀쩡한 사용자에게 「재설치하세요」를 보낸 이력이 있다. 저장·읽기·응답·
+화면 **네 지점 모두**에서 접힘을 금지했고 뮤테이션 I2·I3·I4·I5·I6 이 각각을 지킨다.
+
+### 렌즈 4 — 남이 세운 불변식이 내 변경을 막았다
+
+초판은 AI 건강 조회를 **낡음 판정 갈래 안**에 넣었고,
+`test_staleness_predicate_has_exactly_one_home` 이 즉시 잡았다 — 그 갈래는 「판정 호출이 자기
+갈래의 마지막」이어야 한다(뒤에 오는 값이 판정을 덮는 fail-open 방지). 그 계약을 몰랐던
+내 변경이 그 테스트 덕에 배포 전에 걸렸고, 같은 자리를 이 cycle 의 테스트로도 잠갔다.
+
+### 렌즈 5 — I7: 죽은 가드가 1차에 생존
+
+`aiReady === false && false` 로 분기를 **영영 실행되지 않게** 만들어도 「문자열 존재」·「위치」
+단정은 통과했다. 이 세션에서 구조 단정이 행위를 못 잡은 다섯 번째 사례다(M1·M5·G3·G8·I7).
+조건절을 정확히 잠그고 갈래의 문구 대입까지 보도록 좁혀 닫았다.
+
+⚠ **정직한 한계**: 그래도 구조 단정이다. 더 강한 형태는 node 하네스로 `_paintConn` 을 실제
+호출해 `textContent` 를 확인하는 것이며, 그 부재를 테스트 주석에 명시했다.
+
+### 렌즈 6 — 이월을 갈음하지 않는다
+
+「모른다」(협상 진행 중)는 여전히 준비됨으로 렌더된다 → 러너 재기동 직후 첫 질문은 라이브
+실측 **200초 침묵**. 사용자가 실제로 겪고 보고한 경로다. 이 cycle 은 **협상이 끝난 뒤**의
+거짓만 닫으며, 그 사실을 §6 에 그대로 적었다.
+
+- **판정**: **APPROVED**. 다음: 「확인 중」 제3상태 + 호출 즉시 진행 표시.
+
+## REV-20260903T150000-ai-claude-corp-ps1-scheme-colon-parse [SKIPPED:tool-restricted:backend+qa] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: `.ps1` 파싱 회귀 (CI `test` job FAILURE) — 코드 수정 1줄 + 테스트 커버리지 확장
+- Timestamp: 2026-09-03T15:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**무엇을 배웠나 — 검사가 도는 환경이 커버리지의 일부다.** 이 회귀는 코드가 어려워서가 아니라
+**검사가 그 환경에서 skip 됐기 때문에** 통과했다. `shutil.which("pwsh")` 게이트가 WSL 개발
+환경에서 항상 거짓이었고, 같은 머신에 Windows `pwsh.exe` 실물이 있는데 쓰지 않았다. 「테스트가
+있다」와 「테스트가 돈다」는 다르다(§16.7 G14-e 의 환경 축 변형).
+
+조치는 둘로 나눴다 — ① 그 환경을 확보(`_pwsh()` 가 WSL interop 도 탐색, 실측 skip→PASS)
+② `pwsh` **없이도** 도는 정적 구조 가드 추가(§16.7 G10 — 스킴이 늘 `://` 를 달고 다녀 재발이
+예정된 클래스). 하나만으로는 부족하다: ①은 이 머신에 pwsh 가 있을 때만, ②는 파싱 실패의
+다른 형태를 못 본다.
+
+**검증**: CI 가 잡은 회귀를 그대로 재주입 → **두 게이트 모두 FAIL**, 복원 후 23건 PASS.
+Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주입 + 실 파서 실행)으로 대체했다.
+
+
+## REV-20260903T193000-ai-claude-funnel-audit-merge [SKIPPED:merge-verification] — ACCEPTED
+- Timestamp: 2026-09-03T19:30:00+09:00
+- 병합 검증은 CHG-20260903T193000 참조. 자율 병합을 그냥 믿지 않고 양측 부모 대비 + 회귀 재실행.
+- ⚠ 이 cycle 중 **머지 전에 배포를 돌렸다** — main 이 그 사이 전진했고 cycle-finalize 가
+  `mergeable=UNKNOWN` 으로 중단했는데, 그 사실을 확인하기 전에 `deploy-web` 을 실행했다.
+  결과적으로 **내 수정이 빠진 main 을 배포**했다(무해했으나 순서가 틀렸다). 배포는 머지
+  완료를 **확인한 뒤**에 한다 — §16.3 의 cycle-final 순서(머지 → 배포)가 그것을 말한다.
+
+## REV-20260903T160000-ai-claude-corp-generated-launch-ps1-gate [SKIPPED:tool-restricted:qa] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 검사면 공백 — 굽힌 `launch.ps1` 이 어떤 게이트에도 걸리지 않았다
+- Timestamp: 2026-09-03T16:00:00+09:00
+- Verdict: PASS · Human Approval Needed: no
+
+**왜 이 자리가 비어 있었나.** POSIX 축은 굽힌 `launch.sh` 를 **실제로 실행**하는 테스트가
+여럿인데(`test_launcher_ca_pin`), Windows 축은 설치 스크립트 **자신**만 파싱했다. 두 축이
+비대칭인 줄 아무도 몰랐던 이유는, 그 비대칭이 **초록 뒤에 있었기** 때문이다 — Windows 축도
+「파싱 테스트가 있다」로 보였다.
+
+**초판이 두 번 틀린 것을 기록한다.** here-string 을 손으로 치환했더니 ① 코드 자리
+(`$BakedArgsLiteral`)에 문자열 스텁을 넣어 구문 오류를 **자작**했고 ② `` `$ `` 이스케이프를
+처리하지 않아 또 실패했다. 두 번 다 「굽힌 파일이 깨졌다」는 **거짓 양성**이라, 그대로 뒀으면
+이 테스트는 무엇도 검사하지 않으면서 빨간불만 냈을 것이다. → 굽는 일을 PowerShell 에게 넘겼다
+(POSIX 축이 `sh` 에게 heredoc 을 맡기는 것과 같은 이유: **굽는 규칙의 정본은 셸이다**).
+
+**검증**: here-string 안에 `$Var://` 를 주입 → 이 게이트만 FAIL(바깥 파일은 계속 파싱됨 =
+기존 `test_windows_installer_parses` 는 원리적으로 못 잡는 자리). 복원 후 PASS.
+
+
+## REV-20260903T203000-ai-claude-funnel-live-verified [SKIPPED:docs-only] — ACCEPTED
+- Timestamp: 2026-09-03T20:30:00+09:00
+- 문서만 바뀌므로 코드 리뷰 대상 없음. 대신 **기록한 숫자가 실측인지**를 자기검증했다 —
+  4행 전부를 `ChangeJson` 단위로 조회해 표를 채웠고, `client_download: null` 은 라이브
+  `/api/ai/connect/status` 응답에서 직접 읽었다(추정 아님).
+- 남긴 미확인 항목을 숨기지 않았다: `first_claim`·`first_answer` 실적재 0.
+
+## REV-20260903T170000-ai-claude-corp-runner-name-postdeploy [SKIPPED:non-policy-doc] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 배포 증적 기록만 — 코드 변경 0, 라우트·권한·스키마 무변경
+- Timestamp: 2026-09-03T17:00:00+09:00 · Verdict: PASS · Human Approval Needed: no
+
+배포 전/후 **두 점 측정**으로 이 cycle 이 실제로 값을 바꿨음을 관측했다. 서빙 실물까지
+대조해 「소스는 고쳤는데 배포본은 구버전」 축도 닫았다. 남은 미검증(사용자 머신 OS 등록·
+macOS)은 이 저장소에서 원리적으로 관측할 수 없는 범위이며 그대로 표기한다.
+## REV-20260903T190000-ai-claude-corp-feature-0043-ai-ready-postdeploy [SKIPPED:doc-only] — APPROVED
+
+문서 전용(코드·설정 diff 0). 직전 항의 `PARTIAL` 을 실측으로 승격한다.
+
+### 이 Run 의 load-bearing 요소는 대조군이다
+
+「답할 수 없음」이 화면에 떴다는 관측만으로는 **그 표시가 이 배선의 결과임을 증명하지 못한다** —
+칩이 원래 그 상태였을 수도 있다. 그래서 같은 계정·같은 토큰에서 **AI 의 응답성만** 바꿔
+양방향 전이(0↔1, off↔on)를 관측했다. 이 세션에서 대조군 없이 단정해 두 번 틀렸으므로
+(「무중단」·「자동 갱신 미발동」) 그 실패를 검증 설계에 반영한 것이다.
+
+### 사용자 계정을 빌리지 않은 것도 설계다
+
+문제의 러너는 `admin`(10) 소유이고 브라우저 세션은 `bootstrap_admin`(1)이다. 그 계정의
+자격증명으로 로그인하는 대신 **테스트 계정에 조건을 구성**했다 — DB 컬럼을 손으로 채우는
+대신 러너→서버→화면 전 경로를 실제로 통과시켰으므로 **배선이 진짜로 이어졌는지**가 증명된다
+(값을 주입하면 「저장·노출·렌더」만 보이고 「러너가 그것을 신고하는가」는 미검증으로 남는다).
+
+### 정직하게 남긴 것
+
+- **「모른다」 창은 검증 대상이 아니다** — 미구현 축이고, 재기동 직후 첫 질문 200초 침묵은
+  그대로 남아 있다(`TASK-20260903T180000` §6). 이 Run 을 근거로 「해소」라 말하지 않는다.
+- 사용자 계정(10)의 실제 화면은 보지 않았다 — 같은 코드 경로가 §2 로 실증됐다는 것까지가
+  이 Run 이 말할 수 있는 범위다.
+
+- **판정**: **APPROVED**. 다음: 「확인 중」 제3상태 + 호출 즉시 진행 표시.
 ## REV-20260903T170000-ai-claude-corp-feature-0043-selfupdate-claim-correction [SKIPPED:doc-only] — APPROVED
 
 문서 전용 정정(코드·설정 diff 0). 직전 항이 **사실이 아닌 결함을 기록**했으므로 그것을 고친다.
