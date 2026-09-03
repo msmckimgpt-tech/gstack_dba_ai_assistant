@@ -5660,3 +5660,36 @@ Task-Cycle: feature-0003-agent-web-ui
 - 재발·반증 명시 4건 + 미검증 고지 9건(`summary`·`detail` 양쪽).
 - Verification: `node --check` PASS · `verify_release_notes.mjs` **34/0 = 편집 전 baseline 동일(회귀 0)** · 구조 실측 · 누출 스캔 47패턴 0건.
 - Files: `static/release-notes-data.js`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/FUNCTION.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+
+## CHG-20260903T210000-ai-claude-corp-feature-0003-conn-chip-css-scope — 연결 칩 CSS 가 dark-mode 블록에 갇혀 있었다
+
+### 무엇이 깨져 있었나
+
+`static/css/search-audit.css` 의 `@media (prefers-color-scheme: dark)` 블록에 **닫는 `}` 가
+없었다.** CSS 파서는 그 뒤의 모든 규칙을 그 블록 안으로 넣는다:
+
+```css
+@media (prefers-color-scheme: dark) {
+  .ai-conn[data-state="on"]  { … }
+  .ai-conn[data-state="off"] { … }
+                                    ← `}` 가 여기 있어야 했다
+.ai-conn[data-state="idle"]  { … }  ← 이하 전부 dark-mode 전용이 됐다
+.ai-conn[data-state="stale"] { … }
+.ai-conn[data-state="checking"] { … }
+```
+
+**선재 결함이다** — 「확인 중」이 들어오기 전부터 `idle`·`stale` 칩이 라이트 모드에서
+무스타일이었다(색 상속 검정 · 배경 투명 · `::before` 표지 없음).
+
+### 어떻게 적발됐나
+
+실 Windows 브라우저 + `getComputedStyle`. 문자열 검사로는 원리적으로 불가능했다 —
+규칙은 **파일에 있었다.** 브라우저의 파싱된 스타일시트를 재귀 순회해 `checking` 셀렉터가
+**0개**임을 확인하고, 마지막 파싱 규칙이 그 `@media` 임을 읽어 지점을 특정했다.
+
+### 검증
+
+- 신규 9건. 판정축은 「무조건(중괄호 깊이 0) 규칙이 있는가」다 — dark-mode 덮어쓰기 자체는
+  정당하므로 「깊이>0 이면 결함」으로 잡으면 **항진 검사**가 된다(초판에서 실제로 그렇게
+  걸렸고, 그 자리에서 축을 바로잡았다).
+- ⭐ **결손 재주입**: 닫는 `}` 제거 → 신규 **5 failed** / 직전 cycle 문자열 검사 **19 passed**.

@@ -13065,3 +13065,23 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] `node --check` PASS · `verify_release_notes.mjs` 34/0(편집 전 baseline 동일 = 회귀 0)
 - [x] 누출 스캔 47패턴 0건 + 인용 UI 문구 `static/` grep 실측
 - [ ] 라이브 서빙 확인 — wrapper 소유(post-merge 배포 후 `?v=` content-hash 재주입 · committed ≠ serving)
+
+## TASK-20260903T210000 — 연결 칩 CSS 가 dark-mode 블록에 갇혀 있었다
+
+직전 cycle(TASK-20260903T200000)의 **실 Windows 브라우저 실측**에서 새 「확인 중」 칩이
+스타일 없이 그려졌다 — `getComputedStyle`: `color: rgb(0,0,0)` · `background: rgba(0,0,0,0)` ·
+`::before content: none`. 파일에는 규칙이 분명히 있었다.
+
+- [x] **원인 규명** — `@media (prefers-color-scheme: dark)` 의 **닫는 `}` 누락**. 그 뒤 모든
+      칩 규칙이 그 블록으로 삼켜졌다. 브라우저 파싱의 마지막 규칙이
+      `@media (prefers-color-scheme: dark) { .ai-conn[data-state="on"] …` 였다.
+- [x] **선재 결함 확인** — 「확인 중」이 들어오기 **전부터** `idle`(대기 안 함)·
+      `stale`(업데이트 필요) 칩이 **라이트 모드에서 무스타일**이었다. 그 두 상태의 주석은
+      「'연결됨' 과 뭉치면 헛되이 기다리게 된다」·「초록(정상)과는 확실히 갈라야 한다」고
+      적혀 있었고, 그 구분이 주간 화면에서는 성립하지 않았다.
+- [x] **수정** — 닫는 `}` 복원 + 재발 방지 사유 주석.
+- [x] **테스트 9건 신설** — 중괄호 균형 · 각 칩 상태의 **무조건 규칙** 존재 ·
+      CSS 모수와 `_paintConn` 대입 값의 1:1 · 「확인 중」 색이 정상과 다름.
+- [x] **결손 재주입 검증** — 닫는 `}` 를 다시 지웠을 때 신규 테스트 **5 failed**,
+      직전 cycle 의 문자열 검사 테스트는 **19 passed**(눈이 없었다).
+- [x] 실 브라우저 재측정 — 배포 후 `getComputedStyle` 로 확인.

@@ -7252,3 +7252,30 @@ Verdict: PASS (정본 판정에 종속).
 - **문면 규약**: feature-id·테이블명·함수명·파일명 노출 0건. 인용한 UI 문구는 `static/` grep 으로 실제 렌더 경로 실측 확인했고, 실측에 실패한 초안 2건은 반증돼 교체·삭제했다.
 - **cache-buster**: 수기 bump 없음(**4창 연속 동일 판정**). 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며 `bin/deploy-web.sh` ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정하므로, 수기 실값은 규약 위반에 그치지 않고 배포 안전장치를 무력화한다. 이 run 의 cron wrapper 지시문도 조건 없이 bump 를 지시했으나 따르지 않았다 — 소유자 정정 대상.
 - **landing/배포 소유권**: 무인 cron wrapper v3 — 본 skill 은 로컬 commit 까지만. push·main ff-merge·web 배포·헬스체크는 wrapper 소유. **서빙 static 변경이 있으므로 wrapper 의 post-merge 배포가 반드시 수행돼야** 사용자가 새 블록을 본다(committed ≠ serving).
+
+
+## REV-20260903T210000-ai-claude-corp-feature-0003-conn-chip-css-scope [SKIPPED:tool-restricted:adversarial-subagent] — ACCEPTED
+
+- Related TASK: TASK-20260903T210000 · Timestamp: 2026-09-03T21:00:00+09:00
+- Verdict: PASS · Human Approval Needed: no
+- Reason: 본 세션은 `Agent` 서브에이전트 호출이 사용자 명시 요청 없이는 금지된다. 대신
+  **결손 재주입**(닫는 `}` 제거)으로 「테스트가 이 결함을 실제로 잡는가」를 직접 관측했다.
+
+### 이 cycle 이 스스로에 대해 배운 것
+
+직전 cycle 의 `test_checking_state_has_its_own_style_and_is_not_green` 는 **파일 텍스트에
+규칙이 있는지**만 봤다. 있었다. 그래서 초록이었고, 화면은 무스타일이었다 — 이 저장소가
+반복해 만든 「방어를 넣었다 ≠ 방어가 성립한다」 부류다. 실 렌더 실측이 그 간극을 열었고,
+이제 정적 축(중괄호 깊이)이 커밋 시점에 같은 형태를 잡는다.
+
+초판 판정축은 **항진 검사**였다 — 「`@media` 안에 칩 규칙이 있으면 결함」으로 짰더니
+정당한 dark-mode 덮어쓰기 5건이 전부 결함으로 신고됐다. 축을 「무조건 규칙이 있는가」로
+바로잡았다. 조치 방향을 뒤집는 그 형태를 이 저장소에서 여러 번 만들었으므로 기록한다.
+
+### 남긴 미검증
+
+- 이 검사는 **정적**이다. 실제 캐스케이드(더 구체적인 셀렉터가 덮는 경우)는 잡지 못한다 —
+  그 축은 PB-0008 실 렌더 실측이 담당하며, 이 cycle 도 그것으로 적발했다.
+- `search-audit.css` 의 **다른** 컴포넌트에도 같은 형태가 있는지는 보지 않았다.
+  중괄호 균형 검사가 파일 전체를 보므로 「블록 미닫힘」 형태는 전부 걸리지만,
+  「기본 규칙 없이 조건부만」 축은 `.ai-conn` 에만 적용된다.
