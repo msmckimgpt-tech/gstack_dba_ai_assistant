@@ -464,3 +464,28 @@ def test_cleanup_refuses_a_lookalike_file_with_our_name_but_not_our_content(tmp_
     assert r.returncode == 0, r.stderr
     assert (home / ".mysql-ai-bridge" / "important.db").exists(), (
         "이름만 같은 남의 디렉토리를 지웠다 — 남의 데이터가 사라진다")
+
+
+def test_powershell_never_interpolates_a_scheme_variable_before_a_colon():
+    """`.ps1` 에서 `"$Var://"` 형태를 금지한다 — **파싱 자체가 실패**한다.
+
+    PowerShell 은 `$Name:` 를 네임스페이스 한정 변수(`$env:PATH` 형태)로 읽는다. 스킴 문자열은
+    **늘 `://` 를 달고 다니므로** 이 자리는 구조적으로 재발한다 — 실제로 개명 cycle 에서
+    `Say "… ($DqaScheme://)."` 한 줄이 `.ps1` 전체를 파싱 불가로 만들었고, **로컬은 `pwsh`
+    미설치로 skip 되어 CI 에서야 잡혔다**. `${Var}` 로 감싸야 한다.
+
+    이 단언은 `pwsh` 없이도 도는 것이 요점이다(§16.7 G10 — 재발 클래스를 구조로 잠근다).
+    """
+    import re as _re
+
+    bad = []
+    for path in (SETUP_PS,):
+        for lineno, line in enumerate(_read(path).splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            # `$env:` 등 의도된 네임스페이스 한정자는 제외하고, 우리 변수 뒤의 `:` 만 본다.
+            for m in _re.finditer(r"\$(?!env\b|global\b|script\b|local\b|using\b)"
+                                  r"([A-Za-z_][A-Za-z0-9_]*):", line):
+                bad.append(f"{path.name}:{lineno} ${m.group(1)}: → ${{{m.group(1)}}} 로 감쌀 것 "
+                           f"| {line.strip()[:100]}")
+    assert not bad, "PowerShell 변수 뒤 ':' — 파싱 실패한다:\n  " + "\n  ".join(bad)

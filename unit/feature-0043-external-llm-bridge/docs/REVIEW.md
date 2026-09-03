@@ -4486,3 +4486,25 @@ H7(협상 실패 신고 제거) · H8(하트비트 신고 제거) — **전건 K
 거짓만 닫으며, 그 사실을 §6 에 그대로 적었다.
 
 - **판정**: **APPROVED**. 다음: 「확인 중」 제3상태 + 호출 즉시 진행 표시.
+
+
+## REV-20260903T150000-ai-claude-corp-ps1-scheme-colon-parse [SKIPPED:tool-restricted:backend+qa] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: `.ps1` 파싱 회귀 (CI `test` job FAILURE) — 코드 수정 1줄 + 테스트 커버리지 확장
+- Timestamp: 2026-09-03T15:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**무엇을 배웠나 — 검사가 도는 환경이 커버리지의 일부다.** 이 회귀는 코드가 어려워서가 아니라
+**검사가 그 환경에서 skip 됐기 때문에** 통과했다. `shutil.which("pwsh")` 게이트가 WSL 개발
+환경에서 항상 거짓이었고, 같은 머신에 Windows `pwsh.exe` 실물이 있는데 쓰지 않았다. 「테스트가
+있다」와 「테스트가 돈다」는 다르다(§16.7 G14-e 의 환경 축 변형).
+
+조치는 둘로 나눴다 — ① 그 환경을 확보(`_pwsh()` 가 WSL interop 도 탐색, 실측 skip→PASS)
+② `pwsh` **없이도** 도는 정적 구조 가드 추가(§16.7 G10 — 스킴이 늘 `://` 를 달고 다녀 재발이
+예정된 클래스). 하나만으로는 부족하다: ①은 이 머신에 pwsh 가 있을 때만, ②는 파싱 실패의
+다른 형태를 못 본다.
+
+**검증**: CI 가 잡은 회귀를 그대로 재주입 → **두 게이트 모두 FAIL**, 복원 후 23건 PASS.
+Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주입 + 실 파서 실행)으로 대체했다.

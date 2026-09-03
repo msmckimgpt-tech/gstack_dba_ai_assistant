@@ -687,7 +687,10 @@ try {
   New-Item -Path "$key\shell\open\command" -Force | Out-Null
   Set-ItemProperty -Path "$key\shell\open\command" -Name '(Default)' `
     -Value "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$LaunchPs`" `"%1`""
-  Say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 ($DqaScheme://)."
+  # ⚠ `${}` 로 감싼다. `"$DqaScheme://"` 는 PowerShell 이 `$DqaScheme:` 를 **네임스페이스 한정
+  #   변수**(`$env:PATH` 형태)로 읽어 **파싱 자체가 실패**한다 — 스킴 문자열이 늘 `://` 를
+  #   달고 다니므로 이 자리에서 구조적으로 재발한다. (CI `pwsh` 파싱 게이트가 잡았다.)
+  Say "웹 [내 AI 실행] 버튼용 핸들러를 등록했습니다 (${DqaScheme}://)."
 } catch {
   # 등록 실패는 연결을 막지 않는다 — 러너는 아래에서 그대로 뜬다. 다만 버튼이 안 되는 사실은
   # 말해야 한다(조용히 실패하면 사용자가 버튼을 눌러 보고 고장으로 읽는다).

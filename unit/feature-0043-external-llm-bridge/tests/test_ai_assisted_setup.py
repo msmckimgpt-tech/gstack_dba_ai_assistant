@@ -477,7 +477,34 @@ def test_generated_registration_ps1_gets_a_bom():
     assert i_bom < i_here, "BOM 을 본문 뒤에 썼다 — 선두가 아니면 효과가 없다"
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="pwsh 미설치 — 파서 검사 생략")
+def _ps_path_for(exe: str | None) -> str:
+    """Windows pwsh.exe 는 WSL 경로를 읽지 못한다 — 그 경우에만 `wslpath -w` 로 바꾼다."""
+    if exe and exe.endswith(".exe"):
+        r = subprocess.run(["wslpath", "-w", str(_SETUP_PS1)], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    return str(_SETUP_PS1)
+
+
+def _pwsh() -> str | None:
+    """`pwsh` 실행 파일. WSL 이면 **Windows 쪽 pwsh.exe 도 찾는다**.
+
+    ⚠ 이 확장은 실측에서 나왔다. 종전엔 `shutil.which("pwsh")` 만 봐서 이 개발 환경(WSL,
+    Linux pwsh 미설치)에서는 **항상 skip** 됐고, 그 결과 `.ps1` 을 파싱 불가로 만드는 회귀가
+    로컬 전 검증을 통과해 **CI 에서야** 잡혔다(2026-09-03 개명 cycle). 검사가 도는 환경을
+    넓히는 것이 그 왕복을 없애는 유일한 방법이다 — 같은 머신에 실물이 있는데 안 쓰고 있었다.
+    """
+    found = shutil.which("pwsh")
+    if found:
+        return found
+    for cand in ("/mnt/c/Program Files/PowerShell/7/pwsh.exe",
+                 "/mnt/c/Program Files (x86)/PowerShell/7/pwsh.exe"):
+        if os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
+@pytest.mark.skipif(_pwsh() is None, reason="pwsh 미설치(Windows interop 포함) — 파서 검사 생략")
 def test_windows_installer_parses():
     """ps1 이 실제로 파싱된다(문법 회귀 방지).
 
@@ -485,9 +512,9 @@ def test_windows_installer_parses():
     5.1 에서 깨지는» 클래스는 여기서 안 잡힌다 — 그 축은 위 `..._keeps_a_utf8_bom` 이 본다.
     """
     proc = subprocess.run(
-        ["pwsh", "-NoProfile", "-Command",
+        [_pwsh(), "-NoProfile", "-Command",
          f"$e=$null;[System.Management.Automation.Language.Parser]::ParseFile("
-         f"'{_SETUP_PS1}',[ref]$null,[ref]$e)|Out-Null;if($e){{exit 1}}"],
+         f"'{_ps_path_for(_pwsh())}',[ref]$null,[ref]$e)|Out-Null;if($e){{exit 1}}"],
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr
 
