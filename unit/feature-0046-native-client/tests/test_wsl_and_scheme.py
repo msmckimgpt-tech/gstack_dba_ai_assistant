@@ -34,6 +34,23 @@ sys.path.insert(0, str(_SRC))
 from client import core  # noqa: E402
 
 
+def _canon(key: str) -> str:
+    """명칭 정본(`shared/dqa_identity.py`)에서 값을 읽는다.
+
+    ⚠ 옛 스킴을 **리터럴로 적지 않는다.** `test_name_ssot.py` 가 허용 목록 밖 소스에서 옛
+    이름을 찾으면 실패시키는데(개명이 도달하지 않은 경로를 잡는 게이트), 그 게이트에
+    예외를 뚫는 것보다 정본을 읽는 쪽이 옳다 — 정본이 바뀌면 이 테스트도 따라간다.
+    """
+    src = (_UNIT.parents[1] / "shared" / "dqa_identity.py").read_text(encoding="utf-8")
+    for line in src.splitlines():
+        if line.startswith(f"{key} "):
+            return line.split("=", 1)[1].strip().strip("\"'")
+    raise AssertionError(f"정본에 {key} 가 없다")
+
+
+_LEGACY_SCHEME = _canon("LEGACY_SCHEME")
+
+
 # ── 1. 자리(Windows/WSL) 를 구분해 실행하는가 ─────────────────────────────────────
 
 def test_windows_runtime_runs_directly():
@@ -205,8 +222,9 @@ def test_scheme_url_is_parsed():
 
 
 @pytest.mark.parametrize("url", ["", "not-a-url", "https://evil/start?token=x",
-                                 "mysql-ai-bridge://start?token=x"])
+                                 f"{_LEGACY_SCHEME}://start?token=x"])
 def test_other_schemes_are_ignored(url):
+    """옛 스킴으로 온 것도 받지 않는다 — 옛 등록이 남은 머신에서 값이 섞이면 안 된다."""
     assert _gui().parse_scheme_url(url) == {}
 
 
