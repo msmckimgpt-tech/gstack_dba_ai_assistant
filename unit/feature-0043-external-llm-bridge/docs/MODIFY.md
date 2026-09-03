@@ -4508,3 +4508,12 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `first_heartbeat` 2 / `page_view` 1 / `handoff_issued` 1, DISTINCT ResourceId = 총행수 = 4.
 - ROADMAP §10.1 에 결과와 **두 겹 결함(보내는 쪽 NameError → 받는 쪽 허용목록 누락)** 기록.
 - ROADMAP §10.2 에 클라이언트 배포 채널 미해결 기록 — 라이브 `client_download` = null 실측.
+
+## CHG-20260903T170000-ai-claude-corp-runner-name-postdeploy — POST-DEPLOY 대조 증적
+
+배포 `c08047f8` 후 배포 **전** baseline 과 대조(두 점 측정 — 한 점만 재면 「원래 그랬는지」와
+구별되지 않는다): 딥링크 스킴 `mysql-ai-bridge` → **`dqa-connect`**, 응답 본문 `mysql-ai`
+4 → **0**, `dqa-connect` 0 → **2**, CLI 안내 MCP 키 **`dqa`**. 서빙 실물 3종의 옛 이름 잔여는
+정리 대상 변수·이력 주석뿐(등록 경로 0). 무중단 실측 0건 · 전 서비스 동일 SHA.
+
+미검증 유지: 실 OS 핸들러 등록·옛 잔재 삭제(사용자 머신 setup 재실행 필요) · macOS 경로.

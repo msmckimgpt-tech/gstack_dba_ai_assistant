@@ -3058,4 +3058,10 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
       ⚠ 초판은 here-string 을 **손으로 치환**했다가 두 번 틀렸다(코드 자리에 문자열 스텁 ·
       `` `$ `` 이스케이프 미처리). **굽는 규칙의 정본은 셸**이므로 PowerShell 에게 굽게 했다 —
       POSIX 축이 `sh` 에게 heredoc 을 맡기는 것과 같은 이유.
-- [ ] 라이브 — 배포 후 POST-DEPLOY 대조(딥링크 스킴 `mysql-ai-bridge` → `dqa-connect`) 잔여.
+- [x] **POST-DEPLOY 대조 완료** (배포 `c08047f8`) — 배포 전 baseline 과 대조: 딥링크 스킴
+      `mysql-ai-bridge` → **`dqa-connect`** · 응답 본문 `mysql-ai` 4 → **0** · `dqa-connect`
+      0 → **2** · CLI 안내 MCP 키 **`dqa`**. 서빙 실물(setup 2벌·러너)의 옛 이름 잔여는
+      **정리 대상 변수·이력 주석뿐**이고 등록 경로엔 0. 무중단 실측 `no upstreams available`
+      **0건** · 전 서비스 동일 SHA · 대화 스모크 PASS.
+- [ ] **여전히 미검증** — 실 OS 핸들러 재등록·옛 잔재 삭제는 사용자 머신 setup 재실행 후에만
+      관측된다(이 검증이 덮은 것은 «서버가 무엇을 발행하는가» 까지). macOS 경로 실측 수단 없음.

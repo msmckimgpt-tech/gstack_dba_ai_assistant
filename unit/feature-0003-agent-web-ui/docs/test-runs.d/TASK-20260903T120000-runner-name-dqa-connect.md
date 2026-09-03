@@ -2,7 +2,7 @@
 run_at: 2026-09-03T12:20:00+09:00
 session: ai/claude-corp/feature-0043-runner-name-dqa-connect
 scope: runner-name-dqa-connect — 웹이 발행하는 딥링크 스킴·MCP 키 (feature-0043 개명의 web 축)
-verdict: PASS-BASELINE-PENDING-POSTDEPLOY
+verdict: PASS
 ---
 
 # TASK-20260903T120000 — 웹 축 검증 기록 (PB-0008)
@@ -51,3 +51,38 @@ DOM 구조 변경이 0 이므로 렌더된 기하가 바뀌지 않는다 — 그
   스킴 등록은 사용자가 setup 을 재실행해야 생긴다. 버튼 클릭이 러너를 띄우는 것까지는 이
   cycle 에서 **관측 불가**이며, 그 사실이 곧 하드 컷오버의 알려진 대가다.
 - **macOS 핸들러 경로** — 실측 수단 없음.
+
+
+---
+
+## POST-DEPLOY 대조 (배포 `c08047f8`, 2026-09-03)
+
+배포 **전** 같은 방법으로 재 둔 baseline 과 대조한다 — 한 점만 재면 「원래 그랬는지」와
+구별되지 않으므로 두 점을 잰다.
+
+| 측정 (실 브라우저 `POST /api/ai/connect/token`) | 배포 전 | 배포 후 | 판정 |
+|---|---|---|---|
+| 딥링크 스킴 | `mysql-ai-bridge` | **`dqa-connect`** | 뒤집힘 |
+| 응답 본문 `mysql-ai` 출현 | 4 | **0** | 뒤집힘 |
+| 응답 본문 `dqa-connect` 출현 | 0 | **2** | 뒤집힘 |
+| CLI 안내 `mcp add --transport http <키>` | (미측정) | **`dqa`** | 정본 파생 |
+
+진입: `https://localhost/` → 200 · `DQA — Database Query Assistant` · `bootstrap_admin` 인증됨.
+
+**서빙 실물 대조** (`curl -sk https://localhost/static/agent/…`):
+
+| 파일 | `dqa-connect` | `mysql-ai-bridge` | 잔여의 성격 |
+|---|---|---|---|
+| `bridge_setup.sh` | 5 | 7 | 명칭블록 `LEGACY_*` 2 · 이력 주석 4 · 경고문 1 — **등록 경로 0** |
+| `bridge_setup.ps1` | 3 | 3 | 명칭블록 `LEGACY_*` 2 · 주석 1 |
+| `bridge_agent.py` | 4 | 1 | 개명 주석 1 |
+
+**배포 무결성**: web-a/b·ask-worker·insight-worker·ext-tool-mcp-a/b 전부 `c08047f8` 동일 SHA ·
+`no upstreams available` **0건**(무중단 실측) · surge 잔존 0 · 대화 경로 스모크 PASS.
+
+## 여전히 미검증 (은폐하지 않는다)
+
+- **실 OS 핸들러 재등록·옛 잔재 삭제** — 사용자 머신에서 setup 을 재실행해야 관측된다.
+  이 검증이 보인 것은 «서버가 무엇을 발행하는가» 까지이고, «그 머신에 무엇이 등록되는가» 는
+  아니다. 하드 컷오버라 **재실행 전까지 기존 설치자의 `[내 AI 실행]` 은 무반응**이다.
+- **macOS 경로** — 실측 수단 없음.
