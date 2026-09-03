@@ -4729,6 +4729,12 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
     # 명령 계열 신고 (2026-09-01). 연결 화면 1단계의 기본 탭이 **브라우저가 도는 OS** 로
     # 정해지던 것을 **마지막으로 연결됐던 러너** 로 바꾼다 — WSL 사용자는 Windows 브라우저로
     # 리눅스 러너를 띄우므로, 추측은 그 사람에게 늘 틀린다(제보 2026-09-01).
+    # 「답할 수 있는가」 + 사유. **tri-state** — 키가 없으면 `None`(구 러너)이고,
+    # 그때는 아무것도 쓰지 않는다(구 러너 사용자를 미연결로 만들지 않는다).
+    _ai_raw = (payload or {}).get("ai_ready")
+    ai_ready = None if _ai_raw is None else bool(_ai_raw)
+    ai_unready_reason = str((payload or {}).get("ai_unready_reason") or "")[:300]
+
     agent_os = str((payload or {}).get("agent_os") or "").strip()
     # ── 죽은 러너 인스턴스의 사망 신고 (TASK-20260901T140000) ──────────────────────
     #
@@ -4793,6 +4799,19 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
                 "[bridge] 러너 신고 기록 실패 account=%s: %r", account_id, exc)
         # 명령 계열은 **다른 테이블**(계정)이라 같은 문장에 묶지 못한다. 실패는 여기서 삼킨다 —
         # 화면 기본값 편의 하나가 연결 유지 신호를 죽이지 않게(위 신고 기록과 같은 규율).
+        # ── 「답할 수 있는가」 신고 (TASK-20260903T180000) ─────────────────────────
+        #
+        # 살아있음(`LastHeartbeatAt`)과 **다른 사실**이다. 이 축이 없던 동안 화면은 러너가
+        # 하트비트를 보내는 것만 보고 「내 AI 대기 중」을 띄웠고, 그 러너의 AI 는 응답하지
+        # 않았다 — 사용자는 답이 오지 않는 곳에 질문을 보냈다(사용자 지적 2026-09-03).
+        #
+        # 실패는 삼킨다(연결 유지가 주 목적) — 다음 30초에 다시 온다. 신고 없음(`None`)은
+        # 구 러너이므로 **쓰지 않는다**(setter 가 판정).
+        try:
+            _store.set_runner_ai_health(cur, _bearer(request), ai_ready, ai_unready_reason)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] AI 건강 신고 기록 실패 account=%s: %r", account_id, exc)
         try:
             _store.set_account_bridge_os(cur, _bearer(request), account_id, agent_os)
         except Exception as exc:  # noqa: BLE001

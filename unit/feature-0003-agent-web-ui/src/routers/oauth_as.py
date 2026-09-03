@@ -595,6 +595,13 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     # 다를 수 있고, 그 차이가 곧 "고쳤다는데 화면은 그대로" 다 — 사용자가 그 이유를 알 수
     # 있는 자리가 화면 어디에도 없었다. 판정은 서버가 내고 프런트는 불리언 하나만 읽는다.
     runner_stale = False
+    # ── 「답할 수 있는가」 (TASK-20260903T180000) ─────────────────────────────────
+    #
+    # **tri-state 로 시작한다**: `None` = 모른다(구 러너·컬럼 부재·듣고 있는 러너 없음).
+    # 아래 조회가 어디서 새더라도 이 값이 유지되어 화면이 종전 동작으로 폴백한다 —
+    # 모르는 것을 「답할 수 없다」로 단정하면 멀쩡한 사용자를 미연결로 만든다.
+    ai_ready = None
+    ai_unready_reason = ""
     # 그 러너가 **어느 파일**인가 (2026-09-02, 사용자 제보). `runner_stale` 만으로는 「다시
     # 띄웠는데 같은 파일이 다시 떴다」와 「다른 파일로 바뀌었는데 그것도 낡았다」가 구별되지
     # 않는다 — 전자는 **재실행으로는 영영 풀리지 않는** 상태이고, 그것을 말할 수 있으려면
@@ -668,6 +675,29 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             cur4.close()
     except Exception:
         batch_consent = _consent.DEFAULT_BATCH_CONSENT   # fail-closed(남의 토큰을 태우는 축)
+    # ── 「답할 수 있는가」 조회 (TASK-20260903T180000, 사용자 지적) ─────────────────
+    #
+    # ⚠ **낡음 판정 갈래 안에 두지 않는다.** 그 갈래는 「판정 호출이 자기 갈래의 마지막이어야
+    #   한다」는 계약으로 잠겨 있다(`test_staleness_predicate_has_exactly_one_home`) — 뒤에
+    #   무엇이든 오면 그 값이 판정을 덮을 수 있는 모양이 되기 때문이다. 실제로 초판에서 이
+    #   블록을 그 자리에 넣었다가 그 테스트가 잡았다. 여기 **별 블록**으로 둔다.
+    #
+    # 실패는 「모른다」(`None`)로 남는다 — 모르는 것을 「답할 수 없다」로 단정하면 멀쩡한
+    # 사용자를 미연결로 만든다(구 러너·컬럼 부재 포함).
+    if listening:
+        # 형제 축들과 **같은 커넥션·같은 idiom**(`conn.cursor()` + `finally: close()`).
+        try:
+            cur2c = conn.cursor()
+            try:
+                ai_ready, ai_unready_reason = _store.account_ai_health(
+                    cur2c, int(account.get("id") or 0))
+            finally:
+                cur2c.close()
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "[bridge] AI 건강 조회 실패 — 판정하지 않는다: %r", exc)
+            ai_ready, ai_unready_reason = None, ""
+
     # ── 능력 리비전 (TASK-20260902T140200, 사용자 제보 「새로고침해야 목록이 갱신된다」) ──
     #
     # ## 왜 이 응답에 싣는가
@@ -794,6 +824,15 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "compose_blocked": bool(_bridge_mode() and not (connected and listening)),
         # 연결은 성립했는데 **그 러너가 배포본과 다르다** — 잠금 사유는 아니고(답변은 온다)
         # 안내 사유다. 이 값이 없으면 사용자는 옛 동작을 보면서 이유를 알 방법이 없다.
+        # ── 「연결됐지만 답할 수 없다」 (TASK-20260903T180000, 사용자 지적) ──────────
+        #
+        # `listening` 은 **살아있음**이고 이것은 **답할 수 있음**이다. 이 축이 없던 동안 화면은
+        # 전자만 보고 「내 AI 대기 중」을 띄웠고, 사용자는 답이 오지 않는 곳에 질문을 보냈다.
+        #
+        # ⚠ **tri-state 를 보존해 보낸다.** `None`(모른다 — 구 러너·컬럼 부재)을 `false` 로
+        #   접으면 구 러너 사용자 전원이 미연결로 보인다. 화면은 `=== false` 로만 판정한다.
+        "ai_ready": ai_ready,
+        "ai_unready_reason": ai_unready_reason,
         "runner_stale": runner_stale,
         # 그 러너의 **지문**. 화면은 이 값을 표시하지 않는다 — 재기동 전후를 대조해
         # 「다시 띄웠는데 같은 파일이 다시 떴다」를 가려내는 데만 쓴다(그 상태에서는 실행
