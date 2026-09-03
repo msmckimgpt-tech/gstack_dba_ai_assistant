@@ -151,7 +151,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-08 · 네이티브 클라이언트 — 설치·로그인 대행·러너 내장
-- **status**: pending (**blocked: 코드 서명 미확보**)
+- **status**: **초판 done** (2026-09-03) — Windows 우선·미서명 (사용자 결정). 자동시작·자동업데이트·벤더 설치기 실행은 후속
 - **feature_id**: `feature-0046-native-client` (**신규**)
 - **dimension**: structural
 - **risk_grade**: **Major** — 새 배포 아티팩트 + 사용자 머신에 상주물 + 타사 설치기 실행
@@ -368,9 +368,10 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 
 ## 6. 진행 현황
 
-- 총 **5** (ITEM 4 + SPIKE 1) · **done 3** · in-progress 0 · pending 0 · **blocked 2**(ITEM-08 — 코드 서명 결정 / ITEM-03·06 — ITEM-08 종속)
+- 총 **5** (ITEM 4 + SPIKE 1) · **done 4** · in-progress 0 · pending 2(ITEM-03 · ITEM-06 — 이제 진입 가능) · blocked 0
 - **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03) · `SPIKE-02`(2026-09-03, conditional-go)
-- **P0 전량 완료.** 다음 진입은 `ITEM-08` 이며 **코드 서명 조직 결정**이 유일한 선행이다(SPIKE §2.3 이 완화안 제시).
+- **P0 전량 완료 + ITEM-08 초판 완료.** 사용자 결정(2026-09-03)으로 **Windows 우선·미서명** 확정 — 서명 게이트 해소.
+- **다음 ready**: `ITEM-03`(연결 진단 화면) · `ITEM-06`(「AI 없음」 안내를 클라이언트 유도로) — 둘 다 ITEM-08 선행 충족.
 - ⚠ **ITEM-00 잔여**: 라이브 적재 실측 미수행 — 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행이 실제로 쌓이는지 확인 필요.
 - **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
   「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.
