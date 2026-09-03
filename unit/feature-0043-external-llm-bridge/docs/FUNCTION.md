@@ -606,6 +606,7 @@ FAIL)이고, 제거된 런타임 전수 스캔은 **세 파일 전체**를 훑�
 | 커넥션 | **전용**(`app._connect_memory()`). 업무 conn 으로 쓰면 감사 헬퍼의 `commit`/`rollback` 이 **사용자의 답변을 롤백**할 수 있다 — 초판이 그 형태였고 codex 적대 리뷰가 P1 로 잡았다 |
 | 보장 등급 | **best-effort (0..N)**. exactly-once 아님(SELECT 후 INSERT + 비고유 인덱스), at-least-once 도 아님(조회 실패·예외에서 건너뜀). 소비측이 `COUNT(DISTINCT ResourceId)` 로 dedupe 한다 — `dedupe_key_of()` 가 그 계약의 코드면 |
 | 실패 | 전면 fail-open. 계측 때문에 연결이 막히지 않는다 |
+| 원장 등재 | **`build_audit_change_json` 의 allowlist 에 `ai.connect.funnel` 이 있어야 한다.** 없으면 `ValueError` → `_audit_user_action` 의 fail-open 이 삼켜 **증상 없이 계측만 사라진다**(실측 2026-09-03: 배포 후 행 0건). 잠금은 `tests/test_funnel_audit_action.py` 가 **진짜 빌더를 호출**해 건다 — 가짜 더블은 「받는 쪽이 받아 주는가」를 검사하지 못한다 |
 | 폭주 방지 | 계정당 단계당 1행 + **양성 전용 프로세스 캐시**(원장 append-only 라 「있음」은 뒤집히지 않는다). 하트비트 120회/시간이 1행이 된다 |
 
 **절대 수치를 SLA 로 쓰지 않는다** — 이 지표의 용도는 단계 간 **상대 비교**다.
