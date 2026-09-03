@@ -77,3 +77,32 @@ edit_policy: append-only
 - **동봉 파이썬 3.14.7 로 러너 `--check` → exit=0** (`conn.ok … 연결 성공`).
   종전 배포본이 exit=2 로 죽던 바로 그 명령이다.
 - 설치본 GUI 기동 → 「연결할 준비가 되었습니다」 도달
+
+## CHG-20260904T013000-ai-claude-wsl-and-scheme — WSL 런타임 · 가용성 실증 · 스킴 인계
+- Timestamp: 2026-09-04T01:30:00+09:00
+- 사용자 제보 2건: ① [내 AI 실행] 을 눌러도 「연결 정보가 없습니다」 ② WSL 의 AI 에 진입 불가.
+- 변경: `discover_runtime()`(Windows+WSL 전수) · `verify_answers()`(실제 응답 확인) ·
+  `_ASK_ARGV`(런타임별 호출 형태) · `login(RuntimeState)`(WSL 로그인 대행) ·
+  `runner_runtime_args()`(WSL 은 `--cmd`) · 설치기 스킴 등록 · `parse_scheme_url()`.
+
+### 실측 (실제 Windows, 2026-09-03)
+| 자리 | 발견 | 응답 |
+|---|---|---|
+| claude (Windows) | `~\.local\bin\claude.exe` | **17.8초** ✅ |
+| claude (WSL) | `/usr/local/bin/claude` | 3.8초 ✅ |
+| codex (WSL) | `/usr/local/bin/codex` | 4.4초 ✅ |
+
+종전 클라이언트는 **1개**(Windows claude)만 봤다. 지금은 3개를 보고 각각을 실증한다.
+
+### ⚠ 내가 앞서 단정한 것을 정정한다
+「Windows claude 는 답하지 못한다」고 적었다. **틀렸다.** 관측 2회(180초·93초)가 타임아웃에
+걸렸을 뿐이고, 같은 런타임이 17.8초에 답했다. 느린 것과 못 하는 것은 다르다 — 관측 2회로
+「불가」를 단정하면 안 된다. 그래서 `verify_answers` 는 **판정을 캐시하지 않고** 매번
+확인하며, 실패 문구도 「쓸 수 없습니다」가 아니라 시간과 함께 말한다.
+
+## CHG-20260904T020000-ai-claude-ssot-catch — 테스트가 옛 스킴을 정본에서 읽는다
+- Timestamp: 2026-09-04T02:00:00+09:00
+- CI 의 `feature-0043/tests/test_name_ssot.py` 가 새 테스트 파일의 옛 스킴 **리터럴**을
+  적발해 적색. 허용 목록 예외 대신 `shared/dqa_identity.LEGACY_SCHEME` 를 읽도록 교체.
+- ⚠ 절차 오류도 함께 남긴다: 이 수정을 밀 때 **verify-completion 통과를 확인하기 전에
+  commit·push 했다.** 게이트는 통과를 확인한 **뒤에** 커밋한다.

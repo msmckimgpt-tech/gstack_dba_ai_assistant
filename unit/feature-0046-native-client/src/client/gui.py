@@ -47,6 +47,8 @@ class ClientApp:
         self._tk, self._ttk = tk, ttk
         self.plan = plan
         self.runner_proc = None
+        #: 마지막 탐지 결과. `_selected()` 가 label → 상태 객체를 되찾는 근거다.
+        self._states: list = []
         self._events: queue.Queue = queue.Queue()
 
         self.root = tk.Tk()
@@ -116,24 +118,46 @@ class ClientApp:
     def _on_runtimes(self, states):
         for w in self.box.winfo_children():
             w.destroy()
-        usable = [s for s in states if s.installed and s.logged_in]
+        self._states = list(states)
+        # ⚠ **답하는 것만** 쓸 수 있다고 말한다. 로그인 여부로 판정하면 로그인은 됐지만
+        #   답하지 못하는 런타임을 「연결할 준비가 되었습니다」로 표시한다(실측 2026-09-03).
+        usable = [s for s in states if s.usable]
         if usable:
             self.status.set("연결할 준비가 되었습니다")
-            self.detail.set(f"{usable[0].name} — {usable[0].detail}")
-            self.runtime.set(usable[0].name)
+            if len(usable) == 1:
+                self.detail.set(f"{usable[0].label} — 답변을 확인했습니다.")
+            else:
+                self.detail.set("답변이 확인된 AI 가 여럿입니다. 쓸 것을 고르세요.")
+                for s in usable:
+                    row = self._ttk.Frame(self.box); row.pack(fill="x", pady=2)
+                    self._ttk.Radiobutton(row, text=f"{s.label} — {s.path}",
+                                          variable=self.runtime,
+                                          value=s.label).pack(side="left")
+            self.runtime.set(usable[0].label)
             self._buttons([("이 서비스에 연결", lambda: self._bg(self._connect))])
             return
-        installed = [s for s in states if s.installed]
+        # 로그인은 됐는데 답하지 못한 것들 — 그 사실을 **감추지 않는다**.
+        mute = [s for s in states if s.logged_in and s.answers is False]
+        installed = [s for s in states if s.installed and not s.logged_in]
         if installed:
             self.status.set("로그인이 필요합니다")
-            self.detail.set("아래에서 사용할 AI 를 고르고 [로그인] 을 누르면 브라우저가 열립니다.")
+            self.detail.set("아래에서 사용할 AI 를 고르고 [로그인] 을 누르면 브라우저가 열립니다."
+                            + (f"\n({', '.join(s.label for s in mute)} 은(는) 로그인돼 있지만 "
+                               "답을 받지 못해 제외했습니다.)" if mute else ""))
             for s in installed:
                 row = self._ttk.Frame(self.box); row.pack(fill="x", pady=2)
-                self._ttk.Radiobutton(row, text=f"{s.name} — {s.detail or '로그인 필요'}",
-                                      variable=self.runtime, value=s.name).pack(side="left")
+                self._ttk.Radiobutton(row, text=f"{s.label} — {s.detail or '로그인 필요'}",
+                                      variable=self.runtime, value=s.label).pack(side="left")
             if not self.runtime.get():
-                self.runtime.set(installed[0].name)
+                self.runtime.set(installed[0].label)
             self._buttons([("로그인", lambda: self._bg(self._login))])
+            return
+        if mute:
+            self.status.set("답할 수 있는 AI 가 없습니다")
+            self.detail.set(
+                "설치·로그인은 되어 있는데 **답을 받지 못했습니다** — 서버 연결과는 별개입니다.\n"
+                + "\n".join(f"· {s.label}: {s.detail}" for s in mute))
+            self._buttons([("다시 확인", lambda: self._bg(self._discover))])
             return
         # ⚠ 연결 축과 AI 축을 갈라 말한다.
         self.status.set("이 컴퓨터에 쓸 수 있는 AI 가 없습니다")
@@ -159,18 +183,49 @@ class ClientApp:
 
     # ── 작업 ──────────────────────────────────────────────────────────────────
     def _discover(self):
+        """이 머신의 AI 를 **전부** 찾고, 그중 **정말 답하는 것**만 쓸 수 있다고 말한다.
+
+        ⚠ 두 단계인 이유(실측 2026-09-03): Windows `claude` 는 로그인돼 있는데 `-p` 에
+        180초 무응답이었고, WSL `claude` 는 정상이었다. 한 자리만 보고 멈추면 **쓸 수 있는
+        것이 있는데도** 「없다」가 되고, 로그인만 보면 **못 쓰는 것을 준비됐다**고 말한다.
+        """
         self._post("log", "이 컴퓨터의 AI 를 찾는 중…")
-        states = [core.probe_runtime(n) for n in core.RUNTIMES]
-        for s in states:
-            self._post("log", f"  {s.name}: " + (
-                f"{s.path} ({s.detail or ('로그인됨' if s.logged_in else '로그인 필요')})"
-                if s.installed else "없음"))
-        self._post("runtimes", states)
+        found: list[core.RuntimeState] = []
+        for name in core.RUNTIMES:
+            for loc in core.discover_runtime(name):
+                found.append(core.probe_runtime(name, where=loc.where, path=loc.path))
+        if not found:
+            self._post("log", "  설치된 AI 를 찾지 못했습니다.")
+            self._post("runtimes", [])
+            return
+        for s in found:
+            self._post("log", f"  {s.label}: {s.path}"
+                              f" ({s.detail or ('로그인됨' if s.logged_in else '로그인 필요')})")
+
+        # 로그인된 것만 실제로 물어본다 — 이 호출은 사용자의 AI 사용량을 쓴다.
+        for s in found:
+            if s.logged_in:
+                self._post("log", f"  {s.label}: 실제로 답하는지 확인하는 중…")
+                core.verify_answers(s)
+                self._post("log", f"    → {'답합니다' if s.answers else s.detail}")
+        self._post("runtimes", found)
+
+    def _selected(self):
+        """지금 고른 런타임의 **상태 객체**. 이름만으로는 Windows/WSL 자리를 구분 못 한다."""
+        want = self.runtime.get()
+        for s in getattr(self, "_states", []):
+            if s.label == want:
+                return s
+        return None
 
     def _login(self):
-        name = self.runtime.get()
-        self._post("log", f"{name} 로그인을 시작합니다 — 브라우저에서 승인해 주세요.")
-        ok, msg = core.login(name)
+        st = self._selected()
+        if st is None:
+            self._post("error", "고른 AI 를 찾지 못했습니다. [다시 확인] 을 눌러 주세요.")
+            return
+        self._post("log", f"{st.label} 로그인을 시작합니다 — 브라우저에서 승인해 주세요.")
+        # ⚠ 상태 객체를 넘긴다 — 이름만 넘기면 WSL 자리의 런타임에 로그인 대행이 닿지 않는다.
+        ok, msg = core.login(st)
         self._post("log", msg)
         self._bg(self._discover)
 
@@ -239,17 +294,54 @@ def tell(message: str, title: str = "내 AI 연결") -> None:
         pass
 
 
+def parse_scheme_url(url: str) -> dict:
+    """`dqa-connect://start?token=…&base=…` 를 읽는다.
+
+    ## 왜 필요한가 (실측 2026-09-03)
+
+    웹의 **[내 AI 실행]** 버튼은 이 스킴으로 프로그램을 띄운다. 그런데 종전 진입점은
+    `--base`/`--token` 만 읽어서, 스킴으로 온 **URL 을 통째로 무시**했다. 그래서 화면에는
+    「연결 정보가 없습니다」만 떴다 — 사용자가 바로 앞에서 [연결 준비] 를 눌렀는데도.
+
+    ⚠ 인자를 **엄격히 고른다.** 스킴 URL 은 브라우저를 통해 들어오므로 남이 만든 링크를
+    사용자가 클릭할 수 있다. 여기서 받아들이는 것은 연결에 필요한 네 값뿐이고, 그마저도
+    이후 단계(CA 지문·러너 체크섬 대조)가 다시 검증한다.
+    """
+    if not url or "://" not in url:
+        return {}
+    import urllib.parse
+
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() != "dqa-connect":
+        return {}
+    q = urllib.parse.parse_qs(parsed.query)
+    wanted = {"base": "base", "token": "token",
+              "ca_sha256": "ca_sha256", "agent_sha256": "agent_sha256"}
+    out: dict = {}
+    for key, dest in wanted.items():
+        vals = q.get(key) or []
+        if vals and str(vals[0]).strip():
+            out[dest] = str(vals[0]).strip()
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점. 값은 **스킴 링크 또는 환경변수**로 온다 — 사용자가 타이핑하지 않는다."""
     import argparse
     import os
 
     ap = argparse.ArgumentParser(prog="dqa-connect")
+    ap.add_argument("url", nargs="?", default="",
+                    help="dqa-connect://start?... (스킴 핸들러가 넘긴다)")
     ap.add_argument("--base", default=os.environ.get("BRIDGE_BASE", ""))
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""))
     ap.add_argument("--ca-sha256", default=os.environ.get("BRIDGE_CA_SHA256", ""))
     ap.add_argument("--agent-sha256", default=os.environ.get("BRIDGE_AGENT_SHA256", ""))
     args = ap.parse_args(argv)
+
+    # 스킴으로 온 값이 **이긴다** — 사용자가 방금 웹에서 만든 최신 연결 정보이기 때문이다.
+    for key, value in parse_scheme_url(args.url).items():
+        setattr(args, key, value)
     if not args.base or not args.token:
         tell("연결 정보가 없습니다.\n\n"
              "웹 화면에서 [연결 준비] 를 누르고, 나오는 [내 AI 실행] 버튼으로 실행하세요.")
