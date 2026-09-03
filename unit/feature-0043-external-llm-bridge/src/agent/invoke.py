@@ -16,6 +16,7 @@ from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC
 from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
+from .state import ai_health, note_ai_outcome
 from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
@@ -28,6 +29,33 @@ CANCELED = "__canceled__"
 
 #: 실패 사유로 실어 보낼 자식 출력의 최대 길이(문자).
 _FAIL_DETAIL_MAX = 400
+
+# ── 응답하지 않는 AI 에는 **짧은 상한**을 적용한다 (TASK-20260903T140000) ──────
+#
+# ## 왜 필요한가 (사용자 지적 2026-09-03)
+#
+# `_AI_TIMEOUT_SEC` 기본값은 **0(무제한)** 이다. 그 결정은 옳았다 — 고정 상한은 «일하고 있는
+# AI» 를 끊고, 실제로 900초 상한이 27단계 조사를 죽인 적이 있다. 그리고 진행 중인 조사는
+# 도구 호출마다 서버 lease 를 갱신하므로 서버도 기다릴 수 있다.
+#
+# 그런데 그 계약에는 **구멍**이 있었다: 자식이 **아무것도 하지 않는** 경우다. 도구도 안 부르고
+# 출력도 없으면 진행 신호가 없고, 러너는 상한이 없으므로 **영원히 기다린다.** 라이브에서
+# `claude.exe -p` 가 정확히 그랬다(300초 실측 timeout·출력 0바이트, `oauth/token 400` 반복).
+# 사용자에게는 아무 안내도 없는 무한 대기였다.
+#
+# ## 왜 「아플 때만」 짧게 하는가
+#
+# 무출력만으로는 「생각 중」과 「멈춤」을 가를 수 없다(`claude -p` 는 답을 끝에 한 번에 낸다).
+# 그래서 시간이 아니라 **이 러너의 관측된 건강 상태**로 가른다:
+#
+#   - 건강함(기본) → **종전 그대로 무제한.** 일하는 AI 를 끊지 않는다(회귀 0).
+#   - 응답 없음이 이미 관측됨(`state.ai_health()` 이 거짓) → 이 상한을 적용한다.
+#
+# 그러면 (a) 고장난 러너의 질문은 유한 시간에 정직한 실패로 끝나고, (b) 실제로 복구됐다면
+# 이 시간 안에 답이 와서 `note_ai_outcome(True)` 가 건강 상태를 되돌린다 — **자기 치유**다.
+# 「못 쓴다」로 판정된 러너가 영구히 잠기지 않는 것이 이 설계의 핵심이다.
+_AI_UNHEALTHY_TIMEOUT_SEC = float(
+    os.environ.get("BRIDGE_AI_UNHEALTHY_TIMEOUT_SEC", "") or 150.0)
 
 #: **stderr 에 있어도 실패 원인이 아닌** 줄 — 이것만 남으면 stderr 는 «비었다» 로 본다.
 #:
@@ -255,9 +283,24 @@ def describe_cli_failure(returncode: int, out: str, err: str) -> str:
     return head + body
 
 
+def _timeout_notice(limit_sec: int, unhealthy: bool) -> str:
+    """상한 초과를 사용자 문장으로. 아픈 러너면 **다음 행동**까지 적는다.
+
+    종전 문구는 「AI 호출이 N초를 넘겨 중단했습니다」뿐이라, 원인이 그 컴퓨터의 AI 인지
+    질문이 어려운 것인지 사용자가 알 수 없었다.
+    """
+    head = f"연결된 AI 가 {limit_sec}초 안에 응답하지 않아 중단했습니다."
+    if not unhealthy:
+        return head
+    return (head + "\n\n이 컴퓨터의 AI 가 계속 응답하지 않는 상태로 관측됩니다 — "
+            "그 컴퓨터에서 해당 CLI 에 다시 로그인한 뒤(예: `claude` 재인증) "
+            "질문을 다시 보내 주세요. 러너를 다시 띄울 필요는 없습니다.")
+
+
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                         env: dict | None = None,
-                        stdin_text: str | None = None) -> tuple[bool, str]:
+                        stdin_text: str | None = None,
+                        timeout_sec: float | None = None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
@@ -272,6 +315,8 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     # 오류로 끝났습니다」를 받은 사용자가 원인을 물어와도 우리 쪽에 볼 것이 없었다.
     _t0 = time.monotonic()
     _exe = (cmd[0] if cmd else "")
+    #: 이 호출의 상한. 호출측이 준 값(아픈 러너)이 우선이고, 없으면 종전 전역(기본 무제한).
+    _limit = float(timeout_sec) if timeout_sec else _AI_TIMEOUT_SEC
     try:
         proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, **CHILD_TEXT_IO,
@@ -286,6 +331,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 여기서 터지는 것은 대개 「그 실행 파일이 없다·권한이 없다」이고, 예외 형이 그
         # 둘을 정확히 가른다(FileNotFoundError vs PermissionError). 문자열로 뭉개지 않는다.
         _log_exc(_EV_AI_SPAWN_FAIL, "AI 를 실행하지 못했다", e, exe=_exe, cwd=cwd or "")
+        note_ai_outcome(False, "연결된 AI 를 실행하지 못했습니다.")
         return False, f"AI 실행 실패: {e}"
 
     # 파이프를 비우는 일은 별도 스레드에 맡긴다. 여기서 직접 읽으면 자식이 큰 출력을 낼 때
@@ -329,14 +375,15 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
             log_event("ai.canceled", "취소되어 AI 를 중단했다", level="WARN",
                       exe=_exe, dur_ms=int((time.monotonic() - _t0) * 1000))
             return False, CANCELED
-        if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:
+        if _limit and waited >= _limit:
             _kill(proc)
             pump.join(5.0)
             log_event(_EV_AI_TIMEOUT, "AI 호출이 상한을 넘겨 중단했다", level="ERROR",
-                      exe=_exe, limit_sec=int(_AI_TIMEOUT_SEC),
+                      exe=_exe, limit_sec=int(_limit), unhealthy=bool(timeout_sec),
                       dur_ms=int((time.monotonic() - _t0) * 1000),
                       stderr_tail=(box.get("err") or "")[-2000:])
-            return False, f"AI 호출이 {int(_AI_TIMEOUT_SEC)}초를 넘겨 중단했습니다."
+            note_ai_outcome(False, "연결된 AI 가 응답하지 않습니다(응답 대기 상한 초과).")
+            return False, _timeout_notice(int(_limit), bool(timeout_sec))
 
     _dur = int((time.monotonic() - _t0) * 1000)
     if pump_exc:
@@ -345,6 +392,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 흘러가, 원인이 적힌 예외를 버리고 빈 사유를 남겼다.
         _log_exc("ai.io_fail", "AI 와의 입출력이 실패했다", pump_exc[0],
                  exe=_exe, dur_ms=_dur, stdin_chars=len(stdin_text or ""))
+        note_ai_outcome(False, "연결된 AI 와의 입출력이 실패했습니다.")
         return False, (f"내 AI 와 데이터를 주고받는 중 오류가 났습니다: "
                        f"{type(pump_exc[0]).__name__}: {pump_exc[0]}")
     if proc.returncode is None:
@@ -352,6 +400,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 그러면 빈 답이 정상 답으로 제출된다.
         log_event(_EV_AI_FAIL, "AI 의 종료 상태를 확인하지 못했다", level="ERROR",
                   exe=_exe, dur_ms=_dur, stdout_bytes=len(box.get("out") or ""))
+        note_ai_outcome(False, "연결된 AI 의 종료 상태를 확인할 수 없습니다.")
         return False, "내 AI 의 종료 상태를 확인하지 못했습니다."
     if proc.returncode != 0:
         # ⚠ 자식의 출력 **전문**(각 상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
@@ -365,10 +414,13 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   stdout_bytes=len(box.get("out") or ""),
                   stdout_tail=_redact_secrets((box.get("out") or "")[-2000:]),
                   stderr_tail=_redact_secrets((box.get("err") or "")[-2000:]))
+        note_ai_outcome(False, "연결된 AI 가 오류로 끝났습니다.")
         return False, describe_cli_failure(int(proc.returncode), box.get("out", ""),
                                            box.get("err", ""))
     log_event("ai.ok", level="DEBUG", exe=_exe, exit=0, dur_ms=_dur,
               stdout_bytes=len(box.get("out") or ""))
+    # 한 번 통했다 = 이 러너는 쓸 수 있다. **즉시** 건강 상태를 되돌린다(자기 치유).
+    note_ai_outcome(True)
     return True, (box.get("out") or "").strip()
 
 
@@ -680,5 +732,13 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     child_env = None
     if token:
         child_env = {**os.environ, "BRIDGE_TOKEN": str(token)}
+    # 이 러너의 AI 가 응답하지 않는 것이 **이미 관측됐으면** 짧은 상한을 건다
+    # (TASK-20260903T140000). 건강하면 `None` → 종전 전역(기본 무제한)이 그대로 쓰인다.
+    _ai_ok, _ = ai_health()
+    _cap = None if _ai_ok else _AI_UNHEALTHY_TIMEOUT_SEC
+    if _cap:
+        _log(f"이 컴퓨터의 AI 가 응답하지 않는 상태로 관측됩니다 — 이 호출은 "
+             f"{int(_cap)}초까지만 기다립니다(응답하면 곧바로 정상으로 돌아갑니다).",
+             event="ai.unhealthy_cap", level="WARN", limit_sec=int(_cap))
     return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
-                               stdin_text=_stdin_text)
+                               stdin_text=_stdin_text, timeout_sec=_cap)

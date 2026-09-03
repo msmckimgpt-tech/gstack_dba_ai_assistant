@@ -467,11 +467,28 @@ def test_ai_timeout_is_unlimited_by_default():
         "러너가 여전히 고정 상한을 기본값으로 들고 있다 — 일하는 AI 를 시계로 끊는다")
 
 
-def test_timeout_check_is_skipped_when_unlimited():
-    """상한이 0 인데 비교를 그대로 두면 `waited >= 0` 이 첫 tick 에 참이 되어 **즉시** 끊긴다."""
-    src = CANON.read_text(encoding="utf-8")
-    assert "if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:" in src, (
-        "상한 0(무제한)일 때 검사를 건너뛰지 않는다 — 모든 호출이 즉시 중단된다")
+def test_timeout_check_is_skipped_when_unlimited(tmp_path):
+    """상한이 0 인데 비교를 그대로 두면 `waited >= 0` 이 첫 tick 에 참이 되어 **즉시** 끊긴다.
+
+    ⚠ **행위로 잠근다** (2026-09-03 재작성). 종전에는 소스에
+    `if _AI_TIMEOUT_SEC and waited >= _AI_TIMEOUT_SEC:` 문자열이 있는지 봤다. 상한 결정이
+    지역 변수(`_limit`)로 옮겨지자(TASK-20260903T140000 — 아픈 러너에만 상한) 계약은 그대로
+    성립하는데 단정만 깨졌다. 잠글 것은 「그렇게 쓰였는가」가 아니라 **「무제한이 즉시
+    중단시키지 않는가」** 다.
+    """
+    import importlib.util as _il
+
+    spec = _il.spec_from_file_location("_runner_nolimit", CANON)
+    mod = _il.module_from_spec(spec); spec.loader.exec_module(mod)
+    assert mod._AI_TIMEOUT_SEC == 0, "전제: 기본값은 무제한이다"
+
+    # 첫 tick 보다 확실히 오래 사는 자식 — 즉시 끊기면 이 호출이 실패로 돌아온다.
+    slow = tmp_path / "slow.py"
+    slow.write_text("import time,sys; time.sleep(2); sys.stdout.write('늦었지만 답')",
+                    encoding="utf-8")
+    ok, out = mod._run_cli_cancelable([sys.executable, str(slow)], lambda: False)
+    assert ok and "늦었지만 답" in out, (
+        f"무제한인데 중단됐다 — 모든 호출이 즉시 끊기는 회귀다: ok={ok} out={out!r}")
     # (종전 두 번째 단언은 ollama HTTP 경로의 `timeout=(_AI_TIMEOUT_SEC or None)` 을
     #  요구했다. 그 경로는 2026-09-01 에 제거됐다 — 남은 것은 CLI `Popen` 경로뿐이고
     #  그쪽 무제한 계약은 위 단언 하나가 잠근다.)
