@@ -35,9 +35,42 @@ _UNIT = _SRC.parent                                  # …/feature-0046-native-c
 #: 설치 산출물 이름 — 사용자가 프로그램 목록에서 보는 것. 정본 `shared/dqa_identity.APP_NAME`
 #: (`DQA Connect`) 의 파일명 형태다. 공백 없는 형태를 쓰는 이유는 PyInstaller·경로 안전.
 _APP_NAME = "DQAConnect"
+#: PyInstaller 에 넘기는 진입 스크립트. **패키지 밖**이어야 한다 — 이유는 그 파일의
+#: docstring 과 `tests/test_client_entrypoint.py`.
+_ENTRY = _SRC / "dqa_connect.py"
+
+
+def _make_stdio_lossy() -> None:
+    """레거시 콘솔 코드페이지에서 **출력 때문에 빌드가 실패하지 않게** 한다.
+
+    이 스크립트는 `os.name != "nt"` 를 막아 **Windows 를 강제**한다. 그런데 비영어권
+    Windows 의 기본 콘솔은 UTF-8 이 아니라 레거시 코드페이지다(한국어 = CP949). 그
+    조합에서 `print("⚠ …")` 는 `UnicodeEncodeError` 로 죽는다 — **exe 가 이미 정상적으로
+    만들어진 뒤에**. 즉 산출물은 멀쩡한데 종료 코드가 1 이 되고, 사람은 「빌드 실패」로,
+    CI 는 실패로 읽는다. 2026-09-03 실측: `DQAConnect.exe` 9,174,570 B 정상 생성 + exit=1.
+
+    ⚠ **문자를 골라내는 방식으로 고치지 않는다.** CP949 에는 `⚠`(U+26A0) 뿐 아니라
+    `—`(U+2014 EM DASH)도 없다 — CP949 가 가진 것은 `―`(U+2015)다. 이 저장소의 한국어
+    산문은 `—` 를 도처에 쓰므로, 금지 문자 목록을 관리하는 방식은 다음 문장에서 다시
+    깨진다. 그래서 **문자가 아니라 스트림**을 고친다.
+
+    `encoding` 은 건드리지 않고 `errors` 만 바꾼다. 인코딩까지 UTF-8 로 바꾸면 CP949
+    콘솔에 UTF-8 바이트가 나가 **한글 전체가 깨져** 보인다 — 읽을 수 없는 로그는 죽는
+    로그보다 낫지도 않다. 지금 방식은 표현 못 하는 문자만 `?` 가 되고 한글은 그대로다.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # `--windowed` 로 감싼 실행이나 리다이렉트 환경에서는 None 일 수 있다.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):  # 이미 닫혔거나 재설정 불가한 스트림
+            pass
 
 
 def main(argv: list[str] | None = None) -> int:
+    _make_stdio_lossy()
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(_UNIT / "dist"))
     ap.add_argument("--allow-non-windows", action="store_true",
@@ -61,9 +94,16 @@ def main(argv: list[str] | None = None) -> int:
         "--distpath", str(out),
         "--workpath", str(work),
         "--specpath", str(work),
+        # `client` 를 임포트 가능하게 한다 — 진입점이 절대 임포트를 쓰기 때문이다.
+        "--paths", str(_SRC),
         # 러너는 **동봉하지 않는다** — 서버에서 받아 체크섬을 대조한다(설치 스크립트와 같은 계약).
         # 동봉하면 서버 배포와 클라이언트 배포가 갈려 「고쳤는데 그대로」가 재발한다.
-        str(_SRC / "client" / "__main__.py"),
+        #
+        # ⚠ 진입점은 **패키지 밖**의 `dqa_connect.py` 다. `client/__main__.py` 를 주면
+        # PyInstaller 가 그것을 최상위 스크립트로 실행하고, 그 안의 상대 임포트
+        # (`from .gui import ...`)가 부모 패키지 부재로 죽는다 — 2026-09-03 이전 빌드가
+        # 정확히 그 상태였고 exe 는 오류 대화상자만 띄웠다. 자세한 것은 `dqa_connect.py`.
+        str(_ENTRY),
     ]
     print("$", " ".join(cmd))
     rc = subprocess.run(cmd, cwd=str(_SRC)).returncode
