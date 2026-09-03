@@ -7279,3 +7279,18 @@ Verdict: PASS (정본 판정에 종속).
 - `search-audit.css` 의 **다른** 컴포넌트에도 같은 형태가 있는지는 보지 않았다.
   중괄호 균형 검사가 파일 전체를 보므로 「블록 미닫힘」 형태는 전부 걸리지만,
   「기본 규칙 없이 조건부만」 축은 `.ai-conn` 에만 적용된다.
+
+
+## REV-20260903T220000-ai-claude-corp-feature-0003-chip-postdeploy [SKIPPED:docs-only] — ACCEPTED
+
+- Related TASK: TASK-20260903T210000 · Timestamp: 2026-09-03T22:00:00+09:00
+- Verdict: PASS · Human Approval Needed: no
+- 문서만 바뀌므로 코드 리뷰 대상 없음. 대신 **기록한 숫자가 실측인지**를 자기검증했다 —
+  세 조건 전부를 실 브라우저 `getComputedStyle` 로 직접 읽었고, 러너 사건(`caps.liveness_ok`
+  /`caps.liveness_fail`)과 서버 원장(`account_ai_health`)을 같은 시점에 대조했다.
+- 의심 지점을 넘기지 않았다: 첫 워커가 `checking` 셀렉터 **0건**을 냈는데 계산 스타일은
+  적용돼 있었다 — 모순을 그대로 두지 않고 `CSSRule.MEDIA_RULE` 명시 재귀로 고쳐 7건을
+  확인했다. 또 계정 10 의 최신 토큰이 NULL 로 회전한 것을 보고 「회전이 판정을 리셋하나」를
+  직접 확인했다(리셋하지 않는다 — 읽기가 하트비트 토큰을 본다).
+- 미검증을 숨기지 않았다: 다크 모드 실 렌더 미측정 · 질문 발송 후 확인 실패 창(30초)의
+  종단 보장은 P0-AK 소관.

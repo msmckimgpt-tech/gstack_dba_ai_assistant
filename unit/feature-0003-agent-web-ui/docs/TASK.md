@@ -13085,3 +13085,9 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] **결손 재주입 검증** — 닫는 `}` 를 다시 지웠을 때 신규 테스트 **5 failed**,
       직전 cycle 의 문자열 검사 테스트는 **19 passed**(눈이 없었다).
 - [x] 실 브라우저 재측정 — 배포 후 `getComputedStyle` 로 확인.
+- [x] **POST-DEPLOY 실측 완료** (배포 `b3a4fff1`) — 실 Windows 브라우저 3조건 대조:
+      확인 중(`null`→`checking` 회색) · 정상(`true`→`on` 초록, 대조군) · 불가(`false`→`off`
+      주황 + 사유). 세 조건 모두 `listening: true` — 종전 코드는 전부 「대기 중」으로 그렸다.
+      CSS 수정으로 `idle`·`stale` **선재 결함도 해소**(무스타일 → 각자 색). 파싱된 `checking`
+      셀렉터 0건 → **7건**. 사용자 실 계정(10)은 `account_ai_health → False` 로
+      「답할 수 없음」 + 사유가 나오는 상태(읽기만 함). 테스트 토큰 4건 폐기·러너 0.
