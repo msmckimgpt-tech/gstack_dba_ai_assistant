@@ -1658,3 +1658,93 @@ def _as_naive(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value.replace(tzinfo=None) if value.tzinfo else value
     return _utcnow()
+
+
+# ── 「연결됐지만 답할 수 없다」 (TASK-20260903T180000, 사용자 지적) ─────────────
+#
+# ## 왜 별 축인가 — 화면의 «준비됨» 은 «살아있음» 이 아니다
+#
+# 이 세션의 결함 네 건이 **모두 같은 부류**였다: 화면이 성립하지 않는 상태를 「성립한다」고
+# 말한다. 근본은 화면의 「준비됨」이 **「답할 수 있음」이 아니라 「하트비트가 살아있음」에서
+# 파생**된다는 것이다 — 그 대리 지표를 준비됨으로 렌더하는 구조가 거짓을 반복 생산했다.
+#
+# 사용자 지적(2026-09-03): *"claude 재인증이 필요하다면 사실상 지금 claude 가 정상 작동하지
+# 않는 상태라는 것 아닌가요? 그렇다면 DQA 에서는 정상 상태가 아니라 미연결 상태로 나타나야
+# 합니다."*
+#
+# ## 왜 `set_runner_report` 에 얹지 않는가
+#
+# 그 함수는 `CapabilitiesAt` 를 **쓰기-증폭 throttle 기준**으로 공유한다. 거기 얹으면 「답할 수
+# 없다」 전이가 최대 `HEARTBEAT_MIN_WRITE_SEC` 만큼 늦게 화면에 도달한다 — 사용자가 그 창에서
+# 질문을 보내면 종전과 똑같이 「준비됨」을 보고 기다린다. **이 축은 늦으면 안 된다.**
+#
+# throttle 없이도 쓰기 증폭이 없는 이유: 값이 boolean + 짧은 사유라, 적대적 러너가 값을
+# 번갈아 보내도 하트비트 주기(30초)당 UPDATE 1건이고 그 하트비트 자체가 이미 매번 쓴다.
+
+def set_runner_ai_health(cur, raw_token: str, ai_ready: Any,
+                         reason: str | None) -> bool:
+    """러너가 신고한 **「내 AI 가 답할 수 있는가」** 를 토큰 행에 새긴다. 실제로 썼으면 True.
+
+    `ai_ready` 가 `None`(신고 없음 — 구 러너)이면 **아무것도 쓰지 않는다**. 그 러너는 이 축을
+    모르므로, 0 으로 새기면 구 러너 사용자 전원이 미연결로 보인다(`RunnerBuild` tri-state 와
+    같은 함정을 여기서 반복하지 않는다).
+    """
+    if ai_ready is None:
+        return False
+    flag = 1 if bool(ai_ready) else 0
+    why = str(reason or "").strip()[:300] or None
+    try:
+        cur.execute(
+            "UPDATE WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            "SET t.RunnerAiReady = %s, t.RunnerAiUnreadyReason = %s "
+            f"WHERE t.TokenHash = %s AND {_LIVE_TOKEN_PREDICATE} "
+            # 값이 바뀔 때만 — NULL 비교는 `<>` 로 안 잡히므로 축마다 분기(위 형제 함수와 동형).
+            "  AND (t.RunnerAiReady IS NULL OR t.RunnerAiReady <> %s "
+            "       OR (t.RunnerAiUnreadyReason IS NULL AND %s IS NOT NULL) "
+            "       OR (t.RunnerAiUnreadyReason IS NOT NULL AND %s IS NULL) "
+            "       OR t.RunnerAiUnreadyReason <> %s)",
+            (flag, why, token_hash(raw_token), flag, why, why, why))
+    except Exception as exc:  # noqa: BLE001
+        # 컬럼이 아직 없는 배포 — **연결을 죽이지 않는다.** 그때는 이 축을 모르는 것과 같고,
+        # 읽기 쪽(`account_ai_health`)이 `None` 을 「판정 안 함」으로 다룬다.
+        _log.warning("[bridge] AI 건강 신고 기록 실패(컬럼 부재 가능): %r", exc)
+        return False
+    return int(getattr(cur, "rowcount", -1) or 0) != 0
+
+
+def account_ai_health(cur, account_id: int,
+                      window_sec: int | None = None) -> "tuple[bool | None, str]":
+    """이 계정의 **지금 듣고 있는** 러너가 신고한 「답할 수 있는가」. **tri-state.**
+
+    | 반환 `[0]` | 뜻 |
+    |---|---|
+    | `True` | 답할 수 있다고 신고했다 |
+    | `False` | **답할 수 없다** — 화면은 이것을 미연결로 그려야 한다 |
+    | `None` | **모른다** — 신고 없음(구 러너)·컬럼 부재·듣고 있는 러너 없음 |
+
+    `None` 을 `False` 로 접지 마라 — 그 접힘이 구 러너 사용자 전원을 미연결로 만든다.
+
+    러너 선택은 `account_runner_build` 와 **같은 축**(가장 나중에 연결된 것)이다. 갈리면
+    「화면이 말하는 러너」와 「질문을 처리할 러너」가 달라진다.
+    """
+    if not account_id:
+        return None, ""
+    window = int(window_sec if window_sec is not None else HEARTBEAT_WINDOW_SEC)
+    try:
+        cur.execute(
+            "SELECT t.RunnerAiReady, t.RunnerAiUnreadyReason FROM WebOAuthTokens t "
+            "LEFT JOIN WebAuthSessions s ON s.Id = t.SessionId "
+            f"WHERE t.AccountId = %s AND {_LIVE_TOKEN_PREDICATE} "
+            "  AND t.LastHeartbeatAt IS NOT NULL "
+            f"  AND t.LastHeartbeatAt > DATE_SUB({_SQL_NOW}, INTERVAL %s SECOND) "
+            "ORDER BY t.Id DESC LIMIT 1",
+            (int(account_id), window))
+        row = cur.fetchone()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[bridge] AI 건강 조회 실패 account=%s — 판정하지 않는다: %r",
+                     account_id, exc)
+        return None, ""
+    if not row or row[0] is None:
+        return None, ""
+    return bool(int(row[0])), str(row[1] or "")
