@@ -636,3 +636,69 @@ def test_winget_probe_does_not_trust_mere_presence():
     fn = fn[:fn.index("\n}\n")]
     assert "--version" in fn, "winget 을 실제로 실행해 보지 않는다"
     assert "LASTEXITCODE" in fn, "종료코드를 보지 않는다"
+
+
+@pytest.mark.skipif(_pwsh() is None, reason="pwsh 미설치(Windows interop 포함) — 파서 검사 생략")
+def test_generated_launch_ps1_parses(tmp_path):
+    """설치가 **굽는** `launch.ps1` 도 파싱된다.
+
+    ⚠ 이 축이 비어 있었다. 위 `test_windows_installer_parses` 는 **설치 스크립트 자신**만 보고,
+    그것이 here-string 으로 만들어 사용자 머신에 남기는 `launch.ps1` 은 아무도 파싱하지
+    않았다 — POSIX 축은 `test_launcher_ca_pin` 이 굽힌 `launch.sh` 를 실제로 실행하는데
+    Windows 축만 없었다. 굽힌 파일이 깨지면 `[내 AI 실행]` 이 **무음으로** 죽는다(브라우저는
+    핸들러 실패를 표시하지 않는다).
+
+    ⚠ **굽는 일은 PowerShell 에게 시킨다.** 손으로 here-string 을 치환하면 그 치환기가 새 결함
+    원이 된다 — 실제로 초판에서 두 번 틀렸다(코드 자리에 문자열 스텁 · `` `$ `` 이스케이프 미처리).
+    POSIX 축이 `sh` 에게 heredoc 을 맡기는 것과 같은 이유다: **굽는 규칙의 정본은 셸이다.**
+
+    계기: 2026-09-03 개명이 `"$Var://"` 로 설치 스크립트를 파싱 불가로 만들었고, 같은 클래스가
+    굽힌 파일에서 일어나면 잡을 자리가 없었다.
+    """
+    src = _SETUP_PS1.read_text(encoding="utf-8")
+    start = src.index('@"\n# DQA Connect 러너 기동')
+    end = src.index('"@ | Set-Content', start)
+    here = src[start:end]                      # `@"` … 본문 (닫는 `"@` 는 아래에서 붙인다)
+
+    out = tmp_path / "launch.ps1"
+    gen = tmp_path / "gen.ps1"
+    # 설치 시점에 존재하는 변수만 최소로 세운다. 값은 **정본에서** 읽는다(테스트가 지어내지 않음).
+    def _val(name: str, fallback: str) -> str:
+        m = re.search(rf"^\s*\${name}\s*=\s*'([^']*)'\s*$", src, re.M)
+        return m.group(1) if m else fallback
+    gen.write_text(
+        "param([string]$OutPath)\n"
+        f"$DqaAppName = '{_val('DqaAppName', 'DQA Connect')}'\n"
+        f"$DqaScheme  = '{_val('DqaScheme', 'dqa-connect')}'\n"
+        f"$DqaAppId   = '{_val('DqaAppId', 'com.example.app')}'\n"
+        "$Home_ = 'C:\\stub\\home'\n$Py = 'C:\\stub\\python.exe'\n"
+        "$Base = 'https://h.test'\n$AgentPath = 'C:\\stub\\bridge_agent.py'\n"
+        "$CaPath = 'C:\\stub\\rootCA.crt'\n$BakedArgsLiteral = '@()'\n"
+        + here + '"@ | Set-Content -Encoding UTF8 $OutPath\n',
+        encoding="utf-8")
+
+    def _win(pth) -> str:
+        s = str(pth)
+        if str(_pwsh()).endswith(".exe"):
+            r = subprocess.run(["wslpath", "-w", s], capture_output=True, text=True)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        return s
+
+    # ⚠ `-ExecutionPolicy Bypass` — 실 설치 경로도 이 플래그로 돈다(`bridge_setup.sh` 의
+    #   핸들러 등록·`bridge_setup.ps1` 안내). 서명되지 않은 임시 스크립트를 막는 정책이
+    #   테스트를 「굽힌 파일이 깨졌다」로 오분류하지 않게 한다.
+    bake = subprocess.run(
+        [_pwsh(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+         f"& '{_win(gen)}' -OutPath '{_win(out)}'"],
+        capture_output=True, text=True, timeout=120)
+    assert bake.returncode == 0 and out.exists(), (
+        f"launch.ps1 을 굽지 못했다: {bake.stdout}\n{bake.stderr}")
+
+    proc = subprocess.run(
+        [_pwsh(), "-NoProfile", "-Command",
+         f"$e=$null;[System.Management.Automation.Language.Parser]::ParseFile("
+         f"'{_win(out)}',[ref]$null,[ref]$e)|Out-Null;"
+         f"if($e){{$e|ForEach-Object{{'{{0}}: {{1}}' -f $_.Extent.StartLineNumber,$_.Message}};exit 1}}"],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, f"굽힌 launch.ps1 이 파싱되지 않는다:\n{proc.stdout}\n{proc.stderr}"

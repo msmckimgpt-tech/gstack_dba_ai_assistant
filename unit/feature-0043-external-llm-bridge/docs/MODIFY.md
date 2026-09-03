@@ -4486,3 +4486,17 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - 병렬 세션(`ai-ready-surfaced`)이 먼저 랜딩해 PR DIRTY. append-doc 드라이버로 충돌 0.
 - §16.4 양측 부모 대비 검증(3문서 모두 양측 이상 + 양측 항목 이름 실재) + 병합 후 회귀
   재실행(실패 7 = 기준선, 신규 0).
+
+## CHG-20260903T160000-ai-claude-corp-generated-launch-ps1-gate — 굽힌 `launch.ps1` 파싱 게이트 신설
+
+설치 스크립트 **자신**만 파싱하고, 그것이 here-string 으로 굽는 `launch.ps1` 은 어떤 게이트에도
+걸리지 않았다 — POSIX 축은 굽힌 `launch.sh` 를 실제로 실행하는 테스트가 여럿인데 Windows 축만
+비어 있었고, 그 비대칭이 「파싱 테스트가 있다」는 초록 뒤에 있었다. 굽힌 파일이 깨지면
+`[내 AI 실행]` 이 **무음으로** 죽는다.
+
+`test_generated_launch_ps1_parses` 신설 — **PowerShell 에게 굽게 한 뒤** 파서에 건다.
+⚠ 초판은 here-string 을 손으로 치환했다가 2회 거짓 양성을 자작했다(코드 자리에 문자열 스텁 ·
+`` `$ `` 이스케이프 미처리). 굽는 규칙의 정본은 셸이다 — POSIX 축이 `sh` 에게 heredoc 을
+맡기는 것과 같은 이유.
+
+주입 실증: here-string 안 `$Var://` → 이 게이트만 FAIL(바깥 파일은 계속 파싱된다).

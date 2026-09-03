@@ -4531,3 +4531,25 @@ Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주�
   `mergeable=UNKNOWN` 으로 중단했는데, 그 사실을 확인하기 전에 `deploy-web` 을 실행했다.
   결과적으로 **내 수정이 빠진 main 을 배포**했다(무해했으나 순서가 틀렸다). 배포는 머지
   완료를 **확인한 뒤**에 한다 — §16.3 의 cycle-final 순서(머지 → 배포)가 그것을 말한다.
+
+
+## REV-20260903T160000-ai-claude-corp-generated-launch-ps1-gate [SKIPPED:tool-restricted:qa] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 검사면 공백 — 굽힌 `launch.ps1` 이 어떤 게이트에도 걸리지 않았다
+- Timestamp: 2026-09-03T16:00:00+09:00
+- Verdict: PASS · Human Approval Needed: no
+
+**왜 이 자리가 비어 있었나.** POSIX 축은 굽힌 `launch.sh` 를 **실제로 실행**하는 테스트가
+여럿인데(`test_launcher_ca_pin`), Windows 축은 설치 스크립트 **자신**만 파싱했다. 두 축이
+비대칭인 줄 아무도 몰랐던 이유는, 그 비대칭이 **초록 뒤에 있었기** 때문이다 — Windows 축도
+「파싱 테스트가 있다」로 보였다.
+
+**초판이 두 번 틀린 것을 기록한다.** here-string 을 손으로 치환했더니 ① 코드 자리
+(`$BakedArgsLiteral`)에 문자열 스텁을 넣어 구문 오류를 **자작**했고 ② `` `$ `` 이스케이프를
+처리하지 않아 또 실패했다. 두 번 다 「굽힌 파일이 깨졌다」는 **거짓 양성**이라, 그대로 뒀으면
+이 테스트는 무엇도 검사하지 않으면서 빨간불만 냈을 것이다. → 굽는 일을 PowerShell 에게 넘겼다
+(POSIX 축이 `sh` 에게 heredoc 을 맡기는 것과 같은 이유: **굽는 규칙의 정본은 셸이다**).
+
+**검증**: here-string 안에 `$Var://` 를 주입 → 이 게이트만 FAIL(바깥 파일은 계속 파싱됨 =
+기존 `test_windows_installer_parses` 는 원리적으로 못 잡는 자리). 복원 후 PASS.
