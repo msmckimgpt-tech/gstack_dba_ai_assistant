@@ -107,68 +107,80 @@ def test_healthy_runner_keeps_the_previous_unlimited_contract(mod, monkeypatch, 
         f"건강한 러너에 상한이 걸렸다({seen.get('timeout_sec')}) — 긴 조사가 끊긴다")
 
 
-def test_unhealthy_runner_gets_a_finite_cap(mod, monkeypatch, tmp_path):
-    """응답 없음이 관측된 러너는 **유한 상한**을 받는다 — 무한 대기가 사라진다."""
-    seen = {}
+def test_unhealthy_runner_answers_immediately_without_calling_the_ai(
+        mod, monkeypatch, tmp_path):
+    """⭐ 아픈 러너는 **AI 를 부르지 않고 즉시** 답한다 (사용자 지적 2026-09-03).
+
+    > 「사용자 입장에서, 150는 너무 깁니다. (사실, 10초 이상 소요되는 부분도 길다고
+    >  체감됩니다.)」
+
+    직전 계약(150초 상한)은 **이미 못 쓴다는 것을 아는 상태에서** 더 기다리게 했다. 그 시간은
+    사용자를 위한 것이 아니라 회복 확인이라는 우리 편의였다.
+    """
+    spawned = []
     monkeypatch.setattr(mod, "_run_cli_cancelable",
-                        lambda *a, **k: (seen.update(k), (True, "ok"))[1])
+                        lambda *a, **k: spawned.append(a) or (True, "안 불려야 한다"))
+    monkeypatch.setattr(mod, "schedule_health_recheck", lambda *a, **k: True)
+    monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
+    mod.note_ai_unusable("이 컴퓨터의 claude 가 응답하지 않습니다")
+
+    t0 = time.monotonic()
+    ok, msg = mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
+    elapsed = time.monotonic() - t0
+
+    assert spawned == [], "아픈 러너인데 AI 를 호출했다 — 사용자가 그만큼 기다린다"
+    assert ok is False
+    assert elapsed < 1.0, f"즉시 답하지 않았다({elapsed:.2f}초)"
+    assert "응답하지 않습니다" in msg and "다시 로그인" in msg, msg[:200]
+
+
+def test_fast_fail_schedules_background_recovery(mod, monkeypatch, tmp_path):
+    """즉시 실패하면서 **회복 확인을 배경으로** 건다 — 영구 잠김 방지.
+
+    이 배선이 없으면 「즉시 답한다」가 「영원히 아프다」가 된다.
+    """
+    called = []
+    monkeypatch.setattr(mod, "schedule_health_recheck",
+                        lambda *a, **k: called.append(a) or True)
     monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
     mod.note_ai_unusable("응답 없음")
     mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
-
-    cap = seen.get("timeout_sec")
-    assert cap, "아픈 러너인데 상한이 없다 — 사용자는 영원히 기다린다"
-    assert 0 < float(cap) <= 600, f"상한이 사용자 인내 범위를 넘는다: {cap}"
+    assert called, "회복 확인을 걸지 않았다 — 복구돼도 영원히 막힌다"
 
 
-#: 매달리는 자식의 수명. **유한하게** 둔다 — 아래 주석 참조.
-_HANG_CHILD_SEC = 25
-#: 이 테스트가 적용하는 상한.
-_HANG_CAP_SEC = 3.0
-#: 「끊었다」로 인정할 상한. 자식 수명보다 충분히 작아야 판별력이 있다.
-_HANG_VERDICT_SEC = 12.0
-
-
-def test_hanging_child_is_killed_and_reported(mod, monkeypatch, tmp_path):
-    """⭐ 실제로 매달리는 자식을 **끊고 정직하게 답한다** (라이브 재현).
-
-    `claude.exe` 가 출력 없이 매달리던 그 상황을 자식 프로세스로 재현한다.
-
-    ## 왜 자식 수명이 유한하고, 왜 **경과 시간**을 단정하는가
-
-    초판은 자식을 `sleep(600)` 으로 두고 반환값만 단정했다. 그러면 상한이 사라지는 회귀에서
-    이 테스트는 **실패하지 않고 600초 매달린다** — 적대 뮤테이션 스윕이 그 자리에서 죽었고
-    (실측), CI 에서도 같은 결과가 된다. **매달리는 테스트는 실패하는 테스트보다 나쁘다**:
-    무엇이 깨졌는지 말해 주지 않으면서 파이프라인을 멈춘다.
-
-    그래서 (a) 자식 수명을 유한하게 두어 최악이 «느린 실패»가 되게 하고, (b) 판정을
-    **경과 시간**으로 한다 — 상한이 없으면 자식 수명까지 걸리므로 그 사실이 곧 단정 위반이다.
-    """
-    hang = tmp_path / "hang.py"
-    hang.write_text(f"import time; time.sleep({_HANG_CHILD_SEC})", encoding="utf-8")
-    monkeypatch.setattr(mod, "_AI_UNHEALTHY_TIMEOUT_SEC", _HANG_CAP_SEC)
-    monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
+def test_recovery_recheck_runs_in_background_and_heals(mod, monkeypatch):
+    """배경 확인이 성공하면 **다음 질문**부터 정상 경로다."""
+    mod.reset_health_recheck()
+    monkeypatch.setattr(mod, "_which_ai",
+                        lambda n: "/usr/bin/claude" if n == "claude" else None)
+    monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: {
+        "label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
+        "model_flag": ["--model", "{model}"], "efforts": [], "effort_flag": []})
     mod.note_ai_unusable("응답 없음")
+    assert mod.schedule_health_recheck("claude") is True
 
-    t0 = time.monotonic()
-    ok, msg = mod.ask_local_ai("custom", [], "질문",
-                               f"{sys.executable} {hang}")
-    elapsed = time.monotonic() - t0
-
-    assert elapsed < _HANG_VERDICT_SEC, (
-        f"상한이 걸리지 않아 {elapsed:.1f}초를 기다렸다(자식 수명 {_HANG_CHILD_SEC}초) — "
-        "라이브의 무한 대기가 그대로 돌아왔다")
-    assert ok is False
-    assert "응답하지 않아 중단" in msg, f"정직한 사유가 아니다: {msg!r}"
-    assert "다시 로그인" in msg, f"다음 행동이 없으면 막다른 길이다: {msg!r}"
+    for _ in range(200):                     # 배경 스레드가 끝날 때까지
+        if mod.ai_health()[0]:
+            break
+        time.sleep(0.05)
+    assert mod.ai_health()[0] is True, "회복했는데 건강 상태가 돌아오지 않았다"
 
 
-def test_timeout_notice_differs_by_health(mod):
-    """건강한 러너의 상한 초과는 **다른 사실**이다 — 재인증 안내를 붙이지 않는다."""
-    healthy = mod._timeout_notice(900, False)
-    sick = mod._timeout_notice(150, True)
-    assert "다시 로그인" not in healthy, "정상 러너에 엉뚱한 재인증 안내를 붙였다"
-    assert "다시 로그인" in sick
+def test_recovery_recheck_has_a_cooldown(mod, monkeypatch):
+    """회복 확인은 **AI 를 호출한다** — 매 질문마다 하면 남의 계정 쿼터를 우리가 태운다."""
+    mod.reset_health_recheck()
+    monkeypatch.setattr(mod, "_which_ai", lambda n: None)   # 실제 질의는 안 일어난다
+    assert mod.schedule_health_recheck(None) is True
+    assert mod.schedule_health_recheck(None) is False, "쿨다운 없이 연달아 확인한다"
+
+
+def test_healthy_runner_never_fast_fails(mod, monkeypatch, tmp_path):
+    """건강한 러너는 이 경로를 **타지 않는다** — 정상 질문이 안내문으로 바뀌면 안 된다."""
+    monkeypatch.setattr(mod, "_run_cli_cancelable",
+                        lambda *a, **k: (True, "실제 답변"))
+    monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
+    ok, out = mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
+    assert ok and out == "실제 답변", f"건강한 러너의 답이 바뀌었다: {out!r}"
 
 
 # ── 3. 신고 — 서버가 알 수 있는가 ────────────────────────────────────────────
@@ -235,11 +247,15 @@ def test_successful_call_actually_heals_the_runner(mod, monkeypatch, tmp_path):
     """
     say = tmp_path / "ok.py"
     say.write_text("import sys; sys.stdout.write('답변입니다')", encoding="utf-8")
-    monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
     mod.note_ai_unusable("응답 없음")
     assert mod.ai_health()[0] is False, "전제: 아픈 상태로 시작"
 
-    ok, out = mod.ask_local_ai("custom", [], "질문", f"{sys.executable} {say}")
+    # ⚠ `ask_local_ai` 가 아니라 **실행 계층**을 직접 부른다 (TASK-20260903T160000).
+    #   아픈 러너의 `ask_local_ai` 는 이제 AI 를 부르지 않고 즉시 안내한다(사용자를
+    #   기다리게 하지 않기 위해) — 그래서 「성공이 건강을 되돌린다」는 계약은 실제로
+    #   호출이 일어나는 이 자리에서 잠근다. 회복의 **트리거**는 배경 재확인이 맡고,
+    #   그쪽은 `test_recovery_recheck_runs_in_background_and_heals` 가 본다.
+    ok, out = mod._run_cli_cancelable([sys.executable, str(say)], lambda: False)
 
     assert ok and "답변입니다" in out, f"전제: 이 호출은 성공해야 한다 — {out!r}"
     assert mod.ai_health() == (True, ""), (

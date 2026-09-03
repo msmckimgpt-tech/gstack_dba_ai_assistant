@@ -16,6 +16,7 @@ from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC
 from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
+from .caps import schedule_health_recheck
 from .state import ai_health, note_ai_outcome
 from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG
 
@@ -30,32 +31,40 @@ CANCELED = "__canceled__"
 #: 실패 사유로 실어 보낼 자식 출력의 최대 길이(문자).
 _FAIL_DETAIL_MAX = 400
 
-# ── 응답하지 않는 AI 에는 **짧은 상한**을 적용한다 (TASK-20260903T140000) ──────
+# ── 응답하지 않는 AI 는 **기다리지 않고** 즉시 정직하게 답한다 (TASK-20260903T160000) ──
 #
-# ## 왜 필요한가 (사용자 지적 2026-09-03)
+# ## 왜 상한이 아니라 즉시 실패인가 (사용자 지적 2026-09-03)
 #
-# `_AI_TIMEOUT_SEC` 기본값은 **0(무제한)** 이다. 그 결정은 옳았다 — 고정 상한은 «일하고 있는
-# AI» 를 끊고, 실제로 900초 상한이 27단계 조사를 죽인 적이 있다. 그리고 진행 중인 조사는
-# 도구 호출마다 서버 lease 를 갱신하므로 서버도 기다릴 수 있다.
+# 직전 cycle(TASK-20260903T140000)은 아픈 러너에 **150초 상한**을 뒀다. 사용자 지적:
 #
-# 그런데 그 계약에는 **구멍**이 있었다: 자식이 **아무것도 하지 않는** 경우다. 도구도 안 부르고
-# 출력도 없으면 진행 신호가 없고, 러너는 상한이 없으므로 **영원히 기다린다.** 라이브에서
-# `claude.exe -p` 가 정확히 그랬다(300초 실측 timeout·출력 0바이트, `oauth/token 400` 반복).
-# 사용자에게는 아무 안내도 없는 무한 대기였다.
+# > 「사용자 입장에서, 150는 너무 깁니다. (사실, 10초 이상 소요되는 부분도 길다고
+# >  체감됩니다.)」
 #
-# ## 왜 「아플 때만」 짧게 하는가
+# 맞는 지적이다. **이미 「응답하지 않는다」를 아는 상태에서 150초를 더 기다리게 하는 것**은
+# 설계가 뒤바뀐 것이었다 — 그 150초는 사용자를 위한 시간이 아니라 «회복을 확인하려는 우리
+# 편의»였고, 그 비용을 사용자 대기 시간으로 지불하고 있었다.
 #
-# 무출력만으로는 「생각 중」과 「멈춤」을 가를 수 없다(`claude -p` 는 답을 끝에 한 번에 낸다).
-# 그래서 시간이 아니라 **이 러너의 관측된 건강 상태**로 가른다:
+# ## 두 목적을 분리한다
 #
-#   - 건강함(기본) → **종전 그대로 무제한.** 일하는 AI 를 끊지 않는다(회귀 0).
-#   - 응답 없음이 이미 관측됨(`state.ai_health()` 이 거짓) → 이 상한을 적용한다.
+#   - **사용자 답변**: AI 를 부르지 않고 **즉시** 정직하게 답한다(체감 0초).
+#   - **회복 감지**: `caps.schedule_health_recheck` 가 **배경**에서 확인한다(쿨다운 있음).
+#     성공하면 건강 상태가 돌아오고 **다음 질문**은 정상 경로(무제한)로 처리된다.
 #
-# 그러면 (a) 고장난 러너의 질문은 유한 시간에 정직한 실패로 끝나고, (b) 실제로 복구됐다면
-# 이 시간 안에 답이 와서 `note_ai_outcome(True)` 가 건강 상태를 되돌린다 — **자기 치유**다.
-# 「못 쓴다」로 판정된 러너가 영구히 잠기지 않는 것이 이 설계의 핵심이다.
-_AI_UNHEALTHY_TIMEOUT_SEC = float(
-    os.environ.get("BRIDGE_AI_UNHEALTHY_TIMEOUT_SEC", "") or 150.0)
+# 회복 확인을 없애지 않는 이유는 직전 cycle 과 같다 — 「못 쓴다」가 영구 잠김이 되면 실제로
+# 복구된 러너가 영원히 막힌다. 바뀐 것은 **그 확인을 누가 기다리는가** 뿐이다.
+#
+# ⚠ 건강한 러너는 여전히 **무제한**이다(회귀 0). 이 경로는 아플 때만 탄다.
+
+#: 아픈 러너가 즉시 내는 답. 사유(관측된 것)와 **다음 행동**을 함께 준다.
+def _unhealthy_notice(reason: str) -> str:
+    why = str(reason or "").strip() or "연결된 AI 가 응답하지 않습니다."
+    return (f"{why}\n\n"
+            "그 컴퓨터에서 해당 AI CLI 에 다시 로그인한 뒤(예: `claude` 재인증) 질문을 다시 "
+            "보내 주세요. 러너를 다시 띄울 필요는 없습니다 — 응답이 돌아오면 자동으로 "
+            "정상 처리됩니다.\n\n"
+            "(이 답변은 연결된 AI 를 호출하지 않고 즉시 안내한 것입니다. 응답하지 않는 것이 "
+            "이미 관측된 상태에서 기다리게 하지 않기 위함입니다.)")
+
 
 #: **stderr 에 있어도 실패 원인이 아닌** 줄 — 이것만 남으면 stderr 는 «비었다» 로 본다.
 #:
@@ -697,6 +706,19 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     돌려준다 — 실패와 구분해야 호출측이 "제출하지 않는다" 를 선택할 수 있다.
     """
     _canceled = cancel_check or (lambda: False)
+    # ── 아프면 부르지 않고 즉시 답한다 (TASK-20260903T160000) ────────────────────
+    #
+    # 여기가 **가장 앞**이어야 한다: 프롬프트 조립·명령 조립 뒤에 두면 그만큼 사용자가
+    # 기다리고, 그 시간은 어차피 버릴 준비 작업에 쓰인 것이다.
+    _ai_ok, _ai_why = ai_health()
+    if not _ai_ok:
+        log_event("ai.unhealthy_fastfail",
+                  "연결된 AI 가 응답하지 않는 상태로 관측됩니다 — 호출하지 않고 즉시 "
+                  "안내합니다(회복은 배경에서 확인합니다).",
+                  level="WARN", runtime=kind, reason=_ai_why)
+        # 회복 확인은 **배경**에서. 결과를 기다리지 않는다(기다리면 원점으로 돌아간다).
+        schedule_health_recheck(kind if kind in _RUNTIME_SPECS else None)
+        return False, _unhealthy_notice(_ai_why)
     if custom:
         argv = shlex.split(custom)
         kind = "custom"
@@ -732,13 +754,5 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     child_env = None
     if token:
         child_env = {**os.environ, "BRIDGE_TOKEN": str(token)}
-    # 이 러너의 AI 가 응답하지 않는 것이 **이미 관측됐으면** 짧은 상한을 건다
-    # (TASK-20260903T140000). 건강하면 `None` → 종전 전역(기본 무제한)이 그대로 쓰인다.
-    _ai_ok, _ = ai_health()
-    _cap = None if _ai_ok else _AI_UNHEALTHY_TIMEOUT_SEC
-    if _cap:
-        _log(f"이 컴퓨터의 AI 가 응답하지 않는 상태로 관측됩니다 — 이 호출은 "
-             f"{int(_cap)}초까지만 기다립니다(응답하면 곧바로 정상으로 돌아갑니다).",
-             event="ai.unhealthy_cap", level="WARN", limit_sec=int(_cap))
     return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
-                               stdin_text=_stdin_text, timeout_sec=_cap)
+                               stdin_text=_stdin_text)
