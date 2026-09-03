@@ -125,3 +125,12 @@ edit_policy: append-only
 스킴 인계를 「검증했다」고 보고했으나, 그때 쓴 URL 은 **내가 조립한 것**이었다. 즉 내
 조립기와 내 파서가 맞는지를 시험했고 **제품이 실제로 보내는 것은 한 번도 넣어 보지
 않았다**. `test_handoff_seam.py` 는 `dqa_identity.scheme_url()` 을 직접 호출해 봉투를 만든다.
+
+## CHG-20260904T041000-ai-claude-ux-contract-followup — UX 패리티 계약 갱신 반영
+- Timestamp: 2026-09-04T04:10:00+09:00
+- `feature-0043/tests/test_ux_parity.py` 3건이 옛 주 경로(터미널)를 계약으로 잠가 CI 적색.
+  주 경로 변경은 사용자 결정이므로 계약을 옮겼다 — 보호하던 성질은 유지(REV-…040000 참조).
+- ⚠ **절차 오류 재발**: `verify-completion` 이 FAIL 을 낸 직후 다음 줄에서 commit·push 했다.
+  앞선 cycle 에서 같은 실수를 하고 「`&&` 로 잇는다」고 적었는데, 이번에는 verify 와 commit 을
+  **다른 명령으로 분리**해 그 규칙이 적용되지 않았다. 규칙을 「`&&` 로 잇는다」가 아니라
+  **「verify 의 종료코드를 조건으로 삼는다」**로 다시 적는다 — 형태가 아니라 조건이 본질이다.
