@@ -206,7 +206,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-00 · 연결 퍼널 계측
-- **status**: pending
+- **status**: **done** (2026-09-03)
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: operational
 - **risk_grade**: Minor
@@ -274,7 +274,7 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ---
 
 ### ITEM-05 · AI CLI 허용 목록 3자리 정합 (드리프트 수정)
-- **status**: pending
+- **status**: **done** (2026-09-02) — census 결과 3자리가 아니라 **6자리**였다(FUNCTION.md P0-Z6.1-a)
 - **feature_id**: `feature-0043-external-llm-bridge`
 - **dimension**: structural
 - **risk_grade**: Minor
@@ -365,8 +365,9 @@ ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 
 ## 6. 진행 현황
 
-- 총 **5** (ITEM 4 + SPIKE 1) · done 0 · in-progress 0 · pending 4 · **blocked 1**(ITEM-08 — 코드 서명)
-- **다음 ready**: `SPIKE-02` · `ITEM-00` · `ITEM-05` (P0 병렬 — 선행 의존 없음)
+- 총 **5** (ITEM 4 + SPIKE 1) · **done 2** · in-progress 0 · pending 2 · **blocked 1**(ITEM-08 — 코드 서명)
+- **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03)
+- **다음 ready**: `SPIKE-02` (P0 마지막 — ITEM-08 spec 확정용)
 - **차단 해소에 필요한 조직 작업**: 코드 서명 인증서 확보 여부 확정(Windows + Apple).
   「확보 불가」면 F-004(사내 MDM 배포)로 대체 가능한지 재질의 → 둘 다 불가면 ITEM-08 재검토.
 - 신규 feature 배정: `feature-0046-native-client` (초판의 `feature-0046-mcpb-connector-bundle`

@@ -67,6 +67,7 @@ router = APIRouter()
 # (Dockerfile 은 feature-0002/0003/shared 만 복사). 소비자가 feature-0003 라우터뿐이므로
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import oauth_store as _store  # noqa: E402
+import routers._connect_funnel as _funnel  # noqa: E402  ROADMAP ITEM-00 연결 퍼널 계측
 
 
 def _err(exc: "_store.OAuthError") -> JSONResponse:
@@ -553,6 +554,9 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             cur.close()
     except Exception:
         connected = True   # 판정 실패는 '연결됨'(틀렸을 때 덜 성가신 방향)
+    # 퍼널 1단계 (ROADMAP ITEM-00): 인증 상태로 연결 화면이 열렸다. 이 시점에는 사용자가 아직
+    # 어느 경로도 고르지 않았으므로 `path_kind` 는 `unknown` 이다 — 지어내지 않는다.
+    _funnel.record_step(conn, request, account, step="page_view")
     # 토큰이 있는 것과 **지금 듣고 있는 것**은 다르다. 재부팅하면 러너만 사라지고 토큰은
     # 남아, "연결됨" 만 보이면 아무도 없는 곳에 질문하게 된다(제보 2026-08-27).
     listening = _listening(int(account.get("id") or 0), conn)
@@ -1426,6 +1430,11 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
         last_os = _store.account_bridge_os(cur, int(account.get("id") or 0))
     finally:
         cur.close()
+    # 퍼널 2단계 (ROADMAP ITEM-00): 연결 정보를 발급받았다. `last_os` 가 있으면 그 계정이 앞서
+    # 어떤 러너로 붙었는지 이미 아는 것이므로 경로 종류를 그것으로 각인한다 — 뒤 단계
+    # (`first_claim`·`first_answer`)가 이 값을 이어받아 **경로별 이탈률이 끊기지 않는다**.
+    _funnel.record_step(conn, request, account, step="handoff_issued",
+                        path_kind=_funnel.path_kind_from_agent_os(last_os))
     origin = _origin(request)
     endpoint = f"{origin}/api/ai/mcp"
     # 지시문을 **서버가** 실어 보낸다 — 표시하는 화면이 둘(단독 페이지·대화 모달)이라

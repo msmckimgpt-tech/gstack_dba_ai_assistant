@@ -80,6 +80,7 @@ router = APIRouter()
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import bridge_drain as _drain       # noqa: E402  feature-0045: 배포 연속성(대기 계상·드레인)
 import oauth_store as _store        # noqa: E402
+import routers._connect_funnel as _funnel  # noqa: E402  ROADMAP ITEM-00 연결 퍼널 계측
 
 
 # ── 배급 자격: 이 러너에게 무엇을 줄 수 있는가 (TASK-20260831T100000) ────────────────
@@ -1270,6 +1271,11 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
     # ⚠ 원장 호출은 **한 곳뿐이다.** 분기마다 두면 (a) 「전달이 원장보다 먼저」라는 계약이
     #   분기 하나에서만 성립하고 (b) 그 계약을 지키는 회귀 가드가 소스 순서를 보므로 조용히
     #   무력화된다(실제로 이 수정 전에 그 가드가 FAIL 했다). 결과 필드만 분기로 나눈다.
+    # 퍼널 5단계 (ROADMAP ITEM-00): 처음으로 답변을 제출했다 = 그 사용자가 **첫 가치**에 도달했다.
+    # 원장 호출과 같은 단일점에 둔다 — 분기마다 두면 그 중 하나만 남는 형태가 된다(바로 위 주석의
+    # 교훈). `findings`/`apply_error` 가 있어도 제출 자체는 일어났으므로 도달로 센다.
+    _funnel.record_step(conn, request, account, step="first_answer",
+                        path_kind=_funnel.account_path_kind(conn, int(account.get("id") or 0)))
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="submit_answer",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -2824,6 +2830,11 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         conn, {"conversation_id": conversation_id, "task_id": task_id},
         "질문을 가져왔습니다 — 대화 맥락과 첨부를 확인합니다",
         detail=("첨부 %d건을 함께 받았습니다." % len(attachments)) if attachments else "")
+    # 퍼널 4단계 (ROADMAP ITEM-00): 처음으로 질문을 점유했다 = 연결이 **실제로 일하기 시작**했다.
+    # 이 요청만 봐서는 경로를 알 수 없다(러너든 등록형이든 같은 토큰 표면을 지난다) — 그래서
+    # 앞 단계가 각인한 값을 이어받는다.
+    _funnel.record_step(conn, request, account, step="first_claim",
+                        path_kind=_funnel.account_path_kind(conn, account_id))
     return JSONResponse({
         "task_id": task_id,
         "question": marked,
@@ -4786,6 +4797,12 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "[bridge] 러너 OS 기록 실패 account=%s: %r", account_id, exc)
+        # 퍼널 3단계 (ROADMAP ITEM-00): 이 계정의 무언가가 처음으로 살아 있다고 신고했다.
+        # 경로 종류는 방금 받은 `agent_os` 에서 온다 — 이 자리가 그 사실을 아는 유일한 지점이고,
+        # 뒤 두 단계(`first_claim`·`first_answer`)가 이 값을 이어받는다.
+        _funnel.record_step(conn, request, account,
+                            step="first_heartbeat",
+                            path_kind=_funnel.path_kind_from_agent_os(agent_os))
         # ── 계정·런타임 단위 능력 baseline (TASK-20260902T140200) ─────────────────────
         #
         # 신고를 계정 원장에 **누적**하고, 그 원장을 응답에 실어 러너에게 돌려준다.

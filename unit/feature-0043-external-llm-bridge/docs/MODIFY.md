@@ -4302,3 +4302,18 @@ claude  10.9s  모델 3종 ['opus','sonnet','haiku'] · 추론 5단계 ['low','m
 main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 — 변경 내용(caps 프롬프트·추론축)
 과 그 테스트(엣지 롤링 게이트)의 인과가 성립하지 않고, 단독 반복은 전부 통과한다.
 **PR CI 판정을 정본으로 삼는다.** CI 가 실패하면 이 항목을 먼저 조사한다.
+
+## CHG-20260903T110000-ai-claude-connect-funnel-metrics — 연결 퍼널 계측 (ITEM-00)
+- Timestamp: 2026-09-03T11:00:00+09:00
+- 배경: 온보딩 개선 항목들이 「쉬워졌다」를 주장하는데 **반증할 수단이 없었다.** 전환 전 기준선 확보.
+- 신설: `unit/feature-0003-agent-web-ui/src/routers/_connect_funnel.py`
+  (`FUNNEL_STEPS` 5 · `PATH_KINDS` 7 · `record_step` · `account_path_kind` · `dedupe_key_of`)
+- 배선 5곳: `oauth_as.connect_status`(page_view) · `oauth_as.connect_issue_token`(handoff_issued)
+  · `ai_tools.bridge_heartbeat`(first_heartbeat) · `ai_tools.claim_request`(first_claim)
+  · `ai_tools.submit_answer`(first_answer)
+- **설계 정정 2건 (codex 적대 리뷰)**:
+  1. 감사 기록을 **전용 커넥션**으로 격리 — 업무 conn 사용 시 감사 헬퍼의 commit/rollback 이
+     사용자 트랜잭션을 훼손(초판은 답변 저장 직후에 걸려 **답변을 롤백**할 수 있는 형태였다)
+  2. 보장 등급을 `at-least-once` → **`best-effort(0..N)`** 로 정정 (주장이 코드보다 넓었다)
+- 소비 계약: 행이 아니라 `COUNT(DISTINCT ResourceId)` 로 센다 (`dedupe_key_of` 가 코드면).
+- 잔여: 라이브 적재 실측 미수행.

@@ -2842,3 +2842,14 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 회귀: feature-0043 · feature-0003 모두 **main 기준선과 실패집합 동일**(신규 실패 0)
 - [x] ps1 BOM 보존 확인 (없으면 CP949 파싱 붕괴 — 회귀 이력 있음)
 - [ ] POST-DEPLOY 라이브 실측 — 미수행 (웹 자산 변경 0 · 설치 스크립트는 다음 배포 빌드에 반영)
+
+## Cycle — TASK-20260903T110000 연결 퍼널 계측 (ROADMAP ITEM-00)
+
+- [x] `routers/_connect_funnel.py` 신설 — 단계·경로 열거, 멱등 가드, 경로 상속, 양성 캐시
+- [x] 5개 호출부 배선 (연결화면·토큰발급·하트비트·점유·제출) — 단일점 확인 테스트 포함
+- [x] `tests/test_connect_funnel.py` 34건 — acceptance 5건 + 배선 전수 + P1/P2 회귀 잠금
+- [x] 적대 뮤테이션 18종 전건 KILL
+- [x] codex 적대 리뷰 2라운드 — 1R P1 2건 · 2R P1 2건 전건 수정 후 재검증
+- [x] 회귀: 컨테이너 PYTHONPATH 재현 구성에서 **기준선과 실패집합 동일**(기존 7건, 신규 0)
+- [x] ROADMAP §6 진행 현황 갱신 (ITEM-05·ITEM-00 done)
+- [ ] 라이브 실측 — 미수행. 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행이 실제로 쌓이는지 확인 필요
