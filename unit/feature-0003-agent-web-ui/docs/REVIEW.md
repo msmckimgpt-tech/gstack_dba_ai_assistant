@@ -7303,3 +7303,14 @@ Verdict: PASS (정본 판정에 종속).
   코드를 두 번 더 랜딩했는데 설치본은 그 전 것이었다. 「고쳤다」와 「그 고침이 내가 시험하는
   물건에 들어 있다」는 다른 축이고, 이 저장소가 반복해 배운 그 형태다. **해시 대조**로만
   갈라졌다 — 배포본 검증에는 항상 해시를 먼저 본다.
+
+## REV-20260904T010301-ai-claude-doc-sync-20260904-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-03 블록 신설 (doc_sync 09-04)
+- Related TASK: TASK-20260904T010301-doc-sync-rn-0904
+- Timestamp: 2026-09-04T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 블록 1개 prepend + `generated` 전진**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스로 검증했다.
+- **검증**: `node --check src/static/release-notes-data.js` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일), 첫 그룹이 「2026년 9월 3일」로 렌더됨을 하네스가 단정. `releases` 59→60 · `generated` 09-02 → 09-03.
+- **평이화 준수**: 내부 구현·모듈명·테이블명·feature-id 비노출. 화면에 그대로 나타나는 라벨(「답할 수 있음」·[내 AI 실행] 등)만 그대로 인용.
+- **미검증 정직 표기**: 개명 하드 컷오버의 실 OS 핸들러 재등록·옛 잔재 삭제와 네이티브 클라이언트 설치 경로는 **사용자 머신에서만 관측**되므로 해당 항목과 접힌 summary 양쪽에 그 사실을 명시했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md`). 수기 실값은 그 안전장치를 무력화한다.
+- Human Approval Needed: **아니오**.

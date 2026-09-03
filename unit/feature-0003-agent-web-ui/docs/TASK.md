@@ -13097,3 +13097,12 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] PB-0008 실제 Windows 브라우저로 5항목 확인 (배포 `c4e6684c`)
 - [x] 웹 → 스킴 → 클라이언트 전 경로 실측 (「연결 정보가 없습니다」 해소)
 - [x] 클라이언트가 3개 런타임 탐지·응답 확인 (종전 1개)
+
+## TASK-20260904T010301-doc-sync-rn-0904 릴리즈노트 2026-09-03 블록 신설 (doc_sync 09-04)
+
+- [x] `src/static/release-notes-data.js` 에 `date: "2026-09-03"` 블록 prepend (착륙일 블록 부재 → append 아닌 prepend)
+- [x] `generated` 2026-09-02 → 2026-09-03 전진
+- [x] 사용자향 평이화 준수 — 내부 구현·모듈명·feature-id 비노출, 화면 라벨만 그대로 인용
+- [x] 미검증 항목(개명 하드 컷오버의 실 OS 재등록·클라이언트 설치 경로 = 사용자 머신 전용 관측)을 항목 detail + 접힌 summary 양쪽에 명시
+- [x] `node --check` + `tests/verify_release_notes.mjs` **34/0 ALL PASS**
+- [x] 캐시버스터 수기 bump 금지 준수 (`?v=dev` 고정 · 빌드 주입 · 배포 ABORT 가드)

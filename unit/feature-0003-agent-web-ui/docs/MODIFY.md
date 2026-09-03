@@ -5738,3 +5738,12 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - 드러난 것 2건: ① Chrome 은 외부 프로토콜 실행 전 확인을 요구한다(자동화에서는 안 뜨므로
   결정적 확인은 OS 핸들러 직접 호출로 했다) ② **설치본이 낡으면 조용히 실패한다** —
   `--windowed` 라 argparse 오류가 어디에도 안 보인다. 해시 대조가 유일한 확인 수단이었다.
+
+## CHG-20260904T010301-ai-claude-doc-sync-rn-0904 — 릴리즈노트 2026-09-03 블록 신설 (doc_sync 09-04)
+
+- `src/static/release-notes-data.js`: `releases[]` 맨 앞에 `date: "2026-09-03"` 블록 prepend(59→60) + `generated` 2026-09-02 → 2026-09-03 전진. **데이터만** — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- 착륙일(09-03) 블록이 부재했으므로 기존 블록 append 가 아니라 prepend. 09-02 블록 이하 전량 보존.
+- REQ-20260618-0321 의 운영 규약("새 업데이트 추가는 `releases[]` 맨 앞에 일자 블록 추가, 렌더 로직 변경 불필요")을 그대로 따른 데이터 큐레이션이라 기능 계약 변경 0.
+- AC-0579(내부 정보 비노출) 준수 — 내부 구현·모듈명·테이블명·feature-id 비노출, 화면에 그대로 나타나는 라벨만 인용.
+- 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md`).
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(AC-0578 하네스, baseline 동일) — 첫 그룹 「2026년 9월 3일」 단정 통과.
