@@ -4560,3 +4560,13 @@ Agent tool 은 세션 제약이라 subagent 패널 대신 기계 검증(재주�
   4행 전부를 `ChangeJson` 단위로 조회해 표를 채웠고, `client_download: null` 은 라이브
   `/api/ai/connect/status` 응답에서 직접 읽었다(추정 아님).
 - 남긴 미확인 항목을 숨기지 않았다: `first_claim`·`first_answer` 실적재 0.
+
+## REV-20260903T170000-ai-claude-corp-runner-name-postdeploy [SKIPPED:non-policy-doc] — APPROVED
+
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 배포 증적 기록만 — 코드 변경 0, 라우트·권한·스키마 무변경
+- Timestamp: 2026-09-03T17:00:00+09:00 · Verdict: PASS · Human Approval Needed: no
+
+배포 전/후 **두 점 측정**으로 이 cycle 이 실제로 값을 바꿨음을 관측했다. 서빙 실물까지
+대조해 「소스는 고쳤는데 배포본은 구버전」 축도 닫았다. 남은 미검증(사용자 머신 OS 등록·
+macOS)은 이 저장소에서 원리적으로 관측할 수 없는 범위이며 그대로 표기한다.
