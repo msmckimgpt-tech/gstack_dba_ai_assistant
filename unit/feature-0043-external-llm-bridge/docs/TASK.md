@@ -2887,3 +2887,14 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 15건 + 뮤테이션 8종 **1차 전건 KILL** · 컨테이너 FAILED = `main` 기준선
 - [ ] **자동 갱신 미발동 조사** — 이월(별 cycle). 그 전까지 수동 재기동 필요
 - [ ] 러너가 제출조차 못 하는 경우의 서버측 종결 — 이월 유지
+
+## Cycle — TASK-20260903T190000 퍼널 ActionCode 감사 빌더 등재 (ITEM-00 라이브 실측 후속)
+
+- [x] 라이브 실측: 배포 후 `ai.connect.funnel` 행 **0건** 확인 → 원인 추적
+- [x] 원인: `build_audit_change_json` 은 **명시적 allowlist** 인데 미등재 → `ValueError` →
+      `_audit_user_action` 의 fail-open 이 삼켜 **증상 없이 계측만 소실**
+- [x] `_audit_infra.build_audit_change_json` 에 `ai.connect.funnel` 분기 등재
+- [x] `tests/test_funnel_audit_action.py` 9건 — **진짜 빌더를 호출**(더블 없이)
+- [x] 뮤테이션 3종 KILL (원 결함 재현 포함)
+- [x] 기존 격차 8건 발견·문서화(KNOWN_GAPS) — 별 cycle 대상
+- [ ] 배포 후 라이브 적재 재확인
