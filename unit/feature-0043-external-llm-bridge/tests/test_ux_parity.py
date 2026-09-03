@@ -693,8 +693,12 @@ def test_connect_page_tells_where_to_paste():
     안내도 여전히 대상을 말해야 한다 — 계약(대상을 밝힌다)은 그대로, 대상만 둘이 됐다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "터미널에 붙여넣" in html, "기본 경로에서 어디에 붙여넣는지 알려주지 않는다"
-    assert "AI에 붙여넣" in html, "보조 경로에서 어디에 붙여넣는지 알려주지 않는다"
+    # ⚠ 주 경로가 다시 바뀌었다(사용자 결정 2026-09-03): 터미널 → **연결 프로그램**.
+    #   그래서 주 경로에는 붙여넣을 것이 없다 — 눌러야 할 것을 말해야 한다.
+    assert "내 AI 실행" in html, "주 경로에서 무엇을 눌러야 하는지 알려주지 않는다"
+    # 계약 자체(대상을 밝힌다)는 그대로다. 접힌 보조 경로들도 여전히 대상을 말한다.
+    assert "터미널" in html and "붙여넣" in html, "터미널 경로가 대상을 말하지 않는다"
+    assert "AI에 붙여넣" in html, "AI 경로에서 어디에 붙여넣는지 알려주지 않는다"
 
 
 def test_connect_page_promises_the_human_is_done_after_pasting():
@@ -707,7 +711,9 @@ def test_connect_page_promises_the_human_is_done_after_pasting():
     바뀌었다: "붙여넣으면 끝" + "끝나면 입력창이 열린다". AI 경로의 약속은 보조 경로에 남는다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "붙여넣으면 끝입니다" in html, "기본 경로에서 사람이 할 일의 끝을 말하지 않는다"
+    # ⚠ 주 경로가 연결 프로그램이 되면서 약속의 주어가 다시 바뀌었다 — 「그 창에서 끝난다」.
+    #   약속 자체(사람이 할 일이 여기서 끝난다)는 그대로 남는다.
+    assert "그 창에서 끝납니다" in html, "주 경로에서 사람이 할 일의 끝을 말하지 않는다"
     assert "입력창이 열립니다" in html, "끝난 뒤 무엇이 달라지는지 말하지 않는다"
     assert "AI가 판단합니다" in html, "보조 경로에서 나머지를 AI 가 한다는 약속이 없다"
 
@@ -774,7 +780,10 @@ def test_connect_page_has_exactly_one_copy_action():
     html = CONNECT_HTML.read_text(encoding="utf-8")
     # 접힌 영역을 걷어낸 = 펼치기 전에 보이는 화면.
     visible = re.sub(r"<details.*?</details>", "", html, flags=re.S)
-    assert visible.count("복사</button>") == 1, (
+    # ⚠ 계약은 개수가 아니라 **동시 노출**이다. 주 경로가 연결 프로그램이 되면서
+    #   펼치기 전 화면에는 복사 버튼이 아예 없을 수도 있다(터미널 경로도 접혔다).
+    #   둘 이상이면 여전히 「어느 걸 복사하지?」가 생기므로 그것만 막는다.
+    assert visible.count("복사</button>") <= 1, (
         "펼치기 전 화면에 복사 버튼이 둘 이상이다 — 다시 고르게 만든다")
     assert "<details" in html, "보조 경로가 접혀 있지 않아 두 경로가 동시에 노출된다"
     assert "주소만 복사" not in html
