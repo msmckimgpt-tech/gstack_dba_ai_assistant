@@ -460,3 +460,44 @@ def test_known_recorded_step_skips_connection_entirely():
         mod.record_step(FakeConn(), object(), ACCOUNT, step="page_view")
     assert len(stub.owned) == n_after_first, (
         f"이미 아는 단계에 커넥션을 {len(stub.owned) - n_after_first}회 더 열었다")
+
+
+# ── 배선 인자 해석 (라이브 실측 결함 2026-09-03) ────────────────────────────────
+
+def test_funnel_call_sites_use_names_that_exist_in_their_scope():
+    """호출부가 **있는가** 와 인자가 **해석되는가** 는 다른 사실이다.
+
+    ⚠ **실측 결함**: `bridge_heartbeat` 에는 `account` 가 없는데(토큰 컨텍스트 `ctx` 와
+    `account_id` 만 있다) 초판이 `account` 를 넘겼다. `NameError` 가 났지만 퍼널의 fail-open 이
+    삼켜서 **`first_heartbeat` 가 한 번도 기록되지 않았다** — 라이브 로그에서야 드러났다
+    (`하트비트 기록 실패 account=10: NameError`).
+
+    기존 배선 테스트는 `step="first_heartbeat"` **문자열 존재**만 봤다. 그것으로는 이 결함이
+    영원히 안 잡힌다. 여기서는 각 호출부의 **인자 이름이 그 함수 스코프에 실재하는지**를 본다.
+    """
+    import ast
+
+    for path in (_OAUTH_AS, _AI_TOOLS):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # 이 함수 안에서 «정의되는» 이름: 인자 + 대입 대상
+            bound = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                    bound.add(node.id)
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    bound.update((a.asname or a.name.split(".")[0]) for a in node.names)
+            # 이 함수 안의 record_step 호출
+            for node in ast.walk(fn):
+                if not (isinstance(node, ast.Call)
+                        and ast.unparse(node.func).endswith("record_step")):
+                    continue
+                for arg in node.args:
+                    for nm in ast.walk(arg):
+                        if isinstance(nm, ast.Name) and isinstance(nm.ctx, ast.Load):
+                            assert nm.id in bound or nm.id in dir(__builtins__), (
+                                f"{path.name}::{fn.name} 의 record_step 인자 `{nm.id}` 가 그 "
+                                f"스코프에 없다 — NameError 가 나고 fail-open 이 삼켜 "
+                                f"**그 단계가 영원히 기록되지 않는다**")

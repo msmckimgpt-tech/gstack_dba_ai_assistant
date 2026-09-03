@@ -2853,3 +2853,16 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 회귀: 컨테이너 PYTHONPATH 재현 구성에서 **기준선과 실패집합 동일**(기존 7건, 신규 0)
 - [x] ROADMAP §6 진행 현황 갱신 (ITEM-05·ITEM-00 done)
 - [ ] 라이브 실측 — 미수행. 배포 후 `WebAuditEvents` 에 `ai.connect.funnel` 행이 실제로 쌓이는지 확인 필요
+
+## Cycle — TASK-20260903T160000 연결 단계 체크리스트 + 클라이언트 우선 안내 (ROADMAP ITEM-03·ITEM-06)
+
+- [x] `routers/_connect_steps.py` 신설 — 5단계 판정 + 다음 행동, 서버 단일점
+- [x] `connect_status` 확장 — `steps`·`steps_summary`·`client_download`
+- [x] `ai-connect.{html,js}` — 체크리스트 렌더 + 클라이언트 우선 섹션(있을 때만)
+- [x] `agent/discovery.py` `_no_ai_message` — 첫 행동을 연결 프로그램으로, CLI 안내 유지
+- [x] `tests/test_connect_guidance.py` 16건 + 퍼널 인자해석 테스트 1건
+- [x] 적대 뮤테이션 12종 전건 KILL (JS 검사 2종은 1차 생존 → 검사 좁힌 뒤 KILL)
+- [x] **PB-0008 실 Windows 브라우저 시각검증** — 체크리스트 렌더 확인, 스크린샷 확보
+- [x] **라이브 검증이 결함 2건 적발** (아래 REVIEW 참조) — 둘 다 수정 후 재검증
+- [x] 라이브 원복 (배포 이미지로 재생성, healthz 200)
+- [ ] 클라이언트 배포 채널 — Windows 빌드 산출물을 서버에 놓는 경로 (후속)

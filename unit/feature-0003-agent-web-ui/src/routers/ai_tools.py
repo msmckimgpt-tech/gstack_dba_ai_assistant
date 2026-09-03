@@ -4800,7 +4800,12 @@ def bridge_heartbeat(request: Request, payload: dict | None = Body(default=None)
         # 퍼널 3단계 (ROADMAP ITEM-00): 이 계정의 무언가가 처음으로 살아 있다고 신고했다.
         # 경로 종류는 방금 받은 `agent_os` 에서 온다 — 이 자리가 그 사실을 아는 유일한 지점이고,
         # 뒤 두 단계(`first_claim`·`first_answer`)가 이 값을 이어받는다.
-        _funnel.record_step(conn, request, account,
+        # ⚠ **이 핸들러에는 `account` 가 없다** — 토큰 컨텍스트(`ctx`)와 `account_id` 만 있다.
+        #   초판(ITEM-00)이 `account` 를 그대로 넘겨 `NameError` 가 났고, 퍼널의 fail-open 이
+        #   그것을 삼켜 **`first_heartbeat` 가 한 번도 기록되지 않았다**(라이브 로그 실측
+        #   2026-09-03: `하트비트 기록 실패 account=10: NameError`). 배선 테스트가 «호출부가
+        #   있는가» 만 봤기 때문에 잡히지 않았다 — 인자가 해석되는지는 다른 사실이다.
+        _funnel.record_step(conn, request, ctx.get("account") or {"id": account_id},
                             step="first_heartbeat",
                             path_kind=_funnel.path_kind_from_agent_os(agent_os))
         # ── 계정·런타임 단위 능력 baseline (TASK-20260902T140200) ─────────────────────

@@ -68,6 +68,7 @@ router = APIRouter()
 # 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import oauth_store as _store  # noqa: E402
 import routers._connect_funnel as _funnel  # noqa: E402  ROADMAP ITEM-00 연결 퍼널 계측
+import routers._connect_steps as _steps  # noqa: E402  ROADMAP ITEM-03 연결 단계 체크리스트
 
 
 def _err(exc: "_store.OAuthError") -> JSONResponse:
@@ -532,6 +533,32 @@ def _listening(account_id: int, conn=None) -> bool:
         return False
 
 
+#: 네이티브 클라이언트 배포본이 놓이는 자리. **빌드 생성물**이라 저장소에 커밋하지 않는다
+#: (feature-0046 `build_client.py` 와 러너 빌드가 같은 규약).
+_CLIENT_REL = "agent/mysql-ai-client.exe"
+
+
+def _client_download_url(origin: str) -> str | None:
+    """클라이언트를 **실제로 받을 수 있을 때만** URL 을 낸다. 없으면 `None`.
+
+    ⚠ **없는 다운로드를 안내하지 않는다.** 가이드가 실제와 어긋나면 사용자는 안내받은 대로
+    갔다가 막히고, 그것을 스스로 우회하지 못한다 — P0-I 가 세 지점에서 닫은 결함 클래스다.
+
+    ⚠ **배포 경로가 아직 없다 (정직한 잔여, 2026-09-03)**: 배포 파이프라인은 리눅스 도커인데
+    PyInstaller 는 크로스 컴파일을 하지 않는다. 즉 `.exe` 는 **Windows 에서 따로 빌드해 이
+    자리에 놓아야** 하고, 그 채널은 아직 없다. 그래서 이 함수는 현재 대부분의 배포에서
+    `None` 을 돌려주고, 화면은 종전 경로(터미널 명령)를 그대로 보인다 — **기능이 조용히
+    사라지는 것이 아니라 «아직 없다» 가 값으로 나타난다.**
+    """
+    try:
+        path = app.STATIC_DIR / _CLIENT_REL
+        if path.is_file() and path.stat().st_size > 0:
+            return f"{origin}/static/{_CLIENT_REL}"
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 @router.get("/api/ai/connect/status")
 def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse:
     if conn is None:
@@ -659,6 +686,10 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
     caps_rev = ""
     caps_pending = False
     caps_settling = False
+    # ⚠ 아래 능력 블록은 **조건부**로만 대입한다 — 초기화가 없으면 그 분기를 타지 않은 요청에서
+    #   `NameError` 가 나고 `/api/ai/connect/status` 가 500 이 된다(라이브 미리보기 실측
+    #   2026-09-03). 정의 여부를 블록 순서에 기대지 않는다.
+    _reported_caps = None
     if listening:
         try:
             cur5 = conn.cursor()
@@ -703,6 +734,28 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
             caps_rev = ""
             caps_pending = False
             caps_settling = False
+    # ── 연결 단계 체크리스트 (ROADMAP ITEM-03) ──────────────────────────────────
+    #
+    # 판정은 **여기 한 곳**이다. 프런트가 조립하면 단독 페이지와 모달이 갈리고, 갈리는 순간
+    # 느슨한 쪽이 사용자가 보는 진실이 된다(P0-R 실측 · P0-L 계약).
+    #
+    # `has_caps` = 러너가 쓸 수 있는 모델을 신고했는가 = **답할 AI 가 실재하는가**. 이것이
+    # 없으면 「듣는 중」과 「답할 수 있음」이 한 줄로 뭉쳐 서버 연결을 의심하게 된다.
+    _has_caps = bool(_reported_caps)
+    _answered = False
+    try:
+        _cur_a = conn.cursor()
+        try:
+            _answered = _funnel.step_recorded(
+                _cur_a, int(account.get("id") or 0), "first_answer")
+        finally:
+            _cur_a.close()
+    except Exception:   # noqa: BLE001 — 계측 조회 실패가 화면을 막지 않는다
+        _answered = False
+    _steps_rows = _steps.build_steps(
+        connected=connected, listening=listening, has_caps=_has_caps,
+        answered=_answered, client_download=_client_download_url(origin))
+
     return JSONResponse({
         "logged_in": True,
         "username": account.get("username"),
@@ -711,6 +764,12 @@ def connect_status(request: Request, conn=Depends(app.get_conn)) -> JSONResponse
         "guide": f"{origin}/api/ai/guide",
         "connected": connected,
         "listening": listening,
+        # ROADMAP ITEM-03 — 화면이 「어디서 막혔는지」를 그린다.
+        "steps": _steps_rows,
+        "steps_summary": _steps.overall(_steps_rows),
+        # ROADMAP ITEM-06 — **있을 때만** 권한다. 없는 다운로드를 안내하면 사용자는 안내받은
+        # 대로 갔다가 막힌다(P0-I 가 닫은 결함 클래스).
+        "client_download": _client_download_url(origin),
         # `""` = 「연결한 적이 없거나 구 러너라 모른다」. 화면은 그때만 브라우저 OS 로 추측한다.
         "last_os": last_os,
         # ── 컴포저 잠금의 **단일 판정** (P0-AB, 사용자 결정 2026-08-28) ──────────────

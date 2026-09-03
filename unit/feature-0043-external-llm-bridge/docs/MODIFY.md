@@ -4317,3 +4317,14 @@ main 전체경로 0/1 실패). 표본으로는 귀속이 확정되지 않는다 
   2. 보장 등급을 `at-least-once` → **`best-effort(0..N)`** 로 정정 (주장이 코드보다 넓었다)
 - 소비 계약: 행이 아니라 `COUNT(DISTINCT ResourceId)` 로 센다 (`dedupe_key_of` 가 코드면).
 - 잔여: 라이브 적재 실측 미수행.
+
+## CHG-20260903T160000-ai-claude-connect-guidance — 연결 단계 체크리스트 + 클라이언트 우선 안내
+- Timestamp: 2026-09-03T16:00:00+09:00
+- 신설: `routers/_connect_steps.py` · `tests/test_connect_guidance.py`
+- 확장: `connect_status`(steps·summary·client_download) · `ai-connect.{html,js}` · `_no_ai_message`
+- **라이브 검증이 적발한 결함 2건 수정**:
+  1. `ai_tools.bridge_heartbeat` 가 존재하지 않는 `account` 를 퍼널에 넘겨 `NameError` →
+     fail-open 이 삼켜 **`first_heartbeat` 가 한 번도 기록되지 않았다**(ITEM-00 회귀, main 반영분).
+     `ctx.get("account") or {"id": account_id}` 로 교정 + **인자 해석 검사** 테스트 신설.
+  2. `oauth_as` 의 `_reported_caps` 가 조건부 블록 안에서만 대입돼 그 분기를 안 탄 요청에서
+     `NameError` → `/api/ai/connect/status` **500**. 선언 초기화로 교정.
