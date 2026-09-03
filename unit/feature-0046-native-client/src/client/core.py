@@ -39,6 +39,7 @@ import hashlib
 import json
 import os
 import shutil
+import re
 import ssl
 import subprocess
 import sys
@@ -210,6 +211,47 @@ def ca_fingerprint(pem_or_der: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
 
+def normalize_fingerprint(value: str) -> str:
+    """지문 표기를 **비교 가능한 한 가지 모양**으로 줄인다.
+
+    ⚠ 서버와 클라이언트는 같은 값을 **다른 모양**으로 쓴다. 서버는 OpenSSL 관례를 따라
+    대문자·콜론 구분으로 낸다(`oauth_as.py`: `hexdigest().upper()` → `":".join(...)`),
+    클라이언트는 `hashlib` 기본인 소문자·구분자 없음으로 계산한다.
+
+    **실측 2026-09-03**: 이 정규화가 없어 클라이언트는 연결에 **한 번도 성공할 수 없었다** —
+    「CA 지문이 다릅니다 / 기대: F5:B9:… / 실제: f5b9c581…」. 두 값은 같은 지문이었다.
+
+    ⚠ 이 결함이 생긴 방식을 남긴다. 셸 설치 스크립트는 이미 옳게 하고 있었다
+    (`bridge_setup.sh`: `tr 'A-Z' 'a-z' | tr -d ':'`). 클라이언트는 그 비교를 옮겨 오면서
+    **소문자화만 가져오고 콜론 제거를 빠뜨렸다**. 재사용은 가드를 통째로 가져와야 한다 —
+    절반만 가져오면 원본이 막던 것이 새 경로로 새어 나온다.
+
+    공백도 지운다 — 사용자가 웹에서 값을 복사해 붙이는 경로가 있고, 줄바꿈이 섞여 들어온다.
+    """
+    return "".join(value.split()).replace(":", "").replace("-", "").lower()
+
+
+#: SHA-256 을 16진으로 적으면 **정확히 64자**다. 그보다 짧거나 다른 문자가 섞이면 지문이 아니다.
+_HEX256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def fingerprints_match(got: str, expected: str) -> bool:
+    """표기 차이는 흡수하되 **지문이 아닌 것은 통과시키지 않는다**.
+
+    ⚠ 정규화만으로 비교하면 `«둘 다 빈 문자열»` 이 일치가 된다. 예컨대 기대값이 `":"` 이면
+    (참이라 앞의 `if expected` 가드를 통과한다) 정규화 후 `""` 가 되고, 계산값도 어떤 이유로
+    `""` 라면 두 값이 같다고 판정된다. 지금 계산 경로(`hashlib`)는 항상 64자를 내므로 도달
+    불가능하지만, **무결성 검사가 「우연히 도달 불가」에 기대는 것**은 옳지 않다 —
+    codex 적대 리뷰 지적(2026-09-03).
+
+    그래서 양쪽 모두 `^[0-9a-f]{64}$` 를 만족할 때만 비교한다. 형식이 아니면 **불일치**다.
+    """
+    a, b = normalize_fingerprint(got), normalize_fingerprint(expected)
+    if not _HEX256.match(a) or not _HEX256.match(b):
+        return False
+    return a == b
+
+
 def fetch(url: str, ca_path: str | None = None, timeout: int = 60) -> bytes:
     ctx = None
     if url.startswith("https://") and ca_path:
@@ -249,7 +291,7 @@ def install_ca(plan: ConnectPlan) -> Path:
     plan.home.mkdir(parents=True, exist_ok=True)
     raw = fetch(f"http://{plan.host}/trust/rootCA.crt")
     got = ca_fingerprint(raw)
-    if plan.ca_sha256 and got.lower() != plan.ca_sha256.strip().lower():
+    if plan.ca_sha256 and not fingerprints_match(got, plan.ca_sha256):
         raise IntegrityError(
             f"CA 지문이 다릅니다.\n  기대: {plan.ca_sha256}\n  실제: {got}\n"
             "네트워크 중간에서 바뀌었을 수 있습니다. 진행하지 말고 운영자에게 알리세요.")
@@ -262,7 +304,9 @@ def install_runner(plan: ConnectPlan, ca_path: Path) -> Path:
     """러너 수신 + 체크섬 대조. 정본은 서버가 서빙하는 것 하나다."""
     raw = fetch(f"{plan.base}/static/agent/bridge_agent.py", ca_path=str(ca_path))
     got = sha256_of(raw)
-    if plan.agent_sha256 and got.lower() != plan.agent_sha256.strip().lower():
+    # ⚠ 지금 서버는 이 값을 소문자·구분자 없이 내므로 `.lower()` 만으로도 우연히 통과한다.
+    # 그 우연에 기대지 않는다 — CA 축과 **같은 정규화**를 쓴다(둘이 갈리면 어느 한쪽만 고쳐진다).
+    if plan.agent_sha256 and not fingerprints_match(got, plan.agent_sha256):
         raise IntegrityError(
             f"러너 체크섬이 다릅니다.\n  기대: {plan.agent_sha256}\n  실제: {got}\n"
             "배포 교대 중일 수 있습니다 — 1분 뒤 다시 시도하고, 그래도 다르면 운영자에게 알리세요.")
