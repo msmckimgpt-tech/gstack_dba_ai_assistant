@@ -1237,20 +1237,37 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
         def _probe_and_report(nm: str) -> None:
             try:
                 _probe(nm)
+            except BaseException as exc:  # noqa: BLE001
+                # ⚠ 종전에는 이 자리가 없었고, 아래 `finally` 안의 `return` 이 **진행 중인
+                #   예외를 조용히 버렸다** (Python 3.14 가 `SyntaxWarning: 'return' in a
+                #   'finally' block` 으로 경고하는 바로 그 형태 — 사용자 콘솔에 그 경고가
+                #   실제로 찍혔다, 2026-09-03).
+                #
+                #   결과: `_probe` 가 터지면 그 런타임이 `probed` 에 없다는 사실만 남고
+                #   **사유가 사라진다.** 사용자는 협상 데드라인(수 분)을 기다린 끝에
+                #   「답을 받지 못했습니다」만 본다 — 이 파일이 반복해서 고쳐 온 「실패를
+                #   삼켜 다른 실패로 위장」 부류다.
+                #
+                #   `reasons` 에 남기면 아래 요약 루프가 그것을 사용자에게 그대로 낸다.
+                reasons.setdefault(nm, f"{type(exc).__name__}: {exc}"[:_PROBE_REASON_MAX])
+                log_event("caps.probe_crashed",
+                          "능력 질의가 예외로 끝났습니다 — 이 런타임은 목록에 나오지 않습니다",
+                          level="ERROR", exc=exc, runtime=nm)
             finally:
-                if on_settled is None:
-                    return
-                try:
-                    # 락으로 직렬화한다 — 두 플랫폼이 동시에 끝나면 두 신고가 겹치고,
-                    # 늦게 시작한 쪽이 먼저 끝나 **더 짧은 목록으로 되덮을 수** 있다.
-                    with _settle_lock:
-                        _partial_detail: dict = {}
-                        _partial = _assemble(present, probed, cached, _partial_detail)
-                        on_settled(_partial, _partial_detail)
-                except Exception as exc:  # noqa: BLE001
-                    log_event("caps.partial_report_failed",
-                              "플랫폼 단위 중간 신고에 실패했습니다 — 최종 신고로 대신합니다",
-                              level="WARN", runtime=nm, exc=exc)
+                # ⚠ 여기서 `return` 하지 않는다 — `finally` 의 `return` 은 진행 중인 예외를
+                #   삼킨다. 조건을 뒤집어 **빠져나가지 않고** 감싼다(위 except 와 한 쌍).
+                if on_settled is not None:
+                    try:
+                        # 락으로 직렬화한다 — 두 플랫폼이 동시에 끝나면 두 신고가 겹치고,
+                        # 늦게 시작한 쪽이 먼저 끝나 **더 짧은 목록으로 되덮을 수** 있다.
+                        with _settle_lock:
+                            _partial_detail: dict = {}
+                            _partial = _assemble(present, probed, cached, _partial_detail)
+                            on_settled(_partial, _partial_detail)
+                    except Exception as exc:  # noqa: BLE001
+                        log_event("caps.partial_report_failed",
+                                  "플랫폼 단위 중간 신고에 실패했습니다 — 최종 신고로 대신합니다",
+                                  level="WARN", runtime=nm, exc=exc)
 
         threads = [threading.Thread(target=_probe_and_report, args=(n,), daemon=True)
                    for n in ask]

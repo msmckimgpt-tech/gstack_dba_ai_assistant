@@ -2842,7 +2842,14 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 회귀: feature-0043 · feature-0003 모두 **main 기준선과 실패집합 동일**(신규 실패 0)
 - [x] ps1 BOM 보존 확인 (없으면 CP949 파싱 붕괴 — 회귀 이력 있음)
 - [ ] POST-DEPLOY 라이브 실측 — 미수행 (웹 자산 변경 0 · 설치 스크립트는 다음 배포 빌드에 반영)
+## Cycle — TASK-20260903T110000 협상 실패 사유를 삼키던 `finally`-return
 
+- [x] 사용자 콘솔에 찍힌 `SyntaxWarning: 'return' in a 'finally' block` 해소
+- [x] `_probe` 예외를 `reasons` + `caps.probe_crashed` 로 노출(요약 줄까지 도달)
+- [x] 한 런타임 사고가 나머지 협상을 죽이지 않음 · 예외 비전파
+- [x] 신규 5건 + 뮤테이션 3종 전건 KILL(F2 헛통과 1차 적발 후 단정 좁힘)
+- [x] 컨테이너 FAILED 집합 = `main` 기준선(신규 실패 0)
+- [ ] **사용자 머신 `claude` 재인증** — 이월(우리 범위 밖). `oauth/token 400` 반복 확정
 ## Cycle — TASK-20260903T110000 연결 퍼널 계측 (ROADMAP ITEM-00)
 
 - [x] `routers/_connect_funnel.py` 신설 — 단계·경로 열거, 멱등 가드, 경로 상속, 양성 캐시
