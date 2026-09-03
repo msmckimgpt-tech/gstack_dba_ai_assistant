@@ -232,5 +232,139 @@ def test_modal_success_does_not_accept_an_unusable_runner():
     """
     js = (_SRC / "static" / "app" / "connect-modal.js").read_text(encoding="utf-8")
     body = "\n".join(l for l in js.splitlines() if not l.strip().startswith("//"))
-    assert "b.ai_ready !== false" in body, (
-        "모달 성공 판정이 이 축을 보지 않는다 — 답할 수 없는 러너를 연결 완료로 읽는다")
+    assert "b.ai_ready === true" in body, (
+        "모달 성공 판정이 이 축을 «확인된 정상»으로 요구하지 않는다 — `!== false` 형태는"
+        " 「아직 확인되지 않음」(null)을 연결 완료로 읽는다(TASK-20260903T200000)")
+    assert "b.ai_ready !== false" not in body, (
+        "종전 느슨한 판정이 남아 있다 — 「모른다」가 다시 연결 완료로 새어 나간다")
+
+
+# ── 5. 「모른다」는 정상이 아니다 — 3상태 (TASK-20260903T200000) ──────────────
+#
+# 사용자 지적(2026-09-03): *"연결되지 않은 상황이 정상 연결되었다고 거짓으로 출력되는 부분을
+# 수정하는 작업입니다. claude 인증 상태는 현상일 뿐입니다."*
+#
+# 직전 cycle 은 「관측된 불가」(`false`)만 화면에 올렸다. 남아 있던 거짓은 **확인 전** 구간
+# 이었다 — 러너 원장 초기값이 `True`(fail-open)라 하트비트가 「정상」을 신고했고, 서버는
+# `RunnerAiReady=1` 로 새겼고, 화면은 「대기 중」을 띄웠다. 사용자 라이브가 정확히 그 경로였다:
+# 캐시된 caps 로 협상을 건너뛴 러너 + 만료된 claude OAuth → 관측 기회 없음 → 200초 침묵.
+
+
+def test_setter_writes_null_when_runner_reports_unknown():
+    """⭐ 러너가 `null`(확인 중)을 **신고했으면** NULL 로 새긴다.
+
+    쓰지 않으면 직전 세션의 `1` 이 남아, 재기동한 러너가 아직 아무것도 확인하지 못한
+    구간에도 화면이 「대기 중」을 띄운다 — 고치려는 거짓 그대로다.
+    """
+    import oauth_store
+
+    seen = {}
+
+    class _Cur:
+        rowcount = 1
+
+        def execute(self, sql, params=None):
+            seen["sql"], seen["params"] = sql, params
+
+    wrote = oauth_store.set_runner_ai_health(_Cur(), "mat_x", None, "", reported=True)
+    assert wrote is True, "신고된 «확인 중» 을 무시했다 — 직전 세션의 정상 표시가 남는다"
+    assert (seen["params"] or ())[0] is None, (
+        f"«확인 중» 이 NULL 로 새겨지지 않았다: {seen.get('params')}")
+
+
+def test_setter_still_ignores_a_runner_that_never_reported():
+    """⚠ 그러나 **키를 보내지 않은** 구 러너는 종전처럼 건드리지 않는다.
+
+    `null 신고` 와 `신고 없음` 을 같게 다루면 구 러너 사용자 전원이 「확인 중」으로 굳는다.
+    """
+    import oauth_store
+
+    calls = []
+
+    class _Cur:
+        rowcount = 1
+
+        def execute(self, *a, **k):
+            calls.append(a)
+
+    assert oauth_store.set_runner_ai_health(_Cur(), "mat_x", None, "",
+                                            reported=False) is False
+    assert calls == [], "신고하지 않은 러너의 상태를 새겼다"
+
+
+def test_setter_change_predicate_catches_the_true_to_null_transition():
+    """⭐ 「1 → NULL」 전이를 실제로 잡는 SQL 인가.
+
+    종전 WHERE 절은 `t.RunnerAiReady IS NULL OR t.RunnerAiReady <> %s` 였다. `%s` 가 NULL 이면
+    `<>` 는 NULL(=거짓)이 되고 앞 항도 거짓이라 **한 행도 갱신되지 않는다** — 즉 「정상 →
+    확인 중」이라는, 이 결함의 핵심 전이가 조용히 무시된다. NULL-safe 등호(`<=>`)가 필요하다.
+    """
+    import oauth_store
+
+    seen = {}
+
+    class _Cur:
+        rowcount = 1
+
+        def execute(self, sql, params=None):
+            seen["sql"] = sql
+
+    oauth_store.set_runner_ai_health(_Cur(), "mat_x", None, "", reported=True)
+    sql = seen["sql"]
+    assert "<=>" in sql, (
+        "변경 판정이 NULL-safe 비교를 쓰지 않는다 — 「정상 → 확인 중」 전이가 유실된다")
+    assert "t.RunnerAiReady <> %s" not in sql, "종전 NULL-불안전 비교가 남아 있다"
+
+
+def test_heartbeat_handler_distinguishes_absent_key_from_null():
+    """서버 핸들러가 **키의 존재**를 본다 — 값만 보면 두 「모른다」가 뭉개진다."""
+    src = (_SRC / "routers" / "ai_tools.py").read_text(encoding="utf-8")
+    assert '"ai_ready" in (payload or {})' in src, (
+        "핸들러가 키 존재를 판정하지 않는다 — 구 러너와 «확인 중» 이 같게 다뤄진다")
+    assert "reported=_ai_reported" in src, (
+        "판정 결과가 저장 계층으로 전달되지 않는다 — 관측이 화면에 도달하지 않는 배선 결함")
+
+
+def test_frontend_treats_unknown_as_not_ready():
+    """⭐ 화면이 **`=== true` 일 때만** 「대기 중」을 그린다.
+
+    종전 형태(`aiReady === false` 만 걸러내고 나머지를 정상으로)는 「모른다」를 정상으로
+    흘려보내는 그 구조 그대로다.
+    """
+    js = (_SRC / "static" / "app" / "connect-modal.js").read_text(encoding="utf-8")
+    lines = [l.strip() for l in js.splitlines()]
+    assert "} else if (aiReady !== true) {" in lines, (
+        "「확인되지 않았다」 갈래가 없다 — 기동 직후가 정상으로 보인다")
+    i = lines.index("} else if (aiReady !== true) {")
+    body = "\n".join(lines[i:i + 40])
+    assert '"확인 중"' in body, "그 갈래가 이 상태를 그리지 않는다 — 조건만 남은 죽은 가드다"
+    assert 'el.dataset.state = "checking"' in body, "칩 상태값이 정상(on)과 갈라지지 않는다"
+
+
+def test_unknown_branch_ranks_below_stale_and_above_ready():
+    """순서: 답할 수 없음 → 낡음 → 확인 중 → 대기 중.
+
+    「확인 중」(미확정)이 「낡음」(확정된 사실)을 덮으면 사용자가 할 수 있는 행동을 가린다.
+    반대로 「대기 중」보다는 먼저 와야 «모른다»가 정상으로 새지 않는다.
+    """
+    js = (_SRC / "static" / "app" / "connect-modal.js").read_text(encoding="utf-8")
+    i_off = js.index("} else if (aiReady === false) {")
+    i_stale = js.index("} else if (runnerStale) {")
+    i_chk = js.index("} else if (aiReady !== true) {")
+    i_on = js.index('el.textContent = "대기 중"')
+    assert i_off < i_stale < i_chk < i_on, (
+        f"갈래 순서가 어긋났다: off={i_off} stale={i_stale} checking={i_chk} on={i_on}")
+
+
+def test_checking_state_has_its_own_style_and_is_not_green():
+    """칩 상태에 **전용 스타일**이 있어야 한다 — 없으면 기본색이 정상과 같아 보인다."""
+    css = (_SRC / "static" / "css" / "search-audit.css").read_text(encoding="utf-8")
+    assert '.ai-conn[data-state="checking"]' in css, (
+        "「확인 중」 스타일이 없다 — 화면에서 정상과 구별되지 않는다")
+    i = css.index('.ai-conn[data-state="checking"] {')
+    rule = css[i:i + 200]
+    i_on = css.index('.ai-conn[data-state="on"] {')
+    on_rule = css[i_on:i_on + 200]
+    on_color = on_rule.split("color:")[1].split(";")[0].strip()
+    assert on_color not in rule, (
+        f"「확인 중」이 정상과 같은 색({on_color})이다 — 갈라지는 것이 이 규칙의 존재 이유다")
