@@ -5747,3 +5747,13 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - AC-0579(내부 정보 비노출) 준수 — 내부 구현·모듈명·테이블명·feature-id 비노출, 화면에 그대로 나타나는 라벨만 인용.
 - 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md`).
 - 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(AC-0578 하네스, baseline 동일) — 첫 그룹 「2026년 9월 3일」 단정 통과.
+
+## CHG-20260904T200000-ai-claude-webshell-verified — 웹 셸 전 경로 실측 기록
+- Timestamp: 2026-09-04T20:00:00+09:00
+- 코드 변경 없음. 배포 `5ab60093` 에서 PB-0008 + 실제 프로세스로 7항목을 확인하고
+  `test-runs.d` fragment 에 기록했다.
+- 핵심: **앱 창이 DQA 자체를 열고**(탭·주소창 없음), 그 안의 패널이 이 컴퓨터의 AI 3개를
+  찾아 각각 응답을 확인하며, **WSL 런타임으로 연결해도 「답할 AI 있음」이 ✅** 다
+  (`connected:ok · listening:ok · ai:ok · answered:pending`) — 잔여 항목 해소.
+- 정직하게 남긴 것: 앱 창 캡처의 로그인 화면은 **검증 환경 인공물**(기본 프로필 vs 릴레이
+  전용 프로필)이며 결함이 아니다. gemini 는 미설치라 로그인 명령을 **측정할 수 없다**.
