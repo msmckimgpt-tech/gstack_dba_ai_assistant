@@ -736,6 +736,10 @@
           <p class="connect-modal-hint"><strong>이 컴퓨터의 AI</strong>
              — 연결 프로그램이 실행 중이라 여기서 바로 연결할 수 있습니다.</p>
           <ul id="connectClientList" style="list-style:none;padding-left:0;margin:8px 0"></ul>
+          <!-- ⚠ **비워 둔 채 렌더한다.** 채우는 것은 브리지의 `status.resident` 를 받은
+               뒤다 — 이 창을 닫아도 되는지는 트레이가 실제로 떠 있는가에 달렸고, 그것을
+               아는 것은 껍데기뿐이다. 프런트가 추정하면 트레이 없는 머신에서 거짓이 된다. -->
+          <p class="connect-modal-hint" id="connectClientResidency"></p>
           <div class="connect-modal-actions">
             <button type="button" class="connect-modal-btn" id="connectClientRefresh">다시 찾기</button>
             <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectClientConnect" disabled>이 서비스에 연결</button>

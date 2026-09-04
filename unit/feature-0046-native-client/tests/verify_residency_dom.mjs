@@ -4,7 +4,11 @@
  * `paintResidency` 함수만 **그대로 떼어내** 실제 DOM 에 물려 두 경우를 그린다.
  * ⚠ 떼어낸 것이 원본과 같은지는 길이·본문 대조로 확인한다(추출이 깨지면 vacuous pass 다).
  */
-import { JSDOM } from "jsdom";
+/* jsdom 은 이 저장소의 의존이 아니다. 저장소 밖에 설치된 개발 머신을 위해
+ * `DQA_JSDOM` 으로 경로를 줄 수 있다 — 없으면 2 로 끝낸다(조용한 통과 금지). */
+let JSDOM;
+try { ({ JSDOM } = await import(process.env.DQA_JSDOM || "jsdom")); }
+catch { console.log("JSDOM-UNAVAILABLE"); process.exit(2); }
 import { readFileSync } from "node:fs";
 
 const root = process.argv[2];

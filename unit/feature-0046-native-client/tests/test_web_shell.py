@@ -475,3 +475,152 @@ def test_early_return_happens_before_any_side_effect():
     guard = fn.find("return false;")
     show = fn.find("panel.hidden = false;")
     assert 0 < guard < show, "가드보다 먼저 패널을 노출한다"
+
+
+# ── 주 표면의 상주 안내 + 자유변수 결함 (2026-09-04) ───────────────────────────
+#
+# 앱 창이 여는 것은 **서비스 루트**이고, 그 화면의 연결 패널은 `client-bridge.js` 가 그린다.
+# 상주 안내가 `ai-connect.*`(별도 페이지)에만 있으면 **주 경로 사용자는 못 본다** — 실제로
+# 그랬다. 그리고 그 패널을 실행해 보니 `_status` 가 자유변수라 `ReferenceError` 로 던졌다.
+# 소스 검사로는 안 보인다(이름이 «있어» 보인다) — 그래서 아래 행위 하네스가 따로 있다.
+
+_PANEL_HARNESS = Path(__file__).resolve().parent / "verify_client_panel_dom.mjs"
+_CI_GAP_MARKER = "CI-GAP: verify_client_panel_dom.mjs"
+
+
+def _free_identifiers_called(js: str, name: str) -> bool:
+    """`name` 을 부르면서 **정의도 import 도 하지 않는가**."""
+    called = re.search(rf"(?<![\w.]){re.escape(name)}\s*\(", js) is not None
+    defined = re.search(rf"function\s+{re.escape(name)}\s*\(", js) is not None
+    imported = re.search(rf"import\s*\{{[^}}]*\b{re.escape(name)}\b[^}}]*\}}", js) is not None
+    return called and not defined and not imported
+
+
+def test_bridge_module_has_no_free_identifiers_for_its_helpers():
+    """부르는 헬퍼는 **이 모듈이 갖고 있어야** 한다.
+
+    ESM 모듈 스코프는 파일마다 닫혀 있다. 다른 파일에 같은 이름의 지역 함수가 있어도
+    그것은 이 파일에서 자유변수이고, 첫 호출에서 `ReferenceError` 로 던진다. 예외는
+    `openConnectModal()` 까지 전파돼 **연결 창 자체가 안 열린다**(실측 2026-09-04).
+    """
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    for name in ("_status", "_paintResidency", "bridgeCall"):
+        assert not _free_identifiers_called(js, name), (
+            f"`{name}` 을 부르면서 정의도 import 도 하지 않는다 — ESM 에서 ReferenceError 다"
+        )
+
+
+def test_status_writers_in_both_modules_target_the_same_element():
+    """두 모듈의 `_status` 가 **같은 요소**를 쓴다는 것이 계약이다.
+
+    ⚠ 중복 정의를 허용하는 대신 이 단정으로 묶는다. 어긋나면 한쪽 안내가 화면에서
+      조용히 사라지고, 그 증상은 «아무 일도 안 일어남» 이라 원인을 찾기 어렵다.
+      import 로 풀지 않는 이유는 `connect-modal.js` 가 이 파일을 import 하기 때문이다
+      (반대 방향을 더하면 순환이고, 이 파일의 «의존 0» 성질이 깨진다).
+    """
+    def _target_of_status(js: str, path: str) -> str:
+        """그 파일의 `_status` 가 **실제로 집는 id**. 부분 문자열 검사는 하지 않는다 —
+        `"connectModalStatusX"` 가 `"connectModalStatus"` 를 포함하므로 어긋난 대상을
+        통과시킨다(실측 2026-09-04: 뮤턴트 M34 가 그렇게 살아남았다)."""
+        i = js.find("function _status(")
+        assert i >= 0, f"{path}: `_status` 정의가 없다"
+        body = js[i:i + 400]
+        m = re.search(r'(?:getElementById|\$)\(\s*"([^"]+)"\s*\)', body)
+        assert m, f"{path}: `_status` 가 어떤 요소를 집는지 읽을 수 없다"
+        return m.group(1)
+
+    bridge = _BRIDGE_JS.read_text(encoding="utf-8")
+    modal = _MODAL_JS.read_text(encoding="utf-8")
+    a = _target_of_status(bridge, "client-bridge.js")
+    b = _target_of_status(modal, "connect-modal.js")
+    assert a == b == "connectModalStatus", (
+        f"두 모듈의 _status 가 다른 요소를 쓴다 — client-bridge={a!r} connect-modal={b!r}. "
+        "어긋나면 한쪽 안내가 화면에서 조용히 사라진다"
+    )
+    assert 'id="connectModalStatus"' in _MODAL_HTML.read_text(encoding="utf-8"), \
+        "index.html 에 그 요소가 없다 — 두 모듈이 허공에 쓴다"
+
+
+def test_primary_panel_declares_residency_element():
+    """상주 안내는 **주 표면**에 있어야 한다 — 별도 페이지에만 있으면 못 본다."""
+    html = _MODAL_HTML.read_text(encoding="utf-8")
+    panel = html[html.find('id="connectClientPanel"'):]
+    panel = panel[:panel.find("</section>")]
+    assert 'id="connectClientResidency"' in panel, \
+        "앱 창이 여는 화면의 연결 패널에 상주 안내 자리가 없다"
+    # ⚠ «주석에 그 낱말이 없는가» 로 검사하지 않는다 — 그 요소가 **왜** 비어 있는지 설명하는
+    #   주석이 바로 옆에 있고, 그것까지 잡으면 설명을 지워야 통과하는 테스트가 된다
+    #   (실측 2026-09-04: 처음에 그렇게 만들어 자기 주석에 걸렸다).
+    #   보아야 하는 것은 **요소의 내용**이다.
+    body = re.search(r'id="connectClientResidency"[^>]*>(.*?)</p>', panel, re.S)
+    assert body is not None, "상주 안내 요소가 <p>…</p> 형태가 아니다"
+    assert body.group(1).strip() == "", (
+        "문구를 마크업에 박아 두면 트레이 없는 머신에서 거짓이 된다 — 비워 두고 값으로 채운다: "
+        f"{body.group(1)[:80]!r}")
+
+
+def test_residency_is_asked_before_the_slow_discover():
+    """`discover` 는 수십 초다. 「창을 닫아도 되는가」는 그 전에 알아야 한다."""
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    fn = js[js.find("export function initClientPanel"):]
+    st = fn.find('bridgeCall("status"')
+    disc = fn.rfind("refresh();")
+    assert st > 0, "status 를 묻지 않는다 — 상주 여부를 알 길이 없다"
+    assert st < disc, "status 를 discover 뒤에 묻는다 — 안내가 그만큼 늦는다"
+
+
+def test_panel_behaviour_harness_runs_or_ci_gap_is_documented():
+    """행위 하네스를 돌리거나, 못 돌리면 그 **gap 이 문서에 기록**돼 있어야 한다.
+
+    조용한 `skip` 은 «검증했다» 로 오인된다 — 이 저장소가 여러 번 겪은 형태다.
+    """
+    import os
+    import shutil
+    import subprocess
+
+    assert _PANEL_HARNESS.exists(), "행위 하네스 파일 부재"
+    node = shutil.which("node")
+    if node:
+        proc = subprocess.run(
+            [node, str(_PANEL_HARNESS), str(_REPO)], cwd=str(_PANEL_HARNESS.parent),
+            capture_output=True, text=True, timeout=300,
+            env={**os.environ, "NODE_OPTIONS": ""},
+        )
+        if proc.returncode != 2:      # 2 = jsdom 부재 → 아래 gap 경로로 강등
+            assert proc.returncode == 0, (
+                f"주 표면 행위 하네스 FAIL:\n{proc.stdout[-4000:]}\n{proc.stderr[-2000:]}")
+            return
+    docs = _UNIT / "docs"
+    recorded = any(
+        _CI_GAP_MARKER in p.read_text(encoding="utf-8")
+        for p in [docs / "REVIEW.md", *sorted((docs / "test-runs.d").glob("*.md"))]
+        if p.exists()
+    )
+    assert recorded, (
+        "행위 하네스를 실행할 수 없는데(node/jsdom 부재) 그 gap 이 문서에 없다. "
+        f'REVIEW.md 또는 test-runs.d fragment 에 "{_CI_GAP_MARKER}" 를 기록하라'
+    )
+
+
+def test_residency_painter_actually_reads_its_argument():
+    """`_paintResidency` 가 **인자를 본다**.
+
+    ⚠ 이 단정이 왜 따로 필요한가 — 「상주가 아닌데 «유지됩니다» 라고 말한다」는 결함을
+      행위 하네스(`verify_client_panel_dom.mjs` N4)가 잡지만, 그 하네스는 node 부재로
+      **CI 에 배선되지 않는다**. 행위 층에만 두면 CI 에서는 통과한다(실측 2026-09-04:
+      뮤턴트 M36 이 pytest 층을 그대로 통과했다). 소스 층에도 잠근다.
+    """
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    m = re.search(r"function _paintResidency\((\w+)\)\s*\{", js)
+    assert m, "`_paintResidency` 정의가 없다"
+    param = m.group(1)
+    body = js[m.end():]
+    body = body[:body.find("\n}\n")]
+    # 문자열 안의 등장은 인정하지 않는다 (§16.7 G11-a) — 코드로 읽어야 한다.
+    code = re.sub(r'"[^"]*"|\'[^\']*\'|`[^`]*`', '""', body)
+    assert re.search(rf"(?<![\w.]){param}(?![\w])", code), (
+        f"`_paintResidency` 가 인자 `{param}` 를 코드에서 읽지 않는다 — "
+        "상주가 아닌 머신에서도 «유지됩니다» 라고 말하게 된다"
+    )
+    assert code.count("textContent") >= 1 and "?" in code, \
+        "두 경우로 갈리지 않는다 — 한쪽 문구만 항상 나온다"

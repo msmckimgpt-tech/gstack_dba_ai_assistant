@@ -353,7 +353,7 @@ edit_policy: append-only
   `SW_HIDE` 를 주면 아무것도 안 뜬다(「눌렀는데 아무 일도 없다」 = 조용한 실패).
 - 그런데 이번 cycle 이 만든 `hidden_child_kwargs()` 는 이름·docstring 이 「자식을 창 없이」라
   **그쪽에 갖다 쓰고 싶어지는 유인**을 만든다. 내가 만든 함정이므로 내가 표지를 세운다.
-- `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-V 에 **「GUI 자식에는 쓰지 않는다 ·
+- `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-Z 에 **「GUI 자식에는 쓰지 않는다 ·
   appwindow 의 중복은 의도된 것」** 을 명시. 코드 동작 변경 0 — 오용 방지 표지만 추가.
 
 ## CHG-20260904T140000-ai-claude-scope-decision-recorded — 웹 셸 트레이는 별도 cycle (사용자 결정)
@@ -427,3 +427,27 @@ edit_policy: append-only
 - ⚠ 절차: 이 수정 직전 커밋에서 **테스트 실패를 확인하지 않고 푸시**했다. `verify-completion`
   은 pre-commit 게이트라 테스트를 돌리지 않으므로, 게이트 PASS 가 곧 테스트 green 이 아니다 —
   둘을 같은 것으로 읽었다. 커밋 전에 **회귀도 함께** 확인한다.
+
+## CHG-20260904T170000-ai-claude-primary-panel-residency — 상주 안내를 주 표면으로 + 실행 결함 해소
+- Timestamp: 2026-09-04T17:00:00+09:00
+- **내 상주 안내가 사용자에게 닿지 않는 자리에 있었다.** `ai-connect.html`/`ai-connect.js`
+  에 넣었는데, 앱 창이 여는 것은 서비스 루트(`index.html`)이고 그 연결 패널은
+  `app/client-bridge.js` 가 그린다. 「주 경로와 정합하게」라는 요구가 **한 층 아래에서 그대로
+  반복**됐다 — 저장은 됐는데 읽히지 않는 자리.
+- 그 패널을 실제로 **구동해 보니** 첫 호출에서 던졌다:
+  `ReferenceError: _status is not defined`. `client-bridge.js` 가 `_status` 를 import 없이
+  8곳에서 부르는데 정의는 `connect-modal.js` 의 비-export 지역 함수다. 예외가 호출부
+  `openConnectModal()` 까지 올라가 **연결 창 자체가 안 열린다**.
+  - 직전 cycle 이 고친 「패널이 끝내 안 켜졌다」(CHG-20260904T123000)와 **화면상 구분되지
+    않는다**. 그 처방은 필요했지만 충분하지 않았다.
+- 변경
+  - `app/client-bridge.js` — `_status` 를 **지역 정의**(순환 import 회피 · 이 모듈의 «의존 0»
+    유지) · `_paintResidency` 신설 · `bridgeCall("status")` 를 `discover` **앞에** 호출.
+  - `index.html` — 연결 패널에 `#connectClientResidency` 를 **비운 채** 추가.
+  - `FUNCTION.md` §P0-AA(상주 안내는 보는 화면에) · §P0-AB(부르는 헬퍼는 그 모듈이).
+  - `tests/verify_client_panel_dom.mjs` 신설 — 모듈을 **바이트 그대로 통째 실행**한다
+    (`data:` URL). 함수를 떼어내지 않으므로 「추출이 깨져서 vacuous pass」가 성립하지 않는다.
+  - `tests/test_web_shell.py` +6 · `verify_residency_dom.mjs` 에 `DQA_JSDOM` 수용.
+- **ID 충돌 재발 해소**: main 이 `P0-U`~`P0-X` 를 가져왔다. 트렁크 우선으로 본 cycle 의
+  `P0-U/P0-U-1/P0-V` 를 **`P0-Y/P0-Y-1/P0-Z` 로 재번호**하고 `gui.py`·`MODIFY.md` 참조를
+  함께 옮겼다. (같은 충돌의 2회차 — 병렬 세션이 같은 feature 문서를 쓰는 한 반복된다.)
