@@ -337,3 +337,114 @@
   $("tabPosix").addEventListener("click", function () { osTab = "posix"; osTabPinned = true; paintOsTab(); });
   $("tabWin").addEventListener("click", function () { osTab = "windows"; osTabPinned = true; paintOsTab(); });
 })();
+
+/* ── 클라이언트 패널 (2026-09-04) ────────────────────────────────────────────────
+ *
+ * 연결 프로그램이 이 화면을 앱 창으로 열면 `?client_port=&client_nonce=` 가 붙는다.
+ * 그때만 이 패널이 나타나고, 이 컴퓨터의 능력(AI 탐지·로그인 대행·연결)을 **로컬 브리지**로
+ * 부른다. 화면은 서비스에 하나만 둔다는 결정(P0-S)의 실체다.
+ *
+ * ⚠ 브리지 호출은 반드시 **POST + nonce 헤더** 다. GET 은 브리지가 막는다 —
+ *   `<img>`·`<script>` 로도 발사되어 preflight 를 우회하기 때문이다.
+ * ⚠ 로그인·연결은 브리지가 **네이티브 확인창**을 띄운다. 이 페이지가 XSS 되어도
+ *   사람 없이는 진행되지 않는다. 그래서 여기서 그 응답(`declined`)을 정중히 다룬다.
+ */
+(function clientPanel() {
+  var q = new URLSearchParams(location.search);
+  var port = q.get("client_port"), nonce = q.get("client_nonce");
+  var panel = document.getElementById("clientPanel");
+  if (!panel || !port || !nonce) { return; }   // 평범한 방문 — 아무것도 보이지 않는다
+  panel.classList.remove("aic-hidden");
+
+  var listEl = document.getElementById("clientRuntimes");
+  var statusEl = document.getElementById("clientPanelStatus");
+  var connectBtn = document.getElementById("clientConnect");
+  var chosen = null;
+
+  function pstatus(msg, kind) {
+    statusEl.textContent = msg || "";
+    if (kind) { statusEl.setAttribute("data-kind", kind); }
+    else { statusEl.removeAttribute("data-kind"); }
+  }
+
+  function call(action, body) {
+    return fetch("http://127.0.0.1:" + encodeURIComponent(port) + "/" + action, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-DQA-Nonce": nonce },
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json(); });
+  }
+
+  function paint(runtimes) {
+    listEl.innerHTML = "";
+    var usable = (runtimes || []).filter(function (r) { return r.usable; });
+    (runtimes || []).forEach(function (r) {
+      var li = document.createElement("li");
+      li.style.margin = "6px 0";
+      var mark = r.usable ? "✅" : (r.logged_in ? "❌" : "⏳");
+      var label = document.createElement("label");
+      label.style.cursor = r.usable ? "pointer" : "default";
+      if (r.usable) {
+        var radio = document.createElement("input");
+        radio.type = "radio"; radio.name = "dqa-rt"; radio.value = r.id;
+        radio.style.marginRight = "8px";
+        radio.checked = (chosen === r.id) || (!chosen && r.id === usable[0].id);
+        if (radio.checked) { chosen = r.id; }
+        radio.addEventListener("change", function () { chosen = r.id; });
+        label.appendChild(radio);
+      }
+      label.appendChild(document.createTextNode(mark + " " + r.id));
+      li.appendChild(label);
+      var detail = document.createElement("div");
+      detail.style.cssText = "margin-left:22px;opacity:.8;font-size:.92em";
+      detail.textContent = r.usable ? r.path
+        : (r.detail || (r.logged_in ? "답을 받지 못했습니다" : "로그인이 필요합니다"));
+      li.appendChild(detail);
+      if (!r.usable && !r.logged_in && r.can_login_here) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "aic-btn";
+        b.style.cssText = "margin-left:22px;margin-top:4px";
+        b.textContent = "로그인";
+        b.addEventListener("click", function () {
+          pstatus(r.id + " 로그인을 시작합니다 — 프로그램 창의 확인을 눌러 주세요.");
+          call("login", { id: r.id }).then(function (res) {
+            if (res.error === "declined") { pstatus(res.detail, "error"); return; }
+            pstatus(res.detail || (res.ok ? "로그인했습니다." : "로그인하지 못했습니다."),
+                    res.ok ? "ok" : "error");
+            if (res.ok) { discover(); }
+          });
+        });
+        li.appendChild(b);
+      }
+      listEl.appendChild(li);
+    });
+    connectBtn.disabled = usable.length === 0;
+    if (!runtimes || !runtimes.length) {
+      pstatus("이 컴퓨터에서 AI 를 찾지 못했습니다. 설치한 뒤 [다시 찾기] 를 누르세요.", "error");
+    } else if (!usable.length) {
+      pstatus("설치·로그인은 되어 있는데 답을 받지 못했습니다 — 서버 연결과는 별개입니다.", "error");
+    } else {
+      pstatus("답변이 확인된 AI 가 " + usable.length + "개 있습니다.", "ok");
+    }
+  }
+
+  function discover() {
+    pstatus("이 컴퓨터의 AI 를 찾는 중… (실제로 답하는지 확인하므로 수십 초 걸릴 수 있습니다)");
+    return call("discover", {}).then(function (res) { paint(res.runtimes); })
+      .catch(function (e) {
+        pstatus("연결 프로그램에 닿지 못했습니다 — 창을 닫았을 수 있습니다. (" + e.message + ")",
+                "error");
+      });
+  }
+
+  document.getElementById("clientRefresh").addEventListener("click", discover);
+  connectBtn.addEventListener("click", function () {
+    pstatus("연결하는 중 — 프로그램 창의 확인을 눌러 주세요.");
+    call("connect", { id: chosen }).then(function (res) {
+      if (res.error === "declined") { pstatus(res.detail, "error"); return; }
+      if (res.ok) { pstatus("연결됐습니다. 대화 화면에서 질문하면 이 컴퓨터의 AI 가 답합니다.", "ok"); }
+      else { pstatus(res.detail || "연결하지 못했습니다.", "error"); }
+    });
+  });
+  discover();
+})();
