@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex,nofollow" />
   <title>내 AI 연결하기</title>
+  <!-- ⚠ **서비스 디자인 시스템을 먼저 싫는다** (2026-09-04). 이 화면은 종전에
+       자기만의 토큰(--aic-*)을 정의하는 «디자인 섬» 이었고, 같은 뜻의 색이
+       서비스와 값이 달랐다(강조 #1f6feb vs #2563eb, 배경 #f6f7f9 vs #f7f7f4).
+       규칙은 그대로 두고 **토큰의 출처만** 시스템으로 옮긴다. -->
+  <link rel="stylesheet" href="/static/css/base.css?v=dev" />
   <link rel="stylesheet" href="/static/ai-connect.css?v=dev" />
 </head>
 <body class="aic-body">
@@ -41,6 +46,19 @@
 
       <!-- ROADMAP ITEM-03: 「어디서 막혔는지」를 화면이 말한다. 판정은 서버 한 곳이고
            여기는 그린다 — 프런트가 조립하면 이 화면과 대화 모달이 갈린다(P0-L). -->
+      <!-- ⚠ **클라이언트 패널** (2026-09-04). 연결 프로그램이 이 화면을 앱 창으로 열면
+           `?client_port=&client_nonce=` 가 붙고, 그때만 나타난다. 화면은 서비스에 하나만
+           두기로 한 결정(P0-S)의 실체다 — 클라이언트 안에 화면 사본을 만들지 않는다.
+           브리지가 붙지 않은 평범한 방문에서는 **아무것도 보이지 않는다**. -->
+      <section id="clientPanel" class="aic-hidden" style="margin-bottom:14px">
+        <p class="aic-handoff-hint"><strong id="clientPanelTitle">이 컴퓨터의 AI</strong></p>
+        <ul id="clientRuntimes" style="list-style:none;padding-left:0;margin:8px 0"></ul>
+        <div class="aic-actions" style="justify-content:flex-start">
+          <button type="button" class="aic-btn" id="clientRefresh">다시 찾기</button>
+          <button type="button" class="aic-btn aic-btn--primary" id="clientConnect" disabled>이 서비스에 연결</button>
+        </div>
+        <p class="aic-status" id="clientPanelStatus"></p>
+      </section>
       <section id="connectSteps" class="aic-hidden" style="margin-bottom:12px">
         <p class="aic-handoff-hint"><strong id="stepsSummary"></strong></p>
         <ul id="stepsList" style="list-style:none;padding-left:0;margin:8px 0"></ul>

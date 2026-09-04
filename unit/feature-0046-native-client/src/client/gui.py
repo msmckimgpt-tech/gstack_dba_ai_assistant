@@ -37,7 +37,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import core, tray as tray_mod
+from . import appwindow, bridge, core, tray as tray_mod
 
 
 class ClientApp:
@@ -544,5 +544,70 @@ def main(argv: list[str] | None = None) -> int:
             "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
         return 3
 
-    ClientApp(plan).run()
+    return run_client(plan)
+
+
+def run_client(plan: core.ConnectPlan) -> int:
+    """웹 셸을 **먼저** 시도하고, 안 되면 tkinter 로 떨어진다 (사용자 결정 2026-09-04).
+
+    ## 왜 이 순서인가
+
+    화면은 서비스에 하나만 둔다(P0-S). 그래야 화면을 고칠 때 설치본을 다시 배포하지 않는다 —
+    이번 주기에 **낡은 설치본이 조용히 실패**해 반나절을 쓴 그 함정이다.
+
+    ## 왜 폴백을 남기는가
+
+    `--app` 을 모르는 기본 브라우저(Firefox 등)나 정책으로 막힌 머신이 있다. 거기서 아무
+    창도 안 뜨면 사용자는 프로그램이 죽은 줄 안다 — 이 프로젝트가 반복해 겪은 «조용한 실패»다.
+
+    ⚠ **주 스레드가 tkinter 를 소유한다.** 브리지는 워커 스레드에서 돌고, 위험 동작의 확인
+    창은 주 스레드에 요청해 받는다. tkinter 는 다른 스레드에서 창을 띄우면 신뢰할 수 없다.
+    """
+    import queue as _queue
+
+    asks: "_queue.Queue" = _queue.Queue()
+
+    def _confirm_via_main(message: str) -> bool:
+        """브리지(워커 스레드)가 부른다. 주 스레드에 넘겨 답을 기다린다."""
+        reply: "_queue.Queue" = _queue.Queue(maxsize=1)
+        asks.put((message, reply))
+        try:
+            return bool(reply.get(timeout=300))
+        except Exception:  # noqa: BLE001 — 답이 없으면 **아니오** 다
+            return False
+
+    br = bridge.Bridge(plan, confirm=_confirm_via_main)
+    br.start()
+    url = appwindow.panel_url(plan.base, br.port, br.nonce)
+    exe = appwindow.app_mode_browser()
+    proc = appwindow.open_app_window(url, exe)
+    if proc is None:
+        br.stop()
+        tell("연결 프로그램을 열 수 있는 브라우저를 찾지 못해 기본 화면으로 진행합니다.")
+        ClientApp(plan).run()
+        return 0
+    if not appwindow.is_default_browser(exe):
+        # 기본 브라우저가 아니면 그 창에 로그인 세션이 없을 수 있다 — 미리 말한다.
+        tell("기본 브라우저가 아닌 창으로 열렸습니다.\n"
+             "로그인 화면이 나오면 한 번 더 로그인해 주세요.")
+    try:
+        _serve_confirms(asks, proc)
+    finally:
+        br.stop()
     return 0
+
+
+def _serve_confirms(asks, proc) -> None:
+    """주 스레드 루프 — 확인 요청을 처리하고, 앱 창이 닫히면 끝낸다.
+
+    ⚠ 창이 닫히면 **연결도 끝난다**(러너는 자식 프로세스다). 그것이 tkinter 판과 같은
+    계약이고, 화면 문구도 같은 말을 한다.
+    """
+    import queue as _queue
+
+    while proc.poll() is None:
+        try:
+            message, reply = asks.get(timeout=0.5)
+        except _queue.Empty:
+            continue
+        reply.put(confirm(message))
