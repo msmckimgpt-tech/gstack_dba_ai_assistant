@@ -410,3 +410,20 @@ edit_policy: append-only
 - `wiki/hot.md`: 상주 fact 를 «두 껍데기 공통» 으로 갱신, 미실측 항목에서 동결 exe 아이콘
   제거(실측 완료)하고 **웹 셸 PB-0008 이월**을 추가.
 - wiki-lint 32(선재와 동일, orphan 0).
+
+## CHG-20260904T123000-ai-claude-panel-init-retry — 초기화 성공 여부로 플래그를 세운다
+- Timestamp: 2026-09-04T12:30:00+09:00
+- **배포 후 앱 창에서 패널이 끝내 안 켜졌다.** 서버 자산·스탬프·캐시 헤더를 전부 확인했고
+  모두 정상이었다(컨테이너 자산 새것, 사이드카 스탬프 갱신됨, 스탬프 URL 이 새 코드 서빙).
+  원인은 **내 배선**이었다 — `_clientPanelReady = true` 를 **호출 전에** 세워서,
+  `initClientPanel()` 이 일찍 반환해도 「했다」가 되고 **다시 시도하지 않았다**.
+- 처방: `initClientPanel()` 이 성립 여부를 돌려주고, 호출부가 **그 값으로** 플래그를 세운다.
+
+## CHG-20260904T124000-ai-claude-wiring-contract — 배선 1회 계약을 결과 기록 형태로
+- Timestamp: 2026-09-04T12:40:00+09:00
+- `test_modal_panel_is_wired_only_once` 가 옛 형태(`_clientPanelReady = true`)를 잠그고
+  있어 새 계약과 충돌했다. 지키는 성질(한 번만 배선)은 그대로 두고 **기록하는 값**만
+  결과로 바꿨다.
+- ⚠ 절차: 이 수정 직전 커밋에서 **테스트 실패를 확인하지 않고 푸시**했다. `verify-completion`
+  은 pre-commit 게이트라 테스트를 돌리지 않으므로, 게이트 PASS 가 곧 테스트 green 이 아니다 —
+  둘을 같은 것으로 읽었다. 커밋 전에 **회귀도 함께** 확인한다.

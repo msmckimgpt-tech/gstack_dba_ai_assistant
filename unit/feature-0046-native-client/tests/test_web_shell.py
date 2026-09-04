@@ -394,10 +394,16 @@ def test_modal_panel_is_wired_on_open():
 
 
 def test_modal_panel_is_wired_only_once():
-    """창을 열 때마다 배선하면 리스너가 쌓여 클릭 한 번에 여러 번 돈다."""
+    """창을 열 때마다 배선하면 리스너가 쌓여 클릭 한 번에 여러 번 돈다.
+
+    ⚠ 플래그를 «호출 전에 true» 로 세우던 형태는 폐기했다(2026-09-04) — 초기화가 실패해도
+    「했다」가 되어 다시 시도하지 않았다. 지키는 성질(한 번만 배선)은 그대로이고, 기록하는
+    값만 **결과**로 바뀌었다.
+    """
     js = _MODAL_JS.read_text(encoding="utf-8")
     fn = js[js.find("export function openConnectModal() {"):][:600]
-    assert "_clientPanelReady" in fn and "_clientPanelReady = true" in fn
+    assert "!_clientPanelReady" in fn, "이미 배선했는지 확인하지 않는다"
+    assert "_clientPanelReady = initClientPanel()" in fn
 
 
 def test_modal_panel_uses_post_and_nonce():
@@ -437,3 +443,35 @@ def test_bridge_module_stores_only_coordinates():
     assert "localStorage" not in js, "창을 닫아도 남는 저장소를 쓴다"
     keys = re.findall(r'sessionStorage\.\w+\("([^"]+)"', js)
     assert keys and set(keys) == {"dqa.bridge"}, f"좌표 외의 것을 저장한다: {keys}"
+
+
+# ── 7. 초기화 실패 시 **다시 시도할 수 있는가** ──────────────────────────────────
+#
+# ⚠ 실측 2026-09-04: 배포 후 앱 창에서 패널이 끝내 안 켜졌다. 서버 자산·스탬프·캐시를 모두
+#   확인했는데 전부 정상이었고, 원인은 내 배선이었다 — 플래그를 **호출 전에** 세워서
+#   `initClientPanel()` 이 일찍 반환해도 «했다» 가 됐고 다시 시도하지 않았다.
+
+def test_init_reports_whether_it_actually_wired():
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    fn = js[js.find("export function initClientPanel"):]
+    fn = fn[:fn.find("\n}\n") + 3]
+    assert "return false;" in fn, "실패를 호출부에 알리지 않는다"
+    assert "return true;" in fn, "성공을 호출부에 알리지 않는다"
+
+
+def test_ready_flag_is_set_from_the_result_not_before():
+    """**이 단정이 그 결함을 잡는다.**"""
+    js = _MODAL_JS.read_text(encoding="utf-8")
+    line = next(l for l in js.splitlines() if "_clientPanelReady =" in l and "let " not in l)
+    assert "_clientPanelReady = initClientPanel()" in line, \
+        f"플래그를 호출 결과가 아닌 것으로 세운다: {line.strip()}"
+    assert "_clientPanelReady = true" not in line
+
+
+def test_early_return_happens_before_any_side_effect():
+    """일찍 반환할 때 패널을 보이게 해 두면 «빈 패널» 이 남는다."""
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    fn = js[js.find("export function initClientPanel"):]
+    guard = fn.find("return false;")
+    show = fn.find("panel.hidden = false;")
+    assert 0 < guard < show, "가드보다 먼저 패널을 노출한다"
