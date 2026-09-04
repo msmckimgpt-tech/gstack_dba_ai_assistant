@@ -442,9 +442,28 @@
    * ⚠ 브리지는 **띄운 브라우저 프로세스**로 수명을 판정하지 않는다. Chrome 이 이미 떠 있으면
    *   새 창을 기존 인스턴스에 위임하고 런처가 즉시 종료해, 브리지가 곧바로 닫혔다
    *   (실측 2026-09-04). 그래서 「패널이 말을 걸어오는가」가 수명 신호다.
-   *   창을 닫으면 이 타이머가 멎고, 브리지는 유휴 한도 뒤에 스스로 끝난다.
+   *
+   * ⚠ **다만 상주(트레이) 중에는 유휴가 종료 사유가 아니다** (2026-09-04 재구성). 알림 영역
+   *   아이콘이 떠 있으면 창을 닫아도 연결이 유지되고, 끝내는 것은 아이콘의 [종료] 뿐이다.
+   *   상주가 아닐 때만 유휴 한도 뒤에 스스로 끝난다.
    */
   setInterval(function () { call("ping", {}).catch(function () { /* 창 정리 중 */ }); }, 20000);
+
+  /* 상주 안내 — **브리지가 실제로 아이콘을 띄웠을 때만** 말한다.
+   *
+   * ⚠ 프런트가 스스로 「닫아도 유지됩니다」를 추정하면, 트레이를 못 세운 머신에서 거짓이
+   *   된다(사용자는 창을 닫고 연결을 잃는다). 판정은 껍데기가 하고 여기는 그린다 — 이
+   *   페이지가 이미 여러 번 배운 규칙이다(P0-R · 판정은 한 곳).
+   */
+  function paintResidency(resident) {
+    var el = document.getElementById("clientResidency");
+    if (!el) { return; }
+    el.textContent = resident
+      ? "이 창을 닫아도 알림 영역에서 연결이 유지됩니다. 완전히 끝내려면 알림 영역 아이콘에서 [종료] 를 누르세요."
+      : "이 창을 닫으면 연결이 끝납니다.";
+  }
+  call("status", {}).then(function (res) { paintResidency(!!(res && res.resident)); })
+    .catch(function () { /* 닿지 못하면 아무 말도 하지 않는다 — 모르면 단정하지 않는다 */ });
 
   document.getElementById("clientRefresh").addEventListener("click", discover);
   connectBtn.addEventListener("click", function () {

@@ -36,4 +36,11 @@ testpaths = [
     # 같은 함정을 반복하지 않기 위해 디렉토리 생성과 동시에 등재한다 — 위 feature-0014
     # 주석이 기록한 그대로, testpaths 밖 테스트는 존재해도 아무것도 지키지 못한다.
     "unit/feature-0020-zd-deploy-all/tests",
+    # feature-0046 (2026-09-04): 네이티브 클라이언트 테스트가 **CI 와 testpaths 어디에도
+    # 없었다** — 2026-09-03 신설 이후 로컬에서만 돌았다. 바로 위 feature-0014 주석이 경고한
+    # 그 형태이고(로컬 green · CI 는 그 축을 보지 않음), 이 파일과 ci.yml 의 목록이 서로
+    # 다르다는 사실 자체가 재발 신호다(§16.7 G14-e — 존재는 실행이 아니다).
+    # ⚠ Win32/트레이 층은 리눅스에서 돌지 않는다 — 그 층의 실측은 그 feature 의
+    # `tests/windows/`(pytest 수집 대상 아님, README 에 실행법)가 담당한다.
+    "unit/feature-0046-native-client/tests",
 ]
