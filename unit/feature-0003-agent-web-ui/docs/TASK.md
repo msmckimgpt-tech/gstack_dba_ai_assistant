@@ -13124,3 +13124,14 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] 패널이 연결값 발급 · base 불일치는 네트워크 전에 거절 · 사람 확인 유지
 - [x] 테스트 홈 격리 conftest (실제 홈 오염 + 갈래 오염 차단)
 - [ ] 배포 후 Windows 실측: 재설치 → 시작 메뉴 실행 → 앱 창 → 연결
+
+
+## TASK-20260904T220000 — 앱 창 내장 (사용자 요청)
+
+- [x] `client/window.py` — WebView2 호스팅 · 닫기=숨김(트레이 조건) · show/quit
+- [x] `run_client` 껍데기 선택 3단 + 각 단계 안내
+- [x] `confirm` 을 스레드 안전하게(Windows `MessageBoxW`)
+- [x] `DISPLAY_NAME` 분리 + 설치기 아이콘 이름 · 웹 문구 정리
+- [x] 빌드 의존 동봉 + **동결본 자가진단 실행 검증**
+- [x] Windows 라이브: 창이 이 프로세스의 것 · 브리지 동일 프로세스 · 두 번째 실행 1개
+- [ ] 배포 후 앱 창에서 연결까지 완주 확인

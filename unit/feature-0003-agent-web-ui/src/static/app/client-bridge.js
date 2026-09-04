@@ -81,7 +81,7 @@ function _paintResidency(resident) {
   const el = document.getElementById("connectClientResidency");
   if (!el) return;
   el.textContent = resident
-    ? "이 창을 닫아도 연결은 유지됩니다 — 연결 프로그램이 트레이에 남아 있습니다."
+    ? "이 창을 닫아도 연결은 유지됩니다 — 알림 영역(시계 옆)에 남아 있습니다."
     : "이 창을 닫으면 연결도 끝납니다.";
 }
 
@@ -129,7 +129,7 @@ export function initClientPanel(setStatus) {
         b.style.cssText = "margin-left:22px;margin-top:4px";
         b.textContent = "로그인";
         b.addEventListener("click", () => {
-          _status(r.id + " 로그인 — 프로그램 창의 확인을 눌러 주세요.");
+          _status(r.id + " 로그인 — 이 컴퓨터에서 실행할지 묻는 확인 창에 답해 주세요.");
           bridgeCall("login", { id: r.id }).then((res) => {
             _status(res.detail || (res.ok ? "로그인했습니다." : "로그인하지 못했습니다."),
                     res.ok ? "ok" : "error");
@@ -150,12 +150,13 @@ export function initClientPanel(setStatus) {
       _status(res.runtimes && res.runtimes.some((r) => r.usable)
         ? "쓸 수 있는 AI 를 찾았습니다." : "쓸 수 있는 AI 를 찾지 못했습니다.",
         res.runtimes && res.runtimes.some((r) => r.usable) ? "ok" : "error");
-    }).catch((e) => _status("연결 프로그램에 닿지 못했습니다. (" + e.message + ")", "error"));
+    }).catch((e) => _status("이 컴퓨터의 연결 기능에 닿지 못했습니다. (" + e.message + ")",
+                          "error"));
   };
 
   document.getElementById("connectClientRefresh").addEventListener("click", refresh);
   connectBtn.addEventListener("click", () => {
-    _status("연결하는 중 — 프로그램 창의 확인을 눌러 주세요.");
+    _status("연결하는 중 — 이 컴퓨터에서 실행할지 묻는 확인 창에 답해 주세요.");
     /* ⚠ **연결값을 여기서 받아 넘긴다** (2026-09-04).
      *
      * 종전에는 연결 프로그램이 딥링크로 받아 온 토큰만 썼다. 그러면 시작 메뉴에서 그냥 켠

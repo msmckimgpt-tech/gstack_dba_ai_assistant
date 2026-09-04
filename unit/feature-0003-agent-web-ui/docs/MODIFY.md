@@ -5777,3 +5777,21 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - `parse_scheme_url` 을 `gui` → `core` 로 이관(두 입구가 같은 파서를 쓴다).
 - `tests/conftest.py` 신설 — 이 unit 의 테스트가 **실제 홈을 건드리지 않게**. 없으면 테스트가
   개발 머신의 `~/.dqa-connect` 를 오염시키고, 그 파일 때문에 다른 테스트의 갈래가 바뀐다(실측).
+
+
+## CHG-20260904T220000-ai-claude-embedded-window — 앱 창을 프로그램이 직접 그린다
+- Timestamp: 2026-09-04T22:00:00+09:00
+- 사용자 요청: 「DQAConnect.exe 를 별도로 열지 않고 클라이언트 내장으로」.
+- `client/window.py` 신설 — WebView2(pywebview `edgechromium`) 호스팅. 닫기=숨김(트레이가
+  떴을 때만) · `show()`/`quit()` · 실패는 `False` 로 답해 호출부가 폴백한다.
+- `gui.run_client` — **내장 → 브라우저 앱 모드 → tkinter**. 각 단계는 말없이 내려가지 않는다.
+- `gui.confirm` — Windows 에서 `MessageBoxW`(+`MB_TOPMOST`). 내장 껍데기는 주 스레드를 GUI 가
+  쥐므로 tkinter 대화상자를 부를 자리가 없다.
+- `shared/dqa_identity.DISPLAY_NAME = "DQA"` 신설. 설치기는 `MyAppName`(패키징)과
+  `MyDisplayName`(아이콘·표시)을 가른다 — AppId·설치 폴더는 그대로라 업그레이드가 이어진다.
+- `build_client` — `--collect-all webview/clr_loader/pythonnet` · 의존 자동 설치 ·
+  **동결본 `--selftest` 실행 검증**.
+- 웹 문구: 앱 창 안에서 보이는 문구에서 「연결 프로그램」 제거(브라우저 방문자용 안내는 유지).
+- 실측(Windows): 동결본 자가진단 `{'frozen': True, 'webview_import': True,
+  'runtime_present': True, 'available': True}` · 창 제목 `DQA` 가 **이 프로세스의 것** ·
+  브리지 포트 동일 프로세스 · 두 번째 실행에도 인스턴스 1개.

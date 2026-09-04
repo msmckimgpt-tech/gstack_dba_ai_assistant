@@ -560,3 +560,26 @@ edit_policy: append-only
   SURVIVED** 했고(접두 비교로 스킴 판정 · 빈 값 기록), 그 둘을 잡는 단정을 더해 닫았다 —
   「전건 KILL」은 표본이 내 테스트를 닮았다는 뜻일 수 있어 일부러 어긋나는 뮤턴트를 던졌다.
 - codex 외부 적대 리뷰 4건 수정(딥링크 주소 미검증 · 링크가 동봉값을 이기는 순서 · 봉투가 지문을 지움 · 잠금 밖 기록). 상세는 REVIEW.md.
+
+
+## CHG-20260904T220000-ai-claude-embedded-window — 앱 창을 프로그램이 직접 그린다
+- Timestamp: 2026-09-04T22:00:00+09:00
+- 사용자 요청: 「DQAConnect.exe 를 별도로 열지 않고 클라이언트 내장으로」.
+- `client/window.py` 신설 — WebView2(pywebview `edgechromium`) 호스팅. 닫기=숨김(트레이가
+  떴을 때만) · `show()`/`quit()` · 실패는 `False` 로 답해 호출부가 폴백한다.
+- `gui.run_client` — **내장 → 브라우저 앱 모드 → tkinter**. 각 단계는 말없이 내려가지 않는다.
+- `gui.confirm` — Windows 에서 `MessageBoxW`(+`MB_TOPMOST`). 내장 껍데기는 주 스레드를 GUI 가
+  쥐므로 tkinter 대화상자를 부를 자리가 없다.
+- `shared/dqa_identity.DISPLAY_NAME = "DQA"` 신설. 설치기는 `MyAppName`(패키징)과
+  `MyDisplayName`(아이콘·표시)을 가른다 — AppId·설치 폴더는 그대로라 업그레이드가 이어진다.
+- `build_client` — `--collect-all webview/clr_loader/pythonnet` · 의존 자동 설치 ·
+  **동결본 `--selftest` 실행 검증**.
+- 웹 문구: 앱 창 안에서 보이는 문구에서 「연결 프로그램」 제거(브라우저 방문자용 안내는 유지).
+- 실측(Windows): 동결본 자가진단 `{'frozen': True, 'webview_import': True,
+  'runtime_present': True, 'available': True}` · 창 제목 `DQA` 가 **이 프로세스의 것** ·
+  브리지 포트 동일 프로세스 · 두 번째 실행에도 인스턴스 1개.
+- 뮤테이션 **18/18 KILL** — 다만 처음에는 **4건이 살아남았고 전부 내 테스트의 구멍**이었다:
+  ① 비-Windows 검사(다른 방어가 되메워 통과) ② **확인창 호출**(소스에 `MessageBoxW` 가 있는지만
+  봤다 — 그것을 감싼 `if` 를 `if False` 로 바꿔도 문자열은 남는다) ③ 동결본 자가진단 배선
+  ④ 의존 동봉 배선. ②가 이 저장소가 반복해 겪은 **「게이트 뒤 호출을 소스 검사가 못 본다」**
+  그 형태다 — 실행하는 단정으로 바꿔 메웠다.

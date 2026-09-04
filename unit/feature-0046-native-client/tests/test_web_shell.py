@@ -150,10 +150,17 @@ def _gui_src() -> str:
     return (_SRC / "client" / "gui.py").read_text(encoding="utf-8")
 
 
+def _fn_src(name: str) -> str:
+    """함수 하나의 소스. ⚠ 껍데기 본문은 2026-09-04 에 `run_client` → `_run_browser_shell`
+    로 **옮겨졌다**(내장 창 껍데기가 앞에 붙었다). 성질은 그대로이므로 대상만 옮긴다."""
+    src = _gui_src()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == name)
+    return ast.get_source_segment(src, fn) or ""
+
+
 def test_entry_tries_web_shell_then_falls_back():
-    fn = next(n for n in ast.walk(ast.parse(_gui_src()))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
-    seg = ast.get_source_segment(_gui_src(), fn) or ""
+    seg = _fn_src("_run_browser_shell")
     assert "open_app_window" in seg, "웹 셸을 시도하지 않는다"
     assert "ClientApp(plan).run()" in seg, "폴백이 없다 — 창이 안 뜨면 죽은 줄 안다"
     assert seg.index("open_app_window") < seg.index("ClientApp(plan).run()"), \
@@ -161,37 +168,25 @@ def test_entry_tries_web_shell_then_falls_back():
 
 
 def test_fallback_tells_the_user_why():
-    fn = next(n for n in ast.walk(ast.parse(_gui_src()))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
-    seg = ast.get_source_segment(_gui_src(), fn) or ""
-    assert "tell(" in seg, "조용히 폴백하면 사용자는 무슨 일이 났는지 모른다"
+    assert "tell(" in _fn_src("_run_browser_shell"), \
+        "조용히 폴백하면 사용자는 무슨 일이 났는지 모른다"
 
 
 def test_bridge_is_stopped_even_when_the_window_closes():
-    fn = next(n for n in ast.walk(ast.parse(_gui_src()))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
-    seg = ast.get_source_segment(_gui_src(), fn) or ""
+    seg = _fn_src("_run_browser_shell")
     assert "finally:" in seg and "br.stop()" in seg, "브리지가 남아 포트를 붙잡는다"
 
 
 def test_confirm_runs_on_the_main_thread():
     """tkinter 는 워커 스레드에서 창을 띄우면 신뢰할 수 없다."""
-    src = _gui_src()
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
-    seg = ast.get_source_segment(src, fn) or ""
+    seg = _fn_src("_run_browser_shell")
     assert "_confirm_via_main" in seg and "asks.put" in seg
-    serve = next(n for n in ast.walk(ast.parse(src))
-                 if isinstance(n, ast.FunctionDef) and n.name == "_serve_confirms")
-    assert "confirm(" in (ast.get_source_segment(src, serve) or "")
+    assert "confirm(" in _fn_src("_serve_confirms")
 
 
 def test_confirm_times_out_to_no():
     """답이 없으면 «아니오» 다 — 무한 대기는 브리지 요청을 영원히 붙잡는다."""
-    src = _gui_src()
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
-    seg = ast.get_source_segment(src, fn) or ""
+    seg = _fn_src("_run_browser_shell")
     assert "timeout=" in seg and "return False" in seg
 
 
@@ -228,9 +223,33 @@ def test_panel_handles_the_declined_answer():
     assert js.count('res.error === "declined"') >= 2, "로그인·연결 양쪽에서 다뤄야 한다"
 
 
+def _code_only(js: str) -> str:
+    """JS 에서 주석을 걷어 낸다 — 화면에 뜨는 문구만 남기려는 것이다."""
+    out, i, n = [], 0, len(js)
+    while i < n:
+        if js.startswith("//", i):
+            j = js.find("\n", i)
+            i = n if j < 0 else j
+        elif js.startswith("/*", i):
+            j = js.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            out.append(js[i])
+            i += 1
+    return "".join(out)
+
+
 def test_panel_says_when_the_bridge_is_gone():
+    """닿지 못하면 **그 사실을 말한다** — 빈 목록만 보이면 사용자는 AI 가 없다고 읽는다.
+
+    ⚠ 문구에서 「연결 프로그램」이 빠졌다(2026-09-04). 앱 창 안에서는 그 프로그램이 곧 DQA 라
+    별도 존재로 부르면 안 된다. 성질은 «침묵하지 않는다» 이므로 그것만 잠근다.
+    """
     js = _JS.read_text(encoding="utf-8")
-    assert "연결 프로그램에 닿지 못했습니다" in js
+    assert "닿지 못했습니다" in js
+    # ⚠ **주석은 뺀다.** 설계를 설명하는 주석에 그 낱말이 남는 것은 옳다 — 이 저장소가
+    #   「우리는 X 를 하지 않는다」는 docstring 에 걸려 헛도는 단정을 만든 적이 있다.
+    assert "연결 프로그램" not in _code_only(js), "앱 창 안에서 별도 프로그램처럼 부른다"
 
 
 @pytest.mark.parametrize("btn", ["clientRefresh", "clientConnect"])

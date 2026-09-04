@@ -201,8 +201,15 @@ def test_terminal_path_is_not_deleted(path):
 
 @pytest.mark.parametrize("path", [_MODAL, _PAGE])
 def test_lead_text_points_at_the_client(path):
+    """안내가 **앱 창 경로**를 주 경로로 말하는가.
+
+    ⚠ 문구는 2026-09-04 에 「연결 프로그램이 열리고」 → 「DQA 앱 창이 열리고」로 바뀌었다.
+    이 프로그램이 창을 직접 그리게 되면서 «별도 프로그램»이라는 인상이 틀린 것이 됐기
+    때문이다(사용자 지적). 지켜야 하는 성질은 문구가 아니라 **무엇을 주 경로로 가리키는가**다.
+    """
     html = path.read_text(encoding="utf-8")
-    assert "내 AI 실행" in html and "연결 프로그램이 열리고" in html, \
+    assert "내 AI 실행" in html, f"{path.name}: 실행 경로를 가리키지 않는다"
+    assert "앱 창이 열리고" in html, \
         f"{path.name}: 안내가 아직 터미널을 주 경로로 말한다"
 
 

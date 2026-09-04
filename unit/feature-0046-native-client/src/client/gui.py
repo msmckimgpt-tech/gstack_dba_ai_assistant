@@ -32,12 +32,13 @@ Tauri 를 쓰면 Rust 껍데기 + 파이썬 sidecar 두 런타임을 묶어야 �
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import threading
 from pathlib import Path
 
-from . import appwindow, bridge, core, tray as tray_mod
+from . import appwindow, bridge, core, tray as tray_mod, window as window_mod
 
 #: 웹 셸 경로의 [종료] 신호. 트레이 스레드가 세우고 주 스레드 루프가 읽는다 —
 #: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
@@ -67,7 +68,7 @@ class ClientApp:
         self._shutting_down = False
 
         self.root = tk.Tk()
-        self.root.title("내 AI 연결")
+        self.root.title(core.DISPLAY_NAME)
         self.root.geometry("560x420")
 
         # ⚠ 트레이는 **창보다 먼저** 세운다. 성공 여부가 창 닫기 동작을 가르기 때문이다
@@ -79,7 +80,7 @@ class ClientApp:
         self.detail = tk.StringVar(value="")
         self.runtime = tk.StringVar(value="")
 
-        ttk.Label(self.root, text="내 AI 연결", font=("", 16, "bold")).pack(pady=(16, 4))
+        ttk.Label(self.root, text=core.DISPLAY_NAME, font=("", 16, "bold")).pack(pady=(16, 4))
         ttk.Label(self.root, textvariable=self.status).pack()
         ttk.Label(self.root, textvariable=self.detail, foreground="#555",
                   wraplength=500, justify="left").pack(pady=(4, 12))
@@ -114,7 +115,8 @@ class ClientApp:
             tray_mod.TrayItem(separator=True),
             tray_mod.TrayItem(label="종료", action=lambda: self._post("tray", "quit")),
         ]
-        tray = tray_mod.Tray(title="내 AI 연결", items=items, tooltip="내 AI 연결 — 확인하는 중…")
+        tray = tray_mod.Tray(title=core.DISPLAY_NAME, items=items,
+                             tooltip=f"{core.DISPLAY_NAME} — 확인하는 중…")
         return tray if tray.start() else None
 
     def _tray_live(self) -> bool:
@@ -131,7 +133,7 @@ class ClientApp:
         """트레이 툴팁·메뉴를 현재 상태에 맞춘다. 트레이가 없으면 아무 일도 하지 않는다."""
         if self.tray is None:
             return
-        self.tray.set_tooltip(f"내 AI 연결 — {text}")
+        self.tray.set_tooltip(f"{core.DISPLAY_NAME} — {text}")
         if connected is not None:
             self._tray_toggle.enabled = True
             self._tray_toggle.label = "연결 끊기" if connected else "다시 연결"
@@ -178,7 +180,7 @@ class ClientApp:
         self.root.withdraw()
         if not self._told_about_tray:
             self._told_about_tray = True
-            self.tray.notify("내 AI 연결",
+            self.tray.notify(core.DISPLAY_NAME,
                              "알림 영역에서 계속 연결되어 있습니다. "
                              "아이콘을 두 번 누르면 창이 다시 열립니다.")
 
@@ -448,7 +450,7 @@ class ClientApp:
             self.tray = None
 
 
-def tell(message: str, title: str = "내 AI 연결") -> None:
+def tell(message: str, title: str = core.DISPLAY_NAME) -> None:
     """사용자에게 말한다 — **창으로**.
 
     ⚠ **실 Windows 실측 2026-09-03**: `--windowed` PyInstaller 빌드는 콘솔이 없어
@@ -482,12 +484,34 @@ def tell(message: str, title: str = "내 AI 연결") -> None:
 parse_scheme_url = core.parse_scheme_url
 
 
-def confirm(message: str, title: str = "내 AI 연결") -> bool:
+def confirm(message: str, title: str = core.DISPLAY_NAME) -> bool:
     """사용자에게 **예/아니오**를 묻는다. 창을 띄울 수 없으면 **아니오**로 읽는다.
 
     ⚠ 물을 수 없는 환경에서 「예」로 떨어지면, 물어보려던 이유(남이 만든 링크일 수 있다)가
     통째로 무력화된다. 확인은 **받아야** 성립하지 못 받으면 성립하지 않는다.
+
+    ## 왜 Windows 에서 `MessageBoxW` 인가 (2026-09-04)
+
+    내장 창 껍데기에서는 **주 스레드를 창이 쥔다**(`webview.start()` 는 돌아오지 않는 GUI
+    루프다). tkinter 대화상자는 주 스레드 규약에 묶여 있어 그 구조에서 부를 자리가 없다.
+    `MessageBoxW` 는 **부른 스레드에 자기 모달 루프를 세우므로** 어느 스레드에서도 성립한다.
+
+    ⚠ `MB_TOPMOST | MB_SETFOREGROUND` 를 준다. 이 확인은 **웹 화면이 이 컴퓨터에서 무언가를
+    실행하려 할 때** 뜨는 것이라, 다른 창 뒤에 가려지면 방어선이 아니라 방해물이 된다.
     """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            MB_YESNO, MB_ICONWARNING = 0x4, 0x30
+            MB_TOPMOST, MB_SETFOREGROUND = 0x40000, 0x10000
+            IDYES = 6
+            rc = ctypes.windll.user32.MessageBoxW(
+                None, str(message), str(title),
+                MB_YESNO | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND)
+            return rc == IDYES
+        except Exception:  # noqa: BLE001 — 아래 tkinter 로 내려간다
+            pass
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -512,7 +536,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""))
     ap.add_argument("--ca-sha256", default=os.environ.get("BRIDGE_CA_SHA256", ""))
     ap.add_argument("--agent-sha256", default=os.environ.get("BRIDGE_AGENT_SHA256", ""))
+    # ⚠ 진단 전용. **동결본이 창을 그릴 수 있는가**를 실행으로 답하게 한다 — 빌드가 이것을
+    #   불러 확인한다. 파일 존재 검사로는 「담기긴 했는데 임포트가 깨진」 상태를 못 본다.
+    ap.add_argument("--selftest", default="", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+
+    if args.selftest:
+        return _selftest(args.selftest)
 
     # 스킴으로 온 값이 **이긴다** — 사용자가 방금 웹에서 만든 최신 연결 정보이기 때문이다.
     link = parse_scheme_url(args.url)
@@ -589,8 +619,122 @@ def main(argv: list[str] | None = None) -> int:
         lock.close()
 
 
+def _selftest(out_path: str) -> int:
+    """동결본이 **실제로 무엇을 할 수 있는지** 적어 두고 끝낸다 (빌드 검증용).
+
+    ⚠ 이것이 없으면 「pywebview 를 담았다」와 「담은 것이 임포트된다」가 구분되지 않는다.
+    이 저장소는 그 구분을 못 해서 **한 번도 실행된 적 없는 exe** 를 배포한 적이 있다.
+    """
+    import json
+
+    report = {"frozen": bool(getattr(sys, "frozen", False))}
+    try:
+        import webview  # noqa: F401
+
+        report["webview_import"] = True
+    except Exception as exc:  # noqa: BLE001
+        report["webview_import"] = False
+        report["webview_error"] = str(exc)[:300]
+    try:
+        report["runtime_present"] = window_mod._runtime_present()
+        report["available"] = window_mod.available()
+    except Exception as exc:  # noqa: BLE001
+        report["available_error"] = str(exc)[:300]
+    try:
+        import tkinter  # noqa: F401
+
+        report["tkinter"] = True
+    except Exception:  # noqa: BLE001
+        report["tkinter"] = False
+    Path(out_path).write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    return 0
+
+
 def run_client(plan: core.ConnectPlan) -> int:
-    """웹 셸을 **먼저** 시도하고, 안 되면 tkinter 로 떨어진다 (사용자 결정 2026-09-04).
+    """껍데기를 고른다 — **내장 창 → 브라우저 앱 모드 → tkinter**.
+
+    ## 왜 셋인가 (하나로 줄이지 않는 이유)
+
+    | 껍데기 | 언제 | 무엇을 못 하면 다음으로 |
+    |---|---|---|
+    | **내장 창** | 기본 (사용자 결정 2026-09-04) | WebView2 런타임 부재 · 창 생성 실패 |
+    | 브라우저 앱 모드 | 내장이 안 될 때 | 크로미움 계열 브라우저 부재 |
+    | tkinter | 웹 화면을 띄울 수 없을 때 | — (마지막) |
+
+    아래로 내려갈수록 **사용자가 잃는 것**이 분명하다: 앱 창 하나(작업 표시줄 아이콘 둘) →
+    서비스 화면 자체. 그래서 조용히 실패하지 않고 각 단계가 무엇으로 떨어졌는지 말한다.
+
+    ⚠ 위 두 껍데기는 **확인창 전달 방식이 다르다.** 내장 창은 주 스레드를 GUI 루프가 쥐므로
+    브리지가 `confirm` 을 **직접** 부른다(Windows 에서 `MessageBoxW` 는 어느 스레드에서도
+    성립한다). 브라우저 껍데기는 tkinter 시절의 주-스레드 큐를 그대로 쓴다 — 그쪽은 검증된
+    경로이고, 이번 변경으로 건드릴 이유가 없다.
+    """
+    if window_mod.available():
+        rc = _run_embedded(plan)
+        if rc is not None:
+            return rc
+        tell("앱 창을 프로그램 안에 띄우지 못해 브라우저 창으로 대신 엽니다.")
+    return _run_browser_shell(plan)
+
+
+def _run_embedded(plan: core.ConnectPlan) -> "int | None":
+    """내장 창 껍데기. 창을 못 띄웠으면 `None` — 호출부가 다음 껍데기로 내려간다."""
+    br = bridge.Bridge(plan, confirm=confirm)
+    br.start()
+    url = appwindow.panel_url(plan.base, br.port, br.nonce)
+    shell = window_mod.Shell(url, title=core.DISPLAY_NAME,
+                             storage=str(plan.home / "window"))
+    tray = _start_embedded_tray(shell, br)
+    # ⚠ 트레이가 **실제로 떴을 때만** 닫기를 숨김으로 바꾼다. 없는데 숨기면 창도 아이콘도
+    #   없는 프로그램이 남는다(§P0-R).
+    shell.allow_hide = tray is not None
+    br.resident = tray is not None
+    stop = threading.Event()
+    threading.Thread(target=_watch_show_requests, args=(plan.home, shell, stop),
+                     daemon=True).start()
+    try:
+        opened = shell.run()          # 주 스레드 — 창이 닫힐 때까지 돌아오지 않는다
+    finally:
+        stop.set()
+        if tray is not None:
+            tray.stop()
+        br.stop()
+    return 0 if opened else None
+
+
+def _start_embedded_tray(shell, br):
+    """내장 창의 알림 영역 아이콘. tkinter·브라우저 껍데기와 **같은 메뉴**다.
+
+    사용자에게 이 프로그램은 하나다 — 어느 껍데기로 떴는지는 우리 사정이다.
+    """
+    if not tray_mod.available():
+        return None
+    items = [
+        tray_mod.TrayItem(label="창 열기", default=True, action=shell.show),
+        tray_mod.TrayItem(separator=True),
+        tray_mod.TrayItem(label="연결 끊기", action=br.disconnect),
+        tray_mod.TrayItem(separator=True),
+        tray_mod.TrayItem(label="종료", action=shell.quit),
+    ]
+    tray = tray_mod.Tray(title=core.DISPLAY_NAME, items=items,
+                         tooltip=f"{core.DISPLAY_NAME} — 대기 중")
+    return tray if tray.start() else None
+
+
+def _watch_show_requests(home, shell, stop: threading.Event,
+                         every: float = 0.5) -> None:
+    """두 번째 실행이 남긴 「창을 열어 달라」를 읽어 창을 되살린다.
+
+    ⚠ 내장 창에는 주 스레드 루프가 없다(그 자리를 GUI 가 쓴다). 그래서 이 폴링이 **별도
+    스레드**다 — 브라우저 껍데기가 자기 루프 안에서 하던 일과 같은 계약이다.
+    """
+    while not stop.wait(every):
+        if core.take_show_request(home):
+            shell.show()
+
+
+def _run_browser_shell(plan: core.ConnectPlan) -> int:
+    """브라우저 앱 모드 껍데기 — 안 되면 tkinter 로 떨어진다 (사용자 결정 2026-09-04).
 
     ## 왜 이 순서인가
 
@@ -680,7 +824,8 @@ def _start_shell_tray(br, url: str, exe: str | None):
         tray_mod.TrayItem(label="종료", action=lambda: _SHELL_QUIT.set()),
     ]
     _SHELL_QUIT.clear()
-    tray = tray_mod.Tray(title="내 AI 연결", items=items, tooltip="내 AI 연결 — 대기 중")
+    tray = tray_mod.Tray(title=core.DISPLAY_NAME, items=items,
+                         tooltip=f"{core.DISPLAY_NAME} — 대기 중")
     return tray if tray.start() else None
 
 
@@ -724,6 +869,7 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None,
             tick += 0.5
             if tray is not None and tray.alive and tick >= 2.0:
                 tick = 0.0
-                tray.set_tooltip("내 AI 연결 — " + ("연결됨" if br.connected else "대기 중"))
+                tray.set_tooltip(f"{core.DISPLAY_NAME} — "
+                                 + ("연결됨" if br.connected else "대기 중"))
             continue
         reply.put(confirm(message))
