@@ -1694,3 +1694,44 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **적대 검증이 막은 것(fail-closed 보류 3건)**: ⓐ `docs/STATUS.md` worktree note 재서술 — oldString 밖 원문(괄호절)이 엉뚱한 주어에 붙어 거짓 명제가 된다는 지목. ⓑ **`docs/SECURITY.md` §50·§51 신설** — feature-0046 의 두 공격 표면(미서명 exe 배포·로그인 대행 실행·러너 수신 / `dqa-connect://` 딥링크 세션 토큰 + 마지막-등록자-승 스킴 + 하드 컷오버)이 SECURITY 에 **0건**임은 실측 확인됐으나 §49.3 기존 행과의 상호작용 결함이 지목되고 교정본이 제시되지 않아 적용하지 않았다. **다음 창 최우선**(`wiki/hot.md` Active Threads·`wiki/Log.md` report-only ⓒ 에 기록). ⓒ `wiki/Architecture/Overview.md` §2.3 행 초안 — 셀 꼬리가 「스킴 무변경」이라 같은 창의 개명 사실과 정면 충돌.
 - **오케스트레이터 지시문 반증 1건**: 이 run 의 지시문이 「릴리즈노트 커밋에 캐시버스터 `?v=` bump 를 포함」을 요구했으나, 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트의 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` 수기 bump 금지). 수기 실값은 그 안전장치를 무력화하므로 **stale 지시로 판정해 따르지 않았다** — `index.html`/`admin.html` 무접촉.
 - Human Approval Needed: **아니오** (색인·미러 정합, 정본·코드 무변경).
+
+## REV-20260904T190701-ai-claude-roadmap-wsl-account-axis [SKIPPED:non-policy-doc] — ITEM-09 적재 (WSL 계정 지정 축)
+- Related TASK: _meta_ (`docs/improvements/onboarding-accessibility/ROADMAP.md` — 단일 feature-id 없음)
+- Trigger: docs-only 비정책 doc (`docs/improvements/**`) — §18.8.1 마지막 문단
+- Timestamp: 2026-09-04T19:07:01+09:00
+- 범위: **ROADMAP 1파일.** 신규 `ITEM-09` 항목 + §1 종속성 그래프 1행 + §2 Phase 1행(P3) +
+  §6 진행 현황 + 개정 이력 + frontmatter `revised_at`. 제품 코드·스키마·권한 변경 **0**.
+- **[SKIPPED] 사유**: `docs/improvements/**` 는 §18.8.1 정책 doc 목록(`AGENTS.md`·`CLAUDE.md`·
+  `_template/`·`docs/{CONVENTIONS,ARCHITECTURE,SECURITY,PROJECT}.md`·ANCHOR skeleton) **밖**이다.
+  선례 `REV-20260903T130000-ai-claude-spike-02-native-client` 와 같은 형태 — 적대 패널이 볼
+  새 코드·정책 표면이 없다. 대신 **기계 점검으로 대체**했다(아래).
+- **기계 점검 (§18.8.1 모든 경로 공통 MUST)**:
+  - ITEM-09 이 인용한 **심볼 앵커 21건 전수 grep resolve — 전건 OK**
+    (`core.py` 8 · `bridge.py` 4 · `discovery.py` 4 · `bridge_setup.sh` 2 · `client-bridge.js` 1 ·
+    `FUNCTION.md` P0-AA/P0-L 2), 참조 파일 2건(`verify_client_panel_dom.mjs`·`docs/SECURITY.md`) 실재.
+  - ITEM 번호 충돌 없음 — ROADMAP·RESEARCH 전수 스캔 결과 `ITEM-00..ITEM-08` 점유 → `ITEM-09` 신규.
+  - 스키마 13필드 전건 존재(기존 항목과 동형) · heading 구조 정합 · glued `||` 신규 0.
+  - **G13 diff 순증분**: `116 insertions / 2 deletions`, `CR=0` — 개행 churn 없음(순증분 일치).
+  - `check #17` ui-copy-budget PASS · `check #18` secret scan PASS.
+- **근거 등급 (§16.7 G7)**: 항목의 `why` 표는 이 배치에서 **직접 실측**한 값이다 —
+  `wsl.exe -e id -un` = `root` · `-e printenv HOME` = `/root` ·
+  `-u root -e command -v claude` = `/usr/local/bin/claude` ·
+  `-u claude-corp -e command -v claude` = `/home/claude-corp/.local/bin/claude` ·
+  `reg.exe query HKCU\…\dqa-connect\shell\open\command` = `DQAConnect.exe "%1"` ·
+  `wsl -l -q` = `Ubuntu` 단일. 두 계정 `~/.dqa-connect/` 실재도 파일시스템으로 확인.
+  - **추정으로 표기한 것**: 「claude-corp 바이너리를 `-u` 없이 실행하면 root 자격증명을 읽는다」는
+    HOME·소유자 실측에서의 **추론**이며, 항목 acceptance 2 가 라이브 1-probe 를 요구하도록 적었다.
+  - **미실측으로 표기한 것**: 배포판 2개 이상 머신의 거동(이 배치는 단일 배포판) ·
+    `-u <user>` 로 띄운 `claude auth status` 의 실제 자격증명 귀속.
+- **적재하며 함께 잠근 결함 후보 1건 (차단성)**: `bridge.py:269 _pick()` 이 `st.label` 로 매칭하고
+  `label` 이 `"claude (WSL)"` 라, 계정 축을 더하면 **동일 라벨 2개**가 생겨 사용자 선택이
+  조용히 무시된다. 이것을 guard 1(차단성)로 명시해, 구현 cycle 이 식별자 확장 없이 착수하지
+  못하게 했다. §16.7 G12(모수와 노출면 불일치)와 같은 계열이다.
+- **범위 밖으로 남긴 것**: `docs/SECURITY.md` §50·§51(feature-0046 공격 표면) 미기재 —
+  09-04 doc_sync 가 fail-closed 보류한 선재 항목이라 본 cycle 이 새로 만들지 않았고,
+  ITEM-09 guard 6 에 착수 cycle 의 몫으로 명시했다.
+- **병렬 세션 고지**: `ai/claude/feature-0046-close-to-tray`(REGISTRY 활성)가 `client/bridge.py` 를
+  편집 중이다 — 본 cycle 은 ROADMAP 1파일만 건드려 겹치지 않으나, ITEM-09 구현은 같은 파일에
+  닿으므로 guard 7 에 §13.2.5-A 순차 머지 규약을 명시했다.
+- Human Approval Needed: **아니오** (로드맵 적재, 코드·정책 무변경). 단 **ITEM-09 구현 착수는
+  Major 라 별도 승인 대상**이다.
