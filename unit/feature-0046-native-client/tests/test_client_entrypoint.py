@@ -53,16 +53,24 @@ def _entry_from_build_script() -> Path:
     raise AssertionError("build_client.py 에 _ENTRY 상수가 없다")
 
 
-def _run_as_toplevel(script: Path, args: list[str] | None = None):
+def _run_as_toplevel(script: Path, args: list[str] | None = None,
+                     home: Path | None = None):
     """PyInstaller 와 **같은 조건**으로 돌린다: 최상위 스크립트, 부모 패키지 없음.
 
     `cwd` 는 `src` — 빌드가 `--paths src` 로 주는 것과 같은 임포트 경로를 준다.
     `BRIDGE_*` 는 지운다. 값이 있으면 GUI 가 떠서 테스트가 멈춘다.
+
+    ⚠ **홈을 격리한다** (2026-09-04). 인자 없는 실행은 이제 `~/.dqa-connect` 에 적힌 서버를
+    읽어 앱 창을 연다. 실제 홈을 그대로 쓰면 이 테스트의 결과가 **그 머신에 무엇이 적혀
+    있는가**에 달리고, 개발자 PC 에서는 브라우저까지 뜬다.
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("BRIDGE_")}
     env["PYTHONPATH"] = str(_SRC)
     # tkinter 가 디스플레이를 못 잡아도 `tell()` 이 삼키고 진행하도록 둔다(코드 계약).
     env.pop("DISPLAY", None)
+    if home is not None:
+        env["HOME"] = str(home)
+        env["USERPROFILE"] = str(home)   # Windows 에서 `Path.home()` 이 보는 값
     return subprocess.run([sys.executable, str(script), *(args or [])],
                           cwd=str(_SRC), env=env, capture_output=True,
                           text=True, timeout=120)
@@ -70,9 +78,9 @@ def _run_as_toplevel(script: Path, args: list[str] | None = None):
 
 # ── 1. 결함 재현: 실제로 실행되는가 ────────────────────────────────────────────────
 
-def test_entry_script_runs_without_import_error():
+def test_entry_script_runs_without_import_error(tmp_path):
     """**이 단정이 종전 exe 를 잡는다.** 임포트 단계에서 죽으면 안 된다."""
-    p = _run_as_toplevel(_entry_from_build_script())
+    p = _run_as_toplevel(_entry_from_build_script(), home=tmp_path)
     combined = p.stdout + p.stderr
     assert "ImportError" not in combined, f"진입점이 임포트에서 죽었다:\n{combined[-800:]}"
     assert "attempted relative import" not in combined, \
@@ -80,16 +88,34 @@ def test_entry_script_runs_without_import_error():
     assert "Traceback" not in combined, f"미처리 예외:\n{combined[-800:]}"
 
 
-def test_entry_script_reaches_main_and_asks_for_connect_info():
+def test_entry_script_reaches_main_and_asks_for_connect_info(tmp_path):
     """임포트만 되는 것이 아니라 **`main()` 까지 도달**해 안내를 낸다.
 
-    연결 정보가 없으면 종료 코드 2 와 안내 문구가 규약이다(`gui.main`). 종료 코드만 보면
-    「임포트 실패로 죽은 0 아님」과 구분되지 않으므로 **문구까지** 본다.
+    아는 서버가 하나도 없으면 종료 코드 2 와 안내 문구가 규약이다(`gui.main`). 종료 코드만
+    보면 「임포트 실패로 죽은 0 아님」과 구분되지 않으므로 **문구까지** 본다.
     """
-    p = _run_as_toplevel(_entry_from_build_script())
+    p = _run_as_toplevel(_entry_from_build_script(), home=tmp_path)
     assert p.returncode == 2, f"기대 2, 실제 {p.returncode}\n{(p.stdout + p.stderr)[-800:]}"
-    assert "연결 정보가 없습니다" in p.stdout, \
+    assert "처음 한 번만" in p.stdout, \
         f"안내 문구에 도달하지 못했다:\n{p.stdout[-400:]}"
+
+
+def test_entry_script_without_arguments_uses_the_remembered_server(tmp_path):
+    """**인자 없이 켜도** 아는 서버가 있으면 그 주소로 나아간다 (사용자 제보 2026-09-04).
+
+    이 머신에는 크로미움 계열 브라우저가 없을 수 있으므로 「앱 창이 떴다」로 판정하지 않는다.
+    판정하는 것은 **어느 갈래로 갔는가**다: 「모른다」 안내가 아니라 앱 창 갈래의 안내여야
+    한다. 그 갈림이 이 변경의 전부다.
+
+    ⚠ 문구가 아니라 종료 코드로만 보면 안 된다 — 두 갈래가 **같은 2** 로 끝난다.
+    """
+    home = tmp_path / ".dqa-connect"
+    home.mkdir(parents=True)
+    (home / "server.json").write_text('{"base": "https://svc.example"}', encoding="utf-8")
+    p = _run_as_toplevel(_entry_from_build_script(), home=tmp_path)
+    out = p.stdout + p.stderr
+    assert "처음 한 번만" not in out, f"아는 서버가 있는데 「모른다」로 갔다:\n{out[-400:]}"
+    assert "Traceback" not in out, out[-800:]
 
 
 def test_relative_import_entry_still_fails__the_defect_is_real():
@@ -104,14 +130,15 @@ def test_relative_import_entry_still_fails__the_defect_is_real():
         "대조군이 예상한 방식으로 실패하지 않았다 — 이 테스트의 전제를 다시 봐야 한다"
 
 
-def test_module_invocation_still_works():
+def test_module_invocation_still_works(tmp_path):
     """`python -m client` 경로는 **깨지지 않았다** — 상대 임포트가 옳은 유일한 경로다."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("BRIDGE_")}
     env["PYTHONPATH"] = str(_SRC)
+    env["HOME"] = env["USERPROFILE"] = str(tmp_path)
     p = subprocess.run([sys.executable, "-m", "client"], cwd=str(_SRC), env=env,
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 2, f"{p.returncode}: {(p.stdout + p.stderr)[-400:]}"
-    assert "연결 정보가 없습니다" in p.stdout
+    assert "처음 한 번만" in p.stdout
 
 
 # ── 2. 배선: 빌드가 그 진입점을 실제로 쓰는가 ──────────────────────────────────────

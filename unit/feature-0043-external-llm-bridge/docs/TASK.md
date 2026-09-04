@@ -3123,3 +3123,11 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 클라이언트 `--cmd` 폐기 · 뮤테이션 10/10 KILL
 - [ ] 배포 후 웹 「답할 AI 있음」이 ✅ 로 바뀌는지 실측
 - [x] origin/main 병합 (양측 보존 §16.4 검증)
+
+
+## TASK-20260904T200000-b — 개명 SSOT 게이트를 git 없이 (선행 결함)
+
+- [x] `git grep` → `git ls-files` + 걷기 폴백 (skip 아님)
+- [x] 빌드 산출물·dotfile 제외 — 머신마다 다른 답이 나오지 않게
+- [x] 두 수단의 **판정 일치** 대조 테스트
+- [x] 컨테이너 실측: 2 failed → 22 passed · 1 skipped

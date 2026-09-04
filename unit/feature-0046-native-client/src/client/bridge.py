@@ -41,6 +41,7 @@ import socketserver
 import threading
 import time
 import urllib.parse
+from dataclasses import replace
 from typing import Callable
 
 from . import core
@@ -205,21 +206,63 @@ class Bridge:
         self._say(msg)
         return {"ok": ok, "detail": msg}
 
+    def _plan_for(self, body: dict) -> "tuple[core.ConnectPlan | None, str]":
+        """이번 연결에 쓸 값. `(plan, 문제)` — `plan` 이 `None` 이면 `문제` 를 읽는다.
+
+        ## 왜 패널이 값을 주는가 (2026-09-04)
+
+        종전에는 **딥링크로 받은 값만** 썼다. 그래서 인자 없이 켠 앱 창(시작 메뉴·바탕화면)은
+        토큰이 없어 연결을 걸 수 없었다 — 프로그램이 웹의 부속물로 남던 이유다.
+
+        토큰을 발급하는 주체는 원래부터 **로그인 세션**이고, 앱 창은 그 세션을 갖고 있다.
+        그러니 값을 주는 쪽은 패널이 자연스럽다. 딥링크가 실어 온 값은 이제 **폴백**이다
+        (그 값은 창을 여는 사이 만료됐을 수도 있다).
+
+        ⚠ 봉투는 딥링크와 **같은 문자열**을 그대로 쓴다(`launch.protocol`). 웹이 이미 만들어
+        두는 값이고, 여기서 필드를 새로 정하면 같은 뜻의 봉투가 둘이 되어 한쪽만 고쳐진다.
+
+        ⚠ **`base` 는 우리가 아는 그 서버여야 한다.** 패널이 다른 주소를 실어 보내면 거절한다 —
+        그 값으로 CA·러너를 내려받게 되므로, 서버가 자기 자신 아닌 곳을 가리키는 순간
+        고정(TOFU)이 무력해진다.
+        """
+        sent = core.parse_scheme_url(str(body.get("launch") or ""))
+        if sent:
+            if str(sent.get("base", self.plan.base)).rstrip("/") != self.plan.base:
+                return None, "base"
+            if not sent.get("token"):
+                return None, "token"
+            # ⚠ 봉투가 지문을 **생략했다고 기존 값을 지우지 않는다** (codex 적대 리뷰
+            #   2026-09-04). `install_ca`·`install_runner` 는 기대값이 비면 대조를 **건너뛴다** —
+            #   빈 값으로 덮으면 무결성 검사가 조용히 꺼진다. 서버가 값을 못 낸 회차에
+            #   대조가 사라지는 것이 정확히 그 형태다.
+            return replace(self.plan, token=sent["token"],
+                           ca_sha256=sent.get("ca_sha256") or self.plan.ca_sha256,
+                           agent_sha256=sent.get("agent_sha256")
+                           or self.plan.agent_sha256), ""
+        return (self.plan, "") if self.plan.token else (None, "token")
+
     def _do_connect(self, body: dict) -> dict:
+        plan, why = self._plan_for(body)
+        if plan is None:
+            detail = ("연결 정보를 받지 못했습니다. 이 창에서 로그인한 뒤 다시 눌러 주세요."
+                      if why == "token" else
+                      "웹 화면이 다른 서버를 가리켰습니다. 연결하지 않았습니다.")
+            self._say(detail)
+            return {"ok": False, "error": "no_" + why, "detail": detail}
         st = self._pick(body.get("id"))
         self._say("사내 CA 를 받는 중…")
-        ca = core.install_ca(self.plan)
+        ca = core.install_ca(plan)
         self._say("러너를 받는 중…")
-        runner = core.install_runner(self.plan, ca)
-        rc, out = core.check_connection(self.plan, runner, ca, st)
+        runner = core.install_runner(plan, ca)
+        rc, out = core.check_connection(plan, runner, ca, st)
         if rc == 4:
             self._say("서버 연결은 정상인데 쓸 수 있는 AI 를 찾지 못했습니다.")
             return {"ok": False, "error": "no_ai"}
         if rc != 0:
             self._say(out[:200])
             return {"ok": False, "error": "check_failed", "detail": out[:400]}
-        core.pin_server(self.plan.home, self.plan.base)
-        self._runner_proc = core.spawn_runner(self.plan, runner, ca, st)
+        core.pin_server(plan.home, plan.base)
+        self._runner_proc = core.spawn_runner(plan, runner, ca, st)
         self._say("연결됐습니다.")
         return {"ok": True}
 

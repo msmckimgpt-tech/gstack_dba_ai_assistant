@@ -118,6 +118,104 @@ def test_mcp_server_self_names_follow_the_canonical_key(canon):
 
 #: 옛 이름이 남아 있어도 되는 곳 — 정본의 `LEGACY_*` · 이력 기록 · 이 테스트 자신.
 #: **경로가 아니라 «역할» 로 면제한다**: 값을 정의하는 곳과 지나간 일을 적은 곳뿐이다.
+# ── 저장소 조회 — **git 없이도 돈다** (2026-09-04) ────────────────────────────────
+#
+# 초판은 `git grep` 을 썼다. 실측: **테스트 컨테이너에 git 이 없어**(`FileNotFoundError:
+# 'git'`) 이 두 게이트가 main 에서도 붉었다. 게다가 이 저장소의 표준 흐름인 worktree 에서는
+# `.git` 이 바깥을 가리키는 파일이라, git 을 설치해도 컨테이너 안에서는 조회가 안 된다.
+#
+# ⚠ `pytest.skip` 으로 도망가지 않는다. 그러면 이 게이트는 개발자 PC 에서만 돌고 CI 에서는
+#   **한 번도 실행되지 않는다** — 이 저장소가 「override 하면 skip 하는 계약 테스트」로 이미
+#   겪은 형태다. 조회 수단이 없으면 **다른 수단으로 같은 것을 본다.**
+
+#: 문서에 남은 옛 이름은 **이력**이다 — 이력을 고치면 「있었던 일」이 거짓이 된다.
+_SKIP_DIRS = {".git", ".worktrees", "__pycache__", "node_modules", ".venv", "venv",
+              ".pytest_cache", ".ruff_cache", "dist", "build", "docs", "wiki",
+              ".template-backups", ".mypy_cache", "htmlcov", "site-packages"}
+
+#: **빌드 산출물.** 원본을 이미 조회하므로 여기는 보지 않는다. 보면 로컬에 남은 낡은
+#: 산출물 때문에 게이트가 **머신마다 다른 답**을 낸다(실측: 이 worktree 의 잔재 4개가
+#: 옛 이름을 갖고 있어 컨테이너에서만 붉어졌다).
+_GENERATED = (
+    "unit/feature-0003-agent-web-ui/src/static/agent/",   # 배포용 스테이징
+    "unit/feature-0043-external-llm-bridge/src/bridge_agent.py",  # 조립된 러너
+)
+
+#: 텍스트로 읽을 확장자. 이진까지 읽으면 느려지고 우연한 바이트열이 걸린다.
+_TEXT_SUFFIXES = {".py", ".sh", ".ps1", ".js", ".mjs", ".css", ".html", ".md", ".txt",
+                  ".json", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".iss", ".plist",
+                  ".xml", ".sql", ".conf", ".bat", ".cmd", ""}
+
+
+def _in_scope(rel: str) -> bool:
+    if rel.startswith(("docs/", "wiki/", ".template-backups/")):
+        return False
+    if "/docs/" in rel or "/wiki/" in rel:
+        return False
+    return not rel.startswith(_GENERATED)
+
+
+def _tracked_files() -> "list[str] | None":
+    """git 이 보는 **작업 트리의 소스 파일**. git 을 못 쓰면 `None`(컨테이너·worktree 안).
+
+    ⚠ 추적된 것만이 아니라 **아직 add 하지 않은 새 파일도** 포함한다(`-o
+    --exclude-standard`). 그러지 않으면 방금 만든 파일이 「걷기에만 보이는 것」이 되어
+    아래 대조가 커밋 전까지 붉다 — 개발 중에 울리는 거짓 경보는 사람이 끄는 법을 배운다.
+    ⚠ `.gitignore` 된 것은 빠진다 — 빌드 산출물이 그쪽이고, 그것이 우리가 원하는 경계다.
+    """
+    import subprocess
+    try:
+        r = subprocess.run(["git", "ls-files", "-z", "-c", "-o", "--exclude-standard"],
+                           cwd=_REPO, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return None if r.returncode != 0 else [x for x in r.stdout.split("\0") if x]
+
+
+def _walk_files() -> "list[str]":
+    """git 없이 저장소를 걷는다.
+
+    ⚠ **점으로 시작하는 이름은 건너뛴다.** `.env` 사본처럼 추적되지 않는 파일이 걸리면
+    게이트가 그 머신에서만 붉어진다. 대가로 추적되는 dotfile(`.github/...`)을 놓치는데,
+    그 어긋남은 아래 `test_the_two_scans_agree` 가 잡는다 — 놓친 채로 지나가지 않는다.
+    """
+    out: list[str] = []
+    for path in _REPO.rglob("*"):
+        rel_parts = path.relative_to(_REPO).parts
+        if any(part in _SKIP_DIRS or part.startswith(".") for part in rel_parts):
+            continue
+        if not path.is_file() or path.suffix not in _TEXT_SUFFIXES:
+            continue
+        out.append("/".join(rel_parts))
+    return out
+
+
+def _repo_files() -> "list[str]":
+    files = _tracked_files()
+    if files is None:
+        files = _walk_files()
+    return [f for f in files if _in_scope(f)]
+
+
+def _grep_files(files, pattern) -> "list[tuple[str, str]]":
+    """주어진 파일들에서 pattern 이 걸리는 `(경로, 줄)`. 조회 수단과 무관하게 같은 답."""
+    rx = pattern if hasattr(pattern, "search") else re.compile(re.escape(str(pattern)))
+    hits: list[tuple[str, str]] = []
+    for rel in files:
+        try:
+            text = (_REPO / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.splitlines():
+            if rx.search(line):
+                hits.append((rel, line))
+    return hits
+
+
+def _grep_repo(pattern) -> "list[tuple[str, str]]":
+    return _grep_files(_repo_files(), pattern)
+
+
 _LEGACY_ALLOWED = (
     "shared/dqa_identity.py",                                   # LEGACY_* 정의
     "unit/feature-0043-external-llm-bridge/src/bridge_setup.sh",   # 명칭 블록 + 실측 기록
@@ -138,14 +236,8 @@ def test_no_source_file_outside_the_allowlist_still_uses_the_old_name(canon):
     문서(`docs/`·`wiki/`·`unit/*/docs/`)는 제외한다 — 거기 남은 옛 이름은 **이력**이고, 이력을
     고치면 「있었던 일」이 거짓이 된다. 검사 대상은 **실행되는 것**뿐이다.
     """
-    import subprocess
-
     legacy = canon["LEGACY_SCHEME"]
-    r = subprocess.run(
-        ["git", "grep", "-l", "--", legacy,
-         ":!*/docs/*", ":!docs/*", ":!wiki/*", ":!.template-backups/*"],
-        cwd=_REPO, capture_output=True, text=True)
-    hits = sorted(p for p in r.stdout.split("\n") if p.strip())
+    hits = sorted({path for path, _line in _grep_repo(legacy)})
     unexpected = [p for p in hits if p not in _LEGACY_ALLOWED]
     assert not unexpected, (
         "옛 이름이 허용 목록 밖 소스에 남아 있다 — 개명이 그 경로에 도달하지 않았다:\n  "
@@ -160,23 +252,14 @@ def test_every_runner_home_reference_uses_the_canonical_scheme(canon):
     설정·CA 를 못 찾고 매 실행이 「처음 실행」이 된다 — 특히 클라이언트는 러너의 껍데기 교체라
     (ROADMAP §0.2) 같은 홈을 봐야 한다.
     """
-    import re as _re
-    import subprocess
-
-    r = subprocess.run(
-        ["git", "grep", "-nE", r"\.(mysql-ai-bridge|dqa-connect)\b", "--",
-         ":!*/docs/*", ":!docs/*", ":!wiki/*", ":!.template-backups/*"],
-        cwd=_REPO, capture_output=True, text=True)
+    rx = re.compile(r"\.(mysql-ai-bridge|dqa-connect)\b")
     bad = []
-    for line in r.stdout.split("\n"):
-        if not line.strip():
-            continue
-        path = line.split(":", 1)[0]
+    for path, line in _grep_repo(rx):
         if path in _LEGACY_ALLOWED:
             continue
-        for m in _re.finditer(r"\.(mysql-ai-bridge|dqa-connect)\b", line):
+        for m in rx.finditer(line):
             if m.group(1) != canon["SCHEME"]:
-                bad.append(line.strip()[:160])
+                bad.append(f"{path}: {line.strip()[:140]}")
     assert not bad, "정본 스킴이 아닌 설치 홈 참조:\n  " + "\n  ".join(bad)
 
 
@@ -500,3 +583,24 @@ def test_powershell_never_interpolates_a_scheme_variable_before_a_colon():
                 bad.append(f"{path.name}:{lineno} ${m.group(1)}: → ${{{m.group(1)}}} 로 감쌀 것 "
                            f"| {line.strip()[:100]}")
     assert not bad, "PowerShell 변수 뒤 ':' — 파싱 실패한다:\n  " + "\n  ".join(bad)
+
+
+def test_the_two_scans_agree_where_both_are_available(canon):
+    """⚠ **폴백이 본선과 다른 판정을 내면 안 된다.**
+
+    조회 수단이 둘이면 한쪽만 고쳐지는 드리프트가 난다 — 개발자 PC 는 git 목록으로 통과하고
+    컨테이너는 걷기로 다른 답을 낸다(실측: 정확히 그 일이 있었다). 파일 목록이 조금 달라도
+    좋다. 같아야 하는 것은 **이 게이트들이 내리는 판정**이다.
+    """
+    tracked = _tracked_files()
+    if tracked is None:
+        pytest.skip("git 없음 — 이 대조는 두 수단이 다 되는 머신에서만 뜻이 있다")
+    by_git = [f for f in tracked if _in_scope(f)]
+    by_walk = [f for f in _walk_files() if _in_scope(f)]
+    rx = re.compile(r"\.(mysql-ai-bridge|dqa-connect)\b")
+    for what, pattern in (("옛 이름", canon["LEGACY_SCHEME"]), ("설치 홈 참조", rx)):
+        a = {path for path, _ in _grep_files(by_git, pattern)}
+        b = {path for path, _ in _grep_files(by_walk, pattern)}
+        assert a == b, (
+            f"{what} 조회에서 두 수단의 판정이 갈린다 — 컨테이너에서만 붉어지거나 "
+            f"조용히 통과하는 게이트가 된다.\n  git 만: {sorted(a - b)}\n  걷기만: {sorted(b - a)}")

@@ -43,6 +43,7 @@ import re
 import ssl
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -502,6 +503,13 @@ class IntegrityError(RuntimeError):
 #: 처음 연결한 서버를 적어 두는 파일. 홈 안이라 사용자별로 분리된다.
 _SERVER_PIN = "server.json"
 
+#: 설치 폴더에 **빌드가 적어 두는** 배포 기본값(`{"base": "https://…"}`). 저장소에는 없다 —
+#: 배포마다 다른 값이고, 소스에 특정 주소를 박으면 다른 배포가 그것을 물려받는다.
+_SERVICE_FILE = "service.json"
+
+#: 이미 떠 있는지 판정하는 잠금 파일. 내용이 아니라 **OS 잠금**이 신호다(아래 참조).
+_LOCK_FILE = "app.lock"
+
 
 def pinned_server(home: Path) -> str | None:
     """이 클라이언트가 **전에 연결한** 서버 주소. 없으면 `None`."""
@@ -521,8 +529,7 @@ def pin_server(home: Path, base: str) -> None:
     base = str(base or "").strip()
     if not base:
         return
-    home.mkdir(parents=True, exist_ok=True)
-    (home / _SERVER_PIN).write_text(json.dumps({"base": base}), encoding="utf-8")
+    _write_server_doc(home, base=base)
 
 
 def server_changed(home: Path, base: str) -> str | None:
@@ -543,6 +550,254 @@ def server_changed(home: Path, base: str) -> str | None:
     if not known:
         return None
     return None if known == str(base or "").strip() else known
+
+
+# ── 시작 주소 — 「인자 없이 켰을 때 어디를 여는가」 ────────────────────────────────
+#
+# ## 왜 이것이 필요한가 (사용자 제보 2026-09-04)
+#
+# 종전 진입점은 **딥링크로 켜질 때만** 성립했다. 시작 메뉴·바탕화면·설치 직후의 [지금 실행]
+# 은 전부 인자 없이 켜므로 「연결 정보가 없습니다」만 보여 주고 끝났다. 사용자가 겪은 그대로다:
+#
+#   > 설치된 DQA를 삭제 후, 다시 실행해봤지만 스크린샷과 같은 화면과 함께 반응이 없는것으로
+#   > 확인되었습니다. … 여전히 해당 서비스를 사용하기 위해서는 해당 주소에 들어가야 합니다.
+#
+# 즉 이 프로그램은 **연결 도우미**였지 앱이 아니었다. 앱이라면 아이콘을 눌러 켜지고 그것이
+# 곧 제품이어야 한다. 그러려면 「어느 서버를 여는가」를 인자 없이도 알아야 한다.
+#
+# ## 세 출처를 이 순서로 본다 — 강한 근거가 이긴다
+#
+# 1. **고정된 서버**(`pin`) — 실제로 연결에 성공한 곳. 가장 강한 근거다.
+# 2. **동봉된 배포 기본값**(`service.json`) — 설치할 때 우리가 넣은 값.
+# 3. **마지막으로 받아들인 딥링크의 주소**(`last`) — 사용자가 링크를 눌렀다는 것뿐이다.
+#
+# ⚠ 2가 3을 **이긴다** (codex 적대 리뷰 2026-09-04). 종전 순서는 그 반대였고, 그러면
+#   **악성 링크 한 번**이 그 뒤 모든 무인 실행의 목적지를 조용히 바꾼다 — 사용자는 아이콘을
+#   눌렀을 뿐인데 남의 사이트가 「DQA」로 뜬다. 링크는 클릭 한 번이고 동봉값은 설치 시점에
+#   우리가 넣은 것이며 `pin` 은 실제 연결에 성공한 곳이다. 신뢰의 세기가 그 순서다.
+#   서버가 실제로 옮겨 갔다면 **연결에 성공한 순간** `pin` 이 그것을 반영한다.
+#
+# ⚠ 2번을 1번과 **같은 키에 쓰지 않는다.** `pin` 은 「연결에 성공한 뒤에만」이라는 규율을 갖고
+#   있고(그것이 TOFU 경고의 근거다), 실패한 주소를 거기 적으면 다음번에 그 주소가 「전에 쓰던
+#   곳」으로 신뢰받는다. 창을 여는 근거와 러너를 내려받는 근거는 세기가 다르다.
+
+
+def _server_doc(home: Path) -> dict:
+    try:
+        data = json.loads((home / _SERVER_PIN).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — 없거나 깨졌으면 「기록 없음」이다
+        return {}
+
+
+def _write_server_doc(home: Path, **fields) -> None:
+    """`server.json` 의 **일부 키만** 바꾼다.
+
+    ⚠ 통째로 덮으면 한쪽이 다른 쪽을 지운다 — `pin_server` 가 `last` 를 날리면 연결에 실패한
+    사용자가 다음 실행에서 열 곳을 잃는다.
+    """
+    doc = _server_doc(home)
+    doc.update({k: v for k, v in fields.items() if v})
+    home.mkdir(parents=True, exist_ok=True)
+    (home / _SERVER_PIN).write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+
+def usable_base(value: str) -> str:
+    """웹 주소로 **열어도 되는 값**만 통과시킨다. 아니면 빈 문자열.
+
+    ⚠ 공개 이름이다 — 진입점(`gui.main`)도 **딥링크의 주소**에 같은 검사를 건다. 한쪽만
+    검사하면 공격자는 검사하지 않는 쪽으로 넣는다(codex 적대 리뷰 2026-09-04).
+
+    ⚠ 이 값은 브라우저 창의 목적지가 된다. 파일에서 읽은 문자열을 그대로 넘기면
+    `file://`·`javascript:` 같은 스킴이 창으로 들어간다 — 디스크를 만질 수 있는 상대가
+    한 줄로 로컬 파일 열람이나 스크립트 실행을 얻는다.
+
+    ⚠ 공백·따옴표가 든 값도 버린다. 이 문자열은 `--app=<여기>` 로 **브라우저의 명령줄**에
+    들어가는데, Windows 는 명령줄을 문자열 하나로 넘기고 각 프로그램이 스스로 쪼갠다.
+    정상 URL 에는 둘 다 들어갈 일이 없으므로 여기서 끊는 편이 싸다.
+    """
+    text = str(value or "").strip().rstrip("/")
+    if any(ch.isspace() or ch in "\"'" for ch in text):
+        return ""
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except Exception:  # noqa: BLE001
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return ""
+    return text
+
+
+def remembered_base(home: Path) -> str | None:
+    """마지막으로 **받아들인** 딥링크의 서버 주소. 연결 성공을 뜻하지는 않는다."""
+    return _server_doc(home).get("last") or None
+
+
+def remember_base(home: Path, base: str) -> None:
+    """딥링크를 받아들인 순간 적어 둔다 — 다음 실행이 열 곳이다.
+
+    `pin_server` 와 **별개의 키**를 쓴다(위 ⚠ 참조).
+    """
+    base = str(base or "").strip()
+    if not base:
+        return
+    _write_server_doc(home, last=base)
+
+
+def bundled_service_base() -> str | None:
+    """설치본에 동봉된 배포 기본값. 없으면 `None`.
+
+    빌드가 `--service-base` 로 적는다. 저장소 소스에는 주소가 없다 — 배포마다 다르고,
+    박아 두면 다른 배포의 설치본이 남의 주소를 열게 된다.
+    """
+    try:
+        data = json.loads((app_dir() / _SERVICE_FILE).read_text(encoding="utf-8"))
+        return str(data.get("base") or "").strip() or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def startup_base(home: Path) -> str:
+    """인자 없이 켰을 때 **열 주소**. 아무 근거도 없으면 빈 문자열."""
+    for value in (pinned_server(home), bundled_service_base(), remembered_base(home)):
+        good = usable_base(value or "")
+        if good:
+            return good
+    return ""
+
+
+# ── 이미 떠 있는가 ────────────────────────────────────────────────────────────────
+#
+# 인자 없는 실행이 **실제로 무언가를 하게 되면서** 생긴 문제다. 종전에는 두 번째 실행이
+# 대화상자 하나 띄우고 끝났지만, 이제는 브리지·앱 창·트레이·러너가 한 벌 더 뜬다. 러너가
+# 둘이면 같은 계정에 두 워커가 붙고 트레이 아이콘도 둘이 된다 — 사용자는 어느 쪽을 끄는지
+# 알 수 없다.
+#
+# ⚠ PID 파일로 판정하지 않는다. 죽은 프로세스의 PID 가 재사용되면 「떠 있다」로 오판하고,
+#   비정상 종료 뒤에는 파일이 남아 **영원히 실행되지 않는** 상태가 된다(이 저장소가 stale
+#   sentinel 로 이미 겪은 형태). OS 잠금은 프로세스가 죽으면 커널이 푼다.
+
+
+def acquire_single_instance(home: Path):
+    """잠금을 잡으면 **열린 파일 객체**, 이미 떠 있으면 `None`.
+
+    ⚠ 돌려받은 객체를 살려 둬야 한다. 가비지 컬렉션되어 닫히면 그 순간 잠금이 풀린다 —
+    호출부가 이름 없는 값으로 받으면 두 번째 실행이 그대로 통과한다.
+    """
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        fh = open(home / _LOCK_FILE, "a+b")  # noqa: SIM115 — 수명이 프로세스와 같다
+    except OSError:
+        # 홈을 만들지 못하는 환경에서 **실행 자체를 막지는 않는다**. 단일 인스턴스는 편의이지
+        # 안전 장치가 아니다 — 여기서 막으면 잠금 파일 하나 때문에 앱이 죽는다.
+        return _NO_LOCK
+    try:
+        fh.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
+
+
+#: 「창을 다시 띄워 달라」는 요청 파일. 두 번째 실행이 적고 먼저 뜬 쪽이 읽어 지운다.
+_SHOW_REQ = "show.req"
+
+#: 요청의 유효 시간(초). 지난 것은 무시한다 — 아무도 읽지 않은 요청이 남아 있다가
+#: 다음 실행에서 **엉뚱하게 창을 하나 더** 여는 것을 막는다.
+_SHOW_TTL = 30.0
+
+
+def request_show(home: Path) -> None:
+    """이미 떠 있는 쪽에 **창을 다시 열어 달라**고 남긴다.
+
+    ## 왜 대화상자가 아닌가
+
+    사용자가 앱 창을 닫고(브라우저 창이라 닫는 것이 자연스럽다) 아이콘을 다시 누르는 것은
+    흔한 경로다. 거기서 「이미 실행 중입니다 — 트레이에서 [창 열기]」라고 답하면, 사용자는
+    **아이콘을 눌렀는데 앱이 안 뜨는** 경험을 한 번 더 한다. 이 프로그램이 고치려던 그것이다.
+    """
+    import time
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        (home / _SHOW_REQ).write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def take_show_request(home: Path) -> bool:
+    """요청이 있으면 **소비하고** True. 없거나 낡았으면 False.
+
+    ⚠ 읽기만 하고 지우지 않으면 창이 0.5초마다 계속 열린다.
+    """
+    import time
+    path = home / _SHOW_REQ
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    try:
+        return (time.time() - float(raw.strip())) <= _SHOW_TTL
+    except ValueError:
+        return False
+
+
+class _NoLock:
+    """잠글 수 없는 환경에서 「막지 않는다」를 뜻하는 표식. 참(truthy)이다."""
+
+    def close(self) -> None:
+        return None
+
+
+_NO_LOCK = _NoLock()
+
+
+# ── 딥링크 봉투 ───────────────────────────────────────────────────────────────────
+
+
+def parse_scheme_url(url: str) -> dict:
+    """`dqa-connect://start?token=…&base=…` 를 읽는다.
+
+    ## 왜 필요한가 (실측 2026-09-03)
+
+    웹의 **[내 AI 실행]** 버튼은 이 스킴으로 프로그램을 띄운다. 그런데 종전 진입점은
+    `--base`/`--token` 만 읽어서, 스킴으로 온 **URL 을 통째로 무시**했다. 그래서 화면에는
+    「연결 정보가 없습니다」만 떴다 — 사용자가 바로 앞에서 [연결 준비] 를 눌렀는데도.
+
+    ## 왜 GUI 가 아니라 여기 있는가 (2026-09-04)
+
+    이제 이 봉투는 **두 입구**로 들어온다: OS 딥링크(진입점)와 앱 창의 패널(브리지). 같은
+    문자열을 두 곳에서 각자 뜯으면 「프로세스 경계의 모양이 갈리는」 그 결함이 된다 — 한쪽만
+    고쳐지고 다른 쪽은 조용히 다른 값을 읽는다. 파서는 하나이고 GUI 는 이것을 가져다 쓴다.
+
+    ⚠ 인자를 **엄격히 고른다.** 스킴 URL 은 브라우저를 통해 들어오므로 남이 만든 링크를
+    사용자가 클릭할 수 있다. 여기서 받아들이는 것은 연결에 필요한 네 값뿐이고, 그마저도
+    이후 단계(CA 지문·러너 체크섬 대조)가 다시 검증한다.
+    """
+    if not url or "://" not in url:
+        return {}
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() != "dqa-connect":
+        return {}
+    q = urllib.parse.parse_qs(parsed.query)
+    wanted = ("base", "token", "ca_sha256", "agent_sha256")
+    out: dict = {}
+    for key in wanted:
+        vals = q.get(key) or []
+        if vals and str(vals[0]).strip():
+            out[key] = str(vals[0]).strip()
+    return out
 
 
 def install_ca(plan: ConnectPlan) -> Path:
