@@ -56,28 +56,12 @@ export function bridgeCall(action, body) {
   }).then(function (r) { return r.json(); });
 }
 
-/* 상태 한 줄. **여기서 정의한다** — 같은 이름이 `connect-modal.js` 에도 있지만 그것은
- * 그 모듈의 지역 함수이고 export 되지 않는다. 이 파일은 그것을 import 없이 불렀고,
- * ESM 에서 그것은 자유변수라 **`ReferenceError` 로 던졌다** (실측 2026-09-04: jsdom 에서
- * `initClientPanel()` 이 `_status is not defined` 로 던지고, 그 예외가 호출부
- * `openConnectModal()` 까지 전파돼 연결 창 자체가 안 열린다).
- *
- * ⚠ import 로 풀지 않는다. `connect-modal.js` 가 이 파일을 import 하므로 반대 방향을
- *   더하면 순환이 된다. 이 파일이 **아무것도 import 하지 않는다**는 성질은 파일 상단이
- *   설명하는 분리 이유의 일부다.
- * ⚠ 두 정의가 **같은 요소**를 쓴다는 것이 계약이다 — 어긋나면 한쪽 안내가 화면에서 사라진다.
- *   `test_web_shell.py` 가 두 파일이 같은 id 를 가리키는지 잠근다.
- */
-function _status(msg, kind) {
-  const el = document.getElementById("connectModalStatus");
-  if (!el) return;
-  el.textContent = msg || "";
-  if (kind) el.setAttribute("data-kind", kind);
-  else el.removeAttribute("data-kind");
-}
-
 /* 상주 안내. **브리지가 말해 주는 것만** 옮긴다 — 프런트가 「트레이가 있겠지」라고 추정하면
  * 트레이가 못 뜬 머신에서 거짓말이 된다(§P0-R). 값이 오기 전에는 비워 둔다.
+ *
+ * ⚠ 상태 한 줄(`_status`)과 달리 이것은 **주입받지 않는다.** 저것은 모달이 이미 갖고 있던
+ *   헬퍼라 호출부가 주는 것이 옳지만, 이 안내는 **이 패널에만 있는 요소**이고 다른 호출부가
+ *   달리 그릴 이유가 없다. 주입 인자를 늘리면 호출부가 알아야 할 것만 늘어난다.
  */
 function _paintResidency(resident) {
   const el = document.getElementById("connectClientResidency");
@@ -87,7 +71,11 @@ function _paintResidency(resident) {
     : "이 창을 닫으면 연결도 끝납니다.";
 }
 
-export function initClientPanel() {
+export function initClientPanel(setStatus) {
+  // ⚠ 상태 표시는 **호출부가 준다.** 이 모듈은 모달의 내부 헬퍼를 알지 못한다 —
+  //   분리하면서 `_status` 를 그대로 부른 탓에 `ReferenceError` 로 탐지가 죽었다
+  //   (실측 2026-09-04: 패널은 떴는데 목록이 영원히 비어 있었다).
+  const _status = typeof setStatus === "function" ? setStatus : function () {};
   const panel = document.getElementById("connectClientPanel");
   // ⚠ **성립 여부를 돌려준다.** 호출부가 「했다」를 이 값으로 판정한다 — 요소가 아직 없어
   //   일찍 반환했는데 호출부가 완료로 표시하면 영영 다시 시도하지 않는다(실측 2026-09-04).

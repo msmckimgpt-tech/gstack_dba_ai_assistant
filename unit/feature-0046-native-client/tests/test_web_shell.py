@@ -403,7 +403,7 @@ def test_modal_panel_is_wired_only_once():
     js = _MODAL_JS.read_text(encoding="utf-8")
     fn = js[js.find("export function openConnectModal() {"):][:600]
     assert "!_clientPanelReady" in fn, "이미 배선했는지 확인하지 않는다"
-    assert "_clientPanelReady = initClientPanel()" in fn
+    assert "_clientPanelReady = initClientPanel(" in fn
 
 
 def test_modal_panel_uses_post_and_nonce():
@@ -463,8 +463,10 @@ def test_ready_flag_is_set_from_the_result_not_before():
     """**이 단정이 그 결함을 잡는다.**"""
     js = _MODAL_JS.read_text(encoding="utf-8")
     line = next(l for l in js.splitlines() if "_clientPanelReady =" in l and "let " not in l)
-    assert "_clientPanelReady = initClientPanel()" in line, \
+    assert "_clientPanelReady = initClientPanel(" in line, \
         f"플래그를 호출 결과가 아닌 것으로 세운다: {line.strip()}"
+    # ⚠ 인자 개수는 잠그지 않는다 — 상태 콜백이 늘어난 것처럼 인자는 바뀔 수 있고,
+    #   지키는 성질은 「결과로 세운다」이지 «어떻게 부르는가» 가 아니다.
     assert "_clientPanelReady = true" not in line
 
 
@@ -489,11 +491,21 @@ _CI_GAP_MARKER = "CI-GAP: verify_client_panel_dom.mjs"
 
 
 def _free_identifiers_called(js: str, name: str) -> bool:
-    """`name` 을 부르면서 **정의도 import 도 하지 않는가**."""
-    called = re.search(rf"(?<![\w.]){re.escape(name)}\s*\(", js) is not None
-    defined = re.search(rf"function\s+{re.escape(name)}\s*\(", js) is not None
-    imported = re.search(rf"import\s*\{{[^}}]*\b{re.escape(name)}\b[^}}]*\}}", js) is not None
-    return called and not defined and not imported
+    """`name` 을 부르면서 **어떤 바인딩도 갖지 않는가**.
+
+    ⚠ 「`function` 선언이 있는가」로만 보면 안 된다 — 이름은 `const`/`let`/`var` 로도,
+      **매개변수**로도 묶인다(2026-09-04: `_status` 가 주입 매개변수에서 온 `const` 가 되자
+      이 판정이 거짓 양성을 냈다). 판정해야 하는 것은 「선언 형태」가 아니라 **바인딩 유무**다.
+    """
+    n = re.escape(name)
+    called = re.search(rf"(?<![\w.]){n}\s*\(", js) is not None
+    bound = any(re.search(pat, js) for pat in (
+        rf"function\s+{n}\s*\(",              # function _x(...)
+        rf"\b(?:const|let|var)\s+{n}\b",       # const _x = ...
+        rf"function\s*\w*\s*\([^)]*\b{n}\b[^)]*\)",   # 매개변수
+        rf"\bimport\s*\{{[^}}]*\b{n}\b[^}}]*\}}",       # import { _x }
+    ))
+    return called and not bound
 
 
 def test_bridge_module_has_no_free_identifiers_for_its_helpers():
@@ -510,35 +522,30 @@ def test_bridge_module_has_no_free_identifiers_for_its_helpers():
         )
 
 
-def test_status_writers_in_both_modules_target_the_same_element():
-    """두 모듈의 `_status` 가 **같은 요소**를 쓴다는 것이 계약이다.
+def test_modal_injects_a_status_writer_that_actually_exists():
+    """상태 표시는 **호출부가 주입**한다(main 채택 계약). 그 이름이 실재해야 한다.
 
-    ⚠ 중복 정의를 허용하는 대신 이 단정으로 묶는다. 어긋나면 한쪽 안내가 화면에서
-      조용히 사라지고, 그 증상은 «아무 일도 안 일어남» 이라 원인을 찾기 어렵다.
-      import 로 풀지 않는 이유는 `connect-modal.js` 가 이 파일을 import 하기 때문이다
-      (반대 방향을 더하면 순환이고, 이 파일의 «의존 0» 성질이 깨진다).
+    ⚠ 왜 소스 층에도 두는가 — 이 계약을 구동으로 잡는 `test_client_bridge_runtime.py` 는
+      node 가 없으면 `pytest.skip` 한다. CI 이미지에 node 가 없으므로 **거기서는 아무것도
+      지키지 않는다**. 그리고 이 테스트가 잡는 것은 같은 결함의 한 층 위 형태다 — 주입하는
+      이름 자체가 그 모듈에 없으면 `ReferenceError` 가 호출부로 옮겨 갈 뿐이다.
     """
-    def _target_of_status(js: str, path: str) -> str:
-        """그 파일의 `_status` 가 **실제로 집는 id**. 부분 문자열 검사는 하지 않는다 —
-        `"connectModalStatusX"` 가 `"connectModalStatus"` 를 포함하므로 어긋난 대상을
-        통과시킨다(실측 2026-09-04: 뮤턴트 M34 가 그렇게 살아남았다)."""
-        i = js.find("function _status(")
-        assert i >= 0, f"{path}: `_status` 정의가 없다"
-        body = js[i:i + 400]
-        m = re.search(r'(?:getElementById|\$)\(\s*"([^"]+)"\s*\)', body)
-        assert m, f"{path}: `_status` 가 어떤 요소를 집는지 읽을 수 없다"
-        return m.group(1)
-
-    bridge = _BRIDGE_JS.read_text(encoding="utf-8")
     modal = _MODAL_JS.read_text(encoding="utf-8")
-    a = _target_of_status(bridge, "client-bridge.js")
-    b = _target_of_status(modal, "connect-modal.js")
-    assert a == b == "connectModalStatus", (
-        f"두 모듈의 _status 가 다른 요소를 쓴다 — client-bridge={a!r} connect-modal={b!r}. "
-        "어긋나면 한쪽 안내가 화면에서 조용히 사라진다"
-    )
-    assert 'id="connectModalStatus"' in _MODAL_HTML.read_text(encoding="utf-8"), \
-        "index.html 에 그 요소가 없다 — 두 모듈이 허공에 쓴다"
+    # ⚠ **주석 줄은 세지 않는다** (§16.7 G11-a). 이 파일은 결함 이력을 주석에 길게 적어 두므로
+    #   `initClientPanel(` 이 설명문 안에 여러 번 나온다(실측: 처음에 그 줄을 집었다).
+    def _is_code(l: str) -> bool:
+        s = l.lstrip()
+        return bool(s) and not s.startswith(("//", "*", "/*", "import"))
+
+    line = next((l for l in modal.splitlines()
+                 if "initClientPanel(" in l and _is_code(l)), None)
+    assert line, "모달이 `initClientPanel(...)` 을 코드로 부르지 않는다"
+    m = re.search(r"initClientPanel\(\s*([A-Za-z_$][\w$]*)\s*\)", line)
+    assert m, f"상태 표시를 주입하지 않고 부른다: {line.strip()}"
+    name = m.group(1)
+    assert re.search(rf"function\s+{re.escape(name)}\s*\(", modal) or \
+        re.search(rf"\b(?:const|let|var)\s+{re.escape(name)}\b", modal), \
+        f"주입하는 이름 `{name}` 이 그 모듈에 정의돼 있지 않다 — 예외가 호출부로 옮겨 갈 뿐이다"
 
 
 def test_primary_panel_declares_residency_element():

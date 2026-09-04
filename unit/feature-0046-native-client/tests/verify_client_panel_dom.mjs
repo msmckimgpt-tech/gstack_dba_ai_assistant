@@ -21,6 +21,10 @@
  * 던졌다. 예외는 호출부 `openConnectModal()` 까지 올라가 **연결 창 자체가 안 열린다**.
  * 소스 검사로는 보이지 않는다 — 이름이 «있어» 보이기 때문이다.
  *
+ * 처방은 main 이 채택한 **호출부 주입**이다(`initClientPanel(setStatus)`). 그래서 여기서도
+ * 콜백을 주입해 부르고, **그 콜백으로 실제로 말하는지**까지 본다 — 주입만 받고 쓰지 않으면
+ * 탐지 진행 상황이 화면에서 사라지고 사용자는 멈춘 줄 안다.
+ *
  * 종료 코드: 0 PASS · 1 결함 · 2 실행 불가(jsdom 부재 — 호출부가 gap 경로로 강등)
  */
 /* jsdom 은 이 저장소의 의존이 아니다. 기본은 평범한 해석(`"jsdom"`)이고, 개발 머신처럼
@@ -81,16 +85,19 @@ const run = async (isResident) => {
   resident = isResident;
   calls.length = 0;
   w.document.getElementById("connectClientResidency").textContent = "";
+  const said = [];
   let threw = null, ret;
-  try { ret = mod.initClientPanel(); } catch (e) { threw = e; }
+  try { ret = mod.initClientPanel((m) => said.push(String(m))); } catch (e) { threw = e; }
   await new Promise((z) => setTimeout(z, 50));
-  return { threw, ret, text: w.document.getElementById("connectClientResidency").textContent };
+  return { threw, ret, said,
+           text: w.document.getElementById("connectClientResidency").textContent };
 };
 
 const yes = await run(true);
 if (yes.threw) fails.push(`initClientPanel() 이 던진다: ${yes.threw.constructor.name}: ${yes.threw.message}`);
 if (yes.ret !== true) fails.push(`상주 경로에서 true 를 돌려주지 않는다 (${yes.ret})`);
 if (!calls.includes("status")) fails.push("status 를 묻지 않는다 — 상주 여부를 알 길이 없다");
+if (!yes.said.length) fails.push("주입한 상태 콜백으로 아무 말도 하지 않는다 — 탐지 진행이 화면에서 사라진다");
 if (calls.indexOf("status") > calls.indexOf("discover"))
   fails.push("status 를 discover 뒤에 묻는다 — discover 는 수십 초라 안내가 그만큼 늦는다");
 if (!yes.text.includes("닫아도")) fails.push(`상주인데 문구가 그렇게 말하지 않는다: ${JSON.stringify(yes.text)}`);
@@ -100,6 +107,13 @@ if (no.threw) fails.push(`비상주 경로에서 던진다: ${no.threw.message}`
 if (!no.text.includes("닫으면")) fails.push(`비상주인데 문구가 그렇게 말하지 않는다: ${JSON.stringify(no.text)}`);
 if (no.text.includes("닫아도")) fails.push("비상주인데 «닫아도 유지» 라고 말한다 — 거짓 안내");
 if (yes.text === no.text) fails.push("두 경우의 문구가 같다 — 값을 보지 않는다는 뜻");
+
+/* 콜백을 주지 않아도 죽지 않아야 한다 — main 계약의 기본값(noop)이 실제로 도는지 본다. */
+try {
+  w.document.getElementById("connectClientResidency").textContent = "";
+  if (mod.initClientPanel() !== true) fails.push("콜백 없이 부르면 성립을 보고하지 않는다");
+} catch (e) { fails.push(`콜백 없이 부르면 던진다: ${e.message}`); }
+await new Promise((z) => setTimeout(z, 50));
 
 /* 패널이 실제로 드러났는가 — `hidden` 을 벗기는 것이 이 함수의 첫 계약이다. */
 if (w.document.getElementById("connectClientPanel").hidden)
