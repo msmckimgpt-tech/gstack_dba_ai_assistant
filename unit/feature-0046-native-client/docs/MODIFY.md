@@ -234,3 +234,17 @@ edit_policy: append-only
   「한 목록에서 다른 목록을 생성하거나, 두 목록의 일치를 검사하는 테스트」다.
 - Win32/트레이 층은 리눅스에서 돌지 않으므로 CI 대상이 아니다 — 그 층은
   `tests/windows/`(pytest 수집 대상 아님) + README 의 실행법이 담당한다.
+
+## CHG-20260904T125000-ai-claude-frozen-icon-verified — 동결 exe 아이콘 추출 실측
+- Timestamp: 2026-09-04T12:50:00+09:00
+- REPORT 에 「미검증」으로 적어 둔 항목 하나를 **실제로 재서** 닫았다. 이 저장소는 「소스로는
+  되는데 동결본에서는 안 되는」 결함을 이미 두 번 겪었다(`sys.executable` 이 파이썬이 아닌
+  문제 · 진입점 상대 임포트) — 그래서 동결 축은 추정으로 남기지 않는다.
+- 실제 배포 형식으로 빌드(`build_client.py --skip-installer`, exit 0 · `DQAConnect.exe`
+  2,284,758 B · 임베더블 CPython 동봉 + 러너 모듈 임포트 검증 통과) 후, 그 산출물에
+  `ExtractIconW` 를 걸어 `icon_count=1` · 유효 핸들 확인 → 배포본 트레이는 **앱 아이콘**이다.
+- `tests/windows/verify_frozen_icon.py` 커밋 + README 판정표·빌드 절차 추가.
+- ⚠ **앱을 실행하지는 않았다** — 실행하면 탐지가 돌아 사용자의 AI 사용량을 쓴다. 동결 축에서
+  확인한 것은 아이콘 추출 하나이고 그 사실을 그대로 적는다.
+- 부수 확인: 빌드 로그가 CP949 콘솔에서 한글이 깨져 나오는데도 **종료 코드 0** — §P0-I 의
+  `_make_stdio_lossy()` 가 의도대로 동작한다(「깨짐 = 실패」가 아니다).

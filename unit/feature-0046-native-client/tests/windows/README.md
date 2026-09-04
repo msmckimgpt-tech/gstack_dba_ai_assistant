@@ -42,6 +42,7 @@ cat "$WINTMP/result_console.json"
 | `verify_flicker.py` | **제품 경로**(`wsl_available`·`wsl_which`)가 도는 동안 바탕화면의 `ConsoleWindowClass` 창 수 | 대조군 > baseline · 처방군 = baseline |
 | `verify_tray.py` | 아이콘 등록 · `WM_COMMAND` 라우팅 · 더블클릭 기본 동작 · 툴팁/풍선 · 메뉴 조립 · 팝업 표시 · 정리 | 7단계 전부 ok |
 | `verify_gui.py` | 실 `ClientApp` 로 「닫기→숨음→연결유지→아이콘에서 복귀→종료」 | 6단계 전부 ok |
+| `verify_frozen_icon.py <exe>` | **동결 exe** 에서 `ExtractIconW` 가 앱 아이콘을 내는가 | `hicon ∉ {0,1}` (그 둘이면 기본 아이콘 폴백 — 치명 아님) |
 
 ## 두 가지 함정 (하네스 쪽에서 실제로 겪었다)
 
@@ -53,3 +54,16 @@ cat "$WINTMP/result_console.json"
 
 - `verify_gui.py` 는 `discover_runtime` 을 비워 **사용자의 AI 사용량을 쓰지 않는다.**
   가용성 실증(`verify_answers`)은 실제로 AI 에 질문을 던지므로, 배선 검증에 그것을 섞지 않는다.
+- **동결 exe 는 «실행하지 않고» 검사한다.** 실행하면 탐지가 돌아 사용자의 AI 사용량을 쓴다.
+  그래서 `verify_frozen_icon.py` 는 앱을 띄우지 않고 산출물 파일에 Win32 호출만 건다.
+
+## 동결 exe 를 만들어 검사하려면
+
+```bash
+WB='/mnt/c/Users/<user>/AppData/Local/Temp/dqa-build'
+mkdir -p "$WB" && cp -r unit/feature-0046-native-client/src "$WB/"
+'/mnt/c/.../Python314/python.exe' 'C:\Users\<user>\AppData\Local\Temp\dqa-build\src\scripts\build_client.py' --skip-installer
+```
+
+⚠ 이 빌드 로그는 CP949 콘솔에서 **한글이 깨져 보이지만 종료 코드는 0** 이다 — `build_client.py`
+의 `_make_stdio_lossy()`(§P0-I)가 의도한 동작이다. 「깨짐 = 실패」로 읽지 않는다.

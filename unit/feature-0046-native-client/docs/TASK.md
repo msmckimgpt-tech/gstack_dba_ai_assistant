@@ -122,6 +122,8 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] **실 Windows 실측 4종 PASS** — `tests/windows/` 에 스크립트 커밋(재현 가능)
 - [x] 실측이 결함 2건 적발 — ctypes argtypes 누락(아이콘 등록 실패) · `MF_DEFAULT` 무시
 - [x] `pyproject.toml` `testpaths` 에 등재(4→5) — 로컬 `pytest` 축은 덮인다
+- [x] 동결 exe 아이콘 추출 실측 — 실제 배포 형식으로 빌드해 `ExtractIconW` 확인
+      (`tests/windows/verify_frozen_icon.py` 커밋). REPORT 의 미검증 1건 해소
 - [ ] ⛔ **BLOCKED(권한): `.github/workflows/ci.yml` 등재** — 토큰에 `workflow` 스코프가 없어
       푸시가 거부된다. **CI 는 여전히 이 feature 의 테스트를 돌리지 않는다**(CI 는 경로를
       명시하므로 `testpaths` 를 보지 않는다). 조치는 1줄 추가 — 사람 또는 workflow 스코프 토큰 필요
