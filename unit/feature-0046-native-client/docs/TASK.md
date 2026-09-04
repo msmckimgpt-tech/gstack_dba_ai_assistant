@@ -121,7 +121,13 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
       「아이콘이 뜬 뒤 죽는 경우」. 부수로 WSL 선택이 라벨로 넘어가던 결함도 해소
 - [x] **실 Windows 실측 4종 PASS** — `tests/windows/` 에 스크립트 커밋(재현 가능)
 - [x] 실측이 결함 2건 적발 — ctypes argtypes 누락(아이콘 등록 실패) · `MF_DEFAULT` 무시
+- [x] `pyproject.toml` `testpaths` 에 등재(4→5) — 로컬 `pytest` 축은 덮인다
+- [ ] ⛔ **BLOCKED(권한): `.github/workflows/ci.yml` 등재** — 토큰에 `workflow` 스코프가 없어
+      푸시가 거부된다. **CI 는 여전히 이 feature 의 테스트를 돌리지 않는다**(CI 는 경로를
+      명시하므로 `testpaths` 를 보지 않는다). 조치는 1줄 추가 — 사람 또는 workflow 스코프 토큰 필요
 - [ ] 로그온 자동시작으로 «바로 연결» — 토큰 보관 설계 선행(별도 cycle)
+- [ ] CI 경로 목록과 `testpaths` 의 **불일치 해소**(10 vs 5) — 이번엔 기록만. 구조적 해소는
+      한쪽에서 생성하거나 일치를 검사하는 테스트(별도 cycle)
 
 ## 9. Requested Scope (요청 범위 자기-열거)
 

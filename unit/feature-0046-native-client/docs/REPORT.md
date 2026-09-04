@@ -26,6 +26,16 @@ peak `2 → 1`, 트레이 7단계, GUI 종단간 6단계. 단위 171건 · 뮤�
 
 ## 2. 남은 리스크
 
+- ⛔ **BLOCKED(권한) — CI 가 이 feature 의 테스트를 여전히 돌리지 않는다.**
+  `unit/feature-0046-native-client/tests` 가 `.github/workflows/ci.yml` 의 pytest 경로 목록에
+  없다(2026-09-03 신설 이후 계속). 이번에 `pyproject.toml` `testpaths` 에는 등재했지만 **CI 는
+  경로를 명시 호출하므로 `testpaths` 를 보지 않는다** — 즉 이 축은 아직 열려 있다.
+  푸시가 `workflow` 스코프 부재로 거부됐고(토큰: `admin:public_key, gist, read:org, repo`),
+  **AI 에게는 이 파일을 바꿀 수단이 없다.** 조치는 ci.yml 에 1줄 추가 — 사람 또는 workflow
+  스코프 토큰. 그 전까지 이 feature 의 177건은 **로컬에서만** 검증된다.
+- ⚠ CI 경로 목록과 `testpaths` 는 애초에 서로 다르다(ci.yml 9 · testpaths 5). 그 불일치가
+  다음 누락의 온상이며, 구조적 해소(한쪽에서 생성 또는 일치 검사 테스트)는 별도 cycle.
+
 - **미서명 배포** — SmartScreen 경고 2클릭(사용자 결정으로 감수). 대상이 「경고를 무서워하는
   사람」이라 이탈이 생길 수 있다. 계측(ITEM-00 퍼널)이 그 크기를 잴 것이다.
 - **gemini 미지원** — 로그인 대행 명령 미실측. 화면이 그 사실을 말한다(과장하지 않음).

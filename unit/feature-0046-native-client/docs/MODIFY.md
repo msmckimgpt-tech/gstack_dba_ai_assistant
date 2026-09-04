@@ -204,3 +204,33 @@ edit_policy: append-only
   WSL 런타임을 고르면 `--ai "claude (WSL)"` 이 가서 이름부터 어긋난다(Windows 자리는
   라벨==이름이라 증상이 없어 숨어 있었다). 스레드 수정과 같은 지점이라 함께 고쳤다.
 - 테스트 40건(총 177) · 뮤테이션 **21/21 KILL, NOOP 0** · 실 Windows 4종 재실행 PASS.
+
+## CHG-20260904T121000-ai-claude-tests-actually-run-in-ci — 이 feature 의 테스트가 CI 에 없었다
+- Timestamp: 2026-09-04T12:10:00+09:00
+- **발견**: `unit/feature-0046-native-client/tests` 가 `.github/workflows/ci.yml` 의 pytest 경로
+  목록에도, `pyproject.toml` 의 `testpaths` 에도 **없었다**. 2026-09-03 신설 이후 이 feature 의
+  테스트는 **로컬에서만** 돌았고 CI 는 그 축을 한 번도 보지 않았다.
+- ⚠ **이 저장소가 이미 아는 재발 클래스다.** `ci.yml` 주석이 직접 경고한다 — 「새 테스트
+  디렉토리를 만들면 **양쪽 모두** 등재한다 … 로컬은 green 인데 CI 는 그 축을 보지 않는 상태가
+  조용히 생긴다 — **지금까지 4번 그랬다**」. `pyproject.toml` 의 feature-0014 주석도 같은 사고를
+  기록한다(전면 503 이 6시간에 71건 나는 동안 CI 는 초록이었다).
+- 이번 cycle 이 테스트 40건을 더했으므로, 등재하지 않으면 **그 40건도 실행되지 않는다** —
+  「존재는 실행이 아니다」(AGENTS.md §16.7 G14-e). 그래서 이 cycle 안에서 배선했다.
+- **적용: `pyproject.toml` `testpaths` 4 → 5.**
+- ⛔ **미적용(권한 차단): `.github/workflows/ci.yml`.** 푸시가 거부됐다 —
+  `refusing to allow an OAuth App to create or update workflow ci.yml without workflow scope`.
+  현재 토큰 스코프는 `admin:public_key, gist, read:org, repo` 로 **`workflow` 가 없다**(SSH
+  대체 경로도 이 저장소에는 없다). **AI 가 이 파일을 바꿀 수단이 없다.**
+- ⚠ **그래서 CI 는 여전히 이 feature 의 테스트를 돌리지 않는다.** CI 스텝은 `pytest -q <경로들>`
+  로 경로를 **명시**하므로 `testpaths` 를 보지 않는다 — 즉 이번 `pyproject.toml` 갱신은 로컬
+  `pytest` 만 덮는다. **절반만 배선된 상태를 「배선했다」로 적지 않는다**(§16.7 G14-e 의 요점이
+  정확히 그것이다).
+- **남은 조치(사람 필요, 1줄)**: `.github/workflows/ci.yml` 의 pytest 경로 마지막 줄
+  `unit/feature-0006-lan-proxy-access/tests` 뒤에 ` \` 를 붙이고 다음 줄에
+  `unit/feature-0046-native-client/tests` 를 추가한다. `workflow` 스코프가 있는 토큰 또는
+  GitHub 웹 편집으로 가능하다.
+- ⚠ **또 하나의 남은 사실**: 두 목록은 애초에 서로 다르다(ci.yml 9 vs testpaths 5). 그 불일치
+  자체가 다음 누락의 온상이지만 이 요청의 범위 밖이라 **기록만** 한다. 구조적 해소는
+  「한 목록에서 다른 목록을 생성하거나, 두 목록의 일치를 검사하는 테스트」다.
+- Win32/트레이 층은 리눅스에서 돌지 않으므로 CI 대상이 아니다 — 그 층은
+  `tests/windows/`(pytest 수집 대상 아님) + README 의 실행법이 담당한다.
