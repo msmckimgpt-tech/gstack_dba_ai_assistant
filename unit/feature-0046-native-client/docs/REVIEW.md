@@ -879,3 +879,11 @@ Gemini 로그인 대행은 **측정할 수 없어** 미검증이다.
 
 3라운드 누적: 1R P1 0/P2 1 → 2R P1 0/P2 1(1R 수정이 만든 것 → 되돌림) → **3R 결함 0**.
 P1 은 0 → 0 → 0 으로 단조. §18.8 수렴 계약 (a) 충족(마지막 라운드 P1 0), 상한 미도달.
+
+## REV-20260904T204500-ai-claude-feature-0046-close-to-tray-live [SKIPPED:non-policy-doc] — PASS
+
+- Related TASK: feature-0046-native-client
+- Reason: changed paths are docs only (test-run 기록 · REPORT/TASK/MODIFY 갱신) — 코드 변경 0.
+  이 cycle 이 낸 것은 **설치본 실측 기록**이고, 그 실측 대상 코드는 직전 cycle
+  (REV-20260904T193000 · REV-20260904T195500)에서 codex 3라운드로 이미 검증됐다.
+- Timestamp: 2026-09-04T20:45:00+09:00
