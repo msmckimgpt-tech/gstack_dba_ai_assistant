@@ -2,7 +2,7 @@
 doc_type: DQA_ROADMAP
 initiative: onboarding-accessibility
 created_at: 2026-09-02
-revised_at: 2026-09-02
+revised_at: 2026-09-04
 source_research: ./RESEARCH.md
 status: active
 schema_version: 1
@@ -15,6 +15,10 @@ schema_version: 1
 > **개정 이력**: 초판(2026-09-02 오전)은 MCPB 번들을 주 경로로 삼았다. 같은 날 사용자 지적
 > *"현재 서비스는 claude 뿐만 아니라 다른 AI 모델을 모두 수용 가능해야 합니다"* + **네이티브
 > 클라이언트 채택 결정**으로 주 경로가 교체됐다. 무엇이 왜 바뀌었는지는 §5 보류·기각에 남긴다.
+>
+> **2026-09-04 개정**: `ITEM-09` 신설(P3). ITEM-08 이 스킴 핸들러를 인수하면서 셸 경로에 있던
+> 「어느 WSL 계정의 AI 로 연결할지」 축이 사라진 것을 사용자가 제보했다 — **회귀의 복원**이므로
+> §5 기각 목록이 아니라 §3 항목으로 들어간다.
 
 ## 0. 맥락 (context-free 진입)
 
@@ -86,6 +90,7 @@ SPIKE-02 (클라이언트 실현가능성) ──requires──▶ ITEM-08 (네�
 
 ITEM-08 ──enables──▶ ITEM-03 (웹 연결 진단 — 클라이언트 상태 반영)
         ──enables──▶ ITEM-06 (「AI 없음」 → 클라이언트 유도로 전환)
+        ──enables──▶ ITEM-09 (WSL 계정 지정 — 클라이언트가 인수한 축의 복원)
 
 ITEM-05 (AI CLI 허용목록 3자리 정합) — 독립
 ```
@@ -106,6 +111,7 @@ Windows 우선 · 미서명(SmartScreen 경고 2클릭 감수)으로 진행해 I
 | **게이트** | — | — | SPIKE-02 done (**코드 서명 요건은 2026-09-03 해제**) | 서명 없이 배포하면 SmartScreen/Gatekeeper 경고가 터미널 벽을 그대로 대체할 위험이 있어 원래 하드 선행이었다. 사용자 결정(2026-09-03)으로 **Windows 우선·미서명**(경고 2클릭 감수)을 택해 게이트는 SPIKE-02 하나만 남았고 P1 이 진입했다 |
 | **P1** | ITEM-08 [Major] | ❌ | 위 게이트 통과 | 클라이언트가 나머지 항목의 전제를 바꾼다 |
 | **P2** | ITEM-03 · ITEM-06 | ✅ 병렬 | ITEM-08 done | 클라이언트가 실재해야 웹이 표시할 상태 집합과 안내 문안이 확정된다 |
+| **P3** | ITEM-09 [Major] | ❌ | ITEM-08 done | 클라이언트가 스킴 핸들러를 **인수하면서** 셸 경로에 있던 「어느 WSL 계정으로 연결할지」 축이 사라졌다. 즉 이 항목은 신규 기능이 아니라 **ITEM-08 이 만든 회귀의 복원**이며, 클라이언트가 실재한 뒤에만 정의된다 |
 
 > **SPIKE-02 완료(2026-09-03) 로 게이트가 한쪽만 남았고, 그 한쪽도 같은 날 해제됐다** — 실현가능성은
 > **GO**(3사 중 claude·codex 로그인 대행 실측 확인 · 러너 stdlib 전용이라 동봉 단순 · 크레딧 풀
@@ -349,6 +355,110 @@ Windows 우선 · 미서명(SmartScreen 경고 2클릭 감수)으로 진행해 I
 
 ---
 
+### ITEM-09 · WSL 계정 지정 연결 — 런타임 좌표에 `(distro, user)` 축 추가
+- **status**: **pending** (신설 2026-09-04) — 방향 **A안 확정**(사용자 결정 2026-09-04)
+- **feature_id**: `feature-0046-native-client` — ⚠ **cross-cut**: 러너 축은
+  `feature-0043-external-llm-bridge` 에 거주한다(양쪽을 함께 고쳐야 성립 — 아래 `guards`)
+- **dimension**: functional
+- **risk_grade**: **Major** — 「어느 AI 를 부르는가」가 아니라 **「누가 그것을 실행하는가」**
+  를 바꾼다. 서버 계약·RBAC·권한 코드는 **무변경**이므로 Critical 은 아니다. 착수 시
+  `require_ai_token`·권한 카탈로그에 손이 가면 그 자리에서 §12.3 재판정한다.
+- **depends_on**: [ITEM-08]
+- **enables**: []
+- **why**: 사용자 제보 2026-09-04 — *"이전에는 AI 연결에 따라 wsl 내 설치된 클로드의 'root',
+  'claude-corp' 계정을 사용자가 직접 지정하여 연결할 수 있었습니다."* 셸 경로에서는 **1단계
+  명령을 어느 계정 터미널에서 실행하는가**가 곧 지정이었다(`bridge_setup.sh` 가 `id -un` 을
+  읽어 핸들러 커맨드라인에 `-u <그 계정>` 을 박는다). 클라이언트가 스킴 핸들러를 인수하면서
+  그 축이 통째로 사라졌다.
+
+  **실측 (2026-09-04, 이 배치)**:
+
+  | 측정 | 값 |
+  |---|---|
+  | `wsl.exe -e id -un` (= 클라이언트·러너가 쓰는 형태) | **`root`** |
+  | `wsl.exe -e printenv HOME` | `/root` |
+  | `wsl.exe -u root -e command -v claude` | `/usr/local/bin/claude` → `/root/.local/bin/claude` |
+  | `wsl.exe -u claude-corp -e command -v claude` | `/home/claude-corp/.local/bin/claude` → `…/versions/2.1.227` |
+  | 현재 `HKCU\…\dqa-connect\shell\open\command` | `…\Programs\DQA Connect\DQAConnect.exe "%1"` |
+  | 배포판 목록 (`wsl -l -q`) | `Ubuntu` **단일** |
+
+  두 계정은 **서로 다른 설치·서로 다른 HOME·서로 다른 로그인**이고, 양쪽 모두에
+  `~/.dqa-connect/`(러너 홈·로그·`config.json`)가 실재한다 — 실제로 두 계정으로 연결한
+  이력이다. 그런데 클라이언트 경로는 `claude-corp` 에 **원리적으로 도달할 수 없다**.
+- **fit_verdict**: **adopt-with-guard**
+- **what**: **A안 — 런타임 좌표에 `(distro, user)` 축을 추가**한다. `RuntimeState` 가 자리
+  (`where`)뿐 아니라 배포판·계정까지 들고, `argv()` 가 `wsl.exe -d <distro> -u <user> -e <path>`
+  를 만든다. 러너에는 `BRIDGE_AI_WSL_DISTRO_<NAME>`·`BRIDGE_AI_WSL_USER_<NAME>` 로 넘긴다.
+
+  ⚠ **`BRIDGE_AI_PATH_<NAME>` 만으로는 표현되지 않는다** — 그 env 는 **경로만** 싣는다.
+  거기에 `/home/claude-corp/.local/bin/claude` 를 넣으면 러너는 `wsl.exe -e <그 경로>` 를
+  실행하고, 그것은 위 실측대로 **`root` 로 · `HOME=/root` 로** 돈다. claude-corp 의 바이너리가
+  root 의 자격증명을 읽는다 — **오류가 아니라 «잘못된 계정으로 성공»** 이고, 화면에는
+  「claude (WSL) 로 연결됨」만 남는다. 이 항목이 닫는 결함이 그것이다.
+
+  **기각한 대안 2**: ⓐ 경로 문자열에 인코딩(`wsl://<distro>/<user>/…`) — `_is_wsl_path` 의
+  「POSIX 절대경로면 WSL」 판정을 깨고 그 값을 파일 경로로 다루는 다른 소비처가 조용히
+  오작동한다. ⓑ `--cmd 'wsl.exe -u … -p {prompt}'` 폴백 — 러너가 능력을 신고하지 않아 웹
+  「답할 AI 있음」이 ❌ 로 남는다. **2026-09-04 에 의도적으로 되돌린 축이라 재도입은 회귀다**
+  (`FUNCTION.md` P0-AA · `core.py` `runner_runtime_args` 의 「`--cmd` 를 쓰지 않는다」 주석).
+- **entry_points** (앵커 기준 `main` `accd76b6`, 2026-09-04 — 행번호가 밀리면 심볼로 다시 잡는다):
+  - 클라이언트 — `unit/feature-0046-native-client/src/client/core.py:126` `wsl_which()` ·
+    `:154` `WHERES` · `:182` `RuntimeState.argv()` · `:189` `RuntimeState.label` ·
+    `:340` `discover_runtime()` · `:889` `runner_runtime_args()` · `:917` `runner_runtime_env()`
+  - 클라이언트 브리지 — `unit/feature-0046-native-client/src/client/bridge.py:189` `_do_discover()` ·
+    `:269` `_pick()` · `:287` `_state_json()` · `:293` `_confirm_text()`
+  - 러너 — `unit/feature-0043-external-llm-bridge/src/agent/discovery.py:172` `_which_ai_in_wsl()` ·
+    `:197` `_is_wsl_path()` · `:202` `_which_ai()` · `:226` `_resolve_exe()`
+  - 웹 패널 — `unit/feature-0003-agent-web-ui/src/static/app/client-bridge.js` `initClientPanel()`
+  - 선례(셸 경로의 같은 축) — `unit/feature-0043-external-llm-bridge/src/bridge_setup.sh:668`
+    `_wuser` · `:690` `_cmdline` · `:93` `BRIDGE_HOME`
+- **acceptance**:
+  1. 배포판·계정이 여럿인 머신에서 **후보가 계정별로 갈려** 목록에 뜬다 — 같은 CLI 가
+     `root`·`claude-corp` 양쪽에 있으면 **두 항목**이고, 각자 자기 로그인 계정을 표시한다
+     (`claude auth status` JSON 의 `email` 을 이미 읽는다 — `core.probe_runtime`).
+  2. `claude-corp` 를 골라 연결하면 러너의 자식 프로세스가 **`claude-corp` 로 · `HOME=/home/claude-corp`
+     로** 돈다 (라이브 1-probe 로 확인 — 경로·소유자 추론으로 갈음하지 않는다).
+  3. 좌표를 지정하지 않은 기존 사용자는 **종전과 동일**하게 동작한다(기본 배포판·기본 계정) —
+     회귀 0.
+  4. 능력 신고가 유지된다 — 웹 체크리스트의 「답할 AI 있음」이 ✅ 이고 모델 선택기가 뜬다
+     (`--cmd` 우회를 쓰지 않았다는 관측 가능한 증거).
+  5. 좌표 중 하나를 골라 연결한 뒤 **재실행하면 그 좌표가 기억**된다.
+  6. 배포판이 **하나뿐인** 머신에서 배포판 선택 UI 가 사용자에게 부담을 주지 않는다
+     (§16.8 사용자 대면 텍스트 예산).
+- **guards**:
+  1. ⚠ **식별자 충돌 — 이것이 차단성 결함이다.** `bridge.py:269 _pick()` 은 `st.label` 로
+     매칭하고 `label` 은 `"claude (WSL)"` 이다. 계정이 둘이면 **같은 라벨 두 개**가 되어
+     `_pick()` 이 항상 첫 번째를 돌려준다 — 사용자가 `claude-corp` 를 골라도 `root` 로
+     연결되고, 화면은 골라진 것을 표시하므로 **증상이 없다**. `label`·`_state_json()` 의 `id`
+     에 좌표를 넣는 것이 이 항목의 최소 조건이며, 그러면 웹 패널
+     (`app/client-bridge.js`)·`tests/verify_client_panel_dom.mjs` 가 함께 움직인다.
+  2. ⚠ **양쪽을 함께 고쳐야 성립한다.** 최종 실행자는 러너(`discovery.py:245`)다. 클라이언트만
+     고치면 화면은 계정을 갈라 보여 주면서 실행은 기본 계정으로 간다 — 위 「잘못된 계정으로
+     성공」이 UI 만 바뀐 채 그대로 남는다.
+  3. ⚠ **사용자 AI 사용량 증폭.** `bridge.py:189 _do_discover()` 는 `logged_in` 인 전 런타임에
+     `verify_answers()`(= 실제 질문 1회)를 돈다. 좌표 축이 붙으면 후보가 **계정 수배**로 늘어난다.
+     전수 탐색은 `command -v` 까지만, **실제 질문은 사용자가 고른 좌표에만** 건다
+     (`FUNCTION.md` P0-L 의 「이 호출은 사용자의 AI 사용량을 쓴다」 와 정합).
+  4. ⚠ **`wsl -l -q` 는 UTF-16LE + BOM 이다**(셸 경로 실측 — `bridge_setup.sh` 가
+     `tr -d '\000\r\377\376'` 로 걷어낸다). 클라이언트 `core.py:258 _run()` 은
+     `encoding="utf-8"` 고정이라 지금은 rc 만 보고 통과하지만, **목록을 파싱하는 순간** 이
+     함정에 걸린다. 파싱 경로를 열 때 인코딩을 실측으로 확정한다.
+  5. ⚠ **인자 검증 + 승격 표면.** `-d`/`-u` 값은 `re.fullmatch(r"[A-Za-z0-9._-]+")` 로 강제한다
+     (`^…$` 는 개행 위조를 통과시킨다 — AGENTS.md §22.14 와 동축, 셸 경로 `_safe_word` 와 같은
+     문자집합). 그리고 WSL 은 `-u` 에 암호를 묻지 않으므로 **GUI 가 배포판 내 `root` 프로세스를
+     띄우게 된다** — 새 권한은 아니지만(사용자가 터미널에서 이미 가능) `_confirm_text()` 가
+     **어느 계정으로 실행하는지 명시**해야 한다.
+  6. ⚠ **`docs/SECURITY.md` 가 feature-0046 표면을 아직 모른다** — §50·§51 신설이 09-04
+     doc_sync 에서 fail-closed 보류 상태다(`wiki/hot.md` Active Threads). 이 항목이 WSL 계정
+     선택을 더하면 그 미기재분이 한 겹 늘어난다. 착수 cycle 에서 함께 닫는다.
+  7. ⚠ **병렬 세션 핫스팟.** `ai/claude/feature-0046-close-to-tray`(REGISTRY 활성)가
+     `client/bridge.py`·`client/gui.py`·`client/window.py` 를 편집 중이다 — `bridge.py` 는
+     위 guard 1 의 대상과 같은 파일이다. §13.2.5-A 순차 머지 규약을 적용한다.
+- **effort**: 中 — 클라이언트·러너 양쪽 계약 + 웹 패널 식별자. 배포판 축은 단일 배포판 머신에서
+  실측할 수 없으므로 그 부분은 **미실측으로 표기**하고 넘긴다.
+
+---
+
 ## 4. 정합성 6축 review 요약 (클라이언트 기준 재판정)
 
 | 축 | 판정 요지 |
@@ -385,9 +495,13 @@ Windows 우선 · 미서명(SmartScreen 경고 2클릭 감수)으로 진행해 I
 
 ## 6. 진행 현황
 
-- 총 **5** (ITEM 4 + SPIKE 1) · **done 5** · in-progress 0 · pending 0 · blocked 0 — **로드맵 전 항목 완료**
+- 총 **6** (ITEM 5 + SPIKE 1) · **done 5** · in-progress 0 · **pending 1**(`ITEM-09`) · blocked 0
 - **완료**: `ITEM-05`(2026-09-02) · `ITEM-00`(2026-09-03) · `SPIKE-02`(2026-09-03, conditional-go)
 - **P0 전량 완료 + ITEM-08 초판 완료.** 사용자 결정(2026-09-03)으로 **Windows 우선·미서명** 확정 — 서명 게이트 해소.
+- **P3 진입 대기 — `ITEM-09`(2026-09-04 신설, 방향 A안 확정)**: 클라이언트가 스킴 핸들러를
+  인수하면서 셸 경로에 있던 「어느 WSL 계정의 AI 로 연결할지」 축이 사라졌다. 실측으로
+  `wsl.exe -e` 가 **기본 계정(`root`) 하나만** 도달함을 확인했고, `claude-corp` 는 원리적으로
+  닿지 않는다. 신규 기능이 아니라 **ITEM-08 이 만든 회귀의 복원**이다.
 - **다음 (로드맵 밖 후속)**:
   1. **클라이언트 배포 채널** — Windows 빌드 산출물을 서버 `static/agent/` 에 놓는 경로. 이것이 없으면 ITEM-06 의 클라이언트 유도가 화면에 나타나지 않는다(현재는 정직하게 숨김).
   2. ~~**ITEM-00 라이브 적재 실측**~~ — **2026-09-03 완료**(아래 §10.1).
