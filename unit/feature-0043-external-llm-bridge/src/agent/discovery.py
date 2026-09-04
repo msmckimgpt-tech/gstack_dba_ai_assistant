@@ -123,8 +123,92 @@ def _ai_install_dirs() -> list[str]:
     ]
 
 
+# ── WSL 안의 AI (2026-09-04) ──────────────────────────────────────────────────────
+#
+# 실측: 이 사용자의 Windows `claude` 는 응답이 매우 느렸고, **실제로 쓰던 AI 는 WSL 안**에
+# 있었다. 러너는 Windows 파이썬으로 도는데 WSL 쪽을 보지 않아 그 AI 에 닿지 못했다.
+#
+# 클라이언트가 `--cmd 'wsl.exe -e … -p {prompt}'` 로 우회했지만, `--cmd` 는 **능력 협상을
+# 돌지 않는다**(그 명령에 모델이 박혀 있다는 전제). 그래서 웹의 「답할 AI 있음」이 ❌ 로
+# 남았다 — 답변은 정상인데 신고만 없는 상태다. 러너가 WSL 자리를 직접 알면 그 간극이 사라진다.
+
+#: WSL 조회 결과 캐시. 조회는 프로세스를 띄우므로 **매번 하지 않는다**.
+#: `None` = 아직 안 봤다. 값이 `False` 면 「WSL 없음」.
+_WSL_OK: "bool | None" = None
+_WSL_PATHS: dict = {}
+
+
+def _wsl_exe() -> str:
+    import shutil
+    return shutil.which("wsl.exe") or shutil.which("wsl") or "wsl.exe"
+
+
+def _wsl_available() -> bool:
+    """WSL 배포판이 **하나라도 실행 가능한가**. 결과를 캐시한다.
+
+    ⚠ `wsl.exe` 파일 존재로 판정하지 않는다 — Windows 는 배포판이 없어도 그 실행 파일을
+    갖고 있고, 그때 모든 후속 호출이 조용히 실패한다.
+    """
+    global _WSL_OK
+    if _WSL_OK is not None:
+        return _WSL_OK
+    if os.name != "nt":
+        _WSL_OK = False
+        return False
+    import shutil
+    import subprocess
+    if not (shutil.which("wsl.exe") or shutil.which("wsl")):
+        _WSL_OK = False
+        return False
+    try:
+        rc = subprocess.run([_wsl_exe(), "-l", "-q"], capture_output=True,
+                            timeout=20).returncode
+    except Exception:  # noqa: BLE001
+        rc = 1
+    _WSL_OK = (rc == 0)
+    return _WSL_OK
+
+
+def _which_ai_in_wsl(name: str) -> str | None:
+    """WSL 안에서 그 CLI 의 경로(POSIX). 결과를 캐시한다.
+
+    로그인 셸을 거쳐 사용자의 PATH 를 그대로 본다 — `wsl -e <name>` 로 바로 찌르면
+    「WSL 이 없다」와 「그 CLI 가 없다」가 구분되지 않는다.
+    """
+    if name in _WSL_PATHS:
+        return _WSL_PATHS[name]
+    found = None
+    if _wsl_available():
+        import subprocess
+        try:
+            r = subprocess.run([_wsl_exe(), "-e", "bash", "-lc", f"command -v {name}"],
+                               capture_output=True, timeout=45,
+                               encoding="utf-8", errors="replace")
+            out = (r.stdout or "").strip().splitlines()
+            cand = out[0].strip() if out else ""
+            if r.returncode == 0 and cand.startswith("/"):
+                found = cand
+        except Exception:  # noqa: BLE001
+            found = None
+    _WSL_PATHS[name] = found
+    return found
+
+
+def _is_wsl_path(exe: str) -> bool:
+    """Windows 에서 **POSIX 절대경로**면 그것은 WSL 안의 것이다."""
+    return os.name == "nt" and isinstance(exe, str) and exe.startswith("/")
+
+
 def _which_ai(name: str) -> str | None:
-    """AI CLI 하나를 찾는다 — PATH 우선, 없으면 **표준 설치 위치**(알려진 이름만)."""
+    """AI CLI 하나를 찾는다 — **지정된 경로** → PATH → 표준 설치 위치 → WSL 안.
+
+    ⚠ `BRIDGE_AI_PATH_<NAME>` 이 있으면 그것이 이긴다. 같은 이름의 CLI 가 Windows 와 WSL
+    양쪽에 있을 때 **어느 쪽을 쓸지 사용자가 이미 골랐기 때문**이다 — 연결 프로그램이 각
+    후보에게 실제로 물어보고 답한 것만 고르며, 그 판단을 러너가 뒤집으면 안 된다.
+    """
+    pinned = os.environ.get(f"BRIDGE_AI_PATH_{name.upper()}", "").strip()
+    if pinned:
+        return pinned
     p = _which(name)
     if p:
         return p
@@ -136,7 +220,7 @@ def _which_ai(name: str) -> str | None:
             cand = os.path.join(d, name + ext)
             if _is_exec(cand):
                 return cand
-    return None
+    return _which_ai_in_wsl(name)
 
 
 def _resolve_exe(argv: list[str]) -> list[str]:
@@ -152,7 +236,14 @@ def _resolve_exe(argv: list[str]) -> list[str]:
     if not argv:
         return list(argv)
     exe = _which_ai(argv[0])
-    return ([exe] + list(argv[1:])) if exe else list(argv)
+    if not exe:
+        return list(argv)
+    # WSL 안의 실행 파일은 Windows 가 직접 띄우지 못한다 — `wsl.exe` 를 거친다.
+    # 이 확장은 **런타임 종류를 바꾸지 않으므로** 능력 협상이 그대로 돈다(그것이 `--cmd`
+    # 우회와 다른 점이고, 이 변경의 목적이다).
+    if _is_wsl_path(exe):
+        return [_wsl_exe(), "-e", exe] + list(argv[1:])
+    return [exe] + list(argv[1:])
 
 
 def detect_ai() -> tuple[str, list[str]] | None:

@@ -155,14 +155,30 @@ def test_windows_runtime_passes_plain_ai_name():
     assert core.runner_runtime_args(st) == ["--ai", "claude"]
 
 
-def test_wsl_runtime_passes_a_full_command(monkeypatch):
-    """러너는 Windows 파이썬으로 돈다 — `/usr/local/bin/claude` 에 직접 닿지 못한다."""
-    monkeypatch.setattr(core, "_wsl_exe", lambda: "wsl.exe")
+def test_wsl_runtime_is_named_not_scripted():
+    """⚠ **`--cmd` 를 쓰지 않는다** (2026-09-04).
+
+    러너는 `--cmd` 를 받으면 **능력 협상을 돌지 않는다** — 그 명령에 모델이 이미 박혀
+    있다는 전제다. 그래서 답변은 정상인데 웹의 「답할 AI 있음」이 ❌ 로 남았다. 이제 러너가
+    WSL 자리를 직접 알므로 **이름만** 준다.
+    """
     st = core.RuntimeState(name="claude", path="/usr/local/bin/claude", where="wsl")
-    args = core.runner_runtime_args(st)
-    assert args[0] == "--cmd"
-    assert args[1] == "wsl.exe -e /usr/local/bin/claude -p {prompt}"
-    assert "{prompt}" in args[1], "러너의 자리표시자가 없으면 질문이 전달되지 않는다"
+    assert core.runner_runtime_args(st) == ["--ai", "claude"]
+
+
+def test_wsl_choice_is_pinned_for_the_runner():
+    """같은 CLI 가 양쪽에 있을 때 **어느 쪽인지**는 우리가 정한다 — 실제로 물어보고 골랐다."""
+    st = core.RuntimeState(name="claude", path="/usr/local/bin/claude", where="wsl")
+    assert core.runner_runtime_env(st) == {"BRIDGE_AI_PATH_CLAUDE": "/usr/local/bin/claude"}
+
+
+def test_windows_choice_is_pinned_too():
+    st = core.RuntimeState(name="codex", path=r"C:\x\codex.exe", where="windows")
+    assert core.runner_runtime_env(st) == {"BRIDGE_AI_PATH_CODEX": r"C:\x\codex.exe"}
+
+
+def test_no_runtime_pins_nothing():
+    assert core.runner_runtime_env(None) == {}
 
 
 def test_no_runtime_passes_nothing():
@@ -322,8 +338,18 @@ def test_unknown_runtime_is_not_silently_marked_answering(monkeypatch):
     assert st.answers is False
 
 
-def test_wsl_cmd_uses_the_runtime_specific_form(monkeypatch):
-    monkeypatch.setattr(core, "_wsl_exe", lambda: "wsl.exe")
-    st = core.RuntimeState(name="codex", path="/usr/local/bin/codex", where="wsl")
-    args = core.runner_runtime_args(st)
-    assert args[1] == "wsl.exe -e /usr/local/bin/codex exec --skip-git-repo-check {prompt}"
+def test_every_place_gets_the_same_shape():
+    """자리에 관계없이 러너에는 **이름**을 준다 — 형태가 갈리면 한쪽만 협상이 돈다."""
+    for where, path in (("wsl", "/usr/local/bin/codex"), ("windows", r"C:\x\codex.exe")):
+        st = core.RuntimeState(name="codex", path=path, where=where)
+        assert core.runner_runtime_args(st) == ["--ai", "codex"]
+
+
+@pytest.mark.parametrize("fname", ["check_connection", "spawn_runner"])
+def test_both_entrypoints_pin_the_chosen_path(fname):
+    """한쪽만 고정하면 확인은 WSL 로 가고 상주는 Windows 로 간다."""
+    src = (_SRC / "client" / "core.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == fname)
+    calls = {getattr(c.func, "id", None) for c in ast.walk(fn) if isinstance(c, ast.Call)}
+    assert "runner_runtime_env" in calls

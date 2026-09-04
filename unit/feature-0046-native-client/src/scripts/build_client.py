@@ -132,8 +132,10 @@ def verify_runtime_runs_runner(python_exe: Path) -> None:
     빠져 있으면 **설치는 성공하고 연결만 실패**한다 — 사용자에게는 「코드 1」로만 보인다.
     그래서 빌드가 여기서 먼저 확인한다.
     """
+    # ⚠ 러너가 임포트하는 것과 **함께** 움직인다 — `tests/test_packaging.py` 가 러너
+    #   소스와 대조한다. 2026-09-04: WSL 탐지가 `shutil` 을 더했다.
     runner_mods = ("argparse", "ast", "atexit", "hashlib", "json", "os", "re", "secrets",
-                   "shlex", "signal", "ssl", "subprocess", "sys", "tempfile",
+                   "shlex", "shutil", "signal", "ssl", "subprocess", "sys", "tempfile",
                    "threading", "time", "traceback", "urllib.request")
     code = "import " + ", ".join(runner_mods) + "; print('RUNTIME_OK')"
     p = subprocess.run([str(python_exe), "-c", code], capture_output=True,

@@ -649,11 +649,25 @@ def runner_runtime_args(st: "RuntimeState | None") -> list[str]:
     """
     if st is None:
         return []
-    if st.where == "wsl":
-        # ⚠ 런타임마다 호출 형태가 다르다 — `-p` 로 뭉뚱그리면 codex 는 실행되지 않는다.
-        ask = " ".join(_ASK_ARGV.get(st.name, ("-p", "{prompt}")))
-        return ["--cmd", f"{_wsl_exe()} -e {st.path} {ask}"]
+    # ⚠ **`--cmd` 를 쓰지 않는다** (2026-09-04). 종전에는 WSL 런타임을 명령 문자열로
+    #   넘겼는데, 러너는 `--cmd` 를 받으면 **능력 협상을 돌지 않는다**(그 명령에 모델이 이미
+    #   박혀 있다는 전제). 그래서 답변은 정상인데 웹의 「답할 AI 있음」은 ❌ 로 남았다.
+    #
+    #   이제 러너가 WSL 자리를 직접 알므로 이름만 주면 된다. 다만 같은 CLI 가 양쪽에 있을 때
+    #   **어느 쪽인지**는 우리가 정한다 — 각 후보에게 실제로 물어보고 답한 것을 골랐기
+    #   때문이다. 그 선택을 `BRIDGE_AI_PATH_<NAME>` 로 러너에 고정한다.
     return ["--ai", st.name]
+
+
+def runner_runtime_env(st: "RuntimeState | None") -> dict:
+    """러너에게 **어느 자리의 실행 파일인지** 알려 주는 환경변수.
+
+    비밀이 아니고 경로일 뿐이지만 명령줄이 아니라 환경으로 준다 — 명령줄은 프로세스 목록에
+    남고, 토큰과 같은 통로를 쓰는 편이 규약이 하나로 유지된다.
+    """
+    if st is None or not st.path:
+        return {}
+    return {f"BRIDGE_AI_PATH_{st.name.upper()}": str(st.path)}
 
 
 def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
@@ -665,7 +679,8 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
     """
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
     argv += runner_runtime_args(_as_state(runtime))
-    env_token = dict(os.environ, BRIDGE_TOKEN=plan.token)
+    env_token = dict(os.environ, BRIDGE_TOKEN=plan.token,
+                     **runner_runtime_env(_as_state(runtime)))
     try:
         p = subprocess.run(argv, capture_output=True, timeout=120,
                            encoding="utf-8", errors="replace", env=env_token,
@@ -680,7 +695,8 @@ def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
     argv += runner_runtime_args(_as_state(runtime))
-    kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token),
+    kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token,
+                            **runner_runtime_env(_as_state(runtime))),
                 "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT,
                 "encoding": "utf-8", "errors": "replace"}
     # 콘솔 창이 뜨지 않게 — GUI 앱에서 검은 창이 깜빡이면 그것만으로 「고장」으로 읽힌다.
