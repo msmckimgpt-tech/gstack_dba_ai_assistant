@@ -43,14 +43,29 @@ cat "$WINTMP/result_console.json"
 | `verify_tray.py` | 아이콘 등록 · `WM_COMMAND` 라우팅 · 더블클릭 기본 동작 · 툴팁/풍선 · 메뉴 조립 · 팝업 표시 · 정리 | 7단계 전부 ok |
 | `verify_gui.py` | 실 `ClientApp` 로 「닫기→숨음→연결유지→아이콘에서 복귀→종료」 | 6단계 전부 ok |
 | `verify_frozen_icon.py <exe>` | **동결 exe** 에서 `ExtractIconW` 가 앱 아이콘을 내는가 | `hicon ∉ {0,1}` (그 둘이면 기본 아이콘 폴백 — 치명 아님) |
+| `verify_embedded_close.py hide` | **주 경로(내장 WebView2 창)**: [X] → 숨음 · 안내 1회 · 아이콘에서 복귀 · **아이콘 사망 후 닫기 = 파괴** | 8단계 전부 ok |
+| `verify_embedded_close.py quit` | 트레이 우클릭 **[종료]** 가 프로세스를 실제로 끝내는가 | 6단계 전부 ok |
 
-## 두 가지 함정 (하네스 쪽에서 실제로 겪었다)
+> ⚠ `verify_embedded_close.py` 는 `window.py` 와 **pywebview·pythonnet** 이 필요하다. 복사할 때
+> `src/client/*.py` 전부를 넣고(그 안에 `window.py` 가 있다), 창은 `about:blank` 를 띄운다 —
+> 서비스 페이지를 열면 패널이 `discover` 를 자동 호출해 **사용자의 AI 사용량을 쓴다**.
+> 한 프로세스에서 `webview.start()` 는 1회뿐이라 **모드를 인자로 받아 두 번** 돌린다.
+
+## 함정 (하네스 쪽에서 실제로 겪었다)
 
 - **합성 입력으로 팝업 메뉴를 닫으려 하지 마라.** `keybd_event(ESC)` 는 전경 잠금 때문에
   다른 창으로 가고, 그 사이 메뉴에서 **엉뚱한 항목이 선택**된다(관측: `hits=['quit']`).
   메뉴 창(`#32768`)을 찾아 **그 창에 직접** `WM_KEYDOWN ESC` 를 보낸다.
 - **파괴된 tkinter root 는 `winfo_exists()` 가 0 을 내지 않고 예외를 던진다.** 안 잡으면
   하네스가 죽고, 제품이 옳게 동작한 것이 「검증 실패」로 보인다.
+- **제목으로 창을 특정하지 마라 (2026-09-04).** 트레이도 **같은 제목**의 창을 만든다
+  (`Tray.title` 이 `CreateWindowExW` 의 창 이름으로 들어간다 — 0×0 비가시 메시지 수신용).
+  `FindWindowW(None, 제목)` 은 그것을 먼저 집는다. 클래스로 걸러도 부족했다 — 같은 제목의
+  WinForms 창이 **2개**인 실행이 있었고, 그래서 같은 코드가 한 번 PASS 하고 한 번 FAIL 했다.
+  **소유자에게 물어라**: `webview.platforms.winforms.BrowserView.instances[uid].Handle`.
+- **데몬 워커는 주 스레드가 끝나면 그 자리에서 잘린다 (2026-09-04).** `shell.run()` 이 돌아온
+  뒤 결과를 쓰면 **마지막 단정이 결과 파일에 아예 없다** — 「측정하지 않음」이 「측정해서 통과」
+  와 구별되지 않는다. `join(timeout)` 으로 닫는다.
 
 - `verify_gui.py` 는 `discover_runtime` 을 비워 **사용자의 AI 사용량을 쓰지 않는다.**
   가용성 실증(`verify_answers`)은 실제로 AI 에 질문을 던지므로, 배선 검증에 그것을 섞지 않는다.

@@ -548,3 +548,20 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - ⛔ PB-0008 여전히 미수행(브리지 좌표+토큰 필요 · §13.2.9 로 라이브 반영 불가).
 
 [[Features/feature-0046-native-client]]
+
+## [2026-09-04] fix | feature-0046 닫기=트레이·종료=우클릭 [종료] 를 세 껍데기 공통 계약으로
+
+- `Shell.can_hide` 를 값 → **호출**로(닫는 순간 판정) · `Shell.on_hidden`·`last_error` 신설.
+- `gui._tray_alive` **단일 seam** — tkinter·내장·브라우저 세 껍데기가 같은 판정을 쓴다.
+- `Bridge.resident` **읽기 전용 property** + `resident_probe` — 「기동 시점 bool」 대입 자리를
+  구조적으로 제거(§16.7 G10).
+- 첫 닫기 1회 안내 `HIDDEN_NOTICE` — 종료 경로(우클릭 [종료])를 문구에 명시. 문구는 세 껍데기
+  공유이되 **발화는 닫힘 이벤트를 소유한 두 껍데기(내장·tkinter)에만** — 브라우저 껍데기의
+  추정 발화는 codex 2라운드가 되받아 되돌렸다(패널 ping 은 모달을 열어야 시작 → 창이 열려
+  있는데 「알림 영역에 있습니다」를 말한다).
+- 실 Windows 하네스 `verify_embedded_close.py`(hide/quit) 신설 — 3연속 결정적 PASS.
+  하네스 결함 2건(제목으로 창 특정 · 데몬 워커 절단) 자체 적발·수정.
+- 단위 399 · 뮤테이션 16/16 KILL · codex 적대 리뷰 2라운드 P1 0(P2 는 접근 되돌림으로 소멸).
+- ⛔ 패널 상주 문구의 주기 갱신은 별도 cycle(§13.2.9 · check #13 · AI 사용량).
+
+[[Features/feature-0046-native-client]]

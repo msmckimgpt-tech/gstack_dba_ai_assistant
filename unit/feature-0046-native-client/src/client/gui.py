@@ -44,6 +44,46 @@ from . import appwindow, bridge, core, tray as tray_mod, window as window_mod
 #: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
 _SHELL_QUIT = threading.Event()
 
+#: 창을 **처음 닫았을 때** 1회 안내. 「어디로 갔는가」와 「어떻게 진짜로 끝내는가」를 **같은
+#: 자리에서** 말한다 — 닫기가 곧 종료가 아니게 된 이상, 종료 경로를 모르면 사용자는 작업
+#: 관리자로 가거나 프로그램이 죽은 줄 안다(사용자 요청 2026-09-04).
+#: ⚠ 「연결되어 있습니다」가 아니라 「실행 중입니다」다. 닫는 시점에 연결이 서 있다는 보장이
+#:   없으므로, 그렇게 쓰면 화면이 사실보다 앞서 말하게 된다(§P0-R).
+HIDDEN_NOTICE = ("알림 영역에서 계속 실행 중입니다. 아이콘을 두 번 누르면 창이 다시 열리고, "
+                 "완전히 끝내려면 아이콘을 오른쪽 클릭 → [종료] 를 누르세요.")
+
+
+def _tray_alive(tray) -> bool:
+    """알림 영역 아이콘이 **지금** 있는가 — 세 껍데기가 공유하는 **단일** 판정.
+
+    ⚠ `tray is not None` 으로 판정하면 안 된다. 아이콘은 뜬 뒤에도 사라지고(탐색기 재시작
+    후 재등록 실패 등), 그때 「닫으면 트레이로」를 유지하면 사용자는 창을 닫고 **화면에도
+    알림 영역에도 없는** 프로세스를 갖는다 — 이 기능이 막으려던 상태가 시점만 뒤로 밀려
+    재현되는 형태다(codex 적대 리뷰 2026-09-04 P1).
+
+    ⚠ 판정을 **한 곳에** 둔다. 종전에는 tkinter 판만 생존을 보고(`_tray_live`) 내장·브라우저
+    껍데기는 존재를 봤다 — 같은 결정이 세 곳에 흩어지면 그 중 하나만 고쳐지는 드리프트가
+    난다(§16.7 G8-a). 여기가 그 하나다.
+    """
+    return tray is not None and bool(getattr(tray, "alive", False))
+
+
+def _hidden_notice(tray):
+    """창이 처음 숨겨졌을 때 **딱 한 번** 알리는 콜백을 만든다.
+
+    ⚠ 매번 띄우면 그 자체가 소음이고, 한 번도 안 띄우면 사용자는 프로그램을 잃은 줄 안다.
+    「1회」가 그 사이의 답이며, tkinter 판이 이미 같은 계약을 쓴다(`_told_about_tray`).
+    """
+    told = {"yes": False}
+
+    def notice() -> None:
+        if told["yes"] or not _tray_alive(tray):
+            return
+        told["yes"] = True
+        tray.notify(core.DISPLAY_NAME, HIDDEN_NOTICE)
+
+    return notice
+
 
 class ClientApp:
     """상태 기계 + 화면. 긴 작업은 전부 워커 스레드로 — UI 가 얼면 사용자는 죽은 줄 안다."""
@@ -126,8 +166,10 @@ class ClientApp:
         (탐색기 재시작 후 재등록 실패 등), 그때 「닫으면 트레이로」를 유지하면 사용자는 창을
         닫고 **어디에도 없는** 프로세스를 갖는다. 이 기능이 막으려던 상태가 시점만 뒤로 밀려
         재현되는 형태다(codex 적대 리뷰 2026-09-04 P1).
+
+        ⚠ 판정 자체는 모듈의 `_tray_alive` 하나다 — 세 껍데기가 같은 답을 내야 한다.
         """
-        return self.tray is not None and self.tray.alive
+        return _tray_alive(self.tray)
 
     def _tray_say(self, text: str, connected: bool | None = None) -> None:
         """트레이 툴팁·메뉴를 현재 상태에 맞춘다. 트레이가 없으면 아무 일도 하지 않는다."""
@@ -180,9 +222,9 @@ class ClientApp:
         self.root.withdraw()
         if not self._told_about_tray:
             self._told_about_tray = True
-            self.tray.notify(core.DISPLAY_NAME,
-                             "알림 영역에서 계속 연결되어 있습니다. "
-                             "아이콘을 두 번 누르면 창이 다시 열립니다.")
+            # ⚠ 문구는 **공유 상수**다. 껍데기마다 따로 쓰면 「종료는 우클릭」 같은 핵심
+            #   한 줄이 한쪽에만 남는다 — 사용자에게 이 프로그램은 하나다.
+            self.tray.notify(core.DISPLAY_NAME, HIDDEN_NOTICE)
 
     def _quit(self):
         """정말 끝낸다 — 러너를 내리고 아이콘을 지우고 창을 파괴한다.
@@ -685,10 +727,13 @@ def _run_embedded(plan: core.ConnectPlan) -> "int | None":
     shell = window_mod.Shell(url, title=core.DISPLAY_NAME,
                              storage=str(plan.home / "window"))
     tray = _start_embedded_tray(shell, br)
-    # ⚠ 트레이가 **실제로 떴을 때만** 닫기를 숨김으로 바꾼다. 없는데 숨기면 창도 아이콘도
-    #   없는 프로그램이 남는다(§P0-R).
-    shell.allow_hide = tray is not None
-    br.resident = tray is not None
+    # ⚠ 트레이가 **닫는 그 순간 살아 있을 때만** 닫기를 숨김으로 바꾼다. 기동 시점의 bool 을
+    #   들고 있으면 아이콘이 뒤에 죽어도 계속 숨겨, 창도 아이콘도 없는 프로그램이 남는다
+    #   (§P0-AE). 그래서 값이 아니라 **호출**을 넘긴다 — 판정 정본은 `_tray_alive` 하나다.
+    shell.can_hide = lambda: _tray_alive(tray)
+    # 처음 닫았을 때 1회만 「여기 있습니다 · 종료는 우클릭 [종료]」를 말한다.
+    shell.on_hidden = _hidden_notice(tray)
+    br.resident_probe = lambda: _tray_alive(tray)
     stop = threading.Event()
     threading.Thread(target=_watch_show_requests, args=(plan.home, shell, stop),
                      daemon=True).start()
@@ -787,7 +832,10 @@ def _run_browser_shell(plan: core.ConnectPlan) -> int:
     # 상주 표면을 **두 껍데기에 같은 규약으로** 둔다 (사용자 요청 2026-09-04 재구성).
     # 그 전에는 트레이가 tkinter 판에만 있어, 주 경로 사용자는 패널을 닫는 순간 연결을 잃었다.
     tray = _start_shell_tray(br, url, exe)
-    br.resident = tray is not None
+    # ⚠ 「닫아도 유지됩니다」는 **지금** 아이콘이 살아 있을 때만 참이다. 이 경로의 수명 판정
+    #   (`_serve_confirms`)이 이미 `tray.alive` 를 보므로, 패널 문구도 같은 판정을 봐야
+    #   둘이 갈리지 않는다 — 갈리면 화면은 유지된다 말하고 루프는 유휴로 끝낸다(§P0-R).
+    br.resident_probe = lambda: _tray_alive(tray)
     try:
         _serve_confirms(asks, br, tray=tray,
                         reopen=lambda: appwindow.open_app_window(url, exe))
@@ -846,12 +894,28 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None,
     이 경로에도 트레이를 붙일지는 **별도 cycle** 로 결정됐다(사용자 2026-09-04). 붙일 때는
     이 루프의 종료 조건과 **패널의 안내 문구**를 함께 바꿔야 한다(안 바꾸면 화면이 거짓을
     말한다, §P0-R).
+
+    ⚠ **여기서는 첫-닫기 안내를 내지 않는다 — 낼 근거가 없다** (codex 적대 리뷰 2026-09-04,
+    2라운드). 다른 두 껍데기는 창이 우리 것이라 닫힘을 **이벤트**로 받지만, 이 경로의 창은
+    브라우저의 것이라 `WM_CLOSE` 가 우리에게 오지 않는다. 한때 `idle_seconds` 무신호를
+    「닫혔다」로 **추정**해 안내를 냈는데, 그 추정은 틀린다:
+    패널의 20초 ping 은 `initClientPanel` **안에서** 시작하므로(`client-bridge.js` L178,
+    L96 의 조기 반환 뒤) **연결 모달을 한 번도 열지 않은 사용자는 ping 을 아예 보내지 않고**,
+    배경·최소화된 브라우저는 타이머를 스로틀한다. 즉 **창이 열려 있는데** 「알림 영역에 있습니다」
+    를 말하게 된다 — 이 cycle 이 없애려던 바로 그 «화면이 거짓을 말하는» 형태다(§P0-R).
+
+    무신호를 **수명 판정**(위 `idle_limit`)에 쓰는 것은 그대로 둔다. 그쪽은 「상주할 표면이
+    없으면 끝낸다」는 보수적 방향이라 틀렸을 때의 대가가 반대다 — 사용자에게 거짓을 말하는
+    것이 아니라 프로그램이 조금 일찍 끝나는 것이고, 그 경로는 애초에 트레이가 없을 때만 탄다.
+
+    이 껍데기의 사용자는 안내를 **패널 문구**(`_paintResidency`)로 받는다 — 닫기 **전에**,
+    화면 안에서. 그 문구가 종료 경로를 아직 말하지 않는 것은 `docs/REPORT.md` 의 잔여 항목이다.
     """
     import queue as _queue
 
     tick = 0.0
     while True:
-        if tray is not None and tray.alive:
+        if _tray_alive(tray):
             # ⚠ 상주 중에는 **유휴가 종료 사유가 아니다.** 패널을 닫아 두고 쓰는 것이
             #   상주의 의미이고, 그때도 러너는 계속 답해야 한다. 끝내는 것은 [종료] 뿐이다.
             if _SHELL_QUIT.is_set():
@@ -867,7 +931,7 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None,
             message, reply = asks.get(timeout=0.5)
         except _queue.Empty:
             tick += 0.5
-            if tray is not None and tray.alive and tick >= 2.0:
+            if _tray_alive(tray) and tick >= 2.0:
                 tick = 0.0
                 tray.set_tooltip(f"{core.DISPLAY_NAME} — "
                                  + ("연결됨" if br.connected else "대기 중"))

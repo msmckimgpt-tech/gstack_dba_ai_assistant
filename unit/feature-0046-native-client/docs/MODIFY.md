@@ -583,8 +583,33 @@ edit_policy: append-only
   봤다 — 그것을 감싼 `if` 를 `if False` 로 바꿔도 문자열은 남는다) ③ 동결본 자가진단 배선
   ④ 의존 동봉 배선. ②가 이 저장소가 반복해 겪은 **「게이트 뒤 호출을 소스 검사가 못 본다」**
   그 형태다 — 실행하는 단정으로 바꿔 메웠다.
+## CHG-20260904T190000-close-to-tray — 닫기는 트레이로, 종료는 우클릭 [종료]
 
-
+- Timestamp: 2026-09-04T19:00:00+09:00
+- 사용자 요청: 「윈도우를 닫을 때 기본적으로 트레이 아이콘으로 남겨두고, 실제 종료는 트레이
+  아이콘 우클릭으로」. 골격은 직전 PR #1576(18:58 머지)이 이미 들여왔고, 이 cycle 은 그 골격이
+  **사용자가 겪는 상황에서 실제로 성립하는지**를 닫는다.
+- `client/window.py` — `Shell.allow_hide`(bool) → **`can_hide`(Callable)**. 닫는 **그 순간**
+  판정한다. 판정 불가(예외)면 숨기지 않는다. `on_hidden` 훅 추가(숨김 성립 직후 1회).
+  `last_error` 추가 — `can_hide`/`hide`/`on_hidden` 실패를 남긴다(`Tray.last_error` 규약).
+- `client/gui.py` — `_tray_alive()` **단일 seam** 신설. tkinter `_tray_live`·`_serve_confirms`·
+  두 신규 껍데기가 전부 이것을 부른다(종전엔 tkinter 만 생존 판정, 나머지는 존재 판정).
+  `HIDDEN_NOTICE` 공유 상수 + `_hidden_notice()` 1회 콜백 — 문구가 **종료 경로(우클릭 [종료])
+  를 명시**한다. tkinter 판의 옛 전용 문구는 이 상수로 수렴.
+- `client/bridge.py` — `resident` 를 **읽기 전용 property** 로. 껍데기가 넘긴
+  `resident_probe()` 를 매번 새로 부르고, probe 부재·예외는 **거짓**이다. 대입 자리를 없애
+  「기동 시점 bool」 형태를 구조적으로 불가능하게 했다(§16.7 G10).
+- `tests/windows/verify_embedded_close.py` **신설** — 주 경로(내장 WebView2 창)의 실 Windows
+  실측. `hide`/`quit` 2모드(한 프로세스에서 `webview.start()` 가 1회뿐이라 분리).
+- 테스트 — 소스-텍스트 단정 2건(`"shell.allow_hide = tray is not None"` ·
+  `"br.resident = tray is not None"`)을 **구동 단정**으로 교체. **399 passed(+16, 기준선 383)**.
+- 뮤테이션 **16/16 KILL · SURVIVED 0**.
+- codex 적대 리뷰 2라운드 — 1라운드 P2(브라우저 껍데기 안내 부재) 대응으로 무신호를 「닫힘」
+  으로 읽어 안내를 냈으나, 2라운드가 그 추정을 **P2 로 되받았다**. 확인 결과 옳다: 패널의
+  20초 ping 은 `initClientPanel` 안에서만 시작하므로(`client-bridge.js` L178) 연결 모달을
+  열지 않은 사용자는 ping 을 아예 보내지 않고, 배경 브라우저는 타이머를 스로틀한다 →
+  **창이 열려 있는데** 「알림 영역에 있습니다」를 말하게 된다(§P0-R). **되돌렸다** — 없는
+  근거로 말하지 않는다. 그 결정을 테스트 2건으로 잠갔다(추정 금지 · 배선 자리 AST 고정).
 ## CHG-20260904T233000-ai-claude-shortcut-cleanup — 업그레이드가 옛 바로 가기를 치운다
 - Timestamp: 2026-09-04T23:30:00+09:00
 - **실측으로만 드러난 결함**: 새 설치본을 덮어 설치했더니 시작 메뉴에 옛 이름과 새 이름이
@@ -606,3 +631,12 @@ edit_policy: append-only
 - 덮어 설치 후 **옛 그룹 폴더 없음** · `DQA\` 에 바로 가기 둘뿐 · 아이콘 실행 시 창 `DQA` 가
   이 프로세스의 것 · 브리지 동일 프로세스.
 - 전달 폴더(`C:\Users\mckim\DQA-Connect-배포`) 갱신 — 설치본·sha256·안내문.
+
+## CHG-20260904T195500-close-to-tray-merge — origin/main 병합 + 병합 트리 재검증
+
+- Timestamp: 2026-09-04T19:55:00+09:00
+- `origin/main` 8커밋 병합(설치기 그룹 이름·옛 바로 가기 정리·최종 설치본 라이브 완주).
+  충돌 2건은 **양쪽이 같은 자리에 새 절/새 cycle 블록을 append** 한 형태 → 둘 다 보존.
+- §16.4 해결 결과 검증: 양측 부모 대비 삭제 파일 0 · auto-merge 파일 포함 「그 부모 대비
+  삭제만 있는 파일」 0 · theirs 신규 테스트/헤딩 집합 유실 0. 병합 후 **404 passed**.
+- 병합 트리 기준 codex 재검증 **결함 0**(REV-20260904T195500).

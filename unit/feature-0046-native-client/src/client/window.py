@@ -28,6 +28,10 @@
   브리지·트레이·요청 폴링은 전부 워커 스레드에 있고, 창에 말을 걸 때만 이 모듈을 거친다.
 - **닫기는 종료가 아니다 — 트레이가 살아 있을 때만.** 트레이가 없는데 창을 숨기면 사용자는
   프로그램을 잃는다(§P0-R). 그때는 닫기가 곧 종료다.
+- **그 판정은 «지금» 물어본다.** 아이콘은 뜬 뒤에도 사라진다(탐색기 재시작 후 재등록 실패).
+  기동 시점의 bool 을 들고 있으면 그 뒤 아이콘이 죽어도 계속 숨기고, 사용자는 **창도 알림
+  영역 아이콘도 없는 프로세스**를 갖는다 — 이 껍데기가 막으려던 상태가 시점만 뒤로 밀려
+  재현되는 형태다. 그래서 `can_hide` 는 값이 아니라 **호출**이다(§P0-AE).
 - **로그인 세션은 이 앱의 것이다.** `private_mode=False` + 고정 `storage_path` 라 한 번
   로그인하면 유지된다. ⚠ 브라우저의 세션과는 **별개다** — 그것이 내장의 대가이고, 사용자에게
   처음 한 번 로그인을 요구한다.
@@ -37,6 +41,7 @@ from __future__ import annotations
 
 import os
 import threading
+from typing import Callable
 
 #: WebView2 런타임이 설치되는 자리. Edge 를 깐 Win10·기본 Win11 에는 있다.
 _RUNTIME_DIRS = (
@@ -94,8 +99,16 @@ class Shell:
         self.title = title
         self.storage = storage
         self._window = None
-        #: 닫기를 **숨김으로** 바꿔도 되는가. 트레이가 실제로 떠야 참이 된다(§P0-R).
-        self.allow_hide = False
+        #: 닫기를 **숨김으로** 바꿔도 되는가를 **닫는 순간 묻는다**. 기본값은 「안 된다」 —
+        #: 모르면 숨기지 않는다(모르는 채 숨기는 쪽의 실패가 훨씬 나쁘다, §P0-R).
+        self.can_hide: Callable[[], bool] = lambda: False
+        #: 실제로 숨긴 **직후** 1회 불린다. 호출부가 「어디로 갔는지·어떻게 끝내는지」를
+        #: 사용자에게 말할 자리다 — 아무 말 없이 사라지면 사용자는 종료된 줄 안다.
+        self.on_hidden: Callable[[], None] | None = None
+        #: 마지막 실패. `None` 이면 아직 실패한 적이 없다. **삼키되 조용하지 않게** —
+        #: `tray.Tray.last_error` 와 같은 규약이다. 이 필드가 없던 동안 「닫기가 숨김이
+        #: 아니라 종료가 되는」 실패의 원인이 어디에도 남지 않았다(실측 2026-09-04).
+        self.last_error: str | None = None
         self._quitting = False
         self._ready = threading.Event()
 
@@ -123,15 +136,33 @@ class Shell:
     def _on_closing(self) -> bool:
         """`False` 를 돌려주면 pywebview 가 닫기를 취소한다.
 
-        ⚠ **트레이가 떠 있을 때만** 숨긴다. 없는데 숨기면 창도 아이콘도 없는 프로그램이
-        남고, 사용자는 그것을 끌 수단이 없다.
+        ⚠ **트레이가 지금 떠 있을 때만** 숨긴다. 없는데 숨기면 창도 아이콘도 없는 프로그램이
+        남고, 사용자는 그것을 끌 수단이 없다. 판정은 `can_hide()` **호출**이다 — 기동 시점의
+        값이 아니라 닫는 그 순간의 사실을 본다(위 모듈 docstring §P0-AE).
+
+        ⚠ `can_hide()` 가 던지면 **닫는다**. 판정할 수 없는 상태에서 숨기는 것은 「모르면
+        숨기지 않는다」를 어기는 것이고, 그 실패가 정확히 이 껍데기가 막으려던 상태다.
         """
-        if self._quitting or not self.allow_hide:
+        if self._quitting:
+            return True
+        try:
+            if not self.can_hide():
+                return True
+        except Exception as exc:  # noqa: BLE001 — 판정 불가 = 숨기지 않는다
+            self.last_error = f"can_hide: {exc!r}"
             return True
         try:
             self._window.hide()
-        except Exception:  # noqa: BLE001 — 숨기지 못하면 닫히는 편이 낫다
+        except Exception as exc:  # noqa: BLE001 — 숨기지 못하면 닫히는 편이 낫다
+            self.last_error = f"hide: {exc!r}"
             return True
+        # ⚠ 숨김이 **성립한 뒤에만** 알린다. 실패 경로에서 알리면 「알림 영역에 있습니다」를
+        #   말해 놓고 창이 닫혀 프로그램이 끝나는, 화면이 거짓을 말하는 형태가 된다(§P0-R).
+        if self.on_hidden is not None:
+            try:
+                self.on_hidden()
+            except Exception as exc:  # noqa: BLE001 — 안내 실패가 숨김을 되돌리지는 않는다
+                self.last_error = f"on_hidden: {exc!r}"
         return False
 
     def show(self) -> None:
