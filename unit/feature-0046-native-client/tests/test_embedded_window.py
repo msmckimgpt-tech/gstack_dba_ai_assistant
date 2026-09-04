@@ -26,9 +26,14 @@ _UNIT = Path(__file__).resolve().parents[1]
 _REPO = _UNIT.parents[1]
 sys.path.insert(0, str(_UNIT / "src"))
 
+from client import bridge as bridge_mod  # noqa: E402
 from client import core  # noqa: E402
 from client import gui  # noqa: E402
 from client import window as window_mod  # noqa: E402
+
+#: 진짜 `Bridge.resident` property. monkeypatch **전에** 붙잡아 둔다 — 아래 가짜가
+#: 계약을 베끼는 대신 이것을 그대로 쓴다(베끼면 두 정의가 갈린다).
+_REAL_RESIDENT = bridge_mod.Bridge.resident
 
 _GUI_SRC = (_UNIT / "src" / "client" / "gui.py").read_text(encoding="utf-8")
 
@@ -56,9 +61,10 @@ def test_the_old_helper_name_is_gone_from_the_screen():
 
 # ── 2. 닫기는 종료가 아니다 — 트레이가 있을 때만 ─────────────────────────────────
 
-def _shell(tmp_path, allow_hide: bool):
+def _shell(tmp_path, can_hide):
+    """`can_hide` 는 bool 또는 **함수**다 — 후자가 「닫는 순간 묻는다」를 재현한다."""
     sh = window_mod.Shell("https://svc.example/", "DQA", str(tmp_path / "w"))
-    sh.allow_hide = allow_hide
+    sh.can_hide = can_hide if callable(can_hide) else (lambda v=bool(can_hide): v)
     sh._window = types.SimpleNamespace(hidden=False,
                                        hide=lambda: setattr(sh._window, "hidden", True),
                                        show=lambda: setattr(sh._window, "hidden", False),
@@ -68,20 +74,20 @@ def _shell(tmp_path, allow_hide: bool):
 
 
 def test_closing_hides_when_the_tray_is_up(tmp_path):
-    sh = _shell(tmp_path, allow_hide=True)
+    sh = _shell(tmp_path, can_hide=True)
     assert sh._on_closing() is False, "닫기를 취소하지 않았다 — 트레이가 있는데 프로그램이 끝난다"
     assert sh._window.hidden is True
 
 
 def test_closing_really_closes_when_there_is_no_tray(tmp_path):
     """**이 단정이 「창도 아이콘도 없는 프로그램」을 막는다.**"""
-    sh = _shell(tmp_path, allow_hide=False)
+    sh = _shell(tmp_path, can_hide=False)
     assert sh._on_closing() is True
     assert sh._window.hidden is False
 
 
 def test_quit_closes_even_with_a_tray(tmp_path):
-    sh = _shell(tmp_path, allow_hide=True)
+    sh = _shell(tmp_path, can_hide=True)
     sh.quit()
     assert sh._on_closing() is True, "[종료] 를 눌렀는데 숨기기만 한다"
     assert getattr(sh._window, "killed", False) is True
@@ -89,9 +95,79 @@ def test_quit_closes_even_with_a_tray(tmp_path):
 
 def test_a_window_that_cannot_hide_is_closed_instead(tmp_path):
     """숨기지 못하면 닫히는 편이 낫다 — 반쯤 살아 있는 상태가 가장 나쁘다."""
-    sh = _shell(tmp_path, allow_hide=True)
+    sh = _shell(tmp_path, can_hide=True)
     sh._window.hide = lambda: (_ for _ in ()).throw(RuntimeError("no"))
     assert sh._on_closing() is True
+
+
+# ── 2-A. 판정은 «닫는 순간» 물어본다 (§P0-AE) ────────────────────────────────────
+
+def test_the_hide_gate_is_asked_at_close_time_not_at_startup(tmp_path):
+    """**아이콘은 뜬 뒤에도 사라진다.** 기동 시점의 bool 을 들고 있으면 그 뒤 아이콘이 죽어도
+    계속 숨겨, 사용자는 **창도 알림 영역 아이콘도 없는** 프로세스를 갖는다 — 이 껍데기가
+    막으려던 상태가 시점만 뒤로 밀려 재현되는 형태다(tkinter 판 `_tray_live` 와 같은 판정).
+    """
+    alive = {"v": True}
+    sh = _shell(tmp_path, can_hide=lambda: alive["v"])
+
+    assert sh._on_closing() is False and sh._window.hidden is True, "살아 있는데 닫혔다"
+    sh._window.hidden = False
+    alive["v"] = False                       # 탐색기 재시작 → 재등록 실패
+    assert sh._on_closing() is True, "아이콘이 죽었는데 계속 숨긴다 — 끌 수단이 사라진다"
+    assert sh._window.hidden is False
+
+
+def test_a_gate_that_cannot_answer_closes_the_window(tmp_path):
+    """판정 불가를 「숨겨도 된다」로 읽으면 그 실패가 곧 「프로그램 분실」이다."""
+    sh = _shell(tmp_path, can_hide=lambda: (_ for _ in ()).throw(RuntimeError("모름")))
+    assert sh._on_closing() is True
+    assert sh._window.hidden is False
+
+
+def test_hiding_defaults_to_off_when_nobody_wired_the_gate(tmp_path):
+    """배선을 잊으면 **닫기가 종료**다 — 잊었을 때 더 안전한 쪽이 기본값이어야 한다."""
+    sh = window_mod.Shell("https://svc.example/", "DQA", str(tmp_path / "w"))
+    sh._window = types.SimpleNamespace(hidden=False,
+                                       hide=lambda: setattr(sh._window, "hidden", True))
+    assert sh._on_closing() is True
+    assert sh._window.hidden is False
+
+
+# ── 2-B. 처음 닫았을 때 어디로 갔는지·어떻게 끝내는지 말한다 ─────────────────────
+
+def test_the_first_close_says_where_the_program_went(tmp_path):
+    """아무 말 없이 사라지면 사용자는 **종료된 줄** 안다 — 「닫기 = 트레이로」가 기본값이
+    되는 순간 그 사실은 화면 밖에서 알려져야 한다(사용자 요청 2026-09-04).
+    """
+    said: list = []
+    sh = _shell(tmp_path, can_hide=True)
+    sh.on_hidden = lambda: said.append(1)
+    assert sh._on_closing() is False
+    assert said == [1], "숨겼는데 아무 말도 하지 않았다"
+
+
+def test_no_notice_when_the_window_actually_closes(tmp_path):
+    """숨김이 **성립하지 않은** 경로에서 알리면 「알림 영역에 있습니다」를 말해 놓고 프로그램이
+    끝난다 — 화면이 거짓을 말하는 형태다(§P0-R)."""
+    said: list = []
+    sh = _shell(tmp_path, can_hide=False)
+    sh.on_hidden = lambda: said.append(1)
+    assert sh._on_closing() is True
+    assert said == [], "닫히는데 「알림 영역에 있습니다」를 말했다"
+
+    sh2 = _shell(tmp_path, can_hide=True)
+    sh2.on_hidden = lambda: said.append(2)
+    sh2._window.hide = lambda: (_ for _ in ()).throw(RuntimeError("no"))
+    assert sh2._on_closing() is True
+    assert said == [], "숨기기에 실패했는데 숨었다고 말했다"
+
+
+def test_a_failing_notice_does_not_undo_the_hide(tmp_path):
+    """안내가 실패해도 창은 숨은 상태여야 한다 — 안내는 부수적이고 숨김이 본체다."""
+    sh = _shell(tmp_path, can_hide=True)
+    sh.on_hidden = lambda: (_ for _ in ()).throw(RuntimeError("풍선 실패"))
+    assert sh._on_closing() is False
+    assert sh._window.hidden is True
 
 
 def test_show_and_quit_are_safe_before_the_window_exists(tmp_path):
@@ -262,9 +338,128 @@ def test_the_embedded_shell_cleans_up_even_if_the_window_fails():
     assert "stop.set()" in seg, "요청 폴링 스레드가 남는다"
 
 
-def test_hiding_is_gated_on_the_tray_being_up():
-    """**이 배선이 §P0-R 을 지킨다** — 트레이가 없으면 닫기가 곧 종료여야 한다."""
-    assert "shell.allow_hide = tray is not None" in _fn("_run_embedded")
+class _FakeTray:
+    """`Tray` 의 최소면 — `alive` 를 **바꿀 수 있는** 것이 이 가짜의 요점이다."""
+
+    def __init__(self, alive=True):
+        self.alive = alive
+        self.notices: list = []
+        self.stopped = 0
+
+    def notify(self, title, message):
+        self.notices.append((title, message))
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _drive_embedded(monkeypatch, tray, *, opened=True):
+    """`_run_embedded` 를 **실제로 구동**하고 (rc, shell, bridge) 를 돌려준다.
+
+    ⚠ 소스에 `"shell.can_hide = ..."` 가 있는지 보는 단정은 이 배선을 검사하지 않는다 —
+    그 줄을 감싼 조건을 뒤집어도 문자열은 그대로 남는다(§16.7 G11-a 가 지목한 형태이며,
+    이 파일의 `test_confirm_actually_calls_the_thread_safe_dialog` 가 같은 이유로 이미
+    소스 검사에서 구동 검사로 옮겨졌다). 여기서는 배선의 **결과**를 만진다.
+    """
+    captured: dict = {}
+
+    class _Shell:
+        def __init__(self, url, title, storage):
+            self.url, self.title, self.storage = url, title, storage
+            self.can_hide = lambda: False
+            self.on_hidden = None
+            captured["shell"] = self
+
+        def run(self):
+            return opened
+
+        def show(self):
+            pass
+
+        def quit(self):
+            pass
+
+    class _Bridge:
+        def __init__(self, plan, confirm):
+            self.plan, self.port, self.nonce = plan, 1, "n"
+            self.resident_probe = None
+            captured["bridge"] = self
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def disconnect(self):
+            return True
+
+        #: ⚠ **진짜 property 객체를 그대로 재사용한다.** 여기서 fget 을 다시 부르면
+        #:   `bridge.Bridge` 가 이미 이 가짜로 monkeypatch 된 뒤라 자기 자신을 부른다
+        #:   (실측: RecursionError). 계약을 베끼지 말고 **같은 것**을 쓴다.
+        resident = _REAL_RESIDENT
+
+    monkeypatch.setattr(gui.bridge, "Bridge", _Bridge)
+    monkeypatch.setattr(gui.window_mod, "Shell", _Shell)
+    monkeypatch.setattr(gui, "_start_embedded_tray", lambda shell, br: tray)
+    monkeypatch.setattr(gui.core, "take_show_request", lambda home: False)
+    rc = gui._run_embedded(core.ConnectPlan(base="https://s", token="t"))
+    return rc, captured["shell"], captured["bridge"]
+
+
+def test_hiding_is_gated_on_the_tray_being_alive_not_merely_present(monkeypatch):
+    """**이 배선이 §P0-R 을 지킨다** — 그리고 판정은 존재가 아니라 **생존**이다.
+
+    종전 배선(`shell.allow_hide = tray is not None`)은 기동 시점의 bool 이라, 아이콘이
+    뒤에 죽어도 계속 숨겼다. 여기서는 실제로 구동해 그 사실을 만진다.
+    """
+    tray = _FakeTray(alive=True)
+    _, shell, br = _drive_embedded(monkeypatch, tray)
+    assert shell.can_hide() is True and br.resident is True
+
+    tray.alive = False                      # 탐색기 재시작 → 재등록 실패
+    assert shell.can_hide() is False, "죽은 아이콘인데 숨겨도 된다고 답한다"
+    assert br.resident is False, "패널이 「닫아도 유지됩니다」를 계속 말하게 된다"
+
+
+def test_no_tray_means_closing_ends_the_program(monkeypatch):
+    _, shell, br = _drive_embedded(monkeypatch, None)
+    assert shell.can_hide() is False
+    assert br.resident is False
+
+
+def test_the_embedded_shell_wires_the_first_close_notice(monkeypatch):
+    """닫았을 때 「여기 있습니다 · 종료는 우클릭 [종료]」를 **1회** 말한다."""
+    tray = _FakeTray(alive=True)
+    _, shell, _ = _drive_embedded(monkeypatch, tray)
+    assert shell.on_hidden is not None, "닫아도 아무 말이 없다 — 사용자는 종료된 줄 안다"
+
+    shell.on_hidden()
+    shell.on_hidden()
+    assert len(tray.notices) == 1, "닫을 때마다 말한다 — 그 자체가 소음이다"
+    assert tray.notices[0][1] == gui.HIDDEN_NOTICE
+
+
+def test_the_notice_names_the_way_to_actually_quit():
+    """사용자 요청의 두 번째 항목 — **종료는 트레이 아이콘 우클릭**이다. 닫기가 곧 종료가
+    아니게 된 이상 그 경로를 말하지 않으면 사용자는 끝내는 법을 모른다."""
+    assert "종료" in gui.HIDDEN_NOTICE and "오른쪽 클릭" in gui.HIDDEN_NOTICE
+    assert "알림 영역" in gui.HIDDEN_NOTICE
+
+
+def test_every_shell_uses_the_same_notice():
+    """껍데기마다 문구를 따로 쓰면 「종료는 우클릭」 같은 핵심 한 줄이 한쪽에만 남는다."""
+    assert _GUI_SRC.count("HIDDEN_NOTICE") >= 3, "상수를 쓰지 않고 문구를 복제했다"
+    assert "알림 영역에서 계속 연결되어 있습니다" not in _GUI_SRC, "옛 tkinter 전용 문구가 남았다"
+
+
+def test_the_notice_stays_silent_when_the_icon_is_gone(monkeypatch):
+    """아이콘이 없으면 알릴 곳도 없다 — 그리고 그때는 애초에 숨기지도 않는다."""
+    tray = _FakeTray(alive=True)
+    notice = gui._hidden_notice(tray)
+    tray.alive = False
+    notice()
+    assert tray.notices == []
 
 
 def test_the_second_launch_can_reopen_the_embedded_window():

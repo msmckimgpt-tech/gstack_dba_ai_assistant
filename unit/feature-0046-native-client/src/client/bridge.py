@@ -72,9 +72,10 @@ class Bridge:
         self.last_seen = time.monotonic()
         self._states: list[core.RuntimeState] = []
         self._runner_proc = None
-        #: 껍데기가 **알림 영역 아이콘을 실제로 띄웠는가**. 패널의 안내 문구가 이 값을 본다.
-        #: 껍데기가 세워 주기 전까지는 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
-        self.resident = False
+        #: 껍데기가 **알림 영역 아이콘이 지금 살아 있는가**를 답하는 함수. 패널의 안내 문구가
+        #: 이 판정을 본다. 껍데기가 세워 주기 전까지는 `None` 이고, 그때 `resident` 는
+        #: 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
+        self.resident_probe: Callable[[], bool] | None = None
         self._log: list[str] = []
         handler = _make_handler(self)
         self._srv = socketserver.ThreadingTCPServer((host, 0), handler)
@@ -120,6 +121,27 @@ class Bridge:
         를 본다 — 그것이 「이 창이 아직 살아 있다」의 직접 증거다.
         """
         return time.monotonic() - self.last_seen
+
+    @property
+    def resident(self) -> bool:
+        """**지금** 창을 닫아도 이 프로그램이 남는가 — 패널 안내 문구의 유일한 근거.
+
+        ⚠ 읽기 전용이다. 종전에는 껍데기가 `br.resident = tray is not None` 으로 **기동
+        시점의 bool** 을 대입했는데, 아이콘은 뜬 뒤에도 사라지므로(탐색기 재시작 후 재등록
+        실패) 그 값은 곧 거짓말이 된다 — 패널은 계속 「닫아도 유지됩니다」를 말하고, 실제로는
+        닫는 순간 프로그램이 끝난다(§P0-R). 대입 자리를 없애 그 형태를 **구조적으로 불가능**
+        하게 만들었다(§16.7 G10 — 재발 클래스의 구조 가드 승격).
+
+        ⚠ probe 가 던지면 **거짓**이다. 판정 불가를 「유지된다」로 읽으면 그 실패가 그대로
+        거짓 안내가 된다.
+        """
+        probe = self.resident_probe
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 — 모르면 「유지된다」고 말하지 않는다
+            return False
 
     # ── 검문 ──────────────────────────────────────────────────────────────────
     def authorize(self, origin: str, nonce: str, site: str) -> str | None:

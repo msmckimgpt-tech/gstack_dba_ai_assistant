@@ -10,9 +10,11 @@ feature_status: in-progress
 
 ## 1. 현재 상태
 
-트레이 상주 + 자식 창 숨김 + **주 표면(앱 창) 패널 정합**까지 완료 — feature 테스트 264건,
-**실 Windows 4종 실측 전부 PASS**, jsdom 행위 하네스 2종 PASS(대조군 포함).
-후속: 로그온 자동시작으로 «바로 연결»(토큰 보관 선행) · 자동 업데이트 · 벤더 설치기 실행.
+내장 창(WebView2) 주 경로 + **「닫기 = 트레이로 · 종료 = 아이콘 우클릭 [종료]」 3 껍데기 공통
+계약**까지 완료 — feature 테스트 399건, **실 Windows 실측 3종 PASS**(내장 hide 3연속 · 내장
+quit · tkinter 폴백), 뮤테이션 16/16 KILL.
+후속: 로그온 자동시작으로 «바로 연결»(토큰 보관 선행) · 자동 업데이트 · 벤더 설치기 실행 ·
+패널 상주 문구의 주기 갱신(아래 잔여).
 
 ## 2. Cycle — TASK-20260903T140000 Windows 네이티브 클라이언트 초판 (ROADMAP ITEM-08)
 
@@ -256,5 +258,85 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] `DISPLAY_NAME` 분리 + 설치기 아이콘 이름 · 웹 문구 정리
 - [x] 빌드 의존 동봉 + **동결본 자가진단 실행 검증**
 - [x] Windows 라이브: 창이 이 프로세스의 것 · 브리지 동일 프로세스 · 두 번째 실행 1개
-- [x] 뮤테이션 18/18 KILL (처음 살아남은 4건 = 내 테스트 구멍, 메운 뒤 재확인)
+- [x] 뮤테이션 16/16 KILL (처음 살아남은 4건 = 내 테스트 구멍, 메운 뒤 재확인)
 - [ ] 배포 후 앱 창에서 연결까지 완주 확인
+
+
+## TASK-20260904T190000-close-to-tray — 닫기는 트레이로, 종료는 우클릭 [종료]
+
+원 요청(2026-09-04): *"DQA 클라이언트 윈도우를 닫을 때, 기본적으로 트레이 아이콘으로
+남겨두도록 구성해주세요. 실제 프로세스를 종료하려면 트레이 아이콘 우클릭을 통해 종료를
+진행하는 방향으로 작동시키도록 구성해주세요."*
+
+### 2.1 Implementation Plan (§7.1)
+
+착수 시점 실측: 요청 동작의 **골격은 이미 main 에 있었다**(PR #1576 이 18:58 머지되며 내장 창
+`Shell._on_closing` 을 들여왔다). 그래서 이 cycle 은 **새로 만드는 것이 아니라, 그 골격이
+사용자가 겪는 상황에서 실제로 성립하는지**를 닫는다.
+
+| 대상 | 심볼 | 완료 판정 |
+|---|---|---|
+| `src/client/window.py` | `Shell.can_hide`(bool→Callable) · `Shell.on_hidden` · `Shell.last_error` · `_on_closing` | 아이콘 사망 후 닫기가 **창을 파괴**한다 |
+| `src/client/gui.py` | `_tray_alive` · `_hidden_notice` · `HIDDEN_NOTICE` · `_run_embedded` · `_run_browser_shell` · `ClientApp._tray_live` | 세 껍데기가 **같은 판정·같은 문구**를 쓴다 |
+| `src/client/bridge.py` | `resident`(읽기 전용 property) · `resident_probe` | `br.resident = …` 대입이 **AttributeError** |
+| `tests/windows/verify_embedded_close.py` | (신설) | 실 Windows 에서 `hide`·`quit` 두 모드 PASS |
+
+위험도: **Minor**(§12.3 — 비파괴적 · 인증/데이터/외부비용 무관). 계획은 문서화 목적.
+
+**[다의어] 「DQA 클라이언트 윈도우」**
+- 고른 독해: **세 껍데기 전부** — 내장 WebView2 창(주 경로) · 브라우저 앱 창 · tkinter 폴백 창.
+- 버린 독해: 내장 창 하나만. (사용자가 실제로 보는 것은 그것이지만, 폴백으로 내려간 사용자에게
+  계약이 달라지면 그 사람에게는 요청이 이행되지 않은 것이다.)
+- 예시(관측 가능한 값): 창 [X] 를 누른 뒤 `tasklist | findstr DQAConnect` 가 **여전히 1건**이고,
+  알림 영역 아이콘 우클릭 → [종료] 뒤에는 **0건**이다.
+
+### 항목
+
+- [x] `Shell.can_hide` 를 **값 → 호출**로 (닫는 순간 판정 · 판정 불가 시 닫는다)
+- [x] `gui._tray_alive` 단일 seam — tkinter `_tray_live` 도 이것을 부른다(§16.7 G8-a)
+- [x] `Bridge.resident` 읽기 전용 property + `resident_probe` — 대입 자리를 없애 구조 봉인(G10)
+- [x] 첫 닫기 1회 안내 `HIDDEN_NOTICE` — **종료 경로(우클릭 [종료])를 문구에 명시**, 세 껍데기 공유
+- [x] `Shell.last_error` — 실패를 삼키되 조용하지 않게(하네스 초판 FAIL 을 이 필드가 진단)
+- [x] 소스-텍스트 단정 2건을 **구동 단정**으로 교체(§16.7 G11-a — 문자열은 남고 실행만 빠지는 형태)
+- [x] 실 Windows 하네스 신설 `verify_embedded_close.py` (`hide`/`quit` 2모드) — 3연속 결정적 PASS
+- [x] 하네스 결함 2건 자체 적발·수정: 제목이 같은 **트레이 창**을 집던 것 / 데몬 워커가 주 스레드
+      종료에 잘려 마지막 단정이 결과 파일에 없던 것
+- [x] codex 적대 리뷰 **2라운드** — 1R P1 0/P2 1(브라우저 껍데기 안내 부재) → 대응 → 2R P1 0/
+      P2 1(**그 대응이 만든 결함**: 무신호를 「닫힘」으로 추정) → **되돌림** + 결정을 테스트
+      2건으로 잠금. 수렴 판정: 마지막 라운드 P1 0
+- [x] 단위 399건 통과 · 뮤테이션 16/16 KILL · CI 등가 세트 회귀 0(기존 실패는 main 에서도 동일)
+- [ ] **브라우저 껍데기 패널 문구에 종료 경로 추가** — `_paintResidency` 가 「알림 영역에 남아
+      있습니다」까지만 말한다(별도 페이지 `ai-connect.js` 는 [종료] 를 말한다). 아래 항목과
+      같은 `static/**` cycle 로 묶는다.
+- [ ] **패널 문구의 주기 갱신** — `client-bridge.js` 가 `resident` 를 패널 초기화에 **1회만**
+      묻는다. 브리지 쪽은 이제 매번 새로 판정하지만, 아이콘이 창을 연 뒤에 죽으면 화면 문장은
+      낡은 채 남는다. 고치는 자리는 이미 도는 20초 ping 틱(`client-bridge.js`)이고 변경은
+      1~2줄이다. **이번 cycle 에서 제외한 이유**: `static/**` 을 건드리면 check #13 시각검증
+      hard gate 가 걸리는데, 그 패널을 실제로 띄우면 `discover` 가 자동으로 돌아 **사용자의 AI
+      사용량을 쓴다**(`initClientPanel` → `refresh()` → `verify_answers`). 별도 cycle 로 묶어
+      PB-0008 을 한 번에 치르는 편이 싸다.
+- [ ] ⛔ **BLOCKED(권한) 유지**: `.github/workflows/ci.yml` 에 이 feature 의 tests 미등재 —
+      토큰에 `workflow` 스코프가 없어 푸시가 거부된다. 이번 399건도 **CI 에서는 돌지 않는다**.
+
+## 9. Requested Scope (요청 범위 자기-열거)
+
+- [x] `"윈도우를 닫을 때, 기본적으로 트레이 아이콘으로 남겨두도록"` — 산출물: `Shell._on_closing`
+      + `can_hide` 배선(3 껍데기) · 배선 확인: **실 Windows** `verify_embedded_close.py hide`
+      3연속 PASS(`is_window=True visible=False`) · tkinter `verify_gui.py` PASS
+- [x] `"실제 프로세스를 종료하려면 트레이 아이콘 우클릭을 통해 종료"` — 산출물: 세 껍데기 공통
+      트레이 메뉴 `[종료]`(`shell.quit` / `_SHELL_QUIT` / `_quit`) · 배선 확인: **실 Windows**
+      `verify_embedded_close.py quit` PASS(`dispatched=True is_window=False`, 메뉴
+      `[(1024,'창 열기'),(1026,'연결 끊기'),(1028,'종료')]`)
+- [x] `"기본적으로"` — 배선 확인: 트레이가 뜨면 별도 설정 없이 그 동작이며, 사용자가 그 사실을
+      **첫 닫기에 1회 안내**로 알게 된다(`HIDDEN_NOTICE`)
+
+**주장 affordance 실측 (G3)**: 화면·문구가 주장하는 것 — ① 닫아도 계속 실행 ② 두 번 눌러 복귀
+③ 우클릭 [종료] 로 완전 종료. 셋 다 실 Windows 에서 **구동**해 확인했다(추정 아님).
+
+**경계변수 양측 검증 (G4)**: 이 로직의 정확성이 걸린 변수는 **아이콘의 생존**이고, 그 경계는
+「기동 시점」이 아니라 「닫는 시점」이다.
+- 아이콘 **살아 있음** → 닫기 = 숨김 (`is_window=True visible=False`) — 실 Windows 실측
+- 아이콘 **죽음**(`tray.stop()` 후) → 닫기 = **파괴** (`is_window=False`) — 실 Windows 실측
+- 아이콘 **애초에 없음** → 닫기 = 종료 — 단위 테스트
+- 판정 **불가**(예외) → 닫기 = 종료 — 단위 테스트
+경계 한쪽만 재면 종전 배선(존재 판정)도 통과한다 — 그것이 이 cycle 이 닫은 결함이다.

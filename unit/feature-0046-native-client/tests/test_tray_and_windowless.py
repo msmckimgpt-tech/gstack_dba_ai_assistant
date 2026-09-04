@@ -28,6 +28,7 @@ import os
 import queue
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -662,7 +663,7 @@ class _FakeBridge:
         self.idle_seconds = idle
         self._connected = connected
         self.disconnects = 0
-        self.resident = False
+        self.resident_probe = None
 
     @property
     def connected(self):
@@ -728,6 +729,58 @@ def test_the_serve_loop_can_always_be_ended__no_hang_by_construction():
     gui._SHELL_QUIT.set()
     assert _serve_until_done(_FakeBridge(idle=0.0), _live_tray()), "[종료] → 즉시 종료"
     gui._SHELL_QUIT.clear()
+
+
+def test_the_browser_shell_does_not_guess_that_the_window_closed():
+    """**추정으로 안내하지 않는다** (codex 적대 리뷰 2026-09-04, 2라운드).
+
+    이 껍데기의 창은 브라우저의 것이라 `WM_CLOSE` 가 우리에게 오지 않는다. 한때 무신호
+    (`idle_seconds`)를 「닫혔다」로 읽어 안내를 냈는데 그 추정은 틀린다 — 패널의 20초 ping 은
+    `initClientPanel` **안에서** 시작하므로(`client-bridge.js` L178, L96 조기 반환 뒤)
+    **연결 모달을 한 번도 열지 않은 사용자는 ping 을 아예 보내지 않고**, 배경 브라우저는
+    타이머를 스로틀한다. 그러면 **창이 열려 있는데** 「알림 영역에 있습니다」를 말하게 된다 —
+    이 cycle 이 없애려던 바로 그 형태다(§P0-R).
+
+    ⚠ 이 단정은 「기능이 없다」를 잠그는 것이 **아니라**, 「없는 근거로 말하지 않는다」는
+    결정을 잠근다. 다시 붙이려면 **실제 닫힘 신호**(패널의 `pagehide` → 브리지 통지 등)를
+    먼저 만들어야 한다.
+    """
+    tray = _live_tray()
+    gui._SHELL_QUIT.clear()
+    br = _FakeBridge(idle=10_000.0)          # 오래 무신호 — 그러나 닫혔다는 증거가 아니다
+    import threading as th
+
+    done = th.Event()
+    th.Thread(target=lambda: (gui._serve_confirms(queue.Queue(), br, idle_limit=1_000_000.0,
+                                                  tray=tray),
+                              done.set()), daemon=True).start()
+    time.sleep(1.5)
+    gui._SHELL_QUIT.set()
+    assert done.wait(timeout=5.0)
+    assert tray.backend.balloons == [], \
+        f"무신호를 「닫혔다」로 읽어 안내했다 — 창이 열려 있을 수 있다: {tray.backend.balloons}"
+
+
+def test_the_hidden_notice_is_only_wired_where_we_own_the_close_event():
+    """안내를 다는 자리는 **닫힘을 이벤트로 받는 껍데기**뿐이다 — 내장 창과 tkinter.
+
+    브라우저 껍데기에 다시 배선되면 위 단정이 잡지만, **어디에 달렸는지**를 한 자리에서
+    보이게 두는 편이 다음 작업자에게 낫다.
+    """
+    tree = ast.parse((_SRC / "client" / "gui.py").read_text(encoding="utf-8"))
+    # ⚠ 텍스트가 아니라 **호출 노드**를 센다 — 주석·docstring 이 이름을 언급해도 배선이 아니다
+    #   (§16.7 G11-a: 존재 단정에서 비-코드를 제외한다).
+    wired = {fn.name for fn in ast.walk(tree)
+             if isinstance(fn, ast.FunctionDef) and fn.name != "_hidden_notice"
+             and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                     and c.func.id == "_hidden_notice" for c in ast.walk(fn))}
+    assert wired == {"_run_embedded"}, (
+        f"안내 배선 자리가 예상과 다르다: {wired} — tkinter 는 `_told_about_tray` 로 자체 1회 "
+        f"계약을 갖고 `HIDDEN_NOTICE` 상수를 공유한다")
+    tk_close = next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef) and n.name == "_on_window_close")
+    assert any(isinstance(n, ast.Name) and n.id == "HIDDEN_NOTICE"
+               for n in ast.walk(tk_close)), "tkinter 판이 공유 문구를 쓰지 않는다"
 
 
 def test_without_a_tray_the_old_idle_contract_is_unchanged():
@@ -800,9 +853,26 @@ def test_run_client_tells_the_bridge_whether_it_is_resident():
         fn = next(n for n in ast.walk(tree)
                   if isinstance(n, ast.FunctionDef) and n.name == name)
         body = ast.unparse(fn)
-        assert "br.resident = tray is not None" in body, \
-            f"{name}: 브리지에 상주 여부를 알려 주지 않는다 — 패널이 판단 근거를 못 받는다"
+        # ⚠ **값이 아니라 판정을 넘긴다.** 종전 배선(`br.resident = tray is not None`)은
+        #   기동 시점의 bool 이라 아이콘이 뒤에 죽어도 패널은 계속 「닫아도 유지됩니다」를
+        #   말했다 — 그리고 그 순간 이 경로의 수명 루프는 유휴로 끝난다(§P0-AE).
+        assert "br.resident_probe = lambda: _tray_alive(tray)" in body, \
+            f"{name}: 상주 판정을 넘기지 않는다 — 패널이 낡은 사실로 말하게 된다"
+        assert "br.resident =" not in body, \
+            f"{name}: 상주를 값으로 대입한다 — 그 값은 아이콘이 죽는 순간 거짓이 된다"
         assert "tray" in body and "_start_" in body, f"{name}: 트레이를 세우지 않는다"
+
+
+def test_the_bridge_refuses_a_residency_value(monkeypatch):
+    """**구조 가드** — 대입 자리를 없애 「기동 시점 bool」 형태를 불가능하게 한다(§16.7 G10).
+
+    이 결함 클래스는 이 저장소에서 두 번 났다(tkinter 판 `_tray_live` 로 한 번, 내장·브라우저
+    껍데기의 `resident` 로 다시). 점수정 대신 **대입 자체가 실패**하게 둔다.
+    """
+    b = _bridge_module()
+    br = b.Bridge.__new__(b.Bridge)
+    with pytest.raises(AttributeError):
+        br.resident = True
 
 
 # ── 10. 브리지의 수명 창구 ───────────────────────────────────────────────────────
@@ -832,16 +902,39 @@ def test_bridge_reports_and_cuts_the_connection(tmp_path):
     assert any("끊었" in l for l in br._log), "끊은 사실이 로그에 남지 않는다"
 
 
-def test_status_carries_residency_and_defaults_to_false():
-    """모르면 「유지된다」고 말하지 않는다 — 기본값은 거짓이다."""
+def _status_bridge():
     b = _bridge_module()
     br = b.Bridge.__new__(b.Bridge)
     br._log, br._states, br._runner_proc = [], [], None
     br.plan = core.ConnectPlan(base="https://h", token="t")
-    br.resident = False
+    br.resident_probe = None
+    return br
+
+
+def test_status_carries_residency_and_defaults_to_false():
+    """모르면 「유지된다」고 말하지 않는다 — 배선 전 기본값은 거짓이다."""
+    br = _status_bridge()
     assert br._do_status({})["resident"] is False
-    br.resident = True
+    br.resident_probe = lambda: True
     assert br._do_status({})["resident"] is True
+
+
+def test_status_follows_the_icon_right_now_not_at_startup():
+    """**패널이 매번 새로 묻는다.** 아이콘이 죽으면 그 다음 status 부터 거짓이어야 한다."""
+    br = _status_bridge()
+    alive = {"v": True}
+    br.resident_probe = lambda: alive["v"]
+    assert br._do_status({})["resident"] is True
+    alive["v"] = False
+    assert br._do_status({})["resident"] is False, \
+        "낡은 판정으로 「닫아도 유지됩니다」를 계속 말한다"
+
+
+def test_a_probe_that_raises_reads_as_not_resident():
+    """판정 불가를 「유지된다」로 읽으면 그 실패가 그대로 거짓 안내가 된다."""
+    br = _status_bridge()
+    br.resident_probe = lambda: (_ for _ in ()).throw(RuntimeError("모름"))
+    assert br._do_status({})["resident"] is False
 
 
 # ── 11. 패널 문구는 판정을 받아서 쓴다 ────────────────────────────────────────────
