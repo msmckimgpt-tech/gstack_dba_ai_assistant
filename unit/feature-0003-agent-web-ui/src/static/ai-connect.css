@@ -2,16 +2,19 @@
    두 화면 다 브라우저에 단독으로 뜨는 페이지다(SPA 밖). 그래서 app.css 에 의존하지 않고
    여기서 닫는다 — SPA 스타일이 바뀌어도 인증 화면이 깨지지 않아야 한다. */
 
+/* ⚠ 값을 여기서 «정하지» 않는다 — 서비스 디자인 시스템(css/base.css)에서 끌어온다.
+   종전에는 같은 뜻의 색을 따로 정해 서비스와 미세하게 어긋나 있었다(2026-09-04 발견).
+   폴백 값은 base.css 를 못 실은 경우를 위한 것이고, 실릴 때는 시스템 값이 이긴다. */
 :root {
-  --aic-bg: #f6f7f9;
-  --aic-card: #ffffff;
-  --aic-fg: #1f2328;
-  --aic-muted: #656d76;
-  --aic-line: #d8dee4;
-  --aic-accent: #1f6feb;
+  --aic-bg: var(--bg, #f7f7f4);
+  --aic-card: var(--surface, #ffffff);
+  --aic-fg: var(--text, #26251e);
+  --aic-muted: var(--text-muted, #656d76);
+  --aic-line: var(--border, #e6e5e0);
+  --aic-accent: var(--primary, #2563eb);
   --aic-accent-fg: #ffffff;
-  --aic-warn-bg: #fff8e5;
-  --aic-warn-line: #e5c675;
+  --aic-warn-bg: var(--tag-warn-bg, #fff8e5);
+  --aic-warn-line: var(--border-subtle, #e5c675);
 }
 
 * { box-sizing: border-box; }
