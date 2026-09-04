@@ -252,3 +252,68 @@ def test_old_island_values_are_gone():
     root = css[css.find(":root {"):css.find("}", css.find(":root {"))]
     for stale in ("#1f6feb", "#f6f7f9", "#1f2328", "#d8dee4"):
         assert stale not in root, f"옛 섬 값 {stale} 이 토큰 정의에 남아 있다"
+
+
+# ── 5. 수명 신호 — 브라우저 프로세스는 신뢰할 수 없다 ────────────────────────────
+#
+# ⚠ 실측 2026-09-04: 종전 판은 **띄운 브라우저 프로세스**가 살아 있는 동안 브리지를 유지했다.
+#   Chrome 이 **이미 떠 있으면** 새 창을 기존 인스턴스에 위임하고 런처 프로세스는 **즉시
+#   종료한다**(exit=0, 5초 내 확인). 그래서 브리지가 곧바로 닫혔고 앱 창의 패널은
+#   「연결 프로그램에 닿지 못했습니다」만 봤다 — 전 경로가 여기서 끊겼다.
+
+def test_lifetime_is_not_tied_to_the_browser_process():
+    """**이 단정이 종전 결함을 잡는다.**"""
+    code = _code_of(_SRC / "client" / "gui.py", "_serve_confirms")
+    assert "proc.poll()" not in code, "브라우저 프로세스로 수명을 판정한다"
+    assert "idle_seconds" in code, "패널 생존 신호로 판정하지 않는다"
+
+
+def test_bridge_tracks_when_the_panel_last_spoke(tmp_path, monkeypatch):
+    from client import bridge as bridge_mod
+    from client import core as core_mod
+    plan = core_mod.ConnectPlan(base="https://svc.example", token="t", home=tmp_path)
+    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    try:
+        import time
+        b.last_seen = time.monotonic() - 50
+        assert b.idle_seconds >= 49
+        b.act("ping", {})
+        assert b.idle_seconds < 1, "요청을 받고도 유휴 시간이 줄지 않는다"
+    finally:
+        b.stop()
+
+
+def test_every_action_refreshes_liveness(tmp_path):
+    """`ping` 만이 아니라 **모든 요청**이 생존 신호여야 한다 — 탐지 중에는 ping 이 밀린다."""
+    from client import bridge as bridge_mod
+    from client import core as core_mod
+    import time
+    plan = core_mod.ConnectPlan(base="https://svc.example", token="t", home=tmp_path)
+    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    try:
+        b.last_seen = time.monotonic() - 50
+        b.act("status", {})
+        assert b.idle_seconds < 1
+    finally:
+        b.stop()
+
+
+def test_panel_sends_a_heartbeat():
+    js = _JS.read_text(encoding="utf-8")
+    assert 'call("ping"' in js and "setInterval" in js, "패널이 생존 신호를 보내지 않는다"
+
+
+def test_heartbeat_is_more_frequent_than_the_idle_limit():
+    """신호 주기가 한도보다 길면 **정상 사용 중에** 브리지가 죽는다."""
+    js = _JS.read_text(encoding="utf-8")
+    m = re.search(r"call\(\"ping\", \{\}\)[^;]*;\s*\}, (\d+)\)", js)
+    assert m, "생존 신호 주기를 찾지 못했다"
+    period_s = int(m.group(1)) / 1000
+    code = _code_of(_SRC / "client" / "gui.py", "_serve_confirms")
+    src = (_SRC / "client" / "gui.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_serve_confirms")
+    limit = next(d.value for a, d in zip(fn.args.args[::-1], fn.args.defaults[::-1])
+                 if a.arg == "idle_limit")
+    assert period_s * 2 <= limit, \
+        f"신호 주기 {period_s}s 가 유휴 한도 {limit}s 에 비해 너무 길다(신호 한 번만 놓쳐도 죽는다)"

@@ -39,6 +39,7 @@ import json
 import secrets
 import socketserver
 import threading
+import time
 import urllib.parse
 from typing import Callable
 
@@ -66,6 +67,8 @@ class Bridge:
         #: 실행마다 새로 만든다. 재시작하면 옛 링크는 죽는다.
         self.nonce = secrets.token_urlsafe(24)
         self.origin = _origin_of(plan.base)
+        #: 마지막으로 패널이 말을 걸어온 시각. **수명 판정의 근거**다 — 아래 설명 참조.
+        self.last_seen = time.monotonic()
         self._states: list[core.RuntimeState] = []
         self._runner_proc = None
         self._log: list[str] = []
@@ -98,6 +101,22 @@ class Bridge:
         finally:
             self._srv.server_close()
 
+    @property
+    def idle_seconds(self) -> float:
+        """패널이 말을 걸어온 지 얼마나 됐는가.
+
+        ## 왜 이것이 수명 신호인가 (실측 2026-09-04)
+
+        처음에는 **띄운 브라우저 프로세스**가 살아 있는 동안 브리지를 유지했다. 틀렸다 —
+        Chrome 이 **이미 떠 있으면** 새 창을 기존 인스턴스에 위임하고 런처 프로세스는
+        **즉시 종료한다**(실측: exit=0, 5초 내). 그래서 브리지가 곧바로 닫혔고 앱 창의
+        패널은 「연결 프로그램에 닿지 못했습니다」만 봤다.
+
+        프로세스 계보는 브라우저마다·상황마다 다르다. 대신 **패널이 실제로 말을 걸어오는가**
+        를 본다 — 그것이 「이 창이 아직 살아 있다」의 직접 증거다.
+        """
+        return time.monotonic() - self.last_seen
+
     # ── 검문 ──────────────────────────────────────────────────────────────────
     def authorize(self, origin: str, nonce: str, site: str) -> str | None:
         """통과시키지 못하는 이유를 돌려준다. `None` 이면 통과.
@@ -116,6 +135,7 @@ class Bridge:
 
     # ── 동작 ──────────────────────────────────────────────────────────────────
     def act(self, action: str, body: dict) -> dict:
+        self.last_seen = time.monotonic()
         fn = getattr(self, f"_do_{action}", None)
         if fn is None:
             return {"ok": False, "error": "unknown_action"}
@@ -123,6 +143,10 @@ class Bridge:
             return {"ok": False, "error": "declined",
                     "detail": "사용자가 이 컴퓨터에서의 실행을 승인하지 않았습니다."}
         return fn(body)
+
+    def _do_ping(self, _body: dict) -> dict:
+        """패널이 살아 있음을 알린다. `act()` 가 이미 `last_seen` 을 갱신했다."""
+        return {"ok": True}
 
     def _do_status(self, _body: dict) -> dict:
         return {"ok": True, "base": self.plan.base, "log": self._log[-40:],
