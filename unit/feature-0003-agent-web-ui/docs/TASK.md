@@ -13106,3 +13106,10 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] 미검증 항목(개명 하드 컷오버의 실 OS 재등록·클라이언트 설치 경로 = 사용자 머신 전용 관측)을 항목 detail + 접힌 summary 양쪽에 명시
 - [x] `node --check` + `tests/verify_release_notes.mjs` **34/0 ALL PASS**
 - [x] 캐시버스터 수기 bump 금지 준수 (`?v=dev` 고정 · 빌드 주입 · 배포 ABORT 가드)
+
+## TASK-20260904T200000 — 웹 셸 전 경로 실측
+
+- [x] 앱 창이 DQA 자체를 연다 (탭·주소창 없음)
+- [x] 패널이 AI 3개 탐지·응답 확인 · 연결 버튼 활성화
+- [x] WSL 런타임 연결 시 「답할 AI 있음」 ✅ (잔여 항목 해소)
+- [ ] gemini 로그인 명령 — 미설치로 측정 불가 (커버리지 과장 안 함)
