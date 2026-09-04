@@ -25,6 +25,9 @@ Tauri 를 쓰면 Rust 껍데기 + 파이썬 sidecar 두 런타임을 묶어야 �
   판정해야 하고, 그것이 P0-H 가 기각한 모양이다.
 - **연결 축과 AI 축을 갈라 말한다** — 서버 연결이 멀쩡한데 「연결 확인 실패」로 보이면 안 된다
   (feature-0043 REQ-20260901-win-ai-detect).
+- **화면이 말하는 것은 그 화면에 실재해야 한다** (P0-R). 「창을 닫아도 계속 연결됩니다」는
+  트레이가 **실제로 떠 있을 때만** 하는 말이다 — 트레이가 없는데 그 문구를 쓰면 사용자는
+  창을 닫고 프로그램을 잃는다.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import core
+from . import core, tray as tray_mod
 
 
 class ClientApp:
@@ -50,10 +53,23 @@ class ClientApp:
         #: 마지막 탐지 결과. `_selected()` 가 label → 상태 객체를 되찾는 근거다.
         self._states: list = []
         self._events: queue.Queue = queue.Queue()
+        #: 트레이로 숨겼다는 안내를 **한 번만** 낸다. 매번 띄우면 그 자체가 소음이다.
+        self._told_about_tray = False
+        #: 연결 작업 **단일 실행** 게이트. 창 버튼과 트레이 메뉴가 같은 `_connect` 를
+        #: 부르므로, 없으면 빠르게 두 번 눌렀을 때 러너가 **둘** 뜨고 앞의 것은 제어
+        #: 불가능해진다(codex 적대 리뷰 2026-09-04 P1).
+        self._connect_gate = threading.Lock()
+        #: 종료가 시작됐다. 진행 중이던 연결이 **종료 뒤에 러너를 띄우는 것**을 막는다.
+        self._shutting_down = False
 
         self.root = tk.Tk()
         self.root.title("내 AI 연결")
         self.root.geometry("560x420")
+
+        # ⚠ 트레이는 **창보다 먼저** 세운다. 성공 여부가 창 닫기 동작을 가르기 때문이다
+        #   (실패했는데 「닫으면 트레이로」로 동작하면 사용자가 프로그램을 잃는다).
+        self.tray = self._start_tray()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
 
         self.status = tk.StringVar(value="확인하는 중…")
         self.detail = tk.StringVar(value="")
@@ -75,6 +91,99 @@ class ClientApp:
 
         self.root.after(100, self._drain)
         self._bg(self._discover)
+
+    # ── 트레이 ─────────────────────────────────────────────────────────────────
+    def _start_tray(self):
+        """알림 영역 아이콘을 세운다. 실패하면 `None` — 호출부가 폴백한다.
+
+        ⚠ 메뉴 콜백은 **트레이 스레드**에서 불린다. 거기서 tkinter 를 만지면 정의되지 않은
+        동작이다(tkinter 는 단일 스레드 계약). 그래서 콜백은 큐에 넣기만 하고, 실제 조작은
+        `_drain` 이 도는 GUI 스레드에서 `_on_tray` 가 한다.
+        """
+        self._tray_toggle = tray_mod.TrayItem(label="연결 끊기", enabled=False,
+                                              action=lambda: self._post("tray", "toggle"))
+        items = [
+            tray_mod.TrayItem(label="창 열기", default=True,
+                              action=lambda: self._post("tray", "show")),
+            tray_mod.TrayItem(separator=True),
+            self._tray_toggle,
+            tray_mod.TrayItem(separator=True),
+            tray_mod.TrayItem(label="종료", action=lambda: self._post("tray", "quit")),
+        ]
+        tray = tray_mod.Tray(title="내 AI 연결", items=items, tooltip="내 AI 연결 — 확인하는 중…")
+        return tray if tray.start() else None
+
+    def _tray_live(self) -> bool:
+        """**지금** 알림 영역에 아이콘이 있는가.
+
+        ⚠ `self.tray is not None` 으로 판정하면 안 된다 — 아이콘은 뜬 뒤에도 사라질 수 있고
+        (탐색기 재시작 후 재등록 실패 등), 그때 「닫으면 트레이로」를 유지하면 사용자는 창을
+        닫고 **어디에도 없는** 프로세스를 갖는다. 이 기능이 막으려던 상태가 시점만 뒤로 밀려
+        재현되는 형태다(codex 적대 리뷰 2026-09-04 P1).
+        """
+        return self.tray is not None and self.tray.alive
+
+    def _tray_say(self, text: str, connected: bool | None = None) -> None:
+        """트레이 툴팁·메뉴를 현재 상태에 맞춘다. 트레이가 없으면 아무 일도 하지 않는다."""
+        if self.tray is None:
+            return
+        self.tray.set_tooltip(f"내 AI 연결 — {text}")
+        if connected is not None:
+            self._tray_toggle.enabled = True
+            self._tray_toggle.label = "연결 끊기" if connected else "다시 연결"
+
+    def _on_tray(self, action):
+        """트레이 메뉴 선택 — **GUI 스레드에서** 처리한다."""
+        if action == "show":
+            self._show_window()
+        elif action == "quit":
+            self._quit()
+        elif action == "toggle":
+            if self.runner_proc and self.runner_proc.poll() is None:
+                self._stop()
+            else:
+                self._start_connect()
+
+    def _show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        try:
+            self.root.focus_force()
+        except Exception:  # noqa: BLE001 — 포커스 탈취가 막힌 환경에서도 창은 떠야 한다
+            pass
+
+    def _on_window_close(self):
+        """[X] — 트레이가 살아 있으면 **숨기고 계속 연결**, 없으면 종료.
+
+        ⚠ 이 분기가 이 기능의 전부다. 트레이 없이 숨기면 창도 트레이 아이콘도 없는 프로세스가
+        남아 사용자가 작업 관리자로만 끌 수 있다.
+        """
+        if not self._tray_live():
+            self._quit()
+            return
+        self.root.withdraw()
+        if not self._told_about_tray:
+            self._told_about_tray = True
+            self.tray.notify("내 AI 연결",
+                             "알림 영역에서 계속 연결되어 있습니다. "
+                             "아이콘을 두 번 누르면 창이 다시 열립니다.")
+
+    def _quit(self):
+        """정말 끝낸다 — 러너를 내리고 아이콘을 지우고 창을 파괴한다.
+
+        ⚠ `_shutting_down` 을 **먼저** 세운다. 진행 중이던 `_connect` 가 이 시점 이후에
+        `spawn_runner` 까지 가면 **화면 없는 상주 러너**가 남는다 — 사용자는 그것을 끌 방법이
+        없고 자기 AI 사용량만 계속 나간다(codex 적대 리뷰 2026-09-04 P1).
+        """
+        self._shutting_down = True
+        self._stop()
+        if self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+        try:
+            self.root.destroy()
+        except Exception:  # noqa: BLE001 — 이미 파괴된 뒤 두 번 불려도 조용히 끝낸다
+            pass
 
     # ── 스레드 경계 ────────────────────────────────────────────────────────────
     def _bg(self, fn, *a):
@@ -111,6 +220,7 @@ class ClientApp:
         self.status.set("문제가 생겼습니다")
         self.detail.set(msg)
         self._say(f"[오류] {msg}")
+        self._tray_say("문제가 생겼습니다")
 
     def _on_log(self, msg):
         self._say(msg)
@@ -119,6 +229,7 @@ class ClientApp:
         for w in self.box.winfo_children():
             w.destroy()
         self._states = list(states)
+        self._tray_say("연결 준비" if any(s.usable for s in states) else "쓸 수 있는 AI 없음")
         # ⚠ **답하는 것만** 쓸 수 있다고 말한다. 로그인 여부로 판정하면 로그인은 됐지만
         #   답하지 못하는 런타임을 「연결할 준비가 되었습니다」로 표시한다(실측 2026-09-03).
         usable = [s for s in states if s.usable]
@@ -134,7 +245,7 @@ class ClientApp:
                                           variable=self.runtime,
                                           value=s.label).pack(side="left")
             self.runtime.set(usable[0].label)
-            self._buttons([("이 서비스에 연결", lambda: self._bg(self._connect))])
+            self._buttons([("이 서비스에 연결", self._start_connect)])
             return
         # 로그인은 됐는데 답하지 못한 것들 — 그 사실을 **감추지 않는다**.
         mute = [s for s in states if s.logged_in and s.answers is False]
@@ -150,7 +261,9 @@ class ClientApp:
                                       variable=self.runtime, value=s.label).pack(side="left")
             if not self.runtime.get():
                 self.runtime.set(installed[0].label)
-            self._buttons([("로그인", lambda: self._bg(self._login))])
+            # 고른 런타임은 **GUI 스레드에서** 확정해 넘긴다 — 워커에서 tkinter 변수를
+            # 읽는 것은 단일 스레드 계약 위반이다(codex P1, `_start_connect` 와 같은 이유).
+            self._buttons([("로그인", lambda: self._bg(self._login, self._selected()))])
             return
         if mute:
             self.status.set("답할 수 있는 AI 가 없습니다")
@@ -171,8 +284,17 @@ class ClientApp:
                        ("다시 확인", lambda: self._bg(self._discover))])
 
     def _buttons(self, specs):
+        """행동 버튼을 다시 그린다.
+
+        ⚠ 트레이가 살아 있으면 **모든 화면 상태에** [트레이로 숨기기] 를 붙인다. 특정 상태
+        에서만 붙이면 「어느 화면에서는 되고 어느 화면에서는 안 되는」 기능이 되고, 사용자는
+        그 규칙을 배울 방법이 없다.
+        """
         for w in self.actions.winfo_children():
             w.destroy()
+        specs = list(specs)
+        if self._tray_live():
+            specs.append(("트레이로 숨기기", self._on_window_close))
         for label, cmd in specs:
             self._ttk.Button(self.actions, text=label, command=cmd).pack(side="left", padx=4)
 
@@ -210,6 +332,16 @@ class ClientApp:
                 self._post("log", f"    → {'답합니다' if s.answers else s.detail}")
         self._post("runtimes", found)
 
+    def _start_connect(self):
+        """연결을 시작한다 — **GUI 스레드에서만** 부른다.
+
+        ⚠ 여기서 고른 런타임을 **확정해 넘기는 것**이 요점이다. `self.runtime` 은 tkinter
+        변수라 워커 스레드에서 읽으면 단일 스레드 계약 위반이고(codex P1), 게다가 그 값은
+        **라벨**(「claude (WSL)」)이라 그대로 러너에 주면 WSL 런타임이 이름부터 어긋난다 —
+        `_selected()` 가 돌려주는 상태 객체를 넘겨야 자리(Windows/WSL)까지 따라간다.
+        """
+        self._bg(self._connect, self._selected())
+
     def _selected(self):
         """지금 고른 런타임의 **상태 객체**. 이름만으로는 Windows/WSL 자리를 구분 못 한다."""
         want = self.runtime.get()
@@ -218,8 +350,7 @@ class ClientApp:
                 return s
         return None
 
-    def _login(self):
-        st = self._selected()
+    def _login(self, st=None):
         if st is None:
             self._post("error", "고른 AI 를 찾지 못했습니다. [다시 확인] 을 눌러 주세요.")
             return
@@ -229,43 +360,77 @@ class ClientApp:
         self._post("log", msg)
         self._bg(self._discover)
 
-    def _connect(self):
-        self._post("log", "사내 CA 를 받는 중…")
-        ca = core.install_ca(self.plan)
-        self._post("log", "CA 지문 일치.")
-        self._post("log", "러너를 받는 중…")
-        runner = core.install_runner(self.plan, ca)
-        self._post("log", "러너 체크섬 일치.")
-        rc, out = core.check_connection(self.plan, runner, ca, self.runtime.get() or None)
-        if rc == 4:
-            self._post("log", "서버 연결은 정상인데 쓸 수 있는 AI 를 찾지 못했습니다.")
-            self._bg(self._discover)
+    def _connect(self, runtime=None):
+        """워커 스레드에서 도는 연결 절차. 고른 런타임은 **인자로 받는다**(위 참조).
+
+        게이트는 연결이 **살아 있는 동안 계속 잡고 있다** — 상주 중에 「다시 연결」이 들어와
+        러너가 둘이 되는 것을 막는다. 러너가 끝나면(정상 종료·`terminate`) 읽기 루프가 끝나며
+        자동으로 풀린다.
+        """
+        if not self._connect_gate.acquire(blocking=False):
+            self._post("log", "이미 연결 작업이 진행 중입니다.")
             return
-        if rc != 0:
-            self._post("error", out[:400] or f"연결 확인에 실패했습니다(코드 {rc}).")
-            return
-        self._post("log", "연결 확인 완료 — 상주를 시작합니다.")
-        # 여기까지 왔다는 것은 이 서버가 실제로 동작했다는 뜻이다 — 이제 고정한다.
-        core.pin_server(self.plan.home, self.plan.base)
-        self.runner_proc = core.spawn_runner(self.plan, runner, ca, self.runtime.get() or None)
-        self._post("connected", None)
-        for line in iter(self.runner_proc.stdout.readline, ""):
-            self._post("log", line.rstrip())
+        try:
+            self._post("log", "사내 CA 를 받는 중…")
+            ca = core.install_ca(self.plan)
+            self._post("log", "CA 지문 일치.")
+            self._post("log", "러너를 받는 중…")
+            runner = core.install_runner(self.plan, ca)
+            self._post("log", "러너 체크섬 일치.")
+            rc, out = core.check_connection(self.plan, runner, ca, runtime)
+            if rc == 4:
+                self._post("log", "서버 연결은 정상인데 쓸 수 있는 AI 를 찾지 못했습니다.")
+                self._bg(self._discover)
+                return
+            if rc != 0:
+                self._post("error", out[:400] or f"연결 확인에 실패했습니다(코드 {rc}).")
+                return
+            if self._shutting_down:
+                # 확인하는 동안 사용자가 종료했다. 여기서 띄우면 화면 없는 러너가 남는다.
+                self._post("log", "종료 중이라 연결을 시작하지 않았습니다.")
+                return
+            self._post("log", "연결 확인 완료 — 상주를 시작합니다.")
+            # 여기까지 왔다는 것은 이 서버가 실제로 동작했다는 뜻이다 — 이제 고정한다.
+            core.pin_server(self.plan.home, self.plan.base)
+            proc = core.spawn_runner(self.plan, runner, ca, runtime)
+            self.runner_proc = proc
+            if self._shutting_down:
+                # spawn 과 종료가 겹쳤다 — 띄운 것을 즉시 되돌린다(고아 방지).
+                proc.terminate()
+                return
+            self._post("connected", None)
+            for line in iter(proc.stdout.readline, ""):
+                self._post("log", line.rstrip())
+        finally:
+            self._connect_gate.release()
 
     def _on_connected(self, _):
         self.status.set("연결됨 — 이제 웹에서 질문하면 이 컴퓨터의 AI 가 답합니다")
-        self.detail.set("이 창을 닫으면 연결이 끊깁니다.")
+        # ⚠ 이 문장은 트레이 상태에 따라 **사실이 갈린다**. 트레이가 없으면 창을 닫는 것이
+        #   곧 종료이고, 있으면 창을 닫아도 연결이 유지된다. 한쪽 문구를 양쪽에 쓰면 둘 중
+        #   하나는 거짓말이 된다(P0-R).
+        self.detail.set("창을 닫아도 알림 영역에서 연결이 유지됩니다. "
+                        "완전히 끝내려면 알림 영역 아이콘에서 [종료] 를 누르세요."
+                        if self._tray_live() else "이 창을 닫으면 연결이 끊깁니다.")
+        self._tray_say("연결됨", connected=True)
         self._buttons([("연결 끊기", self._stop)])
 
     def _stop(self):
         if self.runner_proc and self.runner_proc.poll() is None:
             self.runner_proc.terminate()
         self.status.set("연결이 끊겼습니다")
-        self._buttons([("다시 연결", lambda: self._bg(self._connect))])
+        self._tray_say("연결 끊김", connected=False)
+        self._buttons([("다시 연결", self._start_connect)])
 
     def run(self):
         self.root.mainloop()
-        self._stop()
+        # mainloop 를 빠져나온 뒤(창 파괴·종료) 러너와 아이콘을 반드시 정리한다 —
+        # 남으면 화면 어디에도 없는 프로세스가 사용자의 AI 사용량을 계속 쓴다.
+        if self.runner_proc and self.runner_proc.poll() is None:
+            self.runner_proc.terminate()
+        if self.tray is not None:
+            self.tray.stop()
+            self.tray = None
 
 
 def tell(message: str, title: str = "내 AI 연결") -> None:

@@ -1,0 +1,649 @@
+"""트레이 상주 + 자식 창 숨김 — 계약 잠금 (사용자 요청 2026-09-04).
+
+## 이 스위트가 잠그는 두 축
+
+1. **자식 창이 뜨지 않는다.** `--windowed` 빌드는 자기 콘솔이 없어서, 콘솔 앱을 띄우면
+   Windows 가 자식에게 **새 콘솔을 할당**한다. 출력은 파이프로 받으므로 그 창은 **비어
+   있고**, 사용자 눈에는 검은 창이 깜빡이는 것만 보인다(제보 2026-09-04). 종전에는
+   `spawn_runner` 하나만 가드를 갖고 있었고 탐지·로그인·연결확인은 전부 새고 있었다 —
+   **가드가 있었는데 모수가 노출면보다 좁았다**(§16.7 G12). 여기서는 census 를
+   «자식을 띄우는 함수 전체» 로 잡는다.
+
+2. **트레이가 실패하면 창 닫기 동작이 바뀌지 않는다.** 「닫으면 트레이로」가 트레이 없이
+   동작하면 사용자는 **프로그램을 잃는다** — 화면에도 알림 영역에도 없다. 그래서
+   `Tray.start()` 의 반환값이 load-bearing 이고, 그것을 무시하지 않는지 확인한다.
+
+## 왜 소스 검사만 하지 않는가
+
+`test_every_child_spawn_is_windowless` 는 소스 census 이고 «빠뜨린 자리» 를 잡는다. 그러나
+그것만으로는 「함수가 그 값을 **실제로 subprocess 에 넘기는가**」를 모른다 — 그래서 같은
+축을 **행위 테스트**(`test_<fn>_actually_passes_windowless_flags`)로 한 번 더 구동한다.
+둘은 서로 다른 실패를 잡는다(§16.7 G11 의 「텍스트 검사보다 실 행위 테스트」).
+"""
+
+from __future__ import annotations
+
+import ast
+import os
+import queue
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_UNIT = Path(__file__).resolve().parents[1]
+_SRC = _UNIT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from client import core, gui, tray as tray_mod  # noqa: E402
+
+_CORE_SRC = (_SRC / "client" / "core.py").read_text(encoding="utf-8")
+
+#: Windows 상수 — 리눅스 `subprocess` 에는 없다. nt 를 흉내 낼 때 주입한다.
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _as_windows(monkeypatch) -> None:
+    """`core` 가 보는 세계를 Windows 로 만든다.
+
+    ⚠ 상수까지 주입하는 것이 요점이다. `getattr(subprocess, "CREATE_NO_WINDOW", 0)` 는
+    리눅스에서 **조용히 0** 을 내므로, 상수를 주입하지 않으면 「가드를 지운 코드」와
+    「가드가 있는 코드」가 같은 결과를 낸다 — 그런 단정은 아무것도 검사하지 않는다.
+
+    ⚠ `os.name` 을 통째로 바꾸지 않는다. 그러면 `pathlib.Path` 가 `WindowsPath` 로 바뀌어
+    이 테스트와 무관한 코드가 `NotImplementedError` 로 죽는다(실측 2026-09-04). 판정 함수
+    하나만 바꿔 끼운다 — 그러라고 `core._is_windows` 가 있다.
+    """
+    monkeypatch.setattr(core, "_is_windows", lambda: True)
+    monkeypatch.setattr(core.subprocess, "CREATE_NO_WINDOW", _CREATE_NO_WINDOW,
+                        raising=False)
+
+
+# ── 1. 자식 창 숨김 — 소스 census ────────────────────────────────────────────────
+
+def _spawner_functions() -> list[ast.FunctionDef]:
+    out = []
+    for fn in ast.walk(ast.parse(_CORE_SRC)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = ast.unparse(fn)
+        if "subprocess.run(" in body or "subprocess.Popen(" in body:
+            out.append(fn)
+    return out
+
+
+def test_every_child_spawn_is_windowless():
+    """**모수는 «자식을 띄우는 함수 전체»** 다 — 한 곳만 고치면 나머지가 조용히 샌다.
+
+    이 단정이 종전 코드를 잡는다: `_run` 과 `check_connection` 에는 가드가 없었고,
+    사용자가 본 깜빡임은 **전부** 그 두 자리에서 났다.
+    """
+    spawners = _spawner_functions()
+    assert len(spawners) >= 3, (
+        f"자식을 띄우는 함수를 {len(spawners)}개만 찾았다 — 검사 모수가 좁다: "
+        f"{[f.name for f in spawners]}")
+    for fn in spawners:
+        assert "hidden_child_kwargs()" in ast.unparse(fn), (
+            f"`{fn.name}` 이 창 숨김 인자를 넘기지 않는다 — GUI 앱에서 검은 콘솔 창이 뜬다. "
+            f"`**hidden_child_kwargs()` 를 주거나 kwargs 에 합쳐라.")
+
+
+def test_windowless_guard_lives_in_exactly_one_place():
+    """가드를 자리마다 따로 적으면 한 자리만 고쳐지는 드리프트가 재발한다.
+
+    `CREATE_NO_WINDOW` 리터럴은 `hidden_child_kwargs` **안에만** 있어야 한다.
+    """
+    for fn in ast.walk(ast.parse(_CORE_SRC)):
+        if not isinstance(fn, ast.FunctionDef) or fn.name == "hidden_child_kwargs":
+            continue
+        assert "CREATE_NO_WINDOW" not in ast.unparse(fn), (
+            f"`{fn.name}` 이 창 숨김 가드를 자체 선언한다 — 정본은 `hidden_child_kwargs` 하나다")
+
+
+# ── 2. 자식 창 숨김 — 행위 ──────────────────────────────────────────────────────
+
+def test_hidden_child_kwargs_is_empty_off_windows(monkeypatch):
+    """리눅스·macOS 에서 `creationflags` 를 주면 `subprocess` 가 즉시 예외를 낸다."""
+    monkeypatch.setattr(core, "_is_windows", lambda: False)
+    assert core.hidden_child_kwargs() == {}
+
+
+def test_is_windows_reflects_this_platform():
+    """이음매가 **실제 판정과 어긋나지 않는지** 본다 — 늘 참을 내는 이음매는 위장이다."""
+    assert core._is_windows() is (os.name == "nt")
+
+
+def test_hidden_child_kwargs_asks_windows_for_no_console(monkeypatch):
+    _as_windows(monkeypatch)
+    kw = core.hidden_child_kwargs()
+    assert kw.get("creationflags") == _CREATE_NO_WINDOW, (
+        "CREATE_NO_WINDOW 가 빠졌다 — 콘솔 앱 자식에게 새 콘솔 창이 할당된다")
+
+
+@pytest.mark.parametrize("call", ["_run", "check_connection", "spawn_runner"])
+def test_child_spawn_actually_passes_windowless_flags(call, monkeypatch, tmp_path):
+    """소스가 아니라 **실제 넘어간 kwargs** 를 본다.
+
+    census(위)는 「빠뜨린 자리」를, 이 테스트는 「적어 놓고 안 넘기는 자리」를 잡는다.
+    """
+    seen: dict = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            seen.update(kw)
+            self.stdout = None
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    _as_windows(monkeypatch)
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    monkeypatch.setattr(core.subprocess, "Popen", FakePopen)
+
+    plan = core.ConnectPlan(base="https://h", token="t", home=tmp_path)
+    if call == "_run":
+        core._run(["x"])
+    elif call == "check_connection":
+        core.check_connection(plan, tmp_path / "r.py", tmp_path / "ca.crt")
+    else:
+        core.spawn_runner(plan, tmp_path / "r.py", tmp_path / "ca.crt")
+
+    assert seen.get("creationflags") == _CREATE_NO_WINDOW, (
+        f"`{call}` 이 창 숨김 인자를 실제로 넘기지 않았다 (넘어간 kwargs: {sorted(seen)})")
+
+
+def test_login_path_is_windowless_too(monkeypatch):
+    """로그인 대행도 같은 자리를 지난다 — 브라우저 승인 왕복에 검은 창이 끼면 안 된다."""
+    seen: dict = {}
+    _as_windows(monkeypatch)
+    monkeypatch.setattr(core.subprocess, "run",
+                        lambda argv, **kw: (seen.update(kw),
+                                            subprocess.CompletedProcess(argv, 0, "", ""))[1])
+    monkeypatch.setattr(core, "which_runtime", lambda n: f"/fake/{n}")
+    ok, _ = core.login("claude")
+    assert ok
+    assert seen.get("creationflags") == _CREATE_NO_WINDOW
+
+
+# ── 3. 트레이 — 순수 로직 ────────────────────────────────────────────────────────
+
+def _tray(items=None, **kw):
+    return tray_mod.Tray(title="t", items=items or [], **kw)
+
+
+class FakeBackend:
+    """`Tray` 가 요구하는 backend 계약의 최소 구현 — 실패 모드를 주입할 수 있다."""
+
+    def __init__(self, can_create: bool = True):
+        self.can_create = can_create
+        self.alive = False
+        self.tooltips = 0
+        self.balloons: list[tuple[str, str]] = []
+        self.shutdowns = 0
+        self.served = False
+
+    def serve(self, tray, ready):
+        self.served = True
+        self.alive = bool(self.can_create)
+        ready.set()
+
+    def refresh_tooltip(self):
+        self.tooltips += 1
+
+    def balloon(self, title, message):
+        self.balloons.append((title, message))
+
+    def shutdown(self):
+        self.shutdowns += 1
+        self.alive = False
+
+
+def test_tray_is_unavailable_off_windows():
+    if os.name == "nt":  # pragma: no cover
+        pytest.skip("Windows 에서는 사용 가능하다")
+    assert tray_mod.available() is False
+
+
+def test_command_ids_never_collide_with_the_no_selection_value():
+    """`TrackPopupMenu` 는 **0** 으로 「사용자가 그냥 닫았다」를 알린다.
+
+    첫 항목에 0 을 배정하면 그 둘이 구별되지 않아 메뉴를 닫기만 해도 동작이 실행된다.
+    """
+    t = _tray([tray_mod.TrayItem(label="a")])
+    assert t.command_id(0) > 0
+
+
+def test_dispatch_runs_the_selected_item_only():
+    hits: list[str] = []
+    t = _tray([tray_mod.TrayItem(label="열기", action=lambda: hits.append("열기")),
+               tray_mod.TrayItem(label="종료", action=lambda: hits.append("종료"))])
+    assert t.dispatch(t.command_id(1)) is True
+    assert hits == ["종료"]
+
+
+def test_dispatch_ignores_separator_disabled_and_unknown():
+    hits: list[str] = []
+    t = _tray([tray_mod.TrayItem(separator=True),
+               tray_mod.TrayItem(label="꺼짐", enabled=False,
+                                 action=lambda: hits.append("꺼짐"))])
+    assert t.dispatch(t.command_id(0)) is False
+    assert t.dispatch(t.command_id(1)) is False
+    assert t.dispatch(9999) is False
+    assert hits == []
+
+
+def test_default_item_is_what_double_click_runs():
+    hits: list[str] = []
+    t = _tray([tray_mod.TrayItem(label="보조", action=lambda: hits.append("보조")),
+               tray_mod.TrayItem(label="열기", default=True,
+                                 action=lambda: hits.append("열기"))])
+    assert t.activate_default() is True
+    assert hits == ["열기"]
+
+
+def test_callback_failure_does_not_escape_but_is_recorded():
+    """콜백 예외가 새면 메시지 루프가 끝나고 **아이콘이 사라진다**.
+
+    사용자에게는 「트레이 아이콘이 없어졌다」로만 보이고 원인은 어디에도 남지 않는다.
+    """
+    def boom():
+        raise RuntimeError("의도된 실패")
+
+    t = _tray([tray_mod.TrayItem(label="터짐", action=boom)])
+    assert t.dispatch(t.command_id(0)) is True   # 예외가 새지 않는다
+    assert "의도된 실패" in (t.last_error or "")  # 조용하지도 않다
+
+
+def test_tooltip_is_truncated_to_the_win32_limit():
+    """`szTip` 을 넘기면 `Shell_NotifyIconW` 가 통째로 실패해 **아이콘이 사라진다**."""
+    t = _tray()
+    t.set_tooltip("가" * 500)
+    assert len(t.tooltip) == tray_mod.TOOLTIP_LIMIT
+
+
+# ── 4. 트레이 — 수명과 폴백 ──────────────────────────────────────────────────────
+
+def test_start_reports_failure_when_the_icon_cannot_be_created():
+    """**이 반환값이 창 닫기 동작을 가른다** — 거짓인데 참으로 읽으면 사용자가 앱을 잃는다."""
+    backend = FakeBackend(can_create=False)
+    t = _tray(backend=backend)
+    assert t.start() is False
+    assert t.started is False
+    assert backend.served, "backend 를 부르지도 않고 실패로 단정했다"
+
+
+def test_start_succeeds_and_stop_removes_the_icon():
+    backend = FakeBackend()
+    t = _tray(backend=backend)
+    assert t.start() is True
+    t.stop()
+    assert backend.shutdowns == 1
+    t.stop()  # 두 번 불러도 안전하다
+    assert backend.shutdowns == 1
+
+
+def test_start_does_not_block_on_the_message_loop():
+    """실 backend 의 `serve` 는 **돌아오지 않는다**(루프). 반환값을 기다리면 앱이 얼어붙는다."""
+    import threading as _th
+
+    class BlockingBackend(FakeBackend):
+        def serve(self, tray, ready):
+            self.alive = True
+            ready.set()
+            _th.Event().wait(30)   # 메시지 루프 흉내 — 돌아오지 않는다
+
+    t = _tray(backend=BlockingBackend())
+    assert t.start() is True, "생성 신호를 받고도 반환값을 기다리다 실패로 읽었다"
+
+
+def test_tooltip_and_balloon_only_reach_a_live_icon():
+    backend = FakeBackend()
+    t = _tray(backend=backend)
+    t.set_tooltip("아직 안 떴다")
+    t.notify("제목", "본문")
+    assert backend.tooltips == 0 and backend.balloons == []
+    t.start()
+    t.set_tooltip("이제 떴다")
+    t.notify("제목", "본문")
+    assert backend.tooltips == 1 and backend.balloons == [("제목", "본문")]
+
+
+# ── 5. GUI 배선 — 창 닫기 분기 ───────────────────────────────────────────────────
+
+class FakeRoot:
+    def __init__(self):
+        self.withdrawn = 0
+        self.destroyed = 0
+        self.deiconified = 0
+
+    def withdraw(self):
+        self.withdrawn += 1
+
+    def destroy(self):
+        self.destroyed += 1
+
+    def deiconify(self):
+        self.deiconified += 1
+
+    def lift(self):
+        pass
+
+    def focus_force(self):
+        pass
+
+
+def _app(tray=None):
+    """`ClientApp` 을 tkinter 없이 세운다 — 검사 대상은 **분기 로직**이지 위젯이 아니다."""
+    app = gui.ClientApp.__new__(gui.ClientApp)
+    app.root = FakeRoot()
+    app.tray = tray
+    app.runner_proc = None
+    app._told_about_tray = False
+    app._events = queue.Queue()
+    return app
+
+
+def test_close_without_tray_quits_the_program():
+    """트레이가 없으면 [X] 는 **종료**다. 숨기면 끌 수 없는 프로세스가 남는다."""
+    app = _app(tray=None)
+    app._stop = lambda: None
+    app._on_window_close()
+    assert app.root.destroyed == 1
+    assert app.root.withdrawn == 0
+
+
+def test_close_with_tray_hides_and_keeps_running():
+    backend = FakeBackend()
+    t = _tray(backend=backend)
+    t.start()
+    app = _app(tray=t)
+    app._on_window_close()
+    assert app.root.withdrawn == 1
+    assert app.root.destroyed == 0, "트레이가 있는데 프로그램을 끝냈다 — 연결이 끊긴다"
+    assert backend.balloons, "어디로 갔는지 알려 주지 않으면 사용자는 프로그램을 잃은 줄 안다"
+
+
+def test_hide_tells_the_user_once_not_every_time():
+    t = _tray(backend=FakeBackend())
+    t.start()
+    app = _app(tray=t)
+    for _ in range(4):
+        app._on_window_close()
+    assert len(t.backend.balloons) == 1, "닫을 때마다 알리면 그 자체가 소음이다"
+
+
+def test_tray_quit_really_ends_the_program():
+    t = _tray(backend=FakeBackend())
+    t.start()
+    app = _app(tray=t)
+    stopped: list[int] = []
+    app._stop = lambda: stopped.append(1)
+    app._on_tray("quit")
+    assert stopped == [1], "러너를 내리지 않고 끝냈다 — 고아 프로세스가 남는다"
+    assert app.root.destroyed == 1
+    assert app.tray is None
+
+
+def test_tray_show_reopens_the_window():
+    app = _app(tray=_tray(backend=FakeBackend()))
+    app._on_tray("show")
+    assert app.root.deiconified == 1
+
+
+# ── 6. GUI 배선 — 트레이 콜백은 GUI 스레드를 침범하지 않는다 ─────────────────────────
+
+def test_tray_menu_callbacks_only_enqueue(monkeypatch):
+    """메뉴 콜백은 **트레이 스레드**에서 불린다. 거기서 tkinter 를 만지면 정의되지 않은 동작이다.
+
+    그래서 콜백이 하는 일은 큐에 넣는 것뿐이어야 한다 — 실제 조작은 `_drain` 이 도는
+    GUI 스레드에서 일어난다.
+    """
+    made: list = []
+
+    class RecordingTray(tray_mod.Tray):
+        def start(self):  # 리눅스에서도 「떴다」로 둔다 — 검사 대상은 콜백의 내용이다
+            made.append(self)
+            self._started = True
+            return True
+
+    monkeypatch.setattr(gui.tray_mod, "Tray", RecordingTray)
+    app = _app()
+    tray = gui.ClientApp._start_tray(app)
+    assert tray is not None and made, "트레이 생성 경로가 바뀌었다"
+
+    for item in tray.items:
+        if item.action is not None:
+            item.action()
+    posted = []
+    while not app._events.empty():
+        posted.append(app._events.get_nowait())
+
+    assert [kind for kind, _ in posted] == ["tray"] * len(posted)
+    assert {payload for _, payload in posted} == {"show", "toggle", "quit"}
+    assert app.root.withdrawn == app.root.destroyed == app.root.deiconified == 0, (
+        "트레이 콜백이 GUI 를 직접 만졌다 — 다른 스레드에서 tkinter 를 호출하는 것이다")
+
+
+def test_tray_menu_has_exactly_one_default_item(monkeypatch):
+    """굵게 표시되는 기본 동작은 하나여야 한다 — 여럿이면 더블클릭 결과가 순서에 의존한다."""
+    app = _app()
+    items = []
+
+    class Capture(tray_mod.Tray):
+        def start(self):
+            items.extend(self.items)
+            self._started = True
+            return True
+
+    monkeypatch.setattr(gui.tray_mod, "Tray", Capture)
+    gui.ClientApp._start_tray(app)
+    assert sum(1 for i in items if i.default and not i.separator) == 1
+
+
+# ── 7. 화면 문구가 트레이 실재와 일치하는가 (P0-R) ────────────────────────────────
+
+class FakeVar:
+    def __init__(self):
+        self.value = ""
+
+    def set(self, v):
+        self.value = v
+
+    def get(self):
+        return self.value
+
+
+def _connected_app(tray):
+    app = _app(tray=tray)
+    app.status, app.detail = FakeVar(), FakeVar()
+    app._tray_toggle = tray_mod.TrayItem(label="연결 끊기")
+    app._buttons = lambda specs: None
+    return app
+
+
+def test_connected_message_promises_persistence_only_with_a_tray():
+    """「창을 닫아도 유지됩니다」는 트레이가 **실제로 떠 있을 때만** 하는 말이다.
+
+    트레이 없이 그 문구를 쓰면 사용자는 창을 닫고 연결을 잃는다 — 문구가 화면의 실재와
+    어긋나는 형태(P0-R)이고, 이 저장소가 이미 한 번 낸 결함이다.
+    """
+    with_tray = _connected_app(_tray(backend=FakeBackend()))
+    with_tray.tray.start()
+    with_tray._on_connected(None)
+    assert "닫아도" in with_tray.detail.get()
+
+    without = _connected_app(None)
+    without._on_connected(None)
+    assert "닫으면 연결이 끊깁니다" in without.detail.get()
+    assert "닫아도" not in without.detail.get()
+
+
+def test_tray_tooltip_follows_the_connection_state():
+    app = _connected_app(_tray(backend=FakeBackend()))
+    app.tray.start()
+    app._on_connected(None)
+    assert "연결됨" in app.tray.tooltip
+    assert app._tray_toggle.label == "연결 끊기" and app._tray_toggle.enabled
+
+    app.runner_proc = None
+    app._stop()
+    assert "연결 끊김" in app.tray.tooltip
+    assert app._tray_toggle.label == "다시 연결"
+
+
+# ── 8. 적대 리뷰(codex 2026-09-04) P1 4건의 회귀 잠금 ────────────────────────────
+#
+# 네 건 모두 **트레이를 붙이면서 새로 도달 가능해진** 경로다. 창 버튼 하나뿐이던 때는
+# 동시에 두 번 누를 수 없었고, 창을 닫으면 곧 종료라 「종료 뒤에 러너가 뜬다」도 없었다.
+
+def _connect_app(monkeypatch, tmp_path, tray=None):
+    """`_connect` 를 실제로 구동할 수 있는 최소 앱 + 코어 대역."""
+    import threading as _th
+
+    app = _app(tray=tray)
+    app.plan = core.ConnectPlan(base="https://h", token="t", home=tmp_path)
+    app._connect_gate = _th.Lock()
+    app._shutting_down = False
+    app._states = []
+    app.runtime = FakeVar()
+
+    class _Pipe:
+        """빈 파이프 — `iter(readline, "")` 가 즉시 끝난다(러너가 바로 종료한 것과 같다)."""
+
+        def readline(self):
+            return ""
+
+    class FakeProc:
+        def __init__(self):
+            self.stdout = _Pipe()
+            self.terminated = 0
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated += 1
+
+    seen = {"runtime": "unset", "spawned": []}
+
+    def fake_spawn(plan, runner, ca, runtime=None):
+        seen["runtime"] = runtime
+        proc = FakeProc()
+        seen["spawned"].append(proc)
+        return proc
+
+    monkeypatch.setattr(core, "install_ca", lambda plan: tmp_path / "ca.crt")
+    monkeypatch.setattr(core, "install_runner", lambda plan, ca: tmp_path / "r.py")
+    monkeypatch.setattr(core, "check_connection", lambda *a, **k: (0, ""))
+    monkeypatch.setattr(core, "pin_server", lambda home, base: None)
+    monkeypatch.setattr(core, "spawn_runner", fake_spawn)
+    return app, seen
+
+
+def test_connect_is_single_flight(monkeypatch, tmp_path):
+    """창 버튼과 트레이 메뉴가 **같은** `_connect` 를 부른다 — 두 번 누르면 러너가 둘 뜬다.
+
+    앞의 러너는 `runner_proc` 에서 밀려나 **제어할 수 없는 고아**가 된다(codex P1).
+    """
+    app, seen = _connect_app(monkeypatch, tmp_path)
+    app._connect_gate.acquire()          # 첫 연결이 진행 중인 상태를 만든다
+    app._connect(None)                   # 두 번째 시도
+    assert seen["spawned"] == [], "연결이 진행 중인데 러너를 또 띄웠다"
+    assert any("이미 연결 작업이 진행 중" in str(p) for _, p in list(app._events.queue))
+
+
+def test_connect_releases_the_gate_even_on_failure(monkeypatch, tmp_path):
+    """게이트가 안 풀리면 그 뒤로 **영원히 다시 연결할 수 없다** — 잠금은 해제가 계약이다."""
+    app, _ = _connect_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(core, "install_ca", lambda plan: (_ for _ in ()).throw(RuntimeError("x")))
+    with pytest.raises(RuntimeError):
+        app._connect(None)
+    assert app._connect_gate.acquire(blocking=False), "실패 경로에서 게이트가 잠긴 채 남았다"
+
+
+def test_connect_does_not_leave_a_runner_after_quit(monkeypatch, tmp_path):
+    """종료가 시작된 뒤 연결이 끝나면 **화면 없는 상주 러너**가 남는다.
+
+    사용자는 그것을 끌 방법이 없고 자기 AI 사용량만 계속 나간다(codex P1).
+    """
+    app, seen = _connect_app(monkeypatch, tmp_path)
+    app._shutting_down = True
+    app._connect(None)
+    assert seen["spawned"] == [], "종료 중인데 러너를 띄웠다"
+
+    # `--check` 가 도는 **동안** 종료가 들어온 경우 — 아예 띄우지 않는다
+    app2, seen2 = _connect_app(monkeypatch, tmp_path)
+
+    def quit_during_check(*a, **k):
+        app2._shutting_down = True
+        return 0, ""
+
+    monkeypatch.setattr(core, "check_connection", quit_during_check)
+    app2._connect(None)
+    assert seen2["spawned"] == [], "확인 도중 종료됐는데 러너를 띄웠다"
+
+    # spawn 과 종료가 **겹친** 경우 — 이미 띄운 것을 즉시 되돌려야 한다.
+    # (첫 관문을 통과한 뒤에 종료가 들어오는 창이 실제로 존재한다.)
+    app3, seen3 = _connect_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(core, "pin_server",
+                        lambda home, base: setattr(app3, "_shutting_down", True))
+    app3._connect(None)
+    assert seen3["spawned"] and seen3["spawned"][0].terminated == 1, \
+        "spawn 과 종료가 겹쳤는데 러너를 되돌리지 않았다"
+
+
+def test_selection_is_read_on_the_gui_thread_and_passed_as_state(monkeypatch, tmp_path):
+    """워커에서 tkinter 변수를 읽지 않는다. 그리고 넘기는 것은 **라벨이 아니라 상태 객체**다.
+
+    라벨(「claude (WSL)」)을 그대로 넘기면 러너에 `--ai "claude (WSL)"` 이 가서 WSL 런타임은
+    이름부터 어긋난다 — 적대 리뷰의 스레드 지적을 고치면서 함께 드러난 결함이다.
+    """
+    app, seen = _connect_app(monkeypatch, tmp_path)
+    wsl = core.RuntimeState(name="claude", path="/usr/bin/claude", where="wsl")
+    app._states = [wsl]
+    app.runtime.set(wsl.label)
+
+    captured = []
+    app._bg = lambda fn, *a: captured.append((fn, a))
+    app._start_connect()
+    assert captured and captured[0][1] == (wsl,), \
+        f"선택을 GUI 스레드에서 확정해 넘기지 않았다: {captured}"
+
+    fn, args = captured[0]
+    fn(*args)
+    assert seen["runtime"] is wsl, "러너에 라벨 문자열이 넘어갔다 — WSL 자리를 잃는다"
+
+
+def test_close_quits_when_the_icon_died_after_a_successful_start():
+    """아이콘은 **뜬 뒤에도 사라진다**(탐색기 재시작 후 재등록 실패 등).
+
+    그때 `tray is not None` 만 보고 숨기면 사용자는 창도 아이콘도 없는 프로세스를 갖는다 —
+    이 기능이 막으려던 상태가 시점만 뒤로 밀려 재현되는 형태다(codex P1).
+    """
+    backend = FakeBackend()
+    t = _tray(backend=backend)
+    t.start()
+    assert t.alive
+    backend.alive = False               # 아이콘이 사라졌다 (started 는 여전히 True)
+    assert t.started and not t.alive
+
+    app = _app(tray=t)
+    app._stop = lambda: None
+    app._on_window_close()
+    assert app.root.destroyed == 1, "죽은 아이콘을 믿고 창만 숨겼다"
+    assert app.root.withdrawn == 0
+
+
+def test_connected_message_follows_liveness_not_mere_presence():
+    """「닫아도 유지됩니다」는 아이콘이 **지금 살아 있을 때만** 하는 말이다."""
+    backend = FakeBackend()
+    t = _tray(backend=backend)
+    t.start()
+    app = _connected_app(t)
+    backend.alive = False
+    app._on_connected(None)
+    assert "닫으면 연결이 끊깁니다" in app.detail.get(), \
+        "아이콘이 죽었는데 「닫아도 유지」라고 말한다"

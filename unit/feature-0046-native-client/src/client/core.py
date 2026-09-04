@@ -195,16 +195,69 @@ class RuntimeState:
         return bool(_CLI.get(self.name, {}).get("login"))
 
 
+def _is_windows() -> bool:
+    """이 프로세스가 Windows 위인가.
+
+    ⚠ **테스트 이음매다.** 이 판정을 `os.name` 직접 참조로 두면, Windows 동작을 검증하려는
+    테스트가 `os.name` 을 통째로 바꿔야 하고 그 순간 `pathlib.Path` 가 `WindowsPath` 로
+    바뀌어 **관계없는 코드가 깨진다**(리눅스에서 `NotImplementedError`). 실제로 그렇게
+    깨졌다 — 그래서 판정을 함수 하나로 좁혀 그것만 바꿔 끼울 수 있게 한다.
+    """
+    return os.name == "nt"
+
+
+def hidden_child_kwargs() -> dict:
+    """자식을 **창 없이** 띄우는 `subprocess` 인자. Windows 밖에서는 빈 dict.
+
+    ## 왜 이 함수가 있는가 (사용자 제보 2026-09-04)
+
+    「AI 플랫폼과 연결을 진행할 때 그 윈도우가 켜지고 꺼지는 깜빡임」 — 이 프로그램은
+    `--windowed` 로 빌드돼 **자기 콘솔이 없다**. 그 상태에서 콘솔 서브시스템 실행 파일
+    (`claude.exe`·`codex.exe`·`wsl.exe`)을 띄우면 Windows 가 **자식에게 새 콘솔 창을
+    할당**한다. 우리는 출력을 파이프로 받으므로 그 창에는 **아무것도 찍히지 않고**, 사용자
+    눈에는 검은 창이 떴다 사라지는 것만 보인다. 한 번 탐지에 그 창이 8~12개 뜬다
+    (런타임 3종 × `wsl -l -q` · `wsl -e command -v` · `auth status` · 가용성 질문).
+
+    빈 창이 깜빡이는 것은 **정보가 0인데 불안은 100**이다 — 사용자는 그것을 고장으로 읽는다.
+
+    ## 왜 두 가지를 함께 주는가
+
+    - `CREATE_NO_WINDOW` — 콘솔 앱에 **새 콘솔을 만들지 않는다**(깜빡임의 직접 원인).
+    - `STARTF_USESHOWWINDOW` + `SW_HIDE` — 자식이 **스스로 띄우는 창**을 숨긴다. 콘솔
+      할당과는 다른 축이라 한쪽만으로는 다른 쪽이 남는다.
+
+    ⚠ **한 자리에 모으는 것이 요점이다.** 종전에는 `spawn_runner` 에만 `CREATE_NO_WINDOW`
+    가 있었고 탐지·로그인·연결확인 경로에는 없었다 — 즉 가드는 존재했는데 **모수가
+    노출면보다 좁았다**. 사용자가 본 깜빡임은 전부 그 가드 밖의 호출이었다. 새 자식 실행
+    경로를 추가할 때 이 함수를 쓰지 않으면 `test_every_child_spawn_is_windowless` 가 막는다.
+    """
+    if not _is_windows():
+        return {}
+    kw: dict = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    try:
+        info = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW  # type: ignore[attr-defined]
+        info.wShowWindow = subprocess.SW_HIDE  # type: ignore[attr-defined]
+        kw["startupinfo"] = info
+    except Exception:  # noqa: BLE001 — 이 축이 없어도 CREATE_NO_WINDOW 는 유효하다
+        pass
+    return kw
+
+
 def _run(argv: list[str], timeout: int = 30) -> tuple[int, str]:
     """자식 실행 — **셸을 거치지 않는다**(argv 직접).
 
     ⚠ 자식 입출력은 **UTF-8 명시**다. 로케일 인코딩(한국어 윈도우 `cp949`)에 맡기면 인코딩
     불가 문자에서 파이프 예외가 나고, 그 실패는 「AI 가 답을 안 한다」로만 보인다
     (feature-0043 TASK-20260902T160000 실측).
+
+    ⚠ 창은 띄우지 않는다(`hidden_child_kwargs`). 여기가 탐지·로그인·가용성 확인이 **전부**
+    지나가는 자리라, 이 한 줄이 빠지면 연결 한 번에 검은 창이 8~12개 깜빡인다.
     """
     try:
         p = subprocess.run(argv, capture_output=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace",
+                           **hidden_child_kwargs())
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
     except FileNotFoundError:
         return 127, "실행 파일을 찾지 못했습니다."
@@ -605,7 +658,8 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
     env_token = dict(os.environ, BRIDGE_TOKEN=plan.token)
     try:
         p = subprocess.run(argv, capture_output=True, timeout=120,
-                           encoding="utf-8", errors="replace", env=env_token)
+                           encoding="utf-8", errors="replace", env=env_token,
+                           **hidden_child_kwargs())
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
     except Exception as exc:  # noqa: BLE001
         return 1, f"{exc!r}"
@@ -619,7 +673,9 @@ def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
     kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token),
                 "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT,
                 "encoding": "utf-8", "errors": "replace"}
-    if os.name == "nt":
-        # 콘솔 창이 뜨지 않게 — GUI 앱에서 검은 창이 깜빡이면 그것만으로 「고장」으로 읽힌다.
-        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # 콘솔 창이 뜨지 않게 — GUI 앱에서 검은 창이 깜빡이면 그것만으로 「고장」으로 읽힌다.
+    # ⚠ 종전에는 이 함수만 그 가드를 갖고 있었다. 같은 가드가 필요한 자리가 셋인데 하나에만
+    #   적혀 있으면 나머지 둘은 조용히 새고, 실제로 그렇게 샜다 — 그래서 `hidden_child_kwargs`
+    #   한 곳으로 모았다(재사용은 가드를 통째로 가져와야 한다).
+    kw.update(hidden_child_kwargs())
     return subprocess.Popen(argv, **kw)  # noqa: S603

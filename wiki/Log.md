@@ -506,3 +506,13 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - **report-only(정본·소유자 소관 — 미러만 고치면 재발한다)**: ⓐ feature-0046 `FUNCTION.md` §5 빌드 플래그가 같은 파일 §P0-J·`TASK.md` 와 모순(위 참조). ⓑ 연결 체크리스트 단계 수 — `TASK.md` 는 「5단계 판정」이라 적었으나 `_connect_steps.py` 의 `key` 는 **4개**(`connected`/`listening`/`ai`/`answered`)다. 미러에는 개수를 쓰지 않고 단계 이름만 썼다. ⓒ **`docs/SECURITY.md` 에 창의 신규 공격 표면 2개(미서명 exe 배포·로그인 대행 실행·러너 수신 / `dqa-connect://` 딥링크에 실리는 세션 베어러 토큰 + 마지막-등록자-승 머신 전역 스킴 + 하드 컷오버)가 여전히 0건**이다 — §50·§51 신설 제안이 있었으나 적대 검증이 §49.3 기존 행과의 상호작용에서 결함을 지목했고 교정본을 내지 않아 fail-closed 로 보류했다. **다음 창의 최우선 항목**이며, 그때까지 SECURITY 는 이 두 표면을 모른다. ⓓ `wiki/README.md`:113 의 「미러 카드 87개/부재 34개」 분할값은 정의·시점이 달라 갱신하지 않았다(현재 실측은 85 중 84 보유이고 미보유 1건은 이 run 이 해소).
 
 [[Features/feature-0046-native-client]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0003-agent-web-ui]] · [[Flows/External-AI-Bridge]] · [[Flows/User-Journeys]]
+
+## [2026-09-04] feature | feature-0046 트레이 상주 + AI 호출 백그라운드화
+
+- **알림 영역 상주**(`client/tray.py`, stdlib `ctypes`+`Shell_NotifyIconW`, 서드파티 0): [X] 로 닫아도 연결 유지 · 우클릭 메뉴(창 열기/연결 토글/종료) · 툴팁이 상태를 말함. **트레이를 못 세우면 그 동작을 켜지 않는다**(닫기=종료로 폴백) — 트레이 없이 숨기면 사용자가 프로그램을 잃는다.
+- **자식 콘솔 창 제거**(`core.hidden_child_kwargs`): 「AI 플랫폼 창이 켜지고 꺼진다」의 정체는 콘솔 앱 자식에게 할당되는 **빈 콘솔 창**. ⚠ 가드는 원래 있었다 — `spawn_runner` **한 곳에만**. 즉 없었던 것이 아니라 **모수가 노출면보다 좁았다**(§16.7 G12).
+- **실 Windows 실측이 결함 2건 적발**(리눅스 테스트는 전부 통과 중이었다): ctypes argtypes 누락으로 x64 핸들 `OverflowError` → **아이콘 등록 자체 실패** / `MF_DEFAULT` 를 `AppendMenuW` 에 넘겨 **조용히 무시** → 기본 항목 소실(정답은 `SetMenuDefaultItem`). 검증 스크립트를 `tests/windows/` 에 **커밋**했다.
+- **codex 적대 리뷰 P1 4건 전부 유효·전부 수정** — 넷 다 «트레이를 붙이면서 새로 도달 가능해진» 경로다(워커의 tkinter 접근 · 연결 단일 실행 부재 · 종료/연결 경합 · 아이콘이 «뜬 뒤 죽는» 경우). 부수로 `_connect` 가 러너에 **라벨 문자열**을 넘겨 WSL 선택이 어긋나던 결함도 해소.
+- 177 테스트 · 뮤테이션 **21/21 KILL, NOOP 0**(NOOP 2건을 실제로 만나 패턴을 고쳐 재실행).
+
+[[Features/feature-0046-native-client]]
