@@ -1,3 +1,7 @@
+import { clientBridge, initClientPanel } from "./client-bridge.js";
+//: 패널 배선은 창을 열 때마다가 아니라 **한 번만** 한다 — 매번 하면 리스너가 쌓인다.
+let _clientPanelReady = false;
+
 // feature-0043 — AI 연결 모달 (2026-08-27 사용자 결정).
 //
 // 안내 말풍선의 `[AI 연결하기](/ai/connect)` 를 누르면 **화면을 떠나지 않고** 이 모달이 열린다.
@@ -94,6 +98,8 @@ function _onKeydown(ev) {
 }
 
 export function openConnectModal() {
+  // 연결 프로그램 안에서 열렸다면 그 능력을 쓴다 — **1회만** 배선한다.
+  if (clientBridge && !_clientPanelReady) { _clientPanelReady = true; initClientPanel(); }
   const overlay = $("connectModalOverlay");
   if (!overlay) return false;
   _lastFocus = document.activeElement;
@@ -1403,3 +1409,4 @@ export function bindConnState() {
   });
   refreshConnState();
 }
+
