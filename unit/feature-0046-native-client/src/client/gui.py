@@ -39,6 +39,10 @@ from pathlib import Path
 
 from . import appwindow, bridge, core, tray as tray_mod
 
+#: 웹 셸 경로의 [종료] 신호. 트레이 스레드가 세우고 주 스레드 루프가 읽는다 —
+#: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
+_SHELL_QUIT = threading.Event()
+
 
 class ClientApp:
     """상태 기계 + 화면. 긴 작업은 전부 워커 스레드로 — UI 가 얼면 사용자는 죽은 줄 안다."""
@@ -590,14 +594,50 @@ def run_client(plan: core.ConnectPlan) -> int:
         # 기본 브라우저가 아니면 그 창에 로그인 세션이 없을 수 있다 — 미리 말한다.
         tell("기본 브라우저가 아닌 창으로 열렸습니다.\n"
              "로그인 화면이 나오면 한 번 더 로그인해 주세요.")
+    # 상주 표면을 **두 껍데기에 같은 규약으로** 둔다 (사용자 요청 2026-09-04 재구성).
+    # 그 전에는 트레이가 tkinter 판에만 있어, 주 경로 사용자는 패널을 닫는 순간 연결을 잃었다.
+    tray = _start_shell_tray(br, url, exe)
+    br.resident = tray is not None
     try:
-        _serve_confirms(asks, br)
+        _serve_confirms(asks, br, tray=tray)
     finally:
+        if tray is not None:
+            tray.stop()
         br.stop()
     return 0
 
 
-def _serve_confirms(asks, br, idle_limit: float = 90.0) -> None:
+def _start_shell_tray(br, url: str, exe: str | None):
+    """웹 셸 경로의 알림 영역 아이콘. 못 세우면 `None` — 호출부가 종전 수명으로 돌아간다.
+
+    ## 왜 tkinter 판과 «같은 메뉴» 인가
+
+    사용자에게 이 프로그램은 하나다. 어느 껍데기로 떴는지는 우리 사정이지 사용자 사정이
+    아니다 — 두 표면이 다른 어휘를 쓰면 그것을 배우는 비용을 사용자가 낸다.
+
+    ## 왜 「다시 연결」이 없는가
+
+    이 경로에서 연결을 **거는 곳은 패널**이다(`bridge._do_connect`). 트레이가 자체 재연결을
+    가지면 같은 동작의 입구가 둘이 되고, 그 둘은 서로 다른 코드패스로 갈라진다. 그래서
+    트레이는 **패널을 다시 열어 주고**(창 열기), 연결은 거기서 건다. 끊는 것만 트레이가 한다 —
+    끊기는 패널이 없어도 해야 하는 동작이기 때문이다.
+    """
+    if not tray_mod.available():
+        return None
+    items = [
+        tray_mod.TrayItem(label="창 열기", default=True,
+                          action=lambda: appwindow.open_app_window(url, exe)),
+        tray_mod.TrayItem(separator=True),
+        tray_mod.TrayItem(label="연결 끊기", action=br.disconnect),
+        tray_mod.TrayItem(separator=True),
+        tray_mod.TrayItem(label="종료", action=lambda: _SHELL_QUIT.set()),
+    ]
+    _SHELL_QUIT.clear()
+    tray = tray_mod.Tray(title="내 AI 연결", items=items, tooltip="내 AI 연결 — 대기 중")
+    return tray if tray.start() else None
+
+
+def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None) -> None:
     """주 스레드 루프 — 확인 요청을 처리하고, **패널이 말을 끊으면** 끝낸다.
 
     ⚠ 종전에는 **띄운 브라우저 프로세스**가 살아 있는 동안 돌았다. 틀렸다 — Chrome 이 이미
@@ -616,9 +656,23 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0) -> None:
     """
     import queue as _queue
 
-    while br.idle_seconds < idle_limit:
+    tick = 0.0
+    while True:
+        if tray is not None and tray.alive:
+            # ⚠ 상주 중에는 **유휴가 종료 사유가 아니다.** 패널을 닫아 두고 쓰는 것이
+            #   상주의 의미이고, 그때도 러너는 계속 답해야 한다. 끝내는 것은 [종료] 뿐이다.
+            if _SHELL_QUIT.is_set():
+                break
+        elif br.idle_seconds >= idle_limit:
+            # 트레이가 없거나 **뜬 뒤 죽었으면** 종전 계약으로 돌아간다 — 상주할 표면이
+            #   없는데 계속 살아 있으면 사용자가 끌 수단이 없다.
+            break
         try:
             message, reply = asks.get(timeout=0.5)
         except _queue.Empty:
+            tick += 0.5
+            if tray is not None and tray.alive and tick >= 2.0:
+                tick = 0.0
+                tray.set_tooltip("내 AI 연결 — " + ("연결됨" if br.connected else "대기 중"))
             continue
         reply.put(confirm(message))

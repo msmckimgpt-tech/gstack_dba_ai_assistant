@@ -647,3 +647,215 @@ def test_connected_message_follows_liveness_not_mere_presence():
     app._on_connected(None)
     assert "닫으면 연결이 끊깁니다" in app.detail.get(), \
         "아이콘이 죽었는데 「닫아도 유지」라고 말한다"
+
+
+# ── 9. 재구성(2026-09-04): 웹 셸 주 경로에도 같은 상주 규약 ─────────────────────────
+#
+# 병렬 cycle 이 `run_client`(웹 셸)를 **주 경로**로 만들면서 트레이가 tkinter **폴백에만**
+# 남았다. 사용자에게 이 프로그램은 하나이므로 두 껍데기의 수명 계약이 갈리면 안 된다.
+# 여기서는 그 정합을 구동으로 잠근다.
+
+class _FakeBridge:
+    """`_serve_confirms` 가 보는 브리지의 최소면."""
+
+    def __init__(self, idle=0.0, connected=False):
+        self.idle_seconds = idle
+        self._connected = connected
+        self.disconnects = 0
+        self.resident = False
+
+    @property
+    def connected(self):
+        return self._connected
+
+    def disconnect(self):
+        self.disconnects += 1
+        return True
+
+
+def _live_tray():
+    t = _tray(backend=FakeBackend())
+    t.start()
+    return t
+
+
+def _serve_until_done(br, tray, idle_limit=1.0, timeout=5.0):
+    """`_serve_confirms` 를 **반드시 끝나는 형태**로 돌린다.
+
+    ⚠ 이 헬퍼가 없으면 「끝나야 하는데 안 끝나는」 결함이 **테스트 실패가 아니라 스위트
+    행(hang)** 으로 나타난다. 실제로 그랬다 — 뮤테이션 M23(죽은 아이콘을 살아있다고 판정)을
+    적용하자 이 스위트가 무한루프로 멎어 뮤테이션 실행 전체가 서 버렸다(2026-09-04 실측).
+    행은 실패보다 나쁘다: 원인이 어디인지 아무것도 말해 주지 않고, 자동화 전체를 막는다.
+    """
+    import threading as _th
+
+    done = _th.Event()
+    _th.Thread(target=lambda: (gui._serve_confirms(__import__("queue").Queue(), br,
+                                                   idle_limit=idle_limit, tray=tray),
+                               done.set()), daemon=True).start()
+    return done.wait(timeout=timeout)
+
+
+def test_idle_does_not_end_the_program_while_the_icon_is_up():
+    """**이 단정이 재구성의 핵심이다.** 상주 중에는 패널을 닫아 두고 써도 연결이 살아야 한다.
+
+    종전 계약(유휴 90초 → 종료)이 그대로면 트레이를 붙여도 사용자는 90초 뒤 연결을 잃는다.
+    """
+    import queue as q
+    import threading as th
+
+    br = _FakeBridge(idle=10_000.0)          # 유휴 한도를 한참 넘긴 상태
+    tray = _live_tray()
+    gui._SHELL_QUIT.clear()
+    done = th.Event()
+    th.Thread(target=lambda: (gui._serve_confirms(q.Queue(), br, idle_limit=1.0, tray=tray),
+                              done.set()), daemon=True).start()
+    assert not done.wait(timeout=2.0), "상주 중인데 유휴로 종료했다 — 연결이 끊긴다"
+    gui._SHELL_QUIT.set()
+    assert done.wait(timeout=5.0), "[종료] 를 눌러도 끝나지 않는다"
+
+
+def test_the_serve_loop_can_always_be_ended__no_hang_by_construction():
+    """**끝나야 하는 모든 경우가 실제로 끝나는지** 한 자리에서 확인한다.
+
+    ⚠ 이 단정이 없으면 「안 끝남」이 테스트 실패가 아니라 **스위트 행**으로 나타난다.
+    실측 2026-09-04: 뮤테이션 중 그 일이 실제로 벌어져 실행 전체가 멎었다.
+    """
+    gui._SHELL_QUIT.clear()
+    assert _serve_until_done(_FakeBridge(idle=10_000.0), None), "트레이 없음 → 유휴 종료"
+    dead = _live_tray(); dead.backend.alive = False
+    assert _serve_until_done(_FakeBridge(idle=10_000.0), dead), "죽은 아이콘 → 유휴 종료"
+    gui._SHELL_QUIT.set()
+    assert _serve_until_done(_FakeBridge(idle=0.0), _live_tray()), "[종료] → 즉시 종료"
+    gui._SHELL_QUIT.clear()
+
+
+def test_without_a_tray_the_old_idle_contract_is_unchanged():
+    """트레이가 없으면 종전 그대로 — 상주할 표면이 없는데 계속 살면 끌 수단이 없다."""
+    gui._SHELL_QUIT.clear()
+    assert _serve_until_done(_FakeBridge(idle=10_000.0), None), \
+        "트레이가 없는데 유휴로 끝나지 않았다 — 사용자가 끌 수단이 없다"
+
+
+def test_an_icon_that_died_falls_back_to_the_idle_contract():
+    """아이콘은 **뜬 뒤에도 사라진다**(탐색기 재시작 등). 그때 상주 계약을 유지하면
+    화면도 아이콘도 없는 프로세스가 남는다 — tkinter 판의 `_tray_live` 와 같은 판정이다."""
+    tray = _live_tray()
+    tray.backend.alive = False          # 아이콘이 사라졌다
+    gui._SHELL_QUIT.clear()
+    assert _serve_until_done(_FakeBridge(idle=10_000.0), tray), \
+        "아이콘이 죽었는데 상주 계약을 유지했다 — 화면에도 알림 영역에도 없는 프로세스가 남는다"
+
+
+def test_shell_tray_menu_matches_the_tkinter_shell(monkeypatch):
+    """두 껍데기가 **같은 어휘**를 쓴다 — 사용자에게 이 프로그램은 하나다."""
+    opened: list = []
+    monkeypatch.setattr(gui.appwindow, "open_app_window",
+                        lambda url, exe=None: opened.append((url, exe)))
+    monkeypatch.setattr(gui.tray_mod, "available", lambda: True)
+
+    made: list = []
+
+    class Capture(tray_mod.Tray):
+        def start(self):
+            made.append(self)
+            self._started = True
+            return True
+
+    monkeypatch.setattr(gui.tray_mod, "Tray", Capture)
+    br = _FakeBridge(connected=True)
+    tray = gui._start_shell_tray(br, "https://h/ai/connect?x=1", "chrome.exe")
+    assert tray is not None and made
+
+    labels = [i.label for i in tray.items if not i.separator]
+    assert labels == ["창 열기", "연결 끊기", "종료"], labels
+    assert sum(1 for i in tray.items if i.default and not i.separator) == 1
+
+    tray.dispatch(tray.command_id(0))                 # 창 열기
+    assert opened == [("https://h/ai/connect?x=1", "chrome.exe")], \
+        "「창 열기」가 패널을 다시 열지 않는다 — 상주의 의미가 없다"
+    tray.dispatch(tray.command_id(2))                 # 연결 끊기
+    assert br.disconnects == 1
+    gui._SHELL_QUIT.clear()
+    tray.dispatch(tray.command_id(4))                 # 종료
+    assert gui._SHELL_QUIT.is_set()
+
+
+def test_shell_tray_is_none_when_unavailable(monkeypatch):
+    monkeypatch.setattr(gui.tray_mod, "available", lambda: False)
+    assert gui._start_shell_tray(_FakeBridge(), "u", None) is None
+
+
+def test_run_client_tells_the_bridge_whether_it_is_resident():
+    """패널의 「닫아도 유지됩니다」는 **껍데기가 세운 사실**만 근거로 삼는다.
+
+    프런트가 추정하면 트레이 없는 머신에서 거짓이 된다(§P0-R).
+    """
+    src = (_SRC / "client" / "gui.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
+    body = ast.unparse(fn)
+    assert "br.resident = tray is not None" in body, \
+        "브리지에 상주 여부를 알려 주지 않는다 — 패널이 판단 근거를 못 받는다"
+    assert "_start_shell_tray" in body
+
+
+# ── 10. 브리지의 수명 창구 ───────────────────────────────────────────────────────
+
+def _bridge_module():
+    from client import bridge as _b
+    return _b
+
+
+def test_bridge_reports_and_cuts_the_connection(tmp_path):
+    b = _bridge_module()
+    br = b.Bridge.__new__(b.Bridge)
+    br._log = []
+    br._runner_proc = None
+    assert br.connected is False
+    assert br.disconnect() is False, "끊을 것이 없는데 끊었다고 말한다"
+
+    class P:
+        def __init__(self): self.killed = 0
+        def poll(self): return None
+        def terminate(self): self.killed += 1
+
+    br._runner_proc = P()
+    assert br.connected is True
+    assert br.disconnect() is True
+    assert br._runner_proc.killed == 1
+    assert any("끊었" in l for l in br._log), "끊은 사실이 로그에 남지 않는다"
+
+
+def test_status_carries_residency_and_defaults_to_false():
+    """모르면 「유지된다」고 말하지 않는다 — 기본값은 거짓이다."""
+    b = _bridge_module()
+    br = b.Bridge.__new__(b.Bridge)
+    br._log, br._states, br._runner_proc = [], [], None
+    br.plan = core.ConnectPlan(base="https://h", token="t")
+    br.resident = False
+    assert br._do_status({})["resident"] is False
+    br.resident = True
+    assert br._do_status({})["resident"] is True
+
+
+# ── 11. 패널 문구는 판정을 받아서 쓴다 ────────────────────────────────────────────
+
+_WEB = _UNIT.parents[0] / "feature-0003-agent-web-ui" / "src" / "static"
+
+
+def test_panel_promises_persistence_only_when_the_bridge_says_resident():
+    js = (_WEB / "ai-connect.js").read_text(encoding="utf-8")
+    assert "paintResidency" in js
+    fn = js[js.index("function paintResidency"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "res.resident" not in fn, "함수 안에서 응답을 다시 읽지 않는다(인자로 받는다)"
+    assert "닫아도" in fn and "닫으면 연결이 끝납니다" in fn, \
+        "두 경우를 갈라 말하지 않는다 — 한쪽은 반드시 거짓이 된다"
+    assert "res.resident" in js, "브리지 판정을 근거로 쓰지 않는다"
+
+
+def test_panel_has_the_element_the_copy_targets():
+    """문구가 가리키는 대상이 그 화면에 **실재**해야 한다(P0-R)."""
+    html = (_WEB / "ai-connect.html").read_text(encoding="utf-8")
+    assert 'id="clientResidency"' in html

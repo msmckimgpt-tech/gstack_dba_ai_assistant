@@ -22,6 +22,8 @@ edit_policy: mixed
 | 창 닫기 분기 | 트레이 있음=숨김(연결 유지) / 없음=종료 · 안내 문구가 그 실재와 일치 · 풍선 1회 |
 | 스레드 경계 | 트레이 콜백은 큐에만 넣는다(tkinter 직접 조작 금지) |
 | 자식 창 | 자식을 띄우는 **모든** 함수가 창 숨김 인자를 실제로 넘긴다(소스 census + 행위) |
+| 두 껍데기 상주 정합 | 상주 중 유휴가 종료시키지 않음 · 트레이 없음/죽음이면 종전 계약 복귀 · [종료] 로만 끝남 · 두 껍데기 메뉴 어휘 동일 |
+| 패널 문구 | `status.resident` 로 두 문구를 갈라 말함 · 문구가 가리키는 요소 실재 · DOM 렌더 대조군 |
 
 ## 2. 실행
 
@@ -52,3 +54,12 @@ python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 177건
   자식 콘솔 핸들 `2430520 → 0`, 바탕화면 콘솔 창 peak `2 → 1`.
 - Verdict: PASS
 - 적대 리뷰(codex) P1 4건 수정 후 **재측정본**이다 — 수정 전 수치를 인용하지 않는다.
+
+### Run 2026-09-04T15:20:00+09:00 — 재구성: 웹 셸 주 경로에도 트레이 상주
+- 상세: [`test-runs.d/TASK-20260904T150000-tray-parity.md`](./test-runs.d/TASK-20260904T150000-tray-parity.md)
+- Environment: `CLI` 256/256 PASS · 뮤테이션 8/8 KILL(NOOP 0, M24 는 문법 파손 판을 폐기하고 행동 판으로 재실행)
+- Environment: `CLI` (jsdom) — 패널 상주 문구 **DOM 렌더** 확인 + 대조군 FAIL 실증
+- ⛔ **PB-0008 미수행** — 이 패널은 Windows 브리지가 만든 `client_port/nonce` 로만 나타나고
+  유효 토큰이 없다. 라이브 반영은 공유 web 컨테이너를 건드려야 해 §13.2.9 가 금지한다.
+  다음 cycle 로 이월(사유는 fragment §4).
+- Verdict: PASS (미수행 2건 명시)
