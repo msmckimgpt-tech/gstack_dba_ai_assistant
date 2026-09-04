@@ -311,3 +311,13 @@ edit_policy: append-only
   검증 없이 주 경로의 수명 계약을 바꾸는 것은 이 저장소가 반복해 벌을 받은 형태다.
 - 사용자 요청 시점(2026-09-04 오전)의 DQAConnect UI 는 tkinter `ClientApp` 이었다. 웹 셸은
   그 뒤 착륙했다 — 요청 범위가 **작업 중 바뀐** 경우이므로 자의로 넓히지 않고 표면화한다.
+
+## CHG-20260904T134500-ai-claude-guard-misuse-warning — 창 숨김 인자를 GUI 자식에 쓰지 않게
+- Timestamp: 2026-09-04T13:45:00+09:00
+- 병합 후 확인: `appwindow.open_app_window()` 도 자식을 띄우는데 **`CREATE_NO_WINDOW` 만**
+  준다. 이것은 결함이 아니라 **옳다** — 브라우저 앱 창은 자기 창을 **보여 줘야** 하므로
+  `SW_HIDE` 를 주면 아무것도 안 뜬다(「눌렀는데 아무 일도 없다」 = 조용한 실패).
+- 그런데 이번 cycle 이 만든 `hidden_child_kwargs()` 는 이름·docstring 이 「자식을 창 없이」라
+  **그쪽에 갖다 쓰고 싶어지는 유인**을 만든다. 내가 만든 함정이므로 내가 표지를 세운다.
+- `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-V 에 **「GUI 자식에는 쓰지 않는다 ·
+  appwindow 의 중복은 의도된 것」** 을 명시. 코드 동작 변경 0 — 오용 방지 표지만 추가.

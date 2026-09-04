@@ -135,6 +135,8 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] 동결 exe 아이콘 추출 실측 — 실제 배포 형식으로 빌드해 `ExtractIconW` 확인
       (`tests/windows/verify_frozen_icon.py` 커밋). REPORT 의 미검증 1건 해소
 - [x] origin/main(웹 셸 PR #1568) 병합 — 충돌 3건 자율 해결 + 양측 부모 대비 검증(227 passed)
+- [x] 창 숨김 인자 오용 방지 표지 — `appwindow` 의 `CREATE_NO_WINDOW`-만 은 **의도된 중복**임을
+      명시(통합하면 앱 창이 안 뜬다)
 - [ ] ⚠ **사용자 결정 대기: 웹 셸 주 경로에도 트레이를 붙일 것인가.** main 의 `run_client` 가
       웹 셸을 주 경로로 삼아 트레이가 **tkinter 폴백에만** 닿는다. 붙이려면 「창 닫힘 = 연결
       종료」 계약과 그것을 말하는 **웹 페이지 문구**를 함께 바꿔야 하고, 그 경로는 유효 토큰 +

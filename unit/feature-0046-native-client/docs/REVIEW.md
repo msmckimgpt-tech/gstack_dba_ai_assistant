@@ -352,3 +352,15 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
 - Human Approval Needed: **예 (범위 결정)** — 웹 셸 주 경로에도 트레이를 붙일지. 그 경로는
   수명 계약(`창이 닫히면 연결도 끝난다`)과 웹 페이지 문구를 함께 바꿔야 하고, 이 세션에서
   실측할 수단이 없다.
+
+## REV-20260904T134500-ai-claude-guard-misuse-warning [SKIPPED:comment-only-no-behavior-change] — ACCEPTED
+- Related TASK: TASK-20260904T100000 (후속)
+- Timestamp: 2026-09-04T13:45:00+09:00
+- 범위: docstring + FUNCTION 문구. **실행 동작 변경 0**(테스트 227 그대로 통과).
+- **[SKIPPED] 사유**: 실행되는 코드가 바뀌지 않았다.
+- **왜 했나**: 병합으로 같은 패키지에 **자식을 띄우는 두 번째 자리**(`appwindow`)가 생겼는데,
+  그쪽은 `CREATE_NO_WINDOW` 만 주는 것이 **옳다**(브라우저 창은 보여야 한다). 이번 cycle 이
+  만든 헬퍼는 이름상 그쪽에도 맞아 보이므로, 갖다 쓰면 **앱 창이 안 뜨는 조용한 실패**가 난다.
+  내가 만든 유인이므로 내가 표지를 세운다 — 「의도된 중복」을 명시하지 않으면 다음 사람이
+  «중복 제거»로 그것을 없앤다.
+- Risks: 없음(주석). Human Approval Needed: 아니오.
