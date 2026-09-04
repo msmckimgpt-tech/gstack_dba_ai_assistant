@@ -381,7 +381,9 @@ async function _make() {
   const launchBtn = $("connectModalLaunch");
   // 실행 버튼은 **프로토콜 URL 이 있을 때만** 보인다. 없는데 보이면 누른 뒤 아무 일도 일어나지
   // 않고, 사용자는 그것을 고장으로 읽는다.
-  if (launchBtn) launchBtn.hidden = !(_launch && _launch.protocol);
+  // ⚠ 연결 프로그램 안에서는 **이미 실행 중**이라 이 버튼이 무의미하다. 보이면 사용자는
+  //   눌러 보고 아무 일도 안 일어나는 것을 겪는다.
+  if (launchBtn) launchBtn.hidden = !!clientBridge || !(_launch && _launch.protocol);
   $("connectModalResult").hidden = false;
   _status("준비했습니다. 이 창을 닫으면 다시 볼 수 없습니다.", "ok");
   // 방금 연결이 생겼다 — 표시를 즉시 맞춘다(다음 조회를 기다리게 하지 않는다).
@@ -1386,6 +1388,18 @@ function _maybeAutoEntry() {
  *  그래서 이력이 있으면 **바로 실행**하고, 없으면(=설치부터 필요) 종전대로 창을 연다.
  */
 function _connectEntry() {
+  // ⚠ **연결 프로그램 안에서는 다시 띄우지 않는다** (실측 2026-09-04).
+  //
+  //   이 창이 연결 프로그램이 연 앱 창이면 프로그램은 **이미 여기 있다**. 그런데 아래
+  //   경로들은 「없다」를 전제로 만들어졌다 — 이력이 있으면 `autoLaunch` 가 스킴을 다시
+  //   쏘고 모달을 열지 않는다. 그래서 앱 창에서 [내 AI 실행] 을 눌러도 아무 일이 없었고,
+  //   내가 붙인 패널은 열릴 기회조차 없었다.
+  //
+  //   여기서는 곧바로 모달을 연다 — 그 안의 패널이 이 컴퓨터의 AI 를 직접 다룬다.
+  if (clientBridge) {
+    openConnectModal();
+    return;
+  }
   // 이 컴퓨터에서는 재실행이 러너 파일을 바꾸지 못한다는 것을 **이미 봤다**. 같은 것을 다시
   // 권하면 사용자는 또 30초를 버리고 같은 화면으로 돌아온다 — 곧바로 되돌아갈 곳으로 보낸다.
   if (_relaunchNoUpdate && _isStaleNow(_lastObs)) {
