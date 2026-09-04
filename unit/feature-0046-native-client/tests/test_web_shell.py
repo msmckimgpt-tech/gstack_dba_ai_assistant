@@ -394,10 +394,16 @@ def test_modal_panel_is_wired_on_open():
 
 
 def test_modal_panel_is_wired_only_once():
-    """창을 열 때마다 배선하면 리스너가 쌓여 클릭 한 번에 여러 번 돈다."""
+    """창을 열 때마다 배선하면 리스너가 쌓여 클릭 한 번에 여러 번 돈다.
+
+    ⚠ 플래그를 «호출 전에 true» 로 세우던 형태는 폐기했다(2026-09-04) — 초기화가 실패해도
+    「했다」가 되어 다시 시도하지 않았다. 지키는 성질(한 번만 배선)은 그대로이고, 기록하는
+    값만 **결과**로 바뀌었다.
+    """
     js = _MODAL_JS.read_text(encoding="utf-8")
     fn = js[js.find("export function openConnectModal() {"):][:600]
-    assert "_clientPanelReady" in fn and "_clientPanelReady = true" in fn
+    assert "!_clientPanelReady" in fn, "이미 배선했는지 확인하지 않는다"
+    assert "_clientPanelReady = initClientPanel()" in fn
 
 
 def test_modal_panel_uses_post_and_nonce():
