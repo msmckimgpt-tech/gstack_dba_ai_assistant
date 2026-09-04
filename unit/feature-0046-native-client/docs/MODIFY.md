@@ -254,3 +254,22 @@ edit_policy: append-only
 - CI 적발: `test_connect_gate.py` 가 노출 조건을 **문자열 전체**로 잠가, 조건이 넓어지자 깨졌다.
 - 지키는 성질(프로토콜이 없으면 감춘다)은 그대로 두고, 「없다」의 경우가 하나 는 사실만
   반영했다 — 문자열 전체가 아니라 **그 조건이 살아 있는지**를 단정한다.
+
+## CHG-20260904T160000-ai-claude-panel-status-callback — 상태 표시를 호출부가 준다
+- Timestamp: 2026-09-04T16:00:00+09:00
+- **라이브에서 패널은 떴는데 목록이 영원히 비어 있었다.** 원인:
+  `Uncaught ReferenceError: _status is not defined @client-bridge.js:114`.
+  `initClientPanel` 을 모달에서 옮기면서 그 함수가 쓰던 **모달 내부 헬퍼를 함께 옮기지도
+  주입하지도 않았다.**
+- 처방: `initClientPanel(setStatus)` — 상태 표시는 **호출부가 준다**. 이 모듈은 모달의
+  내부를 알지 못한다. 콜백이 없으면 조용한 기본값으로 떨어진다.
+- **`test_client_bridge_runtime.py` 신설** — 가짜 DOM 을 깔고 모듈을 **실제로 import 해
+  호출**한다. 기존 테스트는 전부 소스 문자열 검사였고, 정의되지 않은 이름은 소스에 그럴듯하게
+  적혀 있으며 `node --check` 는 구문만 본다. **실행해야만** 드러나는 종류다.
+- 역검증: `_status` 정의를 지우면 이 하네스가 3건 FAIL 한다(원래 결함 재현 확인).
+
+## CHG-20260904T161000-ai-claude-wiring-arity — 배선 단정에서 인자 개수를 뺀다
+- Timestamp: 2026-09-04T16:10:00+09:00
+- 상태 콜백을 넘기면서 `initClientPanel()` 무인자 형태를 잠그던 단정 2건이 깨졌다.
+- 지키는 성질은 「플래그를 **결과로** 세운다」이지 «어떻게 부르는가» 가 아니다 —
+  인자 개수를 뺐다.

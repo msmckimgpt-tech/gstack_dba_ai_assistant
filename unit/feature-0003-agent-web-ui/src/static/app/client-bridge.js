@@ -56,7 +56,11 @@ export function bridgeCall(action, body) {
   }).then(function (r) { return r.json(); });
 }
 
-export function initClientPanel() {
+export function initClientPanel(setStatus) {
+  // ⚠ 상태 표시는 **호출부가 준다.** 이 모듈은 모달의 내부 헬퍼를 알지 못한다 —
+  //   분리하면서 `_status` 를 그대로 부른 탓에 `ReferenceError` 로 탐지가 죽었다
+  //   (실측 2026-09-04: 패널은 떴는데 목록이 영원히 비어 있었다).
+  const _status = typeof setStatus === "function" ? setStatus : function () {};
   const panel = document.getElementById("connectClientPanel");
   // ⚠ **성립 여부를 돌려준다.** 호출부가 「했다」를 이 값으로 판정한다 — 요소가 아직 없어
   //   일찍 반환했는데 호출부가 완료로 표시하면 영영 다시 시도하지 않는다(실측 2026-09-04).
