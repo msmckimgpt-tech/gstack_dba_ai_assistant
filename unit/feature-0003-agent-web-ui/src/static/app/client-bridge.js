@@ -58,7 +58,9 @@ export function bridgeCall(action, body) {
 
 export function initClientPanel() {
   const panel = document.getElementById("connectClientPanel");
-  if (!panel || !clientBridge) return;
+  // ⚠ **성립 여부를 돌려준다.** 호출부가 「했다」를 이 값으로 판정한다 — 요소가 아직 없어
+  //   일찍 반환했는데 호출부가 완료로 표시하면 영영 다시 시도하지 않는다(실측 2026-09-04).
+  if (!panel || !clientBridge) return false;
   panel.hidden = false;
   const listEl = document.getElementById("connectClientList");
   const connectBtn = document.getElementById("connectClientConnect");
@@ -130,4 +132,5 @@ export function initClientPanel() {
   // 창이 살아 있음을 알린다 — 브리지는 이 신호로 수명을 판정한다.
   setInterval(() => { const p = bridgeCall("ping", {}); if (p) p.catch(() => {}); }, 20000);
   refresh();
+  return true;
 }
