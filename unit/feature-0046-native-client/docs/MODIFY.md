@@ -591,3 +591,10 @@ edit_policy: append-only
   **둘 다** 남았다. Inno 는 안 만드는 바로 가기를 자동으로 치우지 않는다.
 - `DefaultGroupName={#MyDisplayName}` + `[InstallDelete]`(옛 그룹 폴더·바탕화면·자동시작).
 - ⚠ `AppId`·설치 폴더는 **그대로** — 바꾸면 두 벌 설치가 된다. 테스트가 그것을 잠근다.
+
+
+## CHG-20260905T000000-ai-claude-group-name — 업그레이드가 옛 그룹 이름을 물려받지 않는다
+- Timestamp: 2026-09-05T00:00:00+09:00
+- **직전 수정의 나머지 절반**(실측): `[InstallDelete]` 로 옛 바로 가기는 사라졌는데 **폴더
+  이름이 그대로**였다 — Inno 는 업그레이드에서 레지스트리에 적어 둔 지난 그룹 이름을 쓴다.
+- `UsePreviousGroup=no` 한 줄. 이름을 바꾼 의미가 그제야 온전히 도달한다.
