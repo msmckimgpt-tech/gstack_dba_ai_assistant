@@ -102,7 +102,7 @@ export function openConnectModal() {
   // ⚠ **성공했을 때만** 배선 완료로 표시한다. 플래그를 먼저 세우면, 패널 요소가 아직
   //   DOM 에 없어 `initClientPanel()` 이 일찍 반환한 경우에도 «했다» 가 되어 **다시
   //   시도하지 않는다** — 실측 2026-09-04: 그래서 앱 창에서 패널이 끝내 안 켜졌다.
-  if (clientBridge && !_clientPanelReady) { _clientPanelReady = initClientPanel(); }
+  if (clientBridge && !_clientPanelReady) { _clientPanelReady = initClientPanel(_status); }
   const overlay = $("connectModalOverlay");
   if (!overlay) return false;
   _lastFocus = document.activeElement;

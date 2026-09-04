@@ -403,7 +403,7 @@ def test_modal_panel_is_wired_only_once():
     js = _MODAL_JS.read_text(encoding="utf-8")
     fn = js[js.find("export function openConnectModal() {"):][:600]
     assert "!_clientPanelReady" in fn, "이미 배선했는지 확인하지 않는다"
-    assert "_clientPanelReady = initClientPanel()" in fn
+    assert "_clientPanelReady = initClientPanel(" in fn
 
 
 def test_modal_panel_uses_post_and_nonce():
@@ -463,8 +463,10 @@ def test_ready_flag_is_set_from_the_result_not_before():
     """**이 단정이 그 결함을 잡는다.**"""
     js = _MODAL_JS.read_text(encoding="utf-8")
     line = next(l for l in js.splitlines() if "_clientPanelReady =" in l and "let " not in l)
-    assert "_clientPanelReady = initClientPanel()" in line, \
+    assert "_clientPanelReady = initClientPanel(" in line, \
         f"플래그를 호출 결과가 아닌 것으로 세운다: {line.strip()}"
+    # ⚠ 인자 개수는 잠그지 않는다 — 상태 콜백이 늘어난 것처럼 인자는 바뀔 수 있고,
+    #   지키는 성질은 「결과로 세운다」이지 «어떻게 부르는가» 가 아니다.
     assert "_clientPanelReady = true" not in line
 
 
