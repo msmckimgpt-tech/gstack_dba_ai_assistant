@@ -155,6 +155,7 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
       is not defined` 적발·해소(연결 창 자체가 안 열리던 결함). 테스트 +6 · 뮤테이션 7/7 KILL
 - [x] main `P0-U`~`P0-X` 와의 ID 충돌 2회차 해소 — 본 cycle 을 `P0-Y/P0-Y-1/P0-Z` 로 재번호
 - [x] wiki 미러 정합(Features 카드 §4-2 · Log · hot)
+- [x] wiki 미러 정합 2차(§4-3 주 표면·ReferenceError·하네스 3배신 · Log · hot)
 - [ ] **웹 셸 패널 PB-0008 — 다음 cycle 이월** (브리지 `client_port/nonce` + 유효 토큰 필요,
       라이브 반영은 공유 컨테이너라 §13.2.9 금지)
 - [ ] ~~웹 셸 주 경로의 트레이 — 별도 cycle~~ (2026-09-04 재구성으로 해소). main 의 `run_client` 가

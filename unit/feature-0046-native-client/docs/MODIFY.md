@@ -451,3 +451,12 @@ edit_policy: append-only
 - **ID 충돌 재발 해소**: main 이 `P0-U`~`P0-X` 를 가져왔다. 트렁크 우선으로 본 cycle 의
   `P0-U/P0-U-1/P0-V` 를 **`P0-Y/P0-Y-1/P0-Z` 로 재번호**하고 `gui.py`·`MODIFY.md` 참조를
   함께 옮겼다. (같은 충돌의 2회차 — 병렬 세션이 같은 feature 문서를 쓰는 한 반복된다.)
+
+## CHG-20260904T172000-ai-claude-wiki-primary-panel — wiki 미러를 주 표면 정합에 맞춤
+- Timestamp: 2026-09-04T17:20:00+09:00
+- `wiki/Features/feature-0046-native-client.md` §4-3 신설 — 안내가 **닿는 자리**여야 한다는
+  교훈 · `ReferenceError: _status` 의 형태와 왜 소스 검사로 안 보이는가 · 검증 하네스가
+  스스로를 배신한 3건.
+- `wiki/Log.md` append · `wiki/hot.md` 에 「주 표면은 `app/client-bridge.js` 이고
+  `ai-connect.*` 는 별도 페이지」와 「그 모듈은 의존 0 — 헬퍼는 지역 정의」를 사실로 추가.
+- wiki-lint 32(선재 동일, orphan 0).
