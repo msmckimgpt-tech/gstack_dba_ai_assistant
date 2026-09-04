@@ -475,3 +475,42 @@ def test_early_return_happens_before_any_side_effect():
     guard = fn.find("return false;")
     show = fn.find("panel.hidden = false;")
     assert 0 < guard < show, "가드보다 먼저 패널을 노출한다"
+
+
+# ── 8. 연결 프로그램 «안에서» 의 진입 경로 ────────────────────────────────────────
+#
+# ⚠ 실측 2026-09-04: 앱 창에서 연결을 눌러도 아무 일이 없었다. `_connectEntry()` 는 연결
+#   이력이 있으면 `autoLaunch` 로 **스킴을 다시 쏘고** 모달을 열지 않는데, 이 창은 이미
+#   그 프로그램이 연 창이다. 즉 「프로그램이 없다」를 전제한 경로가 「이미 있다」인 상황에
+#   그대로 적용됐고, 내가 붙인 패널은 열릴 기회조차 없었다.
+
+def test_entry_goes_straight_to_the_panel_inside_the_app():
+    """**이 단정이 그 결함을 잡는다.**"""
+    js = _MODAL_JS.read_text(encoding="utf-8")
+    fn = js[js.find("function _connectEntry()"):]
+    fn = fn[:fn.find("\n}\n") + 3]
+    assert "if (clientBridge)" in fn, "연결 프로그램 안인지 보지 않는다"
+    assert fn.index("if (clientBridge)") < fn.index("autoLaunch("), \
+        "프로그램 안인데도 다시 띄우기를 먼저 시도한다"
+    assert "openConnectModal();" in fn
+
+
+def test_launch_button_is_pointless_inside_the_app():
+    """이미 실행 중인데 [내 AI 실행] 이 보이면 눌러 보고 아무 일도 없는 것을 겪는다.
+
+    ⚠ `launchBtn.hidden` 은 여러 곳에서 정해진다. **노출을 결정하는 자리**(프로토콜 유무로
+    켜는 줄)를 골라야 한다 — 첫 줄을 잡으면 엉뚱한 것을 단정한다.
+    """
+    js = _MODAL_JS.read_text(encoding="utf-8")
+    line = next(l for l in js.splitlines()
+                if "launchBtn.hidden" in l and "_launch" in l)
+    assert "clientBridge" in line, f"프로그램 안에서도 실행 버튼을 보인다: {line.strip()}"
+
+
+def test_web_only_path_is_unchanged():
+    """평범한 브라우저 방문에서는 종전 경로가 그대로여야 한다 — 대조군."""
+    js = _MODAL_JS.read_text(encoding="utf-8")
+    fn = js[js.find("function _connectEntry()"):]
+    fn = fn[:fn.find("\n}\n") + 3]
+    for kept in ("_relaunchNoUpdate", "_autoLaunchEligible()", "autoLaunch(\"click\""):
+        assert kept in fn, f"웹 전용 경로에서 {kept} 가 사라졌다"
