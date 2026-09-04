@@ -353,7 +353,7 @@ edit_policy: append-only
   `SW_HIDE` 를 주면 아무것도 안 뜬다(「눌렀는데 아무 일도 없다」 = 조용한 실패).
 - 그런데 이번 cycle 이 만든 `hidden_child_kwargs()` 는 이름·docstring 이 「자식을 창 없이」라
   **그쪽에 갖다 쓰고 싶어지는 유인**을 만든다. 내가 만든 함정이므로 내가 표지를 세운다.
-- `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-Z 에 **「GUI 자식에는 쓰지 않는다 ·
+- `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-AD 에 **「GUI 자식에는 쓰지 않는다 ·
   appwindow 의 중복은 의도된 것」** 을 명시. 코드 동작 변경 0 — 오용 방지 표지만 추가.
 
 ## CHG-20260904T140000-ai-claude-scope-decision-recorded — 웹 셸 트레이는 별도 cycle (사용자 결정)
@@ -444,12 +444,12 @@ edit_policy: append-only
   - `app/client-bridge.js` — `_status` 를 **지역 정의**(순환 import 회피 · 이 모듈의 «의존 0»
     유지) · `_paintResidency` 신설 · `bridgeCall("status")` 를 `discover` **앞에** 호출.
   - `index.html` — 연결 패널에 `#connectClientResidency` 를 **비운 채** 추가.
-  - `FUNCTION.md` §P0-AA(상주 안내는 보는 화면에) · §P0-AB(부르는 헬퍼는 그 모듈이).
+  - `FUNCTION.md` §P0-AE(상주 안내는 보는 화면에) · §P0-AF(부르는 헬퍼는 그 모듈이).
   - `tests/verify_client_panel_dom.mjs` 신설 — 모듈을 **바이트 그대로 통째 실행**한다
     (`data:` URL). 함수를 떼어내지 않으므로 「추출이 깨져서 vacuous pass」가 성립하지 않는다.
   - `tests/test_web_shell.py` +6 · `verify_residency_dom.mjs` 에 `DQA_JSDOM` 수용.
 - **ID 충돌 재발 해소**: main 이 `P0-U`~`P0-X` 를 가져왔다. 트렁크 우선으로 본 cycle 의
-  `P0-U/P0-U-1/P0-V` 를 **`P0-Y/P0-Y-1/P0-Z` 로 재번호**하고 `gui.py`·`MODIFY.md` 참조를
+  `P0-U/P0-U-1/P0-V` 를 **`P0-AC/P0-AC-1/P0-AD` 로 재번호**하고 `gui.py`·`MODIFY.md` 참조를
   함께 옮겼다. (같은 충돌의 2회차 — 병렬 세션이 같은 feature 문서를 쓰는 한 반복된다.)
 
 ## CHG-20260904T172000-ai-claude-wiki-primary-panel — wiki 미러를 주 표면 정합에 맞춤
@@ -460,3 +460,22 @@ edit_policy: append-only
 - `wiki/Log.md` append · `wiki/hot.md` 에 「주 표면은 `app/client-bridge.js` 이고
   `ai-connect.*` 는 별도 페이지」와 「그 모듈은 의존 0 — 헬퍼는 지역 정의」를 사실로 추가.
 - wiki-lint 32(선재 동일, orphan 0).
+
+
+## CHG-20260904T140000-ai-claude-inside-app-entry — 앱 창 «안»에서는 다시 띄우지 않는다
+- Timestamp: 2026-09-04T14:00:00+09:00
+- **앱 창에서 연결을 눌러도 아무 일이 없었다.** `_connectEntry()` 는 연결 이력이 있으면
+  `autoLaunch` 로 **스킴을 다시 쏘고** 모달을 열지 않는다. 그런데 이 창은 **이미 그
+  프로그램이 연 창**이다 — 「프로그램이 없다」를 전제한 경로가 「이미 있다」인 상황에
+  그대로 적용됐고, 패널은 열릴 기회조차 없었다.
+- 처방: `clientBridge` 가 있으면 **곧바로 모달을 연다**. 그 안의 패널이 이 컴퓨터의 AI 를
+  직접 다룬다. 웹 전용 경로는 **그대로 둔다**(대조군 테스트로 고정).
+- [내 AI 실행] 버튼도 앱 창 안에서는 감춘다 — 이미 실행 중이라 눌러도 아무 일이 없다.
+- 뮤테이션 4/4 KILL. ⚠ 그중 1건은 하네스가 «생존» 으로 오보했고, 수동 적용으로 실제로는
+  잡힌다는 것을 확인했다 — **하네스의 보고를 그대로 믿지 않는다**(이 저장소가 반복해 배운 것).
+
+## CHG-20260904T145000-ai-claude-launch-btn-contract — 실행 버튼 노출 계약 확장
+- Timestamp: 2026-09-04T14:50:00+09:00
+- CI 적발: `test_connect_gate.py` 가 노출 조건을 **문자열 전체**로 잠가, 조건이 넓어지자 깨졌다.
+- 지키는 성질(프로토콜이 없으면 감춘다)은 그대로 두고, 「없다」의 경우가 하나 는 사실만
+  반영했다 — 문자열 전체가 아니라 **그 조건이 살아 있는지**를 단정한다.

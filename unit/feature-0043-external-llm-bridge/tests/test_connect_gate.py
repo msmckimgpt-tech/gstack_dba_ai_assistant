@@ -427,9 +427,18 @@ def test_handler_registration_failure_does_not_block_connection():
 
 
 def test_launch_button_is_hidden_without_a_protocol_url():
-    """없는데 보이면 누른 뒤 아무 일도 일어나지 않고, 그것을 고장으로 읽는다."""
+    """없는데 보이면 누른 뒤 아무 일도 일어나지 않고, 그것을 고장으로 읽는다.
+
+    ⚠ 조건이 **넓어졌다**(2026-09-04): 연결 프로그램이 연 앱 창 안에서도 감춘다 — 그 창에서는
+    프로그램이 이미 실행 중이라 눌러도 아무 일이 없다. 지키는 성질(없으면 감춘다)은 그대로이고,
+    「없다」의 경우가 하나 늘었을 뿐이다. 그래서 문자열 전체가 아니라 **그 조건이 살아 있는지**를
+    단정한다.
+    """
     code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
-    assert "launchBtn.hidden = !(_launch && _launch.protocol)" in code
+    line = next((l for l in code.splitlines()
+                 if "launchBtn.hidden" in l and "_launch" in l), None)
+    assert line, "프로토콜 유무로 노출을 정하는 자리가 사라졌다"
+    assert "!(_launch && _launch.protocol)" in line, line.strip()
 
 
 def test_closing_the_modal_drops_the_token_bearing_command():

@@ -153,7 +153,7 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] **주 표면 정합** — 상주 안내가 `ai-connect.*`(별도 페이지)에만 있어 앱 창 사용자는
       못 봤다. `index.html` 연결 패널로 이관 + 그 패널을 구동해 `ReferenceError: _status
       is not defined` 적발·해소(연결 창 자체가 안 열리던 결함). 테스트 +6 · 뮤테이션 7/7 KILL
-- [x] main `P0-U`~`P0-X` 와의 ID 충돌 2회차 해소 — 본 cycle 을 `P0-Y/P0-Y-1/P0-Z` 로 재번호
+- [x] main `P0-U`~`P0-X` 와의 ID 충돌 2회차 해소 — 본 cycle 을 `P0-AC/P0-AC-1/P0-AD` 로 재번호(3회차 — main 순차 증가에서 이격)
 - [x] wiki 미러 정합(Features 카드 §4-2 · Log · hot)
 - [x] wiki 미러 정합 2차(§4-3 주 표면·ReferenceError·하네스 3배신 · Log · hot)
 - [ ] **웹 셸 패널 PB-0008 — 다음 cycle 이월** (브리지 `client_port/nonce` + 유효 토큰 필요,
@@ -202,3 +202,10 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] `initClientPanel()` 이 성립 여부를 반환 · 호출부가 그 값으로 플래그
 - [x] 배포 자산·스탬프·캐시 정상 확인(원인이 아님을 실측으로 배제)
 - [x] 배선 1회 계약을 결과 기록 형태로 갱신
+
+## TASK-20260904T140000 — 앱 창 안의 진입 경로
+
+- [x] `clientBridge` 가 있으면 재실행 대신 곧바로 모달·패널
+- [x] 앱 창에서 [내 AI 실행] 감춤 (이미 실행 중)
+- [x] 웹 전용 경로 대조군 테스트로 보호
+- [x] 실행 버튼 노출 계약 확장 (CI 적발 대응)
