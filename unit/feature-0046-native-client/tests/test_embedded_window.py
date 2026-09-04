@@ -590,3 +590,56 @@ def test_the_runner_axis_stays_stdlib_only():
     body = ast.unparse(fn)
     for third_party in ("webview", "pythonnet", "clr"):
         assert third_party not in body, f"러너 검증이 {third_party} 를 요구한다"
+
+
+# ── 9. 업그레이드 경로 — 옛 이름의 잔재가 남지 않는다 (실측 2026-09-04) ─────────
+#
+# ⚠ 이 결함은 **덮어 설치했을 때만** 나타난다. 깨끗한 머신에 새로 설치해 보는 검증으로는
+#   절대 보이지 않는다 — 실제로 설치해 보고서야 시작 메뉴에 두 벌이 있는 것을 봤다.
+
+_ISS = _UNIT / "src" / "installer" / "DQAConnect.iss"
+
+
+def _iss() -> str:
+    return _ISS.read_text(encoding="utf-8")
+
+
+def test_the_icons_use_the_display_name():
+    iss = _iss()
+    for line in iss.splitlines():
+        if line.startswith("Name: \"{group}") or line.startswith("Name: \"{autodesktop}") \
+                or line.startswith("Name: \"{userstartup}"):
+            assert "{#MyDisplayName}" in line, f"아이콘이 패키징 이름을 쓴다: {line}"
+
+
+def test_the_group_folder_uses_the_display_name():
+    """폴더만 옛 이름이면 시작 메뉴에서 「DQA Connect」 폴더 안의 「DQA」가 된다."""
+    assert "DefaultGroupName={#MyDisplayName}" in _iss()
+
+
+def test_the_group_name_is_not_inherited_from_the_old_install():
+    """⚠ **실측된 결함** — Inno 는 업그레이드에서 저장된 옛 그룹 이름을 재사용한다.
+
+    `DefaultGroupName` 만 바꾸면 덮어 설치한 머신은 «DQA Connect» 폴더 안에 «DQA» 바로 가기를
+    두게 된다. 이름을 바꾼 의미가 절반만 도달한다.
+    """
+    assert "UsePreviousGroup=no" in _iss()
+
+
+def test_the_old_shortcuts_are_removed_on_upgrade():
+    """**이 단정이 실측된 결함을 잡는다** — Inno 는 안 만드는 바로 가기를 알아서 치우지 않는다."""
+    iss = _iss()
+    assert "[InstallDelete]" in iss, "업그레이드 시 옛 이름의 잔재가 남는다"
+    block = iss[iss.index("[InstallDelete]"):]
+    block = block[:block.index("[Files]")]
+    assert "{autoprograms}\\{#MyAppName}" in block, "옛 그룹 폴더가 남는다"
+    assert "{autodesktop}\\{#MyAppName}.lnk" in block, "옛 바탕화면 아이콘이 남는다"
+    assert "{userstartup}\\{#MyAppName}.lnk" in block, "옛 자동시작 항목이 남는다"
+
+
+def test_the_upgrade_path_is_preserved():
+    """⚠ `AppId` 와 설치 폴더는 **그대로여야** 한다 — 바꾸면 옛 설치본이 따로 남는다."""
+    iss = _iss()
+    assert "AppId={{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}" in iss
+    assert "DefaultDirName={autopf}\\{#MyAppName}" in iss, \
+        "설치 폴더까지 바꾸면 업그레이드가 아니라 두 벌 설치가 된다"

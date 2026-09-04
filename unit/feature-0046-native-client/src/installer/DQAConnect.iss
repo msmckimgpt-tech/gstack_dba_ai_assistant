@@ -41,8 +41,14 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyPublisher}
 DefaultDirName={autopf}\{#MyAppName}
-DefaultGroupName={#MyAppName}
+DefaultGroupName={#MyDisplayName}
 DisableProgramGroupPage=yes
+; ⚠ **저장된 옛 그룹 이름을 재사용하지 않는다** (실측 2026-09-04).
+;   Inno 는 업그레이드에서 레지스트리에 적어 둔 지난 그룹 이름을 그대로 쓴다. 그래서
+;   `DefaultGroupName` 을 «DQA» 로 바꿔도 덮어 설치한 머신은 여전히 «DQA Connect» 폴더
+;   **안에** «DQA» 바로 가기를 두게 된다 — 이름을 바꾼 의미가 절반만 도달한다.
+;   위 `[InstallDelete]` 가 옛 폴더를 지우므로 남는 것도 없다.
+UsePreviousGroup=no
 ; 관리자 권한을 묻지 않는다 — 사내 PC 의 일반 사용자가 그대로 설치할 수 있어야 한다.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -62,6 +68,19 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "desktopicon"; Description: "바탕 화면에 바로 가기 만들기"; GroupDescription: "추가 작업:"
 ; 기본 해제 — 요청하지 않은 상주는 놀라움이고, 이 프로그램은 사용자의 AI 사용량을 쓴다.
 Name: "startup"; Description: "Windows 시작 시 자동으로 실행 (내 AI 를 항상 연결해 둡니다)"; GroupDescription: "추가 작업:"; Flags: unchecked
+
+[InstallDelete]
+; ⚠ **옛 이름의 바로 가기를 지운다** (실측 2026-09-04).
+;
+; 보이는 이름을 «DQA Connect» → «DQA» 로 바꾸면서, 덮어 설치한 머신에 **두 벌이 남았다**:
+;   Start Menu\Programs\DQA Connect\{DQA Connect.lnk, DQA Connect 제거.lnk, DQA.lnk, DQA 제거.lnk}
+; Inno 는 자기가 더 이상 만들지 않는 바로 가기를 알아서 치우지 않는다 — 제거 프로그램이 돌 때만
+; 지운다. 그래서 업그레이드 경로에서만 나타나고, **새로 설치해 보는 검증으로는 안 보인다.**
+;
+; 그룹 폴더 이름도 바뀌므로 옛 폴더를 통째로 지운다. 그 안에 있는 것은 전부 우리 것이다.
+Type: filesandordirs; Name: "{autoprograms}\{#MyAppName}"
+Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
+Type: files; Name: "{userstartup}\{#MyAppName}.lnk"
 
 [Files]
 ; 앱 폴더 전체 — `runtime\python.exe` 포함. 하나라도 빠지면 설치는 되고 연결만 실패한다.
