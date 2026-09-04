@@ -863,3 +863,19 @@ Gemini 로그인 대행은 **측정할 수 없어** 미검증이다.
   이 cycle 이 그 배선 자체를 없앴다. 대체물은
   `test_hiding_is_gated_on_the_tray_being_alive_not_merely_present`(구동 단정).
 - 병합 후 스위트 **404 passed**.
+
+## REV-20260904T195500-ai-claude-feature-0046-close-to-tray [CODEX:merged-tree] — PASS
+
+- Related TASK: feature-0046-native-client
+- Source: codex review (codex-cli 0.152.1 --base origin/main)
+- Trigger: **병합 후 재검증** — `origin/main` 8커밋(설치기 그룹 이름·바로 가기 정리·라이브
+  완주)과 합쳐진 트리는 어느 쪽 부모도 아닌 **새 산출물**이다. §16.4 실증이 「머지가 조용히
+  잃는다」를 기록한 바로 그 축이라, 병합 결과 자체를 한 번 더 본다.
+- Timestamp: 2026-09-04T19:55:00+09:00
+- Verdict: **PASS** — `No actionable defects were found in the changes relative to the
+  specified merge base.`
+- Critical issue: 없음
+- Human Approval Needed: no
+
+3라운드 누적: 1R P1 0/P2 1 → 2R P1 0/P2 1(1R 수정이 만든 것 → 되돌림) → **3R 결함 0**.
+P1 은 0 → 0 → 0 으로 단조. §18.8 수렴 계약 (a) 충족(마지막 라운드 P1 0), 상한 미도달.
