@@ -147,7 +147,6 @@ edit_policy: append-only
 - ⚠ 처음 삽입할 때 핸들러가 `paintOsTab()` **안**에 들어가 탭을 다시 그릴 때마다 등록됐다.
   중복 등록은 조용하다 — 화면은 멀쩡하고 클릭 한 번에 여러 번 돈다. 옮기고 테스트로 잠갔다.
 - 뮤테이션 5/5 KILL (버튼 제거·기본 노출·배선 제거·안내 제거·재등록 위치).
-
 ## CHG-20260904T070000-ai-claude-web-shell-bridge — 로컬 브리지 (웹 셸 1단계)
 - Timestamp: 2026-09-04T07:00:00+09:00
 - 사용자 요구: 「Slack 같은 웹 기반 클라이언트」 + 「재사용보다 **서비스와의 정합**」.
@@ -220,6 +219,198 @@ edit_policy: append-only
   그 하네스가 재현하는 것은 평범한 브라우저 방문(브리지 없음)이므로 실물이 필요 없다.
 - 뮤테이션 12/12 KILL.
 
+## CHG-20260904T100000-ai-claude-tray-and-windowless — 트레이 상주 + 자식 콘솔 창 제거
+- Timestamp: 2026-09-04T10:00:00+09:00
+- 사용자 요청 2건: ① 트레이 아이콘으로도 작동 ② AI 플랫폼 연결 시 창 깜빡임을 백그라운드로.
+
+### ① 알림 영역 상주 — `src/client/tray.py` 신설 (서드파티 0)
+- `Tray`(순수 로직: 메뉴 조립·명령 ID 라우팅·툴팁 상한·수명) + `Win32Backend`(ctypes)로
+  **둘로 나눴다**. 리눅스 CI 는 Win32 층을 한 줄도 못 돌리므로, 로직을 그 층에서 빼내지
+  않으면 「테스트가 있다」와 「검사된다」가 갈린다.
+- `gui.py`: [X] → 숨김(연결 유지) · 오른쪽 클릭 메뉴(창 열기/연결 토글/종료) · 툴팁이
+  상태를 말함 · 모든 화면에 [트레이로 숨기기] 버튼.
+- **폴백이 핵심**: `Tray.start()` 가 거짓이면 [X] 는 종전대로 종료이고 문구도 갈린다.
+  트레이 없이 숨기면 사용자는 프로그램을 잃는다(화면에도 알림 영역에도 없음).
+- `pystray` 불채택 — `Pillow` 동반으로 번들이 수십 MB 늘고 백신 오탐 표면이 넓어진다.
+  아이콘은 `ExtractIconW` 로 **우리 exe 안의 것**을 꺼내 쓴다(그리지 않으므로 이미지
+  라이브러리 불요). ANCHOR §1 「부품 하나로 끝난다」와 같은 근거.
+
+### ② 자식 콘솔 창 제거 — `core.hidden_child_kwargs()`
+- 깜빡임의 정체: `--windowed` 빌드는 자기 콘솔이 없어, 콘솔 앱 자식(`claude`·`codex`·`wsl`)을
+  띄우면 Windows 가 **새 콘솔을 할당**한다. 출력은 파이프로 받으므로 그 창은 **비어 있다**.
+- ⚠ **가드는 이미 있었다 — `spawn_runner` 한 곳에만.** 즉 없었던 것이 아니라 **모수가
+  노출면보다 좁았다**(§16.7 G12). 탐지·로그인·연결확인이 전부 그 밖이었고, 사용자가 본
+  깜빡임은 전부 거기서 났다. 판정을 함수 하나로 모으고 census 테스트를 걸었다.
+- `_is_windows()` 이음매 신설 — 테스트가 `os.name` 을 통째로 바꾸면 `pathlib` 이
+  `WindowsPath` 로 바뀌어 무관한 코드가 죽는다(실측). 판정만 바꿔 끼운다.
+
+### ③ 실 Windows 실측이 잡은 결함 2건 (리눅스 171건은 전부 통과 중이었다)
+- **ctypes argtypes 누락** — `ExtractIconW` 의 x64 모듈 핸들에서
+  `OverflowError: int too long to convert` → **아이콘 등록 자체가 실패**(`hwnd=0`).
+  사용하는 Win32 함수 전부에 argtypes/restype 를 선언해 해소.
+- **`MF_DEFAULT` 를 `AppendMenuW` 에 넘김** — 그 상수는 `AppendMenu` 의 유효 플래그가
+  아니라 **조용히 무시**된다. 실 Windows 에서 메뉴를 조립해 `GetMenuState` 로 읽으니
+  5항목 전부 기본 항목 아님. `SetMenuDefaultItem` 으로 교체.
+- 두 결함 모두 **오류도 경고도 없이** 기능만 사라지는 형태다.
+
+### ④ 실측 스크립트를 커밋했다 — `tests/windows/`
+- 그 자리에서 발명한 검증은 세션과 함께 사라진다(§16.7 G14-d). 4종 스크립트 + README
+  (실행법·판정표·하네스 함정 2건)를 남겨 다음 작업자가 같은 자리에서 다시 실패하지 않게 했다.
+
+### 하지 않은 것
+- **설치기(.iss) 무변경** — 트레이는 런타임에 앱이 만든다. 설치기 문구·자동시작 항목은
+  이번 요청 범위가 아니고, 자동시작의 「로그온 → 바로 연결」은 토큰 보관 설계가 선행이다.
+- **`--tray`(숨은 채로 시작) 옵션 미도입** — 부를 자리가 없으면 「존재는 실행이 아니다」
+  (§16.7 G14-e)의 형태가 된다. 자동시작이 실제로 연결까지 갈 수 있게 된 뒤에 붙인다.
+
+## CHG-20260904T113000-ai-claude-tray-review-p1 — 적대 리뷰 P1 4건 수정
+- Timestamp: 2026-09-04T11:30:00+09:00
+- codex 적대 리뷰(§18.8.2-1 제약 없는 채널)가 P1 4건을 냈고 **전부 유효**해 전부 고쳤다.
+  넷 다 **트레이를 붙이면서 새로 도달 가능해진** 경로다 — 기능을 더하면 있던 코드의 전제가 바뀐다.
+- `gui.py`: 선택을 GUI 스레드에서 확정해 넘김(`_start_connect`) · 연결 단일 실행 게이트
+  (`_connect_gate`) · 종료 경합 차단(`_shutting_down` 2지점) · 트레이 판정을 존재→**생존**
+  (`_tray_live`)으로 전환.
+- `tray.py`: `Tray.alive`(backend 생존 조회) 신설 · `TaskbarCreated` 재등록 **실패를 삼키지 않음**.
+- ⚠ **부수 발견**: `_connect` 가 러너에 넘기던 것은 상태 객체가 아니라 **라벨 문자열**이었다.
+  WSL 런타임을 고르면 `--ai "claude (WSL)"` 이 가서 이름부터 어긋난다(Windows 자리는
+  라벨==이름이라 증상이 없어 숨어 있었다). 스레드 수정과 같은 지점이라 함께 고쳤다.
+- 테스트 40건(총 177) · 뮤테이션 **21/21 KILL, NOOP 0** · 실 Windows 4종 재실행 PASS.
+
+## CHG-20260904T121000-ai-claude-tests-actually-run-in-ci — 이 feature 의 테스트가 CI 에 없었다
+- Timestamp: 2026-09-04T12:10:00+09:00
+- **발견**: `unit/feature-0046-native-client/tests` 가 `.github/workflows/ci.yml` 의 pytest 경로
+  목록에도, `pyproject.toml` 의 `testpaths` 에도 **없었다**. 2026-09-03 신설 이후 이 feature 의
+  테스트는 **로컬에서만** 돌았고 CI 는 그 축을 한 번도 보지 않았다.
+- ⚠ **이 저장소가 이미 아는 재발 클래스다.** `ci.yml` 주석이 직접 경고한다 — 「새 테스트
+  디렉토리를 만들면 **양쪽 모두** 등재한다 … 로컬은 green 인데 CI 는 그 축을 보지 않는 상태가
+  조용히 생긴다 — **지금까지 4번 그랬다**」. `pyproject.toml` 의 feature-0014 주석도 같은 사고를
+  기록한다(전면 503 이 6시간에 71건 나는 동안 CI 는 초록이었다).
+- 이번 cycle 이 테스트 40건을 더했으므로, 등재하지 않으면 **그 40건도 실행되지 않는다** —
+  「존재는 실행이 아니다」(AGENTS.md §16.7 G14-e). 그래서 이 cycle 안에서 배선했다.
+- **적용: `pyproject.toml` `testpaths` 4 → 5.**
+- ⛔ **미적용(권한 차단): `.github/workflows/ci.yml`.** 푸시가 거부됐다 —
+  `refusing to allow an OAuth App to create or update workflow ci.yml without workflow scope`.
+  현재 토큰 스코프는 `admin:public_key, gist, read:org, repo` 로 **`workflow` 가 없다**(SSH
+  대체 경로도 이 저장소에는 없다). **AI 가 이 파일을 바꿀 수단이 없다.**
+- ⚠ **그래서 CI 는 여전히 이 feature 의 테스트를 돌리지 않는다.** CI 스텝은 `pytest -q <경로들>`
+  로 경로를 **명시**하므로 `testpaths` 를 보지 않는다 — 즉 이번 `pyproject.toml` 갱신은 로컬
+  `pytest` 만 덮는다. **절반만 배선된 상태를 「배선했다」로 적지 않는다**(§16.7 G14-e 의 요점이
+  정확히 그것이다).
+- **남은 조치(사람 필요, 1줄)**: `.github/workflows/ci.yml` 의 pytest 경로 마지막 줄
+  `unit/feature-0006-lan-proxy-access/tests` 뒤에 ` \` 를 붙이고 다음 줄에
+  `unit/feature-0046-native-client/tests` 를 추가한다. `workflow` 스코프가 있는 토큰 또는
+  GitHub 웹 편집으로 가능하다.
+- ⚠ **또 하나의 남은 사실**: 두 목록은 애초에 서로 다르다(ci.yml 9 vs testpaths 5). 그 불일치
+  자체가 다음 누락의 온상이지만 이 요청의 범위 밖이라 **기록만** 한다. 구조적 해소는
+  「한 목록에서 다른 목록을 생성하거나, 두 목록의 일치를 검사하는 테스트」다.
+- Win32/트레이 층은 리눅스에서 돌지 않으므로 CI 대상이 아니다 — 그 층은
+  `tests/windows/`(pytest 수집 대상 아님) + README 의 실행법이 담당한다.
+
+## CHG-20260904T125000-ai-claude-frozen-icon-verified — 동결 exe 아이콘 추출 실측
+- Timestamp: 2026-09-04T12:50:00+09:00
+- REPORT 에 「미검증」으로 적어 둔 항목 하나를 **실제로 재서** 닫았다. 이 저장소는 「소스로는
+  되는데 동결본에서는 안 되는」 결함을 이미 두 번 겪었다(`sys.executable` 이 파이썬이 아닌
+  문제 · 진입점 상대 임포트) — 그래서 동결 축은 추정으로 남기지 않는다.
+- 실제 배포 형식으로 빌드(`build_client.py --skip-installer`, exit 0 · `DQAConnect.exe`
+  2,284,758 B · 임베더블 CPython 동봉 + 러너 모듈 임포트 검증 통과) 후, 그 산출물에
+  `ExtractIconW` 를 걸어 `icon_count=1` · 유효 핸들 확인 → 배포본 트레이는 **앱 아이콘**이다.
+- `tests/windows/verify_frozen_icon.py` 커밋 + README 판정표·빌드 절차 추가.
+- ⚠ **앱을 실행하지는 않았다** — 실행하면 탐지가 돌아 사용자의 AI 사용량을 쓴다. 동결 축에서
+  확인한 것은 아이콘 추출 하나이고 그 사실을 그대로 적는다.
+- 부수 확인: 빌드 로그가 CP949 콘솔에서 한글이 깨져 나오는데도 **종료 코드 0** — §P0-I 의
+  `_make_stdio_lossy()` 가 의도대로 동작한다(「깨짐 = 실패」가 아니다).
+
+## CHG-20260904T133000-ai-claude-merge-webshell-and-tray-reach — 웹 셸 병합 + 트레이 도달 범위
+- Timestamp: 2026-09-04T13:30:00+09:00
+- 같은 feature 를 병렬 진행한 두 cycle 이 만났다(main 의 PR #1568 웹 셸 1·2·3단계 ↔ 본 cycle 트레이).
+- **충돌 3건 자율 해결**(§16.4): `gui.py` 임포트 양쪽 보존 · `FUNCTION.md` 절 번호 충돌 →
+  main 선착 쪽이 P0-S/P0-T 유지, 본 cycle 은 **P0-U/P0-V 로 재번호** · `TASK.md` 양쪽 cycle
+  블록 보존(시간순). 해결 결과는 **양측 부모 대비**로 검증했다 — 삭제 파일 0, 그쪽 신규 4파일
+  바이트 동일, 양쪽 고유 심볼 전수 잔존, 합본 테스트 227 passed.
+
+### ⚠ 병합이 드러낸 것 — 트레이의 **도달 범위**가 좁아졌다
+- main 의 새 `gui.run_client()` 는 **웹 셸(브라우저 앱 창)을 주 경로**로 삼고, tkinter
+  `ClientApp` 은 「`--app` 을 못 여는 머신」의 **폴백**이 됐다.
+- 이번 cycle 의 트레이는 `ClientApp` 에 붙어 있다 → **주 경로 사용자는 트레이를 만나지 못한다.**
+- 반면 **깜빡임 수정(`core.hidden_child_kwargs`)은 두 경로 모두에 적용된다** — 탐지·로그인·
+  연결확인·러너 기동이 전부 `core` 를 지나기 때문이다. 두 요청의 도달 범위가 **서로 다르다**.
+- ⚠ **코드가 합쳐졌다는 것과 사용자가 그 기능을 만난다는 것은 다른 축이다.** 병합 green 을
+  「요청 충족」으로 읽지 않는다.
+
+### 왜 이번 cycle 에서 웹 셸 경로까지 확장하지 않았나
+- `run_client`/`_serve_confirms` 는 **「앱 창이 닫히면 연결도 끝난다」를 의도된 계약으로 명시**
+  하고, 그쪽 **웹 페이지 문구가 같은 말을 한다**. 트레이를 붙이려면 그 계약과 그 문구를 함께
+  바꿔야 한다 — 안 바꾸면 화면이 거짓을 말하게 된다(P0-R).
+- 그 경로는 유효 토큰 + 실 서버 + 브라우저가 있어야 구동되므로 **이 세션에서 실측할 수 없다.**
+  검증 없이 주 경로의 수명 계약을 바꾸는 것은 이 저장소가 반복해 벌을 받은 형태다.
+- 사용자 요청 시점(2026-09-04 오전)의 DQAConnect UI 는 tkinter `ClientApp` 이었다. 웹 셸은
+  그 뒤 착륙했다 — 요청 범위가 **작업 중 바뀐** 경우이므로 자의로 넓히지 않고 표면화한다.
+
+## CHG-20260904T134500-ai-claude-guard-misuse-warning — 창 숨김 인자를 GUI 자식에 쓰지 않게
+- Timestamp: 2026-09-04T13:45:00+09:00
+- 병합 후 확인: `appwindow.open_app_window()` 도 자식을 띄우는데 **`CREATE_NO_WINDOW` 만**
+  준다. 이것은 결함이 아니라 **옳다** — 브라우저 앱 창은 자기 창을 **보여 줘야** 하므로
+  `SW_HIDE` 를 주면 아무것도 안 뜬다(「눌렀는데 아무 일도 없다」 = 조용한 실패).
+- 그런데 이번 cycle 이 만든 `hidden_child_kwargs()` 는 이름·docstring 이 「자식을 창 없이」라
+  **그쪽에 갖다 쓰고 싶어지는 유인**을 만든다. 내가 만든 함정이므로 내가 표지를 세운다.
+- `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-AD 에 **「GUI 자식에는 쓰지 않는다 ·
+  appwindow 의 중복은 의도된 것」** 을 명시. 코드 동작 변경 0 — 오용 방지 표지만 추가.
+
+## CHG-20260904T140000-ai-claude-scope-decision-recorded — 웹 셸 트레이는 별도 cycle (사용자 결정)
+- Timestamp: 2026-09-04T14:00:00+09:00
+- 병합이 드러낸 「트레이가 주 경로에 없다」를 사용자에게 물었고, **별도 cycle** 로 결정됐다.
+- TASK/REPORT 의 「사용자 결정 대기」를 그 결정으로 갱신. 대화가 아니라 **문서가 정본**이다.
+- 이번 PR 은 현 상태로 머지한다 — 폴백 경로 트레이 + **두 경로 모두 적용되는** 깜빡임 수정.
+
+## CHG-20260904T143000-ai-claude-merge-1569-and-parity-note — main 재병합 + 갈린 계약 정정
+- Timestamp: 2026-09-04T14:30:00+09:00
+- main 이 다시 전진(PR #1569 — 브리지 수명을 패널 생존 신호로 · 앱 창을 그대로 DQA 로).
+  충돌 3건(MODIFY·REVIEW·TASK)은 전부 **양쪽 말미 추가** 형태라 §16.4 대로 둘 다 보존했다.
+- ⚠ **ID 충돌 해소**: 양쪽이 `## TASK-20260904T100000` 을 그대로 썼다(내 쪽은 슬러그 없음).
+  §6 권장 형식대로 나중 도착인 이번 cycle 에 슬러그를 붙여
+  **`TASK-20260904T100000-tray-background`** 로 가르고, **내 항목의** `Related TASK` 6건만
+  갱신했다(그쪽 항목 무접촉).
+- ⚠ **병합이 만든 거짓 서술 1건 정정**: `_serve_confirms` 도크스트링이 「그것이 tkinter 판과
+  같은 계약이다」라고 적고 있었는데, **이번 cycle 이 tkinter 판의 계약을 바꿨다**(트레이가
+  살아 있으면 창을 닫아도 연결 유지). 두 경로의 수명 계약이 갈렸다는 사실과, 확장은 별도
+  cycle 이라는 사용자 결정, 그리고 확장 시 **패널 문구도 함께** 바꿔야 한다는 점을 명시.
+  동작 변경 0 — 주석만. 병렬 cycle 이 만나면 **한쪽의 참이 다른 쪽에서 거짓이 된다.**
+- 합본 테스트 **245 passed**.
+
+## CHG-20260904T150000-ai-claude-tray-parity-across-shells — 상주를 두 껍데기 공통으로 재구성
+- Timestamp: 2026-09-04T15:00:00+09:00
+- 사용자 지시: *「'근본 원인 분석 및 해결 방안 모색' 세션에서 작업하는 부분과 정합하게
+  작동하도록 재구성해주세요」*. 그 세션이 세운 구조(화면은 서비스에 하나 · 웹 셸이 주 경로 ·
+  브리지 수명 = 패널 생존 신호)에 이번 cycle 의 트레이를 맞춰 넣는다.
+- **문제**: 트레이가 tkinter **폴백에만** 붙어 있었다. 주 경로 사용자는 패널을 닫는 순간
+  연결을 잃었고, 두 껍데기의 수명 계약이 갈렸다. 사용자에게 이 프로그램은 하나다.
+- `bridge.py`: **공개 수명 창구** 신설 — `connected`(러너 생존) · `disconnect()`(러너만 내리고
+  브리지는 유지 — 패널을 다시 열어 재연결할 수 있어야 상주의 의미가 산다) ·
+  `resident` 플래그와 `status.resident`.
+  ⚠ `_runner_proc` 를 호출부가 직접 들여다보게 두지 않았다 — 수명 판정이 흩어지면 그 중
+  하나만 고쳐지는 드리프트가 난다(이 cycle 이 창 숨김 가드에서 이미 겪은 형태).
+- `gui.py`: `_start_shell_tray()` 신설 + `run_client` 배선 + `_serve_confirms(tray=…)`.
+  **상주 중에는 유휴가 종료 사유가 아니다**(패널을 닫아 두고 쓰는 것이 상주다). 아이콘이
+  없거나 **뜬 뒤 죽으면** 종전 계약(유휴 90초)으로 되돌아간다 — 상주할 표면이 없는데 계속
+  살아 있으면 끌 수단이 없다. tkinter 판의 `_tray_live` 와 **같은 판정**이다.
+- `ai-connect.js` · `ai-connect.html`: 패널이 「닫아도 유지됩니다 / 닫으면 끝납니다」를
+  **갈라 말한다**. 판정 근거는 `status.resident` 하나 — 프런트가 추정하면 트레이 없는
+  머신에서 거짓이 되고 사용자는 창을 닫고 연결을 잃는다(P0-R).
+- ⚠ **웹 셸 트레이에 「다시 연결」을 넣지 않았다**: 이 경로의 연결 입구는 패널이고, 트레이가
+  자체 재연결을 가지면 같은 동작의 입구가 둘로 갈린다. 트레이는 패널을 열어 주고 연결은
+  거기서 건다. 끊기만 트레이가 한다(패널 없이도 해야 하는 동작).
+- 테스트 +10(총 255) — 유휴가 상주를 끝내지 않는지, 트레이 없음/죽음이 종전 계약으로
+  돌아가는지, 메뉴 어휘가 두 껍데기에서 같은지, 패널이 판정을 받아서 쓰는지를 **구동**으로 확인.
+
+## CHG-20260904T154000-ai-claude-wiki-parity — wiki 를 재구성에 정합
+- Timestamp: 2026-09-04T15:40:00+09:00
+- `wiki/Features/feature-0046-native-client.md` §4-2 신설(두 껍데기 공통 상주 규약 ·
+  「다시 연결」 부재의 의도 · 패널 문구의 판정 출처 · PB-0008 이월).
+- `wiki/Log.md` append(재구성 + 하네스 결함 2건 + CHECK#13 사각).
+- `wiki/hot.md`: 상주 fact 를 «두 껍데기 공통» 으로 갱신, 미실측 항목에서 동결 exe 아이콘
+  제거(실측 완료)하고 **웹 셸 PB-0008 이월**을 추가.
+- wiki-lint 32(선재와 동일, orphan 0).
+
 ## CHG-20260904T123000-ai-claude-panel-init-retry — 초기화 성공 여부로 플래그를 세운다
 - Timestamp: 2026-09-04T12:30:00+09:00
 - **배포 후 앱 창에서 패널이 끝내 안 켜졌다.** 서버 자산·스탬프·캐시 헤더를 전부 확인했고
@@ -236,6 +427,40 @@ edit_policy: append-only
 - ⚠ 절차: 이 수정 직전 커밋에서 **테스트 실패를 확인하지 않고 푸시**했다. `verify-completion`
   은 pre-commit 게이트라 테스트를 돌리지 않으므로, 게이트 PASS 가 곧 테스트 green 이 아니다 —
   둘을 같은 것으로 읽었다. 커밋 전에 **회귀도 함께** 확인한다.
+
+## CHG-20260904T170000-ai-claude-primary-panel-residency — 상주 안내를 주 표면으로 + 실행 결함 해소
+- Timestamp: 2026-09-04T17:00:00+09:00
+- **내 상주 안내가 사용자에게 닿지 않는 자리에 있었다.** `ai-connect.html`/`ai-connect.js`
+  에 넣었는데, 앱 창이 여는 것은 서비스 루트(`index.html`)이고 그 연결 패널은
+  `app/client-bridge.js` 가 그린다. 「주 경로와 정합하게」라는 요구가 **한 층 아래에서 그대로
+  반복**됐다 — 저장은 됐는데 읽히지 않는 자리.
+- 그 패널을 실제로 **구동해 보니** 첫 호출에서 던졌다:
+  `ReferenceError: _status is not defined`. `client-bridge.js` 가 `_status` 를 import 없이
+  8곳에서 부르는데 정의는 `connect-modal.js` 의 비-export 지역 함수다. 예외가 호출부
+  `openConnectModal()` 까지 올라가 **연결 창 자체가 안 열린다**.
+  - 직전 cycle 이 고친 「패널이 끝내 안 켜졌다」(CHG-20260904T123000)와 **화면상 구분되지
+    않는다**. 그 처방은 필요했지만 충분하지 않았다.
+- 변경
+  - `app/client-bridge.js` — `_status` 를 **지역 정의**(순환 import 회피 · 이 모듈의 «의존 0»
+    유지) · `_paintResidency` 신설 · `bridgeCall("status")` 를 `discover` **앞에** 호출.
+  - `index.html` — 연결 패널에 `#connectClientResidency` 를 **비운 채** 추가.
+  - `FUNCTION.md` §P0-AE(상주 안내는 보는 화면에) · §P0-AF(부르는 헬퍼는 그 모듈이).
+  - `tests/verify_client_panel_dom.mjs` 신설 — 모듈을 **바이트 그대로 통째 실행**한다
+    (`data:` URL). 함수를 떼어내지 않으므로 「추출이 깨져서 vacuous pass」가 성립하지 않는다.
+  - `tests/test_web_shell.py` +6 · `verify_residency_dom.mjs` 에 `DQA_JSDOM` 수용.
+- **ID 충돌 재발 해소**: main 이 `P0-U`~`P0-X` 를 가져왔다. 트렁크 우선으로 본 cycle 의
+  `P0-U/P0-U-1/P0-V` 를 **`P0-AC/P0-AC-1/P0-AD` 로 재번호**하고 `gui.py`·`MODIFY.md` 참조를
+  함께 옮겼다. (같은 충돌의 2회차 — 병렬 세션이 같은 feature 문서를 쓰는 한 반복된다.)
+
+## CHG-20260904T172000-ai-claude-wiki-primary-panel — wiki 미러를 주 표면 정합에 맞춤
+- Timestamp: 2026-09-04T17:20:00+09:00
+- `wiki/Features/feature-0046-native-client.md` §4-3 신설 — 안내가 **닿는 자리**여야 한다는
+  교훈 · `ReferenceError: _status` 의 형태와 왜 소스 검사로 안 보이는가 · 검증 하네스가
+  스스로를 배신한 3건.
+- `wiki/Log.md` append · `wiki/hot.md` 에 「주 표면은 `app/client-bridge.js` 이고
+  `ai-connect.*` 는 별도 페이지」와 「그 모듈은 의존 0 — 헬퍼는 지역 정의」를 사실로 추가.
+- wiki-lint 32(선재 동일, orphan 0).
+
 
 ## CHG-20260904T140000-ai-claude-inside-app-entry — 앱 창 «안»에서는 다시 띄우지 않는다
 - Timestamp: 2026-09-04T14:00:00+09:00
@@ -273,3 +498,22 @@ edit_policy: append-only
 - 상태 콜백을 넘기면서 `initClientPanel()` 무인자 형태를 잠그던 단정 2건이 깨졌다.
 - 지키는 성질은 「플래그를 **결과로** 세운다」이지 «어떻게 부르는가» 가 아니다 —
   인자 개수를 뺐다.
+
+## CHG-20260904T180000-ai-claude-converge-status-injection — `_status` 처방을 main 의 주입 방식으로 수렴
+- Timestamp: 2026-09-04T18:00:00+09:00
+- **같은 결함을 병렬 세션도 찾아 다르게 고쳤다**(PR #1572: `initClientPanel(setStatus)` 로
+  호출부 주입). 내 처방은 지역 중복 정의였다. **그쪽이 낫다** — 중복 없음 · 순환 없음 ·
+  「이 모듈은 모달의 내부 헬퍼를 모른다」가 시그니처에 드러남. 내 것을 버리고 수렴했다.
+- 그 위에 상주 안내(`_paintResidency` + `bridgeCall("status")`)를 다시 얹었다. 이것은
+  **주입받지 않는다** — 이 패널에만 있는 요소이고 다른 호출부가 달리 그릴 이유가 없다.
+- 테스트 수렴
+  - `_free_identifiers_called` 를 **바인딩 유무**로 일반화 — `function` 선언만 보면
+    `const`/매개변수 바인딩을 자유변수로 오판한다(주입으로 바꾸자 실제로 거짓 양성이 났다).
+  - `test_status_writers_in_both_modules_target_the_same_element`(내 중복 정의 전제) 폐기 →
+    **`test_modal_injects_a_status_writer_that_actually_exists`** 로 대체. 주입하는 **이름이
+    실재하는가**를 본다 — 같은 결함의 한 층 위 형태이고, 그들의 런타임 테스트는 node 부재 시
+    `pytest.skip` 이라 CI 에서 아무것도 지키지 않는다.
+  - ⚠ 그 단정이 처음에 **주석 줄**을 집었다(§16.7 G11-a) — 코드 줄만 보도록 고쳤다.
+- 하네스도 주입 계약으로: 콜백을 넣어 부르고 **그 콜백으로 실제로 말하는지** + 콜백 없이도
+  죽지 않는지 확인. 대조군 4종(자유변수 복귀 · 콜백 무시 · 기본값 제거 · 상주값 무시) 전건 적발.
+- 회귀 275 passed · 뮤테이션 **5/5 KILL(NOOP 0)**.

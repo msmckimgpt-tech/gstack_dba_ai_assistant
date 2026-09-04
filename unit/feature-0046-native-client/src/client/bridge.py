@@ -71,6 +71,9 @@ class Bridge:
         self.last_seen = time.monotonic()
         self._states: list[core.RuntimeState] = []
         self._runner_proc = None
+        #: 껍데기가 **알림 영역 아이콘을 실제로 띄웠는가**. 패널의 안내 문구가 이 값을 본다.
+        #: 껍데기가 세워 주기 전까지는 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
+        self.resident = False
         self._log: list[str] = []
         handler = _make_handler(self)
         self._srv = socketserver.ThreadingTCPServer((host, 0), handler)
@@ -148,10 +151,39 @@ class Bridge:
         """패널이 살아 있음을 알린다. `act()` 가 이미 `last_seen` 을 갱신했다."""
         return {"ok": True}
 
+    @property
+    def connected(self) -> bool:
+        """러너가 지금 살아 있는가. 껍데기(트레이·패널)가 상태를 읽는 **공개 창구**다.
+
+        ⚠ `_runner_proc` 를 호출부가 직접 들여다보게 두지 않는다 — 그러면 수명 판정이 여러
+        곳에 흩어지고, 그 중 하나만 고쳐지는 드리프트가 난다(이 저장소가 창 숨김 가드에서
+        이미 겪은 형태).
+        """
+        return bool(self._runner_proc and self._runner_proc.poll() is None)
+
+    def disconnect(self) -> bool:
+        """러너를 내린다. 끊을 것이 있었으면 `True`.
+
+        트레이의 [연결 끊기] 가 부른다. **브리지 자체는 계속 산다** — 패널을 다시 열어
+        재연결할 수 있어야 하기 때문이다(그것이 상주의 의미다).
+        """
+        if not self.connected:
+            return False
+        try:
+            self._runner_proc.terminate()
+        except Exception:  # noqa: BLE001 — 이미 죽었으면 그것으로 족하다
+            pass
+        self._say("연결을 끊었습니다.")
+        return True
+
     def _do_status(self, _body: dict) -> dict:
         return {"ok": True, "base": self.plan.base, "log": self._log[-40:],
                 "runtimes": [_state_json(s) for s in self._states],
-                "connected": bool(self._runner_proc and self._runner_proc.poll() is None)}
+                # ⚠ 패널이 「창을 닫아도 유지됩니다」를 말해도 되는지는 **트레이가 실제로 떠
+                #   있는가**에 달렸다. 껍데기가 이 값을 세우고 패널은 그것만 본다 — 프런트가
+                #   스스로 추정하면 트레이 없는 머신에서 거짓을 말하게 된다(§P0-R).
+                "resident": bool(self.resident),
+                "connected": self.connected}
 
     def _do_discover(self, _body: dict) -> dict:
         found: list[core.RuntimeState] = []

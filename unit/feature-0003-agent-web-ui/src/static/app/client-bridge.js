@@ -56,6 +56,21 @@ export function bridgeCall(action, body) {
   }).then(function (r) { return r.json(); });
 }
 
+/* 상주 안내. **브리지가 말해 주는 것만** 옮긴다 — 프런트가 「트레이가 있겠지」라고 추정하면
+ * 트레이가 못 뜬 머신에서 거짓말이 된다(§P0-R). 값이 오기 전에는 비워 둔다.
+ *
+ * ⚠ 상태 한 줄(`_status`)과 달리 이것은 **주입받지 않는다.** 저것은 모달이 이미 갖고 있던
+ *   헬퍼라 호출부가 주는 것이 옳지만, 이 안내는 **이 패널에만 있는 요소**이고 다른 호출부가
+ *   달리 그릴 이유가 없다. 주입 인자를 늘리면 호출부가 알아야 할 것만 늘어난다.
+ */
+function _paintResidency(resident) {
+  const el = document.getElementById("connectClientResidency");
+  if (!el) return;
+  el.textContent = resident
+    ? "이 창을 닫아도 연결은 유지됩니다 — 연결 프로그램이 트레이에 남아 있습니다."
+    : "이 창을 닫으면 연결도 끝납니다.";
+}
+
 export function initClientPanel(setStatus) {
   // ⚠ 상태 표시는 **호출부가 준다.** 이 모듈은 모달의 내부 헬퍼를 알지 못한다 —
   //   분리하면서 `_status` 를 그대로 부른 탓에 `ReferenceError` 로 탐지가 죽었다
@@ -135,6 +150,10 @@ export function initClientPanel(setStatus) {
   });
   // 창이 살아 있음을 알린다 — 브리지는 이 신호로 수명을 판정한다.
   setInterval(() => { const p = bridgeCall("ping", {}); if (p) p.catch(() => {}); }, 20000);
+  // ⚠ `discover` 와 **따로** 묻는다. 저것은 실제로 답하는지 확인하느라 수십 초 걸리는데,
+  //   「창을 닫아도 되는가」는 그 전에 알아야 하는 안내다.
+  const st = bridgeCall("status", {});
+  if (st) st.then((res) => _paintResidency(!!(res && res.resident))).catch(() => {});
   refresh();
   return true;
 }

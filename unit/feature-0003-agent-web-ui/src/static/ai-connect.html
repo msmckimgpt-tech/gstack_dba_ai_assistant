@@ -58,6 +58,10 @@
           <button type="button" class="aic-btn aic-btn--primary" id="clientConnect" disabled>이 서비스에 연결</button>
         </div>
         <p class="aic-status" id="clientPanelStatus"></p>
+        <!-- ⚠ 비워 둔 채 렌더한다. 채우는 것은 `status.resident` 를 받은 뒤이고, 그 값은
+             **껍데기가 알림 영역 아이콘을 실제로 띄웠을 때만** 참이다. 프런트가 추정해
+             「닫아도 유지됩니다」를 먼저 쓰면 트레이 없는 머신에서 거짓이 된다(P0-R). -->
+        <p class="aic-handoff-hint" id="clientResidency"></p>
       </section>
       <section id="connectSteps" class="aic-hidden" style="margin-bottom:12px">
         <p class="aic-handoff-hint"><strong id="stepsSummary"></strong></p>
