@@ -216,6 +216,11 @@ def test_runner_has_no_third_party_imports():
         # TASK-20260901T140000: 러너 인스턴스 발급(`secrets`) + 종료 시 자기 점유 해제
         # (`atexit`·`signal`). 셋 다 표준 라이브러리 — 무설치 계약은 그대로다.
         "secrets", "atexit", "signal",
+        # 2026-09-04: WSL 안의 AI 탐지 — `wsl.exe` 를 찾는다(`shutil.which`).
+        # 이 사용자의 실제로 쓰던 AI 가 WSL 안에 있었고, 러너가 거기 닿지 못해
+        # 연결 프로그램이 `--cmd` 로 우회했는데 그 경로는 능력 협상을 돌지 않는다.
+        # 표준 라이브러리라 무설치 계약은 그대로다.
+        "shutil",
         # TASK-20260901T163000: 예외 스택을 사건 원장에 남긴다(`_short_traceback`). 종전엔
         # `str(e)` 만 남아 예외 형과 터진 자리가 통째로 버려졌다. 표준 라이브러리.
         "traceback",
