@@ -23,7 +23,14 @@
   #error AppDir 을 지정하세요: ISCC /DAppDir=...\dist\DQAConnect
 #endif
 
+; ⚠ 두 이름을 **가른다** (사용자 결정 2026-09-04).
+;   `MyAppName`  — 설치 폴더·제거 항목 등 **패키징 층**. 바꾸면 기존 설치본의 업그레이드
+;                  경로가 갈리므로 그대로 둔다.
+;   `MyDisplayName` — **사용자가 보는 이름**. 이 프로그램은 「연결 도우미」가 아니라 DQA
+;                  자체다(앱 창을 직접 그린다). 시작 메뉴·바탕화면 아이콘이 이것을 쓴다.
+;                  정본은 `shared/dqa_identity.DISPLAY_NAME`.
 #define MyAppName "DQA Connect"
+#define MyDisplayName "DQA"
 #define MyAppExe "DQAConnect.exe"
 #define MyAppVersion "1.0.0"
 #define MyPublisher "Masangsoft"
@@ -61,10 +68,11 @@ Name: "startup"; Description: "Windows 시작 시 자동으로 실행 (내 AI �
 Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
-Name: "{group}\{#MyAppName} 제거"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: startup
+; 아이콘은 **보이는 이름**을 쓴다 — 사용자가 누르는 것이 곧 DQA 다.
+Name: "{group}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"
+Name: "{group}\{#MyDisplayName} 제거"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
+Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: startup
 
 [Registry]
 ; `dqa-connect://` 스킴 핸들러 — 웹의 [내 AI 실행] 이 이 프로그램을 **연결 정보와 함께** 띄운다.
@@ -74,10 +82,10 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: startu
 ;   없습니다」만 본다. 브라우저는 **스킴 핸들러 부재를 감지하지 못하므로** 버튼은 조용히 죽는다.
 ;
 ; per-user 설치이므로 HKCU 에 쓴다(관리자 권한 불필요).
-Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: ""; ValueData: "URL:DQA Connect"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: ""; ValueData: "URL:{#MyDisplayName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\dqa-connect\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExe},0"
 Root: HKCU; Subkey: "Software\Classes\dqa-connect\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExe}"" ""%1"""
 
 [Run]
-Filename: "{app}\{#MyAppExe}"; Description: "지금 실행"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExe}"; Description: "{#MyDisplayName} 실행"; Flags: nowait postinstall skipifsilent

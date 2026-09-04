@@ -792,12 +792,17 @@ def test_run_client_tells_the_bridge_whether_it_is_resident():
     프런트가 추정하면 트레이 없는 머신에서 거짓이 된다(§P0-R).
     """
     src = (_SRC / "client" / "gui.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_client")
-    body = ast.unparse(fn)
-    assert "br.resident = tray is not None" in body, \
-        "브리지에 상주 여부를 알려 주지 않는다 — 패널이 판단 근거를 못 받는다"
-    assert "_start_shell_tray" in body
+    tree = ast.parse(src)
+    # ⚠ **껍데기마다** 확인한다 (2026-09-04: 내장 창 껍데기가 생겼다). 한쪽만 세우면 그
+    #   껍데기로 뜬 사용자만 패널에서 거짓 안내를 본다 — 껍데기가 늘 때 가장 조용히 깨지는
+    #   자리다.
+    for name in ("_run_embedded", "_run_browser_shell"):
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == name)
+        body = ast.unparse(fn)
+        assert "br.resident = tray is not None" in body, \
+            f"{name}: 브리지에 상주 여부를 알려 주지 않는다 — 패널이 판단 근거를 못 받는다"
+        assert "tray" in body and "_start_" in body, f"{name}: 트레이를 세우지 않는다"
 
 
 # ── 10. 브리지의 수명 창구 ───────────────────────────────────────────────────────

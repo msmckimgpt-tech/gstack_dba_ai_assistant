@@ -244,7 +244,7 @@
       say("실행할 연결 정보가 없습니다. [연결 준비] 를 먼저 눌러 주세요.", "error");
       return;
     }
-    say("연결 프로그램을 실행했습니다. 창이 뜨지 않으면 프로그램이 설치되지 않은 것입니다 — " +
+    say("DQA 앱을 실행했습니다. 창이 뜨지 않으면 아직 설치되지 않은 것입니다 — " +
         "아래 [터미널로 연결하기] 를 펼쳐 주세요.", "ok");
     try { window.location.href = launch.protocol; } catch (e) { /* 무시 */ }
   });
@@ -432,7 +432,7 @@
     pstatus("이 컴퓨터의 AI 를 찾는 중… (실제로 답하는지 확인하므로 수십 초 걸릴 수 있습니다)");
     return call("discover", {}).then(function (res) { paint(res.runtimes); })
       .catch(function (e) {
-        pstatus("연결 프로그램에 닿지 못했습니다 — 창을 닫았을 수 있습니다. (" + e.message + ")",
+        pstatus("이 컴퓨터의 연결 기능에 닿지 못했습니다 — 창을 닫았을 수 있습니다. ( " + e.message + ")",
                 "error");
       });
   }

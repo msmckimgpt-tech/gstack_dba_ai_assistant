@@ -48,6 +48,11 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+#: **창·트레이·대화상자에 뜨는 이름.** 정본은 `shared/dqa_identity.DISPLAY_NAME` 이며
+#: `tests/test_embedded_window.py` 가 그 값과 대조한다 — 이 모듈은 배포본이 동결되는
+#: stdlib 경로라 정본을 import 하지 않는다(`ConnectPlan.home` 과 같은 이유).
+DISPLAY_NAME = "DQA"
+
 #: 클라이언트가 다루는 AI 런타임. **러너 `_RUNTIME_SPECS` 가 정본**이며 여기 목록이 넓으면
 #: 「설치는 통과하고 런타임에서 실패」한다 — feature-0043 P0-Z6.1-a 가 겪은 그 형태다.
 #: 동기화는 `tests/test_client_runtime_parity.py` 가 잠근다.

@@ -169,6 +169,50 @@ def _iscc() -> str | None:
     return None
 
 
+#: 내장 앱 창이 쓰는 것. 러너와 **다른 축**이다 — 러너는 여전히 stdlib 전용이고, 이 둘은
+#: 껍데기(이 exe)에만 들어간다.
+GUI_DEPS = ("pywebview", "pythonnet")
+
+
+def ensure_gui_deps() -> None:
+    """빌드 파이썬에 내장 창 의존이 있는지 보고, 없으면 설치한다.
+
+    ⚠ 없는 채로 빌드하면 PyInstaller 가 **조용히 건너뛰고** 설치본만 창을 못 띄운다.
+    빌드가 성공하고 산출물만 반쪽인 형태라 가장 늦게 드러난다.
+    """
+    try:
+        import webview  # noqa: F401
+
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"$ pip install {' '.join(GUI_DEPS)}")
+    rc = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *GUI_DEPS]).returncode
+    if rc != 0:
+        raise SystemExit(f"내장 창 의존 설치 실패({rc}) — {', '.join(GUI_DEPS)}")
+
+
+def verify_frozen_can_draw_a_window(exe: Path) -> None:
+    """**동결본을 실제로 실행해** 창을 그릴 수 있는지 묻는다.
+
+    ⚠ 파일이 담겼는지 보지 않는다. 「담기긴 했는데 임포트가 깨진」 상태를 그 검사는 못 본다 —
+    이 저장소는 그 구분을 못 해서 **한 번도 실행된 적 없는 exe** 를 배포한 적이 있다.
+    """
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "selftest.json"
+        rc = subprocess.run([str(exe), "--selftest", str(out)], timeout=300).returncode
+        if rc != 0 or not out.is_file():
+            raise SystemExit(f"동결본 자가진단이 답하지 않았습니다(코드 {rc}) — {exe}")
+        report = json.loads(out.read_text(encoding="utf-8"))
+    if not report.get("webview_import"):
+        raise SystemExit("동결본에서 내장 창 라이브러리를 임포트하지 못했습니다: "
+                         f"{report.get('webview_error', '')}")
+    print(f"동결본 자가진단: {report}")
+
+
 def write_service_file(app_dir: Path, base: str) -> int:
     """설치본이 열 **배포 기본 주소**를 앱 폴더에 적는다. 문제가 있으면 0 이 아닌 값.
 
@@ -218,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       검증 목적이면 --allow-non-windows 를 주세요.", file=sys.stderr)
         return 2
 
+    ensure_gui_deps()
     out = Path(args.out)
     work = out / "_work"
     out.mkdir(parents=True, exist_ok=True)
@@ -232,6 +277,10 @@ def main(argv: list[str] | None = None) -> int:
         "--specpath", str(work),
         # `client` 를 임포트 가능하게 한다 — 진입점이 절대 임포트를 쓰기 때문이다.
         "--paths", str(_SRC),
+        # ── 내장 앱 창 (사용자 결정 2026-09-04) ────────────────────────────────
+        # ⚠ `--collect-all` 이어야 한다. `webview` 는 코드뿐 아니라 **DLL**(`lib/`)을 함께
+        #   싣는데, 그것이 빠지면 임포트는 되고 창만 안 뜬다 — 가장 늦게 드러나는 형태다.
+        *sum(([f"--collect-all", m] for m in ("webview", "clr_loader", "pythonnet")), []),
         # ⚠ 진입점은 **패키지 밖**의 `dqa_connect.py` 다. `client/__main__.py` 를 주면
         # PyInstaller 가 그것을 최상위 스크립트로 실행하고, 그 안의 상대 임포트가 부모 패키지
         # 부재로 죽는다 — 2026-09-03 이전 빌드가 정확히 그 상태였다.
@@ -247,6 +296,10 @@ def main(argv: list[str] | None = None) -> int:
     if not exe.exists():
         print(f"ERROR: 산출물이 없습니다: {exe}", file=sys.stderr)
         return 1
+
+    # ── 1-1. 동결본이 정말 창을 그릴 수 있는가 ─────────────────────────────────
+    if os.name == "nt":
+        verify_frozen_can_draw_a_window(exe)
 
     # ── 2. 러너용 인터프리터 동봉 ──────────────────────────────────────────────
     py = fetch_embedded_python(app_dir / "runtime", cache=out / "_cache")
