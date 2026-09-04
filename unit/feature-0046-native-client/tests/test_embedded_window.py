@@ -422,6 +422,15 @@ def test_the_group_folder_uses_the_display_name():
     assert "DefaultGroupName={#MyDisplayName}" in _iss()
 
 
+def test_the_group_name_is_not_inherited_from_the_old_install():
+    """⚠ **실측된 결함** — Inno 는 업그레이드에서 저장된 옛 그룹 이름을 재사용한다.
+
+    `DefaultGroupName` 만 바꾸면 덮어 설치한 머신은 «DQA Connect» 폴더 안에 «DQA» 바로 가기를
+    두게 된다. 이름을 바꾼 의미가 절반만 도달한다.
+    """
+    assert "UsePreviousGroup=no" in _iss()
+
+
 def test_the_old_shortcuts_are_removed_on_upgrade():
     """**이 단정이 실측된 결함을 잡는다** — Inno 는 안 만드는 바로 가기를 알아서 치우지 않는다."""
     iss = _iss()

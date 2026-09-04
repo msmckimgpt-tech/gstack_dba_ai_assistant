@@ -43,6 +43,12 @@ AppPublisher={#MyPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyDisplayName}
 DisableProgramGroupPage=yes
+; ⚠ **저장된 옛 그룹 이름을 재사용하지 않는다** (실측 2026-09-04).
+;   Inno 는 업그레이드에서 레지스트리에 적어 둔 지난 그룹 이름을 그대로 쓴다. 그래서
+;   `DefaultGroupName` 을 «DQA» 로 바꿔도 덮어 설치한 머신은 여전히 «DQA Connect» 폴더
+;   **안에** «DQA» 바로 가기를 두게 된다 — 이름을 바꾼 의미가 절반만 도달한다.
+;   위 `[InstallDelete]` 가 옛 폴더를 지우므로 남는 것도 없다.
+UsePreviousGroup=no
 ; 관리자 권한을 묻지 않는다 — 사내 PC 의 일반 사용자가 그대로 설치할 수 있어야 한다.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
