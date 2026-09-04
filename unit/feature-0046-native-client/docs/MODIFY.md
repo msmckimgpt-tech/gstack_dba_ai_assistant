@@ -321,3 +321,9 @@ edit_policy: append-only
   **그쪽에 갖다 쓰고 싶어지는 유인**을 만든다. 내가 만든 함정이므로 내가 표지를 세운다.
 - `core.hidden_child_kwargs` docstring + `FUNCTION.md` §P0-V 에 **「GUI 자식에는 쓰지 않는다 ·
   appwindow 의 중복은 의도된 것」** 을 명시. 코드 동작 변경 0 — 오용 방지 표지만 추가.
+
+## CHG-20260904T140000-ai-claude-scope-decision-recorded — 웹 셸 트레이는 별도 cycle (사용자 결정)
+- Timestamp: 2026-09-04T14:00:00+09:00
+- 병합이 드러낸 「트레이가 주 경로에 없다」를 사용자에게 물었고, **별도 cycle** 로 결정됐다.
+- TASK/REPORT 의 「사용자 결정 대기」를 그 결정으로 갱신. 대화가 아니라 **문서가 정본**이다.
+- 이번 PR 은 현 상태로 머지한다 — 폴백 경로 트레이 + **두 경로 모두 적용되는** 깜빡임 수정.

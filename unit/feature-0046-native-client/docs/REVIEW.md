@@ -364,3 +364,12 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
   내가 만든 유인이므로 내가 표지를 세운다 — 「의도된 중복」을 명시하지 않으면 다음 사람이
   «중복 제거»로 그것을 없앤다.
 - Risks: 없음(주석). Human Approval Needed: 아니오.
+
+## REV-20260904T140000-ai-claude-scope-decision [SKIPPED:decision-record-no-code] — ACCEPTED
+- Related TASK: TASK-20260904T100000
+- Timestamp: 2026-09-04T14:00:00+09:00
+- 범위: 사용자 결정 기록(문서 3건). **코드 0.**
+- 결정: 웹 셸 주 경로의 트레이는 **별도 cycle**. 이번 PR 은 현 상태로 머지한다.
+- 근거를 남긴다 — 그 확장은 (a) 남의 cycle 이 의도적으로 명시한 수명 계약과 (b) 그것을 말하는
+  웹 페이지 문구를 함께 바꿔야 하고, (c) 이 세션에는 그 경로를 실측할 수단이 없다.
+- Human Approval Needed: 아니오 (결정을 이미 받았다).
