@@ -135,7 +135,13 @@ globalThis.__el = (id) => els.get(id);
 globalThis.__status = () => els.get("connectModalStatus").textContent;
 
 const raw = fs.readFileSync(SRC, "utf-8")
-  .replace(/^import \{ showToast \}.*$/m, "const showToast = () => {};");
+  .replace(/^import \{ showToast \}.*$/m, "const showToast = () => {};")
+  // 연결 프로그램 브리지(2026-09-04 신설). 이 하네스가 재현하는 것은 **평범한 브라우저
+  // 방문** — 연결 프로그램이 없는 경로다. 그 경우 `clientBridge` 는 null 이고 패널은
+  // 켜지지 않는다. 실물을 싣지 않는 이유는 `showToast` 와 같다: 여기서 시험하는 것은
+  // 재실행 로직이지 브리지가 아니다.
+  .replace(/^import \{ clientBridge, initClientPanel \}.*$/m,
+           "const clientBridge = null; const initClientPanel = () => {};");
 const tmp = path.join(os.tmpdir(), `cm-${process.pid}-${Math.random().toString(36).slice(2)}.mjs`);
 fs.writeFileSync(tmp, raw);
 let mod;
