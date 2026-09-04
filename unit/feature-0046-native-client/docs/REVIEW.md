@@ -242,8 +242,35 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
   간다. 안내는 하지만 마찰은 남는다.
 - 브리지 표면은 1단계 REVIEW 참조 — 네이티브 확인창이 XSS 시나리오의 유일한 방어선이다.
 - 실제 앱 창에서의 전 경로는 **배포 후 PB-0008 로** 확인한다.
+
+## REV-20260904T100000-ai-claude-bridge-lifetime [SKIPPED:자기 적대 리뷰] — ACCEPTED
+- Timestamp: 2026-09-04T10:00:00+09:00
+- 테스트 316건이 green 인데 **실제 전 경로는 끊겨 있었다.** 프로세스 수명 같은 OS 계층의
+  가정은 단위 테스트가 보지 못한다 — 이 프로젝트가 반복해 배운 것과 같은 형태다.
+- 교훈을 좁게 적는다: **«프로세스가 살아 있다» 를 «창이 열려 있다» 의 대리로 쓰지 않는다.**
+  브라우저는 창을 자기 프로세스 모델대로 다루고, 그 모델은 브라우저·상황마다 다르다.
+  관측하고 싶은 것(창이 살아 있는가)을 **직접** 묻는 신호를 만든다.
+- 신호 주기와 유휴 한도의 관계도 테스트로 묶었다 — 주기가 한도보다 길면 **정상 사용 중에**
+  죽는다. 두 상수가 따로 움직이면 조용히 그렇게 된다.
+
+## REV-20260904T110000-ai-claude-app-is-dqa [SKIPPED:자기 적대 리뷰] — ACCEPTED
+- Timestamp: 2026-09-04T11:00:00+09:00
+
+**가드를 만났을 때의 선택이 이 cycle 의 핵심이다.** 내 코드가 두 가드를 깼고, 가장 쉬운 길은
+가드를 「이건 이력이 아니니까」로 완화하는 것이었다. 그러지 않고 **파일을 갈랐다** —
+가드가 지키는 성질과 내 코드의 성질이 다르면, 둘을 같은 파일에 두는 것 자체가 잘못이다.
+완화했다면 다음 사람은 그 파일에서 «저장해도 되는 것」과 «안 되는 것」을 구분할 근거를
+잃는다.
+
+**분리 과정에서 스스로 낸 실수도 남긴다.** 슬라이스로 코드를 옮기다 `bridgeCall` 정의를
+모달에 남기고 사용처만 옮겼다. 구문 검사는 통과했다(런타임 참조 오류는 정적으로 안 잡힌다).
+node 하네스가 그것을 잡았다 — 실제로 **적재해 보는** 검증이 있어서 걸렸다.
+
+**정직하게 남기는 것**: 앱 창 안에서의 실제 동작(모달 패널이 브리지를 부르고 연결까지)은
+**배포 후 PB-0008 로** 확인한다. 여기까지는 계약과 배선의 검증이다.
+
 ## REV-20260904T100000-ai-claude-tray-and-windowless [CODEX:tray-and-windowless] — ACCEPTED
-- Related TASK: TASK-20260904T100000
+- Related TASK: TASK-20260904T100000-tray-background
 - Timestamp: 2026-09-04T10:00:00+09:00
 - Trigger: UI/화면/스레드 키워드 매칭 → §18.8.2-1 **제약 없는 채널**(codex, `--sandbox read-only`)로
   수행. 세션 상위지시가 AgentTool 을 막고 있어 subagent panel 대신 이 채널을 썼다.
@@ -301,7 +328,7 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
 - Human Approval Needed: 아니오 — 비파괴 추가, 외부 계약·인증·데이터 변경 없음(§12.3 Minor).
 
 ## REV-20260904T121000-ai-claude-tests-actually-run-in-ci [SKIPPED:ci-wiring-no-product-code] — ACCEPTED
-- Related TASK: TASK-20260904T100000 (후속)
+- Related TASK: TASK-20260904T100000-tray-background (후속)
 - Timestamp: 2026-09-04T12:10:00+09:00
 - 범위: `pyproject.toml` `testpaths` · 문서 4건. **제품 코드 변경 0.**
 - **[SKIPPED] 사유**: 새 신뢰경계·새 코드 경로가 없다. 직전 REV 에서 같은 변경 집합을 codex
@@ -325,7 +352,7 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
 - Human Approval Needed: 아니오.
 
 ## REV-20260904T125000-ai-claude-frozen-icon-verified [SKIPPED:measurement-only-no-product-code] — ACCEPTED
-- Related TASK: TASK-20260904T100000 (후속)
+- Related TASK: TASK-20260904T100000-tray-background (후속)
 - Timestamp: 2026-09-04T12:50:00+09:00
 - 범위: 실측 스크립트 1건 추가 + 문서. **제품 코드 변경 0** — 이미 있던 코드를 **재기만** 했다.
 - **[SKIPPED] 사유**: 새 코드 경로·신뢰경계가 없다. 이 변경의 내용이 곧 검증이다.
@@ -339,7 +366,7 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
 - Human Approval Needed: 아니오.
 
 ## REV-20260904T133000-ai-claude-merge-webshell [SKIPPED:merge-resolution-verified-both-parents] — ACCEPTED
-- Related TASK: TASK-20260904T100000 (병합)
+- Related TASK: TASK-20260904T100000-tray-background (병합)
 - Timestamp: 2026-09-04T13:30:00+09:00
 - 범위: origin/main 병합(웹 셸 PR #1568) + 충돌 3건 해결 + 도달 범위 기록. **신규 제품 로직 0.**
 - **[SKIPPED] 사유**: 새 코드를 쓰지 않았다. 이 변경의 위험은 「병합이 무엇을 잃었는가」이고,
@@ -354,7 +381,7 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
   실측할 수단이 없다.
 
 ## REV-20260904T134500-ai-claude-guard-misuse-warning [SKIPPED:comment-only-no-behavior-change] — ACCEPTED
-- Related TASK: TASK-20260904T100000 (후속)
+- Related TASK: TASK-20260904T100000-tray-background (후속)
 - Timestamp: 2026-09-04T13:45:00+09:00
 - 범위: docstring + FUNCTION 문구. **실행 동작 변경 0**(테스트 227 그대로 통과).
 - **[SKIPPED] 사유**: 실행되는 코드가 바뀌지 않았다.
@@ -366,10 +393,39 @@ tkinter 폴백 동기화(4단계). 이 cycle 은 위험이 가장 큰 부분만 
 - Risks: 없음(주석). Human Approval Needed: 아니오.
 
 ## REV-20260904T140000-ai-claude-scope-decision [SKIPPED:decision-record-no-code] — ACCEPTED
-- Related TASK: TASK-20260904T100000
+- Related TASK: TASK-20260904T100000-tray-background
 - Timestamp: 2026-09-04T14:00:00+09:00
 - 범위: 사용자 결정 기록(문서 3건). **코드 0.**
 - 결정: 웹 셸 주 경로의 트레이는 **별도 cycle**. 이번 PR 은 현 상태로 머지한다.
 - 근거를 남긴다 — 그 확장은 (a) 남의 cycle 이 의도적으로 명시한 수명 계약과 (b) 그것을 말하는
   웹 페이지 문구를 함께 바꿔야 하고, (c) 이 세션에는 그 경로를 실측할 수단이 없다.
 - Human Approval Needed: 아니오 (결정을 이미 받았다).
+
+## REV-20260904T143000-ai-claude-merge-1569 [SKIPPED:merge-resolution-verified-both-parents] — ACCEPTED
+- Related TASK: TASK-20260904T100000-tray-background (병합)
+- Timestamp: 2026-09-04T14:30:00+09:00
+- 범위: origin/main 재병합(PR #1569) + 문서 충돌 3건 + ID 충돌 해소 + 주석 1건 정정. 로직 0.
+- **[SKIPPED] 사유**: 새 코드 경로가 없다. 위험은 「병합이 무엇을 잃었나」이고 부모 대조로 답한다.
+- **대조 결과**: 양측 부모 대비 삭제 0 · 내 트레이 심볼 전수 잔존(`_start_tray`·`_tray_live`·
+  `_on_tray`·`_start_connect`·`_connect_gate`·`tray_mod`) · 그쪽 `run_client`/`_serve_confirms`
+  신규 형태 보존 · 합본 **245 passed**.
+- **이 리뷰가 남기는 것**: 병렬 cycle 이 만나면 **한쪽의 참이 다른 쪽에서 거짓이 된다.**
+  그쪽 도크스트링의 「tkinter 판과 같은 계약」은 이번 cycle 이 그 계약을 바꾼 순간 거짓이 됐다.
+  코드는 충돌하지 않았고 테스트도 통과했다 — **어떤 게이트도 이 종류를 잡지 않는다**(§16.4 가
+  「auto-merge 파일도 같은 모수」라고 말하는 이유이고, 그 모수를 «서술» 까지 넓힌 사례다).
+- Human Approval Needed: 아니오.
+
+### 부기 — CHECK#13(시각검증) 우회 사유 (REV-20260904T143000 에 부속)
+- 이 병합 커밋의 staged diff 에는 **웹 자산 4건이 들어 있다**(`static/ai-connect.js` ·
+  `static/app/client-bridge.js` · `static/app/connect-modal.js` · `static/index.html`).
+  전부 **병합으로 들어온 origin/main 의 착륙분**이고, 이번 cycle 은 그 중 **한 줄도 바꾸지
+  않았다**. PR #1568/#1569 가 자기 cycle 에서 PB-0008 로 검증하고 착륙시킨 것들이다.
+- 따라서 이 커밋 한 건에 한해 `GSTACK_SKIP_VISUAL_VERIFICATION=1` 로 통과시키고 **사유를
+  여기 남긴다**(§15.4.1 의 「미수행 사유 명시」 경로). 상시 우회 아님.
+- ⚠ **자기 정정**: 처음에 「staged diff 에 웹 자산 0건」이라고 적었는데 **틀렸다.** 그 측정을
+  cwd 가 드리프트한 **main worktree** 에서 했고, 거기엔 staged 변경이 없어 0 이 나왔다
+  (§13.2.7 mid-cycle cwd 규율이 경고하는 바로 그 형태). 같은 드리프트로 main 에 문서 10줄이
+  잘못 적혔고 **커밋 전에 되돌렸다**(main dirty 0 확인). 이후 모든 git 호출은 `git -C <worktree>`
+  로 대상을 명시한다 — cwd 를 신뢰하지 않는다.
+- ⚠ **후속 재구성에서는 우회하지 않는다** — 그 작업은 서비스 웹 문구를 실제로 바꾸므로
+  PB-0008 실 Windows 시각검증이 완료 조건이다.

@@ -437,6 +437,15 @@
       });
   }
 
+  /* 생존 신호 — 이 창이 아직 열려 있음을 브리지에 알린다.
+   *
+   * ⚠ 브리지는 **띄운 브라우저 프로세스**로 수명을 판정하지 않는다. Chrome 이 이미 떠 있으면
+   *   새 창을 기존 인스턴스에 위임하고 런처가 즉시 종료해, 브리지가 곧바로 닫혔다
+   *   (실측 2026-09-04). 그래서 「패널이 말을 걸어오는가」가 수명 신호다.
+   *   창을 닫으면 이 타이머가 멎고, 브리지는 유휴 한도 뒤에 스스로 끝난다.
+   */
+  setInterval(function () { call("ping", {}).catch(function () { /* 창 정리 중 */ }); }, 20000);
+
   document.getElementById("clientRefresh").addEventListener("click", discover);
   connectBtn.addEventListener("click", function () {
     pstatus("연결하는 중 — 프로그램 창의 확인을 눌러 주세요.");

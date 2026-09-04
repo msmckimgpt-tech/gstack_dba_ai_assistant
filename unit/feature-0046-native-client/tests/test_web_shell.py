@@ -33,9 +33,20 @@ from client import appwindow  # noqa: E402
 # ── 1. 앱 창 런처 ─────────────────────────────────────────────────────────────────
 
 def test_panel_url_carries_bridge_coordinates():
+    """⚠ 기본 경로가 **서비스 루트**로 바뀌었다 (사용자 결정 2026-09-04).
+
+    앱 창은 연결 화면만 보여 주는 보조 창이 아니라 그 자체가 제품이다. 계약에서 지키는 것은
+    「좌표를 싣는다」이지 «어느 경로냐» 가 아니므로, 경로 단정은 루트로 옮기고 좌표 단정은
+    그대로 둔다.
+    """
     url = appwindow.panel_url("https://svc.example/", 41234, "n-abc")
-    assert url.startswith("https://svc.example/ai/connect?")
+    assert url.startswith("https://svc.example/?")
     assert "client_port=41234" in url and "client_nonce=n-abc" in url
+
+
+def test_panel_url_still_accepts_an_explicit_path():
+    url = appwindow.panel_url("https://svc.example", 1, "n", path="/ai/connect")
+    assert url.startswith("https://svc.example/ai/connect?")
 
 
 def test_panel_url_never_carries_the_token():
@@ -252,3 +263,177 @@ def test_old_island_values_are_gone():
     root = css[css.find(":root {"):css.find("}", css.find(":root {"))]
     for stale in ("#1f6feb", "#f6f7f9", "#1f2328", "#d8dee4"):
         assert stale not in root, f"옛 섬 값 {stale} 이 토큰 정의에 남아 있다"
+
+
+# ── 5. 수명 신호 — 브라우저 프로세스는 신뢰할 수 없다 ────────────────────────────
+#
+# ⚠ 실측 2026-09-04: 종전 판은 **띄운 브라우저 프로세스**가 살아 있는 동안 브리지를 유지했다.
+#   Chrome 이 **이미 떠 있으면** 새 창을 기존 인스턴스에 위임하고 런처 프로세스는 **즉시
+#   종료한다**(exit=0, 5초 내 확인). 그래서 브리지가 곧바로 닫혔고 앱 창의 패널은
+#   「연결 프로그램에 닿지 못했습니다」만 봤다 — 전 경로가 여기서 끊겼다.
+
+def test_lifetime_is_not_tied_to_the_browser_process():
+    """**이 단정이 종전 결함을 잡는다.**"""
+    code = _code_of(_SRC / "client" / "gui.py", "_serve_confirms")
+    assert "proc.poll()" not in code, "브라우저 프로세스로 수명을 판정한다"
+    assert "idle_seconds" in code, "패널 생존 신호로 판정하지 않는다"
+
+
+def test_bridge_tracks_when_the_panel_last_spoke(tmp_path, monkeypatch):
+    from client import bridge as bridge_mod
+    from client import core as core_mod
+    plan = core_mod.ConnectPlan(base="https://svc.example", token="t", home=tmp_path)
+    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    try:
+        import time
+        b.last_seen = time.monotonic() - 50
+        assert b.idle_seconds >= 49
+        b.act("ping", {})
+        assert b.idle_seconds < 1, "요청을 받고도 유휴 시간이 줄지 않는다"
+    finally:
+        b.stop()
+
+
+def test_every_action_refreshes_liveness(tmp_path):
+    """`ping` 만이 아니라 **모든 요청**이 생존 신호여야 한다 — 탐지 중에는 ping 이 밀린다."""
+    from client import bridge as bridge_mod
+    from client import core as core_mod
+    import time
+    plan = core_mod.ConnectPlan(base="https://svc.example", token="t", home=tmp_path)
+    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    try:
+        b.last_seen = time.monotonic() - 50
+        b.act("status", {})
+        assert b.idle_seconds < 1
+    finally:
+        b.stop()
+
+
+def test_panel_sends_a_heartbeat():
+    js = _JS.read_text(encoding="utf-8")
+    assert 'call("ping"' in js and "setInterval" in js, "패널이 생존 신호를 보내지 않는다"
+
+
+def test_heartbeat_is_more_frequent_than_the_idle_limit():
+    """신호 주기가 한도보다 길면 **정상 사용 중에** 브리지가 죽는다."""
+    js = _JS.read_text(encoding="utf-8")
+    m = re.search(r"call\(\"ping\", \{\}\)[^;]*;\s*\}, (\d+)\)", js)
+    assert m, "생존 신호 주기를 찾지 못했다"
+    period_s = int(m.group(1)) / 1000
+    code = _code_of(_SRC / "client" / "gui.py", "_serve_confirms")
+    src = (_SRC / "client" / "gui.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_serve_confirms")
+    limit = next(d.value for a, d in zip(fn.args.args[::-1], fn.args.defaults[::-1])
+                 if a.arg == "idle_limit")
+    assert period_s * 2 <= limit, \
+        f"신호 주기 {period_s}s 가 유휴 한도 {limit}s 에 비해 너무 길다(신호 한 번만 놓쳐도 죽는다)"
+
+
+# ── 6. 앱 창이 곧 DQA (사용자 결정 2026-09-04) ────────────────────────────────────
+#
+# 「브라우저를 통한 별도의 연결 없이 앱 창을 그대로 DQA 로」 — 앱 창은 연결 화면만 보여 주는
+# 보조 창이 아니라 **그 자체가 제품**이다. 창을 두 개 쓰게 하지 않는다.
+
+_MODAL_HTML = _STATIC / "index.html"
+_MODAL_JS = _STATIC / "app/connect-modal.js"
+#: ⚠ 브리지 클라이언트는 **별도 모듈**이다. `connect-modal.js` 에는 브라우저 저장소
+#: 금지·상시 폴링 금지 가드가 걸려 있고, 브리지 좌표/생존 신호를 거기 섞으면 다음
+#: 사람이 «이력 저장」과 «좌표 보관»을 구분하지 못한다(2026-09-04 CI 적발).
+_BRIDGE_JS = _STATIC / "app/client-bridge.js"
+
+
+def test_app_window_opens_the_service_root():
+    """연결 화면이 아니라 **서비스 그 자체**를 연다."""
+    src = (_SRC / "client" / "appwindow.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "panel_url")
+    default = next(d.value for a, d in zip(fn.args.args[::-1], fn.args.defaults[::-1])
+                   if a.arg == "path")
+    assert default == "/", f"앱 창이 서비스 루트를 열지 않는다 (path={default!r})"
+
+
+def test_app_window_is_sized_like_an_app_not_a_dialog():
+    code = _code_of(_SRC / "client" / "appwindow.py", "open_app_window")
+    src = (_SRC / "client" / "appwindow.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "open_app_window")
+    size = next(d for a, d in zip(fn.args.args[::-1], fn.args.defaults[::-1])
+                if a.arg == "size")
+    w, h = [e.value for e in size.elts]
+    assert w >= 1000 and h >= 700, f"제품 창이 아니라 대화상자 크기다 ({w}x{h})"
+    assert code
+
+
+def test_bridge_coordinates_are_read_and_cleared():
+    """앱은 라우팅하며 주소를 갈아 끼운다 — 로드 때 보관하지 않으면 나중에 없다."""
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    assert "sessionStorage.setItem(\"dqa.bridge\"" in js, "좌표를 보관하지 않는다"
+    assert "history.replaceState" in js, "nonce 가 주소창·기록에 남는다"
+    assert 'q.delete("client_nonce")' in js
+
+
+def test_storage_failure_does_not_break_the_app():
+    """시크릿 모드 등에서 저장소가 막혀도 앱은 돌아야 한다."""
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    head = js[:js.find("export function bridgeCall")]
+    assert "catch (_) { return null; }" in head
+
+
+def test_modal_panel_is_hidden_without_the_client():
+    html = _MODAL_HTML.read_text(encoding="utf-8")
+    m = re.search(r'<section id="connectClientPanel"([^>]*)>', html)
+    assert m and "hidden" in m.group(1), \
+        "연결 프로그램이 없는 브라우저 방문에서도 패널이 보인다"
+
+
+def test_modal_panel_is_wired_on_open():
+    js = _MODAL_JS.read_text(encoding="utf-8")
+    fn = js[js.find("export function openConnectModal() {"):][:600]
+    assert "initClientPanel()" in fn, "모달을 열어도 패널이 배선되지 않는다"
+
+
+def test_modal_panel_is_wired_only_once():
+    """창을 열 때마다 배선하면 리스너가 쌓여 클릭 한 번에 여러 번 돈다."""
+    js = _MODAL_JS.read_text(encoding="utf-8")
+    fn = js[js.find("export function openConnectModal() {"):][:600]
+    assert "_clientPanelReady" in fn and "_clientPanelReady = true" in fn
+
+
+def test_modal_panel_uses_post_and_nonce():
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    call = js[js.find("export function bridgeCall"):][:600]
+    assert 'method: "POST"' in call and '"X-DQA-Nonce": clientBridge.nonce' in call
+
+
+def test_modal_panel_sends_liveness():
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    assert 'bridgeCall("ping"' in js and "setInterval" in js
+
+
+def test_bridge_call_is_a_noop_without_coordinates():
+    """평범한 브라우저 방문에서 호출부가 터지면 안 된다 — 종전 경로가 그대로 남아야 한다."""
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    call = js[js.find("export function bridgeCall"):][:300]
+    assert "if (!clientBridge) return null;" in call
+
+
+def test_bridge_client_lives_outside_the_guarded_modal():
+    """⚠ `connect-modal.js` 의 두 가드(저장소 금지·상시 폴링 금지)를 되살린다.
+
+    2026-09-04 CI 적발: 브리지 좌표(sessionStorage)와 생존 신호(setInterval)를 그 파일에
+    넣어 두 가드가 함께 깨졌다. 가드를 느슨하게 하지 않고 **파일을 갈랐다** — 지키는
+    성질이 다른 코드를 한 파일에 두면 다음 사람이 구분하지 못한다.
+    """
+    modal = _MODAL_JS.read_text(encoding="utf-8")
+    assert "sessionStorage" not in modal and "localStorage" not in modal
+    assert modal.count("setInterval") == 1, "상시 폴링 가드가 다시 깨졌다"
+    assert 'from "./client-bridge.js"' in modal, "분리했는데 쓰지 않는다"
+
+
+def test_bridge_module_stores_only_coordinates():
+    """분리한 파일에도 **이력은 저장하지 않는다** — 그 규칙은 파일이 아니라 성질에 붙는다."""
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    assert "localStorage" not in js, "창을 닫아도 남는 저장소를 쓴다"
+    keys = re.findall(r'sessionStorage\.\w+\("([^"]+)"', js)
+    assert keys and set(keys) == {"dqa.bridge"}, f"좌표 외의 것을 저장한다: {keys}"

@@ -103,18 +103,22 @@ def is_default_browser(exe: str | None) -> bool:
     return bool(default and os.path.normcase(default) == os.path.normcase(exe))
 
 
-def panel_url(base: str, port: int, nonce: str, path: str = "/ai/connect") -> str:
+def panel_url(base: str, port: int, nonce: str, path: str = "/") -> str:
     """앱 창이 열 주소. 브리지 좌표를 **쿼리로** 넘긴다.
 
     ⚠ 토큰은 싣지 않는다. 이 창은 **로그인 세션으로** 인증되고, 브리지 호출은 nonce 로
     인증된다. 토큰을 한 번 더 URL 에 실으면 노출 지점만 늘어난다.
+
+    ⚠ 기본 경로가 **서비스 루트**다 (사용자 결정 2026-09-04: 「브라우저를 통한 별도의 연결
+    없이 앱 창을 그대로 DQA 로」). 앱 창은 연결 화면만 보여 주는 보조 창이 아니라 **그 자체가
+    제품**이다. 연결 능력은 그 안의 대화 모달에서 쓰인다 — 창을 두 개 쓰게 하지 않는다.
     """
     q = urllib.parse.urlencode({"client_port": int(port), "client_nonce": nonce})
     return f"{str(base).rstrip('/')}{path}?{q}"
 
 
 def open_app_window(url: str, exe: str | None = None,
-                    size: tuple[int, int] = (560, 640)) -> subprocess.Popen | None:
+                    size: tuple[int, int] = (1180, 820)) -> subprocess.Popen | None:
     """앱 창을 띄운다. 못 띄우면 `None` — 호출부가 폴백으로 내려간다.
 
     ⚠ `--user-data-dir` 를 주지 않는 것이 핵심이다. 주면 새 프로필이라 로그인 세션이 없다.

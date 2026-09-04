@@ -591,21 +591,32 @@ def run_client(plan: core.ConnectPlan) -> int:
         tell("기본 브라우저가 아닌 창으로 열렸습니다.\n"
              "로그인 화면이 나오면 한 번 더 로그인해 주세요.")
     try:
-        _serve_confirms(asks, proc)
+        _serve_confirms(asks, br)
     finally:
         br.stop()
     return 0
 
 
-def _serve_confirms(asks, proc) -> None:
-    """주 스레드 루프 — 확인 요청을 처리하고, 앱 창이 닫히면 끝낸다.
+def _serve_confirms(asks, br, idle_limit: float = 90.0) -> None:
+    """주 스레드 루프 — 확인 요청을 처리하고, **패널이 말을 끊으면** 끝낸다.
 
-    ⚠ 창이 닫히면 **연결도 끝난다**(러너는 자식 프로세스다). 그것이 tkinter 판과 같은
-    계약이고, 화면 문구도 같은 말을 한다.
+    ⚠ 종전에는 **띄운 브라우저 프로세스**가 살아 있는 동안 돌았다. 틀렸다 — Chrome 이 이미
+    떠 있으면 새 창을 기존 인스턴스에 위임하고 런처는 **즉시 종료한다**(실측 2026-09-04:
+    exit=0). 그래서 브리지가 곧바로 닫혔고 앱 창은 「연결 프로그램에 닿지 못했습니다」만 봤다.
+
+    프로세스 계보는 브라우저·상황마다 다르다. 대신 **패널이 말을 걸어오는가**를 본다.
+    창을 닫으면 말이 끊기고, `idle_limit` 뒤에 이 프로그램도 끝난다 — 러너는 자식이므로
+    함께 끝난다.
+
+    ⚠ **이제 tkinter 판과 같은 계약이 아니다** (2026-09-04 병합). 그쪽은 알림 영역 아이콘이
+    떠 있으면 창을 닫아도 **연결이 유지된다**(§P0-U). 즉 두 경로의 수명 계약이 갈렸다 —
+    이 경로에도 트레이를 붙일지는 **별도 cycle** 로 결정됐다(사용자 2026-09-04). 붙일 때는
+    이 루프의 종료 조건과 **패널의 안내 문구**를 함께 바꿔야 한다(안 바꾸면 화면이 거짓을
+    말한다, §P0-R).
     """
     import queue as _queue
 
-    while proc.poll() is None:
+    while br.idle_seconds < idle_limit:
         try:
             message, reply = asks.get(timeout=0.5)
         except _queue.Empty:
