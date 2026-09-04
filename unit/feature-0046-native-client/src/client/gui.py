@@ -148,6 +148,16 @@ class ClientApp:
             else:
                 self._start_connect()
 
+    def _poll_show_request(self):
+        """두 번째 실행이 남긴 「창을 열어 달라」를 읽는다.
+
+        ⚠ 웹 셸 경로에만 두면 이 화면에서는 아이콘이 **죽은 채로** 남는다 — 사용자에게
+        이 프로그램은 하나이고, 어느 껍데기로 떴는지는 우리 사정이다.
+        """
+        if core.take_show_request(self.plan.home):
+            self._show_window()
+        self.root.after(500, self._poll_show_request)
+
     def _show_window(self):
         self.root.deiconify()
         self.root.lift()
@@ -427,6 +437,7 @@ class ClientApp:
         self._buttons([("다시 연결", self._start_connect)])
 
     def run(self):
+        self.root.after(500, self._poll_show_request)
         self.root.mainloop()
         # mainloop 를 빠져나온 뒤(창 파괴·종료) 러너와 아이콘을 반드시 정리한다 —
         # 남으면 화면 어디에도 없는 프로세스가 사용자의 AI 사용량을 계속 쓴다.
@@ -465,35 +476,10 @@ def tell(message: str, title: str = "내 AI 연결") -> None:
         pass
 
 
-def parse_scheme_url(url: str) -> dict:
-    """`dqa-connect://start?token=…&base=…` 를 읽는다.
-
-    ## 왜 필요한가 (실측 2026-09-03)
-
-    웹의 **[내 AI 실행]** 버튼은 이 스킴으로 프로그램을 띄운다. 그런데 종전 진입점은
-    `--base`/`--token` 만 읽어서, 스킴으로 온 **URL 을 통째로 무시**했다. 그래서 화면에는
-    「연결 정보가 없습니다」만 떴다 — 사용자가 바로 앞에서 [연결 준비] 를 눌렀는데도.
-
-    ⚠ 인자를 **엄격히 고른다.** 스킴 URL 은 브라우저를 통해 들어오므로 남이 만든 링크를
-    사용자가 클릭할 수 있다. 여기서 받아들이는 것은 연결에 필요한 네 값뿐이고, 그마저도
-    이후 단계(CA 지문·러너 체크섬 대조)가 다시 검증한다.
-    """
-    if not url or "://" not in url:
-        return {}
-    import urllib.parse
-
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme.lower() != "dqa-connect":
-        return {}
-    q = urllib.parse.parse_qs(parsed.query)
-    wanted = {"base": "base", "token": "token",
-              "ca_sha256": "ca_sha256", "agent_sha256": "agent_sha256"}
-    out: dict = {}
-    for key, dest in wanted.items():
-        vals = q.get(key) or []
-        if vals and str(vals[0]).strip():
-            out[dest] = str(vals[0]).strip()
-    return out
+#: 딥링크 봉투 파서. **정본은 `core`** 다 — 같은 문자열을 OS 딥링크와 앱 창의 패널이
+#: 각각 뜯게 두면 두 입구의 「모양」이 갈린다. 여기 이름을 남기는 것은 이 모듈이 진입점의
+#: 얼굴이기 때문이고, 구현을 옮긴 것은 브리지도 같은 파서를 써야 하기 때문이다.
+parse_scheme_url = core.parse_scheme_url
 
 
 def confirm(message: str, title: str = "내 AI 연결") -> bool:
@@ -529,26 +515,78 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     # 스킴으로 온 값이 **이긴다** — 사용자가 방금 웹에서 만든 최신 연결 정보이기 때문이다.
-    for key, value in parse_scheme_url(args.url).items():
+    link = parse_scheme_url(args.url)
+    for key, value in link.items():
         setattr(args, key, value)
-    if not args.base or not args.token:
-        tell("연결 정보가 없습니다.\n\n"
-             "웹 화면에서 [연결 준비] 를 누르고, 나오는 [내 AI 실행] 버튼으로 실행하세요.")
+
+    # ⚠ **딥링크의 주소에도 같은 검증을 건다** (codex 적대 리뷰 2026-09-04). 종전에는 파일에서
+    #   읽은 값만 걸렀는데, 공격자가 가장 쉽게 넣는 값은 **링크 쪽**이다:
+    #   `dqa-connect://start?base=file%3A%2F%2F%2FC%3A%2F…` 하나로 로컬 파일이 앱 창에 뜬다.
+    #   같은 문자열이 같은 곳(브라우저 창의 목적지)으로 가는데 한쪽만 검사하고 있었다.
+    if args.base and not core.usable_base(args.base):
+        tell("연결 링크의 주소가 올바르지 않습니다.\n\n"
+             "직접 요청한 것이 아니라면 그 링크를 신뢰하지 마세요.")
+        return 3
+
+    home = core.ConnectPlan(base="", token="").home
+    if not args.base:
+        # ── 인자 없이 켰다 ──────────────────────────────────────────────────────
+        # 시작 메뉴·바탕화면·설치 직후 [지금 실행]·자동 시작이 전부 이 경로다. 종전에는
+        # 여기서 「연결 정보가 없습니다」로 끝나, 프로그램이 **웹의 부속물**이었다(사용자
+        # 제보 2026-09-04). 이제는 아는 서버가 있으면 그대로 앱 창을 연다 — 토큰은 그 창의
+        # 로그인 세션이 발급하고, 패널이 브리지에 넘긴다(`bridge._plan_for`).
+        args.base = core.startup_base(home)
+        # ⚠ 홈의 `server.json` 은 **인증되지 않는다** — 그 파일에 쓸 수 있는 상대가 다음
+        #   무인 실행의 목적지를 정할 수 있다(codex 적대 리뷰 2026-09-04). 매 실행 확인창은
+        #   답이 아니다(사람이 습관적으로 넘긴다). 대신 **동봉값과 다를 때만** 묻는다 —
+        #   정상 사용에서는 절대 뜨지 않고, 바뀌었을 때만 주소를 눈에 보이게 한다.
+        bundled = core.bundled_service_base()
+        if bundled and args.base and args.base != bundled and not confirm(
+                f"이 프로그램에 들어 있는 주소와 다른 곳을 열려고 합니다.\n\n"
+                f"  설치 시:  {bundled}\n"
+                f"  이번:     {args.base}\n\n"
+                "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
+            return 3
+    if not args.base:
+        tell("아직 어느 서버에 연결할지 모릅니다.\n\n"
+             "처음 한 번만 웹 화면에서 [연결 준비] → [내 AI 실행] 을 눌러 주세요.\n"
+             "그 다음부터는 이 아이콘으로 바로 열립니다.")
         return 2
     plan = core.ConnectPlan(base=args.base.rstrip("/"), token=args.token,
                             ca_sha256=args.ca_sha256, agent_sha256=args.agent_sha256)
 
     # ⚠ 스킴 URL 은 브라우저를 통해 들어온다 — 남이 만든 링크일 수 있다. 전에 쓰던 서버와
     #   다르면 **묻는다**. 첫 연결은 물을 근거가 없어 통과시킨다(core.server_changed 참조).
-    previous = core.server_changed(plan.home, plan.base)
-    if previous and not confirm(
-            f"전에 연결하던 서버와 다릅니다.\n\n"
-            f"  전:  {previous}\n"
-            f"  이번: {plan.base}\n\n"
-            "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
-        return 3
+    #   ⚠ 딥링크로 온 경우에만 묻는다 — 인자 없는 실행의 주소는 우리가 적어 둔 것이라
+    #   「남이 만든 링크」가 아니고, 거기에 대고 물으면 매번 뜨는 확인창이 된다.
+    if link:
+        previous = core.server_changed(plan.home, plan.base)
+        if previous and not confirm(
+                f"전에 연결하던 서버와 다릅니다.\n\n"
+                f"  전:  {previous}\n"
+                f"  이번: {plan.base}\n\n"
+                "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
+            return 3
 
-    return run_client(plan)
+    # ⚠ 잠금은 **이 프레임이 살아 있는 동안** 유지된다. 이름 없는 값으로 받으면 즉시
+    #   수거되어 잠금이 풀린다(`core.acquire_single_instance` 의 경고).
+    lock = core.acquire_single_instance(plan.home)
+    if lock is None:
+        # ⚠ 대화상자로 답하지 않는다. 사용자는 **앱을 열려고** 아이콘을 눌렀다 — 먼저 뜬
+        #   쪽에 창을 열라고 남기고 조용히 끝낸다(`core.request_show`).
+        core.request_show(plan.home)
+        return 0
+    # 여기까지 왔으면 사용자가 이 주소를 **받아들였고**, 이 프로세스가 유일하다.
+    # ⚠ 기록은 **잠금을 잡은 뒤에** 한다 (codex 적대 리뷰 2026-09-04). 잠금 밖에서 쓰면 두
+    #   실행이 같은 문서를 읽고 각자 덮어 한쪽 키가 사라진다. 그리고 두 번째 실행은 어차피
+    #   먼저 뜬 창을 다시 열 뿐이므로, 그쪽이 주소를 기록하는 것 자체가 앞뒤가 안 맞는다.
+    # ⚠ 고정(`pin_server`)이 아니다 — 그것은 연결에 성공한 뒤에만 한다.
+    if link:
+        core.remember_base(plan.home, plan.base)
+    try:
+        return run_client(plan)
+    finally:
+        lock.close()
 
 
 def run_client(plan: core.ConnectPlan) -> int:
@@ -587,6 +625,14 @@ def run_client(plan: core.ConnectPlan) -> int:
     proc = appwindow.open_app_window(url, exe)
     if proc is None:
         br.stop()
+        if not plan.token:
+            # ⚠ 폴백 화면은 **토큰을 스스로 얻지 못한다.** 그 값은 웹의 로그인 세션이
+            #   발급하고, 앱 창이 없으면 그 세션에 닿는 통로도 없다. 여기서 빈손으로
+            #   ClientApp 을 띄우면 사용자는 [연결] 을 눌러 보고 나서야 안 된다는 것을
+            #   알게 된다 — 그 전에 말한다.
+            tell("앱 창을 열 수 있는 브라우저(Chrome·Edge 계열)를 찾지 못했습니다.\n\n"
+                 "웹 화면에서 [연결 준비] → [내 AI 실행] 으로 한 번 실행해 주세요.")
+            return 2
         tell("연결 프로그램을 열 수 있는 브라우저를 찾지 못해 기본 화면으로 진행합니다.")
         ClientApp(plan).run()
         return 0
@@ -599,7 +645,8 @@ def run_client(plan: core.ConnectPlan) -> int:
     tray = _start_shell_tray(br, url, exe)
     br.resident = tray is not None
     try:
-        _serve_confirms(asks, br, tray=tray)
+        _serve_confirms(asks, br, tray=tray,
+                        reopen=lambda: appwindow.open_app_window(url, exe))
     finally:
         if tray is not None:
             tray.stop()
@@ -637,7 +684,8 @@ def _start_shell_tray(br, url: str, exe: str | None):
     return tray if tray.start() else None
 
 
-def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None) -> None:
+def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None,
+                    reopen=None) -> None:
     """주 스레드 루프 — 확인 요청을 처리하고, **패널이 말을 끊으면** 끝낸다.
 
     ⚠ 종전에는 **띄운 브라우저 프로세스**가 살아 있는 동안 돌았다. 틀렸다 — Chrome 이 이미
@@ -667,6 +715,9 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None) -> None:
             # 트레이가 없거나 **뜬 뒤 죽었으면** 종전 계약으로 돌아간다 — 상주할 표면이
             #   없는데 계속 살아 있으면 사용자가 끌 수단이 없다.
             break
+        # 두 번째 실행이 「창을 열어 달라」고 남겼는가. 아이콘을 다시 누른 그 경로다.
+        if reopen is not None and core.take_show_request(br.plan.home):
+            reopen()
         try:
             message, reply = asks.get(timeout=0.5)
         except _queue.Empty:

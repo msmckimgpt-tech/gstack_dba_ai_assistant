@@ -534,3 +534,29 @@ edit_policy: append-only
 - 하네스도 주입 계약으로: 콜백을 넣어 부르고 **그 콜백으로 실제로 말하는지** + 콜백 없이도
   죽지 않는지 확인. 대조군 4종(자유변수 복귀 · 콜백 무시 · 기본값 제거 · 상주값 무시) 전건 적발.
 - 회귀 275 passed · 뮤테이션 **5/5 KILL(NOOP 0)**.
+
+
+## CHG-20260904T200000-ai-claude-standalone-launch — 아이콘만 눌러도 앱이 뜬다
+- Timestamp: 2026-09-04T20:00:00+09:00
+- **사용자 제보 해소**: 설치 후 시작 메뉴에서 켜면 「연결 정보가 없습니다」만 뜨고, 서비스를
+  쓰려면 여전히 브라우저로 주소를 쳐야 했다. 프로그램이 **웹의 부속물**이었다.
+- `core.startup_base(home)` — 고정 → 마지막으로 받아들인 딥링크 → 동봉된 배포 기본값.
+  각 값은 `http(s)`+호스트를 통과해야 하고(창의 목적지가 된다), **망가진 출처는 건너뛴다.**
+- `core.remember_base` / `remembered_base` — 딥링크를 **받아들인 순간** 적는다.
+  ⚠ `pin_server` 와 **다른 키**다. 고정은 연결 성공 뒤에만이라는 규율을 지킨다.
+  `_write_server_doc` 로 부분 갱신 — 한쪽이 다른 쪽을 지우지 않는다.
+- `core.bundled_service_base()` + `build_client.write_service_file` — 배포 기본 주소는
+  **빌드가 적는다**(`--service-base`). ⚠ 저장소 소스에 주소를 박지 않는다.
+- `core.acquire_single_instance` — OS 잠금(fcntl/msvcrt). PID 파일이 아니다.
+- `bridge._plan_for` — 패널이 준 `launch` 봉투가 이긴다. base 불일치는 **네트워크 전에** 거절.
+- `client-bridge.js` — connect 직전에 `/api/ai/connect/token` 으로 봉투를 받아 그대로 전달.
+  실패해도 connect 는 나간다(딥링크로 켠 창은 이미 값을 갖고 있다).
+- `parse_scheme_url` 을 `gui` → `core` 로 이관(두 입구가 같은 파서를 쓴다).
+- `tests/conftest.py` 신설 — 이 unit 의 테스트가 **실제 홈을 건드리지 않게**. 없으면 테스트가
+  개발 머신의 `~/.dqa-connect` 를 오염시키고, 그 파일 때문에 다른 테스트의 갈래가 바뀐다(실측).
+- `core.request_show` / `take_show_request` + 두 껍데기의 소비 지점 — 두 번째 실행이
+  대화상자 대신 「창을 열어 달라」를 남긴다(30초 TTL · 읽으면 삭제).
+- 뮤테이션 **30/30 KILL**(20 + 사각지대 탐침 4 + 재열기 6). 탐침 4건 중 **2건이 처음에
+  SURVIVED** 했고(접두 비교로 스킴 판정 · 빈 값 기록), 그 둘을 잡는 단정을 더해 닫았다 —
+  「전건 KILL」은 표본이 내 테스트를 닮았다는 뜻일 수 있어 일부러 어긋나는 뮤턴트를 던졌다.
+- codex 외부 적대 리뷰 4건 수정(딥링크 주소 미검증 · 링크가 동봉값을 이기는 순서 · 봉투가 지문을 지움 · 잠금 밖 기록). 상세는 REVIEW.md.

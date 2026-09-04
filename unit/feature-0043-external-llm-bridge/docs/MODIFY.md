@@ -4668,3 +4668,23 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   해소하지 못해 **양측 블록을 둘 다 남기는** 방식으로 손 해소했다.
 - §16.4 양측 부모 대비 검증: 4문서 모두 양측 이상(MODIFY 20+32→33 · REVIEW 23+34→35 ·
   TASK 15+15→16 · FUNCTION 5+5→5) + 양측 고유 항목 실재 확인 + 병합 후 회귀 재실행.
+
+
+## CHG-20260904T200000-ai-claude-ssot-scan-without-git — 개명 게이트가 컨테이너에서 실제로 돈다
+- Timestamp: 2026-09-04T20:00:00+09:00
+- **선행 결함 해소(내가 낸 것)**: `test_name_ssot.py` 의 두 전수 게이트가 `git grep` 에
+  의존했다. **테스트 컨테이너에 git 이 없어**(`FileNotFoundError: 'git'`) 두 건이 main 에서도
+  붉었다 — 즉 개명 전수 검사는 **한 번도 CI 에서 돈 적이 없다.** 게다가 이 저장소의 표준
+  흐름인 worktree 는 `.git` 이 바깥을 가리키는 파일이라, git 을 깔아도 컨테이너 안에서는
+  조회가 안 된다.
+- 처방은 **수단을 바꾸는 것**이지 건너뛰는 것이 아니다. `pytest.skip` 을 쓰면 게이트가
+  개발자 PC 에서만 돌고 CI 에서는 영영 안 돈다(`test-env-override-skip` 형태).
+  - `_tracked_files()` — `git ls-files -c -o --exclude-standard`(아직 add 안 한 새 파일 포함,
+    `.gitignore` 된 산출물 제외).
+  - `_walk_files()` — git 이 없으면 걷는다. **점으로 시작하는 이름과 빌드 산출물은 제외** —
+    로컬 잔재 때문에 게이트가 머신마다 다른 답을 내면 안 된다(실측: 이 worktree 의 잔재
+    4개가 옛 이름을 갖고 있어 컨테이너에서만 붉어졌다).
+  - `test_the_two_scans_agree_where_both_are_available` — 두 수단이 **같은 판정**을 내는지.
+    파일 목록이 조금 달라도 좋고, 같아야 하는 것은 게이트의 판정이다.
+- 실측: 컨테이너(그리고 git 없는 환경)에서 22 passed · 1 skipped(대조는 두 수단이 다 되는
+  머신에서만 뜻이 있다). 종전에는 같은 자리에서 2 failed 였다.

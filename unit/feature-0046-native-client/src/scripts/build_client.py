@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -168,10 +169,43 @@ def _iscc() -> str | None:
     return None
 
 
+def write_service_file(app_dir: Path, base: str) -> int:
+    """설치본이 열 **배포 기본 주소**를 앱 폴더에 적는다. 문제가 있으면 0 이 아닌 값.
+
+    ## 왜 빌드가 적는가
+
+    ⚠ **저장소 소스에 주소를 박지 않는다.** 배포마다 다른 값이고, 박아 두면 다른 배포의
+    설치본이 남의 주소를 연다. 클라이언트는 「고정된 서버 → 마지막으로 받아들인 딥링크 →
+    이 값」 순으로 본다(`core.startup_base`).
+
+    이 값이 없어도 설치본은 동작한다. 다만 **처음 한 번** 웹의 [내 AI 실행] 을 거쳐야 하고,
+    사용자에게는 「아이콘을 눌렀는데 아무 일도 없다」로 보이는 그 경로다.
+    """
+    base = str(base or "").strip().rstrip("/")
+    target = app_dir / "service.json"
+    if not base:
+        # ⚠ 남아 있으면 **지운다.** 같은 `--out` 으로 다시 빌드할 때 지난 회차의 주소가
+        #   조용히 살아남으면, 「주소를 안 줬는데 그 주소가 열리는」 상태가 된다.
+        target.unlink(missing_ok=True)
+        print("⚠ --service-base 를 주지 않았습니다 — 설치 직후 첫 실행은 웹의 "
+              "[내 AI 실행] 을 한 번 거쳐야 합니다.", file=sys.stderr)
+        return 0
+    if not (base.startswith("https://") or base.startswith("http://")):
+        # 여기서 막지 않으면 그 문자열이 그대로 브라우저 창의 목적지가 된다.
+        print(f"ERROR: --service-base 는 http(s) 주소여야 합니다: {base!r}", file=sys.stderr)
+        return 2
+    target.write_text(json.dumps({"base": base}, ensure_ascii=False), encoding="utf-8")
+    print(f"서비스 기본 주소 동봉: {base}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _make_stdio_lossy()
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(_UNIT / "dist"))
+    ap.add_argument("--service-base", default=os.environ.get("DQA_SERVICE_BASE", ""),
+                    help="이 설치본이 열 서비스 주소(예: https://dqa.example). "
+                         "설치 직후 아이콘만 눌러도 앱 창이 뜨게 한다.")
     ap.add_argument("--skip-installer", action="store_true",
                     help="앱 폴더까지만 만든다(설치기 컴파일 생략)")
     ap.add_argument("--allow-non-windows", action="store_true",
@@ -218,6 +252,17 @@ def main(argv: list[str] | None = None) -> int:
     py = fetch_embedded_python(app_dir / "runtime", cache=out / "_cache")
     if os.name == "nt":
         verify_runtime_runs_runner(py)
+
+    # ── 2-1. 배포 기본 주소 동봉 ───────────────────────────────────────────────
+    #
+    # ⚠ **저장소 소스에 주소를 박지 않는다.** 배포마다 다른 값이고, 박아 두면 다른 배포의
+    #   설치본이 남의 주소를 연다. 대신 빌드가 이 파일을 적고, 클라이언트는 「고정된 서버 →
+    #   마지막으로 받아들인 딥링크 → 이 값」 순으로 본다(`core.startup_base`).
+    #
+    # 이 값이 없으면 설치본은 **처음 한 번** 웹의 [내 AI 실행] 을 거쳐야 한다. 되기는 하지만
+    # 사용자에게는 「아이콘을 눌렀는데 아무 일도 없다」로 보이는 그 경로다.
+    if write_service_file(app_dir, args.service_base) != 0:
+        return 2
 
     # ── 3. 설치기 컴파일 ───────────────────────────────────────────────────────
     setup = None

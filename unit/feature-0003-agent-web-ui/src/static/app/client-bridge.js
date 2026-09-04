@@ -56,6 +56,20 @@ export function bridgeCall(action, body) {
   }).then(function (r) { return r.json(); });
 }
 
+/** 이번 연결에 쓸 값(딥링크와 같은 봉투). 못 받으면 빈 문자열 — 브리지가 폴백을 쓴다.
+ *
+ * ⚠ 실패를 삼키고 빈 문자열로 돌려준다. 여기서 예외를 던지면 **딥링크로 켠 창**까지 연결이
+ *   막힌다 — 그쪽은 이미 값을 갖고 있어 이 호출이 없어도 성립한다.
+ */
+function _connectLaunch() {
+  return fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (b) {
+      return String((b && b.launch && b.launch.protocol) || "");
+    })
+    .catch(function () { return ""; });
+}
+
 /* 상주 안내. **브리지가 말해 주는 것만** 옮긴다 — 프런트가 「트레이가 있겠지」라고 추정하면
  * 트레이가 못 뜬 머신에서 거짓말이 된다(§P0-R). 값이 오기 전에는 비워 둔다.
  *
@@ -142,11 +156,22 @@ export function initClientPanel(setStatus) {
   document.getElementById("connectClientRefresh").addEventListener("click", refresh);
   connectBtn.addEventListener("click", () => {
     _status("연결하는 중 — 프로그램 창의 확인을 눌러 주세요.");
-    bridgeCall("connect", { id: chosen }).then((res) => {
-      if (res.error === "declined") { _status(res.detail, "error"); return; }
-      _status(res.ok ? "연결됐습니다." : (res.detail || "연결하지 못했습니다."),
-              res.ok ? "ok" : "error");
-    });
+    /* ⚠ **연결값을 여기서 받아 넘긴다** (2026-09-04).
+     *
+     * 종전에는 연결 프로그램이 딥링크로 받아 온 토큰만 썼다. 그러면 시작 메뉴에서 그냥 켠
+     * 앱 창은 토큰이 없어 연결을 걸지 못한다 — 프로그램이 웹의 부속물로 남던 지점이다.
+     * 토큰을 발급하는 주체는 원래부터 **이 창의 로그인 세션**이므로 여기서 받는 것이 옳다.
+     *
+     * ⚠ 봉투는 서버가 딥링크용으로 이미 만드는 `launch.protocol` **그대로** 넘긴다. 필드를
+     *   여기서 새로 조립하면 같은 뜻의 봉투가 둘이 되고, 한쪽만 고쳐지는 드리프트가 난다.
+     */
+    _connectLaunch().then((launch) => bridgeCall("connect", { id: chosen, launch: launch }))
+      .then((res) => {
+        if (res.error === "declined") { _status(res.detail, "error"); return; }
+        _status(res.ok ? "연결됐습니다." : (res.detail || "연결하지 못했습니다."),
+                res.ok ? "ok" : "error");
+      })
+      .catch((e) => _status("연결하지 못했습니다. (" + e.message + ")", "error"));
   });
   // 창이 살아 있음을 알린다 — 브리지는 이 신호로 수명을 판정한다.
   setInterval(() => { const p = bridgeCall("ping", {}); if (p) p.catch(() => {}); }, 20000);
