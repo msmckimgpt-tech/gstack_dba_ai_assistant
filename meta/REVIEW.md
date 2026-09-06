@@ -1735,3 +1735,24 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
   닿으므로 guard 7 에 §13.2.5-A 순차 머지 규약을 명시했다.
 - Human Approval Needed: **아니오** (로드맵 적재, 코드·정책 무변경). 단 **ITEM-09 구현 착수는
   Major 라 별도 승인 대상**이다.
+
+## REV-20260907T010301-ai-claude-doc-sync-20260907-010301 [SKIPPED:cross-cutting-doc-index-sync] — doc_sync 09-07 색인·미러 정합 34건 (META-0072)
+- Related TASK: _meta_ (cross-cutting doc 정합 — 단일 feature-id 없음, `Meta-Cycle: doc-sync-20260907`)
+- Timestamp: 2026-09-07T01:03:01+09:00
+- 범위: `docs/*` 4문서 + `wiki/*` 6문서 **색인·미러 정합만**. 제품 코드 변경 **0**. 정본(`unit/<id>/docs/*`) 무접촉.
+- **[SKIPPED] 사유**: §18.8 — cross-cutting 색인 동기화. 정본을 새로 쓰지 않고 미러의 stale 값·누락 행만 정정하므로 적대 패널이 볼 새 코드/정책 표면이 없다. 대신 **타깃별 기계 검증**으로 대체했다(아래).
+- **delta window**: 직전 doc_sync META `4c7400ee`(09-04) 이후 **54커밋**, 착륙 전량 2026-09-04. 신규 feature **0**(feature-0046 이 압도적 다수 · feature-0043 러너 WSL · feature-0003 웹 셸).
+- **방법**: 4축 병렬 sweep(릴리즈노트 / wiki 미러 / 정책문서 / 전역 폐기값-모순) + **2조 적대 교차검증**(cross-fault 금지 · oldString 유일성 기계 대조 · MISS 누락탐지). 제안 **61건**(edit 49 · report-only 12) → 검증 **CONFIRMED 53 / CORRECTED 1 / REFUTED 7** + MISS 4.
+- **오케스트레이터가 적대검증을 넘어 잡은 것 — span 충돌 8쌍**: 검증조가 **양쪽 다 CONFIRMED** 한 findings 중 **같은 바이트 구간을 상호배타적으로 치환**하는 쌍이 8건 있었다(`MAP-03`↔`MISS-02` · `WIKI-17`↔`XS-13` · `WIKI-06`↔`XS-03` · `WIKI-07`↔`XS-02` · `WIKI-05`↔`XS-01` · `WIKI-13`↔`XS-11` · `WIKI-03`↔`XS-08` · `WIKI-16`↔`XS-14`). 적용 전 span overlap 검사로 전건 검출해 쌍마다 정본 대조 후 승자를 골랐다 — **8쌍 모두 승자가 패자를 포함하거나 더 정확**했고, 특히 `XS-01`/`XS-02` 는 WSL caps 신고를 「배포 후 실측 잔여」로 유보했으나 정본 `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260904-web-shell.md:16` 이 `✅ ai:ok — 잔여 항목 해소`(배포 `5ab60093`, PB-0008)로 **이미 닫았다** — 패자 쪽이 거짓 명제였다. 최종 **34건 적용**(META 33 + 이월 소유권 정정 1), 8건은 중복·열등으로 의도적 제외.
+- **이월 항목 재실측(2창 연속 미해소) + 소유권 정정**: 직전 창이 `docs/SECURITY.md` §50·§51 신설을 「다음 창 최우선」으로 남겼으나 재실측 결과 여전히 히트 0(마지막 절 §49.6). 그러나 **3표면 대조에서 소유권이 이미 이관돼 있었다** — 같은 창의 **뒤 판정** `meta/REVIEW.md` REV-20260904T190701(「ITEM-09 guard 6 에 착수 cycle 의 몫으로 명시」) + `docs/improvements/onboarding-accessibility/ROADMAP.md:453`(「착수 cycle 에서 함께 닫는다」)이 doc_sync 밖으로 옮겼다. 위협모델 절 신설은 미러 정합이 아니라 **정본 저술**이라 §18.8.1 적대 패널을 요구하고 doc_sync run 은 그 패널을 돌리지 않으므로, **적용하지 않고** `wiki/hot.md` Active Thread 의 stale 한 「다음 창 최우선」을 **실제 소유권 + 2창 연속 미해소 + 표면 확대 사실**로 정정했다(매 창 재발 차단). 델타창이 표면을 더 넓혔다 — 로컬 loopback HTTP 브리지(서비스 origin 에 열려 XSS 가 사용자 머신 프로세스 실행으로 이어진다, `tests/test_bridge_security.py` 21건이 잠금) · WebView2 프로세스 내 호스팅 · 업그레이드의 바로 가기·레지스트리 잔재 삭제 — 이므로 **직전 §50·§51 초안은 이미 불완전**하다.
+- **검증(적용 후 실측)**:
+  - `bin/wiki-lint.sh` total **32 = baseline 동일**. `orphan: PASS(0)` 유지 · `broken` 은 선재 1건만(신규 broken 0).
+  - `bin/gen-status.sh --check` **최신**(frontmatter 21 · passthrough 25 · 신규 0) — STATUS 1절 표 직접 편집 0, passthrough 행만 정합.
+  - `bin/ssot-lint.sh` **4 WARN = baseline 동일**(전부 선재 tracked `.env` 백업 — 이 run 이 늘리지 않았다).
+  - 카운트 정합: `ls -d unit/feature-*` **46** = `wiki/Features/_Index.md:42` 「46 개」 = `wiki/Architecture/Overview.md:28` 「46 카드」. 신규 glued `||` 0.
+  - 신규 wikilink 전건 대상 실재(`Features/feature-0003|0043|0046-*.md` — 경로형 링크라 basename grep 은 오탐, `ls` 로 확증).
+  - `wiki/Log.md` **append-only 준수**(과거 entry 무치환).
+- **verify 한계 명시**: check #1/#5 는 v1.1 deferred 라 STATUS·wiki 정합을 보증하지 않는다 — 위 타깃별 기계 검증이 그 자리를 대신한다.
+- **report-only 로 올린 정본 내부모순(doc_sync 는 정본을 고치지 않는다)**: ⓐ `feature-0046/docs/FUNCTION.md` 의 `P0-*` ID 중복 → 미러는 절 제목으로만 인용(WIKI-21·POL-01). ⓑ `feature-0046/docs/TEST.md` 카운트·Run 색인 stale — 미러 「177 테스트」의 근원(XS-16·RN-03). ⓒ `feature-0046/docs/FUNCTION.md` §P0-K 의 `--cmd` 서술이 §P0-AA 폐기와 모순 — 미러만 고치면 다음 창에 되살아난다(WIKI-20·XS-17). ⓓ `feature-0043/docs/TASK.md` WSL 체크박스 3표면 불일치(RN-02). ⓔ `docs/STATUS.md` feature-0046 행은 frontmatter-driven 이라 표 직접 편집 금지 — 정본 frontmatter 갱신은 owning cycle 소관(STAT-05).
+- **오케스트레이터 지시문 반증 1건(2창 연속 동일)**: 이 run 의 지시문이 「릴리즈노트 커밋에 `index.html`/`admin.html` 의 `?v=<new>` 캐시버스터 bump 를 **같은 커밋에** 포함」을 요구했으나, 소스는 `?v=dev` **고정**이고 빌드가 content-hash 를 주입하며(현재 서빙 `?v=d1ebb1da0b64`) `bin/deploy-web.sh` ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` 수기 bump 금지). 수기 실값은 그 안전장치를 무력화하므로 **stale 지시로 판정해 따르지 않았다** — `index.html`/`admin.html` 무접촉.
+- Human Approval Needed: **아니오** (색인·미러 정합, 정본·코드 무변경).

@@ -565,3 +565,16 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - ⛔ 패널 상주 문구의 주기 갱신은 별도 cycle(§13.2.9 · check #13 · AI 사용량).
 
 [[Features/feature-0046-native-client]]
+
+## [2026-09-07] wiki-ingest
+
+- **doc_sync 09-07** — 직전 doc_sync META `4c7400ee`(09-04) 이후 델타 **54 커밋(non-merge 31)**, 착륙은 2026-09-04 하루에 몰렸다(09-05·09-06·09-07 신규 머지 0). **신규 feature 0개** — `ls -d unit/feature-*` **46** = `wiki/Features/feature-*.md` 46 = Features MOC 렌더 행 46 = `Index` §2.3 = `Architecture/Module-Map` 범위 상한 = `Architecture/Overview` 머리표 「46 카드」. 무게중심은 **feature-0046(26 non-merge)** 이고 feature-0043 2 · feature-0003 1 · ROADMAP 1 · 릴리즈노트 1 이다.
+- **카운트는 전건 일치인데 기능 맵에서 행 하나가 통째로 빠져 있었다.** `Architecture/Overview.md`:28 머리표는 「46 카드(feature-0001 ~ feature-0046)」인데 §2.3 기능 맵 표의 렌더 행은 **45**(마지막이 feature-0045)였고 §2.4 의존성 표에도 feature-0046 이 없었다 — **이름집합·카운트 미러가 전건 PASS 여도 표 본문은 갈릴 수 있다**는 실증이다(`docs/ARCHITECTURE.md` §4·§6 에는 이미 있었으므로 wiki 미러만 뒤처진 cross-surface drift). glued `||` 행은 0 이었다(`overview.md`:83 의 `payload||existing` 은 blockquote 산문 리터럴로 오탐 제외).
+- **`--cmd` WSL 우회는 폐기됐는데 미러 3표면이 현재시제로 그것을 말하고 있었다.** 정본 `FUNCTION.md` §「러너는 WSL 안의 AI 도 찾는다」(탐지 순서 지정경로 → PATH → 표준 설치 위치 → WSL 안 · POSIX 절대경로는 `wsl.exe -e` 확장이되 **런타임 종류를 바꾸지 않아** 협상이 돈다), feature-0043 `TASK-20260904T180000` 의 「클라이언트 `--cmd` 폐기」, feature-0003 `test-runs.d/TASK-20260904-web-shell.md` 7번(`ai:ok`, PB-0008 실측)이 모두 같은 방향인데 `Features/_Index.md`·`Features/feature-0043-*.md`·`Features/feature-0046-*.md` 는 「WSL 은 `--cmd` 로 넘긴다 → 「답할 AI 있음」 ❌」를 유지하고 있었다. `docs/improvements/onboarding-accessibility/ROADMAP.md`:402 는 그 축의 재도입을 **회귀**로 못 박는다.
+- **「미측정」 표기 3건이 이미 해소돼 있었다.** ⓐ 동결 exe 를 «실행» 한 트레이(카드 §4-1) → `test-runs.d/20260904T204500-installed-close-to-tray.md` 가 설치본을 실행해 창 [X] 뒤 1건 유지 · 트레이 [종료] 뒤 0건을 PASS 로 실측했고, 회피 사유였던 「실행하면 AI 사용량을 쓴다」도 성립하지 않았다(연결 모달을 열지 않으면 `discover` 가 돌지 않는다). ⓑ 웹 셸 패널의 PB-0008(카드 §4-2 · `hot.md`) → feature-0003 `TASK-20260904T200000` 이 배포 `5ab60093` 에서 수행. ⓒ `hot.md` 의 「설치본이 구버전」 → 09-04 20:45 재빌드·덮어 설치로 해소. **해소를 기록하지 않으면 다음 창이 같은 항목을 다시 «남은 일»로 읽는다.**
+- **껍데기 수가 둘 → 셋으로 늘었는데 미러가 두 값을 동시에 말했다.** 카드 §4-2 는 「껍데기는 둘이다 — 웹 셸(주)과 tkinter(폴백)」, §4-4 는 「세 껍데기(내장 WebView2 창 · 브라우저 앱 모드 · tkinter)」였고 `hot.md` 도 :13(셋)과 :14(둘)로 갈렸다. 정본 §「앱 창을 이 프로그램이 직접 그린다」의 3단 표(내장 창 → 브라우저 앱 모드 → tkinter)를 따랐다.
+- **명칭 축이 셋에서 넷이 됐다** — `APP_NAME`(`DQA Connect`, 패키징 층) 옆에 `DISPLAY_NAME`(`DQA`, 창·트레이·대화상자·바로 가기)이 신설됐고(`shared/dqa_identity.py`) 그 분리가 업그레이드 잔재 정리(`[InstallDelete]` + `UsePreviousGroup=no`)의 근거다. 설치 폴더·`AppId` 를 함께 바꾸면 업그레이드가 아니라 두 벌 설치가 되므로 **보이는 이름만** 바꾼 것이 핵심이고, 미러는 3축만 알고 있었다.
+- **델타창 최대 서사가 카드에 통째로 없었다** — 앱 창의 WebView2 내장 · 인자 없는 실행 · 보이는 이름 «DQA» · 업그레이드 잔재 정리 · 설치본 종단간 확인. 26 커밋의 무게중심이 미러에 도달하지 않아, 카드만 읽으면 이 feature 가 여전히 「브라우저가 여는 앱 창 + 딥링크 전용」으로 읽혔다.
+- **report-only(정본·소유자 소관 — 미러만 고치면 재발한다)**: ⓐ `FUNCTION.md` §「AI 는 Windows 와 WSL 양쪽에서 찾는다」가 `--cmd` 계약을 현재시제로 적고 같은 파일 §「러너는 WSL 안의 AI 도 찾는다」가 그것을 폐기한다 — 미러 stale 의 근원이다. ⓑ 같은 파일의 `P0-*` ID 가 충돌한다(`P0-Z` 2회 · `P0-AC` 3회)라 미러가 ID 로 인용할 수 없어 **절 제목으로만** 인용했다. ⓒ `REPORT.md` §2 가 「동결 exe 를 실행한 트레이 검증은 하지 않았다」와 「설치본 해소(20:45, 실행해서 확인)」를 같은 절에 함께 싣는다. ⓓ `docs/ARCHITECTURE.md` §6 에 feature-0046 의존성 행이 **두 줄**(:151·:152) 있다.
+
+[[Features/feature-0046-native-client]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0003-agent-web-ui]]

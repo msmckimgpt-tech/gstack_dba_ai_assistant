@@ -200,7 +200,7 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 | worktree | Git worktree를 활용한 물리적 작업 디렉토리 분리. 병렬 AI 작업 시 권장 |
 | LEARNINGS.md | AI 학습 기록 문서. 실수, 패턴, 특이사항, 선호를 append-only로 누적 |
 | CODEBASE_MAP.md | 저장소 파일 구조와 주요 진입점을 AI가 빠르게 참조할 수 있도록 요약한 문서 |
-| DQA Connect | 개인 머신 AI 를 이 서비스에 연결하는 클라이언트의 제품 명칭. 명칭 정본은 `shared/dqa_identity.py` **3축** — 사람이 읽는 `APP_NAME`(`DQA Connect`) · URL 스킴 = 머신 전역 네임스페이스 `SCHEME`(`dqa-connect`) · 역-DNS `APP_ID`(`com.masangsoft.dqa-connect`). 축마다 지배하는 규약이 달라 한 토큰으로 합치지 않는다. 옛 이름 `mysql-ai-bridge` 는 하위호환 별칭 없이 하드 컷오버(2026-09-03) — 소스에 리터럴로 적지 않고 정본을 읽는다(`feature-0043/tests/test_name_ssot.py` 가 강제) |
+| DQA Connect | 개인 머신 AI 를 이 서비스에 연결하는 클라이언트의 제품 명칭. 명칭 정본은 `shared/dqa_identity.py` **4축** — 설치·패키징 층에서 사람이 읽는 `APP_NAME`(`DQA Connect`) · 창·트레이·대화상자·바로 가기에 뜨는 `DISPLAY_NAME`(`DQA`, 사용자 결정 2026-09-04 — 설치 폴더·레지스트리 키는 `APP_NAME` 그대로 두어 업그레이드 경로를 보존한다) · URL 스킴 = 머신 전역 네임스페이스 `SCHEME`(`dqa-connect`) · 역-DNS `APP_ID`(`com.masangsoft.dqa-connect`). 축마다 지배하는 규약이 달라 한 토큰으로 합치지 않는다. 옛 이름 `mysql-ai-bridge` 는 하위호환 별칭 없이 하드 컷오버(2026-09-03) — 소스에 리터럴로 적지 않고 정본을 읽는다(`feature-0043/tests/test_name_ssot.py` 가 강제) |
 
 ## 10. Admin Console UI 일관성
 
@@ -418,7 +418,7 @@ TEMP_CLEANUP_ON_SUCCESS="1"
   ```
 
 - 새 target 추가/제거 시 `docs/DECISIONS.md` 의 ADR 작성 (Makefile = "실행 진입점" anchor, §18).
-- **테스트 경로 등재는 양쪽 모두 (2026-09-01 확립)** — `Makefile` 의 `test` 타깃과 `.github/workflows/ci.yml` 의 pytest 인자 목록은 **같은 집합**이어야 한다. `pytest.ini` 의 `testpaths` 는 인자를 명시하면 무시되므로, 한쪽에만 등재하면 «로컬은 green 인데 CI 는 그 축을 보지 않는» 상태가 **아무 신호 없이** 생긴다(2026-08~09 동일 누락 4회 재발 — feature-0014·0020 / 0023 / 0041·0043·0008). 새 테스트 디렉토리를 만들면 두 곳 모두 등재하고, 집합 일치는 `unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py` 가 잠근다.
+- **테스트 경로 등재는 양쪽 모두 (2026-09-01 확립)** — `Makefile` 의 `test` 타깃과 `.github/workflows/ci.yml` 의 pytest 인자 목록은 **같은 집합**이어야 한다. `pytest.ini` 의 `testpaths` 는 인자를 명시하면 무시되므로, 한쪽에만 등재하면 «로컬은 green 인데 CI 는 그 축을 보지 않는» 상태가 **아무 신호 없이** 생긴다(2026-08~09 동일 누락 4회 재발 — feature-0014·0020 / 0023 / 0041·0043·0008; 2026-09-04 feature-0046 에서 한 번 더 — `pyproject.toml` `testpaths` 에만 등재되고 `Makefile`·`.github/workflows/ci.yml` 은 **여전히 미등재**라 CI 는 그 스위트를 돌리지 않는다. 정본 `unit/feature-0046-native-client/docs/REVIEW.md` REV-20260904T121000). 새 테스트 디렉토리를 만들면 두 곳 모두 등재하고, 집합 일치는 `unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py` 가 잠근다.
 - 본 § 은 PROJECT.md §9.1 (자동화 도구) 의 categorization 과 일관 — Makefile 은 테스트 프레임워크가 아닌 자동화 영역. CI/CD 도구는 PROJECT.md §10 참조.
 
 ## 11. Wikilink 및 Wiki vault 표기 (v3.12.0+)
