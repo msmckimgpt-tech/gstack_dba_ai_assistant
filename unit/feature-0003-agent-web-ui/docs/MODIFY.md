@@ -5795,3 +5795,14 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - 실측(Windows): 동결본 자가진단 `{'frozen': True, 'webview_import': True,
   'runtime_present': True, 'available': True}` · 창 제목 `DQA` 가 **이 프로세스의 것** ·
   브리지 포트 동일 프로세스 · 두 번째 실행에도 인스턴스 1개.
+
+## CHG-20260907T010301-ai-claude-doc-sync-rn-0907 — 릴리즈노트 2026-09-04 블록 신설 (doc_sync 09-07)
+
+- `src/static/release-notes-data.js`: `releases[]` 맨 앞에 `date: "2026-09-04"` 블록 prepend(60→61) + `generated` 2026-09-03 → 2026-09-04 전진. **데이터만** — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- 착륙일(09-04) 블록이 부재했으므로 기존 블록 append 가 아니라 prepend. 09-03 블록 이하 전량 보존.
+- 항목 10건(new 2 · improved 3 · fixed 5 / work 8 · common 2). 델타창 53커밋 중 사용자 체감이 있는 것만 골랐다 — 내부 리팩터·테스트·CI·문서 커밋은 제외.
+- REQ-20260618-0321 의 운영 규약("새 업데이트 추가는 `releases[]` 맨 앞에 일자 블록 추가, 렌더 로직 변경 불필요")을 그대로 따른 데이터 큐레이션이라 기능 계약 변경 0.
+- AC-0579(내부 정보 비노출) 준수 — 27개 누출 패턴 기계 스캔 0건.
+- **직전 블록의 예고 항목 종결 명시**: 09-03 블록이 "대가를 숨기지 않고 적습니다 — WSL 쪽 AI 로 연결하시면 「답할 AI 있음」 줄이 어긋난 상태로 남습니다" 라고 적었고, `docs/test-runs.d/TASK-20260904-web-shell.md:16` 이 `✅ ai:ok — 잔여 항목 해소`(배포 `5ab60093`, PB-0008)로 닫았다. 릴리즈노트에 정정이 없으면 그 문장이 거짓 명제로 남으므로 09-04 블록이 명시적으로 닫는다.
+- 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md`).
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).

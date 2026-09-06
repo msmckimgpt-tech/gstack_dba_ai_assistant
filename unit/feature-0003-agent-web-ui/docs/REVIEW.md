@@ -7421,3 +7421,15 @@ WebView2 런타임이 없는 머신에서 «아무 창도 안 뜨는» 것이 �
 - WebView2 런타임이 없는 머신은 여전히 브라우저 껍데기로 내려간다 — 「내장」이 보편은 아니다.
 - `pywebview`·`pythonnet` 이라는 서드파티가 껍데기에 들어왔다. **러너는 그대로 stdlib 전용**
   이고 두 축은 섞이지 않는다(빌드가 각각 검증한다).
+
+## REV-20260907T010301-ai-claude-doc-sync-20260907-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-04 블록 신설 (doc_sync 09-07)
+- Related TASK: TASK-20260907T010301-doc-sync-rn-0907
+- Timestamp: 2026-09-07T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 블록 1개 prepend + `generated` 전진**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스로 검증했다.
+- **검증**: `node --check` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일). `releases` 60→61 · `generated` 09-03 → 09-04.
+- **평이화 준수**: 내부 명칭 27패턴 기계 스캔 **0건**. 화면에 그대로 나타나는 라벨(「답할 AI 있음」·[종료]·「연결 정보가 없습니다」 등)만 그대로 인용. 「」 23/23 균형 · `**`/`«»` 0(기존 블록 관행 동일).
+- **미검증 정직 표기**: 이 서비스 화면에서 연결 프로그램을 받는 자리가 아직 없다는 것 · 미서명 경고 · 앱 창 안 별도 로그인 · 패널 상주 문구가 1회 스냅샷이라는 것 · 풍선 알림과 탐색기 재시작 후 아이콘 재등록 미실측 — 항목 detail + 접힌 summary 양쪽에 명시했다.
+- **거짓 명제 해소**: 09-03 블록이 예고한 WSL 「답할 AI 있음」 어긋남을 09-04 블록이 정본 실측(`docs/test-runs.d/TASK-20260904-web-shell.md:16` `✅ ai:ok`, 배포 `5ab60093`, PB-0008)에 근거해 닫았다. 적대 검증에서 다른 축이 이 항목을 「배포 후 실측 잔여」로 유보했으나 정본 대조로 반증했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md`). 수기 실값은 그 안전장치를 무력화한다.
+- Human Approval Needed: **아니오**.

@@ -3734,3 +3734,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - `node --check src/static/release-notes-data.js` → PASS (JS 문법)
 - `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 첫 그룹 일자 「2026년 9월 3일」 단정 통과.
 - **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고, 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다(배포 후 라이브 노출은 wrapper 소관).
+
+## TASK-20260907T010301-doc-sync-rn-0907 릴리즈노트 블록 신설 검증
+
+- `node --check src/static/release-notes-data.js` → PASS (JS 문법)
+- `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 하네스 실행을 위해 `jsdom@24` 를 `/tmp` 에 핀 설치했다(세션마다 부재할 수 있음).
+- 평이화 기계 스캔: 신규 블록에 대해 내부 명칭 27패턴(feature-id·파일 확장자·기술 스택명·식별자) → **0 히트**. 「」 23/23 균형.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고, 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다(배포 후 라이브 노출은 wrapper 소관).
+- reconcile-first 실측(커밋 직전 재측정 2026-09-07T01:03:01+09:00): 서빙 `release-notes-data.js` md5 `f26bed6e…` = `origin/main` blob 동일 → **파리티 갭 0**. `repo/` main clean · `origin/main` == `9e26ffa5` · 배포 실패 마커 0. 캐시버스터 수기 bump **없음** — 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며(현재 서빙 `?v=d1ebb1da0b64`), `bin/deploy-web.sh` ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정하므로 수기 실값은 그 안전장치를 무력화한다.
+- **Pass/Fail: PASS**.
