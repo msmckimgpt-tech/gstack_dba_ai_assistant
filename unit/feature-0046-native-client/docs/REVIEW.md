@@ -887,3 +887,63 @@ P1 은 0 → 0 → 0 으로 단조. §18.8 수렴 계약 (a) 충족(마지막 �
   이 cycle 이 낸 것은 **설치본 실측 기록**이고, 그 실측 대상 코드는 직전 cycle
   (REV-20260904T193000 · REV-20260904T195500)에서 codex 3라운드로 이미 검증됐다.
 - Timestamp: 2026-09-04T20:45:00+09:00
+
+## REV-20260907T160000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — BLOCK
+- Related TASK: feature-0046-native-client
+- Trigger: API/endpoint · credential/무결성 keyword matched (§18.8) — 「내려받아 실행」 신설
+- Timestamp: 2026-09-07T16:00:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T160000-security.md
+- Critical issue: 설치기 종료를 아무도 관측하지 않는데 앱은 무조건 종료 → 설치 실패 시 「다시
+  시작됩니다」라고 말한 뒤 프로그램이 사라지고 돌아오지 않는다 (P1 3건 전부 런타임 probe 로 확인)
+- Human Approval Needed: no
+
+## REV-20260907T170000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — BLOCK
+- Related TASK: feature-0046-native-client
+- Trigger: §18.8 패널 수렴 계약 (a) — P1 수정 후 확인 라운드 필수 (수정한 라운드는 종결 근거 아님)
+- Timestamp: 2026-09-07T17:00:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T170000-security-confirm.md
+- Critical issue: P1 2건이 **1라운드 수정이 새로 넣은 코드**에 있다 — 고정 `.part` 자리가 같은
+  프로세스의 두 스레드를 한 파일로 모아 «검사한 스트림 ≠ 실행되는 파일» 이 됐고,
+  `or self.pending_update` 폴백이 확인 대상 고정을 무효화했다
+- Human Approval Needed: no
+
+## REV-20260907T173000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — 수렴 기록
+- Related TASK: feature-0046-native-client
+- Trigger: §18.8 패널 수렴 계약 (a)(b)(c) 적용 결과 기록
+- Timestamp: 2026-09-07T17:30:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T170000-security-confirm.md
+- Critical issue: **P1 5건 전건 수정 완료 · 잔여 P1 0.** 다만 §18.8 (a) 가 요구하는 「마지막
+  라운드 P1 0」의 근거가 **3라운드 패널이 아니라 자체 실측**이다 — 세션 사용량 한도(429,
+  reset 17:00 KST)로 3라운드를 띄우지 못했다. 그 대신: 2라운드가 지목한 각 결함에 **회귀
+  게이트를 코드로 박고**(두 스레드 동시 실행 · `verify_file` · 단일 실행 · 파리티 실물 대조 ·
+  매니페스트 실패 사유), **결함 주입 15/15 로 되돌리면 FAIL** 함을 확인했다.
+  ⚠ 3라운드 미실시를 「P1 0 확인」과 동일시하지 않는다 — `REPORT.md` 잔여에 남긴다.
+- Human Approval Needed: no
+
+### 이번 cycle 이 흡수한 것 (§18.8 (b) 비단조 판정)
+
+2라운드 P1 2건이 **1라운드 수정의 새 코드**에 있었으므로 문자적으로 (b) 의 비단조 조건을
+충족한다. 그러나 처방을 국소 수정으로 두지 않고 **판정면을 재배치**했다:
+
+| 지적 | 국소 처방 (기각) | 채택한 처방 |
+|---|---|---|
+| P1-A | `.part` 이름만 고침 | 이름 유일화 **+ `apply()` 직전 디스크 재검증**(`verify_file`) + 프로세스당 단일 실행 게이트 |
+| P1-B | `or` 절 삭제 | 그것 + 확인 대상을 `act()` 에서 고정해 핸들러로 **넘기는** 구조 |
+| C-2 | tkinter 에 항목 추가 | 그것 + 순서의 정본을 `updater.run_flow` **하나**로 + 파리티 테스트를 실물 대조로 |
+| C-3 | 사유 문자열 추가 | 전송 계층과 **내용 계층**을 함께 갈라 `parse_manifest_detail` 신설 |
+| §3-1 | 확인창에 경고 표시 | 앵커 **우선순위 역전 정정**(동봉값이 고정값을 이긴다) |
+
+「검사한 스트림 ≠ 실행되는 파일」이 이 계열의 뿌리였고, 그것을 닫은 것은 이름 유일화가 아니라
+**실행할 그 바이트를 다시 세는** 한 줄이다 — §16.7 G14 를 F1 에만 적용하고 취득 경로에는
+적용하지 않았던 것이 2라운드가 드러낸 진짜 결손이다.
+
+### 이연으로 기록한 것 (기각이 아니다)
+
+- **매니페스트 분리 서명** — 서버 침해·릴리스 디렉토리 쓰기 획득 시나리오의 잔여 방어가 0 인
+  것은 사실이다(sha256 도 공격자가 함께 바꾼다). 동결 exe 에 공개키를 박는 방식은 EV 코드
+  서명보다 싸다. **키 관리 결정이 선행**이라 이 cycle 범위 밖이며 `REPORT.md` 잔여에 남겼다.
+- **설치기 실제 실행·권한 갈래** — Windows 빌드 머신이 필요하다. 볼 항목 4개를
+  `docs/test-runs.d/…` §5 에 명시했다.

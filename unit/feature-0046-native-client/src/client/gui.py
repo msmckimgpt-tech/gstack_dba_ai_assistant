@@ -38,7 +38,8 @@ import sys
 import threading
 from pathlib import Path
 
-from . import appwindow, bridge, core, tray as tray_mod, window as window_mod
+from . import (appwindow, bridge, core, tray as tray_mod, updater,
+               window as window_mod)
 
 #: 웹 셸 경로의 [종료] 신호. 트레이 스레드가 세우고 주 스레드 루프가 읽는다 —
 #: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
@@ -152,6 +153,11 @@ class ClientApp:
                               action=lambda: self._post("tray", "show")),
             tray_mod.TrayItem(separator=True),
             self._tray_toggle,
+            # ⚠ **세 껍데기가 같은 어휘를 쓴다** (§P0-AC.1). 종전에는 이 껍데기에만 이 항목이
+            #   없어서, `--app` 을 모르는 브라우저·정책으로 막힌 머신은 업데이트 입구가
+            #   **0개**였고 그 사실이 로그에조차 남지 않았다(적대 리뷰 C-2).
+            tray_mod.TrayItem(label=UPDATE_MENU_LABEL,
+                              action=lambda: self._post("tray", "update")),
             tray_mod.TrayItem(separator=True),
             tray_mod.TrayItem(label="종료", action=lambda: self._post("tray", "quit")),
         ]
@@ -191,6 +197,32 @@ class ClientApp:
                 self._stop()
             else:
                 self._start_connect()
+        elif action == "update":
+            # ⚠ 네트워크를 GUI 스레드에서 기다리면 창이 얼고 사용자는 죽은 줄 안다.
+            self._bg(self._update)
+
+    def _update(self):
+        """새 버전을 확인하고, 있으면 사람에게 묻고 적용한다.
+
+        ⚠ **순서를 복제하지 않는다** — `updater.run_flow` 가 정본이고 이 메서드는 그 함수에
+        이 껍데기의 손잡이(확인·로그·연결 여부·종료)를 넘길 뿐이다. 그 순서 안에 무결성
+        판정과 단일 실행 게이트가 들어 있어, 복제하면 그 중 하나만 고쳐진다(적대 리뷰 C-2).
+        """
+        try:
+            found = check_and_report(self.plan.home)
+            if found is None:
+                return
+            got = updater.run_flow(
+                self.plan.home, target=found, confirm=confirm,
+                say=lambda line: self._post("log", line),
+                is_connected=lambda: bool(self.runner_proc
+                                          and self.runner_proc.poll() is None),
+                on_started=lambda: self._post("tray", "quit"))
+            if not got.get("ok") and got.get("error") != "declined":
+                tell(got.get("detail")
+                     or f"업데이트를 적용하지 못했습니다 ({got.get('error')}).")
+        except Exception:  # noqa: BLE001 — 업데이트 실패가 프로그램을 죽이지 않는다(규율 7)
+            pass
 
     def _poll_show_request(self):
         """두 번째 실행이 남긴 「창을 열어 달라」를 읽는다.
@@ -501,7 +533,26 @@ def tell(message: str, title: str = core.DISPLAY_NAME) -> None:
     (실제로 그렇게 걸려서 강제 종료해야 했다).
 
     GUI 앱이 콘솔로 말하려 한 것 자체가 잘못이었다 — 볼 사람이 없는 곳에 쓴 것이다.
+
+    ## 왜 Windows 에서 `MessageBoxW` 가 먼저인가 (2026-09-07)
+
+    `confirm()` 과 **같은 이유**다: 내장 창 껍데기는 주 스레드를 창이 쥐므로 tkinter 를
+    부를 자리가 없고, 워커 스레드에서 새 `tk.Tk()` 를 만드는 것은 신뢰할 수 없다.
+    트레이 [업데이트 확인] 같은 **워커 스레드발 안내**가 이 경로로 온다 — 여기가
+    tkinter 뿐이었다면 그 안내는 조용히 사라지고, 사용자는 「눌렀는데 아무 일이 없다」를 본다.
     """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            MB_OK, MB_ICONINFORMATION = 0x0, 0x40
+            MB_TOPMOST, MB_SETFOREGROUND = 0x40000, 0x10000
+            ctypes.windll.user32.MessageBoxW(
+                None, str(message), str(title),
+                MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND)
+            return
+        except Exception:  # noqa: BLE001 — 아래 tkinter 로 내려간다
+            pass
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -601,6 +652,15 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     home = core.ConnectPlan(base="", token="").home
+    # ⚠ **직전 업데이트 시도의 결과를 여기서 판정한다** (적대 리뷰 F1). `apply()` 는 설치기를
+    #   띄웠는지만 알 수 있고 `/SUPPRESSMSGBOXES` 때문에 설치기도 조용하다 — 그 상태에서
+    #   우리는 스스로 종료하므로, 설치가 실패하면 사용자는 **프로그램이 사라지고 돌아오지
+    #   않는** 상태를 얻는다(화면은 방금 「다시 시작됩니다」라고 말했다). 다시 뜬 프로세스가
+    #   자기 버전으로 그 시도를 대조하는 것이 Inno 의 프로세스 모델과 무관하게 성립하는
+    #   유일한 결과 확인이다(§16.7 G14 — 처방은 결과 대조로 끝난다).
+    unsettled = updater.settle_pending_install(home)
+    if unsettled:
+        tell(unsettled)
     if not args.base:
         # ── 인자 없이 켰다 ──────────────────────────────────────────────────────
         # 시작 메뉴·바탕화면·설치 직후 [지금 실행]·자동 시작이 전부 이 경로다. 종전에는
@@ -734,9 +794,12 @@ def _run_embedded(plan: core.ConnectPlan) -> "int | None":
     # 처음 닫았을 때 1회만 「여기 있습니다 · 종료는 우클릭 [종료]」를 말한다.
     shell.on_hidden = _hidden_notice(tray)
     br.resident_probe = lambda: _tray_alive(tray)
+    # 업데이트 설치는 실행 중인 exe 를 갈아 끼우므로 **우리가 비켜 줘야** 한다.
+    br.on_quit = shell.quit
     stop = threading.Event()
     threading.Thread(target=_watch_show_requests, args=(plan.home, shell, stop),
                      daemon=True).start()
+    _start_update_watch(br, tray, stop)
     try:
         opened = shell.run()          # 주 스레드 — 창이 닫힐 때까지 돌아오지 않는다
     finally:
@@ -758,12 +821,128 @@ def _start_embedded_tray(shell, br):
         tray_mod.TrayItem(label="창 열기", default=True, action=shell.show),
         tray_mod.TrayItem(separator=True),
         tray_mod.TrayItem(label="연결 끊기", action=br.disconnect),
+        tray_mod.TrayItem(label=UPDATE_MENU_LABEL, action=_update_action(br)),
         tray_mod.TrayItem(separator=True),
         tray_mod.TrayItem(label="종료", action=shell.quit),
     ]
     tray = tray_mod.Tray(title=core.DISPLAY_NAME, items=items,
                          tooltip=f"{core.DISPLAY_NAME} — 대기 중")
     return tray if tray.start() else None
+
+
+#: 트레이 메뉴의 업데이트 항목. **두 껍데기가 같은 문자열**을 쓴다 — 사용자에게 이 프로그램은
+#: 하나이고, 껍데기마다 다른 어휘를 쓰면 그 차이를 배우는 비용을 사용자가 낸다(§P0-AC.1).
+UPDATE_MENU_LABEL = "업데이트 확인"
+
+#: 상주 중 업데이트를 다시 보는 주기(초). 실제 조회 여부는 `updater.due()` 가 정한다 —
+#: 이 값은 「얼마나 자주 물어보러 가는가」가 아니라 「얼마나 자주 그 판정을 하는가」다.
+_UPDATE_TICK_SEC = 15 * 60.0
+
+
+def check_and_report(home) -> "updater.Update | None":
+    """새 버전을 확인하고 **사용자에게 결과를 말한다**. 받을 것이 있으면 그것을 돌려준다.
+
+    ⚠ 세 껍데기가 이 판정을 각자 하면 문구가 갈린다 — 그리고 하필 그 문구가 「이미 최신」과
+    「확인하지 못했다」를 가르는 자리다(적대 리뷰 C-3: 종전에는 그 둘이 같은 말이었다).
+    """
+    found, why = updater.check_detail(home)
+    updater.mark_checked(home, error=why or None)
+    if why:
+        updater.log(home, f"check FAILED — {why}")
+        # ⚠ **확인 실패를 「최신입니다」로 말하지 않는다.** 사용자가 직접 누른 확인에 거짓을
+        #   말하면, 정작 새 버전이 있는데 못 받는 머신이 스스로를 최신으로 믿는다(§16.7 G7).
+        tell(f"업데이트를 확인하지 못했습니다 ({why}).\n\n"
+             "서버에 닿지 못했거나 사내 인증서가 만료되었을 수 있습니다 — "
+             "연결이 정상인지 확인한 뒤 다시 시도해 주세요.")
+        return None
+    if found is None:
+        tell(f"이미 최신입니다 (버전 {updater.version.CLIENT_VERSION}).")
+        return None
+    return found
+
+
+def _update_action(br):
+    """트레이 [업데이트 확인] 의 동작. **워커 스레드로 던진다.**
+
+    ⚠ 메뉴 콜백은 **트레이 스레드**에서 불린다. 거기서 네트워크를 기다리면 그동안 메뉴가
+    응답하지 않고, 사용자에게는 「아이콘이 멈췄다」로 보인다 — 그 스레드는 메시지 루프를
+    쥐고 있고, 루프가 멈추면 아이콘 자체가 죽는다(§P0-AC.1 의 큐 규약과 같은 근거).
+    """
+    def run() -> None:
+        threading.Thread(target=_update_flow, args=(br,), daemon=True).start()
+
+    return run
+
+
+def _update_flow(br) -> None:
+    """확인 → (있으면) 사람에게 묻고 적용. 없으면 **그 사실도 말한다**.
+
+    ⚠ 사용자가 직접 누른 확인에 아무 반응이 없으면 「눌렀는데 아무 일이 없다」가 된다 —
+    이 저장소가 딥링크·패널에서 두 번 겪은 형태다(§P0-AB · §P0-W).
+    """
+    try:
+        found = check_and_report(br.plan.home)
+        if found is None:
+            return
+        br.pending_update = found
+        got = br.update_now(confirmed=False, target=found)
+        # ⚠ **실패도 말한다.** 이 경로에는 로그를 보여 줄 패널이 없다 — `br._say` 에만 남기면
+        #   사용자는 확인창에서 [예] 를 누른 뒤 **아무 일도 일어나지 않는 것**을 본다.
+        #   [아니요] 를 누른 경우(`declined`)는 사용자가 이미 아는 결과라 말하지 않는다.
+        if not got.get("ok") and got.get("error") != "declined":
+            tell(got.get("detail")
+                 or f"업데이트를 적용하지 못했습니다 ({got.get('error')}) — "
+                    "지금 버전으로 계속합니다.")
+    except Exception:  # noqa: BLE001 — 업데이트 실패가 프로그램을 죽이지 않는다(규율 7)
+        pass
+
+
+def _start_update_watch(br, tray, stop: threading.Event) -> None:
+    """상주 중 주기적으로 새 버전을 본다. **찾기만 하고 설치는 사람이 정한다.**
+
+    ⚠ **동결된 배포본에서만 돈다.** 소스 트리에서 도는 개발 세션이 설치기를 받아 실행하면,
+    개발자가 방금 고친 코드를 배포본이 조용히 가린다.
+
+    ⚠ 자동 적용은 **홈 설정이 켜져 있을 때만**이다(기본 꺼짐, 사용자 결정 2026-09-07).
+    이 배포본은 서명되지 않았으므로 무음 설치를 기본으로 두면 「알 수 없는 게시자」의 설치기가
+    사용자 모르게 도는 것이 정상 동작이 된다.
+    """
+    if not updater.running_frozen():
+        return
+
+    def loop() -> None:
+        # 기동 직후에는 사용자가 연결을 세우는 중이다 — 그때 확인창을 띄우면 방해가 된다.
+        if stop.wait(60.0):
+            return
+        while True:
+            try:
+                if updater.due(br.plan.home):
+                    found, why = updater.check_detail(br.plan.home)
+                    updater.mark_checked(br.plan.home, error=why or None)
+                    br.pending_update = found
+                    if why:
+                        updater.log(br.plan.home, f"check FAILED — {why}")
+                    if found is not None:
+                        if tray is not None:
+                            tray.notify(core.DISPLAY_NAME,
+                                        f"새 버전 {found.version} 이 있습니다 — "
+                                        f"아이콘 우클릭 → [{UPDATE_MENU_LABEL}]")
+                        else:
+                            # ⚠ 트레이가 없으면 이 채널의 **입구가 0개**다(패널 표시는 후속).
+                            #   조용히 지나가면 그 머신은 영구히 낡은 채로 남으므로, 적어도
+                            #   기록에 남긴다(적대 리뷰 §3-6).
+                            updater.log(br.plan.home,
+                                        f"available {found.version} — no tray entry point")
+                        if updater.auto_apply(br.plan.home):
+                            # ⚠ 사람이 없는 경로다 — 연결 중이면 미룬다(규율 6).
+                            br.update_now(confirmed=True, target=found,
+                                          require_idle=True)
+            except Exception:  # noqa: BLE001 — 규율 7
+                pass
+            if stop.wait(_UPDATE_TICK_SEC):
+                return
+
+    threading.Thread(target=loop, name="dqa-update-watch", daemon=True).start()
 
 
 def _watch_show_requests(home, shell, stop: threading.Event,
@@ -836,10 +1015,15 @@ def _run_browser_shell(plan: core.ConnectPlan) -> int:
     #   (`_serve_confirms`)이 이미 `tray.alive` 를 보므로, 패널 문구도 같은 판정을 봐야
     #   둘이 갈리지 않는다 — 갈리면 화면은 유지된다 말하고 루프는 유휴로 끝낸다(§P0-R).
     br.resident_probe = lambda: _tray_alive(tray)
+    # 이 껍데기의 종료 신호는 이벤트 하나다 — `_serve_confirms` 루프가 그것을 읽고 끝낸다.
+    br.on_quit = _SHELL_QUIT.set
+    update_stop = threading.Event()
+    _start_update_watch(br, tray, update_stop)
     try:
         _serve_confirms(asks, br, tray=tray,
                         reopen=lambda: appwindow.open_app_window(url, exe))
     finally:
+        update_stop.set()
         if tray is not None:
             tray.stop()
         br.stop()
@@ -868,6 +1052,7 @@ def _start_shell_tray(br, url: str, exe: str | None):
                           action=lambda: appwindow.open_app_window(url, exe)),
         tray_mod.TrayItem(separator=True),
         tray_mod.TrayItem(label="연결 끊기", action=br.disconnect),
+        tray_mod.TrayItem(label=UPDATE_MENU_LABEL, action=_update_action(br)),
         tray_mod.TrayItem(separator=True),
         tray_mod.TrayItem(label="종료", action=lambda: _SHELL_QUIT.set()),
     ]
@@ -915,12 +1100,20 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None,
 
     tick = 0.0
     while True:
-        if _tray_alive(tray):
-            # ⚠ 상주 중에는 **유휴가 종료 사유가 아니다.** 패널을 닫아 두고 쓰는 것이
-            #   상주의 의미이고, 그때도 러너는 계속 답해야 한다. 끝내는 것은 [종료] 뿐이다.
-            if _SHELL_QUIT.is_set():
-                break
-        elif br.idle_seconds >= idle_limit:
+        # ⚠ **종료 신호는 트레이 생존과 무관하다** (적대 리뷰 F2, 런타임 probe 로 확인).
+        #   종전에는 이 검사가 아래 `_tray_alive(tray)` 블록 **안**에 있어서, 트레이가 없거나
+        #   뒤에 죽은 머신에서는 `_SHELL_QUIT` 를 세워도 이 루프가 끝나지 않았다 — 유일한
+        #   탈출이 90초 무신호였고, 패널이 20초마다 ping 하는 동안 그 조건은 오지 않는다.
+        #   그런데 이 껍데기의 종료 손잡이(`br.on_quit`)가 바로 이 이벤트다: 업데이트가
+        #   설치기를 띄운 뒤 우리가 비켜 주지 못해 **exe 잠금이 유지되고 설치가 조용히
+        #   실패**했다. 두 축은 다른 질문이다 — 「끝내라고 했는가」(신호)와 「상주할 표면이
+        #   있는가」(수명)를 같은 조건에 묶지 않는다.
+        if _SHELL_QUIT.is_set():
+            break
+        # ⚠ 상주 중에는 **유휴가 종료 사유가 아니다.** 패널을 닫아 두고 쓰는 것이 상주의
+        #   의미이고, 그때도 러너는 계속 답해야 한다. 아이콘이 없거나 뒤에 죽으면 종전
+        #   계약으로 돌아간다 — 상주할 표면이 없는데 계속 살아 있으면 사용자가 끌 수단이 없다.
+        if not _tray_alive(tray) and br.idle_seconds >= idle_limit:
             # 트레이가 없거나 **뜬 뒤 죽었으면** 종전 계약으로 돌아간다 — 상주할 표면이
             #   없는데 계속 살아 있으면 사용자가 끌 수단이 없다.
             break

@@ -648,3 +648,98 @@ edit_policy: append-only
   **설치본에서 직접 구동**해 확인했다 — push/merge 는 코드 완료이지 사용자 도달이 아니다
   (§16.3 deploy-backed 완료 기준의 클라이언트 배포 대응).
 - 설치본 sha256 `bee0c780…` · 25,692,215 bytes.
+
+## CHG-20260907T150000-client-update-channel — 다른 머신이 새 버전을 받는다
+
+**요청 (사용자 2026-09-07)**: 「클라이언트를 배포했을 상황에서 … 다른 머신에서 버전이 올라간
+클라이언트를 업데이트 받을 수 있는 구조를 구성」.
+
+**신규**
+
+- `src/client/version.py` — 배포 버전 정본 `CLIENT_VERSION` + `parse`/`is_newer`(수치 비교).
+- `src/client/updater.py` — 매니페스트 조회·무결성 4축·적용. 러너 `agent/selfupdate.py` 의
+  규율 7개를 이식(고정 출처 · 검사 후 실행 · 같으면 안 함 · 실패는 조용히).
+- `feature-0003/src/routers/client_release.py` — `GET /api/ai/client/latest`.
+  **실물과 대조해 통과한 것만** 광고하고, 지문은 매니페스트가 아니라 **파일에서** 계산한다
+  (mtime+size 키 캐시). `INCLUDE_ORDER=260`.
+- `src/scripts/publish_release.py` — 반입(`--setup`) · 롤백(`--activate`) · 정리(`--prune`) ·
+  `--check`(서버 모듈을 그대로 불러 **서버 시선으로** 재확인).
+- `tests/test_updater.py`(63) · `tests/test_release_channel.py`(15).
+
+**변경**
+
+- `src/client/bridge.py` — `update_check`/`update_apply` 액션, `update_now()` 단일 경로,
+  `pending_update`·`on_quit`, `status` 에 `version`·`update`, `DANGEROUS` 에 `update_apply`,
+  `_confirm_text(action, body, bridge=None)` 로 확장(확인 문구가 **버전을 말한다**).
+- `src/client/gui.py` — 트레이 [업데이트 확인](두 껍데기 공통) · `_start_update_watch`
+  (동결본에서만) · `tell()` 에 `MessageBoxW` 우선 경로.
+- `feature-0003/src/app.py` — `/client` StaticFiles 마운트(디렉토리 존재 시에만).
+- `feature-0003/src/routers/oauth_as.py` — `_client_download_url` 1순위를 릴리스 채널로.
+- `src/installer/DQAConnect.iss` — `AppVersion` 폴백 + `/RELAUNCH` 무음 재기동.
+- `src/scripts/build_client.py` — `_client_version()` 으로 정본 주입 + 퍼블리시 안내.
+- `docker-compose.yml` — `x-web-extra` 에 `../artifacts/client-release:/srv/client:ro`.
+- `feature-0043/tests/test_connect_guidance.py` — 함수 본문 추출을 `{0,1200}` 문자 예산에서
+  **구조 경계**로 교체. 그 상한은 함수가 조금만 길어지면 매치가 사라져 단언이 「함수를 찾지
+  못했다」로 죽었다 — 실제로 이 cycle 이 그 함수에 분기를 더하면서 깨졌다.
+- `tests/test_tray_and_windowless.py` — 메뉴 항목 1개 추가 반영 + [종료] 를 **라벨로** 찾도록
+  (인덱스를 손으로 세면 다음 항목 추가에서 조용히 다른 것을 누른다).
+
+**되돌린 것**: 없음.
+
+## CHG-20260907T170000-client-update-channel-r2 — 적대 검증 2라운드 반영
+
+1라운드 **BLOCK**(P1 3 · P2 3 · cross-domain 6)과 확인 라운드 **BLOCK**(P1 2 · cross-domain 6)
+을 흡수했다. 2라운드 P1 2건은 **1라운드 수정이 새로 넣은 코드**에 있었다 — 그 사실이 아래
+구조 변경을 정했다(§18.8 (b) 비단조 신호의 국소 처방이 아니라 판정면 재배치).
+
+**신규**
+
+- `updater.verify_file(path, update)` — **실행할 그 파일**을 다시 센다. `download()` 의 판정
+  대상은 스트림이고 `apply()` 의 실행 대상은 디스크 경로다 — 두 스레드로 그 둘이 갈리는 것이
+  재현됐다(한 흐름이 검사한 바이트와 그 흐름이 돌려준 파일의 내용이 완전히 달랐다).
+- `updater._FLOW_LOCK` + `updater.run_flow(...)` — 순서의 **단일 정본**(확인 → 받기 →
+  디스크 재검증 → 유휴 재확인 → 설치기 실행) + 프로세스당 단일 실행. 입구가 셋인데
+  (트레이·웹 패널·주기 감시) 게이트가 없어 **미서명 설치기 둘이 동시에** 돌 수 있었다.
+- `updater.parse_manifest_detail()` — 「이미 최신」과 「매니페스트를 읽지 못했다」를 가른다.
+  전송 계층만 갈라 놓았더니 200+HTML·잘린 JSON·퍼블리시 버전 실수가 전부 「이미 최신입니다」
+  로 보고됐다.
+- `updater.PENDING_MAX_AGE_SEC` · `_sweep_old_downloads()` — 오래된 표식은 판정하지 않고,
+  고정 자리의 잔재는 나이로 잘라 정리한다.
+- `gui.check_and_report()` — 세 껍데기가 같은 문구·같은 판정을 쓴다.
+- `gui.ClientApp._update` + 트레이 항목 — tkinter 폴백 껍데기에 업데이트 입구가 **0개**였다.
+- `routers/client_release.client_download` — `GET /client/{filename}`, **광고 중인 파일만**.
+
+**변경**
+
+- `updater.download()` — `mkstemp` 로 **흐름별 유일** 이름(종전 PID 기준은 같은 프로세스의
+  두 스레드를 가르지 못했다). 최종 파일도 흐름별로 유일해 실행 대상이 흔들리지 않는다.
+- `updater.update_base()` — **동봉 주소가 고정 주소를 이긴다**. 동봉값은 설치 행위 자체가
+  인증한 앵커이고, 고정(TOFU)은 한 번 성공한 딥링크의 주소일 수 있다. 종전 우선순위는
+  규율 2 가 세운 세기를 뒤집고 있었다. 동봉값 없는 빌드는 그 사실을 기록에 남긴다.
+- `updater.check_detail()` — 죽은 `http-{status}` 분기를 실제 입구(`HTTPError.code`)로 옮겨
+  403·500·502 를 한 덩어리로 접지 않는다.
+- `updater.SILENT_ARGS` — `/RESTARTAPPLICATIONS` 제거. 재기동 입구가 둘이면 우리가 아직
+  살아 있는 사이 새 인스턴스가 단일 인스턴스 잠금에 막혀 **조용히 사라진다**.
+- `bridge.act()` — 확인 대상을 **묻기 전에** 고정해 핸들러로 넘긴다.
+- `bridge._do_update_apply()` — `or self.pending_update` 폴백 **제거**. 그것이 있으면
+  `act()` 의 고정이 무효화돼, 확인창이 「버전을 모른다」고 말한 갈래에서 구체 버전이 설치되고
+  주소 불일치 경고까지 비켜 갔다.
+- `bridge.update_now()` — `updater.run_flow` 에 위임(순서를 복제하지 않는다).
+- `gui._serve_confirms()` — 종료 신호 검사를 루프 최상단으로. 종전에는 `_tray_alive` 블록
+  **안**에 있어 트레이 없는 머신에서 `on_quit` 이 무효였다(exe 잠금 유지 → 무음 설치 실패).
+- `app.py` — `/client` StaticFiles 마운트 **제거**. 통째로 마운트하면 ① 내린 버전이 계속
+  익명 다운로드되고 ② 호스트 디렉토리의 무관한 파일이 공개되며 ③ 기동 시점 `is_dir()` 판정
+  때문에 나중에 생긴 디렉토리는 **영구 404** 였다.
+- `routers/client_release.py` — 라우트 경로를 **리터럴**로. `gen-routemap.py` 는 데코레이터
+  인자의 `ast.Constant` 만 읽어, 표현식이면 ROUTEMAP 에 `?` 로 떨어진다 — 하필 그 인덱스가
+  이름을 적을 수 없는 라우트가 익명으로 실행 파일을 서빙하는 표면이 된다.
+- `build_client._client_version()` — 정규식을 정본 `VERSION_RE` 와 같은 모양으로.
+- `tests/test_release_channel.py` — `or` 절로 무력화된 단언을 **행위 테스트**로 교체
+  (내린 버전 404 · 무관한 파일 404 · 마운트 부재 단언).
+- `tests/test_updater.py` — 소스 문자열 단언을 **두 스레드 동시 실행** 테스트로 교체 +
+  성공/불일치/초과/재검증/단일실행 행위 커버리지.
+- `tests/test_tray_and_windowless.py` — 파리티 테스트를 하드코딩 리스트에서 **tkinter 실물
+  대조**로. 상수와 비교하면 실물이 갈려도 통과한다(그래서 갈린 것을 몰랐다).
+- `docs/ROUTEMAP.md` — 재생성(266 routes).
+
+**되돌린 것**: 없음.

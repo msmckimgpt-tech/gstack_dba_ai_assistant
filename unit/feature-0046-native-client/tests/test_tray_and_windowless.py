@@ -423,7 +423,8 @@ def test_tray_menu_callbacks_only_enqueue(monkeypatch):
         posted.append(app._events.get_nowait())
 
     assert [kind for kind, _ in posted] == ["tray"] * len(posted)
-    assert {payload for _, payload in posted} == {"show", "toggle", "quit"}
+    # feature-0046 client-update-channel: 세 껍데기 공통 어휘라 이 껍데기에도 있다.
+    assert {payload for _, payload in posted} == {"show", "toggle", "update", "quit"}
     assert app.root.withdrawn == app.root.destroyed == app.root.deiconified == 0, (
         "트레이 콜백이 GUI 를 직접 만졌다 — 다른 스레드에서 tkinter 를 호출하는 것이다")
 
@@ -800,6 +801,42 @@ def test_an_icon_that_died_falls_back_to_the_idle_contract():
         "아이콘이 죽었는데 상주 계약을 유지했다 — 화면에도 알림 영역에도 없는 프로세스가 남는다"
 
 
+def _tkinter_shell_labels() -> list:
+    """tkinter 껍데기(`ClientApp._start_tray`)가 **실제로** 만드는 메뉴 라벨 골격.
+
+    tkinter 를 띄우지 않고 그 메서드의 `items = [...]` 블록만 읽는다 — 이 스위트는
+    헤드리스에서 돌고 `ClientApp.__init__` 은 `tk.Tk()` 를 요구한다.
+
+    연결 항목은 상태에 따라 라벨이 바뀌는 토글이라(`연결 끊기`/`다시 연결`) 골격의
+    `"<연결>"` 슬롯으로 정규화한다 — 비교 대상은 **어휘와 순서**이고 그 한 칸의 현재
+    문자열이 아니다.
+    """
+    import re as _re
+
+    src = Path(gui.__file__).read_text(encoding="utf-8")
+    m = _re.search(r"def _start_tray\(self\):[\s\S]*?\n        items = \[([\s\S]*?)\n        \]",
+                   src)
+    assert m, "ClientApp._start_tray 의 items 블록을 찾지 못했다"
+    out = []
+    for line in m.group(1).splitlines():
+        if _re.search(r"separator=True", line):
+            continue
+        if "self._tray_toggle," in line:
+            out.append("<연결>")
+        elif "label=UPDATE_MENU_LABEL" in line:
+            out.append(gui.UPDATE_MENU_LABEL)
+        else:
+            lab = _re.search(r'label="([^"]+)"', line)
+            if lab:
+                out.append(lab.group(1))
+    return out
+
+
+def _skeleton(labels: list) -> list:
+    """껍데기별 라벨을 **공통 골격**으로 정규화한다 — 연결 항목 한 칸만 다르다."""
+    return [("<연결>" if lab in ("연결 끊기", "다시 연결") else lab) for lab in labels]
+
+
 def test_shell_tray_menu_matches_the_tkinter_shell(monkeypatch):
     """두 껍데기가 **같은 어휘**를 쓴다 — 사용자에게 이 프로그램은 하나다."""
     opened: list = []
@@ -821,7 +858,11 @@ def test_shell_tray_menu_matches_the_tkinter_shell(monkeypatch):
     assert tray is not None and made
 
     labels = [i.label for i in tray.items if not i.separator]
-    assert labels == ["창 열기", "연결 끊기", "종료"], labels
+    # ⚠ **하드코딩 리스트로 대조하지 않는다** (적대 리뷰 C-2). 종전에는 상수 리스트와 비교해
+    #   tkinter 껍데기의 실물이 갈렸는데도 이 테스트가 통과했다 — 그 결과 그 껍데기로 떨어진
+    #   머신은 업데이트 입구가 **0개**였고 그 사실이 로그에조차 남지 않았다. 파리티 테스트는
+    #   **다른 표면의 실물**을 모수로 삼아야 갈림 자체가 실패가 된다.
+    assert _skeleton(labels) == _tkinter_shell_labels(), labels
     assert sum(1 for i in tray.items if i.default and not i.separator) == 1
 
     tray.dispatch(tray.command_id(0))                 # 창 열기
@@ -830,7 +871,10 @@ def test_shell_tray_menu_matches_the_tkinter_shell(monkeypatch):
     tray.dispatch(tray.command_id(2))                 # 연결 끊기
     assert br.disconnects == 1
     gui._SHELL_QUIT.clear()
-    tray.dispatch(tray.command_id(4))                 # 종료
+    # ⚠ 항목을 끼워 넣으면 **뒤 항목의 명령 ID 가 밀린다**. 인덱스를 손으로 세지 말고
+    #   라벨로 찾는다 — 다음 항목 추가에서 이 단언이 조용히 다른 것을 누르지 않게.
+    quit_id = next(cid for cid, item in tray.menu() if item.label == "종료")
+    tray.dispatch(quit_id)
     assert gui._SHELL_QUIT.is_set()
 
 
@@ -908,6 +952,8 @@ def _status_bridge():
     br._log, br._states, br._runner_proc = [], [], None
     br.plan = core.ConnectPlan(base="https://h", token="t")
     br.resident_probe = None
+    # feature-0046 client-update-channel: `status` 가 버전·대기 중인 업데이트를 함께 싣는다.
+    br.pending_update = None
     return br
 
 
