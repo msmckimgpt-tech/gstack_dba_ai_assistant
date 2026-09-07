@@ -1572,9 +1572,37 @@ def _request_is_https(request: Request) -> bool:
 
 
 def _set_session_cookie(response: Any, request: Request, session_id: str) -> None:
+    """세션 쿠키를 심는다. **수명은 서버 정책의 절대 상한을 따른다.**
+
+    ## 왜 수명을 주는가 (사용자 제보 2026-09-07, 실측으로 확정)
+
+    종전에는 `max_age`/`expires` 가 **없었다** — 즉 세션 쿠키였고, 브라우저는 「이 브라우징
+    세션이 끝나면 버림」으로 다룬다. Chrome·Edge 는 재시작 시 세션 복원으로 이를 대개 가려
+    주므로 **웹에서는 이 결함이 보이지 않았다.**
+
+    데스크톱 앱 창(WebView2)에는 그 복원이 없다. 프로세스가 끝나면 그 브라우징 세션도 끝나고
+    쿠키는 사라진다. 실측: 앱 프로필의 영구 쿠키 저장소에 **쿠키 0건**, 새 창을 열면
+    `/api/ai/connect/status` 가 `logged_in: false`. 사용자에게는 *"설치 후 로그인을
+    진행했습니다"* 뒤 다음 실행에서 조용히 로그아웃된 상태로 나타났다 — 게다가 이미 그려진
+    화면(대화 목록·계정 이름)은 남고 상태 칩·잠금 안내만 사라져 **고장처럼 보이지 않았다.**
+
+    즉 서버가 정한 14일(무활동 슬라이딩)이 **사용자 디스크에 도달한 적이 없다.**
+
+    ## 왜 `AUTH_SESSION_DAYS` 가 아니라 `AUTH_SESSION_MAX_DAYS` 인가
+
+    ⚠ 슬라이딩 창(14일)을 쿠키 수명으로 주면 **쿠키가 제한 요인이 된다.** 서버는 활동이
+    있을 때마다 만료를 다시 미는데(`_touch_auth_session`) 쿠키는 로그인 시점에 한 번만
+    정해지므로, 매일 쓰는 사용자도 14일째에 쿠키가 사라져 로그아웃된다 — feature-0043
+    TASK-20260828T150000 이 **서버 쪽에서 고친 바로 그 증상**을 쿠키 쪽에서 되살리는 꼴이다.
+
+    그래서 절대 상한(기본 90일)을 준다. **권한은 여전히 서버가 정한다** — 14일 무활동이면
+    서버가 그 세션을 거절하고, 남아 있는 쿠키는 죽은 값일 뿐이다. 쿠키는 운반체이지 권한이
+    아니다.
+    """
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
+        max_age=AUTH_SESSION_MAX_DAYS * 24 * 60 * 60,
         httponly=True,
         samesite="lax",
         secure=_request_is_https(request),
