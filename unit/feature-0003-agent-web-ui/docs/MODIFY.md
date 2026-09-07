@@ -5806,3 +5806,20 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - **직전 블록의 예고 항목 종결 명시**: 09-03 블록이 "대가를 숨기지 않고 적습니다 — WSL 쪽 AI 로 연결하시면 「답할 AI 있음」 줄이 어긋난 상태로 남습니다" 라고 적었고, `docs/test-runs.d/TASK-20260904-web-shell.md:16` 이 `✅ ai:ok — 잔여 항목 해소`(배포 `5ab60093`, PB-0008)로 닫았다. 릴리즈노트에 정정이 없으면 그 문장이 거짓 명제로 남으므로 09-04 블록이 명시적으로 닫는다.
 - 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md`).
 - 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
+
+
+## CHG-20260907T020000-ai-claude-conn-chip-place — 칩 자리 고정 · 앱 창의 자기 실행 차단
+- Timestamp: 2026-09-07T02:00:00+09:00
+- **제보 1**: 「계정 옆에 칩 자체가 확인되지 않았습니다」 — 칩은 계정 행 **아래 줄**에 있었다.
+  `flex-wrap: nowrap` + 트리거 `flex: 1 1 auto`(이름이 먼저 줄어든다) + 칩 `flex: 0 0 auto`.
+  ⚠ 칩에 `flex-shrink: 1` 을 주었다가 실측에서 되돌렸다 — 상태 낱말이 잘렸다.
+- **제보 2**: 앱 창에서 「이 사이트에서 DQAConnect.exe을 열려고 합니다」 승인창.
+  `_maybeAutoEntry` 에 `clientBridge` 가드가 없었다. 스킴 발사를 `_fireScheme()` **한 곳**으로
+  모아 거기서 막고, 자동 진입은 앱 창에서 시작조차 하지 않는다.
+- 실측: 라이브 브라우저에서 180/252/320px × 이름 3종 × 상태 2종 전 조합 PASS.
+  뮤테이션 4/4 KILL(가드 무력화 · 가드를 이동 뒤로 · 자동 진입 가드 제거 · 발사 지점 분산).
+- ⚠ **전제를 바꾸었으므로 그 전제를 지키던 게이트도 함께 바꿨다.**
+  `test_connect_gate.py::test_connection_chip_is_free_of_the_footer_collapse_rule` 이
+  옛 계약(`flex-wrap: wrap` + 트리거 `flex: 1 0 auto` = 「이름을 뭉개지 않고 칩이 다음 줄로」)을
+  **명시적으로 잠그고** 있었다. 그 단정이 살아 있는 한 이 결함은 «계약» 이었다 — 회귀 스위트가
+  그것을 잡아 주었고, 이유를 적어 뒤집었다. 조용히 지우지 않는다.

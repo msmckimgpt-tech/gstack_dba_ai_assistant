@@ -283,17 +283,31 @@ def test_connection_chip_is_free_of_the_footer_collapse_rule():
     prof = (WEB_SRC / "static" / "css" / "profile.css").read_text(encoding="utf-8")
     assert ".sidebar-profile > .ai-conn" in prof, "프로필 행 배치 규칙이 없다"
 
-    # 자리가 모자랄 때의 계약: **이름을 뭉개지 않고 칩이 다음 줄로 내려간다.**
-    # 그 판단은 폭 임계값이 아니라 실제 계정 이름 길이가 한다 — 같은 252px 사이드바라도
-    # `admin` 은 여백이 119px 남고 `bootstrap_admin` 은 10px 밖에 안 남는다(실측 2026-09-01).
-    # 두 축이 다 필요하다: wrap 이 없으면 칩이 밀려 나가고, trigger 가 shrink 하면
-    # wrap 대신 이름이 잘린다.
+    # ── 자리가 모자랄 때의 계약이 **뒤집혔다** (사용자 제보 2026-09-07) ──────────────
+    #
+    # 종전 계약: 「이름을 뭉개지 않고 **칩이 다음 줄로** 내려간다」. 근거는 2026-09-01 의
+    # 실측(「`admin` 은 여백이 119px 남는다」)이었다.
+    #
+    # 그런데 사용자가 두 번 말했다 — *"계정 옆에 칩 자체가 확인되지 않았습니다."* 다시 재
+    # 보니 기본 252px 에서 계정 행이 폭을 **다 써서**(트리거가 grow 한다) 칩은 `admin` 에서도
+    # 아래 줄로 내려갔다. 즉 옛 실측은 그 뒤의 변경을 견디지 못했고, 그 계약을 지키던 이
+    # 단정이 **결함을 계약으로** 만들고 있었다.
+    #
+    # 칩의 목적은 «질문 전에 상태를 알린다» 이다. 못 찾는 자리에 두면 그 목적을 못 지킨다.
+    # 이름은 잘려도 앞부분으로 알아보지만 칩은 자리를 옮기면 찾지 못한다 — 교환을 뒤집는다.
+    #
+    # ⚠ 칩 자신은 줄지 않는다. `flex-shrink: 1` 로 두었더니 «업데이트 필…» 처럼 **상태
+    #   낱말이 잘렸다**(라이브 실측). 잘린 상태 칩은 상태를 알리는 일을 못 한다.
+    #
+    # 라이브 실측(2026-09-07, 실제 렌더 박스): 180·252·320px × 이름 3종 × 상태 문구 2종
+    # 전 조합에서 **같은 줄 · 잘림 없음 · 클리핑 없음**.
     row = prof[prof.index(".sidebar-profile {"):prof.index(".profile-avatar {")]
-    assert "flex-wrap: wrap" in row, (
-        "자리가 없을 때 칩이 다음 줄로 내려갈 길이 없다 — 사이드바는 180px 까지 좁아진다")
-    assert "flex: 1 0 auto" in row, (
-        ".profile-trigger 가 shrink 한다 — 칩이 들어올 자리를 계정 이름에서 빼앗아 "
-        "다음 줄로 내려가는 대신 이름이 잘린다")
+    assert "flex-wrap: nowrap" in row, (
+        "칩이 다음 줄로 내려갈 수 있다 — 사용자는 사이드바 구석의 칩을 찾지 못한다")
+    assert "flex: 1 1 auto" in row, (
+        ".profile-trigger 가 줄지 않으면 칩이 밀려난다 — 이름이 먼저 줄어야 한다")
+    assert "flex: 0 0 auto" in row, (
+        "칩이 줄어들면 상태 낱말이 잘려(«업데이트 필…») 상태를 알리지 못한다")
 
 
 def test_guide_distinguishes_missing_token_from_stopped_process():

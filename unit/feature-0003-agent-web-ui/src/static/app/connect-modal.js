@@ -528,6 +528,35 @@ function _autoLaunchEligible() {
  *  반환값은 «실행을 실제로 쏘았는가» — 호출측(칩·게이트 버튼)이 «그럼 창을 열어야 하나» 를
  *  판정한다. 실행조차 못 쏘았으면 종전 경로(창 열기)로 그대로 떨어져야 한다.
  */
+/** 스킴을 실제로 쏘는 **단 하나의 자리**. 쏘았으면 `true`.
+ *
+ *  ## 왜 한 곳으로 모았나 (사용자 제보 2026-09-07)
+ *
+ *  앱 창(연결 프로그램이 연 창) 안에서 브라우저가 **「이 사이트에서 DQAConnect.exe을 열려고
+ *  합니다」** 승인창을 띄웠다. 이미 실행 중인 프로그램이 **자기 자신을 다시 실행**하려 한
+ *  것이고, 사용자에게는 보안적으로 불안한 모양이다.
+ *
+ *  원인: `_connectEntry`(클릭 경로)에는 2026-09-04 에 `clientBridge` 가드를 붙였는데
+ *  **`_maybeAutoEntry`(로그인 직후 자동 경로)에는 붙이지 않았다.** 가드를 입구마다 붙이는
+ *  방식이었으므로 새 입구 하나가 그대로 빠져나갔다 — 이 저장소가 반복해 겪은 형태다.
+ *
+ *  그래서 가드를 **입구가 아니라 출구**에 둔다. 앞으로 어떤 경로가 생겨도 이 함수를 거치는 한
+ *  앱 창에서는 스킴이 나가지 않는다.
+ *
+ *  ⚠ 앱 창에서는 「대신 무엇을 할까」를 여기서 정하지 않는다. 부르는 쪽마다 답이 다르다 —
+ *  클릭이면 패널을 열고(`_connectEntry`), 자동이면 **아무 것도 하지 않는다**(사용자가
+ *  요청하지 않은 확인창을 대신 띄우면 같은 불안을 다른 모양으로 되돌려 줄 뿐이다).
+ */
+function _fireScheme(url) {
+  if (clientBridge) return false;   // 프로그램은 이미 여기 있다 — 자기 자신을 부르지 않는다
+  try {
+    window.location.href = url;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function autoLaunch(reason, opts) {
   const fallbackModal = !!(opts && opts.fallbackModal);
   // ⚠ 진행 중이어도 **사용자의 클릭은 이긴다** (라이브 실측 2026-09-02).
@@ -545,9 +574,7 @@ async function autoLaunch(reason, opts) {
     return false;
   }
   // ⚠ 프리페치가 있으면 이 줄까지 **await 가 하나도 없다** — 클릭의 사용자 활성화가 살아 있다.
-  try {
-    window.location.href = ready.protocol;
-  } catch (_) {
+  if (!_fireScheme(ready.protocol)) {
     if (fallbackModal) openConnectModal();
     return false;
   }
@@ -631,9 +658,7 @@ async function _awaitUsable(attempt, epoch) {
 async function _launchRunner() {
   if (!_launch || !_launch.protocol) return;
   // ⚠ 이 줄이 첫 await 앞에 있어야 한다. 뒤로 밀리면 사용자 활성화가 끊겨 크롬이 조용히 거른다.
-  try {
-    window.location.href = _launch.protocol;
-  } catch (_) {
+  if (!_fireScheme(_launch.protocol)) {
     _status("실행을 요청하지 못했습니다 — 강조된 1단계 명령을 터미널에 붙여넣어 실행하세요.", "error");
     _revealCommand();
     return;
@@ -1365,6 +1390,11 @@ export async function refreshConnState() {
  *  «접근성 개선» 이 아니라 방해다.
  */
 function _maybeAutoEntry() {
+  // ⚠ **앱 창에서는 자동 진입 자체를 하지 않는다** (사용자 제보 2026-09-07).
+  //   `_fireScheme` 이 스킴은 막지만, 여기서 멈추지 않으면 쏘지도 않을 실행을 위해 토큰을
+  //   매 로그인마다 발급받는다. 그리고 이 창에서 연결은 패널이 한다 — 자동으로 대신 눌러
+  //   주는 것은 사용자가 요청하지 않은 동작이다.
+  if (clientBridge) return;
   if (!_autoLaunchEligible()) return;
   // 재실행이 이 컴퓨터에서 파일을 바꾸지 못한다는 증거가 이미 있으면 자동으로 쏘지 않는다 —
   // 결과가 정해진 시도를 로그인할 때마다 반복하는 것은 사용자에게도 서버에도 낭비다.
