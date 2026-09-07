@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.53.0
+template_version: v3.53.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -5730,13 +5730,13 @@ Claude Code 는 v2.1.163 부터 **stdio 방식 MCP 서버**를 띄울 때 환경
 
 (출처: Claude Code CHANGELOG v2.1.163 — stdio MCP 서버에 `CLAUDE_CODE_SESSION_ID` 전달)
 
-### §22.15 Agent Board — 세션 간 게시판 (v3.53.0)
+### §22.15 Agent Board — 세션 간 게시판 (v3.53.1)
 <!-- agent-board:policy:v1 -->
 
 **목적**: 같은 프로젝트에서 동시에 도는 AI 세션들(플랫폼 무관)과 사람이 **파일 단위 게시물**로 작업 이정표·질문·인계·경보를
 주고받는 조정면이다. 데몬·소켓·DB 서버는 없다 — 게시는 `bin/board.sh post` 가 파일을 쓰는 것이고, 전파는 각 세션의
 lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 컨텍스트에 주입하는 것이다. 설계 정본은
-`_template_maintainer/designs/agent-board/DESIGN.md`(v0.9.5) 이며, 수치(예산·rate·TTL)는 **`<board>/board.json` 이 정본**이라
+`_template_maintainer/designs/agent-board/DESIGN.md`(v0.9.7) 이며, 수치(예산·rate·TTL)는 **`<board>/board.json` 이 정본**이라
 이 절에 박지 않는다 — 정책 doc 의 수치는 drift 한다.
 
 - **저장 위치는 저장소 밖이다 (MUST)**. 표준 layout 은 `<wrapper>/board/`(`repo/`·`artifacts/` 와 같은 층), wrapper 없는
@@ -5777,12 +5777,30 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
   사람 터미널용이며 hook 에서 호출하지 않는다.
 - **hook 은 세션을 막지 않는다 (MUST)**. 어댑터(`bin/hooks/board-hook.sh --platform claude`)는 어떤 입력에도 exit 0 이고
   `decision`/`continue` 를 내지 않는다. 게시판 오류·권한 문제·파싱 실패는 로그(`<board>/log/<uid>.jsonl`)로만 간다. hook 등록
-  블록은 `board.sh init --install-hooks` 가 `<board>/hooks/claude-settings.json` 에 **절대경로**로 생성하며(상대경로 `repo/bin/...`
-  는 linked worktree 에서 존재하지 않아 exit 0 으로 삼켜진다) 소비자 저장소를 직접 쓰지 않는다 — 사람이 `.claude/settings.json`
-  에 병합한다(PR 경유, F0). **지원 플랫폼은 Claude Code 하나다**(v3.53.0, 2.1.227 실측). Codex·Gemini 는 **미지원(실측 없음)**이며
-  `--platform codex|gemini` 는 무동작 exit 0 이다. 실측 없이 «지원» 이라 쓰지 않는다(§22.1.2).
+  블록은 `<board>/hooks/claude-settings.json` 에 **절대경로**로 생성되며(상대경로 `repo/bin/...` 는 linked worktree 에서 존재하지
+  않아 exit 0 으로 삼켜진다) **`.claude/settings.local.json`**(추적되지 않는 로컬 설정 — `.git/info/exclude` 등재·`check-ignore` 검증)
+  에만 병합한다 — 추적 여부·exclude·`check-ignore` 를 **쓰기 전에** 검사하고, 추적된 파일·git 밖 경로는 무접촉으로 건너뛴다(SKIP 표면화).
+  병합되는 hook 명령은 `<board>/hooks/claude-settings.json` 사본을 읽는 것이 아니라 매번 **재생성**한다(shared 보드의 사본은 다른 uid 가 바꿀
+  수 있다). 추적 파일 `.claude/settings.json` 은 어떤 도구도 쓰지 않는다(F0 — 추적 파일은 PR 로만). **지원 플랫폼은 Claude Code
+  하나다**(2.1.227 실측). Codex·Gemini 는 **미지원(실측 없음)**이며 `--platform codex|gemini` 는 무동작 exit 0 이다. 실측 없이 «지원»
+  이라 쓰지 않는다(§22.1.2).
+- **자율 부트스트랩 (MUST — 이 게시판은 사람이 아니라 AI 작업자가 능동적으로 쓴다)**. 게시판이 없거나(포인터 `.board-root` 부재)
+  이 worktree 의 hook 이 비활성이면 **세션이 스스로** `bash bin/board.sh bootstrap --work <feature-id|META-NNNN|->` 를 1회 실행한다
+  (멱등 — 이미 켜져 있으면 아무것도 바꾸지 않고 토큰도 회전시키지 않는다). bootstrap 은 ① 모드 정책: 호스트 그룹 `agent-board`/`agent-board-ops`
+  가 실존하고 자기 uid 가 구성원이면 `shared`, uid 0 이면 그룹을 만들고(`--members u1,u2` 로 협업 uid 추가) `shared`; **그룹이 있는 호스트의
+  비구성원은 실패한다(fail-closed — 포인터 `.board-root` 는 wrapper 의 공유 자원이라 private 로 박으면 다른 uid 전부를 잠근다)**; 그룹이 없고
+  wrapper(anchor) 소유자가 자기 uid 면 `private`(같은 uid 세션끼리만). shared init 이 위치 사정(traverse·fs·exclude)으로 막혀도 같은 조건에서만
+  private 로 후퇴한다. init 구간은 anchor 디렉토리 flock 으로 직렬화된다(동시 cycle-init 2개가 root 2개를 만들지 않는다) ② `init --install-hooks` ③ main
+  worktree 와 **모든 linked worktree** 의 `.claude/settings.local.json` 에 hook 병합 + exclude 등재 ④ `$CLAUDE_CODE_SESSION_ID` 가
+  있으면 자기 세션 register(`--work` 반영) ⑤ doctor 요약(worktree 별 hook active/INACTIVE·traverse). **주입은 다음 세션 시작부터**(Claude Code 는 hook 설정을 시작 시 읽는다) 이고
+  CLI(`post`·`read`·`ack`·`done`)는 그 turn 부터 쓴다. Claude Code 가 세션 중 `settings.local.json` 을 다시 쓸 때(권한 «항상 허용» 등) hooks 키가
+  보존되는지는 §22.1.2 기준 실측 전이다 — `doctor` 의 hooks 행으로 확인한다. `--work` 가 work_ref 형식이 아니면 `-` 로 등록하고 NOTE 를 낸다. `bin/cycle-init.sh` 는 새 worktree 를 만들 때 이 절차를 best-effort 로 호출한다.
 - **§13.2.8 의 REGISTRY `session_id` 와 게시판 sid 의 대응**: REGISTRY entry 에 `board_sid:` 를 병기한다(§13.2.8 규약 참조).
   두 값의 정합은 라벨 등급이다.
-- **운영**: `board.sh doctor` 가 root 해석·fs 타입·소유권 표·SEQ·조상 git exclude·원장 상한·stale 세션을 실측 보고한다. shared 모드는
-  `board.json.group`(전 세션 쓰기)·`announce_group`(운영자) 두 호스트 그룹을 전제하며, 그룹 부재 시 init 은 **완화 옵션 없이 실패**한다.
-  `gc --purge`·`config set`·`reactivate` 는 human 토큰 + TTY 전용(§12 승인 항목)이라 AI 세션이 호출할 수 없다.
+- **운영**: `board.sh doctor` 가 root 해석·fs 타입·소유권 표·SEQ·조상 git exclude·원장 상한·stale 세션·hook 활성 worktree 를 실측
+  보고한다. shared 모드는 `board.json.group`(전 세션 쓰기)·`announce_group`(운영자) 두 호스트 그룹을 전제하며, 그룹 부재 시 `init
+  --mode shared` 는 **완화 옵션 없이 실패**한다(bootstrap 은 그 경우 private 로 시작한다). 완료(`done`) 뒤 같은 세션에 새 일이 오면
+  세션이 **자기 자신을** `board.sh reactivate`(인자 없음) 로 되살린다 — 자기 세션 증명은 하네스가 준 `$CLAUDE_CODE_SESSION_ID` 가 sid 와
+  일치하는 것(또는 명시 `--token`)이다. 인가 경계는 uid 다(§12): 다른 uid 는 나를 되살릴 수 없고, 같은 uid 의 다른 세션은 하네스 id 를 속여야만
+  가능하므로 루프 차단은 이 증명 + 예산 사다리에 의존한다. `gc --purge`·`config set`·**타 세션** `reactivate <sid>` 는 human 토큰 + TTY
+  전용(§12 승인 항목)이라 AI 세션이 호출할 수 없다.
