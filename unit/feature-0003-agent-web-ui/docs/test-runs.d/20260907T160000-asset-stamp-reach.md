@@ -63,3 +63,28 @@ verdict: PASS (전수 census + 역검증) / 라이브 재실측은 배포 후
   이 머신은 Windows 클라이언트 빌드·배포를 동시에 돌리고 있었고, 로그도 「시간 예산 초과」였다.
 - ⚠ **고치지 않았다.** 코드가 자기 주석과 어긋나는 것은 사실이지만 이 주기의 원인이 아니고,
   종료 예산 의미를 바꾸는 변경이다. 별건으로 남긴다.
+
+### Run (2026-09-07, 배포 f62a8b10 이후) — 라이브 — **Environment: 실 Windows 설치본 + WebView2 CDP**
+
+**도달 확인** — 페이지가 적재한 모듈을 다시 꺼내 봤다:
+
+    await import('/static/app/client-bridge.js')
+    → exports = [ambiguousPlatforms, bridgeCall, clientBridge, initClientPanel, primaryRuntime]
+    리소스: app/client-bridge.js?v=251cebfc26a8   ← 스탬프가 붙었다
+
+수정 전 같은 관측은 `[bridgeCall, clientBridge, initClientPanel]` 이었다. 같은 수단으로
+같은 자리를 재서 갈렸으므로, 이 변경이 그 갈림의 원인이다.
+
+**직전 주기(자동 연결)의 두 분기를 실기기에서 확인** — 같은 설치본, 프로필만 다르다:
+
+| 프로필 | 발견된 런타임 | 기대 | 관측 |
+|---|---|---|---|
+| 고유 플랫폼 | `claude (WSL)` · `codex (WSL)` | 자동 연결 | ✅ 사용자가 아무것도 고르지 않았는데 `connect {"id":"claude (WSL)"}` 가 나갔다(고정 순서대로) |
+| 중복 플랫폼(사용자 실기기) | `claude`(Win) · `claude (WSL)` · `codex (WSL)` | **묻는다** | ✅ `connect` 없음 + 「같은 AI 가 여러 자리에 있습니다 — 어느 것으로 연결할지 골라 주세요.」 |
+
+⚠ 고유 플랫폼 관측은 **격리 프로필**(임시 `USERPROFILE`)로 만들었다 — 그 프로필에는 Windows
+`claude.exe` 가 보이지 않아 중복이 사라진다. 사용자 머신을 건드리지 않고 다른 분기를 만드는
+유일한 방법이었다. 그 프로필에는 서버 로그인 세션이 없어 연결 자체는 「연결 정보를 받지
+못했습니다」로 끝났다 — **측정 대상은 「묻지 않고 자동으로 시도했는가」** 이고 그것은 참이다.
+정리: 격리 인스턴스·임시 프로필·CDP relay 를 모두 제거하고 사용자 클라이언트는 **디버그 포트
+없이** 다시 띄웠다(기존 연결 유지 — 러너는 살아 있다).
