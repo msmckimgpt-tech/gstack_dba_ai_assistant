@@ -1764,3 +1764,7 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 ## REV-20260907T040858-hook-worktree-compat [CODEX:hook-path-review] — PASS
 
 기존 worktree에 Codex adapter가 없으면 Git common main의 adapter로 연결하고 현재 cwd를 유지한다. 현재 worktree adapter 우선순위와 사용자 정의 hook·timeout을 보존하며, installer 재실행 시에도 같은 명령을 유지한다. canonical template e56c89ece5d3의 source regression 16건을 독립 실행해 PASS를 확인했다. 변경 범위는 Codex hook 명령·생성기이며 Claude 동작과 제품 실행은 유지한다.
+
+## REV-20260907T042250-optional-board-compat [CODEX:optional-board-review] — PASS
+
+선택 기능인 Agent Board core가 없는 이전 소비자에서 Codex hook은 조용히 종료한다. core 파일 부재만 허용하며 설치된 core의 import/dependency 오류는 계속 stderr JSON으로 보고한다. core 설치·초기화나 hook 정의 변경은 하지 않는다. canonical template 80d9c409ac7e의 실제 복사 adapter 회귀를 포함한 10개 테스트를 독립 실행해 PASS를 확인했다. 런타임 검증은 종료 코드와 함께 오류 출력 부재를 판정한다.

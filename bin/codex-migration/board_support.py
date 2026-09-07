@@ -25,12 +25,12 @@ EVENTS = {
     "Stop": "on_turn_end",
     "SessionEnd": None,
 }
+CORE_PATH = Path(__file__).resolve().parents[1] / "lib" / "board_fs.py"
 
 
 def load_core():
-    path = Path(__file__).resolve().parents[1] / "lib" / "board_fs.py"
     name = "_codex_board_core"
-    spec = importlib.util.spec_from_file_location(name, path)
+    spec = importlib.util.spec_from_file_location(name, CORE_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError("board_core_unavailable")
     core = importlib.util.module_from_spec(spec)
@@ -151,6 +151,14 @@ def main() -> int:
         # Bound reads; reject duplicate keys with the board's strict parser.
         raw = sys.stdin.buffer.read((1 << 20) + 1)
         if len(raw) > 1 << 20:
+            return 0
+        # Older consumers may not include the optional Agent Board at all.
+        # Do not upgrade/bootstrap it merely to enable Codex. Only absence of
+        # the core itself is a quiet no-op; errors in an installed core remain
+        # observable through the error response below.
+        try:
+            CORE_PATH.stat()
+        except FileNotFoundError:
             return 0
         core = load_core()
         payload = core.json_loads_strict(raw)
