@@ -838,3 +838,46 @@ R2 에서 구조 승격으로 소거했으므로 «수정이 새 결함을 만�
 ### 잔여
 
 - R3 확인 라운드 1회 (구조 승격이 새 결함을 만들지 않았는지).
+
+
+## REV-20260907T180000-ai-claude-corp-feature-0007-local-llm-decommission [CODEX:local-llm-decommission-R3] — PASS (수렴)
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Source: codex review --base main (codex-cli 0.153.4, gpt-6-astra, effort high) — **확인 라운드 R3**
+- Trigger: §18.8 (a) — R2 의 P2 수정(구조 승격)이 새 결함을 만들지 않았는지 확인
+- Timestamp: 2026-09-07T18:00:00+09:00
+- Verdict: **PASS — P1 0건 · P2 0건**
+- Human Approval Needed: no
+
+### 판정 원문
+
+> "No actionable regressions were identified in the diff against the specified merge base.
+> Test execution was blocked during conftest initialization because the sandbox prohibits
+> socket creation, so runtime verification remains incomplete."
+
+### 수렴 (§18.8 (a)(b))
+
+| 라운드 | P1 | P2 | 조치 |
+|---|---|---|---|
+| R1 | 1 | 1 | 전건 수정 (게이트웨이 paired 요구 · 백필 진입 가드) |
+| R2 | **0** | 1 | 구조 승격 (chokepoint + AST 모수 검증) |
+| R3 | **0** | **0** | — 종결 |
+
+P1 이 1 → 0 → 0 으로 **단조 감소**했고 진동이 없다(§18.8 (b) 비단조 = 접근 재설계 신호에 해당하지
+않음). §18.8 (a) 의 「P1 을 수정했으면 확인 라운드 1회 필수」를 R2·R3 두 라운드로 충족했다.
+
+### codex 가 남긴 검증 공백과 그 보전 (정직 표기)
+
+codex 는 **자기 sandbox 에서 테스트를 실행하지 못했다** ("sandbox prohibits socket creation" —
+루트 `conftest.py` 가 PG 포트를 도달 불가 값으로 고정하는 과정에서 소켓 생성이 필요하다).
+따라서 R3 의 PASS 는 **정적 분석 기준**이며 런타임 검증을 포함하지 않는다.
+
+그 공백은 이 세션이 직접 수행한 측정으로 덮인다 — 근거를 R3 의 것으로 오인하지 않도록 분리 기재:
+
+| 축 | 수행자 | 결과 |
+|---|---|---|
+| 신규 회귀 테스트 | 본 세션 | 10건 통과 + 결함 주입 3형태 각각 FAIL 실증 |
+| 영향 테스트 전수 | 본 세션 | 17파일 + 신규 1파일 + 관문 AST 1파일 = 전량 통과 |
+| 전수 스위트 기준선 대조 | 본 세션 | branch 86 / main 86, **집합 차이 0건** (`comm` 대조) |
+| litellm `model_list: []` 기동 | 본 세션 | 실컨테이너 기동 + liveliness/readiness 200 |
+| 라이브 재배포·healthz | (배포 단계) | §16.3 deploy-backed 완료 기준 |

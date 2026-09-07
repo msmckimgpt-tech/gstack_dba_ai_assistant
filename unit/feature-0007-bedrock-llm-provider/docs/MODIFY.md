@@ -792,3 +792,26 @@ source_of_truth: true
   chokepoint 테스트 FAIL ⓒ chokepoint 밖 `OpenAI(` 생성 → AST 모수 테스트 FAIL. 원복 후 10건 통과.
 - 테스트 6 → **10건**.
 - Cross-ref: REVIEW REV-20260907T174500 · TEST Run 2026-09-07-local-llm-decommission-R2.
+
+## CHG-20260907T180000-ai-claude-corp-feature-0007-local-llm-decommission — R3 수렴 기록 + 의도적 미적용 ADR
+
+- **확인 라운드 R3 PASS** — `codex review --base main` 판정 *"No actionable regressions were
+  identified in the diff against the specified merge base."* (P1 0 · P2 0). 수렴 추이
+  R1(1/1) → R2(0/1) → R3(0/0), P1 단조 감소·진동 없음(§18.8 (a)(b)).
+- **codex 검증 공백을 분리 기재** — codex 는 자기 sandbox 에서 테스트를 실행하지 못했다
+  ("sandbox prohibits socket creation"). 따라서 R3 의 PASS 는 **정적 분석 기준**이며,
+  런타임 축(신규 10건 + 결함주입 3형태 + 영향 19파일 + 전수 스위트 기준선 대조 +
+  litellm 실기동)은 **본 세션이 직접 측정**한 것이다. REVIEW REV-20260907T180000 에
+  축별 수행자를 표로 분리했다 — R3 의 근거로 오인되지 않게 한다.
+- **`docs/DECISIONS.md` ADR-20260907T175000-local-llm-decommission-scope-boundary 신설**
+  (§16.7 G8-c — 기록 없는 미적용은 누락과 구분되지 않는다). 의도적 미적용 3건:
+  ① `bedrock-gateway` 철거 — 결정 축이 다르고(로컬 실행 vs 외부 경로) feature-0020 무중단
+     배포 배선 폭이 크다. `model_list: []` 로도 기동함을 실측했으므로 유지 비용 없음
+  ② `embed_ollama_models` 볼륨 보존 — 승인된 16GB 삭제는 `local_llm/models-edge` 대상이었고,
+     이 볼륨은 되돌리기 경로(모델 재다운로드 불요)
+  ③ 선행 프로젝트 `mysql_ai/.env` — git 저장소 아님(VCS 부재) · 2026-03 이후 휴면 ·
+     컨테이너 0개 · `.env*` deny rule · 별 프로젝트 스코프
+- **ADR 의 목적**: §18.8 「의도된 구성은 ADR 로 영구화한다」 — 근거 없이 같은 3건이 매 라운드
+  재상정돼 실제 결함 탐색 예산을 갉아먹는 것을 막되, 지적 자체를 무르게 만들지 않는다.
+  각 항목에 **재개봉 조건**을 명시했다.
+- Cross-ref: REVIEW REV-20260907T180000 · TASK 동 cycle 항목 · `docs/DECISIONS.md` 동 ADR.
