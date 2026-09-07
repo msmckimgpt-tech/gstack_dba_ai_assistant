@@ -126,7 +126,7 @@ feature_dir() {
 is_meta_path() {
   local path="$1"
   case "$path" in
-    AGENTS.md|CLAUDE.md|GEMINI.md) return 0 ;;
+    AGENTS.md|AGENTS.override.md|CLAUDE.md|GEMINI.md) return 0 ;;
     bin/*|shared/docs/*|docs/*) return 0 ;;
     unit/_template/*) return 0 ;;
     # v3.13.0 — wiki/ 사람 facing vault (AGENTS.md §21) 는 META path.
@@ -145,7 +145,7 @@ is_meta_path() {
     .claude/*) return 0 ;;
     # .codex, .agents/plugins, and the template-owned local Codex plugin hold
     # project-scope Codex commands, skills, and marketplace metadata — meta-class.
-    .codex/*|.agents/plugins/*|plugins/ai-delegated-dev-template/*) return 0 ;;
+    .codex/*|.agents/skills/*|.agents/ENVIRONMENT.md|.agents/plugins/*|plugins/ai-delegated-dev-template/*) return 0 ;;
     *) return 1 ;;
   esac
 }

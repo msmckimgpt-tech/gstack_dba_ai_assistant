@@ -1756,3 +1756,7 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 - **report-only 로 올린 정본 내부모순(doc_sync 는 정본을 고치지 않는다)**: ⓐ `feature-0046/docs/FUNCTION.md` 의 `P0-*` ID 중복 → 미러는 절 제목으로만 인용(WIKI-21·POL-01). ⓑ `feature-0046/docs/TEST.md` 카운트·Run 색인 stale — 미러 「177 테스트」의 근원(XS-16·RN-03). ⓒ `feature-0046/docs/FUNCTION.md` §P0-K 의 `--cmd` 서술이 §P0-AA 폐기와 모순 — 미러만 고치면 다음 창에 되살아난다(WIKI-20·XS-17). ⓓ `feature-0043/docs/TASK.md` WSL 체크박스 3표면 불일치(RN-02). ⓔ `docs/STATUS.md` feature-0046 행은 frontmatter-driven 이라 표 직접 편집 금지 — 정본 frontmatter 갱신은 owning cycle 소관(STAT-05).
 - **오케스트레이터 지시문 반증 1건(2창 연속 동일)**: 이 run 의 지시문이 「릴리즈노트 커밋에 `index.html`/`admin.html` 의 `?v=<new>` 캐시버스터 bump 를 **같은 커밋에** 포함」을 요구했으나, 소스는 `?v=dev` **고정**이고 빌드가 content-hash 를 주입하며(현재 서빙 `?v=d1ebb1da0b64`) `bin/deploy-web.sh` ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` 수기 bump 금지). 수기 실값은 그 안전장치를 무력화하므로 **stale 지시로 판정해 따르지 않았다** — `index.html`/`admin.html` 무접촉.
 - Human Approval Needed: **아니오** (색인·미러 정합, 정본·코드 무변경).
+
+## REV-20260907T123500-ai-codex-compat [CODEX:compatibility-review] — reviewed
+
+Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고 Codex 발견 경로, 리뷰어, 공통 세션 조회를 추가한다. 격리 installer/history 및 board 회귀 테스트와 실제 Codex 로딩으로 검증한다. 사용자 전환 요청은 후속 지시에 따라 공존 구성으로 조정되었다. 정책 정본 AGENTS.md와 제품 실행 공급자는 변경하지 않는다. 상세 설계·범위: docs/CODEX_MIGRATION.md.

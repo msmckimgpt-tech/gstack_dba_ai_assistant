@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(if [ -f repo/bin/hooks/codex-board-hook.py ]; then echo repo; else git rev-parse --show-toplevel; fi)/bin/hooks/codex-board-hook.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(if [ -f repo/bin/hooks/codex-board-hook.py ]; then echo repo; else git rev-parse --show-toplevel; fi)/bin/hooks/codex-board-hook.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(if [ -f repo/bin/hooks/codex-board-hook.py ]; then echo repo; else git rev-parse --show-toplevel; fi)/bin/hooks/codex-board-hook.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(if [ -f repo/bin/hooks/codex-board-hook.py ]; then echo repo; else git rev-parse --show-toplevel; fi)/bin/hooks/codex-board-hook.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

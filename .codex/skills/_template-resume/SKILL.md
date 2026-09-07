@@ -1,9 +1,8 @@
 ---
 name: _template-resume
-description: Use when the user invokes /_template:resume or asks Codex to resume and complete work that was started in another (or an interrupted) session — tracking conversation history and the in-progress worktree, then driving it to completion under the project governance gates.
+description: "Run the project /_template:resume workflow."
+generated_by: codex-environment-install
+managed_body_sha256: 22c8b98265009d0d285f464bee9fe9b9a23819a484fd83a487ff1b586def60b4
 ---
 
-# _template-resume
-
-Read and follow `.codex/commands/_template/resume.md` in the current repository.
-That command file is the canonical Codex prompt for this workflow.
+Read `.codex/CONTEXT.md` from the current policy root, then follow `.codex/commands/_template/resume.md`. Resolve the policy root from `repo/AGENTS.md` when launched in the wrapper, otherwise from `AGENTS.md`. Use the current user arguments as `$ARGUMENTS`.
