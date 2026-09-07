@@ -1809,3 +1809,13 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-security.md
 - Human Approval Needed: no
 - Cross-ref: feature-0002 REVIEW의 backend/security R2 및 qa R3 (최종203 PASS).
+
+## REV-20260908T010301-doc-sync-20260908-010301 [SKIPPED:mirror-index-reconciliation] — doc_sync 09-08 META(wiki+정책문서) 정합
+- Related TASK: META-0073-doc-sync-0908
+- Trigger: 46커밋 창(a93fe005..577b5ea1, 착륙일 전량 2026-09-07) 의 미러·색인 drift
+- Timestamp: 2026-09-08T01:03:01+09:00
+- Verdict: PASS
+- Artifact: meta/reviews/2026-09-08T01:03:01Z-doc-sync-0908.md
+- **[SKIPPED] 사유**: §18.8 — 본 변경은 정본(`unit/*/docs/*`·`docs/DECISIONS.md`)이 이미 확정한 사실을 미러 표면(wiki·STATUS·ARCHITECTURE 색인)에 반영하는 **정합 편집**이다. 새 정책·구조 결정 저술 0건이라 적대 패널이 볼 판단 표면이 없다. 대신 4축 병렬 sweep + 2조 적대 교차검증(6에이전트·1.24M 토큰)으로 대체했다.
+- **검증**: 제안 68건 → CONFIRMED 66 · PLAUSIBLE 7(정정 반영) · REFUTED 1 · overreach 환원 1 → span 충돌 13쌍 해소 후 **최종 54건 적용** + ORCH-01. `wiki-lint` total 32(직전 창 baseline 복귀 — broken 2→1) · `gen-status --check` 최신(frontmatter 21·passthrough 25) · `ssot-lint` 4 WARN(baseline 동일) · 카운트 46 = wiki 카드 46.
+- Human Approval Needed: no

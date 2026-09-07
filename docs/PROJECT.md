@@ -67,7 +67,7 @@ ai_read_priority: 2
 - Docker Compose
 - MySQL 8.0 — `web*` control plane (RBAC/audit/auth)
 - PostgreSQL 16 + pgvector + Apache AGE — KB(`agent_kb`) · agent runtime(`agent_runtime` schema) · assistant 작업공간(`agent_scratch`) 정본 (ADR-0021 / ADR-0024 / ADR-0027 / ADR-0028). 라이브 KB 이미지는 2026-06-30 AGE cutover(PR #477) 이후 AGE 포함 커스텀 `kb-pg-age:pg16` 이며, compose 는 `${KB_PG_IMAGE:-pgvector/pgvector:pg16}` + `KB_PG_PRELOAD`/`KB_PG_REPLICA_PRELOAD` 토글로 이미지·preload 를 선택한다(compose 기본값 자체는 여전히 `pgvector/pgvector:pg16`)
-- pgbouncer (PG 연결 풀) · Caddy 2 (엣지 TLS·LAN 단일 진입) · MinIO (첨부 오브젝트 스토리지) · LiteLLM bedrock-gateway (LLM) · Ollama (KB 임베딩)
+- pgbouncer (PG 연결 풀) · Caddy 2 (엣지 TLS·LAN 단일 진입) · MinIO (첨부 오브젝트 스토리지) · LiteLLM bedrock-gateway (LLM — 2026-09-07 로컬 LLM 폐기 이후 활성 모델 0개, `model_list: []`)
 - WSL Ubuntu
 
 ### 8.2 의존성 설치
@@ -111,10 +111,10 @@ make build
 
 ### 9.2 서비스 정의
 - **Docker Compose**: `../docker-compose.yml`로 서비스 오케스트레이션
-- 서비스 24개(2026-08-27 `docker-compose.yml` 실측) — 데이터: `mysql` · `postgres` · `pgbouncer` ·
+- 서비스 23개(2026-09-07 `docker-compose.yml` 실측) — 데이터: `mysql` · `postgres` · `pgbouncer` ·
   `postgres-replica` · `postgres-replica-init` · `minio` · `minio-init` / 에이전트·워커: `agent` ·
   `memory-init` · `insight-worker` · `ask-worker` · `ask-worker-surge` · `ops-scheduler` / 웹·엣지:
-  `web-a` · `web-b` · `caddy` / LLM: `bedrock-gateway` · `bedrock-gateway-surge` · `embed-ollama` /
+  `web-a` · `web-b` · `caddy` / LLM: `bedrock-gateway` · `bedrock-gateway-surge` /
   도구·MCP: `mcp` · `gdrive-mcp` · `ext-tool-mcp-a` · `ext-tool-mcp-b` · `browser`
   (MCP 표면은 feature-0045 로 2 replica — 개인 AI 연결이 배포마다 끊기지 않도록 Caddy LB 뒤
    one-at-a-time 롤링을 받는다)

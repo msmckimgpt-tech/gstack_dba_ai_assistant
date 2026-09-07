@@ -122,7 +122,7 @@ flowchart LR
 | datasource host | 메타데이터 IP 하드차단 + DNS rebinding pin | [[../Decisions/ADR-0030-ssrf-guard-toggle]] |
 | sandbox schema | `attachment_writer`/`_reader`/`_maintainer`/`_cleanup` 4 user 분리 | ADR-0023 |
 | 외부 AI → MCP 전송 | Caddyfile `/api/ai/mcp` 라우트의 `Authorization` 존재 요구 | feature-0041 · feature-0006 |
-| agent → Bedrock | 게이트웨이 컨테이너 env 만 AWS credential 인지. **2026-08-27 이후 chat 은 fail-closed 차단**(임베딩 전용) | ADR-0026 · feature-0043 |
+| agent → Bedrock | 게이트웨이 컨테이너 env 만 AWS credential 인지. **2026-08-27 이후 chat 은 fail-closed 차단** → **2026-09-07 이후 활성 모델 0개**(임베딩 alias 도 제거 — 지나는 요청 없음) | ADR-0026 · feature-0043 · ADR-20260907T175000 |
 
 ### 2.3 인가 — RBAC 2계층
 

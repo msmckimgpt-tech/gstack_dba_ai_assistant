@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 | [[../../docs/DECISIONS\|docs/DECISIONS.md]] |
-| ADR 수 | 정본 43 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 12; `## ADR-` heading 은 44 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
+| ADR 수 | 정본 45 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 14; `## ADR-` heading 은 46 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -116,6 +116,8 @@ AI 가 ADR 작성 시 본 MOC 에 1줄 entry add + `Decisions/<adr-id>-<slug>.md
 | ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키가 없는 inline image 는 본문 노출을 **유지**한다(차단하지 않음) — 선행 결정 `REQ-20260814-vision-provenance` 의 재확인. 롤링 배포 중 구·신 inline JSON 형식이 공존하는 창에서 owner-less 를 막으면 공유 대화와 무관한 1:1 사용자까지 쓰기 도구가 통째로 막히기 때문이며, 소유자가 DB 행(`AccountId`)에서 오는 텍스트·csv 축은 같은 비용이 없어 거기만 fail-closed 로 닫았다(비대칭은 의도). 잔여 위험은 명시적으로 열어 두고 inline JSON 형식 마이그레이션 후 재개봉 | accepted (재확인) | `docs/DECISIONS.md` |
 | ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키가 없는 inline image 는 **본문 노출을 유지**(차단하지 않음) — 텍스트·csv·`read_attachment`·`_v0` 축만 fail-closed 로 닫고 이미지 축의 비대칭은 의도로 확정 (2026-08-26 conversation_audit 적대 리뷰 반복 지적에 대한 판정) | accepted (재확인 — 선행 결정 `REQ-20260814-vision-provenance` 유지) | `docs/DECISIONS.md` |
 | ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키 없는 inline image 는 provenance 신호를 세우지 않고 **열어 둔다**(재확인) — inline image JSON 은 web 이 쓰고 worker 가 읽는 파일 계약이라 롤링 배포 중 구·신 형식 공존 창에서 owner-less 를 막으면 1:1 사용자까지 쓰기 도구가 막힌다 (`REQ-20260814-vision-provenance` 유지) | accepted (재확인) | `docs/DECISIONS.md` |
+| ADR-20260907T175000-local-llm-decommission-scope-boundary | 로컬 LLM 폐기의 **외연 경계** — 의도적 미적용 3건(`bedrock-gateway` 컨테이너 미철거 등)을 사유와 함께 영구화(기록 없는 미적용은 누락과 구분되지 않는다) | accepted (사용자 결정 2026-09-07) | `docs/DECISIONS.md` |
+| ADR-20260907T185500-kb-external-search-without-embeddings | 임베딩 없는 KB 검색 — `pg_trgm` 문자 후보를 서버가 찾고 **의미 판단은 기존 외부 AI 연결**이 수행(새 임베딩 API 미도입 · 의미검색 동등 품질 미보장 고지) | accepted (사용자 결정 2026-09-07) | `docs/DECISIONS.md` |
 
 ## 3. Status legend
 

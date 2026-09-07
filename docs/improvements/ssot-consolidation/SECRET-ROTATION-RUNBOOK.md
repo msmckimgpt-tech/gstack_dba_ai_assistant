@@ -25,7 +25,7 @@ created_at: 2026-06-24
 | `WEB_BOOTSTRAP_ADMIN_PASSWORD` | 앱 admin 부트스트랩 | 앱 내 비밀번호 변경(기존 계정은 WebAccounts row) | 사용자 |
 | **`AGENT_DATASOURCE_KEK_V1`** | **데이터소스 KEK** | **V2 도입 + 저장 cred re-wrap (값만 교체 금지!)** | **feature-0002/0003 소유 cycle** |
 | `DS_WINSQL_PASSWORD` | 외부 MSSQL 서버 | 외부 DB 에서 교체 | 사용자(외부) |
-| `LOCAL_LLM_API_KEY` | LLM 게이트웨이 | 게이트웨이에서 재발급 | 사용자 |
+| ~~`LOCAL_LLM_API_KEY`~~ | ~~LLM 게이트웨이~~ | **회전 불가 — 2026-09-07 로컬 LLM 폐기로 재발급할 게이트웨이가 사라졌다.** 값 자체는 `shared/config.py`·`modules/llm` 이 아직 읽으므로 조치는 회전이 아니라 라이브 `.env` 잔존값 **제거**다 | 운영자 |
 | (AWS Bedrock) | AWS IAM | IAM 키 rotation | 사용자(외부 AWS) |
 
 > MinIO 키(`.env.minio`)는 위 .bak 4종에 미포함 — 별도로 `git ls-files | grep -i minio` 노출 여부 확인 권장.
@@ -57,7 +57,8 @@ docker compose up -d   # --no-build
 
 ## 3. 외부 자격증명
 - `DS_WINSQL_PASSWORD`: 외부 MSSQL 에서 교체 → `.env.secret` 갱신.
-- `LOCAL_LLM_API_KEY` / AWS Bedrock IAM: 각 서비스 콘솔에서 재발급 → `.env.secret`/AWS profile 갱신.
+- AWS Bedrock IAM: 서비스 콘솔에서 재발급 → `.env.secret`/AWS profile 갱신.
+- ~~`LOCAL_LLM_API_KEY`~~: 2026-09-07 로컬 LLM 폐기로 **회전 대상에서 제외**(재발급할 게이트웨이가 없다). 라이브 `.env` 잔존값 제거만 운영자 조치.
 
 ## 4. 저장소 위생 (rotation 완료 후 — AI 가 직접 수행 가능)
 ```bash

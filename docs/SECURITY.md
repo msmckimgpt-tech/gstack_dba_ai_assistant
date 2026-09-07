@@ -99,7 +99,7 @@ ai_read_priority: 4
   설정 + key 미설정 시 silent misroute 차단 (다음 provider 로 fallback).
 - ~~본 cycle 범위 외: per-user / per-role token quota (배포 후 별 cycle).~~ **→ 구현 완료 (TASK-20260619T030500-llm-usage-quota, 2026-06-19)**: `WebRoleTokenQuotas`(역할 기본)+`WebAccountTokenQuotas`(계정 특수) daily/monthly 토큰 한도 + `/api/ask` 사전 게이트(초과 429, fail-open, 미설정=무제한). 정합 정본 = feature-0003 FUNCTION.md AC-0596~0599.
   - **한도 조회/조절 전용 권한 (TASK-20260623T030418-quota-rbac-permission, 2026-06-23)**: 한도 관리를 `console.manage` 에서 분리해 `quota.read`(조회)·`quota.manage`(조절, read 선행) 전용 권한으로 위임. 백엔드 게이트 GET `/api/admin/quotas`=quota.read·PUT role/account=quota.manage, 직렬화 노출도 quota.read 없으면 strip(`_strip_quota_fields_if_unpermitted`). UI 는 quota.read 없으면 한도 섹션 미렌더, quota.manage 없으면 readOnly. `console.usage.read`(사용량 *집계* 조회)와 별개 — quota.read 는 한도 *설정값* 조회. **이행 주의(least-privilege)**: admin 은 seed 전권으로 무영향이나, console.manage 만 가진 커스텀 역할은 quota.read/manage 를 명시 부여해야 한도 접근 가능(datasource.read/product.read 도입 선례 동형). 정합 정본 = AC-0610·0611.
-- **자동 로컬(on-prem) LLM 강등 경로 전면 폐지 (feature-0007 llm-edge-free-routing, 사용자 결정 2026-07-30)**: litellm `fallbacks` 의 edge 참조를 전량 제거하고 앱 층 시각 기반 강등을 기본 비활성화(`AGENT_INSIGHT_OFFHOURS_MODEL` 기본값 `edge` → 빈 값)해 **자동으로 로컬 gemma 가 서빙되는 경로가 0** 이 됐다 — 종전에는 야간·주말 insight 배치가 on-prem lane 이었다. 데이터 처리 위치 관점에서 **자동 로컬 생성(chat/completion) lane 은 0** 이 됐다 — 단 KB 임베딩은 여전히 on-prem 이다(`titan-embed` → 로컬 Ollama bge-m3, 전용 `embed-ollama` 서비스). 즉 생성 경로의 잔류 안전망만 사라졌고, 엄격 잔류 보장이 필요해지면 위 "on-prem LLM 재검토" 경로를 생성 축에서 다시 열어야 한다. litellm `edge-fallback` deployment 정의는 되돌리기용으로 잔존하며(fallbacks 참조 0), 그와 **다른 층**인 `_select_llm_provider()` 의 Local LLM gateway 경로(`LOCAL_LLM_API_BASE`+`LOCAL_LLM_API_KEY`)는 코드에 그대로 남아 있고 운영에서는 `BEDROCK_GATEWAY_URL` 설정 때문에 발동하지 않는다 — 층 전체 차단은 미결(정본 REPORT §8 후속). 이들은 **운영자가 모델값·knob 을 명시로 채우면 재활성**되는 사용자 결정 override 다. 기본값 변경만으로는 env override 가 남은 라이브가 안 꺼지므로 운영 `.env` 실값도 함께 비웠고(백업 보존), off-hours 회귀 테스트를 **실효 설정 검사**로 반전해 override 존재 시 skip 되던 vacuous pass 를 없앴다(REVIEW P1-1·P1-2). trade-off(정직): 안전망을 걷어냈으므로 계정 체인이 모두 도달 불가한 창에서는 해당 기능이 조용한 품질 저하 대신 **실패**한다. 정본 = `unit/feature-0007-bedrock-llm-provider/docs/DECISIONS.md` ADR-003(ADR-002 결정 2 폐지) · 같은 feature `FUNCTION.md` §9.
+- **자동 로컬(on-prem) LLM 강등 경로 전면 폐지 (feature-0007 llm-edge-free-routing, 사용자 결정 2026-07-30)**: litellm `fallbacks` 의 edge 참조를 전량 제거하고 앱 층 시각 기반 강등을 기본 비활성화(`AGENT_INSIGHT_OFFHOURS_MODEL` 기본값 `edge` → 빈 값)해 **자동으로 로컬 gemma 가 서빙되는 경로가 0** 이 됐다 — 종전에는 야간·주말 insight 배치가 on-prem lane 이었다. 데이터 처리 위치 관점에서 **자동 로컬 생성(chat/completion) lane 은 0** 이 됐다 — 그때는 KB 임베딩만 on-prem 으로 남아 있었다(`titan-embed` → 로컬 Ollama bge-m3, 전용 `embed-ollama` 서비스). 즉 생성 경로의 잔류 안전망만 사라졌고, 엄격 잔류 보장이 필요해지면 위 "on-prem LLM 재검토" 경로를 생성 축에서 다시 열어야 한다. **2026-09-07 「로컬 LLM 미사용」 사용자 결정으로 그 마지막 on-prem lane 까지 폐기**됐다 — `titan-embed` alias 와 백엔드 `embed-ollama` 서비스가 제거돼 `model_list: []` 이고, litellm `edge-fallback` deployment 는 **정의까지** 제거(주석 이력으로 강등)됐으며, `_select_llm_provider()` 의 Local LLM gateway 경로(`LOCAL_LLM_API_BASE`+`LOCAL_LLM_API_KEY`)도 사라져 Bedrock 자격증명이 없으면 `(None, None)` 으로 정직하게 실패한다. 다만 **「층 전체 차단」은 여전히 미결**이다(2026-09-08 실측) — `modules/llm._resolve_tier_endpoint()` 가 로컬 tier alias(`edge`/`core`/`auto`/`code`)에 대해 아직 `LOCAL_LLM_API_BASE`+`LOCAL_LLM_API_KEY` 쌍을 반환하고 `modules/llm_provider_health.current_provider()` 도 그 쌍으로 provider 를 `local` 로 읽는다. 게이트웨이가 폐기돼 도달은 불가하지만 코드 경로가 남아 있으므로 잔여 후속으로 유지한다. KB 검색은 끊기지 않는다(`kb_retrieval` 2-tier 경로가 pg_trgm 으로 흐르고 벡터 축만 강등). 이들은 **운영자가 모델값·knob 을 명시로 채우면 재활성**되는 사용자 결정 override 다. 기본값 변경만으로는 env override 가 남은 라이브가 안 꺼지므로 운영 `.env` 실값도 함께 비웠고(백업 보존), off-hours 회귀 테스트를 **실효 설정 검사**로 반전해 override 존재 시 skip 되던 vacuous pass 를 없앴다(REVIEW P1-1·P1-2). trade-off(정직): 안전망을 걷어냈으므로 계정 체인이 모두 도달 불가한 창에서는 해당 기능이 조용한 품질 저하 대신 **실패**한다. 정본 = `unit/feature-0007-bedrock-llm-provider/docs/DECISIONS.md` ADR-003(ADR-002 결정 2 폐지) · 같은 feature `FUNCTION.md` §9.
 - **백그라운드 LLM 토큰 예산 (feature-0032-llm-token-budget, 2026-07-30)**: 위 quota 가 *사용자 요청* 축이라면, 사람이 요청하지 않은 자동 지출(노드 분석·클러스터 라벨/요약·분류 제안)에는 상한이 없었다 — rolling 24시간 토큰 상한 `AGENT_BACKGROUND_LLM_TOKEN_CAP_24H`(기본 20,000,000 · 콘솔 live · 0=무제한)을 신설했다. 집계 원천은 기존 `agent_runtime.llm_usage` 이고(신규 계측 0), **사용자가 기다리는 호출(`agent`·`redteam`·`topic`·`classify`·`prompt_gen`)은 집계·차단 양쪽에서 제외**한다 — 예산으로 사용자를 막으면 비용 통제가 아니라 서비스 장애라는 설계 불변식(ADR-0032-03, 제외가 실제 집계 SQL 에 반영되는지 테스트가 파라미터를 직접 검사). **신규 권한 코드·라우트·스키마 0** — 노출은 기존 `GET /api/admin/ai-ops`(§20 `console.aiops.read`) 응답 확장, 조절은 기존 런타임 설정 게이트(`system.runtime.read/write`) 재사용. **잔여 위험(정직)**: 게이트는 백그라운드 진입점 3곳(백그라운드 소비 ≈96%)에만 있고 나머지(table/account/schema insight)는 계량만 되며, **fail-open 3중**(상한 0·조회 실패·모듈 부재)이라 상한이 조용히 무력화될 수 있다 — 콘솔이 "조회 불가"를 "상한 없음"과 다른 문구로 구분 표시해 그 상태를 숨기지 않는다(ADR-0032-05·07). 정본 = `unit/feature-0032-llm-token-budget/docs/{FUNCTION.md, DECISIONS.md, REVIEW.md}`.
 
 ## 7. Anonymous 접근 허용 경로 (allowlist)
@@ -1907,14 +1907,19 @@ ZIP 반출이 가능하다. 넓어진 것은 **참조 가능 범위**이지 접�
 | 코드 | `shared/llm_gate.server_llm_enabled()` | **기본값 = 차단.** env `AGENT_SERVER_LLM_ENABLED` 가 참일 때만 열린다 |
 | 코드 | `modules/llm._get_llm_client()` | 모든 chat 클라이언트의 단일 출구 |
 | 코드 | `agent_core._run_agent_core()` | 위 출구를 타지 않는 직접 `OpenAI(...)` 생성부 backstop |
-| 설정 | `litellm_config.yaml` | 계정 alias 14종 + `fallbacks` 주석. `titan-embed`(로컬)만 활성 |
+| 설정 | `litellm_config.yaml` | 계정 alias 14종 + `fallbacks` 주석. **(2026-09-07 로컬 LLM 폐기 이후) 활성 모델 0 — `model_list: []`**(`titan-embed` alias 제거, `edge-fallback` 정의는 주석 이력으로 강등). 빈 목록으로도 게이트웨이가 기동함을 실측 확인 |
 
 **코드 기본값을 차단으로 둔 이유**가 보안 논거다: `.env` 는 gitignore 대상이고 `config/` 는 배포에
 포함되지 않는다. 설정을 정본으로 삼으면 "설정이 실리지 않은 환경에서 잠금이 풀리는" 뒤집힌 안전성이
 생긴다. 잊으면 잠기는 쪽으로 실패하게 했다.
 
-**비차단(의도)**: KB 임베딩(로컬 `bge-m3`/ollama). 계정 자격증명과 무관하며, 함께 끄면 검색이 죽는
-부수 피해가 된다 — 사용자가 요청한 것은 "계정 사용 차단" 이지 "임베딩 중단" 이 아니다.
+**비차단(의도) — 2026-09-07 supersede**: 이 절은 KB 임베딩(로컬 `bge-m3`/ollama)을 차단 대상 밖에
+두었으나, 사용자 결정으로 로컬 LLM 폐기 범위에 임베딩 축이 포함돼 `embed-ollama` 백엔드와
+`titan-embed` alias 가 함께 제거됐다. 임베딩 경로는 이제 게이트웨이 URL·KEY **paired 요구** +
+`call_openai_embeddings` chokepoint 의 빈-모델 가드로 **fail-closed** 이며(미설정은 실패가 아니라
+비활성 — `[DISABLED]` exit 0), KB 검색은 pg_trgm 문자 유사도 축으로 계속 동작한다. 정본
+`unit/feature-0007-bedrock-llm-provider/docs/TASK.md` `TASK-20260907T152000-local-llm-decommission`
+· 범위 경계 ADR-20260907T175000-local-llm-decommission-scope-boundary.
 
 ### 49.3 새로 생긴 표면과 그 경계
 
