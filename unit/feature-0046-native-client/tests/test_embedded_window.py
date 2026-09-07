@@ -387,10 +387,13 @@ def _drive_embedded(monkeypatch, tray, *, opened=True):
             pass
 
     class _Bridge:
-        # ⚠ 2026-09-07: 확인(`confirm`) → 알림(`notify`)로 바뀌었다.
-        def __init__(self, plan, notify=None):
+        # ⚠ 2026-09-07: 연결·로그인은 확인(`confirm`) → 알림(`notify`)로 바뀌었고,
+        #   업데이트 설치(`CONFIRMED`)만 확인을 유지한다 — 그래서 둘 다 받는다.
+        def __init__(self, plan, notify=None, confirm=None):
             self.plan, self.port, self.nonce = plan, 1, "n"
             self.resident_probe = None
+            self.on_quit = None
+            self.pending_update = None
             captured["bridge"] = self
 
         def start(self):

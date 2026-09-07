@@ -146,6 +146,20 @@ x-web-extra: &web-extra
     # CA 회전 후 `bin/trust-bundle.sh` 재조립이 누락된 순간 두 파일이 갈리고, 받는 쪽은
     # 정상 절차를 따랐는데 불일치를 보고 중단한다(온보딩이 통째로 막히는 오경보).
     - ../artifacts/trust-bundle:/srv/trust:ro
+    # feature-0046 client-update-channel (2026-09-07): Windows 네이티브 클라이언트 설치기.
+    #
+    # ⚠ **이미지에 담을 수 없다.** 배포는 Linux 컨테이너에서 도는데 PyInstaller 는 실행 대상
+    #   OS 에서만 그 OS 용 실행파일을 만든다 — 그래서 종전 `static/agent/DQAConnect.exe` 는
+    #   라이브에서 영원히 없었고 「연결 프로그램 받기」는 계속 숨어 있었다(ROADMAP §10.2).
+    #   저장소에 커밋하는 것도 답이 아니다(릴리스마다 수십 MB · 이미지 재빌드 없이는 못 내보냄).
+    #
+    # 반입은 `unit/feature-0046-native-client/src/scripts/publish_release.py` 하나이고,
+    # 서버는 `routers/client_release.py` 가 **실물과 대조해 통과한 것만** 광고한다.
+    #
+    # ⚠ 디렉토리가 없으면 docker 가 **root 소유로 만든다** — 그러면 비-root 퍼블리시가
+    #   막힌다. 처음 한 번은 배포 사용자가 먼저 만든다:
+    #     mkdir -p artifacts/client-release
+    - ../artifacts/client-release:/srv/client:ro
   networks: [dbnet, replica-net]
   # feature-0014: SIGTERM 시 uvicorn in-flight 비-SSE 요청 drain + @app.on_event(shutdown)
   # in-flight run 마킹(8s soft cap)에 여유. SSE 장수명 스트림은 deploy-web.sh pre-drain 게이트가 담당.

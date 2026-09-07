@@ -44,7 +44,7 @@ import urllib.parse
 from dataclasses import replace
 from typing import Callable
 
-from . import core
+from . import core, updater, version
 
 #: 브라우저가 «사설망 접근」 preflight 에서 요구하는 헤더. 없으면 최신 Chrome/Edge 가
 #: https 페이지의 127.0.0.1 요청을 차단한다(실측 2026-09-04: 이 헤더로 통과).
@@ -70,14 +70,39 @@ _PNA_HEADER = "Access-Control-Allow-Private-Network"
 #: 보고 이상하면 트레이에서 [연결 끊기]·[종료] 를 할 수 있다. 사용자 결정 2026-09-07.
 NOTIFIED: frozenset[str] = frozenset({"login", "connect"})
 
+#: **확인 창을 유지하는 동작.** 위 `NOTIFIED` 와 **다른 판정축**이다.
+#:
+#: ## 왜 업데이트만 여전히 묻는가 (두 사용자 결정이 공존한다)
+#:
+#: 같은 날(2026-09-07) 두 결정이 났고 **대상이 다르다**:
+#:
+#: - 연결·로그인 → 「되묻지 말고 알려라」. 근거는 사용자가 **방금 패널에서 [연결] 을 누른
+#:   직후** 그 창이 떴다는 것이다 — 자기가 시킨 일을 다시 묻는 모양이었다.
+#: - 업데이트 → 「확인 후 적용」. 사용자가 누른 것은 [업데이트 **확인**] 이고, 그 다음에
+#:   일어나는 일(어느 버전이 설치되는가 · AI 연결이 끊긴다 · 어디서 받는가)은 **아직 말한
+#:   적이 없다**. 이 확인창이 그것을 처음 말하는 자리다.
+#:
+#: ⚠ 그리고 잃는 것의 크기가 다르다. 연결은 러너 한 장을 상주시키지만 이것은 **서명되지 않은
+#: 설치기가 프로그램 전체를 갈아 끼운다** — 위 `NOTIFIED` 주석이 「마지막 겹이 없어졌다」고
+#: 적은 그 겹을, 대가가 가장 큰 동작에서는 유지한다.
+CONFIRMED: frozenset[str] = frozenset({"update_apply"})
+
 
 class Bridge:
     """로컬 브리지. **상태를 갖지 않는다** — 매 요청이 nonce·origin 을 다시 통과해야 한다."""
 
     def __init__(self, plan: core.ConnectPlan,
                  notify: "Callable[[str, str], None] | None" = None,
+                 confirm: "Callable[[str], bool] | None" = None,
                  host: str = "127.0.0.1"):
         self.plan = plan
+        #: `CONFIRMED` 동작 앞에서 사람에게 **묻는** 함수. **주입받는다** — tkinter 는 주
+        #: 스레드만 쓸 수 있어서 여기서 직접 부르면 안 되고, 껍데기가 그 규약을 아는 쪽이다.
+        #:
+        #: ⚠ **주지 않으면 «아니요» 다.** 묻지 못하는 환경에서 「예」로 떨어지면 물어보려던
+        #: 이유가 통째로 무력화된다 — 확인은 **받아야** 성립하지 못 받으면 성립하지 않는다
+        #: (`gui.confirm` 이 창을 못 띄울 때 거짓을 내는 것과 같은 규율).
+        self._confirm = confirm or (lambda _message: False)
         #: 프로세스를 띄운 **뒤** 사용자에게 알리는 함수(제목, 본문). **주입받는다** —
         #: 알림 영역 아이콘은 껍데기가 세우고, 못 세운 머신도 있다(그때는 알리지 못한다).
         #: ⚠ 알림이 실패해도 동작은 계속된다 — 알림은 통지이지 관문이 아니다.
@@ -93,6 +118,13 @@ class Bridge:
         #: 이 판정을 본다. 껍데기가 세워 주기 전까지는 `None` 이고, 그때 `resident` 는
         #: 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
         self.resident_probe: Callable[[], bool] | None = None
+        #: 껍데기가 **이 프로그램을 끝내는** 함수. 업데이트 설치는 실행 중인 exe 를 갈아
+        #: 끼우므로 우리가 비켜 줘야 한다 — 껍데기마다 끝내는 방법이 달라서 주입받는다
+        #: (내장 창은 `shell.quit`, 브라우저 셸은 `_SHELL_QUIT.set`).
+        self.on_quit: Callable[[], None] | None = None
+        #: 마지막 확인에서 발견한 새 버전. 트레이·패널·확인 문구가 **같은 값**을 본다 —
+        #: 각자 다시 조회하면 확인창이 말한 버전과 실제로 받는 버전이 갈릴 수 있다.
+        self.pending_update: "updater.Update | None" = None
         self._log: list[str] = []
         handler = _make_handler(self)
         self._srv = socketserver.ThreadingTCPServer((host, 0), handler)
@@ -182,6 +214,19 @@ class Bridge:
         fn = getattr(self, f"_do_{action}", None)
         if fn is None:
             return {"ok": False, "error": "unknown_action"}
+        # ⚠ **확인 대상을 «묻기 전에» 고정한다.** 이 서버는 스레드당 요청을 처리하므로,
+        #   확인창이 떠 있는 사이 다른 요청(`update_check`)이 `pending_update` 를 갈아 끼울
+        #   수 있다. 확인이 끝난 뒤 핸들러가 그 필드를 다시 읽으면, 확인창이 말한 버전과
+        #   실제로 설치되는 버전이 **갈린다** — 적대 리뷰가 probe 로 재현한 결함이다.
+        if action in CONFIRMED:
+            target = self.pending_update if action == "update_apply" else None
+            if not self._confirm(_confirm_text(action, body, bridge=self,
+                                               pending=target)):
+                return {"ok": False, "error": "declined",
+                        "detail": "사용자가 이 컴퓨터에서의 실행을 승인하지 않았습니다."}
+            if action == "update_apply":
+                return self._do_update_apply(body, target=target)
+
         result = fn(body)
         # ⚠ **끝난 뒤에** 알린다. 앞에서 알리면 실패한 시도까지 「실행했다」고 말하게 되고,
         #   그 알림은 사용자가 확인할 방법이 없는 소음이 된다.
@@ -221,9 +266,115 @@ class Bridge:
         self._say("연결을 끊었습니다.")
         return True
 
+    # ── 업데이트 (feature-0046 client-update-channel, 2026-09-07) ──────────────
+    def _do_update_check(self, _body: dict) -> dict:
+        """더 새 버전이 있는가. **조회뿐이라 확인창이 없다**(`DANGEROUS` 밖).
+
+        찾은 것은 `pending_update` 에 남긴다 — 이어지는 확인창·트레이·패널이 **같은 값**을
+        보게 하기 위해서다. 각자 다시 조회하면 확인창이 말한 버전과 실제로 받는 버전이
+        갈릴 수 있고, 그 어긋남은 사용자에게 보이지 않는다.
+        """
+        found, why = updater.check_detail(self.plan.home)
+        self.pending_update = found
+        # ⚠ 「최신이다」와 「확인하지 못했다」를 같은 필드로 접지 않는다 — 접으면 CA 만료로
+        #   조용히 실패하는 머신이 최신인 머신과 구분되지 않는다(적대 리뷰 §3-3).
+        updater.mark_checked(self.plan.home, error=why or None)
+        if why:
+            updater.log(self.plan.home, f"check FAILED — {why}")
+        if found is None:
+            return {"ok": True, "current": version.CLIENT_VERSION, "available": None,
+                    "error": why or None}
+        self._say(f"새 버전이 있습니다 — {found.version}")
+        return {"ok": True, "current": version.CLIENT_VERSION,
+                "available": {"version": found.version, "notes": found.notes,
+                              "size": found.size}}
+
+    def _do_update_apply(self, _body: dict,
+                         target: "updater.Update | None" = None) -> dict:
+        """확인을 받은 뒤 설치기를 받아 실행한다. `act()` 가 이미 물었다(`DANGEROUS`).
+
+        ⚠ **확인할 것이 없으면 진행하지 않는다.** `pending_update` 가 없으면 `act()` 가
+        띄운 확인 문구는 「받을 버전을 아직 확인하지 못했습니다 — 확인을 먼저 눌러 주세요」
+        이고 **[아니요] 를 누르라고 지시한다**. 그런데도 [예] 로 진행하면, 사용자가 승인한
+        대상과 실제로 실행되는 대상이 갈린다 — 확인창이 방어선인 시스템에서 그 확인이
+        무엇에 대한 동의인지가 정의되지 않는다(적대 리뷰 F3, 런타임 probe 로 확인).
+        그래서 여기서 거절해 그 문구를 **실제 집행**으로 만든다.
+
+        ⚠ 확인 시점의 `Update` 를 **지역으로 고정해** 넘긴다. 이 서버는 스레드당 요청을
+        처리하므로, 확인창이 떠 있는 사이 다른 요청(`update_check`)이 `pending_update` 를
+        갈아 끼울 수 있다 — 그러면 확인창이 말한 버전과 설치되는 버전이 달라진다(§3-7).
+        """
+        # ⚠ **폴백을 두지 않는다** (적대 리뷰 P1-B, probe 로 재현). `or self.pending_update`
+        #   가 있으면 `act()` 가 `target=None` 으로 고정해 넘겼는데도 그 고정이 무효화된다 —
+        #   확인창이 「받을 버전을 아직 확인하지 못했습니다」라고 말한 그 갈래에서, 확인 중에
+        #   주기 감시가 세운 구체 버전이 설치됐다. 게다가 그 문구는 「no pending」 전용이라
+        #   F5 의 주소 불일치 경고가 **아예 표시되지 않는다** — 완화가 통째로 비켜 간다.
+        if target is None:
+            return {"ok": False, "error": "no_pending",
+                    "detail": "받을 버전을 먼저 확인해 주세요."}
+        return self.update_now(confirmed=True, target=target)
+
+    def update_now(self, confirmed: bool = False,
+                   target: "updater.Update | None" = None,
+                   require_idle: bool = False) -> dict:
+        """확인 → 내려받기 → 검사 → 설치기 실행 → 이 프로그램 종료.
+
+        트레이 메뉴와 웹 패널이 **같은 함수**를 부른다. 입구가 둘인데 코드패스가 갈리면
+        한쪽만 고쳐지는 드리프트가 난다(§P0-AC.1 이 트레이 「다시 연결」을 두지 않은 근거와
+        같은 축).
+
+        ⚠ `confirmed` 는 **호출부가 이미 사람에게 물었을 때만** 참이다. 기본값이 거짓인
+        이유는, 이 인자를 잊은 새 호출부가 «묻지 않고 설치하는» 경로가 되지 않게 하기
+        위해서다 — 실패는 안전한 쪽으로 기운다.
+
+        ⚠ `require_idle` 은 **사람이 없는 경로**(자동 적용)가 준다. 확인창이 뜨는 경로에서는
+        「지금 연결 중이라 답변이 죽는다」를 문구가 말하고 결정은 사람이 하지만, 자동 경로에는
+        그 결정을 대신할 사람이 없다 — 그래서 연결이 살아 있으면 미룬다(적대 리뷰 F4,
+        이식 원본 `try_self_update` 의 `if active.count() > 0: return False` 와 같은 자리).
+        """
+        found = target or self.pending_update or updater.check(self.plan.home)
+        if found is None:
+            return {"ok": False, "error": "up_to_date",
+                    "detail": f"이미 최신입니다 ({version.CLIENT_VERSION})."}
+        self.pending_update = found
+        # ⚠ **순서의 정본은 `updater.run_flow` 하나다** (적대 리뷰 C-2). 브리지(웹 패널·
+        #   트레이)와 tkinter 껍데기가 같은 순서를 밟아야 하고, 그 순서 안에 무결성 판정과
+        #   단일 실행 게이트가 들어 있다 — 두 곳에 복제하면 그 중 하나만 고쳐진다.
+        return updater.run_flow(
+            self.plan.home, target=found,
+            confirm=None if confirmed else self._confirm,
+            say=self._say,
+            is_connected=lambda: self.connected,
+            require_idle=require_idle,
+            on_started=self._quit_soon)
+
+    def _quit_soon(self, delay: float = 1.5) -> None:
+        """**응답을 보낸 뒤** 프로그램을 끝낸다.
+
+        ⚠ 여기서 곧바로 끝내면 이 요청의 HTTP 응답이 나가지 못하고, 패널은 「연결 프로그램에
+        닿지 못했습니다」를 본다 — 실제로는 성공했는데 화면이 실패를 말하는 형태다(§P0-R).
+        """
+        quit_fn = self.on_quit
+        if quit_fn is None:
+            return
+        threading.Timer(delay, lambda: self._safe_quit(quit_fn)).start()
+
+    @staticmethod
+    def _safe_quit(quit_fn: Callable[[], None]) -> None:
+        try:
+            quit_fn()
+        except Exception:  # noqa: BLE001 — 못 끝내도 설치기는 이미 떴다
+            pass
+
     def _do_status(self, _body: dict) -> dict:
+        pending = self.pending_update
         return {"ok": True, "base": self.plan.base, "log": self._log[-40:],
                 "runtimes": [_state_json(s) for s in self._states],
+                # 화면이 「업데이트 있음」을 그릴 근거. **서버가 아니라 이 프로그램이** 판정한다
+                # — 판정을 프런트가 조립하면 같은 사실을 두 곳이 다르게 말한다.
+                "version": version.CLIENT_VERSION,
+                "update": ({"version": pending.version, "notes": pending.notes}
+                           if pending else None),
                 # ⚠ 패널이 「창을 닫아도 유지됩니다」를 말해도 되는지는 **트레이가 실제로 떠
                 #   있는가**에 달렸다. 껍데기가 이 값을 세우고 패널은 그것만 본다 — 프런트가
                 #   스스로 추정하면 트레이 없는 머신에서 거짓을 말하게 된다(§P0-R).
@@ -335,7 +486,7 @@ def _state_json(st: core.RuntimeState) -> dict:
 
 
 def _notice(action: str, body: dict) -> "tuple[str, str]":
-    """끝난 뒤 알림 영역에 띄울 (제목, 본문).
+    """끝난 뒤 알림 영역에 띄울 (제목, 본문) — `NOTIFIED` 동작용.
 
     ⚠ 경고가 아니라 **보고**다. 사용자가 방금 시킨 일이므로 「직접 요청한 것이 아니라면」
     같은 문구를 쓰지 않는다 — 그 어투가 확인 창을 위협으로 읽히게 만든 원인이다.
@@ -344,6 +495,34 @@ def _notice(action: str, body: dict) -> "tuple[str, str]":
     if action == "login":
         return (core.DISPLAY_NAME, f"{who} 로그인 명령을 실행했습니다.")
     return (core.DISPLAY_NAME, f"{who} 로 연결했습니다. 이제 질문에 답할 수 있습니다.")
+
+
+def _confirm_text(action: str, body: dict, bridge: "Bridge | None" = None,
+                  pending: "updater.Update | None" = None) -> str:
+    """`CONFIRMED` 동작의 **사전** 확인 문구 — 현재는 업데이트 설치 하나다.
+
+    ⚠ `_notice` 와 대칭이 아니다. 저쪽은 「방금 시킨 일을 보고」하고 이쪽은 「아직 말한 적
+    없는 일을 미리」 말한다 — 사용자가 누른 것은 [업데이트 **확인**] 이고, 어느 버전이
+    설치되는지·AI 연결이 끊기는지·어디서 받는지는 이 창이 처음 말하는 자리다.
+    """
+    if action == "update_apply":
+        # ⚠ **버전을 말한다.** 「업데이트할까요?」만 물으면 사용자는 무엇이 설치되는지도,
+        #   연결이 끊긴다는 것도 모른다. 문구의 정본은 `updater.confirm_text` 하나이고
+        #   트레이 경로도 같은 것을 쓴다.
+        # ⚠ 호출부가 고정해 준 대상이 있으면 **그것**을 말한다. 여기서 필드를 다시 읽으면
+        #   문구와 설치 대상이 서로 다른 시점의 값을 보게 된다(`act()` 의 ⚠ 참조).
+        pending = pending or getattr(bridge, "pending_update", None)
+        connected = bool(getattr(bridge, "connected", False))
+        if pending is None:
+            return ("업데이트를 설치하려고 합니다.\n"
+                    "받을 버전을 아직 확인하지 못했습니다 — 확인을 먼저 눌러 주세요.\n\n"
+                    "직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
+        home = getattr(getattr(bridge, "plan", None), "home", None)
+        return updater.confirm_text(pending, connected, home=home)
+    # ⚠ 도달하지 않는 갈래를 **조용히 참으로 만들지 않는다.** `CONFIRMED` 에 새 동작을
+    #   더하고 문구를 잊으면, 사용자는 무엇을 승인하는지 모르는 창을 보게 된다.
+    return (f"이 컴퓨터에서 «{action}» 을 실행하려고 합니다.\n\n"
+            "직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
 
 
 def _make_handler(bridge: "Bridge"):

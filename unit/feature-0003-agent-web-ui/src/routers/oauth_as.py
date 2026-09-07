@@ -548,12 +548,28 @@ def _client_download_url(origin: str) -> str | None:
     ⚠ **없는 다운로드를 안내하지 않는다.** 가이드가 실제와 어긋나면 사용자는 안내받은 대로
     갔다가 막히고, 그것을 스스로 우회하지 못한다 — P0-I 가 세 지점에서 닫은 결함 클래스다.
 
-    ⚠ **배포 경로가 아직 없다 (정직한 잔여, 2026-09-03)**: 배포 파이프라인은 리눅스 도커인데
-    PyInstaller 는 크로스 컴파일을 하지 않는다. 즉 `.exe` 는 **Windows 에서 따로 빌드해 이
-    자리에 놓아야** 하고, 그 채널은 아직 없다. 그래서 이 함수는 현재 대부분의 배포에서
-    `None` 을 돌려주고, 화면은 종전 경로(터미널 명령)를 그대로 보인다 — **기능이 조용히
-    사라지는 것이 아니라 «아직 없다» 가 값으로 나타난다.**
+    ## 배포 경로 (2026-09-07, feature-0046 client-update-channel — ROADMAP §10.2 해소)
+
+    **1순위는 릴리스 채널**이다: 호스트의 `artifacts/client-release` 가 컨테이너 `/srv/client`
+    에 ro 로 붙고, 그 안의 `manifest.json` 이 가리키는 설치기를 `routers/client_release.py`
+    가 실물과 대조해 통과시킨다. Windows 에서 빌드한 산출물을 그 디렉토리에 놓기만 하면
+    이미지 재빌드 없이 새 버전이 나간다.
+
+    ⚠ 2순위(`static/agent/DQAConnect.exe`)는 **하위호환으로만 남긴다.** 배포 파이프라인은
+    리눅스 도커인데 PyInstaller 는 크로스 컴파일을 하지 않으므로 그 자리는 이미지 빌드로
+    채워지지 않는다 — 즉 그 경로는 사람이 손으로 이미지에 넣은 경우에만 참이다.
+
+    어느 쪽도 없으면 `None` 이고 화면은 종전 경로(터미널 명령)를 그대로 보인다 — **기능이
+    조용히 사라지는 것이 아니라 «아직 없다» 가 값으로 나타난다.**
     """
+    try:
+        from routers import client_release
+
+        url = client_release.download_url(origin)
+        if url:
+            return url
+    except Exception:  # noqa: BLE001 — 릴리스 채널 조회 실패가 화면을 막지 않는다
+        pass
     try:
         path = app.STATIC_DIR / _CLIENT_REL
         if path.is_file() and path.stat().st_size > 0:

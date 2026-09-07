@@ -458,7 +458,13 @@ def test_bridge_client_lives_outside_the_guarded_modal():
     modal = _MODAL_JS.read_text(encoding="utf-8")
     assert "sessionStorage" not in modal and "localStorage" not in modal
     assert modal.count("setInterval") == 1, "상시 폴링 가드가 다시 깨졌다"
-    assert 'from "./client-bridge.js"' in modal, "분리했는데 쓰지 않는다"
+    # ⚠ **스탬프를 허용한다.** feature-0003 asset-stamp-reach(PR #1592)가 모듈 참조에
+    #   `?v=dev` 를 붙이면서 이 단언이 깨졌다 — 그런데 이 스위트가 CI 경로에 없어서
+    #   그 회귀가 **아무 데도 걸리지 않았다**(REPORT.md 의 BLOCKED 항목이 실제로 발현한
+    #   형태다). 검사하려는 성질은 「분리한 모듈을 실제로 쓰는가」이고 스탬프 유무가 아니다.
+    import re as _re
+    assert _re.search(r'from "\./client-bridge\.js(\?[^"]*)?"', modal), \
+        "분리했는데 쓰지 않는다"
 
 
 def test_bridge_module_stores_only_coordinates():

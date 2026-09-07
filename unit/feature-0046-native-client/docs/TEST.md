@@ -24,11 +24,16 @@ edit_policy: mixed
 | 자식 창 | 자식을 띄우는 **모든** 함수가 창 숨김 인자를 실제로 넘긴다(소스 census + 행위) |
 | 두 껍데기 상주 정합 | 상주 중 유휴가 종료시키지 않음 · 트레이 없음/죽음이면 종전 계약 복귀 · [종료] 로만 끝남 · 두 껍데기 메뉴 어휘 동일 |
 | 패널 문구 | `status.resident` 로 두 문구를 갈라 말함 · 문구가 가리키는 요소 실재 · DOM 렌더 대조군 |
+| 업데이트 버전 판정 | 수치 비교(`1.10.0 > 1.9.0`) · 같으면 갱신 안 함 · 모양 아닌 값은 거짓 |
+| 업데이트 출처 | 고정 경로 + TOFU 고정 서버 + 사내 CA · 매니페스트의 URL 미사용 · `remembered_base` 미사용 · 평문 거부 |
+| 업데이트 무결성 | 크기·sha256·PE 서명·상한 4축 · 파일명 traversal 거절 · 파일명↔버전 불일치 거절 |
+| 릴리스 채널 | 실물 없음/크기·지문 불일치는 **광고 안 함** · 롤백(`--activate`) · 정리가 배포 중인 것을 안 지움 |
+| 업데이트 확인창 | `update_apply` 는 `DANGEROUS` · 문구가 버전과 「연결이 끊긴다」를 말함 · 자동 적용 기본 꺼짐 |
 
 ## 2. 실행
 
 ```
-python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 177건
+python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 478건
 
 # 실 Windows 층(ctypes/Win32)은 리눅스에서 돌지 않는다 — 별도 실측:
 #   tests/windows/README.md  (verify_console / verify_flicker / verify_tray / verify_gui)
@@ -63,3 +68,14 @@ python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 177건
   유효 토큰이 없다. 라이브 반영은 공유 web 컨테이너를 건드려야 해 §13.2.9 가 금지한다.
   다음 cycle 로 이월(사유는 fragment §4).
 - Verdict: PASS (미수행 2건 명시)
+
+### Run 2026-09-07T15:30:00+09:00 — 클라이언트 업데이트 채널
+- 상세: [`test-runs.d/20260907T150000-client-update-channel.md`](./test-runs.d/20260907T150000-client-update-channel.md)
+- Environment: `CLI` — feature 스위트 **478/478 PASS** (신규 96건)
+- Environment: `CLI` — **결함 주입 8/8 FAIL**(§16.7 G11-b — 새 소스-텍스트 단언이 실제로 잡는다)
+- Environment: `CLI` + **실 TLS 서버** — 반입 → 서빙 → 수신 → 무결성 거절 **종단 8단계 PASS**
+  (사내 CA 서명 https, 받은 바이트가 올린 바이트와 byte-동일)
+- 선재 실패 1건(`test_share_redaction_invariant`)은 `main` 에서도 동일 FAIL — 회귀 아님
+- ⛔ **미실측**: 설치기 실제 실행(`/SILENT /RELAUNCH`) — Windows 빌드 머신 필요
+- `Environment: Windows-browser` 없음 — **웹 자산 변경 0건**이라 check #13 대상 아님
+- Verdict: PASS (미실측 1건 명시)

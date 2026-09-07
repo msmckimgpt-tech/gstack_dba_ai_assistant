@@ -602,3 +602,8 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
   는 **가정이었고** litellm 실기동(liveliness/readiness 200)으로 반증해 단언을 교체.
 - **범위 밖으로 남긴 것**: `bedrock-gateway` 철거 — 활성 model 0개로 용도가 소진됐으나 feature-0020
   무중단 배포 machinery 에 배선돼 있고 **외부 LLM 경로 철거는 별개 결정**이다.
+## [2026-09-07] feature | 클라이언트 업데이트 채널 — 다른 머신이 새 버전을 받는다
+
+feature-0046 에 **버전 정본**(`src/client/version.py`)과 **수신 경로**(`src/client/updater.py`)가 생겼고, 배포물이 서버에 도달하는 경로(호스트 `artifacts/client-release` → `/srv/client:ro` → `GET /api/ai/client/latest` + `/client/<파일>`)가 섰다 — ROADMAP §10.2 「서버가 실물을 못 만든다」 해소. 규율은 러너 자기 갱신(`feature-0043/src/agent/selfupdate.py`)에서 이식했고 적용은 **확인 후**다(미서명 배포라 무음 자동 설치를 기본으로 두지 않는다 — 사용자 결정). 실 TLS 서버로 종단 8단계 실측.
+
+[[Features/feature-0046-native-client]] · [[Features/feature-0043-external-llm-bridge]]

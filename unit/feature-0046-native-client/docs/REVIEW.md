@@ -887,8 +887,65 @@ P1 은 0 → 0 → 0 으로 단조. §18.8 수렴 계약 (a) 충족(마지막 �
   이 cycle 이 낸 것은 **설치본 실측 기록**이고, 그 실측 대상 코드는 직전 cycle
   (REV-20260904T193000 · REV-20260904T195500)에서 codex 3라운드로 이미 검증됐다.
 - Timestamp: 2026-09-04T20:45:00+09:00
+## REV-20260907T160000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — BLOCK
+- Related TASK: feature-0046-native-client
+- Trigger: API/endpoint · credential/무결성 keyword matched (§18.8) — 「내려받아 실행」 신설
+- Timestamp: 2026-09-07T16:00:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T160000-security.md
+- Critical issue: 설치기 종료를 아무도 관측하지 않는데 앱은 무조건 종료 → 설치 실패 시 「다시
+  시작됩니다」라고 말한 뒤 프로그램이 사라지고 돌아오지 않는다 (P1 3건 전부 런타임 probe 로 확인)
+- Human Approval Needed: no
 
+## REV-20260907T170000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — BLOCK
+- Related TASK: feature-0046-native-client
+- Trigger: §18.8 패널 수렴 계약 (a) — P1 수정 후 확인 라운드 필수 (수정한 라운드는 종결 근거 아님)
+- Timestamp: 2026-09-07T17:00:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T170000-security-confirm.md
+- Critical issue: P1 2건이 **1라운드 수정이 새로 넣은 코드**에 있다 — 고정 `.part` 자리가 같은
+  프로세스의 두 스레드를 한 파일로 모아 «검사한 스트림 ≠ 실행되는 파일» 이 됐고,
+  `or self.pending_update` 폴백이 확인 대상 고정을 무효화했다
+- Human Approval Needed: no
 
+## REV-20260907T173000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — 수렴 기록
+- Related TASK: feature-0046-native-client
+- Trigger: §18.8 패널 수렴 계약 (a)(b)(c) 적용 결과 기록
+- Timestamp: 2026-09-07T17:30:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T170000-security-confirm.md
+- Critical issue: **P1 5건 전건 수정 완료 · 잔여 P1 0.** 다만 §18.8 (a) 가 요구하는 「마지막
+  라운드 P1 0」의 근거가 **3라운드 패널이 아니라 자체 실측**이다 — 세션 사용량 한도(429,
+  reset 17:00 KST)로 3라운드를 띄우지 못했다. 그 대신: 2라운드가 지목한 각 결함에 **회귀
+  게이트를 코드로 박고**(두 스레드 동시 실행 · `verify_file` · 단일 실행 · 파리티 실물 대조 ·
+  매니페스트 실패 사유), **결함 주입 15/15 로 되돌리면 FAIL** 함을 확인했다.
+  ⚠ 3라운드 미실시를 「P1 0 확인」과 동일시하지 않는다 — `REPORT.md` 잔여에 남긴다.
+- Human Approval Needed: no
+
+### 이번 cycle 이 흡수한 것 (§18.8 (b) 비단조 판정)
+
+2라운드 P1 2건이 **1라운드 수정의 새 코드**에 있었으므로 문자적으로 (b) 의 비단조 조건을
+충족한다. 그러나 처방을 국소 수정으로 두지 않고 **판정면을 재배치**했다:
+
+| 지적 | 국소 처방 (기각) | 채택한 처방 |
+|---|---|---|
+| P1-A | `.part` 이름만 고침 | 이름 유일화 **+ `apply()` 직전 디스크 재검증**(`verify_file`) + 프로세스당 단일 실행 게이트 |
+| P1-B | `or` 절 삭제 | 그것 + 확인 대상을 `act()` 에서 고정해 핸들러로 **넘기는** 구조 |
+| C-2 | tkinter 에 항목 추가 | 그것 + 순서의 정본을 `updater.run_flow` **하나**로 + 파리티 테스트를 실물 대조로 |
+| C-3 | 사유 문자열 추가 | 전송 계층과 **내용 계층**을 함께 갈라 `parse_manifest_detail` 신설 |
+| §3-1 | 확인창에 경고 표시 | 앵커 **우선순위 역전 정정**(동봉값이 고정값을 이긴다) |
+
+「검사한 스트림 ≠ 실행되는 파일」이 이 계열의 뿌리였고, 그것을 닫은 것은 이름 유일화가 아니라
+**실행할 그 바이트를 다시 세는** 한 줄이다 — §16.7 G14 를 F1 에만 적용하고 취득 경로에는
+적용하지 않았던 것이 2라운드가 드러낸 진짜 결손이다.
+
+### 이연으로 기록한 것 (기각이 아니다)
+
+- **매니페스트 분리 서명** — 서버 침해·릴리스 디렉토리 쓰기 획득 시나리오의 잔여 방어가 0 인
+  것은 사실이다(sha256 도 공격자가 함께 바꾼다). 동결 exe 에 공개키를 박는 방식은 EV 코드
+  서명보다 싸다. **키 관리 결정이 선행**이라 이 cycle 범위 밖이며 `REPORT.md` 잔여에 남겼다.
+- **설치기 실제 실행·권한 갈래** — Windows 빌드 머신이 필요하다. 볼 항목 4개를
+  `docs/test-runs.d/…` §5 에 명시했다.
 ## REV-20260907T060000-ai-claude-auto-connect [SKIPPED:자기 적대 리뷰] — ACCEPTED
 - Timestamp: 2026-09-07T06:00:00+09:00
 
@@ -916,3 +973,71 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 **등가**로 드러냈다 — 되메우는 것은 플래그가 아니라 «auto 를 주는 호출이 하나뿐» 이라는 사실
 이었다. 남겨 두면 다음 사람은 「여기 방어가 있다」고 읽지만 그 방어는 한 번도 서지 않는다.
 지우고, 되메우던 사실 쪽을 단정으로 옮겼다.
+
+## REV-20260907T182000-ai-claude-corp-feature-0046-client-update-channel [SUBAGENT:security] — 병합 충돌 자율 해결
+- Related TASK: feature-0046-native-client
+- Trigger: §16.4 자율 해결 — 「동일 로직에서 서로 다른 구현」이 **의미 충돌**로 나타났다
+- Timestamp: 2026-09-07T18:20:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/2026-09-07T170000-security-confirm.md
+- Critical issue: 없음 — 두 사용자 결정이 **대상이 달라** 공존한다(아래 판정 근거)
+- Human Approval Needed: no
+
+### 왜 사람 위임이 아니라 자율 해결인가
+
+§16.4 는 「동일 함수/로직에서 서로 다른 구현」을 **사람 판단 필수**로 분류한다. 이 충돌은
+표면적으로 그 형태다 — 병렬 cycle(PR #1589)이 `DANGEROUS`(사전 확인)를 `NOTIFIED`(사후 알림)로
+**교체**했고, 이 브랜치는 같은 자리에 `update_apply` 를 사전 확인으로 추가했다.
+
+그런데 **양쪽 의도가 모두 명확하고 공존 가능**하다(§16.4 자율 해결의 판정 원칙):
+
+| | 병렬 cycle 의 결정 | 이 브랜치의 결정 |
+|---|---|---|
+| 대상 | 연결 · 로그인 | 업데이트 설치 |
+| 사용자 발화 | 「연결을 되묻는것은 사용자에게 위협으로 다가올 수 있습니다」 | 「확인 후 적용」(AskUserQuestion 응답) |
+| 근거 | 사용자가 **방금 [연결] 을 누른 직후** 그 창이 떴다 — 자기가 시킨 일을 다시 묻는 모양 |
+| | | 누른 것은 [업데이트 **확인**] 이고, 어느 버전·연결 끊김·출처는 **아직 말한 적이 없다** |
+| 잃는 것 | 러너 한 장의 상주 | **서명되지 않은 설치기가 프로그램 전체를 갈아 끼운다** |
+| 날짜 | 2026-09-07 | 2026-09-07 |
+
+두 결정은 **서로를 반박하지 않는다** — 같은 날 같은 사용자가 다른 동작에 대해 내린 것이고,
+한쪽을 다른 쪽에 적용하면 그 결정의 근거가 성립하지 않는다. 그래서 판정축을 둘로 갈랐다:
+`bridge.NOTIFIED`(사후 알림) · `bridge.CONFIRMED`(사전 확인).
+
+⚠ **자율 해결의 한계를 적는다.** 「업데이트도 되묻지 말라」가 사용자의 뜻이었다면 이 해결은
+틀렸다. 그 가능성을 배제하는 근거는 이 세션의 AskUserQuestion 응답(「확인 후 적용 (권장)」)이고,
+그것은 **업데이트에 대해 직접 물어 받은 답**이다. 뒤집으려면 사용자 한 마디로 충분하다 —
+`bridge.CONFIRMED` 를 비우면 `NOTIFIED` 쪽으로 넘어간다.
+
+### 해결 내역 (파일별)
+
+- `src/client/bridge.py` — 의미 충돌. `NOTIFIED`(theirs) + `CONFIRMED`(ours) 병존.
+  `act()` 가 사전 확인(**고정된 대상**으로)과 사후 알림을 둘 다 수행한다. `_notice`(theirs)와
+  `_confirm_text`(ours)가 같은 자리에서 충돌해 본문이 섞였으므로 **별개 함수로 분리**했다.
+  main 이 없앤 `confirm` 주입면을 되살렸다 — 주지 않으면 「아니요」(fail-closed).
+- `docs/FUNCTION.md` — append 충돌. **양쪽 절 보존** + 두 결정의 관계를 절로 명시.
+- `docs/{TASK,REVIEW,MODIFY}.md` — append-doc merge driver 가 말미 블록 병존 처리.
+- `tests/test_embedded_window.py` — 가짜 `Bridge` 를 실 시그니처(`notify` + `confirm`)에 맞춤.
+- `tests/test_updater.py` — 판정축 이름 변경 반영(`DANGEROUS` → `CONFIRMED`/`NOTIFIED`) +
+  **연결·로그인이 알림 쪽인지도 함께 단언**(한 축만 보면 다음 변경에서 조용히 갈린다).
+
+### 흡수한 main-측 선재 실패
+
+`test_web_shell.py` 의 `from "./client-bridge.js"` 문자열 단언이 **main 에서 이미 깨져 있었다** —
+PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 스위트가 **CI 경로에 없어서
+그 회귀가 아무 데도 걸리지 않았다**. `REPORT.md` 의 BLOCKED 항목(「CI 가 이 feature 의 테스트를
+돌리지 않는다」)이 **실제로 발현한 형태**다. 검사하려는 성질(「분리한 모듈을 실제로 쓰는가」)을
+유지하며 스탬프를 허용하도록 고쳤다.
+
+### §16.4 해결 결과 검증 (커밋 전 수행)
+
+- 양측 부모 대비 `git diff --diff-filter=D --name-only` **둘 다 공백** — 사라진 파일 없음
+- theirs 가 base 대비 바꾼 **22 파일 전수** 대조(충돌 표시 파일뿐 아니라 auto-merge 파일까지).
+  미반영으로 뜬 5 파일 13줄은 전부 **의도적으로 바꾼 줄**이고 의도는 보존된다 — import 에
+  `updater` 추가 · `Bridge` 에 `confirm` 추가 · `_SHELL_QUIT` 검사를 트레이 생존 블록 **밖으로**
+  승격(main 도 그 결함을 갖고 있었고 이 브랜치가 고친 것이다).
+- feature 스위트 **506 passed**
+- ⚠ **머지 커밋의 delta 를 판정 근거로 쓰지 않았다**(§16.4-c). post-commit hook 이 이 머지
+  커밋만 보고 FAIL 을 냈는데, 그것은 정의상 delta 가 비어 보이는 커밋이다. 판정은 부모 대비
+  대조로 내렸다. 다만 그 신호가 **실제 결손 하나를 지적했다** — §16.4 가 요구하는 「REVIEW.md 에
+  해결 내역 기록」을 커밋 메시지에만 남겼던 것이고, 이 entry 가 그것을 채운다.

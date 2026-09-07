@@ -350,6 +350,15 @@ app.mount(
     name="static",
 )
 
+# feature-0046 client-update-channel (2026-09-07): 설치기 서빙은 **StaticFiles 마운트가
+# 아니라 라우트**다 — `routers/client_release.py` 의 `GET /client/{filename}`.
+#
+# ⚠ 여기 마운트를 두지 않는 이유(적대 리뷰 C1·§3-5): ① 릴리스 디렉토리를 통째로 마운트하면
+#   `activate()` 로 **내린 버전이 계속 익명 다운로드**되고(내렸다 ≠ 받을 수 없다),
+#   ② 호스트 디렉토리라 운영자가 무관한 파일을 두면 그것도 공개되며,
+#   ③ 기동 시점 `is_dir()` 판정이라 디렉토리가 나중에 생기면 그 replica 는 **영구 404** 인데
+#      그 사실을 알리는 신호가 없었다. 라우트는 요청 시점에 디렉토리를 읽으므로 셋 다 사라진다.
+
 
 @app.on_event("startup")
 def _bootstrap_memory_runtime() -> None:

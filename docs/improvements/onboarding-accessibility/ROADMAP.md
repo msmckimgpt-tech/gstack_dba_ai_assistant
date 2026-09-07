@@ -542,7 +542,26 @@ choke-point(`ai_tools.py`)를 쓰므로 앞 세 단계의 적재가 배선을 �
 
 **아직 확인되지 않은 것**: `first_claim`·`first_answer` 의 실적재. 다음 실사용 답변 이후 확인.
 
-## 10.2 클라이언트 배포 채널 — 서버가 실물을 못 만든다 (미해결)
+## 10.2 클라이언트 배포 채널 — 서버가 실물을 못 만든다 (**해소 2026-09-07**)
+
+> **해소**: 반입 경로를 **호스트 릴리스 디렉토리**로 세웠다(사용자 결정 2026-09-07).
+> 호스트의 `artifacts/client-release` 가 web 컨테이너에 `/srv/client:ro` 로 붙고
+> (`/srv/trust` CA 번들과 같은 형태), `unit/feature-0046-native-client/src/scripts/publish_release.py`
+> 가 Windows 에서 빌드한 설치기를 거기에 올린다. 서버는
+> `feature-0003/src/routers/client_release.py` 가 **실물과 대조해 통과한 것만** 광고하고
+> (`GET /api/ai/client/latest`), `_client_download_url` 이 그 채널을 1순위로 본다 —
+> 즉 「연결 프로그램 받기」가 비로소 참이 될 수 있다.
+>
+> 아래 두 선택지는 **배타적이지 않다** — Windows 러너 CI 는 같은 스크립트를 부르면 되고
+> (반입 경로가 바뀌는 것이 아니라 호출자만 사람에서 CI 로 바뀐다), 사내 파일서버/MDM 은
+> 별도 신뢰 앵커를 요구하므로 그때 다시 결정한다(클라이언트는 **자기가 고정한 서버**에서만
+> 받는다 — `client/updater.py` 규율 1·2).
+>
+> 같은 cycle 에서 **업데이트 수신**도 함께 섰다: 버전 정본(`client/version.py`) ·
+> 수신·무결성(`client/updater.py`) · 트레이 [업데이트 확인] · 설치기 `/RELAUNCH` 무음 재기동.
+> 정본은 `unit/feature-0046-native-client/docs/FUNCTION.md` §P0-AH.
+>
+> 아래는 해소 전 기록(원문 보존).
 
 `/api/ai/connect/status` 의 `client_download` 는 라이브에서 `null` 이고, 화면의 「연결 프로그램
 받기」는 **숨겨져 있다**. 없는 다운로드를 안내하지 않는다는 ITEM-06 의 설계대로다.
