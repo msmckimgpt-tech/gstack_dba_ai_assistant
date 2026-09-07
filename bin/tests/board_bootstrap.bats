@@ -222,3 +222,221 @@ bf._group_members=lambda name: None              # 그룹 부재 + 비root → p
 assert bf.bootstrap_choose_mode([], notes)=="private"
 PY
 }
+# ---------------------------------------------------------------- §13.2.10 권한 어댑터 정합 (write-through / 접근 거부 구분)
+@test "B23 기존 settings.local.json 은 **같은 inode 에 write-through** 된다 (os.replace 금지) — mode·다른 키 보존, tmp 잔재 없음" {
+  mkdir -p .claude; printf '{"env":{"SECRET":"sk-x"},"permissions":{"allow":["Bash(ls)"]}}\n' > .claude/settings.local.json
+  chmod 600 .claude/settings.local.json; i0=$(stat -c %i .claude/settings.local.json)
+  bash "$B" bootstrap --no-register >/dev/null
+  [ "$(stat -c %i .claude/settings.local.json)" = "$i0" ]        # 갈아끼우지 않았다 = mode·uid/gid·ACL·xattr 이 정의상 보존
+  [ "$(stat -c %a .claude/settings.local.json)" = 600 ]
+  grep -q '"SECRET"' .claude/settings.local.json; grep -q 'Bash(ls)' .claude/settings.local.json
+  [ "$(hooks_of .claude/settings.local.json)" = "FileChanged SessionEnd SessionStart Stop UserPromptSubmit" ]
+  [ -z "$(ls .claude/*.tmp 2>/dev/null)" ]
+  # 신규 경로는 «생성됐고 0600» 으로 단언한다. 옛 단언(다른 파일과 inode 가 다름)은 언제나 참인 항진명제였다.
+  [ -f "$W/.worktrees/feat-1/.claude/settings.local.json" ]
+  [ "$(stat -c %a "$W/.worktrees/feat-1/.claude/settings.local.json")" = 600 ]
+}
+@test "B24 부여된 named ACL 은 bootstrap 을 거쳐도 #effective 를 잃지 않는다; mask 가 무너지면 doctor 가 settings WARN + rc 1" {
+  command -v setfacl >/dev/null && command -v getfacl >/dev/null || skip "setfacl/getfacl 부재"
+  mkdir -p .claude; printf '{"env":{"SECRET":"sk-x"}}\n' > .claude/settings.local.json; chmod 600 .claude/settings.local.json
+  setfacl -m u:12345:rw .claude/settings.local.json 2>/dev/null || skip "이 파일시스템은 POSIX ACL 미지원"
+  bash "$B" bootstrap --no-register >/dev/null
+  getfacl -c .claude/settings.local.json | grep -qx 'user:12345:rw-'      # `#effective:---` 가 붙으면 이 패턴이 깨진다
+  grep -q '"SECRET"' .claude/settings.local.json
+  run bash "$B" doctor; [ "$status" -eq 0 ]; nogrep -q 'settings WARN' <<<"$output"
+  chmod 600 .claude/settings.local.json                                   # chmod 의 group 비트가 mask 를 0 으로 — 부여는 남고 효력만 죽는다
+  getfacl -c .claude/settings.local.json | grep -q '#effective:---'
+  run bash "$B" doctor; [ "$status" -eq 1 ]; [[ "$output" == *"settings WARN"* ]]; [[ "$output" == *"ACL mask 0"* ]]
+}
+@test "B25 읽을 수 없는 settings.local.json 은 «BLOCKED»(접근 거부) 로 보고된다 — «INACTIVE»(미설치) 와 구분, rc 1" {
+  [ "$(id -u)" -ne 0 ] || skip "root 는 mode 로 막히지 않는다"
+  bash "$B" bootstrap --no-register >/dev/null
+  run bash "$B" doctor; [ "$status" -eq 0 ]; [[ "$output" == *"hooks active  : $W/repo"* ]]
+  chmod 000 .claude/settings.local.json
+  run bash "$B" doctor; [ "$status" -eq 1 ]
+  [[ "$output" == *"hooks BLOCKED : $W/repo"* ]]; [[ "$output" == *"접근 거부"* ]]; [[ "$output" == *"소유"* ]]
+  nogrep -q "hooks INACTIVE: $W/repo" <<<"$output"                        # 권한 문제가 «미설치» 로 둔갑하지 않는다 (§13.2.10)
+}
+# ---------------------------------------------------------------- security panel 070: write-through 가 되살린 파일시스템 정체성 위험
+@test "B26 hardlink 된 settings.local.json 은 거부한다 — 제자리 쓰기가 추적 파일을 오염시키지 않는다 (F0)" {
+  mkdir -p .claude
+  printf '{"tracked":true}\n' > .claude/settings.json                       # 추적 파일 (어떤 도구도 쓰지 않는다)
+  ln .claude/settings.json .claude/settings.local.json                      # hardlink — 두 선검사가 모두 통과한다
+  m=$(md5sum .claude/settings.json | cut -d' ' -f1)
+  run bash "$B" bootstrap --no-register; [ "$status" -eq 0 ]                # 대상별 SKIP, 전체는 계속
+  [[ "$output" == *"SKIP $W/repo: settings_local_hardlinked"* ]]
+  [ "$(md5sum .claude/settings.json | cut -d' ' -f1)" = "$m" ]              # 추적 파일 무변경 — 이것이 요점
+  grep -q '"tracked"' .claude/settings.local.json                           # 링크 상대도 무변경
+  [ -f "$W/.worktrees/feat-1/.claude/settings.local.json" ]                  # 다른 대상은 정상 활성화
+}
+@test "B27 부모 .claude 가 symlink 이면 쓰지 않는다 — 저장소 밖으로 새지 않는다 (호출자 선검사 + dir fd 고정 2층)" {
+  victim="$BATS_TEST_TMPDIR/victim"; mkdir -p "$victim"; printf 'untouched\n' > "$victim/settings.local.json"
+  ln -s "$victim" .claude
+  # 1층 — 호출자 선검사(`settings_local_merge` 의 islink)가 쓰기 전에 SKIP 한다
+  run bash "$B" bootstrap --no-register; [ "$status" -eq 0 ]
+  [[ "$output" == *"SKIP $W/repo: settings_symlink"* ]]
+  [ "$(cat "$victim/settings.local.json")" = "untouched" ]
+  # 2층 — **선검사를 우회해** 쓰기 함수를 직접 호출한다. 선검사는 1회·leaf 만 보므로 실전에서는
+  # 「선검사 통과 → `.claude` 를 symlink 으로 교체 → 쓰기」 race 가 성립한다(security panel 070 P2:
+  # 0.17~0.41ms 실측). 그 race 의 도착점이 바로 이 상태이고, 여기서 거부되어야 방어가 성립한다.
+  # 1층만 단언하면 2층을 제거해도 통과하는 항진명제가 된다 (뮤턴트 M2 생존으로 실증).
+  run python3 - "$FS" "$PWD/.claude/settings.local.json" <<'PY'
+import sys, importlib.util
+spec=importlib.util.spec_from_file_location("bf",sys.argv[1]); bf=importlib.util.module_from_spec(spec); spec.loader.exec_module(bf)
+try:
+    bf._write_nofollow_replace(sys.argv[2], b'{"leaked":true}\n', 0o600)
+except OSError as e:
+    print("REFUSED", type(e).__name__); raise SystemExit(0)
+except bf.BoardError as e:
+    print("REFUSED", e.reason); raise SystemExit(0)
+raise SystemExit("WROTE — 저장소 밖으로 샜다")
+PY
+  [ "$status" -eq 0 ]; [[ "$output" == REFUSED* ]]
+  [ "$(cat "$victim/settings.local.json")" = "untouched" ]                   # 저장소 밖 파일 무변경
+  [ -z "$(ls "$victim" | grep '\.tmp$')" ]                                   # tmp 도 새지 않았다
+}
+@test "B28 FIFO 는 거부된다 — **reader 가 붙은** FIFO 로도 시크릿이 유출되지 않고(S_ISREG 가드), reader 없으면 멈추지 않는다" {
+  mkdir -p .claude
+  # (a) reader 없는 FIFO — 무한 대기가 없다는 것만 본다 (O_NONBLOCK 이 ENXIO 로 즉시 실패)
+  mkfifo .claude/settings.local.json
+  run timeout 30 bash "$B" bootstrap --no-register; [ "$status" -eq 0 ]      # 124(timeout) 가 아니다
+  [[ "$output" == *"SKIP $W/repo:"* ]]; [ -p .claude/settings.local.json ]
+  run timeout 30 bash "$B" doctor; [ "$status" -ne 124 ]
+  # (b) **reader 가 붙은** FIFO — 여기서는 open 이 성공하므로 ENXIO 가 아니라 `S_ISREG` 가드가 유일한 방어다.
+  #     이 축이 없으면 가드를 제거해도 (a) 만으로 통과해, 이름과 검사 대상이 어긋난 항진명제가 된다
+  #     (backend panel 070 P2 가 실증: 가드 제거 시 API 키 57바이트가 FIFO 로 유출).
+  rm -f .claude/settings.local.json; mkfifo .claude/settings.local.json
+  ( timeout 20 cat .claude/settings.local.json > "$BATS_TEST_TMPDIR/captured" 2>/dev/null ) &
+  rpid=$!; sleep 1
+  run python3 - "$FS" "$PWD/.claude/settings.local.json" <<'PY'
+import sys, importlib.util
+spec=importlib.util.spec_from_file_location("bf",sys.argv[1]); bf=importlib.util.module_from_spec(spec); spec.loader.exec_module(bf)
+secret=b'{"env":{"ANTHROPIC_API_KEY":"sk-ant-LEAKME-0123456789"}}\n'   # verify-secret-allow: 실토큰 아님 — FIFO 유출 여부를 판정하기 위한 합성 픽스처(리터럴 'LEAKME'), 아래에서 이 문자열이 reader 에 도달하지 않았음을 단언한다
+try:
+    bf._write_nofollow_replace(sys.argv[2], secret, 0o600)
+except bf.BoardError as e: print("REFUSED", e.reason); raise SystemExit(0)
+except OSError as e: print("REFUSED", type(e).__name__); raise SystemExit(0)
+raise SystemExit("WROTE — FIFO 로 유출됐다")
+PY
+  [ "$status" -eq 0 ]; [[ "$output" == "REFUSED settings_local_not_regular" ]]
+  wait "$rpid" 2>/dev/null || true
+  [ ! -s "$BATS_TEST_TMPDIR/captured" ]                                      # reader 가 받은 바이트 0
+  nogrep -q 'sk-ant-LEAKME' "$BATS_TEST_TMPDIR/captured"
+}
+@test "B29 torn write 는 새 내용의 사본을 tmp 에 남긴다 (회수 가능) — 대상 무접촉 실패는 tmp 를 남기지 않는다" {
+  mkdir -p .claude; printf '{"env":{"S":"x"}}\n' > .claude/settings.local.json
+  python3 - "$FS" <<'PY'
+import sys, os, importlib.util
+spec=importlib.util.spec_from_file_location("bf",sys.argv[1]); bf=importlib.util.module_from_spec(spec); spec.loader.exec_module(bf)
+orig=bf._write_all; n=[]
+def flaky(fd, data):
+    n.append(1)
+    if len(n)==2: raise OSError(28,"ENOSPC(simulated)")       # 2번째 호출 = 대상 write-through 중 중단
+    return orig(fd, data)
+bf._write_all=flaky
+try: bf._write_nofollow_replace(".claude/settings.local.json", b'{"new":"content"}\n', 0o600); raise SystemExit("must raise")
+except OSError: pass
+t=[f for f in os.listdir(".claude") if f.endswith(".tmp")]
+assert len(t)==1, t
+tp=os.path.join(".claude",t[0])
+assert open(tp).read()=='{"new":"content"}\n'                                # 올바른 새 내용이 회수 가능
+# 회수 사본은 **대상보다 넓지 않다** — 시크릿을 품은 채 남는 파일이므로 `existing_mode` 가 여기서 부하를 진다
+import stat as _s
+assert (os.stat(tp).st_mode & 0o077) == 0, oct(os.stat(tp).st_mode)
+PY
+  rm -f .claude/*.tmp
+  # 대상을 건드리기 전 실패(hardlink 거부)는 tmp 를 남기지 않는다
+  rm -f .claude/settings.local.json; printf '{"a":1}\n' > .claude/other; ln .claude/other .claude/settings.local.json
+  run bash "$B" bootstrap --no-register; [ "$status" -eq 0 ]
+  [ -z "$(ls .claude/*.tmp 2>/dev/null)" ]
+}
+# ---------------------------------------------------------------- backend panel 070: 축이 비어 있던 부분 (짧아지는 병합 · 쓰기 거부 · 부분 쓰기)
+@test "B30 **짧아지는 병합**도 유효 JSON 이다 — ftruncate 없이는 옛 꼬리가 남아 파일이 깨진다" {
+  mkdir -p .claude
+  # 우리 hook 항목을 이벤트마다 여러 개 심어 둔다 → 병합이 «우리 것» 을 1개로 재생성하므로 파일이 **짧아진다**.
+  python3 - .claude/settings.local.json "$W/repo/bin/hooks/board-hook.sh" <<'PY'
+import json,sys,os
+hook=os.path.realpath(sys.argv[2])
+mine=lambda: {"hooks":[{"type":"command","command":"bash %s --platform claude" % hook,"timeout":5}]}
+ev=("SessionStart","UserPromptSubmit","Stop","SessionEnd","FileChanged")
+o={"hooks":{e:[mine() for _ in range(12)] for e in ev}}          # 60개 → 5개로 줄어든다
+json.dump(o, open(sys.argv[1],"w"), ensure_ascii=False, indent=2)
+PY
+  before=$(stat -c %s .claude/settings.local.json)
+  bash "$B" bootstrap --no-register >/dev/null
+  after=$(stat -c %s .claude/settings.local.json)
+  [ "$after" -lt "$before" ]                                                  # 실제로 짧아졌다 (이 축이 성립해야 검사가 의미를 가진다)
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' .claude/settings.local.json   # 유효 JSON — 옛 꼬리가 남지 않았다
+  [ "$(hooks_of .claude/settings.local.json)" = "FileChanged SessionEnd SessionStart Stop UserPromptSubmit" ]
+  [ "$(ours_count .claude/settings.local.json SessionStart)" -eq 1 ]
+}
+@test "B31 읽을 수는 있으나 **쓸 수 없는** 대상(0400)은 BLOCKED 다 — 읽기 축만 보면 «미설치» 로 둔갑한다" {
+  [ "$(id -u)" -ne 0 ] || skip "root 는 mode 로 막히지 않는다"
+  bash "$B" bootstrap --no-register >/dev/null                                # 보드가 있어야 doctor 가 hooks 행을 낸다
+  run bash "$B" doctor; [ "$status" -eq 0 ]                                   # 기준선: 이 상태의 rc 는 0
+  printf '{"permissions":{"allow":[]}}\n' > .claude/settings.local.json        # 유효 JSON·hook 없음 → 옛 구현은 INACTIVE
+  chmod 400 .claude/settings.local.json
+  run bash "$B" doctor; [ "$status" -eq 1 ]
+  [[ "$output" == *"hooks BLOCKED : $W/repo"* ]]; [[ "$output" == *"쓰기 거부"* ]]
+  nogrep -q "hooks INACTIVE: $W/repo" <<<"$output"
+}
+@test "B32 _write_all 은 부분 쓰기를 이어 쓴다 (os.write 가 1바이트씩 반환해도 전량이 나간다)" {
+  mkdir -p .claude; printf '{"env":{"S":"x"}}\n' > .claude/settings.local.json
+  python3 - "$FS" <<'PY'
+import sys, os, importlib.util
+spec=importlib.util.spec_from_file_location("bf",sys.argv[1]); bf=importlib.util.module_from_spec(spec); spec.loader.exec_module(bf)
+real=os.write
+bf.os.write = lambda fd, b: real(fd, b[:1])            # 매 호출 1바이트만 — 루프가 없으면 잘린다
+payload=b'{"env":{"S":"x"},"hooks":{"SessionStart":[]}}\n'
+bf._write_nofollow_replace(".claude/settings.local.json", payload, 0o600)
+bf.os.write = real
+got=open(".claude/settings.local.json","rb").read()
+assert got == payload, (len(got), len(payload), got[:40])
+PY
+}
+@test "B33 rc 는 **이 세션의 worktree** 만 싣는다 — 남의 worktree BLOCKED 는 표시하되 rc 0 (다중 계정 배치에서 영구 실패 방지)" {
+  [ "$(id -u)" -ne 0 ] || skip "root 는 mode 로 막히지 않는다"
+  bash "$B" bootstrap --no-register >/dev/null
+  chmod 000 "$W/.worktrees/feat-1/.claude/settings.local.json"                # 남의 worktree 가 접근 불가
+  cd "$W/repo"                                                                # 이 세션은 main worktree 에 있다
+  run bash "$B" doctor
+  [[ "$output" == *"hooks BLOCKED : $W/.worktrees/feat-1"* ]]                 # 가시성은 유지
+  [[ "$output" == *"이 세션의 worktree 아님"* ]]
+  [ "$status" -eq 0 ]                                                         # 판정은 좁힌다 — 내 것이 아니면 rc 에 싣지 않는다
+  # 반대로 **내** worktree 가 막히면 rc 1 이다
+  chmod 000 .claude/settings.local.json
+  run bash "$B" doctor; [ "$status" -eq 1 ]; [[ "$output" == *"hooks BLOCKED : $W/repo"* ]]
+}
+@test "B34 읽기 경로의 정체성 계약 — _read_nofollow 는 FIFO 를 «없는 것» 으로 보고, dead_acl 판정은 lstat 의미론(symlink 미추종)이다" {
+  mkdir -p .claude
+  python3 - "$FS" <<'PY'
+import sys, os, importlib.util, tempfile, subprocess, shutil
+spec=importlib.util.spec_from_file_location("bf",sys.argv[1]); bf=importlib.util.module_from_spec(spec); spec.loader.exec_module(bf)
+d=tempfile.mkdtemp()
+# ① FIFO — **writer 가 붙어 있어도** 그 내용을 설정으로 읽지 않는다. 이 축이 없으면 남이 심은 FIFO 가
+#    doctor 에 «active» 를 먹일 수 있다 (S_ISREG 없으면 실제로 읽힌다).
+f=os.path.join(d,"fifo"); os.mkfifo(f)
+# writer 를 **자기 프로세스로** 붙인다 (`O_RDWR` — reader 대기도 race 도 없다). 별 프로세스 writer 는
+# 아직 open 하지 않은 순간에 read 가 EOF 를 내서 가드 없이도 "" 가 되는 race 축이었다.
+wfd=os.open(f, os.O_RDWR | os.O_NONBLOCK)
+try:
+    os.write(wfd, b'{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash /x/bin/hooks/board-hook.sh --platform claude"}]}]}}')
+    assert bf._read_nofollow(f) == "", "FIFO 내용이 설정으로 읽혔다 (S_ISREG 가드 부재)"
+finally:
+    os.close(wfd)
+# ② settings_local_dead_acl 은 lstat 의미론 — symlink 이면 판정하지 않는다 (대상의 ACL 상태를 링크의 것으로 보고하지 않는다)
+p=os.path.join(d,"proj"); os.makedirs(os.path.join(p,".claude"))
+real=os.path.join(d,"real.json"); open(real,"w").write("{}\n"); os.chmod(real,0o600)
+if not shutil.which("setfacl"):
+    print("SKIP_ACL"); raise SystemExit(0)
+subprocess.run(["setfacl","-m","u:12345:rw",real],check=True)
+subprocess.run(["chmod","600",real],check=True)                            # mask 붕괴 = dead_acl 판정 대상 상태
+d2=os.path.join(d,"direct"); os.makedirs(os.path.join(d2,".claude"))
+shutil.copy2(real, os.path.join(d2,".claude","settings.local.json"))
+subprocess.run(["setfacl","-m","u:12345:rw",os.path.join(d2,".claude","settings.local.json")],check=True)
+subprocess.run(["chmod","600",os.path.join(d2,".claude","settings.local.json")],check=True)
+assert bf.settings_local_dead_acl(d2) is not None, "정규파일의 mask 붕괴를 판정하지 못했다 (축이 죽어 있다)"
+os.symlink(real, os.path.join(p,".claude","settings.local.json"))
+assert bf.settings_local_dead_acl(p) is None, "symlink 을 따라가 판정했다 (lstat 이 아니다)"
+PY
+}

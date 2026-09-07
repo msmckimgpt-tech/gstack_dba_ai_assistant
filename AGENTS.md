@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.53.1
+template_version: v3.53.2
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1447,6 +1447,46 @@ push / PR merge 는 코드 완료이지 배포 완료가 아니다.
 > `cycle-finalize`)에만 배선한다. `verify-completion.sh` 같은 read-only 게이트나
 > post-commit hook 경로는 건드리지 않는다 — 검증에 승격이 필요 없고, hook 에서의 sudo 는
 > 지연·프롬프트 위험만 늘린다.
+
+**계약은 어댑터가 아니라 «공유 운영 파일을 rewrite 하는 모든 경로» 에 붙는다 (MUST, v3.53.2)**:
+위 범위 한정은 *어느 스크립트에 `privilege.sh` 를 source 하는가* 를 정한 것이지, **write-through
+요구를 그 두 스크립트에만 적용하라는 뜻이 아니다.** 다른 언어·다른 계층에서 같은 파일을 rewrite
+하는 경로는 어댑터를 쓸 수 없어도 **같은 계약을 자기 언어로 이행한다** — 원본 inode 를 유지한 채
+내용만 write-through 하고, mode 를 되감지 않는다.
+
+- 적용 실체 (v3.53.2): `bin/lib/board_fs.py` 의 `_write_nofollow_replace` — `.claude/settings.local.json`
+  을 tmp + `os.replace` 로 갈아끼우던 것을 **원본 inode write-through** 로 바꿨다 (`mktemp`+`mv` 의
+  Python 등가가 바로 이 절이 금지한 형태였다). 승격은 쓰지 않는다 — hook 경로에서 도는 코드이므로
+  위 범위 한정의 「hook 에서의 `sudo` 금지」가 그대로 적용되고, **보존만으로 결함이 소멸**한다.
+- 왜 놓쳤는가 (재발 방지 관점): 본 절은 v3.41.0 에 도입됐고 `board_fs.py` 는 v3.53.x(META-068/069)에
+  추가됐다. 새 write 경로가 **이미 있는 계약의 적용 대상인지 점검하는 단계가 없어서**, 같은 결함이
+  4개월 뒤 새 파일에서 재생산됐다. 공유 운영 파일에 쓰는 코드를 추가할 때 이 절을 조회한다.
+- **write-through 는 파일 «정체성» 검사를 함께 요구한다 (MUST — 이것을 빠뜨리면 보존이 오염이 된다)**:
+  `mv`/`os.replace` 는 **새 inode 를 갈아끼우는** 연산이라 대상이 무엇이었는지에 무관심했다. 제자리
+  쓰기로 바꾸는 순간 그 무관심이 사라지므로, **열기 단계에서** 세 가지를 기계로 막는다 (security
+  panel 070 이 v3.53.2 구현에서 실증한 3종):
+  - **hardlink** — 대상이 다른 파일과 같은 inode 면 제자리 쓰기가 **그 파일까지** 바꾼다. 추적 파일과
+    hardlink 된 untracked 파일이 대표 사례이고, 경로 기반 검사(`check-ignore`·추적 여부)는 전부
+    통과한다. `fstat` 로 `st_nlink == 1` 을 요구한다.
+  - **부모 컴포넌트 교체 (TOCTOU)** — leaf 만 보는 `O_NOFOLLOW`·`[ -L ]` 은 **부모**가 symlink 으로
+    바뀌는 것을 막지 못한다(실측 0.17~0.41ms 창에 저장소 밖 파일로 쓰기 성립). 부모 디렉터리를
+    `O_DIRECTORY|O_NOFOLLOW` 로 **먼저 열어 fd 로 고정**하고 이후 생성·열기·rename·삭제를 전부 그
+    `dir_fd` 기준으로 한다 — fd 가 inode 를 붙들어 이후 rename 이 경로를 바꾸지 못한다. 1회 선검사는
+    race 를 닫지 못하므로 «검사» 가 아니라 «고정» 이 답이다.
+  - **정규파일 아님** — `O_NOFOLLOW` 는 FIFO 를 막지 않고, reader 없는 FIFO 의 `O_WRONLY` 는 **무한
+    대기**한다(hook·cron 경로가 그대로 멈춘다). `O_NONBLOCK` 으로 열어 즉시 실패시키고 `fstat` 로
+    `S_ISREG` 를 요구한다.
+  그리고 **회수 사본을 실제로 남긴다** — 원자성을 포기한 대가로 얻는 것이 «중단 시 새 내용이 `$tmp` 에
+  남는다» 인데, 실패 경로가 tmp 를 지우면 그 문장은 거짓이 된다. 대상을 건드리기 **전** 실패는 tmp 를
+  지우고, **쓰다가** 중단된 경우는 남긴다 — 이 둘을 가르지 않으면 둘 중 하나가 항상 틀린다.
+- 실증 (2026-09-07, 소비자 1곳): `root` 세션의 `board.sh bootstrap` 이 main + 16 worktree 의
+  `settings.local.json` **17개 전부**를 `root:root 0600` 새 inode 로 갈아끼웠고, `.claude/` 의
+  default ACL `user:claude-corp:rwx` 는 생성 mode 0600 이 `mask::---` 를 만들어
+  `#effective:---` 로 죽었다. 결과는 **claude-corp 세션의 hook 5종이 무증상 비활성** — 그리고
+  `doctor` 는 17줄 모두 `INACTIVE` 로만 보고해(권한 거부를 `except OSError: return False` 로
+  삼킴) 원인이 어디에도 나타나지 않았다. 이 절이 「부재와 권한 거부를 구분한다」고 요구한 바로
+  그 오진이며, 그래서 `doctor` 는 이제 `BLOCKED`(접근 거부)를 `INACTIVE`(미설치)와 구분해
+  보고하고 rc 에 싣는다. 회복은 `setfacl -m u:<계정>:rw` 17건이었다 (mode 확대 아님).
 
 #### §13.2.11 세션 정지·무신호 감지 (Stall Detection, v3.47.0)
 
@@ -5730,7 +5770,7 @@ Claude Code 는 v2.1.163 부터 **stdio 방식 MCP 서버**를 띄울 때 환경
 
 (출처: Claude Code CHANGELOG v2.1.163 — stdio MCP 서버에 `CLAUDE_CODE_SESSION_ID` 전달)
 
-### §22.15 Agent Board — 세션 간 게시판 (v3.53.1)
+### §22.15 Agent Board — 세션 간 게시판 (v3.53.2)
 <!-- agent-board:policy:v1 -->
 
 **목적**: 같은 프로젝트에서 동시에 도는 AI 세션들(플랫폼 무관)과 사람이 **파일 단위 게시물**로 작업 이정표·질문·인계·경보를
@@ -5781,7 +5821,14 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
   않아 exit 0 으로 삼켜진다) **`.claude/settings.local.json`**(추적되지 않는 로컬 설정 — `.git/info/exclude` 등재·`check-ignore` 검증)
   에만 병합한다 — 추적 여부·exclude·`check-ignore` 를 **쓰기 전에** 검사하고, 추적된 파일·git 밖 경로는 무접촉으로 건너뛴다(SKIP 표면화).
   병합되는 hook 명령은 `<board>/hooks/claude-settings.json` 사본을 읽는 것이 아니라 매번 **재생성**한다(shared 보드의 사본은 다른 uid 가 바꿀
-  수 있다). 추적 파일 `.claude/settings.json` 은 어떤 도구도 쓰지 않는다(F0 — 추적 파일은 PR 로만). **지원 플랫폼은 Claude Code
+  수 있다). 추적 파일 `.claude/settings.json` 은 어떤 도구도 쓰지 않는다(F0 — 추적 파일은 PR 로만).
+  **병합 쓰기는 원본 inode 에 write-through 한다 (MUST, v3.53.2 — §13.2.10 계약)**: 기존 파일을 새 inode 로
+  갈아끼우지 않으므로 mode·uid/gid·**ACL**·xattr 이 보존된다. 기존 mode 보존·새 파일 0600(security panel
+  069 P2-3)은 유지하되, **여러 OS 계정이 번갈아 bootstrap 을 돌려도 앞 계정이 부여한 접근권이 죽지 않는다** —
+  `os.replace` 시절에는 소유자가 실행 계정으로 뒤집히고 생성 mode 0600 이 상속 ACL 의 `mask` 를 0 으로
+  만들어, 다음 계정이 자기 `settings.local.json` 을 못 읽고 hook 이 조용히 죽었다(2026-09-07 소비자 17개
+  실측). 신규 파일은 보존할 metadata 가 없어 0600 그대로이며 — **mask 를 임의로 넓히지 않는다** — 공유
+  배치에서 필요하면 운영자가 `setfacl -m u:<계정>:rw` 로 한 번 부여하고, 그 뒤로는 write-through 가 지킨다. **지원 플랫폼은 Claude Code
   하나다**(2.1.227 실측). Codex·Gemini 는 **미지원(실측 없음)**이며 `--platform codex|gemini` 는 무동작 exit 0 이다. 실측 없이 «지원»
   이라 쓰지 않는다(§22.1.2).
 - **자율 부트스트랩 (MUST — 이 게시판은 사람이 아니라 AI 작업자가 능동적으로 쓴다)**. 게시판이 없거나(포인터 `.board-root` 부재)
@@ -5798,7 +5845,11 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
 - **§13.2.8 의 REGISTRY `session_id` 와 게시판 sid 의 대응**: REGISTRY entry 에 `board_sid:` 를 병기한다(§13.2.8 규약 참조).
   두 값의 정합은 라벨 등급이다.
 - **운영**: `board.sh doctor` 가 root 해석·fs 타입·소유권 표·SEQ·조상 git exclude·원장 상한·stale 세션·hook 활성 worktree 를 실측
-  보고한다. shared 모드는 `board.json.group`(전 세션 쓰기)·`announce_group`(운영자) 두 호스트 그룹을 전제하며, 그룹 부재 시 `init
+  보고한다. worktree 별 hook 상태는 **3값이다 (v3.53.2)** — `active` / `INACTIVE`(미설치·미완결·어댑터 부재) /
+  **`BLOCKED`(접근 거부 — 이 계정이 `settings.local.json` 을 읽을 수 없다)**. §13.2.10 이 요구한 «부재와 권한 거부를
+  구분한다» 의 이행면이며 `BLOCKED` 는 rc 1 로 나간다(고장이지 미설치가 아니다). 더해 **`settings WARN: ACL mask 0`** —
+  확장 ACL 은 붙어 있는데 `mask` 가 0 인, 즉 «부여는 남고 효력만 죽은» 상태를 `os.listxattr` 로 판정해 표면화한다
+  (평범한 0600 에는 소음을 내지 않는다). 이 두 신호가 없던 동안 17개 대상의 권한 고장이 전부 `INACTIVE` 로만 보였다. shared 모드는 `board.json.group`(전 세션 쓰기)·`announce_group`(운영자) 두 호스트 그룹을 전제하며, 그룹 부재 시 `init
   --mode shared` 는 **완화 옵션 없이 실패**한다(bootstrap 은 그 경우 private 로 시작한다). 완료(`done`) 뒤 같은 세션에 새 일이 오면
   세션이 **자기 자신을** `board.sh reactivate`(인자 없음) 로 되살린다 — 자기 세션 증명은 하네스가 준 `$CLAUDE_CODE_SESSION_ID` 가 sid 와
   일치하는 것(또는 명시 `--token`)이다. 인가 경계는 uid 다(§12): 다른 uid 는 나를 되살릴 수 없고, 같은 uid 의 다른 세션은 하네스 id 를 속여야만

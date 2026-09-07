@@ -2435,11 +2435,19 @@ def ancestor_git_exclude(board_root: str, main_repo: str, dry: bool = False) -> 
 
 
 def _read_nofollow(path: str) -> str:
+    """`O_NOFOLLOW` 로 읽는다. 정규파일이 아니면 «없는 것» 으로 본다 (security panel 070 P3):
+    `O_NOFOLLOW` 는 **FIFO 를 막지 않고**, writer 없는 FIFO 의 `O_RDONLY` 는 무한 대기한다 —
+    `settings.local.json` 자리에 FIFO 를 두면 `bootstrap`·`doctor` 가 그대로 멈춘다(hook 경로가
+    막힌다). `O_NONBLOCK` 으로 즉시 열고 `fstat` 로 정규파일을 요구해 그 정지를 없앤다.
+    쓰기 경로(`_write_nofollow_replace`)는 같은 상황을 `settings_local_not_regular` 로 **표면화**한다 —
+    여기서는 읽기라 «비활성으로 본다» 가 옳은 degrade 다."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except FileNotFoundError:
         return ""
     try:
+        if not statmod.S_ISREG(os.fstat(fd).st_mode):
+            return ""
         chunks = []
         while True:
             b = os.read(fd, 65536)
@@ -2801,8 +2809,25 @@ def do_doctor(cwd: str, harness: Optional[str]) -> Tuple[str, int]:
             tr = False
         lines.append("traverse %s: 상위 디렉토리가 그룹 %s 에 통과 %s" % ("ok  " if tr else "FAIL", board.group, "가능" if tr else "불가 — 다른 uid 세션은 EACCES"))
         if not tr: rc = 1
-    for d in [res.main_repo] + linked_worktrees(res.main_repo):
-        lines.append("hooks %s: %s" % ("active  " if hooks_active_in(d) else "INACTIVE", d))
+    targets = [res.main_repo] + linked_worktrees(res.main_repo)
+    # **rc 는 «이 세션이 쓰는 worktree» 에만 싣는다 (backend panel 070 P1)**: 다중 계정 배치에서는 남의
+    # worktree 가 내게 접근 불가인 것이 정상이고(그래서 `install-hooks` 도 by-design SKIP 이다), 그것까지
+    # rc 1 로 만들면 이 수정이 겨냥한 바로 그 배치에서 doctor 가 **영구히** 실패해 신호가 무의미해진다.
+    # 남의 worktree 의 BLOCKED·WARN 은 그대로 **표시**한다 — 가시성은 유지하고 판정만 좁힌다.
+    mine = _containing_target(cwd, targets)
+    for d in targets:
+        state, detail = hooks_status_in(d)
+        own = (d == mine)
+        if state == "BLOCKED" and not own:
+            detail = (detail or "") + " [이 세션의 worktree 아님 — rc 에 싣지 않는다; 그 계정 세션이 조치]"
+        lines.append("hooks %-8s: %s%s" % (state, d, (" — " + detail) if detail else ""))
+        if state == "BLOCKED" and own:
+            rc = 1                      # 접근 거부는 «미설치» 가 아니라 고장이다 — traverse FAIL 과 같은 등급
+        dead = settings_local_dead_acl(d)
+        if dead:
+            lines.append("  settings WARN: %s%s" % (dead, "" if own else " [이 세션의 worktree 아님 — rc 제외]"))
+            if own:
+                rc = 1
     if harness == "claude":
         lines.append("harness claude: 이벤트 SessionStart/UserPromptSubmit/Stop/SessionEnd/FileChanged 는 2.1.227 에서 실측 실존 (spikes/20260904T1018)")
     elif harness:
@@ -3023,19 +3048,116 @@ def bootstrap_choose_mode(members: List[str], notes: List[str]) -> str:
     return "private"
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """`os.write` 는 부분 쓰기를 할 수 있다 — 전량이 나갈 때까지 반복한다."""
+    off = 0
+    while off < len(data):
+        off += os.write(fd, data[off:])
+
+
 def _write_nofollow_replace(path: str, data: bytes, mode: int) -> None:
-    tmp = "%s.%d.%s.tmp" % (path, os.getpid(), secrets.token_hex(4))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    """새 내용을 tmp 에 먼저 적고, **원본이 있으면 그 inode 에 write-through** 한다 (원본을 새 inode 로
+    갈아끼우지 않는다) — 그러면 mode·uid/gid·**ACL**·xattr 이 «아무것도 다시 설정하지 않으므로»
+    정의상 보존된다. AGENTS.md §13.2.10 의 `priv_replace_preserving_mode` 와 같은 계약이며,
+    같은 절의 «`mktemp`+`mv` 직접 사용 금지 · `chmod` 로 mode 되감기 금지» 를 이 경로에도 적용한 것이다.
+
+    왜 필요한가 (2026-09-07 소비자 실측): `os.replace` 는 대상을 **새 inode** 로 갈아끼우므로
+    ① 소유자가 쓰는 쪽(bootstrap 실행 계정)으로 바뀌고 ② 원본의 named ACL entry 가 사라진다.
+    새 inode 는 부모 `.claude/` 의 default ACL 을 상속하지만, POSIX ACL 에서 **생성 mode 의 group
+    비트가 `mask` 를 정한다** — `mode=0600` 이면 `mask::---` 가 되어 상속된 `user:<peer>:rwx` 가
+    `#effective:---` 로 무효화된다. 두 결과가 겹치면 **여러 OS 계정이 번갈아 bootstrap 을 돌리는
+    배치에서 다음 계정이 자기 `settings.local.json` 을 못 읽고, Claude 가 hook 을 조용히 못 올린다**
+    (실측: 소비자 한 곳의 main + 16 worktree 전부가 `root:root 0600 mask::---` 로 굳어 claude-corp
+    세션의 hook 5종이 무증상 비활성. inode 번호와 `mask` 변화로 단일 uid 재현 가능).
+
+    **0600 을 넓혀서 풀지 않는다** — 기존 mode 보존·새 파일 0600 은 security panel 069 P2-3 의
+    결정이다(§22.15). 확대 대신 «보존» 으로 푼다: 원본에 운영자가 부여한 접근권(named ACL)이 있으면
+    그것이 영구히 유지되고, 없으면 오늘과 동일한 0600 이다 (신규 파일은 보존할 metadata 가 없으므로
+    mask 를 임의로 넓히지 않고, `doctor` 가 peer 접근 불가 사실을 조언한다 — 코드는 보존하고
+    운영자가 결정한다).
+
+    `mode` 는 **tmp 와 신규 생성에만** 적용된다 — 기존 파일에는 아무 mode 도 다시 설정하지 않는 것이
+    이 함수의 요점이다. 원자성은 포기한다: 쓰기 중단 시 파일이 「새 내용 + 옛 꼬리」로 남을 수 있으나
+    그 상태는 invalid JSON 이라 호출자가 `settings_local_invalid_json` 으로 **무접촉 SKIP** 하고,
+    올바른 새 내용은 `$tmp` 에 남는다 (§13.2.10 이 명시한 trade-off 와 동일).
+    쓸 수 없는 기존 파일(예: 0400)은 `PermissionError` 를 그대로 올려 호출자가 대상별 SKIP 으로
+    표면화한다 — 남의 mode 의도를 inode 교체로 조용히 뒤집지 않는다.
+
+    ── write-through 가 되살리는 파일시스템 정체성 위험 3종 (security panel 070) ──────────────
+    `os.replace` 는 «새 inode 를 갈아끼우는» 연산이라 대상의 정체성에 무관심했다. 제자리 쓰기로
+    바꾸면 그 무관심이 사라지므로, 열기 단계에서 세 가지를 **기계로** 막는다:
+
+    - **부모 컴포넌트 교체 (TOCTOU)** — 호출자의 `islink` 선검사는 leaf 만 보고 1회뿐이라, 마지막
+      재검증과 쓰기 사이(실측 0.17~0.41ms)에 `.claude` 를 symlink 으로 바꿔치기하면 저장소 **밖**
+      파일에 쓰게 된다. 그래서 부모 `.claude` 를 `O_DIRECTORY|O_NOFOLLOW` 로 **먼저 열어 fd 로 고정**
+      하고, tmp 생성·leaf 열기·rename·unlink 를 전부 그 `dir_fd` 기준으로 한다 — fd 가 inode 를
+      붙들고 있으므로 이후 어떤 rename 도 경로를 바꾸지 못한다. `O_NOFOLLOW` 가 «그 순간 `.claude`
+      가 symlink 이면 실패» 를 보장하니 선검사와 달리 race 가 없다. (`.claude` **위** 컴포넌트는
+      호출자 책임 — `settings_local_merge` 가 git worktree 루트임을 먼저 확인한다.)
+    - **hardlink** — `settings.local.json` 이 `.claude` 의 **추적 파일** `settings.json` 과 hardlink 이면
+      제자리 쓰기가 그 추적 파일을 오염시킨다 (F0 위반: 추적 파일은 PR 로만). 두 선검사가 모두
+      통과한다 — `check-ignore` 는 경로 기반이고 `_git_tracked` 는 다른 경로를 본다. `os.replace`
+      시절엔 링크가 끊겨 이 경로가 없었으므로 **write-through 가 새로 만든 위험**이다.
+      → `fstat` 로 `st_nlink == 1` 을 요구한다.
+    - **FIFO** — `O_NOFOLLOW` 는 FIFO 를 막지 않고, reader 없는 `O_WRONLY` 는 **무한 대기**한다
+      (hook 경로가 멈춘다). → `O_NONBLOCK` 으로 열어 즉시 `ENXIO` 로 실패시키고, `fstat` 로
+      정규파일을 요구한다. 정규파일에서 `O_NONBLOCK` 은 의미가 없으므로 그대로 두어도 무해하다.
+
+    torn write 시 `$tmp` 는 **남긴다** — 그 시점 새 내용의 유일한 사본이다. 대상을 건드리기 **전**
+    실패는 tmp 를 지운다 (`?? .claude/…tmp` 잔존 방지 — backend panel 069 P3). 둘을 가르는 것이
+    「회수 가능」 주장을 참으로 만드는 유일한 방법이다.
+    """
+    parent = os.path.dirname(path) or "."
+    name = os.path.basename(path)
+    tmp_name = "%s.%d.%s.tmp" % (name, os.getpid(), secrets.token_hex(4))
+    dfd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
+        fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode, dir_fd=dfd)
+        torn = False
         try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
-        os.replace(tmp, path)
-    except BaseException:
-        try: os.unlink(tmp)           # 중단 시 `?? .claude/…tmp` 잔존 방지 (backend panel 069 P3)
-        except OSError: pass
+            try:
+                _write_all(fd, data)
+            finally:
+                os.close(fd)
+            try:
+                tfd = os.open(name, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd)
+            except FileNotFoundError:
+                os.rename(tmp_name, name, src_dir_fd=dfd, dst_dir_fd=dfd)   # 신규 — 보존할 metadata 없음
+                return
+            closed = False
+            try:
+                st = os.fstat(tfd)
+                if not statmod.S_ISREG(st.st_mode):
+                    raise BoardError(EXIT_VALIDATION, "settings_local_not_regular", path)
+                if st.st_nlink != 1:
+                    raise BoardError(EXIT_VALIDATION, "settings_local_hardlinked", path)
+                # truncate 를 **뒤에** 한다: 앞서 하면 중단 시 빈 파일이 되어 사용자의 다른 키(permissions·
+                # env)가 조용히 소실된다. 뒤에 하면 중단 상태가 invalid JSON 이라 위 무접촉 SKIP 으로 간다.
+                torn = True
+                _write_all(tfd, data)
+                os.ftruncate(tfd, len(data))
+                # `close` 가 실패하면(EIO·ENOSPC 지연 보고) 데이터가 실제로 갔는지 알 수 없다 —
+                # 그 창에서 회수 사본을 버리지 않는다 (backend panel 070 P3).
+                os.close(tfd); closed = True
+                torn = False
+            finally:
+                if not closed:
+                    try: os.close(tfd)
+                    except OSError: pass
+            os.unlink(tmp_name, dir_fd=dfd)
+        except BaseException:
+            if not torn:              # 대상 무접촉 → tmp 제거. torn 이면 새 내용의 유일한 사본이라 남긴다.
+                try: os.unlink(tmp_name, dir_fd=dfd)
+                except OSError: pass
+            raise
+    except OSError as e:
+        # `dir_fd` 상대 연산의 `filename` 은 **basename** 뿐이라 SKIP 진단이 «어느 파일인지» 를 잃는다
+        # (backend panel 070 P3). 전체 경로로 다시 올린다.
+        if getattr(e, "filename", None) is not None and os.sep not in str(e.filename):
+            raise type(e)(e.errno, e.strerror, path) from None
         raise
+    finally:
+        os.close(dfd)
 
 
 def _hook_is_ours(entry: Any) -> bool:
@@ -3172,27 +3294,131 @@ def _uid_name(uid: int) -> str:
         return str(uid)
 
 
-def hooks_active_in(project_dir: str) -> bool:
+ACL_ACCESS_XATTR = "system.posix_acl_access"
+
+
+def settings_local_dead_acl(project_dir: str) -> Optional[str]:
+    """`settings.local.json` 의 **부여된 접근권이 이미 무력화됐는지** 판정한다 (read-only, 승격 없음).
+
+    signature: **확장 ACL 이 존재하는데 `mask` 가 0**. POSIX ACL 에서 `stat` 의 group 비트는 확장 ACL 이
+    붙은 파일에서 **`mask` 를 보고**하므로, 그 값이 0 이면 운영자가 부여한 `user:<peer>:rw` 류 named
+    entry 가 전부 `#effective:---` 다 — 즉 **부여한 사실은 파일에 남아 있는데 효력만 죽은** 상태다.
+    확장 ACL 이 아예 없는 평범한 0600 은 정상이므로 판정하지 않는다 (단일 계정 프로젝트에 소음 0).
+
+    이 상태는 `os.replace` 로 inode 를 갈아끼우던 시절의 잔재이거나(→ `_write_nofollow_replace` 가
+    write-through 로 봉인), 누군가 `chmod` 로 mode 를 되감아 `mask` 를 무너뜨린 결과다
+    (§13.2.10: «`chmod` 로 mode 를 되감는 방식은 쓰지 않는다»). 판정은 `os.lstat` + `os.listxattr` 만
+    쓴다 — 외부 ACL 유틸리티를 호출하지 않는다 (board_core.bats 37 의 정적 규율).
+    """
+    listxattr = getattr(os, "listxattr", None)         # macOS·비-Linux 에는 없다 — 없으면 판정하지 않는다
+    if listxattr is None:                              # (AttributeError 가 `except OSError` 를 빠져나가 «internal error» 가 되던 것)
+        return None
+    path = os.path.join(project_dir, SETTINGS_LOCAL_REL)
+    try:
+        st = os.lstat(path)
+        if not statmod.S_ISREG(st.st_mode) or ACL_ACCESS_XATTR not in listxattr(path):
+            return None
+    except OSError:
+        return None                                    # 부재·권한 부족은 여기서 판정하지 않는다 (hooks_status_in 이 구분한다)
+    if (st.st_mode & 0o070) != 0:
+        return None                                    # mask 가 살아 있다 — named entry 가 유효
+    return ("ACL mask 0 — 부여된 named ACL 이 전부 #effective:--- (소유 %s, mode %04o). 이 파일을 공유하는 "
+            "다른 계정 세션은 hook 을 못 올린다. 수정: setfacl -m u:<계정>:rw %s"
+            % (_uid_name(st.st_uid), statmod.S_IMODE(st.st_mode), path))
+
+
+def _not_activatable(path: str) -> Optional[str]:
+    """hook 을 **켤 수 없는** 쓰기 거부를 판정한다 (backend panel 070 P2).
+
+    읽기 축만 보면 «읽을 수는 있으나 쓸 수 없는» 대상(예: 0400)이 그대로 `INACTIVE` 로 나가
+    이 릴리스가 닫겠다고 한 «권한 문제의 미설치 둔갑» 이 그 축에서 되살아난다. write-through 는
+    대상 파일 자체에 써야 하므로(inode 보존이 요점) 쓰기 권한이 없으면 활성화가 **불가능**하다 —
+    v3.53.1 은 디렉터리 쓰기만으로 rename 이 됐으므로 이건 거동 변화이기도 하다.
+    부재는 여기서 판정하지 않는다 — 새로 만들면 되고, 그 실패는 `install-hooks` 가 대상별 SKIP 으로 낸다."""
+    if not os.path.exists(path):
+        return None
+    if os.access(path, os.W_OK):
+        return None
+    return ("쓰기 거부 — 이 계정(%s)이 %s 를 쓸 수 없어 hook 을 켤 수 없다%s"
+            % (_uid_name(os.getuid()), path, _owner_mode_hint(path)))
+
+
+def hooks_status_in(project_dir: str) -> Tuple[str, Optional[str]]:
+    """`(state, detail)` — state 는 `"active"` / `"INACTIVE"` / `"BLOCKED"`.
+
+    **«부재» 와 «권한으로 접근 불가» 를 구분한다** (AGENTS.md §13.2.10: "구분하지 않으면 권한 문제가
+    스키마·경로 문제로 둔갑한다"). 이전 구현은 `except OSError: return False` 로 EACCES 를 삼켜
+    권한 거부를 «hook 미설치» 와 같은 `INACTIVE` 로 보고했다 — 실측(2026-09-07): 한 소비자의 main +
+    16 worktree **전부**가 EACCES 였는데 doctor 는 17줄 모두 `INACTIVE` 만 냈고, 원인이 권한이라는
+    사실은 어디에도 나타나지 않았다. `grep` 이 읽지 못하면 조용히 false 를 내는 것과 같은 형태다.
+
+    구분은 **읽기·쓰기 두 축** 모두에서 한다 — 읽기만 보면 0400 대상이 다시 «미설치» 로 둔갑한다
+    (backend panel 070 P2). 활성이 아닌데 쓸 수도 없으면 `BLOCKED` 다.
+    """
+    state, detail = _hooks_state_read(project_dir)
+    if state == "INACTIVE":
+        w = _not_activatable(os.path.join(project_dir, SETTINGS_LOCAL_REL))
+        if w:
+            return "BLOCKED", w
+    return state, detail
+
+
+def _hooks_state_read(project_dir: str) -> Tuple[str, Optional[str]]:
+    """읽기 축 판정 — `hooks_status_in` 이 쓰기 축을 덧붙인다."""
     path = os.path.join(project_dir, SETTINGS_LOCAL_REL)
     try:
         raw = _read_nofollow(path) if os.path.lexists(path) else ""     # symlink 는 O_NOFOLLOW 가 ELOOP → 비활성으로 본다
+    except PermissionError:
+        return "BLOCKED", ("PermissionError — 이 계정(%s)이 %s 를 읽을 수 없다. hook 미설치가 아니라 접근 거부다%s"
+                           % (_uid_name(os.getuid()), path, _owner_mode_hint(path)))
     except OSError:
-        return False
+        return "INACTIVE", None
     try:
         o = json.loads(raw) if raw.strip() else {}
     except ValueError:
-        return False
+        return "INACTIVE", "invalid JSON — board 는 무접촉이다 (수기 복구 후 board.sh install-hooks)"
     hooks = o.get("hooks") if isinstance(o, dict) else None
     if not isinstance(hooks, dict):
-        return False
+        return "INACTIVE", None
     ok = all(any(_hook_is_ours(e) for e in (hooks.get(ev) or [])) for ev in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd", "FileChanged"))
     if not ok:
-        return False
+        return "INACTIVE", None
     for e in hooks.get("SessionStart") or []:          # 어댑터 실존까지 — wrapper 를 옮기면 stale 경로가 «active» 로 보이면 안 된다 (P3)
         if _hook_is_ours(e):
             parts = shlex.split(str(e["hooks"][0].get("command", "")))
-            return os.path.isfile(parts[1])
-    return False
+            if not os.path.isfile(parts[1]):
+                return "INACTIVE", "어댑터 부재: %s (wrapper 를 옮겼다면 board.sh install-hooks)" % parts[1]
+            return "active", None
+    return "INACTIVE", None
+
+
+def _owner_mode_hint(path: str) -> str:
+    """권한 거부 진단에 소유자·mode 를 덧붙인다 — 읽을 수 없어도 `lstat` 은 대개 가능하다."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return ""
+    return " (소유 %s, mode %04o)" % (_uid_name(st.st_uid), statmod.S_IMODE(st.st_mode))
+
+
+def _containing_target(cwd: str, targets: List[str]) -> Optional[str]:
+    """`cwd` 가 속한 worktree 를 고른다 (가장 긴 prefix). wrapper 등 어디에도 속하지 않으면
+    main worktree 를 «이 세션의 것» 으로 본다 — 소비자에서 doctor 는 대개 wrapper 나 `repo/` 에서 돈다.
+    `realpath` 로 정규화한다 (WSL·mac 의 경로 차이 — §13.2.7 edge case 와 같은 이유)."""
+    try:
+        c = os.path.realpath(cwd)
+    except OSError:
+        return targets[0] if targets else None
+    best = None
+    for t in targets:
+        try:
+            r = os.path.realpath(t)
+        except OSError:
+            continue
+        if c == r or c.startswith(r.rstrip(os.sep) + os.sep):
+            if best is None or len(r) > len(best[1]):
+                best = (t, r)
+    return best[0] if best else (targets[0] if targets else None)
 
 
 def do_install_hooks(cwd: str, extra_dirs: List[str]) -> str:
@@ -3417,6 +3643,8 @@ ERR_HINT: Dict[str, str] = {
     "group_missing": "board.sh bootstrap 은 그룹이 없으면 private 로 시작한다. shared 전환: 운영자(root)가 groupadd agent-board agent-board-ops; usermod -aG agent-board,agent-board-ops <uid>",
     "no_project_context": "AGENTS.md 가 있는 repo/worktree(또는 그 wrapper) 안에서 실행하라",
     "settings_symlink": ".claude/settings.local.json(또는 .claude/) 이 symlink 다 — 쓰지 않는다",
+    "settings_local_hardlinked": "settings.local.json 이 다른 파일과 hardlink 다 — 제자리 쓰기가 그 파일(예: 추적 파일 settings.json)을 오염시키므로 거부한다. 링크를 끊어라(cp --remove-destination)",
+    "settings_local_not_regular": "settings.local.json 이 정규파일이 아니다(FIFO·소켓·디바이스) — 쓰지 않는다. 그 경로를 정리하라",
     "settings_local_invalid_json": ".claude/settings.local.json 이 JSON 객체가 아니다 — 손으로 고친 뒤 board.sh install-hooks",
     "settings_local_not_ignored": ".claude/settings.local.json 이 git 에 추적될 수 있다 — .git/info/exclude 를 확인하라",
     "settings_local_tracked": ".claude/settings.local.json 이 이 저장소에 **추적**돼 있다 — 도구는 추적 파일을 쓰지 않는다(F0). PR 로 hook 을 넣거나 파일을 추적 해제하라",
