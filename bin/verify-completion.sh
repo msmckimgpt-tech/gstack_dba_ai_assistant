@@ -126,6 +126,9 @@ feature_dir() {
 is_meta_path() {
   local path="$1"
   case "$path" in
+    # inbox-autonomy:meta-config:v1
+    # Template migration state and repository ignore rules belong to META verification.
+    .gitignore|.template-state|playbooks/PB-0003-feature-completion.md) return 0 ;;
     AGENTS.md|AGENTS.override.md|CLAUDE.md|GEMINI.md) return 0 ;;
     bin/*|shared/docs/*|docs/*) return 0 ;;
     unit/_template/*) return 0 ;;

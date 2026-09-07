@@ -85,3 +85,9 @@ unit/feature-0043-external-llm-bridge/src/bridge_agent.py
 unit/feature-0003-agent-web-ui/src/static/agent/bridge_agent.py
 unit/feature-0003-agent-web-ui/src/static/agent/bridge_setup.sh
 unit/feature-0003-agent-web-ui/src/static/agent/bridge_setup.ps1
+unit/*/docs/reviews/.state-*
+unit/*/meta/reviews/.state-*
+unit/*/docs/.review-lock
+unit/*/meta/.review-lock
+meta/.review-lock
+meta/reviews/.state-*

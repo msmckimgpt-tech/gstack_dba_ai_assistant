@@ -1792,3 +1792,11 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 ## REV-20260907T042250-optional-board-compat [CODEX:optional-board-review] — PASS
 
 선택 기능인 Agent Board core가 없는 이전 소비자에서 Codex hook은 조용히 종료한다. core 파일 부재만 허용하며 설치된 core의 import/dependency 오류는 계속 stderr JSON으로 보고한다. core 설치·초기화나 hook 정의 변경은 하지 않는다. canonical template 80d9c409ac7e의 실제 복사 adapter 회귀를 포함한 10개 테스트를 독립 실행해 PASS를 확인했다. 런타임 검증은 종료 코드와 함께 오류 출력 부재를 판정한다.
+
+## REV-20260907T084131-chore-template-inbox-v3.54.0 [SUBAGENT:qa-reviewer] — PASS
+- Related TASK: _meta_
+- Trigger: template v3.54.0 frozen migration QA + actual consumer contract/idempotency verification
+- Timestamp: 2026-09-07T08:41:31Z
+- Verdict: PASS
+- Artifact: meta/reviews/2026-09-07T08:41:31Z-qa-reviewer.md
+- Human Approval Needed: no

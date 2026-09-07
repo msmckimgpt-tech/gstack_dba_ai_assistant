@@ -10,6 +10,16 @@ Arguments: `$ARGUMENTS`
 This is the Codex-owned counterpart of Claude Code's `/_template:entry`.
 It preserves the same user-facing intent while using Codex-native behavior.
 
+<!-- inbox-autonomy:codex-entry:v1 -->
+**착수 신호·정책 재독·버전 경고 (v3.54.0)**: 도구로 정책을 읽기 전에 사용자에게 목적과 첫 작업을
+한 번 알리고, 도구 작업이 길어지면 진행 상태를 알린다. 빈 인사말만으로 대체하지 않는다.
+진입·cycle 경계에 실제 정책 경로와 내용 SHA-256을 대조하고 변경된 규정을 재독한다.
+하네스 권장 버전 미달은 안내·경고이며 시작 차단 사유가 아니다. 가용 기능·대체 수단으로 진행한다.
+이전 REVIEW/TASK의 verification_debt가 있으면 복구 여부와 필요한 재검증을 확인한다.
+네이티브 auto-continue와 stale 재호출의 구분은 AGENTS.md §22.12의 명시 활성 등록 계약을 따른다.
+
+<!-- /inbox-autonomy:codex-entry:v1 -->
+
 ## Required Flow
 
 1. Resolve `policy_root` as a directory:
