@@ -794,3 +794,47 @@ grep 은 «내가 지운 심볼» 을 찾았을 뿐 «그 심볼이 없어진 �
 ### 잔여
 
 - 확인 라운드(§18.8 (a) — P1 수정 라운드 자체는 종결 근거가 아니다) 1회 필요.
+
+
+## REV-20260907T174500-ai-claude-corp-feature-0007-local-llm-decommission [CODEX:local-llm-decommission-R2] — P1 0 / P2 1 → 수정
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Source: codex review --base main (codex-cli 0.153.4, gpt-6-astra, effort high) — **확인 라운드 R2**
+- Trigger: §18.8 (a) — P1 을 수정한 라운드 자체는 종결 근거가 아니므로 확인 라운드 1회 필수
+- Timestamp: 2026-09-07T17:45:00+09:00
+- Verdict: **P1 0건** (종결 조건 충족) · **P2 1건** → 수정 완료
+- Human Approval Needed: no
+
+### R2 지적 (수용)
+
+- **[P2] Apply the disabled-model guard to the CLI entry point too**
+  (`kb_embedding_worker.py:288-290`). 인용: *"`bin/kb-embedding-worker.sh` still invokes
+  `main()`, which bypasses this guard and sends `model=""` to the gateway … exits with an API
+  failure instead of recognizing that embedding is disabled."* + *"follows the all-entrypoints
+  requirement in AGENTS.md#L2879-L2881"*(= §16.7 G8-a).
+
+### 이것이 내 자기 진단의 재발이다 (기록)
+
+직전 REVIEW(REV-20260907T163000) §「왜 이 두 건이 내 게이트를 통과했는가」에서 나는 이렇게 적었다 —
+**"제거 변경의 적용면은 «제거한 심볼» 이 아니라 «그 심볼이 채우던 자리» 다."** 그러고서 그 교훈을
+적용한 수정에서 **같은 실수를 반복했다**: 빈 모델을 소비하는 자리가 둘(`run_embedding_pass`,
+`main()`)인데 하나만 막았다. 진단을 적는 것과 그 진단이 다음 행동을 바꾸는 것은 다르다.
+
+§16.7 G10 이 정확히 이 상황을 규정한다 — **재발 관측 시 점수정으로 종결하지 않고 클래스를
+구조로 잠근다**. 그래서 이번엔 진입점을 하나 더 막는 대신 **chokepoint 를 만들고 모수를 AST 로
+강제**했다. 다음 진입점은 가드를 우회할 수 없고, 우회하려면 테스트가 먼저 깨진다.
+
+### P 추이 (§18.8 (b) 비단조 판정)
+
+| 라운드 | P1 | P2 | 판정 |
+|---|---|---|---|
+| R1 | 1 | 1 | BLOCK → 전건 수정 |
+| R2 | **0** | 1 | P1 종결 조건 충족 · P2 수정 |
+| R3 | (확인 대기) | | — |
+
+P1 이 1 → 0 으로 단조 감소했고 진동이 없다. P2 는 R1·R2 각 1건이나 **같은 클래스의 잔여**였고
+R2 에서 구조 승격으로 소거했으므로 «수정이 새 결함을 만드는» 형태(§18.8 (b))는 아니다.
+
+### 잔여
+
+- R3 확인 라운드 1회 (구조 승격이 새 결함을 만들지 않았는지).

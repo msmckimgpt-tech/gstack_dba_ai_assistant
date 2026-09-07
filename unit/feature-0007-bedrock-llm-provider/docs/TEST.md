@@ -674,3 +674,27 @@ INFO:     Uvicorn running on http://0.0.0.0:8080
 
 ⚠ 수치 일치를 집합 일치로 갈음하지 않았다 — 두 수가 같아도 서로 다른 실패일 수 있으므로
 정렬 후 `comm` 으로 대조했다.
+
+
+### Run 2026-09-07-local-llm-decommission-R2
+
+**대상**: codex 확인 라운드 R2 의 P2 수정 (빈-모델 가드 구조 승격)
+
+| 검증 | 결과 |
+|---|---|
+| `test_kb_embedding_gateway_failclosed.py` (6 → **10건**) | 전량 통과 |
+| 결함 주입 ⓐ `main()` 조기 종료 제거 (**R2 P2 의 정확한 형태**) | `test_cli_entrypoint_exits_zero_when_model_unset` **FAIL** |
+| 결함 주입 ⓑ chokepoint 빈-모델 가드 제거 | `test_chokepoint_blocks_empty_model` **FAIL** |
+| 결함 주입 ⓒ chokepoint 밖에서 `OpenAI(` 생성 | `test_all_gateway_entrypoints_route_through_chokepoint` **FAIL** (+ CLI 2건 부수) |
+| 원복 후 재실행 | 10건 통과 · `git diff --stat` = 30+/1- (수정분뿐) |
+
+#### 신규 테스트의 성격
+
+- `test_chokepoint_blocks_empty_model` — 빈 모델(`""`·공백·`None`) 3형태에서 **클라이언트 생성
+  자체가 일어나지 않음**을 단정. 계약은 "실패한다" 가 아니라 "게이트웨이로 나가지 않는다".
+- `test_cli_entrypoint_exits_zero_when_model_unset` — `main()` 이 **exit 0 + `[DISABLED]`** 로
+  끝나고 PG 연결·임베딩 호출 어느 쪽도 하지 않음. 비활성 ≠ 실패.
+- `test_cli_entrypoint_honours_explicit_model_override` — `--model` override 시 정상 경로를 그대로
+  탄다 (§16.7 G9-c — 차단 로직이 정상 경로를 막지 않는지 실측).
+- `test_all_gateway_entrypoints_route_through_chokepoint` — **모수 검증** (§16.7 G12-b). 모수를
+  손으로 열거하지 않고 AST 로 소스를 조회해 구성하므로 **새 진입점이 자동으로 모수에 들어온다**.

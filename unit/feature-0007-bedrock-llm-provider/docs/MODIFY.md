@@ -767,3 +767,28 @@ source_of_truth: true
   포함) → 원복 후 6건 통과 → `git diff --stat` 로 원복 확인.
 - Cross-ref: TASK `## TASK-20260907T152000-local-llm-decommission` 의 적대 검증 항목 ·
   REVIEW REV-20260907T163000 · TEST Run 2026-09-07-local-llm-decommission-P1P2.
+
+
+## CHG-20260907T174500-ai-claude-corp-feature-0007-local-llm-decommission — 확인 라운드 R2 P2: 빈-모델 가드를 구조로 승격
+
+`codex review --base main`(확인 라운드 R2)이 **P1 0건 · P2 1건**을 냈다. P2 는 직전 CHG 가
+남긴 것이며 **내가 그 CHG 의 REVIEW 에서 자기 진단한 형태의 재발**이다.
+
+- **지적**: R1 의 P2 를 `run_embedding_pass` 진입 가드로만 고쳤더니 형제 진입점 `main()`
+  (= `bin/kb-embedding-worker.sh`)이 우회해 `model=""` 를 게이트웨이로 보내고, "임베딩 비활성"
+  이 아니라 **API 실패로 종료**한다. codex 가 `AGENTS.md` §16.7 G8-a(모든 호출 경로 열거)를
+  근거로 인용했고 그 인용이 정확하다.
+- **왜 점수정하지 않았는가**: 진입점별 가드는 **다음 진입점에서 다시 벌어진다**. §16.7 G10 은
+  재발 관측 시 클래스 전체를 잠그는 구조 테스트로 승격하라고 요구한다. 두 진입점이 반드시
+  지나는 `call_openai_embeddings` 에 가드를 두어 앞으로 추가되는 경로도 자동으로 덮이게 했다.
+- **호출측 UX 는 각자 담당**: `main()` 은 `[DISABLED]` 안내 + **exit 0**(비활성은 실패가 아니다 —
+  실패로 끝내면 cron·래퍼가 장애로 보고 재시도·알림을 쌓는다), `run_embedding_pass` 는 PG 연결
+  조차 열지 않는 조기 no-op. `--model` 명시 override 는 양쪽에서 보존된다(§16.7 G9-c — 차단이
+  정상 경로를 막지 않는지 실측 포함).
+- **모수 검증** (§16.7 G12-b): `test_all_gateway_entrypoints_route_through_chokepoint` 가 AST 로
+  `OpenAI(` 직접 생성 지점이 `call_openai_embeddings` 하나뿐임을 강제한다. 모수를 손으로 열거하지
+  않고 **소스에서 조회**하므로 새 진입점이 자동으로 모수에 들어온다.
+- **결함 주입 3형태 실증**: ⓐ `main()` 조기 종료 제거 → CLI 테스트 FAIL ⓑ chokepoint 가드 제거 →
+  chokepoint 테스트 FAIL ⓒ chokepoint 밖 `OpenAI(` 생성 → AST 모수 테스트 FAIL. 원복 후 10건 통과.
+- 테스트 6 → **10건**.
+- Cross-ref: REVIEW REV-20260907T174500 · TEST Run 2026-09-07-local-llm-decommission-R2.

@@ -138,3 +138,98 @@ def test_backfill_still_runs_when_model_set(monkeypatch):
     rep = W.run_embedding_pass(max_rows=10)
     assert rep["processed"] == 1, rep
     assert rep.get("skipped") is None, rep
+
+
+# ── R2 P2: 빈-모델 가드가 **전 진입점**을 덮는다 (§16.7 G8-a·G10·G12) ──────────
+#
+# R1 에서 `run_embedding_pass` 만 막았더니 형제 진입점 `main()`(= bin/kb-embedding-worker.sh)이
+# 우회해 `model=""` 를 게이트웨이로 보냈다. 진입점별 가드는 **다음 진입점에서 다시 벌어지므로**
+# (G10 재발 클래스) 두 진입점이 반드시 지나는 `call_openai_embeddings` 를 chokepoint 로 삼았다.
+# 아래 테스트의 모수는 "가드를 넣은 함수" 가 아니라 **"게이트웨이로 나갈 수 있는 진입점 전체"** 다.
+
+
+def test_chokepoint_blocks_empty_model(monkeypatch):
+    """공유 chokepoint 가 빈 모델을 클라이언트 생성 전에 차단한다 (구조 잠금)."""
+    monkeypatch.setenv("BEDROCK_GATEWAY_API_KEY", "k")
+    monkeypatch.setenv("BEDROCK_GATEWAY_URL", "http://bedrock-gateway:8080/v1")
+
+    class _Boom:
+        def __init__(self, *a, **kw):
+            raise AssertionError("빈 모델인데 OpenAI 클라이언트가 생성됐다")
+
+    import openai as _openai
+    monkeypatch.setattr(_openai, "OpenAI", _Boom)
+
+    for empty in ("", "   ", None):
+        with pytest.raises(RuntimeError) as ei:
+            W.call_openai_embeddings(["텍스트"], empty, 5, 1)
+        assert "임베딩 모델 미설정" in str(ei.value), (empty, str(ei.value))
+
+
+def test_cli_entrypoint_exits_zero_when_model_unset(monkeypatch, capsys):
+    """`main()` (= bin/kb-embedding-worker.sh) 은 **exit 0 + 안내**로 끝난다.
+
+    비활성은 실패가 아니다 — API 실패로 끝내면 cron·래퍼가 장애로 보고 재시도·알림을 쌓는다.
+    그리고 PG 연결·게이트웨이 호출 어느 쪽도 일어나지 않아야 한다.
+    """
+    monkeypatch.setattr(sys, "argv", ["kb_embedding_worker.py"])
+    monkeypatch.setattr(W, "get_settings", lambda: {
+        "model": "", "dim": 1024, "batch_size": 25, "timeout": 300, "max_attempts": 3,
+    })
+    monkeypatch.setattr(W, "open_pg_conn", lambda: (_ for _ in ()).throw(
+        AssertionError("모델 미설정인데 PG 연결을 열었다")))
+    monkeypatch.setattr(W, "call_openai_embeddings", lambda *a, **kw: (_ for _ in ()).throw(
+        AssertionError("모델 미설정인데 임베딩을 호출했다")))
+
+    assert W.main() == 0
+    err = capsys.readouterr().err
+    assert "[DISABLED]" in err, err
+
+
+def test_cli_entrypoint_honours_explicit_model_override(monkeypatch):
+    """`--model` 명시 override 는 보존된다 (§16.7 G9-c — 차단이 정상 경로를 막지 않는다)."""
+    monkeypatch.setattr(sys, "argv", ["kb_embedding_worker.py", "--model", "titan-embed", "--dry-run"])
+    monkeypatch.setattr(W, "get_settings", lambda: {
+        "model": "", "dim": 1024, "batch_size": 2, "timeout": 300, "max_attempts": 1,
+    })
+    monkeypatch.setattr(W, "open_pg_conn", lambda: object())
+    monkeypatch.setattr(W, "count_pending", lambda conn: 3)
+    monkeypatch.setattr(W, "fetch_pending_batch", lambda conn, n: [("h1", "t1")])
+    monkeypatch.setattr(W, "close_pg_conn", lambda conn: None, raising=False)
+
+    # --dry-run 이므로 임베딩 호출 없이 비용 추정까지만 — 즉 «비활성» 으로 조기 종료되지 않는다.
+    assert W.main() == 0
+
+
+def test_all_gateway_entrypoints_route_through_chokepoint():
+    """**모수 검증** — 게이트웨이로 나가는 경로가 chokepoint 를 지나는지 AST 로 강제한다.
+
+    `openai.OpenAI(` 를 직접 생성하는 지점이 `call_openai_embeddings` 하나여야 한다.
+    새 진입점이 자기 클라이언트를 만들면 가드를 우회하므로 여기서 잡는다 (§16.7 G12-b —
+    모수를 손으로 열거하지 않고 노출면을 조회해 구성한다).
+    """
+    import ast
+    src = pathlib.Path(W.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    creators = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+        if name != "OpenAI":
+            continue
+        # 이 Call 을 감싸는 최상위 함수 이름을 찾는다
+        owner = None
+        for cand in ast.walk(tree):
+            if isinstance(cand, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if any(n is node for n in ast.walk(cand)):
+                    owner = cand.name
+        creators.append(owner)
+
+    assert creators, "OpenAI 클라이언트 생성 지점을 찾지 못했다 — 테스트가 무엇도 검사하지 않는다"
+    assert set(creators) == {"call_openai_embeddings"}, (
+        f"chokepoint 밖에서 OpenAI 클라이언트를 만드는 함수: {sorted(set(creators) - {'call_openai_embeddings'})}. "
+        "게이트웨이로 나가는 경로는 call_openai_embeddings 를 지나야 빈-모델·paired-설정 가드가 적용된다."
+    )
