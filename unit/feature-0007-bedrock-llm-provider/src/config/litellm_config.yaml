@@ -34,7 +34,13 @@
 # Bedrock 의 "Model access" 페이지에 표시되는 ARN 또는 invocation ID 를 그대로
 # 사용한다.
 
-model_list:
+# ⚠ 활성 model 0개 (2026-09-07, local-llm-decommission)
+#   chat alias 14종은 feature-0043(서버 계정 LLM fail-closed)에서, titan-embed 는 본 cycle 에서
+#   주석 처리됐다. 게이트웨이 컨테이너(bedrock-gateway)는 feature-0020 무중단 배포 machinery
+#   (surge replica · recreate-audit · smoke)에 배선돼 있어 이 cycle 의 범위에서 제외했다 —
+#   "외부 LLM 게이트웨이 자체를 철거할지" 는 로컬 LLM 미사용과 별개 결정이므로 후속으로 남긴다.
+#   빈 리스트(`[]`)로 명시해 YAML null 이 되지 않게 한다(기동 실측 완료).
+model_list: []
   # ── Claude Opus 5 (frontier 최상위, ACTIVE) — opus5-model 2026-07-27 ─────────────────
   #    사용자 요청으로 assistant 선택 가능 모델에 Opus 를 추가한다("claude-corp 및 root 계정 포함").
   #    sonnet 이 겪은 단일계정 실패 모드를 반복하지 않도록 **처음부터 3 deployment** 로 둔다:
@@ -231,15 +237,19 @@ model_list:
 
   # ── 로컬 gemma(edge) via local-llm-gateway — **현재 어떤 fallback 체인에도 등록되지 않음** ──
   # llm-edge-free-routing(2026-07-30, 사용자 결정 "로컬 LLM 미사용"): 아래 litellm_settings.fallbacks 에서
-  # edge-fallback 참조를 전부 제거했다. deployment 정의만 남겨 두는 이유는 되돌리기(운영자가 로컬 폴백을
-  # 다시 원할 때 fallbacks 한 줄로 복구) 를 위해서다 — 정의가 남아 있어도 참조가 없으면 라우팅되지 않는다.
+  # edge-fallback 참조를 전부 제거하고, deployment 정의는 되돌리기용으로 남겨 뒀다.
+  # ⚠ local-llm-decommission(2026-09-07): 그 "되돌리기용 보존" 의 전제가 소멸했다 — 사용자 결정으로
+  #   local_llm 프로젝트 자체가 폐기(컨테이너 제거 + 모델 16GB 삭제)됐으므로 api_base 가 가리키는
+  #   local-llm-gateway 가 존재하지 않는다. 정의를 주석으로 강등해 "복구 가능한 정의" 가 아니라
+  #   "이력" 으로 남긴다. 되살리려면 local_llm 프로젝트 복원(모델 재다운로드 ~16GB)이 선행된다.
   # ⚠ 다시 등록하려면 그것이 사용자 결정 override 임을 인지할 것(§12.3 외부 영향 — 산출물 품질 저하).
   # local-llm-gateway 는 OpenAI 호환 chat(gemma4:e2b) — thinking 미지원이라 litellm drop_params 가 제거.
   # api_key 는 비밀 아님(로컬 게이트웨이) — 리터럴.
+#   (제거됨 2026-09-07, local-llm-decommission — 아래 «되돌리기용 보존» 근거가 소멸했다)
 #   - model_name: edge-fallback
 #     litellm_params:
 #       model: openai/gemma4:e2b
-#       api_base: http://local-llm-gateway:8080/v1
+#       api_base: http://local-llm-gateway:8080/v1   ← 이 게이트웨이 컨테이너 자체가 폐기됨
 #       api_key: "local-no-key"
 
   # ── KB 임베딩 alias `titan-embed` (1024-dim) — TASK-0135 (#13) ────────
@@ -269,10 +279,19 @@ model_list:
   # dbnet)는 bge-m3 만 단독 상주(KEEP_ALIVE=-1)시켜 영구 warm(실측 0.33s). 차원
   # 동일(1024) 이라 백필/검색 호환. Bedrock Titan 복구 시 아래 토글로 되돌리고
   # embed-ollama 서비스는 비활성화한다.
-  - model_name: titan-embed
-    litellm_params:
-      model: ollama/bge-m3
-      api_base: http://embed-ollama:11434
+  # ── titan-embed (→ 로컬 Ollama bge-m3) 제거 (2026-09-07, local-llm-decommission) ──
+  #   사용자 결정 "로컬 LLM 은 더 이상 사용하지 않는다"(2026-09-07). 본 alias 의 백엔드였던
+  #   embed-ollama 서비스를 같은 cycle 에서 docker-compose.yml 에서 제거했으므로, alias 를
+  #   남겨 두면 도달 불가 백엔드를 가리키는 활성 라우트가 된다.
+  #   KB 검색 영향: kb_retrieval 이 "쿼리 임베딩 실패/미설정 시 pg_trgm fallback" 을 이미
+  #   구현하고 있어(2-tier, 롤백 안전) 기능이 끊기지 않고 벡터→trigram 으로 강등된다.
+  #   되돌리기: docker-compose.yml 의 embed-ollama 블록 + volumes.embed_ollama_models 를
+  #   복원하고 아래 4줄의 주석을 해제한다. docker 볼륨은 삭제하지 않았으므로 bge-m3 가
+  #   그대로 남아 있다(재다운로드 불요).
+  #   - model_name: titan-embed
+  #     litellm_params:
+  #       model: ollama/bge-m3
+  #       api_base: http://embed-ollama:11434
   # ── 배포 복구용 (Bedrock Titan v2, Seoul) — AWS_* 자격 확보 후 위 3줄과 토글 ──
   # amazon.titan-embed-text-v2:0 는 Seoul region 접근 가능 확인(2026-06-02 boto3
   # probe, dim=1024). Bedrock 자격(AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)을

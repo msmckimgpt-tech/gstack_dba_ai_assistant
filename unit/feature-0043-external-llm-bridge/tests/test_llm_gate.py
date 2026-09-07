@@ -181,26 +181,54 @@ def test_litellm_config_has_no_active_chat_alias():
     assert leaked == [], f"활성 chat alias 잔존: {leaked}"
 
 
-def test_litellm_config_keeps_local_embedding_alias():
-    """AC-7 — 로컬 임베딩(`titan-embed` → bge-m3)은 계정과 무관하므로 살아 있어야 한다.
+def test_litellm_config_has_no_local_embedding_alias():
+    """AC-7 **SUPERSEDED** (2026-09-07, local-llm-decommission) — 로컬 임베딩 alias 도 없다.
 
-    이걸 함께 끄면 KB 검색이 죽는다. 사용자가 요청한 것은 '계정 사용 차단' 이지
-    '임베딩 중단' 이 아니다 — 그 경계를 테스트로 고정한다.
+    종전 계약(AC-7, feature-0043 2026-08-26): `titan-embed`(→ 로컬 Ollama bge-m3)는 계정과
+    무관하므로 **살아 있어야 한다** — "사용자가 요청한 것은 '계정 사용 차단' 이지 '임베딩 중단'
+    이 아니다" 는 경계 고정이었다.
+
+    그 경계가 사용자 결정으로 이동했다: **"로컬 LLM 은 더 이상 사용하지 않는다"(2026-09-07)** —
+    계정 축이 아니라 *로컬 실행* 축의 결정이므로 임베딩도 포함된다. 따라서 백엔드
+    `embed-ollama` 서비스와 이 alias 를 함께 제거했다.
+
+    KB 검색은 죽지 않는다 — `kb_retrieval` 이 "쿼리 임베딩 미설정/실패 시 pg_trgm fallback"
+    (2-tier, 롤백 안전)을 이미 구현하고 있어 **벡터 축만 강등**된다. 기존 임베딩
+    (texts 154,365행)은 삭제하지 않았으므로 제공자 복구 시 그대로 재사용된다.
     """
     active_models = [
         m.group(1)
         for m in (re.match(r"^\s*-\s*model_name:\s*(\S+)", ln) for ln in _active_lines())
         if m
     ]
-    assert "titan-embed" in active_models, "임베딩 alias 까지 꺼졌다 — 부수 피해"
+    assert "titan-embed" not in active_models, (
+        "titan-embed alias 가 되살아났다 — 백엔드(embed-ollama)를 실제로 복원했다면 이 테스트도 "
+        "함께 되돌릴 것(docstring 의 supersede 경위 참조)"
+    )
 
 
 def test_litellm_config_still_parses():
-    """주석 처리 후에도 유효한 YAML 이고 model_list 가 비어 있지 않다."""
+    """주석 처리 후에도 유효한 YAML 이고 필수 키가 살아 있다.
+
+    ⚠ 종전 단언은 `assert doc.get("model_list")` — 즉 **비어 있지 않음**이었고 사유는
+    "model_list 가 비었다 — 게이트웨이 기동 실패" 였다. 그 사유는 **가정이었고 실측으로
+    반증됐다** (2026-09-07): `ghcr.io/berriai/litellm:main-stable` 을 `model_list: []` 로
+    직접 기동해 `Application startup complete` + `/health/liveliness` 200 +
+    `/health/readiness` 200 을 확인했다. 활성 모델 0개는 기동 실패 사유가 아니다.
+
+    그래서 단언을 "비어 있지 않음" → **"키가 존재하고 리스트 타입"** 으로 옮긴다.
+    지키려는 것은 `model_list:` 를 통째로 지워 YAML `null` 이 되는 상태(그건 파서 층에서
+    다르게 취급될 수 있다)이지, 항목 수가 아니다. 항목 수 계약은 위
+    `test_litellm_config_has_no_local_embedding_alias` 와 chat alias 테스트가 담당한다.
+    """
     yaml = pytest.importorskip("yaml")
     doc = yaml.safe_load(LITELLM_CFG.read_text(encoding="utf-8"))
     assert isinstance(doc, dict)
-    assert doc.get("model_list"), "model_list 가 비었다 — 게이트웨이 기동 실패"
+    assert "model_list" in doc, "model_list 키가 통째로 사라졌다 — YAML null 회귀"
+    assert isinstance(doc["model_list"], list), (
+        f"model_list 가 리스트가 아니다: {type(doc['model_list']).__name__} "
+        "(빈 키로 두면 None 이 된다 — `model_list: []` 로 명시할 것)"
+    )
     assert doc.get("general_settings", {}).get("master_key")
 
 

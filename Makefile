@@ -37,7 +37,7 @@ BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FI
 .DEFAULT_GOAL := help
 
 .PHONY: help \
-        check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db \
+        ensure-replica-network replica-check wait-mysql ensure-memory-db \
         up down start stop restart status build test backup gc embed ps logs init clean clear \
         bridge-agent \
         sh repl ask mysql out dump session-info dc-build \
@@ -80,12 +80,11 @@ help:  ## meta: 이 도움말을 출력한다 (기본 타깃)
 # 내부 prerequisites (사용자가 직접 호출하지 않음 — help 에서 숨김)
 # =============================================================================
 
-check-llm-network: ensure-replica-network
-	@docker network inspect llm-shared >/dev/null 2>&1 || { \
-		echo "llm-shared 외부 네트워크를 찾을 수 없습니다." >&2; \
-		echo "현재 repo는 Local LLM을 직접 기동하지 않습니다. 먼저 /root/download/docker/local_llm 에서 provider를 준비하세요." >&2; \
-		exit 1; \
-	}
+# check-llm-network 제거 (2026-09-07, local-llm-decommission)
+#   사용자 결정 "로컬 LLM 미사용" 으로 llm-shared 외부 네트워크에 attach 하는 서비스가
+#   0개가 됐다(docker-compose.yml). 별도 local_llm provider 준비는 더 이상 전제조건이
+#   아니므로 이 게이트를 제거하고, 호출부 16곳은 실제로 남는 일인 ensure-replica-network
+#   를 직접 호출한다. 되돌리기: 이 블록을 되살리고 호출부를 다시 가리키게 한다.
 
 # replica-net 은 AI 전용 복제 MySQL 이 있는 docker network (기본 이름 replica-net).
 # REPLICA_DB_* 를 쓰지 않는 배포에서도 idempotent 하게 스텁 네트워크를 만들어
@@ -145,7 +144,7 @@ quiesce-guard:  ## lifecycle: 진행 중 사용자 run 이 없는지 확인(재�
 	@FORCE_BUSY=$${FORCE_BUSY:-0} bash -c '		DC=(docker compose -f docker-compose.yml); DC_PROD=("$${DC[@]}"); REPLICAS=(web-a web-b); 		. bin/lib/quiesce.sh; 		quiesce_gate "make $(MAKECMDGOALS)" || { 			echo "[make] 진행 중 사용자 run 이 있어 중단했습니다. 조용해진 뒤 재실행하거나 FORCE_BUSY=1 로 강행하세요." >&2; 			exit 1; }'
 
 up: quiesce-guard  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-worker, ask-worker, ops-scheduler, [mcp], [caddy])
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
 	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
 	@chmod -R 770 $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) || true
@@ -304,7 +303,7 @@ eval:  ## ci: NL→SQL 평가 harness (ITEM-01) — golden 질문을 실제 파�
 	  python /work/unit/feature-0002-agent-core/tests/eval/runner.py $(EVAL_ARGS); \
 	'
 
-kb-retrieval-eval:  ## ci: KB retrieval A/B (ITEM-05) — fusion vs 2-tier precision/recall@k. evalkb scope 격리 + 라이브 bge-m3 임베딩. 옵션: KB_EVAL_ARGS="--provision --purge-after --k 5"
+kb-retrieval-eval:  ## ci: KB retrieval A/B (ITEM-05) — fusion vs 2-tier precision/recall@k. evalkb scope 격리. (2026-09-07 로컬 LLM 제거 후 쿼리 임베딩은 미설정 → kb_retrieval 이 pg_trgm 로 fallback 하므로 벡터 축 A/B 는 임베딩 제공자 복구 시에만 유효하다.) 옵션: KB_EVAL_ARGS="--provision --purge-after --k 5"
 	@$(MAKE) -s dc-build SERVICE=agent
 	@$(DC_QUIET) run --rm \
 	  -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
@@ -356,7 +355,7 @@ out:  ## status: shared/out 과 shared/logs 디렉토리 내용 표시
 	ls -alh $(LOG_DIR) 2>/dev/null || true
 
 replica-check:  ## status: replica MySQL 네트워크 도달 가능성 점검
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@./scripts/check_replica.sh
 
 # =============================================================================
@@ -364,11 +363,11 @@ replica-check:  ## status: replica MySQL 네트워크 도달 가능성 점검
 # =============================================================================
 
 sh:  ## agent: agent 컨테이너에 bash 진입
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --entrypoint bash agent
 
 repl:  ## agent: agent REPL 모드
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --repl
 
 ask: init  ## agent: 1회성 질의 실행 (사용법: make ask q="질문")
@@ -376,7 +375,7 @@ ask: init  ## agent: 1회성 질의 실행 (사용법: make ask q="질문")
 		echo '사용법: make ask q="질문"'; \
 		exit 1; \
 	fi
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent "$(q)"
 
 init:  ## agent: memory DB 초기화 (idempotent — SKIP_INIT=1 로 우회 가능)
@@ -394,7 +393,7 @@ mysql: init  ## db: mysql 클라이언트로 SQL 실행 (사용법: make mysql s
 		echo '사용법: make mysql sql="SELECT 1;"'; \
 		exit 1; \
 	fi
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@$(DC_QUIET) run --rm --remove-orphans --entrypoint bash --env SQL="$(sql)" agent -lc 'mysql -h "$$DB_HOST" -P "$$DB_PORT" -u "$$DB_USER" -p"$$DB_PASSWORD" -e "$$SQL"'
 
 dump:  ## db: 특정 데이터베이스 덤프 (사용법: make dump db=name [file=out.sql])
@@ -459,11 +458,11 @@ migrate-new:  ## db: 신규 revision 생성 (사용법: make migrate-new name="a
 # =============================================================================
 
 convo-list: init  ## convo: 저장된 대화 목록 표시
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --list-conversations
 
 convo-new: init  ## convo: 새 대화 시작
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --new-conversation
 
 convo-use: init  ## convo: 특정 대화로 전환 (사용법: make convo-use index=N [q="질문"])
@@ -471,7 +470,7 @@ convo-use: init  ## convo: 특정 대화로 전환 (사용법: make convo-use in
 		echo '사용법: make convo-use index=1 q="질문"'; \
 		exit 1; \
 	fi
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@if [[ -z "$(q)" ]]; then \
 		AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --use-conversation-index "$(index)"; \
 	else \
@@ -483,7 +482,7 @@ convo-delete: init  ## convo: 특정 대화 삭제 (사용법: make convo-delete
 		echo '사용법: make convo-delete index=1'; \
 		exit 1; \
 	fi
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --delete-conversation-index "$(index)"
 
 convo-rename: init  ## convo: 대화 주제 변경 (사용법: make convo-rename index=N topic="새 주제")
@@ -491,11 +490,11 @@ convo-rename: init  ## convo: 대화 주제 변경 (사용법: make convo-rename
 		echo '사용법: make convo-rename index=1 topic="새 주제"'; \
 		exit 1; \
 	fi
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --rename-conversation-index "$(index)" --rename-topic "$(topic)"
 
 convo-clear: init  ## convo: 모든 메모리 테이블 비우기
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent "__CLEAR_MEMORY_TABLES__"
 
 # =============================================================================
@@ -504,7 +503,7 @@ convo-clear: init  ## convo: 모든 메모리 테이블 비우기
 
 web: init  ## web: Web UI 기동 (web-a/web-b 2-replica + Caddy :443 단일 진입). 라이브 무중단 재배포는 'make deploy-web'.
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then $(MAKE) -s web-tls-cert; fi
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@# feature-0014: 두 replica(web-a/web-b). 동일 Dockerfile 이라 빌드 캐시로 사실상 build-once.
 	@$(DC_QUIET) build web-a web-b || true
 	@for img in repo-web-a repo-web-b; do docker image inspect $$img >/dev/null 2>&1 || { echo "[make web] 이미지 누락: $$img" >&2; exit 1; }; done
@@ -558,7 +557,7 @@ web-tls-cert:  ## web: 자체 서명 인증서 생성 (이미 있으면 재사�
 
 web-tls-up: init web-tls-cert  ## web: web-a/web-b + caddy 를 TLS 모드로 기동
 	@mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@$(DC_QUIET) up -d --build web-a web-b
 	@$(DC_QUIET) up -d caddy
 	@echo "TLS Web UI: https://$(WEB_PUBLIC_HOST)"
@@ -578,7 +577,7 @@ web-tls-logs:  ## web: caddy 로그 follow
 # =============================================================================
 
 insight-up:  ## insight: insight-worker 기동
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@$(MAKE) -s dc-build SERVICE=insight-worker
 	@$(DC_QUIET) up -d --no-build insight-worker
 
@@ -596,7 +595,7 @@ insight-logs:  ## insight: insight-worker 로그 follow
 # =============================================================================
 
 ask-worker-up:  ## ask-worker: ask-worker 기동
-	@$(MAKE) check-llm-network
+	@$(MAKE) ensure-replica-network
 	@$(MAKE) -s dc-build SERVICE=ask-worker
 	@$(DC_QUIET) up -d --no-build ask-worker
 

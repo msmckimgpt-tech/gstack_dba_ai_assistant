@@ -707,3 +707,35 @@ source_of_truth: true
 - **유지되는 결함 판정(재평가 대상 아님)**: 같은 리뷰의 나머지 P1 — burst-429 오강등, recreate 실패 영구화, `--check` 가 회전, selector 사망에 의한 slot 무음 정지, `expires_in` 과거 만료 되쓰기, POST 후 백업 실패로 refresh token 유실 — 은 전부 **권한과 무관한 가용성·정합성 결함**이고 이미 수정됐다.
 - **왜 기록하는가**: 원장에 열린 P1 으로 남겨 두면 다음 적대 패널이 같은 것을 다시 최상위로 올려 실제 결함 탐색 예산을 갉아먹는다. 향후 리뷰어는 이 항목을 **환경 전제**로 읽어야 한다.
 - Cross-ref: REVIEW REV-20260811T140000 · TASK `## TASK-20260811T120000-oauth-auto-rotate` 이월 종결 · 선행 REV-20260807T190000 / REV-20260811T120000.
+
+
+## CHG-20260907T152000-ai-claude-corp-feature-0007-local-llm-decommission — 로컬 LLM 전면 폐기 (사용자 결정 2026-09-07)
+
+- **결정**: "로컬 LLM 은 더 이상 사용하지 않는다." 2026-07-30 `llm-edge-free-routing`(자동 강등 경로 제거)과
+  2026-08-26 feature-0043(서버 계정 chat fail-closed)이 남긴 **로컬 실행 잔여를 전량 제거**한다.
+  범위는 AskUserQuestion 3문항으로 확정 — 모델 파일 삭제 포함 · 본 소비자측 동시 정리 · `embed-ollama` 포함.
+- **인프라**
+  - `docker-compose.yml`: `llm-shared` attach 6곳 detach + 네트워크 선언 제거 · `embed-ollama` 서비스 제거 ·
+    `volumes.embed_ollama_models` 선언 제거. ⚠ **docker 볼륨(`repo_embed_ollama_models`)은 삭제하지 않았다** —
+    적재된 bge-m3 가 남아 있어 선언 복원만으로 되돌릴 수 있다. 서비스 24→23. `docker compose config` rc=0.
+  - `Makefile`: `check-llm-network` 타깃 제거(llm-shared 전제조건 소멸), 호출부 16곳 → `ensure-replica-network`.
+    `kb-retrieval-eval` 설명에서 "라이브 bge-m3 임베딩" 정정.
+- **게이트웨이 설정**
+  - `litellm_config.yaml`: `titan-embed`(→ `ollama/bge-m3` @ `embed-ollama:11434`) 제거 —
+    **`model_list` 의 유일한 활성 항목이었다**. `edge-fallback` 정의를 주석 이력으로 강등
+    (「되돌리기용 보존」의 전제가 provider 폐기로 소멸). `model_list: []` 명시(YAML null 회피).
+- **앱 층 (fail-open 3경로 폐쇄)**
+  - `shared/model_catalog.py`: `_LOCAL_LLM_ENABLED` env 판독 → 상수 `False`.
+  - `shared/config.py`: `_select_llm_provider()` 의 Local LLM 강등 경로 제거 ·
+    `AGENT_KB_EMBEDDING_MODEL` 기본값 → 빈 값.
+  - `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py`: `LOCAL_LLM_API_KEY/BASE` fallback 제거.
+- **문서 정합**: `shared/llm_gate.py`(「비차단: 로컬 bge-m3 임베딩」) · `README.md` · `.env.example` ·
+  `.env.llm.example` · `bin/kb-embedding-worker.sh`.
+- **테스트**: `test_llm_edge_free_routing.py` 방향 반전 + 신규 1건 · `test_llm_gate.py` AC-7 supersede +
+  「비면 기동 실패」가정 교체.
+- **repo 밖 조치(같은 결정의 일부)**: `local_llm` compose down · `models-edge` 16GB 삭제 ·
+  `DECOMMISSIONED` sentinel + Makefile 가드 · root crontab 일일 재시작 블록 비활성화.
+- **미조치(기록)**: 라이브 `.env` 의 `LOCAL_LLM_API_BASE`/`LOCAL_LLM_API_KEY`/`AGENT_KB_EMBEDDING_MODEL` —
+  `.env*` deny rule 로 이 세션 편집 불가. 코드 방어로 기능 영향은 없으나 KB 쿼리마다 경고 1건이 쌓인다.
+- Cross-ref: TASK `## TASK-20260907T152000-local-llm-decommission` · REVIEW REV-20260907T152000 ·
+  TEST Run 2026-09-07-local-llm-decommission · 선행 CHG(2026-07-30 llm-edge-free-routing / 2026-08-26 feature-0043).

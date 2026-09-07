@@ -687,3 +687,62 @@ P1 5건 + P2 7건 전량 수정(상세는 MODIFY CHG-20260811T120000). 특히 �
 - Human Approval Needed: no (사람 결정을 기록하는 항목)
 - Timestamp: 2026-08-11T14:00:00+09:00
 - Cross-ref: MODIFY CHG-20260811T140000-oauth-acl-intent-record.
+
+
+## REV-20260907T152000-ai-claude-corp-feature-0007-local-llm-decommission [SUBAGENT:pending] — 로컬 LLM 폐기 판단 근거
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Trigger: 사용자 결정 "로컬 LLM 미사용" (2026-09-07) — schema/API 키워드 무매칭, 인프라·설정 변경
+- Timestamp: 2026-09-07T15:20:00+09:00
+- Human Approval Needed: no (범위는 AskUserQuestion 으로 사전 확정)
+
+### 1. 무엇을 근거로 폐기했는가 (추정 아닌 실측 — §16.7 G7-a)
+
+- `local-llm-edge` 7일 로그 77,789줄 중 `POST` **0건**(전량 `GET /api/tags` healthcheck), RSS 31.5MiB = 모델 미로드.
+- `local-llm-gateway` 로그는 자기 `/health` 뿐 — 외부 소비자 트래픽 0.
+- `litellm_config.yaml` 활성 `model_name` 1개(`titan-embed`), chat alias 14종은 이미 주석.
+- 즉 "쓰이지 않는데 GPU·RAM·16GB 디스크를 점유하고 일일 cron 재시작을 요구하는" 상태였다.
+
+### 2. 왜 KB 검색이 죽지 않는가 (제거 전 선판정)
+
+`kb_retrieval._embed_query_vector` 는 `AGENT_KB_EMBEDDING_MODEL` 이 빈 값이면 **호출 전에 None** 을 반환하고,
+`_load_rag_documents_for_request_pg` 의 2-tier 분기가 `qvec is None` 이면 `pg_trgm` 유사도로 흐른다
+(주석에 "롤백 안전" 으로 명시된 기존 경로). 따라서 결과는 **벡터 축 강등**이고 반쪽 상태가 생기지 않는다 —
+`qvec` 이 *항상* None 이므로 벡터 검색이 부분적으로만 도는 구간이 없다.
+보존: `texts` 154,365행 전량 임베딩 + `sample_queries` 1행 (삭제하지 않음 · 제공자 복구 시 재사용).
+
+### 3. 이 cycle 이 폐쇄한 fail-open 3경로 (요청에 명시되지 않았으나 같은 결정의 적용면 — §16.7 G8-a)
+
+1. `model_catalog._LOCAL_LLM_ENABLED` — `.env` 에 `LOCAL_LLM_API_BASE` 가 있어 **라이브에서만** 로컬 alias 가
+   카탈로그에 들어갔고 `/api/ask` 가 `auto`/`edge`/`core`/`code` 를 수락했다. 테스트 환경은 env 미설정이라
+   `test_model_persist.py` 가 `False` 를 단정하며 통과 — **환경 차이가 게이트를 무력화한 형태**.
+2. `config._select_llm_provider()` — Bedrock 자격증명 부재 시 `LOCAL_LLM_*` 로 강등. 라이브에 그 두 값이
+   폐기된 게이트웨이를 가리킨 채 남아 있었으므로 Bedrock 장애 시 도달 불가 백엔드로 흘렀다.
+3. `kb_embedding_worker` — 동일 축의 자격증명 fallback.
+
+### 4. 선행 계약을 뒤집은 지점 (정직 표기)
+
+- **AC-7 (feature-0043, 2026-08-26)**: "`titan-embed` 는 계정과 무관하므로 살아 있어야 한다 —
+  사용자가 요청한 것은 '계정 사용 차단' 이지 '임베딩 중단' 이 아니다." 그 경계는 **계정 축**이었고,
+  이번 결정은 **로컬 실행 축**이라 임베딩을 포함한다. 사용자 Q3 확정(포함) → 테스트 방향 반전.
+- **`test_litellm_config_still_parses`**: "model_list 가 비었다 — 게이트웨이 기동 실패" 는 **가정이었다**.
+  litellm `main-stable` 을 `model_list: []` 로 실기동해 `Application startup complete` +
+  liveliness/readiness 200 을 확인해 반증하고, 단언을 "키 존재 + 리스트 타입" 으로 옮겼다.
+
+### 5. 의도적으로 범위에 넣지 않은 것 (§16.7 G8-c — 기록 없는 미적용은 누락과 구분되지 않는다)
+
+- **`bedrock-gateway` 철거**: 활성 model 0개로 용도가 소진됐다. 그러나 ① feature-0020 무중단 배포의
+  surge replica·`bin/recreate-audit.sh`·`bin/smoke-conversation.sh`·`BEDROCK_GATEWAY_URL` 에 배선돼 있고
+  ② **외부(Bedrock/Anthropic) 경로 철거는 「로컬 LLM 미사용」과 다른 결정**이다. 요청 범위를 넓히지 않고
+  후속 결정거리로 올린다.
+- **`embed_ollama_models` 볼륨 삭제**: 승인받은 16GB 삭제는 `local_llm/models-edge` 대상이었다.
+  되돌리기 경로를 남기기 위해 이 볼륨은 보존한다.
+- **라이브 `.env` 편집**: `.env*` deny rule 로 차단. 코드 방어가 기능을 보장하나 경고 로그가 남는다 —
+  운영자 조치 항목으로 명시.
+
+### 6. 잔여 리스크
+
+- KB 벡터 검색 품질 저하(한국어 의미검색 → trigram). 사용자 결정에 내포된 대가이며 되돌리기 경로는 보존됨.
+- `_LOCAL_LLM_MODELS`/`_LOCAL_LLM_MAX_TOKENS` 는 inert data 로 남는다(`_LOCAL_LLM_ENABLED=False`).
+  그 cap 을 잠그는 `test_prompt_gen_max_tokens.py` 4건은 이제 **도달 불가 tier 의 값**을 검사한다 —
+  vacuous 는 아니나(값 회귀는 여전히 잡는다) 의미는 축소됐다. 정리는 후속.

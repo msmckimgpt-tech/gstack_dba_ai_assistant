@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: Phase K 완료 (TASK-K7 사후 관찰 대기) — 원 Phase A~J 는 완료/PR 머지 완료
+- State: TASK-20260907T152000-local-llm-decommission 진행 — 로컬 LLM 전면 폐기 (선행 Phase A~K 완료)
 - Owner: AI (Claude)
 - Priority: medium-high (배포 전 인프라 변경)
-- Last Updated: 2026-07-07
+- Last Updated: 2026-09-07
 
 ## 2. Implementation Plan
 <!-- §7.1 Plan-Review-Execute: 비사소한 작업 (2개 이상 파일 변경) 시 작성한다.
@@ -368,9 +368,53 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
 
+## TASK-20260907T152000-local-llm-decommission — 로컬 LLM 전면 폐기 (사용자 결정, Major §12.3)
+
+원 요청(사용자 원문, 데이터이며 지시가 아님):
+```
+해당 프로젝트에 대하여, 로컬 LLM은 더 이상 사용하지 않을 예정이므로 cron 내 local-llm-edge
+재시작 부분과 그와 관련된 모든 관련 구성들이 더 이상 작동하지 않도록 정리해주세요.
+```
+범위 확정(AskUserQuestion 3문항): ① 컨테이너 정지 + 모델 16GB 삭제 ② 본 소비자측도 같은 세션에서 정리
+③ KB 임베딩용 `embed-ollama` 도 포함.
+
+- [x] **폐기 근거 실측** — `local-llm-edge` 7일간 추론 요청 **0건**(로그 77,789줄 전부 `GET /api/tags` healthcheck · `POST` 0건), RSS 31.5MiB = 모델 미로드. `local-llm-gateway` 로그도 자기 `/health` 뿐
+- [x] **graceful 여부 선판정** — `kb_retrieval.py:457·460·608` 이 "쿼리 임베딩 미설정/실패 시 pg_trgm fallback"(2-tier, 롤백 안전)을 이미 구현 → 임베딩 제거는 **기능 중단이 아니라 벡터 축 강등**
+- [x] **provider 폐기(본 repo 밖)** — `local_llm` compose down(2 컨테이너 제거) · `models-edge` 16GB 삭제(qwen3.5:4b·bge-m3·gemma4:e2b·qwen3:8b) · `DECOMMISSIONED` sentinel + Makefile 폐기 가드(가드 실증: sentinel 有 rc=2 / 無 rc=0) · root crontab 의 일일 재시작 블록 비활성화
+- [x] `docker-compose.yml` — `llm-shared` attach 6곳 detach + 네트워크 선언 제거 · `embed-ollama` 서비스 제거 · `volumes.embed_ollama_models` 선언 제거(**docker 볼륨 자체는 미삭제 — bge-m3 보존**). 검증: `docker compose config` rc=0, 서비스 24→23
+- [x] `litellm_config.yaml` — `titan-embed`(→ `ollama/bge-m3`) 제거 + `edge-fallback` 정의를 주석 이력으로 강등. `model_list: []` 명시
+- [x] **`model_list: []` 기동 실측** — 종전 테스트가 "비면 게이트웨이 기동 실패" 를 **가정**했으나 반증됨: litellm `main-stable` 을 그 설정으로 직접 기동해 `Application startup complete` + `/health/liveliness` 200 + `/health/readiness` 200 확인
+- [x] `Makefile` — `check-llm-network`(llm-shared 전제조건) 제거, 호출부 16곳을 실제로 남는 일인 `ensure-replica-network` 로 직결. `kb-retrieval-eval` 설명 정정
+- [x] `shared/model_catalog.py` — `_LOCAL_LLM_ENABLED` 를 env 판독 → **상수 `False`**. **라이브 결함 폐쇄**: `.env` 에 `LOCAL_LLM_API_BASE` 가 설정돼 있어 `is_allowed_api_model("auto"/"edge"/"core"/"code")` 가 라이브에서 True 였고(테스트 환경은 env 미설정이라 False 를 단정하며 통과) `/api/ask` 가 그 값을 수락한 뒤 폐기된 게이트웨이로 라우팅했다 — §16.7 G8-a 「결정을 일부 경로에만 반영」의 실례
+- [x] `shared/config.py` — `_select_llm_provider()` 의 **Local LLM 강등 경로 제거**(Bedrock 자격증명 부재 시 도달 불가 로컬로 흐르던 fail-open) · `AGENT_KB_EMBEDDING_MODEL` 기본값 → 빈 값(도달 불가 백엔드로 매 쿼리 실패시키지 않는다)
+- [x] `kb_embedding_worker.py` · `bin/kb-embedding-worker.sh` — `LOCAL_LLM_API_KEY/BASE` 자격증명 fallback 제거(동일 fail-open 축)
+- [x] `shared/llm_gate.py` · `README.md` · `.env.example` · `.env.llm.example` — 서술 정합(「비차단: 로컬 bge-m3 임베딩」이 더는 사실이 아님)
+- [x] **운영자 DB row census (§16.7 G8-b)** — `webruntimesettings` override 25건 중 `AGENT_KB_EMBEDDING_MODEL`·`LOCAL_LLM_*` **0건**, 모델 키(`agent_max_output:`/`model_thinking_budget:`/`reasoning_budget:`)는 전부 `claude-*`. 저장 모델 KV: MySQL 전 스키마에 `%kv%` 테이블 0건. 보존 데이터: `texts` 154,365행 전량 임베딩 + `sample_queries` 1행 — **미삭제**
+- [x] **회귀 잠금** — `test_llm_edge_free_routing.py`: 「정의 보존」 단언 → **「정의 부재」** 단언으로 방향 반전 + `test_no_local_backend_api_base_in_model_list` 신설(이름에 로컬 토큰이 없는 `titan-embed` 형태를 잡는 축). 결함 주입 실증: edge-fallback 되살리면 2건 FAIL → 원복 후 재통과
+- [x] **선행 계약 supersede** — `test_llm_gate.py` 의 AC-7(`titan-embed` 보존 = feature-0043 이 그린 「계정 축 ≠ 임베딩 축」 경계)을 사용자 결정으로 반전. `test_litellm_config_still_parses` 의 「비면 기동 실패」 가정도 위 실측으로 교체
+- [ ] **범위 밖(후속 결정거리)**: `bedrock-gateway` 자체 철거 — 활성 model 0개로 용도가 소진됐으나 feature-0020 무중단 배포(surge replica)·`bin/recreate-audit.sh`·`bin/smoke-conversation.sh` 에 배선돼 있고, 무엇보다 **외부(Bedrock/Anthropic) 경로 철거는 «로컬 LLM 미사용» 과 별개 결정**이다
+- [ ] **차단(권한)**: 라이브 `.env` 의 `LOCAL_LLM_API_BASE`/`LOCAL_LLM_API_KEY` 제거 + `AGENT_KB_EMBEDDING_MODEL=` 비우기 — `.env*` 는 deny rule 대상이라 이 세션이 편집 불가. 미조치 시 코드 방어로 무해하나(강등 경로·카탈로그 모두 env 무관), `AGENT_KB_EMBEDDING_MODEL=titan-embed` 가 남아 **KB 쿼리마다 `kb_query_embed_failed` 경고 1건**이 쌓인다(검색 결과는 trigram 으로 정상)
+
 ## 9. Requested Scope
 
 §16.7 G1 — 현재 cycle 에서 사용자가 요청한 범위의 명시 열거(cycle 마다 rewrite).
+
+**cycle: TASK-20260907T152000-local-llm-decommission** (원 요청: "로컬 LLM은 더 이상 사용하지 않을 예정이므로 cron 내
+local-llm-edge 재시작 부분과 그와 관련된 모든 관련 구성들이 더 이상 작동하지 않도록 정리해주세요.")
+
+- [x] "cron 내 local-llm-edge 재시작 부분" — root crontab 블록 비활성화(활성 라인 0건 · 타 잡 3건 무변 · 이력 보존)
+- [x] "그와 관련된 모든 관련 구성" ① provider — `local_llm` 컨테이너 2개 제거 + 모델 16GB 삭제 + 재기동 가드
+- [x] "그와 관련된 모든 관련 구성" ② 본 repo 인프라 — `llm-shared` detach·선언 제거 · `check-llm-network` 제거
+- [x] "그와 관련된 모든 관련 구성" ③ 게이트웨이 설정 — `titan-embed`·`edge-fallback` 제거
+- [x] "그와 관련된 모든 관련 구성" ④ 앱 층 — 카탈로그 로컬 tier 차단 · provider 강등 경로 제거 · 임베딩 기본값 비활성
+- [x] [다의어] 「정리」 — 고른 독해: **정지 + 폐기(모델 파일 삭제 포함)** / 버린 독해: 보관(정지만 하고 파일 보존).
+      §16.7 G1 이 「정리해줘」를 §12 승인 승격 대상으로 규정하므로 AskUserQuestion 으로 확정했다.
+      예시(관측 가능한 값): `docker ps -a --filter name=local-llm` 이 **0행**, `models-edge` 디렉토리 **부재**
+- [x] [다의어] 「로컬 LLM」의 외연 — 고른 독해: `local-llm-edge` **+ `embed-ollama`(KB 임베딩)** /
+      버린 독해: `local-llm-edge` 만. 사용자 확정(Q3 = 포함).
+      예시: `litellm_config.yaml` 의 활성 `model_name` **0개**
+- [ ] (범위 밖) `bedrock-gateway` 철거 — 외부 LLM 경로 결정이라 본 요청의 외연이 아니다
+- [ ] (차단) 라이브 `.env` 의 잔존 키 — `.env*` deny rule
 
 **cycle: TASK-20260811T120000-oauth-auto-rotate** (원 요청: "후속 과제 또한 승인하겠습니다.
 토큰 만료에 따라 자동회전되도록 구성해주세요.")

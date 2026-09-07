@@ -79,17 +79,16 @@ def call_openai_embeddings(texts: list[str], model: str, timeout_sec: int, max_a
     except ImportError as e:
         raise RuntimeError(f"openai SDK 미설치: {e}") from e
 
-    api_key = (
-        os.environ.get("BEDROCK_GATEWAY_API_KEY")
-        or os.environ.get("LOCAL_LLM_API_KEY")
-    )
+    # local-llm-decommission(2026-09-07): LOCAL_LLM_* fallback 제거.
+    #   종전에는 BEDROCK_GATEWAY_* 가 비면 LOCAL_LLM_API_KEY/BASE 로 강등했는데, 라이브 `.env` 에
+    #   그 두 값이 폐기된 게이트웨이(local-llm-gateway)를 가리킨 채 남아 있어 **도달 불가 백엔드로
+    #   조용히 흐르는 fail-open 경로**였다(shared/config._select_llm_provider 와 동일 축).
+    #   이제 Bedrock 게이트웨이 자격증명이 없으면 정직하게 실패한다.
+    api_key = os.environ.get("BEDROCK_GATEWAY_API_KEY")
     if not api_key:
-        raise RuntimeError("LLM API 자격증명 부재 (BEDROCK_GATEWAY_API_KEY 또는 LOCAL_LLM_API_KEY 필요)")
+        raise RuntimeError("LLM API 자격증명 부재 (BEDROCK_GATEWAY_API_KEY 필요)")
 
-    api_base = (
-        os.environ.get("BEDROCK_GATEWAY_URL")
-        or os.environ.get("LOCAL_LLM_API_BASE")
-    )
+    api_base = os.environ.get("BEDROCK_GATEWAY_URL")
     client_kwargs: dict = {"api_key": api_key, "timeout": timeout_sec}
     if api_base:
         client_kwargs["base_url"] = api_base

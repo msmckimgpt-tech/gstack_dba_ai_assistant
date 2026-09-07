@@ -796,10 +796,17 @@ AGENT_SCRATCH_PG_CONFIGURED = bool(AGENT_SCRATCH_PG_HOST) and bool(AGENT_SCRATCH
 # M3 (TASK-0023) — Embedding worker (texts.embedding 컬럼 일괄 생성).
 # Blocker B-4 결정 (M1 ADR-0021): TextHash 별 단일 embedding — fact_entries /
 # rag_documents / rag_objects 가 texts join 시 자연 참조.
-AGENT_KB_EMBEDDING_MODEL = (
-    os.getenv("AGENT_KB_EMBEDDING_MODEL", "text-embedding-3-small").strip()
-    or "text-embedding-3-small"
-)
+# local-llm-decommission(2026-09-07, 사용자 결정 "로컬 LLM 미사용"): 기본값을
+#   "text-embedding-3-small" → **빈 값(비활성)** 으로 내린다.
+#   이 alias 의 실 백엔드는 litellm 의 `titan-embed` → 로컬 Ollama `bge-m3`(embed-ollama)였고
+#   그 서비스와 alias 를 같은 cycle 에서 제거했다. 기본값을 남겨 두면 매 쿼리가 도달 불가
+#   백엔드로 호출을 시도한 뒤 `kb_query_embed_failed` 경고를 쌓는다 — 실패 경로를 정상 경로로
+#   쓰는 형태(§16.7 G9-c)다. 빈 값이면 `_embed_query_vector` 가 호출 전에 None 을 반환하고
+#   `kb_retrieval` 의 2-tier 경로가 pg_trgm 유사도로 흐른다(기능 유지, 벡터 축만 강등).
+#   되돌리기: 임베딩 제공자를 복구한 뒤 이 기본값 또는 `.env` 의 AGENT_KB_EMBEDDING_MODEL 을
+#   그 alias 로 지정한다. 저장된 `texts.embedding` / `sample_queries.embedding` 벡터는
+#   삭제하지 않았으므로 기존 임베딩은 그대로 남아 있다.
+AGENT_KB_EMBEDDING_MODEL = os.getenv("AGENT_KB_EMBEDDING_MODEL", "").strip()
 AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1024") or "1024")  # titan-embed v2 / 로컬 1024 모델·alembic 0001 texts 정본 일치(구 1536 기본은 stale)
 # ITEM-02: 샘플쿼리 few-shot 주입 토글(기본 ON). OFF 면 _build_knowledge_context 가 EXAMPLE
 # QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.
@@ -985,7 +992,11 @@ MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 # 위해 유지(env 소스만 신규 우선). 다음 cycle 에 OPENAI_MODEL env fallback 제거 검토.
 OPENAI_MODEL = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or "claude-sonnet-4"
 
-# ── 로컬 LLM Gateway (구버전 호환 — Local LLM gateway 사용 시) ──
+# ── 로컬 LLM Gateway — DEPRECATED (2026-09-07, local-llm-decommission) ──
+# 사용자 결정 "로컬 LLM 은 더 이상 사용하지 않는다". 별도 local_llm 프로젝트(local-llm-edge /
+# local-llm-gateway)가 폐기됐으므로 이 값이 설정돼 있어도 가리키는 곳이 없다.
+# 변수 자체는 남긴다 — `.env` 에 값이 남은 배포에서 import 가 깨지지 않게 하고, 아래
+# `_select_llm_provider()` 가 **의도적으로 무시**한다는 사실을 코드로 보이기 위함이다.
 LOCAL_LLM_API_BASE = os.getenv("LOCAL_LLM_API_BASE", "").strip() or None
 LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "").strip() or None
 # TASK-0237: OPENAI_API_BASE 제거 — CHG-20260522-0006(OpenAI direct fallback 제거) 이후
@@ -1009,16 +1020,20 @@ def _select_llm_provider() -> tuple[str | None, str | None]:
 
     우선순위 (paired only):
     1. Bedrock gateway   — BEDROCK_GATEWAY_URL + BEDROCK_GATEWAY_API_KEY 둘 다.
-    2. Local LLM gateway — LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY 둘 다.
-    3. 미설정            — (None, None). _get_llm_client() 가 None 반환.
+    2. 미설정            — (None, None). _get_llm_client() 가 None 반환.
 
     feature-0007 follow-up (CHG-20260522-0006): OpenAI direct fallback 제거.
     CHG-20260522-0010: OPENAI_API_KEY 변수 완전 제거.
+
+    ⚠ local-llm-decommission(2026-09-07): **Local LLM gateway 경로를 제거**했다. 종전에는
+      Bedrock 자격증명이 비면 `LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY` 로 silent 강등했는데,
+      라이브 `.env` 에 그 두 값이 남아 있어(폐기된 게이트웨이를 가리킴) **Bedrock 장애 시
+      도달 불가 로컬 게이트웨이로 흐르는 fail-open 경로**였다. 이제 Bedrock 이 없으면
+      (None, None) 을 반환해 정직하게 실패한다 — 2026-07-30 llm-edge-free-routing 이
+      litellm 층에서 세운 규약을 앱 층 provider 선택에도 적용한 것이다.
     """
     if BEDROCK_GATEWAY_URL and BEDROCK_GATEWAY_API_KEY:
         return (BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY)
-    if LOCAL_LLM_API_BASE and LOCAL_LLM_API_KEY:
-        return (LOCAL_LLM_API_BASE, LOCAL_LLM_API_KEY)
     return (None, None)
 
 

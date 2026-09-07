@@ -578,3 +578,27 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 - **report-only(정본·소유자 소관 — 미러만 고치면 재발한다)**: ⓐ `FUNCTION.md` §「AI 는 Windows 와 WSL 양쪽에서 찾는다」가 `--cmd` 계약을 현재시제로 적고 같은 파일 §「러너는 WSL 안의 AI 도 찾는다」가 그것을 폐기한다 — 미러 stale 의 근원이다. ⓑ 같은 파일의 `P0-*` ID 가 충돌한다(`P0-Z` 2회 · `P0-AC` 3회)라 미러가 ID 로 인용할 수 없어 **절 제목으로만** 인용했다. ⓒ `REPORT.md` §2 가 「동결 exe 를 실행한 트레이 검증은 하지 않았다」와 「설치본 해소(20:45, 실행해서 확인)」를 같은 절에 함께 싣는다. ⓓ `docs/ARCHITECTURE.md` §6 에 feature-0046 의존성 행이 **두 줄**(:151·:152) 있다.
 
 [[Features/feature-0046-native-client]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0003-agent-web-ui]]
+
+## [2026-09-07] refactor | 로컬 LLM 전면 폐기 — local-llm-edge/gateway + embed-ollama 제거
+
+- **결정**: 사용자 "로컬 LLM 은 더 이상 사용하지 않는다"(2026-09-07). 2026-07-30 `llm-edge-free-routing`
+  (자동 강등 경로 제거)과 2026-08-26 feature-0043(서버 계정 chat fail-closed)이 남긴 **로컬 실행 잔여를 전량 제거**.
+- **폐기 근거는 실측이다**: `local-llm-edge` 7일 로그 77,789줄 중 추론 `POST` **0건**(전량 healthcheck),
+  RSS 31.5MiB(모델 미로드), gateway 로그는 자기 `/health` 뿐. 쓰이지 않는데 GPU·RAM·16GB 디스크를
+  점유하고 일일 cron 재시작을 요구하는 상태였다.
+- **제거 대상**: `llm-shared` attach 6곳 + 네트워크 선언 · `embed-ollama` 서비스 · `titan-embed` alias ·
+  `edge-fallback` 정의 · `check-llm-network` Makefile 게이트 · (repo 밖) `local_llm` 컨테이너 2개 + 모델 16GB +
+  root crontab 일일 재시작.
+- **KB 검색은 죽지 않았다** — 제거 *전에* `kb_retrieval` 이 "쿼리 임베딩 미설정 시 pg_trgm fallback"
+  (2-tier, 롤백 안전)을 이미 구현하고 있음을 확인했고, `qvec` 이 항상 None 이 되므로 반쪽 상태 없이
+  일관된 trigram-only 로 강등된다. 기존 임베딩 `texts` 154,365행 + bge-m3 볼륨은 **보존**.
+- **부수 발견 — 라이브에서만 열려 있던 fail-open 3경로**: ① `model_catalog._LOCAL_LLM_ENABLED` 가
+  `.env` 의 `LOCAL_LLM_API_BASE` 를 읽어 라이브에서만 로컬 alias 를 카탈로그에 넣었고(`/api/ask` 가
+  `auto`/`edge` 수락 → 폐기된 게이트웨이로 라우팅), **테스트 환경은 env 미설정이라 정반대를 단정하며
+  통과**했다. ② `_select_llm_provider()` 가 Bedrock 부재 시 로컬로 강등. ③ 임베딩 워커의 자격증명 fallback.
+  전부 env 무관 구조로 폐쇄.
+- **선행 계약 2건 반전(정직 표기)**: feature-0043 의 AC-7(`titan-embed` 보존 = 「계정 축 ≠ 임베딩 축」 경계)은
+  이번 결정이 *로컬 실행 축*이라 supersede. `test_litellm_config_still_parses` 의 "빈 model_list → 기동 실패"
+  는 **가정이었고** litellm 실기동(liveliness/readiness 200)으로 반증해 단언을 교체.
+- **범위 밖으로 남긴 것**: `bedrock-gateway` 철거 — 활성 model 0개로 용도가 소진됐으나 feature-0020
+  무중단 배포 machinery 에 배선돼 있고 **외부 LLM 경로 철거는 별개 결정**이다.
