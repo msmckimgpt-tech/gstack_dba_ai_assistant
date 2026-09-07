@@ -7708,3 +7708,18 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Alternative: 전체 로컬 CI 7485 PASS/28 skip/1 옛 assertion 실패; 그 검사 정합 후 suite19 PASS.
   KB 관련203 PASS. 전체ruff0, migrate-lint heads/self-test, codenav/routemap PASS.
 - verification_debt: 원격 GitHub runner 미실행; retry_after=unknown; 복구 후 다음 cycle에서 확인.
+
+## REV-20260908T010301-ai-claude-doc-sync-20260908-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-07 블록 신설 (doc_sync 09-08)
+- Related TASK: TASK-20260908T010301-doc-sync-rn-0908
+- Timestamp: 2026-09-08T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 블록 1개 prepend + `generated` 전진**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스 + 적대 검증조로 검증했다.
+- **검증**: `node --check` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일). `releases` 61→62 · `generated` 09-04 → 09-07.
+- **적대 검증(13항목 판정)**: CONFIRMED 10 · PLAUSIBLE 3 — 정정 3건을 전건 반영했다.
+  ① 업데이트 채널: 정본 `feature-0046 REPORT.md:36-39` 이 「그 실측은 web-a 컨테이너 내부 포트로 쟀다 — 엣지(caddy) 경유와 web-b 는 재지 않았다」 라 적는데 초안이 「배포된 서버에서 다시 쟀다」 로만 써 바깥 경로 미측정을 감췄다 → 고지 추가.
+  ② 모델 목록: 릴리즈노트 **2026-09-02 블록**이 이미 「5분을 10초 안팎으로 줄였다」 로 같은 증상의 해소를 단정했는데 이번 정본 실측이 그 경로가 목록 자체를 못 받음을 보였다 → **재발 명시** 추가.
+  ③ summary: 09-04 블록이 고지한 **앱 창↔브라우저 로그인 분리**가 이번 창에 해소되지 않았는데(정본 grep 0건) 초안이 침묵했고, 항목 5(「로그인이 앱 재실행을 견딘다」)와 맞물려 「이제 브라우저와 로그인을 공유한다」 로 오독될 수 있었다 → 고지 복원.
+- **평이화 준수**: 내부 명칭 기계 스캔 **0건**. 화면에 그대로 나타나는 라벨(「연결 정보가 없습니다」·[업데이트 확인]·[종료] 등)만 인용했다.
+- **미검증 정직 표기**: 첫 실 릴리스 미반입(받기 자리는 열렸으나 서버에 파일 없음) · 미서명 경고 · 설치기 실제 실행 미실측(Windows 빌드 머신 필요) · 라이브 계정 화면의 모델 목록 미관측 · 엣지 경유 채널 미측정 — 항목 detail + 접힌 summary 양쪽에 명시했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md`). 수기 실값은 그 안전장치를 무력화한다. wrapper 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- Human Approval Needed: **아니오**.

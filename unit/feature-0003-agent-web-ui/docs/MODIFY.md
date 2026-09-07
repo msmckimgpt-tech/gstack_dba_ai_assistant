@@ -5955,3 +5955,14 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 **영향**: 프런트 전용, 비파괴. 서버 계약(`/api/ai/connect/token` 의 `handoff`·`launch`,
 `last_os`)은 그대로다 — 화면이 더 이상 그리지 않을 뿐이다.
+
+## CHG-20260908T010301-ai-claude-doc-sync-rn-0908 — 릴리즈노트 2026-09-07 블록 신설 (doc_sync 09-08)
+
+- `src/static/release-notes-data.js`: `releases[]` 맨 앞에 `date: "2026-09-07"` 블록 prepend(61→62) + `generated` 2026-09-04 → 2026-09-07 전진. **데이터만** — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- 착륙일(09-07) 블록이 부재했으므로 append 가 아니라 prepend. 09-04 블록 이하 전량 보존.
+- 항목 12건(new 3 · improved 3 · fixed 6 / work 11 · common 1). 델타창 46커밋 중 사용자 체감이 있는 것만 골랐다.
+- REQ-20260618-0321 의 운영 규약("새 업데이트 추가는 `releases[]` 맨 앞에 일자 블록 추가, 렌더 로직 변경 불필요")을 그대로 따른 데이터 큐레이션이라 기능 계약 변경 0.
+- AC-0579(내부 정보 비노출) 준수 — 누출 패턴 기계 스캔 0건.
+- **직전 블록의 단정 정정**: 릴리즈노트 2026-09-02 블록이 「모델 목록을 확인하는 데 5분을 넘기던 것을 10초 안팎으로 줄였습니다」 로 확인을 단정했는데, 이번 창의 정본 실측(`docs/test-runs.d/20260907T060000-model-catalog.md`)이 바로 그 「말로 묻는」 경로가 목록 자체를 받지 못함을 보였다. 09-07 블록이 재발을 명시적으로 적는다 — 적지 않으면 09-02 문장이 거짓 명제로 남는다.
+- 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드가 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md`).
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).

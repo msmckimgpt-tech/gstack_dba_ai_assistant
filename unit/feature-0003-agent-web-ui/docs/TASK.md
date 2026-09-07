@@ -13332,3 +13332,14 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] 전제가 바뀐 테스트 6건 이유를 적어 뒤집음
 - [ ] 다음 주기: 「연결 준비·터미널·AI 지시문」 전면 제거
 - [ ] 배포 후 실제 클라이언트에서 자동 연결·알림 실측
+
+## TASK-20260908T010301-doc-sync-rn-0908 릴리즈노트 2026-09-07 블록 신설 (doc_sync 09-08)
+
+- [x] `src/static/release-notes-data.js` 에 `date: "2026-09-07"` 블록 prepend (착륙일 블록 부재 → append 아닌 prepend, releases 61→62)
+- [x] `generated` 2026-09-04 → 2026-09-07 전진 (델타창 46커밋의 착륙일이 전량 2026-09-07 단일일)
+- [x] 항목 12건 — 사용자 체감분만. 템플릿 업그레이드 v3.53.x/v3.54.0·Codex 호환·골든 스냅샷 재생성·테스트 분리 등 내부 작업 8건은 제외
+- [x] 사용자향 평이화 준수 — 내부 명칭 기계 스캔 **0건**(feature-id·파일 확장자·API 경로·chokepoint·fail-closed·SSOT·frontmatter·pytest·WebView2·jsdom·sha256·TOFU 등)
+- [x] 적대 검증조 정정 3건 반영 — ① 업데이트 채널 항목에 「서버 안쪽에서 쟀고 바깥 길(대문)로는 아직 못 쟀다」 고지 추가, ② 모델 목록 항목에 09-02 블록이 같은 증상을 「확인했다」 로 단정했던 것의 **재발 명시**, ③ summary 에 09-04 블록이 고지했고 이번 창에서 해소되지 않은 **앱 창↔브라우저 로그인 분리** 고지 복원
+- [x] 미확인 항목(첫 실 릴리스 미반입 → 받기 자리는 열렸으나 파일 없음·미서명·설치기 실제 실행 미실측·라이브 계정 화면 미관측)을 항목 detail + 접힌 summary 양쪽에 정직 고지
+- [x] `node --check` + `tests/verify_release_notes.mjs` **34/0 ALL PASS** (baseline 동일)
+- [x] 캐시버스터 수기 bump 금지 준수 (`?v=dev` 고정 · 빌드 주입 · 배포 ABORT 가드)

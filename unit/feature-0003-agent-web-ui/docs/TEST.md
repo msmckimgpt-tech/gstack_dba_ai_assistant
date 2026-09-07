@@ -3748,3 +3748,12 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - Related TASK: TASK-20260907T181510-kb-external-search
 - Result: PASS — 최종 회귀 203건, 실제 격리 PostgreSQL 포함.
 - Evidence: [실행 기록](test-runs.d/TASK-20260907T181510-kb-external-search.md).
+
+## TASK-20260908T010301-doc-sync-rn-0908 릴리즈노트 블록 신설 검증
+
+- `node --check src/static/release-notes-data.js` → PASS (JS 문법)
+- `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 하네스 실행을 위해 `jsdom@24` 를 `/tmp` 에 핀 설치했다(세션마다 부재할 수 있음).
+- 평이화 기계 스캔: 신규 블록 79줄에 대해 내부 명칭 패턴(feature-id·파일 확장자·API 경로·chokepoint·fail-closed·SSOT·frontmatter·pytest·WebView2·jsdom·subprocess·sha256·TOFU) → **0 히트**.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고, 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다(배포 후 라이브 노출은 wrapper 소관).
+- reconcile-first 실측(2026-09-08T01:03:01+09:00 run 시작 시점): 서빙 `release-notes-data.js` md5 `dafbdc1208e1b775db6d26237e5caec3` = `origin/main` blob 동일 → **파리티 갭 0**. `artifacts/deploy/deploy-web.state` `current=577b5ea1` = HEAD · 배포 실패 마커 0. 라이브 캐시토큰 `?v=0bb8a56f6b8a`(빌드 주입) — 소스 `?v=dev` 고정이라 **수기 bump 하지 않았다**.
+- **Pass/Fail: PASS**.
