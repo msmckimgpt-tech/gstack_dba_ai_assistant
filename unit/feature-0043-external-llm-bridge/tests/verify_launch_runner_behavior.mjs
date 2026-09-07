@@ -12,7 +12,7 @@
 // addEventListener·location.href·fetch), 레이아웃이 걸린 축이 아니다. 의존성 없이 CI 에서 돈다.
 // 렌더 결과는 PB-0008 이 따로 본다 — 세 층이 서로를 대체하지 않는다.
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -65,12 +65,12 @@ function makeEl(id) {
   return el;
 }
 
+// ⚠ 2026-09-07: 「연결 준비」·명령·지시문 자리가 사라졌다(사용자 결정). 없는 요소를 여기
+//   세워 두면 제품이 그것을 다시 만져도 하네스는 조용히 통과한다.
 const ids = [
   "connectModalOverlay", "connectModal", "connectModalTitle", "connectModalCloseBtn",
-  "connectModalStatus", "connectModalMake", "connectModalLaunch", "connectModalResult",
-  "connectModalText", "connectModalCmd", "connectModalProbe", "connectModalOsLabel",
-  "connectModalTabPosix", "connectModalTabWin", "connectModalCopy", "connectModalCopyCmd",
-  "connectModalCopyProbe", "aiConnState", "composerGate", "composerGateTitle",
+  "connectModalStatus", "connectModalLaunch", "connectModalGet", "connectModalGetLink",
+  "aiConnState", "composerGate", "composerGateTitle",
   "composerGateDesc", "composerGateBtn",
 ];
 const registry = new Map(ids.map((i) => [i, makeEl(i)]));
@@ -107,7 +107,11 @@ globalThis.clearInterval = () => {};
 
 // ── fetch 스텁 ──────────────────────────────────────────────────────────────
 const PROTOCOL = "dqa-connect://start?token=mat_TESTTOKEN";
-let statusBody = { logged_in: true, connected: true, listening: false, compose_blocked: true };
+// ⚠ `last_os` 가 **자격**이다 (2026-09-07). 「연결 준비」가 사라지면서 실행 URL 은 창을 열 때
+//   미리 받아 두는데(`_offerLaunch`), 그 조건이 서버가 아는 연결 이력이다. 이 하네스는
+//   [내 AI 실행] 을 누르는 사람의 이야기이고, 그 사람은 정의상 한 번은 연결해 본 사람이다.
+let statusBody = { logged_in: true, connected: true, listening: false, compose_blocked: true,
+                   last_os: "windows" };
 const statusCalls = [];
 globalThis.fetch = async (url) => {
   if (String(url).includes("/api/ai/connect/token")) {
@@ -130,7 +134,28 @@ globalThis.fetch = async (url) => {
 // 이 하네스가 의미를 갖는다).
 const src = readFileSync(MODULE_PATH, "utf8");
 check(src.length > 0, "모듈이 비어 있다");
-const tmp = join(mkdtempSync(join(tmpdir(), "connect-modal-")), "connect-modal.mjs");
+
+// ⚠ **상대 import 는 실재해야 한다.** 이 모듈은 `../app.js` 와 `./client-bridge.js` 를
+//   부르는데, 종전에는 사본을 임시 디렉토리에 **혼자** 떨궈서 그 지정자들이 아무 데도
+//   닿지 못했다. 실측 2026-09-07: `client-bridge.js` 가 생긴 2026-09-04 이후로 이 하네스는
+//   `ERR_MODULE_NOT_FOUND` 로 **한 번도 돌지 않았다** — 인자 없이 부르면 usage 만 찍고
+//   0 으로 끝나므로 「안 돌았다」와 「통과했다」가 겉으로 같았다.
+//
+//   그래서 소스를 고치는 대신(정본을 그대로 실행해야 이 하네스가 의미를 갖는다) **이웃을
+//   만들어 준다** — 같은 모양의 트리에 스텁을 놓는다.
+const root = mkdtempSync(join(tmpdir(), "connect-modal-"));
+mkdirSync(join(root, "app"));
+// ⚠ `.js` 는 package.json 없이는 **CJS 로 읽힌다** — 그러면 `export` 가 named export 로
+//   보이지 않아 적재가 죽는다(정본 사본만 `.mjs` 로 바꾸는 종전 우회는 이웃에는 안 통한다).
+writeFileSync(join(root, "package.json"), '{"type":"module"}\n', "utf8");
+writeFileSync(join(root, "app.js"),
+  "export const showToast = (m) => { globalThis.__toasts = (globalThis.__toasts || []); "
+  + "globalThis.__toasts.push(m); };\n", "utf8");
+// 이 하네스는 **브라우저에서 열린 창**을 잰다 — 앱 창(브리지 있음)이 아니다.
+writeFileSync(join(root, "app", "client-bridge.js"),
+  "export const clientBridge = null;\nexport function initClientPanel() { return false; }\n"
+  + "export function bridgeCall() { return Promise.resolve({}); }\n", "utf8");
+const tmp = join(root, "app", "connect-modal.mjs");
 writeFileSync(tmp, src, "utf8");
 const mod = await import(pathToFileURL(tmp).href);
 
@@ -138,17 +163,36 @@ mod.bindConnectModal();
 mod.bindConnState();
 mod.openConnectModal();
 
-const make = registry.get("connectModalMake");
 const launch = registry.get("connectModalLaunch");
 const status = registry.get("connectModalStatus");
-const cmd = registry.get("connectModalCmd");
 
-// 1) [연결 준비] → 서버가 준 프로토콜 URL 이 있으므로 실행 버튼이 드러난다.
-make.click();
-await new Promise((r) => setTimeout(r, 0));
-await new Promise((r) => setTimeout(r, 0));
-await new Promise((r) => setTimeout(r, 0));
-check(launch.hidden === false, "L1 [연결 준비] 후에도 실행 버튼이 숨겨져 있다");
+// 1) 창을 여는 것만으로 실행 URL 이 준비되고 버튼이 드러난다.
+//
+//    ⚠ 종전에는 여기서 [연결 준비] 를 눌렀다. 그 버튼이 사라졌으므로(사용자 결정 2026-09-07)
+//      준비는 `openConnectModal` 안의 `_offerLaunch` 가 한다 — 그리고 그 자격은 서버가 아는
+//      연결 이력(`last_os`)이다. 계약은 그대로다: **쏠 URL 이 손에 있을 때만 보인다.**
+/** 창을 (다시) 열어 실행 URL 을 손에 쥔다.
+ *
+ *  ⚠ **한 번 쏜 URL 은 버려진다** — 같은 토큰을 다시 쏘면 그 사이 만료·회수된 값으로 조용히
+ *  실패하기 때문이다. 그래서 두 번째 이후의 실행은 **창을 다시 여는 것**이 전제다(실제로도
+ *  성공하면 창이 닫히므로 사용자는 다시 연다). 종전에는 [연결 준비] 를 다시 눌러 그 자리를
+ *  메웠고, 그 버튼이 사라지면서 이 준비가 필요해졌다.
+ */
+async function rearm() {
+  // ⚠ **아직 쓸 수 없는 상태로 연다.** 이 창은 「사용자가 연결이 안 된 상태로 창을 열고
+  //   [내 AI 실행] 을 누른다」를 재현하는 것이다. 시나리오가 정해 둔 «이미 대기 중» 상태
+  //   그대로 열면 창이 열리는 즉시 성공으로 판정돼 스스로 닫히고(그 판정은 옳다),
+  //   그 뒤의 클릭은 남의 이야기가 된다 — 재는 대상이 바뀐다.
+  const saved = statusBody;
+  statusBody = { logged_in: true, connected: true, listening: false,
+                 compose_blocked: false, last_os: "windows" };
+  mod.openConnectModal();
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setTimeout(r, 0));
+  statusBody = saved;
+}
+
+for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0));
+check(launch.hidden === false, "L1 창을 열어도 실행 버튼이 드러나지 않는다");
 
 // 2) [내 AI 실행] — 최상위 이동으로 발사되고, iframe 을 만들지 않는다.
 const createdBefore = created.length;
@@ -163,27 +207,28 @@ check(newIframes.length === 0,
       `생성된 iframe=${newIframes.length}`);
 
 // 3) 응답이 없으면 «요청했다» 로 끝내지 않고 실패를 말하고 되돌아갈 곳을 가리킨다.
-for (let i = 0; i < 60; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] === "error",
       "L4 아무도 응답하지 않았는데 실패로 표시되지 않았다",
       `data-kind=${status._attrs["data-kind"]} text=${status.textContent}`);
-check(/터미널/.test(status.textContent),
-      "L5 실패 문구가 되돌아갈 경로(터미널 명령)를 말하지 않는다", status.textContent);
-// 강조는 4초 뒤 스스로 걷히므로 «부여된 적이 있는가» 로 본다. 스크롤 기준은 명령이 아니라
-// 상태 문구다 — 모달 맨 아래의 그 문구를 화면에 넣어야 «왜» 가 읽힌다(PB-0008 실측).
-check(cmd._classSeen.includes("is-attention"),
-      "L6 실패 시 1단계 명령 블록을 강조하지 않는다", JSON.stringify(cmd._classSeen));
-check(status._scrolled === true,
-      "L6b 실패 문구를 화면 안으로 넣지 않는다 — 강조만 보이고 사유는 화면 밖에 남는다");
+// ⚠ **되돌아갈 곳이 바뀌었다** (사용자 결정 2026-09-07). 종전 문구는 「강조된 1단계 명령을
+//   터미널에 붙여넣어 실행하세요」였고, L6/L6b 는 그 명령 블록을 강조·스크롤하는지 봤다.
+//   그 경로가 사라졌으므로 지금 지켜야 하는 것은 둘이다 — ① 사라진 곳을 가리키지 않는가
+//   ② 그러면서도 **막다른 길로 두지 않는가**(=남은 길인 앱을 가리키는가).
+check(!/터미널|1단계/.test(status.textContent),
+      "L5a 실패 문구가 사라진 경로를 아직 가리킨다", status.textContent);
+check(/DQA 앱|설치/.test(status.textContent),
+      "L5b 실패를 말하면서 되돌아갈 곳(연결 프로그램)을 가리키지 않는다", status.textContent);
 check(statusCalls.length >= 4,
       "L7 한 번만 확인하고 판정했다 — 러너 기동 시간을 감안한 재확인이 없다",
       `조회 횟수=${statusCalls.length}`);
 
 // 4) 대기 상태가 되면 성공으로 말한다(거짓 실패를 내지 않는다).
-statusBody = { logged_in: true, connected: true, listening: true, compose_blocked: false };
+statusBody = { logged_in: true, connected: true, listening: true, compose_blocked: false, last_os: "windows" };
 const before = statusCalls.length;
+await rearm();
 launch.click();
-for (let i = 0; i < 20; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] === "ok",
       "L8 대기 중이 됐는데도 성공으로 말하지 않는다",
       `data-kind=${status._attrs["data-kind"]} text=${status.textContent}`);
@@ -200,7 +245,7 @@ check(body && body.listening === true,
 // 6) 마지막 회차 응답이 **낡아서 버려져도** 성공을 실패로 뒤집지 않는다 (P1-2).
 //    겹친 폴링이 새 세대를 만들면 이 루프의 응답은 `null` 이 된다 — 그때 «대기 안 함» 으로
 //    읽으면, 실제로는 대기 중인데 모달에 "명령을 다시 실행하세요" 가 남는다.
-statusBody = { logged_in: true, connected: true, listening: true, compose_blocked: false };
+statusBody = { logged_in: true, connected: true, listening: true, compose_blocked: false, last_os: "windows" };
 const origFetch = globalThis.fetch;
 let bumping = false;   // 재진입 방지 — 없으면 wrapper 가 자기를 무한히 부른다
 globalThis.fetch = async (url) => {
@@ -213,18 +258,20 @@ globalThis.fetch = async (url) => {
   return res;
 };
 status._attrs["data-kind"] = undefined;
+await rearm();
 launch.click();
-for (let i = 0; i < 200; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] === "ok",
       "L12 낡아서 버려진 응답 때문에 «대기 중» 을 실패로 뒤집는다",
       `data-kind=${status._attrs["data-kind"]} text=${status.textContent}`);
 globalThis.fetch = origFetch;
 
 // 7) 로그아웃 응답에 `listening` 이 실려 와도 성공으로 말하지 않는다 (P2-7).
-statusBody = { logged_in: false, listening: true };
+statusBody = { logged_in: false, listening: true, last_os: "windows" };
 status._attrs["data-kind"] = undefined;
+await rearm();
 launch.click();
-for (let i = 0; i < 80; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] !== "ok",
       "L13 로그아웃 상태인데 «내 AI가 대기 중입니다» 라고 말한다", status.textContent);
 
@@ -237,8 +284,9 @@ globalThis.fetch = async (url) => {
 };
 status._attrs["data-kind"] = undefined;
 status.textContent = "";
+await rearm();
 launch.click();
-for (let i = 0; i < 80; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] === "error" && !/핸들러/.test(status.textContent),
       "L14 조회가 전부 실패했는데 원인을 설치(핸들러)로 돌린다", status.textContent);
 globalThis.fetch = failFetch;
@@ -263,8 +311,13 @@ globalThis.fetch = sigFetch;
 //     1R 수정(관측 보완)이 만든 반대 방향의 결함이다 — 관측은 세대 검사를 통과한 응답만 남긴다.
 // ⚠ 스텁이 `statusBody` 를 **호출 시점에 읽으면** 이 시나리오가 재현되지 않는다(값을 바꿔
 //    놓아도 `json()` 이 나중에 최신 값을 읽는다). 그래서 응답 객체를 여기서 **직접** 만든다.
-const LISTENING = { logged_in: true, connected: true, listening: true, compose_blocked: false };
-const IDLE = { logged_in: true, connected: true, listening: false, compose_blocked: true };
+// ⚠ `last_os` 를 뺀 응답을 흘리면 그 뒤로 실행 버튼이 **영영 안 나타난다** — 그 값이
+//   「이미 한 번 연결해 본 사람」의 유일한 근거이고, 없으면 `_offerLaunch` 가 물러난다.
+//   실측 2026-09-07: 여기서 빠뜨린 탓에 뒤따르는 L17 이 «버튼도 못 누른 채» 통과할 뻔했다.
+const LISTENING = { logged_in: true, connected: true, listening: true,
+                    compose_blocked: false, last_os: "windows" };
+const IDLE = { logged_in: true, connected: true, listening: false,
+               compose_blocked: true, last_os: "windows" };
 const resp = (body) => ({ ok: true, json: async () => body });
 statusBody = IDLE;
 let staleTurn = true;
@@ -284,8 +337,9 @@ globalThis.fetch = async (url, opts) => {
   return resp(IDLE);
 };
 status._attrs["data-kind"] = undefined;
+await rearm();
 launch.click();
-for (let i = 0; i < 200; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] !== "ok",
       "L16 버려진 낡은 응답의 «대기 중» 이 최신 «대기 안 함» 을 덮는다",
       `data-kind=${status._attrs["data-kind"]} text=${status.textContent}`);
@@ -302,11 +356,11 @@ globalThis.fetch = async (url, opts) => {
 };
 status._attrs["data-kind"] = undefined;
 status.textContent = "";
+await rearm();
 launch.click();
-for (let i = 0; i < 120; i += 1) await new Promise((r) => setTimeout(r, 0));
+for (let i = 0; i < 400; i += 1) await new Promise((r) => setTimeout(r, 0));
 check(status._attrs["data-kind"] === "error" && !/핸들러/.test(status.textContent),
-      "L17 HTTP 오류를 «받아 봤다» 로 세어 서비스 장애를 설치 문제로 안내한다",
-      status.textContent);
+      `L17 HTTP 오류를 «받아 봤다» 로 세어 서비스 장애를 설치 문제로 안내한다 — kind=${status._attrs["data-kind"]} text=${status.textContent}`);
 globalThis.fetch = okFetch;
 
 // 12) 실행 판정에 **벽시계 상한**이 있다 (2R P1-3·P2) — 요청별 상한만으로는 최악이 90초를 넘고,

@@ -682,7 +682,8 @@ def test_connect_page_explains_why_before_how():
     """'무엇을 하는 화면인지' 를 단계 설명보다 **먼저** 말한다."""
     html = CONNECT_HTML.read_text(encoding="utf-8")
     assert 'class="aic-why"' in html, "무엇을 하면 되는지 알려주는 도입부가 없다"
-    assert html.index("aic-why") < html.index("makeHandoff"), "안내가 버튼 뒤에 있다"
+    # ⚠ 기준 버튼이 바뀌었다 — 「연결 준비」가 사라졌으므로(2026-09-07) 주 버튼은 실행이다.
+    assert html.index("aic-why") < html.index("launchClient"), "안내가 버튼 뒤에 있다"
 
 
 def test_connect_page_tells_where_to_paste():
@@ -693,12 +694,13 @@ def test_connect_page_tells_where_to_paste():
     안내도 여전히 대상을 말해야 한다 — 계약(대상을 밝힌다)은 그대로, 대상만 둘이 됐다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    # ⚠ 주 경로가 다시 바뀌었다(사용자 결정 2026-09-03): 터미널 → **연결 프로그램**.
-    #   그래서 주 경로에는 붙여넣을 것이 없다 — 눌러야 할 것을 말해야 한다.
-    assert "내 AI 실행" in html, "주 경로에서 무엇을 눌러야 하는지 알려주지 않는다"
-    # 계약 자체(대상을 밝힌다)는 그대로다. 접힌 보조 경로들도 여전히 대상을 말한다.
-    assert "터미널" in html and "붙여넣" in html, "터미널 경로가 대상을 말하지 않는다"
-    assert "AI에 붙여넣" in html, "AI 경로에서 어디에 붙여넣는지 알려주지 않는다"
+    # ⚠ **경로가 하나만 남았다** (사용자 결정 2026-09-07): 터미널·AI 지시문 전면 제거.
+    #   붙여넣을 것이 없으므로 계약도 「대상을 밝힌다」에서 **「할 일을 밝힌다」** 로 옮긴다 —
+    #   지키려던 성질(사용자가 다음에 무엇을 하는지 안다)은 그대로다.
+    assert "내 AI 실행" in html, "무엇을 눌러야 하는지 알려주지 않는다"
+    assert "DQA 앱 받기" in html, "아직 앱이 없는 사용자가 무엇을 해야 하는지 말하지 않는다"
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert "붙여넣" not in body, "사라진 붙여넣기 경로를 아직 안내한다"
 
 
 def test_connect_page_promises_the_human_is_done_after_pasting():
@@ -711,11 +713,12 @@ def test_connect_page_promises_the_human_is_done_after_pasting():
     바뀌었다: "붙여넣으면 끝" + "끝나면 입력창이 열린다". AI 경로의 약속은 보조 경로에 남는다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    # ⚠ 주 경로가 연결 프로그램이 되면서 약속의 주어가 다시 바뀌었다 — 「그 창에서 끝난다」.
+    # ⚠ 문구가 또 바뀌었다(2026-09-07) — 붙여넣을 것이 없어졌으므로 약속의 주어도 바뀐다:
+    #   「연결은 DQA 앱이 합니다」. 보조 경로(AI 가 판단합니다)는 **사라졌다**.
     #   약속 자체(사람이 할 일이 여기서 끝난다)는 그대로 남는다.
-    assert "그 창에서 끝납니다" in html, "주 경로에서 사람이 할 일의 끝을 말하지 않는다"
-    assert "입력창이 열립니다" in html, "끝난 뒤 무엇이 달라지는지 말하지 않는다"
-    assert "AI가 판단합니다" in html, "보조 경로에서 나머지를 AI 가 한다는 약속이 없다"
+    assert "연결은 <strong>DQA 앱</strong>이 합니다" in html, (
+        "주 경로에서 사람이 할 일의 끝을 말하지 않는다")
+    assert "그 창이 열립니다" in html, "끝난 뒤 무엇이 달라지는지 말하지 않는다"
 
 
 def test_connect_page_is_a_single_flow():
@@ -735,8 +738,12 @@ def test_connect_page_glosses_token_once_and_keeps_the_word():
     '열쇠' 같은 새 이름을 만들면 정작 AI 도구 설정 화면의 `token` 칸과 매칭이 끊긴다.
     """
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    assert "비밀번호처럼" in html, "토큰을 어떻게 다뤄야 하는지 말하지 않는다"
+    # ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).** 이 화면은 토큰을 보여주지 않으므로
+    #   「토큰이라는 말을 유지하되 풀어 설명한다」의 대상이 없다. 남은 절반 — **새 이름을
+    #   지어내지 않는다** — 은 되살아날 때를 위해 그대로 잠근다.
     assert "열쇠" not in html, "용어를 두 벌로 만들면 사용자가 매칭에 실패한다"
+    if "비밀번호처럼" in html:
+        assert "토큰" in html, "설명만 있고 매칭에 쓰이는 말(토큰)이 없다"
 
 
 def test_connect_page_no_unexplained_mcp_in_visible_text():
@@ -775,17 +782,13 @@ def test_connect_page_has_exactly_one_copy_action():
     지시문은 `<details>` 안에 접혀 있어, 펼치기 전까지 사용자가 보는 복사 버튼은 여전히 하나다.
     "선택을 시키지 않는다" 는 원래 계약은 개수가 아니라 **동시 노출**의 문제였다.
     """
-    import re
-
     html = CONNECT_HTML.read_text(encoding="utf-8")
-    # 접힌 영역을 걷어낸 = 펼치기 전에 보이는 화면.
     visible = re.sub(r"<details.*?</details>", "", html, flags=re.S)
-    # ⚠ 계약은 개수가 아니라 **동시 노출**이다. 주 경로가 연결 프로그램이 되면서
-    #   펼치기 전 화면에는 복사 버튼이 아예 없을 수도 있다(터미널 경로도 접혔다).
-    #   둘 이상이면 여전히 「어느 걸 복사하지?」가 생기므로 그것만 막는다.
-    assert visible.count("복사</button>") <= 1, (
-        "펼치기 전 화면에 복사 버튼이 둘 이상이다 — 다시 고르게 만든다")
-    assert "<details" in html, "보조 경로가 접혀 있지 않아 두 경로가 동시에 노출된다"
+    # ⚠ **0 이 됐다** (사용자 결정 2026-09-07). 복사할 것(명령·지시문)이 통째로 사라졌으므로
+    #   「어느 걸 복사하지?」라는 선택도 함께 사라졌다. 계약의 상한(≤1)은 그대로 두고 —
+    #   0 도 만족한다 — 되살아나는 것만 막는다.
+    assert visible.count("복사</button>") == 0, (
+        "복사 버튼이 되살아났다 — 복사할 대상은 이 화면에 없다")
     assert "주소만 복사" not in html
 
 
@@ -960,20 +963,30 @@ def test_every_surface_uses_the_server_composed_handoff(label, path):
     아니라 **표시하는 곳 전부**에 건다.
     """
     js = path.read_text(encoding="utf-8")
-    assert "body.handoff" in js, f"{label}: 지시문을 프런트가 만든다(두 벌 관리)"
-    # 자체 조립의 지문 — 이 조각이 있으면 서버 문안과 별개의 사본이 산다.
+    # ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).** 종전 계약은 「지시문을 서버에서 받아라」
+    #   였다 — 프런트가 조립하면 문안이 갈리기 때문이다. 지금은 **어느 화면도 지시문을 보여
+    #   주지 않는다.** 그러므로 지켜야 하는 것은 「서버에서 받는가」가 아니라 **「되살아나지
+    #   않는가」** 다. 원래 걱정(사본이 산다)은 그대로이고, 사본이 없으려면 표시가 없어야 한다.
+    assert "body.handoff" not in js, f"{label}: 지시문 표시가 되살아났다"
+    # 자체 조립의 지문 — 이 조각이 있으면 서버 문안과 별개의 사본이 산다(계약 그대로).
     for token in ("mcpServers", "Authorization: Bearer \" +", "list_open_requests 로"):
         assert token not in js, f"{label}: 지시문 조각을 직접 조립한다({token!r})"
 
 
-def test_modal_clears_token_from_dom_on_close():
-    """닫으면 본문을 비운다 — DOM 에 토큰을 남기지 않고, '다시 볼 수 없다' 를 참으로 만든다."""
-    close = MODAL_JS[:0] if False else None  # noqa: F841  (가독용 no-op)
+def test_modal_never_puts_a_token_in_the_dom():
+    """⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+
+    종전 계약은 「창을 열고 닫을 때 토큰이 실린 본문을 비워라」였다 — 화면에 토큰을 그렸기
+    때문이다. 지금은 **그리지 않는다.** 토큰은 스킴 URL 안에 실려 프로그램으로 바로 건네지고
+    사용자가 그 값을 보거나 복사할 일이 없다.
+
+    지키려던 성질(토큰이 DOM 에 남지 않는다)은 **더 강하게** 만족된다 — 애초에 넣지 않으므로
+    지울 것도 없다. 그래서 「지우는가」가 아니라 **「넣는 자리가 있는가」** 를 잰다.
+    """
     js = MODAL_JS.read_text(encoding="utf-8")
-    body = js[js.index("export function closeConnectModal("):js.index("async function _make(")]
-    assert 'textContent = ""' in body, "닫을 때 토큰이 DOM 에 남는다"
-    opened = js[js.index("export function openConnectModal("):js.index("export function closeConnectModal(")]
-    assert 'textContent = ""' in opened, "열 때 이전 토큰이 남아 새것으로 오인된다"
+    # 토큰을 그리던 자리들. 하나라도 되살아나면 지우는 계약도 함께 되살려야 한다.
+    for gone in ("connectModalText", "connectModalCmd", "connectModalProbe", "body.handoff"):
+        assert gone not in js, f"토큰 표시 자리가 되살아났다({gone}) — 지우는 계약도 필요하다"
 
 
 def test_standalone_page_still_exists():

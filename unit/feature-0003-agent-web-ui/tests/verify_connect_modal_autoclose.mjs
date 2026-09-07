@@ -78,11 +78,12 @@ class FakeEl {
   scrollIntoView() {}
 }
 
+// ⚠ 2026-09-07: 「연결 준비」·명령·지시문 자리가 통째로 사라졌다(사용자 결정). 그 id 들을
+//   여기 남겨 두면 **없는 요소를 있는 것처럼** 세워 두는 셈이라, 제품이 그것을 다시 만지기
+//   시작해도 하네스는 조용히 통과한다.
 const IDS = [
-  "connectModalOverlay", "connectModalStatus", "connectModalMake", "connectModalLaunch",
-  "connectModalResult", "connectModalText", "connectModalCmd", "connectModalProbe",
-  "connectModalTabPosix", "connectModalTabWin", "connectModalOsLabel", "connectModalCloseBtn",
-  "connectModalCopy", "connectModalCopyCmd", "connectModalCopyProbe",
+  "connectModalOverlay", "connectModalStatus", "connectModalLaunch", "connectModalCloseBtn",
+  "connectModalGet", "connectModalGetLink",
   "aiConnState", "composerGate", "composerGateTitle", "composerGateDesc", "composerGateBtn",
 ];
 let els = new Map(IDS.map((id) => [id, new FakeEl(id)]));
@@ -119,7 +120,11 @@ globalThis.clearInterval = (t) => { liveTimers.delete(t); return _realClearInter
 let statusBody = { logged_in: true, connected: false, listening: false, compose_blocked: false };
 let statusFails = false;      //: 조회가 실패하는 구간 (네트워크 오류·5xx)
 let statusDelayMs = 0;        //: 응답 지연 (겹침 검증용)
-const setStatus = (b) => { statusBody = b; };
+// ⚠ `last_os` 를 **기본으로 실어 준다** (2026-09-07). 「연결 준비」가 사라지면서 실행 URL 은
+//   창을 열 때 미리 받아 두는데(`_offerLaunch`), 그 자격은 **서버가 아는 연결 이력**이다 —
+//   `last_os` 가 그 이력이다. 여기 시나리오들은 전부 [내 AI 실행] 을 누르는 사람의 이야기이고,
+//   그 사람은 정의상 한 번은 연결해 본 사람이다. 시나리오마다 적으면 그 사실이 흩어진다.
+const setStatus = (b) => { statusBody = { last_os: "posix", ...b }; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 globalThis.fetch = async (url) => {
@@ -147,13 +152,31 @@ globalThis.__toasts = [];
 // ── 모듈 적재 ────────────────────────────────────────────────────────────────
 // `import { showToast } from "../app.js"` 를 스텁으로 바꿔 data: URL 로 적재한다. app.js 는
 // 화면 전체를 세우는 대형 번들이라, 이 모듈 하나를 보려고 통째로 평가시키지 않는다.
+// ⚠ **상대 import 는 하나도 남기면 안 된다.** data: URL 에는 기준 경로가 없어
+//   `./client-bridge.js` 같은 지정자는 `ERR_INVALID_URL` 로 **적재 자체가 죽는다**.
+//
+//   실측 2026-09-07: 이 하네스는 `client-bridge.js` 가 도입된 2026-09-04 이후로 **한 번도
+//   돌지 않고 있었다** — `showToast` 만 스텁했기 때문이다. 그동안 문서에는 「25/0 PASS」가
+//   그대로 남아 있었다. 그래서 스텁을 한 줄짜리 특례가 아니라 **전수 처리**로 바꾸고,
+//   남은 상대 import 가 하나라도 있으면 그 자리에서 죽인다(조용한 통과보다 낫다).
 const raw = readFileSync(SRC, "utf8");
-const IMPORT_RE = /^import\s*\{\s*showToast\s*\}\s*from\s*["']([^"']+)["'];?\s*$/m;
-const importMatch = raw.match(IMPORT_RE);
-const stubbed = raw.replace(IMPORT_RE, "const showToast = (m) => { globalThis.__toasts.push(m); };");
-if (stubbed === raw && /^import\s/m.test(raw)) {
-  // 스텁이 안 걸린 채 상대 import 가 남아 있으면 data: URL 적재가 깨진다 — 조용히 넘기지 않는다.
-  console.log("  WARN  showToast import 스텁이 매칭되지 않았습니다 (import 형태 변경?)");
+const STUBS = {
+  showToast: "const showToast = (m) => { globalThis.__toasts.push(m); };",
+  // 이 하네스는 **브라우저에서 열린 창**을 잰다 — 앱 창(브리지 있음)이 아니다.
+  clientBridge: "const clientBridge = null;\nconst initClientPanel = () => false;",
+};
+const stubbed = raw.replace(
+  /^import\s*\{([^}]*)\}\s*from\s*["'][^"']+["'];?\s*$/gm,
+  (whole, names) => {
+    const first = String(names).split(",")[0].trim();
+    if (first in STUBS) return STUBS[first];
+    console.log(`  WARN  스텁 없는 import: ${whole.trim()}`);
+    return whole;
+  });
+const leftover = stubbed.match(/^import\s.*$/m);
+if (leftover) {
+  console.log(`  FAIL  상대 import 가 남았습니다 — 적재가 깨집니다: ${leftover[0]}`);
+  process.exit(1);
 }
 const mod = await import(
   "data:text/javascript;base64," + Buffer.from(stubbed, "utf8").toString("base64")
@@ -162,6 +185,25 @@ const mod = await import(
 const overlay = $("connectModalOverlay");
 // 열기 직후의 fire-and-forget 조회가 기준선을 잡을 시간을 준다.
 const settle = () => sleep(20);
+
+/** 종전 「연결 준비」 클릭이 있던 자리.
+ *
+ *  그 버튼이 사라졌으므로(2026-09-07) 실행 URL 은 **창을 여는 것만으로** 준비된다
+ *  (`_offerLaunch` → `/api/ai/connect/token`). 준비가 끝났는지는 **버튼이 드러났는가**로
+ *  안다 — 그 노출이 곧 「쏠 URL 이 손에 있다」는 제품의 계약이기 때문이다.
+ *
+ *  ⚠ 고정 대기로 때우지 않는다. 발급은 프라미스 두 단계를 거치므로 20ms 가 우연히 맞을 뿐이고,
+ *  어긋나면 실패 원인이 「타이밍」으로 뭉개진다.
+ */
+async function armLaunch(timeoutMs = 500) {
+  const btn = $("connectModalLaunch");
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    await sleep(10);
+    if (btn && btn.hidden === false) return true;
+  }
+  return false;
+}
 
 async function reset() {
   try { mod.closeConnectModal(); } catch (_) { /* 이미 닫힘 */ }
@@ -226,12 +268,17 @@ console.log("\n[D] 성립 후 추가 관측이 토스트를 다시 띄우지 않
 
 console.log("\n[E] 배선·자원");
 {
-  // E1 — 스텁 정규식이 import 를 통째로 지우므로, 경로가 틀려도 위 시나리오는 전부 통과한다.
-  //      그 경로가 실재하는지는 여기서 따로 본다(틀리면 라이브에서 화면 전체가 죽는다).
+  // E1 — 스텁이 import 를 통째로 지우므로, 경로가 틀려도 위 시나리오는 전부 통과한다.
+  //      그 경로들이 실재하는지는 여기서 따로 본다(틀리면 라이브에서 화면 전체가 죽는다 —
+  //      ESM 자유변수는 소스가 멀쩡해 보이는 런타임 폭탄이다).
+  //      ⚠ **전부** 본다. 종전에는 `showToast` 하나만 봤고, 그래서 `client-bridge.js` 가
+  //        추가됐을 때 이 검사는 아무 말도 하지 않았다.
   if (IS_DEFAULT_SRC) {
-    const spec = importMatch ? importMatch[1].split("?")[0] : null;
-    const resolved = spec ? join(dirname(SRC), spec) : null;
-    ok("E1 showToast import 경로가 실재한다", !!resolved && existsSync(resolved));
+    const specs = [...raw.matchAll(/^import\s*\{[^}]*\}\s*from\s*["']([^"']+)["'];?\s*$/gm)]
+      .map((m) => m[1].split("?")[0]);
+    ok("E1a import 를 실제로 찾았다", specs.length >= 2);
+    const missing = specs.filter((sp) => !existsSync(join(dirname(SRC), sp)));
+    ok(`E1b import 경로가 모두 실재한다 (${specs.length}건)`, missing.length === 0, missing);
   } else {
     console.log("  SKIP  E1 (대체 소스 경로 — 상대 import 기준점이 다르다)");
   }
@@ -267,10 +314,25 @@ console.log("\n[E] 배선·자원");
 
 console.log("\n[F] 창 교체 경합 — 이전 창의 대기가 새 창을 닫지 않는다 (codex 1R P1-1 · 2R)");
 {
-  // 공통 준비: 「연결 준비」로 명령을 발급해 `[내 AI 실행]` 버튼을 살린다.
+  // 공통 준비: 창을 열면 실행 URL 이 준비되고 `[내 AI 실행]` 버튼이 드러난다(`armLaunch`).
   const launchBtn = $("connectModalLaunch");
-  const cmdEl = $("connectModalCmd");
   mod.bindConnectModal();   // 실제 리스너 배선 — 버튼 경로를 우회하지 않는다
+
+  // ⚠ **로그인 진입 자동 실행을 먼저 소진시킨다.**
+  //
+  //   그것은 **페이지당 1회**이고, 실제 페이지에서는 로그인 직후에 일어나 사용자가 아래
+  //   동작(실행 → 닫기 → 다시 열기)을 하는 시점에는 이미 끝나 있다. 그런데 이 하네스는
+  //   모듈 하나를 모든 시나리오가 나눠 쓰므로, 그 1회가 **시나리오 한가운데서** 일어날 수
+  //   있다 — 그러면 이 블록은 「창 교체 경합」이 아니라 「자동 진입」을 재게 된다.
+  //
+  //   실측 2026-09-07: 실제로 그랬다. F2 의 실패는 클릭 대기가 아니라 자동 진입의 대기가
+  //   성공을 보고 창을 닫은 것이었다. 시점을 실제와 맞추려면 **끝까지** 소진해야 한다 —
+  //   쏘기만 하고 두면 그 대기(≤40초)가 나중 시나리오에서 되살아난다.
+  await reset();
+  setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
+  await mod.refreshConnState();          // 자격 성립 → 자동 진입이 스킴을 쏜다
+  setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
+  await sleep(2400);                     // 그 대기가 성공을 보고 스스로 끝난다
 
   // (구 F1 «남의 러너로 닫히지 않는다» 는 제거됐다 — 그 판정이 사용자 제보의 원인이었다.
   //  같은 상황을 [H] 가 **반대 기대**로 잠근다: 사용자가 누른 실행이 성공을 확인하면 닫는다.)
@@ -281,21 +343,18 @@ console.log("\n[F] 창 교체 경합 — 이전 창의 대기가 새 창을 닫�
   setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
   mod.openConnectModal();
   await settle();
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   launchBtn.click();                 // 대기 시작 (첫 회차 2000ms)
   await sleep(200);
   mod.closeConnectModal();           // 사용자가 창을 닫고
   mod.openConnectModal();            // 곧바로 새 창을 연다
   await settle();
-  $("connectModalMake").click();     // 새 명령 발급
-  await settle();
-  const newCmd = String(cmdEl.textContent || "");
+  await armLaunch();                 // 새 창에서 실행 URL 을 다시 받는다
   setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
   // 이제 이전 대기의 첫 조회가 도착한다 — 그 응답은 listening:true 다.
   await sleep(2600);
   ok("F2a 이전 대기가 새 창을 닫지 않는다", overlay.hidden === false);
-  ok("F2b 새 명령이 남아 있다", String(cmdEl.textContent || "") === newCmd && newCmd.length > 0);
+  ok("F2b 새 창의 실행 경로가 살아 있다", launchBtn.hidden === false);
 
   // F3 (P1-1 심층, codex 2R) — F2 는 조회가 **출발하기 전**에 창을 닫으므로 in-flight 경합을
   //    건드리지 않는다. 여기서는 조회를 날려 둔 채 창을 교체한다: 그 늦은 응답은
@@ -306,8 +365,7 @@ console.log("\n[F] 창 교체 경합 — 이전 창의 대기가 새 창을 닫�
   await mod.refreshConnState();                 // 페이지가 «대기 안 함» 을 안다
   mod.openConnectModal();
   await settle();
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   statusDelayMs = 1200;
   setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
   launchBtn.click();                            // 대기 시작 — 첫 조회는 t≈2000 에 출발
@@ -315,12 +373,11 @@ console.log("\n[F] 창 교체 경합 — 이전 창의 대기가 새 창을 닫�
   setStatus({ logged_in: true, connected: false, listening: false, compose_blocked: false });
   mod.closeConnectModal();
   mod.openConnectModal();                       // 새 창 — 이 창의 조회는 false 를 받는다
-  $("connectModalMake").click();
+  await armLaunch();
   await sleep(400);
-  const cmd3 = String(cmdEl.textContent || "");
   await sleep(3000);                            // 양쪽 응답이 모두 도착할 시간
   ok("F3a in-flight 응답이 새 창을 닫지 않는다", overlay.hidden === false);
-  ok("F3b 새 명령이 남아 있다", String(cmdEl.textContent || "") === cmd3 && cmd3.length > 0);
+  ok("F3b 새 창의 실행 경로가 살아 있다", launchBtn.hidden === false);
   ok("F3c 거짓 알림이 없다", globalThis.__toasts.length === 0);
 
   // F4 — 실행 대기 중 창을 **닫기만** 했다(다시 열지 않는다). 뒤늦게 도착한 성공 응답이
@@ -332,8 +389,7 @@ console.log("\n[F] 창 교체 경합 — 이전 창의 대기가 새 창을 닫�
   await mod.refreshConnState();
   mod.openConnectModal();
   await settle();
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   statusDelayMs = 1200;
   setStatus({ logged_in: true, connected: true, listening: true, compose_blocked: false });
   launchBtn.click();
@@ -357,7 +413,6 @@ console.log("\n[H] 사용자 제보 재현 (2026-09-01) — 실행을 눌러 «�
   // 실행**까지 그 판정에 묶어 버린 것이 이 결함이다. 버튼을 누른 것은 명시적 의도이고, 그
   // 결과로 대기 중이 확인됐으면 사용자에게 그것은 성공이다.
   const launchBtn = $("connectModalLaunch");
-  const cmdEl = $("connectModalCmd");
   mod.bindConnectModal();
 
   await reset();
@@ -367,9 +422,8 @@ console.log("\n[H] 사용자 제보 재현 (2026-09-01) — 실행을 눌러 «�
   mod.openConnectModal();
   await settle();
   ok("H1 열자마자 닫히지는 않는다 (자동 경로의 기준선은 유효하다)", overlay.hidden === false);
-  $("connectModalMake").click();
-  await settle();
-  ok("H2 명령이 발급된다", String(cmdEl.textContent || "").length > 0);
+  await armLaunch();
+  ok("H2 실행 URL 이 준비된다", launchBtn.hidden === false);
   launchBtn.click();
   await sleep(2600);
   ok("H3 실행이 성공을 확인하면 창이 닫힌다", overlay.hidden === true);
@@ -385,8 +439,7 @@ console.log("\n[H] 사용자 제보 재현 (2026-09-01) — 실행을 눌러 «�
   await mod.refreshConnState();
   mod.openConnectModal();
   await settle();
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   setStatus({ logged_in: true, connected: true, listening: true, runner_stale: true, compose_blocked: false });
   launchBtn.click();
   await sleep(2600);
@@ -425,8 +478,7 @@ console.log("\n[I] 사용자 요청 (2026-09-01) — 명령 경로 · «업데�
   mod.openConnectModal();
   await settle();
   ok("I1a 열자마자 닫히지 않는다", overlay.hidden === false);
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   setStatus({ logged_in: true, connected: true, listening: false, compose_blocked: false });
   await mod.refreshConnState();          // 러너를 껐다 (명령을 실행하려고)
   ok("I1b 끊긴 것만으로는 닫지 않는다", overlay.hidden === false);
@@ -443,8 +495,7 @@ console.log("\n[I] 사용자 요청 (2026-09-01) — 명령 경로 · «업데�
   mod.openConnectModal();
   await settle();
   ok("I2a 열자마자 닫히지 않는다", overlay.hidden === false);
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   ok("I2b 아직 낡은 동안은 창이 남는다", overlay.hidden === false);
   setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
   await mod.refreshConnState();          // 최신 러너로 갱신됐다
@@ -458,8 +509,7 @@ console.log("\n[I] 사용자 요청 (2026-09-01) — 명령 경로 · «업데�
   await mod.refreshConnState();
   mod.openConnectModal();
   await settle();
-  $("connectModalMake").click();
-  await settle();
+  await armLaunch();
   launchBtn.click();
   await sleep(1200);
   setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
@@ -482,7 +532,6 @@ console.log("\n[I] 사용자 요청 (2026-09-01) — 명령 경로 · «업데�
 
 console.log("\n[J] 닫은 창의 늦은 응답이 다음 창의 «직전 관측» 을 오염시키지 않는다 (codex P1)");
 {
-  const cmdEl = $("connectModalCmd");
   // 판정을 «직전 관측» 기준으로 바꾸면 그 값 자체가 자산이 된다 — 남의 창 응답이 거기 섞이면
   // 일어나지 않은 전이가 만들어지고, 새로 연 창이 방금 받은 명령과 함께 닫힌다.
   await reset();
@@ -500,13 +549,11 @@ console.log("\n[J] 닫은 창의 늦은 응답이 다음 창의 «직전 관측�
   setStatus({ logged_in: true, connected: true, listening: true, runner_stale: false, compose_blocked: false });
   mod.openConnectModal();                 // 창 B — 열 때 이미 «쓸 수 있음»
   await settle();
-  $("connectModalMake").click();
-  await settle();
-  const cmd = String(cmdEl.textContent || "");
+  await armLaunch();
   await mod.refreshConnState();
   ok("J1 오염된 관측으로 새 창을 닫지 않는다",
      overlay.hidden === false && globalThis.__toasts.length === 0);
-  ok("J2 새 명령이 남아 있다", String(cmdEl.textContent || "") === cmd && cmd.length > 0);
+  ok("J2 새 창의 실행 경로가 살아 있다", $("connectModalLaunch").hidden === false);
 }
 
 await reset();

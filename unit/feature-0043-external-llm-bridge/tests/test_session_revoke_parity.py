@@ -264,10 +264,20 @@ def test_indicator_opens_the_modal():
 
 
 def test_indicator_refreshes_after_connecting():
-    """방금 연결했는데 표시가 낡아 있으면 사용자는 실패한 줄 안다."""
+    """방금 연결했는데 표시가 낡아 있으면 사용자는 실패한 줄 안다.
+
+    ⚠ **재는 자리가 옮겨졌다 (2026-09-07).** 종전에는 발급(`_make`)이 끝난 뒤 곧바로 다시
+    조회하는지를 봤다 — 그 발급이 「연결을 만드는」 동작이었기 때문이다. 그 버튼이 사라지고
+    연결을 만드는 것은 **실행**(`_launchRunner`)과 앱 창의 패널이 됐다. 성질은 그대로:
+    연결이 성립한 직후 표시가 다음 폴링을 기다리지 않는다.
+    """
     js = MODAL_JS.read_text(encoding="utf-8")
-    make = js[js.index("async function _make("):js.index("/** 지정한 `<pre>` 의 내용을")]
-    assert "refreshConnState()" in make
+    fn = js[js.index("async function _launchRunner("):]
+    fn = fn[:fn.index("\n}")]
+    assert "_awaitUsable(" in fn, "실행 뒤 상태를 지켜보지 않는다"
+    assert "refreshConnState" in js[js.index("async function _awaitUsable("):
+                                    js.index("async function _launchRunner(")], (
+        "지켜보기가 실제로 상태를 다시 읽지 않는다")
 
 
 def test_indicator_refreshes_on_tab_return():

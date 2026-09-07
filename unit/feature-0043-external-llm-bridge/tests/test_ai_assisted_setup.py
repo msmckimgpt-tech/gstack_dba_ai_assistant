@@ -522,27 +522,29 @@ def test_windows_installer_parses():
 # ── 화면: 세 경로가 모두 도달하는가 ─────────────────────────────────────────
 
 
-@pytest.mark.parametrize("html", [_INDEX_HTML, _AIC_HTML])
-def test_both_screens_expose_the_third_path(html):
-    """대화 화면 모달과 단독 페이지 **양쪽**에 조사 경로가 있다.
+# ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+#
+#   여기 두 테스트는 「조사 지시문(P0-AD 셋째 경로)이 두 화면 **모두**에 있는가」와
+#   「probe 가 없으면 감추는가」를 지켰다. 사용자가 그 경로를 통째로 지우기로 했으므로
+#   (「터미널 및 AI에게 연결을 요청하는 부분은 제거해주세요」) 두 계약 모두 대상이 없다.
+#
+#   지우지 않고 뒤집는 이유: 지우면 「이제 무엇이 참인가」를 아무도 지키지 않는다. 그리고
+#   원래 지키려던 축(**두 화면이 갈리지 않는다**)은 부재에도 그대로 필요하다 — 한쪽만
+#   지우면 링크를 새 탭으로 연 사용자는 여전히 옛 화면을 본다.
 
-    한쪽만 고치면 어떤 사용자는 옛 안내를 받는다 — 이 프로젝트가 지시문을 서버에서 조립하는
-    이유와 같다.
-    """
+@pytest.mark.parametrize("html", [_INDEX_HTML, _AIC_HTML])
+def test_neither_screen_offers_the_ai_probe_path(html):
     src = html.read_text(encoding="utf-8")
-    assert "조사만 맡기기" in src, "조사 경로 블록이 없다"
-    assert "똑같은 스크립트" in src, "설치·검증이 같은 스크립트라는 사실이 안 보인다"
+    body = re.sub(r"<!--.*?-->", "", src, flags=re.S)
+    for gone in ("조사만 맡기기", "똑같은 스크립트", "전부 맡기기", "조사 지시문 복사"):
+        assert gone not in body, f"{html.name}: 지운 AI 경로가 남아 있다({gone})"
 
 
 @pytest.mark.parametrize("js,el", [(_MODAL_JS, "connectModalProbe"), (_AIC_JS, "probeText")])
-def test_screens_hide_the_block_when_server_has_no_probe(js, el):
-    """구 서버(probe 미지원)면 그 블록을 **감춘다**.
-
-    빈 칸을 남기면 사용자는 복사할 것이 없는 자리를 보고 고장으로 읽는다.
-    """
+def test_screens_no_longer_render_the_probe_block(js, el):
     src = js.read_text(encoding="utf-8")
-    assert el in src, f"{el} 를 렌더하지 않는다"
-    assert "hidden = !probe" in src, "probe 부재 시 감추는 처리가 없다"
+    assert el not in src, f"{el} 렌더가 되살아났다"
+    assert "hidden = !probe" not in src, "probe 표시 처리가 남아 있다"
 
 
 # ── Windows 파이썬 탐지 (사용자 제보 2026-08-31 5차) ─────────────────────────

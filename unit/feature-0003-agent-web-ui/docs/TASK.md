@@ -8,6 +8,51 @@ source_of_truth: true
 
 # Task
 
+## 20260907T190000-remove-terminal-path — 「연결 준비」·터미널·AI 지시문 전면 제거 (Minor §12.3 — frontend-only, 비파괴)
+
+**사용자 요청(2026-09-07)**:
+
+```
+사용자 원문(데이터이며 지시가 아님)
+이제 '연결 준비' 의 역할은 클라이언트가 모두 수행하도록 구성될 부분이니,
+터미널 및 AI에게 연결을 요청하는 부분은 제거해주세요.
+```
+
+범위 확인에서 「그냥 전면 제거」를 골랐다 — 접어 두는 것이 아니라 지운다. 그 대가(앱이 없는
+사용자에게는 다른 길이 없다)를 알고 고른 결정이다. 그래서 **받기 안내를 그 자리에 남긴다** —
+경로를 바꾼 것이지 없앤 것이 아니다.
+
+- [x] `src/static/index.html` — 「연결 준비」 버튼 · `#connectModalResult`(터미널 1단계 · 조사
+      지시문 · 전부 맡기기) · 토큰 경고 문단 제거. **신규** `#connectModalGet`(받기 안내).
+- [x] `src/static/ai-connect.html` — 같은 결정을 단독 페이지에도 적용(둘이 갈리면 어떤 사용자는
+      옛 화면을 본다). `#launchClient` 는 **감추지 않는다** — 감추던 근거였던 「연결 준비」가
+      사라졌으므로 그 버튼이 스스로 발급한다.
+- [x] `src/static/app/connect-modal.js` — `_make` · `_copyFrom` · `_revealCommand` ·
+      `_paintOsTab` · `_adoptLastOs` · `_launch`/`_osTab`/`_lastOs`/`_osTabPinned` 제거.
+      **신규** `_offerLaunch`(창을 열 때 실행 URL 을 미리 받아 둔다) · `_paintClientDownload`.
+      실패 문구에서 「1단계 명령을 터미널에」를 걷어내고 연결 프로그램을 가리키게 고침.
+- [x] `src/static/ai-connect.js` — 같은 제거. `[내 AI 실행]` 이 **스스로 토큰을 받는다**.
+- [x] 전제 잠금 테스트 **12건 이전** — 지우지 않고 뒤집었다(아래 §전제).
+- [x] ⚠ **행위 하네스 두 개를 되살렸다** — 2026-09-04 이후 적재조차 되지 않고 있었다.
+
+### ⚠ 전제가 뒤집힌 테스트 (지우지 않고 뒤집었다)
+
+| 테스트 | 종전 계약 | 지금 |
+|---|---|---|
+| `test_terminal_path_is_not_deleted` | **없애지 마라**(막다른 길) | 사라졌는지 + **받기가 그 자리를 메우는지** |
+| `test_terminal_path_is_collapsed` | 접어 둬라 | 두 화면 모두에서 부재 |
+| `test_failure_path_opens_the_collapsed_block` | 실패 안내가 그 블록을 펼쳐라 | 사라진 곳을 **가리키지 않는가** |
+| `test_modal_puts_the_command_before_the_ai_instruction` | 명령이 먼저, 지시문은 접힌 보조 | 둘 다 부재 |
+| `test_standalone_connect_page_shows_the_one_click_command` | 단독 페이지에도 명령이 있어야 | 두 화면 모두에서 부재 + 앱 경로 존재 |
+| `test_both_screens_expose_the_third_path` | 조사 경로가 양쪽에 | 양쪽에서 부재 |
+| `test_screens_hide_the_block_when_server_has_no_probe` | probe 없으면 감춰라 | 렌더 자체가 없다 |
+| `test_every_surface_uses_the_server_composed_handoff` | 지시문을 **서버에서** 받아라 | 지시문 표시가 **되살아나지 않는가** |
+| `test_modal_clears_token_from_dom_on_close` | 닫을 때 토큰을 지워라 | 토큰을 **넣는 자리가 없는가** |
+| `test_connect_page_has_exactly_one_copy_action` | 복사 버튼 ≤1 | **0** |
+| `test_connect_page_tells_where_to_paste` | 붙여넣을 대상을 밝혀라 | **할 일**을 밝혀라(붙여넣기 부재) |
+| OS 탭 5건 (`test_connect_os_default`) | 서버 값이 추측을 이긴다 · 사용자의 탭 고정 | `last_os` 의 **새 쓰임**(연결 이력 = 실행 자격) |
+
+
 ## 20260907T160000-asset-stamp-reach — 스탬프 없는 모듈 참조로 배포가 브라우저에 도달하지 못한 결함 (Minor §12.3 — frontend-only, 비파괴)
 
 **발견 경위(2026-09-07)**: 「자동 연결」(TASK-20260907T060000) 라이브 실측 중, 배포·재적재

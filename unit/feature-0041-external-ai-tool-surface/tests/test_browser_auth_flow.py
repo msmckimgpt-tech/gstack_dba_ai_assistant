@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import ast
 import os
 import sys
@@ -284,10 +286,20 @@ def test_console_token_lifetime_matches_the_session_not_15_minutes():
         == _store.CONSOLE_TOKEN_MAX_TTL_SEC
 
 
-def test_console_token_ttl_is_shown_in_a_unit_that_means_something():
+def test_console_token_ttl_is_not_shown_because_no_token_is_shown():
+    """전제가 뒤집혔다 (사용자 결정 2026-09-07).
+
+    종전 계약은 「토큰의 유효기간을 뜻이 통하는 단위로 보여라」였다 — 1시간 미만을 시간 단위로
+    반올림하면 「약 0시간」이 되고, 실제로 그렇게 떴었다. 그 화면은 이제 **토큰을 보여주지
+    않는다**: 터미널·AI 지시문 경로가 사라지면서 발급값이 화면에 오르지 않고, 실행 URL 안에
+    실려 프로그램으로 곧장 건네진다.
+
+    보여줄 것이 없으므로 단위 문제도 없다. 되살아나면 단위 계약도 함께 되살려야 하므로 그
+    자리를 잠근다.
+    """
     js = _read(*_STATIC, "ai-connect.js")
-    assert "function humanTtl(" in js
-    assert 's < 3600' in js, "1시간 미만을 시간 단위로 반올림하면 '0시간' 이 된다"
+    assert "humanTtl" not in js, "유효기간 표시가 되살아났다 — 단위 계약도 함께 되살려야 한다"
+    assert "expires_in" not in js, "발급 응답의 만료를 다시 그린다"
 
 
 def test_console_token_refuses_when_session_is_unknown():
@@ -296,20 +308,20 @@ def test_console_token_refuses_when_session_is_unknown():
     assert "if session_id is None:" in body and "status_code=401" in body
 
 
-def test_connect_page_warns_about_the_secret_it_shows():
-    """토큰 노출 경고 **3요소**가 있는가.
+def test_connect_page_shows_no_secret_to_warn_about():
+    """전제가 뒤집혔다 (사용자 결정 2026-09-07).
 
-    ⚠ 특정 문장이 아니라 **말해야 하는 사실**을 검사한다(2026-08-27 문구 개선에서 이 테스트가
-    깨졌다 — 뜻은 같은데 표현이 바뀌었을 뿐이었다). 문구는 사용자 눈높이에 맞춰 계속 다듬을
-    것이고, 그때마다 테스트가 깨지면 사람들은 **경고를 지우는 대신 테스트를 지운다**.
-    검사해야 하는 것은 표현이 아니라 세 가지 사실이다.
+    종전에는 토큰 노출 경고 **3요소**(로그아웃 시 무효 · 남에게 주지 말 것 · 1회 노출)를
+    쟀다. 이 화면은 더 이상 비밀을 보여주지 않으므로 경고할 대상이 사라졌다.
+
+    「보여주면서 경고하지 않는다」를 막던 계약을 「**보여주지 않는다**」로 옮긴다 — 경고
+    문구만 지우고 표시를 남기는 것이 정확히 이 테스트가 막던 결함이므로, 표시 쪽을 잠그면
+    원래 걱정이 더 강하게 지켜진다.
     """
     html = _read(*_STATIC, "ai-connect.html")
-    assert "로그아웃하면" in html, "로그아웃 시 무효라는 사실이 없다"
-    # 타인 제공 금지 — 어떤 표현이든 이 사실은 있어야 한다.
-    assert any(k in html for k in ("공유하지", "다른 사람에게 주지", "남에게 주지")), (
-        "토큰을 남에게 주면 안 된다는 경고가 없다")
-    assert "다시 볼 수 없" in html, "1회 노출이라는 사실을 알리지 않는다"
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    for gone in ("handoffText", "launchCmd", "probeText", "지시문 복사", "명령 복사"):
+        assert gone not in body, f"비밀을 그리는 자리가 되살아났다({gone}) — 경고도 함께 되살려라"
 
 
 def test_connect_page_hands_off_without_calling_the_human_back():

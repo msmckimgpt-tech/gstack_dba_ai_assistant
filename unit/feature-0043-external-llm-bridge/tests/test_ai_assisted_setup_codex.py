@@ -145,7 +145,13 @@ def test_ui_does_not_claim_identical_results(html):
     src = html.read_text(encoding="utf-8")
     assert "결과는 ①과 같습니다" not in src and "결과는 1단계와 같습니다" not in src, (
         f"{html.name}: 검증되지 않는 동일성 주장이 남아 있다")
-    assert "AI마다 다를 수 있습니다" in src, f"{html.name}: 비결정성 고지가 없다"
+    # ⚠ **비결정성 고지의 전제가 사라졌다 (사용자 결정 2026-09-07).** 그 고지는 AI 에게 설치를
+    #   맡기는 경로가 화면에 있을 때만 뜻이 있다 — 그 경로가 통째로 지워졌으므로 고지할 대상이
+    #   없다. 그러나 원래 걱정(검증 못 하는 동일성 주장)은 그대로이므로 위 단정은 남기고,
+    #   **경로가 돌아오면 고지도 함께 돌아와야 한다**는 짝을 여기서 잠근다.
+    if any(k in src for k in ("조사만 맡기기", "전부 맡기기", "probeText", "handoffText")):
+        assert "AI마다 다를 수 있습니다" in src, (
+            f"{html.name}: AI 경로를 되살리면서 비결정성 고지를 빠뜨렸다")
 
 
 def test_instruction_draws_the_line_at_the_unvalidated_human_slot():
