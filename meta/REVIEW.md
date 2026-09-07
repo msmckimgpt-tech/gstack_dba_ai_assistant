@@ -1760,3 +1760,7 @@ web-a/web-b/ask-worker/insight-worker 4개 서비스 `GIT_COMMIT` 일치 실측.
 ## REV-20260907T123500-ai-codex-compat [CODEX:compatibility-review] — reviewed
 
 Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고 Codex 발견 경로, 리뷰어, 공통 세션 조회를 추가한다. 격리 installer/history 및 board 회귀 테스트와 실제 Codex 로딩으로 검증한다. 사용자 전환 요청은 후속 지시에 따라 공존 구성으로 조정되었다. 정책 정본 AGENTS.md와 제품 실행 공급자는 변경하지 않는다. 상세 설계·범위: docs/CODEX_MIGRATION.md.
+
+## REV-20260907T040858-hook-worktree-compat [CODEX:hook-path-review] — PASS
+
+기존 worktree에 Codex adapter가 없으면 Git common main의 adapter로 연결하고 현재 cwd를 유지한다. 현재 worktree adapter 우선순위와 사용자 정의 hook·timeout을 보존하며, installer 재실행 시에도 같은 명령을 유지한다. canonical template e56c89ece5d3의 source regression 16건을 독립 실행해 PASS를 확인했다. 변경 범위는 Codex hook 명령·생성기이며 Claude 동작과 제품 실행은 유지한다.

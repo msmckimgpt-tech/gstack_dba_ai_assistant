@@ -16,6 +16,18 @@ import subprocess
 import sys
 import textwrap
 
+LEGACY_BOARD_COMMAND = 'python3 "$(if [ -f repo/bin/hooks/codex-board-hook.py ]; then echo repo; else git rev-parse --show-toplevel; fi)/bin/hooks/codex-board-hook.py"'
+BOARD_COMMAND = (
+    'agent_hook_root=repo; '
+    'if [ ! -f "$agent_hook_root/bin/hooks/codex-board-hook.py" ]; then '
+    'agent_hook_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; '
+    'if [ ! -f "$agent_hook_root/bin/hooks/codex-board-hook.py" ]; then '
+    'agent_hook_root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0; '
+    'agent_hook_root=$(dirname "$agent_hook_root"); fi; fi; '
+    'if [ -f "$agent_hook_root/bin/hooks/codex-board-hook.py" ]; then '
+    'python3 "$agent_hook_root/bin/hooks/codex-board-hook.py"; fi'
+)
+
 LOADER = '''# Codex project entrypoint
 
 This is a compact loader, not a replacement for repository policy. The complete
@@ -247,13 +259,18 @@ def install(source: Path, target: Path, apply: bool) -> list:
                      '상대 환경·세션 발견 및 인계는 `.agents/ENVIRONMENT.md`를 참조하세요. '
                      '현재 작업의 정본은 계속 `AGENTS.md`와 기능 문서입니다.\n')
     write_file(claude_guide, existing, apply, changes)
-    # Both wrapper and repo cwd resolve to the same script, including linked
-    # worktrees. Hooks are reviewed/trusted by Codex independently of Git trust.
+    # Native hook discovery uses main even for linked worktrees. Older branches
+    # may lack the adapter, so fall back to main without changing execution cwd.
+    # Hooks are reviewed/trusted by Codex independently of Git trust.
     hooks_path = target / '.codex/hooks.json'
     hooks = json.loads(hooks_path.read_text()) if hooks_path.exists() else {'hooks': {}}
-    command = 'python3 "$(if [ -f repo/bin/hooks/codex-board-hook.py ]; then echo repo; else git rev-parse --show-toplevel; fi)/bin/hooks/codex-board-hook.py"'
+    command = BOARD_COMMAND
     for event in ['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd']:
         groups = hooks.setdefault('hooks', {}).setdefault(event, [])
+        for group in groups:
+            for hook in group.get('hooks', []):
+                if hook.get('command') == LEGACY_BOARD_COMMAND:
+                    hook['command'] = command
         if not any(h.get('command') == command for g in groups for h in g.get('hooks', [])):
             groups.append({'hooks': [{'type': 'command', 'command': command, 'timeout': 3}]})
     write_file(hooks_path, json.dumps(hooks, ensure_ascii=False, indent=2) + '\n', apply, changes)
