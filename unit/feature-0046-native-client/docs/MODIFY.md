@@ -757,3 +757,19 @@ edit_policy: append-only
   등가 뮤턴트) — 지우고 그 성질(«auto 를 주는 자리가 하나»)을 직접 잠갔다.
   ② 「트레이를 알림 전달자에 잇는다」 단정이 이름 존재만 봐서, **잇는 줄만 지운** 뮤턴트가
   통과했다 — 그 상태에서는 알림이 영영 갈 곳이 없는데 코드는 멀쩡해 보인다.
+
+## CHG-20260907T182000-merge-two-decisions — origin/main 병합 (의미 충돌 자율 해결)
+
+병렬 cycle(PR #1589)이 연결·로그인의 사전 확인을 사후 알림으로 **교체**했고, 이 브랜치는 같은
+자리에 업데이트 설치의 사전 확인을 **추가**했다. 두 사용자 결정은 같은 날 났고 **대상이 다르다** —
+공존시켰다(판정 근거는 `REVIEW.md` REV-20260907T182000).
+
+- `src/client/bridge.py` — `NOTIFIED`(사후 알림) + `CONFIRMED`(사전 확인) 두 판정축.
+  `act()` 가 둘 다 수행하고, 확인 대상은 **묻기 전에 고정**해 핸들러로 넘긴다.
+  `_notice`/`_confirm_text` 를 별개 함수로 분리(충돌로 본문이 섞였다).
+  `Bridge.__init__` 에 `confirm` 복원 — 주지 않으면 「아니요」(fail-closed).
+- `src/client/gui.py` — 두 껍데기가 `notify` 와 `confirm` 을 **둘 다** 주입.
+- `docs/FUNCTION.md` — 양쪽 절 보존 + 두 결정의 관계를 절로 명시.
+- `tests/test_embedded_window.py` · `tests/test_updater.py` — 실 시그니처·판정축 반영.
+- `tests/test_web_shell.py` — **main-측 선재 실패 흡수**: PR #1592 가 모듈 import 에 `?v=dev` 를
+  붙이면서 문자열 단언이 깨져 있었고, 이 스위트가 CI 경로에 없어 아무 데도 걸리지 않았다.

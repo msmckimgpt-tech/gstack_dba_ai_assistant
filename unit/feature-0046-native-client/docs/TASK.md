@@ -457,3 +457,14 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] 뮤테이션 12/12 KILL (살아남은 2건 = 등가 가드 · 느슨한 단정, 둘 다 처리)
 - [ ] 다음 주기: 「연결 준비·터미널·AI 지시문」 전면 제거
 - [ ] 배포 후 실제 클라이언트에서 자동 연결·알림 실측
+
+## TASK-20260907T182000-merge-two-decisions — 병합 충돌 자율 해결
+
+- [x] `origin/main` 병합 — 병렬 cycle(PR #1589)의 「되묻지 말고 알려라」와 이 cycle 의
+      「확인 후 적용」이 **대상이 달라** 공존함을 판정(§16.4 자율 해결, 근거는 REVIEW.md)
+- [x] 판정축을 둘로 분리 — `bridge.NOTIFIED`(사후 알림) · `bridge.CONFIRMED`(사전 확인)
+- [x] `_notice`/`_confirm_text` 별개 함수 분리 (충돌로 본문이 섞였다)
+- [x] `Bridge.confirm` 주입면 복원 — 주지 않으면 「아니요」(fail-closed)
+- [x] §16.4 해결 결과 검증 — 양측 부모 `--diff-filter=D` 공백 · theirs 22 파일 전수 대조 ·
+      506 passed
+- [x] main-측 선재 실패 1건 흡수 (`?v=dev` 스탬프로 깨진 문자열 단언 — CI 공백이 발현한 형태)
