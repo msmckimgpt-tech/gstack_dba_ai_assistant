@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.53.2
+template_version: v3.54.0
 domain: [security]
 ai_read_priority: 4
 ---

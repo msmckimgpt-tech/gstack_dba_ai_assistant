@@ -157,3 +157,14 @@ make web
 ### 10.4 정합 원칙
 - "single TLS termination" — 한 경로 (Caddy) 가 TLS 종단을 담당하고, 내부 service 는 plaintext 로 다닌다. 이중 TLS 는 운영·디버그·자동화 모두에서 마찰을 만든다.
 - web 컨테이너의 self-HTTPS 모드는 *Caddy 우회 외부 노출* (예: 18080 을 LAN 으로 expose) 시나리오에서만 의미. 본 repo 의 dev 가동은 그 시나리오가 아니다.
+
+<!-- inbox-autonomy:minimum-version:v1 -->
+## 하네스 버전 차이와 작업 지속
+
+권장 최소 버전에 미달해도 버전 차이만으로 AI 작업자나 무인 runner의 시작을 막지 않는다.
+현재 버전·필요 기능을 확인해 안내·경고하고, 가용 기능이나 대체 수단으로 진행한다. 실제 기능
+부재·실패는 해당 기능 범위에서 처리하며 성공으로 가정하지 않는다. `requiredMinimumVersion`과
+`requiredMaximumVersion`은 조직 관리용 시작 차단 설정이다. 작업자 자율성의 기본값으로
+설치하지 않으며 기존 조직·사용자 설정을 임의 변경하지 않는다. 권장 버전은 필요한 기능과
+지원되는 실행 환경에 근거해 정하고 모든 프로젝트에 고정 숫자를 강제하지 않는다.
+<!-- /inbox-autonomy:minimum-version:v1 -->
