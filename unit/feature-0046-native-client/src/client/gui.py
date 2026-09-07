@@ -781,12 +781,21 @@ def run_client(plan: core.ConnectPlan) -> int:
 
 def _run_embedded(plan: core.ConnectPlan) -> "int | None":
     """내장 창 껍데기. 창을 못 띄웠으면 `None` — 호출부가 다음 껍데기로 내려간다."""
-    br = bridge.Bridge(plan, confirm=confirm)
+    #: 알림 영역 아이콘은 아래에서 세운다 — 그 전에 온 알림은 갈 곳이 없어 버려진다.
+    #: ⚠ 알림은 **통지이지 관문이 아니다.** 못 띄워도 동작은 그대로 진행된다.
+    tray_box: list = []
+
+    def _notify(title: str, body: str) -> None:
+        if tray_box and tray_box[0] is not None:
+            tray_box[0].notify(title, body)
+
+    br = bridge.Bridge(plan, notify=_notify, confirm=confirm)
     br.start()
     url = appwindow.panel_url(plan.base, br.port, br.nonce)
     shell = window_mod.Shell(url, title=core.DISPLAY_NAME,
                              storage=str(plan.home / "window"))
     tray = _start_embedded_tray(shell, br)
+    tray_box.append(tray)
     # ⚠ 트레이가 **닫는 그 순간 살아 있을 때만** 닫기를 숨김으로 바꾼다. 기동 시점의 bool 을
     #   들고 있으면 아이콘이 뒤에 죽어도 계속 숨겨, 창도 아이콘도 없는 프로그램이 남는다
     #   (§P0-AE). 그래서 값이 아니라 **호출**을 넘긴다 — 판정 정본은 `_tray_alive` 하나다.
@@ -975,18 +984,17 @@ def _run_browser_shell(plan: core.ConnectPlan) -> int:
     """
     import queue as _queue
 
+    #: 이 큐는 확인 창을 주 스레드로 나르던 통로였다. 확인이 사라진 뒤(사용자 결정
+    #: 2026-09-07)로는 비어 있지만 **루프는 남는다** — 수명 판정·트레이 툴팁·창 다시 열기가
+    #: 그 위에 있다. 큐를 지우면 그 셋을 옮겨야 하고, 이 주기의 범위가 아니다.
     asks: "_queue.Queue" = _queue.Queue()
+    tray_box: list = []
 
-    def _confirm_via_main(message: str) -> bool:
-        """브리지(워커 스레드)가 부른다. 주 스레드에 넘겨 답을 기다린다."""
-        reply: "_queue.Queue" = _queue.Queue(maxsize=1)
-        asks.put((message, reply))
-        try:
-            return bool(reply.get(timeout=300))
-        except Exception:  # noqa: BLE001 — 답이 없으면 **아니오** 다
-            return False
+    def _notify(title: str, body: str) -> None:
+        if tray_box and tray_box[0] is not None:
+            tray_box[0].notify(title, body)
 
-    br = bridge.Bridge(plan, confirm=_confirm_via_main)
+    br = bridge.Bridge(plan, notify=_notify, confirm=confirm)
     br.start()
     url = appwindow.panel_url(plan.base, br.port, br.nonce)
     exe = appwindow.app_mode_browser()
@@ -1011,6 +1019,7 @@ def _run_browser_shell(plan: core.ConnectPlan) -> int:
     # 상주 표면을 **두 껍데기에 같은 규약으로** 둔다 (사용자 요청 2026-09-04 재구성).
     # 그 전에는 트레이가 tkinter 판에만 있어, 주 경로 사용자는 패널을 닫는 순간 연결을 잃었다.
     tray = _start_shell_tray(br, url, exe)
+    tray_box.append(tray)
     # ⚠ 「닫아도 유지됩니다」는 **지금** 아이콘이 살아 있을 때만 참이다. 이 경로의 수명 판정
     #   (`_serve_confirms`)이 이미 `tray.alive` 를 보므로, 패널 문구도 같은 판정을 봐야
     #   둘이 갈리지 않는다 — 갈리면 화면은 유지된다 말하고 루프는 유휴로 끝낸다(§P0-R).

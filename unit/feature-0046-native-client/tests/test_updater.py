@@ -382,10 +382,20 @@ def test_build_reads_the_version_without_importing_the_package():
 # ── 9. 브리지 계약 ──────────────────────────────────────────────────────────────
 
 def test_update_apply_is_a_confirmed_action():
-    """이 프로그램 전체를 갈아 끼우는 설치기다 — 사람 없이 돌지 않는다."""
-    assert "update_apply" in bridge_mod.DANGEROUS
-    # 조회는 확인창을 받지 않는다 — 조회까지 물으면 사람이 확인을 습관적으로 넘긴다.
-    assert "update_check" not in bridge_mod.DANGEROUS
+    """이 프로그램 전체를 갈아 끼우는 설치기다 — 사람 없이 돌지 않는다.
+
+    ⚠ **두 판정축이 있다** (2026-09-07 두 사용자 결정): `NOTIFIED`(연결·로그인 — 끝난 뒤
+    알린다)와 `CONFIRMED`(업데이트 설치 — 미리 묻는다). 업데이트가 알림 쪽으로 넘어가면
+    미서명 설치기가 사람 없이 도는 것이 정상 동작이 된다.
+    """
+    assert "update_apply" in bridge_mod.CONFIRMED
+    assert "update_apply" not in bridge_mod.NOTIFIED
+    # 조회는 어느 축에도 없다 — 조회까지 물으면 사람이 확인을 습관적으로 넘긴다.
+    assert "update_check" not in bridge_mod.CONFIRMED
+    assert "update_check" not in bridge_mod.NOTIFIED
+    # 연결·로그인은 사용자 결정대로 알림 쪽이다(되묻지 않는다).
+    assert {"login", "connect"} <= bridge_mod.NOTIFIED
+    assert not ({"login", "connect"} & bridge_mod.CONFIRMED)
 
 
 def test_confirm_text_for_update_reports_the_version_it_will_install():
