@@ -2,6 +2,30 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260907T180000-template-upgrade-v3.53.2 [SKIPPED:template-upgrade] — template v3.53.1 → v3.53.2 흡수 (settings.local.json 계정 간 접근권 파괴 결함)
+
+- **cycle**: `ai/claude-corp/template-upgrade-v3.53.2`. 본 소비자에서 발생한 라이브 사건의 근본 수정을 template 원천(v3.53.2)에서 받는다.
+- **사건**: `root` 세션의 `board.sh bootstrap` 이 main + 16 worktree 의 `.claude/settings.local.json` **17개 전부**를 `root:root 0600 mask::---` 로
+  굳혀, 같은 트리를 쓰는 `claude-corp` 세션의 hook 5종이 **무증상 비활성**됐다. 원인은 `_write_nofollow_replace` 의 tmp + `os.replace` —
+  새 inode 가 되면 소유자가 실행 계정으로 뒤집히고 원본의 named ACL 이 사라지며, 상속된 default ACL 은 생성 mode 0600 때문에 `mask::---` 로 죽는다.
+  AGENTS.md §13.2.10 이 이미 이 결함 유형의 정본 정책(«`mktemp`+`mv` 금지 · `chmod` 되감기 금지»)이었으므로 **신규 설계가 아니라 기존 계약 미적용**이었다.
+- **흡수 내용(hop v3.53.1-to-v3.53.2)**: `bin/lib/board_fs.py`(원본 inode write-through + 파일 정체성 검사 3종 + `doctor` 3값화·rc 범위 축소) ·
+  `bin/tests/board_bootstrap.bats`(B23~B34) · AGENTS.md §13.2.10 신규 절 + §22.15 갱신 · 정책 doc 7개 frontmatter bump
+  (`CONTRIBUTING.md` 은 본 소비자에 frontmatter 가 없어 설계대로 skip).
+- **즉시 조치(코드와 별개)**: 이미 굳어버린 파일은 hop 이 고치지 않는다 — `setfacl -m u:claude-corp:rw` 로 **총 22건** 1회 복구
+  (초기 17건 + 새 doctor 가 표면화한 5건; `other::---` 유지 = mode 확대 아님). 이후로는 write-through 가 유지한다.
+- **검증**: `bin/lib/board_fs.py`·`bin/tests/board_bootstrap.bats` 가 template 정본과 **byte 동일** · 소비자 트리에서 `board_bootstrap.bats` **34/34** ·
+  `board.sh doctor` 가 **22개 대상 전부 `hooks active`**(BLOCKED·`settings WARN`·INACTIVE 0건, rc 0) · verify-completion 의 #10·#11·#13·#14·#17·#18 PASS.
+  template 측 게이트: 전건 807/807 + verify-completion PASS(META mode) + §18.8 패널 2개(security CONCERN · backend BLOCK) 지적 P1×2·P2×9·P3×11 전건 해소,
+  근거는 원천의 `_template_maintainer/REVIEW_INDEX.md` REV-20260907T160000-security / REV-20260907T161500-backend.
+- **[SKIPPED:template-upgrade] 사유**: 소비자 코드를 새로 작성한 것이 아니라 원천의 검증된 hop 산출물을 흡수한 것이고, 패널은 원천 cycle 에서 2회 수행됐다
+  (§18.8 «중복 도메인은 dedupe»). 소비자 측 신규 판단은 «어느 파일이 굳었는지» 와 그 복구뿐이며 위 검증으로 대체한다.
+- **알려진 게이트 공백 (별도 사안)**: 본 소비자의 `bin/verify-completion.sh` 는 `.template-state` 를 META path 로 분류하지 않는다(template 원천도 동일).
+  template 업그레이드 changeset 은 러너가 기록하는 추적 파일 `.template-state` 를 필연적으로 포함하므로 **영구히 pure-meta 로 분류되지 못하고**
+  feature mode 로 떨어져 `unit/<id>/` 부재로 중단된다 — 이 소비자의 이전 업그레이드 6건(v3.48.0~v3.53.1)이 모두 `chore(template)` 커밋 + PR 로
+  랜딩된 이유다. 본 cycle 도 같은 관례를 따른다. 이 분류 누락은 한 줄 수정이지만 원천 버전 bump + hop 이 필요하므로 **사용자 판단 대상으로 표면화**한다.
+- **Human Approval Needed**: 아니오 — 원천에서 검증된 hop 흡수 + 권한 복구(확대 아님). 전역 auto-sync 대상.
+
 ## REV-20260702T110054-report-deck-hardening [SUBAGENT:report-deck-verification(codex + red team)] — report_deck 스킬 하드닝 (검증 라운드 6개 개선점 규율 승격)
 
 - **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02. 첫 실행(범위 2026-06-01~07-02 v1)을 사용자·`/codex`(독립 엔진)·red team(적대 감사)로 검증한 결과 반복 발생한 결함을 **스킬 규율로 승격**(1회성 패치가 아니라 다음 호출부터 자동 적용).
