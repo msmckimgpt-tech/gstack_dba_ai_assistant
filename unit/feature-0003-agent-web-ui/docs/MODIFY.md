@@ -5889,3 +5889,15 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 브라우저도 자연 수렴한다 — HTML 은 `no-cache` 라 새 스탬프를 즉시 집고, 그 새 진입점이
 `client-bridge.js?v=<새 스탬프>` 를 참조한다.
 
+
+## CHG-20260907T181510-kb-external-search
+- Date: 2026-09-07
+- Related TASK: TASK-20260907T181510-kb-external-search (#1598)
+- Summary: 임베딩 없는 샘플 검색과 기존 외부 AI claim/focus 근거 연결. 로컬 제공자 별칭 차단,
+  NL 편집 후 SQL 신선도 보존, MySQL 문서의 모든 DB 해석에 대한 인가, 5초 검색 제한,
+  부분 오류 전달·현재 권한 재검증·전체 응답 원장 계측을 적용했다.
+- Files: core modules/sample_queries.py,kb_search.py,kb_retrieval.py; scripts/kb_embedding_worker.py;
+  agent_core.py; web routers/ai_tools.py,_prompt_context.py,admin_metadata.py; shared/config.py.
+- Cross-ref: shared/docs/MODIFY.md CHG-20260907T181510-kb-external-search.
+- Navigation: routers/ai_tools.py의 claim_request/get_task_context 및 admin_metadata.py의
+  admin_update_sample 기존 앵커 유지. gen-routemap 재생성, codenav-lint PASS.

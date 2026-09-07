@@ -95,7 +95,7 @@ def test_claim_response_declares_kb_fields():
     src = inspect.getsource(ai_tools.claim_request)
     assert '"kb_context": kb_context' in src, "점유 응답에 kb_context 가 없다"
     assert '"kb_notes": kb_notes' in src
-    assert "_kb_grounding_sections(" in src, "근거 조립을 호출하지 않는다"
+    assert "_kb_grounding_sections, question" in src, "근거 조립을 호출하지 않는다"
 
 
 def test_claim_matches_on_plain_question_not_wrapped():
@@ -108,7 +108,7 @@ def test_claim_matches_on_plain_question_not_wrapped():
     from routers import ai_tools
 
     src = inspect.getsource(ai_tools.claim_request)
-    i = src.index("_kb_grounding_sections(")
+    i = src.index("_kb_grounding_sections, question")
     call = src[i:i + 160]
     assert "question," in call and "marked" not in call.split(")")[0], \
         f"원문이 아닌 값으로 매칭한다: {call[:90]!r}"

@@ -427,7 +427,7 @@ def test_sample_embed_active_on_nl_change(monkeypatch):
     assert captured.get("embedding") and len(captured["embedding"]) == 1024
 
 
-def test_sample_embed_stale_on_embed_failure(monkeypatch):
+def test_sample_embed_unavailable_on_embed_failure(monkeypatch):
     _allow_scopes(monkeypatch)
     acct = _admin(monkeypatch)
     _pg(monkeypatch)
@@ -439,8 +439,8 @@ def test_sample_embed_stale_on_embed_failure(monkeypatch):
     monkeypatch.setattr(_kr, "_embed_query_vector", lambda t: None)  # 임베딩 실패
 
     r = asyncio.run(admin_metadata.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "신규 질문"}), account=acct))
-    assert r.status_code == 200 and _body(r)["embedding_status"] == "stale"
-    assert captured.get("embedding") is None, "실패 → None → 코어가 status='stale'"
+    assert r.status_code == 200 and _body(r)["embedding_status"] == "unavailable"
+    assert captured.get("embedding") is None, "실패 → None, 문자 검색과 신선도는 별개"
 
 
 def test_sample_embed_untouched_when_nl_unchanged(monkeypatch):

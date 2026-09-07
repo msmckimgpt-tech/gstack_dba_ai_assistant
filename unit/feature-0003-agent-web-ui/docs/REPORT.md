@@ -2913,3 +2913,24 @@ psycopg 공백 표기 두 가지로 도착하는 것을 파싱 폴백으로 흡�
 A(명령 재연결): 열림 유지 → 끊긴 동안 유지 → 재연결 후 닫힘 + 「연결되었습니다」.
 B(«업데이트 필요» 갱신): 갱신 후 닫힘 + 「최신으로 갱신되었습니다」 — 문구가 상황을 따라간다.
 무중단 blip 0. 증적: `docs/test-runs.d/…-transition-postdeploy.md` + `docs/evidence/…/pd3-*.png`.
+
+## REPORT-20260907T181510-kb-external-search
+
+기존 로컬 LLM 철거 작업(ADR-20260907T175000-local-llm-decommission-scope-boundary)에 이어,
+검색 근거를 사용자가 선택한 기존 Claude/Codex 연결로 전달했다. 샘플 로더의 vector 필수
+조기 반환과 편집 후 embedding 실패→stale 강등이 연결 단절 원인이었다. 문자 검색과 SQL
+신선도를 분리하고, 기존 제품/대화 권한을 재확인하는 외부 claim/focus 경로에 연결했다.
+
+R1에서 legacy DB prefix 충돌을 발견했다. 독립 DB provenance가 없는 저장소에 대해 MySQL
+키의 모든 가능한 DB 접두를 인가하도록 고쳤으며, MSSQL 레거시·불명확 키는 제외하고 기존
+구조 조회 도구를 안내한다. 기존 벡터/볼륨은 일괄 삭제하지 않는다. 질문 수정에 따른 해당
+벡터 무효화는 유지한다. 문자 검색을 의미검색 복구로 보고하지 않는다.
+
+최종 격리 PG/회귀 203 PASS. 운영 RO 실측은 test-runs.d 기록 참조. backend/security R2
+P1 0, QA R3 P1/P2 0. Git 동기화·배포 결과는 이슈 #1598에 연결되는 PR 본문에 기록한다.
+정책 hash: 8e7d65bd9d31b1013ef522b762abbc62fb023ef8c358a92e46ab567eac277770.
+작업 worktree: .worktrees/feature-0002-kb-external-search; 공개 branch: issue/1598-kb-external-search.
+
+### Git 동기화 결과
+- 코드/검증/문서를 함께 commit/push하고 PR에서 병합·배포 결과를 기록한다.
+- 기존 main의 .codex/config.toml 및 untracked source-command skills는 유지한다.

@@ -30,3 +30,14 @@ rewrite 정책: 최신 상태만 유지. 변경 이력은 shared/docs/MODIFY.md�
 
 ## 4. Cross-feature 참조
 - 변경 시 알림 필요: (feature별 REPORT.md 경로)
+
+## CHG-20260907T181510-kb-external-search
+- Date: 2026-09-07
+- Changed By: feature-0002-agent-core (Codex), 단일 mutator.
+- Files: shared/config.py
+- Summary: normalize_kb_embedding_model로 철거된 titan-embed/bge-m3/ollama 별칭을 빈 값으로
+  정규화하여 제거된 제공자로의 쿼리/백필 호출을 차단한다. 명시적인 기타 제공자 값은 재지정하지
+  않는다. 새 외부 API를 추가하지 않으며 기존 Claude/Codex가 문자 검색 후보의 의미를 판단한다.
+- Affected Features: feature-0002-agent-core, feature-0003-agent-web-ui.
+- Verification: core의 retired-model LLM/worker-DB tripwire 포함 최종203 PASS.
+- Cross-ref: unit/feature-0002-agent-core/docs/REPORT.md REPORT-20260907T181510-kb-external-search.

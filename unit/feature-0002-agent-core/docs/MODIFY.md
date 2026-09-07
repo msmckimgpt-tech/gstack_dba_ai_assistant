@@ -3284,3 +3284,15 @@ Task-Cycle: feature-0002-agent-core
 - 증적: `feature-0003/docs/test-runs.d/20260902T110000-kb-prompt-grounding.md` Run 7·8.
 
 Task-Cycle: feature-0002-agent-core
+
+## CHG-20260907T181510-kb-external-search
+- Date: 2026-09-07
+- Related TASK: TASK-20260907T181510-kb-external-search (#1598)
+- Summary: 임베딩 없는 샘플 검색과 기존 외부 AI claim/focus 근거 연결. 로컬 제공자 별칭 차단,
+  NL 편집 후 SQL 신선도 보존, MySQL 문서의 모든 DB 해석에 대한 인가, 5초 검색 제한,
+  부분 오류 전달·현재 권한 재검증·전체 응답 원장 계측을 적용했다.
+- Files: core modules/sample_queries.py,kb_search.py,kb_retrieval.py; scripts/kb_embedding_worker.py;
+  agent_core.py; web routers/ai_tools.py,_prompt_context.py,admin_metadata.py; shared/config.py.
+- Cross-ref: shared/docs/MODIFY.md CHG-20260907T181510-kb-external-search.
+- Navigation: routers/ai_tools.py의 claim_request/get_task_context 및 admin_metadata.py의
+  admin_update_sample 기존 앵커 유지. gen-routemap 재생성, codenav-lint PASS.

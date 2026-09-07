@@ -2630,7 +2630,7 @@ async def admin_update_sample(sample_id: int, request: Request, account=Depends(
     """샘플 수정(by id, scope 가드). 권한 kb.sample.curate. body: scope_key, nl_question?, sql?, domain?, weight?, approved?.
 
     하이브리드 C 임베딩: nl_question 변경 시에만 kb_retrieval._embed_query_vector 동기 시도 →
-    성공이면 embedding 갱신(status='active'), 실패면 embedding 무효화(status='stale', 재임베딩 대기).
+    성공이면 embedding 갱신, 실패면 NULL로 무효화한다. SQL 신선도 status는 보존한다.
     nl 미변경 시 embedding touch 안 함. weight 1~1000 clamp. nl 중복(UNIQUE) → 409.
     """
     data = await _metadata_read_json(request)
@@ -2665,18 +2665,18 @@ async def admin_update_sample(sample_id: int, request: Request, account=Depends(
     if not kwargs:
         return app._json_error("수정할 필드가 없습니다.", 400)
 
-    # 하이브리드 C: nl_question 변경 시에만 임베딩 동기 시도. 실패→None(코어가 status='stale').
+    # 하이브리드 C: nl_question 변경 시에만 임베딩 동기 시도. 실패→None(문자 검색 유지, SQL 신선도 보존).
     embed_changed = "nl_question" in kwargs
-    embed_status = None  # 응답 진단용: 'active' | 'stale' | None(미변경)
+    embed_status = None  # 응답 진단용: 'active' | 'unavailable' | None(미변경)
     if embed_changed:
         vec = None
         try:
             from modules.kb_retrieval import _embed_query_vector
-            vec = _embed_query_vector(kwargs["nl_question"])  # dim=1024(titan-embed v2)
+            vec = await asyncio.to_thread(_embed_query_vector, kwargs["nl_question"])
         except Exception:
             vec = None
         kwargs["embedding"] = vec if vec else None
-        embed_status = "active" if vec else "stale"
+        embed_status = "active" if vec else "unavailable"
 
     from modules import sample_queries as _sq
     from shared.db import _pg_connect

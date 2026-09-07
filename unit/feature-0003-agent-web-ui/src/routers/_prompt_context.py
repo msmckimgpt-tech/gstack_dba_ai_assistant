@@ -1490,7 +1490,8 @@ async def _counted_stream(agen):
         with app._ACTIVE_STREAMS_LOCK:
             app._ACTIVE_STREAMS = max(0, app._ACTIVE_STREAMS - 1)
 
-def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_key: str | None) -> list[str]:
+def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_key: str | None,
+                                          *, strict: bool = False) -> list[str]:
     """TASK-0228 (1:N): 특정 (product, datasource) 의 접근가능 스키마(DB) 목록 — datasource 차원 격리.
 
     datasource_key=None/'' 은 레거시(단일 MySQL/미차원화) 행 — DatasourceKey='' 으로 저장된 backfill
@@ -1508,6 +1509,8 @@ def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_ke
             )
             return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
         except Exception:
+            if strict:
+                raise
             # DatasourceKey 컬럼 부재(미이전) → 차원 없는 레거시 조회로 폴백.
             cur.execute(
                 "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",

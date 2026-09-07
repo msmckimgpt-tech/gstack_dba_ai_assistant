@@ -806,7 +806,16 @@ AGENT_SCRATCH_PG_CONFIGURED = bool(AGENT_SCRATCH_PG_HOST) and bool(AGENT_SCRATCH
 #   되돌리기: 임베딩 제공자를 복구한 뒤 이 기본값 또는 `.env` 의 AGENT_KB_EMBEDDING_MODEL 을
 #   그 alias 로 지정한다. 저장된 `texts.embedding` / `sample_queries.embedding` 벡터는
 #   삭제하지 않았으므로 기존 임베딩은 그대로 남아 있다.
-AGENT_KB_EMBEDDING_MODEL = os.getenv("AGENT_KB_EMBEDDING_MODEL", "").strip()
+def normalize_kb_embedding_model(value: str | None) -> str:
+    """철거된 로컬 alias는 잔존 env/CLI 값과 무관하게 비활성으로 해석한다."""
+    model = str(value or "").strip()
+    lowered = model.lower()
+    if lowered in {"titan-embed", "bge-m3", "bge-m3:latest"} or lowered.startswith("ollama/"):
+        return ""
+    return model
+
+
+AGENT_KB_EMBEDDING_MODEL = normalize_kb_embedding_model(os.getenv("AGENT_KB_EMBEDDING_MODEL", ""))
 AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1024") or "1024")  # titan-embed v2 / 로컬 1024 모델·alembic 0001 texts 정본 일치(구 1536 기본은 stale)
 # ITEM-02: 샘플쿼리 few-shot 주입 토글(기본 ON). OFF 면 _build_knowledge_context 가 EXAMPLE
 # QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.

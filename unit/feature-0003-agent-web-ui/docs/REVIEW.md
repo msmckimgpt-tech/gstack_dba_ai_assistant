@@ -7563,3 +7563,27 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 **넓히지 않은 것**: `static_cache.py` 가 「`?v=` 없음」에 `no-cache` 를 부여하도록 정책을 강화할
 수도 있었다. 하지만 그것은 캐시 정책의 의미를 바꾸는 변경이고, 이 결함의 원인은 «정책» 이 아니라
 «참조가 스탬프 밖에 있었다» 이다. 원인 자리에서 막고, 정책은 건드리지 않는다.
+
+## REV-20260907T185500-kb-search-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-security.md
+- Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-backend.md
+- Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-qa.md
+- Human Approval Needed: no

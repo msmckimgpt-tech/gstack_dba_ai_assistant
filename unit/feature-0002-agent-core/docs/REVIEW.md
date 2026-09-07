@@ -3032,3 +3032,27 @@ PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL 
 - Cross-ref: CHG-20260902T140000-postdeploy-live. 코드 변경 0.
 - 근거: 러너 로그 `prompt_chars`(4,611 / 7,145) · 배포본 답변 본문 · 컨테이너 태그
   `be01e28f` · caddy 0건 · health 실패 로그 0건.
+
+## REV-20260907T185500-kb-search-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-security.md
+- Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-backend.md
+- Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-qa.md
+- Human Approval Needed: no
