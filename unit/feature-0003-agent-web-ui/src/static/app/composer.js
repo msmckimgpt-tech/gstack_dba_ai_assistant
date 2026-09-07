@@ -3222,10 +3222,7 @@ function _composerModelSelectorHidden() {
   // ⚠ **카탈로그가 없으면 숨김이다** (codex 적대리뷰 P2, 2026-09-02). 종전엔 `undefined`
   //   가 `"hidden"` 과 다르다는 이유로 `false`(=보임)를 돌려줬고, 그래서
   //   `/api/api-vault/options` 가 실패한 화면은 **목록 없는 선택기 + 서버 기본값 라벨**을
-  //   그대로 내보였다 — 사용자가 고른 값이 어디에도 없는 상태다. 같은 이유로
-  //   `_applyComposerSelectorNote` 의 「카탈로그를 불러오지 못했습니다」 분기가 **도달
-  //   불가능한 죽은 코드**였다(그 분기를 하네스가 직접 호출해 통과시켰다 — 진입점을 통과하지
-  //   않는 검증의 전형적인 vacuous pass).
+  //   그대로 내보였다 — 사용자가 고른 값이 어디에도 없는 상태다.
   if (!catalog) return true;
   return String(catalog.model_selector || "") === "hidden";
 }
@@ -3244,56 +3241,23 @@ function _applyComposerSelectorVisibility() {
       if (menu) menu.classList.add("hidden");
     });
   }
-  _applyComposerSelectorNote(hidden);
   return hidden;
 }
 
-// feature-0043 caps-trust-gate: 모델·추론 항목이 **왜** 없는지를 한 줄로 말한다.
+// feature-0043: 모델·추론 항목이 **왜** 없는지를 컴포저 위 문단으로 적던 안내는
+// 제거했다 (사용자 결정 2026-09-07). 그 문단은 입력창 위에 자기 줄을 차지해 컴포저
+// 높이를 흔들었고, 사이드바 프로필 행과의 하단 정합이 안내가 켜질 때마다 어긋났다.
+// 상태를 말하는 자리는 프로필 행의 연결 칩(`#aiConnState`)으로 모은다 — 같은 사실을 두
+// 자리에서 말하면 한쪽이 낡는다.
 //
-// 서버가 실어 준 `model_selector_reason` 을 그대로 그린다 — 프론트가 문구를 지으면 서버가
-// 판정을 바꾼 날 그 문구만 낡아, 화면과 서버가 서로 다른 사실을 말한다. 문구를 파싱하지도
-// 않는다(상태는 `runner_listening` 이라는 별도 값으로 온다).
+// ⚠ **칩이 전부를 덮지는 못한다** (ux 적대리뷰 P2, 2026-09-07). 칩 6문안에는 「모델」이라는
+//   말이 없고, 잠금 안내(`#composerGate`)는 연결·대기가 성립하면 뜨지 않는다. 그래서
+//   **카탈로그 미수신**(fetch 실패로 고른 값이 안 실리는 강등)은 아래 전송 경로에서
+//   토스트로 따로 말한다. 남는 공백(러너는 붙었는데 능력 협상이 계속 실패)은 화면이
+//   조용한데, 그것이 이 제거가 받아들인 대가다.
 //
-// 보이는 상태에서는 안내를 **비운다** — 목록이 돌아왔는데 "고를 수 없다" 가 남아 있으면
-// 그 자체가 거짓이다.
-//
-// ⚠ 카탈로그를 못 받은 상태(fetch 실패 → 둘 다 null)에도 **말을 한다**(적대리뷰). 종전엔
-//   그 경우 `reason` 이 빈 문자열이라 선택기가 설명 없이 사라졌다 — 이 cycle 이 닫으려는
-//   바로 그 마찰이 가장 흔한 실패(일시적 네트워크)에서 그대로 남아 있었다.
-//
-// ⚠ **받을 곳까지** 준다(`runner_download_url`). 종전엔 그 필드가 응답에만 있고 소비처가
-//   0 이라, 안내가 "최신 실행 파일" 을 말하면서 링크가 없었다 — `model_selector_reason` 이
-//   08-28 에 겪은 「출하 ≠ 도달」을 새 필드가 반복한 것이다.
-//   링크는 **러너가 듣고 있을 때만** 붙인다: 러너가 아예 없으면 받을 파일이 아니라 연결
-//   흐름이 먼저이고, 그 상태에 다운로드를 들이미는 것은 다음 행동을 잘못 지목하는 것이다.
-const COMPOSER_NOTE_NO_CATALOG =
-  "모델 목록을 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요.";
-
-function _applyComposerSelectorNote(hidden) {
-  const el = document.getElementById("composerActionsSelectorNote");
-  if (!el) return;
-  if (!hidden) {
-    el.textContent = "";
-    el.classList.add("hidden");
-    return;
-  }
-  const catalog = state.modelCatalog || state.apiVaultOptions;
-  const reason = catalog
-    ? String(catalog.model_selector_reason || "")
-    : COMPOSER_NOTE_NO_CATALOG;
-  el.textContent = reason;
-  const url = String(catalog?.runner_download_url || "");
-  if (reason && url && catalog?.runner_listening) {
-    // 링크는 안내 **뒤에** 붙인다 — 문장이 먼저 읽히고, 받을 곳은 그 다음이다.
-    el.appendChild(document.createTextNode(" "));
-    const a = document.createElement("a");
-    a.href = url;
-    a.textContent = "실행 파일 받기";
-    a.setAttribute("download", "bridge_agent.py");
-    el.appendChild(a);
-  }
-  el.classList.toggle("hidden", !reason);
-}
+// ⚠ 서버 응답의 `model_selector_reason` · `runner_download_url` 은 그대로 둔다:
+//   판정 근거이자 진단 필드이고, 소비처가 없어진 것은 **화면 문단 하나**뿐이다.
 
 function _updateComposerModelLabel() {
   const hidden = _applyComposerSelectorVisibility();
@@ -3968,7 +3932,28 @@ async function sendPrompt() {
   // feature-0003 model-persist (2R 적대 리뷰 C-A): model 은 그 대화의 저장값을 덮어쓰므로,
   // hydration 되지 않은 대화로는 싣지 않는다(그 경우 서버가 기존 저장값을 보존).
   if (_selectorHidden) {
-    // 숨김 상태 — 모델 동봉·경고 토스트 모두 성립하지 않는다(고를 수 없었으므로 강등도 없다).
+    // 숨김 상태 — 모델은 싣지 않는다. 다만 **왜 숨겨졌는지에 따라 말이 갈린다** (ux 적대리뷰
+    // P1, 2026-09-07):
+    //
+    // - **고를 것이 없어서** 숨겨졌으면(러너 미연결·구 러너·`--cmd`) 강등이 아니다. 사용자가
+    //   고른 적이 없으므로 알릴 것도 없다 — 종전 주석이 옳았던 경우다.
+    // - **카탈로그를 못 받아서** 숨겨졌으면(`/api/api-vault/options` 503·타임아웃) 그것은
+    //   조용한 강등이다. 화면에서 모델·추론 항목이 사라지고 고른 등급이 실리지 않은 채
+    //   전송되는데, 연결 칩은 다른 엔드포인트를 보므로 「대기 중」을 유지한다.
+    //
+    // 두 번째 경우를 **말하던 유일한 표면**이 컴포저 안내 문단이었고, 그 문단은 컴포저 높이를
+    // 흔들어 이번 cycle 에 제거됐다(사용자 결정 2026-09-07). 그래서 같은 사실을 **레이아웃
+    // 비용이 0 인 채널**로 옮긴다 — 이 파일이 이미 동형의 무음 강등에 쓰는 토스트다
+    // (아래 `_modelSelectionSilentlyDropped` 분기의 「무음 금지」와 같은 근거).
+    //
+    // ⚠ 전송마다 띄우지 않는다. 한 번 알린 뒤 카탈로그가 돌아오면 표식을 내려, 다음 실패에
+    //   다시 말할 수 있게 한다 — 매 전송 토스트는 그 자체가 새 마찰이다.
+    if (!_catalogReady && !state._modelCatalogOutageNotified) {
+      state._modelCatalogOutageNotified = true;
+      showToast("모델 목록을 불러오지 못해 이번 질문은 기본 모델로 처리됩니다 —"
+        + " 잠시 후 다시 시도해 주세요.");
+      console.warn("[model-catalog] 카탈로그 미수신 — model·reasoning_level 미동봉");
+    }
   } else if (_shouldSendModelField(state, targetConvId, isLazyCreate)) {
     askBody.model = _composerCurrentModel();
   } else if (_modelSelectionSilentlyDropped(state, targetConvId, isLazyCreate)) {

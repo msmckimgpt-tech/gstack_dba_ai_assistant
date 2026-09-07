@@ -5853,8 +5853,21 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - 부수: 포트 미해제로 내장 창 생성이 실패한 회차에 **브라우저 앱 모드로 정상 폴백**하는 것을
   관측했다 — 3단 폴백의 실측이다.
 - 디버깅 포트는 측정 동안만 열고 끝나면 제거, 클라이언트는 정상 실행으로 복귀.
-
-
+## CHG-20260907T060000-ai-claude-chip-copy-and-note — 칩 툴팁 단순화 · 컴포저 안내 제거
+- Timestamp: 2026-09-07T06:00:00+09:00
+- `src/static/app/connect-modal.js`: `_paintConn` 의 `el.title` 6종을 **2문단**으로 축약하고
+  개행으로 나눴다. 어휘도 대상 사용자 기준으로 낮췄다(§16.8 B-2) — 「머신을 재시작했다면」→
+  「컴퓨터를 다시 켰다면」 · 「러너가 서버 배포본과 다릅니다」→「연결 프로그램이 최신본이
+  아닙니다」. 칩 **라벨**(`연결 안 됨`/`대기 안 함`/`답할 수 없음`/`업데이트 필요`/`확인 중`/
+  `대기 중`)은 불변.
+- `src/static/index.html`: `#composerActionsSelectorNote` `<p>` 제거(자리에 사유 주석만 남김).
+- `src/static/css/chat.css`: `.composer-actions-note` 규칙 3블록 제거.
+- `src/static/app/composer.js`: `_applyComposerSelectorNote`·`COMPOSER_NOTE_NO_CATALOG` 및
+  `_applyComposerSelectorVisibility` 의 호출 제거. 서버 필드(`model_selector_reason`·
+  `runner_download_url`)는 그대로 — 사라진 것은 화면 소비처 하나뿐이다.
+- `src/routers/ai_tools.py`: `_SANITIZE_SOURCE_ALLOW` 에 `catalog`·`baseline` 추가
+  (근거는 `feature-0043-external-llm-bridge/docs/REVIEW.md` REV-20260907T060000).
+- `tests/verify_selector_note.mjs` 제거 — 검증 대상(안내 문단)이 사라졌다.
 ## CHG-20260907T060000-ai-claude-auto-connect — 고를 것이 없으면 묻지 않는다 · 확인창을 알림으로
 - Timestamp: 2026-09-07T06:00:00+09:00
 - **자동 연결**: 같은 플랫폼이 두 자리에 있을 때만 사람에게 고르게 한다. 그 외에는 패널이
@@ -5889,3 +5902,18 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 브라우저도 자연 수렴한다 — HTML 은 `no-cache` 라 새 스탬프를 즉시 집고, 그 새 진입점이
 `client-bridge.js?v=<새 스탬프>` 를 참조한다.
 
+
+
+## CHG-20260907T072000-ai-claude-route-golden-refresh — 라우트 골든 스냅샷 재생성 (범위 밖 복구)
+- Timestamp: 2026-09-07T07:20:00+09:00
+- `tests/route_snapshot_p5b.json`: `total_routes` 267 → **269**.
+- **내 변경이 만든 drift 가 아니다.** `origin/main` 을 단독 추출해 같은 테스트를 돌린 결과
+  동일 수치(267 → 269)로 실패했다 — 즉 병합 **이전부터 main 이 적색**이었다. 원인은
+  `eb31e828 feat(client): 다른 머신이 새 버전을 받는 업데이트 채널` 이 라우트 2개
+  (`GET /api/ai/client/latest` · `GET /client/{filename}`)를 의도적으로 추가하면서 골든을
+  재생성하지 않은 것(CONTRIBUTING §8 「route 를 바꿨다면 같은 cycle 안에서 재정합」 누락).
+- 절차는 그 테스트 파일이 명시한 것을 그대로 썼다 — `_build_table()` 출력을 골든에 덮어쓰기.
+- **델타 검증**: 추가 2건은 위 두 경로뿐이고 **제거 0건**이다. 재생성이 다른 drift 를 함께
+  덮어쓰지 않았다는 근거다(무비판 재생성이 실제 회귀를 삼키는 것이 이 게이트의 실패 모드다).
+- 범위 밖 수정인 이유를 남긴다: main 이 적색인 채로는 **이후 모든 cycle 의 완료 게이트가
+  막힌다**. 되돌리기 비용이 0(데이터 파일 1개)이고 델타가 검증 가능해 여기서 복구했다.

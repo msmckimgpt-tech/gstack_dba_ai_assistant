@@ -398,6 +398,20 @@ def merge_baseline(baseline: object, reported: object, *,
         #   (= 배선이 끊긴 상태)를 넣어도 항목에 실린 `source` 가 앵커를 세워, 확인 경로가
         #   꺼진 사실을 단정이 관측하지 못했다. 채널을 하나로 두면 그 단정이 실제로 판별한다.
         src = str((sources or {}).get(name) or "")
+        # ── 원장 되받기는 원장을 **되살리지 않는다** (security 적대리뷰 P1, 2026-09-07) ──
+        #
+        # `baseline` 은 러너가 «확인하지 못해» 원장을 그대로 신고한 것이다. 그 신고로 이 항목을
+        # 갱신하면 아래 `last_used_at = stamp` 가 TTL 축을 밀어, 화석 만료의 두 축이 **둘 다**
+        # 영영 발화하지 않는다:
+        #   - `prune_stale` 의 TTL(14일)  — `last_used_at` 이 계속 새로워져 도달 불가
+        #   - `baseline_for_runner` 의 `verify_streak >= 5` — `else` 가지라 0에서 멈춤
+        # 러너 재시도 주기(≤900초)가 throttle(`BASELINE_TOUCH_MIN_SEC` 3600초)을 매 시간 넘기므로
+        # 실제로 매시간 한 번씩 밀린다. 즉 **원장을 되받아 원장을 영구화**하는 자기강화 루프다.
+        #
+        # 그래서 이 출처는 항목을 **건드리지 않고 지나간다**. 확인·열거가 성공하는 날 그 출처가
+        # 정상 경로로 갱신하고, 끝내 성공하지 못하면 원장은 예정대로 TTL 에 만료된다.
+        if src == "baseline":
+            continue
         prev_probed_raw = str((prev or {}).get("probed_at") or "")
         # 연속 확인 횟수 — 열린 열거는 **0으로 되돌리고**, 확인은 **1 올린다**. 그 밖의
         # 출처(`cache`)는 건드리지 않는다: 캐시 신고는 그 머신이 이미 확인해 둔 사실의
@@ -405,13 +419,19 @@ def merge_baseline(baseline: object, reported: object, *,
         # 꺼진다 — R3 S1 이 지적한 「벽시계」 문제의 횟수판 재현).
         prev_streak = (prev or {}).get("verify_streak")
         prev_streak = prev_streak if isinstance(prev_streak, int) and prev_streak >= 0 else 0
-        if src == "probe":
+        # `catalog`(그 CLI 자신의 카탈로그 출력, 2026-09-07)는 **열린 열거와 같은 급**이다 —
+        # 앵커를 새로 세우고 streak 을 0으로 되돌린다. 오히려 열거보다 확실하다: LLM 의
+        # 회차별 흔들림이 없고, 값이 그 CLI 의 출력 그대로다.
+        #
+        # (`baseline` 은 위에서 이미 `continue` 로 빠졌다 — `else` 가지에 맡기면
+        #  `last_used_at` 이 갱신돼 TTL 이 영영 안 온다. 그 근거는 위 블록에 있다.)
+        if src in ("probe", "catalog"):
             streak = 0
         elif src == "verified":
             streak = prev_streak + 1
         else:
             streak = prev_streak
-        if src == "probe":
+        if src in ("probe", "catalog"):
             _prev_probed = _parse_iso(prev_probed_raw)
             _fresh_enough = (_prev_probed is not None
                              and (ref - _prev_probed).total_seconds()

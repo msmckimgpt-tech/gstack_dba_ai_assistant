@@ -144,6 +144,20 @@ _RUNTIME_SPECS: dict[str, dict] = {
         #   붙이고 재시도에서는 뺀다(`caps.py` `_probe`) — 인자 하나 때문에 그 런타임이
         #   화면에서 통째로 사라지는 일이 없어야 한다.
         "probe_extra": ["-c", "model_reasoning_effort=low", "--ephemeral"],
+        # ── 이 CLI 가 **스스로 내놓는 공식 모델 카탈로그** (사용자 요청 2026-09-07) ──
+        #
+        # `codex debug models` = 「Render the raw model catalog as JSON」(`codex debug --help`).
+        # LLM 질의가 아니라 **기계적 조회**다 — 실측 **240ms**·토큰 0·로그인 상태 무관.
+        # 같은 머신에서 능력 질의는 22.7초(그마저 `models: []`)~600초 타임아웃이었다.
+        #
+        # 이것이 「목록의 출처는 연결된 AI」 계약을 **더 정확히** 만족한다: 우리가 적어 둔
+        # 표(`builtin`)가 아니라 그 CLI 자신의 출력이고, LLM 이 기억으로 답한 것보다
+        # 관측에 가깝다(§16.6 「관측이 기억을 이긴다」의 모델 축 판본).
+        #
+        # ⚠ `debug` 하위명령이라 포맷이 바뀔 수 있다. 파서는 실패를 **예외로 만들지 않고**
+        #   `None` 을 돌려주고, 호출측은 종전 질의 경로로 그대로 흐른다 — 이 경로가 사라져도
+        #   기능이 죽지 않는다.
+        "catalog": ["codex", "debug", "models"],
         # 라이브 실측 2026-09-02: `printf … | codex exec --skip-git-repo-check -` → 정상 응답.
         # claude 와 달리 자리를 **비우면 안 되고** `-` 를 남겨야 한다(빼면 대화형으로 뜬다).
         "stdin_ok": True,

@@ -37,7 +37,6 @@
 """
 from __future__ import annotations
 
-import html.parser
 import json
 import pathlib
 import shutil
@@ -50,6 +49,7 @@ _WEB = _UNIT / "feature-0003-agent-web-ui" / "src"
 MODAL_JS = _WEB / "static" / "app" / "connect-modal.js"
 INDEX_HTML = _WEB / "static" / "index.html"
 CHAT_CSS = _WEB / "static" / "css" / "chat.css"
+COMPOSER_JS = _WEB / "static" / "app" / "composer.js"
 OAUTH_AS = _WEB / "routers" / "oauth_as.py"
 
 
@@ -440,66 +440,31 @@ def test_the_notice_prepares_the_command_it_points_at():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class _Ancestors(html.parser.HTMLParser):
-    """대상 id 의 조상 사슬을 모은다(class·role 속성만 본다)."""
+def test_the_composer_notice_row_is_gone_for_good():
+    """⭐ 정본 — 컴포저 안내 문단은 **없다** (사용자 결정 2026-09-07).
 
-    _VOID = {"br", "hr", "img", "input", "meta", "link", "source", "path", "circle", "use"}
+    이 문단은 두 번 레이아웃을 깼다. 2026-09-02 에는 `.composer-box` 안의 플렉스 항목이라
+    입력창을 옆으로 밀었고("대화창 UI가 무너진다"), 자리를 입력창 위로 옮긴 뒤에는 자기 줄을
+    차지해 **컴포저 전체 높이**를 바꿨다 — 사이드바 프로필 행과의 하단 정합이 안내가 켜질
+    때마다 어긋났다(제보 2026-09-07). 자리를 옮기는 수정이 두 번 다 증상만 옮긴 것이다.
 
-    def __init__(self, target: str) -> None:
-        super().__init__(convert_charrefs=True)
-        self.target = target
-        self.stack: list[tuple[str, str, str]] = []
-        self.found: list[tuple[str, str, str]] | None = None
-
-    def handle_starttag(self, tag, attrs):
-        d = dict(attrs)
-        if d.get("id") == self.target and self.found is None:
-            self.found = list(self.stack)
-        if tag not in self._VOID:
-            self.stack.append((tag, d.get("class") or "", d.get("role") or ""))
-
-    def handle_startendtag(self, tag, attrs):
-        d = dict(attrs)
-        if d.get("id") == self.target and self.found is None:
-            self.found = list(self.stack)
-
-    def handle_endtag(self, tag):
-        for i in range(len(self.stack) - 1, -1, -1):
-            if self.stack[i][0] == tag:
-                del self.stack[i:]
-                return
+    그래서 «어디에 두는가» 가 아니라 «두지 않는다» 를 계약으로 잠근다. 상태를 말하는 자리는
+    프로필 행의 연결 칩(`#aiConnState`) 하나다 — 같은 사실을 두 자리에서 말하면 한쪽이 낡는다.
+    """
+    html_src = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="composerActionsSelectorNote"' not in html_src, \
+        "컴포저 안내 문단이 되살아났다 — 켜지는 순간 컴포저 높이가 바뀌어 프로필 행과 어긋난다"
+    assert "composer-actions-note" not in CHAT_CSS.read_text(encoding="utf-8"), \
+        "안내 문단 스타일이 남아 있다 — 요소가 되돌아올 자리를 남기지 않는다"
+    assert "_applyComposerSelectorNote" not in COMPOSER_JS.read_text(encoding="utf-8"), \
+        "안내를 그리던 배선이 남아 있다"
 
 
-def _ancestors(target: str) -> list[tuple[str, str, str]]:
-    p = _Ancestors(target)
-    p.feed(INDEX_HTML.read_text(encoding="utf-8"))
-    assert p.found is not None, f"#{target} 가 화면에 없다"
-    return p.found
+def test_the_download_link_has_no_surface_left():
+    """`runner_download_url` 은 응답에 남지만 **화면 문단으로는 그리지 않는다**.
 
-
-def test_the_notice_is_not_a_flex_item_of_the_input_row():
-    """⭐ 정본 — `.composer-box` 는 `display:flex` 한 줄이다. 정적 자식은 입력창을 밀어낸다."""
-    classes = " ".join(c for _, c, _ in _ancestors("composerActionsSelectorNote"))
-    assert "composer-box" not in classes, \
-        "안내가 입력창과 같은 플렉스 줄에 서 있다 — 켜지는 순간 입력창이 밀린다(제보 2026-09-02)"
-
-
-def test_the_notice_still_stays_out_of_the_menu_role():
-    """앞 cycle 의 ARIA 계약(B4)을 되돌리지 않는다 — 자리를 옮기며 그것을 깨기 쉽다."""
-    roles = [r for _, _, r in _ancestors("composerActionsSelectorNote")]
-    assert "menu" not in roles, \
-        "`role=menu` 안의 `<p>` 는 허용되지 않는 owned child 다(presentation 으로도 못 덮는다)"
-
-
-def test_the_notice_is_still_on_screen_next_to_the_composer():
-    """밖으로 꺼내다가 컴포저 밖으로 흘려보내면 안내가 사라진 것과 같다."""
-    classes = " ".join(c for _, c, _ in _ancestors("composerActionsSelectorNote"))
-    assert "composer-wrap" in classes, "컴포저 영역 밖으로 나갔다"
-
-
-def test_the_notice_style_matches_a_standalone_row():
-    """자리를 옮기면 그 자리에 맞는 여백이어야 한다 — 메뉴 항목용 안쪽 여백이 남지 않게."""
-    css = CHAT_CSS.read_text(encoding="utf-8")
-    block = css.split(".composer-actions-note {", 1)[1].split("}", 1)[0]
-    assert "padding: 6px 10px 8px" not in block, "메뉴 항목 시절의 여백이 그대로 남아 있다"
-    assert "margin: 0 0 6px" in block, "입력창과 붙어 한 덩어리로 읽히지 않는다"
+    필드 자체는 진단·판정 근거라 지우지 않는다(서버 계약 불변). 지운 것은 그 값을 컴포저
+    문단 안 링크로 그리던 소비처 하나뿐이고, 이 단언이 그 구분을 붙들어 둔다.
+    """
+    js = COMPOSER_JS.read_text(encoding="utf-8")
+    assert "실행 파일 받기" not in js, "컴포저가 다시 다운로드 링크를 그린다"

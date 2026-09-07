@@ -338,27 +338,84 @@ def test_runner_and_server_provenance_sets_still_match():
     assert server is not None
     assert set(mod._REPORTABLE_SOURCES) == server
     assert "verified" in server, "확인 경로의 출처가 허용집합에 없다 — 확인해도 신고가 버려진다"
-    for fossil in ("builtin", "baseline", "server"):
+    assert "catalog" in server, (
+        "CLI 자체 카탈로그 출처가 허용집합에 없다 — 240ms 경로로 얻은 목록이 통째로 버려진다")
+    # `baseline` 은 2026-09-07 사용자 결정으로 **의도적으로** 들어왔다 (「확인-후-표시」 완화).
+    # 그 결정을 여기 못 박아 둔다 — 나중에 이 항목이 사라지면 그것은 정리가 아니라 되돌림이다.
+    assert "baseline" in server, (
+        "원장 폴백 출처가 빠졌다 — 확인이 끝나지 않는 런타임에서 목록이 다시 영영 빈다"
+        " (사용자 결정 2026-09-07)")
+    # 화석은 여전히 배제한다 — 러너 **소스에 적힌 표**는 어떤 이름으로도 들어오지 않는다.
+    for fossil in ("builtin", "server"):
         assert fossil not in server, (
-            f"«확인 전» 출처 `{fossil}` 가 허용집합에 들어왔다 — 서버 보관 목록이 확인 없이"
-            " 화면에 도달하고, 그것이 `gpt-5.1-codex` 화석의 재현이다")
+            f"출처 `{fossil}` 가 허용집합에 들어왔다 — 우리가 적어 둔 표가 화면에 도달하고,"
+            " 그것이 `gpt-5.1-codex` 화석의 재현이다")
 
 
-def test_baseline_alone_is_not_reported(monkeypatch):
-    """baseline 이 있어도 **확인에 실패하면 신고되지 않는다** (AC-6).
+def test_baseline_is_reported_when_live_confirmation_never_lands(monkeypatch):
+    """⭐ 확인도 열거도 실패하면 **원장을 그대로 신고한다** (사용자 결정 2026-09-07).
 
-    이 단정이 「확인-후-표시」의 유일한 집행 지점이다. 확인 질의가 답하지 않는 상황을
-    만들고, 그 회차의 신고가 비어 있음을 본다.
+    ## 이 단정이 뒤집힌 이유
+
+    종전 이름은 `test_baseline_alone_is_not_reported` 였고 「확인-후-표시」(2026-09-02)의
+    집행 지점이었다. 그 규칙이 라이브에서 낸 결과는 **목록이 영영 비는 것**이었다 — codex 는
+    확인 질의가 600초에도 끝나지 않고 열린 질의에는 `models: []` 로 답한다(실측 2026-09-07).
+    사용자는 그 상태를 결함으로 신고했고(「AI가 연결되었음에도 모델 목록이 나타나지
+    않고 있습니다」) 완화를 결정했다.
+
+    ## 그래도 남는 것 — 아래 두 단정이 그 경계다
+
+    폴백은 **임시 표시**이지 결론이 아니다: 출처가 `baseline` 로 정직하게 표시되고,
+    로컬 캐시에 남지 않아 다음 기동이 다시 실조회한다.
     """
     mod = _load_runner()
     monkeypatch.setattr(mod, "_which_ai", lambda n: f"/usr/bin/{n}" if n == "claude" else None)
-    # 확인·열린 질의 **둘 다** 답하지 않는다 — 그러면 신고할 근거가 어디에도 없다.
+    # 확인·열린 질의 **둘 다** 답하지 않는다 — 라이브 codex 가 정확히 그 상태였다.
     monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: None)
     base = {"claude": {"label": "Claude",
                        "models": [{"value": "sonnet", "label": "sonnet"}], "efforts": []}}
-    got = mod.detect_runtimes(cached=None, probe=True, baseline=base)
-    assert [r for r in got if r["runtime"] == "claude"] == [], (
-        "확인되지 않은 baseline 이 신고에 실렸다 — 화석 경로가 열렸다")
+    detail: dict = {}
+    got = mod.detect_runtimes(cached=None, probe=True, baseline=base, detail_out=detail)
+    entry = next((r for r in got if r["runtime"] == "claude"), None)
+    assert entry is not None, "확인이 끝나지 않는 런타임에서 목록이 다시 비었다"
+    assert [m["value"] for m in entry["models"]] == ["sonnet"]
+    assert entry["source"] == "baseline", (
+        f"폴백이 다른 출처를 주장한다: {entry['source']} — 서버가 앵커를 잘못 갱신한다")
+    assert "claude" not in detail, (
+        "원장 폴백이 로컬 캐시에 남았다 — 다음 기동이 실조회를 건너뛰어 임시 표시가 결론이 된다")
+    # ⭐ **건강 축까지 본다** (적대리뷰 P1 ×2, 2026-09-07). 초판은 출처·캐시만 보고 통과했는데,
+    #   폴백이 `probed[nm]` 를 채우면 같은 루프의 `note_ai_outcome(True)` 가 발화해 **라이브
+    #   질의가 전부 실패한 AI 를 「지금 응답한다」로 확정**했다. 그러면 lifecycle 의 생존 확인
+    #   (`if ai_health()[0] is None: ...`)이 건너뛰어져, 답하지 못하는 AI 가 화면에 「대기 중」
+    #   으로 나간다 — 이 feature 가 2026-09-03 에 닫은 결함의 재생산이다. 폴백의 「대가는
+    #   정직하게 남긴다」는 주장이 이 단정 없이는 코드로 지켜지지 않았다.
+    assert mod.ai_health()[0] is not True, (
+        "원장 폴백이 건강 축을 True 로 찍었다 — 응답하지 못하는 AI 가 「대기 중」으로 나간다")
+
+
+def test_a_catalog_read_alone_does_not_prove_the_ai_answers(monkeypatch):
+    """⭐ CLI 카탈로그 조회 성공은 **「답할 수 있다」가 아니다** (적대리뷰 P1, 2026-09-07).
+
+    `codex debug models` 는 로컬 조회라 **OAuth 가 만료돼도 exit 0** 이다. 그 성공으로 건강을
+    확정하면 생존 확인이 영영 돌지 않고, 로그인 만료 상태가 화면에 「대기 중」으로 나간다.
+    """
+    mod = _load_runner()
+    monkeypatch.setattr(mod, "_which_ai", lambda n: "/usr/bin/codex" if n == "codex" else None)
+
+    class _P:
+        stdout = ('{"models": [{"slug": "gpt-5.6-sol", "display_name": "Sol",'
+                  ' "visibility": "list", "priority": 1,'
+                  ' "supported_reasoning_levels": [{"effort": "low"}]}]}')
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _P())
+    monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: None)   # 라이브 질의는 전부 실패
+    got = mod.detect_runtimes(only="codex", cached=None, probe=True)
+    entry = next(r for r in got if r["runtime"] == "codex")
+    assert entry["source"] == "catalog", "이 테스트의 전제(카탈로그 경로)가 성립하지 않았다"
+    assert mod.ai_health()[0] is not True, (
+        "카탈로그 조회만으로 건강을 True 로 찍었다 — 로그인 만료가 「대기 중」으로 보인다")
 
 
 def test_verified_baseline_is_reported_with_verified_source(monkeypatch):
@@ -498,18 +555,35 @@ def test_refresh_caps_wiring_drops_the_baseline_too(monkeypatch):
     fn = next((n for n in ast.walk(tree)
                if isinstance(n, ast.FunctionDef) and n.name == "_negotiate_caps"), None)
     assert fn is not None, "_negotiate_caps 를 찾지 못했다 — 배선 자리가 바뀌었다"
-    assigns = {t.id: ast.unparse(a.value)
+    assigns = {t.id: a.value
                for a in ast.walk(fn) if isinstance(a, ast.Assign)
                for t in a.targets if isinstance(t, ast.Name)}
-    base_expr = assigns.get("_base")
-    assert base_expr, f"_base 대입을 찾지 못했다: {sorted(assigns)}"
-    assert "refresh_caps" in base_expr, (
-        f"`--refresh-caps` 가 baseline 을 버리지 않는다: `_base = {base_expr}`")
+    base_node = assigns.get("_base")
+    assert base_node is not None, f"_base 대입을 찾지 못했다: {sorted(assigns)}"
+
+    def _discard_guard(node):
+        """`X if <조건> else Y` 에서 **버리는 쪽의 조건**만 꺼낸다. 모양이 다르면 None.
+
+        ⚠ 문자열 통비교를 쓰지 않는다 (2026-09-07). 종전 판본은 두 표현식에서 서로 다른
+        꼬리(`conf_caps or None` · `dict(_caps_baseline) or None`)를 잘라 낸 **나머지**를
+        비교했는데, 그 방식은 이 단정의 관심사(«폐기 조건이 같은가»)가 아니라 폴백 사슬의
+        철자까지 고정한다. 실제로 캐시 축에 누적분(`dict(caps)`)을 앞세우자 조건은 그대로인데
+        이 단정만 빨갛게 됐다 — 게이트가 결함이 아니라 «다른 철자» 를 잡은 것이다.
+        """
+        if not isinstance(node, ast.IfExp):
+            return None
+        if not (isinstance(node.body, ast.Constant) and node.body.value is None):
+            return None                      # 참일 때 버리는 형태가 아니다
+        return ast.unparse(node.test)
+
+    base_guard = _discard_guard(base_node)
+    assert base_guard and "refresh_caps" in base_guard, (
+        f"`--refresh-caps` 가 baseline 을 버리지 않는다: `_base = {ast.unparse(base_node)}`")
     # 캐시와 **같은 조건**이어야 한다 — 한쪽만 버리면 사용자가 본 것은 여전히 직전 목록이다.
-    cached_expr = assigns.get("_cached") or ""
-    assert cached_expr.replace("conf_caps or None", "").strip() == \
-        base_expr.replace("dict(_caps_baseline) or None", "").strip(), (
-            f"캐시와 baseline 의 폐기 조건이 다르다: `{cached_expr}` vs `{base_expr}`")
+    cached_node = assigns.get("_cached")
+    cached_guard = _discard_guard(cached_node) if cached_node is not None else None
+    assert cached_guard == base_guard, (
+        f"캐시와 baseline 의 폐기 조건이 다르다: `{cached_guard}` vs `{base_guard}`")
 
 
 def test_heartbeat_signals_baseline_ready_on_every_outcome(monkeypatch):
@@ -671,9 +745,10 @@ def test_sanitizer_accepts_verified_and_still_rejects_unknown_sources():
     ns: dict = {"re": re}
     exec(src[start:end], ns)  # noqa: S102 — 대상 구역만 격리 실행
     sanitize = ns["_sanitize_runtimes"]
-    ok = sanitize([{**_rt("claude", ["sonnet"]), "source": "verified"}])
-    assert [r["runtime"] for r in ok] == ["claude"]
-    for bad in ("builtin", "baseline", "", "server"):
+    for good in ("verified", "catalog", "baseline"):
+        ok = sanitize([{**_rt("claude", ["sonnet"]), "source": good}])
+        assert [r["runtime"] for r in ok] == ["claude"], f"출처 `{good}` 가 저장에서 버려졌다"
+    for bad in ("builtin", "", "server"):
         assert sanitize([{**_rt("claude", ["sonnet"]), "source": bad}]) == [], (
             f"출처 `{bad}` 가 저장 게이트를 통과했다")
 
@@ -961,9 +1036,14 @@ def test_source_map_is_out_of_band_and_uses_the_same_gate():
     assert stored and "source" not in stored[0], "저장 스키마(4키)에 출처가 새어 들어갔다"
     assert ns["_report_sources"]([item], stored) == {"claude": "probe"}
     # 허용집합 밖 출처는 앵커도 세우지 못한다.
-    for bad in ("builtin", "baseline", ""):
+    for bad in ("builtin", ""):
         raw = [{**_rt("claude", ["sonnet"]), "source": bad}]
         assert ns["_report_sources"](raw, ns["_sanitize_runtimes"](raw)) == {}, bad
+    # 허용집합 안이면 앵커 축에도 그대로 전달된다 — 판정은 `merge_baseline` 이 한다
+    # (`catalog` = 열거와 같은 급 · `baseline` = 아무것도 건드리지 않음).
+    for good in ("catalog", "baseline"):
+        raw = [{**_rt("claude", ["sonnet"]), "source": good}]
+        assert ns["_report_sources"](raw, ns["_sanitize_runtimes"](raw)) == {"claude": good}
 
 
 def test_runner_sanitizes_the_server_baseline(monkeypatch):

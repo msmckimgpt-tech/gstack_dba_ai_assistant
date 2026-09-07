@@ -4705,3 +4705,66 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   옛 계약(`flex-wrap: wrap` + 트리거 `flex: 1 0 auto` = 「이름을 뭉개지 않고 칩이 다음 줄로」)을
   **명시적으로 잠그고** 있었다. 그 단정이 살아 있는 한 이 결함은 «계약» 이었다 — 회귀 스위트가
   그것을 잡아 주었고, 이유를 적어 뒤집었다. 조용히 지우지 않는다.
+
+
+## CHG-20260907T060000-ai-claude-model-list-visible — 목록이 비는 3중 원인 해소
+- Timestamp: 2026-09-07T06:00:00+09:00
+- `src/agent/runtimes.py`: codex 에 `catalog: ["codex","debug","models"]` 추가 — 그 CLI 가
+  스스로 출력하는 공식 모델 카탈로그.
+- `src/agent/caps.py`:
+  - `catalog_runtime_caps()` + `_parse_codex_catalog()` — 노출(`visibility=="list"`) 필터 ·
+    `priority` 순서 · 등급은 **모든 노출 모델의 교집합**(고른 값이 항상 반영되게).
+  - `_CAPS_CATALOG_MAX_BYTES = 8MB` — 실측 출력 413,777바이트라 probe 상한(256KB)으로는
+    **항상 잘려** 파싱이 한 번도 성공하지 못한다(첫 구현이 그 상태였다).
+  - `baseline_as_caps()` — 카탈로그·확인·열거가 모두 실패하면 계정 원장을 `source:
+    "baseline"` 으로 신고 (사용자 결정 2026-09-07 「확인-후-표시」 완화).
+  - `_probe` 순서: **카탈로그 → 캐시 축 재확정 → 원장 확인 → 열린 질의 ×2 → 원장 폴백**.
+  - `ask` 계산이 카탈로그 보유 런타임을 캐시 유무와 무관하게 포함 · 「수십 초」 예고는
+    LLM 질의를 타는 런타임에만.
+  - `_REPORTABLE_SOURCES`/`_CREATION_SOURCES` 에 `catalog`·`baseline` 추가,
+    `_UNCACHEABLE_SOURCES` 신설(`builtin`·`catalog`·`baseline` 은 `config.json` 에 안 남긴다).
+- `src/agent/lifecycle.py`: `_negotiate_caps_until_reported()` — 실조회로 확인된 목록을
+  얻을 때까지 배경 재시도(`_needs_retry()`: 빈 목록 · 원장 폴백뿐인 목록 = 아직).
+  `_cached` 를 `conf_caps` 대신 **누적 `caps`** 로 넘겨 성공분을 다시 묻지 않는다.
+  표 밖 CLI(`_caps_first`)도 빈손이면 같은 재시도 경로에 편입.
+- `src/agent/timing.py`: `_CAPS_RETRY_BACKOFF_SEC=(60,120,300,600)` · `_CAPS_RETRY_CEILING_SEC=900`.
+- `../../shared/bridge_caps.py`: `merge_baseline` 이 `catalog` 을 열린 열거와 같은 급으로
+  (앵커 갱신 + streak 0). `baseline` 은 아무것도 건드리지 않는다(자기강화 루프 차단).
+- `../feature-0003-agent-web-ui/src/routers/ai_tools.py`: `_SANITIZE_SOURCE_ALLOW` 에
+  `catalog`·`baseline` 추가 + 완화 근거 기록. `builtin` 배제는 불변.
+- 테스트: `tests/test_cli_model_catalog.py`(신규 8) · `tests/test_caps_negotiation_retries.py`
+  (신규 6) · `test_caps_live_sync.py` 4건 계약 갱신 · `test_session_revoke_parity.py` ·
+  `test_relaunch_dead_end.py` 재조준.
+
+
+## CHG-20260907T063000-ai-claude-review-round1 — 적대 리뷰 P1 3건 · P2 8건 조치
+- Timestamp: 2026-09-07T06:30:00+09:00
+- `src/agent/caps.py`:
+  - `_LIVE_ANSWER_SOURCES = {probe, verified}` 신설 — `note_ai_outcome(True)` 를 그 출처에만.
+    `catalog` 은 로컬 조회라 **로그인 만료에도 exit 0** 이고 `baseline` 은 AI 미개입이다(P1).
+  - 협상 요약 로그가 출처를 있는 그대로 적는다(종전엔 `verified` 외 전부 「본인 응답」).
+  - 등급 교집합의 모수를 **등급을 신고한 모델**로 한정 + 절단을 `caps.catalog_partial_efforts`
+    로 남김 — 한 모델이 안 실으면 전 등급이 사라지던 것.
+  - 카탈로그 실패 사유를 `catalog_reasons` 로 분리 — `reasons` 에 바로 대입해 뒤따르는
+    `setdefault` 사유를 가리던 것(실패를 다른 실패로 위장).
+  - `_assemble` 이 캐시 금지 출처일 때 **기존 캐시를 보존** — `save_conf` 가 파일을 재작성하며
+    그 머신의 probe 캐시를 지우던 것.
+- `src/agent/lifecycle.py`: 협상 **회차 토큰** + 게시 락(`_publish_caps_for` · `_snapshot_caps`)
+  — 앞 회차 지각 스레드가 새 목록을 되덮고 `dict(caps)` 가 `RuntimeError` 로 재시도를 죽이던 것.
+  재시도 문의 술어를 `not runtimes` → `_needs_retry()` 로 통일(표 밖 CLI 가 재질의 기회를 잃던 것).
+- `src/agent/timing.py`: `_CAPS_RETRY_CEILING_SHOWING_SEC = 3600` — 보여줄 목록이 이미 있으면
+  천장을 1시간으로. 폴백이 선 채 15분마다 240초 질의를 무기한 태우던 것.
+- `../../shared/bridge_caps.py`: `source="baseline"` 은 원장 항목을 **건드리지 않고 지나간다**
+  (`continue`) — `last_used_at` 을 밀어 TTL·streak 두 만료 축을 모두 죽이던 것(P1).
+- 테스트: `test_cli_model_catalog.py` +5(TTL 종단·등급 부분신고·사유 마스킹·캐시 보존·전역 patch
+  내성) · `test_caps_negotiation_retries.py` +1(회차 겹침) + 하네스가 새 천장을 patch ·
+  `test_caps_live_sync.py` +1(카탈로그 건강 축) + 폴백 테스트에 건강 단정 · `test_session_revoke_parity.py`
+  +1(여러 줄 사유 접힘) + 예산 게이트에 접기 지점 단정.
+
+## CHG-20260907T063000-ai-claude-chip-note-followup — 화면 축 (feature-0003 동반)
+- `../feature-0003-agent-web-ui/src/static/app/composer.js`: 카탈로그 미수신 강등에 토스트
+  (상태 전이당 1회). `../.../app.js`: 카탈로그 복구 시 표식 해제.
+- `../feature-0003-agent-web-ui/src/static/app/connect-modal.js`: 러너 사유를 표시 직전 한
+  문단으로 접고 140자 상한(`_reasonLine` · `_CHIP_REASON_MAX_CHARS`).
+- `../feature-0003-agent-web-ui/src/static/index.html`: 칩에 `role="status" aria-live="polite"`
+  승계 + 과장된 커버리지 주석 정정.
