@@ -707,3 +707,111 @@ source_of_truth: true
 - **유지되는 결함 판정(재평가 대상 아님)**: 같은 리뷰의 나머지 P1 — burst-429 오강등, recreate 실패 영구화, `--check` 가 회전, selector 사망에 의한 slot 무음 정지, `expires_in` 과거 만료 되쓰기, POST 후 백업 실패로 refresh token 유실 — 은 전부 **권한과 무관한 가용성·정합성 결함**이고 이미 수정됐다.
 - **왜 기록하는가**: 원장에 열린 P1 으로 남겨 두면 다음 적대 패널이 같은 것을 다시 최상위로 올려 실제 결함 탐색 예산을 갉아먹는다. 향후 리뷰어는 이 항목을 **환경 전제**로 읽어야 한다.
 - Cross-ref: REVIEW REV-20260811T140000 · TASK `## TASK-20260811T120000-oauth-auto-rotate` 이월 종결 · 선행 REV-20260807T190000 / REV-20260811T120000.
+
+
+## CHG-20260907T152000-ai-claude-corp-feature-0007-local-llm-decommission — 로컬 LLM 전면 폐기 (사용자 결정 2026-09-07)
+
+- **결정**: "로컬 LLM 은 더 이상 사용하지 않는다." 2026-07-30 `llm-edge-free-routing`(자동 강등 경로 제거)과
+  2026-08-26 feature-0043(서버 계정 chat fail-closed)이 남긴 **로컬 실행 잔여를 전량 제거**한다.
+  범위는 AskUserQuestion 3문항으로 확정 — 모델 파일 삭제 포함 · 본 소비자측 동시 정리 · `embed-ollama` 포함.
+- **인프라**
+  - `docker-compose.yml`: `llm-shared` attach 6곳 detach + 네트워크 선언 제거 · `embed-ollama` 서비스 제거 ·
+    `volumes.embed_ollama_models` 선언 제거. ⚠ **docker 볼륨(`repo_embed_ollama_models`)은 삭제하지 않았다** —
+    적재된 bge-m3 가 남아 있어 선언 복원만으로 되돌릴 수 있다. 서비스 24→23. `docker compose config` rc=0.
+  - `Makefile`: `check-llm-network` 타깃 제거(llm-shared 전제조건 소멸), 호출부 16곳 → `ensure-replica-network`.
+    `kb-retrieval-eval` 설명에서 "라이브 bge-m3 임베딩" 정정.
+- **게이트웨이 설정**
+  - `litellm_config.yaml`: `titan-embed`(→ `ollama/bge-m3` @ `embed-ollama:11434`) 제거 —
+    **`model_list` 의 유일한 활성 항목이었다**. `edge-fallback` 정의를 주석 이력으로 강등
+    (「되돌리기용 보존」의 전제가 provider 폐기로 소멸). `model_list: []` 명시(YAML null 회피).
+- **앱 층 (fail-open 3경로 폐쇄)**
+  - `shared/model_catalog.py`: `_LOCAL_LLM_ENABLED` env 판독 → 상수 `False`.
+  - `shared/config.py`: `_select_llm_provider()` 의 Local LLM 강등 경로 제거 ·
+    `AGENT_KB_EMBEDDING_MODEL` 기본값 → 빈 값.
+  - `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py`: `LOCAL_LLM_API_KEY/BASE` fallback 제거.
+- **문서 정합**: `shared/llm_gate.py`(「비차단: 로컬 bge-m3 임베딩」) · `README.md` · `.env.example` ·
+  `.env.llm.example` · `bin/kb-embedding-worker.sh`.
+- **테스트**: `test_llm_edge_free_routing.py` 방향 반전 + 신규 1건 · `test_llm_gate.py` AC-7 supersede +
+  「비면 기동 실패」가정 교체.
+- **repo 밖 조치(같은 결정의 일부)**: `local_llm` compose down · `models-edge` 16GB 삭제 ·
+  `DECOMMISSIONED` sentinel + Makefile 가드 · root crontab 일일 재시작 블록 비활성화.
+- **미조치(기록)**: 라이브 `.env` 의 `LOCAL_LLM_API_BASE`/`LOCAL_LLM_API_KEY`/`AGENT_KB_EMBEDDING_MODEL` —
+  `.env*` deny rule 로 이 세션 편집 불가. 코드 방어로 기능 영향은 없으나 KB 쿼리마다 경고 1건이 쌓인다.
+- Cross-ref: TASK `## TASK-20260907T152000-local-llm-decommission` · REVIEW REV-20260907T152000 ·
+  TEST Run 2026-09-07-local-llm-decommission · 선행 CHG(2026-07-30 llm-edge-free-routing / 2026-08-26 feature-0043).
+
+
+## CHG-20260907T163000-ai-claude-corp-feature-0007-local-llm-decommission — 적대 검증 P1·P2 수정
+
+선행 CHG-20260907T152000 에 `codex review --uncommitted`(§18.8.1 accepted 채널)를 걸어
+**P1 1건 · P2 1건**을 검출하고 전건 수정했다. 둘 다 **그 CHG 가 만든 구멍**이다.
+
+- **P1 (보안 — 자격증명·데이터 egress)** `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py`:
+  로컬 `api_base` fallback 을 제거하면서 `base_url` 을 조건부로만 넘기게 됐다. OpenAI SDK 는
+  `base_url` 미지정 시 기본값 `https://api.openai.com/v1` 을 쓰므로, `BEDROCK_GATEWAY_API_KEY` 는
+  있고 `BEDROCK_GATEWAY_URL` 이 없는 구성에서 **게이트웨이 토큰과 KB 텍스트가 OpenAI 로 전송**된다.
+  `docs/SECURITY.md`(CHG-20260522-0006, 사용자 결정 2026-05-22)가 OpenAI direct 경로를 의도적으로
+  폐기하고 "LLM 호출 entry 는 게이트웨이만 허용" 이라 규정하므로 이는 그 결정의 silent 우회다.
+  → **URL·KEY paired 요구**(둘 중 하나라도 없으면 클라이언트 생성 전에 `RuntimeError`).
+  `shared/config._select_llm_provider()` 의 paired tuple 규약(CHG-20260522-0003)과 같은 축이다.
+- **P2 (가용성 — 무의미 재시도)** 같은 파일 `run_embedding_pass`:
+  `AGENT_KB_EMBEDDING_MODEL` 기본값을 빈 값으로 내렸는데 `AGENT_KB_EMBEDDING_AUTO` 는 기본 활성이라
+  insight-worker 백필 데몬이 매 tick 빈 모델명으로 요청한다. → 진입 가드
+  (`skipped: embedding-model-unset` 반환, `error` 는 비움 — 비활성은 실패가 아니라서 caller 가
+  매 tick 경고를 쌓지 않게 한다).
+- **회귀 잠금** `unit/feature-0002-agent-core/tests/test_kb_embedding_gateway_failclosed.py` 신규 6건.
+  단언 대상이 순수 함수가 아니라 **실제 진입점**(`call_openai_embeddings`·`run_embedding_pass`)이라
+  배선 사각(§16.7 G14-e)이 없다. `OpenAI` 생성자를 실패시키는 스텁으로 **"생성 자체가 일어나지 않음"**
+  을 단정한다 — "실패한다" 가 아니라 "기본 endpoint 로 나가지 않는다" 가 계약이다.
+- **결함 재주입 실증**(§16.7 G11-b): 수정 전 형태로 되돌리면 3건 FAIL(P1 의 정확한 형태 `KEY 有/URL 無`
+  포함) → 원복 후 6건 통과 → `git diff --stat` 로 원복 확인.
+- Cross-ref: TASK `## TASK-20260907T152000-local-llm-decommission` 의 적대 검증 항목 ·
+  REVIEW REV-20260907T163000 · TEST Run 2026-09-07-local-llm-decommission-P1P2.
+
+
+## CHG-20260907T174500-ai-claude-corp-feature-0007-local-llm-decommission — 확인 라운드 R2 P2: 빈-모델 가드를 구조로 승격
+
+`codex review --base main`(확인 라운드 R2)이 **P1 0건 · P2 1건**을 냈다. P2 는 직전 CHG 가
+남긴 것이며 **내가 그 CHG 의 REVIEW 에서 자기 진단한 형태의 재발**이다.
+
+- **지적**: R1 의 P2 를 `run_embedding_pass` 진입 가드로만 고쳤더니 형제 진입점 `main()`
+  (= `bin/kb-embedding-worker.sh`)이 우회해 `model=""` 를 게이트웨이로 보내고, "임베딩 비활성"
+  이 아니라 **API 실패로 종료**한다. codex 가 `AGENTS.md` §16.7 G8-a(모든 호출 경로 열거)를
+  근거로 인용했고 그 인용이 정확하다.
+- **왜 점수정하지 않았는가**: 진입점별 가드는 **다음 진입점에서 다시 벌어진다**. §16.7 G10 은
+  재발 관측 시 클래스 전체를 잠그는 구조 테스트로 승격하라고 요구한다. 두 진입점이 반드시
+  지나는 `call_openai_embeddings` 에 가드를 두어 앞으로 추가되는 경로도 자동으로 덮이게 했다.
+- **호출측 UX 는 각자 담당**: `main()` 은 `[DISABLED]` 안내 + **exit 0**(비활성은 실패가 아니다 —
+  실패로 끝내면 cron·래퍼가 장애로 보고 재시도·알림을 쌓는다), `run_embedding_pass` 는 PG 연결
+  조차 열지 않는 조기 no-op. `--model` 명시 override 는 양쪽에서 보존된다(§16.7 G9-c — 차단이
+  정상 경로를 막지 않는지 실측 포함).
+- **모수 검증** (§16.7 G12-b): `test_all_gateway_entrypoints_route_through_chokepoint` 가 AST 로
+  `OpenAI(` 직접 생성 지점이 `call_openai_embeddings` 하나뿐임을 강제한다. 모수를 손으로 열거하지
+  않고 **소스에서 조회**하므로 새 진입점이 자동으로 모수에 들어온다.
+- **결함 주입 3형태 실증**: ⓐ `main()` 조기 종료 제거 → CLI 테스트 FAIL ⓑ chokepoint 가드 제거 →
+  chokepoint 테스트 FAIL ⓒ chokepoint 밖 `OpenAI(` 생성 → AST 모수 테스트 FAIL. 원복 후 10건 통과.
+- 테스트 6 → **10건**.
+- Cross-ref: REVIEW REV-20260907T174500 · TEST Run 2026-09-07-local-llm-decommission-R2.
+
+## CHG-20260907T180000-ai-claude-corp-feature-0007-local-llm-decommission — R3 수렴 기록 + 의도적 미적용 ADR
+
+- **확인 라운드 R3 PASS** — `codex review --base main` 판정 *"No actionable regressions were
+  identified in the diff against the specified merge base."* (P1 0 · P2 0). 수렴 추이
+  R1(1/1) → R2(0/1) → R3(0/0), P1 단조 감소·진동 없음(§18.8 (a)(b)).
+- **codex 검증 공백을 분리 기재** — codex 는 자기 sandbox 에서 테스트를 실행하지 못했다
+  ("sandbox prohibits socket creation"). 따라서 R3 의 PASS 는 **정적 분석 기준**이며,
+  런타임 축(신규 10건 + 결함주입 3형태 + 영향 19파일 + 전수 스위트 기준선 대조 +
+  litellm 실기동)은 **본 세션이 직접 측정**한 것이다. REVIEW REV-20260907T180000 에
+  축별 수행자를 표로 분리했다 — R3 의 근거로 오인되지 않게 한다.
+- **`docs/DECISIONS.md` ADR-20260907T175000-local-llm-decommission-scope-boundary 신설**
+  (§16.7 G8-c — 기록 없는 미적용은 누락과 구분되지 않는다). 의도적 미적용 3건:
+  ① `bedrock-gateway` 철거 — 결정 축이 다르고(로컬 실행 vs 외부 경로) feature-0020 무중단
+     배포 배선 폭이 크다. `model_list: []` 로도 기동함을 실측했으므로 유지 비용 없음
+  ② `embed_ollama_models` 볼륨 보존 — 승인된 16GB 삭제는 `local_llm/models-edge` 대상이었고,
+     이 볼륨은 되돌리기 경로(모델 재다운로드 불요)
+  ③ 선행 프로젝트 `mysql_ai/.env` — git 저장소 아님(VCS 부재) · 2026-03 이후 휴면 ·
+     컨테이너 0개 · `.env*` deny rule · 별 프로젝트 스코프
+- **ADR 의 목적**: §18.8 「의도된 구성은 ADR 로 영구화한다」 — 근거 없이 같은 3건이 매 라운드
+  재상정돼 실제 결함 탐색 예산을 갉아먹는 것을 막되, 지적 자체를 무르게 만들지 않는다.
+  각 항목에 **재개봉 조건**을 명시했다.
+- Cross-ref: REVIEW REV-20260907T180000 · TASK 동 cycle 항목 · `docs/DECISIONS.md` 동 ADR.

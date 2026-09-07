@@ -579,6 +579,29 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 
 [[Features/feature-0046-native-client]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0003-agent-web-ui]]
 
+## [2026-09-07] refactor | 로컬 LLM 전면 폐기 — local-llm-edge/gateway + embed-ollama 제거
+
+- **결정**: 사용자 "로컬 LLM 은 더 이상 사용하지 않는다"(2026-09-07). 2026-07-30 `llm-edge-free-routing`
+  (자동 강등 경로 제거)과 2026-08-26 feature-0043(서버 계정 chat fail-closed)이 남긴 **로컬 실행 잔여를 전량 제거**.
+- **폐기 근거는 실측이다**: `local-llm-edge` 7일 로그 77,789줄 중 추론 `POST` **0건**(전량 healthcheck),
+  RSS 31.5MiB(모델 미로드), gateway 로그는 자기 `/health` 뿐. 쓰이지 않는데 GPU·RAM·16GB 디스크를
+  점유하고 일일 cron 재시작을 요구하는 상태였다.
+- **제거 대상**: `llm-shared` attach 6곳 + 네트워크 선언 · `embed-ollama` 서비스 · `titan-embed` alias ·
+  `edge-fallback` 정의 · `check-llm-network` Makefile 게이트 · (repo 밖) `local_llm` 컨테이너 2개 + 모델 16GB +
+  root crontab 일일 재시작.
+- **KB 검색은 죽지 않았다** — 제거 *전에* `kb_retrieval` 이 "쿼리 임베딩 미설정 시 pg_trgm fallback"
+  (2-tier, 롤백 안전)을 이미 구현하고 있음을 확인했고, `qvec` 이 항상 None 이 되므로 반쪽 상태 없이
+  일관된 trigram-only 로 강등된다. 기존 임베딩 `texts` 154,365행 + bge-m3 볼륨은 **보존**.
+- **부수 발견 — 라이브에서만 열려 있던 fail-open 3경로**: ① `model_catalog._LOCAL_LLM_ENABLED` 가
+  `.env` 의 `LOCAL_LLM_API_BASE` 를 읽어 라이브에서만 로컬 alias 를 카탈로그에 넣었고(`/api/ask` 가
+  `auto`/`edge` 수락 → 폐기된 게이트웨이로 라우팅), **테스트 환경은 env 미설정이라 정반대를 단정하며
+  통과**했다. ② `_select_llm_provider()` 가 Bedrock 부재 시 로컬로 강등. ③ 임베딩 워커의 자격증명 fallback.
+  전부 env 무관 구조로 폐쇄.
+- **선행 계약 2건 반전(정직 표기)**: feature-0043 의 AC-7(`titan-embed` 보존 = 「계정 축 ≠ 임베딩 축」 경계)은
+  이번 결정이 *로컬 실행 축*이라 supersede. `test_litellm_config_still_parses` 의 "빈 model_list → 기동 실패"
+  는 **가정이었고** litellm 실기동(liveliness/readiness 200)으로 반증해 단언을 교체.
+- **범위 밖으로 남긴 것**: `bedrock-gateway` 철거 — 활성 model 0개로 용도가 소진됐으나 feature-0020
+  무중단 배포 machinery 에 배선돼 있고 **외부 LLM 경로 철거는 별개 결정**이다.
 ## [2026-09-07] feature | 클라이언트 업데이트 채널 — 다른 머신이 새 버전을 받는다
 
 feature-0046 에 **버전 정본**(`src/client/version.py`)과 **수신 경로**(`src/client/updater.py`)가 생겼고, 배포물이 서버에 도달하는 경로(호스트 `artifacts/client-release` → `/srv/client:ro` → `GET /api/ai/client/latest` + `/client/<파일>`)가 섰다 — ROADMAP §10.2 「서버가 실물을 못 만든다」 해소. 규율은 러너 자기 갱신(`feature-0043/src/agent/selfupdate.py`)에서 이식했고 적용은 **확인 후**다(미서명 배포라 무음 자동 설치를 기본으로 두지 않는다 — 사용자 결정). 실 TLS 서버로 종단 8단계 실측.

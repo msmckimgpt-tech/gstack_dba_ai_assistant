@@ -20,8 +20,13 @@ AI 런타임이 자기 계정 LLM 으로 수행한다(feature-0041 도구 표면
 
 - **차단**: 대화 답변 · 대화 보조 단계 · insight 배치 · node_analysis · cluster_label · redteam · probe
   — 즉 `modules/llm._get_llm_client()` 와 `agent_core` 의 직접 클라이언트 생성부를 지나는 모든 chat 호출.
-- **비차단**: KB 임베딩(로컬 `bge-m3`/ollama). 계정 자격증명과 무관하며 별도 클라이언트 경로를 쓴다.
+- **비차단(설계상)**: KB 임베딩. 계정 자격증명과 무관하며 별도 클라이언트 경로를 쓴다.
   임베딩까지 끄면 검색이 죽는데, 그건 사용자가 요청한 "계정 사용 차단" 과 무관한 부수 피해다.
+  ⚠ local-llm-decommission(2026-09-07): 그 임베딩의 백엔드였던 로컬 `bge-m3`/ollama(embed-ollama)가
+  사용자 결정("로컬 LLM 미사용")으로 제거됐다. 따라서 본 게이트가 임베딩을 막지 않는다는 사실은
+  그대로지만, **막을 임베딩 호출 자체가 없다** — `AGENT_KB_EMBEDDING_MODEL` 기본값이 빈 값이라
+  `_embed_query_vector` 가 호출 전에 None 을 반환하고 `kb_retrieval` 이 pg_trgm 로 흐른다.
+  즉 검색은 죽지 않고 **벡터 축만 강등**됐다(기존 임베딩 154,365행은 보존, 미사용).
 
 ## ⚠ 이 게이트는 **기존 테스트의 전제를 깬다** (2026-08-27 실측)
 

@@ -79,21 +79,44 @@ def call_openai_embeddings(texts: list[str], model: str, timeout_sec: int, max_a
     except ImportError as e:
         raise RuntimeError(f"openai SDK 미설치: {e}") from e
 
-    api_key = (
-        os.environ.get("BEDROCK_GATEWAY_API_KEY")
-        or os.environ.get("LOCAL_LLM_API_KEY")
-    )
-    if not api_key:
-        raise RuntimeError("LLM API 자격증명 부재 (BEDROCK_GATEWAY_API_KEY 또는 LOCAL_LLM_API_KEY 필요)")
+    # local-llm-decommission(2026-09-07): LOCAL_LLM_* fallback 제거.
+    #   종전에는 BEDROCK_GATEWAY_* 가 비면 LOCAL_LLM_API_KEY/BASE 로 강등했는데, 라이브 `.env` 에
+    #   그 두 값이 폐기된 게이트웨이(local-llm-gateway)를 가리킨 채 남아 있어 **도달 불가 백엔드로
+    #   조용히 흐르는 fail-open 경로**였다(shared/config._select_llm_provider 와 동일 축).
+    #   이제 Bedrock 게이트웨이 자격증명이 없으면 정직하게 실패한다.
+    # ⚠ **모델 미설정이면 여기서 차단한다 (공유 chokepoint)** — codex 확인 라운드 R2 P2 (2026-09-07).
+    #   R1 의 P2 를 `run_embedding_pass` 진입 가드로만 고쳤더니 **형제 진입점 `main()`**
+    #   (= `bin/kb-embedding-worker.sh`)이 그 가드를 우회해 `model=""` 를 게이트웨이로 보냈다.
+    #   §16.7 G8-a 「모든 호출 경로 열거」의 재발이고, G10 은 재발 클래스를 점수정이 아니라
+    #   **구조로 잠그라**고 요구한다. 두 진입점이 반드시 지나는 이 함수에 가드를 둬서 앞으로
+    #   추가되는 진입점도 자동으로 덮이게 한다(진입점별 가드는 다음 진입점에서 다시 벌어진다).
+    #   호출측 UX 는 각자 담당한다 — `main()` 은 exit 0 + "비활성" 안내,
+    #   `run_embedding_pass` 는 PG 연결조차 열지 않는 조기 no-op.
+    if not str(model or "").strip():
+        raise RuntimeError(
+            "임베딩 모델 미설정 — AGENT_KB_EMBEDDING_MODEL 이 빈 값이다. "
+            "local-llm-decommission(2026-09-07)으로 임베딩 제공자가 제거됐으므로 이것이 기본 상태다. "
+            "임베딩이 필요하면 도달 가능한 제공자를 복구한 뒤 그 alias 를 지정한다."
+        )
 
-    api_base = (
-        os.environ.get("BEDROCK_GATEWAY_URL")
-        or os.environ.get("LOCAL_LLM_API_BASE")
-    )
-    client_kwargs: dict = {"api_key": api_key, "timeout": timeout_sec}
-    if api_base:
-        client_kwargs["base_url"] = api_base
-    client = OpenAI(**client_kwargs)
+    # ⚠ **URL·KEY 를 함께 요구한다 (fail-closed)** — codex 적대 리뷰 P1 (2026-09-07).
+    #   `base_url` 을 지정하지 않으면 OpenAI SDK 가 기본값 `https://api.openai.com/v1` 로 나간다.
+    #   즉 KEY 만 있고 URL 이 없는 구성에서는 **게이트웨이 자격증명과 KB 텍스트가 OpenAI 로 전송**된다.
+    #   `docs/SECURITY.md`(CHG-20260522-0006, 사용자 결정 2026-05-22)는 "LLM 호출 entry 는 게이트웨이만
+    #   허용" 이고 OpenAI direct 경로를 의도적으로 폐기했으므로, 이 무지정 상태는 그 결정을 우회한다.
+    #   `shared/config._select_llm_provider()` 의 **paired tuple** 규약(CHG-20260522-0003)과 같은 축이다.
+    api_key = os.environ.get("BEDROCK_GATEWAY_API_KEY")
+    api_base = os.environ.get("BEDROCK_GATEWAY_URL")
+    if not api_key or not api_base:
+        missing = [n for n, v in (("BEDROCK_GATEWAY_URL", api_base),
+                                  ("BEDROCK_GATEWAY_API_KEY", api_key)) if not v]
+        raise RuntimeError(
+            "임베딩 게이트웨이 설정 부재 — " + ", ".join(missing) + " 필요. "
+            "둘 중 하나만 있으면 SDK 기본 endpoint(api.openai.com)로 나가므로 진행하지 않는다 "
+            "(docs/SECURITY.md — LLM 호출 entry 는 게이트웨이만 허용)."
+        )
+
+    client = OpenAI(api_key=api_key, base_url=api_base, timeout=timeout_sec)
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -176,9 +199,23 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    model = args.model or settings["model"]
+    model = str(args.model or settings["model"] or "").strip()
     batch_size = args.batch_size or settings["batch_size"]
     max_rows = args.max_rows
+
+    # local-llm-decommission(2026-09-07) — codex 확인 라운드 R2 P2.
+    #   모델이 비어 있으면 **비활성 상태**이므로 exit 0 으로 조용히 끝낸다. API 실패로
+    #   끝내면 cron·래퍼가 이를 "장애" 로 보고 재시도·알림을 쌓는다 — 비활성 ≠ 실패.
+    #   `--model` 명시 override 는 위에서 이미 반영되므로 운영자가 제공자를 복구하고
+    #   `--model <alias>` 로 부르면 정상 경로를 그대로 탄다(정상 경로 미차단, §16.7 G9-c).
+    if not model:
+        print(
+            "[DISABLED] 임베딩 모델 미설정 (AGENT_KB_EMBEDDING_MODEL 빈 값) — 처리할 것이 없다.\n"
+            "           local-llm-decommission(2026-09-07)으로 임베딩 제공자가 제거된 기본 상태다.\n"
+            "           제공자를 복구했다면 --model <alias> 또는 .env 의 AGENT_KB_EMBEDDING_MODEL 로 지정한다.",
+            file=sys.stderr,
+        )
+        return 0
 
     print(f"[INFO] model={model} batch={batch_size} max_rows={max_rows or 'unlimited'} dry-run={args.dry_run}", file=sys.stderr)
 
@@ -268,7 +305,18 @@ def run_embedding_pass(max_rows: "int | None" = None) -> dict:
     if max_rows is not None and max_rows <= 0:
         return {"processed": 0, "failed": 0, "error": "", "remaining": None}
     settings = get_settings()
-    model = settings["model"]
+    model = str(settings["model"] or "").strip()
+    # ⚠ **모델 미설정이면 백필 자체를 no-op 으로 둔다** — codex 적대 리뷰 P2 (2026-09-07).
+    #   local-llm-decommission 으로 `AGENT_KB_EMBEDDING_MODEL` 기본값이 빈 값이 됐는데,
+    #   `AGENT_KB_EMBEDDING_AUTO` 는 여전히 기본 활성(shared/config.py)이라 insight-worker 의
+    #   백필 데몬이 `INTERVAL_SEC` 마다 빈 모델명으로 임베딩을 시도한다. 쿼리 임베딩만
+    #   `_embed_query_vector` 에서 no-op 이 됐고 **백필 경로는 그 방어를 공유하지 않았다**
+    #   (§16.7 G8-a — 결정을 일부 경로에만 반영). 여기서 진입 자체를 막는다.
+    #   `error` 를 비워 두는 이유: 이것은 실패가 아니라 **비활성 상태**다 — caller(insight
+    #   데몬)가 error 를 로그로 올리므로 사유를 실으면 매 tick 마다 경고가 쌓인다.
+    if not model:
+        return {"processed": 0, "failed": 0, "error": "", "remaining": None,
+                "skipped": "embedding-model-unset"}
     batch_size = settings["batch_size"]
     conn = open_pg_conn()
     processed = 0

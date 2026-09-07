@@ -160,7 +160,7 @@ x-web-extra: &web-extra
     #   막힌다. 처음 한 번은 배포 사용자가 먼저 만든다:
     #     mkdir -p artifacts/client-release
     - ../artifacts/client-release:/srv/client:ro
-  networks: [dbnet, llm-shared, replica-net]
+  networks: [dbnet, replica-net]
   # feature-0014: SIGTERM 시 uvicorn in-flight 비-SSE 요청 drain + @app.on_event(shutdown)
   # in-flight run 마킹(8s soft cap)에 여유. SSE 장수명 스트림은 deploy-web.sh pre-drain 게이트가 담당.
   stop_grace_period: 30s
@@ -407,7 +407,7 @@ services:
 
   agent:
     <<: *agent-common
-    networks: [dbnet, llm-shared, replica-net]
+    networks: [dbnet, replica-net]
 
   memory-init:
     <<: *agent-common
@@ -480,7 +480,7 @@ services:
       # (AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO)는 config 기본 ON — 별도 지정 불요.
       AGENT_XDS_RELATIONSHIP_INFER_AUTO: "1"
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
-    networks: [dbnet, llm-shared, replica-net]
+    networks: [dbnet, replica-net]
     restart: on-failure:3
     # feature-0015: SIGTERM graceful(_INSIGHT_SHUTDOWN) — 진행 cycle 을 루프 경계에서 마치고 종료.
     # cycle 이 LLM 호출로 길 수 있어 기본 10s 보다 여유. 초과 시 SIGKILL 이나 쓰기 멱등이라 무손상.
@@ -520,7 +520,7 @@ services:
       # 본체는 자기 job 만 마치면 되므로, 이 예산을 늘리는 데 드는 사용자 비용이 0 이 됐다.
       AGENT_ASK_WORKER_DRAIN_SEC: "${AGENT_ASK_WORKER_DRAIN_SEC:-1800}"
     entrypoint: ["python", "/app/agent_core.py", "--ask-worker"]
-    networks: [dbnet, llm-shared, replica-net]
+    networks: [dbnet, replica-net]
     restart: unless-stopped
     # SIGTERM 후 현재 실행 중 run 이 **완주**할 시간(drain 예산 + 반납 여유). 종전 70s 는
     # "한 step 예산" 기준이었고 그것이 곧 배포마다 run 을 죽이던 창이다(feature-0020).
@@ -567,7 +567,7 @@ services:
       AGENT_ASK_WORKER_ENABLED: "1"
       AGENT_ASK_WORKER_DRAIN_SEC: "${AGENT_ASK_WORKER_DRAIN_SEC:-1800}"
     entrypoint: ["python", "/app/agent_core.py", "--ask-worker"]
-    networks: [dbnet, llm-shared, replica-net]
+    networks: [dbnet, replica-net]
     # 배포 스파인이 생성·정리를 소유한다. 재시작 정책이 있으면 정리 실패 시 유령이 남는다.
     restart: "no"
     # 본체와 **대칭** — surge 는 본체가 healthy 해진 뒤 stop 되는데, 그 시점 surge 가 들고 있는
@@ -804,12 +804,13 @@ services:
       - "/app/config.yaml"
       - "--port"
       - "8080"
-    # CHG-20260623: titan-embed alias 를 로컬 Ollama bge-m3 로 전환(litellm_config.yaml).
-    # litellm 이 api_base http://ollama-edge:11434 (llm-shared 내 local-llm-edge alias)
-    # 로 임베딩을 직접 호출하려면 bedrock-gateway 가 llm-shared 에 attach 돼야 한다.
-    # dbnet(앱·DB)은 master_key 인증 트래픽(앱→gateway)용으로 유지. Bedrock 자격
-    # 복구 시 llm-shared 는 그대로 둬도 무해(Bedrock 라우팅은 외부 AWS endpoint).
-    networks: [dbnet, llm-shared]
+    # local-llm-decommission(2026-09-07, 사용자 결정 "로컬 LLM 미사용"): titan-embed
+    # (→ 로컬 Ollama bge-m3) alias 와 그 백엔드 embed-ollama 를 제거했으므로 이 게이트웨이가
+    # 로컬 Ollama 로 나갈 일이 없다 → 외부 네트워크 llm-shared attach 를 해제한다.
+    # (llm-shared 는 본래 별도 local_llm 프로젝트의 local-llm-edge/gateway 에 닿기 위한
+    #  공유 네트워크였고, 그 프로젝트는 같은 날 폐기됐다.)
+    # dbnet(앱·DB)은 master_key 인증 트래픽(앱→gateway)용으로 유지.
+    networks: [dbnet]
     # feature-0020: 재배포 시 in-flight LLM 호출 drain 여유(litellm=uvicorn 이 SIGTERM 에
     # graceful — 신규 수락 중단 + 진행 요청 완료). 기본 10s 면 장시간 LLM 호출이 SIGKILL.
     #
@@ -884,8 +885,6 @@ services:
     networks:
       dbnet:
         aliases: [bedrock-gateway]
-      llm-shared:
-        aliases: [bedrock-gateway]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
       interval: 10s
@@ -893,51 +892,15 @@ services:
       retries: 12
       start_period: 30s
 
-  # ── 전용 임베딩 Ollama (titan-embed 백엔드 = bge-m3) ──────────────────────────
-  # CHG-20260625: 임베딩 cold-reload 회귀(준비 4s→50s) 해소. 공유 Ollama
-  # (local-llm-edge, 별도 local_llm 프로젝트, MAX_LOADED_MODELS=1) 는 타 서비스
-  # chat 모델이 bge-m3 를 계속 축출해 매 임베딩이 cold 재로딩(실측 27~37s) 이었다.
-  # 본 컨테이너는 bge-m3 만 단독 상주(MAX_LOADED_MODELS=1 + KEEP_ALIVE=-1)시켜
-  # 영구 warm(실측 0.33s) 을 보장한다. bedrock-gateway 의 titan-embed alias 가
-  # api_base http://embed-ollama:11434 로 직접 호출(litellm_config.yaml). GPU 는
-  # local-llm-edge 와 동일한 WSL2 패스스루(/dev/dxg + wsl libs). bge-m3=1.2GB 로
-  # GTX 1660 SUPER(6GB) 에 100% GPU 적재됨(검증 완료). Bedrock Titan 자격 복구 시
-  # litellm_config.yaml 토글 후 본 서비스는 비활성화/제거 가능(무해).
-  embed-ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    logging: *default-logging
-    mem_limit: 2g
-    pids_limit: 256
-    env_file:
-      - .env
-    environment:
-      TZ: ${TZ}
-      # WSL2 GPU 패스스루 (local-llm-edge 와 동일 패턴)
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      LD_LIBRARY_PATH: /usr/lib/wsl/lib
-      # bge-m3 단독 영구 상주 — 축출 없는 warm 보장이 본 컨테이너의 존재 이유.
-      OLLAMA_MAX_LOADED_MODELS: 1
-      OLLAMA_KEEP_ALIVE: "-1"
-      OLLAMA_FLASH_ATTENTION: 1
-      OLLAMA_NUM_PARALLEL: 1
-    volumes:
-      - embed_ollama_models:/root/.ollama
-      - /root/wsl-gpu/lib:/usr/lib/wsl/lib:ro
-      - /root/wsl-gpu/drivers:/usr/lib/wsl/drivers:ro
-      - ./unit/feature-0007-bedrock-llm-provider/src/scripts/embed-ollama-init.sh:/usr/local/bin/embed-ollama-init.sh:ro
-    devices:
-      - /dev/dxg:/dev/dxg
-    entrypoint: ["/usr/bin/env", "bash", "/usr/local/bin/embed-ollama-init.sh"]
-    networks: [dbnet]
-    healthcheck:
-      # bge-m3 가 적재(pull)된 후에만 healthy — 첫 pull(1.2GB) 시간 허용(start_period).
-      test: ["CMD-SHELL", "ollama show bge-m3 >/dev/null 2>&1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 180s
+  # ── 전용 임베딩 Ollama (embed-ollama) — 제거됨 (2026-09-07) ────────────────────
+  # local-llm-decommission: 사용자 결정 "로컬 LLM 은 더 이상 사용하지 않는다"(2026-09-07).
+  # 본 서비스는 titan-embed(→ ollama/bge-m3) 의 백엔드였고, 그 alias 도 같은 cycle 에서
+  # litellm_config.yaml 에서 제거했다. KB 검색은 kb_retrieval 의 기존 2-tier 경로에 따라
+  # 쿼리 임베딩 미설정 시 pg_trgm 유사도로 fallback 하므로 기능이 끊기지 않고 강등된다.
+  # 되돌리기: 이 블록과 volumes.embed_ollama_models, litellm_config.yaml 의 titan-embed
+  #   alias 를 함께 복원한다. **docker 볼륨(repo_embed_ollama_models)은 삭제하지 않았으므로
+  #   적재된 bge-m3 모델이 그대로 남아 있다** — 선언만 되살리면 재다운로드 없이 복구된다.
+
 
   # TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 1 — ADR-0022
   # MinIO S3-compat 첨부 객체 스토리지. BRIEFING D1 사용자 직접 확정. 사내망
@@ -997,14 +960,6 @@ services:
 
 networks:
   dbnet:
-  llm-shared:
-    external: true
-    name: llm-shared
   replica-net:
     external: true
     name: ${REPLICA_NETWORK_NAME:-replica-net}
-
-volumes:
-  # 전용 임베딩 Ollama 의 모델 저장소(bge-m3). 공유 local_llm 의 models-edge 와
-  # 분리해 두 Ollama 데몬의 동시 쓰기 충돌을 피한다(축출 격리가 본 설계의 핵심).
-  embed_ollama_models:

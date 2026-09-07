@@ -23,7 +23,7 @@ tags: [litellm, gateway, openai-compat]
 |---|---|
 | 분류 | `#wiki/entity` |
 | 유형 | tool (OSS) |
-| 본 프로젝트 사용 | `bedrock-gateway` 컨테이너 — OpenAI-compatible → Bedrock InvokeModel 변환. **2026-08-26(feature-0043) 이후 chat alias 14종과 `fallbacks` 가 전량 주석 처리**돼 활성 `model_name` 은 `titan-embed`(→ `ollama/bge-m3`) 1종뿐이며, 현재 이 컨테이너를 통해 나가는 Bedrock chat 요청은 없다 |
+| 본 프로젝트 사용 | `bedrock-gateway` 컨테이너 — OpenAI-compatible → Bedrock InvokeModel 변환. **2026-08-26(feature-0043)** 에 chat alias 14종·`fallbacks` 가 전량 주석 처리되고, **2026-09-07(local-llm-decommission)** 에 마지막 활성 alias `titan-embed`(→ `ollama/bge-m3`)까지 제거돼 **활성 `model_name` 이 0개**다(`model_list: []`). 활성 모델 0개로도 기동함을 실측(liveliness/readiness 200) — 컨테이너는 healthy 유지. 즉 현재 이 게이트웨이를 통해 나가는 요청이 **없다**(철거 여부는 별개 결정으로 미결) |
 
 ## 1. 개요
 
@@ -40,7 +40,10 @@ OpenAI Chat Completions API 호환 게이트웨이. 본 프로젝트는 `bedrock
 ### 2.2 본 프로젝트 config
 
 - `litellm_config.yaml` — Claude alias ↔ Bedrock model ID 매핑 정본
-- `claude-sonnet-4` / `claude-haiku-4` 등 chat alias 14종 — **전량 주석 처리됨**(feature-0043, 2026-08-26). 활성은 `titan-embed` → `ollama/bge-m3`(`http://embed-ollama:11434`) 하나뿐
+- `claude-sonnet-4` / `claude-haiku-4` 등 chat alias 14종 — **전량 주석 처리됨**(feature-0043, 2026-08-26).
+- `titan-embed` → `ollama/bge-m3`(`http://embed-ollama:11434`) — **제거됨**(local-llm-decommission, 2026-09-07). 백엔드 `embed-ollama` 서비스도 함께 제거. KB 검색은 `kb_retrieval` 의 2-tier 경로로 `pg_trgm` 강등(기능 유지)
+- `edge-fallback`(로컬 gemma via `local-llm-gateway`) — **정의까지 제거**(2026-09-07). 종전엔 «참조 0 + 되돌리기용 정의 보존» 이었으나 `local_llm` 프로젝트 자체가 폐기돼 그 전제가 소멸
+- ⇒ **활성 alias 0개**
 - AWS credential 은 본 컨테이너 env 만
 
 ### 2.3 본 프로젝트와의 관계
