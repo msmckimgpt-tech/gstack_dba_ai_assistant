@@ -1,0 +1,30 @@
+{
+  "name": "chip-copy-and-note",
+  "description": "TASK-20260907T060000 — 칩 툴팁 2문단 · 컴포저 안내 문단 제거 후 하단 정합",
+  "base_url": "https://172.26.154.233:18099",
+  "steps": [
+    {"action": "goto", "url": "https://172.26.154.233:18099/"},
+    {"action": "wait_for", "selector": "#promptInput", "timeout_ms": 20000},
+    {"action": "wait_for", "selector": "#aiConnState", "timeout_ms": 20000},
+
+    {"action": "eval", "name": "note-element-gone",
+     "script": "(() => ({ note: !!document.getElementById('composerActionsSelectorNote'), cssRule: [...document.styleSheets].some(s => { try { return [...s.cssRules].some(r => (r.selectorText||'').includes('composer-actions-note')); } catch (e) { return false; } }) }))()"},
+
+    {"action": "eval", "name": "chip-tooltip",
+     "script": "(() => { const el = document.getElementById('aiConnState'); return { state: el.dataset.state, label: el.textContent, title: el.title, paragraphs: (el.title.match(/\\n/g)||[]).length + 1, chars: el.title.length }; })()"},
+
+    {"action": "eval", "name": "bottom-alignment",
+     "script": "(() => { const prof = document.querySelector('.sidebar-profile'); const box = document.querySelector('.composer-box'); const wrap = document.querySelector('.composer-wrap'); const r = e => { const b = e.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), height: Math.round(b.height) }; }; return { profile: r(prof), composerBox: r(box), composerWrap: r(wrap), bottomGap: Math.round(prof.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom) }; })()"},
+
+    {"action": "screenshot", "name": "01-composer-and-profile-row", "full_page": false},
+
+    {"action": "hover", "selector": "#aiConnState"},
+    {"action": "screenshot", "name": "02-chip-hover", "full_page": false},
+
+    {"action": "click", "selector": "#composerActionsBtn"},
+    {"action": "wait_for", "selector": "#composerActionsMenu:not(.hidden)", "timeout_ms": 8000},
+    {"action": "eval", "name": "model-item-visibility",
+     "script": "(() => { const m = document.getElementById('composerActionsModelItem'); const cat = window.__state && window.__state.modelCatalog; return { modelItemHidden: m ? m.classList.contains('hidden') : null, label: document.getElementById('composerActionsModelLabel')?.textContent || null }; })()"},
+    {"action": "screenshot", "name": "03-composer-actions-menu", "full_page": false}
+  ]
+}

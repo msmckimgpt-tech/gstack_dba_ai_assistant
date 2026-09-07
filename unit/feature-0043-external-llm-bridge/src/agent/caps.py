@@ -203,6 +203,34 @@ _CAPS_HELP_TIMEOUT_SEC = 15.0
 #:  올려야 풀리는 문제이고, 그 경우까지 덮으려 확인을 더 깎으면 확인 자체가 못 끝난다.)
 _CAPS_VERIFY_TIMEOUT_SEC = 60.0
 
+#: CLI **자체 카탈로그 조회**에 주는 시간 (사용자 요청 2026-09-07).
+#:
+#: 이것은 LLM 질의가 아니라 로컬 명령 하나다 — 실측 `codex debug models` **240ms**. 상한을
+#: 짧게 두는 근거(경계 양측 — §16.7 G4): ① 정상 경로에 80배 여유가 있고 ② 이 조회가 걸리면
+#: 뒤따르는 질의 예산(240초)을 축내는 대신 곧바로 그쪽으로 넘어가야 한다. 카탈로그는
+#: **빠르니까** 먼저 하는 것이고, 빠르지 않으면 먼저 할 이유가 사라진다.
+_CAPS_CATALOG_TIMEOUT_SEC = 20.0
+
+#: CLI 카탈로그 출력의 읽기 상한.
+#:
+#: ⚠ `_CAPS_PROBE_MAX_BYTES`(256KB)를 **쓰면 안 된다** — 실측 `codex debug models` 출력은
+#:   **413,777 바이트**다(모델마다 `model_messages` 프롬프트 전문이 실린다). 그 상한으로
+#:   자르면 JSON 이 중간에서 끊겨 `json.loads` 가 실패하고, 이 경로는 **항상 조용히
+#:   폴백**한다 — 배선은 있는데 한 번도 성공하지 않는 상태다(§16.7 G14-e: 존재는 실행이
+#:   아니다). 실제로 첫 구현이 그랬고, 종단 실행에서 「카탈로그 출력을 해석하지 못했습니다」
+#:   0.198초로 드러났다.
+#:
+#: 값의 근거(경계 양측): 실측의 약 20배 — 모델 수가 몇 배로 늘어도 잘리지 않고, 오작동한
+#: CLI 의 대량 출력이 **JSON 탐색으로 번지지는** 않는다.
+#:
+#: ⚠ **이 상한은 «파싱 대상» 을 자르지 «메모리» 를 막지 않는다** (codex 적대리뷰 P2,
+#:   2026-09-07 — 초판 주석이 여기서 거짓을 주장했다). `capture_output=True` 는 자식의
+#:   stdout 을 **전부** 모은 뒤에야 이 슬라이스가 적용된다. 메모리 쪽 경계는
+#:   `_CAPS_CATALOG_TIMEOUT_SEC`(20초)이며, 이는 형제 헬퍼(`_ask_json`·`_cli_help_text`)가
+#:   `_CAPS_PROBE_MAX_BYTES` 로 하는 것과 **같은 규약**이다 — 자식은 사용자 자신의 CLI 라
+#:   적대적 입력원이 아니고, 스트리밍 읽기로 바꾸면 그 세 곳을 함께 바꿔야 한다(별도 축).
+_CAPS_CATALOG_MAX_BYTES = 8 * 1024 * 1024
+
 #: probe stdout 상한 (codex P2-5). 오작동한 CLI 가 대량 출력을 쏟으면 그것이 전부 메모리에
 #: 쌓이고, 이어지는 JSON 탐색이 그 위에서 반복 스캔한다. 정상 응답은 수 KB 다.
 _CAPS_PROBE_MAX_BYTES = 256 * 1024
@@ -360,7 +388,8 @@ def _coerce_flag(raw: object, placeholder: str) -> list[str] | None:
 #: 강등의 유일한 목적이다. 새 출처를 `_REPORTABLE_SOURCES` 에 더하면서 여기 더하지 않으면
 #: 그 이름이 강등을 우회해 **파일이 라이브 근거를 주장**하게 된다 — 구조 테스트가
 #: 「`_REPORTABLE_SOURCES` − {`cache`} ⊆ `_CREATION_SOURCES`」 를 잠근다.
-_CREATION_SOURCES: frozenset[str] = frozenset({"probe", "verified"})
+_CREATION_SOURCES: frozenset[str] = frozenset(
+    {"probe", "verified", "catalog", "baseline"})
 
 
 def sanitize_caps(raw: object) -> dict:
@@ -473,6 +502,257 @@ def _ask_json(argv: list[str], prompt: str, timeout: float,
         reason_out["reason"] = ("정상 종료했으나 JSON 을 찾지 못했습니다"
                                 + (f": {tail}" if tail else ""))[:_PROBE_REASON_MAX]
     return got
+
+
+#: **캐시에 남기지 않는** 출처. 파일에 남으면 다음 기동이 「이미 안다」고 판단해 다시 얻지
+#: 않는데, 이 셋은 전부 그러면 안 되는 값이다:
+#:
+#: - `builtin`  — 우리가 적어 둔 표. 캐시하면 `gpt-5.1-codex` 화석이 영구화된다.
+#: - `catalog`  — CLI 자체 조회. **매번 다시 읽는 것이 더 싸고(240ms) 항상 최신**이다.
+#: - `baseline` — 서버 원장 그대로. 캐시하면 그 머신에서 확인 없는 목록이 굳어, 다음 기동이
+#:                실조회를 시도하지 않는다(원장 폴백은 «임시 표시» 이지 «결론» 이 아니다).
+_UNCACHEABLE_SOURCES: frozenset[str] = frozenset({"builtin", "catalog", "baseline"})
+
+#: **그 AI 가 실제로 답했다**는 증거가 되는 출처. 건강 축(`note_ai_outcome`)은 이것만 본다.
+#:
+#: `catalog` 이 여기 없는 이유가 이 집합의 요점이다 — `codex debug models` 는 로컬 조회라
+#: **로그인이 만료돼도 성공한다**. 그 성공으로 「이 AI 는 답할 수 있다」를 찍으면 생존 확인이
+#: 건너뛰어지고, 답하지 못하는 AI 가 화면에 「대기 중」으로 나간다(security 적대리뷰 P1,
+#: 2026-09-07). `baseline` 은 서버 원장을 되받은 것이라 AI 가 개입조차 하지 않는다.
+_LIVE_ANSWER_SOURCES: frozenset[str] = frozenset({"probe", "verified"})
+
+
+def _catalog_argv(name: str) -> list[str] | None:
+    """이 CLI 가 **자기 모델 카탈로그를 출력하는** 명령. 없으면 None."""
+    argv = (_RUNTIME_SPECS.get(name) or {}).get("catalog")
+    return list(argv) if isinstance(argv, list) and argv else None
+
+
+def _parse_codex_catalog(text: str) -> tuple[list[dict], list[dict]] | None:
+    """`codex debug models` JSON → `(모델 목록, 추론등급 목록)`. 모양이 어긋나면 None.
+
+    ## 무엇을 고르는가
+
+    - **`visibility == "list"` 인 항목만.** `hide` 는 그 CLI 가 사람에게 보이지 않기로 한
+      내부용(`gpt-reserve` · `codex-auto-review`)이다. 우리가 판단하지 않고 **그 CLI 의
+      필드를 그대로** 따른다.
+    - 정렬은 `priority` 오름차순 — 그 CLI 가 정한 순서다. 화면의 첫 항목이 기본값이 되므로
+      순서를 우리가 재배열하면 그 CLI 의 권장이 뒤집힌다.
+
+    ## 추론등급은 **교집합**이다
+
+    codex 는 등급을 **모델마다** 다르게 신고한다(실측: `gpt-5.6-luna` 에는 `ultra` 가 없다).
+    그런데 신고 스키마는 런타임당 등급 목록 하나다(`reasoning_levels_by_runtime`). 합집합을
+    쓰면 「고를 수 있는데 그 모델에서는 거부되는」 조합이 생기고, 그것이 이 feature 가 반복해
+    지워 온 상태다(P0-T). 그래서 **모든 노출 모델이 공통으로 받는 등급만** 신고한다 —
+    무엇을 고르든 반영된다.
+
+    (모델별 등급을 그대로 싣는 것은 스키마 변경이라 별도 cycle 이다. 그때 이 교집합은
+     풀린다 — 지금은 «덜 주되 항상 맞는» 쪽을 고른다.)
+    """
+    try:
+        doc = json.loads(text)
+    except Exception:  # noqa: BLE001
+        return None
+    items = doc.get("models") if isinstance(doc, dict) else None
+    if not isinstance(items, list):
+        return None
+    rows: list[tuple[int, dict, list[str]]] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("visibility") or "") != "list":
+            continue
+        slug = str(it.get("slug") or "").strip()
+        if not slug:
+            continue
+        # ⚠ **중첩 필드도 타입을 확인한다** (codex 적대리뷰 P2, 2026-09-07).
+        #   `supported_reasoning_levels: 1` 처럼 리스트가 아닌 값이 오면 순회에서
+        #   `TypeError` 가 나고, 그 예외는 `_probe` 를 통째로 끝내 **확인 질의·열린 질의·
+        #   원장 폴백을 전부 건너뛴다** — 카탈로그 하나의 형태 오류가 나머지 세 경로를
+        #   지우는 형태다. 서버 `_sanitize_runtimes` 가 같은 이유로 이미 `_capped_list` 를
+        #   쓴다(같은 결함 클래스의 반대편).
+        _levels = it.get("supported_reasoning_levels")
+        efforts = [str((e or {}).get("effort") or "").strip()
+                   for e in (_levels if isinstance(_levels, list) else [])
+                   if isinstance(e, dict)]
+        try:
+            prio = int(it.get("priority"))
+        except Exception:  # noqa: BLE001
+            prio = 10 ** 6
+        rows.append((prio, {"value": slug,
+                            "label": str(it.get("display_name") or slug)},
+                     [e for e in efforts if e]))
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0])
+    models = _coerce_options([r[1] for r in rows])
+    if not models:
+        return None
+    # ⚠ 교집합의 모수는 «등급을 실제로 신고한 모델» 뿐이다 (적대리뷰 P2 ×2, 2026-09-07).
+    #   종전에는 신고하지 않은 모델(필드 부재·리스트 아님 → 위 가드가 `[]` 로 접음)도
+    #   모수에 넣어, 그런 모델이 **하나만 섞여도 교집합이 공집합**이 되고 그 런타임의 추론
+    #   등급 선택기가 통째로 사라졌다. 그리고 카탈로그는 매 기동 캐시를 이기므로 그 소실이
+    #   영구화된다 — 「덜 주되 항상 맞게」라는 이 축의 취지가 「아무것도 안 준다」로 뒤집힌다.
+    #
+    #   빈 목록은 «그 모델은 등급을 지정할 수 없다» 가 아니라 «이 카탈로그가 말하지 않았다»
+    #   이므로, 모른다는 사실로 아는 것을 지우지 않는다. 아무도 신고하지 않았으면 그때야
+    #   공집합이고, 그것은 참이다.
+    _declared = [efs for _, _, efs in rows if efs]
+    _silent = len(rows) - len(_declared)
+    common: set | None = None
+    for efs in _declared:
+        common = set(efs) if common is None else (common & set(efs))
+    if _silent:
+        # 절단은 조용히 넘기지 않는다 (CODE_REVIEW §2.1 G9-b 무음 절단 금지).
+        log_event("caps.catalog_partial_efforts",
+                  "카탈로그의 일부 모델이 추론 등급을 신고하지 않아 교집합에서 제외했습니다.",
+                  level="INFO", runtime="codex",
+                  silent_models=_silent, declaring_models=len(_declared))
+    # 등급 값의 표기 라벨은 우리 표를 쓴다 — **값이 아니라 이름**이라 계약 밖이고, 그래야
+    # 화면 어휘가 런타임마다 갈리지 않는다. 표에 없는 값은 값 그대로 보여준다.
+    spec_labels = {str(o.get("value")): str(o.get("label") or o.get("value"))
+                   for o in ((_RUNTIME_SPECS.get("codex") or {}).get("efforts") or [])}
+    order = [str(o.get("value")) for o in ((_RUNTIME_SPECS.get("codex") or {}).get("efforts") or [])]
+    ordered = [v for v in order if v in (common or set())]
+    ordered += sorted(v for v in (common or set()) if v not in order)
+    efforts = _coerce_options([{"value": v, "label": spec_labels.get(v, v)} for v in ordered],
+                              limit=12)
+    return models, efforts
+
+
+#: 런타임 이름 → 그 CLI 카탈로그 출력 파서. 여기 없는 런타임은 카탈로그 경로를 타지 않는다.
+_CATALOG_PARSERS = {"codex": _parse_codex_catalog}
+
+
+def catalog_runtime_caps(name: str, timeout: float | None = None,
+                         reason_out: dict | None = None) -> dict | None:
+    """그 CLI **자신의 모델 카탈로그**를 읽어 능력으로 옮긴다. 못 읽으면 None.
+
+    ## 왜 이 경로가 1순위인가 (사용자 요청 2026-09-07)
+
+    사용자 요청: *"공식 웹사이트 등에서 해당 목록을 즉시 얻을 수 있다면, 그렇게 진행하는
+    부분도 검토해주세요."* — 찾아보니 웹사이트보다 나은 것이 **CLI 안에** 있었다.
+    `codex debug models` 는 「Render the raw model catalog as JSON」이고, 실측 **240ms**,
+    토큰 0, 네트워크·로그인 무관이다.
+
+    같은 머신의 LLM 질의 실측(2026-09-07)과 비교하면 차이가 분명하다:
+
+    | 경로 | 시간 | 결과 |
+    |---|---|---|
+    | `codex debug models` | **0.24초** | 노출 모델 7종 + 등급 |
+    | 능력 질의(가드+extras) | 22.7초 | **`models: []`** — 「모델은 못 고른다」 |
+    | 가드 없이 · 모델축만 · 원장 확인 | 200~603초 | 전부 **타임아웃** |
+
+    ## 계약을 깨지 않는다
+
+    「목록의 출처는 연결된 AI」(P0-Z4)는 그대로다 — 오히려 더 정확히 지킨다. 이 값은 우리가
+    소스에 적어 둔 표(`builtin`, `gpt-5.1-codex` 화석의 출처)가 **아니라** 그 CLI 자신이
+    출력한 것이고, LLM 이 기억으로 답한 것보다 관측에 가깝다.
+
+    ## 실패는 조용히 넘긴다
+
+    `debug` 하위명령이라 포맷이 바뀔 수 있다. 파싱 실패·비정상 종료·미지원은 전부 `None` 이고
+    호출측은 종전 질의 경로로 그대로 흐른다 — 이 경로가 사라져도 기능은 죽지 않는다.
+    """
+    argv = _catalog_argv(name)
+    parse = _CATALOG_PARSERS.get(name)
+    if not argv or parse is None:
+        return None
+    budget = timeout if timeout and timeout > 0 else _CAPS_CATALOG_TIMEOUT_SEC
+    try:
+        proc = subprocess.run(_resolve_exe(argv), capture_output=True,
+                              **CHILD_TEXT_IO, timeout=budget)
+    except Exception as exc:  # noqa: BLE001  (미설치·타임아웃·권한)
+        if reason_out is not None:
+            reason_out["reason"] = f"카탈로그 조회 {type(exc).__name__}: {exc}"[:_PROBE_REASON_MAX]
+        return None
+    if proc.returncode != 0:
+        if reason_out is not None:
+            tail = ((proc.stderr or "").strip() or (proc.stdout or "").strip())
+            reason_out["reason"] = (f"카탈로그 조회 exit {proc.returncode}"
+                                    + (f": {tail}" if tail else ""))[:_PROBE_REASON_MAX]
+        return None
+    # ⚠ 파서 예외를 **여기서** 잡는다 (codex 적대리뷰 P2, 2026-09-07). 파서 안의 타입
+    #   가드가 아무리 촘촘해도 「이 경로가 사라져도 기능은 죽지 않는다」를 보장하는 것은
+    #   호출부의 이 한 겹이다 — 다음 사람이 파서에 필드를 하나 더 추가하는 날 그 가드를
+    #   빠뜨려도, 협상은 종전 경로로 그대로 흐른다.
+    try:
+        got = parse((proc.stdout or "")[:_CAPS_CATALOG_MAX_BYTES])
+    except Exception as exc:  # noqa: BLE001
+        if reason_out is not None:
+            reason_out["reason"] = (
+                f"카탈로그 해석 {type(exc).__name__}: {exc}")[:_PROBE_REASON_MAX]
+        return None
+    if not got:
+        if reason_out is not None:
+            reason_out["reason"] = "카탈로그 출력을 해석하지 못했습니다."
+        return None
+    models, efforts = got
+    spec = _RUNTIME_SPECS.get(name) or {}
+    # 호출법은 우리 표를 쓴다 — 값이 아니라 **형태**라 이 계약의 대상이 아니고, 없으면
+    # 고른 값을 넘길 방법이 없어 목록 자체가 뜻을 잃는다(`probe_runtime_caps` 와 같은 규칙).
+    model_flag = _coerce_flag(spec.get("model"), "{model}")
+    if not model_flag:
+        if reason_out is not None:
+            reason_out["reason"] = "모델을 넘길 인자 형태를 모릅니다."
+        return None
+    effort_flag = _coerce_flag(spec.get("effort"), "{effort}")
+    return {
+        "label": str(spec.get("label") or name),
+        "models": models,
+        "efforts": efforts if effort_flag else [],
+        "model": model_flag,
+        "effort": effort_flag,
+        # 등급까지 카탈로그가 말했으므로 축은 **확정**이다 — 다시 물을 이유가 없다.
+        "effort_probed": bool(effort_flag and efforts),
+        "source": "catalog",
+    }
+
+
+def baseline_as_caps(name: str, entry: object) -> dict | None:
+    """서버 원장 항목을 **그대로** 능력으로 옮긴다 (사용자 결정 2026-09-07). 못 쓰면 None.
+
+    ## 이것은 「확인-후-표시」의 **완화**다 — 조용히 넘어가지 않는다
+
+    2026-09-02 결정은 「서버 보관 목록은 라이브 확인을 통과해야 화면에 오른다」였다. 그런데
+    라이브에서 그 확인 질의가 **끝나지 않는 런타임**이 나왔다(실측 codex: 확인 질의 600초
+    타임아웃 · 열린 질의는 `models: []`). 그 상태에서 규칙을 그대로 두면 결과는 「목록이
+    영영 비어 있다」이고, 사용자는 그것을 결함으로 신고했다(2026-09-07).
+
+    사용자 결정(2026-09-07): **확인이 실패하면 원장을 표시한다.** 근거는 원장의 출처가
+    화석과 다르다는 점이다 — 원장에 들어가는 값은 `_sanitize_runtimes` 를 통과한
+    `probe`/`cache`/`verified` 뿐이라 **그 계정의 그 AI 가 직접 답했던 목록**이고,
+    `gpt-5.1-codex` 화석처럼 우리가 소스에 적어 둔 표가 아니다.
+
+    대가는 정직하게 남긴다: 원장이 낡았으면 고른 값을 CLI 가 거부할 수 있다. 그때
+    `handler.py` 가 「반영하지 못한 지정」을 답변에 적으므로 사용자가 조용히 속지는 않는다.
+    그리고 이 폴백은 **캐시하지 않는다**(`_UNCACHEABLE_SOURCES`) — 다음 기동은 다시 실조회를
+    시도한다. 임시 표시이지 결론이 아니다.
+
+    ⚠ 순서상 **맨 뒤**다. 카탈로그·확인·열거가 모두 실패했을 때만 여기 온다.
+    """
+    if not isinstance(entry, dict):
+        return None
+    models = _coerce_options(entry.get("models"))
+    if not models:
+        return None
+    spec = _RUNTIME_SPECS.get(name) or {}
+    model_flag = _coerce_flag(spec.get("model"), "{model}")
+    if not model_flag:
+        # 넘길 방법을 모르면 목록은 뜻이 없다 — 표 밖 CLI 는 이 폴백을 타지 않는다.
+        return None
+    effort_flag = _coerce_flag(spec.get("effort"), "{effort}")
+    return {
+        "label": str(entry.get("label") or spec.get("label") or name),
+        "models": models,
+        "efforts": _coerce_options(entry.get("efforts"), limit=12) if effort_flag else [],
+        "model": model_flag,
+        "effort": effort_flag,
+        # 확인을 통과한 것이 아니므로 축 확정 표지를 남기지 않는다 — 다음 기동이 다시 본다.
+        "effort_probed": False,
+        "source": "baseline",
+    }
 
 
 def _cli_help_text(name: str, timeout: float = _CAPS_HELP_TIMEOUT_SEC) -> str | None:
@@ -1029,7 +1309,8 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                     detail_out: dict | None = None,
                     probe: bool = False,
                     baseline: dict | None = None,
-                    on_settled=None) -> list[dict]:
+                    on_settled=None,
+                    asked_out: list | None = None) -> list[dict]:
     """이 머신에서 **쓸 수 있는 런타임 전부**와 각자가 고를 수 있는 것 (P0-Z3).
 
     종전 `detect_ai()` 는 첫 번째 하나만 골랐다. 그것은 "무엇으로 답할까" 의 답으로는
@@ -1116,11 +1397,32 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
     probed: dict = {}
     #: 런타임별 **실패 사유**. 성공하면 비어 있다 (TASK-20260902T140000).
     reasons: dict = {}
+    #: 카탈로그 조회 실패 사유 — `reasons` 의 **폴백**이다. 별 dict 로 두는 이유는 위
+    #: `catalog_reasons[nm] = ...` 주석에 있다(먼저 시도되는 경로가 뒤 사유를 가리지 않게).
+    catalog_reasons: dict = {}
+    # ⚠ **카탈로그가 있는 런타임은 캐시가 있어도 다시 본다** (사용자 요청 2026-09-07).
+    #   그 조회는 240ms·토큰 0 이라 «아껴야 할 질의» 가 아니고, 아끼면 몇 달 전 LLM 답이
+    #   그 머신에서 계속 정본이 된다 — 캐시를 두는 이유(비싼 질의를 반복하지 않는다)가
+    #   이 경로에는 성립하지 않는다.
     ask = [n for n in present
-           if (cached.get(n) is None or _caps_axis_unsettled(cached.get(n)))
+           if (cached.get(n) is None or _caps_axis_unsettled(cached.get(n))
+               or _catalog_argv(n))
            and ((_RUNTIME_SPECS.get(n) or {}).get("argv") or n in unknown_argvs)] if probe else []
+    # ⚠ **무엇을 물었는지 호출측에 알린다** (codex 적대리뷰 P2-1, 2026-09-07).
+    #   재시도 판정이 「신고 목록이 비었는가」만 보면, **한 런타임이 성공하는 순간** 나머지
+    #   런타임의 빈 목록·원장 폴백이 영구화된다(claude 성공 + codex 실패 조합에서 실측
+    #   가능한 형태다). 「물어봤는데 못 얻은 것이 남았는가」를 판정하려면 모수가 필요하고,
+    #   그 모수는 여기서만 정확히 안다 — 호출측이 `_which_ai` 로 다시 세면 술어가 두 벌이
+    #   되고 갈린다(§16.7 G8).
+    if asked_out is not None:
+        asked_out[:] = list(ask)
     if ask:
-        _log(f"쓸 수 있는 모델·추론 수준을 물어보는 중… ({', '.join(ask)} — 최초 1회, 수십 초)")
+        # 「수십 초」는 LLM 질의를 타는 런타임에만 참이다 — 카탈로그만 읽으면 1초 미만이다.
+        # 걸리지도 않을 대기를 예고하면 그 예고 자체가 이 feature 가 줄이려던 체감 대기다.
+        _slow = [n for n in ask if not _catalog_argv(n)]
+        if _slow:
+            _log("쓸 수 있는 모델·추론 수준을 물어보는 중…"
+                 f" ({', '.join(_slow)} — 최초 1회, 수십 초)")
 
         # 전체 질의에 **하나의 절대 deadline** 을 둔다 (codex P2-4). 후보를 순차로 시도하는
         # 표 밖 CLI 는 후보마다 timeout 을 다 쓸 수 있어(240초 × 2) main 의 대기(250초)를
@@ -1129,8 +1431,46 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
         deadline = time.monotonic() + _CAPS_PROBE_TIMEOUT_SEC
 
         def _probe(nm: str) -> None:
+            # ── 0순위: 그 CLI **자신의 카탈로그** (사용자 요청 2026-09-07) ─────────
+            #
+            # LLM 에게 묻기 전에, 그 CLI 가 스스로 내놓는 목록이 있으면 그것을 쓴다 —
+            # 실측 240ms · 토큰 0 · 로그인 상태 무관이라 질의 경로(22.7초~600초 타임아웃)와
+            # 비교 대상이 아니다. 근거는 `catalog_runtime_caps` 의 실측 표.
+            #
+            # ⚠ **캐시 분기보다 앞이다.** 뒤에 두면 이미 캐시가 있는 머신은 카탈로그를
+            #   영영 읽지 않고, 몇 달 전 LLM 답이 그 머신에서 계속 정본이 된다 — 이 경로가
+            #   해결하려는 상태(낡은 목록)를 캐시가 그대로 재생산한다. 값이 더 신선하고
+            #   비용이 더 싼 쪽이 먼저다.
+            #
+            # 실패(미지원 CLI·포맷 변경·비정상 종료)는 전부 `None` 이고, 아래 종전 경로가
+            # 그대로 이어진다 — 이 경로가 사라져도 기능은 죽지 않는다.
+            _whyc: dict = {}
+            _gotc = catalog_runtime_caps(nm, reason_out=_whyc)
+            if _gotc:
+                _gotc["argv"] = list((_RUNTIME_SPECS.get(nm) or {}).get("argv")
+                                     or (cached.get(nm) or {}).get("argv") or [])
+                probed[nm] = _gotc
+                return
+            if _whyc.get("reason"):
+                # ⚠ `reasons` 에 **바로 쓰지 않는다** (적대리뷰 P2, 2026-09-07). 카탈로그는
+                #   맨 먼저 시도되므로 여기서 대입하면 뒤따르는 `reasons.setdefault(...)`
+                #   두 곳(남은 시간 부족 · `_probe` 예외)이 통째로 가려진다 — 사용자에게는
+                #   실제 원인 대신 「카탈로그 조회 exit 1」이 표시된다. 이 파일이 반복해
+                #   고쳐 온 「실패를 다른 실패로 위장」의 재생산이다.
+                #   더 구체적인 사유가 아무도 없을 때만 쓰이도록 **뒤로 미룬다**.
+                catalog_reasons[nm] = str(_whyc["reason"])
             prev = cached.get(nm)
             if prev is not None:
+                # ⚠ **캐시가 이미 완전하면 아무것도 묻지 않는다** (2026-09-07 자기검토).
+                #   종전에는 `ask` 가 «캐시 없음 또는 축 미확정» 일 때만 이 함수를 불렀으므로
+                #   여기 오는 캐시는 반드시 미확정이었다. 그런데 카탈로그 경로를 넣으면서
+                #   `ask` 에 «카탈로그가 있는 런타임» 이 추가됐고, 그 카탈로그가 실패하면
+                #   (구 codex 처럼 `debug models` 를 모르는 빌드) **이미 확정된 캐시가
+                #   아래 축 재질의로 흘러들어** 매 기동마다 LLM 질의를 한 번씩 태운다 —
+                #   캐시를 둔 이유(비싼 질의를 반복하지 않는다)를 정면으로 깨는 회귀다.
+                #   `_assemble` 이 `probed` 없으면 `cached` 를 그대로 쓰므로 그냥 물러난다.
+                if not _caps_axis_unsettled(prev):
+                    return
                 # 캐시는 있는데 **추론등급 축만** 미확정이다(구 러너가 만든 캐시). 모델 목록은
                 # 이미 그 AI 가 답한 것이므로 전체를 다시 묻지 않는다 — 축 하나만 확정하고
                 # 그 사실을 캐시에 남겨 다음 기동은 묻지 않게 한다.
@@ -1223,6 +1563,17 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                     probed[nm] = got
                     return
 
+            # ── 마지막: 확인도 열거도 안 되면 **원장 그대로** (사용자 결정 2026-09-07) ──
+            #
+            # 여기까지 왔다는 것은 카탈로그도 없고, 확인 질의도 열린 질의도 실패했다는
+            # 뜻이다. 종전에는 그대로 포기했고 그 결과가 「AI 는 연결됐는데 모델 목록이
+            # 안 나온다」(제보 2026-09-07)였다. 근거·대가는 `baseline_as_caps` 참조.
+            _fb = baseline_as_caps(nm, (baseline or {}).get(nm))
+            if _fb:
+                _fb["argv"] = _pure[0]
+                probed[nm] = _fb
+                return
+
         # ── 플랫폼 하나가 끝날 때마다 **그 시점의 목록을 신고한다** (제보 3차 2026-09-02) ──
         #
         # 종전에는 아래 join 이 전부 끝난 뒤에야 결과가 나갔다. 실측 claude 22.7초 ·
@@ -1279,15 +1630,31 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
         for n in ask:
             got = probed.get(n)
             if got:
+                _src = str(got.get("source") or "")
                 # 협상이 답을 받아냈다 = **그 AI 는 지금 응답한다**. 원장을 여기서
                 # `True` 로 떨어뜨려 「모른다」를 남기지 않는다 (TASK-20260903T200000) —
                 # 남기면 lifecycle 이 같은 사실을 확인하려고 생존 확인을 한 번 더 부른다.
-                note_ai_outcome(True)
-                _verified = str(got.get("source") or "") == "verified"
+                #
+                # ⚠ **그 AI 가 실제로 답한 출처에서만** 그렇다 (security 적대리뷰 P1,
+                #   2026-09-07). `catalog` 은 로컬 CLI 조회라 **로그인이 만료돼도 exit 0**
+                #   이고, `baseline` 은 서버 원장을 되받은 것이라 AI 가 개입조차 하지 않는다.
+                #   그 둘로 건강을 `True` 로 찍으면 lifecycle 의 생존 확인
+                #   (`if ai_health()[0] is None: confirm_ai_or_report(...)`)이 건너뛰어져,
+                #   **답하지 못하는 AI 가 화면에 「대기 중」으로 나간다** — 이 feature 가
+                #   2026-09-03 에 닫은 「연결되지 않았는데 정상이라 말한다」의 재생산이다.
+                #   모르면 `None` 으로 남겨 생존 확인이 돌게 한다.
+                if _src in _LIVE_ANSWER_SOURCES:
+                    note_ai_outcome(True)
+                _verified = _src == "verified"
+                # 출처를 있는 그대로 적는다 — 「목록의 출처는 연결된 AI」가 이 기능의 계약이라
+                # 로그가 그것을 거짓으로 진술하면 조사자가 계약 위반을 못 본다(적대리뷰 P2).
+                _origin = {"verified": "직전 목록 확인", "probe": "본인 응답",
+                           "cache": "이 머신의 캐시", "catalog": "CLI 카탈로그 조회",
+                           "baseline": "직전 목록 그대로(확인 못 함)"}.get(_src, _src or "출처 미상")
                 _log(f"  {n}: 모델 {len(got['models'])}종"
                      + (f" · 추론 {len(got['efforts'])}단계" if got["efforts"] else
                         " · 추론 수준 지정 불가")
-                     + (" (직전 목록 확인)" if _verified else " (본인 응답)"))
+                     + f" ({_origin})")
                 # 확인 경로는 **무엇이 달라졌는지**를 남긴다 (TASK-20260902T140200).
                 # 「목록이 실행마다 다르다」는 제보를 조사할 때 필요한 것은 결과 개수가
                 # 아니라 **차이**다 — 차이가 0 이면 그것이 곧 안정화의 증거이고, 차이가
@@ -1317,14 +1684,17 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 #   4분을 기다린 사용자가 「왜」를 어디서도 듣지 못했다 — 라이브의 실제 사유는
                 #   *"OAuth access token has expired. Re-authenticate to continue."* 였고,
                 #   그 한 줄이면 사용자가 바로 고칠 수 있었다.
-                if reasons.get(n):
-                    _log(f"  {n}: 사유 — {reasons[n]}")
+                # 구체적인 사유가 우선, 없으면 카탈로그 사유 — 둘 다 없으면 침묵하지 않고
+                # 아래 안내만 남는다(종전과 동일).
+                _reason = reasons.get(n) or catalog_reasons.get(n) or ""
+                if _reason:
+                    _log(f"  {n}: 사유 — {_reason}")
                 # 「응답이 없다」의 **질문 전 첫 관측** (TASK-20260903T140000).
                 # 이 신고가 없으면 러너는 답할 수 없는 상태로 질문을 집어가고, 사용자는
                 # 아무 안내 없이 무한정 기다린다(사용자 지적 2026-09-03).
                 note_ai_unusable(
                     f"이 컴퓨터의 {n} 가 응답하지 않습니다"
-                    + (f" — {reasons[n]}" if reasons.get(n) else "."))
+                    + (f" — {_reason}" if _reason else "."))
                 _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
                      f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 
@@ -1419,8 +1789,19 @@ def _assemble(present: list, probed: dict, cached: dict,
         #   실패(인증 지연·타임아웃)가 영구화된다 — 다음 기동은 캐시가 있다고 묻지 않으므로,
         #   인증이 복구돼도 낡은 내장 목록을 계속 보여준다. 사용자는 `--refresh-caps` 를
         #   알기 전까지 그것이 틀렸다는 사실조차 모른다. 물어서 얻은 것만 남긴다.
-        if detail_out is not None and caps.get("source") != "builtin":
-            detail_out[name] = caps
+        if detail_out is not None:
+            if caps.get("source") not in _UNCACHEABLE_SOURCES:
+                detail_out[name] = caps
+            elif cached.get(name) is not None:
+                # ⚠ **가진 캐시를 지우지 않는다** (적대리뷰 P2 ×2, 2026-09-07).
+                #   캐시 금지 출처(`catalog`·`baseline`·`builtin`)가 이겼다고 이 키를
+                #   `detail_out` 에서 빼면, `_publish_caps` 가 「`_detail` 에 없는 키는
+                #   지운다」로 `caps` 에서 pop 하고 `save_conf(caps=caps)` 가 파일을 통째로
+                #   재작성해 **그 머신의 기존 probe 캐시가 삭제된다.** 그 뒤 카탈로그가 없는
+                #   빌드로 내려가면 되돌아갈 캐시가 없어 매 기동 240초 LLM 질의로 떨어진다.
+                #   이번 신고에는 안 쓰이지만 **파일에는 남긴다** — 캐시는 다음 기동의
+                #   안전망이지 이번 회차의 후보가 아니다.
+                detail_out[name] = cached[name]
         # ⚠ 항목을 **재구성한다**(얕은 복사 금지 — codex P2-1). `list(caps["models"])` 는
         #   내부 dict 를 그대로 참조하므로, 오염된 항목에 붙은 여분 키(`{"value":…,
         #   "model":["--secret"]}`)가 하트비트 HTTP 본문에 실려 나간다. 서버 sanitizer 가
@@ -1457,12 +1838,14 @@ def _assemble(present: list, probed: dict, cached: dict,
 #: 항목만 이 출처를 달고 신고된다(사용자 결정 2026-09-02 「확인-후-표시」). 그래서
 #: `baseline` 같은 «확인 전» 출처 이름은 양쪽 집합에 **없어야 한다**: 있으면 서버가 보관한
 #: 목록이 확인 없이 화면에 도달하고, 그것은 `gpt-5.1-codex` 화석과 구조적으로 같은 형태다.
-_REPORTABLE_SOURCES: frozenset[str] = frozenset({"probe", "cache", "verified"})
+_REPORTABLE_SOURCES: frozenset[str] = frozenset(
+    {"probe", "cache", "verified", "catalog", "baseline"})
 
 
 def resolve_caps(only: str | None, cached: dict | None,
                  refresh: bool, baseline: dict | None = None,
-                 on_settled=None) -> tuple[list[dict], dict]:
+                 on_settled=None,
+                 asked_out: list | None = None) -> tuple[list[dict], dict]:
     """신고할 목록과 **로컬에 남길 능력 상세**를 함께 만든다 (P0-Z4).
 
     두 값을 가르는 것이 이 함수의 존재 이유다:
@@ -1479,6 +1862,10 @@ def resolve_caps(only: str | None, cached: dict | None,
     `--refresh-caps` 의 뜻은 「지금 처음부터 다시 물어라」이고, 그때 baseline 으로 대조하면
     사용자가 명시한 그 뜻이 지켜지지 않는다.
 
+    `asked_out` 을 주면 **이번 회차에 실제로 물어본 런타임 이름**이 제자리로 채워진다.
+    재시도 판정의 모수다 — 「물어봤는데 못 얻은 것이 남았는가」를 세려면 신고 목록만으로는
+    부족하다(codex 적대리뷰 P2-1).
+
     `on_settled` 은 **플랫폼 단위 중간 신고** 콜백이다 — 그대로 통과시킨다
     (`detect_runtimes` docstring 의 「`on_settled`」 절 참조). 이 함수가 두 값을 가르므로
     콜백도 **같은 두 값**을 받는다: 호출측이 신고와 상세를 다르게 다뤄야 하는 이유가
@@ -1488,7 +1875,7 @@ def resolve_caps(only: str | None, cached: dict | None,
     reported = detect_runtimes(only, cached=(None if refresh else (cached or None)),
                                detail_out=detail, probe=True,
                                baseline=(None if refresh else (baseline or None)),
-                               on_settled=on_settled)
+                               on_settled=on_settled, asked_out=asked_out)
     return reported, detail
 
 

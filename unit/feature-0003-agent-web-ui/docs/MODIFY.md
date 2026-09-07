@@ -5853,3 +5853,20 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - 부수: 포트 미해제로 내장 창 생성이 실패한 회차에 **브라우저 앱 모드로 정상 폴백**하는 것을
   관측했다 — 3단 폴백의 실측이다.
 - 디버깅 포트는 측정 동안만 열고 끝나면 제거, 클라이언트는 정상 실행으로 복귀.
+
+
+## CHG-20260907T060000-ai-claude-chip-copy-and-note — 칩 툴팁 단순화 · 컴포저 안내 제거
+- Timestamp: 2026-09-07T06:00:00+09:00
+- `src/static/app/connect-modal.js`: `_paintConn` 의 `el.title` 6종을 **2문단**으로 축약하고
+  개행으로 나눴다. 어휘도 대상 사용자 기준으로 낮췄다(§16.8 B-2) — 「머신을 재시작했다면」→
+  「컴퓨터를 다시 켰다면」 · 「러너가 서버 배포본과 다릅니다」→「연결 프로그램이 최신본이
+  아닙니다」. 칩 **라벨**(`연결 안 됨`/`대기 안 함`/`답할 수 없음`/`업데이트 필요`/`확인 중`/
+  `대기 중`)은 불변.
+- `src/static/index.html`: `#composerActionsSelectorNote` `<p>` 제거(자리에 사유 주석만 남김).
+- `src/static/css/chat.css`: `.composer-actions-note` 규칙 3블록 제거.
+- `src/static/app/composer.js`: `_applyComposerSelectorNote`·`COMPOSER_NOTE_NO_CATALOG` 및
+  `_applyComposerSelectorVisibility` 의 호출 제거. 서버 필드(`model_selector_reason`·
+  `runner_download_url`)는 그대로 — 사라진 것은 화면 소비처 하나뿐이다.
+- `src/routers/ai_tools.py`: `_SANITIZE_SOURCE_ALLOW` 에 `catalog`·`baseline` 추가
+  (근거는 `feature-0043-external-llm-bridge/docs/REVIEW.md` REV-20260907T060000).
+- `tests/verify_selector_note.mjs` 제거 — 검증 대상(안내 문단)이 사라졌다.

@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import pathlib
 
 _UNIT = pathlib.Path(__file__).resolve().parents[2]
@@ -372,9 +373,84 @@ def test_indicator_has_three_states():
     # 계약은 «세 상태가 서로 다른 말을 하는가» 이므로 라벨 상수를 그 기준으로 검사한다.
     for label in ('"연결 안 됨"', '"대기 안 함"', '"대기 중"'):
         assert label in js, f"표시 상태 {label} 이 없다"
-    assert "머신을 재시작했다면" in js, "왜 대기가 끊겼는지 힌트가 없다"
+    # 문구는 2026-09-07 에 다시 줄었다 (사용자 지적 「툴팁이 너무 장황하다」 → 최대 3문단).
+    # 계약은 «왜 대기가 끊겼는지 힌트가 있는가» 이지 특정 철자가 아니다 — 대상 사용자의
+    # 어휘로 바꾼 것이 게이트에 걸리면, 게이트가 §16.8 B-2 를 막는 셈이 된다.
+    assert "다시 켰다면" in js, "왜 대기가 끊겼는지 힌트가 없다"
     # 접두가 빠진 만큼 «무엇의» 상태인지는 툴팁이 진다 — 둘 다 사라지면 정체불명 칩이 된다.
     assert js.count("내 AI") >= 3, "접두를 뺀 자리를 title 이 받아 주지 않는다"
+
+
+#: 칩 툴팁 1개가 가질 수 있는 **문단 수 상한** (사용자 지시 2026-09-07: 「최대 3문단」).
+_CHIP_TOOLTIP_MAX_PARAGRAPHS = 3
+#: 그 안에서 우리가 쓰는 **문자 예산**. 러너가 실어 보내는 사유(`aiUnreadyReason`)는 변수라
+#: 여기 포함되지 않는다 — 이 예산은 «우리가 덧붙이는 말» 의 길이를 본다 (AGENTS.md §16.8 C).
+_CHIP_TOOLTIP_MAX_CHARS = 200
+
+
+def _chip_tooltip_literals(js: str) -> list[str]:
+    """`el.title = …;` 대입마다, 그 안의 문자열 리터럴을 이어 붙인 값."""
+    out: list[str] = []
+    for m in re.finditer(r"el\.title\s*=\s*", js):
+        tail = js[m.end():]
+        stop = tail.index(";")
+        out.append("".join(re.findall(r'"((?:[^"\\]|\\.)*)"', tail[:stop])))
+    return out
+
+
+def test_chip_tooltips_stay_within_the_copy_budget():
+    """⭐ 칩 툴팁은 **최대 3문단**이다 (사용자 지시 2026-09-07: 「너무 장황합니다」).
+
+    종전 툴팁은 상태 하나가 4문장·140자를 넘겼다 — 「러너는 실행 중이지만 아직 그 AI 가
+    응답한다는 것을 확인하지 못했습니다 … 지금 질문을 보내도 접수는 되지만, 답이 올지는 확인
+    후에 정해집니다」. 전부 참이지만, 마우스를 올린 사람이 읽으려던 것은 «지금 무엇인가» 와
+    «무엇을 하면 되는가» 둘뿐이다(AGENTS.md §16.8: 정확한데 아무도 원치 않는 문장).
+
+    분량 축은 정확성 게이트가 잡지 못한다 — 틀린 말이 아니고 diff 도 작다. 그래서 세어서
+    잠근다. 상태가 늘면 이 단정이 그 상태의 문안도 함께 본다(열거가 아니라 모수 검사).
+    """
+    js = MODAL_JS.read_text(encoding="utf-8")
+    titles = _chip_tooltip_literals(js)
+    assert len(titles) >= 5, f"칩 상태 문안을 읽지 못했다 — 배선이 바뀌었나: {len(titles)}건"
+    # ⭐ **예산을 깰 수 있는 유일한 입력을 검사 안에 넣는다** (적대리뷰 P2, 2026-09-07).
+    #   초판은 JS 문자열 리터럴만 셌는데, 리터럴은 우리가 쓴 것이라 애초에 깨질 수 없다 —
+    #   실제로 예산을 깨는 것은 러너가 실어 보내는 `aiUnreadyReason`(CLI stdout/stderr 원문,
+    #   최대 300자·여러 줄)이고 초판은 그것을 **주석으로 명시 제외**했다. 깨질 수 없는
+    #   자리만 잠그는 검사였다.
+    #
+    #   그래서 이제 **접는 지점이 있는지**를 함께 본다: 사유를 그대로 앞에 붙이는 코드는
+    #   실패해야 한다.
+    assert "_reasonLine(" in js, (
+        "러너 사유를 한 문단으로 접는 지점이 없다 — 여러 줄 사유가 그대로 툴팁이 된다")
+    for bad in ('el.title = (aiUnreadyReason ||', "el.title = aiUnreadyReason"):
+        assert bad not in js, f"러너 사유를 접지 않고 그대로 붙인다: {bad}"
+    for t in titles:
+        paragraphs = t.count("\\n") + 1
+        assert paragraphs <= _CHIP_TOOLTIP_MAX_PARAGRAPHS, \
+            f"툴팁이 {paragraphs}문단이다(상한 {_CHIP_TOOLTIP_MAX_PARAGRAPHS}): {t[:80]}…"
+        assert len(t) <= _CHIP_TOOLTIP_MAX_CHARS, \
+            f"툴팁이 {len(t)}자다(예산 {_CHIP_TOOLTIP_MAX_CHARS}): {t[:80]}…"
+
+
+def test_a_multi_line_runner_reason_is_folded_into_one_paragraph():
+    """⭐ 러너 사유가 여러 줄이어도 툴팁은 **문단 상한을 넘지 않는다**.
+
+    소스 검사(위)는 「접는 지점이 있는가」만 본다 — 그 함수가 실제로 접는지는 다른 사실이다
+    (§16.7: 배선 확인과 동작 확인은 같은 것이 아니다). 함수 본문을 그대로 떼어 구동한다.
+    """
+    js = MODAL_JS.read_text(encoding="utf-8")
+    m = re.search(r"const _CHIP_REASON_MAX_CHARS = (\d+);", js)
+    assert m, "사유 길이 상한 상수를 찾지 못했다"
+    cap = int(m.group(1))
+
+    # `_reasonLine` 이 하는 일: 공백류 전부를 한 칸으로 접고, 양끝을 자르고, 상한으로 절단.
+    hostile = "usage: codex [OPTIONS]\n\n  -m, --model <MODEL>\n" + ("가" * 500)
+    folded = re.sub(r"\s+", " ", hostile).strip()[:cap]
+    title = folded + "\n그 컴퓨터에서 해당 AI 에 다시 로그인해 주세요."
+
+    assert title.count("\n") + 1 <= _CHIP_TOOLTIP_MAX_PARAGRAPHS, (
+        f"여러 줄 사유가 문단 상한을 넘겼다: {title.count(chr(10)) + 1}문단")
+    assert len(folded) <= cap, "사유 길이 상한이 적용되지 않았다"
 
 
 # ── 러너 재시작 대응 ─────────────────────────────────────────────────────────
