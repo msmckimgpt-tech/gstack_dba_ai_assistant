@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.51.0
+template_version: v3.53.0
 domain: [product, scope]
 ai_read_priority: 2
 ---
@@ -132,8 +132,11 @@ GitHub Actions 기반 자동화 (`ai-*` 워크플로, `policy-contract`, `selfho
 ## 세션 정지 감지 임계 (§13.2.11)
 
 <!-- AGENTS.md §13.2.11 의 stalled 판정 임계를 기록한다. 기록 칸이 없으면 조정은 일어나지 않는다. -->
+<!-- ⚠️ 아래 「임계」는 placeholder 가 아니라 **발효 중인 기본값**이다 (v3.52.0).
+     비워 두거나 <TBD> 로 남겨도 관측자는 20분으로 동작한다 — 「미기입 = 비활성」이 아니다.
+     다른 값이 필요할 때만 산출 규칙(최장 단일 도구 호출 × 2)대로 바꾸고 아래 근거를 채운다. -->
 
-- 임계: <TBD: 기본 20분 — 「이 프로젝트의 최장 단일 도구 호출 × 2」로 산출>
+- 임계: **20분** (기본값 발효 중 — 산출 규칙: 「이 프로젝트의 최장 단일 도구 호출 × 2」)
 - 산출 근거 (§16.7 G4 경계 양측):
   - 직하 (정상 장기 도구 호출 최대 지속): <TBD>
   - 직상 (문제로 판정해야 할 무신호): <TBD: 실증 84분 / 11분 27초>

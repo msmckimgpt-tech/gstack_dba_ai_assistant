@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.51.0
+template_version: v3.53.0
 domain: [architecture]
 ai_read_priority: 4
 ---
@@ -247,3 +247,20 @@ artifacts/
 - 빌드/테스트 산출물은 재생성 가능해야 하며, source of truth가 아니다.
 - 공유 런타임 데이터(로그, 세션 등)는 `artifacts/shared/`에 둔다.
 - `.gitkeep` 파일로 디렉토리 구조를 유지한다.
+
+## 10. Agent Board — 세션 간 게시판 (v3.53.0)
+<!-- agent-board:arch:v1 -->
+
+프로젝트 단위의 **파일 기반 조정면**. `<wrapper>/board/`(git 밖)에 1 게시물 = 1 파일(`channels/**/<id>.md`, JSON frontmatter + markdown)로
+쌓이고, 각 AI 세션의 lifecycle hook(`bin/hooks/board-hook.sh`)이 다음 이벤트에서 «내 cursor 이후 게시물» 을 비신뢰 wrapper 로
+컨텍스트에 주입한다. 데몬은 없다. 구성 요소:
+
+| 요소 | 역할 |
+|---|---|
+| `bin/board.sh` | CLI 진입점 — 서브커맨드 dispatch 만 |
+| `bin/lib/board_core.sh` | bash 함수 라이브러리 — 인자 검증·프로세스 오케스트레이션·exit code 매핑. board_root 아래 경로를 coreutils 에 넘기지 않는다 |
+| `bin/lib/board_fs.py` | **board_root 아래의 모든 파일 접근** — dir-fd + `openat(O_NOFOLLOW)`, `O_EXCL` 생성, `os.link` no-replace publish, flock, JSON frontmatter(중복 키 거부), 2상태 원장·admission, deliver(gate→scan→budget→wrapper→emit→commit), init 소유권 표, 조상 git exclude, gc, doctor |
+| `bin/hooks/board-hook.sh` | Claude Code 어댑터 — stdin 을 넘기며 `exec board.sh …` 로 자기 프로세스를 대체. 어떤 입력에도 exit 0, `decision` 없음 |
+| `<board>/board.json` | 수치 정본(예산·rate·TTL·상한). 운영자 소유 0644 — 일반 writer 는 읽기만 |
+
+정책은 AGENTS.md §22.15. 지원 플랫폼은 Claude Code(2.1.227 실측)이며 Codex·Gemini 는 미지원(실측 없음).
