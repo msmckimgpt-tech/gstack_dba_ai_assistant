@@ -33,7 +33,7 @@ edit_policy: mixed
 ## 2. 실행
 
 ```
-python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 478건
+python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 506건
 
 # 실 Windows 층(ctypes/Win32)은 리눅스에서 돌지 않는다 — 별도 실측:
 #   tests/windows/README.md  (verify_console / verify_flicker / verify_tray / verify_gui)
@@ -71,11 +71,30 @@ python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 478건
 
 ### Run 2026-09-07T15:30:00+09:00 — 클라이언트 업데이트 채널
 - 상세: [`test-runs.d/20260907T150000-client-update-channel.md`](./test-runs.d/20260907T150000-client-update-channel.md)
-- Environment: `CLI` — feature 스위트 **478/478 PASS** (신규 96건)
-- Environment: `CLI` — **결함 주입 8/8 FAIL**(§16.7 G11-b — 새 소스-텍스트 단언이 실제로 잡는다)
+- Environment: `CLI` — feature 스위트 **506/506 PASS** (신규 124건 — 적대 2라운드 반영 후 수치)
+- Environment: `CLI` — **결함 주입 15/15 FAIL**(§16.7 G11-b — 되돌리면 전부 FAIL 한다)
 - Environment: `CLI` + **실 TLS 서버** — 반입 → 서빙 → 수신 → 무결성 거절 **종단 8단계 PASS**
   (사내 CA 서명 https, 받은 바이트가 올린 바이트와 byte-동일)
 - 선재 실패 1건(`test_share_redaction_invariant`)은 `main` 에서도 동일 FAIL — 회귀 아님
 - ⛔ **미실측**: 설치기 실제 실행(`/SILENT /RELAUNCH`) — Windows 빌드 머신 필요
 - `Environment: Windows-browser` 없음 — **웹 자산 변경 0건**이라 check #13 대상 아님
 - Verdict: PASS (미실측 1건 명시)
+
+### Run 2026-09-07T18:00:00+09:00 — 라이브 배포 실측 (업데이트 채널)
+- 상세: [`test-runs.d/20260907T180000-live-deploy-verify.md`](./test-runs.d/20260907T180000-live-deploy-verify.md)
+- Environment: `라이브 배포본` — `main` **697ffa84** 전 서비스 롤아웃 + soak 90s + 대화 스모크 PASS
+- Environment: `라이브 배포본 (web-a 컨테이너 내부 8000 — 엣지 미경유)` — 채널 **10 PASS + 1 미경유**:
+  마운트 실물 · 없으면 404 · 퍼블리시 후 바이트 동일성 · 공고 안 된 이름 404 ·
+  같은 디렉토리의 다른 파일 404 · 제거 후 원복. **미경유 1칸** = 경로 탈출(`{filename}` 단일
+  세그먼트라 라우트가 매칭조차 안 됨 — 내 가드를 타지 않았고 되돌려 FAIL 시킬 수도 없다)
+- 방법과 그 대가: 정본(`1.1.0`)보다 **낮은 1.0.0** 합성 파일 → `updater.py` 경로는 안 집는다
+  (`is_newer` 거짓). ⚠ 그러나 `download_url()` 은 **버전을 비교하지 않아** 사람용
+  「연결 프로그램 받기」 버튼은 그 밖이었고, **라이브에 38초 창이 실재했다**(08:58:06→08:58:43.9).
+  실피해 0(그 창의 외부 클라이언트 매니페스트 요청 0건) — 다음부터는 격리 인스턴스에서 잰다
+- ⚠ 배포 중 관측 2건(둘 다 이 cycle 코드와 무관): 1차 ABORT = caddy **exec 채널** 파손(서빙은 200) ·
+  배포 창 안 13초 엣지 정지 = **행위 종류 특정(기존 컨테이너 stop/start) · 행위자 미특정**
+- ⛔ **미실측**: 엣지 경유 릴리스 200/다운로드 · web-b 채널 · 연결 화면 버튼 전환(체크리스트 [4]
+  PB-0008 — **미이행**) · 설치기 실제 실행 · 실 설치기 종단 · §18.8 3라운드
+- `Environment: Windows-browser` 없음 — 웹 자산 변경 0건. ⚠ 이것은 **check #13** 의 면제 논거이며
+  배포 후 체크리스트 **[4] 의 면제가 아니다**(둘을 접었던 것을 정정)
+- Verdict: PASS (미실측 6건 + 미경유 1칸 명시)

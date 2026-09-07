@@ -607,3 +607,12 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 feature-0046 에 **버전 정본**(`src/client/version.py`)과 **수신 경로**(`src/client/updater.py`)가 생겼고, 배포물이 서버에 도달하는 경로(호스트 `artifacts/client-release` → `/srv/client:ro` → `GET /api/ai/client/latest` + `/client/<파일>`)가 섰다 — ROADMAP §10.2 「서버가 실물을 못 만든다」 해소. 규율은 러너 자기 갱신(`feature-0043/src/agent/selfupdate.py`)에서 이식했고 적용은 **확인 후**다(미서명 배포라 무음 자동 설치를 기본으로 두지 않는다 — 사용자 결정). 실 TLS 서버로 종단 8단계 실측.
 
 [[Features/feature-0046-native-client]] · [[Features/feature-0043-external-llm-bridge]]
+## [2026-09-07] deploy | 업데이트 채널을 배포하고, 배포본에서 다시 쟀다
+
+`main` 697ffa84 로 전 서비스 롤아웃 후 채널을 배포본에서 다시 쟀다 — 호스트 릴리스 디렉토리가 `/srv/client` 로 read-only 실물 마운트됨, 릴리스가 없으면 **404**(200+`available:false` 아님), 올린 바이트가 sha256·크기까지 그대로 내려옴, **공고 안 된 이름과 같은 디렉토리의 다른 파일은 404**. 지금 광고 중인 릴리스는 없고, 그것이 정상이다.
+
+**적대 리뷰가 이 기록에 BLOCK 을 냈고, 지적은 한쪽으로 몰렸다 — 서술이 실측보다 강했다.** ① 「라이브에 창을 열지 않고 쟀다」는 **거짓**이었다: `is_newer` 안전판은 `updater.py` 경로만 덮고 `download_url()` 은 **버전을 비교하지 않아** 사람용 「연결 프로그램 받기」 버튼은 그 밖이었다 — 실제 창은 **38초**(08:58:06→08:58:43.9)이고 그 시각 라이브 사용자 세션이 붙어 있었다(연 사람이 없었던 것은 **운**, 실피해 0). ② 「11단계 라이브 PASS」는 전부 **web-a 컨테이너 내부 포트**였고 하필 caddy 정지 창 안이라 **엣지를 지날 수 없었다**. ③ 경로 탈출 칸은 **항진명제**(라우트 미매칭 응답 ≠ 가드 응답) → 10 PASS + 1 미경유. ④ 잔여 함정의 처방 `mkdir -p artifacts/client-release` 는 `repo/` cwd 에서 **미끼 디렉토리**를 만들어 함정을 그대로 발동시킨다 → compose 주석(원천)까지 정정.
+
+1차 배포는 ABORT 했는데 표면 문구(「web-b 엣지 미복귀」)와 실인과(**caddy exec 채널 파손**, 같은 순간 엣지는 200)가 달랐다 — [[LRN-20260907-0001]]. 배포 창 안 13초 엣지 정지는 **행위 종류는 특정**(기존 컨테이너 stop/start)했으나 **행위자는 못 했고**, 자기 배제가 성립하지 않음을 인정해 적었다.
+
+[[Features/feature-0046-native-client]]
