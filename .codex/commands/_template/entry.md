@@ -16,9 +16,12 @@ It preserves the same user-facing intent while using Codex-native behavior.
    - If `repo/AGENTS.md` exists from the current workspace wrapper, set `policy_root=repo`.
    - Otherwise, if `./AGENTS.md` exists, set `policy_root=.`.
    - If neither exists, stop and state that this command only works in an `ai_delegated_dev_template` project.
-2. Read the policy context in priority order:
+2. Read `.codex/CONTEXT.md` and `.agents/ENVIRONMENT.md` in the policy root.
+   Retrieve the AGENTS.md heading index and the applicable sections named by
+   the context adapter; do not request the entire large policy in one read.
+   Read the remaining policy context in priority order:
    - `<wrapper>/FIRST_REQUEST.md` when present.
-   - `<policy_root>/AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`.
+   - `<policy_root>/CLAUDE.md`, `CONTRIBUTING.md`.
    - `<policy_root>/docs/{PROJECT,STATUS,ARCHITECTURE,CONVENTIONS,SECURITY,REQUEST}.md` when present.
    - `<policy_root>/playbooks/README.md` when present.
    - `<policy_root>/meta/{TASK,REVIEW}.md` when present.

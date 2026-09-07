@@ -1,9 +1,8 @@
 ---
 name: _template-observability
-description: Use when the user invokes /_template:observability or asks for observability evidence in an ai_delegated_dev_template feature.
+description: "Plan or add observability evidence for a feature using the template's documentation and verification structure."
+generated_by: codex-environment-install
+managed_body_sha256: 4d144d0308922299b8406ab743356bb7d7ddee176f2580b2b38cd3472d152adc
 ---
 
-# _template-observability
-
-Read and follow `.codex/commands/_template/observability.md` in the current repository.
-That command file is the canonical Codex prompt for this workflow.
+Read `.codex/CONTEXT.md` from the current policy root, then follow `.codex/commands/_template/observability.md`. Resolve the policy root from `repo/AGENTS.md` when launched in the wrapper, otherwise from `AGENTS.md`. Use the current user arguments as `$ARGUMENTS`.

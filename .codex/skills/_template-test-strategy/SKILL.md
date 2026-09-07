@@ -1,9 +1,8 @@
 ---
 name: _template-test-strategy
-description: Use when the user invokes /_template:test-strategy or asks Codex to design or update feature test strategy.
+description: "Build a focused test strategy for the current feature or change set."
+generated_by: codex-environment-install
+managed_body_sha256: 199d1d870783dc9709ab4f34b7d6eede566524235d8e948b109157aa1fca9f3a
 ---
 
-# _template-test-strategy
-
-Read and follow `.codex/commands/_template/test-strategy.md` in the current repository.
-That command file is the canonical Codex prompt for this workflow.
+Read `.codex/CONTEXT.md` from the current policy root, then follow `.codex/commands/_template/test-strategy.md`. Resolve the policy root from `repo/AGENTS.md` when launched in the wrapper, otherwise from `AGENTS.md`. Use the current user arguments as `$ARGUMENTS`.

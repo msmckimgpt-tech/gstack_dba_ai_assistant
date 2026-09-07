@@ -1,9 +1,8 @@
 ---
 name: _template-entry
-description: Use when the user invokes /_template:entry or asks Codex to bootstrap ai_delegated_dev_template context before continuing a task.
+description: "Prime ai_delegated_dev_template policy context, then dispatch the provided request under Codex-compatible guardrails."
+generated_by: codex-environment-install
+managed_body_sha256: 762c461f2631a934e267286ca8be6e631cd1bdca846943b86a130de2dd510482
 ---
 
-# _template-entry
-
-Read and follow `.codex/commands/_template/entry.md` in the current repository.
-That command file is the canonical Codex prompt for this workflow.
+Read `.codex/CONTEXT.md` from the current policy root, then follow `.codex/commands/_template/entry.md`. Resolve the policy root from `repo/AGENTS.md` when launched in the wrapper, otherwise from `AGENTS.md`. Use the current user arguments as `$ARGUMENTS`.

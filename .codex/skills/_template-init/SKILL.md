@@ -1,9 +1,8 @@
 ---
 name: _template-init
-description: Use when the user invokes /_template:init or asks to initialize a copied ai_delegated_dev_template consumer project.
+description: "Initialize a copied ai_delegated_dev_template project for real consumer use under Codex."
+generated_by: codex-environment-install
+managed_body_sha256: cb0bf49e56f66f7870ace9195253e05303fcb631dc55d2fb0bf72d8afbd12d5d
 ---
 
-# _template-init
-
-Read and follow `.codex/commands/_template/init.md` in the current repository.
-That command file is the canonical Codex prompt for this workflow.
+Read `.codex/CONTEXT.md` from the current policy root, then follow `.codex/commands/_template/init.md`. Resolve the policy root from `repo/AGENTS.md` when launched in the wrapper, otherwise from `AGENTS.md`. Use the current user arguments as `$ARGUMENTS`.

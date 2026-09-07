@@ -65,3 +65,6 @@ gstack 스킬이 본 저장소 맥락과 충돌하지 않는 경우에 한해, �
 
 Codex 사용자는 `.codex/commands/` 및 `AGENTS.md` 의 Codex command compatibility
 정책을 따른다. `.claude/commands/` 는 Claude 전용 entrypoint 로 유지한다.
+
+<!-- agent-compatibility -->
+Claude와 Codex는 같은 프로젝트를 함께 지원합니다. 상대 환경·세션 발견 및 인계는 `.agents/ENVIRONMENT.md`를 참조하세요. 현재 작업의 정본은 계속 `AGENTS.md`와 기능 문서입니다.
