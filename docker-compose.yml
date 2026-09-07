@@ -157,8 +157,12 @@ x-web-extra: &web-extra
     # 서버는 `routers/client_release.py` 가 **실물과 대조해 통과한 것만** 광고한다.
     #
     # ⚠ 디렉토리가 없으면 docker 가 **root 소유로 만든다** — 그러면 비-root 퍼블리시가
-    #   막힌다. 처음 한 번은 배포 사용자가 먼저 만든다:
-    #     mkdir -p artifacts/client-release
+    #   막힌다. 처음 한 번은 배포 사용자가 먼저 만든다. **경로는 아래 마운트 원본과 같아야
+    #   한다** — compose project dir 은 `repo/` 이고 `make deploy-web` 도 거기서 도므로,
+    #   `mkdir -p artifacts/client-release` 를 그 cwd 에서 치면 **아무도 마운트하지 않는
+    #   `repo/artifacts/client-release` 미끼**가 생기고 진짜 경로는 여전히 root 소유로 만들어진다:
+    #     mkdir -p ../artifacts/client-release        # repo/ 에서
+    #     mkdir -p <project_root>/artifacts/client-release   # cwd 무관하게 쓰려면
     - ../artifacts/client-release:/srv/client:ro
   networks: [dbnet, replica-net]
   # feature-0014: SIGTERM 시 uvicorn in-flight 비-SSE 요청 drain + @app.on_event(shutdown)

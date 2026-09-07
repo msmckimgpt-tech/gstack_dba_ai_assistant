@@ -1142,6 +1142,10 @@ function _paintGate(body) {
   }
 }
 
+//: 칩 툴팁 첫 문단(러너 사유)의 문자 상한. 서버·러너는 300자까지 허용하지만 그것을 그대로
+//: 띄우면 툴팁이 한 문단으로도 화면을 덮는다 — 「장황하다」는 제보의 원인과 같은 축이다.
+const _CHIP_REASON_MAX_CHARS = 140;
+
 function _paintConn(connected, listening, epoch, runnerStale, runnerBuild,
                     aiReady, aiUnreadyReason) {
   // 배지 요소가 없어도 «연결됨» 판정은 살아 있어야 한다 — 모달의 성공 감지가 배지의 존재에
@@ -1167,6 +1171,15 @@ function _paintConn(connected, listening, epoch, runnerStale, runnerBuild,
   }
   const el = $("aiConnState");
   if (!el) return;
+  // 러너가 실어 보낸 사유는 **CLI 의 stdout/stderr 원문**이다 — 여러 줄(usage·스택트레이스)일
+  // 수 있고, 그대로 앞에 붙이면 「최대 3문단」(사용자 지시 2026-09-07)이 그 자리에서 깨진다.
+  // 체인 어디에도 개행을 접는 지점이 없었다(ux 적대리뷰 P2): caps.py 는 `[:300]` 만 자르고,
+  // state.py 는 양끝 `strip()` 만 하며, 서버도 `[:300]` 만 한다. **표시 직전에** 접는다 —
+  // 값의 의미는 그대로 두고 모양만 한 문단으로 만든다.
+  const _reasonLine = (v, fallback) => {
+    const t = String(v || "").replace(/\s+/g, " ").trim();
+    return (t || fallback).slice(0, _CHIP_REASON_MAX_CHARS);
+  };
   _connKnown = connected;
   el.classList.remove("hidden");
   // 3상태. **연결됨 ≠ 대기 중** — 토큰은 DB 에, 러너는 프로세스에 있다. 머신을 재시작하면
@@ -1180,12 +1193,12 @@ function _paintConn(connected, listening, epoch, runnerStale, runnerBuild,
   if (!connected) {
     el.dataset.state = "off";
     el.textContent = "연결 안 됨";
-    el.title = "내 AI 가 연결되어 있지 않습니다 — 답변할 AI 가 없습니다. 눌러서 연결하세요.";
+    el.title = "내 AI 가 연결되어 있지 않습니다.\n눌러서 연결하세요.";
   } else if (!listening) {
     el.dataset.state = "idle";
     el.textContent = "대기 안 함";
-    el.title = "내 AI 가 연결은 되어 있으나 지금 듣고 있는 AI 가 없습니다"
-      + "(머신을 재시작했다면 러너가 꺼졌을 수 있습니다). 눌러서 다시 연결 정보를 받으세요.";
+    el.title = "연결은 되어 있지만 지금 대기 중인 AI 가 없습니다.\n"
+      + "컴퓨터를 다시 켰다면 꺼졌을 수 있습니다 — 눌러서 다시 실행하세요.";
   } else if (aiReady === false) {
     // ── 「연결됐지만 답할 수 없다」 (TASK-20260903T180000, 사용자 지적) ──────────
     //
@@ -1204,19 +1217,16 @@ function _paintConn(connected, listening, epoch, runnerStale, runnerBuild,
     // 않는다」다. 둘이 겹칠 때 사용자가 먼저 알아야 하는 것은 무거운 쪽이다.
     el.dataset.state = "off";
     el.textContent = "답할 수 없음";
-    el.title = (aiUnreadyReason || "연결된 AI 가 응답하지 않습니다.")
-      + " 러너는 실행 중이지만 그 컴퓨터의 AI 가 답하지 못하는 상태입니다 —"
-      + " 그 컴퓨터에서 해당 CLI 에 다시 로그인한 뒤 질문해 주세요."
-      + " (응답이 돌아오면 자동으로 정상으로 바뀝니다.)";
+    el.title = _reasonLine(aiUnreadyReason, "연결된 AI 가 응답하지 않습니다.")
+      + "\n그 컴퓨터에서 해당 AI 에 다시 로그인해 주세요.";
   } else if (runnerStale) {
     // 연결도 대기도 성립했는데 **그 러너가 배포본과 다른 파일**이다 (2026-08-31).
     // 잠금 사유는 아니다 — 답변은 온다. 다만 옛 동작·옛 모델 목록이 그대로 보이고,
     // 그 이유가 화면 어디에도 없어 사용자가 「재설치했는데 그대로」를 겪었다.
     el.dataset.state = "stale";
     el.textContent = "업데이트 필요";
-    el.title = "내 AI 는 연결되어 있지만 실행 중인 러너가 서버 배포본과 다릅니다."
-      + " 옛 동작·옛 모델 목록이 보일 수 있습니다 —"
-      + " 눌러서 최신 실행 명령을 받아 다시 실행하세요.";
+    el.title = "실행 중인 연결 프로그램이 최신본이 아닙니다.\n"
+      + "눌러서 최신 실행 명령을 받아 다시 실행하세요.";
   } else if (aiReady !== true) {
     // ── 「아직 확인되지 않았다」 (TASK-20260903T200000, 사용자 지적) ─────────────
     //
@@ -1241,14 +1251,12 @@ function _paintConn(connected, listening, epoch, runnerStale, runnerBuild,
     // 안내를 미확정 안내로 덮으면 사용자가 할 수 있는 행동(재실행)을 가린다.
     el.dataset.state = "checking";
     el.textContent = "확인 중";
-    el.title = (aiUnreadyReason || "연결된 AI 가 답할 수 있는지 확인하는 중입니다.")
-      + " 러너는 실행 중이지만 아직 그 AI 가 응답한다는 것을 확인하지 못했습니다 —"
-      + " 잠시 뒤 「대기 중」 또는 「답할 수 없음」으로 바뀝니다."
-      + " (지금 질문을 보내도 접수는 되지만, 답이 올지는 확인 후에 정해집니다.)";
+    el.title = _reasonLine(aiUnreadyReason, "연결된 AI 가 답할 수 있는지 확인하는 중입니다.")
+      + "\n잠시 뒤 「대기 중」 또는 「답할 수 없음」으로 바뀝니다.";
   } else {
     el.dataset.state = "on";
     el.textContent = "대기 중";
-    el.title = "내 AI 가 대기 중입니다. 질문을 보내면 바로 가져갑니다.";
+    el.title = "내 AI 가 대기 중입니다.\n질문을 보내면 바로 가져갑니다.";
   }
 }
 

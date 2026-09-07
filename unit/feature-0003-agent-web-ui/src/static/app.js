@@ -7672,6 +7672,9 @@ async function loadVaultOptions() {
     const payload = await apiFetch("/api/api-vault/options");
     state.apiVaultOptions = payload;
     state.modelCatalog = payload;
+    // 카탈로그가 돌아왔다 — 다음 장애 때 다시 말할 수 있게 표식을 내린다
+    // (composer.js 의 `_modelCatalogOutageNotified`, ux 적대리뷰 P1 2026-09-07).
+    state._modelCatalogOutageNotified = false;
   } catch (_e) {
     state.apiVaultOptions = null;
     state.modelCatalog = null;

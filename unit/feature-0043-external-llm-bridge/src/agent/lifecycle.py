@@ -34,7 +34,7 @@ from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
                          fetch_deployed_agent, install_agent_file, reexec_self,
                          running_bundle_path)
 from .state import ai_health, note_ai_probing, prev_runner_instance, runner_instance
-from .timing import _CAPS_BASELINE_WAIT_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
+from .timing import _CAPS_BASELINE_WAIT_SEC, _CAPS_RETRY_BACKOFF_SEC, _CAPS_RETRY_CEILING_SEC, _CAPS_RETRY_CEILING_SHOWING_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
@@ -746,6 +746,10 @@ def main() -> int:
     #: 갱신(`[:]`)해서 다음 하트비트가 저절로 새 목록을 싣게 한다. 새 리스트를 대입하면
     #: 하트비트가 잡아 둔 옛 객체를 계속 보내 목록이 영영 비어 보인다.
     runtimes: list = []
+    #: 직전 협상 회차가 **실제로 물어본** 런타임 이름. 재시도 판정의 모수다
+    #: (codex 적대리뷰 P2-1, 2026-09-07) — 「신고가 비었는가」만 보면 한 런타임이 성공하는
+    #: 순간 나머지의 빈 목록이 영구화된다.
+    _caps_asked: list = []
 
     # ── 협상을 기다릴 것인가 (TASK-20260902T140000) ───────────────────────────
     #
@@ -780,6 +784,32 @@ def main() -> int:
     #: 주기 대기 대신 이것을 기다린다 — 주기(30초)를 기다리면 플랫폼별 실시간 갱신이
     #: 그만큼 늦어진다(사용자 제보 2026-09-02, 3차).
     _caps_nudge = threading.Event()
+
+    #: 협상 **회차 번호**와 그 회차의 게시를 직렬화하는 락 (적대리뷰 P2, 2026-09-07).
+    #:
+    #: 재시도가 생기면서 회차가 겹칠 수 있게 됐다: `resolve_caps` 는 데드라인이 지나면
+    #: `t.join(...)` 을 포기하고 반환하는데, 남은 질의 스레드는 계속 살아 있다가 **다음
+    #: 회차 중에** `on_settled` 를 부른다. 그러면 앞 회차의 (더 짧은) 부분 목록이 방금
+    #: 성공한 목록을 되덮고, 같은 순간 `dict(caps)` 를 읽던 재시도 스레드가
+    #: `RuntimeError: dictionary changed size during iteration` 으로 죽는다 — 재시도가
+    #: 사라져 원 결함(목록이 영영 안 옴)으로 되돌아간다. 종전엔 협상이 1회뿐이라 이 겹침
+    #: 자체가 없었다.
+    _caps_round = [0]
+    _caps_publish_lock = threading.Lock()
+
+    def _publish_caps_for(round_no: int):
+        """그 회차 전용 `on_settled`. **낡은 회차의 게시는 버린다.**"""
+        def _cb(_got: list, _detail: dict) -> None:
+            with _caps_publish_lock:
+                if round_no != _caps_round[0]:
+                    return          # 앞 회차의 지각 스레드 — 지금 목록을 되덮지 않는다
+                _publish_caps(_got, _detail)
+        return _cb
+
+    def _snapshot_caps() -> dict:
+        """`caps` 의 안전한 사본. 게시와 같은 락 아래에서 뜬다."""
+        with _caps_publish_lock:
+            return dict(caps)
 
     def _publish_caps(_got: list, _detail: dict) -> None:
         """협상 결과를 **제자리** 갱신하고 하트비트를 깨운다.
@@ -817,7 +847,14 @@ def main() -> int:
         # (기다림이 곧 웹 선택기의 공백이고, 그것이 이번에 고치는 마찰이다).
         if wait_baseline and not args.refresh_caps:
             _baseline_ready.wait(_CAPS_BASELINE_WAIT_SEC)
-        _cached = None if args.refresh_caps else (conf_caps or None)
+        # ⚠ `conf_caps`(기동 시점 파일)가 아니라 **지금까지 얻은 것**을 넘긴다. 재시도가
+        #   생기면서 이 차이가 생겼다: 회차마다 파일 스냅샷을 넘기면 앞 회차에 성공한
+        #   런타임을 다음 회차가 **다시 묻는다**(그 AI 의 토큰을 이유 없이 태우고, 흔들리는
+        #   답이 이미 안정된 목록을 덮을 수도 있다). `caps` 는 성공분만 누적하므로
+        #   `resolve_caps` 의 `ask` 계산이 «아직 못 얻은 것» 으로 저절로 좁아진다.
+        _round = _caps_round[0] + 1
+        _caps_round[0] = _round
+        _cached = None if args.refresh_caps else (_snapshot_caps() or conf_caps or None)
         _base = None if args.refresh_caps else (dict(_caps_baseline) or None)
         # 자기갱신이 이 창을 「유휴」로 오판해 `os.execv` 하지 않도록 표시한다
         # (codex R4 P2-9 — `try_self_update` 의 `_CAPS_NEGOTIATING` 가드).
@@ -830,13 +867,15 @@ def main() -> int:
         _CAPS_NEGOTIATING[0] = True
         try:
             _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps,
-                                         baseline=_base, on_settled=_publish_caps)
+                                         baseline=_base,
+                                         on_settled=_publish_caps_for(_round),
+                                         asked_out=_caps_asked)
         finally:
             _CAPS_NEGOTIATING[0] = False
         # 최종 게시 — 중간 신고와 같은 경로를 쓴다. 두 경로를 따로 쓰면 한쪽만 고쳐지는 날
         # 「부분은 되는데 최종이 안 되는」(또는 반대) 상태가 되고, 그 차이는 라이브에서만
         # 드러난다.
-        _publish_caps(_got, _detail)
+        _publish_caps_for(_round)(_got, _detail)
         if _got:
             _log("고를 수 있는 것: " + " · ".join(
                 f"{r['label']}({len(r['models'])}종"
@@ -881,6 +920,88 @@ def main() -> int:
         if ai_health()[0] is None:
             confirm_ai_or_report(kind, list(argv))
 
+    def _needs_retry() -> bool:
+        """**물어봤는데 실조회로 확인하지 못한 런타임이 남았는가.**
+
+        판정 모수는 신고 목록이 아니라 **직전 회차가 물어본 런타임 집합**(`_caps_asked`)이다.
+        신고 목록만 보면 한 런타임이 성공하는 순간 재시도가 멎어, 같은 머신의 **다른**
+        런타임이 빈 목록·원장 폴백에 영구히 갇힌다 — claude 는 답하고 codex 는 못 답하는
+        조합이 실제로 이 프로젝트의 라이브 형태다 (codex 적대리뷰 P2-1, 2026-09-07).
+
+        런타임 하나가 «아직» 인 조건은 둘이다:
+
+        - 신고에 **아예 없다** — 물어봤는데 아무것도 못 얻었다.
+        - 신고에 있는데 출처가 `baseline` 이다 — 원장 폴백은 확인을 통과한 값이 아니라
+          화면을 비우지 않으려고 임시로 얹은 것이다. 실조회가 성공하면 그것을 덮는다.
+
+        ⚠ 아직 한 번도 물어보지 못했으면(`_caps_asked` 가 빈 첫 진입) 신고 유무로 본다 —
+          모수를 모르는 상태에서 「남은 것 없음」으로 읽으면 재시도가 시작조차 하지 않는다.
+
+        `runtimes` 항목의 `source` 는 서버로 나가는 신고에 실려 있다(`_assemble`).
+        """
+        confirmed = {str((r or {}).get("runtime") or "") for r in runtimes
+                     if str((r or {}).get("source") or "") not in ("", "baseline")}
+        if not _caps_asked:
+            return not confirmed
+        return any(n not in confirmed for n in _caps_asked)
+
+    def _negotiate_caps_until_reported(stop: threading.Event,
+                                       immediate: bool = True) -> None:
+        """신고할 목록을 **얻을 때까지** 협상을 되풀이한다 (사용자 제보 2026-09-07).
+
+        ## 무엇을 고치는가
+
+        종전에는 이 자리가 `_negotiate_caps(wait_baseline=True)` **1회**였다. 그 1회가
+        아무것도 얻지 못하면 그 러너가 사는 동안 웹 선택기는 영영 비어 있는다 — 그런데
+        서버가 그 자리에 내보내는 문구는 「연결된 본인 AI 에게 쓸 수 있는 모델을 확인하는
+        중입니다」다. **화면은 진행 중이라고 말하는데 실제로는 아무것도 다시 확인하지 않는**
+        상태였고, 사용자에게는 「AI 는 연결됐는데 모델 목록이 안 나온다」로 보였다.
+
+        실패 사유는 다시 물으면 풀리는 종류가 흔하다 — 라이브 관측: `OAuth access token has
+        expired`(로그인하면 풀린다) · `TimeoutExpired`(그때 그 머신이 느렸다) · 그리고 이
+        파일이 이미 기록한 「codex 는 같은 조건에서 성공과 실패를 오간다」.
+
+        ## 멈추는 조건은 둘뿐이다
+
+        - **실조회로 확인된 목록을 얻었다** (`_needs_retry()` 가 거짓). 원장 폴백뿐인 목록은
+          여기 해당하지 않는다 — 그 판정은 `_needs_retry` 에 있다.
+        - **러너가 내려간다** (`stop` — 종료·로그아웃·자기갱신 재기동). `Event.wait` 로
+          기다리므로 대기 중에도 즉시 깨어난다. `time.sleep` 이면 최대 15분을 붙잡는다.
+
+        ⚠ 「몇 번까지」를 두지 않는다. 총 횟수를 정해 멈추면 한 시간 뒤에 CLI 로그인을 고친
+          사용자가 목록을 영영 못 받는데, 그것이 이 재시도가 없애려는 상태와 **같은 상태**다.
+          비용은 간격 사다리(`_CAPS_RETRY_BACKOFF_SEC`)가 억제한다 — 천장에서 시간당 4회다.
+
+        `immediate=False` 는 **직전에 이미 한 회차를 돌린** 호출부용이다(표 밖 CLI 의 동기
+        협상). 그 자리에서 곧바로 같은 협상을 또 돌리면 방금 태운 비용을 즉시 반복한다.
+        """
+        if immediate:
+            _negotiate_caps(wait_baseline=True)
+        attempt = 0
+        while not stop.is_set() and _needs_retry():
+            # 천장은 **화면이 지금 무엇을 보여주는가**로 갈린다 (적대리뷰 P2, 2026-09-07).
+            # 원장 폴백이라도 목록이 서 있으면 사용자는 막혀 있지 않다 — 그때까지 15분마다
+            # 개인 계정 토큰으로 질의를 태울 이유가 없다. 아무것도 못 보여주는 동안만 빠르다.
+            _ceiling = (_CAPS_RETRY_CEILING_SHOWING_SEC if runtimes
+                        else _CAPS_RETRY_CEILING_SEC)
+            delay = (_CAPS_RETRY_BACKOFF_SEC[attempt] if attempt < len(_CAPS_RETRY_BACKOFF_SEC)
+                     else _ceiling)
+            attempt += 1
+            log_event("caps.retry_scheduled",
+                      f"쓸 수 있는 모델을 아직 받지 못했습니다 — {int(delay)}초 뒤 다시 물어봅니다.",
+                      level="INFO", attempt=attempt, delay_sec=delay)
+            if stop.wait(delay):
+                return
+            # ⚠ 대기 뒤 **다시 본다**. 대기 중에 다른 경로(사용자의 `--refresh-caps` 재기동은
+            #   새 프로세스이므로 해당 없지만, 부분 신고 콜백 `_publish_caps`)가 목록을
+            #   채웠을 수 있고, 그때 한 번 더 묻는 것은 순수한 낭비다.
+            if not _needs_retry() or stop.is_set():
+                return
+            # baseline 은 이미 받아 뒀다 — 회차마다 다시 기다리면 그만큼 공백이 길어진다.
+            _negotiate_caps()
+        if runtimes and attempt and not _needs_retry():
+            _log("쓸 수 있는 모델을 받았습니다 — 웹 선택기에 나타납니다.")
+
     if args.cmd:
         _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
         # `--cmd` 는 협상을 돌지 않으므로 여기서도 원장이 `None` 으로 남는다. 같은 함수로
@@ -904,9 +1025,18 @@ def main() -> int:
     # 으로 읽는다.
     _SELF_UPDATE_STOP[0] = heartbeat_stop.set
 
-    if not args.cmd and not _caps_first:
+    # ⚠ 문(gate)의 술어도 `_needs_retry()` 다 (적대리뷰 P2, 2026-09-07). `not runtimes` 로
+    #   두면 **다른 런타임이 하나라도 신고되면** 표 밖 CLI 가 argv 를 못 배운 채 재질의
+    #   기회를 0 으로 잃는다 — `_needs_retry` 를 만든 이유가 바로 그 술어 오류인데 문에는
+    #   옛 술어가 남아 있었다(고친 판정과 그 판정을 부르는 자리가 갈린 형태).
+    if not args.cmd and (not _caps_first or _needs_retry()):
         # 협상은 **뒤에서** 한다. 끝나면 위 `runtimes` 가 제자리로 갱신되고 다음 하트비트가
         # 새 목록을 싣는다 — 그때까지 웹 선택기만 비어 있고, 질문 처리는 이미 살아 있다.
+        #
+        # ⚠ **`_caps_first`(표 밖 CLI) 도 아무것도 못 얻었으면 여기로 온다** (2026-09-07).
+        #   그쪽은 위에서 이미 한 번 동기 협상을 돌았지만, 실패했을 때 재시도할 자리가
+        #   없었다 — 재시도를 «표 안 CLI 전용» 으로 두면 같은 결함이 한 갈래에만 남는다
+        #   (§16.7 G8: 정책을 고쳤으면 적용면을 전수로 본다).
         #
         # ⚠ 이 경로가 **웹 화면의 공백 창**을 만든다는 사실이 이번 수정의 출발점이다. 그
         #   공백 자체는 의도된 것이고(질문 처리를 먼저 살린다), 결함이었던 것은 **공백이
@@ -914,8 +1044,10 @@ def main() -> int:
         #   `onCapsChange` 가 그 축을 닫는다.
         # baseline 을 짧게 기다린 뒤 확인 질의로 간다 — 기다림 없이 출발하면 확인 경로가
         # 사실상 발화하지 않고, 그러면 목록 안정화라는 이 cycle 의 절반이 코드로만 존재한다.
-        threading.Thread(target=lambda: _negotiate_caps(wait_baseline=True),
-                         name="bridge-caps", daemon=True).start()
+        threading.Thread(
+            target=lambda: _negotiate_caps_until_reported(heartbeat_stop,
+                                                          immediate=not _caps_first),
+            name="bridge-caps", daemon=True).start()
 
     cancels = CancelRegistry()
     #: 동시 처리 슬롯. 수요가 오면 늘고, 안 쓰면 오래된 것부터 준다.

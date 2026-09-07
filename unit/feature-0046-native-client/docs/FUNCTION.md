@@ -673,6 +673,18 @@ property** 이고 껍데기가 넘긴 `resident_probe()` 를 매번 새로 부�
 바이너리를 저장소에 커밋하면 그 문제는 풀리지만 더 나쁜 것을 얻는다 — 이력이 릴리스마다 수십
 MB 부풀고 이미지 재빌드 없이는 새 버전을 못 내보낸다. 호스트 디렉토리를 `/srv/client` 로
 붙이는 것은 이 저장소가 **CA 번들에 대해 이미 쓰고 있는 형태**다(`/srv/trust`).
+부수 효과가 하나 더 있다 — `artifacts/` 는 `repo/` 의 **형제**이고 git 저장소 밖이라,
+릴리스 바이너리는 `.gitignore` 같은 약속이 아니라 **구조적으로** 커밋될 수 없다.
+
+⚠ **그 마운트 원본 경로는 한 곳에만 있고, 그 경로를 틀리면 조용히 미끼가 생긴다.**
+선언은 `docker-compose.yml` 의 `- ../artifacts/client-release:/srv/client:ro` 이고 compose
+project dir 은 `repo/` 다 — 즉 실제 경로는 `<project_root>/artifacts/client-release` 다.
+디렉토리가 없으면 docker 가 **root 소유로 만들어** 비-root 퍼블리시가 막히므로 배포 전에
+배포 사용자가 먼저 만들어야 하는데, `repo/` 안에도 **`artifacts/` 라는 별개 실디렉토리가
+존재한다**. 그래서 배포 cwd 에서 `mkdir -p artifacts/client-release` 를 치면 아무도 마운트하지
+않는 `repo/artifacts/client-release` 가 생기고, 진짜 경로는 여전히 root 소유로 만들어진다 —
+증상은 「퍼블리시 권한 오류」이고 원인은 **경로**다. 옳은 형태는 절대경로
+(`mkdir -p <project_root>/artifacts/client-release`) 또는 `repo/` 에서 `../artifacts/…` 다.
 
 #### 규율은 러너 자기 갱신에서 그대로 가져온다
 

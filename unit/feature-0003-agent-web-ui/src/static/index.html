@@ -141,7 +141,14 @@
                `<button>` 안의 `<button>` 은 중첩 금지라, 형제로 두고 CSS flex 흐름으로 프로필
                버튼이 쓰고 남은 여백을 채운다(profile.css). 계정 이름이 길어 자리가 없으면 이름을
                뭉개는 대신 칩이 다음 줄로 내려간다. -->
-          <button type="button" class="ai-conn hidden" id="aiConnState" title="내 AI 연결 상태"></button>
+          <!-- ⚠ `aria-live` 는 **승계된 것**이다 (ux 적대리뷰 P2, 2026-09-07). 제거된 컴포저
+               안내 문단이 `aria-live="polite"` 를 갖고 있어 상태 변화를 읽어 주었는데, 그
+               문단만 지우고 승계하지 않으면 「연결 안 됨 → 답할 수 없음」 같은 전이가
+               스크린리더에 **한 마디도** 가지 않는다. 칩은 라벨 자체가 상태이므로 여기가
+               그 자리다. `role="status"` 는 `<button>` 의 암묵 role 을 덮지만 이 요소의
+               1차 의미가 «상태» 이고 클릭은 부가 동작이라 그 교환이 맞다. -->
+          <button type="button" class="ai-conn hidden" id="aiConnState" title="내 AI 연결 상태"
+                  role="status" aria-live="polite"></button>
         </div>
       </aside>
 
@@ -296,24 +303,18 @@
               <li>안 읽은 메시지는 목록에 배지 표시</li>
             </ul>
           </div>
-          <!-- feature-0043: 모델·추론 항목이 숨겨진 **이유**. 서버가 실어 준
-               `model_selector_reason` 만 그린다(프론트가 문구를 짓지 않는다).
+          <!-- feature-0043: 모델·추론 항목이 숨겨진 이유를 여기 문단으로 적던 안내는
+               제거했다 (사용자 결정 2026-09-07). 그 문단은 입력창 위에 자기 줄을
+               차지해 컴포저 전체 높이를 흔들었고, 사이드바 프로필 행과의 하단 정합이
+               안내가 켜질 때마다 어긋났다.
 
-               ⚠ **`role="menu"` 밖에 둔다.** 안에 두면 `note`/`paragraph` 가 허용되지 않는
-               owned child 가 되고, `role="presentation"` 으로 덮으려 해도 `aria-live` 같은
-               global 속성이 있으면 presentation 이 무시돼 암묵 role 이 되돌아온다
-               (ARIA presentational-roles-conflict-resolution — security 적대리뷰 B4).
-               밖에 두면 `aria-live` 를 그대로 쓸 수 있고, 메뉴를 열지 않아도 읽힌다.
-
-               ⚠ **`.composer-box` 밖에 둔다** (사용자 제보 2026-09-02: "대화창 UI가 무너진다").
-               그 상자는 `display:flex` 한 줄이고 형제인 두 팝업은 `absolute`/`fixed` 라 줄에서
-               빠져 있다 — 이 `<p>` 만 정적 흐름이라 **플렉스 항목**이 되어, 안내가 켜지는 순간
-               `+` 버튼과 제품 칩 사이에 끼어 입력창을 오른쪽으로 밀어냈다. `role="menu"` 를
-               피하려고 메뉴 밖으로 꺼낸 것이 배치까지 함께 옮겨 주지는 않았던 것이다.
-               자리는 **입력창 위**다 — 잠금 안내(`#composerGate`)와 같은 근거로, "왜 고를 것이
-               없는가" 는 입력창을 만나기 전에 읽혀야 한다. -->
-          <p class="composer-actions-note hidden" id="composerActionsSelectorNote"
-             aria-live="polite"></p>
+               ⚠ **대가를 정확히 적는다** (ux 적대리뷰 P2, 2026-09-07). 남은 표면이 이 상태를
+               전부 덮지는 **못한다**: 잠금 안내(`#composerGate`)는 `compose_blocked =
+               bridge_mode and not (connected and listening)` 일 때만 뜨므로 「연결·대기는
+               성립했는데 목록만 비었다」를 못 덮고, 연결 칩·모달 문안에는 「모델」이라는
+               말이 없다. 카탈로그 **미수신**(fetch 실패)은 composer.js 가 토스트로 말한다.
+               남는 공백은 「러너는 붙었는데 능력 협상이 계속 실패」 한 경우이며, 그때 화면은
+               선택기만 조용히 없다 — 사용자 결정으로 받아들인 대가다. -->
           <div class="composer-box">
             <!-- feature-0008 (composer-model-selector): textarea 좌측의 multi-action `+`
                  dropdown. ChatGPT 패턴 — primary popup 에 [파일 첨부, 모델 선택] 2 항목.
