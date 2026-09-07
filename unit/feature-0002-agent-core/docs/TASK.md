@@ -8,6 +8,44 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260907T181510-kb-external-search — 로컬 임베딩 철거 이후 KB 검색 연결
+
+- status: implemented — 검증 완료, 병합·배포 결과는 PR #1599 정본
+- 요청: KB 검색을 기존 Claude/Codex 연결에 연결. 사용자 2026-09-07 답변으로 기존 연결 활용 확정.
+- 범위: 별도 임베딩 API 도입 없이 검색 후보를 서버에서 조회하고 외부 AI에 근거로 전달.
+- 위험도: Minor (기존 read scope·큐레이션·인증 계약 유지, 비파괴 내부 검색 수정).
+- worktree: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0002-kb-external-search`
+- branch: `issue/1598-kb-external-search` (내부 ai/codex 브랜치에서 통합), base: `71dc946f`
+- 정책 실경로: 위 worktree의 `AGENTS.md`; main `/root/download/docker/mysql_ai_delegated_dev/repo/AGENTS.md`와 동일.
+- 정책 SHA-256: `8e7d65bd9d31b1013ef522b762abbc62fb023ef8c358a92e46ab567eac277770` (착수 확인).
+
+### 2.1 Implementation Plan
+
+1. `src/modules/sample_queries.py`: `search_samples`/`load_example_queries_context`에 임베딩 없는 문자 검색 추가. 승인·active·제품+common 조건과 SQL 비실행 계약 유지.
+2. `src/agent_core.py`: `_build_knowledge_context`의 샘플 주입을 벡터 유무와 분리.
+3. `shared/config.py`, `src/modules/kb_retrieval.py`, `src/scripts/kb_embedding_worker.py`: 폐기된 로컬 임베딩 alias가 남은 환경에서도 조회·등록·백필이 제거된 제공자에 요청하지 않도록 공통 모델 정규화. 기존 벡터 보존.
+4. feature-0003 `src/routers/ai_tools.py`: `_kb_grounding_sections`의 검색/추가 focus 조회에 필요한 근거 연결. 제품·데이터소스·대화 경계는 기존 인가 결과만 사용. 새 외부 AI 호출 없음.
+5. 관련 기능 문서·검색 계약·공식 pg_trgm 문서 근거·단위/격리 PostgreSQL/라이브 read-only 검증 결과 기록. backend/security/qa 검토 후 verify-completion, commit/PR, 승인된 배포 절차.
+
+### Acceptance Criteria
+
+- 임베딩 제공자 부재 + 승인된 `활성 고객 수` 샘플 → 관련 질문의 EXAMPLE QUERIES에 SQL 예시 포함; 미승인/retired/다른 제품 샘플은 제외.
+- 같은 검색 결과가 외부 AI `claim_request.kb_context` 및 `get_task_context(focus=...)`에서 도달한다.
+- `AGENT_KB_EMBEDDING_MODEL=titan-embed` 잔존 → 질의/샘플 등록/백필의 LLM client 생성 0회; 기존 벡터 일괄 삭제 없음(질문 수정 시 해당 벡터는 무효화).
+- 검색은 문자 유사도 기반 후보이며, 의미 판단은 외부 AI가 수행한다. 벡터 의미검색과 동등하다고 표기하지 않는다.
+- DB 오류와 무매칭을 구분하여 기존 notes/fail-soft 경로에 표시. SQL은 바인딩하며 새 인가 우회 없음.
+
+- 인사이트 문서 검색은 MySQL 정본 hash/모든 DB 해석 인가로 제한. MSSQL legacy는 출처 불명으로 제외하고 구조 도구 안내.
+
+### Verification plan
+
+- 임베딩 네트워크 tripwire, SQL scope/승인 조건, 빈 질문·NULL embedding·정상 예시·오류 회귀.
+- 실제 격리 PostgreSQL에서 검색 순위/배제/특수문자 바인딩 확인; 외부 AI prompt 전달 회귀.
+- §18.8 backend/security/qa 패널 최대 3라운드, 마지막 P1 0; 기능별 verify-completion.
+- [x] 구현 및 문서
+- [x] 검증 203 PASS; 패널 결과 REVIEW 기록
+- [x] commit/push/PR #1599 기록; 병합·배포 실측은 PR 본문에 갱신
+
 ## TASK-20260814T190000-ds-connect-network-guidance — 데이터소스 연결 제한 시 '머신의 네트워크 이슈'·'VPN 연결 이슈' 명시 안내 (Minor §12.3)
 
 사용자 요청(2026-08-14): "프로젝트 내 서비스에서 assistant 에게 요청했을 때, 요청된 각

@@ -1,8 +1,8 @@
 """ITEM-02 (ROADMAP dba-ai-nl2sql): 샘플쿼리 few-shot 저장소 — 등록·검색·주입·신선도.
 
-NL↔SQL 샘플을 agent_kb(PG)에 product-scoped(scope_key) + 임베딩(titan-embed, vector(1024))으로
-저장하고, 사용자 질문 임베딩으로 **approved∧active** 샘플을 cosine top-K(weight 가중) 검색해
-_build_knowledge_context 가 `## EXAMPLE QUERIES` 로 주입한다.
+NL↔SQL 샘플을 agent_kb(PG)에 product-scoped(scope_key)로 저장한다. 임베딩 없이도
+pg_trgm으로 **approved∧active** 후보를 검색하여 기존 Claude/Codex 근거 번들에 전달한다.
+저장된 벡터와 명시적인 벡터 조회 경로는 보존한다.
 
 가드: ① product-scope(scope_key=활성 제품 + 'common' — metadata-product-scope) ② approved∧active 만 검색
 ③ **injection-only**(샘플 sql 은 프롬프트 예시일 뿐 직접 실행 절대 금지 — 호출측 datamark+펜스)
@@ -20,6 +20,7 @@ _log = logging.getLogger("sample_queries")
 
 _DEFAULT_TOP_K = 5
 _INJECT_SQL_CAP = 800   # 주입 시 샘플 SQL 길이 cap(프롬프트 비대 방지)
+_LEXICAL_MIN_SIM = 0.2
 
 
 def _ro_conn(conn):
@@ -28,7 +29,7 @@ def _ro_conn(conn):
 
 
 def _embed(text, timeout_sec=None):
-    """nl_question/질문 임베딩(titan-embed). 미설정/실패 → None(graceful).
+    """nl_question/질문 임베딩(명시 제공자 설정 시). 미설정/실패 → None(graceful).
     CHG-20260625: timeout_sec 전달 — 상호작용(질의) 경로는 fast-fail timeout 을 쓴다."""
     from modules.kb_retrieval import _embed_query_vector
     return _embed_query_vector(text, timeout_sec=timeout_sec)
@@ -38,7 +39,7 @@ def _embed(text, timeout_sec=None):
 def register_sample(conn, scope_key, nl_question, sql, *, domain="", weight=100,
                     source_type="manual", approved=False, created_by=None,
                     embedding=None) -> None:
-    """샘플 upsert. embedding 미제공 시 nl_question 을 임베딩(titan-embed). 단위테스트는
+    """샘플 upsert. embedding 미제공 시 nl_question 을 임베딩(명시 제공자 설정 시). 단위테스트는
     embedding=[] 등 명시로 Bedrock 우회."""
     vec = embedding
     if vec is None:
@@ -130,9 +131,9 @@ def update_sample(conn, sample_id, scope_key, *, nl_question=None, sql=None, dom
     """샘플 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404).
 
     부분 수정 — None 인 필드는 미수정. nl_question 변경 시에만 embedding 인자를 반영한다
-    (하이브리드 C: 호출측이 nl 변경 시 동기 임베딩 시도, 실패면 None 전달 → status='stale').
-      · embedding=벡터  → embedding 갱신(+status='active')
-      · embedding=None  → embedding 무효화(NULL) + status='stale' (재임베딩 대기)
+    (호출측이 nl 변경 시 임베딩 시도, 실패면 None 전달. SQL 신선도 상태는 보존).
+      · embedding=벡터  → embedding 갱신(신선도 상태 보존)
+      · embedding=None  → embedding 무효화(NULL), 문자 검색은 기존 신선도 상태를 따름
       · embedding 미지정(_EMBED_SENTINEL) → embedding/status touch 안 함(nl 미변경 경로)
     nl_question 변경이 기존 (scope,nl) UNIQUE 와 충돌하면 호출측이 IntegrityError 를 409 로 변환.
     """
@@ -157,12 +158,10 @@ def update_sample(conn, sample_id, scope_key, *, nl_question=None, sql=None, dom
         if embedding:
             # %s::vector 캐스트 필수(register_sample 선례) — psycopg3 list→float8[] 불일치 방지.
             sets.append("embedding = %s::vector")
-            sets.append("status = 'active'")
             params.append(list(embedding))
         else:
-            # 임베딩 실패/무효화 → 검색 대상에서 제외(stale). NULL embedding 은 search WHERE 가 거른다.
+            # 임베딩 유무와 SQL 신선도는 독립이다. active/stale/retired 상태는 보존한다.
             sets.append("embedding = NULL")
-            sets.append("status = 'stale'")
     if not sets:
         return 0  # 변경 필드 없음 — no-op(호출측은 404 아님; 입력검증에서 차단 권장)
     sets.append("updated_at = now()")
@@ -218,9 +217,34 @@ def search_samples(conn, query_vector, scope_key, top_k=_DEFAULT_TOP_K):
 _QVEC_UNSET = object()  # "벡터 미제공 → 직접 임베딩" 과 "None 전달 → 임베딩 skip" 구분 sentinel
 
 
+def search_samples_text(conn, query_text, scope_key, top_k=_DEFAULT_TOP_K):
+    """임베딩 없는 샘플도 검색한다. 반환 점수는 문자 유사도이며 의미 유사도가 아니다."""
+    query = " ".join(str(query_text or "").split())
+    if not query:
+        return []
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT nl_question, sql, domain, weight, sim FROM ("
+            "SELECT id, nl_question, sql, domain, weight, GREATEST("
+            "similarity(nl_question, %(query)s), "
+            "word_similarity(%(query)s, nl_question), "
+            "strict_word_similarity(%(query)s, sql)) AS sim "
+            "FROM sample_queries WHERE scope_key = ANY(%(scopes)s) "
+            "AND approved = true AND status = 'active') AS candidates "
+            "WHERE sim >= %(min_sim)s "
+            "ORDER BY sim * (weight / 100.0) DESC, sim DESC, id DESC LIMIT %(k)s",
+            {"query": query, "scopes": _kb_scope_candidates(scope_key),
+             "min_sim": _LEXICAL_MIN_SIM, "k": max(0, min(int(top_k), 20))},
+        )
+        return list(cur.fetchall() or [])
+    finally:
+        cur.close()
+
+
 def load_example_queries_context(user_message, scope_key=None, conn=None, top_k=_DEFAULT_TOP_K,
-                                 query_vector=_QVEC_UNSET) -> str:
-    """질문 임베딩 → approved∧active∧product-scoped 유사 샘플 top-K → 프롬프트 본문 조립.
+                                 query_vector=_QVEC_UNSET, raise_on_error=False) -> str:
+    """벡터/문자 검색 → approved∧active∧product-scoped 유사 샘플 top-K → 프롬프트 본문 조립.
     미매칭/미가용/임베딩실패 → "". scope 미지정 시 활성 제품(get_active_product_scope).
 
     CHG-20260625: query_vector 를 넘기면 그 벡터를 재사용한다(_build_knowledge_context 가
@@ -234,16 +258,20 @@ def load_example_queries_context(user_message, scope_key=None, conn=None, top_k=
         qvec = _embed(user_message, timeout_sec=AGENT_KB_QUERY_EMBED_TIMEOUT_SEC)
     else:
         qvec = query_vector
-    if not qvec:
-        return ""
     c = None
     owned = False
     try:
         c, owned = _ro_conn(conn)
         if c is None:
+            if raise_on_error:
+                raise RuntimeError("KB read connection unavailable")
             return ""
-        rows = search_samples(c, qvec, scope_key, top_k=top_k)
+        rows = search_samples(c, qvec, scope_key, top_k=top_k) if qvec else []
+        if not rows:
+            rows = search_samples_text(c, user_message, scope_key, top_k=top_k)
     except Exception as exc:
+        if raise_on_error:
+            raise
         _log.debug("sample_search_failed err=%r", exc)
         return ""
     finally:

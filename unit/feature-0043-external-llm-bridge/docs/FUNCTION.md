@@ -8,6 +8,9 @@ source_of_truth: true
 
 # Function
 
+KB 근거 연결(#1598): claim 응답의 사용자 질문은 principal+canary, 이전 이력은 history,
+조회된 KB만 비신뢰 tool_output 구획이다. 기존 러너는 kb_context를 프롬프트에 전달한다.
+
 ## 1. Summary
 
 서비스가 보유한 Claude 계정(`claude-corp` · `root`)으로 LLM을 호출하는 경로를 **전면 차단**하고,

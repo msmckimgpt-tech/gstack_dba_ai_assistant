@@ -3743,3 +3743,8 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고, 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다(배포 후 라이브 노출은 wrapper 소관).
 - reconcile-first 실측(커밋 직전 재측정 2026-09-07T01:03:01+09:00): 서빙 `release-notes-data.js` md5 `f26bed6e…` = `origin/main` blob 동일 → **파리티 갭 0**. `repo/` main clean · `origin/main` == `9e26ffa5` · 배포 실패 마커 0. 캐시버스터 수기 bump **없음** — 소스는 `?v=dev` 고정이고 빌드가 content-hash 를 주입하며(현재 서빙 `?v=d1ebb1da0b64`), `bin/deploy-web.sh` ABORT 가드가 baked 이미지의 `?v=dev` 잔존으로 주입 누락을 판정하므로 수기 실값은 그 안전장치를 무력화한다.
 - **Pass/Fail: PASS**.
+
+## RUN-20260907T181510-kb-external-search
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Result: PASS — 최종 회귀 203건, 실제 격리 PostgreSQL 포함.
+- Evidence: [실행 기록](test-runs.d/TASK-20260907T181510-kb-external-search.md).

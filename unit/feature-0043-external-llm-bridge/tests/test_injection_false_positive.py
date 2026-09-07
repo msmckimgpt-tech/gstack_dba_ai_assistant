@@ -222,7 +222,18 @@ def test_claim_request_uses_principal_and_history_wrappers():
     body = _func_source(_AI_TOOLS, "claim_request")
     assert "_guard.wrap_principal_request(" in body, "질문이 principal 구획으로 나가지 않는다"
     assert "_guard.wrap_conversation_history(" in body, "이력이 참고맥락 구획으로 나가지 않는다"
-    assert "_guard.wrap_tool_output(" not in body, "비신뢰 구획이 되살아났다"
+    import ast
+    tree = ast.parse(_AI_TOOLS.read_text(encoding="utf-8"))
+    fn = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "claim_request")
+    calls = {}
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "_guard"):
+            calls.setdefault(node.func.attr, []).append(ast.unparse(node.args[0]))
+    principal = ast.parse('f"{_guard.session_canary(task_id)}\\n{question}"', mode="eval").body
+    assert calls["wrap_principal_request"] == [ast.unparse(principal)]
+    assert calls["wrap_conversation_history"] == ["history"]
+    assert calls.get("wrap_tool_output", []) == ["kb_context"], "KB 근거만 비신뢰 구획이어야 한다"
 
 
 def test_claim_request_prepends_the_origin_preamble():

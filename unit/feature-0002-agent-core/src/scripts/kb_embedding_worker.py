@@ -74,6 +74,8 @@ def call_openai_embeddings(texts: list[str], model: str, timeout_sec: int, max_a
     Returns: list of float vectors, one per input text. Order preserved.
     Raises: Exception on final failure.
     """
+    from shared.config import normalize_kb_embedding_model
+    model = normalize_kb_embedding_model(model)
     try:
         from openai import OpenAI  # type: ignore
     except ImportError as e:
@@ -199,7 +201,8 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    model = str(args.model or settings["model"] or "").strip()
+    from shared.config import normalize_kb_embedding_model
+    model = normalize_kb_embedding_model(args.model or settings["model"])
     batch_size = args.batch_size or settings["batch_size"]
     max_rows = args.max_rows
 
@@ -305,7 +308,8 @@ def run_embedding_pass(max_rows: "int | None" = None) -> dict:
     if max_rows is not None and max_rows <= 0:
         return {"processed": 0, "failed": 0, "error": "", "remaining": None}
     settings = get_settings()
-    model = str(settings["model"] or "").strip()
+    from shared.config import normalize_kb_embedding_model
+    model = normalize_kb_embedding_model(settings["model"])
     # ⚠ **모델 미설정이면 백필 자체를 no-op 으로 둔다** — codex 적대 리뷰 P2 (2026-09-07).
     #   local-llm-decommission 으로 `AGENT_KB_EMBEDDING_MODEL` 기본값이 빈 값이 됐는데,
     #   `AGENT_KB_EMBEDDING_AUTO` 는 여전히 기본 활성(shared/config.py)이라 insight-worker 의

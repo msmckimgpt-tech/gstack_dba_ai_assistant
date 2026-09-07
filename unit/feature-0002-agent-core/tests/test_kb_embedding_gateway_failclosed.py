@@ -62,7 +62,7 @@ def test_embedding_client_requires_both_gateway_settings(monkeypatch, key, base,
     monkeypatch.setattr(_openai, "OpenAI", _Boom)
 
     with pytest.raises(RuntimeError) as ei:
-        W.call_openai_embeddings(["텍스트"], "titan-embed", 5, 1)
+        W.call_openai_embeddings(["텍스트"], "external-embedding-test", 5, 1)
     assert missing_token in str(ei.value), str(ei.value)
     assert called == [], "클라이언트가 생성되면 안 된다"
 
@@ -88,7 +88,7 @@ def test_embedding_client_passes_explicit_base_url(monkeypatch):
     import openai as _openai
     monkeypatch.setattr(_openai, "OpenAI", _Client)
 
-    out = W.call_openai_embeddings(["텍스트"], "titan-embed", 5, 1)
+    out = W.call_openai_embeddings(["텍스트"], "external-embedding-test", 5, 1)
     assert out == [[0.1, 0.2]]
     assert seen.get("base_url") == "http://bedrock-gateway:8080/v1", seen
     assert seen.get("api_key") == "k"
@@ -126,7 +126,7 @@ def test_backfill_is_noop_when_model_unset(monkeypatch):
 def test_backfill_still_runs_when_model_set(monkeypatch):
     """가드가 **정상 경로를 막지 않는다** (§16.7 G9-c — 차단 로직의 정상 경로 실측)."""
     monkeypatch.setattr(W, "get_settings", lambda: {
-        "model": "titan-embed", "batch_size": 2, "timeout": 300, "max_attempts": 1,
+        "model": "external-embedding-test", "batch_size": 2, "timeout": 300, "max_attempts": 1,
     })
     monkeypatch.setattr(W, "open_pg_conn", lambda: object())
     batches = [[("h1", "t1")], []]
@@ -188,7 +188,7 @@ def test_cli_entrypoint_exits_zero_when_model_unset(monkeypatch, capsys):
 
 def test_cli_entrypoint_honours_explicit_model_override(monkeypatch):
     """`--model` 명시 override 는 보존된다 (§16.7 G9-c — 차단이 정상 경로를 막지 않는다)."""
-    monkeypatch.setattr(sys, "argv", ["kb_embedding_worker.py", "--model", "titan-embed", "--dry-run"])
+    monkeypatch.setattr(sys, "argv", ["kb_embedding_worker.py", "--model", "external-embedding-test", "--dry-run"])
     monkeypatch.setattr(W, "get_settings", lambda: {
         "model": "", "dim": 1024, "batch_size": 2, "timeout": 300, "max_attempts": 1,
     })

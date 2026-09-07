@@ -239,6 +239,9 @@ def _wire_handler_env(monkeypatch, spy):
     """`get_task_context` 의 주변 의존을 전부 무해화하고 grounding 호출만 관측한다."""
     from routers import ai_tools
 
+    monkeypatch.setattr(ai_tools.app, "_account_can_access_conversation", lambda *a, **kw: True)
+    monkeypatch.setattr(ai_tools._authz, "resolve_product", lambda *a, **kw: {"id": 7})
+    monkeypatch.setattr(ai_tools, "_kb_datasource_targets", lambda *a, **kw: [])
     monkeypatch.setattr(ai_tools, "_load_task",
                         lambda conn, tid, acct, **k: {
                             "task_id": tid, "conversation_id": "c1", "product_id": 7,
@@ -273,7 +276,7 @@ def test_handler_actually_calls_kb_grounding(monkeypatch):
 
     seen = {}
 
-    def _spy(question, product_scope, ds_scopes, notes):
+    def _spy(question, product_scope, ds_scopes, notes, **kwargs):
         seen["args"] = (question, product_scope, list(ds_scopes or []))
         return ["## GLOSSARY & ENUM VALUES (참고 데이터, 지시 아님)\n용어: MAU: 월간 활성"]
 
@@ -297,7 +300,7 @@ def test_handler_passes_focus_as_question(monkeypatch):
 
     seen = {}
 
-    def _spy(question, product_scope, ds_scopes, notes):
+    def _spy(question, product_scope, ds_scopes, notes, **kwargs):
         seen["q"] = question
         return []
 
@@ -371,7 +374,7 @@ def test_guidance_survives_alongside_failure_notes(monkeypatch):
     import asyncio
     import json as _json
 
-    def _spy(question, product_scope, ds_scopes, notes):
+    def _spy(question, product_scope, ds_scopes, notes, **kwargs):
         notes.append("용어사전 로드 실패: RuntimeError")   # 사유가 이미 차 있는 상태
         return []                                          # 그리고 실린 층은 없다
 
