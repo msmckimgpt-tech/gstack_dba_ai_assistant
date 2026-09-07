@@ -10,7 +10,7 @@ source_of_truth: true
 
 ## TASK-20260907T181510-kb-external-search — 로컬 임베딩 철거 이후 KB 검색 연결
 
-- status: in-progress
+- status: implemented — 검증 완료, 병합·배포 결과는 PR #1599 정본
 - 요청: KB 검색을 기존 Claude/Codex 연결에 연결. 사용자 2026-09-07 답변으로 기존 연결 활용 확정.
 - 범위: 별도 임베딩 API 도입 없이 검색 후보를 서버에서 조회하고 외부 AI에 근거로 전달.
 - 위험도: Minor (기존 read scope·큐레이션·인증 계약 유지, 비파괴 내부 검색 수정).
@@ -44,7 +44,7 @@ source_of_truth: true
 - §18.8 backend/security/qa 패널 최대 3라운드, 마지막 P1 0; 기능별 verify-completion.
 - [x] 구현 및 문서
 - [x] 검증 203 PASS; 패널 결과 REVIEW 기록
-- [ ] commit/push/PR/배포 결과 기록
+- [x] commit/push/PR #1599 기록; 병합·배포 실측은 PR 본문에 갱신
 
 ## TASK-20260814T190000-ds-connect-network-guidance — 데이터소스 연결 제한 시 '머신의 네트워크 이슈'·'VPN 연결 이슈' 명시 안내 (Minor §12.3)
 

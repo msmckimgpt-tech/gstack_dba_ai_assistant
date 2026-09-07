@@ -315,3 +315,9 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 | TEST-20260902T140000-fold | `connect-modal.js` | 접는 식이 **한 곳**뿐 · 원시 낡음 직접 읽는 곳 없음 · 구 서버 응답은 종전 안내로 폴백 | AC-20260902T140000-selfupdate-5 |
 | TEST-20260902T140000-emit | `agent/__init__.py` | `_EMIT_ORDER` 등재 — 빠지면 배포본에서 **조용히 사라진다** | AC-20260902T140000-selfupdate-1 |
 | TEST-20260902T140000-stdlib | 배포본 | 표준 라이브러리 밖 import 0 — 무설치 계약 유지 | AC-20260902T140000-selfupdate-1 |
+
+## RUN-20260907T190600-kb-trust-boundary
+- Result: 19 passed in 0.16s.
+- 전체 실행: 7485 passed, 28 skipped, 1 legacy assertion failed; 그 검사를 고친 후 이 suite19 PASS.
+- Environment: isolated Docker, network none. 제품 코드 변경 없음.
+- Evidence: wrapper artifacts/kb-external-search/tests-trust-boundary.log.

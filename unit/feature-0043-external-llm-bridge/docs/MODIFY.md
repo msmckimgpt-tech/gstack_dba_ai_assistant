@@ -4768,3 +4768,10 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   문단으로 접고 140자 상한(`_reasonLine` · `_CHIP_REASON_MAX_CHARS`).
 - `../feature-0003-agent-web-ui/src/static/index.html`: 칩에 `role="status" aria-live="polite"`
   승계 + 과장된 커버리지 주석 정정.
+
+## CHG-20260907T190600-kb-trust-boundary-test
+- Related TASK: TASK-20260907T181510-kb-external-search (#1598)
+- Files: tests/test_injection_false_positive.py
+- Summary: 전체 로컬 CI 실행의 유일한 실패는 claim 안의 모든 비신뢰 포장을 금지하는 옛
+  assertion이었다. 질문/이력/KB 각 인자를 구별하는 AST 검사로 정합화해 사용자 요청 오탐
+  방지와 KB 비신뢰 구획을 동시에 지킨다. 제품 코드 변경 없음. 해당 suite19 PASS.

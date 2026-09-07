@@ -2975,3 +2975,9 @@ P1 0, QA R3 P1/P2 0. Git 동기화·배포 결과는 이슈 #1598에 연결되�
 ### Git 동기화 결과
 - 코드/검증/문서를 함께 commit/push하고 PR에서 병합·배포 결과를 기록한다.
 - 기존 main의 .codex/config.toml 및 untracked source-command skills는 유지한다.
+
+### 전체 CI 대체 및 통합
+- origin/main067e4a58 통합(50e1c94a). 문서 충돌은 양쪽 기록 보존. 제품 KB 구현 충돌 없음.
+- 로컬 전체7485 PASS/28 skip, 옛 구획 assertion1건은 테스트 정합 후 해당suite19 PASS.
+- 전체ruff0, migrate-lint/head/code navigation PASS. GitHub runner는 billing 차단으로 미실행.
+- 최종 Git·배포 상태: PR #1599 본문에 기록(AGENTS §16.3 결과 기록의 PR 정본 허용).

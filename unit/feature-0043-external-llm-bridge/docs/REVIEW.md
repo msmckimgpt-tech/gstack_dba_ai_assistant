@@ -4935,3 +4935,19 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 
 라운드 2(확인 라운드)는 이 조치들에 대한 회귀 테스트 8건 신설 + 전체 `make test` 로 갈음한다 —
 §18.8 패널 수렴 계약 (a) 「P1 을 수정했으면 확인 라운드 1회」.
+
+## REV-20260907T190600-kb-trust-boundary [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: 질문/이력/KB trust boundary 회귀 검사
+- Timestamp: 2026-09-07T19:06:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T190600-kb-search-security-r3.md
+- Human Approval Needed: no
+
+## REV-20260907T190600-kb-ci-channel [SKIPPED:channel-unavailable:github-actions]
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Reason: GitHub Actions run34075693338 job101601208267 annotation에서 계정 결제/지출 한도
+  때문에 job이 시작되지 못했다고 확인했다. AGENTS §18.8 채널 불가 판정.
+- Alternative: 전체 로컬 CI 7485 PASS/28 skip/1 옛 assertion 실패; 그 검사 정합 후 suite19 PASS.
+  KB 관련203 PASS. 전체ruff0, migrate-lint heads/self-test, codenav/routemap PASS.
+- verification_debt: 원격 GitHub runner 미실행; retry_after=unknown; 복구 후 다음 cycle에서 확인.

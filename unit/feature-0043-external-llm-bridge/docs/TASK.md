@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260907T181510-kb-external-search — KB 구획 회귀 정합 (#1598)
+
+- [x] claim_request의 질문(principal+session canary)·이력(history)·KB(tool_output) 구획을
+  AST 인자·호출 개수로 구별한다. 모든 tool_output 호출을 금지하던 과도한 검사를 수정했다.
+- [x] 제품 코드 추가 변경 없음. 기존 프롬프트 오탐 방지 suite 19 PASS로 확인한다.
+- [x] 보안 R3 PASS. 질문/이력을 비신뢰 도구 구획에 넣는 회귀는 계속 차단한다.
+- 검증 정본: core docs/test-runs.d/TASK-20260907T181510-kb-external-search.md.
+
 ## 1. Current Status
 - State: in-progress (답변 총 수행시간 각인 복구 — TASK-20260902T172500, 코드·테스트 완료 ·
   배포 후 라이브 확인 대기 / 선행 TASK-20260902T140000 은 사용자 머신 러너 재기동 대기)
