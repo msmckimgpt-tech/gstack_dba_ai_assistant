@@ -55,6 +55,10 @@ function mk(id) {
 globalThis.document = {
   getElementById: (id) => els.get(id) || null,
   createElement: () => mk("tmp-" + Math.random()),
+  // ⚠ 목록을 실제로 그리려면 이것도 있어야 한다. 없던 동안 `paint()` 가 던졌고, 그 예외가
+  //   `.catch` 에 잡혀 **「연결 기능에 닿지 못했습니다」로 둔갑**했다 — 하네스의 결함이
+  //   제품의 실패처럼 보인 형태다(실측 2026-09-07).
+  createTextNode: (t) => ({ nodeValue: String(t) }),
 };
 globalThis.location = { search: "?client_port=1234&client_nonce=n-test", pathname: "/", hash: "" };
 globalThis.history = { replaceState() {} };
@@ -75,10 +79,15 @@ globalThis.fetch = (url, opt) => {
     if (globalThis.__tokenFails) return Promise.reject(new Error("no session"));
     return Promise.resolve({ ok: true, json: () => Promise.resolve({ launch: { protocol: LAUNCH } }) });
   }
+  if (u.indexOf("/discover") >= 0) {
+    return Promise.resolve({ json: () => Promise.resolve(
+      { ok: true, runtimes: globalThis.__runtimes || [] }) });
+  }
   return Promise.resolve({ json: () => Promise.resolve({ ok: true, runtimes: [] }) });
 };
 
 if (process.argv[3] === "token-fails") globalThis.__tokenFails = true;
+globalThis.__runtimes = process.argv[4] ? JSON.parse(process.argv[4]) : [];
 
 const mod = await import("file://" + process.argv[2]);
 const statusSeen = [];
@@ -88,16 +97,20 @@ try {
 } catch (e) {
   threw = String(e && e.message || e);
 }
-await new Promise((r) => setTimeout(r, 30));
+await new Promise((r) => setTimeout(r, 250));
 // [이 서비스에 연결] 을 **실제로 누른다** — 등록된 핸들러를 그대로 호출한다.
+// ⚠ 자동 연결을 재는 회차에서는 누르지 않는다. 누르면 그 클릭의 connect 가 섞여 «자동으로
+//   연결했는가» 를 판정할 수 없다(실측: 이 오염으로 4건이 거짓 실패했다).
 let clickThrew = null;
-try {
-  const h = els.get("connectClientConnect").handlers.click;
-  if (h) await h();
-} catch (e) {
-  clickThrew = String(e && e.message || e);
+if (process.argv[5] !== "no-click") {
+  try {
+    const h = els.get("connectClientConnect").handlers.click;
+    if (h) await h();
+  } catch (e) {
+    clickThrew = String(e && e.message || e);
+  }
 }
-await new Promise((r) => setTimeout(r, 30));
+await new Promise((r) => setTimeout(r, 250));
 console.log("@@R@@" + JSON.stringify({
   threw,
   clickThrew,
@@ -110,7 +123,7 @@ console.log("@@R@@" + JSON.stringify({
 """
 
 
-def _run(mode: str = "") -> dict:
+def _run(mode: str = "", runtimes=None, click: bool = True) -> dict:
     if not shutil.which("node"):
         pytest.skip("node 없음")
     import tempfile
@@ -121,7 +134,8 @@ def _run(mode: str = "") -> dict:
         #   `.mjs` 로 복사해 적재한다 — 검증 때문에 제품 파일 확장자를 바꾸지 않는다.
         mod = Path(d) / "client-bridge.mjs"
         mod.write_text(_BRIDGE.read_text(encoding="utf-8"), encoding="utf-8")
-        p = subprocess.run(["node", str(h), str(mod), mode],
+        p = subprocess.run(["node", str(h), str(mod), mode, json.dumps(runtimes or []),
+                            "click" if click else "no-click"],
                            capture_output=True, text=True, timeout=120)
         assert p.returncode == 0, f"stdout={p.stdout}\nstderr={p.stderr}"
         line = next(l for l in p.stdout.splitlines() if l.startswith("@@R@@"))
@@ -231,3 +245,71 @@ def test_a_failed_token_call_still_connects__the_deep_link_path_must_not_break()
     conn = [c for c in r["calls"] if c["url"].endswith("/connect")]
     assert conn, "토큰 실패가 connect 를 통째로 막았다"
     assert json.loads(conn[0]["body"])["launch"] == ""
+
+
+# ── 4. 자동 연결 (사용자 결정 2026-09-07) ────────────────────────────────────────
+#
+# > 각 AI플랫폼 별로 고유한 서비스가 확인된다면 해당 연결은 자동으로 연결되도록 수행해주세요.
+# > (중복되는 플랫폼이 있을때만 구성)
+#
+# 고를 것이 없으면 묻지 않는다. 「고를 것」은 **같은 플랫폼이 두 자리에 있을 때**뿐이다.
+
+_CLAUDE_WIN = {"id": "claude", "name": "claude", "where": "windows", "usable": True}
+_CLAUDE_WSL = {"id": "claude (WSL)", "name": "claude", "where": "wsl", "usable": True}
+_CODEX_WSL = {"id": "codex (WSL)", "name": "codex", "where": "wsl", "usable": True}
+_GEMINI = {"id": "gemini", "name": "gemini", "where": "windows", "usable": True}
+_UNUSABLE = {"id": "codex", "name": "codex", "where": "windows", "usable": False}
+
+
+def _connected(r) -> list:
+    return [json.loads(c["body"])["id"] for c in r["calls"] if c["url"].endswith("/connect")]
+
+
+def test_a_single_platform_connects_without_asking():
+    """**이 단정이 요청의 전부다** — 고를 것이 없으면 묻지 않는다."""
+    assert _connected(_run(click=False, runtimes=[_CODEX_WSL])) == ["codex (WSL)"]
+
+
+def test_distinct_platforms_are_not_a_choice():
+    """⚠ 러너는 요청마다 런타임을 바꿔 답한다 — 한 번 연결하면 나머지도 모델 메뉴에 뜬다.
+    그러므로 «서로 다른 플랫폼이 여럿» 은 사람이 고를 일이 아니다."""
+    assert _connected(_run(click=False, runtimes=[_CODEX_WSL, _GEMINI])) == ["codex (WSL)"]
+
+
+def test_the_same_platform_in_two_places_is_a_choice():
+    """**대조군** — claude 가 Windows·WSL 양쪽에 있으면 어느 쪽인지는 사람만 안다."""
+    assert _connected(_run(click=False, runtimes=[_CLAUDE_WIN, _CLAUDE_WSL, _CODEX_WSL])) == []
+
+
+def test_the_primary_is_deterministic():
+    """탐지 순서로 고르면 같은 컴퓨터에서 실행할 때마다 다른 AI 로 연결된다."""
+    assert _connected(_run(click=False, runtimes=[_GEMINI, _CODEX_WSL])) == ["codex (WSL)"]
+    assert _connected(_run(click=False, runtimes=[_CODEX_WSL, _GEMINI])) == ["codex (WSL)"]
+
+
+def test_unusable_runtimes_are_not_counted():
+    """답하지 못한 것을 «중복» 으로 세면, 쓸 수 있는 하나뿐인데도 사람에게 묻게 된다."""
+    assert _connected(_run(click=False, runtimes=[_UNUSABLE, _CODEX_WSL])) == ["codex (WSL)"]
+
+
+def test_nothing_usable_connects_nothing():
+    assert _connected(_run(click=False, runtimes=[_UNUSABLE])) == []
+
+
+def test_the_auto_connect_carries_the_envelope():
+    """자동이든 수동이든 **같은 경로**여야 한다 — 갈리면 한쪽만 고쳐진다."""
+    body = json.loads([c for c in _run(click=False, runtimes=[_CODEX_WSL])["calls"]
+                       if c["url"].endswith("/connect")][0]["body"])
+    assert body["launch"].startswith("dqa-connect://"), "봉투 없이 연결한다"
+
+
+def test_only_the_first_lookup_may_auto_connect():
+    """⚠ 자동 연결의 «한 번» 을 보장하는 것은 **호출 지점이 하나뿐**이라는 사실이다.
+
+    플래그로 막던 것을 지웠다 — 되메우는 것이 호출 지점이라 그 플래그는 도달할 수 없었고,
+    시험할 수 없는 가드는 「여기 방어가 있다」는 거짓 인상만 남긴다. 대신 그 사실을 잠근다.
+    """
+    src = _BRIDGE.read_text(encoding="utf-8")
+    body = src[src.index("export function initClientPanel"):]
+    assert body.count("refresh(true)") == 1, "auto 를 주는 자리가 여럿이다 — 거듭 연결한다"
+    assert "refresh(false)" in body, "[다시 찾기] 가 자동 연결을 다시 켠다"

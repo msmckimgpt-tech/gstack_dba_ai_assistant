@@ -177,17 +177,17 @@ def test_bridge_is_stopped_even_when_the_window_closes():
     assert "finally:" in seg and "br.stop()" in seg, "브리지가 남아 포트를 붙잡는다"
 
 
-def test_confirm_runs_on_the_main_thread():
-    """tkinter 는 워커 스레드에서 창을 띄우면 신뢰할 수 없다."""
-    seg = _fn_src("_run_browser_shell")
-    assert "_confirm_via_main" in seg and "asks.put" in seg
-    assert "confirm(" in _fn_src("_serve_confirms")
+def test_the_browser_shell_reports_instead_of_asking():
+    """⚠ 2026-09-07 전제 변경 — 브리지는 **묻지 않고 끝난 뒤 알린다**.
 
-
-def test_confirm_times_out_to_no():
-    """답이 없으면 «아니오» 다 — 무한 대기는 브리지 요청을 영원히 붙잡는다."""
+    종전 두 단정(«주-스레드 큐로 확인을 나른다» · «답이 없으면 아니오»)은 그 확인이 있을
+    때만 뜻이 있었다. 확인을 없앤 결정과 잃은 것은 `docs/REVIEW.md` 에 적었다.
+    지우지 않고 **알림 배선을 잠그는 단정으로 뒤집는다.**
+    """
     seg = _fn_src("_run_browser_shell")
-    assert "timeout=" in seg and "return False" in seg
+    assert "notify=_notify" in seg, "알림 전달자가 없다"
+    assert "tray_box" in seg, "트레이가 세워진 뒤에 알림이 나가도록 묶여 있지 않다"
+    assert "_confirm_via_main" not in seg, "확인 통로가 남아 있다 — 도달하지 않는 코드다"
 
 
 # ── 3. 서비스 패널 ────────────────────────────────────────────────────────────────
@@ -217,10 +217,15 @@ def test_panel_calls_the_bridge_with_post_and_nonce():
     assert 'method: "POST"' in call and '"X-DQA-Nonce": nonce' in call
 
 
-def test_panel_handles_the_declined_answer():
-    """네이티브 확인창에서 «아니오» 를 누른 경우를 정중히 다뤄야 한다."""
-    js = _JS.read_text(encoding="utf-8")
-    assert js.count('res.error === "declined"') >= 2, "로그인·연결 양쪽에서 다뤄야 한다"
+def test_panel_no_longer_expects_a_declined_answer():
+    """2026-09-07 전제 변경 — 브리지가 **묻지 않으므로** `declined` 응답 자체가 없다.
+
+    ⚠ 종전 단정(«로그인·연결 양쪽에서 declined 를 다뤄야 한다»)을 지우지 않고 뒤집는다.
+    그 분기를 남겨 두면 영영 도달하지 않는 코드가 되고, 다음 사람은 그것을 보고 확인 창이
+    아직 있다고 읽는다.
+    """
+    assert "declined" not in _code_only(_JS.read_text(encoding="utf-8")), \
+        "도달하지 않는 분기가 남아 있다"
 
 
 def _code_only(js: str) -> str:
@@ -302,7 +307,7 @@ def test_bridge_tracks_when_the_panel_last_spoke(tmp_path, monkeypatch):
     from client import bridge as bridge_mod
     from client import core as core_mod
     plan = core_mod.ConnectPlan(base="https://svc.example", token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     try:
         import time
         b.last_seen = time.monotonic() - 50
@@ -319,7 +324,7 @@ def test_every_action_refreshes_liveness(tmp_path):
     from client import core as core_mod
     import time
     plan = core_mod.ConnectPlan(base="https://svc.example", token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     try:
         b.last_seen = time.monotonic() - 50
         b.act("status", {})
@@ -453,7 +458,13 @@ def test_bridge_client_lives_outside_the_guarded_modal():
     modal = _MODAL_JS.read_text(encoding="utf-8")
     assert "sessionStorage" not in modal and "localStorage" not in modal
     assert modal.count("setInterval") == 1, "상시 폴링 가드가 다시 깨졌다"
-    assert 'from "./client-bridge.js"' in modal, "분리했는데 쓰지 않는다"
+    # ⚠ **스탬프를 허용한다.** feature-0003 asset-stamp-reach(PR #1592)가 모듈 참조에
+    #   `?v=dev` 를 붙이면서 이 단언이 깨졌다 — 그런데 이 스위트가 CI 경로에 없어서
+    #   그 회귀가 **아무 데도 걸리지 않았다**(REPORT.md 의 BLOCKED 항목이 실제로 발현한
+    #   형태다). 검사하려는 성질은 「분리한 모듈을 실제로 쓰는가」이고 스탬프 유무가 아니다.
+    import re as _re
+    assert _re.search(r'from "\./client-bridge\.js(\?[^"]*)?"', modal), \
+        "분리했는데 쓰지 않는다"
 
 
 def test_bridge_module_stores_only_coordinates():
@@ -590,8 +601,12 @@ def test_residency_is_asked_before_the_slow_discover():
     js = _BRIDGE_JS.read_text(encoding="utf-8")
     fn = js[js.find("export function initClientPanel"):]
     st = fn.find('bridgeCall("status"')
-    disc = fn.rfind("refresh();")
+    # ⚠ **첫 조회**와 견준다. 종전에는 `refresh();` 를 찾았는데 그 문자열은 로그인 성공 뒤의
+    #   재조회에도 있어서, 자동 연결(2026-09-07)로 첫 조회가 `refresh(true)` 가 되자 엉뚱한
+    #   자리와 비교하며 깨졌다. 지켜야 하는 성질은 «상주 안내가 느린 탐지에 묶이지 않는다» 다.
+    disc = fn.rfind("refresh(true)")
     assert st > 0, "status 를 묻지 않는다 — 상주 여부를 알 길이 없다"
+    assert disc > 0, "첫 조회를 찾지 못했다 — 표식이 어긋났다"
     assert st < disc, "status 를 discover 뒤에 묻는다 — 안내가 그만큼 늦는다"
 
 

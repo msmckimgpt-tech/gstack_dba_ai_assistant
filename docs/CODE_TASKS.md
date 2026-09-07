@@ -61,9 +61,12 @@ ai_read_priority: 5
 
 ---
 
-## 영역 지도 (routers/ 37파일, 2026-09-01 실측)
+## 영역 지도 (routers/ 38파일, 2026-09-07 실측)
 
-- **29 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
+- **30 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
+  - ⚠ `routers/client_release.py`(INCLUDE_ORDER=260, feature-0046 소유) 는 **`app` 을 import 하지 않는
+    유일한 route-module** 이다 — 그래서 `app.py` 가 `/client` 마운트를 위해 이것만 직접 import 할 수 있다.
+    다른 라우터를 그 자리에 올리면 순환이 생긴다(그 import 가 파일 상단이 아니라 마운트 직전에 있는 이유).
 - **8 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
@@ -403,6 +406,45 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 ("끊김 0" 또는 강행/미확인 사유).
 
 ---
+
+## TASK 11 — 클라이언트 배포본(설치기)을 내보낸다 / 업데이트 채널 변경
+
+**Match keywords**: 클라이언트 배포 · 설치기 · 업데이트 · `client_download` · 「연결 프로그램 받기」 ·
+`DQAConnect-Setup` · 릴리스 디렉토리 · `/srv/client`
+
+**Entry region**: `unit/feature-0003-agent-web-ui/src/routers/client_release.py`
+(L0: `GET /api/ai/client/latest`) — 소유 feature 는 **feature-0046**.
+
+**Reference regions**
+- `unit/feature-0003-agent-web-ui/src/app.py` — `/client` StaticFiles 마운트(디렉토리 존재 시에만).
+- `unit/feature-0003-agent-web-ui/src/routers/oauth_as.py` `_client_download_url` — 릴리스 채널 1순위.
+- `unit/feature-0046-native-client/src/scripts/publish_release.py` — **유일한 반입 경로**.
+- `unit/feature-0046-native-client/src/client/updater.py` — 수신측 계약(고정 출처·4축 무결성).
+- `docker-compose.yml` `x-web-extra` — `../artifacts/client-release:/srv/client:ro`.
+
+**Recurse via** (리터럴 grep)
+```
+grep -rn 'client_release' unit/feature-0003-agent-web-ui/src
+grep -rn 'SETUP_NAME_RE' unit/                      # 세 곳이 같은 모양이어야 한다
+grep -rn 'DOWNLOAD_PREFIX\|/srv/client' unit/ docker-compose.yml
+```
+
+**Invariants**
+- **이름 규약은 세 곳이 같다** — 클라이언트 `updater.SETUP_NAME_RE` · 서버
+  `client_release.SETUP_NAME_RE` · 퍼블리시 `publish_release.SETUP_NAME_RE`. 갈리면 한 곳이
+  통과시킨 릴리스를 다른 곳이 거절해 **아무도 받지 못하고**, 원인은 세 파일을 나란히 놓아야 보인다.
+- **없는 것을 광고하지 않는다** — 실물 부재·크기/지문 불일치는 404 다. 지문은 매니페스트가 아니라
+  **파일에서** 계산한다(퍼블리시 실수를 여기서 막는다).
+- **절대 URL 을 싣지 않는다** — 응답은 상대 `path` 만 준다. 클라이언트는 자기가 고정한 서버(TOFU)에서만
+  받으므로 그것으로 충분하고, 절대 URL 은 「응답을 바꿀 수 있는 쪽이 실행 파일의 출처를 지목한다」는 모양이다.
+- **`/client` 마운트는 기동 시점 판정**이다 — 디렉토리가 나중에 생기면 그 replica 는 서빙하지 않는다.
+
+**Verify**
+```
+python3 -m pytest unit/feature-0046-native-client/tests/test_release_channel.py -q
+python3 unit/feature-0046-native-client/src/scripts/publish_release.py --check   # 서버 시선
+python3 bin/gen-routemap.py                                                       # 라우터 추가 시
+```
 
 ## 부록 — grep 쿡북 (durable anchors)
 

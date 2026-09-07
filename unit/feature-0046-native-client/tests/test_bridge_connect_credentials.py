@@ -67,9 +67,9 @@ def spy(monkeypatch, tmp_path):
     return seen
 
 
-def _bridge(tmp_path, token: str, confirm=lambda msg: True):
+def _bridge(tmp_path, token: str, notify=lambda title, body: None):
     plan = core.ConnectPlan(base=BASE, token=token, home=tmp_path)
-    return bridge_mod.Bridge(plan, confirm=confirm)
+    return bridge_mod.Bridge(plan, notify=notify)
 
 
 # ── 1. 어떤 값이 실제로 흐르는가 ──────────────────────────────────────────────────
@@ -152,17 +152,27 @@ def test_garbage_in_the_envelope_falls_back_rather_than_crashing(tmp_path, spy):
     assert dict(spy["plans"])["spawn"].token == "mat_link"
 
 
-# ── 3. 사람 확인은 그대로다 ───────────────────────────────────────────────────────
+# ── 3. 끝난 뒤 알린다 (2026-09-07 전제 변경) ────────────────────────────────────
+#
+# 종전 계약은 「연결 전에 사람에게 묻는다」였고, 그 확인이 XSS 시나리오의 마지막 방어선
+# 이었다. 사용자 결정(2026-09-07)으로 **묻기를 없애고 알리기로** 바꿨다 — 막지는 못하지만
+# 모르게 일어나지는 않는다. 잃은 것은 `docs/REVIEW.md` 에 적었다.
 
-def test_connect_still_asks_the_human_first(tmp_path, spy):
-    """⚠ 값의 출처가 바뀌었다고 **확인이 약해지면 안 된다** — 그것이 XSS 시나리오에서
-    유일하게 남는 방어선이다."""
-    asked: list[str] = []
-    b = _bridge(tmp_path, token="", confirm=lambda msg: asked.append(msg) or False)
-    res = b.act("connect", {"launch": FRESH})
-    assert res["error"] == "declined"
-    assert asked, "묻지 않고 진행했다"
-    assert spy["plans"] == []
+
+def test_connect_reports_afterwards(tmp_path, spy):
+    told: list[str] = []
+    b = _bridge(tmp_path, token="", notify=lambda t, m: told.append(m))
+    assert b.act("connect", {"launch": FRESH})["ok"] is True
+    assert told and "연결" in told[0], "연결해 놓고 아무 말도 하지 않는다"
+
+
+def test_a_refused_connect_is_not_announced(tmp_path, spy):
+    """대조군 — 거절된 연결까지 «했다» 고 알리면 그 알림은 믿을 수 없게 된다."""
+    told: list[str] = []
+    b = _bridge(tmp_path, token="", notify=lambda t, m: told.append(m))
+    res = b.act("connect", {"launch": "dqa-connect://start?token=t&base=https%3A%2F%2Fevil.example"})
+    assert res["ok"] is False
+    assert told == []
 
 
 def test_pin_records_the_server_we_actually_reached(tmp_path, spy):

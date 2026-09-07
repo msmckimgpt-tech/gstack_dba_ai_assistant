@@ -1,4 +1,9 @@
-import { clientBridge, initClientPanel } from "./client-bridge.js";
+// ⚠ `?v=dev` 를 **반드시** 붙인다. 빌드가 이 토큰을 content-hash 로 치환하는데
+// (`inject_asset_stamp.py`), 토큰이 없으면 치환 대상이 아니어서 이 모듈만 스탬프
+// 밖으로 빠진다 — 캐시 정책이 «?v= 없음 = 조건부 GET» 이라 브라우저 휴리스틱 캐시가
+// 걸리고, **서버는 새 코드를 서빙하는데 페이지는 구 모듈을 쓴다**(라이브 실측
+// 2026-09-07: 배포·재적재 뒤에도 페이지의 모듈에 신규 export 가 없었다).
+import { clientBridge, initClientPanel } from "./client-bridge.js?v=dev";
 //: 패널 배선은 창을 열 때마다가 아니라 **한 번만** 한다 — 매번 하면 리스너가 쌓인다.
 let _clientPanelReady = false;
 

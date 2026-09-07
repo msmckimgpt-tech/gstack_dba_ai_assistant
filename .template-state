@@ -1,12 +1,12 @@
 # .template-state — managed by bin/template-upgrade.sh. Do not edit by hand.
 state_schema_version=1
-declared_version=v3.53.1
-detected_version=v3.53.1
-applied_migrations=v3.25.0-to-v3.26.0,v3.26.0-to-v3.27.0,v3.27.0-to-v3.28.0,v3.28.0-to-v3.29.0,v3.29.0-to-v3.29.1,v3.29.1-to-v3.30.0,v3.30.0-to-v3.31.0,v3.31.0-to-v3.31.1,v3.31.1-to-v3.32.0,v3.32.0-to-v3.33.0,v3.33.0-to-v3.34.0,v3.34.0-to-v3.34.1,v3.34.1-to-v3.35.0,v3.35.0-to-v3.35.1,v3.35.1-to-v3.36.0,v3.36.0-to-v3.37.0,v3.37.0-to-v3.37.1,v3.37.1-to-v3.37.2,v3.37.2-to-v3.38.0,v3.38.0-to-v3.39.0,v3.39.0-to-v3.40.0,v3.40.0-to-v3.41.0,v3.41.0-to-v3.42.0,v3.42.0-to-v3.43.0,v3.43.0-to-v3.44.0,v3.44.0-to-v3.44.1,v3.47.2-to-v3.48.0,v3.48.0-to-v3.49.0,v3.49.0-to-v3.50.0,v3.50.0-to-v3.51.0,v3.51.0-to-v3.52.0,v3.52.0-to-v3.53.0,v3.53.0-to-v3.53.1
+declared_version=v3.53.2
+detected_version=v3.53.2
+applied_migrations=v3.25.0-to-v3.26.0,v3.26.0-to-v3.27.0,v3.27.0-to-v3.28.0,v3.28.0-to-v3.29.0,v3.29.0-to-v3.29.1,v3.29.1-to-v3.30.0,v3.30.0-to-v3.31.0,v3.31.0-to-v3.31.1,v3.31.1-to-v3.32.0,v3.32.0-to-v3.33.0,v3.33.0-to-v3.34.0,v3.34.0-to-v3.34.1,v3.34.1-to-v3.35.0,v3.35.0-to-v3.35.1,v3.35.1-to-v3.36.0,v3.36.0-to-v3.37.0,v3.37.0-to-v3.37.1,v3.37.1-to-v3.37.2,v3.37.2-to-v3.38.0,v3.38.0-to-v3.39.0,v3.39.0-to-v3.40.0,v3.40.0-to-v3.41.0,v3.41.0-to-v3.42.0,v3.42.0-to-v3.43.0,v3.43.0-to-v3.44.0,v3.44.0-to-v3.44.1,v3.47.2-to-v3.48.0,v3.48.0-to-v3.49.0,v3.49.0-to-v3.50.0,v3.50.0-to-v3.51.0,v3.51.0-to-v3.52.0,v3.52.0-to-v3.53.0,v3.53.0-to-v3.53.1,v3.53.1-to-v3.53.2
 strategy=preserve
-last_synced_at=2026-09-07T03:15:44Z
+last_synced_at=2026-09-07T08:30:51Z
 bootstrap=false
-last_synced_template_commit=7ce5832
+last_synced_template_commit=5f7d141
 repair_version_gap=v3.44.1..v3.47.2
 note_v3_50_0=g12-g13-not-delivered
 partial_v3_51_0=#13

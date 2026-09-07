@@ -65,6 +65,26 @@ _ENTRY = _SRC / "dqa_connect.py"
 #: Inno Setup 스크립트(커밋 대상). 빌드가 이것을 컴파일해 설치기를 만든다.
 _ISS = _SRC / "installer" / "DQAConnect.iss"
 
+def _client_version() -> str:
+    """배포 버전의 정본 `src/client/version.py` 를 **텍스트로** 읽는다.
+
+    ⚠ `import client.version` 하지 않는다. 이 스크립트는 빌드 머신에서 도는데, 그쪽에
+    `client` 패키지가 임포트 가능한 상태라는 보장이 없고(경로·가상환경), 임포트에 실패하면
+    빌드가 **버전 없이** 성공해 버린다. 정규식 한 줄이 그 실패 모드를 없앤다.
+    """
+    import re
+
+    src = (_SRC / "client" / "version.py").read_text(encoding="utf-8")
+    # ⚠ 정본 `version.VERSION_RE` 와 **같은 모양**이다. 느슨하면 `1.2.3.4.5` 같은 값이
+    #   통과하고, 그러면 `is_newer` 가 항상 거짓이 되어 **아무도 업데이트되지 않는다**
+    #   (적대 리뷰 C4 — 그 실패는 조용하다).
+    m = re.search(r'^CLIENT_VERSION\s*=\s*"([0-9]+(?:\.[0-9]+){0,3})"', src, re.M)
+    if not m:
+        raise SystemExit("버전 정본을 읽지 못했습니다 — src/client/version.py 의 "
+                         "CLIENT_VERSION 을 확인하세요.")
+    return m.group(1)
+
+
 #: 동봉할 파이썬. **공식 임베더블 배포판**이며 우리가 손대지 않는다.
 #: 버전을 올릴 때는 `--check-runtime` 으로 러너가 그 위에서 도는지 먼저 확인할 것.
 _PY_VERSION = "3.14.7"
@@ -326,8 +346,13 @@ def main(argv: list[str] | None = None) -> int:
                   "앱 폴더는 완성되었습니다.\n"
                   "  설치: winget install --id JRSoftware.InnoSetup", file=sys.stderr)
         else:
+            # ⚠ **버전은 정본에서 주입한다** (feature-0046 client-update-channel).
+            #   `.iss` 의 폴백을 그대로 쓰면, 소스에서 버전을 올려도 설치기 파일명은 그대로라
+            #   업데이트 채널이 「같은 버전의 다른 파일」을 광고하게 된다 — 이미 받은 머신은
+            #   더 새것일 때만 받으므로 **영원히 낡은 채로** 남는다.
             rc = subprocess.run(
-                [iscc, f"/DAppDir={app_dir}", f"/O{out}", str(_ISS)],
+                [iscc, f"/DAppDir={app_dir}", f"/DAppVersion={_client_version()}",
+                 f"/O{out}", str(_ISS)],
                 capture_output=True, text=True).returncode
             if rc != 0:
                 print("ERROR: 설치기 컴파일 실패", file=sys.stderr)
@@ -342,6 +367,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"앱 폴더: {app_dir}  (동봉 런타임: {py.name})")
     print("\n⚠ 서명하지 않았습니다 — 설치기 첫 실행에서 SmartScreen 경고가 뜹니다"
           "([추가 정보] → [실행]). 설치 이후 앱 실행에는 뜨지 않습니다. 사용자 결정 2026-09-03.")
+    if setup is not None:
+        # ⚠ **빌드는 배포가 아니다.** 여기서 멈추면 산출물은 빌드 머신에만 있고, 다른 머신은
+        #   새 버전이 있다는 사실조차 모른다 — 그것이 ROADMAP §10.2 가 미해결로 남긴 간극이다.
+        print("\n다음 — 서버 호스트에서 릴리스 채널에 올립니다 (feature-0046):")
+        print(f"  python3 unit/feature-0046-native-client/src/scripts/publish_release.py \\\n"
+              f"      --setup <이 파일을 서버로 복사한 경로>/{setup.name}")
+        print("  (확인만: 같은 스크립트에 --check)")
     shutil.rmtree(work, ignore_errors=True)
     return 0
 

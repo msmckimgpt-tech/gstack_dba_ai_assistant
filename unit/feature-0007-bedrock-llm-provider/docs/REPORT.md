@@ -10,6 +10,25 @@ source_of_truth: false
 
 ## 1. Summary
 
+> **최신 (2026-09-07, TASK-20260907T152000-local-llm-decommission)** — 로컬 LLM 전면 폐기.
+> 사용자 결정으로 `local-llm-edge`/`local-llm-gateway`(별도 `local_llm` 프로젝트)와 본 repo 의
+> 전용 임베딩 `embed-ollama` 를 모두 제거했다. 폐기 근거는 실측이다 — `local-llm-edge` 7일 로그
+> 77,789줄 중 추론 `POST` **0건**, RSS 31.5MiB(모델 미로드).
+>
+> - **게이트웨이**: `litellm_config.yaml` 의 활성 `model_name` **0개**(`titan-embed` 제거,
+>   chat alias 14종은 feature-0043 에서 이미 주석). `model_list: []` 로 기동함을 실측
+>   (`Application startup complete` + liveliness/readiness 200) — `bedrock-gateway` 는 healthy 유지.
+> - **네트워크**: `llm-shared` attach 6곳 detach + 선언 제거. 서비스 24→23.
+> - **앱 층 fail-open 3경로 폐쇄**: 카탈로그 로컬 tier(env 무관 `False`) · provider 강등 경로 ·
+>   임베딩 워커 자격증명 fallback.
+> - **KB 검색**: 벡터 → `pg_trgm` 강등(기능 유지). 기존 임베딩 154,365행 + bge-m3 볼륨 **보존**.
+> - **후속 결정거리**: `bedrock-gateway` 자체 철거(활성 model 0개로 용도 소진 — 단 feature-0020
+>   무중단 배포 machinery 에 배선돼 있고 **외부 LLM 경로 철거는 별개 결정**).
+> - **운영자 조치 필요**: 라이브 `.env` 의 `LOCAL_LLM_API_BASE`/`LOCAL_LLM_API_KEY` 제거 +
+>   `AGENT_KB_EMBEDDING_MODEL=` 비우기 (`.env*` deny rule 로 이 세션 편집 불가). 미조치 시
+>   기능 영향은 없으나 KB 쿼리마다 `kb_query_embed_failed` 경고 1건이 쌓인다.
+
+
 API Vault (사용자별 OpenAI API key 입력 wizard) 패턴을 전면 폐기하고 서비스가
 보유한 단일 AWS Bedrock 자격증명 (Seoul region `ap-northeast-2`, LiteLLM proxy
 gateway 경유) 으로 모든 LLM 호출을 라우팅하도록 provider 통합을 변경한 cycle.

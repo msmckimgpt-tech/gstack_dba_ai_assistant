@@ -32,8 +32,19 @@
 #define MyAppName "DQA Connect"
 #define MyDisplayName "DQA"
 #define MyAppExe "DQAConnect.exe"
-#define MyAppVersion "1.0.0"
 #define MyPublisher "Masangsoft"
+
+; 버전 정본은 `src/client/version.py` 의 `CLIENT_VERSION` 이고, `build_client.py` 가
+; `/DAppVersion=` 으로 주입한다. 아래 폴백은 **손으로 ISCC 를 부를 때만** 쓰이며 정본과
+; 같은 값이어야 한다 — `tests/test_updater.py::test_iss_version_matches_the_canon` 이 대조한다.
+;
+; ⚠ 갈리면 **설치기 파일명과 프로그램이 말하는 버전이 서로 다른** 상태가 되고, 그 상태에서
+;   업데이트 판정은 «항상 새것»(무한 재설치) 또는 «영원히 최신»(아무도 못 받음) 중 하나로
+;   고장난다. 어느 쪽이든 사용자에게는 원인이 보이지 않는다.
+#ifndef AppVersion
+  #define AppVersion "1.1.0"
+#endif
+#define MyAppVersion AppVersion
 
 [Setup]
 AppId={{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}
@@ -108,3 +119,31 @@ Root: HKCU; Subkey: "Software\Classes\dqa-connect\shell\open\command"; ValueType
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "{#MyDisplayName} 실행"; Flags: nowait postinstall skipifsilent
+; feature-0046 client-update-channel: **업데이트로 무음 설치된 경우** 앱을 다시 띄운다.
+;
+; ⚠ 위 줄은 `skipifsilent` 라 무음 설치에서는 돌지 않는다. 그것이 없으면 사용자는
+;   [업데이트] 를 눌렀다가 **프로그램이 사라지는 것**을 본다 — 업데이트를 적용하려면 실행 중인
+;   exe 를 비켜 줘야 하므로 우리가 스스로 끝내기 때문이다(`client/updater.apply`).
+;
+; ⚠ 무음이면 **무조건** 다시 띄우지는 않는다. MDM·스크립트로 무음 배포하는 경로에서 남의
+;   세션에 창이 뜨면 안 된다. 우리 업데이터만 `/RELAUNCH` 를 준다(`updater.SILENT_ARGS`).
+Filename: "{app}\{#MyAppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchAfterSilentUpdate
+
+[Code]
+function RelaunchAfterSilentUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if not WizardSilent then
+    Exit;
+  { ⚠ 인자 **하나씩** 대조한다. `Pos('/RELAUNCH', GetCmdTail)` 로 보면 다른 인자의 값
+    안에 그 문자열이 들어 있어도 참이 된다 — 실행 여부를 정하는 판정에 부분 문자열을 쓰지
+    않는다. }
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/RELAUNCH') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;

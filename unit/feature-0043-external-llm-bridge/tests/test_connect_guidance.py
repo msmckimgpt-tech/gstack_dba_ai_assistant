@@ -112,18 +112,33 @@ def test_client_download_present_gives_action():
     assert a and a["href"].endswith(".exe")
 
 
+def _function_body(src: str, name: str) -> str:
+    """`def <name>` 부터 **다음 최상위 정의 직전**까지.
+
+    ⚠ 종전에는 `[\\s\\S]{0,1200}?\\n\\n\\n` 로 잘랐다. 그 상한은 함수가 조금만 길어지면
+    매치 자체가 사라져 **단언이 「함수를 찾지 못했다」로 죽는다** — 실제로 그렇게 깨졌다
+    (feature-0046 이 이 함수에 릴리스 채널 분기를 더하면서). 검사가 지키려던 성질은 그대로인데
+    문자 예산 하나 때문에 게이트가 통째로 무의미해지는 형태라, 경계를 **구조**로 옮긴다.
+    """
+    start = src.index(f"def {name}")
+    tail = src[start:]
+    end = re.search(r"\n(?:@|def |class )", tail)
+    return tail[:end.start()] if end else tail
+
+
 def test_server_only_advertises_an_existing_file():
     """`_client_download_url` 은 **실물이 있을 때만** URL 을 낸다.
 
     배포 파이프라인은 리눅스 도커이고 PyInstaller 는 크로스 컴파일하지 않는다 — 즉 대부분의
     배포에서 `.exe` 는 **없다**. 그 사실이 «값» 으로 나타나야 화면이 거짓말을 하지 않는다.
     """
-    src = _OAUTH_AS.read_text(encoding="utf-8")
-    m = re.search(r"def _client_download_url[\s\S]{0,1200}?\n\n\n", src)
-    assert m, "_client_download_url 을 찾지 못했다"
-    body = m.group(0)
+    body = _function_body(_OAUTH_AS.read_text(encoding="utf-8"), "_client_download_url")
     assert "is_file()" in body, "파일 존재를 확인하지 않고 URL 을 낸다"
     assert "return None" in body, "없을 때 None 을 돌려주는 경로가 없다"
+    # feature-0046 client-update-channel: 1순위는 **릴리스 채널**이다. 이미지 안 경로만 보면
+    # 그 자리는 라이브에서 영원히 비어 있어(PyInstaller 는 크로스 컴파일 없음) 버튼이 계속
+    # 숨는다 — ROADMAP §10.2 가 미해결로 기록한 그 상태다.
+    assert "client_release.download_url" in body, "릴리스 채널을 보지 않는다"
 
 
 # ── 4. 프런트가 판정을 조립하지 않는다 ─────────────────────────────────────────

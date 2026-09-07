@@ -687,3 +687,197 @@ P1 5건 + P2 7건 전량 수정(상세는 MODIFY CHG-20260811T120000). 특히 �
 - Human Approval Needed: no (사람 결정을 기록하는 항목)
 - Timestamp: 2026-08-11T14:00:00+09:00
 - Cross-ref: MODIFY CHG-20260811T140000-oauth-acl-intent-record.
+
+
+## REV-20260907T152000-ai-claude-corp-feature-0007-local-llm-decommission [SUBAGENT:pending] — 로컬 LLM 폐기 판단 근거
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Trigger: 사용자 결정 "로컬 LLM 미사용" (2026-09-07) — schema/API 키워드 무매칭, 인프라·설정 변경
+- Timestamp: 2026-09-07T15:20:00+09:00
+- Human Approval Needed: no (범위는 AskUserQuestion 으로 사전 확정)
+
+### 1. 무엇을 근거로 폐기했는가 (추정 아닌 실측 — §16.7 G7-a)
+
+- `local-llm-edge` 7일 로그 77,789줄 중 `POST` **0건**(전량 `GET /api/tags` healthcheck), RSS 31.5MiB = 모델 미로드.
+- `local-llm-gateway` 로그는 자기 `/health` 뿐 — 외부 소비자 트래픽 0.
+- `litellm_config.yaml` 활성 `model_name` 1개(`titan-embed`), chat alias 14종은 이미 주석.
+- 즉 "쓰이지 않는데 GPU·RAM·16GB 디스크를 점유하고 일일 cron 재시작을 요구하는" 상태였다.
+
+### 2. 왜 KB 검색이 죽지 않는가 (제거 전 선판정)
+
+`kb_retrieval._embed_query_vector` 는 `AGENT_KB_EMBEDDING_MODEL` 이 빈 값이면 **호출 전에 None** 을 반환하고,
+`_load_rag_documents_for_request_pg` 의 2-tier 분기가 `qvec is None` 이면 `pg_trgm` 유사도로 흐른다
+(주석에 "롤백 안전" 으로 명시된 기존 경로). 따라서 결과는 **벡터 축 강등**이고 반쪽 상태가 생기지 않는다 —
+`qvec` 이 *항상* None 이므로 벡터 검색이 부분적으로만 도는 구간이 없다.
+보존: `texts` 154,365행 전량 임베딩 + `sample_queries` 1행 (삭제하지 않음 · 제공자 복구 시 재사용).
+
+### 3. 이 cycle 이 폐쇄한 fail-open 3경로 (요청에 명시되지 않았으나 같은 결정의 적용면 — §16.7 G8-a)
+
+1. `model_catalog._LOCAL_LLM_ENABLED` — `.env` 에 `LOCAL_LLM_API_BASE` 가 있어 **라이브에서만** 로컬 alias 가
+   카탈로그에 들어갔고 `/api/ask` 가 `auto`/`edge`/`core`/`code` 를 수락했다. 테스트 환경은 env 미설정이라
+   `test_model_persist.py` 가 `False` 를 단정하며 통과 — **환경 차이가 게이트를 무력화한 형태**.
+2. `config._select_llm_provider()` — Bedrock 자격증명 부재 시 `LOCAL_LLM_*` 로 강등. 라이브에 그 두 값이
+   폐기된 게이트웨이를 가리킨 채 남아 있었으므로 Bedrock 장애 시 도달 불가 백엔드로 흘렀다.
+3. `kb_embedding_worker` — 동일 축의 자격증명 fallback.
+
+### 4. 선행 계약을 뒤집은 지점 (정직 표기)
+
+- **AC-7 (feature-0043, 2026-08-26)**: "`titan-embed` 는 계정과 무관하므로 살아 있어야 한다 —
+  사용자가 요청한 것은 '계정 사용 차단' 이지 '임베딩 중단' 이 아니다." 그 경계는 **계정 축**이었고,
+  이번 결정은 **로컬 실행 축**이라 임베딩을 포함한다. 사용자 Q3 확정(포함) → 테스트 방향 반전.
+- **`test_litellm_config_still_parses`**: "model_list 가 비었다 — 게이트웨이 기동 실패" 는 **가정이었다**.
+  litellm `main-stable` 을 `model_list: []` 로 실기동해 `Application startup complete` +
+  liveliness/readiness 200 을 확인해 반증하고, 단언을 "키 존재 + 리스트 타입" 으로 옮겼다.
+
+### 5. 의도적으로 범위에 넣지 않은 것 (§16.7 G8-c — 기록 없는 미적용은 누락과 구분되지 않는다)
+
+- **`bedrock-gateway` 철거**: 활성 model 0개로 용도가 소진됐다. 그러나 ① feature-0020 무중단 배포의
+  surge replica·`bin/recreate-audit.sh`·`bin/smoke-conversation.sh`·`BEDROCK_GATEWAY_URL` 에 배선돼 있고
+  ② **외부(Bedrock/Anthropic) 경로 철거는 「로컬 LLM 미사용」과 다른 결정**이다. 요청 범위를 넓히지 않고
+  후속 결정거리로 올린다.
+- **`embed_ollama_models` 볼륨 삭제**: 승인받은 16GB 삭제는 `local_llm/models-edge` 대상이었다.
+  되돌리기 경로를 남기기 위해 이 볼륨은 보존한다.
+- **라이브 `.env` 편집**: `.env*` deny rule 로 차단. 코드 방어가 기능을 보장하나 경고 로그가 남는다 —
+  운영자 조치 항목으로 명시.
+
+### 6. 잔여 리스크
+
+- KB 벡터 검색 품질 저하(한국어 의미검색 → trigram). 사용자 결정에 내포된 대가이며 되돌리기 경로는 보존됨.
+- `_LOCAL_LLM_MODELS`/`_LOCAL_LLM_MAX_TOKENS` 는 inert data 로 남는다(`_LOCAL_LLM_ENABLED=False`).
+  그 cap 을 잠그는 `test_prompt_gen_max_tokens.py` 4건은 이제 **도달 불가 tier 의 값**을 검사한다 —
+  vacuous 는 아니나(값 회귀는 여전히 잡는다) 의미는 축소됐다. 정리는 후속.
+
+
+## REV-20260907T163000-ai-claude-corp-feature-0007-local-llm-decommission [CODEX:local-llm-decommission] — BLOCK → 수정 후 재검증
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Source: codex review --uncommitted (codex-cli 0.153.4, model gpt-6-astra, reasoning effort high)
+- Trigger: local-llm-decommission cycle 의 §18.8 적대 검증 (§18.8.1 경량 경로 — codex 채널)
+- Timestamp: 2026-09-07T16:30:00+09:00
+- Verdict: **BLOCK (P1 1건)** → 전건 수정 → 확인 라운드 대기
+- Human Approval Needed: no
+
+### R1 지적 (전건 수용 — 반박 0)
+
+- **[P1] Require the gateway URL before constructing the embedding client**
+  (`kb_embedding_worker.py:91-95`). 인용: *"If `BEDROCK_GATEWAY_API_KEY` is set but
+  `BEDROCK_GATEWAY_URL` is absent, removing the legacy local URL fallback now leaves
+  `base_url` unspecified … sending the gateway credential and KB text to OpenAI rather than
+  failing closed."* — `docs/SECURITY.md:80-84` 를 근거로 제시했고 그 인용이 **정확하다**.
+- **[P2] Disable embedding backfill when the model is empty** (`shared/config.py:809`).
+  인용: *"only query embedding becomes a no-op. `AGENT_KB_EMBEDDING_AUTO` still defaults to
+  enabled, and the insight worker's `run_embedding_pass()` passes the empty model directly …
+  the daemon repeatedly retries invalid requests."*
+
+### 왜 이 두 건이 내 게이트를 통과했는가 (자기 진단)
+
+두 지적은 **같은 형태**다 — 내가 "로컬 경로 제거" 를 *한 경로에서* 수행하고 그 경로의 이웃을
+보지 않았다. §16.7 G8-a 가 정확히 이것을 규정하는데, 나는 G8 census 를 **운영자 DB row**
+(§G8-b)에만 적용하고 **호출 경로 열거**(§G8-a)는 `LOCAL_LLM` grep 결과로 갈음했다.
+grep 은 «내가 지운 심볼» 을 찾았을 뿐 «그 심볼이 없어진 뒤의 거동» 을 보지 않는다:
+
+- P1 은 `LOCAL_LLM_API_BASE` 를 지운 결과 **SDK 기본값**이 드러난 것이므로 그 심볼 grep 에
+  걸리지 않는다.
+- P2 는 `AGENT_KB_EMBEDDING_MODEL` 을 빈 값으로 만든 결과 **다른 소비자**(백필 데몬)가
+  빈 값을 그대로 쓰게 된 것이므로 역시 걸리지 않는다.
+
+교훈: **제거 변경의 적용면은 «제거한 심볼» 이 아니라 «그 심볼이 채우던 자리» 다.** 기본값이
+있는 자리(SDK default·env default)는 제거 시 그 기본값이 새 동작이 된다.
+
+### 수정 요지
+
+- P1 → URL·KEY paired 요구(fail-closed). 계약을 "실패한다" 가 아니라 **"기본 endpoint 로
+  나가지 않는다"** 로 잡고, 테스트가 `OpenAI` 생성자 호출 자체를 금지한다.
+- P2 → `run_embedding_pass` 진입 가드. `error` 를 비워 «비활성 ≠ 실패» 를 유지(매 tick 경고 방지).
+- 신규 6건 + 결함 재주입 3건 FAIL 실증 + 정상 경로 실측.
+
+### 잔여
+
+- 확인 라운드(§18.8 (a) — P1 수정 라운드 자체는 종결 근거가 아니다) 1회 필요.
+
+
+## REV-20260907T174500-ai-claude-corp-feature-0007-local-llm-decommission [CODEX:local-llm-decommission-R2] — P1 0 / P2 1 → 수정
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Source: codex review --base main (codex-cli 0.153.4, gpt-6-astra, effort high) — **확인 라운드 R2**
+- Trigger: §18.8 (a) — P1 을 수정한 라운드 자체는 종결 근거가 아니므로 확인 라운드 1회 필수
+- Timestamp: 2026-09-07T17:45:00+09:00
+- Verdict: **P1 0건** (종결 조건 충족) · **P2 1건** → 수정 완료
+- Human Approval Needed: no
+
+### R2 지적 (수용)
+
+- **[P2] Apply the disabled-model guard to the CLI entry point too**
+  (`kb_embedding_worker.py:288-290`). 인용: *"`bin/kb-embedding-worker.sh` still invokes
+  `main()`, which bypasses this guard and sends `model=""` to the gateway … exits with an API
+  failure instead of recognizing that embedding is disabled."* + *"follows the all-entrypoints
+  requirement in AGENTS.md#L2879-L2881"*(= §16.7 G8-a).
+
+### 이것이 내 자기 진단의 재발이다 (기록)
+
+직전 REVIEW(REV-20260907T163000) §「왜 이 두 건이 내 게이트를 통과했는가」에서 나는 이렇게 적었다 —
+**"제거 변경의 적용면은 «제거한 심볼» 이 아니라 «그 심볼이 채우던 자리» 다."** 그러고서 그 교훈을
+적용한 수정에서 **같은 실수를 반복했다**: 빈 모델을 소비하는 자리가 둘(`run_embedding_pass`,
+`main()`)인데 하나만 막았다. 진단을 적는 것과 그 진단이 다음 행동을 바꾸는 것은 다르다.
+
+§16.7 G10 이 정확히 이 상황을 규정한다 — **재발 관측 시 점수정으로 종결하지 않고 클래스를
+구조로 잠근다**. 그래서 이번엔 진입점을 하나 더 막는 대신 **chokepoint 를 만들고 모수를 AST 로
+강제**했다. 다음 진입점은 가드를 우회할 수 없고, 우회하려면 테스트가 먼저 깨진다.
+
+### P 추이 (§18.8 (b) 비단조 판정)
+
+| 라운드 | P1 | P2 | 판정 |
+|---|---|---|---|
+| R1 | 1 | 1 | BLOCK → 전건 수정 |
+| R2 | **0** | 1 | P1 종결 조건 충족 · P2 수정 |
+| R3 | (확인 대기) | | — |
+
+P1 이 1 → 0 으로 단조 감소했고 진동이 없다. P2 는 R1·R2 각 1건이나 **같은 클래스의 잔여**였고
+R2 에서 구조 승격으로 소거했으므로 «수정이 새 결함을 만드는» 형태(§18.8 (b))는 아니다.
+
+### 잔여
+
+- R3 확인 라운드 1회 (구조 승격이 새 결함을 만들지 않았는지).
+
+
+## REV-20260907T180000-ai-claude-corp-feature-0007-local-llm-decommission [CODEX:local-llm-decommission-R3] — PASS (수렴)
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Source: codex review --base main (codex-cli 0.153.4, gpt-6-astra, effort high) — **확인 라운드 R3**
+- Trigger: §18.8 (a) — R2 의 P2 수정(구조 승격)이 새 결함을 만들지 않았는지 확인
+- Timestamp: 2026-09-07T18:00:00+09:00
+- Verdict: **PASS — P1 0건 · P2 0건**
+- Human Approval Needed: no
+
+### 판정 원문
+
+> "No actionable regressions were identified in the diff against the specified merge base.
+> Test execution was blocked during conftest initialization because the sandbox prohibits
+> socket creation, so runtime verification remains incomplete."
+
+### 수렴 (§18.8 (a)(b))
+
+| 라운드 | P1 | P2 | 조치 |
+|---|---|---|---|
+| R1 | 1 | 1 | 전건 수정 (게이트웨이 paired 요구 · 백필 진입 가드) |
+| R2 | **0** | 1 | 구조 승격 (chokepoint + AST 모수 검증) |
+| R3 | **0** | **0** | — 종결 |
+
+P1 이 1 → 0 → 0 으로 **단조 감소**했고 진동이 없다(§18.8 (b) 비단조 = 접근 재설계 신호에 해당하지
+않음). §18.8 (a) 의 「P1 을 수정했으면 확인 라운드 1회 필수」를 R2·R3 두 라운드로 충족했다.
+
+### codex 가 남긴 검증 공백과 그 보전 (정직 표기)
+
+codex 는 **자기 sandbox 에서 테스트를 실행하지 못했다** ("sandbox prohibits socket creation" —
+루트 `conftest.py` 가 PG 포트를 도달 불가 값으로 고정하는 과정에서 소켓 생성이 필요하다).
+따라서 R3 의 PASS 는 **정적 분석 기준**이며 런타임 검증을 포함하지 않는다.
+
+그 공백은 이 세션이 직접 수행한 측정으로 덮인다 — 근거를 R3 의 것으로 오인하지 않도록 분리 기재:
+
+| 축 | 수행자 | 결과 |
+|---|---|---|
+| 신규 회귀 테스트 | 본 세션 | 10건 통과 + 결함 주입 3형태 각각 FAIL 실증 |
+| 영향 테스트 전수 | 본 세션 | 17파일 + 신규 1파일 + 관문 AST 1파일 = 전량 통과 |
+| 전수 스위트 기준선 대조 | 본 세션 | branch 86 / main 86, **집합 차이 0건** (`comm` 대조) |
+| litellm `model_list: []` 기동 | 본 세션 | 실컨테이너 기동 + liveliness/readiness 200 |
+| 라이브 재배포·healthz | (배포 단계) | §16.3 deploy-backed 완료 기준 |
