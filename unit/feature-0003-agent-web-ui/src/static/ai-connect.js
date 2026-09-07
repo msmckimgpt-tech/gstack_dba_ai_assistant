@@ -19,48 +19,11 @@
   var $ = function (id) { return document.getElementById(id); };
   var statusEl = $("connectStatus");
   var endpoint = "";
-  // feature-0043 P0-AC: 서버가 준 원클릭 명령 {posix, windows, protocol}. 화면은 표시만 한다 —
-  // 여기서 조립하면 무결성 값이 빠지고(브라우저는 모른다) 모달과 문안이 갈린다(P0-X).
-  var launch = null;
-  // 기본 탭은 **마지막으로 연결됐던 OS** 다 (사용자 요청 2026-09-01).
-  //
-  // 종전에는 `navigator.platform` 으로 정했는데, 그것은 **브라우저가 도는 OS** 이지 러너가 도는
-  // OS 가 아니다. WSL 안에서 러너를 띄우는 사용자는 Windows 브라우저로 이 화면을 보므로 항상
-  // PowerShell 명령이 먼저 뽑혔고, 매번 탭을 바꿔야 했다("windows가 항상 기본적으로 선택된 상태").
-  //
-  // 서버가 러너 신고로 아는 사실(`last_os`)을 쓰고, **그것이 없을 때만** 종전 추측으로 돌아간다 —
-  // 아직 한 번도 연결하지 않았거나 구 러너라 신고가 없는 경우다.
-  var osGuess = /win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix";
-  var osTab = osGuess;
-  //: 사용자가 탭을 직접 누른 뒤에는 서버 값이 그 선택을 덮지 않는다 — 화면이 손 밑에서 바뀌면
-  //: 방금 고른 명령이 아닌 것을 복사하게 된다.
-  var osTabPinned = false;
-  //: 지금 탭을 정한 근거의 등급. 낮은 등급의 **늦은** 응답이 높은 등급을 덮지 못한다 —
-  //: 페이지 로드 직후 발급을 누르면 상태 조회가 발급 응답보다 늦게 도착할 수 있고, 그때 이미
-  //: 그려진 명령이 손 밑에서 바뀐다(codex 적대 리뷰 P2-4).
-  //: 0 = 브라우저 추측 · 1 = 상태 조회 · 2 = 발급 응답(명령을 함께 실어 온 그 응답).
-  var osRank = 0;
-
-  /** 서버가 아는 「마지막으로 연결된 OS」를 기본 탭에 반영한다. 모르면 그대로 둔다. */
-  function adoptLastOs(value, rank) {
-    if (osTabPinned) { return; }
-    var r = Number(rank || 0);
-    if (r < osRank) { return; }
-    var v = String(value || "");
-    if (v !== "posix" && v !== "windows") { return; }
-    osRank = r;
-    osTab = v;
-    paintOsTab();
-  }
-
-  function paintOsTab() {
-    var isWin = osTab === "windows";
-    var pt = $("tabPosix"), wt = $("tabWin");
-    if (pt) pt.className = "aic-btn" + (isWin ? "" : " aic-btn--primary");
-    if (wt) wt.className = "aic-btn" + (isWin ? " aic-btn--primary" : "");
-    var cmd = $("launchCmd");
-    if (cmd) cmd.textContent = launch ? String(launch[osTab] || "") : "";
-  }
+  // ⚠ **터미널·AI 지시문 경로는 없다** (사용자 결정 2026-09-07). 종전에는 이 화면이
+  //   토큰을 발급해 OS별 명령·지시문을 그렸다. 그 경로가 통째로 사라졌으므로 명령 상태
+  //   (`launch`·`osTab`·`osRank`)도 함께 사라졌다 — 쓰지 않는 값을 남겨 두면 다음 사람이
+  //   그 자리를 되살릴 수 있다고 읽는다. 실행 URL 은 **필요할 때 받아** 곧바로 쏜다.
+  var launchUrl = "";
 
   function say(msg, kind) {
     statusEl.textContent = msg || "";
@@ -68,65 +31,17 @@
     else { statusEl.removeAttribute("data-kind"); }
   }
 
-  /** 지시문은 **서버가 조립한다** — 이 화면은 표시만 한다.
-   *
-   * 왜 여기서 만들지 않는가: 같은 지시문을 보여주는 곳이 둘이다(이 단독 페이지, 대화 화면
-   * 모달). 각자 조립하면 **문안이 갈리고**, 한쪽만 고쳐지는 순간 어떤 사용자는 옛 안내를
-   * 받는다. 실제로 그렇게 됐다 — 서버(`compose_connect_handoff`)가 CA 지문·러너 체크섬·
-   * 상주 러너 절차·TLS 신뢰 범위를 담도록 여러 차례 개정되는 동안, 이 파일의 사본은
-   * **몇 세대 뒤처진 문안**을 계속 내보내고 있었다(라이브 PB-0008 에서 발각, 2026-08-28).
-   * 서버가 실어 보내는 `handoff` 를 그대로 쓴다.
-   *
-   * 그리고 지시문은 도구 이름·발급자·무결성 값 같은 **서버 사실**을 담는다 — 브라우저는
-   * 그 값들을 알지 못하므로, 여기서 조립하는 한 그것들은 영원히 빠진다.
-   */
-  var handoffText = "";
-
-  function humanTtl(seconds) {
-    // access TTL 은 1시간 미만이다. 시간 단위로 반올림하면 "약 0시간" 이 되어 아무 정보도
-    // 주지 못한다(브라우저 검증에서 실제로 그렇게 떴다). 단위를 값에 맞춘다.
-    var s = Number(seconds || 0);
-    if (s <= 0) { return "확인 필요"; }
-    if (s < 3600) { return "약 " + Math.max(1, Math.round(s / 60)) + "분"; }
-    var h = s / 3600;
-    return "약 " + (h < 10 ? Math.round(h * 10) / 10 : Math.round(h)) + "시간";
-  }
-
-  function copy(text, okMsg) {
-    var done = function () { say(okMsg, "ok"); };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(function () { legacy(text, done); });
-    } else {
-      legacy(text, done);
-    }
-  }
-
-  function legacy(text, done) {
-    // clipboard API 는 보안 컨텍스트·권한에 따라 막힌다. 그 경우 복사가 조용히 실패하면
-    // 사용자는 붙여넣기가 안 되는 이유를 모른다 — 선택 상태로 남겨 직접 복사하게 한다.
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    var ok = false;
-    try { ok = document.execCommand("copy"); } catch (_e) { ok = false; }
-    document.body.removeChild(ta);
-    if (ok) { done(); } else { say("복사가 차단되었습니다 — 아래 내용을 직접 선택해 복사하세요.", "error"); }
-  }
-
   function showLoggedOut() {
     $("connectLead").textContent = "웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
     $("connectLogin").classList.remove("aic-hidden");
     // 로그아웃 상태에서도 무엇을 하는 화면인지는 보여준다(설명만 — 만들기는 로그인 후).
     $("connectFlow").classList.remove("aic-hidden");
-    $("makeHandoff").disabled = true;
+    var lb = $("launchClient");
+    if (lb) lb.hidden = true;
   }
 
   function init(info) {
     endpoint = info.endpoint || "";
-    adoptLastOs(info && info.last_os, 1);
     if (!info.logged_in) { showLoggedOut(); return; }
     $("connectLead").textContent =
       (info.display_name || info.username || "") + " 계정 · 웹에서 보낸 질문을 내 AI 가 답하도록 연결합니다.";
@@ -239,68 +154,41 @@
   //
   // ⚠ 스킴 핸들러가 없으면 브라우저는 **아무 일도 하지 않고 오류도 주지 않는다**. 그래서
   //   누른 뒤 안내를 남긴다 — 조용한 실패를 사용자가 「고장」으로만 읽지 않도록.
+  //
+  // ⚠ 종전에는 [연결 준비] 가 발급한 값을 썼다. 그 버튼이 사라졌으므로 **여기서 받는다.**
+  //   그래서 이 경로는 클릭 → await → 이동 순서가 되고, 크롬이 사용자 활성화가 끊긴 스킴
+  //   이동을 거를 수 있다. 이 화면은 대화 모달과 달리 **미리 받아 둘 계기가 없다**(창을
+  //   여는 동작이 없다) — 그래서 한 번 받은 URL 을 들고 있다가 두 번째 클릭은 동기적으로
+  //   쏜다. 첫 클릭이 걸러지면 사용자는 한 번 더 누르게 되고, 그때는 통과한다.
   var _lb = $("launchClient"); if (_lb) _lb.addEventListener("click", function () {
-    if (!(launch && launch.protocol)) {
-      say("실행할 연결 정보가 없습니다. [연결 준비] 를 먼저 눌러 주세요.", "error");
-      return;
-    }
-    say("DQA 앱을 실행했습니다. 창이 뜨지 않으면 아직 설치되지 않은 것입니다 — " +
-        "아래 [터미널로 연결하기] 를 펼쳐 주세요.", "ok");
-    try { window.location.href = launch.protocol; } catch (e) { /* 무시 */ }
-  });
-
-  $("makeHandoff").addEventListener("click", function () {
-    $("makeHandoff").disabled = true;
-    say("만드는 중…");
+    if (launchUrl) { _fire(launchUrl); return; }
+    say("연결 정보를 받는 중…");
     fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" })
-      .then(function (res) {
-        return res.json().then(function (b) { return { ok: res.ok, body: b }; });
-      })
+      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, body: b }; }); })
       .then(function (r) {
-        $("makeHandoff").disabled = false;
         if (!r.ok) {
-          say((r.body && (r.body.error_description || r.body.error)) || "만들지 못했습니다.", "error");
+          say((r.body && (r.body.error_description || r.body.error)) || "받지 못했습니다.", "error");
           if (r.body && r.body.error === "unauthorized") { showLoggedOut(); }
           return;
         }
         endpoint = r.body.endpoint || endpoint;
-        handoffText = r.body.handoff || "";
-        $("handoffText").textContent = handoffText;
-        // feature-0043 P0-AC: 원클릭 명령도 **서버가 준 것을 표시만** 한다. 이 화면이 이걸
-        // 빠뜨리고 있었던 탓에, 링크를 새 탭으로 연 사용자는 기본 경로를 만나지 못했다.
-        launch = (r.body.launch && typeof r.body.launch === "object") ? r.body.launch : null;
-        // P0-AD 셋째 경로. 구 서버(probe 미지원)면 그 블록을 감춘다 — 빈 칸을 남기면
-        // 사용자는 복사할 것이 없는 자리를 보고 고장으로 읽는다.
-        var probe = (launch && launch.probe) || "";
-        $("probeText").textContent = probe;
-        $("probeBox").hidden = !probe;
-        // 발급 응답이 실어 온 값이 더 최신이다 — 이 화면을 열어 둔 사이에 연결했을 수 있다.
-        adoptLastOs(r.body && r.body.last_os, 2);
-        paintOsTab();
-        // 모달과 같은 규약 — 프로토콜 URL 이 있을 때만 실행 버튼을 보인다.
-        var lb = $("launchClient");
-        if (lb) lb.hidden = !(launch && launch.protocol);
-        $("handoffResult").classList.remove("aic-hidden");
-        say("만들었습니다. 유효기간 " + humanTtl(r.body.expires_in) +
-            " · 로그아웃 시 즉시 무효.", "ok");
+        var proto = (r.body.launch && typeof r.body.launch === "object")
+          ? String(r.body.launch.protocol || "") : "";
+        if (!proto) { say("이 서버는 앱 실행을 지원하지 않습니다.", "error"); return; }
+        launchUrl = proto;
+        _fire(proto);
       })
-      .catch(function (e) {
-        $("makeHandoff").disabled = false;
-        say("만들지 못했습니다: " + e, "error");
-      });
+      .catch(function (e) { say("받지 못했습니다: " + e, "error"); });
   });
 
-  $("copyHandoff").addEventListener("click", function () {
-    copy(handoffText, "복사했습니다. AI에 붙여넣으세요.");
-  });
+  function _fire(url) {
+    say("DQA 앱을 실행했습니다. 창이 뜨지 않으면 아직 설치되지 않은 것입니다 — " +
+        "위 [DQA 앱 받기] 로 설치해 주세요.", "ok");
+    // 한 번 쓴 URL 은 버린다 — 같은 토큰을 다시 쏘면 그 사이 만료·회수된 값으로 조용히 실패한다.
+    launchUrl = "";
+    try { window.location.href = url; } catch (e) { /* 무시 */ }
+  }
 
-  $("copyProbe").addEventListener("click", function () {
-    copy((launch && launch.probe) || "", "복사했습니다. 내 컴퓨터의 AI에 붙여넣으세요.");
-  });
-
-  $("copyCmd").addEventListener("click", function () {
-    copy((launch && launch[osTab]) || "", "복사했습니다. 터미널에 붙여넣고 실행하세요.");
-  });
   $("batchConsent").addEventListener("change", function () {
     var el = $("batchConsent");
     var want = !!el.checked;
@@ -334,8 +222,6 @@
       });
   });
 
-  $("tabPosix").addEventListener("click", function () { osTab = "posix"; osTabPinned = true; paintOsTab(); });
-  $("tabWin").addEventListener("click", function () { osTab = "windows"; osTabPinned = true; paintOsTab(); });
 })();
 
 /* ── 클라이언트 패널 (2026-09-04) ────────────────────────────────────────────────

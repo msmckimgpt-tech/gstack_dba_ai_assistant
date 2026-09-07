@@ -5928,3 +5928,30 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
   덮어쓰지 않았다는 근거다(무비판 재생성이 실제 회귀를 삼키는 것이 이 게이트의 실패 모드다).
 - 범위 밖 수정인 이유를 남긴다: main 이 적색인 채로는 **이후 모든 cycle 의 완료 게이트가
   막힌다**. 되돌리기 비용이 0(데이터 파일 1개)이고 델타가 검증 가능해 여기서 복구했다.
+
+## CHG-20260907T190000-remove-terminal-path (「연결 준비」·터미널·AI 지시문 전면 제거, Minor §12.3)
+
+**변경**:
+
+- `src/static/index.html` · `src/static/ai-connect.html` — 「연결 준비」 버튼, 터미널 1단계
+  (OS 탭·명령·복사), AI 지시문 두 갈래(조사만 맡기기 · 전부 맡기기), 토큰 경고 문단 제거.
+  **신규** 받기 안내(`#connectModalGet` / 기존 `#clientFirst`) — 서버가 실물을 확인해
+  `client_download` 를 낼 때만 보인다(P0-I).
+- `src/static/app/connect-modal.js` (−321줄) — 발급·복사·OS 탭·명령 강조 경로 삭제.
+  실행 URL 은 **창을 열 때** 미리 받는다(`_offerLaunch`) — 클릭 시점에 발급을 시작하면
+  await 가 사용자 활성화를 끊어 크롬이 스킴 이동을 조용히 거른다.
+- `src/static/ai-connect.js` (−174줄) — 같은 제거. 이 화면에는 「창을 여는 계기」가 없으므로
+  `[내 AI 실행]` 이 **누를 때** 발급한다(첫 클릭이 걸러지면 두 번째가 통과한다 — 받아 둔
+  URL 을 들고 있다).
+- 실패 문구 3종을 「1단계 명령을 터미널에 붙여넣어」 → 연결 프로그램(설치·재실행)으로 교체.
+
+**되살린 것 (이 주기의 부수 소득)**:
+
+- `tests/verify_connect_modal_autoclose.mjs` · `verify_launch_runner_behavior.mjs` 는
+  **2026-09-04 이후 한 번도 돌지 않았다** — `client-bridge.js` 가 생기면서 상대 import 가
+  data:/임시 사본에서 해소되지 못해 `ERR_INVALID_URL` / `ERR_MODULE_NOT_FOUND` 로 죽었다.
+  문서에는 「25/0 PASS」가 그대로 남아 있었다. 스텁을 전수 처리로 바꾸고(전자), 이웃 모듈을
+  실재하는 스텁 트리로 만들어(후자) 되살렸다. **40/0 · 18/18 PASS.**
+
+**영향**: 프런트 전용, 비파괴. 서버 계약(`/api/ai/connect/token` 의 `handoff`·`launch`,
+`last_os`)은 그대로다 — 화면이 더 이상 그리지 않을 뿐이다.

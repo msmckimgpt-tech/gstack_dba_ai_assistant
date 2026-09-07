@@ -103,9 +103,11 @@ function makeEl(id) {
 }
 
 const els = new Map();
-for (const id of ["connectModalOverlay", "connectModalStatus", "connectModalMake",
-                  "connectModalLaunch", "connectModalCmd", "connectModalText",
-                  "connectModalResult", "connectModalProbe", "aiConnState", "composerGate",
+// ⚠ 2026-09-07: 「연결 준비」·명령·지시문 자리가 사라졌다(사용자 결정). 없는 요소를 세워
+//    두면 제품이 그것을 다시 만져도 이 하네스는 조용히 통과한다.
+for (const id of ["connectModalOverlay", "connectModalStatus",
+                  "connectModalLaunch", "connectModalGet", "connectModalGetLink",
+                  "aiConnState", "composerGate",
                   "composerGateBtn", "composerGateTitle", "composerGateDesc"]) {
   els.set(id, makeEl(id));
 }
@@ -206,7 +208,7 @@ export async function run({ mod, el, nav }) {
   await globalThis.__settle(400);
   return { chip: chip.textContent, navAfterEntry, navAfterClick, navFinal: nav.length,
            status1, status2: globalThis.__status(),
-           cmd: el("connectModalText").textContent,
+           launchHidden: el("connectModalLaunch").hidden,
            modalOpen: !el("connectModalOverlay").classList.contains("hidden") };
 }
 """
@@ -219,8 +221,10 @@ def test_same_fingerprint_after_relaunch_is_named_and_routed(tmp_path):
     assert "러너 파일이 그대로입니다" in got["status1"], \
         f"재실행이 무의미한 상태를 «응답 없음» 으로 뭉갠다: {got['status1']!r}"
     assert got["modalOpen"] is True, "말만 하고 되돌아갈 곳을 안 보여 준다"
-    assert got["cmd"] == "설치 지시문", \
-        "1단계 명령을 발급하지 않았다 — 「아래 명령을 실행하세요」가 빈 자리를 가리킨다"
+    # ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).** 종전 계약은 「말하면서 1단계 명령까지
+    #   발급해 준다」였다 — 「아래 명령을 실행하세요」가 빈 자리를 가리키면 막다른 길을 한 칸
+    #   뒤로 옮긴 것뿐이기 때문이다. 그 명령이 사라졌으므로 발급할 것도 없다.
+    #   지키려던 성질(**말하면서 되돌아갈 곳을 함께 준다**)은 위 `modalOpen` 이 이미 잰다.
 
 
 def test_no_click_burns_another_wait_window_once_the_evidence_is_in(tmp_path):
@@ -426,13 +430,19 @@ def test_both_launch_paths_use_the_same_comparison():
     assert js.count("MSG_RELAUNCH_NO_UPDATE") >= 3, "문구가 한 곳에서 나오지 않는다"
 
 
-def test_the_notice_prepares_the_command_it_points_at():
-    """「아래 1단계 명령」을 말하려면 그 명령이 화면에 있어야 한다."""
-    fn = _js().split("async function _showRelaunchNoUpdate(", 1)[1].split("\n}", 1)[0]
-    assert "openConnectModal()" in fn and "_make()" in fn, \
-        "창만 열고 발급을 안 하면 사용자는 빈 자리를 가리키는 안내를 읽는다"
-    assert "_revealCommand()" in fn, "명령이 화면 밖에 있으면 없는 것과 같다"
-    assert "_modalEpoch" in fn, "발급을 기다리는 사이 창이 바뀌었을 수 있다"
+def test_the_notice_still_opens_somewhere_to_go():
+    """⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+
+    종전 계약은 「말하면서 1단계 명령까지 발급해 준다」였다 — 「아래 명령을 실행하세요」가 빈
+    자리를 가리키면 막다른 길을 한 칸 뒤로 옮긴 것뿐이기 때문이다. 그 명령이 사라졌으므로
+    발급(`_make`)도, 펼치기(`_revealCommand`)도, 그 사이의 창 세대 검사도 대상이 없다.
+
+    지키려던 성질은 남는다 — **말하면서 되돌아갈 곳을 함께 연다.** 지금 그곳은 연결 창이고,
+    그 안에 앱을 받거나 실행하는 길이 있다.
+    """
+    fn = _js().split("function _showRelaunchNoUpdate(", 1)[1].split("\n}", 1)[0]
+    assert "openConnectModal()" in fn, "사유만 말하고 되돌아갈 곳을 열지 않는다"
+    assert "MSG_RELAUNCH_NO_UPDATE" in fn, "무엇이 문제인지 말하지 않는다"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

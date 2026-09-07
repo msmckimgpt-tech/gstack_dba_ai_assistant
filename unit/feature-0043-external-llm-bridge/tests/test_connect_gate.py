@@ -32,6 +32,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
+import re
+
 import pytest
 
 _UNIT = pathlib.Path(__file__).resolve().parents[2]
@@ -365,7 +367,11 @@ def test_launch_commands_reach_the_client():
     src = _func_source(OAUTH_AS, "connect_issue_token")
     assert "compose_launch_commands(" in src, "발급 응답에 원클릭 명령이 없다"
     code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
-    assert "body.launch" in code, "화면이 서버 명령을 읽지 않는다"
+    # ⚠ **읽는 대상이 좁아졌다 (사용자 결정 2026-09-07).** 화면이 명령(posix/windows/probe)을
+    #   더 이상 그리지 않으므로 읽는 것은 **프로토콜 URL 하나**다. 서버는 나머지도 계속 실어
+    #   보내고(위 단정), 화면만 안 볼 뿐이다 — 되돌릴 때 서버를 다시 만들 필요가 없다.
+    assert "b.launch" in code and "launch.protocol" in code, (
+        "화면이 서버가 준 실행 URL 을 읽지 않는다 — [내 AI 실행] 이 영영 안 나타난다")
 
 
 def test_frontend_never_assembles_the_command_itself():
@@ -449,18 +455,33 @@ def test_launch_button_is_hidden_without_a_protocol_url():
     단정한다.
     """
     code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
-    line = next((l for l in code.splitlines()
-                 if "launchBtn.hidden" in l and "_launch" in l), None)
-    assert line, "프로토콜 유무로 노출을 정하는 자리가 사라졌다"
-    assert "!(_launch && _launch.protocol)" in line, line.strip()
+    # ⚠ **판정 자리가 옮겨졌다 (2026-09-07).** 종전에는 「연결 준비」가 만든 `_launch` 를 보고
+    #   한 줄로 정했다. 그 버튼이 사라지면서 준비는 `_offerLaunch` 가 하고, 그 함수는
+    #   **받아진 뒤에만** 드러낸다. 지키는 성질(없으면 감춘다)은 그대로다.
+    fn = code[code.index("function _offerLaunch("):]
+    fn = fn[:fn.index("\n}")]
+    assert "if (!ready || !ready.protocol) return;" in fn, (
+        "프로토콜 유무로 노출을 정하는 자리가 사라졌다")
+    assert "hidden = false" in fn, "받아졌는데도 드러내지 않는다"
+    # 앱 창에서는 아예 권하지 않는다 — 프로그램이 이미 여기 있다(2026-09-04 의 확장분).
+    assert "if (clientBridge) return;" in fn, "앱 창에서도 실행을 권한다"
 
 
-def test_closing_the_modal_drops_the_token_bearing_command():
-    """지시문만 지우고 명령을 남기면 '닫으면 다시 볼 수 없다' 가 절반만 참이 된다."""
-    js = MODAL_JS.read_text(encoding="utf-8")
-    close = js[js.index("export function closeConnectModal("):js.index("async function _make(")]
-    assert "_launch = null;" in close, "토큰이 실린 명령이 메모리에 남는다"
-    assert 'cmd.textContent = ""' in close, "토큰이 실린 명령이 DOM 에 남는다"
+def test_a_used_launch_url_is_dropped_so_it_is_never_fired_twice():
+    """⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+
+    종전 계약은 「닫을 때 토큰이 실린 명령을 메모리·DOM 에서 지워라」였다 — 화면이 그것을
+    그렸기 때문이다. 지금은 그리지 않으므로 지울 DOM 이 없다.
+
+    그러나 **메모리 쪽 걱정은 남는다**: 실행 URL 에는 토큰이 실려 있고, 한 번 쏜 뒤에도 들고
+    있으면 그 사이 만료·회수된 값을 다시 쏘아 조용히 실패한다. 그래서 「닫을 때 지운다」를
+    **「쓰고 나면 지운다」** 로 옮긴다 — 더 좁고 더 정확한 자리다.
+    """
+    code = _strip_js_comments(MODAL_JS.read_text(encoding="utf-8"))
+    for fname in ("async function _launchRunner(", "async function autoLaunch("):
+        fn = code[code.index(fname):]
+        fn = fn[:fn.index("\n}")]
+        assert "_prefetched = null;" in fn, f"{fname}: 쓴 실행 URL 을 버리지 않는다"
 
 
 @pytest.mark.parametrize("pair", [
@@ -479,15 +500,19 @@ def test_served_setup_script_matches_the_source(pair):
         f"{src.name}: 정본과 배포본이 다르다 — 서버가 알려 준 체크섬도 함께 갈린다")
 
 
-def test_modal_puts_the_command_before_the_ai_instruction():
-    """AI 지시문이 기본 경로로 남아 있으면 '설치 결과가 매번 다르다' 가 그대로 재발한다."""
+def test_modal_has_no_ai_instruction_path_at_all():
+    """⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+
+    종전 계약은 위계였다 — 「명령이 먼저, AI 지시문은 접힌 보조」. 그것은 「설치 결과가 매번
+    다르다」(제보 2026-08-28)를 AI 경로 탓으로 진단하고 **순서로** 완화한 것이었다. 지금은
+    그 경로 자체가 없다. 위계를 지킬 대상이 사라졌으므로 **부재를 지킨다** — 원래 걱정
+    (결과가 갈리는 경로가 기본이 된다)은 부재로 더 강하게 해소된다.
+    """
     html = INDEX_HTML.read_text(encoding="utf-8")
-    body = html[html.index('id="connectModalResult"'):html.index("connect-modal-note")]
-    assert body.index('id="connectModalCmd"') < body.index('id="connectModalText"'), (
-        "AI 지시문이 명령보다 앞에 온다")
-    assert "<details" in body, "AI 지시문이 접히지 않아 두 경로가 같은 무게로 보인다"
-    assert "설치 결과가 달라질 수 있습니다" in body, (
-        "보조 경로의 성질(결과가 갈린다)을 밝히지 않는다")
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    for gone in ('id="connectModalResult"', 'id="connectModalCmd"', 'id="connectModalText"',
+                 'id="connectModalProbe"', "설치 결과가 달라질 수 있습니다"):
+        assert gone not in body, f"AI/터미널 경로가 되살아났다({gone})"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -618,19 +643,21 @@ def test_blocked_send_cleans_up_lazy_create_state():
     assert "그대로 두었습니다" in branch, "덮어쓰지 않는 경우 아무 말도 하지 않는다"
 
 
-def test_standalone_connect_page_shows_the_one_click_command():
-    """[P2] P0-X 가 "표시하는 화면 **전부**" 라고 못박은 그 drift 가 재발했다.
+def test_standalone_connect_page_matches_the_modal():
+    """[P2] P0-X 가 "표시하는 화면 **전부**" 라고 못박은 축은 그대로다 — **대상만 뒤집혔다.**
 
-    링크를 새 탭으로 연 사용자는 원클릭 명령을 아예 만나지 못하고 AI 지시문만 받았다.
+    종전에는 「모달에 있는 원클릭 명령이 단독 페이지에도 있는가」를 물었다(그 drift 가 실제로
+    있었다). 2026-09-07 의 전면 제거도 같은 축이다: **한 화면만 지우면** 링크를 새 탭으로 연
+    사용자와 모달에서 본 사용자가 다른 것을 본다. 그래서 두 화면 모두에서 부재를 잰다.
     """
     js = (WEB_SRC / "static" / "ai-connect.js").read_text(encoding="utf-8")
-    assert "r.body.launch" in js, "단독 페이지가 서버의 원클릭 명령을 무시한다"
-    assert "launch[osTab]" in js, "명령을 표시하지 않는다"
     html = (WEB_SRC / "static" / "ai-connect.html").read_text(encoding="utf-8")
-    assert 'id="launchCmd"' in html and 'id="copyCmd"' in html
-    # 모달과 같은 위계여야 한다 — 명령이 먼저, 지시문은 접힌 보조.
-    assert html.index('id="launchCmd"') < html.index('id="handoffText"')
-    assert "<details" in html
-    # 자체 조립 금지(P0-X): 무결성 값은 서버만 안다.
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    for gone in ('id="launchCmd"', 'id="copyCmd"', 'id="handoffText"', 'id="probeText"'):
+        assert gone not in body, f"단독 페이지에 지운 경로가 남아 있다({gone})"
+    assert "launch[osTab]" not in js, "OS별 명령 표시가 되살아났다"
+    # 남은 길은 앱 하나 — 그 길이 실제로 화면에 있는지 함께 본다(부재만 재면 막다른 길을 못 본다).
+    assert "내 AI 실행" in body and "DQA 앱 받기" in body, "앱 경로가 화면에 없다"
+    # 자체 조립 금지(P0-X): 무결성 값은 서버만 안다. 계약 그대로.
     for leak in ("BRIDGE_TOKEN=", "bridge_setup.sh", "mcpServers"):
         assert leak not in js, f"단독 페이지가 명령을 자체 조립한다({leak})"

@@ -184,19 +184,58 @@ _MODAL = _REPO / "unit/feature-0003-agent-web-ui/src/static/index.html"
 _PAGE = _REPO / "unit/feature-0003-agent-web-ui/src/static/ai-connect.html"
 
 
-@pytest.mark.parametrize("path", [_MODAL, _PAGE])
-def test_terminal_path_is_collapsed(path):
-    """사용자 결정 2026-09-03: 1·2·3단계는 클라이언트가 하므로 웹에 노출할 필요가 없다."""
-    html = path.read_text(encoding="utf-8")
-    assert "터미널로 연결하기" in html, f"{path.name}: 터미널 경로를 접어 두지 않았다"
+# ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+#
+#   여기에는 두 테스트가 있었다 — `test_terminal_path_is_collapsed`(접어 둔다)와
+#   `test_terminal_path_is_not_deleted`(**없애지는 않는다**). 뒤엣것은 「프로그램 없는
+#   사용자가 막다른 길에 선다」를 근거로 삭제를 막고 있었다.
+#
+#   사용자가 그 근거를 알고 반대로 골랐다:
+#
+#       "이제 '연결 준비' 의 역할은 클라이언트가 모두 수행하도록 구성될 부분이니,
+#        터미널 및 AI에게 연결을 요청하는 부분은 제거해주세요."
+#
+#   그래서 두 테스트를 **지우는 대신 뒤집는다.** 지우면 「이제 무엇이 참인가」를 아무도 지키지
+#   않고, 다음 사람이 지운 경로를 되살려도 초록이다. 그리고 옛 테스트의 걱정(막다른 길)은
+#   여전히 옳으므로, 그 자리를 **받기 안내가 메우는지** 함께 고정한다.
+
+_GONE = (
+    # 터미널 경로
+    "터미널로 연결하기", "connectModalCmd", "launchCmd", "명령 복사",
+    "connectModalTerminal", "terminalPath",
+    # AI 지시문 두 갈래(전부 맡기기 · 조사만 맡기기)
+    "지시문 복사", "조사 지시문 복사", "connectModalText", "handoffText",
+    "connectModalProbe", "probeText", "probeBox",
+    # 발급 버튼
+    "연결 준비", "connectModalMake", "makeHandoff",
+)
 
 
 @pytest.mark.parametrize("path", [_MODAL, _PAGE])
-def test_terminal_path_is_not_deleted(path):
-    """⚠ **없애지는 않는다.** 연결 프로그램이 없는 사용자에게는 이것이 유일한 길이다."""
+def test_terminal_and_ai_instruction_paths_are_gone(path):
+    """터미널·AI 지시문·「연결 준비」가 **두 화면 모두**에서 사라졌다.
+
+    한 화면만 지우면 링크를 새 탭으로 연 사용자와 모달에서 본 사용자가 다른 것을 본다 —
+    P0-X 가 닫은 결함 클래스다. 그래서 `parametrize` 로 둘 다 건다.
+    """
     html = path.read_text(encoding="utf-8")
-    assert ("connectModalCmd" in html) or ("launchCmd" in html), \
-        f"{path.name}: 터미널 경로가 사라졌다 — 프로그램 없는 사용자가 막다른 길에 선다"
+    # 주석에는 「무엇을 왜 지웠는가」가 남아 있어야 하므로, 마크업 본문만 본다.
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    left = [t for t in _GONE if t in body]
+    assert not left, f"{path.name}: 지운 경로가 아직 있다 — {left}"
+
+
+@pytest.mark.parametrize("path", [_MODAL, _PAGE])
+def test_removing_them_did_not_leave_a_dead_end(path):
+    """지운 자리를 **받기 안내가 메운다.**
+
+    옛 `test_terminal_path_is_not_deleted` 의 걱정은 옳았다 — 프로그램이 없는 사용자에게
+    아무 길도 남기지 않으면 그 사람은 막다른 길에 선다. 경로를 바꾼 것이지 없앤 것이
+    아니라는 사실을 여기서 지킨다.
+    """
+    html = path.read_text(encoding="utf-8")
+    body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert "DQA 앱 받기" in body, f"{path.name}: 프로그램을 받을 길이 화면에 없다"
 
 
 @pytest.mark.parametrize("path", [_MODAL, _PAGE])
@@ -209,19 +248,28 @@ def test_lead_text_points_at_the_client(path):
     """
     html = path.read_text(encoding="utf-8")
     assert "내 AI 실행" in html, f"{path.name}: 실행 경로를 가리키지 않는다"
-    assert "앱 창이 열리고" in html, \
-        f"{path.name}: 안내가 아직 터미널을 주 경로로 말한다"
+    # ⚠ 문구가 또 바뀌었다(2026-09-07). 「연결 준비를 누른 뒤 내 AI 실행을 누르면 앱 창이
+    #   열리고」가 사라지고 「연결은 DQA 앱이 합니다」가 됐다 — 누를 것이 하나뿐이기 때문이다.
+    #   지켜야 하는 성질은 여전히 문구가 아니라 **무엇을 주 경로로 가리키는가**다.
+    assert "연결은 <strong>DQA 앱</strong>이 합니다" in html, \
+        f"{path.name}: 안내가 앱을 주 경로로 말하지 않는다"
 
 
-def test_failure_path_opens_the_collapsed_block():
-    """실패 안내가 「1단계 명령」으로 되돌려 보내는데 그 블록이 접혀 있으면 막다른 길이다."""
+def test_failure_messages_no_longer_point_at_a_path_that_is_gone():
+    """⚠ **전제가 뒤집혔다.** 종전 계약은 「실패 안내가 「1단계 명령」으로 되돌려 보내니 그
+    블록을 펼쳐라」였다(`_revealCommand`). 그 블록이 사라졌으므로 이제 지켜야 하는 것은
+    반대다 — **없는 곳을 가리키지 않는가.**
+
+    이것이 더 중요한 축이다. 사라진 경로를 계속 가리키는 안내는 «막다른 길» 을 만드는데,
+    화면에는 아무 흔적도 남지 않아 소스만 보면 멀쩡해 보인다.
+    """
     js = (_REPO / "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js"
           ).read_text(encoding="utf-8")
-    fn_start = js.find("function _revealCommand()")
-    assert fn_start >= 0
-    body = js[fn_start:fn_start + 900]
-    assert "connectModalTerminal" in body and "open = true" in body, \
-        "되돌아갈 경로를 가리키면서 그 경로를 닫아 둔다"
+    # 사용자에게 보이는 문자열만 본다 — 주석에는 「왜 지웠는가」가 남아 있어야 한다.
+    quoted = re.findall(r'"((?:[^"\\]|\\.)*)"', js)
+    speaking = [q for q in quoted if any(w in q for w in ("터미널", "1단계", "붙여넣"))]
+    assert not speaking, f"사라진 경로를 아직 가리킨다: {speaking}"
+    assert "_revealCommand" not in js, "지운 함수의 호출이 남아 있다"
 
 
 # ── 4. 안내가 가리키는 것이 그 화면에 **실재하는가** ──────────────────────────────
@@ -253,29 +301,55 @@ def test_launch_button_exists_where_the_text_points_at_it(page, script):
     (_STATIC / "ai-connect.html", _STATIC / "ai-connect.js"),
     (_STATIC / "index.html", _STATIC / "app/connect-modal.js"),
 ])
-def test_launch_button_is_hidden_until_a_protocol_url_exists(page, script):
-    """없는데 보이면 누른 뒤 아무 일도 없고, 사용자는 그것을 고장으로 읽는다."""
+def test_launch_button_never_lies_about_what_it_can_do(page, script):
+    """없는데 보이면 누른 뒤 아무 일도 없고, 사용자는 그것을 고장으로 읽는다.
+
+    ⚠ **두 화면이 갈렸다 (2026-09-07).** 종전에는 둘 다 「[연결 준비] 가 프로토콜 URL 을
+    만들어 준 뒤에만 보인다」였고, 그래서 둘 다 `hidden` 이었다. 그 버튼이 사라지면서:
+
+    - **모달**은 창을 여는 순간이 있으므로 그때 미리 받아 두고(`_offerLaunch`), 받아졌을
+      때만 버튼을 드러낸다 — 종전 계약 그대로 `hidden`.
+    - **단독 페이지**는 창을 여는 계기가 없다. 그래서 버튼이 **스스로 받는다** — 숨겨 두면
+      영영 드러날 계기가 없어 「없는 버튼을 가리키는 안내」가 된다.
+
+    지켜야 하는 성질은 `hidden` 이라는 구현이 아니라 **누르면 실제로 무슨 일이 일어나는가**
+    다. 두 구현을 각각 그 성질로 잰다.
+    """
     html = page.read_text(encoding="utf-8")
     if "내 AI 실행" not in html:
         pytest.skip(f"{page.name}: 해당 없음")
     bid = re.findall(r'<button[^>]*id="([A-Za-z]+)"[^>]*>\s*내 AI 실행', html)[0]
     decl = re.search(rf'<button[^>]*id="{bid}"[^>]*>', html).group(0)
-    assert "hidden" in decl, f"{page.name}: {bid} 가 기본 숨김이 아니다"
     js = script.read_text(encoding="utf-8")
-    assert "protocol" in js, f"{script.name}: 프로토콜 유무로 노출을 정하지 않는다"
+    if "hidden" in decl:
+        # 숨겨 두는 쪽은 **드러내는 자리**가 있어야 한다 — 없으면 영영 안 보인다.
+        assert "hidden = false" in js, f"{script.name}: 숨겨 놓고 드러내는 곳이 없다"
+    else:
+        # 늘 보이는 쪽은 **누를 때 받아야** 한다 — 안 그러면 눌러도 아무 일이 없다.
+        idx = js.find(f'$("{bid}")')
+        assert idx >= 0, f"{script.name}: {bid} 가 배선되지 않았다"
+        assert "/api/ai/connect/token" in js[idx:idx + 1200], \
+            f"{script.name}: 늘 보이는 버튼인데 눌러도 연결 정보를 받지 않는다"
+    assert "protocol" in js, f"{script.name}: 프로토콜 유무로 동작을 정하지 않는다"
 
 
 def test_page_handler_is_registered_once_not_per_repaint():
     """⚠ 처음 넣을 때 `paintOsTab()` 안에 들어가 **탭을 그릴 때마다** 등록됐다.
 
     중복 등록은 조용하다 — 화면은 멀쩡하고 클릭 한 번에 핸들러가 여러 번 돈다.
+
+    ⚠ 그 `paintOsTab` 은 2026-09-07 에 사라졌다(OS 탭이 없어졌다). 그래서 「저 함수 안에
+    있지 않은가」로는 더 이상 잴 수 없다 — 재는 것을 **성질 자체**로 옮긴다: 등록은 모듈
+    최상위에서 **정확히 한 번** 일어난다.
     """
     js = (_STATIC / "ai-connect.js").read_text(encoding="utf-8")
-    i_lb = js.find('$("launchClient")')
-    i_paint = js.find("function paintOsTab")
-    assert i_lb >= 0 and i_paint >= 0
-    end = js.find("\n  }", i_paint)
-    assert not (i_paint < i_lb < end), "실행 버튼 등록이 다시 그리는 함수 안에 있다"
+    regs = re.findall(r'\$\("launchClient"\)[^\n]*addEventListener', js)
+    assert len(regs) == 1, f"실행 버튼 등록이 {len(regs)} 곳이다 — 1 이어야 한다"
+    # 등록 줄의 들여쓰기가 2칸(IIFE 최상위)인가 — 함수 안이면 4칸 이상이 된다.
+    line = next(ln for ln in js.splitlines() if 'addEventListener' in ln
+                and '$("launchClient")' in ln)
+    assert len(line) - len(line.lstrip()) <= 2, \
+        f"실행 버튼 등록이 어떤 함수 안에 있다: {line.strip()[:60]}"
 
 
 def test_silent_scheme_failure_is_explained():
@@ -285,3 +359,6 @@ def test_silent_scheme_failure_is_explained():
     body = js[idx - 800:idx + 900]
     assert "설치되지 않은" in body or "창이 뜨지 않으면" in body, \
         "조용한 실패를 사용자가 「고장」으로만 읽게 둔다"
+    # ⚠ 되돌아갈 곳도 함께 본다. 종전 문구는 「아래 [터미널로 연결하기] 를 펼쳐 주세요」
+    #   였는데 그 블록이 사라졌다 — 안내만 남으면 없는 곳을 가리킨다.
+    assert "터미널" not in body, "사라진 경로를 아직 가리킨다"

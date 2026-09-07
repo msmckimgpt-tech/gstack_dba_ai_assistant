@@ -18,27 +18,27 @@
     <h1>내 AI 연결하기</h1>
     <p class="aic-lead" id="connectLead">확인하는 중…</p>
 
-    <!-- 단일 흐름(2026-08-27): 연결 방법을 사람에게 고르게 하지 않는다. 연결 정보를 AI 가
-         읽을 지시문 한 덩어리로 만들어 주고, 어느 방법이 되는지는 AI 가 시도해 판단한다.
-         화면 문구는 짧게 유지한다 — 사용자는 구조 설명이 아니라 할 일을 찾으러 온다. -->
+    <!-- 단일 흐름(2026-08-27 → 2026-09-07): 연결 방법을 사람에게 고르게 하지 않는다.
+         종전에는 「AI 가 읽을 지시문 한 덩어리」가 그 단일 흐름이었고, 뒤에 터미널 명령이
+         기본 경로로 들어왔다. 지금은 **DQA 앱 하나**다 — 사용자 결정으로 나머지를 모두
+         지웠다. 화면 문구는 짧게 유지한다 — 사용자는 구조 설명이 아니라 할 일을 찾으러 온다. -->
     <section id="connectFlow" class="aic-hidden">
-      <!-- feature-0043 P0-AC: 이 화면도 **모달과 같은 것**을 보여야 한다. 종전에는 이쪽만
-           AI 지시문을 유일 경로로 제공해, 링크를 새 탭으로 연 사용자는 원클릭 명령을 아예
-           만나지 못했다(codex 적대 리뷰 P2) — P0-X 가 "표시하는 화면 전부" 라고 못박은 바로
-           그 drift 다. 조립은 여전히 서버 한 곳(`compose_launch_commands`)이고 여기는 표시만. -->
+      <!-- feature-0043 P0-X: 이 화면과 대화 모달은 **같은 것**을 보여야 한다. 한쪽만
+           경로를 남기면 링크를 새 탭으로 연 사용자와 모달에서 본 사용자가 다른 안내를
+           받는다 — 2026-09-07 의 「전면 제거」도 두 화면에 **함께** 적용한다. -->
       <p class="aic-why">
         내 AI를 이 서비스에 연결하면 질문에 답할 수 있습니다.
-        아래 <strong>연결 준비</strong>를 누른 뒤 <strong>내 AI 실행</strong>을 누르면
-        DQA 앱 창이 열리고 나머지는 그 창에서 끝납니다.
-        <br>한 번 연결한 뒤에는 <strong>시작 메뉴의 아이콘</strong>만 눌러도 그 창이 열립니다.
+        연결은 <strong>DQA 앱</strong>이 합니다 — 앱 창이 이 컴퓨터의 AI를 찾아 바로
+        연결하고, 한 번 연결한 뒤에는 <strong>시작 메뉴의 아이콘</strong>만 눌러도
+        그 창이 열립니다.
       </p>
 
       <!-- ROADMAP ITEM-06: 클라이언트를 **받을 수 있을 때만** 보인다. 서버가 실물 존재를
            확인해 `client_download` 를 낼 때만 채워진다 — 없는 다운로드를 안내하면 사용자는
            안내받은 대로 갔다가 막힌다(P0-I). -->
       <section id="clientFirst" class="aic-note aic-hidden" style="margin-bottom:12px">
-        <p><strong>터미널 없이 연결하기</strong> — DQA 앱을 받아 실행하면
-           설치·로그인·연결을 창에서 끝낼 수 있습니다.</p>
+        <p><strong>아직 DQA 앱이 없다면</strong> — 받아서 실행하면 로그인과 연결을
+           그 창에서 끝낼 수 있습니다.</p>
         <div class="aic-actions" style="justify-content:flex-start">
           <a class="aic-btn aic-btn--primary" id="clientDownload" href="#">DQA 앱 받기</a>
         </div>
@@ -69,67 +69,17 @@
         <ul id="stepsList" style="list-style:none;padding-left:0;margin:8px 0"></ul>
       </section>
 
+      <!-- ⚠ **「연결 준비」·터미널·AI 지시문은 없다** (사용자 결정 2026-09-07):
+           「이제 '연결 준비' 의 역할은 클라이언트가 모두 수행하도록 구성될 부분이니,
+            터미널 및 AI에게 연결을 요청하는 부분은 제거해주세요.」
+           남은 길은 DQA 앱 하나다 — 위 [DQA 앱 받기](받을 수 있을 때만) 또는 아래
+           [내 AI 실행](이미 설치한 머신). 대화 모달과 **같은 결정**이어야 한다:
+           둘이 갈리면 어떤 사용자는 옛 화면을 본다.
+           ⚠ 종전과 달리 **감추지 않는다.** 감추던 근거는 「[연결 준비] 로 프로토콜 URL 을
+           받은 뒤에만 보인다」였는데, 그 버튼이 사라졌으므로 이 버튼이 스스로 받는다. -->
       <div class="aic-actions" style="justify-content:flex-start">
-        <button type="button" class="aic-btn aic-btn--primary" id="makeHandoff">연결 준비</button>
-        <!-- ⚠ 이 버튼이 **없었다**(2026-09-03). 대화 모달에만 있었고, 이 페이지의 안내 문구는
-             「[내 AI 실행] 을 누르면」 이라고 말했다 — 없는 버튼을 가리킨 것이다(P0-AC 가
-             닫은 결함 클래스: 「표시하는 화면 전부」가 같아야 한다).
-             모달과 **같은 규약**: 프로토콜 URL 이 있을 때만 보인다. 없는데 보이면 누른 뒤
-             아무 일도 일어나지 않고 사용자는 그것을 고장으로 읽는다. -->
-        <button type="button" class="aic-btn" id="launchClient" hidden
-                title="연결 프로그램을 실행합니다">내 AI 실행</button>
-      </div>
-
-      <div id="handoffResult" class="aic-hidden" style="margin-top:16px">
-        <!-- 터미널 경로는 **접어 둔다** (사용자 결정 2026-09-03). 없애지는 않는다 —
-             연결 프로그램이 없는 사용자에게는 이것이 유일한 길이다. 대화 모달과 **같은
-             결정**이어야 한다(둘이 갈리면 어떤 사용자는 옛 화면을 본다). -->
-        <details id="terminalPath">
-          <summary>터미널로 연결하기 — 연결 프로그램을 아직 설치하지 않았다면</summary>
-        <p class="aic-handoff-hint">
-          내 컴퓨터의 터미널에 그대로 붙여넣고 실행하세요.
-        </p>
-        <div class="aic-actions" style="justify-content:flex-start; margin-bottom:8px">
-          <button type="button" class="aic-btn" id="tabPosix">macOS · Linux</button>
-          <button type="button" class="aic-btn" id="tabWin">Windows</button>
-        </div>
-        <div class="aic-code aic-code--block" id="launchCmd"></div>
-        <div class="aic-actions" style="justify-content:flex-start">
-          <button type="button" class="aic-btn aic-btn--primary" id="copyCmd">명령 복사</button>
-        </div>
-        <p class="aic-handoff-hint">
-          실행이 끝나면 대화 화면 왼쪽 아래 계정 옆 표시가 <strong>대기 중</strong>으로 바뀌고 입력창이 열립니다.
-        </p>
-        </details>
-
-        <!-- 셋째 경로 (P0-AD) — 명령은 1단계와 **같고** 환경 판단만 AI 가 채운다.
-             문안은 대화 화면 모달과 같아야 한다(둘이 갈리면 어떤 사용자는 옛 안내를 받는다). -->
-        <details style="margin-top:16px" id="probeBox">
-          <summary>환경을 잘 모르겠다면 — AI에게 조사만 맡기기</summary>
-          <p class="aic-handoff-hint">
-            아래 내용을 내 컴퓨터의 AI(Claude Code · Codex 등)에 붙여넣으세요.
-            AI가 이 머신의 파이썬·AI CLI를 <strong>조사해 빈칸만 채우고</strong>,
-            설치와 검증은 1단계와 <strong>똑같은 스크립트</strong>가 합니다.
-            AI가 고른 값은 화면에 그대로 표시되고 범위를 벗어나면 스크립트가 버립니다 —
-            다만 <strong>어떤 값을 고르는지는 AI마다 다를 수 있습니다.</strong>
-          </p>
-          <div class="aic-code aic-code--block" id="probeText"></div>
-          <div class="aic-actions" style="justify-content:flex-start">
-            <button type="button" class="aic-btn" id="copyProbe">조사 지시문 복사</button>
-          </div>
-        </details>
-
-        <details style="margin-top:16px">
-          <summary>터미널을 쓸 수 없다면 — AI에게 전부 맡기기</summary>
-          <p class="aic-handoff-hint">
-            아래 내용을 AI에 붙여넣으세요. 연결 방식 선택과 인증은 AI가 판단합니다
-            — <strong>도구에 따라 설치 결과가 달라질 수 있습니다.</strong>
-          </p>
-          <div class="aic-code aic-code--block" id="handoffText"></div>
-          <div class="aic-actions" style="justify-content:flex-start">
-            <button type="button" class="aic-btn" id="copyHandoff">지시문 복사</button>
-          </div>
-        </details>
+        <button type="button" class="aic-btn aic-btn--primary" id="launchClient"
+                title="이미 설치를 마친 머신에서 DQA 앱을 실행합니다">내 AI 실행</button>
       </div>
 
       <!-- 배경 작업 동의 (TASK-20260901T190000, 사용자 결정 "웹페이지에서 토글").
@@ -146,11 +96,6 @@
         <p id="batchConsentStatus" class="aic-status" style="margin:8px 0 0"></p>
       </section>
 
-      <div class="aic-note">
-        <p>연결 정보에는 <strong>토큰</strong>이 들어갑니다. 내 권한으로 데이터를 조회하므로
-           비밀번호처럼 다루고 남에게 주지 마세요.</p>
-        <p>로그아웃하면 무효가 되고, <strong>이 화면을 벗어나면 다시 볼 수 없습니다.</strong></p>
-      </div>
     </section>
 
     <p class="aic-status" id="connectStatus"></p>

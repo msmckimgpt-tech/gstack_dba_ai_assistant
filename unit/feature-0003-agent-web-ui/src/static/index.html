@@ -715,20 +715,26 @@
         <button type="button" class="connect-modal-close" id="connectModalCloseBtn" aria-label="닫기 (Esc)" title="닫기 (Esc)">×</button>
       </div>
       <div class="connect-modal-body">
+        <!-- ⚠ **터미널·AI 지시문 경로는 없다** (사용자 결정 2026-09-07):
+             「이제 '연결 준비' 의 역할은 클라이언트가 모두 수행하도록 구성될 부분이니,
+              터미널 및 AI에게 연결을 요청하는 부분은 제거해주세요.」
+             그래서 이 창에는 명령도, 복사 버튼도, 「연결 준비」도 없다. 남은 길은 하나 —
+             DQA 앱. 그 대가로 **앱이 없는 사용자에게는 다른 길이 없다**(사용자가 그 대가를
+             알고 고른 것이다). 그래서 받기 안내를 아래에 둔다 — 없애면 막다른 길이 된다. -->
         <p class="connect-modal-why">
           내 AI를 이 서비스에 연결하면 질문에 답할 수 있습니다.
-          아래 <strong>연결 준비</strong>를 누른 뒤 <strong>내 AI 실행</strong>을 누르면
-          DQA 앱 창이 열리고 나머지는 그 창에서 끝납니다.
-          <br>한 번 연결한 뒤에는 <strong>시작 메뉴의 아이콘</strong>만 눌러도 그 창이 열립니다.
+          연결은 <strong>DQA 앱</strong>이 합니다 — 앱 창이 이 컴퓨터의 AI를 찾아 바로
+          연결하고, 한 번 연결한 뒤에는 <strong>시작 메뉴의 아이콘</strong>만 눌러도
+          그 창이 열립니다.
         </p>
         <div class="connect-modal-actions">
-          <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalMake">연결 준비</button>
-          <!-- feature-0043 P0-AC: 이미 설치한 머신에서 러너만 다시 띄우는 경로.
-               브라우저는 샌드박스라 프로세스를 직접 못 띄우므로, 설치 스크립트가 등록해 둔
-               `dqa-connect://` 스킴을 여는 것이 유일한 구현 수단이다. 등록 전에는 아무 일도
-               일어나지 않으므로 **연결 준비를 누른 뒤에만** 보인다. -->
-          <button type="button" class="connect-modal-btn" id="connectModalLaunch" hidden
-                  title="이미 설치를 마친 머신에서 러너를 다시 실행합니다">내 AI 실행</button>
+          <!-- feature-0043 P0-AC: 이미 설치한 머신에서 프로그램을 다시 띄우는 경로.
+               브라우저는 샌드박스라 프로세스를 직접 못 띄우므로, 설치가 등록해 둔
+               `dqa-connect://` 스킴을 여는 것이 유일한 구현 수단이다.
+               ⚠ **쏠 URL 이 실제로 손에 있을 때만** 보인다(`_offerLaunch`). 없는데 보이면
+               누른 뒤 아무 일도 일어나지 않고, 사용자는 그것을 고장으로 읽는다. -->
+          <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalLaunch" hidden
+                  title="이미 설치를 마친 머신에서 DQA 앱을 실행합니다">내 AI 실행</button>
         </div>
         <!-- ⚠ **연결 프로그램 안에서 열렸을 때만** 보인다 (사용자 결정 2026-09-04:
              「앱 창을 그대로 DQA 로」). 그 창에서는 웹이 이 컴퓨터의 AI 를 직접 다룰 수
@@ -747,73 +753,17 @@
             <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectClientConnect" disabled>이 서비스에 연결</button>
           </div>
         </section>
-        <div id="connectModalResult" hidden>
-          <!-- ① 터미널 경로 — **접어 둔다** (사용자 결정 2026-09-03: 「연결 준비를 통한
-               1·2·3단계는 클라이언트를 통해 진행되니 웹에서 노출될 필요가 없다」).
-               ⚠ **없애지는 않는다.** 연결 프로그램을 아직 설치하지 않은 사용자에게는 이것이
-               유일한 길이고, 지우면 그 사람은 막다른 길에 선다. 그리고 실행 실패 안내가
-               「1단계 명령」으로 되돌려 보내므로, 그 경로는 이 블록을 **자동으로 펼친다**
-               (`connect-modal.js` `_revealCommand`). -->
-          <details class="connect-modal-step" id="connectModalTerminal">
-            <summary>터미널로 연결하기 — 연결 프로그램을 아직 설치하지 않았다면</summary>
-            <p class="connect-modal-hint">
-              <strong>1단계 · 터미널에 붙여넣기</strong>
-              — 내 컴퓨터의 터미널(<span class="connect-modal-os" id="connectModalOsLabel">macOS·Linux</span>)에
-              그대로 붙여넣고 실행하세요.
-            </p>
-            <div class="connect-modal-tabs" role="tablist" aria-label="운영체제 선택">
-              <button type="button" class="connect-modal-tab is-active" id="connectModalTabPosix"
-                      role="tab" aria-selected="true">macOS · Linux</button>
-              <button type="button" class="connect-modal-tab" id="connectModalTabWin"
-                      role="tab" aria-selected="false">Windows</button>
-            </div>
-            <pre class="connect-modal-code" id="connectModalCmd"></pre>
-            <div class="connect-modal-actions">
-              <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectModalCopyCmd">명령 복사</button>
-            </div>
-            <p class="connect-modal-hint connect-modal-hint--muted">
-              실행이 끝나면 왼쪽 아래 계정 옆 표시가 <strong>대기 중</strong>으로 바뀌고
-              입력창이 열립니다.
-            </p>
-          </details>
-          <!-- ② 셋째 경로 (P0-AD) — 명령은 ①과 **같고**, 환경 판단(파이썬·AI CLI·핸들러)만
-               그 머신의 AI 가 채운다. ③과 다른 점은 AI 가 **명령을 만들지 않는다**는 것이다:
-               빈칸만 채우고, 채운 값은 설치 스크립트가 다시 검증한다. 그래서 ③이 겪던
-               "매번 다른 설치" 가 되돌아오지 않는다. -->
-          <details class="connect-modal-alt">
-            <summary>환경을 잘 모르겠다면 — AI에게 조사만 맡기기</summary>
-            <p class="connect-modal-hint">
-              아래 내용을 내 컴퓨터의 AI(Claude Code · Codex 등)에 붙여넣으세요.
-              AI가 이 머신의 파이썬·AI CLI를 <strong>조사해 빈칸만 채우고</strong>,
-              설치와 검증은 ①과 <strong>똑같은 스크립트</strong>가 합니다.
-              AI가 고른 값(파이썬·AI·워커 수)은 화면에 그대로 표시되고
-              범위를 벗어나면 스크립트가 버립니다 — 다만 <strong>어떤 값을 고르는지는
-              AI마다 다를 수 있습니다.</strong>
-            </p>
-            <pre class="connect-modal-code" id="connectModalProbe"></pre>
-            <div class="connect-modal-actions">
-              <button type="button" class="connect-modal-btn" id="connectModalCopyProbe">조사 지시문 복사</button>
-            </div>
-          </details>
-          <!-- ③ 보조 경로 — 터미널을 쓸 수 없을 때. 접어 둔다: 이쪽은 AI 해석에 결과가 달라져
-               "매번 다른 설치" 마찰의 원인이었고(제보 2026-08-28), 기본 경로로 두지 않는다. -->
-          <details class="connect-modal-alt">
-            <summary>터미널을 쓸 수 없다면 — AI에게 전부 맡기기</summary>
-            <p class="connect-modal-hint">
-              아래 내용을 AI에 그대로 붙여넣으세요. 연결 방식 선택과 인증은 AI가 판단합니다
-              — <strong>도구에 따라 설치 결과가 달라질 수 있습니다.</strong>
-            </p>
-            <pre class="connect-modal-code" id="connectModalText"></pre>
-            <div class="connect-modal-actions">
-              <button type="button" class="connect-modal-btn" id="connectModalCopy">지시문 복사</button>
-            </div>
-          </details>
-        </div>
-        <div class="connect-modal-note">
-          <p>연결 정보에는 <strong>토큰</strong>이 들어갑니다. 내 권한으로 데이터를 조회하므로
-             비밀번호처럼 다루고 남에게 주지 마세요.</p>
-          <p>로그아웃하면 무효가 되고, <strong>이 창을 닫으면 다시 볼 수 없습니다.</strong></p>
-        </div>
+        <!-- ROADMAP ITEM-06 — **받을 수 있을 때만** 보인다. 서버가 실물 존재를 확인해
+             `client_download` 를 낼 때만 채워진다(`_paintClientDownload`). 없는 다운로드를
+             안내하면 사용자는 안내받은 대로 갔다가 막힌다(P0-I 가 닫은 결함 클래스).
+             앱 창에서도 감춘다 — 이미 설치한 사람에게 받기를 권할 이유가 없다. -->
+        <section class="connect-modal-note" id="connectModalGet" hidden>
+          <p><strong>아직 DQA 앱이 없다면</strong> — 받아서 실행하면 로그인과 연결을
+             그 창에서 끝낼 수 있습니다.</p>
+          <div class="connect-modal-actions">
+            <a class="connect-modal-btn" id="connectModalGetLink" href="#">DQA 앱 받기</a>
+          </div>
+        </section>
         <p class="connect-modal-status" id="connectModalStatus" role="status" aria-live="polite"></p>
       </div>
     </div>

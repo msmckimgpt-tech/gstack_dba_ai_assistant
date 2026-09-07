@@ -26,41 +26,18 @@ const $ = (id) => document.getElementById(id);
 
 let _lastFocus = null;
 
-// ── 원클릭 연결 (P0-AC, 사용자 결정 2026-08-28) ───────────────────────────────
+// ── 연결 준비·터미널·AI 지시문은 **없다** (사용자 결정 2026-09-07) ───────────
 //
-// 종전 유일 경로는 "지시문을 AI 에 붙여넣기" 였고, 그때부터 무엇이 일어날지는 그 AI 의 해석에
-// 달렸다 — 그래서 사용자마다 설치 결과가 달랐다(제보: "구축하는 방식이 모두 달라"). 명령은
-// 셸이 실행하므로 해석층이 없다. 지시문은 남기되 **접어서 보조로** 내린다.
+//   "이제 '연결 준비' 의 역할은 클라이언트가 모두 수행하도록 구성될 부분이니,
+//    터미널 및 AI에게 연결을 요청하는 부분은 제거해주세요."
 //
-// 명령·프로토콜 URL 은 **서버가 만든다**(`compose_launch_commands`). 화면이 조립하면
-// 무결성 값(CA 지문·체크섬)이 빠지고 — 브라우저는 그 값을 모른다 — 대조 없는 설치가 된다.
-let _launch = null;      //: 서버가 준 {posix, windows, protocol}
-let _osTab = "posix";    //: 지금 보여 주는 명령 (사용자가 탭으로 바꾼다)
-//: 서버가 아는 「마지막으로 연결됐던 명령 계열」 (`""` = 모른다). 상태 조회가 실어 온다.
-//:
-//: 왜 브라우저 추측을 쓰지 않는가: `navigator.platform` 은 **브라우저가 도는 OS** 이고, 러너는
-//: 다른 곳에서 돈다. WSL 안에서 러너를 띄우는 사용자는 Windows 브라우저로 이 창을 열므로 늘
-//: PowerShell 명령이 먼저 뽑혔다 — 매번 탭을 바꿔야 했다(사용자 요청 2026-09-01).
-let _lastOs = "";
-//: 이번에 열린 창에서 사용자가 탭을 직접 눌렀는가. 눌렀으면 늦게 도착한 서버 값이 그 선택을
-//: 덮지 않는다 — 화면이 손 밑에서 바뀌면 방금 고른 것과 다른 명령을 복사하게 된다.
-let _osTabPinned = false;
-
-/** 서버가 아는 「마지막으로 연결된 OS」를 받아 둔다. 창이 열려 있고 사용자가 탭을 만지지
- *  않았으면 즉시 반영한다 — 창을 연 직후 도착하는 첫 조회가 이 경로로 들어온다.
- *
- *  값이 닫힌 집합 밖이거나 비어 있으면 **아무것도 하지 않는다**. 「모른다」를 「posix」로 바꾸면
- *  한 번도 연결한 적 없는 Windows 사용자에게 틀린 명령을 먼저 보이게 된다.
- */
-function _adoptLastOs(value) {
-  const v = String(value || "");
-  if (v !== "posix" && v !== "windows") return;
-  _lastOs = v;
-  if (_modalOpen && !_osTabPinned && _osTab !== v) {
-    _osTab = v;
-    _paintOsTab();
-  }
-}
+// 종전에는 이 창이 토큰을 발급해 **명령과 지시문을 화면에 그렸다**. 그 경로가 통째로
+// 사라졌으므로 여기에는 OS 탭도, 명령 블록도, 「연결 준비」도, 복사 버튼도 없다.
+// 남은 것은 두 가지다 — **앱 창이면 이 컴퓨터의 AI 패널**, 브라우저면 **연결 프로그램**
+// (이미 연결해 본 적 있으면 [내 AI 실행], 아니면 받기 안내).
+//
+// ⚠ 토큰은 여전히 발급된다 — 다만 **화면에 그리지 않는다.** 스킴 URL 안에 실려 프로그램
+//   으로 바로 건네지고, 사용자가 그 값을 보거나 복사할 일이 없다.
 
 // ── 연결이 성립하면 알리고 닫는다 (사용자 요청 2026-08-31) ────────────────────
 //
@@ -111,30 +88,10 @@ export function openConnectModal() {
   const overlay = $("connectModalOverlay");
   if (!overlay) return false;
   _lastFocus = document.activeElement;
-  // 열 때마다 초기화한다 — 이전에 만든 토큰이 화면에 남아 있으면 "다시 볼 수 없습니다" 가
-  // 거짓이 되고, 지난 토큰을 새것으로 오인해 붙여넣게 된다.
-  const result = $("connectModalResult");
-  if (result) result.hidden = true;
-  const text = $("connectModalText");
-  if (text) text.textContent = "";
-  const cmd = $("connectModalCmd");
-  if (cmd) cmd.textContent = "";
-  // 토큰이 실린 명령·프로토콜 URL 도 함께 버린다 — 지시문만 지우고 이쪽을 남기면 "닫으면 다시
-  // 볼 수 없다" 가 절반만 참이 된다.
-  _launch = null;
+  // 실행 버튼은 **쏠 URL 이 실제로 손에 있을 때만** 보인다(아래 `_offerLaunch`). 열 때
+  // 감춰 두는 이유: 지난 창에서 쓰고 버린 URL 이 남아 보이면, 눌러도 아무 일이 없다.
   const launchBtn = $("connectModalLaunch");
   if (launchBtn) launchBtn.hidden = true;
-  const make = $("connectModalMake");
-  if (make) make.disabled = false;
-  // 어느 명령을 먼저 보일지 미리 골라 둔다. 틀려도 탭으로 바꿀 수 있으므로 손해가 없고,
-  // 맞으면 클릭 하나를 아낀다.
-  //
-  // **아는 사실이 추측을 이긴다**: 마지막으로 연결됐던 계열(`_lastOs`, 서버가 러너 신고로 안다)이
-  // 있으면 그것을 쓰고, 없을 때만 브라우저 OS 로 추측한다 — 브라우저가 도는 OS 는 러너가 도는
-  // OS 가 아니다(WSL).
-  _osTabPinned = false;
-  _osTab = _lastOs || (/win/i.test(navigator.platform || navigator.userAgent || "") ? "windows" : "posix");
-  _paintOsTab();
   _status("");
   // 기준선을 따로 고정하지 않는다 — 판정은 **직전 관측 대비 변화**로 한다(`_lastObs`).
   _modalOpen = true;
@@ -142,31 +99,14 @@ export function openConnectModal() {
   _modalEpoch += 1;
   overlay.hidden = false;
   document.addEventListener("keydown", _onKeydown);
-  if (make) make.focus();
-  // 열려 있는 동안은 상태를 지켜본다 — 기본 경로(터미널 명령)는 이 창 밖에서 끝나므로,
+  $("connectModalCloseBtn")?.focus();
+  // 브라우저에서 열렸으면 **연결 프로그램으로 가는 길**을 준비한다(앱 창은 패널이 한다).
+  _offerLaunch();
+  // 열려 있는 동안은 상태를 지켜본다 — 연결은 이 창 밖(프로그램 안)에서 끝나므로,
   // 지켜보지 않으면 «연결됐다» 는 사실이 이 화면에 영영 도착하지 않는다.
   _syncGatePoll();
   try { refreshConnState(); } catch (_) { /* 조회 실패는 여는 동작을 막지 않는다 */ }
   return true;
-}
-
-/** 지금 고른 OS 탭에 맞춰 명령·탭 상태를 다시 그린다. */
-function _paintOsTab() {
-  const posixTab = $("connectModalTabPosix");
-  const winTab = $("connectModalTabWin");
-  const isWin = _osTab === "windows";
-  if (posixTab) {
-    posixTab.classList.toggle("is-active", !isWin);
-    posixTab.setAttribute("aria-selected", String(!isWin));
-  }
-  if (winTab) {
-    winTab.classList.toggle("is-active", isWin);
-    winTab.setAttribute("aria-selected", String(isWin));
-  }
-  const label = $("connectModalOsLabel");
-  if (label) label.textContent = isWin ? "Windows PowerShell" : "macOS·Linux";
-  const cmd = $("connectModalCmd");
-  if (cmd) cmd.textContent = _launch ? String(_launch[_osTab] || "") : "";
 }
 
 export function closeConnectModal() {
@@ -174,16 +114,10 @@ export function closeConnectModal() {
   if (!overlay || overlay.hidden) return;
   overlay.hidden = true;
   document.removeEventListener("keydown", _onKeydown);
-  // 닫으면 본문을 지운다 — DOM 에 토큰을 남겨 두지 않는다.
-  const text = $("connectModalText");
-  if (text) text.textContent = "";
-  const cmd = $("connectModalCmd");
-  if (cmd) cmd.textContent = "";
-  _launch = null;
+  // 닫으면 실행 버튼을 다시 감춘다 — 다음에 열 때 URL 이 손에 없을 수도 있고, 그때 남아
+  // 있는 버튼은 «눌러도 아무 일이 없는» 버튼이 된다.
   const launchBtn = $("connectModalLaunch");
   if (launchBtn) launchBtn.hidden = true;
-  const result = $("connectModalResult");
-  if (result) result.hidden = true;
   // 지켜보기를 멈춘다 — 잠금이 걸려 있으면 그쪽 사유로 폴링이 유지되고, 아니면 여기서 멎는다.
   //
   // ⚠ `_announced` 는 **여기서 되돌리지 않는다.** 성공을 알리는 쪽이 곧 닫는 쪽이라, 닫으면서
@@ -284,30 +218,16 @@ function _relaunchChangedNothing(before, now) {
   return before === now.build;
 }
 
-/** 「재실행으로는 안 된다」를 말하고 **되돌아갈 곳까지 준비해** 보여 준다.
+/** 「재실행으로는 안 된다」를 말한다.
  *
- *  ⚠ 창만 여는 것으로는 부족하다. 1단계 명령에는 토큰이 실려 있어 **[연결 준비] 를 눌러야**
- *  비로소 화면에 생긴다 — "아래 1단계 명령을 실행하세요" 라고 말하면서 그 자리가 비어 있으면,
- *  막다른 길을 한 칸 뒤로 옮겼을 뿐이다. 그래서 여기서 발급까지 대신 눌러 준다.
+ *  ⚠ 종전에는 여기서 **토큰을 발급해 1단계 명령까지 그려 줬다** — 「아래 명령을 실행하세요」
+ *  라고 말하면서 그 자리가 비어 있으면 막다른 길을 한 칸 뒤로 옮긴 것뿐이었기 때문이다.
+ *  그 경로가 사라졌으므로(사용자 결정 2026-09-07) 여기서 발급할 것도, 펼칠 것도 없다.
+ *  창을 열고 사유를 말한다 — 되돌아갈 곳은 **연결 프로그램**이고 그 안내는 창이 스스로 한다.
  */
-//: 그 안내가 지금 준비 중인가. 이 경로는 토큰을 **발급**하므로, 답답해서 여러 번 누르는
-//: 것만으로 계정에 토큰이 쌓인다.
-let _showingNoUpdate = false;
-
-async function _showRelaunchNoUpdate() {
-  if (_showingNoUpdate) return;
-  _showingNoUpdate = true;
+function _showRelaunchNoUpdate() {
   openConnectModal();
-  const epochAtStart = _modalEpoch;
-  try {
-    try { await _make(); } catch (_) { /* 발급 실패해도 사유는 말한다 */ }
-    // 기다리는 사이에 사용자가 창을 닫았거나 다시 열었으면 남의 창에 쓰지 않는다.
-    if (!_modalOpen || epochAtStart !== _modalEpoch) return;
-    _status(MSG_RELAUNCH_NO_UPDATE, "error");
-    _revealCommand();
-  } finally {
-    _showingNoUpdate = false;
-  }
+  _status(MSG_RELAUNCH_NO_UPDATE, "error");
 }
 
 /** 이번 조회를 모달 판정에 반영한다 (`_paintConn` 에서 호출).
@@ -331,88 +251,6 @@ function _noteConnForModal(prev, now, epoch) {
   // 무엇이 풀렸는지에 따라 말이 달라진다 — «연결되었습니다» 로 뭉치면, 업데이트를 하러 온
   // 사용자는 자기가 한 일과 다른 말을 듣는다.
   _announceConnected(prev.listening === true && prev.stale === true ? MSG_UPDATED : MSG_CONNECTED);
-}
-
-async function _make() {
-  const btn = $("connectModalMake");
-  if (btn) btn.disabled = true;
-  _status("만드는 중…");
-  //: 이 발급이 출발한 시점의 창 세대. 돌아왔을 때 그 창이 아직 그 창인지 가른다 —
-  //: 발급 중에 창을 닫고 다시 열면(또는 닫아 둔 채로) 늦게 온 응답이 **다른 창의 토큰·명령을
-  //: 덮어쓰거나**, 닫으면서 지운 bearer 명령을 숨은 DOM 에 되살린다(codex 적대 리뷰 P1-3).
-  //: 상태 조회는 이미 같은 검사를 한다 — 발급만 빠져 있었다.
-  const epochAtStart = _modalEpoch;
-  let res;
-  try {
-    res = await fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" });
-  } catch (err) {
-    if (!_modalOpen || epochAtStart !== _modalEpoch) return;
-    if (btn) btn.disabled = false;
-    _status("만들지 못했습니다: " + err, "error");
-    return;
-  }
-  let body = {};
-  try { body = await res.json(); } catch (_) { body = {}; }
-  // 창이 바뀌었으면(닫혔거나 다시 열렸으면) **아무것도 반영하지 않는다.** 이 응답에는 토큰이
-  // 실려 있어, 늦게 그려 넣으면 "닫으면 다시 볼 수 없습니다" 가 거짓이 된다.
-  if (!_modalOpen || epochAtStart !== _modalEpoch) return;
-  if (btn) btn.disabled = false;
-  if (!res.ok) {
-    _status(body.error_description || body.error || "만들지 못했습니다.", "error");
-    return;
-  }
-  const text = String(body.handoff || "");
-  // P0-AC: 기본 경로는 **명령**이다. 명령이 없으면(구 서버) 지시문만으로 진행하고, 둘 다
-  // 없을 때만 실패로 본다 — 한쪽 부재로 나머지를 못 쓰게 만들지 않는다.
-  _launch = (body.launch && typeof body.launch === "object") ? body.launch : null;
-  if (!text && !_launch) {
-    // 서버가 아무것도 안 실어 보냈다 — 토큰만 보여주면 사용자는 무엇을 할지 모른다.
-    _status("연결 정보를 받지 못했습니다. 연결 페이지(/ai/connect)에서 시도해 주세요.", "error");
-    return;
-  }
-  $("connectModalText").textContent = text;
-  // P0-AD 셋째 경로. 구 서버(probe 미지원)면 그 블록만 감춘다 — 빈 `<pre>` 를 남기면
-  // 사용자는 복사할 것이 없는 칸을 보고 고장으로 읽는다.
-  const probeEl = $("connectModalProbe");
-  if (probeEl) {
-    const probe = String((_launch && _launch.probe) || "");
-    probeEl.textContent = probe;
-    const box = probeEl.closest("details");
-    if (box) box.hidden = !probe;
-  }
-  // 발급 응답이 실어 온 값이 더 최신이다 — 창을 열어 둔 사이에 연결했을 수 있다.
-  _adoptLastOs(body.last_os);
-  _paintOsTab();
-  const launchBtn = $("connectModalLaunch");
-  // 실행 버튼은 **프로토콜 URL 이 있을 때만** 보인다. 없는데 보이면 누른 뒤 아무 일도 일어나지
-  // 않고, 사용자는 그것을 고장으로 읽는다.
-  // ⚠ 연결 프로그램 안에서는 **이미 실행 중**이라 이 버튼이 무의미하다. 보이면 사용자는
-  //   눌러 보고 아무 일도 안 일어나는 것을 겪는다.
-  if (launchBtn) launchBtn.hidden = !!clientBridge || !(_launch && _launch.protocol);
-  $("connectModalResult").hidden = false;
-  _status("준비했습니다. 이 창을 닫으면 다시 볼 수 없습니다.", "ok");
-  // 방금 연결이 생겼다 — 표시를 즉시 맞춘다(다음 조회를 기다리게 하지 않는다).
-  try { refreshConnState(); } catch (_) { /* 표시 실패는 흐름을 막지 않는다 */ }
-}
-
-/** 지정한 `<pre>` 의 내용을 클립보드로. 막히면 선택 상태로 남긴다. */
-async function _copyFrom(id, okMsg) {
-  const el = $(id);
-  const text = (el && el.textContent) || "";
-  if (!text) return;
-  try {
-    await navigator.clipboard.writeText(text);
-    _status(okMsg, "ok");
-    return;
-  } catch (_) { /* 아래 폴백 */ }
-  // clipboard API 는 보안 컨텍스트·권한에 따라 막힌다. 조용히 실패하면 사용자는 붙여넣기가
-  // 안 되는 이유를 모른다 — 선택 상태로 남겨 직접 복사하게 한다.
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  _status("복사가 차단되었습니다 — 선택된 내용을 직접 복사하세요.", "error");
 }
 
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -504,7 +342,6 @@ function _prefetchLaunch() {
       if (!r || !r.ok) return null;
       const b = await r.json();
       const p = b && b.launch && typeof b.launch === "object" ? String(b.launch.protocol || "") : "";
-      _adoptLastOs(b && b.last_os);
       _prefetched = p ? { protocol: p } : null;
       return _prefetched;
     } catch (_) {
@@ -661,13 +498,18 @@ async function _awaitUsable(attempt, epoch) {
 }
 
 async function _launchRunner() {
-  if (!_launch || !_launch.protocol) return;
-  // ⚠ 이 줄이 첫 await 앞에 있어야 한다. 뒤로 밀리면 사용자 활성화가 끊겨 크롬이 조용히 거른다.
-  if (!_fireScheme(_launch.protocol)) {
-    _status("실행을 요청하지 못했습니다 — 강조된 1단계 명령을 터미널에 붙여넣어 실행하세요.", "error");
-    _revealCommand();
+  // ⚠ **프리페치한 URL 만 쓴다.** 여기서 발급을 시작하면 이 줄 앞에 await 가 생기고, 그러면
+  //   사용자 활성화가 끊겨 크롬이 스킴 이동을 조용히 거른다 — 「눌렀는데 아무 일도 없다」.
+  //   준비는 창을 열 때 끝난다(`_offerLaunch`).
+  const ready = _prefetched;
+  if (!ready || !ready.protocol) return;
+  if (!_fireScheme(ready.protocol)) {
+    _status("실행을 요청하지 못했습니다. 이 창을 닫고 시작 메뉴의 DQA 아이콘으로 실행해 "
+            + "주세요.", "error");
     return;
   }
+  // 한 번 쓴 URL 은 버린다 — 같은 토큰을 다시 쏘면 그 사이 만료·회수된 값으로 조용히 실패한다.
+  _prefetched = null;
   const btn = $("connectModalLaunch");
   if (btn) btn.disabled = true;
   _status("실행을 요청했습니다. 내 AI가 응답하는지 확인하는 중…");
@@ -713,17 +555,56 @@ async function _launchRunner() {
     if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) {
       _relaunchNoUpdate = true;
       _status(MSG_RELAUNCH_NO_UPDATE, "error");
-      _revealCommand();
       return;
     }
-    // «요청은 갔지만 아무도 응답하지 않았다». 원인은 여럿이지만(핸들러 미등록·확인 대화상자를
-    // 닫음·러너 기동 실패) 사용자가 할 일은 하나다 — 터미널 명령.
-    _status("아직 응답이 없습니다. 이 컴퓨터에 실행 핸들러가 없거나 브라우저 확인 창을 "
-            + "닫았을 수 있습니다 — 강조된 1단계 명령을 터미널에 붙여넣어 실행하세요.", "error");
-    _revealCommand();
+    // «요청은 갔지만 아무도 응답하지 않았다». 원인은 여럿이지만(프로그램 미설치·브라우저
+    // 확인 창을 닫음·기동 실패) 사용자가 할 일은 하나다 — 연결 프로그램을 갖추는 것.
+    _status(MSG_NO_CLIENT, "error");
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+//: 프로그램이 응답하지 않을 때 하는 말. 종전에는 「1단계 명령을 터미널에」였다 —
+//: 그 경로가 없어졌으므로 되돌아갈 곳도 **프로그램**이다. 문구는 한 곳에만 둔다(두 벌로 두면
+//: 한쪽만 고쳐지고, 그때 같은 상황에 두 가지 안내가 나간다).
+const MSG_NO_CLIENT = "연결 프로그램이 응답하지 않았습니다. 설치돼 있지 않거나 브라우저 확인 "
+  + "창을 닫았을 수 있습니다 — [DQA 앱 받기] 로 설치한 뒤 다시 시도하세요.";
+
+/** 브라우저에서 이 창이 열렸을 때, **연결 프로그램으로 가는 길**을 준비한다.
+ *
+ *  - 앱 창(`clientBridge`)에서는 아무것도 하지 않는다 — 프로그램은 이미 여기 있고, 연결은
+ *    패널이 한다.
+ *  - **이미 한 번 연결해 본 사람에게만** 실행 URL 을 받아 둔다(`_everConnected`). 그 값은
+ *    토큰을 발급하므로, 자격 없이 부르면 창을 열 때마다 쓰이지 않을 토큰이 하나씩 늘어난다.
+ *    한 번도 연결한 적 없는 사람에게 [내 AI 실행] 은 눌러도 아무 일이 없는 버튼이다 —
+ *    그 사람에게 필요한 것은 **받기**이고 그쪽은 `_paintClientDownload` 가 그린다.
+ */
+function _offerLaunch() {
+  if (clientBridge) return;
+  if (!_everConnected) return;
+  const epochAtStart = _modalEpoch;
+  _prefetchLaunch().then((ready) => {
+    // 기다리는 사이 창을 닫았거나 다시 열었으면 남의 창에 버튼을 띄우지 않는다.
+    if (!_modalOpen || epochAtStart !== _modalEpoch) return;
+    if (!ready || !ready.protocol) return;
+    const btn = $("connectModalLaunch");
+    if (btn) btn.hidden = false;
+  }).catch(() => { /* 실패하면 버튼이 없을 뿐이다 — 받기 경로는 그대로 남는다 */ });
+}
+
+/** 받기 안내. **서버가 실물을 확인해 URL 을 낼 때만** 보인다 (P0-I).
+ *
+ *  없는 다운로드를 안내하면 사용자는 안내받은 대로 갔다가 막힌다 — 그래서 값이 없으면
+ *  링크 자체를 감춘다. 앱 창에서도 감춘다: 이미 설치한 사람에게 받기를 권할 이유가 없다.
+ */
+function _paintClientDownload(url) {
+  const box = $("connectModalGet");
+  if (!box) return;
+  const link = $("connectModalGetLink");
+  const ok = !clientBridge && !!url;
+  box.hidden = !ok;
+  if (ok && link) link.href = String(url);
 }
 
 /** 지금 대기 중인가 — 이 회차의 응답 또는 **직전에 관측된** 상태 중 하나라도 그렇다면 참.
@@ -745,48 +626,11 @@ function _isListeningNow(body, attempt) {
          && _lastObserved.attempt === attempt && _lastObserved.ok === true;
 }
 
-/** 되돌아갈 경로(1단계 명령)를 눈에 띄게 한다. 실패를 말하면서 대안을 안 보여 주면 막다른 길이다.
- *
- *  ⚠ **스크롤 기준은 명령이 아니라 상태 문구다.** 상태 문구(`connectModalStatus`)는 이 모달의
- *  맨 아래에 있어서, 명령 블록을 화면에 맞추면 방금 띄운 실패 문구가 화면 밖에 남는다 —
- *  사용자는 강조된 검은 상자만 보고 **왜** 그것을 보게 됐는지는 못 읽는다
- *  (PB-0008 실측 2026-08-31: `block:"center"`·`"nearest"` 둘 다 statusVisible=false).
- *  문구를 화면에 넣으면 그보다 위에 있는 명령 블록이 함께 들어온다. 강조는 명령에 남긴다 —
- *  읽어야 할 것과 눌러야 할 것이 다르기 때문이다.
- */
-function _revealCommand() {
-  const cmd = $("connectModalCmd");
-  if (!cmd) return;
-  // ⚠ 터미널 경로는 **접혀 있다**(2026-09-03). 접힌 채로 강조·스크롤하면 사용자는
-  //   「강조된 1단계 명령」이라는 말만 듣고 아무것도 보지 못한다 — 되돌아갈 길을
-  //   가리키면서 그 길을 닫아 두는 셈이다. 여기서 연다.
-  const box = $("connectModalTerminal");
-  if (box && "open" in box) box.open = true;
-  const anchor = $("connectModalStatus") || cmd;
-  try { anchor.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (_) { /* 무시 */ }
-  // 잠깐 강조 — 어느 블록을 말하는지 글로만 가리키면 찾는 데 시간이 든다.
-  cmd.classList.add("is-attention");
-  setTimeout(() => { try { cmd.classList.remove("is-attention"); } catch (_) { /* 무시 */ } }, 4000);
-}
-
 export function bindConnectModal() {
   const overlay = $("connectModalOverlay");
   if (!overlay) return;
   $("connectModalCloseBtn")?.addEventListener("click", closeConnectModal);
-  $("connectModalMake")?.addEventListener("click", _make);
-  $("connectModalCopy")?.addEventListener("click",
-    () => _copyFrom("connectModalText", "복사했습니다. AI에 붙여넣으세요."));
-  $("connectModalCopyCmd")?.addEventListener("click",
-    () => _copyFrom("connectModalCmd", "복사했습니다. 터미널에 붙여넣고 실행하세요."));
-  $("connectModalCopyProbe")?.addEventListener("click",
-    () => _copyFrom("connectModalProbe", "복사했습니다. 내 컴퓨터의 AI에 붙여넣으세요."));
   $("connectModalLaunch")?.addEventListener("click", _launchRunner);
-  $("connectModalTabPosix")?.addEventListener("click", () => {
-    _osTab = "posix"; _osTabPinned = true; _paintOsTab();
-  });
-  $("connectModalTabWin")?.addEventListener("click", () => {
-    _osTab = "windows"; _osTabPinned = true; _paintOsTab();
-  });
   overlay.addEventListener("click", (ev) => {
     if (ev.target === overlay) closeConnectModal();   // 바깥 클릭으로 닫기
   });
@@ -1369,12 +1213,16 @@ export async function refreshConnState() {
     // 다음 관측까지 미뤄지는데, 폴링이 방금 멎었으므로 «다음 관측» 이 오지 않는다).
     _paintCaps(b);
     _paintGate(b);
-    // 마지막으로 연결됐던 명령 계열 — 창을 열 때 어느 탭을 먼저 보일지 정한다 (2026-09-01).
-    // 세대·순번 검사를 이미 통과한 응답만 여기 온다.
-    _adoptLastOs(b.last_os);
+    // 받을 수 있을 때만 받기를 권한다 — 서버가 실물 존재를 확인해 낸 값이다(P0-I).
+    _paintClientDownload(b.client_download);
     // 연결 이력 (2026-09-02). `last_os` 는 러너가 **실제로 연결됐을 때만** 기록되므로 그
     // 존재가 곧 「이 사람은 이미 한 번 연결해 봤다」다 — 자동 실행의 자격 판정이 이 값이다.
     _everConnected = !!String(b.last_os || "");
+    // ⚠ 자격을 **방금 알았을 수도 있다.** 창을 열 때 `_offerLaunch` 가 한 번 도는데, 그 시점에
+    //   아직 상태 조회가 한 번도 안 끝났으면 «이력 없음» 으로 읽고 물러난다 — 그러면 그 창에는
+    //   [내 AI 실행] 이 영영 안 나타난다(다시 열기 전까지). 알게 된 자리에서 한 번 더 준다.
+    //   `_prefetchLaunch` 는 이미 받아 둔 값을 그대로 돌려주므로 토큰이 늘지 않는다.
+    if (_modalOpen) _offerLaunch();
     _maybeAutoEntry();
     return b;
   } catch (_) {

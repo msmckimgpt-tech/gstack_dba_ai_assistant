@@ -244,66 +244,49 @@ def test_status_and_token_responses_carry_last_os():
     assert "_store.account_bridge_os(" in src
 
 
-# ── 6. 화면 — 아는 사실이 추측을 이긴다 ─────────────────────────────────────
-
-def test_page_prefers_server_value_over_browser_guess():
-    src = _PAGE_JS.read_text(encoding="utf-8")
-    assert "function adoptLastOs(" in src
-    assert "adoptLastOs(info && info.last_os, 1)" in src, "상태 조회 값을 반영하지 않는다"
-    assert "adoptLastOs(r.body && r.body.last_os, 2)" in src, "발급 응답 값을 반영하지 않는다"
-    # 추측은 남되 **폴백**이어야 한다.
-    assert "navigator.platform" in src
-
-
-def test_page_pins_the_tab_once_the_user_picks():
-    src = _PAGE_JS.read_text(encoding="utf-8")
-    assert src.count("osTabPinned = true") == 2, "탭 두 개 중 한쪽이 선택을 고정하지 않는다"
-    fn = src[src.index("function adoptLastOs("):]
-    fn = fn[:fn.index("\n  }")]
-    assert "if (osTabPinned) { return; }" in fn, "늦게 온 서버 값이 사용자의 선택을 덮는다"
+# ── 6. 화면 — `last_os` 의 **쓰임이 바뀌었다** ────────────────────────────────
+#
+# ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
+#
+#   여기에는 화면 테스트 다섯이 있었다 — 「서버 값이 브라우저 추측을 이긴다」·「사용자가 누른
+#   탭을 늦게 온 응답이 덮지 않는다」·「근거 등급으로 도착 순서를 무력화한다」. 전부 **OS 탭**
+#   의 이야기였고, 그 탭은 1단계 명령을 고르기 위한 것이었다.
+#
+#   터미널 명령이 사라지면서 고를 OS 도 사라졌다. 그러나 **`last_os` 자체는 남는다** — 서버
+#   축(러너 신고 → 계정에 새김 → 응답에 실림)은 위 1~5 가 그대로 잠그고 있고, 화면에서의
+#   쓰임만 바뀌었다: 이제 그 값은 「이 사람이 **한 번이라도 연결해 본 적 있는가**」의 유일한
+#   근거이고, 그것으로 [내 AI 실행] 을 보일지 정한다.
+#
+#   그래서 화면 테스트를 지우는 대신 **새 쓰임을 잠근다.** 지우면 서버가 계속 실어 보내는
+#   값을 아무도 쓰지 않아도 초록이 되고, 그때 실행 버튼은 조용히 영영 안 나타난다.
 
 
-def test_modal_prefers_server_value_over_browser_guess():
+def test_screens_no_longer_choose_an_os_tab():
+    """OS 탭이 두 화면 모두에서 사라졌다 — 고를 명령이 없다."""
+    for src in (_PAGE_JS.read_text(encoding="utf-8"), _MODAL_JS.read_text(encoding="utf-8")):
+        for gone in ("osTabPinned", "paintOsTab", "adoptLastOs", "_osTab", "_adoptLastOs"):
+            assert gone not in src, f"OS 탭 처리가 남아 있다({gone})"
+
+
+def test_modal_uses_last_os_as_the_launch_eligibility():
+    """`last_os` 의 새 쓰임 — **연결 이력**이고, 그것이 실행 경로의 자격이다."""
     src = _MODAL_JS.read_text(encoding="utf-8")
-    assert "_osTab = _lastOs || (/win/i.test(" in src, (
-        "모달이 여전히 브라우저 OS 를 먼저 쓴다")
-    assert "_adoptLastOs(b.last_os)" in src, "상태 조회 값을 받지 않는다"
-    assert "_adoptLastOs(body.last_os)" in src, "발급 응답 값을 받지 않는다"
-
-
-def test_modal_pins_the_tab_once_the_user_picks():
-    src = _MODAL_JS.read_text(encoding="utf-8")
-    assert src.count("_osTabPinned = true") == 2
-    assert "_osTabPinned = false" in src, "창을 다시 열 때 고정이 풀리지 않는다"
-    fn = src[src.index("function _adoptLastOs("):]
+    assert "_everConnected = !!String(b.last_os" in src, (
+        "서버가 실어 보내는 연결 이력을 아무도 읽지 않는다 — 실행 버튼이 영영 안 나타난다")
+    fn = src[src.index("function _offerLaunch("):]
     fn = fn[:fn.index("\n}")]
-    assert "!_osTabPinned" in fn, "늦게 온 서버 값이 사용자의 선택을 덮는다"
-    assert 'v !== "posix" && v !== "windows"' in fn, (
-        "「모른다」를 posix 로 굳힌다 — 한 번도 연결한 적 없는 Windows 사용자가 틀린 명령을 본다")
+    assert "_everConnected" in fn, "실행 준비가 연결 이력을 자격으로 쓰지 않는다"
 
 
-def test_modal_discards_a_late_token_response_from_another_window():
-    """발급 응답에도 **창 세대 검사**가 있어야 한다 (codex P1-3).
+def test_the_offer_is_retried_once_eligibility_becomes_known():
+    """자격을 **나중에 알게 되는** 경우가 있다 — 그때 한 번 더 준다.
 
-    A 창에서 발급 중 닫고 B 창을 다시 열면, A 의 응답이 B 의 토큰·명령을 덮어쓴다. 닫힌 채로
-    도착하면 close 가 지운 bearer 명령이 숨은 DOM 에 되살아난다 — "닫으면 다시 볼 수 없습니다"
-    가 거짓이 되는 경로다. 상태 조회는 이미 같은 검사를 하고 있었고 발급만 빠져 있었다.
+    창을 여는 순간에는 상태 조회가 한 번도 끝나지 않았을 수 있고, 그러면 `_offerLaunch` 는
+    「이력 없음」으로 읽고 물러난다. 그 창에는 [내 AI 실행] 이 영영 안 나타난다(다시 열기
+    전까지) — 실측 2026-09-07 에 하네스가 이 자리를 짚었다.
     """
     src = _MODAL_JS.read_text(encoding="utf-8")
-    fn = src[src.index("async function _make("):]
-    fn = fn[:fn.index("\n}")]
-    assert "const epochAtStart = _modalEpoch;" in fn, "발급 출발 시점의 창 세대를 잡지 않는다"
-    assert fn.count("epochAtStart !== _modalEpoch") >= 2, (
-        "성공·실패 두 경로 모두에서 낡은 응답을 버려야 한다")
-    # 세대 검사가 **토큰·명령을 그리기 전**에 와야 한다 — 뒤에 두면 이미 덮은 뒤다.
-    assert fn.index("epochAtStart !== _modalEpoch") < fn.index("_launch = (body.launch")
-
-
-def test_page_orders_status_and_token_responses():
-    """늦게 온 **상태 조회**가 이미 그려진 발급 응답의 탭을 덮지 않는다 (codex P2-4)."""
-    src = _PAGE_JS.read_text(encoding="utf-8")
-    fn = src[src.index("function adoptLastOs("):]
-    fn = fn[:fn.index("\n  }")]
-    assert "if (r < osRank) { return; }" in fn, "근거 등급 비교가 없다 — 도착 순서가 결과를 정한다"
-    assert "adoptLastOs(info && info.last_os, 1)" in src   # 상태 조회
-    assert "adoptLastOs(r.body && r.body.last_os, 2)" in src   # 발급 응답이 더 높다
+    i = src.index("_everConnected = !!String(b.last_os")
+    after = src[i:i + 700]
+    assert "if (_modalOpen) _offerLaunch();" in after, (
+        "자격을 알게 된 자리에서 실행 준비를 다시 주지 않는다")
