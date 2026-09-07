@@ -321,13 +321,20 @@ def test_the_browser_shell_runs_when_embedding_is_unavailable(monkeypatch):
 
 # ── 6. 내장 껍데기의 배선 ────────────────────────────────────────────────────────
 
-def test_the_bridge_asks_the_human_directly_in_the_embedded_shell():
-    """⚠ 주 스레드를 GUI 루프가 쥐므로 **주-스레드 큐를 쓸 수 없다.**
+def test_the_bridge_reports_through_the_tray_in_the_embedded_shell():
+    """⚠ 2026-09-07 전제 변경 — 브리지는 **묻지 않고 끝난 뒤 알린다**.
 
-    큐를 그대로 쓰면 확인 요청이 영원히 처리되지 않고, 사용자에게는 「연결이 멈춤」으로 보인다.
+    알림은 알림 영역 아이콘으로 나가므로, 아이콘을 세우기 전에 온 알림은 갈 곳이 없다.
+    그래서 전달자는 **나중에 채워지는 상자**를 본다.
     """
     seg = _fn("_run_embedded")
-    assert "confirm=confirm" in seg, "확인 전달자가 없다"
+    assert "notify=_notify" in seg, "알림 전달자가 없다"
+    # ⚠ **상자에 담는 줄까지** 본다. 「`tray_box` 라는 이름이 나온다」로는 부족하다 —
+    #   담는 줄만 지운 뮤턴트가 살아남았다(실측 2026-09-07). 그 상태에서는 알림이 영영
+    #   갈 곳이 없는데 코드는 멀쩡해 보인다.
+    assert "tray_box.append(tray)" in seg, "트레이를 알림 전달자에 이어 주지 않는다"
+    assert seg.index("notify=_notify") < seg.index("tray_box.append(tray)"), \
+        "전달자보다 늦게 정의되면 브리지가 빈 상자를 들고 시작한다"
     assert "asks" not in seg, "주 스레드 큐를 쓴다 — 내장 껍데기에서는 처리될 자리가 없다"
 
 
@@ -380,7 +387,8 @@ def _drive_embedded(monkeypatch, tray, *, opened=True):
             pass
 
     class _Bridge:
-        def __init__(self, plan, confirm):
+        # ⚠ 2026-09-07: 확인(`confirm`) → 알림(`notify`)로 바뀌었다.
+        def __init__(self, plan, notify=None):
             self.plan, self.port, self.nonce = plan, 1, "n"
             self.resident_probe = None
             captured["bridge"] = self

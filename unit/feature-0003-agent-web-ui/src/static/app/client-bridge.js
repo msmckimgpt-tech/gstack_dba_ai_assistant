@@ -44,8 +44,8 @@ export const clientBridge = (function () {
  *
  * ⚠ 평범한 브라우저 방문에서는 좌표가 없어 이 패널이 켜지지 않고, 종전 경로가 그대로 남는다.
  *   연결 프로그램이 없는 사용자를 막다른 길에 세우지 않는다.
- * ⚠ 위험 동작(로그인·연결)은 브리지가 **네이티브 확인창**을 띄운다. 이 페이지가 XSS 되어도
- *   사람 없이는 진행되지 않으므로, 여기서 `declined` 응답을 정중히 다룬다.
+ * ⚠ 위험 동작(로그인·연결)은 2026-09-07 부터 **묻지 않는다**(사용자 결정). 브리지가
+ *   끝난 뒤 알림 영역으로 알린다 — 막지는 못하지만 모르게 일어나지는 않는다.
  */
 export function bridgeCall(action, body) {
   if (!clientBridge) return null;
@@ -54,6 +54,45 @@ export function bridgeCall(action, body) {
     headers: { "Content-Type": "application/json", "X-DQA-Nonce": clientBridge.nonce },
     body: JSON.stringify(body || {})
   }).then(function (r) { return r.json(); });
+}
+
+/* ── 자동 연결 (사용자 결정 2026-09-07) ─────────────────────────────────────────
+ *
+ * > 각 AI플랫폼 별로 고유한 서비스가 확인된다면 해당 연결은 자동으로 연결되도록
+ * > 수행해주세요. (중복되는 플랫폼이 있을때만 구성)
+ *
+ * 고를 것이 없으면 묻지 않는다. 「고를 것」은 **같은 플랫폼이 두 자리에 있을 때**뿐이다 —
+ * `claude` 가 Windows 와 WSL 양쪽에 있으면 어느 쪽인지는 사람만 안다.
+ *
+ * ⚠ **서로 다른 플랫폼이 여럿인 것은 갈림이 아니다.** 러너는 요청마다 런타임을 바꿔 답할 수
+ *   있으므로(`agent/handler.py`), 한 번 연결하면 나머지도 모델 메뉴에서 그대로 고를 수 있다.
+ *   여기서 정하는 것은 «어느 것으로 시작할까» 이지 «어느 것만 쓸까» 가 아니다.
+ */
+const _PRIMARY_ORDER = ["claude", "codex", "gemini"];
+
+/** 같은 플랫폼이 둘 이상 쓸 수 있는가 — 그때만 사람에게 고르게 한다. */
+export function ambiguousPlatforms(runtimes) {
+  const seen = new Map();
+  (runtimes || []).filter((r) => r.usable).forEach((r) => {
+    const key = String(r.name || r.id || "");
+    seen.set(key, (seen.get(key) || 0) + 1);
+  });
+  return [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k);
+}
+
+/** 자동으로 시작할 하나. 없으면 `null`.
+ *
+ *  ⚠ 순서를 고정한다 — 「탐지된 순서」로 두면 같은 컴퓨터에서 실행할 때마다 다른 AI 로
+ *  연결될 수 있고, 사용자는 그 이유를 알 방법이 없다.
+ */
+export function primaryRuntime(runtimes) {
+  const usable = (runtimes || []).filter((r) => r.usable);
+  if (usable.length === 0) return null;
+  for (const name of _PRIMARY_ORDER) {
+    const hit = usable.find((r) => String(r.name || "") === name);
+    if (hit) return hit;
+  }
+  return usable[0];
 }
 
 /** 이번 연결에 쓸 값(딥링크와 같은 봉투). 못 받으면 빈 문자열 — 브리지가 폴백을 쓴다.
@@ -129,7 +168,7 @@ export function initClientPanel(setStatus) {
         b.style.cssText = "margin-left:22px;margin-top:4px";
         b.textContent = "로그인";
         b.addEventListener("click", () => {
-          _status(r.id + " 로그인 — 이 컴퓨터에서 실행할지 묻는 확인 창에 답해 주세요.");
+          _status(r.id + " 로그인 명령을 실행하는 중…");
           bridgeCall("login", { id: r.id }).then((res) => {
             _status(res.detail || (res.ok ? "로그인했습니다." : "로그인하지 못했습니다."),
                     res.ok ? "ok" : "error");
@@ -143,43 +182,55 @@ export function initClientPanel(setStatus) {
     connectBtn.disabled = usable.length === 0;
   };
 
-  const refresh = () => {
+  /** 골라 둔 것으로 연결한다. 자동·수동이 **같은 경로**를 쓴다. */
+  const doConnect = (id, auto) => {
+    _status(auto ? "쓸 수 있는 AI 를 찾았습니다 — 바로 연결하는 중…" : "연결하는 중…");
+    return _connectLaunch()
+      .then((launch) => bridgeCall("connect", { id: id, launch: launch }))
+      .then((res) => {
+        _status(res.ok ? "연결됐습니다." : (res.detail || "연결하지 못했습니다."),
+                res.ok ? "ok" : "error");
+        return res;
+      })
+      .catch((e) => _status("연결하지 못했습니다. (" + e.message + ")", "error"));
+  };
+
+  const refresh = (auto) => {
     _status("이 컴퓨터의 AI 를 찾는 중… (실제로 답하는지 확인하므로 수십 초 걸립니다)");
     return bridgeCall("discover", {}).then((res) => {
-      paint(res.runtimes);
-      _status(res.runtimes && res.runtimes.some((r) => r.usable)
-        ? "쓸 수 있는 AI 를 찾았습니다." : "쓸 수 있는 AI 를 찾지 못했습니다.",
-        res.runtimes && res.runtimes.some((r) => r.usable) ? "ok" : "error");
+      const rts = res.runtimes || [];
+      paint(rts);
+      const usable = rts.filter((r) => r.usable);
+      if (usable.length === 0) {
+        _status("쓸 수 있는 AI 를 찾지 못했습니다.", "error");
+        return;
+      }
+      // ⚠ 자동 연결은 **패널을 처음 켤 때 한 번**이다 — `auto` 를 참으로 주는 호출이
+      //   맨 아래 첫 조회 하나뿐이라는 것이 그 보장이다([다시 찾기] 는 거짓을 준다).
+      //   플래그를 따로 두었다가 지웠다: 되메우는 것이 호출 지점이라 그 플래그는 **도달할 수
+      //   없었고**(뮤테이션에서 등가로 드러났다), 시험할 수 없는 가드는 다음 사람에게
+      //   「여기 방어가 있다」는 거짓 인상만 남긴다.
+      const amb = ambiguousPlatforms(rts);
+      if (auto && amb.length === 0) {
+        const pick = primaryRuntime(rts);
+        if (pick) { doConnect(pick.id, true); return; }
+      }
+      _status(amb.length
+        ? "같은 AI 가 여러 자리에 있습니다 — 어느 것으로 연결할지 골라 주세요."
+        : "쓸 수 있는 AI 를 찾았습니다.", "ok");
     }).catch((e) => _status("이 컴퓨터의 연결 기능에 닿지 못했습니다. (" + e.message + ")",
                           "error"));
   };
 
-  document.getElementById("connectClientRefresh").addEventListener("click", refresh);
-  connectBtn.addEventListener("click", () => {
-    _status("연결하는 중 — 이 컴퓨터에서 실행할지 묻는 확인 창에 답해 주세요.");
-    /* ⚠ **연결값을 여기서 받아 넘긴다** (2026-09-04).
-     *
-     * 종전에는 연결 프로그램이 딥링크로 받아 온 토큰만 썼다. 그러면 시작 메뉴에서 그냥 켠
-     * 앱 창은 토큰이 없어 연결을 걸지 못한다 — 프로그램이 웹의 부속물로 남던 지점이다.
-     * 토큰을 발급하는 주체는 원래부터 **이 창의 로그인 세션**이므로 여기서 받는 것이 옳다.
-     *
-     * ⚠ 봉투는 서버가 딥링크용으로 이미 만드는 `launch.protocol` **그대로** 넘긴다. 필드를
-     *   여기서 새로 조립하면 같은 뜻의 봉투가 둘이 되고, 한쪽만 고쳐지는 드리프트가 난다.
-     */
-    _connectLaunch().then((launch) => bridgeCall("connect", { id: chosen, launch: launch }))
-      .then((res) => {
-        if (res.error === "declined") { _status(res.detail, "error"); return; }
-        _status(res.ok ? "연결됐습니다." : (res.detail || "연결하지 못했습니다."),
-                res.ok ? "ok" : "error");
-      })
-      .catch((e) => _status("연결하지 못했습니다. (" + e.message + ")", "error"));
-  });
+  document.getElementById("connectClientRefresh")
+    .addEventListener("click", () => refresh(false));
+  connectBtn.addEventListener("click", () => { doConnect(chosen, false); });
   // 창이 살아 있음을 알린다 — 브리지는 이 신호로 수명을 판정한다.
   setInterval(() => { const p = bridgeCall("ping", {}); if (p) p.catch(() => {}); }, 20000);
   // ⚠ `discover` 와 **따로** 묻는다. 저것은 실제로 답하는지 확인하느라 수십 초 걸리는데,
   //   「창을 닫아도 되는가」는 그 전에 알아야 하는 안내다.
   const st = bridgeCall("status", {});
   if (st) st.then((res) => _paintResidency(!!(res && res.resident))).catch(() => {});
-  refresh();
+  refresh(true);
   return true;
 }

@@ -33,9 +33,13 @@ ORIGIN = "https://svc.example"
 
 @pytest.fixture()
 def confirmed():
-    """사람이 «예» 를 누른 경우. 확인 호출을 기록한다."""
+    """알림을 기록한다.
+
+    ⚠ 이름이 `confirmed` 인 것은 이력이다. 2026-09-07 에 **묻기 → 알리기**로 바뀌었다
+    (사용자 결정: "연결을 되묻는것은 사용자에게 위협으로 다가올 수 있습니다").
+    """
     calls: list[str] = []
-    yield calls, (lambda msg: calls.append(msg) or True)
+    yield calls, (lambda title, body: calls.append(f"{title}|{body}"))
 
 
 @pytest.fixture()
@@ -43,7 +47,7 @@ def br(tmp_path, confirmed, monkeypatch):
     calls, confirm = confirmed
     monkeypatch.setattr(core, "discover_runtime", lambda n: [])
     plan = core.ConnectPlan(base=BASE, token="mat_t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=confirm)
+    b = bridge_mod.Bridge(plan, notify=confirm)
     b.start()
     b._confirm_calls = calls
     yield b
@@ -109,8 +113,8 @@ def test_missing_sec_fetch_site_is_rejected(br):
 def test_nonce_is_per_launch(tmp_path):
     """재시작하면 옛 링크가 죽어야 한다 — 흘러나간 nonce 가 영원히 유효하면 안 된다."""
     plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
-    a = bridge_mod.Bridge(plan, confirm=lambda m: True)
-    c = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    a = bridge_mod.Bridge(plan, notify=lambda t, m: None)
+    c = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     try:
         assert a.nonce != c.nonce and len(a.nonce) >= 24
     finally:
@@ -143,43 +147,73 @@ def test_bridge_binds_loopback_only(br):
     assert br._srv.server_address[0] == "127.0.0.1"
 
 
-# ── 3. 위험 동작은 **사람 확인** 없이는 진행되지 않는다 ───────────────────────────
+# ── 3. 위험 동작은 **끝난 뒤 알린다** (2026-09-07 전제 변경) ─────────────────────
+#
+# 종전 계약: 프로세스를 띄우는 동작 **앞에** 네이티브 확인 창을 띄운다. 그 확인은 서비스에
+# XSS 가 생겼을 때 「사람 없이 사용자 머신에서 프로세스가 뜨는 것」을 막던 마지막 겹이었다.
+#
+# 사용자 결정(2026-09-07): *"연결을 되묻는것은 사용자에게 위협으로 다가올 수 있습니다.
+# 별도의 확인 창 없이 수행되도록 구성해주세요."* — 실제로 그 창은 사용자가 방금 [이 서비스에
+# 연결] 을 누른 **직후** 떴고, 문구가 「웹 화면이 이 컴퓨터에서 …」로 시작해 경고처럼 읽혔다.
+#
+# ⚠ **막는 겹은 사라졌다.** 남은 것은 「모르게 일어나지는 않는다」 — 끝난 뒤 알림 영역으로
+#   알린다. 이 파일은 그 약속을 잠근다: 성공하면 알리고, 실패하면 알리지 않고, 조회는 조용하다.
 
-def test_dangerous_actions_ask_the_human(br, monkeypatch):
-    seen: list = []
-    monkeypatch.setattr(core, "login", lambda st, **kw: (seen.append(st), (True, "ok"))[1])
+
+def test_process_spawning_actions_report_afterwards(br, monkeypatch):
+    monkeypatch.setattr(core, "login", lambda st, **kw: (True, "ok"))
     br._states = [core.RuntimeState(name="claude", path="/x/claude", where="wsl")]
     code, body = _post(br, "login", nonce=br.nonce, body={"id": "claude (WSL)"})
     assert code == 200 and body["ok"] is True
-    assert br._confirm_calls, "위험 동작인데 사람에게 묻지 않았다"
+    assert br._confirm_calls, "실행해 놓고 아무 말도 하지 않는다 — 모르게 일어난다"
     assert "claude (WSL)" in br._confirm_calls[0]
 
 
-def test_declined_dangerous_action_does_nothing(tmp_path, monkeypatch):
-    """**XSS 가 생겨도 사람 없이는 진행되지 않는다** — 이 단정이 그 약속이다."""
-    ran: list = []
-    monkeypatch.setattr(core, "login", lambda *a, **k: ran.append(1) or (True, ""))
+def test_a_failed_action_is_not_reported_as_done(tmp_path, monkeypatch):
+    """⚠ 실패까지 알리면 그 알림은 **확인할 수 없는 소음**이 된다."""
+    calls: list = []
+    monkeypatch.setattr(core, "login", lambda *a, **k: (False, "로그인 실패"))
     plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda msg: False)   # 사람이 «아니오»
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: calls.append(m))
     b.start()
     try:
         b._states = [core.RuntimeState(name="claude", path="/x/claude")]
         code, body = _post(b, "login", nonce=b.nonce, body={"id": "claude"})
-        assert code == 200 and body["ok"] is False and body["error"] == "declined"
-        assert not ran, "거절했는데 실행됐다"
+        assert code == 200 and body["ok"] is False
+        assert calls == [], "실패했는데 «했다» 고 알렸다"
     finally:
         b.stop()
 
 
-def test_read_only_actions_do_not_nag(br):
-    """조회까지 물으면 사람이 확인창을 습관적으로 넘기게 되고, 정작 위험할 때도 넘긴다."""
+def test_a_broken_notifier_does_not_undo_the_action(tmp_path, monkeypatch):
+    """알림은 **통지이지 관문이 아니다** — 알리지 못했다고 연결이 취소되면 안 된다."""
+    ran: list = []
+    monkeypatch.setattr(core, "login", lambda *a, **k: ran.append(1) or (True, "ok"))
+    plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
+
+    def _boom(*_a):
+        raise RuntimeError("트레이 없음")
+
+    b = bridge_mod.Bridge(plan, notify=_boom)
+    b.start()
+    try:
+        b._states = [core.RuntimeState(name="claude", path="/x/claude")]
+        code, body = _post(b, "login", nonce=b.nonce, body={"id": "claude"})
+        assert code == 200 and body["ok"] is True
+        assert ran == [1]
+    finally:
+        b.stop()
+
+
+def test_read_only_actions_stay_quiet(br):
+    """조회까지 알리면 알림이 소음이 되고, 사람은 그것을 끄는 법을 배운다."""
     _post(br, "status", nonce=br.nonce)
     _post(br, "discover", nonce=br.nonce)
     assert br._confirm_calls == []
 
 
 def test_dangerous_set_covers_every_process_spawning_action():
-    """프로세스를 띄우는 동작이 목록 밖에 생기면 확인 없이 실행된다."""
+    """프로세스를 띄우는 동작이 목록 밖에 생기면 **알리지 않고** 실행된다."""
     import ast
     src = (_UNIT / "src" / "client" / "bridge.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -190,8 +224,8 @@ def test_dangerous_set_covers_every_process_spawning_action():
             if any(k in seg for k in ("core.login", "core.spawn_runner",
                                       "core.install_runner", "core.check_connection")):
                 spawning.add(node.name[len("_do_"):])
-    assert spawning <= set(bridge_mod.DANGEROUS), \
-        f"확인 없이 프로세스를 띄우는 동작: {sorted(spawning - set(bridge_mod.DANGEROUS))}"
+    assert spawning <= set(bridge_mod.NOTIFIED), \
+        f"확인 없이 프로세스를 띄우는 동작: {sorted(spawning - set(bridge_mod.NOTIFIED))}"
 
 
 # ── 4. 알 수 없는 동작·깨진 입력 ──────────────────────────────────────────────────
@@ -220,7 +254,7 @@ def test_broken_json_does_not_crash_the_bridge(br):
 def test_origin_comparison_is_origin_not_prefix(tmp_path):
     """`https://svc.example.evil.com` 이 통과하면 안 된다."""
     plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     b.start()
     try:
         for bad in ("https://svc.example.evil.com", "http://svc.example",
@@ -241,7 +275,7 @@ def test_stop_without_start_does_not_hang(tmp_path):
     """
     import threading as _t
     plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     done = _t.Event()
     _t.Thread(target=lambda: (b.stop(), done.set()), daemon=True).start()
     assert done.wait(10), "기동하지 않은 브리지의 stop() 이 블록했다"
@@ -249,7 +283,7 @@ def test_stop_without_start_does_not_hang(tmp_path):
 
 def test_double_start_is_idempotent(tmp_path):
     plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     b.start(); b.start()
     try:
         assert _post(b, "status", nonce=b.nonce)[0] == 200
@@ -259,5 +293,5 @@ def test_double_start_is_idempotent(tmp_path):
 
 def test_stop_is_idempotent(tmp_path):
     plan = core.ConnectPlan(base=BASE, token="t", home=tmp_path)
-    b = bridge_mod.Bridge(plan, confirm=lambda m: True)
+    b = bridge_mod.Bridge(plan, notify=lambda t, m: None)
     b.start(); b.stop(); b.stop()

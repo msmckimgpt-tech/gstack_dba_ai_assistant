@@ -347,7 +347,8 @@
  * ⚠ 브리지 호출은 반드시 **POST + nonce 헤더** 다. GET 은 브리지가 막는다 —
  *   `<img>`·`<script>` 로도 발사되어 preflight 를 우회하기 때문이다.
  * ⚠ 로그인·연결은 브리지가 **네이티브 확인창**을 띄운다. 이 페이지가 XSS 되어도
- *   사람 없이는 진행되지 않는다. 그래서 여기서 그 응답(`declined`)을 정중히 다룬다.
+ *   ⚠ 2026-09-07: 그 확인은 없어졌다(사용자 결정). 브리지는 끝난 뒤 알림 영역으로
+ *   알린다 — 막지는 못하지만 모르게 일어나지는 않는다.
  */
 (function clientPanel() {
   var q = new URLSearchParams(location.search);
@@ -408,7 +409,6 @@
         b.addEventListener("click", function () {
           pstatus(r.id + " 로그인을 시작합니다 — 프로그램 창의 확인을 눌러 주세요.");
           call("login", { id: r.id }).then(function (res) {
-            if (res.error === "declined") { pstatus(res.detail, "error"); return; }
             pstatus(res.detail || (res.ok ? "로그인했습니다." : "로그인하지 못했습니다."),
                     res.ok ? "ok" : "error");
             if (res.ok) { discover(); }
@@ -469,7 +469,6 @@
   connectBtn.addEventListener("click", function () {
     pstatus("연결하는 중 — 프로그램 창의 확인을 눌러 주세요.");
     call("connect", { id: chosen }).then(function (res) {
-      if (res.error === "declined") { pstatus(res.detail, "error"); return; }
       if (res.ok) { pstatus("연결됐습니다. 대화 화면에서 질문하면 이 컴퓨터의 AI 가 답합니다.", "ok"); }
       else { pstatus(res.detail || "연결하지 못했습니다.", "error"); }
     });
