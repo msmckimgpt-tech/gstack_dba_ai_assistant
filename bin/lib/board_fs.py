@@ -2339,7 +2339,7 @@ def _traverse_ok(path: str, group_gid: int) -> bool:
         except OSError:
             return False
         if not (st.st_mode & 0o001) and not (st.st_gid == group_gid and st.st_mode & 0o010):
-            return False
+            return False              # mode 비트로만 판정 (fail-closed). ACL 로만 통과 가능한 호스트는 bootstrap 이 private 로 후퇴한다 (security panel 069 P2-3)
         if cur == "/":
             return True
         cur = os.path.dirname(cur)
@@ -2590,8 +2590,9 @@ def do_init(cwd: str, *, mode: str, root_arg: Optional[str], group: str, announc
     return msg + hooks_msg
 
 
-def install_hooks_files(root: Root, root_path: str, main_repo: str, mode: str = "shared") -> str:
-    """§11.1 P2-14: shlex.quote + json.dumps 2층, 위험 문자 경로는 exit 1 거부. Claude 만 (Q-8)."""
+def hooks_settings_obj(main_repo: str) -> Dict[str, Any]:
+    """§11.1 P2-14: adapter 절대경로(charset 검증) + shlex.quote. **소비 시점마다 재생성한다** — `<board>/hooks/claude-settings.json` 은
+    사람이 보는 사본일 뿐이고 shared 보드에서는 그룹의 다른 uid 가 바꿀 수 있으므로 병합 입력으로 쓰지 않는다 (security panel 069 P1-1)."""
     adapter = os.path.realpath(os.path.join(main_repo, "bin", "hooks", "board-hook.sh"))
     if not RE_HOOK_PATH_CHARSET.fullmatch(adapter):
         raise BoardError(EXIT_GENERIC_INIT, "hook_path_charset", "adapter 경로에 허용되지 않는 문자 — wrapper 를 그런 문자가 없는 경로로 옮긴 뒤 재시도")
@@ -2600,11 +2601,16 @@ def install_hooks_files(root: Root, root_path: str, main_repo: str, mode: str = 
         e: Dict[str, Any] = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
         if matcher: e["matcher"] = matcher
         return [e]
-    settings = {"hooks": {"SessionStart": h(5), "UserPromptSubmit": h(5), "Stop": h(5), "SessionEnd": h(1), "FileChanged": h(5, "SEQ")}}
-    root.mkdir(("hooks",), 0o2775 if mode == "shared" else 0o700)
+    return {"hooks": {"SessionStart": h(5), "UserPromptSubmit": h(5), "Stop": h(5), "SessionEnd": h(1), "FileChanged": h(5, "SEQ")}}
+
+
+def install_hooks_files(root: Root, root_path: str, main_repo: str, mode: str = "shared") -> str:
+    """사람이 보는 사본 `<board>/hooks/claude-settings.json` 을 쓴다 (활성화 입력이 아니다 — hooks_settings_obj 참조)."""
+    settings = hooks_settings_obj(main_repo)
+    root.mkdir(("hooks",), 0o2755 if mode == "shared" else 0o700)      # 그룹 쓰기 없음 — 사본조차 타 uid 가 바꾸지 못하게
     root.write_replace(("hooks", "claude-settings.json"), (json.dumps(settings, ensure_ascii=False, indent=2) + "\n").encode(), 0o644 if mode == "shared" else 0o600)
     return ("  hooks: %s/hooks/claude-settings.json 생성 (Claude Code 전용 — Codex/Gemini 는 미지원·실측 없음)\n"
-            "    다음: 그 파일의 hooks 를 사람이 %s/.claude/settings.json 에 병합한다 (PR 경유 — 이 도구는 소비자 저장소를 쓰지 않는다)\n"
+            "    활성화: board.sh bootstrap 또는 board.sh install-hooks 가 %s/.claude/settings.local.json(추적 안 됨·exclude 등재)에 병합한다 — 추적 파일 settings.json 은 쓰지 않는다\n"
             "    확인: bash bin/board.sh doctor --harness claude\n" % (root_path, main_repo))
 
 
@@ -2788,6 +2794,15 @@ def do_doctor(cwd: str, harness: Optional[str]) -> Tuple[str, int]:
                     continue
         finally:
             os.close(dmb)
+    if board.mode == "shared":
+        try:
+            tr = _traverse_ok(res.root, grp.getgrnam(board.group).gr_gid)
+        except KeyError:
+            tr = False
+        lines.append("traverse %s: 상위 디렉토리가 그룹 %s 에 통과 %s" % ("ok  " if tr else "FAIL", board.group, "가능" if tr else "불가 — 다른 uid 세션은 EACCES"))
+        if not tr: rc = 1
+    for d in [res.main_repo] + linked_worktrees(res.main_repo):
+        lines.append("hooks %s: %s" % ("active  " if hooks_active_in(d) else "INACTIVE", d))
     if harness == "claude":
         lines.append("harness claude: 이벤트 SessionStart/UserPromptSubmit/Stop/SessionEnd/FileChanged 는 2.1.227 에서 실측 실존 (spikes/20260904T1018)")
     elif harness:
@@ -2942,6 +2957,351 @@ def do_usage(root: Root, board: Board, log: Log, sid: Optional[str], since: str)
 
 
 # ============================================================================
+# 12b. 자율 부트스트랩 (§22.15 v3.53.1) — AI 세션이 스스로 게시판을 세우고 hook 을 켜고 참가한다
+# ============================================================================
+
+BOARD_GROUP_DEFAULT = "agent-board"
+BOARD_OPS_GROUP_DEFAULT = "agent-board-ops"
+SETTINGS_LOCAL_REL = os.path.join(".claude", "settings.local.json")
+
+
+def _group_members(name: str) -> Optional[set]:
+    try:
+        g = grp.getgrnam(name)
+    except KeyError:
+        return None
+    mem = set(g.gr_mem)
+    for pw in pwd.getpwall():
+        if pw.pw_gid == g.gr_gid:
+            mem.add(pw.pw_name)
+    return mem
+
+
+def bootstrap_choose_mode(members: List[str], notes: List[str]) -> str:
+    """shared 가 가능하면 shared, 아니면 private. uid 0 은 그룹을 만들 수 있다 (sudo 없음 — 있는 권한만 쓴다)."""
+    uid = current_uid_name()
+    g1, g2 = _group_members(BOARD_GROUP_DEFAULT), _group_members(BOARD_OPS_GROUP_DEFAULT)
+    want = sorted(set([uid] + [m for m in members if m]))
+    if g1 is not None and g2 is not None:
+        if uid in g1 and uid in g2:
+            missing = [m for m in want if m not in g1 or m not in g2]
+            if missing and os.getuid() == 0:
+                for m in missing:
+                    subprocess.run(["usermod", "-aG", "%s,%s" % (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT), m], capture_output=True)
+                notes.append("groups: %s 를 %s/%s 에 추가 (재로그인 뒤 유효)" % (",".join(missing), BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT))
+            elif missing:
+                notes.append("NOTE: %s 는 그룹 구성원이 아니다 — 운영자: sudo usermod -aG %s,%s <uid>" % (",".join(missing), BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT))
+            return "shared"
+        if os.getuid() == 0:
+            r = subprocess.run(["usermod", "-aG", "%s,%s" % (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT), uid], capture_output=True, text=True)
+            if r.returncode == 0:
+                notes.append("groups: root 를 %s/%s 에 추가" % (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT))
+                return "shared"
+        # 그룹이 **있는** 호스트 = 다중 uid 공유 호스트. 비운영자가 wrapper 의 공유 자원(.board-root)에 private 포인터를 박으면 다른 uid 전부가
+        # 막히고 복구는 수동이다 (backend panel 069 P2) → fail-closed.
+        raise BoardError(EXIT_VALIDATION, "operator_required",
+                         "호스트에 %s 그룹이 있는데 %s 는 구성원이 아니다 — private 로 후퇴하지 않는다(다른 uid 를 잠근다). 운영자: usermod -aG %s,%s %s 뒤 재로그인"
+                         % (BOARD_GROUP_DEFAULT, uid, BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT, uid))
+    if os.getuid() == 0:
+        ok = True
+        for gname in (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT):
+            if _group_members(gname) is None:
+                r = subprocess.run(["groupadd", gname], capture_output=True, text=True)
+                ok = ok and r.returncode == 0
+        if ok:
+            for m in want:
+                r = subprocess.run(["usermod", "-aG", "%s,%s" % (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT), m], capture_output=True, text=True)
+                if r.returncode != 0:
+                    notes.append("NOTE: usermod %s 실패 (%s)" % (m, (r.stderr or "").strip()[:80]))
+            notes.append("groups: %s/%s 생성 + 구성원 %s (다른 uid 는 재로그인 뒤 유효)" % (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT, ",".join(want)))
+            return "shared"
+        notes.append("NOTE: 그룹 생성 실패 → private 로 시작")
+        return "private"
+    notes.append("NOTE: 호스트 그룹 %s/%s 부재이고 uid %s 는 만들 수 없다 → private(같은 uid 세션 전용). shared 전환: 운영자(root)가 "
+                 "'groupadd %s; groupadd %s; usermod -aG %s,%s <uid>' 뒤 'board.sh init --mode shared'"
+                 % (BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT, uid, BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT, BOARD_GROUP_DEFAULT, BOARD_OPS_GROUP_DEFAULT))
+    return "private"
+
+
+def _write_nofollow_replace(path: str, data: bytes, mode: int) -> None:
+    tmp = "%s.%d.%s.tmp" % (path, os.getpid(), secrets.token_hex(4))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)           # 중단 시 `?? .claude/…tmp` 잔존 방지 (backend panel 069 P3)
+        except OSError: pass
+        raise
+
+
+def _hook_is_ours(entry: Any) -> bool:
+    """우리 항목 = command 가 `bash <abs>/bin/hooks/board-hook.sh --platform <p>` 형태 (사용자의 `my-board-hook.sh` 같은 이름은 우리 것이 아니다)."""
+    if not isinstance(entry, dict):
+        return False
+    for h in (entry.get("hooks") or []):
+        if not isinstance(h, dict): continue
+        try:
+            parts = shlex.split(str(h.get("command", "")))
+        except ValueError:
+            continue
+        if len(parts) >= 3 and parts[0] == "bash" and parts[1].endswith("/bin/hooks/board-hook.sh") and parts[2] == "--platform":
+            return True
+    return False
+
+
+def _git_tracked(project_dir: str, rel: str) -> bool:
+    try:
+        r = subprocess.run(["git", "-C", project_dir, "ls-files", "--error-unmatch", "--", rel], capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+def settings_local_merge(project_dir: str, hooks_obj: Dict[str, Any]) -> Tuple[bool, str]:
+    """`<project_dir>/.claude/settings.local.json` 에 **우리 hook 만** 병합 (다른 hook·키는 보존). 추적 파일 settings.json 은 건드리지 않는다.
+    순서가 계약이다 (security panel 069 P1-2): symlink → git 저장소 확인 → **추적 여부**(추적 파일이면 무접촉 거부) → exclude 등재 + check-ignore →
+    그 다음에야 쓴다. 기존 파일 mode 는 보존(확대 금지), 새 파일은 0600. 반환 (changed, path)."""
+    d = os.path.join(project_dir, ".claude")
+    path = os.path.join(project_dir, SETTINGS_LOCAL_REL)
+    if os.path.islink(d) or os.path.islink(path):
+        raise BoardError(EXIT_VALIDATION, "settings_symlink", path)
+    if _git_exclude_path(project_dir) is None:
+        raise BoardError(EXIT_VALIDATION, "settings_target_not_git", project_dir)      # hook 은 git worktree 에만 켠다 (임의 경로 생성 금지)
+    if _git_tracked(project_dir, SETTINGS_LOCAL_REL):
+        raise BoardError(EXIT_VALIDATION, "settings_local_tracked", path)             # 추적 파일은 PR 로만 (F0) — 무접촉
+    settings_local_exclude(project_dir)                                                # 등재 + check-ignore — 실패면 여기서 멈춘다 (쓰기 전)
+    os.makedirs(d, exist_ok=True)
+    existing_mode: Optional[int] = None
+    if os.path.exists(path):
+        existing_mode = statmod.S_IMODE(os.lstat(path).st_mode)
+    raw = _read_nofollow(path) if os.path.exists(path) else ""
+    try:
+        cur = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        raise BoardError(EXIT_VALIDATION, "settings_local_invalid_json", path)
+    if not isinstance(cur, dict):
+        raise BoardError(EXIT_VALIDATION, "settings_local_invalid_json", path)
+    hooks = dict(cur.get("hooks")) if isinstance(cur.get("hooks"), dict) else {}
+    changed = False
+    for ev, entries in hooks_obj.get("hooks", {}).items():
+        keep = [e for e in (hooks.get(ev) or []) if not _hook_is_ours(e)]
+        merged = keep + list(entries)
+        if hooks.get(ev) != merged:
+            changed = True
+            hooks[ev] = merged
+    if changed or "hooks" not in cur:
+        cur["hooks"] = hooks
+        _write_nofollow_replace(path, (json.dumps(cur, ensure_ascii=False, indent=2) + "\n").encode(), existing_mode if existing_mode is not None else 0o600)
+        changed = True
+    return changed, path
+
+
+def settings_local_exclude(project_dir: str) -> str:
+    """`.claude/settings.local.json` 을 그 저장소(공용 info/exclude — linked worktree 전부 커버)에 등재하고 check-ignore 로 검증."""
+    ex = _git_exclude_path(project_dir)
+    if ex is None:
+        raise BoardError(EXIT_VALIDATION, "settings_target_not_git", project_dir)
+    line = "/" + SETTINGS_LOCAL_REL
+    os.makedirs(os.path.dirname(ex), exist_ok=True)          # `.git/info` 가 없는 저장소도 있다 (security panel 069 P2-4)
+    existing = _read_nofollow(ex)
+    if line not in existing.split("\n"):
+        fd = os.open(ex, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+        try:
+            if existing and not existing.endswith("\n"):
+                os.write(fd, b"\n")
+            os.write(fd, (line + "\n").encode())
+        finally:
+            os.close(fd)
+    r = subprocess.run(["git", "-C", project_dir, "check-ignore", "-q", SETTINGS_LOCAL_REL], capture_output=True, timeout=5)
+    if r.returncode != 0:
+        raise BoardError(EXIT_VALIDATION, "settings_local_not_ignored", "%s 가 check-ignore 를 통과하지 않는다 (%s)" % (SETTINGS_LOCAL_REL, ex))
+    return "exclude: %s ← %s" % (ex, line)
+
+
+def linked_worktrees(main_repo: str) -> List[str]:
+    try:
+        r = subprocess.run(["git", "-C", main_repo, "worktree", "list", "--porcelain"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for ln in r.stdout.splitlines():
+        if ln.startswith("worktree "):
+            p = ln[len("worktree "):].strip()
+            if os.path.realpath(p) != os.path.realpath(main_repo) and os.path.isfile(os.path.join(p, "AGENTS.md")):
+                out.append(p)
+    return out
+
+
+def hooks_activate(main_repo: str, extra_dirs: List[str]) -> List[str]:
+    """main worktree + 모든 linked worktree + extra_dirs 에 settings.local.json 병합. 대상별 best-effort — 한 worktree 의 실패(타 uid 소유·추적 파일·
+    비-git 경로·권한)는 SKIP 줄로 표면화하고 다음 대상으로 간다 (backend panel 069 P1). hook 본문은 저장 파일이 아니라 **재생성**한다 (P1-1)."""
+    hooks_obj = hooks_settings_obj(main_repo)
+    targets: List[str] = []
+    for d in [main_repo] + linked_worktrees(main_repo) + [x for x in extra_dirs if x]:
+        rp = os.path.realpath(d)
+        if os.path.isdir(rp) and rp not in targets:
+            targets.append(rp)
+    lines = []
+    for d in targets:
+        try:
+            if not (_is_git_worktree_root(d) and os.path.isfile(os.path.join(d, "AGENTS.md"))):
+                raise BoardError(EXIT_VALIDATION, "settings_target_not_git", d)      # repo 하위 dir·임의 경로에 .claude/ 를 만들지 않는다 (P3)
+            try:
+                dst = os.stat(d)
+            except OSError:
+                dst = None
+            if dst is not None and dst.st_uid != os.getuid() and os.getuid() != 0:
+                lines.append("  hooks SKIP %s: 다른 uid(%s) 소유 worktree — 그 세션이 직접 board.sh install-hooks" % (d, _uid_name(dst.st_uid))); continue
+            changed, path = settings_local_merge(d, hooks_obj)
+            lines.append("  hooks %s: %s" % ("병합" if changed else "이미 활성", path))
+        except BoardError as e:
+            lines.append("  hooks SKIP %s: %s%s" % (d, e.reason, (" — " + ERR_HINT[e.reason]) if e.reason in ERR_HINT else ""))
+        except OSError as e:
+            lines.append("  hooks SKIP %s: %s (%s) — 이 worktree 는 다른 uid 소유이거나 쓸 수 없다; 그 세션이 직접 board.sh install-hooks" % (d, type(e).__name__, e.filename or ""))
+    return lines
+
+
+def _uid_name(uid: int) -> str:
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
+def hooks_active_in(project_dir: str) -> bool:
+    path = os.path.join(project_dir, SETTINGS_LOCAL_REL)
+    try:
+        raw = _read_nofollow(path) if os.path.lexists(path) else ""     # symlink 는 O_NOFOLLOW 가 ELOOP → 비활성으로 본다
+    except OSError:
+        return False
+    try:
+        o = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return False
+    hooks = o.get("hooks") if isinstance(o, dict) else None
+    if not isinstance(hooks, dict):
+        return False
+    ok = all(any(_hook_is_ours(e) for e in (hooks.get(ev) or [])) for ev in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd", "FileChanged"))
+    if not ok:
+        return False
+    for e in hooks.get("SessionStart") or []:          # 어댑터 실존까지 — wrapper 를 옮기면 stale 경로가 «active» 로 보이면 안 된다 (P3)
+        if _hook_is_ours(e):
+            parts = shlex.split(str(e["hooks"][0].get("command", "")))
+            return os.path.isfile(parts[1])
+    return False
+
+
+def do_install_hooks(cwd: str, extra_dirs: List[str]) -> str:
+    res = resolve_root(cwd)
+    if res is None or not res.pointer:
+        raise BoardError(EXIT_VALIDATION, "no_board", "보드 없음 — board.sh bootstrap")
+    root = Root(res.root); log = Log(root, current_uid_name())
+    try:
+        board = Board(root, log); bind_check(res, board, root)
+        if not root.exists(("hooks", "claude-settings.json")):
+            install_hooks_files(root, res.root, res.main_repo, board.mode)
+        lines = hooks_activate(res.main_repo, extra_dirs)
+    finally:
+        root.close()
+    return "agent-board hook 활성화\n" + "\n".join(lines) + "\n  주입은 다음 세션 시작부터(hook 설정은 시작 시 읽힌다) — CLI 는 지금부터\n"
+
+
+def do_bootstrap(cwd: str, *, work: str, members: List[str], mode_override: Optional[str], no_register: bool, extra_dirs: List[str],
+                 worktree: Optional[str] = None) -> str:
+    """§22.15 자율 부트스트랩 — 멱등 1명령: (모드 정책) init --install-hooks → hook 활성화(settings.local.json) → 자기 register → doctor.
+    init 구간은 anchor 디렉토리 flock 으로 직렬화한다 (동시 cycle-init 2개가 root 2개를 만들지 않게 — backend panel 069 P2)."""
+    main = find_main_repo(cwd)
+    if main is None:
+        raise BoardError(EXIT_VALIDATION, "no_project_context", "AGENTS.md 를 찾을 수 없다 — wrapper/repo/worktree 안에서 실행")
+    wrapper = os.path.dirname(main) if os.path.basename(main) == "repo" else None
+    anchor = wrapper or main
+    lines: List[str] = ["agent-board bootstrap"]
+    init_root: Optional[str] = None
+    afd = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(afd, fcntl.LOCK_EX)
+        res = resolve_root(cwd)
+        if res is None or not res.pointer:
+            notes: List[str] = []
+            if mode_override:
+                mode = mode_override
+            elif wrapper is None:
+                mode = "private"; notes.append("NOTE: wrapper 없는 layout — shared 는 --root 가 필요하므로 private 로 시작 (§22.15)")
+            else:
+                mode = bootstrap_choose_mode(members, notes)
+            lines += ["  " + x for x in notes]
+            lines.append("  init: mode=%s" % mode)
+            single_user = os.stat(anchor).st_uid == os.getuid()
+            try:
+                out = do_init(cwd, mode=mode, root_arg=None, group=BOARD_GROUP_DEFAULT, announce_group=BOARD_OPS_GROUP_DEFAULT, install_hooks=True)
+            except BoardError as e:
+                # 자동 선택 shared 가 «위치» 사정으로 막히면 private 로 후퇴 — 단 anchor 소유자가 자기 uid 일 때만 (사실상 단일 사용자).
+                # 다중 uid 호스트에서의 후퇴는 다른 uid 를 잠그므로 실패를 그대로 보인다. 명시 --mode 도 후퇴하지 않는다.
+                fallback_reasons = ("traverse", "root_required", "fs_type_rejected", "exclude_readonly", "ancestor_git_unresolvable", "ancestor_git_tracks_board", "group_missing")
+                if mode_override is None and mode == "shared" and e.reason in fallback_reasons and single_user:
+                    lines.append("  NOTE: shared init 불가(%s) → private 로 후퇴(anchor 소유 = 자기 uid). shared 전환: 원인 해소 뒤 'board.sh init --mode shared' (%s)"
+                                 % (e.reason, e.msg if e.msg != e.reason else ""))
+                    mode = "private"
+                    out = do_init(cwd, mode=mode, root_arg=None, group=BOARD_GROUP_DEFAULT, announce_group=BOARD_OPS_GROUP_DEFAULT, install_hooks=True)
+                elif mode_override is None and mode == "shared" and e.reason in fallback_reasons:
+                    raise BoardError(EXIT_VALIDATION, e.reason, (e.msg if e.msg != e.reason else e.reason) +
+                                     " — anchor(%s) 소유자가 다른 uid(%s)라 private 로 후퇴하지 않는다(다른 uid 를 잠근다). 운영자 uid 가 bootstrap 하라" % (anchor, _uid_name(os.stat(anchor).st_uid)))
+                else:
+                    raise
+            lines.append("  " + out.replace("\n", "\n  ").rstrip())
+            res = resolve_root(cwd)
+            if res is None:
+                raise BoardError(EXIT_INTERNAL, "bootstrap_resolve_failed")
+            init_root = res.root
+        else:
+            lines.append("  board: 이미 초기화됨 root=%s mode=%s" % (res.root, res.mode))
+    finally:
+        os.close(afd)
+    root = Root(res.root); log = Log(root, current_uid_name())
+    try:
+        board = Board(root, log); bind_check(res, board, root)
+        if not root.exists(("hooks", "claude-settings.json")):
+            install_hooks_files(root, res.root, res.main_repo, board.mode)
+        lines += hooks_activate(res.main_repo, extra_dirs)
+        native = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        if no_register:
+            lines.append("  register: 생략 (--no-register)")
+        elif native and fm(RE_NATIVE, native):
+            sid = "claude:%s:%s" % (current_uid_name(), native)
+            w = work or "-"
+            if w != "-" and not (fm(RE_WORK_FEATURE, w) or fm(RE_WORK_META, w)):
+                lines.append("  NOTE: --work '%s' 는 work_ref 형식(feature-NNNN-<slug> | META-NNNN | -)이 아니다 → '-' 로 등록" % w); w = "-"
+            pres = load_presence(root, sid, log)
+            if pres is not None and pres["state"] in ("active", "muted", "done"):
+                lines.append("  register: 이미 등록됨 %s (state=%s, 토큰 유지)" % (sid, pres["state"]))   # 재등록은 토큰을 회전시킨다 — 멱등 재실행이 env 토큰을 깨면 안 된다 (P2)
+            else:
+                try:
+                    do_register(root, board, res, log, native_id=native, platform="claude", alias=None, work=w, model=None, harness=None,
+                                worktree=worktree, resume=(pres is not None), env_file=None)
+                    lines.append("  register: %s (work=%s%s) — 토큰은 sessions/<sid>.token (자기 uid 는 --token 없이 CLI 사용 가능)"
+                                 % (sid, w, (" 복귀 " + pres["state"]) if pres is not None else ""))
+                except BoardError as e:
+                    if e.reason == "tombstone":
+                        lines.append("  register: 이 세션 id 는 종단(ended) 상태 — 새 Claude 세션에서 다시 시작해야 한다")
+                    else:
+                        lines.append("  register: skip (%s)" % e.reason)
+        else:
+            lines.append("  register: CLAUDE_CODE_SESSION_ID 없음 — hook 이 다음 세션 시작에서 등록한다")
+    finally:
+        root.close()
+    res2 = resolve_root(cwd)
+    if init_root and res2 is not None and os.path.realpath(res2.root) != os.path.realpath(init_root):
+        lines.append("  WARN: 포인터가 가리키는 root(%s)가 방금 초기화한 root(%s)와 다르다 — 다른 세션이 먼저 초기화했다; 포인터 쪽이 정본" % (res2.root, init_root))
+    msg, _rc = do_doctor(cwd, "claude")
+    lines.append("  doctor:\n    " + msg.rstrip().replace("\n", "\n    "))
+    lines.append("  다음: 주입(hook)은 **다음 세션 시작부터** 유효하다 — 지금 turn 은 CLI 로 참가한다: board.sh read · post · ack · done")
+    return "\n".join(lines) + "\n"
+
+# ============================================================================
 # 13. 어댑터 진입 — session-start · end --hook · file-changed (§10.3.1 · §11.1 · §11.3)
 # ============================================================================
 
@@ -3054,7 +3414,15 @@ ERR_HINT: Dict[str, str] = {
     "bad_channel": "채널은 public | announce | topic/<slug> | dm(--to 필수)",
     "re_not_found": "--re 가 가리키는 게시물이 없다",
     "unknown_key": "board.json 에 모르는 최상위 키가 있다 — 완화 옵션은 없다. 키를 지워라",
-    "group_missing": "운영자: sudo groupadd <그룹>; sudo usermod -aG <그룹> <uid> 뒤 재로그인",
+    "group_missing": "board.sh bootstrap 은 그룹이 없으면 private 로 시작한다. shared 전환: 운영자(root)가 groupadd agent-board agent-board-ops; usermod -aG agent-board,agent-board-ops <uid>",
+    "no_project_context": "AGENTS.md 가 있는 repo/worktree(또는 그 wrapper) 안에서 실행하라",
+    "settings_symlink": ".claude/settings.local.json(또는 .claude/) 이 symlink 다 — 쓰지 않는다",
+    "settings_local_invalid_json": ".claude/settings.local.json 이 JSON 객체가 아니다 — 손으로 고친 뒤 board.sh install-hooks",
+    "settings_local_not_ignored": ".claude/settings.local.json 이 git 에 추적될 수 있다 — .git/info/exclude 를 확인하라",
+    "settings_local_tracked": ".claude/settings.local.json 이 이 저장소에 **추적**돼 있다 — 도구는 추적 파일을 쓰지 않는다(F0). PR 로 hook 을 넣거나 파일을 추적 해제하라",
+    "settings_target_not_git": "hook 은 git worktree 에만 켠다 — --activate-in 경로가 git 저장소가 아니다",
+    "self_only": "인자 없는 reactivate 는 자기 세션 전용 — 타 세션은 human 토큰+TTY 로 'reactivate <sid>'",
+    "root_open_failed": "포인터(.board-root)가 가리키는 root 를 열 수 없다 — root 가 지워졌거나(포인터 dangling: .board-root 를 지우고 bootstrap) 다른 uid 의 private 보드다",
     "inside_repo": "보드는 저장소 안에 둘 수 없다 — --root <저장소 밖 절대경로>",
     "binding_mismatch": "포인터/board.json 의 귀속이 이 프로젝트와 다르다 — 복사·이전된 보드. board.sh doctor",
     "already_initialized": "이미 초기화됐다 (멱등)",
@@ -3091,6 +3459,9 @@ def main(argv: List[str]) -> int:
     p = sub.add_parser("register"); p.add_argument("--native-id"); p.add_argument("--platform"); p.add_argument("--alias")
     p.add_argument("--work", default="-"); p.add_argument("--model"); p.add_argument("--harness"); p.add_argument("--worktree"); p.add_argument("--resume", action="store_true")
     p.add_argument("--env-file"); p.add_argument("--human", action="store_true"); p.add_argument("--observer", action="store_true"); p.add_argument("--print-token", action="store_true")
+    for name in ("bootstrap", "install-hooks"):
+        p = sub.add_parser(name); p.add_argument("--work", default="-"); p.add_argument("--members", default=""); p.add_argument("--mode", choices=("shared", "private"))
+        p.add_argument("--no-register", action="store_true"); p.add_argument("--activate-in", action="append", default=[]); p.add_argument("--worktree")
     for name in ("post", "alert", "ack", "done", "mute", "unmute", "end", "reactivate", "subscribe", "unsubscribe", "alias", "config", "usage", "gc", "read", "sessions", "deliver", "session-start", "file-changed", "doctor", "bind-check", "resolve-root", "digest-verify"):
         p = sub.add_parser(name)
         p.add_argument("--sid"); p.add_argument("--token"); p.add_argument("--platform"); p.add_argument("--event")
@@ -3140,6 +3511,13 @@ def main(argv: List[str]) -> int:
             _emit(do_init(cwd, mode=a.mode, root_arg=a.root, group=a.group, announce_group=a.announce_group, install_hooks=a.install_hooks)); return 0
         if a.cmd == "doctor":
             msg, rc = do_doctor(cwd, a.harness); _emit(msg); return rc
+        if a.cmd == "bootstrap":
+            members = [m for m in (a.members or "").split(",") if m]
+            for m in members:
+                if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", m): raise BoardError(EXIT_VALIDATION, "bad_member", m)
+            _emit(do_bootstrap(cwd, work=a.work or "-", members=members, mode_override=a.mode, no_register=a.no_register, extra_dirs=a.activate_in, worktree=a.worktree)); return 0
+        if a.cmd == "install-hooks":
+            _emit(do_install_hooks(cwd, a.activate_in)); return 0
         if a.cmd == "resolve-root":
             res = resolve_root(cwd); _emit(res.root if res else ""); return 0 if res else EXIT_VALIDATION
         res, root, board, log = open_board(cwd, sid or "-")
@@ -3158,7 +3536,7 @@ def main(argv: List[str]) -> int:
             if a.print_token and is_tty() and a.human:
                 sys.stderr.write("export AGENT_BOARD_SID=%s AGENT_BOARD_TOKEN=%s\n" % (s, t))
             return 0
-        if a.cmd in ("read", "sessions", "doctor") or (a.cmd == "usage" and a.all) or (a.cmd == "gc" and not a.purge):
+        if a.cmd in ("read", "sessions", "doctor", "bootstrap", "install-hooks") or (a.cmd == "usage" and a.all) or (a.cmd == "gc" and not a.purge):
             pass   # 사람·모델용 pull / 진단 — 세션 불필요 (§14 G4)
         elif not sid:
             # §6.1 writer 의 sid 해석: (uid, 플랫폼) active 세션이 유일할 때만
@@ -3188,9 +3566,19 @@ def main(argv: List[str]) -> int:
                                                re_id=pid, refs=[], priority="normal", title_override="ack"))
             return 0
         if a.cmd == "reactivate":
-            # reactivate <target-sid>: --sid/--token(또는 env) 은 **human 행위자**, 위치 인자는 done 상태의 대상 (같은 uid). TTY 전용.
+            # reactivate            : **자기 세션** self-reactivate (done → active, 자기 토큰) — 새 일이 왔을 때 세션이 스스로 되살린다 (§22.15)
+            # reactivate <target>   : --sid/--token 은 human 행위자(TTY 전용), 위치 인자는 done 상태의 대상 (같은 uid)
             tgt = a.name or a.id or ""
-            if not tgt: raise BoardError(EXIT_USAGE, "usage", "reactivate <target-sid> (행위자 human 세션은 --sid/--token)")
+            if not tgt:
+                # 같은 uid 안에서 토큰 파일은 누구나 읽을 수 있다(uid 가 인가 경계) — «자기 세션» 은 하네스가 준 CLAUDE_CODE_SESSION_ID 가 sid 의
+                # native 컴포넌트와 같거나, 호출자가 토큰을 **명시**한 경우로만 인정한다 (security panel 069 P2-2).
+                require_own_sid(sid)
+                native_env = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+                if native_env:
+                    if sid_parts(sid)[2] != native_env: raise BoardError(EXIT_VALIDATION, "self_only", "reactivate(인자 없음)는 자기 세션(%s)만 — 타 세션은 human 토큰+TTY 로 'reactivate <sid>'" % native_env)
+                elif not (getattr(a, "token", None) or os.environ.get("AGENT_BOARD_TOKEN")):
+                    raise BoardError(EXIT_VALIDATION, "self_only", "자기 세션 증명이 없다 — CLAUDE_CODE_SESSION_ID 또는 --token 이 필요하다")
+                _emit(transition(root, board, log, sid=sid, token=token, target="reactivate", actor="self:" + sid)); return 0
             actor = authz_session(root, sid, token, log, ("active", "muted", "done")); require_human_tty(actor)
             _emit(transition(root, board, log, sid=tgt, token=None, target="reactivate", actor=sid)); return 0
         if a.cmd in ("done", "mute", "unmute", "end"):

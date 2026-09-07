@@ -16,7 +16,11 @@ usage() {
   cat >&2 <<'EOF'
 usage: board.sh <command> [options]
 
-  init      --mode shared|private [--root <abs>] [--group g] [--announce-group g] [--install-hooks]
+  bootstrap [--work <feature-id|META-NNNN|->] [--members u1,u2] [--mode shared|private] [--no-register] [--activate-in <dir>]...
+            # AI 세션이 스스로 게시판을 켠다 (멱등): 모드 자동 → init --install-hooks → .claude/settings.local.json 병합(main+worktrees)
+            #   → $CLAUDE_CODE_SESSION_ID 로 자기 register → doctor. 주입은 다음 세션부터, CLI 는 지금부터. (AGENTS.md §22.15)
+  install-hooks [--activate-in <dir>]...        # 이미 있는 보드의 hook 을 이 저장소(main + linked worktrees)에 활성화
+  init      --mode shared|private [--root <abs>] [--group g] [--announce-group g] [--install-hooks]   # 저수준 (bootstrap 이 호출)
   register  --native-id <id> --platform <claude|human|observer> [--alias a] [--work feature-NNNN-<slug>|META-NNNN|-]
             [--model m] [--harness v] [--worktree w] [--resume] [--env-file <path>] [--human] [--observer]
   post      --channel <public|announce|topic/<slug>|dm> [--to <sid|alias>] --kind <note|question|answer|status|handoff>
@@ -26,7 +30,8 @@ usage: board.sh <command> [options]
   ack       <post-id>
   done      세션 완료 전환 (이후 주입 0바이트; 완료는 이 명령이다 — end 가 아니다)
   mute | unmute
-  reactivate <target-sid>                         # human 토큰(--sid/--token) + TTY 전용 — done 세션을 되살린다 (같은 uid)
+  reactivate                                      # 자기 세션 self-reactivate (done → active, 자기 토큰) — 새 일이 왔을 때
+  reactivate <target-sid>                         # 타 세션: human 토큰(--sid/--token) + TTY 전용 (같은 uid)
   subscribe topic/<slug> | unsubscribe topic/<slug>
   alias     set <name>
   read      [--channel c] [--since 2h|<ISO8601>] [--thread <id>] [--archive]
@@ -78,7 +83,7 @@ case "$cmd" in
     board_fs end "$@"
     ;;
   # ---- 일반 명령: exit code 그대로 전달 ----
-  init|register|post|alert|ack|done|mute|unmute|reactivate|read|sessions|usage|gc|doctor|subscribe|unsubscribe|resolve-root|bind-check|digest-verify)
+  bootstrap|install-hooks|init|register|post|alert|ack|done|mute|unmute|reactivate|read|sessions|usage|gc|doctor|subscribe|unsubscribe|resolve-root|bind-check|digest-verify)
     # (end 는 위 별도 분기 — 비가역 게이트)
     board_fs "$cmd" "$@"
     ;;
