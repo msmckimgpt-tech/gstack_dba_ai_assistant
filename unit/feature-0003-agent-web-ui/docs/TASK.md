@@ -8,6 +8,33 @@ source_of_truth: true
 
 # Task
 
+## 20260907T160000-asset-stamp-reach — 스탬프 없는 모듈 참조로 배포가 브라우저에 도달하지 못한 결함 (Minor §12.3 — frontend-only, 비파괴)
+
+**발견 경위(2026-09-07)**: 「자동 연결」(TASK-20260907T060000) 라이브 실측 중, 배포·재적재
+뒤에도 앱 창의 동작이 바뀌지 않았다. 페이지가 **실제로 적재한 모듈 인스턴스**를
+`import('/static/app/client-bridge.js')` 로 꺼내 보니 신규 export 가 없었다 — 서버가 서빙하는
+파일은 새것이었다.
+
+### 진단 (증거)
+
+| 관측 | 값 |
+|---|---|
+| 서버가 서빙하는 파일 | 새 코드 (`ambiguousPlatforms` 포함, 9172자) |
+| 페이지가 적재한 모듈 | 구 코드 (`exports = bridgeCall, clientBridge, initClientPanel`) |
+| 문서의 리소스 항목 | `client-bridge.js` (쿼리 **없음**), decoded 10721B |
+| 다시 받은 파일 | `client-bridge.js?v=dev`, decoded 12971B |
+| 전체 import 중 무스탬프 | **1건** (`./client-bridge.js`), 나머지 102건은 `?v=dev` 보유 |
+
+원인: `inject_asset_stamp.py` 는 **`?v=` 토큰을 치환**한다(삽입하지 않는다). 토큰이 없으면
+치환 대상 밖이고, 캐시 정책은 「`?v=` 없음 = Cache-Control 미설정」이라 브라우저 휴리스틱
+캐시가 걸린다. 그 결과 «배포됨» 과 «도달함» 이 갈렸다.
+
+- [x] `src/static/app/connect-modal.js` — `./client-bridge.js` → `./client-bridge.js?v=dev`
+- [x] **신규** `tests/test_static_module_stamp_census.py` — 정적 트리 전체(48파일·상대참조
+      103건)에 대해 **모든 로컬 모듈 참조가 `?v=` 를 갖는지** 전수 검사 + 추출이 깨졌는지
+      가르는 양성 대조군 + 표본 하한(15).
+
+
 ## 20260901T1900-conv-status-dot-wiring — 사이드바 대화 상태 배지 색 배선 복원 + 동종 배선 게이트 (Minor §12.3 — frontend-only, 비파괴)
 
 **사용자 요청(2026-09-01)**:
