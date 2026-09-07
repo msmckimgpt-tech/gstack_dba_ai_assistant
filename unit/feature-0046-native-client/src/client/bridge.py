@@ -50,21 +50,38 @@ from . import core
 #: https 페이지의 127.0.0.1 요청을 차단한다(실측 2026-09-04: 이 헤더로 통과).
 _PNA_HEADER = "Access-Control-Allow-Private-Network"
 
-#: **프로세스를 띄우는** 동작. 이것만 사람 확인을 받는다 — 조회까지 물으면 사람이 확인창을
-#: 습관적으로 넘기게 되고, 그러면 정작 위험한 순간의 확인도 같이 넘어간다.
-DANGEROUS: frozenset[str] = frozenset({"login", "connect"})
+#: **프로세스를 띄우는** 동작. 끝난 뒤 알림 영역으로 **알린다**.
+#:
+#: ## 왜 「묻기」에서 「알리기」로 바꿨나 (사용자 결정 2026-09-07)
+#:
+#: 종전에는 이 동작들 앞에 네이티브 확인 창을 띄웠다. 사용자 제보:
+#:
+#:   > 연결을 되묻는것은 사용자에게 위협으로 다가올 수 있습니다.
+#:   > 별도의 확인 창 없이 수행되도록 구성해주세요.
+#:
+#: 실제로 그 창은 **사용자가 방금 패널에서 [이 서비스에 연결] 을 누른 직후** 떴다 — 자기가
+#: 시킨 일을 다시 묻는 모양이고, 문구가 「웹 화면이 이 컴퓨터에서 …」로 시작해 경고처럼 읽힌다.
+#:
+#: ⚠ **잃는 것을 분명히 적는다.** 이 확인은 서비스에 XSS 가 생겼을 때 「사람 없이 사용자
+#: 머신에서 프로세스가 뜨는 것」을 막던 **마지막 겹**이었다(origin·nonce 는 XSS 가 그대로
+#: 통과한다 — 같은 페이지에서 읽히기 때문이다). 그 겹은 이제 없다.
+#:
+#: 대신 **끝난 뒤 알린다.** 막지는 못하지만 **모르게 일어나지는 않는다** — 사용자가 알림을
+#: 보고 이상하면 트레이에서 [연결 끊기]·[종료] 를 할 수 있다. 사용자 결정 2026-09-07.
+NOTIFIED: frozenset[str] = frozenset({"login", "connect"})
 
 
 class Bridge:
     """로컬 브리지. **상태를 갖지 않는다** — 매 요청이 nonce·origin 을 다시 통과해야 한다."""
 
     def __init__(self, plan: core.ConnectPlan,
-                 confirm: Callable[[str], bool],
+                 notify: "Callable[[str, str], None] | None" = None,
                  host: str = "127.0.0.1"):
         self.plan = plan
-        #: 위험 동작에서 사람에게 묻는 함수. **주입받는다** — tkinter 는 주 스레드만 쓸 수
-        #: 있어서 여기서 직접 부르면 안 되고, 껍데기가 그 규약을 아는 쪽이다.
-        self._confirm = confirm
+        #: 프로세스를 띄운 **뒤** 사용자에게 알리는 함수(제목, 본문). **주입받는다** —
+        #: 알림 영역 아이콘은 껍데기가 세우고, 못 세운 머신도 있다(그때는 알리지 못한다).
+        #: ⚠ 알림이 실패해도 동작은 계속된다 — 알림은 통지이지 관문이 아니다.
+        self._notify = notify or (lambda title, body: None)
         #: 실행마다 새로 만든다. 재시작하면 옛 링크는 죽는다.
         self.nonce = secrets.token_urlsafe(24)
         self.origin = _origin_of(plan.base)
@@ -165,10 +182,15 @@ class Bridge:
         fn = getattr(self, f"_do_{action}", None)
         if fn is None:
             return {"ok": False, "error": "unknown_action"}
-        if action in DANGEROUS and not self._confirm(_confirm_text(action, body)):
-            return {"ok": False, "error": "declined",
-                    "detail": "사용자가 이 컴퓨터에서의 실행을 승인하지 않았습니다."}
-        return fn(body)
+        result = fn(body)
+        # ⚠ **끝난 뒤에** 알린다. 앞에서 알리면 실패한 시도까지 「실행했다」고 말하게 되고,
+        #   그 알림은 사용자가 확인할 방법이 없는 소음이 된다.
+        if action in NOTIFIED and isinstance(result, dict) and result.get("ok"):
+            try:
+                self._notify(*_notice(action, body))
+            except Exception:  # noqa: BLE001 — 알림 실패가 동작을 되돌리지 않는다
+                pass
+        return result
 
     def _do_ping(self, _body: dict) -> dict:
         """패널이 살아 있음을 알린다. `act()` 가 이미 `last_seen` 을 갱신했다."""
@@ -312,14 +334,16 @@ def _state_json(st: core.RuntimeState) -> dict:
             "detail": st.detail, "can_login_here": st.can_login_here}
 
 
-def _confirm_text(action: str, body: dict) -> str:
+def _notice(action: str, body: dict) -> "tuple[str, str]":
+    """끝난 뒤 알림 영역에 띄울 (제목, 본문).
+
+    ⚠ 경고가 아니라 **보고**다. 사용자가 방금 시킨 일이므로 「직접 요청한 것이 아니라면」
+    같은 문구를 쓰지 않는다 — 그 어투가 확인 창을 위협으로 읽히게 만든 원인이다.
+    """
     who = str(body.get("id") or "")
     if action == "login":
-        return (f"웹 화면이 이 컴퓨터에서 «{who}» 로그인 명령을 실행하려고 합니다.\n\n"
-                "직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
-    return (f"웹 화면이 이 컴퓨터에서 «{who}» 로 연결을 시작하려고 합니다.\n"
-            "러너를 내려받아 상주시킵니다.\n\n"
-            "직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
+        return (core.DISPLAY_NAME, f"{who} 로그인 명령을 실행했습니다.")
+    return (core.DISPLAY_NAME, f"{who} 로 연결했습니다. 이제 질문에 답할 수 있습니다.")
 
 
 def _make_handler(bridge: "Bridge"):
