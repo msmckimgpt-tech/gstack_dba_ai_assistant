@@ -23,14 +23,16 @@
 ## 실행
 1. 현재 디렉토리에서 작업한다.
 2. `.env`가 로컬 전용 파일이며 원본 운영 의미를 유지하는지 점검한다.
-3. 외부 Local LLM provider가 필요하면 먼저 `/root/download/docker/local_llm` 에서 별도로 기동한다.
-4. 외부 provider가 `llm-shared` 네트워크와 `http://local-llm-gateway:8080/v1` 계약을 제공하는지 확인한다.
-5. `ENABLE_MCP=1` 상태라면 호스트 포트 `28000`이 비어 있는지 확인한다.
-6. `make start`
-7. `make status`
-8. `make ask q="질문"`
+3. `ENABLE_MCP=1` 상태라면 호스트 포트 `28000`이 비어 있는지 확인한다.
+4. `make start`
+5. `make status`
+6. `make ask q="질문"`
 
-현재 repo는 Local LLM을 직접 기동하지 않는다. `llm-shared` 외부 네트워크가 없으면 `make` 명령이 안내 메시지와 함께 중단된다.
+로컬 LLM은 사용하지 않는다 (2026-09-07 사용자 결정). 별도 `local_llm` provider 기동이나
+`llm-shared` 외부 네트워크는 더 이상 전제조건이 아니며, 이를 요구하던 `check-llm-network`
+게이트도 제거됐다. 대화 추론은 각 사용자의 개인 머신 AI 런타임이 수행하고
+(feature-0043 external-llm-bridge), KB 검색의 쿼리 임베딩은 미설정 상태이므로
+`kb_retrieval` 이 `pg_trgm` 유사도로 fallback 한다.
 
 ## GitHub 협업
 - 원격 저장소는 `git@github.com:msmckimgpt-tech/ai_desk_mysql.git`를 사용한다.
@@ -53,8 +55,14 @@
 - 현재 단계 검증은 구조/경로/기동 확인까지만 반영했다.
 - 엄격한 도메인 검증 시나리오는 각 feature의 `docs/TEST.md`를 정본으로 후속 작성한다.
 - `.env.example`는 대체 기본값 파일이 아니라, 원본 `.env` 구조를 민감값 없이 보여주는 샘플이다.
-- 2026-04-15 기준으로 현재 repo는 외부 `/root/download/docker/local_llm` provider를 소비만 하며, 내부에서 Ollama/gateway를 생성하거나 관리하지 않는다.
-- 2026-04-15 기준으로 Web UI는 `LOCAL_LLM_API_BASE` 연결 가능 여부를 `local_llm_enabled`로 노출하고, 외부 provider 미기동 시 Local LLM 요청을 503으로 제한한다.
+- ~~2026-04-15 기준으로 현재 repo는 외부 `/root/download/docker/local_llm` provider를 소비만 하며…~~
+  **(2026-09-07 폐기)** 사용자 결정 "로컬 LLM 미사용" 으로 그 provider 자체가 폐기됐고, 본 repo 의
+  로컬 LLM 소비면(`llm-shared` attach · `check-llm-network` 게이트 · `titan-embed` alias ·
+  `embed-ollama` 서비스 · 모델 카탈로그의 로컬 tier)이 전부 제거됐다.
+- ~~Web UI는 `LOCAL_LLM_API_BASE` 연결 가능 여부를 `local_llm_enabled`로 노출하고…~~
+  **(2026-09-07 폐기)** `shared/model_catalog.py` 의 `_LOCAL_LLM_ENABLED` 가 env 를 읽지 않고
+  상수 `False` 이므로, `.env` 에 `LOCAL_LLM_API_BASE` 가 남아 있어도 로컬 alias(auto/edge/core/code)는
+  카탈로그 밖이며 `/api/ask` 가 400 으로 거부한다.
 - 최근 검증 기준으로 `ENABLE_MCP=1`일 때 호스트 `28000` 포트가 이미 사용 중이면 `make start` 마지막 단계에서 `mcp` 기동이 차단될 수 있다.
 
 ## Codex Commands

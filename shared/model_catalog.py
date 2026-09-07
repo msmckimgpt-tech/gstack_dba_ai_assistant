@@ -40,7 +40,11 @@ __all__ = [
 
 API_DEFAULT_MODEL = "claude-haiku-4"
 
-# ── 로컬 LLM 게이트웨이 모델 (LOCAL_LLM_API_BASE 설정 시 자동 추가) ──
+# ── 로컬 LLM 게이트웨이 모델 — 폐기 (2026-09-07, local-llm-decommission) ──
+# 아래 표와 _LOCAL_LLM_MAX_TOKENS 는 **inert data** 로만 남는다: `_LOCAL_LLM_ENABLED = False`
+# 라 카탈로그(_ALL_MODEL_OPTIONS)에 합쳐지지 않으므로 어떤 모델 값도 이 tier 로 선택될 수 없다.
+# 표를 지우지 않는 이유는 되돌리기 시 재작성 없이 복원하기 위함이며, 이 tier 의 cap 을 잠그는
+# 기존 테스트(test_prompt_gen_max_tokens.py)도 그 상태로 계속 통과한다(값 회귀 방어는 유지).
 # supports_vision: 보수적 false. 로컬 게이트웨이 모델별 vision 지원은 배포 환경
 # 따라 다르고, D11 (file_image consent) 가 false 면 첨부 image 가 송신되지 않
 # 으므로 안전한 기본값.
@@ -142,7 +146,17 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
     },
 )
 
-_LOCAL_LLM_ENABLED = bool(os.getenv("LOCAL_LLM_API_BASE", "").strip())
+# local-llm-decommission (2026-09-07, 사용자 결정 "로컬 LLM 은 더 이상 사용하지 않는다"):
+# 종전에는 `bool(os.getenv("LOCAL_LLM_API_BASE"))` 였다. 그 env 가 라이브 `.env` 에 설정돼
+# 있었으므로 `_ALL_MODEL_OPTIONS` 에 로컬 alias(auto/edge/core/code)가 포함되고,
+# `is_allowed_api_model("auto")` 가 **라이브에서 True** 였다 — 즉 `/api/ask` 가 그 값을
+# 수락한 뒤 이제 존재하지 않는 local-llm-gateway 로 라우팅했다. (테스트 환경은 env 미설정이라
+# `test_model_persist.py` 가 False 를 단정하고 통과했고, 그래서 이 괴리가 게이트에 걸리지
+# 않았다 — §16.7 G8-a 「결정을 일부 경로에만 반영」의 실례.)
+# env 의존을 끊어 **배포 환경과 무관하게** 로컬 alias 를 카탈로그 밖에 둔다.
+# 되돌리기: 아래를 `bool(os.getenv("LOCAL_LLM_API_BASE", "").strip())` 로 환원하고
+#   local_llm provider 를 복원한다(local_llm/DECOMMISSIONED 참조).
+_LOCAL_LLM_ENABLED = False
 _LOCAL_LLM_VALUES: frozenset[str] = frozenset(item["value"] for item in _LOCAL_LLM_MODELS)
 # 내부 유효성 검사 (is_allowed_api_model) 에는 로컬 LLM 포함 — insight-worker 가
 # edge/core/auto/code 를 사용하므로 허용 목록에서 제거하면 안 됨.

@@ -46,6 +46,11 @@ throughput 또는 별 provider (Anthropic API / Azure OpenAI Korea / on-prem) �
   페르소나: 빠른 도입을 우선하는 소규모 팀. 본 코드 베이스가 이미 `OpenAI(api_key,
   base_url)` SDK 패턴으로 동작 + Local LLM gateway 분기가 동일 모양으로 존재 →
   코드 변경 범위가 가장 작음. 안 고른 이유: N/A — 채택.
+  ⚠ 사실 정합(2026-09-07, local-llm-decommission): 위 근거에 등장하는 "Local LLM gateway
+  분기" 는 **더 이상 존재하지 않는다** — 사용자 결정 "로컬 LLM 미사용" 으로 제거됐다.
+  그 분기는 Alt-A 를 고를 때의 *당시 근거*였을 뿐이고 채택 결정 자체는 유효하므로
+  §1·§3(방향)은 갱신하지 않는다. 지금의 근거는 "게이트웨이 1개 경유로 모델·인증을
+  단일화한다" 로 축소됐다.
 
 - **Alt-B: boto3 + bedrock-runtime native 직접 호출.**
   페르소나: 장기 운영하는 대규모 서비스 (latency / cost / streaming 최적화 여지

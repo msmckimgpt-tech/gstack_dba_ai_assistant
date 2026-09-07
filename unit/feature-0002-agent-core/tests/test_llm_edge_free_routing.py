@@ -15,8 +15,15 @@ llm-routing-interactive-split(배경 배치는 야간·주말 gemma 로 강등�
   1. litellm fallback 체인 어디에도 `edge-fallback` 참조가 없다 (게이트웨이 층).
   2. `AGENT_INSIGHT_OFFHOURS_MODEL` 기본값이 빈 값이라 시각 기반 강등이 비활성이다 (앱 층).
 
-강등 로직·deployment 정의 자체는 보존한다(운영자가 명시적으로 되돌릴 수 있게) — 이 테스트가 잠그는
-것은 "기본 배포에서 자동으로 로컬 LLM 이 서빙되지 않는다" 이다.
+강등 로직은 보존한다(운영자가 명시적으로 되돌릴 수 있게) — 이 테스트가 잠그는 것은
+"기본 배포에서 자동으로 로컬 LLM 이 서빙되지 않는다" 이다.
+
+⚠ local-llm-decommission (2026-09-07): `edge-fallback` **deployment 정의도 제거**됐다.
+종전에는 "참조 0건이지만 정의는 되돌리기용으로 보존" 이 계약이었으나, 사용자 결정으로
+local_llm 프로젝트 자체가 폐기(컨테이너 제거 + 모델 16GB 삭제)돼 그 정의의 `api_base` 가
+가리키는 local-llm-gateway 가 존재하지 않는다. 즉 "복구 가능한 정의" 라는 전제가 소멸했다.
+따라서 아래 `test_edge_deployment_absent` 는 **정의의 부재**를 잠근다 — 되살리려면
+provider 복원(모델 재다운로드 ~16GB)이 선행되며, 그때 이 테스트를 함께 되돌린다.
 """
 from _alias_transition import transition_contract_holds  # feature-0043: 전환 상태 대체 계약
 import pathlib
@@ -99,18 +106,44 @@ def test_insight_and_interactive_chains_end_at_root():
         assert fb.get(terminal) in (None, []), (terminal, fb.get(terminal))
 
 
-def test_edge_deployment_defined_but_unreferenced():
-    """edge-fallback deployment 정의는 되돌리기용으로 남기되, 참조는 0건이어야 한다."""
-    # feature-0043(external-llm-bridge): 서버 계정 alias 가 주석 처리된 전환 상태에서는
-    # 이 계약의 전제(체인 존재)가 없다. 그때는 대체 계약 — 활성 계정 라우팅이 0 이라는 것 —
-    # 을 단정하고 종료한다(skip 아님). 주석을 해제해 되돌리면 아래 원 계약이 자동 복원된다.
-    if transition_contract_holds(_cfg()):
-        return
+def test_edge_deployment_absent():
+    """local-llm-decommission(2026-09-07) — edge-fallback 은 정의도 참조도 0건이어야 한다.
+
+    종전 계약은 "정의는 되돌리기용으로 보존 + 참조 0" 이었다. 그 전제(정의만 살려 두면
+    `fallbacks` 한 줄로 복구 가능)가 사용자 결정으로 소멸했다 — local_llm 프로젝트가 폐기돼
+    `api_base: http://local-llm-gateway:8080/v1` 가 도달 불가다. 도달 불가 백엔드를 가리키는
+    정의를 남기면 "복구 가능" 이라는 거짓 신호를 준다.
+
+    ⚠ 전환 상태(feature-0043)에서 조기 return 하지 **않는다**. 이 단언은 계정 alias 활성
+    여부와 무관하게 성립해야 하며, 조기 return 을 두면 전환 상태에서 영원히 검사되지 않는
+    vacuous pass 가 된다(_alias_transition 모듈 docstring 의 논지와 동일).
+    """
     d = _cfg()
-    names = [m["model_name"] for m in d.get("model_list", [])]
-    assert "edge-fallback" in names, "되돌리기용 deployment 정의는 보존한다"
+    names = [str(m.get("model_name") or "") for m in (d.get("model_list") or [])]
+    assert "edge-fallback" not in names, (
+        "edge-fallback deployment 정의가 되살아났다 — local_llm provider 를 실제로 복원했다면 "
+        "이 테스트도 함께 되돌릴 것(모듈 docstring 참조)"
+    )
     referenced = {t for targets in _fallbacks(d).values() for t in (targets or [])}
-    assert "edge-fallback" not in referenced, "정의는 있어도 라우팅되면 안 된다"
+    assert "edge-fallback" not in referenced, "정의가 없는데 라우팅 참조가 남아 있다 — dangling fallback"
+
+
+def test_no_local_backend_api_base_in_model_list():
+    """어떤 활성 deployment 도 로컬 백엔드(api_base)를 가리키지 않는다.
+
+    이름 토큰(edge/local/gemma)을 피한 로컬 deployment 를 잡는 축이다 —
+    `titan-embed` → `ollama/bge-m3` @ `http://embed-ollama:11434` 가 정확히 그 형태였고
+    (이름에 로컬 토큰이 없다) 2026-09-07 에 제거됐다.
+    """
+    d = _cfg()
+    offenders = []
+    for m in (d.get("model_list") or []):
+        params = m.get("litellm_params") or {}
+        model = str(params.get("model") or "")
+        api_base = str(params.get("api_base") or "")
+        if model.startswith("ollama/") or "local-llm" in api_base or "embed-ollama" in api_base:
+            offenders.append((m.get("model_name"), model, api_base))
+    assert offenders == [], f"로컬 백엔드를 가리키는 활성 deployment 잔존: {offenders}"
 
 
 def test_offhours_downgrade_disabled_in_effective_config():

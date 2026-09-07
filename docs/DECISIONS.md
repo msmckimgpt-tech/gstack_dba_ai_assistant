@@ -1043,3 +1043,58 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - 대안: (a) 즉시 fail-closed — 배포 창 동안 1:1 사용자 쓰기 도구 차단, 불채택. (b) owner-less 이미지를
   **주입하지 않음** — 이미지 첨부 기능이 배포 창 동안 사실상 정지, 불채택. (c) 형식 마이그레이션 후
   전환 — **채택 예정**(별 트랙).
+
+## ADR-20260907T175000-local-llm-decommission-scope-boundary
+
+- Status: accepted (사용자 결정 2026-09-07 — AskUserQuestion 3문항으로 범위 확정)
+- Context: 사용자 결정 "로컬 LLM 은 더 이상 사용하지 않는다"(2026-09-07)를 적용하면서, §16.7 G8-a
+  「모든 호출 경로 열거」로 적용면을 전수 감사한 결과 **의도적으로 적용하지 않는 경로 3건**이
+  남았다. G8-c 는 「기록 없는 미적용은 누락과 구분되지 않는다」고 규정하므로 여기에 예외로 남긴다.
+  이 기록이 없으면 다음 적대 패널이 같은 3건을 매 라운드 최상위로 다시 올려 실제 결함 탐색
+  예산을 갉아먹는다(§18.8 「의도된 구성은 ADR 로 영구화한다」).
+- Decision: 아래 3건은 **본 결정의 외연 밖**이며 각각의 사유로 미적용한다.
+
+  **① `bedrock-gateway` 컨테이너 자체는 철거하지 않는다.**
+  - 상태: `litellm_config.yaml` 의 활성 `model_name` 이 **0개**(`model_list: []`)다 — chat alias
+    14종은 feature-0043(2026-08-26)에서, 마지막 `titan-embed` 는 본 cycle 에서 제거됐다.
+    즉 이 게이트웨이를 통해 나가는 요청이 현재 **없다**.
+  - 그런데도 남기는 이유 (둘 다 성립):
+    (a) **결정 축이 다르다.** 사용자 결정은 *로컬 실행* 축이다. bedrock-gateway 는 **외부**
+        (Bedrock/Anthropic) 경로의 프록시이므로, 그것을 철거하는 것은 "외부 LLM 게이트웨이를
+        철거할 것인가" 라는 **별개 결정**이다. 요청 범위를 넓히지 않는다.
+    (b) **배선 폭이 크다.** feature-0020 무중단 배포의 surge replica(`bedrock-gateway-surge`,
+        DNS alias 공유·`stop_grace_period: 990s`) · `bin/recreate-audit.sh` 의 SERVICES 배열 ·
+        `bin/smoke-conversation.sh` · `shared/config.BEDROCK_GATEWAY_URL/API_KEY` ·
+        `.env.llm` 에 걸쳐 있다.
+  - 실측 근거: `model_list: []` 상태로 litellm `main-stable` 을 직접 기동해
+    `Application startup complete` + `/health/liveliness` 200 + `/health/readiness` 200 을 확인했다.
+    **활성 모델 0개는 기동 실패 사유가 아니므로** 남겨 두는 데 가용성 비용이 없다.
+  - 재개봉 조건: 외부 LLM 경로 철거가 결정되거나, 게이트웨이 유지 비용이 관측되면.
+
+  **② `embed_ollama_models` docker 볼륨은 삭제하지 않는다.**
+  - 사용자가 승인한 16GB 삭제는 `local_llm/models-edge`(별도 프로젝트) 대상이었다. 이 볼륨은
+    본 repo 의 `embed-ollama` 가 쓰던 bge-m3 적재본이며, compose 선언만 제거했다.
+  - 근거: 되돌리기 경로 보존. 선언을 되살리면 **모델 재다운로드 없이** 복구된다.
+    `texts` 154,365행 + `sample_queries` 1행의 기존 1024-dim 벡터도 같은 이유로 보존한다
+    (차원 동일 → 스키마·기존 백필 호환).
+
+  **③ 선행 프로젝트 `/root/download/docker/mysql_ai` 의 `.env:16`
+     (`LOCAL_LLM_API_BASE=http://local-llm-gateway:8080/v1`) 은 미조치.**
+  - 실측: 그 디렉토리는 **git 저장소가 아니고**(VCS 부재) 파일 활동이 2026-03 에 멈췄으며
+    관련 컨테이너가 **0개**다 — 참조가 작동할 수 없는 휴면 상태다.
+  - 미조치 사유: (a) VCS 가 없어 secret 보유 `.env` 편집이 되돌릴 수 없다 (b) `.env*` 는 하네스
+    deny rule 대상이다 (c) 사용자 요청은 「해당 프로젝트」로 스코프됐고 이것은 별 프로젝트다.
+  - 조치가 필요하면 그 프로젝트 소유자가 수행한다.
+
+- Consequences:
+  - `bedrock-gateway` 는 **활성 모델 0개로 계속 healthy 하게 뜬다**. 이를 "쓰이지 않는 컨테이너"
+    로 보는 지적은 정당하지만 본 ADR 이 그 판단을 **후속 결정으로 이월**한 것이다 — 근거 없이
+    재상정하지 않는다.
+  - 라이브 `.env` 의 `LOCAL_LLM_API_BASE`/`LOCAL_LLM_API_KEY`/`AGENT_KB_EMBEDDING_MODEL` 정리는
+    **운영자 조치 항목**으로 남는다(deny rule 로 AI 세션 편집 불가). 미조치 시 기능 영향은 없으나
+    (`_LOCAL_LLM_ENABLED`·`_select_llm_provider` 모두 env 무관) `AGENT_KB_EMBEDDING_MODEL=titan-embed`
+    가 남아 **KB 쿼리마다 `kb_query_embed_failed` 경고 1건**이 쌓인다.
+- 대안: (a) bedrock-gateway 를 같은 cycle 에서 철거 — feature-0020 배포 machinery 를 동시에 손대야
+  하고 결정 축이 달라 불채택. (b) `model_list` 에 더미 alias 를 넣어 "빈 리스트" 를 피함 — 실측으로
+  빈 리스트 기동이 확인됐으므로 불필요, 불채택. (c) `embed_ollama_models` 볼륨까지 삭제 — 되돌리기
+  비용(1.2GB 재다운로드)만 늘고 승인 범위 밖이라 불채택.

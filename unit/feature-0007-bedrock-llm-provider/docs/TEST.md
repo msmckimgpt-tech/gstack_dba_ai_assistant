@@ -573,3 +573,128 @@ source_of_truth: true
 
 - **자체 발견(정직 표기)**: 1차 mutation 에서 생존한 5건 중 **3건은 코드가 아니라 내 테스트가 vacuous** 해서였다 — ① `keep_backups=0` 테스트에 지울 백업이 없었고 ② lost-update 테스트의 '지연' 헤더를 서버가 무시했으며 ③ scope 잠식은 아예 테스트가 없었다. 하네스에 응답 지연을 실제로 구현하고 사전 백업을 심어 잡았다.
 - UI 표면 변경 없음 → PB-0008 비해당(§15.4.1 예외).
+
+
+### Run 2026-09-07-local-llm-decommission
+
+**대상**: TASK-20260907T152000-local-llm-decommission (로컬 LLM 전면 폐기)
+**환경**: worktree `ai/claude-corp/feature-0007-local-llm-decommission` (base `ab70380c`),
+로컬 pytest + 루트 `conftest.py` 격리 2차 방어(`DB_PORT=1`·`AGENT_KB_PG_PORT=1`·read backend=mysql).
+컨테이너 `make test` 대신 로컬 경로를 쓴 이유: 같은 `repo-unittest` compose 프로젝트에서 **다른 세션 2개가
+동시에 테스트 중**이었고(`repo-unittest-agent-run-*` 9분·24분 경과), `dc-build` 의 이미지 재태깅이 그
+실행들을 오염시킬 수 있었다.
+
+#### 1. 폐기 근거 실측 (제거 전)
+
+| 항목 | 측정 | 결과 |
+|---|---|---|
+| `local-llm-edge` 추론 요청 (7일) | `docker logs --since 168h \| grep -c POST` | **0건** (전체 77,789줄 = `GET /api/tags` healthcheck) |
+| `local-llm-edge` 메모리 | `docker stats --no-stream` | 31.5MiB / 12GiB — **모델 미로드** |
+| `local-llm-gateway` 트래픽 | `docker logs --since 168h` | 자기 `/health` 뿐 (외부 소비자 0) |
+| `litellm_config.yaml` 활성 alias | 비주석 `model_name` 계수 | 1개 (`titan-embed`) |
+
+#### 2. `model_list: []` 기동 실측 — 기존 테스트 가정의 반증
+
+`test_litellm_config_still_parses` 가 "model_list 가 비었다 — 게이트웨이 기동 실패" 를 단정했으나
+**가정이었다**. `ghcr.io/berriai/litellm:main-stable` 을 편집본 config 로 직접 기동:
+
+```
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080
+/health/liveliness -> 200
+/health/readiness  -> 200
+```
+
+→ 활성 모델 0개는 기동 실패 사유가 아니다. 단언을 "키 존재 + 리스트 타입" 으로 교체했다.
+
+#### 3. 구조 검증
+
+| 검증 | 명령 | 결과 |
+|---|---|---|
+| compose YAML 구조 | `yaml.safe_load` | services 23 · networks `[dbnet, replica-net]` · volumes `[]` · `embed-ollama` 부재 |
+| compose 시맨틱 | `docker compose config` | **rc=0** · `embed-ollama` 0건 · `llm-shared` 0건 |
+| Makefile 구문 | `make -n help` | rc=0 (`.env` 부재 경고는 worktree 의 기존 거동) |
+| 잔존 참조(비주석) | `grep -vE '^\s*#'` | `llm-shared`/`embed-ollama`/`embed_ollama_models` **0건** (주석 4행만 — 되돌리기 안내) |
+| 카탈로그 게이트 | env 를 죽은 주소로 설정 후 import | `_LOCAL_LLM_ENABLED=False` · `auto/edge/core/code` 전부 `is_allowed_api_model=False` · `claude-haiku-4=True` · PUBLIC 3개 무변 |
+| provider 선택 | Bedrock 미설정 + `LOCAL_LLM_*` 설정 | `(None, None)` — fail-open 경로 폐쇄 |
+
+#### 4. 회귀 잠금 + 결함 주입 실증 (§16.7 G11-b)
+
+| 단계 | 결과 |
+|---|---|
+| `test_llm_edge_free_routing.py` (갱신 후) | **6건 통과** |
+| 결함 주입 — `edge-fallback` 정의를 `model_list` 에 되살림 | `test_edge_deployment_absent` **FAIL** + `test_no_local_backend_api_base_in_model_list` **FAIL** |
+| 원복 후 재실행 | 6건 통과 · `git status` 로 원복 확인 |
+| 영향 테스트 17파일 (`grep` 로 수집한 전수) | 초기 **2건 FAIL** → 선행 계약 supersede 후 **전량 통과** |
+
+초기 FAIL 2건은 `feature-0043` 의 `test_llm_gate.py` — `test_litellm_config_keeps_local_embedding_alias`(AC-7,
+`titan-embed` 보존 강제)와 `test_litellm_config_still_parses`(빈 model_list 금지). 둘 다 **이번 사용자 결정으로
+전제가 이동한 계약**이므로 방향을 반전하고 경위를 docstring 에 남겼다.
+
+#### 5. 운영자 DB row census (§16.7 G8-b)
+
+| 대상 | 결과 |
+|---|---|
+| `webruntimesettings` override | 25건 — `AGENT_KB_EMBEDDING_MODEL`·`LOCAL_LLM_*` **0건**. 모델 키는 전부 `claude-*` |
+| 저장 모델 KV | MySQL 전 스키마에 `%kv%` 테이블 **0건** (있어도 `conversations.py:975-987` 이 탈락 시 기본값 복귀) |
+| 보존 데이터 | `texts` 154,365행 전량 임베딩 · `sample_queries` 1행 — **미삭제** |
+
+#### 6. 미검증 (정직 표기)
+
+- **라이브 재배포·healthz**: 본 Run 시점 미수행 — 아래 「후속」 참조.
+- **라이브 `.env` 정리**: `.env*` deny rule 로 이 세션 편집 불가 → 미조치. 그로 인해 라이브에는
+  `AGENT_KB_EMBEDDING_MODEL=titan-embed` 가 남아 있어 **KB 쿼리마다 경고 1건**이 예상된다
+  (결과는 trigram 으로 정상). 배포 후 실측 항목.
+- **KB 검색 품질 회귀 측정**: 벡터→trigram 강등의 정량 영향(precision/recall@k)은 측정하지 않았다.
+  `make kb-retrieval-eval` 의 벡터 축이 제공자 부재로 무효라 A/B 자체가 성립하지 않는다.
+
+
+### Run 2026-09-07-local-llm-decommission-P1P2
+
+**대상**: codex 적대 검증 R1 의 P1·P2 수정 (`kb_embedding_worker.py`)
+
+| 단계 | 결과 |
+|---|---|
+| 신규 `test_kb_embedding_gateway_failclosed.py` | **6건 통과** |
+| 결함 재주입 — 수정 전 형태(조건부 `base_url` + 가드 없음)로 되돌림 | **3건 FAIL** — `[k--BEDROCK_GATEWAY_URL]`(P1 정확한 형태) · `[--BEDROCK_GATEWAY_URL]` · `test_backfill_is_noop_when_model_unset` |
+| 원복 후 재실행 | 6건 통과 · `git diff --stat` = 28+/8- (내 수정분뿐) |
+| 영향 테스트 17파일 + 신규 1파일 | **전량 통과** (rc=0) |
+| §15.2.1 관문 AST 테스트 | 24건 PASS (`ensure_oauth_frontier_identity` 무접촉) |
+
+#### 전수 스위트 기준선 대조 (§16.4 (a) 형태 — 양측 대조)
+
+| | 실패 수 | 실패 파일 |
+|---|---|---|
+| branch | 86 | `test_oauth_exhaustion_gate`(68) · `test_share_redaction_invariant`(7) · `test_scratch`(6) · `test_mssql_auth_cooldown`(5) |
+| main (기준선) | 86 | 동일 |
+
+**집합 차이 0건** (`comm -23` 0 · `comm -13` 0). 즉 branch 에만 있는 실패도, main 에만 있는 실패도
+없다 — 86건은 전부 pre-existing 이며 이 실행 환경(컨테이너 밖 로컬 pytest: `pymysql`·`psycopg`
+부재, bash 스크립트 fixture 부재)에서 발생한다. **내가 만든 회귀 0건.**
+
+⚠ 수치 일치를 집합 일치로 갈음하지 않았다 — 두 수가 같아도 서로 다른 실패일 수 있으므로
+정렬 후 `comm` 으로 대조했다.
+
+
+### Run 2026-09-07-local-llm-decommission-R2
+
+**대상**: codex 확인 라운드 R2 의 P2 수정 (빈-모델 가드 구조 승격)
+
+| 검증 | 결과 |
+|---|---|
+| `test_kb_embedding_gateway_failclosed.py` (6 → **10건**) | 전량 통과 |
+| 결함 주입 ⓐ `main()` 조기 종료 제거 (**R2 P2 의 정확한 형태**) | `test_cli_entrypoint_exits_zero_when_model_unset` **FAIL** |
+| 결함 주입 ⓑ chokepoint 빈-모델 가드 제거 | `test_chokepoint_blocks_empty_model` **FAIL** |
+| 결함 주입 ⓒ chokepoint 밖에서 `OpenAI(` 생성 | `test_all_gateway_entrypoints_route_through_chokepoint` **FAIL** (+ CLI 2건 부수) |
+| 원복 후 재실행 | 10건 통과 · `git diff --stat` = 30+/1- (수정분뿐) |
+
+#### 신규 테스트의 성격
+
+- `test_chokepoint_blocks_empty_model` — 빈 모델(`""`·공백·`None`) 3형태에서 **클라이언트 생성
+  자체가 일어나지 않음**을 단정. 계약은 "실패한다" 가 아니라 "게이트웨이로 나가지 않는다".
+- `test_cli_entrypoint_exits_zero_when_model_unset` — `main()` 이 **exit 0 + `[DISABLED]`** 로
+  끝나고 PG 연결·임베딩 호출 어느 쪽도 하지 않음. 비활성 ≠ 실패.
+- `test_cli_entrypoint_honours_explicit_model_override` — `--model` override 시 정상 경로를 그대로
+  탄다 (§16.7 G9-c — 차단 로직이 정상 경로를 막지 않는지 실측).
+- `test_all_gateway_entrypoints_route_through_chokepoint` — **모수 검증** (§16.7 G12-b). 모수를
+  손으로 열거하지 않고 AST 로 소스를 조회해 구성하므로 **새 진입점이 자동으로 모수에 들어온다**.

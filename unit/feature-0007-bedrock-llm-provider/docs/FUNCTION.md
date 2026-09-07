@@ -254,15 +254,20 @@ source_of_truth: true
   pull.
 - AWS IAM credential — `AmazonBedrockFullAccess` 또는 `bedrock:InvokeModel` 권한
   포함 IAM user / role. (현행 임베딩 경로는 AWS 자격 불요 — 아래 Ollama 사용.)
-- **KB 임베딩 (titan-embed alias) — 로컬 Ollama bge-m3 (CHG-20260623-0001)**:
-  litellm 이 `model: ollama/bge-m3` + `api_base: http://ollama-edge:11434` 로
-  Ollama (`local-llm-edge` 컨테이너, `llm-shared` network alias `ollama-edge`)
-  의 `/api/embeddings` 를 직접 호출 → 1024-dim 벡터. bedrock-gateway 가
-  `llm-shared` 에 attach 돼 있어야 도달 (docker-compose `networks: [dbnet,
-  llm-shared]`). bge-m3 모델은 Ollama 에 사전 `ollama pull bge-m3` 필요 (runtime
-  볼륨 상주, git 미추적). local-llm-gateway 는 chat 전용(/v1/embeddings 404)이라
-  임베딩은 Ollama 백엔드 직접 지정으로 우회. Bedrock Titan v2 복구 시 차원 동일
-  (1024) 이라 스키마/백필 호환.
+- **KB 임베딩 — 제공자 없음 (2026-09-07, local-llm-decommission)**:
+  사용자 결정 "로컬 LLM 은 더 이상 사용하지 않는다" 로 임베딩 제공자가 **부재**한다.
+  `AGENT_KB_EMBEDDING_MODEL` 기본값이 빈 값이며, `kb_retrieval._embed_query_vector` 가
+  호출 전에 `None` 을 반환해 2-tier 경로가 `pg_trgm` 유사도로 흐른다 — 즉 **KB 검색은
+  동작하고 벡터 축만 강등**된다. Anthropic API 는 임베딩을 제공하지 않고 AWS 자격증명도
+  제거된 상태라 대체 제공자가 없다.
+  - 보존: `texts` 154,365행 + `sample_queries` 1행의 기존 1024-dim 벡터를 **삭제하지 않았다**.
+    `embed_ollama_models` docker 볼륨(bge-m3 적재본)도 보존 — compose 선언만 제거했다.
+  - 되돌리기: ① `docker-compose.yml` 의 `embed-ollama` 서비스 + `volumes.embed_ollama_models`
+    복원 ② `litellm_config.yaml` 의 `titan-embed` alias 주석 해제 ③ `AGENT_KB_EMBEDDING_MODEL`
+    지정. 차원(1024)이 동일하므로 스키마·기존 백필과 호환된다.
+  - ~~종전(CHG-20260623-0001)~~: litellm 이 `model: ollama/bge-m3` + `api_base:
+    http://embed-ollama:11434` 로 전용 Ollama 컨테이너를 직접 호출했고, bedrock-gateway 가
+    `llm-shared` 에 attach 돼 있어야 도달했다. 그 서비스·alias·네트워크가 전부 제거됐다.
 
 ### shared 모듈 의존성
 - 없음 (본 변경은 feature-0002 / feature-0003 의 local module 만 수정).
