@@ -1791,3 +1791,13 @@ RestartCount 전 서비스 0. 증적:
 - [ ] **`_CAPS_PROBE_TIMEOUT_SEC`(240초)를 줄이지 않았다** — 이제 정상 경로가 10초 안이라
       240초는 과대하다. 줄이면 「행(hang) 시 재시도 불가」(§11-B)가 완화되지만, 느린
       머신·느린 네트워크의 여유도 함께 줄어든다. 실측 근거 없이 조이지 않는다.
+
+## TASK-20260907T181510-kb-external-search — KB 구획 회귀 정합 (#1598)
+
+- [x] claim_request의 질문(principal+session canary)·이력(history)·KB(tool_output) 구획을
+  AST 인자·호출 개수로 구별한다. 모든 tool_output 호출을 금지하던 과도한 검사를 수정했다.
+- [x] 제품 코드 추가 변경 없음. 기존 프롬프트 오탐 방지 suite 19 PASS로 확인한다.
+- [x] 보안 R3 PASS. 질문/이력을 비신뢰 도구 구획에 넣는 회귀는 계속 차단한다.
+- 검증 정본: core docs/test-runs.d/TASK-20260907T181510-kb-external-search.md.
+
+Git 동기화·배포 결과: PR #1599 본문 참조.

@@ -611,8 +611,8 @@ def _embed_query_vector(text: str, timeout_sec: "int | None" = None) -> "Optiona
     CHG-20260625: timeout_sec 미지정 시 기존 동작(_get_llm_client 가 AGENT_TIMEOUT_SEC
     사용). 상호작용 grounding 경로는 짧은 값(AGENT_KB_QUERY_EMBED_TIMEOUT_SEC)을 넘겨,
     임베딩 백엔드 지연 시 init 을 길게 블로킹하지 않고 빠르게 trigram 으로 폴백한다."""
-    from shared.config import AGENT_KB_EMBEDDING_MODEL
-    model = str(AGENT_KB_EMBEDDING_MODEL or "").strip()
+    from shared.config import AGENT_KB_EMBEDDING_MODEL, normalize_kb_embedding_model
+    model = normalize_kb_embedding_model(AGENT_KB_EMBEDDING_MODEL)
     if not model or not str(text or "").strip():
         return None
     try:

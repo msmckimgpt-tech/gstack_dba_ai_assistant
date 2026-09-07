@@ -3932,7 +3932,7 @@ def _build_knowledge_context(
     try:
         from shared.config import AGENT_SAMPLE_QUERIES_ENABLED
         examples_ctx = ""
-        if AGENT_SAMPLE_QUERIES_ENABLED and _shared_qvec:
+        if AGENT_SAMPLE_QUERIES_ENABLED:
             from modules.sample_queries import load_example_queries_context
             examples_ctx = load_example_queries_context(user_message, query_vector=_shared_qvec)
     except Exception:

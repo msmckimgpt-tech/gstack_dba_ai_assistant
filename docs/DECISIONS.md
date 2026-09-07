@@ -1098,3 +1098,15 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   하고 결정 축이 달라 불채택. (b) `model_list` 에 더미 alias 를 넣어 "빈 리스트" 를 피함 — 실측으로
   빈 리스트 기동이 확인됐으므로 불필요, 불채택. (c) `embed_ollama_models` 볼륨까지 삭제 — 되돌리기
   비용(1.2GB 재다운로드)만 늘고 승인 범위 밖이라 불채택.
+
+## ADR-20260907T185500-kb-external-search-without-embeddings
+
+- Status: accepted — 사용자 2026-09-07 선택: 기존 Claude/Codex 연결 활용.
+- Context: 로컬 임베딩 철거 후 샘플의 vector 필수 반환과 편집 시 stale 강등이 KB 전달을 끊었다.
+- Decision: pg_trgm 문자 후보 + 기존 외부 AI 의미 판단. claim/focus 근거 전달, 제품·대화 권한
+  재확인과 전체 응답 원장 계측. 새 임베딩 API는 도입하지 않는다.
+- DB isolation: MySQL engine+endpoint hash와 가능한 DB 접두 전부의 인가를 적용한다.
+  MSSQL legacy는 catalog provenance가 없으므로 원문 RAG 검색에서 제외하고 구조 도구를 안내한다.
+- Consequences: 의미검색 동등 품질을 보장하지 않는다. 문서 발췌/5초 timeout/부분 장애를 고지한다.
+  벡터/볼륨 일괄 삭제 없음; 질문 편집 시 해당 벡터 무효화는 정상 데이터 정합 작업이다.
+- Evidence: feature-0002 docs/test-runs.d/TASK-20260907T181510-kb-external-search.md (203 PASS).

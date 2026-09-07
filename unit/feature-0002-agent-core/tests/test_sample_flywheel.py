@@ -16,7 +16,7 @@ class _FakeCursor:
     def execute(self, sql, params=None):
         self.state["captured"].append((sql, params))
         self._mode = None
-        if "FROM sample_queries" in sql and "<=>" in sql:
+        if "FROM sample_queries" in sql and ("<=>" in sql or "AS sim" in sql):
             self._mode = ("many", self.state.get("search_rows", []))
         elif "SELECT scope_key, nl_question, generated_sql, vote FROM sample_feedback" in sql:
             self._mode = ("one", self.state.get("feedback_row"))
@@ -79,10 +79,11 @@ def test_load_example_context_injects_examples(monkeypatch):
     assert "SELECT count(*) FROM customers WHERE is_active=1" in out
 
 
-def test_load_example_context_empty_when_embed_fails(monkeypatch):
+def test_load_example_context_uses_text_search_when_embed_fails(monkeypatch):
     monkeypatch.setattr(SQ, "_embed", lambda t, **k: None)  # 임베딩 미가용
     conn = _FakeConn(search_rows=[("q", "SELECT 1", "d", 100, 0.9)])
-    assert SQ.load_example_queries_context("질문", scope_key="ds:sales", conn=conn) == ""
+    assert "SELECT 1" in SQ.load_example_queries_context("질문", scope_key="ds:sales", conn=conn)
+    assert "word_similarity" in conn.captured[-1][0]
 
 
 def test_load_example_context_empty_no_rows(monkeypatch):

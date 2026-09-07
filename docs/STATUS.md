@@ -149,3 +149,10 @@ sources:
 - 등록 기능(main `unit/`): 45 (디렉토리 46 — feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, 번호 충돌 — 사람 결정 보류)
 - review 10 (feature-0008/0012/0014/0015/0016-zd-pg-pause-caddy/0017/0038/0039/0040/0045) · in-progress 33 · done 2 (feature-0011/0042) · planned 1 (feature-0044) · blocked 0
 - 상세 진척·이력: 각 unit TASK.md / [STATUS_ARCHIVE.md](./archive/STATUS_ARCHIVE.md)
+
+## 2026-09-07 — KB 검색 외부 AI 연결 (#1598)
+
+기존 Claude/Codex claim/focus에 임베딩 없는 승인 샘플과 보수적으로 인가한 MySQL 문서 후보를
+연결했다. 로컬 별칭 호출 차단·샘플 편집 신선도 보존·전체 응답 원장 계측, 203 회귀 PASS.
+MSSQL legacy 문서는 출처 불명으로 제외/구조 도구 안내. 의미검색 품질 복구로 간주하지 않는다.
+병합·배포 결과는 연결 PR 본문과 feature-0002 REPORT의 Git 동기화 기록을 참조한다.

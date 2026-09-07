@@ -1800,3 +1800,12 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS
 - Artifact: meta/reviews/2026-09-07T08:41:31Z-qa-reviewer.md
 - Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-shared [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: shared/config.py 로컬 임베딩 alias 정규화
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-security.md
+- Human Approval Needed: no
+- Cross-ref: feature-0002 REVIEW의 backend/security R2 및 qa R3 (최종203 PASS).

@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Function
 
+## KB 검색과 외부 AI 연결 (2026-09-07, #1598)
+
+로컬 임베딩 제공자 없이 `pg_trgm`으로 후보를 찾고, 기존 Claude/Codex의
+`claim_request.kb_context`와 `get_task_context(focus=...)`에 근거를 전달한다.
+의미 적합성 판단·질문 재구성은 외부 AI가 수행한다. 별도 임베딩 API는 추가하지 않는다.
+
+- 샘플은 제품+common의 **승인·active** 행만 문자 검색한다. 벡터 NULL도 검색 가능하다.
+  질문을 수정하면 해당 벡터를 무효화할 수 있으며, SQL 신선도(active/stale/retired)는 유지한다.
+  기존 벡터와 볼륨을 일괄 삭제하거나 모델 간 벡터를 혼용하지 않는다.
+- 기존 MySQL schema/table 인사이트는 엔진을 포함한 endpoint hash와 제품의 허용 DB로 제한한다.
+  schema 키는 DB 정확 비교, table 키는 점으로 나눌 수 있는 모든 DB 접두를 인가한다.
+  점이 포함된 이름은 보수적으로 제외될 수 있다. hash로 잘린 키도 제외한다.
+- MSSQL 레거시 인사이트는 catalog 출처가 불명확해 이 문서 검색에서 제외한다.
+  제품 KB와 기존 `list_schemas`/`describe_schema`/`describe_table` 도구로 확인하도록 안내한다.
+- 문자 검색은 의미 검색과 동등하지 않다. 무매칭은 객체 부재의 증거가 아니다.
+  식별자·구체적인 용어로 focus를 좁혀 재검색한다. 문서별 1,200자 발췌 위치를 표시한다.
+- 문서 검색은 읽기 전용 연결과 5초 statement timeout을 사용한다. 층별 장애는 notes로 전달한다.
+  현재 대화·제품 권한을 재확인하며, 응답은 비신뢰 근거로 각인하고 전체 JSON 크기를 원장에 기록한다.
+- `titan-embed`, `bge-m3[:latest]`, `ollama/*` 잔존 설정은 네트워크 호출 전 비활성화한다.
+
+근거: [PostgreSQL 16 pg_trgm](https://www.postgresql.org/docs/16/pgtrgm.html),
+[MySQL identifier mapping](https://dev.mysql.com/doc/refman/8.0/en/identifier-mapping.html).
+검증: `test-runs.d/TASK-20260907T181510-kb-external-search.md`.
+
 ## 1. Summary
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 

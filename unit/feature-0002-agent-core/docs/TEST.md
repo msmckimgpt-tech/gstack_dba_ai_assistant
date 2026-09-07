@@ -269,3 +269,8 @@ source_of_truth: true
     `modules/llm.py` 에 `_openai_request_timeout(AGENT_TIMEOUT_SEC)` 명시 전달 0.
   - 기존 계약 무회귀 동반 확인: `test_ask_worker`(STALE > run_timeout) ·
     `test_ask_redeploy_handoff`(ROLE_STALE < STALE) → 관련 3파일 합계 **37 PASS**.
+
+## RUN-20260907T181510-kb-external-search
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Result: PASS — 최종 회귀 203건, 실제 격리 PostgreSQL 포함.
+- Evidence: [실행 기록](test-runs.d/TASK-20260907T181510-kb-external-search.md).

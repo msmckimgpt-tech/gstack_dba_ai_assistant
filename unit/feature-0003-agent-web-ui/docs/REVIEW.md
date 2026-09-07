@@ -7632,8 +7632,6 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 **넓히지 않은 것**: `static_cache.py` 가 「`?v=` 없음」에 `no-cache` 를 부여하도록 정책을 강화할
 수도 있었다. 하지만 그것은 캐시 정책의 의미를 바꾸는 변경이고, 이 결함의 원인은 «정책» 이 아니라
 «참조가 스탬프 밖에 있었다» 이다. 원인 자리에서 막고, 정책은 건드리지 않는다.
-
-
 ## REV-20260907T190000-remove-terminal-path [SKIPPED:자기 적대 리뷰] — ACCEPTED
 - Timestamp: 2026-09-07T19:00:00+09:00
 
@@ -7671,3 +7669,42 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 **넓히지 않은 것**: 서버는 여전히 `handoff`·`launch.posix/windows/probe` 를 만들어 보낸다.
 화면이 안 그릴 뿐이다. 서버까지 걷어내면 되돌리기가 어려워지고, 이 결정이 되돌아올 가능성은
 0 이 아니다(사용자가 대가를 알고 골랐다는 것은 그 대가가 실재한다는 뜻이다).
+## REV-20260907T185500-kb-search-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-security.md
+- Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-backend.md
+- Human Approval Needed: no
+
+## REV-20260907T185500-kb-search-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: KB 검색/외부 AI/제품·DB 인가
+- Timestamp: 2026-09-07T18:55:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T185500-kb-search-qa.md
+- Human Approval Needed: no
+
+## REV-20260907T190600-kb-trust-boundary [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Trigger: 질문/이력/KB trust boundary 회귀 검사
+- Timestamp: 2026-09-07T19:06:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260907T190600-kb-search-security-r3.md
+- Human Approval Needed: no
+
+## REV-20260907T190600-kb-ci-channel [SKIPPED:channel-unavailable:github-actions]
+- Related TASK: TASK-20260907T181510-kb-external-search
+- Reason: GitHub Actions run34075693338 job101601208267 annotation에서 계정 결제/지출 한도
+  때문에 job이 시작되지 못했다고 확인했다. AGENTS §18.8 채널 불가 판정.
+- Alternative: 전체 로컬 CI 7485 PASS/28 skip/1 옛 assertion 실패; 그 검사 정합 후 suite19 PASS.
+  KB 관련203 PASS. 전체ruff0, migrate-lint heads/self-test, codenav/routemap PASS.
+- verification_debt: 원격 GitHub runner 미실행; retry_after=unknown; 복구 후 다음 cycle에서 확인.
