@@ -92,9 +92,14 @@ def test_stale_runner_is_an_eligible_target():
 
 
 def test_click_path_navigates_without_an_await_in_front_of_it():
-    """프리페치가 있으면 이동 앞에 `await` 가 없어야 한다 — 있으면 크롬이 조용히 거른다."""
+    """프리페치가 있으면 이동 앞에 `await` 가 없어야 한다 — 있으면 크롬이 조용히 거른다.
+
+    ⚠ 이동 자체는 2026-09-07 에 `_fireScheme()` 하나로 모였다(앱 창에서 자기 자신을 실행하려는
+    승인창이 뜬 제보). 지켜야 하는 성질은 «어느 줄이 이동인가» 가 아니라 **그 앞에 await 가
+    없다** 이므로 표식만 옮긴다.
+    """
     body = _fn("autoLaunch")
-    head = body[:body.index("window.location.href")]
+    head = body[:body.index("_fireScheme(")]
     # 유일하게 허용되는 await 는 «프리페치가 없을 때만» 도는 폴백이다.
     awaits = [ln for ln in head.splitlines() if "await" in ln]
     assert len(awaits) <= 1, f"이동 앞에 await 가 여러 개다: {awaits}"
@@ -121,8 +126,48 @@ def test_prefetch_is_not_duplicated():
 def test_used_launch_url_is_discarded():
     """한 번 쓴 URL 은 버린다 — 재사용하면 만료·로그아웃된 토큰으로 조용히 실패한다."""
     body = _fn("autoLaunch")
-    i_nav = body.index("window.location.href")
+    i_nav = body.index("_fireScheme(")
     assert "_prefetched = null" in body[i_nav:], "쓴 URL 을 남기면 다음 시도가 낡은 토큰을 쏜다"
+
+
+def test_the_navigation_itself_is_synchronous():
+    """이동을 감싼 함수 안에도 `await` 가 없어야 한다 — 감싸면서 활성화를 잃으면 안 된다."""
+    body = _fn("_fireScheme")
+    assert "window.location.href" in body, "이동이 여기 없다 — 표식이 어긋났다"
+    assert "await" not in body
+
+
+# ── 2-1. 앱 창은 **자기 자신을 실행하지 않는다** (사용자 제보 2026-09-07) ──────────
+#
+# 앱 창 안에서 브라우저가 「이 사이트에서 DQAConnect.exe을 열려고 합니다」 승인창을 띄웠다.
+# 이미 실행 중인 프로그램이 자기 자신을 다시 실행하려 한 것이고, 사용자에게는 보안적으로
+# 불안한 모양이다. 원인은 **클릭 경로에만** 가드를 붙이고 자동 경로에는 붙이지 않은 것이다.
+
+
+def test_the_scheme_is_fired_from_exactly_one_place():
+    """가드를 **입구마다** 붙이면 새 입구 하나가 그대로 빠져나간다 — 출구를 하나로 둔다."""
+    js = _js()
+    sites = [ln for ln in js.splitlines()
+             if "location.href" in ln and not ln.strip().startswith(("*", "//"))]
+    assert len(sites) == 1, f"스킴을 쏘는 자리가 여럿이다: {sites}"
+    # 그리고 그 하나는 **가드가 붙은 함수 안**이어야 한다.
+    assert sites[0].strip() in _fn("_fireScheme")
+
+
+def test_the_app_window_never_fires_the_scheme():
+    """**이 단정이 제보된 승인창을 막는다.**"""
+    body = _fn("_fireScheme")
+    i = body.index("clientBridge")
+    assert body.index("window.location.href") > i, "가드가 이동 뒤에 있다 — 이미 쏜 뒤다"
+    assert "return false" in body[i:body.index("window.location.href")]
+
+
+def test_the_automatic_entry_stops_before_asking_for_a_token():
+    """앱 창에서는 **토큰 발급도 하지 않는다** — 쏘지도 않을 실행을 위해 매 로그인마다 받는다."""
+    body = _fn("_maybeAutoEntry")
+    i_guard = body.index("clientBridge")
+    assert i_guard < body.index("_prefetchLaunch()"), \
+        "가드가 프리페치 뒤에 있다 — 앱 창이 로그인할 때마다 토큰을 받는다"
 
 
 # ── 3. 진입점별 동작 ──────────────────────────────────────────────────────────

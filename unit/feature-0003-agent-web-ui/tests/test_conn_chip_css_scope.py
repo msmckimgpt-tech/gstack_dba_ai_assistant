@@ -119,3 +119,63 @@ def test_checking_is_visually_distinct_from_ready(css):
 
     assert color_of("checking") != color_of("on"), (
         "「확인 중」이 정상과 같은 색이다 — 코드가 갈라도 화면은 갈라지지 않는다")
+
+
+# ── 칩이 **계정 이름 옆**을 떠나지 않는다 (사용자 제보 2026-09-07) ────────────────
+#
+# 사용자가 두 번 말했다: *"계정 옆에 칩 자체가 확인되지 않았습니다."*
+# 칩은 있었다 — **사이드바 맨 아래 왼쪽 구석, 계정 행 아래 줄**에. 종전 규칙이 자리가
+# 모자라면 칩을 다음 줄로 흘려보냈고(`flex-wrap: wrap` + 트리거 `flex-shrink: 0`), 기본
+# 사이드바 폭(252px)에서는 계정 행이 그 폭을 다 써서 **거의 항상** 내려갔다.
+#
+# 이 칩의 목적은 «질문 전에 상태를 알린다» 이므로, 못 찾는 자리에 두는 것은 목적을 지키지
+# 못하는 것이다. 실측(라이브 브라우저)으로 180·252·320px × 이름 길이 3종 × 상태 문구
+# 2종에서 **같은 줄·잘림 없음·클리핑 없음**을 확인한 뒤 이 계약을 고정한다.
+
+import re as _re
+
+_PROFILE_CSS = _CSS_DIR / "profile.css" if "_CSS_DIR" in dir() else None
+
+
+def _profile_css() -> str:
+    from pathlib import Path
+    here = Path(__file__).resolve().parents[1] / "src" / "static" / "css" / "profile.css"
+    return here.read_text(encoding="utf-8")
+
+
+def _rule(css: str, selector: str) -> str:
+    i = css.index(selector)
+    return css[i:css.index("}", i)]
+
+
+def test_the_chip_never_wraps_to_its_own_line():
+    """**이 단정이 제보된 결함을 잡는다** — 줄을 나누면 칩이 구석으로 사라진다."""
+    body = _rule(_profile_css(), ".sidebar-profile {")
+    assert _re.search(r"flex-wrap:\s*nowrap", body), \
+        "칩이 아래 줄로 내려갈 수 있다 — 사용자는 그것을 찾지 못한다"
+
+
+def test_the_name_shrinks_before_the_chip_moves():
+    """이름은 잘려도 앞부분으로 알아본다. 칩은 자리를 옮기면 **찾지 못한다.**"""
+    body = _rule(_profile_css(), ".profile-trigger {")
+    m = _re.search(r"flex:\s*(\d+)\s+(\d+)\s+\S+", body)
+    assert m, f"트리거의 flex 축약형을 찾지 못했다: {body[-200:]}"
+    assert m.group(2) != "0", "트리거가 줄지 않으면 칩이 밀려난다"
+
+
+def test_the_chip_itself_does_not_shrink():
+    """⚠ 실측에서 되돌린 결정 — 칩을 줄이면 «업데이트 필…» 처럼 **상태 낱말이 잘렸다**."""
+    body = _rule(_profile_css(), ".sidebar-profile > .ai-conn {")
+    m = _re.search(r"flex:\s*(\d+)\s+(\d+)\s+\S+", body)
+    assert m, f"칩의 flex 축약형을 찾지 못했다: {body[-200:]}"
+    assert m.group(2) == "0", "칩이 줄면 상태 낱말이 잘려 상태를 알리지 못한다"
+
+
+def test_the_name_can_ellipsize():
+    """트리거가 줄어드는 계약은 이름이 **말줄임으로 남을 때만** 성립한다."""
+    css = _profile_css()
+    for sel in (".profile-name {", ".profile-role {"):
+        body = _rule(css, sel)
+        assert "text-overflow: ellipsis" in body and "overflow: hidden" in body, sel
+    assert "min-width: 0" in _rule(css, ".profile-info {"), \
+        "min-width:0 이 없으면 flex 항목이 줄지 않아 이름이 잘리지 않는다"
