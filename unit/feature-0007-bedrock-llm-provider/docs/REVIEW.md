@@ -746,3 +746,51 @@ P1 5건 + P2 7건 전량 수정(상세는 MODIFY CHG-20260811T120000). 특히 �
 - `_LOCAL_LLM_MODELS`/`_LOCAL_LLM_MAX_TOKENS` 는 inert data 로 남는다(`_LOCAL_LLM_ENABLED=False`).
   그 cap 을 잠그는 `test_prompt_gen_max_tokens.py` 4건은 이제 **도달 불가 tier 의 값**을 검사한다 —
   vacuous 는 아니나(값 회귀는 여전히 잡는다) 의미는 축소됐다. 정리는 후속.
+
+
+## REV-20260907T163000-ai-claude-corp-feature-0007-local-llm-decommission [CODEX:local-llm-decommission] — BLOCK → 수정 후 재검증
+
+- Related TASK: feature-0007-bedrock-llm-provider
+- Source: codex review --uncommitted (codex-cli 0.153.4, model gpt-6-astra, reasoning effort high)
+- Trigger: local-llm-decommission cycle 의 §18.8 적대 검증 (§18.8.1 경량 경로 — codex 채널)
+- Timestamp: 2026-09-07T16:30:00+09:00
+- Verdict: **BLOCK (P1 1건)** → 전건 수정 → 확인 라운드 대기
+- Human Approval Needed: no
+
+### R1 지적 (전건 수용 — 반박 0)
+
+- **[P1] Require the gateway URL before constructing the embedding client**
+  (`kb_embedding_worker.py:91-95`). 인용: *"If `BEDROCK_GATEWAY_API_KEY` is set but
+  `BEDROCK_GATEWAY_URL` is absent, removing the legacy local URL fallback now leaves
+  `base_url` unspecified … sending the gateway credential and KB text to OpenAI rather than
+  failing closed."* — `docs/SECURITY.md:80-84` 를 근거로 제시했고 그 인용이 **정확하다**.
+- **[P2] Disable embedding backfill when the model is empty** (`shared/config.py:809`).
+  인용: *"only query embedding becomes a no-op. `AGENT_KB_EMBEDDING_AUTO` still defaults to
+  enabled, and the insight worker's `run_embedding_pass()` passes the empty model directly …
+  the daemon repeatedly retries invalid requests."*
+
+### 왜 이 두 건이 내 게이트를 통과했는가 (자기 진단)
+
+두 지적은 **같은 형태**다 — 내가 "로컬 경로 제거" 를 *한 경로에서* 수행하고 그 경로의 이웃을
+보지 않았다. §16.7 G8-a 가 정확히 이것을 규정하는데, 나는 G8 census 를 **운영자 DB row**
+(§G8-b)에만 적용하고 **호출 경로 열거**(§G8-a)는 `LOCAL_LLM` grep 결과로 갈음했다.
+grep 은 «내가 지운 심볼» 을 찾았을 뿐 «그 심볼이 없어진 뒤의 거동» 을 보지 않는다:
+
+- P1 은 `LOCAL_LLM_API_BASE` 를 지운 결과 **SDK 기본값**이 드러난 것이므로 그 심볼 grep 에
+  걸리지 않는다.
+- P2 는 `AGENT_KB_EMBEDDING_MODEL` 을 빈 값으로 만든 결과 **다른 소비자**(백필 데몬)가
+  빈 값을 그대로 쓰게 된 것이므로 역시 걸리지 않는다.
+
+교훈: **제거 변경의 적용면은 «제거한 심볼» 이 아니라 «그 심볼이 채우던 자리» 다.** 기본값이
+있는 자리(SDK default·env default)는 제거 시 그 기본값이 새 동작이 된다.
+
+### 수정 요지
+
+- P1 → URL·KEY paired 요구(fail-closed). 계약을 "실패한다" 가 아니라 **"기본 endpoint 로
+  나가지 않는다"** 로 잡고, 테스트가 `OpenAI` 생성자 호출 자체를 금지한다.
+- P2 → `run_embedding_pass` 진입 가드. `error` 를 비워 «비활성 ≠ 실패» 를 유지(매 tick 경고 방지).
+- 신규 6건 + 결함 재주입 3건 FAIL 실증 + 정상 경로 실측.
+
+### 잔여
+
+- 확인 라운드(§18.8 (a) — P1 수정 라운드 자체는 종결 근거가 아니다) 1회 필요.

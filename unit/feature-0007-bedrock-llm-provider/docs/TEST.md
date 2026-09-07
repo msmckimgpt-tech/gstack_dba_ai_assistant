@@ -647,3 +647,30 @@ INFO:     Uvicorn running on http://0.0.0.0:8080
   (결과는 trigram 으로 정상). 배포 후 실측 항목.
 - **KB 검색 품질 회귀 측정**: 벡터→trigram 강등의 정량 영향(precision/recall@k)은 측정하지 않았다.
   `make kb-retrieval-eval` 의 벡터 축이 제공자 부재로 무효라 A/B 자체가 성립하지 않는다.
+
+
+### Run 2026-09-07-local-llm-decommission-P1P2
+
+**대상**: codex 적대 검증 R1 의 P1·P2 수정 (`kb_embedding_worker.py`)
+
+| 단계 | 결과 |
+|---|---|
+| 신규 `test_kb_embedding_gateway_failclosed.py` | **6건 통과** |
+| 결함 재주입 — 수정 전 형태(조건부 `base_url` + 가드 없음)로 되돌림 | **3건 FAIL** — `[k--BEDROCK_GATEWAY_URL]`(P1 정확한 형태) · `[--BEDROCK_GATEWAY_URL]` · `test_backfill_is_noop_when_model_unset` |
+| 원복 후 재실행 | 6건 통과 · `git diff --stat` = 28+/8- (내 수정분뿐) |
+| 영향 테스트 17파일 + 신규 1파일 | **전량 통과** (rc=0) |
+| §15.2.1 관문 AST 테스트 | 24건 PASS (`ensure_oauth_frontier_identity` 무접촉) |
+
+#### 전수 스위트 기준선 대조 (§16.4 (a) 형태 — 양측 대조)
+
+| | 실패 수 | 실패 파일 |
+|---|---|---|
+| branch | 86 | `test_oauth_exhaustion_gate`(68) · `test_share_redaction_invariant`(7) · `test_scratch`(6) · `test_mssql_auth_cooldown`(5) |
+| main (기준선) | 86 | 동일 |
+
+**집합 차이 0건** (`comm -23` 0 · `comm -13` 0). 즉 branch 에만 있는 실패도, main 에만 있는 실패도
+없다 — 86건은 전부 pre-existing 이며 이 실행 환경(컨테이너 밖 로컬 pytest: `pymysql`·`psycopg`
+부재, bash 스크립트 fixture 부재)에서 발생한다. **내가 만든 회귀 0건.**
+
+⚠ 수치 일치를 집합 일치로 갈음하지 않았다 — 두 수가 같아도 서로 다른 실패일 수 있으므로
+정렬 후 `comm` 으로 대조했다.

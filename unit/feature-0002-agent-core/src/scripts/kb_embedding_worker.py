@@ -84,15 +84,24 @@ def call_openai_embeddings(texts: list[str], model: str, timeout_sec: int, max_a
     #   그 두 값이 폐기된 게이트웨이(local-llm-gateway)를 가리킨 채 남아 있어 **도달 불가 백엔드로
     #   조용히 흐르는 fail-open 경로**였다(shared/config._select_llm_provider 와 동일 축).
     #   이제 Bedrock 게이트웨이 자격증명이 없으면 정직하게 실패한다.
+    # ⚠ **URL·KEY 를 함께 요구한다 (fail-closed)** — codex 적대 리뷰 P1 (2026-09-07).
+    #   `base_url` 을 지정하지 않으면 OpenAI SDK 가 기본값 `https://api.openai.com/v1` 로 나간다.
+    #   즉 KEY 만 있고 URL 이 없는 구성에서는 **게이트웨이 자격증명과 KB 텍스트가 OpenAI 로 전송**된다.
+    #   `docs/SECURITY.md`(CHG-20260522-0006, 사용자 결정 2026-05-22)는 "LLM 호출 entry 는 게이트웨이만
+    #   허용" 이고 OpenAI direct 경로를 의도적으로 폐기했으므로, 이 무지정 상태는 그 결정을 우회한다.
+    #   `shared/config._select_llm_provider()` 의 **paired tuple** 규약(CHG-20260522-0003)과 같은 축이다.
     api_key = os.environ.get("BEDROCK_GATEWAY_API_KEY")
-    if not api_key:
-        raise RuntimeError("LLM API 자격증명 부재 (BEDROCK_GATEWAY_API_KEY 필요)")
-
     api_base = os.environ.get("BEDROCK_GATEWAY_URL")
-    client_kwargs: dict = {"api_key": api_key, "timeout": timeout_sec}
-    if api_base:
-        client_kwargs["base_url"] = api_base
-    client = OpenAI(**client_kwargs)
+    if not api_key or not api_base:
+        missing = [n for n, v in (("BEDROCK_GATEWAY_URL", api_base),
+                                  ("BEDROCK_GATEWAY_API_KEY", api_key)) if not v]
+        raise RuntimeError(
+            "임베딩 게이트웨이 설정 부재 — " + ", ".join(missing) + " 필요. "
+            "둘 중 하나만 있으면 SDK 기본 endpoint(api.openai.com)로 나가므로 진행하지 않는다 "
+            "(docs/SECURITY.md — LLM 호출 entry 는 게이트웨이만 허용)."
+        )
+
+    client = OpenAI(api_key=api_key, base_url=api_base, timeout=timeout_sec)
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -267,7 +276,18 @@ def run_embedding_pass(max_rows: "int | None" = None) -> dict:
     if max_rows is not None and max_rows <= 0:
         return {"processed": 0, "failed": 0, "error": "", "remaining": None}
     settings = get_settings()
-    model = settings["model"]
+    model = str(settings["model"] or "").strip()
+    # ⚠ **모델 미설정이면 백필 자체를 no-op 으로 둔다** — codex 적대 리뷰 P2 (2026-09-07).
+    #   local-llm-decommission 으로 `AGENT_KB_EMBEDDING_MODEL` 기본값이 빈 값이 됐는데,
+    #   `AGENT_KB_EMBEDDING_AUTO` 는 여전히 기본 활성(shared/config.py)이라 insight-worker 의
+    #   백필 데몬이 `INTERVAL_SEC` 마다 빈 모델명으로 임베딩을 시도한다. 쿼리 임베딩만
+    #   `_embed_query_vector` 에서 no-op 이 됐고 **백필 경로는 그 방어를 공유하지 않았다**
+    #   (§16.7 G8-a — 결정을 일부 경로에만 반영). 여기서 진입 자체를 막는다.
+    #   `error` 를 비워 두는 이유: 이것은 실패가 아니라 **비활성 상태**다 — caller(insight
+    #   데몬)가 error 를 로그로 올리므로 사유를 실으면 매 tick 마다 경고가 쌓인다.
+    if not model:
+        return {"processed": 0, "failed": 0, "error": "", "remaining": None,
+                "skipped": "embedding-model-unset"}
     batch_size = settings["batch_size"]
     conn = open_pg_conn()
     processed = 0

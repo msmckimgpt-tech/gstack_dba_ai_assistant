@@ -739,3 +739,31 @@ source_of_truth: true
   `.env*` deny rule 로 이 세션 편집 불가. 코드 방어로 기능 영향은 없으나 KB 쿼리마다 경고 1건이 쌓인다.
 - Cross-ref: TASK `## TASK-20260907T152000-local-llm-decommission` · REVIEW REV-20260907T152000 ·
   TEST Run 2026-09-07-local-llm-decommission · 선행 CHG(2026-07-30 llm-edge-free-routing / 2026-08-26 feature-0043).
+
+
+## CHG-20260907T163000-ai-claude-corp-feature-0007-local-llm-decommission — 적대 검증 P1·P2 수정
+
+선행 CHG-20260907T152000 에 `codex review --uncommitted`(§18.8.1 accepted 채널)를 걸어
+**P1 1건 · P2 1건**을 검출하고 전건 수정했다. 둘 다 **그 CHG 가 만든 구멍**이다.
+
+- **P1 (보안 — 자격증명·데이터 egress)** `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py`:
+  로컬 `api_base` fallback 을 제거하면서 `base_url` 을 조건부로만 넘기게 됐다. OpenAI SDK 는
+  `base_url` 미지정 시 기본값 `https://api.openai.com/v1` 을 쓰므로, `BEDROCK_GATEWAY_API_KEY` 는
+  있고 `BEDROCK_GATEWAY_URL` 이 없는 구성에서 **게이트웨이 토큰과 KB 텍스트가 OpenAI 로 전송**된다.
+  `docs/SECURITY.md`(CHG-20260522-0006, 사용자 결정 2026-05-22)가 OpenAI direct 경로를 의도적으로
+  폐기하고 "LLM 호출 entry 는 게이트웨이만 허용" 이라 규정하므로 이는 그 결정의 silent 우회다.
+  → **URL·KEY paired 요구**(둘 중 하나라도 없으면 클라이언트 생성 전에 `RuntimeError`).
+  `shared/config._select_llm_provider()` 의 paired tuple 규약(CHG-20260522-0003)과 같은 축이다.
+- **P2 (가용성 — 무의미 재시도)** 같은 파일 `run_embedding_pass`:
+  `AGENT_KB_EMBEDDING_MODEL` 기본값을 빈 값으로 내렸는데 `AGENT_KB_EMBEDDING_AUTO` 는 기본 활성이라
+  insight-worker 백필 데몬이 매 tick 빈 모델명으로 요청한다. → 진입 가드
+  (`skipped: embedding-model-unset` 반환, `error` 는 비움 — 비활성은 실패가 아니라서 caller 가
+  매 tick 경고를 쌓지 않게 한다).
+- **회귀 잠금** `unit/feature-0002-agent-core/tests/test_kb_embedding_gateway_failclosed.py` 신규 6건.
+  단언 대상이 순수 함수가 아니라 **실제 진입점**(`call_openai_embeddings`·`run_embedding_pass`)이라
+  배선 사각(§16.7 G14-e)이 없다. `OpenAI` 생성자를 실패시키는 스텁으로 **"생성 자체가 일어나지 않음"**
+  을 단정한다 — "실패한다" 가 아니라 "기본 endpoint 로 나가지 않는다" 가 계약이다.
+- **결함 재주입 실증**(§16.7 G11-b): 수정 전 형태로 되돌리면 3건 FAIL(P1 의 정확한 형태 `KEY 有/URL 無`
+  포함) → 원복 후 6건 통과 → `git diff --stat` 로 원복 확인.
+- Cross-ref: TASK `## TASK-20260907T152000-local-llm-decommission` 의 적대 검증 항목 ·
+  REVIEW REV-20260907T163000 · TEST Run 2026-09-07-local-llm-decommission-P1P2.
