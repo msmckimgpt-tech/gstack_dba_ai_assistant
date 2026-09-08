@@ -1,0 +1,39 @@
+{
+  "verified_at": "2026-09-08T04:06:13.562312+00:00",
+  "base": "https://112.185.196.20",
+  "tls_verified": true,
+  "/livez": {
+    "http_status": 200,
+    "git_commit": "92cfa2c2",
+    "status": "ok"
+  },
+  "/readyz": {
+    "http_status": 200,
+    "git_commit": "92cfa2c2",
+    "status": "ready"
+  },
+  "identity_without_token": 401,
+  "asset_stamps": [
+    "5690c742a34b"
+  ],
+  "/": {
+    "http_status": 200,
+    "bytes": 59788,
+    "sha256": "7467433845097e33ab4ec10ef010ac5455fe59f2a01a3443468f157d22724b3a"
+  },
+  "/static/app/client-bridge.js": {
+    "http_status": 200,
+    "bytes": 18412,
+    "sha256": "bb6a862b5df44e0196847ab96d032daea6a07ba5101e2fd45c8f9dcc544e4ebf"
+  },
+  "/static/css/client-connect.css": {
+    "http_status": 200,
+    "bytes": 5147,
+    "sha256": "d787f1b8457377eeff85d1420aec8b0ae56be037bccf48f2db67e8d79427c694"
+  },
+  "/static/agent/bridge_agent.py": {
+    "http_status": 200,
+    "bytes": 447356,
+    "sha256": "821ddea5d86284a0682ebdfc325263d4e688e013c500deff4813a0ab3b6c5084"
+  }
+}

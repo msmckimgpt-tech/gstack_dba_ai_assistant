@@ -3019,3 +3019,7 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
 [위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
 DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+## DQA 연결 개선 배포 결과 — 2026-09-08
+
+PR #1619 / 서버 92cfa2c2 전체 배포 및 DQA 1.2.0 설치기 공개 완료. 실제 다운로드 크기·SHA-256이 Windows 원본과 일치한다. 최종 검증/미확인 경계와 증거 정본은 feature-0046 REPORT의 배포 완료 절과 공동 실행 원장이다.

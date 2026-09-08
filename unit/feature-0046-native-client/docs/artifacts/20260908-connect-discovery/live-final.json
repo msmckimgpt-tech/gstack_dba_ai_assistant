@@ -1,0 +1,8 @@
+{
+  "verified_at": "2026-09-08T04:15:50.219559+00:00",
+  "caddy_since": "2026-09-08T04:01:35Z",
+  "no_upstreams_available": 0,
+  "ask_worker_surge_remaining": false,
+  "readyz_http_status": 200,
+  "git_commit": "92cfa2c2"
+}

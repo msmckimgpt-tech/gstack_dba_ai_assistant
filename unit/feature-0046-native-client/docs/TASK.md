@@ -3,7 +3,7 @@ doc_type: TASK
 feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
-feature_status: in-progress
+feature_status: done
 feature_status_date: 2026-09-08
 feature_status_note: DQA 1.2.0 AI별 자동 연결과 Windows·WSL 위치 재사용. 검증과 릴리스 상세는 REPORT 정본.
 ---
@@ -12,7 +12,7 @@ feature_status_note: DQA 1.2.0 AI별 자동 연결과 Windows·WSL 위치 재사
 
 ## TASK-20260908T120000-connect-discovery-ux — AI별 자동 연결과 위치 캐시
 
-- 상태: in-progress / 위험도 Minor (기존 인증·인가 계약 유지, 현재 사용자 요청으로 탐색·연결·디자인 변경 위임)
+- 상태: done / 위험도 Minor (기존 인증·인가 계약 유지, 현재 사용자 요청으로 탐색·연결·디자인 변경 위임)
 - hot_paths: `client/core.py`, `client/bridge.py`, `static/app/client-bridge.js`, `static/app/connect-modal.js`, `agent/discovery.py`
 - 다른 활성 worktree는 읽기 전용으로 확인했으며 이 cycle은 전용 worktree에서 수행한다.
 
@@ -75,3 +75,5 @@ DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증
 - [x] 최신 main a92c9256 통합: DQA 앱 우선 안내·실제 클릭 행위 테스트 보존, native 527건/수집 계약 18건 재검증.
 
 - [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.
+
+- [x] PR #1619 병합, 서버 92cfa2c2 전체 배포·상태/서빙 확인, DQA 1.2.0 공개 및 실제 다운로드 크기/SHA-256 대조 완료.
