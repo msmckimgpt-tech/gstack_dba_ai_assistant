@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -42,7 +43,7 @@ class CodexBoardHookTest(unittest.TestCase):
     def init_board(self):
         self.board("init", "--mode", "private")
         fields = dict(line.split("=", 1) for line in
-                      (self.wrapper / ".board-root").read_text().splitlines())
+                      (self.cwd.parent / ".board-root").read_text().splitlines())
         self.root = Path(fields["root"])
 
     def hook(self, event, **fields):
@@ -78,6 +79,35 @@ class CodexBoardHookTest(unittest.TestCase):
         self.assertIsNone(self.start())
         self.assertFalse((self.wrapper / ".board-root").exists())
         self.assertEqual(sorted(p.name for p in self.cwd.iterdir()), ["AGENTS.md"])
+
+    def copied_adapter(self):
+        hook = self.cwd / 'bin/hooks/codex-board-hook.py'
+        support = self.cwd / 'bin/codex-migration/board_support.py'
+        hook.parent.mkdir(parents=True)
+        support.parent.mkdir(parents=True)
+        shutil.copyfile(HOOK, hook)
+        shutil.copyfile(REPO / 'bin/codex-migration/board_support.py', support)
+        return hook
+
+    def test_legacy_consumer_without_board_core_is_quiet_and_not_upgraded(self):
+        hook = self.copied_adapter()
+        result = self.command(['python3', str(hook)], json.dumps({
+            'hook_event_name': 'SessionStart', 'session_id': 'test-session', 'source': 'startup'
+        }))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertFalse((self.cwd / 'bin/lib/board_fs.py').exists())
+        self.assertFalse((self.wrapper / '.board-root').exists())
+
+    def test_existing_board_core_failure_is_reported_even_when_dependency_is_missing(self):
+        hook = self.copied_adapter()
+        core = self.cwd / 'bin/lib/board_fs.py'
+        core.parent.mkdir(parents=True)
+        core.write_text('raise FileNotFoundError("missing_dependency")\n')
+        result = self.command(['python3', str(hook)], '{}')
+        self.assertEqual((result.returncode, result.stdout), (0, ''))
+        self.assertEqual(json.loads(result.stderr), {
+            'component': 'codex-board-hook', 'error': 'FileNotFoundError'
+        })
 
     def test_rejects_malformed_duplicate_oversized_and_unknown_input(self):
         self.init_board()
@@ -185,6 +215,125 @@ class CodexBoardHookTest(unittest.TestCase):
         self.assertIsNone(self.hook("Stop"))
         self.assertIsNone(self.hook("SessionEnd", reason="other"))
         self.assertEqual(list((self.root / "sessions").glob("*.json")), [])
+
+    def test_missed_start_registers_on_prompt_and_disable_stays_quiet(self):
+        self.init_board()
+        self.assertIsNone(self.hook("UserPromptSubmit", turn_id="unregistered"))
+        self.assertEqual(self.presence()["state"], "active")
+        before = self.presence()
+        self.env["AGENT_BOARD_DISABLE"] = "1"
+        self.assertIsNone(self.start())
+        self.assertEqual(self.presence(), before)
+
+    def test_native_env_event_mismatch_never_registers_foreign_thread(self):
+        self.init_board()
+        self.env["CODEX_THREAD_ID"] = "actual-thread"
+        for event, fields in (("SessionStart", {"source": "startup"}),
+                              ("UserPromptSubmit", {}), ("Stop", {}), ("SessionEnd", {})):
+            self.assertIsNone(self.hook(event, **fields))
+        self.assertEqual(list((self.root / "sessions").glob("*.json")), [])
+
+    def test_cli_codex_identity_overrides_parent_claude_exports(self):
+        self.init_board()
+        writer = self.writer()
+        self.env.update(CODEX_THREAD_ID="test-session", CLAUDE_CODE_SESSION_ID="test-writer",
+                        AGENT_BOARD_SID=writer, AGENT_BOARD_TOKEN="example-parent-token")
+        post = self.board("milestone", "--work", "META-0073", "-m", "Codex starts")
+        self.assertIn('"sid":"' + self.sid + '"', (self.root / "channels/public" / (post + ".md")).read_text())
+        self.assertEqual(self.presence()["work_ref"], "META-0073")
+        self.board("post", "-m", "Codex finding")
+        self.board("done")
+        self.assertEqual(self.presence()["state"], "done")
+        self.board("reactivate")
+        self.assertEqual(self.presence()["state"], "active")
+        peer = json.loads((self.root / "sessions" / (writer + ".json")).read_text())
+        self.assertEqual(peer["state"], "active")
+
+    def test_bootstrap_binds_existing_hook_registration_without_resetting_state(self):
+        self.init_board()
+        self.start()
+        self.env["CODEX_THREAD_ID"] = "test-session"
+        token = self.token()
+        cursor = self.root / "cursors" / self.sid / "state.json"
+        before = cursor.read_bytes()
+        for state in ("active", "muted", "done"):
+            if state == "muted":
+                self.board("mute")
+            if state == "done":
+                self.board("unmute")
+                self.board("done")
+            self.board("bootstrap", "--work", "META-0073", "--worktree", str(self.cwd))
+            self.assertEqual(self.presence()["work_ref"], "META-0073")
+            self.assertEqual(self.presence()["state"], state)
+            self.assertEqual(self.presence()["worktree"], self.cwd.name)
+            self.assertEqual(self.token(), token)
+            self.assertEqual(cursor.read_bytes(), before)
+
+    def test_bad_codex_id_never_falls_back_to_only_peer(self):
+        self.init_board()
+        writer = self.writer()
+        self.env["CODEX_THREAD_ID"] = "../bad"
+        for args in (("post", "-m", "must not publish"), ("done",), ("reactivate",)):
+            result = self.command(["bash", str(BOARD), *args])
+            self.assertEqual(result.returncode, 3, result.stderr)
+        result = self.command(["bash", str(BOARD), "milestone", "-m", "bad identity"])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("bad_native_id", result.stderr)
+        self.assertEqual(list((self.root / "channels/public").glob("*.md")), [])
+        self.assertEqual(json.loads((self.root / "sessions" / (writer + ".json")).read_text())["state"], "active")
+
+    def test_reactivate_checks_platform_as_well_as_native_id(self):
+        self.init_board()
+        peer = self.board("register", "--platform", "claude", "--native-id", "test-session")
+        self.board("done", "--sid", peer)
+        self.env["CODEX_THREAD_ID"] = "test-session"
+        result = self.command(["bash", str(BOARD), "reactivate", "--sid", peer])
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("self_only", result.stderr)
+
+    def test_cross_platform_question_answer_uses_same_project_only(self):
+        self.init_board()
+        self.start()
+        writer = self.writer()
+        self.env["CODEX_THREAD_ID"] = "test-session"
+        question = self.board("post", "--channel", "dm", "--to", writer,
+                              "--kind", "question", "-m", "Which module owns migration?")
+        delivered = self.command(["bash", str(BOARD), "deliver", "--platform", "claude",
+                                  "--event", "on_prompt", "--sid", writer, "--stdin-json", "-"], "{}")
+        self.assertIn("Which module", delivered.stdout)
+        self.board("post", "--sid", writer, "--channel", "dm", "--to", self.sid,
+                   "--kind", "answer", "--re", question, "-m", "Migration belongs to bin/migrations.")
+        own_cwd, own_root = self.cwd, self.root
+        self.cwd = Path(self.tmp.name) / "other-project/repo"
+        self.cwd.mkdir(parents=True)
+        (self.cwd / "AGENTS.md").write_text("# Other project\n")
+        self.init_board()
+        self.assertNotEqual(self.root, own_root)
+        self.start()
+        self.assertIsNone(self.hook("UserPromptSubmit", turn_id="other"))
+        self.assertNotIn("Migration belongs", self.board("read"))
+        self.cwd, self.root = own_cwd, own_root
+        context = self.hook("UserPromptSubmit", turn_id="answer")
+        self.assertIn("Migration belongs", context["hookSpecificOutput"]["additionalContext"])
+
+    def test_linked_worktree_resolves_same_board_and_other_repo_pointer_is_rejected(self):
+        self.command(["git", "init", "-q"])
+        self.command(["git", "add", "AGENTS.md"])
+        result = self.command(["git", "-c", "user.name=Test", "-c", "user.email=t@t", "commit", "-qm", "init"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.init_board()
+        own_cwd = self.cwd
+        linked = Path(self.tmp.name) / "linked"
+        result = self.command(["git", "worktree", "add", "-qb", "test", str(linked)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.cwd = linked
+        self.start()
+        self.assertEqual(self.presence()["worktree"], linked.name)
+        self.cwd = Path(self.tmp.name) / "foreign/repo"
+        self.cwd.mkdir(parents=True)
+        (self.cwd / "AGENTS.md").write_text("# Foreign\n")
+        shutil.copyfile(own_cwd.parent / ".board-root", self.cwd.parent / ".board-root")
+        self.assertIsNone(self.start())
 
 
 if __name__ == "__main__":

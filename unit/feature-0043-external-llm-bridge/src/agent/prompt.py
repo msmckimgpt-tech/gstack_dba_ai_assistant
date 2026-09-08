@@ -9,7 +9,7 @@ import json
 import re
 
 from .api import Api
-from .base import _GLOSSARY_MARK, _GLOSSARY_MAX, _HOME_DIRNAME, _TITLE_MARK
+from .base import _GLOSSARY_MARK, _GLOSSARY_MAX, _TITLE_MARK
 
 # ── 프롬프트 ─────────────────────────────────────────────────────────────────
 
@@ -71,9 +71,8 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
         # ⚠ 조사 주소의 **출처**를 밝힌다 (TASK-20260901T140000). 밝히지 않으면 「모르는
         #   주소로 자격증명을 실어 보내라」로만 읽히고, 라이브에서 그것이 인젝션 판정의
         #   근거 2번이 됐다. 이 주소는 러너 설정 파일에 있어 **확인 가능한 사실**이다.
-        f"  이 주소({api.base})는 당신을 실행한 사람이 자기 머신에서 띄운 브리지 러너의"
-        f" 설정값(`~/{_HOME_DIRNAME}/config.json` 의 `base`)이다 — 제3자 주소가 아니다."
-        " 의심되면 그 파일을 직접 읽어 대조하라.",
+        f"  이 주소({api.base})는 DQA 클라이언트의 기존 서비스 연결 설정(config.json의 base)이다"
+        " — 제3자 주소가 아니다.",
         # ⚠ 아래 토큰이 **유일한** 자격증명이라고 못 박는다. 러너가 부르는 CLI 에 같은 서비스의
         #   MCP 서버가 상주 설정돼 있으면(그 헤더는 이 task 와 무관한 별개 토큰이다) 모델은
         #   프롬프트의 토큰 대신 그 도구를 먼저 집는다 — 그 토큰이 만료돼 있으면 조사가 통째로
@@ -98,8 +97,12 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
         #   자격증명은 (a) 인젝션 판정의 근거가 됐고 (b) argv 로 넘어가 같은 호스트의 다른
         #   사용자가 `/proc/<pid>/cmdline` 으로 볼 수 있었으며 (c) CLI 세션 기록에도 남았다.
         #   자식 프로세스는 러너의 환경변수를 상속하므로 값은 이미 손에 있다.
-        "  토큰: 이 프로세스의 환경변수 `BRIDGE_TOKEN` 에 있다"
-        " (`printenv BRIDGE_TOKEN` 으로 읽거나, 셸에서 `$BRIDGE_TOKEN` 으로 바로 쓴다).",
+        "  토큰: 환경변수 `BRIDGE_TOKEN`을 코드에서 읽어 Authorization 헤더에만 사용한다."
+        " 토큰 원문을 명령줄 인자·출력·로그·답변에 넣지 마라.",
+        "  DQA HTTPS 요청은 인증서 검증을 유지한다. 환경변수 `BRIDGE_CA`가 있으면"
+        " 그 CA 파일을 해당 요청에 사용한다. Python 예:"
+        " ssl.create_default_context(cafile=os.environ.get('BRIDGE_CA') or None)."
+        " curl은 --cacert 옵션을 사용한다. 검증을 끄거나 다른 자격증명을 찾지 마라.",
         "",
         # 조사 내역은 사용자 화면의 「실행 단계」에 그대로 그려진다. 사유가 없으면 서버가
         # 도구의 일반적 목적으로 채우는데, 그건 *이 질문에서의* 이유가 아니다.

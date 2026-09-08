@@ -10,6 +10,17 @@ source_of_truth: true
 
 **2026-09-08 검증 도구 정합**: Makefile·CI·직접 pytest의 테스트 목록을 루트 `pyproject.toml`로 통합했다. 기존 Makefile/CI 9경로를 유지하며 native-client 515건을 추가 연결했고, 전체 8,017건 collection rc=0 및 수집 계약 18건 PASS를 확인했다. [실행 기록](test-runs.d/TASK-20260908T020000-delegation-friction.md). 제품 동작 변경이나 라이브 검증 결과를 뜻하지 않는다.
 
+## TASK-20260908T115500-bridge-network — 라이브 후속 수정
+
+첫 PR #1609를 배포한 뒤 실제 DQA 앱에서 Codex를 골라 연결했다. PC 자동 수신 파일과
+서버의 SHA-256은 d875c9ee8b11e95315a0b2b959715e7f125818ef62f1331cc7c4711f4aa307a4로
+일치했다. 검증용 첨부 1282를 읽는 실제 task는 토큰 확인을 통과했지만 네트워크 EPERM으로
+실패했다. 이 때문에 첫 PR의 더미 토큰 실험을 사용자 문제 해결 완료로 보고하지 않았다.
+
+후속은 읽기 전용 파일 정책을 유지하고 DQA 호스트만 네트워크 허용하는 Codex 실행 프로필,
+BRIDGE_CA 전달, 토큰 비출력 지침이다. Windows→WSL 실측은 CA 검증 HTTPS200/다른 호스트403/
+파일 write 거절 모두 확인했다. 최종 실제 첨부 성공·배포 결과는 후속 PR 설명에 기록한다.
+
 ## TASK-20260908T113000-bridge-token-env — DQA 첨부 리뷰 실패 수정
 
 Windows DQA 내부 러너→WSL Codex 경계에서 BRIDGE_TOKEN이 빠진 것이 원인이다.

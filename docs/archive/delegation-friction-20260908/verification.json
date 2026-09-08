@@ -64,5 +64,10 @@
       }
     ],
     "native_client_note": "Main STATUS 1.1.2 summary synchronized into TASK frontmatter; existing in-progress state and date retained."
+  },
+  "latest_document_merge": {
+    "commit": "8f49f1fc5c42ed5b763a227dc5534f2ce7ea35c8",
+    "architecture_template_version": "v3.54.2",
+    "archive_snapshots_unchanged": true
   }
 }

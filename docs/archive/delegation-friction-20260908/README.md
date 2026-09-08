@@ -53,3 +53,7 @@ review 10, done 2, planned 1)은 보존했다. 과거 worktree·미검증 항목
 main STATUS와 TASK/REPORT의 완료 기록을 대조해 TASK frontmatter에 반영했다.
 상태 표는 병합한 TASK 정본으로 재생성하며, 기존 여섯 TASK/REPORT의 main 본문과
 이 작업의 별도 추적 블록을 모두 보존했다. 상세 대조는 verification.json의 main_integration을 따른다.
+
+추가 main `8f49f1fc5c42ed5b763a227dc5534f2ce7ea35c8` 합류에서는 ARCHITECTURE의 템플릿 버전 표기를
+자동 병합했고 현행 크기를 다시 측정했다. 0043의 네트워크 보안 구현 기록과
+이 작업의 실행 결과 블록을 모두 보존했으며, 정리 전 원본 스냅샷은 변경하지 않았다.

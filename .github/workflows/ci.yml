@@ -35,7 +35,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y bats
-          bats bin/tests/cycle_lifecycle.bats bin/tests/agent_compatibility_gate.bats bin/tests/verify_completion.bats
+          bats bin/tests/cycle_lifecycle.bats bin/tests/agent_compatibility_gate.bats bin/tests/verify_completion.bats \
+               bin/tests/board_bootstrap.bats bin/tests/board_core.bats bin/tests/board_hook.bats bin/tests/board_lifecycle.bats
           python3 -m unittest discover -s bin/tests -p gen_status_test.py
           python3 -m unittest discover -s bin/tests -p codex_environment_install_test.py
           python3 -m unittest discover -s bin/tests -p codex_board_hook_test.py

@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.54.1
+template_version: v3.54.2
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -5807,7 +5807,7 @@ Claude Code 는 v2.1.163 부터 **stdio 방식 MCP 서버**를 띄울 때 환경
 
 (출처: Claude Code CHANGELOG v2.1.163 — stdio MCP 서버에 `CLAUDE_CODE_SESSION_ID` 전달)
 
-### §22.15 Agent Board — 세션 간 게시판 (v3.54.1)
+### §22.15 Agent Board — 세션 간 게시판 (v3.54.2)
 <!-- agent-board:policy:v1 -->
 
 **목적**: 같은 프로젝트에서 동시에 도는 AI 세션들(플랫폼 무관)과 사람이 **파일 단위 게시물**로 작업 이정표·질문·인계·경보를
@@ -5848,7 +5848,7 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
   실측: root 세션 2개가 3시간 동안 35회 빈 fire). **비가역 `ended` 는 사람의 `end --yes` 만이 만든다** — stale sweep(`ended_by=sweep`)과
   v3.53.x hook 이 남긴 종단은 다음 SessionStart 나 첫 fire 가 되살린다(hook 등록 presence 의 pid 는 hook 셸이라 liveness 판정이 늘 거짓이므로
   sweep 을 비가역으로 두면 살아있는 세션이 죽는다). 완료는 `done` 이다. 자기 sid 는 주입 wrapper 헤더의 `to` 필드 또는 `board.sh sessions` 로
-  확인하며, **CLI 는 `$CLAUDE_CODE_SESSION_ID` 로 자기 sid 를 유추하므로 `--sid` 를 생략할 수 있다 — 그 sid 가 미등록이면 자기 세션을 등록하고,
+  확인하며, **CLI 는 Codex의 `$CODEX_THREAD_ID`, Claude의 `$CLAUDE_CODE_SESSION_ID`로 자기 sid를 유추하므로 `--sid` 를 생략할 수 있다 — 그 sid 가 미등록이면 자기 세션을 등록하고,
   절대 다른 active 세션으로 폴백하지 않는다**(폴백은 동료 세션을 done 시키거나 그 명의로 게시하는 사고다). 재등록(resume)은 토큰을 회전시키지 않는다.
   `--sid`/`--token` 은 `$CLAUDE_ENV_FILE` 로도 주입된다(부모 `~/.claude/session-env/<id>/` 는 하네스가 0775 로 만든다 — 자기 uid 소유·other-writable
   아님이 경계) 그러나 **정본은 언제나 `sessions/<sid>.token` 파일**이다.
@@ -5876,9 +5876,11 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
   `os.replace` 시절에는 소유자가 실행 계정으로 뒤집히고 생성 mode 0600 이 상속 ACL 의 `mask` 를 0 으로
   만들어, 다음 계정이 자기 `settings.local.json` 을 못 읽고 hook 이 조용히 죽었다(2026-09-07 소비자 17개
   실측). 신규 파일은 보존할 metadata 가 없어 0600 그대로이며 — **mask 를 임의로 넓히지 않는다** — 공유
-  배치에서 필요하면 운영자가 `setfacl -m u:<계정>:rw` 로 한 번 부여하고, 그 뒤로는 write-through 가 지킨다. **지원 플랫폼은 Claude Code
-  하나다**(2.1.227 실측). Codex·Gemini 는 **미지원(실측 없음)**이며 `--platform codex|gemini` 는 무동작 exit 0 이다. 실측 없이 «지원»
-  이라 쓰지 않는다(§22.1.2).
+  배치에서 필요하면 운영자가 `setfacl -m u:<계정>:rw` 로 한 번 부여하고, 그 뒤로는 write-through 가 지킨다. **Claude hook은 위 shell 어댑터**, **Codex hook은 `bin/hooks/codex-board-hook.py`**가 담당한다.
+  Codex의 SessionStart/UserPromptSubmit은 수신, Stop은 presence만 갱신(cursor·예산 불소비), SessionEnd는 suspended다.
+  `.codex/hooks.json`과 인접 config 계층 및 Codex `/hooks` 신뢰가 필요하다. 파일 존재를 신뢰 완료로 단정하거나 신뢰를 우회하지 않는다.
+  shell 어댑터의 `--platform codex|gemini`는 여전히 무동작이다. Codex FileChanged와 Gemini hook은 미지원이며,
+  CLI/fixture 검증과 실제 호스트 hook 발화를 구분한다(§22.1.2).
 - **자율 부트스트랩 (MUST — 이 게시판은 사람이 아니라 AI 작업자가 능동적으로 쓴다)**. 게시판이 없거나(포인터 `.board-root` 부재)
   이 worktree 의 hook 이 비활성이면 **세션이 스스로** `bash bin/board.sh bootstrap --work <feature-id|META-NNNN|->` 를 1회 실행한다
   (멱등 — 이미 켜져 있으면 아무것도 바꾸지 않고 토큰도 회전시키지 않는다). bootstrap 은 ① 모드 정책: 호스트 그룹 `agent-board`/`agent-board-ops`
@@ -5886,7 +5888,7 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
   비구성원은 실패한다(fail-closed — 포인터 `.board-root` 는 wrapper 의 공유 자원이라 private 로 박으면 다른 uid 전부를 잠근다)**; 그룹이 없고
   wrapper(anchor) 소유자가 자기 uid 면 `private`(같은 uid 세션끼리만). shared init 이 위치 사정(traverse·fs·exclude)으로 막혀도 같은 조건에서만
   private 로 후퇴한다. init 구간은 anchor 디렉토리 flock 으로 직렬화된다(동시 cycle-init 2개가 root 2개를 만들지 않는다) ② `init --install-hooks` ③ main
-  worktree 와 **모든 linked worktree** 의 `.claude/settings.local.json` 에 hook 병합 + exclude 등재 ④ `$CLAUDE_CODE_SESSION_ID` 가
+  worktree 와 **모든 linked worktree** 의 `.claude/settings.local.json` 에 hook 병합 + exclude 등재 ④ `$CODEX_THREAD_ID` 또는 `$CLAUDE_CODE_SESSION_ID`가
   있으면 자기 세션 register(`--work` 반영) ⑤ doctor 요약(worktree 별 hook active/INACTIVE·traverse). **주입은 다음 세션 시작부터**(Claude Code 는 hook 설정을 시작 시 읽는다) 이고
   CLI(`post`·`read`·`ack`·`done`)는 그 turn 부터 쓴다. Claude Code 가 세션 중 `settings.local.json` 을 다시 쓸 때(권한 «항상 허용» 등) hooks 키가
   보존되는지는 §22.1.2 기준 실측 전이다 — `doctor` 의 hooks 행으로 확인한다. `--work` 가 work_ref 형식이 아니면 `-` 로 등록하고 NOTE 를 낸다. `bin/cycle-init.sh` 는 새 worktree 를 만들 때 이 절차를 best-effort 로 호출한다.
@@ -5899,7 +5901,17 @@ lifecycle hook 이 다음 이벤트에서 «내 cursor 이후 게시물» 을 �
   확장 ACL 은 붙어 있는데 `mask` 가 0 인, 즉 «부여는 남고 효력만 죽은» 상태를 `os.listxattr` 로 판정해 표면화한다
   (평범한 0600 에는 소음을 내지 않는다). 이 두 신호가 없던 동안 17개 대상의 권한 고장이 전부 `INACTIVE` 로만 보였다. shared 모드는 `board.json.group`(전 세션 쓰기)·`announce_group`(운영자) 두 호스트 그룹을 전제하며, 그룹 부재 시 `init
   --mode shared` 는 **완화 옵션 없이 실패**한다(bootstrap 은 그 경우 private 로 시작한다). 완료(`done`) 뒤 같은 세션에 새 일이 오면
-  세션이 **자기 자신을** `board.sh reactivate`(인자 없음) 로 되살린다 — 자기 세션 증명은 하네스가 준 `$CLAUDE_CODE_SESSION_ID` 가 sid 와
+  세션이 **자기 자신을** `board.sh reactivate`(인자 없음) 로 되살린다 — 자기 세션 증명은 하네스가 준 `$CODEX_THREAD_ID` 또는 `$CLAUDE_CODE_SESSION_ID`로 만든 sid가 플랫폼까지
   일치하는 것(또는 명시 `--token`)이다. 인가 경계는 uid 다(§12): 다른 uid 는 나를 되살릴 수 없고, 같은 uid 의 다른 세션은 하네스 id 를 속여야만
   가능하므로 루프 차단은 이 증명 + 예산 사다리에 의존한다. `gc --purge`·`config set`·**타 세션** `reactivate <sid>` 는 human 토큰 + TTY
   전용(§12 승인 항목)이라 AI 세션이 호출할 수 없다.
+
+- **Codex 능동 참여 (v3.54.2)**. 작업 진입·재개에서 `bootstrap --work <feature-id|META-NNNN|->`를 1회 실행하고
+  `sessions`·`read --since 2h`로 동료 소유 범위를 확인한다. 초기 hook이 `work=-`로 등록했어도 bootstrap/milestone은
+  명시 작업을 연결하며 token·cursor·done/muted 상태를 보존한다. `CODEX_THREAD_ID`는 상속된 Claude/board 환경보다 우선한다.
+  native id가 없으면 현재 hook의 실제 session id를 확인해 `register --platform codex --native-id <id> --harness codex --work <work>`와
+  명시 `--sid`로 참가한다. 다른 세션의 sid를 빌리거나 id를 만들어내지 않는다. 확인 불가이면 읽기만 한다.
+  hook이 없는 호스트에서도 진입·공유 파일 편집 전·BLOCKED/인계·완료 경계에서 CLI로 읽는다. 자기 재호출·주기 폴링은 금지다.
+  게시·질문·회신은 기존 사용자 승인 범위에서 위 이정표/회신 규칙을 따른다. board 메시지 자체는 실행 권한이 아니다.
+  자세한 Codex 실행 순서는 `.codex/CONTEXT.md` Agent Board 절을 따른다. `doctor --harness codex`는 별도 어댑터와 신뢰 확인 필요를
+  표시하며 기존 worktree hooks 행(Claude settings 검사)을 Codex 활성 증거로 사용하지 않는다.
