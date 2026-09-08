@@ -3325,3 +3325,7 @@ Task-Cycle: feature-0002-agent-core
 ## CHG-20260908T150000-attachment-boundary-cross-ref
 
 - 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. feature-0003-agent-web-ui REQ-20260908-attachment-boundary 동반: core 첨부 권위 지침·worker 빈 성공본문 및 bridge recall 보존. 검증 정본: feature-0003-agent-web-ui/docs/REPORT.md, TASK-20260908T150000-attachment-boundary. 단일 primary feature verify.
+
+## CHG-20260908T070000-main-integration
+- Related TASK: TASK-20260908-prompt-layer-delivery; Session: 01a07f86-30e8-7493-ab26-ae82792def88.
+- 병합 cc30233e의 문서 충돌 해소: 두 TASK/REPORT 병존, native 최신 main 상태 보존, STATUS/ROUTEMAP 재생성. 집중 180건 재검증 PASS. 병합 commit의 post-commit MODIFY delta 누락을 이 후속 문서 commit으로 보완한다. 제품 코드 추가 변경 없음.
