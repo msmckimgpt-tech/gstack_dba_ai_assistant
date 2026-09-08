@@ -178,7 +178,8 @@ def test_l2_census_comes_from_a_real_query_not_a_hand_list():
     (적대 검증 라운드 2 실측: 조회 17종인데 census 는 무조건 25종이었다).
     그래서 **조회 산출 자체**를 본다.
     """
-    queried = app._query_tool_names()
+    queried, complete = app._query_tool_names()
+    assert complete, "조회 출처 중 하나가 비었다 — census 가 조용히 좁아진다"
     assert len(queried) >= 20, (
         f"레지스트리 조회가 {len(queried)}건뿐 — `modules.tools._TOOL_HANDLERS` 또는 브리지 "
         "표면 조회가 깨졌다(폴백이 이 결손을 가리지 않게 조회분을 직접 본다)")
@@ -571,7 +572,9 @@ def test_l7_every_step_title_renderer_uses_the_shared_helper():
     assert not offenders, (
         f"`intent`(=`<도구명>: …`) 를 아직 제목으로 쓰는 렌더러가 있다: {offenders}")
     app_src = _code_only(_APP_JS.read_text(encoding="utf-8"))
-    assert "title.textContent = stepTitleText(step, idx);" in app_src
+    # 제목은 공용 헬퍼가 만든 값만 쓴다(폴백 억제 옵션 도입으로 `titleInfo.text` 경유).
+    assert "const titleInfo = stepTitleInfo(step, idx);" in app_src
+    assert "title.textContent = titleInfo.text;" in app_src
     # 활동 행도 공용 정화를 거친다(백틱 제거 + 인자 리터럴 강등).
     assert "stripDisplayTicks(step.work).trim()" in app_src
     assert "STEP_ARGS_LITERAL_RE.test(actWork)" in app_src
@@ -686,3 +689,108 @@ def test_l8_python_guards_also_fail_on_injected_regression(tmp_path, monkeypatch
     monkeypatch.setattr(sys.modules[__name__], "_APP_JS", copy)
     with pytest.raises(AssertionError):
         test_l7_unknown_tool_badge_does_not_echo_the_identifier()
+
+
+# ── L9 조치의 봉인 (§16.7 G11-b — 되돌리면 붉어져야 한다) ─────────────────────
+#
+# 라운드 3 확인 검증이 실측했다: 라운드 1~3 이 고친 6건을 되돌려도 55건이 전건 초록이었다.
+# 「고쳤다」와 「고친 상태가 유지된다」는 다르다 — 각 조치를 그 조치가 지키는 **관측 가능한
+# 결과**로 잠근다. 소스 문자열이 아니라 함수 산출을 본다.
+
+_LIVE_REASONS_WITH_TOOL_NAME = [
+    # 라이브 원장에서 뽑은 정상 사유 — (b) 를 사유 축에 켜면 이 문장들이 통째로 사라진다.
+    "Gold/GemV2/Currency 모두 dbLog 내 테이블이므로 단일 execute_sql 쿼리로 UNION 집계하여 "
+    "모든 재화 소모를 통합 분석",
+    "execute_sql의 기본 데이터베이스가 어디인지 확인하기 위해",
+]
+
+
+@pytest.mark.parametrize("reason", _LIVE_REASONS_WITH_TOOL_NAME)
+def test_l9_reason_axis_wiring_is_sealed_at_the_seam(reason):
+    """이음매가 사유에 `allow_tool_names=False` 를 **실제로 넘기는지** 본다.
+
+    기존 L2 는 판정기를 직접 호출해 축의 «의미» 만 봤다. 이음매의 인자를 뒤집으면 라이브
+    사유 21건이 사라지는데 그 배선을 보는 단언이 없었다(라운드 3 F1).
+    """
+    _w, _ws, out, src = app._step_display_narration(
+        {"tool": "execute_sql", "args": {"sql": "SELECT 1"}, "work": "", "reason": reason,
+         "reason_source": "llm"})
+    assert out == reason, "이음매가 정상 사유를 지웠다 — allow_tool_names 배선이 뒤집혔다"
+    assert src == "llm"
+
+
+def test_l9_server_rule_a_is_anchored():
+    """서버 규칙 (a) 의 맨앞 앵커가 살아 있는지 — 앵커를 빼면 산문 속 JSON 이 전부 죽는다.
+
+    같은 계약의 클라이언트 층은 하네스가 이미 잠그고 있었는데 서버 층만 무봉인이었다.
+    """
+    prose = "설정값 {'theme': 'dark'} 이 든 컬럼을 확인한다"
+    assert not app._step_text_is_tool_syntax(prose, "describe_table"), (
+        "산문 속 JSON 이 도구 표기로 판정된다 — 규칙 (a) 의 앵커가 사라졌다")
+    assert app._step_text_is_tool_syntax("{'schema_name': 'coupon'} 확인", "describe_table"), (
+        "호출 형태(맨앞 리터럴)를 놓친다 — 앵커를 너무 좁혔다")
+    assert app._step_text_is_tool_syntax(
+        "describe_table {'schema_name': 'coupon'}", "describe_table")
+
+
+#: 조치가 고정한 **문구의 값**. 어휘·길이만 검사하면 조용한 회귀가 통과한다(라운드 3 F2).
+_PHRASE_CONTRACT = [
+    # (tool, args, 반드시 포함, 절대 포함 금지, 사유)
+    ("scratch_sql", {"sql": "DELETE FROM tmp.t"}, "SQL을 실행한다", "조회한다",
+     "이 도구는 DELETE/DROP 도 받는다 — 읽기로 기술하면 변경을 조회로 오기술한다"),
+    ("scratch_import", {"dest_table": "tmp.orders"}, "tmp.orders", None,
+     "인자를 버리면 옆 행은 대상을 말하는데 이 행만 못 말하는 비대칭이 생긴다"),
+    ("scratch_reset", {}, "비운다", "삭제",
+     "「임시 삭제」는 «임시로 삭제(되돌릴 수 있다)» 로 먼저 읽힌다"),
+    ("list_schemas", {}, "DB(스키마)", None,
+     "배지 「DB 목록」과 제목의 명사가 갈리면 두 동작으로 읽힌다"),
+]
+
+
+@pytest.mark.parametrize("tool,args,must,must_not,why", _PHRASE_CONTRACT)
+def test_l9_phrase_values_are_pinned(tool, args, must, must_not, why):
+    work, _ws, _r, _rs = app._step_display_narration(
+        {"tool": tool, "args": dict(args), "sql": str(args.get("sql") or ""),
+         "work": "", "reason": ""})
+    assert must in work, f"{tool}: {why} — 얻은 문구: {work!r}"
+    if must_not:
+        assert must_not not in work, f"{tool}: {why} — 얻은 문구: {work!r}"
+
+
+def test_l9_no_derived_phrase_describes_a_write_as_a_read():
+    """파생 문구 전수 — 변경을 받을 수 있는 도구를 「조회」로 기술하지 않는다."""
+    writes = ("scratch_sql", "scratch_import", "scratch_reset", "update_attachment",
+              "materialize_attachment")
+    offenders = []
+    for tool in writes:
+        work, _ws, _r, _rs = app._step_display_narration(
+            {"tool": tool, "args": dict(_REPRESENTATIVE_ARGS),
+             "sql": _REPRESENTATIVE_ARGS["sql"], "work": "", "reason": ""})
+        if "조회한다" in work:
+            offenders.append((tool, work))
+    assert not offenders, f"변경 가능 도구를 조회로 기술한다: {offenders}"
+
+
+def test_l9_ask_payload_goes_through_the_display_seam():
+    """`/api/ask` 응답의 `steps` 도 이음매를 통과한다 — 그 경로만 우회하면 `intent` 가 샌다."""
+    # 파이썬 소스라 JS 스캐너를 쓰지 않는다 — 주석은 `#` 이고, 단언 문자열이 그 파일의
+    # 주석에 등장하지 않음을 아래에서 함께 확인한다(§16.7 G11-a).
+    conv = (_STATIC.parents[0] / "routers" / "conversations.py")
+    src = conv.read_text(encoding="utf-8")
+    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+    assert "app._resolve_step_display(_s) if isinstance(_s, dict) else _s" in code, (
+        "/api/ask 의 steps 가 표시 이음매를 거치지 않는다")
+
+
+def test_l9_derived_reason_is_visually_distinguished():
+    """서버가 역산한 근거를 AI 가 말한 근거와 같은 라벨로 그리지 않는다 (라운드 3 C3)."""
+    src = _code_only(_APP_JS.read_text(encoding="utf-8"))
+    assert 'String(step.reason_source || "") === "derived"' in src
+    assert '"근거(추정)"' in src, "파생 근거의 라벨이 구분되지 않는다"
+
+
+def test_l9_side_panel_suppresses_the_duplicated_fallback_title():
+    """배지가 이미 그려진 자리에서 폴백 제목을 되풀이하지 않는다 (라운드 3 C1)."""
+    src = _code_only(_APP_JS.read_text(encoding="utf-8"))
+    assert "hideFallbackTitle" in src
+    assert "hideFallbackTitle: !!step.tool" in src, "사이드 패널이 옵션을 넘기지 않는다"

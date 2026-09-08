@@ -6344,47 +6344,62 @@ _TOOL_NAME_QUERIED: "frozenset[str] | None" = None
 _TOOL_NAME_RE = None
 
 
-def _query_tool_names() -> "frozenset[str]":
-    """레지스트리 **조회**로만 얻은 도구 이름. 실패·부재면 빈 집합.
+def _query_tool_names() -> "tuple[frozenset[str], bool]":
+    """레지스트리 **조회**로만 얻은 도구 이름과, 모든 출처가 성공했는지 여부 `(names, complete)`.
 
-    ⚠ 모수는 `_TOOL_HANDLERS`(실 디스패치 표)다. `TOOL_DEFINITIONS_FULL` + `scratch_tool_defs()`
-      조합은 **런타임 스위치에 걸린다** — `AGENT_SCRATCH_ENABLED` 가 꺼진 프로세스에서
-      `scratch_tool_defs()` 가 `[]` 를 돌려줘 scratch 4종이 census 에서 빠졌다(라운드 2 실측).
-      게이트는 «부를 수 있는가» 를 정하지 부를 이름을 없애지 않는다.
+    ⚠ 모수는 `_TOOL_HANDLERS`(실 디스패치 표)다. `scratch_tool_defs()` 는 런타임 스위치
+      (`AGENT_SCRATCH_ENABLED`)에 걸려 꺼진 프로세스에서 `[]` 를 돌려주고 scratch 4종이
+      census 에서 빠졌다(실측). 게이트는 «부를 수 있는가» 를 정하지 부를 이름을 없애지 않는다.
+
+    ⚠ **부분 실패를 성공으로 접지 않는다.** 두 출처 중 하나만 실패해도 census 가 조용히
+      좁아지고(브리지 2종 소실 실측), 좁아진 census 는 판정기와 라벨 가드의 모수를 **동시에**
+      줄여 「가드가 결손을 못 보는」 상태를 만든다.
     """
     names: set[str] = set()
+    complete = True
     try:
         import modules.tools as _t
 
-        names.update(str(k) for k in (getattr(_t, "_TOOL_HANDLERS", {}) or {}))
+        got = {str(k) for k in (getattr(_t, "_TOOL_HANDLERS", {}) or {})}
         for d in list(getattr(_t, "TOOL_DEFINITIONS_FULL", []) or []):
             fn = str(((d or {}).get("function") or {}).get("name") or "").strip()
             if fn:
-                names.add(fn)
+                got.add(fn)
+        complete = complete and bool(got)
+        names |= got
     except Exception:
-        pass
+        complete = False
     try:
         from routers import ai_tools as _at   # 브리지 표면 — 지연 import(순환 안전)
 
-        names.update(str(k) for k in (getattr(_at, "_BRIDGE_ONLY_NARRATION", {}) or {}))
-        names.update(str(k) for k in (getattr(_at, "EXPOSED_TOOLS", ()) or ()))
+        got = {str(k) for k in (getattr(_at, "_BRIDGE_ONLY_NARRATION", {}) or {})}
+        got |= {str(k) for k in (getattr(_at, "EXPOSED_TOOLS", ()) or ())}
+        complete = complete and bool(got)
+        names |= got
     except Exception:
-        pass
-    return frozenset(n for n in names if n)
+        complete = False
+    return frozenset(n for n in names if n), complete
 
 
 def _tool_name_census() -> "frozenset[str]":
-    """서버가 낼 수 있는 도구 이름 전체 = **조회 산출** + 배출 전용 상수(+ 조회 실패 시 폴백)."""
+    """서버가 낼 수 있는 도구 이름 전체 = **조회 산출** + 배출 전용 상수.
+
+    조회가 부분이라도 실패하면 폴백으로 메우고 WARN 을 남기며 **캐시하지 않는다** —
+    다음 호출에서 다시 조회해 정상 복구가 가능하게 한다.
+    """
     global _TOOL_NAME_CENSUS, _TOOL_NAME_QUERIED
     if _TOOL_NAME_CENSUS is not None:
         return _TOOL_NAME_CENSUS
-    queried = _query_tool_names()
+    queried, complete = _query_tool_names()
     names = set(queried) | set(_EXTRA_EMITTED_TOOLS)
-    if not queried:
-        # 조회가 통째로 실패했다 — 서명이 비면 규칙 (b) 가 조용히 무력해진다.
+    if not complete:
+        # 조회가 **부분이라도** 실패했다 — 서명이 좁아지면 규칙 (b) 가 조용히 약해진다.
         logging.getLogger(__name__).warning(
-            "[step-narration] 도구 census 조회 실패 — 폴백 목록으로 판정한다(모수가 낡을 수 있다)")
+            "[step-narration] 도구 census 조회가 불완전하다(조회 %d종) — 폴백으로 보충하고 "
+            "**캐시하지 않는다**. 캐시하면 기동 순서 때문에 한 번 좁아진 모수가 프로세스 "
+            "수명 동안 고정된다", len(queried))
         names.update(_FALLBACK_TOOL_NAMES)
+        return frozenset(names)
     _TOOL_NAME_QUERIED = queried
     _TOOL_NAME_CENSUS = frozenset(names)
     return _TOOL_NAME_CENSUS

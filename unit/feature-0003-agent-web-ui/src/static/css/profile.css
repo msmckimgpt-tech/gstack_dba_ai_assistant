@@ -670,6 +670,11 @@
   line-height: 1.45;
   color: var(--text-muted, #6b7280);
 }
+/* 서버가 도구 목적에서 역산한 근거는 AI 가 말한 근거와 **다른 색**으로 적는다 —
+   라벨 문구(「근거(추정)」)에 더해 시각으로도 갈라, 색만 보고 스캔해도 구분된다. */
+.step-reason-label.is-derived {
+  color: var(--text-muted, #6b7280);
+}
 .step-reason-label {
   flex: 0 0 auto;
   font-size: 9px;

@@ -8388,3 +8388,13 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Reason: 배포 후 실측 결과·캡처 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음
   (구현분의 검증 패널은 REV-20260908T133000-attach-folder-tree 가 이미 2라운드 수행).
 - Timestamp: 2026-09-08T20:37:00+09:00
+
+## REV-20260908T204500-step-narration-r3-panel [SUBAGENT:backend-security-qa-ux] — CONCERN
+- Related TASK: TASK-20260908T204500-step-narration-seal / feature-0003-agent-web-ui
+- Trigger: 라운드 3 확인 라운드 — TASK-20260908T125500 의 `verification_debt` 상환
+- Timestamp: 2026-09-08T20:45:00+09:00
+- Verdict: CONCERN (P1 0 · medium 3 + concern 4)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T204500-r3-panel.md
+- Critical issue: 라운드 1~3 조치 6건이 **뮤턴트로 봉인되지 않아** 되돌려도 전건 초록 · `/api/ask` 의 `steps` 가 표시 이음매를 우회해 `intent` 유출(라이브 3,382행) · 적재층의 사유 파생이 화면에서 구분되지 않음(22행)
+- 조치: 본 cycle 에서 전건 반영 + **뮤턴트 8종 KILL 실증**. 잔여 3건은 TASK 에 후속으로 명시.
+- Human Approval Needed: no

@@ -5396,6 +5396,11 @@ async def ask(request: Request) -> JSONResponse:
                         conversation_id, exc_info=True,
                     )
 
+        # 표시 payload 는 **반드시 표시 이음매를 통과**한다. 여기만 우회하면 이 응답의 `steps`
+        # 가 `intent`(=`<도구명>: <문구>`)와 정화되지 않은 `work` 를 그대로 실어 나른다 —
+        # 판정축은 「렌더 여부」가 아니라 「나가는가」다(§16.8 B-2(a), 적대 검증 라운드 3 F3).
+        render_steps = [app._resolve_step_display(_s) if isinstance(_s, dict) else _s
+                        for _s in (render_steps or [])]
         result = {
             "output": render_output,
             "executed_sql": render_sql,
