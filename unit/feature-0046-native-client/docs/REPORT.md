@@ -8,9 +8,27 @@ source_of_truth: true
 
 # Report
 
-## TASK-20260908-update-install-proof — 설치 실패 복구 진행 중
+## TASK-20260908-update-install-proof — 실제 설치 완료 (DQA 1.2.1)
 
-실제 설치된1.1.2의 [업데이트 확인]부터 설치까지 실측하여 1.2.0의 롤백 결함을 재현했다. 구버전이 남긴 내장 Python 파일 잠금이 원인이며, 1.2.1 설치기가 해당 설치본의 실행 파일 소유자만 정리하도록 수정했다. Windows 빌드 exit0, 코드 검증과 독립 backend/security·QA 검토는 통과했다. 공개 후 같은 실제 메뉴 경로에서 최종 설치·재실행을 재측정한다.
+실제 Windows 사용자 mckim의1.1.2 앱에서 [업데이트 확인]→확인창 수락→앱 다운로드→설치→자동 재실행→최신 버전 재확인까지 **PASS**했다. DQA1.2.1은 같은 기존 per-user 설치 경로에서 실행 중이다.
+
+최초1.2.0 설치는 종료된 부모가 남긴 내장 Python이 파일을 점유하여 약30초 후exit5/롤백했다. 상세 로그는 사용자 취소가 아닌 무음 메시지의 자동 Abort임을 입증했다. 1.2.1 설치기는 해당 설치본의 실행 파일만 Windows 종료 대상으로 삼고, 재실행을 한 곳으로 통합하며 설치 로그를 남긴다.
+
+| 수락 이후 | 실측 결과 |
+|---|---|
+| 5.102초 | 기존 DQA 정상 종료 |
+| 35.116초 | 기존 고아 내장 Python을 설치기가 종료 |
+| 40.578초 | 동일 설치 경로에서 DQA1.2.1 자동 실행 |
+| 43.737초 | 설치기 두 프로세스 모두 종료코드0 |
+| 49.602초 | 단일 재실행·버전/지문·pending해소·성공로그 조건5초 이상 유지 |
+
+재실행된 실제 메뉴 응답은 “이미 최신입니다 (버전1.2.1).”였다. 확인창을 닫고 앱은 켜 둔 상태다. Windows 종료 대기 약30초는 유지되므로 이번 수정은 설치 실패 복구이며 속도 단축으로 보고하지 않는다.
+
+- 배포: 제품PR[#1623](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1623), merge6747139f, 공개1.2.1(26,044,458bytes). 서버코드변경 없음으로 웹 재배포 불필요.
+- 받은 설치기 SHA-256: `199cffb3e5f9d1c4ebcff496c78fe9b964a5fc660654e61ccd163114b1932352`.
+- 실제 설치된 exe SHA-256: `06ca673fd2a62930035bd1df39e079611f61e7a7beba9cf091470dcbe95992df`.
+- 검증: native528개, Windows빌드·자가진단·동봉런타임, backend/security·QA 코드 및 최종 실제 설치 증거 검토 PASS.
+- [요약](artifacts/20260908-update-install/measurement-summary.json), [실제 프로세스/상태 기록](artifacts/20260908-update-install/install-result.json), [최신 버전 확인창](artifacts/20260908-update-install/latest-version-confirmation.json).
 
 ## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
 

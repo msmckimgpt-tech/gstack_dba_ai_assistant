@@ -1240,3 +1240,8 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 
 ## REV-20260908T141200-update-install-eol [SKIPPED:non-policy-doc] — PASS
 - Trigger: 비정책 증적 줄바꿈 정규화. 값·제품 코드는 불변이며 실제 파일 크기와 SHA-256 값도 그대로다.
+
+## REV-20260908T141300-update-install-live [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908-update-install-proof.
+- Trigger: actual installation/실제 설치 결과와 기존 실패 회귀.
+- Artifact: [독립 실측 검토](artifacts/20260908-update-install/qa-live-review.md). 실제설치파일과다운로드파일SHA도 별도 재계산하여 대조했다. 설치종료·재실행·최신메뉴응답까지PASS.

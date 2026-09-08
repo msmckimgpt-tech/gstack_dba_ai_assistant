@@ -1,0 +1,327 @@
+{
+  "started_at": 1788844182.4362466,
+  "initial_pid": 35608,
+  "events": [
+    {
+      "at": 1788844182.4508739,
+      "kind": "baseline",
+      "processes": [
+        {
+          "pid": 48536,
+          "parent": 8988,
+          "name": "python.exe",
+          "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\runtime\\python.exe"
+        },
+        {
+          "pid": 35608,
+          "parent": 21100,
+          "name": "DQAConnect.exe",
+          "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe"
+        }
+      ],
+      "version": "1.1.2"
+    },
+    {
+      "at": 1788844182.4613974,
+      "kind": "accepted_update_confirmation",
+      "dialog": {
+        "hwnd": 129832098,
+        "pid": 35608,
+        "class": "#32770",
+        "text": "DQA",
+        "visible": true,
+        "id": 0,
+        "children": [
+          {
+            "hwnd": 10819076,
+            "pid": 35608,
+            "class": "Button",
+            "text": "예(&Y)",
+            "visible": true,
+            "id": 6
+          },
+          {
+            "hwnd": 10356330,
+            "pid": 35608,
+            "class": "Button",
+            "text": "아니요(&N)",
+            "visible": true,
+            "id": 7
+          },
+          {
+            "hwnd": 47324304,
+            "pid": 35608,
+            "class": "Static",
+            "text": "",
+            "visible": true,
+            "id": 20
+          },
+          {
+            "hwnd": 19275282,
+            "pid": 35608,
+            "class": "Static",
+            "text": "DQA 1.2.1 로 업데이트합니다.\n현재 버전: 1.1.2\n\n업데이트 설치 중 남은 내부 프로세스로 중단되는 문제를 수정했습니다. 설치 후 DQA가 자동으로 다시 시작됩니다.\n\n설치 후 프로그램이 자동으로 다시 시작됩니다.",
+            "visible": true,
+            "id": 65535
+          }
+        ]
+      }
+    },
+    {
+      "at": 1788844182.4915097,
+      "kind": "window",
+      "hwnd": 27199730,
+      "pid": 35608,
+      "class": "WindowsForms10.Window.8.app.0.aec740_r54_ad1",
+      "title": "DQA",
+      "text": "DQA — Database Query Assistant\nChrome Legacy Window"
+    },
+    {
+      "at": 1788844184.2285473,
+      "kind": "process_started",
+      "pid": 49416,
+      "parent": 35608,
+      "name": "DQAConnect-Setup-1.2.1.exe.ope06myo.exe",
+      "exe": "C:\\Users\\mckim\\.dqa-connect\\update\\DQAConnect-Setup-1.2.1.exe.ope06myo.exe"
+    },
+    {
+      "at": 1788844185.441143,
+      "kind": "process_started",
+      "pid": 21096,
+      "parent": 49416,
+      "name": "DQAConnect-Setup-1.2.1.exe.ope06myo.tmp",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Temp\\is-CRUNGD340K.tmp\\DQAConnect-Setup-1.2.1.exe.ope06myo.tmp"
+    },
+    {
+      "at": 1788844186.1671712,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 준비 중\n컴퓨터에 DQA Connect 설치를 준비하는 중입니다.\n취소"
+    },
+    {
+      "at": 1788844186.167653,
+      "kind": "window",
+      "hwnd": 30480882,
+      "pid": 21096,
+      "class": "TApplication",
+      "title": "",
+      "text": ""
+    },
+    {
+      "at": 1788844186.6912773,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n응용 프로그램을 닫는 중...\n취소"
+    },
+    {
+      "at": 1788844187.5635114,
+      "kind": "process_exited",
+      "pid": 35608,
+      "parent": 21100,
+      "name": "DQAConnect.exe",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "exit_code": 0
+    },
+    {
+      "at": 1788844217.577831,
+      "kind": "process_exited",
+      "pid": 48536,
+      "parent": 8988,
+      "name": "python.exe",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\runtime\\python.exe",
+      "exit_code": 0
+    },
+    {
+      "at": 1788844217.5958526,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe\n취소"
+    },
+    {
+      "at": 1788844218.1443648,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\runtime\\python314.dll\n취소"
+    },
+    {
+      "at": 1788844218.6647375,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\...\\AppData\\Local\\Programs\\DQA Connect\\_internal\\api-ms-win-core-interlocked-l1-1-0.dll\n취소"
+    },
+    {
+      "at": 1788844219.200466,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\_internal\\python314.dll\n취소"
+    },
+    {
+      "at": 1788844219.7207754,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\_internal\\clr_loader\\util\\__init__.py\n취소"
+    },
+    {
+      "at": 1788844220.2432315,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\_internal\\webview\\guilib.py\n취소"
+    },
+    {
+      "at": 1788844220.7614372,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\_internal\\_tcl_data\\msgs\\ar_jo.msg\n취소"
+    },
+    {
+      "at": 1788844221.287237,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\...\\mckim\\AppData\\Local\\Programs\\DQA Connect\\_internal\\_tcl_data\\tzdata\\Africa\\Luanda\n취소"
+    },
+    {
+      "at": 1788844221.813638,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\...\\AppData\\Local\\Programs\\DQA Connect\\_internal\\_tcl_data\\tzdata\\Antarctica\\Syowa\n취소"
+    },
+    {
+      "at": 1788844222.3504713,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\...\\AppData\\Local\\Programs\\DQA Connect\\_internal\\_tcl_data\\tzdata\\Europe\\Busingen\n취소"
+    },
+    {
+      "at": 1788844222.8683958,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n파일을 추출하는 중...\nC:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\_internal\\_tk_data\\ttk\\combobox.tcl\n취소"
+    },
+    {
+      "at": 1788844223.0392413,
+      "kind": "process_started",
+      "pid": 29004,
+      "parent": 21096,
+      "name": "DQAConnect.exe",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe"
+    },
+    {
+      "at": 1788844223.3989406,
+      "kind": "window",
+      "hwnd": 13835326,
+      "pid": 21096,
+      "class": "TWindowDisabler-Window",
+      "title": "설치",
+      "text": ""
+    },
+    {
+      "at": 1788844223.3995767,
+      "kind": "window",
+      "hwnd": 39393376,
+      "pid": 21096,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.1",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n설치를 완료하는 중...\n취소"
+    },
+    {
+      "at": 1788844226.1979492,
+      "kind": "process_exited",
+      "pid": 49416,
+      "parent": 35608,
+      "name": "DQAConnect-Setup-1.2.1.exe.ope06myo.exe",
+      "exe": "C:\\Users\\mckim\\.dqa-connect\\update\\DQAConnect-Setup-1.2.1.exe.ope06myo.exe",
+      "exit_code": 0
+    },
+    {
+      "at": 1788844226.1985106,
+      "kind": "process_exited",
+      "pid": 21096,
+      "parent": 49416,
+      "name": "DQAConnect-Setup-1.2.1.exe.ope06myo.tmp",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Temp\\is-CRUNGD340K.tmp\\DQAConnect-Setup-1.2.1.exe.ope06myo.tmp",
+      "exit_code": 0
+    },
+    {
+      "at": 1788844226.563512,
+      "kind": "all_completion_checks_passed",
+      "app_pid": 29004
+    },
+    {
+      "at": 1788844227.6191447,
+      "kind": "window",
+      "hwnd": 30546418,
+      "pid": 29004,
+      "class": "WindowsForms10.Window.8.app.0.aec740_r47_ad1",
+      "title": "DQA",
+      "text": ""
+    },
+    {
+      "at": 1788844228.1664107,
+      "kind": "window",
+      "hwnd": 30546418,
+      "pid": 29004,
+      "class": "WindowsForms10.Window.8.app.0.aec740_r47_ad1",
+      "title": "DQA",
+      "text": "DQA — Database Query Assistant\nChrome Legacy Window"
+    }
+  ],
+  "success": true,
+  "finished_at": 1788844232.0634215,
+  "installed_version": "1.2.1",
+  "exe_sha256": "06ca673fd2a62930035bd1df39e079611f61e7a7beba9cf091470dcbe95992df",
+  "processes": [
+    {
+      "pid": 29004,
+      "parent": 21096,
+      "name": "DQAConnect.exe",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe"
+    }
+  ],
+  "update_state": {
+    "last_check": 1788844161.0583465,
+    "last_error": "",
+    "pending_install": "",
+    "pending_at": 0.0
+  },
+  "observer_python_survived": 45424,
+  "stable_seconds": 5.529326600022614
+}

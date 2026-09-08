@@ -930,3 +930,8 @@ edit_policy: append-only
 
 ## CHG-20260908-update-install-evidence-eol — Windows 증적 정규화
 - Windows 생성 증적의 CRLF를 저장소 LF로 정규화했다. 원본은 Windows 임시 작업 폴더에 보존하며 결과 값은 동일하다.
+
+## CHG-20260908-update-install-measured — 실제 업데이트 설치 성공
+- 1.2.1 공개 후 기존1.1.2 메뉴에서 설치·자동 재시작·최신 버전 확인 완료. 고아 프로세스 수동 종료 없이 회귀 상황 그대로 PASS.
+- setup둘exit0(43.737초), 같은 경로의 새DQA1개, 실제 exe/다운로드 SHA, pending해소, applyok, 5초 안정 실행 대조. 원본 증적과 전체 압축 설치 로그 보존.
+- FUNCTION/REPORT/TASK를 현재 설치·배포 상태로 동기화했다. 제품 코드는 직전 검토 후 바뀌지 않았다.
