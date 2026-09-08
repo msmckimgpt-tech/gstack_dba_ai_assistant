@@ -1,0 +1,32 @@
+[
+  {
+    "pass": true,
+    "toasts": [
+      "Codex · Windows 연결 완료",
+      "Claude · WSL · FixtureUbuntu · alice 연결 완료"
+    ],
+    "engine": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0",
+    "nonce_scrubbed": true,
+    "body": "\n          \n            2개 AI 연결됨\n            다시 찾기\n          \n          CClaudeWSL · FixtureUbuntu · alice연결됨위치 변경CoCodexWindows연결됨GGemini이 컴퓨터에서 찾지 못했습니다미연결\n          창을 닫아도 AI 연결은 유지됩니다.\n          연결\n        ",
+    "native_capture": "unavailable: Error: BrowserType.connect_over_cdp: connect ECONNREFUSED 127.0.0.1:4772\nCall log:\n  - <ws preparing> retrieving websocket url from http://127.0.0.1:4772\n",
+    "iteration": 0,
+    "native_executable": true,
+    "cached_location_reused": false,
+    "heartbeat_confirmed": true
+  },
+  {
+    "pass": true,
+    "toasts": [
+      "Claude · WSL · FixtureUbuntu · alice 연결 완료",
+      "Codex · Windows 연결 완료"
+    ],
+    "engine": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0",
+    "nonce_scrubbed": true,
+    "body": "\n          \n            2개 AI 연결됨\n            다시 찾기\n          \n          CClaudeWSL · FixtureUbuntu · alice연결됨위치 변경CoCodexWindows연결됨GGemini이 컴퓨터에서 찾지 못했습니다미연결\n          창을 닫아도 AI 연결은 유지됩니다.\n          연결\n        ",
+    "native_capture": "unavailable: Error: BrowserType.connect_over_cdp: connect ECONNREFUSED 127.0.0.1:4772\nCall log:\n  - <ws preparing> retrieving websocket url from http://127.0.0.1:4772\n",
+    "iteration": 1,
+    "native_executable": true,
+    "cached_location_reused": true,
+    "heartbeat_confirmed": true
+  }
+]

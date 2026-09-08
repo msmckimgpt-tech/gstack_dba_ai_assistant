@@ -47,3 +47,13 @@ Scenario: 네이티브 창의 픽셀 캡처
 Reason: PrintWindow와 화면 영역 캡처 모두 빈 면을 반환했다.
 Alternative: 실제 앱의 요소 상태·입력·브리지·heartbeat 결과는 위 PASS, 동일 HTML/CSS의 Windows Chrome 캡처는 보조 시각 검증이다.
 Next: WebView2 픽셀 캡처가 가능한 Windows 화면 세션에서 해당 카드 영역을 다시 캡처한다.
+
+## 라이브 웹 및 설치기 반입
+
+- PR #1619 병합: `92cfa2c2b4e69e8b8f7156f00a8f2fc4d56c6f86` (2026-09-08T04:01:35Z).
+- TLS 검증을 켠 공개 엣지 `/livez`·`/readyz` 200, git_commit `92cfa2c2`. 미인증 `POST /api/ai/connect/identity` 401. 공용 JS/CSS/배포 러너 200, Python 구문 정상, HTML 자산 스탬프 `5690c742a34b`.
+- 설치기 공개: 2026-09-08T04:12:43Z, 최신 릴리스 API 1.2.0 및 실제 다운로드 200. 수신 26,037,943 bytes/SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`, Windows 원본/매니페스트와 일치.
+- 원장: feature-0046 `artifacts/20260908-connect-discovery/{live-server,live-installer}.json`. 사용자 설치본에 설치를 실행한 것으로 보고하지 않는다.
+- 추가 native 2회에서도 연결/캐시 흐름 PASS. 격리 DQA 프로세스에 WebView2 CDP 옵션을 전달하는 별도 시도는 `ECONNREFUSED`여서 캡처를 얻지 못했다(`native-cdp-results.json`). 기존 픽셀 미확인 판정은 유지한다.
+
+전체 배포 종료코드 0. 웹 2대·워커/MCP 5대의 git_commit 92cfa2c2, 90초 soak PASS, Caddy no-upstreams 0, 임시 ask-worker 잔존 0. 대화 스모크는 서버 LLM 차단 게이트 PASS이며 실제 벤더 답변 검사는 비적용이다. `deploy-summary.json`과 `live-final.json`에 보존한다.

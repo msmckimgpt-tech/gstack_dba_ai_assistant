@@ -15,6 +15,20 @@ DQA 클라이언트를 실행하고 로그인하면 설치된 AI를 찾는다. A
 Issue #1615. 자동 연결·중복 위치 선택·클라이언트 캐시·모델 등록 후 toast를 구현했다. 최신 main의 아이콘/자동 복구를 통합했다. 검증과 릴리스 결과는 `test-runs.d/20260908T123400-connect-discovery.md`에 기록한다.
 
 
+
+## 배포 완료 — 2026-09-08
+
+- 구현 PR [#1619](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1619), merge `92cfa2c2b4e69e8b8f7156f00a8f2fc4d56c6f86`. `make deploy-web` 전체 범위 종료코드 0. 웹 2대·워커/MCP 5대가 `92cfa2c2`, 90초 soak PASS. DB 변경 없음. 기존 gateway는 드리프트가 없어 유지했다.
+- 실제 서버: `/livez`·`/readyz` 200, 미인증 연결 identity 401, 새 JS/CSS/러너 200, 자산 스탬프 `5690c742a34b`. 배포 시간대 Caddy `no upstreams available` 0건, ask-worker 임시 인스턴스 잔존 없음.
+- DQA **1.2.0 공개 완료**. 최신 릴리스 API와 설치기 수신 모두 200, **26,037,943 bytes**, SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`. Windows 빌드/서버 매니페스트/실제 수신이 일치한다. 기존 DQA 앱의 [업데이트 확인]을 통해 적용하며, 사용자 설치본을 임의로 교체하지 않았다.
+- 검증: 최신 main 통합 후 native 527 PASS, 러너 1661 PASS/1 적용 대상 없음 skip, 웹 인증 22 PASS, 수집 계약 18 PASS, DOM 11개 및 보조 Windows 렌더 4개 PASS. 실제 동결 DQA 연결/캐시/heartbeat/toast 2회 연속 PASS. 보안·백엔드·QA·UX·디자인 최종 SHIP. 원격 PR의 check rollup은 비어 있어 로컬 결과를 원격 CI PASS로 표기하지 않는다.
+- 검증 경계: 서비스 로그인/API·벤더 CLI·app.js toast/초기화는 native fixture다. 실제 벤더 계정 답변은 호출하지 않았다. 배포 대화 스모크는 서버 LLM 차단 게이트 PASS이며 실제 벤더 답변 생성 PASS가 아니다. native 픽셀 캡처는 PrintWindow/화면 영역 모두 빈 면, CDP 추가 시도는 ECONNREFUSED였다. 실제 앱 요소/브리지 검증과 보조 브라우저 시각 검증을 분리해 기록한다.
+- 증거: `artifacts/20260908-connect-discovery/{build,native-results,native-cdp-results,live-server,live-installer,live-final,deploy-summary}.json` 및 [실행 원장](test-runs.d/20260908T123400-connect-discovery.md).
+
+## 이전 작업 기록
+
+아래 1.1.x 및 이전 TASK의 상태·위험 목록은 당시 기록이며, 이번 1.2.0의 현재 결과는 위 배포 완료 절을 따른다.
+
 ## TASK-20260908T113000-bridge-token-env — 2026-09-08
 
 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합. DQA 클라이언트 단독 사용 기준 유지. 내부 토큰 전달 복구는 feature-0043 소유.
