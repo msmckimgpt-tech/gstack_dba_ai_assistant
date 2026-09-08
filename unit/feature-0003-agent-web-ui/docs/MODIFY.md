@@ -6023,3 +6023,9 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
 - 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
 - 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+
+## CHG-20260908T150000-attachment-boundary
+
+- Related: REQ-20260908-attachment-boundary / TASK-20260908T150000-attachment-boundary
+- Timestamp: 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+- 마지막 fence 탐색으로 후속 답변을 저장하던 결함 수정. outer/inner fence 추적, 인용 비실행. 성공 문구 제거와 빈본문 보존. REPORT 및 test-runs.d/TASK-20260908T150000-attachment-boundary.md 참조.
