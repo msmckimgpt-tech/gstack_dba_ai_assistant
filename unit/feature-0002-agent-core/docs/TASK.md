@@ -6,11 +6,28 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단
 
 ---
 
 # Task
+
+## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검증
+
+### 2.1 Implementation Plan
+- Policy: /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0002-prompt-layer-delivery/AGENTS.md sha256=a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2
+- Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- 승인 근거: 현재 사용자 요청(전역 → 제품 → 역할 전역 → 역할 제품 → 개인 전역 → 개인 제품 검토·개선). Major: 프롬프트 조회 실패 처리와 진단 개선; 인증·인가 변경 없음.
+- `unit/feature-0002-agent-core/src/agent_core.py::compose_system_prompt`: strict 조회 모드로 설정 부재와 조회 실패를 구분한다. 제품 표시명 조회 실패가 제품 지침을 누락시키지 않게 분리한다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py::_bridge_system_prompt,claim_request`: strict 모드를 사용하고 실패하면 점유 해제·503으로 불완전 지침 실행을 차단한다.
+- `unit/feature-0043-external-llm-bridge/src/agent/handler.py::handle_one`: 전달 길이·SHA-256·실제 채널을 원문 없이 기록한다. 생성 러너 2벌을 재생성한다.
+- 테스트: 여섯 고유 문자열이 최종 프롬프트에 정확히 한 번, 요청 순서대로 존재; auto 모드에서 전역 3계층만 적용; 빈 설정/조회 오류/표시명 오류/계정·제품 전환/긴 프롬프트를 검증한다.
+- 완료 기준 예시: G→P→RG→RP→AG→AP를 설정하면 Claude 시스템 채널 또는 Codex 본문에 동일 순서로 모두 전달된다. 역할 조회 SQL 실패는 빈 설정으로 처리되지 않고 AI 실행 전 재시도 가능한 실패가 된다.
+- 본문 전달은 모든 런타임의 시스템 역할 보장을 뜻하지 않는다. 파일 전달 옵션은 검토했으나 이번 변경은 기존 CLI·인증 설정을 유지하면서 누락 차단과 실전달 검증을 강화한다.
+- 검증 패널: backend/security/qa(API 및 SQL 조회 오류 계약) + toast 1줄 제거 UX/design 검토, 최대 3회. 최종 PASS. 공유 hot_paths: core compose_system_prompt, ai_tools claim/release/working, handler dispatch; composer.js 한 줄 삭제. 배포 포함(FIRST_REQUEST.md).
+- [x] 구현·단위/통합 회귀·검증 패널
+- [x] verify-completion PASS. 출하 단계(commit/push/PR/main/배포)의 최종 SHA·실행 결과는 해당 PR의 Git 동기화 결과와 배포 로그를 따른다.
+
 
 
 ## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery (cross-feature)

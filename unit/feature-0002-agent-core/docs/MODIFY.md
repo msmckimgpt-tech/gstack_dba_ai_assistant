@@ -3314,3 +3314,7 @@ Task-Cycle: feature-0002-agent-core
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+## CHG-20260908T063000-prompt-layers
+- Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.

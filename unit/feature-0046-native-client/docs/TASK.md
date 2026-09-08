@@ -3,7 +3,7 @@ doc_type: TASK
 feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
-feature_status: completed
+feature_status: done
 feature_status_date: 2026-09-08
 feature_status_note: 실제 업데이트 확인을 통해 1.1.2에서1.2.1 설치·자동 재실행·최신버전 재확인 PASS.
 ---

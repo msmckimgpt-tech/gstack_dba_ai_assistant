@@ -3092,3 +3092,29 @@ PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
 - Timestamp: 2026-09-08T11:38:45+09:00
+
+## REV-20260908T060223-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0002-agent-core)
+- Trigger: API/엔드포인트 및 query/쿼리
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260908T060223-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0002-agent-core)
+- Trigger: API/응답 및 개인정보 비노출
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260908T060223-security.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-qa-ux-design [SUBAGENT:qa-ux-design] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0002-agent-core)
+- Trigger: API/계약, 여섯 계층 수용 기준, toast 한 줄 UX/design
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0002-agent-core/docs/reviews/20260908T060223-qa-ux-design.md
+- Human Approval Needed: no
+
+- 배포 승인 근거: 현재 사용자 개선 위임 + wrapper FIRST_REQUEST.md deploy_scope: included, AGENTS.md §16.5.1. 인증/인가·파괴적 변경 없음.

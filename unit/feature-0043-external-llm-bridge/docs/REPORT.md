@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검토·개선
+- 요청한 여섯 계층의 누적 순서는 정상. 계정 개인 설정은 `WebSystemPrompts`의 account scope 전역/제품 행이다.
+- 수정: 지침 SQL 조회 오류를 빈 설정으로 숨기던 경로 차단; 제품 표시명 오류와 내용 조회 분리; 오류 안내·5초 비동기 재시도; 최초 점유자에 한정한 정리; 전달 원문 없는 길이·SHA-256·채널 진단.
+- 검증: 집중 회귀 180건 PASS, ruff PASS, ES module 구문 PASS. 독립 backend/security/QA 및 한 줄 toast 제거의 UX/design 리뷰 PASS. 전체 bridge 회귀 결과는 Run에 기록한다.
+- DQA 앱: 실행 중인 DQAConnect/WebView2 확인, 디버그 포트 미개방. 기존 사용자 앱을 재시작하지 않아 화면 오류 안내의 새 시나리오는 NOT-RUN.
+- 상세: [전달 감사](../../feature-0043-external-llm-bridge/docs/PROMPT_DELIVERY.md), [실행 기록](test-runs.d/TASK-20260908-prompt-layer-delivery.md).
+- Policy SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. Session: 01a07f86-30e8-7493-ab26-ae82792def88.
+- Git 동기화 결과: verify·commit·push·PR/main·배포는 아래 계획대로 자동 진행하며 최종 SHA/PR는 GitHub PR 결과를 정본으로 사용한다. 배포 전 검증 기록이며 배포 성공을 선기록하지 않는다.
+
 **2026-09-08 검증 도구 정합**: Makefile·CI·직접 pytest의 테스트 목록을 루트 `pyproject.toml`로 통합했다. 기존 Makefile/CI 9경로를 유지하며 native-client 515건을 추가 연결했고, 전체 8,017건 collection rc=0 및 수집 계약 18건 PASS를 확인했다. [실행 기록](test-runs.d/TASK-20260908T020000-delegation-friction.md). 제품 동작 변경이나 라이브 검증 결과를 뜻하지 않는다.
 
 ## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0

@@ -3219,8 +3219,11 @@ def compose_system_prompt(
     account_id: int | None = None,
     product_mode: str = "pinned",
     conversation_id: str | None = None,
+    strict: bool = False,
 ) -> str:
-    """Product → Role → Account 순으로 custom 시스템 프롬프트를 base 뒤에 append 한다.
+    """전역 → 제품 → 역할 전역/제품 → 계정 전역/제품 순으로 누적한다.
+
+    strict=True는 조회 실패를 빈 설정과 구분해 호출자가 불완전한 지침 실행을 막게 한다.
 
     Role/Account scope 에서 `ProductId IS NULL` 공통 prompt 는 fallback 이 아니라 먼저 누적한다.
     현재 product 한정 prompt 가 있으면 공통 prompt 뒤에 추가한다. mem_conn 이 None 이거나
@@ -3243,7 +3246,16 @@ def compose_system_prompt(
     # 원본(_v0) 사본도 같은 규율 — 남으면 **다른 대화**의 원본이 리뷰어 ground truth 로 실린다.
     _ORIGINAL_VERSIONS_CTX.set(None)
     is_auto = str(product_mode or "pinned").lower() == "auto"
+    def load_failed(layer: str, exc: Exception | None = None) -> None:
+        # 원문·SQL 예외 문자열에는 개인 지침이 들어갈 수 있어 기록하지 않는다.
+        logging.getLogger(__name__).warning(
+            "system_prompt.load_failed layer=%s error_type=%s",
+            layer, type(exc).__name__ if exc is not None else "NoConnection")
+        if strict:
+            raise RuntimeError(f"System prompt unavailable: {layer}") from None
+
     if mem_conn is None:
+        load_failed("global")
         # ⚠️ 조기 return 도 **코드-권위 directive 를 반드시 거친다**. 예전에는 여기서 base 만
         # 돌려줘, DB 없는 경로(부트스트랩·연결 실패·in-process 호출)에서 injection guard 를
         # 포함한 코드-주입 블록이 통째로 사라졌다 — 운영자 override 와 무관한 **구조적 구멍**
@@ -3255,6 +3267,7 @@ def compose_system_prompt(
     # 코드 상수 SYSTEM_PROMPT 가 bootstrap fallback. 운영자가 admin 콘솔에서 재배포
     # 없이 BASE 를 수정할 수 있게 한다.
     base_prompt = SYSTEM_PROMPT
+    _bcur = None
     try:
         _bcur = mem_conn.cursor()
         _bcur.execute(
@@ -3265,13 +3278,14 @@ def compose_system_prompt(
         _brow = _bcur.fetchone()
         if _brow and _brow[0]:
             base_prompt = str(_brow[0])
-        try:
-            _bcur.close()
-        except Exception:
-            pass
-    except Exception:
-        # WebSystemPrompts 미존재 (bootstrap-time) 또는 SQL 예외 — 코드 상수 fallback
-        base_prompt = SYSTEM_PROMPT
+    except Exception as exc:
+        load_failed("global", exc)
+    finally:
+        if _bcur is not None:
+            try:
+                _bcur.close()
+            except Exception:
+                pass
 
     # TASK-20260619T033714-prompt-injection-defense (보안 ⑤): 명령-계층 고지를 base 직후 코드-주입.
     # global row(운영자 커스터마이즈) 내용과 무관하게 항상 상위에 존재 → 비신뢰 콘텐츠
@@ -3281,7 +3295,8 @@ def compose_system_prompt(
     parts: list[str] = list(_code_directive_parts(base_prompt, is_auto))
     try:
         cur = mem_conn.cursor()
-    except Exception:
+    except Exception as exc:
+        load_failed("scoped", exc)
         # 조기 return 도 directive 를 거친다 (위 mem_conn None 경로와 동일 계약 — [P1]).
         return _with_code_directives(base_prompt, is_auto)
 
@@ -3314,7 +3329,13 @@ def compose_system_prompt(
             row = cur.fetchone()
             if row and row[0]:
                 return (str(row[0]), "all products")
-        except Exception:
+        except Exception as exc:
+            if strict:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            load_failed(f"{scope}_{'product' if prompt_product_id else 'global'}", exc)
             return ("", "")
         return ("", "")
 
@@ -3325,6 +3346,9 @@ def compose_system_prompt(
             cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
             row = cur.fetchone()
             product_label = str(row[0]) if row and row[0] else str(product_id)
+        except Exception:
+            product_label = str(product_id)
+        try:
             cur.execute(
                 "SELECT Content FROM WebSystemPrompts WHERE Scope='product' AND ProductId=%s LIMIT 1",
                 (int(product_id),),
@@ -3332,8 +3356,13 @@ def compose_system_prompt(
             prow = cur.fetchone()
             if prow and prow[0]:
                 parts.append(f"\n\n## PRODUCT CONTEXT ({product_label})\n{str(prow[0]).strip()}\n")
-        except Exception:
-            pass
+        except Exception as exc:
+            if strict:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            load_failed("product", exc)
 
     # Role-scope prompt
     # Role 의 "전 Product 공통" prompt 는 fallback 이 아니라 항상 먼저 누적한다.
