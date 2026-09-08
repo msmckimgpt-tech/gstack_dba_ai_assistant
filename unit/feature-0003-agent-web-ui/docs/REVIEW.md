@@ -7834,6 +7834,32 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - P1 수정: catalog 빈 detail KeyError/남은 성공행/예외 기록 누락, catalog 건강 오인, error JSON 생존 오인, 로그인 필요 위치 소실. P2 수정: 공통 CSS 적용면, OS PermissionError 형 보존, A→B→A 선택 경쟁.
 - QA가 후속 선택 실패 후 재시도 소실과 전역 파일 세대의 불필요한 재조회 2건을 적발했다. watcher 백오프와 플랫폼별 selection_id로 수정 후12건 PASS.
 - Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.4 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+
+## REV-20260908T060223-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
+- Trigger: API/엔드포인트 및 query/쿼리
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T060223-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
+- Trigger: API/응답 및 개인정보 비노출
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T060223-security.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-qa-ux-design [SUBAGENT:qa-ux-design] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
+- Trigger: API/계약, 여섯 계층 수용 기준, toast 한 줄 UX/design
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T060223-qa-ux-design.md
+- Human Approval Needed: no
+
+- 배포 승인 근거: 현재 사용자 개선 위임 + wrapper FIRST_REQUEST.md deploy_scope: included, AGENTS.md §16.5.1. 인증/인가·파괴적 변경 없음.
 ## REV-20260908T150000-attachment-backend [SUBAGENT:backend] — PASS
 - Related TASK: TASK-20260908T150000-attachment-boundary
 - Trigger: API/contract 응답 본문 계약

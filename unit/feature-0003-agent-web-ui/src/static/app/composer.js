@@ -860,7 +860,6 @@ function _applyBridgePhase(phase, prev, taskId, convId) {
     // 서버가 대기 말풍선을 '처리 중' 으로 바꿔 두었다 — 보여주지 않으면 사용자는 여전히
     // "가져가면 표시됩니다" 만 본다.
     loadHistory({ preserveScroll: true }).catch(() => { /* 치명 아님 */ });
-    showToast("내 AI 가 질문을 가져갔습니다. 처리 중입니다.");
   } else if (phase === "stalled") {
     // 가져갔는데 **진행 신호가 끊겼다** (TASK-20260901T140000). 서버가 대기 말풍선 본문을
     // 무진행 고지로 바꿔 두었으므로 이력을 다시 읽어야 그것이 보인다 — `working` 전환과

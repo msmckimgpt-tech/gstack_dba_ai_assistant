@@ -5073,7 +5073,6 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 ## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
 
 - 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
-
 ## REV-20260908T151500-codex-connect-fix [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T151000-codex-connect-fix; Issue #1625.
 - Trigger: API/응답 계약, permission/실행 권한, caching/캐시, UI/연결 화면.
@@ -5087,3 +5086,28 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Trigger: API/응답 계약·concurrency/상태 경합.
 - QA가 빈/옛 요청 성공 응답이 미송신 새 catalog의 source를 바꾸는 실제 경쟁을 결정적으로 재현했다. 송신 snapshot의 동일행만 cache로 전환하도록 수정 후119 PASS. 기본 runtimes=None(능력 미신고)과[](명시 빈목록)의 기존 계약도 보존했다.
 - backend/security 좁은 확인과 QA 결정적 회귀: 기존 source단정을 유지하여 새 미송신행/변경선택의 잘못된 인정이 없음을 확인.
+## REV-20260908T060223-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0043-external-llm-bridge)
+- Trigger: API/엔드포인트 및 query/쿼리
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T060223-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0043-external-llm-bridge)
+- Trigger: API/응답 및 개인정보 비노출
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T060223-security.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-qa-ux-design [SUBAGENT:qa-ux-design] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0043-external-llm-bridge)
+- Trigger: API/계약, 여섯 계층 수용 기준, toast 한 줄 UX/design
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T060223-qa-ux-design.md
+- Human Approval Needed: no
+
+- 배포 승인 근거: 현재 사용자 개선 위임 + wrapper FIRST_REQUEST.md deploy_scope: included, AGENTS.md §16.5.1. 인증/인가·파괴적 변경 없음.

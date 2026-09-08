@@ -958,3 +958,7 @@ edit_policy: append-only
 - 공개1.2.3을 통합하여1.2.4로 올렸다. 텍스트 선택/검색 개선을 보존했다.
 - native544 PASS, runner 집중119 PASS, DOM12 PASS, Windows 설치기26,045,699bytes/SHA a0535a088c9d000e776b12f5b817d311b7bce1f82da890b3dcee1cb02b494429.
 - merge commit의 combined diff를 검증 도구가 일반 cycle delta로 인식하지 못해 이 통합 결과를 일반 문서 commit에도 기록한다. 실제 사용자 검증은 아직 배포 후 일정이며 PASS로 표기하지 않는다.
+
+## CHG-20260908T153000-codex-prompt-integration
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1627의 프롬프트 전달 계약 수정을 통합하고 양 작업의 문서 기록을 보존했다. 네이티브 소스/빌드 변화는 없다. 관련 runner 회귀를 추가 검증한다.

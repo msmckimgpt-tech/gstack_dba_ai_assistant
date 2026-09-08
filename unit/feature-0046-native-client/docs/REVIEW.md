@@ -1281,3 +1281,7 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - backend/security 최종 P1/P2 0: 선택별 id와 기존위치캐시 경계, heartbeat snapshot 및 None/[] 계약 보존 확인.
 - qa 최종119 PASS, native544 PASS, ux/design DOM12 PASS. 코드 변경 없는 현재 기록은 앞 검증 결과를 참조한다.
 - 실제 DQA 설치/새 요청·응답은 배포 후 검증 예정이며 완료 전에 별도 기록한다.
+
+## REV-20260908T153000-codex-prompt-integration [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix.
+- 기존 검토를 마친 main PR1627 통합에서 충돌한 설명/작업 이력을 양쪽 보존. 실행 코드 충돌 없음, 현재 해결 작업은 비정책 문서다. 원래 backend/security/qa/ux/design 판정은 앞 기록을 참조한다.

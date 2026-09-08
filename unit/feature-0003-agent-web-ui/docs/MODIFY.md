@@ -6027,6 +6027,10 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
 - 사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
 - 테스트/실측 정본: feature-0046-native-client/docs/test-runs.d/20260908-codex-connect-fix.md.
+
+## CHG-20260908T063000-prompt-layers
+- Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
 ## CHG-20260908T150000-attachment-boundary
 
 - Related: REQ-20260908-attachment-boundary / TASK-20260908T150000-attachment-boundary

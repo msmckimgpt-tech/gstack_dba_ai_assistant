@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+
 from .cancel import CancelRegistry
 
 import time
@@ -104,7 +106,10 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
               model=want_model, effort=want_effort,
               kind=str(claimed.get("kind") or "conversation"),
               conv=str(claimed.get("conversation_id") or "") or None,
-              prompt_chars=len(prompt), sys_channel=_use_sys_channel)
+              prompt_chars=len(prompt), sys_channel=_use_sys_channel,
+              system_delivery=("system" if _use_sys_channel else "user_body") if _sysp else "none",
+              system_chars=len(_sysp),
+              system_sha256=hashlib.sha256(_sysp.encode("utf-8")).hexdigest() if _sysp else None)
     if unmet:
         # 「고른 값이 반영되지 않았다」는 **답변에도 적히지만 로그에도 남겨야** 한다 — 답변은
         # 사용자가 지우면 사라지고, 같은 계정에 러너가 여럿일 때의 재현 조사는 로그로 한다.
