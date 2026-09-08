@@ -553,11 +553,13 @@ def test_refresh_caps_wiring_drops_the_baseline_too(monkeypatch):
     src = (_UNIT / "feature-0043-external-llm-bridge" / "src" / "agent" / "lifecycle.py")
     tree = ast.parse(src.read_text(encoding="utf-8"))
     fn = next((n for n in ast.walk(tree)
-               if isinstance(n, ast.FunctionDef) and n.name == "_negotiate_caps"), None)
+               if isinstance(n, ast.FunctionDef) and n.name == "_negotiate_caps_impl"), None)
     assert fn is not None, "_negotiate_caps 를 찾지 못했다 — 배선 자리가 바뀌었다"
-    assigns = {t.id: a.value
-               for a in ast.walk(fn) if isinstance(a, ast.Assign)
-               for t in a.targets if isinstance(t, ast.Name)}
+    assigns = {}
+    for a in ast.walk(fn):
+        if isinstance(a, ast.Assign):
+            for t in a.targets:
+                if isinstance(t, ast.Name): assigns.setdefault(t.id, a.value)
     base_node = assigns.get("_base")
     assert base_node is not None, f"_base 대입을 찾지 못했다: {sorted(assigns)}"
 

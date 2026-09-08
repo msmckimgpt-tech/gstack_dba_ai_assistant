@@ -3326,3 +3326,11 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
 
 - [x] TASK-20260908T020000-delegation-friction: 최신 main ec913f94 합류 뒤 전체 8,059 PASS/16 skip/실패0, Bats69/도구24 및 독립107/check13 20 결과를 최종 원장에 기록했다. 실제 DQA 앱 사용자 흐름은 NOT-RUN으로 구분했다.
+
+## TASK-20260908T120000-connect-discovery-ux
+
+DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.
+
+- [x] 이번 TASK의 선택 위치 실행·플랫폼별 모델 협상·서버 수락 receipt·자동 복구 통합 구현 및 회귀 검증 완료. 설치기/배포 결과는 feature-0046 REPORT와 공동 TEST run 참조.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.

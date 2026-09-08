@@ -1,0 +1,10 @@
+{
+  "DQAConnect-Setup-1.2.0.exe": {
+    "size": 26037943,
+    "sha256": "a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692"
+  },
+  "DQAConnect.exe": {
+    "size": 6027746,
+    "sha256": "e27bf478abc62c9b265c4449b192584ba2ac0377de933ebfcc8a3f31275869ff"
+  }
+}

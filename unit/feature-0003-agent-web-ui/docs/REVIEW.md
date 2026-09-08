@@ -7773,3 +7773,53 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
 - Timestamp: 2026-09-08T11:38:45+09:00
+
+
+## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/성능/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-backend.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
+- Trigger: auth/인증/token/세션 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-security.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/검증/performance/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-ux [SUBAGENT:ux] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/화면/모달 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-ux.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-design [SUBAGENT:design] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/디자인/대비 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-design.md)
+- Human Approval Needed: no
+
+## REV-20260908T150000-connect-release-evidence [SKIPPED:non-policy-evidence-only] — ACCEPTED
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 직전 backend/security/QA/UX/design SHIP 이후 코드 변경 없이 이미 수행한 native 2회 결과·설치기 지문·최신 main 통합 결과를 기록한다. 신규 동작·정책·권한 경계가 없어 패널을 반복하지 않는다. 검증 파일의 값과 실행 로그를 대조했다.

@@ -3757,3 +3757,17 @@ detached 노드에서도 `querySelectorAll` 은 개수를 맞게 돌려주므로
 - **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고, 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다(배포 후 라이브 노출은 wrapper 소관).
 - reconcile-first 실측(2026-09-08T01:03:01+09:00 run 시작 시점): 서빙 `release-notes-data.js` md5 `dafbdc1208e1b775db6d26237e5caec3` = `origin/main` blob 동일 → **파리티 갭 0**. `artifacts/deploy/deploy-web.state` `current=577b5ea1` = HEAD · 배포 실패 마커 0. 라이브 캐시토큰 `?v=0bb8a56f6b8a`(빌드 주입) — 소스 `?v=dev` 고정이라 **수기 bump 하지 않았다**.
 - **Pass/Fail: PASS**.
+
+
+## 2026-09-08 — AI별 자동 연결
+
+[통합 실행 기록](test-runs.d/20260908T123400-connect-discovery.md): Python·DOM·Windows-browser·실제 DQA/WebView2.
+
+## Run: connect-discovery 최종 통합
+
+Environment: DQA-client
+Result: PASS
+Scenario: 격리 동결 DQA 1.2.0 실행 파일의 연결·위치 선택·재시작 캐시·완료 toast
+Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), feature-0046 artifacts의 native-results.json.
+
+서비스/API/벤더 응답과 app.js toast 초기화는 대역이다. 네이티브 픽셀 캡처는 빈 면으로 NOT-RUN이며 동일 제품 UI의 Windows Chrome 렌더는 별도 보조 증거다. 실제 벤더 계정 호출·사용자 설치본 교체의 PASS를 뜻하지 않는다.
