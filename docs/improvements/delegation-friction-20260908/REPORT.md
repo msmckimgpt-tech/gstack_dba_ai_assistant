@@ -30,14 +30,15 @@ Claude·Codex 원본 개발 대화와 현재 구현을 대조해, 재승인·과
 | Windows 브라우저를 실제 사용자 환경으로 강제 | [PB-0009](../../../playbooks/PB-0009-dqa-client-verification.md), PROJECT, AGENTS, wrapper를 DQA 기준으로 정합; PB-0008은 보조 호환 검증 | 실제 DQA WebView2와 별도 Chrome을 구별; 앱 미검증은 PASS 아님 |
 | 검증 파일에 환경 단어나 다른 Run PASS만 있어도 통과 | check #13이 Run별 환경·결과·미실행 사유를 구분하고 같은/다른 fragment의 명시 실패를 보존 | 미실행+사유는 WARN, 결과 없는 기록·명시 FAIL은 차단 |
 
-현재 색인 두 문서의 총 분량은 약 314KB에서 57KB로 줄었다(약 82%). 정확한 바이트·해시·링크 보존 판정은 [verification.json](../../archive/delegation-friction-20260908/verification.json)에 있다. 과거 본문 자체를 삭제하거나 모든 정책을 작은 신규 문서로 재복제하지 않았다.
+현재 색인 두 문서의 총 분량은 313,669 bytes에서 56,068 bytes로 줄었다(82.1%). 정확한 바이트·해시·링크 보존 판정은 [verification.json](../../archive/delegation-friction-20260908/verification.json)에 있다. 과거 본문 자체를 삭제하거나 모든 정책을 작은 신규 문서로 재복제하지 않았다.
 
 ## 검증
 
 - 최초 collection 비교: 이전 9경로 410파일/7,502건 → 정본 설정 426파일/8,017건. 기존 파일별 테스트 수 변화·누락 0, native-client 16파일/515건만 추가. 이 스냅샷 뒤 회귀 대조를 추가했다.
-- native-client 최종 로컬 실행: **521 PASS**, 실패·건너뜀 0, 39.98초. `/tmp/delegation-native-suite-final.log`.
-- 별도 검토자가 수정된 JS 실행 하네스를 독립 실행: handoff+web_shell **92 PASS**. 브라우저 호환 분기 양성·발급 실패·빈 프로토콜·무응답 메시지 및 DQA 내부 미호출을 확인했다.
-- 전체 `make test`, Bats, Python 도구 회귀, 완료 gate의 최종 결과는 아래 실행 결과에 기록한다. collection이나 과거 PASS를 이번 실행으로 치환하지 않는다.
+- main 합류 전 native-client 로컬 실행: **521 PASS**, 실패·건너뜀 0, 39.98초. `/tmp/delegation-native-suite-final.log`.
+- main 합류 후 별도 검토자가 JS 실행 하네스·기존 relaunch 회귀를 독립 실행: **107 PASS**. 브라우저 호환 분기 양성·발급 실패·빈 프로토콜·무응답 메시지, 실제 트레이 메뉴→업데이트 워커 배선, DQA 내부 미호출을 확인했다.
+- 합류 후 전체 `make test`: **8,059 PASS / 16 skipped / 실패·오류 0**, pytest 477.858초. native-client **531건** 포함. ruff PASS. 조건부 건너뜀 16건은 통과 수에서 제외했다.
+- 격리 Git/Bats **69 PASS**(check #13 20 포함), Python 도구 **24 PASS**, 합류 후 집중 회귀 **125 PASS**. [기계 판독 결과와 코드 해시](verification.json)에 테스트 대상 커밋을 기록했다.
 
 ## DQA 실환경 확인과 한계
 
@@ -70,3 +71,8 @@ Git 바깥의 프로젝트 진입점 `FIRST_REQUEST.md`도 현재 사용자 지�
 ## 최종 실행 결과
 
 합류 전 전체 make test에서 옛 업데이트 문구를 고정한 feature-0043 회귀 6개가 실패했다. 해당 테스트와 DQA 트레이 안내는 병렬 개발의 origin/main에서 함께 수정됐음을 확인했다. 최신 main 합류 후 실행 결과를 별도로 기록한다.
+
+
+최종 전체 실행은 `37fae5d5`(최신 main 합류) 기준이며 제품 소스의 후속 수정은 없다. `make test`는 별도 Compose 프로젝트와 테스트 DB 차단 환경에서 실행했다. 종료 코드 0, JUnit 8,075건 중 8,059 PASS/16 skipped/0 fail/0 error, ruff PASS. 로그는 `/tmp/delegation-friction-make-test-merged.log`, JUnit은 `.pytest_cache/delegation-merged-final.xml`이다.
+
+PR/배포 전 구현·검증·독립 리뷰를 마쳤다. 실제 병합·배포 결과는 전달 후 이 절에 추가하며 선행 완료로 기록하지 않는다.

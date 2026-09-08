@@ -7,7 +7,7 @@ Result: NOT-RUN
 Scenario: 변경된 브라우저 호환 모달과 DQA 내부 미호출 검증
 Evidence: docs/improvements/delegation-friction-20260908/EVIDENCE.md §6
 Reason: 실행 중 DQAConnect.exe/WebView2/bridge는 확인했으나 현재 앱의 디버깅 포트가 없고 UIAutomation 자식도 0개여서 실제 앱 DOM 조작은 수행하지 않음.
-Alternative: Node VM에서 실제 공유 JS 클릭·토큰 발급·스킴 이동·실패 메시지를 실행하고 DQA 내부에서는 버튼 숨김·토큰 미발급·스킴 미이동을 확인. 수정은 브라우저 호환 안내 두 문구이며 앱 생명주기/연결 로직 변경 없음. 독립 실행 handoff+web_shell 92 PASS, native 전체 521 PASS.
+Alternative: Node VM에서 실제 공유 JS 클릭·토큰 발급·스킴 이동·실패 메시지를 실행하고 DQA 내부에서는 버튼 숨김·토큰 미발급·스킴 미이동을 확인. 최신 main의 트레이 업데이트 안내를 보존했고 순변경은 자동 연결 실패 안내 한 문구임. 앱 생명주기/연결 로직 변경 없음. 합류 후 독립 handoff+web_shell+relaunch 107 PASS, root parity 포함 125 PASS. native 전체 521 PASS는 합류 전 결과임.
 Next: 실제 DQA UI 변경 시 PB-0009에 따라 DQA 소유 WebView2의 변경 영역을 검증. 기존 사용자 앱은 종료/재실행하지 않음.
 
 ## Run — 브라우저 호환 분기 실행 하네스

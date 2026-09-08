@@ -4815,3 +4815,8 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+## CHG-20260908T121500-delegation-verification
+
+- TASK: TASK-20260908T020000-delegation-friction
+- 최신 main의 DQA 1.1.2·러너 복구·트레이 안내를 보존한 통합본의 전체 회귀와 독립 리뷰 결과를 기록했다. JUnit 8,075건 중 8,059 PASS/16 skipped/실패0이며 native-client 531건을 포함한다. 설치 앱의 미검증 범위는 별도로 유지한다.

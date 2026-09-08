@@ -31,10 +31,10 @@ PS-01~PS-04는 수정 후 재검토했다. 아래 범위와 한계에서 남은 
 
 **PS-04 — 해결: 서로 다른 Run의 결과 결합 및 DQA FAIL 은폐**
 
-- Evidence: 처음에는 동일 fragment의 다른 환경 PASS를 DQA에 붙일 수 있었다. 이를 고친 다음에도 DQA PASS(모달 열기) 뒤 DQA FAIL(연결 동작)을 둔 실제 전체 gate의 격리 Bats fixture가 FAIL을 내지 않았다. 최종 parser는 Environment별 결과를 묶고 명시 DQA FAIL을 우선하며 모든 fragment를 확인한다.
+- Evidence: 처음에는 동일 fragment의 다른 환경 PASS를 DQA에 붙일 수 있었다. 이를 고친 다음에도 DQA PASS(모달 열기) 뒤 DQA FAIL(연결 동작)을 둔 실제 전체 gate의 격리 Bats fixture가 FAIL을 내지 않았다. 최종 parser는 Environment별 결과를 묶고 모든 fragment를 확인한다. 같은 파일의 명시적으로 동일한 Scenario 재검증만 최신 결과로 바꾸며, 다른 시나리오·미기재 Run·별도 파일의 실패/미실행은 보존한다.
 - Location: `bin/verify-completion.sh`의 `visual_run_evidence_kind()`·`check_13_visual_verification()`; `bin/tests/agent_compatibility_gate.bats`의 CHECK13 회귀.
 - Reason: 한 시나리오의 성공이 다른 미해결 사용자 흐름 실패를 덮어서는 안 된다. 현재 Run의 기록 검증과 실제 앱 실행의 진실성 판정도 구분해야 한다.
-- Action: 수정 후 `bats --filter CHECK13 bin/tests/agent_compatibility_gate.bats`를 독립 실행해 **15건 PASS**. 같은 파일/다른 fragment PASS 차용·DQA FAIL 은폐·과거 Run 재사용의 음성 대조와 native UI 5개 경로 귀속을 포함한다.
+- Action: 수정 후 `bats --filter CHECK13 bin/tests/agent_compatibility_gate.bats`를 최종 스냅샷에서 독립 실행해 **20건 PASS**. 같은 파일/다른 fragment PASS 차용·DQA FAIL 은폐·미실행 은폐·과거 Run 재사용의 음성 대조와 native UI 5개 경로 귀속, 같은 Scenario의 FAIL→수정→PASS 및 PASS→FAIL을 포함한다.
 
 **검토 범위와 수행한 확인**
 
@@ -50,12 +50,22 @@ PS-01~PS-04는 수정 후 재검토했다. 아래 범위와 한계에서 남은 
 **추가 사용자 결정에 따른 재검토 (2026-09-08)**
 
 - DQA 사용 경로: 실제 Windows `DQAConnect.exe` PID 27660 및 직접 자식 WebView2, 같은 PID의 127.0.0.1:10513 LISTEN을 읽기 전용 조회했다. 설치 파일은 `C:\Users\mckim\AppData\Local\Programs\DQA Connect\DQAConnect.exe`다. `window.py`의 edgechromium 내장 창과 일치한다.
-- 실측 한계: 현재 앱은 최소화됐고 WebView2 디버깅 포트가 없으며 UIAutomation 루트의 자식이 조회되지 않았다. 프로세스·포트 존재를 화면/연결 PASS로 보지 않는다. 앱 종료·재시작·창 복원·설치·실제 질의는 수행하지 않았다. 상세 미검증은 initiative REPORT에 별도 기록한다.
+- 실측 한계: 당시 조회한 앱은 최소화됐고 WebView2 디버깅 포트가 없으며 UIAutomation 루트의 자식이 조회되지 않았다. 프로세스·포트 존재를 화면/연결 PASS로 보지 않는다. 앱 종료·재시작·창 복원·설치·실제 질의는 수행하지 않았다. 상세 미검증은 initiative REPORT에 별도 기록한다.
 - 주 경로/보조 경로: `PROJECT.md`의 `primary_ui_surface: dqa-client`, PB-0009가 주 경로, PB-0008은 일반 브라우저 호환 경로다. 과거 Windows-browser 라벨의 실제 설치본 증거는 보존하되 새 실행으로 승격하지 않는다. 변경에 따라 화면·연결·창/트레이·업데이트 검증을 선택하며 문구 변경마다 재설치·AI 질의·별도 브라우저를 요구하지 않는다.
 - wrapper 확인: `/root/download/docker/mysql_ai_delegated_dev/FIRST_REQUEST.md`의 DQA/PB-0009·§10.1·`deploy-web.sh --web-only` 참조를 읽었다. 실제 현재 SHA는 아래 표와 같고 `/tmp/delegation-wrapper-change.json`의 after와 일치한다. before SHA는 변경 기록에서만 읽었으며 원문을 독립 보존·대조한 검증은 아니다. wrapper 변경은 Git changeset 밖이다.
-- 좁은 코드 검토: `connect-modal.js` 변경은 삭제된 명령/버튼을 가리키던 실패 안내 두 곳과 주석 정리다. `python3 -m pytest -q unit/feature-0046-native-client/tests/test_handoff_seam.py unit/feature-0046-native-client/tests/test_web_shell.py` **92건 PASS**. 실제 JS 핸들러를 Node VM에서 실행해 DOM 안내, 토큰 실패/빈 스킴 대조, 클릭 배선을 확인한다. 네트워크와 스킴 이동은 fixture로 격리되어 DQA 앱이나 유료 AI를 실행하지 않는다.
+- 초기 좁은 코드 검토: 합류 전 `test_handoff_seam.py`·`test_web_shell.py` **92건 PASS**. 최종 source 차이와 재검증은 아래 ec913f94 합류 후 항목으로 대체한다. 실제 JS 핸들러를 Node VM에서 실행하며 네트워크·스킴 이동은 fixture로 격리되어 DQA 앱이나 유료 AI를 실행하지 않는다.
 - DQA 분기 한계: 실제 모달 핸들러의 clientBridge 분기에서 실행 버튼 숨김·토큰 미발급·스킴 미이동을 검사한다. 별도 강제 autoLaunch fixture에서도 스킴 이동 0을 확인했다. 이는 현재 앱 프로세스의 OS 스킴 처리·인증·실제 연결 성공을 증명하지 않는다.
 - gate 범위: 같은 changeset의 환경/결과 기록을 검증하고 앱 미실행/브라우저 보조는 WARN으로 남긴다. 기존 native window/appwindow/gui/tray/bridge는 감지하지만 신규 파일/installer 의미를 자동 추론하지 않는다. 사용자 흐름 완결성과 기록 진실성은 독립 리뷰 범위다. `bash -n bin/verify-completion.sh`, `git diff --check`, 양 command·생성 CONTEXT 정합을 재확인했다.
+
+**origin/main ec913f94 합류 후 최종 코드 재검토**
+
+- 기준: 원격 17개 commit 합류 중 해결된 지정 코드 및 PB-0009만 다시 읽었다. 전체 정책 재독·전체 런타임 보안 검토를 수행했다는 주장은 아니다. 병렬 문서 충돌 해결은 다른 검토자의 범위다.
+- 보존: 원격의 `MSG_RELAUNCH_NO_UPDATE`와 트레이 `[업데이트 확인]` 안내는 그대로다. 원격 대비 제품 JS 변화는 autoLaunch 일반 실패의 삭제된 명령/`[연결 준비]` 참조를 실제 `[내 AI 실행]` 안내로 바꾼 한 곳과 관련 주석뿐이다.
+- native 메뉴: 새 `_embedded_update_menu_labels()`는 실제 `_start_embedded_tray()`로 메뉴를 구성하고 `menu()`·`dispatch()`를 실행해 해당 항목의 enabled/action과 `_update_flow(bridge)` 워커 배선을 대조한다. Win32 시작 및 워커 실행은 stub으로 격리한다. 문자열 allowlist만 넓혀 트레이를 인정한 검사가 아니며, 실제 아이콘·업데이트 설치 PASS도 아니다.
+- 실행 검증: 합류본의 `test_handoff_seam.py`, `test_web_shell.py`, 원격의 `test_relaunch_dead_end.py`를 함께 독립 실행해 **107건 PASS**(collect-only 107 확인). 원격 트레이 안내 계약·새 실패 안내·DQA 내부 미실행 대조를 함께 보존한다. check #13은 별도로 **20건 PASS**; `bash -n`과 지정 파일 `git diff --check`도 통과했다.
+- 같은 Scenario의 실패 후 실제 성공을 마지막 Run으로 기록할 수 있어, 과거 실패 증거를 삭제해야 gate를 통과하는 병목을 피한다. PB-0009는 같은 파일/Environment/Scenario 반복 및 실패 원인·해소·재검증 증거를 요구한다. parser는 기록을 분류하며 그 증거의 진실성은 자동 판단하지 않는다.
+- 마지막 정책 보완: §12.3·§16.6의 접근 획득은 자기 검증 인스턴스/승인된 운영 배포와 기존 사용자 앱 보존으로 한정한다. 일반 브라우저 세션 격리는 PB-0008을 사용할 때만 적용한다. 히스토리 검증은 변경 대상 클라이언트가 실제 노출하는 뒤로/앞으로 기능에 한정하며 새 기능이나 특정 `/browse` 도구를 요구하지 않는다. 측정 대상·상태·척도 일치 요구는 유지한다.
+- 실제 사용자 DQA 클라이언트 검증은 여전히 **NOT-RUN**이다. 현재 실행 앱을 종료·재시작하거나 일반 브라우저로 대체해 PASS를 선언하지 않았다.
 
 ### 3. Challenge to current spec
 
@@ -83,7 +93,7 @@ PASS — 지정 정책·security 정합과 추가 DQA 정책/check #13/JS 하네
 | `.codex/commands/_dqa/conversation_audit.md` | `381100c344e461e0580d85480c0050a635c0114ad0c76b3f4f8485d782d776ff` |
 | `bin/codex-environment-install.py` | `d8f1596fc52c2a6e539246d86f7eab636a2c4c27f8a539d9ff46a7f8ef591524` |
 
-추가 DQA 재검토 완료 스냅샷 SHA-256:
+추가 DQA 재검토 스냅샷 SHA-256(ec913f94 합류 전; 아래 코드 재검토 표가 해당 파일을 갱신):
 
 | 파일 | SHA-256 |
 |---|---|
@@ -108,3 +118,17 @@ PASS — 지정 정책·security 정합과 추가 DQA 정책/check #13/JS 하네
 | `unit/feature-0046-native-client/tests/test_web_shell.py` | `2a01fc23f44707697073f8d91e115688520bb2a137047d0460453c74640081d1` |
 | `unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js` | `ad1461789be9c10864a57a7cb0a1fe2652d0105d8c98ebec9c4a46498d72654d` |
 | `/root/download/docker/mysql_ai_delegated_dev/FIRST_REQUEST.md` | `31fd755decf2ff1621c998998620072f12fa30b029a1ac8e08b438a6b7429764` |
+
+ec913f94 합류 후 지정 코드·테스트·PB-0009 최종 재검토 SHA-256:
+
+| 파일 | SHA-256 |
+|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js` | `aa1efc170ec450ae945cc411b9d4d0a24c097ee7c695cbe08b86e84a25b0b955` |
+| `unit/feature-0046-native-client/tests/test_handoff_seam.py` | `ca12da70e3af5999086ecfc6c0939d8c1071e68a434d49dfc493ec65e52c3166` |
+| `unit/feature-0046-native-client/tests/test_web_shell.py` | `2a01fc23f44707697073f8d91e115688520bb2a137047d0460453c74640081d1` |
+| `unit/feature-0043-external-llm-bridge/tests/test_relaunch_dead_end.py` | `7f7b72f2f9e8222f1e63f14270ef87baa21102a6d17fc278c938e05bd4c1e0af` |
+| `bin/verify-completion.sh` | `76ec622e6d5ca49d672c9556e0cc49738f1113bcee153373d666fc00c54aaa90` |
+| `bin/tests/agent_compatibility_gate.bats` | `0e5aba8056947560f4a86fd7c6856b57e8ca67e3cac28f7ab5cd6cb4a77fa872` |
+| `playbooks/PB-0009-dqa-client-verification.md` | `7fc2cc687570ac46454509e6c596f164024b43234f56209dc77ddd2d3ceb87a5` |
+
+마지막 §12.3·§16.6 인접 문구 재검토 후 `AGENTS.md` SHA-256: `f80456d9b88a6303b5b394bed5ea350734dcc9c198a4332f4c15b7e568034b48`.

@@ -1835,3 +1835,11 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS (구현 소유권이 없는 workflow/generator 독립 검토; 본인 작성 native tests는 conversation_evidence가 독립 확인)
 - Artifact: meta/reviews/20260908T-workflow-qa.md
 - Human Approval Needed: no — 현재 위임 범위의 재현 결함 수정. 타인 변경·기존 세션 보존.
+
+## REV-20260908T121500-delegation-integration [SUBAGENT:conversation_evidence] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: ec913f94 합류, 네이티브 트레이 안내/콜백과 동일 Scenario 재검증 규칙 최종 확인
+- Timestamp: 2026-09-08
+- Verdict: PASS — 독립107 pytest/20 check13, root 전체8059 PASS·16 skip·실패0. 실제 설치 DQA 앱 사용자 흐름은 NOT-RUN.
+- Artifact: meta/reviews/20260908T-policy-security.md
+- Human Approval Needed: no — 현재 사용자 위임·DQA 주 사용 지시, 기존 deploy_scope: included.

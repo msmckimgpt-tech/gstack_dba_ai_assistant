@@ -1,0 +1,30 @@
+{
+  "tested_commit": "37fae5d54e7bf2ff8ae30e38f1649c46989b7cb6",
+  "main_integrated": "ec913f94360cd706b4769e7e9c98e5d69b27d5c4",
+  "tests": 8075,
+  "passed": 8059,
+  "skipped": 16,
+  "failures": 0,
+  "errors": 0,
+  "pytest_seconds": 477.858,
+  "native_client_cases": 531,
+  "make_test_exit_code": 0,
+  "ruff": "PASS",
+  "workflow_bats": {
+    "passed": 69,
+    "check13": 20
+  },
+  "python_tools_passed": 24,
+  "dqa_installed_app_flow": "NOT-RUN",
+  "policy_sha256": "f80456d9b88a6303b5b394bed5ea350734dcc9c198a4332f4c15b7e568034b48",
+  "source_files_sha256": {
+    "bin/cycle-init.sh": "ff295ed011b8a904a02b0a8a48df5581da2c18fb62b0037ec9a48c26168d4ec2",
+    "bin/cycle-finalize.sh": "051118ae022ef128b3e98425e89c1fbccef77fc263a058184d49241f583d4df8",
+    "bin/verify-completion.sh": "76ec622e6d5ca49d672c9556e0cc49738f1113bcee153373d666fc00c54aaa90",
+    "bin/gen-status.sh": "e6953ea7c399408d91385fa0fa1f63b81a7f761331c491e1d12f8b46deb5f863",
+    "pyproject.toml": "55b15dcae27038ad0116922f656b4d86e955b01a772687b78bc409fb6a1777b9",
+    "Makefile": "5ed5e3ba2ba43fbff64555f592faa94ecafa94b54915dde6facfeb48d13dc0e0",
+    ".github/workflows/ci.yml": "5f4ef71cb52957f0b3d699f80d5cc9c27975c7f8e33e786ddb92986a6a4d72e1",
+    "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js": "aa1efc170ec450ae945cc411b9d4d0a24c097ee7c695cbe08b86e84a25b0b955"
+  }
+}

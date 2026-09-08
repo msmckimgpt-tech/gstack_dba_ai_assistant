@@ -26,3 +26,11 @@ verdict: PASS
 
 - 같은 파일의 동일 Environment/명시 Scenario를 순차 재검증한 경우 마지막 결과를 현재 상태로 판정한다. FAIL→PASS 해소/다른 Scenario 실패 보존/PASS→FAIL 회귀를 검증했다. 실패 원인과 해소 증거는 앞 Run에 남긴다.
 - 최신 main `ec913f94` 합류 후 relaunch-dead-end + parity + handoff + web-shell: **125 PASS**, 14.77초 (`/tmp/delegation-merged-focused.log`). 트레이 업데이트 안내/콜백과 기존 main의 회복 계약을 보존했다.
+
+## 전체 실행 — 최신 main 합류 후
+
+- 대상 commit: `37fae5d5`, origin/main `ec913f94` 포함.
+- `make test` (전용 compose `repo-unittest-delegation-20260908`, 기존 TEST_ISOLATION_ENV 그대로 + JUnit 저장 옵션): exit 0.
+- JUnit: 총 8,075건, **8,059 PASS / 16 skipped / 0 failures / 0 errors**, 477.858초. native-client 531건 포함.
+- ruff: PASS. 로그 `/tmp/delegation-friction-make-test-merged.log`, 결과 `.pytest_cache/delegation-merged-final.xml`.
+- 코드·정책 해시: `docs/improvements/delegation-friction-20260908/verification.json`. 설치된 DQA 앱 사용자 흐름은 별도 NOT-RUN이며 이 테스트 수에 합산하지 않았다.
