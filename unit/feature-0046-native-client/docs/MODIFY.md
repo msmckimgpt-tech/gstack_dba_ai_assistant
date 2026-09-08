@@ -952,3 +952,9 @@ edit_policy: append-only
 - Timestamp: 2026-09-08T15:18:00+09:00; Session: codex text-interaction.
 - PR #1628 병합·1.2.3 공개채널 다운로드 크기/SHA 일치 기록. 검색 UI NOT-RUN과 Issue #1626을 유지한다.
 - 변경은 현재 문서·검증 JSON 및 증거 파일의 불필요한 실행비트 정리다. 제품 코드 변경 없음.
+
+## CHG-20260908T152700-codex-release-integration
+- Related TASK: TASK-20260908-codex-connect-fix; product PR #1631.
+- 공개1.2.3을 통합하여1.2.4로 올렸다. 텍스트 선택/검색 개선을 보존했다.
+- native544 PASS, runner 집중119 PASS, DOM12 PASS, Windows 설치기26,045,699bytes/SHA a0535a088c9d000e776b12f5b817d311b7bce1f82da890b3dcee1cb02b494429.
+- merge commit의 combined diff를 검증 도구가 일반 cycle delta로 인식하지 못해 이 통합 결과를 일반 문서 commit에도 기록한다. 실제 사용자 검증은 아직 배포 후 일정이며 PASS로 표기하지 않는다.

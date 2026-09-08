@@ -1274,3 +1274,10 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Trigger: API/응답 계약·concurrency/상태 경합.
 - QA가 빈/옛 요청 성공 응답이 미송신 새 catalog의 source를 바꾸는 실제 경쟁을 결정적으로 재현했다. 송신 snapshot의 동일행만 cache로 전환하도록 수정 후119 PASS. 기본 runtimes=None(능력 미신고)과[](명시 빈목록)의 기존 계약도 보존했다.
 - backend/security 좁은 확인과 QA 결정적 회귀: 기존 source단정을 유지하여 새 미송신행/변경선택의 잘못된 인정이 없음을 확인.
+
+## REV-20260908T152700-codex-release-integration [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T152700-codex-release-integration.
+- Trigger: API/응답·권한·캐싱·UI. 앞 독립 panel 결과의 main 통합 확인 기록.
+- backend/security 최종 P1/P2 0: 선택별 id와 기존위치캐시 경계, heartbeat snapshot 및 None/[] 계약 보존 확인.
+- qa 최종119 PASS, native544 PASS, ux/design DOM12 PASS. 코드 변경 없는 현재 기록은 앞 검증 결과를 참조한다.
+- 실제 DQA 설치/새 요청·응답은 배포 후 검증 예정이며 완료 전에 별도 기록한다.
