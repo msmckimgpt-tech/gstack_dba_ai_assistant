@@ -16,6 +16,8 @@ DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` �
 
 `POST /api/ai/connect/token`은 세션 비교 힌트 `connection_session`을 추가한다. `POST /api/ai/connect/identity`는 기존 `require_ai_token` 인증을 거쳐 실제 account_id/connection_session만 반환한다. 클라이언트는 새 토큰과 기존 활성 토큰의 세션을 서버에서 검증하며 힌트를 인증 대신 쓰지 않는다. 기존 갱신/트레이 안내를 유지한다.
 
+일반 브라우저 호환 경로에서 앱 실행 응답이 없으면 DQA 앱 상태와 실제 [내 AI 실행] 동작으로 안내한다. DQA 내부에서는 자기 실행 버튼·프로토콜 재실행을 노출하지 않는다.
+
 ## KB 검색과 외부 AI 연결 (2026-09-07, #1598)
 
 로컬 임베딩 제공자 없이 `pg_trgm`으로 후보를 찾고, 기존 Claude/Codex의

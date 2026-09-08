@@ -1,0 +1,73 @@
+{
+  "status_counts": {
+    "in-progress": 33,
+    "review": 10,
+    "done": 2,
+    "planned": 1
+  },
+  "STATUS": {
+    "before_bytes": 143422,
+    "after_bytes": 22493,
+    "before_max_line_bytes": 41597,
+    "after_max_line_bytes": 507,
+    "before_sha256": "db80c4d4ad54dc505643b9e3fcd1c1dc07a387b1bb80f543fae565421938a200",
+    "archive_content_preserved": true
+  },
+  "dependency_rows": 47,
+  "ARCHITECTURE": {
+    "before_bytes": 170247,
+    "after_bytes": 33575,
+    "before_max_line_bytes": 11378,
+    "after_max_line_bytes": 487,
+    "before_sha256": "dc59178a33c10cce046b0a6a2a1a06ae085442903becd951119b054af65fb450",
+    "archive_content_preserved": true
+  },
+  "local_links_checked": 167,
+  "original_commit": "76a76ddd517aad6001ddb62c53e2e360c0ebdfda",
+  "checks": [
+    "archive differs only by archival metadata/banner and relative-link rebasing",
+    "all original feature ids preserved in archive",
+    "all 46 status ids/statuses/TASK links unchanged; latest main supplies four date updates",
+    "all original STATUS Markdown targets retained",
+    "all 47 architecture dependency tuples unchanged",
+    "all local Markdown file links resolve",
+    "gen-status --check passed",
+    "git diff --check passed",
+    "every STATUS note <=180 characters, including legacy unescaped pipe row",
+    "STATUS and ARCHITECTURE each <50000 bytes and every active line <4096 bytes",
+    "passthrough notes rebuilt from immutable original table after semantic-preservation generator fix"
+  ],
+  "main_integration": {
+    "commit": "ec913f94360cd706b4769e7e9c98e5d69b27d5c4",
+    "feature_ids_states_and_task_links_unchanged": true,
+    "all_current_first_four_columns_match_main": true,
+    "date_updates": [
+      {
+        "feature": "feature-0002-agent-core",
+        "before_date": "2026-09-07",
+        "current_date": "2026-09-08"
+      },
+      {
+        "feature": "feature-0003-agent-web-ui",
+        "before_date": "2026-09-07",
+        "current_date": "2026-09-08"
+      },
+      {
+        "feature": "feature-0043-external-llm-bridge",
+        "before_date": "2026-09-07",
+        "current_date": "2026-09-08"
+      },
+      {
+        "feature": "feature-0046-native-client",
+        "before_date": "",
+        "current_date": "2026-09-08"
+      }
+    ],
+    "native_client_note": "Main STATUS 1.1.2 summary synchronized into TASK frontmatter; existing in-progress state and date retained."
+  },
+  "latest_document_merge": {
+    "commit": "8f49f1fc5c42ed5b763a227dc5534f2ce7ea35c8",
+    "architecture_template_version": "v3.54.2",
+    "archive_snapshots_unchanged": true
+  }
+}

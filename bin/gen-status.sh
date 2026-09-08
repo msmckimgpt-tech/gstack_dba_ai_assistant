@@ -8,13 +8,13 @@
 # source of truth: `unit/<feature>/docs/TASK.md` frontmatter 의 진행 상태 키(선택):
 #   feature_status:      planned|in-progress|blocked|review|done|deprecated
 #   feature_status_date: YYYY-MM-DD (최종 갱신)
-#   feature_status_note: 한 줄 요지
+#   feature_status_note: 한 줄 요지 (출력은 plain text 최대 180자; 원문은 TASK 보존)
 # (기존 `status:` 키는 문서 lifecycle(active 등)로 이미 점유 — 충돌 회피를 위해
 #  feature_* prefix 를 규약으로 한다. ROADMAP ITEM-08 명세의 `status:·phase:` 취지 동일.)
 #
 # 동작: STATUS.md 의 <!-- AI-EDITABLE:STATUS-TABLE:START/END --> 마커 구간 안의 표를
 # 재생성한다. frontmatter 키가 있는 feature 행만 frontmatter 로 대체하고, 없는 feature
-# 행은 기존 행 그대로 보존(passthrough — 점진 도입, 일괄 강제 없음). 구간 밖 본문 불변.
+# 행은 상태·날짜를 보존하고 요지만 동일 예산으로 압축한다. 구간 밖 본문 불변.
 # 연속 실행 idempotent(diff 0).
 #
 # 사용: bin/gen-status.sh [--check]
@@ -53,13 +53,35 @@ for line in block.strip().splitlines():
     s = line.strip()
     if not s.startswith("|"):
         continue
-    cells = [c.strip() for c in s.strip("|").split("|")]
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", s.strip("|"))]
     if not cells or cells[0] in ("기능 ID", "---", ""):
         header_lines.append(s)
         continue
     fid = cells[0]
     rows[fid] = s
     order.append(fid)
+
+def compact_note(note):
+    # STATUS is an index. Keep the complete narrative only in TASK/archive.
+    note = re.sub(r"!?\[([^\]]+)\]\([^)]+\)", r"\1", note)
+    note = re.sub(r"`+([^`]+)`+", r"\1", note)
+    note = re.sub(r"\*\*([^*]+)\*\*", r"\1", note)
+    note = re.sub(r"<br\s*/?>", " ", note, flags=re.I)
+    note = re.sub(r"\s+", " ", note).strip()
+    suffix = "… (상세는 TASK)"
+    if len(note) > 180:
+        note = note[:180 - len(suffix)].rstrip() + suffix
+    return note.replace("|", "／")
+
+
+# Limit legacy rows too; status/date/link columns are preserved.
+for fid, row in rows.items():
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip("|"))]
+    if len(cells) >= 5:
+        # Historical notes contain unescaped pipes; only the first four columns are structural.
+        cells = cells[:4] + [compact_note(" | ".join(cells[4:]))]
+        rows[fid] = "| " + " | ".join(cells) + " |"
+
 
 # frontmatter 수집
 def frontmatter(path):
@@ -94,7 +116,7 @@ for fid in units:
         print(f"[gen-status] ERROR: {fid} feature_status={st!r} 는 유효값 아님 {sorted(VALID)}", file=sys.stderr)
         sys.exit(2)
     date = fm.get("feature_status_date", "")
-    note = fm.get("feature_status_note", "").replace("|", "\\|")
+    note = compact_note(fm.get("feature_status_note", ""))
     row = f"| {fid} | {st} | {date} | [TASK](../unit/{fid}/docs/TASK.md) | {note} |"
     if fid in rows:
         rows[fid] = row

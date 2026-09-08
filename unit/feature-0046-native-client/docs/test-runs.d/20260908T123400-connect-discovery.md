@@ -16,12 +16,34 @@ verdict: PASS (검증 경계 별도 명시)
 
 ## 렌더 및 실제 클라이언트
 
-**Environment: Windows-browser** — 실제 Windows Chrome 152.0.7977.75/CDP, 제품 CSS/HTML/연결 모듈을 렌더. desktop1440×1050, mobile390×844, standalone, failure 4개 PASS. 가로 넘침·pageerror 없음. duplicate 선택과 Codex 독립 완료, Escape 닫기 확인. 연결 배지 대비 5.21:1. 스크립트: `tests/windows/verify_connect_visual.py`.
+Environment: Windows-browser
+Result: PASS
+Scenario: 연결 카드 desktop/mobile/standalone/failure 렌더 (보조 검증)
 
-**Environment: Windows-native** — Windows에서 빌드한 DQAConnect.exe 1.2.0 + 동봉 Python + WebView2 152. 실제 로컬 Bridge의 nonce/origin/authenticated identity→runner download/hash→--check→감독 프로세스→모델 협상→heartbeat→ready receipt→JS 카드/toast를 실행했다. 첫 실행은 Codex Windows 자동 연결, Claude Windows/FixtureUbuntu alice 중 WSL 선택. 두 번째 실행은 클라이언트 홈의 캐시/선호 위치 재사용으로 위치 질문 없이 두 플랫폼 자동 연결. 각 회차 완료 toast 두 개, 두 플랫폼 server heartbeat, URL nonce 제거 확인.
+ 실제 Windows Chrome 152.0.7977.75/CDP, 제품 CSS/HTML/연결 모듈을 렌더. desktop1440×1050, mobile390×844, standalone, failure 4개 PASS. 가로 넘침·pageerror 없음. duplicate 선택과 Codex 독립 완료, Escape 닫기 확인. 연결 배지 대비 5.21:1. 스크립트: `tests/windows/verify_connect_visual.py`.
+
+Environment: DQA-client
+Result: PASS
+Scenario: 격리 DQA 실행 파일의 AI별 연결 및 재시작 후 위치 재사용
+Build: DQAConnect 1.2.0; source 014976fd; server/API/vendor fixtures
+Evidence: unit/feature-0046-native-client/docs/artifacts/20260908-connect-discovery/native-results.json
+
+ Windows에서 빌드한 DQAConnect.exe 1.2.0 + 동봉 Python + WebView2 152. 실제 로컬 Bridge의 nonce/origin/authenticated identity→runner download/hash→--check→감독 프로세스→모델 협상→heartbeat→ready receipt→JS 카드/toast를 실행했다. 첫 실행은 Codex Windows 자동 연결, Claude Windows/FixtureUbuntu alice 중 WSL 선택. 두 번째 실행은 클라이언트 홈의 캐시/선호 위치 재사용으로 위치 질문 없이 두 플랫폼 자동 연결. 각 회차 완료 toast 두 개, 두 플랫폼 server heartbeat, URL nonce 제거 확인.
 
 대역 경계: 서비스 로그인/API, `app.js` toast stub 및 테스트용 로그인 후 초기화 호출, 벤더 CLI 응답은 fixture다. 실제 서비스 로그인·app.js 초기화 전체나 실제 벤더 계정의 유료 모델 호출을 검증했다고 주장하지 않는다. 사용자 계정의 인증 파일은 열지 않았고 기존 설치본을 교체하지 않았다. 실제 발견 명령은 Windows/WSL 다계정 후보 식별까지 별도 확인했다.
 
-재현: Windows staging 폴더에 `src/`, `static/`, `dist/DQAConnect/`, `rootCA.crt`, `fake-bin/`을 둔다. `FakeAI.cs`를 csc로 claude.exe/codex.exe/wsl.exe 각각 빌드하며 전부 테스트 실행 파일이다. Pillow를 staging/test-deps에 설치한 후 `python verify_connect_native.py <staging>`을 실행한다. 프로필은 실행마다 새로 만들고 한 실행 내 두 회차에서만 공유한다. 테스트 소유 PID 트리만 정리한다. native-evidence/native-results.json을 반환한다. 이 호스트의 native 창 픽셀 캡처는 PrintWindow/화면 영역 두 방식 모두 빈 면을 반환하여 유효한 시각 증거로 사용하지 않았다. 실제 native DOM/Bridge/runner 통합 실행은 PASS이며, 동일 제품 UI의 시각 검증은 앞의 Windows-browser 캡처로 별도 수행했다.
+재현: Windows staging 폴더에 `src/`, `static/`, `dist/DQAConnect/`, `rootCA.crt`, `fake-bin/`을 둔다. `FakeAI.cs`를 csc로 claude.exe/codex.exe/wsl.exe 각각 빌드하며 전부 테스트 실행 파일이다. Windows Python으로 `python verify_connect_native.py <staging>`을 실행한다. 프로필은 실행마다 새로 만들고 한 실행 내 두 회차에서만 공유한다. 테스트 소유 PID 트리만 정리한다. native-evidence/native-results.json을 반환한다. 이 호스트의 native 창 픽셀 캡처는 PrintWindow/화면 영역 두 방식 모두 빈 면을 반환하여 유효한 시각 증거로 사용하지 않았다. 실제 native DOM/Bridge/runner 통합 실행은 PASS이며, 동일 제품 UI의 시각 검증은 앞의 Windows-browser 캡처로 별도 수행했다.
 
 스크린샷·JSON: `unit/feature-0046-native-client/docs/artifacts/20260908-connect-discovery/`. Code-Navigation Map 재생성과 codenav-lint PASS. lint/게이트/배포·반입 지문은 REPORT의 최종 기록을 따른다.
+
+## 최신 main 통합 재검증
+
+- main `a92c9256`의 테스트 수집 정본·실제 UI 핸들러 검증·앱 우선 안내를 보존했다. native 전체 **527 passed (38.92s)**, 변경된 CI 수집 계약 **18 passed (0.11s)**. 네이티브 배포 코드의 추가 변경은 없다.
+- 최종 실행 파일의 2회 연속 native 검증 PASS. 재검증 드라이버는 launcher PID와 실제 exe PID 차이로 남을 수 있는 프로세스를 자기 staging exe의 정확한 경로로만 정리한다.
+
+Environment: DQA-client
+Result: NOT-RUN
+Scenario: 네이티브 창의 픽셀 캡처
+Reason: PrintWindow와 화면 영역 캡처 모두 빈 면을 반환했다.
+Alternative: 실제 앱의 요소 상태·입력·브리지·heartbeat 결과는 위 PASS, 동일 HTML/CSS의 Windows Chrome 캡처는 보조 시각 검증이다.
+Next: WebView2 픽셀 캡처가 가능한 Windows 화면 세션에서 해당 카드 영역을 다시 캡처한다.

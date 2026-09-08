@@ -8,6 +8,8 @@ source_of_truth: true
 
 # Report
 
+**2026-09-08 검증 도구 정합**: Makefile·CI·직접 pytest의 테스트 목록을 루트 `pyproject.toml`로 통합했다. 기존 Makefile/CI 9경로를 유지하며 native-client 515건을 추가 연결했고, 전체 8,017건 collection rc=0 및 수집 계약 18건 PASS를 확인했다. [실행 기록](test-runs.d/TASK-20260908T020000-delegation-friction.md). 제품 동작 변경이나 라이브 검증 결과를 뜻하지 않는다.
+
 ## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
 
 DQA가 지정한 `BRIDGE_RUNTIME_SELECTION`이 있으면 그 파일의 플랫폼/실행 경로/WSL 배포판·사용자만 사용한다. 잘못된 파일은 임의 자동 탐색으로 우회하지 않는다. WSL 실행은 배포판·계정·홈을 명시하고 프롬프트를 argv의 리터럴 값으로 전달한다. 기존 WSLENV 토큰 전달과 DQA 호스트 네트워크 범위 설정을 유지한다.

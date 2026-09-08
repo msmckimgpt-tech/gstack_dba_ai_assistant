@@ -12,6 +12,15 @@ feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 �
 
 # Task
 
+## TASK-20260908T020000-delegation-friction — 테스트 수집 정본화
+
+- 범위/계획: `tests/test_ci_testpath_parity.py`의 두 목록 비교를 공통 pytest 설정 사용 검사로 교체하고, 루트 `pyproject.toml`을 Makefile·CI·직접 실행의 단일 테스트 목록으로 사용한다. 상세 계획은 [META TASK](../../../meta/TASK.md).
+- 수용 기준: 이전 Makefile/CI 9경로를 모두 유지하고, 양쪽에서 빠졌던 native-client 테스트만 추가 수집한다. 제품 실행 동작은 이 작업의 변경 대상이 아니다.
+- [x] pytest testpaths 합집합 10경로로 정합하고 두 진입점의 경로 인자 복제를 제거한다.
+- [x] 설정 우회·필터·pytest 호출 누락 음성 대조를 포함한 수집 계약 18건을 통과한다.
+- [x] 새 전체 설정에서 8,017건 수집, native-client 515건 포함, collection rc=0을 확인한다.
+- 검증 기록: [테스트 실행](test-runs.d/TASK-20260908T020000-delegation-friction.md). 이 cycle의 리뷰·랜딩은 프로젝트 META TASK에서 추적한다.
+
 ## TASK-20260908T115500-bridge-network — 실제 첨부 경로의 네트워크·CA 전달
 
 ### 2.1 Implementation Plan
@@ -3316,6 +3325,7 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
 
+- [x] TASK-20260908T020000-delegation-friction: 최신 main ec913f94 합류 뒤 전체 8,059 PASS/16 skip/실패0, Bats69/도구24 및 독립107/check13 20 결과를 최종 원장에 기록했다. 실제 DQA 앱 사용자 흐름은 NOT-RUN으로 구분했다.
 
 ## TASK-20260908T120000-connect-discovery-ux
 

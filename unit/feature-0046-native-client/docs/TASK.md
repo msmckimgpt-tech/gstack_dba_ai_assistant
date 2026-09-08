@@ -4,6 +4,8 @@ feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
 feature_status: in-progress
+feature_status_date: 2026-09-08
+feature_status_note: DQA 1.2.0 AI별 자동 연결과 Windows·WSL 위치 재사용. 검증과 릴리스 상세는 REPORT 정본.
 ---
 
 # Task
@@ -52,6 +54,22 @@ feature_status: in-progress
 
 ## 통합 및 검증 경계
 
-- Issue #1615 / 공개 브랜치 `issue/1615-dqa-ai-connections`. main `8f49f1fc` 통합. 기존 완료 기록은 task-history에 보존.
+- Issue #1615 / 공개 브랜치 `issue/1615-dqa-ai-connections`. main `8f49f1fc` 및 `a92c9256` 통합. 기존 완료 기록은 task-history에 보존.
 - 사용자는 Windows 웹브라우저를 따로 실행하지 않는다. 실제 제품 경로는 DQA 앱의 WebView2다.
 - Windows-native E2E는 실제 동결 exe·내장 Python·로컬 Bridge·배포 러너·WSL argv·서버 신고까지 실행한다. 서비스 로그인/API와 벤더 CLI 응답, app.js의 toast stub 및 테스트용 로그인 후 초기화 호출을 격리 대역으로 둔다. 실제 벤더 계정의 유료 모델 질의나 기존 사용자 설치본 교체를 검증했다고 주장하지 않는다.
+
+최신 main의 이전 검증 기록은 [a92c9256 TASK](task-history/20260908-main-a92c9256.md)에 보존한다.
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+## 완료 전 정책 대조
+
+- 현재 worktree `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0043-connect-discovery-ux/AGENTS.md` 및 공유 main의 `origin/main` 정책을 대조했다. main a92c9256의 DQA-client 검증·자율 병합·읽기 계약 변경을 반영했다.
+- AGENTS.md SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`. 기존 검증 기록을 DQA-client/보조 브라우저/픽셀 미확인으로 구분했다.
+
+- [x] 최신 main a92c9256 통합: DQA 앱 우선 안내·실제 클릭 행위 테스트 보존, native 527건/수집 계약 18건 재검증.

@@ -2472,6 +2472,7 @@ Windows 파이썬으로 도는 러너가 WSL 쪽을 보지 않아, 실제로 쓰
 
 ## 9. Constraints / Risks
 
+- **테스트 수집**: `tests/test_ci_testpath_parity.py`는 Makefile·CI가 루트 `pyproject.toml`의 `testpaths`를 경로/필터 인자로 덮어쓰지 않는지 확인한다. 이 기능과 native-client의 회귀가 공통 실행 목록에서 빠지지 않도록 검증한다(TASK-20260908T020000-delegation-friction).
 - **가용성**: 개인 머신 AI 런타임이 꺼져 있으면 답변이 오지 않는다. 이는 설계상 수용된 한계이며
   (feature-0041 ANCHOR §2 Alt-D 가 지적한 "상시 도달 불가"), UI에서 **대기 상태로 정직하게 표시**한다.
 - **즉시성**: 폴링 주기만큼 지연된다. 서버 LLM 즉답과 동등한 체감은 목표가 아니다.

@@ -4783,6 +4783,13 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `TASK.md` 의 「배포 후 라이브 실측」 항목 체크 + `REPORT.md §8` 에 자기갱신 경합 기록.
 - 사용자 요청(*"해당 러너 실행 및 실측도 직접 진행해주세요"*)에 따라 사용자 계정 러너를
   직접 기동하고 앱 창 화면까지 확인했다.
+## CHG-20260908T020000-ai-codex-delegation-friction — pytest 수집 목록 정본화
+
+- Session: ai/codex/meta-delegation-friction-20260908
+- Related TASK: TASK-20260908T020000-delegation-friction
+- `tests/test_ci_testpath_parity.py`: Makefile↔CI 두 목록만 같으면 통과하던 검사를 공통 pytest 설정 사용 계약으로 교체한다. 양쪽에서 native-client가 함께 빠진 상태를 놓치던 원인을 제거한다.
+- 루트 `pyproject.toml`에 이전 실행 9경로와 native-client를 합친 10경로를 유지한다. Makefile/CI는 경로 인자를 생략하여 그 정본을 읽는다.
+- 검증: 수집 계약 18 PASS, ruff PASS, 전체 collection 8,017건(native-client 515건 포함) rc=0. 상세는 `docs/test-runs.d/TASK-20260908T020000-delegation-friction.md`.
 ## CHG-20260908T113000-bridge-token-env
 
 - Session: Codex / ai/codex/feature-0043-bridge-token-env, 2026-09-08.
@@ -4820,6 +4827,10 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   DQA hostname allowlist 강제, 불특정 네트워크/쓰기/실행제한 해제 폴백 없음.
 - 근거·검증: test-runs.d/TASK-20260908T115500-bridge-network.md 및 후속 PR 설명.
 
+## CHG-20260908T121500-delegation-verification
+
+- TASK: TASK-20260908T020000-delegation-friction
+- 최신 main의 DQA 1.1.2·러너 복구·트레이 안내를 보존한 통합본의 전체 회귀와 독립 리뷰 결과를 기록했다. JUnit 8,075건 중 8,059 PASS/16 skipped/실패0이며 native-client 531건을 포함한다. 설치 앱의 미검증 범위는 별도로 유지한다.
 
 ## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
 - Timestamp: 2026-09-08T12:34:00+09:00

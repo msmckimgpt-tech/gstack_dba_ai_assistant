@@ -128,7 +128,7 @@ is_meta_path() {
   case "$path" in
     # inbox-autonomy:meta-config:v1
     # Template migration state and repository ignore rules belong to META verification.
-    .gitignore|.template-state|playbooks/PB-0003-feature-completion.md) return 0 ;;
+    .gitignore|.aiignore|.template-state|playbooks/PB-0003-feature-completion.md) return 0 ;;
     AGENTS.md|AGENTS.override.md|CLAUDE.md|GEMINI.md) return 0 ;;
     bin/*|shared/docs/*|docs/*) return 0 ;;
     unit/_template/*) return 0 ;;
@@ -235,6 +235,13 @@ is_web_asset() {
   # (M2 오탐 방지: docs/presentation/*.html 이 시각검증 게이트를 트리거하지 않도록.)
   case "$path" in
     docs/*|*/docs/*|wiki/*|.claude/*|.codex/*|.agents/*) return 1 ;;
+  esac
+  # Native window, tray, and embedded-panel surfaces also require client evidence.
+  case "$path" in
+    unit/feature-0046-native-client/src/client/*)
+      case "${path#unit/feature-0046-native-client/src/client/}" in
+        window.py|appwindow.py|gui.py|tray.py|bridge.py) return 0 ;;
+      esac ;;
   esac
   # 정적 프론트 자산 경로 — 이 프로젝트의 admin.js/app.js/share.js/styles.css/*.html 이 여기 거주.
   case "$path" in
@@ -1234,16 +1241,10 @@ check_12_wiki_feature_card() {
   return 0
 }
 
-# Check #13: 웹/UI 변경 시 실제 Windows 브라우저 시각검증(PB-0008) 완료 게이트.
-# 정책 근거: AGENTS.md §15.4.1 / §16.2 — 웹/UI(화면·상호작용) 변경의 완료 검증은 실제
-# Windows 브라우저(`bin/win-browser.py`)에서 수행하고 feature `docs/TEST.md §3` 에
-# 'Environment: Windows-browser' Run 을 기록한다.
-# 강제 수준(wrapper FIRST_REQUEST.md `visual_verification_scope`):
-#   always → 미기록 시 FAIL(hard gate — 본 프로젝트 정책, 2026-07-01 사용자 지시).
-#   그 외/미선언 → WARN(backward-compat — 기존 소비자 비파괴).
-# escape: 브리지 setup 불가(공용 CI 등)로 미수행 시 TEST.md 에 'Windows-browser' 맥락으로
-#   사유(미수행/skip/BLOCKED/불가)를 기록하면 통과(카고컬트 방지 — 사유 명시 요구).
-#   긴급 우회: env GSTACK_SKIP_VISUAL_VERIFICATION=1 또는 --skip-visual-verification.
+# Check #13: UI 변경의 현재 cycle 검증 기록(PB-0009).
+# DQA-client 실행 결과와 Windows-browser 대체 증거를 구분한다.
+# visual_verification_scope=always 이면 기록 누락 FAIL, 미선언이면 WARN.
+# 명시 미수행 사유는 WARN이며 클라이언트 실측 PASS를 뜻하지 않는다.
 # Check #15: ROUTEMAP freshness (AGENTS.md §21.11.4, WARN-only) — 구조 리팩터 시 code-map 갱신 의무.
 check_15_routemap_freshness() {
   local mode="${1:-pre-commit}"
@@ -1316,6 +1317,51 @@ check_16_codenav_lint() {
   return 0
 }
 
+visual_run_evidence_kind() {
+  # Verdict frontmatter belongs to a single-environment fragment only. In TEST.md,
+  # each Environment starts a separate Run so a browser PASS cannot certify DQA.
+  # Within one file, only an explicitly identical Scenario can supersede its Run.
+  awk '
+    function classify(e, r, why, scenario, kind, key) {
+      if (e ~ /:[[:space:]]*dqa-client([[:space:]]|$)/) {
+        if (r ~ /:[[:space:]]*fail([[:space:](/]|$)/) kind="failed"
+        else if ((e " " r) ~ /blocked|not[- ]run|deferred|미수행|미검증/) {
+          if (why != "") kind="pending"
+        } else if (r ~ /:[[:space:]]*pass([[:space:](/]|$)/) kind="primary"
+        key=(scenario != "" ? "dqa-client" SUBSEP scenario : "unnamed" SUBSEP ++unnamed)
+        if (kind != "") runs[key]=kind
+      } else if (e ~ /:[[:space:]]*windows-browser([[:space:]]|$)/) alternative=1
+    }
+    { raw[++n]=$0; lines[n]=tolower($0); if (lines[n] ~ /^[[:space:]#-]*environment[[:space:]]*:/) environments++ }
+    END {
+      frontmatter=(lines[1] == "---")
+      for (i=1; i<=n; i++) {
+        line=lines[i]
+        if (frontmatter && i>1 && line == "---") { frontmatter=0; continue }
+        if (frontmatter && line ~ /^verdict[[:space:]]*:/) fragment_verdict=line
+        if (line ~ /^[[:space:]#-]*environment[[:space:]]*:/) {
+          classify(environment, result, reason, scenario)
+          environment=line; result=(environments == 1 ? fragment_verdict : ""); reason=""; scenario=""
+        } else if (line ~ /^[[:space:]#-]*(result|verdict)[[:space:]]*:/) result=line
+        else if (line ~ /^[[:space:]#-]*(reason|사유)[[:space:]]*:[[:space:]]*[^[:space:]]/) reason=line
+        else if (line ~ /^[[:space:]#-]*scenario[[:space:]]*:/) {
+          scenario=raw[i]; sub(/^[^:]*:[[:space:]]*/, "", scenario); sub(/[[:space:]]+$/, "", scenario)
+        }
+      }
+      classify(environment, result, reason, scenario)
+      for (key in runs) {
+        if (runs[key] == "failed") failed=1
+        else if (runs[key] == "pending") pending=1
+        else if (runs[key] == "primary") primary=1
+      }
+      if (failed) print "failed"
+      else if (pending) print "pending"
+      else if (primary) print "primary"
+      else if (alternative) print "alternative"
+    }
+  '
+}
+
 check_13_visual_verification() {
   local mode="${1:-pre-commit}" fdir="${2:-}"
 
@@ -1366,35 +1412,56 @@ check_13_visual_verification() {
   done
   targets=$(printf '%s' "$targets" | sort -u | sed '/^$/d')
 
-  # 각 대상 TEST.md 가 '이번 staged diff 에 추가된' Windows-browser Run(또는 미수행 사유)
-  # 라인을 담는가(M1: whole-file substring 아닌 추가 라인만 — stale/재-stage/주석 우회 차단).
-  local missing="" tmd added frag_dir frag_added
+  local missing="" failures="" alternatives="" pending="" tmd record records added normalized evidence kind
   while IFS= read -r tmd; do
     [ -z "$tmd" ] && continue
-    added=$(git diff --cached -- "$tmd" 2>/dev/null | grep -E '^\+' | grep -iE 'windows-browser' || true)
-    # META-0026 (ITEM-06): TEST.md 추가 라인 **또는** test-runs.d/ fragment 신규 파일 인정
-    # (하위호환 OR — 병렬 Run 기록 append 충돌 제거, §5.3 fragment 규약).
-    if [ -z "$added" ]; then
-      frag_dir="${tmd%/TEST.md}/test-runs.d"
-      frag_added=$(git diff --cached -- "$frag_dir" 2>/dev/null | grep -E '^\+' | grep -iE 'windows-browser' || true)
-      [ -z "$frag_added" ] && missing+="${tmd} "
-    fi
+    kind=""
+    records=$(printf '%s\n' "$tmd"; git diff --cached --name-only -- "${tmd%/TEST.md}/test-runs.d")
+    while IFS= read -r record; do
+      [ -n "$record" ] || continue
+      added=$(git diff --cached --unified=0 -- "$record" 2>/dev/null | sed -n '/^+++ /d; s/^+//p')
+      normalized=$(printf '%s\n' "$added" | sed 's/[*`]//g')
+      evidence=$(printf '%s\n' "$normalized" | visual_run_evidence_kind)
+      case "$evidence" in
+        primary) if [ -z "$kind" ] || [ "$kind" = "alternative" ]; then kind="primary"; fi ;;
+        failed) kind="failed" ;;
+        pending) [ "$kind" = "failed" ] || kind="pending" ;;
+        alternative) [ -n "$kind" ] || kind="alternative" ;;
+      esac
+    done <<< "$records"
+    case "$kind" in
+      primary) : ;;
+      failed) failures+="${tmd} " ;;
+      pending) pending+="${tmd} " ;;
+      alternative) alternatives+="${tmd} " ;;
+      *) missing+="${tmd} " ;;
+    esac
   done <<<"$targets"
   [ -n "$unattributed" ] && missing+="(unattributed: ${unattributed})"
 
+  if [ -n "$failures" ]; then
+    log_check 13 FAIL "visual verification" "DQA-client 실행 FAIL 기록: ${failures}. 실패 원인을 해소하고 재검증하세요."
+    return 1
+  fi
+
+  if [ -n "$pending$alternatives" ]; then
+    log_check 13 WARN "visual verification" \
+      "DQA-client 실측 PASS 미확인. 미수행 사유 기록: ${pending:-없음}; Windows-browser 대체 증거: ${alternatives:-없음}. 대체 증거는 현재 클라이언트 실행 PASS로 승격하지 않음."
+  fi
   if [ -z "$missing" ]; then
-    log_check 13 PASS "visual verification" "(대상 TEST.md 에 이번 cycle Windows-browser Run 추가 — PB-0008)"
+    if [ -z "$pending$alternatives" ]; then
+      log_check 13 PASS "visual verification" "(이번 cycle Environment: DQA-client + Result/Verdict: PASS 기록 — PB-0009)"
+    fi
     return 0
   fi
 
   if [ "$scope" = "always" ]; then
     log_check 13 FAIL "visual verification" \
-      "웹/UI 자산 변경인데 이번 cycle 'Windows-browser' Run(PB-0008) 추가가 없는 대상: ${missing}. bin/win-browser.py 로 시각검증 후 해당 feature docs/test-runs.d/<TASK-또는-REV-id>.md fragment(권장, §5.3) 또는 docs/TEST.md §3 에 'Environment: Windows-browser' Run 을 추가·stage(브리지 불가 시 그 라인에 미수행 사유 명시)하세요 (AGENTS.md §15.4.1 · PB-0008 · visual_verification_scope=always). 긴급: GSTACK_SKIP_VISUAL_VERIFICATION=1"
+      "UI 변경에 이번 cycle 검증 기록 누락/불완전: ${missing}. 해당 feature test-runs.d/ 또는 TEST.md에 Environment: DQA-client + Result: PASS를 기록하거나 Result: NOT-RUN + Reason을 명시하세요. Windows-browser는 대체 검증으로만 기록합니다(PB-0009)."
     return 1
   fi
-
   log_check 13 WARN "visual verification" \
-    "웹/UI 자산 변경에 이번 cycle 'Windows-browser' Run(PB-0008) 추가 없음 — 대상: ${missing}. visual_verification_scope 미선언 → WARN(§15.4.1 권장). always 로 선언하면 hard gate."
+    "UI 변경의 DQA-client 검증 기록 누락/불완전: ${missing}. visual_verification_scope 미선언 → WARN."
   return 0
 }
 

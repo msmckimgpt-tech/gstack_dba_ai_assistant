@@ -230,3 +230,11 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 - 공식 클라이언트 채널 1.1.1 게시 완료. 실제 Windows 앱의 updater 코드가 1.1.0에서 1.1.1을 발견하고 설치기 25,731,162 bytes를 다운로드해 SHA-256 일치를 확인했다. 설치기를 실행해 사용자 설치본을 바꾸지는 않았다.
 - 사용자는 **DQA 앱에서 1.1.1로 업데이트한 뒤 다시 연결**한다. 별도 러너 실행·터미널 명령은 필요 없다. 실제 두 러너 복귀 및 파싱 전 실패 복구 실측은 아래 정본에 기록했다.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

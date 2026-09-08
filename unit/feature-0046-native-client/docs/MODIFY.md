@@ -903,3 +903,9 @@ edit_policy: append-only
 - 변경: DQA 클라이언트를 실행하고 로그인하면 설치된 AI를 찾는다. AI별 사용 가능한 위치가 하나이면 자동 연결하고, Windows/WSL 배포판/계정 여러 곳에 있으면 해당 AI 카드에서만 선택한다. 이미 고른 위치가 다시 유효하면 자동 재사용한다. 별도 러너·Windows 브라우저 실행은 사용자 절차에 없다.
 - 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
 - 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.
+
+## CHG-20260908-connect-discovery-main-integration
+
+- Timestamp: 2026-09-08T12:58:44+09:00
+- TASK: TASK-20260908T120000-connect-discovery-ux
+- 최신 main의 연결 안내·행위 검증과 현재 자동 연결 변경을 통합했다. DQA 실행 버튼은 앱 내부에 노출하지 않고, 일반 브라우저 호환 경로의 무응답은 실제 존재하는 DQA 앱/버튼으로 안내한다. 네이티브 코드 재변경 없이 527건 PASS, 수집 계약 18건 PASS.

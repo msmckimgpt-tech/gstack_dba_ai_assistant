@@ -6006,3 +6006,9 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - 변경: DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.
 - 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
 - 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.
+
+## CHG-20260908-connect-discovery-main-integration
+
+- Timestamp: 2026-09-08T12:58:44+09:00
+- TASK: TASK-20260908T120000-connect-discovery-ux
+- 최신 main의 연결 안내·행위 검증과 현재 자동 연결 변경을 통합했다. DQA 실행 버튼은 앱 내부에 노출하지 않고, 일반 브라우저 호환 경로의 무응답은 실제 존재하는 DQA 앱/버튼으로 안내한다. 네이티브 코드 재변경 없이 527건 PASS, 수집 계약 18건 PASS.
