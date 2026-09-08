@@ -5997,3 +5997,40 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+## CHG-20260908T125500-step-tool-syntax-leak
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak; REQ-20260908T125500-step-tool-syntax-leak; 위험도 Major §12.3(표시 계층 + 비신뢰 입력 처리, 스키마·RBAC·엔드포인트·마이그레이션 0).
+- Timestamp: 2026-09-08T13:20:00+09:00; session: claude ai/claude/feature-0003-step-tool-syntax-leak.
+- **변경과 이유**: 실행 단계 패널의 제목이 `describe_table {'schema_name': 'coupon', 'table_name': 'dbo.T_COUPON'}` 처럼 도구 호출 구문 그대로였다. 라이브 원장(`agent_runtime.steps`) 실측 — `work_source='external-ai'` **30행 중 19행(63%)** 이 그 형태. 출처는 연결된 개인 AI 가 `POST /api/ai/tools/<name>` 본문에 실어 보내는 `work` 이고, 브리지 프롬프트는 그 필드를 규정조차 하지 않아 **계약 없는 비신뢰 입력**이었다. 서버가 판정·대체하도록 바꿨다(프롬프트는 지시이지 집행이 아니고, 러너는 사용자 PC 에 있어 낡은 빌드가 남는다).
+- **파일**: `routers/_conv_store.py`(판정기 `_step_text_is_tool_syntax`·`_sanitize_step_narration`·파생 꼬리 `_derive_step_work_tail` 신설 + `_resolve_step_display` 배선) · `routers/ai_tools.py`(`_bridge_step_narration` 도구명 인자 + 적재 차단, `_bridge_live_steps` 표시 정합, `_bridge_derived_narration` 식별자 폴백 제거) · `app.py`(re-export 3) · `static/app.js`(`TOOL_LABEL_MAP` 7→28 · `toolLabel` 미지 폴백 `"도구"` · `stepTitleText` 신설) · `static/app/progress.js`(같은 폴백).
+- **저장된 원문은 건드리지 않는다** — 판정은 표시층 전용이다. 감사·재현 가치가 있고, 판정이 틀렸을 때 되돌릴 근거가 사라지지 않는다.
+- **적대 검증이 잡은 것 2건**: ① 라이브 19행 재생에서 **파생 문구 자신이 판정기에 걸림**(백틱 감싼 식별자로 시작 → `sanitize(derive(x))` 가 고정점 아님). (c) 규칙을 «인용 없는» 식별자로 좁히고 `test_l2_derived_narration_is_a_fixed_point` 로 서버 도구 census 전체에 불변식을 걸었다. ② codex P2 — **사유(reason)는 대체값이 없는 축**이라 (c) 를 적용하면 `order_items 테이블에 …` 같은 정상 설명이 순수 손실된다. 사유에는 (a)·(b) 만 적용하도록 세 이음매를 모두 좁혔다.
+- **검증**: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`. 라이브 재생 유출 18→**0**, pytest 전량 PASS, 행위 하네스 13 PASS + 결함 주입 6 FAIL.
+- **되돌리기**: 이 cycle 을 git revert 후 web 재배포. 데이터 변경이 없으므로 되돌리면 종전 표시(원문 그대로)로 즉시 복귀한다.
+
+## CHG-20260908T134000-step-tool-syntax-leak-r2
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak; 위험도 Major §12.3(변동 없음).
+- Timestamp: 2026-09-08T13:40:00+09:00; session: claude ai/claude/feature-0003-step-tool-syntax-leak.
+- **적대 검증 라운드 1 이 4명 전원 BLOCK 을 냈고, 그 뿌리는 초판 판정기였다.** backend 가
+  라이브 원장 **9,759행 전건 재생**으로 실측: 「인용 없는 snake_case 로 시작」 규칙이 걸러낸
+  412행 중 실제 도구 구문은 **18행뿐**, 394행(96%)이 정상 제목이었다(손익비 1:22). 이 도메인은
+  테이블 이름이 곧 사용자의 어휘라 그 형태를 금지 서명으로 쓸 수 없다.
+- **재설계**: 판정 서명을 (a) 인자 매핑 리터럴 + (b) **서버 도구 census 의 이름** 둘로 좁히고,
+  NFKC + 제로폭·bidi 제거로 전각 우회를 닫았다. 표시 문구를 만드는 **단일 이음매**
+  `_step_display_narration` 을 두어 완료·진행 두 경로가 그것만 부르게 했다 — 파생값 재정화
+  (비신뢰 `args` 재주입 차단) · 길이 상한 · 출처 정직화 · None-safe 를 한 자리에서 지킨다.
+- **사유 축 분리**: 사유에는 (a) 만 적용하고 표시 경로에 `_derive_step_reason` 파생을 배선했다.
+  대체가 없는 축에 같은 규칙을 쓰면 정상 설명이 순수 손실된다(라이브 8건 실측).
+- **함께 닫은 갈래**: `_DERIVED_WORK_TAIL` 인자 인지 콜러블 승격(진행/완료 제목 동일성) ·
+  `agent_core._derive_step_work` 3번째 인자 오배선 · census 를 정의 조회로 전환 + 배출 전용
+  2종 편입 · `intent` 를 공유 화이트리스트·진행 payload 에서 제거 · 프런트 백틱 제거 ·
+  activity 렌더러의 `intent` 폴백 제거 · 배지 폭 CSS 고정 · 라벨 어휘 교정.
+- **게이트 자체의 결함도 고쳤다**: `_fn_body` 가 주석을 제거하지 않아 존재 단언이 주석에
+  걸렸고(G11-a), 「make test 에 node 가 없다」는 **사실이 아닌 전제**로 만든 CI-gap 탈출구가
+  L6·L7·L8 을 동시에 무력화하고 있었다(Makefile 이 node 를 설치한다). 탈출구를 없애고
+  음성 대조군을 **산출물 주입**으로 바꿨다.
+- **검증**: 재생 후 버려진 제목 19건(전부 도구 표기) · 버려진 사유 **0건** · 잔존 유출 **0건**.
+  `docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`.
+- **되돌리기**: 데이터 변경 0 — git revert 후 web 재배포하면 종전 표시로 즉시 복귀한다.
