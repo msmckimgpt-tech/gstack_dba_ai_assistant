@@ -241,3 +241,11 @@ DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증
 소스 8231cffe, main 병합 2838ce58. 병합 후 native 전체 **536 PASS**, 웹 **30 PASS**, 아이콘/자산 일치·Windows 5표면·source Tk/WebView2 생명주기·frozen 속성/정상 종료 PASS. 내부 로고 4곳의 Windows Chrome 로그인 렌더·디자인 PASS. **현재 Windows 잠금 화면이 최종 taskbar 캡처를 가려 시각 검수는 대기**하며, 최종 frozen PNG를 PASS라고 보았던 이전 판정은 철회했다. 사용 중인 앱은 유지했다.
 
 배포 후보는 artifacts/dqa-transparent-icon/DQAConnect-Setup-1.1.3.exe, 25,876,951 bytes, SHA-256 132d5d715b73673c60c78cb54e1957f9b5c117612c4d1a26e9b9fbc75df903ac. 기존 채널의 1.1.2를 아직 전환하지 않았다. 잠금 해제 후 최종 검수→병합→기존 채널 게시→web-only rolling 배포→실제 다운로드/앱 로고 확인을 수행한다.
+
+### 재개 위치
+
+- Draft PR: [#1617](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617), branch `ai/codex/feature-0046-transparent-taskbar-icon`, worktree `../.worktrees/feature-0046-transparent-taskbar-icon`(wrapper 기준 `.worktrees/...`). 원격 CI check 없음; 로컬 536+30 PASS와 실제 Windows 부분 증적을 정본으로 둔다.
+- Windows 잠금 해제 요청에 대한 응답 대기. 검사 편의를 위한 사용자 잠금 해제·기존 앱 종료·재설치는 하지 않았다. 후보 설치기와 해시는 위 최신 상태 참조.
+- 이후: 최신 tests/windows를 Windows 임시 `dqa-transparent-icon/tests`에 복사→`verify_frozen_taskbar.py --app <dist/DQAConnect/DQAConnect.exe> --out <새 경로>`→유효 taskbar PNG 직접 확인. `capture_taskbar.ps1`가 LockScreenBackstopFrame을 거부하므로 상태가 같으면 반복하지 않는다.
+- 실제 앱 내부 로고도 확인한다(PB-0009). 별도 frozen 진단 프로세스에만 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`를 주는 두 시도에서 CDP endpoint가 나타나지 않았다. 레지스트리/사용자 앱은 변경하지 않았고 두 인스턴스는 자기 트레이 종료 exit0. 필요 시 지원되는 앱 검수 방식 또는 잠금 해제 후 실제 화면으로 확인한다. 일반 Chrome 결과를 앱 검증으로 바꾸지 않는다.
+- 검수 후 PR ready/병합·`publish_release.py --setup <1.1.3> --dir <wrapper>/artifacts/client-release`·main `bin/deploy-web.sh --web-only`·rootCA TLS 검증한 manifest/실제 다운로드 hash·웹/앱 자산 검증→완료 문서와 자기 worktree 정리. 새 버전 게시 전에 main/channel에 1.1.3 충돌이 없는지 확인한다.

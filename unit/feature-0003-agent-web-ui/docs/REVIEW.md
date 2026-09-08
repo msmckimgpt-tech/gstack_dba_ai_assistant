@@ -7791,15 +7791,20 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-ux.md
 - Human Approval Needed: no
 
-## REV-20260908T040000-transparent-merge-evidence [SKIPPED:non-policy-doc]
+## REV-20260908T035400-transparent-merge-evidence [SKIPPED:non-policy-doc]
 - Related TASK: TASK-20260908T-transparent-taskbar
 - Reason: main의 현재 검증 정책과 타 세션 변경을 보존한 문서 병합·회귀 결과 보충. native 제품 코드 변화 0, 정책을 재작성하지 않았다. 고정 양 부모의 삭제/제목 유실 0.
-- Timestamp: 2026-09-08T04:00:00Z
+- Timestamp: 2026-09-08T03:55:39Z
 
-## REV-20260908T040001-transparent-inner-logo [SUBAGENT:icon_design_review] — PASS
+## REV-20260908T035401-transparent-inner-logo [SUBAGENT:icon_design_review] — PASS
 - Related TASK: TASK-20260908T-transparent-taskbar
 - Trigger: UI/로그인·사이드바·빈 대화 로고
 - Verdict: PASS
 - Findings: P1/P2/P3 0. 4개 이미지의 22/36/40px 크기·배치 유지, 실제 Windows 로그인 렌더의 투명 심볼 확인. Taskbar 잠금 해제 후 검수는 별도이다.
 - Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
 - Human Approval Needed: no
+
+## REV-20260908T035530-transparent-handoff [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: draft PR/검증 파일/대기 사유/프로세스 정리의 실제 결과 기록. 제품 코드·정책·디자인 변경 없음.
+- Timestamp: 2026-09-08T03:55:39Z

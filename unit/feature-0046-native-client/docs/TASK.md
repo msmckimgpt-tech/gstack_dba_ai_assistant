@@ -621,3 +621,6 @@ DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증
 - [ ] Windows 잠금 해제 후 최종 동결본 작업 표시줄과 앱 로고 시각 재검수
 - [ ] 최종 검수 후 PR ready/병합·1.1.3 설치기 채널 및 웹 배포·라이브 대조
 - 정책 재독: 현재 worktree `AGENTS.md` SHA-256 a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 초기 024a8b53…에서 변경되어 §10.1·15.4.1·16.3·16.4·16.5.1·PB-0009를 갱신 반영했다. Windows-browser 호환과 DQA-client 실제 검증을 구분한다.
+
+- [x] 검수 대기 결과를 draft PR #1617에 보관하고 실행 중인 검사 프로세스·별도 Chrome/relay 정리
+- PR: https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617 (draft). Windows 잠금 해제 응답 대기이며 릴리스 채널은 아직 1.1.2다.

@@ -907,9 +907,15 @@ edit_policy: append-only
 - 로그인·사이드바·빈 대화·관리 사이드바 로고 이미지 4곳을 같은 SVG로 정합했다. 기존 크기와 배치는 유지한다.
 - 실제 잠금 화면이 작업 표시줄 캡처를 가리는 경우를 검수 도구에서 차단한다. 정상 종료 이전 PASS 기록도 바로잡았다. 최종 시각 확인과 배포는 잔여 단계로 명시한다.
 
-## CHG-20260908T040000-transparent-main-evidence
+## CHG-20260908T035400-transparent-main-evidence
 
 - Related TASK: TASK-20260908T-transparent-taskbar / #1612
 - main 동기화 문서 충돌 4개는 양쪽 신규 기록을 모두 보존했다. 544cfed9/a92c9256 양 부모 삭제 파일·문서 제목 유실 0, 자동 병합 코드 포함 대조. 8231cffe 대비 native src 변경 0이므로 검증된 1.1.3 빌드와 동일하다.
 - 병합 후 native 536 PASS(50.204초), 웹 30 PASS. 디자인 추가 리뷰도 P1/P2/P3 0.
 - 동결본 속성·리소스·종료는 PASS지만 잠금 화면으로 최종 taskbar PNG는 NOT-RUN으로 남긴다. 일반 브라우저 결과를 앱 전체 검증으로 합산하지 않는다.
+
+## CHG-20260908T035530-transparent-handoff
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- draft PR #1617·검증된 1.1.3 후보·잠금 해제 후 재검수/배포 순서를 인계한다. 원격 CI check가 보고되지 않아 CI PASS로 주장하지 않는다.
+- 별도 검사 DQA 두 인스턴스는 정상 exit=0, 별도 Chrome/relay만 종료했다. 기존 사용자 앱과 프로필은 유지했다. 제품 코드 변경 없음.
