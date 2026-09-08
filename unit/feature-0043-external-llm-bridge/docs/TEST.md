@@ -321,3 +321,19 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 - 전체 실행: 7485 passed, 28 skipped, 1 legacy assertion failed; 그 검사를 고친 후 이 suite19 PASS.
 - Environment: isolated Docker, network none. 제품 코드 변경 없음.
 - Evidence: wrapper artifacts/kb-external-search/tests-trust-boundary.log.
+
+
+## 2026-09-08 — AI별 자동 연결
+
+[통합 실행 기록](test-runs.d/20260908T123400-connect-discovery.md): Python·DOM·Windows-browser·실제 DQA/WebView2.
+
+## Run: connect-discovery 최종 통합
+
+Environment: DQA-client
+Result: PASS
+Scenario: 격리 동결 DQA 1.2.0 실행 파일의 연결·위치 선택·재시작 캐시·완료 toast
+Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), feature-0046 artifacts의 native-results.json.
+
+서비스/API/벤더 응답과 app.js toast 초기화는 대역이다. 네이티브 픽셀 캡처는 빈 면으로 NOT-RUN이며 동일 제품 UI의 Windows Chrome 렌더는 별도 보조 증거다. 실제 벤더 계정 호출·사용자 설치본 교체의 PASS를 뜻하지 않는다.
+
+- TASK-20260908-prompt-layer-delivery: 여섯 계층 전달·오류·재시도·점유 교체 회귀는 [개별 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md)을 참조한다.

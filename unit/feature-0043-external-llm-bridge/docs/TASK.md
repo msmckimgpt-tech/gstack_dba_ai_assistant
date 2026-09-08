@@ -6,11 +6,33 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단
 
 ---
 
 # Task
+
+## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
+
+- Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.
+- Plan: catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+- [x] 코드 변경 및 집중 회귀 검증.
+- [x] 전체8f1116cf 배포·DQA1.2.4 업데이트·실제 root Codex 새 대화 응답 확인. 정본: native test-runs.d/20260908-codex-connect-fix.md.
+
+## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검증
+
+### 2.1 Implementation Plan
+- 승인 근거: 현재 사용자 요청(전역 → 제품 → 역할 전역 → 역할 제품 → 개인 전역 → 개인 제품 검토·개선). Major: 프롬프트 조회 실패 처리와 진단 개선; 인증·인가 변경 없음.
+- `unit/feature-0002-agent-core/src/agent_core.py::compose_system_prompt`: strict 조회 모드로 설정 부재와 조회 실패를 구분한다. 제품 표시명 조회 실패가 제품 지침을 누락시키지 않게 분리한다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py::_bridge_system_prompt,claim_request`: strict 모드를 사용하고 실패하면 점유 해제·503으로 불완전 지침 실행을 차단한다.
+- `unit/feature-0043-external-llm-bridge/src/agent/handler.py::handle_one`: 전달 길이·SHA-256·실제 채널을 원문 없이 기록한다. 생성 러너 2벌을 재생성한다.
+- 테스트: 여섯 고유 문자열이 최종 프롬프트에 정확히 한 번, 요청 순서대로 존재; auto 모드에서 전역 3계층만 적용; 빈 설정/조회 오류/표시명 오류/계정·제품 전환/긴 프롬프트를 검증한다.
+- 완료 기준 예시: G→P→RG→RP→AG→AP를 설정하면 Claude 시스템 채널 또는 Codex 본문에 동일 순서로 모두 전달된다. 역할 조회 SQL 실패는 빈 설정으로 처리되지 않고 AI 실행 전 재시도 가능한 실패가 된다.
+- 본문 전달은 모든 런타임의 시스템 역할 보장을 뜻하지 않는다. 파일 전달 옵션은 검토했으나 이번 변경은 기존 CLI·인증 설정을 유지하면서 누락 차단과 실전달 검증을 강화한다.
+- 검증 패널: backend/security/qa(API 및 SQL 조회 오류 계약) + toast 1줄 제거 UX/design 검토, 최대 3회. 최종 PASS. 공유 hot_paths: core compose_system_prompt, ai_tools claim/release/working, handler dispatch; composer.js 한 줄 삭제. 배포 포함(FIRST_REQUEST.md).
+- [x] 구현·단위/통합 회귀·검증 패널
+- [x] verify-completion PASS. 출하 단계(commit/push/PR/main/배포)의 최종 SHA·실행 결과는 해당 PR의 Git 동기화 결과와 배포 로그를 따른다.
+
 
 ## TASK-20260908T020000-delegation-friction — 테스트 수집 정본화
 
@@ -3326,3 +3348,13 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
 
 - [x] TASK-20260908T020000-delegation-friction: 최신 main ec913f94 합류 뒤 전체 8,059 PASS/16 skip/실패0, Bats69/도구24 및 독립107/check13 20 결과를 최종 원장에 기록했다. 실제 DQA 앱 사용자 흐름은 NOT-RUN으로 구분했다.
+
+## TASK-20260908T120000-connect-discovery-ux
+
+DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.
+
+- [x] 이번 TASK의 선택 위치 실행·플랫폼별 모델 협상·서버 수락 receipt·자동 복구 통합 구현 및 회귀 검증 완료. 설치기/배포 결과는 feature-0046 REPORT와 공동 TEST run 참조.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.
+
+- [x] PR #1619 병합, 서버 92cfa2c2 전체 배포·상태/서빙 확인, DQA 1.2.0 공개 및 실제 다운로드 크기/SHA-256 대조 완료.

@@ -42,8 +42,8 @@ def test_s1_strip_block_with_placeholder_keeps_diff():
     assert "attachment-edit" not in out          # 블록 태그 제거
     assert _BODY not in out                       # 전체 본문 미노출
     assert "```diff" in out                       # 변경점 diff 유지
-    assert "📎 수정본" in out                      # 명시 전달 문구
-    assert "orders.sql" in out and "v2" in out
+    assert "📎 수정본" not in out                      # 명시 전달 문구
+    assert "orders.sql" not in out and "전달했습니다" not in out
 
 
 def test_s2_strip_block_no_materialize_no_placeholder():
@@ -87,8 +87,7 @@ def test_s5_strip_multiple_blocks_all_removed():
     out = app._strip_attachment_edit_blocks(answer, materialized)
     assert "AAA_BODY_ONE" not in out and "BBB_BODY_TWO" not in out
     assert "attachment-edit" not in out
-    assert out.count("📎 수정본") == 2             # 첨부별 안내
-    assert "a.sql" in out and "b.csv" in out
+    assert out == ""  # 성공 첨부만 있는 답변은 파일 칩으로 전달
 
 
 def test_s6_strip_block_with_embedded_fence_no_leak():
@@ -104,13 +103,13 @@ def test_s6_strip_block_with_embedded_fence_no_leak():
     assert "SELECT secret" not in out
     assert "attachment-edit" not in out
     assert "```diff" in out                       # diff 보존
-    assert "📎 수정본" in out
+    assert "📎 수정본" not in out
 
 
 def test_s7_parse_block_with_embedded_fence_full_body():
     # parse 도 본문 내 ``` 를 포함한 전체 본문을 절단 없이 캡처(첨부 저장이 깨지지 않음).
     body = "line1\n```\nstill body\n```\nlast"
-    answer = '```attachment-edit\n{"source_attachment_id": 7}\n' + body + "\n```"
+    answer = '````attachment-edit\n{"source_attachment_id": 7}\n' + body + "\n````"
     blocks = app._parse_attachment_edit_blocks(answer)
     assert len(blocks) == 1
     assert blocks[0]["source_attachment_id"] == 7

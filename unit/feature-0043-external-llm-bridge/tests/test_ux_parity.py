@@ -334,24 +334,25 @@ def test_node_analysis_refuses_before_enqueue_only_when_nowhere_to_delegate(monk
 
     소스가 아니라 **판정 결과**를 본다: 게이트 함수를 실제로 돌려 세 경우를 모두 확인한다.
     """
-    import sys
+    import types
 
-    sys.path.insert(0, str(NODE_ANALYSIS.parents[2]))
-    from modules import node_analysis as na
+    namespace = {}
+    exec(_func_source(NODE_ANALYSIS, "_analysis_gate"), namespace)
+    na = types.SimpleNamespace(_analysis_gate=namespace["_analysis_gate"], delegation_possible=None)
 
     # (1) 서버 LLM 닫힘 + 위임할 곳 없음 → **거절**(종전 계약의 핵심은 여기서 유지된다)
     monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "")
-    monkeypatch.setattr(na, "delegation_possible", lambda who: False)
+    monkeypatch.setitem(namespace, "delegation_possible", lambda who: False)
     reason = na._analysis_gate("alice")
     assert reason, "위임할 곳도 없는데 통과시키면 잡마다 재시도를 태우고 실패로 끝난다"
 
     # (2) 서버 LLM 닫힘 + 연결된 AI 있음 → **진행**(제보된 결함이 고쳐진 지점)
-    monkeypatch.setattr(na, "delegation_possible", lambda who: True)
+    monkeypatch.setitem(namespace, "delegation_possible", lambda who: True)
     assert na._analysis_gate("alice") == "", "연결된 AI 가 있는데도 막고 있다"
 
     # (3) 게이트를 되돌린 운영 → 진행
     monkeypatch.setenv("AGENT_SERVER_LLM_ENABLED", "1")
-    monkeypatch.setattr(na, "delegation_possible", lambda who: False)
+    monkeypatch.setitem(namespace, "delegation_possible", lambda who: False)
     assert na._analysis_gate("alice") == ""
 
     # 두 진입점 모두 **그 판정 함수를 부른다**(한쪽만 고치면 스키마 단위 분석이 계속 막힌다).
@@ -716,9 +717,9 @@ def test_connect_page_promises_the_human_is_done_after_pasting():
     # ⚠ 문구가 또 바뀌었다(2026-09-07) — 붙여넣을 것이 없어졌으므로 약속의 주어도 바뀐다:
     #   「연결은 DQA 앱이 합니다」. 보조 경로(AI 가 판단합니다)는 **사라졌다**.
     #   약속 자체(사람이 할 일이 여기서 끝난다)는 그대로 남는다.
-    assert "연결은 <strong>DQA 앱</strong>이 합니다" in html, (
+    assert "DQA 앱에서 이 컴퓨터의 AI를 연결하세요" in html, (
         "주 경로에서 사람이 할 일의 끝을 말하지 않는다")
-    assert "그 창이 열립니다" in html, "끝난 뒤 무엇이 달라지는지 말하지 않는다"
+    assert "내 AI 실행" in html, "끝난 뒤 무엇이 달라지는지 말하지 않는다"
 
 
 def test_connect_page_is_a_single_flow():
@@ -905,7 +906,7 @@ def test_guide_tool_count_matches_exposed_surface():
     structural = len(re.findall(r'"([a-z_]+)"', p0 + p1))
     # 구조·SQL 도구 + 작업 3종(open_task/get_task_context/submit_answer)
     # + 브리지 4종(wait_for_request/list_open_requests/claim_request/read_task_attachment)
-    expected = structural + 3 + 4
+    expected = structural + 3 + 4 + 1  # get_tool_catalog
     guide = (WEB_SRC / "static" / "ai-api-guide.md").read_text(encoding="utf-8")
     assert f"({expected}종)" in guide, (
         f"가이드의 도구 수가 실제({expected}종)와 다르다")
@@ -1536,10 +1537,11 @@ def test_runner_puts_system_prompt_first():
     assert '"system": [_APPEND_SYSTEM_FLAG' in src, "claude 명세에 시스템 채널이 없다"
 
 
-def test_prompt_failure_does_not_block_the_answer():
-    """프롬프트 조립 실패가 답변을 막지 않는다 — 막으면 설정 하나가 서비스를 세운다."""
+def test_prompt_failure_cannot_silently_drop_configured_layers():
     body = _func_source(AI_TOOLS, "_bridge_system_prompt")
-    assert 'return ""' in body and "logging" in body, "조용히 실패하거나, 실패로 답변을 막는다"
+    assert "strict=True" in body and "raise RuntimeError" in body
+    claim = _func_source(AI_TOOLS, "claim_request")
+    assert '_json_err(503,' in claim and '_release_claim(conn, task_id, account_id)' in claim
 
 
 # ── ③ 첨부 ───────────────────────────────────────────────────────────────────

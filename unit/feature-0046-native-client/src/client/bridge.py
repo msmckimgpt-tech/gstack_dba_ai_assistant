@@ -45,6 +45,7 @@ from dataclasses import replace
 from typing import Callable
 
 from . import core, updater, version
+from .discovery import DiscoveryCache, state_json
 
 #: 브라우저가 «사설망 접근」 preflight 에서 요구하는 헤더. 없으면 최신 Chrome/Edge 가
 #: https 페이지의 127.0.0.1 요청을 차단한다(실측 2026-09-04: 이 헤더로 통과).
@@ -114,10 +115,16 @@ class Bridge:
         self.last_seen = time.monotonic()
         self._states: list[core.RuntimeState] = []
         self._runner_proc = None
-        self._connect_gate = threading.Lock()
         self._runner_lock = threading.Lock()
         self._runner_generation = 0
         self._stopping = False
+        self.discovery = DiscoveryCache(plan.home)
+        self._selected: dict[str, core.RuntimeState] = {}
+        self._retry_after: dict[str, int] = {}
+        self._selection_ids: dict[str, str] = {}
+        self._connect_lock = threading.RLock()
+        self._connection_session = ""
+        self._runner_ca = None
         #: 껍데기가 **알림 영역 아이콘이 지금 살아 있는가**를 답하는 함수. 패널의 안내 문구가
         #: 이 판정을 본다. 껍데기가 세워 주기 전까지는 `None` 이고, 그때 `resident` 는
         #: 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
@@ -241,7 +248,7 @@ class Bridge:
         result = fn(body)
         # ⚠ **끝난 뒤에** 알린다. 앞에서 알리면 실패한 시도까지 「실행했다」고 말하게 되고,
         #   그 알림은 사용자가 확인할 방법이 없는 소음이 된다.
-        if action in NOTIFIED and isinstance(result, dict) and result.get("ok"):
+        if action in NOTIFIED and isinstance(result, dict) and result.get("ok") and not result.get("already_connected") and not result.get("pending"):
             try:
                 self._notify(*_notice(action, body))
             except Exception:  # noqa: BLE001 — 알림 실패가 동작을 되돌리지 않는다
@@ -271,6 +278,7 @@ class Bridge:
         """
         with self._runner_lock:
             self._runner_generation += 1
+            self._selected.clear()
             proc = self._runner_proc
             if proc is None or proc.poll() is not None:
                 return False
@@ -394,25 +402,29 @@ class Bridge:
                 #   있는가**에 달렸다. 껍데기가 이 값을 세우고 패널은 그것만 본다 — 프런트가
                 #   스스로 추정하면 트레이 없는 머신에서 거짓을 말하게 된다(§P0-R).
                 "resident": bool(self.resident),
-                "connected": self.connected}
+                "connected": self.connected,
+                "connections": [state_json(st) for st in list(self._selected.values())
+                                if self._connection_state(st).get("state") == "ready"] if self.connected else [],
+                "connection_session": getattr(self, "_connection_session", ""),
+                "client_features": ["platform_connections", "discovery_cache", "wsl_accounts"]}
 
     def _do_discover(self, _body: dict) -> dict:
-        found: list[core.RuntimeState] = []
-        for name in core.RUNTIMES:
-            for loc in core.discover_runtime(name):
-                found.append(core.probe_runtime(name, where=loc.where, path=loc.path))
-        for st in found:
-            if st.logged_in:
-                core.verify_answers(st)
-        self._states = found
-        self._say(f"AI {len(found)}개를 찾았습니다.")
-        return {"ok": True, "runtimes": [_state_json(s) for s in found]}
+        result = self.discovery.discover(force=_body.get("force") is True,
+                                         background=_body.get("background") is True)
+        self._states = list(self.discovery.states)
+        return result
+
+    def _do_discovery_status(self, _body: dict) -> dict:
+        result = self.discovery.snapshot()
+        self._states = list(self.discovery.states)
+        return result
 
     def _do_login(self, body: dict) -> dict:
         st = self._pick(body.get("id"))
         if st is None:
             return {"ok": False, "error": "unknown_runtime"}
         ok, msg = core.login(st)
+        self.discovery.invalidate(st.label)
         self._say(msg)
         return {"ok": ok, "detail": msg}
 
@@ -452,23 +464,24 @@ class Bridge:
         return (self.plan, "") if self.plan.token else (None, "token")
 
     def _do_connect(self, body: dict) -> dict:
-        if not self._connect_gate.acquire(blocking=False):
-            return {"ok": False, "error": "connecting", "detail": "이미 연결 중입니다."}
-        try:
-            with self._runner_lock:
-                if self._stopping:
-                    return {"ok": False, "error": "stopping"}
-                generation = self._runner_generation
-            return self._connect_runner(body, generation)
-        finally:
-            self._connect_gate.release()
+        ident = body.get("id")
+        st = self._pick(ident)
+        if ident and (st is None or not st.usable):
+            return {"ok": False, "error": "unknown_runtime",
+                    "detail": "이 위치를 다시 확인해 주세요."}
+        with self._runner_lock:
+            generation = self._runner_generation
+        with self._connect_lock:
+            if self._stopping or generation != self._runner_generation:
+                return {"ok": False, "error": "cancelled"}
+            return self._connect_one(body, st, generation)
 
     def _runner_event(self, state: str, message: str) -> None:
         self._say(message)
         if state == "disconnected":
             self._notify("연결이 끊겼습니다", message)
 
-    def _connect_runner(self, body: dict, generation: int) -> dict:
+    def _connect_one(self, body: dict, st: core.RuntimeState | None, generation: int) -> dict:
         plan, why = self._plan_for(body)
         if plan is None:
             detail = ("연결 정보를 받지 못했습니다. 이 창에서 로그인한 뒤 다시 눌러 주세요."
@@ -476,11 +489,45 @@ class Bridge:
                       "웹 화면이 다른 서버를 가리켰습니다. 연결하지 않았습니다.")
             self._say(detail)
             return {"ok": False, "error": "no_" + why, "detail": detail}
-        st = self._pick(body.get("id"))
-        self._say("사내 CA 를 받는 중…")
-        ca = core.install_ca(plan)
-        self._say("러너를 받는 중…")
+        session = str(body.get("connection_session") or "")[:128]
+        ca = None
+        if session:
+            try:
+                ca = self._runner_ca if self._runner_active() and self._runner_ca else core.install_ca(plan)
+                verified = core.connection_identity(plan, ca)
+                if verified != session:
+                    raise ValueError("session mismatch")
+            except Exception:
+                return {"ok": False, "error": "session_invalid",
+                        "detail": "로그인 세션을 확인하지 못했습니다. 다시 로그인해 주세요."}
+        same_session = ((session and session == self._connection_session)
+                        or (not session and plan.token == self.plan.token))
+        if session and same_session and self._runner_active() and plan.token != self.plan.token:
+            try:
+                same_session = core.connection_identity(self.plan, ca) == session
+            except Exception:
+                same_session = False
+        with self._runner_lock:
+            if self._stopping or generation != self._runner_generation:
+                return {"ok": False, "error": "cancelled"}
+            if st and self._runner_active() and same_session:
+                previous = self._selected.get(st.name)
+                if previous and all(getattr(previous, k) == getattr(st, k)
+                                    for k in ("name", "where", "path", "distro", "user")):
+                    state = self._connection_state(st).get("state")
+                    if state == "failed":
+                        self._retry_after[st.name] = time.time_ns()
+                        self._write_selection(self._selected, changed_name=st.name)
+                    return {"ok": True, "already_connected": state == "ready",
+                            "pending": state != "ready", "id": st.label}
+                self._write_selection({**self._selected, st.name: st}, changed_name=st.name)
+                self._selected[st.name] = st
+                return {"ok": True, "pending": True, "id": st.label}
+        self._say("연결을 준비하는 중…")
+        plan = replace(plan, selection_file="")
+        ca = ca or core.install_ca(plan)
         runner = core.install_runner(plan, ca)
+        # 새 로그인은 기존 연결로 표시하지 않는다. 새 토큰 검증을 끝낸 뒤에만 교체한다.
         rc, out = core.check_connection(plan, runner, ca, st)
         if rc == 4:
             self._say("서버 연결은 정상인데 쓸 수 있는 AI 를 찾지 못했습니다.")
@@ -500,10 +547,73 @@ class Bridge:
         with self._runner_lock:
             if self._stopping or generation != self._runner_generation:
                 return {"ok": False, "error": "cancelled"}
-            self._runner_proc = core.spawn_runner(plan, runner, ca, st,
-                                                  on_event=self._runner_event)
-        self._say("연결됐습니다.")
-        return {"ok": True}
+            if st:
+                self._write_selection({st.name: st}, changed_name=st.name)
+                plan = replace(plan, selection_file=str(plan.home / "runtime-selection.json"),
+                               selection_instance=secrets.token_hex(16))
+            proc = core.spawn_runner(plan, runner, ca, st, on_event=self._runner_event)
+            if proc is not None and proc.poll() is not None:
+                return {"ok": False, "error": "runner_exited",
+                        "detail": "AI 연결이 종료됐습니다. 다시 연결해 주세요."}
+            self._runner_proc = proc
+            self._runner_ca = ca
+            self.plan = plan
+            self._connection_session = session
+            if st:
+                self._selected = {st.name: st}
+        self._say("모델을 확인하는 중…" if st else "연결됐습니다.")
+        return {"ok": True, "pending": bool(st), "id": st.label if st else ""}
+
+    def _runner_active(self):
+        return self._runner_proc is not None and self._runner_proc.poll() is None
+
+    def _connection_state(self, st):
+        if not self.connected:
+            if self._runner_proc is not None and self._runner_proc.poll() is None:
+                return {"state": "pending"}
+            return {"state": "failed", "detail": "AI 연결이 종료됐습니다. 다시 연결해 주세요."}
+        try:
+            path = self.plan.home / "runtime-selection.ready.json"
+            if path.stat().st_size > 262144: return {"state": "pending"}
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            row = doc.get("locations", {}).get(st.name, {})
+            target = {k: getattr(st, k) for k in ("path", "where", "distro", "user")}
+            if st.name in self._selection_ids:
+                target["selection_id"] = self._selection_ids[st.name]
+            if (doc.get("instance") == self.plan.selection_instance and row.get("target") == target
+                    and doc.get("pid") == getattr(self._runner_proc, "pid", None)):
+                if row.get("state") == "failed" and row.get("failed_at", 0) < self._retry_after.get(st.name, 0):
+                    return {"state": "pending"}
+                if row.get("state") == "ready" and self.discovery.preferences.get(st.name) != st.label:
+                    self.discovery.remember(st)
+                return row
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        return {"state": "pending"}
+
+    def _do_connection_status(self, body):
+        st = self._selected.get(str(body.get("name") or ""))
+        if st is None or st.label != body.get("id"):
+            return {"ok": False, "state": "failed", "detail": "연결할 위치를 다시 선택해 주세요."}
+        return {"ok": True, **self._connection_state(st)}
+
+    def _write_selection(self, selected, *, changed_name=None):
+        # 러너 하나에 위치를 원자적으로 전달한다. 새 플랫폼을 추가해도 기존 질문을 끊지 않는다.
+        import os
+        import tempfile
+        self.plan.home.mkdir(parents=True, exist_ok=True)
+        ids = {name: (secrets.token_hex(16) if name == changed_name or name not in self._selection_ids
+                      else self._selection_ids[name]) for name in selected}
+        fd, temp = tempfile.mkstemp(prefix=".runtime-selection-", dir=self.plan.home)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump({name: {k: getattr(st, k) for k in ("path", "where", "distro", "user")}
+                           | {"selection_id": ids[name]} for name, st in selected.items()}, stream, ensure_ascii=False)
+            os.replace(temp, self.plan.home / "runtime-selection.json")
+            self._selection_ids = ids
+        finally:
+            if os.path.exists(temp):
+                os.unlink(temp)
 
     def _pick(self, ident: str | None) -> core.RuntimeState | None:
         for st in self._states:
@@ -524,9 +634,7 @@ def _origin_of(base: str) -> str:
 
 
 def _state_json(st: core.RuntimeState) -> dict:
-    return {"id": st.label, "name": st.name, "where": st.where, "path": st.path,
-            "logged_in": st.logged_in, "answers": st.answers, "usable": st.usable,
-            "detail": st.detail, "can_login_here": st.can_login_here}
+    return state_json(st)
 
 
 def _notice(action: str, body: dict) -> "tuple[str, str]":

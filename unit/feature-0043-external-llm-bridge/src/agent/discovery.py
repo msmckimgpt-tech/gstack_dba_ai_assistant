@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 
 from .logs import _log
 from .runtimes import _CLI_ADAPTERS, _RUNTIME_SPECS, _WIN_EXEC_EXTS, _WIN_KNOWN_EXTS
@@ -199,6 +201,36 @@ def _is_wsl_path(exe: str) -> bool:
     return os.name == "nt" and isinstance(exe, str) and exe.startswith("/")
 
 
+def client_runtime_selection() -> dict | None:
+    """클라이언트가 확인한 위치만 사용한다. 손상된 선택 파일은 자동 탐색으로 우회하지 않는다."""
+    filename = os.environ.get("BRIDGE_RUNTIME_SELECTION")
+    if not filename:
+        return None
+    try:
+        with open(filename, encoding="utf-8") as stream:
+            raw = json.loads(stream.read(262145))
+        if not isinstance(raw, dict):
+            return {}
+        selected = {}
+        for name, row in raw.items():
+            if name not in _known_ai_names() or not isinstance(row, dict):
+                return {}
+            if row.get("where") not in ("windows", "wsl") or not row.get("path"):
+                return {}
+            for key in ("path", "distro", "user"):
+                value = row.get(key, "")
+                if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
+                    return {}
+            selection_id = row.get("selection_id")
+            if selection_id is not None and (not isinstance(selection_id, str)
+                                              or not re.fullmatch(r"[0-9a-f]{32}", selection_id)):
+                return {}
+            selected[name] = row
+        return selected
+    except (OSError, ValueError):
+        return {}
+
+
 def _which_ai(name: str) -> str | None:
     """AI CLI 하나를 찾는다 — **지정된 경로** → PATH → 표준 설치 위치 → WSL 안.
 
@@ -206,6 +238,9 @@ def _which_ai(name: str) -> str | None:
     양쪽에 있을 때 **어느 쪽을 쓸지 사용자가 이미 골랐기 때문**이다 — 연결 프로그램이 각
     후보에게 실제로 물어보고 답한 것만 고르며, 그 판단을 러너가 뒤집으면 안 된다.
     """
+    selected = client_runtime_selection()
+    if selected is not None:
+        return (selected.get(name) or {}).get("path")
     pinned = os.environ.get(f"BRIDGE_AI_PATH_{name.upper()}", "").strip()
     if pinned:
         return pinned
@@ -235,14 +270,27 @@ def _resolve_exe(argv: list[str]) -> list[str]:
     """
     if not argv:
         return list(argv)
-    exe = _which_ai(argv[0])
+    selected = client_runtime_selection()
+    target = (selected or {}).get(argv[0])
+    exe = (target or {}).get("path") if selected is not None else _which_ai(argv[0])
     if not exe:
+        if selected is not None and argv[0] in _known_ai_names():
+            raise FileNotFoundError("DQA에서 선택한 AI 위치를 확인할 수 없습니다.")
         return list(argv)
     # WSL 안의 실행 파일은 Windows 가 직접 띄우지 못한다 — `wsl.exe` 를 거친다.
     # 이 확장은 **런타임 종류를 바꾸지 않으므로** 능력 협상이 그대로 돈다(그것이 `--cmd`
     # 우회와 다른 점이고, 이 변경의 목적이다).
     if _is_wsl_path(exe):
-        return [_wsl_exe(), "-e", exe] + list(argv[1:])
+        prefix = [_wsl_exe()]
+        # 선택한 배포판·계정을 실제 질의와 능력 조회에도 동일하게 적용한다.
+        for option, field in (("-d", "DISTRO"), ("-u", "USER")):
+            value = (target.get(field.lower(), "") if target is not None else
+                     os.environ.get(f"BRIDGE_AI_WSL_{field}_{argv[0].upper()}", ""))
+            if value:
+                prefix += [option, value]
+        if len(prefix) > 1:
+            return prefix + ["--cd", "~", "-e", "bash", "-lc", 'exec "$@"', "dqa", exe] + list(argv[1:])
+        return prefix + ["-e", exe] + list(argv[1:])
     return [exe] + list(argv[1:])
 
 

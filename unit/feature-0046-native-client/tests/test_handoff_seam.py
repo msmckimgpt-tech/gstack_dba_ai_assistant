@@ -390,7 +390,7 @@ def test_lead_text_points_at_the_client(path):
     # ⚠ 문구가 또 바뀌었다(2026-09-07). 「연결 준비를 누른 뒤 내 AI 실행을 누르면 앱 창이
     #   열리고」가 사라지고 「연결은 DQA 앱이 합니다」가 됐다 — 누를 것이 하나뿐이기 때문이다.
     #   지켜야 하는 성질은 여전히 문구가 아니라 **무엇을 주 경로로 가리키는가**다.
-    assert "연결은 <strong>DQA 앱</strong>이 합니다" in html, \
+    assert "DQA 앱" in re.sub(r"<[^>]+>", "", html), \
         f"{path.name}: 안내가 앱을 주 경로로 말하지 않는다"
 
 

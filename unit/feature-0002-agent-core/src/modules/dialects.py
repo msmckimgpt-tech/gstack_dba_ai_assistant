@@ -1658,9 +1658,12 @@ class MSSQLDialect(Dialect):
         keyword = str(keyword or "").replace("'", "''")
         schema = str(schema or "").replace("'", "''")
         allow = _sql_str_list(allow_dbs)
-        db_filter = f"LOWER(st.database_name) IN ({allow})"
-        if schema:
-            db_filter += f" AND LOWER(st.database_name) = LOWER('{schema}')"
+        def database_filter(alias: str) -> str:
+            clause = f"LOWER({alias}.database_name) IN ({allow})"
+            if schema:
+                clause += f" AND LOWER({alias}.database_name) = LOWER('{schema}')"
+            return clause
+        db_filter = database_filter("st")
         # 주기 표현: sysschedules 는 freq_type 코드라 사람이 읽을 문자열로 환원한다.
         freq = """CASE sc.freq_type
                     WHEN 1 THEN '1회'
@@ -1690,11 +1693,12 @@ class MSSQLDialect(Dialect):
         ORDER BY st.step_id
     """
         kw = ""
+        keyword_db_filter = database_filter("k")
         if keyword:
             kw = (f" AND (j.name LIKE '%{keyword}%'"
                   f" OR ISNULL(j.description, '') LIKE '%{keyword}%'"
                   f" OR EXISTS (SELECT 1 FROM msdb.dbo.sysjobsteps k"
-                  f"            WHERE k.job_id = j.job_id AND ISNULL(k.command, '') LIKE '%{keyword}%'))")
+                  f"            WHERE k.job_id = j.job_id AND {keyword_db_filter} AND ISNULL(k.command, '') LIKE '%{keyword}%'))")
         return f"""
         SELECT TOP {_OBJ_ROWS_LIMIT}
             CAST(st.database_name AS NVARCHAR(128)) AS SCHEMA_NAME,

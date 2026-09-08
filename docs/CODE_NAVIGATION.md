@@ -198,3 +198,7 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | settings | `renderRuntimeTimeouts` · `renderModelThinkingBudgets` |
 
 **app.js(8,562줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일. fetch 라인에서 엔클로징 함수 역산: `awk 'NR<=<라인>' app.js | grep -n "^function\|^async function" | tail -1`.
+
+## 외부 AI 도구 catalog (2026-09-08)
+
+`/api/ai/tools/get_tool_catalog` → `routers/ai_tools.py:get_tool_catalog` → `src/external_tool_catalog.py:build_catalog`. 도구 실행은 `routers/ai_tools.py:run_structure_tool`; 서버 지침은 `_bridge_system_prompt`에서 `render_guidance`를 합성한다.

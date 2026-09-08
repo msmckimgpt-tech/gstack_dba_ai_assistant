@@ -331,7 +331,7 @@ def test_s1_strip_block_with_note():
     out = app._strip_attachment_new_blocks(answer, [{"original_filename": "improve.sql"}])
     assert "attachment-new" not in out
     assert body not in out                       # 전체 본문 미노출
-    assert "📎" in out and "improve.sql" in out  # 첨부 전달 안내
+    assert out == "개선안입니다."  # 파일 정보는 첨부 칩에만 표시
     assert "개선안입니다." in out
 
 

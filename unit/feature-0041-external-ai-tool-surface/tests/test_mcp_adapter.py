@@ -88,7 +88,7 @@ def test_error_bodies_are_defanged(codex_p2=True):
 def test_all_tools_registered_through_name_helper():
     """등록이 `_register(...)` 를 거쳐야 라벨 접미가 빠짐없이 적용된다."""
     source = _source()
-    tools = ["open_task", "get_task_context", "submit_answer",
+    tools = ["get_tool_catalog", "run_read_tool", "open_task", "get_task_context", "submit_answer",
              # feature-0043 (2026-08-26): 웹 대화 pull 브리지. 어댑터에 없는 도구는
              # 클라이언트에게 존재하지 않는 것과 같다(codex 리뷰 P1-1).
              "list_open_requests", "claim_request",
@@ -148,5 +148,5 @@ def test_http_errors_preserve_status_code():
 def test_every_tool_posts_and_carries_bearer():
     source = _source()
     # 정의 1 + 호출 14 (P0 9 + P1 execute_sql + 브리지 2 + 첨부 1 + 대기 1)
-    assert source.count("_post(") == 1 + 14
+    assert source.count("_post(") == 1 + 16  # catalog 조회와 범용 조사 전달
     assert 'Authorization": f"Bearer {_TOKEN}"' in source

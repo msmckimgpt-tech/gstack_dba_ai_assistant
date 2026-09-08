@@ -6,10 +6,7 @@
 #   1. main worktree 식별
 #   2. main 최신화 (git fetch + git pull --ff-only origin main) — stale base 차단
 #   3. git worktree add <project_root>/.worktrees/<feat> -b ai/<agent>/<feat>
-#   4. 종료 보고 — 호출 모드 분기:
-#      - inline mode (env CYCLE_INIT_FROM_ENTRY_PERSONA=1): AI 가 본 세션에서
-#        cd 후 Phase 6 진입 (AGENTS.md §13.2.1 P1 carve-out, v3.10.0+)
-#      - 직접 호출 (env 없음): 사용자가 새 Claude Code 세션을 worktree path 에서 시작
+#   4. 종료 보고 — AI 가 본 세션에서 생성한 worktree 를 작업 경로로 사용해 계속 진행
 #
 # 자동 진행 정책 (AGENTS.md §13.2 + §16.3 Step 6 정합):
 #   normal 경로 (main worktree 식별 + fetch/pull 성공 + worktree 생성 가능) 는
@@ -17,10 +14,8 @@
 #   이미 존재 + 충돌, worktree path 이미 존재 + 다른 branch) 는 자동 중단 +
 #   사용자 결정.
 #
-# Inline execution mode (v3.10.0+, AGENTS.md §13.2.1 P1 carve-out):
-#   env CYCLE_INIT_FROM_ENTRY_PERSONA=1 로 호출 시 종료 보고에 "AI 가 cd 후 본
-#   세션에서 Phase 6 진입" 안내 출력. entry persona arg-given dispatch 가 본 모드로
-#   호출한다. 직접 호출 (env var 없음) 은 기존 안내 (사용자가 새 세션 시작).
+# 호출 호환: CYCLE_INIT_FROM_ENTRY_PERSONA 값과 무관하게 같은 세션에서 계속한다.
+#   entry persona 와 직접 호출 모두 AGENTS.md §13.2 의 현재 위임 범위를 따른다.
 #
 # Usage:
 #   bash bin/cycle-init.sh --feature <feature-id>
@@ -119,7 +114,7 @@ command -v git >/dev/null 2>&1 || die "git not found in PATH."
 git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a git repository (cwd: $(pwd))."
 
 # main worktree = `git worktree list --porcelain` 의 첫 entry.
-MAIN_WORKTREE_PATH="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')"
+MAIN_WORKTREE_PATH="$(git worktree list --porcelain | awk '/^worktree / && !seen {print substr($0,10); seen=1}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed."
 MAIN_BRANCH="$(git -C "$MAIN_WORKTREE_PATH" symbolic-ref --quiet --short HEAD)" \
   || die "main worktree is detached; a named branch is required."
@@ -272,32 +267,18 @@ cat >&2 <<EOF
   mode:            $([ "$PRINT_ONLY" -eq 1 ] && echo "print-only" || ([ "$DRY_RUN" -eq 1 ] && echo "dry-run" || echo "executed"))
 EOF
 
-if [ "${CYCLE_INIT_FROM_ENTRY_PERSONA:-0}" = "1" ]; then
-  cat >&2 <<EOF
-
-Inline execution mode (entry persona dispatch — AGENTS.md §13.2.1 P1 carve-out):
-  AI 가 본 세션에서 다음 명령을 자동 진행합니다 — 사용자 추가 조치 불필요.
-
-    cd $NEW_WORKTREE_PATH
-
-  이후 entry persona Phase 6 (작업 실행) 으로 진입. cycle 종료 시
-  bin/cycle-finalize.sh 가 PR 머지 후 cleanup 자동 진행.
-EOF
+if [ "$DRY_RUN" -eq 1 ] || [ "$PRINT_ONLY" -eq 1 ]; then
+  log_info "모의 실행 — worktree 생성·검증 완료를 뜻하지 않습니다. 실제 실행 후 해당 경로에서 계속합니다."
 else
   cat >&2 <<EOF
 
-다음 단계 (사용자):
-  새 Claude Code 세션을 worktree path 에서 시작하세요 — AI 는 cwd 를 자율로
-  변경하지 않습니다 (AGENTS.md §13.2 P1 trigger).
+다음 단계 (AI — AGENTS.md §13.2):
+  본 세션에서 생성한 worktree 를 작업 경로로 사용해 위임된 작업을 계속합니다.
 
     cd $NEW_WORKTREE_PATH
-    claude   # 또는 사용하는 Claude Code 진입 명령
 
-  또는 진입 직후 다음 명령으로 entry persona 호출:
-    /_template:entry <작업 의도>
-
-  자동 inline execution 을 원하면 entry persona arg-given dispatch 로 호출하세요:
-    /_template:entry <작업 의도>  # mutation 신호 감지 시 본 흐름 자동 진행
+  각 도구 호출의 cwd/workdir 를 위 경로로 지정합니다. 새 세션 시작이나 동일 범위
+  재승인을 요구하지 않습니다. 검증·PR 준비가 끝나면 bin/cycle-finalize.sh 로 정리합니다.
 EOF
 fi
 

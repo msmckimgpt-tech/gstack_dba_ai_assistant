@@ -1,0 +1,26 @@
+[
+  {
+    "scenario": "desktop",
+    "pass": true,
+    "connected": 2,
+    "page_errors": []
+  },
+  {
+    "scenario": "mobile",
+    "pass": true,
+    "connected": 2,
+    "page_errors": []
+  },
+  {
+    "scenario": "standalone",
+    "pass": true,
+    "connected": 2,
+    "page_errors": []
+  },
+  {
+    "scenario": "failure",
+    "pass": true,
+    "connected": 0,
+    "page_errors": []
+  }
+]

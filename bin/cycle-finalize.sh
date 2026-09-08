@@ -114,7 +114,7 @@ SELF_BRANCH="$(git -C "$SELF_WORKTREE_PATH" branch --show-current)"
 # main worktree 식별 — `git worktree list --porcelain` 의 첫 entry.
 # 자기 자신이 main worktree 일 수도 있다 (그 경우 cleanup step 5 의 cwd 이동 불요).
 MAIN_WORKTREE_PATH="$(git -C "$SELF_WORKTREE_PATH" worktree list --porcelain \
-  | awk '/^worktree /{print substr($0,10); exit}')"
+  | awk '/^worktree / && !seen {print substr($0,10); seen=1}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed (git worktree list returned empty)."
 
 # ── target worktree override (v3.35.0) ────────────────────────────────────
@@ -599,9 +599,19 @@ if [ ! -f "$_CF_DONE_BOARD" ] && [ -f "$_CF_DIR/board.sh" ]; then
   _CF_DONE_BOARD="$_CF_DIR/board.sh"
 fi
 if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DONE_BOARD" ] && [ -n "$_CF_SID" ]; then
-  ( [ "$_CF_LEGACY_BINDING" -eq 1 ] || unset AGENT_BOARD_TOKEN
-    cd "$MAIN_REAL" && bash "$_CF_DONE_BOARD" done --sid "$_CF_SID" ) >/dev/null 2>&1 \
-    || log_warn "agent-board done 실패 — 세션이 직접 'bash bin/board.sh done --sid $_CF_SID' (§22.15)"
+  if _CF_DONE_OUTPUT=$( ( [ "$_CF_LEGACY_BINDING" -eq 1 ] || unset AGENT_BOARD_TOKEN
+    cd "$MAIN_REAL" && bash "$_CF_DONE_BOARD" done --sid "$_CF_SID" ) 2>&1 ); then
+    :
+  else
+    _CF_DONE_RC=$?
+    # This transition error is emitted only after the core authenticates the session.
+    if [ "$_CF_DONE_RC" -eq 3 ] && printf '%s\n' "$_CF_DONE_OUTPUT" | grep -Fxq 'board: transition:done->done'; then
+      log_info "agent-board 이미 완료 — 본인 세션 done 상태 확인."
+    else
+      log_warn "agent-board done 실패 — 세션이 직접 'bash bin/board.sh done --sid $_CF_SID' (§22.15)"
+    fi
+  fi
+  unset _CF_DONE_OUTPUT
 fi
 
 log_step "cycle-finalize 완료"

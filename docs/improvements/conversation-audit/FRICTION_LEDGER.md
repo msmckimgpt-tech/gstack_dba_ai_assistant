@@ -2620,3 +2620,29 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   `[` 는 문자 클래스 와일드카드라 보존이 오히려 예측 불가를 만든다(부분 일치로 여전히 매칭됨).
   단계의 `database_name` 이 빈 작업(CmdExec/PowerShell 등 OS 레벨)은 제품 경계 밖이라 계속 제외
   (fail-closed, by-design — 도구가 caveat 으로 고지).
+
+## FR-attachment-last-fence-captures-answer — fixed:deployed:unverified-live (L4↔L7)
+
+- Timestamp: 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea; source: 사용자 명시 감사 요청.
+- scope: …8c73806a, assistant 9240/9244 결과물; last_audited_message=9245; seen_count=1.
+- symptom/rootcause confidence: high. 명시 제보 + 저장 byte/SHA 대조 + 코드 재현.
+- root: `_conv_store.py::_attachment_block_spans` 마지막 bare fence 선택 → 후속 설명/diff 혼입. `conversations.py::_strip_attachment_*_blocks`의 파일별 완료 문장 자동 부착.
+- corroboration: 파일 6/10(60%), 두 응답. 단일 대화 명백한 구조 결함 국소 봉인. S=4 F=2 L=5 C=5 R=5; score=23; Minor.
+- refuted: 표시만의 오류(객체 byte 혼입/SHA 10/10), 모델이 설명을 파일 내부에 썼다는 가설(6개 모두 bare close→후속 설명→diff).
+- fix: TASK-20260908T150000-attachment-boundary, primary feature-0003-agent-web-ui. 첫 outer 닫힘·인용 비실행·자동 문구 제거·empty success 보존; 120 tests + 3 panel PASS.
+- 읽기/변경 경계: replica SELECT + MinIO GET, 운영 데이터 write 0. 기존 손상본 보존. 배포 구조 재현과 사용자 AI 마찰 재발률은 별도 측정.
+
+- FR-attachment-last-fence-captures-answer deployment update (2026-09-08T06:27:43.349266+00:00; Session 01a07f94-148f-7253-a515-1a7a66a97cea): PR #1629 / e8fd398b full deployment exit 0; 7 services 56 checks PASS; stored-file replay 10 SHA matches / 6 contaminated tails excluded. Original data unchanged. `unverified-live` means user AI re-generation / future recurrence is not yet measured, not an undeployed fix.
+
+## FR-external-tool-catalog-omits-core-introspection — fixed:deployed:unverified-live (L1↔L2↔L5)
+
+- source: 사용자 후속 명시 제보, 대화 …8c73806a core msg9248. seen_count1 / distinct_conv1. 30일 search_routines+404/미제공 assistant 언급 대화1.
+- symptom_confidence: high; rootcause_confidence: high. 내부 core 구현·외부 allowlist 누락·현재 HTTP 회귀 재현이 일치한다.
+- RC: routers/ai_tools.py P0_TOOLS(7노출)와 core prompt의 내부도구 지시 불일치, MCP/러너 목록을 따로 관리. 15정적+6조건부 중 8정적 도구 누락. 구조 결함이므로 단일 제보에서도 fix-now.
+- disposition: fix-now. F1/S4/C5/E2/R4. 조회5개 연결(명시적 허용 제품 내부), 나머지9개 제한/대체경로. 신규 인증/OAuth scope/RBAC 완화 없음.
+- 안전: 범위 없는 MySQL 검색/권한 회수 미반영/Agent 키워드 미허용 단계/EXPLAIN batch 검증 누락을 노출 전에 차단. 공백 schema·alias 포함 DB명 반례도 검증.
+- 실제 도구 호출: task6개 원장132호출. 404는 실행 전 반환으로 원장에 없고 코드+발언+HTTP 재현으로 확인. DB_NAME 차단은 의도된 가드로 기각, 대체 조회 안내.
+- fix: TASK-20260908T162000-tool-surface; primary feature-0003-agent-web-ui. TOOL_SURFACE_AUDIT.md 및 test-runs.d 정본.
+- 이전 첨부 수정 폐루프: 배포 이후 해당 대화 assistant 신규0. 재발/소멸 판정 불가, 기존 상태 유지.
+- live: PR1635/ca3fe660 7서비스 배포·56계약검사 PASS. 실계정 catalog200/미바인딩403/첨부대체404 확인. search_routines는 DB 연결 단계500(timeout); 기존 워커/호스트 TCP도 실패해 원래 도구누락404와 분리. 실제 DB 결과 및 새 AI 응답 미실측.
+- corroboration: 2026-09-08 17:19:22+09 SELECT, 이전 첨부 배포 이후·이번 도구 배포 이후 assistant 각0. 30일 관련 대화1 유지. 후속 표본 없음으로 verified 승격 불가.

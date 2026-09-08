@@ -75,8 +75,8 @@ sources:
 | 기능 ID | 상태 | 최종 갱신 | 정본(상세) | 최근 작업 요지 |
 |---|---|---|---|---|
 | feature-0001-platform-runtime | in-progress | 2026-07-28 | [TASK](../unit/feature-0001-platform-runtime/docs/TASK.md) | 엄격한 운영 시나리오(TEST-0003) 확정 + 라이브 실측 PASS — Completion Checklist 전건 충족 |
-| feature-0002-agent-core | in-progress | 2026-09-08 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료 |
-| feature-0003-agent-web-ui | in-progress | 2026-09-08 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료 |
+| feature-0002-agent-core | in-progress | 2026-09-08 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단 |
+| feature-0003-agent-web-ui | in-progress | 2026-09-08 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단 |
 | feature-0004-browser-automation | in-progress | 2026-07-28 | [TASK](../unit/feature-0004-browser-automation/docs/TASK.md) | 엄격한 브라우저 시나리오(TEST-0003) 확정 + 라이브 왕복·scheme 가드 PASS — Completion Checklist 전건 충족 |
 | feature-0005-qa-mcp | in-progress | 2026-07-28 | [TASK](../unit/feature-0005-qa-mcp/docs/TASK.md) | 엄격한 QA 시나리오(TEST-0003) 확정 + MCP 왕복·실 DB 메타데이터 반환 PASS — Completion Checklist 전건 충족 |
 | feature-0006-lan-proxy-access | in-progress | 2026-09-02 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 · _get_client_ip X-Forwarded-For conditional trust(SECURITY.md §9.7) · (06-17) 사내 자체 Root CA 신뢰 배포(self-signed 탈피)·caddy :443 정식 front door·테스터 Root C… (상세는 TASK) |
@@ -116,10 +116,10 @@ sources:
 | feature-0040-db-object-explorer | review |  | [TASK](../unit/feature-0040-db-object-explorer/docs/TASK.md) |  |
 | feature-0041-external-ai-tool-surface | in-progress | 2026-09-01 | [TASK](../unit/feature-0041-external-ai-tool-surface/docs/TASK.md) | P0 도구 9종 + P1 execute_sql + AC-7 답변 보존·열람 라이브 배포 완료(6cd45761) · POST-DEPLOY 10회 전건 PASS · 잔여 1건 — 사람 브라우저 인가 1회가 필요한 AC-1 e2e. 외부 사용자의 AI 가 자기 계정 LLM 으로 직접 추론하며 데이터소스·R… (상세는 TASK) |
 | feature-0042-analysis-dedup | done | 2026-08-14 | [TASK](../unit/feature-0042-analysis-dedup/docs/TASK.md) | 조사·검증 cycle 완결 — 런타임 코드 변경 0건, 산출물은 판정이다. 분석 워커 LLM 요청당 낭비(입력의 약 80%가 고정 시스템 프롬프트)를 회수할 수 있는지 실측 판정: batch 두 해석 전건 기각(Batches API — 전송경로 부재·구독형이라 할인가치 0·24h SLA 불일치 / 다… (상세는 TASK) |
-| feature-0043-external-llm-bridge | in-progress | 2026-09-08 | [TASK](../unit/feature-0043-external-llm-bridge/docs/TASK.md) | 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료 |
+| feature-0043-external-llm-bridge | in-progress | 2026-09-08 | [TASK](../unit/feature-0043-external-llm-bridge/docs/TASK.md) | 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단 |
 | feature-0044-qa-staging-pipeline | planned | 2026-08-27 | [TASK](../unit/feature-0044-qa-staging-pipeline/docs/TASK.md) | QA·라이브 분리 CI/CD 설계 rev.3 확정 (전제 13축 중 12축 결정 — SVN 안 A(매니페스트만)+파일서버 tar · docker save 릴레이 · 빌드 서버 이관 경로 · 로컬 LLM 전면 폐지로 GPU 불요, 단 임베딩 사내 MCP 이관이 QA 세팅 선행 조건). 구현 착수는 사용자 승인 대기 |
 | feature-0045-zd-bridge-continuity | review | 2026-08-27 | [TASK](../unit/feature-0045-zd-bridge-continuity/docs/TASK.md) | 웹브라우저–개인 AI 브리지가 연결된 상태에서 배포가 진행돼도 그 작업이 끊기지 않게 무중단 스파인을 재구성. 배경: feature-0043 전환으로 추론 주체가 개인 머신 AI 로 넘어가면서 사용자 작업이 WebAiTasks + 브리지 왕복 위에서 일어나게 됐는데, 배포 게이트는 여전히 active… (상세는 TASK) |
-| feature-0046-native-client | in-progress | 2026-09-08 | [TASK](../unit/feature-0046-native-client/docs/TASK.md) | 러너 복구 개선을 포함한 DQA 1.1.2 마상 브랜드 아이콘. 클라이언트·설치기 적용과 Windows 5개 표면 검증. 릴리스 상세는 TASK/REPORT 정본. |
+| feature-0046-native-client | review |  | [TASK](../unit/feature-0046-native-client/docs/TASK.md) |  |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 ### Worktree 확인

@@ -1,0 +1,18 @@
+[
+  {
+    "ProcessId": 48536,
+    "ParentProcessId": 8988,
+    "CreationDate": "/Date(1788840327698)/",
+    "ExecutablePath": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\runtime\\python.exe",
+    "argv_redacted": [
+      "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\runtime\\python.exe",
+      "C:\\Users\\mckim\\.dqa-connect\\bridge_agent.py",
+      "--base",
+      "<value>",
+      "--ca",
+      "<value>",
+      "--ai",
+      "<value>"
+    ]
+  }
+]
