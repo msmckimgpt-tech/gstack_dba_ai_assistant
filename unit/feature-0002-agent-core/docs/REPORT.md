@@ -781,3 +781,13 @@ P1 0, QA R3 P1/P2 0. Git 동기화·배포 결과는 이슈 #1598에 연결되�
 - 로컬 전체7485 PASS/28 skip, 옛 구획 assertion1건은 테스트 정합 후 해당suite19 PASS.
 - 전체ruff0, migrate-lint/head/code navigation PASS. GitHub runner는 billing 차단으로 미실행.
 - 최종 Git·배포 상태: PR #1599 본문에 기록(AGENTS §16.3 결과 기록의 PR 정본 허용).
+
+## TASK-20260908T120000-runner-update-recovery — 러너 경합·종료 복구
+
+단일 러너 빌더가 UTF-8 소스 본문의 SHA-256을 실행 코드 상수로 삽입한다. 자기 스탬프 행을 제외한 내용으로 검증하여 파싱 후 파일 교체 경합을 구분한다. Windows 줄바꿈 변환으로 지문이 달라지지 않도록 write_bytes로 출력한다.
+
+Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/교차 갱신 4개 조합 모두 **2/2 복귀**, 각 계정 생존 PID 1개 및 후속 요청 대기를 확인했다. 동시 감독 사례 다운로드 간격 3.43ms. Linux에서도 동일 4개 조합을 실제 프로세스로 검증한다.
+
+빌드 지문을 매번 디스크에서 읽는 뮤턴트는 `run.ready` A=2/B=1로 실패했다. 따라서 한 대만 복귀하는 회귀를 완료로 인정하지 않는다. 상세 결과·명령·한계는 `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+서버 배포와 설치기 채널 반입은 cycle 마무리 단계에 수행한다. 사용자의 기존 앱에 감독 기능이 들어가려면 **1.1.1 설치 후 재연결**이 필요하다. 이미 종료된 옛 러너는 서버 파일 교체만으로 소급 복구되지 않는다. 이번 실측은 실제 OS/실제 프로세스 + 격리 HTTPS 서버이며, 실제 사용자 AI 작업을 실행하거나 계정 15시간 단절의 전체 원인을 재현했다고 주장하지 않는다.

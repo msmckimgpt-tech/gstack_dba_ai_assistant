@@ -5976,3 +5976,10 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 세션이 필요하고 이 세션은 `.env` 자격증명 접근이 거부돼 있다(사용자 결정). 그 분기는 되살린
 행위 하네스가 `clientBridge = null` 로 실제 모듈을 구동해 잰다. 「무엇을 어디서 쟀는가」를
 뭉개지 않는다.
+
+## CHG-20260908T120000-runner-update-recovery
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.
+- 변경과 이유: 갱신 실패 시 사라진 1단계 명령을 가리키던 안내를 DQA 앱 업데이트 확인·최신본 설치·재연결로 교정한다. 동일 지문 관측만으로 낡은 실행 스크립트가 원인이라고 단정하던 문장도 제거한다.
+- 동반: 기존 테스트의 전역 app stub 누출·실제 CLI 탐지 누출·낡은 UI 문자열 범위 판정을 바로잡았다. native suite를 Makefile과 CI 양쪽에 등록했다.
+- 검증: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 되돌리기: 해당 cycle Git revert 후 서버 재배포; 앱 채널은 기존 1.1.0 재활성화 가능하나 이미 설치된 최신본은 자동 강등하지 않는다.

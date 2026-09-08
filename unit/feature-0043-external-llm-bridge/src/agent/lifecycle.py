@@ -25,14 +25,14 @@ from .conf import load_conf, save_conf
 from .discovery import _no_ai_message, pick_ai
 from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_SELFUPDATE, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
 from .handler import handle_one
+from .events import RUNNING_BUNDLE_PATH
 from .identity import init_runner_instance
 from .invoke import _ensure_strict_mcp_supported
 from .logs import _RUN_T0, _STATS, _audit_path, _human_log_path, _log, _log_exc, log_event
 from .pool import ActiveTasks, WorkerPool
 from .runtimes import _RUNTIME_SPECS
 from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
-                         fetch_deployed_agent, install_agent_file, reexec_self,
-                         running_bundle_path)
+                         fetch_deployed_agent, install_agent_file, reexec_self)
 from .state import ai_health, note_ai_probing, prev_runner_instance, runner_instance
 from .timing import _CAPS_BASELINE_WAIT_SEC, _CAPS_RETRY_BACKOFF_SEC, _CAPS_RETRY_CEILING_SEC, _CAPS_RETRY_CEILING_SHOWING_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
@@ -114,6 +114,7 @@ _CAPS_NEGOTIATING: list = [False]
 #: 선택(`--no-self-update`)을 함께 판정해 세운다. 신고(`self_update` feature)와 **같은 값**이다:
 #: 못 하면서 신고하면 화면이 오지 않을 갱신을 기다린다.
 _SELF_UPDATE_OK = [False]
+_SELF_UPDATE_BUNDLE = [RUNNING_BUNDLE_PATH]
 
 
 def _log_run_stop(reason: str = "exit") -> None:
@@ -422,7 +423,7 @@ def try_self_update(api: Api, active: ActiveTasks) -> bool:
     # 신호는 여기서 내린다 — 실패해도 다음 하트비트가 다시 세운다(재시도는 그 주기를 탄다).
     _SELF_UPDATE.clear()
     mine = _self_build()
-    path = running_bundle_path(mine)
+    path = _SELF_UPDATE_BUNDLE[0]
     if not path:
         # 단일 파일이 아니다(개발 트리) — 여기까지 오면 안 되지만, 판정을 한 번 더 한다.
         return False
@@ -460,7 +461,7 @@ def try_self_update(api: Api, active: ActiveTasks) -> bool:
         log_event(_EV_SELFUPDATE, "재시작에 실패했습니다 — 러너를 종료합니다"
                                   "(다음 실행부터 최신본이 뜹니다).",
                   level="ERROR", phase="reexec", new_build=new_build)
-        raise SystemExit(0) from None
+        raise SystemExit(1) from None
     return True
 
 
@@ -657,7 +658,7 @@ def main() -> int:
     # 화면은 그 말을 믿고 조치 요구를 감춘 채 **오지 않을 갱신**을 기다린다. 신고와 실제
     # 능력을 같은 식으로 세워 그 괴리를 구조적으로 없앤다.
     _SELF_UPDATE_OK[0] = (not getattr(args, "no_self_update", False)
-                          and bool(running_bundle_path(_self_build())))
+                          and bool(_SELF_UPDATE_BUNDLE[0]))
     if not _SELF_UPDATE_OK[0]:
         _feats = [f for f in _feats if f != "self_update"]
     api.features = tuple(_feats)

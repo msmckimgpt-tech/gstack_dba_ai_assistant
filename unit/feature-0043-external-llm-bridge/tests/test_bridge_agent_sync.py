@@ -201,6 +201,7 @@ def test_runner_has_no_third_party_imports():
 
     tree = ast.parse(CANON.read_text(encoding="utf-8"))
     stdlib = {
+        "contextlib", "msvcrt", "fcntl",
         "argparse", "json", "os", "shlex", "ssl", "subprocess", "sys",
         # 2026-08-28 P0-Z4: AI 가 답한 모델·등급 **값의 모양**을 검사한다
         # (내용이 아니라 모양만 — 어떤 모델이 있는지는 그 AI 의 소관이다).
@@ -262,6 +263,7 @@ def test_runner_does_not_poll():
     # 연결 복구 · 배포 교대 · 워커 포화 배압 · 점유 실패 배압 · 제출 재시도.
     allowed = {
         "time.sleep(backoff)",                                        # 연결 복구 백오프
+        "time.sleep(0.05)",                                          # 설치 파일 락 경합(상한 10초)
         "time.sleep(_DRAINING_RETRY_FLOOR_SEC)",                      # 배포 교대 / 워커 포화
         "time.sleep(_RECONNECT_BACKOFF_START)",                       # 제출 1회 재시도
         "time.sleep(min(_RECONNECT_BACKOFF_MAX, "

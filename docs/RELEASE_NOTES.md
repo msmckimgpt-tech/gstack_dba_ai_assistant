@@ -265,3 +265,10 @@ edit_policy: append-only
 
 ### 정본
 - `unit/feature-0016-metadata-graph/docs/*`(§57.4~9·§60~76, feature-local ADR-026~037) · `unit/feature-0003-agent-web-ui/docs/*`(ask-timeout-nonblocking·graph-toolbar) · `unit/feature-0002-agent-core/docs/*`(mssql-auth-cooldown §12.3·§69 node-analysis 코드 거주).
+
+## 2026-09-08 — 러너 동시 갱신 복구 / DQA Connect 1.1.1
+
+- 같은 머신의 러너들이 공유 파일을 동시에 갱신해도 완성된 파일로 교체하고 각각 새 빌드로 돌아오도록 수정했다.
+- 앱이 띄운 러너가 비정상 종료되면 최대 5회 백오프로 재기동한다. 자동 복구 실패와 정상 종료는 연결 단절을 알리고, 사용자가 연결을 끊으면 재시도를 취소한다.
+- 갱신 실패 안내가 없어진 터미널 명령 대신 앱 업데이트와 재연결을 안내한다.
+- 기존 앱 사용자는 앱에서 업데이트 확인 후 **1.1.1 설치·재연결**이 필요하다. 서버 배포만으로 이미 죽은 구 러너가 다시 뜨지는 않는다.

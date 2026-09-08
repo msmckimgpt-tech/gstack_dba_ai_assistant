@@ -779,3 +779,12 @@ Windows 는 실행 중인 exe 를 잠근다. 그래서 순서가 **설치기 기
 `src/scripts/build_client.py` — PyInstaller `--onedir --windowed` + 임베더블 CPython 동봉 +
 Inno Setup 설치기(§P0-J). **Windows 에서 실행해야 한다**
 (크로스 컴파일 불가). 소스는 커밋, **배포본은 빌드 생성물**(러너와 같은 규약).
+
+## REQ-20260908-runner-update-recovery — 동시 갱신과 종료 복구
+
+설치 시 직접 덮어쓰기를 없애고 러너와 같은 임시파일·fsync·replace·sidecar 락 규약을 적용한다. 자기가 띄운 러너를 감독하여 1/2/4/8/16초 백오프로 최대 5회 재기동한다. 60초 이상 정상 생존하면 예산을 재설정한다. 정상 종료 또는 복구 소진은 연결 단절 알림, 명시적 연결 해제·앱 종료는 재기동 취소다. stdout/stderr를 계속 비워 파이프 막힘과 파싱 전 오류 유실을 방지한다.
+
+- AC-RUR-1: 동일 경로를 쓰는 두 실제 러너가 동시 갱신 및 교차 갱신 후 각각 새 빌드로 복귀한다. 계정별 생존 프로세스는 정확히 1개이며 요청 대기가 계속된다.
+- AC-RUR-2: 파싱 전 실패도 감독이 종료를 감지한다. 유한 백오프, 정상 종료 알림, 명시적 해제 후 재기동 0을 검증한다.
+- AC-RUR-3: 기존 HTTPS/CA/고정 다운로드 경로/크기·문법·해시 검사와 토큰 환경변수 전달 계약을 유지한다. 앱 설치기 적용 확인 계약은 유지한다.
+- 정본 실측: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
