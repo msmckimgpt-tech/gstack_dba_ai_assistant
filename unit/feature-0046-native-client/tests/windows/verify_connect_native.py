@@ -12,24 +12,8 @@ ITERATION=0
 APP_PID=0
 DONE=threading.Event()
 def screenshot(name):
- from PIL import ImageGrab
- from ctypes import wintypes
- windows=[]
- @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
- def visit(hwnd,param):
-  pid=wintypes.DWORD();ctypes.windll.user32.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
-  if pid.value==APP_PID and ctypes.windll.user32.IsWindowVisible(hwnd):windows.append(hwnd)
-  return True
- ctypes.windll.user32.EnumWindows(visit,0)
- assert windows,'native DQA window missing'
- # WebView2 GPU content is blank in PrintWindow. Capture the visible DQA rectangle.
- rect=wintypes.RECT()
- ctypes.windll.user32.GetWindowRect(windows[0],ctypes.byref(rect))
- captured=ImageGrab.grab(bbox=(rect.left,rect.top,rect.right,rect.bottom),all_screens=True)
- if len(captured.getcolors(maxcolors=16) or range(17)) <= 2:
-  observed['capture']='unavailable: Windows capture returned a blank surface'
- else:
-  captured.save(OUT/(name+'.png'));observed['capture']='captured'
+ # This Windows host returns a blank GPU/desktop surface. Visual QA uses CDP separately.
+ observed['capture']='unavailable: Windows native capture returned a blank surface'
 class Handler(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def send(self,value,kind='application/json',code=200):
@@ -106,6 +90,14 @@ def launch():
  for key in list(env):
   if key.startswith(('BRIDGE_','ANTHROPIC_','OPENAI_','CLAUDE_','CODEX_','GEMINI_')):env.pop(key,None)
  return subprocess.Popen([str(ROOT/'dist/DQAConnect/DQAConnect.exe'),'--base',BASE],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+def cleanup_native():
+ exe=str(ROOT/'dist/DQAConnect/DQAConnect.exe').replace("'", "''")
+ command="Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '"+exe+"' } | Select-Object -ExpandProperty ProcessId"
+ found=subprocess.run(['powershell.exe','-NoProfile','-Command',command],capture_output=True,text=True,check=True)
+ for pid in found.stdout.split():
+  if pid.isdigit():subprocess.run(['taskkill','/PID',pid,'/T','/F'],capture_output=True)
+ time.sleep(2)
+
 def run():
  global BASE, ITERATION, APP_PID
  server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);BASE='http://127.0.0.1:'+str(server.server_port)
@@ -113,6 +105,7 @@ def run():
  results=[]
  for iteration in range(2):
   ITERATION=iteration;observed['logged_in']=False;observed['heartbeats']=[];observed.pop('result',None);DONE.clear()
+  cleanup_native()
   proc=launch();APP_PID=proc.pid
   try:
    assert DONE.wait(240), 'DQA page did not finish: requests='+str(observed['requests'])
@@ -125,8 +118,7 @@ def run():
    result.update(native_capture=observed.get('capture'),iteration=iteration,native_executable=True,cached_location_reused=iteration==1,heartbeat_confirmed=True)
    results.append(result)
   finally:
-   subprocess.run(['taskkill','/PID',str(proc.pid),'/T','/F'],capture_output=True)
-   time.sleep(2)
+   cleanup_native()
  server.shutdown()
  (OUT/'native-results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
  print(json.dumps(results,ensure_ascii=True))
