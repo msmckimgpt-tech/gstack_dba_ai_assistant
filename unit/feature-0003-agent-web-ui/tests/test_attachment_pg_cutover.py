@@ -289,8 +289,20 @@ def test_d1_backfill_param_mapping_and_id_preserved():
 
 
 def test_d2_backfill_idempotent_do_nothing():
-    # backfill 은 dual-write 가 이미 넣은 행을 덮지 않도록 DO NOTHING.
-    assert "ON CONFLICT (id) DO NOTHING" in bf._PG_UPSERT_ATTACH
+    """backfill 은 dual-write 가 이미 넣은 행을 덮지 않는다.
+
+    REQ-20260908-attach-folder-tree (§18.8 backend [P1]): `core_attachments` 만 **한 컬럼**
+    예외를 갖는다 — `relative_path` 가 비어 있을 때만 채운다. 그 컬럼이 생기기 전에 들어온
+    행은 순수 DO NOTHING 이면 재실행으로도 영영 NULL 로 남고, read backend 를 PG 로 돌리는
+    순간 cutover 이전 폴더가 통째로 평면 목록이 된다. `COALESCE` 라 이미 값이 있는 행은
+    건드리지 않으므로 「덮지 않는다」는 성질 자체는 유지된다.
+    """
+    # 다른 컬럼은 여전히 보존 — UPDATE 절이 relative_path **하나만** 건드린다.
+    assert "ON CONFLICT (id) DO UPDATE SET" in bf._PG_UPSERT_ATTACH
+    _set_clause = bf._PG_UPSERT_ATTACH.split("DO UPDATE SET", 1)[1]
+    assert _set_clause.count("=") == 1, f"경로 외 컬럼도 덮어쓴다: {_set_clause}"
+    assert "relative_path = COALESCE(" in _set_clause
+    # 부속 테이블은 종전 그대로 순수 DO NOTHING.
     assert "ON CONFLICT (id) DO NOTHING" in bf._PG_UPSERT_DERIVED
     assert set(bf._TABLE_ORDER[:1]) == {"core_attachments"}  # FK 의존성: 첨부 선행
 

@@ -6033,6 +6033,125 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - **검증**: 재생 후 버려진 제목 19건(전부 도구 표기) · 버려진 사유 **0건** · 잔존 유출 **0건**.
   `docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`.
 - **되돌리기**: 데이터 변경 0 — git revert 후 web 재배포하면 종전 표시로 즉시 복귀한다.
+
+## CHG-20260908T124500-attach-folder-tree
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree (REQ-20260908-attach-folder-tree).
+- 첨부 전달의 단위를 **파일**에서 **폴더(디렉토리 트리)** 로 넓히고, 그 구조를 저장·표시·프롬프트
+  세 면에서 보존한다. 사용자 요청(2026-09-08).
+
+### 스키마 (additive · 기존 데이터 무손실)
+
+- `routers/_bootstrap_schema.py`: `WebConversationAttachments` CREATE 에 `RelativePath VARCHAR(1024) NULL`
+  추가 + 신규 `_ensure_attachment_relative_path_schema` (컬럼 존재 선확인 → `ALTER … ALGORITHM=INPLACE,
+  LOCK=NONE`, 실패는 error 로그로 표면화). **fast path(`_ensure_seed_catchup`)·slow path
+  (`_ensure_web_tables`) 양쪽 배선** — 운영 재기동은 slow path 를 안 타므로 fast 누락 시 컬럼이 영영 안 생긴다.
+- `alembic/versions/20260908_0059_attachment_relative_path.py` (+ `MAX_MIGRATION.txt`),
+  `scripts/agent_runtime_schema.sql`: PG `agent_runtime.core_attachments.relative_path varchar(1024)`.
+- `modules/attachment_pg_mirror.py`: dual-write 3면(MySQL SELECT 계약 · PG alias · UPSERT/params).
+
+### shared
+
+- **신규** `shared/attachment_path.py` — 경로 정규화·체인 키·트리 렌더의 단일 정본(web·agent-core 공용).
+  traversal(`..`)·절대경로·드라이브 접두·제어문자 제거, 깊이 32·길이 1024 상한, **파일명이 권위**
+  (경로 마지막 세그먼트를 업로드된 파일명으로 고정).
+
+### 백엔드 (feature-0003)
+
+- `routers/conversations.py`: 업로드가 `relative_path` 폼 필드 수용 → 정규화 → INSERT.
+  체인 조회에 경로 전달.
+- `routers/_conv_store.py`: `_find_latest_same_name_attachment` 스코프를
+  `(conv, account, RelativePath 또는 OriginalFilename)` 로 확장 — **경로 있는 행과 없는 행은 섞이지 않는다**.
+  assistant 편집본 INSERT 와 fork 복사가 원본 경로를 승계. `_serialize_attachment_for_api` 에 `relative_path`.
+- 첨부 표준 컬럼셋 SELECT 8곳에 `RelativePath` 추가.
+
+### 프론트 (feature-0003)
+
+- `static/index.html`: `+` 메뉴에 "폴더 첨부" 항목 + `#attachDirInput`(`webkitdirectory`).
+- `static/app/composer.js`: 업로드 파이프라인을 `(File, relativePath)` 쌍으로 일반화
+  (`_toAttachUploadItem`), 드롭 디렉토리 **재귀 순회**(`_collectDroppedUploadItems` — `readEntries` 를
+  빈 배열까지 반복해 큰 폴더의 뒷부분 유실 방지), 300개 상한(초과 시 **자르지 않고 멈춤**),
+  dedup 축에 경로 포함, pill 폴더 배지, 배치 요약을 "폴더 N개(파일 M개)" 로.
+- `static/css/chat.css`: `.pill-folder`.
+
+### assistant (feature-0002)
+
+- `agent_core.py`: 첨부 SELECT 2곳(PG/MySQL)에 경로를 **끝에 append**(row[14] — 기존 positional index 보존),
+  파일 라인에 `path="..."`, 순회 후 `## DIRECTORY STRUCTURE OF ATTACHED FOLDERS` 블록 1회 렌더
+  (**폴더 첨부가 있을 때만** — 없으면 종전 출력과 동치). `read_attachment` 가 경로로 파일을 지칭
+  (경로 정확 → 이름 정확 → 경로 접미 → 이름 부분), 다중 후보 안내에 경로 표기.
+- `modules/tools.py`: `read_attachment` 도구 설명·`filename` 파라미터가 경로 수용을 명시.
+
+### 테스트
+
+- **신규** `unit/feature-0002-agent-core/tests/test_attach_folder_tree.py` (22건),
+  `unit/feature-0003-agent-web-ui/tests/test_attach_folder_upload.py` (10건).
+- `test_attachment_versioning.py`: INSERT 바인딩 **위치 하드코딩**(`ins[10]`)을 내용 기반 조회
+  (`_meta_json_param`)로 교체 — 컬럼이 늘 때마다 무관한 테스트가 깨지던 취약성을 제거(이번에 실제로 깨졌다).
+
+## CHG-20260908T133000-attach-folder-tree-panel-fixes
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree · REV-20260908T133000-attach-folder-tree.
+- §18.8 full panel 적발분 반영 (P1 3 · P2 10 · P3 5). 상세 근거는 REVIEW entry.
+
+### 보안 (프롬프트 경계)
+
+- `agent_core.py`: 트리 블록 구획을 **마크다운 펜스 → datamark sentinel**(`_datamark_untrusted`)로
+  교체하고, 세그먼트·라벨을 `_flatten_untrusted_name` + 백틱 중화로 정제. `path="…"` 라벨도 동일
+  정제 + 따옴표 치환. 컬럼 부재 시 **경로 없이 재조회**하는 degrade 폴백(첨부 섹션 소실 차단).
+- `shared/attachment_path.py`: `filename` 권위 override 가 `.`/`..` 를 되살리던 경로 차단.
+
+### 방어 위치
+
+- `routers/_conv_store.py`: `_attachment_count_cap()`(기본 1000, `ATTACHMENT_MAX_COUNT_PER_CONV`)
+  신설 + 기존 conv 집계에 `COUNT(*)` 를 얹어 대화당 첨부 **개수** 상한을 서버에서 집행
+  (300 상한이 클라이언트에만 있어 API 직접 호출로 우회되던 것).
+
+### 프론트 (사용자가 실제로 보는 것)
+
+- `app/composer.js`: 계보 그룹 키를 경로 기반으로(백엔드 체인 스코프와 동일 술어) ·
+  **서버 목록 행에 폴더 칩** + 마지막 2단 표기 · 드롭 순회 진행 토스트 · 열거 상한 ·
+  잠금 검사를 순회 앞으로 · 파일 input 게이트 일치 · 상한 문구 통일 · 배치 요약에 실패 사유 ·
+  낱개/폴더 분리 집계 · 서버의 경로 거절을 화면이 덮던 폴백 교정 · pill DOM 순서(이름·폴더·크기).
+- `routers/conversations.py`: 목록 정렬 1차 키에 디렉토리 추가(같은 폴더 파일이 붙어 선다).
+- `css/chat.css`: `.pill-folder` `flex: 0 1 auto`(초판 `0 0 auto` 는 파일명을 먼저 잘랐다) ·
+  `--muted`(미정의 토큰) → `--text-2` · `.attach-list-item-folder` 폭 상한 + 줄바꿈 방지
+  (실 캡처에서 긴 칩이 행 버튼을 밀어 행 높이가 갈리던 것).
+- `index.html`: 드롭 오버레이·컴포저 안내·`+` aria-label 에 폴더 반영.
+
+### 프롬프트 예산
+
+- `agent_core.py`: `_ATTACHMENT_TREE_MAX_LINES`(200, env 조정) — 초과 시 디렉토리 단위로 접고
+  파일 수를 남긴다. `shared/attachment_path.render_directory_tree` 에 `max_lines` + 동명 leaf
+  dedup(`(N versions/lineages)`) 추가.
+
+### 테스트
+
+- `test_attach_folder_tree.py` +8건 (`PanelFindingsRegressionTest`·`SharedHelperHardeningTest`) —
+  펜스 탈출·개행 주입·라벨 위조·중복 leaf·트리 상한·경로 예외 문구·override traversal·접힘 관측성.
+  각 항목이 결함의 **기전**을 겨냥한다(§16.7 G10 — 점수정이 아니라 구조로 잠근다).
+
+## CHG-20260908T140000-attach-folder-tree-backend-round
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree · REV-20260908T133000-attach-folder-tree (라운드 2).
+- §18.8 backend·qa 렌즈 적발분 (P1 3 · P2 8 · P3 2). 뮤테이션 테스트가 「통과하는데 비어 있던」
+  구간을 드러냈다 — 상세 근거는 REVIEW 라운드 2.
+
+- `agent_core.py`: `_load_scoped_attachment_rows` 에 컬럼 부재 degrade 폴백(형제 함수와 동형).
+- `scripts/attachment_backfill.py`: PG 계약 4면 배선 + `ON CONFLICT` 가 **빈 경로만** 치유
+  (`COALESCE` — 기존 행 보존 멱등은 유지). docstring 정합.
+- `shared/attachment_path.py`: 깊이·길이 상한 초과를 **폐기 → 꼬리 보존**
+  (`…/en/messages.json`). 폐기하면 형제 파일이 한 체인으로 합쳐져 supersede 된다.
+- `routers/_conv_store.py`: `_load_filename_lineage_heads` 스코프를 경로 기반으로 ·
+  개수 캡을 live head(`SupersededAt IS NULL`) 기준으로.
+- `routers/attachments.py`: `/versions` 가 경로 스코프로 조회하고 `lineages[].relative_path` 노출.
+- `routers/conversations.py`: 일괄 다운로드 SELECT 에 경로 + `_zip_entry_name` 이 디렉토리 보존
+  (세그먼트별 zip-slip 방어 동반).
+- `routers/_bootstrap_schema.py`: ALTER 실패 로그 문구를 실제 blast radius(전 첨부 API 500)로 정정.
+- `static/app/composer.js`: `_mergeServerRelativePath` 헬퍼로 서버 경로 권위를 **3 병합 지점 전부**에
+  적용(초판은 1곳만 고쳐 lazy 생성·staged flush 가 마스킹을 유지했다).
+- 테스트 +12건 (`read_attachment` 경로 해소 4 · backend 적발분 회귀 7 · 상한 계약 재작성 1) —
+  신규 총 **52건**.
 ## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
 - Timestamp: 2026-09-08T12:34:00+09:00
 - Related TASK: TASK-20260908T120000-connect-discovery-ux
