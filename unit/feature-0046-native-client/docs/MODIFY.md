@@ -890,3 +890,7 @@ edit_policy: append-only
 ## CHG-20260908T024500-brand-merge-evidence
 - Related TASK: TASK-20260908-brand-icon
 - #1609/#1610 후속 문서 병합 결과를 기록한다. 16c5818a와 11fa3741 고정 부모 각각의 문서 제목·추가 파일 유실 0. 클라이언트 배포 소스는 Windows 실측 1.1.2와 동일하며 변경 웹 계약 검사 86건 PASS.
+
+## CHG-20260908T024700-brand-published
+- Related TASK: TASK-20260908-brand-icon
+- PR #1608 병합 및 1.1.2 라이브 릴리스 완료. TASK/REPORT/검증 기록·릴리스 노트에 실제 엣지 다운로드 200, 26,023,355 bytes, 검증 빌드와 SHA-256/byte 동일을 기록했다. 코드·아이콘 자산 변경 없음.
