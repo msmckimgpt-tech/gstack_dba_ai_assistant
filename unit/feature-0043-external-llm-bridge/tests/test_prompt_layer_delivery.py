@@ -80,7 +80,9 @@ def compose_bridge(monkeypatch):
     path = UNIT / "feature-0003-agent-web-ui/src/routers/ai_tools.py"
     tree = ast.parse(path.read_text())
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_bridge_system_prompt")
-    namespace = {"logging": logging}
+    namespace = {"logging": logging, "_tool_catalog": lambda: {
+        "tools": [], "restricted": {}, "sql_policy": "", "attachment_policy": ""}}
+    # 도구 catalog 경계는 test_external_tool_catalog에서 실제 라우터로 별도 검증한다.
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
     monkeypatch.setattr(agent_core, "_folder_instructions_for", lambda *args: "")
     return namespace["_bridge_system_prompt"]

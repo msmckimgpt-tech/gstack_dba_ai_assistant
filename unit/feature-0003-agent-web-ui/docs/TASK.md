@@ -12,6 +12,31 @@ feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 
 
 # Task
 
+
+## TASK-20260908T162000-tool-surface — 외부 AI 도구 누락과 계약 불일치
+
+- 요청: 같은 GZR 대화의 search_routines HTTP404 및 각 도구 사용 제한 확인·개선. source core message 9248, conversation …8c73806a. 내부 원문/식별 데이터 미전재.
+- 위험: 기존 인증된 읽기 도구 표면에 검색·정의 조회를 연결하는 내부 API 개선. 제품/DB 허용범위, SQL readonly/행수/운영 스위치 유지. 새 자격증명·쓰기·권한 확대 없음. 노출 전 발견한 범위 누출·EXPLAIN batch 가드 누락을 차단한다.
+- 승인 근거: 현재 사용자가 도구별 제한 조사와 개선을 직접 위임. 기존 허용 제품 내 조회 지원이며 사용자 권한·데이터소스 바인딩 변경은 하지 않는다.
+- 작업: .worktrees/feature-0003-agent-web-ui; ai/codex-tool-audit/feature-0003-agent-web-ui; base 2dede457; AGENTS SHA a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2.
+
+### 2.1 Implementation Plan
+
+1. routers/ai_tools.py P0_TOOLS, _bridge_system_prompt, get_task_context, run_structure_tool: 허용목록+core 스키마로 도구 catalog를 생성하고 claim/컨텍스트에 전달. search_routines/describe_routine/search_db_objects/describe_db_object/explain_query 연결. check_table_coverage는 첨부 실행 컨텍스트가 필요하므로 전용 읽기 경로로 대체. 미제공 도구에는 대체 경로와 현재 제공목록 반환.
+2. modules/tools.py의 메타데이터 검색에 제품 스키마 필터를 적용하고 explain_query에 동일 readonly AST 검증. dialects.py Agent job keyword 검색도 허용 DB 단계만 조사. run_structure_tool은 현재 제품/대화 권한을 재검증한다.
+3. standalone MCP에는 catalog 조회와 범용 조사 어댑터를 추가하여 신규 도구·database/offset 등 전체 인자 전달. 기존 wrapper 호환 유지. 러너 설치본은 서버 지침으로 현재 catalog와 첨부 대체 경로를 전달받는다.
+4. 도구별 목록/제한·조회 범위·SQL 거부·권한 회수·구버전 러너 전달 회귀 테스트 및 backend/security/qa 검토. verify→PR→merge→전체 영향 서비스 배포, 동일 HTTP 경로 확인.
+
+AC: 허용 task의 search_routines는 404가 아닌 scoped 조회에 도달하고, describe_routine의 database/offset을 전달한다. 미허용 DB의 객체/본문을 반환하지 않고 SQL 쓰기/다중문은 실행 전 차단. update_attachment 호출 대신 기존 attachment-edit/submit_answer 경로를 안내한다. core의 모든 도구는 제공 또는 명시적 대체/제한으로 분류된다.
+
+### Requested Scope
+- [x] 대화 실패와 도구별 노출/제한 전수 대조
+- [x] 누락 조회 도구 연결과 최신 사용법 전달
+- [x] 기존 보안 경계 및 발견된 누출·다중문 경로 차단
+- [ ] 회귀 테스트·패널·문서·원격 동기화
+- [ ] 배포본 경로 검증 및 실제 AI 생성 여부 구분
+
+
 ## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
 
 - Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.

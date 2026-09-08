@@ -407,6 +407,8 @@ import tool_ledger as _ledger       # noqa: E402
 P0_TOOLS = frozenset({
     "list_schemas", "describe_schema", "describe_table",
     "search_tables", "get_foreign_keys", "get_table_indexes",
+    "search_routines", "describe_routine", "search_db_objects", "describe_db_object",
+    "explain_query",
 })
 
 # P1 (2026-08-14): 자유 SELECT. 구조만으로는 **관계 주장을 데이터로 검증할 수 없다**는 실사용
@@ -419,6 +421,13 @@ P0_TOOLS = frozenset({
 #   ② 원장에 **실제 행수**를 기록한다(렌더 문자열의 줄 수로 세면 시간당 행 상한이 장식이 된다).
 P1_TOOLS = frozenset({"execute_sql"})
 EXPOSED_TOOLS = P0_TOOLS | P1_TOOLS
+
+def _tool_catalog() -> dict[str, Any]:
+    import modules.tools as _tools
+    from external_tool_catalog import build_catalog
+    return build_catalog(_tools.TOOL_DEFINITIONS_FULL, P0_TOOLS, P1_TOOLS,
+                         sql_enabled=_sql_enabled())
+
 
 # 운영자 스위치. 데이터 추출 축이라 구조 조회와 별개로 끌 수 있어야 한다.
 _SQL_ENABLED_KEY = "AGENT_EXT_TOOL_SQL_ENABLED"
@@ -969,7 +978,8 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
         account=str(account.get("username") or account.get("id")),
         conversation_id=task.get("conversation_id"), task_id=task_id, source="task_context")
 
-    response = JSONResponse({"task_id": task_id, "context": marked, "notes": notes})
+    response = JSONResponse({"task_id": task_id, "context": marked, "notes": notes,
+                             "tool_catalog": _tool_catalog()})
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="get_task_context",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -2927,6 +2937,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
+        "tool_catalog": _tool_catalog(),
         # 관리 콘솔이 큐레이션한 KB 근거(용어사전·ENUM·설명·샘플·관계). **도구를 부르지 않아도**
         # 받는다 — 위 주석 참조(라이브에서 AI 가 `get_task_context` 를 안 불러 0 기여였다).
         # 빈 문자열이면 매칭된 근거가 없다는 뜻이고, 러너는 이 블록을 통째로 생략한다.
@@ -3286,7 +3297,8 @@ def _bridge_system_prompt(conn, *, product_id, role_id, account_id,
         ) or "")
         if not prompt.strip():
             raise RuntimeError("Empty system prompt")
-        return prompt
+        from external_tool_catalog import render_guidance
+        return prompt + "\n\n" + render_guidance(_tool_catalog())
     except Exception as exc:
         logging.getLogger(__name__).error(
             "[bridge] 시스템 프롬프트 조립 실패 error_type=%s", type(exc).__name__)
@@ -3768,6 +3780,23 @@ def _recent_conversation_context(conn, conversation_id, exclude_text: str = "") 
     return rendered
 
 
+@router.post("/api/ai/tools/get_tool_catalog")
+async def get_tool_catalog(request: Request, ctx=Depends(require_ai_token),
+                           conn=Depends(app.get_conn)) -> JSONResponse:
+    """현재 task의 도구 목록·인자·운영 제한을 반환한다."""
+    body = await _json(request)
+    account = ctx["account"]
+    task = _load_task(conn, str(body.get("task_id") or ""), account)
+    if task is None:
+        return _json_err(404, "task 를 찾을 수 없습니다.")
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is None:
+        denied = _kb_product_access_denied(conn, account, task.get("product_id"))
+    if denied is not None:
+        return denied
+    return JSONResponse({"task_id": task["task_id"], "tool_catalog": _tool_catalog()})
+
+
 @router.post("/api/ai/tools/{tool_name}")
 async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(require_ai_token),
                              conn=Depends(app.get_conn)) -> JSONResponse:
@@ -3775,7 +3804,11 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     부하 게이트·allowlist 를 재구현하지 않는다(재구현은 곧 두 벌 관리이고, 갈리는 순간 약한
     쪽이 실질 경계가 된다)."""
     if tool_name not in EXPOSED_TOOLS:
-        return _json_err(404, f"'{tool_name}' 는 이 표면에 노출된 도구가 아닙니다.")
+        from external_tool_catalog import RESTRICTED_TOOLS
+        return JSONResponse({"error": "tool_not_exposed", "tool": tool_name,
+                             "detail": RESTRICTED_TOOLS.get(tool_name, "현재 도구 목록에서 이름과 인자를 확인하세요."),
+                             "available_tools": sorted(EXPOSED_TOOLS),
+                             "catalog_tool": "get_tool_catalog"}, status_code=404)
     if tool_name in P1_TOOLS and not _sql_enabled():
         return _json_err(403, f"'{tool_name}' 는 현재 비활성화되어 있습니다(운영 설정).")
 
@@ -3785,6 +3818,12 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     task = _load_task(conn, task_id, account)
     if task is None:
         return _json_err(400, "task_id 가 필요합니다(open_task 로 먼저 여세요).")
+
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is None:
+        denied = _kb_product_access_denied(conn, account, task.get("product_id"))
+    if denied is not None:
+        return denied
 
     try:
         _ledger.check_limits(_pg(), account_id=int(account.get("id") or 0),

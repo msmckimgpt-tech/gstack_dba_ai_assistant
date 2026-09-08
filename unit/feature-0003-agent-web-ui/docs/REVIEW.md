@@ -7927,3 +7927,27 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 ## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
 - 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.
+
+## REV-20260908T162000-tool-surface-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908T162000-tool-surface
+- Trigger: API/query 도구 계약·조회 경계
+- Timestamp: 2026-09-08T08:03:31.170056+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T162000-tool-surface-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T162000-tool-surface-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908T162000-tool-surface
+- Trigger: API/query 도구 계약·조회 경계
+- Timestamp: 2026-09-08T08:03:31.170056+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T162000-tool-surface-security.md
+- Human Approval Needed: no
+
+## REV-20260908T162000-tool-surface-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908T162000-tool-surface
+- Trigger: API/query 도구 계약·조회 경계
+- Timestamp: 2026-09-08T08:03:31.170056+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T162000-tool-surface-qa.md
+- Human Approval Needed: no

@@ -4875,3 +4875,7 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 ## CHG-20260908T160200-codex-verified-closeout
 - Related TASK: TASK-20260908-codex-connect-fix.
 - PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+
+## CHG-20260908T162000-tool-surface
+
+- 2026-09-08T08:01:57.915443+00:00; TASK-20260908T162000-tool-surface. 외부 AI 도구 누락과 검색/권한 경계 보완의 정본은 feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md 및 해당 TASK/REPORT. 사용자 요청 범위로 기존 가드를 유지하고 조회5종을 연결한다.

@@ -463,3 +463,7 @@ python3 bin/gen-routemap.py                                                     
 | route 역탐색 | `grep -rn '"/api/부분경로"' src/routers/` |
 | ROUTEMAP drift 게이트 | `python3 bin/gen-routemap.py --check` |
 | 전체 검증 | `make test` (agent 컨테이너 pytest + ruff, `--no-deps`) |
+
+## 외부 AI 도구 catalog (2026-09-08)
+
+도구 404·인자 누락 조사: `routers/ai_tools.py`의 P0_TOOLS/P1_TOOLS·get_tool_catalog·run_structure_tool → `unit/feature-0003-agent-web-ui/src/external_tool_catalog.py` → feature-0041 MCP run_read_tool. 전체 노출/제한 매핑은 feature-0003 docs/TOOL_SURFACE_AUDIT.md.

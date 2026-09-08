@@ -437,3 +437,7 @@ source_of_truth: true
   `unit/feature-0041-.../docs/{TASK,REPORT}.md`
 - Impact: 코드 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260908T162000-tool-surface
+
+- 2026-09-08T08:01:57.915443+00:00; TASK-20260908T162000-tool-surface. 외부 AI 도구 누락과 검색/권한 경계 보완의 정본은 feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md 및 해당 TASK/REPORT. 사용자 요청 범위로 기존 가드를 유지하고 조회5종을 연결한다.
