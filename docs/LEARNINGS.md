@@ -1346,3 +1346,10 @@ B 가 레이아웃·이벤트·스타일 상속 관점에서 **어떤 자리인�
 없었다. **분모를 세지 않은 0 은 아무 증거도 아니다.** 카운트 지표를 무사고의 근거로 쓸 때는
 같은 창의 **총 요청 수를 함께** 센다 (`logs caddy --since <창> | grep -c 'handled request'`).
 관련: [[LRN-20260902-0001]].
+
+### LRN-20260908-0003 — 내부 도구 구현과 외부 제공 계약은 별도로 검증한다
+- Source: conversation_audit FR-external-tool-catalog-omits-core-introspection / TASK-20260908T162000-tool-surface
+- Category: pattern
+- Pattern: 내부 core에 도구가 있어도 HTTP allowlist·MCP wrapper·서버 프롬프트가 다르면 외부 AI는 없는 도구를 호출한다. 명시적 공개 목록과 core 인자 스키마를 조합한 현재 catalog를 서버 지침과 MCP가 공유하고, 나머지 도구는 제한 이유와 실제 대체 경로로 분류한다. 새 core 도구를 자동 공개하지 않는다.
+- How to apply: 전체 handler 집합=제공+제한의 계약 테스트, 실제 라우팅, 양 MCP 어댑터 전체 인자 전송, 실행 시 현재 권한 검사를 함께 확인한다. 목록 누락404는 실행 원장에 없을 수 있고, HTTP 성공 안에도 SQL 가드 실패가 들어갈 수 있으므로 원장 성공 수만으로 사용자 성공을 판단하지 않는다.
+- Signal: 404/미제공 발언은 실제 노출 목록과 대조한다. 수정 후 datasource timeout은 원래 404와 분리하고 기존 빌드·호스트의 TCP 결과로 배포 관련성을 확인한다. 배포 이후 새 assistant 표본0은 회귀 해소 증거가 아니다.
