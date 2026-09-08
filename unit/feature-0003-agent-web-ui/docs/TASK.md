@@ -12,6 +12,36 @@ feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 �
 
 # Task
 
+
+## TASK-20260908T150000-attachment-boundary — 첨부 본문 혼입과 자동 전달 문구 수정
+
+- 요청: conversation_audit 사용자 제보. 대화 …8c73806a의 SQL 첨부에 답변이 섞임; 첨부 완료 반복 문구 제거.
+- 위험도 Minor: 서버 내부 첨부 파싱·답변 정리 계약. DB/원본 첨부 수정 없음, 권한/저장 가드 유지.
+- worktree: `.worktrees/feature-0003-agent-web-ui`; branch `ai/codex-attachment-audit/feature-0003-agent-web-ui`; base `49f7fa41`.
+- 정책: 이 worktree `AGENTS.md` 및 main 정책 해시 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`를 착수/완료 대조한다.
+- 소유: `routers/_conv_store.py::_attachment_block_spans`, `routers/conversations.py::_strip_attachment_{edit,new}_blocks`, `routers/ai_tools.py::_materialize_bridge_attachments` 및 호출부; 해당 테스트·기능 문서.
+
+### 2.1 Implementation Plan
+
+1. 첨부 시작·종료 펜스를 앞에서부터 추적하고 첫 유효 닫힘에서 종료한다. 일반 코드 블록 안의 첨부 예시는 파일로 저장하지 않는다. 내부 코드 펜스는 길이/문자별 추적하며, 모호한 단독 펜스는 외곽을 더 길게 쓰는 계약으로 처리한다.
+2. 저장 성공시 서버 자동 전달 문장 제거. 파일만 있는 정상 답변은 빈 본문과 기존 첨부 칩으로 전달하고, 실패는 기존 실패 고지를 유지한다. 브리지의 빈 문자열/영속 실패 구분을 명시한다.
+3. 실제 입력 구조(첨부→다음 파일 설명→diff→다음 첨부)와 마크다운 중첩·인용·취소/실패·파일만 전달 경로를 검증한다.
+4. backend/security/qa 패널 → verify-completion → PR/main → 무중단 배포; 운영 데이터를 수정하지 않는 배포본 동일 구조 재현.
+
+AC: `attachment-edit(SQL A) → 설명 B → diff B → attachment-edit(SQL B)`이면 저장 파일은 각각 SQL A/B만, 답변에는 설명/diff B가 보존되고 자동 '첨부 파일로 전달했습니다' 문구는 없다.
+
+- [x] 구현 및 회귀 테스트 — 120 PASS
+- [x] backend/security/qa 패널 — 최종 PASS
+- [x] 문서·verify-completion — pre-commit PASS
+- [ ] PR·병합·배포본 검증
+
+### Requested Scope (요청 범위)
+- [x] 첨부에 답변 혼입 방지 — 정확한 파일 byte와 후속 설명/diff 보존 테스트.
+- [x] 불필요한 첨부 전달 문구 제거 — 서버 자동 문장 제거 및 권위 프롬프트 반영.
+- [ ] 배포본 동작 확인 — 사용자 AI 재생성 검증과 구분.
+
+
+
 ## TASK-20260908T113000-bridge-token-env — DQA 클라이언트만 사용하는 흐름 검증
 
 ### 2.1 Implementation Plan

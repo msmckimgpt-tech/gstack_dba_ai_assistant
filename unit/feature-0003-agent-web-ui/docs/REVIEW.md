@@ -7827,3 +7827,27 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 ## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
 
 - 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
+
+## REV-20260908T150000-attachment-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: API/contract 응답 본문 계약
+- Timestamp: 2026-09-08T06:09:53.549929+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-attachment-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T150000-attachment-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: API/contract 응답 본문 계약
+- Timestamp: 2026-09-08T06:09:53.549929+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-attachment-security.md
+- Human Approval Needed: no
+
+## REV-20260908T150000-attachment-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: API/contract 응답 본문 계약
+- Timestamp: 2026-09-08T06:09:53.549929+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-attachment-qa.md
+- Human Approval Needed: no

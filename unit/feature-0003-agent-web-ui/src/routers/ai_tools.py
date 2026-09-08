@@ -2035,7 +2035,7 @@ def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
 
 def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversation_id: str,
                                     message_id: int, answer: str,
-                                    task_id: str) -> tuple[str, list, list]:
+                                    task_id: str) -> tuple[str | None, list, list]:
     """답변의 ```attachment-edit```/```attachment-new``` 블록을 **실제 첨부로** 만든다.
 
     ## 왜 필요한가 (사용자 제보 2026-08-28)
@@ -2058,7 +2058,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
     느슨한 쪽이 사용자가 보는 진실이 된다. 이 함수는 브리지 맥락(task_id 로깅, 회수 store 에
     넘길 정리본 반환)만 얹는다.
 
-    Returns: `(정리본 or "", edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
+    Returns: `(정리본 or None, edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
     """
     log = logging.getLogger(__name__)
     try:
@@ -2068,7 +2068,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
     except Exception as exc:
         # 후처리 실패가 답변 전달을 막지 않는다 — 답변은 이미 저장됐고 사용자는 그것을 봐야 한다.
         log.error("[bridge] 첨부 후처리 실패 task=%s conv=%s: %r", task_id, conversation_id, exc)
-        return "", [], []
+        return None, [], []
 
     edited = list(res.get("edited") or [])
     created = list(res.get("created") or [])
@@ -2078,7 +2078,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
                  len(res.get("skipped") or []), int(res.get("undelivered") or 0))
     # 본문이 바뀌었고 **영속까지 됐을 때만** 정리본을 돌려준다. 실패했는데 정리본을 돌려주면
     # 회수 store 와 화면 본문이 갈린다(표시본엔 블록이 남는데 회수본엔 없다).
-    return (str(res.get("answer") or "") if res.get("answer_persisted") else "",
+    return (str(res.get("answer") or "") if res.get("answer_persisted") else None,
             edited, created)
 
 
@@ -2300,7 +2300,7 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
             # 첨부 블록을 정리한 본문이 있으면 **그것을** 남긴다 — 회수본에 원문 블록이 남으면
             # 다음 턴 LLM 컨텍스트에 파일 전문이 통째로 다시 실린다(표시본은 이미 정리됨).
             _core._save_message(conn, str(conversation_id), "assistant",
-                                content=(_clean or answer))
+                                content=(_clean if _clean is not None else answer))
         except Exception as exc:
             logging.getLogger(__name__).error(
                 "[bridge] core store 답변 기록 실패 task=%s conv=%s — 표시본만 남는다: %r",

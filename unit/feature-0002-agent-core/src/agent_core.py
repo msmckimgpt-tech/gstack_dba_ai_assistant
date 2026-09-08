@@ -1587,6 +1587,14 @@ def _tools_mod_for_notice():
 # — base 대비 last-writer; product/role/account scope prompt 는 이 뒤에 누적됨).
 _ATTACHMENT_DELIVERY_DIRECTIVE = (
     "\n\n## FILE UPDATE REQUESTS — DELIVER AS A NEW ATTACHMENT VERSION (authoritative)\n"
+    "For ALL attachment delivery (new files, edits, or tools), keep file contents separate from "
+    "review explanations and diff blocks. Close each attachment block before continuing the answer. "
+    "If the file contains bare code fences or attachment-block examples, use an outer backtick fence "
+    "longer than every fence inside the file (for example ````attachment-new with a matching ```` close). "
+    "Preserve original comments unless the requested change requires editing them. "
+    "The UI already displays delivered files: do not add delivery confirmations such as "
+    "'수정본 <파일이름> 을(를) 첨부파일로 전달했습니다', download instructions, or a list repeating filenames. "
+    "Keep substantive review findings and changes in the answer; report actual delivery failures.\n"
     "If the user explicitly asks you to update / apply / reflect / regenerate / hand back / raise "
     "the version of a text/csv/sql file that already exists in this conversation — one THEY "
     "attached (this turn OR earlier) **OR one YOU delivered earlier in this conversation** — e.g. "
