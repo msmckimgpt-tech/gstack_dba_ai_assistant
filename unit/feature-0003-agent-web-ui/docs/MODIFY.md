@@ -6358,3 +6358,11 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
   (`app.js?v=737ff1e2c409`, 501,697B) 대조 — 신규 심볼 전건 존재, 제거한 폴백 4종 전부 0건,
   라벨 표 30종.
 - 남은 미검증: DQA 클라이언트 **화면** 실측(앱 WebView2 디버깅 포트 부재 — PB-0009 NOT-RUN 유지).
+
+## CHG-20260908T203700-attach-folder-tree-postdeploy
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree (PR #1638 머지 후 배포 검증).
+- 제품 코드·정책 변경 **없음** — 라이브 배포 후 실측 결과와 캡처만 기록한다.
+- 배포 `4e3d70b0` · alembic 0059 적용 확인 · 양쪽 DB 컬럼 실재 · 라이브에서 폴더 첨부
+  end-to-end(동명 파일 v1 공존 포함)와 목록 폴더 칩 렌더 확인.
+- 정본: `docs/test-runs.d/TASK-20260908T203700-attach-folder-tree-postdeploy.md`.
