@@ -34,3 +34,8 @@ An initialized Agent Board can share presence and authorized handoff messages.
 Claude keeps its existing hooks; Codex uses `bin/hooks/codex-board-hook.py` after
 hook review/trust. Platform labels remain distinct. The common docs remain the
 source of truth; the board is transient coordination data.
+
+Codex task participation: follow `.codex/CONTEXT.md` Agent Board steps. The
+common CLI recognizes `CODEX_THREAD_ID` for bootstrap, milestones and done;
+use it from the current policy root. Hook trust is separate from CLI access.
+Project boundaries, uid/token authorization and message budgets remain shared.

@@ -12,7 +12,7 @@ nogrep() { if grep "$@"; then return 1; fi; return 0; }
 setup() {
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg"
   W="$BATS_TEST_TMPDIR/wrapper"; mkdir -p "$W/repo"
-  unset CLAUDE_CODE_SESSION_ID CLAUDE_ENV_FILE AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_NOW
+  unset CODEX_THREAD_ID CLAUDE_CODE_SESSION_ID CLAUDE_ENV_FILE AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_NOW
   ( cd "$W/repo" && git init -q && printf -- '---\ntemplate_version: v3.53.1\n---\n# AGENTS\n' > AGENTS.md && mkdir -p bin/hooks && printf '#!/usr/bin/env bash\nexit 0\n' > bin/hooks/board-hook.sh \
     && git add AGENTS.md bin/hooks/board-hook.sh && git -c user.email=t@t -c user.name=t commit -qm init && git worktree add -q "$W/.worktrees/feat-1" -b ai/t/feat-1 >/dev/null 2>&1 )
   cd "$W/repo"
@@ -68,11 +68,11 @@ PY
   run bash "$B" bootstrap --no-register; [ "$status" -eq 0 ]; [[ "$output" == *"SKIP $W/repo: settings_local_invalid_json"* ]]; [ "$(cat .claude/settings.local.json)" = '{not json' ]
   rm .claude/settings.local.json; run bash "$B" bootstrap --no-register; [ "$status" -eq 0 ]; nogrep -q 'SKIP' <<<"$output"; [ -f .claude/settings.local.json ]
 }
-@test "B5 CLAUDE_CODE_SESSION_ID 없음 → register 생략 안내(exit 0); --no-register 도 생략; 잘못된 id 는 무시" {
-  run bash "$B" bootstrap; [ "$status" -eq 0 ]; [[ "$output" == *"CLAUDE_CODE_SESSION_ID 없음"* ]]
+@test "B5 native id 없음 → register 생략 안내; --no-register 생략; 잘못된 id 는 거부" {
+  run bash "$B" bootstrap; [ "$status" -eq 0 ]; [[ "$output" == *"CODEX_THREAD_ID/CLAUDE_CODE_SESSION_ID/AGENT_BOARD_SID 없음"* ]]
   ROOT="$(grep '^root=' "$W/.board-root" | cut -d= -f2)"; [ -z "$(ls "$ROOT/sessions" 2>/dev/null)" ]
   CLAUDE_CODE_SESSION_ID=bs-0002 run bash "$B" bootstrap --no-register; [[ "$output" == *"생략 (--no-register)"* ]]; [ -z "$(ls "$ROOT/sessions" 2>/dev/null)" ]
-  CLAUDE_CODE_SESSION_ID='bad id!' run bash "$B" bootstrap; [ "$status" -eq 0 ]; [ -z "$(ls "$ROOT/sessions" 2>/dev/null)" ]
+  CLAUDE_CODE_SESSION_ID='bad id!' run bash "$B" bootstrap; [ "$status" -eq 3 ]; [ -z "$(ls "$ROOT/sessions" 2>/dev/null)" ]
   CLAUDE_CODE_SESSION_ID=bs-0003 run bash "$B" bootstrap --work META-CYCLE-069-agent-board-bootstrap; [ "$status" -eq 0 ]
   [[ "$output" == *"work_ref 형식"* ]]; grep -q '"work_ref":"-"' "$ROOT/sessions/claude:$(id -un):bs-0003.json"       # 형식 불일치는 NOTE + '-' 등록 (미등록 아님)
 }
