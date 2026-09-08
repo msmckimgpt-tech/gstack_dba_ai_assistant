@@ -6,7 +6,7 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완료, 배포 진행
+feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
 
 ---
 
@@ -14,7 +14,7 @@ feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완
 
 ## TASK-20260908T120000-runner-update-recovery — 갱신 실패 안내 정합
 
-- 상태: in-progress. feature-0043 러너 복구 검증 중 발견한 삭제된 1단계 명령 안내를 수정한다.
+- 상태: completed — PR #1606 병합·서버 배포 완료. feature-0043 러너 복구 검증 중 발견한 삭제된 1단계 명령 안내를 앱 업데이트·재연결 안내로 수정했다.
 - Plan: `static/app/connect-modal.js::MSG_RELAUNCH_NO_UPDATE`를 현재 존재하는 앱 업데이트 및 재연결 경로로 연결한다. 같은 파일이라는 관측만으로 낡은 실행 스크립트라고 단정하지 않는다.
 - 검증: native handoff 이음매 테스트와 실제 Windows 브라우저에서 해당 상태 안내 표시 확인.
 - 위험도 Minor. 기존 인증·토큰·자동실행 조건은 그대로다.
@@ -13372,7 +13372,7 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
 - [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
 - [x] 전체 make test 및 verify-completion PASS.
-- [ ] PR 병합 및 서버/채널 배포 완료 기록.
+- [x] PR #1606 병합 및 서버/채널 배포 완료. web-a/b `0f58a1de`, DQA 1.1.1 실제 업데이트 조회·다운로드·SHA-256 검증 PASS.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
 
 ### 사용자 동선 확정 (2026-09-08 후속 지시)

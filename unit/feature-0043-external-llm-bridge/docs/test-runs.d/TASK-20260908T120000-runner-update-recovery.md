@@ -47,7 +47,7 @@ Environment: Windows-browser. PB-0008 `bin/win-browser.py`의 실제 Windows CDP
 
 ## 전체 검증 및 배포 후속
 
-완료 시 정확한 검사 결과·병합 SHA·배포본 및 설치기 채널 지문을 추가한다. 설치기 게시와 사용자의 설치는 별개다. **기존 사용자는 1.1.1 설치 후 재연결해야 감독 기능이 생긴다.** 이미 죽은 구 러너는 서버 배포만으로 되살릴 수 없다.
+정확한 검사 결과·병합 SHA·배포본 및 설치기 채널 지문은 아래 완료 기록에 있다. 설치기 게시와 사용자의 설치는 별개다. **기존 사용자는 1.1.1 설치 후 재연결해야 감독 기능이 생긴다.** 이미 죽은 구 러너는 서버 배포만으로 되살릴 수 없다.
 
 ### 배포 전 확정 결과 (2026-09-08T11:17:16+09:00)
 
@@ -65,3 +65,15 @@ Environment: Windows-browser. PB-0008 `bin/win-browser.py`의 실제 Windows CDP
 - GUI 단절 상세 안내까지 반영한 실제 Windows 창/트레이 검증 PASS. 최종 PNG와 JSON 저장 및 직접 열람 완료.
 - GitHub PR #1606. GitHub Actions/check run은 현재 보고된 것이 없어 CI green으로 표기하지 않는다. 로컬 표준 make test 결과가 이번 검사 근거다.
 - HTTPS Git 인증의 workflow scope 부재로 최초 push가 거절되어, 이미 설정된 SSH GitHub 인증으로 정상 push했다. 자격증명 변경 없음.
+
+### 서버 및 클라이언트 채널 배포 완료 (2026-09-08)
+
+- PR #1606 병합 SHA: `0f58a1de2f53883bbff1158f87c7637a85323d88`. `bin/deploy-web.sh --web-only` **exit 0**, 11:30:20 KST 완료. web-a/b 양쪽 동일 코드 ready 및 90초 soak PASS. UTC 02:26:36 이후 배포 창 Caddy `no upstreams available`: **0건**. worker 변경이 없어 worker 배포와 실제 AI 대화 smoke는 수행하지 않았다.
+- 실제 HTTPS 제공 `/static/agent/bridge_agent.py`: **434,507 bytes**, SHA-256 `7ef612df4ba6c707039bf1f06310d4443d5e16a53c5e86c196e40afd5011ace3`. 배포 CA로 TLS 검증, 다운로드 바이트 compile 및 내장 소스 SHA-256 스탬프 검증 PASS. 이 값이 배포 러너이고 위 하네스의 설정 격리 지문과 다르다.
+- `publish_release.py` **exit 0**, server-view check PASS. `/api/ai/client/latest`가 **1.1.1**, `/client/DQAConnect-Setup-1.1.1.exe`를 제공한다. 설치기 **25,731,162 bytes**, SHA-256 `49b37a3fee97aa5dface8ecfb23b3a011f6e0d732288cf3468a67376a58fc055`.
+- 실제 Windows에서 제품 `client.updater.check_detail(current="1.1.0")`와 `download` 실행: **1.1.1 발견 → 전체 다운로드 → 크기/SHA-256 일치 PASS**. 격리된 앱 설정·공개 CA를 사용했고 `installer_executed=false`. 앱 사용자 확인 계약을 보존하며 설치본을 임의 갱신하지 않았다.
+- 실제 Windows 시험 프로세스 정리: 이번 staging 경로의 러너 잔존 **0개**. 실제 사용자 러너·설정·토큰을 종료하거나 변경하지 않았다.
+- 증거: wrapper `artifacts/test-runs/runner-update-recovery/`의 `runner-deploy.log`, `post-deploy.json`, `deployed-bridge_agent.py`, `manifest.json`, `client-channel-result.json`, `runner-client-channel.log`, `runner-win-cleanup.log`.
+- 최종 사용자 동선: **DQA 앱에서 1.1.1 업데이트 설치 후 다시 연결**. 별도 러너 실행이나 터미널 명령은 요구하지 않는다. 서버·설치기 게시 완료와 사용자의 실제 설치 완료는 구분한다.
+
+- 배포 후 Environment: Windows-browser. 실제 Windows Chrome에서 배포 사이트의 HTML/CSS/JS로 갱신 실패 모달의 픽셀을 재확인했다. JS는 TLS 검증 다운로드 후 캐시 스탬프 치환만 제외하면 소스와 동일함을 확인했고 시험용 export만 추가했다. 독립 브라우저 context에서 API를 차단하여 실제 계정 연결을 만들지 않았다. 실패 상태는 합성이며 실제 사고 재현이라고 주장하지 않는다. `web-update-failure-deployed.png`, `web-deployed-result.json` 참조. 최초 route.fetch는 브라우저와 별개의 TLS 신뢰 설정 때문에 실패해, 배포 CA를 명시한 다운로드로 교정했다.
