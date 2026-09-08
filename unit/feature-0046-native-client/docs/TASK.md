@@ -57,3 +57,23 @@ feature_status_date: 2026-09-08
 - [x] 최종 main의 프롬프트 전달/클라이언트 선택 회귀39 PASS(30.90s). PR1631 통합 결과 확정.
 
 - [x] 최종 표시 보완7ca6f2a4 웹 배포·실제 설치 앱 재시작·연결창 정상 문구 및 root 재연결 확인. 최신1.2.4 재확인, 원장 기록 완료.
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+## TASK-20260908T125500-share-client-entry — 딥링크가 목적지 페이지까지 나른다
+
+feature-0003 이 소유한 cycle(웹 계약 정본:
+[feature-0003 TASK](../../feature-0003-agent-web-ui/docs/TASK.md))의 **클라이언트 쪽 몫**.
+
+- [x] `dqa-connect://open?…&path=/share/<token>` 수용 — `parse_scheme_url` · `safe_app_path`
+      (정본 `shared/dqa_identity` 의 사본, 테스트가 같은 표로 대조) · `ConnectPlan.path`.
+- [x] 세 껍데기 모두 목적지로 연다 — 내장 창(`Shell.navigate` 후 `show`) · 브라우저 앱 모드
+      (`reopen(dest)`) · 신규 실행(`panel_url(…, plan.path)`).
+- [x] **상주 중 도달** — `core.request_show(home, path)` + 별도 `show.path`(신호 파일에
+      줄을 보태면 먼저 떠 있는 구버전이 요청 자체를 버린다).
+- [x] 회귀 536 PASS. Run: [test-runs.d/TASK-20260908T125500-share-client-entry.md](test-runs.d/TASK-20260908T125500-share-client-entry.md)
+- [ ] **DQA-client 실측** — 1.1.2 설치기 빌드·게시 후. 현재 `NOT-RUN + Reason`(설치기 빌드는
+      Windows 전용이라 이 WSL 세션에서 변경 반영본을 띄울 수 없다). 서버만 배포하면 구버전
+      앱은 서비스 루트를 연다 — 파손이 아니라 의도된 degrade.

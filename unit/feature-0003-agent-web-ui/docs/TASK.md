@@ -13625,3 +13625,103 @@ DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계
 - [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.
 
 - [x] PR #1619 병합, 서버 92cfa2c2 전체 배포·상태/서빙 확인, DQA 1.2.0 공개 및 실제 다운로드 크기/SHA-256 대조 완료.
+## TASK-20260908T125500-share-client-entry — 공유 링크: 열람은 브라우저, 참여·fork 는 DQA 앱
+
+- 상태: 구현·검증 완료 — verify-completion / PB-0009 진행
+- 요청(사용자 원문): "DQA클라이언트가 구성됨에 따라, 대화를 링크로 공유할 때 일반적인
+  웹브라우저로 해당 링크를 통해 내용을 확인할 수 있지만 대화에 참여하거나 fork 하려면
+  클라이언트를 통해 진행되도록 정합하게 구성해주세요."
+- 작업: `ai/claude-corp/feature-0003-share-client-entry`; base `a92c9256`(최신 main ff).
+- 위험: **Major §12.3** — 사용자 진입 경로 변경 + 클라이언트 배포 동반. 인증·인가 코드,
+  DB 스키마, 서버 권한 게이트는 **무변경**(join/fork 의 자격 판정은 그대로다).
+- 사용자 결정(2026-09-08, 착수 전 AskUserQuestion):
+  - 앱 미설치 사용자 → **앱 전용 + 받기 안내**(웹 폴백 없음).
+  - 서버 집행 → **프런트 유도까지**. 근거: join/fork 를 직접 POST 하려면 이미 «유효 로그인
+    세션 + 유효 공유 토큰» 이 있어야 하므로, 우회로 얻는 것은 권한이 아니라 «어느 화면에서
+    눌렀는가» 뿐이다. 즉 보안 경계가 아니라 UX 경계이고, 프런트 집행이 비례한다.
+
+### 2.1 Implementation Plan
+
+1. `shared/dqa_identity.py` — `safe_app_path()` · `app_open_url()` 신설. 스킴·경로 규칙의
+   **정본**. 연결용 `scheme_url()`(토큰 실음)과 축이 다르므로 함수를 나눈다.
+2. `unit/feature-0046-native-client/src/client/core.py` — `safe_app_path()` 사본(동결
+   배포본이라 `shared/` 미import — `SCHEME` 리터럴과 같은 사정) + `parse_scheme_url` 의
+   `path` 수용 + `ConnectPlan.path` + `request_show(home, path)` / `take_show_request →
+   str|None`(별도 `show.path` 파일 — 구버전이 신호 자체를 잃지 않게).
+3. `client/gui.py` — `main()`(argparse `--path` + plan 주입 + 이미-실행 분기 전달) ·
+   `_run_embedded` · `_watch_show_requests` · `_run_browser_shell` · `_serve_confirms`
+   의 `reopen(dest)`. `client/window.py` — `Shell.navigate()`.
+4. `routers/share.py` — `_share_client_entry(request, token)` + 응답 `client` 블록.
+   받기 URL 판정은 `oauth_as._client_download_url` 에 위임(판정 정본 1개).
+5. `static/share-client-context.js`(신규) — 정본 `app/client-bridge.js` 를 import 해
+   `window.__dqaClientBridge` 로 얹는 **어댑터**. 규약 재구현 금지.
+6. `static/share.html`·`share.js`·`share.css` — 액션 바 이원화(앱 안: 직접 실행 /
+   브라우저: 앱 진입 + 받기 + 클릭 후 안내). 웹 로그인 링크 제거.
+7. 테스트 — `test_share_client_entry.py`(계약) · `verify_share_client_entry.mjs`(jsdom
+   동작) · `test_wsl_and_scheme.py`(양벌 경로표 대조·왕복·degrade) ·
+   `test_standalone_launch.py`(목적지 전달) · `test_share_bar_layout.py` L3 갱신.
+
+### 수용 기준
+
+정본은 [FUNCTION.md §2](FUNCTION.md) 의 `AC-20260908T125500-share-client-entry-1 ~ -6`.
+
+- [x] AC-1 열람 경로 무변경(익명 포함) — 공유 window·redaction·버전 페이징 계약 불변.
+- [x] AC-2 브라우저에는 앱 진입 하나, 직접 실행은 앱 창 안에서만, 웹 로그인 링크 제거.
+- [x] AC-3 판정 신호는 브리지 좌표 하나 — 어댑터가 정본 모듈을 import.
+- [x] AC-4 딥링크는 서버가 정본으로 조립하고 토큰을 싣지 않는다.
+- [x] AC-5 앱이 **그 대화를** 연다(신규 실행·이미 실행 중 둘 다) + 경로 검증 양벌 대조.
+- [x] AC-6 막다른 길 없음 — 클릭 후 안내 · 실물 있을 때만 받기 · 불가 링크엔 미노출 ·
+      서버 조립 실패 시 종전 웹 경로로 열화.
+
+### 검증 (적대 검증 2라운드 후 최종)
+
+- 계약 `test_share_client_entry.py` + `test_share_bar_layout.py` **26 PASS** · 동작
+  `verify_share_client_entry.mjs` **108 PASS**(jsdom, 2차원 표) · 클라이언트
+  `feature-0046/tests` 전건 · 레이아웃 `tests/headless/verify_share_bar_layout.py`
+  **20 PASS**(chromium 실 렌더 — T9 예산 4폭 + T10 인쇄 가드).
+- **각 조치는 뮤턴트로 봉인을 확인**했다 — 구현을 훼손하면 해당 테스트가 적색.
+- 회귀 판정 = **main 대비 차집합 0**. 전체 실패 20건은 양쪽 동일(로컬 환경 의존)이고,
+  반대로 main 에만 있던 1건(`test_route_parity_p5b`)은 이 cycle 이 해소했다.
+- Run 기록: [test-runs.d/TASK-20260908T125500-share-client-entry.md](test-runs.d/TASK-20260908T125500-share-client-entry.md)
+
+### 적대 검증 (§18.8) — 두 라운드가 실제로 결함을 잡았다
+
+- **1R: security·ux·qa 전원 BLOCK.** 그중 둘은 **이 cycle 이 새로 만든 위험**이었다 —
+  ① `?`·`#` 가 경로 검증을 통과해 `panel_url` 쿼리가 두 벌이 되고 브라우저가 첫 값을 취하므로
+  **링크 제작자가 브리지 nonce 를 덮어쓸 수 있었다** ② 브리지 좌표 캡처가 **익명 공유 페이지**로
+  내려와 링크 한 줄로 origin 전역 상태를 심을 수 있었다. 그 밖에 토큰 평문 기록,
+  `open` 링크의 토큰 수용, 받을 곳 없는 배포의 막다른 길, 하단 바가 대화 말미를 가리는 문제
+  (320px 에서 **102px 초과**), **내장 창 목적지 배선이 561건 중 한 건도 지키지 않던** 사실.
+- **2R: security BLOCK · ux CONCERN.** 「넣었다」와 「성립한다」가 갈렸다 — X1 조치가
+  `/static/share.html` 로 **뚫렸고**(라이브 200), `os.fchmod` 가 **배포 플랫폼에서 no-op**
+  이었고, 목적지 쓰기 실패가 **요청 자체를 삼켰고**, 여백 동기화가 **인쇄를 깨뜨렸고**,
+  T9 가 **항진명제**였다.
+- **이 cycle 이 스스로 잡은 것 셋**: 경계 테스트를 상수에서 계산했더니 항진명제가 됐고,
+  좁은 폭 조치가 `textContent` 대입으로 받기 링크를 삭제했으며, 하네스 두 곳의 테스트 nonce 가
+  실제 규격 밖이라 제품과 다른 것을 재고 있었다.
+- **3R(수렴 확인): BLOCK — HIGH 2건이 «둘 다 2R 조치가 만든 회귀»였다.** 세 스위트를 재현해
+  **초록임을 확인한 상태에서** 실행으로 재현됐다는 점이 요지다. ① allow-list 가 앱 창의 좌표를
+  **첫 이동에서 영구히 잃게** 만들어, 그 창이 자기를 브라우저로 오인하고 **자기 자신에게
+  딥링크를 쏘는** 2026-09-07 제보 결함의 조건이 재현됐다 ② 로그인 링크를 무조건 지운 탓에
+  **열화 3분기 전부에서 미로그인 진입이 0개**가 됐다(2R 의 이연 근거를 하네스 자신이 반증).
+  진단은 **「진입점을 만들었으나 진입 이후를 설계하지 않았다」** — 검증도 축 하나만 훑어
+  교차 칸이 비어 있었다. 좌표를 «검증 후» 세션으로 올리고 하네스를 **2차원 표**로 바꿨다.
+- 원장: [r1](reviews/20260908T132000-share-client-entry-r1.md) ·
+  [r2](reviews/20260908T141000-share-client-entry-r2.md) ·
+  [r3](reviews/20260908T150000-share-client-entry-r3.md)
+
+### 남은 것 · 후속
+
+- **클라이언트 재배포가 있어야 목적지 이동이 성립한다.** 서버만 배포하면 구버전 앱은
+  `path` 를 모르므로 서비스 루트를 연다(파손 아님 — 의도된 degrade). 설치기 빌드는
+  Windows 에서만 되므로 feature-0046 의 릴리스 채널 절차를 따른다.
+- **DQA-client 실측은 그 재배포 뒤다** — 현재 Run 은 `NOT-RUN + Reason`. 확인되지 않은 것을
+  명시했다: 실 WebView2 `load_url`, 트레이 상주 중 창 이동 체감, OS 스킴 등록·발사, SmartScreen.
+- **이연 9건**(적대 검증이 지적했으나 이 cycle 범위 밖 — 근거·분류는 3R artifact §4,
+  3R 리뷰어가 «유지 동의»):
+  브라우저 명령줄·방문 기록에 남는 공유 토큰 · 스킴 하이재킹 노출 빈도 증가 ·
+  `server.json` 미인증 · mtime 정리의 시계 전진·symlink · 열화 모드 미관측 ·
+  `/static/*.html` 이중 노출 · `ai-connect.js` 좌표 사본 · `verify_side_panel_exclusive.mjs`
+  C3 선재 실패(main 동일 — jsdom 설치로 처음 드러났다) · 공개 base 설정값 고정(3R C4).
+  ⚠ 그중 둘은 **이 변경이 키운** 축이라 다음 cycle 후보로 명시한다 — 브라우저 명령줄의 토큰
+  (H1 의 «IPC 로 목적지 전달» 과 같은 뿌리) · 열화 모드 미관측(H2 가 열화 분기에서 났다).
