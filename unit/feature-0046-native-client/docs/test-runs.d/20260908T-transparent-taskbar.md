@@ -51,3 +51,21 @@ verdict: IN_PROGRESS
 [Microsoft AppUserModelID](https://learn.microsoft.com/en-us/windows/win32/shell/appids), [창 속성 수명](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shgetpropertystoreforwindow), [재실행 아이콘](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-relaunchiconresource).
 
 - 후속: Windows 잠금 화면(`LockScreenBackstopFrame`) 가림을 검수 도구가 탐지하도록 보완 중. 최종 frozen/탭 PNG 시각 확인은 잠금 해제 후 수행한다. 로그인·사이드바·빈 대화·관리 사이드바의 기존 로고 이미지 4곳도 같은 SVG로 정합했다.
+
+## 최종 main 동기화 후 부분 검증
+
+Environment: DQA-client
+Result: PASS
+Build: 1.1.3 / native src 8231cffe (2838ce58 병합 후 변화 0)
+Scenario: taskbar-metadata-and-window-lifecycle
+Evidence: artifacts/dqa-transparent-icon/{verify-native,verify-webview,identity-tk,identity-webview,verify-frozen-final}/result.json
+
+실제 source WebView2 숨김/복귀/정리, 최종 동결 DQA EXE의 4속성·동봉 아이콘·별도 홈·자기 tray 정상 종료를 검증했다. 실제 화면 픽셀과 동결본 taskbar PNG는 아래 미실행과 분리한다. 병합 후 536 PASS/0 FAIL/0 SKIP, JUnit artifacts/dqa-transparent-icon-tests-merged.xml.
+
+Environment: DQA-client
+Result: NOT-RUN
+Build: 1.1.3
+Scenario: final-desktop-taskbar-and-inner-logo-visual
+Reason: Windows LockScreenBackstopFrame이 실제 작업 표시줄을 가린다. 사용자 잠금을 임의로 해제하지 않았고 해제 요청을 보냈다.
+Alternative: source WebView2 taskbar 시각 PASS, frozen 4속성/리소스/정상 종료 PASS. Windows Chrome의 source HTML/자산 오버라이드 + 라이브 read-only API로 새 로그인 로고 렌더 PASS(artifacts/dqa-transparent-browser/{staging-final.json,02-login-new-logo.png}); 이를 DQA 실제 내부 화면 PASS로 합산하지 않는다.
+Next: Windows 잠금 해제 후 capture guard가 통과하는 상태에서 frozen taskbar·실제 DQA 내부 로고를 재검수하고 배포한다.

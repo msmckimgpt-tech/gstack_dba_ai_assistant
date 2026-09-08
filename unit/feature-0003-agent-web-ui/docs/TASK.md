@@ -13413,3 +13413,12 @@ Task-Cycle: feature-0003-agent-web-ui
 [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
 [위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
 DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+## TASK-20260908T-transparent-taskbar — main 정합 및 검증 경계
+
+- [x] main a92c9256의 정책·DQA 주 사용 검증·회귀 테스트 변경을 병합하고 양 부모 보존 대조
+- [x] 병합 후 네이티브 전체 536건·웹 30건 PASS
+- [x] 4개 내부 로고 변경과 Windows 브라우저 실제 로그인 렌더 확인, 독립 디자인 재검토 PASS
+- [ ] Windows 잠금 해제 후 최종 동결본 작업 표시줄과 앱 로고 시각 재검수
+- [ ] 최종 검수 후 PR ready/병합·1.1.3 설치기 채널 및 웹 배포·라이브 대조
+- 정책 재독: 현재 worktree `AGENTS.md` SHA-256 a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 초기 024a8b53…에서 변경되어 §10.1·15.4.1·16.3·16.4·16.5.1·PB-0009를 갱신 반영했다. Windows-browser 호환과 DQA-client 실제 검증을 구분한다.

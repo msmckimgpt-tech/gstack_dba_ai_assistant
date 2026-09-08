@@ -235,3 +235,9 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
 [위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
 DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+### 투명 아이콘 최신 상태 — 2026-09-08
+
+소스 8231cffe, main 병합 2838ce58. 병합 후 native 전체 **536 PASS**, 웹 **30 PASS**, 아이콘/자산 일치·Windows 5표면·source Tk/WebView2 생명주기·frozen 속성/정상 종료 PASS. 내부 로고 4곳의 Windows Chrome 로그인 렌더·디자인 PASS. **현재 Windows 잠금 화면이 최종 taskbar 캡처를 가려 시각 검수는 대기**하며, 최종 frozen PNG를 PASS라고 보았던 이전 판정은 철회했다. 사용 중인 앱은 유지했다.
+
+배포 후보는 artifacts/dqa-transparent-icon/DQAConnect-Setup-1.1.3.exe, 25,876,951 bytes, SHA-256 132d5d715b73673c60c78cb54e1957f9b5c117612c4d1a26e9b9fbc75df903ac. 기존 채널의 1.1.2를 아직 전환하지 않았다. 잠금 해제 후 최종 검수→병합→기존 채널 게시→web-only rolling 배포→실제 다운로드/앱 로고 확인을 수행한다.

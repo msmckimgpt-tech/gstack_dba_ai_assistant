@@ -1190,3 +1190,16 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Verdict: CONCERN — 코드 P1/P2/P3 0, Windows 잠금 해제 후 최종 frozen 시각 확인 잔여
 - Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-ux.md
 - Human Approval Needed: no
+
+## REV-20260908T040000-transparent-merge-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: main의 현재 검증 정책과 타 세션 변경을 보존한 문서 병합·회귀 결과 보충. native 제품 코드 변화 0, 정책을 재작성하지 않았다. 고정 양 부모의 삭제/제목 유실 0.
+- Timestamp: 2026-09-08T04:00:00Z
+
+## REV-20260908T040001-transparent-inner-logo [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/로그인·사이드바·빈 대화 로고
+- Verdict: PASS
+- Findings: P1/P2/P3 0. 4개 이미지의 22/36/40px 크기·배치 유지, 실제 Windows 로그인 렌더의 투명 심볼 확인. Taskbar 잠금 해제 후 검수는 별도이다.
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Human Approval Needed: no
