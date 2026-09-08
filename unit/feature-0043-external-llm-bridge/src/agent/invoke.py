@@ -5,12 +5,14 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
 import subprocess
 import threading
 import time
+import urllib.parse
 
 from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _HOME_DIRNAME
 from .discovery import _resolve_exe
@@ -314,11 +316,32 @@ def _wsl_child_env(cmd: list[str], env: dict | None) -> dict | None:
     child = dict(env)
     # Windows 환경 키는 대소문자를 구분하지 않는다. 중복 키도 만들지 않는다.
     keys = [key for key in child if key.upper() == "WSLENV"]
+    forwarded = {"BRIDGE_TOKEN": "u"}
+    if child.get("BRIDGE_CA"):
+        forwarded["BRIDGE_CA"] = "up"
     entries = [part for key in keys for part in str(child.pop(key)).split(":")
-               if part and part.split("/", 1)[0].upper() != "BRIDGE_TOKEN"]
+               if part and part.split("/", 1)[0].upper() not in forwarded]
     # /u: Windows→WSL 전용. 토큰에는 경로(/p)·목록(/l) 변환을 적용하지 않는다.
-    child["WSLENV"] = ":".join([*entries, "BRIDGE_TOKEN/u"])
+    child["WSLENV"] = ":".join([*entries, *(f"{key}/{flags}" for key, flags in forwarded.items())])
     return child
+
+
+def _with_dqa_network(cmd: list[str], kind: str, base: str | None) -> list[str]:
+    """Codex의 파일 쓰기는 막고, 이번 DQA 호스트만 프록시를 통해 허용한다."""
+    if kind != "codex" or not base:
+        return cmd
+    endpoint = urllib.parse.urlsplit(base)
+    host = (endpoint.hostname or "").encode("idna").decode("ascii")
+    if (endpoint.scheme not in ("http", "https") or endpoint.username or endpoint.password
+            or not re.fullmatch(r"[a-zA-Z0-9._:-]+", host)):
+        raise ValueError("DQA 서비스 주소가 올바르지 않아 AI 연결을 시작하지 못했습니다.")
+    # 표 전체를 교체해 같은 이름의 사용자 프로필에 있던 허용 도메인이 섞이지 않게 한다.
+    profile = ('{extends=":read-only",network={enabled=true,domains={'
+               + json.dumps(host) + '="allow"}}}')
+    flags = ["-c", 'default_permissions="dqa-task"',
+             "-c", "permissions.dqa-task=" + profile,
+             "-c", "features.network_proxy=true"]
+    return [*cmd[:-1], *flags, cmd[-1]]
 
 
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
@@ -708,7 +731,8 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
                  runtimes: list | None = None,
                  caps: dict | None = None,
                  system: str | None = None,
-                 token: str | None = None) -> tuple[bool, str]:
+                 token: str | None = None,
+                 api_base: str | None = None, api_ca: str | None = None) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
     `model`·`effort` 는 사용자가 **웹에서 고른 것**이다 (P0-Z3). 유효성은 `runtimes`(이 러너가
@@ -758,6 +782,11 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     # 판정해 `system` 을 넘겼을 때만 실린다 — 여기서 다시 판정하면 프롬프트를 만든 판정과
     # 갈릴 수 있고, 그러면 지침이 **두 벌**이거나 **한 벌도 없는** 상태가 된다.
     cmd = _with_system_prompt(cmd, kind, system)
+    if token:
+        try:
+            cmd = _with_dqa_network(cmd, kind, api_base)
+        except (ValueError, UnicodeError):
+            return False, "DQA 서비스 주소가 올바르지 않아 AI 연결을 시작하지 못했습니다."
     # 명령줄 상한 (TASK-20260902T140000). Windows 는 32,767자에서 `CreateProcess` 가 거절하고,
     # 그 거절이 라이브에서 **그 계정의 모든 질문**을 죽였다(운영자 지침 34,962자).
     cmd, _stdin_text, _fit = _fit_cmdline(kind, cmd, prompt)
@@ -773,5 +802,9 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     child_env = None
     if token:
         child_env = {**os.environ, "BRIDGE_TOKEN": str(token)}
+        if api_base:
+            child_env.pop("BRIDGE_CA", None)
+            if api_ca:
+                child_env["BRIDGE_CA"] = os.path.abspath(api_ca)
     return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
                                stdin_text=_stdin_text)

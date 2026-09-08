@@ -5006,3 +5006,16 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
 - Timestamp: 2026-09-08T11:38:45+09:00
+
+
+## REV-20260908T115500-bridge-network [SUBAGENT:security] — PASS
+
+- Related TASK: TASK-20260908T115500-bridge-network / Issue #1607.
+- Timestamp: 2026-09-08T12:04:07+09:00
+- Trigger: 작업 네트워크 권한 프로필·위임 토큰·사내 CA 전달. §18.8 security subset.
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T115500-network-security.md
+- Verdict: PASS. 초기 hostname 보장 범위·기존 설정 결합 우려는 문서 한정 및 실제 충돌 대조로 해소.
+- Human Approval Needed: no. DQA 기능 사용 실패 해소라는 현재 사용자 요청 내 서비스 접근 구성.
+  파일 read-only·정확한 hostname allowlist·기존 서버측 권한/관리 제약 유지, 사용자 설정 파일 무변경.
+- 전체 브리지 1658 passed/1 skipped, 집중 103 passed/1 skipped, ruff PASS.
+- 첫 PR의 앱 첨부 실패는 숨기지 않고 후속 원장·PR #1609에 기록했다. 후속 배포 종단 확인 대기.

@@ -3595,6 +3595,19 @@ DQAConnect.exe을 열려고 합니다」 승인창을 띄웠다(사용자 제보
   받는 상태가, 이 재시도가 없애려는 상태와 같다.
 - 재시도는 **아직 못 얻은 것만** 묻는다(`cached` 로 누적분을 넘긴다).
 
+## REQ-20260908-dqa-network — DQA 호스트 접근과 사내 CA 전달
+
+DQA가 위임한 Codex 작업에는 자식 실행에만 적용되는 read-only 권한 프로필을 구성한다.
+network_proxy를 함께 활성화하고 기존 Api.base의 정확한 hostname만 허용한다.
+호스트 제한은 scheme·port·path 제한이 아니다. 본문·DB 접근은 기존 서버의 토큰 범위 검사가
+판정한다. 프로필 table 전체를 교체하여 동일 이름의 넓은 사용자 규칙이 섞이지 않게 한다.
+설정 미지원·관리 정책 거부는 실패로 처리하며 샌드박스를 해제해 재시도하지 않는다.
+
+Api.ca는 BRIDGE_CA로 전달한다. WSL에서는 /up 경로 변환을 적용하고 DQA HTTP 요청에만
+해당 CA를 사용한다. 인증서 검증 및 Codex 자체 public CA 신뢰를 유지한다.
+토큰·CA 없음/다른 런타임/사용자 custom 명령은 해당 자동 프로필의 대상이 아니다.
+기능 탐색·자가 리뷰에는 작업 토큰이나 네트워크 권한을 추가하지 않는다.
+
 ## REQ-20260908-bridge-token-env — Windows에서 WSL AI로 토큰 전달
 
 `ask_local_ai`가 자식 환경에 주입한 `BRIDGE_TOKEN`은 Windows→WSL 경계를 넘어야 한다.
