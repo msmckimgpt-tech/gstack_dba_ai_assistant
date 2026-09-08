@@ -3314,7 +3314,18 @@ Task-Cycle: feature-0002-agent-core
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+## CHG-20260908T063000-prompt-layers
+- Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
 
+## CHG-20260908-finalize-pipe
+- Timestamp: 2026-09-08T06:14:23.669241+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- PR #1627 출하 중 bin/cycle-finalize.sh가 worktree 목록 조기 소비 종료로 rc=141에 중단했다. awk가 입력 전체를 소비하면서 첫 worktree만 출력하도록 수정했다. 대상 선택·잠금·삭제 조건은 유지한다.
+- 100000행 fixture: 기존 cat | awk rc=141, 수정 rc=0, 두 결과 /main. bash -n PASS, 독립 backend 리뷰 P1/P2 없음.
 ## CHG-20260908T150000-attachment-boundary-cross-ref
 
 - 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. feature-0003-agent-web-ui REQ-20260908-attachment-boundary 동반: core 첨부 권위 지침·worker 빈 성공본문 및 bridge recall 보존. 검증 정본: feature-0003-agent-web-ui/docs/REPORT.md, TASK-20260908T150000-attachment-boundary. 단일 primary feature verify.
+
+## CHG-20260908T070000-main-integration
+- Related TASK: TASK-20260908-prompt-layer-delivery; Session: 01a07f86-30e8-7493-ab26-ae82792def88.
+- 병합 cc30233e의 문서 충돌 해소: 두 TASK/REPORT 병존, native 최신 main 상태 보존, STATUS/ROUTEMAP 재생성. 집중 180건 재검증 PASS. 병합 commit의 post-commit MODIFY delta 누락을 이 후속 문서 commit으로 보완한다. 제품 코드 추가 변경 없음.

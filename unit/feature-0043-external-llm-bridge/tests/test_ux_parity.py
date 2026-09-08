@@ -1537,10 +1537,11 @@ def test_runner_puts_system_prompt_first():
     assert '"system": [_APPEND_SYSTEM_FLAG' in src, "claude 명세에 시스템 채널이 없다"
 
 
-def test_prompt_failure_does_not_block_the_answer():
-    """프롬프트 조립 실패가 답변을 막지 않는다 — 막으면 설정 하나가 서비스를 세운다."""
+def test_prompt_failure_cannot_silently_drop_configured_layers():
     body = _func_source(AI_TOOLS, "_bridge_system_prompt")
-    assert 'return ""' in body and "logging" in body, "조용히 실패하거나, 실패로 답변을 막는다"
+    assert "strict=True" in body and "raise RuntimeError" in body
+    claim = _func_source(AI_TOOLS, "claim_request")
+    assert '_json_err(503,' in claim and '_release_claim(conn, task_id, account_id)' in claim
 
 
 # ── ③ 첨부 ───────────────────────────────────────────────────────────────────

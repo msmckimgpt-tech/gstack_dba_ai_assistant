@@ -8,6 +8,11 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260908-prompt-layer-delivery
+
+여섯 계층의 요청 순서·최종 CLI 전달을 검증하고 조회 실패 은폐를 수정했다. DB 오류는 bridge의 strict 조립에서 차단하며 기존 placeholder에 원인을 기록하고 5초 비동기 간격으로 재시도한다. 최초 점유자와 일치하는 경우에만 해제한다. 제품 표시명 조회 오류는 내용 조회를 막지 않는다. 집중 회귀 180건과 bridge 전체 1,700건(1 skip), 독립 backend/security/QA 리뷰를 통과했다. DQA 앱 화면 시나리오는 실행 중 앱의 CDP 미개방으로 NOT-RUN이며 source 검토와 구분한다. 출하 결과는 해당 PR의 최종 Git/배포 기록을 따른다. [상세 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md).
+
+
 ## TASK-20260908T150000-attachment-boundary — 첨부 경계 감사
 
 - 상태: 구현·120 pytest·backend/security/qa PASS; PR/main·배포 진행 예정.

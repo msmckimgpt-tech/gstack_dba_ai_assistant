@@ -25,6 +25,7 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import threading
 import json
@@ -174,7 +175,7 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
 
     | 대화 | 콘솔 작업 |
     |---|---|
-    | 5단계 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
+    | 6계층 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
     | 이전 대화 문맥·첨부 | 없다 (대화가 없다) |
     | 말풍선 진행 표시·제목 규약 | 없다 (화면이 폼·그래프다) |
 
@@ -2702,6 +2703,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         return _json_err(409, _stale_runner_notice(_claim_yield_to))
     _claim_scope_sql, _claim_scope_params = _dispatch_scope_sql(
         _runner_job_grants(conn, ctx, request), account_id)
+    _prompt_claim_client = _claimed_client_value(ctx.get("client_id"), body.get("runner_instance"))
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2722,7 +2724,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             # 인스턴스를 새겨 두면 `bridge_heartbeat` 의 사망 신고가 그 점유만 정확히 놓는다.
             # 신고하지 않는 구 러너는 종전과 같은 값이 들어간다(호환).
             (account_id,
-             _claimed_client_value(ctx.get("client_id"), body.get("runner_instance")),
+             _prompt_claim_client,
              task_id, *_claim_scope_params))
         claimed = int(cur.rowcount or 0)
         conn.commit()
@@ -2766,7 +2768,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
     # ── 콘솔 작업이면 여기서 갈린다 (TASK-20260831T100000) ──────────────────────────
     #
-    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 5단계 시스템 프롬프트 ·
+    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 6계층 시스템 프롬프트 ·
     # 진행 표시 · 제목 규약)는 **콘솔 작업에 하나도 해당하지 않는다.** 억지로 통과시키면
     # 없는 대화를 조회하고 없는 말풍선을 갱신하려 든다 — 각각은 fail-soft 지만, 합치면
     # "왜 이 작업만 느린가" 를 아무도 설명하지 못하는 상태가 된다.
@@ -2816,11 +2818,23 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     # 전달돼, 개인 머신 AI 가 "첨부가 없다" 고 전제하고 답했다(웹 대화 사용감과 어긋남).
     attachments = _task_attachment_list(conn, row[4], conversation_id)
 
-    # 운영자가 설정한 5단계 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
+    # 운영자가 설정한 6계층 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
     # 둘 다 빠져 있어서, 브리지 답변만 다른 규칙으로·어디를 보는지 모른 채 만들어졌다.
-    system_prompt = _bridge_system_prompt(
-        conn, product_id=row[2], role_id=row[5], account_id=account_id,
-        product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
+    try:
+        system_prompt = _bridge_system_prompt(
+            conn, product_id=row[2], role_id=row[5], account_id=account_id,
+            product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
+    except RuntimeError:
+        notice = "답변 지침을 불러오지 못해 대기 중입니다. 잠시 후 자동으로 다시 시도합니다."
+        _mark_bridge_working(conn, task_id, conversation_id, text=notice)
+        # 구버전 러너는 Retry-After를 무시한다. 점유를 유지한 비동기 대기로 재시도를 제한한다.
+        try:
+            await asyncio.sleep(5)
+        finally:
+            _release_claim(conn, task_id, account_id, claimed_client=_prompt_claim_client)
+        response = _json_err(503, notice)
+        response.headers["Retry-After"] = "5"
+        return response
     scope = _bridge_product_scope(conn, row[2])
     # 출처 고지는 운영자 지침 **앞**에 둔다 — 러너가 `system_prompt` 를 프롬프트 맨 앞에
     # 놓으므로, 받는 AI 가 역할 지침을 읽기 **전에** 이 실행이 어디서 왔는지 알게 된다.
@@ -2830,6 +2844,9 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                 product_name=str(scope.get("product_name") or "")),
         system_prompt.strip(),
     ) if x)
+    logging.getLogger(__name__).info(
+        "bridge.system_prompt task=%s chars=%s sha256=%s",
+        task_id, len(system_prompt), hashlib.sha256(system_prompt.encode("utf-8")).hexdigest())
     # ── 큐레이션 KB 근거를 **점유 응답에 실어 보낸다** (2026-09-02) ────────────────────
     #
     # ⚠ 왜 도구(`get_task_context`)로 충분하지 않았나 — 라이브 실증
@@ -3122,7 +3139,8 @@ def _announce_no_progress(phase: str, task_id: str, conversation_id,
     _mark_bridge_no_progress(task_id, conversation_id, int(claimed_age_sec // 60))
 
 
-def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
+def _mark_bridge_working(conn, task_id: str, conversation_id, *,
+                         text: str | None = None) -> bool:
     """대기 말풍선을 **'처리 중'** 으로 바꾼다. 점유 직후 1회.
 
     사용자 제보(2026-08-27): "AI 가 연결이 완수되었는지, 답변을 진행중인건지 알 방법이 없다."
@@ -3154,7 +3172,8 @@ def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
                     "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
                     "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
                     "RETURNING id",
-                    (_BRIDGE_WORKING_TEXT, str(conversation_id), str(task_id)))
+                    (text if text is not None else _BRIDGE_WORKING_TEXT,
+                     str(conversation_id), str(task_id)))
                 hit = cur.fetchone() is not None
             pg.commit()
             return hit
@@ -3252,35 +3271,26 @@ def account_is_listening(account_id: int, conn=None) -> bool:
 
 def _bridge_system_prompt(conn, *, product_id, role_id, account_id,
                           product_mode: str, conversation_id) -> str:
-    """이 요청에 적용될 **5단계 시스템 프롬프트**(전역·제품·역할·계정·개인).
-
-    브리지는 `agent_core` 를 타지 않으므로 이 프롬프트가 통째로 빠져 있었다 — 운영자가 제품별·
-    역할별로 설정한 지침이 브리지 답변에서만 사라졌고, 같은 질문이 경로에 따라 다른 규칙으로
-    답해졌다(사용자 제보 2026-08-27).
-
-    **서버가 조립해서 넘긴다.** 개인 AI 가 우리 프롬프트 체계를 알 리 없고, 안다 해도 DB 를 읽을
-    수 없다. 그리고 조립 로직을 여기서 다시 쓰면 두 벌이 되어 갈린다 — 내부 경로와 **같은 함수**
-    (`agent_core.compose_system_prompt`)를 부른다.
-
-    실패는 빈 문자열. 프롬프트를 못 만들었다고 답변 자체를 막지는 않는다(막으면 운영자 설정
-    하나가 서비스 전체를 세운다). 다만 로그로 남겨 조용히 사라지지 않게 한다.
-    """
+    """여섯 계층을 공통 조립기로 읽는다. 조회 오류는 빈 설정으로 취급하지 않는다."""
     try:
         import agent_core as _core
 
-        return str(_core.compose_system_prompt(
+        prompt = str(_core.compose_system_prompt(
             conn,
             product_id=int(product_id) if product_id else None,
             role_id=int(role_id) if role_id else None,
             account_id=int(account_id) if account_id else None,
             product_mode=str(product_mode or "pinned"),
             conversation_id=str(conversation_id or "") or None,
+            strict=True,
         ) or "")
+        if not prompt.strip():
+            raise RuntimeError("Empty system prompt")
+        return prompt
     except Exception as exc:
         logging.getLogger(__name__).error(
-            "[bridge] 시스템 프롬프트 조립 실패 conv=%s product=%s role=%s: %r",
-            conversation_id, product_id, role_id, exc)
-        return ""
+            "[bridge] 시스템 프롬프트 조립 실패 error_type=%s", type(exc).__name__)
+        raise RuntimeError("System prompt unavailable") from None
 
 
 def _bridge_origin_preamble(*, username: str, product_name: str = "") -> str:
@@ -3615,7 +3625,11 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
     })
 
 
-def _release_claim(conn, task_id: str, account_id: int) -> None:
+_CLAIM_CLIENT_UNSET = object()
+
+
+def _release_claim(conn, task_id: str, account_id: int, *,
+                   claimed_client: Any = _CLAIM_CLIENT_UNSET) -> None:
     """점유 해제 — 실패 경로에서 작업을 대기열로 되돌린다.
 
     `Status='open'` 인 것만 되돌린다: 이미 제출된(`submitted`) 작업을 되살리면 확정 불변이 깨진다.
@@ -3628,10 +3642,15 @@ def _release_claim(conn, task_id: str, account_id: int) -> None:
     try:
         cur = conn.cursor()
         try:
+            # await 이후의 정리는 그 사이 새로 점유한 러너의 lease를 해제하면 안 된다.
+            lease_sql = " AND ClaimedClient <=> %s" if claimed_client is not _CLAIM_CLIENT_UNSET else ""
+            params = (task_id, account_id, account_id)
+            if claimed_client is not _CLAIM_CLIENT_UNSET:
+                params += (claimed_client,)
             cur.execute(
-                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL "
-                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)",
-                (task_id, account_id, account_id))
+                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL, ClaimedClient=NULL "
+                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)" + lease_sql,
+                params)
             conn.commit()
         finally:
             cur.close()
