@@ -654,3 +654,41 @@ def test_the_upgrade_path_is_preserved():
     assert "AppId={{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}" in iss
     assert "DefaultDirName={autopf}\\{#MyAppName}" in iss, \
         "설치 폴더까지 바꾸면 업그레이드가 아니라 두 벌 설치가 된다"
+
+
+def test_text_selection_and_loaded_shortcuts_are_wired(monkeypatch, tmp_path):
+    made = _fake_webview(monkeypatch)
+    sh = window_mod.Shell("about:blank", "DQA", str(tmp_path))
+    assert sh.run()
+    assert made["window"].kw["text_select"] is True
+    assert sh._on_loaded in made["window"].events.loaded.handlers
+    assert not made["start_kw"].get("debug", False)
+
+
+def test_loaded_enables_native_find_on_ui_thread(monkeypatch, tmp_path):
+    sh = _shell(tmp_path, False)
+    settings = types.SimpleNamespace(AreBrowserAcceleratorKeysEnabled=False,
+                                     AreDevToolsEnabled=False)
+    calls = []
+    def invoke(callback):
+        calls.append("ui")
+        callback()
+    sh._window.native = types.SimpleNamespace(
+        Invoke=invoke, webview=types.SimpleNamespace(
+            CoreWebView2=types.SimpleNamespace(Settings=settings)))
+    monkeypatch.setitem(sys.modules, "System", types.SimpleNamespace(Action=lambda fn: fn))
+    sh._on_loaded()
+    assert calls == ["ui"]
+    assert settings.AreBrowserAcceleratorKeysEnabled is True
+    assert settings.AreDevToolsEnabled is False
+    assert sh._ready.is_set()
+    assert sh.last_error is None
+
+
+def test_shortcut_failure_is_observable_without_losing_window(monkeypatch, tmp_path):
+    sh = _shell(tmp_path, False)
+    monkeypatch.setitem(sys.modules, "System", types.SimpleNamespace(Action=lambda fn: fn))
+    sh._on_loaded()
+    assert sh._window is not None
+    assert sh._ready.is_set()
+    assert sh.last_error.startswith("text interaction:")

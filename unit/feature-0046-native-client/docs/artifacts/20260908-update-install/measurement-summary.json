@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "from": "1.1.2",
+  "to": "1.2.1",
+  "confirmed_at": "2026-09-08T14:09:42.461397+09:00",
+  "installed_at": "2026-09-08T14:10:26.198397+09:00",
+  "seconds_to_new_app": 40.578,
+  "seconds_to_installer_exit_0": 43.737,
+  "seconds_to_full_verification": 49.60202407836914,
+  "stable_seconds": 5.529326600022614,
+  "app_pid": 29004,
+  "original_orphan_pid": 48536,
+  "orphan_closed_by_installer": true,
+  "installer_log_sha256": "8f72dcb3809fa7447cb301a55d56a21324f73d9f68f87d0ba88a1875a9dde46a",
+  "release": {
+    "version": "1.2.1",
+    "orphan_pid": 48536,
+    "exe_sha256": "06ca673fd2a62930035bd1df39e079611f61e7a7beba9cf091470dcbe95992df",
+    "setup_sha256": "199cffb3e5f9d1c4ebcff496c78fe9b964a5fc660654e61ccd163114b1932352",
+    "setup_size": 26044458
+  },
+  "product_pr": 1623,
+  "product_merge": "6747139fa0fdacdb68ddd2444a337d870532e618",
+  "new_server_deploy_needed": false
+}

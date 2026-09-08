@@ -1,0 +1,26 @@
+{
+  "instance": "01adaab0c3e66dc80e1da50c1557f0f1",
+  "pid": 47700,
+  "locations": {
+    "codex": {
+      "target": {
+        "path": "/usr/local/bin/codex",
+        "where": "wsl",
+        "distro": "Ubuntu",
+        "user": "root",
+        "selection_id": "e7649428b6c64d225cc7715cd8a1220d"
+      },
+      "state": "ready"
+    },
+    "claude": {
+      "target": {
+        "path": "/usr/local/bin/claude",
+        "where": "wsl",
+        "distro": "Ubuntu",
+        "user": "root",
+        "selection_id": "ef93dec7fdf73d2b615246295ac989d1"
+      },
+      "state": "ready"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "catalog_at": 1788849547.149931,
+  "locations": [
+    {
+      "name": "claude",
+      "path": "C:\\Users\\mckim\\.local\\bin\\claude.exe",
+      "where": "windows",
+      "distro": "",
+      "user": "",
+      "logged_in": true,
+      "answers": true,
+      "error_code": "",
+      "checked_at": 1788849557.5538616
+    },
+    {
+      "name": "claude",
+      "path": "/usr/local/bin/claude",
+      "where": "wsl",
+      "distro": "Ubuntu",
+      "user": "root",
+      "logged_in": true,
+      "answers": true,
+      "error_code": "",
+      "checked_at": 1788849571.006609
+    },
+    {
+      "name": "codex",
+      "path": "/usr/local/bin/codex",
+      "where": "wsl",
+      "distro": "Ubuntu",
+      "user": "root",
+      "logged_in": true,
+      "answers": true,
+      "error_code": "",
+      "checked_at": 1788849567.5835197
+    },
+    {
+      "name": "claude",
+      "path": "/home/claude-corp/.local/bin/claude",
+      "where": "wsl",
+      "distro": "Ubuntu",
+      "user": "claude-corp",
+      "logged_in": true,
+      "answers": false,
+      "error_code": "",
+      "checked_at": 1788849566.2417197
+    },
+    {
+      "name": "codex",
+      "path": "/usr/local/bin/codex",
+      "where": "wsl",
+      "distro": "Ubuntu",
+      "user": "claude-corp",
+      "logged_in": true,
+      "answers": true,
+      "error_code": "",
+      "checked_at": 1788849567.9631307
+    }
+  ],
+  "preferences": {
+    "claude": "claude (WSL · Ubuntu · root)",
+    "codex": "codex (WSL · Ubuntu · root)"
+  }
+}

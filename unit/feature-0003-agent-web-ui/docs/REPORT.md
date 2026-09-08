@@ -8,6 +8,31 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260908-prompt-layer-delivery
+
+여섯 계층의 요청 순서·최종 CLI 전달을 검증하고 조회 실패 은폐를 수정했다. DB 오류는 bridge의 strict 조립에서 차단하며 기존 placeholder에 원인을 기록하고 5초 비동기 간격으로 재시도한다. 최초 점유자와 일치하는 경우에만 해제한다. 제품 표시명 조회 오류는 내용 조회를 막지 않는다. 집중 회귀 180건과 bridge 전체 1,700건(1 skip), 독립 backend/security/QA 리뷰를 통과했다. DQA 앱 화면 시나리오는 실행 중 앱의 CDP 미개방으로 NOT-RUN이며 source 검토와 구분한다. 출하 결과는 해당 PR의 최종 Git/배포 기록을 따른다. [상세 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md).
+
+
+## TASK-20260908T150000-attachment-boundary — 첨부 경계 감사
+
+- 상태: PR #1629 병합 및 e8fd398b 전체 배포 완료. 120 pytest·3패널·배포본 56검사 PASS.
+- 실측: 대화 …8c73806a의 assistant 파일 10개 중 6개에 다음 설명/diff 혼입. PostgreSQL replica SELECT + MinIO GET으로 확인; 실제 byte와 저장 SHA-256 10/10 일치. 사용자/첨부 원문 비전재, 운영 데이터 write 0.
+- RC: `_attachment_block_spans`의 마지막 bare fence 탐색이 다음 설명/diff를 흡수. `_strip_attachment_*_blocks`가 파일별 완료 문장을 자동 부착. `FR-attachment-last-fence-captures-answer`.
+- 변경: 앞방향 fence 경계, 긴 outer 종료 우선, 코드 인용 비실행; 성공 자동 안내 제거; bridge/worker 빈 성공본문 보존; 권위 프롬프트에 내용 분리·원본 주석 보존·반복 완료문구 생략.
+- 검증: 관련 6개 모듈 pytest 120 PASS(경계 21건), ROUTEMAP 재생성/codenav-lint PASS. 패널 초기 P2와 인용·empty recall 빈틈 해소 후 3명 PASS.
+- 한계: 기존 손상 파일 자동 복원, 사용자 AI 재질의, 실제 DQA 화면은 미실측. 테스트는 서버 처리 계약 증거이며 실제 사용자 대화 마찰 소멸을 단정하지 않는다.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0003-agent-web-ui/AGENTS.md`; SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; main 동일 해시. Session `01a07f94-148f-7253-a515-1a7a66a97cea`; 2026-09-08T06:09:53.549929+00:00.
+- 배포 권한: 현재 사용자 수정 요청 + AGENTS §16.5.1 included. 정본 무중단 스파인 사용. 권한·스키마·비용 계약 변경 없음.
+- 배포 실측 (2026-09-08T06:27:43.349266+00:00): `bash bin/deploy-web.sh` exit 0, web-a/b·MCP a/b·insight/ask/ops-scheduler 7서비스 e8fd398b. ready/90초 soak PASS, ask 본체·surge 각각 6초 정상 종료·surge 정리. 서버 LLM 스모크는 호출 차단 계약 PASS이며 실제 사용자 AI 생성 성공을 뜻하지 않는다.
+- 동일 배포본에서 서비스별 파서/strip 8검사(총 56) 및 권위 지침 확인 PASS. web-b에서 저장 파일 10개를 읽어 byte/SHA 일치 확인 후 재구성 입력에 파서를 적용해 혼입 6개 후속 답변 제외 확인. DB/object write 0. web-a 암호화키·첨부 저장 자격증명 존재 확인(값 미출력).
+
+
+## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
+
+DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.
+
+Issue #1615. 자동 연결·중복 위치 선택·클라이언트 캐시·모델 등록 후 toast를 구현했다. 최신 main의 아이콘/자동 복구를 통합했다. 검증과 릴리스 결과는 `test-runs.d/20260908T123400-connect-discovery.md`에 기록한다.
+
 ## TASK-20260908T124500-attach-folder-tree — 2026-09-08
 
 첨부 전달의 단위를 **파일에서 폴더(디렉토리 트리)** 로 넓혔다. 사용자 요청(2026-09-08):
@@ -3084,3 +3109,35 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 - 공식 클라이언트 채널 1.1.1 게시 완료. 실제 Windows 앱의 updater 코드가 1.1.0에서 1.1.1을 발견하고 설치기 25,731,162 bytes를 다운로드해 SHA-256 일치를 확인했다. 설치기를 실행해 사용자 설치본을 바꾸지는 않았다.
 - 사용자는 **DQA 앱에서 1.1.1로 업데이트한 뒤 다시 연결**한다. 별도 러너 실행·터미널 명령은 필요 없다. 실제 두 러너 복귀 및 파싱 전 실패 복구 실측은 아래 정본에 기록했다.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+## DQA 연결 개선 배포 결과 — 2026-09-08
+
+PR #1619 / 서버 92cfa2c2 전체 배포 및 DQA 1.2.0 설치기 공개 완료. 실제 다운로드 크기·SHA-256이 Windows 원본과 일치한다. 최종 검증/미확인 경계와 증거 정본은 feature-0046 REPORT의 배포 완료 절과 공동 실행 원장이다.
+
+## CHG-20260908-attachment-cycle-cleanup
+
+- Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+정리 중 cycle-finalize가 종료 코드 141로 실패했다. `set -o pipefail` 아래에서 첫 경로를 얻은 awk의 조기 종료가 큰 worktree 목록을 출력하는 git에 SIGPIPE를 전달했다. cycle-init/finalize 모두 첫 경로만 출력하면서 나머지 입력을 소비하도록 수정했다. Bats 전체 25 PASS, 격리된 기존 코드 뮤턴트는 신규 2건 모두 141로 실패. 제품 런타임 변경은 없으며 추가 배포 대상이 아니다.
+
+## CHG-20260908T162000-tool-surface
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:01:57.915443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+[TASK-20260908T162000-tool-surface 도구 감사](TOOL_SURFACE_AUDIT.md): 대화의 HTTP404/SQL 가드 제한을 분리해 확인했다. 조회5종 연결, 21종 계약 분류, 서버 catalog·MCP 전체인자 전달과 제품 경계 보강. 검증/배포 결과는 test-runs.d/TASK-20260908T162000-tool-surface.md.
+
+## CHG-20260908T172000-tool-surface-deploy-proof
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:20:41.263318+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비스 healthy·90초 soak·56배포본 계약검사 PASS, 실제 task 권한 catalog/미허용 datasource/첨부 대체경로 확인. 실제 SQL Server는 새 웹·기존 워커·호스트 모두 연결 timeout이어서 프로시저 결과 성공과 구분한다. 신규 AI 응답0으로 fixed:deployed:unverified-live 유지. 정본: [배포·미실측 기록](test-runs.d/TASK-20260908T162000-tool-surface.md). 제품 코드 추가 변경 없이 증거·제한을 문서화한다.

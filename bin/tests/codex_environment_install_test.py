@@ -19,6 +19,12 @@ hspec.loader.exec_module(history)
 
 
 class Compatibility(unittest.TestCase):
+    def test_tracked_context_matches_installer_source(self):
+        self.assertEqual(
+            installer.CONTEXT,
+            (ROOT.parent / '.codex/CONTEXT.md').read_text(),
+        )
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / 'project/repo'

@@ -1,0 +1,127 @@
+{
+  "tested_commit": "37fae5d54e7bf2ff8ae30e38f1649c46989b7cb6",
+  "main_integrated": "ec913f94360cd706b4769e7e9c98e5d69b27d5c4",
+  "tests": 8075,
+  "passed": 8059,
+  "skipped": 16,
+  "failures": 0,
+  "errors": 0,
+  "pytest_seconds": 477.858,
+  "native_client_cases": 531,
+  "make_test_exit_code": 0,
+  "ruff": "PASS",
+  "workflow_bats": {
+    "passed": 69,
+    "check13": 20
+  },
+  "python_tools_passed": 24,
+  "dqa_installed_app_flow": "NOT-RUN",
+  "policy_sha256": "f80456d9b88a6303b5b394bed5ea350734dcc9c198a4332f4c15b7e568034b48",
+  "source_files_sha256": {
+    "bin/cycle-init.sh": "ff295ed011b8a904a02b0a8a48df5581da2c18fb62b0037ec9a48c26168d4ec2",
+    "bin/cycle-finalize.sh": "051118ae022ef128b3e98425e89c1fbccef77fc263a058184d49241f583d4df8",
+    "bin/verify-completion.sh": "76ec622e6d5ca49d672c9556e0cc49738f1113bcee153373d666fc00c54aaa90",
+    "bin/gen-status.sh": "e6953ea7c399408d91385fa0fa1f63b81a7f761331c491e1d12f8b46deb5f863",
+    "pyproject.toml": "55b15dcae27038ad0116922f656b4d86e955b01a772687b78bc409fb6a1777b9",
+    "Makefile": "5ed5e3ba2ba43fbff64555f592faa94ecafa94b54915dde6facfeb48d13dc0e0",
+    ".github/workflows/ci.yml": "5f4ef71cb52957f0b3d699f80d5cc9c27975c7f8e33e786ddb92986a6a4d72e1",
+    "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js": "aa1efc170ec450ae945cc411b9d4d0a24c097ee7c695cbe08b86e84a25b0b955"
+  },
+  "final_integration": {
+    "commit": "4619c20d",
+    "main": "8f49f1fc",
+    "bridge_passed": 1671,
+    "bridge_skipped": 1,
+    "workflow_bats_passed": 69,
+    "board_bats_passed": 134,
+    "board_bats_skipped": 4,
+    "python_tools_passed": 34,
+    "policy_sha256": "a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2",
+    "source_files_sha256": {
+      "bin/cycle-init.sh": "ff295ed011b8a904a02b0a8a48df5581da2c18fb62b0037ec9a48c26168d4ec2",
+      "bin/cycle-finalize.sh": "73c5f773c8977873d345d6d33a450c3b4441ed2f724278788990746fbef0f752",
+      "bin/verify-completion.sh": "76ec622e6d5ca49d672c9556e0cc49738f1113bcee153373d666fc00c54aaa90",
+      "bin/gen-status.sh": "e6953ea7c399408d91385fa0fa1f63b81a7f761331c491e1d12f8b46deb5f863",
+      "pyproject.toml": "55b15dcae27038ad0116922f656b4d86e955b01a772687b78bc409fb6a1777b9",
+      "Makefile": "5ed5e3ba2ba43fbff64555f592faa94ecafa94b54915dde6facfeb48d13dc0e0",
+      ".github/workflows/ci.yml": "5a08389f43b029257b7bd034a55f981b1473227042fc1a7512842b92f495f722",
+      "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js": "aa1efc170ec450ae945cc411b9d4d0a24c097ee7c695cbe08b86e84a25b0b955"
+    }
+  },
+  "delivery": {
+    "checked_at_utc": "2026-09-08T03:39:10.744312+00:00",
+    "deployed_revision": "a92c9256",
+    "scope": "web",
+    "script_exit": 0,
+    "soak_seconds": 90,
+    "healthz_http": 200,
+    "replicas": [
+      {
+        "name": "/repo-web-a-1",
+        "image": "mysql-ai-web:a92c9256",
+        "health": "healthy",
+        "restart_count": "0"
+      },
+      {
+        "name": "/repo-web-b-1",
+        "image": "mysql-ai-web:a92c9256",
+        "health": "healthy",
+        "restart_count": "0"
+      }
+    ],
+    "caddy_no_upstreams_last_10m": 0,
+    "asset": {
+      "tls_verified": true,
+      "ca": "artifacts/certs/rootCA.pem",
+      "served_asset_sha256": "7f61978c035564384d8e29f0d93d7e2f03c71a84aa2631628f8fecbe0ca0b4d1",
+      "new_recovery_message": true,
+      "old_removed_instruction": false,
+      "native_tray_guidance_preserved": true
+    },
+    "installed_dqa_flow": "NOT-RUN",
+    "conversation_smoke": "NOT-RUN (web-only scope)",
+    "merge_commit": "a92c925603680dcd66784868083623afdcc24748",
+    "pull_request": 1616,
+    "github_actions": {
+      "enabled": false,
+      "pull_request_runs": 0,
+      "result": "NOT-RUN"
+    }
+  },
+  "closing_tools": {
+    "base_commit": "a92c925603680dcd66784868083623afdcc24748",
+    "cycle_lifecycle_passed": 21,
+    "board_lifecycle_passed": 12,
+    "independent_cleanup_cases_passed": 6,
+    "deploy_quiesce_passed": 34,
+    "deploy_output_combinations_reviewed": 6,
+    "application_source_changed": false,
+    "source_files_sha256": {
+      "bin/cycle-finalize.sh": "ab3ecceb5111c1e1015455a0855a983f8ec6ce87abb5a75bd1b4d457587768e4",
+      "bin/tests/cycle_lifecycle.bats": "99755abe3c713ab911ad9ecaf06bff0a45141ee9e90b930181f131961fde0f10",
+      "bin/deploy-web.sh": "1d47e78d9bb1852aec184c9dcd5ed4487c78387d78bfe9de2e75f03353f30e08"
+    },
+    "merge_commit": "d81325ff3cf96a8d252065d3c2f7f993c309c829",
+    "pull_request": 1618,
+    "worktree_and_branches_removed": true,
+    "registry_closed": true,
+    "own_board_state_observed": "done"
+  },
+  "idempotent_close": {
+    "base_commit": "d81325ff3cf96a8d252065d3c2f7f993c309c829",
+    "cycle_lifecycle_passed": 23,
+    "board_lifecycle_passed": 12,
+    "exit_code": 0,
+    "board_core_changed": false,
+    "application_source_changed": false,
+    "other_error_test": "done helper rc3 diagnostic injection; not an actual authentication test",
+    "source_files_sha256": {
+      "bin/cycle-init.sh": "779f969d7eb0504393949c58944ef8c039f7698b5a48277691910525a311288f",
+      "bin/cycle-finalize.sh": "3c472f4a491e0e34c2934378bd31c8a579718bb4377ab25a3ce795c3ef60b2e4",
+      "bin/tests/cycle_lifecycle.bats": "43dbd77f0dcfbbc5d5bb9522344ff314aef275b17a44d59636e2c65d2e58ff2a"
+    },
+    "independent_cases_passed": 3,
+    "integrated_main": "92cfa2c2",
+    "reviewed_tools_and_board_core_unchanged_on_integration": true
+  }
+}

@@ -25,6 +25,7 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import threading
 import json
@@ -174,7 +175,7 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
 
     | 대화 | 콘솔 작업 |
     |---|---|
-    | 5단계 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
+    | 6계층 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
     | 이전 대화 문맥·첨부 | 없다 (대화가 없다) |
     | 말풍선 진행 표시·제목 규약 | 없다 (화면이 폼·그래프다) |
 
@@ -406,6 +407,8 @@ import tool_ledger as _ledger       # noqa: E402
 P0_TOOLS = frozenset({
     "list_schemas", "describe_schema", "describe_table",
     "search_tables", "get_foreign_keys", "get_table_indexes",
+    "search_routines", "describe_routine", "search_db_objects", "describe_db_object",
+    "explain_query",
 })
 
 # P1 (2026-08-14): 자유 SELECT. 구조만으로는 **관계 주장을 데이터로 검증할 수 없다**는 실사용
@@ -418,6 +421,13 @@ P0_TOOLS = frozenset({
 #   ② 원장에 **실제 행수**를 기록한다(렌더 문자열의 줄 수로 세면 시간당 행 상한이 장식이 된다).
 P1_TOOLS = frozenset({"execute_sql"})
 EXPOSED_TOOLS = P0_TOOLS | P1_TOOLS
+
+def _tool_catalog() -> dict[str, Any]:
+    import modules.tools as _tools
+    from external_tool_catalog import build_catalog
+    return build_catalog(_tools.TOOL_DEFINITIONS_FULL, P0_TOOLS, P1_TOOLS,
+                         sql_enabled=_sql_enabled())
+
 
 # 운영자 스위치. 데이터 추출 축이라 구조 조회와 별개로 끌 수 있어야 한다.
 _SQL_ENABLED_KEY = "AGENT_EXT_TOOL_SQL_ENABLED"
@@ -542,6 +552,13 @@ def require_ai_token(request: Request, conn=Depends(app.get_conn)) -> dict[str, 
         raise app._AuthError(f"이 토큰에는 {_REQUIRED_SCOPE} 권한이 없습니다.", 403)
     return {"account": account, "client_id": resolved.get("client_id"),
             "session_id": resolved.get("session_id"), "scopes": resolved.get("scopes")}
+
+
+@router.post("/api/ai/connect/identity")
+def connect_identity(ctx=Depends(require_ai_token)) -> dict:
+    """클라이언트 연결 재사용에 필요한 인증된 세션 식별자만 반환한다."""
+    return {"connection_session": str(ctx.get("session_id") or ""),
+            "account_id": int(ctx["account"]["id"])}
 
 
 def _pg():
@@ -961,7 +978,8 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
         account=str(account.get("username") or account.get("id")),
         conversation_id=task.get("conversation_id"), task_id=task_id, source="task_context")
 
-    response = JSONResponse({"task_id": task_id, "context": marked, "notes": notes})
+    response = JSONResponse({"task_id": task_id, "context": marked, "notes": notes,
+                             "tool_catalog": _tool_catalog()})
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="get_task_context",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -2028,7 +2046,7 @@ def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
 
 def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversation_id: str,
                                     message_id: int, answer: str,
-                                    task_id: str) -> tuple[str, list, list]:
+                                    task_id: str) -> tuple[str | None, list, list]:
     """답변의 ```attachment-edit```/```attachment-new``` 블록을 **실제 첨부로** 만든다.
 
     ## 왜 필요한가 (사용자 제보 2026-08-28)
@@ -2051,7 +2069,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
     느슨한 쪽이 사용자가 보는 진실이 된다. 이 함수는 브리지 맥락(task_id 로깅, 회수 store 에
     넘길 정리본 반환)만 얹는다.
 
-    Returns: `(정리본 or "", edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
+    Returns: `(정리본 or None, edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
     """
     log = logging.getLogger(__name__)
     try:
@@ -2061,7 +2079,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
     except Exception as exc:
         # 후처리 실패가 답변 전달을 막지 않는다 — 답변은 이미 저장됐고 사용자는 그것을 봐야 한다.
         log.error("[bridge] 첨부 후처리 실패 task=%s conv=%s: %r", task_id, conversation_id, exc)
-        return "", [], []
+        return None, [], []
 
     edited = list(res.get("edited") or [])
     created = list(res.get("created") or [])
@@ -2071,7 +2089,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
                  len(res.get("skipped") or []), int(res.get("undelivered") or 0))
     # 본문이 바뀌었고 **영속까지 됐을 때만** 정리본을 돌려준다. 실패했는데 정리본을 돌려주면
     # 회수 store 와 화면 본문이 갈린다(표시본엔 블록이 남는데 회수본엔 없다).
-    return (str(res.get("answer") or "") if res.get("answer_persisted") else "",
+    return (str(res.get("answer") or "") if res.get("answer_persisted") else None,
             edited, created)
 
 
@@ -2293,7 +2311,7 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
             # 첨부 블록을 정리한 본문이 있으면 **그것을** 남긴다 — 회수본에 원문 블록이 남으면
             # 다음 턴 LLM 컨텍스트에 파일 전문이 통째로 다시 실린다(표시본은 이미 정리됨).
             _core._save_message(conn, str(conversation_id), "assistant",
-                                content=(_clean or answer))
+                                content=(_clean if _clean is not None else answer))
         except Exception as exc:
             logging.getLogger(__name__).error(
                 "[bridge] core store 답변 기록 실패 task=%s conv=%s — 표시본만 남는다: %r",
@@ -2695,6 +2713,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         return _json_err(409, _stale_runner_notice(_claim_yield_to))
     _claim_scope_sql, _claim_scope_params = _dispatch_scope_sql(
         _runner_job_grants(conn, ctx, request), account_id)
+    _prompt_claim_client = _claimed_client_value(ctx.get("client_id"), body.get("runner_instance"))
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2715,7 +2734,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             # 인스턴스를 새겨 두면 `bridge_heartbeat` 의 사망 신고가 그 점유만 정확히 놓는다.
             # 신고하지 않는 구 러너는 종전과 같은 값이 들어간다(호환).
             (account_id,
-             _claimed_client_value(ctx.get("client_id"), body.get("runner_instance")),
+             _prompt_claim_client,
              task_id, *_claim_scope_params))
         claimed = int(cur.rowcount or 0)
         conn.commit()
@@ -2759,7 +2778,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
     # ── 콘솔 작업이면 여기서 갈린다 (TASK-20260831T100000) ──────────────────────────
     #
-    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 5단계 시스템 프롬프트 ·
+    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 6계층 시스템 프롬프트 ·
     # 진행 표시 · 제목 규약)는 **콘솔 작업에 하나도 해당하지 않는다.** 억지로 통과시키면
     # 없는 대화를 조회하고 없는 말풍선을 갱신하려 든다 — 각각은 fail-soft 지만, 합치면
     # "왜 이 작업만 느린가" 를 아무도 설명하지 못하는 상태가 된다.
@@ -2809,11 +2828,23 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     # 전달돼, 개인 머신 AI 가 "첨부가 없다" 고 전제하고 답했다(웹 대화 사용감과 어긋남).
     attachments = _task_attachment_list(conn, row[4], conversation_id)
 
-    # 운영자가 설정한 5단계 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
+    # 운영자가 설정한 6계층 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
     # 둘 다 빠져 있어서, 브리지 답변만 다른 규칙으로·어디를 보는지 모른 채 만들어졌다.
-    system_prompt = _bridge_system_prompt(
-        conn, product_id=row[2], role_id=row[5], account_id=account_id,
-        product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
+    try:
+        system_prompt = _bridge_system_prompt(
+            conn, product_id=row[2], role_id=row[5], account_id=account_id,
+            product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
+    except RuntimeError:
+        notice = "답변 지침을 불러오지 못해 대기 중입니다. 잠시 후 자동으로 다시 시도합니다."
+        _mark_bridge_working(conn, task_id, conversation_id, text=notice)
+        # 구버전 러너는 Retry-After를 무시한다. 점유를 유지한 비동기 대기로 재시도를 제한한다.
+        try:
+            await asyncio.sleep(5)
+        finally:
+            _release_claim(conn, task_id, account_id, claimed_client=_prompt_claim_client)
+        response = _json_err(503, notice)
+        response.headers["Retry-After"] = "5"
+        return response
     scope = _bridge_product_scope(conn, row[2])
     # 출처 고지는 운영자 지침 **앞**에 둔다 — 러너가 `system_prompt` 를 프롬프트 맨 앞에
     # 놓으므로, 받는 AI 가 역할 지침을 읽기 **전에** 이 실행이 어디서 왔는지 알게 된다.
@@ -2823,6 +2854,9 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                 product_name=str(scope.get("product_name") or "")),
         system_prompt.strip(),
     ) if x)
+    logging.getLogger(__name__).info(
+        "bridge.system_prompt task=%s chars=%s sha256=%s",
+        task_id, len(system_prompt), hashlib.sha256(system_prompt.encode("utf-8")).hexdigest())
     # ── 큐레이션 KB 근거를 **점유 응답에 실어 보낸다** (2026-09-02) ────────────────────
     #
     # ⚠ 왜 도구(`get_task_context`)로 충분하지 않았나 — 라이브 실증
@@ -2903,6 +2937,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
+        "tool_catalog": _tool_catalog(),
         # 관리 콘솔이 큐레이션한 KB 근거(용어사전·ENUM·설명·샘플·관계). **도구를 부르지 않아도**
         # 받는다 — 위 주석 참조(라이브에서 AI 가 `get_task_context` 를 안 불러 0 기여였다).
         # 빈 문자열이면 매칭된 근거가 없다는 뜻이고, 러너는 이 블록을 통째로 생략한다.
@@ -3115,7 +3150,8 @@ def _announce_no_progress(phase: str, task_id: str, conversation_id,
     _mark_bridge_no_progress(task_id, conversation_id, int(claimed_age_sec // 60))
 
 
-def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
+def _mark_bridge_working(conn, task_id: str, conversation_id, *,
+                         text: str | None = None) -> bool:
     """대기 말풍선을 **'처리 중'** 으로 바꾼다. 점유 직후 1회.
 
     사용자 제보(2026-08-27): "AI 가 연결이 완수되었는지, 답변을 진행중인건지 알 방법이 없다."
@@ -3147,7 +3183,8 @@ def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
                     "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
                     "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
                     "RETURNING id",
-                    (_BRIDGE_WORKING_TEXT, str(conversation_id), str(task_id)))
+                    (text if text is not None else _BRIDGE_WORKING_TEXT,
+                     str(conversation_id), str(task_id)))
                 hit = cur.fetchone() is not None
             pg.commit()
             return hit
@@ -3245,35 +3282,27 @@ def account_is_listening(account_id: int, conn=None) -> bool:
 
 def _bridge_system_prompt(conn, *, product_id, role_id, account_id,
                           product_mode: str, conversation_id) -> str:
-    """이 요청에 적용될 **5단계 시스템 프롬프트**(전역·제품·역할·계정·개인).
-
-    브리지는 `agent_core` 를 타지 않으므로 이 프롬프트가 통째로 빠져 있었다 — 운영자가 제품별·
-    역할별로 설정한 지침이 브리지 답변에서만 사라졌고, 같은 질문이 경로에 따라 다른 규칙으로
-    답해졌다(사용자 제보 2026-08-27).
-
-    **서버가 조립해서 넘긴다.** 개인 AI 가 우리 프롬프트 체계를 알 리 없고, 안다 해도 DB 를 읽을
-    수 없다. 그리고 조립 로직을 여기서 다시 쓰면 두 벌이 되어 갈린다 — 내부 경로와 **같은 함수**
-    (`agent_core.compose_system_prompt`)를 부른다.
-
-    실패는 빈 문자열. 프롬프트를 못 만들었다고 답변 자체를 막지는 않는다(막으면 운영자 설정
-    하나가 서비스 전체를 세운다). 다만 로그로 남겨 조용히 사라지지 않게 한다.
-    """
+    """여섯 계층을 공통 조립기로 읽는다. 조회 오류는 빈 설정으로 취급하지 않는다."""
     try:
         import agent_core as _core
 
-        return str(_core.compose_system_prompt(
+        prompt = str(_core.compose_system_prompt(
             conn,
             product_id=int(product_id) if product_id else None,
             role_id=int(role_id) if role_id else None,
             account_id=int(account_id) if account_id else None,
             product_mode=str(product_mode or "pinned"),
             conversation_id=str(conversation_id or "") or None,
+            strict=True,
         ) or "")
+        if not prompt.strip():
+            raise RuntimeError("Empty system prompt")
+        from external_tool_catalog import render_guidance
+        return prompt + "\n\n" + render_guidance(_tool_catalog())
     except Exception as exc:
         logging.getLogger(__name__).error(
-            "[bridge] 시스템 프롬프트 조립 실패 conv=%s product=%s role=%s: %r",
-            conversation_id, product_id, role_id, exc)
-        return ""
+            "[bridge] 시스템 프롬프트 조립 실패 error_type=%s", type(exc).__name__)
+        raise RuntimeError("System prompt unavailable") from None
 
 
 def _bridge_origin_preamble(*, username: str, product_name: str = "") -> str:
@@ -3608,7 +3637,11 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
     })
 
 
-def _release_claim(conn, task_id: str, account_id: int) -> None:
+_CLAIM_CLIENT_UNSET = object()
+
+
+def _release_claim(conn, task_id: str, account_id: int, *,
+                   claimed_client: Any = _CLAIM_CLIENT_UNSET) -> None:
     """점유 해제 — 실패 경로에서 작업을 대기열로 되돌린다.
 
     `Status='open'` 인 것만 되돌린다: 이미 제출된(`submitted`) 작업을 되살리면 확정 불변이 깨진다.
@@ -3621,10 +3654,15 @@ def _release_claim(conn, task_id: str, account_id: int) -> None:
     try:
         cur = conn.cursor()
         try:
+            # await 이후의 정리는 그 사이 새로 점유한 러너의 lease를 해제하면 안 된다.
+            lease_sql = " AND ClaimedClient <=> %s" if claimed_client is not _CLAIM_CLIENT_UNSET else ""
+            params = (task_id, account_id, account_id)
+            if claimed_client is not _CLAIM_CLIENT_UNSET:
+                params += (claimed_client,)
             cur.execute(
-                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL "
-                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)",
-                (task_id, account_id, account_id))
+                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL, ClaimedClient=NULL "
+                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)" + lease_sql,
+                params)
             conn.commit()
         finally:
             cur.close()
@@ -3742,6 +3780,23 @@ def _recent_conversation_context(conn, conversation_id, exclude_text: str = "") 
     return rendered
 
 
+@router.post("/api/ai/tools/get_tool_catalog")
+async def get_tool_catalog(request: Request, ctx=Depends(require_ai_token),
+                           conn=Depends(app.get_conn)) -> JSONResponse:
+    """현재 task의 도구 목록·인자·운영 제한을 반환한다."""
+    body = await _json(request)
+    account = ctx["account"]
+    task = _load_task(conn, str(body.get("task_id") or ""), account)
+    if task is None:
+        return _json_err(404, "task 를 찾을 수 없습니다.")
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is None:
+        denied = _kb_product_access_denied(conn, account, task.get("product_id"))
+    if denied is not None:
+        return denied
+    return JSONResponse({"task_id": task["task_id"], "tool_catalog": _tool_catalog()})
+
+
 @router.post("/api/ai/tools/{tool_name}")
 async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(require_ai_token),
                              conn=Depends(app.get_conn)) -> JSONResponse:
@@ -3749,7 +3804,11 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     부하 게이트·allowlist 를 재구현하지 않는다(재구현은 곧 두 벌 관리이고, 갈리는 순간 약한
     쪽이 실질 경계가 된다)."""
     if tool_name not in EXPOSED_TOOLS:
-        return _json_err(404, f"'{tool_name}' 는 이 표면에 노출된 도구가 아닙니다.")
+        from external_tool_catalog import RESTRICTED_TOOLS
+        return JSONResponse({"error": "tool_not_exposed", "tool": tool_name,
+                             "detail": RESTRICTED_TOOLS.get(tool_name, "현재 도구 목록에서 이름과 인자를 확인하세요."),
+                             "available_tools": sorted(EXPOSED_TOOLS),
+                             "catalog_tool": "get_tool_catalog"}, status_code=404)
     if tool_name in P1_TOOLS and not _sql_enabled():
         return _json_err(403, f"'{tool_name}' 는 현재 비활성화되어 있습니다(운영 설정).")
 
@@ -3759,6 +3818,12 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     task = _load_task(conn, task_id, account)
     if task is None:
         return _json_err(400, "task_id 가 필요합니다(open_task 로 먼저 여세요).")
+
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is None:
+        denied = _kb_product_access_denied(conn, account, task.get("product_id"))
+    if denied is not None:
+        return denied
 
     try:
         _ledger.check_limits(_pg(), account_id=int(account.get("id") or 0),

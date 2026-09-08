@@ -22,6 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          node --version
           python -m pip install --upgrade pip
           pip install -r unit/feature-0002-agent-core/src/requirements.txt
           pip install -r requirements-dev.txt
@@ -29,6 +30,16 @@ jobs:
       - name: Lint (ruff) — 초기 비차단
         continue-on-error: true
         run: ruff check unit/feature-0002-agent-core/src unit/feature-0003-agent-web-ui/src
+
+      - name: Workflow regression gates (isolated Git fixtures)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bats
+          bats bin/tests/cycle_lifecycle.bats bin/tests/agent_compatibility_gate.bats bin/tests/verify_completion.bats \
+               bin/tests/board_bootstrap.bats bin/tests/board_core.bats bin/tests/board_hook.bats bin/tests/board_lifecycle.bats
+          python3 -m unittest discover -s bin/tests -p gen_status_test.py
+          python3 -m unittest discover -s bin/tests -p codex_environment_install_test.py
+          python3 -m unittest discover -s bin/tests -p codex_board_hook_test.py
 
       - name: Guard — no raw AgentMemory* write SQL in live KB/runtime callers (TASK-0127 #1)
         run: |
@@ -79,27 +90,5 @@ jobs:
           # `import web.app` 을 직접 호출한다. bare-runner 에선 repo 루트에 `web` 네임스페이스가 없어
           # collection 이 실패하므로, web → feature-0003 src 심링크로 컨테이너와 동형 경로를 만든다.
           ln -sfn unit/feature-0003-agent-web-ui/src web
-          # feature-0020 (2026-08-14): 배포 스파인 테스트 디렉토리를 **실제로 실행**한다.
-          # pytest.ini 의 testpaths 에는 feature-0014/0020 이 등재돼 있었지만, 이 스텝이 경로를
-          # 명시하면 testpaths 는 무시된다 — 그래서 "무중단 불변식을 잠그는 테스트가 CI 에서
-          # 한 번도 돈 적 없는" 상태였다(등재 주석이 경계한 바로 그 함정을, 등재 자체는 못 막았다).
-          # feature-0023 도 같은 이유로 누락돼 있었다(Makefile `test` 에는 있고 CI 에는 없었다).
-          #
-          # 2026-09-01: 같은 누락이 **3개 더** 남아 있었다 — feature-0041·0043·0008. 셋 다
-          # `Makefile` `test` 에는 등재돼 있는데 이 목록에만 없어서, 그 스위트들은 CI 에서 한 번도
-          # 돈 적이 없다. 발견 경위: feature-0043 에 회귀 18건을 추가하고 나서야 "그 테스트가 CI
-          # 에서 도는가" 를 확인했고, 돌지 않았다. 위 주석이 경계한 함정이 **주석이 있는 채로**
-          # 세 번 더 반복된 셈이다.
-          #
-          # ⚠ 이 목록과 `Makefile` 의 `test` 타깃은 **같은 집합이어야 한다.** 한쪽에만 추가하면
-          #   로컬은 green 인데 CI 는 그 축을 보지 않는 상태가 조용히 생긴다 — 지금까지 4번 그랬다.
-          #   새 테스트 디렉토리를 만들면 **양쪽 모두** 등재한다.
-          pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests \
-                    unit/feature-0023-conversation-api-access/tests \
-                    unit/feature-0014-zero-downtime-deploy/tests \
-                    unit/feature-0020-zd-deploy-all/tests \
-                    unit/feature-0041-external-ai-tool-surface/tests \
-                    unit/feature-0043-external-llm-bridge/tests \
-                    unit/feature-0046-native-client/tests \
-                    unit/feature-0008-windows-browser-testing/tests \
-                    unit/feature-0006-lan-proxy-access/tests
+          # Suite membership is defined once in pyproject.toml testpaths.
+          pytest -q

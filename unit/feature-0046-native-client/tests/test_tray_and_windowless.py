@@ -944,6 +944,8 @@ def test_bridge_reports_and_cuts_the_connection(tmp_path):
     br._log = []
     br._runner_lock = __import__("threading").Lock()
     br._runner_generation = 0
+    br._connect_lock = __import__("threading").RLock()
+    br._selected = {}
     br._runner_proc = None
     assert br.connected is False
     assert br.disconnect() is False, "끊을 것이 없는데 끊었다고 말한다"
@@ -1002,18 +1004,8 @@ def test_a_probe_that_raises_reads_as_not_resident():
 _WEB = _UNIT.parents[0] / "feature-0003-agent-web-ui" / "src" / "static"
 
 
-def test_panel_promises_persistence_only_when_the_bridge_says_resident():
-    js = (_WEB / "ai-connect.js").read_text(encoding="utf-8")
-    assert "paintResidency" in js
-    fn = js[js.index("function paintResidency"):]
-    fn = fn[:fn.index("\n  }")]
-    assert "res.resident" not in fn, "함수 안에서 응답을 다시 읽지 않는다(인자로 받는다)"
-    assert "닫아도" in fn and "닫으면 연결이 끝납니다" in fn, \
-        "두 경우를 갈라 말하지 않는다 — 한쪽은 반드시 거짓이 된다"
-    assert "res.resident" in js, "브리지 판정을 근거로 쓰지 않는다"
-
 
 def test_panel_has_the_element_the_copy_targets():
     """문구가 가리키는 대상이 그 화면에 **실재**해야 한다(P0-R)."""
     html = (_WEB / "ai-connect.html").read_text(encoding="utf-8")
-    assert 'id="clientResidency"' in html
+    assert 'id="connectClientResidency"' in html

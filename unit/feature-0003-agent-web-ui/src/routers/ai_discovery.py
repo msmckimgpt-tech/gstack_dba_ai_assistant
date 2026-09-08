@@ -166,8 +166,7 @@ _TOOL_SURFACE_ENDPOINTS = [
      "purpose": "grounding 번들(도메인 개요·클러스터 요약·증거). 우리 LLM 호출 0",
      "request": {"task_id": "string"}, "response": {"context": "string — datamark 구획됨"}},
     {"method": "POST", "path": "/api/ai/tools/{tool}", "auth": "Bearer access_token",
-     "purpose": "구조 조회 6종 — list_schemas · describe_schema · describe_table · "
-                "search_tables · get_foreign_keys · get_table_indexes",
+     "purpose": "허용 제품의 구조·루틴·DB 객체·실행계획·SELECT 조회. 현재 목록/인자는 get_tool_catalog 참조",
      "request": {"task_id": "string", "arguments": "object — 도구별 인자(datasource 선택)"},
      "response": {"result": "string — datamark 구획됨"}},
     {"method": "POST", "path": "/api/ai/tools/submit_answer", "auth": "Bearer access_token",
@@ -339,6 +338,7 @@ def _openapi_spec(request: Request) -> dict:
 
     app.openapi()(admin 포함 전체)와 별개로 수기 관리한다(§7.1 불변식 — introspection 유출 방지).
     엄밀 JSON Schema + 예제로 클라이언트 코드젠을 지원한다(REV FINDING #4)."""
+    from routers.ai_tools import EXPOSED_TOOLS
     origin = str(request.base_url).rstrip("/")
     _ask_req = {
         "type": "object", "required": ["message"],
@@ -482,6 +482,15 @@ def _openapi_spec(request: Request) -> dict:
                               "400": {"description": "질문 누락 또는 지시 전복 문구 탐지"},
                               "401": {"description": "토큰 없음/만료/세션 로그아웃"},
                               "403": {"description": "제품 스코프 밖"}}}},
+            "/api/ai/tools/get_tool_catalog": {"post": {
+                "summary": "현재 task의 도구 목록·인자 JSON Schema·제한과 대체 경로",
+                "operationId": "aiToolsCatalog",
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object", "required": ["task_id"], "properties": {
+                        "task_id": {"type": "string"}}}}}},
+                "responses": {"200": {"description": "tool_catalog"},
+                              "403": {"description": "현재 제품/대화 접근 거부"},
+                              "404": {"description": "task 없음"}}}},
             "/api/ai/tools/get_task_context": {"post": {
                 "summary": "grounding 번들(도메인 개요·클러스터 요약·증거). 서버 LLM 호출 0.",
                 "operationId": "aiToolsGetTaskContext",
@@ -491,13 +500,10 @@ def _openapi_spec(request: Request) -> dict:
                 "responses": {"200": {"description": "datamark 구획된 컨텍스트"},
                               "404": {"description": "task 없음"}}}},
             "/api/ai/tools/{tool}": {"post": {
-                "summary": "구조 조회 6종(list_schemas·describe_schema·describe_table·"
-                           "search_tables·get_foreign_keys·get_table_indexes).",
+                "summary": "허용 제품의 조회 도구 실행. 현재 인자/운영 상태는 get_tool_catalog 참조.",
                 "operationId": "aiToolsRun",
                 "parameters": [{"name": "tool", "in": "path", "required": True,
-                                "schema": {"type": "string", "enum": [
-                                    "list_schemas", "describe_schema", "describe_table",
-                                    "search_tables", "get_foreign_keys", "get_table_indexes"]}}],
+                                "schema": {"type": "string", "enum": sorted(EXPOSED_TOOLS)}}],
                 "requestBody": {"required": True, "content": {"application/json": {"schema": {
                     "type": "object", "required": ["task_id"], "properties": {
                         "task_id": {"type": "string"},

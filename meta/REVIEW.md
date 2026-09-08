@@ -1819,7 +1819,29 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - **[SKIPPED] 사유**: §18.8 — 본 변경은 정본(`unit/*/docs/*`·`docs/DECISIONS.md`)이 이미 확정한 사실을 미러 표면(wiki·STATUS·ARCHITECTURE 색인)에 반영하는 **정합 편집**이다. 새 정책·구조 결정 저술 0건이라 적대 패널이 볼 판단 표면이 없다. 대신 4축 병렬 sweep + 2조 적대 교차검증(6에이전트·1.24M 토큰)으로 대체했다.
 - **검증**: 제안 68건 → CONFIRMED 66 · PLAUSIBLE 7(정정 반영) · REFUTED 1 · overreach 환원 1 → span 충돌 13쌍 해소 후 **최종 54건 적용** + ORCH-01. `wiki-lint` total 32(직전 창 baseline 복귀 — broken 2→1) · `gen-status --check` 최신(frontmatter 21·passthrough 25) · `ssot-lint` 4 WARN(baseline 동일) · 카운트 46 = wiki 카드 46.
 - Human Approval Needed: no
+## REV-20260908T125000-delegation-policy [SUBAGENT:conversation_evidence] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: 승인·읽기·재개 규칙 정합, DQA-client 검증 정책과 check #13
+- Timestamp: 2026-09-08
+- Verdict: PASS (정책·권한·게이트와 JS fixture 독립 검토; 실제 DQA 앱 사용자 흐름은 NOT-RUN)
+- Artifact: meta/reviews/20260908T-policy-security.md
+- Human Approval Needed: no — 현재 사용자의 직접 개선 위임과 DQA 사용 경로 정정. 기존 deploy_scope: included에 따른 정본 배포 사용.
 
+## REV-20260908T125001-delegation-workflow [SUBAGENT:compact_indexes] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: cycle 격리/merge/REGISTRY 보호, 테스트 정본과 STATUS 생성 회귀
+- Timestamp: 2026-09-08
+- Verdict: PASS (구현 소유권이 없는 workflow/generator 독립 검토; 본인 작성 native tests는 conversation_evidence가 독립 확인)
+- Artifact: meta/reviews/20260908T-workflow-qa.md
+- Human Approval Needed: no — 현재 위임 범위의 재현 결함 수정. 타인 변경·기존 세션 보존.
+
+## REV-20260908T121500-delegation-integration [SUBAGENT:conversation_evidence] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: ec913f94 합류, 네이티브 트레이 안내/콜백과 동일 Scenario 재검증 규칙 최종 확인
+- Timestamp: 2026-09-08
+- Verdict: PASS — 독립107 pytest/20 check13, root 전체8059 PASS·16 skip·실패0. 실제 설치 DQA 앱 사용자 흐름은 NOT-RUN.
+- Artifact: meta/reviews/20260908T-policy-security.md
+- Human Approval Needed: no — 현재 사용자 위임·DQA 주 사용 지시, 기존 deploy_scope: included.
 ## REV-20260908T024925-META73-template-security [SUBAGENT:security-reviewer] — PASS
 - Related TASK: _meta_
 - Timestamp: 2026-09-08T02:48:39.716969+00:00
@@ -1843,3 +1865,34 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — upstream implementation reviewed; canonical isolated --apply succeeded and delivered code/context bytes match source 97131eb.
 - Artifact: [backend-r2 review](https://github.com/msmckimgpt-tech/ai_delegate_dev_template/blob/97131eb/_template_maintainer/reviews/20260908-codex-board-backend-r2.md)
 - Scope: preserved consumer customization outside the managed board section; project/token authorization unchanged. External PR/merge approval pending.
+
+## REV-20260908T123000-delegation-final-main [SUBAGENT:workflow_audit] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: template v3.54.2 합류, 실제 보드 계약·읽기 정본·생성기와 협업 보호 보존
+- Verdict: PASS — Bats203 PASS/4 skip, Python34 PASS; root feature0043 1671 PASS/1 skip.
+- Artifact: meta/reviews/20260908T-policy-security.md 및 docs/improvements/delegation-friction-20260908/REPORT.md의 마지막 합류 결과
+- Human Approval Needed: no — 기존 위임 범위와 사용자·다른 세션 보존 유지.
+
+
+## REV-20260908T035430-delegation-close [CODEX:root] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: actual keep-worktree cleanup failure, removed-worktree board path, truthfulness of final deployment output
+- Verdict: PASS — root independently reviewed worker cleanup and executed six Git/board regressions; conversation_evidence independently reviewed root deploy output and six output combinations. Lifecycle33 PASS, deploy quiesce34 PASS. Actual PR1616 web deployment and explicit NOT-RUNs are recorded separately.
+- Artifact: meta/reviews/20260908T-cleanup-close.md; meta/reviews/20260908T-policy-security.md
+- Human Approval Needed: no — current user's delegated maintenance scope and existing deploy_scope: included; final change touches host tools and records, not runtime application source.
+
+
+## REV-20260908T040415-delegation-idempotence [SUBAGENT:workflow_audit] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: live already-done completion warning and obsolete direct-init new-session instructions
+- Verdict: PASS — independent focused3 PASS; full lifecycle35 PASS, syntax and diff checks PASS. Exact authenticated done-to-done diagnostic only; real errors retain WARN; board core unchanged.
+- Artifact: meta/reviews/20260908T-cycle-idempotence.md
+- Human Approval Needed: no — existing delegated maintenance scope; own session diagnostic and continuation guidance only.
+
+
+## REV-20260908T040507-delegation-last-integration [CODEX:root] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: merge of already-landed main 92cfa2c2 before final tool-only delivery
+- Verdict: PASS — reviewed three files and board core three files are byte-identical to independent review/test snapshot. No policy or tool conflict; upstream DQA changes preserved. Previous app test/deployment results are not attributed to the newer app implementation.
+- Artifact: meta/reviews/20260908T-cycle-idempotence.md; docs/improvements/delegation-friction-20260908/verification.json
+- Human Approval Needed: no — current delegated scope; no runtime change in this PR.

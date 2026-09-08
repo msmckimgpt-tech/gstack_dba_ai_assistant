@@ -404,7 +404,7 @@ submit_answer(task_id, answer, source_tasks=[task_id])
 > - 결과는 **미리보기**만 온다. 보지 못한 행에 대해 존재/부재/개수를 단정하지 마라 —
 >   필요하면 `COUNT`·`GROUP BY`·`NOT IN` 으로 좁혀 다시 물어라. 이 표면에 CSV 다운로드는 없다.
 
-### 열려 있는 도구 (14종)
+### 열려 있는 HTTP 도구 (20종)
 
 작업 축 — `open_task` · `get_task_context` · `submit_answer`
 
@@ -413,11 +413,22 @@ submit_answer(task_id, answer, source_tasks=[task_id])
 답변을 만들지 않으므로, 웹 사용자의 질문은 여기 대기열에 쌓이고 **각 사용자의 AI 가 가져가 답한다.**
 
 구조 조회 — `list_schemas` · `describe_schema` · `describe_table` · `search_tables` ·
-`get_foreign_keys` · `get_table_indexes`
+`get_foreign_keys` · `get_table_indexes` · `search_routines` · `describe_routine` ·
+`search_db_objects` · `describe_db_object` · `explain_query`
+
+발견 — `get_tool_catalog(task_id)`: 실제 제공 목록·인자 JSON Schema·운영 활성 상태와 제한 사유.
+MCP의 `run_read_tool(task_id, tool_name, arguments, reason)`으로 모든 조회 도구와
+`database`·`offset`·`confirm_heavy` 등 전체 인자를 전달한다.
 
 데이터 — `execute_sql` (단일 SELECT/CTE)
 
-쓰기·작업공간 계열은 이 표면에 영구히 없다. 첨부는 **읽기만**(`read_task_attachment`) 열린다.
+쓰기·작업공간 도구는 제공하지 않는다. 웹 task의 첨부는 `read_task_attachment`로 읽고,
+갱신은 최종 답변의 `attachment-edit` 블록(JSON 헤더 `source_attachment_id`)을 `submit_answer`로 제출한다.
+`update_attachment`라는 HTTP 도구를 호출하지 않는다. 신규 파일은 `attachment-new` 블록(JSON 헤더 `filename`)이다.
+`get_sample_rows`는 `execute_sql`의 제한된 SELECT, `check_table_coverage`는 첨부 읽기와
+`describe_schema` 대조, `graph_navigate`는 제품 범위의 `get_task_context(focus=...)`를 사용한다.
+`DB_NAME()` 등의 메타데이터 함수 차단은 유지된다. DB 위치는 검색 결과의 `database`와
+`list_schemas(database=...)`로 확인한다.
 
 #### 웹 브리지 사용 순서
 

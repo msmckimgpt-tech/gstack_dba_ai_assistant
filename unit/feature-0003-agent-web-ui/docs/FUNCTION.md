@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Function
 
+## REQ-20260908-tool-surface — 현재 도구 계약
+
+외부 AI dispatcher는 명시된 조회 12종을 제공하고 내부 도구 9종에는 제한/대체 경로를 명시한다.
+허용목록과 core 인자 Schema로 생성한 catalog를 get_tool_catalog·claim·context·서버 시스템 지침에 전달한다.
+프로시저/DB객체 검색·정의와 읽기 전용 실행계획을 사용할 수 있으며 신규 core 도구를 자동 공개하지 않는다.
+현재 제품·대화 권한을 실행 때 재검증하고 MySQL 카탈로그·Agent 작업 검색도 허용 DB 범위로 제한한다.
+전체 도구 매핑과 실제 제약은 [TOOL_SURFACE_AUDIT.md](TOOL_SURFACE_AUDIT.md)를 따른다.
+
+## 2026-09-08 — Codex 연결 판정 보완
+
+사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
+
+## REQ-20260908-attachment-boundary — 파일 경계와 답변 본문
+
+첨부 `attachment-edit`/`attachment-new`는 첫 유효 외곽 닫힘까지만 저장한다. 후속 설명·diff는 답변에 남긴다. 내부 fence가 있는 Markdown 파일은 더 긴 외곽 backtick fence를 사용하며, 외곽 닫힘은 미닫힌 내부 fence보다 우선한다. 일반 fenced code 및 4칸/탭 들여쓰기 예시는 첨부 명령으로 실행하지 않는다. 레거시 3-backtick 내 언어 지정 내부 fence는 지원하되 동일 길이 단독 fence는 외곽 종료다.
+
+파일 전달 성공은 기존 첨부 칩으로 표시한다. 서버는 파일명별 완료 문장·다운로드 안내를 추가하지 않으며, 코드 권위 프롬프트도 해당 반복 서술을 금지한다. 파일만 있는 성공 답변의 빈 본문은 표시·회수·worker result에서 보존한다. 실패 고지는 유지한다. 원본 주석은 요청된 변경에 필요한 경우에만 편집한다.
+
+
+## 2026-09-08 — DQA AI별 연결
+
+DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.
+
+최초 탐색/토큰/로컬 브리지 실패도 복구 화면을 연다. 재시도는 해당 카드, 재탐색은 다시 찾기로 수행한다. 로그인 세션 종료는 진행 중 UI 응답을 무효화한다. 클라이언트 좌표는 이번 창의 sessionStorage에만 보관하고 URL에서 제거하며 토큰/위치 캐시는 웹 저장소에 남기지 않는다. 단독 연결 페이지도 같은 모듈을 사용한다.
+
+`POST /api/ai/connect/token`은 세션 비교 힌트 `connection_session`을 추가한다. `POST /api/ai/connect/identity`는 기존 `require_ai_token` 인증을 거쳐 실제 account_id/connection_session만 반환한다. 클라이언트는 새 토큰과 기존 활성 토큰의 세션을 서버에서 검증하며 힌트를 인증 대신 쓰지 않는다. 기존 갱신/트레이 안내를 유지한다.
+
+일반 브라우저 호환 경로에서 앱 실행 응답이 없으면 DQA 앱 상태와 실제 [내 AI 실행] 동작으로 안내한다. DQA 내부에서는 자기 실행 버튼·프로토콜 재실행을 노출하지 않는다.
+
 ## KB 검색과 외부 AI 연결 (2026-09-07, #1598)
 
 로컬 임베딩 제공자 없이 `pg_trgm`으로 후보를 찾고, 기존 Claude/Codex의
@@ -36,6 +65,8 @@ source_of_truth: true
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+
+- REQ-20260908-prompt-layer-delivery: 전역 → 제품 → 역할 전역 → 역할 제품 → 계정 개인 전역 → 계정 개인 제품 순서로 해당 지침을 전달한다. DQA claim은 지침 조회 실패를 빈 설정과 구분해 AI 실행을 막고 재시도한다. 제품 미선택(auto)은 전역 세 계층만 적용한다. 상세 계약과 검증: [전달 감사](../../feature-0043-external-llm-bridge/docs/PROMPT_DELIVERY.md).
 - REQ-20260901T190000-conv-status-dot-wiring (20260901T1900-conv-status-dot-wiring, **Minor §12.3** — `static/app/conv-status.js`(신규 leaf) · `static/app/sidebar.js` · `static/app.js` · `static/css/{shell,profile,search-audit}.css` + 신규 계약 테스트 9건 + 감사 스크립트. 백엔드·스키마·RBAC·엔드포인트 0, 프론트 표시면 한정): **대화의 상태값이 사이드바 배지 색으로 실제 도달하게 하고, 같은 종류의 끊긴 배선을 전수 판정해 재발을 CI 로 잠근다.** 사용자 원문(2026-09-01): "프로젝트 내 서비스에서, assistant에게 요청을 보냈을 경우 좌측 사이드바 대화 뱃지의 색상이 상태값에 따라 변경되는 동작이 누락된것으로 확인되었습니다. 해당 이슈를 수정해주세요. 추가로, 이와 같이 배선이 끊긴 기능들에 대해 모두 정합하게 작동할 수 있도록 작업을 진행해주세요." **원인은 단일 버그가 아니라 어휘가 세 갈래로 갈린 배선**이었다 — dot 클래스를 `is-${status}` 로 세 곳에서 각각 조립하는데 CSS 어휘가 따로 자라, 배포본 실측에서 **151개 항목 중 133개(`is-done` 110 · `is-error` 21 · `is-canceled` 2)가 상태를 정확히 알면서 computed background 가 전부 `rgb(196,196,201)` 기본 회색**이었다. CSS 의 `.conv-dot.is-completed` 는 아무도 만들지 않는 죽은 규칙(서버 완료 리터럴은 `done`)이었고, `stale_error` 는 CSS 하이픈 ↔ 코드 언더스코어라 어긋나 **툴팁만 뜨고 색은 안 변하는 비대칭**을 만들었다. 세 결함 모두 파일을 따로 보면 정상으로 읽힌다 — 끊긴 것은 파일 사이의 짝이다. 「배선이 끊긴 기능들 모두」는 **상태 modifier 축 전수 열거**로 닫았다(수정 3종 + 근거 달린 화이트리스트 7종, 장식 축 76건은 REPORT §8 이월). 재발은 계약 테스트 T1~T4 가 CI 게이트로 잠근다 — CSS 없는 상태 클래스를 추가하면 적색이 나고 근거를 적어야 통과한다. `/_template:entry` arg-given dispatch. REV-20260901T190000-conv-status-dot-wiring. AC-20260901T190000-conv-status-dot-wiring-1 ~ -4.
 - REQ-20260901T133000-remove-query-result-details (20260901T1330-remove-query-result-details, **Minor §12.3** — `static/app/messages.js` · `static/app.js` · `static/app/composer.js` · `static/css/chat.css` + feature-0043 계약 테스트 3종 방향 전환. 백엔드·스키마·RBAC·엔드포인트 0): **말풍선 안 「▼ 쿼리 결과 / 실행 단계」 여닫이를 제거하고, 단계·SQL·결과셋의 표시면을 「단계 보기」 사이드 패널 하나로 통일한다.** 사용자 원문(2026-09-01): "`▼ 쿼리 결과` 펼치기에 대한 UI는 더 이상 의미없는 구조로 확인됩니다. (이미 `단계 보기` 기능을 통해 사이드바에서 더 정확하고 의미있는 데이터를 조회 가능) 해당 UI를 정리해주세요." 라이브 실측이 그 판단을 뒷받침한다 — 같은 답변에서 여닫이는 SQL 17건 + 비-SQL 일부를 보였고 패널은 **77단계 전부**를 소요시간과 함께 보였다(중복이면서 덜 보여주는 쪽이 여닫이였다). 「정리」가 다의어(삭제 vs 부분 제거)라 §16.7 G1 · §12 절차로 승격해 사용자 결정을 받았다 — **「제거만」**. 함께 소멸하는 기능을 결정 **전에** 고지했다: CSV 다운로드 링크 · 「전체 데이터 보기」(패널에 대체재 없음). 사후 자체 점검에서 셋째가 드러나 별도 보고했다: `steps` 없는 **구형 메시지 폴백**(「실행 SQL」·「결과 파일」)도 이 블록 안에 있었고 그런 메시지는 「단계 보기」 버튼조차 붙지 않아 **대체 표시면이 없다**. REV-20260901T133000-remove-query-result-details. AC-20260901T133000-remove-query-result-details-1 ~ -3.
   - AC-20260901T133000-remove-query-result-details-1 (여닫이와 그 조립 경로 전체 제거): assistant 말풍선은 더 이상 `<details class="message-details">` 를 갖지 않는다. `renderMessageDetails` · `buildStepBlocks` · `bubbleVisibleSteps` · `buildSqlNavigator` · `buildSqlStepPanel` · `loadFullCsvIntoTable` · `appendDetailBlock` · `extractFirstTableRef` · `formatSqlForDisplay`(+`SQL_FORMAT_KEYWORDS`)를 함께 제거하고, 생산자가 사라진 CSS 규칙(`.message-details*` · `.message-detail-block` · `.step-detail-list` · `.sql-navigator`/`.sql-nav-*` · `.sql-result-group`/`-body`/`-actions` · `.sql-toggle-wrap` · 사문이던 `.sql-result-label`)도 걷어낸다. **표시면을 지우면서 그것을 만들던 함수를 남기면 다음 사람이 그 자리를 아직 살아 있는 것으로 읽는다.** 남기는 것은 다른 소비처가 있는 것뿐이다 — `buildResultTable` · `parseMarkdownTablePreview` · `parseCsv`(본문 인라인 표 로더), `.sql-block`(본문 ```sql 블록), `.sql-toggle-btn` · `.sql-result-toggle-wrap`(「단계 보기」 패널 카드). 본 AC 는 **AC-0072 의 「`renderMessageDetails()` 의 접이식이 보존된다」와 AC-0340(구형 fallback 의 `meta.sql` 표시)을 supersede** 한다.
@@ -5063,3 +5094,7 @@ specifier 는 `?v=` 토큰을 갖는다. `tests/test_static_module_stamp_census.
 - AC-RUR-2: 파싱 전 실패도 감독이 종료를 감지한다. 유한 백오프, 정상 종료 알림, 명시적 해제 후 재기동 0을 검증한다.
 - AC-RUR-3: 기존 HTTPS/CA/고정 다운로드 경로/크기·문법·해시 검사와 토큰 환경변수 전달 계약을 유지한다. 앱 설치기 적용 확인 계약은 유지한다.
 - 정본 실측: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+## 2026-09-08 — 연결 상태 안내
+
+현재 사용할 수 없는 위치의 안내는 공통 연결 패널에서 일반 텍스트로 표시한다. 기존 Markdown 강조 표식은 노출하지 않고 textContent로 출력하여 HTML을 실행하지 않는다.

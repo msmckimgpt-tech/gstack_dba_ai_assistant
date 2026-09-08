@@ -5997,7 +5997,6 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
-
 ## CHG-20260908T124500-attach-folder-tree
 
 - Related TASK: TASK-20260908T124500-attach-folder-tree (REQ-20260908-attach-folder-tree).
@@ -6116,3 +6115,77 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
   적용(초판은 1곳만 고쳐 lazy 생성·staged flush 가 마스킹을 유지했다).
 - 테스트 +12건 (`read_attachment` 경로 해소 4 · backend 적발분 회귀 7 · 상한 계약 재작성 1) —
   신규 총 **52건**.
+## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Related TASK: TASK-20260908T120000-connect-discovery-ux
+- 이유: 모든 AI를 하나의 선택으로 묶던 흐름을 플랫폼별로 바꾸고, 매번 위치를 고르는 비용과 잘못된 완료 알림을 줄인다.
+- 변경: DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.
+- 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
+- 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.
+
+## CHG-20260908-connect-discovery-main-integration
+
+- Timestamp: 2026-09-08T12:58:44+09:00
+- TASK: TASK-20260908T120000-connect-discovery-ux
+- 최신 main의 연결 안내·행위 검증과 현재 자동 연결 변경을 통합했다. DQA 실행 버튼은 앱 내부에 노출하지 않고, 일반 브라우저 호환 경로의 무응답은 실제 존재하는 DQA 앱/버튼으로 안내한다. 네이티브 코드 재변경 없이 527건 PASS, 수집 계약 18건 PASS.
+
+## CHG-20260908-connect-release-evidence
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 최종 DQA 1.2.0 실행 파일에서 첫 연결과 재시작 선택 재사용을 확인한 JSON을 보존했다. native 픽셀 캡처 불가와 서비스/API/벤더 대역 범위를 명시했다. 설치기 26,037,943 bytes, SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`.
+
+## CHG-20260908T041713-connect-published
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
+- 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- 사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
+- 테스트/실측 정본: feature-0046-native-client/docs/test-runs.d/20260908-codex-connect-fix.md.
+
+## CHG-20260908T063000-prompt-layers
+- Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
+## CHG-20260908T150000-attachment-boundary
+
+- Related: REQ-20260908-attachment-boundary / TASK-20260908T150000-attachment-boundary
+- Timestamp: 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+- 마지막 fence 탐색으로 후속 답변을 저장하던 결함 수정. outer/inner fence 추적, 인용 비실행. 성공 문구 제거와 빈본문 보존. REPORT 및 test-runs.d/TASK-20260908T150000-attachment-boundary.md 참조.
+
+## CHG-20260908T152700-attachment-boundary-deployed
+
+- 2026-09-08T06:27:43.349266+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. TASK-20260908T150000-attachment-boundary 출하 결과 기록. PR #1629, serving e8fd398b; full deployment exit 0, 7서비스 56검사, 10파일 읽기 전용 재현 PASS. 런타임 코드 추가 변경 없음.
+
+## CHG-20260908T153000-attachment-verification-format
+
+- TASK-20260908T150000-attachment-boundary 검증 기록의 EOF 서식 정리와 원격 동기화 체크 기록.
+
+## CHG-20260908-attachment-cycle-cleanup
+
+- Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 worktree 목록 조기 종료 제거와 대용량 목록 회귀 2건 추가. 작업 정리 실패의 근본 원인인 pipefail/SIGPIPE를 해소한다. 기존 첫 경로 선택 의미 유지.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.
+- 실제 UI에서 발견한 사용 불가 안내의 Markdown 강조 표식을 공통 연결 패널에서 일반 텍스트로 표시한다.
+
+## CHG-20260908T160200-codex-verified-closeout
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+
+## CHG-20260908T162000-tool-surface
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:01:57.915443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+조회 도구가 내부에는 있지만 외부 allowlist/MCP/러너 안내가 달라 HTTP404를 반환했다. explicit allowlist + core Schema의 catalog를 조립하고 5조회 연결·9제한 대체경로 전달. 검색 범위/현재 권한/EXPLAIN 검증 결함 보강. 상세 TOOL_SURFACE_AUDIT.md.
+
+## CHG-20260908T172000-tool-surface-deploy-proof
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:20:41.263318+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비스 healthy·90초 soak·56배포본 계약검사 PASS, 실제 task 권한 catalog/미허용 datasource/첨부 대체경로 확인. 실제 SQL Server는 새 웹·기존 워커·호스트 모두 연결 timeout이어서 프로시저 결과 성공과 구분한다. 신규 AI 응답0으로 fixed:deployed:unverified-live 유지. 정본: [배포·미실측 기록](test-runs.d/TASK-20260908T162000-tool-surface.md). 제품 코드 추가 변경 없이 증거·제한을 문서화한다.

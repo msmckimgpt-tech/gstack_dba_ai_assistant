@@ -284,10 +284,14 @@ bridge-agent:  ## dev: 브리지 러너 배포본 빌드 (src/agent/ 패키지 �
 test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — 전용 compose 프로젝트(라이브 네트워크 미참여) + 라이브 DB/스냅샷 차단 env
 	@$(MAKE) -s dc-build SERVICE=agent DC_QUIET="$(DC_TEST)"
 	@$(DC_TEST) run --rm --no-deps $(TEST_ISOLATION_ENV) -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
+	  if ! command -v node >/dev/null 2>&1; then \
+	    apt-get update -qq >/tmp/node-test-install.log 2>&1 && apt-get install -y --no-install-recommends nodejs >>/tmp/node-test-install.log 2>&1 || { cat /tmp/node-test-install.log; exit 1; }; \
+	  fi; \
+	  node --version || exit 1; \
 	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \
 	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src:/work; \
 	  echo "=== pytest ==="; \
-	  python -m pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests unit/feature-0023-conversation-api-access/tests unit/feature-0014-zero-downtime-deploy/tests unit/feature-0020-zd-deploy-all/tests unit/feature-0041-external-ai-tool-surface/tests unit/feature-0043-external-llm-bridge/tests unit/feature-0046-native-client/tests unit/feature-0008-windows-browser-testing/tests unit/feature-0006-lan-proxy-access/tests; rc=$$?; \
+	  python -m pytest -q; rc=$$?; \
 	  echo "=== ruff (참고용, 비차단) ==="; \
 	  ruff check unit/feature-0002-agent-core/src unit/feature-0003-agent-web-ui/src || true; \
 	  exit $$rc'

@@ -1173,3 +1173,133 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Reason: 완료된 #1608 및 기존 채널의 실제 1.1.2 다운로드 결과를 문서에 기록한다. 정책·제품 코드·디자인 변경 없음. manifest 값뿐 아니라 실제 다운로드의 크기·SHA-256·전체 바이트를 Windows 검증본과 대조했다.
 - Timestamp: 2026-09-08T02:47:00Z
+
+
+## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/성능/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-backend.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: auth/인증/token/세션 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-security.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/검증/performance/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-ux [SUBAGENT:ux] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/화면/모달 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-ux.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-design [SUBAGENT:design] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/디자인/대비 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-design.md)
+- Human Approval Needed: no
+
+## REV-20260908T150000-connect-release-evidence [SKIPPED:non-policy-evidence-only] — ACCEPTED
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 직전 backend/security/QA/UX/design SHIP 이후 코드 변경 없이 이미 수행한 native 2회 결과·설치기 지문·최신 main 통합 결과를 기록한다. 신규 동작·정책·권한 경계가 없어 패널을 반복하지 않는다. 검증 파일의 값과 실행 로그를 대조했다.
+
+## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
+
+- 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
+
+## REV-20260908T141000-update-install-backend-security [SUBAGENT:backend-security] — PASS
+- Related TASK: TASK-20260908-update-install-proof; issue #1622.
+- Trigger: performance/설치30초 지연, process lifecycle/프로세스 수명, session/사용자 경계.
+- Artifact: [독립 검토](artifacts/20260908-update-install/backend-security-review.md). 차단 결함0, 실제 설치 결과는 후속 실측.
+
+## REV-20260908T141100-update-install-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908-update-install-proof.
+- Trigger: performance/설치 지연 및 회귀 검증.
+- Artifact: [QA 재검토](artifacts/20260908-update-install/qa-review.md). 초기 QA-1은 관찰기의 조기 성공 판정이었다. setup exit0·고아종료·pending해소·단일앱5초 유지까지 조건을 보완했고 확인 라운드에서 해소됐다.
+
+## REV-20260908T141200-update-install-eol [SKIPPED:non-policy-doc] — PASS
+- Trigger: 비정책 증적 줄바꿈 정규화. 값·제품 코드는 불변이며 실제 파일 크기와 SHA-256 값도 그대로다.
+
+## REV-20260908T141300-update-install-live [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908-update-install-proof.
+- Trigger: actual installation/실제 설치 결과와 기존 실패 회귀.
+- Artifact: [독립 실측 검토](artifacts/20260908-update-install/qa-live-review.md). 실제설치파일과다운로드파일SHA도 별도 재계산하여 대조했다. 설치종료·재실행·최신메뉴응답까지PASS.
+## REV-20260908T151500-codex-connect-fix [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T151000-codex-connect-fix; Issue #1625.
+- Trigger: API/응답 계약, permission/실행 권한, caching/캐시, UI/연결 화면.
+- Dispatch: update_installer_review(backend/security), update_install_qa(qa), connect_ux_review(ux/design). 독립 도메인 검토 및 수정 확인.
+- P1 수정: catalog 빈 detail KeyError/남은 성공행/예외 기록 누락, catalog 건강 오인, error JSON 생존 오인, 로그인 필요 위치 소실. P2 수정: 공통 CSS 적용면, OS PermissionError 형 보존, A→B→A 선택 경쟁.
+- QA가 후속 선택 실패 후 재시도 소실과 전역 파일 세대의 불필요한 재조회 2건을 적발했다. watcher 백오프와 플랫폼별 selection_id로 수정 후12건 PASS.
+- Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.4 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+## REV-20260908T150900-text-interaction-ux [SUBAGENT:ux] — PASS
+- Trigger: UI/화면 텍스트 상호작용
+- Verdict: PASS (code); native search UI verification PARTIAL
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T150900-text-interaction-design [SUBAGENT:design] — PASS
+- Trigger: UI/화면 텍스트 상호작용
+- Verdict: PASS (code); native search UI verification PARTIAL
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-design.md
+- Human Approval Needed: no
+
+## REV-20260908T151800-text-published [SKIPPED:non-policy-doc] — PASS
+- 공개 다운로드 증적·현재 문서·artifact 실행비트 정리만 변경. 제품 코드는 PR #1628과 동일하다.
+- 배포 승인 근거: 현재 사용자 수정 위임, wrapper FIRST_REQUEST deploy_scope included, AGENTS.md §16.5.1. 설치본 교체 없음.
+- native 검색 UI 실측은 계속 NOT-RUN/PARTIAL로 유지한다.
+
+## REV-20260908T152500-heartbeat-snapshot [SUBAGENT:backend,security,qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T152000-codex-heartbeat-snapshot.
+- Trigger: API/응답 계약·concurrency/상태 경합.
+- QA가 빈/옛 요청 성공 응답이 미송신 새 catalog의 source를 바꾸는 실제 경쟁을 결정적으로 재현했다. 송신 snapshot의 동일행만 cache로 전환하도록 수정 후119 PASS. 기본 runtimes=None(능력 미신고)과[](명시 빈목록)의 기존 계약도 보존했다.
+- backend/security 좁은 확인과 QA 결정적 회귀: 기존 source단정을 유지하여 새 미송신행/변경선택의 잘못된 인정이 없음을 확인.
+
+## REV-20260908T152700-codex-release-integration [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T152700-codex-release-integration.
+- Trigger: API/응답·권한·캐싱·UI. 앞 독립 panel 결과의 main 통합 확인 기록.
+- backend/security 최종 P1/P2 0: 선택별 id와 기존위치캐시 경계, heartbeat snapshot 및 None/[] 계약 보존 확인.
+- qa 최종119 PASS, native544 PASS, ux/design DOM12 PASS. 코드 변경 없는 현재 기록은 앞 검증 결과를 참조한다.
+- 실제 DQA 설치/새 요청·응답은 배포 후 검증 예정이며 완료 전에 별도 기록한다.
+
+## REV-20260908T153000-codex-prompt-integration [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix.
+- 기존 검토를 마친 main PR1627 통합에서 충돌한 설명/작업 이력을 양쪽 보존. 실행 코드 충돌 없음, 현재 해결 작업은 비정책 문서다. 원래 backend/security/qa/ux/design 판정은 앞 기록을 참조한다.
+
+## REV-20260908T153300-codex-integration-verified [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix.
+- 비정책 검증 기록 보완. 병합된 main의 실행코드는 그대로 보존했고 관련39회귀 PASS. 제품 변경의 독립 패널은 앞 ACCEPTED 기록을 따른다.
+
+## REV-20260908T155000-codex-actual-proof [SUBAGENT:ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 실제 DQA에서 안내 강조 기호 노출을 발견해 client-bridge.js의 표시만 보완했다. textContent 유지, 기존 DOM12 PASS, 독립 UX/code P1/P2 0. 표시 수정의 배포 후 UI 관찰은 별도 원장에 기록한다.
+
+## REV-20260908T155500-codex-live-evidence [SUBAGENT:qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 독립 읽기 검토: 실제1.2.3→1.2.4 설치/지문, 새 대화 동일 task의 송신→32318ms/delivered→UIA 답변, 위치 변경 ready→완료 toast 자료 정합 PASS. 공개 manifest 및 실제 파일 SHA를 독립 재계산했다.
+- WebView PID47356/내장 runner47700의 부모가 native29672임을 WMI로 재확인. 데이터에 인증정보·이메일은 없으며 사용자명·로컬 경로·task/PID/선택 식별자 등 운영 메타데이터는 포함된다.
+- UI 최초 렌더 시간·픽셀 스크린샷·현장 Permission denied 재현은 PASS 범위에 포함하지 않는다. root복원은 이어서 실제 ready/toast로 확인했다. 안내 표식 수정본의 배포 후 관찰은 별도 후속이다.
+
+## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
+- 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.

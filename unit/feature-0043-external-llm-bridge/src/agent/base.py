@@ -103,5 +103,5 @@ _MAX_STALLED_ROUNDS = 20
 
 #: 재시작 대비 설정 파일. **토큰은 넣지 않는다** — 비밀이고, 어차피 세션과 함께 죽는다.
 #: 저장하는 것은 다시 물어보기 번거로운 것들(주소·CA 경로·AI 선택)뿐이다.
-_CONF_DIR = os.path.join(os.path.expanduser("~"), _HOME_DIRNAME)
+_CONF_DIR = os.environ.get("BRIDGE_STATE_DIR") or os.path.join(os.path.expanduser("~"), _HOME_DIRNAME)
 _CONF_PATH = os.path.join(_CONF_DIR, "config.json")

@@ -1,0 +1,24 @@
+{
+  "pr": 1619,
+  "merge_commit": "92cfa2c2b4e69e8b8f7156f00a8f2fc4d56c6f86",
+  "deployment_exit_code": 0,
+  "scope": "all",
+  "web_replicas": [
+    "web-a",
+    "web-b"
+  ],
+  "worker_replicas": [
+    "insight-worker",
+    "ask-worker",
+    "ops-scheduler",
+    "ext-tool-mcp-a",
+    "ext-tool-mcp-b"
+  ],
+  "git_commit": "92cfa2c2",
+  "soak_seconds": 90,
+  "soak_pass": true,
+  "pending_migrations": 0,
+  "gateway_changed": false,
+  "conversation_smoke": "server LLM deny gate PASS; actual vendor response not exercised",
+  "build_warning": "snap docker compose metadata-file race; image existence and GIT_COMMIT verified by deploy script"
+}

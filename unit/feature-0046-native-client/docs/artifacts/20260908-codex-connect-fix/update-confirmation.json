@@ -1,0 +1,87 @@
+{
+  "at": 1788849371.467229,
+  "pid": 41100,
+  "tray": 18291714,
+  "items": [
+    {
+      "position": 0,
+      "id": 1024,
+      "text": "창 열기"
+    },
+    {
+      "position": 1,
+      "id": 0,
+      "text": ""
+    },
+    {
+      "position": 2,
+      "id": 1026,
+      "text": "연결 끊기"
+    },
+    {
+      "position": 3,
+      "id": 1027,
+      "text": "업데이트 확인"
+    },
+    {
+      "position": 4,
+      "id": 0,
+      "text": ""
+    },
+    {
+      "position": 5,
+      "id": 1029,
+      "text": "종료"
+    }
+  ],
+  "selected": {
+    "position": 3,
+    "id": 1027,
+    "text": "업데이트 확인"
+  },
+  "entry": "native tray popup -> resolved command ID -> WM_COMMAND",
+  "dialogs": [
+    {
+      "hwnd": 51714894,
+      "pid": 41100,
+      "class": "#32770",
+      "text": "DQA",
+      "visible": true,
+      "id": 0,
+      "children": [
+        {
+          "hwnd": 9641610,
+          "pid": 41100,
+          "class": "Button",
+          "text": "예(&Y)",
+          "visible": true,
+          "id": 6
+        },
+        {
+          "hwnd": 8133860,
+          "pid": 41100,
+          "class": "Button",
+          "text": "아니요(&N)",
+          "visible": true,
+          "id": 7
+        },
+        {
+          "hwnd": 23403042,
+          "pid": 41100,
+          "class": "Static",
+          "text": "",
+          "visible": true,
+          "id": 20
+        },
+        {
+          "hwnd": 9969156,
+          "pid": 41100,
+          "class": "Static",
+          "text": "DQA 1.2.4 로 업데이트합니다.\n현재 버전: 1.2.3\n\nCodex 연결 완료 오류 수정, 실행 권한이 없는 위치 자동 연결 제외·사유 표시, CI 계정 탐색 제외, 위치 변경과 재시도 안정화. 텍스트 선택·검색 개선 포함.\n\n⚠ 지금 연결 중입니다 — 설치하는 동안 AI 연결이 끊기고, 진행 중인 답변이 있으면 취소됩니다.\n설치 후 프로그램이 자동으로 다시 시작됩니다.",
+          "visible": true,
+          "id": 65535
+        }
+      ]
+    }
+  ]
+}

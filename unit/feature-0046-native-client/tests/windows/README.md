@@ -91,3 +91,21 @@ mkdir -p "$WB" && cp -r unit/feature-0046-native-client/src "$WB/"
 핸들은 `c_ssize_t`→`.NET Int64`→`IntPtr`로 옮긴다(x64 부호 확장 보존). 기대값은 .NET의 자동 프레임 선택에 의존하지 않고 ICO 내 동일 크기 프레임 하나만 분리해 읽는다. Tk의 앱 기본 아이콘은 `WM_GETICON` 또는 창 클래스의 `GCLP_HICON`에서 얻는다.
 
 WebView2 창 아이콘은 `shown` 이벤트 후 검사한다. `about:blank`의 페이지 로드 이벤트를 창 생성 증거로 기다리지 않는다.
+
+## DQA 1.2.0 AI 연결 검증
+
+`verify_connect_native.py <staging>`은 Windows에서 빌드한 실제 `dist/DQAConnect/DQAConnect.exe`를 두 번 실행한다. 첫 실행에서 Codex 자동 연결과 Claude 중복 위치 선택을 확인하고, 같은 격리 프로필로 다시 실행해 선택 재사용과 플랫폼별 완료 toast를 확인한다. 이 드라이버는 Windows `python.exe`로 실행하며 JSON 결과를 남긴다.
+
+- staging에는 `src/`, 제품 `static/`, `dist/DQAConnect/`, `rootCA.crt`, `fake-bin/`을 둔다. `FakeAI.cs`를 claude.exe/codex.exe/wsl.exe로 빌드해 공식 CLI 응답을 대역 처리한다.
+- 실제 DQA의 WebView2·로컬 Bridge·동봉 Python·감독 프로세스·배포 러너·서버 heartbeat/receipt 왕복을 실행한다. 서비스 로그인/API, app.js toast와 초기화 호출, 벤더 CLI 응답은 fixture다.
+- 기존 사용자 앱을 종료하지 않는다. 정확히 staging exe 경로와 일치하는 프로세스 트리만 회차 전후 정리한다. 프로필은 실행마다 새로 만들고 그 안의 두 회차에서만 공유한다.
+- 결과: `native-evidence/native-results.json`. 이 호스트의 네이티브 픽셀 캡처는 빈 면이라 유효 증거로 저장하지 않는다. 캡처 불가는 실제 앱 요소/브리지 검증 결과와 별개다.
+- `verify_connect_visual.py`는 일반 Windows Chrome/CDP로 같은 제품 자산을 렌더하는 보조 검증이다. DQA 창·로그인·브리지 검증을 대신하지 않는다.
+
+이번 실행 지문과 검증 경계는 [실행 원장](../../docs/test-runs.d/20260908T123400-connect-discovery.md)을 따른다.
+
+## 텍스트 선택·복사 검증
+
+`verify_text_interaction.py <staging> [control]`은 staging의 `src/client`와 `static/css`를 이용해 실제 제품 Shell/WebView2를 실행한다. `control`은 이전 선택/단축키 설정을 재현한다. 답변·Markdown·원문 코드 fixture의 실제 드래그, Ctrl+C/V, Windows Clipboard와 입력창 동일성, 읽기 전용 본문을 확인한다. 사용자 클립보드는 출력하지 않고 종료 시 복원한다. 키 입력은 해당 WebView2의 CDP에만 전달한다.
+
+현재 호스트에서 CDP는 브라우저 기본 검색 UI에 입력을 전달하지 못한다. 따라서 Ctrl+F/F3/Shift+F3/Escape 실측은 NOT-RUN, 전체 판정은 PARTIAL이다. 설정값 True 또는 접근성 트리 변화만으로 검색 PASS를 쓰지 않는다. 검색 UI를 확인하려면 실제 앱 소유 창에 전달된 native 입력과 검색어/일치번호/닫힘 증거가 필요하다. 서비스 인증/API·실제 사용자 대화는 이 fixture 범위가 아니다.

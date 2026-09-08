@@ -1728,33 +1728,18 @@ post_deploy_checklist() {
   [ "$DRY_RUN" -eq 1 ] && return 0
   cat >&2 <<'CKL'
 
-=== 배포 검증 체크리스트 (사용자 인수 전 필수 — 상세: feature-0014 RUNBOOK §10) ===
- [1] 배포 완료: web-a·web-b 가 대상 SHA + soak 통과(위 로그). 이 시점 전에는 기능을
-     "사용자 테스트 가능"으로 알리지 않는다 (merge ≠ 배포 완료 — 그 사이 창은 구코드).
- [2] 워커 롤아웃: 위 '워커 롤아웃 완료' 로그 확인(스파인이 자동 수행 — feature-0020).
-     '--web-only' 로 돌렸다면 워커 코드 변경 여부를 판단해 전체 스코프로 재실행한다.
-     ⚠ '부분 완료' 로 끝났다면 그것은 배포가 아니다 — 미도달 서비스가 로그에 나열된다.
-       docker compose -f docker-compose.yml ps --format '{{.Service}}\t{{.Image}}'
-     서비스별 이미지 태그가 모두 같은 SHA 인지 눈으로 확인한다(state 파일이 아니라 실물).
- [1b] 대화 스모크: 위 '대화 경로 스모크' PASS 로그 확인(2026-08-26 신설). 이 게이트가 없던
-     시절, 게이트웨이 의존성 갱신으로 모든 대화가 죽었는데 healthz/soak 는 전부 green 이었고
-     사용자 신고까지 약 20시간이 걸렸다. FAIL 이면 배포는 exit 1 로 끝난다(조용한 성공 없음).
- [2b] surge 잔존 확인(feature-0020 zd-ask-rollout): 교체가 끝나면 surge 는 없어야 한다.
-       docker compose -f docker-compose.yml --profile deploy-surge ps -q ask-worker-surge
-     비어 있지 않으면 정리에 실패한 것 — 그 컨테이너가 큐에서 계속 job 을 가져간다(조용하다).
-     다음 배포의 leaked sweep 이 정리하지만, 그때까지 두 인스턴스가 함께 도는 상태다.
- [3] 캐시 무효화: 서빙 HTML 의 ?v= 스탬프가 바뀌었는가(위 asset 스탬프 OK). 사용자에게
-     하드 리프레시(Ctrl+F5) 안내 — stale JS 로 구 동작이 관측되는 것을 방지.
- [4] 실 사용자 표면 검증: 백엔드 API 뿐 아니라 사용자가 실제 쓰는 경로(UI 업로드/클릭 등)를
-     라이브 배포본에서 PB-0008 로 검증한다 (백엔드 fetch 만 타면 client-only 결함을 놓친다).
- [5] 무중단 실측(2026-08-11 신설): 이번 배포 창에 엣지가 실제로 무중단이었는지 확인한다.
-     배포 스크립트의 soak 는 blip 을 관용하므로 "성공 보고 = 무중단" 이 아니다.
-       docker compose -f docker-compose.yml logs caddy --since 10m \
-         | grep -c 'no upstreams available'      # 기대 0
-     0 이 아니면 롤링이 엣지 후보 복귀보다 빨랐다는 뜻 — 사용자에게는 그 시간만큼 전면 503
-     이었다. bin/deploy-web.sh 의 wait_edge_available 로그와 Caddyfile 의 fail_duration 을
-     함께 확인한다.
- [6] 완료 보고: [1]~[5] 통과 후에만 "배포·검증 완료"를 사용자에게 보고한다.
+=== 배포 결과 확인 (변경 범위 기준 — AGENTS §15.4.1·PB-0009) ===
+ [1] 실제 교체한 서비스의 대상 SHA·ready·soak 결과를 확인한다. 배포 생략/실패를 PASS로
+     합산하지 않는다. 워커 코드도 바뀌었다면 --web-only만으로 전체 배포를 완료했다고 하지 않는다.
+ [2] 대화 스모크는 실제 실행 결과를 기록한다. scope=web에서 미수행이면 대화 동작 PASS를
+     선언하지 않는다. 워커 surge를 실행한 범위에서는 잔존 인스턴스가 없는지 확인한다.
+ [3] 변경 자산의 버전 스탬프와 실제 서빙 내용을 대조한다. 기존 DQA 앱·연결을 임의로 종료하거나
+     브라우저 강제 새로고침을 사용자에게 위임해 검증을 대신하지 않는다.
+ [4] 실제 사용자 화면/동작이 바뀌면 PB-0009의 변경 범위에 따라 DQA 클라이언트에서 확인한다.
+     일반 브라우저 전용 호환 분기는 해당 분기와 DQA 내부 미호출 대조로 검증한다.
+     설치 앱 미검증은 NOT-RUN과 사유·수행한 하위 검증을 기록한다.
+ [5] 무중단을 주장하려면 배포 시간대의 Caddy 엣지 오류와 ready/드레인 기록을 확인한다.
+     soak PASS만으로 배포 전체 기간의 요청 무손실이나 실제 대화 성공을 추정하지 않는다.
 ================================================================================
 CKL
 }
@@ -1912,7 +1897,11 @@ main() {
 
   normalize_ownership
   conversation_smoke_or_fail
-  step "배포 완료: $TARGET_SHA (scope=$SCOPE — web 롤링·워커·gateway reconcile + soak + 대화 스모크 통과)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "배포 모의 실행 완료: $TARGET_SHA (scope=$SCOPE — 실제 적용·검증 미수행)"
+  else
+    step "배포 완료: $TARGET_SHA (scope=$SCOPE — 적용·검증·미수행 결과는 각 단계 로그 참조)"
+  fi
   quiesce_summary
   bridge_continuity_summary
   post_deploy_checklist

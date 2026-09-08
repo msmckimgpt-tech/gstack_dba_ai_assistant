@@ -240,7 +240,7 @@ def test_all_tools_are_registered_at_import():
     """등록 자체가 import 부수효과다 — 데코레이터가 깨지면 도구 0개로 조용히 뜬다."""
     mod = _load(2)
     assert sorted(mod.mcp.tools) == sorted([
-        "open_task", "get_task_context", "submit_answer",
+        "get_tool_catalog", "run_read_tool", "open_task", "get_task_context", "submit_answer",
         # feature-0043 (2026-08-26): 웹 대화 pull 브리지. 이 둘이 빠지면 무설치 주 경로
         # (`/api/ai/mcp`)에서 대기 질문을 발견·점유할 수 없다(codex 리뷰 P1-1).
         "list_open_requests", "claim_request",
@@ -251,3 +251,82 @@ def test_all_tools_are_registered_at_import():
         "get_foreign_keys", "get_table_indexes",
         "execute_sql",   # P1 (2026-08-14)
     ]), sorted(mod.mcp.tools)
+
+
+@pytest.mark.parametrize('generation', [1, 2])
+def test_catalog_dispatch_preserves_all_core_arguments(generation):
+    import json
+    mod = _load(generation)
+    calls = []
+    def post(path, payload, ctx):
+        calls.append((path, payload, ctx))
+        if path.endswith('get_tool_catalog'):
+            return json.dumps({'tool_catalog': {'tools': [{'name': 'describe_routine'}]}})
+        return 'result'
+    mod._post = post
+    ctx = object()
+    args = {'database': 'Allowed', 'schema_name': 'dbo', 'routine_name': 'p', 'offset': 1234, 'datasource': 'ds'}
+    assert mod.run_read_tool(ctx, 'task', 'describe_routine', args, 'review') == 'result'
+    assert calls[-1] == ('/api/ai/tools/describe_routine', {'task_id':'task','reason':'review','arguments':args}, ctx)
+    assert {'get_tool_catalog','run_read_tool'} <= set(mod.mcp.tools)
+
+
+@pytest.mark.parametrize('generation', [1, 2])
+@pytest.mark.parametrize('name', ['../submit_answer', 'submit_answer', 'scratch_reset'])
+def test_generic_read_adapter_never_dispatches_workflow_or_write_tool(generation, name):
+    import json
+    mod = _load(generation)
+    calls = []
+    def post(path, payload, ctx):
+        calls.append(path)
+        assert path.endswith('get_tool_catalog')
+        return json.dumps({'tool_catalog': {'tools': [{'name': 'search_routines'}]}})
+    mod._post = post
+    assert 'error' in json.loads(mod.run_read_tool(object(),'task',name,{}))
+    assert len(calls) <= 1
+
+
+@pytest.mark.parametrize('generation', [1, 2])
+def test_catalog_auth_failure_is_returned_without_second_call(generation):
+    import json
+    mod = _load(generation)
+    calls=[]
+    def post(path,payload,ctx):
+        calls.append(path)
+        return json.dumps({'error':'HTTP 403'})
+    mod._post=post
+    assert json.loads(mod.run_read_tool(object(),'task','search_routines',{}))['error']=='HTTP 403'
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('generation', [1, 2])
+def test_stdio_catalog_dispatch_runtime(monkeypatch, generation):
+    import json
+    for name in ('mcp','mcp.server','mcp.server.mcpserver','mcp.server.fastmcp'):
+        monkeypatch.delitem(sys.modules,name,raising=False)
+    for name,value in _fake_sdk(generation).items():
+        monkeypatch.setitem(sys.modules,name,value)
+    monkeypatch.setenv('EXT_TOOL_API_BASE_URL','https://localhost')
+    monkeypatch.setenv('EXT_TOOL_ACCESS_TOKEN','test-only-token')
+    monkeypatch.setenv('EXT_TOOL_SESSION_LABEL','test')
+    path = os.path.join(_HERE,'..','src','external_tool_mcp_server.py')
+    spec = importlib.util.spec_from_file_location('_stdio_catalog_test',path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    calls=[]
+    def post(path,payload):
+        calls.append((path,payload))
+        if path.endswith('get_tool_catalog'):
+            return json.dumps({'tool_catalog':{'tools':[{'name':'describe_routine'}]}})
+        return 'result'
+    monkeypatch.setattr(mod,'_post',post)
+    args={'database':'Allowed','schema_name':'dbo','routine_name':'p','offset':123,'datasource':'ds'}
+    assert mod.run_read_tool('task','describe_routine',args,'review')=='result'
+    assert calls[-1][1]['arguments']==args
+    assert 'run_read_tool__test' in mod.mcp.tools
+    calls.clear()
+    assert 'error' in json.loads(mod.run_read_tool('task','submit_answer',{}))
+    assert len(calls)==1
+    calls.clear()
+    assert 'error' in json.loads(mod.run_read_tool('task','../submit_answer',{}))
+    assert not calls

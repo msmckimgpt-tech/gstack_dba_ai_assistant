@@ -6,11 +6,89 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단
 
 ---
 
 # Task
+
+
+## TASK-20260908T162000-tool-surface — 외부 AI 도구 누락과 계약 불일치
+
+- 요청: 같은 GZR 대화의 search_routines HTTP404 및 각 도구 사용 제한 확인·개선. source core message 9248, conversation …8c73806a. 내부 원문/식별 데이터 미전재.
+- 위험: 기존 인증된 읽기 도구 표면에 검색·정의 조회를 연결하는 내부 API 개선. 제품/DB 허용범위, SQL readonly/행수/운영 스위치 유지. 새 자격증명·쓰기·권한 확대 없음. 노출 전 발견한 범위 누출·EXPLAIN batch 가드 누락을 차단한다.
+- 승인 근거: 현재 사용자가 도구별 제한 조사와 개선을 직접 위임. 기존 허용 제품 내 조회 지원이며 사용자 권한·데이터소스 바인딩 변경은 하지 않는다.
+- 작업: .worktrees/feature-0003-agent-web-ui; ai/codex-tool-audit/feature-0003-agent-web-ui; base 2dede457; AGENTS SHA a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2.
+
+### 2.1 Implementation Plan
+
+1. routers/ai_tools.py P0_TOOLS, _bridge_system_prompt, get_task_context, run_structure_tool: 허용목록+core 스키마로 도구 catalog를 생성하고 claim/컨텍스트에 전달. search_routines/describe_routine/search_db_objects/describe_db_object/explain_query 연결. check_table_coverage는 첨부 실행 컨텍스트가 필요하므로 전용 읽기 경로로 대체. 미제공 도구에는 대체 경로와 현재 제공목록 반환.
+2. modules/tools.py의 메타데이터 검색에 제품 스키마 필터를 적용하고 explain_query에 동일 readonly AST 검증. dialects.py Agent job keyword 검색도 허용 DB 단계만 조사. run_structure_tool은 현재 제품/대화 권한을 재검증한다.
+3. standalone MCP에는 catalog 조회와 범용 조사 어댑터를 추가하여 신규 도구·database/offset 등 전체 인자 전달. 기존 wrapper 호환 유지. 러너 설치본은 서버 지침으로 현재 catalog와 첨부 대체 경로를 전달받는다.
+4. 도구별 목록/제한·조회 범위·SQL 거부·권한 회수·구버전 러너 전달 회귀 테스트 및 backend/security/qa 검토. verify→PR→merge→전체 영향 서비스 배포, 동일 HTTP 경로 확인.
+
+AC: 허용 task의 search_routines는 404가 아닌 scoped 조회에 도달하고, describe_routine의 database/offset을 전달한다. 미허용 DB의 객체/본문을 반환하지 않고 SQL 쓰기/다중문은 실행 전 차단. update_attachment 호출 대신 기존 attachment-edit/submit_answer 경로를 안내한다. core의 모든 도구는 제공 또는 명시적 대체/제한으로 분류된다.
+
+### Requested Scope
+- [x] 대화 실패와 도구별 노출/제한 전수 대조
+- [x] 누락 조회 도구 연결과 최신 사용법 전달
+- [x] 기존 보안 경계 및 발견된 누출·다중문 경로 차단
+- [x] 회귀 테스트·패널·문서·원격 동기화
+- [x] 배포본 경로 검증 및 실제 AI 생성 여부 구분 — ca3fe660 7서비스/56검사 PASS. 실제 datasource는 기존 워커·호스트에서도 TCP timeout, 신규 AI/DQA 응답은 NOT-RUN. test-runs.d 정본에 미완료 실측 기록.
+
+
+## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
+
+- Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.
+- Plan: 사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
+- [x] 코드 변경 및 집중 회귀 검증.
+- [x] 전체8f1116cf 배포·DQA1.2.4 업데이트·실제 root Codex 새 대화 응답 확인. 정본: native test-runs.d/20260908-codex-connect-fix.md.
+
+## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검증
+
+### 2.1 Implementation Plan
+- 승인 근거: 현재 사용자 요청(전역 → 제품 → 역할 전역 → 역할 제품 → 개인 전역 → 개인 제품 검토·개선). Major: 프롬프트 조회 실패 처리와 진단 개선; 인증·인가 변경 없음.
+- `unit/feature-0002-agent-core/src/agent_core.py::compose_system_prompt`: strict 조회 모드로 설정 부재와 조회 실패를 구분한다. 제품 표시명 조회 실패가 제품 지침을 누락시키지 않게 분리한다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py::_bridge_system_prompt,claim_request`: strict 모드를 사용하고 실패하면 점유 해제·503으로 불완전 지침 실행을 차단한다.
+- `unit/feature-0043-external-llm-bridge/src/agent/handler.py::handle_one`: 전달 길이·SHA-256·실제 채널을 원문 없이 기록한다. 생성 러너 2벌을 재생성한다.
+- 테스트: 여섯 고유 문자열이 최종 프롬프트에 정확히 한 번, 요청 순서대로 존재; auto 모드에서 전역 3계층만 적용; 빈 설정/조회 오류/표시명 오류/계정·제품 전환/긴 프롬프트를 검증한다.
+- 완료 기준 예시: G→P→RG→RP→AG→AP를 설정하면 Claude 시스템 채널 또는 Codex 본문에 동일 순서로 모두 전달된다. 역할 조회 SQL 실패는 빈 설정으로 처리되지 않고 AI 실행 전 재시도 가능한 실패가 된다.
+- 본문 전달은 모든 런타임의 시스템 역할 보장을 뜻하지 않는다. 파일 전달 옵션은 검토했으나 이번 변경은 기존 CLI·인증 설정을 유지하면서 누락 차단과 실전달 검증을 강화한다.
+- 검증 패널: backend/security/qa(API 및 SQL 조회 오류 계약) + toast 1줄 제거 UX/design 검토, 최대 3회. 최종 PASS. 공유 hot_paths: core compose_system_prompt, ai_tools claim/release/working, handler dispatch; composer.js 한 줄 삭제. 배포 포함(FIRST_REQUEST.md).
+- [x] 구현·단위/통합 회귀·검증 패널
+- [x] verify-completion PASS. 출하 단계(commit/push/PR/main/배포)의 최종 SHA·실행 결과는 해당 PR의 Git 동기화 결과와 배포 로그를 따른다.
+
+
+## TASK-20260908T150000-attachment-boundary — 첨부 본문 혼입과 자동 전달 문구 수정
+
+- 요청: conversation_audit 사용자 제보. 대화 …8c73806a의 SQL 첨부에 답변이 섞임; 첨부 완료 반복 문구 제거.
+- 위험도 Minor: 서버 내부 첨부 파싱·답변 정리 계약. DB/원본 첨부 수정 없음, 권한/저장 가드 유지.
+- worktree: `.worktrees/feature-0003-agent-web-ui`; branch `ai/codex-attachment-audit/feature-0003-agent-web-ui`; base `49f7fa41`.
+- 정책: 이 worktree `AGENTS.md` 및 main 정책 해시 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`를 착수/완료 대조한다.
+- 소유: `routers/_conv_store.py::_attachment_block_spans`, `routers/conversations.py::_strip_attachment_{edit,new}_blocks`, `routers/ai_tools.py::_materialize_bridge_attachments` 및 호출부; 해당 테스트·기능 문서.
+
+### 2.1 Implementation Plan
+
+1. 첨부 시작·종료 펜스를 앞에서부터 추적하고 첫 유효 닫힘에서 종료한다. 일반 코드 블록 안의 첨부 예시는 파일로 저장하지 않는다. 내부 코드 펜스는 길이/문자별 추적하며, 모호한 단독 펜스는 외곽을 더 길게 쓰는 계약으로 처리한다.
+2. 저장 성공시 서버 자동 전달 문장 제거. 파일만 있는 정상 답변은 빈 본문과 기존 첨부 칩으로 전달하고, 실패는 기존 실패 고지를 유지한다. 브리지의 빈 문자열/영속 실패 구분을 명시한다.
+3. 실제 입력 구조(첨부→다음 파일 설명→diff→다음 첨부)와 마크다운 중첩·인용·취소/실패·파일만 전달 경로를 검증한다.
+4. backend/security/qa 패널 → verify-completion → PR/main → 무중단 배포; 운영 데이터를 수정하지 않는 배포본 동일 구조 재현.
+
+AC: `attachment-edit(SQL A) → 설명 B → diff B → attachment-edit(SQL B)`이면 저장 파일은 각각 SQL A/B만, 답변에는 설명/diff B가 보존되고 자동 '첨부 파일로 전달했습니다' 문구는 없다.
+
+- [x] 구현 및 회귀 테스트 — 120 PASS
+- [x] backend/security/qa 패널 — 최종 PASS
+- [x] 문서·verify-completion — pre-commit PASS
+- [x] PR #1629 병합·e8fd398b 전체 배포·7서비스 56검사 PASS
+- [x] 배포 증거 문서 커밋·원격 동기화 및 서식 확인
+- [x] 정리 중 발견한 lifecycle 도구 SIGPIPE 수정: cycle-init/finalize가 worktree 목록을 끝까지 소비. Bats 25 PASS, backend/qa 재검토 PASS.
+
+### Requested Scope (요청 범위)
+- [x] 첨부에 답변 혼입 방지 — 정확한 파일 byte와 후속 설명/diff 보존 테스트.
+- [x] 불필요한 첨부 전달 문구 제거 — 서버 자동 문장 제거 및 권위 프롬프트 반영.
+- [x] 배포본 56검사 + 저장파일 10개 재구성 입력 재현 PASS. 사용자 AI 재생성·DQA 실제 화면은 미실측.
+
+
 
 ## TASK-20260908T113000-bridge-token-env — DQA 클라이언트만 사용하는 흐름 검증
 
@@ -13389,6 +13467,26 @@ Task-Cycle: feature-0003-agent-web-ui
 ### 사용자 동선 확정 (2026-09-08 후속 지시)
 
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+## TASK-20260908T120000-connect-discovery-ux
+
+DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.
+
+- [x] 이번 TASK의 DQA 로그인 후 공용 연결 패널·중복 위치 선택·완료 toast·인증 identity 구현 및 회귀 검증 완료. 설치기/배포 결과는 feature-0046 REPORT와 공동 TEST run 참조.
+
+- [x] 최신 main a92c9256 통합: DQA 앱 우선 안내·실제 클릭 행위 테스트 보존, native 527건/수집 계약 18건 재검증.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.
+
+- [x] PR #1619 병합, 서버 92cfa2c2 전체 배포·상태/서빙 확인, DQA 1.2.0 공개 및 실제 다운로드 크기/SHA-256 대조 완료.
 
 ## TASK-20260908T124500-attach-folder-tree — 폴더 첨부 · 디렉토리 트리 보존 · assistant 구조 인지
 

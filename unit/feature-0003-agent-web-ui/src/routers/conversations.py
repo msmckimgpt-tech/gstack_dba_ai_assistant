@@ -5715,13 +5715,7 @@ def _infer_kind(filename: str, mime_type: str) -> str:
     return "other"
 
 def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
-    """답변에서 ```attachment-edit``` 블록을 제거하고 "📎 수정본 전달" 명시 문구로 치환(TASK-0286).
-
-    사용자에게 전체 수정본 본문이 텍스트로 노출되는 것을 막는다 — 변경점은 diff 블록으로, 전체
-    수정본은 다운로드 가능한 첨부 새 버전(materialize)으로 전달한다. materialize 가 실패(파싱은
-    됐으나 가드 거부 등)한 블록도 제거해 본문 노출을 막는다(fail-open 일관). 전부 제거돼 본문이
-    비면(블록만 있고 materialize 실패한 드문 경우) 원문을 유지해 빈 답변을 방지한다.
-    """
+    """첨부 블록만 제거한다. 성공은 첨부 칩으로 표시하고 실패 고지는 보존한다."""
     spans = app._attachment_edit_block_spans(answer)
     if not spans:
         return answer
@@ -5733,33 +5727,13 @@ def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]
     stripped = "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
     # 블록 제거로 생긴 과도한 빈 줄 정리.
     stripped = app.re.sub(r"\n{3,}", "\n\n", stripped).strip()
-    if materialized:
-        notes = "\n".join(
-            f"📎 수정본 **{a.get('original_filename') or '파일'}** (v{a.get('version_number') or 2}) 을(를) "
-            f"첨부 파일로 전달했습니다. 위 변경점을 확인하고 첨부에서 다운로드하세요."
-            for a in materialized
-        )
-        stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
-    # ⚠ 종전에는 `stripped or answer` 였다 — 답변이 **블록 하나로만** 이뤄진 경우(설명 없이
-    # 파일만 준 답변) strip 결과가 비어 **원문이 되살아났다**. materialize 가 실패했거나
-    # `failed=True` 라 아예 건너뛴 run 에서는 안내 문구도 안 붙으므로, 그 자리에 파일 전문이
-    # 그대로 채팅에 굳는다(codex 적대 리뷰 P1, 2026-08-28).
-    #
-    # 빈 문자열을 돌려주는 것도 답이 아니다 — 말풍선이 통째로 비어 "답이 없다" 로 읽힌다.
-    # 무슨 일이 있었는지 한 줄로 말한다.
-    if stripped:
+    # 파일만 있는 성공 답변은 기존 첨부 칩이 내용을 대신한다.
+    if stripped or materialized:
         return stripped
     return "첨부 블록만 담긴 답변이었고, 파일은 전달되지 않았습니다."
 
 def _strip_attachment_new_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
-    """답변에서 ```attachment-new``` 블록을 제거하고 "📎 첨부 전달" 안내 문구로 치환.
-
-    FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): assistant 가 새로
-    생성한 전체 스크립트 본문이 채팅에 그대로 노출되는 것을 막고(사용자가 명시적으로 "본문이
-    아닌 첨부로" 요청), 전체 파일은 다운로드 첨부(materialize)로 전달한다. materialize 가 실패한
-    블록도 제거해 본문 노출을 막는다(fail-open 일관). 전부 제거돼 본문이 비면 원문을 유지한다.
-    편집 strip(_strip_attachment_edit_blocks)과 동일 규율, 신규 첨부용 안내 문구만 다르다.
-    """
+    """첨부 블록만 제거한다. 성공은 첨부 칩으로 표시하고 실패 고지는 보존한다."""
     spans = app._attachment_new_block_spans(answer)
     if not spans:
         return answer
@@ -5769,21 +5743,8 @@ def _strip_attachment_new_blocks(answer: str, materialized: list[dict[str, Any]]
         remove.update(range(_oi, _ci + 1))
     stripped = "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
     stripped = app.re.sub(r"\n{3,}", "\n\n", stripped).strip()
-    if materialized:
-        notes = "\n".join(
-            f"📎 **{a.get('original_filename') or '파일'}** 을(를) 첨부 파일로 전달했습니다. "
-            f"첨부 목록·말풍선에서 다운로드하세요."
-            for a in materialized
-        )
-        stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
-    # ⚠ 종전에는 `stripped or answer` 였다 — 답변이 **블록 하나로만** 이뤄진 경우(설명 없이
-    # 파일만 준 답변) strip 결과가 비어 **원문이 되살아났다**. materialize 가 실패했거나
-    # `failed=True` 라 아예 건너뛴 run 에서는 안내 문구도 안 붙으므로, 그 자리에 파일 전문이
-    # 그대로 채팅에 굳는다(codex 적대 리뷰 P1, 2026-08-28).
-    #
-    # 빈 문자열을 돌려주는 것도 답이 아니다 — 말풍선이 통째로 비어 "답이 없다" 로 읽힌다.
-    # 무슨 일이 있었는지 한 줄로 말한다.
-    if stripped:
+    # 파일만 있는 성공 답변은 기존 첨부 칩이 내용을 대신한다.
+    if stripped or materialized:
         return stripped
     return "첨부 블록만 담긴 답변이었고, 파일은 전달되지 않았습니다."
 

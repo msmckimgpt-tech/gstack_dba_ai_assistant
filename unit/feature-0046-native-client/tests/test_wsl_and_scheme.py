@@ -92,13 +92,13 @@ def test_wsl_available_requires_a_working_distro(monkeypatch):
     """`wsl.exe` 파일 존재로 판정하지 않는다 — 배포판이 없어도 그 파일은 있다."""
     monkeypatch.setattr(core.os, "name", "nt")
     monkeypatch.setattr(core.shutil, "which", lambda n: r"C:\Windows\wsl.exe")
-    monkeypatch.setattr(core, "_run", lambda argv, timeout=30: (1, "배포판 없음"))
+    monkeypatch.setattr(core, "_run", lambda argv, timeout=30, **kw: (1, "배포판 없음"))
     assert core.wsl_available() is False
 
 
 def test_wsl_which_rejects_non_absolute_output(monkeypatch):
     """`command -v` 가 경로가 아닌 것을 뱉으면 「찾았다」로 읽지 않는다."""
-    monkeypatch.setattr(core, "_run", lambda argv, timeout=30: (0, "claude: not found"))
+    monkeypatch.setattr(core, "_run", lambda argv, timeout=30, **kw: (0, "claude: not found"))
     assert core.wsl_which("claude") is None
 
 
@@ -107,7 +107,7 @@ def test_wsl_which_rejects_non_absolute_output(monkeypatch):
 def test_logged_in_runtime_that_cannot_answer_is_not_usable(monkeypatch):
     """**이 단정이 종전 화면을 잡는다.** 로그인됐다고 「준비됨」이라 말하면 안 된다."""
     st = core.RuntimeState(name="claude", path="C:/x/claude.exe", logged_in=True)
-    monkeypatch.setattr(core, "_run", lambda argv, timeout=60: (124, "응답이 없어 중단했습니다."))
+    monkeypatch.setattr(core, "_run", lambda argv, timeout=60, **kw: (124, "응답이 없어 중단했습니다."))
     core.verify_answers(st)
     assert st.answers is False
     assert st.usable is False
@@ -117,7 +117,7 @@ def test_logged_in_runtime_that_cannot_answer_is_not_usable(monkeypatch):
 def test_answering_runtime_is_usable(monkeypatch):
     st = core.RuntimeState(name="claude", path="/usr/local/bin/claude",
                            where="wsl", logged_in=True)
-    monkeypatch.setattr(core, "_run", lambda argv, timeout=60: (0, "OK"))
+    monkeypatch.setattr(core, "_run", lambda argv, timeout=60, **kw: (0, "OK"))
     core.verify_answers(st)
     assert st.answers is True and st.usable is True
 
@@ -125,7 +125,7 @@ def test_answering_runtime_is_usable(monkeypatch):
 def test_empty_answer_is_not_an_answer(monkeypatch):
     """rc 만 보면 조용히 아무것도 안 낸 런타임을 「답한다」고 읽는다."""
     st = core.RuntimeState(name="claude", path="C:/x/claude.exe", logged_in=True)
-    monkeypatch.setattr(core, "_run", lambda argv, timeout=60: (0, "   \n "))
+    monkeypatch.setattr(core, "_run", lambda argv, timeout=60, **kw: (0, "   \n "))
     core.verify_answers(st)
     assert st.answers is False
 
@@ -135,7 +135,7 @@ def test_verify_uses_the_runtimes_own_argv(monkeypatch):
     seen: list[list[str]] = []
     monkeypatch.setattr(core, "_wsl_exe", lambda: "wsl.exe")
     monkeypatch.setattr(core, "_run",
-                        lambda argv, timeout=60: (seen.append(argv), (0, "OK"))[1])
+                        lambda argv, timeout=60, **kw: (seen.append(argv), (0, "OK"))[1])
     st = core.RuntimeState(name="claude", path="/usr/local/bin/claude", where="wsl")
     core.verify_answers(st)
     assert seen[0][:3] == ["wsl.exe", "-e", "/usr/local/bin/claude"]
@@ -202,7 +202,7 @@ def test_login_delegates_into_wsl(monkeypatch):
     seen: list[list[str]] = []
     monkeypatch.setattr(core, "_wsl_exe", lambda: "wsl.exe")
     monkeypatch.setattr(core, "_run",
-                        lambda argv, timeout=300: (seen.append(argv), (0, ""))[1])
+                        lambda argv, timeout=300, **kw: (seen.append(argv), (0, ""))[1])
     st = core.RuntimeState(name="claude", path="/usr/local/bin/claude", where="wsl")
     ok, _ = core.login(st)
     assert ok
@@ -212,7 +212,7 @@ def test_login_delegates_into_wsl(monkeypatch):
 def test_login_still_accepts_a_bare_name(monkeypatch):
     """호환 — 이름만 주면 Windows 자리로 간주한다(종전 동작)."""
     monkeypatch.setattr(core, "which_runtime", lambda n: r"C:\x\claude.exe")
-    monkeypatch.setattr(core, "_run", lambda argv, timeout=300: (0, ""))
+    monkeypatch.setattr(core, "_run", lambda argv, timeout=300, **kw: (0, ""))
     assert core.login("claude")[0] is True
 
 

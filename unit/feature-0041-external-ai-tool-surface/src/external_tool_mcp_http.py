@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import http.client
 import ssl
 import sys
@@ -417,6 +418,28 @@ def read_task_attachment(ctx: McpContext, task_id: str, attachment_id: int | Non
     return _post("/api/ai/tools/read_task_attachment",
                  {"task_id": task_id, "attachment_id": attachment_id, "filename": filename,
                   "start_line": start_line, "max_lines": max_lines, "reason": reason}, ctx)
+
+
+@mcp.tool(description="현재 task의 조사 도구 전체 목록·JSON 인자 스키마·제한과 대체 경로를 확인한다.")
+def get_tool_catalog(ctx: McpContext, task_id: str) -> str:
+    return _post("/api/ai/tools/get_tool_catalog", {"task_id": task_id}, ctx)
+
+
+@mcp.tool(description="get_tool_catalog에 있는 모든 조사 도구를 호출한다. search_routines/describe_routine/search_db_objects/describe_db_object/explain_query를 포함한다. database/offset 등 전체 인자를 arguments에 담는다.")
+def run_read_tool(ctx: McpContext, task_id: str, tool_name: str,
+                  arguments: dict[str, Any], reason: str = "") -> str:
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", tool_name):
+        return json.dumps({"error": "invalid_tool_name"})
+    raw = get_tool_catalog(ctx, task_id)
+    try:
+        catalog = json.loads(raw)
+        names = {t["name"] for t in catalog["tool_catalog"]["tools"]}
+    except (ValueError, KeyError, TypeError):
+        return raw
+    if tool_name not in names:
+        return json.dumps({"error": "tool_not_exposed", "available_tools": sorted(names)})
+    return _post(f"/api/ai/tools/{tool_name}",
+                 {"task_id": task_id, "reason": reason, "arguments": arguments}, ctx)
 
 
 @mcp.tool(description="접근 가능한 스키마(DB) 목록." + _REASON_HINT)

@@ -29,12 +29,14 @@ It preserves the same user-facing intent while using Codex-native behavior.
 2. Read `.codex/CONTEXT.md` and `.agents/ENVIRONMENT.md` in the policy root.
    Retrieve the AGENTS.md heading index and the applicable sections named by
    the context adapter; do not request the entire large policy in one read.
-   Read the remaining policy context in priority order:
-   - `<wrapper>/FIRST_REQUEST.md` when present.
-   - `<policy_root>/CLAUDE.md`, `CONTRIBUTING.md`.
-   - `<policy_root>/docs/{PROJECT,STATUS,ARCHITECTURE,CONVENTIONS,SECURITY,REQUEST}.md` when present.
-   - `<policy_root>/playbooks/README.md` when present.
-   - `<policy_root>/meta/{TASK,REVIEW}.md` when present.
+   AGENTS.md §10.1 is the shared reading contract. Read wrapper FIRST_REQUEST.md
+   when present, then CLAUDE.md, CONTRIBUTING.md, docs/PROJECT.md and the STATUS
+   index. Read current target feature documents (or the matching meta/TASK.md
+   entry); load architecture, security, conventions, reviews and playbooks by
+   the applicable section/path rather than copying their full history.
+   For an authorized mutation from main, create the task's isolated worktree
+   and continue in this session (§13.2.1); no separate session request is needed.
+
 3. Enumerate, but do not fully read unless needed:
    - `<policy_root>/.codex/commands/_template/*.md`
    - `<policy_root>/.codex/skills/_template-*/SKILL.md`

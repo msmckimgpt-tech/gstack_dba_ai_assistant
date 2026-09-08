@@ -702,7 +702,19 @@ def test_a_failed_check_shortens_the_retry_interval(tmp_path):
 def test_a_relaunch_owner_is_single(tmp_path):
     """재기동 입구가 둘이면 우리가 아직 살아 있는 사이 새 인스턴스가 잠금에 막힌다(C5)."""
     assert "/RESTARTAPPLICATIONS" not in updater.SILENT_ARGS
+    assert "/NORESTARTAPPLICATIONS" in updater.SILENT_ARGS
     assert "/RELAUNCH" in updater.SILENT_ARGS
+    code = _iss_code_only(_ISS.read_text(encoding="utf-8"))
+    assert re.search(r"^RestartApplications=no$", code, re.M)
+
+
+def test_installer_recovers_legacy_children_without_closing_shared_dll_users():
+    """1.1.2의 고아 Python은 일반 종료 요청에 응답하지 않아 무음 설치를 롤백시켰다."""
+    code = _iss_code_only(_ISS.read_text(encoding="utf-8"))
+    assert re.search(r"^CloseApplications=force$", code, re.M)
+    match = re.search(r"^CloseApplicationsFilter=(.+)$", code, re.M)
+    assert match and set(match[1].split(",")) == {"DQAConnect.exe", "python.exe", "pythonw.exe"}
+    assert re.search(r"^SetupLogging=yes$", code, re.M)
 
 
 def test_downloads_land_in_one_fixed_place(tmp_path):
