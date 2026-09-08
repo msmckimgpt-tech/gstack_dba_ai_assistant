@@ -64,3 +64,9 @@ SQL Agent 검색은 반환 단계뿐 아니라 키워드 검색 단계에도 같
 집중 테스트·MCP 1/2 SDK 실행·패널 결과와 배포 검증은 test-runs.d/TASK-20260908T162000-tool-surface.md를 참조한다.
 기존 첨부 수정의 배포 후 해당 대화 신규 assistant 턴은 0개다. 재발/소멸 판정 근거가 아직 없으며 이전 fixed:deployed:unverified-live를 유지한다.
 새 사용자 AI 답변 생성·실제 DQA 창은 별도 실측 항목이다. 운영 대화/첨부를 변경하지 않는다.
+
+## 배포 후 확인
+
+PR #1635 / ca3fe660 전체 7서비스 배포 완료. 회귀717 PASS, 배포본 계약56 PASS, 실제 계정/제품 범위 catalog 조회200·미허용 datasource403·첨부 대체경로 안내를 확인했다.
+실제 프로시저 검색은 누락404를 통과했지만 대상 SQL Server 접속 timeout으로500을 반환했다. 기존 버전 워커와 호스트 TCP도 동일 실패하여 배포로 인한 도구 제한과 분리했다. 네트워크/DB 서버 원인은 미확정이며 실제 정의·객체·계획 조회 성공을 주장하지 않는다.
+17:19 KST 원장 재측정에서 해당 대화의 배포 후 신규 assistant0; 사용자 AI 재검증은 미수행. 상태 fixed:deployed:unverified-live.

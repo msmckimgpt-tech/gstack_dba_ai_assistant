@@ -6066,3 +6066,10 @@ Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 w
 - Timestamp: 2026-09-08T08:01:57.915443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
 
 조회 도구가 내부에는 있지만 외부 allowlist/MCP/러너 안내가 달라 HTTP404를 반환했다. explicit allowlist + core Schema의 catalog를 조립하고 5조회 연결·9제한 대체경로 전달. 검색 범위/현재 권한/EXPLAIN 검증 결함 보강. 상세 TOOL_SURFACE_AUDIT.md.
+
+## CHG-20260908T172000-tool-surface-deploy-proof
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:20:41.263318+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비스 healthy·90초 soak·56배포본 계약검사 PASS, 실제 task 권한 catalog/미허용 datasource/첨부 대체경로 확인. 실제 SQL Server는 새 웹·기존 워커·호스트 모두 연결 timeout이어서 프로시저 결과 성공과 구분한다. 신규 AI 응답0으로 fixed:deployed:unverified-live 유지. 정본: [배포·미실측 기록](test-runs.d/TASK-20260908T162000-tool-surface.md). 제품 코드 추가 변경 없이 증거·제한을 문서화한다.

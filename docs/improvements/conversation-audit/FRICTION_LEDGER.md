@@ -2634,7 +2634,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 - FR-attachment-last-fence-captures-answer deployment update (2026-09-08T06:27:43.349266+00:00; Session 01a07f94-148f-7253-a515-1a7a66a97cea): PR #1629 / e8fd398b full deployment exit 0; 7 services 56 checks PASS; stored-file replay 10 SHA matches / 6 contaminated tails excluded. Original data unchanged. `unverified-live` means user AI re-generation / future recurrence is not yet measured, not an undeployed fix.
 
-## FR-external-tool-catalog-omits-core-introspection — fixed:undeployed (L1↔L2↔L5)
+## FR-external-tool-catalog-omits-core-introspection — fixed:deployed:unverified-live (L1↔L2↔L5)
 
 - source: 사용자 후속 명시 제보, 대화 …8c73806a core msg9248. seen_count1 / distinct_conv1. 30일 search_routines+404/미제공 assistant 언급 대화1.
 - symptom_confidence: high; rootcause_confidence: high. 내부 core 구현·외부 allowlist 누락·현재 HTTP 회귀 재현이 일치한다.
@@ -2644,4 +2644,5 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - 실제 도구 호출: task6개 원장132호출. 404는 실행 전 반환으로 원장에 없고 코드+발언+HTTP 재현으로 확인. DB_NAME 차단은 의도된 가드로 기각, 대체 조회 안내.
 - fix: TASK-20260908T162000-tool-surface; primary feature-0003-agent-web-ui. TOOL_SURFACE_AUDIT.md 및 test-runs.d 정본.
 - 이전 첨부 수정 폐루프: 배포 이후 해당 대화 assistant 신규0. 재발/소멸 판정 불가, 기존 상태 유지.
-- live: 배포 전. 실제 새 사용자 AI 응답은 미실측이며 배포 후 코드 도달성과 분리한다.
+- live: PR1635/ca3fe660 7서비스 배포·56계약검사 PASS. 실계정 catalog200/미바인딩403/첨부대체404 확인. search_routines는 DB 연결 단계500(timeout); 기존 워커/호스트 TCP도 실패해 원래 도구누락404와 분리. 실제 DB 결과 및 새 AI 응답 미실측.
+- corroboration: 2026-09-08 17:19:22+09 SELECT, 이전 첨부 배포 이후·이번 도구 배포 이후 assistant 각0. 30일 관련 대화1 유지. 후속 표본 없음으로 verified 승격 불가.
