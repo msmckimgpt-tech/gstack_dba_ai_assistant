@@ -13,6 +13,17 @@ source_of_truth: false
 여섯 계층의 요청 순서·최종 CLI 전달을 검증하고 조회 실패 은폐를 수정했다. DB 오류는 bridge의 strict 조립에서 차단하며 기존 placeholder에 원인을 기록하고 5초 비동기 간격으로 재시도한다. 최초 점유자와 일치하는 경우에만 해제한다. 제품 표시명 조회 오류는 내용 조회를 막지 않는다. 집중 회귀 180건과 bridge 전체 1,700건(1 skip), 독립 backend/security/QA 리뷰를 통과했다. DQA 앱 화면 시나리오는 실행 중 앱의 CDP 미개방으로 NOT-RUN이며 source 검토와 구분한다. 출하 결과는 해당 PR의 최종 Git/배포 기록을 따른다. [상세 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md).
 
 
+## TASK-20260908T150000-attachment-boundary — 첨부 경계 감사
+
+- 상태: 구현·120 pytest·backend/security/qa PASS; PR/main·배포 진행 예정.
+- 실측: 대화 …8c73806a의 assistant 파일 10개 중 6개에 다음 설명/diff 혼입. PostgreSQL replica SELECT + MinIO GET으로 확인; 실제 byte와 저장 SHA-256 10/10 일치. 사용자/첨부 원문 비전재, 운영 데이터 write 0.
+- RC: `_attachment_block_spans`의 마지막 bare fence 탐색이 다음 설명/diff를 흡수. `_strip_attachment_*_blocks`가 파일별 완료 문장을 자동 부착. `FR-attachment-last-fence-captures-answer`.
+- 변경: 앞방향 fence 경계, 긴 outer 종료 우선, 코드 인용 비실행; 성공 자동 안내 제거; bridge/worker 빈 성공본문 보존; 권위 프롬프트에 내용 분리·원본 주석 보존·반복 완료문구 생략.
+- 검증: 관련 6개 모듈 pytest 120 PASS(경계 21건), ROUTEMAP 재생성/codenav-lint PASS. 패널 초기 P2와 인용·empty recall 빈틈 해소 후 3명 PASS.
+- 한계: 기존 손상 파일 자동 복원, 사용자 AI 재질의, 실제 DQA 화면은 미실측. 테스트는 서버 처리 계약 증거이며 실제 사용자 대화 마찰 소멸을 단정하지 않는다.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0003-agent-web-ui/AGENTS.md`; SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; main 동일 해시. Session `01a07f94-148f-7253-a515-1a7a66a97cea`; 2026-09-08T06:09:53.549929+00:00.
+- 배포 권한: 현재 사용자 수정 요청 + AGENTS §16.5.1 included. 정본 무중단 스파인 사용. 권한·스키마·비용 계약 변경 없음.
+
 ## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
 
 DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.

@@ -124,9 +124,9 @@ class Shell:
         try:
             self._window = webview.create_window(
                 self.title, self.url, width=1180, height=820,
-                min_size=(900, 600), confirm_close=False)
+                min_size=(900, 600), confirm_close=False, text_select=True)
             self._window.events.closing += self._on_closing
-            self._window.events.loaded += lambda: self._ready.set()
+            self._window.events.loaded += self._on_loaded
             os.makedirs(self.storage, exist_ok=True)
             webview.start(gui="edgechromium", private_mode=False,
                           storage_path=self.storage, icon=str(ICON_PATH))
@@ -134,6 +134,22 @@ class Shell:
         except Exception:  # noqa: BLE001 — 못 띄우면 호출부가 폴백한다
             self._window = None
             return False
+
+    def _on_loaded(self) -> None:
+        """pywebview가 끈 기본 검색을 WebView2 소유 UI 스레드에서 복구한다."""
+        try:
+            from System import Action
+
+            native = self._window.native
+
+            def enable_shortcuts():
+                native.webview.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = True
+
+            native.Invoke(Action(enable_shortcuts))
+        except Exception as exc:  # 창은 유지하되 단축키 설정 실패를 기록한다.
+            self.last_error = f"text interaction: {exc!r}"
+        finally:
+            self._ready.set()
 
     def _on_closing(self) -> bool:
         """`False` 를 돌려주면 pywebview 가 닫기를 취소한다.

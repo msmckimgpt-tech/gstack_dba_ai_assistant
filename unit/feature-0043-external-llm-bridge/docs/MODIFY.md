@@ -4850,7 +4850,9 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
 - 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
 - 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
-
 ## CHG-20260908T063000-prompt-layers
 - Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
 - 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
+## CHG-20260908T150000-attachment-boundary-cross-ref
+
+- 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. feature-0003-agent-web-ui REQ-20260908-attachment-boundary 동반: core 첨부 권위 지침·worker 빈 성공본문 및 bridge recall 보존. 검증 정본: feature-0003-agent-web-ui/docs/REPORT.md, TASK-20260908T150000-attachment-boundary. 단일 primary feature verify.

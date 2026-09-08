@@ -31,3 +31,5 @@ Next: DQA 자동화 가능 인스턴스에서 해당 장애/회복 시나리오 
 - verify-completion --pre-commit feature-0002-agent-core PASS. #13 DQA 화면 미실측은 WARN으로 분리했다. 최초 CHG 이력 heading 누락 FAIL은 CHG heading 정정 후 해소했다.
 
 - PR #1627 최초 cycle-finalize는 worktree 목록 조기 소비 종료에 따른 SIGPIPE로 exit141, PR은 OPEN 유지. 100000행 fixture로 old141/new0 재현, 첫 경로 /main 동일. 입력 전량 소비하도록 한 줄 수정 후 bash -n 및 독립 backend review PASS.
+
+- 출하 전 origin/main 830f39fd 통합: 첨부 경계 수정 TASK/REPORT는 양쪽 보존, native 상태는 최신 main 유지, STATUS/ROUTEMAP 재생성. 제품 코드는 자동 병합됐으며 집중 180건 재실행 PASS, codenav-lint PASS. 정책 SHA-256 동일.

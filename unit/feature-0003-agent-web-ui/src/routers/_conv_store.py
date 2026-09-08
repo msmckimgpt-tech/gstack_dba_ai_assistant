@@ -6130,47 +6130,50 @@ def _size_bucket(size_bytes: int) -> str:
 _ATTACHMENT_BLOCK_TAGS = ("```attachment-edit", "```attachment-new")
 
 def _attachment_block_spans(answer: str, tag: str) -> list[tuple[int, int, str, str]]:
-    """<tag> 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로 추출(TASK-0286
-    보안리뷰 MAJOR 수정 규율 유지). 여는 ```` ```<tag> ```` 다음 줄을 JSON 헤더로, **다음 attachment
-    블록(edit/new 무관) 여는 펜스 직전까지의 마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
-    일반 ``` 코드펜스를 허용하고(닫는 펜스는 블록의 가장 마지막 ```), **잘-형성된(각자 닫힌)
-    edit/new 블록이 공존**할 때 상호 본문 삼킴을 막는다.
+    """파일의 첫 유효 닫힘까지만 추출한다. 답변의 후속 코드펜스는 파일에 속하지 않는다.
 
-    알려진 한계(§18.8 backend 패널, 실트리거 ≈0 for SQL/CSV): 한 블록의 **본문 안**에 상대 태그
-    (예: edit 본문에 `` ```attachment-new `` 로 시작하는 줄)가 나타나면 그 줄을 경계로 오인해 바깥
-    블록이 조기 종료/드롭될 수 있다. 이는 자기 문서화용 마크다운/텍스트에서만 현실성이 있고
-    SQL/CSV 첨부에는 사실상 발생하지 않는다. 대안(상대 태그를 경계로 무시)은 더 흔한 공존 케이스를
-    깨므로 현 트레이드오프를 유지한다(회귀 테스트로 동작 고정 — test_attachment_new).
+    내부 코드펜스는 문자/길이로 추적한다. 단독 펜스를 포함하는 파일은 더 긴 외곽
+    펜스(예: ````attachment-new)를 사용한다. 일반 코드블록 안의 예시는 실행하지 않는다.
     """
-    text = answer or ""
-    if tag not in text:
-        return []
-    lines = text.split("\n")
-    n = len(lines)
-    # 경계 = 모든 attachment 블록(edit/new) 여는 펜스. 이 블록 다음의 첫 경계가 next_open.
-    boundaries = [i for i, ln in enumerate(lines)
-                  if any(ln.strip().startswith(t) for t in _ATTACHMENT_BLOCK_TAGS)]
-    opens = [i for i, ln in enumerate(lines) if lines[i].strip().startswith(tag)]
+    lines = (answer or "").split("\n")
+    wanted = tag.lstrip("`")
     spans: list[tuple[int, int, str, str]] = []
-    for oi in opens:
-        next_open = n
-        for b in boundaries:
-            if b > oi:
-                next_open = b
-                break
-        if oi + 1 >= n:
+    outer: tuple[str, int] | None = None
+    nested: tuple[str, int] | None = None
+    active: tuple[int, str] | None = None
+    for i, line in enumerate(lines):
+        match = app.re.fullmatch(r" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?", line)
+        if not match:
             continue
-        header_line = lines[oi + 1]
-        # 닫는 펜스: (헤더 다음 .. 다음 블록 직전) 중 정확히 "```" 인 **마지막** 줄.
-        close_idx = -1
-        for j in range(min(next_open, n) - 1, oi + 1, -1):
-            if lines[j].strip() == "```":
-                close_idx = j
-                break
-        if close_idx < 0:
+        fence, info = match.group(1), match.group(2).strip()
+        marker, length = fence[0], len(fence)
+        if outer is None:
+            outer = (marker, length)
+            if marker == "`" and info in ("attachment-edit", "attachment-new") and i + 1 < len(lines):
+                active = (i, info)
             continue
-        body = "\n".join(lines[oi + 2:close_idx])
-        spans.append((oi, close_idx, header_line, body))
+        if active is None:
+            if not info and marker == outer[0] and length >= outer[1]:
+                outer = None
+            continue
+        if nested is not None:
+            if (not info and marker == outer[0] and length >= outer[1]
+                    and (marker != nested[0] or outer[1] > nested[1])):
+                nested = None  # 더 긴 외곽 닫힘은 내부 파일의 EOF를 확정한다.
+            else:
+                if not info and marker == nested[0] and length >= nested[1]:
+                    nested = None
+                continue
+        if not info and marker == outer[0] and length >= outer[1]:
+            oi, kind = active
+            if kind == wanted:
+                spans.append((oi, i, lines[oi + 1], "\n".join(lines[oi + 2:i])))
+            outer = active = None
+        elif info in ("attachment-edit", "attachment-new") and marker == outer[0] and length >= outer[1]:
+            # 잘린 블록은 다음 파일까지 삼키지 않는다. 짧은 펜스의 예시는 내부 본문이다.
+            outer, active = (marker, length), (i, info)
+        elif info or marker != outer[0] or length < outer[1]:
+            nested = (marker, length)
     return spans
 
 def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
