@@ -1896,3 +1896,15 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — reviewed three files and board core three files are byte-identical to independent review/test snapshot. No policy or tool conflict; upstream DQA changes preserved. Previous app test/deployment results are not attributed to the newer app implementation.
 - Artifact: meta/reviews/20260908T-cycle-idempotence.md; docs/improvements/delegation-friction-20260908/verification.json
 - Human Approval Needed: no — current delegated scope; no runtime change in this PR.
+
+## REV-20260908T062000-skill-descriptions-backend [SUBAGENT:backend-reviewer] — PASS
+
+- Trigger: migration/마이그레이션 installer; shared META-0074 implementation reviewed by template panel.
+- Scope: project-meta
+- Artifact: meta/reviews/20260908-skill-descriptions-backend.md
+
+## REV-20260908T062000-skill-descriptions-qa [SUBAGENT:qa-reviewer] — PASS
+
+- Trigger: migration/마이그레이션 installer; shared META-0074 implementation reviewed by template panel.
+- Scope: project-meta
+- Artifact: meta/reviews/20260908-skill-descriptions-qa.md

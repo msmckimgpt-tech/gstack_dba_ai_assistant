@@ -1,5 +1,5 @@
 ---
-description: 라이브 대화(그룹·1:1)에서 사용자가 겪은 마찰 — 명시적 신호(도구 거부·에러 반복·과도 재질문·brute-force·rate-limit 노출) + 암묵 이탈 신호(침묵 종료·체념·짧은 좌절 토큰·thumbs-down·수동 우회) — 을 직접 탐색·진단하고, 그 근본 원인을 코드가 거주하는 unit feature 에서 수정·검증·출하하는 cross-cutting maintenance persona. 사람이 필요 시 호출하거나 주기 정합으로 예약. 단건(한 대화 한 마찰) / 드레인(여러 대화·같은-뿌리 batch) 모드
+description: "사용자가 AI와 대화하며 겪은 오류나 불편을 찾아, 원인을 진단하고 제품을 수정·검증합니다. mysql_ai_delegated_dev 전용입니다."
 argument-hint: [대화 한정(conversation-id|product=..|account=..|기간 YYYY-MM-DD..) 또는 friction-id, 또는 --drain [N] (선택) — 생략 시 자동 선택(미감사·마찰의심 상위 1건)]
 allowed-tools: Read, Glob, Grep, Bash, Agent, Write, Edit, TodoWrite
 created_by: _dqa pipeline (hand-authored)

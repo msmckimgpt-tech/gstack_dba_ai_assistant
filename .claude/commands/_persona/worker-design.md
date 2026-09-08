@@ -1,5 +1,5 @@
 ---
-description: UI/UX 피드백을 raw→번역→dimension rating→모던 레퍼런스 조합→재설계→적용까지 수행하는 프론트엔드 디자이너 worker
+description: "화면 디자인이나 사용성에 대한 피드백을 바탕으로, 웹 UI의 개선안을 구체화하고 화면에 적용합니다."
 argument-hint: [UI/UX 피드백 또는 재설계 요청]
 allowed-tools: Read, Write, Edit, Bash, Glob
 created_by: persona-new factory

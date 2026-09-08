@@ -1,5 +1,5 @@
 ---
-description: improve_research 가 모은 개선후보를 내부 정합성 review 로 다듬고, 개발 종속성이 명확한 standalone 로드맵 문서(ROADMAP.md)로 구축하는 AI 자율 호출 persona
+description: "조사한 개선 후보를 개발 계획으로 구체화할 때, 프로젝트 적합성과 선행 작업을 검토해 실행 가능한 로드맵을 만듭니다. mysql_ai_delegated_dev 전용입니다."
 argument-hint: [initiative-slug (선택) — 생략 시 가장 최근 RESEARCH.md]
 allowed-tools: Read, Glob, Grep, Bash, Agent, Write, Edit, TodoWrite
 created_by: _dqa pipeline (hand-authored)

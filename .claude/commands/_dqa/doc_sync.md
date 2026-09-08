@@ -1,5 +1,5 @@
 ---
-description: 머지된 작업과 프로젝트 문서(정책문서·wiki·릴리즈노트) 사이의 drift 를 검출·해소하는 cross-cutting 문서 정합 작업. 단일 feature 에 귀속되지 않는 explicit-call·schedulable maintenance persona — 사람이 필요 시 호출하거나 주기 정합으로 예약
+description: "개발 결과와 문서가 어긋났을 때, 반영된 작업을 기준으로 프로젝트 문서·위키·릴리즈노트를 최신화합니다. mysql_ai_delegated_dev 전용입니다."
 argument-hint: [타깃 한정(릴리즈노트|wiki|정책문서) 또는 기준일 YYYY-MM-DD (선택) — 생략 시 전 타깃 × 마지막 sync 지점부터 오늘까지]
 allowed-tools: Read, Glob, Grep, Bash, Agent, Write, Edit, TodoWrite
 created_by: _dqa pipeline (hand-authored)

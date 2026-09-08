@@ -1,6 +1,6 @@
 ---
 name: _template-makefile
-description: "Author repo/Makefile via Q&A for consumer projects with multiple entry points or per-feature script execution patterns. Project-agnostic — no domain assumptions."
+description: "빌드·실행·테스트 명령을 간편하게 쓰고 싶을 때, 프로젝트에 맞는 Makefile을 작성합니다."
 generated_by: codex-environment-install
 managed_body_sha256: 7eb0a00ebeded2f18b57fe2098c3c125e874f69ccd47076442763ad073fe093e
 ---
