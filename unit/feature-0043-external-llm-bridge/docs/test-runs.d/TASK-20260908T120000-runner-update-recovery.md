@@ -55,3 +55,13 @@ Environment: Windows-browser. PB-0008 `bin/win-browser.py`의 실제 Windows CDP
 - 최종 Windows 1.1.1 설치기: 25,731,162 bytes, SHA-256 `49b37a3fee97aa5dface8ecfb23b3a011f6e0d732288cf3468a67376a58fc055`. GUI 단절 시 이전 연결 유지 안내도 교체하도록 반영한 최종 빌드다.
 - 실제 브라우저에서 CSS/JS를 모두 제공한 현재 모달의 안내 표시와 줄바꿈을 확인했다. API를 차단한 합성 실패 상태임을 유지한다.
 - GitHub issue: #1604.
+
+- 사용자 후속 지시 반영: 클라이언트 감독 경로가 실제 사용 기준이다. 직접 exec는 개발자 호환 검사에만 해당하며, 사용자에게 별도 러너 실행을 안내하지 않는다.
+- 진행 중 main의 템플릿 v3.54.1 변경을 병합했다. AGENTS.md §22.15 변경을 재독했고 정책 SHA-256 `024a8b53b67f2b14e35986aca68ecc8f59470c7e312b0f0f92cb79b91026df1d`를 대조했다. 기능 코드 충돌 없음.
+
+### 전체 검사 완료 (2026-09-08T11:25:32+09:00)
+
+- `make test`: **exit 0**, 전체 명시 suite 10개(이번 native 추가 포함) 완료, ruff도 PASS. Windows 전용 항목 등 환경별 skip은 기존 테스트 계약대로이며 별도 Windows 실측을 병행했다. 원본: wrapper `artifacts/test-runs/runner-update-recovery/runner-make-test.log`.
+- GUI 단절 상세 안내까지 반영한 실제 Windows 창/트레이 검증 PASS. 최종 PNG와 JSON 저장 및 직접 열람 완료.
+- GitHub PR #1606. GitHub Actions/check run은 현재 보고된 것이 없어 CI green으로 표기하지 않는다. 로컬 표준 make test 결과가 이번 검사 근거다.
+- HTTPS Git 인증의 workflow scope 부재로 최초 push가 거절되어, 이미 설정된 SSH GitHub 인증으로 정상 push했다. 자격증명 변경 없음.

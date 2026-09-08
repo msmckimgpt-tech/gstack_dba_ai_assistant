@@ -5983,3 +5983,9 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - 변경과 이유: 갱신 실패 시 사라진 1단계 명령을 가리키던 안내를 DQA 앱 업데이트 확인·최신본 설치·재연결로 교정한다. 동일 지문 관측만으로 낡은 실행 스크립트가 원인이라고 단정하던 문장도 제거한다.
 - 동반: 기존 테스트의 전역 app stub 누출·실제 CLI 탐지 누출·낡은 UI 문자열 범위 판정을 바로잡았다. native suite를 Makefile과 CI 양쪽에 등록했다.
 - 검증: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 되돌리기: 해당 cycle Git revert 후 서버 재배포; 앱 채널은 기존 1.1.0 재활성화 가능하나 이미 설치된 최신본은 자동 강등하지 않는다.
+
+## CHG-20260908T112500-runner-client-only-verification
+
+- 사용자 후속 지시를 현재 TASK에 기록: 별도 러너 실행 절차 없이 DQA 앱만 사용한다.
+- 변경 범위는 문서·실측 결과 보충이며 이미 구현한 소유 자식 감독 계약과 일치한다.
+- 템플릿 main v3.54.1 병합 후 정책 변경 구간과 지문을 재확인했다.

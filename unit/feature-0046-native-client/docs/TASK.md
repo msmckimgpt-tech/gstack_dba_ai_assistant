@@ -530,5 +530,10 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] 기동 지문·번들 경로 경합, 파싱 전 실패, 종료 중 연결 경합 수정.
 - [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
 - [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
-- [ ] 전체 make test, verify-completion, PR 병합 및 서버/채널 배포 완료 기록.
+- [x] 전체 make test 및 verify-completion PASS.
+- [ ] PR 병합 및 서버/채널 배포 완료 기록.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
+
+### 사용자 동선 확정 (2026-09-08 후속 지시)
+
+- [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.

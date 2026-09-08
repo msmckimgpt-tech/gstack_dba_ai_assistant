@@ -4983,3 +4983,8 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T112000-runner-race-review.md
 - Human Approval Needed: no
 - 배포 근거: wrapper FIRST_REQUEST.md의 기존 deploy_scope: included, AGENTS.md §16.5.1. 앱 업데이트 확인 계약은 유지.
+
+## REV-20260908T112500-runner-client-only-verification [SKIPPED:non-policy-doc]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 기존 구현·사용 동선을 변경하지 않고 사용자 확인 내용과 실제 검증 결과를 TASK 및 test-runs 기록에 보충한다. FUNCTION·정책·제품 코드 변경 없음.
+- Timestamp: 2026-09-08T11:22:45+09:00
