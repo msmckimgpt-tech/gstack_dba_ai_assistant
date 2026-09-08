@@ -33,12 +33,12 @@ AC: `attachment-edit(SQL A) → 설명 B → diff B → attachment-edit(SQL B)`�
 - [x] 구현 및 회귀 테스트 — 120 PASS
 - [x] backend/security/qa 패널 — 최종 PASS
 - [x] 문서·verify-completion — pre-commit PASS
-- [ ] PR·병합·배포본 검증
+- [x] PR #1629 병합·e8fd398b 전체 배포·7서비스 56검사 PASS
 
 ### Requested Scope (요청 범위)
 - [x] 첨부에 답변 혼입 방지 — 정확한 파일 byte와 후속 설명/diff 보존 테스트.
 - [x] 불필요한 첨부 전달 문구 제거 — 서버 자동 문장 제거 및 권위 프롬프트 반영.
-- [ ] 배포본 동작 확인 — 사용자 AI 재생성 검증과 구분.
+- [x] 배포본 56검사 + 저장파일 10개 재구성 입력 재현 PASS. 사용자 AI 재생성·DQA 실제 화면은 미실측.
 
 
 
