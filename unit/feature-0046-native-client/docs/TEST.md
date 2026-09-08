@@ -98,3 +98,8 @@ python3 -m pytest unit/feature-0046-native-client/tests/ -q     # 506건
 - `Environment: Windows-browser` 없음 — 웹 자산 변경 0건. ⚠ 이것은 **check #13** 의 면제 논거이며
   배포 후 체크리스트 **[4] 의 면제가 아니다**(둘을 접었던 것을 정정)
 - Verdict: PASS (미실측 6건 + 미경유 1칸 명시)
+
+
+### Run 2026-09-08 — DQA 브랜드 아이콘
+
+정본: [브랜드 아이콘 검증](test-runs.d/20260908T020049-brand-icon.md). Windows 재현 진입점은 `tests/windows/verify_brand_icon.py`이며, 사용자의 AI 질의·연결을 수행하지 않는다.

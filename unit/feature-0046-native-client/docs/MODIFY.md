@@ -846,3 +846,13 @@ edit_policy: append-only
   (하드 리프레시 안내) **미이행** 명기 · `LRN-20260907-0001` 의 `verified` 값 정정 ·
   앞 cycle 미체크 항목의 종결 표시.
 
+
+
+## CHG-20260908T020049-brand-icon
+
+- 사용자 요청: DQA 아이콘 제작 및 설치 파일 포함 적용, 추가로 공식 마상소프트/마상게임즈 심볼 방향 반영. 웹 테마 확장은 사용자 선택으로 제외.
+- `client/assets`, `branding.py`, `gui.py`, `window.py`, `tray.py`: 마상 계열 각진 Q·데이터 심볼과 단일 자산 경로.
+- `build_client.py`, `DQAConnect.iss`, `version.py`: 앱/설치기 아이콘 동봉 및 1.1.1. 기존 버전 설치기가 남은 출력 폴더에서 잘못된 파일을 결과로 보고하던 glob 선택을 현재 버전의 정확한 경로로 교정.
+- `tests/test_packaging.py`: 이전 설치기가 남아 있어도 현재 버전의 이름·해시를 보고하는 행위 회귀. Windows `verify_brand_icon.py`: PE 리소스·동봉 자산·실제 네이티브 아이콘 픽셀 비교.
+
+- Windows 실측 후 ICO 인코딩 교정: Tk 8.6의 PNG 프레임 확대 문제를 16~128px DIB + 256px PNG 혼합 인코딩으로 해소. `export_icon.py`로 변환을 재현한다.

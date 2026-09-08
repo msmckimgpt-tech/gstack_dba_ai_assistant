@@ -188,3 +188,40 @@ def test_build_tells_the_user_when_installer_tooling_is_missing():
     """도구가 없으면 **조용히 건너뛰지 않는다** — 설치기가 없는 줄 모르고 배포하게 된다."""
     src = _BUILD.read_text(encoding="utf-8")
     assert "ISCC" in src and "winget install" in src
+
+
+def test_build_reports_current_installer_when_old_release_remains(tmp_path, monkeypatch, capsys):
+    """Reusing an output directory must not report the oldest setup as the new release."""
+    import hashlib
+    import types
+
+    mod = _build_mod()
+    monkeypatch.setattr(mod, '_make_stdio_lossy', lambda: None)
+    monkeypatch.setattr(mod, 'ensure_gui_deps', lambda: None)
+    monkeypatch.setattr(mod, '_iscc', lambda: 'ISCC.exe')
+    monkeypatch.setattr(mod, 'fetch_embedded_python',
+                        lambda dest, cache: dest / 'python.exe')
+    old = tmp_path / 'DQAConnect-Setup-1.0.0.exe'
+    old.write_bytes(b'old setup')
+    current = tmp_path / f'DQAConnect-Setup-{mod._client_version()}.exe'
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if 'PyInstaller' in argv:
+            app = tmp_path / mod._APP_NAME
+            app.mkdir()
+            (app / mod._APP_NAME).write_bytes(b'app')
+        else:
+            current.write_bytes(b'current setup')
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(mod.subprocess, 'run', run)
+    assert mod.main(['--allow-non-windows', '--out', str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert str(current) in output
+    assert hashlib.sha256(b'current setup').hexdigest() in output
+    assert hashlib.sha256(b'old setup').hexdigest() not in output
+    pyinstaller = calls[0]
+    assert Path(pyinstaller[pyinstaller.index('--icon') + 1]).is_file()
+    assert 'client/assets' in pyinstaller[pyinstaller.index('--add-data') + 1]

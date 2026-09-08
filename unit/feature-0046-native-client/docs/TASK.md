@@ -503,3 +503,27 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [ ] §18.8 3라운드 패널 (직전 cycle 잔여, 사용량 한도로 미실시)
 - 종결 표시: 앞 cycle 의 `- [ ] 릴리스 디렉토리 첫 생성` 은 이 인스턴스에서 **완료**
       (경로는 `<project_root>/artifacts/client-release` — `repo/` 상대경로 아님)
+
+## TASK-20260908-brand-icon — DQA 서비스 아이콘
+
+### 2.1 Implementation Plan
+
+- 요청: 서비스에 맞는 세련되고 절제된 아이콘을 생성하여 클라이언트와 설치 파일에 적용한다.
+- 위험도: Minor. 브랜드 자산·패키징·창 아이콘 지정만 변경하며 기존 제품명과 업데이트 계약을 따른다.
+- `src/client/assets/dqa.png`, `dqa.ico`: 생성 이미지 원본과 16/20/24/32/40/48/64/128/256px ICO. 마상 공식 심볼을 참고한 각진 Q/데이터 심볼·시안→보라→마젠타 색상 흐름.
+- `src/client/branding.py::ICON_PATH`, `gui.py::ClientApp.__init__`, `window.py::Shell.run`: 소스와 동결본 모두 같은 자산으로 창 아이콘을 지정한다.
+- `src/scripts/build_client.py::main`, `src/installer/DQAConnect.iss`: 실행 파일 내장 아이콘, 데이터 동봉, Setup/Uninstall 아이콘과 바로가기 배선. `version.py::CLIENT_VERSION` 1.1.1 패치 릴리스.
+- 트레이는 동일 ICO를 먼저 추출하고, 자산 실패 시 EXE·시스템 아이콘 순으로 복구한다. 소스/동결본에 같은 아이콘을 적용한다.
+- 검증: feature pytest, 실제 Windows PyInstaller/Inno Setup 빌드, EXE/설치기 아이콘 리소스와 ICO 픽셀 대조, 내장창/트레이 관찰, 릴리스 채널 다운로드 SHA-256.
+- 완료 예시: Explorer의 DQAConnect.exe·DQAConnect-Setup-1.1.1.exe, 작업표시줄·트레이에서 동일한 마상 계열 Q/데이터 아이콘이 보인다. 별도 브라우저 폴백 창의 아이콘과 웹 색상 테마는 브라우저/웹의 기존 동작이다(사용자 아이콘·설치 파일 우선 선택).
+
+### Requested Scope / Completion Checklist
+
+- [x] 아이콘 원본과 다중 해상도 ICO 생성 및 작은 크기 시각 확인
+- [x] 클라이언트 창·트레이·실행 파일·바로가기·설치/제거 아이콘 배선
+- [x] Windows 설치 파일 생성 및 리소스 실측
+- [x] 테스트·독립 리뷰·기능 문서 갱신
+- [ ] commit/push/PR 및 릴리스 채널 반영
+
+- 추가 실측 반영: `src/scripts/export_icon.py`가 DIB16~128/PNG256 혼합 ICO를 재현한다. 전 프레임 PNG 방식은 Tk에서16px 확대가 발생했으며 DIB 교체 후32px 픽셀 일치 확인.
+- hot_paths: `src/client/{gui,window,tray}.py`, `src/scripts/build_client.py`, `src/installer/DQAConnect.iss`. 아이콘 지정·패키징만 소유하며 기존 세션 작업은 보존한다.

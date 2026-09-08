@@ -40,6 +40,7 @@ from pathlib import Path
 
 from . import (appwindow, bridge, core, tray as tray_mod, updater,
                window as window_mod)
+from .branding import ICON_PATH
 
 #: 웹 셸 경로의 [종료] 신호. 트레이 스레드가 세우고 주 스레드 루프가 읽는다 —
 #: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
@@ -110,6 +111,8 @@ class ClientApp:
 
         self.root = tk.Tk()
         self.root.title(core.DISPLAY_NAME)
+        if os.name == "nt":
+            self.root.iconbitmap(default=str(ICON_PATH))
         self.root.geometry("560x420")
 
         # ⚠ 트레이는 **창보다 먼저** 세운다. 성공 여부가 창 닫기 동작을 가르기 때문이다

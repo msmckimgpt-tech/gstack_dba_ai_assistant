@@ -17,6 +17,8 @@ source_of_truth: true
 
 ## 2. Goal
 
+- REQ-20260908-brand-icon: 마상소프트·마상게임즈 심볼의 사선과 색상 흐름에 맞춘 DQA 아이콘을 생성하고 Windows 클라이언트·설치 파일에 적용한다. 사용자 확정 범위는 아이콘·설치 파일 우선이다.
+
 - REQ-20260903-native-client: 「AI 연결」의 터미널 의존을 제거한다. 근본 원인은
   `docs/improvements/onboarding-accessibility/RESEARCH.md` §9.1 — **연결을 우리가 만든
   배포물로 구현하고 런타임·설치 UX·설정 UI·업데이트 채널을 전부 자체 구현해 넷 모두가 마찰이 됐다.**
@@ -779,3 +781,14 @@ Windows 는 실행 중인 exe 를 잠근다. 그래서 순서가 **설치기 기
 `src/scripts/build_client.py` — PyInstaller `--onedir --windowed` + 임베더블 CPython 동봉 +
 Inno Setup 설치기(§P0-J). **Windows 에서 실행해야 한다**
 (크로스 컴파일 불가). 소스는 커밋, **배포본은 빌드 생성물**(러너와 같은 규약).
+
+
+### P0-AI. DQA 브랜드 아이콘 (2026-09-08)
+
+`client/assets/dqa.png`가 생성 원본, `dqa.ico`가 Windows용 9개 해상도 자산이다. `branding.ICON_PATH`를 Tk·WebView2·트레이가 공유한다. 트레이는 ICO→EXE→시스템 아이콘 순으로 복구한다. PyInstaller `--icon`과 `--add-data`, Inno Setup `SetupIconFile`은 같은 ICO를 참조한다. 바로가기·URL 스킴·프로그램 제거 항목은 EXE 내장 아이콘을 사용한다.
+
+- AC-20260908T020049-brand-icon-1: 16~256px 아이콘과 최종 생성·공식 참조 기록이 저장소에 있다.
+- AC-20260908T020049-brand-icon-2: EXE·Setup의 9개 아이콘 리소스가 ICO와 일치하고, 네이티브 창·트레이의 실제 이미지가 해당 프레임과 일치한다.
+- AC-20260908T020049-brand-icon-3: 1.1.1 설치 파일을 생성하고 기존 릴리스 채널을 통해 받을 수 있다.
+
+별도 브라우저 폴백(`--app`)의 창 아이콘은 브라우저가 관리한다. 웹 favicon·화면 색상 테마는 이번 범위에서 제외한다. 브랜드 공식 규정 준수를 주장하는 것이 아니라 공식 이미지의 시각적 특징을 반영한 DQA 하위 서비스 심볼이다. 제작 근거·프롬프트는 [자산 기록](../src/client/assets/README.md)에 둔다.

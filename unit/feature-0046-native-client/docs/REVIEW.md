@@ -1089,3 +1089,21 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
   않아 확정 불가. 재발 시 즉시 `docker events` 를 스트리밍으로 걸어 두는 것이 유일한 관측 수단.
 - Human Approval Needed: 아니오 — `deploy_scope: included` 범위 안의 배포와 그 기록.
   단 `LRN-20260907-0001` 의 `verified` 는 사용자 확인 전이므로 `self-measured` 로 두었다.
+
+## REV-20260908T020049-brand-design [SUBAGENT:icon_design_review] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: UI/아이콘 디자인
+- Timestamp: 2026-09-08T02:12:00Z
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-design.md
+- Human Approval Needed: no
+
+## REV-20260908T020050-brand-ux [SUBAGENT:icon_ux_review] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: UI/아이콘 배선·패키징
+- Timestamp: 2026-09-08T02:12:00Z
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-ux.md
+- Human Approval Needed: no
+
+변경 근거: 사용자가 디자인과 적용을 요청했고, 공식 마상 심볼 정합 및 아이콘·설치 파일 우선을 명시했다. 자산/패키징의 Minor 변경이며 기존 업데이트 채널·버전 계약을 사용한다. 사용자 요청과 AGENTS.md §16.5.1에 따라 빌드 검증 후 기존 릴리스 채널로 반영한다. 별도 브라우저 폴백의 아이콘은 브라우저가 관리하며 웹 테마를 바꾸지 않는다.
