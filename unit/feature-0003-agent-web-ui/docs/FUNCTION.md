@@ -5079,3 +5079,7 @@ specifier 는 `?v=` 토큰을 갖는다. `tests/test_static_module_stamp_census.
 - AC-RUR-2: 파싱 전 실패도 감독이 종료를 감지한다. 유한 백오프, 정상 종료 알림, 명시적 해제 후 재기동 0을 검증한다.
 - AC-RUR-3: 기존 HTTPS/CA/고정 다운로드 경로/크기·문법·해시 검사와 토큰 환경변수 전달 계약을 유지한다. 앱 설치기 적용 확인 계약은 유지한다.
 - 정본 실측: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+## 2026-09-08 — 연결 상태 안내
+
+현재 사용할 수 없는 위치의 안내는 공통 연결 패널에서 일반 텍스트로 표시한다. 기존 Markdown 강조 표식은 노출하지 않고 textContent로 출력하여 HTML을 실행하지 않는다.

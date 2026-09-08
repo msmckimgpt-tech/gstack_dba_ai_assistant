@@ -17,7 +17,7 @@ feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 
 - Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.
 - Plan: catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
 - [x] 코드 변경 및 집중 회귀 검증.
-- [ ] 전체 배포 후 실제 DQA UI/요청 실측. 증거는 native TEST 원장에 연결.
+- [x] 전체8f1116cf 배포·DQA1.2.4 업데이트·실제 root Codex 새 대화 응답 확인. 정본: native test-runs.d/20260908-codex-connect-fix.md.
 
 ## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검증
 

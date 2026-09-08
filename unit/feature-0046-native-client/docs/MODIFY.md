@@ -966,3 +966,7 @@ edit_policy: append-only
 ## CHG-20260908T153300-codex-integration-verified
 - Related TASK: TASK-20260908-codex-connect-fix.
 - 최신 main 통합 뒤 prompt delivery/선택 회귀39 PASS, native544 및 heartbeat집중119 PASS 결과를 현재 출하 기록에 연결했다. 설치기 바이트는 기존1.2.4 빌드와 동일하다.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.

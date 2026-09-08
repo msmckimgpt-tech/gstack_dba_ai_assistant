@@ -1289,3 +1289,13 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 ## REV-20260908T153300-codex-integration-verified [SKIPPED:non-policy-doc] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix.
 - 비정책 검증 기록 보완. 병합된 main의 실행코드는 그대로 보존했고 관련39회귀 PASS. 제품 변경의 독립 패널은 앞 ACCEPTED 기록을 따른다.
+
+## REV-20260908T155000-codex-actual-proof [SUBAGENT:ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 실제 DQA에서 안내 강조 기호 노출을 발견해 client-bridge.js의 표시만 보완했다. textContent 유지, 기존 DOM12 PASS, 독립 UX/code P1/P2 0. 표시 수정의 배포 후 UI 관찰은 별도 원장에 기록한다.
+
+## REV-20260908T155500-codex-live-evidence [SUBAGENT:qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 독립 읽기 검토: 실제1.2.3→1.2.4 설치/지문, 새 대화 동일 task의 송신→32318ms/delivered→UIA 답변, 위치 변경 ready→완료 toast 자료 정합 PASS. 공개 manifest 및 실제 파일 SHA를 독립 재계산했다.
+- WebView PID47356/내장 runner47700의 부모가 native29672임을 WMI로 재확인. 데이터에 인증정보·이메일은 없으며 사용자명·로컬 경로·task/PID/선택 식별자 등 운영 메타데이터는 포함된다.
+- UI 최초 렌더 시간·픽셀 스크린샷·현장 Permission denied 재현은 PASS 범위에 포함하지 않는다. root복원은 이어서 실제 ready/toast로 확인했다. 안내 표식 수정본의 배포 후 관찰은 별도 후속이다.

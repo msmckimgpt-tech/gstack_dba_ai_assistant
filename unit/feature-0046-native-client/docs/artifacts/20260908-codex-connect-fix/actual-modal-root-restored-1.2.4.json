@@ -1,0 +1,325 @@
+[
+  {
+    "Index": 0,
+    "Name": "내 AI 연결하기",
+    "Type": "ControlType.Text",
+    "Id": "connectModalTitle",
+    "Class": "connect-modal-title",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 1,
+    "Name": "닫기 (Esc)",
+    "Type": "ControlType.Button",
+    "Id": "connectModalCloseBtn",
+    "Class": "connect-modal-close",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 2,
+    "Name": "이 컴퓨터의 AI를 연결해 질문에 사용하세요.",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 3,
+    "Name": "이 컴퓨터의 AI 연결",
+    "Type": "ControlType.Group",
+    "Id": "connectClientPanel",
+    "Class": "connect-client-panel",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 4,
+    "Name": "2개 AI 연결됨",
+    "Type": "ControlType.Text",
+    "Id": "connectClientSummary",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 5,
+    "Name": "다시 찾기",
+    "Type": "ControlType.Button",
+    "Id": "connectClientRefresh",
+    "Class": "connect-modal-btn",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 6,
+    "Name": "",
+    "Type": "ControlType.List",
+    "Id": "connectClientList",
+    "Class": "connect-ai-list",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 7,
+    "Name": "ClaudeWSL · Ubuntu · root✓ 연결됨위치 변경WSL · Ubuntu · claude-corp설치·로그인은 되어 있는데 **답을 받지 못했습니다**",
+    "Type": "ControlType.ListItem",
+    "Id": "",
+    "Class": "connect-ai-card",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 8,
+    "Name": "Claude",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "connect-ai-name",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 9,
+    "Name": "WSL · Ubuntu · root",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 10,
+    "Name": "위치 변경",
+    "Type": "ControlType.Button",
+    "Id": "",
+    "Class": "connect-modal-btn",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 11,
+    "Name": "현재 사용할 수 없는 위치",
+    "Type": "ControlType.List",
+    "Id": "",
+    "Class": "connect-ai-unavailable",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 12,
+    "Name": "WSL · Ubuntu · claude-corp설치·로그인은 되어 있는데 **답을 받지 못했습니다**",
+    "Type": "ControlType.ListItem",
+    "Id": "",
+    "Class": "connect-ai-unavailable-location",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 13,
+    "Name": "WSL · Ubuntu · claude-corp",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 14,
+    "Name": "Codex WSL · Ubuntu · root ✓ 연결됨 위치 변경",
+    "Type": "ControlType.ListItem",
+    "Id": "",
+    "Class": "connect-ai-card",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 15,
+    "Name": "Codex",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "connect-ai-name",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 16,
+    "Name": "WSL · Ubuntu · root",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 17,
+    "Name": "위치 변경",
+    "Type": "ControlType.Button",
+    "Id": "",
+    "Class": "connect-modal-btn",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 18,
+    "Name": "Gemini이 컴퓨터에서 찾지 못했습니다미연결",
+    "Type": "ControlType.ListItem",
+    "Id": "",
+    "Class": "connect-ai-card",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 19,
+    "Name": "Gemini",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "connect-ai-name",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 20,
+    "Name": "이 컴퓨터에서 찾지 못했습니다",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 21,
+    "Name": "창을 닫아도 AI 연결은 유지됩니다.",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 22,
+    "Name": "",
+    "Type": "ControlType.StatusBar",
+    "Id": "connectModalStatus",
+    "Class": "connect-modal-status",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "Index": 23,
+    "Name": "질문에 사용할 AI가 연결됐습니다.",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  }
+]

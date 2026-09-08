@@ -2,6 +2,19 @@
 
 - DOM12 시나리오 PASS. 사용 불가 위치 표시, 로그인 필요 위치 동선, 자동/선택 연결 및 toast 회귀.
 - Environment: DQA-client
-- Build: 수정본 출하 준비
+- Build: 설치1.2.4 / 서버8f1116cf
+- Result: PASS
+- 실제 Windows DQA 내 AI 연결창에서 Codex root 연결 완료, gh-runner 없음, Claude corp 응답 실패 위치 표시. 새 대화 Codex 응답 `42 DQA_CODEX_42`까지 확인했다. [설치·요청 실측 원장](../../feature-0046-native-client/docs/test-runs.d/20260908-codex-connect-fix.md).
+
+## 안내 강조 기호 표시 후속
+
+- 기존 Markdown 강조 `**`를 안전한 일반 텍스트로 표시. UX 독립 검토 P1/P2 0, 기존 DOM12 PASS.
+- Environment: DQA-client
 - Result: NOT-RUN
-- Reason: main 통합·서버 배포 후 실제 DQA1.2.4 업데이트와 변경된 연결창을 직접 제어해 검증한다. 완료 선언 전에 native 검증 원장과 함께 최종 결과를 기록한다.
+- Reason: 이 표시 수정의 배포 후 실제 DQA 연결창에서 재확인한다. 앞 제품 동작 PASS와 분리한다.
+
+## 실제 위치 변경 UI·알림
+
+- Environment: DQA-client
+- Result: PASS
+- 설치1.2.4의 실제 Codex 카드에서 root→claude-corp→root를 선택했다. 두 위치 모두 새 선택 receipt가 ready가 되고 완료 toast의 실제 UIA 텍스트를 확인했다. 최종 root복원 및 gh-runner미표시는 native 원장의 actual-modal-root-restored/actual-toast-location-switch 증거 참조. 강조 기호 표시 수정본은 위 NOT-RUN과 분리한다.

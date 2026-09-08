@@ -19,7 +19,7 @@ feature_status_date: 2026-09-08
 - `feature-0043/src/agent/lifecycle.py::_negotiate_client_caps`: 카탈로그 성공이 영속 상세를 반환하지 않는 계약을 처리하고 예외 기록을 복구한다. catalog + 빈 detail → 서버 heartbeat 수락 후 ready, stale/실패 위치는 ready 불가.
 - `feature-0046/src/client/core.py::{RuntimeState,probe_runtime,verify_answers,login}`: 권한 실패를 안전한 상태 코드로 분리한다. Permission denied → usable=false, 로그인 대행 불가. 실제 응답과 진단 출력만 있는 상태를 구분한다.
 - `feature-0046/src/client/discovery.py::{locations,DiscoveryCache}`: CI 계정 gh-runner를 탐색·기존 캐시에서 제외하고 권한 오류를 캐시 재사용으로 덮지 않는다.
-- `feature-0003/src/static/app/client-bridge.js::paint`와 ai-connect.css: 사용 불가 위치/사유를 연결된 플랫폼에서도 표시하고 선택/자동 연결에서는 제외한다.
+- `feature-0003/src/static/app/client-bridge.js::paint`와 client-connect.css: 사용 불가 위치/사유를 연결된 플랫폼에서도 표시하고 선택/자동 연결에서는 제외한다.
 - 테스트: catalog→receipt 회귀, 권한 거부/로그인 필요 구별, 오래된 성공 캐시 무효화, gh-runner 기존 캐시 제거, UI 비활성 위치 표시. 실제 앱 메뉴 업데이트 설치 → root Codex 연결 → 새 테스트 대화 요청/응답 실측.
 - 패널: backend/security/qa/ux/design, 최대 3회, P1 0 확인. 코드와 실측 증거를 구분한다.
 
@@ -28,8 +28,8 @@ feature_status_date: 2026-09-08
 - [x] Codex 모델 조회 성공 이후 연결 완료 처리 수정·회귀 검증.
 - [x] 권한 거부 위치 자동 연결 제외, 목록에 사유 표시.
 - [x] gh-runner 탐색/캐시 제외.
-- [ ] 제품 출하·실제 DQA 업데이트 설치.
-- [ ] 실제 DQA UI 연결·간단한 Codex 요청/응답 및 시간 실측.
+- [x] 제품 PR #1631 병합·8f1116cf 전체 서버 배포·공개1.2.4·실제 DQA1.2.3→1.2.4 업데이트 설치.
+- [x] 실제 DQA root Codex 연결·새 대화 응답 `42 DQA_CODEX_42`, 런타임32318ms/서버제출 성공 및 UI 표시 확인.
 - [ ] 독립 검토·증적·Git 동기화 완료.
 
 ## Context

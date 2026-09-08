@@ -6050,3 +6050,8 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
 
 Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 worktree 목록 조기 종료 제거와 대용량 목록 회귀 2건 추가. 작업 정리 실패의 근본 원인인 pipefail/SIGPIPE를 해소한다. 기존 첫 경로 선택 의미 유지.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.
+- 실제 UI에서 발견한 사용 불가 안내의 Markdown 강조 표식을 공통 연결 패널에서 일반 텍스트로 표시한다.

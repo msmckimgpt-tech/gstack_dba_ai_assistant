@@ -4867,3 +4867,7 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - 통합 회귀가 빈/옛 heartbeat 요청 도중 게시된 새 catalog를 미송신 상태에서 cache로 강등하는 경쟁을 발견했다.
 - 항상 실제 송신 snapshot을 유지하고 성공 처리 시 같은 행만 cache로 전환한다. 새 선택·모델은 다음 실제 수락을 기다린다.
 - 빈 요청/옛 선택 요청 모두 결정적 회귀로 검증한다. 기존 source==catalog 단정을 약화하지 않았다.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.
