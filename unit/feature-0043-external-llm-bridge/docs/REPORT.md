@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908-codex-connect-fix
+
+catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+
+구현·배포·실측 결과 정본은 feature-0046-native-client/docs/REPORT.md와 해당 test-runs.d 원장이다. 실제 DQA 설치/요청 검증은 배포 후 이어서 기록한다.
+
 **2026-09-08 검증 도구 정합**: Makefile·CI·직접 pytest의 테스트 목록을 루트 `pyproject.toml`로 통합했다. 기존 Makefile/CI 9경로를 유지하며 native-client 515건을 추가 연결했고, 전체 8,017건 collection rc=0 및 수집 계약 18건 PASS를 확인했다. [실행 기록](test-runs.d/TASK-20260908T020000-delegation-friction.md). 제품 동작 변경이나 라이브 검증 결과를 뜻하지 않는다.
 
 ## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0

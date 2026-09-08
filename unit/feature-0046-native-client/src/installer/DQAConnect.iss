@@ -42,7 +42,7 @@
 ;   업데이트 판정은 «항상 새것»(무한 재설치) 또는 «영원히 최신»(아무도 못 받음) 중 하나로
 ;   고장난다. 어느 쪽이든 사용자에게는 원인이 보이지 않는다.
 #ifndef AppVersion
-  #define AppVersion "1.2.1"
+  #define AppVersion "1.2.2"
 #endif
 #define MyAppVersion AppVersion
 

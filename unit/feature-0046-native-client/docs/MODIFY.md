@@ -935,3 +935,11 @@ edit_policy: append-only
 - 1.2.1 공개 후 기존1.1.2 메뉴에서 설치·자동 재시작·최신 버전 확인 완료. 고아 프로세스 수동 종료 없이 회귀 상황 그대로 PASS.
 - setup둘exit0(43.737초), 같은 경로의 새DQA1개, 실제 exe/다운로드 SHA, pending해소, applyok, 5초 안정 실행 대조. 원본 증적과 전체 압축 설치 로그 보존.
 - FUNCTION/REPORT/TASK를 현재 설치·배포 상태로 동기화했다. 제품 코드는 직전 검토 후 바뀌지 않았다.
+
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- core: PermissionError 및 CLI 권한 실패의 안전한 상태 코드, 진단 출력과 실제 OK 응답 분리.
+- discovery: gh-runner 신규/기존 캐시 제외, 권한 실패가 성공 캐시로 덮이지 않음.
+- bridge: AI별 selection_id 유지/갱신 및 해당 receipt만 수락. 다른 AI 추가 시 기존 선택 id 보존.
+- native1.2.2 버전, 실제 설치용 Windows 빌드. runner/UI 변경은 각 기능 MODIFY에 기록.
+- 검증: native 회귀·DOM12시나리오·독립 패널, 실제 설치본 업데이트/AI 요청은 후속 증거로 분리.

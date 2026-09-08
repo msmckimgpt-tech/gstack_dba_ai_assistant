@@ -121,6 +121,7 @@ class Bridge:
         self.discovery = DiscoveryCache(plan.home)
         self._selected: dict[str, core.RuntimeState] = {}
         self._retry_after: dict[str, int] = {}
+        self._selection_ids: dict[str, str] = {}
         self._connect_lock = threading.RLock()
         self._connection_session = ""
         self._runner_ca = None
@@ -516,10 +517,10 @@ class Bridge:
                     state = self._connection_state(st).get("state")
                     if state == "failed":
                         self._retry_after[st.name] = time.time_ns()
-                        self._write_selection(self._selected)
+                        self._write_selection(self._selected, changed_name=st.name)
                     return {"ok": True, "already_connected": state == "ready",
                             "pending": state != "ready", "id": st.label}
-                self._write_selection({**self._selected, st.name: st})
+                self._write_selection({**self._selected, st.name: st}, changed_name=st.name)
                 self._selected[st.name] = st
                 return {"ok": True, "pending": True, "id": st.label}
         self._say("연결을 준비하는 중…")
@@ -547,7 +548,7 @@ class Bridge:
             if self._stopping or generation != self._runner_generation:
                 return {"ok": False, "error": "cancelled"}
             if st:
-                self._write_selection({st.name: st})
+                self._write_selection({st.name: st}, changed_name=st.name)
                 plan = replace(plan, selection_file=str(plan.home / "runtime-selection.json"),
                                selection_instance=secrets.token_hex(16))
             proc = core.spawn_runner(plan, runner, ca, st, on_event=self._runner_event)
@@ -577,6 +578,8 @@ class Bridge:
             doc = json.loads(path.read_text(encoding="utf-8"))
             row = doc.get("locations", {}).get(st.name, {})
             target = {k: getattr(st, k) for k in ("path", "where", "distro", "user")}
+            if st.name in self._selection_ids:
+                target["selection_id"] = self._selection_ids[st.name]
             if (doc.get("instance") == self.plan.selection_instance and row.get("target") == target
                     and doc.get("pid") == getattr(self._runner_proc, "pid", None)):
                 if row.get("state") == "failed" and row.get("failed_at", 0) < self._retry_after.get(st.name, 0):
@@ -594,17 +597,20 @@ class Bridge:
             return {"ok": False, "state": "failed", "detail": "연결할 위치를 다시 선택해 주세요."}
         return {"ok": True, **self._connection_state(st)}
 
-    def _write_selection(self, selected):
+    def _write_selection(self, selected, *, changed_name=None):
         # 러너 하나에 위치를 원자적으로 전달한다. 새 플랫폼을 추가해도 기존 질문을 끊지 않는다.
         import os
         import tempfile
         self.plan.home.mkdir(parents=True, exist_ok=True)
+        ids = {name: (secrets.token_hex(16) if name == changed_name or name not in self._selection_ids
+                      else self._selection_ids[name]) for name in selected}
         fd, temp = tempfile.mkstemp(prefix=".runtime-selection-", dir=self.plan.home)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump({name: {k: getattr(st, k) for k in ("path", "where", "distro", "user")}
-                           for name, st in selected.items()}, stream, ensure_ascii=False)
+                           | {"selection_id": ids[name]} for name, st in selected.items()}, stream, ensure_ascii=False)
             os.replace(temp, self.plan.home / "runtime-selection.json")
+            self._selection_ids = ids
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)

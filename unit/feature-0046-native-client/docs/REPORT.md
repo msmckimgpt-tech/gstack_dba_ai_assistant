@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908-codex-connect-fix — 수정본 검증·출하 진행
+
+실제 DQA1.2.1 연결창에서 Codex root/claude-corp 선택 후 failed receipt를 재현했다. 모델 카탈로그 성공 시 영속 상세가 비어 있는 정상 계약을 lifecycle의 detail[name]이 KeyError로 처리하고, 예외 로깅 인자도 누락되어 원인이 가려졌다.
+
+빈 상세 처리, 실제 alive:true 검증, 선택별 독립 세대, 위치 변경 후 재시도, OS/WSL 권한 실패 판정, CI 계정 제외, 사용 불가 위치 UI를 수정했다. 사용자 계정의 권한은 변경하지 않았다. root/claude-corp의 홈 기준 CLI 무도구 진단 요청은 둘 다 성공하여 Permission denied를 현 환경의 모든 실행에서 재현된 것으로 단정하지 않는다.
+
+코드 검증과 실제 설치·요청/응답 증거는 test-runs.d/20260908-codex-connect-fix.md에 구분해 기록한다. 1.2.2 실제 설치/질문 검증은 배포 후 이어서 수행하며, 이전 cycle의 완료 주장은 현재 수정본 검증을 대신하지 않는다.
+
 ## TASK-20260908-update-install-proof — 실제 설치 완료 (DQA 1.2.1)
 
 실제 Windows 사용자 mckim의1.1.2 앱에서 [업데이트 확인]→확인창 수락→앱 다운로드→설치→자동 재실행→최신 버전 재확인까지 **PASS**했다. DQA1.2.1은 같은 기존 per-user 설치 경로에서 실행 중이다.

@@ -12,6 +12,14 @@ feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 �
 
 # Task
 
+## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
+
+- Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.
+- Plan: catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+- [x] 코드 변경 및 집중 회귀 검증.
+- [ ] 전체 배포 후 실제 DQA UI/요청 실측. 증거는 native TEST 원장에 연결.
+
+
 ## TASK-20260908T020000-delegation-friction — 테스트 수집 정본화
 
 - 범위/계획: `tests/test_ci_testpath_parity.py`의 두 목록 비교를 공통 pytest 설정 사용 검사로 교체하고, 루트 `pyproject.toml`을 Makefile·CI·직접 실행의 단일 테스트 목록으로 사용한다. 상세 계획은 [META TASK](../../../meta/TASK.md).

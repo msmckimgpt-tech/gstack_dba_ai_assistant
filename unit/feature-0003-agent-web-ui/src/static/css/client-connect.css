@@ -48,3 +48,8 @@
 }
 
 .dqa-client-connected-view #launchClient, .dqa-client-connected-view #clientFirst, .dqa-client-connected-view #connectSteps, .dqa-client-connected-view #connectModalGet { display: none !important; }
+
+.connect-ai-unavailable { list-style:none; margin:12px 0 0; padding:12px 0 0; border-top:1px solid var(--border); }
+.connect-ai-unavailable-location { display:grid; gap:4px; padding:8px 0; font-size:13px; }
+.connect-ai-unavailable-location .connect-ai-detail { margin:0; line-height:1.5; }
+.connect-ai-unavailable-location button { justify-self:start; margin-top:4px; }
