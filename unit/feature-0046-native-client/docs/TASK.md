@@ -557,6 +557,7 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] 클라이언트 창·트레이·실행 파일·바로가기·설치/제거 아이콘 배선
 - [x] Windows 설치 파일 생성 및 리소스 실측
 - [x] 테스트·독립 리뷰·기능 문서 갱신
+- [x] 최신 main 러너 복구 보존·1.1.2 재빌드·전체 524건 및 Windows 아이콘 재검증
 - [ ] commit/push/PR 및 릴리스 채널 반영
 
 - 추가 실측 반영: `src/scripts/export_icon.py`가 DIB16~128/PNG256 혼합 ICO를 재현한다. 전 프레임 PNG 방식은 Tk에서16px 확대가 발생했으며 DIB 교체 후32px 픽셀 일치 확인.

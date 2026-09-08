@@ -866,3 +866,9 @@ edit_policy: append-only
 - 사용자 후속 지시를 현재 TASK에 기록: 별도 러너 실행 절차 없이 DQA 앱만 사용한다.
 - 변경 범위는 문서·실측 결과 보충이며 이미 구현한 소유 자식 감독 계약과 일치한다.
 - 템플릿 main v3.54.1 병합 후 정책 변경 구간과 지문을 재확인했다.
+
+## CHG-20260908T024000-brand-release-version
+- Related TASK: TASK-20260908-brand-icon
+- 사유: #1606 러너 복구의 1.1.1이 먼저 배포되어 같은 버전을 다른 설치기로 덮어쓰지 않는다.
+- 변경: main의 러너 복구를 보존하고 아이콘 적용판 version.py·Inno Setup을 1.1.2로 정합. GUI/빌드 자동 병합과 FUNCTION/TASK/STATUS 충돌을 양 부모 기준 검토했다.
+- 검증: 최종 524 PASS, ruff PASS, Windows 재빌드·5개 표면 아이콘 픽셀 일치 PASS. 증적은 test-runs.d/20260908T020049-brand-icon.md.

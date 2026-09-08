@@ -1127,3 +1127,12 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - 충돌은 STATUS 요약과 FUNCTION/TASK 말미 추가 블록이다. 양쪽 이력·요구를 보존하고 STATUS는 통합 요약으로 정리했다. 자동 병합된 GUI와 빌드 스크립트도 `442552e4`와 `origin/main` 양 부모 대비 확인했다. 삭제 파일 0, 양 부모의 feature 문서 제목 유실 0.
 - 아이콘 자산은 독립 리뷰 PASS 상태 그대로다. 선행 1.1.1의 러너 복구를 보존하고 버전을 1.1.2로 올렸다. 최종 전체 524 PASS, ruff PASS, Windows 재빌드·5표면 픽셀 일치 PASS.
 - Human Approval Needed: no — 양측 의도가 독립·명료하며 AGENTS.md §16.4 자율 병합에 해당한다.
+
+## REV-20260908T024000-brand-merge-ux [SUBAGENT:icon_ux_review] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: main 병합·선행 1.1.1 배포 이후 아이콘 적용판 1.1.2 최종 검토
+- Timestamp: 2026-09-08T02:40:00Z
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-ux.md
+- Findings: P1/P2/P3 없음. main 러너 복구 보존, 기존 아이콘 자산·배선 동일, Windows 5개 표면·설치기 실물 크기/해시 PASS.
+- Human Approval Needed: no
