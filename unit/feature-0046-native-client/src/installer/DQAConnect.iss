@@ -42,7 +42,7 @@
 ;   업데이트 판정은 «항상 새것»(무한 재설치) 또는 «영원히 최신»(아무도 못 받음) 중 하나로
 ;   고장난다. 어느 쪽이든 사용자에게는 원인이 보이지 않는다.
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.2.1"
 #endif
 #define MyAppVersion AppVersion
 
@@ -72,6 +72,12 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExe}
+; 구버전이 남긴 콘솔 자식도 닫는다. 종료 대상은 이 설치본의 실행 파일로 한정한다.
+CloseApplications=force
+CloseApplicationsFilter=DQAConnect.exe,python.exe,pythonw.exe
+; 재실행은 아래 /RELAUNCH 한 곳에서만 수행한다.
+RestartApplications=no
+SetupLogging=yes
 
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"

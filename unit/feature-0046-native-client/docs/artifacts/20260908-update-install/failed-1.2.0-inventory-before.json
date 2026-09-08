@@ -1,0 +1,36 @@
+{
+  "username": "mckim",
+  "userprofile": "C:\\Users\\mckim",
+  "installed": [
+    {
+      "hive": "HKCU",
+      "view": "64",
+      "key": "{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}_is1",
+      "name": "DQA Connect",
+      "DisplayVersion": "1.1.2",
+      "InstallLocation": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\",
+      "DisplayIcon": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "Inno Setup: App Path": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect",
+      "Inno Setup: User": "mckim",
+      "InstallDate": "20260908",
+      "exe_size": 6010855,
+      "exe_sha256": "2ff55f5d80dcb96601491f84516b8d5512941dc4e0ff4af08bbb91021a5fe4a1"
+    },
+    {
+      "hive": "HKCU",
+      "view": "32",
+      "key": "{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}_is1",
+      "name": "DQA Connect",
+      "DisplayVersion": "1.1.2",
+      "InstallLocation": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\",
+      "DisplayIcon": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "Inno Setup: App Path": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect",
+      "Inno Setup: User": "mckim",
+      "InstallDate": "20260908",
+      "exe_size": 6010855,
+      "exe_sha256": "2ff55f5d80dcb96601491f84516b8d5512941dc4e0ff4af08bbb91021a5fe4a1"
+    }
+  ],
+  "processes": [],
+  "windows": []
+}

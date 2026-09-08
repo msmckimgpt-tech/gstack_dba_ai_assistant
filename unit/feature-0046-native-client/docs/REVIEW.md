@@ -1227,3 +1227,16 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 ## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
 
 - 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
+
+## REV-20260908T141000-update-install-backend-security [SUBAGENT:backend-security] — PASS
+- Related TASK: TASK-20260908-update-install-proof; issue #1622.
+- Trigger: performance/설치30초 지연, process lifecycle/프로세스 수명, session/사용자 경계.
+- Artifact: [독립 검토](artifacts/20260908-update-install/backend-security-review.md). 차단 결함0, 실제 설치 결과는 후속 실측.
+
+## REV-20260908T141100-update-install-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908-update-install-proof.
+- Trigger: performance/설치 지연 및 회귀 검증.
+- Artifact: [QA 재검토](artifacts/20260908-update-install/qa-review.md). 초기 QA-1은 관찰기의 조기 성공 판정이었다. setup exit0·고아종료·pending해소·단일앱5초 유지까지 조건을 보완했고 확인 라운드에서 해소됐다.
+
+## REV-20260908T141200-update-install-eol [SKIPPED:non-policy-doc] — PASS
+- Trigger: 비정책 증적 줄바꿈 정규화. 값·제품 코드는 불변이며 실제 파일 크기와 SHA-256 값도 그대로다.
