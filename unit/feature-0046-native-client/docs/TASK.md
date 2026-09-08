@@ -569,7 +569,7 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] Windows 설치 파일 생성 및 리소스 실측
 - [x] 테스트·독립 리뷰·기능 문서 갱신
 - [x] 최신 main 러너 복구 보존·1.1.2 재빌드·전체 524건 및 Windows 아이콘 재검증
-- [ ] commit/push/PR 및 릴리스 채널 반영
+- [x] commit/push/PR #1608 병합 및 1.1.2 릴리스 채널 반영 — 엣지 manifest/다운로드 200, 크기·SHA-256·바이트 동일
 
 - 추가 실측 반영: `src/scripts/export_icon.py`가 DIB16~128/PNG256 혼합 ICO를 재현한다. 전 프레임 PNG 방식은 Tk에서16px 확대가 발생했으며 DIB 교체 후32px 픽셀 일치 확인.
 - hot_paths: `src/client/{gui,window,tray}.py`, `src/scripts/build_client.py`, `src/installer/DQAConnect.iss`. 아이콘 지정·패키징만 소유하며 기존 세션 작업은 보존한다.
