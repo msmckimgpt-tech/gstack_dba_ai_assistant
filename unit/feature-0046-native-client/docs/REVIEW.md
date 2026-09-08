@@ -1285,3 +1285,7 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 ## REV-20260908T153000-codex-prompt-integration [SKIPPED:non-policy-doc] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix.
 - 기존 검토를 마친 main PR1627 통합에서 충돌한 설명/작업 이력을 양쪽 보존. 실행 코드 충돌 없음, 현재 해결 작업은 비정책 문서다. 원래 backend/security/qa/ux/design 판정은 앞 기록을 참조한다.
+
+## REV-20260908T153300-codex-integration-verified [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix.
+- 비정책 검증 기록 보완. 병합된 main의 실행코드는 그대로 보존했고 관련39회귀 PASS. 제품 변경의 독립 패널은 앞 ACCEPTED 기록을 따른다.

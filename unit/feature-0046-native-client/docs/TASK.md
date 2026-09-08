@@ -44,7 +44,7 @@ feature_status_date: 2026-09-08
 
 - Issue #1625. 추가 발견: catalog 건강 오인/진단 JSON 생존 오인, 선택 위치 변경 뒤 재시도 소실, OS PermissionError 형 유실을 함께 수정. 전역 파일 세대는 무관한 AI 조회를 반복하므로 AI별 selection_id로 구현.
 
-- main統合: PR1628 텍스트 선택/검색 수정·공개1.2.3, PR1629 첨부 전달 수정 통합. 새 버전은1.2.4. 앞 작업 TASK는 task-history/20260908-text-interaction-at-integration.md에 보존.
+- main 통합: PR1628 텍스트 선택/검색 수정·공개1.2.3, PR1629 첨부 전달 수정 통합. 새 버전은1.2.4. 앞 작업 TASK는 task-history/20260908-text-interaction-at-integration.md에 보존.
 
 - [x] 공개1.2.3의 텍스트 선택/검색 개선을 포함한 최신 main 통합 및 문서 충돌 해소. 출하 버전1.2.4.
 
@@ -53,3 +53,5 @@ feature_status_date: 2026-09-08
 - [x] 제품 PR #1631 작성. main1.2.3 통합과1.2.4 빌드/지문 확정, 독립 검토 완료. 설치·요청 실측은 배포 후 수행.
 
 - [x] 최종 출하 대기 중 병합된 PR1627 프롬프트 전달 검증을 추가 통합했다. 네이티브1.2.4 바이너리 변경 없음.
+
+- [x] 최종 main의 프롬프트 전달/클라이언트 선택 회귀39 PASS(30.90s). PR1631 통합 결과 확정.
