@@ -306,6 +306,21 @@ def _timeout_notice(limit_sec: int, unhealthy: bool) -> str:
             "질문을 다시 보내 주세요. 러너를 다시 띄울 필요는 없습니다.")
 
 
+def _wsl_child_env(cmd: list[str], env: dict | None) -> dict | None:
+    """Windows→WSL 경계에서 위임 토큰만 전달한다. 부모 환경은 바꾸지 않는다."""
+    if (os.name != "nt" or not cmd or not env or not env.get("BRIDGE_TOKEN")
+            or cmd[0].replace("\\", "/").rsplit("/", 1)[-1].lower() not in ("wsl", "wsl.exe")):
+        return env
+    child = dict(env)
+    # Windows 환경 키는 대소문자를 구분하지 않는다. 중복 키도 만들지 않는다.
+    keys = [key for key in child if key.upper() == "WSLENV"]
+    entries = [part for key in keys for part in str(child.pop(key)).split(":")
+               if part and part.split("/", 1)[0].upper() != "BRIDGE_TOKEN"]
+    # /u: Windows→WSL 전용. 토큰에는 경로(/p)·목록(/l) 변환을 적용하지 않는다.
+    child["WSLENV"] = ":".join([*entries, "BRIDGE_TOKEN/u"])
+    return child
+
+
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                         env: dict | None = None,
                         stdin_text: str | None = None,
@@ -327,7 +342,8 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     #: 이 호출의 상한. 호출측이 준 값(아픈 러너)이 우선이고, 없으면 종전 전역(기본 무제한).
     _limit = float(timeout_sec) if timeout_sec else _AI_TIMEOUT_SEC
     try:
-        proc = subprocess.Popen(_resolve_exe(cmd), stdout=subprocess.PIPE,
+        resolved_cmd = _resolve_exe(cmd)
+        proc = subprocess.Popen(resolved_cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, **CHILD_TEXT_IO,
                                 # ⚠ `stdin_text` 가 없을 때는 **파이프를 만들지 않는다** —
                                 #   종전대로 러너의 stdin 을 상속한다. 여기서 무조건 PIPE 를
@@ -335,7 +351,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                                 #   경로가 생겨(`warning: no stdin data received`), 인자로
                                 #   프롬프트를 받은 정상 호출까지 느려진다.
                                 stdin=(subprocess.PIPE if stdin_text is not None else None),
-                                cwd=cwd, env=env)
+                                cwd=cwd, env=_wsl_child_env(resolved_cmd, env))
     except Exception as e:  # noqa: BLE001
         # 여기서 터지는 것은 대개 「그 실행 파일이 없다·권한이 없다」이고, 예외 형이 그
         # 둘을 정확히 가른다(FileNotFoundError vs PermissionError). 문자열로 뭉개지 않는다.

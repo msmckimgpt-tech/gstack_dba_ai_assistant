@@ -7739,7 +7739,21 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 **관측했으나 설명하지 못한 것**: 검증 중 클라이언트가 한 번 스스로 종료·재시작했다(약 35초).
 원인을 확인하지 못했으므로 추측을 적지 않았다. 결과적으로 러너는 `AI = codex` 로 자동
 재연결됐고 사용자 상태는 복구됐다.
+## REV-20260908T113000-bridge-token-env-ux [SUBAGENT:ux] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0003-agent-web-ui
+- Trigger: UI/클라이언트 안내 keyword matched
+- Timestamp: 2026-09-08T11:26:45+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T113000-ux.md
+- Human Approval Needed: no
 
+## REV-20260908T113000-bridge-token-env-design [SUBAGENT:design] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0003-agent-web-ui
+- Trigger: UI/클라이언트 안내 keyword matched
+- Timestamp: 2026-09-08T11:26:45+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T113000-design.md
+- Human Approval Needed: no
 ## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
 - Related TASK: feature-0003-agent-web-ui
 - Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰

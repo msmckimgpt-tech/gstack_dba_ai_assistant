@@ -198,8 +198,8 @@ function _isStaleNow(o) {
 let _relaunchNoUpdate = false;
 
 const MSG_RELAUNCH_NO_UPDATE =
-  "다시 실행했지만 AI 연결 프로그램을 갱신하지 못했습니다. "
-  + "DQA 앱에서 업데이트를 확인하고 최신 버전을 설치한 뒤 다시 연결해 주세요.";
+  "DQA 앱을 다시 실행했지만 업데이트가 적용되지 않았습니다. "
+  + "알림 영역의 DQA 아이콘을 우클릭해 [업데이트 확인]을 선택해 주세요.";
 
 /** 재기동을 했는데 **같은 파일이 다시 떴는가**.
  *
