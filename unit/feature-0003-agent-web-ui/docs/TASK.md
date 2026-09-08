@@ -35,6 +35,7 @@ AC: `attachment-edit(SQL A) → 설명 B → diff B → attachment-edit(SQL B)`�
 - [x] 문서·verify-completion — pre-commit PASS
 - [x] PR #1629 병합·e8fd398b 전체 배포·7서비스 56검사 PASS
 - [x] 배포 증거 문서 커밋·원격 동기화 및 서식 확인
+- [x] 정리 중 발견한 lifecycle 도구 SIGPIPE 수정: cycle-init/finalize가 worktree 목록을 끝까지 소비. Bats 25 PASS, backend/qa 재검토 PASS.
 
 ### Requested Scope (요청 범위)
 - [x] 첨부에 답변 혼입 방지 — 정확한 파일 byte와 후속 설명/diff 보존 테스트.

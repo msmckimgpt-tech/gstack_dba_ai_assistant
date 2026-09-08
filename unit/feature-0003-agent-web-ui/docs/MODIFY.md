@@ -6037,3 +6037,9 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 ## CHG-20260908T153000-attachment-verification-format
 
 - TASK-20260908T150000-attachment-boundary 검증 기록의 EOF 서식 정리와 원격 동기화 체크 기록.
+
+## CHG-20260908-attachment-cycle-cleanup
+
+- Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 worktree 목록 조기 종료 제거와 대용량 목록 회귀 2건 추가. 작업 정리 실패의 근본 원인인 pipefail/SIGPIPE를 해소한다. 기존 첫 경로 선택 의미 유지.

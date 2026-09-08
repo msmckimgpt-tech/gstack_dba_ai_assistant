@@ -7865,3 +7865,19 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Trigger: 검증 문서 서식과 원격 동기화 체크만 변경
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260908T153500-cycle-list-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: lifecycle cleanup SIGPIPE
+- Timestamp: 2026-09-08T06:38:22.052443+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908-cycle-list-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T153500-cycle-list-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: lifecycle cleanup SIGPIPE
+- Timestamp: 2026-09-08T06:38:22.052443+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908-cycle-list-qa.md
+- Human Approval Needed: no

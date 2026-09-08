@@ -22,3 +22,8 @@ Evidence: original SHA matches 10/10; contaminated answer tails excluded 6/6. No
 
 ## Live user scope
 User AI regeneration and actual DQA window: NOT-RUN. This change modifies backend parsing/prompt behavior, no frontend assets; verify-completion visual gate reports no UI asset change. Deployed function execution proves server behavior, not the outcome of a new model response. Next audit can measure post-deployment recurrence; stored older versions are preserved.
+
+## Run — lifecycle cleanup regression
+Environment: isolated Bats fixture; 10,000 worktree records
+Result: PASS
+Evidence: `bats bin/tests/cycle_lifecycle.bats` 25/25 PASS; `bash -n bin/cycle-init.sh bin/cycle-finalize.sh` PASS. QA restored the old awk early exit in a temporary copy: both new regression tests failed with exit 141. No production service change.

@@ -114,7 +114,7 @@ SELF_BRANCH="$(git -C "$SELF_WORKTREE_PATH" branch --show-current)"
 # main worktree 식별 — `git worktree list --porcelain` 의 첫 entry.
 # 자기 자신이 main worktree 일 수도 있다 (그 경우 cleanup step 5 의 cwd 이동 불요).
 MAIN_WORKTREE_PATH="$(git -C "$SELF_WORKTREE_PATH" worktree list --porcelain \
-  | awk '/^worktree /{print substr($0,10); exit}')"
+  | awk '/^worktree / && !seen {print substr($0,10); seen=1}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed (git worktree list returned empty)."
 
 # ── target worktree override (v3.35.0) ────────────────────────────────────

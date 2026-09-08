@@ -3037,3 +3037,9 @@ DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증
 ## DQA 연결 개선 배포 결과 — 2026-09-08
 
 PR #1619 / 서버 92cfa2c2 전체 배포 및 DQA 1.2.0 설치기 공개 완료. 실제 다운로드 크기·SHA-256이 Windows 원본과 일치한다. 최종 검증/미확인 경계와 증거 정본은 feature-0046 REPORT의 배포 완료 절과 공동 실행 원장이다.
+
+## CHG-20260908-attachment-cycle-cleanup
+
+- Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+정리 중 cycle-finalize가 종료 코드 141로 실패했다. `set -o pipefail` 아래에서 첫 경로를 얻은 awk의 조기 종료가 큰 worktree 목록을 출력하는 git에 SIGPIPE를 전달했다. cycle-init/finalize 모두 첫 경로만 출력하면서 나머지 입력을 소비하도록 수정했다. Bats 전체 25 PASS, 격리된 기존 코드 뮤턴트는 신규 2건 모두 141로 실패. 제품 런타임 변경은 없으며 추가 배포 대상이 아니다.
