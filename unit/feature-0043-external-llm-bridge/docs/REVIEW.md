@@ -5064,3 +5064,8 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Verdict: PASS
 - Artifact: [review](reviews/20260908T123400-connect-discovery-design.md)
 - Human Approval Needed: no
+
+## REV-20260908T150000-connect-release-evidence [SKIPPED:non-policy-evidence-only] — ACCEPTED
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 직전 backend/security/QA/UX/design SHIP 이후 코드 변경 없이 이미 수행한 native 2회 결과·설치기 지문·최신 main 통합 결과를 기록한다. 신규 동작·정책·권한 경계가 없어 패널을 반복하지 않는다. 검증 파일의 값과 실행 로그를 대조했다.

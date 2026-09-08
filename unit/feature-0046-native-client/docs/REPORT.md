@@ -238,3 +238,7 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
 [위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
 DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+### 병합 통합 검증 기록
+
+main a92c9256 통합 후 3개 feature pre-commit PASS. merge commit의 post-commit #2/#3은 `git log -1 -p`의 combined diff(`++` 접두)를 단일 diff(`+`)로 판정해 미검출했다. 누락된 변경이 아님을 양 부모 diff로 확인하고, 최종 배포 증거를 일반 후속 커밋에 기록해 같은 검증을 다시 수행한다.

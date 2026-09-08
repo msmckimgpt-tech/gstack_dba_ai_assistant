@@ -6012,3 +6012,8 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - Timestamp: 2026-09-08T12:58:44+09:00
 - TASK: TASK-20260908T120000-connect-discovery-ux
 - 최신 main의 연결 안내·행위 검증과 현재 자동 연결 변경을 통합했다. DQA 실행 버튼은 앱 내부에 노출하지 않고, 일반 브라우저 호환 경로의 무응답은 실제 존재하는 DQA 앱/버튼으로 안내한다. 네이티브 코드 재변경 없이 527건 PASS, 수집 계약 18건 PASS.
+
+## CHG-20260908-connect-release-evidence
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 최종 DQA 1.2.0 실행 파일에서 첫 연결과 재시작 선택 재사용을 확인한 JSON을 보존했다. native 픽셀 캡처 불가와 서비스/API/벤더 대역 범위를 명시했다. 설치기 26,037,943 bytes, SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`.

@@ -4839,3 +4839,8 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - 변경: DQA가 지정한 `BRIDGE_RUNTIME_SELECTION`이 있으면 그 파일의 플랫폼/실행 경로/WSL 배포판·사용자만 사용한다. 잘못된 파일은 임의 자동 탐색으로 우회하지 않는다. WSL 실행은 배포판·계정·홈을 명시하고 프롬프트를 argv의 리터럴 값으로 전달한다. 기존 WSLENV 토큰 전달과 DQA 호스트 네트워크 범위 설정을 유지한다.
 - 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
 - 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.
+
+## CHG-20260908-connect-release-evidence
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 최종 DQA 1.2.0 실행 파일에서 첫 연결과 재시작 선택 재사용을 확인한 JSON을 보존했다. native 픽셀 캡처 불가와 서비스/API/벤더 대역 범위를 명시했다. 설치기 26,037,943 bytes, SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`.

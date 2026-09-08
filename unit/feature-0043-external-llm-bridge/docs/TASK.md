@@ -3332,3 +3332,5 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.
 
 - [x] 이번 TASK의 선택 위치 실행·플랫폼별 모델 협상·서버 수락 receipt·자동 복구 통합 구현 및 회귀 검증 완료. 설치기/배포 결과는 feature-0046 REPORT와 공동 TEST run 참조.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.

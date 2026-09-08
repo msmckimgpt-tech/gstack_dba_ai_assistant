@@ -13405,3 +13405,5 @@ DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계
 - [x] 이번 TASK의 DQA 로그인 후 공용 연결 패널·중복 위치 선택·완료 toast·인증 identity 구현 및 회귀 검증 완료. 설치기/배포 결과는 feature-0046 REPORT와 공동 TEST run 참조.
 
 - [x] 최신 main a92c9256 통합: DQA 앱 우선 안내·실제 클릭 행위 테스트 보존, native 527건/수집 계약 18건 재검증.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.

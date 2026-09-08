@@ -73,3 +73,5 @@ DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증
 - AGENTS.md SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`. 기존 검증 기록을 DQA-client/보조 브라우저/픽셀 미확인으로 구분했다.
 
 - [x] 최신 main a92c9256 통합: DQA 앱 우선 안내·실제 클릭 행위 테스트 보존, native 527건/수집 계약 18건 재검증.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.
