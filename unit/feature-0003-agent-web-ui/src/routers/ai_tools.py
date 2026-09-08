@@ -544,6 +544,13 @@ def require_ai_token(request: Request, conn=Depends(app.get_conn)) -> dict[str, 
             "session_id": resolved.get("session_id"), "scopes": resolved.get("scopes")}
 
 
+@router.post("/api/ai/connect/identity")
+def connect_identity(ctx=Depends(require_ai_token)) -> dict:
+    """클라이언트 연결 재사용에 필요한 인증된 세션 식별자만 반환한다."""
+    return {"connection_session": str(ctx.get("session_id") or ""),
+            "account_id": int(ctx["account"]["id"])}
+
+
 def _pg():
     """원장용 RW 연결. 없으면 None — 호출측이 fail-closed 로 처리한다."""
     try:

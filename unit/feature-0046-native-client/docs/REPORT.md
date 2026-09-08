@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
+
+DQA 클라이언트를 실행하고 로그인하면 설치된 AI를 찾는다. AI별 사용 가능한 위치가 하나이면 자동 연결하고, Windows/WSL 배포판/계정 여러 곳에 있으면 해당 AI 카드에서만 선택한다. 이미 고른 위치가 다시 유효하면 자동 재사용한다. 별도 러너·Windows 브라우저 실행은 사용자 절차에 없다.
+
+Issue #1615. 자동 연결·중복 위치 선택·클라이언트 캐시·모델 등록 후 toast를 구현했다. 최신 main의 아이콘/자동 복구를 통합했다. 검증과 릴리스 결과는 `test-runs.d/20260908T123400-connect-discovery.md`에 기록한다.
+
+
 ## TASK-20260908T113000-bridge-token-env — 2026-09-08
 
 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합. DQA 클라이언트 단독 사용 기준 유지. 내부 토큰 전달 복구는 feature-0043 소유.
@@ -231,3 +238,7 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
 [위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
 DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
+
+### 병합 통합 검증 기록
+
+main a92c9256 통합 후 3개 feature pre-commit PASS. merge commit의 post-commit #2/#3은 `git log -1 -p`의 combined diff(`++` 접두)를 단일 diff(`+`)로 판정해 미검출했다. 누락된 변경이 아님을 양 부모 diff로 확인하고, 최종 배포 증거를 일반 후속 커밋에 기록해 같은 검증을 다시 수행한다.

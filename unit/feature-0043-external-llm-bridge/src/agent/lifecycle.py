@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import tempfile
 import atexit
 import os
 import shlex
@@ -22,7 +24,7 @@ from .cancel import CancelRegistry
 from .caps import (_CREATION_SOURCES, baseline_index, confirm_ai_or_report,
                    resolve_caps, sanitize_caps)
 from .conf import load_conf, save_conf
-from .discovery import _no_ai_message, pick_ai
+from .discovery import _no_ai_message, pick_ai, client_runtime_selection
 from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_SELFUPDATE, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
 from .handler import handle_one
 from .events import RUNNING_BUNDLE_PATH
@@ -33,7 +35,7 @@ from .pool import ActiveTasks, WorkerPool
 from .runtimes import _RUNTIME_SPECS
 from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
                          fetch_deployed_agent, install_agent_file, reexec_self)
-from .state import ai_health, note_ai_probing, prev_runner_instance, runner_instance
+from .state import ai_health, note_ai_outcome, note_ai_unusable, note_ai_probing, prev_runner_instance, runner_instance
 from .timing import _CAPS_BASELINE_WAIT_SEC, _CAPS_RETRY_BACKOFF_SEC, _CAPS_RETRY_CEILING_SEC, _CAPS_RETRY_CEILING_SHOWING_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
@@ -177,7 +179,8 @@ def start_heartbeat(api: Api, stop: threading.Event,
                     batch_override: "bool | None" = None,
                     baseline_out: dict | None = None,
                     baseline_ready: "threading.Event | None" = None,
-                    nudge: "threading.Event | None" = None) -> threading.Thread:
+                    nudge: "threading.Event | None" = None,
+                    on_reported=None) -> threading.Thread:
     """연결 유지 신호를 보내는 데몬 스레드 (TASK-20260828T150000).
 
     **대기 스레드와 분리한 것이 이 기능의 핵심이다.** 대기(`wait_for_request`)는 빈 워커 자리를
@@ -211,7 +214,10 @@ def start_heartbeat(api: Api, stop: threading.Event,
             # 능력은 **매번** 싣는다. 처음 한 번만 보내면 서버가 재시작하거나 토큰 행이 갈릴 때
             # 화면의 목록이 영영 비고, 그 빈 목록은 "러너가 없다" 와 구분되지 않는다.
             # 서버는 값이 그대로면 쓰지 않으므로(쓰기 증폭 없음) 매번 싣는 비용이 없다.
-            res = api.heartbeat(runtimes, released_instances=_pending_release)
+            reported = [dict(row) for row in (runtimes or [])] if on_reported else runtimes
+            outgoing = [{k: v for k, v in row.items() if k != "_client_location"}
+                        for row in reported] if on_reported else runtimes
+            res = api.heartbeat(outgoing, released_instances=_pending_release)
             code = res.get("_http")
             if code == 401:
                 # 복귀 안내는 여기서 하지 않는다 — 대기 루프 한 곳이 정본이다(두 곳에서
@@ -229,6 +235,8 @@ def start_heartbeat(api: Api, stop: threading.Event,
                           streak=_hb_fail_streak[0],
                           detail=str(res.get("error") or "")[:200])
             else:
+                if on_reported:
+                    on_reported(reported)
                 if _hb_fail_streak[0]:
                     # 끊겼다 이어진 사실 자체가 조사 단서다 — 몇 번 만에 돌아왔는지 남긴다.
                     log_event("hb.recovered", "하트비트가 다시 통했다",
@@ -798,10 +806,18 @@ def main() -> int:
     _caps_round = [0]
     _caps_publish_lock = threading.Lock()
 
-    def _publish_caps_for(round_no: int):
+    _negotiate_lock = threading.Lock()
+
+    def _publish_caps_for(round_no: int, targets=None):
         """그 회차 전용 `on_settled`. **낡은 회차의 게시는 버린다.**"""
         def _cb(_got: list, _detail: dict) -> None:
             with _caps_publish_lock:
+                if targets is not None and targets != client_runtime_selection():
+                    return
+                if targets is not None:
+                    for name, detail in _detail.items():
+                        if isinstance(detail, dict):
+                            detail["client_location"] = targets.get(name)
                 if round_no != _caps_round[0]:
                     return          # 앞 회차의 지각 스레드 — 지금 목록을 되덮지 않는다
                 _publish_caps(_got, _detail)
@@ -841,7 +857,108 @@ def main() -> int:
         # 깨우면 플랫폼이 끝난 **직후** 신고가 나가고, 서버 지문이 바뀌어 화면이 받는다.
         _caps_nudge.set()
 
+    _client_jobs = set()
+    _client_rows = {}
+    _client_status = {}
+
+    def _write_client_status():
+        filename = os.environ.get("BRIDGE_RUNTIME_SELECTION")
+        if not filename: return
+        temp = None
+        try:
+            fd, temp = tempfile.mkstemp(prefix=".runtime-status-", dir=os.path.dirname(filename))
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump({"instance": os.environ.get("BRIDGE_RUNTIME_INSTANCE", ""),
+                           "pid": os.getpid(), "locations": _client_status}, stream)
+            os.replace(temp, os.path.splitext(filename)[0] + ".ready.json")
+        except OSError:
+            pass
+        finally:
+            if temp:
+                try: os.unlink(temp)
+                except OSError: pass
+
+    def _client_reported(rows):
+        with _caps_publish_lock:
+            targets = client_runtime_selection() or {}
+            for row in rows:
+                name = row.get("runtime")
+                target = row.get("_client_location")
+                if target and target == targets.get(name):
+                    _client_status[name] = {"target": target, "state": "ready"}
+            _write_client_status()
+
+    def _negotiate_client_caps():
+        targets = client_runtime_selection() or {}
+        with _caps_publish_lock:
+            removed = False
+            for name in list(_client_rows):
+                if (_client_rows[name].get("_client_location") != targets.get(name)):
+                    _client_rows.pop(name, None)
+                    caps.pop(name, None)
+                    removed = True
+            if removed:
+                rows = list(_client_rows.values())
+                if not rows: note_ai_probing("선택한 위치의 모델을 확인하는 중입니다.")
+                _publish_caps(rows, {r["runtime"]: caps[r["runtime"]] for r in rows})
+            for name, target in targets.items():
+                key = (name, json.dumps(target, sort_keys=True))
+                if name in _client_rows or key in _client_jobs: continue
+                _client_jobs.add(key)
+                if name not in _caps_asked: _caps_asked.append(name)
+                _client_status[name] = {"target": target, "state": "pending"}
+                cached = (caps.get(name) or conf_caps.get(name) or {}) if not args.refresh_caps else {}
+                if cached.get("client_location") != target: cached = {}
+                _CAPS_NEGOTIATING[0] = True
+                def run(name=name, target=target, key=key, cached=cached):
+                    failure = None
+                    try:
+                        got, detail = resolve_caps(name, {name: cached} if cached else None,
+                                                   args.refresh_caps,
+                                                   baseline=None if args.refresh_caps else dict(_caps_baseline))
+                        with _caps_publish_lock:
+                            if target != (client_runtime_selection() or {}).get(name): return
+                            row = next((r for r in got if r.get("runtime") == name and r.get("models")
+                                        and r.get("source") != "baseline"), None)
+                            if row:
+                                _client_rows[name] = dict(row, _client_location=target)
+                                caps[name] = dict(detail[name], client_location=target)
+                            else:
+                                failure = {"target": target, "state": "failed", "failed_at": time.time_ns(),
+                                                        "detail": "모델을 확인하지 못했습니다. 다시 연결해 주세요."}
+                            active = client_runtime_selection() or {}
+                            rows = [r for n, r in _client_rows.items() if r["_client_location"] == active.get(n)]
+                            details = {r["runtime"]: caps[r["runtime"]] for r in rows}
+                            _publish_caps(rows, details)
+                            if rows: note_ai_outcome(True)
+                            elif not any(v.get("state") == "pending" for n, v in _client_status.items() if n != name):
+                                note_ai_unusable("연결된 AI의 모델을 확인하지 못했습니다.")
+                            if caps: save_conf(args.base, args.ca, "", args.cmd, caps=caps)
+                    except Exception:
+                        with _caps_publish_lock:
+                            if target == (client_runtime_selection() or {}).get(name):
+                                failure = {"target": target, "state": "failed", "failed_at": time.time_ns(),
+                                                        "detail": "모델 확인에 실패했습니다. 다시 연결해 주세요."}
+                        _log_exc("client_caps")
+                    finally:
+                        with _caps_publish_lock:
+                            _client_jobs.discard(key)
+                            if failure and target == (client_runtime_selection() or {}).get(name):
+                                _client_status[name] = failure
+                            _CAPS_NEGOTIATING[0] = bool(_client_jobs)
+                            _write_client_status()
+                threading.Thread(target=run, name="client-caps-" + name, daemon=True).start()
+            _write_client_status()
+
     def _negotiate_caps(wait_baseline: bool = False) -> None:
+        if client_runtime_selection() is not None:
+            if wait_baseline and not args.refresh_caps: _baseline_ready.wait(_CAPS_BASELINE_WAIT_SEC)
+            _negotiate_client_caps()
+            return
+        with _negotiate_lock:
+            _negotiate_caps_impl(wait_baseline)
+
+    def _negotiate_caps_impl(wait_baseline: bool = False) -> None:
         """능력 협상 1회. 결과는 `runtimes`·`caps` 를 **제자리** 갱신한다."""
         # baseline 은 하트비트 응답으로 온다 — 배경 협상은 그 첫 응답을 짧게 기다린다.
         # 상한을 두는 이유: 서버가 느리거나 응답하지 않아도 협상은 **반드시** 진행돼야 한다
@@ -856,6 +973,10 @@ def main() -> int:
         _round = _caps_round[0] + 1
         _caps_round[0] = _round
         _cached = None if args.refresh_caps else (_snapshot_caps() or conf_caps or None)
+        _targets = client_runtime_selection()
+        if _targets is not None:
+            _cached = {name: value for name, value in (_cached or {}).items()
+                       if name in _targets and value.get("client_location") == _targets[name]}
         _base = None if args.refresh_caps else (dict(_caps_baseline) or None)
         # 자기갱신이 이 창을 「유휴」로 오판해 `os.execv` 하지 않도록 표시한다
         # (codex R4 P2-9 — `try_self_update` 의 `_CAPS_NEGOTIATING` 가드).
@@ -869,14 +990,14 @@ def main() -> int:
         try:
             _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps,
                                          baseline=_base,
-                                         on_settled=_publish_caps_for(_round),
+                                         on_settled=_publish_caps_for(_round, _targets),
                                          asked_out=_caps_asked)
         finally:
             _CAPS_NEGOTIATING[0] = False
         # 최종 게시 — 중간 신고와 같은 경로를 쓴다. 두 경로를 따로 쓰면 한쪽만 고쳐지는 날
         # 「부분은 되는데 최종이 안 되는」(또는 반대) 상태가 되고, 그 차이는 라이브에서만
         # 드러난다.
-        _publish_caps_for(_round)(_got, _detail)
+        _publish_caps_for(_round, _targets)(_got, _detail)
         if _got:
             _log("고를 수 있는 것: " + " · ".join(
                 f"{r['label']}({len(r['models'])}종"
@@ -1003,6 +1124,22 @@ def main() -> int:
         if runtimes and attempt and not _needs_retry():
             _log("쓸 수 있는 모델을 받았습니다 — 웹 선택기에 나타납니다.")
 
+    def _watch_client_selection() -> None:
+        def revision():
+            try:
+                stat = os.stat(os.environ["BRIDGE_RUNTIME_SELECTION"])
+                return stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns
+            except OSError: return None
+        previous = None
+        while not heartbeat_stop.wait(1):
+            current = revision()
+            if current != previous:
+                previous = current
+                try:
+                    _negotiate_caps()
+                except Exception as exc:
+                    _log_exc("caps.selection_refresh_fail", "연결 위치 변경 확인 실패", exc)
+
     if args.cmd:
         _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
         # `--cmd` 는 협상을 돌지 않으므로 여기서도 원장이 `None` 으로 남는다. 같은 함수로
@@ -1020,7 +1157,10 @@ def main() -> int:
     heartbeat_stop = threading.Event()
     start_heartbeat(api, heartbeat_stop, runtimes, batch_override=_batch_override,
                     baseline_out=_caps_baseline, baseline_ready=_baseline_ready,
-                    nudge=_caps_nudge)
+                    nudge=_caps_nudge,
+                    on_reported=_client_reported if client_runtime_selection() is not None else None)
+    if os.environ.get("BRIDGE_RUNTIME_SELECTION") and not args.cmd:
+        threading.Thread(target=_watch_client_selection, daemon=True).start()
     # 자기 갱신이 재기동 직전에 하트비트를 끊을 수 있게 손잡이를 건넨다 — `os.execv` 는
     # `atexit` 를 부르지 않으므로, 여기서 끊지 않으면 서버는 사라진 프로세스를 계속 «대기 중»
     # 으로 읽는다.
