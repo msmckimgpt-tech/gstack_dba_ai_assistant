@@ -47,5 +47,59 @@
       ".github/workflows/ci.yml": "5a08389f43b029257b7bd034a55f981b1473227042fc1a7512842b92f495f722",
       "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js": "aa1efc170ec450ae945cc411b9d4d0a24c097ee7c695cbe08b86e84a25b0b955"
     }
+  },
+  "delivery": {
+    "checked_at_utc": "2026-09-08T03:39:10.744312+00:00",
+    "deployed_revision": "a92c9256",
+    "scope": "web",
+    "script_exit": 0,
+    "soak_seconds": 90,
+    "healthz_http": 200,
+    "replicas": [
+      {
+        "name": "/repo-web-a-1",
+        "image": "mysql-ai-web:a92c9256",
+        "health": "healthy",
+        "restart_count": "0"
+      },
+      {
+        "name": "/repo-web-b-1",
+        "image": "mysql-ai-web:a92c9256",
+        "health": "healthy",
+        "restart_count": "0"
+      }
+    ],
+    "caddy_no_upstreams_last_10m": 0,
+    "asset": {
+      "tls_verified": true,
+      "ca": "artifacts/certs/rootCA.pem",
+      "served_asset_sha256": "7f61978c035564384d8e29f0d93d7e2f03c71a84aa2631628f8fecbe0ca0b4d1",
+      "new_recovery_message": true,
+      "old_removed_instruction": false,
+      "native_tray_guidance_preserved": true
+    },
+    "installed_dqa_flow": "NOT-RUN",
+    "conversation_smoke": "NOT-RUN (web-only scope)",
+    "merge_commit": "a92c925603680dcd66784868083623afdcc24748",
+    "pull_request": 1616,
+    "github_actions": {
+      "enabled": false,
+      "pull_request_runs": 0,
+      "result": "NOT-RUN"
+    }
+  },
+  "closing_tools": {
+    "base_commit": "a92c925603680dcd66784868083623afdcc24748",
+    "cycle_lifecycle_passed": 21,
+    "board_lifecycle_passed": 12,
+    "independent_cleanup_cases_passed": 6,
+    "deploy_quiesce_passed": 34,
+    "deploy_output_combinations_reviewed": 6,
+    "application_source_changed": false,
+    "source_files_sha256": {
+      "bin/cycle-finalize.sh": "ab3ecceb5111c1e1015455a0855a983f8ec6ce87abb5a75bd1b4d457587768e4",
+      "bin/tests/cycle_lifecycle.bats": "99755abe3c713ab911ad9ecaf06bff0a45141ee9e90b930181f131961fde0f10",
+      "bin/deploy-web.sh": "1d47e78d9bb1852aec184c9dcd5ed4487c78387d78bfe9de2e75f03353f30e08"
+    }
   }
 }

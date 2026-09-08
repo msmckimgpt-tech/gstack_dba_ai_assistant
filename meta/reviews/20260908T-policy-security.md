@@ -2,7 +2,7 @@
 
 (no findings)
 
-PS-01~PS-04는 수정 후 재검토했다. 아래 범위와 한계에서 남은 차단 항목은 없다.
+PS-01~PS-05는 수정 후 재검토했다. 아래 범위와 한계에서 남은 차단 항목은 없다.
 
 ### 2. Cross-domain concerns
 
@@ -35,6 +35,13 @@ PS-01~PS-04는 수정 후 재검토했다. 아래 범위와 한계에서 남은 
 - Location: `bin/verify-completion.sh`의 `visual_run_evidence_kind()`·`check_13_visual_verification()`; `bin/tests/agent_compatibility_gate.bats`의 CHECK13 회귀.
 - Reason: 한 시나리오의 성공이 다른 미해결 사용자 흐름 실패를 덮어서는 안 된다. 현재 Run의 기록 검증과 실제 앱 실행의 진실성 판정도 구분해야 한다.
 - Action: 수정 후 `bats --filter CHECK13 bin/tests/agent_compatibility_gate.bats`를 최종 스냅샷에서 독립 실행해 **20건 PASS**. 같은 파일/다른 fragment PASS 차용·DQA FAIL 은폐·미실행 은폐·과거 Run 재사용의 음성 대조와 native UI 5개 경로 귀속, 같은 Scenario의 FAIL→수정→PASS 및 PASS→FAIL을 포함한다.
+
+**PS-05 — 해결: 배포 출력이 미수행 검증을 PASS로 합산**
+
+- Evidence: 옛 배너가 PB-0008/사용자 Ctrl+F5를 요구하고 web-only도 대화 스모크 통과로 요약했다. 초기 scope별 문구 수정도 DRY_RUN·스모크 생략 환경변수·web_skip 재개 경로의 미수행을 PASS로 표시할 수 있었다.
+- Location: `bin/deploy-web.sh`의 `post_deploy_checklist()`와 main 마지막 결과 출력.
+- Reason: 출력이 실제 실행보다 넓은 완료를 선언하면 검증 재작업과 잘못된 인계를 반복한다. 요약에서 실행 분기를 다시 구현하면 두 판정이 다시 갈릴 수 있다.
+- Action: 최종 출력은 모의 실행/실제 배포 처리를 구별하고, 적용·검증·미수행의 정확한 결과는 각 단계 로그를 참조한다. 체크리스트는 PB-0009 변경 범위와 실제 앱 NOT-RUN 구분을 따른다. `a92c9256` 대비 두 출력 구간을 제외한 코드의 바이트 동일성을 확인했다. 실제 summary fragment를 DRY_RUN 0/1 × scope web/workers/all **6조건**으로 실행해 미확인 PASS/통과 문구가 없음을 확인했다. `bash -n`·지정 diff check도 통과했다. 이 검토에서 배포를 재실행하지 않았다.
 
 **검토 범위와 수행한 확인**
 
@@ -77,7 +84,7 @@ PS-01~PS-04는 수정 후 재검토했다. 아래 범위와 한계에서 남은 
 
 ### 4. Verdict
 
-PASS — 지정 정책·security 정합과 추가 DQA 정책/check #13/JS 하네스 검토에서 남은 차단 항목 없음. PS-01~PS-04 수정 후 해당 경로를 재검토했다. 아래 새 SHA 범위의 판단이며 실제 DQA 앱 사용자 흐름 PASS, 전체 테스트 완료, 배포·랜딩 완료를 뜻하지 않는다.
+PASS — 지정 정책·security 정합과 추가 DQA 정책/check #13/JS 하네스 검토에서 남은 차단 항목 없음. PS-01~PS-05 수정 후 해당 경로를 재검토했다. 아래 새 SHA 범위의 판단이며 실제 DQA 앱 사용자 흐름 PASS, 전체 테스트 완료, 배포·랜딩 완료를 뜻하지 않는다.
 
 초기 검토에서 PASS한 파일 내용 SHA-256(추가 DQA 변경 이전):
 
@@ -139,3 +146,16 @@ ec913f94 합류 후 지정 코드·테스트·PB-0009 최종 재검토 SHA-256:
 지원 도구 선택이 보존됐다. 게시판 메시지를 실행 권한으로 보지 않는 경계도 유지한다. CONTEXT 생성기·
 board 구현 검증은 workflow reviewer, 원격 네트워크 코드 검증은 해당 독립 리뷰 범위다. 신규 findings 없음.
 최종 자동 합류 `AGENTS.md` SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`.
+
+**배포 출력·SSH 안내 최종 보완 검토**: `.agents/ENVIRONMENT.md`의 SSH fallback은 workflow scope 오류가
+발생했을 때 동일 저장소에 이미 권한이 있는 기존 인증을 명령 단위·본인 ref에 한해 사용한다.
+원격 URL·다른 계정 로그인·토큰 scope를 변경하거나 새 인증을 만들지 않는 경계가 명시돼 있어
+승인 범위 확대가 없다. 기존 대화 조회·board 메시지를 새 권한으로 보지 않는 지침도 유지한다.
+배포 출력 변경은 PS-05 해결 범위의 PASS이며, 실제 DQA 앱 사용자 흐름은 계속 NOT-RUN이다.
+
+| 최종 보완 검토 파일 | SHA-256 |
+|---|---|
+| `bin/deploy-web.sh` | `1d47e78d9bb1852aec184c9dcd5ed4487c78387d78bfe9de2e75f03353f30e08` |
+| `.agents/ENVIRONMENT.md` | `c30b2ee9c5c0c37e1c71f21e2efe85af00821bbe11dec0267d958e9e5fa23468` |
+
+출력 호환 최종 확인: 실행 모드의 `배포 완료:` prefix만 기존 값으로 복원됐고, 각 단계 로그 참조 및 모의 실행 미수행 문구는 동일하다. 위 deploy-web.sh SHA를 이 스냅샷으로 갱신했다.
