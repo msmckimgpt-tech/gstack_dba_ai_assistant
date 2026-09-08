@@ -129,3 +129,12 @@ Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), fea
 - 공식 계약: [Inno CloseApplications](https://jrsoftware.org/ishelp/topic_setup_closeapplications.htm), [필터](https://jrsoftware.org/ishelp/topic_setup_closeapplicationsfilter.htm), [RestartApplications 기본값](https://jrsoftware.org/ishelp/topic_setup_restartapplications.htm), [종료코드](https://jrsoftware.org/ishelp/topic_setupexitcodes.htm).
 
 - 수정 후 코드 검증: native 전체527 PASS/1 skip(jsdom 경로 미지정), 기존 jsdom 경로를 명시한 해당 DOM 검사 재실행1 PASS로 총528개 검증 완료. Windows1.2.1 빌드 exit0 및 동결본 자가진단·동봉 런타임 import PASS.
+
+## 2026-09-08 실제 업데이트 설치 — 1.2.1 PASS
+
+- 기존1.1.2 고아PID48536을 남긴 상태에서 실제 메뉴로1.2.1 확인·수락. 실제 앱이 받은 설치기26,044,458bytes/공개SHA일치. 별도 설치기 수동 실행으로 대체하지 않았다.
+- 14:09:42KST 수락 기준: 기존앱exit0 +5.102초, 고아종료 +35.116초, 새DQA실행 +40.578초, setup두프로세스exit0 +43.737초.
+- registry1.2.1/동일 per-user설치경로/신앱1개/실제exeSHA/pending소거/applyok를 모두 만족한 뒤5.529초 유지, 총49.602초.
+- 재시작된 실제 메뉴는 “이미 최신입니다 (버전1.2.1).”. 확인창을 닫고 앱 실행 유지. 관찰에 사용한 외부 Python도 종료되지 않았다. 설치로그는 등록파일3개·일반사용자권한·forcedshutdown·설치성공·Windows재부팅불필요를 입증했다.
+- Windows RM 종료 대기 약30초는 유지됐다. 실제1.1.2→1.2.1 복구 성공이며 모든 Windows 환경/버전의 동작이나 픽셀 렌더 검증으로 확대하지 않는다.
+- [요약 및 지문](artifacts/20260908-update-install/measurement-summary.json), [실제 설치 결과](artifacts/20260908-update-install/install-result.json), [전체 설치 로그](artifacts/20260908-update-install/installer.log.gz), [최신버전 대화상자](artifacts/20260908-update-install/latest-version-confirmation.json).

@@ -1,0 +1,43 @@
+{
+  "at": 1788844160.9662087,
+  "pid": 35608,
+  "tray": 32971616,
+  "items": [
+    {
+      "position": 0,
+      "id": 1024,
+      "text": "창 열기"
+    },
+    {
+      "position": 1,
+      "id": 0,
+      "text": ""
+    },
+    {
+      "position": 2,
+      "id": 1026,
+      "text": "연결 끊기"
+    },
+    {
+      "position": 3,
+      "id": 1027,
+      "text": "업데이트 확인"
+    },
+    {
+      "position": 4,
+      "id": 0,
+      "text": ""
+    },
+    {
+      "position": 5,
+      "id": 1029,
+      "text": "종료"
+    }
+  ],
+  "selected": {
+    "position": 3,
+    "id": 1027,
+    "text": "업데이트 확인"
+  },
+  "entry": "native tray popup -> resolved command ID -> WM_COMMAND"
+}
