@@ -1,0 +1,15 @@
+{
+  "started": 1788843274.6925297,
+  "finished": 1788843308.7151508,
+  "exit": 5,
+  "args": [
+    "C:\\Users\\mckim\\.dqa-connect\\update\\DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe",
+    "/SILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+    "/CLOSEAPPLICATIONS",
+    "/RELAUNCH",
+    "/LOG=C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-update-install-20260908\\installer-diagnostic.log",
+    "/LOGCLOSEAPPLICATIONS"
+  ]
+}

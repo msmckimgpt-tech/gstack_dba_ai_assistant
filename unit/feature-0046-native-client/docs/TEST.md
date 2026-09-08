@@ -117,3 +117,15 @@ Scenario: 격리 동결 DQA 1.2.0 실행 파일의 연결·위치 선택·재시
 Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), feature-0046 artifacts의 native-results.json.
 
 서비스/API/벤더 응답과 app.js toast 초기화는 대역이다. 네이티브 픽셀 캡처는 빈 면으로 NOT-RUN이며 동일 제품 UI의 Windows Chrome 렌더는 별도 보조 증거다. 실제 벤더 계정 호출·사용자 설치본 교체의 PASS를 뜻하지 않는다.
+
+## 2026-09-08 실제 업데이트 설치 — 1.2.0 실패 재현
+
+- 실제 설치 경로: Windows mckim per-user DQA Connect, 최초 버전1.1.2. 설치 레지스트리/바이너리 지문 대조.
+- 실제 트레이 popup에서 “업데이트 확인” 항목 ID를 읽고 Win32 선택 이벤트를 전달했다. 실제 DQA 확인창의 예 버튼을 수락했다. 업데이터 함수·다운로드를 대체하지 않았다.
+- 앱이 받은 설치기의 실행→기존 앱 exit0→약30초 “응용 프로그램을 닫는 중”→롤백→설치기 exit5. 180초 관찰 종료 시1.1.2 유지, 새DQA프로세스0.
+- 같은 설치기에 /LOG,/LOGCLOSEAPPLICATIONS만 추가한 별도 진단 실행에서도exit5. 이 별도 실행을 사용자 메뉴 검증 성공으로 계산하지 않는다. 로그에서 suppressed Abort 확인.
+- Restart Manager의 읽기 전용 조회로 설치본 runtime/python.exe PID48536만 잠금 소유자임을 확인했다. argv는 bridge_agent.py, 부모8988은 이미 종료.
+- [실측 원본](artifacts/20260908-update-install/failed-1.2.0-install-result.json), [진단 로그](artifacts/20260908-update-install/failed-1.2.0-installer-diagnostic.log).
+- 공식 계약: [Inno CloseApplications](https://jrsoftware.org/ishelp/topic_setup_closeapplications.htm), [필터](https://jrsoftware.org/ishelp/topic_setup_closeapplicationsfilter.htm), [RestartApplications 기본값](https://jrsoftware.org/ishelp/topic_setup_restartapplications.htm), [종료코드](https://jrsoftware.org/ishelp/topic_setupexitcodes.htm).
+
+- 수정 후 코드 검증: native 전체527 PASS/1 skip(jsdom 경로 미지정), 기존 jsdom 경로를 명시한 해당 DOM 검사 재실행1 PASS로 총528개 검증 완료. Windows1.2.1 빌드 exit0 및 동결본 자가진단·동봉 런타임 import PASS.

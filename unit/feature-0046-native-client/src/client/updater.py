@@ -568,12 +568,9 @@ def verify(payload: bytes, update: Update) -> bool:
 #: 설치기에 주는 인자. `/RELAUNCH` 는 우리 `.iss` 가 아는 값으로, 무음 설치 뒤 앱을 다시
 #: 띄운다 — 없으면 사용자는 「업데이트를 눌렀더니 프로그램이 사라졌다」를 본다.
 #:
-#: ⚠ **`/RESTARTAPPLICATIONS` 를 주지 않는다** (적대 리뷰 C5). 그것을 함께 주면 재기동 입구가
-#: 둘이 되고(재시작 관리자 + `[Run]` 항목), 그 둘은 서로 다른 시점에 발화한다 — 우리가 아직
-#: 살아 있는 사이에 새 인스턴스가 뜨면 단일 인스턴스 잠금에 막혀 **조용히 사라진다**.
-#: 재기동의 책임자는 `.iss` 의 `/RELAUNCH` **하나**다.
+#: Inno의 기본값은 RestartApplications=yes다. 명시적으로 꺼 /RELAUNCH만 재기동을 맡긴다.
 SILENT_ARGS = ("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-               "/CLOSEAPPLICATIONS", "/RELAUNCH")
+               "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/RELAUNCH")
 
 
 def confirm_text(update: Update, connected: bool, home: Path | None = None) -> str:

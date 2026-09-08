@@ -920,3 +920,10 @@ edit_policy: append-only
 - TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
 - 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
 - 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+
+## CHG-20260908-update-install-recovery — 실제 업데이트 롤백 수정
+- Related TASK: TASK-20260908-update-install-proof; issue #1622.
+- 실제 Windows 1.1.2 업데이트 메뉴→확인→설치에서 고아 내장 Python의 파일 잠금으로 1.2.0 설치가 exit 5 롤백하는 결함을 재현했다.
+- 1.2.1: 설치기의 강제 종료 대상을 패키지 실행 파일 세 개로 제한하고, Windows 기본 자동 재시작을 명시적으로 꺼 `/RELAUNCH`만 사용한다. 설치 상세 로그도 기본 활성화한다.
+- 기존 1.1.2 업데이터에도 적용되도록 수정의 핵심을 새 설치기에 두었다. 전역 프로세스 이름 kill이나 외부 Python 정리는 사용하지 않는다.
+- 검증: updater/supervisor 95 PASS. Windows 빌드·실제 업데이트 재검증 결과는 후속 기록에 추가한다.
