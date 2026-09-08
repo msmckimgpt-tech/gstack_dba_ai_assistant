@@ -8185,3 +8185,10 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included` + AGENTS.md §16.5.1. we
 wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결정) + AGENTS.md
 §16.5.1. web 자산 변경이므로 `bin/deploy-web.sh --web-only` 범위이며, DB 마이그레이션·외부
 발송·외부 리소스 삭제 등 재배포로 원복되지 않는 side-effect 는 **없다**(§12 Critical 미해당).
+
+## REV-20260908T160000-share-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: TASK-20260908T160000-share-postdeploy.
+- Reason: 배포 후 라이브 실측 결과와 그 검증의 미확인 경계를 test-runs 에 기록만 한다.
+  제품 코드·FUNCTION·정책·권한 변경 0 — §18.8 dispatch 표의 「비정책 doc-only」 행.
+- Timestamp: 2026-09-08T16:00:00+09:00

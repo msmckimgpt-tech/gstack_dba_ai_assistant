@@ -6222,3 +6222,9 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
   `tests/test_client_bridge_runtime.py` 는 upstream 이 별도 하네스로 재작성했으므로 그것을
   채택하고 **그 하네스(`verify_client_connections_dom.mjs`)의 테스트 nonce 를 실 규격으로**
   맞췄다(6자 `secret` 은 이번에 추가된 좌표 모양 검사에 걸린다).
+
+## CHG-20260908T160000-share-postdeploy
+
+- Related TASK: TASK-20260908T160000-share-postdeploy.
+- `docs/test-runs.d/TASK-20260908T125500-share-client-entry.md`: Run 6(라이브 도달성) 추가.
+  코드·FUNCTION·정책 변경 없음 — 배포 후 실측 결과와 **미확인 경계**의 기록뿐이다.
