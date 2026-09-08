@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -288,6 +289,40 @@ def _run_connect_ui(page, script, *, token_ok=True, protocol=None, stale=False, 
     return json.loads(result.stdout)
 
 
+def _embedded_update_menu_labels(monkeypatch):
+    """실제 내장 앱 메뉴를 구성하고 선택→업데이트 워커 연결까지 검사한다."""
+    workers = []
+
+    class Worker:
+        def __init__(self, *, target, args, daemon):
+            self.spec = (target, args, daemon)
+
+        def start(self):
+            workers.append(self.spec)
+
+    monkeypatch.setattr(gui.tray_mod, "available", lambda: True)
+    monkeypatch.setattr(gui.tray_mod.Tray, "start", lambda self: True)
+    monkeypatch.setattr(gui, "threading", SimpleNamespace(Thread=Worker))
+    shell = SimpleNamespace(show=lambda: None, quit=lambda: None)
+    bridge = SimpleNamespace(disconnect=lambda: None)
+    tray = gui._start_embedded_tray(shell, bridge)
+    assert tray is not None
+    update_items = [(cid, item) for cid, item in tray.menu()
+                    if item.label == gui.UPDATE_MENU_LABEL]
+    assert len(update_items) == 1, "앱 트레이의 업데이트 메뉴가 없거나 중복됐다"
+    command_id, item = update_items[0]
+    assert item.enabled and not item.separator and callable(item.action)
+    assert tray.dispatch(command_id), "업데이트 메뉴를 선택해도 콜백에 도달하지 않는다"
+    assert workers == [(gui._update_flow, (bridge,), True)], \
+        "업데이트 메뉴가 실제 브리지의 업데이트 워커를 시작하지 않는다"
+    return {item.label}
+
+
+def test_embedded_update_menu_reaches_the_update_worker(monkeypatch):
+    """Win32 아이콘 표시는 별도 실측이며 여기서는 메뉴와 작업 연결을 검증한다."""
+    assert _embedded_update_menu_labels(monkeypatch) == {gui.UPDATE_MENU_LABEL}
+
+
 # ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
 #
 #   여기에는 두 테스트가 있었다 — `test_terminal_path_is_collapsed`(접어 둔다)와
@@ -360,7 +395,7 @@ def test_lead_text_points_at_the_client(path):
 
 
 @pytest.mark.parametrize(("stale", "auto"), [(True, False), (True, True), (False, True)])
-def test_failure_messages_no_longer_point_at_a_path_that_is_gone(stale, auto):
+def test_failure_messages_no_longer_point_at_a_path_that_is_gone(stale, auto, monkeypatch):
     """실제 실패 분기가 DOM에 표시한 안내를 검사한다. 주석은 사용자 발화가 아니다."""
     result = _run_connect_ui(_MODAL, _STATIC / "app/connect-modal.js", stale=stale, auto=auto)
     message = result["message"]
@@ -372,7 +407,11 @@ def test_failure_messages_no_longer_point_at_a_path_that_is_gone(stale, auto):
         re.sub(r"<[^>]+>", "", label).strip()
         for label in re.findall(r"<(?:button|a)\b[^>]*>(.*?)</(?:button|a)>", html, re.S)
     }
-    for target in re.findall(r"\[([^\]]+)\]", message):
+    targets = re.findall(r"\[([^\]]+)\]", message)
+    if gui.UPDATE_MENU_LABEL in targets:
+        assert re.search(r"알림\s*영역|트레이", message), "네이티브 메뉴 위치 안내가 없다"
+        labels.update(_embedded_update_menu_labels(monkeypatch))
+    for target in targets:
         assert target in labels, f"안내가 가리키는 조작면이 없다: {target}"
 
 
