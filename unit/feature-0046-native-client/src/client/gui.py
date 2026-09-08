@@ -234,6 +234,16 @@ class ClientApp:
 
         ⚠ 웹 셸 경로에만 두면 이 화면에서는 아이콘이 **죽은 채로** 남는다 — 사용자에게
         이 프로그램은 하나이고, 어느 껍데기로 떴는지는 우리 사정이다.
+
+        ⚠ **이 껍데기는 목적지를 쓰지 않는다 — 의도된 결정이다** (share-client-entry
+        2026-09-08). `take_show_request` 는 이제 목적지 경로를 돌려주지만, 이 창은 서비스
+        화면이 아니라 **연결 UI**(tkinter 위젯)라 열 «페이지» 자체가 없다. 그러므로 여기서
+        목적지를 버리는 것은 배선 누락이 아니라 그 껍데기의 성질이다. 다른 두 껍데기
+        (내장 WebView2 · 브라우저 앱 모드)는 목적지로 이동한다.
+
+        ⚠ 이 사실을 **주석과 테스트 양쪽에** 둔다. 계약 변경(bool → `str | None`)이
+        truthiness 로 조용히 흡수되면 「기능이 도달하지 않는 껍데기」가 침묵 속에 하나
+        생긴다 — 이 파일의 형제 테스트가 이미 같은 형태의 비대칭을 한 번 잡았다.
         """
         if core.take_show_request(self.plan.home):
             self._show_window()
@@ -659,6 +669,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""))
     ap.add_argument("--ca-sha256", default=os.environ.get("BRIDGE_CA_SHA256", ""))
     ap.add_argument("--agent-sha256", default=os.environ.get("BRIDGE_AGENT_SHA256", ""))
+    # ⚠ 딥링크가 싣는 **목적지 경로**. 손으로 칠 값이 아니라 도움말에서 감춘다 — 이 인자를
+    #   선언해 두는 이유는 `link` 를 `args` 에 얹는 아래 루프가 기본값 있는 속성을 요구하기
+    #   때문이다(선언이 없으면 링크에 `path` 가 없는 정상 실행에서 AttributeError 가 난다).
+    ap.add_argument("--path", default="/", help=argparse.SUPPRESS)
     # ⚠ 진단 전용. **동결본이 창을 그릴 수 있는가**를 실행으로 답하게 한다 — 빌드가 이것을
     #   불러 확인한다. 파일 존재 검사로는 「담기긴 했는데 임포트가 깨진」 상태를 못 본다.
     ap.add_argument("--selftest", default="", help=argparse.SUPPRESS)
@@ -714,8 +728,12 @@ def main(argv: list[str] | None = None) -> int:
              "처음 한 번만 웹 화면에서 [연결 준비] → [내 AI 실행] 을 눌러 주세요.\n"
              "그 다음부터는 이 아이콘으로 바로 열립니다.")
         return 2
+    # ⚠ 경로도 **여기서 한 번 더** 거른다. `parse_scheme_url` 이 이미 걸렀지만 이 값은
+    #   `--path` 로도 들어올 수 있고, base 검증을 딥링크·파일 양쪽에 건 것과 같은 이유다 —
+    #   한쪽만 검사하면 공격자는 검사하지 않는 쪽으로 넣는다.
     plan = core.ConnectPlan(base=args.base.rstrip("/"), token=args.token,
-                            ca_sha256=args.ca_sha256, agent_sha256=args.agent_sha256)
+                            ca_sha256=args.ca_sha256, agent_sha256=args.agent_sha256,
+                            path=core.safe_app_path(args.path) or "/")
 
     # ⚠ 스킴 URL 은 브라우저를 통해 들어온다 — 남이 만든 링크일 수 있다. 전에 쓰던 서버와
     #   다르면 **묻는다**. 첫 연결은 물을 근거가 없어 통과시킨다(core.server_changed 참조).
@@ -729,6 +747,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"  이번: {plan.base}\n\n"
                 "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
             return 3
+        # ⚠ **동봉값 대조를 딥링크에도 건다** (적대 리뷰 2026-09-08 2R-C2).
+        #   `server_changed` 는 `pinned_server` 가 없으면 `None` 을 돌려준다(첫 연결은 물을
+        #   근거가 없다). 그래서 **설치 직후·연결 성공 전** 클라이언트에서는 남이 만든
+        #   `open?base=https://evil…` 링크가 **확인창 없이** DQA 브랜드 창에 남의 origin 을
+        #   띄우고, 이어서 `remember_base` 가 그것을 적어 둔다.
+        #   더 강한 근거(설치 시 우리가 넣은 `service.json`)가 이미 코드에 있고 무인 실행
+        #   분기는 그것을 쓰는데, **더 신뢰가 낮은 입력(남이 만든 링크)에는 걸지 않는** 비대칭
+        #   이었다. 정상 사용에서는 base 가 동봉값과 같으므로 이 창은 뜨지 않는다.
+        bundled_link = core.bundled_service_base()
+        if bundled_link and plan.base != bundled_link and not confirm(
+                f"이 프로그램에 들어 있는 주소와 다른 곳을 열려고 합니다.\n\n"
+                f"  설치 시:  {bundled_link}\n"
+                f"  이 링크:  {plan.base}\n\n"
+                "직접 요청한 것이 아니라면 [아니요] 를 누르세요."):
+            return 3
 
     # ⚠ 잠금은 **이 프레임이 살아 있는 동안** 유지된다. 이름 없는 값으로 받으면 즉시
     #   수거되어 잠금이 풀린다(`core.acquire_single_instance` 의 경고).
@@ -736,7 +769,10 @@ def main(argv: list[str] | None = None) -> int:
     if lock is None:
         # ⚠ 대화상자로 답하지 않는다. 사용자는 **앱을 열려고** 아이콘을 눌렀다 — 먼저 뜬
         #   쪽에 창을 열라고 남기고 조용히 끝낸다(`core.request_show`).
-        core.request_show(plan.home)
+        # ⚠ 목적지를 **함께** 남긴다. 이 프로그램은 상주하므로 「앱에서 열기」의 흔한 경로가
+        #   바로 이 분기다 — 여기서 경로를 버리면 사용자는 눌렀던 그 대화가 아니라 서비스
+        #   루트를 보고, 자기가 어디서 왔는지 스스로 되짚어야 한다.
+        core.request_show(plan.home, plan.path)
         return 0
     # 여기까지 왔으면 사용자가 이 주소를 **받아들였고**, 이 프로세스가 유일하다.
     # ⚠ 기록은 **잠금을 잡은 뒤에** 한다 (codex 적대 리뷰 2026-09-04). 잠금 밖에서 쓰면 두
@@ -821,7 +857,7 @@ def _run_embedded(plan: core.ConnectPlan) -> "int | None":
 
     br = bridge.Bridge(plan, notify=_notify, confirm=confirm)
     br.start()
-    url = appwindow.panel_url(plan.base, br.port, br.nonce)
+    url = appwindow.panel_url(plan.base, br.port, br.nonce, plan.path)
     shell = window_mod.Shell(url, title=core.DISPLAY_NAME,
                              storage=str(plan.home / "window"))
     tray = _start_embedded_tray(shell, br)
@@ -836,8 +872,8 @@ def _run_embedded(plan: core.ConnectPlan) -> "int | None":
     # 업데이트 설치는 실행 중인 exe 를 갈아 끼우므로 **우리가 비켜 줘야** 한다.
     br.on_quit = shell.quit
     stop = threading.Event()
-    threading.Thread(target=_watch_show_requests, args=(plan.home, shell, stop),
-                     daemon=True).start()
+    threading.Thread(target=_watch_show_requests,
+                     args=(plan.home, shell, stop, plan, br), daemon=True).start()
     _start_update_watch(br, tray, stop)
     try:
         opened = shell.run()          # 주 스레드 — 창이 닫힐 때까지 돌아오지 않는다
@@ -984,16 +1020,25 @@ def _start_update_watch(br, tray, stop: threading.Event) -> None:
     threading.Thread(target=loop, name="dqa-update-watch", daemon=True).start()
 
 
-def _watch_show_requests(home, shell, stop: threading.Event,
+def _watch_show_requests(home, shell, stop: threading.Event, plan=None, br=None,
                          every: float = 0.5) -> None:
     """두 번째 실행이 남긴 「창을 열어 달라」를 읽어 창을 되살린다.
 
     ⚠ 내장 창에는 주 스레드 루프가 없다(그 자리를 GUI 가 쓴다). 그래서 이 폴링이 **별도
     스레드**다 — 브라우저 껍데기가 자기 루프 안에서 하던 일과 같은 계약이다.
+
+    ⚠ **목적지가 실려 오면 그리로 옮긴 뒤 보인다.** 순서가 반대면 사용자는 이전 화면을
+    한 번 본 뒤 페이지가 갈아 끼워지는 것을 보게 된다 — 「엉뚱한 곳이 열렸다」로 읽힌다.
+    이동에 실패해도 **창은 반드시 띄운다**: 사용자가 요청한 최소 결과가 그것이고, 창조차
+    안 뜨면 「눌렀는데 아무 일도 없다」가 된다.
     """
     while not stop.wait(every):
-        if core.take_show_request(home):
-            shell.show()
+        dest = core.take_show_request(home)
+        if not dest:
+            continue
+        if dest != "/" and plan is not None and br is not None:
+            shell.navigate(appwindow.panel_url(plan.base, br.port, br.nonce, dest))
+        shell.show()
 
 
 def _run_browser_shell(plan: core.ConnectPlan) -> int:
@@ -1026,7 +1071,7 @@ def _run_browser_shell(plan: core.ConnectPlan) -> int:
 
     br = bridge.Bridge(plan, notify=_notify, confirm=confirm)
     br.start()
-    url = appwindow.panel_url(plan.base, br.port, br.nonce)
+    url = appwindow.panel_url(plan.base, br.port, br.nonce, plan.path)
     exe = appwindow.app_mode_browser()
     proc = appwindow.open_app_window(url, exe)
     if proc is None:
@@ -1059,8 +1104,13 @@ def _run_browser_shell(plan: core.ConnectPlan) -> int:
     update_stop = threading.Event()
     _start_update_watch(br, tray, update_stop)
     try:
+        # ⚠ `reopen` 이 **목적지를 받는다.** 인자 없이 고정 url 만 열면, 상주 중에 온
+        #   「이 대화를 앱에서 열기」가 직전 화면으로 열린다(§P0-R — 안내가 가리키는 것과
+        #   실제가 갈린다). 목적지가 없으면 종전 url 그대로다.
         _serve_confirms(asks, br, tray=tray,
-                        reopen=lambda: appwindow.open_app_window(url, exe))
+                        reopen=lambda dest="/": appwindow.open_app_window(
+                            url if dest == "/" else appwindow.panel_url(
+                                plan.base, br.port, br.nonce, dest), exe))
     finally:
         update_stop.set()
         if tray is not None:
@@ -1157,8 +1207,10 @@ def _serve_confirms(asks, br, idle_limit: float = 90.0, tray=None,
             #   없는데 계속 살아 있으면 사용자가 끌 수단이 없다.
             break
         # 두 번째 실행이 「창을 열어 달라」고 남겼는가. 아이콘을 다시 누른 그 경로다.
-        if reopen is not None and core.take_show_request(br.plan.home):
-            reopen()
+        if reopen is not None:
+            dest = core.take_show_request(br.plan.home)
+            if dest:
+                reopen(dest)
         try:
             message, reply = asks.get(timeout=0.5)
         except _queue.Empty:

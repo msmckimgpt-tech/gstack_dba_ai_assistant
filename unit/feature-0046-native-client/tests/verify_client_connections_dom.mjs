@@ -17,7 +17,11 @@ const wsl = {id:"claude (WSL · Ubuntu · alice)", name:"claude", where:"wsl", d
 const codex = {id:"codex (WSL · Ubuntu · root)", name:"codex", where:"wsl", distro:"Ubuntu", user:"root", path:"/root/bin/codex", usable:true};
 let serial = 0;
 async function scenario({runtimes=[win,codex], preferences={}, fail=false, tokenFail=false, legacy=false, progressive=false, standalone=false, coordinates=true, resident=true, bridgeGone=false, pendingAck=false, ackFailure=false}={}) {
-  const dom = new JSDOM(readFileSync(`${staticRoot}/${standalone ? "ai-connect" : "index"}.html`, "utf8"), {url:"https://service.test/"+(coordinates?"?client_port=1234&client_nonce=secret":"")});
+  // ⚠ nonce 는 **브리지가 실제로 만드는 규격**이어야 한다 — `secrets.token_urlsafe(24)` 는
+  //   32자 URL-safe 다(`client/bridge.py`). 좌표 «모양 검사»(쿼리 스머글링 탐지,
+  //   2026-09-08 share-client-entry)가 규격 밖 값을 거부하므로, 짧은 가짜 값을 쓰면
+  //   이 하네스가 제품과 다른 것을 재게 된다(패널이 뜨지 않아 전건 실패한다).
+  const dom = new JSDOM(readFileSync(`${staticRoot}/${standalone ? "ai-connect" : "index"}.html`, "utf8"), {url:"https://service.test/"+(coordinates?"?client_port=1234&client_nonce=Nn7xQ2vK8pL3sT9bY1wJ4hR6dF0gM5cZ":"")});
   for (const name of ["document","location","history","sessionStorage","URLSearchParams","Event","HTMLElement"]) global[name] = dom.window[name];
   global.window = dom.window;
   global.setInterval = () => 0;
