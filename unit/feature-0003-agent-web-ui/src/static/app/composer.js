@@ -1131,6 +1131,10 @@ async function _syncConversationAttachmentsToBucket(convId) {
           root_attachment_id: Number(a.root_attachment_id || aid),
           // REQ-20260713: 클라이언트 해시 대조 dedup 용(히스토리 로드 후 재추가 정밀 판정).
           sha256: a.sha256 || null,
+          // attach-folder-tree: 서버가 보존한 폴더 경로. 없으면 null(단일 파일).
+          // 이 값이 있어야 대화를 다시 연 뒤에도 목록이 폴더로 묶여 보이고, 같은 이름의
+          // 다른 폴더 파일을 다시 올릴 때 dedup 이 오탐하지 않는다.
+          relative_path: a.relative_path || null,
         });
         existingIds.add(aid);
       }
@@ -1178,9 +1182,14 @@ function _renderAttachmentPills() {
   const _buildPill = (it, isSession) => {
     const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
     const safeName = String(it.name || "unnamed");
+    // attach-folder-tree: 폴더 첨부는 **어느 폴더의 파일인가**가 파일명만큼 중요하다 —
+    // `config.json` 이 셋 있을 때 이름만 보이면 어느 것이 무엇인지 알 수 없다.
+    const relPath = String(it.relative_path || "");
+    const folderPath = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+    const displayPath = relPath || safeName;
     const titleText = it.status === "failed"
       ? "업로드 실패: " + (it.error || "알 수 없는 오류")
-      : (it.status === "staged" ? `${safeName} (첫 메시지와 함께 업로드)` : safeName);
+      : (it.status === "staged" ? `${displayPath} (첫 메시지와 함께 업로드)` : displayPath);
 
     const pill = document.createElement("span");
     pill.className = "composer-attachment-pill" + (isSession ? " session-source" : "");
@@ -1198,7 +1207,21 @@ function _renderAttachmentPills() {
     sizeEl.className = "pill-size";
     sizeEl.textContent = `${sizeKb} KB`;
 
-    pill.append(nameEl, sizeEl);
+    // attach-folder-tree (§18.8 ux [P2]): 순서는 **이름 · 폴더 · 크기** 다 — 폴더는 식별자이고
+    // 크기는 아니다. 크기를 식별자 앞에 두면 좁은 패널에서 구분에 쓰이는 정보가 먼저 밀린다.
+    pill.append(nameEl);
+
+    // 폴더 안 파일이면 부모 폴더를 배지로 붙인다. 배지 텍스트는 **마지막 두 단**까지 보여
+    // `src/utils` 와 `test/utils` 가 둘 다 `utils` 로 보이던 것을 가른다(전체 경로는 title).
+    if (folderPath) {
+      const folderEl = document.createElement("span");
+      folderEl.className = "pill-folder";
+      const segs = folderPath.split("/").filter(Boolean);
+      folderEl.textContent = segs.slice(-2).join("/");
+      folderEl.title = folderPath;
+      pill.appendChild(folderEl);
+    }
+    pill.appendChild(sizeEl);
 
     // TASK-0274: assistant 수정본 / 버전 배지. version>1 또는 assistant 생성 시 표시.
     const versionNum = Number(it.version_number || 1);
@@ -1290,6 +1313,128 @@ function _discardPendingAttachmentPill(attachmentId) {
 // attach-multi-upload: 업로드 1건의 결과 코드. 배치 호출부(_uploadComposerAttachments)가
 // 이 값을 집계해 **요약 1회**로 알린다 — 파일마다 토스트를 띄우면 단일 토스트 엘리먼트가
 // 서로를 덮어써 마지막 1건만 남고, 22개 폴더 업로드에서 무슨 일이 일어났는지 알 수 없다.
+// attach-folder-tree: 폴더 첨부에서 한 파일이 실어 나르는 것은 File 하나가 아니라
+// **(File, 폴더 루트 기준 상대 경로)** 쌍이다. 업로드 경로 전체가 그 쌍을 다루도록
+// 입력을 한 형태로 모은다 — 기존 호출부는 File 을 그대로 넘기므로 하위호환이 필요하다.
+//
+//   File                        → { file, relativePath: file.webkitRelativePath || "" }
+//   { file, relativePath }      → 그대로 (드롭된 디렉토리 순회가 만드는 형태)
+//
+// `webkitRelativePath` 는 `<input webkitdirectory>` 로 고른 File 에만 채워지고, 드래그된
+// 디렉토리에서 꺼낸 File 에는 **비어 있다**(그래서 순회가 경로를 따로 만들어 붙인다).
+// §18.8 backend [P2]: 서버 응답의 경로가 **권위**다. `resp.relative_path || <클라이언트 값>`
+// 는 서버의 «의도적 거절»(정규화 결과 폴더 아님 → null)과 «필드 부재»를 구분하지 못해, 서버가
+// 버린 폴더를 화면만 계속 보여 준다 — 그 상태로 `_lineageKeyOf` 가 DB 에 없는 경로로 묶으면
+// 새로고침 순간 항목이 사라진 것처럼 보인다. 세 병합 지점이 같은 규칙을 쓰게 한 곳에 모은다.
+function _mergeServerRelativePath(resp, clientValue) {
+  if (resp && Object.prototype.hasOwnProperty.call(resp, "relative_path")) {
+    return resp.relative_path || null;
+  }
+  return clientValue || null;
+}
+
+function _toAttachUploadItem(x) {
+  if (!x) return null;
+  if (x instanceof File) {
+    return { file: x, relativePath: String(x.webkitRelativePath || "") };
+  }
+  if (x.file instanceof File) {
+    return { file: x.file, relativePath: String(x.relativePath || x.file.webkitRelativePath || "") };
+  }
+  return null;
+}
+
+// attach-folder-tree: 한 번에 올릴 수 있는 파일 수 상한. 폴더를 통째로 끌어다 놓으면
+// node_modules 처럼 수천 개가 딸려올 수 있는데, 업로드는 파일당 1 요청이라 그대로 두면
+// 브라우저와 서버 양쪽이 수천 왕복을 한다. 상한을 넘으면 **자르지 않고 멈춘 뒤 알린다** —
+// 조용히 일부만 올리면 사용자는 전부 올라간 줄 알고 assistant 에게 없는 파일을 묻는다.
+const ATTACH_FOLDER_MAX_FILES = 300;
+
+// §18.8 ux [P2]: 상한 안내를 **한 문장으로 통일**한다. 진입점 3곳(폴더 선택·채팅 드롭·컴포저
+// 폴백)이 서로 다른 문구를 쓰면 같은 제약이 세 규칙처럼 보인다. `total` 을 아는 경로(폴더
+// 선택)는 규모를 말하고, 순회가 중간에 멈춰 총계를 모르는 드롭 경로는 "300개를 넘습니다" 로
+// 정직하게 적는다 — 모르는 수를 지어내지 않는다.
+function _attachFolderTooManyMessage(total = 0) {
+  const scale = total > 0 ? `파일이 ${total}개입니다` : `파일이 ${ATTACH_FOLDER_MAX_FILES}개를 넘습니다`;
+  return `폴더에 ${scale} — 한 번에 ${ATTACH_FOLDER_MAX_FILES}개까지 첨부할 수 있습니다. `
+    + "하위 폴더를 나눠서 올려 주세요.";
+}
+
+// attach-folder-tree: 드롭된 항목에서 (File, 상대경로) 목록을 만든다. 디렉토리는 재귀 순회.
+// `webkitGetAsEntry()` 는 Chromium·Firefox·Safari 가 모두 지원하는 사실상 표준이고,
+// 이것 없이는 `dataTransfer.files` 가 **폴더를 통째로 버린다**(드롭해도 아무 일이 없다).
+//
+// 반환: { items, truncated } — truncated=true 면 상한에 걸려 순회를 멈춘 것.
+async function _collectDroppedUploadItems(dataTransfer) {
+  const out = [];
+  let truncated = false;
+  const entries = [];
+  const dtItems = Array.from(dataTransfer?.items || []);
+  for (const it of dtItems) {
+    if (it.kind !== "file") continue;
+    const entry = (typeof it.webkitGetAsEntry === "function") ? it.webkitGetAsEntry() : null;
+    if (entry) entries.push(entry);
+  }
+  // webkitGetAsEntry 를 못 쓰는 환경 — 평평한 파일 목록으로 폴백(폴더는 여전히 못 받는다).
+  if (!entries.length) {
+    return {
+      items: Array.from(dataTransfer?.files || []).map(_toAttachUploadItem).filter(Boolean),
+      truncated: false,
+    };
+  }
+
+  const readEntryFile = (fileEntry) => new Promise((resolve) => {
+    try { fileEntry.file((f) => resolve(f), () => resolve(null)); } catch (_e) { resolve(null); }
+  });
+  // readEntries() 는 한 번에 전부 주지 않는다(구현별 100개 단위) — 빈 배열이 올 때까지 반복해야
+  // 한다. 이 반복을 빠뜨리면 큰 폴더의 뒷부분이 조용히 사라진다.
+  //
+  // §18.8 ux [P2]: 다만 **열거 자체에도 상한**이 필요하다. 파일 수 컷(300)은 `isFile` 분기에서만
+  // 검사되므로, 한 디렉토리에 5만 개가 있으면 그 5만 엔트리를 전부 메모리에 쌓은 **뒤에야**
+  // 첫 파일이 판정된다 — 300 상한을 도입한 근거(`node_modules`)가 바로 그 형태다.
+  const ENUM_CAP = ATTACH_FOLDER_MAX_FILES * 10;
+  const readAllDirEntries = (reader) => new Promise((resolve) => {
+    const acc = [];
+    const step = () => {
+      try {
+        reader.readEntries((batch) => {
+          if (!batch || !batch.length) { resolve(acc); return; }
+          acc.push(...batch);
+          if (acc.length >= ENUM_CAP) { resolve(acc); return; }
+          step();
+        }, () => resolve(acc));
+      } catch (_e) { resolve(acc); }
+    };
+    step();
+  });
+
+  const walk = async (entry, prefix) => {
+    if (!entry || truncated) return;
+    if (entry.isFile) {
+      if (out.length >= ATTACH_FOLDER_MAX_FILES) { truncated = true; return; }
+      const f = await readEntryFile(entry);
+      if (f) out.push({ file: f, relativePath: prefix ? `${prefix}/${entry.name}` : "" });
+      return;
+    }
+    if (entry.isDirectory) {
+      const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const children = await readAllDirEntries(entry.createReader());
+      for (const child of children) {
+        if (truncated) return;
+        // eslint-disable-next-line no-await-in-loop
+        await walk(child, nextPrefix);
+      }
+    }
+  };
+
+  for (const entry of entries) {
+    if (truncated) break;
+    // eslint-disable-next-line no-await-in-loop
+    await walk(entry, "");
+  }
+  return { items: out, truncated };
+}
+
 const ATTACH_UPLOAD_RESULT = {
   UPLOADED: "uploaded",
   SKIPPED_DUPLICATE: "skipped-duplicate",
@@ -1299,6 +1444,9 @@ const ATTACH_UPLOAD_RESULT = {
 };
 
 async function _uploadComposerAttachment(file, opts = {}) {
+  // attach-folder-tree: 폴더 첨부면 폴더 루트 기준 상대 경로가 함께 온다(없으면 빈 문자열
+  // = 단일 파일). 서버가 정규화·검증하므로 여기서는 운반만 한다.
+  const _relPath = String(opts.relativePath || file?.webkitRelativePath || "");
   // TASK-0124 de-duplication → REQ-20260713-attach-user-version: 이름+크기 차단을 **해시 대조**로
   // 정밀화한다. 같은 이름의 파일이라도 내용이 다르면(sha256 불일치) 통과시켜 백엔드가 새 버전으로
   // 편입하게 하고, 내용이 완전히 동일할 때만 중복 차단한다(기존 안티-중복 의도 보존). 새 파일 해시는
@@ -1311,8 +1459,11 @@ async function _uploadComposerAttachment(file, opts = {}) {
   const _deupKey = _composerAttachmentKey(state.activeConversationId);
   const _dedupBucket = state.composerAttachments.byConv[_deupKey];
   if (_dedupBucket && file) {
+    // attach-folder-tree: 중복 판정 축에 **경로**를 더한다. 이름·크기만 보면
+    // `src/config.json` 을 올린 뒤 `test/config.json` 이 "이미 첨부됨" 으로 조용히 버려진다.
     const _sameNameSize = _dedupBucket.items.filter(
-      (it) => it.name === (file.name || "unnamed") && it.size === (Number(file.size) || 0) && it.status !== "failed"
+      (it) => it.name === (file.name || "unnamed") && it.size === (Number(file.size) || 0)
+        && String(it.relative_path || "") === _relPath && it.status !== "failed"
     );
     if (_sameNameSize.length) {
       let _newHash = null;
@@ -1365,7 +1516,7 @@ async function _uploadComposerAttachment(file, opts = {}) {
     if (state.composerAttachments.lazyConvCreating) {
       const localId = state.composerAttachments.nextLocalId;
       state.composerAttachments.nextLocalId -= 1;
-      bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file, source: "new" });
+      bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file, relative_path: _relPath || null, source: "new" });
       _renderAttachmentPills();
       _toast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
       return ATTACH_UPLOAD_RESULT.STAGED;
@@ -1374,7 +1525,7 @@ async function _uploadComposerAttachment(file, opts = {}) {
     let _lazyOutcome = ATTACH_UPLOAD_RESULT.FAILED;
     const localId = state.composerAttachments.nextLocalId;
     state.composerAttachments.nextLocalId -= 1;
-    bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true, source: "new" });
+    bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true, relative_path: _relPath || null, source: "new" });
     state.composerAttachments.uploadingCount += 1;
     _renderAttachmentPills();
     const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
@@ -1412,10 +1563,11 @@ async function _uploadComposerAttachment(file, opts = {}) {
       const uploadBucket = state.composerAttachments.byConv[earlyCid];
       const formData = new FormData();
       formData.append("file", file);
+      if (_relPath) formData.append("relative_path", _relPath);
       const resp = await apiFetch(`/api/conversations/${encodeURIComponent(earlyCid)}/attachments`, { method: "POST", body: formData, headers: {} });
       if (resp && Number(resp.id) > 0) {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
-        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new", sha256: resp.sha256 || null, version_number: Number(resp.version_number || 1) };
+        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new", sha256: resp.sha256 || null, version_number: Number(resp.version_number || 1), relative_path: _mergeServerRelativePath(resp, _relPath) };
         _toast(_attachUploadDoneMessage(resp, file.name || "unnamed"));
         _lazyOutcome = resp.reused_existing_version
           ? ATTACH_UPLOAD_RESULT.SKIPPED_DUPLICATE
@@ -1451,6 +1603,8 @@ async function _uploadComposerAttachment(file, opts = {}) {
     size: Number(file.size) || 0,
     status: "uploading",
     selected: true,
+    // attach-folder-tree: 낙관적 pill 도 경로를 들고 있어야 dedup·그룹 표시가 즉시 맞는다.
+    relative_path: _relPath || null,
     source: "new",
   };
   bucket.items.push(optimistic);
@@ -1461,6 +1615,7 @@ async function _uploadComposerAttachment(file, opts = {}) {
   try {
     const formData = new FormData();
     formData.append("file", file);
+    if (_relPath) formData.append("relative_path", _relPath);
     const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`, {
       method: "POST",
       body: formData,
@@ -1482,6 +1637,7 @@ async function _uploadComposerAttachment(file, opts = {}) {
           source: "new",
           sha256: resp.sha256 || null,
           version_number: Number(resp.version_number || 1),
+          relative_path: _mergeServerRelativePath(resp, optimistic.relative_path),
         };
       }
       _toast(_attachUploadDoneMessage(resp, optimistic.name));
@@ -1514,35 +1670,70 @@ async function _uploadComposerAttachment(file, opts = {}) {
 //   갱신하는 구조라(app.js showToast) 파일마다 띄우면 서로를 덮어써 마지막 1건만 남는다.
 // 반환: 집계 결과 객체(테스트·호출부 검증용).
 async function _uploadComposerAttachments(files) {
-  const list = Array.from(files || []).filter(Boolean);
-  const tally = { total: list.length, uploaded: 0, skipped: 0, staged: 0, blocked: 0, failed: 0 };
+  // attach-folder-tree: 입력은 File[] 또는 {file, relativePath}[] — 둘 다 받아 한 형태로 모은다
+  // (파일 첨부/드롭은 File, 폴더 순회는 경로가 붙은 객체를 준다).
+  const list = Array.from(files || []).map(_toAttachUploadItem).filter(Boolean);
+  const tally = { total: list.length, uploaded: 0, skipped: 0, staged: 0, blocked: 0, failed: 0,
+                  // §18.8 ux [P2]: 대표 실패 사유. 배치에서는 개별 토스트가 억제되므로 사유가
+                  // 요약에 없으면 사용자는 실패 pill 을 하나하나 호버해야만 원인을 안다
+                  // (용량 상한 초과처럼 **행동이 갈리는** 사유가 조용히 사라진다).
+                  failReason: "" };
   if (!list.length) return tally;
   const batch = list.length > 1;
-  for (const file of list) {
+  for (const item of list) {
     // 파일 사이 race 방지를 위해 await 직렬 (버킷·lazy-create 상태 공유).
     // eslint-disable-next-line no-await-in-loop
-    const result = await _uploadComposerAttachment(file, { silent: batch });
+    const result = await _uploadComposerAttachment(item.file, { silent: batch, relativePath: item.relativePath });
     if (result === ATTACH_UPLOAD_RESULT.UPLOADED) tally.uploaded += 1;
     else if (result === ATTACH_UPLOAD_RESULT.SKIPPED_DUPLICATE) tally.skipped += 1;
     else if (result === ATTACH_UPLOAD_RESULT.STAGED) tally.staged += 1;
     else if (result === ATTACH_UPLOAD_RESULT.BLOCKED) tally.blocked += 1;
-    else tally.failed += 1;
+    else {
+      tally.failed += 1;
+      if (!tally.failReason) {
+        // 방금 실패한 항목의 서버 사유를 버킷에서 되찾는다(첫 사유를 대표로 삼는다).
+        const _k = _composerAttachmentKey(state.activeConversationId);
+        const _b = state.composerAttachments.byConv[_k];
+        const _failed = (_b?.items || []).filter((it) => it.status === "failed" && it.error);
+        if (_failed.length) tally.failReason = String(_failed[_failed.length - 1].error);
+      }
+    }
   }
-  if (batch) showToast(_attachBatchSummaryMessage(tally), tally.failed > 0 || tally.blocked > 0);
+  if (batch) {
+    // attach-folder-tree: 폴더 첨부는 "몇 개 폴더" 가 사용자가 기억하는 단위다 — 파일 수만
+    // 말하면 무엇을 올렸는지 대조할 수 없다.
+    const _inFolder = list.filter((it) => String(it.relativePath || "").includes("/"));
+    const folderCount = new Set(
+      _inFolder.map((it) => String(it.relativePath).split("/")[0])
+    ).size;
+    // §18.8 ux [P3]: 분모를 전체(t.total)로 쓰면 낱개 파일이 섞였을 때 폴더가 실제보다 커
+    // 보인다 — 폴더 안 파일 수를 따로 센다.
+    tally.inFolder = _inFolder.length;
+    showToast(_attachBatchSummaryMessage(tally, folderCount), tally.failed > 0 || tally.blocked > 0);
+  }
   return tally;
 }
 
 // attach-multi-upload: 배치 업로드 요약 문구. "건너뜀"은 오류가 아니라 변경 없음을 뜻한다 —
 // 사용자가 폴더 전체를 다시 올리는 흐름에서 대부분이 건너뜀이 되는 것이 정상이다.
-function _attachBatchSummaryMessage(t) {
+function _attachBatchSummaryMessage(t, folderCount = 0) {
   const parts = [];
   if (t.uploaded) parts.push(`${t.uploaded}개 업로드`);
   if (t.staged) parts.push(`${t.staged}개 첨부 대기`);
   if (t.skipped) parts.push(`${t.skipped}개 변경 없음(건너뜀)`);
-  if (t.failed) parts.push(`${t.failed}개 실패`);
+  if (t.failed) {
+    const _why = String(t.failReason || "").trim();
+    parts.push(_why ? `${t.failed}개 실패(${_why})` : `${t.failed}개 실패`);
+  }
   if (t.blocked) parts.push(`${t.blocked}개 차단`);
-  if (!parts.length) return `첨부 ${t.total}개 — 처리된 항목 없음`;
-  return `첨부 ${t.total}개 중 ${parts.join(" · ")}`;
+  const _loose = Math.max(0, Number(t.total || 0) - Number(t.inFolder || 0));
+  const subject = folderCount > 0
+    ? (_loose > 0
+        ? `폴더 ${folderCount}개(파일 ${t.inFolder}개) + 파일 ${_loose}개`
+        : `폴더 ${folderCount}개(파일 ${t.inFolder}개)`)
+    : `첨부 ${t.total}개`;
+  if (!parts.length) return `${subject} — 처리된 항목 없음`;
+  return `${subject} 중 ${parts.join(" · ")}`;
 }
 
 // REQ-20260713-attach-user-version: 업로드 응답의 버전 상태에 따른 완료 toast 메시지.
@@ -1582,6 +1773,10 @@ async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
     try {
       const formData = new FormData();
       formData.append("file", staged._localFile);
+      // attach-folder-tree: staged 단계에서 붙잡아 둔 경로를 그대로 실어 보낸다 — 여기서
+      // 빠뜨리면 "첫 메시지와 함께 업로드" 흐름의 폴더 첨부만 구조를 잃는다(경로 있는 업로드와
+      // 없는 업로드가 갈려 체인 스코프까지 어긋난다).
+      if (staged.relative_path) formData.append("relative_path", String(staged.relative_path));
       const resp = await apiFetch(`/api/conversations/${encodeURIComponent(targetCid)}/attachments`, {
         method: "POST",
         body: formData,
@@ -1602,6 +1797,7 @@ async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
           source: "new",
           sha256: resp.sha256 || null,
           version_number: Number(resp.version_number || 1),
+          relative_path: _mergeServerRelativePath(resp, staged.relative_path),
         });
         uploadedIds.push(Number(resp.id));
       } else {
@@ -2487,9 +2683,18 @@ async function _loadConversationAttachmentList(convId) {
     // 서버 왕복 없이 목록 자체로 판정한다 — 행마다 `root_attachment_id`·`version_count`·
     // `branched_from_attachment_id` 가 이미 실려 온다. 목록은 계보당 **head 한 행**이므로
     // 파일명으로 묶으면 그것이 곧 계보 집합이다.
+    // attach-folder-tree (§18.8 ux [P1]): 묶는 기준은 **백엔드 체인 스코프와 같은 술어**여야
+    // 한다 — `shared/attachment_path.path_or_filename` 이 `relative_path || original_filename`
+    // 이고, `_find_latest_same_name_attachment` 도 그것으로 스코프한다. 프론트만 basename 으로
+    // 묶으면 `src/config.json` 과 `test/config.json` 이 한 카드에 「계보 2개」로 묶여
+    // 「⇄ 계보 비교」가 무관한 두 파일을 버전처럼 diff 한다 — 백엔드가 "다른 파일" 이라고
+    // 고친 것을 화면이 "같은 파일" 이라고 되돌리는 셈이다.
+    const _lineageKeyOf = (x) => String(x?.relative_path || x?.original_filename || "");
     const _lineageByName = new Map();
     for (const x of arr) {
-      const nm = String(x.original_filename || "");
+      // 키는 경로 우선이지만 **빈 키 제외 규칙은 그대로**다 — 이름도 경로도 없는 첨부가
+      // `""` 한 키로 모이면 서로 무관한 것들이 한 카드 안에서 "같은 파일의 갈래" 로 단정된다.
+      const nm = _lineageKeyOf(x) || String(x.original_filename || "");
       // REQ-20260831-attach-lineage-visibility: **이름 없는 첨부는 묶지 않는다**.
       //
       // 종전에는 빈 이름이 전부 `""` 한 키로 모여 서로 무관한 첨부들이 "같은 이름의 계보" 로
@@ -2515,7 +2720,7 @@ async function _loadConversationAttachmentList(convId) {
     const _emittedGroups = new Set();
     const _orderedArr = [];
     for (const x of arr) {
-      const nm = String(x.original_filename || "");
+      const nm = _lineageKeyOf(x);
       const grp = _lineageByName.get(nm) || [x];
       if (grp.length < 2) { _orderedArr.push(x); continue; }
       if (_emittedGroups.has(nm)) continue;   // 이미 그룹으로 통째 방출됨
@@ -2565,7 +2770,7 @@ async function _loadConversationAttachmentList(convId) {
         verBadge = ` <span class="attach-list-item-ver${isAi ? " ai-edited" : ""}" title="${title}">${escapeHtml(label)}</span>`;
       }
       // REQ-20260828-attach-lineage-ui: 같은 이름의 계보 지형을 이 행에 새긴다.
-      const _sibs = _lineageByName.get(String(a.original_filename || "")) || [a];
+      const _sibs = _lineageByName.get(_lineageKeyOf(a)) || [a];
       const _linTotal = _sibs.length;
       const _linIdx = Math.max(1, _sibs.findIndex((x) => Number(x.id) === Number(a.id)) + 1);
       const _hasSiblings = _linTotal > 1;
@@ -2639,8 +2844,11 @@ async function _loadConversationAttachmentList(convId) {
       // 카드는 **첫 멤버에서 한 번** 만들고 나머지 멤버가 재사용한다. 만들면서 곧바로 목록에
       // 붙이므로 카드의 자리 = 첫 멤버가 원래 있던 자리다(목록 전체 순서 보존).
       if (_hasSiblings) {
-        const _gname = String(a.original_filename || "");
-        let _card = _groupCards.get(_gname);
+        // 카드 키는 그룹 키(경로 우선)와 같아야 하고, 카드에 **보이는 이름**도 경로가 있으면
+        // 경로여야 한다 — 같은 basename 카드가 둘 나란히 서면 어느 폴더 것인지 알 수 없다.
+        const _gkey = _lineageKeyOf(a);
+        const _gname = _gkey;
+        let _card = _groupCards.get(_gkey);
         if (!_card) {
           // codex P3: 행 아이콘을 걷어냈으므로 머리 아이콘이 **그룹 전체**를 대표하게 된다.
           // 형제들의 kind 가 갈리는 경계 데이터에서 첫 행의 종류만 남으면 카드가 나머지를
@@ -2648,7 +2856,7 @@ async function _loadConversationAttachmentList(convId) {
           const _kinds = new Set(_sibs.map((x) => String(x?.kind || "")));
           _card = _attachLineageGroupCard(
             _gname, _linTotal, _kinds.size === 1 ? kindIcon(a.kind) : "📎");
-          _groupCards.set(_gname, _card);
+          _groupCards.set(_gkey, _card);
           listEl.appendChild(_card.el);
           // 그룹 레벨 비교 — **계보를 펼치지 않고** 바로 계보 간 비교로 들어간다.
           // 모달은 `/versions` 응답의 `lineages` 를 필요로 하므로 첫 계보 head 로 한 번
@@ -2771,12 +2979,29 @@ async function _loadConversationAttachmentList(convId) {
       const _verBadgeRow = (_hasSiblings && isAi && verBadge)
         ? ` <span class="attach-list-item-ver ai-edited" title="AI가 수정한 최신 버전">v${verNum}</span>`
         : verBadge;
+      // attach-folder-tree (§18.8 ux [P1]): **사용자가 여는 목록**에도 폴더를 보여 준다.
+      //
+      // 컴포저 pill(업로드 직후)에만 배지를 달면, 목록 패널을 열거나 대화를 다시 연 순간
+      // 폴더 정보가 사라진다 — 이 패널은 서버 목록으로 통째로 다시 그려지기 때문이다
+      // (같은 패널을 두 렌더러가 쓰는 구조: 위 `_renderAttachmentPills` 주석 참조).
+      // 「디렉토리 트리를 보존한다」면서 그것을 보는 것이 모델뿐이면 요청의 절반만 이룬 것이다.
+      // 폴더는 **메타줄**에 둔다 — 이름줄은 계보 라벨·버전 배지가 이미 다투는 자리다.
+      const _relPathRow = String(a.relative_path || "");
+      const _folderRow = _relPathRow.includes("/")
+        ? _relPathRow.slice(0, _relPathRow.lastIndexOf("/")) : "";
+      // 표시는 **마지막 두 단**까지 — 실 브라우저 캡처에서 전체 경로를 넣으니 말줄임이 뒤쪽
+      // (구분되는 쪽)을 잘라 `my-project/sr…` · `my-project/te…` 로 보였다. 컴포저 pill 과
+      // 같은 규칙을 쓴다(두 렌더러가 같은 사실을 같은 모양으로 말한다). 전체 경로는 title.
+      const _folderShort = _folderRow.split("/").filter(Boolean).slice(-2).join("/");
+      const _folderChip = _folderRow
+        ? ` <span class="attach-list-item-folder" title="${escapeHtml(_relPathRow)}">📁 ${escapeHtml(_folderShort)}</span>`
+        : "";
       item.innerHTML = `
         ${_hasSiblings ? "" : `<span class="attach-list-item-icon">${kindIcon(a.kind)}</span>`}
         <div class="attach-list-item-info">
           <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text${_hasSiblings ? (isAi ? " is-ai-lineage" : " is-user-lineage") : ""}">${escapeHtml(_rowLabel)}</span>${_verBadgeRow}${linBadge}</div>
           <div class="attach-list-item-meta">
-            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${sizeDeltaChip}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
+            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${sizeDeltaChip}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>${_folderChip}
             <span class="attach-list-item-actions">
               <button class="attach-list-item-dl" title="다운로드" aria-label="${nameSafe} 다운로드" data-id="${a.id}">⬇</button>
               ${a.can_manage ? `<button class="attach-list-item-del" title="삭제" aria-label="${nameSafe} 삭제" data-id="${a.id}">🗑</button>` : ""}
@@ -3013,11 +3238,36 @@ function _bindComposerAttachmentEvents() {
       // value 리셋을 업로드 **전에** 한다 — 업로드가 await 로 길어지는 동안 input 이
       // 이전 선택을 물고 있으면 같은 파일 재선택이 change 를 발화하지 않는다.
       ev.target.value = "";
-      if (files.length) {
-        await _uploadComposerAttachments(files);
+      if (!files.length) return;
+      // §18.8 ux [P2]: 같은 드롭업의 「폴더 첨부」와 드롭 경로는 연결 잠금을 검사하는데 이
+      // 경로만 통과시키면, 사용자는 한 칸 위에서 되던 일이 아래에서 막히는 것을 본다.
+      if (isComposeBlocked()) {
+        showToast("내 AI 가 연결되어 있지 않습니다. 연결한 뒤 파일을 첨부해 주세요.", true);
+        return;
       }
+      await _uploadComposerAttachments(files);
     });
   }
+  // attach-folder-tree: 폴더 선택 input. 각 File 의 `webkitRelativePath` 가 폴더 루트 기준
+  // 상대 경로를 들고 오므로 `_toAttachUploadItem` 이 그대로 집어 올린다.
+  const dirInput = document.getElementById("attachDirInput");
+  if (dirInput) {
+    dirInput.addEventListener("change", async (ev) => {
+      const files = Array.from(ev.target?.files || []);
+      ev.target.value = "";
+      if (!files.length) return;
+      if (isComposeBlocked()) {
+        showToast("내 AI 가 연결되어 있지 않습니다. 연결한 뒤 폴더를 첨부해 주세요.", true);
+        return;
+      }
+      if (files.length > ATTACH_FOLDER_MAX_FILES) {
+        showToast(_attachFolderTooManyMessage(files.length), true);
+        return;
+      }
+      await _uploadComposerAttachments(files);
+    });
+  }
+
   if (composerWrap) {
     let dragCounter = 0;
     composerWrap.addEventListener("dragenter", (ev) => {
@@ -3044,8 +3294,13 @@ function _bindComposerAttachmentEvents() {
       // chatPane 이 없는(구조 변경) 환경에서는 여기서 직접 전량 업로드해 기능 소실을 막는다.
       const chatPaneEl = document.getElementById("chatPane");
       if (chatPaneEl && chatPaneEl.contains(composerWrap)) return;
-      const files = Array.from(ev.dataTransfer?.files || []);
-      if (files.length) await _uploadComposerAttachments(files);
+      // attach-folder-tree: 폴백 경로도 폴더를 받는다(위임 경로와 동작이 갈리면 안 된다).
+      const collected = await _collectDroppedUploadItems(ev.dataTransfer);
+      if (collected.truncated) {
+        showToast(_attachFolderTooManyMessage(), true);
+        return;
+      }
+      if (collected.items.length) await _uploadComposerAttachments(collected.items);
     });
   }
 
@@ -3098,16 +3353,35 @@ function _bindComposerAttachmentEvents() {
       ev.preventDefault();
       chatDragCounter = 0;
       chatOverlay.classList.add("hidden");
-      const files = Array.from(ev.dataTransfer?.files || []);
-      if (!files.length) return;
       // feature-0043 P0-AB: 잠금은 **여기도** 지나야 한다 (codex 적대 리뷰 P2).
-      // 컴포저 잠금은 `pointer-events: none` 으로 걸리는데, 드래그-드롭은 포인터 이벤트가
-      // 아니라 그 가드를 통째로 지나간다 — 잠긴 화면에 파일을 끌어다 놓으면 업로드가 됐다.
-      // 첨부만 쌓이고 보낼 수는 없는 상태는 "막혔다" 가 아니라 "고장났다" 로 읽힌다.
+      // §18.8 ux [P2]: 잠금 검사를 **순회 앞으로** 옮긴다 — 뒤에 두면 잠긴 화면에 큰 폴더를
+      // 놓았을 때 수 초 순회를 다 끝낸 뒤 "잠김" 이 아니라 "너무 많음" 을 듣는다.
       if (isComposeBlocked()) {
         showToast("내 AI 가 연결되어 있지 않습니다. 연결한 뒤 파일을 첨부해 주세요.", true);
         return;
       }
+      // attach-folder-tree: 폴더를 드롭하면 `dataTransfer.files` 는 그것을 **버린다** —
+      // 디렉토리 엔트리를 재귀 순회해야 안의 파일과 경로를 얻는다. 순회는 비동기이므로
+      // dataTransfer 가 무효화되기 전에 시작해야 한다(drop 핸들러 첫 await 이전).
+      //
+      // §18.8 ux [P2]: 순회는 큰 폴더에서 수 초가 걸리는데 그동안 화면에 아무 신호가 없었다
+      // (오버레이는 순회 **전에** 이미 숨겨진다). 진행 토스트로 그 구간을 메운다 — 침묵은
+      // "안 되는 것" 으로 읽힌다.
+      const _dropToast = showToast("폴더를 읽는 중…");
+      let collected;
+      try {
+        collected = await _collectDroppedUploadItems(ev.dataTransfer);
+      } finally {
+        void _dropToast;
+      }
+      const files = collected.items;
+      if (collected.truncated) {
+        showToast(_attachFolderTooManyMessage(), true);
+        return;
+      }
+      if (!files.length) return;
+      // (컴포저 잠금은 `pointer-events: none` 으로 걸리는데 드래그-드롭은 포인터 이벤트가
+      //  아니라 그 가드를 통째로 지나간다 — 그래서 위에서 명시 검사한다.)
       // 한 번에 여러 파일 드롭 시 순차 업로드 (backend 는 1 파일/요청 단위).
       // attach-multi-upload: 배치 요약 1회로 결과를 알린다(파일마다 토스트 → 상호 덮어쓰기).
       await _uploadComposerAttachments(files);
@@ -3641,6 +3915,18 @@ function _bindComposerActionsEvents() {
       ev.stopPropagation();
       _closeComposerActionsMenus();
       fileInput.click();
+    });
+  }
+  // attach-folder-tree: "폴더 첨부" — `webkitdirectory` input 을 연다. 별 input 인 이유는
+  // 그 속성이 붙은 input 은 폴더만 고를 수 있어(파일 선택 불가) 하나로 겸할 수 없어서다.
+  const attachDirItem = document.getElementById("composerActionsAttachDirItem");
+  const dirInput = document.getElementById("attachDirInput");
+  if (attachDirItem && dirInput) {
+    attachDirItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _closeComposerActionsMenus();
+      dirInput.click();
     });
   }
   const listItem = document.getElementById("composerActionsListItem");

@@ -8,6 +8,86 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260908T124500-attach-folder-tree — 2026-09-08
+
+첨부 전달의 단위를 **파일에서 폴더(디렉토리 트리)** 로 넓혔다. 사용자 요청(2026-09-08):
+"폴더 또한 전달할 수 있도록 · 디렉토리 트리도 보존 · assistant 또한 이러한 구조를 인지".
+
+**무엇이 없었나**: 컴포저는 파일 여러 개는 받았지만(`multiple`) **폴더는 못 골랐고**, 폴더를
+드롭하면 `dataTransfer.files` 가 그것을 버려 아무 일도 일어나지 않았다. 서버는 `OriginalFilename`
+(basename)만 저장해 그 파일이 원래 어느 폴더의 어디에 있었는지 알 방법이 없었고, assistant 는
+평평한 파일 목록만 봤다.
+
+**세 면을 함께 고쳤다** — (1) 입구: 폴더 선택 input(`webkitdirectory`) + 드롭 디렉토리 **재귀
+순회**(`webkitGetAsEntry`, `readEntries` 를 빈 배열까지 반복 — 안 하면 큰 폴더 뒷부분이 조용히
+사라진다), 300개 상한은 **자르지 않고 멈춘다**(일부만 올리면 사용자는 전부 올라간 줄 알고
+assistant 에게 없는 파일을 묻는다). (2) 저장: `RelativePath`(MySQL, fast+slow 부트스트랩 양쪽
+online DDL) · `relative_path`(PG alembic `0059`, expand-only) + dual-write 미러 3면, fork·assistant
+편집본이 경로를 승계. (3) 인지: 프롬프트 파일 라인의 `path="..."` 와 `DIRECTORY STRUCTURE` 트리
+블록, `read_attachment` 의 경로 지칭.
+
+**이 변경의 load-bearing 부분은 버전 체인 스코프다.** 스코프가 `(conv, account, filename)` 인 채로
+폴더를 받으면 `src/config.json` 과 `test/config.json` 이 한 체인으로 합쳐져 **서로를 supersede** 한다
+— 사용자가 올린 파일이 목록에서 사라진다. 컬럼만 추가하고 스코프를 두면 기능이 아니라 데이터
+손실이므로 같은 cycle 안에 넣었다. 경로 있는 행과 없는 행도 서로 배제한다(폴더 안 `a.txt` ≠ 따로
+올린 `a.txt`).
+
+**경로는 신뢰하지 않는다** — `webkitRelativePath` 는 브라우저가 보내는 사용자 입력이다.
+traversal·절대경로·드라이브 접두·제어문자를 제거하고 깊이 32·길이 1024 를 건다. 위험한 값은
+**거절이 아니라 폴더 정보 폐기**(파일 자체는 올라간다 — 경로는 부가 정보이지 업로드의 전제가 아니다).
+경로의 마지막 세그먼트는 업로드된 파일명으로 고정한다(둘이 어긋나면 목록·트리가 실제 파일과 다른
+것을 가리킨다).
+
+**무회귀 설계**: 폴더 첨부가 없는 대화의 프롬프트는 종전과 **동치**(트리 블록 미렌더 — 테스트로
+고정). 마이그레이션 전 배포(row 가 짧음)에서는 폴더 없는 종전 동작으로 자연 폴백한다.
+
+**§18.8 full panel 이 P1 3건을 잡았고, 그 셋이 이 cycle 의 실질 내용을 바꿨다.**
+① 파일명이 ```` ``` ```` 이면 트리 블록이 프롬프트 코드펜스를 닫아 뒤따르는 권위 블록이 통째로
+산문으로 새어 나갔다 — 구획을 datamark sentinel 로 바꾸고 이름을 평탄화했다(라이브 실측 확인).
+② 백엔드는 「다른 폴더의 동명 파일은 다른 파일」로 고쳤는데 **프론트가 basename 으로 묶어**
+「⇄ 계보 비교」가 무관한 두 파일을 버전처럼 diff 했다 — 그룹 키를 같은 술어로 통일.
+③ 폴더 배지가 컴포저 pill 에만 있어, 목록을 열거나 대화를 다시 열면 **사용자는 폴더를 못 봤다**
+— 「트리를 보존한다」면서 보는 것이 모델뿐이면 요청의 절반이다. 서버 목록 행에도 실었다.
+P2 10건(서버측 개수 상한 부재 · 컬럼 부재 시 첨부 섹션 통째 소실 · 드롭 순회 무피드백 · pill
+flex 방향이 주석과 정반대 · 트리 토큰 무상한 등)과 P3 5건도 반영했다. 상세는 REVIEW entry.
+
+**검증**: 신규 테스트 40건 PASS(리뷰 반영분 회귀 8건 포함) · 컨테이너 `make test` exit 0 ·
+**main 대비 실패 차집합 0**. 기존 테스트 1건이 INSERT 바인딩 **위치 하드코딩**(`ins[10]`) 때문에
+컬럼 추가로 깨졌고, 위치가 아니라 내용으로 찾도록 고쳐 같은 취약성을 없앴다.
+
+**시각검증(§16.6 · PB-0008)**: 실 Windows Chrome + 격리 컨테이너(라이브 web 이미지 + 본 branch
+`src` 마운트, 라이브 스택 무접촉)에서 폴더 업로드 end-to-end 실측 — `src/config.json` 과
+`test/config.json` 이 **둘 다 v1 로 공존**(핵심 결함 회피의 직접 증거) · traversal 무해화 ·
+프롬프트 인젝션 중화 · 목록 폴더 칩 6/6 렌더 · 행 높이 55px 균일. 캡처
+`docs/evidence/attach-folder-tree-list.png`. **라운드 2 재확인에서 시각 캡처가 새 결함을 하나 더
+잡았다** — 긴 폴더 칩이 행 버튼을 다음 줄로 밀어 행 높이가 갈리던 것(element 상태만 봤다면
+놓쳤을 픽셀-클래스). 폭 상한 + 마지막 2단 표기로 해소 후 재실측.
+
+### shared/ 변경 (§13.2.2 F2 — 단일 mutator 지정)
+
+- **신규** `shared/attachment_path.py` — 본 worktree(`ai/claude/feature-0003-attach-folder-tree`)가
+  이 cycle 의 **단일 mutator** 다. 신규 파일 추가이며 기존 shared 모듈은 수정하지 않았다.
+- shared 에 둔 이유: 경로 정규화·트리 렌더를 web(feature-0003 업로드·목록)과 agent-core
+  (feature-0002 LLM 컨텍스트)가 **같은 규칙으로** 써야 한다. 정규화가 갈리면 저장된 경로와
+  프롬프트에 그려지는 트리가 어긋나고, 그 어긋남은 "assistant 가 없는 파일을 말한다" 로
+  사용자에게 도달한다(`shared/share_window.py` 가 같은 이유로 shared 에 있다).
+
+### 게이트 결과
+
+- `bin/migrate-lint.sh` — PASS (head 단일 `0059_attachment_relative_path` · expand-safe).
+- `bin/mysql-ddl-lint.sh` — PASS (신규 ALTER 가 `ALGORITHM=INPLACE, LOCK=NONE` 명시).
+
+**남은 것**: assistant 가 **새 파일을 특정 폴더 안에** 만드는 것(`attachment-new` 경로 지정)은
+범위 밖 — 현재 AI 생성 신규 파일은 경로 NULL(폴더 밖)이다. 기존 첨부의 경로는 존재한 적 없는
+정보라 backfill 하지 않는다. **미수행 검증 2축**: 실제 폴더 드래그&드롭 제스처(브라우저 자동화로
+OS 파일 드롭을 합성할 수 없다 — 코드 경로는 테스트로, 결과는 배포 후 실사용으로 확인) · 실 LLM
+답변에서의 구조 인지(개인 AI 브리지 미연결 — 프롬프트에 실리는 문자열 자체는 직접 실측했다).
+**유니코드 look-alike 분리자**(`／` 등)는 폴딩하지 않는다 — 표시 spoofing 축이고 경로가 어떤
+resolve 에도 쓰이지 않아 실피해가 없으며, 폴딩은 전각 문자를 쓰는 정당한 파일명을 훼손한다.
+경로를 파일시스템·아카이브에 **결합하는 소비자**(폴더 보존 ZIP 내보내기 등)가 생기면 그때
+NFC 정규화와 함께 도입한다.
+
+
 ## TASK-20260908T113000-bridge-token-env — 2026-09-08
 
 갱신 실패 안내 MSG_RELAUNCH_NO_UPDATE를 실제 트레이 [업데이트 확인] 경로로 수정. DQA 클라이언트 단독 사용 기준 유지. 내부 토큰 전달 복구는 feature-0043 소유.

@@ -13389,3 +13389,56 @@ Task-Cycle: feature-0003-agent-web-ui
 ### 사용자 동선 확정 (2026-09-08 후속 지시)
 
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
+
+## TASK-20260908T124500-attach-folder-tree — 폴더 첨부 · 디렉토리 트리 보존 · assistant 구조 인지
+
+**요청 (사용자, 2026-09-08)**: "DQA에 첨부파일을 전달할 때, 폴더 또한 전달할 수 있도록 개선해주세요.
+디렉토리 트리도 가능하다면, 보존해주세요. assistant 또한 이러한 구조를 인지해야 합니다."
+
+**REQ-20260908-attach-folder-tree** · 위험도 Minor~Major (비파괴 컬럼 추가 + 다수 파일) ·
+cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측 변경은 feature-0002 코드)
+
+### AC (완료 판정 기준)
+
+- [x] **AC-20260908T124500-attach-folder-tree-1** — 폴더를 통째로 첨부할 수 있다: 컴포저 `+` 메뉴의
+      "폴더 첨부"(webkitdirectory input)와 **폴더 드래그&드롭**(webkitGetAsEntry 재귀 순회) 두 경로.
+      *구체 예시*: `my-project/` 를 드롭 → 하위 3개 파일이 각자의 경로와 함께 업로드.
+- [x] **AC-…-2** — 디렉토리 트리가 보존된다: 각 첨부가 `RelativePath`(`my-project/src/utils/helper.py`)를
+      갖고, 목록·fork·assistant 편집본이 그 값을 승계한다.
+- [x] **AC-…-3** — assistant 가 구조를 인지한다: 프롬프트 파일 라인에 `path="..."`, 그리고
+      `## DIRECTORY STRUCTURE OF ATTACHED FOLDERS` 블록에 실제 트리가 렌더된다.
+      *구체 예시*: 위 폴더 첨부 시 프롬프트에 `proj/` → `  src/` → `    utils/` → `      helper.py`.
+- [x] **AC-…-4** — 같은 이름의 파일이 다른 폴더에 있어도 서로를 덮어쓰지 않는다(버전 체인 스코프에 경로 포함).
+- [x] **AC-…-5** — 경로는 사용자 입력이므로 traversal·절대경로·제어문자·과도한 깊이가 차단된다.
+- [x] **AC-…-6** — 폴더 첨부가 없는 대화의 프롬프트 출력은 종전과 동치(트리 블록 미렌더).
+
+### 구현 결과
+
+- [x] 스키마: MySQL `WebConversationAttachments.RelativePath` (fast+slow path idempotent ALTER,
+      online DDL `ALGORITHM=INPLACE, LOCK=NONE`) · PG `agent_runtime.core_attachments.relative_path`
+      (alembic `0059_attachment_relative_path` + 부트스트랩 DDL) · dual-write 미러 3면.
+- [x] 정규화 정본 `shared/attachment_path.py` (web·agent-core 공용).
+- [x] 업로드 `relative_path` 폼 필드 · 체인 스코프 경로화 · assistant 편집본/fork 경로 승계 · API 노출.
+- [x] 프론트: 폴더 input · 드롭 재귀 순회(readEntries 반복 배치) · 300개 상한 · pill 폴더 배지 · 배치 요약.
+- [x] assistant: 경로 라벨 + 트리 블록 + `read_attachment` 경로 지칭(경로 정확 → 이름 정확 → 접미 → 부분).
+- [x] 테스트 **52건** 신규 · 컨테이너 `make test` exit 0 · main 대비 회귀 0.
+- [x] §18.8 **full panel**(security · backend · qa · ux · design) 2라운드 — P1 6 · P2 18 · P3 8 반영,
+      각 항목을 회귀 테스트로 잠금(§16.7 G10). 상세: REV-20260908T133000-attach-folder-tree.
+- [x] PB-0008 실 Windows 브라우저 시각검증 — 격리 컨테이너(라이브 무접촉)에서 업로드 end-to-end ·
+      동명 파일 비충돌 · traversal/인젝션 방어 · 목록 폴더 칩 · 행 레이아웃 균일 실측 + 캡처.
+- [ ] 라이브 배포 + POST-DEPLOY 확인.
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다
+- [x] 자동 테스트가 통과한다 (신규 52건 PASS · 컨테이너 make test exit 0 · main 대비 실패 차집합 0)
+- [x] 웹/UI 변경 시각검증 — PB-0008 실 Windows 브라우저 Run 기록(`test-runs.d/` fragment).
+      실제 폴더 드래그&드롭 제스처와 실 LLM 답변 인지는 자동화로 합성 불가라 미수행으로 명시
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md / test-runs.d 에 테스트 결과가 기록되었다
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] ANCHOR.md §1~§3이 채워져 있다 (기존 feature-0003 앵커 유효 — 본 cycle 은 첨부 전달 축 확장)

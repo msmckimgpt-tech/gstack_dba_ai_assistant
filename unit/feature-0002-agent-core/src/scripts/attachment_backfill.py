@@ -12,6 +12,9 @@
 
 특성:
 - **멱등**: INSERT … ON CONFLICT (id) DO NOTHING. dual-write 로 이미 들어온 행은 보존(미덮어쓰기).
+  단 `core_attachments` 만 예외로 **비어 있는 `relative_path` 를 채운다**(COALESCE) — 그 컬럼이
+  생기기 전에 들어온 행은 DO NOTHING 이면 재실행으로도 영영 NULL 로 남고, PG read 로 넘어가는
+  순간 폴더 구조가 통째로 사라진다(REQ-20260908-attach-folder-tree). 다른 컬럼은 무변경.
 - **id 보존**: MySQL Id 를 PG id 로 명시 INSERT(GENERATED ALWAYS 미사용 — 참조 무결성).
 - **타입 정합**: DATETIME(6) naive UTC → timestamptz(`%s::timestamptz`, UTC 명시), JSON 문자열 → jsonb.
 - **orphan-safe**: core_attachments 는 conversation FK, 부속은 attachment FK — 대상 부모가 PG 에 없으면
@@ -82,7 +85,11 @@ def _json_to_pg(value: Any) -> Any:
 
 
 _MYSQL_ATTACH_COLS = (
-    "Id, ConversationId, AccountId, ObjectKey, OriginalFilename, FilenameHmac, MimeType, "
+    # REQ-20260908-attach-folder-tree: 경로는 **이 스크립트에도** 있어야 한다. 미러 모듈만 고치면
+    # dual-write 는 경로를 싣지만 backfill 은 NULL 로 넣고, `ON CONFLICT DO NOTHING` 이라
+    # 재실행으로도 복구되지 않는다 — read backend 를 PG 로 돌리는 순간 cutover 이전 폴더가
+    # 통째로 평면 목록이 된다(§18.8 backend [P1]).
+    "Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath, FilenameHmac, MimeType, "
     "SizeBytes, SizeBucket, Sha256, Kind, UploadStatus, AttachmentDerivedMessages, CreatedAt, "
     "DeletedAt, DeletePending, DeleteReason, MetaJson, RootAttachmentId, VersionNumber, "
     "CreatedByRole, SupersededAt"
@@ -90,18 +97,23 @@ _MYSQL_ATTACH_COLS = (
 
 _PG_UPSERT_ATTACH = """
 INSERT INTO agent_runtime.core_attachments (
-    id, conversation_id, account_id, object_key, original_filename, filename_hmac,
+    id, conversation_id, account_id, object_key, original_filename, relative_path, filename_hmac,
     mime_type, size_bytes, size_bucket, sha256, kind, upload_status,
     attachment_derived_messages, created_at, deleted_at, delete_pending, delete_reason,
     meta_json, root_attachment_id, version_number, created_by_role, superseded_at
 ) VALUES (
     %(id)s, %(conversation_id)s, %(account_id)s, %(object_key)s, %(original_filename)s,
-    %(filename_hmac)s, %(mime_type)s, %(size_bytes)s, %(size_bucket)s, %(sha256)s, %(kind)s,
+    %(relative_path)s, %(filename_hmac)s, %(mime_type)s, %(size_bytes)s, %(size_bucket)s, %(sha256)s, %(kind)s,
     %(upload_status)s, %(attachment_derived_messages)s::jsonb, %(created_at)s::timestamptz,
     %(deleted_at)s::timestamptz, %(delete_pending)s, %(delete_reason)s, %(meta_json)s::jsonb,
     %(root_attachment_id)s, %(version_number)s, %(created_by_role)s, %(superseded_at)s::timestamptz
 )
-ON CONFLICT (id) DO NOTHING
+-- REQ-20260908-attach-folder-tree: 기존 행 보존이라는 이 스크립트의 멱등 계약은 유지하되,
+-- **경로가 비어 있을 때만** 채운다. dual-write 이전에 들어온 행은 `relative_path` 가 NULL 인데
+-- DO NOTHING 이면 재실행으로도 영영 복구되지 않는다(그 행들이 곧 cutover 대상이다).
+-- 다른 컬럼은 건드리지 않으므로 "이미 들어온 행은 보존" 이라는 성질도 그대로다.
+ON CONFLICT (id) DO UPDATE SET
+    relative_path = COALESCE(agent_runtime.core_attachments.relative_path, EXCLUDED.relative_path)
 """
 
 _PG_UPSERT_SANDBOX = """
@@ -140,6 +152,8 @@ def _attach_params(r: dict) -> dict:
         "account_id": int(r.get("AccountId") or 0),
         "object_key": str(r.get("ObjectKey") or ""),
         "original_filename": str(r.get("OriginalFilename") or ""),
+        # NULL 보존 — "" 로 접으면 「단일 파일」과 「폴더 루트 직하」가 구분되지 않는다.
+        "relative_path": (str(r["RelativePath"]) if r.get("RelativePath") else None),
         "filename_hmac": str(r.get("FilenameHmac") or ""),
         "mime_type": str(r.get("MimeType") or ""),
         "size_bytes": int(r.get("SizeBytes") or 0),

@@ -961,6 +961,45 @@
   background: #e8f0ff;
   color: #2563eb;
 }
+/* attach-folder-tree: 폴더 첨부의 부모 폴더 배지.
+   §18.8 ux [P2] 교정 — 초판은 `flex: 0 0 auto` 였는데, 그것은 「이 항목은 절대 양보하지
+   않는다」는 뜻이라 pill 안에서 **수축 가능한 유일한 항목인 파일명이 먼저 잘렸다**(주석이
+   주장한 것과 정반대 효과). 폴더는 보조 정보이므로 먼저 양보해야 한다: `flex: 0 1 auto`
+   + `min-width: 0` 로 수축을 허용하고 상한도 폭 비례로 둔다.
+   색은 `var(--muted)`(정의된 적 없는 토큰 → 상속되어 본문과 같은 진한 잉크로 렌더됐다)
+   대신 실재 토큰 `--text-2`(#5a5852)를 쓴다 — `--text-muted`(#807d72)는 이 저장소 실측에서
+   `--surface-2` 위 3.58:1 로 WCAG AA 미달이고 10px 배지라 large-text 예외도 없다. */
+.composer-attachment-pill .pill-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(96px, 40%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.composer-attachment-pill .pill-folder::before {
+  content: "📁 ";
+}
+/* attach-folder-tree: 서버 목록(첨부 패널) 행의 폴더 칩. 메타줄에 놓여 이름줄을 다투지 않는다.
+   실 브라우저 캡처(2026-09-08)에서 깊은 경로(`my-project/src/utils`)가 메타줄을 넘겨 다운로드·
+   삭제 버튼을 다음 줄로 밀어냈다 — 행 높이가 파일마다 달라진다. 칩이 먼저 양보하도록 폭 상한을
+   두고(전체 경로는 title 이 진다) 줄바꿈을 막는다. */
+.attach-list-item-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.attach-list-item-meta { flex-wrap: nowrap; }
 .composer-attachment-pill .pill-toggle {
   border: none;
   background: transparent;

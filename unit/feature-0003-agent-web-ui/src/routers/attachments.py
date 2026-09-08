@@ -238,7 +238,10 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
         lineages_truncated = False
         try:
             heads = app._load_filename_lineage_heads(
-                conn, str(base.get("ConversationId") or ""), str(base.get("OriginalFilename") or ""))
+                conn, str(base.get("ConversationId") or ""), str(base.get("OriginalFilename") or ""),
+                # REQ-20260908-attach-folder-tree: 경로가 있으면 그 경로의 계보만 — 다른 폴더의
+                # 동명 파일을 「경쟁 계보」로 세우지 않는다(§18.8 backend [P2]).
+                relative_path=(str(base.get("RelativePath")) if base.get("RelativePath") else None))
             lineages_truncated = bool(heads and heads[0].pop("_lineage_heads_truncated", False))
             for h in heads:
                 _h_root = int(h.get("RootAttachmentId") or 0) or int(h.get("Id") or 0)
@@ -253,6 +256,8 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
                     # 첨부 시각은 UTC 저장 — 전송도 UTC 임을 명시한다(같은 계약 공유).
                     "created_at": app._iso_utc_z(h.get("CreatedAt")),
                     "branched_from_attachment_id": int(_meta.get("branch_of_attachment_id") or 0) or None,
+                    # 클라이언트가 계보를 구분해 라벨할 수 있도록 경로도 싣는다.
+                    "relative_path": (str(h["RelativePath"]) if h.get("RelativePath") else None),
                     "is_current_lineage": _h_root == root_id,
                 })
         except Exception:
@@ -963,7 +968,7 @@ def _load_attachment_row_mysql(conn, attachment_id: int) -> dict[str, Any] | Non
         cur.execute(
             """
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 MimeType, SizeBytes, Sha256, Kind, UploadStatus, CreatedAt,
                 DeletedAt, DeletePending, DeleteReason,
                 RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
@@ -1066,7 +1071,7 @@ def _load_attachment_chain(
         cur.execute(
             f"""
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 MimeType, SizeBytes, Sha256, Kind, UploadStatus, CreatedAt,
                 DeletedAt, DeletePending, DeleteReason,
                 RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt

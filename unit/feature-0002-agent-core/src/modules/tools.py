@@ -1643,6 +1643,9 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
                 "`attachment_id` 로 지정하면 된다(이때는 filename 이 아니라 attachment_id 를 쓴다). "
                 "버전 비교·'처음과 뭐가 달라졌나' 질문에서 원본 본문이 아직 프롬프트에 없으면 "
                 "이 도구로 먼저 읽고 답한다. "
+                "**폴더로 첨부된 파일은 경로로도 지칭할 수 있다** — filename 에 "
+                "'my-project/src/utils/helper.py' 처럼 목록의 `path=\"...\"` 값을 그대로 넘긴다. "
+                "같은 이름의 파일이 여러 폴더에 있으면 이름만으로는 갈리지 않으므로 경로를 쓴다. "
                 "csv/xlsx 의 데이터 분석은 sandbox 테이블을 execute_sql 로 조회하는 편이 낫고, "
                 "이 도구는 원본 텍스트(헤더·서식 확인 등) 용도다. 이미지 파일은 읽을 수 없다."
             ),
@@ -1651,7 +1654,12 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
                 "properties": {
                     "filename": {
                         "type": "string",
-                        "description": "읽을 파일 이름(ATTACHED FILES 목록에 표시된 이름). 예: 'sales.csv'.",
+                        "description": (
+                            "읽을 파일 이름 **또는 경로**(ATTACHED FILES 목록에 표시된 이름·경로). "
+                            "예: 'sales.csv', 'my-project/src/utils/helper.py'. 폴더로 첨부된 파일은 "
+                            "목록 라인의 `path=\"...\"` 값을 그대로 넘길 수 있고, 같은 이름의 파일이 "
+                            "여러 폴더에 있으면 **경로로 지정해야** 어느 것인지 갈린다."
+                        ),
                     },
                     "attachment_id": {
                         "type": "integer",

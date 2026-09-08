@@ -186,6 +186,7 @@
                     stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <strong>여기에 파일을 놓으세요</strong>
+              <span>폴더도 그대로 놓을 수 있습니다</span>
           </div>
         </div>
 
@@ -248,7 +249,7 @@
           <!-- TASK-0161: 죽은 composer-attachments DOM 제거 (첨부 UI 는 #attachSidePanel 로 이전 완료). state.composerAttachments 버킷은 live 유지. -->
           <!-- TASK-0094 Phase 6: drag-drop overlay — 사용자가 composer 영역에 파일을 끌어다 놓으면 표면화. -->
           <div class="composer-drop-overlay hidden" id="composerDropOverlay" aria-hidden="true">
-            <span>파일을 끌어다 놓아서 첨부</span>
+            <span>파일·폴더를 끌어다 놓아서 첨부</span>
           </div>
           <!-- TASK-20260619T014034: LLM provider 외부요인 제한(자격증명 만료 등) 직접 배너.
                restricted 동안 상시 노출 — 사용자가 명시적으로 확인. /api/llm/health 폴링이 토글. -->
@@ -323,7 +324,7 @@
                  으로 통합. multiple 비활성 (한 번에 한 파일). -->
             <button type="button" class="composer-actions-btn" id="composerActionsBtn"
                     title="파일 첨부 / 모델 선택"
-                    aria-label="추가 동작 (파일 첨부 / 모델 선택)"
+                    aria-label="추가 동작 (파일 첨부 / 폴더 첨부 / 모델 선택)"
                     aria-haspopup="menu"
                     aria-expanded="false">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -337,6 +338,15 @@
                   <path d="M16.5 6.5L9 14a3 3 0 104.24 4.24l8.49-8.48a5 5 0 10-7.07-7.07L4.93 12.43" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
                 <span class="composer-actions-label">파일 첨부</span>
+              </button>
+              <!-- attach-folder-tree: 폴더를 통째로 첨부한다. 파일 첨부와 다른 input 을 쓰는 이유는
+                   `webkitdirectory` 가 있는 input 은 **폴더만** 고를 수 있어(파일 선택 불가) 하나로
+                   겸할 수 없기 때문이다. -->
+              <button type="button" class="composer-actions-item" id="composerActionsAttachDirItem" role="menuitem">
+                <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                </svg>
+                <span class="composer-actions-label">폴더 첨부</span>
               </button>
               <button type="button" class="composer-actions-item" id="composerActionsListItem" role="menuitem">
                 <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -386,6 +396,17 @@
             <input type="file"
                    id="attachFileInput"
                    class="hidden"
+                   multiple
+                   aria-hidden="true" />
+            <!-- attach-folder-tree: 폴더 단위 첨부. `webkitdirectory` 는 표준화 전 접두사이지만
+                 Chromium·Firefox·Safari 가 모두 이 이름으로 지원한다(`directory` 는 아직 아니다).
+                 선택된 각 File 은 `webkitRelativePath` 로 「선택한 폴더 루트 기준 상대 경로」를
+                 들고 오며, 그 값이 서버의 `relative_path` 가 된다. -->
+            <input type="file"
+                   id="attachDirInput"
+                   class="hidden"
+                   webkitdirectory
+                   directory
                    multiple
                    aria-hidden="true" />
             <!-- UX-COMPACT: Product chip 왼쪽으로 이동 (textarea 앞) -->

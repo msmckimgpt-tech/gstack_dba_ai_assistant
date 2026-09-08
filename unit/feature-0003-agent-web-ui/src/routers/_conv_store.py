@@ -2155,13 +2155,17 @@ def _materialize_assistant_attachment_edits(
             cur.execute(
                 """
                 INSERT INTO WebConversationAttachments (
-                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, MetaJson, RootAttachmentId, VersionNumber, CreatedByRole
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'assistant')
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'assistant')
                 """,
                 (
                     conversation_id, account_id, object_key, filename,
+                    # REQ-20260908-attach-folder-tree: 원본이 폴더 안 파일이면 **그 자리를 승계**한다.
+                    # 승계하지 않으면 경로 기반 체인이 끊겨(부모는 경로 있음, 자식은 없음) 다음
+                    # 재업로드가 이 수정본을 못 찾고, 트리에서도 파일이 폴더 밖으로 튀어나온다.
+                    (str(src.get("RelativePath")) if src.get("RelativePath") else None),
                     app._hmac_filename(filename), mime_type, len(body_bytes),
                     app._size_bucket(len(body_bytes)), sha256_hex, new_kind,
                     # message_id_space="display": message_id 은 _load_latest_assistant_message 가
@@ -2776,7 +2780,7 @@ def _copy_conversation_attachments(
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            "SELECT Id, ObjectKey, OriginalFilename, FilenameHmac, MimeType, SizeBytes, "
+            "SELECT Id, ObjectKey, OriginalFilename, RelativePath, FilenameHmac, MimeType, SizeBytes, "
             "SizeBucket, Sha256, Kind, UploadStatus, MetaJson, CreatedAt "
             "FROM WebConversationAttachments "
             "WHERE ConversationId = %s AND DeletedAt IS NULL ORDER BY Id ASC",
@@ -2832,11 +2836,13 @@ def _copy_conversation_attachments(
             try:
                 wcur.execute(
                     "INSERT INTO WebConversationAttachments "
-                    "(ConversationId, AccountId, ObjectKey, OriginalFilename, FilenameHmac, "
+                    "(ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath, FilenameHmac, "
                     " MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus, MetaJson) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         new_cid, int(fork_account_id), new_key, filename,
+                        # REQ-20260908-attach-folder-tree: 이어받은 대화에서도 폴더 구조를 유지한다.
+                        (str(att.get("RelativePath")) if att.get("RelativePath") else None),
                         att.get("FilenameHmac"), mime, size_bytes,
                         att.get("SizeBucket"), att.get("Sha256"), kind, new_status, new_meta,
                     ),
@@ -4096,6 +4102,10 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
         "kind": str(row.get("Kind") or ""),
         "mime_type": str(row.get("MimeType") or ""),
         "original_filename": str(row.get("OriginalFilename") or ""),
+        # REQ-20260908-attach-folder-tree: 폴더 첨부의 폴더-루트 기준 상대 경로.
+        # None = 폴더에 속하지 않는 단일 파일 — 프론트가 그 사실로 그룹핑을 가른다.
+        # `original_filename` 은 계속 basename 이다(경로는 추가 축이지 대체가 아니다).
+        "relative_path": (str(row["RelativePath"]) if row.get("RelativePath") else None),
         "size": int(row.get("SizeBytes") or 0),
         "size_bucket": str(row.get("SizeBucket") or ""),
         "sha256": str(row.get("Sha256") or ""),
@@ -4455,7 +4465,7 @@ def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[t
         try:
             cur.execute(
                 """
-                SELECT Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                SELECT Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                        MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus,
                        CreatedAt, DeletedAt, DeletePending, DeleteReason, MetaJson,
                        RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
@@ -6932,7 +6942,8 @@ def _check_attachment_size_caps(
     try:
         cur.execute(
             """
-            SELECT COALESCE(SUM(SizeBytes), 0)
+            SELECT COALESCE(SUM(SizeBytes), 0),
+                   SUM(CASE WHEN SupersededAt IS NULL THEN 1 ELSE 0 END)
             FROM WebConversationAttachments
             WHERE ConversationId = %s AND DeletedAt IS NULL AND DeletePending = 0
             """,
@@ -6940,6 +6951,17 @@ def _check_attachment_size_caps(
         )
         row = cur.fetchone()
         conv_used = int((row[0] if row else 0) or 0)
+        # REQ-20260908-attach-folder-tree (§18.8 security [P2]): **개수** 축.
+        # D8 캡은 바이트만 본다 — 1바이트 파일은 대화당 캡 안에서 수천만 건이 들어갈 수 있고,
+        # 각 건이 INSERT + MinIO put + 미러 upsert + 이 집계 스캔을 유발한다. 폴더 첨부가
+        # 제품 흐름이 된 이상(프론트 300개 상한은 클라이언트에만 있어 API 직접 호출로 우회된다)
+        # 서버가 같은 축을 가져야 한다 — 방어를 신뢰 경계 **안쪽**에 둔다.
+        #
+        # §18.8 backend [P2]: **살아 있는 head 만** 센다. superseded 구버전까지 세면 "폴더를 고쳐
+        # 다시 올린다" 는 이 기능의 표준 흐름이 쿼터를 스스로 소진한다 — 300 파일 폴더를 세 번
+        # 갱신하면 1050 행인데 사용자 화면에는 300 개뿐이라, "새 대화를 시작하라" 는 안내가
+        # 원인과 무관해진다(보이지 않는 행이 채운 쿼터다).
+        conv_count = int((row[1] if row and len(row) > 1 else 0) or 0)
 
         cur.execute(
             """
@@ -6967,6 +6989,12 @@ def _check_attachment_size_caps(
         logging.getLogger(__name__).warning(
             "_check_attachment_size_caps: PG cap read failed (MySQL 권위값 유지)", exc_info=True)
 
+    per_conv_count = app._attachment_count_cap()
+    if per_conv_count > 0 and conv_count + 1 > per_conv_count:
+        return False, (
+            f"대화당 첨부 개수 한도({per_conv_count}개)를 초과했습니다. "
+            "새 대화를 시작하거나 폴더를 나눠서 올려 주세요."
+        )
     if conv_used + n > per_conv:
         return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
     if account_used + n > per_account:
@@ -7081,7 +7109,7 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
         cur.execute(
             """
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                 UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                 DeletePending, DeleteReason, MetaJson,
@@ -7115,7 +7143,8 @@ def _iso_utc_z(value) -> str | None:
 
 
 def _load_filename_lineage_heads(
-    conn, conversation_id: str, filename: str, *, limit: int = 20
+    conn, conversation_id: str, filename: str, *, limit: int = 20,
+    relative_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """같은 대화·같은 파일명의 **모든 계보 head** 를 시간순(최신 우선)으로.
 
@@ -7134,15 +7163,26 @@ def _load_filename_lineage_heads(
         return []
     # cursor 획득도 try 안에 둔다 — 밖에 두면 획득 실패가 호출측으로 전파돼 이 축의 fail-soft
     # 계약이 깨진다(이 저장소에서 반복된 결함: 자원 획득을 try 밖에 두기).
+    # REQ-20260908-attach-folder-tree (§18.8 backend [P2]): 계보 스코프도 **체인 스코프와 같은
+    # 술어**여야 한다. 파일명만으로 묶으면 폴더 안의 `src/config.json`·`test/config.json`·
+    # `dist/config.json` 이 「한 파일의 경쟁 계보 3개」로 뜨고, 전부 `created_by_role='user'` 라
+    # 화면에 구분 수단이 없다 — 폴더가 들어오기 전에는 불가능했던 상태다.
+    _rp = (str(relative_path).strip() if relative_path else "")
+    if _rp:
+        _match_sql = "RelativePath = %s"
+        _match_val: Any = _rp
+    else:
+        _match_sql = "OriginalFilename = %s AND (RelativePath IS NULL OR RelativePath = '')"
+        _match_val = str(filename)
     cur = None
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
-            """
+            f"""
             SELECT Id, RootAttachmentId, AccountId, CreatedByRole, VersionNumber,
-                   OriginalFilename, CreatedAt, MetaJson
+                   OriginalFilename, RelativePath, CreatedAt, MetaJson
             FROM WebConversationAttachments
-            WHERE ConversationId = %s AND OriginalFilename = %s
+            WHERE ConversationId = %s AND {_match_sql}
               AND SupersededAt IS NULL AND DeletedAt IS NULL AND DeletePending = 0
             ORDER BY CreatedAt DESC, Id DESC
             LIMIT %s
@@ -7152,7 +7192,7 @@ def _load_filename_lineage_heads(
             # 않았다. 그룹 카드가 목록 기준 전체 계보 수(예: `계보 21`)를 말하는데 비교 화면엔
             # 20개만 뜨면, 화면이 없는 것을 있다고 말한 셈이 된다. 초과분 1건은 아래에서 버리고
             # 대신 `_truncated` 표식을 실어 호출부가 사용자에게 밝힐 수 있게 한다.
-            (str(conversation_id), str(filename), int(limit) + 1),
+            (str(conversation_id), _match_val, int(limit) + 1),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
         _over_cap = len(rows) > int(limit)
@@ -7188,34 +7228,49 @@ def _load_filename_lineage_heads(
 
 
 def _find_latest_same_name_attachment(
-    conn, conversation_id: str, account_id: int, filename: str
+    conn, conversation_id: str, account_id: int, filename: str,
+    relative_path: str | None = None,
 ) -> dict[str, Any] | None:
     """REQ-20260713-attach-user-version: 사용자 재업로드 버전 체인 편입 판정용.
 
-    대화 내 **같은 파일명·같은 account** 의 최신(비-superseded·비-deleted·비-pending)
+    대화 내 **같은 파일(경로 포함)·같은 account** 의 최신(비-superseded·비-deleted·비-pending)
     첨부 1건을 반환한다(없으면 None). 반환 dict 는 `_load_attachment_row` 와 동형 컬럼셋.
 
-    버전 체인은 `(conversation_id, account_id, OriginalFilename)` 로 스코프한다:
+    버전 체인은 `(conversation_id, account_id, RelativePath 또는 OriginalFilename)` 로
+    스코프한다:
       - 다른 멤버가 올린 동명 파일(그룹 대화)이나 다른 대화의 첨부와 체인이 섞이지 않게 —
         cross-account/cross-conversation 체인 하이재킹(IDOR) 방어.
+      - **REQ-20260908-attach-folder-tree**: 폴더 첨부가 들어온 뒤로 파일명만으로 스코프하면
+        `src/config.json` 과 `test/config.json` 이 **한 체인으로 합쳐져 서로를 supersede** 한다
+        — 사용자가 올린 파일이 목록에서 사라진다. 폴더가 있는 이상 「같은 파일」의 정의는
+        경로다. 경로 없는 첨부(단일 파일)끼리는 종전대로 파일명으로 매칭한다.
       - `SupersededAt IS NULL` 로 체인의 현재 head 만 매칭한다(구버전에는 붙지 않음).
     업로드 경로(MySQL INSERT 직후)에서 호출되므로 write-consistent 한 MySQL(conn)에서
     직접 읽는다(PG 미러 지연 회피).
     """
     if not (conversation_id and account_id and filename):
         return None
+    # 경로가 있으면 경로로, 없으면 파일명으로 매칭한다. 이때 **경로 있는 행과 없는 행이 서로
+    # 섞이지 않아야** 한다 — 폴더 안의 `a.txt` 와 따로 올린 `a.txt` 는 다른 파일이다.
+    _rp = (str(relative_path).strip() if relative_path else "")
+    if _rp:
+        _match_sql = "AND RelativePath = %s"
+        _match_params: tuple[Any, ...] = (_rp,)
+    else:
+        _match_sql = "AND OriginalFilename = %s AND (RelativePath IS NULL OR RelativePath = '')"
+        _match_params = (str(filename),)
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """
+            f"""
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                 UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                 DeletePending, DeleteReason, MetaJson,
                 RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
             FROM WebConversationAttachments
-            WHERE ConversationId = %s AND AccountId = %s AND OriginalFilename = %s
+            WHERE ConversationId = %s AND AccountId = %s {_match_sql}
               AND DeletedAt IS NULL AND DeletePending = 0 AND SupersededAt IS NULL
               -- REQ-20260814-attach-version-branching (§18.8 적대 리뷰 [P1]): **사용자 계보만**
               -- 편입 대상이다. AI 수정본이 별도 계보로 분기한 뒤로는 같은 파일명에 head 가 둘
@@ -7226,7 +7281,7 @@ def _find_latest_same_name_attachment(
             ORDER BY VersionNumber DESC, Id DESC
             LIMIT 1
             """,
-            (str(conversation_id), int(account_id), str(filename)),
+            (str(conversation_id), int(account_id)) + _match_params,
         )
         row = cur.fetchone()
         return dict(row) if row else None
@@ -7406,7 +7461,7 @@ def _load_attachment_version_chain(
             cur.execute(
                 """
                 SELECT
-                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                     DeletePending, DeleteReason, MetaJson,
@@ -7934,6 +7989,22 @@ def _attachment_size_caps() -> tuple[int, int, int]:
         max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_CONV") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV)),
         max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_ACCOUNT") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT)),
     )
+
+def _attachment_count_cap() -> int:
+    """REQ-20260908-attach-folder-tree: 대화당 첨부 **개수** 상한 (0 = 무제한).
+
+    D8 은 바이트만 본다 — 폴더 첨부가 제품 흐름이 된 뒤로는 「작은 파일 수천 개」가 용량 캡을
+    한참 밑돌면서도 대화당 행·오브젝트·집계 스캔을 그만큼 늘린다. 프론트의 300개 상한은
+    클라이언트에만 있어 API 직접 호출로 우회되므로, 같은 축의 방어를 서버에 둔다.
+
+    기본 1000 — 프론트 1회 상한(300)의 3배 남짓이라 정상적인 폴더 첨부(여러 번 나눠 올리는
+    경우 포함)를 막지 않으면서 무한 증식만 끊는다. env `ATTACHMENT_MAX_COUNT_PER_CONV` 로 조정.
+    """
+    try:
+        v = int(os.getenv("ATTACHMENT_MAX_COUNT_PER_CONV") or 1000)
+    except (TypeError, ValueError):
+        v = 1000
+    return max(0, v)
 
 def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) -> bool:
     owner_account_id = app._conversation_owner_account_id(conn, conversation_id)

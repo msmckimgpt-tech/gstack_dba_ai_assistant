@@ -133,8 +133,11 @@ def test_unnamed_attachments_are_not_grouped_together():
     결함이 더 강한 거짓말이 된다.
     """
     body = _code_only(_fn_body(_src(COMPOSER), "_loadConversationAttachmentList"))
-    m = re.search(r"const nm = String\(x\.original_filename \|\| \"\"\);\s*\n\s*if \(!nm\) continue;", body)
-    assert m, "빈 파일명을 그룹핑에서 제외하지 않는다"
+    # REQ-20260908-attach-folder-tree: 그룹 키가 «파일명» 에서 «경로 우선» 으로 넓어졌다
+    # (`_lineageKeyOf`). 검사 대상은 할당문의 **형태**가 아니라 규칙이다 —
+    # ① 키를 만든다 ② 키가 비면 그룹핑에서 제외한다.
+    m = re.search(r"const nm = [^;]*original_filename[^;]*;\s*\n(?:\s*//[^\n]*\n)*\s*if \(!nm\) continue;", body)
+    assert m, "빈 키(이름·경로 모두 없음)를 그룹핑에서 제외하지 않는다"
 
 
 def test_branch_is_marked_on_the_row_for_css_to_draw():
@@ -443,7 +446,12 @@ def test_lineage_truncation_is_reported_not_silent():
     """
     store = _src(_WEB / "routers" / "_conv_store.py")
     i = store.find("def _load_filename_lineage_heads")
-    seg = store[i: i + 3200]
+    # 고정 바이트 창(구 `i + 3200`)은 함수 앞에 주석 한 문단만 붙어도 검사 대상을 창 밖으로
+    # 밀어내 **구현이 멀쩡한데 실패**한다(REQ-20260908-attach-folder-tree 에서 실제로 그랬다).
+    # 함수 경계로 자른다 — 다음 최상위 `def` 까지가 이 함수다.
+    _rest = store[i:]
+    _end = _rest.find("\ndef ", 1)
+    seg = _rest if _end < 0 else _rest[:_end]
     assert re.search(r"int\(limit\)\s*\+\s*1", seg), (
         "정확히 limit 만 읽는다 — '마침 20개' 와 '잘림' 을 구분할 수 없다")
     assert "_lineage_heads_truncated" in seg, "절단 사실을 표식으로 남기지 않는다"
