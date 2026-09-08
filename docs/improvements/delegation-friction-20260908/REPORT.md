@@ -66,7 +66,7 @@ Git 바깥의 프로젝트 진입점 `FIRST_REQUEST.md`도 현재 사용자 지�
 
 - 새 정책의 실제 다음 Claude/Codex 세션에서 절약되는 토큰·재질문 횟수는 아직 측정하지 않았다. 문서 분량 감소를 실행 비용 개선률로 주장하지 않는다.
 - 이번 worktree에 실비밀을 복제하지 않았다. 기존 STATUS에 기록된 자격증명 교체·보안 부채는 현재 실행 권한과 상태를 추정해 지우지 않았다. 기존 백업 설정 파일의 값도 출력하지 않았다.
-- GitHub CI와 실제 배포의 성공 여부는 로컬 회귀와 별도로 확인한다.
+- GitHub Actions는 저장소 설정에서 비활성화(`enabled:false`)되어 PR 실행이 없었다. CI PASS로 기록하지 않으며 아래 로컬 실행과 실제 배포 결과를 구분한다. 설정은 변경하지 않았다.
 
 ## 최종 실행 결과
 
@@ -75,7 +75,7 @@ Git 바깥의 프로젝트 진입점 `FIRST_REQUEST.md`도 현재 사용자 지�
 
 최종 전체 실행은 `37fae5d5`(최신 main 합류) 기준이며 제품 소스의 후속 수정은 없다. `make test`는 별도 Compose 프로젝트와 테스트 DB 차단 환경에서 실행했다. 종료 코드 0, JUnit 8,075건 중 8,059 PASS/16 skipped/0 fail/0 error, ruff PASS. 로그는 `/tmp/delegation-friction-make-test-merged.log`, JUnit은 `.pytest_cache/delegation-merged-final.xml`이다.
 
-PR/배포 전 구현·검증·독립 리뷰를 마쳤다. 실제 병합·배포 결과는 전달 후 이 절에 추가하며 선행 완료로 기록하지 않는다.
+구현·검증·독립 리뷰 후 PR #1616을 병합하고 web 범위 배포를 완료했다. 실제 결과는 아래에 기록한다.
 
 
 ### 마지막 main 합류와 전달 준비
@@ -85,4 +85,26 @@ PR/배포 전 구현·검증·독립 리뷰를 마쳤다. 실제 병합·배포 
 - 합류 후 워크플로 Bats **69 PASS**, 보드 Bats **134 PASS / 4 skipped**(root에서 접근 거부를 재현할 수 없는 사례), Python bin **34 PASS**. 보드 네 파일도 CI 실행에 연결했다. 로그 `/tmp/delegation-merge-{workflow-bats,board-bats,python-bin}.log`.
 - Codex CONTEXT와 생성기, §10.1·§16.5.1·§16.6, merge 잠금·최신 base 합류·REGISTRY 보호를 다시 대조했다. main 새 보드 계약과 이전 승인·DQA 정책은 함께 보존됐다.
 - 첫 HTTPS push는 OAuth App의 workflow scope 부족으로 거절됐다. 기존 GitHub SSH 인증으로 같은 저장소의 본인 브랜치를 push했다. 원격 URL·로그인·토큰 권한은 바꾸지 않았다. `.agents/ENVIRONMENT.md`에 재현 가능한 처리 기준을 남겼다.
-- PR: [#1616](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1616). 실제 병합·배포 후 결과를 추가한다.
+- PR: [#1616](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1616), merge `a92c925603680dcd66784868083623afdcc24748`.
+
+
+### 실제 배포 결과
+
+2026-09-08 정본 main에서 `bash bin/deploy-web.sh --web-only`를 실행해 종료 코드 0으로 완료했다. web-a·web-b 모두 `mysql-ai-web:a92c9256`, healthy, restart 0을 확인했다. 활성 스트림 종료를 기다린 순차 교체와 90초 soak가 통과했다. 워커·MCP 코드는 이번 배포 대상이 아니다.
+
+- Caddy를 통한 `/healthz`: **HTTP 200**. WSL 기본 trust에서 확인되지 않는 내부 CA는 기존 `artifacts/certs/rootCA.pem`을 명시해 호스트 이름·인증서를 검증했다. 시스템 trust 설정을 바꾸거나 TLS 검증을 생략하지 않았다.
+- 실제 서빙 `connect-modal.js`: 새 자동 연결 실패 안내 있음, 삭제된 명령 안내 없음, 기존 네이티브 트레이 안내 유지. 서빙 자산 SHA-256은 `7f61978c035564384d8e29f0d93d7e2f03c71a84aa2631628f8fecbe0ca0b4d1`이다. 버전 스탬프가 포함되므로 원본 소스 해시와 직접 비교하지 않는다.
+- 03:39:10 UTC 관측 시 최근 10분 Caddy `no upstreams available` 0건. 이 관측만으로 모든 요청의 무손실을 주장하지 않는다.
+- 대화 스모크: **NOT-RUN — web-only 범위**. 설치된 DQA 앱 사용자 흐름도 앞 절의 접근 제한으로 **NOT-RUN**이다. 실제 자산 확인·Node 실행 대조를 앱 E2E PASS로 바꾸지 않는다.
+- 배포 로그: `/tmp/delegation-deploy-web.log`. 구조화 결과는 [verification.json](verification.json)의 `delivery`에 보존했다. GitHub Actions 비활성으로 원격 CI 실행은 없으며 로컬 검증을 대체 근거로 사용했다.
+
+### 전달 과정에서 재현한 정리 오류와 마지막 보완
+
+PR #1616의 `--keep-worktree` 실행에서 폴더를 남기면서 브랜치 삭제를 시도하고, 실패한 삭제도 완료로 출력하는 결함을 확인했다. 또한 자기 worktree의 스크립트로 폴더를 삭제하면 마지막 `board.sh` 경로가 사라져 본인 세션의 완료 기록을 놓쳤다. 다음과 같이 수정·검증했다.
+
+- `--keep-worktree`는 폴더와 로컬·원격 브랜치를 함께 보존한다. `--keep-branch`는 폴더만 제거한다. 삭제 성공·보존·실패·이미 없음·모의 실행을 실제 결과대로 보고한다.
+- 정리 뒤에는 살아 있는 main의 `board.sh`로 본인 세션을 완료 처리한다. native session ID가 우선하며, 기존 Claude SID/token 인계는 현재 프로젝트의 기존 인증 함수로 검증된 경우만 이어간다. 다른 세션 SID나 틀린 토큰은 사용하지 않는다.
+- cycle lifecycle 21건 + 기존 board lifecycle 12건: **33 PASS**. 별도 검토자가 보존 옵션·삭제된 worktree 실행·native ID 부재·유효한 Claude 인계·잘못된 토큰의 6건을 독립 실행해 모두 통과했다. GitHub 호출은 fixture이며 실제 로컬 Git과 board core 상태·다른 세션 보존을 검사한다.
+- 배포 스크립트가 출력하던 Ctrl+F5/PB-0008 필수 안내를 DQA/PB-0009의 변경 범위 기준으로 정정했다. 실제 수행하지 않은 대화 스모크를 최종 문구에서 통과로 단정하지 않으며 모의 실행도 구분한다. 배포·드레인·스모크 실행 코드는 동일하다.
+- 배포 출력 보완 회귀 `test_quiesce_gate.py`: **34 PASS**, 27.70초. 별도 정책 검토자는 최종 출력의 web/workers/all × 실제/모의 실행 6가지 조합을 실행해 미측정 PASS 단정이 없음을 확인했다.
+- [정리 코드 독립 리뷰](../../../meta/reviews/20260908T-cleanup-close.md), [배포 출력 독립 리뷰](../../../meta/reviews/20260908T-policy-security.md). 마지막 변경은 호스트 도구·검증·기록에 한정되어 배포한 앱 소스는 바뀌지 않는다.

@@ -64,8 +64,12 @@ make_worktree() {
   git push -q origin "$GH_FIXTURE_HEAD"
 }
 
+finalize_cycle() {
+  (cd "$WT" && bash "$FIXTURE/bin/cycle-finalize.sh" --pr 7 "$@")
+}
+
 finalize_kept() {
-  (cd "$WT" && bash "$FIXTURE/bin/cycle-finalize.sh" --pr 7 --keep-worktree --keep-branch "$@")
+  finalize_cycle --keep-worktree --keep-branch "$@"
 }
 
 @test "cycle-init topic base starts the worktree without advancing main to topic" {
@@ -183,6 +187,144 @@ finalize_kept() {
   [ "$status" -eq 0 ]
   run grep -q '^pr merge ' "$GH_LOG"
   [ "$status" -eq 1 ]
+}
+
+@test "cycle-finalize keep-worktree preserves local and remote branches without deletion attempts" {
+  make_worktree
+  export GH_FIXTURE_STATE=MERGED
+  GIT_TRACE="$FIXTURE/git.trace" run finalize_cycle --keep-worktree
+  [ "$status" -eq 0 ]
+  [ -d "$WT" ]
+  [ "$(git rev-parse "refs/heads/$GH_FIXTURE_HEAD")" = "$MAIN_INITIAL" ]
+  [ "$(git --git-dir="$GH_FIXTURE_ORIGIN" rev-parse "refs/heads/$GH_FIXTURE_HEAD")" = "$MAIN_INITIAL" ]
+  [[ "$output" == *"local branch:       kept (--keep-worktree): $GH_FIXTURE_HEAD"* ]]
+  [[ "$output" == *"remote branch:      skipped (--keep-worktree): $GH_FIXTURE_HEAD"* ]]
+  run grep -E 'worktree remove|branch -[dD]|push origin --delete' "$FIXTURE/git.trace"
+  [ "$status" -eq 1 ]
+}
+
+@test "cycle-finalize keep-branch removes the worktree but retains both branches" {
+  make_worktree
+  export GH_FIXTURE_STATE=MERGED
+  GIT_TRACE="$FIXTURE/git.trace" run finalize_cycle --keep-branch
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  git show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  git --git-dir="$GH_FIXTURE_ORIGIN" show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  [[ "$output" == *"worktree cleanup:   removed: $WT"* ]]
+  [[ "$output" == *"local branch:       kept (--keep-branch): $GH_FIXTURE_HEAD"* ]]
+  run grep -E 'branch -[dD]|push origin --delete' "$FIXTURE/git.trace"
+  [ "$status" -eq 1 ]
+}
+
+@test "cycle-finalize default cleanup reports actual worktree and branch deletions" {
+  make_worktree
+  export GH_FIXTURE_STATE=MERGED
+  run finalize_cycle
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  [[ "$output" == *"worktree cleanup:   removed: $WT"* ]]
+  [[ "$output" == *"local branch:       deleted: $GH_FIXTURE_HEAD"* ]]
+  [[ "$output" == *"remote branch:      deleted: $GH_FIXTURE_HEAD"* ]]
+  run git show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  [ "$status" -eq 1 ]
+  run git --git-dir="$GH_FIXTURE_ORIGIN" show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  [ "$status" -eq 1 ]
+}
+
+@test "cycle-finalize failed local branch deletion is reported as retained" {
+  make_worktree
+  git -C "$WT" commit -qm unmerged-local-commit --allow-empty
+  export GH_FIXTURE_STATE=MERGED
+  run finalize_cycle
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  git show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  [[ "$output" == *"local branch:       retained (delete failed): $GH_FIXTURE_HEAD"* ]]
+  [[ "$output" != *"local branch:       deleted:"* ]]
+}
+
+@test "cycle-finalize dry-run reports intended cleanup without claiming deletion" {
+  make_worktree
+  export GH_FIXTURE_STATE=MERGED
+  run finalize_cycle --dry-run
+  [ "$status" -eq 0 ]
+  [ -d "$WT" ]
+  git show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  git --git-dir="$GH_FIXTURE_ORIGIN" show-ref --verify --quiet "refs/heads/$GH_FIXTURE_HEAD"
+  [[ "$output" == *"worktree cleanup:   dry-run: would remove $WT"* ]]
+  [[ "$output" == *"local branch:       dry-run: would delete $GH_FIXTURE_HEAD"* ]]
+  [[ "$output" == *"remote branch:      dry-run: would delete $GH_FIXTURE_HEAD"* ]]
+}
+
+prepare_real_board_cycle() {
+  unset CODEX_THREAD_ID CLAUDE_CODE_SESSION_ID AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_LIB BOARD_FS
+  export XDG_STATE_HOME="$FIXTURE/xdg"
+  mkdir -p "$REPO/bin/lib"
+  cp "$FIXTURE/bin/cycle-finalize.sh" "$BATS_TEST_DIRNAME/../board.sh" "$REPO/bin/"
+  cp "$FIXTURE/bin/lib/privilege.sh" "$BATS_TEST_DIRNAME/../lib/board_core.sh" "$BATS_TEST_DIRNAME/../lib/board_fs.py" "$REPO/bin/lib/"
+  printf '# Isolated board fixture\n' > "$REPO/AGENTS.md"
+  git add bin AGENTS.md
+  git commit -qm 'tracked scripts executed from the removable worktree'
+  git push -q origin main
+  bash "$REPO/bin/board.sh" init --mode private >/dev/null
+  BOARD_ROOT=$(sed -n 's/^root=//p' "$FIXTURE/.board-root")
+  OWN_SID=$(bash "$REPO/bin/board.sh" register --platform codex --native-id finalize-self)
+  PEER_SID=$(bash "$REPO/bin/board.sh" register --platform claude --native-id finalize-peer)
+  make_worktree
+  export GH_FIXTURE_STATE=MERGED
+}
+
+@test "cycle-finalize executed from the deleted worktree marks only its native session done" {
+  prepare_real_board_cycle
+  export CODEX_THREAD_ID=finalize-self CLAUDE_CODE_SESSION_ID=finalize-peer AGENT_BOARD_SID="$PEER_SID"
+  export AGENT_BOARD_TOKEN="$(cat "$BOARD_ROOT/sessions/$PEER_SID.token")"
+  peer_before=$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")
+  run bash -c 'cd "$1" && bash bin/cycle-finalize.sh --pr 7' -- "$WT"
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  grep -q '"state":"done"' "$BOARD_ROOT/sessions/$OWN_SID.json"
+  [ "$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")" = "$peer_before" ]
+}
+
+@test "cycle-finalize without native identity cannot borrow an inherited peer board session" {
+  prepare_real_board_cycle
+  export AGENT_BOARD_SID="$PEER_SID"
+  peer_before=$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")
+  run bash -c 'cd "$1" && bash bin/cycle-finalize.sh --pr 7' -- "$WT"
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  [ "$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")" = "$peer_before" ]
+  shopt -s nullglob
+  posts=("$BOARD_ROOT/channels/public/"*.md)
+  [ "${#posts[@]}" -eq 0 ]
+  [[ "$output" == *'native session id 미확인'* ]]
+}
+
+@test "cycle-finalize preserves verified suspended Claude SID token binding without native environment" {
+  prepare_real_board_cycle
+  export AGENT_BOARD_SID="$PEER_SID" AGENT_BOARD_TOKEN="$(cat "$BOARD_ROOT/sessions/$PEER_SID.token")"
+  printf '{"session_id":"finalize-peer","reason":"other"}' | bash "$REPO/bin/board.sh" end --hook --platform claude --stdin-json -
+  grep -q '"state":"suspended"' "$BOARD_ROOT/sessions/$PEER_SID.json"
+  other_before=$(sha256sum "$BOARD_ROOT/sessions/$OWN_SID.json")
+  run bash -c 'cd "$1" && bash bin/cycle-finalize.sh --pr 7' -- "$WT"
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  grep -q '"state":"done"' "$BOARD_ROOT/sessions/$PEER_SID.json"
+  [ "$(sha256sum "$BOARD_ROOT/sessions/$OWN_SID.json")" = "$other_before" ]
+}
+
+@test "cycle-finalize rejects an incorrect inherited token without changing another session" {
+  prepare_real_board_cycle
+  export AGENT_BOARD_SID="$PEER_SID" AGENT_BOARD_TOKEN=00000000000000000000000000000000
+  peer_before=$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")
+  run bash -c 'cd "$1" && bash bin/cycle-finalize.sh --pr 7' -- "$WT"
+  [ "$status" -eq 0 ]
+  [ "$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")" = "$peer_before" ]
+  shopt -s nullglob
+  posts=("$BOARD_ROOT/channels/public/"*.md)
+  [ "${#posts[@]}" -eq 0 ]
+  [[ "$output" == *'검증된 SID/token 바인딩 없음'* ]]
 }
 
 make_registry() {
