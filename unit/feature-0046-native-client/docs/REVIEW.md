@@ -1245,3 +1245,15 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: TASK-20260908-update-install-proof.
 - Trigger: actual installation/실제 설치 결과와 기존 실패 회귀.
 - Artifact: [독립 실측 검토](artifacts/20260908-update-install/qa-live-review.md). 실제설치파일과다운로드파일SHA도 별도 재계산하여 대조했다. 설치종료·재실행·최신메뉴응답까지PASS.
+
+## REV-20260908T150900-text-interaction-ux [SUBAGENT:ux] — PASS
+- Trigger: UI/화면 텍스트 상호작용
+- Verdict: PASS (code); native search UI verification PARTIAL
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T150900-text-interaction-design [SUBAGENT:design] — PASS
+- Trigger: UI/화면 텍스트 상호작용
+- Verdict: PASS (code); native search UI verification PARTIAL
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-design.md
+- Human Approval Needed: no

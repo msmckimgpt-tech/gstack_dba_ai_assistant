@@ -935,3 +935,9 @@ edit_policy: append-only
 - 1.2.1 공개 후 기존1.1.2 메뉴에서 설치·자동 재시작·최신 버전 확인 완료. 고아 프로세스 수동 종료 없이 회귀 상황 그대로 PASS.
 - setup둘exit0(43.737초), 같은 경로의 새DQA1개, 실제 exe/다운로드 SHA, pending해소, applyok, 5초 안정 실행 대조. 원본 증적과 전체 압축 설치 로그 보존.
 - FUNCTION/REPORT/TASK를 현재 설치·배포 상태로 동기화했다. 제품 코드는 직전 검토 후 바뀌지 않았다.
+
+## CHG-20260908T150900-codex-text-interaction — 텍스트 상호작용 복구
+- Timestamp: 2026-09-08T15:09:00+09:00; Session: codex text-interaction; Issue #1626.
+- `Shell.run`의 text_select 기본 False를 True로 바꿔 pywebview의 전역 선택 차단을 제거했다.
+- loaded 이벤트에서 소유 UI 스레드로 WebView2 기본 검색 단축키를 활성화했다. 디버그/개발자 도구는 비활성 상태를 유지한다.
+- 네이티브 버전 1.2.3 빌드; 동료 작업의 1.2.2와 구분한다. 첨부 본문 CSS·줄번호 제외 규칙을 유지한다.

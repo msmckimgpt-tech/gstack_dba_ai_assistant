@@ -1,0 +1,10 @@
+{
+  "version": "1.2.3",
+  "size": 26048286,
+  "sha256": "85b69a01da88019031c7cead689d6c7c4359d750b58f7ed32a22958424c5d672",
+  "windows_build_exit": 0,
+  "service": {
+    "base": "https://112.185.196.20"
+  },
+  "exe_sha256": "f0ca3986ce8f87b91b0d1b21e2da884d2bca2891d4cca628714567aa566a114e"
+}
