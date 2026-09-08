@@ -3318,3 +3318,8 @@ Task-Cycle: feature-0002-agent-core
 ## CHG-20260908T063000-prompt-layers
 - Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
 - 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
+
+## CHG-20260908-finalize-pipe
+- Timestamp: 2026-09-08T06:14:23.669241+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- PR #1627 출하 중 bin/cycle-finalize.sh가 worktree 목록 조기 소비 종료로 rc=141에 중단했다. awk가 입력 전체를 소비하면서 첫 worktree만 출력하도록 수정했다. 대상 선택·잠금·삭제 조건은 유지한다.
+- 100000행 fixture: 기존 cat | awk rc=141, 수정 rc=0, 두 결과 /main. bash -n PASS, 독립 backend 리뷰 P1/P2 없음.

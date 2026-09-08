@@ -26,6 +26,7 @@ feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 
 - 본문 전달은 모든 런타임의 시스템 역할 보장을 뜻하지 않는다. 파일 전달 옵션은 검토했으나 이번 변경은 기존 CLI·인증 설정을 유지하면서 누락 차단과 실전달 검증을 강화한다.
 - 검증 패널: backend/security/qa(API 및 SQL 조회 오류 계약) + toast 1줄 제거 UX/design 검토, 최대 3회. 최종 PASS. 공유 hot_paths: core compose_system_prompt, ai_tools claim/release/working, handler dispatch; composer.js 한 줄 삭제. 배포 포함(FIRST_REQUEST.md).
 - [x] 구현·단위/통합 회귀·검증 패널
+- [x] 출하 중 발견한 cycle-finalize worktree 목록 SIGPIPE 수정: 전량 소비, 첫 경로만 선택. 대용량 재현 및 backend 독립 검토 PASS.
 - [x] verify-completion PASS. 출하 단계(commit/push/PR/main/배포)의 최종 SHA·실행 결과는 해당 PR의 Git 동기화 결과와 배포 로그를 따른다.
 
 

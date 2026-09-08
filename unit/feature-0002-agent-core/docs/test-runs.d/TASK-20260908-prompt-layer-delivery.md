@@ -29,3 +29,5 @@ Next: DQA 자동화 가능 인스턴스에서 해당 장애/회복 시나리오 
 
 - core/web/root PYTHONPATH 정합 후 feature-0043 전체 회귀: exit 0, 수집 1700건, skip 1건. 단위 테스트용 도달 불가 호스트의 heartbeat 로그는 예상 실패 fixture이며 라이브 서비스 호출이 아니다.
 - verify-completion --pre-commit feature-0002-agent-core PASS. #13 DQA 화면 미실측은 WARN으로 분리했다. 최초 CHG 이력 heading 누락 FAIL은 CHG heading 정정 후 해소했다.
+
+- PR #1627 최초 cycle-finalize는 worktree 목록 조기 소비 종료에 따른 SIGPIPE로 exit141, PR은 OPEN 유지. 100000행 fixture로 old141/new0 재현, 첫 경로 /main 동일. 입력 전량 소비하도록 한 줄 수정 후 bash -n 및 독립 backend review PASS.
