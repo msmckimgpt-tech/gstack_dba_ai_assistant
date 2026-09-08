@@ -34,6 +34,7 @@ AC: `attachment-edit(SQL A) → 설명 B → diff B → attachment-edit(SQL B)`�
 - [x] backend/security/qa 패널 — 최종 PASS
 - [x] 문서·verify-completion — pre-commit PASS
 - [x] PR #1629 병합·e8fd398b 전체 배포·7서비스 56검사 PASS
+- [x] 배포 증거 문서 커밋·원격 동기화 및 서식 확인
 
 ### Requested Scope (요청 범위)
 - [x] 첨부에 답변 혼입 방지 — 정확한 파일 byte와 후속 설명/diff 보존 테스트.

@@ -6033,3 +6033,7 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 ## CHG-20260908T152700-attachment-boundary-deployed
 
 - 2026-09-08T06:27:43.349266+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. TASK-20260908T150000-attachment-boundary 출하 결과 기록. PR #1629, serving e8fd398b; full deployment exit 0, 7서비스 56검사, 10파일 읽기 전용 재현 PASS. 런타임 코드 추가 변경 없음.
+
+## CHG-20260908T153000-attachment-verification-format
+
+- TASK-20260908T150000-attachment-boundary 검증 기록의 EOF 서식 정리와 원격 동기화 체크 기록.

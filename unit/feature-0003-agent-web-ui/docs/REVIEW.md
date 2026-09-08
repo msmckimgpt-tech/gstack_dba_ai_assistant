@@ -7859,3 +7859,9 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Verdict: PASS
 - Human Approval Needed: no
 - 기존 코드 3패널 PASS 후 실행 결과만 기록; 추가 코드/정책 변경 없음.
+
+## REV-20260908T153000-attachment-docs [SKIPPED:non-policy-doc] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: 검증 문서 서식과 원격 동기화 체크만 변경
+- Verdict: PASS
+- Human Approval Needed: no

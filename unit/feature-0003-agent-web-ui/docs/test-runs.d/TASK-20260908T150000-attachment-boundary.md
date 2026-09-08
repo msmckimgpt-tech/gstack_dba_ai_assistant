@@ -22,4 +22,3 @@ Evidence: original SHA matches 10/10; contaminated answer tails excluded 6/6. No
 
 ## Live user scope
 User AI regeneration and actual DQA window: NOT-RUN. This change modifies backend parsing/prompt behavior, no frontend assets; verify-completion visual gate reports no UI asset change. Deployed function execution proves server behavior, not the outcome of a new model response. Next audit can measure post-deployment recurrence; stored older versions are preserved.
-
