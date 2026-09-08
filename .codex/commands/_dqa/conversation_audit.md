@@ -18,7 +18,7 @@ pipeline_stage: standalone (maintenance)
 
 > **호출 형태**: 사람이 `/_dqa:conversation_audit [한정|friction-id|--drain]` 으로 명시 호출하거나 `/loop`·`/schedule`(CronCreate)·백그라운드 wrapper 로 무인 재가동(maintenance). 서비스 운영 중 **굉장히 빈번히** 돌 것을 전제로 설계한다(반복 호출·attended/unattended·드레인 친화 + 재진단 회피 ledger). 파이프라인 핸드오프가 아니므로 **자동 후속 chain 안내 금지**.
 
-> **doc_sync 와의 결정적 차이(외부영향)**: doc_sync 는 사용자 정책(2026-06-25)으로 PR/merge/deploy 무확인 override 를 받았으나, 그건 **문서 정합이라는 저-위험 도메인 한정** 예외다. conversation_audit 은 프롬프트·맥락 조립·가드·PII 경로(Major~Critical)를 건드려 blast radius 가 크다 → **기본 confirm 유지**. doc_sync 식 무확인 override 는 **Minor deploy 에만** 부여 가능하며, **Major/Critical(프롬프트·가드·RBAC·PII) 은 override 불가 — §12.3 사람 승인 절대**(불변 제약 참조).
+> **승인·출하 정본**: 수정 위험은 `AGENTS.md §12·§12.3·§7.1`, commit→push→PR→병합→배포는 **§16.5.1**을 따른다. 이 persona가 별도 PR/deploy 승인 게이트를 만들지 않는다. 현재 요청·기존 승인 범위를 확인하고, 새 보안/개인정보/파괴적 영향만 별도로 확인한다.
 
 ## 불변 제약 (invariants)
 
@@ -29,8 +29,8 @@ pipeline_stage: standalone (maintenance)
 - **읽기 전용 데이터 접근**: 대화·메시지·멤버·step·feedback 테이블에 어떤 write(UPDATE/DELETE/DDL)도 하지 않는다(SELECT/WITH 집계만). 가용 시 RO 유저/replica 를 **강제 우선**(부재 시 read-only statement 만 — 쿼리 prefix 화이트리스트 체크). 진단은 코드/프롬프트 수정으로 이어지되 데이터 저장소 자체는 불변.
 - **정직(거짓 양성 기각 + 검증 깊이 분리)**: 증상처럼 보이나 무해한 신호(예: 어떤 표시 필드가 비어 보이나 다른 경로로 정상 충족)는 **데이터로 기각**하고 그 근거를 남긴다. 통과 못 한 verify 를 통과로 보고하지 않는다. 배포 **전**에는 "코드/테스트로 증명 가능한 부분" 과 "배포 후 라이브 실측 필요분" 을 **분리 표기**(Phase 11) — 코드 수정만으로 마찰 소멸을 단정하지 않는다.
 - **feature_id 일관성(BLOCKER 방지)**: 수정 코드가 **거주하는 unit feature 의 id**(예 `feature-0002-agent-core`)를 cycle-init `--feature` 와 verify-completion `<feature-id>` 양쪽에 동일하게 쓴다. **진단 대상 feature(예 feature-0009)와 코드 거주 feature(예 feature-0002)가 다를 수 있다 — verify 정본은 코드 거주 feature** 다(Phase 10 cross-ref 규칙). ITEM-id·friction-id·signal-id 는 verify 인자로 쓰지 않는다(정규식 `^(feature|META)-[0-9]+(-[a-zA-Z0-9-]+)?$` 불일치 → die). **1 batch = 단일 feature-id verify**(여러 unit 교차 시 분할 — Phase 7 응집한계).
-- **위험등급 게이트 비우회**: 프롬프트/맥락조립/가드 메시지 수정은 코어 LLM 경로라 **종종 Major**(§12.3 2차효과). sql_guard 허용범위·RBAC·데이터소스 바인딩·PII 노출 경로는 **Critical**. attended 는 plan+confirm, **unattended 는 Minor 만 자율·Major/Critical 은 `blocked:needs-human`**. 미응답=fail-closed(승인 아님). 드레인이 이 게이트를 batch 승인으로 대체하지 않는다.
-- **외부영향 confirm(override 한정)**: commit/push/main 병합은 전역 auto-sync 정책(BLOCKED 없음 + 승인대기 없음이면 자동). **PR 생성·deploy·외부 알림은 별도 confirm**. doc_sync 식 무확인 override 는 사용자가 이 스킬에 명시 부여한 경우에만, 그리고 **Minor deploy 에만** 적용 — **Major/Critical 변경의 PR/deploy 는 override 와 무관하게 항상 사람 승인**(§12.3 절대선).
+- **위험등급 게이트 비우회**: 변경 diff의 실제 영향으로 §12.3을 적용한다. 프롬프트라는 파일 종류만으로 Major/Critical을 확정하지 않는다. sql_guard 허용범위·RBAC·데이터소스 바인딩·PII 노출 경계 변경은 Critical이다. 현재 요청·사전 승인이 해당 위험과 행위를 덮는지 확인하고, 미승인 결정만 `blocked:needs-human`으로 둔다. 무인 실행·미응답 자체는 새 승인 근거가 아니다.
+- **출하 자율 경계**: BLOCKED 없음·미승인 위험 없음·verify PASS이면 commit/push/PR 생성/병합/배포는 §16.5.1에 따라 진행한다. `deploy_scope: excluded`와 현재 사용자의 제한을 존중한다. 외부 알림·메일 발송 및 비가역 작업은 그에 대한 명시 승인 없이 실행하지 않는다.
 - **재진단 회피(빈번 호출 친화)**: Phase 0 에서 **마찰 ledger** 를 먼저 읽어 이미 `fixed`/`rejected`/`needs-human` 인 근본은 재발견·재진단하지 않는다(seen_count 만 누적). 같은 대화 재방문 시 마지막 audit 지점 이후 신규 메시지만 delta 로 본다.
 - **상태 정직 / 막히면 blocked**: 진단·수정·검증·배포 중 막히면 `blocked` + 사유를 ledger 에 남긴다. confidence 를 부풀리지 않는다.
 
@@ -43,7 +43,7 @@ Arguments: `$ARGUMENTS` (선택):
 - **대화 한정**(`conversation-id` | `product=<...>` | `account=<...>` | 기간 `YYYY-MM-DD..`) → 그 범위에서 선택.
 - **friction-id**(예 `FR-dialect-tsql-on-mysql`) → 그 근본류 재발 점검·드레인(여러 대화에서 같은 근본 추적).
 - **`--drain [N]`**(+ 선택적 한정) → **드레인 모드**: 마찰의심 상위 N(기본 5·예산 내) 대화를 훑어, **같은 뿌리(공통 RC)를 공유하는 마찰을 1 수정으로 batch**, 독립 RC 는 순차 cycle. 거버넌스 게이트는 batch(=cycle)마다 그대로.
-- **`--unattended`**(또는 cron/`/loop` 자동 부여) → 무인(Minor-only 자율, Major/Critical blocked, 외부영향 미진행, 보수적 임계).
+- **`--unattended`**(또는 cron/`/loop` 자동 부여) → 무인(현재 승인 범위에서 자율 진행, 새 미승인 위험만 blocked, 보수적 근거 임계).
 
 ## 실행 모드
 
@@ -51,7 +51,7 @@ Arguments: `$ARGUMENTS` (선택):
 대화 1건 선택 → 1 batch(같은 RC 공유 마찰 묶음) → Phase 0~14 → 종료. 별개 RC 가 여럿이면 단건에서는 우선 1개만 promote, 나머지는 ledger 에 `deferred`.
 
 ### 드레인 모드 (`--drain`)
-여러 대화·마찰을 수집해 **RC 로 군집(공통 뿌리 = 1 수정 batch)** 한 뒤, 한 batch 당 1 cycle 로 소진. **드레인이 자동화하는 것은 orchestration(수집·RC 군집·중복회피·순차·ledger 갱신)뿐** — 각 batch 의 위험등급 plan-review·Critical confirm·PR/deploy 외부영향은 그 차례에 개별 게이트로 유지(improve_cycle 드레인 동일 원칙). RC 군집화의 **정본은 Phase 7(triage)** 다 — 드레인 루프는 Phase 7 batch 단위로 Phase 4~14 를 반복하고, 한 batch 가 done·머지되면 ledger·corroboration 을 재계산해 다음 batch 를 잡는다.
+여러 대화·마찰을 수집해 **RC 로 군집(공통 뿌리 = 1 수정 batch)** 한 뒤, 한 batch 당 1 cycle 로 소진. 각 batch는 실제 위험과 기존 승인 범위를 대조하고 §16.5.1에 따라 구현·검증·출하한다. 새로운 미승인 위험만 별도 결정으로 분리한다. RC 군집화의 **정본은 Phase 7(triage)** 다 — 드레인 루프는 Phase 7 batch 단위로 Phase 4~14 를 반복하고, 한 batch 가 done·머지되면 ledger·corroboration 을 재계산해 다음 batch 를 잡는다.
 
 ```
 drain():
@@ -60,7 +60,7 @@ drain():
   loop:
     frictions = identify+diagnose(next_conv)  # Phase 4~6 (signal→RC, 거짓양성 기각)
     batches   = triage(frictions, ledger)     # Phase 7: 5축 점수·corroboration·공통뿌리 batch·disposition
-    show_plan_preview(batches); consent_drain()  # 1회 메타 승인(아래)
+    show_plan_preview(batches)                # 위임 범위의 순서를 고지; 새 미결정만 질문
     for b in ordered(batches):                # 위험등급 asc → 영향대화수 desc → id asc
       if b.friction_id in ledger.closed: continue
       g = risk_gate(b)                         # Phase 8
@@ -71,8 +71,8 @@ drain():
   report: fixed N(배포여부) / blocked M(사유) / report-only K / 남은 + 다음 사람 액션
 ```
 
-**consent_drain — 메타 승인(attended, §18.12 분리 패턴)**: 군집된 실행계획(각 RC·friction-id·영향 대화수·코드 거주 feature·위험등급 + 1줄 요지)을 1회 표면화 후, "이 순서로 드레인 진행" 메타 승인 1회. **인가하는 것**: ① 마찰 수집·RC 군집·순차·ledger 갱신 ② **Minor batch 자동 구현** ③ commit/push 자동 동기화. **인가하지 않는 것(차례마다 개별 게이트)**: ❌ Major plan-review ❌ Critical confirm ❌ PR/deploy 외부영향(override 미부여 또는 Major/Critical 이면).
-**무인 실행**: Minor batch 만 자동 구현·검증·commit/push, Major/Critical·PR/deploy 는 `blocked:needs-human`. 미응답=fail-closed. 한 패스 새 fixed 0 이면 종료.
+**드레인 범위 확인**: 현재 요청이 드레인을 위임했으면 RC·영향·코드 거주 feature·위험·순서를 한 번 알리고 진행한다. 실행 순서나 PR 단계만을 위한 메타 승인을 반복하지 않는다. 기존 승인 범위 밖의 §12 위험이 발견될 때만 해당 결정을 묻고 나머지 batch는 계속한다.
+**무인 실행**: 현재 유효한 승인 범위 안에서 구현·검증·출하한다(§16.5.1). 승인되지 않은 위험은 `blocked:needs-human`으로 남긴다. 미응답을 승인으로 처리하지 않으며 한 패스 새 fixed 0이면 종료한다.
 
 ---
 
@@ -239,14 +239,14 @@ signal_id   (관측, 대화 내 위치)      예 E-AST-2@<conv>#<msg>     ← Ph
      이 정밀 프록시 없이 거친 "ended-on-assistant" 로 세면 idiosyncratic 을 structural 로 오판한다(과적합 위험 역전).
 3. **공통뿌리 batch(T.2)**: 정본까지 추적된 **물리적 동일 근본**(§C2 friction-id)을 공유하는 마찰을 1 batch. **응집 한계(MUST, 넘으면 분할→queue)**: 1 worktree cycle · **1 verify-completion(단일 코드거주 feature-id)** · 1 적대 패널 렌즈셋(§18.8) · 단일 리뷰 응집. (드레인 군집화의 정본 = 여기. governance drain() 은 이 결과를 순차 실행.)
 4. **disposition(게이트 우선, 점수는 정렬용)**:
-   - **human-decision**: R 이 정책·UX·ANCHOR·plan 필요 함의 → Phase 8/Phase 6.F5.
+   - **human-decision**: 승인 범위 밖의 정책·UX 선택 또는 ANCHOR 충돌 등 실제 미결정이 있음 → Phase 8/Phase 6.F5.
    - **report-only**: C 낮음 · F=1 + corroboration 실패 · 거짓양성 필터 적중 · 근거부족 · 위험>가치(아래 기준).
    - **defer(queue)**: promote 가능하나 응집범위 초과 또는 선행 의존 → ledger `deferred`.
    - **fix-now**: 위 셋 비해당 + (C≥4 ∧ R≥3 ∧ corroboration 충족, 또는 **명백한 구조결함**(아래 정의)) → promote, batch 편입.
-   - **저흔적 이탈 예외(빈도 아닌 근본 확정도로 promote — 원 설계 1순위 요구의 게이트)**: "조용히 떠난 사용자"(I-SIL·I-ENG·I-FALSE) 는 *정의상* 기계 흔적이 약해 corroboration 이 표본부족(near-0 trace)으로 inconclusive 가 되기 쉽다. 그러나 **낮은 빈도는 낮은 검출가능성이지 낮은 심각도가 아니다**(이탈은 S 축 최상위 — 대화가 끊김). 그래서 빈도 게이트(F·corroboration)가 미달이어도, **(a) Phase 5 삼각측량이 코드 file:line 정본에 `confirmed`(rootcause_confidence high) ∧ (b) 재발경로(Phase 5.5)가 data/config·ux ∧ (c) 위험등급 Minor** 셋을 모두 충족하면 → **국소-우선 fix-now**(전역 행동 변경이 아닌 *봉인적* 수정만 — 단일 대화 표본으로 전역 프롬프트 재작성 금지, 과적합 가드 유지). Major↑ 면 human-decision(Phase 8). **이 분기가 곧 위 fix-now 의 "명백한 구조결함" 정의다** — 단일 대화라도 근본이 코드 정본까지 confirmed 면 corroboration 없이 fix-now 자격을 얻는다. 이로써 침묵 이탈이 "영구 report-only" 로 새지 않는다(없으면 사용자가 가장 강조한 '불만으로 끊긴 대화' 가 구조적으로 미수정).
-   - **무인 추가 게이트**: fix-now 중 Major/Critical 은 `blocked:needs-human` 격하(Minor 만 자율). attended 는 genuine fork 만 AskUserQuestion(분리 패턴·1턴1회·빈/미수신=승인아님).
-5. **report-only 기준**(수정 안 함이 정답): 정책·UX 결정 필요 / ANCHOR 충돌 / 사람 plan 필요(Major↑) / 근거 부족(C 낮음·inconclusive) / 위험>가치(R 낮고 S 낮음). 보류 + 사유 + **필요한 사람 액션 1줄**. **보안 가드 거부를 통과시키는 방향(보안 회귀)으로 promote 금지**.
-6. **ledger 선조회·idempotent**(빈번 호출): friction-id 매칭 — `fixed/rejected`=seen_count++ 만(여전히 보이면 fix 무효 1줄 점검) · `report-only/needs-human`=재보고 말고 seen_count++(임계 돌파해 idiosyncratic→structural 승격 시 재triage) · `deferred`=deps 풀렸고 응집 맞으면 promote · 신규=full triage. 종료 보고는 **상태 변경분만** 표면화.
+   - **저흔적 이탈 예외(빈도 아닌 근본 확정도로 promote — 원 설계 1순위 요구의 게이트)**: "조용히 떠난 사용자"(I-SIL·I-ENG·I-FALSE) 는 *정의상* 기계 흔적이 약해 corroboration 이 표본부족(near-0 trace)으로 inconclusive 가 되기 쉽다. 그러나 **낮은 빈도는 낮은 검출가능성이지 낮은 심각도가 아니다**(이탈은 S 축 최상위 — 대화가 끊김). 그래서 빈도 게이트(F·corroboration)가 미달이어도, **(a) Phase 5 삼각측량이 코드 file:line 정본에 `confirmed`(rootcause_confidence high) ∧ (b) 재발경로(Phase 5.5)가 data/config·ux ∧ (c) 위험등급 Minor** 셋을 모두 충족하면 → **국소-우선 fix-now**(전역 행동 변경이 아닌 *봉인적* 수정만 — 단일 대화 표본으로 전역 프롬프트 재작성 금지, 과적합 가드 유지). Major 이상은 Phase 8에서 실제 위험·승인 범위를 대조하고 미승인 결정만 human-decision으로 둔다. **이 분기가 곧 위 fix-now 의 "명백한 구조결함" 정의다** — 단일 대화라도 근본이 코드 정본까지 confirmed 면 corroboration 없이 fix-now 자격을 얻는다. 이로써 침묵 이탈이 "영구 report-only" 로 새지 않는다(없으면 사용자가 가장 강조한 '불만으로 끊긴 대화' 가 구조적으로 미수정).
+   - **무인 승인 확인**: fix-now 중 기존 승인으로 덮이지 않는 §12 위험만 `blocked:needs-human`으로 둔다. 실제 미결정 선택만 가용한 사용자 입력 도구로 묻고, 빈/미수신은 승인으로 처리하지 않는다.
+5. **report-only 기준**(수정 안 함이 정답): 승인 범위 밖의 정책·UX 결정 / ANCHOR 충돌 / 실제 미승인 위험 / 근거 부족(C 낮음·inconclusive) / 위험>가치(R 낮고 S 낮음). 보류 + 사유 + **필요한 사람 액션 1줄**. **보안 가드 거부를 통과시키는 방향(보안 회귀)으로 promote 금지**.
+6. **ledger 선조회·idempotent**(빈번 호출): friction-id 매칭 — `fixed/rejected`=seen_count++ 만(여전히 보이면 fix 무효 1줄 점검) · `report-only/needs-human`=새 사용자 지시·승인·근거·정책 변화가 있으면 재triage, 없으면 seen_count++만 기록 · `deferred`=deps 풀렸고 응집 맞으면 promote · 신규=full triage. 종료 보고는 **상태 변경분만** 표면화.
 
 # Phase 8 — 위험등급 판정 + 사전 게이트 (§12.3 / §18.3)
 
@@ -255,13 +255,13 @@ signal_id   (관측, 대화 내 위치)      예 E-AST-2@<conv>#<msg>     ← Ph
 
 | 수정 성격 | 등급(기본) | 근거 |
 |---|---|---|
-| 프롬프트(권위 주입)·맥락 조립(히스토리 라벨)·가드 메시지/거부 로직 | **Major** | 코어 LLM 경로 — 모든 대화 출력 영향(보안 저하·회귀) |
+| 프롬프트·맥락 조립·가드 메시지 | **영향에 따라 §12.3 판정** | 문구/정렬 수정과 보안 경계·출력 노출·외부 비용 변경을 구분 |
 | sql_guard 허용범위·RBAC·데이터소스 바인딩 | **Critical** | 인증/인가·보안 경계 |
 | 개인정보 노출 경로 | **Critical** | PII |
 | 비파괴 추가(테스트·로깅·내부 헬퍼·진단 쿼리) | **Minor** | 표면 안전 |
-| 데이터 row 교정(코드 권위 미동반) | Minor~Major | row-only=drift 재발 → **권장 안 함**, 코드 권위 수정으로 격상 |
+| 대화 데이터 row 교정 | **금지** | 이 persona의 읽기 전용 데이터 접근 경계 적용; 원인은 코드·설정의 승인된 변경으로 해소 |
 
-3. **attended/unattended**: Minor=직접 구현(양쪽) · Major=attended plan→PLAN-APPROVED 후 구현 / unattended `blocked:needs-human-plan-approval` · Critical=attended inline plan→confirm / unattended `blocked:needs-human`. 미응답=fail-closed. attended plan/confirm 은 §18.12 분리 패턴(prose brief 먼저·짧은 질문·1턴1회).
+3. **승인 판정**: §7.1·§12.3에 따라 실제 위험과 현재 승인 범위를 대조한다. 명시 승인 없는 Critical은 구현 전 확인한다. 이미 승인된 Major/Critical의 동일 범위를 단계별로 재승인받지 않는다. 무인 실행은 승인되지 않은 부분만 `blocked:needs-human`으로 남긴다.
 
 # Phase 9 — worktree 진입 (cycle-init, §13.2.7 F0)
 
@@ -296,11 +296,11 @@ worktree 안에서, **재발 경로(Phase 5)에 맞는 봉인**으로 RC 를 수
 # Phase 13 — 마감 (cycle-finalize) + 배포 (§12.2 / §13.2.9 / §16.3)
 
 1. **commit**(§16.3 Step 2): named-add 만(`git add -A/.` 금지), `CONTRIBUTING.md §5` 형식 + trailer + `Co-Authored-By:`. unit docs 동봉. commit/push 는 전역 auto-sync(BLOCKED 없음 + 승인대기 없음).
-2. **cycle-finalize(PR 머지, §16.3 Step 6)** — **외부영향 confirm**(PR URL 1줄 표면화 후 attended §18.12 confirm): `bash bin/cycle-finalize.sh --pr <PR-NUMBER>`. 무인/미응답 → commit/push 까지만, ledger `awaiting-merge PR#<n>`.
+2. **cycle-finalize(PR 머지, §16.3 Step 6)**: verify PASS·미승인 위험 없음이면 PR URL을 알리고 `bash bin/cycle-finalize.sh --pr <PR-NUMBER>`를 실행한다(§16.5.1). 기술적 차단은 실제 원인과 미완료 단계를 ledger에 기록한다.
 3. **배포(§12.2 / §13.2.9)** — **무엇을 재빌드해야 반영되나 project-agnostic discovery**:
    - 이 제품군은 **코드가 이미지에 baked** → push/merge 만으로 라이브 미반영. **수정이 닿는 모든 서빙 서비스를 discovery 해 재빌드** — 예: @assistant 처리 worker + web(프롬프트·맥락·가드는 LLM 호출 worker 가 실행하므로 worker 누락 시 web 만 새 코드). **`make up` 류가 일부 서비스를 누락**할 수 있음 → make 타깃 대신 영향 서비스를 직접 식별. 서비스키는 compose 에서 읽고 컨테이너명은 `docker compose ps <svc>` 로 해소. baked 면 `docker compose build <each-affected> && docker compose up -d --no-deps <each-affected>`(docker 권한 없으면 `sudo`).
    - **deploy-stage 격리(§13.2.9)**: 배포 직전 공유 REPO checkout(branch=main·dirty=0) 확인. 다른 세션 점유면 격리 경로(본 worktree 이미지 + isolation override, 공유 secret/override 미수정).
-   - **deploy = confirm**(기본). `deploy_scope: included` 가 cycle 시작 시점 선언돼 있으면 1줄 표면화 후 자동. **doc_sync 식 무확인 override 는 Minor deploy 에만 — Major/Critical 은 override 와 무관하게 confirm**(불변제약).
+   - **배포 권한**: §16.5.1을 적용한다. `deploy_scope` 기본값은 `included`이며 명시 opt-out·새 비가역 영향만 별도 처리한다. 첫 배포 전 영향 서비스를 알리고 실행한다.
    - 배포 진입점 부재 환경이면 skip(silent). **단 서빙 서비스 변경 후 배포 누락은 silent skip 아님 — 장애로 표면화**(사용자가 옛 코드 응답).
 4. **배포 검증(§16.3 deploy-backed)**: PR merge(코드 완료) ≠ 배포 완료. 재빌드 후 healthz/서빙 200(TLS 인지·포트 discovery) + 핵심 env(KEK/secret) 주입 확인. **이건 "서비스 기동·코드 반영" 증명** — Phase 11b "마찰 실제 소멸" 라이브 실측과 구분 표기.
 
@@ -323,9 +323,9 @@ worktree 안에서, **재발 경로(Phase 5)에 맞는 봉인**으로 RC 를 수
 - [ ] 근본원인 진단: `RC-id` 레코드, 레이어 역추적(단일 L1~L8 사전) + 5-whys 증거사다리 + 삼각측량(`rootcause_confidence`) + **공통뿌리=물리적 동일성 병합** + **재발경로 분류**(코드권위는 카탈로그 1항목 — 환각/지연/UX 에 drift내성 강요 안 함).
 - [ ] 거짓양성 단일 모듈 3시점 적용(신호직후 약한기각 / 진단중 데이터기각 / promote직전 6필터 — F4 보안가드 거부=기능, 결함 위치 재지정). 기각은 `refuted`/근거 기록.
 - [ ] Triage 게이트: 5축(C=rootcause_confidence·R 역축) + **corroboration(structural/idiosyncratic/inconclusive, 무인 고정임계·표본부족 fail-closed)** + 공통뿌리 batch(1 cycle/1 verify single feature-id/1 패널) + disposition. 단일 대화로 전역수정 promote 금지(과적합).
-- [ ] 위험등급(§12.3): 프롬프트/맥락/가드=Major, 보안경계/PII=Critical. attended=plan/confirm 후, **unattended=Minor 만·나머지 blocked, 미응답=fail-closed**.
+- [ ] 위험등급은 실제 변경 영향으로 판정하고 §7.1·§12 승인 근거를 기록했다. 미승인 결정은 blocked이며 현재 승인 범위를 재질문하지 않았다.
 - [ ] worktree(cycle-init `--feature`)·verify(`<feature-id>`)에 **코드 거주 feature-id 동일**. 재발경로에 맞는 봉인 수정. unit docs 갱신(primary verify + secondary cross-ref).
 - [ ] 검증 2층 분리: 11a 단위테스트+verify PASS=의도 동작 증명, **11b 마찰 실제 소멸=배포 후 동일입력 재현/라이브 실측 필요분 정직 분리**(코드만으로 소멸 단정 금지).
 - [ ] §18.8 패널(키워드 매칭, 프롬프트=full panel default·가드=backend+qa, 하드코딩 금지) + REVIEW.md entry(check #9, Trigger 기록).
-- [ ] cycle-finalize(PR=외부영향 confirm) → 배포(**영향 서비스 전부 discovery 재빌드**, make 누락 주의·`--no-deps`·§13.2.9 격리, **Major/Critical deploy=confirm override불가**), 배포 후 healthz/env 검증. 서빙 변경 후 배포 누락=장애(silent skip 금지).
+- [ ] §16.5.1에 따라 cycle-finalize→필요한 배포→서비스 기동·실제 경로 검증까지 진행했다. 미완료 단계는 원인과 함께 명시했다.
 - [ ] 산출: **단일 `FRICTION_LEDGER.md`**(feature REPORT 는 cross-ref 1줄) status 갱신 + **회귀 측정 폐루프**(fixed 재corroboration → verified/regressed, 측정으로만 done) + 재사용 교훈 LEARNINGS(LRN) + 신호사전 환류. 문서 정합은 doc_sync 위임(자동 chain 금지). content·PII·로드된 secret 비노출. 경로 repo-상대(`repo/` prefix 금지).

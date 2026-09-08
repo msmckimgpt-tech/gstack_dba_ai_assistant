@@ -25,7 +25,10 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -184,6 +187,107 @@ _MODAL = _REPO / "unit/feature-0003-agent-web-ui/src/static/index.html"
 _PAGE = _REPO / "unit/feature-0003-agent-web-ui/src/static/ai-connect.html"
 
 
+# Shared-JS/DOM unit coverage, including browser handoff compatibility.
+# This does not prove the DQA client's WebView, OS scheme handler, or live connection.
+_CONNECT_UI_HARNESS = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const spec = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(spec.page, 'utf8');
+const elements = new Map();
+function element(id, hidden = false) {
+  return {
+    id, hidden, textContent: '', disabled: false, style: {}, handlers: {},
+    classList: { add() {}, remove() {}, toggle() {} },
+    setAttribute(k, v) { this[k] = v; }, removeAttribute(k) { delete this[k]; },
+    addEventListener(k, fn) { (this.handlers[k] ||= []).push(fn); },
+    appendChild() {}, focus() {},
+  };
+}
+for (const match of html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)) {
+  elements.set(match[1], element(match[1], /\bhidden\b/.test(match[0])));
+}
+const calls = [], navigation = [];
+const location = { search: '', origin: 'https://fixture.invalid' };
+Object.defineProperty(location, 'href', { set(url) { navigation.push(url); } });
+const context = vm.createContext({
+  document: {
+    getElementById: id => elements.get(id) || null,
+    createElement: () => element(''), activeElement: null,
+    addEventListener() {}, removeEventListener() {},
+  },
+  window: { location }, location, URLSearchParams,
+  clientBridge: spec.client ? {} : null, initClientPanel: () => false, showToast() {},
+  fetch: async (url, options = {}) => {
+    calls.push({ url, options });
+    const token = url === '/api/ai/connect/token';
+    return { ok: token ? spec.tokenOk : true, json: async () => token
+      ? (spec.tokenOk ? { launch: { protocol: spec.protocol } }
+                       : { error: 'unauthorized' })
+      : { logged_in: true, client_download: '/client/download', steps: [] } };
+  },
+  setTimeout, clearTimeout, console,
+});
+let code = fs.readFileSync(spec.script, 'utf8');
+if (spec.modal) {
+  // Imported UI services are seams; execute the module's own handlers unchanged.
+  code = code.replace(/^import .+?;\s*$/gm, '').replace(/^export /gm, '');
+}
+vm.runInContext(code, context, { filename: spec.script });
+const flush = async () => {
+  for (let i = 0; i < 6; i++) await new Promise(setImmediate);
+};
+(async () => {
+  if (spec.modal) {
+    // The polling outcome is controlled; real click/DOM/recovery logic is retained.
+    vm.runInContext(`
+      _syncGatePoll = () => {};
+      refreshConnState = async () => null;
+      _awaitUsable = async () => false;
+      _everConnected = true;
+      _lastObs = ${JSON.stringify(spec.stale
+        ? { listening: true, stale: true, build: 'old-build' }
+        : { listening: false, stale: false, build: 'current-build' })};
+      bindConnectModal(); openConnectModal();
+    `, context);
+  }
+  await flush();
+  const button = elements.get(spec.modal ? 'connectModalLaunch' : 'launchClient');
+  const beforeClick = { hidden: button.hidden, calls: [...calls] };
+  if (spec.auto) {
+    await vm.runInContext("autoLaunch('click', { fallbackModal: true })", context);
+  } else if (!button.hidden) {
+    const handlers = button.handlers.click || [];
+    if (handlers.length !== 1) throw new Error(`click handlers: ${handlers.length}`);
+    await handlers[0]();
+  }
+  await flush();
+  const status = elements.get(spec.modal ? 'connectModalStatus' : 'connectStatus');
+  console.log(JSON.stringify({ beforeClick, calls, navigation,
+    message: status.textContent, kind: status['data-kind'] || '',
+    hidden: button.hidden, handlers: (button.handlers.click || []).length }));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+
+
+def _run_connect_ui(page, script, *, token_ok=True, protocol=None, stale=False, auto=False,
+                    client=False):
+    node = shutil.which("node")
+    assert node, "Connection UI behavior tests require Node.js in the test environment"
+    if protocol is None:
+        protocol = ident.scheme_url("fixture-token", base="https://fixture.invalid")
+    result = subprocess.run(
+        [node, "-e", _CONNECT_UI_HARNESS],
+        input=json.dumps({"page": str(page), "script": str(script),
+                          "modal": page == _MODAL, "tokenOk": token_ok,
+                          "protocol": protocol, "stale": stale, "auto": auto,
+                          "client": client}),
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
 # ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).**
 #
 #   여기에는 두 테스트가 있었다 — `test_terminal_path_is_collapsed`(접어 둔다)와
@@ -255,21 +359,21 @@ def test_lead_text_points_at_the_client(path):
         f"{path.name}: 안내가 앱을 주 경로로 말하지 않는다"
 
 
-def test_failure_messages_no_longer_point_at_a_path_that_is_gone():
-    """⚠ **전제가 뒤집혔다.** 종전 계약은 「실패 안내가 「1단계 명령」으로 되돌려 보내니 그
-    블록을 펼쳐라」였다(`_revealCommand`). 그 블록이 사라졌으므로 이제 지켜야 하는 것은
-    반대다 — **없는 곳을 가리키지 않는가.**
-
-    이것이 더 중요한 축이다. 사라진 경로를 계속 가리키는 안내는 «막다른 길» 을 만드는데,
-    화면에는 아무 흔적도 남지 않아 소스만 보면 멀쩡해 보인다.
-    """
-    js = (_REPO / "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js"
-          ).read_text(encoding="utf-8")
-    # 사용자에게 보이는 문자열만 본다 — 주석에는 「왜 지웠는가」가 남아 있어야 한다.
-    quoted = re.findall(r'"((?:[^"\\]|\\.)*)"', js)
-    speaking = [q for q in quoted if any(w in q for w in ("터미널", "1단계", "붙여넣"))]
-    assert not speaking, f"사라진 경로를 아직 가리킨다: {speaking}"
-    assert "_revealCommand" not in js, "지운 함수의 호출이 남아 있다"
+@pytest.mark.parametrize(("stale", "auto"), [(True, False), (True, True), (False, True)])
+def test_failure_messages_no_longer_point_at_a_path_that_is_gone(stale, auto):
+    """실제 실패 분기가 DOM에 표시한 안내를 검사한다. 주석은 사용자 발화가 아니다."""
+    result = _run_connect_ui(_MODAL, _STATIC / "app/connect-modal.js", stale=stale, auto=auto)
+    message = result["message"]
+    assert result["navigation"], "실행을 시도하지 않고 실패 안내만 검사했다"
+    assert result["kind"] == "error" and message
+    assert not re.search(r"터미널|1단계|붙여넣|아래 명령|연결 준비", message), message
+    html = re.sub(r"<!--.*?-->", "", _MODAL.read_text(encoding="utf-8"), flags=re.S)
+    labels = {
+        re.sub(r"<[^>]+>", "", label).strip()
+        for label in re.findall(r"<(?:button|a)\b[^>]*>(.*?)</(?:button|a)>", html, re.S)
+    }
+    for target in re.findall(r"\[([^\]]+)\]", message):
+        assert target in labels, f"안내가 가리키는 조작면이 없다: {target}"
 
 
 # ── 4. 안내가 가리키는 것이 그 화면에 **실재하는가** ──────────────────────────────
@@ -302,63 +406,41 @@ def test_launch_button_exists_where_the_text_points_at_it(page, script):
     (_STATIC / "index.html", _STATIC / "app/connect-modal.js"),
 ])
 def test_launch_button_never_lies_about_what_it_can_do(page, script):
-    """없는데 보이면 누른 뒤 아무 일도 없고, 사용자는 그것을 고장으로 읽는다.
-
-    ⚠ **두 화면이 갈렸다 (2026-09-07).** 종전에는 둘 다 「[연결 준비] 가 프로토콜 URL 을
-    만들어 준 뒤에만 보인다」였고, 그래서 둘 다 `hidden` 이었다. 그 버튼이 사라지면서:
-
-    - **모달**은 창을 여는 순간이 있으므로 그때 미리 받아 두고(`_offerLaunch`), 받아졌을
-      때만 버튼을 드러낸다 — 종전 계약 그대로 `hidden`.
-    - **단독 페이지**는 창을 여는 계기가 없다. 그래서 버튼이 **스스로 받는다** — 숨겨 두면
-      영영 드러날 계기가 없어 「없는 버튼을 가리키는 안내」가 된다.
-
-    지켜야 하는 성질은 `hidden` 이라는 구현이 아니라 **누르면 실제로 무슨 일이 일어나는가**
-    다. 두 구현을 각각 그 성질로 잰다.
-    """
-    html = page.read_text(encoding="utf-8")
-    if "내 AI 실행" not in html:
-        pytest.skip(f"{page.name}: 해당 없음")
-    bid = re.findall(r'<button[^>]*id="([A-Za-z]+)"[^>]*>\s*내 AI 실행', html)[0]
-    decl = re.search(rf'<button[^>]*id="{bid}"[^>]*>', html).group(0)
-    js = script.read_text(encoding="utf-8")
-    if "hidden" in decl:
-        # 숨겨 두는 쪽은 **드러내는 자리**가 있어야 한다 — 없으면 영영 안 보인다.
-        assert "hidden = false" in js, f"{script.name}: 숨겨 놓고 드러내는 곳이 없다"
-    else:
-        # 늘 보이는 쪽은 **누를 때 받아야** 한다 — 안 그러면 눌러도 아무 일이 없다.
-        idx = js.find(f'$("{bid}")')
-        assert idx >= 0, f"{script.name}: {bid} 가 배선되지 않았다"
-        assert "/api/ai/connect/token" in js[idx:idx + 1200], \
-            f"{script.name}: 늘 보이는 버튼인데 눌러도 연결 정보를 받지 않는다"
-    assert "protocol" in js, f"{script.name}: 프로토콜 유무로 동작을 정하지 않는다"
+    """실제 클릭이 서버가 준 스킴으로 이동하며, 모달만 클릭 전에 토큰을 받는다."""
+    result = _run_connect_ui(page, script)
+    assert result["beforeClick"]["hidden"] is False
+    token_calls = [call for call in result["calls"] if call["url"] == "/api/ai/connect/token"]
+    assert token_calls and all(call["options"].get("method") == "POST" for call in token_calls)
+    before = [call for call in result["beforeClick"]["calls"] if call["url"] == "/api/ai/connect/token"]
+    assert bool(before) is (page == _MODAL)
+    assert result["navigation"] == [ident.scheme_url("fixture-token", base="https://fixture.invalid")]
 
 
 def test_page_handler_is_registered_once_not_per_repaint():
-    """⚠ 처음 넣을 때 `paintOsTab()` 안에 들어가 **탭을 그릴 때마다** 등록됐다.
-
-    중복 등록은 조용하다 — 화면은 멀쩡하고 클릭 한 번에 핸들러가 여러 번 돈다.
-
-    ⚠ 그 `paintOsTab` 은 2026-09-07 에 사라졌다(OS 탭이 없어졌다). 그래서 「저 함수 안에
-    있지 않은가」로는 더 이상 잴 수 없다 — 재는 것을 **성질 자체**로 옮긴다: 등록은 모듈
-    최상위에서 **정확히 한 번** 일어난다.
-    """
-    js = (_STATIC / "ai-connect.js").read_text(encoding="utf-8")
-    regs = re.findall(r'\$\("launchClient"\)[^\n]*addEventListener', js)
-    assert len(regs) == 1, f"실행 버튼 등록이 {len(regs)} 곳이다 — 1 이어야 한다"
-    # 등록 줄의 들여쓰기가 2칸(IIFE 최상위)인가 — 함수 안이면 4칸 이상이 된다.
-    line = next(ln for ln in js.splitlines() if 'addEventListener' in ln
-                and '$("launchClient")' in ln)
-    assert len(line) - len(line.lstrip()) <= 2, \
-        f"실행 버튼 등록이 어떤 함수 안에 있다: {line.strip()[:60]}"
+    """상태 응답 렌더 뒤 실제 버튼에 클릭 리스너가 한 번만 등록돼 있다."""
+    result = _run_connect_ui(_PAGE, _STATIC / "ai-connect.js")
+    assert result["handlers"] == 1
 
 
 def test_silent_scheme_failure_is_explained():
-    """스킴 핸들러가 없으면 브라우저는 **아무 일도 하지 않고 오류도 주지 않는다**."""
-    js = (_STATIC / "ai-connect.js").read_text(encoding="utf-8")
-    idx = js.find('$("launchClient")')
-    body = js[idx - 800:idx + 900]
-    assert "설치되지 않은" in body or "창이 뜨지 않으면" in body, \
-        "조용한 실패를 사용자가 「고장」으로만 읽게 둔다"
-    # ⚠ 되돌아갈 곳도 함께 본다. 종전 문구는 「아래 [터미널로 연결하기] 를 펼쳐 주세요」
-    #   였는데 그 블록이 사라졌다 — 안내만 남으면 없는 곳을 가리킨다.
-    assert "터미널" not in body, "사라진 경로를 아직 가리킨다"
+    """외부 프로그램의 응답이 없는 실제 스킴 이동 뒤 설치 안내가 DOM에 남는다."""
+    result = _run_connect_ui(_PAGE, _STATIC / "ai-connect.js")
+    assert result["navigation"]
+    assert "창이 뜨지 않으면" in result["message"]
+    assert "DQA 앱 받기" in result["message"]
+    assert "터미널" not in result["message"]
+
+
+@pytest.mark.parametrize("page, script", [
+    (_PAGE, _STATIC / "ai-connect.js"),
+    (_MODAL, _STATIC / "app/connect-modal.js"),
+])
+@pytest.mark.parametrize("token_ok, protocol", [(False, ""), (True, "")])
+def test_failed_token_or_missing_protocol_never_launches(page, script, token_ok, protocol):
+    """양성 대조군과 같은 핸들러가 발급 실패/빈 스킴에서는 이동하지 않는다."""
+    result = _run_connect_ui(page, script, token_ok=token_ok, protocol=protocol)
+    assert not result["navigation"]
+    if page == _MODAL:
+        assert result["beforeClick"]["hidden"] is True
+    else:
+        assert result["kind"] == "error"

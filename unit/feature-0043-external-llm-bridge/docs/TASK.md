@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260908T020000-delegation-friction — 테스트 수집 정본화
+
+- 범위/계획: `tests/test_ci_testpath_parity.py`의 두 목록 비교를 공통 pytest 설정 사용 검사로 교체하고, 루트 `pyproject.toml`을 Makefile·CI·직접 실행의 단일 테스트 목록으로 사용한다. 상세 계획은 [META TASK](../../../meta/TASK.md).
+- 수용 기준: 이전 Makefile/CI 9경로를 모두 유지하고, 양쪽에서 빠졌던 native-client 테스트만 추가 수집한다. 제품 실행 동작은 이 작업의 변경 대상이 아니다.
+- [x] pytest testpaths 합집합 10경로로 정합하고 두 진입점의 경로 인자 복제를 제거한다.
+- [x] 설정 우회·필터·pytest 호출 누락 음성 대조를 포함한 수집 계약 18건을 통과한다.
+- [x] 새 전체 설정에서 8,017건 수집, native-client 515건 포함, collection rc=0을 확인한다.
+- 검증 기록: [테스트 실행](test-runs.d/TASK-20260908T020000-delegation-friction.md). 이 cycle의 리뷰·랜딩은 프로젝트 META TASK에서 추적한다.
+
 ## TASK-20260907T181510-kb-external-search — KB 구획 회귀 정합 (#1598)
 
 - [x] claim_request의 질문(principal+session canary)·이력(history)·KB(tool_output) 구획을

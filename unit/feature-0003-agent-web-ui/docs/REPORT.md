@@ -2981,3 +2981,11 @@ P1 0, QA R3 P1/P2 0. Git 동기화·배포 결과는 이슈 #1598에 연결되�
 - 로컬 전체7485 PASS/28 skip, 옛 구획 assertion1건은 테스트 정합 후 해당suite19 PASS.
 - 전체ruff0, migrate-lint/head/code navigation PASS. GitHub runner는 billing 차단으로 미실행.
 - 최종 Git·배포 상태: PR #1599 본문에 기록(AGENTS §16.3 결과 기록의 PR 정본 허용).
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

@@ -503,3 +503,11 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [ ] §18.8 3라운드 패널 (직전 cycle 잔여, 사용량 한도로 미실시)
 - 종결 표시: 앞 cycle 의 `- [ ] 릴리스 디렉토리 첫 생성` 은 이 인스턴스에서 **완료**
       (경로는 `<project_root>/artifacts/client-release` — `repo/` 상대경로 아님)
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

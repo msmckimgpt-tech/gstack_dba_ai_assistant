@@ -13351,3 +13351,11 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] 미확인 항목(첫 실 릴리스 미반입 → 받기 자리는 열렸으나 파일 없음·미서명·설치기 실제 실행 미실측·라이브 계정 화면 미관측)을 항목 detail + 접힌 summary 양쪽에 정직 고지
 - [x] `node --check` + `tests/verify_release_notes.mjs` **34/0 ALL PASS** (baseline 동일)
 - [x] 캐시버스터 수기 bump 금지 준수 (`?v=dev` 고정 · 빌드 주입 · 배포 ABORT 가드)
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

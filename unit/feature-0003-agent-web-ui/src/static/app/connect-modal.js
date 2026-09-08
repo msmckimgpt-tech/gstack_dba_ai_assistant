@@ -194,13 +194,12 @@ function _isStaleNow(o) {
 // 추측하는 것보다 강한 근거이고, 앞으로 어떤 이유로 갱신이 막히든(권한·오프라인·차단) 같은
 // 결론에 도달한다.
 //
-//: 그 증거를 잡았는가. 잡은 뒤로는 재실행을 권하지 않고 **다시 설치하는 1단계 명령**으로 보낸다.
+//: 같은 지문이면 최신 앱 설치와 재연결을 안내한다.
 let _relaunchNoUpdate = false;
 
 const MSG_RELAUNCH_NO_UPDATE =
-  "다시 실행했지만 러너 파일이 그대로입니다 — 이 컴퓨터의 실행 스크립트가 예전 것이라 "
-  + "스스로 갱신하지 못합니다. 아래 1단계 명령을 한 번만 다시 실행해 주세요. "
-  + "그다음부터는 실행할 때마다 자동으로 갱신됩니다.";
+  "DQA 앱을 다시 실행했지만 업데이트가 적용되지 않았습니다. "
+  + "알림 영역의 DQA 아이콘을 우클릭해 [업데이트 확인]을 선택해 주세요.";
 
 /** 재기동을 했는데 **같은 파일이 다시 떴는가**.
  *
@@ -453,13 +452,13 @@ async function autoLaunch(reason, opts) {
     // 곳을 지목한다.
     if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) _relaunchNoUpdate = true;
     // 로그인 진입에서는 창을 열지 않는다 — 로그인하자마자 창이 튀어나오는 것은 방해다.
-    // 증거는 위에서 이미 남았으므로, 사용자가 다음에 누르는 순간 곧바로 명령으로 간다.
+    // 다음 클릭에서는 연결 프로그램으로 안내한다.
     if (fallbackModal) {
       if (_relaunchNoUpdate) _showRelaunchNoUpdate();
       else {
         openConnectModal();
-        _status("자동 실행에 응답이 없었습니다 — 아래 명령으로 직접 실행하거나 [연결 준비] 를 "
-                + "다시 눌러 주세요.", "error");
+        _status("자동 연결에 응답이 없습니다. DQA 앱이 실행 중인지 확인한 뒤 "
+                + "[내 AI 실행]을 다시 눌러 주세요.", "error");
       }
     }
     return true;
@@ -1317,4 +1316,3 @@ export function bindConnState() {
   });
   refreshConnState();
 }
-

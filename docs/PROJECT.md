@@ -6,6 +6,7 @@ edit_policy: rewrite
 source_of_truth: true
 template_version: v3.54.1
 domain: [product, scope]
+primary_ui_surface: dqa-client
 ai_read_priority: 2
 ---
 
@@ -98,9 +99,12 @@ make build
   feature-0020(전 대상 확장) · feature-0039(정기 잡 인-컨테이너) · feature-0045(브리지 연속성 — 개인 AI
   연결·진행 중 왕복을 배포가 끊지 않도록 드레인·게이트·MCP 2-replica). 완료 판정 기준은 `../AGENTS.md` §16
   (§16.1 완료 기준 · §16.2 완료 선언 · §16.3 deploy-backed 소비자 완료 기준), 웹 UI 시각검증 기준은
-  §16.6 + 실 Windows 브라우저 PB-0008.
-- AI 자율 배포: 기본 불가 (사람 승인 필요). 예외 = `FIRST_REQUEST.md` / `unit/<id>/docs/FUNCTION.md`
-  `## Pre-approved Changes` 의 `deploy_scope: included` 선언 범위 (`../AGENTS.md` §12.2).
+  §16.6 + 실제 DQA 클라이언트 PB-0009다. Windows 브라우저는 보조 호환 경로다.
+- 사용자 결정(2026-09-08): 서비스는 별도 DQA 클라이언트로 이용한다. UI 완료 검증은 앱의
+  화면·로컬 브리지·해당 사용자 동작을 기준으로 하며 일반 브라우저 기동을 매번 요구하지 않는다.
+- 배포 자율 경계는 `../AGENTS.md` §16.5.1이 정본이다(`deploy_scope` 기본값 `included`).
+  명시 opt-out과 §12의 미승인 위험을 확인하며, 이미 승인된 작업을 배포 단계에서 다시 묻지 않는다.
+  정책·문서·개발 도구만 바뀌어 서빙 산출물에 영향이 없으면 제품 재배포는 불요하다.
 
 ## 9. 빌드 자동화
 

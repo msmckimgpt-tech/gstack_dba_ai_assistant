@@ -1110,3 +1110,11 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - Consequences: 의미검색 동등 품질을 보장하지 않는다. 문서 발췌/5초 timeout/부분 장애를 고지한다.
   벡터/볼륨 일괄 삭제 없음; 질문 편집 시 해당 벡터 무효화는 정상 데이터 정합 작업이다.
 - Evidence: feature-0002 docs/test-runs.d/TASK-20260907T181510-kb-external-search.md (203 PASS).
+
+
+## ADR-20260908T024500-dqa-client-verification — 주 사용 환경과 UI 검증 정본
+
+- 상태: accepted — 2026-09-08 현재 사용자 직접 지시: 서비스는 일반 Windows 웹브라우저가 아니라 별도 DQA 클라이언트로 이용한다.
+- 결정: `docs/PROJECT.md`의 `primary_ui_surface: dqa-client`, AGENTS §15.4.1·§16.6, PB-0009를 정본으로 한다. PB-0008은 일반 브라우저 호환 보조 경로로 유지한다.
+- 적용: 새 Run은 DQA-client와 명시 Result/증거/미검증 범위를 기록한다. 기존 Windows-browser 이력은 삭제하지 않고 실제 대상에 따라 해석한다. 브라우저/Node/CLI PASS를 앱 전체 PASS로 합산하지 않는다.
+- 근거: 이번 사용 경로 정정과 feature-0046 `window.py`의 내장 WebView2 구현. 상세 검수·검증 결과는 [위탁 병목 개선](improvements/delegation-friction-20260908/EVIDENCE.md)과 해당 REPORT 참조.

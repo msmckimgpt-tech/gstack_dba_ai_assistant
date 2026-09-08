@@ -4783,3 +4783,11 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `TASK.md` 의 「배포 후 라이브 실측」 항목 체크 + `REPORT.md §8` 에 자기갱신 경합 기록.
 - 사용자 요청(*"해당 러너 실행 및 실측도 직접 진행해주세요"*)에 따라 사용자 계정 러너를
   직접 기동하고 앱 창 화면까지 확인했다.
+
+## CHG-20260908T020000-ai-codex-delegation-friction — pytest 수집 목록 정본화
+
+- Session: ai/codex/meta-delegation-friction-20260908
+- Related TASK: TASK-20260908T020000-delegation-friction
+- `tests/test_ci_testpath_parity.py`: Makefile↔CI 두 목록만 같으면 통과하던 검사를 공통 pytest 설정 사용 계약으로 교체한다. 양쪽에서 native-client가 함께 빠진 상태를 놓치던 원인을 제거한다.
+- 루트 `pyproject.toml`에 이전 실행 9경로와 native-client를 합친 10경로를 유지한다. Makefile/CI는 경로 인자를 생략하여 그 정본을 읽는다.
+- 검증: 수집 계약 18 PASS, ruff PASS, 전체 collection 8,017건(native-client 515건 포함) rc=0. 상세는 `docs/test-runs.d/TASK-20260908T020000-delegation-friction.md`.

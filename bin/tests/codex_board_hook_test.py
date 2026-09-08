@@ -167,11 +167,23 @@ class CodexBoardHookTest(unittest.TestCase):
         self.hook("SessionStart", source="resume")
         self.assertEqual(self.presence()["state"], "done")
 
-    def test_disabled_and_unregistered_lifecycle_do_not_create_presence(self):
+    def test_missing_start_is_recovered_by_first_prompt_without_posting(self):
         self.init_board()
         self.assertIsNone(self.hook("UserPromptSubmit", turn_id="unregistered"))
+        self.assertEqual(self.presence()["platform"], "codex")
+        self.assertEqual(self.presence()["state"], "active")
+        token = self.token()
+        self.assertIsNone(self.hook("UserPromptSubmit", turn_id="second"))
+        self.assertEqual(self.token(), token)
+        self.assertEqual(list((self.root / "channels/public").glob("*.md")), [])
+
+    def test_disabled_lifecycle_does_not_create_presence(self):
+        self.init_board()
         self.env["AGENT_BOARD_DISABLE"] = "1"
         self.assertIsNone(self.start())
+        self.assertIsNone(self.hook("UserPromptSubmit", turn_id="disabled"))
+        self.assertIsNone(self.hook("Stop"))
+        self.assertIsNone(self.hook("SessionEnd", reason="other"))
         self.assertEqual(list((self.root / "sessions").glob("*.json")), [])
 
 

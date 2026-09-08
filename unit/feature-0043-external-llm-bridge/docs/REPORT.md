@@ -8,6 +8,8 @@ source_of_truth: true
 
 # Report
 
+**2026-09-08 검증 도구 정합**: Makefile·CI·직접 pytest의 테스트 목록을 루트 `pyproject.toml`로 통합했다. 기존 Makefile/CI 9경로를 유지하며 native-client 515건을 추가 연결했고, 전체 8,017건 collection rc=0 및 수집 계약 18건 PASS를 확인했다. [실행 기록](test-runs.d/TASK-20260908T020000-delegation-friction.md). 제품 동작 변경이나 라이브 검증 결과를 뜻하지 않는다.
+
 ## 1. 현재 상태
 
 **2026-09-08 (TASK-20260908T010000)**: 배포 후 라이브 종단 실측 완료 — 사용자 계정 앱 창에서
