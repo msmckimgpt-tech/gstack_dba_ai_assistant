@@ -233,7 +233,9 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$PRINT_ONLY" -eq 0 ]; then
   if [ -f "$_CI_DIR/board.sh" ]; then
     log_step "agent-board bootstrap (best-effort, §22.15)"
     if ( cd "$MAIN_WORKTREE_PATH" && bash "$_CI_DIR/board.sh" bootstrap --work "$FEATURE_ID" --worktree "$FEATURE_ID" --activate-in "$NEW_WORKTREE_PATH" ) >&2; then
-      :
+      # 착수 이정표 (§22.15 이정표 모델 — persona 재량이 아니라 스크립트가 게시한다, v3.54.1). 실패는 stderr 한 줄, rc 0.
+      ( cd "$MAIN_WORKTREE_PATH" && bash "$_CI_DIR/board.sh" milestone --kind status --work "$FEATURE_ID" \
+          -m "착수 $FEATURE_ID — worktree $(basename "$NEW_WORKTREE_PATH") · branch $NEW_BRANCH · base $BASE_BRANCH" ) >/dev/null || true
     else
       _rc=$?; log_warn "agent-board bootstrap 실패(rc=$_rc) — 세션이 직접 'bash bin/board.sh bootstrap --work $FEATURE_ID' 를 실행하라 (§22.15)"
     fi
