@@ -136,6 +136,12 @@ def test_child_spawn_actually_passes_windowless_flags(call, monkeypatch, tmp_pat
             seen.update(kw)
             self.stdout = None
 
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
     def fake_run(argv, **kw):
         seen.update(kw)
         return subprocess.CompletedProcess(argv, 0, "", "")
@@ -342,6 +348,8 @@ def _app(tray=None):
     app.root = FakeRoot()
     app.tray = tray
     app.runner_proc = None
+    app._runner_lock = __import__("threading").RLock()
+    app._connect_generation = 0
     app._told_about_tray = False
     app._events = queue.Queue()
     return app
@@ -463,6 +471,9 @@ def _connected_app(tray):
     app.status, app.detail = FakeVar(), FakeVar()
     app._tray_toggle = tray_mod.TrayItem(label="연결 끊기")
     app._buttons = lambda specs: None
+    from types import SimpleNamespace
+    app.runner_proc = SimpleNamespace(running=True, poll=lambda: None)
+    app._shutting_down = False
     return app
 
 
@@ -474,11 +485,11 @@ def test_connected_message_promises_persistence_only_with_a_tray():
     """
     with_tray = _connected_app(_tray(backend=FakeBackend()))
     with_tray.tray.start()
-    with_tray._on_connected(None)
+    with_tray._on_connected((with_tray._connect_generation, with_tray.runner_proc))
     assert "닫아도" in with_tray.detail.get()
 
     without = _connected_app(None)
-    without._on_connected(None)
+    without._on_connected((without._connect_generation, without.runner_proc))
     assert "닫으면 연결이 끊깁니다" in without.detail.get()
     assert "닫아도" not in without.detail.get()
 
@@ -486,11 +497,13 @@ def test_connected_message_promises_persistence_only_with_a_tray():
 def test_tray_tooltip_follows_the_connection_state():
     app = _connected_app(_tray(backend=FakeBackend()))
     app.tray.start()
-    app._on_connected(None)
+    app._on_connected((app._connect_generation, app.runner_proc))
     assert "연결됨" in app.tray.tooltip
     assert app._tray_toggle.label == "연결 끊기" and app._tray_toggle.enabled
 
     app.runner_proc = None
+    app._runner_lock = __import__("threading").RLock()
+    app._connect_generation = 0
     app._stop()
     assert "연결 끊김" in app.tray.tooltip
     assert app._tray_toggle.label == "다시 연결"
@@ -531,7 +544,7 @@ def _connect_app(monkeypatch, tmp_path, tray=None):
 
     seen = {"runtime": "unset", "spawned": []}
 
-    def fake_spawn(plan, runner, ca, runtime=None):
+    def fake_spawn(plan, runner, ca, runtime=None, **kwargs):
         seen["runtime"] = runtime
         proc = FakeProc()
         seen["spawned"].append(proc)
@@ -593,8 +606,7 @@ def test_connect_does_not_leave_a_runner_after_quit(monkeypatch, tmp_path):
     monkeypatch.setattr(core, "pin_server",
                         lambda home, base: setattr(app3, "_shutting_down", True))
     app3._connect(None)
-    assert seen3["spawned"] and seen3["spawned"][0].terminated == 1, \
-        "spawn 과 종료가 겹쳤는데 러너를 되돌리지 않았다"
+    assert not seen3["spawned"], "종료를 이미 알았는데 러너를 띄웠다"
 
 
 def test_selection_is_read_on_the_gui_thread_and_passed_as_state(monkeypatch, tmp_path):
@@ -646,7 +658,7 @@ def test_connected_message_follows_liveness_not_mere_presence():
     t.start()
     app = _connected_app(t)
     backend.alive = False
-    app._on_connected(None)
+    app._on_connected((app._connect_generation, app.runner_proc))
     assert "닫으면 연결이 끊깁니다" in app.detail.get(), \
         "아이콘이 죽었는데 「닫아도 유지」라고 말한다"
 
@@ -930,6 +942,8 @@ def test_bridge_reports_and_cuts_the_connection(tmp_path):
     b = _bridge_module()
     br = b.Bridge.__new__(b.Bridge)
     br._log = []
+    br._runner_lock = __import__("threading").Lock()
+    br._runner_generation = 0
     br._runner_proc = None
     assert br.connected is False
     assert br.disconnect() is False, "끊을 것이 없는데 끊었다고 말한다"

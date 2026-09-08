@@ -3296,3 +3296,21 @@ Task-Cycle: feature-0002-agent-core
 - Cross-ref: shared/docs/MODIFY.md CHG-20260907T181510-kb-external-search.
 - Navigation: routers/ai_tools.py의 claim_request/get_task_context 및 admin_metadata.py의
   admin_update_sample 기존 앵커 유지. gen-routemap 재생성, codenav-lint PASS.
+
+## CHG-20260908T120000-runner-update-recovery
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.
+- 변경과 이유: 단일 러너 빌더가 UTF-8 소스 본문의 SHA-256을 실행 코드 상수로 삽입한다. 자기 스탬프 행을 제외한 내용으로 검증하여 파싱 후 파일 교체 경합을 구분한다. Windows 줄바꿈 변환으로 지문이 달라지지 않도록 write_bytes로 출력한다.
+- 동반: 기존 테스트의 전역 app stub 누출·실제 CLI 탐지 누출·낡은 UI 문자열 범위 판정을 바로잡았다. native suite를 Makefile과 CI 양쪽에 등록했다.
+- 검증: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 되돌리기: 해당 cycle Git revert 후 서버 재배포; 앱 채널은 기존 1.1.0 재활성화 가능하나 이미 설치된 최신본은 자동 강등하지 않는다.
+
+## CHG-20260908T112500-runner-client-only-verification
+
+- 사용자 후속 지시를 현재 TASK에 기록: 별도 러너 실행 절차 없이 DQA 앱만 사용한다.
+- 변경 범위는 문서·실측 결과 보충이며 이미 구현한 소유 자식 감독 계약과 일치한다.
+- 템플릿 main v3.54.1 병합 후 정책 변경 구간과 지문을 재확인했다.
+
+## CHG-20260908T114000-runner-recovery-postdeploy
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery.
+- PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.

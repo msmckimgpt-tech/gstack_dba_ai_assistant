@@ -12,8 +12,8 @@
 이 클라이언트의 설계 근거가 **부품 수**다(ANCHOR §1: 「tkinter 를 쓰면 부품이 하나로 끝난다」).
 `pystray` 는 아이콘 비트맵을 만들려고 `Pillow` 를 끌고 오는데, 그 둘은 PyInstaller 번들을
 수십 MB 늘리고 백신 오탐 표면을 넓힌다 — **알림 영역 아이콘 하나 때문에** 치를 값이 아니다.
-Win32 `Shell_NotifyIconW` 는 `ctypes` 로 직접 부를 수 있고, 아이콘은 **우리 exe 안에 이미
-있는 것**(`ExtractIconW`)을 쓴다. 새로 그리지 않으므로 이미지 라이브러리가 필요 없다.
+Win32 `Shell_NotifyIconW` 는 `ctypes` 로 직접 부를 수 있고, 아이콘은 동봉 ICO를 `ExtractIconW`로 읽고 EXE 리소스로 복구한다.
+실행 시 새로 그리지 않으므로 이미지 라이브러리가 필요 없다.
 
 ## 구조 — 왜 둘로 나눴는가
 
@@ -376,9 +376,12 @@ class Win32Backend:
         IDI_APPLICATION, IDC_ARROW = 32512, 32512
 
         hinst = kernel32.GetModuleHandleW(None)
-        # 아이콘은 **우리 실행 파일 안의 것**을 꺼내 쓴다 — 새로 그리지 않으므로 이미지
-        # 라이브러리가 필요 없다. 소스로 돌 때는 python.exe 의 아이콘이 나온다(정상).
-        hicon = shell32.ExtractIconW(hinst, str(sys.executable), 0)
+        from .branding import ICON_PATH
+
+        # 소스 실행도 같은 브랜드를 사용한다. 동봉 자산이 없으면 EXE 리소스로 복구한다.
+        hicon = shell32.ExtractIconW(hinst, str(ICON_PATH), 0)
+        if int(hicon or 0) in (0, 1):
+            hicon = shell32.ExtractIconW(hinst, str(sys.executable), 0)
         if int(hicon or 0) in (0, 1):
             hicon = user32.LoadIconW(None, as_resource(IDI_APPLICATION))
 

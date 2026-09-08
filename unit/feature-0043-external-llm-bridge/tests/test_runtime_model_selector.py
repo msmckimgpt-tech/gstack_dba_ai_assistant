@@ -114,7 +114,7 @@ def test_detect_runtimes_omits_runtimes_with_no_models(monkeypatch):
     여기 있었으나 그 런타임은 제거됐다 — 로컬 LLM 미사용, 사용자 결정).
     """
     mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "claude" else None)
+    monkeypatch.setattr(mod, "_which_ai", lambda name: "/usr/bin/x" if name == "claude" else None)
     monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
     assert mod.detect_runtimes(cached={}, probe=True) == [], "빈 런타임이 신고에 남았다"
 
@@ -1749,17 +1749,17 @@ def test_roster_never_calls_a_token_that_never_ran_a_runner_stale():
     assert by_acct[9]["runner_build"] is None, (
         "하트비트가 없던 토큰에 빈 지문을 주고 있다 — 명부가 그것을 구버전으로 적는다")
 
-    from routers.ai_tools import runner_build_is_stale
-    import routers.ai_tools as ai_tools
+    # 라우터를 import하면 앞 테스트의 app 스텁에 의존한다. 순수 판정의 실제 소스를 실행한다.
+    import ast
 
-    orig = ai_tools._deployed_runner_build
-    ai_tools._deployed_runner_build = lambda: "deadbeefcafe"
-    try:
-        assert runner_build_is_stale(by_acct[7]["runner_build"]) is True
-        assert runner_build_is_stale(by_acct[9]["runner_build"]) is False, (
-            "러너를 띄운 적 없는 계정에 갱신 지시가 나간다")
-    finally:
-        ai_tools._deployed_runner_build = orig
+    source = _AI_TOOLS.read_text(encoding="utf-8")
+    fn = next(n for n in ast.parse(source).body
+              if isinstance(n, ast.FunctionDef) and n.name == "runner_build_is_stale")
+    ns = {"_deployed_runner_build": lambda: "deadbeefcafe"}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(_AI_TOOLS), "exec"), ns)
+    assert ns["runner_build_is_stale"](by_acct[7]["runner_build"]) is True
+    assert ns["runner_build_is_stale"](by_acct[9]["runner_build"]) is False, (
+        "러너를 띄운 적 없는 계정에 갱신 지시가 나간다")
 
 
 def test_missing_catalog_hides_the_selector_through_the_real_entry_point():

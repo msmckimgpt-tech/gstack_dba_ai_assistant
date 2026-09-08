@@ -4,6 +4,10 @@ feature_id: feature-0043-external-llm-bridge
 status: active
 edit_policy: rewrite
 source_of_truth: true
+feature_status: in-progress
+feature_status_date: 2026-09-08
+feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+
 ---
 
 # Task
@@ -16,6 +20,54 @@ source_of_truth: true
 - [x] 설정 우회·필터·pytest 호출 누락 음성 대조를 포함한 수집 계약 18건을 통과한다.
 - [x] 새 전체 설정에서 8,017건 수집, native-client 515건 포함, collection rc=0을 확인한다.
 - 검증 기록: [테스트 실행](test-runs.d/TASK-20260908T020000-delegation-friction.md). 이 cycle의 리뷰·랜딩은 프로젝트 META TASK에서 추적한다.
+
+## TASK-20260908T113000-bridge-token-env — Windows→WSL 토큰 전달 복구
+
+- 상태: in-progress. 사용자 2026-09-08 DQA 첨부 리뷰 실패 화면에 따른 버그 수정.
+- 작업: `ai/codex/feature-0043-bridge-token-env`, base `76a76ddd`, Issue #1607.
+- 정책: 이 worktree `AGENTS.md` / 공유 main `repo/AGENTS.md`, 양쪽 SHA-256
+  `024a8b53b67f2b14e35986aca68ecc8f59470c7e312b0f0f92cb79b91026df1d` (진입 확인).
+- 근거: Windows run `e6db1eda910b`, task `t_rS0NLnHV4BU5aQ6_`, 11:02:02 Codex dispatch →
+  WSL Codex 0.153.4 session `01a07ec0-43a5-77b0-a151-789efba59c04` 도구 출력에 토큰 없음.
+  실제 Windows→WSL 더미 실험: WSLENV 부재 False / `BRIDGE_TOKEN/u` 등록 True.
+
+### 2.1 Implementation Plan
+
+- 위험도 Minor: 이미 자식 CLI 에 위임하기로 한 토큰의 OS 경계 전달 누락 복구.
+  토큰 발급/권한/인증 판정·Codex 보안 설정 변경 없음.
+- `src/agent/invoke.py::_run_cli_cancelable`, 신규 `_wsl_child_env`:
+  실행 파일 해석 후 WSL 실행일 때만 자식 환경 복사본의 WSLENV에 `BRIDGE_TOKEN/u` 추가.
+  기존 다른 변수·플래그 보존, BRIDGE_TOKEN 기존 항목의 반대 방향/경로 변환 플래그 정규화.
+- `tests/test_runner_wsl_token_env.py`: 실제 호출 연결과 환경 상속·비노출·비WSL 무회귀 검증.
+- `docs/{FUNCTION,TASK,REPORT,MODIFY,REVIEW}.md` 및 test-runs.d에 근거·검증·배포 기록.
+- AC-1: Windows 러너→WSL 자식에서 더미 BRIDGE_TOKEN이 동일하게 읽힘(기존 False→True).
+- AC-2: 토큰 원문이 argv/프롬프트/로그에 추가되지 않음; 부모 환경과 무관한 WSLENV 항목 보존.
+- AC-3: Windows 직접 실행·POSIX·토큰 없는 능력 조회의 환경은 기존과 동일.
+- AC-4: 관련 회귀 suite 및 security panel 통과 → PR 착륙·배포·실제 첨부 읽기 확인.
+- AC-5 (사용자 추가 지시): 사용자는 DQA 클라이언트만 실행한다. 내부 러너 별도 기동이나
+  환경변수 설정 요구 없이 클라이언트의 기존 자동 기동·갱신 경로로 수정본이 적용되어야 한다.
+
+### Task Queue
+
+- [x] 원본 요청의 실행 경로·실패 출력 확인 및 실제 OS 경계 재현.
+- [x] 코드 수정 및 집중 회귀 229건·Windows 후보 안내 확인.
+- [x] security·UX·design panel 및 verify-completion PASS. 전체 2151 PASS / 1 skip.
+- [ ] PR 착륙·배포·라이브 러너 갱신/첨부 읽기 확인.
+
+
+## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery
+
+- 상태: completed — PR #1606 병합, 서버 및 DQA 1.1.1 채널 배포·검증 완료. 사용자 2026-09-08 직접 요청. 위험도 Minor: 기존 다운로드 신뢰·계정 경계를 유지하는 파일 교체 및 자식 프로세스 복구.
+- 작업 경로: `ai/codex/feature-0043-runner-update-recovery` worktree.
+- `feature-0043/src/agent/selfupdate.py::install_agent_file` — 동일 디렉터리 임시파일·fsync·원자 교체를 유지하고 sidecar 파일 잠금·동일 payload 재교체 생략을 추가한다.
+- `feature-0043/src/agent/{events,lifecycle}.py::_self_build,try_self_update` — 기동 지문과 인정된 번들 경로를 고정한다. 감독 러너는 갱신 후 전용 종료코드로 부모에게 재기동을 맡긴다. Windows 직접 exec 인자 인용을 보완한다.
+- `feature-0046/src/client/{core,supervisor,bridge,gui}.py` — 설치의 직접 덮어쓰기를 제거한다. 부모가 소유한 프로세스만 감독하며 유한 지수 백오프를 적용하고 종료·복구 실패를 알린다. 명시적 연결 해제·앱 종료·연결 경합은 재기동을 취소한다.
+- 완료 예시: old A/B → 동일 파일 동시 갱신 → new A/B 모두 시작(2/2); new A만 시작이면 FAIL. 연결 해제 후 재시작 수 0.
+- 검증: 실제 프로세스 2개 동시 갱신, 형제 갱신 뒤 old 지문 보존, 파싱 전 실패, 백오프 중 연결 해제, 정상 종료, 중복 연결. Linux 및 가용 Windows 동봉 Python에서 실측.
+- 리뷰: backend/qa/security(프로세스 경합·재시도·실행파일 신뢰), P1 수정 후 확인 라운드, 상한 3회.
+- 배포: 기존 deploy_scope: included. 서버 및 클라이언트 빌드·배포를 진행하며 설치기 적용의 사용자 확인 계약 유지.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0043-runner-update-recovery/AGENTS.md` SHA-256 `8e7d65bd9d31b1013ef522b762abbc62fb023ef8c358a92e46ab567eac277770`. 완료 검증 때 대조.
+
 
 ## TASK-20260907T181510-kb-external-search — KB 구획 회귀 정합 (#1598)
 
@@ -3236,3 +3288,18 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] **④ 원상 복구** — 디버깅 포트 회수 · 클라이언트 정상 실행 복귀 · 임시물 제거.
 - [x] **⑤ 부수 결함 기록** — 자기갱신 경합으로 러너가 사라지고 클라이언트가 되살리지 못하는
       경로를 `REPORT.md §8` 에 처방과 함께 남겼다(이 cycle 밖).
+
+## TASK-20260908T120000-runner-update-recovery — 구현 결과 및 완료 추적
+
+- [x] 사용자 범위: 설치 경합 방지 + 자기가 띄운 러너의 재기동/단절 알림.
+- [x] 직접/감독 두 실행 방식과 동시/교차 갱신 모두 두 실제 러너 복귀 검증.
+- [x] 기동 지문·번들 경로 경합, 파싱 전 실패, 종료 중 연결 경합 수정.
+- [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
+- [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
+- [x] 전체 make test 및 verify-completion PASS.
+- [x] PR #1606 병합 및 서버/채널 배포 완료. web-a/b `0f58a1de`, DQA 1.1.1 실제 업데이트 조회·다운로드·SHA-256 검증 PASS.
+- 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
+
+### 사용자 동선 확정 (2026-09-08 후속 지시)
+
+- [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.

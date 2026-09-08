@@ -43,6 +43,8 @@ import os
 import threading
 from typing import Callable
 
+from .branding import ICON_PATH
+
 #: WebView2 런타임이 설치되는 자리. Edge 를 깐 Win10·기본 Win11 에는 있다.
 _RUNTIME_DIRS = (
     r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application",
@@ -127,7 +129,7 @@ class Shell:
             self._window.events.loaded += lambda: self._ready.set()
             os.makedirs(self.storage, exist_ok=True)
             webview.start(gui="edgechromium", private_mode=False,
-                          storage_path=self.storage)
+                          storage_path=self.storage, icon=str(ICON_PATH))
             return True
         except Exception:  # noqa: BLE001 — 못 띄우면 호출부가 폴백한다
             self._window = None

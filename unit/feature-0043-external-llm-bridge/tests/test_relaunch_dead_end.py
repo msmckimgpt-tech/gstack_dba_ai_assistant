@@ -215,12 +215,14 @@ export async function run({ mod, el, nav }) {
 
 
 def test_same_fingerprint_after_relaunch_is_named_and_routed(tmp_path):
-    """⭐ 정본 — 다시 띄웠는데 **같은 파일**이면 그 사실을 말하고 명령까지 준비해 준다."""
+    """⭐ 정본 — 다시 띄웠는데 **같은 파일**이면 그 사실과 DQA 앱 내 복구 경로를 안내한다."""
     got = _run_scenario(tmp_path, _SAME_BUILD)
     assert got["chip"] == "업데이트 필요"
-    assert "러너 파일이 그대로입니다" in got["status1"], \
+    assert "업데이트가 적용되지 않았습니다" in got["status1"], \
         f"재실행이 무의미한 상태를 «응답 없음» 으로 뭉갠다: {got['status1']!r}"
     assert got["modalOpen"] is True, "말만 하고 되돌아갈 곳을 안 보여 준다"
+    assert "[업데이트 확인]" in got["status1"]
+    assert "1단계" not in got["status1"]
     # ⚠ **전제가 뒤집혔다 (사용자 결정 2026-09-07).** 종전 계약은 「말하면서 1단계 명령까지
     #   발급해 준다」였다 — 「아래 명령을 실행하세요」가 빈 자리를 가리키면 막다른 길을 한 칸
     #   뒤로 옮긴 것뿐이기 때문이다. 그 명령이 사라졌으므로 발급할 것도 없다.
@@ -237,7 +239,7 @@ def test_no_click_burns_another_wait_window_once_the_evidence_is_in(tmp_path):
     assert got["navAfterEntry"] == 1, "진입 자동 시도가 실행을 쏘지 않았다(전제 불성립)"
     assert got["navFinal"] == got["navAfterEntry"], \
         "증거가 있는데도 클릭이 또 실행을 쏜다 — 사용자가 같은 30초를 반복해 기다린다"
-    assert "러너 파일이 그대로입니다" in got["status2"]
+    assert "업데이트가 적용되지 않았습니다" in got["status2"]
 
 
 #: 답답해서 연달아 누르는 경우 — 이 경로는 토큰을 발급하므로 겹쳐 돌면 안 된다.
@@ -262,7 +264,7 @@ def test_impatient_clicks_do_not_mint_a_token_each(tmp_path):
     """연달아 누른다고 계정에 토큰이 쌓이면 안 된다 — 이 경로는 발급을 동반한다."""
     got = _run_scenario(tmp_path, _IMPATIENT)
     assert got["issued"] <= 1, f"클릭마다 토큰을 하나씩 만든다({got['issued']}건)"
-    assert "러너 파일이 그대로입니다" in got["status"]
+    assert "업데이트가 적용되지 않았습니다" in got["status"]
 
 
 #: 재기동이 파일을 **바꾸기는 하는데** 그것도 낡은 경우 — 런처는 멀쩡하고 원인이 다르다.
@@ -285,7 +287,7 @@ def test_a_changed_but_still_stale_build_is_not_called_unchanged(tmp_path):
     """⭐ 판별력 — 축은 «낡았는가» 가 아니라 «같은 파일인가» 다."""
     got = _run_scenario(tmp_path, _BUILD_CHANGED)
     assert got["navs"] >= 2, "실행이 두 번(진입·클릭) 나가야 이 축이 검사된다"
-    assert "러너 파일이 그대로입니다" not in got["status"], \
+    assert "업데이트가 적용되지 않았습니다" not in got["status"], \
         "파일이 바뀌었는데 «그대로» 라고 한다 — 대조가 아니라 낡음만 보고 있다"
     assert got["status"], "그렇다고 아무 말도 안 하면 안 된다(종전 안내가 남아야 한다)"
 
@@ -307,7 +309,7 @@ export async function run({ mod, el, nav }) {
 def test_unknown_fingerprint_is_never_read_as_unchanged(tmp_path):
     """「모른다」 둘을 «같다» 로 읽으면 조회 실패가 「재설치하세요」로 둔갑한다."""
     got = _run_scenario(tmp_path, _BUILD_UNKNOWN)
-    assert "러너 파일이 그대로입니다" not in got["status"], \
+    assert "업데이트가 적용되지 않았습니다" not in got["status"], \
         "양쪽이 unknown 인 것을 동일성으로 읽었다"
 
 
@@ -328,7 +330,7 @@ export async function run({ mod, el, nav }) {
 def test_unreported_fingerprint_is_a_known_value_not_unknown(tmp_path):
     """`""` 는 「지문 축 이전 빌드」라는 **아는 사실**이다 — `null` 과 뭉치면 안 된다."""
     got = _run_scenario(tmp_path, _BUILD_EMPTY)
-    assert "러너 파일이 그대로입니다" in got["status"], \
+    assert "업데이트가 적용되지 않았습니다" in got["status"], \
         "지문을 신고하지 않는 구 러너가 정확히 이 결함의 모집단인데 판정에서 빠졌다"
 
 
@@ -360,7 +362,7 @@ export async function run({ mod, el, nav }) {
 def test_the_evidence_expires_once_the_file_actually_changes(tmp_path):
     """재설치를 마친 사용자가 이 세션 내내 「재설치하세요」만 보면 그것도 막다른 길이다."""
     got = _run_scenario(tmp_path, _RECOVERS_BUILD_CHANGED)
-    assert "러너 파일이 그대로입니다" in got["stuck"], "전제(증거를 잡음)가 성립하지 않았다"
+    assert "업데이트가 적용되지 않았습니다" in got["stuck"], "전제(증거를 잡음)가 성립하지 않았다"
     assert got["relaunched"] is True, \
         "파일이 바뀐 뒤에도 증거가 남아 실행 경로가 영영 막혔다"
 
@@ -392,7 +394,7 @@ export async function run({ mod, el, nav }) {
 def test_the_evidence_expires_once_the_machine_proves_it_can_update(tmp_path):
     """한 번 최신에 도달한 컴퓨터는 갱신할 수 있다 — 그 뒤의 낡음은 다시 실행으로 푼다."""
     got = _run_scenario(tmp_path, _RECOVERS_VIA_OK)
-    assert "러너 파일이 그대로입니다" in got["stuck"], "전제(증거를 잡음)가 성립하지 않았다"
+    assert "업데이트가 적용되지 않았습니다" in got["stuck"], "전제(증거를 잡음)가 성립하지 않았다"
     assert got["relaunched"] is True, \
         "갱신에 성공했던 컴퓨터인데 증거가 남아 실행 경로가 막혔다"
 

@@ -17,9 +17,12 @@ verdict: PASS
 
 ## 워크플로 회귀 최종 실행 — 2026-09-08T11:57:40+09:00
 
-- `bats --print-output-on-failure bin/tests/cycle_lifecycle.bats bin/tests/agent_compatibility_gate.bats bin/tests/verify_completion.bats`: 66 PASS (lifecycle 12, compatibility 27, 기존 completion 27). 로그: `/tmp/delegation-workflow-gates-final.log`.
+- `bats --print-output-on-failure bin/tests/cycle_lifecycle.bats bin/tests/agent_compatibility_gate.bats bin/tests/verify_completion.bats`: 69 PASS (lifecycle 12, compatibility 30, 기존 completion 27). 로그: `/tmp/delegation-workflow-gates-final.log`.
 - lifecycle은 격리 Git 저장소와 GitHub stub으로 main/base 분리, 공유 merge lock, 업데이트 실패/미반영 차단, 확인한 PR head 고정, REGISTRY 자체 항목 정리를 검증했다. 실제 PR merge를 수행한 결과는 아니다.
-- compatibility 중 check #13 17건은 DQA-client와 Windows-browser 대체 기록을 구분하고, Run 간 PASS 차용·명시 FAIL 은폐·미수행 은폐·과거 기록 재사용을 차단한다. 네이티브 UI 5개 파일의 소유 feature 귀속과 core/test-only 제외도 검증했다. 실제 DQA 앱 검증을 수행한 결과는 아니다.
+- compatibility 중 check #13 20건은 DQA-client와 Windows-browser 대체 기록을 구분하고, Run 간 PASS 차용·명시 FAIL 은폐·미수행 은폐·과거 기록 재사용을 차단한다. 네이티브 UI 5개 파일의 소유 feature 귀속과 core/test-only 제외도 검증했다. 실제 DQA 앱 검증을 수행한 결과는 아니다.
 - 최종 자기검토에서 `Environment: DQA-client (blocked)` + `Result: FAIL`이 WARN으로 강등되는 입력을 red test로 재현한 뒤, 명시 FAIL을 우선하도록 수정하여 전체 회귀를 재실행했다.
 - `python3 -m pytest -q unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py`: 18 PASS 재확인. 같은 파일 `ruff check`: PASS.
 - `bash -n bin/cycle-init.sh bin/cycle-finalize.sh bin/verify-completion.sh`, `git diff --check`, `make -n test`: PASS. `make test`의 Node 의존성은 임시 테스트 컨테이너에만 설치하며 CI도 `node --version`을 확인한다.
+
+- 같은 파일의 동일 Environment/명시 Scenario를 순차 재검증한 경우 마지막 결과를 현재 상태로 판정한다. FAIL→PASS 해소/다른 Scenario 실패 보존/PASS→FAIL 회귀를 검증했다. 실패 원인과 해소 증거는 앞 Run에 남긴다.
+- 최신 main `ec913f94` 합류 후 relaunch-dead-end + parity + handoff + web-shell: **125 PASS**, 14.77초 (`/tmp/delegation-merged-focused.log`). 트레이 업데이트 안내/콜백과 기존 main의 회복 계약을 보존했다.

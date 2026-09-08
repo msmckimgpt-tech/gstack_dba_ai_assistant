@@ -4,9 +4,32 @@ feature_id: feature-0003-agent-web-ui
 status: active
 edit_policy: rewrite
 source_of_truth: true
+feature_status: in-progress
+feature_status_date: 2026-09-08
+feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+
 ---
 
 # Task
+
+## TASK-20260908T113000-bridge-token-env — DQA 클라이언트만 사용하는 흐름 검증
+
+### 2.1 Implementation Plan
+- Minor. 사용자 2026-09-08 추가 지시: 별도 러너 실행 없이 DQA 클라이언트만 사용.
+- 갱신 실패 안내 MSG_RELAUNCH_NO_UPDATE를 실제 트레이 [업데이트 확인] 경로로 수정.
+- AC: 없어진 1단계 명령 안내 없음. 실제 앱 메뉴·이벤트 연결 확인, 회귀 green.
+- [x] 현재 사용자 요구·기존 ANCHOR 방향 정합 확인.
+- [x] 구현 및 집중 회귀 검증.
+- [ ] 배포 후 Windows 확인.
+- 정본: feature-0043-external-llm-bridge/docs/TASK-20260908T113000-bridge-token-env 작업 항목.
+
+## TASK-20260908T120000-runner-update-recovery — 갱신 실패 안내 정합
+
+- 상태: completed — PR #1606 병합·서버 배포 완료. feature-0043 러너 복구 검증 중 발견한 삭제된 1단계 명령 안내를 앱 업데이트·재연결 안내로 수정했다.
+- Plan: `static/app/connect-modal.js::MSG_RELAUNCH_NO_UPDATE`를 현재 존재하는 앱 업데이트 및 재연결 경로로 연결한다. 같은 파일이라는 관측만으로 낡은 실행 스크립트라고 단정하지 않는다.
+- 검증: native handoff 이음매 테스트와 실제 Windows 브라우저에서 해당 상태 안내 표시 확인.
+- 위험도 Minor. 기존 인증·토큰·자동실행 조건은 그대로다.
+
 
 ## 20260908T100000-remove-terminal-path-live — 전면 제거 라이브 실측 기록 (문서 전용)
 
@@ -13351,6 +13374,21 @@ Task-Cycle: feature-0003-agent-web-ui
 - [x] 미확인 항목(첫 실 릴리스 미반입 → 받기 자리는 열렸으나 파일 없음·미서명·설치기 실제 실행 미실측·라이브 계정 화면 미관측)을 항목 detail + 접힌 summary 양쪽에 정직 고지
 - [x] `node --check` + `tests/verify_release_notes.mjs` **34/0 ALL PASS** (baseline 동일)
 - [x] 캐시버스터 수기 bump 금지 준수 (`?v=dev` 고정 · 빌드 주입 · 배포 ABORT 가드)
+
+## TASK-20260908T120000-runner-update-recovery — 구현 결과 및 완료 추적
+
+- [x] 사용자 범위: 설치 경합 방지 + 자기가 띄운 러너의 재기동/단절 알림.
+- [x] 직접/감독 두 실행 방식과 동시/교차 갱신 모두 두 실제 러너 복귀 검증.
+- [x] 기동 지문·번들 경로 경합, 파싱 전 실패, 종료 중 연결 경합 수정.
+- [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
+- [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
+- [x] 전체 make test 및 verify-completion PASS.
+- [x] PR #1606 병합 및 서버/채널 배포 완료. web-a/b `0f58a1de`, DQA 1.1.1 실제 업데이트 조회·다운로드·SHA-256 검증 PASS.
+- 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
+
+### 사용자 동선 확정 (2026-09-08 후속 지시)
+
+- [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
 
 
 ### TASK-20260908T020000-delegation-friction — 교차 검증 보완

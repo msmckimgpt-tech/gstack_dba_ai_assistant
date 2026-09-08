@@ -4783,7 +4783,6 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `TASK.md` 의 「배포 후 라이브 실측」 항목 체크 + `REPORT.md §8` 에 자기갱신 경합 기록.
 - 사용자 요청(*"해당 러너 실행 및 실측도 직접 진행해주세요"*)에 따라 사용자 계정 러너를
   직접 기동하고 앱 창 화면까지 확인했다.
-
 ## CHG-20260908T020000-ai-codex-delegation-friction — pytest 수집 목록 정본화
 
 - Session: ai/codex/meta-delegation-friction-20260908
@@ -4791,3 +4790,28 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - `tests/test_ci_testpath_parity.py`: Makefile↔CI 두 목록만 같으면 통과하던 검사를 공통 pytest 설정 사용 계약으로 교체한다. 양쪽에서 native-client가 함께 빠진 상태를 놓치던 원인을 제거한다.
 - 루트 `pyproject.toml`에 이전 실행 9경로와 native-client를 합친 10경로를 유지한다. Makefile/CI는 경로 인자를 생략하여 그 정본을 읽는다.
 - 검증: 수집 계약 18 PASS, ruff PASS, 전체 collection 8,017건(native-client 515건 포함) rc=0. 상세는 `docs/test-runs.d/TASK-20260908T020000-delegation-friction.md`.
+## CHG-20260908T113000-bridge-token-env
+
+- Session: Codex / ai/codex/feature-0043-bridge-token-env, 2026-09-08.
+- REQ-20260908-bridge-token-env: Windows 러너의 BRIDGE_TOKEN이 WSL 자식에 전달되지 않아
+  첨부 리뷰가 HTTP 요청 전에 중단되던 결함을 수정했다.
+- src/agent/invoke.py: 실행 파일 해석 후 WSL 호출에만 `BRIDGE_TOKEN/u` 등록, 기존 환경 보존.
+- tests/test_runner_wsl_token_env.py: 최종 Popen까지 배선·비노출·비WSL 무회귀 회귀 11건.
+- 기존 테스트는 ask_local_ai의 env 인자까지만 검사해 OS 경계 전달 실패를 놓쳤다.
+## CHG-20260908T120000-runner-update-recovery
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.
+- 변경과 이유: 공유 설치 파일의 교체 구간을 동일 sidecar 락으로 직렬화하고, 동일 payload 재교체를 생략한다. 실행 소스의 기동 지문과 단일 번들 경로를 고정하며, 파싱된 소스와 디스크 세대가 다르면 stale로 신고해 갱신한다. 감독하의 갱신은 종료코드 75로 부모에게 재기동을 위임하고, 단독 Windows exec 인자 인용을 보완한다.
+- 동반: 기존 테스트의 전역 app stub 누출·실제 CLI 탐지 누출·낡은 UI 문자열 범위 판정을 바로잡았다. native suite를 Makefile과 CI 양쪽에 등록했다.
+- 검증: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 되돌리기: 해당 cycle Git revert 후 서버 재배포; 앱 채널은 기존 1.1.0 재활성화 가능하나 이미 설치된 최신본은 자동 강등하지 않는다.
+
+## CHG-20260908T112500-runner-client-only-verification
+
+- 사용자 후속 지시를 현재 TASK에 기록: 별도 러너 실행 절차 없이 DQA 앱만 사용한다.
+- 변경 범위는 문서·실측 결과 보충이며 이미 구현한 소유 자식 감독 계약과 일치한다.
+- 템플릿 main v3.54.1 병합 후 정책 변경 구간과 지문을 재확인했다.
+
+## CHG-20260908T114000-runner-recovery-postdeploy
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery.
+- PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.

@@ -114,6 +114,10 @@ class Bridge:
         self.last_seen = time.monotonic()
         self._states: list[core.RuntimeState] = []
         self._runner_proc = None
+        self._connect_gate = threading.Lock()
+        self._runner_lock = threading.Lock()
+        self._runner_generation = 0
+        self._stopping = False
         #: 껍데기가 **알림 영역 아이콘이 지금 살아 있는가**를 답하는 함수. 패널의 안내 문구가
         #: 이 판정을 본다. 껍데기가 세워 주기 전까지는 `None` 이고, 그때 `resident` 는
         #: 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
@@ -147,13 +151,20 @@ class Bridge:
         `stop()` 을 부른 테스트가 그대로 멎었다. 기동에 실패한 앱이 종료되지 않는 것과
         같은 결함이라 여기서 닫는다.
         """
+        self._stopping = True
+        self.disconnect()
+        proc = self._runner_proc
         try:
-            if self._thread is not None:
-                self._srv.shutdown()
-                self._thread.join(timeout=5)
-                self._thread = None
+            if proc is not None and hasattr(proc, "wait"):
+                proc.wait(timeout=10)
         finally:
-            self._srv.server_close()
+            try:
+                if self._thread is not None:
+                    self._srv.shutdown()
+                    self._thread.join(timeout=5)
+                    self._thread = None
+            finally:
+                self._srv.server_close()
 
     @property
     def idle_seconds(self) -> float:
@@ -249,7 +260,8 @@ class Bridge:
         곳에 흩어지고, 그 중 하나만 고쳐지는 드리프트가 난다(이 저장소가 창 숨김 가드에서
         이미 겪은 형태).
         """
-        return bool(self._runner_proc and self._runner_proc.poll() is None)
+        proc = self._runner_proc
+        return bool(proc and getattr(proc, "running", proc.poll() is None))
 
     def disconnect(self) -> bool:
         """러너를 내린다. 끊을 것이 있었으면 `True`.
@@ -257,12 +269,15 @@ class Bridge:
         트레이의 [연결 끊기] 가 부른다. **브리지 자체는 계속 산다** — 패널을 다시 열어
         재연결할 수 있어야 하기 때문이다(그것이 상주의 의미다).
         """
-        if not self.connected:
-            return False
-        try:
-            self._runner_proc.terminate()
-        except Exception:  # noqa: BLE001 — 이미 죽었으면 그것으로 족하다
-            pass
+        with self._runner_lock:
+            self._runner_generation += 1
+            proc = self._runner_proc
+            if proc is None or proc.poll() is not None:
+                return False
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
         self._say("연결을 끊었습니다.")
         return True
 
@@ -437,6 +452,23 @@ class Bridge:
         return (self.plan, "") if self.plan.token else (None, "token")
 
     def _do_connect(self, body: dict) -> dict:
+        if not self._connect_gate.acquire(blocking=False):
+            return {"ok": False, "error": "connecting", "detail": "이미 연결 중입니다."}
+        try:
+            with self._runner_lock:
+                if self._stopping:
+                    return {"ok": False, "error": "stopping"}
+                generation = self._runner_generation
+            return self._connect_runner(body, generation)
+        finally:
+            self._connect_gate.release()
+
+    def _runner_event(self, state: str, message: str) -> None:
+        self._say(message)
+        if state == "disconnected":
+            self._notify("연결이 끊겼습니다", message)
+
+    def _connect_runner(self, body: dict, generation: int) -> dict:
         plan, why = self._plan_for(body)
         if plan is None:
             detail = ("연결 정보를 받지 못했습니다. 이 창에서 로그인한 뒤 다시 눌러 주세요."
@@ -457,7 +489,19 @@ class Bridge:
             self._say(out[:200])
             return {"ok": False, "error": "check_failed", "detail": out[:400]}
         core.pin_server(plan.home, plan.base)
-        self._runner_proc = core.spawn_runner(plan, runner, ca, st)
+        with self._runner_lock:
+            if self._stopping or generation != self._runner_generation:
+                return {"ok": False, "error": "cancelled"}
+            previous = self._runner_proc
+            if previous is not None and previous.poll() is None:
+                previous.terminate()
+        if previous is not None and hasattr(previous, "wait"):
+            previous.wait(timeout=10)
+        with self._runner_lock:
+            if self._stopping or generation != self._runner_generation:
+                return {"ok": False, "error": "cancelled"}
+            self._runner_proc = core.spawn_runner(plan, runner, ca, st,
+                                                  on_event=self._runner_event)
         self._say("연결됐습니다.")
         return {"ok": True}
 

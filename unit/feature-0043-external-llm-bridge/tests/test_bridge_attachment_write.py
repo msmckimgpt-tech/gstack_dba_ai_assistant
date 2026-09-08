@@ -371,12 +371,6 @@ def test_done_waits_briefly_for_delivery():
     다만 **영원히 기다리지는 않는다** — 전달이 진짜 실패하면 유예 후 `done` 으로 보내
     `delivered=false` 안내가 뜨게 한다(도는 화면보다 정직하다).
     """
-    import importlib.util
-    import sys
-    import types
-
-    if "app" not in sys.modules:
-        sys.modules["app"] = types.ModuleType("app")
     src = _src(AI_TOOLS)
     tree = ast.parse(src)
     ns: dict = {"Any": object, "_STATUS_CANCELED": "canceled", "_STATUS_EXPIRED": "expired",

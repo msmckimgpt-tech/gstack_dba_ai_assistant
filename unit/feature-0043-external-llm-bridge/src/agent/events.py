@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -64,7 +65,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 AGENT_VERSION = "2026.09.01"
 
 
-def _self_build() -> str:
+def _read_running_source() -> tuple[str, str | None]:
     """이 **파일 자체**의 지문 12자. 못 읽으면 빈 문자열.
 
     `AGENT_VERSION` 만으로는 부족하다 (사용자 제보 2026-08-31). 날짜 단위라 **같은 날 여러 번
@@ -74,13 +75,36 @@ def _self_build() -> str:
 
     버전(호환성 축)과 지문(동일성 축)은 다른 질문에 답한다 — 그래서 둘 다 싣는다.
     """
+    bundle = None
     try:
         import hashlib
 
-        with open(__file__, "rb") as _f:
-            return hashlib.sha256(_f.read()).hexdigest()[:12]
+        path = os.path.realpath(__file__)
+        source_stamp = globals().get("_BUNDLE_SOURCE_SHA256")
+        bundle = (path if source_stamp and not __package__
+                  and os.path.realpath(sys.argv[0]) == path else None)
+        with open(path, "rb") as _f:
+            payload = _f.read()
+        build = hashlib.sha256(payload).hexdigest()[:12]
+        if source_stamp:
+            marker = f'_BUNDLE_SOURCE_SHA256 = "{source_stamp}"\n'.encode("utf-8")
+            if (payload.count(marker) != 1
+                    or hashlib.sha256(payload.replace(marker, b"", 1)).hexdigest() != source_stamp):
+                # 소스를 읽은 뒤 첫 코드 실행 전에 형제가 교체했다. 최신이라고 위장하지
+                # 않고 지문을 미확인으로 신고한다. 인정 경로는 남겨 유휴 시 갱신한다.
+                build = ""
+        return build, bundle
     except Exception:  # noqa: BLE001  (읽기 실패·경로 부재 — 모르면 빈 값)
-        return ""
+        return "", bundle
+
+
+# 형제가 파일을 교체해도 이 프로세스가 실행하는 코드는 바뀌지 않는다.
+_RUNNING_BUILD, RUNNING_BUNDLE_PATH = _read_running_source()
+
+
+def _self_build() -> str:
+    """기동 시 읽은 지문. 하트비트와 자기갱신이 동일한 실행 세대를 본다."""
+    return _RUNNING_BUILD
 
 
 def _self_os() -> str:

@@ -3,10 +3,40 @@ doc_type: TASK
 feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
+
 feature_status: in-progress
+feature_status_date: 2026-09-08
+feature_status_note: 러너 복구 개선을 포함한 DQA 1.1.2 마상 브랜드 아이콘. 클라이언트·설치기 적용과 Windows 5개 표면 검증. 릴리스 상세는 TASK/REPORT 정본.
+
 ---
 
 # Task
+
+## TASK-20260908T113000-bridge-token-env — DQA 클라이언트만 사용하는 흐름 검증
+
+### 2.1 Implementation Plan
+- Minor. 사용자 2026-09-08 추가 지시: 별도 러너 실행 없이 DQA 클라이언트만 사용.
+- 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합.
+- AC: 없어진 1단계 명령 안내 없음. 실제 앱 메뉴·이벤트 연결 확인, 회귀 green.
+- [x] 현재 사용자 요구·기존 ANCHOR 방향 정합 확인.
+- [x] 구현 및 집중 회귀 검증.
+- [ ] 배포 후 Windows 확인.
+- 정본: feature-0043-external-llm-bridge/docs/TASK-20260908T113000-bridge-token-env 작업 항목.
+
+
+## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery
+
+- 상태: completed — PR #1606 병합, 서버 및 DQA 1.1.1 채널 배포·검증 완료. 사용자 2026-09-08 직접 요청. 위험도 Minor: 기존 다운로드 신뢰·계정 경계를 유지하는 파일 교체 및 자식 프로세스 복구.
+- 작업 경로: `ai/codex/feature-0043-runner-update-recovery` worktree.
+- `feature-0043/src/agent/selfupdate.py::install_agent_file` — 동일 디렉터리 임시파일·fsync·원자 교체를 유지하고 sidecar 파일 잠금·동일 payload 재교체 생략을 추가한다.
+- `feature-0043/src/agent/{events,lifecycle}.py::_self_build,try_self_update` — 기동 지문과 인정된 번들 경로를 고정한다. 감독 러너는 갱신 후 전용 종료코드로 부모에게 재기동을 맡긴다. Windows 직접 exec 인자 인용을 보완한다.
+- `feature-0046/src/client/{core,supervisor,bridge,gui}.py` — 설치의 직접 덮어쓰기를 제거한다. 부모가 소유한 프로세스만 감독하며 유한 지수 백오프를 적용하고 종료·복구 실패를 알린다. 명시적 연결 해제·앱 종료·연결 경합은 재기동을 취소한다.
+- 완료 예시: old A/B → 동일 파일 동시 갱신 → new A/B 모두 시작(2/2); new A만 시작이면 FAIL. 연결 해제 후 재시작 수 0.
+- 검증: 실제 프로세스 2개 동시 갱신, 형제 갱신 뒤 old 지문 보존, 파싱 전 실패, 백오프 중 연결 해제, 정상 종료, 중복 연결. Linux 및 가용 Windows 동봉 Python에서 실측.
+- 리뷰: backend/qa/security(프로세스 경합·재시도·실행파일 신뢰), P1 수정 후 확인 라운드, 상한 3회.
+- 배포: 기존 deploy_scope: included. 서버 및 클라이언트 빌드·배포를 진행하며 설치기 적용의 사용자 확인 계약 유지.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0043-runner-update-recovery/AGENTS.md` SHA-256 `8e7d65bd9d31b1013ef522b762abbc62fb023ef8c358a92e46ab567eac277770`. 완료 검증 때 대조.
+
 
 ## 1. 현재 상태
 
@@ -503,6 +533,50 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [ ] §18.8 3라운드 패널 (직전 cycle 잔여, 사용량 한도로 미실시)
 - 종결 표시: 앞 cycle 의 `- [ ] 릴리스 디렉토리 첫 생성` 은 이 인스턴스에서 **완료**
       (경로는 `<project_root>/artifacts/client-release` — `repo/` 상대경로 아님)
+
+## TASK-20260908T120000-runner-update-recovery — 구현 결과 및 완료 추적
+
+- [x] 사용자 범위: 설치 경합 방지 + 자기가 띄운 러너의 재기동/단절 알림.
+- [x] 직접/감독 두 실행 방식과 동시/교차 갱신 모두 두 실제 러너 복귀 검증.
+- [x] 기동 지문·번들 경로 경합, 파싱 전 실패, 종료 중 연결 경합 수정.
+- [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
+- [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
+- [x] 전체 make test 및 verify-completion PASS.
+- [x] PR #1606 병합 및 서버/채널 배포 완료. web-a/b `0f58a1de`, DQA 1.1.1 실제 업데이트 조회·다운로드·SHA-256 검증 PASS.
+- 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
+
+### 사용자 동선 확정 (2026-09-08 후속 지시)
+
+- [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
+
+## TASK-20260908-brand-icon — DQA 서비스 아이콘
+
+### 2.1 Implementation Plan
+
+- 요청: 서비스에 맞는 세련되고 절제된 아이콘을 생성하여 클라이언트와 설치 파일에 적용한다.
+- 위험도: Minor. 브랜드 자산·패키징·창 아이콘 지정만 변경하며 기존 제품명과 업데이트 계약을 따른다.
+- `src/client/assets/dqa.png`, `dqa.ico`: 생성 이미지 원본과 16/20/24/32/40/48/64/128/256px ICO. 마상 공식 심볼을 참고한 각진 Q/데이터 심볼·시안→보라→마젠타 색상 흐름.
+- `src/client/branding.py::ICON_PATH`, `gui.py::ClientApp.__init__`, `window.py::Shell.run`: 소스와 동결본 모두 같은 자산으로 창 아이콘을 지정한다.
+- `src/scripts/build_client.py::main`, `src/installer/DQAConnect.iss`: 실행 파일 내장 아이콘, 데이터 동봉, Setup/Uninstall 아이콘과 바로가기 배선. `version.py::CLIENT_VERSION` 1.1.2 패치 릴리스.
+- 트레이는 동일 ICO를 먼저 추출하고, 자산 실패 시 EXE·시스템 아이콘 순으로 복구한다. 소스/동결본에 같은 아이콘을 적용한다.
+- 검증: feature pytest, 실제 Windows PyInstaller/Inno Setup 빌드, EXE/설치기 아이콘 리소스와 ICO 픽셀 대조, 내장창/트레이 관찰, 릴리스 채널 다운로드 SHA-256.
+- 완료 예시: Explorer의 DQAConnect.exe·DQAConnect-Setup-1.1.2.exe, 작업표시줄·트레이에서 동일한 마상 계열 Q/데이터 아이콘이 보인다. 별도 브라우저 폴백 창의 아이콘과 웹 색상 테마는 브라우저/웹의 기존 동작이다(사용자 아이콘·설치 파일 우선 선택).
+
+### Requested Scope / Completion Checklist
+
+- [x] 아이콘 원본과 다중 해상도 ICO 생성 및 작은 크기 시각 확인
+- [x] 클라이언트 창·트레이·실행 파일·바로가기·설치/제거 아이콘 배선
+- [x] Windows 설치 파일 생성 및 리소스 실측
+- [x] 테스트·독립 리뷰·기능 문서 갱신
+- [x] 최신 main 러너 복구 보존·1.1.2 재빌드·전체 524건 및 Windows 아이콘 재검증
+- [x] commit/push/PR #1608 병합 및 1.1.2 릴리스 채널 반영 — 엣지 manifest/다운로드 200, 크기·SHA-256·바이트 동일
+
+- 추가 실측 반영: `src/scripts/export_icon.py`가 DIB16~128/PNG256 혼합 ICO를 재현한다. 전 프레임 PNG 방식은 Tk에서16px 확대가 발생했으며 DIB 교체 후32px 픽셀 일치 확인.
+- hot_paths: `src/client/{gui,window,tray}.py`, `src/scripts/build_client.py`, `src/installer/DQAConnect.iss`. 아이콘 지정·패키징만 소유하며 기존 세션 작업은 보존한다.
+
+- [x] #1609 후속 main 동기화: 토큰 전달 수정과 문서·테스트를 보존. 클라이언트 배포 소스는 1.1.2 검증본과 동일.
+
+- [x] 최종 main 11fa3741의 배포 완료 기록 보존 및 양 부모 대조 완료. 클라이언트 배포 소스 변경 0, 변경 웹 계약 테스트 86 PASS.
 
 
 ### TASK-20260908T020000-delegation-friction — 교차 검증 보완

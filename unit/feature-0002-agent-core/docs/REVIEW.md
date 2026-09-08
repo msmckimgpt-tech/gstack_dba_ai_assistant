@@ -3072,3 +3072,23 @@ PASS — `make test` rc=0 · 6,957 tests · ruff clean · 뮤테이션 7/7 KILL 
 - Alternative: 전체 로컬 CI 7485 PASS/28 skip/1 옛 assertion 실패; 그 검사 정합 후 suite19 PASS.
   KB 관련203 PASS. 전체ruff0, migrate-lint heads/self-test, codenav/routemap PASS.
 - verification_debt: 원격 GitHub runner 미실행; retry_after=unknown; 복구 후 다음 cycle에서 확인.
+
+## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
+- Related TASK: feature-0002-agent-core
+- Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰
+- Timestamp: 2026-09-08T11:20:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T112000-runner-race-review.md
+- Human Approval Needed: no
+- 배포 근거: wrapper FIRST_REQUEST.md의 기존 deploy_scope: included, AGENTS.md §16.5.1. 앱 업데이트 확인 계약은 유지.
+
+## REV-20260908T112500-runner-client-only-verification [SKIPPED:non-policy-doc]
+- Related TASK: feature-0002-agent-core
+- Reason: 기존 구현·사용 동선을 변경하지 않고 사용자 확인 내용과 실제 검증 결과를 TASK 및 test-runs 기록에 보충한다. FUNCTION·정책·제품 코드 변경 없음.
+- Timestamp: 2026-09-08T11:22:45+09:00
+
+## REV-20260908T114000-runner-recovery-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery.
+- Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
+- Timestamp: 2026-09-08T11:38:45+09:00

@@ -160,7 +160,7 @@ def test_dev_tree_declares_no_self_update_capability():
     src = _code(LIFECYCLE_PY.read_text(encoding="utf-8"))
     assert "_SELF_UPDATE_OK[0] = (not getattr(args, \"no_self_update\", False)" in src, \
         "능력 판정이 사용자 선택만 보고 있다"
-    assert "running_bundle_path(_self_build())" in src, \
+    assert "_SELF_UPDATE_BUNDLE = [RUNNING_BUNDLE_PATH]" in src, \
         "실제 능력(단일 파일인가)을 보지 않는다"
     assert 'f != "self_update"' in src, "못 하는 경우에 신고를 지우지 않는다"
 

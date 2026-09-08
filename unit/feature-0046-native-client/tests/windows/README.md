@@ -82,3 +82,12 @@ mkdir -p "$WB" && cp -r unit/feature-0046-native-client/src "$WB/"
 
 ⚠ 이 빌드 로그는 CP949 콘솔에서 **한글이 깨져 보이지만 종료 코드는 0** 이다 — `build_client.py`
 의 `_make_stdio_lossy()`(§P0-I)가 의도한 동작이다. 「깨짐 = 실패」로 읽지 않는다.
+
+
+## 브랜드 아이콘 검증
+
+`verify_brand_icon.py --src <src> --app <DQAConnect.exe> --setup <Setup.exe> --out <결과 폴더> --surface native|webview`를 Windows 빌드 Python으로 두 번, 각각 별도 프로세스·결과 폴더에서 실행한다(`pefile`은 PyInstaller 의존성). EXE/Setup의 9개 RT_ICON payload와 원본 ICO를 바이트 대조하고, 동봉 자산을 대조한다. 이후 실제 트레이·Tk·WebView2(`about:blank`)의 아이콘을 PNG로 저장하여 동일 크기 ICO 프레임과 픽셀 대조한다. AI 감지·로그인·질의를 실행하지 않는다.
+
+핸들은 `c_ssize_t`→`.NET Int64`→`IntPtr`로 옮긴다(x64 부호 확장 보존). 기대값은 .NET의 자동 프레임 선택에 의존하지 않고 ICO 내 동일 크기 프레임 하나만 분리해 읽는다. Tk의 앱 기본 아이콘은 `WM_GETICON` 또는 창 클래스의 `GCLP_HICON`에서 얻는다.
+
+WebView2 창 아이콘은 `shown` 이벤트 후 검사한다. `about:blank`의 페이지 로드 이벤트를 창 생성 증거로 기다리지 않는다.

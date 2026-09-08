@@ -34,6 +34,8 @@ import hashlib
 import os
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
 
 #: 내려받을 곳. **고정이다** — 서버 응답의 값을 쓰지 않는다(모듈 docstring 규율 2).
 SELF_UPDATE_PATH = "/static/agent/bridge_agent.py"
@@ -48,6 +50,40 @@ SELF_UPDATE_FETCH_TIMEOUT_SEC = 30.0
 
 #: 받아 온 파일이 이보다 작으면 러너일 리 없다 — 오류 페이지·잘린 응답을 걸러낸다.
 SELF_UPDATE_MIN_BYTES = 20000
+
+# 부모가 새 프로세스의 종료까지 책임지는 경우의 재기동 인계 계약.
+SUPERVISED_UPDATE_EXIT = 75
+
+
+@contextmanager
+def agent_install_lock(path: str, timeout: float = 10.0):
+    """교체되는 inode가 아닌 고정 sidecar를 잠근다. 락 파일은 삭제하지 않는다."""
+    with open(path + ".install.lock", "a+b") as lock:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("runner install lock timeout") from None
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def agent_digest(payload: bytes) -> str:
@@ -135,7 +171,18 @@ def install_agent_file(path: str, payload: bytes) -> bool:
             f.flush()
             os.fsync(f.fileno())
         os.chmod(tmp_path, mode)
-        os.replace(tmp_path, path)
+        with agent_install_lock(path):
+            # 형제가 이미 같은 배포본을 설치했어도 호출자는 재기동해야 한다.
+            # 재교체만 생략하여 Windows의 실행 파일 읽기와 불필요한 경합을 줄인다.
+            try:
+                with open(path, "rb") as current:
+                    same = current.read() == payload
+            except FileNotFoundError:
+                same = False
+            if same:
+                os.unlink(tmp_path)
+            else:
+                os.replace(tmp_path, path)
         return True
     except Exception:  # noqa: BLE001  (권한·디스크 — 못 쓰면 있던 파일 그대로 돈다)
         if tmp_path:
@@ -152,4 +199,12 @@ def reexec_self(path: str) -> None:
     환경(토큰 `BRIDGE_TOKEN`)과 열린 파일 기술자는 그대로 넘어간다 — 런처가 stderr 를
     로그 파일로 이어 두었다면 새 프로세스도 같은 파일에 이어 쓴다.
     """
-    os.execv(sys.executable, [sys.executable, path, *sys.argv[1:]])
+    if os.environ.get("DQA_RUNNER_SUPERVISED") == "1":
+        raise SystemExit(SUPERVISED_UPDATE_EXIT)
+    argv = [sys.executable, path, *sys.argv[1:]]
+    if os.name == "nt":
+        import subprocess
+
+        # Windows CRT execv는 argv를 직접 인용하지 않는다(공백 설치 경로 포함).
+        argv = [subprocess.list2cmdline([arg]) for arg in argv]
+    os.execv(sys.executable, argv)

@@ -40,6 +40,7 @@ from pathlib import Path
 
 from . import (appwindow, bridge, core, tray as tray_mod, updater,
                window as window_mod)
+from .branding import ICON_PATH
 
 #: 웹 셸 경로의 [종료] 신호. 트레이 스레드가 세우고 주 스레드 루프가 읽는다 —
 #: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
@@ -105,11 +106,15 @@ class ClientApp:
         #: 부르므로, 없으면 빠르게 두 번 눌렀을 때 러너가 **둘** 뜨고 앞의 것은 제어
         #: 불가능해진다(codex 적대 리뷰 2026-09-04 P1).
         self._connect_gate = threading.Lock()
+        self._runner_lock = threading.RLock()
+        self._connect_generation = 0
         #: 종료가 시작됐다. 진행 중이던 연결이 **종료 뒤에 러너를 띄우는 것**을 막는다.
         self._shutting_down = False
 
         self.root = tk.Tk()
         self.root.title(core.DISPLAY_NAME)
+        if os.name == "nt":
+            self.root.iconbitmap(default=str(ICON_PATH))
         self.root.geometry("560x420")
 
         # ⚠ 트레이는 **창보다 먼저** 세운다. 성공 여부가 창 닫기 동작을 가르기 때문이다
@@ -460,6 +465,7 @@ class ClientApp:
         if not self._connect_gate.acquire(blocking=False):
             self._post("log", "이미 연결 작업이 진행 중입니다.")
             return
+        generation = self._connect_generation
         try:
             self._post("log", "사내 CA 를 받는 중…")
             ca = core.install_ca(self.plan)
@@ -482,19 +488,29 @@ class ClientApp:
             self._post("log", "연결 확인 완료 — 상주를 시작합니다.")
             # 여기까지 왔다는 것은 이 서버가 실제로 동작했다는 뜻이다 — 이제 고정한다.
             core.pin_server(self.plan.home, self.plan.base)
-            proc = core.spawn_runner(self.plan, runner, ca, runtime)
-            self.runner_proc = proc
+            with self._runner_lock:
+                if generation != self._connect_generation or self._shutting_down:
+                    return
+                proc = core.spawn_runner(self.plan, runner, ca, runtime,
+                                         on_event=lambda state, message:
+                                         self._post("runner_state", (generation, state, message)))
+                self.runner_proc = proc
             if self._shutting_down:
                 # spawn 과 종료가 겹쳤다 — 띄운 것을 즉시 되돌린다(고아 방지).
                 proc.terminate()
                 return
-            self._post("connected", None)
+            self._post("connected", (generation, proc))
             for line in iter(proc.stdout.readline, ""):
                 self._post("log", line.rstrip())
         finally:
             self._connect_gate.release()
 
-    def _on_connected(self, _):
+    def _on_connected(self, event):
+        generation, proc = event
+        if (self._shutting_down or generation != self._connect_generation
+                or proc is not self.runner_proc
+                or not getattr(proc, "running", proc.poll() is None)):
+            return
         self.status.set("연결됨 — 이제 웹에서 질문하면 이 컴퓨터의 AI 가 답합니다")
         # ⚠ 이 문장은 트레이 상태에 따라 **사실이 갈린다**. 트레이가 없으면 창을 닫는 것이
         #   곧 종료이고, 있으면 창을 닫아도 연결이 유지된다. 한쪽 문구를 양쪽에 쓰면 둘 중
@@ -505,9 +521,23 @@ class ClientApp:
         self._tray_say("연결됨", connected=True)
         self._buttons([("연결 끊기", self._stop)])
 
+    def _on_runner_state(self, event):
+        generation, state, message = event
+        if self._shutting_down or generation != self._connect_generation:
+            return
+        self.status.set(message)
+        self._tray_say(message, connected=state != "disconnected")
+        if state == "disconnected":
+            self.detail.set("다시 연결을 눌러 연결 상태를 확인해 주세요.")
+            self._buttons([("다시 연결", self._start_connect)])
+            if self._tray_live():
+                self.tray.notify("연결이 끊겼습니다", message)
+
     def _stop(self):
-        if self.runner_proc and self.runner_proc.poll() is None:
-            self.runner_proc.terminate()
+        with self._runner_lock:
+            self._connect_generation += 1
+            if self.runner_proc and self.runner_proc.poll() is None:
+                self.runner_proc.terminate()
         self.status.set("연결이 끊겼습니다")
         self._tray_say("연결 끊김", connected=False)
         self._buttons([("다시 연결", self._start_connect)])

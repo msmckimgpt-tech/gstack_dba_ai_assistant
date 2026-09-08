@@ -35,14 +35,21 @@ git show 76a76ddd517aad6001ddb62c53e2e360c0ebdfda:docs/ARCHITECTURE.md
 의존 유형도 유지하며 상세 작업/검증 회차는 이 스냅샷과 unit 문서에서 조회한다.
 
 검증 결과는 [verification.json](./verification.json)에 기록했다. 46개 기능의 ID·상태·날짜·
-TASK 링크, 47개 의존 관계의 ID·대상·유형은 정리 전후 동일하다. 기존 STATUS의 Markdown
-대상도 모두 유지했다. 원본 상세는 보존 규칙에 따른 변환과 정확히 일치한다.
+TASK 링크, 47개 의존 관계의 ID·대상·유형은 최초 정리 전후 동일했다. 이후 main 합류에서
+0002·0003·0043·0046의 갱신 날짜를 2026-09-08로 반영했으며 기능 상태는 유지했다.
+현재 STATUS의 ID·상태·날짜·TASK 링크는 합류한 main과 일치한다. 기존 Markdown 대상도
+모두 유지했으며 원본 상세 스냅샷은 보존 규칙에 따른 변환과 정확히 일치한다.
 
 | 현행 인덱스 | 정리 전 bytes | 정리 후 bytes | 최장 행 bytes (전 → 후) |
 |---|---:|---:|---:|
-| STATUS | 143422 | 23004 | 41597 → 507 |
+| STATUS | 143422 | 22493 | 41597 → 507 |
 | ARCHITECTURE | 170247 | 33575 | 11378 → 487 |
 
 STATUS 집계는 총수 45를 실제 46행으로 정정했으며 상태별 값(in-progress 33,
 review 10, done 2, planned 1)은 보존했다. 과거 worktree·미검증 항목은 스냅샷과
 현행 미해소 기록으로 구별하고, 완료를 재판정하지 않았다.
+
+최신 main 합류 기준은 `ec913f94360cd706b4769e7e9c98e5d69b27d5c4`다. feature-0046의 1.1.2 릴리스 요약은
+main STATUS와 TASK/REPORT의 완료 기록을 대조해 TASK frontmatter에 반영했다.
+상태 표는 병합한 TASK 정본으로 재생성하며, 기존 여섯 TASK/REPORT의 main 본문과
+이 작업의 별도 추적 블록을 모두 보존했다. 상세 대조는 verification.json의 main_integration을 따른다.
