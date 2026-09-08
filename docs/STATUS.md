@@ -119,7 +119,7 @@ sources:
 | feature-0043-external-llm-bridge | in-progress | 2026-09-08 | [TASK](../unit/feature-0043-external-llm-bridge/docs/TASK.md) | 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료 |
 | feature-0044-qa-staging-pipeline | planned | 2026-08-27 | [TASK](../unit/feature-0044-qa-staging-pipeline/docs/TASK.md) | QA·라이브 분리 CI/CD 설계 rev.3 확정 (전제 13축 중 12축 결정 — SVN 안 A(매니페스트만)+파일서버 tar · docker save 릴레이 · 빌드 서버 이관 경로 · 로컬 LLM 전면 폐지로 GPU 불요, 단 임베딩 사내 MCP 이관이 QA 세팅 선행 조건). 구현 착수는 사용자 승인 대기 |
 | feature-0045-zd-bridge-continuity | review | 2026-08-27 | [TASK](../unit/feature-0045-zd-bridge-continuity/docs/TASK.md) | 웹브라우저–개인 AI 브리지가 연결된 상태에서 배포가 진행돼도 그 작업이 끊기지 않게 무중단 스파인을 재구성. 배경: feature-0043 전환으로 추론 주체가 개인 머신 AI 로 넘어가면서 사용자 작업이 WebAiTasks + 브리지 왕복 위에서 일어나게 됐는데, 배포 게이트는 여전히 active… (상세는 TASK) |
-| feature-0046-native-client | done | 2026-09-08 | [TASK](../unit/feature-0046-native-client/docs/TASK.md) | DQA 1.2.0 AI별 자동 연결·중복 위치 선택·캐시·완료 토스트 배포. 설치기 수신 지문 확인. 상세는 REPORT. |
+| feature-0046-native-client | review | 2026-09-08 | [TASK](../unit/feature-0046-native-client/docs/TASK.md) | DQA 1.2.3 텍스트 선택·복사/붙여넣기 복구 및 공개 다운로드 검증. Ctrl+F 설정 복구, 실제 검색 UI는 미검증. 상세 REPORT. |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 ### Worktree 확인

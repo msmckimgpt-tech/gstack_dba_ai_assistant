@@ -1257,3 +1257,8 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Verdict: PASS (code); native search UI verification PARTIAL
 - Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-design.md
 - Human Approval Needed: no
+
+## REV-20260908T151800-text-published [SKIPPED:non-policy-doc] — PASS
+- 공개 다운로드 증적·현재 문서·artifact 실행비트 정리만 변경. 제품 코드는 PR #1628과 동일하다.
+- 배포 승인 근거: 현재 사용자 수정 위임, wrapper FIRST_REQUEST deploy_scope included, AGENTS.md §16.5.1. 설치본 교체 없음.
+- native 검색 UI 실측은 계속 NOT-RUN/PARTIAL로 유지한다.
