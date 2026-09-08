@@ -73,7 +73,7 @@ nogrep() { if grep "$@"; then return 1; fi; return 0; }
   hook "{\"hook_event_name\":\"FileChanged\",\"session_id\":\"hook-sess-1\",\"file_path\":\"$ROOT/seq/SEQ\",\"event\":\"change\"}" >/dev/null
   run hook '{"hook_event_name":"UserPromptSubmit","session_id":"hook-sess-1"}'; [ ! -e "$ROOT/cursors/$SID/PENDING" ]
 }
-@test "SessionEnd: reason=clear → suspended (SessionStart resume 로 복귀); logout/prompt_input_exit/other/미지값 → ended; 항상 exit 0" {
+@test "SessionEnd: 모든 reason(clear/logout/prompt_input_exit/other/미지값) → suspended, SessionStart resume 로 복귀 (v3.54.1 — 같은 session id 의 --resume 보존); 항상 exit 0" {
   hook '{"hook_event_name":"SessionStart","session_id":"hook-sess-1","source":"startup"}' >/dev/null
   run hook '{"hook_event_name":"SessionEnd","session_id":"hook-sess-1","reason":"clear"}'; [ "$status" -eq 0 ]; [ -z "$output" ]
   grep -q '"state":"suspended"' "$ROOT/sessions/$SID.json"
@@ -81,12 +81,13 @@ nogrep() { if grep "$@"; then return 1; fi; return 0; }
   for r in logout prompt_input_exit other something_new; do
     S2="claude:$(id -un):end-$r"; hook "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"end-$r\",\"source\":\"startup\"}" >/dev/null
     run hook "{\"hook_event_name\":\"SessionEnd\",\"session_id\":\"end-$r\",\"reason\":\"$r\"}"; [ "$status" -eq 0 ]
-    grep -q '"state":"ended"' "$ROOT/sessions/$S2.json"
+    grep -q '"state":"suspended"' "$ROOT/sessions/$S2.json"; nogrep -q '"ended_by"' "$ROOT/sessions/$S2.json"
+    hook "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"end-$r\",\"source\":\"resume\"}" >/dev/null; grep -q '"state":"active"' "$ROOT/sessions/$S2.json"
   done
 }
-@test "ended tombstone: 같은 session_id 로 SessionStart → 재등록 거부, 최소 JSON(watchPaths 만) 출력" {
+@test "ended tombstone(사람의 end --yes 만): 같은 session_id 로 SessionStart → 재등록 거부, 최소 JSON(watchPaths 만) 출력" {
   hook '{"hook_event_name":"SessionStart","session_id":"hook-sess-1","source":"startup"}' >/dev/null
-  hook '{"hook_event_name":"SessionEnd","session_id":"hook-sess-1","reason":"logout"}' >/dev/null
+  bash "$B" end --yes --sid "$SID" --reason logout >/dev/null; grep -q '"ended_by":"cli"' "$ROOT/sessions/$SID.json"
   run hook '{"hook_event_name":"SessionStart","session_id":"hook-sess-1","source":"startup"}'
   echo "$output" | jq_ '"additionalContext" in o["hookSpecificOutput"]' | grep -qx False
   echo "$output" | jq_ 'len(o["hookSpecificOutput"]["watchPaths"])' | grep -qx 1

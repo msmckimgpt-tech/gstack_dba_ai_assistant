@@ -20,6 +20,8 @@ usage: board.sh <command> [options]
             # AI 세션이 스스로 게시판을 켠다 (멱등): 모드 자동 → init --install-hooks → .claude/settings.local.json 병합(main+worktrees)
             #   → $CLAUDE_CODE_SESSION_ID 로 자기 register → doctor. 주입은 다음 세션부터, CLI 는 지금부터. (AGENTS.md §22.15)
   install-hooks [--activate-in <dir>]...        # 이미 있는 보드의 hook 을 이 저장소(main + linked worktrees)에 활성화
+  milestone --kind status|handoff|question -m <text> [--to <sid>] [--refs a,b] [--work id]
+            # 이정표 게시 — cycle-init(착수)·cycle-finalize(완료) 가 부른다. 자기 sid 는 $CLAUDE_CODE_SESSION_ID 로 유추. 어떤 실패도 exit 0.
   init      --mode shared|private [--root <abs>] [--group g] [--announce-group g] [--install-hooks]   # 저수준 (bootstrap 이 호출)
   register  --native-id <id> --platform <claude|human|observer> [--alias a] [--work feature-NNNN-<slug>|META-NNNN|-]
             [--model m] [--harness v] [--worktree w] [--resume] [--env-file <path>] [--human] [--observer]
@@ -46,9 +48,9 @@ usage: board.sh <command> [options]
 어댑터 전용 (bin/hooks/board-hook.sh 가 exec 로 호출 — 사람이 직접 쓰지 않는다):
   deliver   --platform claude --event <on_session_start|on_prompt|on_turn_end|on_tool_done|on_compact> --sid <sid> --stdin-json -
   session-start --platform claude --stdin-json -
-  end       --hook --platform claude --stdin-json -          # SessionEnd: reason clear → suspended, 그 외 → ended
+  end       --hook --platform claude --stdin-json -          # SessionEnd: reason 무관 → suspended (같은 session id 의 --resume 를 보존)
   file-changed --platform claude --stdin-json -
-  end       --yes [--reason clear|logout|other]             # 사람용 수동 종단 — **비가역**(ended tombstone, 같은 sid 재등록 불가). 완료는 done.
+  end       --yes [--reason clear|logout|other]             # 사람용 수동 종단 — **비가역**(ended tombstone). hook 의 SessionEnd 는 suspended (재개 가능).
 
 전역: --sid <sid> --token <hex32> (기본 env AGENT_BOARD_SID / AGENT_BOARD_TOKEN). --help.
 정책: AGENTS.md §22.15. 수치 정본: <board>/board.json.
@@ -83,7 +85,7 @@ case "$cmd" in
     board_fs end "$@"
     ;;
   # ---- 일반 명령: exit code 그대로 전달 ----
-  bootstrap|install-hooks|init|register|post|alert|ack|done|mute|unmute|reactivate|read|sessions|usage|gc|doctor|subscribe|unsubscribe|resolve-root|bind-check|digest-verify)
+  bootstrap|install-hooks|milestone|init|register|post|alert|ack|done|mute|unmute|reactivate|read|sessions|usage|gc|doctor|subscribe|unsubscribe|resolve-root|bind-check|digest-verify)
     # (end 는 위 별도 분기 — 비가역 게이트)
     board_fs "$cmd" "$@"
     ;;
