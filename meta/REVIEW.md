@@ -1865,3 +1865,10 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — upstream implementation reviewed; canonical isolated --apply succeeded and delivered code/context bytes match source 97131eb.
 - Artifact: [backend-r2 review](https://github.com/msmckimgpt-tech/ai_delegate_dev_template/blob/97131eb/_template_maintainer/reviews/20260908-codex-board-backend-r2.md)
 - Scope: preserved consumer customization outside the managed board section; project/token authorization unchanged. External PR/merge approval pending.
+
+## REV-20260908T123000-delegation-final-main [SUBAGENT:workflow_audit] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: template v3.54.2 합류, 실제 보드 계약·읽기 정본·생성기와 협업 보호 보존
+- Verdict: PASS — Bats203 PASS/4 skip, Python34 PASS; root feature0043 1671 PASS/1 skip.
+- Artifact: meta/reviews/20260908T-policy-security.md 및 docs/improvements/delegation-friction-20260908/REPORT.md의 마지막 합류 결과
+- Human Approval Needed: no — 기존 위임 범위와 사용자·다른 세션 보존 유지.

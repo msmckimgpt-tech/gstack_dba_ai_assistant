@@ -76,3 +76,13 @@ Git 바깥의 프로젝트 진입점 `FIRST_REQUEST.md`도 현재 사용자 지�
 최종 전체 실행은 `37fae5d5`(최신 main 합류) 기준이며 제품 소스의 후속 수정은 없다. `make test`는 별도 Compose 프로젝트와 테스트 DB 차단 환경에서 실행했다. 종료 코드 0, JUnit 8,075건 중 8,059 PASS/16 skipped/0 fail/0 error, ruff PASS. 로그는 `/tmp/delegation-friction-make-test-merged.log`, JUnit은 `.pytest_cache/delegation-merged-final.xml`이다.
 
 PR/배포 전 구현·검증·독립 리뷰를 마쳤다. 실제 병합·배포 결과는 전달 후 이 절에 추가하며 선행 완료로 기록하지 않는다.
+
+
+### 마지막 main 합류와 전달 준비
+
+- `8f49f1fc`(template v3.54.2 보드)와 DQA 호스트 한정 네트워크/CA 전달 변경을 추가 합류했다. 이전 전체 실행 이후의 변경이므로 전체 결과를 이 commit의 새 실행으로 표기하지 않았다.
+- 영향 범위인 feature-0043 전체: **1,671 PASS / 1 skipped**, 177.61초. 로그 `/tmp/delegation-final-main-bridge.log`, JUnit `.pytest_cache/delegation-final-main-bridge.xml`.
+- 합류 후 워크플로 Bats **69 PASS**, 보드 Bats **134 PASS / 4 skipped**(root에서 접근 거부를 재현할 수 없는 사례), Python bin **34 PASS**. 보드 네 파일도 CI 실행에 연결했다. 로그 `/tmp/delegation-merge-{workflow-bats,board-bats,python-bin}.log`.
+- Codex CONTEXT와 생성기, §10.1·§16.5.1·§16.6, merge 잠금·최신 base 합류·REGISTRY 보호를 다시 대조했다. main 새 보드 계약과 이전 승인·DQA 정책은 함께 보존됐다.
+- 첫 HTTPS push는 OAuth App의 workflow scope 부족으로 거절됐다. 기존 GitHub SSH 인증으로 같은 저장소의 본인 브랜치를 push했다. 원격 URL·로그인·토큰 권한은 바꾸지 않았다. `.agents/ENVIRONMENT.md`에 재현 가능한 처리 기준을 남겼다.
+- PR: [#1616](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1616). 실제 병합·배포 후 결과를 추가한다.
