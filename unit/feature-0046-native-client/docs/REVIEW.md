@@ -1237,3 +1237,6 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: TASK-20260908-update-install-proof.
 - Trigger: performance/설치 지연 및 회귀 검증.
 - Artifact: [QA 재검토](artifacts/20260908-update-install/qa-review.md). 초기 QA-1은 관찰기의 조기 성공 판정이었다. setup exit0·고아종료·pending해소·단일앱5초 유지까지 조건을 보완했고 확인 라운드에서 해소됐다.
+
+## REV-20260908T141200-update-install-eol [SKIPPED:non-policy-doc] — PASS
+- Trigger: 비정책 증적 줄바꿈 정규화. 값·제품 코드는 불변이며 실제 파일 크기와 SHA-256 값도 그대로다.

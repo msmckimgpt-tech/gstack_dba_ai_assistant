@@ -44,3 +44,5 @@ feature_status_note: 실제 설치된 1.1.2에서 업데이트 확인을 통해 
 - 1.2.1 설치기: 강제 종료를 설치본의 DQAConnect.exe/python.exe/pythonw.exe 파일 소유자로 제한하고 DLL 사용자는 제외한다. RestartApplications=no와 /NORESTARTAPPLICATIONS로 재시작을 /RELAUNCH에 모으며 SetupLogging=yes로 실패 로그를 남긴다.
 - 원인 검증: [실패 증적](artifacts/20260908-update-install/failed-1.2.0-install-result.json). Issue #1622.
 - 패널: backend/security + qa, 최대 3라운드. 현재 Windows 빌드와 코드 검증 후 실제 메뉴 경로 재실측 예정.
+
+- [x] Windows 1.2.1 빌드 및 native528개 검증, 독립 코드 검토 완료.

@@ -1,4 +1,4 @@
-﻿2026-09-08 13:54:35.592   Log opened. (Time zone: UTC+09:00)
+2026-09-08 13:54:35.592   Log opened. (Time zone: UTC+09:00)
 2026-09-08 13:54:35.592   Setup version: Inno Setup version 6.7.3
 2026-09-08 13:54:35.592   Original Setup EXE: C:\Users\mckim\.dqa-connect\update\DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe
 2026-09-08 13:54:35.593   Setup command line: /SL5="$6108F2,24702157,1002496,C:\Users\mckim\.dqa-connect\update\DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe" /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELAUNCH /LOG=C:\Users\mckim\AppData\Local\Temp\dqa-update-install-20260908\installer-diagnostic.log /LOGCLOSEAPPLICATIONS

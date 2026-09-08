@@ -927,3 +927,6 @@ edit_policy: append-only
 - 1.2.1: 설치기의 강제 종료 대상을 패키지 실행 파일 세 개로 제한하고, Windows 기본 자동 재시작을 명시적으로 꺼 `/RELAUNCH`만 사용한다. 설치 상세 로그도 기본 활성화한다.
 - 기존 1.1.2 업데이터에도 적용되도록 수정의 핵심을 새 설치기에 두었다. 전역 프로세스 이름 kill이나 외부 Python 정리는 사용하지 않는다.
 - 검증: updater/supervisor 95 PASS. Windows 빌드·실제 업데이트 재검증 결과는 후속 기록에 추가한다.
+
+## CHG-20260908-update-install-evidence-eol — Windows 증적 정규화
+- Windows 생성 증적의 CRLF를 저장소 LF로 정규화했다. 원본은 Windows 임시 작업 폴더에 보존하며 결과 값은 동일하다.
