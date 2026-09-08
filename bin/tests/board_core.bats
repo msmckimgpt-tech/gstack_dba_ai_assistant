@@ -92,7 +92,7 @@ post_count() { ls "$ROOT/channels/$1" 2>/dev/null | grep -c '\.md$' || true; }
 }
 # ---------------------------------------------------------------- 6 redaction
 @test "6 redaction 5 클래스: writer exit 5, 매치 문자열이 stdout/stderr 어디에도 없음" {
-  declare -A S=( [pem]='-----BEGIN RSA PRIVATE KEY-----' [aws]='AKIAEXAMPLE000000000' [tok]='ghp_ABCDEFGHIJKLMNOP1234' [kv]='password: hunter2secret' )
+  declare -A S=( [pem]='-----BEGIN RSA PRIVATE KEY-----' [aws]='AKIAEXAMPLE000000000' [tok]='ghp_ABCDEFGHIJKLMNOP1234' [kv]='password: hunter2secret' ) # verify-secret-allow: synthetic AKIAEXAMPLE redaction test fixture, not a credential
   for k in "${!S[@]}"; do
     run bash "$B" post --sid "$SA" --channel public --kind note -m "x ${S[$k]} y"
     [ "$status" -eq 5 ]; [[ "$output" != *"${S[$k]}"* ]]
@@ -101,17 +101,17 @@ post_count() { ls "$ROOT/channels/$1" 2>/dev/null | grep -c '\.md$' || true; }
   [ "$(post_count public)" -eq 0 ]
 }
 @test "52 redaction 범위: title/refs/alias 에 든 비밀도 exit 5; 화이트리스트 밖 키의 값은 스캔 대상 아님(오탐 없음)" {
-  run bash "$B" post --sid "$SA" --channel public --kind note --refs 'AKIAEXAMPLE000000000' -m ok; [ "$status" -eq 5 ]
+  run bash "$B" post --sid "$SA" --channel public --kind note --refs 'AKIAEXAMPLE000000000' -m ok; [ "$status" -eq 5 ] # verify-secret-allow: synthetic AKIAEXAMPLE redaction test fixture, not a credential
   bash "$B" post --sid "$SA" --channel public --kind note -m "clean" >/dev/null
   f=$(ls "$ROOT/channels/public"/*.md | head -1)
   python3 - "$f" <<'PY'
-import sys,json; p=sys.argv[1]; t=open(p,encoding='utf-8').read(); fm,body=t.split('\n---\n',1); o=json.loads(fm[8:]); o['unknown_x']='AKIAEXAMPLE000000000'
+import sys,json; p=sys.argv[1]; t=open(p,encoding='utf-8').read(); fm,body=t.split('\n---\n',1); o=json.loads(fm[8:]); o['unknown_x']='AKIAEXAMPLE000000000' # verify-secret-allow: synthetic AKIAEXAMPLE redaction test fixture, not a credential
 open(p,'w',encoding='utf-8').write('---json\n'+json.dumps(o,ensure_ascii=False,separators=(',',':'))+'\n---\n'+body)
 PY
   run deliver "$SB" on_prompt; echo "$output" | ctx | grep -q '"body":"clean"'; [[ "$output" != *AKIAEXAMPLE* ]]
 }
 @test "57 truncate → 스캔: body_max_bytes 너머의 비밀은 저장되지 않으므로 writer 통과, 파일에 부재" {
-  big="$(head -c 8192 /dev/zero | tr '\0' 'a')AKIAEXAMPLE000000000"
+  big="$(head -c 8192 /dev/zero | tr '\0' 'a')AKIAEXAMPLE000000000" # verify-secret-allow: synthetic AKIAEXAMPLE redaction test fixture, not a credential
   run bash "$B" post --sid "$SA" --channel public --kind note -m "$big"; [ "$status" -eq 0 ]
   nogrep -q AKIAEXAMPLE "$ROOT/channels/public/$output.md"
   grep -q '"truncated":true' "$ROOT/channels/public/$output.md"
@@ -396,13 +396,16 @@ PY
   run bash "$B" register --native-id eeee-5555 --platform claude --work TASK-0001; [ "$status" -eq 3 ]
 }
 # ---------------------------------------------------------------- 43 env-file
-@test "43 --env-file: 0600 자기 소유 정규파일만 append; 0644·symlink·부재 → append 0 + 토큰은 파일에만" {
+@test "43 --env-file: 0600 자기 소유 정규파일만 append; 0644·symlink → append 0; 부재는 자기 소유·비-other-writable 부모에서만 생성(0600) + 토큰은 파일에만" {
   good="$BATS_TEST_TMPDIR/env-good"; : > "$good"; chmod 600 "$good"
   bad="$BATS_TEST_TMPDIR/env-bad"; : > "$bad"; chmod 644 "$bad"; ln -s "$good" "$BATS_TEST_TMPDIR/env-link"
   bash "$B" register --native-id ffff-6666 --platform claude --work - --env-file "$good" >/dev/null; [ "$(grep -c 'export AGENT_BOARD_TOKEN' "$good")" -eq 1 ]
   bash "$B" register --native-id gggg-7777 --platform claude --work - --env-file "$bad" >/dev/null; [ ! -s "$bad" ]
   bash "$B" register --native-id hhhh-8888 --platform claude --work - --env-file "$BATS_TEST_TMPDIR/env-link" >/dev/null; [ "$(grep -c AGENT_BOARD_TOKEN "$good")" -eq 1 ]
-  bash "$B" register --native-id iiii-9999 --platform claude --work - --env-file "$BATS_TEST_TMPDIR/nope" >/dev/null; [ ! -e "$BATS_TEST_TMPDIR/nope" ]
+  # 부재 파일: 부모가 자기 소유 ∧ other-writable 아님이면 생성(0600, 2줄) — 실 Claude 의 ~/.claude/session-env/<id>/ 는 0775 (v3.54.1); 부모 0777 이면 거부
+  bash "$B" register --native-id iiii-9999 --platform claude --work - --env-file "$BATS_TEST_TMPDIR/nope" >/dev/null; [ -f "$BATS_TEST_TMPDIR/nope" ]; [ "$(stat -c %a "$BATS_TEST_TMPDIR/nope")" = 600 ]; [ "$(grep -c AGENT_BOARD "$BATS_TEST_TMPDIR/nope")" -eq 2 ]
+  ow="$BATS_TEST_TMPDIR/ow"; mkdir -p "$ow"; chmod 777 "$ow"
+  bash "$B" register --native-id jjjj-0001 --platform claude --work - --env-file "$ow/nope" >/dev/null; [ ! -e "$ow/nope" ]
   [ -f "$ROOT/sessions/claude:$(id -un):gggg-7777.token" ]
 }
 # ---------------------------------------------------------------- 47·49·51·53·54·56
@@ -515,7 +518,7 @@ PY
 @test "Q1 reader redaction: 파일에 직접 심은 비밀(body) 은 주입되지 않고 redaction 로그" {
   id=$(bash "$B" post --sid "$SA" --channel public --kind note -m clean)
   python3 - "$ROOT/channels/public/$id.md" <<'PY'
-import sys; p=sys.argv[1]; t=open(p,encoding='utf-8').read(); fm,body=t.split('\n---\n',1); open(p,'w',encoding='utf-8').write(fm+'\n---\n'+body.rstrip('\n')+'\nAKIAEXAMPLE000000000\n')
+import sys; p=sys.argv[1]; t=open(p,encoding='utf-8').read(); fm,body=t.split('\n---\n',1); open(p,'w',encoding='utf-8').write(fm+'\n---\n'+body.rstrip('\n')+'\nAKIAEXAMPLE000000000\n') # verify-secret-allow: synthetic AKIAEXAMPLE redaction test fixture, not a credential
 PY
   run deliver "$SB" on_prompt; [ -z "$output" ]; grep -q '"reason":"redaction"' "$ROOT/log/$(id -un).jsonl"
   # 배제된 id 는 «처리 완료» — 그 뒤 게시물은 정상 전달되고 cursor 가 그 앞에 고착하지 않는다
@@ -679,13 +682,15 @@ PY
   run deliver "$SB" on_prompt; echo "$output" | ctx | grep -q '"body":"tail-post"'; [ "$(printf '%s' "$output" | wc -c)" -le 4096 ]
   run deliver "$SB" on_prompt; [ -z "$output" ]
 }
-@test "Q18 deliver 중 done 전이가 끼어들어도 commit 이 done 을 active 로 되돌리지 않는다; end --hook reason 어휘(clear→suspended, logout→ended)" {
+@test "Q18 deliver 중 done 전이가 끼어들어도 commit 이 done 을 active 로 되돌리지 않는다; end --hook 은 reason 무관 suspended, end --yes 만 ended(ended_by=cli)" {
   bash "$B" post --sid "$SA" --channel public --kind note -m x >/dev/null
   deliver "$SB" on_prompt >/dev/null; bash "$B" done --sid "$SB" >/dev/null
   run deliver "$SB" on_prompt; [ -z "$output" ]; grep -q '"state":"done"' "$ROOT/sessions/$SB.json"
   printf '{"session_id":"aaaa-1111","reason":"clear"}' | bash "$B" end --hook --platform claude --stdin-json -; grep -q '"state":"suspended"' "$ROOT/sessions/$SA.json"
   bash "$B" register --native-id aaaa-1111 --platform claude --work - --resume >/dev/null; grep -q '"state":"active"' "$ROOT/sessions/$SA.json"
-  printf '{"session_id":"aaaa-1111","reason":"logout"}' | bash "$B" end --hook --platform claude --stdin-json -; grep -q '"state":"ended"' "$ROOT/sessions/$SA.json"
+  printf '{"session_id":"aaaa-1111","reason":"logout"}' | bash "$B" end --hook --platform claude --stdin-json -; grep -q '"state":"suspended"' "$ROOT/sessions/$SA.json"   # v3.54.1: hook 은 종단하지 않는다
+  run bash "$B" end --yes --sid "$SA" --reason logout; [ "$status" -eq 0 ]       # suspended 에서 사람의 end --yes 는 허용 — 단일 경로
+  grep -q '"state":"ended"' "$ROOT/sessions/$SA.json"; grep -q '"ended_by":"cli"' "$ROOT/sessions/$SA.json"
 }
 @test "Q19 human 도 L3 rate limit 적용(면제는 L5 만): human 21번째 post exit 4" {
   read -r HS HT <<<"$(human)"

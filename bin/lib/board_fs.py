@@ -161,7 +161,7 @@ AUTHOR_KEYS = ("sid", "alias", "platform", "model", "harness", "host", "uid", "w
                "worktree", "attested")
 PRESENCE_KEYS = ("sid", "alias", "platform", "model", "harness", "host", "uid", "pid", "pid_start",
                  "work_ref", "task_path", "cwd", "worktree", "state", "prev_state", "started_at",
-                 "last_seen", "stale_since", "done_at", "ended_at", "subscriptions", "subscribed_at",
+                 "last_seen", "stale_since", "done_at", "ended_at", "ended_by", "subscriptions", "subscribed_at",
                  "schema")
 
 RING_MAX = 500
@@ -1125,8 +1125,11 @@ def env_file_append(path: Optional[str], sid: str, token: str, res: Resolved, lo
         except FileNotFoundError:
             parent = os.path.dirname(path)
             pst = os.lstat(parent)
-            if not statmod.S_ISDIR(pst.st_mode) or pst.st_uid != os.getuid() or (pst.st_mode & 0o077) != 0:
-                log.emit("register", "env_file_rejected", why="parent_not_private"); return False
+            # 실측(2026-09-07, Claude Code 2.1.227 두 계정): 부모 `~/.claude/session-env/<id>/` 는 하네스가 0775 로 만든다 — mode&0o077==0 은 항상 거부라
+            # 토큰 주입이 한 번도 되지 않았다(소비자 로그 env_file_rejected 20건). 경계는 «자기 uid 소유 ∧ other-writable 아님» 으로 둔다:
+            # 파일 자체는 O_CREAT|O_EXCL|O_NOFOLLOW 0600 이라 그룹이 읽을 수 없고, 선점·symlink 는 EEXIST/ELOOP 로 막힌다.
+            if not statmod.S_ISDIR(pst.st_mode) or pst.st_uid != os.getuid() or (pst.st_mode & 0o002) != 0:
+                log.emit("register", "env_file_rejected", why="parent_not_owned_or_other_writable"); return False
             fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError:
         log.emit("register", "env_file_rejected", why="open")
@@ -1179,10 +1182,16 @@ def do_register(root: Root, board: Board, res: Resolved, log: Log, *, native_id:
     root.mkdir(("cursors", sid), 0o700)
     with Flock(root, ("cursors", sid, "lock"), 0o600, nonblock=False):
         pres = load_presence(root, sid, log)
+        existing = pres is not None
         now = now_ts()
         if pres is not None:
             if pres["state"] == "ended":
-                raise BoardError(EXIT_VALIDATION, "tombstone")
+                if pres.get("ended_by") in (None, "sweep") and resume:
+                    # v3.53.x hook 종단(ended_by 없음)·stale sweep 은 사람의 종단이 아니다 — resume 로 되살린다 (v3.54.1). 비가역은 end --yes(cli) 만.
+                    pres["state"] = pres.get("prev_state") or "active"; pres.pop("prev_state", None); pres.pop("ended_at", None); pres.pop("stale_since", None)
+                    log.emit("register", "legacy_tombstone_resumed")
+                else:
+                    raise BoardError(EXIT_VALIDATION, "tombstone")
             if pres["state"] == "suspended":
                 if not resume:
                     raise BoardError(EXIT_VALIDATION, "state:suspended")
@@ -1217,8 +1226,10 @@ def do_register(root: Root, board: Board, res: Resolved, log: Log, *, native_id:
             root.mkdir(("channels", "dm", sid), 0o3775 if board.mode == "shared" else 0o700)
         except OSError as e:
             log.emit("register", "dm_dir_failed", err=type(e).__name__)
-        token = secrets.token_hex(16)
-        root.write_replace(token_path(sid), (token + "\n").encode(), 0o600)
+        stored = read_token_file(root, sid) if existing else None
+        token = stored or secrets.token_hex(16)           # 재등록(resume)은 토큰을 회전시키지 않는다 — env 주입 토큰이 살아 있어야 한다 (qa panel 072 P2)
+        if not stored:
+            root.write_replace(token_path(sid), (token + "\n").encode(), 0o600)
         save_presence(root, pres)
     if env_file:
         env_file_append(env_file, sid, token, res, log)
@@ -1803,7 +1814,7 @@ def post_status_done(root: Root, board: Board, log: Log, sid: str, pres: Dict[st
 
 
 def transition(root: Root, board: Board, log: Log, *, sid: str, token: Optional[str], target: str, hook: bool = False,
-               reason: Optional[str] = None, actor: Optional[str] = None) -> str:
+               reason: Optional[str] = None, actor: Optional[str] = None, ended_by: str = "cli") -> str:
     """§10.4 전이 표 (MUST-17 인증). hook=True 는 end --hook (모든 실패 exit 0 정규화 — 호출자가 처리).
     reactivate 는 **행위자**(actor = human 토큰+TTY 로 이미 인증된 sid) 가 **대상**(sid, done 상태, 같은 uid) 을 되살린다 (§10.5 L6)."""
     require_own_sid(sid)
@@ -1825,6 +1836,7 @@ def transition(root: Root, board: Board, log: Log, *, sid: str, token: Optional[
             pres["prev_state"] = cur
         elif target == "ended":
             pres["ended_at"] = now
+            pres["ended_by"] = ended_by          # cli(사람 end --yes) | sweep(stale) — hook 은 더 이상 ended 를 만들지 않는다 (v3.54.1)
         elif target == "reactivate":
             if cur != "done": raise BoardError(EXIT_VALIDATION, "transition:%s->active" % cur)
             if not actor: raise BoardError(EXIT_VALIDATION, "human_tty_required")   # 행위자 인증은 호출자(main) 가 했다
@@ -2113,6 +2125,18 @@ def deliver(res: Optional[Resolved], root: Optional[Root], board: Optional[Board
     except BoardError as e:
         log.emit("deliver", e.reason); return _empty_output(platform, event, root_path)
     pres = load_presence(root, sid, log)
+    revivable = pres is not None and pres["state"] == "ended" and pres.get("ended_by") in (None, "sweep")
+    env_native = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if (pres is None or revivable) and event in ("on_prompt", "on_turn_end", "on_tool_done") and platform in PLATFORMS \
+            and not (platform == "claude" and env_native and env_native != sid_parts(sid)[2]):     # §11.1 교차확인 — env 와 어긋난 id 는 등록하지 않는다
+        # SessionStart 를 놓친 세션·v3.53.x 유산 종단 세션도 첫 fire 에서 (재)등록된다 (v3.54.1, 소비자 실측 deliver unregistered / state:ended)
+        try:
+            do_register(root, board, res, log, native_id=sid_parts(sid)[2], platform=platform, alias=None, work="-", model=None,
+                        harness=None, worktree=None, resume=revivable, env_file=None)
+            log.emit("deliver", "auto_registered" if not revivable else "legacy_tombstone_resumed")
+            pres = load_presence(root, sid, log)
+        except BoardError as e:
+            log.emit("deliver", "auto_register_failed:" + e.reason)
     if pres is None or pres["state"] != "active":
         log.emit("deliver", "unregistered" if pres is None else "state:" + pres["state"])
         return _empty_output(platform, event, root_path)
@@ -2908,7 +2932,7 @@ def do_sessions(root: Root, board: Board, log: Log, all_: bool, sweep: bool) -> 
             pid = p.get("pid")
             alive = isinstance(pid, int) and os.path.exists("/proc/%d" % pid)
             if not alive:
-                p["state"] = "ended"; p["ended_at"] = iso_utc(); save_presence(root, p); out[-1] += " -> ended(sweep)"
+                p["state"] = "ended"; p["ended_at"] = iso_utc(); p["ended_by"] = "sweep"; save_presence(root, p); out[-1] += " -> ended(sweep)"
     return "\n".join(out) + "\n"
 
 
@@ -3577,7 +3601,9 @@ def hook_session_start(cwd: str, platform: str, stdin_obj: Dict[str, Any]) -> st
 
 
 def hook_end(cwd: str, platform: str, stdin_obj: Dict[str, Any]) -> None:
-    """SessionEnd: clear → suspended, 그 외·미지값 → ended (2026-09-04 실측 어휘). 모든 실패 로그 후 exit 0."""
+    """SessionEnd: reason 과 **무관하게 suspended** (v3.54.1). Claude Code 는 프로세스 종료마다 reason other/logout 을 내고 같은 session id 로
+    `--resume` 한다 — 종단(ended)으로 만들면 tombstone 이 되어 그 세션은 영구 무수신이었다 (2026-09-07 mysql_ai_delegated_dev 실측:
+    root 세션 2개가 3시간 동안 35회 빈 fire). 비가역 ended 는 사람의 `end --yes` 만이다. 모든 실패 로그 후 exit 0."""
     if platform not in P1_DELIVER_PLATFORMS: return
     native = stdin_obj.get("session_id")
     if not isinstance(native, str) or not fm(RE_NATIVE, native): return
@@ -3585,7 +3611,7 @@ def hook_end(cwd: str, platform: str, stdin_obj: Dict[str, Any]) -> None:
         res, root, board, log = open_board(cwd)
         if root is None or board is None: return
         sid = "%s:%s:%s" % (platform, current_uid_name(), native)
-        target = "suspended" if stdin_obj.get("reason") == "clear" else "ended"
+        target = "suspended"
         try:
             transition(root, board, log, sid=sid, token=None, target=target, hook=True, reason=stdin_obj.get("reason"))
         except BoardError as e:
@@ -3633,7 +3659,7 @@ ERR_HINT: Dict[str, str] = {
     "loop_cooldown": "두 세션의 왕복이 한도(loop_pair_k/loop_pair_t_sec)를 넘었다 — cooldown 뒤 재시도. 사람이 개입하면 계수가 초기화된다",
     "rate": "게시 rate limit — 잠시 뒤 재시도 (board.sh usage)",
     "thread_depth": "스레드 깊이 상한 — 새 스레드로 시작하라",
-    "tombstone": "이 sid 는 end 로 종단됐다(비가역). 새 세션 id 로 등록하라",
+    "tombstone": "이 sid 는 사람이 end --yes 로 종단했다(비가역). 새 세션 id 로 등록하라 — hook 의 SessionEnd 와 stale sweep 은 종단이 아니라 재개 가능이다 (v3.54.1)",
     "state": "현재 상태에서 허용되지 않는 전이다 (board.sh sessions)",
     "stale": "오래 쉰 세션이다. board.sh register --resume 로 복귀",
     "dm_requires_to": "--channel dm 은 --to <sid|alias> 가 필요하다",
@@ -3663,6 +3689,47 @@ ERR_HINT: Dict[str, str] = {
 }
 
 
+def harness_sid() -> Optional[str]:
+    """CLI 의 자기 sid 유추: AGENT_BOARD_SID → (CLAUDE_CODE_SESSION_ID 가 있으면) claude:<uid>:<id>. 없으면 None."""
+    env = os.environ.get("AGENT_BOARD_SID")
+    if env:
+        return env
+    native = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if native and fm(RE_NATIVE, native):
+        return "claude:%s:%s" % (current_uid_name(), native)
+    return None
+
+
+def do_milestone(cwd: str, *, kind: str, body: str, to: Optional[str], refs: List[str], work: str) -> str:
+    """이정표 게시 (cycle-init 착수 · cycle-finalize 완료 등 **템플릿 스크립트가 부른다** — persona 재량이 아니다).
+    best-effort: 보드 없음·sid 불명·rate·redaction 어느 것도 스크립트를 막지 않는다 — 결과는 stderr 한 줄 + 로그. 반환 = 게시물 id 또는 ""."""
+    sid = harness_sid()
+    if sid is None:
+        sys.stderr.write("board milestone: skip — 세션 id 불명 (CLAUDE_CODE_SESSION_ID/AGENT_BOARD_SID 없음)\n"); return ""
+    root = None
+    try:
+        res, root, board, log = open_board(cwd, sid)
+        if res is None or root is None or board is None:
+            sys.stderr.write("board milestone: skip — 보드 없음 (board.sh bootstrap)\n"); return ""
+        require_own_sid(sid)
+        pres = load_presence(root, sid, log)
+        if pres is None or pres["state"] == "suspended" or pres.get("stale_since") or (pres["state"] == "ended" and pres.get("ended_by") in (None, "sweep")):
+            do_register(root, board, res, log, native_id=sid_parts(sid)[2], platform=sid_parts(sid)[0], alias=None, work=work or "-", model=None,
+                        harness=None, worktree=None, resume=(pres is not None), env_file=None)
+        pid = do_post(root, board, log, sid=sid, token=None, channel=("dm" if to else "public"), kind=kind, body=body, to=to, re_id=None,
+                      refs=refs, priority="normal", force=False)
+        log.emit("milestone", kind, id=pid)
+        return pid
+    except BoardError as e:
+        sys.stderr.write("board milestone: skip (%s)%s\n" % (e.reason, (" — " + ERR_HINT[e.reason.split(":")[0]]) if e.reason.split(":")[0] in ERR_HINT else ""))
+        if root is not None:
+            Log(root, current_uid_name(), sid).emit("milestone", "skip:" + e.reason)
+        return ""
+    finally:
+        if root is not None:
+            root.close()
+
+
 def _read_stdin_json() -> Dict[str, Any]:
     try:
         raw = sys.stdin.read(1 << 20)
@@ -3687,6 +3754,8 @@ def main(argv: List[str]) -> int:
     p = sub.add_parser("register"); p.add_argument("--native-id"); p.add_argument("--platform"); p.add_argument("--alias")
     p.add_argument("--work", default="-"); p.add_argument("--model"); p.add_argument("--harness"); p.add_argument("--worktree"); p.add_argument("--resume", action="store_true")
     p.add_argument("--env-file"); p.add_argument("--human", action="store_true"); p.add_argument("--observer", action="store_true"); p.add_argument("--print-token", action="store_true")
+    p = sub.add_parser("milestone"); p.add_argument("--kind", default="status", choices=("status", "handoff", "question", "note"))
+    p.add_argument("-m", "--message", required=True); p.add_argument("--to"); p.add_argument("--refs", default=""); p.add_argument("--work", default="-")
     for name in ("bootstrap", "install-hooks"):
         p = sub.add_parser(name); p.add_argument("--work", default="-"); p.add_argument("--members", default=""); p.add_argument("--mode", choices=("shared", "private"))
         p.add_argument("--no-register", action="store_true"); p.add_argument("--activate-in", action="append", default=[]); p.add_argument("--worktree")
@@ -3746,6 +3815,10 @@ def main(argv: List[str]) -> int:
             _emit(do_bootstrap(cwd, work=a.work or "-", members=members, mode_override=a.mode, no_register=a.no_register, extra_dirs=a.activate_in, worktree=a.worktree)); return 0
         if a.cmd == "install-hooks":
             _emit(do_install_hooks(cwd, a.activate_in)); return 0
+        if a.cmd == "milestone":
+            pid = do_milestone(cwd, kind=a.kind, body=a.message, to=a.to, refs=[r for r in a.refs.split(",") if r], work=a.work)
+            if pid: _emit(pid)
+            return 0
         if a.cmd == "resolve-root":
             res = resolve_root(cwd); _emit(res.root if res else ""); return 0 if res else EXIT_VALIDATION
         res, root, board, log = open_board(cwd, sid or "-")
@@ -3766,6 +3839,20 @@ def main(argv: List[str]) -> int:
             return 0
         if a.cmd in ("read", "sessions", "doctor", "bootstrap", "install-hooks") or (a.cmd == "usage" and a.all) or (a.cmd == "gc" and not a.purge):
             pass   # 사람·모델용 pull / 진단 — 세션 불필요 (§14 G4)
+        elif not sid and harness_sid():
+            # 하네스가 준 세션 id 로 자기 sid 유추 (v3.54.1). **폴백 금지**: 미등록이면 자기 세션을 등록한다 — «유일 active» 규칙으로
+            # 타 세션 명의를 빌리면 done/게시가 동료 세션에 전염된다 (qa panel 072 P1).
+            hs = harness_sid()
+            if load_presence(root, hs, None) is None:
+                if os.environ.get("AGENT_BOARD_SID"):
+                    raise BoardError(EXIT_VALIDATION, "sid_required", "AGENT_BOARD_SID=%s 는 등록된 세션이 아니다" % hs)
+                try:
+                    do_register(root, board, res, log, native_id=sid_parts(hs)[2], platform=sid_parts(hs)[0], alias=None, work="-", model=None,
+                                harness=None, worktree=None, resume=False, env_file=None)
+                    Log(root, uid, hs).emit(a.cmd, "harness_auto_registered")
+                except BoardError as e:
+                    raise BoardError(EXIT_VALIDATION, "sid_required", "자기 세션 %s 등록 실패(%s) — 다른 세션으로 폴백하지 않는다" % (hs, e.reason))
+            sid = hs
         elif not sid:
             # §6.1 writer 의 sid 해석: (uid, 플랫폼) active 세션이 유일할 때만
             cands = [p["sid"] for p in list_presences(root, log) if p["state"] in ("active", "muted", "done") and p["uid"] == uid]
@@ -3811,7 +3898,7 @@ def main(argv: List[str]) -> int:
             _emit(transition(root, board, log, sid=tgt, token=None, target="reactivate", actor=sid)); return 0
         if a.cmd in ("done", "mute", "unmute", "end"):
             target = {"done": "done", "mute": "muted", "unmute": "active", "end": ("suspended" if a.reason == "clear" else "ended")}[a.cmd]
-            _emit(transition(root, board, log, sid=sid, token=token, target=target)); return 0
+            _emit(transition(root, board, log, sid=sid, token=token, target=target, ended_by="cli")); return 0
         if a.cmd in ("subscribe", "unsubscribe"):
             _emit(do_subscribe(root, board, log, sid, token, a.name or a.channel or "", a.cmd == "subscribe")); return 0
         if a.cmd == "alias":

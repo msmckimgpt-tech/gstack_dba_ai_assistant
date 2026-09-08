@@ -17,7 +17,7 @@
 #   PostToolUse | PostToolBatch (opt-in)    → deliver on_tool_done
 #   FileChanged                             → file-changed (file_path==<board>/seq/SEQ ∧ event∈{change,add} → PENDING + systemMessage)
 #   PreCompact                              → 무출력 (기록만)
-#   SessionEnd                              → end --hook (clear → suspended, 그 외 → ended; 항상 0)
+#   SessionEnd                              → end --hook (reason 무관 → suspended — 같은 session id 의 --resume 를 보존, v3.54.1; 비가역 ended 는 사람의 end --yes 만)
 #
 # 절대경로 계약 (§11.1): `init --install-hooks` 가 이 파일의 realpath 로 settings 블록을 만든다. 상대경로 `repo/bin/...`
 #   는 linked worktree cwd 에서 존재하지 않아 exit 0 으로 삼켜진다 — 쓰지 않는다.
