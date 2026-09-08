@@ -224,140 +224,19 @@
 
 })();
 
-/* ── 클라이언트 패널 (2026-09-04) ────────────────────────────────────────────────
- *
- * 연결 프로그램이 이 화면을 앱 창으로 열면 `?client_port=&client_nonce=` 가 붙는다.
- * 그때만 이 패널이 나타나고, 이 컴퓨터의 능력(AI 탐지·로그인 대행·연결)을 **로컬 브리지**로
- * 부른다. 화면은 서비스에 하나만 둔다는 결정(P0-S)의 실체다.
- *
- * ⚠ 브리지 호출은 반드시 **POST + nonce 헤더** 다. GET 은 브리지가 막는다 —
- *   `<img>`·`<script>` 로도 발사되어 preflight 를 우회하기 때문이다.
- * ⚠ 로그인·연결은 브리지가 **네이티브 확인창**을 띄운다. 이 페이지가 XSS 되어도
- *   ⚠ 2026-09-07: 그 확인은 없어졌다(사용자 결정). 브리지는 끝난 뒤 알림 영역으로
- *   알린다 — 막지는 못하지만 모르게 일어나지는 않는다.
- */
-(function clientPanel() {
-  var q = new URLSearchParams(location.search);
-  var port = q.get("client_port"), nonce = q.get("client_nonce");
-  var panel = document.getElementById("clientPanel");
-  if (!panel || !port || !nonce) { return; }   // 평범한 방문 — 아무것도 보이지 않는다
-  panel.classList.remove("aic-hidden");
-
-  var listEl = document.getElementById("clientRuntimes");
-  var statusEl = document.getElementById("clientPanelStatus");
-  var connectBtn = document.getElementById("clientConnect");
-  var chosen = null;
-
-  function pstatus(msg, kind) {
-    statusEl.textContent = msg || "";
-    if (kind) { statusEl.setAttribute("data-kind", kind); }
-    else { statusEl.removeAttribute("data-kind"); }
-  }
-
-  function call(action, body) {
-    return fetch("http://127.0.0.1:" + encodeURIComponent(port) + "/" + action, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-DQA-Nonce": nonce },
-      body: JSON.stringify(body || {})
-    }).then(function (r) { return r.json(); });
-  }
-
-  function paint(runtimes) {
-    listEl.innerHTML = "";
-    var usable = (runtimes || []).filter(function (r) { return r.usable; });
-    (runtimes || []).forEach(function (r) {
-      var li = document.createElement("li");
-      li.style.margin = "6px 0";
-      var mark = r.usable ? "✅" : (r.logged_in ? "❌" : "⏳");
-      var label = document.createElement("label");
-      label.style.cursor = r.usable ? "pointer" : "default";
-      if (r.usable) {
-        var radio = document.createElement("input");
-        radio.type = "radio"; radio.name = "dqa-rt"; radio.value = r.id;
-        radio.style.marginRight = "8px";
-        radio.checked = (chosen === r.id) || (!chosen && r.id === usable[0].id);
-        if (radio.checked) { chosen = r.id; }
-        radio.addEventListener("change", function () { chosen = r.id; });
-        label.appendChild(radio);
-      }
-      label.appendChild(document.createTextNode(mark + " " + r.id));
-      li.appendChild(label);
-      var detail = document.createElement("div");
-      detail.style.cssText = "margin-left:22px;opacity:.8;font-size:.92em";
-      detail.textContent = r.usable ? r.path
-        : (r.detail || (r.logged_in ? "답을 받지 못했습니다" : "로그인이 필요합니다"));
-      li.appendChild(detail);
-      if (!r.usable && !r.logged_in && r.can_login_here) {
-        var b = document.createElement("button");
-        b.type = "button"; b.className = "aic-btn";
-        b.style.cssText = "margin-left:22px;margin-top:4px";
-        b.textContent = "로그인";
-        b.addEventListener("click", function () {
-          pstatus(r.id + " 로그인을 시작합니다 — 프로그램 창의 확인을 눌러 주세요.");
-          call("login", { id: r.id }).then(function (res) {
-            pstatus(res.detail || (res.ok ? "로그인했습니다." : "로그인하지 못했습니다."),
-                    res.ok ? "ok" : "error");
-            if (res.ok) { discover(); }
-          });
-        });
-        li.appendChild(b);
-      }
-      listEl.appendChild(li);
-    });
-    connectBtn.disabled = usable.length === 0;
-    if (!runtimes || !runtimes.length) {
-      pstatus("이 컴퓨터에서 AI 를 찾지 못했습니다. 설치한 뒤 [다시 찾기] 를 누르세요.", "error");
-    } else if (!usable.length) {
-      pstatus("설치·로그인은 되어 있는데 답을 받지 못했습니다 — 서버 연결과는 별개입니다.", "error");
-    } else {
-      pstatus("답변이 확인된 AI 가 " + usable.length + "개 있습니다.", "ok");
-    }
-  }
-
-  function discover() {
-    pstatus("이 컴퓨터의 AI 를 찾는 중… (실제로 답하는지 확인하므로 수십 초 걸릴 수 있습니다)");
-    return call("discover", {}).then(function (res) { paint(res.runtimes); })
-      .catch(function (e) {
-        pstatus("이 컴퓨터의 연결 기능에 닿지 못했습니다 — 창을 닫았을 수 있습니다. ( " + e.message + ")",
-                "error");
-      });
-  }
-
-  /* 생존 신호 — 이 창이 아직 열려 있음을 브리지에 알린다.
-   *
-   * ⚠ 브리지는 **띄운 브라우저 프로세스**로 수명을 판정하지 않는다. Chrome 이 이미 떠 있으면
-   *   새 창을 기존 인스턴스에 위임하고 런처가 즉시 종료해, 브리지가 곧바로 닫혔다
-   *   (실측 2026-09-04). 그래서 「패널이 말을 걸어오는가」가 수명 신호다.
-   *
-   * ⚠ **다만 상주(트레이) 중에는 유휴가 종료 사유가 아니다** (2026-09-04 재구성). 알림 영역
-   *   아이콘이 떠 있으면 창을 닫아도 연결이 유지되고, 끝내는 것은 아이콘의 [종료] 뿐이다.
-   *   상주가 아닐 때만 유휴 한도 뒤에 스스로 끝난다.
-   */
-  setInterval(function () { call("ping", {}).catch(function () { /* 창 정리 중 */ }); }, 20000);
-
-  /* 상주 안내 — **브리지가 실제로 아이콘을 띄웠을 때만** 말한다.
-   *
-   * ⚠ 프런트가 스스로 「닫아도 유지됩니다」를 추정하면, 트레이를 못 세운 머신에서 거짓이
-   *   된다(사용자는 창을 닫고 연결을 잃는다). 판정은 껍데기가 하고 여기는 그린다 — 이
-   *   페이지가 이미 여러 번 배운 규칙이다(P0-R · 판정은 한 곳).
-   */
-  function paintResidency(resident) {
-    var el = document.getElementById("clientResidency");
-    if (!el) { return; }
-    el.textContent = resident
-      ? "이 창을 닫아도 알림 영역에서 연결이 유지됩니다. 완전히 끝내려면 알림 영역 아이콘에서 [종료] 를 누르세요."
-      : "이 창을 닫으면 연결이 끝납니다.";
-  }
-  call("status", {}).then(function (res) { paintResidency(!!(res && res.resident)); })
-    .catch(function () { /* 닿지 못하면 아무 말도 하지 않는다 — 모르면 단정하지 않는다 */ });
-
-  document.getElementById("clientRefresh").addEventListener("click", discover);
-  connectBtn.addEventListener("click", function () {
-    pstatus("연결하는 중 — 프로그램 창의 확인을 눌러 주세요.");
-    call("connect", { id: chosen }).then(function (res) {
-      if (res.ok) { pstatus("연결됐습니다. 대화 화면에서 질문하면 이 컴퓨터의 AI 가 답합니다.", "ok"); }
-      else { pstatus(res.detail || "연결하지 못했습니다.", "error"); }
-    });
+// 모달과 단독 페이지가 같은 패널을 사용한다.
+import("./app/client-bridge.js?v=dev").then(({clientBridge, initClientPanel}) => {
+  if (!clientBridge) return;
+  const status = document.getElementById("clientPanelStatus");
+  const toast = document.getElementById("clientConnectToast");
+  let timer;
+  initClientPanel((message, kind) => {
+    status.textContent = message || "";
+    status.dataset.kind = kind || "";
+  }, (message) => {
+    toast.textContent = message; toast.hidden = false;
+    clearTimeout(timer); timer = setTimeout(() => { toast.hidden = true; }, 2200);
   });
-  discover();
-})();
+}).catch(() => {
+  document.getElementById("clientPanelStatus").textContent = "연결 화면을 불러오지 못했습니다. 새로고침해 주세요.";
+});

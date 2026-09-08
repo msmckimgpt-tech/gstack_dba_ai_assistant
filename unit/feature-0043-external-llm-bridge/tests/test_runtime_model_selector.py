@@ -126,23 +126,24 @@ def test_detect_runtimes_omits_runtimes_with_no_models(monkeypatch):
     # 등급 플래그가 없으면 신고에도 등급이 없다.
     assert got[0]["efforts"] == []
 
-def test_heartbeat_carries_capabilities_every_time():
-    """능력을 **매번** 싣는다.
-
-    처음 한 번만 보내면 서버 재시작·토큰 행 교체 이후 화면의 목록이 영영 비고, 그 빈 목록은
-    '러너가 없다' 와 구분되지 않는다. 서버는 값이 같으면 쓰지 않으므로 비용이 없다.
-    """
-    src = _RUNNER.read_text(encoding="utf-8")
-    loop = src[src.index("def start_heartbeat("):]
-    loop = loop[:loop.index("\ndef ")]
-    # 첫 인자가 `runtimes` 이면 된다 — TASK-20260901T140000 이 사망 신고
-    # (`released_instances=`)를 같은 호출에 덧붙였으므로 전량 일치로 고정하면
-    # 이 계약과 무관한 인자 추가가 곧 실패가 된다.
-    call = "api.heartbeat(runtimes"
-    assert call in loop, "하트비트가 능력을 싣지 않는다"
-    # 루프 밖에서 한 번만 보내는 형태가 아닌지 — 호출이 while 안에 있어야 한다.
-    while_at = loop.index("while not stop.is_set():")
-    assert loop.index(call) > while_at, "능력 신고가 루프 밖에 있다"
+def test_heartbeat_carries_capabilities_every_time(monkeypatch):
+    """Every heartbeat carries models; only successful publication acknowledges them."""
+    mod = _load_runner()
+    stop = threading.Event()
+    monkeypatch.setattr(mod, "_HEARTBEAT_INTERVAL_SEC", .01)
+    rows = [{"runtime":"claude", "models":[], "_client_location":{"user":"private"}}]
+    sent, confirmed = [], []
+    class FakeApi:
+        def heartbeat(self, payload, **kwargs):
+            sent.append(payload)
+            if len(sent) == 1: return {"_http":503}
+            stop.set()
+            return {"ok":True}
+    thread = mod.start_heartbeat(FakeApi(), stop, rows, on_reported=confirmed.append)
+    thread.join(2)
+    assert not thread.is_alive()
+    assert sent == [[{"runtime":"claude", "models":[]}]] * 2
+    assert confirmed == [rows]
 
 
 def test_runner_does_not_offer_a_selector_it_cannot_honor(monkeypatch, tmp_path):

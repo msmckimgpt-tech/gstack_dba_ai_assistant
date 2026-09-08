@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
+
+DQA가 지정한 `BRIDGE_RUNTIME_SELECTION`이 있으면 그 파일의 플랫폼/실행 경로/WSL 배포판·사용자만 사용한다. 잘못된 파일은 임의 자동 탐색으로 우회하지 않는다. WSL 실행은 배포판·계정·홈을 명시하고 프롬프트를 argv의 리터럴 값으로 전달한다. 기존 WSLENV 토큰 전달과 DQA 호스트 네트워크 범위 설정을 유지한다.
+
+Issue #1615. 자동 연결·중복 위치 선택·클라이언트 캐시·모델 등록 후 toast를 구현했다. 최신 main의 아이콘/자동 복구를 통합했다. 검증과 릴리스 결과는 `test-runs.d/20260908T123400-connect-discovery.md`에 기록한다.
+
+
 ## TASK-20260908T115500-bridge-network — 라이브 후속 수정
 
 첫 PR #1609를 배포한 뒤 실제 DQA 앱에서 Codex를 골라 연결했다. PC 자동 수신 파일과

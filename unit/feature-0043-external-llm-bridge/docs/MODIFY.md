@@ -4819,3 +4819,12 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - 자식 실행의 네트워크 권한 변경을 별도 security 확인 대상으로 삼는다. 파일은 read-only,
   DQA hostname allowlist 강제, 불특정 네트워크/쓰기/실행제한 해제 폴백 없음.
 - 근거·검증: test-runs.d/TASK-20260908T115500-bridge-network.md 및 후속 PR 설명.
+
+
+## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Related TASK: TASK-20260908T120000-connect-discovery-ux
+- 이유: 모든 AI를 하나의 선택으로 묶던 흐름을 플랫폼별로 바꾸고, 매번 위치를 고르는 비용과 잘못된 완료 알림을 줄인다.
+- 변경: DQA가 지정한 `BRIDGE_RUNTIME_SELECTION`이 있으면 그 파일의 플랫폼/실행 경로/WSL 배포판·사용자만 사용한다. 잘못된 파일은 임의 자동 탐색으로 우회하지 않는다. WSL 실행은 배포판·계정·홈을 명시하고 프롬프트를 argv의 리터럴 값으로 전달한다. 기존 WSLENV 토큰 전달과 DQA 호스트 네트워크 범위 설정을 유지한다.
+- 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
+- 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.

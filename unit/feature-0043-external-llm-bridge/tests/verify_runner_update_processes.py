@@ -54,9 +54,6 @@ def verify(bundle, directory, cert, key, *, stagger=False, supervised=False):
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     source = Path(bundle).read_text(encoding="utf-8")
-    conf = '_CONF_DIR = os.path.join(os.path.expanduser("~"), _HOME_DIRNAME)'
-    assert source.count(conf) == 1
-    source = source.replace(conf, '_CONF_DIR = os.environ["DQA_TEST_CONF_DIR"]')
     new = restamp(source).encode("utf-8")
     old = restamp(source + "\n# previous deployment\n").encode("utf-8")
     digest = lambda data: hashlib.sha256(data).hexdigest()[:12]
@@ -120,7 +117,7 @@ def verify(bundle, directory, cert, key, *, stagger=False, supervised=False):
         for ident in ("a", "b"):
             home = directory / ident
             home.mkdir()
-            env = dict(os.environ, BRIDGE_TOKEN="test-" + ident, DQA_TEST_CONF_DIR=str(home),
+            env = dict(os.environ, BRIDGE_TOKEN="test-" + ident, BRIDGE_STATE_DIR=str(home),
                        BRIDGE_LOG_DIR=str(home), PYTHONIOENCODING="utf-8")
             env.pop("DQA_RUNNER_SUPERVISED", None)
             if supervised:

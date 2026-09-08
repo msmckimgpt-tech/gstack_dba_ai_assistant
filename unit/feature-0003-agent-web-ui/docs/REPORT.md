@@ -8,6 +8,13 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
+
+DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.
+
+Issue #1615. 자동 연결·중복 위치 선택·클라이언트 캐시·모델 등록 후 toast를 구현했다. 최신 main의 아이콘/자동 복구를 통합했다. 검증과 릴리스 결과는 `test-runs.d/20260908T123400-connect-discovery.md`에 기록한다.
+
+
 ## TASK-20260908T113000-bridge-token-env — 2026-09-08
 
 갱신 실패 안내 MSG_RELAUNCH_NO_UPDATE를 실제 트레이 [업데이트 확인] 경로로 수정. DQA 클라이언트 단독 사용 기준 유지. 내부 토큰 전달 복구는 feature-0043 소유.

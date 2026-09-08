@@ -1566,6 +1566,7 @@ def connect_issue_token(request: Request, conn=Depends(app.get_conn)) -> JSONRes
     # 유일한 출처 표시다. 없으면 지시문은 출처 불명의 붙여넣기와 구분되지 않는다.
     _tok = str(issued.get("access_token") or "")
     return JSONResponse({**issued, "endpoint": endpoint,
+                         "connection_session": str(session_id),
                          "handoff": compose_connect_handoff(
                              endpoint=endpoint, token=_tok,
                              username=str(account.get("username") or "")),

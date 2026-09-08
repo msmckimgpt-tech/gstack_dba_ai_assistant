@@ -5019,3 +5019,48 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
   파일 read-only·정확한 hostname allowlist·기존 서버측 권한/관리 제약 유지, 사용자 설정 파일 무변경.
 - 전체 브리지 1658 passed/1 skipped, 집중 103 passed/1 skipped, ruff PASS.
 - 첫 PR의 앱 첨부 실패는 숨기지 않고 후속 원장·PR #1609에 기록했다. 후속 배포 종단 확인 대기.
+
+
+## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/성능/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-backend.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: auth/인증/token/세션 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-security.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/검증/performance/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-ux [SUBAGENT:ux] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/화면/모달 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-ux.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-design [SUBAGENT:design] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/디자인/대비 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-design.md)
+- Human Approval Needed: no

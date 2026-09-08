@@ -177,6 +177,8 @@ class RuntimeState:
     #: 로그인돼 있었지만 답하지 못했다 — 종전 클라이언트는 그것을 「연결할 준비가
     #: 되었습니다」로 표시했다. **인증 상태는 가용성의 증거가 아니다.**
     answers: bool | None = None
+    distro: str = ""
+    user: str = ""
 
     @property
     def installed(self) -> bool:
@@ -190,13 +192,23 @@ class RuntimeState:
     def argv(self, *args: str) -> list[str]:
         """이 런타임을 실행하는 argv. WSL 이면 `wsl.exe` 를 앞에 둔다."""
         if self.where == "wsl":
-            return [_wsl_exe(), "-e", str(self.path), *args]
+            prefix = [_wsl_exe()]
+            if self.distro:
+                prefix += ["-d", self.distro]
+            if self.user:
+                prefix += ["-u", self.user]
+            if self.distro or self.user:
+                return prefix + ["--cd", "~", "-e", "bash", "-lc", 'exec "$@"', "dqa", str(self.path), *args]
+            return prefix + ["-e", str(self.path), *args]
         return [str(self.path), *args]
 
     @property
     def label(self) -> str:
         """사람에게 보이는 이름. 같은 CLI 가 두 자리에 있을 수 있으므로 자리를 밝힌다."""
-        return f"{self.name} (WSL)" if self.where == "wsl" else self.name
+        if self.where == "wsl":
+            location = " · ".join(filter(None, ("WSL", self.distro, self.user)))
+            return f"{self.name} ({location})"
+        return self.name
 
     @property
     def can_login_here(self) -> bool:
@@ -263,7 +275,7 @@ def hidden_child_kwargs() -> dict:
     return kw
 
 
-def _run(argv: list[str], timeout: int = 30) -> tuple[int, str]:
+def _run(argv: list[str], timeout: int = 30, encoding: str = "utf-8") -> tuple[int, str]:
     """자식 실행 — **셸을 거치지 않는다**(argv 직접).
 
     ⚠ 자식 입출력은 **UTF-8 명시**다. 로케일 인코딩(한국어 윈도우 `cp949`)에 맡기면 인코딩
@@ -275,7 +287,7 @@ def _run(argv: list[str], timeout: int = 30) -> tuple[int, str]:
     """
     try:
         p = subprocess.run(argv, capture_output=True, timeout=timeout,
-                           encoding="utf-8", errors="replace",
+                           encoding=encoding, errors="replace",
                            **hidden_child_kwargs())
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
     except FileNotFoundError:
@@ -365,9 +377,9 @@ def discover_runtime(name: str) -> list[RuntimeState]:
 
 
 def probe_runtime(name: str, where: str = "windows",
-                  path: str | None = None) -> RuntimeState:
+                  path: str | None = None, distro: str = "", user: str = "") -> RuntimeState:
     """설치 여부 + 로그인 여부를 한 번에. **토큰은 만지지 않는다** (§0.1)."""
-    st = RuntimeState(name=name, where=where,
+    st = RuntimeState(name=name, where=where, distro=distro, user=user,
                       path=path if path is not None else which_runtime(name))
     if not st.installed:
         st.detail = "이 컴퓨터에 설치되어 있지 않습니다."
@@ -496,6 +508,9 @@ class ConnectPlan:
     #: `feature-0043/tests/test_name_ssot.py` 가 이 리터럴을 대조한다(이 모듈도 배포본이
     #: 동결되는 stdlib 경로라 import 하지 않는다).
     home: Path = field(default_factory=lambda: Path.home() / ".dqa-connect")
+
+    selection_file: str = ""
+    selection_instance: str = ""
 
     @property
     def host(self) -> str:
@@ -979,7 +994,39 @@ def runner_runtime_env(st: "RuntimeState | None") -> dict:
     """
     if st is None or not st.path:
         return {}
-    return {f"BRIDGE_AI_PATH_{st.name.upper()}": str(st.path)}
+    env = {f"BRIDGE_AI_PATH_{st.name.upper()}": str(st.path)}
+    if st.where == "wsl":
+        if st.distro:
+            env[f"BRIDGE_AI_WSL_DISTRO_{st.name.upper()}"] = st.distro
+        if st.user:
+            env[f"BRIDGE_AI_WSL_USER_{st.name.upper()}"] = st.user
+    return env
+
+
+def connection_identity(plan: ConnectPlan, ca_path: Path) -> str:
+    """힌트 대신 서버가 검증한 Bearer의 세션을 사용한다. 리다이렉트에 토큰을 넘기지 않는다."""
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    context = ssl.create_default_context(cafile=str(ca_path))
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect())
+    request = urllib.request.Request(plan.base + "/api/ai/connect/identity", data=b"{}",
+                                     headers={"Authorization": "Bearer " + plan.token,
+                                              "Content-Type": "application/json"}, method="POST")
+    with opener.open(request, timeout=20) as response:
+        doc = json.loads(response.read(65536))
+    session = str(doc.get("connection_session") or "")
+    if not session or not doc.get("account_id"):
+        raise ValueError("missing authenticated session")
+    return session
+
+
+def runner_state_env(plan: ConnectPlan, st: "RuntimeState | None") -> dict:
+    if plan.selection_file:
+        return {"BRIDGE_RUNTIME_SELECTION": plan.selection_file,
+                "BRIDGE_RUNTIME_INSTANCE": plan.selection_instance,
+                "BRIDGE_STATE_DIR": str(plan.home / "runners" / sha256_of(plan.base.encode())[:24])}
+    return {}
 
 
 def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
@@ -990,9 +1037,10 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
     화면이 갈라 말해야 한다(feature-0043 REQ-20260901-win-ai-detect).
     """
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
-    argv += runner_runtime_args(_as_state(runtime))
+    argv += [] if plan.selection_file else runner_runtime_args(_as_state(runtime))
     env_token = dict(os.environ, BRIDGE_TOKEN=plan.token,
-                     **runner_runtime_env(_as_state(runtime)))
+                     **runner_runtime_env(_as_state(runtime)),
+                     **runner_state_env(plan, _as_state(runtime)))
     try:
         p = subprocess.run(argv, capture_output=True, timeout=120,
                            encoding="utf-8", errors="replace", env=env_token,
@@ -1006,9 +1054,10 @@ def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
                  runtime: "str | RuntimeState | None" = None, *, on_event=None):
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
-    argv += runner_runtime_args(_as_state(runtime))
+    argv += [] if plan.selection_file else runner_runtime_args(_as_state(runtime))
     kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token, DQA_RUNNER_SUPERVISED="1",
-                            **runner_runtime_env(_as_state(runtime))),
+                            **runner_runtime_env(_as_state(runtime)),
+                            **runner_state_env(plan, _as_state(runtime))),
                 "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT,
                 "encoding": "utf-8", "errors": "replace"}
     # 콘솔 창이 뜨지 않게 — GUI 앱에서 검은 창이 깜빡이면 그것만으로 「고장」으로 읽힌다.

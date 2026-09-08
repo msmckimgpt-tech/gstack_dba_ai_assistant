@@ -425,6 +425,8 @@ def sanitize_caps(raw: object) -> dict:
                     or any((" " in a or '"' in a or "'" in a) for a in argv)):
                 argv = None
         entry = {
+            "client_location": (caps.get("client_location")
+                                if isinstance(caps.get("client_location"), dict) else None),
             "label": " ".join(str(caps.get("label") or name).split())[:60] or name,
             "models": models,
             "efforts": _coerce_options(caps.get("efforts"), limit=12) if effort_flag else [],

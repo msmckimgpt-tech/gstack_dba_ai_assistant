@@ -894,3 +894,12 @@ edit_policy: append-only
 ## CHG-20260908T024700-brand-published
 - Related TASK: TASK-20260908-brand-icon
 - PR #1608 병합 및 1.1.2 라이브 릴리스 완료. TASK/REPORT/검증 기록·릴리스 노트에 실제 엣지 다운로드 200, 26,023,355 bytes, 검증 빌드와 SHA-256/byte 동일을 기록했다. 코드·아이콘 자산 변경 없음.
+
+
+## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Related TASK: TASK-20260908T120000-connect-discovery-ux
+- 이유: 모든 AI를 하나의 선택으로 묶던 흐름을 플랫폼별로 바꾸고, 매번 위치를 고르는 비용과 잘못된 완료 알림을 줄인다.
+- 변경: DQA 클라이언트를 실행하고 로그인하면 설치된 AI를 찾는다. AI별 사용 가능한 위치가 하나이면 자동 연결하고, Windows/WSL 배포판/계정 여러 곳에 있으면 해당 AI 카드에서만 선택한다. 이미 고른 위치가 다시 유효하면 자동 재사용한다. 별도 러너·Windows 브라우저 실행은 사용자 절차에 없다.
+- 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
+- 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.

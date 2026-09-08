@@ -5997,3 +5997,12 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+
+## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Related TASK: TASK-20260908T120000-connect-discovery-ux
+- 이유: 모든 AI를 하나의 선택으로 묶던 흐름을 플랫폼별로 바꾸고, 매번 위치를 고르는 비용과 잘못된 완료 알림을 줄인다.
+- 변경: DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` 패널을 시작한다. AI별 카드에 탐색/연결/연결됨/위치 선택/실패를 구분한다. 위치가 하나인 플랫폼 또는 유효한 저장 위치는 자동 연결하고, 같은 AI의 중복 위치만 radio를 표시한다. 성공 토스트는 공용 앱 toast에 플랫폼·위치를 담아 순서대로 노출한다. 하나의 연결이 끝나도 남은 선택 화면을 닫지 않는다.
+- 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
+- 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.

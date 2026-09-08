@@ -77,6 +77,13 @@ function _status(msg, kind) {
 
 function _onKeydown(ev) {
   if (ev.key === "Escape") closeConnectModal();
+  if (ev.key === "Tab") {
+    const focusable = [...$("connectModal").querySelectorAll("button, a[href], input, select, [tabindex='0']")]
+      .filter((el) => !el.disabled && el.getClientRects().length);
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last?.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first?.focus(); }
+  }
 }
 
 export function openConnectModal() {
@@ -84,7 +91,7 @@ export function openConnectModal() {
   // ⚠ **성공했을 때만** 배선 완료로 표시한다. 플래그를 먼저 세우면, 패널 요소가 아직
   //   DOM 에 없어 `initClientPanel()` 이 일찍 반환한 경우에도 «했다» 가 되어 **다시
   //   시도하지 않는다** — 실측 2026-09-04: 그래서 앱 창에서 패널이 끝내 안 켜졌다.
-  if (clientBridge && !_clientPanelReady) { _clientPanelReady = initClientPanel(_status); }
+  if (clientBridge) { _clientPanelReady = initClientPanel(_status, showToast); }
   const overlay = $("connectModalOverlay");
   if (!overlay) return false;
   _lastFocus = document.activeElement;
@@ -242,7 +249,7 @@ function _showRelaunchNoUpdate() {
  *  «창 경계» 의 보장이 아니다 (codex 2R).
  */
 function _noteConnForModal(prev, now, epoch) {
-  if (!_modalOpen) return;
+  if (!_modalOpen || clientBridge) return;
   if (epoch !== undefined && epoch !== _modalEpoch) return;
   if (!prev) return;                 // 비교할 직전 관측이 아직 없다
   if (_connOk(prev)) return;         // 이미 쓸 수 있었다 — 이 창이 푼 것이 아니다
@@ -1250,11 +1257,13 @@ export async function refreshConnState() {
  *  «접근성 개선» 이 아니라 방해다.
  */
 function _maybeAutoEntry() {
-  // ⚠ **앱 창에서는 자동 진입 자체를 하지 않는다** (사용자 제보 2026-09-07).
-  //   `_fireScheme` 이 스킴은 막지만, 여기서 멈추지 않으면 쏘지도 않을 실행을 위해 토큰을
-  //   매 로그인마다 발급받는다. 그리고 이 창에서 연결은 패널이 한다 — 자동으로 대신 눌러
-  //   주는 것은 사용자가 요청하지 않은 동작이다.
-  if (clientBridge) return;
+  // DQA 로그인 후 클라이언트가 탐색·연결한다. 위치 선택이나 복구가 필요할 때 창을 연다.
+  if (clientBridge) {
+    if (!_autoEntryTried) {
+      _autoEntryTried = initClientPanel(_status, showToast, openConnectModal);
+    }
+    return;
+  }
   if (!_autoLaunchEligible()) return;
   // 재실행이 이 컴퓨터에서 파일을 바꾸지 못한다는 증거가 이미 있으면 자동으로 쏘지 않는다 —
   // 결과가 정해진 시도를 로그인할 때마다 반복하는 것은 사용자에게도 서버에도 낭비다.

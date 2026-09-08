@@ -1,6 +1,7 @@
 import { renderMessageContent, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange, onCapsChange } from "./app/connect-modal.js?v=dev";
+import { suspendClientPanel, restartClientPanel } from "./app/client-bridge.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
@@ -7693,6 +7694,7 @@ async function loadVaultOptions() {
 // feature-0038 Cycle 8: 인증 표면 세그먼트 2 은 app/auth.js 로 분리 (구 L11685–11859).
 
 async function handleLogout() {
+  suspendClientPanel();
   // 열려있는 드로어를 먼저 닫아야 로그아웃 후 뒤에 드로어가 남지 않음
   closeProfile();
   stopProgressPolling({ reset: true });
@@ -7743,6 +7745,7 @@ export async function initializeWorkspace() {
     pollLlmHealth();
   } catch (_) { /* noop */ }
   state.user = state.session.user;
+  restartClientPanel();
   // TASK-0061 Phase 6 (AC-0095): 새로고침 후에도 must_change_password 가 true 면 강제 modal.
   if (state.user && state.user.must_change_password) {
     showForceChangePasswordModal();

@@ -1173,3 +1173,48 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Reason: 완료된 #1608 및 기존 채널의 실제 1.1.2 다운로드 결과를 문서에 기록한다. 정책·제품 코드·디자인 변경 없음. manifest 값뿐 아니라 실제 다운로드의 크기·SHA-256·전체 바이트를 Windows 검증본과 대조했다.
 - Timestamp: 2026-09-08T02:47:00Z
+
+
+## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/성능/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-backend.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: auth/인증/token/세션 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-security.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/검증/performance/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-ux [SUBAGENT:ux] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/화면/모달 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-ux.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-design [SUBAGENT:design] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/디자인/대비 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-design.md)
+- Human Approval Needed: no

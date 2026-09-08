@@ -321,3 +321,8 @@ Run 기록은 `docs/test-runs.d/` 의 항목당 1파일로 작성한다 (AGENTS.
 - 전체 실행: 7485 passed, 28 skipped, 1 legacy assertion failed; 그 검사를 고친 후 이 suite19 PASS.
 - Environment: isolated Docker, network none. 제품 코드 변경 없음.
 - Evidence: wrapper artifacts/kb-external-search/tests-trust-boundary.log.
+
+
+## 2026-09-08 — AI별 자동 연결
+
+[통합 실행 기록](test-runs.d/20260908T123400-connect-discovery.md): Python·DOM·Windows-browser·실제 DQA/WebView2.
