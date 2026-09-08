@@ -4783,7 +4783,14 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `TASK.md` 의 「배포 후 라이브 실측」 항목 체크 + `REPORT.md §8` 에 자기갱신 경합 기록.
 - 사용자 요청(*"해당 러너 실행 및 실측도 직접 진행해주세요"*)에 따라 사용자 계정 러너를
   직접 기동하고 앱 창 화면까지 확인했다.
+## CHG-20260908T113000-bridge-token-env
 
+- Session: Codex / ai/codex/feature-0043-bridge-token-env, 2026-09-08.
+- REQ-20260908-bridge-token-env: Windows 러너의 BRIDGE_TOKEN이 WSL 자식에 전달되지 않아
+  첨부 리뷰가 HTTP 요청 전에 중단되던 결함을 수정했다.
+- src/agent/invoke.py: 실행 파일 해석 후 WSL 호출에만 `BRIDGE_TOKEN/u` 등록, 기존 환경 보존.
+- tests/test_runner_wsl_token_env.py: 최종 Popen까지 배선·비노출·비WSL 무회귀 회귀 11건.
+- 기존 테스트는 ask_local_ai의 env 인자까지만 검사해 OS 경계 전달 실패를 놓쳤다.
 ## CHG-20260908T120000-runner-update-recovery
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.

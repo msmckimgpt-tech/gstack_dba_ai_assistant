@@ -3595,6 +3595,22 @@ DQAConnect.exe을 열려고 합니다」 승인창을 띄웠다(사용자 제보
   받는 상태가, 이 재시도가 없애려는 상태와 같다.
 - 재시도는 **아직 못 얻은 것만** 묻는다(`cached` 로 누적분을 넘긴다).
 
+## REQ-20260908-bridge-token-env — Windows에서 WSL AI로 토큰 전달
+
+`ask_local_ai`가 자식 환경에 주입한 `BRIDGE_TOKEN`은 Windows→WSL 경계를 넘어야 한다.
+`invoke._run_cli_cancelable`은 해석된 실행 파일이 WSL인 경우에만 자식 환경 복사본의
+`WSLENV`에 `BRIDGE_TOKEN/u`를 등록한다. `/u`는 Windows→WSL 전용이며 토큰에 경로·목록
+변환을 적용하지 않는다. 다른 WSLENV 항목과 부모 환경은 보존하고, 토큰 원문을 argv나
+프롬프트·로그에 추가하지 않는다. 토큰 없는 조회·Windows 직접 실행·POSIX는 기존 환경을 유지한다.
+
+- AC-20260908T113000-bridge-token-env-1: 실제 Windows Python→WSL Python에서 더미 토큰 동일성 확인.
+- AC-20260908T113000-bridge-token-env-2: 기존 환경 보존·비노출·작업별 분리·비WSL 무회귀 확인.
+- AC-20260908T113000-bridge-token-env-3: 배포 러너 갱신 후 실제 첨부 조회 도달성 확인.
+
+근거: [Microsoft WSLENV 공식 문서](https://learn.microsoft.com/en-us/windows/wsl/filesystems#share-environment-variables-between-windows-and-wsl-with-wslenv).
+Codex의 셸 환경 정책은 별도 경계다. 이번 실패는 WSL 전달 자체에서 재현되었으므로 사용자
+Codex 설정을 변경하지 않는다. [OpenAI 공식 문서](https://learn.chatgpt.com/docs/config-file/config-advanced#shell-environment-policy).
+
 ## REQ-20260908-runner-update-recovery — 동시 갱신과 종료 복구
 
 공유 설치 파일의 교체 구간을 동일 sidecar 락으로 직렬화하고, 동일 payload 재교체를 생략한다. 실행 소스의 기동 지문과 단일 번들 경로를 고정하며, 파싱된 소스와 디스크 세대가 다르면 stale로 신고해 갱신한다. 감독하의 갱신은 종료코드 75로 부모에게 재기동을 위임하고, 단독 Windows exec 인자 인용을 보완한다.

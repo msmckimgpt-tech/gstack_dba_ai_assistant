@@ -1089,7 +1089,21 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
   않아 확정 불가. 재발 시 즉시 `docker events` 를 스트리밍으로 걸어 두는 것이 유일한 관측 수단.
 - Human Approval Needed: 아니오 — `deploy_scope: included` 범위 안의 배포와 그 기록.
   단 `LRN-20260907-0001` 의 `verified` 는 사용자 확인 전이므로 `self-measured` 로 두었다.
+## REV-20260908T113000-bridge-token-env-ux [SUBAGENT:ux] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0046-native-client
+- Trigger: UI/클라이언트 안내 keyword matched
+- Timestamp: 2026-09-08T11:26:45+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T113000-ux.md
+- Human Approval Needed: no
 
+## REV-20260908T113000-bridge-token-env-design [SUBAGENT:design] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0046-native-client
+- Trigger: UI/클라이언트 안내 keyword matched
+- Timestamp: 2026-09-08T11:26:45+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T113000-design.md
+- Human Approval Needed: no
 ## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
 - Related TASK: feature-0046-native-client
 - Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰

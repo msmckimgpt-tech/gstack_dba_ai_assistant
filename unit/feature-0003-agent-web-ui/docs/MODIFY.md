@@ -5976,7 +5976,10 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 세션이 필요하고 이 세션은 `.env` 자격증명 접근이 거부돼 있다(사용자 결정). 그 분기는 되살린
 행위 하네스가 `clientBridge = null` 로 실제 모듈을 구동해 잰다. 「무엇을 어디서 쟀는가」를
 뭉개지 않는다.
-
+## CHG-20260908T113000-bridge-token-env
+- Timestamp: 2026-09-08T11:24:21+09:00; session: Codex ai/codex/feature-0043-bridge-token-env.
+- REQ-20260908-client-only: 갱신 실패 안내 MSG_RELAUNCH_NO_UPDATE를 실제 트레이 [업데이트 확인] 경로로 수정.
+- 검증 정본: feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T113000-bridge-token-env.md.
 ## CHG-20260908T120000-runner-update-recovery
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.

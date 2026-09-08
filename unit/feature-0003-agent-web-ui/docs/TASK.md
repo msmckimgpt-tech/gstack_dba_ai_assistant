@@ -12,6 +12,17 @@ feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완
 
 # Task
 
+## TASK-20260908T113000-bridge-token-env — DQA 클라이언트만 사용하는 흐름 검증
+
+### 2.1 Implementation Plan
+- Minor. 사용자 2026-09-08 추가 지시: 별도 러너 실행 없이 DQA 클라이언트만 사용.
+- 갱신 실패 안내 MSG_RELAUNCH_NO_UPDATE를 실제 트레이 [업데이트 확인] 경로로 수정.
+- AC: 없어진 1단계 명령 안내 없음. 실제 앱 메뉴·이벤트 연결 확인, 회귀 green.
+- [x] 현재 사용자 요구·기존 ANCHOR 방향 정합 확인.
+- [x] 구현 및 집중 회귀 검증.
+- [ ] 배포 후 Windows 확인.
+- 정본: feature-0043-external-llm-bridge/docs/TASK-20260908T113000-bridge-token-env 작업 항목.
+
 ## TASK-20260908T120000-runner-update-recovery — 갱신 실패 안내 정합
 
 - 상태: in-progress. feature-0043 러너 복구 검증 중 발견한 삭제된 1단계 명령 안내를 수정한다.

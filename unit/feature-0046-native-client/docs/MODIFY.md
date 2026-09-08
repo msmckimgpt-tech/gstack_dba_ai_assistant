@@ -846,6 +846,10 @@ edit_policy: append-only
   (하드 리프레시 안내) **미이행** 명기 · `LRN-20260907-0001` 의 `verified` 값 정정 ·
   앞 cycle 미체크 항목의 종결 표시.
 
+## CHG-20260908T113000-bridge-token-env
+- Timestamp: 2026-09-08T11:24:21+09:00; session: Codex ai/codex/feature-0043-bridge-token-env.
+- REQ-20260908-client-only: 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합.
+- 검증 정본: feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T113000-bridge-token-env.md.
 ## CHG-20260908T120000-runner-update-recovery
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.
