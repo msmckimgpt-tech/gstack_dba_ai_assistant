@@ -1,8 +1,7 @@
 """Codex lifecycle binding for the existing, platform-neutral board operations.
 
-The core's CLI deliberately still advertises its measured Claude adapter only.
-This module owns Codex support without rewriting that core (including local
-user changes). Its separately loaded module gets a process-local delivery gate
+The core CLI supports Codex native identity; this module owns its hook contract.
+Its separately loaded module gets a process-local delivery gate
 and wire renderer. Identity remains ``codex:<uid>:<native id>``; authentication,
 filesystem validation, quotas, redaction, locks and emit-before-commit remain
 the original board implementation. No Claude session or environment is used.
@@ -74,6 +73,9 @@ def handle(payload: dict, cwd: str) -> str:
     core = load_core()
     if not isinstance(native, str) or not core.fm(core.RE_NATIVE, native):
         return ""
+    env_native = os.environ.get("CODEX_THREAD_ID")
+    if env_native and env_native != native:
+        return ""  # native event/env disagreement never binds another thread
     if event == "SessionStart" and payload.get("source") not in (
         "startup", "resume", "clear", "compact"
     ):
@@ -125,7 +127,7 @@ def handle(payload: dict, cwd: str) -> str:
                 core.do_register(
                     root, board, res, log, native_id=native, platform="codex",
                     alias=None, work="-", model=model if isinstance(model, str) else None,
-                    harness="codex", worktree=os.path.realpath(cwd), resume=True,
+                    harness="codex", worktree=os.path.basename(os.path.realpath(cwd)), resume=True,
                     env_file=None,
                 )
             log.emit("codex-hook", "session_start", event=event, source=source)

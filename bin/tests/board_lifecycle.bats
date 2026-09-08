@@ -8,7 +8,7 @@ nogrep() { if grep "$@"; then return 1; fi; return 0; }
 setup() {
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg"
   W="$BATS_TEST_TMPDIR/wrapper"; mkdir -p "$W/repo"
-  unset CLAUDE_CODE_SESSION_ID CLAUDE_ENV_FILE AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_NOW
+  unset CODEX_THREAD_ID CLAUDE_CODE_SESSION_ID CLAUDE_ENV_FILE AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_NOW
   ( cd "$W/repo" && git init -q && printf -- '---\ntemplate_version: v3.54.1\n---\n# AGENTS\n' > AGENTS.md && mkdir -p bin/hooks && printf '#!/usr/bin/env bash\nexit 0\n' > bin/hooks/board-hook.sh \
     && git add -A && git -c user.email=t@t -c user.name=t commit -qm init )
   cd "$W/repo"; bash "$B" init --mode private >/dev/null; ROOT="$(grep '^root=' "$W/.board-root" | cut -d= -f2)"; touch "$ROOT/control/TEST_CLOCK"
@@ -137,4 +137,37 @@ GH
   CLAUDE_CODE_SESSION_ID=s-0010 run bash "$B" milestone --kind status -m "after suspend"; [ "$status" -eq 0 ]; grep -q '"state":"active"' "$ROOT/sessions/$SID.json"
   [ "$(cat "$ROOT/sessions/$SID.token")" = "$t1" ]
   ( . "$d/env"; run bash "$B" post --channel public --kind note -m with-old-env-token; [ "$status" -eq 0 ] )
+}
+
+@test "L11 Codex cycle-init 이 착수 status 를 자동 게시한다 (worktree·branch·base 포함) — 다른 세션이 수신" {
+  O="$BATS_TEST_TMPDIR/origin.git"; git init -q --bare "$O"; git -C "$W/repo" remote add origin "$O"; DEF="$(git -C "$W/repo" rev-parse --abbrev-ref HEAD)"; git -C "$W/repo" push -q -u origin "$DEF"
+  CODEX_THREAD_ID=ci-0001 run bash "$REPO/bin/cycle-init.sh" --feature feature-0042-board --agent t --base "$DEF"; [ "$status" -eq 0 ]
+  f="$(ls "$ROOT/channels/public"/*.md | head -1)"; grep -q '"kind":"status"' "$f"; grep -q '착수 feature-0042-board' "$f"; grep -q "base $DEF" "$f"
+  grep -q '"work_ref":"feature-0042-board"' "$ROOT/sessions/codex:$(id -un):ci-0001.json"
+  printf '{}' | bash "$B" deliver --platform claude --event on_prompt --sid "$SA" --stdin-json - 2>/dev/null | ctx | grep -q '착수 feature-0042-board'
+}
+@test "L12 Codex cycle-finalize e2e(gh 스텁): 머지 확정 뒤 «완료 PR #N» status 1건 게시 + 정리 뒤 자기 세션 done; 다른 세션이 수신; --dry-run 은 게시 0" {
+  git -C "$W/repo" branch -M main
+  O="$BATS_TEST_TMPDIR/origin.git"; git init -q --bare "$O"; git -C "$W/repo" remote add origin "$O"; DEF=main; git -C "$W/repo" push -q -u origin "$DEF"
+  CODEX_THREAD_ID=fin-0001 bash "$REPO/bin/cycle-init.sh" --feature feature-0043-fin --agent t --base "$DEF" >/dev/null 2>&1
+  WT="$W/.worktrees/feature-0043-fin"; [ -d "$WT" ]
+  stub="$BATS_TEST_TMPDIR/stub"; mkdir -p "$stub"
+  cat > "$stub/gh" <<'GH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr view") printf '{"state":"MERGED","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefName":"ai/t/feature-0043-fin","title":"feat: fin \"quoted\" title"}\n' ;;
+  "pr merge") exit 0 ;;
+  *) exit 0 ;;
+esac
+GH
+  chmod +x "$stub/gh"
+  n0=$(ls "$ROOT/channels/public" | grep -c '\.md$' || true)
+  ( cd "$WT" && PATH="$stub:$PATH" CODEX_THREAD_ID=fin-0001 bash "$REPO/bin/cycle-finalize.sh" --pr 7 --keep-worktree --keep-branch --dry-run >"$BATS_TEST_TMPDIR/dry.log" 2>&1 ) || { cat "$BATS_TEST_TMPDIR/dry.log"; false; }
+  n1=$(ls "$ROOT/channels/public" | grep -c '\.md$' || true)
+  [ "$n1" -eq "$n0" ] || { echo "dry-run posted: n0=$n0 n1=$n1"; tail -20 "$BATS_TEST_TMPDIR/dry.log"; false; }
+  ( cd "$WT" && PATH="$stub:$PATH" CODEX_THREAD_ID=fin-0001 bash "$REPO/bin/cycle-finalize.sh" --pr 7 --keep-worktree --keep-branch >"$BATS_TEST_TMPDIR/fin.log" 2>&1 ) || { cat "$BATS_TEST_TMPDIR/fin.log"; false; }
+  f="$(grep -l '완료 PR #7' "$ROOT/channels/public"/*.md | head -1)"; [ -n "$f" ]; grep -q '"kind":"status"' "$f"; grep -q 'fin' "$f"
+  [ "$(grep -l '완료 PR #7' "$ROOT/channels/public"/*.md | wc -l)" -eq 1 ]
+  grep -q '"state":"done"' "$ROOT/sessions/codex:$(id -un):fin-0001.json"
+  printf '{}' | bash "$B" deliver --platform claude --event on_prompt --sid "$SA" --stdin-json - 2>/dev/null | ctx | grep -q '완료 PR #7'
 }

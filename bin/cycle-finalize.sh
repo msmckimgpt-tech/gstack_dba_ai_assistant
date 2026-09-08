@@ -205,7 +205,7 @@ case "$PR_STATE" in
 esac
 
 # ── agent-board 완료 이정표 (§22.15, v3.54.1) — best-effort, 절대 막지 않음 ──────────
-# 머지가 확정된 시점에 «완료» status 를 게시한다. 세션 sid 는 $CLAUDE_CODE_SESSION_ID 로 유추(board.sh milestone).
+# 머지가 확정된 시점에 «완료» status 를 게시한다. Codex/Claude native id 로 자기 sid 를 유추(board.sh milestone).
 _CF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DIR/board.sh" ]; then
   _pr_title="$(printf "%s" "$PR_STATE_JSON" | python3 -c 'import json,sys
@@ -371,7 +371,7 @@ fi
 # ── 종료 보고 ─────────────────────────────────────────────────────────────
 # ── agent-board done (§22.15 «완료 세션은 board.sh done», v3.54.1) — best-effort ────────────
 # 정리까지 끝난 세션은 게시판 주입을 더 받지 않는다. 같은 세션에 새 일이 오면 `board.sh reactivate` 로 되살린다.
-if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DIR/board.sh" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}${AGENT_BOARD_SID:-}" ]; then
+if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DIR/board.sh" ] && [ -n "${CODEX_THREAD_ID:-}${CLAUDE_CODE_SESSION_ID:-}${AGENT_BOARD_SID:-}" ]; then
   ( cd "$MAIN_WORKTREE_PATH" && bash "$_CF_DIR/board.sh" done ) >/dev/null 2>&1 || log_warn "agent-board done 실패 — 세션이 직접 'bash bin/board.sh done' (§22.15)"
 fi
 

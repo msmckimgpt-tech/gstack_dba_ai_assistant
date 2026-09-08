@@ -12,6 +12,27 @@ feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 �
 
 # Task
 
+## TASK-20260908T115500-bridge-network — 실제 첨부 경로의 네트워크·CA 전달
+
+### 2.1 Implementation Plan
+
+- 기존 #1609 배포본 d875c9ee8b11은 DQA 앱 연결으로 자동 수신했다(SHA-256 서버·PC 일치).
+- 라이브 task t__srshhWNSdGOU93V / Codex session 01a07ee9-d956-7841-b358-365dcddd96d8:
+  getenv 이후 urllib 요청이 EPERM. 기본 read-only/network-disabled, 승인 never였다.
+- 위험도 Minor: DQA가 수행하도록 위임된 API 접근을 정확한 서비스 호스트에만 허용한다.
+  파일은 read-only, 다른 네트워크 주소 차단, 사용자 설정 파일·인증 정책 무변경.
+- invoke.py: Codex 작업 호출에 한해 permissions profile + network_proxy를 일시 주입.
+  trusted api.base에서 hostname만 추출하여 allow, 임의 wildcard/userinfo 주소 거절.
+- handler.py: 기존 Api의 base/ca를 호출에 연결. BRIDGE_CA를 자식에 전달하고 Windows→WSL
+  경계에는 /up로 경로 변환. OpenAI 자체 TLS 환경은 덮어쓰지 않는다.
+- prompt.py: BRIDGE_CA를 DQA 요청에만 적용하고 인증서 검증을 유지한다.
+  printenv로 토큰을 출력하라는 기존 권고도 헤더에만 직접 사용하도록 정정한다.
+- 검증: 실제 Codex sandbox DQA 200 / 다른 host 403 / 파일 write 차단 이미 확인.
+  profile·자격증명 비노출·CA 전달·호출 wiring 회귀 및 실제 DQA 첨부 읽기까지 재검증.
+- [x] 첫 배포의 라이브 한계 및 두 번째 원인 확인.
+- [x] 구현·실제 권한 경계·security 리뷰·전체 브리지 1658 PASS/1skip 통과.
+- [ ] 후속 PR 배포 후 DQA 앱에서 첨부 첫 줄 일치 확인.
+
 ## TASK-20260908T113000-bridge-token-env — Windows→WSL 토큰 전달 복구
 
 - 상태: in-progress. 사용자 2026-09-08 DQA 첨부 리뷰 실패 화면에 따른 버그 수정.

@@ -2854,6 +2854,10 @@ def do_doctor(cwd: str, harness: Optional[str]) -> Tuple[str, int]:
                 rc = 1
     if harness == "claude":
         lines.append("harness claude: 이벤트 SessionStart/UserPromptSubmit/Stop/SessionEnd/FileChanged 는 2.1.227 에서 실측 실존 (spikes/20260904T1018)")
+    elif harness == "codex":
+        lines.append("harness codex: CLI CODEX_THREAD_ID 지원; bin/hooks/codex-board-hook.py 별도 어댑터")
+        lines.append("  Codex SessionStart/UserPromptSubmit 수신; Stop presence만; SessionEnd suspended. FileChanged 미지원.")
+        lines.append("  Codex .codex/hooks.json 등록과 호스트 hook trust는 별도 확인 필요; 위 hooks 행은 Claude 설정 실측이다.")
     elif harness:
         lines.append("harness %s: 미지원(실측 없음) — --platform %s 는 무동작 exit 0" % (harness, harness))
     root.close()
@@ -3517,36 +3521,39 @@ def do_bootstrap(cwd: str, *, work: str, members: List[str], mode_override: Opti
         if not root.exists(("hooks", "claude-settings.json")):
             install_hooks_files(root, res.root, res.main_repo, board.mode)
         lines += hooks_activate(res.main_repo, extra_dirs)
-        native = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        sid = harness_sid() if not no_register else None
         if no_register:
             lines.append("  register: 생략 (--no-register)")
-        elif native and fm(RE_NATIVE, native):
-            sid = "claude:%s:%s" % (current_uid_name(), native)
+        elif sid:
+            require_own_sid(sid)
+            platform, _, native = sid_parts(sid)
             w = work or "-"
             if w != "-" and not (fm(RE_WORK_FEATURE, w) or fm(RE_WORK_META, w)):
                 lines.append("  NOTE: --work '%s' 는 work_ref 형식(feature-NNNN-<slug> | META-NNNN | -)이 아니다 → '-' 로 등록" % w); w = "-"
             pres = load_presence(root, sid, log)
             if pres is not None and pres["state"] in ("active", "muted", "done"):
+                bind_work(root, res, log, sid, w, worktree)
                 lines.append("  register: 이미 등록됨 %s (state=%s, 토큰 유지)" % (sid, pres["state"]))   # 재등록은 토큰을 회전시킨다 — 멱등 재실행이 env 토큰을 깨면 안 된다 (P2)
             else:
                 try:
-                    do_register(root, board, res, log, native_id=native, platform="claude", alias=None, work=w, model=None, harness=None,
+                    do_register(root, board, res, log, native_id=native, platform=platform, alias=None, work=w, model=None, harness=platform,
                                 worktree=worktree, resume=(pres is not None), env_file=None)
+                    bind_work(root, res, log, sid, w, worktree)
                     lines.append("  register: %s (work=%s%s) — 토큰은 sessions/<sid>.token (자기 uid 는 --token 없이 CLI 사용 가능)"
                                  % (sid, w, (" 복귀 " + pres["state"]) if pres is not None else ""))
                 except BoardError as e:
                     if e.reason == "tombstone":
-                        lines.append("  register: 이 세션 id 는 종단(ended) 상태 — 새 Claude 세션에서 다시 시작해야 한다")
+                        lines.append("  register: 이 세션 id 는 종단(ended) 상태 — 새 세션에서 다시 시작해야 한다")
                     else:
                         lines.append("  register: skip (%s)" % e.reason)
         else:
-            lines.append("  register: CLAUDE_CODE_SESSION_ID 없음 — hook 이 다음 세션 시작에서 등록한다")
+            lines.append("  register: CODEX_THREAD_ID/CLAUDE_CODE_SESSION_ID/AGENT_BOARD_SID 없음 — native id 확인 후 등록한다")
     finally:
         root.close()
     res2 = resolve_root(cwd)
     if init_root and res2 is not None and os.path.realpath(res2.root) != os.path.realpath(init_root):
         lines.append("  WARN: 포인터가 가리키는 root(%s)가 방금 초기화한 root(%s)와 다르다 — 다른 세션이 먼저 초기화했다; 포인터 쪽이 정본" % (res2.root, init_root))
-    msg, _rc = do_doctor(cwd, "claude")
+    msg, _rc = do_doctor(cwd, "codex" if os.environ.get("CODEX_THREAD_ID") else "claude")
     lines.append("  doctor:\n    " + msg.rstrip().replace("\n", "\n    "))
     lines.append("  다음: 주입(hook)은 **다음 세션 시작부터** 유효하다 — 지금 turn 은 CLI 로 참가한다: board.sh read · post · ack · done")
     return "\n".join(lines) + "\n"
@@ -3689,25 +3696,55 @@ ERR_HINT: Dict[str, str] = {
 }
 
 
+def native_harness_sid() -> Optional[str]:
+    """Codex may inherit a parent Claude environment; its native id wins.
+
+    Invalid native identity is an error, never permission to borrow a peer.
+    This is a label within the existing uid/token authorization boundary.
+    """
+    for platform, key in (("codex", "CODEX_THREAD_ID"), ("claude", "CLAUDE_CODE_SESSION_ID")):
+        native = os.environ.get(key)
+        if native:
+            if not fm(RE_NATIVE, native):
+                raise BoardError(EXIT_VALIDATION, "bad_native_id", key + " 형식 오류")
+            return "%s:%s:%s" % (platform, current_uid_name(), native)
+    return None
+
+
 def harness_sid() -> Optional[str]:
-    """CLI 의 자기 sid 유추: AGENT_BOARD_SID → (CLAUDE_CODE_SESSION_ID 가 있으면) claude:<uid>:<id>. 없으면 None."""
+    """Codex native identity, explicit board environment, then Claude native id."""
+    if os.environ.get("CODEX_THREAD_ID"):
+        return native_harness_sid()
     env = os.environ.get("AGENT_BOARD_SID")
     if env:
         return env
-    native = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    if native and fm(RE_NATIVE, native):
-        return "claude:%s:%s" % (current_uid_name(), native)
-    return None
+    return native_harness_sid()
+
+
+def bind_work(root: Root, res: Resolved, log: Log, sid: str, work: str,
+              worktree: Optional[str] = None) -> None:
+    """Explicit cycle binding after hook registration; keep token/cursor/state."""
+    if work == "-" and not worktree:
+        return
+    require_own_sid(sid)
+    work_ref, task_path = work_ref_resolve(work, sid_parts(sid)[0], res.main_repo)
+    with Flock(root, ("cursors", sid, "lock"), 0o600, nonblock=False):
+        pres = authz_session(root, sid, None, log, ("active", "muted", "done"))
+        if work != "-":
+            pres["work_ref"], pres["task_path"] = work_ref, task_path
+        if worktree:
+            pres["worktree"] = label_or_invalid(os.path.basename(worktree.rstrip(os.sep)))
+        save_presence(root, pres)
 
 
 def do_milestone(cwd: str, *, kind: str, body: str, to: Optional[str], refs: List[str], work: str) -> str:
     """이정표 게시 (cycle-init 착수 · cycle-finalize 완료 등 **템플릿 스크립트가 부른다** — persona 재량이 아니다).
     best-effort: 보드 없음·sid 불명·rate·redaction 어느 것도 스크립트를 막지 않는다 — 결과는 stderr 한 줄 + 로그. 반환 = 게시물 id 또는 ""."""
-    sid = harness_sid()
-    if sid is None:
-        sys.stderr.write("board milestone: skip — 세션 id 불명 (CLAUDE_CODE_SESSION_ID/AGENT_BOARD_SID 없음)\n"); return ""
     root = None
     try:
+        sid = harness_sid()
+        if sid is None:
+            sys.stderr.write("board milestone: skip — 세션 id 불명 (CODEX_THREAD_ID/CLAUDE_CODE_SESSION_ID/AGENT_BOARD_SID 없음)\n"); return ""
         res, root, board, log = open_board(cwd, sid)
         if res is None or root is None or board is None:
             sys.stderr.write("board milestone: skip — 보드 없음 (board.sh bootstrap)\n"); return ""
@@ -3716,6 +3753,7 @@ def do_milestone(cwd: str, *, kind: str, body: str, to: Optional[str], refs: Lis
         if pres is None or pres["state"] == "suspended" or pres.get("stale_since") or (pres["state"] == "ended" and pres.get("ended_by") in (None, "sweep")):
             do_register(root, board, res, log, native_id=sid_parts(sid)[2], platform=sid_parts(sid)[0], alias=None, work=work or "-", model=None,
                         harness=None, worktree=None, resume=(pres is not None), env_file=None)
+        bind_work(root, res, log, sid, work or "-")
         pid = do_post(root, board, log, sid=sid, token=None, channel=("dm" if to else "public"), kind=kind, body=body, to=to, re_id=None,
                       refs=refs, priority="normal", force=False)
         log.emit("milestone", kind, id=pid)
@@ -3774,8 +3812,11 @@ def main(argv: List[str]) -> int:
     except SystemExit:
         return EXIT_USAGE
     cwd = a.cwd
-    sid = getattr(a, "sid", None) or os.environ.get("AGENT_BOARD_SID")
+    sid = getattr(a, "sid", None)
     token = getattr(a, "token", None) or os.environ.get("AGENT_BOARD_TOKEN")
+    # Parent Claude exports belong to that parent, not to a nested Codex CLI.
+    if not getattr(a, "token", None) and os.environ.get("CODEX_THREAD_ID"):
+        token = None
     uid = current_uid_name()
 
     # ---- 어댑터 계약: 항상 exit 0 ----
@@ -3844,7 +3885,7 @@ def main(argv: List[str]) -> int:
             # 타 세션 명의를 빌리면 done/게시가 동료 세션에 전염된다 (qa panel 072 P1).
             hs = harness_sid()
             if load_presence(root, hs, None) is None:
-                if os.environ.get("AGENT_BOARD_SID"):
+                if os.environ.get("AGENT_BOARD_SID") == hs:
                     raise BoardError(EXIT_VALIDATION, "sid_required", "AGENT_BOARD_SID=%s 는 등록된 세션이 아니다" % hs)
                 try:
                     do_register(root, board, res, log, native_id=sid_parts(hs)[2], platform=sid_parts(hs)[0], alias=None, work="-", model=None,
@@ -3888,11 +3929,11 @@ def main(argv: List[str]) -> int:
                 # 같은 uid 안에서 토큰 파일은 누구나 읽을 수 있다(uid 가 인가 경계) — «자기 세션» 은 하네스가 준 CLAUDE_CODE_SESSION_ID 가 sid 의
                 # native 컴포넌트와 같거나, 호출자가 토큰을 **명시**한 경우로만 인정한다 (security panel 069 P2-2).
                 require_own_sid(sid)
-                native_env = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-                if native_env:
-                    if sid_parts(sid)[2] != native_env: raise BoardError(EXIT_VALIDATION, "self_only", "reactivate(인자 없음)는 자기 세션(%s)만 — 타 세션은 human 토큰+TTY 로 'reactivate <sid>'" % native_env)
-                elif not (getattr(a, "token", None) or os.environ.get("AGENT_BOARD_TOKEN")):
-                    raise BoardError(EXIT_VALIDATION, "self_only", "자기 세션 증명이 없다 — CLAUDE_CODE_SESSION_ID 또는 --token 이 필요하다")
+                native_sid = native_harness_sid()
+                if native_sid:
+                    if sid != native_sid: raise BoardError(EXIT_VALIDATION, "self_only", "reactivate(인자 없음)는 자기 세션(%s)만 — 타 세션은 human 토큰+TTY 로 'reactivate <sid>'" % native_sid)
+                elif not token:
+                    raise BoardError(EXIT_VALIDATION, "self_only", "자기 세션 증명이 없다 — CODEX_THREAD_ID/CLAUDE_CODE_SESSION_ID 또는 --token 이 필요하다")
                 _emit(transition(root, board, log, sid=sid, token=token, target="reactivate", actor="self:" + sid)); return 0
             actor = authz_session(root, sid, token, log, ("active", "muted", "done")); require_human_tty(actor)
             _emit(transition(root, board, log, sid=tgt, token=None, target="reactivate", actor=sid)); return 0
