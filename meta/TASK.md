@@ -45,3 +45,5 @@
 - [x] 최신 main 8f49f1fc 추가 합류: feature0043 1671 PASS/1 skip, workflow Bats69 PASS, board Bats134 PASS/4 skip, Python 도구34 PASS.
 - [x] PR #1616 merge a92c9256, 정본 web-only 배포 exit0·양 replica healthy·90초 soak·CA 검증된 healthz200·실제 서빙 자산 확인. GitHub Actions 비활성, 설치 DQA 흐름/대화 스모크 NOT-RUN은 REPORT에 별도 기록.
 - [x] 전달 중 재현한 보존 옵션/삭제 후 본인 board 완료/허위 완료 출력 수정: lifecycle33 PASS·독립6 PASS·deploy quiesce34 PASS·독립 출력6조합. 마지막 보완은 host 도구와 문서이며 배포 앱 소스 변경 없음.
+
+- [x] PR #1618 merge d81325ff, 본 작업 worktree·로컬/원격 브랜치·REGISTRY 정리 완료. 관측된 이미-done 경고와 직접-init의 강제 새 세션 안내를 후속 출력 정합 대상으로 수정; 실제 auth/board core 전이 정책은 유지. 검증은 추가 리뷰와 REPORT 참조.

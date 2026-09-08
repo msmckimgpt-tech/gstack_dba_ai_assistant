@@ -1880,3 +1880,19 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — root independently reviewed worker cleanup and executed six Git/board regressions; conversation_evidence independently reviewed root deploy output and six output combinations. Lifecycle33 PASS, deploy quiesce34 PASS. Actual PR1616 web deployment and explicit NOT-RUNs are recorded separately.
 - Artifact: meta/reviews/20260908T-cleanup-close.md; meta/reviews/20260908T-policy-security.md
 - Human Approval Needed: no — current user's delegated maintenance scope and existing deploy_scope: included; final change touches host tools and records, not runtime application source.
+
+
+## REV-20260908T040415-delegation-idempotence [SUBAGENT:workflow_audit] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: live already-done completion warning and obsolete direct-init new-session instructions
+- Verdict: PASS — independent focused3 PASS; full lifecycle35 PASS, syntax and diff checks PASS. Exact authenticated done-to-done diagnostic only; real errors retain WARN; board core unchanged.
+- Artifact: meta/reviews/20260908T-cycle-idempotence.md
+- Human Approval Needed: no — existing delegated maintenance scope; own session diagnostic and continuation guidance only.
+
+
+## REV-20260908T040507-delegation-last-integration [CODEX:root] — PASS
+- Related TASK: TASK-20260908T020000-delegation-friction
+- Trigger: merge of already-landed main 92cfa2c2 before final tool-only delivery
+- Verdict: PASS — reviewed three files and board core three files are byte-identical to independent review/test snapshot. No policy or tool conflict; upstream DQA changes preserved. Previous app test/deployment results are not attributed to the newer app implementation.
+- Artifact: meta/reviews/20260908T-cycle-idempotence.md; docs/improvements/delegation-friction-20260908/verification.json
+- Human Approval Needed: no — current delegated scope; no runtime change in this PR.

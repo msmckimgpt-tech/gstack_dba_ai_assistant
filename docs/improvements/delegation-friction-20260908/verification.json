@@ -100,6 +100,28 @@
       "bin/cycle-finalize.sh": "ab3ecceb5111c1e1015455a0855a983f8ec6ce87abb5a75bd1b4d457587768e4",
       "bin/tests/cycle_lifecycle.bats": "99755abe3c713ab911ad9ecaf06bff0a45141ee9e90b930181f131961fde0f10",
       "bin/deploy-web.sh": "1d47e78d9bb1852aec184c9dcd5ed4487c78387d78bfe9de2e75f03353f30e08"
-    }
+    },
+    "merge_commit": "d81325ff3cf96a8d252065d3c2f7f993c309c829",
+    "pull_request": 1618,
+    "worktree_and_branches_removed": true,
+    "registry_closed": true,
+    "own_board_state_observed": "done"
+  },
+  "idempotent_close": {
+    "base_commit": "d81325ff3cf96a8d252065d3c2f7f993c309c829",
+    "cycle_lifecycle_passed": 23,
+    "board_lifecycle_passed": 12,
+    "exit_code": 0,
+    "board_core_changed": false,
+    "application_source_changed": false,
+    "other_error_test": "done helper rc3 diagnostic injection; not an actual authentication test",
+    "source_files_sha256": {
+      "bin/cycle-init.sh": "779f969d7eb0504393949c58944ef8c039f7698b5a48277691910525a311288f",
+      "bin/cycle-finalize.sh": "3c472f4a491e0e34c2934378bd31c8a579718bb4377ab25a3ce795c3ef60b2e4",
+      "bin/tests/cycle_lifecycle.bats": "43dbd77f0dcfbbc5d5bb9522344ff314aef275b17a44d59636e2c65d2e58ff2a"
+    },
+    "independent_cases_passed": 3,
+    "integrated_main": "92cfa2c2",
+    "reviewed_tools_and_board_core_unchanged_on_integration": true
   }
 }

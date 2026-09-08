@@ -84,6 +84,8 @@ finalize_kept() {
   [ "$status" -eq 0 ]
   [ "$(git rev-parse main)" = "$MAIN_INITIAL" ]
   [ "$(git -C "$FIXTURE/.worktrees/feature-9001-cycle" rev-parse HEAD)" = "$topic_head" ]
+  [[ "$output" == *'본 세션에서 생성한 worktree 를 작업 경로로 사용해 위임된 작업을 계속합니다.'* ]]
+  [[ "$output" != *'새 Claude Code 세션을 worktree path 에서 시작하세요'* ]]
 }
 
 @test "cycle-init resolves a remote-only base without checking it out in main" {
@@ -285,6 +287,42 @@ prepare_real_board_cycle() {
   [ ! -d "$WT" ]
   grep -q '"state":"done"' "$BOARD_ROOT/sessions/$OWN_SID.json"
   [ "$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")" = "$peer_before" ]
+}
+
+@test "cycle-finalize already-done native session is idempotent after authentication" {
+  prepare_real_board_cycle
+  export CODEX_THREAD_ID=finalize-self
+  bash "$REPO/bin/board.sh" done --sid "$OWN_SID"
+  peer_before=$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")
+  run bash -c 'cd "$1" && bash bin/cycle-finalize.sh --pr 7' -- "$WT"
+  [ "$status" -eq 0 ]
+  [ ! -d "$WT" ]
+  grep -q '"state":"done"' "$BOARD_ROOT/sessions/$OWN_SID.json"
+  [ "$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")" = "$peer_before" ]
+  [[ "$output" == *'agent-board 이미 완료'* ]]
+  [[ "$output" != *'agent-board done 실패'* ]]
+}
+
+@test "cycle-finalize other board error on done session is not reported as already complete" {
+  prepare_real_board_cycle
+  export CODEX_THREAD_ID=finalize-self
+  bash "$REPO/bin/board.sh" done --sid "$OWN_SID"
+  cp "$REPO/bin/board.sh" "$REPO/bin/board-real.sh"
+  cat > "$REPO/bin/board.sh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = done ]; then
+  printf 'board: token-mismatch fixture-diagnostic\n' >&2
+  exit 3
+fi
+exec bash "$(dirname "$0")/board-real.sh" "$@"
+EOF
+  peer_before=$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")
+  run bash -c 'cd "$1" && bash bin/cycle-finalize.sh --pr 7' -- "$WT"
+  [ "$status" -eq 0 ]
+  [ "$(sha256sum "$BOARD_ROOT/sessions/$PEER_SID.json")" = "$peer_before" ]
+  [[ "$output" == *'agent-board done 실패'* ]]
+  [[ "$output" != *'agent-board 이미 완료'* ]]
+  [[ "$output" != *'fixture-diagnostic'* ]]
 }
 
 @test "cycle-finalize without native identity cannot borrow an inherited peer board session" {
