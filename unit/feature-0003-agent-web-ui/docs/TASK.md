@@ -13725,3 +13725,15 @@ DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계
   C3 선재 실패(main 동일 — jsdom 설치로 처음 드러났다) · 공개 base 설정값 고정(3R C4).
   ⚠ 그중 둘은 **이 변경이 키운** 축이라 다음 cycle 후보로 명시한다 — 브라우저 명령줄의 토큰
   (H1 의 «IPC 로 목적지 전달» 과 같은 뿌리) · 열화 모드 미관측(H2 가 열화 분기에서 났다).
+
+## TASK-20260908T160000-share-postdeploy — 공유-앱 진입 배포 후 도달성 기록
+
+- [x] 라이브 실측 — `healthz git_commit=fd2d5f1c` · 신규 어댑터 200 · 스탬프가 `?v=dev` 가
+      아니라 content-hash(`ce592373034d`) · 서빙 파일에 이번 배선 실재.
+- [x] **확인하지 않은 것의 경계**를 함께 기록 — 라이브 `client` 블록 · DQA-client 사용자 흐름
+      (클라이언트 재배포 뒤) · 대화 스모크(scope=web 미수행). 도달성은 사용자 흐름이 아니다.
+- Run 정본: [test-runs.d/TASK-20260908T125500-share-client-entry.md](test-runs.d/TASK-20260908T125500-share-client-entry.md) Run 6
+
+⚠ 이 기록이 별도 cycle 인 이유: 처음에 `repo/` 에서 직접 커밋했다가 post-commit hook 의
+check #11(§13.2.7 F0)에 걸렸다. 커밋을 되돌리고 규정대로 worktree 에서 다시 남긴다 —
+「배포 후 한 줄 기록」이라는 이유가 F0 의 예외가 되지 않는다.

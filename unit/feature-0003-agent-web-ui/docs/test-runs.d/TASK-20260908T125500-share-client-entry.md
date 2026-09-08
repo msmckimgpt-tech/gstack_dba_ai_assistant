@@ -111,3 +111,28 @@ Next: 1.1.2 설치기 빌드·게시 후 위 Scenario 를 실측하고 같은 `E
 - `verify_side_panel_exclusive.mjs` C3 2건은 이 cycle 을 위해 jsdom 을 설치하면서 **처음으로
   실행되어** 드러난 선재 결함이다(`main` 동일). 그 게이트는 도구가 **없을 때** 「CI gap 문서화」
   경로로 통과하도록 설계돼 있어, jsdom 없는 환경에서는 영원히 보이지 않는다(§16.7 G15).
+
+### Run 6 — 라이브 배포 후 도달성 (post-deploy)
+
+Environment: live-https
+Result: PASS (도달성·서빙 내용 한정 — 아래 «확인하지 않은 것» 참조)
+Scenario: 머지·배포한 코드가 **실제로 서빙되는가**.
+Evidence (2026-09-08, `https://localhost`):
+- `GET /healthz` → `{"status":"ok","git_commit":"fd2d5f1c","mysql_ok":true,"pg_ok":true}`
+  — 내 머지 커밋이 라이브에서 돌고 있다.
+- `GET /static/share-client-context.js` → **200** (신규 어댑터가 서빙된다).
+- `GET /share/<probe>` 의 스탬프 → `share-client-context.js?v=ce592373034d` ·
+  `share.js?v=ce592373034d` — `?v=dev` placeholder 가 아니라 **빌드가 주입한 content-hash** 다
+  (스탬프 없는 모듈 참조로 배포가 브라우저에 도달하지 못하던 결함 클래스의 재발 아님).
+- 서빙되는 `share.js` 에 `appPlatformSupported`·`_adoptIfTheBridgeAcceptsIt` 2건,
+  `app/client-bridge.js` 에 `_PERSIST_SURFACES` 2건 — **이번 배선이 실제 서빙 파일에 있다.**
+
+⚠ **확인하지 않은 것 (도달성 ≠ 사용자 흐름).**
+- 서버 응답의 `client:{app_link, download_url}` 블록은 **라이브에서 미확인**이다 — 확인하려면
+  실제 공유 링크를 만들어야 하고 그것은 운영 데이터에 잔재를 남긴다. 코드 경로는 Run 2 가
+  AST·위임 대조로, 조립 정본은 Run 3 이 왕복으로 검증했다.
+- 화면에서 어느 버튼이 보이는지, 앱이 그 대화를 여는지는 **Run 5(DQA-client, NOT-RUN)** 의 몫이며
+  **클라이언트 재배포 뒤**다. 지금 배포된 것은 서버·정적 자산뿐이므로, 구버전 앱은 딥링크의
+  `path` 를 몰라 서비스 루트를 연다(파손이 아니라 의도된 degrade).
+- 대화 스모크는 `scope=web` 이라 미수행이다(배포 로그가 그렇게 기록한다) — 이 변경은 대화
+  런타임을 건드리지 않지만, 그 사실을 «대화 동작 PASS» 로 합산하지 않는다.
