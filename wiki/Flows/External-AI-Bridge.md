@@ -267,7 +267,9 @@ flowchart TD
 
 ②와 ⑥이 **같은 원장**을 쓰는 것이 요점이다. 누적 상한의 원천이 원장이므로 기록이 실패하면 상한을 집행할 수 없고, 그때 결과를 주면 상한이 우회된다.
 
-노출 도구는 **세션 계약 3종**(`open_task`·`get_task_context`·`submit_answer`) + **구조 조회 6종** + **브리지 3종**(`list_open_requests`·`wait_for_request`·`claim_request`) 이다. `execute_sql` 은 행수 예산·rate limit·추출 원장이 선행 조건이라 이 표면에 없다(P1). 쓰기·첨부·scratch 계열은 **영구 제외** — 세션 간 서버측 공유 상태를 만들지 않는다.
+노출 도구는 **세션 계약 3종**(`open_task`·`get_task_context`·`submit_answer`) + **조회 12종** + **브리지 3종**(`list_open_requests`·`wait_for_request`·`claim_request`) 이다.
+
+> **2026-09-08 정정** — 종전 서술(「구조 조회 6종 · `execute_sql` 은 이 표면에 없다(P1) · 쓰기·첨부·scratch 계열은 **영구 제외**」)은 낡았다. 실측 원인은 **외부 dispatcher 가 core 정적 15 + 조건부 6 중 7개만 제공**하고 있었다는 것이고(사용자 화면에서 `search_routines` 가 404), 조회 **5종을 연결해 12종**이 됐다 — `search_routines`(이름·본문 검색, 허용 DB만) · `describe_routine`(대상 DB·본문 이어읽기) · `search_db_objects`(view/trigger/schedule/alias/generator) · `describe_db_object`(정의·속성 + offset) · `explain_query`(본문 실행 없이 추정 계획, 같은 readonly AST 가드 선행). `execute_sql` 은 **있다** — 단일 SELECT/CTE · 운영 스위치 · 행수/원장 · 부하 가드 · `confirm_heavy`. 제한이 남은 9종은 **대체 경로와 사유가 명시**된다: `get_sample_rows`→`execute_sql` 의 제한된 SELECT(추출 예산 우회 금지) · `check_table_coverage`→`read_task_attachment`+`describe_schema` 대조 · `graph_navigate`→제품 범위 `get_task_context(focus=…)` · `read_attachment`/`update_attachment`/`scratch_*` 4종은 **일반 dispatcher 제한**이고 웹 task 에는 전용 경로가 있다(읽기 `read_task_attachment` · 저장은 최종 answer 의 `attachment-edit` + `submit_answer`). 목록·인자 규격·SQL 활성 상태는 `get_tool_catalog` 와 claim/`get_task_context` 의 `tool_catalog` 가 **런타임에** 알려 주고, 공개는 **명시 allowlist** 로만 결정된다(새 core 도구 자동 공개 없음). MCP 는 `run_read_tool` 이 서버 catalog 를 확인한 뒤 전체 인자를 전달하고 이름별 wrapper 는 호환을 유지한다. 정본: `unit/feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md`.
 
 ### 2.9 관리 콘솔·배치 작업 위임 (Kind 축)
 

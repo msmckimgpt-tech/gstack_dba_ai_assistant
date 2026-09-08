@@ -8,7 +8,7 @@ ai_read_priority: 5
 # CODE_TASKS — TASK 카드 카탈로그 (변경유형 → 코드영역 → 재귀 실행)
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.
-     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 37개 파일(route-module 29 + 언더스코어 공유모듈 7 + `__init__`, 2026-09-01 재실측).
+     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 40개 파일(route-module 30 + 언더스코어 공유모듈 9 + `__init__`, 2026-09-09 재실측).
      source: routers/*.py + docs/ROUTEMAP.md + static/graph/ 실측(2026-07-13; routers 카운트는 2026-08-25 재실측). freshness 는 ROUTEMAP source_commit 로 검증. -->
 
 > **이 문서의 용도**: "무엇을 바꾸려는가"(변경유형)를 입력으로, **어느 파일:심볼에서 시작해 →
@@ -61,13 +61,13 @@ ai_read_priority: 5
 
 ---
 
-## 영역 지도 (routers/ 38파일, 2026-09-07 실측)
+## 영역 지도 (routers/ 40파일, 2026-09-09 실측)
 
 - **30 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
   - ⚠ `routers/client_release.py`(INCLUDE_ORDER=260, feature-0046 소유) 는 **`app` 을 import 하지 않는
     유일한 route-module** 이다 — 그래서 `app.py` 가 `/client` 마운트를 위해 이것만 직접 import 할 수 있다.
     다른 라우터를 그 자리에 올리면 순환이 생긴다(그 import 가 파일 상단이 아니라 마운트 직전에 있는 이유).
-- **8 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
+- **9 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
   - `routers/_prompt_context.py` — 프롬프트 컨텍스트 조립(admin_roles·admin_products·auth·conversations 소비).

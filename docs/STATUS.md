@@ -161,10 +161,10 @@ git status --short --branch
 - 테스트 실행 경로: `Makefile`의 `test` 및 `pyproject.toml`의 `testpaths`. 웹/UI 변경은 AGENTS.md §15.4.1에 따라 DQA 클라이언트를 주 검증 환경으로 사용하고 일반 Windows 브라우저는 보조 호환 검증에 사용한다.
 - 기능별 테스트 정본: `unit/<feature>/docs/TEST.md`.
 - 정리 전 ARCHITECTURE의 미검증 기록: feature-0025 관리 UI와 feature-0040 객체 탐색은 POST-DEPLOY PB-0008 잔여, feature-0020의 바쁜 워커 drain 완결 궤적은 미관측이다. 현재 해소 여부는 해당 TASK/TEST에서 확인한다.
-- feature-0039는 과거 라이브 cutover 관측과 TASK 체크박스가 어긋났다는 기록이 있어 `review`를 유지했다. feature-0046은 첫 실 릴리스 반입/엣지 경유 검증이 잔여로 기록돼 있으며, 구현 존재만으로 배포 완료를 판정하지 않는다.
+- feature-0039는 과거 라이브 cutover 관측과 TASK 체크박스가 어긋났다는 기록이 있어 `review`를 유지했다. feature-0046은 첫 실 릴리스 반입이 2026-09-08 창에 해소됐고(클라이언트 1.2.0~1.2.4 공개 · 실 설치기 다운로드 · 실제 설치 앱 업데이트), 엣지(caddy) 경유 릴리스 다운로드·web-b 채널·설치기 실제 실행은 여전히 미실측으로 기록돼 있다. 잔여 축의 정본은 해당 TEST/REPORT이며 공개·구현 존재만으로 완료를 판정하지 않는다.
 
 ## 5. 상태별 집계
 - 등록 기능: **46행 / 46개 기능 디렉토리**(2026-09-08 표 재집계). 숫자 접두 ID는 45종 — feature-0016은 metadata-graph + zd-pg-pause-caddy 2슬라이스이며 번호 충돌에 대한 사람 결정은 보류 상태다.
-- review 10 (feature-0008/0012/0014/0015/0016-zd-pg-pause-caddy/0017/0038/0039/0040/0045) · in-progress 33 · done 2 (feature-0011/0042) · planned 1 (feature-0044) · blocked 0
+- review 11 (feature-0008/0012/0014/0015/0016-zd-pg-pause-caddy/0017/0038/0039/0040/0045/0046) · in-progress 32 · done 2 (feature-0011/0042) · planned 1 (feature-0044) · blocked 0
 - 합계는 완료율이 아니다. 빈 갱신일이나 요지는 TASK에 값이 없는 경우이며 날짜·완료를 추정하지 않는다.
 - 상세 진척·이력: 각 unit TASK.md / [STATUS_ARCHIVE.md](./archive/STATUS_ARCHIVE.md)

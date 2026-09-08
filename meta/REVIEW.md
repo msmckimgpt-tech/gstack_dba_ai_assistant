@@ -1896,3 +1896,15 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — reviewed three files and board core three files are byte-identical to independent review/test snapshot. No policy or tool conflict; upstream DQA changes preserved. Previous app test/deployment results are not attributed to the newer app implementation.
 - Artifact: meta/reviews/20260908T-cycle-idempotence.md; docs/improvements/delegation-friction-20260908/verification.json
 - Human Approval Needed: no — current delegated scope; no runtime change in this PR.
+
+## REV-20260909T010301-doc-sync-20260909-010301 [SKIPPED:mirror-index-reconciliation] — doc_sync 09-09 META(wiki+정책문서) 정합
+- Related TASK: META-0075-doc-sync-0909
+- Trigger: 53커밋 창(`84bda1ce..2249addf`, 착륙일 전량 2026-09-08) 의 미러·색인 drift
+- Timestamp: 2026-09-09T01:03:01+09:00
+- Verdict: PASS
+- Artifact: meta/reviews/2026-09-09T01:03:01Z-doc-sync-0909.md
+- **[SKIPPED] 사유**: §18.8 — 본 변경은 정본(`unit/*/docs/*`·`docs/DECISIONS.md`)이 이미 확정한 사실을 미러 표면(wiki·STATUS·ARCHITECTURE 색인·CODEBASE_MAP)에 반영하는 **정합 편집**이다. 새 정책·구조 결정 저술 0건이라 적대 패널이 볼 판단 표면이 없다. 대신 4축 병렬 sweep + 2조 적대 교차검증(6에이전트·1.26M 토큰)으로 대체했다.
+- **검증**: 제안 80건 + 검증조 MISS 11건 → CONFIRMED 68 · CORRECTED 10 · REFUTED 2 → span 충돌 7건 정리(중복 3쌍은 1건만·D-09→X-20 채택·X-17/18/22→D-08 병합안 흡수) → **META 적용 58건**. `wiki-lint` total **32**(baseline 동일) · `ssot-lint` **4 WARN**(tracked secret 백업 4, baseline 동일) · 카운트 46 = wiki 카드 46 = Features MOC = STATUS 46행 · ADR 색인 3표면 = 정본 실측(heading 47 · timestamp+slug 15) · `Log.md` append-only 준수 · Log/hot 경로형 wikilink 리터럴 0.
+- **BLOCKER 표면화(report-only)**: `bin/gen-status.sh --check` 가 **rc=2** 다 — 정본 `unit/feature-0046-native-client/docs/TASK.md:6` 의 `feature_status: implemented` 가 무효값(허용: blocked/deprecated/done/in-progress/planned/review). 창 안에서 `in-progress`→`done`→`completed`→`implemented` 로 요동했다. 그 결과 `docs/STATUS.md:122`(생성물 구간) 의 `review` 행은 **어느 frontmatter 값과도 일치하지 않는 수기 오염**이다. 정본 frontmatter 수리는 owning feature cycle 소관이라 doc_sync 는 하지 않았고, 따라서 이 run 은 **생성물 구간 무접촉**(passthrough 행·표 밖 prose 만 편집)이다. 직전 창(META-0073)이 같은 회귀를 기록했으므로 **2창 연속 재발**이다.
+- **미적용 1건**: 검증조 MISS 중 `wiki/Architecture/Overview.md` §2.3 의 「첫 실 릴리스 미발행」 거짓 명제는 **다른 finding 이 이미 해소**해 별도 적용이 불필요했다(적용 후 재grep 0히트).
+- Human Approval Needed: no

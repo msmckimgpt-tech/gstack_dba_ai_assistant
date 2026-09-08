@@ -120,6 +120,8 @@ ai_read_priority: 4
 | `/api/session` | GET | anonymous (**축소 응답**) | 로그인 화면 부트스트랩의 인증 상태 판정. 미인증 응답 = `{"authenticated": false}` **뿐** | SEC-20260811 (아래 §7.3) |
 | `/api/llm/health` | GET | anonymous (**축소 응답**) | LLM 제한 상태점. 미인증 응답 = `{"state": ...}` **뿐** (probe 미트리거) | SEC-20260811 |
 | `/api/api-vault/options` | GET | anonymous (**빈 카탈로그**) | 모델 선택기 카탈로그. 미인증 응답 = `{"default_model": null, "models": []}` | SEC-20260811 |
+| `/api/ai/client/latest` | GET | anonymous | 네이티브 DQA 클라이언트 릴리스 매니페스트(버전·파일명·크기·sha256·상대 경로). 배포 중인 것이 없으면 **404**(200 + `available:false` 로 답하지 않는다). 모듈 docstring 이 「익명 · 인스턴스 데이터 0. RBAC 스코프: 없음」을 선언한다 — `routers/client_release.py` | feature-0046 §P0-AH 업데이트 채널 (2026-09-07) |
+| `/client/{filename}` | GET | anonymous | 설치기 실물(.exe) 다운로드. **지금 광고 중인 그 파일명만** 200 이고 그 외·과거 버전은 404(`filename != current_release()["filename"]` — 철회가 곧 도달 불가이며 `StaticFiles` 마운트를 쓰지 않는 이유). 익명 공유 화면의 `/api/public/share/{token}` 응답 `client.download_url` 이 이 경로를 안내하므로 위 share 행의 **미서명 설치기 실행 안내** 주의와 같은 항으로 읽는다 | feature-0046 §P0-AH 업데이트 채널 (2026-09-07) |
 
 ### 7.1 운영 정책
 
