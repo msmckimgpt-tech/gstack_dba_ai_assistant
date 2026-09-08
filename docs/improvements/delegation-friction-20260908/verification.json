@@ -120,6 +120,8 @@
       "bin/cycle-finalize.sh": "3c472f4a491e0e34c2934378bd31c8a579718bb4377ab25a3ce795c3ef60b2e4",
       "bin/tests/cycle_lifecycle.bats": "43dbd77f0dcfbbc5d5bb9522344ff314aef275b17a44d59636e2c65d2e58ff2a"
     },
-    "independent_cases_passed": 3
+    "independent_cases_passed": 3,
+    "integrated_main": "92cfa2c2",
+    "reviewed_tools_and_board_core_unchanged_on_integration": true
   }
 }

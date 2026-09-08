@@ -119,3 +119,5 @@ PR #1616의 `--keep-worktree` 실행에서 폴더를 남기면서 브랜치 삭�
 같은 진입 도구의 직접 호출 안내에 남은 강제 새 Claude 세션 요구도 제거했다. entry 환경 변수 유무와 무관하게 생성된 worktree를 본 세션의 cwd/workdir로 사용하며, 모의 실행은 생성 완료로 알리지 않는다. 이는 기존에 정정한 AGENTS §13.2 정책의 실행 출력 정합이다. 회귀 결과·독립 리뷰는 [verification.json](verification.json)의 `idempotent_close`와 [추가 리뷰](../../../meta/reviews/20260908T-cycle-idempotence.md)에 기록한다. 앱 소스와 배포 결과는 변경되지 않는다.
 
 최종 보완 회귀는 cycle lifecycle 23건과 board lifecycle 12건 **총 35 PASS**, 종료 코드 0이다(`/tmp/delegation-idempotent-lifecycle-final.log`). 별도 검토자가 직접-init·실제 already-done·다른 오류 진단의 **3건**을 독립 실행해 통과했다. 다른 오류 대조는 rc=3 진단을 주입하는 helper fixture이며 실제 인증 실패 실측으로 주장하지 않는다. 인증 선행 여부는 변경하지 않은 core의 실행 순서와 별도 리뷰로 확인했다.
+
+전달 직전 다른 작업자의 PR #1619(main `92cfa2c2`)를 충돌 없이 합류했다. 이번 회귀 대상 세 도구/테스트와 board core 세 파일은 검증 시점과 바이트 동일함을 확인했다. 해당 PR의 새 DQA 앱 구현은 소유자의 검증·배포 기록에 따르며, 본 보고서의 이전 전체 테스트나 a92c9256 배포 결과를 새 앱 코드의 실행 증거로 재사용하지 않는다.
