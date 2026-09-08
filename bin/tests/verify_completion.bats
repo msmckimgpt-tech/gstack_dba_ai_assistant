@@ -275,25 +275,35 @@ stage_code_change() {
 # META mode auto-detection
 # -----------------------------------------------------------------------------
 
-@test "META mode: AGENTS.md-only change skips verify" {
+stage_review_fixture() {
+  local review="${1:-meta/REVIEW.md}"
+  mkdir -p "$(dirname "$review")"
+  printf '\n## REV-20260908T000000-gate-fixture [SUBAGENT:qa-reviewer] — PASS\n\nSynthetic gate fixture; no production review claim.\n' >> "$review"
+  git add "$review"
+}
+
+@test "META mode: AGENTS.md change with review skips operational companions" {
   echo "# dummy AGENTS rule" > AGENTS.md
   git add AGENTS.md
+  stage_review_fixture
   run bash bin/verify-completion.sh --pre-commit "feature-0001-demo"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "META mode" ]]
 }
 
-@test "META mode: bin/ script edit skips verify" {
+@test "META mode: bin/ script edit with review skips operational companions" {
   echo "# tweak" >> bin/verify-completion.sh
   git add bin/verify-completion.sh
+  stage_review_fixture
   run bash bin/verify-completion.sh --pre-commit "feature-0001-demo"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "META mode" ]]
 }
 
-@test "META mode: unit/_template/ edit skips verify" {
+@test "META mode: unit/_template/ edit with review skips operational companions" {
   echo "# skeleton tweak" >> unit/_template/docs/ANCHOR.md
   git add unit/_template/docs/ANCHOR.md
+  stage_review_fixture
   run bash bin/verify-completion.sh --pre-commit "feature-0001-demo"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "META mode" ]]
@@ -310,6 +320,7 @@ stage_code_change() {
   stage_modify_append
   stage_function_update
   stage_code_change
+  stage_review_fixture unit/feature-0001-demo/docs/REVIEW.md
   run bash bin/verify-completion.sh --pre-commit "feature-0001-demo"
   # Check that META mode did NOT activate (no skip message)
   [[ ! "$output" =~ "META mode" ]]
@@ -555,6 +566,7 @@ stage_code_change() {
   stage_modify_append
   stage_function_update
   stage_code_change
+  stage_review_fixture unit/feature-0001-demo/docs/REVIEW.md
   run bash bin/verify-completion.sh --pre-commit "feature-0001-demo"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "verify-completion: PASS" ]]

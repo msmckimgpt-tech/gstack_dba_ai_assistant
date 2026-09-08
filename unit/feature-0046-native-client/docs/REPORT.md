@@ -227,3 +227,11 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 ## 2026-09-08 — 투명 아이콘/작업 표시줄 검수 (#1612)
 
 투명 SVG 정본과 PNG/ICO, Windows 앱 식별자·창 relaunch 속성·바로가기 ID, 웹 6진입점 favicon을 반영했다. 네이티브 529건·웹 30건, Windows 빌드/5표면/실제 작업 표시줄과 소스·동결본 식별자, Windows 브라우저 소스 검증 PASS. 기존 사용 중인 설치/앱은 유지했다. 현재 남은 단계는 PR 병합·1.1.3 채널/웹 배포·라이브 검증이다. 상세는 test-runs.d/20260908T-transparent-taskbar.md.
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

@@ -18,45 +18,31 @@ export GIT_SSH_COMMAND='ssh -i ~/.ssh/mckim_wsl -o IdentitiesOnly=yes'
 
 ### 2.1 병렬 AI 브랜치 전략
 
-두 개 이상의 AI가 동시에 작업하는 경우, 내부 작업 브랜치와 공개 PR 브랜치를 분리한다.
-
-- **내부 병렬 브랜치:** `ai/<agent-id>/<issue-number>/<slice>`
-- **공개 PR 브랜치:** `issue/<issue-number>-<short-slug>`
-- **Worktree 격리 (권장):**
-  ```bash
-  git worktree add ../worktrees/issue-12 -b ai/claude/12/browser-cleanup
-  ```
-- 내부 병렬 브랜치는 로컬/worktree 전용이며, PR head로 직접 사용하지 않는다.
-- 작업 완료 후 공개 `issue/*` 브랜치에 통합하고 PR을 갱신한 뒤 worktree를 제거한다.
-- 동일 shared 모듈을 두 AI가 동시에 수정하는 것은 금지한다.
-- 프로젝트 수준 문서(STATUS.md, ARCHITECTURE.md 등)는 공개 `issue/*` 브랜치 통합 시에만 갱신한다.
-- 상세 규칙은 `AGENTS.md` §13.2를 참조한다.
+- 소비자 변경은 `cycle-init.sh --feature <작업-id> --agent <도구>`가 만든
+  `ai/<agent>/<작업-id>` worktree에서 진행한다(AGENTS.md §13.2.1).
+- **`ai/*`는 PR head로 직접 사용할 수 있다.** 기존 `issue/*`도 유효하다. PR을 위해
+  같은 변경을 별도 공개 branch에 다시 복사하거나 공유 main을 전환하지 않는다.
+- 파일/모듈 소유권과 `hot_paths`는 자기 TASK에 기록한다. 같은 구간은 §13.2.5-A에 따라 조정한다.
+- 현재 기능 문서는 해당 worktree에서 수정하고 main 병합 때 반영한다. 공통 문서는 실제로
+  상태·계약이 바뀌는 경우에만 갱신하며, 완료 이력을 STATUS 셀에 누적하지 않는다.
 
 ## 3. 작업 흐름
-1. GitHub Issue를 생성한다.
-2. 이슈에 `feature`, `bug`, `task` 중 하나의 타입 라벨을 붙이고 차단 상태가 없도록 정리한다.
-3. `issue/<번호>-<short-slug>` 브랜치를 만들고 작업한다.
-4. PR을 열고 본문에 `closes #<번호>`를 포함한다.
-5. 사람 리뷰 후 `gh pr merge` 등으로 main 에 병합한다.
-6. 병합 후 Issue를 종료한다.
+
+1. 현재 요청과 TASK를 작업 계약으로 정리한다. 기존 Issue가 있으면 연결한다. 외부 이슈 등록이
+   필요한 작업은 범위·수용 기준·검증 방법을 담아 생성하되 읽기 전용 조사에 Issue를 강제하지 않는다.
+2. 격리 worktree에서 구현·관련 검증·문서 정합을 수행한다.
+3. `AGENTS.md §16.3`에 따라 named-add→verify-completion→commit→push→PR을 진행한다.
+4. 이미 승인된 범위는 §16.5.1에 따라 자동 병합한다. 새 §12 승인 항목이나 의미가 모호한
+   충돌만 사용자에게 묻는다. 병합은 `cycle-finalize.sh`의 잠금·최신화·검증 계약을 따른다.
+5. 요청 범위의 main 반영·필요한 배포·결과 검증 및 자기 worktree 정리를 완료한다.
 
 ## 4. 브랜치 / PR 규칙
-- 공개 PR 브랜치: `issue/<issue-number>-<short-slug>`
-- 내부 병렬 브랜치: `ai/<agent-id>/<issue-number>/<slice>` (로컬/worktree 전용, PR 금지)
-- 내부 작업 브랜치 (`feat/*`, `chore/*`, `ai/*`) 는 공개 `issue/*` 브랜치로 통합한 뒤 PR 을 연다.
-- PR 제목은 다음 두 형식 중 하나를 사용한다.
-  - `#<issue-number> <summary>` — 사람이 GitHub UI 에서 짧게 작성할 때.
-  - `<type>(<scope>): <summary> (#<issue-number>)` — `gh pr create` 가 first commit subject 를 그대로 PR 제목으로 채울 때 (§5.2 commit 형식과 동일).
-  - 두 형식 모두에서 `closes #<issue-number>` 는 PR 본문에 반드시 포함한다.
-- `main`에는 직접 push 하지 않는다.
 
-예시:
-
-```bash
-git switch main
-git pull --ff-only origin main
-git switch -c issue/12-fix-browser-session-cleanup
-```
+- `ai/*` 및 `issue/*` PR을 허용하며 main 직접 push는 하지 않는다.
+- PR 제목은 `<type>(<scope>): <summary>` 또는 `#<issue-number> <summary>` 형식이다.
+  관련 Issue가 있으면 `(#<issue-number>)`와 본문의 `closes #<issue-number>`를 넣는다.
+- 존재하지 않는 Issue 번호·승인·검증 결과를 형식 충족용으로 만들지 않는다.
+- 기존 공개 branch를 재작성하지 않고 최신 main을 merge한다. 충돌은 §16.4에 따라 해결·검증한다.
 
 ## 5. 커밋 메시지 규칙
 
@@ -72,7 +58,8 @@ git switch -c issue/12-fix-browser-session-cleanup
 ```
 
 ### 5.2 제목 (subject line)
-- `<type>(<scope>): <요약> (#<issue-number>)` 형식을 사용한다.
+- `<type>(<scope>): <요약>` 형식을 사용하며 관련 Issue가 있을 때 `(#<issue-number>)`를 붙인다.
+- `Task-Cycle: <feature-id|META-id>` trailer와 TASK 참조로 실제 작업을 연결한다.
 - 커밋 유형(`type`): `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 - 범위(`scope`): 기능 ID (예: `feature-0001`) 또는 `project`, `shared`
 - 범위를 안전하게 특정할 수 없으면 `project`를 기본 scope로 사용한다.
@@ -109,15 +96,14 @@ feat(feature-0002): agent-core 세션 관리 개선 (#12)
 - follow-up이 필요한 항목은 숨기지 않고 남긴다.
 
 ## 8. AI 작업 기준
-- AI 작업자는 Issue 내용을 작업 계약으로 사용한다.
-- 브랜치 이름과 PR 제목은 이슈 번호를 기준으로 맞춘다.
-- 공개 브랜치는 항상 `issue/*`를 사용하고, 내부 `ai/*` 브랜치는 로컬/worktree에서만 사용한다.
+- AI 작업자는 현재 사용자 요청·TASK와 연결된 Issue를 작업 계약으로 사용한다.
+- branch·PR은 §2.1·§4를 따른다. 같은 작업을 이슈 형식 때문에 다른 branch로 다시 옮기지 않는다.
 - 이슈에 검증 방법이 없으면 먼저 문서와 로그를 확인해 보완한다.
 - 작업 후 `README.md`, `docs/STATUS.md`, feature 문서가 현실과 어긋나지 않는지 확인한다.
 - **route/handler/RBAC/구조를 바꿨다면** Code-Navigation Map(`docs/ROUTEMAP.md`·`docs/CODE_NAVIGATION.md`·`docs/CODE_TASKS.md`·`docs/CODEBASE_MAP.md`)을 같은 cycle 안에서 재정합한다 — `python3 bin/gen-routemap.py` 재생성 + 참조한 `<file>.py:<sym>` 앵커를 `bin/codenav-lint.sh` 로 resolve 재검증(AGENTS.md §21.11.4·§21.11.7 참조→수정→재정합 순환).
 - `AGENTS.md`의 Git 동기화 절차에 따라 Git 커밋 및 동기화를 수행한다.
   - **항상**: §5 커밋 메시지 규칙에 따라 커밋한다.
-  - **공개 동기화 조건 충족 시**: 원격 `issue/*` 브랜치 push 및 PR 생성/갱신까지 수행한다.
+  - **공개 동기화 조건 충족 시**: 원격 작업 브랜치 push 및 PR 생성/갱신까지 수행한다.
 
 ## 9. GitHub 저장소 권장 설정
 - 기본 브랜치는 `main`으로 유지한다.

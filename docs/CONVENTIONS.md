@@ -418,7 +418,13 @@ TEMP_CLEANUP_ON_SUCCESS="1"
   ```
 
 - 새 target 추가/제거 시 `docs/DECISIONS.md` 의 ADR 작성 (Makefile = "실행 진입점" anchor, §18).
-- **테스트 경로 등재는 양쪽 모두 (2026-09-01 확립)** — `Makefile` 의 `test` 타깃과 `.github/workflows/ci.yml` 의 pytest 인자 목록은 **같은 집합**이어야 한다. `pytest.ini` 의 `testpaths` 는 인자를 명시하면 무시되므로, 한쪽에만 등재하면 «로컬은 green 인데 CI 는 그 축을 보지 않는» 상태가 **아무 신호 없이** 생긴다(2026-08~09 동일 누락 4회 재발 — feature-0014·0020 / 0023 / 0041·0043·0008; 2026-09-04 feature-0046 에서 한 번 더 — `pyproject.toml` `testpaths` 에만 등재되고 `Makefile`·`.github/workflows/ci.yml` 은 **여전히 미등재**라 CI 는 그 스위트를 돌리지 않는다. 정본 `unit/feature-0046-native-client/docs/REVIEW.md` REV-20260904T121000). 새 테스트 디렉토리를 만들면 두 곳 모두 등재하고, 집합 일치는 `unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py` 가 잠근다.
+- **테스트 수집 경로 정본은 `pyproject.toml`의 `tool.pytest.ini_options.testpaths`**다.
+  `Makefile test`와 CI는 디렉터리 인자를 다시 나열하지 않고 `python -m pytest -q`로 같은
+  목록을 실행한다. 새 테스트 디렉터리는 이 정본에 등록하고 실제 collection을 확인한다.
+  `unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py`는 실행 진입점의
+  경로 덮어쓰기·설정 누락을 검증한다. 과거 Make/CI 두 목록이 **똑같이 누락**된 0046은
+  집합 동치 검사도 PASS했으므로, 두 목록을 맞추는 수작업 규칙을 폐기했다.
+  Windows 전용 등 별도 환경 검증은 실행 경로·미검증 범위를 명시하고 Linux PASS와 합산하지 않는다.
 - 본 § 은 PROJECT.md §9.1 (자동화 도구) 의 categorization 과 일관 — Makefile 은 테스트 프레임워크가 아닌 자동화 영역. CI/CD 도구는 PROJECT.md §10 참조.
 
 ## 11. Wikilink 및 Wiki vault 표기 (v3.12.0+)

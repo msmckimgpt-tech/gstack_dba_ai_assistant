@@ -13405,3 +13405,11 @@ Task-Cycle: feature-0003-agent-web-ui
 
 - [x] 검수 하네스의 잠금 화면 오판을 재현하고 가림/단색 캡처를 거부하도록 보완
 - [ ] Windows 잠금 해제 후 최종 동결본 taskbar·브라우저 탭 시각 확인
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

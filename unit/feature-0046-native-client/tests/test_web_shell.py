@@ -686,16 +686,13 @@ def test_entry_goes_straight_to_the_panel_inside_the_app():
 
 
 def test_launch_button_is_pointless_inside_the_app():
-    """이미 실행 중인데 [내 AI 실행] 이 보이면 눌러 보고 아무 일도 없는 것을 겪는다.
+    """DQA 앱에서 실제 모달을 열면 자기 실행 버튼·토큰 발급·스킴 이동이 없다."""
+    from test_handoff_seam import _run_connect_ui
 
-    ⚠ `launchBtn.hidden` 은 여러 곳에서 정해진다. **노출을 결정하는 자리**(프로토콜 유무로
-    켜는 줄)를 골라야 한다 — 첫 줄을 잡으면 엉뚱한 것을 단정한다.
-    """
-    js = _MODAL_JS.read_text(encoding="utf-8")
-    offer = js[js.index("function _offerLaunch()"):].split("\n}", 1)[0]
-    assert "if (clientBridge) return;" in offer
-    assert offer.index("if (clientBridge) return;") < offer.index("btn.hidden = false"), (
-        "프로그램 안에서도 실행 버튼을 보인다")
+    result = _run_connect_ui(_STATIC / "index.html", _MODAL_JS, client=True)
+    assert result["beforeClick"]["hidden"] is True
+    assert not result["navigation"]
+    assert not any(call["url"] == "/api/ai/connect/token" for call in result["calls"])
 
 
 def test_web_only_path_is_unchanged():

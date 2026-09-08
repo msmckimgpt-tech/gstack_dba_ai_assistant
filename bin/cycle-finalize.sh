@@ -168,6 +168,32 @@ log_info "dry-run:        $([ "$DRY_RUN" -eq 1 ] && echo yes || echo no)"
 # Capture pre-cleanup HEAD for end-report.
 MAIN_HEAD_BEFORE="$(git -C "$MAIN_WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 
+# ── Step 0b: host-local merge mutex (META-0027, parallel-work-structure ITEM-07) ──
+# 전 worktree 가 공유하는 git 공용 디렉터리(.git) 안의 락으로 머지 구간(Step 1~2)을
+# 직렬화한다 — 두 세션이 동시에 finalize 해도 순차 머지되고, 두 번째는 락 대기 후
+# 최신 main 기준으로 재검증(신선도 게이트+CLEAN 재폴링)한다. 락 파일이 working tree
+# 밖(공용 .git)이라 clean 검증·gitignore 와 무간섭·전 worktree 공유. host-local 이므로
+# 원격/CI 발 머지는 보호하지 못한다(문서화된 한계 — 본 호스트는 전 작업자 동일 호스트).
+# gh 구버전(<2.57)엔 `gh pr update-branch` 미존재(2026-07-11 라이브 실증) — REST API 폴백.
+gh_update_branch() {  # $1=PR번호. 성공 0 / 실패 비0(호출부가 중단)
+  gh pr update-branch "$1" 2>/dev/null \
+    || gh api --method PUT "repos/{owner}/{repo}/pulls/$1/update-branch" >/dev/null 2>&1
+}
+
+MERGE_LOCK_TIMEOUT_SEC="${MERGE_LOCK_TIMEOUT_SEC:-900}"
+MERGE_LOCK_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/.merge.lock"
+log_step "Step 0b: merge mutex 획득 (flock, 최대 ${MERGE_LOCK_TIMEOUT_SEC}s)"
+exec 9>"$MERGE_LOCK_FILE" || die "merge lock 파일 열기 실패: $MERGE_LOCK_FILE"
+if ! flock -n 9 2>/dev/null; then
+  log_info "다른 세션이 머지 진행 중 — 락 대기 (최대 ${MERGE_LOCK_TIMEOUT_SEC}s)…"
+  flock -w "$MERGE_LOCK_TIMEOUT_SEC" 9 \
+    || die "merge mutex 획득 실패 (${MERGE_LOCK_TIMEOUT_SEC}s 초과) — 다른 finalize 가 장기 점유 중. 그 세션 종료/이상 여부 확인 후 재시도 (락: $MERGE_LOCK_FILE)"
+fi
+log_info "merge mutex 획득 — 머지 구간(Step 1~2) 직렬화"
+# 모든 die/exit 경로에서 락 확정 해제 — detached auto-gc 가 fd 9 OFD 사본을 물고
+# 장수해도 flock -u 는 OFD 락을 즉시 푼다 (패널 MINOR-1).
+trap 'flock -u 9 2>/dev/null || true' EXIT
+
 # ── Step 1: PR 상태 검증 + gh pr merge (idempotent) ───────────────────────
 log_step "Step 1: PR 상태 검증"
 
@@ -188,13 +214,83 @@ case "$PR_STATE" in
     if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then
       die "PR #$PR_NUMBER not MERGEABLE (state=$PR_STATE, mergeable=$PR_MERGEABLE). Resolve conflicts first."
     fi
+    # ── Step 1a-0: 신선도 hard gate + mergeStateStatus CLEAN 재폴링 (META-0027) ──
+    # 락 안에서 최신 main 기준 재검증: behind >= MERGE_BEHIND_GATE(기본 20) 이면 자동
+    # update-branch 후 CI 재확인을 강제(§13.2.5 의 '권유'를 게이트로 격상). 어떤 경우든
+    # CLEAN 확인 후에만 머지(낡은 base 로 통과한 테스트로 머지하는 semantic drift 차단
+    # — Not Rocket Science Rule, RESEARCH W-002). abnormal(BLOCKED/DIRTY)은 §16.3
+    # Step 6 대로 자동 중단. textual clean != semantic safe — 기존 diff/테스트 게이트는
+    # 그대로 유지되며 본 게이트는 그 위의 추가 방어선이다(W-008).
+    MERGE_BEHIND_GATE="${MERGE_BEHIND_GATE:-20}"
+    MERGE_CLEAN_TIMEOUT_SEC="${MERGE_CLEAN_TIMEOUT_SEC:-600}"
+    _verified_head=""
+    if [ "$DRY_RUN" -eq 1 ]; then
+      printf "[dry-run] 신선도 게이트: behind>=%s 이면 gh pr update-branch %s → base 포함/CLEAN 확인 후 merge\n" \
+        "$MERGE_BEHIND_GATE" "$PR_NUMBER" >&2
+    else
+      git fetch origin >/dev/null 2>&1 || die "git fetch 실패 — 최신 base를 검증할 수 없어 머지 중단."
+      _base_commit=$(git rev-parse --verify refs/remotes/origin/main) \
+        || die "origin/main 부재 — 머지 base를 검증할 수 없음."
+      _behind=$(git rev-list --count "refs/remotes/origin/${PR_HEAD_REF}..origin/main") \
+        || die "PR head ref 부재 — 신선도를 검증할 수 없어 머지 중단."
+      _refresh_base=""
+      if [ "$_behind" -ge "$MERGE_BEHIND_GATE" ]; then
+        log_info "신선도 게이트: behind=${_behind} (>= ${MERGE_BEHIND_GATE}) — update-branch 강제"
+        _refresh_base="$_base_commit"
+        gh_update_branch "$PR_NUMBER" || die "update-branch 실패 — 최신 base 반영을 확인할 수 없어 머지 중단."
+      fi
+      _deadline=$(( $(date +%s) + MERGE_CLEAN_TIMEOUT_SEC ))
+      while :; do
+        _poll=$(gh pr view "$PR_NUMBER" --json state,mergeStateStatus,headRefOid \
+          --jq '"\(.state):\(.mergeStateStatus):\(.headRefOid)"' 2>/dev/null || echo "VIEWFAIL:UNKNOWN:")
+        IFS=: read -r _polled_state _merge_state _polled_head <<< "$_poll"
+        _mss="${_polled_state}:${_merge_state}"
+        case "$_mss" in
+          MERGED:*) log_info "폴링 중 PR 이 외부에서 머지됨 — idempotent 합류"; break ;;
+          OPEN:CLEAN|OPEN:HAS_HOOKS)
+            [[ "$_polled_head" =~ ^[0-9a-f]{40,64}$ ]] || die "PR head SHA 미확인 — 머지 중단."
+            if [ -n "$_refresh_base" ]; then
+              git fetch origin >/dev/null 2>&1 || die "update 후 git fetch 실패 — 머지 중단."
+              if ! git merge-base --is-ancestor "$_refresh_base" "$_polled_head" 2>/dev/null; then
+                log_info "update 요청의 base가 PR head에 아직 없음 — 반영 대기"
+              else
+                _verified_head="$_polled_head"
+                log_info "요청 base 포함 + mergeStateStatus=${_merge_state} — 머지 진행"
+                break
+              fi
+            else
+              _verified_head="$_polled_head"
+              log_info "mergeStateStatus=${_merge_state} — 머지 진행"
+              break
+            fi ;;
+          OPEN:BEHIND)
+            if [ -z "$_refresh_base" ]; then
+              git fetch origin >/dev/null 2>&1 || die "BEHIND base 갱신 실패 — 머지 중단."
+              _refresh_base=$(git rev-parse --verify refs/remotes/origin/main) || die "origin/main 부재."
+              gh_update_branch "$PR_NUMBER" || die "update-branch 실패 — 머지 중단."
+            fi ;;
+          *:BLOCKED|*:DIRTY|CLOSED:*)
+            die "PR #$PR_NUMBER mergeStateStatus=${_merge_state}, state=${_polled_state} — 원인 해소 후 재시도." ;;
+          VIEWFAIL:*) log_warn "gh pr view 실패 — 재폴링" ;;
+          *) : ;;
+        esac
+        [ "$(date +%s)" -lt "$_deadline" ] || die "PR #$PR_NUMBER base/CLEAN 대기 timeout(${MERGE_CLEAN_TIMEOUT_SEC}s, 마지막 상태=$_mss)."
+        sleep 15
+      done
+    fi
     # --delete-branch 미사용 (worktree-first 호환): gh 는 --delete-branch 시 기본
     # 브랜치로 로컬 체크아웃 전환 + 로컬/원격 브랜치 삭제를 시도하는데, 머지 대상
     # 브랜치가 worktree 에 checkout 된 상태(§13.2 worktree-first)면 전환/삭제가
     # 거부돼 매 cycle 실패한다. 로컬 브랜치는 Step 5b(git branch -d), 원격 브랜치는
     # Step 5c(best-effort push --delete)가 분리 처리한다.
-    log_step "Step 1a: gh pr merge --$MERGE_STRATEGY (no --delete-branch — worktree-first 호환)"
-    run_or_dryrun "gh pr merge $PR_NUMBER --$MERGE_STRATEGY"
+    # 폴링 중 외부 머지 합류 케이스 — merge 호출 전 최종 재확인 (idempotent)
+    _final_state=$(gh pr view "$PR_NUMBER" --json state --jq .state 2>/dev/null || echo OPEN)
+    if [ "$_final_state" = "MERGED" ]; then
+      log_info "PR #$PR_NUMBER 이미 MERGED — merge 호출 skip (idempotent)."
+    else
+      log_step "Step 1a: gh pr merge --$MERGE_STRATEGY (no --delete-branch — worktree-first 호환)"
+      run_or_dryrun "gh pr merge $PR_NUMBER --$MERGE_STRATEGY${_verified_head:+ --match-head-commit $_verified_head}"
+    fi
     ;;
   CLOSED)
     die "PR #$PR_NUMBER is CLOSED (not merged). Cycle-finalize aborted."
@@ -238,6 +334,10 @@ fi
 
 MAIN_HEAD_AFTER="$(git -C "$MAIN_WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 log_info "main HEAD: $MAIN_HEAD_BEFORE → $MAIN_HEAD_AFTER"
+
+# merge mutex 해제 — 머지 구간(Step 1~2)만 직렬화, worktree 정리(Step 3~)는 병렬 허용 (META-0027)
+flock -u 9 2>/dev/null || true
+log_info "merge mutex 해제 — 이후 단계는 락 밖"
 
 # ── Step 3: 자기 worktree clean 검증 ─────────────────────────────────────
 log_step "Step 3: 자기 worktree working tree clean 검증"
@@ -347,25 +447,79 @@ PROJECT_ROOT="$(dirname "$MAIN_REAL")"
 REGISTRY_PATH="$PROJECT_ROOT/worktrees/REGISTRY.md"
 SESSIONS_LOG_PATH="$MAIN_REAL/meta/SESSIONS_LOG.md"
 
-if [ ! -f "$REGISTRY_PATH" ]; then
-  log_info "REGISTRY.md 부재 (consumer §13.2.4 미채택) — skip."
+REGISTRY_RESULT="(not adopted)"
+[ ! -f "$REGISTRY_PATH" ] || REGISTRY_RESULT="manual entry move required"
+if [ "$DRY_RUN" -eq 1 ]; then
+  REGISTRY_RESULT="dry-run: unchanged"
+  log_info "[dry-run] REGISTRY entry 이동 및 권한 변경 생략"
 else
-  log_info "REGISTRY.md 발견: $REGISTRY_PATH"
-  # §13.2.10: 여러 계정이 번갈아 cycle 을 돌리는 배치에서 이 파일이 다른 계정 소유
-  # 0600 으로 굳어 있을 수 있다. 접근권을 복구하고(정상 상태면 sudo 호출 0회), 실패하면
-  # **권한이 원인임을 명시**한다 — 그러지 않으면 아래 수동 안내를 따르려던 사용자가
-  # 원인 불명의 Permission denied 를 만난다.
+# §13.2.10: REGISTRY 가 다른 계정 소유 0600 으로 굳어 있으면 접근권을 먼저 복구한다
+# (정상 상태면 sudo 호출 0회). 복구 후에도 접근 불가면 아래에서 정직하게 갈라 보고한다.
+if [ -e "$REGISTRY_PATH" ]; then
   priv_ensure_writable "$REGISTRY_PATH" || true
-  _reg_reason="$(priv_access_reason "$REGISTRY_PATH")"
-  if [ "$_reg_reason" != "ok" ]; then
-    log_warn "REGISTRY.md 접근 불가($_reg_reason) — 실행자: $(id -un). passwordless sudo 가용성을 확인하세요 (PRIV_NO_SUDO 미설정 여부 포함)."
+  priv_ensure_writable "$REGISTRY_PATH.lock" || true
+fi
+
+REG_REASON="$(priv_access_reason "$REGISTRY_PATH")"
+if [ -e "$REGISTRY_PATH" ] && [ "$REG_REASON" != "ok" ]; then
+  # 권한 실패를 스키마 불일치로 오진하지 않는다. 아래 grep 은 읽지 못하면 조용히 false 를
+  # 내므로, 그대로 두면 "비-META-0029 형식" 안내로 새어나가 사용자가 있지도 않은 포맷
+  # 차이를 뒤지게 된다 (2026-07-27 라이브 오진 실증). 읽기·쓰기를 모두 본다 — 0664
+  # 정규화 이후 남는 실패는 대개 rewrite 용 **쓰기** 거부다.
+  log_warn "REGISTRY.md 접근 불가($REG_REASON) — entry 이동 skip: $REGISTRY_PATH (실행자: $(id -un))"
+  log_warn "  passwordless sudo 가용성을 확인하세요 (PRIV_NO_SUDO 미설정 여부 포함). 승격되면 자동 복구됩니다 (§13.2.10)."
+  log_warn "  수동 이동: '## Active' 의 '### $SELF_BRANCH' 블록을 '## Closed' 로"
+elif [ ! -f "$REGISTRY_PATH" ]; then
+  log_info "REGISTRY.md 부재 (consumer §13.2.4 미채택) — skip."
+elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_PATH"; then
+  # META-0029 스키마(## Active/## Closed + `### <branch>` 블록) — 자기 entry 자동 이동.
+  # cycle-init 과 동일 lock 공유(병렬 직렬화) · mktemp→검증→mv 원자 rewrite · 실패는 경고만
+  # (§18.8 패널 REV-20260711T051835 MAJOR-3 반영 — 닫는 쪽 없는 라이프사이클/안내문 스키마 불일치 해소).
+  log_info "REGISTRY.md 발견 (META-0029 스키마): $REGISTRY_PATH — entry 자동 이동 (Active → Closed)"
+  REG_TMP=""
+  if exec 8>"$REGISTRY_PATH.lock" && flock -w 10 8 \
+     && REG_TMP="$(mktemp "$REGISTRY_PATH.XXXXXX")" \
+     && awk -v br="### $SELF_BRANCH" \
+            -v closed="- closed_at: $(date +%Y-%m-%dT%H:%M:%S%z) (PR #${PR_NUMBER:-?})" '
+          /^## Active$/ {act=1; print; next}
+          /^## Closed$/ {
+            act=0; print
+            if (n > 0) { print ""; for (i=1;i<=n;i++) print buf[i]; print closed }
+            next
+          }
+          act && $0 == br {cap=1; n=1; buf[1]=$0; next}
+          cap && (/^### / || /^## /) {cap=0}
+          cap {n++; buf[n]=$0; next}
+          {print}
+        ' "$REGISTRY_PATH" >"$REG_TMP" \
+     && ! awk '/^## Active$/{a=1;next} /^## Closed$/{a=0} a' "$REG_TMP" | grep -qxF "### $SELF_BRANCH" \
+     && priv_replace_preserving_mode "$REG_TMP" "$REGISTRY_PATH"; then
+    # §13.2.10: `mv` 대신 원본 inode 유지 write-through — mode·uid/gid·ACL 보존
+    # (cycle-init 과 동일 축. `chmod` 되감기는 ACL named entry 를 복원하지 못한다).
+    REGISTRY_RESULT="automatic entry close completed"
+    log_info "REGISTRY entry 이동 완료: $SELF_BRANCH → ## Closed"
+  else
+    rm -f "${REG_TMP:-/nonexistent}" 2>/dev/null || true
+    # write-through 는 원본 mode 를 건드리지 않으므로 실패 분기에서 되감을 것이 없다
+    # (mv 방식일 때 필요했던 보정 — write-through 전환으로 소멸).
+    _reg_reason_post="$(priv_access_reason "$REGISTRY_PATH")"
+    if [ "$_reg_reason_post" != "ok" ]; then
+      log_warn "REGISTRY entry 자동 이동 실패: 권한($_reg_reason_post) — $REGISTRY_PATH (실행자: $(id -un))"
+    else
+      log_warn "REGISTRY entry 자동 이동 실패(또는 entry 부재) — 수동 이동 가능: '## Active' 의 '### $SELF_BRANCH' 블록을 '## Closed' 로"
+    fi
   fi
-  log_info "본 script 는 REGISTRY entry 의 자동 이동을 수행하지 않습니다 (각 consumer 의 entry format 차이로 인한 수정 위험)."
+  { exec 8>&-; } 2>/dev/null || true
+else
+  log_info "REGISTRY.md 발견 (비-META-0029 형식): $REGISTRY_PATH"
+  log_info "본 script 는 이 format 의 자동 이동을 수행하지 않습니다 (consumer entry format 차이로 인한 수정 위험)."
   log_info "다음을 수동으로 진행하세요:"
-  log_info "  1. $REGISTRY_PATH 에서 '## 활성 세션' 의 자기 entry (worktree_path=$SELF_REAL) 를 '## 종료 세션' 으로 이동"
+  log_info "  1. $REGISTRY_PATH 에서 활성 구간의 자기 entry (branch=$SELF_BRANCH, worktree=$SELF_REAL) 를 종료 구간으로 이동"
   if [ -f "$SESSIONS_LOG_PATH" ]; then
     log_info "  2. $SESSIONS_LOG_PATH 에 종료 timestamp + PR #$PR_NUMBER append"
   fi
+fi
+
 fi
 
 # ── 종료 보고 ─────────────────────────────────────────────────────────────
@@ -383,11 +537,11 @@ cat >&2 <<EOF
   main HEAD:          $MAIN_HEAD_BEFORE → $MAIN_HEAD_AFTER
   removed worktree:   $([ "$KEEP_WORKTREE" -eq 0 ] && echo "$SELF_REAL" || echo "(kept)")
   deleted branch:     $([ "$KEEP_BRANCH" -eq 0 ] && echo "$SELF_BRANCH" || echo "(kept)")
-  REGISTRY hint:      $([ -f "$REGISTRY_PATH" ] && echo "manual entry move required" || echo "(not adopted)")
+  REGISTRY hint:      $REGISTRY_RESULT
   dry-run:            $([ "$DRY_RUN" -eq 1 ] && echo yes || echo no)
 
 다음 단계:
-  - REGISTRY entry 가 있다면 수동 이동 (위 안내 참조)
+  - REGISTRY: $REGISTRY_RESULT (위 실행 결과 참조)
   - 신규 cycle 진입: bash bin/cycle-init.sh --feature <next-feature-id>
 EOF
 
