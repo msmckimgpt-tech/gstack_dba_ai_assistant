@@ -7767,3 +7767,9 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Related TASK: feature-0003-agent-web-ui
 - Reason: 기존 구현·사용 동선을 변경하지 않고 사용자 확인 내용과 실제 검증 결과를 TASK 및 test-runs 기록에 보충한다. FUNCTION·정책·제품 코드 변경 없음.
 - Timestamp: 2026-09-08T11:22:45+09:00
+
+## REV-20260908T114000-runner-recovery-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery.
+- Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
+- Timestamp: 2026-09-08T11:38:45+09:00
