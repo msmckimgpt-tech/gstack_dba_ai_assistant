@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from .cancel import CancelRegistry
+
 import time
 
 from .api import Api

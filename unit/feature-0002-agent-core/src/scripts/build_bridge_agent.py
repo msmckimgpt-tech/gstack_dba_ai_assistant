@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import pathlib
 import sys
 
@@ -141,7 +142,11 @@ def build(pkg: pathlib.Path) -> str:
         if i:
             out += ["", ""]              # 모듈 이음매는 빈 줄 2개 (PEP8 최상위 구분)
         out.append(text)
-    return "\n".join(out).rstrip("\n") + "\n"
+    source = "\n".join(out).rstrip("\n") + "\n"
+    stamp = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    marker = f'_BUNDLE_SOURCE_SHA256 = "{stamp}"\n'
+    return source.replace("from __future__ import annotations\n",
+                          "from __future__ import annotations\n" + marker, 1)
 
 
 #: `--stage-assets` 로 함께 배치하는 파일 — 러너와 **같은 곳에서 내려받는** 설치 스크립트.
@@ -196,7 +201,7 @@ def main() -> int:
 
     for path, content in want:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_bytes(content.encode("utf-8"))
     n_mod = len(_emit_order((pkg / "__init__.py").read_text(encoding="utf-8")))
     print(f"build_bridge_agent: {out} ({len(built.splitlines())}행) ← {n_mod} 모듈"
           + (f" · 자산 {len(want) - 1}개 배치" if len(want) > 1 else ""))

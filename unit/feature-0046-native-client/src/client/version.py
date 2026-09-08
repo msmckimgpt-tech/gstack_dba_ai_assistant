@@ -33,7 +33,7 @@ import re
 #: 이 소스 트리가 만들어 내는 배포본의 버전. **릴리스마다 여기를 올린다.**
 #:
 #: ⚠ `installer/DQAConnect.iss` 의 `#ifndef AppVersion` 폴백과 **같은 값**이어야 한다.
-CLIENT_VERSION = "1.1.1"
+CLIENT_VERSION = "1.1.2"
 
 #: 버전 문자열이 가져야 할 모양. 설치기 파일명에 그대로 들어가므로 경로·인자로 새어 나갈 수
 #: 있는 문자를 애초에 배제한다(`publish_release.py` 와 `updater.py` 가 같은 정규식을 쓴다).

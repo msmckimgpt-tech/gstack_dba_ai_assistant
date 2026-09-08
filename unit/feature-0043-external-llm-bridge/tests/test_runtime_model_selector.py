@@ -114,7 +114,7 @@ def test_detect_runtimes_omits_runtimes_with_no_models(monkeypatch):
     여기 있었으나 그 런타임은 제거됐다 — 로컬 LLM 미사용, 사용자 결정).
     """
     mod = _load_runner()
-    monkeypatch.setattr(mod, "_which", lambda name: "/usr/bin/x" if name == "claude" else None)
+    monkeypatch.setattr(mod, "_which_ai", lambda name: "/usr/bin/x" if name == "claude" else None)
     monkeypatch.setattr(mod, "probe_runtime_caps", lambda *a, **k: None)
     assert mod.detect_runtimes(cached={}, probe=True) == [], "빈 런타임이 신고에 남았다"
 

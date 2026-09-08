@@ -266,7 +266,7 @@ def test_failure_messages_no_longer_point_at_a_path_that_is_gone():
     js = (_REPO / "unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js"
           ).read_text(encoding="utf-8")
     # 사용자에게 보이는 문자열만 본다 — 주석에는 「왜 지웠는가」가 남아 있어야 한다.
-    quoted = re.findall(r'"((?:[^"\\]|\\.)*)"', js)
+    quoted = re.findall(r'"((?:[^"\\\r\n]|\\.)*)"', js)
     speaking = [q for q in quoted if any(w in q for w in ("터미널", "1단계", "붙여넣"))]
     assert not speaking, f"사라진 경로를 아직 가리킨다: {speaking}"
     assert "_revealCommand" not in js, "지운 함수의 호출이 남아 있다"
@@ -326,9 +326,9 @@ def test_launch_button_never_lies_about_what_it_can_do(page, script):
         assert "hidden = false" in js, f"{script.name}: 숨겨 놓고 드러내는 곳이 없다"
     else:
         # 늘 보이는 쪽은 **누를 때 받아야** 한다 — 안 그러면 눌러도 아무 일이 없다.
-        idx = js.find(f'$("{bid}")')
-        assert idx >= 0, f"{script.name}: {bid} 가 배선되지 않았다"
-        assert "/api/ai/connect/token" in js[idx:idx + 1200], \
+        handler = re.search(rf'\$\("{bid}"\)[^\n]*addEventListener\("click", function \(\) \{{(.*?)\n  \}}\);', js, re.S)
+        assert handler, f"{script.name}: {bid} 가 배선되지 않았다"
+        assert "/api/ai/connect/token" in handler.group(1), \
             f"{script.name}: 늘 보이는 버튼인데 눌러도 연결 정보를 받지 않는다"
     assert "protocol" in js, f"{script.name}: 프로토콜 유무로 동작을 정하지 않는다"
 
@@ -355,8 +355,7 @@ def test_page_handler_is_registered_once_not_per_repaint():
 def test_silent_scheme_failure_is_explained():
     """스킴 핸들러가 없으면 브라우저는 **아무 일도 하지 않고 오류도 주지 않는다**."""
     js = (_STATIC / "ai-connect.js").read_text(encoding="utf-8")
-    idx = js.find('$("launchClient")')
-    body = js[idx - 800:idx + 900]
+    body = js.split("function _fire(url) {", 1)[1].split("\n  }", 1)[0]
     assert "설치되지 않은" in body or "창이 뜨지 않으면" in body, \
         "조용한 실패를 사용자가 「고장」으로만 읽게 둔다"
     # ⚠ 되돌아갈 곳도 함께 본다. 종전 문구는 「아래 [터미널로 연결하기] 를 펼쳐 주세요」

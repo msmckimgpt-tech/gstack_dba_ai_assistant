@@ -156,10 +156,12 @@ def verify_runtime_runs_runner(python_exe: Path) -> None:
     """
     # ⚠ 러너가 임포트하는 것과 **함께** 움직인다 — `tests/test_packaging.py` 가 러너
     #   소스와 대조한다. 2026-09-04: WSL 탐지가 `shutil` 을 더했다.
-    runner_mods = ("argparse", "ast", "atexit", "hashlib", "json", "os", "re", "secrets",
+    runner_mods = ("argparse", "ast", "atexit", "contextlib", "hashlib", "json", "os", "re", "secrets",
                    "shlex", "shutil", "signal", "ssl", "subprocess", "sys", "tempfile",
                    "threading", "time", "traceback", "urllib.request")
-    code = "import " + ", ".join(runner_mods) + "; print('RUNTIME_OK')"
+    platform_mods = {"nt": "msvcrt", "posix": "fcntl"}
+    code = ("import " + ", ".join(runner_mods)
+            + f"; __import__({platform_mods!r}[os.name]); print('RUNTIME_OK')")
     p = subprocess.run([str(python_exe), "-c", code], capture_output=True,
                        text=True, timeout=120)
     if "RUNTIME_OK" not in (p.stdout or ""):

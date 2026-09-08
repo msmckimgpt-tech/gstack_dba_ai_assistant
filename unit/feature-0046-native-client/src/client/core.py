@@ -43,6 +43,9 @@ import re
 import ssl
 import subprocess
 import sys
+import tempfile
+import time
+from contextlib import contextmanager
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -824,6 +827,37 @@ def install_ca(plan: ConnectPlan) -> Path:
     return out
 
 
+@contextmanager
+def agent_install_lock(path: str, timeout: float = 10.0):
+    """교체되는 inode가 아닌 고정 sidecar를 잠근다. 락 파일은 삭제하지 않는다."""
+    with open(path + ".install.lock", "a+b") as lock:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("runner install lock timeout") from None
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def install_runner(plan: ConnectPlan, ca_path: Path) -> Path:
     """러너 수신 + 체크섬 대조. 정본은 서버가 서빙하는 것 하나다."""
     raw = fetch(f"{plan.base}/static/agent/bridge_agent.py", ca_path=str(ca_path))
@@ -835,7 +869,25 @@ def install_runner(plan: ConnectPlan, ca_path: Path) -> Path:
             f"러너 체크섬이 다릅니다.\n  기대: {plan.agent_sha256}\n  실제: {got}\n"
             "배포 교대 중일 수 있습니다 — 1분 뒤 다시 시도하고, 그래도 다르면 운영자에게 알리세요.")
     out = plan.home / "bridge_agent.py"
-    out.write_bytes(raw)
+    tmp_path = ""
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".bridge_agent.", suffix=".new", dir=plan.home)
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        with agent_install_lock(str(out)):
+            if out.exists() and out.read_bytes() == raw:
+                os.unlink(tmp_path)
+            else:
+                os.replace(tmp_path, out)
+        tmp_path = ""
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
     return out
 
 
@@ -951,11 +1003,11 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
 
 
 def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
-                 runtime: "str | RuntimeState | None" = None) -> subprocess.Popen:
+                 runtime: "str | RuntimeState | None" = None, *, on_event=None):
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
     argv += runner_runtime_args(_as_state(runtime))
-    kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token,
+    kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token, DQA_RUNNER_SUPERVISED="1",
                             **runner_runtime_env(_as_state(runtime))),
                 "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT,
                 "encoding": "utf-8", "errors": "replace"}
@@ -964,4 +1016,6 @@ def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
     #   적혀 있으면 나머지 둘은 조용히 새고, 실제로 그렇게 샜다 — 그래서 `hidden_child_kwargs`
     #   한 곳으로 모았다(재사용은 가드를 통째로 가져와야 한다).
     kw.update(hidden_child_kwargs())
-    return subprocess.Popen(argv, **kw)  # noqa: S603
+    from .supervisor import RunnerSupervisor
+
+    return RunnerSupervisor(lambda: subprocess.Popen(argv, **kw), on_event=on_event)

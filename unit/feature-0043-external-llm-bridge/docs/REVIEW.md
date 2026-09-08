@@ -4974,3 +4974,17 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
    기존 계정·데이터를 바꾸지 않았고 새 계정을 만들지 않았다(§16.6 검증 접근 획득 조건).
 3. **클라이언트를 재기동했다.** 앱 창에 디버깅 포트를 여는 유일한 방법이었다. 측정이 끝난
    뒤 포트 없이 다시 띄워 정상 상태로 되돌렸고 CDP 가 닫힌 것을 확인했다.
+
+## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
+- Related TASK: feature-0043-external-llm-bridge
+- Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰
+- Timestamp: 2026-09-08T11:20:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T112000-runner-race-review.md
+- Human Approval Needed: no
+- 배포 근거: wrapper FIRST_REQUEST.md의 기존 deploy_scope: included, AGENTS.md §16.5.1. 앱 업데이트 확인 계약은 유지.
+
+## REV-20260908T112500-runner-client-only-verification [SKIPPED:non-policy-doc]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 기존 구현·사용 동선을 변경하지 않고 사용자 확인 내용과 실제 검증 결과를 TASK 및 test-runs 기록에 보충한다. FUNCTION·정책·제품 코드 변경 없음.
+- Timestamp: 2026-09-08T11:22:45+09:00

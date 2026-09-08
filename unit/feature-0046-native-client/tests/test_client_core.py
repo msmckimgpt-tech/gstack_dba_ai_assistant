@@ -239,6 +239,12 @@ def test_token_goes_through_env_never_argv(monkeypatch, tmp_path):
             captured["argv"], captured["env"] = argv, kw.get("env", {})
             self.stdout = None
 
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
     monkeypatch.setattr(core.subprocess, "Popen", FakePopen)
     plan = core.ConnectPlan(base="https://h", token="mat_secret", home=tmp_path)
     core.spawn_runner(plan, tmp_path / "bridge_agent.py", tmp_path / "rootCA.crt")
