@@ -227,3 +227,11 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 | Gap | 위치 | 상태 | 비고 |
 |-----|------|------|------|
 | **GDPR legal-erasure (#4)** | feature-0002 `src/modules/attachment_reconciliation.py` (TASK-0094 D6 4-state + legal pseudonym, Phase 10 의존) | **미배선(unwired)** | 라이브 web(feature-0003)판 reconciliation 에는 legal-erasure 경로가 가동되지 않는다. 코드 보존(삭제·병합 금지). wiring 은 **별도 compliance 결정** 사항. (feature-0011 ANCHOR §3 동반 메모 출처) |
+
+
+## 러너 갱신·감독 진입점 (2026-09-08)
+
+- `unit/feature-0043-external-llm-bridge/src/agent/selfupdate.py::install_agent_file`: 같은 디렉터리 원자 교체 및 sidecar 락. `events.py::_read_running_source`, `lifecycle.py::try_self_update`: 실행 세대와 재기동.
+- `unit/feature-0046-native-client/src/client/supervisor.py::RunnerSupervisor`: 소유한 자식의 출력 배수·종료 감지·유한 재시도. `core.py::spawn_runner`에서 생성하고 `bridge.py`/`gui.py`가 제어한다.
+- `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py`: 단일 파일 및 실행 소스 SHA-256 스탬프 생성.
+- 회귀: feature-0043 `tests/test_runner_update_processes.py`, feature-0046 `tests/test_runner_supervisor.py`, Windows `tests/windows/verify_runner_recovery.py`.

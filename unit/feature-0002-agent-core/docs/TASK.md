@@ -4,9 +4,21 @@ feature_id: feature-0002-agent-core
 status: active
 edit_policy: rewrite
 source_of_truth: true
+feature_status: in-progress
+feature_status_date: 2026-09-08
+feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완료, 배포 진행
+
 ---
 
 # Task
+
+
+## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery (cross-feature)
+
+- feature-0043 사용자 요청의 자기갱신 경합 수정에 필요한 빌드 배선. 위험도 Minor.
+- `src/scripts/build_bridge_agent.py::build,main`: 번들에 스탬프 자신을 제외한 소스 SHA-256을 삽입하고 UTF-8/LF 바이트로 출력한다. 서버 full-file SHA12 계약 유지.
+- AC: 파서가 읽은 old 코드와 disk new가 갈릴 때 러너는 최신 지문을 거짓 신고하지 않고 unknown으로 신고하여 다시 갱신한다. Linux/Windows 두 실제 프로세스 복귀 검증.
+- 구현·리뷰·검증 정본: feature-0043 TASK-20260908T120000-runner-update-recovery.
 
 ## TASK-20260907T181510-kb-external-search — 로컬 임베딩 철거 이후 KB 검색 연결
 
@@ -3615,3 +3627,18 @@ Task-Cycle: feature-0002-agent-core
 - [ ] 배포 후 **같은 질문 재실측** — 이번엔 AI 가 답할 수 있어야 한다
 
 Task-Cycle: feature-0002-agent-core
+
+## TASK-20260908T120000-runner-update-recovery — 구현 결과 및 완료 추적
+
+- [x] 사용자 범위: 설치 경합 방지 + 자기가 띄운 러너의 재기동/단절 알림.
+- [x] 직접/감독 두 실행 방식과 동시/교차 갱신 모두 두 실제 러너 복귀 검증.
+- [x] 기동 지문·번들 경로 경합, 파싱 전 실패, 종료 중 연결 경합 수정.
+- [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
+- [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
+- [x] 전체 make test 및 verify-completion PASS.
+- [ ] PR 병합 및 서버/채널 배포 완료 기록.
+- 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
+
+### 사용자 동선 확정 (2026-09-08 후속 지시)
+
+- [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.

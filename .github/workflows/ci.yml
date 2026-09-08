@@ -100,5 +100,6 @@ jobs:
                     unit/feature-0020-zd-deploy-all/tests \
                     unit/feature-0041-external-ai-tool-surface/tests \
                     unit/feature-0043-external-llm-bridge/tests \
+                    unit/feature-0046-native-client/tests \
                     unit/feature-0008-windows-browser-testing/tests \
                     unit/feature-0006-lan-proxy-access/tests

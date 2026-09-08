@@ -1749,3 +1749,12 @@ fail-soft 라 사이클은 계속 돌았고, 로그 한 줄 외에는 아무 표
 ### 코드 거주
 
 feature-0002 `modules/insight.py` `_DS_HEALTH_UPSERT_SQL`.
+
+## REQ-20260908-runner-update-recovery — 동시 갱신과 종료 복구
+
+단일 러너 빌더가 UTF-8 소스 본문의 SHA-256을 실행 코드 상수로 삽입한다. 자기 스탬프 행을 제외한 내용으로 검증하여 파싱 후 파일 교체 경합을 구분한다. Windows 줄바꿈 변환으로 지문이 달라지지 않도록 write_bytes로 출력한다.
+
+- AC-RUR-1: 동일 경로를 쓰는 두 실제 러너가 동시 갱신 및 교차 갱신 후 각각 새 빌드로 복귀한다. 계정별 생존 프로세스는 정확히 1개이며 요청 대기가 계속된다.
+- AC-RUR-2: 파싱 전 실패도 감독이 종료를 감지한다. 유한 백오프, 정상 종료 알림, 명시적 해제 후 재기동 0을 검증한다.
+- AC-RUR-3: 기존 HTTPS/CA/고정 다운로드 경로/크기·문법·해시 검사와 토큰 환경변수 전달 계약을 유지한다. 앱 설치기 적용 확인 계약은 유지한다.
+- 정본 실측: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.

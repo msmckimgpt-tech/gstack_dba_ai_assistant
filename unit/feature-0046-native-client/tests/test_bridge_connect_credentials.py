@@ -54,7 +54,7 @@ def spy(monkeypatch, tmp_path):
         seen["plans"].append(("check", plan))
         return 0, ""
 
-    def _spawn(plan, runner, ca, st):
+    def _spawn(plan, runner, ca, st, **kwargs):
         seen["plans"].append(("spawn", plan))
         return None
 

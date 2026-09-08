@@ -846,3 +846,15 @@ edit_policy: append-only
   (하드 리프레시 안내) **미이행** 명기 · `LRN-20260907-0001` 의 `verified` 값 정정 ·
   앞 cycle 미체크 항목의 종결 표시.
 
+## CHG-20260908T120000-runner-update-recovery
+
+- Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.
+- 변경과 이유: 설치 시 직접 덮어쓰기를 없애고 러너와 같은 임시파일·fsync·replace·sidecar 락 규약을 적용한다. 자기가 띄운 러너를 감독하여 1/2/4/8/16초 백오프로 최대 5회 재기동한다. 60초 이상 정상 생존하면 예산을 재설정한다. 정상 종료 또는 복구 소진은 연결 단절 알림, 명시적 연결 해제·앱 종료는 재기동 취소다. stdout/stderr를 계속 비워 파이프 막힘과 파싱 전 오류 유실을 방지한다.
+- 동반: 기존 테스트의 전역 app stub 누출·실제 CLI 탐지 누출·낡은 UI 문자열 범위 판정을 바로잡았다. native suite를 Makefile과 CI 양쪽에 등록했다.
+- 검증: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 되돌리기: 해당 cycle Git revert 후 서버 재배포; 앱 채널은 기존 1.1.0 재활성화 가능하나 이미 설치된 최신본은 자동 강등하지 않는다.
+
+## CHG-20260908T112500-runner-client-only-verification
+
+- 사용자 후속 지시를 현재 TASK에 기록: 별도 러너 실행 절차 없이 DQA 앱만 사용한다.
+- 변경 범위는 문서·실측 결과 보충이며 이미 구현한 소유 자식 감독 계약과 일치한다.
+- 템플릿 main v3.54.1 병합 후 정책 변경 구간과 지문을 재확인했다.

@@ -7739,3 +7739,17 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 **관측했으나 설명하지 못한 것**: 검증 중 클라이언트가 한 번 스스로 종료·재시작했다(약 35초).
 원인을 확인하지 못했으므로 추측을 적지 않았다. 결과적으로 러너는 `AI = codex` 로 자동
 재연결됐고 사용자 상태는 복구됐다.
+
+## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
+- Related TASK: feature-0003-agent-web-ui
+- Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰
+- Timestamp: 2026-09-08T11:20:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T112000-runner-race-review.md
+- Human Approval Needed: no
+- 배포 근거: wrapper FIRST_REQUEST.md의 기존 deploy_scope: included, AGENTS.md §16.5.1. 앱 업데이트 확인 계약은 유지.
+
+## REV-20260908T112500-runner-client-only-verification [SKIPPED:non-policy-doc]
+- Related TASK: feature-0003-agent-web-ui
+- Reason: 기존 구현·사용 동선을 변경하지 않고 사용자 확인 내용과 실제 검증 결과를 TASK 및 test-runs 기록에 보충한다. FUNCTION·정책·제품 코드 변경 없음.
+- Timestamp: 2026-09-08T11:22:45+09:00

@@ -49,9 +49,9 @@
                         명령이 되지 않는다. → `_run_cli_cancelable` 의
                         `subprocess.Popen(cmd, ...)` 에서 `cmd` 는 리스트다(셸 해석이 개입하는
                         자리가 없다).
-    원격 코드 실행 없음 `eval`·`exec`·`compile`·동적 import 가 없다. 자동 업데이트도 없다.
-                        → `grep -nE 'eval[(]|exec[(]|compile[(]|__import__' bridge_agent.py`
-                          (매칭되는 줄은 **이 안내문 자신뿐**이어야 한다. 코드에는 없다.)
+    자기 갱신          기동 때 정한 서버의 고정 HTTPS 경로에서 CA 검증 후 새 러너를 받아
+                        원자 교체하고 유휴 상태에서 재기동한다. `--no-self-update`로 끌 수 있다.
+                        → `grep -nE 'def fetch_deployed_agent|def reexec_self' bridge_agent.py`
     설치물 없음         표준 라이브러리만 쓴다(`pip install` 불필요). 부팅 등록·crontab·서비스
                         설치를 하지 않는다. 남기는 것은 `~/.dqa-connect/` 안의 넷뿐 —
                         `config.json`(0600, **토큰 없음**) · 빈 폴더 `work` · `bridge.log` ·

@@ -1089,3 +1089,17 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
   않아 확정 불가. 재발 시 즉시 `docker events` 를 스트리밍으로 걸어 두는 것이 유일한 관측 수단.
 - Human Approval Needed: 아니오 — `deploy_scope: included` 범위 안의 배포와 그 기록.
   단 `LRN-20260907-0001` 의 `verified` 는 사용자 확인 전이므로 `self-measured` 로 두었다.
+
+## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
+- Related TASK: feature-0046-native-client
+- Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰
+- Timestamp: 2026-09-08T11:20:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T112000-runner-race-review.md
+- Human Approval Needed: no
+- 배포 근거: wrapper FIRST_REQUEST.md의 기존 deploy_scope: included, AGENTS.md §16.5.1. 앱 업데이트 확인 계약은 유지.
+
+## REV-20260908T112500-runner-client-only-verification [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client
+- Reason: 기존 구현·사용 동선을 변경하지 않고 사용자 확인 내용과 실제 검증 결과를 TASK 및 test-runs 기록에 보충한다. FUNCTION·정책·제품 코드 변경 없음.
+- Timestamp: 2026-09-08T11:22:45+09:00

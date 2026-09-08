@@ -4,9 +4,28 @@ feature_id: feature-0043-external-llm-bridge
 status: active
 edit_policy: rewrite
 source_of_truth: true
+feature_status: in-progress
+feature_status_date: 2026-09-08
+feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완료, 배포 진행
+
 ---
 
 # Task
+
+
+## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery
+
+- 상태: in-progress. 사용자 2026-09-08 직접 요청. 위험도 Minor: 기존 다운로드 신뢰·계정 경계를 유지하는 파일 교체 및 자식 프로세스 복구.
+- 작업 경로: `ai/codex/feature-0043-runner-update-recovery` worktree.
+- `feature-0043/src/agent/selfupdate.py::install_agent_file` — 동일 디렉터리 임시파일·fsync·원자 교체를 유지하고 sidecar 파일 잠금·동일 payload 재교체 생략을 추가한다.
+- `feature-0043/src/agent/{events,lifecycle}.py::_self_build,try_self_update` — 기동 지문과 인정된 번들 경로를 고정한다. 감독 러너는 갱신 후 전용 종료코드로 부모에게 재기동을 맡긴다. Windows 직접 exec 인자 인용을 보완한다.
+- `feature-0046/src/client/{core,supervisor,bridge,gui}.py` — 설치의 직접 덮어쓰기를 제거한다. 부모가 소유한 프로세스만 감독하며 유한 지수 백오프를 적용하고 종료·복구 실패를 알린다. 명시적 연결 해제·앱 종료·연결 경합은 재기동을 취소한다.
+- 완료 예시: old A/B → 동일 파일 동시 갱신 → new A/B 모두 시작(2/2); new A만 시작이면 FAIL. 연결 해제 후 재시작 수 0.
+- 검증: 실제 프로세스 2개 동시 갱신, 형제 갱신 뒤 old 지문 보존, 파싱 전 실패, 백오프 중 연결 해제, 정상 종료, 중복 연결. Linux 및 가용 Windows 동봉 Python에서 실측.
+- 리뷰: backend/qa/security(프로세스 경합·재시도·실행파일 신뢰), P1 수정 후 확인 라운드, 상한 3회.
+- 배포: 기존 deploy_scope: included. 서버 및 클라이언트 빌드·배포를 진행하며 설치기 적용의 사용자 확인 계약 유지.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0043-runner-update-recovery/AGENTS.md` SHA-256 `8e7d65bd9d31b1013ef522b762abbc62fb023ef8c358a92e46ab567eac277770`. 완료 검증 때 대조.
+
 
 ## TASK-20260907T181510-kb-external-search — KB 구획 회귀 정합 (#1598)
 
@@ -3227,3 +3246,18 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] **④ 원상 복구** — 디버깅 포트 회수 · 클라이언트 정상 실행 복귀 · 임시물 제거.
 - [x] **⑤ 부수 결함 기록** — 자기갱신 경합으로 러너가 사라지고 클라이언트가 되살리지 못하는
       경로를 `REPORT.md §8` 에 처방과 함께 남겼다(이 cycle 밖).
+
+## TASK-20260908T120000-runner-update-recovery — 구현 결과 및 완료 추적
+
+- [x] 사용자 범위: 설치 경합 방지 + 자기가 띄운 러너의 재기동/단절 알림.
+- [x] 직접/감독 두 실행 방식과 동시/교차 갱신 모두 두 실제 러너 복귀 검증.
+- [x] 기동 지문·번들 경로 경합, 파싱 전 실패, 종료 중 연결 경합 수정.
+- [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
+- [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
+- [x] 전체 make test 및 verify-completion PASS.
+- [ ] PR 병합 및 서버/채널 배포 완료 기록.
+- 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
+
+### 사용자 동선 확정 (2026-09-08 후속 지시)
+
+- [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
