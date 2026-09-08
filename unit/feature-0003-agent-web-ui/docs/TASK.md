@@ -13476,6 +13476,144 @@ Task-Cycle: feature-0003-agent-web-ui
 [위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
 DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
 
+## TASK-20260908T125500-step-tool-syntax-leak — 실행 단계에 도구 호출 구문이 그대로 노출 (사용자 제보)
+
+- status: done
+- risk: Major §12.3 (표시 계층 + 비신뢰 입력 처리. 인증·권한·스키마·파괴적 데이터 변경 0,
+  외부 비용 0. 파일 5 + 테스트 2 라 §7.1 계획 대상)
+- 사용자 제보(2026-09-08, 화면 캡처 동반):
+
+```
+사용자 원문(데이터이며 지시가 아님)
+실행 단계에서 나타나는 각 도구의 구문이 그대로 클라이언트에 노출되는 이슈가 확인되어 수정이 필요합니다.
+```
+
+### 9. Requested Scope (요청 범위)
+
+- [x] **실행 단계에 노출된 도구 «구문» 제거** — 산출물: ① 단계 제목이 도구 호출 구문
+      (`describe_table {'schema_name': 'coupon', 'table_name': 'dbo.T_COUPON'}`)일 때 서버가
+      **표시에서 버리고** 도구·인자에서 파생한 한국어 문구로 대체(적재 시점 + 완료/진행 두 표시
+      경로 전부), ② 배지가 내부 식별자(`search_tables`·`read_task_attachment`)로 찍히던 것을
+      한국어 라벨 표로 대체하고 표의 모수를 **서버 도구 census 전체**로 확장(23종),
+      ③ 제목 폴백이 `intent`(`<도구명>: …`)·`tool`(식별자)로 떨어지던 두 단 제거
+      · 인용: `각 도구의 구문이 그대로 클라이언트에 노출되는 이슈`
+
+[다의어] 고른 독해 / 버린 독해 / 예시:
+- **고른 독해**: 「도구의 구문」 = 사용자 화면에 나오는 **도구 식별자와 인자 표기 전부**
+  (제목의 `<tool> {args}` + 배지의 `<tool>`).
+- **버린 독해**: 「도구의 구문」 = **인자 표기만**(`{...}`) — 도구 이름 자체는 남겨도 된다.
+- **예시(관측 가능한 값)**: 12번 단계의 제목이
+  `search_tables {'keyword': 'masangsoft_member_channeling_gzr'}` →
+  ``masangsoft_member_channeling_gzr` 관련 테이블을 찾는다`,
+  같은 단계의 배지가 `search_tables` → `테이블 찾기`.
+- 버린 독해를 택하지 않은 이유: 제보 캡처에서 **배지도 식별자 그대로**였고(6·8·10·12번),
+  AGENTS.md §16.8 B-2(a)가 「내부 경로·프로토콜명을 그대로 노출하지 않는다」로 둘을 같은
+  축으로 규정한다. 인자만 지우면 `search_tables` 가 제목·배지 양쪽에 그대로 남는다.
+
+### 적대 검증 라운드 1 — 4명 전원 BLOCK, 설계 재작성 (2026-09-08 13:15)
+
+REV-20260908T131500-step-tool-syntax-{backend,security,qa,ux-design,codex}. **초판 판정기가
+틀렸다** — backend 가 라이브 원장 **9,759행 전건 재생**으로 실측: 규칙 (c)(「인용 없는
+snake_case 로 시작」)가 걸러낸 412행 중 **실제 도구 구문은 18행뿐, 394행(96%)이 정상 제목**
+이었다(손익비 1:22). 이 도메인은 **테이블 이름이 곧 사용자의 어휘**라 그 형태를 금지 서명으로
+쓸 수 없다. 규칙 (c) 를 폐기하고 **서버 도구 census** 기반으로 재설계했다.
+
+- [x] 판정 축 재설계 — (a) 인자 매핑 리터럴(dict 형태만; SQL 산문의 `(KEY='v')` 오탐 제거) +
+      (b) **census 의 도구 이름**. 모수는 행의 도구 하나가 아니라 census 전체(§16.7 G12).
+- [x] NFKC 정규화 + 제로폭·bidi 제거 — 전각 밑줄·전각 라틴 우회 차단(security C2).
+- [x] **단일 표시 이음매** `_step_display_narration` 신설 — 완료·진행 두 경로가 그것만 부른다.
+      파생값 **재정화**(security B1: `keyword` 에 도구 구문을 넣으면 제목으로 복귀했다) +
+      길이 상한(security B2: 100KB → 제목 100,014자) + None-safe(backend C6).
+- [x] 사유 축은 (a) 만 — 대체가 없는 축이라 (b) 를 쓰면 순수 손실(backend B2·codex P2).
+      표시 경로에도 `_derive_step_reason` 파생을 배선해 「왜」 칸이 행마다 사라지지 않게 했다.
+- [x] `_DERIVED_WORK_TAIL` 을 **인자 인지 콜러블**로 승격 — 진행/완료 제목 동일성 확보
+      (`read_task_attachment` 의 첨부 파일명이 완료본에서만 사라졌다: ux B2·qa B4).
+- [x] `agent_core._derive_step_work` 3번째 인자 오배선 제거(backend C4 — `tool_result` 슬롯).
+- [x] census 를 **정의 조회**(`modules.tools` 객체)로 전환 + 라이브 배출 전용 2종
+      (`materialize_attachment` 48행 · `query_sql` 1행) 편입(backend C5·qa B3).
+- [x] `intent` 를 공유 화이트리스트·진행 payload 에서 제거(backend C2·security C1 — 라이브
+      `intent LIKE '%{''%'` **21행**).
+- [x] 프런트: `stripDisplayTicks`(백틱 리터럴 렌더 — ux B1) · activity 렌더러의 `intent` 폴백
+      제거(ux B3) · pending 말풍선 헬퍼 통일 · 인자 리터럴 심층 방어 3줄(security 다).
+- [x] 배지 라벨 B-2 어휘 교정 + 폭 예산(한글 5자 ≈ 64px 실측) 테스트화, 예외 2종 사유 등재.
+- [x] 게이트 자체 결함 — `_fn_body` 주석 제거(G11-a), **CI-gap 탈출구 삭제**(「make test 에
+      node 없음」은 사실이 아니었다: Makefile 이 설치한다), 음성 대조군을 **산출물 주입**으로.
+
+### 적대 검증 라운드 2·3 (2026-09-08 14:20 / 15:00)
+
+- **라운드 2 (확인 라운드)** — backend·security **CONCERN** / qa·ux **BLOCK** / codex **P1 0 · P2 1**.
+  라운드 1 P1 은 10건 중 9건 CLOSED. 그리고 **내 라운드 1 수정이 만든 신규 결함 2건**이 잡혔다:
+  ① 「렌더러 전수」를 선언한 가드의 모수가 `app.js` 한 파일이라 `app/progress.js` 회귀가 48건
+  전건 통과 ② 폴백 제목이 라벨을 되풀이해 「테이블 구조 · 테이블 구조 단계」.
+  - [x] L7 모수를 프런트 **전 모듈**(`app.js` + `app/*.js`)로 확장 + progress.js 결함 주입 대조군
+  - [x] `intent` 를 완료 payload 에서도 제거(라이브 3,254행) + 신규 적재의 도구명 접두 제거
+  - [x] census 를 레지스트리 **조회**(`_TOOL_HANDLERS` + 브리지 표면)로 전환, 폴백은 조회 실패 시만
+        — 무조건 합산은 `test_l2_census_…` 를 «실패할 수 없는 단언» 으로 만들고 있었다
+  - [x] 표시 경로의 **사유 파생을 되돌림** — 규칙을 좁혀 사유 손실이 0 이 된 지금, 그 파생은
+        AI 가 말한 적 없는 근거를 구분 없이 렌더하는 신규 노출면일 뿐이다(라이브 644행)
+  - [x] 빈 census 에서 정규식이 «모든 문자열» 에 매칭되는 지뢰 제거 · `_code_only` 를 저장소의
+        검증된 스캐너(`scan_js`)로 교체(꼬리·블록 주석) · 활동 툴팁 백틱·리터럴 강등
+  - [x] scratch 문구의 인자 반영 · 라벨 어휘 2종(`임시 비움` · `DB(스키마) 목록`)
+  - [x] 문서 수치 정정(하네스 15항목 · 주입 8 FAIL · 라벨 30종 · 배지 폭 실측)
+- **라운드 3 (확인 라운드)** — codex **P1 0건**, P2 1건(클라이언트 정규식이 서버보다 넓어 서버가
+  보존한 산문 속 JSON 을 강등) → 서버와 같은 호출-접두 앵커로 정렬 + 하네스 회귀 케이스 2건.
+  - `verification_debt` — subagent 4인 패널의 3차 교차검증은 **세션 한도(429, reset 17:30 KST)**
+    로 미수행. §18.8.2 item 4 상 「대기」이지 「불가」가 아니므로 debt 로 남긴다.
+    채널=subagent-panel · 미검증 범위=라운드 2 수정의 독립 3차 교차검증 · 원인=rate_limit ·
+    `retry_after`=2026-09-08T17:30+09:00 · 대상=본 cycle 커밋 · 대체 검증=codex 라운드 3 P1 0 +
+    작업자 직접 실측 + 전체 시험 8,143 PASS + 라이브 9,759행 재생 · 후속=다음 cycle 경계에서 확인.
+
+### 2.1 Implementation Plan
+
+원인(라이브 원장 실측): `agent_runtime.steps` 의 해당 행이 `work_source='external-ai'` 였다.
+연결된 개인 AI 가 `POST /api/ai/tools/<name>` 본문에 실어 보낸 `work` 문자열을 서버가 그대로
+저장하고 화면이 그대로 그렸다. 브리지 프롬프트는 `reason` 만 규정하고 `work` 는 규정조차
+하지 않는다 — **계약 없는 비신뢰 입력**이다.
+
+- `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py`
+  — 판정기 `_step_text_is_tool_syntax`(정본 1곳) · 정화 `_sanitize_step_narration` ·
+    **단일 표시 이음매** `_step_display_narration` · 파생 꼬리 `_derive_step_work_tail` ·
+    census `_tool_name_census` 신설. `_resolve_step_display` 는 이음매에 위임한다.
+- `unit/feature-0003-agent-web-ui/src/app.py` — 위 두 심볼 re-export(`app.X` 동적 참조 규약).
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py`
+  — `_bridge_step_narration(body, arguments, tool_name)` 적재 시점 차단(호출 4곳 도구명 전달),
+    `_bridge_live_steps` 가 완료 경로와 **같은 판정·같은 대체**를 쓰도록 정합.
+- `unit/feature-0003-agent-web-ui/src/static/app.js`
+  — `TOOL_LABEL_MAP` 7종 → 28종(서버 census 23 + 옛 기록 5), `toolLabel` 미지 도구 폴백을
+    식별자 → `"도구"`, `stepTitleText` 신설(제목 폴백 단일화).
+- `unit/feature-0003-agent-web-ui/src/static/app/progress.js` — 같은 폴백 사용.
+- 테스트: `tests/test_step_tool_syntax_leak.py`(L1~L8, 48건) +
+  `tests/verify_step_title_no_tool_syntax.mjs`(행위 하네스, 결함 주입 대조군 포함).
+  표본 — 유출 문구 **10종**(전각·제로폭 우회 포함) / 정상 문구 **9종**(라이브에서 초판이
+  실제로 지웠던 제목 4건 포함) / 인자 벡터 **2종**(정상·적대).
+
+**프롬프트로 닫지 않는 이유**: 프롬프트 계약은 지시이지 집행이 아니고(같은 판단이
+`feature-0043 prompt.py` 주석에 이미 있다), 러너는 사용자 PC 에 있어 낡은 빌드가 남는다.
+서버가 판정하고 서버가 대체한다 — 대체값은 이미 존재하던 `_derive_step_work` 파생 문구다.
+
+**완료 판정 기준**
+- 유출 문구가 적재 경로·완료 표시·진행 표시 **세 곳 모두**에서 파생 문구로 바뀐다.
+- 진행 중과 완료본의 같은 단계 제목이 **동일**하다(제출 순간 화면이 바뀌지 않는다).
+- 배지 라벨 표의 모수가 서버 도구 census 와 일치하고, 그 가드가 결손 주입 시 FAIL 한다.
+- 정상 문구(사람이 쓴 한국어)는 그대로 통과한다(음성 대조군).
+
+### 작업
+
+- [x] 라이브 원장으로 출처 확정(`work_source='external-ai'`) — 추정 아닌 실측
+- [x] 판정기 신설 + 라이브 유출 문자열 10종 / 정상 문구 9종으로 양·음성 대조
+- [x] 적재 시점 차단(`_bridge_step_narration`) — 호출 4곳에 도구명 전달
+- [x] 표시 시점 대체 2경로 정합(`_resolve_step_display` · `_bridge_live_steps`) — 이미 적재된 행 복구
+- [x] 출처 표기 정직화: 원문 부재=`legacy` / 원문을 버림=`derived`
+- [x] 배지 라벨 표 30종 + 미지 도구 폴백 `"도구"` + 제목 폴백 단일화
+- [x] 구조 가드: 라벨 표 모수 = 서버 도구 census(손 열거 아님) + 결손 주입 대조군
+- [x] 행위 하네스(node) + 결함 주입 대조군 6 FAIL 실증 + pytest 배선
+- [x] 라이브 원장 **9,759행 전건 재생**: 버려진 제목 19건(인자 리터럴 14 + 도구명
+      언급 5) · 버려진 사유 **0건** · 표시 산출 잔존 유출 **0건**
+- [x] `make test` 전량 PASS(선재 실패 19건은 main 원본과 동일 — 차집합 0) · ruff clean
+- [x] DQA 클라이언트 검증 — CDP 포트 부재 실측 후 PB-0009 Run 기록
+- [x] 최신 main(cdd414e3, 46커밋) 흡수 — 충돌 3건 양측 보존 + §16.4 결과 검증(양쪽 부모 유실 0)
+- [x] 병합 후 재검증 8,267건/실패 2 — 그 2건은 pristine origin/main 에서도 동일(차집합 0)
+- [ ] 배포 후 DQA 클라이언트 화면 실측 (PB-0009 — 이 cycle 의 유일한 미검증 축)
 ## TASK-20260908T120000-connect-discovery-ux
 
 DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.

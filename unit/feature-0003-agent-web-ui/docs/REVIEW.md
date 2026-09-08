@@ -7773,6 +7773,104 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
 - Timestamp: 2026-09-08T11:38:45+09:00
+## REV-20260908T131500-step-tool-syntax-backend [SUBAGENT:backend] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: API/response shape/스키마 keyword matched — 단계 표시 payload 조립 변경
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-backend.md
+- Critical issue: 라이브 원장 9,759행 전건 재생 — 초판 규칙 (c)가 걸러낸 412행 중 실제 도구 구문은 18행뿐, 394행(96%)이 정상 제목(손익비 1:22)
+- Human Approval Needed: no
+
+## REV-20260908T131500-step-tool-syntax-security [SUBAGENT:security] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 비신뢰 입력(외부 AI narration) 처리 경로 신설
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-security.md
+- Critical issue: 파생 대체값이 비신뢰 `args` 를 무검증으로 제목에 주입해 판정기 우회가 완결된다(같은 요청에서 필드만 옮기면 유출 복귀) + 파생값 길이 무제한
+- Human Approval Needed: no
+
+## REV-20260908T131500-step-tool-syntax-qa [SUBAGENT:qa] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 신규 게이트·구조 가드 도입 — 검증 자체의 유효성 감사
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-qa.md
+- Critical issue: node 부재 사본에서 프런트 가드 전량 통과(주석 미제거 + CI-gap 마커가 탈출구를 영구 충족) — 「make test 에 node 없음」 전제 자체가 사실이 아니었다
+- Human Approval Needed: no
+
+## REV-20260908T131500-step-tool-syntax-ux-design [SUBAGENT:ux-design] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: UI/화면/레이아웃 keyword matched — 실행 단계 패널 배지·제목
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-ux-design.md
+- Critical issue: 파생 문구의 백틱이 `textContent` 로 리터럴 렌더 — 구문을 다른 구문으로 바꾼 셈 + activity 렌더러가 아직 `intent`(=`<도구명>: …`) 사용
+- Human Approval Needed: no
+
+## REV-20260908T131500-step-tool-syntax-codex [CODEX:step-tool-syntax] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.153.4 --uncommitted)
+- Trigger: 코드 변경 경량 채널 (§18.8.1) — subagent panel 과 병행
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK (P1 1건 + P2 1건)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-codex.md
+- Critical issue: P1 파생 폴백 불완전(census 23종 중 12종 미분기) · P2 식별자로 시작하는 정상 사유가 대체 없이 삭제
+- Human Approval Needed: no
+
+## REV-20260908T142000-step-tool-syntax-r2-backend-security [SUBAGENT:backend-security] — CONCERN
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 라운드 2 확인 라운드 (§18.8 수렴 계약 (a))
+- Timestamp: 2026-09-08T14:20:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T142000-backend-security-r2.md
+- Critical issue: 라운드 1 P1 10건 중 9건 CLOSED. 잔여 — `intent` 가 인증 payload 에 잔존(3,254행) · census 폴백 무조건 합산 · 표시 경로의 사유 파생이 구분 없이 렌더
+- Human Approval Needed: no
+
+## REV-20260908T142000-step-tool-syntax-r2-qa-ux [SUBAGENT:qa-ux] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 라운드 2 확인 라운드 — 게이트 유효성 + 화면 어휘
+- Timestamp: 2026-09-08T14:20:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T142000-qa-ux-r2.md
+- Critical issue: **라운드 1 수정이 만든 신규 결함 2건** — 「렌더러 전수」 가드의 모수가 app.js 한 파일(progress.js 회귀 무증상 통과) · 폴백 제목이 라벨을 되풀이(「테이블 구조 · 테이블 구조 단계」)
+- Human Approval Needed: no
+
+## REV-20260908T142000-step-tool-syntax-r2-codex [CODEX:step-tool-syntax-r2] — CONCERN
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.153.4 --uncommitted)
+- Trigger: 라운드 2 확인 — 경량 채널 (§18.8.1)
+- Timestamp: 2026-09-08T14:20:00+09:00
+- Verdict: CONCERN (P1 **0건**, P2 1건)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T142000-codex-r2.md
+- Critical issue: P2 — scratch SQL 의 변경 연산(DELETE/DROP)을 「조회」로 오기술
+- Human Approval Needed: no
+
+## REV-20260908T150000-step-tool-syntax-r3-codex [CODEX:step-tool-syntax-r3] — CONCERN
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.153.4 --uncommitted)
+- Trigger: 라운드 3 확인 라운드 (§18.8 수렴 계약 (a) — 수정한 라운드는 종결 근거가 아니다)
+- Timestamp: 2026-09-08T15:00:00+09:00
+- Verdict: CONCERN (P1 **0건**, P2 1건 — 수정 완료)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-codex-r3.md
+- Critical issue: P2 — 클라이언트 인자-리터럴 정규식에 앵커가 없어 서버가 보존한 산문 속 JSON 을 강등. 서버와 같은 호출-접두 앵커로 정렬 + 프런트 하네스에 회귀 케이스 2건 추가
+- Human Approval Needed: no
+
+## REV-20260908T150000-step-tool-syntax-r3-subagent [SKIPPED:channel-unavailable:subagent-panel]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 라운드 3 subagent 확인 패널이 **세션 한도(HTTP 429 `rate_limit`, reset 17:30 KST)** 로
+  중단됐다. §18.8.2 item 4 판정축 — 결제·조직정책 같은 **구조적 차단이 아니라 「대기」** 이므로
+  「불가」로 선언하지 않고 `verification_debt` 로 남긴다(아래 TASK.md 기재).
+- Timestamp: 2026-09-08T15:00:00+09:00
+- 대체 검증(실제 수행): ① codex 독립 채널 라운드 3 **P1 0건** ② 라운드 2 지적 11건을 작업자가
+  직접 실측 재확인(census 조회 산출 23종·scratch/브리지 포함, 조회 차단 시 9종으로 떨어져 가드가
+  FAIL 함, 빈 census 에서 정상 제목 생존, 사유 미조작(`missing`), 산문 속 JSON 서버 보존,
+  실기동 순서에서 순환 import 없음·census 25) ③ 컨테이너 전체 시험 **8,143건 PASS / 실패 0**
+  ④ 라이브 원장 9,759행 재생: 버려진 제목 19(전부 도구 표기)·사유 0·잔존 유출 0
+- 미검증으로 남는 것: subagent 4인 패널의 **독립적** 3차 교차검증. 다음 명시적 재개 또는 cycle
+  경계에서 복구 여부를 확인한다.
+- Human Approval Needed: no
 ## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
 - Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
 - Trigger: API/성능/캐싱 keyword matched
@@ -7956,6 +8054,14 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Reason: 제품 코드·정책 변경 없이 배포 실측과 미검증 경계를 기록하는 비정책 문서 후속. 구현 패널 backend/security/qa는 REV-20260908T162000에서 PASS했다.
 - Review: 7서비스 56건은 배포 모듈 계약 검사이며 실제 DB 결과/AI 응답과 구별했다. 실제 계정 권한 경로는 catalog200·미바인딩403·첨부대체404를 확인했고 search_routines500은 TCP timeout이다. 기존 버전 워커·호스트에서도 연결 실패하여 누락404와 같은 원인으로 합치지 않았다.
 - Evidence: test-runs.d/TASK-20260908T162000-tool-surface.md. 신규 assistant0을 verified로 승격하지 않으며 기존 사용자 대화/첨부는 보존했다. 민감한 접속정보·DB 정의는 문서에 전재하지 않았다.
+
+## REV-20260908T160000-step-tool-syntax-postmerge [SKIPPED:merge-only-no-product-change]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 제품 코드 델타 0 — `origin/main` 흡수 병합과 검증 증적 기록뿐이다. 병합 자체의 검증은
+  §16.4 「해결 결과 검증(MUST)」로 수행했다(양쪽 부모 대비 유실 0 · 양측 고유 변경 생존 ·
+  auto-merge 파일 포함 대조). 코드 축의 적대 검증은 REV-20260908T131500-* / T142000-* /
+  T150000-* 3라운드가 이미 덮는다.
+- Timestamp: 2026-09-08T16:00:00+09:00
 ## REV-20260908T125500-share-client-entry [SUBAGENT:security,ux,qa] — CONCERN (3R 후)
 
 - Related TASK: TASK-20260908T125500-share-client-entry
