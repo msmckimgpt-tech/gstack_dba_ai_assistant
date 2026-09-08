@@ -34,8 +34,9 @@
 
 - 사용 불가 안내의 Markdown `**`가 일반 텍스트로 노출돼 공통 client-bridge.js에서 강조 표식을 제거했다. textContent로 안전한 텍스트 출력 유지, 기존 DOM12 그룹 PASS/UX P1·P2 0.
 - Environment: DQA-client
-- Result: NOT-RUN
-- Reason: 표시 수정 병합·웹 배포 후 같은 실제 앱의 연결창에서 확인하여 추가 기록한다. 위1.2.4 설치·Codex 실제 응답 PASS와 구분한다.
+- Result: PASS
+- PR #1633(7ca6f2a4) 웹 배포 후 실제 설치1.2.4 앱을 트레이 종료(exit0)→같은 설치 경로에서 재실행했다. F5 입력 메시지는 갱신을 일으키지 않아 실제 재실행으로 확인했다. 다른 브라우저·개발용 Shell은 사용하지 않았다.
+- [최종 UI](../artifacts/20260908-codex-connect-fix/actual-modal-after-polish.json)에서 실패 안내의 `**` 없음, Codex root 연결됨, 실패 위치 목록 보존, gh-runner 없음. [서빙 파일](../artifacts/20260908-codex-connect-fix/published-ui-polish.json)도 병합 소스와 바이트 일치. 재실행 nativePID29732/내장runner50000, [새 ready](../artifacts/20260908-codex-connect-fix/after-polish-runtime-ready.json)에서 root선택 자동 복원.
 
 ## 실제 위치 변경·root 복원
 
@@ -43,3 +44,11 @@
 - Result: PASS
 - 실제 Codex UI에서 root→claude-corp→root를 선택했고 매번 새 selection_id의 ready와 완료 toast를 확인했다. 최종 root 선택은 [변경 기록](../artifacts/20260908-codex-connect-fix/actual-location-switch-root.json) 기준 클릭 도구 반환→ready15.701s(pending 최초 관찰→ready15.253s), toast15:52:39.490. 이 시간은 UI 렌더/서버 제출 시간이 아니라 실제 선택 후 receipt 확인 시간이다.
 - [최종 연결창](../artifacts/20260908-codex-connect-fix/actual-modal-root-restored-1.2.4.json), [toast](../artifacts/20260908-codex-connect-fix/actual-toast-location-switch.json), final-runtime-selection/ready 및 final-ai-locations 증거로 root 복원·선호 캐시·다른 AI 선택 id 보존 확인. 요청 테스트 후 사용자 선호를 root로 복원했다.
+
+## 최종 업데이트 확인·배포 범위
+
+- Environment: DQA-client
+- Result: PASS
+- 실제 트레이 메뉴를 다시 실행해 [이미 최신입니다(버전1.2.4)](../artifacts/20260908-codex-connect-fix/latest-version-confirmation.json)를 확인하고 확인창을 닫았다.
+- [배포 기록](../artifacts/20260908-codex-connect-fix/deployment-summary.json): 전체8f1116cf exit0 후 표시만 변경한7ca6f2a4의 web-only exit0, 양 web ready·90초 soak 통과. 뒤 웹 배포는 서버 AI smoke를 생략했으며 앞 실제 DQA 왕복 증거와 합산하지 않는다.
+- 증거 JSON은 값 보존·UTF-8/LF로 정규화했다. 인증비밀은 없으며 사용자명·경로·task/PID/selection 식별자는 진단 근거로 포함한다. Windows 픽셀 화면·Permission denied 현장 재현 및 최초 UI 응답 렌더 시간은 미측정이다.

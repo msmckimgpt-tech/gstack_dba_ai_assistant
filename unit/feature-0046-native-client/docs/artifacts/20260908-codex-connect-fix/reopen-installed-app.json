@@ -1,0 +1,9 @@
+{
+  "reason": "Load deployed connection text fix in the installed DQA app after own test completed",
+  "old_pid": 29672,
+  "started_at": 1788850782.3999016,
+  "old_exit_code": 0,
+  "old_exited_at": 1788850784.888552,
+  "new_pid": 29732,
+  "reopened_at": 1788850784.9071867
+}

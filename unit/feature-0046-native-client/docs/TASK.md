@@ -3,7 +3,7 @@ doc_type: TASK
 feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
-feature_status: in-progress
+feature_status: implemented
 feature_status_date: 2026-09-08
 ---
 
@@ -30,7 +30,7 @@ feature_status_date: 2026-09-08
 - [x] gh-runner 탐색/캐시 제외.
 - [x] 제품 PR #1631 병합·8f1116cf 전체 서버 배포·공개1.2.4·실제 DQA1.2.3→1.2.4 업데이트 설치.
 - [x] 실제 DQA root Codex 연결·새 대화 응답 `42 DQA_CODEX_42`, 런타임32318ms/서버제출 성공 및 UI 표시 확인.
-- [ ] 독립 검토·증적·Git 동기화 완료.
+- [x] 독립 backend/security/QA/UX 검토, 실제 증적 정리·제품 PR1631/표시 보완 PR1633 병합·배포 완료. 최종 비정책 증거 동기화는 이 기록의 후속 PR를 따른다.
 
 ## Context
 
@@ -55,3 +55,5 @@ feature_status_date: 2026-09-08
 - [x] 최종 출하 대기 중 병합된 PR1627 프롬프트 전달 검증을 추가 통합했다. 네이티브1.2.4 바이너리 변경 없음.
 
 - [x] 최종 main의 프롬프트 전달/클라이언트 선택 회귀39 PASS(30.90s). PR1631 통합 결과 확정.
+
+- [x] 최종 표시 보완7ca6f2a4 웹 배포·실제 설치 앱 재시작·연결창 정상 문구 및 root 재연결 확인. 최신1.2.4 재확인, 원장 기록 완료.

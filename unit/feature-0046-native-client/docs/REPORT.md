@@ -18,7 +18,7 @@ source_of_truth: true
 
 권한 오류 위치는 안전한 permission_denied 상태로 자동 연결·로그인 대행에서 제외하고 목록에는 사유를 남긴다. **이번 현장에서는 Codex root와 claude-corp 모두 가용성 응답·실제 UI 연결이 성공**하여 사용자가 겪은 Permission denied를 재현했다고 보고하지 않는다. 계정명 차단·OS 권한 수정은 하지 않았다. Claude의 claude-corp 응답 실패 위치가 비활성 목록에 남는 것은 실제 확인했다. gh-runner는 탐색·기존 캐시·UI 후보에서 제거했으며 OS/CI 계정은 유지한다.
 
-[검증 원장](test-runs.d/20260908-codex-connect-fix.md)에 코드·실제 설치·대화·제한을 구분하고, 해당 원장의 artifacts 링크에 인증정보 없는 증거를 보존한다. 실제 화면에서 발견한 안내의 Markdown 강조 기호 노출도 공통 연결 UI에서 수정했다. 이 표시 수정의 배포 후 확인은 원장의 별도 판정을 따른다.
+[검증 원장](test-runs.d/20260908-codex-connect-fix.md)에 코드·실제 설치·대화·제한을 구분하고, 해당 원장의 artifacts 링크에 인증정보 없는 증거를 보존한다. 실제 화면에서 발견한 안내의 Markdown 강조 기호 노출도 공통 연결 UI에서 수정했다. PR #1633(7ca6f2a4) 웹 배포 후 실제 설치 앱을 정상 종료·재실행해 강조 기호 제거와 root 자동 복원을 확인했다. 최종 설치판은1.2.4다.
 
 ## TASK-20260908-update-install-proof — 실제 설치 완료 (DQA 1.2.1)
 
