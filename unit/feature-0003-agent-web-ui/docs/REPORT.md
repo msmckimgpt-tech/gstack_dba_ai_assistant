@@ -3048,3 +3048,10 @@ PR #1619 / 서버 92cfa2c2 전체 배포 및 DQA 1.2.0 설치기 공개 완료. 
 - Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
 
 정리 중 cycle-finalize가 종료 코드 141로 실패했다. `set -o pipefail` 아래에서 첫 경로를 얻은 awk의 조기 종료가 큰 worktree 목록을 출력하는 git에 SIGPIPE를 전달했다. cycle-init/finalize 모두 첫 경로만 출력하면서 나머지 입력을 소비하도록 수정했다. Bats 전체 25 PASS, 격리된 기존 코드 뮤턴트는 신규 2건 모두 141로 실패. 제품 런타임 변경은 없으며 추가 배포 대상이 아니다.
+
+## CHG-20260908T162000-tool-surface
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:01:57.915443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+[TASK-20260908T162000-tool-surface 도구 감사](TOOL_SURFACE_AUDIT.md): 대화의 HTTP404/SQL 가드 제한을 분리해 확인했다. 조회5종 연결, 21종 계약 분류, 서버 catalog·MCP 전체인자 전달과 제품 경계 보강. 검증/배포 결과는 test-runs.d/TASK-20260908T162000-tool-surface.md.

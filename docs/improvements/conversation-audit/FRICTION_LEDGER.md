@@ -2633,3 +2633,15 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - 읽기/변경 경계: replica SELECT + MinIO GET, 운영 데이터 write 0. 기존 손상본 보존. 배포 구조 재현과 사용자 AI 마찰 재발률은 별도 측정.
 
 - FR-attachment-last-fence-captures-answer deployment update (2026-09-08T06:27:43.349266+00:00; Session 01a07f94-148f-7253-a515-1a7a66a97cea): PR #1629 / e8fd398b full deployment exit 0; 7 services 56 checks PASS; stored-file replay 10 SHA matches / 6 contaminated tails excluded. Original data unchanged. `unverified-live` means user AI re-generation / future recurrence is not yet measured, not an undeployed fix.
+
+## FR-external-tool-catalog-omits-core-introspection — fixed:undeployed (L1↔L2↔L5)
+
+- source: 사용자 후속 명시 제보, 대화 …8c73806a core msg9248. seen_count1 / distinct_conv1. 30일 search_routines+404/미제공 assistant 언급 대화1.
+- symptom_confidence: high; rootcause_confidence: high. 내부 core 구현·외부 allowlist 누락·현재 HTTP 회귀 재현이 일치한다.
+- RC: routers/ai_tools.py P0_TOOLS(7노출)와 core prompt의 내부도구 지시 불일치, MCP/러너 목록을 따로 관리. 15정적+6조건부 중 8정적 도구 누락. 구조 결함이므로 단일 제보에서도 fix-now.
+- disposition: fix-now. F1/S4/C5/E2/R4. 조회5개 연결(명시적 허용 제품 내부), 나머지9개 제한/대체경로. 신규 인증/OAuth scope/RBAC 완화 없음.
+- 안전: 범위 없는 MySQL 검색/권한 회수 미반영/Agent 키워드 미허용 단계/EXPLAIN batch 검증 누락을 노출 전에 차단. 공백 schema·alias 포함 DB명 반례도 검증.
+- 실제 도구 호출: task6개 원장132호출. 404는 실행 전 반환으로 원장에 없고 코드+발언+HTTP 재현으로 확인. DB_NAME 차단은 의도된 가드로 기각, 대체 조회 안내.
+- fix: TASK-20260908T162000-tool-surface; primary feature-0003-agent-web-ui. TOOL_SURFACE_AUDIT.md 및 test-runs.d 정본.
+- 이전 첨부 수정 폐루프: 배포 이후 해당 대화 assistant 신규0. 재발/소멸 판정 불가, 기존 상태 유지.
+- live: 배포 전. 실제 새 사용자 AI 응답은 미실측이며 배포 후 코드 도달성과 분리한다.

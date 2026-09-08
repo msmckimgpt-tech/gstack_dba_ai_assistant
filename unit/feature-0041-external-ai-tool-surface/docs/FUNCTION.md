@@ -56,11 +56,9 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 
 ## 4. Out of Scope
 
-- **P1 이후로 이월**: `execute_sql` · `explain_query` · `get_sample_rows`(행수 예산·rate
-  limit·추출 원장이 선행 조건) / `describe_routine` · `search_routines` ·
-  `check_table_coverage` · `graph_navigate`(P2) / `review_answer` opt-in red-team(P3)
-- **영구 제외**: `scratch_*` 4종 · `read_attachment` · `update_attachment` — 쓰기·첨부 계열은
-  외부 노출 대상 아님(세션 간 서버측 공유 상태를 만들지 않기 위함이기도 하다)
+- **대체 경로 사용**: get_sample_rows → execute_sql의 제한된 SELECT; check_table_coverage → read_task_attachment + describe_schema; graph_navigate → 제품 범위 get_task_context. review_answer opt-in red-team은 미제공.
+- **일반 dispatcher 제외**: scratch_* 4종, read_attachment, update_attachment. 웹 task의 전용 첨부 읽기·최종 블록 저장은 feature-0043 계약으로 제공한다.
+- **현재 제공 계약**: 조회12종과 JSON 인자는 get_tool_catalog, MCP는 run_read_tool로 전체 인자를 전달한다. 상세는 feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md.
 - 사용자 LLM 자격증명의 보관·대리 호출(ANCHOR §2 Alt-B/C에서 폐기)
 - feature-0023 `ask` 축의 동작 변경 — 무회귀
 - 외부 AI 런타임 내부의 컨텍스트 격리 강제 (구조적으로 불가 — §9 참조)

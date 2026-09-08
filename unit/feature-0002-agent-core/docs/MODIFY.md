@@ -3329,3 +3329,7 @@ Task-Cycle: feature-0002-agent-core
 ## CHG-20260908T070000-main-integration
 - Related TASK: TASK-20260908-prompt-layer-delivery; Session: 01a07f86-30e8-7493-ab26-ae82792def88.
 - 병합 cc30233e의 문서 충돌 해소: 두 TASK/REPORT 병존, native 최신 main 상태 보존, STATUS/ROUTEMAP 재생성. 집중 180건 재검증 PASS. 병합 commit의 post-commit MODIFY delta 누락을 이 후속 문서 commit으로 보완한다. 제품 코드 추가 변경 없음.
+
+## CHG-20260908T162000-tool-surface
+
+- 2026-09-08T08:01:57.915443+00:00; TASK-20260908T162000-tool-surface. 외부 AI 도구 누락과 검색/권한 경계 보완의 정본은 feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md 및 해당 TASK/REPORT. 사용자 요청 범위로 기존 가드를 유지하고 조회5종을 연결한다.

@@ -235,3 +235,7 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 - `unit/feature-0046-native-client/src/client/supervisor.py::RunnerSupervisor`: 소유한 자식의 출력 배수·종료 감지·유한 재시도. `core.py::spawn_runner`에서 생성하고 `bridge.py`/`gui.py`가 제어한다.
 - `unit/feature-0002-agent-core/src/scripts/build_bridge_agent.py`: 단일 파일 및 실행 소스 SHA-256 스탬프 생성.
 - 회귀: feature-0043 `tests/test_runner_update_processes.py`, feature-0046 `tests/test_runner_supervisor.py`, Windows `tests/windows/verify_runner_recovery.py`.
+
+## 외부 AI 도구 catalog (2026-09-08)
+
+외부 도구 계약은 `unit/feature-0003-agent-web-ui/src/external_tool_catalog.py`의 build_catalog/render_guidance가 소유한다. routers/ai_tools.py의 명시적 allowlist와 core Schema를 합쳐 HTTP/MCP/러너에 현재 목록을 전달한다.

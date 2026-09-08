@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Function
 
+## REQ-20260908-tool-surface — 현재 도구 계약
+
+외부 AI dispatcher는 명시된 조회 12종을 제공하고 내부 도구 9종에는 제한/대체 경로를 명시한다.
+허용목록과 core 인자 Schema로 생성한 catalog를 get_tool_catalog·claim·context·서버 시스템 지침에 전달한다.
+프로시저/DB객체 검색·정의와 읽기 전용 실행계획을 사용할 수 있으며 신규 core 도구를 자동 공개하지 않는다.
+현재 제품·대화 권한을 실행 때 재검증하고 MySQL 카탈로그·Agent 작업 검색도 허용 DB 범위로 제한한다.
+전체 도구 매핑과 실제 제약은 [TOOL_SURFACE_AUDIT.md](TOOL_SURFACE_AUDIT.md)를 따른다.
+
 ## 2026-09-08 — Codex 연결 판정 보완
 
 사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.

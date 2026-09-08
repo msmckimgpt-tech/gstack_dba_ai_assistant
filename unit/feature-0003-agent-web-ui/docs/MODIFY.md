@@ -6059,3 +6059,10 @@ Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 w
 ## CHG-20260908T160200-codex-verified-closeout
 - Related TASK: TASK-20260908-codex-connect-fix.
 - PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+
+## CHG-20260908T162000-tool-surface
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:01:57.915443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+조회 도구가 내부에는 있지만 외부 allowlist/MCP/러너 안내가 달라 HTTP404를 반환했다. explicit allowlist + core Schema의 catalog를 조립하고 5조회 연결·9제한 대체경로 전달. 검색 범위/현재 권한/EXPLAIN 검증 결함 보강. 상세 TOOL_SURFACE_AUDIT.md.
