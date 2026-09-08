@@ -127,6 +127,27 @@ Evidence: **라운드 1 — 4명 전원 BLOCK** + codex P1·P2. 뿌리는 하나
 §18.8 수렴 계약 (a) 대로 **수정한 라운드는 종결 근거가 아니다** — 라운드 3 확인이 남아 있다.
 원장은 `docs/REVIEW.md` REV-20260908T131500-* / REV-20260908T142000-*.
 
+## Run — POST-DEPLOY 실측 (배포본 기준)
+
+Environment: CLI
+Result: PASS
+Scenario: 머지·배포 후 **배포된 컨테이너와 서빙되는 자산**에서 사용자가 실제로 받는 값을 잰다
+Build: web-a/web-b `mysql-ai-web:3658deee` (둘 다 healthy) · main `3658deee`
+Evidence:
+- **서버 반 (배포 컨테이너 `repo-web-a-1` 안에서 라이브 DB 전건 재생)** —
+  `ROWS=10114 DROPPED_WORK=21 DROPPED_REASON=0 LEAKED_AFTER=0 census=25`.
+  대표 변환: `search_tables {'keyword': 'masangsoft_eos_token'}` →
+  ``masangsoft_eos_token` 관련 테이블을 찾는다`.
+- **프런트 반 (라이브 엣지에서 받은 실제 자산)** — `https://localhost/` 가 가리키는
+  `app.js?v=737ff1e2c409` (501,697B) 를 내려받아 대조:
+  `stripDisplayTicks` 3 · `stepTitleInfo` 3 · `isFallback` 4 · `STEP_ARGS_LITERAL_RE` 4 ·
+  `scratch_reset: "임시 비움"` 1 · `materialize_attachment: "첨부 저장"` 1 · 라벨 표 **30종**.
+  제거한 폴백은 전부 **0건**: `TOOL_LABEL_MAP[toolName] || toolName` · `step.intent` ·
+  `latest.intent` · `scratch_reset: "임시 삭제"`.
+- healthz 200 · post-cutover soak 통과 · Caddy 무변경(blip 0).
+Limit: 이 Run 은 **서버가 내보내는 문자열과 브라우저가 내려받는 코드**를 잰다. 실제 DQA 앱
+화면에서의 렌더는 아래 DQA-client Run 의 범위이며 여전히 NOT-RUN 이다.
+
 ## 미검증·한계 (숨기지 않는다)
 
 - **DQA 앱 화면 실측 미수행** — 위 사유(디버깅 포트 부재). 배포 후 재검증 전까지 「사용자

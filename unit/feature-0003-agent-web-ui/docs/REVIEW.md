@@ -8192,3 +8192,9 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Reason: 배포 후 라이브 실측 결과와 그 검증의 미확인 경계를 test-runs 에 기록만 한다.
   제품 코드·FUNCTION·정책·권한 변경 0 — §18.8 dispatch 표의 「비정책 doc-only」 행.
 - Timestamp: 2026-09-08T16:00:00+09:00
+
+## REV-20260908T163000-step-tool-syntax-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 제품 코드 델타 0 — 배포 후 실측 결과 기록뿐이다. 코드 축의 적대 검증은
+  REV-20260908T131500-* / T142000-* / T150000-* 3라운드가 덮는다.
+- Timestamp: 2026-09-08T16:30:00+09:00

@@ -6228,3 +6228,14 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - Related TASK: TASK-20260908T160000-share-postdeploy.
 - `docs/test-runs.d/TASK-20260908T125500-share-client-entry.md`: Run 6(라이브 도달성) 추가.
   코드·FUNCTION·정책 변경 없음 — 배포 후 실측 결과와 **미확인 경계**의 기록뿐이다.
+
+## CHG-20260908T163000-step-tool-syntax-postdeploy
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak. 제품 코드 변경 **0** — 배포 증적만.
+- PR #1637 병합(main `3658deee`) 후 `bin/deploy-web.sh --web-only` 로 web-a/b 재배포
+  (`mysql-ai-web:3658deee`, 둘 다 healthy · soak 통과 · Caddy 무변경).
+- POST-DEPLOY 실측 2축: ① **배포 컨테이너 안**에서 라이브 원장 10,114행 전건 재생 —
+  잔존 유출 **0** · 사유 손실 **0** · census 25 ② **라이브 엣지에서 내려받은 실제 자산**
+  (`app.js?v=737ff1e2c409`, 501,697B) 대조 — 신규 심볼 전건 존재, 제거한 폴백 4종 전부 0건,
+  라벨 표 30종.
+- 남은 미검증: DQA 클라이언트 **화면** 실측(앱 WebView2 디버깅 포트 부재 — PB-0009 NOT-RUN 유지).
