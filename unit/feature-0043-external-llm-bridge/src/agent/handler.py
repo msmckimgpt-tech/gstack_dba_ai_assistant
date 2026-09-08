@@ -114,7 +114,7 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
                               model=want_model, effort=want_effort, runtimes=runtimes,
                               caps=caps,
                               system=(_sysp if _use_sys_channel else None),
-                              token=api.token)
+                              token=api.token, api_base=api.base, api_ca=api.ca)
     if answer == CANCELED:
         # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
         # 토큰과 왕복을 아끼는 지점이다.

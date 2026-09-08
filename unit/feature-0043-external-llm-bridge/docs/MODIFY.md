@@ -4808,3 +4808,14 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+
+## CHG-20260908T115500-bridge-network
+
+- TASK-20260908T115500-bridge-network / REQ-20260908-dqa-network / Issue #1607.
+- 토큰 복구 후 실제 앱 첨부 읽기에서 네트워크 차단을 관측해 후속 수정한다.
+- invoke._with_dqa_network + handler의 Api base/ca 전달, BRIDGE_CA WSL 경로변환,
+  요청별 TLS 검증 지침과 토큰 printenv 권고 제거. 인증·토큰 scope 변경 없음.
+- 자식 실행의 네트워크 권한 변경을 별도 security 확인 대상으로 삼는다. 파일은 read-only,
+  DQA hostname allowlist 강제, 불특정 네트워크/쓰기/실행제한 해제 폴백 없음.
+- 근거·검증: test-runs.d/TASK-20260908T115500-bridge-network.md 및 후속 PR 설명.
