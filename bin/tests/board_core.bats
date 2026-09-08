@@ -17,7 +17,7 @@ setup() {
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/xdg"
   W="$BATS_TEST_TMPDIR/wrapper"; mkdir -p "$W/repo"
   printf -- '---\ntemplate_version: v3.52.0\n---\n# AGENTS\n' > "$W/repo/AGENTS.md"
-  unset CLAUDE_CODE_SESSION_ID CLAUDE_ENV_FILE AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_NOW
+  unset CODEX_THREAD_ID CLAUDE_CODE_SESSION_ID CLAUDE_ENV_FILE AGENT_BOARD_SID AGENT_BOARD_TOKEN AGENT_BOARD_DISABLE BOARD_NOW
   cd "$W/repo"
   run bash "$B" init --mode private; [ "$status" -eq 0 ]
   ROOT="$(grep '^root=' "$W/.board-root" | cut -d= -f2)"
