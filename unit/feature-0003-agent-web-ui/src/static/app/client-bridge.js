@@ -190,24 +190,33 @@ export function initClientPanel(setStatus, notify, needsAttention) {
           retry.classList.add("connect-modal-btn--primary");
           li.appendChild(retry);
         }
-        for (const r of options.filter((r) => !r.usable && !r.logged_in && r.can_login_here)) {
-          li.appendChild(button(locationLabel(r) + " 로그인", async () => {
-            pending.add(name); paint();
-            try {
-              const result = await bridgeCall("login", {id: r.id});
-              if (!result.ok) throw new Error(result.detail || "로그인을 완료하지 못했습니다.");
-              attempted.delete(name); errors.delete(name);
-              pending.delete(name);
-              await refresh(true);
-            } catch (e) { errors.set(name, e.message); }
-            finally { pending.delete(name); paint(); }
-          }));
+      }
+      const unavailable = options.filter((r) => !r.usable && (r.answers !== null || r.logged_in === false || r.error_code));
+      if (unavailable.length) {
+        const locations = node("ul", "connect-ai-unavailable");
+        locations.setAttribute("aria-label", "현재 사용할 수 없는 위치");
+        for (const r of unavailable) {
+          const item = node("li", "connect-ai-unavailable-location");
+          item.append(node("strong", "", locationLabel(r)),
+            node("span", "connect-ai-detail", r.detail || "응답을 확인하지 못했습니다."));
+          if (!r.logged_in && r.can_login_here && !busy && !waiting && supported) {
+            item.appendChild(button("로그인", async () => {
+              pending.add(name); paint();
+              try {
+                const result = await bridgeCall("login", {id: r.id});
+                if (!result.ok) throw new Error(result.detail || "로그인을 완료하지 못했습니다.");
+                attempted.delete(name); errors.delete(name);
+                pending.delete(name);
+                await refresh(true);
+              } catch (e) { errors.set(name, e.message); }
+              finally { pending.delete(name); paint(); }
+            }));
+          }
+          locations.appendChild(item);
         }
+        li.appendChild(locations);
       }
       if (error) li.appendChild(node("p", "connect-ai-error", error));
-      else if (!active && !waiting && !usable.length && options.length) {
-        li.appendChild(node("p", "connect-ai-detail", options[0].detail || "AI에 로그인한 뒤 다시 찾아 주세요."));
-      }
       const restoreFocus = old && old.contains(document.activeElement);
       if (old) old.replaceWith(li); else list.appendChild(li);
       if (restoreFocus) { li.tabIndex = -1; li.focus(); }

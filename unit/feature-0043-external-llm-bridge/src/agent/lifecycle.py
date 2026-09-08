@@ -21,8 +21,8 @@ import urllib.request
 from .api import Api
 from .base import _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _DEFAULT_MAX_WORKERS, _DEFAULT_WORKERS, _DEFAULT_WORKER_IDLE_SEC, _MAX_STALLED_ROUNDS, _WAIT_TIMEOUT_SEC
 from .cancel import CancelRegistry
-from .caps import (_CREATION_SOURCES, baseline_index, confirm_ai_or_report,
-                   resolve_caps, sanitize_caps)
+from .caps import (_CREATION_SOURCES, _LIVE_ANSWER_SOURCES, baseline_index, confirm_ai_or_report,
+                   resolve_caps, sanitize_caps, verify_ai_liveness)
 from .conf import load_conf, save_conf
 from .discovery import _no_ai_message, pick_ai, client_runtime_selection
 from .events import AGENT_FEATURES, AGENT_VERSION, BATCH_FEATURE, _EV_AI_FAIL, _EV_CONN_FAIL, _EV_CONN_OK, _EV_CONN_RETRY, _EV_CONN_UNAUTH, _EV_HB_FAIL, _EV_HB_STALE, _EV_HB_SUPERSEDED, _EV_HB_UNAUTH, _EV_RUN_FATAL, _EV_SELFUPDATE, _EV_RUN_READY, _EV_RUN_START, _EV_RUN_STOP, _EV_TASK_CANCEL, _EV_TASK_CLAIM_FAIL, _EV_TASK_CLAIM_SKIP, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _batch_override_from_args, _self_build, _transport_is_safe, apply_consent
@@ -214,9 +214,9 @@ def start_heartbeat(api: Api, stop: threading.Event,
             # 능력은 **매번** 싣는다. 처음 한 번만 보내면 서버가 재시작하거나 토큰 행이 갈릴 때
             # 화면의 목록이 영영 비고, 그 빈 목록은 "러너가 없다" 와 구분되지 않는다.
             # 서버는 값이 그대로면 쓰지 않으므로(쓰기 증폭 없음) 매번 싣는 비용이 없다.
-            reported = [dict(row) for row in (runtimes or [])] if on_reported else runtimes
+            reported = [dict(row) for row in (runtimes or [])]
             outgoing = [{k: v for k, v in row.items() if k != "_client_location"}
-                        for row in reported] if on_reported else runtimes
+                        for row in reported] if on_reported else (None if runtimes is None else reported)
             res = api.heartbeat(outgoing, released_instances=_pending_release)
             code = res.get("_http")
             if code == 401:
@@ -258,7 +258,7 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 # 경로에 있다(`sanitize_caps` 가 `verified` → `cache` 로 강등한다).
                 # `cache` 도 신고 가능 출처라 화면의 목록은 그대로 유지된다.
                 for _r in (runtimes or []):
-                    if _r.get("source") in _CREATION_SOURCES:
+                    if _r.get("source") in _CREATION_SOURCES and _r in reported:
                         _r["source"] = "cache"
                 # 사망 신고가 서버에 닿았다 — 다음 신호부터는 싣지 않는다.
                 if _pending_release:
@@ -888,6 +888,13 @@ def main() -> int:
                     _client_status[name] = {"target": target, "state": "ready"}
             _write_client_status()
 
+    def _client_selection_revision():
+        try:
+            stat = os.stat(os.environ["BRIDGE_RUNTIME_SELECTION"])
+            return stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns
+        except OSError:
+            return None
+
     def _negotiate_client_caps():
         targets = client_runtime_selection() or {}
         with _caps_publish_lock:
@@ -900,7 +907,7 @@ def main() -> int:
             if removed:
                 rows = list(_client_rows.values())
                 if not rows: note_ai_probing("선택한 위치의 모델을 확인하는 중입니다.")
-                _publish_caps(rows, {r["runtime"]: caps[r["runtime"]] for r in rows})
+                _publish_caps(rows, {r["runtime"]: caps[r["runtime"]] for r in rows if r["runtime"] in caps})
             for name, target in targets.items():
                 key = (name, json.dumps(target, sort_keys=True))
                 if name in _client_rows or key in _client_jobs: continue
@@ -908,38 +915,46 @@ def main() -> int:
                 if name not in _caps_asked: _caps_asked.append(name)
                 _client_status[name] = {"target": target, "state": "pending"}
                 cached = (caps.get(name) or conf_caps.get(name) or {}) if not args.refresh_caps else {}
-                if cached.get("client_location") != target: cached = {}
+                location = {k: v for k, v in target.items() if k != "selection_id"}
+                if cached.get("client_location") != location: cached = {}
                 _CAPS_NEGOTIATING[0] = True
-                def run(name=name, target=target, key=key, cached=cached):
+                def run(name=name, target=target, key=key, cached=cached, location=location):
                     failure = None
                     try:
                         got, detail = resolve_caps(name, {name: cached} if cached else None,
                                                    args.refresh_caps,
                                                    baseline=None if args.refresh_caps else dict(_caps_baseline))
+                        row = next((r for r in got if r.get("runtime") == name and r.get("models")
+                                    and r.get("source") != "baseline"), None)
+                        live, why = True, ""
+                        if row and row.get("source") not in _LIVE_ANSWER_SOURCES:
+                            live, why = verify_ai_liveness(name, list(_RUNTIME_SPECS[name]["argv"]))
                         with _caps_publish_lock:
                             if target != (client_runtime_selection() or {}).get(name): return
-                            row = next((r for r in got if r.get("runtime") == name and r.get("models")
-                                        and r.get("source") != "baseline"), None)
-                            if row:
+                            if row and live:
+                                # catalog는 신고할 모델만 반환하며 영속 상세에는 없을 수 있다.
+                                if name in detail:
+                                    caps[name] = dict(detail[name], client_location=location)
                                 _client_rows[name] = dict(row, _client_location=target)
-                                caps[name] = dict(detail[name], client_location=target)
                             else:
                                 failure = {"target": target, "state": "failed", "failed_at": time.time_ns(),
-                                                        "detail": "모델을 확인하지 못했습니다. 다시 연결해 주세요."}
+                                           "detail": "AI가 응답하지 않습니다. 다시 찾아 주세요." if row else
+                                                     "모델을 확인하지 못했습니다. 다시 연결해 주세요."}
                             active = client_runtime_selection() or {}
                             rows = [r for n, r in _client_rows.items() if r["_client_location"] == active.get(n)]
-                            details = {r["runtime"]: caps[r["runtime"]] for r in rows}
+                            details = {r["runtime"]: caps[r["runtime"]] for r in rows if r["runtime"] in caps}
                             _publish_caps(rows, details)
                             if rows: note_ai_outcome(True)
                             elif not any(v.get("state") == "pending" for n, v in _client_status.items() if n != name):
                                 note_ai_unusable("연결된 AI의 모델을 확인하지 못했습니다.")
                             if caps: save_conf(args.base, args.ca, "", args.cmd, caps=caps)
-                    except Exception:
+                    except Exception as exc:
                         with _caps_publish_lock:
                             if target == (client_runtime_selection() or {}).get(name):
+                                _client_rows.pop(name, None)
                                 failure = {"target": target, "state": "failed", "failed_at": time.time_ns(),
                                                         "detail": "모델 확인에 실패했습니다. 다시 연결해 주세요."}
-                        _log_exc("client_caps")
+                        _log_exc("client_caps.failed", "선택한 AI의 모델 확인에 실패했습니다", exc, runtime=name)
                     finally:
                         with _caps_publish_lock:
                             _client_jobs.discard(key)
@@ -1125,20 +1140,29 @@ def main() -> int:
             _log("쓸 수 있는 모델을 받았습니다 — 웹 선택기에 나타납니다.")
 
     def _watch_client_selection() -> None:
-        def revision():
-            try:
-                stat = os.stat(os.environ["BRIDGE_RUNTIME_SELECTION"])
-                return stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns
-            except OSError: return None
         previous = None
+        attempt, retry_at = 0, 0.0
         while not heartbeat_stop.wait(1):
-            current = revision()
-            if current != previous:
+            current = _client_selection_revision()
+            changed = current != previous
+            targets = client_runtime_selection() or {}
+            with _caps_publish_lock:
+                failed = any(s.get("state") == "failed" and s.get("target") == targets.get(n)
+                             for n, s in _client_status.items())
+                pending = bool(_client_jobs)
+            if changed or (failed and not pending and time.monotonic() >= retry_at):
                 previous = current
+                if changed: attempt = 0
                 try:
                     _negotiate_caps()
                 except Exception as exc:
                     _log_exc("caps.selection_refresh_fail", "연결 위치 변경 확인 실패", exc)
+                ceiling = _CAPS_RETRY_CEILING_SHOWING_SEC if runtimes else _CAPS_RETRY_CEILING_SEC
+                delay = _CAPS_RETRY_BACKOFF_SEC[attempt] if attempt < len(_CAPS_RETRY_BACKOFF_SEC) else ceiling
+                retry_at = time.monotonic() + delay
+                log_event("caps.retry_scheduled", "선택한 AI 확인에 실패하면 간격을 두고 다시 확인합니다.",
+                          attempt=attempt + 1, delay_sec=delay)
+                attempt += 1
 
     if args.cmd:
         _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
@@ -1170,7 +1194,7 @@ def main() -> int:
     #   두면 **다른 런타임이 하나라도 신고되면** 표 밖 CLI 가 argv 를 못 배운 채 재질의
     #   기회를 0 으로 잃는다 — `_needs_retry` 를 만든 이유가 바로 그 술어 오류인데 문에는
     #   옛 술어가 남아 있었다(고친 판정과 그 판정을 부르는 자리가 갈린 형태).
-    if not args.cmd and (not _caps_first or _needs_retry()):
+    if not args.cmd and client_runtime_selection() is None and (not _caps_first or _needs_retry()):
         # 협상은 **뒤에서** 한다. 끝나면 위 `runtimes` 가 제자리로 갱신되고 다음 하트비트가
         # 새 목록을 싣는다 — 그때까지 웹 선택기만 비어 있고, 질문 처리는 이미 살아 있다.
         #

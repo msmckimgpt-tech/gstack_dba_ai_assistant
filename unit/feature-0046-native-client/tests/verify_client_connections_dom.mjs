@@ -56,6 +56,20 @@ async function scenario({runtimes=[win,codex], preferences={}, fail=false, token
 }
 const results = {};
 {
+  const denied = {...codex, id:"codex (WSL · Ubuntu · blocked)", user:"blocked", usable:false, answers:false,
+    logged_in:true, can_login_here:false, error_code:"permission_denied", detail:"실행 권한이 없습니다 (Permission denied)."};
+  const s=await scenario({runtimes:[codex,denied],preferences:{codex:denied.id}});
+  assert.deepEqual(s.calls.filter(c=>c.action==="connect").map(c=>c.body.id),[codex.id]);
+  const card=s.doc.querySelector('[data-platform="codex"]');
+  assert(card.textContent.includes("blocked") && card.textContent.includes("Permission denied"));
+  assert.equal(card.querySelectorAll('input[type="radio"]').length,0);
+  assert.equal(card.querySelectorAll('.connect-ai-unavailable button').length,0);
+  const login=await scenario({runtimes:[{...codex,usable:false,logged_in:false,answers:null,can_login_here:true,detail:"로그인이 필요합니다."}]});
+  assert(login.doc.querySelector('.connect-ai-unavailable button').textContent.includes("로그인"));
+  results.denied_visible_but_never_connected=true;
+}
+
+{
   const s = await scenario();
   assert.deepEqual(s.calls.filter(c=>c.action==="connect").map(c=>c.body.id).sort(),[win.id,codex.id].sort());
   assert.equal(s.doc.querySelectorAll('input[type="radio"]').length,0);

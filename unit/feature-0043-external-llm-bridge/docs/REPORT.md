@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908-codex-connect-fix
+
+catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+
+구현·배포·실측 결과 정본은 feature-0046-native-client/docs/REPORT.md와 해당 test-runs.d 원장이다. 실제 DQA 설치/요청 검증은 배포 후 이어서 기록한다.
+
 ## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검토·개선
 - 요청한 여섯 계층의 누적 순서는 정상. 계정 개인 설정은 `WebSystemPrompts`의 account scope 전역/제품 행이다.
 - 수정: 지침 SQL 조회 오류를 빈 설정으로 숨기던 경로 차단; 제품 표시명 오류와 내용 조회 분리; 오류 안내·5초 비동기 재시도; 최초 점유자에 한정한 정리; 전달 원문 없는 길이·SHA-256·채널 진단.

@@ -179,6 +179,7 @@ class RuntimeState:
     answers: bool | None = None
     distro: str = ""
     user: str = ""
+    error_code: str = ""
 
     @property
     def installed(self) -> bool:
@@ -187,7 +188,7 @@ class RuntimeState:
     @property
     def usable(self) -> bool:
         """이 런타임으로 **정말 답을 받을 수 있는가**. 화면·선택은 이 값을 본다."""
-        return bool(self.installed and self.answers)
+        return bool(self.installed and self.answers and not self.error_code)
 
     def argv(self, *args: str) -> list[str]:
         """이 런타임을 실행하는 argv. WSL 이면 `wsl.exe` 를 앞에 둔다."""
@@ -213,7 +214,7 @@ class RuntimeState:
     @property
     def can_login_here(self) -> bool:
         """이 클라이언트가 **로그인을 대행할 수 있는가**. 아니면 화면이 안내로 강등한다."""
-        return bool(_CLI.get(self.name, {}).get("login"))
+        return bool(_CLI.get(self.name, {}).get("login")) and self.error_code != "permission_denied"
 
 
 def _is_windows() -> bool:
@@ -275,7 +276,7 @@ def hidden_child_kwargs() -> dict:
     return kw
 
 
-def _run(argv: list[str], timeout: int = 30, encoding: str = "utf-8") -> tuple[int, str]:
+def _run(argv: list[str], timeout: int = 30, encoding: str = "utf-8", *, stdout_only: bool = False) -> tuple[int, str]:
     """자식 실행 — **셸을 거치지 않는다**(argv 직접).
 
     ⚠ 자식 입출력은 **UTF-8 명시**다. 로케일 인코딩(한국어 윈도우 `cp949`)에 맡기면 인코딩
@@ -289,9 +290,11 @@ def _run(argv: list[str], timeout: int = 30, encoding: str = "utf-8") -> tuple[i
         p = subprocess.run(argv, capture_output=True, timeout=timeout,
                            encoding=encoding, errors="replace",
                            **hidden_child_kwargs())
-        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+        return p.returncode, ((p.stdout or "") + ("" if stdout_only and p.returncode == 0 else (p.stderr or ""))).strip()
     except FileNotFoundError:
         return 127, "실행 파일을 찾지 못했습니다."
+    except PermissionError:
+        return 126, _PERMISSION_DETAIL
     except subprocess.TimeoutExpired:
         return 124, "응답이 없어 중단했습니다."
     except Exception as exc:  # noqa: BLE001
@@ -321,6 +324,20 @@ _PING_PROMPT = "OK 라고만 답하세요."
 _PING_TIMEOUT = 60
 
 
+_PERMISSION_DETAIL = "실행 권한이 없습니다 (Permission denied). 이 위치는 자동 연결에서 제외됩니다."
+
+
+def _permission_denied(output: str) -> bool:
+    return bool(re.search(r"permission denied|access is denied|eacces|errno 13|winerror 5|액세스가 거부|권한이 거부", output, re.I))
+
+
+def _mark_permission_denied(st: RuntimeState) -> RuntimeState:
+    st.answers = False
+    st.error_code = "permission_denied"
+    st.detail = _PERMISSION_DETAIL
+    return st
+
+
 def verify_answers(st: RuntimeState, timeout: int = _PING_TIMEOUT) -> RuntimeState:
     """**정말 답하는지** 한 번 물어본다. `st.answers` 를 채워 돌려준다.
 
@@ -347,8 +364,12 @@ def verify_answers(st: RuntimeState, timeout: int = _PING_TIMEOUT) -> RuntimeSta
         st.detail = "이 AI 를 어떻게 부르는지 알려져 있지 않습니다."
         return st
     rc, out = _run(st.argv(*[a.replace("{prompt}", _PING_PROMPT) for a in ask]),
-                   timeout=timeout)
-    st.answers = (rc == 0 and bool((out or "").strip()))
+                   timeout=timeout, stdout_only=True)
+    if _permission_denied(out):
+        return _mark_permission_denied(st)
+    st.error_code = ""
+    # 종료 성공/진단 출력만으로는 응답 성공이 아니다. 짧은 확인 질문의 답을 확인한다.
+    st.answers = rc == 0 and bool(re.fullmatch(r"[\s\"'`*]*OK[.!\s\"'`*]*", out or "", re.I))
     if not st.answers:
         st.detail = ("설치·로그인은 되어 있는데 **답을 받지 못했습니다**"
                      if st.logged_in else st.detail or "답을 받지 못했습니다")
@@ -389,6 +410,9 @@ def probe_runtime(name: str, where: str = "windows",
         st.detail = "로그인 상태를 확인하는 명령이 알려져 있지 않습니다."
         return st
     rc, out = _run(st.argv(*status))
+    if _permission_denied(out):
+        st.logged_in = None
+        return _mark_permission_denied(st)
     st.logged_in = (rc == 0)
     # claude 는 JSON 을 낸다 — 계정까지 보여 줄 수 있다. 못 읽어도 rc 판정은 유효하다.
     try:
@@ -416,6 +440,8 @@ def login(target: "str | RuntimeState", timeout: int = 300) -> tuple[bool, str]:
         name=str(target), path=which_runtime(str(target)), where="windows")
     if not st.installed:
         return False, "설치되어 있지 않습니다."
+    if st.error_code == "permission_denied":
+        return False, _PERMISSION_DETAIL
     argv = _CLI.get(st.name, {}).get("login")
     if not argv:
         return False, ("이 AI 는 이 프로그램에서 로그인을 대신 실행할 수 없습니다. "

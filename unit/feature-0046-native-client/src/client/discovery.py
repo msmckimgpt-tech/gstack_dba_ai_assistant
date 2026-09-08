@@ -19,6 +19,13 @@ CATALOG_TTL = 900
 MAX_WORKERS = 4
 
 
+_SERVICE_USERS = frozenset({"gh-runner"})
+
+
+def _user_visible(where, user):
+    return where != "wsl" or user not in _SERVICE_USERS
+
+
 def locations(on_found=None) -> list[core.RuntimeState]:
     found = [core.RuntimeState(name=n, path=p) for n in core.RUNTIMES
              if (p := core.which_runtime(n))]
@@ -44,6 +51,7 @@ def locations(on_found=None) -> list[core.RuntimeState]:
             if (len(parts) == 7 and parts[2].isdigit()
                     and (parts[2] == "0" or 1000 <= int(parts[2]) < 65534)
                     and not parts[6].endswith(("/nologin", "/false"))
+                    and _user_visible("wsl", parts[0])
                     and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*\$?", parts[0])):
                 users.append(parts[0])
         for user in users:
@@ -68,7 +76,7 @@ def state_json(st: core.RuntimeState) -> dict:
     return {"id": st.label, "name": st.name, "where": st.where, "path": st.path,
             "distro": st.distro, "user": st.user, "logged_in": st.logged_in,
             "answers": st.answers, "usable": st.usable, "detail": st.detail,
-            "can_login_here": st.can_login_here}
+            "can_login_here": st.can_login_here, "error_code": st.error_code}
 
 
 class DiscoveryCache:
@@ -102,14 +110,18 @@ class DiscoveryCache:
                 if any(not isinstance(s, str) or len(s) > 1024 or any(ord(c) < 32 for c in s)
                        for s in (path, distro, user)):
                     raise ValueError("invalid location")
+                if not _user_visible(where, user):
+                    continue
                 st = core.RuntimeState(name=name, path=path, where=where, distro=distro, user=user,
                                        logged_in=row.get("logged_in") is True,
                                        answers=row.get("answers") is True)
+                if row.get("error_code") == "permission_denied":
+                    core._mark_permission_denied(st)
                 states.append(st)
                 checked[st.label] = float(row.get("checked_at", 0))
             preferences = doc.get("preferences", {})
             self.preferences = {n: value for n, value in preferences.items()
-                                if n in core.RUNTIMES and isinstance(value, str)}
+                                if n in core.RUNTIMES and isinstance(value, str) and value in checked}
             self.states, self.checked = states, checked
             self.catalog_at = float(doc.get("catalog_at", 0))
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
@@ -117,7 +129,7 @@ class DiscoveryCache:
 
     def _save(self):
         # 독립 파일에는 위치와 검증 시각만 저장한다. detail(계정 이메일/명령 출력)은 제외한다.
-        rows = [{k: getattr(s, k) for k in ("name", "path", "where", "distro", "user", "logged_in", "answers")}
+        rows = [{k: getattr(s, k) for k in ("name", "path", "where", "distro", "user", "logged_in", "answers", "error_code")}
                 | {"checked_at": self.checked.get(s.label, 0)} for s in self.states]
         doc = {"version": 1, "catalog_at": self.catalog_at, "locations": rows,
                "preferences": self.preferences}
@@ -198,9 +210,10 @@ class DiscoveryCache:
                 current = core.probe_runtime(st.name, where=st.where, path=st.path,
                                              distro=st.distro, user=st.user)
                 if (not force and prev and prev.path == st.path and 0 <= age < ttl
-                        and current.logged_in is True):
-                    return replace(current, answers=prev.answers), True
-                if current.logged_in is not False:
+                        and current.logged_in is True and not current.error_code):
+                    return replace(current, answers=prev.answers, error_code=prev.error_code,
+                                   detail=core._PERMISSION_DETAIL if prev.error_code == "permission_denied" else current.detail), True
+                if current.logged_in is not False and not current.error_code:
                     core.verify_answers(current)
                 return current, False
 
@@ -221,7 +234,7 @@ class DiscoveryCache:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 def add(st):
                     with self.lock:
-                        if st.label in seen: return
+                        if st.label in seen or not _user_visible(st.where, st.user): return
                         seen.add(st.label)
                         self.states.append(replace(st, answers=None))
                         pending[st.name] += 1

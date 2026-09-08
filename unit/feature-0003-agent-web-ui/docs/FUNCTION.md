@@ -8,6 +8,10 @@ source_of_truth: true
 
 # Function
 
+## 2026-09-08 — Codex 연결 판정 보완
+
+사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
+
 ## REQ-20260908-attachment-boundary — 파일 경계와 답변 본문
 
 첨부 `attachment-edit`/`attachment-new`는 첫 유효 외곽 닫힘까지만 저장한다. 후속 설명·diff는 답변에 남긴다. 내부 fence가 있는 Markdown 파일은 더 긴 외곽 backtick fence를 사용하며, 외곽 닫힘은 미닫힌 내부 fence보다 우선한다. 일반 fenced code 및 4칸/탭 들여쓰기 예시는 첨부 명령으로 실행하지 않는다. 레거시 3-backtick 내 언어 지정 내부 fence는 지원하되 동일 길이 단독 fence는 외곽 종료다.

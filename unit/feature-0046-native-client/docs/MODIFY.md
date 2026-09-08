@@ -935,14 +935,34 @@ edit_policy: append-only
 - 1.2.1 공개 후 기존1.1.2 메뉴에서 설치·자동 재시작·최신 버전 확인 완료. 고아 프로세스 수동 종료 없이 회귀 상황 그대로 PASS.
 - setup둘exit0(43.737초), 같은 경로의 새DQA1개, 실제 exe/다운로드 SHA, pending해소, applyok, 5초 안정 실행 대조. 원본 증적과 전체 압축 설치 로그 보존.
 - FUNCTION/REPORT/TASK를 현재 설치·배포 상태로 동기화했다. 제품 코드는 직전 검토 후 바뀌지 않았다.
-
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- core: PermissionError 및 CLI 권한 실패의 안전한 상태 코드, 진단 출력과 실제 OK 응답 분리.
+- discovery: gh-runner 신규/기존 캐시 제외, 권한 실패가 성공 캐시로 덮이지 않음.
+- bridge: AI별 selection_id 유지/갱신 및 해당 receipt만 수락. 다른 AI 추가 시 기존 선택 id 보존.
+- native1.2.4 버전, 실제 설치용 Windows 빌드. runner/UI 변경은 각 기능 MODIFY에 기록.
+- 검증: native 회귀·DOM12시나리오·독립 패널, 실제 설치본 업데이트/AI 요청은 후속 증거로 분리.
 ## CHG-20260908T150900-codex-text-interaction — 텍스트 상호작용 복구
 - Timestamp: 2026-09-08T15:09:00+09:00; Session: codex text-interaction; Issue #1626.
 - `Shell.run`의 text_select 기본 False를 True로 바꿔 pywebview의 전역 선택 차단을 제거했다.
 - loaded 이벤트에서 소유 UI 스레드로 WebView2 기본 검색 단축키를 활성화했다. 디버그/개발자 도구는 비활성 상태를 유지한다.
-- 네이티브 버전 1.2.3 빌드; 동료 작업의 1.2.2와 구분한다. 첨부 본문 CSS·줄번호 제외 규칙을 유지한다.
+- 네이티브 버전 1.2.3 빌드; 동료 작업의 1.2.4와 구분한다. 첨부 본문 CSS·줄번호 제외 규칙을 유지한다.
 
 ## CHG-20260908T151800-codex-text-published — 공개 채널 검증 기록
 - Timestamp: 2026-09-08T15:18:00+09:00; Session: codex text-interaction.
 - PR #1628 병합·1.2.3 공개채널 다운로드 크기/SHA 일치 기록. 검색 UI NOT-RUN과 Issue #1626을 유지한다.
 - 변경은 현재 문서·검증 JSON 및 증거 파일의 불필요한 실행비트 정리다. 제품 코드 변경 없음.
+
+## CHG-20260908T152700-codex-release-integration
+- Related TASK: TASK-20260908-codex-connect-fix; product PR #1631.
+- 공개1.2.3을 통합하여1.2.4로 올렸다. 텍스트 선택/검색 개선을 보존했다.
+- native544 PASS, runner 집중119 PASS, DOM12 PASS, Windows 설치기26,045,699bytes/SHA a0535a088c9d000e776b12f5b817d311b7bce1f82da890b3dcee1cb02b494429.
+- merge commit의 combined diff를 검증 도구가 일반 cycle delta로 인식하지 못해 이 통합 결과를 일반 문서 commit에도 기록한다. 실제 사용자 검증은 아직 배포 후 일정이며 PASS로 표기하지 않는다.
+
+## CHG-20260908T153000-codex-prompt-integration
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1627의 프롬프트 전달 계약 수정을 통합하고 양 작업의 문서 기록을 보존했다. 네이티브 소스/빌드 변화는 없다. 관련 runner 회귀를 추가 검증한다.
+
+## CHG-20260908T153300-codex-integration-verified
+- Related TASK: TASK-20260908-codex-connect-fix.
+- 최신 main 통합 뒤 prompt delivery/선택 회귀39 PASS, native544 및 heartbeat집중119 PASS 결과를 현재 출하 기록에 연결했다. 설치기 바이트는 기존1.2.4 빌드와 동일하다.

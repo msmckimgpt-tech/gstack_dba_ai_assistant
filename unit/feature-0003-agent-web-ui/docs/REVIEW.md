@@ -7827,6 +7827,14 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 ## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
 
 - 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
+## REV-20260908T151500-codex-connect-fix [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T151000-codex-connect-fix; Issue #1625.
+- Trigger: API/응답 계약, permission/실행 권한, caching/캐시, UI/연결 화면.
+- Dispatch: update_installer_review(backend/security), update_install_qa(qa), connect_ux_review(ux/design). 독립 도메인 검토 및 수정 확인.
+- P1 수정: catalog 빈 detail KeyError/남은 성공행/예외 기록 누락, catalog 건강 오인, error JSON 생존 오인, 로그인 필요 위치 소실. P2 수정: 공통 CSS 적용면, OS PermissionError 형 보존, A→B→A 선택 경쟁.
+- QA가 후속 선택 실패 후 재시도 소실과 전역 파일 세대의 불필요한 재조회 2건을 적발했다. watcher 백오프와 플랫폼별 selection_id로 수정 후12건 PASS.
+- Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.4 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+
 ## REV-20260908T060223-backend [SUBAGENT:backend] — PASS
 - Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
 - Trigger: API/엔드포인트 및 query/쿼리

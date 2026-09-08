@@ -4850,9 +4850,20 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
 - 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
 - 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+- 테스트/실측 정본: feature-0046-native-client/docs/test-runs.d/20260908-codex-connect-fix.md.
+
 ## CHG-20260908T063000-prompt-layers
 - Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
 - 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
 ## CHG-20260908T150000-attachment-boundary-cross-ref
 
 - 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. feature-0003-agent-web-ui REQ-20260908-attachment-boundary 동반: core 첨부 권위 지침·worker 빈 성공본문 및 bridge recall 보존. 검증 정본: feature-0003-agent-web-ui/docs/REPORT.md, TASK-20260908T150000-attachment-boundary. 단일 primary feature verify.
+
+## CHG-20260908T152000-codex-heartbeat-snapshot
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- 통합 회귀가 빈/옛 heartbeat 요청 도중 게시된 새 catalog를 미송신 상태에서 cache로 강등하는 경쟁을 발견했다.
+- 항상 실제 송신 snapshot을 유지하고 성공 처리 시 같은 행만 cache로 전환한다. 새 선택·모델은 다음 실제 수락을 기다린다.
+- 빈 요청/옛 선택 요청 모두 결정적 회귀로 검증한다. 기존 source==catalog 단정을 약화하지 않았다.
