@@ -13611,6 +13611,9 @@ snake_case 로 시작」)가 걸러낸 412행 중 **실제 도구 구문은 18�
       언급 5) · 버려진 사유 **0건** · 표시 산출 잔존 유출 **0건**
 - [x] `make test` 전량 PASS(선재 실패 19건은 main 원본과 동일 — 차집합 0) · ruff clean
 - [x] DQA 클라이언트 검증 — CDP 포트 부재 실측 후 PB-0009 Run 기록
+- [x] 최신 main(cdd414e3, 46커밋) 흡수 — 충돌 3건 양측 보존 + §16.4 결과 검증(양쪽 부모 유실 0)
+- [x] 병합 후 재검증 8,267건/실패 2 — 그 2건은 pristine origin/main 에서도 동일(차집합 0)
+- [ ] 배포 후 DQA 클라이언트 화면 실측 (PB-0009 — 이 cycle 의 유일한 미검증 축)
 ## TASK-20260908T120000-connect-discovery-ux
 
 DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.

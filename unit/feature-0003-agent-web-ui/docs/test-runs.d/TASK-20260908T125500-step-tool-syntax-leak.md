@@ -95,6 +95,21 @@ Limit: 이 워크트리에 jsdom 이 있으면 `test_side_panel_exclusive::test_
 같은 결과라 이 cycle 의 회귀가 아니다. `make test` 컨테이너에는 jsdom 이 없어 그 테스트는
 문서 gap 경로를 타므로 위 7건 목록에 나타나지 않는다.
 
+## Run — 최신 main 흡수 후 재검증
+
+Environment: CLI
+Result: PASS
+Scenario: `origin/main` **46커밋**(cdd414e3)을 병합한 뒤 같은 시험 집합을 재실행
+Evidence: **8,267건 / 실패 2 / errors 0 / skipped 17**. 실패 2건은
+`test_route_parity_p5b::test_route_table_matches_golden_snapshot`(route 269→271)과
+`test_bridge_interrupt_stream::test_cancel_channel_adds_no_new_tool`(명시 도구 라우트 7→8)이며,
+**pristine `origin/main`(cdd414e3) 원본 트리에서 같은 2건이 동일하게 실패**함을 확인했다 —
+다른 세션이 라우트를 추가하며 골든 스냅샷·개수 단언을 갱신하지 않은 선재 결함이고 본 cycle 대비
+**차집합 0**이다. 병합 전 본 브랜치 단독 실행은 8,143건 **전량 PASS** 였다. ruff clean.
+§16.4 해결 결과 검증(MUST): 충돌 3건(FUNCTION·REPORT·TASK, 전부 «양쪽 말미 append»)을 양측
+보존으로 해소한 뒤 **양쪽 부모 대비 유실 파일 0건**(`--diff-filter=D` 각각 0), 이 cycle 의 핵심
+심볼 6종 생존, main 이 추가한 신규 파일 153건 생존, main 고유 변경분 대표 3파일 병합본 == main.
+
 ## 적대 검증 (§18.8)
 
 Environment: CLI

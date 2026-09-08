@@ -6107,3 +6107,14 @@ Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 w
 - Timestamp: 2026-09-08T08:20:41.263318+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
 
 PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비스 healthy·90초 soak·56배포본 계약검사 PASS, 실제 task 권한 catalog/미허용 datasource/첨부 대체경로 확인. 실제 SQL Server는 새 웹·기존 워커·호스트 모두 연결 timeout이어서 프로시저 결과 성공과 구분한다. 신규 AI 응답0으로 fixed:deployed:unverified-live 유지. 정본: [배포·미실측 기록](test-runs.d/TASK-20260908T162000-tool-surface.md). 제품 코드 추가 변경 없이 증거·제한을 문서화한다.
+
+## CHG-20260908T160000-step-tool-syntax-postmerge
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak. 제품 코드 변경 **0** — 병합·증적만.
+- 최신 `origin/main`(cdd414e3, 46커밋) 흡수. 충돌 3건(FUNCTION·REPORT·TASK)은 전부 «양쪽 말미
+  append» 라 §16.4 자율 해결(양측 보존). 결과 검증(MUST): 양쪽 부모 대비 유실 파일 **0건**,
+  이 cycle 핵심 심볼 6종 생존, main 신규 파일 153건 생존, main 고유 변경분 == 병합본.
+- 병합 후 재검증 **8,267건 / 실패 2**. 그 2건(`test_route_parity_p5b` 골든 스냅샷 269→271,
+  `test_bridge_interrupt_stream` 명시 도구 라우트 7→8)은 **pristine origin/main 에서도 동일**하게
+  실패하는 선재 결함이다(다른 세션이 라우트를 추가하며 골든·개수 단언을 갱신하지 않음).
+  본 cycle 대비 차집합 0. 병합 전 단독 실행은 8,143건 전량 PASS.

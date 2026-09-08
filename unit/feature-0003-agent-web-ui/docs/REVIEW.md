@@ -8054,3 +8054,11 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Reason: 제품 코드·정책 변경 없이 배포 실측과 미검증 경계를 기록하는 비정책 문서 후속. 구현 패널 backend/security/qa는 REV-20260908T162000에서 PASS했다.
 - Review: 7서비스 56건은 배포 모듈 계약 검사이며 실제 DB 결과/AI 응답과 구별했다. 실제 계정 권한 경로는 catalog200·미바인딩403·첨부대체404를 확인했고 search_routines500은 TCP timeout이다. 기존 버전 워커·호스트에서도 연결 실패하여 누락404와 같은 원인으로 합치지 않았다.
 - Evidence: test-runs.d/TASK-20260908T162000-tool-surface.md. 신규 assistant0을 verified로 승격하지 않으며 기존 사용자 대화/첨부는 보존했다. 민감한 접속정보·DB 정의는 문서에 전재하지 않았다.
+
+## REV-20260908T160000-step-tool-syntax-postmerge [SKIPPED:merge-only-no-product-change]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 제품 코드 델타 0 — `origin/main` 흡수 병합과 검증 증적 기록뿐이다. 병합 자체의 검증은
+  §16.4 「해결 결과 검증(MUST)」로 수행했다(양쪽 부모 대비 유실 0 · 양측 고유 변경 생존 ·
+  auto-merge 파일 포함 대조). 코드 축의 적대 검증은 REV-20260908T131500-* / T142000-* /
+  T150000-* 3라운드가 이미 덮는다.
+- Timestamp: 2026-09-08T16:00:00+09:00
