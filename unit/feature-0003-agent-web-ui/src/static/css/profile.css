@@ -624,6 +624,10 @@
   letter-spacing: .3px;
   align-self: flex-start;
   margin-bottom: 2px;
+  /* 한국어 라벨(최장 7자 — 예외 2종)이 pill 안에서 접히거나 잘리지 않게 못박는다. 사용자가 패널을
+     좁혀도 배지는 자기 크기를 지키고, 줄바꿈은 헤더의 시각 요소가 담당한다. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .step-title {
   font-size: 12px;

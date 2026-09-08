@@ -989,7 +989,7 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
     _renew_claim_lease(conn, task_id, int(account.get("id") or 0))
-    _ctx_work, _ctx_reason = _bridge_step_narration(body, {})
+    _ctx_work, _ctx_reason = _bridge_step_narration(body, {}, "get_task_context")
     _record_bridge_step(
         conn, task, "get_task_context",
         {k: v for k, v in (("focus", str(body.get("focus") or "").strip()),) if v},
@@ -1655,27 +1655,32 @@ def _bridge_derived_narration(tool_name: str, args: dict[str, Any] | None) -> tu
     """
     payload = args if isinstance(args, dict) else {}
     tool = str(tool_name or "").strip().lower()
+    # 문구(work)는 표시층 정본(`_conv_store._derive_step_work_tail`)에 위임한다 — 진행 중과
+    # 완료본이 같은 표를 봐야 제출 순간 제목이 바뀌지 않는다(적대 검증 실측: 첨부 파일명 소실).
     if tool in _BRIDGE_ONLY_NARRATION:
-        work, reason = _BRIDGE_ONLY_NARRATION[tool]
-        name = str(payload.get("filename") or "").strip()
-        if tool == "read_task_attachment" and name:
-            work = f'첨부 파일 "{name}" 의 내용을 읽는다'
-        return work, reason
+        return app._derive_step_work_tail(tool, payload), _BRIDGE_ONLY_NARRATION[tool][1]
     try:
         import agent_core as _core
 
         work = str(_core._derive_step_work(tool, payload) or "").strip()
         reason = str(_core._derive_step_reason(tool, payload) or "").strip()
-        # 내부 헬퍼가 모르는 도구는 "단계를 수행한다" 로 떨어진다 — 도구 이름이라도 남긴다.
-        if tool and work in ("", "단계를 수행한다"):
-            work = f"`{tool}` 도구를 실행한다"
+        # 내부 헬퍼가 모르는 도구는 "단계를 수행한다" 로 떨어진다. 종전엔 그 자리에
+        # ``f"`{tool}` 도구를 실행한다"`` 로 **도구 이름이라도 남겼는데**, 그것이 곧
+        # 사용자 화면의 식별자 노출이었다(2026-09-08 제보의 한 갈래).
+        if tool and (work in ("", "단계를 수행한다")
+                     or app._step_text_is_tool_syntax(work, tool)):
+            work = app._derive_step_work_tail(tool, payload)
         return work, reason
     except Exception:
         # 파생 실패가 단계 기록 자체를 막지는 않는다(빈 문구로라도 단계는 남는다).
-        return (f"`{tool}` 도구를 실행한다" if tool else ""), ""
+        try:
+            return (app._derive_step_work_tail(tool, payload) if tool else ""), ""
+        except Exception:
+            return "", ""
 
 
-def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any]) -> tuple[str, str]:
+def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any],
+                           tool_name: str = "") -> tuple[str, str]:
     """개인 AI 가 함께 보낸 단계 narration `(work, reason)` 을 꺼내고 **인자에서 제거**한다.
 
     내부 경로(`agent_core`)는 LLM 이 도구 호출 인자에 실어 보낸 `work`/`reason` 을 pop 해서
@@ -1684,13 +1689,31 @@ def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any]) -> t
 
     **제거가 핵심이다.** 남겨두면 `execute_tool` 이 알 수 없는 인자를 받는다(도구에 따라
     거절되거나 조용히 무시되는데, 어느 쪽이든 narration 때문에 조사가 실패하면 안 된다).
+
+    ## 도구 «구문» 은 여기서 떨군다 (사용자 제보 2026-09-08)
+
+    이 값은 **비신뢰 입력**이다 — 프롬프트(`feature-0043 prompt.compose_prompt`)는 `reason`
+    만 규정하고 `work` 는 규정조차 하지 않으므로, 개인 AI 가 즉흥으로 채운다. 라이브에서
+    실제로 온 것은 `describe_table {'schema_name': 'coupon', 'table_name': 'dbo.T_COUPON'}`
+    — 자기 도구 호출을 그대로 옮겨 적은 문자열이었고, 그것이 사용자 화면 「실행 단계」의
+    제목으로 그대로 나갔다.
+
+    빈 문자열로 떨구면 호출측(`_record_bridge_step`)이 `_bridge_derived_narration` 의 한국어
+    파생 문구로 대체한다 — 같은 사실을 담고 식별자는 담지 않는다. 프롬프트에 「이렇게 쓰지
+    마라」를 더하지 않는 이유는 그것이 **지시이지 집행이 아니고**, 러너는 사용자 PC 에 있어
+    낡은 빌드가 남기 때문이다. 판정 정본은 `_conv_store._step_text_is_tool_syntax` 하나이며,
+    이미 적재된 행은 표시 시점(`_resolve_step_display`·`_bridge_live_steps`)에서 같은 판정을
+    받는다.
     """
     out: list[str] = []
-    for key in ("work", "reason"):
+    # 사유(reason)는 «선두 식별자» 규칙에서 뺀다 — 그 축에는 파생 대체가 없어 걸러내면 설명이
+    # 순수 손실이 되고, 사유는 산문이라 테이블 이름으로 시작하는 것이 자연스럽다.
+    for key, leading in (("work", True), ("reason", False)):
         inline = arguments.pop(key, None)
         raw = body.get(key)
         picked = raw if raw not in (None, "") else inline
-        out.append(str(picked or "").strip()[:500])
+        out.append(app._sanitize_step_narration(str(picked or "")[:500], tool_name,
+                                                allow_tool_names=leading))
     return out[0], out[1]
 
 
@@ -1857,7 +1880,11 @@ def _record_bridge_step(conn, task: dict[str, Any], tool_name: str, args: dict[s
         # intent 는 도구 기반으로 고정한다. 내부 경로는 첫 단계에 원 질문을 쓰지만, 여기서는
         # 번호가 INSERT 시점에 정해져 "내가 첫 단계인가" 를 미리 알 수 없다(그걸 알려고 미리
         # 조회하면 방금 없앤 경합이 되돌아온다). 질문은 이미 말풍선에 있다.
-        intent = f"{tool_name}: {work_text or tool_name}"
+        # ⚠ 종전 `f"{tool_name}: {work_text or tool_name}"` 는 **도구 식별자를 원장에 새로
+        #   적재**했고, 그 컬럼이 표시 payload 로 나갔다(라이브 3,254행). 접두를 없애 신규
+        #   행부터 끊는다 — 표시층은 `intent` 를 더 이상 내보내지 않으므로 이 값은 원장
+        #   가독성용이다.
+        intent = work_text or ""
         entry = _core._build_step_payload(
             run_id=task_id, step_index=0, tool_name=tool_name, intent=intent,
             args=args, tool_result=tool_result,
@@ -1984,7 +2011,8 @@ def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
                     " result_summary_json, error_text, created_at) "
                     "VALUES (%s,%s,%s,'tool',%s,%s,%s,'bridge-ledger',%s,'derived',%s,%s,%s,%s)",
                     (conversation_id, task_id, n, tool,
-                     f"{tool}: {work_text or tool}"[:255], work_text or None, reason_text or None,
+                     # 도구명 접두를 넣지 않는다 — 이 컬럼이 표시 payload 로 나가던 경로였다.
+                     (work_text or "")[:255], work_text or None, reason_text or None,
                      json.dumps(args, ensure_ascii=False),
                      json.dumps(summary, ensure_ascii=False),
                      (str(r[7] or "") if str(r[6] or "") not in ("ok", "") else None), r[8]))
@@ -3576,7 +3604,7 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
         logging.getLogger(__name__).error(
             "[bridge] 첨부 읽기 실패 task=%s: %r", task_id, exc)
         # 실패한 시도도 단계로 남긴다 — 감추면 "첨부를 봤는가" 가 화면에서 판정 불가가 된다.
-        _fw, _fr = _bridge_step_narration(body, {})
+        _fw, _fr = _bridge_step_narration(body, {}, "read_task_attachment")
         _record_bridge_step(
             conn, {"conversation_id": conversation_id, "task_id": task_id},
             "read_task_attachment",
@@ -3615,7 +3643,7 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
     _renew_claim_lease(conn, task_id, account_id)
-    _att_work, _att_reason = _bridge_step_narration(body, {})
+    _att_work, _att_reason = _bridge_step_narration(body, {}, "read_task_attachment")
     _record_bridge_step(
         conn, {"conversation_id": conversation_id, "task_id": task_id},
         "read_task_attachment",
@@ -3841,7 +3869,7 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     arguments = {k: v for k, v in dict(body.get("arguments") or {}).items()
                  if not str(k).startswith("_")}
     # 단계 narration(무엇을·왜)은 조사 인자가 아니다 — 실행 전에 걷어낸다(내부 경로와 동형).
-    narr_work, narr_reason = _bridge_step_narration(body, arguments)
+    narr_work, narr_reason = _bridge_step_narration(body, arguments, tool_name)
     # `execute_tool` 이 `arguments` 에서 `datasource` 를 pop 한다 — 실행 뒤에 읽으면 항상 빈 값이
     # 되어 추출 원장의 datasource 추적이 통째로 죽는다(codex P2). 실행 전에 붙잡는다.
     requested_ds = str(arguments.get("datasource") or "") or None
@@ -4311,15 +4339,25 @@ def _bridge_live_steps(task_id: str) -> tuple[list[dict[str, Any]], int]:
                     summary = json.loads(r[10])
                 except Exception:
                     summary = None
+            tool = str(r[2] or "")
+            # 표시 문구는 **완료 경로와 같은 단일 이음매**가 만든다 — 두 경로가 각자 정화·파생
+            # 하면 제출 순간 같은 단계의 제목이 바뀌고(실측: 첨부 파일명 소실), 한쪽에 정화가
+            # 빠지면 그 경로가 곧 우회로가 된다 (AGENTS.md §16.7 G12).
+            work, work_source, reason, reason_source = app._step_display_narration({
+                "tool": tool, "args": args, "sql": str(r[9] or ""),
+                "work": r[4], "work_source": r[5],
+                "reason": r[6], "reason_source": r[7],
+            })
             out.append({
                 "step_index": int(r[0] or 0),
                 "action": str(r[1] or "step"),
-                "tool": str(r[2] or ""),
-                "intent": str(r[3] or ""),
-                "work": str(r[4] or ""),
-                "work_source": str(r[5] or ""),
-                "reason": str(r[6] or ""),
-                "reason_source": str(r[7] or ""),
+                "tool": tool,
+                # `intent` 는 서버가 `<도구명>: <문구>` 로 조립한 값이라 식별자를 담는다.
+                # 화면은 더 이상 쓰지 않으므로 payload 에서도 뺀다(공유 뷰·devtools 노출 차단).
+                "work": work,
+                "work_source": work_source,
+                "reason": reason,
+                "reason_source": reason_source,
                 "args": args,
                 "sql": str(r[9] or ""),
                 "result_summary": summary,

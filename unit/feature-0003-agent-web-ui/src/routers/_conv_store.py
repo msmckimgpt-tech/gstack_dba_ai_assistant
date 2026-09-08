@@ -4236,27 +4236,20 @@ def _parse_attachment_new_blocks(answer: str) -> list[dict[str, Any]]:
     return out
 
 def _resolve_step_display(step: dict[str, Any]) -> dict[str, Any]:
+    """완료 답변의 단계 1건을 표시용으로 고른다. 문구 판정·파생은 `_step_display_narration`
+    **단일 이음매**가 전담한다 — 진행 중 경로(`ai_tools._bridge_live_steps`)도 같은 함수를
+    부르므로 제출 순간 제목이 바뀌지 않는다."""
     item = dict(step or {})
-    stored_work = app._normalize_step_text(item.get("work"), 255)
-    stored_reason = app._normalize_step_text(item.get("reason"), 500)
-    work_source = str(item.get("work_source") or "").strip()
-    reason_source = str(item.get("reason_source") or "").strip()
-    if stored_work:
-        item["work"] = stored_work
-        item["work_source"] = work_source or "llm"
-    else:
-        item["work"] = app._derive_step_work(
-            str(item.get("tool") or ""),
-            item.get("args") if isinstance(item.get("args"), dict) else {},
-            str(item.get("sql") or ""),
-        )
-        item["work_source"] = "legacy"
-    if stored_reason:
-        item["reason"] = stored_reason
-        item["reason_source"] = reason_source or "llm"
-    else:
-        item["reason"] = ""
-        item["reason_source"] = "missing"
+    work, work_source, reason, reason_source = app._step_display_narration(item)
+    # `intent` 는 서버가 `<도구명>: <문구>` 로 조립한 값이라 **내부 식별자를 담는다**
+    # (라이브 실측: census 도구명이 든 행 3,254 · 인자 리터럴까지 든 행 14). 화면은 쓰지
+    # 않으므로 표시 payload 에서 뺀다 — 진행 경로·익명 공유와 **같은 규율**이다. 원장 컬럼은
+    # 감사 가치가 있어 그대로 둔다(이 cycle 의 「저장 원문 불가침」과 정합).
+    item.pop("intent", None)
+    item["work"] = work
+    item["work_source"] = work_source
+    item["reason"] = reason
+    item["reason_source"] = reason_source
     return item
 
 def _load_last_run_id(conn, conversation_id: str) -> str:
@@ -6280,11 +6273,235 @@ def _normalize_step_text(value: Any, max_len: int = 500) -> str:
         return text
     return text[: max_len - 1].rstrip() + "…"
 
+
+# ── 실행 단계 문구의 «도구 구문» 차단 ────────────────────────────────────────────
+#
+# 사용자 제보(2026-09-08): 실행 단계 패널의 제목이 `describe_table {'schema_name': 'coupon',
+# 'table_name': 'dbo.T_COUPON'}` 처럼 **도구 호출 구문 그대로** 나왔다.
+#
+# 출처는 외부 AI 다. `POST /api/ai/tools/<name>` 본문의 `work`/`reason` 은 연결된 개인 AI 가
+# 채우는 **비신뢰 입력**인데(프롬프트는 `reason` 만 규정하고 `work` 는 규정조차 하지 않는다),
+# 서버가 그대로 저장하고 화면이 그대로 그렸다. 라이브 원장 실측에서 `work_source='external-ai'`
+# 30행 중 19행(63%)이 그 형태였다.
+#
+# **프롬프트로는 닫히지 않는다** — 프롬프트 계약은 지시이지 집행이 아니고(같은 판단이
+# `prompt.py` 의 승인요구 탐지에도 적혀 있다), 러너는 사용자 PC 에 있어 낡은 빌드가 남는다.
+#
+# ⚠ **판정 축은 «호출 표기» 이지 «식별자처럼 보임» 이 아니다 (v2, 적대 검증 후 재설계).**
+#   초판은 「인용 없는 snake_case 로 시작」을 규칙에 넣었다. 라이브 원장 **9,759행 전건 재생**
+#   결과 그 규칙이 걸러낸 412행 중 **실제 도구 구문은 18행뿐이고 394행(96%)이 정상 제목**이었다
+#   (`dk_game_release_240의 Character 테이블 구조 확인` · `log_v2 스키마의 테이블 목록 조회` …
+#   전부 `work_source='llm'`, 즉 제보와 무관한 내부 에이전트 경로). 손익비 1:22 였다.
+#   이 도메인은 **테이블 이름이 곧 사용자의 어휘**라 그 형태를 금지 서명으로 쓸 수 없다.
+#   지금은 「서버가 실제로 가진 도구 이름」만 서명으로 본다 — 모수를 조회로 얻는다(§16.7 G12-b).
+#
+# ⚠ 이 판정은 **표시층 전용**이다. 저장된 원문은 건드리지 않는다(감사·재현 가치가 있고,
+#   판정이 틀렸을 때 되돌릴 근거가 사라진다). 화면에 나가는 값만 고른다.
+#
+# AGENTS.md §16.8 B-2(a) — 내부 경로·프로토콜명을 그대로 노출하지 않는다.
+
+#: **호출 형태**의 인자 매핑 리터럴 — 문구 맨앞(선택적으로 식별자 접두 뒤)의
+#: `{'k': …}` / `{"k": …}`. 파이썬 repr·JSON 양쪽.
+#:
+#: ⚠ 두 번 좁혔다.
+#:   ① `(k='v')` kwargs 가지 제거 — SQL 산문의 `(CREATE_OPTIONS='partitioned')` 를 도구 인자로
+#:      오인해 정상 사유를 통째로 지웠다(적대 검증 라운드 1).
+#:   ② **맨앞 앵커** — 「어디에나 있으면 차단」은 `설정값 {'theme': 'dark'} 이 든 컬럼을
+#:      확인한다` 같은 정상 제목까지 지운다(라운드 2). JSON 컬럼·샘플 값이 일상 어휘인
+#:      도메인이라 그 형태는 금지 서명이 될 수 없다. 도구 «호출» 은 언제나 이름+인자가
+#:      문구의 머리에 오므로 앵커가 서명을 좁히면서 실 유출 14/14 를 그대로 잡는다.
+_STEP_ARGS_LITERAL_RE = app.re.compile(
+    r"""^(?:[A-Za-z_][A-Za-z0-9_]*\s*)?[{]\s*['"][A-Za-z_][A-Za-z0-9_]*['"]\s*:""")
+
+#: 판정 전에 지우는 제로폭·양방향 제어문자. 전각→반각은 NFKC 가 처리한다.
+#: 없으면 `describe＿table`(전각 밑줄)·`execute\u200bsql` 같은 형태가 화면상 동일하게 보이면서
+#: 판정을 통과한다(적대 검증 실측).
+_STEP_INVISIBLE_RE = app.re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+#: 판정 입력 상한. 판정은 접두부로 충분하고, 호출측의 캡 누락에 의존하지 않는다.
+_STEP_SCAN_CAP = 2000
+
+#: 이 저장소가 **실제로 낼 수 있는** 도구 이름. 정의(`modules.tools`)에 없는 두 이름은
+#: 코드가 직접 `agent_runtime.steps.tool` 에 쓰는 것이라(라이브 원장 실측: `materialize_attachment`
+#: 48행 · `query_sql` 1행) 정의 census 만 보면 영구히 빠진다.
+_EXTRA_EMITTED_TOOLS = ("materialize_attachment", "query_sql")
+
+#: 조회가 **전부** 실패했을 때만 쓰는 폴백. 비어 있는 census 로 조용히 통과시키지 않기
+#: 위한 안전망이며, 정상 경로에서는 합쳐지지 않는다 — 무조건 합치면 그 순간 이 가드는
+#: §16.7 G12-b 가 금지하는 «손 열거 모수» 가 되고, 새 도구가 늘어도 테스트가 결손을 못 본다
+#: (적대 검증 라운드 2: 조회 산출 17종 + 무조건 합산 23종 → 6종이 오직 손 목록에서만 왔다).
+_FALLBACK_TOOL_NAMES = (
+    "execute_sql", "explain_query", "list_schemas", "describe_schema", "describe_table",
+    "describe_routine", "search_tables", "search_routines", "search_db_objects",
+    "describe_db_object", "get_sample_rows", "get_table_indexes", "get_foreign_keys",
+    "check_table_coverage", "graph_navigate", "scratch_import", "scratch_sql",
+    "scratch_list", "scratch_reset", "read_attachment", "update_attachment",
+    "get_task_context", "read_task_attachment",
+)
+
+_TOOL_NAME_CENSUS: "frozenset[str] | None" = None
+_TOOL_NAME_QUERIED: "frozenset[str] | None" = None
+_TOOL_NAME_RE = None
+
+
+def _query_tool_names() -> "frozenset[str]":
+    """레지스트리 **조회**로만 얻은 도구 이름. 실패·부재면 빈 집합.
+
+    ⚠ 모수는 `_TOOL_HANDLERS`(실 디스패치 표)다. `TOOL_DEFINITIONS_FULL` + `scratch_tool_defs()`
+      조합은 **런타임 스위치에 걸린다** — `AGENT_SCRATCH_ENABLED` 가 꺼진 프로세스에서
+      `scratch_tool_defs()` 가 `[]` 를 돌려줘 scratch 4종이 census 에서 빠졌다(라운드 2 실측).
+      게이트는 «부를 수 있는가» 를 정하지 부를 이름을 없애지 않는다.
+    """
+    names: set[str] = set()
+    try:
+        import modules.tools as _t
+
+        names.update(str(k) for k in (getattr(_t, "_TOOL_HANDLERS", {}) or {}))
+        for d in list(getattr(_t, "TOOL_DEFINITIONS_FULL", []) or []):
+            fn = str(((d or {}).get("function") or {}).get("name") or "").strip()
+            if fn:
+                names.add(fn)
+    except Exception:
+        pass
+    try:
+        from routers import ai_tools as _at   # 브리지 표면 — 지연 import(순환 안전)
+
+        names.update(str(k) for k in (getattr(_at, "_BRIDGE_ONLY_NARRATION", {}) or {}))
+        names.update(str(k) for k in (getattr(_at, "EXPOSED_TOOLS", ()) or ()))
+    except Exception:
+        pass
+    return frozenset(n for n in names if n)
+
+
+def _tool_name_census() -> "frozenset[str]":
+    """서버가 낼 수 있는 도구 이름 전체 = **조회 산출** + 배출 전용 상수(+ 조회 실패 시 폴백)."""
+    global _TOOL_NAME_CENSUS, _TOOL_NAME_QUERIED
+    if _TOOL_NAME_CENSUS is not None:
+        return _TOOL_NAME_CENSUS
+    queried = _query_tool_names()
+    names = set(queried) | set(_EXTRA_EMITTED_TOOLS)
+    if not queried:
+        # 조회가 통째로 실패했다 — 서명이 비면 규칙 (b) 가 조용히 무력해진다.
+        logging.getLogger(__name__).warning(
+            "[step-narration] 도구 census 조회 실패 — 폴백 목록으로 판정한다(모수가 낡을 수 있다)")
+        names.update(_FALLBACK_TOOL_NAMES)
+    _TOOL_NAME_QUERIED = queried
+    _TOOL_NAME_CENSUS = frozenset(names)
+    return _TOOL_NAME_CENSUS
+
+
+def _tool_name_re():
+    """census 의 모든 이름을 «독립 식별자» 로 찾는 하나의 정규식(캐시)."""
+    global _TOOL_NAME_RE
+    if _TOOL_NAME_RE is None:
+        names = sorted(_tool_name_census(), key=len, reverse=True)
+        if not names:
+            # ⚠ `alts` 가 비면 `(?:)` 가 되어 **모든 문자열**에 매칭된다 — 실행 단계 제목이
+            #   전멸하는데 예외도 로그도 없다(라운드 2 실측). 절대 매칭되지 않는 패턴을 준다.
+            _TOOL_NAME_RE = app.re.compile(r"(?!x)x")
+        else:
+            alts = "|".join(app.re.escape(n) for n in names)
+            _TOOL_NAME_RE = app.re.compile(
+                rf"(?<![A-Za-z0-9_])(?:{alts})(?![A-Za-z0-9_])", app.re.IGNORECASE)
+    return _TOOL_NAME_RE
+
+
+def _step_scan_body(text: Any) -> str:
+    """판정용 정규화 — NFKC + 비가시문자 제거 + 공백 접기 + 상한."""
+    import unicodedata
+
+    body = str(text or "")[: _STEP_SCAN_CAP * 4]
+    body = unicodedata.normalize("NFKC", body)
+    body = _STEP_INVISIBLE_RE.sub("", body)
+    return app.re.sub(r"\s+", " ", body.strip())[: _STEP_SCAN_CAP]
+
+
+def _step_text_is_tool_syntax(text: Any, tool: Any = "", allow_tool_names: bool = True) -> bool:
+    """이 문구가 «사람의 문장» 이 아니라 «도구 호출 표기» 인가.
+
+    둘 중 하나면 참이다:
+
+      (a) 인자 매핑 리터럴을 담고 있다 — `{'keyword': 'x'}` · `{"keyword": "x"}`.
+      (b) **서버 도구 census 의 이름**이 독립 식별자로 등장한다 — `execute_sql 검증` ·
+          `list_schemas` · `다음은 search_tables 로 확인한다`. 모수는 이 단계의 도구 하나가
+          아니라 census 전체다(§16.7 G12 — 가드의 모수 = 노출면 전체).
+
+    `allow_tool_names=False` 면 (b) 를 끈다.
+
+    ⚠ **대체값이 없는 축에는 (b) 를 쓰지 않는다.** 사유(reason)가 그렇다 — 사유는 산문이라
+      「… 단일 execute_sql 쿼리로 UNION 집계하여 …」처럼 도구 이름을 **설명 안에서 언급**하는
+      것이 자연스럽고, 그 문장을 지우면 「왜」 칸이 통째로 빈다(적대 검증 실측 8건).
+      사유에는 (a) 만 적용한다 — 인자 매핑 리터럴은 산문에 우연히 나타나지 않는다.
+    """
+    body = _step_scan_body(text)
+    if not body:
+        return False
+    if _STEP_ARGS_LITERAL_RE.search(body):
+        return True
+    if not allow_tool_names:
+        return False
+    name = str(tool or "").strip()
+    if name and app.re.search(
+            rf"(?<![A-Za-z0-9_]){app.re.escape(name)}(?![A-Za-z0-9_])", body, app.re.IGNORECASE):
+        return True
+    return bool(_tool_name_re().search(body))
+
+
+def _sanitize_step_narration(text: Any, tool: Any = "", max_len: int = 500,
+                             allow_tool_names: bool = True) -> str:
+    """표시용 단계 문구. 도구 표기면 ""(호출측이 파생 문구로 대체한다)."""
+    body = _normalize_step_text(text, max_len)
+    return "" if _step_text_is_tool_syntax(body, tool, allow_tool_names) else body
+
+
+def _step_display_narration(step: Any) -> "tuple[str, str, str, str]":
+    """표시용 `(work, work_source, reason, reason_source)` 를 만드는 **단일 이음매**.
+
+    완료 경로(`_resolve_step_display`)와 진행 중 경로(`ai_tools._bridge_live_steps`)가 **둘 다
+    이 함수만** 부른다. 두 경로가 각자 정화·파생하면 같은 행이 제출 순간 다른 제목으로 바뀌고
+    (실측: `read_task_attachment` 의 첨부 파일명이 완료본에서 사라졌다), 한쪽에만 정화가 빠지면
+    그 경로가 곧 우회로가 된다(적대 검증: 파생값이 비신뢰 `args` 를 무검증으로 제목에 주입).
+
+    계약 세 가지:
+      1. **나가는 값은 반드시 정화를 통과한다** — 저장 문구든 파생 문구든 같은 판정을 받는다.
+         파생값도 `args` 에서 만들어지고 `args` 역시 비신뢰이므로, 파생 후 재정화가 필수다.
+      2. **길이 상한이 파생값에도 걸린다** — 저장 문구만 캡하면 파생이 캡을 우회한다
+         (실측: `keyword` 100KB → 제목 100,014자).
+      3. **출처를 정직하게 가른다** — 원문 부재 `legacy` / 원문을 버림 `derived` / 통과 `llm`.
+    """
+    item = step if isinstance(step, dict) else {}
+    tool = str(item.get("tool") or "")
+    args = item.get("args") if isinstance(item.get("args"), dict) else {}
+    sql = str(item.get("sql") or "")
+    raw_work = str(item.get("work") or "").strip()
+    raw_reason = str(item.get("reason") or "").strip()
+
+    work = _sanitize_step_narration(raw_work, tool, 255)
+    if work:
+        work_source = str(item.get("work_source") or "").strip() or "llm"
+    else:
+        derived = _derive_step_work(tool, args, sql)
+        work = _sanitize_step_narration(derived, tool, 255) or _DERIVED_WORK_UNKNOWN
+        work_source = "derived" if raw_work else "legacy"
+
+    # 사유는 (a) 만 본다 — 위 판정기 주석의 ⚠ 참조.
+    #
+    # ⚠ **여기서 사유를 파생하지 않는다.** 라운드 1 의 권고 중 하나가 파생 배선이었고 실제로
+    #   넣어 봤으나, 규칙을 좁혀 «버려지는 사유» 가 라이브 9,759행에서 0건이 된 지금은 얻는
+    #   것이 없고 잃는 것이 있다 — 저장 사유가 아예 없던 644행(6.6%)에 서버가 도구 목적에서
+    #   역산한 문장이 새로 붙는데, 화면에는 `reason_source` 를 읽는 코드가 한 줄도 없어
+    #   **AI 가 말한 근거와 구분되지 않는다**(적대 검증 라운드 2 F3). 「지어내지 않는다」가
+    #   이 기능의 명시 계약이라, 구분 표시 없는 파생은 계약 위반 쪽이다. 없으면 비운다.
+    reason = _sanitize_step_narration(raw_reason, tool, 500, allow_tool_names=False)
+    reason_source = (str(item.get("reason_source") or "").strip() or "llm") if reason else "missing"
+    return work, work_source, reason, reason_source
+
+
 def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: str = "") -> str:
     payload = args if isinstance(args, dict) else {}
     tool_name = str(tool or "").strip().lower()
     if tool_name == "list_schemas":
-        return "사용자 스키마 목록을 확인한다"
+        return "DB(스키마) 목록을 확인한다"
     if tool_name == "describe_schema":
         schema = str(payload.get("schema_name") or "").strip()
         return f"`{schema}` 스키마의 테이블 목록을 확인한다" if schema else "스키마의 테이블 목록을 확인한다"
@@ -6356,9 +6573,100 @@ def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: s
         if target:
             return f"`{target}` 데이터를 조회한다"
         return "SQL을 실행한다"
-    if tool_name:
-        return f"`{tool_name}` 도구를 실행한다"
-    return "단계를 수행한다"
+    return _derive_step_work_tail(tool_name, payload)
+
+
+#: 위 분기가 모르는 도구의 문구. **여기서 새로 짓는 것은 이 표시층에만 있는 도구뿐**이고,
+#: 나머지는 내부 경로(`agent_core._derive_step_work`)에 위임한다 — 같은 도구가 경로에 따라
+#: 다르게 표현되면 둘 중 하나는 반드시 낡는다.
+#:
+#: 값이 **인자를 받는 함수**인 이유: 상수 문자열이면 대상(파일명·키워드)이 문구에서 사라져,
+#: 옆 행은 「무엇을 찾았는지」를 말하는데 이 행만 못 말하는 비대칭이 생긴다. 실측으로도
+#: `read_task_attachment` 의 첨부 파일명이 완료본에서만 사라져 진행/완료 제목이 갈렸다.
+def _first_sql_table(sql: Any) -> str:
+    """SQL 에서 첫 대상 테이블 하나. 못 찾으면 ""."""
+    try:
+        tables = app._extract_sql_tables(str(sql or ""))
+    except Exception:
+        return ""
+    return str(tables[0]) if tables else ""
+
+
+def _q(v: Any) -> str:
+    t = str(v or "").strip()
+    return f"`{t}`" if t else ""
+
+
+_DERIVED_WORK_TAIL: "dict[str, Any]" = {
+    "graph_navigate": lambda a: (
+        f"{_q(a.get('node'))} 에서 메타데이터 관계도를 탐색한다" if a.get("node")
+        else "메타데이터 관계도를 탐색한다"),
+    "search_db_objects": lambda a: (
+        f"{_q(a.get('keyword'))} 이름으로 테이블·프로시저를 함께 찾는다" if a.get("keyword")
+        else "이름으로 테이블·프로시저를 함께 찾는다"),
+    "describe_db_object": lambda a: (
+        f"{_q(a.get('object_name') or a.get('name'))} 의 정의를 확인한다"
+        if (a.get("object_name") or a.get("name")) else "DB 객체의 정의를 확인한다"),
+    "scratch_import": lambda a: (
+        f"조회 결과를 임시 작업 영역 {_q(a.get('dest_table'))} 로 저장한다"
+        if a.get("dest_table") else "조회 결과를 임시 작업 영역에 저장한다"),
+    # ⚠ 「조회」로 쓰지 않는다 — 이 도구는 CREATE/INSERT/UPDATE/DELETE/DROP 도 받는다
+    #   (`modules/tools.py`). 읽기로 기술하면 실행 이력이 **변경을 조회로 오기술**한다
+    #   (codex 적대 리뷰 라운드 2 P2). 연산 중립 문구를 쓴다.
+    "scratch_sql": lambda a: (
+        f"임시 작업 영역의 {_q(_first_sql_table(a.get('sql')))} 에 SQL을 실행한다"
+        if _first_sql_table(a.get("sql")) else "임시 작업 영역에서 SQL을 실행한다"),
+    "scratch_list": lambda a: "임시 작업 영역의 데이터 목록을 확인한다",
+    "scratch_reset": lambda a: "임시 작업 영역을 비운다",   # 라벨도 「임시 비움」
+    "update_attachment": lambda a: (
+        f"첨부 파일 \"{a.get('filename')}\" 을 새 버전으로 저장한다" if a.get("filename")
+        else "첨부 파일을 새 버전으로 저장한다"),
+    "materialize_attachment": lambda a: (
+        f"첨부 파일 \"{a.get('filename')}\" 을 대화에 저장한다" if a.get("filename")
+        else "고친 첨부 파일을 대화에 저장한다"),
+    "query_sql": lambda a: "데이터를 조회한다",
+    "get_task_context": lambda a: "이 질문이 어느 업무 영역인지 확인한다",
+    "read_task_attachment": lambda a: (
+        f"첨부 파일 \"{a.get('filename')}\" 의 내용을 읽는다" if a.get("filename")
+        else "첨부 파일의 내용을 읽는다"),
+}
+
+#: 어느 경로도 문구를 모를 때. **도구 이름을 넣지 않는다** — 종전 폴백
+#: ``f"`{tool_name}` 도구를 실행한다"`` 가 사용자 화면에 내부 식별자를 그대로 내보내는
+#: 경로였다(2026-09-08 제보의 한 갈래). 「무엇을」은 배지의 한국어 라벨이 말한다.
+_DERIVED_WORK_UNKNOWN = "요청한 작업을 수행한다"
+
+
+def _derive_step_work_tail(tool_name: str, payload: dict[str, Any]) -> str:
+    """분기표가 모르는 도구의 표시 문구. **식별자를 절대 되돌려 주지 않는다.**
+
+    반환값이 판정기를 통과하지 못하면 일반 문구로 강등한다 — `sanitize(derive(x))` 를
+    **구조적으로** 고정점으로 만든다. 분기를 하나씩 채워 지키는 방식은 도구가 늘 때마다
+    다시 벌어진다(§16.7 G12-b — 모수는 조회로 얻는다).
+    """
+    if not tool_name:
+        return "단계를 수행한다"
+    args = payload if isinstance(payload, dict) else {}
+    fn = _DERIVED_WORK_TAIL.get(tool_name)
+    if fn is not None:
+        try:
+            known = str(fn(args) or "").strip()
+        except Exception:
+            known = ""
+        if known:
+            return known
+    try:
+        import agent_core as _core
+
+        # ⚠ 세 번째 인자는 `tool_result` 다(`sql_text` 가 아니다). 값을 흘려 넣으면 그쪽
+        #   분기가 `` `{tool}` 도구를 실행한다 `` 를 켜서 식별자가 새 나온다(적대 검증 C4).
+        text = str(_core._derive_step_work(tool_name, args) or "").strip()
+    except Exception:
+        text = ""
+    if text and text != "단계를 수행한다" and not _step_text_is_tool_syntax(text, tool_name):
+        return text
+    return _DERIVED_WORK_UNKNOWN
+
 
 def _summarize_rationale(steps: list[dict[str, Any]]) -> str:
     if not steps:
@@ -6759,7 +7067,6 @@ def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None =
         return ""
     last_step = steps[-1]
     work = str(last_step.get("work") or "").strip()
-    intent = str(last_step.get("intent") or "").strip()
     summary = last_step.get("result_summary")
     rows = None
     cols = None
@@ -6768,9 +7075,9 @@ def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None =
         cols = summary.get("cols")
     parts: list[str] = []
     if work:
+        # `intent`(=`<도구명>: …`) 폴백을 뺐다 — 표시 이음매가 `work` 를 항상 채우고,
+        # 그 값이 비는 경우에도 도구 식별자를 요약 문장에 넣지 않는다.
         parts.append(f"실행 완료: {work}")
-    elif intent:
-        parts.append(f"실행 완료: {intent}")
     if rows is not None:
         if cols is not None:
             parts.append(f"결과: {rows}행, {cols}열")

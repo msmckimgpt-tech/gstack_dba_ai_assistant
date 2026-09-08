@@ -894,8 +894,6 @@ edit_policy: append-only
 ## CHG-20260908T024700-brand-published
 - Related TASK: TASK-20260908-brand-icon
 - PR #1608 병합 및 1.1.2 라이브 릴리스 완료. TASK/REPORT/검증 기록·릴리스 노트에 실제 엣지 다운로드 200, 26,023,355 bytes, 검증 빌드와 SHA-256/byte 동일을 기록했다. 코드·아이콘 자산 변경 없음.
-
-
 ## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
 - Timestamp: 2026-09-08T12:34:00+09:00
 - Related TASK: TASK-20260908T120000-connect-discovery-ux
@@ -974,3 +972,19 @@ edit_policy: append-only
 ## CHG-20260908T160200-codex-verified-closeout
 - Related TASK: TASK-20260908-codex-connect-fix.
 - PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+## CHG-20260908T125500-share-client-entry-deeplink
+
+- Related TASK: feature-0003 `TASK-20260908T125500-share-client-entry` (웹 계약 소유).
+- `client/core.py`: `MAX_APP_PATH` · `safe_app_path()`(정본 `shared/dqa_identity` 의 사본 —
+  동결 배포본이라 import 하지 않는다) · `parse_scheme_url` 의 `path` 수용(부적격이면 키만
+  버림) · `ConnectPlan.path` · `request_show(home, path)` + `show.path` 별도 파일 ·
+  `take_show_request` 반환 계약 bool → `str | None`.
+- `client/gui.py`: `--path`(SUPPRESS) · plan 주입 시 재검증 · 이미-실행 분기가 목적지 전달 ·
+  `_run_embedded`/`_run_browser_shell` 이 `panel_url(…, plan.path)` ·
+  `_watch_show_requests(…, plan, br)` 가 `navigate` 후 `show` · `_serve_confirms` 의
+  `reopen(dest)`.
+- `client/window.py`: `Shell.navigate(url)` 신설 — 실패는 `last_error` 로 남기고 삼킨다
+  (여기서 예외를 올리면 폴링 스레드가 죽어 「창 열기」 자체가 영영 안 된다).
+- `tests/test_wsl_and_scheme.py`: 정본↔사본 **경로표 대조**(`_PATH_TABLE`) · 왕복(서버 조립
+  → 클라이언트 파싱) · 토큰 부재 · 구버전 degrade · plan 도달.
+- `tests/test_standalone_launch.py`: 목적지 전달 5건 추가, 반환 계약 변경 반영.

@@ -3388,8 +3388,10 @@ export function renderPendingAssistantBubble(pending) {
   } else if (steps.length) {
     const latest = steps[steps.length - 1];
     const lbl = latest.tool ? toolLabel(latest.tool) : "";
-    const work = latest.work || latest.intent || "";
-    currentStepEl.textContent = lbl ? `${lbl} · ${work}` : work || `단계 ${steps.length}`;
+    const info = stepTitleInfo(latest, steps.length - 1);
+    // 폴백 제목은 라벨을 되풀이한 말이다 — 그때는 라벨만 쓴다.
+    currentStepEl.textContent = (lbl && !info.isFallback)
+      ? `${lbl} · ${info.text}` : (lbl || info.text);
   } else {
     currentStepEl.textContent = "시작 중…";
   }
@@ -3408,18 +3410,88 @@ export function renderPendingAssistantBubble(pending) {
   return row;
 }
 
-const TOOL_LABEL_MAP = {
+// 실행 단계 배지의 사람 이름. **모수는 서버가 낼 수 있는 도구 전체**여야 한다 —
+// 빠진 이름은 배지에 그대로 나가 사용자가 내부 식별자(`search_tables`)를 읽게 된다
+// (사용자 제보 2026-09-08). `tests/test_step_tool_syntax_leak.py` 가 서버의 도구 목록을
+// 실제로 조회해 이 표와 대조한다(손으로 나열한 모수는 다음 도구에서 다시 벌어진다 —
+// AGENTS.md §16.7 G12-b).
+export const TOOL_LABEL_MAP = {
+  // 내부 에이전트 조사 도구 (`modules/tools.py`)
   execute_sql: "SQL 실행",
+  explain_query: "실행 계획",
+  list_schemas: "DB 목록",
+  describe_schema: "테이블 목록",
+  describe_table: "테이블 구조",
+  describe_routine: "프로시저 정의",
+  search_tables: "테이블 찾기",
+  search_routines: "프로시저 찾기",
+  search_db_objects: "통합 찾기",
+  describe_db_object: "정의 보기",
+  get_sample_rows: "샘플 데이터",
+  get_table_indexes: "인덱스 확인",
+  get_foreign_keys: "외래키 확인",
+  check_table_coverage: "첨부 대조",
+  graph_navigate: "관계도 탐색",
+  scratch_import: "임시 저장",
+  scratch_sql: "임시 SQL",
+  scratch_list: "임시 목록",
+  scratch_reset: "임시 비움",
+  read_attachment: "첨부 읽기",
+  update_attachment: "첨부 저장",
+  // 외부 AI 브리지 표면 (`routers/ai_tools.py`)
+  get_task_context: "질문 파악",
+  read_task_attachment: "첨부 읽기",
+  // 정의표에는 없고 코드가 직접 단계로 남기는 이름 (라이브 원장 실측)
+  materialize_attachment: "첨부 저장",
+  query_sql: "SQL 실행",
+  // 옛 기록에만 남아 있는 이름 — 지우면 과거 대화의 배지가 "도구" 로 뭉개진다.
   schema_lookup: "스키마 조회",
   list_tables: "테이블 목록",
-  describe_table: "테이블 구조",
   search_data: "데이터 검색",
   generate_report: "리포트 생성",
   plan: "계획 수립",
 };
 
-function toolLabel(toolName) {
-  return TOOL_LABEL_MAP[toolName] || toolName || "도구";
+// 모르는 도구는 **이름을 노출하지 않고** 일반 라벨로 떨어뜨린다. 내부 식별자는 사용자의
+// 어휘가 아니다(AGENTS.md §16.8 B-2). 무엇을 했는지는 배지가 아니라 제목(work)이 말하며,
+// 그 제목은 서버가 도구·인자에서 한국어로 파생한다.
+export function toolLabel(toolName) {
+  return TOOL_LABEL_MAP[toolName] || "도구";
+}
+
+// 단계 제목. `work` 가 정본이고, 없을 때도 **내부 식별자로 떨어지지 않는다** —
+// 종전 폴백 두 단(intent · tool)은 각각 `describe_table: …` 과 `describe_table` 을 그대로
+// 내보내는 경로였다(intent 는 서버가 `<도구명>: <문구>` 로 조립한다).
+//
+// **백틱을 벗긴다.** 서버 파생 문구는 식별자를 마크다운 인용(``coupon`.`T_COUPON``)으로
+// 감싸는데 이 자리는 `textContent` 라 백틱이 **글자 그대로** 찍힌다. 사용자가 지적한 것이
+// 「기계 표기가 화면에 나온다」이므로, 그것을 다른 기계 표기로 바꾸면 같은 지적이 재발한다.
+// 서버의 백틱은 원장·감사 가치가 있으니 두고 **표시층에서만** 벗긴다.
+export function stripDisplayTicks(text) {
+  return String(text || "").replace(/`([^`]*)`/g, "$1").replace(/`/g, "");
+}
+
+// 인자 매핑 리터럴의 서명. 서버 판정기(`_conv_store._STEP_ARGS_LITERAL_RE`)와 **같은 형태**의
+// 얇은 심층 방어다 — 정본은 서버이고 이 줄은 서버측 누락 1건이 그대로 화면에 닿는 것을
+// 막는다. 서버가 유일 실패점이 되는 구조를 계약으로 굳히지 않는다.
+//
+// ⚠ **서버와 같이 맨앞 앵커**를 쓴다. 앵커 없이 「어디에나 있으면 강등」으로 두면
+// `설정값 {'theme': 'dark'} 이 든 컬럼을 확인한다` 처럼 **서버가 일부러 살려 보낸 정상 문구**를
+// 클라이언트가 지운다 — 심층 방어가 서버 판정을 뒤집는 셈이다(codex 적대 리뷰 라운드 3 P2).
+const STEP_ARGS_LITERAL_RE = /^(?:[A-Za-z_][A-Za-z0-9_]*\s*)?[{]\s*['"][A-Za-z_][A-Za-z0-9_]*['"]\s*:/;
+
+// 폴백으로 만든 제목인지까지 돌려준다. 호출측이 그것을 모르면 라벨과 나란히 놓을 때
+// 「테이블 구조 · 테이블 구조 단계」처럼 같은 말을 두 번 하게 된다(라운드 2 실측).
+export function stepTitleInfo(step, idx) {
+  const s = step || {};
+  const work = stripDisplayTicks(s.work).trim();
+  if (work && !STEP_ARGS_LITERAL_RE.test(work)) return { text: work, isFallback: false };
+  if (s.tool) return { text: `${toolLabel(s.tool)} 단계`, isFallback: true };
+  return { text: `단계 ${(idx || 0) + 1}`, isFallback: true };
+}
+
+export function stepTitleText(step, idx) {
+  return stepTitleInfo(step, idx).text;
 }
 
 // step 의 "결과 보기" 펼침 상태 영속화용 안정 키.
@@ -3496,7 +3568,7 @@ export function buildStepDetailEl(step, idx, { compact = false } = {}) {
   // work 제목
   const title = document.createElement("strong");
   title.className = "step-title";
-  title.textContent = step.work || step.intent || step.tool || `단계 ${(idx || 0) + 1}`;
+  title.textContent = stepTitleText(step, idx);
   wrap.appendChild(title);
 
   // reason — 각 실행 단계의 수행 근거를 사용자에게 노출(작업이 합리적으로 진행됐음을
@@ -4057,7 +4129,9 @@ function _buildStepActivityRow(step, idx, tm, { isRunningNow, cumulativeFrom }) 
 
   const textEl = document.createElement("span");
   textEl.className = "step-activity-text";
-  textEl.textContent = step.work || step.intent || "내부 동작";
+  // `intent` 는 서버가 `<도구명>: …` 로 조립한 값이라 식별자를 담는다 — 쓰지 않는다.
+  const actWork = stripDisplayTicks(step.work).trim();
+  textEl.textContent = (actWork && !STEP_ARGS_LITERAL_RE.test(actWork)) ? actWork : "내부 동작";
   row.appendChild(textEl);
 
   const timeEl = document.createElement("span");
@@ -4079,7 +4153,7 @@ function _buildStepActivityRow(step, idx, tm, { isRunningNow, cumulativeFrom }) 
   if (Number.isFinite(tm.startTs)) parts.push(`시작 ${_fmtStepClock(tm.startTs)}`);
   if (step.reason) parts.push(step.reason);
   if (isRunningNow) parts.push("이 구간은 아직 진행 중입니다 (경과는 1초마다 갱신됩니다)");
-  row.title = parts.join(" · ") || String(step.work || "내부 동작");
+  row.title = parts.join(" · ") || actWork || "내부 동작";
   return row;
 }
 

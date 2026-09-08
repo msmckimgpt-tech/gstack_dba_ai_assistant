@@ -5997,6 +5997,43 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+## CHG-20260908T125500-step-tool-syntax-leak
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak; REQ-20260908T125500-step-tool-syntax-leak; 위험도 Major §12.3(표시 계층 + 비신뢰 입력 처리, 스키마·RBAC·엔드포인트·마이그레이션 0).
+- Timestamp: 2026-09-08T13:20:00+09:00; session: claude ai/claude/feature-0003-step-tool-syntax-leak.
+- **변경과 이유**: 실행 단계 패널의 제목이 `describe_table {'schema_name': 'coupon', 'table_name': 'dbo.T_COUPON'}` 처럼 도구 호출 구문 그대로였다. 라이브 원장(`agent_runtime.steps`) 실측 — `work_source='external-ai'` **30행 중 19행(63%)** 이 그 형태. 출처는 연결된 개인 AI 가 `POST /api/ai/tools/<name>` 본문에 실어 보내는 `work` 이고, 브리지 프롬프트는 그 필드를 규정조차 하지 않아 **계약 없는 비신뢰 입력**이었다. 서버가 판정·대체하도록 바꿨다(프롬프트는 지시이지 집행이 아니고, 러너는 사용자 PC 에 있어 낡은 빌드가 남는다).
+- **파일**: `routers/_conv_store.py`(판정기 `_step_text_is_tool_syntax`·`_sanitize_step_narration`·파생 꼬리 `_derive_step_work_tail` 신설 + `_resolve_step_display` 배선) · `routers/ai_tools.py`(`_bridge_step_narration` 도구명 인자 + 적재 차단, `_bridge_live_steps` 표시 정합, `_bridge_derived_narration` 식별자 폴백 제거) · `app.py`(re-export 3) · `static/app.js`(`TOOL_LABEL_MAP` 7→28 · `toolLabel` 미지 폴백 `"도구"` · `stepTitleText` 신설) · `static/app/progress.js`(같은 폴백).
+- **저장된 원문은 건드리지 않는다** — 판정은 표시층 전용이다. 감사·재현 가치가 있고, 판정이 틀렸을 때 되돌릴 근거가 사라지지 않는다.
+- **적대 검증이 잡은 것 2건**: ① 라이브 19행 재생에서 **파생 문구 자신이 판정기에 걸림**(백틱 감싼 식별자로 시작 → `sanitize(derive(x))` 가 고정점 아님). (c) 규칙을 «인용 없는» 식별자로 좁히고 `test_l2_derived_narration_is_a_fixed_point` 로 서버 도구 census 전체에 불변식을 걸었다. ② codex P2 — **사유(reason)는 대체값이 없는 축**이라 (c) 를 적용하면 `order_items 테이블에 …` 같은 정상 설명이 순수 손실된다. 사유에는 (a)·(b) 만 적용하도록 세 이음매를 모두 좁혔다.
+- **검증**: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`. 라이브 재생 유출 18→**0**, pytest 전량 PASS, 행위 하네스 13 PASS + 결함 주입 6 FAIL.
+- **되돌리기**: 이 cycle 을 git revert 후 web 재배포. 데이터 변경이 없으므로 되돌리면 종전 표시(원문 그대로)로 즉시 복귀한다.
+
+## CHG-20260908T134000-step-tool-syntax-leak-r2
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak; 위험도 Major §12.3(변동 없음).
+- Timestamp: 2026-09-08T13:40:00+09:00; session: claude ai/claude/feature-0003-step-tool-syntax-leak.
+- **적대 검증 라운드 1 이 4명 전원 BLOCK 을 냈고, 그 뿌리는 초판 판정기였다.** backend 가
+  라이브 원장 **9,759행 전건 재생**으로 실측: 「인용 없는 snake_case 로 시작」 규칙이 걸러낸
+  412행 중 실제 도구 구문은 **18행뿐**, 394행(96%)이 정상 제목이었다(손익비 1:22). 이 도메인은
+  테이블 이름이 곧 사용자의 어휘라 그 형태를 금지 서명으로 쓸 수 없다.
+- **재설계**: 판정 서명을 (a) 인자 매핑 리터럴 + (b) **서버 도구 census 의 이름** 둘로 좁히고,
+  NFKC + 제로폭·bidi 제거로 전각 우회를 닫았다. 표시 문구를 만드는 **단일 이음매**
+  `_step_display_narration` 을 두어 완료·진행 두 경로가 그것만 부르게 했다 — 파생값 재정화
+  (비신뢰 `args` 재주입 차단) · 길이 상한 · 출처 정직화 · None-safe 를 한 자리에서 지킨다.
+- **사유 축 분리**: 사유에는 (a) 만 적용하고 표시 경로에 `_derive_step_reason` 파생을 배선했다.
+  대체가 없는 축에 같은 규칙을 쓰면 정상 설명이 순수 손실된다(라이브 8건 실측).
+- **함께 닫은 갈래**: `_DERIVED_WORK_TAIL` 인자 인지 콜러블 승격(진행/완료 제목 동일성) ·
+  `agent_core._derive_step_work` 3번째 인자 오배선 · census 를 정의 조회로 전환 + 배출 전용
+  2종 편입 · `intent` 를 공유 화이트리스트·진행 payload 에서 제거 · 프런트 백틱 제거 ·
+  activity 렌더러의 `intent` 폴백 제거 · 배지 폭 CSS 고정 · 라벨 어휘 교정.
+- **게이트 자체의 결함도 고쳤다**: `_fn_body` 가 주석을 제거하지 않아 존재 단언이 주석에
+  걸렸고(G11-a), 「make test 에 node 가 없다」는 **사실이 아닌 전제**로 만든 CI-gap 탈출구가
+  L6·L7·L8 을 동시에 무력화하고 있었다(Makefile 이 node 를 설치한다). 탈출구를 없애고
+  음성 대조군을 **산출물 주입**으로 바꿨다.
+- **검증**: 재생 후 버려진 제목 19건(전부 도구 표기) · 버려진 사유 **0건** · 잔존 유출 **0건**.
+  `docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`.
+- **되돌리기**: 데이터 변경 0 — git revert 후 web 재배포하면 종전 표시로 즉시 복귀한다.
+
 ## CHG-20260908T124500-attach-folder-tree
 
 - Related TASK: TASK-20260908T124500-attach-folder-tree (REQ-20260908-attach-folder-tree).
@@ -6189,3 +6226,135 @@ Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 w
 - Timestamp: 2026-09-08T08:20:41.263318+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
 
 PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비스 healthy·90초 soak·56배포본 계약검사 PASS, 실제 task 권한 catalog/미허용 datasource/첨부 대체경로 확인. 실제 SQL Server는 새 웹·기존 워커·호스트 모두 연결 timeout이어서 프로시저 결과 성공과 구분한다. 신규 AI 응답0으로 fixed:deployed:unverified-live 유지. 정본: [배포·미실측 기록](test-runs.d/TASK-20260908T162000-tool-surface.md). 제품 코드 추가 변경 없이 증거·제한을 문서화한다.
+
+## CHG-20260908T160000-step-tool-syntax-postmerge
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak. 제품 코드 변경 **0** — 병합·증적만.
+- 최신 `origin/main`(cdd414e3, 46커밋) 흡수. 충돌 3건(FUNCTION·REPORT·TASK)은 전부 «양쪽 말미
+  append» 라 §16.4 자율 해결(양측 보존). 결과 검증(MUST): 양쪽 부모 대비 유실 파일 **0건**,
+  이 cycle 핵심 심볼 6종 생존, main 신규 파일 153건 생존, main 고유 변경분 == 병합본.
+- 병합 후 재검증 **8,267건 / 실패 2**. 그 2건(`test_route_parity_p5b` 골든 스냅샷 269→271,
+  `test_bridge_interrupt_stream` 명시 도구 라우트 7→8)은 **pristine origin/main 에서도 동일**하게
+  실패하는 선재 결함이다(다른 세션이 라우트를 추가하며 골든·개수 단언을 갱신하지 않음).
+  본 cycle 대비 차집합 0. 병합 전 단독 실행은 8,143건 전량 PASS.
+## CHG-20260908T125500-share-client-entry
+
+- Related TASK: TASK-20260908T125500-share-client-entry (REQ-20260908-share-client-entry).
+- `shared/dqa_identity.py`: `MAX_APP_PATH` · `safe_app_path()` · `app_open_url()` 신설 —
+  「이 화면을 앱에서 열어라」 딥링크의 **조립 정본**. 연결용 `scheme_url()` 은 무변경.
+- `unit/feature-0046-native-client/src/client/core.py`: `safe_app_path()` 사본(테스트가
+  정본과 같은 표로 대조) · `parse_scheme_url` 이 `path` 수용(부적격이면 키만 버림) ·
+  `ConnectPlan.path` · `request_show(home, path)` + `show.path` · `take_show_request` 가
+  bool → `str | None`(목적지 경로) 로 반환 계약 변경.
+- `client/gui.py`: `--path` 인자 · plan 주입 · 이미-실행 분기의 목적지 전달 ·
+  `_watch_show_requests(…, plan, br)` 가 `Shell.navigate` 후 `show()` ·
+  `_serve_confirms` 의 `reopen(dest)`. `client/window.py`: `Shell.navigate()` 신설.
+- `unit/feature-0003-agent-web-ui/src/routers/share.py`: `_share_client_entry()` 신설 +
+  `/api/public/share/{token}` 응답에 `client: {app_link, download_url}` 1블록 추가.
+  받기 URL 은 `oauth_as._client_download_url` 위임(판정 정본 1개). 기존 필드·게이트 무변경.
+- `static/share-client-context.js`(신규): 정본 `app/client-bridge.js` 를 import 해
+  `window.__dqaClientBridge` 로 얹는 어댑터. 좌표 규약을 재구현하지 않는다.
+- `static/share.html`: 액션 바에 `shareAppEntryBtn`·`shareAppGetLink`·`shareAppHint` 추가,
+  `shareLoginLink` 제거, 컨텍스트 모듈(module) → `share.js`(defer) 순서 계약.
+- `static/share.js`: `inClientApp()`·`appEntryIsUseful()`·`enterViaApp()` 신설, 액션
+  가시성 이원화, `_latestClient` 스냅샷. `static/share.css`: `.share-app-btn` ·
+  `.share-app-get` · `.share-app-hint` 규격(기존 hover/터치/reduced-motion 그룹에 편입).
+- 테스트: `test_share_client_entry.py`(신규 15) · `verify_share_client_entry.mjs`(신규 30,
+  jsdom + 양성 대조군) · `test_wsl_and_scheme.py`(양벌 경로표·왕복·degrade 추가) ·
+  `test_standalone_launch.py`(목적지 전달 5건 추가 + 반환 계약 갱신) ·
+  `test_share_bar_layout.py` L3(웹 로그인 링크 제거 반영).
+
+## CHG-20260908T141000-share-client-entry-panel
+
+- Related TASK: TASK-20260908T125500-share-client-entry. **적대 검증 2라운드 조치** —
+  1R(security·ux·qa 전원 BLOCK) → 조치 → 2R(security BLOCK · ux CONCERN) → 조치.
+  지적·근거 원문은 [reviews/…-r1.md](reviews/20260908T132000-share-client-entry-r1.md) ·
+  [reviews/…-r2.md](reviews/20260908T141000-share-client-entry-r2.md).
+
+### 보안
+
+- `shared/dqa_identity.py` · `client/core.py`: `safe_app_path` 가 **`?`·`#` 거부**(1R F1 —
+  통과하면 `panel_url` 쿼리가 두 벌이 되어 브리지 nonce 를 링크 제작자가 덮어쓴다, 실행 재현).
+- `client/appwindow.py`: `panel_url` 을 f-string 연결에서 **urlsplit + 좌표 강제 덮어쓰기**로
+  교체(방어 이중화 — 검증기가 뚫려도 조립이 막는다).
+- `client/core.py`: `parse_scheme_url` 이 host 로 **액션 분기**(`open` → `base`·`path` 만) —
+  1R F3. `_write_private()` 신설(0600 원자 교체) — 1R F2. 고아 정리를 **mtime 기반**으로 — 1R F4.
+  2R B2 로 `fchmod` 를 **POSIX 한정**(Windows 는 no-op·3.12 이하는 AttributeError), 2R B3 으로
+  **목적지 실패가 신호를 죽이지 않게** + 실패 경로 `close → unlink`.
+- `static/app/client-bridge.js`: 좌표 보관을 **allow-list** 로(`_PERSIST_SURFACES`) — 1R X1 의
+  deny-list 는 `/static/share.html` 로 뚫렸다(2R B1, 라이브 200 확인). 좌표 **모양 검사**
+  (포트·nonce 형식 + 쿼리 말미) — 2R C1(개수만 세면 흡수 파라미터로 우회된다).
+- `client/gui.py`: 딥링크 `base` 에도 **동봉값 대조** — 2R C2(pin 이 없으면 무경고였다).
+- `docs/SECURITY.md` §7: 익명 응답 새 필드 등재 + **우회 가능 범위**와 **미서명 설치기 실행
+  유도** 위험 명시.
+
+### UX
+
+- `static/share.js`: 열화 조건을 셋으로(앱 링크 부재 · **받을 곳 부재** · **앱이 존재할 수 없는
+  기기**) — 1R HIGH·§3. `already_member` 의 «대화로 이동» 을 게이트 밖으로 + 라벨·설명에서
+  «참여» 제거 — 1R MED·2R F3. 상시 설명 1줄 + live region 순서 교정 + 버튼 자체 피드백
+  (「앱을 여는 중...」) — 1R CONCERN·2R F2. `inClientApp` URL 2차 신호. `syncFooterSpacing`
+  (ResizeObserver) + **인쇄 가드** — 1R MED·2R F1. `compactFooterForNarrow`(좁은 폭에서 받기
+  링크를 안내문 안으로) — 2R F4. `setHintText`(자식 span 슬롯) — **그 조치가 만든 버그**:
+  `textContent` 대입이 안으로 접힌 링크를 삭제했다.
+- `static/share.html`: 안내 문단에 `#shareAppHintText` 슬롯. `static/share.css`:
+  `--share-muted` **미정의 변수** 교정(1R CONCERN) · `.share-app-get--inline` · 좁은 폭 축소 ·
+  `@media print { padding: 0 !important }`.
+
+### 테스트 (각 조치를 뮤턴트로 봉인 확인)
+
+- `test_embedded_window.py`: 내장 창 목적지 배선을 **실제 호출로** 검증(1R qa-F1 — 배선을 지워도
+  561건 전건 초록이었다). `Shell.navigate` 세 갈래.
+- `test_wsl_and_scheme.py`: 경로표에 `?`·`#`·경계 양측·표기 변종 추가. **상한 값 자체를 단정하는
+  테스트 별도 추가** — 경계를 상수에서 계산하면 상수와 표가 함께 움직여 **항진명제**가 된다(실측).
+  `open` 토큰 배제 · `panel_url` 스머글 방어 · 딥링크 base 게이트.
+- `test_standalone_launch.py`: 파일 권한 · 경합(fresh/aged 고아) · tkinter 갈래의 **의도적**
+  목적지 미사용 + 나머지 두 껍데기의 사용.
+- `test_share_client_entry.py`: 스킴 리터럴 금지 **모수를 디렉터리 순회**로(1R qa-F2 — 파일
+  하나만 보던 동안 어댑터에 리터럴을 넣어도 전부 초록) · 익명 응답 키 집합을 **AST 로** 판독
+  (2R §3-3 — 들여쓰기 정규식은 중첩 키를 오인한다) · allow-list 극성 단정.
+- `verify_share_client_entry.mjs`: 47 → **81건**. 재렌더 2회 시나리오(1R qa-F3) · 비-Windows
+  3종 · 이미-멤버 가시 컨트롤 집합 · 좌표 경로 표 6종 · 모양 검사 우회 4종 · 버튼 피드백.
+- `tests/headless/verify_share_bar_layout.py`: **T9**(안내 표시 × 4폭) + **T9-b 절대 예산 25%**
+  (2R F4 — `pad >= fh` 는 구현 되풀이라 바가 500px 여도 초록이었다) · 실기기 높이 · 플랫폼 고정 ·
+  스크립트 제거를 정규식으로(2R C2 — 목록이 stale 이었고 무해했던 이유가 `about:blank` 우연이었다).
+
+## CHG-20260908T150000-share-client-entry-r3
+
+- Related TASK: TASK-20260908T125500-share-client-entry. **적대 검증 3라운드(수렴 확인) 조치** —
+  판정 BLOCK, HIGH 2건이 **둘 다 2R 조치가 만든 회귀**였다. 원장:
+  [reviews/…-r3.md](reviews/20260908T150000-share-client-entry-r3.md).
+- `static/app/client-bridge.js`: `_adoptIfTheBridgeAcceptsIt()` 신설 — 익명 표면의 좌표를 그
+  페이지 한정으로 쓰되 **브리지 `ping` 이 수용할 때만** 보관한다(3R H1). 무조건 보관은 allow-list
+  를 되열고, 보관하지 않으면 앱 창이 첫 이동에 자격을 잃는다 — 그 사이가 이 함수다.
+- `static/share.html`·`share.js`·`share.css`: `shareLoginLink` **복원**, 단 열화 분기에서만
+  노출(3R H2). 앱 전용 분기에서는 종전대로 감춘다.
+- `static/share.js`: busy 중 라벨 대입 skip(3R C1) · 안내문 **토글**(3R C2).
+- `tests/headless/verify_share_bar_layout.py`: **T10** 인쇄 가드 신설(3R C3) · 증적 저장을
+  `--evidence` 뒤로(3R C5). 이 cycle 이 덮어쓴 2026-07-27 증적 3장은 **원복**했다.
+- `tests/verify_share_client_entry.mjs`: 81 → **108건**. **2차원 표** 도입 —
+  ③b(열화 4분기 × 미로그인/로그인 후) · Ⓓ(검증 후 보관 · 이동 후 좌표 계승 · 대조군) · ⑤d(busy
+  경합) · ⑨(재렌더 후 안내문). 3R 이 지적한 「축 하나만 훑는 검증」의 교차 칸을 메운다.
+- `tests/test_share_bar_layout.py`: L3 를 조건부 로그인 링크 계약으로 갱신.
+- 병합: main `cdd414e3`(48커밋) 흡수. 충돌 7건 — append-only 문서 4건은 **양측 보존**,
+  `docs/STATUS.md` 는 행별 분리(0002=upstream · 0003=mine), `docs/ROUTEMAP.md` 는 재생성,
+  `tests/test_client_bridge_runtime.py` 는 upstream 이 별도 하네스로 재작성했으므로 그것을
+  채택하고 **그 하네스(`verify_client_connections_dom.mjs`)의 테스트 nonce 를 실 규격으로**
+  맞췄다(6자 `secret` 은 이번에 추가된 좌표 모양 검사에 걸린다).
+
+## CHG-20260908T160000-share-postdeploy
+
+- Related TASK: TASK-20260908T160000-share-postdeploy.
+- `docs/test-runs.d/TASK-20260908T125500-share-client-entry.md`: Run 6(라이브 도달성) 추가.
+  코드·FUNCTION·정책 변경 없음 — 배포 후 실측 결과와 **미확인 경계**의 기록뿐이다.
+
+## CHG-20260908T163000-step-tool-syntax-postdeploy
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak. 제품 코드 변경 **0** — 배포 증적만.
+- PR #1637 병합(main `3658deee`) 후 `bin/deploy-web.sh --web-only` 로 web-a/b 재배포
+  (`mysql-ai-web:3658deee`, 둘 다 healthy · soak 통과 · Caddy 무변경).
+- POST-DEPLOY 실측 2축: ① **배포 컨테이너 안**에서 라이브 원장 10,114행 전건 재생 —
+  잔존 유출 **0** · 사유 손실 **0** · census 25 ② **라이브 엣지에서 내려받은 실제 자산**
+  (`app.js?v=737ff1e2c409`, 501,697B) 대조 — 신규 심볼 전건 존재, 제거한 폴백 4종 전부 0건,
+  라벨 표 30종.
+- 남은 미검증: DQA 클라이언트 **화면** 실측(앱 WebView2 디버깅 포트 부재 — PB-0009 NOT-RUN 유지).
