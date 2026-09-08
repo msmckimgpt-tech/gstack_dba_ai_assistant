@@ -225,6 +225,39 @@ def test_catalog_without_details_waits_for_successful_heartbeat(tmp_path, monkey
         assert not any(row['ev']=='client_caps.failed' for row in state['logs']())
 
 
+@pytest.mark.parametrize('had_previous_row',[False,True])
+def test_heartbeat_does_not_cache_a_catalog_published_during_older_request(tmp_path,monkeypatch,had_previous_row):
+    mod=load()
+    monkeypatch.setenv('BRIDGE_LOG_DIR',str(tmp_path/'logs'))
+    old={**_catalog('codex')[0][0],'_client_location':{'selection_id':'0'*32}}
+    fresh={**_catalog('codex')[0][0],'_client_location':{'selection_id':'1'*32}}
+    rows=[old] if had_previous_row else []
+    expected_confirmed=json.loads(json.dumps(rows))
+    sent,confirmed=[],[]
+    stop=threading.Event()
+    class Api:
+        def heartbeat(self,runtimes=None,**kwargs):
+            sent.append(json.loads(json.dumps(runtimes)))
+            if len(sent)==1:
+                # 협상 게시가 이전 heartbeat의 네트워크 응답보다 먼저 도착한다.
+                rows[:]=[fresh]
+                return {'interval_sec':.01}
+            stop.set()
+            return {'_http':503}
+    monkeypatch.setattr(mod,'_HEARTBEAT_MIN_INTERVAL_SEC',.01)
+    thread=mod.start_heartbeat(Api(),stop,rows,on_reported=confirmed.append)
+    try:
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+        assert confirmed==[expected_confirmed]
+        assert sent[1][0]['source']=='catalog'
+        assert fresh['source']=='catalog'
+        assert '_client_location' not in sent[1][0]
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+
 def test_catalog_does_not_make_an_unresponsive_ai_ready(tmp_path, monkeypatch):
     with _client_session(tmp_path,monkeypatch,lambda name,attempt:_catalog(name),
                          alive=False,hold_liveness=True,accept_heartbeat=True,retry_delay=10) as state:

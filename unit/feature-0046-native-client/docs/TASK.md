@@ -43,3 +43,9 @@ feature_status_date: 2026-09-08
 - share-client-entry 소유자에 core.py 영향 심볼 질의 20260908T054858508Z-61b4a3. 창/GUI 파일은 변경 계획 없음.
 
 - Issue #1625. 추가 발견: catalog 건강 오인/진단 JSON 생존 오인, 선택 위치 변경 뒤 재시도 소실, OS PermissionError 형 유실을 함께 수정. 전역 파일 세대는 무관한 AI 조회를 반복하므로 AI별 selection_id로 구현.
+
+- main統合: PR1628 텍스트 선택/검색 수정·공개1.2.3, PR1629 첨부 전달 수정 통합. 새 버전은1.2.4. 앞 작업 TASK는 task-history/20260908-text-interaction-at-integration.md에 보존.
+
+- [x] 공개1.2.3의 텍스트 선택/검색 개선을 포함한 최신 main 통합 및 문서 충돌 해소. 출하 버전1.2.4.
+
+- [x] main통합 Windows1.2.4 빌드·native544 회귀 완료. heartbeat송신경쟁은 결정적 회귀로 추가 봉인.

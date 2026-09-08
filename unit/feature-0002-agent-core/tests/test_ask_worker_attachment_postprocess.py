@@ -495,3 +495,17 @@ def test_tilde_and_wide_fences_are_tracked(monkeypatch):
     _postprocess_attachment_blocks("conv-x", 10, result, "run-1")
     saved = calls["update"][-1]["content"] if calls["update"] else result.get("answer", "")
     assert "첨부 전달 실패" not in saved
+
+
+def test_successful_file_only_result_preserves_empty_answer(monkeypatch):
+    import modules.ask as ask
+    raw = '```attachment-new\n{"filename":"x.sql"}\nSELECT 1;\n```'
+    _install_fake_web(monkeypatch, latest_content=raw)
+    fake = sys.modules['web.app']
+    fake._apply_assistant_attachment_blocks = lambda *a, **kw: {
+        'answer': '', 'answer_persisted': True, 'created': [{'id': 1}], 'edited': [],
+    }
+    result = {'answer': raw, 'conversation_id': 'conv-1'}
+    ask._postprocess_attachment_blocks('conv-1', 42, result)
+    assert result['answer'] == ''
+    assert result['new_attachments'] == [{'id': 1}]

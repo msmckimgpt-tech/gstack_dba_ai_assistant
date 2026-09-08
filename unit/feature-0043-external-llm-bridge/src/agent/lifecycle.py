@@ -214,9 +214,9 @@ def start_heartbeat(api: Api, stop: threading.Event,
             # 능력은 **매번** 싣는다. 처음 한 번만 보내면 서버가 재시작하거나 토큰 행이 갈릴 때
             # 화면의 목록이 영영 비고, 그 빈 목록은 "러너가 없다" 와 구분되지 않는다.
             # 서버는 값이 그대로면 쓰지 않으므로(쓰기 증폭 없음) 매번 싣는 비용이 없다.
-            reported = [dict(row) for row in (runtimes or [])] if on_reported else runtimes
+            reported = [dict(row) for row in (runtimes or [])]
             outgoing = [{k: v for k, v in row.items() if k != "_client_location"}
-                        for row in reported] if on_reported else runtimes
+                        for row in reported] if on_reported else (None if runtimes is None else reported)
             res = api.heartbeat(outgoing, released_instances=_pending_release)
             code = res.get("_http")
             if code == 401:
@@ -258,7 +258,7 @@ def start_heartbeat(api: Api, stop: threading.Event,
                 # 경로에 있다(`sanitize_caps` 가 `verified` → `cache` 로 강등한다).
                 # `cache` 도 신고 가능 출처라 화면의 목록은 그대로 유지된다.
                 for _r in (runtimes or []):
-                    if _r.get("source") in _CREATION_SOURCES:
+                    if _r.get("source") in _CREATION_SOURCES and _r in reported:
                         _r["source"] = "cache"
                 # 사망 신고가 서버에 닿았다 — 다음 신호부터는 싣지 않는다.
                 if _pending_release:

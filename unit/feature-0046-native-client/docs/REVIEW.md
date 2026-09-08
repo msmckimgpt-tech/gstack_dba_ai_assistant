@@ -1245,11 +1245,32 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: TASK-20260908-update-install-proof.
 - Trigger: actual installation/실제 설치 결과와 기존 실패 회귀.
 - Artifact: [독립 실측 검토](artifacts/20260908-update-install/qa-live-review.md). 실제설치파일과다운로드파일SHA도 별도 재계산하여 대조했다. 설치종료·재실행·최신메뉴응답까지PASS.
-
 ## REV-20260908T151500-codex-connect-fix [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T151000-codex-connect-fix; Issue #1625.
 - Trigger: API/응답 계약, permission/실행 권한, caching/캐시, UI/연결 화면.
 - Dispatch: update_installer_review(backend/security), update_install_qa(qa), connect_ux_review(ux/design). 독립 도메인 검토 및 수정 확인.
 - P1 수정: catalog 빈 detail KeyError/남은 성공행/예외 기록 누락, catalog 건강 오인, error JSON 생존 오인, 로그인 필요 위치 소실. P2 수정: 공통 CSS 적용면, OS PermissionError 형 보존, A→B→A 선택 경쟁.
 - QA가 후속 선택 실패 후 재시도 소실과 전역 파일 세대의 불필요한 재조회 2건을 적발했다. watcher 백오프와 플랫폼별 selection_id로 수정 후12건 PASS.
-- Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.2 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+- Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.4 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+## REV-20260908T150900-text-interaction-ux [SUBAGENT:ux] — PASS
+- Trigger: UI/화면 텍스트 상호작용
+- Verdict: PASS (code); native search UI verification PARTIAL
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T150900-text-interaction-design [SUBAGENT:design] — PASS
+- Trigger: UI/화면 텍스트 상호작용
+- Verdict: PASS (code); native search UI verification PARTIAL
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T150900-text-interaction-design.md
+- Human Approval Needed: no
+
+## REV-20260908T151800-text-published [SKIPPED:non-policy-doc] — PASS
+- 공개 다운로드 증적·현재 문서·artifact 실행비트 정리만 변경. 제품 코드는 PR #1628과 동일하다.
+- 배포 승인 근거: 현재 사용자 수정 위임, wrapper FIRST_REQUEST deploy_scope included, AGENTS.md §16.5.1. 설치본 교체 없음.
+- native 검색 UI 실측은 계속 NOT-RUN/PARTIAL로 유지한다.
+
+## REV-20260908T152500-heartbeat-snapshot [SUBAGENT:backend,security,qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T152000-codex-heartbeat-snapshot.
+- Trigger: API/응답 계약·concurrency/상태 경합.
+- QA가 빈/옛 요청 성공 응답이 미송신 새 catalog의 source를 바꾸는 실제 경쟁을 결정적으로 재현했다. 송신 snapshot의 동일행만 cache로 전환하도록 수정 후119 PASS. 기본 runtimes=None(능력 미신고)과[](명시 빈목록)의 기존 계약도 보존했다.
+- backend/security 좁은 확인과 QA 결정적 회귀: 기존 source단정을 유지하여 새 미송신행/변경선택의 잘못된 인정이 없음을 확인.
