@@ -1089,6 +1089,22 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
   않아 확정 불가. 재발 시 즉시 `docker events` 를 스트리밍으로 걸어 두는 것이 유일한 관측 수단.
 - Human Approval Needed: 아니오 — `deploy_scope: included` 범위 안의 배포와 그 기록.
   단 `LRN-20260907-0001` 의 `verified` 는 사용자 확인 전이므로 `self-measured` 로 두었다.
+## REV-20260908T113000-bridge-token-env-ux [SUBAGENT:ux] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0046-native-client
+- Trigger: UI/클라이언트 안내 keyword matched
+- Timestamp: 2026-09-08T11:26:45+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T113000-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T113000-bridge-token-env-design [SUBAGENT:design] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0046-native-client
+- Trigger: UI/클라이언트 안내 keyword matched
+- Timestamp: 2026-09-08T11:26:45+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T113000-design.md
+- Human Approval Needed: no
+
 ## REV-20260908T020049-brand-design [SUBAGENT:icon_design_review] — PASS
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Trigger: UI/아이콘 디자인
@@ -1136,3 +1152,8 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-ux.md
 - Findings: P1/P2/P3 없음. main 러너 복구 보존, 기존 아이콘 자산·배선 동일, Windows 5개 표면·설치기 실물 크기/해시 PASS.
 - Human Approval Needed: no
+
+## REV-20260908T024200-brand-main-doc-sync [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Reason: #1609 main 동기화의 충돌은 MODIFY/REVIEW 문서 말미 추가뿐이며 양쪽 기록을 보존했다. 클라이언트 배포 소스는 기존 검증본과 byte 동일하다. 새 아이콘 코드·디자인 변경은 없다.
+- Timestamp: 2026-09-08T02:42:00Z

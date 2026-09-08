@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260908T113000-bridge-token-env — DQA 첨부 리뷰 실패 수정
+
+Windows DQA 내부 러너→WSL Codex 경계에서 BRIDGE_TOKEN이 빠진 것이 원인이다.
+자식 환경의 WSLENV에 BRIDGE_TOKEN/u만 추가해 복구한다. 사용자 별도 러너 실행·환경 설정은
+불필요하며 기존 자동 갱신으로 배포본을 수신한다. 실제 Windows Python→WSL 실험은 수정 전
+False / 수정 후 True, 수정 제품 경로로 토큰 동일성·대조 환경 보존 모두 PASS.
+보안 리뷰 PASS. 추가로 사라진 터미널 명령을 안내하던 오류 문구와 기존 회귀 하네스 결함을 수정.
+
+### Git 동기화 결과
+- 작업 브랜치: ai/codex/feature-0043-bridge-token-env, base 76a76ddd.
+- verify-completion / commit / push / PR / 배포: 검증 완료 후 순서대로 진행.
+- 최종 검증·배포 결과 정본: 이 cycle test-runs.d 및 PR 설명.
+
+
 ## 1. 현재 상태
 
 **2026-09-08 (TASK-20260908T010000)**: 배포 후 라이브 종단 실측 완료 — 사용자 계정 앱 창에서

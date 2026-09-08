@@ -12,6 +12,17 @@ feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완
 
 # Task
 
+## TASK-20260908T113000-bridge-token-env — DQA 클라이언트만 사용하는 흐름 검증
+
+### 2.1 Implementation Plan
+- Minor. 사용자 2026-09-08 추가 지시: 별도 러너 실행 없이 DQA 클라이언트만 사용.
+- 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합.
+- AC: 없어진 1단계 명령 안내 없음. 실제 앱 메뉴·이벤트 연결 확인, 회귀 green.
+- [x] 현재 사용자 요구·기존 ANCHOR 방향 정합 확인.
+- [x] 구현 및 집중 회귀 검증.
+- [ ] 배포 후 Windows 확인.
+- 정본: feature-0043-external-llm-bridge/docs/TASK-20260908T113000-bridge-token-env 작업 항목.
+
 
 ## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery
 
@@ -562,3 +573,5 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 
 - 추가 실측 반영: `src/scripts/export_icon.py`가 DIB16~128/PNG256 혼합 ICO를 재현한다. 전 프레임 PNG 방식은 Tk에서16px 확대가 발생했으며 DIB 교체 후32px 픽셀 일치 확인.
 - hot_paths: `src/client/{gui,window,tray}.py`, `src/scripts/build_client.py`, `src/installer/DQAConnect.iss`. 아이콘 지정·패키징만 소유하며 기존 세션 작업은 보존한다.
+
+- [x] #1609 후속 main 동기화: 토큰 전달 수정과 문서·테스트를 보존. 클라이언트 배포 소스는 1.1.2 검증본과 동일.

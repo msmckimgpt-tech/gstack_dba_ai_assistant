@@ -692,10 +692,10 @@ def test_launch_button_is_pointless_inside_the_app():
     켜는 줄)를 골라야 한다 — 첫 줄을 잡으면 엉뚱한 것을 단정한다.
     """
     js = _MODAL_JS.read_text(encoding="utf-8")
-    offer = js.split("function _offerLaunch() {", 1)[1].split("\n}", 1)[0]
+    offer = js[js.index("function _offerLaunch()"):].split("\n}", 1)[0]
     assert "if (clientBridge) return;" in offer
-    assert offer.index("if (clientBridge) return;") < offer.index("hidden = false"), \
-        "프로그램 안에서도 실행 버튼을 보인다"
+    assert offer.index("if (clientBridge) return;") < offer.index("btn.hidden = false"), (
+        "프로그램 안에서도 실행 버튼을 보인다")
 
 
 def test_web_only_path_is_unchanged():

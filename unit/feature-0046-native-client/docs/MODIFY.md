@@ -846,6 +846,11 @@ edit_policy: append-only
   (하드 리프레시 안내) **미이행** 명기 · `LRN-20260907-0001` 의 `verified` 값 정정 ·
   앞 cycle 미체크 항목의 종결 표시.
 
+## CHG-20260908T113000-bridge-token-env
+- Timestamp: 2026-09-08T11:24:21+09:00; session: Codex ai/codex/feature-0043-bridge-token-env.
+- REQ-20260908-client-only: 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합.
+- 검증 정본: feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T113000-bridge-token-env.md.
+
 ## CHG-20260908T020049-brand-icon
 
 - 사용자 요청: DQA 아이콘 제작 및 설치 파일 포함 적용, 추가로 공식 마상소프트/마상게임즈 심볼 방향 반영. 웹 테마 확장은 사용자 선택으로 제외.
@@ -872,3 +877,7 @@ edit_policy: append-only
 - 사유: #1606 러너 복구의 1.1.1이 먼저 배포되어 같은 버전을 다른 설치기로 덮어쓰지 않는다.
 - 변경: main의 러너 복구를 보존하고 아이콘 적용판 version.py·Inno Setup을 1.1.2로 정합. GUI/빌드 자동 병합과 FUNCTION/TASK/STATUS 충돌을 양 부모 기준 검토했다.
 - 검증: 최종 524 PASS, ruff PASS, Windows 재빌드·5개 표면 아이콘 픽셀 일치 PASS. 증적은 test-runs.d/20260908T020049-brand-icon.md.
+
+## CHG-20260908T024200-brand-main-doc-sync
+- Related TASK: TASK-20260908-brand-icon
+- #1609의 문서 말미 충돌을 양쪽 보존으로 해결했다. 클라이언트 배포 소스와 설치기는 기존 1.1.2 실측본과 같다. 변경된 웹 계약 테스트를 재확인한다.

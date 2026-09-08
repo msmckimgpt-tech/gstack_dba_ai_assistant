@@ -4974,7 +4974,19 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
    기존 계정·데이터를 바꾸지 않았고 새 계정을 만들지 않았다(§16.6 검증 접근 획득 조건).
 3. **클라이언트를 재기동했다.** 앱 창에 디버깅 포트를 여는 유일한 방법이었다. 측정이 끝난
    뒤 포트 없이 다시 띄워 정상 상태로 되돌렸고 CDP 가 닫힌 것을 확인했다.
-
+## REV-20260908T113000-bridge-token-env [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908T113000-bridge-token-env / feature-0043-external-llm-bridge
+- Trigger: token/토큰 전달 keyword matched — AGENTS.md §18.8 security subset
+- Timestamp: 2026-09-08T11:24:21+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T113000-security.md
+- Human Approval Needed: no
+- 승인 근거: 현재 사용자 DQA 실패 해소 요청. 기존 위임 경로 복구로 인증·인가 구조 변화 없음.
+  배포는 FIRST_REQUEST.md deploy_scope: included 및 AGENTS.md §16.5.1에 따른다.
+- 원인 증거: 11:02 Windows runner run e6db1eda910b → WSL Codex session
+  01a07ec0-43a5-77b0-a151-789efba59c04. HTTP 전 getenv 부재. 같은 PC 더미 실험으로 반증.
+- 대안: Codex 전역 환경 필터 해제는 적용하지 않았다. WSL 경계 자체에서 변수가 사라지며,
+  공식 최신 Codex 문서도 기본 ignore_default_excludes=true로 명시한다. CLI 설정을 바꿀 근거 없음.
 ## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
 - Related TASK: feature-0043-external-llm-bridge
 - Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰
