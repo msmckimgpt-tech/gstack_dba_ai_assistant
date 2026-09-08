@@ -6,7 +6,7 @@ edit_policy: rewrite
 
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완료, 배포 진행
+feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
 
 ---
 
@@ -26,7 +26,7 @@ feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완
 
 ## 2.1 Implementation Plan — TASK-20260908T120000-runner-update-recovery
 
-- 상태: in-progress. 사용자 2026-09-08 직접 요청. 위험도 Minor: 기존 다운로드 신뢰·계정 경계를 유지하는 파일 교체 및 자식 프로세스 복구.
+- 상태: completed — PR #1606 병합, 서버 및 DQA 1.1.1 채널 배포·검증 완료. 사용자 2026-09-08 직접 요청. 위험도 Minor: 기존 다운로드 신뢰·계정 경계를 유지하는 파일 교체 및 자식 프로세스 복구.
 - 작업 경로: `ai/codex/feature-0043-runner-update-recovery` worktree.
 - `feature-0043/src/agent/selfupdate.py::install_agent_file` — 동일 디렉터리 임시파일·fsync·원자 교체를 유지하고 sidecar 파일 잠금·동일 payload 재교체 생략을 추가한다.
 - `feature-0043/src/agent/{events,lifecycle}.py::_self_build,try_self_update` — 기동 지문과 인정된 번들 경로를 고정한다. 감독 러너는 갱신 후 전용 종료코드로 부모에게 재기동을 맡긴다. Windows 직접 exec 인자 인용을 보완한다.
@@ -542,7 +542,7 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
 - [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
 - [x] 전체 make test 및 verify-completion PASS.
-- [ ] PR 병합 및 서버/채널 배포 완료 기록.
+- [x] PR #1606 병합 및 서버/채널 배포 완료. web-a/b `0f58a1de`, DQA 1.1.1 실제 업데이트 조회·다운로드·SHA-256 검증 PASS.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
 
 ### 사용자 동선 확정 (2026-09-08 후속 지시)

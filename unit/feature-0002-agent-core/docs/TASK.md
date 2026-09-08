@@ -6,7 +6,7 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신 및 종료 복구 구현과 실측 완료, 배포 진행
+feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
 
 ---
 
@@ -3636,7 +3636,7 @@ Task-Cycle: feature-0002-agent-core
 - [x] R1 발견 수정 → R2 PASS → UI·CI·테스트 보완 R3 PASS.
 - [x] Windows 1.1.1 설치기 생성 및 동봉 런타임 검사.
 - [x] 전체 make test 및 verify-completion PASS.
-- [ ] PR 병합 및 서버/채널 배포 완료 기록.
+- [x] PR #1606 병합 및 서버/채널 배포 완료. web-a/b `0f58a1de`, DQA 1.1.1 실제 업데이트 조회·다운로드·SHA-256 검증 PASS.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`. 이 TASK 밖 기존 열린 항목의 상태를 변경하지 않는다.
 
 ### 사용자 동선 확정 (2026-09-08 후속 지시)
