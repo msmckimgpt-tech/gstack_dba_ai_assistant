@@ -6,7 +6,7 @@ edit_policy: rewrite
 
 feature_status: in-progress
 feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+feature_status_note: 러너 복구 개선을 포함한 DQA 1.1.2 마상 브랜드 아이콘. 클라이언트·설치기 적용과 Windows 5개 표면 검증. 릴리스 상세는 TASK/REPORT 정본.
 
 ---
 
@@ -577,3 +577,11 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - [x] #1609 후속 main 동기화: 토큰 전달 수정과 문서·테스트를 보존. 클라이언트 배포 소스는 1.1.2 검증본과 동일.
 
 - [x] 최종 main 11fa3741의 배포 완료 기록 보존 및 양 부모 대조 완료. 클라이언트 배포 소스 변경 0, 변경 웹 계약 테스트 86 PASS.
+
+
+### TASK-20260908T020000-delegation-friction — 교차 검증 보완
+
+테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
+[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
+[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
+DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.

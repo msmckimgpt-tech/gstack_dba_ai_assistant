@@ -8,10 +8,10 @@ scope: feature
 
 # Playbook: Windows 브라우저 검증 (AI 자동 구동)
 
-> 웹/UI(화면·상호작용) 변경의 완료 검증은 WSL 내부 headless 가 아닌 **실제 Windows
-> 브라우저**에서 수행한다 — AI 의 검증 화면 == 사용자가 보는 화면 (관점 괴리 방지).
-> 본 Playbook 은 AI 가 `bin/win-browser.py` 로 Windows Chrome/Edge 를 CDP 자동 구동하는
-> 절차다. 환경 분류·게이트는 AGENTS.md §15.4, 각 feature `docs/TEST.md` §3.
+> **보조 호환 검증용 (사용자 결정 2026-09-08)**: 주 서비스 사용 환경은 별도 DQA
+> 클라이언트다. UI 완료 검증은 [PB-0009](PB-0009-dqa-client-verification.md)를 따른다.
+> 이 문서는 일반 Windows 브라우저 호환성을 별도로 확인할 때만 사용한다. 별도 Chrome/Edge
+> 실행은 DQA 앱의 WebView2·세션·로컬 브리지·트레이 검증이 아니다.
 
 ## Prerequisites
 - 검증 대상 웹앱이 기동 중 (`docker compose ps` 로 `web` 서비스 healthy 확인).
@@ -81,8 +81,8 @@ scope: feature
    인스턴스만** 종료한다 (사용자 일반 브라우저는 보존). NAT+relay 모드에서 브리지를
    상시 열어두지 않으려면 관리자 PowerShell 에서 `win-browser-setup.ps1 -Remove` 로
    portproxy + 방화벽 규칙도 닫는다 (mirrored 모드는 인바운드 hole 이 없어 해당 없음).
-9. **BLOCKED 처리** — 브리지 setup 이 불가하거나(예: 관리자 권한 없음) 화면 검증에서
-   결함 발견 시 `REPORT.md` 에 `BLOCKED` 로 정리하여 사람에게 전달한다.
+9. 보조 브라우저 접근 실패는 해당 검증의 한계로 기록한다. 주 경로 DQA-client 검증이
+   가능한데 보조 환경 실패만으로 작업 전체를 승인 대기 상태로 만들지 않는다.
 
 ## Validation
 - [ ] `doctor` 가 `"ok": true` (브리지 동작 확인)
@@ -96,8 +96,8 @@ scope: feature
 ## 비고
 - 브리지 setup 이 환경상 불가하면(공용 CI 등) `WSL-headless`(feature-0004) 로 1차 검증하되,
   TEST.md 에 `Windows-browser` 미수행 사유를 명시한다 — "검증함"으로 오인되지 않게.
-- verify-completion check #13 (WARN-only, v1) 이 웹 대상 변경에 `Windows-browser` Run 누락 시
-  경고한다. 후속 cycle 에서 strict 격상 예정.
+- 현재 완료 gate는 AGENTS.md §15.4.1과 PB-0009가 정본이다. 이 문서의 브라우저 Run을
+  새 DQA-client 실행 PASS로 해석하지 않는다.
 - **대화형(in-loop) 탐색**은 Playwright MCP(`bin/playwright-mcp.sh` + `.mcp.json`)로 같은 브리지에
   attach 해 browser_snapshot/click/type 도구를 모델 루프에서 직접 쓸 수 있다(`bin/WIN-BROWSER-SETUP.md`).
   단 **반복 가능한 완료 게이트 증거**(TEST.md §3 Run)는 win-browser.py `run --scenario` 로 남긴다.

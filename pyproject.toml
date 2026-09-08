@@ -24,6 +24,7 @@ select = ["E9", "F63", "F7", "F82"]
 #     (PATH 문제 아님). grep 파이프라인을 `|| true` 로 무해화하여 수정.
 # 신규 회귀는 그대로 검출된다.
 addopts = "-q"
+# Shared by direct pytest, Makefile test, and CI; entrypoints must not override paths.
 testpaths = [
     "unit/feature-0002-agent-core/tests",
     "unit/feature-0003-agent-web-ui/tests",
@@ -43,4 +44,9 @@ testpaths = [
     # ⚠ Win32/트레이 층은 리눅스에서 돌지 않는다 — 그 층의 실측은 그 feature 의
     # `tests/windows/`(pytest 수집 대상 아님, README 에 실행법)가 담당한다.
     "unit/feature-0046-native-client/tests",
+    "unit/feature-0023-conversation-api-access/tests",
+    "unit/feature-0041-external-ai-tool-surface/tests",
+    "unit/feature-0043-external-llm-bridge/tests",
+    "unit/feature-0008-windows-browser-testing/tests",
+    "unit/feature-0006-lan-proxy-access/tests",
 ]

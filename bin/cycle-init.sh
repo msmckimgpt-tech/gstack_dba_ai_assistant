@@ -121,6 +121,8 @@ git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a git repository (cwd
 # main worktree = `git worktree list --porcelain` 의 첫 entry.
 MAIN_WORKTREE_PATH="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed."
+MAIN_BRANCH="$(git -C "$MAIN_WORKTREE_PATH" symbolic-ref --quiet --short HEAD)" \
+  || die "main worktree is detached; a named branch is required."
 
 # project_root = wrapper of MAIN_WORKTREE_PATH (= policy_root).
 # standard layout: <wrapper>/repo = policy_root, <wrapper>/.worktrees = sibling.
@@ -143,11 +145,11 @@ log_info "base branch:     $BASE_BRANCH"
 log_info "mode:            $([ "$PRINT_ONLY" -eq 1 ] && echo "print-only" || ([ "$DRY_RUN" -eq 1 ] && echo "dry-run" || echo "execute"))"
 
 # ── Step 1: main 최신화 (필수 — 사용자 추가 요구) ────────────────────────
-log_step "Step 1: main worktree 최신화 (git fetch + pull --ff-only origin $BASE_BRANCH)"
+log_step "Step 1: main worktree 최신화 (git fetch + pull --ff-only origin $MAIN_BRANCH)"
 
 if [ "$PRINT_ONLY" -eq 1 ]; then
   printf "[print-only] git -C %s fetch origin\n" "$MAIN_WORKTREE_PATH" >&2
-  printf "[print-only] git -C %s pull --ff-only origin %s\n" "$MAIN_WORKTREE_PATH" "$BASE_BRANCH" >&2
+  printf "[print-only] git -C %s pull --ff-only origin %s\n" "$MAIN_WORKTREE_PATH" "$MAIN_BRANCH" >&2
 else
   # fetch — 실패는 WARN (offline 환경 대비).
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -160,13 +162,22 @@ else
 
   # pull --ff-only — non-fast-forward 는 fail-loud.
   if [ "$DRY_RUN" -eq 1 ]; then
-    printf "[dry-run] git -C %s pull --ff-only origin %s\n" "$MAIN_WORKTREE_PATH" "$BASE_BRANCH" >&2
+    printf "[dry-run] git -C %s pull --ff-only origin %s\n" "$MAIN_WORKTREE_PATH" "$MAIN_BRANCH" >&2
   else
-    if ! git -C "$MAIN_WORKTREE_PATH" pull --ff-only origin "$BASE_BRANCH" 2>&1; then
-      die "git pull --ff-only origin $BASE_BRANCH failed (non-fast-forward?). main 에 로컬 commit 이 있는지 확인 + manual resolve. 자동 merge/rebase 는 silent history rewriting 우려로 지원하지 않습니다."
+    if ! git -C "$MAIN_WORKTREE_PATH" pull --ff-only origin "$MAIN_BRANCH" 2>&1; then
+      die "git pull --ff-only origin $MAIN_BRANCH failed (non-fast-forward?). main 에 로컬 commit 이 있는지 확인 + manual resolve. 자동 merge/rebase 는 silent history rewriting 우려로 지원하지 않습니다."
     fi
   fi
 fi
+
+# --base selects the new worktree's start point; it must never be pulled into main.
+BASE_REF="$BASE_BRANCH"
+if ! git -C "$MAIN_WORKTREE_PATH" show-ref --verify --quiet "refs/heads/$BASE_BRANCH" && \
+   git -C "$MAIN_WORKTREE_PATH" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
+  BASE_REF="refs/remotes/origin/$BASE_BRANCH"
+fi
+git -C "$MAIN_WORKTREE_PATH" rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null \
+  || die "base branch '$BASE_BRANCH' not found locally or at origin."
 
 # ── Step 2: pre-check (이미 존재 시 idempotent skip) ──────────────────────
 log_step "Step 2: worktree / branch 존재 검사 (idempotent)"
@@ -220,7 +231,7 @@ else
     run_or_dryrun "git -C $MAIN_WORKTREE_PATH worktree add $NEW_WORKTREE_PATH $NEW_BRANCH"
   else
     # 신규 branch 작성 — -b + base branch.
-    run_or_dryrun "git -C $MAIN_WORKTREE_PATH worktree add $NEW_WORKTREE_PATH -b $NEW_BRANCH $BASE_BRANCH"
+    run_or_dryrun "git -C $MAIN_WORKTREE_PATH worktree add $NEW_WORKTREE_PATH -b $NEW_BRANCH $BASE_REF"
   fi
 fi
 

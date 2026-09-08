@@ -8,14 +8,14 @@ shell starts from the wrapper or a linked worktree.
 `AGENTS.md` remains the complete operating policy. Read its heading index first
 (`rg -n '^#{1,4} ' AGENTS.md`), then retrieve relevant sections with line ranges;
 do not assume that the truncated automatically loaded prefix is the policy.
-At entry read §2–3 (scope/precedence), §7–10 (request/plan/context), §12
-(authorization), §13.2 (worktree isolation), §16.3 and §16.5 (completion and
-autonomy). For policy/META work also read §18.8–18.10 and §19.2.1. Read §22.15
-when the board is active. Read additional sections when the task involves them.
-Read project `CLAUDE.md` if it contains domain guidance beyond referring to
-AGENTS.md; that guidance still applies with the Codex tool substitutions below.
-Read `docs/PROJECT.md`, `docs/STATUS.md`, and the target feature's
-`docs/{FUNCTION,TASK,REPORT,ANCHOR}.md`. Follow referenced domain constraints.
+Use AGENTS.md §10.1 as the shared Claude/Codex reading contract: common required
+sections first, then the sections matching the current changes. Retrieve only
+the requested subsection, not all descendants of a broad parent heading.
+Read project CLAUDE.md, CONTRIBUTING.md, docs/PROJECT.md and the STATUS index;
+then the target feature's current docs/{AGENTS,FUNCTION,TASK,REPORT,ANCHOR}.md.
+For project-wide META use the matching meta/TASK.md entry. Follow applicable
+domain constraints and references; do not preload whole architecture/security
+histories or wiki trees. Policy path/content hashes control refresh (§16.3).
 
 Preserve existing modified files and unfinished branches. For a consumer main
 checkout mutation, create an isolated worktree under the authorized request;

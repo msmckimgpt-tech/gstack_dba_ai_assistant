@@ -1,0 +1,63 @@
+# Backend / QA review — delegation friction (2026-09-08)
+
+Reviewer: Codex independent worker `/root/compact_indexes`; reviewed workflow/test changes only.
+The STATUS/ARCHITECTURE edits previously authored by this reviewer are excluded.
+Initial review base: `76a76ddd517aad6001ddb62c53e2e360c0ebdfda`. Final evidence includes the integration of main `ec913f94360cd706b4769e7e9c98e5d69b27d5c4` and the scoped independent review linked below.
+
+### 1. Blocking issues
+
+- **WF-QA-1 / P1 — freshness update failure still merges stale code (RESOLVED after independent re-review).**
+  - Evidence: isolated real Git/bare-origin fixture with main ahead 1, `MERGE_BEHIND_GATE=1`, both update-branch and REST update returning nonzero, and GitHub reporting `OPEN:CLEAN` returned `exit=0`, invoked `gh pr merge`, and left `remaining_behind=1`.
+  - Location: `bin/cycle-finalize.sh` freshness branch, initial review lines 230–251.
+  - Reason: an update request failure is downgraded to WARN and CLEAN is accepted without proving that the required base commit entered the PR head. CLEAN alone is not a freshness proof when the repository does not require up-to-date branches.
+  - Action: fail closed on update/fetch/ref failure; verify the updated PR head contains the required base; bind CLEAN and merge to the same head OID. Add failed-update and successful-but-no-op-update regressions. Implementation owner notified immediately.
+
+- **WF-QA-2 / P2 — suite membership guard loses existing-suite protection (RESOLVED after independent re-review).**
+  - Evidence: calling `test_configured_testpaths_exist_and_include_native_client` with a fake pytest configuration containing only feature-0043 and feature-0046 passes. The former explicit 0041/0043/0008 preservation assertions are removed.
+  - Location: `unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py`, initial review lines 49–56.
+  - Reason: both entrypoints can use the same reduced configuration while silently losing eight formerly selected suites. Centralizing runtime configuration is correct, but the regression contract no longer proves preservation of the existing nine suites.
+  - Action: keep an immutable required-suite regression baseline as a subset assertion, allow future additions, and mutation-test deletion of a required suite. This is a regression oracle, not a second runtime configuration.
+
+- **WF-QA-3 / P1 — newly enabled native-client suite is red (RESOLVED with independent review and complete-suite execution).**
+  - Evidence: `python3 -m pytest -q unit/feature-0043-external-llm-bridge/tests/test_ci_testpath_parity.py unit/feature-0046-native-client/tests --disable-warnings --maxfail=3` exits 1 with three failures in `test_handoff_seam.py`.
+  - Location: `test_handoff_seam.py` lines 271, 331, 360; `src/static/app/connect-modal.js:202`; `src/static/ai-connect.js:39,163,166,185` in feature-0003.
+  - Reason: the modal still tells users to run the removed “1단계 명령” path. The first assertion also matches a quoted comment. Two other tests mistake the first `launchClient` lookup in `clearPanel` for the actual click handler; the real handler requests `/api/ai/connect/token` and explains missing installation.
+  - Action: correct the actual stale product message and make tests inspect executable user-facing strings/the click handler, then run all newly enabled tests without an early maxfail. Do not remove or skip the suite to restore green.
+
+- **WF-QA-4 / P2 — compact status notes silently change identifiers and conditions (RESOLVED after independent re-review).**
+  - Evidence: an isolated generator fixture with the short TASK note `` `MAX_RETRY_COUNT` 조건 `value < 10 && elapsed > 0` 유지 `` exits 0 and renders `MAXRETRYCOUNT 조건 value 0 유지`. This occurs without reaching the 180-character truncation threshold.
+  - Location: `bin/gen-status.sh:64`, `compact_note`; the initially reviewed `bin/tests/gen_status_test.py` exercised long-note shape/idempotence without a semantic-preservation negative control.
+  - Reason: removing every underscore changes code identifiers, while treating every `<...>` range as HTML deletes ordinary comparison expressions. The summary can therefore state a different constraint while reporting successful generation.
+  - Action: preserve inline code contents and comparison operators, strip markup conservatively, and add a short-note regression for the exact counterexample. Rebuild the live status table from original TASK/passthrough sources so previously stripped characters can be recovered. Root notified immediately; archive source snapshots remain unchanged.
+
+### 2. Cross-domain concerns
+
+- `bats bin/tests/cycle_lifecycle.bats`: all eight initial tests pass, including shared-lock acquisition/release, zero-timeout contention, BLOCKED refusal, remote-only/local base semantics, and already-merged idempotence. WF-QA-1 demonstrates that these initial tests are insufficient to establish the claimed freshness contract.
+- The runtime testpath change preserves the previous nine Makefile suites and adds only feature-0046. Independently parsed collection logs `/tmp/delegation-collection-old-paths.log` and `/tmp/delegation-collection-after.log`: 410 files/7,502 cases → 426 files/8,017 cases; zero removed or changed prior file counts; native-client adds 16 files/515 cases.
+- Collection is not execution. The initial targeted mixed run exposed WF-QA-3; the final complete configured run now passes after main integration. Independently parsed `.pytest_cache/delegation-merged-final.xml`: **8,075 total, 8,059 passed, 16 skipped, zero failures/errors, 477.858 seconds**. All **531 native-client cases pass with zero skips**. No cross-suite contamination failure was exposed in this combined execution; this is execution evidence, not a claim that every possible import order is proven safe.
+- Board bootstrap/milestone/done blocks remain present and outside the edited semantics. Initial lifecycle fixtures deliberately omit `board.sh`, so their PASS does not prove actual live board registration, event delivery, or permissions. This review does not operate another session or publish board messages.
+- Dirty-worktree cleanup refusal, non-fast-forward pull refusal, and non-forced local branch deletion remain in the finalizer. No cleanup/merge operation was executed against the real repository during review; GitHub actions were stubbed in isolated fixtures.
+- Independent additional checks: generator regression **1/1 PASS**, Codex environment installer **14/14 PASS**, Codex board adapter **9/9 PASS**, and `gen-status.sh --check` passes. The first generator run did not cover WF-QA-4; the updated regression now includes the exact short input and preserves both identifiers and comparison operators.
+- The installer CONTEXT constant matches the tracked `.codex/CONTEXT.md`, and the change updates only the shared reading contract. Existing isolated installer tests still exercise Claude/source preservation, settings preservation, symlink refusal, dry-run and idempotence. The board fixture now verifies actual first-prompt registration recovery without public posting, stable session token on the next prompt, and disabled lifecycle silence; the production board adapter is unchanged.
+- Makefile and CI both invoke unfiltered pytest from the project root. Node is required explicitly: the disposable test container installs it when absent and checks its version; CI checks the runner-provided binary before tests. Installation failure aborts instead of skipping runtime JS tests. Runtime application images are unchanged. The CI workflow separately runs isolated workflow, installer, board and generator regressions; check 13 logic is assigned to another reviewer.
+
+### 3. Challenge to current spec
+
+- “CLEAN after asking for update” must mean a measured updated commit, not merely an accepted request or unchanged provider status. Host-local flock cannot protect against remote PR-head changes; a commit-bound merge is the appropriate additional check.
+- One runtime suite registry is desirable. An immutable regression baseline and actual collection/execution evidence are still required to show that centralization did not silently narrow coverage.
+- Restoring a previously shipped workflow block does not establish correctness by provenance. The initial restored freshness logic contained a reproducible false-success path; its resolution required the same behavioral review as new implementation.
+
+### 4. Verdict
+
+**PASS for the reviewed workflow, suite-membership, installer, board fixture, generator and browser compatibility changes. WF-QA-1 through WF-QA-4 are resolved.** Authored native tests are approved through the separate independent review below, not self-approved here. This verdict does not claim actual DQA client/WebView/OS user-flow verification, deployment or landing completion.
+
+Re-review evidence:
+
+- `bats bin/tests/cycle_lifecycle.bats`: **12/12 PASS**. Update and REST failure now stop before merge; a successful-but-no-op update also fails. The returned CLEAN/head OID is one observation, required base ancestry is checked, and `gh pr merge --match-head-commit` pins the reviewed commit. REGISTRY tests preserve peer/history entries, inode/mode, idempotence and dry-run content/metadata.
+- `test_ci_testpath_parity.py`: **18/18 PASS**. Each of the nine previously active suites has an omission-negative regression; the runtime list remains solely in pyproject.toml.
+- WF-QA-4 re-review: `compact_note` removes paired backtick/bold delimiters and known `<br>` tags rather than arbitrary underscores/angle-bracket contents. The exact short-input counterexample now remains `MAX_RETRY_COUNT 조건 value < 10 && elapsed > 0 유지`; the updated isolated generator regression passes. The live STATUS table was rebuilt from the immutable original table before generation to recover passthrough characters stripped by the initial implementation. No non-table STATUS text changed; subsequent `--check` and a second generation are byte-identical.
+- At root's subsequent request this reviewer switched to implementation ownership of `test_handoff_seam.py` and the same stale-source assertion in `test_web_shell.py`. Its changes therefore **are not independently approved by this same review**. The pre-integration local native-suite execution was **521/521 PASS, zero skips, 39.98 seconds** (`/tmp/delegation-native-suite-final.log`), including real JS click → token POST → scheme navigation, denied/empty protocol no-navigation controls, three actual failure-message DOM branches, bracket label existence, and no self-launch/token when hosted in DQA.
+- A temporary removed-navigation mutation fails the positive runtime assertion; a legacy “1단계 명령” mutation reaches actual DOM output, confirming the recovery test observes the executed branch rather than comments. The fourth former failure (`test_web_shell.py::test_launch_button_is_pointless_inside_the_app`) searched for a removed variable/assignment shape; it now reuses the real modal DOM harness. Product copy changes were authored by root, not this reviewer.
+- The new runtime harness requires Node.js and fails explicitly when unavailable. Final `make test` completed with rc=0 (`/tmp/delegation-friction-make-test-merged.log`); the XML independently confirms all 531 native cases executed without skips. Existing 16 skips elsewhere are reported rather than counted as passes. The workflow/installer/board regressions remain separate CI steps, not part of the pytest total.
+- [Independent policy/security and final JS-harness review](20260908T-policy-security.md), “origin/main ec913f94 합류 후 최종 코드 재검토,” records **107 pytest PASS** for handoff/web-shell/relaunch together and **20 check #13 PASS**. The reviewer examined actual tray construction → dispatch → update-worker wiring and the DQA internal no-launch controls. The final SHA-256 values for both authored test files and `connect-modal.js` match that review's recorded values.
+- Latest user steering: the **DQA native client is the primary service entry**, while browser handoff is compatibility behavior. Relative to integrated main, the remaining product change is one browser-only autoLaunch failure message and its comment; main's native tray update guidance is preserved. Under [PB-0009's change-scope table](../../playbooks/PB-0009-dqa-client-verification.md), the browser branch plus DQA internal no-call negative controls cover this change. Actual DQA client/WebView/OS execution remains **NOT-RUN**, outside this change's required verification scope, and is not relabeled PASS. The Node/tray fixtures do not prove a live icon, update installation, authentication or connection success.

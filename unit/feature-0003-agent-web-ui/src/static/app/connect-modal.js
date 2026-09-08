@@ -452,13 +452,13 @@ async function autoLaunch(reason, opts) {
     // 곳을 지목한다.
     if (wasStale && _relaunchChangedNothing(beforeBuild, _lastObs)) _relaunchNoUpdate = true;
     // 로그인 진입에서는 창을 열지 않는다 — 로그인하자마자 창이 튀어나오는 것은 방해다.
-    // 증거는 위에서 이미 남았으므로, 사용자가 다음에 누르는 순간 곧바로 명령으로 간다.
+    // 다음 클릭에서는 연결 프로그램으로 안내한다.
     if (fallbackModal) {
       if (_relaunchNoUpdate) _showRelaunchNoUpdate();
       else {
         openConnectModal();
-        _status("자동 실행에 응답이 없었습니다 — 아래 명령으로 직접 실행하거나 [연결 준비] 를 "
-                + "다시 눌러 주세요.", "error");
+        _status("자동 연결에 응답이 없습니다. DQA 앱이 실행 중인지 확인한 뒤 "
+                + "[내 AI 실행]을 다시 눌러 주세요.", "error");
       }
     }
     return true;
