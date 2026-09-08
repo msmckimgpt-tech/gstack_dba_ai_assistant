@@ -103,3 +103,9 @@ WebView2 창 아이콘은 `shown` 이벤트 후 검사한다. `about:blank`의 �
 - `verify_connect_visual.py`는 일반 Windows Chrome/CDP로 같은 제품 자산을 렌더하는 보조 검증이다. DQA 창·로그인·브리지 검증을 대신하지 않는다.
 
 이번 실행 지문과 검증 경계는 [실행 원장](../../docs/test-runs.d/20260908T123400-connect-discovery.md)을 따른다.
+
+## 텍스트 선택·복사 검증
+
+`verify_text_interaction.py <staging> [control]`은 staging의 `src/client`와 `static/css`를 이용해 실제 제품 Shell/WebView2를 실행한다. `control`은 이전 선택/단축키 설정을 재현한다. 답변·Markdown·원문 코드 fixture의 실제 드래그, Ctrl+C/V, Windows Clipboard와 입력창 동일성, 읽기 전용 본문을 확인한다. 사용자 클립보드는 출력하지 않고 종료 시 복원한다. 키 입력은 해당 WebView2의 CDP에만 전달한다.
+
+현재 호스트에서 CDP는 브라우저 기본 검색 UI에 입력을 전달하지 못한다. 따라서 Ctrl+F/F3/Shift+F3/Escape 실측은 NOT-RUN, 전체 판정은 PARTIAL이다. 설정값 True 또는 접근성 트리 변화만으로 검색 PASS를 쓰지 않는다. 검색 UI를 확인하려면 실제 앱 소유 창에 전달된 native 입력과 검색어/일치번호/닫힘 증거가 필요하다. 서비스 인증/API·실제 사용자 대화는 이 fixture 범위가 아니다.

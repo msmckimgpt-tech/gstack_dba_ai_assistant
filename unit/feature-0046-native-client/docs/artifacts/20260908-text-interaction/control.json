@@ -1,0 +1,45 @@
+{
+  "environment": "DQA-client",
+  "fixture": true,
+  "control": true,
+  "checks": {
+    "answer": {
+      "selected": "",
+      "copy_matches": false,
+      "paste_matches": false,
+      "expected": "선택 복사 확인 needle first",
+      "pass": false
+    },
+    "markdown": {
+      "selected": "",
+      "copy_matches": false,
+      "paste_matches": false,
+      "expected": "첨부 문서 텍스트 needle markdown",
+      "pass": false
+    },
+    "source": {
+      "selected": "",
+      "copy_matches": false,
+      "paste_matches": false,
+      "expected": "SELECT needle FROM example;",
+      "pass": false
+    },
+    "native_find_ui": {
+      "result": "NOT-RUN",
+      "reason": "Host native SendKeys and targeted window messages did not deliver browser accelerators. CDP is content-only."
+    },
+    "readonly_answer": {
+      "pass": true
+    }
+  },
+  "settings": {
+    "accelerators": false,
+    "devtools": false
+  },
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0",
+  "last_error": null,
+  "after_reload": false,
+  "text_pass": false,
+  "settings_pass": false,
+  "result": "FAIL"
+}
