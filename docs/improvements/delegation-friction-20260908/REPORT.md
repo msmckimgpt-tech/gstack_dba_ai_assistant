@@ -108,3 +108,14 @@ PR #1616의 `--keep-worktree` 실행에서 폴더를 남기면서 브랜치 삭�
 - 배포 스크립트가 출력하던 Ctrl+F5/PB-0008 필수 안내를 DQA/PB-0009의 변경 범위 기준으로 정정했다. 실제 수행하지 않은 대화 스모크를 최종 문구에서 통과로 단정하지 않으며 모의 실행도 구분한다. 배포·드레인·스모크 실행 코드는 동일하다.
 - 배포 출력 보완 회귀 `test_quiesce_gate.py`: **34 PASS**, 27.70초. 별도 정책 검토자는 최종 출력의 web/workers/all × 실제/모의 실행 6가지 조합을 실행해 미측정 PASS 단정이 없음을 확인했다.
 - [정리 코드 독립 리뷰](../../../meta/reviews/20260908T-cleanup-close.md), [배포 출력 독립 리뷰](../../../meta/reviews/20260908T-policy-security.md). 마지막 변경은 호스트 도구·검증·기록에 한정되어 배포한 앱 소스는 바뀌지 않는다.
+
+
+### 정리 완료와 중복 완료 진단
+
+마지막 보완 [PR #1618](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1618)은 `d81325ff3cf96a8d252065d3c2f7f993c309c829`로 병합됐다. 정본 finalizer가 main을 동기화하고 이번 worktree·로컬/원격 브랜치·REGISTRY 정리를 완료했다. 기존 main 미추적 파일 5개는 그대로다.
+
+이때 본인 board 상태는 이미 `done`이었으나 중복 전이의 rc=3을 일반 실패로 출력했다. 현재 프로젝트에서 직접 조회된 오류는 `transition:done->done`이며 완료 상태 자체가 누락된 것은 아니었다. finalizer는 기존 core가 인증을 마친 뒤 내는 이 정확한 진단과 rc=3 조합만 멱등 완료로 표시하도록 보완했다. 다른 오류는 기존 WARN을 유지하고 캡처한 원문을 출력하지 않는다. core의 인증·상태 전이 정책은 바꾸지 않았다.
+
+같은 진입 도구의 직접 호출 안내에 남은 강제 새 Claude 세션 요구도 제거했다. entry 환경 변수 유무와 무관하게 생성된 worktree를 본 세션의 cwd/workdir로 사용하며, 모의 실행은 생성 완료로 알리지 않는다. 이는 기존에 정정한 AGENTS §13.2 정책의 실행 출력 정합이다. 회귀 결과·독립 리뷰는 [verification.json](verification.json)의 `idempotent_close`와 [추가 리뷰](../../../meta/reviews/20260908T-cycle-idempotence.md)에 기록한다. 앱 소스와 배포 결과는 변경되지 않는다.
+
+최종 보완 회귀는 cycle lifecycle 23건과 board lifecycle 12건 **총 35 PASS**, 종료 코드 0이다(`/tmp/delegation-idempotent-lifecycle-final.log`). 별도 검토자가 직접-init·실제 already-done·다른 오류 진단의 **3건**을 독립 실행해 통과했다. 다른 오류 대조는 rc=3 진단을 주입하는 helper fixture이며 실제 인증 실패 실측으로 주장하지 않는다. 인증 선행 여부는 변경하지 않은 core의 실행 순서와 별도 리뷰로 확인했다.
