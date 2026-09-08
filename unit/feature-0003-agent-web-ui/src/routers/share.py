@@ -16,6 +16,49 @@ INCLUDE_ORDER = 50  # 등록 순서 고정 — 2026-07-10 현행 include 순서 
 router = APIRouter()
 
 
+def _share_client_entry(request: Request, token: str) -> dict:
+    """공유 화면이 **DQA 앱으로 건너가는 데 필요한 값**. 실패해도 화면을 막지 않는다.
+
+    ## 왜 서버가 조립하는가 (프런트가 문자열을 만들지 않는다)
+
+    딥링크의 스킴·경로·검증 규칙의 정본은 `shared/dqa_identity` 다. 프런트가 그 문자열을
+    직접 조립하면 **개명·규칙 변경이 도달하지 않는 네 번째 자리**가 생긴다 — 이 저장소가
+    `dqa_identity.py` 를 만든 이유가 정확히 그것이다(리터럴 21곳 산재).
+
+    ## 왜 익명에게도 내려가는가
+
+    공유 링크를 받은 사람은 대개 **로그인하지 않은 상태로 처음 연다**. 참여·fork 가 앱에서
+    일어난다면 그 사람에게 필요한 것도 앱이다 — 로그인은 앱 창 안에서 한다. 이 값에는
+    자격증명이 없다(토큰 미포함, `app_open_url` 참조). 노출되는 것은 **이 서비스의 주소와
+    공유 토큰**뿐인데, 둘 다 그 사람이 이미 손에 쥔 링크에 들어 있다.
+
+    ⚠ `download_url` 은 **실물이 있을 때만** 채워진다(`oauth_as._client_download_url`).
+    없는 다운로드를 안내하면 사용자는 안내받은 대로 갔다가 막힌다 — 이 저장소가 세 지점에서
+    닫은 결함 클래스이고, 판정을 여기서 다시 만들지 않고 그 정본을 부른다.
+    """
+    import urllib.parse
+
+    out: dict = {"app_link": None, "download_url": None}
+    try:
+        origin = str(request.base_url).rstrip("/")
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        from shared import dqa_identity as _ident
+
+        out["app_link"] = _ident.app_open_url(
+            origin, "/share/" + urllib.parse.quote(str(token), safe=""))
+    except Exception:  # noqa: BLE001 — 링크 조립 실패가 공유 열람을 막지 않는다
+        logging.getLogger(__name__).warning("share: app_link build failed", exc_info=True)
+    try:
+        from routers import oauth_as as _oauth_as
+
+        out["download_url"] = _oauth_as._client_download_url(origin)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("share: client download probe failed", exc_info=True)
+    return out
+
+
 @router.delete("/api/share/{share_id}")
 def revoke_share(share_id: int, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """공유 링크 revoke. CreatedBy 본인 또는 admin (`conversation.read.any` 가진 자) 만 가능."""
@@ -418,6 +461,13 @@ WHERE Token = %s AND RevokedAt IS NULL
                     # 이라 새로운 식별자 누출이 없다.
                     "conversation_id": conversation_id if already_member else None,
                 },
+                # ── 참여·fork 의 진입은 **DQA 앱**이다 (사용자 결정 2026-09-08) ──────────
+                # 열람은 이 브라우저에서 끝나지만, 대화에 들어가거나 자기 계정으로 가져가는
+                # 것은 앱 창에서 한다. 화면이 그 경로를 그리려면 두 값이 필요하다 —
+                # 어디로 건너뛸지(`app_link`)와, 앱이 없는 사람에게 무엇을 줄지(`download_url`).
+                # ⚠ 이 값들은 **표시를 위한 것이지 집행이 아니다.** 참여·fork 의 자격은
+                #   여전히 로그인 세션과 공유 토큰이 정한다(`join`·`fork` 핸들러의 게이트).
+                "client": _share_client_entry(request, token),
             }
         )
     finally:

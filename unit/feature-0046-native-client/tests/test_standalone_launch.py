@@ -359,14 +359,94 @@ def test_a_second_launch_asks_the_first_to_show_itself(monkeypatch, home, ran):
     told: list = []
     monkeypatch.setattr(gui, "tell", lambda *a, **k: told.append(a))
     assert gui.main([]) == 0
-    assert core.take_show_request(_plan_home()) is True, "요청을 남기지 않았다"
+    # ⚠ 반환은 **목적지 경로**다(`"/"` = 서비스 루트). 인자 없는 실행에는 목적지가 없으므로
+    #   루트이고, 딥링크가 `path` 를 실어 오면 그 경로가 온다 — 아래 전용 테스트가 그것을 본다.
+    assert core.take_show_request(_plan_home()) == "/", "요청을 남기지 않았다"
     assert told == [], "대화상자로 답했다 — 사용자는 앱을 열려고 눌렀다"
 
 
 def test_the_request_is_consumed_once(home):
     core.request_show(home)
-    assert core.take_show_request(home) is True
-    assert core.take_show_request(home) is False, "지우지 않으면 창이 계속 열린다"
+    assert core.take_show_request(home) == "/"
+    assert core.take_show_request(home) is None, "지우지 않으면 창이 계속 열린다"
+
+
+# ── 6-a. 「이 대화를 앱에서 열기」가 **상주 중인 창**에 도달한다 ─────────────────────
+#
+# 이 프로그램은 알림 영역에 상주하므로, 공유 화면의 [DQA 앱에서 참여] 를 누를 때 앱은
+# 대개 **이미 떠 있다**. 그 분기에서 목적지를 잃으면 사용자는 자기가 누른 대화가 아니라
+# 서비스 루트를 보고, 어디서 왔는지 스스로 되짚어야 한다.
+
+def test_the_destination_travels_to_the_running_instance(home):
+    core.request_show(home, "/share/tok123")
+    assert core.take_show_request(home) == "/share/tok123"
+
+
+def test_a_bad_destination_degrades_to_root_not_to_nothing(home):
+    """부적격 경로 하나가 **창 자체를 못 열게** 하면 「눌렀는데 아무 일도 없다」가 된다."""
+    core.request_show(home, "//evil.example/x")
+    assert core.take_show_request(home) == "/"
+
+
+def test_a_stale_destination_does_not_ride_the_next_request(home):
+    """지난 목적지가 남으면 다음 「그냥 창 열기」가 엉뚱한 곳으로 간다."""
+    core.request_show(home, "/share/old")
+    assert core.take_show_request(home) == "/share/old"
+    core.request_show(home)
+    assert core.take_show_request(home) == "/"
+
+
+def test_the_destination_file_is_not_world_readable(home):
+    """목적지에는 **공유 토큰 전문**이 실린다 — 그 머신의 다른 로컬 계정이 읽으면 안 된다.
+
+    (적대 리뷰 2026-09-08 F2) 이 홈에 있던 것은 서버 주소·공개 CA·공개 러너 코드뿐이었고,
+    이 파일이 **비밀을 담는 첫 파일**이다. 이 저장소는 감사 로그에 토큰 8자 프리픽스만
+    남기도록 이미 성문화해 두었는데, 홈에 64자 전문을 평문·기본 퍼미션으로 남기면 「링크를
+    받은 사람만 본다」는 공유 모델이 「그 머신의 아무 계정이나 본다」로 바뀐다.
+    """
+    import stat
+
+    core.request_show(home, "/share/SECRET-TOKEN")
+    mode = stat.S_IMODE((home / "show.path").stat().st_mode)
+    assert mode == 0o600, f"목적지 파일이 0o{mode:o} 로 열려 있다"
+
+
+def test_a_fresh_orphan_destination_is_not_swept_by_a_racing_poller(home):
+    """`request_show` 는 목적지 → 신호 순으로 쓴다. 그 **사이**에 0.5초 폴러가 끼어들어도
+    방금 쓴 목적지를 지우면 안 된다 (적대 리뷰 F4 — 순서로 해결한 경합이 정리 로직 때문에
+    반대 방향으로 되살아났다). TTL 을 넘긴 것만 고아로 본다."""
+    core._write_private(home / "show.path", "/share/fresh")
+    assert core.take_show_request(home) is None      # 신호가 없으므로 요청은 아니다
+    assert (home / "show.path").exists(), "쓰는 중인 목적지를 폴러가 지웠다"
+
+
+def test_a_stale_orphan_destination_is_swept(home):
+    """반대로 TTL 을 넘긴 고아는 지운다 — 남으면 다음 요청에 엉뚱하게 실린다."""
+    import os
+    import time
+
+    core._write_private(home / "show.path", "/share/old")
+    old = time.time() - (core._SHOW_TTL + 60)
+    os.utime(home / "show.path", (old, old))
+    assert core.take_show_request(home) is None
+    assert not (home / "show.path").exists()
+
+
+def test_a_destination_without_a_signal_is_not_a_request(home):
+    """목적지 파일만 남아 있어도 **요청은 아니다** — 신호가 요청의 정본이다.
+
+    ⚠ 정리는 TTL 을 넘긴 뒤다(위 두 테스트 참조) — 갓 쓰인 목적지를 즉시 지우면
+    `request_show` 의 쓰기 창과 경합한다.
+    """
+    import os
+    import time
+
+    (home / "show.path").parent.mkdir(parents=True, exist_ok=True)
+    core._write_private(home / "show.path", "/share/orphan")
+    old = time.time() - (core._SHOW_TTL + 60)
+    os.utime(home / "show.path", (old, old))
+    assert core.take_show_request(home) is None
+    assert not (home / "show.path").exists(), "고아 목적지를 지우지 않으면 다음 요청에 실린다"
 
 
 def test_a_stale_request_is_ignored(home, monkeypatch):
@@ -375,11 +455,11 @@ def test_a_stale_request_is_ignored(home, monkeypatch):
     core.request_show(home)
     later = time.time() + 10_000_000
     monkeypatch.setattr(time, "time", lambda: later)
-    assert core.take_show_request(home) is False
+    assert core.take_show_request(home) is None
 
 
 def test_no_request_is_not_an_error(home):
-    assert core.take_show_request(home) is False
+    assert core.take_show_request(home) is None
 
 
 def test_the_web_shell_loop_reopens_the_window(monkeypatch, home):
@@ -403,8 +483,70 @@ def test_the_web_shell_loop_reopens_the_window(monkeypatch, home):
 
     core.request_show(home)
     gui._serve_confirms(queue.Queue(), _Br(), idle_limit=90.0,
-                        reopen=lambda: opened.append(1))
-    assert opened == [1], "요청이 있는데 창을 열지 않았다"
+                        reopen=lambda dest: opened.append(dest))
+    assert opened == ["/"], "요청이 있는데 창을 열지 않았다"
+
+
+def test_the_web_shell_loop_carries_the_destination(monkeypatch, home):
+    """되열기가 **목적지를 받는다** — 안 받으면 상주 중 「앱에서 열기」가 직전 화면으로 열린다."""
+    import queue
+    import types
+    opened: list = []
+
+    class _Br:
+        plan = types.SimpleNamespace(home=home)
+        connected = False
+
+        def __init__(self):
+            self._reads = 0
+
+        @property
+        def idle_seconds(self):
+            self._reads += 1
+            return 0.0 if self._reads == 1 else 999.0
+
+    core.request_show(home, "/share/tok123")
+    gui._serve_confirms(queue.Queue(), _Br(), idle_limit=90.0,
+                        reopen=lambda dest: opened.append(dest))
+    assert opened == ["/share/tok123"]
+
+
+def test_the_tkinter_shell_ignores_the_destination_on_purpose():
+    """tkinter 갈래가 목적지를 **버리는 것은 결정**이다 — 침묵이 아니라 기록이어야 한다.
+
+    (적대 리뷰 2026-09-08 qa-F4) 반환 계약이 `bool` → `str | None` 로 바뀌었는데 세 호출부
+    중 이 갈래만 값을 쓰지 않는다. 그 창은 서비스 화면이 아니라 연결 UI 라 열 페이지가 없으니
+    옳은 동작이지만, 근거가 코드에 없으면 다음 사람은 이것을 **배선 누락**으로 읽거나 그냥
+    지나친다. 근거와 그 근거의 존재를 함께 잠근다.
+    """
+    import ast
+
+    src = (_UNIT / "src" / "client" / "gui.py").read_text(encoding="utf-8")
+    cls = next(n for n in ast.walk(ast.parse(src))
+               if isinstance(n, ast.ClassDef) and n.name == "ClientApp")
+    fn = next(n for n in cls.body
+              if isinstance(n, ast.FunctionDef) and n.name == "_poll_show_request")
+    doc = ast.get_docstring(fn) or ""
+    assert "목적지를 쓰지 않는다" in doc, \
+        "tkinter 갈래가 목적지를 버리는 근거가 코드에 없다 — 침묵은 결정이 아니다."
+    # 그리고 실제로 쓰지 않는다(반환값을 조건으로만 쓴다).
+    body = ast.unparse(fn)
+    assert "navigate" not in body and "panel_url" not in body
+
+
+def test_the_other_two_shells_do_consume_the_destination():
+    """세 껍데기의 **비대칭이 의도한 그대로**인지 — 나머지 둘은 목적지를 쓴다."""
+    import ast
+
+    src = (_UNIT / "src" / "client" / "gui.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    watcher = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_watch_show_requests")
+    assert "shell.navigate" in ast.unparse(watcher), "내장 창이 목적지를 쓰지 않는다"
+    browser = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_run_browser_shell")
+    assert "reopen(dest)" in ast.unparse(browser) or "dest" in ast.unparse(browser), \
+        "브라우저 셸이 목적지를 쓰지 않는다"
 
 
 def test_the_tkinter_shell_reads_the_same_request():

@@ -1,7 +1,24 @@
 // REQ-20260514-0001: 대화 공유 페이지 (anonymous accessible) 의 vanilla JS.
 // /share/{token} 페이지에서 로드되어 /api/public/share/{token} 을 호출하고
-// 메시지·SQL·결과셋을 read-only 렌더링한다. 로그인 + conversation.create 권한이
-// 있는 viewer 에게는 "내 계정에서 fork" 버튼을 노출한다.
+// 메시지·SQL·결과셋을 read-only 렌더링한다.
+//
+// share-client-entry (사용자 결정 2026-09-08): **열람과 참가의 경로가 갈린다.**
+//   · 열람 — 평범한 웹브라우저로 끝난다(익명 포함). 종전 그대로다.
+//   · 참여(join)·fork — **DQA 앱**에서 한다. 브라우저에서는 앱으로 건너가는 버튼만 보이고,
+//     직접 실행 버튼(참여·fork)은 **앱 창 안에서만** 나타난다.
+// 판정 신호는 브리지 좌표 하나뿐이다(`window.__dqaClientBridge` ← share-client-context.js).
+//
+// ⚠ 이 분기는 **표시이지 집행이 아니다.** 참여·fork 의 자격은 서버가 로그인 세션과 공유
+//   토큰으로 정한다(`routers/share.py` 의 join·fork 게이트). 여기서 버튼을 감추는 것은
+//   경로를 하나로 모으는 UX 결정이지 권한 통제가 아니며, 그렇게 설계했다 — 우회로 얻는
+//   것은 권한이 아니라 «어느 화면에서 눌렀는가» 뿐이다.
+//
+// ⚠ **어디까지 우회되는지 적어 둔다** (적대 리뷰 2026-09-08 2R-§3). 전달받은 링크에
+//   `?client_port=…` 하나를 붙이면 아래 `inClientApp()` 의 2차 신호가 참이 되어 앱 유도를
+//   건너뛰고 직접 실행 버튼이 뜬다. 이것은 **결함이 아니라 이 설계의 알려진 성질**이다 —
+//   서버 게이트가 자격을 집행하므로 권한은 변하지 않는다. 다만 이 사실이 기록돼 있지 않으면
+//   다음 사람이 이 유도를 «통제» 로 오인하고 그 위에 무언가를 얹는다(프런트 게이트를 분기
+//   판정에 쓰면 한쪽 갈래가 영구히 죽는, 이 저장소가 이미 겪은 형태).
 
 (function () {
   "use strict";
@@ -50,6 +67,7 @@
   }
 
   setupCopyLink();
+  watchFooterSpacing();
 
   fetchShare(token)
     .then((data) => {
@@ -174,6 +192,8 @@
 
     const joinBtn = document.getElementById("shareJoinBtn");
     const forkBtn = document.getElementById("shareForkBtn");
+    const appBtn = document.getElementById("shareAppEntryBtn");
+    const appGet = document.getElementById("shareAppGetLink");
     const loginLink = document.getElementById("shareLoginLink");
     // share-join-btn-visibility (2026-08-04 사용자 요청): 참여 버튼은 **링크가 참여
     // 허용(joinable) + 로그인** 이면 노출한다. 종전엔 can_join(= 로그인 && joinable &&
@@ -189,29 +209,315 @@
     // 핸들러는 1 회만 부착되므로(wireShareAction) 첫 render 의 viewer 를 클로저에 가두면
     // 재렌더 후 stale 판정이 된다 — 최신 viewer 를 모듈 스코프에 두고 클릭 시점에 읽는다.
     _latestViewer = viewer;
-    const showJoin = shouldShowJoin(viewer);
+    _latestClient = (data && data.client) || {};
+
+    // share-client-entry: 직접 실행은 **앱 창 안에서만**. 밖에서는 앱으로 건너간다.
+    //
+    // ⚠ 단 **결정의 전제가 갖춰졌을 때만** 그렇게 한다. 사용자 결정은 「앱 전용 + 받기 안내」
+    //   였다(2026-09-08). 그러므로 다음 두 회차에는 종전 웹 경로로 **열화**한다:
+    //     ① 서버가 앱 링크를 내지 못했다 — 우리 쪽 장애다.
+    //     ② 받을 곳이 없다(`download_url` 부재) — 「받기 안내」가 성립하지 않는 배포다.
+    //   ②를 빼고 앱 전용만 집행하면 결정의 절반만 적용되어, 앱이 없는 수신자는 설치할 방법도
+    //   돌아갈 길도 없는 화면을 본다. 리눅스 도커 파이프라인은 설치기를 만들지 못하므로
+    //   (`oauth_as._client_download_url` 참조) 그 회차는 예외가 아니라 흔한 상태다.
+    //   결정이 전제한 조건이 갖춰졌을 때만 결정을 적용하는 편이 결정에 더 충실하다
+    //   (P0-Q — 되돌아갈 길을 가리키면서 그 길을 닫아 두면 막다른 길이다).
+    const appEntryReady = Boolean(
+      _latestClient.app_link && _latestClient.download_url && appPlatformSupported());
+    const directActions = inClientApp() || !appEntryReady;
+
+    // ⚠ **이미 멤버인 사람의 클릭은 «이동» 이지 «참여» 가 아니다.** 그 갈래는 `join` 을
+    //   호출하지 않고 `/?conversation=` 로 갈 뿐이라(openJoinedConversation) 앱의 능력을
+    //   전혀 쓰지 않는다. 이 cycle 이 앱 뒤로 옮기기로 한 것은 join 과 fork 두 가지이므로,
+    //   그 둘이 아닌 이동까지 데스크톱 설치 뒤로 보내면 결정 범위 밖의 기능이 함께 끌려간다
+    //   (자기 공유 링크를 확인하는 소유자, 앱 없는 자리에서 링크를 받은 기존 멤버).
+    const canReturnToConversation = Boolean(viewer.already_member && viewer.conversation_id);
+    const showJoin = shouldShowJoin(viewer) && (directActions || canReturnToConversation);
     wireShareAction(joinBtn, showJoin, () => {
       const v = _latestViewer || {};
       if (v.already_member) openJoinedConversation(v.conversation_id);
       else doJoin(tok, joinBtn);
     });
     if (joinBtn && showJoin) {
-      // 이미 멤버면 클릭이 '참여' 가 아니라 '대화로 이동' 이라는 점을 보조 정보로만 알린다
-      // (화면 문구는 요청대로 '대화에 참여' 유지).
-      joinBtn.title = viewer.already_member
-        ? "이미 참여 중인 대화입니다 — 대화로 이동합니다"
+      // ⚠ 앱 밖에서 보이는 유일한 경우가 «이미 멤버» 갈래이므로, 그때는 **라벨 자체**를
+      //   바꾼다. 「대화에 참여」라고 적힌 버튼이 참여가 아니라 이동을 하면, 그 사람은
+      //   자기가 무엇을 누르는지 모른 채 누른다(툴팁은 터치 기기에 도달하지 않는다).
+      const moveOnly = Boolean(viewer.already_member);
+      joinBtn.textContent = moveOnly ? "대화로 이동" : "대화에 참여";
+      joinBtn.title = moveOnly
+        ? "이미 참여 중인 대화입니다 — 그 대화로 이동합니다"
         : "이 공유 링크로 그룹 대화에 참여합니다";
     }
     wireShareAction(
       forkBtn,
-      Boolean(viewer.is_authenticated && viewer.can_fork),
+      directActions && Boolean(viewer.is_authenticated && viewer.can_fork),
       () => doFork(tok, forkBtn),
     );
-    wireShareAction(loginLink, !viewer.is_authenticated, null);
+
+    // 평범한 브라우저 — 앱 진입 하나로 모은다.
+    const showAppEntry = !directActions && appEntryIsUseful(viewer);
+    wireShareAction(appBtn, showAppEntry, () => enterViaApp());
+    if (appBtn && !appBtn.dataset.shareEntryBusy) {
+      // 이미 멤버에게 남은 앱 동작은 fork 뿐이다 — 라벨이 그 사실을 말한다.
+      //
+      // ⚠ **busy 중에는 건드리지 않는다** (적대 리뷰 3R C1). 클릭이 라벨을 「앱을 여는 중...」
+      //   으로 바꾸고 `disabled` 를 거는데, 그 2.5초 사이에 재렌더가 일어나면 여기서 라벨만
+      //   되돌아가 **「정상 라벨 + 죽은 버튼」** 이 된다 — 사용자에게는 「누를 수 있게 생긴
+      //   버튼이 안 눌린다」로 보이고, 그것은 이 조치가 고치려던 「눌렀는데 아무 일도 없다」와
+      //   구분되지 않는다. 라벨·`disabled`·busy 마커는 **한 주인**(클릭 타이머)이 갖는다.
+      appBtn.textContent = viewer.already_member
+        ? "DQA 앱에서 fork" : "DQA 앱에서 참여 · fork";
+    }
+    if (appBtn && showAppEntry) {
+      // ⚠ 단정하지 않는다. 서버는 미로그인 viewer 의 `can_fork`·`can_join` 을 알려 주지
+      //   않으므로(로그인 전에는 false 로 온다), 「할 수 있습니다」는 화면이 확인하지 않은
+      //   능력을 약속하는 문장이 된다.
+      appBtn.title = viewer.is_authenticated
+        ? "이 대화를 DQA 앱에서 엽니다 — 참여·fork 는 앱에서 진행합니다"
+        : "DQA 앱에서 로그인한 뒤 참여·fork 를 진행합니다";
+    }
+    // ⚠ **상시 설명 한 줄** — 이 화면의 독자는 이 제품을 처음 보는 사람일 수 있다(익명
+    //   접근을 허용하는 유일한 화면이다). 툴팁에만 둔 설명은 터치 기기에 존재하지 않으므로,
+    //   무엇을 누르면 무슨 일이 일어나는지 화면에 남긴다. 클릭하면 상태 문구로 교체된다.
+    const hintEl = document.getElementById("shareAppHint");
+    if (hintEl) {
+      // ⚠ **켜기만 하고 끄지 않으면** 재렌더로 앱 진입이 사라진 뒤에도 「참여·fork 는 앱에서
+      //   합니다」가 남아, 되살아난 종전 웹 버튼 바로 옆에서 서로를 반증한다(적대 리뷰 3R C2 —
+      //   상시 설명이 눈앞에서 틀리면 그 문장 전체의 신뢰가 떨어진다). `wireShareAction` 과
+      //   같은 규약으로 **토글**한다. 단 클릭 후 상태 문구가 떠 있는 동안에는 유지한다.
+      const keepFired = Boolean(hintEl.dataset.shareHintFired);
+      if (showAppEntry && !keepFired) {
+        setHintText(viewer.already_member
+          ? "fork 는 DQA 앱에서 합니다 (Windows)."
+          : "참여·fork 는 DQA 앱에서 합니다 (Windows).");
+      }
+      hintEl.classList.toggle("hidden", !showAppEntry && !keepFired);
+    }
+    syncFooterSpacing();
+    // ⚠ 받기 안내는 **실물이 있을 때만**(서버가 존재를 확인해 URL 을 낸 경우). 없는
+    //   다운로드를 안내하면 사용자는 안내받은 대로 갔다가 막힌다.
+    const canGet = showAppEntry && Boolean(_latestClient.download_url);
+    if (appGet && canGet) appGet.href = String(_latestClient.download_url);
+    wireShareAction(appGet, canGet, null);
+
+    // ⚠ **열화 분기의 미로그인 수신자에게는 로그인 진입이 있어야 한다** (3R H2).
+    //   열화(`directActions`)는 「종전 웹 경로를 살려 둔다」는 뜻인데, 그 경로에서 join·fork 를
+    //   가르는 조건은 플랫폼이 아니라 `is_authenticated` 다 — 로그인하면 바로 그 버튼에 닿는다.
+    //   이 링크가 없으면 앱 창 안·받을 곳 없음·비-Windows 세 갈래 모두에서 그 사람의 화면에
+    //   남는 것은 [링크 복사] 하나뿐이다(실측).
+    //   ⚠ **앱 전용 분기에서는 감춘다** — 거기서는 로그인해도 누를 버튼이 없어 링크 자체가
+    //   막다른 길이 된다(그것이 2026-09-08 에 이 링크를 지운 원래 이유다).
+    wireShareAction(loginLink, directActions && !viewer.is_authenticated, null);
+    compactFooterForNarrow();
+  }
+
+  // 하단 고정 바가 본문을 덮지 않게 여백을 **실제 높이에 맞춘다**.
+  //
+  // ⚠ 종전에는 `.share-container { padding-bottom: 80px }`(모바일 96px)라는 **상수**가
+  //   그 역할을 했다. 바가 「안내문 한 줄 + 버튼 한 줄」로 고정이던 동안에는 성립했지만,
+  //   이번 변경이 안내 행을 하나 더 얹으면서 그 예산이 깨졌다 — 실측(2026-09-08,
+  //   chromium): 데스크톱 hover 82.5px > 80px, 375px 뷰포트 180.1px > 96px,
+  //   320px 뷰포트 198.1px > 96px. 초과분은 `position: fixed` 바에 **영구히 가려진 대화
+  //   말미**가 되고, 하필 이 화면은 진입 시 맨 아래로 pin 되므로 사용자가 처음 보는 자리가
+  //   그 가려진 구간이다.
+  //
+  // ⚠ 상수를 키우는 대신 **재서 맞춘다** — 문구·언어·폭·글꼴이 바뀌면 상수는 또 어긋난다.
+  //   CSS 상수는 스크립트가 죽었을 때의 폴백으로 남긴다.
+  // ⚠ 값을 **줄이지 않는다**(관측 최댓값 유지). hover 로 바가 커질 때마다 여백이 늘었다
+  //   줄면 본문이 위아래로 흔들린다. 폭이 바뀌면 그때만 리셋하고 다시 잰다.
+  let _footerPadFor = -1;
+  function syncFooterSpacing() {
+    try {
+      const footer = document.querySelector(".share-footer");
+      const container = document.querySelector(".share-container");
+      if (!footer || !container) return;
+      // ⚠ 인쇄 매체에서는 바가 없다 — 그 자리를 비워 두면 빈 페이지가 한 장 더 난다.
+      //   CSS 쪽 `@media print` 가 `!important` 로 막지만, 값을 애초에 얹지 않는 편이 정직하다.
+      try {
+        if (window.matchMedia && window.matchMedia("print").matches) return;
+      } catch (_) { /* matchMedia 부재 환경 — CSS 쪽 방어에 맡긴다 */ }
+      if (_footerPadFor !== window.innerWidth) {
+        _footerPadFor = window.innerWidth;
+        container.style.paddingBottom = "";
+      }
+      const need = Math.ceil(footer.getBoundingClientRect().height) + 12;
+      const cur = parseFloat(getComputedStyle(container).paddingBottom) || 0;
+      if (need > cur) container.style.paddingBottom = need + "px";
+    } catch (_) { /* 여백 계산 실패가 화면을 깨지 않는다 */ }
+  }
+
+  // 안내 문구를 쓴다. **문단이 아니라 자식 span 에** 쓴다 — 좁은 폭에서 [DQA 앱 받기] 가
+  // 이 문단 안으로 접혀 들어오므로(`compactFooterForNarrow`), 문단에 `textContent` 를 대입하면
+  // 그 링크가 함께 지워진다(실측으로 사라졌다). 그러면 안내는 없는 버튼을 가리키게 된다.
+  function setHintText(text) {
+    const slot = document.getElementById("shareAppHintText");
+    if (slot) slot.textContent = text;
+    else {
+      const hint = document.getElementById("shareAppHint");
+      if (hint) hint.textContent = text;   // 구조가 바뀐 경우의 폴백
+    }
+  }
+
+  //: 이 폭 아래에서는 받기 링크를 **안내문 안**으로 접는다. 값의 근거는 실측이다 —
+  //: 320px 에서 버튼 3개가 두 줄로 접히며 액션 그룹만 67px 를 먹는다.
+  const _NARROW_FOOTER_PX = 420;
+
+  // 좁은 화면에서 하단 고정 바의 **행 수**를 줄인다.
+  //
+  // ⚠ 여백 동기화(`syncFooterSpacing`)는 「가려지지 않는다」를 보장할 뿐 «바가 화면의 얼마를
+  //   가져가는가» 는 보장하지 않는다 — 실측(2026-09-08): 320×568 에서 바가 174px 로
+  //   **화면의 31%** 였다. 게다가 그 높이의 대부분은 Windows 전용 경로(스킴 버튼·`.exe`
+  //   받기·Windows 안내)인데, 그 경로가 실행되지 않는 기기(휴대폰)에서 가장 크게 문다.
+  //   읽기 위한 화면에서 고정 바가 1/3 을 영구 점유하면 그것은 기능이 아니라 방해다
+  //   (적대 리뷰 2026-09-08 ux-2R-F4).
+  //
+  // ⚠ 정보를 **버리지 않는다** — 받기 링크는 사라지는 것이 아니라 안내문 줄 끝으로 옮겨간다.
+  function compactFooterForNarrow() {
+    try {
+      const get = document.getElementById("shareAppGetLink");
+      const hint = document.getElementById("shareAppHint");
+      const actions = document.querySelector(".share-actions");
+      if (!get || !hint || !actions) return;
+      const narrow = window.innerWidth <= _NARROW_FOOTER_PX;
+      const wanted = narrow ? hint : actions;
+      if (get.parentElement !== wanted) wanted.appendChild(get);
+      get.classList.toggle("share-app-get--inline", narrow);
+    } catch (_) { /* 배치 실패가 화면을 깨지 않는다 */ }
+  }
+
+  function watchFooterSpacing() {
+    const footer = document.querySelector(".share-footer");
+    if (!footer) return;
+    compactFooterForNarrow();
+    syncFooterSpacing();
+    try {
+      new ResizeObserver(syncFooterSpacing).observe(footer);
+    } catch (_) {
+      // ResizeObserver 미지원 — hover 로 커지는 순간만이라도 따라간다.
+      footer.addEventListener("mouseenter", syncFooterSpacing);
+      footer.addEventListener("focusin", syncFooterSpacing);
+    }
+    window.addEventListener("resize", () => {
+      compactFooterForNarrow();
+      syncFooterSpacing();
+    });
+  }
+
+  // 이 기기에 DQA 앱이 **존재할 수 있는가**.
+  //
+  // ⚠ 앱은 Windows 전용이고(feature-0046 FUNCTION §4 — macOS 는 서명·공증 없이는 Gatekeeper
+  //   가 차단해 범위 밖), 받기 링크가 가리키는 것도 `.exe` 다. 그런데 공유 링크는 이 제품이
+  //   바깥을 향해 여는 유일한 표면이라 **macOS·Linux·모바일 수신자가 흔하다.** 그 사람에게
+  //   앱 전용을 강제하면 누를 수 있는 유일한 버튼이 그 기기에서 동작하지 않는 스킴이 되고,
+  //   그 옆 받기는 `.exe` 다 — 참여·fork 로 가는 길이 **하나도 없다**.
+  //
+  //   이것은 사용자 결정(앱 전용)의 예외가 아니라, 이미 채택한 열화 규칙(「결정이 전제한
+  //   조건이 갖춰졌을 때만 결정을 적용한다」)의 같은 적용이다. 받을 곳이 없는 배포에서
+  //   열화하는 것과 **받을 수 없는 기기에서 열화하는 것**은 같은 사유다.
+  //
+  // ⚠ UA 판정은 위조 가능하지만 여기서는 문제가 아니다 — 이 분기는 **표시**이고, 위조해서
+  //   얻는 것은 「앱 전용 화면을 본다」뿐이다(그리고 그 사람은 앱이 있을 것이다).
+  function appPlatformSupported() {
+    try {
+      const nav = window.navigator || {};
+      const hint = String(nav.userAgentData && nav.userAgentData.platform ? nav.userAgentData.platform
+        : (nav.platform || nav.userAgent || ""));
+      return /win/i.test(hint);
+    } catch (_) {
+      // 판정할 수 없으면 **앱 전용을 강제하지 않는다** — 모르는 채 길을 닫는 쪽이 더 나쁘다.
+      return false;
+    }
+  }
+
+  // 지금 이 화면이 **DQA 앱 창 안**인가. 신호는 브리지 좌표 하나뿐이다 —
+  // `share-client-context.js` 가 정본 모듈(`app/client-bridge.js`)에서 받아 얹어 둔다.
+  // ⚠ 그 모듈이 아직 안 돌았으면 `undefined` 이고, 그것은 「앱 밖」과 같게 다룬다 —
+  //   모르면 앱 밖으로 본다(잘못 「앱 안」으로 보면 앱에서만 되는 버튼을 브라우저에
+  //   띄우고, 눌러도 아무 일이 없다).
+  function inClientApp() {
+    try {
+      if (window.__dqaClientBridge) return true;
+      // ⚠ **2차 신호.** 어댑터 모듈(`share-client-context.js` → `app/client-bridge.js`)이
+      //   적재에 실패하면 전역은 비고, 그 상태에서 앱 창은 **자기를 앱 밖으로 판정**해
+      //   지금 보고 있는 이 페이지를 향해 딥링크를 다시 쏜다 — 사용자가 빠져나올 수 없는
+      //   왕복이 된다. 모듈이 안 돌았다면 좌표는 주소에서 지워지지 않고 남아 있으므로,
+      //   그것을 두 번째 근거로 쓴다(값을 쓰지는 않는다 — 판정에만 쓴다).
+      return new URLSearchParams(window.location.search).has("client_port");
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // 앱으로 건너갈 값어치가 있는가. **할 수 없는 일을 권하지 않는다** — 참여도 fork 도
+  // 불가능한 링크에서 앱을 띄우면 사용자는 앱을 열고 나서야 그것을 안다.
+  // ⚠ 미로그인은 «가능/불가» 를 아직 알 수 없다(서버가 can_* 를 false 로 준다). 그 사람에게
+  //   앱은 로그인 자리이기도 하므로 보여 준다 — 이 화면에서 로그인할 길은 이제 없다.
+  function appEntryIsUseful(viewer) {
+    const v = viewer || {};
+    if (!v.is_authenticated) return true;
+    // ⚠ **이미 멤버면 «참여» 는 이미 끝난 일이다** — 그 사람에게 남은 것은 fork 뿐이다.
+    //   `joinable` 만 보고 버튼을 남기면 한 줄에 「대화로 이동」(웹에서 바로 들어감)과
+    //   「DQA 앱에서 참여 · fork」(앱을 받으라)와 「참여·fork 는 앱에서 합니다」가 나란히
+    //   서서 서로를 반증한다 — 상시 설명이 눈앞에서 틀리면 그 문장 전체의 신뢰가 떨어지고,
+    //   정작 fork 하려는 사람도 안내를 믿지 않는다(적대 리뷰 2026-09-08 ux-2R-F3).
+    if (v.already_member) return Boolean(v.can_fork);
+    return Boolean(v.joinable || v.can_join || v.can_fork);
+  }
+
+  // 앱을 띄운다. 스킴 URL 로 여는 것이 유일한 수단이다 — 브라우저는 샌드박스라 프로세스를
+  // 직접 띄우지 못한다(connect-modal 의 `_fireScheme` 과 같은 형태).
+  //
+  // ⚠ **성공을 확인할 방법이 없다.** 브라우저는 스킴 핸들러 부재를 알려 주지 않으므로,
+  //   앱이 없는 사람에게는 «아무 일도 일어나지 않는» 것으로 보인다. 그래서 누른 직후
+  //   안내를 띄운다 — 무엇이 일어나야 하는지와, 일어나지 않았을 때 무엇을 할지.
+  function enterViaApp() {
+    const link = String((_latestClient && _latestClient.app_link) || "");
+    if (!link) return;
+    // ⚠ **버튼 자체가 눌렸다고 말한다.** 상시 설명이 생기면서 클릭의 피드백이 「없던 줄이
+    //   생긴다」(출현)에서 「같은 자리·같은 크기·같은 색의 텍스트가 바뀐다」(교체)로 격하됐다 —
+    //   인지적으로 가장 눈에 안 띄는 변화다. 같은 바의 다른 세 액션은 전부 버튼 안에서
+    //   말한다(`복사됨 ✓` · `참여 중...` · `fork 중...`). 앱 진입만 그 관례에서 빠지면
+    //   「눌렀는데 아무 일도 없다」와 구분되지 않는다(적대 리뷰 2026-09-08 ux-2R-F2).
+    // ⚠ 되돌리는 것은 **성공했기 때문이 아니다** — 스킴 발사는 성공을 확인할 수 없다.
+    //   이 앱은 새 창으로 뜨므로 이 탭은 살아 있고, 사용자가 다시 누를 수 있어야 한다.
+    const btn = document.getElementById("shareAppEntryBtn");
+    if (btn && !btn.dataset.shareEntryBusy) {
+      btn.dataset.shareEntryBusy = "1";
+      const label = btn.textContent;
+      btn.textContent = "앱을 여는 중...";
+      btn.disabled = true;
+      setTimeout(() => {
+        btn.textContent = label;
+        btn.disabled = false;
+        delete btn.dataset.shareEntryBusy;
+      }, 2500);
+    }
+    const hint = document.getElementById("shareAppHint");
+    if (hint) {
+      // ⚠ **표시로 먼저 전환하고, 그다음 태스크에서 텍스트를 넣는다.** `display:none` 인
+      //   live region 의 내용 변경은 스크린리더에 통지되지 않는다 — 이 안내는 스킴 발사의
+      //   **유일한** 피드백이라, 통지되지 않으면 그 사용자에게는 「눌러도 아무 반응 없음」과
+      //   구분되지 않는다.
+      hint.dataset.shareHintFired = "1";
+      setHintText("");
+      hint.classList.remove("hidden");
+      const message = _latestClient.download_url
+        ? "DQA 앱을 여는 중입니다. 창이 안 보이면 다른 창·알림 영역을 확인해 주세요. 앱이 없으면 [DQA 앱 받기]."
+        : "DQA 앱을 여는 중입니다. 창이 안 보이면 다른 창·알림 영역을 확인해 주세요. (Windows 전용)";
+      setTimeout(() => { setHintText(message); syncFooterSpacing(); }, 0);
+    }
+    try {
+      window.location.href = link;
+    } catch (_) {
+      /* 스킴 발사 실패도 화면을 깨지 않는다 — 위 안내가 다음 행동을 이미 말했다. */
+    }
   }
 
   // render() 가 갱신하는 최신 viewer 스냅샷 — 1 회 부착된 클릭 핸들러가 클릭 시점에 읽는다.
   let _latestViewer = {};
+  // 같은 이유로 앱 진입 정보(`app_link`·`download_url`)도 모듈 스코프에 둔다 — 버전 페이징
+  // 재렌더로 값이 바뀌어도 클릭은 **그 시점의** 값을 읽어야 한다.
+  let _latestClient = {};
 
   // 이미 멤버/소유자인 viewer 의 '대화에 참여' 클릭 — **join 을 호출하지 않고** 그 대화로 이동한다.
   // 이유: 서버 join 은 이미 멤버여도 windowed 링크면 가시 범위를 교집합으로 축소한다
