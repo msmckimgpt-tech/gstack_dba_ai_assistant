@@ -8381,3 +8381,10 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Reason: 제품 코드 델타 0 — 배포 후 실측 결과 기록뿐이다. 코드 축의 적대 검증은
   REV-20260908T131500-* / T142000-* / T150000-* 3라운드가 덮는다.
 - Timestamp: 2026-09-08T16:30:00+09:00
+
+## REV-20260908T203700-attach-folder-tree-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree.
+- Reason: 배포 후 실측 결과·캡처 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음
+  (구현분의 검증 패널은 REV-20260908T133000-attach-folder-tree 가 이미 2라운드 수행).
+- Timestamp: 2026-09-08T20:37:00+09:00

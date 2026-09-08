@@ -13777,7 +13777,7 @@ cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측
       각 항목을 회귀 테스트로 잠금(§16.7 G10). 상세: REV-20260908T133000-attach-folder-tree.
 - [x] PB-0008 실 Windows 브라우저 시각검증 — 격리 컨테이너(라이브 무접촉)에서 업로드 end-to-end ·
       동명 파일 비충돌 · traversal/인젝션 방어 · 목록 폴더 칩 · 행 레이아웃 균일 실측 + 캡처.
-- [ ] 라이브 배포 + POST-DEPLOY 확인.
+- [x] 라이브 배포 + POST-DEPLOY 확인 — PR #1638 머지(`4e3d70b0`) → `make deploy-web` exit 0 · alembic 0059 적용 · 양쪽 DB 컬럼 실재 · 라이브 폴더 첨부 end-to-end + 목록 칩 실측(캡처). 정본: `docs/test-runs.d/TASK-20260908T203700-attach-folder-tree-postdeploy.md`.
 
 ### 7. Completion Checklist
 
