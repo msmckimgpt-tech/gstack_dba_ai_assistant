@@ -68,7 +68,7 @@ Result: PASS
 Scenario: 배포되는 `src/static/app.js` 의 `toolLabel`/`stepTitleText` 를 실제로 실행해
 알려진 도구의 한국어 라벨, 미지 도구의 식별자 비노출, 제목 폴백의 식별자 비노출,
 마크다운 백틱 제거, 인자 리터럴 심층 방어를 확인
-Evidence: `node tests/verify_step_title_no_tool_syntax.mjs` → **15항목 전건 PASS (rc=0)**.
+Evidence: `node tests/verify_step_title_no_tool_syntax.mjs` → **17항목 전건 PASS (rc=0)**.
 음성 대조군 — 이번에 없앤 두 폴백(배지의 식별자 반환 · 제목의 intent/tool 폴백)을 주입한
 사본에 같은 하네스를 태워 **8 FAIL (rc=1)** 실증.
 Wiring: `test_l8_behaviour_harness_runs` 가 pytest 에서 이 하네스를 호출한다. `make test` 는
@@ -81,8 +81,8 @@ Limit: DOM 을 거치지 않는 순수 함수 실행이다. 실제 패널 렌더
 Environment: CLI
 Result: PASS
 Scenario: `make test` 와 동일한 pytest 집합 + ruff
-Evidence: 신규 `tests/test_step_tool_syntax_leak.py` **55건 PASS**(적대 인자 벡터 · census 전
-도구 × 저장문구 3형태의 진행/완료 동치 · 전각·제로폭 우회 · 결함 주입 대조군 4종 포함).
+Evidence: 신규 `tests/test_step_tool_syntax_leak.py` **66건 PASS**(적대 인자 벡터 · census 전
+도구 × 저장문구 3형태의 진행/완료 동치 · 전각·제로폭 우회 · 결함 주입 대조군 4종 + 조치 봉인 8종 포함).
 전체 집합(`make test` 와 동일 경로 + node 설치)은 **선재 실패 7건**을 포함하는데,
 `origin/main`(`d81325ff`) **원본 트리에 같은 명령을 돌려 같은 7건이 동일하게 실패**함을
 확인했다 — 본 cycle 대비 **차집합 0**(회귀 아님). 해당 7건은

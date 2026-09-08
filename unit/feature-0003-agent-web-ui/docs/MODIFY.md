@@ -6005,7 +6005,7 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - **파일**: `routers/_conv_store.py`(판정기 `_step_text_is_tool_syntax`·`_sanitize_step_narration`·파생 꼬리 `_derive_step_work_tail` 신설 + `_resolve_step_display` 배선) · `routers/ai_tools.py`(`_bridge_step_narration` 도구명 인자 + 적재 차단, `_bridge_live_steps` 표시 정합, `_bridge_derived_narration` 식별자 폴백 제거) · `app.py`(re-export 3) · `static/app.js`(`TOOL_LABEL_MAP` 7→28 · `toolLabel` 미지 폴백 `"도구"` · `stepTitleText` 신설) · `static/app/progress.js`(같은 폴백).
 - **저장된 원문은 건드리지 않는다** — 판정은 표시층 전용이다. 감사·재현 가치가 있고, 판정이 틀렸을 때 되돌릴 근거가 사라지지 않는다.
 - **적대 검증이 잡은 것 2건**: ① 라이브 19행 재생에서 **파생 문구 자신이 판정기에 걸림**(백틱 감싼 식별자로 시작 → `sanitize(derive(x))` 가 고정점 아님). (c) 규칙을 «인용 없는» 식별자로 좁히고 `test_l2_derived_narration_is_a_fixed_point` 로 서버 도구 census 전체에 불변식을 걸었다. ② codex P2 — **사유(reason)는 대체값이 없는 축**이라 (c) 를 적용하면 `order_items 테이블에 …` 같은 정상 설명이 순수 손실된다. 사유에는 (a)·(b) 만 적용하도록 세 이음매를 모두 좁혔다.
-- **검증**: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`. 라이브 재생 유출 18→**0**, pytest 전량 PASS, 행위 하네스 13 PASS + 결함 주입 6 FAIL.
+- **검증**: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`. 라이브 재생 유출 18→**0**, pytest 전량 PASS. (하네스·테스트 수치는 라운드 2·3 을 거쳐 바뀌었다 — 현행 값은 `docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md` 가 정본.)
 - **되돌리기**: 이 cycle 을 git revert 후 web 재배포. 데이터 변경이 없으므로 되돌리면 종전 표시(원문 그대로)로 즉시 복귀한다.
 
 ## CHG-20260908T134000-step-tool-syntax-leak-r2
@@ -6366,3 +6366,21 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - 배포 `4e3d70b0` · alembic 0059 적용 확인 · 양쪽 DB 컬럼 실재 · 라이브에서 폴더 첨부
   end-to-end(동명 파일 v1 공존 포함)와 목록 폴더 칩 렌더 확인.
 - 정본: `docs/test-runs.d/TASK-20260908T203700-attach-folder-tree-postdeploy.md`.
+
+## CHG-20260908T204500-step-narration-seal
+
+- Related TASK: TASK-20260908T204500-step-narration-seal; 위험도 Minor §12.3.
+- 계기: TASK-20260908T125500 의 `verification_debt` 를 갚은 라운드 3 확인 검증(CONCERN, 유효
+  지적 7건). 라운드 2 조치 11건 중 8 CLOSED / 3 PARTIALLY.
+- **남은 노출 경로**: `/api/ask` 의 `steps` 가 표시 이음매를 우회해 `intent`(=`<도구명>: …`)를
+  실어 보냈다(라이브 3,382행). `_resolve_step_display` 를 통과시켜 닫았다. 앞선 cycle 의 커밋
+  문구 「신규 적재의 도구명 접두 제거」는 **브리지 적재 한정**이었다 — TASK 에 정정 기재.
+- **조치의 봉인**: 라운드 1~3 이 고친 6건이 되돌려도 전건 초록이었다(적대 검증 실측). 사유 축
+  배선 · 서버 규칙(a) 앵커 · scratch 문구 3종 · list_schemas 제목 · 파생 근거 구분 · 사이드 패널
+  폴백 억제 · ask payload 이음매를 **값·산출 단언**으로 잠갔고, **뮤턴트 8종 전건 KILL** 실증.
+- **정직 표기**: 서버가 역산한 근거를 「근거(추정)」 + muted 색으로 갈랐다(라이브 22행). 종전엔
+  AI 가 말한 근거와 같은 라벨이라 화면이 지어낸 문장을 AI 의 말처럼 보이게 했다.
+- **census 부분 실패**: 두 출처 중 하나만 실패해도 조용히 좁아지고 그 값이 프로세스 수명 동안
+  캐시됐다(브리지 2종 소실 실측). 이제 WARN + 폴백 보충 + **비캐시**로 복구 가능하게 했다.
+- 검증: `docs/test-runs.d/TASK-20260908T204500-step-narration-seal.md`.
+- 되돌리기: 데이터 변경 0 — git revert 후 web 재배포.

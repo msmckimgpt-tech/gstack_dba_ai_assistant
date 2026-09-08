@@ -3541,7 +3541,10 @@ function _stepResultKey(step, idx) {
 
 // step 하나를 상세 표시 DOM 요소로 변환.
 // compact=true 이면 SQL/결과 미리보기 생략 (pending bubble 헤더용).
-export function buildStepDetailEl(step, idx, { compact = false } = {}) {
+// `hideFallbackTitle` — 호출측이 **이미 배지를 그린** 자리에서 쓴다. 폴백 제목은 라벨을
+// 되풀이한 말이라(「테이블 구조」+「테이블 구조 단계」) 나란히 두면 같은 말이 두 번 나온다
+// (대기 말풍선과 같은 규칙 — 적대 검증 라운드 3 C1).
+export function buildStepDetailEl(step, idx, { compact = false, hideFallbackTitle = false } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "step-detail";
 
@@ -3566,10 +3569,13 @@ export function buildStepDetailEl(step, idx, { compact = false } = {}) {
   }
 
   // work 제목
-  const title = document.createElement("strong");
-  title.className = "step-title";
-  title.textContent = stepTitleText(step, idx);
-  wrap.appendChild(title);
+  const titleInfo = stepTitleInfo(step, idx);
+  if (!(hideFallbackTitle && titleInfo.isFallback)) {
+    const title = document.createElement("strong");
+    title.className = "step-title";
+    title.textContent = titleInfo.text;
+    wrap.appendChild(title);
+  }
 
   // reason — 각 실행 단계의 수행 근거를 사용자에게 노출(작업이 합리적으로 진행됐음을
   // 명시적으로 알 수 있게). 데이터는 step.reason(LLM tool_notes)에 이미 존재.
@@ -3578,7 +3584,16 @@ export function buildStepDetailEl(step, idx, { compact = false } = {}) {
     reasonEl.className = "step-reason";
     const reasonLabel = document.createElement("span");
     reasonLabel.className = "step-reason-label";
-    reasonLabel.textContent = "근거";
+    // 서버가 도구 목적에서 **역산한** 근거는 AI 가 말한 근거와 구분해 적는다. 구분 없이
+    // 같은 「근거」로 그리면 화면이 «지어낸 문장» 을 «AI 가 말한 것» 으로 보이게 한다 —
+    // 「지어내지 않는다」가 이 기능의 명시 계약이다(적대 검증 라운드 2 F3 · 라운드 3 C3).
+    const reasonDerived = String(step.reason_source || "") === "derived";
+    reasonLabel.textContent = reasonDerived ? "근거(추정)" : "근거";
+    if (reasonDerived) reasonLabel.classList.add("is-derived");
+    if (reasonDerived) {
+      reasonEl.title = "이 근거는 연결된 AI 가 말한 것이 아니라, 서버가 도구의 목적에서 "
+        + "역산한 설명입니다.";
+    }
     reasonEl.appendChild(reasonLabel);
     const reasonText = document.createElement("span");
     reasonText.className = "step-reason-text";
@@ -4274,7 +4289,8 @@ function _renderStepSidePanelBody(pending) {
       itemHeader.appendChild(timeEl);
     }
     item.appendChild(itemHeader);
-    item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
+    // 헤더가 이미 배지를 그렸다 — 폴백 제목은 그 라벨의 되풀이이므로 넣지 않는다.
+    item.appendChild(buildStepDetailEl(step, idx, { compact: false, hideFallbackTitle: !!step.tool }));
     body.appendChild(item);
   });
   // 내부 결과셋 + 외부 패널 스크롤 복원(동기 + rAF). rAF 로 layout 확정 후 재적용해
