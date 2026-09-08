@@ -15,7 +15,7 @@ source_of_truth: false
 
 ## TASK-20260908T150000-attachment-boundary — 첨부 경계 감사
 
-- 상태: 구현·120 pytest·backend/security/qa PASS; PR/main·배포 진행 예정.
+- 상태: PR #1629 병합 및 e8fd398b 전체 배포 완료. 120 pytest·3패널·배포본 56검사 PASS.
 - 실측: 대화 …8c73806a의 assistant 파일 10개 중 6개에 다음 설명/diff 혼입. PostgreSQL replica SELECT + MinIO GET으로 확인; 실제 byte와 저장 SHA-256 10/10 일치. 사용자/첨부 원문 비전재, 운영 데이터 write 0.
 - RC: `_attachment_block_spans`의 마지막 bare fence 탐색이 다음 설명/diff를 흡수. `_strip_attachment_*_blocks`가 파일별 완료 문장을 자동 부착. `FR-attachment-last-fence-captures-answer`.
 - 변경: 앞방향 fence 경계, 긴 outer 종료 우선, 코드 인용 비실행; 성공 자동 안내 제거; bridge/worker 빈 성공본문 보존; 권위 프롬프트에 내용 분리·원본 주석 보존·반복 완료문구 생략.
@@ -23,6 +23,9 @@ source_of_truth: false
 - 한계: 기존 손상 파일 자동 복원, 사용자 AI 재질의, 실제 DQA 화면은 미실측. 테스트는 서버 처리 계약 증거이며 실제 사용자 대화 마찰 소멸을 단정하지 않는다.
 - 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0003-agent-web-ui/AGENTS.md`; SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; main 동일 해시. Session `01a07f94-148f-7253-a515-1a7a66a97cea`; 2026-09-08T06:09:53.549929+00:00.
 - 배포 권한: 현재 사용자 수정 요청 + AGENTS §16.5.1 included. 정본 무중단 스파인 사용. 권한·스키마·비용 계약 변경 없음.
+- 배포 실측 (2026-09-08T06:27:43.349266+00:00): `bash bin/deploy-web.sh` exit 0, web-a/b·MCP a/b·insight/ask/ops-scheduler 7서비스 e8fd398b. ready/90초 soak PASS, ask 본체·surge 각각 6초 정상 종료·surge 정리. 서버 LLM 스모크는 호출 차단 계약 PASS이며 실제 사용자 AI 생성 성공을 뜻하지 않는다.
+- 동일 배포본에서 서비스별 파서/strip 8검사(총 56) 및 권위 지침 확인 PASS. web-b에서 저장 파일 10개를 읽어 byte/SHA 일치 확인 후 재구성 입력에 파서를 적용해 혼입 6개 후속 답변 제외 확인. DB/object write 0. web-a 암호화키·첨부 저장 자격증명 존재 확인(값 미출력).
+
 
 ## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
 
@@ -3039,3 +3042,9 @@ DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증
 ## DQA 연결 개선 배포 결과 — 2026-09-08
 
 PR #1619 / 서버 92cfa2c2 전체 배포 및 DQA 1.2.0 설치기 공개 완료. 실제 다운로드 크기·SHA-256이 Windows 원본과 일치한다. 최종 검증/미확인 경계와 증거 정본은 feature-0046 REPORT의 배포 완료 절과 공동 실행 원장이다.
+
+## CHG-20260908-attachment-cycle-cleanup
+
+- Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+정리 중 cycle-finalize가 종료 코드 141로 실패했다. `set -o pipefail` 아래에서 첫 경로를 얻은 awk의 조기 종료가 큰 worktree 목록을 출력하는 git에 SIGPIPE를 전달했다. cycle-init/finalize 모두 첫 경로만 출력하면서 나머지 입력을 소비하도록 수정했다. Bats 전체 25 PASS, 격리된 기존 코드 뮤턴트는 신규 2건 모두 141로 실패. 제품 런타임 변경은 없으며 추가 배포 대상이 아니다.

@@ -2621,7 +2621,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   단계의 `database_name` 이 빈 작업(CmdExec/PowerShell 등 OS 레벨)은 제품 경계 밖이라 계속 제외
   (fail-closed, by-design — 도구가 caveat 으로 고지).
 
-## FR-attachment-last-fence-captures-answer — fixed:undeployed (L4↔L7)
+## FR-attachment-last-fence-captures-answer — fixed:deployed:unverified-live (L4↔L7)
 
 - Timestamp: 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea; source: 사용자 명시 감사 요청.
 - scope: …8c73806a, assistant 9240/9244 결과물; last_audited_message=9245; seen_count=1.
@@ -2631,3 +2631,5 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - refuted: 표시만의 오류(객체 byte 혼입/SHA 10/10), 모델이 설명을 파일 내부에 썼다는 가설(6개 모두 bare close→후속 설명→diff).
 - fix: TASK-20260908T150000-attachment-boundary, primary feature-0003-agent-web-ui. 첫 outer 닫힘·인용 비실행·자동 문구 제거·empty success 보존; 120 tests + 3 panel PASS.
 - 읽기/변경 경계: replica SELECT + MinIO GET, 운영 데이터 write 0. 기존 손상본 보존. 배포 구조 재현과 사용자 AI 마찰 재발률은 별도 측정.
+
+- FR-attachment-last-fence-captures-answer deployment update (2026-09-08T06:27:43.349266+00:00; Session 01a07f94-148f-7253-a515-1a7a66a97cea): PR #1629 / e8fd398b full deployment exit 0; 7 services 56 checks PASS; stored-file replay 10 SHA matches / 6 contaminated tails excluded. Original data unchanged. `unverified-live` means user AI re-generation / future recurrence is not yet measured, not an undeployed fix.

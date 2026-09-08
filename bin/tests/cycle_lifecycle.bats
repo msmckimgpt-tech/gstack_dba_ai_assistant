@@ -417,3 +417,37 @@ EOF
   [ "$(stat -c '%i:%a:%Y' "$REGISTRY")" = "$before_stat" ]
   [ ! -e "$REGISTRY.lock" ]
 }
+
+
+large_worktree_listing() {
+  export REAL_GIT="$(command -v git)"
+  cat > "$FIXTURE/stubs/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+"$REAL_GIT" "$@"
+if [[ "$*" == *'worktree list --porcelain' ]]; then
+  python3 - <<'PYTHON'
+import os, signal
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+for i in range(10000):
+    os.write(1, f"worktree /tmp/unused-{i}\nHEAD {'0' * 40}\n\n".encode())
+PYTHON
+fi
+EOF
+  chmod +x "$FIXTURE/stubs/git"
+}
+
+@test "cycle-init consumes a large worktree listing without SIGPIPE" {
+  large_worktree_listing
+  run bash "$FIXTURE/bin/cycle-init.sh" --feature feature-9001-cycle --agent test --print-only
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"main worktree:   $REPO"* ]]
+}
+
+@test "cycle-finalize consumes a large worktree listing without SIGPIPE" {
+  make_worktree
+  large_worktree_listing
+  run finalize_kept --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"main worktree:  $REPO"* ]]
+}
