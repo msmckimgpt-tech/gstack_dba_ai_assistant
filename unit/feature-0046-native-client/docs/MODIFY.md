@@ -941,3 +941,8 @@ edit_policy: append-only
 - `Shell.run`의 text_select 기본 False를 True로 바꿔 pywebview의 전역 선택 차단을 제거했다.
 - loaded 이벤트에서 소유 UI 스레드로 WebView2 기본 검색 단축키를 활성화했다. 디버그/개발자 도구는 비활성 상태를 유지한다.
 - 네이티브 버전 1.2.3 빌드; 동료 작업의 1.2.2와 구분한다. 첨부 본문 CSS·줄번호 제외 규칙을 유지한다.
+
+## CHG-20260908T151800-codex-text-published — 공개 채널 검증 기록
+- Timestamp: 2026-09-08T15:18:00+09:00; Session: codex text-interaction.
+- PR #1628 병합·1.2.3 공개채널 다운로드 크기/SHA 일치 기록. 검색 UI NOT-RUN과 Issue #1626을 유지한다.
+- 변경은 현재 문서·검증 JSON 및 증거 파일의 불필요한 실행비트 정리다. 제품 코드 변경 없음.

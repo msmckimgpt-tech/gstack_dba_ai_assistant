@@ -3,7 +3,7 @@ doc_type: TASK
 feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
-feature_status: in-progress
+feature_status: review
 ---
 
 # Task
@@ -37,7 +37,7 @@ feature_status: in-progress
 - [x] 원인 확인: pywebview text_select 기본 False, edgechromium AreBrowserAcceleratorKeysEnabled=debug(False).
 - [x] 구현 및 단위 검증
 - [x] DQA-client 텍스트 실측·독립 UX/design 코드 검토. native 검색 UI NOT-RUN/PARTIAL 기록.
-- [ ] 새 설치기 빌드·Git 병합·공개 다운로드 크기/SHA 검증
+- [x] 새 설치기 1.2.3 빌드·PR #1628 병합(513f0d5e)·공개 다운로드 크기/SHA 검증
 
 ## 9. Requested Scope
 
@@ -53,7 +53,7 @@ Ctrl+F 를 통한 텍스트 탐색
 - [ ] Ctrl+F: 네이티브 설정 복구/재로드 유지 확인. 실제 검색창·결과 이동은 자동화 입력 한계로 NOT-RUN. 전체 수용 기준 PARTIAL.
 - [다의어] 박스처리=브라우저 텍스트 드래그 선택; 별도 주석 사각형 그리기는 포함하지 않는다. 예시는 계획 §2.1 유지.
 
-- 설치기 빌드 완료. 공개채널 반입 및 다운로드 검증 진행 중.
+- 설치기 빌드 완료. 공개채널 반입 및 다운로드 검증 완료. 검색 UI 실측 부채는 Issue #1626에 유지한다.
 
 ## Verification debt
 

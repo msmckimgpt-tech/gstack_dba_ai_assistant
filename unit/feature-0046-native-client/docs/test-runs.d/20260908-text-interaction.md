@@ -39,3 +39,8 @@ Evidence: ../artifacts/20260908-text-interaction/build.json — 26,048,286 bytes
 - https://pywebview.flowrl.com/api/ — text_select default False.
 - Windows 설치 pywebview/platforms/edgechromium.py:287 — AreBrowserAcceleratorKeysEnabled = debug.
 - https://learn.microsoft.com/en-us/dotnet/api/microsoft.web.webview2.core.corewebview2settings.arebrowseracceleratorkeysenabled — Ctrl+F/F3 범위 및 Ctrl+C/V 기본 편집과 구분.
+
+Environment: Published-client
+Result: PASS
+Scenario: 최신 릴리스 조회 및 실제 설치기 다운로드.
+Evidence: ../artifacts/20260908-text-interaction/published.json. 프로젝트 CA 검증한 HTTPS로 두 경로 200; 버전1.2.3, 26,048,286bytes, Windows 빌드와 SHA-256 일치. 기존 사용자 설치본은 변경하지 않았다.

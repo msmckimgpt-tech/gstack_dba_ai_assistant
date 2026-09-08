@@ -12,7 +12,7 @@ source_of_truth: true
 
 DQA 창의 pywebview 기본값(text_select=False)이 답변·텍스트 첨부 선택을 막고 있었다. text_select=True로 복구했다. Ctrl+F는 배포 모드에서 AreBrowserAcceleratorKeysEnabled=False이던 것을 UI 스레드에서 True로 설정한다. 디버그·개발자 도구·클립보드 인가·읽기 전용 본문을 바꾸지 않는다.
 
-클라이언트 1.2.3 Windows 설치기 빌드 성공. 서버 코드 변경은 없으므로 웹 재배포는 불필요하다. 기존 사용자 앱은 종료·설치하지 않았으며 배포 후 기존 [업데이트 확인]을 통해 적용한다.
+클라이언트 **1.2.3 공개 완료**. 최신 릴리스 API·설치기 실제 다운로드 모두 HTTP 200, 26,048,286 bytes, SHA-256 `85b69a01da88019031c7cead689d6c7c4359d750b58f7ed32a22958424c5d672`로 Windows 빌드와 일치한다. [공개 검증](artifacts/20260908-text-interaction/published.json). 서버 코드 변경은 없으므로 웹 재배포는 불필요하다. 기존 사용자 앱은 종료·설치하지 않았으며 배포 후 기존 [업데이트 확인]을 통해 적용한다.
 
 [실측 원장](test-runs.d/20260908-text-interaction.md)·[수정본](artifacts/20260908-text-interaction/fixed.json)·[빌드](artifacts/20260908-text-interaction/build.json).
 
@@ -24,6 +24,7 @@ DQA 창의 pywebview 기본값(text_select=False)이 답변·텍스트 첨부 �
 
 ## Git 동기화 결과
 
-- pre-commit 검증 및 PR 준비 중. 사용자 승인 대기 없음.
+- 제품 commit c5842b94, PR #1628 병합 513f0d5e. pre/post verify-completion PASS, native 검색 UI 미검증 경고 보존.
+- 업데이트 채널 공개·다운로드 검증 완료. 사용자 승인 대기 없음. 검색 UI 실측 부채는 Issue #1626으로 유지한다.
 - 제품 코드 독립 UX/design 리뷰 PASS; 실측 범위는 PARTIAL.
 - 이전 기록: [report history](report-history/20260908-before-text-interaction.md).
