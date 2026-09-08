@@ -93,6 +93,20 @@ def test_quit_closes_even_with_a_tray(tmp_path):
     assert getattr(sh._window, "killed", False) is True
 
 
+def test_taskbar_properties_survive_hide_and_are_released_before_close(monkeypatch, tmp_path):
+    sh = _shell(tmp_path, can_hide=True)
+    sh._brand_hwnd = 123
+    cleared = []
+    monkeypatch.setattr(window_mod.branding, 'clear_window', cleared.append)
+    assert sh._on_closing() is False
+    assert not cleared and sh._brand_hwnd == 123
+    sh._quitting = True
+    assert sh._on_closing() is True
+    assert cleared == [123] and sh._brand_hwnd is None
+    assert sh._on_closing() is True
+    assert cleared == [123]
+
+
 def test_a_window_that_cannot_hide_is_closed_instead(tmp_path):
     """숨기지 못하면 닫히는 편이 낫다 — 반쯤 살아 있는 상태가 가장 나쁘다."""
     sh = _shell(tmp_path, can_hide=True)
@@ -230,7 +244,8 @@ def _fake_webview(monkeypatch, *, fail=False):
     class _Win:
         def __init__(self, title, url, **kw):
             self.title, self.url, self.kw = title, url, kw
-            self.events = types.SimpleNamespace(closing=_Events(), loaded=_Events())
+            self.events = types.SimpleNamespace(closing=_Events(), loaded=_Events(),
+                                                before_show=_Events())
 
         def hide(self):
             made["hidden"] = True

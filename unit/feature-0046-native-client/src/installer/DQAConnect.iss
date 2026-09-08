@@ -33,6 +33,7 @@
 #define MyDisplayName "DQA"
 #define MyAppExe "DQAConnect.exe"
 #define MyPublisher "Masangsoft"
+#define MyAppUserModelID "Masangsoft.DQA.Connect"
 
 ; 버전 정본은 `src/client/version.py` 의 `CLIENT_VERSION` 이고, `build_client.py` 가
 ; `/DAppVersion=` 으로 주입한다. 아래 폴백은 **손으로 ISCC 를 부를 때만** 쓰이며 정본과
@@ -42,7 +43,7 @@
 ;   업데이트 판정은 «항상 새것»(무한 재설치) 또는 «영원히 최신»(아무도 못 받음) 중 하나로
 ;   고장난다. 어느 쪽이든 사용자에게는 원인이 보이지 않는다.
 #ifndef AppVersion
-  #define AppVersion "1.1.2"
+  #define AppVersion "1.1.3"
 #endif
 #define MyAppVersion AppVersion
 
@@ -100,10 +101,10 @@ Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 
 [Icons]
 ; 아이콘은 **보이는 이름**을 쓴다 — 사용자가 누르는 것이 곧 DQA 다.
-Name: "{group}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"
+Name: "{group}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\{#MyDisplayName} 제거"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: startup
+Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; AppUserModelID: "{#MyAppUserModelID}"; Tasks: desktopicon
+Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; AppUserModelID: "{#MyAppUserModelID}"; Tasks: startup
 
 [Registry]
 ; `dqa-connect://` 스킴 핸들러 — 웹의 [내 AI 실행] 이 이 프로그램을 **연결 정보와 함께** 띄운다.

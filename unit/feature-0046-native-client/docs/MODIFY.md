@@ -894,3 +894,15 @@ edit_policy: append-only
 ## CHG-20260908T024700-brand-published
 - Related TASK: TASK-20260908-brand-icon
 - PR #1608 병합 및 1.1.2 라이브 릴리스 완료. TASK/REPORT/검증 기록·릴리스 노트에 실제 엣지 다운로드 200, 26,023,355 bytes, 검증 빌드와 SHA-256/byte 동일을 기록했다. 코드·아이콘 자산 변경 없음.
+
+## CHG-20260908T-transparent-taskbar
+- Related TASK: TASK-20260908T-transparent-taskbar; issue #1612.
+- 사유: 사용자 제보로 기존 5표면 검사가 Windows 작업 표시줄 식별자와 실제 버튼을 포함하지 않았음을 확인. 투명 배경 요구와 승인된 SVG 정리 방식 반영.
+- 변경: 프로세스와 실제 창·시작 메뉴/바탕화면/자동실행 바로가기는 Masangsoft.DQA.Connect ID를 공유한다. 작업 표시줄 재실행 명령·표시 이름·아이콘을 명시하고 현재 실행 인자를 저장하지 않는다. Tk는 최종 HWND가 정해지는 Map 때 적용하며 실제 창 파괴 직전에만 속성을 VT_EMPTY로 해제한다.
+- 검증 정본: feature-0046-native-client/docs/test-runs.d/20260908T-transparent-taskbar.md.
+
+## CHG-20260908T035000-transparent-verification
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- 로그인·사이드바·빈 대화·관리 사이드바 로고 이미지 4곳을 같은 SVG로 정합했다. 기존 크기와 배치는 유지한다.
+- 실제 잠금 화면이 작업 표시줄 캡처를 가리는 경우를 검수 도구에서 차단한다. 정상 종료 이전 PASS 기록도 바로잡았다. 최종 시각 확인과 배포는 잔여 단계로 명시한다.

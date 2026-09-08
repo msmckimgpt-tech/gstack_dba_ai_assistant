@@ -3004,3 +3004,7 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 - 공식 클라이언트 채널 1.1.1 게시 완료. 실제 Windows 앱의 updater 코드가 1.1.0에서 1.1.1을 발견하고 설치기 25,731,162 bytes를 다운로드해 SHA-256 일치를 확인했다. 설치기를 실행해 사용자 설치본을 바꾸지는 않았다.
 - 사용자는 **DQA 앱에서 1.1.1로 업데이트한 뒤 다시 연결**한다. 별도 러너 실행·터미널 명령은 필요 없다. 실제 두 러너 복귀 및 파싱 전 실패 복구 실측은 아래 정본에 기록했다.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+## 2026-09-08 — 투명 아이콘/작업 표시줄 검수 (#1612)
+
+투명 SVG 정본과 PNG/ICO, Windows 앱 식별자·창 relaunch 속성·바로가기 ID, 웹 6진입점 favicon을 반영했다. 네이티브 529건·웹 30건, Windows 빌드/5표면/실제 작업 표시줄과 소스·동결본 식별자, Windows 브라우저 소스 검증 PASS. 기존 사용 중인 설치/앱은 유지했다. 현재 남은 단계는 PR 병합·1.1.3 채널/웹 배포·라이브 검증이다. 상세는 test-runs.d/20260908T-transparent-favicon.md.

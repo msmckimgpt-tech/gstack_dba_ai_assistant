@@ -66,9 +66,29 @@ def main():
         import clr
         clr.AddReference('System.Drawing')
         from System import Array, Byte, Int64, IntPtr
-        from System.Drawing import Icon
+        from System.Drawing import Bitmap, Icon
         from System.IO import MemoryStream
         from System.Drawing.Imaging import ImageFormat
+
+        result['alpha'] = []
+        for width, height, payload in frames:
+            single = (struct.pack('<HHH', 0, 1, 1)
+                      + struct.pack('<BBBBHHII', width % 256, height % 256,
+                                    0, 0, 1, 32, len(payload), 22) + payload)
+            png_frame = payload.startswith(b'\x89PNG')
+            stream = MemoryStream(Array[Byte](payload if png_frame else single))
+            frame_icon = None if png_frame else Icon(stream)
+            bitmap = Bitmap(stream) if png_frame else frame_icon.ToBitmap()
+            alphas = [bitmap.GetPixel(x, y).A for y in range(height) for x in range(width)]
+            corners = [bitmap.GetPixel(x, y).A for x, y in
+                       ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1))]
+            assert min(alphas) == 0 and max(alphas) == 255 and corners == [0] * 4
+            result['alpha'].append({'size': width, 'min': min(alphas), 'max': max(alphas),
+                                    'corners': corners})
+            bitmap.Dispose()
+            if frame_icon is not None:
+                frame_icon.Dispose()
+            stream.Dispose()
 
         def compare_icon(icon, label):
             actual = icon.ToBitmap()
@@ -109,6 +129,7 @@ def main():
         user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         user32.SendMessageW.restype = ctypes.c_void_p
         if args.surface == 'native':
+            branding.initialize_process()
             t = tray.Tray(title='DQA icon verification')
             try:
                 assert t.start(), t.last_error
@@ -123,7 +144,7 @@ def main():
             root = tk.Tk()
             try:
                 root.title('DQA icon verification')
-                root.iconbitmap(default=str(branding.ICON_PATH))
+                branding.bind_tk_window(root)
                 root.update()
                 user32.GetParent.argtypes = [wintypes.HWND]
                 user32.GetParent.restype = wintypes.HWND
@@ -133,6 +154,7 @@ def main():
                 assert hicon, (hwnd, root.winfo_id(), root.iconbitmap())
                 compare_icon(Icon.FromHandle(IntPtr(Int64(ctypes.c_ssize_t(hicon).value))), 'tk-window')
             finally:
+                branding.clear_window(int(root.frame(), 0))
                 root.destroy()
 
         if args.surface == 'webview':

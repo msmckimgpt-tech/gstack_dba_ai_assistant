@@ -40,7 +40,7 @@ from pathlib import Path
 
 from . import (appwindow, bridge, core, tray as tray_mod, updater,
                window as window_mod)
-from .branding import ICON_PATH
+from . import branding
 
 #: 웹 셸 경로의 [종료] 신호. 트레이 스레드가 세우고 주 스레드 루프가 읽는다 —
 #: 트레이 콜백에서 루프를 직접 건드리지 않기 위한 유일한 접점이다.
@@ -111,10 +111,10 @@ class ClientApp:
         #: 종료가 시작됐다. 진행 중이던 연결이 **종료 뒤에 러너를 띄우는 것**을 막는다.
         self._shutting_down = False
 
+        branding.initialize_process()
         self.root = tk.Tk()
         self.root.title(core.DISPLAY_NAME)
-        if os.name == "nt":
-            self.root.iconbitmap(default=str(ICON_PATH))
+        branding.bind_tk_window(self.root)
         self.root.geometry("560x420")
 
         # ⚠ 트레이는 **창보다 먼저** 세운다. 성공 여부가 창 닫기 동작을 가르기 때문이다
@@ -276,6 +276,8 @@ class ClientApp:
             self.tray.stop()
             self.tray = None
         try:
+            if os.name == "nt":
+                branding.clear_window(int(self.root.frame(), 0))
             self.root.destroy()
         except Exception:  # noqa: BLE001 — 이미 파괴된 뒤 두 번 불려도 조용히 끝낸다
             pass
@@ -649,6 +651,7 @@ def confirm(message: str, title: str = core.DISPLAY_NAME) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     """진입점. 값은 **스킴 링크 또는 환경변수**로 온다 — 사용자가 타이핑하지 않는다."""
+    branding.initialize_process()
     import argparse
     import os
 

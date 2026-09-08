@@ -1,7 +1,8 @@
-"""Export the master PNG as a Windows ICO (Pillow is build-time only)."""
+"""Render the transparent SVG master to PNG/ICO (CairoSVG/Pillow are build-time only)."""
 from __future__ import annotations
 
 import io
+import shutil
 import struct
 from pathlib import Path
 
@@ -37,4 +38,12 @@ def export_icon(source: Path, destination: Path) -> None:
 
 
 if __name__ == '__main__':
+    import cairosvg
+
+    cairosvg.svg2png(url=str(ASSETS / 'dqa.svg'), write_to=str(ASSETS / 'dqa.png'),
+                    output_width=1024, output_height=1024)
     export_icon(ASSETS / 'dqa.png', ASSETS / 'dqa.ico')
+    web = ASSETS.parents[4] / 'unit/feature-0003-agent-web-ui/src/static/brand'
+    web.mkdir(parents=True, exist_ok=True)
+    for name in ('dqa.svg', 'dqa.ico'):
+        shutil.copy2(ASSETS / name, web / name)

@@ -5056,3 +5056,11 @@ specifier 는 `?v=` 토큰을 갖는다. `tests/test_static_module_stamp_census.
 - AC-RUR-2: 파싱 전 실패도 감독이 종료를 감지한다. 유한 백오프, 정상 종료 알림, 명시적 해제 후 재기동 0을 검증한다.
 - AC-RUR-3: 기존 HTTPS/CA/고정 다운로드 경로/크기·문법·해시 검사와 토큰 환경변수 전달 계약을 유지한다. 앱 설치기 적용 확인 계약은 유지한다.
 - 정본 실측: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+## REQ-20260908T-transparent-taskbar — 투명 아이콘과 Windows 식별자
+
+index/admin/share/ai-connect/oauth-callback/oauth-consent의 favicon은 같은 투명 DQA SVG/ICO를 쓴다. export_icon.py가 native 정본에서 web static/brand를 함께 재생성한다. 브라우저 프로필과 로그인 동선·화면 테마는 유지한다.
+
+- AC-TI-1: 정본 SVG와 PNG/ICO는 실제 투명 배경이며 ICO 9개 크기에서 외곽 alpha=0이다.
+- AC-TI-2: Window.Icon 검사와 실제 작업 표시줄 검사를 구분하고 적용되는 앱 식별자·아이콘/재실행 속성·바로가기를 Windows에서 대조한다.
+- AC-TI-3: 이전 1.1.2의 Python 작업 표시줄 아이콘을 재현하고 수정본의 투명 DQA 아이콘을 확인한다. 새 설치기와 웹 favicon이 기존 채널에서 제공된다.

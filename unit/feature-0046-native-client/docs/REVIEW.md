@@ -1173,3 +1173,20 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Reason: 완료된 #1608 및 기존 채널의 실제 1.1.2 다운로드 결과를 문서에 기록한다. 정책·제품 코드·디자인 변경 없음. manifest 값뿐 아니라 실제 다운로드의 크기·SHA-256·전체 바이트를 Windows 검증본과 대조했다.
 - Timestamp: 2026-09-08T02:47:00Z
+
+## REV-20260908T034000-transparent-design [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar / feature-0046-native-client / feature-0003-agent-web-ui
+- Trigger: UI/아이콘·설치·웹 진입점 디자인
+- Timestamp: 2026-09-08T03:37:54+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Findings: P1/P2/P3 0. 실제 알파·소형 가독성·웹 자산 동일성·제작기록 정합 확인.
+- Human Approval Needed: no
+
+## REV-20260908T035000-transparent-ux [SUBAGENT:icon_ux_review] — CONCERN
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/창·작업 표시줄·아이콘
+- Timestamp: 2026-09-08T03:50:00Z
+- Verdict: CONCERN — 코드 P1/P2/P3 0, Windows 잠금 해제 후 최종 frozen 시각 확인 잔여
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-ux.md
+- Human Approval Needed: no

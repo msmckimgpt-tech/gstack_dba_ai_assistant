@@ -5997,3 +5997,15 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+## CHG-20260908T-transparent-taskbar
+- Related TASK: TASK-20260908T-transparent-taskbar; issue #1612.
+- 사유: 사용자 제보로 기존 5표면 검사가 Windows 작업 표시줄 식별자와 실제 버튼을 포함하지 않았음을 확인. 투명 배경 요구와 승인된 SVG 정리 방식 반영.
+- 변경: index/admin/share/ai-connect/oauth-callback/oauth-consent의 favicon은 같은 투명 DQA SVG/ICO를 쓴다. export_icon.py가 native 정본에서 web static/brand를 함께 재생성한다. 브라우저 프로필과 로그인 동선·화면 테마는 유지한다.
+- 검증 정본: feature-0046-native-client/docs/test-runs.d/20260908T-transparent-taskbar.md.
+
+## CHG-20260908T035000-transparent-verification
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- 로그인·사이드바·빈 대화·관리 사이드바 로고 이미지 4곳을 같은 SVG로 정합했다. 기존 크기와 배치는 유지한다.
+- 실제 잠금 화면이 작업 표시줄 캡처를 가리는 경우를 검수 도구에서 차단한다. 정상 종료 이전 PASS 기록도 바로잡았다. 최종 시각 확인과 배포는 잔여 단계로 명시한다.
