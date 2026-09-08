@@ -197,8 +197,9 @@ export function initClientPanel(setStatus, notify, needsAttention) {
         locations.setAttribute("aria-label", "현재 사용할 수 없는 위치");
         for (const r of unavailable) {
           const item = node("li", "connect-ai-unavailable-location");
+          const detail = (r.detail || "응답을 확인하지 못했습니다.").replace(/\*\*([^*]+)\*\*/g, "$1");
           item.append(node("strong", "", locationLabel(r)),
-            node("span", "connect-ai-detail", r.detail || "응답을 확인하지 못했습니다."));
+            node("span", "connect-ai-detail", detail));
           if (!r.logged_in && r.can_login_here && !busy && !waiting && supported) {
             item.appendChild(button("로그인", async () => {
               pending.add(name); paint();

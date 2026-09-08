@@ -1,0 +1,100 @@
+{
+  "username": "mckim",
+  "userprofile": "C:\\Users\\mckim",
+  "installed": [
+    {
+      "hive": "HKCU",
+      "view": "64",
+      "key": "{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}_is1",
+      "name": "DQA Connect",
+      "DisplayVersion": "1.2.3",
+      "InstallLocation": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\",
+      "DisplayIcon": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "Inno Setup: App Path": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect",
+      "Inno Setup: User": "mckim",
+      "InstallDate": "20260908",
+      "exe_size": 6028250,
+      "exe_sha256": "f0ca3986ce8f87b91b0d1b21e2da884d2bca2891d4cca628714567aa566a114e"
+    },
+    {
+      "hive": "HKCU",
+      "view": "32",
+      "key": "{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}_is1",
+      "name": "DQA Connect",
+      "DisplayVersion": "1.2.3",
+      "InstallLocation": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\",
+      "DisplayIcon": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "Inno Setup: App Path": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect",
+      "Inno Setup: User": "mckim",
+      "InstallDate": "20260908",
+      "exe_size": 6028250,
+      "exe_sha256": "f0ca3986ce8f87b91b0d1b21e2da884d2bca2891d4cca628714567aa566a114e"
+    }
+  ],
+  "processes": [
+    {
+      "ProcessId": 41100,
+      "ParentProcessId": 50300,
+      "ExecutablePath": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "SessionId": 1
+    }
+  ],
+  "windows": [
+    {
+      "hwnd": 15342784,
+      "pid": 41100,
+      "class": "WindowsForms10.Window.8.app.0.aec740_r47_ad1",
+      "title": "DQA",
+      "visible": true
+    },
+    {
+      "hwnd": 28051058,
+      "pid": 41100,
+      "class": "GDI+ Hook Window Class",
+      "title": "GDI+ Window (DQAConnect.exe)",
+      "visible": false
+    },
+    {
+      "hwnd": 11601498,
+      "pid": 41100,
+      "class": ".NET-BroadcastEventWindow.4.0.0.0.aec740.0",
+      "title": ".NET-BroadcastEventWindow.4.0.0.0.aec740.0",
+      "visible": false
+    },
+    {
+      "hwnd": 18291714,
+      "pid": 41100,
+      "class": "DQAConnectTrayWindow",
+      "title": "DQA",
+      "visible": false
+    },
+    {
+      "hwnd": 4201838,
+      "pid": 41100,
+      "class": "MSCTFIME UI",
+      "title": "MSCTFIME UI",
+      "visible": false
+    },
+    {
+      "hwnd": 50076020,
+      "pid": 41100,
+      "class": "IME",
+      "title": "Default IME",
+      "visible": false
+    },
+    {
+      "hwnd": 16063584,
+      "pid": 41100,
+      "class": "IME",
+      "title": "Default IME",
+      "visible": false
+    },
+    {
+      "hwnd": 21503146,
+      "pid": 41100,
+      "class": "IME",
+      "title": "Default IME",
+      "visible": false
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "ui_action": "actual DQA sendBtn WebView click",
+  "started_at": 1788849946.4489024,
+  "click_returned_at": 1788849950.8759308,
+  "returncode": 0,
+  "output": "Clicked WebView widget 15408594 at 1870,1104",
+  "model": "GPT-6-Astra",
+  "reasoning": "높음",
+  "prompt": "DQA 연결 확인용 테스트입니다. 도구를 사용하지 말고 17 + 25의 결과와 DQA_CODEX_42만 한 줄로 답해주세요."
+}

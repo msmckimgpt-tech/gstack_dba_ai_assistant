@@ -1,0 +1,16 @@
+[
+  {
+    "At": "2026-09-08T15:38:03.3016705+09:00",
+    "Pid": 29672,
+    "Id": "connectClientSummary",
+    "Name": "2개 AI 연결됨",
+    "Offscreen": false
+  },
+  {
+    "At": "2026-09-08T15:39:07.5112109+09:00",
+    "Pid": 29672,
+    "Id": "connectClientSummary",
+    "Name": "AI를 찾고 있습니다",
+    "Offscreen": false
+  }
+]

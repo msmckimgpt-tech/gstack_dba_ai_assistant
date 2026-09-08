@@ -18,7 +18,28 @@
 ## 수정본 실제 설치·요청
 
 - Environment: DQA-client
-- Build: 1.2.4 후보
+- Build: 공개·설치1.2.4 / 서버8f1116cf (PR #1631)
+- Result: PASS
+- Evidence: [업데이트 메뉴](../artifacts/20260908-codex-connect-fix/menu-selection.json), [실제 확인창](../artifacts/20260908-codex-connect-fix/update-confirmation.json), [설치 과정](../artifacts/20260908-codex-connect-fix/install-events.jsonl), [최종 결과](../artifacts/20260908-codex-connect-fix/install-result.json), [공개 다운로드](../artifacts/20260908-codex-connect-fix/public-release.json), [빌드](../artifacts/20260908-codex-connect-fix/build.json).
+- 현재 설치본은 작업 도중1.2.3이 되어 PID를 새로 조회했다. 예전PID를 사용한 사전 도구 시도는 확인창 전 실패했으며 설치 실패/성공 실측에 합산하지 않았다. 실제 측정은1.2.3→1.2.4이다.
+- 수락 기준: 새 DQA PID29672 시작11.153s, 설치기EXE/TMP 정상 종료14.185/14.186s. 이후5.165s 안정 실행, 최종 검증19.713s. 기존 앱/동봉 런타임은 설치기가 정리했으며 별도 관찰용 Python은 생존했다.
+- installer26,045,699bytes/SHA-256 `a0535a088c9d000e776b12f5b817d311b7bce1f82da890b3dcee1cb02b494429`; 설치 EXE SHA-256 `99ff3b5d47605427d5d39ac47976da9f654c27fc6e8070a38846944def1b4748`. 공개 다운로드·manifest·빌드·설치본 일치.
+- [재탐색 UI](../artifacts/20260908-codex-connect-fix/actual-modal-refreshed-1.2.4.json)에서 Codex WSL Ubuntu root/Claude root 연결 완료. [선택](../artifacts/20260908-codex-connect-fix/runtime-selection.json)과 [ready receipt](../artifacts/20260908-codex-connect-fix/runtime-selection.ready.json)의 각 selection_id가 일치한다. [클라이언트 캐시](../artifacts/20260908-codex-connect-fix/ai-locations.json)에 위치·가용성·선호 위치가 유지되며 gh-runner는 없다.
+- 새 대화의 [실제 입력·sendBtn 클릭](../artifacts/20260908-codex-connect-fix/actual-request-send.json) → [Codex dispatch/review/submit](../artifacts/20260908-codex-connect-fix/actual-request-events.json) → [실제 UI 응답](../artifacts/20260908-codex-connect-fix/actual-request-response-1.2.4.json). 질문은 도구 없이17+25와 고유 마커 응답 요청. 답변 `42 DQA_CODEX_42`, GPT-6-Astra/높음,32318ms(자가 검토15779ms 포함), delivered=true. send 클릭 도구 반환→제출33.401s. UI 응답은15:46:58에 별도로 관찰했으므로 최초 화면 렌더 시간은 측정하지 않았다.
+- UIA의 PID47356은 앱의 WebView2 자식이며 설치 결과의 nativePID29672와 구분한다. WebView2에 실제 클릭 메시지를 전달했고 별도 웹브라우저/수동 러너를 띄우지 않았다. 픽셀 스크린샷 증거는 없으며 UIA와 native/bridge 실동작 증거로 판정한다.
+- 현장 Codex claude-corp probe도 answers:true이며 실제 UI의 해당 위치 선택→ready→완료 toast도 성공했다. [위치 변경](../artifacts/20260908-codex-connect-fix/actual-location-switch-claude-corp.json), [toast UIA](../artifacts/20260908-codex-connect-fix/actual-toast-location-switch.json). 클릭 도구 반환→ready7.659s, pending 최초 관찰→ready7.233s, toast15:50:12.336. Permission denied는 미재현. 결정적 회귀로 권한 거부 표시/자동 제외/캐시 무효화를 검증했다. 실제 UI에서 Claude claude-corp 응답 실패는 비활성 목록으로 표시된다.
+- 전체 서버 배포 exit0: web/MCP/ask-worker/ops-scheduler 대상 SHA/ready 검사 완료. 기본 서버 대화 smoke는 서버 LLM 차단 계약 확인이며, 실제 AI 왕복 PASS의 근거는 위 DQA 새 대화다.
+
+## 실제 UI에서 발견한 안내 문구 후속 수정
+
+- 사용 불가 안내의 Markdown `**`가 일반 텍스트로 노출돼 공통 client-bridge.js에서 강조 표식을 제거했다. textContent로 안전한 텍스트 출력 유지, 기존 DOM12 그룹 PASS/UX P1·P2 0.
+- Environment: DQA-client
 - Result: NOT-RUN
-- Reason: 수정본을 main에 통합·배포한 후 실제 설치본 업데이트 및 새 AI 요청을 수행한다. 완료 선언 전에 결과를 추가한다.
-- 실제 트레이 업데이트 확인→설치→재실행, 연결창 root선택→ready/toast, 새 대화의 간단한 Codex 요청/응답 및 걸린 시간을 직접 관찰한다.
+- Reason: 표시 수정 병합·웹 배포 후 같은 실제 앱의 연결창에서 확인하여 추가 기록한다. 위1.2.4 설치·Codex 실제 응답 PASS와 구분한다.
+
+## 실제 위치 변경·root 복원
+
+- Environment: DQA-client
+- Result: PASS
+- 실제 Codex UI에서 root→claude-corp→root를 선택했고 매번 새 selection_id의 ready와 완료 toast를 확인했다. 최종 root 선택은 [변경 기록](../artifacts/20260908-codex-connect-fix/actual-location-switch-root.json) 기준 클릭 도구 반환→ready15.701s(pending 최초 관찰→ready15.253s), toast15:52:39.490. 이 시간은 UI 렌더/서버 제출 시간이 아니라 실제 선택 후 receipt 확인 시간이다.
+- [최종 연결창](../artifacts/20260908-codex-connect-fix/actual-modal-root-restored-1.2.4.json), [toast](../artifacts/20260908-codex-connect-fix/actual-toast-location-switch.json), final-runtime-selection/ready 및 final-ai-locations 증거로 root 복원·선호 캐시·다른 AI 선택 id 보존 확인. 요청 테스트 후 사용자 선호를 root로 복원했다.

@@ -12,7 +12,7 @@ source_of_truth: true
 
 catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
 
-구현·배포·실측 결과 정본은 feature-0046-native-client/docs/REPORT.md와 해당 test-runs.d 원장이다. 실제 DQA 설치/요청 검증은 배포 후 이어서 기록한다.
+구현·배포·실측 결과 정본은 feature-0046-native-client/docs/REPORT.md와 해당 test-runs.d 원장이다. 전체8f1116cf 배포 및 실제 DQA1.2.4 업데이트/새 Codex 요청 `42 DQA_CODEX_42` 응답을 확인했다(32318ms, delivered=true).
 
 ## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검토·개선
 - 요청한 여섯 계층의 누적 순서는 정상. 계정 개인 설정은 `WebSystemPrompts`의 account scope 전역/제품 행이다.

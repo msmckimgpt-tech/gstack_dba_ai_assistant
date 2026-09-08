@@ -1,0 +1,51 @@
+{
+  "requested_user": "claude-corp",
+  "started_at": 1788850199.0435584,
+  "click_returned_at": 1788850203.7876194,
+  "click_rc": 0,
+  "click_output": "Clicked WebView widget 15408594 at 732,773",
+  "observations": [
+    {
+      "at": 1788850203.7910352,
+      "receipt": {
+        "target": {
+          "path": "/usr/local/bin/codex",
+          "where": "wsl",
+          "distro": "Ubuntu",
+          "user": "root",
+          "selection_id": "a986650144e1020aff1e6b1998443fa7"
+        },
+        "state": "ready"
+      }
+    },
+    {
+      "at": 1788850204.2139556,
+      "receipt": {
+        "target": {
+          "path": "/usr/local/bin/codex",
+          "where": "wsl",
+          "distro": "Ubuntu",
+          "user": "claude-corp",
+          "selection_id": "0b5a4b07f690d84080d2b2b9a56d5dd6"
+        },
+        "state": "pending"
+      }
+    },
+    {
+      "at": 1788850211.4468687,
+      "receipt": {
+        "target": {
+          "path": "/usr/local/bin/codex",
+          "where": "wsl",
+          "distro": "Ubuntu",
+          "user": "claude-corp",
+          "selection_id": "0b5a4b07f690d84080d2b2b9a56d5dd6"
+        },
+        "state": "ready"
+      }
+    }
+  ],
+  "ready_at": 1788850211.4468732,
+  "success": true,
+  "finished_at": 1788850211.4468741
+}

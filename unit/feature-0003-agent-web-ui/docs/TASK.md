@@ -17,7 +17,7 @@ feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 
 - Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.
 - Plan: 사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
 - [x] 코드 변경 및 집중 회귀 검증.
-- [ ] 전체 배포 후 실제 DQA UI/요청 실측. 증거는 native TEST 원장에 연결.
+- [x] 전체8f1116cf 배포·DQA1.2.4 업데이트·실제 root Codex 새 대화 응답 확인. 정본: native test-runs.d/20260908-codex-connect-fix.md.
 
 ## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검증
 

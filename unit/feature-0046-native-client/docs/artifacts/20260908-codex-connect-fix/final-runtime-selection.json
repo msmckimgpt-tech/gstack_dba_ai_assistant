@@ -1,0 +1,16 @@
+{
+  "codex": {
+    "path": "/usr/local/bin/codex",
+    "where": "wsl",
+    "distro": "Ubuntu",
+    "user": "root",
+    "selection_id": "e7649428b6c64d225cc7715cd8a1220d"
+  },
+  "claude": {
+    "path": "/usr/local/bin/claude",
+    "where": "wsl",
+    "distro": "Ubuntu",
+    "user": "root",
+    "selection_id": "ef93dec7fdf73d2b615246295ac989d1"
+  }
+}
