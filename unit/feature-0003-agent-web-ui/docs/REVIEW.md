@@ -8398,3 +8398,15 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Critical issue: 라운드 1~3 조치 6건이 **뮤턴트로 봉인되지 않아** 되돌려도 전건 초록 · `/api/ask` 의 `steps` 가 표시 이음매를 우회해 `intent` 유출(라이브 3,382행) · 적재층의 사유 파생이 화면에서 구분되지 않음(22행)
 - 조치: 본 cycle 에서 전건 반영 + **뮤턴트 8종 KILL 실증**. 잔여 3건은 TASK 에 후속으로 명시.
 - Human Approval Needed: no
+
+## REV-20260909T010301-ai-claude-doc-sync-20260909-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-08 블록 신설 (doc_sync 09-09)
+- Related TASK: TASK-20260909T010301-doc-sync-rn-0909
+- Timestamp: 2026-09-09T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 블록 1개 prepend + `generated` 전진**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스 + 적대 검증조로 검증했다.
+- **검증**: `node --check` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일). `date:` 블록 62→63 · `generated` 09-07 → 09-08.
+- **적대 검증**: 구조·규약·정직성은 전건 통과(34/0 유지 · 내부 노출 기계 스캔 0 · 접힌 summary 에 「설치본 코드라 새 앱을 받으신 뒤에만 성립」 계열 고지 존재 · 미확인 미래약속 0). 사실오류 **1건 적발·반영** — 아이콘 항목 제목의 `(1.1.1 · 1.1.2)` → `(1.1.2)`(1.1.1 은 러너 복구로 먼저 게시된 별개 릴리스, 아이콘은 1.1.2 로만 배포. 정본 `feature-0043 REPORT.md` · `MODIFY.md` · 머지 `6bf4ace3`). 직전 3블록이 제목에 버전 라벨을 쓴 적 없다는 관례 근거도 함께 확인.
+- **평이화 준수**: 내부 명칭 기계 스캔 **0건**. 화면에 그대로 나타나는 라벨·앱 이름(DQA)·버전 번호만 인용했다(직전 블록들과 동일 관례).
+- **미검증 정직 표기**: 공유-앱 진입의 딥링크 목적지 이동은 **게시된 최신본 1.2.4 에도 없다**(수용 코드가 마지막 버전 bump 뒤에 착륙 — 다음 릴리스 필요) · 미서명 설치 시 Windows 경고 1회 · [DQA 앱 받기] 노출 전환 미관측 · 앱 화면 실측 범위 한계 — 항목 detail 과 접힌 summary 양쪽에 명시했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- Human Approval Needed: **아니오**.

@@ -3773,3 +3773,13 @@ Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), fea
 서비스/API/벤더 응답과 app.js toast 초기화는 대역이다. 네이티브 픽셀 캡처는 빈 면으로 NOT-RUN이며 동일 제품 UI의 Windows Chrome 렌더는 별도 보조 증거다. 실제 벤더 계정 호출·사용자 설치본 교체의 PASS를 뜻하지 않는다.
 
 - TASK-20260908-prompt-layer-delivery: 여섯 계층 전달·오류·재시도·점유 교체 회귀는 [개별 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md)을 참조한다.
+
+## TASK-20260909T010301-doc-sync-rn-0909 릴리즈노트 블록 신설 검증
+
+- `node --check src/static/release-notes-data.js` → PASS (JS 문법)
+- `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 하네스 실행을 위해 `jsdom@24` 를 `/tmp` 에 핀 설치했다(세션마다 부재할 수 있음).
+- 구조 실측: `date: "` 블록 62 → **63** · `generated` 2026-09-07 → **2026-09-08**.
+- 평이화 기계 스캔: 신규 블록에 대해 내부 명칭 패턴(feature-id·`.js`/`.py` 확장자·alembic·WebView2·jsdom·sha256·SSOT·frontmatter·pytest·APIRouter·subprocess·PyInstaller) → **0 히트**.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다. 아울러 이 창에서 UI 검증 정본이 PB-0009(실제 DQA 앱)로 옮겨졌으며(ADR-20260908T024500), 배포 후 라이브 노출 확인은 wrapper 소관이다.
+- reconcile-first 실측(2026-09-09T01:03:01+09:00, run 시작 시점): 서빙 `release-notes-data.js` 가 `origin/main` blob 과 **바이트 동일**(sha256 `d8b4285e60b2629c…`, 465,521 bytes) → **파리티 갭 0**. `artifacts/deploy/deploy-web.state` `current=2249addf` = HEAD · 배포 실패 마커 0.
+- **Pass/Fail: PASS**.

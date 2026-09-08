@@ -13826,3 +13826,9 @@ cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측
       원장 컬럼으로만 남았다. 별도 cycle 후보로 남긴다)
 - [ ] `_LABEL_BUDGET` 를 글자 수 → 실 폭 가드로 승격 (후속)
 - [ ] 옛 라벨 5종(`schema_lookup` 등)의 근거를 MySQL 원장으로 실측하거나 표에서 제거 (후속)
+
+## TASK-20260909T010301-doc-sync-rn-0909 릴리즈노트 2026-09-08 블록 신설 (doc_sync 09-09)
+
+- [x] 델타창 53커밋(non-merge, 착륙일 전량 2026-09-08) 중 사용자 체감 변화만 골라 `releases[]` 맨 앞에 `date: "2026-09-08"` 블록 prepend + `generated` 전진.
+- [x] 사용자향 평이화(내부 명칭·구현 비노출) 기계 스캔 0히트.
+- [x] `node --check` + 전용 하네스 `tests/verify_release_notes.mjs` baseline 유지 확인.

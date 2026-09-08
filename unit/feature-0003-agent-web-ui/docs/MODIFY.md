@@ -6384,3 +6384,13 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
   캐시됐다(브리지 2종 소실 실측). 이제 WARN + 폴백 보충 + **비캐시**로 복구 가능하게 했다.
 - 검증: `docs/test-runs.d/TASK-20260908T204500-step-narration-seal.md`.
 - 되돌리기: 데이터 변경 0 — git revert 후 web 재배포.
+
+## CHG-20260909T010301-ai-claude-doc-sync-rn-0909 — 릴리즈노트 2026-09-08 블록 신설 (doc_sync 09-09)
+
+- `src/static/release-notes-data.js`: `releases[]` 맨 앞에 `date: "2026-09-08"` 블록 prepend(62→63) + `generated` 2026-09-07 → 2026-09-08 전진. **데이터만** — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- 착륙일(09-08) 블록이 부재했으므로 append 가 아니라 prepend. 09-07 블록 이하 전량 보존.
+- REQ-20260618-0321 의 운영 규약("새 업데이트 추가는 `releases[]` 맨 앞에 일자 블록 추가, 렌더 로직 변경 불필요")을 그대로 따른 데이터 큐레이션이라 기능 계약 변경 0.
+- AC-0579(내부 정보 비노출) 준수 — 누출 패턴 기계 스캔 0건.
+- **적대 검증이 잡은 사실오류 1건 반영**: 아이콘 항목 제목의 `(1.1.1 · 1.1.2)` 표기를 `(1.1.2)` 로 정정했다. 1.1.1 은 러너 복구로 먼저 게시된 별개 릴리스이고 아이콘은 같은 번호를 다른 설치기로 덮지 않기 위해 1.1.2 로만 나갔다(정본 `unit/feature-0043-external-llm-bridge/docs/REPORT.md` · 머지 `6bf4ace3`). 직전 3블록은 제목에 버전 라벨을 쓴 적이 없어 신규 관례이기도 했다.
+- 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` §14.1 — 수기 bump 금지 명문). 실측 정합: 라이브 스탬프 `?v=94c87eec12e1`.
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
