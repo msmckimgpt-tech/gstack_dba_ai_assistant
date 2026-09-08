@@ -1104,6 +1104,24 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Verdict: PASS
 - Artifact: unit/feature-0046-native-client/docs/reviews/20260908T113000-design.md
 - Human Approval Needed: no
+
+## REV-20260908T020049-brand-design [SUBAGENT:icon_design_review] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: UI/아이콘 디자인
+- Timestamp: 2026-09-08T02:12:00Z
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-design.md
+- Human Approval Needed: no
+
+## REV-20260908T020050-brand-ux [SUBAGENT:icon_ux_review] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: UI/아이콘 배선·패키징
+- Timestamp: 2026-09-08T02:12:00Z
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-ux.md
+- Human Approval Needed: no
+
+변경 근거: 사용자가 디자인과 적용을 요청했고, 공식 마상 심볼 정합 및 아이콘·설치 파일 우선을 명시했다. 자산/패키징의 Minor 변경이며 기존 업데이트 채널·버전 계약을 사용한다. 사용자 요청과 AGENTS.md §16.5.1에 따라 빌드 검증 후 기존 릴리스 채널로 반영한다. 별도 브라우저 폴백의 아이콘은 브라우저가 관리하며 웹 테마를 바꾸지 않는다.
 ## REV-20260908T120000-runner-update-recovery [SUBAGENT:runner_race_review] — PASS
 - Related TASK: feature-0046-native-client
 - Trigger: 공유 파일 교체 경합, 자식 프로세스 수명, 단절 표시, 실행파일 신뢰
@@ -1123,3 +1141,30 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
 - Timestamp: 2026-09-08T11:38:45+09:00
+
+## REV-20260908T023800-brand-merge — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: #1606 병합과 1.1.1 선행 배포
+- Verdict: PASS
+- 충돌은 STATUS 요약과 FUNCTION/TASK 말미 추가 블록이다. 양쪽 이력·요구를 보존하고 STATUS는 통합 요약으로 정리했다. 자동 병합된 GUI와 빌드 스크립트도 `442552e4`와 `origin/main` 양 부모 대비 확인했다. 삭제 파일 0, 양 부모의 feature 문서 제목 유실 0.
+- 아이콘 자산은 독립 리뷰 PASS 상태 그대로다. 선행 1.1.1의 러너 복구를 보존하고 버전을 1.1.2로 올렸다. 최종 전체 524 PASS, ruff PASS, Windows 재빌드·5표면 픽셀 일치 PASS.
+- Human Approval Needed: no — 양측 의도가 독립·명료하며 AGENTS.md §16.4 자율 병합에 해당한다.
+
+## REV-20260908T024000-brand-merge-ux [SUBAGENT:icon_ux_review] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Trigger: main 병합·선행 1.1.1 배포 이후 아이콘 적용판 1.1.2 최종 검토
+- Timestamp: 2026-09-08T02:40:00Z
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T020049-brand-ux.md
+- Findings: P1/P2/P3 없음. main 러너 복구 보존, 기존 아이콘 자산·배선 동일, Windows 5개 표면·설치기 실물 크기/해시 PASS.
+- Human Approval Needed: no
+
+## REV-20260908T024200-brand-main-doc-sync [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Reason: #1609 main 동기화의 충돌은 MODIFY/REVIEW 문서 말미 추가뿐이며 양쪽 기록을 보존했다. 클라이언트 배포 소스는 기존 검증본과 byte 동일하다. 새 아이콘 코드·디자인 변경은 없다.
+- Timestamp: 2026-09-08T02:42:00Z
+
+## REV-20260908T024500-brand-merge-evidence [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Reason: 후속 main 문서 병합의 보존·검증 결과 기록만 추가. 신규 코드·디자인·정책 변경 없음. 16c5818a/11fa3741 양 부모의 삭제 파일 0·문서 제목 유실 0, cabeeaed 대비 배포 소스 변경 0, 바뀐 handoff/web_shell 테스트 86 PASS.
+- Timestamp: 2026-09-08T02:45:00Z

@@ -64,6 +64,7 @@ _APP_NAME = "DQAConnect"
 _ENTRY = _SRC / "dqa_connect.py"
 #: Inno Setup 스크립트(커밋 대상). 빌드가 이것을 컴파일해 설치기를 만든다.
 _ISS = _SRC / "installer" / "DQAConnect.iss"
+_ICON = _SRC / "client" / "assets" / "dqa.ico"
 
 def _client_version() -> str:
     """배포 버전의 정본 `src/client/version.py` 를 **텍스트로** 읽는다.
@@ -294,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean", "--onedir", "--windowed",
         "--name", _APP_NAME,
+        "--icon", str(_ICON),
+        "--add-data", f"{_ICON}{os.pathsep}client/assets",
         "--distpath", str(out),
         "--workpath", str(work),
         "--specpath", str(work),
@@ -359,7 +362,9 @@ def main(argv: list[str] | None = None) -> int:
             if rc != 0:
                 print("ERROR: 설치기 컴파일 실패", file=sys.stderr)
                 return rc
-            setup = next(iter(sorted(out.glob(f"{_APP_NAME}-Setup*.exe"))), None)
+            setup = out / f"{_APP_NAME}-Setup-{_client_version()}.exe"
+            if not setup.is_file():
+                raise RuntimeError(f"설치기 산출물이 없습니다: {setup}")
 
     target = setup or exe
     digest = hashlib.sha256(target.read_bytes()).hexdigest()

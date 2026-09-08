@@ -850,6 +850,15 @@ edit_policy: append-only
 - Timestamp: 2026-09-08T11:24:21+09:00; session: Codex ai/codex/feature-0043-bridge-token-env.
 - REQ-20260908-client-only: 클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합.
 - 검증 정본: feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T113000-bridge-token-env.md.
+
+## CHG-20260908T020049-brand-icon
+
+- 사용자 요청: DQA 아이콘 제작 및 설치 파일 포함 적용, 추가로 공식 마상소프트/마상게임즈 심볼 방향 반영. 웹 테마 확장은 사용자 선택으로 제외.
+- `client/assets`, `branding.py`, `gui.py`, `window.py`, `tray.py`: 마상 계열 각진 Q·데이터 심볼과 단일 자산 경로.
+- `build_client.py`, `DQAConnect.iss`, `version.py`: 앱/설치기 아이콘 동봉 및 1.1.2(동시 병합된 러너 복구 1.1.1 포함). 기존 버전 설치기가 남은 출력 폴더에서 잘못된 파일을 결과로 보고하던 glob 선택을 현재 버전의 정확한 경로로 교정.
+- `tests/test_packaging.py`: 이전 설치기가 남아 있어도 현재 버전의 이름·해시를 보고하는 행위 회귀. Windows `verify_brand_icon.py`: PE 리소스·동봉 자산·실제 네이티브 아이콘 픽셀 비교.
+
+- Windows 실측 후 ICO 인코딩 교정: Tk 8.6의 PNG 프레임 확대 문제를 16~128px DIB + 256px PNG 혼합 인코딩으로 해소. `export_icon.py`로 변환을 재현한다.
 ## CHG-20260908T120000-runner-update-recovery
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery; REQ-20260908-runner-update-recovery; 위험도 Minor.
@@ -867,3 +876,17 @@ edit_policy: append-only
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+
+## CHG-20260908T024000-brand-release-version
+- Related TASK: TASK-20260908-brand-icon
+- 사유: #1606 러너 복구의 1.1.1이 먼저 배포되어 같은 버전을 다른 설치기로 덮어쓰지 않는다.
+- 변경: main의 러너 복구를 보존하고 아이콘 적용판 version.py·Inno Setup을 1.1.2로 정합. GUI/빌드 자동 병합과 FUNCTION/TASK/STATUS 충돌을 양 부모 기준 검토했다.
+- 검증: 최종 524 PASS, ruff PASS, Windows 재빌드·5개 표면 아이콘 픽셀 일치 PASS. 증적은 test-runs.d/20260908T020049-brand-icon.md.
+
+## CHG-20260908T024200-brand-main-doc-sync
+- Related TASK: TASK-20260908-brand-icon
+- #1609의 문서 말미 충돌을 양쪽 보존으로 해결했다. 클라이언트 배포 소스와 설치기는 기존 1.1.2 실측본과 같다. 변경된 웹 계약 테스트를 재확인한다.
+
+## CHG-20260908T024500-brand-merge-evidence
+- Related TASK: TASK-20260908-brand-icon
+- #1609/#1610 후속 문서 병합 결과를 기록한다. 16c5818a와 11fa3741 고정 부모 각각의 문서 제목·추가 파일 유실 0. 클라이언트 배포 소스는 Windows 실측 1.1.2와 동일하며 변경 웹 계약 검사 86건 PASS.
