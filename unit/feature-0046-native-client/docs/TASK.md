@@ -575,3 +575,5 @@ windows는 SmartScreen 경고 2클릭은 우선 감수하겠습니다. 진행해
 - hot_paths: `src/client/{gui,window,tray}.py`, `src/scripts/build_client.py`, `src/installer/DQAConnect.iss`. 아이콘 지정·패키징만 소유하며 기존 세션 작업은 보존한다.
 
 - [x] #1609 후속 main 동기화: 토큰 전달 수정과 문서·테스트를 보존. 클라이언트 배포 소스는 1.1.2 검증본과 동일.
+
+- [x] 최종 main 11fa3741의 배포 완료 기록 보존 및 양 부모 대조 완료. 클라이언트 배포 소스 변경 0, 변경 웹 계약 테스트 86 PASS.

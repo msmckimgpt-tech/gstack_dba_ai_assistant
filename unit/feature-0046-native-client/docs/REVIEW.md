@@ -1163,3 +1163,8 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Reason: #1609 main 동기화의 충돌은 MODIFY/REVIEW 문서 말미 추가뿐이며 양쪽 기록을 보존했다. 클라이언트 배포 소스는 기존 검증본과 byte 동일하다. 새 아이콘 코드·디자인 변경은 없다.
 - Timestamp: 2026-09-08T02:42:00Z
+
+## REV-20260908T024500-brand-merge-evidence [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
+- Reason: 후속 main 문서 병합의 보존·검증 결과 기록만 추가. 신규 코드·디자인·정책 변경 없음. 16c5818a/11fa3741 양 부모의 삭제 파일 0·문서 제목 유실 0, cabeeaed 대비 배포 소스 변경 0, 바뀐 handoff/web_shell 테스트 86 PASS.
+- Timestamp: 2026-09-08T02:45:00Z

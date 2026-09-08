@@ -886,3 +886,7 @@ edit_policy: append-only
 ## CHG-20260908T024200-brand-main-doc-sync
 - Related TASK: TASK-20260908-brand-icon
 - #1609의 문서 말미 충돌을 양쪽 보존으로 해결했다. 클라이언트 배포 소스와 설치기는 기존 1.1.2 실측본과 같다. 변경된 웹 계약 테스트를 재확인한다.
+
+## CHG-20260908T024500-brand-merge-evidence
+- Related TASK: TASK-20260908-brand-icon
+- #1609/#1610 후속 문서 병합 결과를 기록한다. 16c5818a와 11fa3741 고정 부모 각각의 문서 제목·추가 파일 유실 0. 클라이언트 배포 소스는 Windows 실측 1.1.2와 동일하며 변경 웹 계약 검사 86건 PASS.
