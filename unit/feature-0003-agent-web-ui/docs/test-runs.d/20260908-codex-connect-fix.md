@@ -10,11 +10,17 @@
 
 - 기존 Markdown 강조 `**`를 안전한 일반 텍스트로 표시. UX 독립 검토 P1/P2 0, 기존 DOM12 PASS.
 - Environment: DQA-client
-- Result: NOT-RUN
-- Reason: 이 표시 수정의 배포 후 실제 DQA 연결창에서 재확인한다. 앞 제품 동작 PASS와 분리한다.
+- Result: PASS
+- 7ca6f2a4 웹 배포 후 실제 설치 DQA1.2.4를 트레이 종료→재실행하여 안내에 강조 표식이 없고 root연결·실패 목록이 보존됨을 확인했다. 서빙 client-bridge.js는 병합 소스와 바이트 일치.
 
 ## 실제 위치 변경 UI·알림
 
 - Environment: DQA-client
 - Result: PASS
-- 설치1.2.4의 실제 Codex 카드에서 root→claude-corp→root를 선택했다. 두 위치 모두 새 선택 receipt가 ready가 되고 완료 toast의 실제 UIA 텍스트를 확인했다. 최종 root복원 및 gh-runner미표시는 native 원장의 actual-modal-root-restored/actual-toast-location-switch 증거 참조. 강조 기호 표시 수정본은 위 NOT-RUN과 분리한다.
+- 설치1.2.4의 실제 Codex 카드에서 root→claude-corp→root를 선택했다. 두 위치 모두 새 선택 receipt가 ready가 되고 완료 toast의 실제 UIA 텍스트를 확인했다. 최종 root복원 및 gh-runner미표시는 native 원장의 actual-modal-root-restored/actual-toast-location-switch 증거 참조. 강조 기호 표시 수정본의 실제 확인은 위 후속 PASS에 기록했다.
+
+## 최종 실측 종결
+
+- Environment: DQA-client
+- Result: PASS
+- 최종 native원장의 actual-modal-after-polish.json/published-ui-polish.json/deployment-summary.json 참조. 설치1.2.4/웹7ca6f2a4에서 사용 불가 안내의 강조 기호 제거와 Codex root 연결 자동 복원을 확인했다. 이번 후속은 검증 문서·증적만 추가한다.

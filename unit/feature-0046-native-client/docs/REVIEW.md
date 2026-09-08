@@ -1299,3 +1299,7 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - 독립 읽기 검토: 실제1.2.3→1.2.4 설치/지문, 새 대화 동일 task의 송신→32318ms/delivered→UIA 답변, 위치 변경 ready→완료 toast 자료 정합 PASS. 공개 manifest 및 실제 파일 SHA를 독립 재계산했다.
 - WebView PID47356/내장 runner47700의 부모가 native29672임을 WMI로 재확인. 데이터에 인증정보·이메일은 없으며 사용자명·로컬 경로·task/PID/선택 식별자 등 운영 메타데이터는 포함된다.
 - UI 최초 렌더 시간·픽셀 스크린샷·현장 Permission denied 재현은 PASS 범위에 포함하지 않는다. root복원은 이어서 실제 ready/toast로 확인했다. 안내 표식 수정본의 배포 후 관찰은 별도 후속이다.
+
+## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
+- 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.
