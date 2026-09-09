@@ -213,3 +213,11 @@ source_of_truth: true
 ## CHG-20260909T141300-deploy-refresh-evidence
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
+
+
+## CHG-20260909T160000-edge-probe-process-lifecycle
+
+- 배포 차단을 만든 Caddy BusyBox HTTPS probe의 ssl_client zombie 누적을 확인했다. host nsenter/curl/dig 방식으로 PID tree를 호스트에 유지하면서 동일 네트워크·DNS·TLS 경계를 검증한다.
+- Caddy init:true/PID 256을 정의했다. 라이브에는 PID 제한만 무중단 갱신했으며 init은 향후 재생성 시 적용된다.
+- 기존 게이트의 timeout 정규식이 curl --connect-timeout을 명령으로 오인하는 검사를 수정했다. 지속적인 compose ps 실패는 이제 미확인 상대를 통과시키지 않는 RC1을 검증한다.
+- 관련 49 PASS, 실제 정상 probe 5회·잘못된 SNI 차단·zombie 99 유지. [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md).
