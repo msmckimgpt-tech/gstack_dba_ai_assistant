@@ -2,10 +2,12 @@
 run_at: 2026-09-09T14:00:00+09:00
 session: codex:root:01a08411-5b5d-7691-890c-509a2b60ed6d
 scope: TASK-20260909T140000-deploy-refresh
-verdict: PARTIAL
+verdict: PASS
 ---
 
 # 배포 완료 자동 반영 검증
+
+**현재 판정(2026-09-09 15:01 KST): 서버4f570829 배포 완료 및 실제 설치 DQA 자동 갱신 PASS.** 완료 게시 후 약1.2초에 문서가 바뀌고 약4.4초에 적용 알림을 관측했다. 아래 NOT-RUN은 최초 bootstrap 시도의 당시 결과이며, 마지막 실측이 이를 해소한다. 설치본은 빈 작업 화면의 자동 갱신, 초안/첨부 보호와 diff 복원은 제품 Shell fixture 검증으로 구분한다.
 
 Environment: CLI
 Result: PASS
@@ -98,3 +100,38 @@ PR #1652/#1656의 인증 초기화와 Caddy 복구를 통합했다. PID 한도25
 통합 회귀: 배포/edge67 PASS, watcher Node10 PASS, 인증 Node44 PASS. 기존 전체 실행을 반복한 것은 아니며 변경 접합부만 재검증했다. 로그는 artifacts/dqa-deploy-refresh-20260909/logs/dqa-caddy-merged-tests.log 및 dqa-refresh-integrated-{watcher,auth}.log.
 
 동시 세션이 PR #1656/cf55c659 배포와 실제 설치 DQA 관리 화면 왕복3회를 완료했다. `artifacts/auth-transition/installed-fixed.json`은 Installed=true/AppPid29732/Ready3회를 기록한다. 서버에서도 browser /api/ui-release 요청이 관측되어 최초 코드 로드 경계가 바뀌었다. 이는 해당 세션의 기여이며, 본 세션은 추가 설치 앱 조작 없이 후속 배포의 자동 적용을 읽기 전용으로 관측한다.
+
+
+## 최종 배포 3 — 설치 DQA 자동 적용 실측
+
+Environment: Server
+Result: PASS
+Build: PR #1658 / main4f570829 / asset11c0bb4da7ce
+Scenario: 통합 배포 경로, 두 replica 순차 교체, 완료 신호와 실제 서빙 소스 대조
+Evidence: `artifacts/dqa-deploy-refresh-20260909/logs/dqa-refresh-deploy3.log`, `deployed-4f570829.json`, `release-events-3.jsonl`, `deploy3-live-evidence.json`.
+
+- `bin/deploy-web.sh --web-only` exit0, 두 replica ready와 엣지 복귀, 90초 soak PASS. 14:57:00.676부터 pending, 14:59:42.843에 complete 게시(generation1788933582843), 외부 관측14:59:43.144. 두 replica/CA 검증 edge의 완료 메타데이터·no-store와 제품7파일 지문이 모두 일치했다.
+- Caddy PID3619937/시작시각2026-09-07T08:58:22.130694633Z 유지, zombie99→99, 잔류 probe0. 배포 관측 구간의 `no upstreams available` 로그0. 기존 좀비를 제거했다거나 모든 사용자 요청의 무손실을 검증했다는 의미는 아니다. init은 다음 정상 재생성부터 적용되며 현재 PID 한도256은 병행 세션이 반영했다.
+- 최종 TLS 검증은 host namespace의 Docker DNS·CA·SNI 검증이며, admin은 init sidecar, 파일 읽기는 Docker archive를 사용했다. 실패했던 배포2와 달리 동일 Caddy를 유지하며 완료 게시까지 도달했다.
+- scope=web에 따라 worker/MCP 교체와 대화 smoke는 미수행이다. 새 마이그레이션0, GitHub CI checks 없음. 이미지 빌드의 snap metadata-file 오류는 산출 이미지 revision 일치를 검사하는 기존 복구 분기로 처리됐다.
+
+Environment: DQA-client
+Result: PASS
+Build: 실제 설치 DQA PID29732 / HWND4988646 / WebView PID38028 유지
+Scenario: 열린 설치 앱에서 완료 신호 감지 → 자동 reload → 적용 알림
+Evidence: `artifacts/dqa-deploy-refresh-20260909/installed/after-peer-bootstrap-observations.jsonl` 및 같은 디렉터리 `live-auto-refresh-summary.json`. 서버 교차 근거는 `deploy3-live-evidence.json`.
+
+- 완료 게시14:59:42.843 → browser 완료 조회14:59:43.807 → GET `/`14:59:43.825(200). UIAutomation 문서RuntimeId는14:59:44.085에3284065→3342173으로 바뀌었다(게시 후1.242초).
+- 14:59:47.281에 `업데이트가 적용되었습니다.` 알림을 exact match로 관측했다(게시 후4.438초). 실제 화면 전체의 픽셀 완성 시각을 재는 측정은 아니다.
+- 배포 중 문서 변화/적용 알림0. 설치 앱 종료·재설치·키 입력·포커스 이동·AI 메시지 전송 없이 읽기 감시만 수행했다. 최초 watcher 로드는 병행 승인 세션의 관리 화면 왕복에 따른 것이며, 이후 이번 배포는 사용자 조작 없이 적용됐다.
+- 이번은 자산 스탬프가 같은 cf55c659→4f570829 전환이다. 서버 코드만 바뀌어도 이미 실행 중인 watcher가 revision 변경을 감지하여 새 페이지를 로드함을 확인했다. 최초 감지 코드가 없는 오래 열린 페이지에는 최초1회 새 코드 로드가 필요하다는 일반 bootstrap 한계는 남는다.
+
+Environment: DQA-client
+Result: PASS
+Build: 인증 초기화 변경까지 통합한 최종 제품21파일 지문 일치 / 실제 격리 Shell/WebView2
+Scenario: 자동 reload7회, 초안·신규 첨부·타대화 작업·IME·pointer 보호, 대화/선택/diff/메시지 위치 복원
+Evidence: `artifacts/dqa-deploy-refresh-20260909/native/final-integrated/result.json` **34/34 PASS**, 같은 디렉터리 캡처·fingerprints.json. 보조 auth.js 지문도 기록했다.
+Boundary: 전체 app.js/API/알림 함수는 fixture이며 물리 IME는 미실행이다. 실제 설치본의 첨부/diff 선택 복원을 실행한 것으로 확대하지 않는다. 관련 통합 회귀67 PASS, watcher10 PASS, 인증44 PASS와 기존 전체 회귀 결과의 범위도 각각 유지한다.
+
+
+최종 설치 후 상태: 15:01:52에 빈 입력·기본 헤더 복원·전송 활성·로그인 입력 미노출을 확인했다. 자동 갱신은1회, 이후139.514초의 관측에서 중복 갱신0회다. 읽기 문서/알림 모니터는 정상 종료했고 기존 설치 앱은 유지했다. 로컬 완료 게이트는 문서 staging 전 실행에서 실패했으므로 staging 후 다시 실행하며, 실패 상태에서는 커밋하지 않았다.
