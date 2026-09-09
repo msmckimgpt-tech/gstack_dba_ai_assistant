@@ -314,3 +314,9 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 ## REV-20260909T170000-edge-probe-recovery-shipped [SKIPPED:non-policy-doc]
 
 소스 추가 변경 없이 배포·프로세스·설치 DQA 실측 결과를 기록한다. source review PASS와 운영 실측의 범위를 분리했다.
+
+
+## REV-20260909T150100-deploy-refresh-installed-evidence [SKIPPED:non-policy-doc]
+- Trigger: 최종 배포/설치 실측 결과를 기록하는 비정책 문서 변경.
+- Verdict: PASS. 제품 코드 변경 없음. 서버 exit0·완료 manifest·서빙7파일과 실제 설치 PID/문서 변화/적용 알림의 시각을 대조했다.
+- Artifact: test-runs.d/TASK-20260909T140000-deploy-refresh.md 최종 배포3. 독립 소스 리뷰/fixture 결과를 설치본 실제 사용자 첨부 검증으로 확대하지 않는다.

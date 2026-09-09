@@ -229,3 +229,9 @@ source_of_truth: true
 ## CHG-20260909T170000-edge-probe-recovery-shipped
 
 PR #1656/cf55c659 배포 exit 0·두 replica ready·90초 soak PASS를 기록했다. Caddy PID 및 zombie 99개는 유지되어 probe 누적 재발이 없으며, init 실행환경 미반영 사실을 보존했다. 원래 설치 DQA 전환도 통과했다.
+
+
+## CHG-20260909T150100-deploy-refresh-installed-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh / TASK-20260909T143400-caddy-probe-reaping
+- PR #1658/4f570829 최종 배포 exit0, 두 replica·edge 완료 신호/소스 일치 및 Caddy 무재시작 실측을 기록했다.
+- 실제 설치 DQA의 자동 문서 변경1.242초·적용 알림4.438초를 확인했다. 최초 bootstrap의 병행 세션 기여, 현재 설치본 빈 작업 화면과 제품 Shell fixture34 PASS의 경계를 유지한다. 추가 제품 코드 변경 없음.

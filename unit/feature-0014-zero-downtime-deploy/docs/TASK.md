@@ -28,7 +28,7 @@ source_of_truth: true
 - 정본: feature-0003 TASK의 동명 항목. 사용자 요청으로 배포 완료→열린 DQA 자동 적용 승인.
 - Plan: `bin/deploy-web.sh:publish_ui_release` / `bin/lib/ui-release.sh`로 실제 두 replica ready·revision·stamp 일치 및 배포 검증 성공 뒤 공유 manifest 원자 게시. 실패·혼합 버전·모의 실행에는 미게시, rollback 및 재시도 검증.
 - AC: 미완료 배포는 새 release를 알리지 않는다. 완료 시 두 replica가 같은 완료 release를 반환한다. 기존 드레인·롤링·검증 게이트 유지.
-- [ ] 완료 신호 구현·검증·출하 결과 기록
+- [x] 완료 신호 구현·검증·출하 결과 기록 — 최종4f570829 배포 및 실제 설치 자동 적용 PASS.
 
 - [x] PR #1653/7fa75a51 배포 완료, 두 replica/edge 완료 메타데이터와 제품7파일 지문 확인. 설치 DQA 검증 진행 중.
 
@@ -36,11 +36,11 @@ source_of_truth: true
 
 - 승인 범위: 현재 요청의 서버 배포 완료를 막은 라이브 결함 복구. 앱/프록시 재시작 없이 검증을 복원하며 DB·권한 변경 없음. 위험 Major(배포 관측 경로/유한 PID 용량), 서비스 재생성은 하지 않는다.
 - 원인: Caddy에 ssl_client 좀비99개 + live threads24 = pids.current123/max128; kernel fork rejected. 배포2는 Caddyfile 읽기 exec 실패로 exit128, UI manifest pending 유지. 과거 개별 생성 경로는 소급 확정하지 않되 HTTPS wget 반복과 일치한다.
-- Plan: bin/lib/caddy-probe.sh의 caddy_read_file은 Docker archive 읽기로 교체하고 caddy_probe는 현재 이미지ID+같은 network namespace의 격리 --init sidecar에서 동일wget 인자를 실행한다. 원래 Caddy에서 probe 자식을 만들지 않는다. 타임아웃/실패 반환·현재 ready/soak 게이트는 유지한다.
-- Plan: compose의 Caddy init:true/pids_limit256을 다음 생성 계약으로 기록하고, 현재 컨테이너는 docker update --pids-limit256만 적용한다. PID/시작시각을 보존하고 CA검증edge와양replica를확인한다. 남은좀비99는기존PID1수거불가로다음정상재생성까지유지되지만추가생성경로를제거한다.
+- 최종 Plan: caddy_read_file은 Docker archive, admin HTTP는 현재 이미지ID+같은 network namespace의 --init sidecar로 격리한다. replica TLS는 PR #1656의 host nsenter/dig/curl DNS·CA·SNI 검증을 보존한다. 원래 Caddy에 probe 자식을 만들지 않고 타임아웃·실패 반환·ready/soak 게이트를 유지한다.
+- 최종 Plan: compose의 Caddy init:true/pids_limit256을 다음 생성 계약으로 기록한다. 현재 한도256은 병행 세션에서 이미 적용한 사실을 확인하여 중복 변경하지 않았다. PID/시작시각·CA 검증 edge·양 replica를 확인한다. 기존 좀비99는 다음 정상 재생성까지 남지만 추가 생성 경로를 제거했다.
 - AC: PID 한도가 찬 Caddy에서도 파일/admin/replica 확인이 가능하고 기존Caddy PID가같다. 검사반복후Caddy좀비가증가하지않는다. 실패는completed로게시하지않고,검증재시도후에만complete게시.
 - [x] 구현·독립회귀·실제probe 반복 검증
-- [ ] 최신 main 통합·재시작 없는 한도 반영·배포 완료 재검증
+- [x] 최신 main 통합·무재시작 한도 반영 확인·배포 완료 재검증 — PR #1658/4f570829 exit0, 한도 확대는 병행 세션 기여, Caddy PID 유지.
 
 ## 1. Current Status
 - State: in-progress
