@@ -8064,7 +8064,7 @@ def _build_version_diff_view(
     """두 버전 본문의 비교 뷰(unified 문자열 + 좌우 정렬 행)를 만든다.
 
     `unified` 는 단일열 렌더용 git 형식 문자열, `rows` 는 2열 렌더용 좌우 정렬 행이다.
-    한 번의 `SequenceMatcher` opcode 로 **두 표현을 함께** 만들어, 두 뷰가 서로 다른
+    공백·대소문자 정규화 앵커와 토큰 유사도로 정렬한 뒤 **두 표현을 함께** 만들어, 두 뷰가 서로 다른
     비교 결과를 보이는 일이 구조적으로 없게 한다(프론트 토글은 같은 데이터의 두 표현).
 
     - `context_lines=None` → 전체 맥락 유지(동일한 줄도 전부 행으로 방출).
@@ -8084,83 +8084,36 @@ def _build_version_diff_view(
       눈으로 찾아야 한다 — 긴 줄·CSV·SQL 에서 실제로 그 탐색이 사용자 부담이었다. 계산이 성립하지
       않는 줄에는 키 자체를 붙이지 않으므로 프론트는 종전의 줄 단위 경로를 그대로 탄다.
     """
-    import difflib
+    from ._attachment_diff import align_lines, unified_from_rows
 
     left_lines = (left_text or "").splitlines()
     right_lines = (right_text or "").splitlines()
-
-    unified = "\n".join(
-        difflib.unified_diff(
-            left_lines,
-            right_lines,
-            fromfile=f"{filename} (v{left_version})",
-            tofile=f"{filename} (v{right_version})",
-            lineterm="",
-            n=(3 if context_lines is None else max(0, int(context_lines))),
-        )
+    added = removed = 0
+    flat: list[dict[str, Any]] = []
+    aligned, alignment_limited = align_lines(left_lines, right_lines)
+    for li, rj in aligned:
+        left = left_lines[li] if li is not None else None
+        right = right_lines[rj] if rj is not None else None
+        if li is None:
+            tag = "insert"
+        elif rj is None:
+            tag = "delete"
+        else:
+            # 정렬용 정규화가 문자열 값·대소문자·공백 변경을 숨겨서는 안 된다.
+            tag = "equal" if left == right else "replace"
+        flat.append({
+            "type": tag,
+            "left_no": li + 1 if li is not None else None, "left": left,
+            "right_no": rj + 1 if rj is not None else None, "right": right,
+        })
+        added += tag in ("insert", "replace")
+        removed += tag in ("delete", "replace")
+    unified = unified_from_rows(
+        flat, f"{filename} (v{left_version})", f"{filename} (v{right_version})",
+        3 if context_lines is None else max(0, int(context_lines)),
     )
 
-    sm = difflib.SequenceMatcher(None, left_lines, right_lines, autojunk=False)
-    opcodes = sm.get_opcodes()
-    added = removed = 0
-
-    # 1차 패스 — opcode 를 좌우 정렬 행으로 펼친다(맥락 축약 전).
-    flat: list[dict[str, Any]] = []
-    for tag, i1, i2, j1, j2 in opcodes:
-        if tag == "equal":
-            for off in range(i2 - i1):
-                flat.append({
-                    "type": "equal",
-                    "left_no": i1 + off + 1, "left": left_lines[i1 + off],
-                    "right_no": j1 + off + 1, "right": right_lines[j1 + off],
-                })
-        elif tag == "replace":
-            span = max(i2 - i1, j2 - j1)
-            for off in range(span):
-                li = i1 + off
-                rj = j1 + off
-                has_l = li < i2
-                has_r = rj < j2
-                if has_l and has_r:
-                    flat.append({
-                        "type": "replace",
-                        "left_no": li + 1, "left": left_lines[li],
-                        "right_no": rj + 1, "right": right_lines[rj],
-                    })
-                    added += 1
-                    removed += 1
-                elif has_l:
-                    flat.append({
-                        "type": "delete",
-                        "left_no": li + 1, "left": left_lines[li],
-                        "right_no": None, "right": None,
-                    })
-                    removed += 1
-                else:
-                    flat.append({
-                        "type": "insert",
-                        "left_no": None, "left": None,
-                        "right_no": rj + 1, "right": right_lines[rj],
-                    })
-                    added += 1
-        elif tag == "delete":
-            for off in range(i2 - i1):
-                flat.append({
-                    "type": "delete",
-                    "left_no": i1 + off + 1, "left": left_lines[i1 + off],
-                    "right_no": None, "right": None,
-                })
-                removed += 1
-        elif tag == "insert":
-            for off in range(j2 - j1):
-                flat.append({
-                    "type": "insert",
-                    "left_no": None, "left": None,
-                    "right_no": j1 + off + 1, "right": right_lines[j1 + off],
-                })
-                added += 1
-
-    # 내용 동일 판정은 **opcode 집계로만** 한다 — 축약·행 상한(rows)에 영향받지 않게.
+    # 내용 동일 판정은 **전체 정렬의 원문 변경 집계로만** 한다 — 축약·행 상한(rows)에 영향받지 않게.
     # 2차 패스보다 앞에서 확정해야 축약 분기가 이 값을 읽을 수 있다.
     identical = (added == 0 and removed == 0)
 
@@ -8215,7 +8168,7 @@ def _build_version_diff_view(
 
     # 3차 패스 — intra-line 세그먼트. **표시 대상으로 확정된 행에만** 계산한다(축약·행 상한
     # 뒤에 두는 이유 = 화면에 안 나올 행의 비용을 치르지 않기 위해). 두 뷰가 같은 세그먼트를
-    # 보도록 서버가 한 번만 산출한다 — 단일 opcode 패스 불변식(`unified`/`rows`)의 연장이다.
+    # 보도록 서버가 한 번만 산출한다 — 단일 정렬 불변식(`unified`/`rows`)의 연장이다.
     # 프론트가 각자 계산하면 2열과 단일열이 같은 줄에 다른 강조를 그릴 수 있다.
     #
     # 상한 3겹: 행별 문자쌍 컷(결정론적) · 패스 경과시간(실측 backstop) · 응답 바이트.
@@ -8261,7 +8214,8 @@ def _build_version_diff_view(
         },
         # `intraline` 은 **정밀도** 절단이다(줄 단위 차이는 온전). 그래도 표면화하는 이유:
         # 마크가 없는 줄을 "통째로 바뀐 줄" 로 오독할 수 있어서다.
-        "truncated": {"rows": rows_truncated, "intraline": intraline_skipped},
+        "truncated": {"rows": rows_truncated, "intraline": intraline_skipped,
+                      "alignment": alignment_limited},
     }
 
 

@@ -70,6 +70,7 @@ ai_read_priority: 5
 - **9 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
+  - 첨부 비교 정렬: `routers/_attachment_diff.py:align_lines`·`unified_from_rows` → `routers/_conv_store.py:_build_version_diff_view` → `routers/attachments.py:get_attachment_version_diff` → `static/app/attach-diff.js`. 원문 equal, 정렬 제한 안내, 양쪽 줄번호·원문 복원을 함께 검증한다.
   - `routers/_prompt_context.py` — 프롬프트 컨텍스트 조립(admin_roles·admin_products·auth·conversations 소비).
   - `routers/_audit_infra.py` — 감사 인프라 헬퍼(전 라우터 소비).
   - `routers/_bootstrap_schema.py` — 웹 테이블/시드 부트스트랩(startup 기계가 호출, DDL idempotent).

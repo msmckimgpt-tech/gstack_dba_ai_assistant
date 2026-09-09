@@ -91,6 +91,13 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 - [x] verify-completion PASS. 출하(commit/push/PR/main)·배포·라이브 도달 확인 결과는
       [Run 원장](test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md)에 기록한다.
       DQA-client 실측은 배포 후 Run 2 로 남는다(러너 자격 필요 — NOT-RUN 사유 기록).
+- [x] 출하·배포·라이브 도달 — PR #1644 머지(main `00981307`) · `deploy-web.sh --web-only` exit 0 ·
+      90초 soak 통과 · 서빙 자산 3축과 신규 라우트(401 vs 없는 경로 404 대조군) 실측.
+      머지 충돌 4파일은 §16.4 자율 해결 + 양측 순증분 대조로 검증했다.
+- [x] **DQA-client 실측 완료** (2026-09-09, 사용자 요청 "실측까지 진행") — 검증용 러너를 직접
+      기동해(`agent.lifecycle`, codex) 실제 브라우저에서 [자동 작성] 클릭 → 「맡겼습니다」 →
+      「연결된 AI 가 처리 중…」 → **「연결된 AI 가 작성했습니다 (559자)」 + 입력란 채워짐** 관측.
+      서버 축도 `bridge_pending` → 폴링 `done`(655자)로 왕복 확인. Run 원장 §4c.
 
 ## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
 

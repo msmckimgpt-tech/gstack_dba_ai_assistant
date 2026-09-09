@@ -28,3 +28,5 @@ verdict: PASS-code-cli
 브리지 전체 회귀 이후 마지막 두 보완은 집중 43건으로 재검증했다. 넓은 회귀 수치를 최종 두 보완까지 재실행한 결과로 표기하지 않는다. 생략 없는 무제한 대화 보존을 보장하지 않으며 서버 snapshot은 최근 80개/48,000자이다.
 
 완료 게이트: `bash bin/verify-completion.sh --pre-commit feature-0043-external-llm-bridge` PASS. 최초 기록 형식 실패(CHG 접두·feature-0003의 DQA-client NOT-RUN/Reason)를 수정한 뒤 통과했다. `ruff`(신규 모듈·테스트), `node --check`(릴리즈 노트), `git diff --check`, ROUTEMAP 재생성·codenav-lint PASS. 설치 DQA NOT-RUN 기록을 코드 PASS와 구분한다.
+
+최신 main `62afb45b` 통합 후 세션43 + 첨부 diff48 회귀: **91 passed, 19 warnings, 7.71초**, exit 0 (`integration-tests.log`). 양측 순증분 대조·codenav-lint·diff-check PASS.

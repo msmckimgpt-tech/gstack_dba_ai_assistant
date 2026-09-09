@@ -12,6 +12,12 @@ source_of_truth: false
 
 대화 claim에 최신 그룹 문맥과 변경 지문을 제공하고, submit 성공 후 최종 assistant까지 포함한 이력 영수증을 반환한다. 질문과 assistant에 요청자/task를 식별할 metadata를 기록한다. 이력 조회 실패 시 불완전한 문맥으로 실행하지 않는다. 검증 및 배포 정본은 [feature-0043 Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).
 
+## TASK-20260909T120000-diff-similarity — 2026-09-09
+
+DQA 첨부 diff의 원문 완전 일치 기반 정렬을 공백·대소문자 정규화 앵커와 구문 유사도 정렬로 개선했다. 원문이 다른 줄은 계속 replace이며 문자열과 인용 식별자는 정렬에서도 구별한다. 반복 SQL·잘못 닫힌 인용 입력의 성능 문제를 독립 리뷰로 적발·해소했다. 계산 제한은 안내로 표시한다.
+
+집중 Python 91건, Node diff 128건·계보 24건, 실제 제품 Shell/WebView2 fixture 21건 PASS. 최초 전체 회귀 8,358 PASS/16 FAIL/40 SKIP의 실패 원인을 모두 분류했다. 환경13건은 네트워크 없는 컨테이너에서 관련45건 PASS, 기존 테스트3건은 최신 main의2건 수정 수용 및 하네스1건 교정으로 재검증했다. 전체 재실행을 PASS로 주장하지 않는다. 최신 main 통합 후 관련94건 PASS. PR #1646 main 반영 및 web-only `46b70e26` 배포 완료(exit 0). 두 replica ready·90초 soak PASS, 배포본 정렬 26행 및 서버/JS 4파일 일치. Caddy HTTPS 서빙 자산도 스탬프 `707243eb7376`·내용 일치. 설치된 사용자 DQA와 실제 첨부/API 왕복은 아직 미검증이다. 실행 경로·원본 캡처는 `test-runs.d/TASK-20260909T120000-diff-similarity.md`에 기록한다. 정책 SHA256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`, 작업/브랜치는 TASK 정본.
+
 ## TASK-20260908T125500-step-tool-syntax-leak — 2026-09-08
 
 **실행 단계 패널에서 도구 호출 구문 제거** (Major §12.3 — 표시 계층 + 비신뢰 입력 처리.
