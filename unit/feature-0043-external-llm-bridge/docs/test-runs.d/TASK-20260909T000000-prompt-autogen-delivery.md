@@ -121,6 +121,26 @@ amend 는 §16.3 이 금지하므로 후속 커밋에서 올바른 trailer 로 �
 > 산출물에 적용됐다는 뜻이다. 스탬프 없는 참조가 있으면 브라우저가 옛 사본을 계속 쓰는데,
 > 그 축은 `test_static_module_stamp_census` 가 별도로 잠근다(위 30건에 포함).
 
+## 4c. 라이브 실측 (사용자 요청 "실측까지 진행", 2026-09-09 12:22~12:27 KST)
+
+§5 에서 「러너 자격 때문에 이월」로 남겼던 것을 **검증용 러너를 직접 띄워** 해소했다.
+
+| 축 | 관측 | 결과 |
+|---|---|---|
+| 러너 기동 | 정본 `python3 -m agent.lifecycle --no-batch --no-self-review` (`BRIDGE_AI=codex`, 사설 CA) | `run.ready runtime=codex` · 하트비트 도달 |
+| 자동작성 호출 | `GET /api/auth/me/system-prompt/generate/stream` | **200 · `application/json`** · `bridge_pending` 봉투 · `poll_url=/api/profile/ai-jobs/…`(신설 경로) |
+| 폴링 | 화면과 같은 순서로 6회 | `working` ×5 → **`done`** · `degraded=false` · result **655자**(실제 프롬프트) |
+| 화면 | 실제 브라우저에서 [자동 작성] 클릭 | 「…연결된 본인 AI 에 맡겼습니다」 → 「연결된 AI 가 처리 중…」 → **「연결된 AI 가 작성했습니다 (559자)」 + 입력란 559자** |
+| 러너 반대편 | `task.dispatch runtime=codex model=gpt-5.6-luna` → `task.submit.ok dur_ms=24438 answer_chars=559` | 왕복 일치 |
+
+⚠ **단일 파일 러너(`bridge_runner.py`)로는 이 검증이 성립하지 않는다** — 하트비트 전송 코드가
+없어(`grep heartbeat` → 0) `listening=False` 가 되고 위임 자체가 일어나지 않는다. 정본은
+`src/agent/` 모듈군이다. 이 사실을 모르고 단일 파일로 재려다 한 번 헛돌았다.
+
+시각 증거: `feature-0003 test-runs.d/evidence/20260909-prompt-autogen-live.png`.
+원상복구: 미저장 입력란 비움 + 드로어 닫음(저장 안 눌러 DB 쓰기 0) · 검증 러너 종료 ·
+검증 세션 로그아웃(결합 토큰 동시 무효) · 로컬 토큰/쿠키 파일 삭제. 사용자 앱·세션 미종료.
+
 ## 5. 미검증 · 이월 (정직 표기)
 
 - **jsdom 하네스는 CI 에서 돌지 않을 수 있다.** `make test` 컨테이너는 node 를 설치하지만
@@ -130,7 +150,7 @@ amend 는 §16.3 이 금지하므로 후속 커밋에서 올바른 trailer 로 �
 - **admin.js 는 행위 하네스 대상이 아니다.** `buildSystemPromptEditor` 는 관리 콘솔 상태에
   깊게 묶여 있어 함수 단위 추출 구동이 어렵다. 배선(분기 위치·import·pending 반영)은 pytest 가
   잠그지만, «실제로 채워지는가» 는 라이브 관리 콘솔에서 확인해야 한다.
-- **라이브 왕복은 러너 자격에 달려 있다.** 위임이 실제로 일어나려면 그 계정의 개인 AI 러너가
+- ~~**라이브 왕복은 러너 자격에 달려 있다.**~~ → **§4c 에서 해소**(검증용 러너 기동 후 실측 PASS). 아래는 그 시점의 기록이다. 위임이 실제로 일어나려면 그 계정의 개인 AI 러너가
   연결돼 있어야 하고, 재기동에는 사람이 웹에서 발급하는 `mat_` 토큰이 필요하다. 배포 후
   도달 확인(서빙 자산에 새 모듈·새 분기가 실려 있는가)은 러너 없이 가능하므로 그것을 수행한다.
 - **러너 실패 판정은 문구 의존이다.** `submit_answer` 에 실패 신고 채널이 없어 러너의 고정
