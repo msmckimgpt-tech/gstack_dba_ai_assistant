@@ -8,6 +8,55 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260909T070000-portproxy-s4u — 실행 계정 교정 (SYSTEM → 사용자 + S4U)
+
+앞 TASK(`…-portproxy-task-repair`)의 **판정 하나를 정정**한다.
+
+### 정정 — 「`run_hidden.vbs` 불요」는 근거가 부족했다
+
+앞 TASK 는 「정본이 SYSTEM+ServiceAccount 로 등록하므로 Session 0 격리로 창이 안 뜬다 → vbs 불요」
+로 판정했다. **그 전제가 틀렸다.** SYSTEM 으로는 애초에 이 스크립트가 동작하지 않는다:
+
+| 실행 계정 | WSL 조회 | 콘솔 창 | 근거 |
+|---|---|---|---|
+| SYSTEM | **불가** | — | `WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED` · `EXIT=-1` (프로브 작업 실측) |
+| 사용자 + Interactive | 가능 | **뜸** | `inet 172.26.154.233/20` · `EXIT=0` |
+| **사용자 + S4U** | **가능** | **안 뜸** | `Register-ScheduledTask … -LogonType S4U` 후 실행 rc=0 |
+
+즉 원래 구성(사용자 계정 + vbs 숨김)은 **비정본 우회가 아니라 SYSTEM 제약을 피한 실용적 해법**
+이었고, vbs 는 그 구성에서 필요했다. 그것을 「불요」로 단정한 것은 오판이다.
+
+**다만 결론(=vbs 를 되살릴 필요는 없다)은 유지된다** — 이유가 다르다. S4U 라는 제3의 선택지가
+창 없이도 WSL 조회를 가능하게 하므로 vbs 가 필요 없어진다. 「원래 불필요했다」가 아니라
+「이제 불필요해졌다」이다.
+
+### 변경
+
+- `src/windows/register_mysql_ai_web_portproxy_task.ps1`
+  - `-UserId "SYSTEM" -LogonType ServiceAccount` → `-UserId $RunAsUser -LogonType S4U`
+  - `-RunAsUser` 파라미터 신설(기본값 = 실행 사용자). `-RunLevel Highest` 유지.
+  - 트리거에서 `AtLogOn` 제거(S4U 와 「일부 트리거만 시작」 경고 · 의미 중복),
+    `RepetitionDuration` 1일 → 3650일(하루 뒤 반복이 멎던 문제).
+- `docs/FUNCTION.md` — 실행 계정 계약 절 신설(위 표 + 등록 계약).
+
+### 라이브 적용
+
+사용자 머신의 `mysql_ai_web_portproxy_sync2` 를 S4U 로 재등록했다(`logon=S4U user=mckim
+runlevel=Highest`, `repeat=PT5M dur=P3650D`). 매핑·접속은 유지된다.
+
+### 남은 것
+
+- **유령 작업은 재부팅 전까지 계속된다** — 옛 이름 `mysql_ai_web_portproxy_sync` 가 스케줄러
+  메모리에만 남아 wscript 를 실행한다(디스크·레지스트리는 정리됨, `schtasks /change` 는
+  「시스템에 없습니다」). 사용자가 재부팅하기로 했다.
+- 재부팅 후 S4U 작업의 `LastTaskResult` 가 0인지 확인이 남는다(재등록 직후 조회는 `267009`
+  = 실행 중 상태였다).
+
+- [x] SYSTEM 불가 실증 + S4U 대안 실증 (사용자 요청 "먼저 실증")
+- [x] 정본 등록 스크립트 교정 + FUNCTION 계약 명시
+- [x] 라이브 작업 S4U 재등록
+- [ ] 재부팅 후 유령 작업 소멸 확인 + S4U 작업 rc=0 확인
+
 ## TASK-20260909T050000-portproxy-task-repair — 예약작업 손상으로 5분마다 오류창 (사용자 제보)
 
 사용자 제보(스크린샷): `Windows Script Host — 스크립트 파일 "C:\ProgramData\mysql_ai_web_portproxy\run_hidden.vbs"을(를) 찾을 수 없습니다.` 가 반복 표시.
