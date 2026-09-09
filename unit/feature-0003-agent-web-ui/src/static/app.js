@@ -8,7 +8,7 @@ import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgr
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
 // messages.js 의 "../app.js" import 계약 보존 (re-export) — 첨부 다운로드 진입점.
 export { _downloadAttachmentById };
-import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget } from "./app/auth.js?v=dev";
+import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, showStartupPending, showStartupError, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget } from "./app/auth.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
 export { bindBackdropDismiss };
@@ -7863,12 +7863,12 @@ async function handleLogout() {
   showAuthOverlay();
 }
 
-export async function initializeWorkspace() {
+export async function initializeWorkspace(initialSession = null) {
   // TASK-20260729T152000-ratelimit-scope: 계정 경계 2중 방어 — handleLogout 이 캐시를 비우지만,
   // 세션 만료 후 페이지 새로고침 없이 다시 로그인하는 경로(handleLogin → 여기)는 logout 을 거치지
   // 않는다. 워크스페이스 초기화 시점에도 대화 본문 캐시를 비워 계정 간 잔류를 차단한다.
   _branchViewCacheClear();
-  state.session = await apiFetch("/api/session");
+  state.session = initialSession || await apiFetch("/api/session");
   // TASK-20260619T014034: LLM provider 제한 상태 초기 적용 + hybrid 폴링 시작 + 선제 probe(로드 직후 1회).
   try {
     applyLlmProviderStatus(state.session && state.session.llm_provider_status);
@@ -7877,10 +7877,6 @@ export async function initializeWorkspace() {
   } catch (_) { /* noop */ }
   state.user = state.session.user;
   restartClientPanel();
-  // TASK-0061 Phase 6 (AC-0095): 새로고침 후에도 must_change_password 가 true 면 강제 modal.
-  if (state.user && state.user.must_change_password) {
-    showForceChangePasswordModal();
-  }
   state.products = Array.isArray(state.session.products) ? state.session.products : [];
   state.default_product_id = state.session.default_product_id || null;
   // TASK-0047: 제품 선호 hydrate (서버 pref + 대화별 product → state).
@@ -7899,6 +7895,7 @@ export async function initializeWorkspace() {
   //   (2) 진행 중 요청 이어받기(TASK-0041) — 직전 대화가 서버에서 처리 중이면 그 대화를 활성화.
   const _serverCid = state.session.conversation_id || "";
   let _preferCid = "";
+  let _hasDeepLink = false;
   let _allowCurrentFallback = false;
   let _resumeStatus = null;
   try {
@@ -7906,12 +7903,9 @@ export async function initializeWorkspace() {
     const _deep = (_qp.get("conversation") || "").trim();
     if (_deep) {
       _preferCid = _deep;
+      _hasDeepLink = true;
       // 명시 deep-link — 미존재/비소유 시 기존 서버 current 폴백 동작 보존(TASK-0263).
       _allowCurrentFallback = true;
-      // URL 정리(새로고침·공유 시 깔끔) — history state 만 교체(재탐색 없음).
-      if (window.history && window.history.replaceState) {
-        window.history.replaceState({}, "", window.location.pathname);
-      }
     }
   } catch (_) { /* URL 파싱 실패 무시 */ }
   // 진행 중 요청이 있으면 빈 화면 대신 그 대화를 선택해 이어받는다(아래 resume 블록과 status 공유).
@@ -7970,10 +7964,18 @@ export async function initializeWorkspace() {
         });
     }
   }
+  // 실패 후 재시도에도 목적지를 유지하고, 오류 화면 위에 강제 모달을 남기지 않는다.
+  if (_hasDeepLink && window.history && window.history.replaceState) {
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+  if (state.user && state.user.must_change_password) {
+    showForceChangePasswordModal();
+  }
 }
 
 async function initialize() {
   applyMotionPref(); // anim-pref: 저장된 애니메이션 효과 설정을 <html data-motion> 에 반영(페이지 1회).
+  document.getElementById("startupRetryBtn").addEventListener("click", restoreSession);
   document.querySelectorAll("[data-auth-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       toggleAuthPane(button.dataset.authTab);
@@ -8327,9 +8329,15 @@ async function initialize() {
 
   toggleAuthPane("login");
 
+  await restoreSession();
+}
+
+export async function restoreSession() {
+  showStartupPending();
   try {
     const session = await apiFetch("/api/session");
     state.session = session;
+    state.user = session.user || null;
     state.products = Array.isArray(session.products) ? session.products : [];
     state.default_product_id = session.default_product_id || null;
     if (!session.authenticated) {
@@ -8343,15 +8351,20 @@ async function initialize() {
     // feature-0041: 이미 로그인된 채로 `?next=` 를 들고 들어온 경우(다른 탭에서 로그인 등)
     // 작업 화면을 그리지 않고 바로 원래 목적지로 보낸다.
     if (consumeNextTarget()) return;
+    await initializeWorkspace(session);
     hideAuthOverlay();
-    state.user = session.user;
-    await initializeWorkspace();
   } catch (error) {
-    showAuthOverlay();
-    renderAccountState();
-    renderAccessNotice();
-    renderComposer();
-    showToast(error.message || "초기화에 실패했습니다.", true);
+    // 통신/작업 초기화 실패는 세션 만료가 아니다.
+    if (error.status === 401) {
+      state.user = null;
+      state.session = null;
+      showAuthOverlay();
+      renderAccountState();
+      renderAccessNotice();
+      renderComposer();
+    } else {
+      showStartupError();
+    }
   }
 }
 

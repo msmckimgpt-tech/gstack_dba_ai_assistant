@@ -65,6 +65,8 @@ DQA 클라이언트의 로그인 완료 경로에서 공용 `client-bridge.js` �
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+
+- REQ-20260909-auth-transition: 관리 콘솔 ↔ 작업 화면 전환 시 인증 확인 전 로그인 폼을 표시하지 않는다. 실제 미인증만 로그인으로 안내하고, 통신/초기화 실패는 재시도 가능한 오류로 구분한다.
 - REQ-20260908T204500-step-narration-seal (TASK-20260908T204500-step-narration-seal, **Minor §12.3** — `routers/conversations.py` · `routers/_conv_store.py` · `static/app.js` · `static/css/profile.css` + 테스트. 스키마·RBAC·엔드포인트·데이터 0): **실행 단계 문구의 남은 노출 경로를 닫고, 앞 cycle 의 조치를 되돌릴 수 없게 잠근다.** 계기는 `verification_debt`(subagent 3차 교차검증)를 갚은 확인 검증이 낸 지적 7건이다. AC-20260908T204500-step-narration-seal-1 ~ -4.
   - AC-20260908T204500-step-narration-seal-1 (표시 payload 는 예외 없이 이음매를 통과한다): `/api/ask` 응답의 `steps` 도 `_resolve_step_display` 를 거친다. 그 경로만 우회하면 `intent`(=`<도구명>: <문구>`)와 미정화 `work` 가 그대로 클라이언트로 나간다(라이브 3,382행). 판정축은 「렌더 여부」가 아니라 「나가는가」다(§16.8 B-2(a)).
   - AC-20260908T204500-step-narration-seal-2 (조치는 되돌리면 붉어진다): 사유 축의 `allow_tool_names=False` **배선**, 서버 규칙 (a) 의 맨앞 앵커, `scratch_sql`/`scratch_import`/`scratch_reset`/`list_schemas` 의 문구 **값**, 파생 근거 구분, 사이드 패널 폴백 억제, `/api/ask` 이음매 통과 — 각각을 그 조치가 지키는 **관측 가능한 산출**로 단언하고 뮤턴트 8종으로 KILL 을 실증한다 (§16.7 G11-b). 소스 문자열이 아니라 함수 산출을 본다.

@@ -8506,3 +8506,43 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
 - Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: auth/session/인증 세션
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-security.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-ux [SUBAGENT:ux] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: UI/screen/화면 전환
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-ux.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-design [SUBAGENT:design] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: UI/layout/화면 디자인
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-design.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: API/response/세션 오류 응답
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: API/test/오류 및 재시도 검증
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-qa.md
+- Human Approval Needed: no

@@ -23,8 +23,15 @@
 </head>
 <body>
 
+  <div class="auth-screen" id="startupOverlay">
+    <div class="auth-card">
+      <p class="startup-status" id="startupStatus" role="status" aria-live="polite">화면을 불러오는 중입니다.</p>
+      <button type="button" class="btn-primary btn-full hidden" id="startupRetryBtn">다시 시도</button>
+    </div>
+  </div>
+
   <!-- ─── Auth Screen ─────────────────────────────────────────────── -->
-  <div class="auth-screen" id="authOverlay">
+  <div class="auth-screen hidden" id="authOverlay">
     <div class="auth-card">
       <div class="auth-logo">
         <img src="/static/logo-dqa.svg" alt="DQA" width="36" height="36" style="display:block;border-radius:6px;" />
@@ -87,7 +94,7 @@
   <!-- ─── App Shell ──────────────────────────────────────────────── -->
   <!-- REQ-20260518-0004: ChatGPT 패턴 layout — sidebar 가 전체 height, topbar 가 chat-pane width 만.
        brand 는 sidebar 의 첫 child, 대화 제목 + 관리 콘솔은 chat-column 의 topbar. chat-header 폐기. -->
-  <div class="app-shell" id="appFrame">
+  <div class="app-shell" id="appFrame" inert>
 
       <!-- Sidebar (full height — brand 포함) -->
       <aside class="sidebar">

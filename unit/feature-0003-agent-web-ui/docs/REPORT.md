@@ -8,6 +8,13 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260909-auth-transition — 로그인 화면 노출 수정
+
+초기 HTML이 로그인 폼을 표시하고 세션 확인 후 숨기던 순서를 수정했다. 확인중/미인증/오류 상태를 구분하고 오류에는 재시도를 제공한다. 로그인·2FA·회원가입도 같은 초기화 경로를 사용한다. DB 연결 실패는 미인증200 대신503이며 쿠키/인가계약은 유지한다. 재시도 시 대화 목적지를 보존하고 비밀번호 변경 모달은 초기화 성공 후 연다.
+
+독립 security/ux/design/backend/qa 리뷰의 지적을 모두 수정했다. Node40PASS, Python25PASS, 실제제품Shell/WebView2 fixture15PASS. 전체테스트·main반영·배포·실제설치DQA 확인은 진행 중이며 정본은 [Run](test-runs.d/20260909-auth-transition.md).
+
+
 ## TASK-20260909-session-continuity — 그룹의 질문·assistant 문맥 유지
 
 **최종: PR #1649·#1650 반영, 서버9cd10571 두 replica 배포·90초 soak PASS. 설치 DQA Codex 동일 대화 두 요청의 같은 native ID, resumed=false→true, 확정 이력4→6 및 실제 회상 응답 PASS.** 여러 계정의 그룹 앱 왕복은 NOT-RUN이고 그룹 문맥은 서버/프롬프트 회귀로 확인했다. 초기 전달 누락은 아래 이력이며 수정과 재검증을 마쳤다.
