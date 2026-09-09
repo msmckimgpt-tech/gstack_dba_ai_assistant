@@ -86,6 +86,14 @@ base `cdd414e3` 에서 이미 붉었다 — 다른 cycle 이 라우트 2개를 �
 | `test_route_parity_p5b` | golden 269 vs 실제 271 | 컨테이너에서 golden 재생성(272/271). 흡수된 base drift = `POST /api/ai/connect/identity` · `POST /api/ai/tools/get_tool_catalog` |
 | `test_cancel_channel_adds_no_new_tool` | 명시 도구 7 기대 vs 실제 8 | `get_tool_catalog` 의 **4곳 정합을 확인한 뒤**(매니페스트/OpenAPI `routers/ai_discovery.py` · MCP 어댑터 2벌 · `test_ux_parity` 초록) 숫자만 7→8. 계약은 그대로 — 또 늘면 여전히 잡는다 |
 
+### 출하 중 정정 1건 (post-commit 게이트가 잡았다)
+
+첫 커밋 `424e20ff` 의 `Task-Cycle:` trailer 에 **worktree slug**(`feature-0043-prompt-autogen-delivery`)
+를 적었는데, post-commit verify 는 그 값을 **feature 디렉토리 id** 로 해석한다
+(`ERROR: feature directory not found`). 정본 id 는 `feature-0043-external-llm-bridge` 다.
+amend 는 §16.3 이 금지하므로 후속 커밋에서 올바른 trailer 로 정정했다. 첫 커밋의 잘못된 값은
+이력에 남으며, 이 문단이 그 대응 기록이다.
+
 ## 5. 미검증 · 이월 (정직 표기)
 
 - **jsdom 하네스는 CI 에서 돌지 않을 수 있다.** `make test` 컨테이너는 node 를 설치하지만
