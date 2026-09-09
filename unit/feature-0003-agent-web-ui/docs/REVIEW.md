@@ -8498,3 +8498,11 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-qa.md
 - Human Approval Needed: no
+
+## REV-20260909T130116-session-installed-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: 설치 DQA 실측, API/응답 계약
+- Timestamp: 2026-09-09T13:01:16.237752+09:00
+- Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
+- Human Approval Needed: no

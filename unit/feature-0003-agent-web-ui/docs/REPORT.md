@@ -10,7 +10,10 @@ source_of_truth: false
 
 ## TASK-20260909-session-continuity — 그룹의 질문·assistant 문맥 유지
 
-설치 DQA 실측에서 첫 답변은 정상 도착했지만 세션 저장이 없었다. 원인은 실제 claim 응답의 최상위 `conversation_id` 누락이다. 전달 필드 1줄과 전체 응답→러너 재개 회귀를 추가했으며 수정 전 RED/수정 후 관련87건 PASS. 최초 코드/CLI PASS를 설치 DQA 세션 PASS로 간주하지 않는다. 보완 배포와 동일 ID 실측이 남아 있다.
+**최종: PR #1649·#1650 반영, 서버9cd10571 두 replica 배포·90초 soak PASS. 설치 DQA Codex 동일 대화 두 요청의 같은 native ID, resumed=false→true, 확정 이력4→6 및 실제 회상 응답 PASS.** 여러 계정의 그룹 앱 왕복은 NOT-RUN이고 그룹 문맥은 서버/프롬프트 회귀로 확인했다. 초기 전달 누락은 아래 이력이며 수정과 재검증을 마쳤다.
+
+
+설치 DQA 실측에서 첫 답변은 정상 도착했지만 세션 저장이 없었다. 원인은 실제 claim 응답의 최상위 `conversation_id` 누락이다. 전달 필드 1줄과 전체 응답→러너 재개 회귀를 추가했으며 수정 전 RED/수정 후 관련87건 PASS. 최초 코드/CLI PASS를 설치 DQA 세션 PASS로 간주하지 않는다. 보완 배포 후 동일 ID 실측까지 통과했다.
 
 
 대화 claim에 최신 그룹 문맥과 변경 지문을 제공하고, submit 성공 후 최종 assistant까지 포함한 이력 영수증을 반환한다. 질문과 assistant에 요청자/task를 식별할 metadata를 기록한다. 이력 조회 실패 시 불완전한 문맥으로 실행하지 않는다. 검증 및 배포 정본은 [feature-0043 Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).

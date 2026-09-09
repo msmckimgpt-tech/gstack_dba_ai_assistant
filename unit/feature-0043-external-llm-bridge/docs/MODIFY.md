@@ -4931,3 +4931,7 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 ## CHG-20260909T125141-session-claim-identity
 
 설치 DQA 첫 응답은 성공했으나 세션 상태가 생성되지 않았다. 실제 claim JSONResponse에 `conversation_id`가 없어 러너가 세션 사용을 건너뛰는 P1이었다. 인증·대화 접근 검사를 통과한 변수로 최상위 ID를 전달한다(1줄). 실제 전체 payload→handle_one→SessionBinding 두 호출 회귀를 추가해 수정 전 RED/후87 PASS를 확인했다. 기존 부분 계약 테스트와 CLI 실측이 실제 HTTP/앱 전달을 대신하지 못한 한계를 기록한다.
+
+## CHG-20260909T130116-session-installed-acceptance
+
+제품 코드 변경 없이 보완 배포 및 설치 DQA 실제 재개 결과를 기록한다. 첫 결속·후속 재개 둘 다 완료, 동일 native ID 및 상태4→6, 합성 문자열 회상 UI PASS. 다계정 그룹 앱 왕복 NOT-RUN은 유지한다.
