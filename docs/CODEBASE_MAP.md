@@ -245,3 +245,5 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 
 
 배포의 Caddy 관측 경로: `bin/lib/caddy-probe.sh` → Docker archive 파일 조회 / 현재 이미지·network namespace의 격리 init probe. `bin/deploy-web.sh`의 TLS 사전 점검·edge gate·reconcile에서 소비한다.
+
+통합 경계(2026-09-09): replica TLS 확인은 PR #1656의 `bin/deploy-web.sh:edge_peer_live`가 호스트 nsenter/dig/curl로 실제 DNS·CA·SNI를 확인한다. `caddy_probe`의 격리 init 컨테이너는 admin HTTP GET에 사용한다.

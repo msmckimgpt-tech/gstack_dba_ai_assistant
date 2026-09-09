@@ -289,12 +289,24 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - Reason: 코드 변경 없이 실제 서버 배포와 격리 재검증 결과를 기록하는 비정책 문서 후속. backend-security-qa가 기존 수치와 경계를 대조했고 web-only smoke 문구를 정정했다.
 - Timestamp: 2026-09-09T14:13:00+09:00
-
-
 ## REV-20260909T144000-caddy-probe [SUBAGENT:backend-security-qa] — PASS
 - Related TASK: TASK-20260909T143400-caddy-probe-reaping
 - Trigger: 배포 완료를 막은 Caddy PID 고갈·점검 프로세스 회수·상태 조회 실패·격리 probe cleanup.
 - Timestamp: 2026-09-09T14:40:00+09:00
 - Verdict: PASS
 - Artifact: [독립 검토](reviews/20260909T144000-caddy-probe.md)
+- Human Approval Needed: no
+## REV-20260909T160000-edge-probe-process-lifecycle [SUBAGENT:backend,qa,security]
+
+- backend/qa 독립 리뷰는 PID 123/128 및 zombie 99를 확인하고 host namespace probe와 init 방어를 제안했다. curlrc 오염 지적을 받아 --disable 첫 옵션을 추가했다. timeout 구조검사의 curl 옵션 오탐과 지속 ps 실패의 기대값을 교정했다.
+- security 최초 BLOCK: inspect IP 직결로 Docker DNS 장애를 놓치는 경계. 실제 Caddy resolver로 DNS를 조회하고 IP 일치를 요구하여 해소했다. 최종 정적 PASS, 잔여 지적 없음.
+- 실측과 최종 backend/qa 판정은 [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md)에 기록한다.
+
+
+## REV-20260909T145000-caddy-integration [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 최신 main의 TLS probe 강화와 admin/archive 격리 경로 통합.
+- Timestamp: 2026-09-09T14:50:00+09:00
+- Verdict: PASS (통합 회귀67 PASS)
+- Artifact: feature-0014 docs/reviews/20260909T144000-caddy-probe.md의 최신 main 통합 재검토
 - Human Approval Needed: no

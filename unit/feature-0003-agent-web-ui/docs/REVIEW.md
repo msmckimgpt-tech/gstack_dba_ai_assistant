@@ -8506,8 +8506,45 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
 - Human Approval Needed: no
+## REV-20260909T135700-auth-transition-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: auth/session/인증 세션
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-security.md
+- Human Approval Needed: no
 
+## REV-20260909T135700-auth-transition-ux [SUBAGENT:ux] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: UI/screen/화면 전환
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-ux.md
+- Human Approval Needed: no
 
+## REV-20260909T135700-auth-transition-design [SUBAGENT:design] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: UI/layout/화면 디자인
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-design.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: API/response/세션 오류 응답
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: API/test/오류 및 재시도 검증
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-qa.md
+- Human Approval Needed: no
 ## REV-20260909T140000-deploy-refresh-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
@@ -8555,4 +8592,24 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Timestamp: 2026-09-09T14:40:00+09:00
 - Verdict: PASS
 - Artifact: [독립 검토](../../feature-0014-zero-downtime-deploy/docs/reviews/20260909T144000-caddy-probe.md)
+- Human Approval Needed: no
+
+## REV-20260909T150000-auth-transition-integration [SUBAGENT:ux,backend,qa]
+
+- PR #1653 통합 뒤 UX reviewer가 실제 초기화 함수의 자동 갱신 복원·deep-link·강제 비밀번호 변경 순서를 검증하여 44 PASS. 하네스 import.meta P2를 수정했다.
+- backend/qa reviewer는 통합 소스와 Makefile Git/jsdom/acorn 시험 의존성, pytest 인증 wrapper를 검토했다. 두 JS wrapper 독립 실행 PASS와 격리 컨테이너 141 PASS 로그를 확인했다.
+- Verdict: PASS, 잔여 P1/P2 없음. 이 리뷰 뒤 수용한 PR #1654/#1655의 갱신 종료 처리는 root가 기존 리뷰 및 변경 diff를 확인하고 두 JS wrapper를 재실행한다. 설치앱 검증은 Run의 배포 후 항목을 따른다.
+
+
+## REV-20260909T160000-auth-transition-deploy-recovery [SUBAGENT:backend,qa,security]
+
+배포 blocker의 독립 원인/보안 리뷰와 수정은 [feature-0014 REVIEW](../../feature-0014-zero-downtime-deploy/docs/REVIEW.md)에 기록한다. 원래 UI 소스 추가 변경은 없다.
+
+
+## REV-20260909T145000-caddy-integration [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 최신 main의 TLS probe 강화와 admin/archive 격리 경로 통합.
+- Timestamp: 2026-09-09T14:50:00+09:00
+- Verdict: PASS (통합 회귀67 PASS)
+- Artifact: feature-0014 docs/reviews/20260909T144000-caddy-probe.md의 최신 main 통합 재검토
 - Human Approval Needed: no

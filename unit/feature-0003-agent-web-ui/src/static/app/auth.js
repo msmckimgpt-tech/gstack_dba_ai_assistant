@@ -4,7 +4,7 @@
 //   handleLogout 은 앱 전역 타이머 let 재할당(ESM import-binding write 금지) 탓 app.js 잔류.
 import { safeNextTarget } from "./next-target.js?v=dev";
 import {
-  state, apiFetch, showToast, initializeWorkspace,
+  state, apiFetch, showToast, restoreSession,
   authOverlayEl, loginErrorEl, signupErrorEl,
 } from "../app.js?v=dev";
 
@@ -80,13 +80,33 @@ function consumeNextTarget() {
 }
 
 function showAuthOverlay() {
+  document.getElementById("startupOverlay").classList.add("hidden");
+  document.getElementById("appFrame").inert = true;
   authOverlayEl.classList.remove("hidden");
   refreshOAuthLoginButtons();
   showOAuthErrorIfPresent();
 }
 
 function hideAuthOverlay() {
+  document.getElementById("startupOverlay").classList.add("hidden");
   authOverlayEl.classList.add("hidden");
+  document.getElementById("appFrame").inert = false;
+}
+
+function showStartupPending() {
+  authOverlayEl.classList.add("hidden");
+  document.getElementById("appFrame").inert = true;
+  document.getElementById("startupStatus").textContent = "화면을 불러오는 중입니다.";
+  document.getElementById("startupRetryBtn").classList.add("hidden");
+  document.getElementById("startupOverlay").classList.remove("hidden");
+}
+
+function showStartupError() {
+  showStartupPending();
+  document.getElementById("startupStatus").textContent = "화면을 불러오지 못했습니다. 다시 시도해 주세요.";
+  const retry = document.getElementById("startupRetryBtn");
+  retry.classList.remove("hidden");
+  retry.focus();
 }
 
 // ── feature-0038 세그먼트 경계 (원본 비연속 구간 구분자 — byte-parity 재구성용) ──
@@ -111,13 +131,7 @@ async function handleLogin(event) {
     // 이게 없으면 사용자는 로그인 후 작업 화면에 떨어지고, 무엇을 하려 했는지 스스로 다시
     // 찾아야 한다(외부 AI 인가 링크는 재현이 어렵다 — 클라이언트가 만든 일회성 URL 이다).
     if (consumeNextTarget()) { return; }
-    hideAuthOverlay();
-    await initializeWorkspace();
-    // TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 관리자가 비밀번호 초기화한 계정이면
-    // 다음 로그인 직후 강제 변경 modal 노출 (다른 모든 액션 차단).
-    if (state.user && state.user.must_change_password) {
-      showForceChangePasswordModal();
-    }
+    await restoreSession();
   } catch (error) {
     loginErrorEl.textContent = error.message || "로그인에 실패했습니다.";
   }
@@ -157,10 +171,8 @@ function showTotpLoginPrompt(totpToken) {
       // codex P2 — 여기에 복귀가 없으면 **2FA 를 켠 계정만** 인가 화면으로 못 돌아간다
       // (보안을 강화한 사용자가 더 나쁜 경험을 받는 형태).
       if (consumeNextTarget()) return;
-      hideAuthOverlay();
-      await initializeWorkspace();
+      await restoreSession();
       if (res.used_backup_code) showToast("백업 코드로 로그인했습니다. 새 백업 코드 발급을 권장합니다.");
-      if (state.user && state.user.must_change_password) showForceChangePasswordModal();
     } catch (error) {
       btn.disabled = false;
       // 세션 만료 → 처음부터 다시 로그인.
@@ -265,12 +277,11 @@ async function handleSignup(event) {
       }),
     });
     state.user = payload.user;
-    hideAuthOverlay();
     showToast("계정이 등록되었습니다. 관리자 승인 전까지는 조회 전용으로 동작합니다.");
-    await initializeWorkspace();
+    await restoreSession();
   } catch (error) {
     signupErrorEl.textContent = error.message || "회원가입에 실패했습니다.";
   }
 }
 
-export { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget };
+export { toggleAuthPane, showAuthOverlay, hideAuthOverlay, showStartupPending, showStartupError, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget };

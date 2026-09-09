@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260909-auth-transition-deploy-recovery
+
+로그인 화면 수정 PR #1652 배포에서 Caddy PID 예산 소진으로 사전 게이트가 중단됐다. 사용자 수정 요청의 배포 완료에 필요한 연속 복구 범위다. worktree `.worktrees/feature-0003-auth-transition`, 정책 SHA는 feature-0003 TASK와 동일하다.
+
+### 2.1 Implementation Plan
+
+1. `bin/deploy-web.sh:edge_peer_live`의 BusyBox HTTPS 자식 생성 경로를 호스트 curl로 교체한다. Caddy network namespace, 실제 resolver DNS, 공유 network IP, 실제 마운트 CA, 공개 Host/SNI, 정확한 200 및 제한시간을 검증한다.
+2. `docker-compose.yml:caddy`에 init 회수 설정과 PID 여유 256을 기록한다. 실행 중 Caddy의 한도만 무중단 상향하며 재생성은 하지 않는다.
+3. 종료 자식 증가 0, 잘못된 SNI 거부, DNS/HTTP/메타데이터 오류 실패, 기존 롤링 게이트 회귀와 독립 backend/qa/security 리뷰 후 배포 재개.
+
+- [x] 실측 원인: threads 24 + ssl_client zombie 99, pids.current 123/max 128, 제한 도달 180회
+- [x] 현재 PID 3619937 유지, 한도 256으로 내부 실행 복구
+- [x] 근본 경로 수정, 관련 49 PASS, 실제 probe 5회 후 zombie 99 유지·잘못된 SNI 차단
+- [ ] 후속 PR 병합·원래 로그인 화면 수정 배포 완주
+
+
 ## TASK-20260909T140000-deploy-refresh — 완료 신호 게시
 - 정본: feature-0003 TASK의 동명 항목. 사용자 요청으로 배포 완료→열린 DQA 자동 적용 승인.
 - Plan: `bin/deploy-web.sh:publish_ui_release` / `bin/lib/ui-release.sh`로 실제 두 replica ready·revision·stamp 일치 및 배포 검증 성공 뒤 공유 manifest 원자 게시. 실패·혼합 버전·모의 실행에는 미게시, rollback 및 재시도 검증.
@@ -208,3 +224,6 @@ source_of_truth: true
 - [x] 게이트웨이 `request_timeout` 300 → 960 **+ stop_grace 330s → 990s**(층 간 정합, 사용자 결정).
 - [x] 라이브 배포본에서 스모크 PASS 확인 + fail-closed 동작 확인.
 - [ ] **배포로 게이트 실동작 확인** — 다음 배포에서 `대화 경로 스모크 … PASS` 로그가 찍히는지.
+
+
+- [x] PR #1656의 동일 원인 수정과 통합: TLS probe는 host nsenter/dig/curl의 DNS·CA·SNI 검증을 보존하고, archive 파일 조회·admin 격리 probe·조회 실패 무재생성을 추가한다. init/pids256은 동일 계약이다. runtime 한도 확대는 상대 세션의 Run으로 주체를 확인했으며 중복 적용하지 않았다.

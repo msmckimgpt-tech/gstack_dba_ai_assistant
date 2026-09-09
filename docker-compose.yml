@@ -734,7 +734,7 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
-    # Reap orphaned children; deployment probes run in separate containers.
+    # Reap orphaned children; deployment probes run outside Caddy.
     init: true
     logging: *default-logging
     mem_limit: 256m

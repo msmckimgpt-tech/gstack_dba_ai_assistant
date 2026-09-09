@@ -158,6 +158,13 @@ a { color: inherit; }
   background: #f0efe8;
 }
 
+.startup-status {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .auth-card {
   width: min(400px, 100% - 32px);
   background: var(--surface);
@@ -388,4 +395,3 @@ a { color: inherit; }
   color: var(--text-muted);
 }
 .is-access-blocked:hover { background: transparent; color: var(--text-muted); }
-

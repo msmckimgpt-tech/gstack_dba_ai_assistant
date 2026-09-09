@@ -479,3 +479,5 @@ feature-0043 `src/agent/sessions.py`의 범위 키·지원 probe·최종 이력 
 ## 배포 점검이 procReady / PID 한도로 실패할 때
 
 `bin/lib/caddy-probe.sh:caddy_read_file` / `caddy_probe`가 실행 중 Caddy 내부 fork를 피한다. `bin/deploy-web.sh:reconcile_caddy`는 상태 조회 실패와 실제 미기동을 구분한다. 다음 생성의 reaper·용량은 docker-compose.yml의 caddy init/pids_limit에 있다. 회귀는 feature-0014의 test_caddy_probe_isolation.py와 test_edge_rolling_gate.py.
+
+통합 경계(2026-09-09): replica TLS 확인은 PR #1656의 `bin/deploy-web.sh:edge_peer_live`가 호스트 nsenter/dig/curl로 실제 DNS·CA·SNI를 확인한다. `caddy_probe`의 격리 init 컨테이너는 admin HTTP GET에 사용한다.

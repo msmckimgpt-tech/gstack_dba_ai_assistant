@@ -86,3 +86,15 @@ Environment: Server
 Result: PASS
 Scenario: 현재 프록시 무재시작·실제 Docker archive/admin GET/TLS /livez 반복
 Evidence: `artifacts/dqa-deploy-refresh-20260909/caddy-probe-live.json`. TLS GET9회 성공, Caddy PID/시작시각 동일, 좀비99→99, 잔류 probe0. 최종 CID 기반 cleanup도 실제 실행했다. 기존좀비가제거됐다는뜻은아니며 추가누적이없음을확인했다.
+
+
+## 동시 작업 통합
+
+PR #1652/#1656의 인증 초기화와 Caddy 복구를 통합했다. PID 한도256 변경은 해당 작업의 `20260909-auth-transition-deploy-recovery.md`에 실행 사실이 기록돼 있어 주체가 확인됐다. 이 세션에서는 중복 runtime 변경을 하지 않았다.
+
+최종 replica TLS probe는 먼저 착륙한 PR #1656의 host nsenter/dig/curl DNS·CA·SNI 검증을 보존한다. 본 작업은 Docker archive 파일 읽기, admin HTTP의 격리 init probe, 조회 실패 시 무재생성과 자기 CID cleanup을 더한다. 앞선 TLS sidecar9회 실측은 진단/초안 증거이며 최종 TLS probe의 증거로 대체하지 않는다.
+
+
+통합 회귀: 배포/edge67 PASS, watcher Node10 PASS, 인증 Node44 PASS. 기존 전체 실행을 반복한 것은 아니며 변경 접합부만 재검증했다. 로그는 artifacts/dqa-deploy-refresh-20260909/logs/dqa-caddy-merged-tests.log 및 dqa-refresh-integrated-{watcher,auth}.log.
+
+동시 세션이 PR #1656/cf55c659 배포와 실제 설치 DQA 관리 화면 왕복3회를 완료했다. `artifacts/auth-transition/installed-fixed.json`은 Installed=true/AppPid29732/Ready3회를 기록한다. 서버에서도 browser /api/ui-release 요청이 관측되어 최초 코드 로드 경계가 바뀌었다. 이는 해당 세션의 기여이며, 본 세션은 추가 설치 앱 조작 없이 후속 배포의 자동 적용을 읽기 전용으로 관측한다.

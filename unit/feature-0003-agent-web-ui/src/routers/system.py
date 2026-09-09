@@ -402,7 +402,7 @@ def get_session(request: Request) -> JSONResponse:
     try:
         conn = app._connect_memory()
     except Exception:
-        return JSONResponse({"authenticated": False})
+        return JSONResponse({"error": "로그인 상태를 확인하지 못했습니다. 다시 시도해 주세요."}, status_code=503)
     account = app._get_authenticated_account(conn, request)
     if not account:
         conn.close()

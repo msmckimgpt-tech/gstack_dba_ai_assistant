@@ -10,9 +10,13 @@ source_of_truth: true
 
 ## REQ-20260909-caddy-probe — 프록시 점검 프로세스 격리
 
-배포는 Caddy 내부에 점검 자식을 만들지 않는다. 파일은 Docker archive로 읽고, admin·replica GET는 같은 네트워크 namespace와 실행 중 이미지 ID를 사용하는 별도 init 컨테이너에서 실행한다. 이미지 pull·환경/볼륨 공유 없이 자원과 시간을 제한하고, 생성된 자기 CID만 정리한다. 조회 실패를 미기동으로 오인하여 프록시를 재생성하지 않는다.
+배포는 Caddy 내부에 점검 자식을 만들지 않는다. 파일은 Docker archive로 읽고, admin GET는 같은 네트워크 namespace와 실행 중 이미지 ID를 사용하는 별도 init 컨테이너에서 실행한다. replica TLS GET는 아래 REQ-20260909-edge-probe-process-lifecycle의 호스트 namespace·CA 검증 경로를 사용한다. 이미지 pull·환경/볼륨 공유 없이 자원과 시간을 제한하고, 생성된 자기 CID만 정리한다. 조회 실패를 미기동으로 오인하여 프록시를 재생성하지 않는다.
 
 Caddy 다음 생성에는 init과 PID 한도256을 적용한다. 기존 프로세스는 그대로 유지하며 이미 남은 좀비는 다음 정상 재생성 때 제거된다. 한도 조정만으로 자식 누수를 해결했다고 하지 않는다. 이번 배포는 probe 분리로 추가 생성 경로를 제거한다.
+
+## REQ-20260909-edge-probe-process-lifecycle
+
+엣지 복귀 점검은 장수 Caddy에 HTTPS 자식 프로세스를 만들지 않는다. 호스트 nsenter/curl/dig로 Caddy network namespace와 실제 resolver·CA를 사용하며, DNS 결과와 공유 네트워크의 대상 IP가 일치하고 TLS/SNI/Host 검증 후 정확히 HTTP 200일 때만 통과한다. 메타데이터·DNS·TLS 조회 실패는 게이트 실패이며 HTTP fallback은 없다. 호스트 curl 설정 파일과 프록시 환경은 점검을 바꾸지 못한다.
 
 ## REQ-20260909-deploy-refresh — 배포 완료 게시
 

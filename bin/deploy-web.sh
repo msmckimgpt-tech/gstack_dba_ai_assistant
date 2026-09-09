@@ -778,31 +778,38 @@ caddy_fail_duration_s() {  # 실행 중 Caddy 설정과 repo 소스 중 **큰** 
   printf '%s' "$out"
 }
 
-edge_peer_live() {  # $1 = svc → 0 = **Caddy 네트워크에서** 그 replica 의 health_uri 가 200
-  # Caddy 의 active health probe 를 그대로 재현한다 — 같은 컨테이너·같은 경로·같은 Host·같은 TLS
-  # 조건. passive `fails` 만 보면 active health 가 제외한 replica 를 "복귀" 로 오판할 수 있다
-  # (적대 검증 P1): 컨테이너 내부 /readyz 는 200 이고 fails 도 0 인데 Caddy→replica 도달이
-  # 끊긴 상태가 성립하며, 그 상대를 믿고 다음 replica 를 내리면 다시 upstream 0 이 된다.
-  # Host 는 실 트래픽과 동일하게 공개 호스트로 — 앱 TrustedHost 가 내부 서비스명을 400 거부한다.
-  # ⚠ **http fallback 을 두지 않는다** — Caddyfile 의 transport 는 `tls` 고정이라 엣지는 https 로만
-  # 붙는다. web 이 TLS 없이 같은 포트에 HTTP 로 떴다면 Caddy 는 그 replica 를 제외하는데, http 로
-  # 폴백하는 probe 는 200 을 받아 **false-pass** 한다(적대 검증 P1, 4R).
-  # 한계와 그 전제(5R 적대 검증 — 수용된 잔여 리스크): caddy 이미지의 busybox wget 은 CA 를
-  # 지정할 수 없어 `--no-check-certificate` 로 붙는다. 즉 이 probe 는 "TLS 로 도달해 200 을
-  # 받는가" 까지이고 CA/SAN 검증은 하지 못한다. 그래서 "Caddy 는 CA 검증 실패로 제외했는데
-  # probe 만 200" 인 false-pass 가 이론상 가능하다.
-  #   그 시나리오가 성립하려면 **replica 마다 다른 leaf** 를 제시해야 하는데, 이 구성은
-  #   `x-web-extra` 가 양 replica 에 **동일한 `../artifacts/certs` 마운트 + 동일 WEB_TLS_CERT_FILE**
-  #   을 주므로 성립하지 않는다(둘은 항상 같은 cert 를 제시한다). cert 를 교체했는데 Caddy 가
-  #   옛 CA 를 들고 있으면 **양쪽이 동시에** 제외되어 배포 이전에 이미 전면 503 이고, 그 축은
-  #   `preflight_tls` 의 (2) rootCA 검증·(4) 컨테이너 CA 대조가 배포 시작 전에 ABORT 시킨다.
-  #   실제로 한쪽만 TLS 도달 불가가 되는 경우(예: 그 replica 가 cert 를 못 읽어 평문 기동)는
-  #   http 폴백이 없으므로 handshake 실패 → probe 실패로 이 게이트가 잡는다.
-  #   ⚠ 전제(단일 cert 소스 공유)가 깨지면 위 논거가 무너진다 —
-  #     `test_edge_rolling_gate.py::test_g10_replicas_share_a_single_cert_source` 가 그것을 잠근다.
-  local svc="$1"
-  caddy_probe -q -T 3 --no-check-certificate \
-    --header="Host: $WEB_PUBLIC_HOST" -O /dev/null "https://$svc:8000/livez" 2>/dev/null
+edge_peer_live() {  # $1 = svc → Caddy network namespace에서 replica TLS/Host/CA 확인
+  # busybox HTTPS wget의 ssl_client가 Caddy PID1 아래 zombie로 누적되지 않도록
+  # 호스트 curl을 네트워크 namespace에만 진입시킨다. PID tree와 wait는 호스트에 남는다.
+  local svc="$1" caddy_id peer_id info target pid peer_ip resolver resolved code
+  case "$svc" in web-a|web-b) ;; *) return 1 ;; esac
+  caddy_id="$(timeout -k 5 10 "${DC[@]}" ps -q caddy)" || return 1
+  peer_id="$(timeout -k 5 10 "${DC[@]}" ps -q "$svc")" || return 1
+  [ -n "$caddy_id" ] && [ -n "$peer_id" ] || return 1
+  info="$(timeout -k 5 10 docker inspect --format '{{.State.Pid}} {{json .NetworkSettings.Networks}}' "$caddy_id" "$peer_id")" || return 1
+  target="$(printf '%s\n' "$info" | python3 -c '
+import ipaddress, json, sys
+rows = [line.split(" ", 1) for line in sys.stdin.read().splitlines()]
+if len(rows) != 2 or any(int(row[0]) <= 0 for row in rows):
+    sys.exit(1)
+left, right = (json.loads(row[1]) for row in rows)
+common = sorted(set(left) & set(right))
+if not common:
+    sys.exit(1)
+address = ipaddress.ip_address(right[common[0]]["IPAddress"])
+print(rows[0][0], address)
+')" || return 1
+  read -r pid peer_ip <<< "$target"
+  resolver="$(awk '$1 == "nameserver" { print $2; exit }' "/proc/$pid/root/etc/resolv.conf")" || return 1
+  [ -n "$resolver" ] || return 1
+  resolved="$(timeout -k 5 10 nsenter --target "$pid" --net dig "+time=3" "+tries=1" "+short" "@$resolver" "$svc" A)" || return 1
+  [ "$resolved" = "$peer_ip" ] || return 1
+  # 내부 IP에 고정하되 SNI/Host는 Caddy와 맞춘다. HTTP fallback은 허용하지 않는다.
+  code="$(timeout -k 5 15 nsenter --target "$pid" --net curl --disable --silent --show-error \
+    --noproxy '*' --connect-timeout 3 --max-time 5 --cacert "/proc/$pid/root/certs/rootCA.pem" \
+    --resolve "$WEB_PUBLIC_HOST:8000:$peer_ip" --header "Host: $WEB_PUBLIC_HOST" \
+    --output /dev/null --write-out '%{http_code}' "https://$WEB_PUBLIC_HOST:8000/livez" 2>/dev/null)" || return 1
+  [ "$code" = 200 ]
 }
 
 edge_upstream_fails() {  # $1 = svc → 그 upstream 의 passive fail 카운터. 조회·파싱 불가 시 빈 출력.
