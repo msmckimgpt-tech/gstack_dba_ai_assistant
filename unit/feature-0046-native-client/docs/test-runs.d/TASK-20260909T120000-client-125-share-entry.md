@@ -177,3 +177,17 @@ Alternative: Run 1~5. 클라이언트 축(목적지 이동·상주 중 이동·�
 **출하되는 그 동결본**으로 실측했고, 채널 도달성은 라이브에서 바이트 단위로 대조했다.
 Next: 사용자가 알림 영역 [업데이트 확인] 에서 1.2.5 를 수락한 뒤, 같은 `Environment` ·
 같은 Scenario 로 Run 을 추가한다. 그때까지 이 시나리오는 PASS 가 아니다.
+
+### CI 게이트 부재 (판정에 영향)
+
+이 PR(#1659)에는 **체크가 하나도 등록되지 않았다** — `gh pr view … statusCheckRollup` = `[]`,
+`mergeStateStatus` = `CLEAN`. 워크플로가 skip 된 것이 아니라 **저장소 전체에서 돌지 않는다**:
+`gh run list` 의 마지막 `CI` 실행은 2026-09-07T02:15Z 이고 **4초 만에 failure** 다(이 저장소가
+전에 겪은 Actions 결제 중단의 그 신호 — step 0개 + 수초 + BlobNotFound). 오늘 머지된
+#1652~#1655 도 같다.
+
+그래서 **컨테이너 pytest 전체(`make test`)가 이 변경에 대해 돌지 않았다.** worktree 에서는
+feature-0003 의 conftest 가 `app` 을 임포트하지 못해 그쪽 pytest 도 로컬로 돌릴 수 없다.
+이번 diff 의 feature-0003 몫은 **정적 자산 1개**(`release-notes-data.js`)이고 그것은 실 렌더러
+jsdom 34건 + 렌더 DOM 대조로 쟀다. 네이티브 595건은 로컬에서 전부 돌렸다.
+CI 가 돌아오면 이 커밋 범위를 다시 통과시켜 확인한다.
