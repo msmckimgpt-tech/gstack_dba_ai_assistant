@@ -30,3 +30,11 @@ verdict: PASS-code-cli
 완료 게이트: `bash bin/verify-completion.sh --pre-commit feature-0043-external-llm-bridge` PASS. 최초 기록 형식 실패(CHG 접두·feature-0003의 DQA-client NOT-RUN/Reason)를 수정한 뒤 통과했다. `ruff`(신규 모듈·테스트), `node --check`(릴리즈 노트), `git diff --check`, ROUTEMAP 재생성·codenav-lint PASS. 설치 DQA NOT-RUN 기록을 코드 PASS와 구분한다.
 
 최신 main `62afb45b` 통합 후 세션43 + 첨부 diff48 회귀: **91 passed, 19 warnings, 7.71초**, exit 0 (`integration-tests.log`). 양측 순증분 대조·codenav-lint·diff-check PASS.
+
+## 최초 배포 및 설치 DQA에서 발견한 전달 누락
+
+- PR #1649 main `834369bb` web-a/b ready·90초 soak PASS, 배포 exit 0. 서버/Windows 러너 SHA-256 `68340862901e6ac6779e609d5757e149707a8ba6897a69a435f9cf5aca7d7cc9` 일치. 기존 DQA 앱을 종료하지 않고 러너가 PID 50000→49080, 12:45:41 run.ready로 자동 복귀했다.
+- 설치 DQA의 새 합성 대화에서 12:46:17 `t_Utejwb7GvekozkyH` Codex 실행→12:46:47 delivered=true. UIAutomation으로 `DQA_SESSION_739_READY` 실제 응답 확인. 데이터베이스/도구 호출 없는 합성 요청이다.
+- **세션 저장은 FAIL**: 상태 디렉터리가 없었다. 실제 claim 응답에 `conversation_id`가 누락돼 러너의 결속 guard에서 건너뛰었다. 단위 테스트/CLI 성공으로 설치 앱의 세션 연속성을 주장할 수 없는 실제 반례다.
+- `test_actual_claim_payload_reaches_runner_session_binding`을 추가해 실제 전체 응답을 실제 handler에 전달: 수정 전 binding=None RED(`claim-seam-red.log`). 인가된 conversation_id 필드 1줄 추가 후 신규44+기존배선43 = **87 passed, 2.69초**(`claim-seam-green.log`).
+- 보완 서버 배포 후 상태 생성·두 번째 동일 native ID 재개를 다시 확인한다.

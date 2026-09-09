@@ -14,6 +14,10 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 
 ## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
 
+- [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.
+- [ ] 보완 서버 배포 후 설치 DQA 세션 파일 생성·동일 ID 재개 재검증.
+
+
 ### 2.1 Implementation Plan
 
 - 승인 근거: 현재 사용자의 DQA 대화 세션 재사용 및 그룹 assistant 이력 유지 요청. Major, 기존 계정별 실행·대화 접근 인가를 유지하는 내부 실행/문맥 계약 변경.

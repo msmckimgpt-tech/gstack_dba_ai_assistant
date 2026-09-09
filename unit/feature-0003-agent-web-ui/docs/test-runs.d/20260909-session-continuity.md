@@ -11,3 +11,10 @@ verdict: NOT-RUN-client
 - Result: NOT-RUN
 - Reason: 변경 서버/러너 배포 전이다. 실제 설치 DQA PID 29732의 UIAutomation 경로를 확인했으며, 배포 후 별도 합성 대화로 검증한다. CLI 실행/서버 함수 회귀는 설치 앱 E2E로 표기하지 않는다.
 - 코드·실제 CLI 검증 정본: [feature-0043 Run](../../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).
+
+## 최초 설치 앱 실행
+
+- Environment: DQA-client
+- Result: FAIL
+- Reason: 실제 첫 Codex 응답은 UI에 도착했지만 claim 응답의 conversation_id 누락으로 세션 저장이 없었다. 전달 필드와 회귀를 수정했고 보완 배포 후 재검증한다.
+- 실제 앱 PID 29732, WebView2 PID 38028, 새 러너 PID 49080. UI 증거 `artifacts/session-continuity/` 및 Windows Temp `dqa-session-continuity-20260909/first.json`.

@@ -379,3 +379,35 @@ def test_claim_response_contains_authenticated_binding_contract():
 def test_non_json_execution_output_cannot_trigger_recreation(runner):
     state = {"kind": "claude", "resume": SID}
     assert runner.decode_session_output(state, "malformed execution output", "Session not found: " + SID, 1)[1] != runner._SESSION_MISSING
+
+
+def test_actual_claim_payload_reaches_runner_session_binding(runner, monkeypatch):
+    path = UNIT / "feature-0003-agent-web-ui/src/routers/ai_tools.py"
+    tree = ast.parse(path.read_text())
+    fn = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "claim_request")
+    response = next(n for n in fn.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
+                    and isinstance(n.value.func, ast.Name) and n.value.func.id == "JSONResponse")
+    code = compile(ast.Expression(response.value.args[0]), str(path), "eval")
+    ns = {"account_id": 10, "history_state": {"history_chain": ["a" * 64]},
+          "hashlib": hashlib, "json": json, "task_id": "t1", "conversation_id": "conv-real",
+          "marked": "question", "marked_history": "", "question": "question",
+          "row": [None, None, 11, None, None, 31, "pinned", "codex", "", ""],
+          "system_prompt": "rules", "scope": {}, "ctx": {"client_id": "client", "session_id": "login1"},
+          "attachments": [], "_tool_catalog": lambda: {}, "kb_context": "", "kb_notes": [],
+          "_self_review_directive": lambda question: {}}
+    resumes = []
+    def ask(*args, **kwargs):
+        session = kwargs["session"]
+        assert session is not None, "실제 claim 응답의 대화 식별자가 러너에 도달해야 한다"
+        resumes.append(session.get("resume"))
+        session.update(native_id=SID, completed=True)
+        return True, "answer"
+    monkeypatch.setattr(runner, "ask_local_ai", ask)
+    client = api()
+    client.call = lambda *a, **k: {"delivered_to_conversation": True,
+                                 "conversation_session": {"history_chain": ns["history_state"]["history_chain"] + ["f" * 64]}}
+    for turn in (1, 2):
+        payload = eval(code, ns)
+        runner.handle_one(client, f"t{turn}", payload, "codex", ["codex", "exec", "{prompt}"], None, self_review=False)
+        ns["history_state"]["history_chain"].extend(["f" * 64, "b" * 64])
+    assert resumes == [None, SID]
