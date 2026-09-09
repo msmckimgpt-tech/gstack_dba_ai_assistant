@@ -136,3 +136,45 @@ Evidence (2026-09-08, `https://localhost`):
   `path` 를 몰라 서비스 루트를 연다(파손이 아니라 의도된 degrade).
 - 대화 스모크는 `scope=web` 이라 미수행이다(배포 로그가 그렇게 기록한다) — 이 변경은 대화
   런타임을 건드리지 않지만, 그 사실을 «대화 동작 PASS» 로 합산하지 않는다.
+
+### Run 7 — 후속: 클라이언트 1.2.5 출하 (Run 5 의 전제 해소)
+
+Environment: live-https
+Result: PASS
+Build: 채널 광고본 1.2.5 (`909d246b…d905d7`) · 서버 revision `59fd70f6`
+Scenario: Run 5 가 `NOT-RUN` 인 이유로 든 **② 클라이언트 재배포**가 실제로 이뤄졌는가 —
+채널이 목적지 수용 코드를 담은 설치본을 광고하고 그 바이트가 받아지는가.
+Evidence: `GET /api/ai/client/latest` → **1.2.5** (sha256 `909d246b…d905d7`, 26,051,359 bytes),
+`GET /client/DQAConnect-Setup-1.2.5.exe` → 200 + 같은 sha256.
+목적지 수용 코드의 문자열 상수(`show.path` · `safe_app_path`)는 **설치기가 담는 앱 폴더의**
+`dist/DQAConnect/DQAConnect.exe` 에서 확인했다(feature-0046 Run 2, `Environment: build-artifact`).
+⚠ **받은 설치기 그 자체를 뜯어 본 것이 아니다** — Inno 산출물은 LZMA2 라 같은 스캐너로 0건이
+나온다(적대 리뷰 2026-09-09 MED-2). 앱 폴더 → 설치기의 연결은 빌드 로그의 사실이지 측정이 아니다.
+[feature-0046 TASK-20260909T120000](../../../feature-0046-native-client/docs/test-runs.d/TASK-20260909T120000-client-125-share-entry.md)
+
+⚠ **Run 5 는 여전히 `NOT-RUN` 이다.** 이 Run 이 해소한 것은 그 Reason 의 **전제**(설치기가
+없다)이지 Scenario 가 아니다. 클라이언트 축(목적지 이동·상주 중 이동·부적격 degrade)은
+격리 동결본으로 실측해 PASS 지만, 「브라우저 공유 화면의 버튼 → OS 스킴 → **설치된** 앱」의
+두 고리는 사용자가 1.2.5 를 수락한 뒤에 잰다. 서명 없는 설치기라 무음 적용은 기본 꺼짐이다
+(사용자 결정 2026-09-07) — 검증 편의로 사용자 앱을 종료·재설치하지 않는다(PB-0009 실행 3항).
+
+### Run 8 — 릴리스노트 1.2.5 항목 · 설치본 화면
+
+Environment: DQA-client
+Result: NOT-RUN
+Build: 채널 광고본 1.2.5 (`909d246b…d905d7`) · 사용자 설치본은 **1.2.4** (PID 29732)
+Scenario: 앱 창의 프로필 > 릴리즈 노트에 「공유 링크에서 앱으로 들어가면 이제 「그 대화」 가
+열립니다 (1.2.5)」 항목이 보이고, 같은 앱에서 공유 링크 → `[DQA 앱에서 참여 · fork]` 가
+그 대화를 연다.
+Reason: 이 시각 사용자의 앱은 **대화 작업 중**이다(브리지 로그 13:54 작업 디스패치).
+설치본을 1.2.5 로 올리려면 그 앱을 닫아야 하고, 검증 편의로 기존 앱·연결 세션을 종료하거나
+재설치하지 않는다(PB-0009 실행 3항). 서명 없는 설치기라 무음 적용도 기본 꺼짐이다
+(사용자 결정 2026-09-07).
+Alternative: 릴리스노트는 실 렌더러로 쟀다 — `verify_release_notes.mjs` **34 passed**,
+그리고 같은 jsdom 에서 렌더한 DOM 에 그 항목의 세 문장이 실제로 나온다(항목 512개).
+클라이언트 축은 **출하되는 그 동결본**으로 실측했다 —
+[feature-0046 Run 4](../../../feature-0046-native-client/docs/test-runs.d/TASK-20260909T120000-client-125-share-entry.md)
+(정본 조립기가 만든 딥링크 ⑤, 상주 중 부적격 ⑥ 포함). jsdom 은 실 렌더가 아니고, 앱 창의
+WebView2 표시는 재지 않았다.
+Next: 사용자가 [업데이트 확인] 에서 1.2.5 를 수락한 뒤 같은 `Environment` · 같은 Scenario 로
+Run 을 추가한다. 그때까지 이 시나리오는 PASS 가 아니다.

@@ -350,8 +350,12 @@ def test_the_build_and_the_iss_use_the_same_version_shape():
     build = _BUILD.read_text(encoding="utf-8", errors="replace")
     # 정본 `VERSION_RE` 의 상한(`{0,3}`)이 빌드 쪽에도 있어야 한다 — `[0-9.]*` 류는
     # `1.2.3.4.5` 를 통과시키고, 그 값이면 클라이언트가 어떤 매니페스트에도 반응하지 않는다.
-    m = re.search(r"CLIENT_VERSION\\s\*=\\s\*\\\"\(\[0-9\]\+\(\?:", build)
-    assert m or "{0,3}" in build, "빌드의 버전 정규식이 정본과 같은 모양이 아니다"
+    # ⚠ 이 단정의 첫 판은 **죽어 있었다** (적대 리뷰 2026-09-09 L1). 패턴이 `"` 앞에
+    #   백슬래시를 요구해 어떤 빌드 파일에도 맞지 않았고, `or` 뒤의 느슨한 절만으로 통과했다 —
+    #   즉 「빌드 정규식이 정본과 같은 모양인가」를 **아무도 보고 있지 않았다**.
+    m = re.search(r'CLIENT_VERSION\\s\*=\\s\*"\(\[0-9\]\+\(\?:', build)
+    assert m, "빌드가 정본과 같은 캡처 모양으로 버전을 읽지 않는다"
+    assert "{0,3}" in build, "빌드의 버전 정규식에 정본과 같은 상한이 없다"
 
 
 def test_iss_version_matches_the_canon():
@@ -888,3 +892,42 @@ def test_only_one_update_flow_runs_at_a_time(tmp_path, monkeypatch):
     second = updater.run_flow(home, target=upd)
     release.set()
     assert second["error"] == "already_running", second
+
+_FUNCTION_DOC = _UNIT / "docs" / "FUNCTION.md"
+_RELEASE_NOTES = (_UNIT.parents[0] / "feature-0003-agent-web-ui" / "src" / "static"
+                  / "release-notes-data.js")
+
+
+def test_function_doc_names_the_current_channel():
+    """정본 문서가 말하는 「현재 공개 채널」이 실제 정본 버전과 같아야 한다.
+
+    ⚠ 이 봉인이 없어서 **한 번 낡았다** (적대 리뷰 2026-09-09 HIGH-1): 1.2.5 를 내면서
+      `FUNCTION.md` 는 「현재 공개 채널은 1.2.4이다」로 남았다. 사람이 읽는 정본이 라이브와
+      어긋나면 다음 사람은 틀린 전제로 판단한다. §16.7 G10 — 한 번 겪은 실패 유형은
+      점수정이 아니라 구조로 잠근다.
+    """
+    doc = _FUNCTION_DOC.read_text(encoding="utf-8", errors="replace")
+    found = re.findall(r"현재 공개 채널은 \*\*([0-9]+(?:\.[0-9]+){0,3})\*\*이다", doc)
+    assert found, "FUNCTION.md 에 「현재 공개 채널은 **<버전>**이다」 문장이 없다"
+    assert len(set(found)) == 1, f"서로 다른 버전을 말하는 문장이 여럿이다: {sorted(set(found))}"
+    assert found[0] == version.CLIENT_VERSION, (
+        f"FUNCTION.md 는 {found[0]} 라고 말하는데 정본은 {version.CLIENT_VERSION} 이다")
+
+
+def test_the_release_notes_carry_an_item_for_the_current_version():
+    """사용자에게 보이는 릴리스노트에 **이 버전** 항목이 있어야 한다.
+
+    ⚠ 이것도 봉인이 없어 조용히 빠졌다 (적대 리뷰 2026-09-09 MED-1). 종전 클라이언트 버전은
+      전부 항목이 있는데 1.2.5 만 없었고, 그 릴리스는 **직전 노트가 「새 앱 버전을 받으신
+      뒤에만 성립합니다」라고 적어 둔 바로 그 버전** 이었다 — 즉 사용자는 왜 올려야 하는지
+      알 방법이 없었다. 관례가 있으면 관례를 검사한다.
+
+    ⚠ 「파일에 그 문자열이 있는가」로 단정하지 않는다 — 이 docstring 자체가 버전을 쓰고 있어
+      자기 설명이 자기 단언을 깨는 형태를 피한다(§16.7 G11-a). **항목의 title 필드**를 본다.
+    """
+    src = _RELEASE_NOTES.read_text(encoding="utf-8", errors="replace")
+    titles = re.findall(r'^\s*title:\s*"(.*?)",\s*$', src, re.M)
+    assert titles, "릴리스노트에서 title 필드를 찾지 못했다"
+    marker = f"({version.CLIENT_VERSION})"
+    assert any(marker in ttl for ttl in titles), (
+        f"릴리스노트에 {marker} 항목이 없다 — 사용자는 이 버전을 왜 받아야 하는지 알 수 없다")

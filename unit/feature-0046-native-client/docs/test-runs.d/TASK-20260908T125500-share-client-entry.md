@@ -48,3 +48,23 @@ Alternative: 위 Run 1 (536 PASS — 경로 판정·왕복·목적지 전달의 
 체감, 스킴 핸들러 등록 경로는 실 Windows 에서만 확인된다.
 Next: 1.1.2 설치기 빌드·게시 후 위 세 시나리오를 실측하고 같은 `Environment: DQA-client` ·
 같은 Scenario 로 Run 을 추가한다. 그때까지 이 시나리오는 PASS 가 아니다.
+
+### Run 3 — 후속: 1.2.5 로 출하 후 실측 (격리 동결본)
+
+Environment: DQA-client
+Result: PASS
+Build: 격리 동결본 1.2.5 `dist/DQAConnect/`(설치본 아님) · 서버 revision `59fd70f6`
+Scenario: **출하되는 동결본**(1.2.5 `dist/DQAConnect/`)을 격리 `%USERPROFILE%` 로 띄워
+① 꺼진 상태에서 **목적지가 실린 실행**(스킴 핸들러가 넘기는 것과 같은 argv) → 그 대화가
+열린다 ② 상주 중 같은 실행 → 떠 있던 창이 그 대화로 옮겨진다(포트·nonce 동일로 확인)
+③ 부적격 경로(질의 밀반입 · protocol-relative · `..`) → 루트가 열린다 ④ 양성 대조.
+Evidence: [TASK-20260909T120000-client-125-share-entry Run 4](TASK-20260909T120000-client-125-share-entry.md)
+— 프로브 로그로 **앱이 실제 요청한 URL** 을 측정.
+
+⚠ 이 Run 은 위 **Run 2 의 Scenario 를 대체하지 않는다.** Run 2 는 「공유 화면의 진입 버튼」
+부터 시작하는 종단 경로이고, 여기서 잰 것은 그 뒤의 **클라이언트 축**이다. 아직 재지 않은
+연결 고리 둘: **설치본**(Inno 설치 후 실행)과 **OS 스킴 핸들러 발사**. 등록은 읽기로 확인했으나
+(`HKCU\Software\Classes\dqa-connect\shell\open\command` = 설치본 + `"%1"`) 그 명령이 지금
+가리키는 것은 사용자의 **1.2.4** 다. 1.2.5 는 채널에 올라갔고, 무음 적용은 기본 꺼짐
+(서명 없는 설치기라 사용자 결정 2026-09-07) — 사용자가 [업데이트 확인] 에서 수락한 뒤에야
+그 두 고리를 잴 수 있다.

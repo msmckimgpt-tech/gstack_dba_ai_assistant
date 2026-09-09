@@ -77,3 +77,38 @@ feature-0003 이 소유한 cycle(웹 계약 정본:
 - [ ] **DQA-client 실측** — 1.1.2 설치기 빌드·게시 후. 현재 `NOT-RUN + Reason`(설치기 빌드는
       Windows 전용이라 이 WSL 세션에서 변경 반영본을 띄울 수 없다). 서버만 배포하면 구버전
       앱은 서비스 루트를 연다 — 파손이 아니라 의도된 degrade.
+
+## TASK-20260909T120000-client-125-share-entry — DQA 1.2.5: 공유 링크 목적지 수용 배포
+
+- 상태: 빌드·게시 완료 (1.2.5 라이브)
+- 배경: [feature-0003 REQ-20260908-share-client-entry](../../feature-0003-agent-web-ui/docs/FUNCTION.md)
+  가 서버·정적 자산까지 배포됐으나(main `fd2d5f1c`, 2026-09-08 20:07 KST), 딥링크의 목적지
+  경로(`path`) 수용은 **설치본 코드**라 클라이언트를 다시 내야 성립한다.
+  현재 채널 최신은 **1.2.4**(게시 2026-09-08 15:33 KST)로 그 머지보다 **4시간 반 앞서므로**
+  그 설치기에는 이 코드가 없다 — 지금 사용자가 공유 화면에서 [DQA 앱에서 참여 · fork] 를
+  누르면 앱은 뜨지만 **서비스 루트**를 연다(파손 아님, 의도된 degrade).
+- 위험: **Minor §12.3** — 버전 정본 2곳(`version.py` · `.iss` 폴백) + 빌드 산출물.
+  제품 로직·권한·스키마 변경 0.
+
+### 2.1 Implementation Plan
+
+1. `src/client/version.py` 의 `CLIENT_VERSION` 1.2.4 → **1.2.5**. `.iss` 의 `AppVersion`
+   폴백도 같이 — 갈리면 손으로 부른 ISCC 가 파일명과 버전이 어긋난 설치기를 낸다.
+2. Windows 에서 `build_client.py --service-base https://112.185.196.20` 실행
+   (PyInstaller 는 크로스컴파일하지 않는다 — WSL 에서 Windows Python 을 호출한다).
+3. `publish_release.py` 로 호스트 `artifacts/client-release` 에 반입 + 릴리스노트.
+4. 라이브 `GET /api/ai/client/latest` 가 1.2.5 를 광고하는지, sha256·크기가 실물과 맞는지 확인.
+5. **설치 후 실측** — 공유 링크 → [DQA 앱에서 참여 · fork] → 앱이 **그 대화**를 여는가.
+   feature-0003 의 `NOT-RUN` Run 5 를 이 결과로 갱신한다.
+
+### 수용 기준
+
+- [x] AC-1: 채널이 1.2.5 를 광고하고 실물 sha256·크기가 매니페스트와 일치한다.
+- [x] AC-2: **현재 소스의** `version.is_newer` 가 1.2.5 를 1.2.4 보다 새것으로 판정한다
+  (문자열 아닌 수치 비교). ⚠ 「**설치된** 1.2.4 가 [업데이트 확인] 에서 1.2.5 를 제안한다」는
+  대리 측정이 아니라 실측이 필요하고, 그것은 Run 6 의 `NOT-RUN` 에 있다(적대 리뷰 MED-5).
+- [~] AC-3: **격리 동결본**에서 신규 실행·상주 중·정본 딥링크 모두 그 대화를 연다(PASS,
+  `Environment: DQA-client-isolated`). **설치본** 실행과 OS 스킴 발사는 Run 6 `NOT-RUN` —
+  사용자가 1.2.5 를 수락한 뒤에 잰다. 무음 적용은 기본 꺼짐이고, 검증 편의로 사용자 앱을
+  종료·재설치하지 않는다(PB-0009 실행 3항).
+- [x] AC-4: 부적격 경로가 실린 링크는 앱이 뜨되 루트를 연다(의도된 degrade).

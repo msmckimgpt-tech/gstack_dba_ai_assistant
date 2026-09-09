@@ -1,0 +1,23 @@
+{
+  "built_at": "2026-09-09T13:49:00+09:00",
+  "builder": "C:\\Users\\mckim\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+  "command": "build_client.py --service-base https://112.185.196.20",
+  "setup": "DQAConnect-Setup-1.2.5.exe",
+  "size": 26051359,
+  "sha256": "909d246b8a2b19a8e395905377d5bc1c07a0bf02f012aae79b97fd3ed5d905d7",
+  "frozen_selfcheck": {
+    "frozen": true,
+    "webview_import": true,
+    "runtime_present": true,
+    "available": true,
+    "tkinter": true
+  },
+  "bundled_service_base": "https://112.185.196.20",
+  "signed": false,
+  "app_exe": {
+    "path": "dist/DQAConnect/DQAConnect.exe",
+    "note": "Run 2·4 가 실제로 뜯고 띄운 파일. 설치기가 담는 앱 폴더의 exe 다 (적대 리뷰 LOW-2).",
+    "size": 6035998,
+    "sha256": "607e8831143e06b0778131d586c3cf6a624852128e1c9321230e32c0763378c4"
+  }
+}
