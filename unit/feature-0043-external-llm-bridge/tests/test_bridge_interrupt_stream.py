@@ -212,10 +212,16 @@ def test_cancel_channel_adds_no_new_tool():
     여기서 세는 것은 **명시 라우트**다(구조 조회 6종은 `{tool_name}` catch-all 이 dispatch
     하므로 이 수에 들어오지 않는다). 총 노출 수 대조는 `test_ux_parity` 의 가이드 수 테스트가 맡는다.
     """
+    # 2026-09-09: 7 → 8. `get_tool_catalog`(구조 조회 도구의 현재 목록·인자를 알려 주는
+    # 카탈로그) 가 더해졌고, 이 테스트가 요구하는 **4곳 정합이 실제로 되어 있음을 확인**한 뒤
+    # 숫자를 옮겼다 — 매니페스트/OpenAPI(`routers/ai_discovery.py`)와 MCP 어댑터 2벌
+    # (`external_tool_mcp_http.py` · `external_tool_mcp_server.py`)에 모두 등재돼 있고,
+    # 총 노출 수를 보는 `test_ux_parity` 도 초록이다. 숫자만 stale 이었다(그 cycle 이 여기를
+    # 함께 갱신하지 않아 base 가 붉은 채였다). 계약은 그대로다 — **개수가 또 늘면 여전히 잡는다.**
     tools = _src(TOOLS_PY)
     routes = [ln for ln in tools.split("\n") if '@router.post("/api/ai/tools/' in ln]
     named = [r for r in routes if "{tool_name}" not in r]
-    assert len(named) == 7, (
+    assert len(named) == 8, (
         f"명시 도구 라우트 수가 바뀌었다({len(named)}종) — 가이드 열거·수 대조·매니페스트도 "
         "같은 cycle 에서 갱신해야 한다")
     assert any("{tool_name}" in r for r in routes), "구조 조회 dispatch 라우트가 사라졌다"

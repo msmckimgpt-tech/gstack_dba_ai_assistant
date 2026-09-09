@@ -5,12 +5,25 @@ status: active
 edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
-feature_status_date: 2026-09-08
-feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단
+feature_status_date: 2026-09-09
+feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 않던 결함 수정(3진입점 + 폴링 권한 축)
 
 ---
 
 # Task
+
+## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과 도달 (참조)
+
+- 정본: [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) ·
+  [REPORT](../../feature-0043-external-llm-bridge/docs/REPORT.md) ·
+  [Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md).
+- 본 feature 의 변경: `static/console-job-poll.js`(신설) · `static/admin/llm-state.js`(re-export) ·
+  `static/app.js`·`static/admin.js`(위임 봉투 분기) · `routers/profile.py`(폴링 라우트 신설) ·
+  `routers/admin_console.py`·`routers/_console_jobs.py`(응답 조립 공통화) ·
+  `static/release-notes-data.js`(2026-09-09 릴리즈) · `tests/verify_prompt_autogen_delivery.mjs`.
+- 사유: 자동 작성 3진입점이 위임 응답(`bridge_pending`)을 읽지 않아 서버가 정상 처리한 결과가
+  화면에 도달하지 않았다(라이브 2026-09-08 19:56 실증).
+- [x] 구현·회귀·뮤턴트 역검증. 출하·배포 결과는 정본 Run 에 기록한다.
 
 
 ## TASK-20260908T162000-tool-surface — 외부 AI 도구 누락과 계약 불일치

@@ -287,12 +287,28 @@ def test_blank_and_malformed_messages_are_dropped_not_rendered():
 # ── 폴링: 재시도해도 달라지지 않는 상태에서 기다리지 않는다 (codex P2 x2) ─────────────
 
 _LLM_STATE_JS = (_SRC / "feature-0003-agent-web-ui" / "src" / "static" / "admin" / "llm-state.js")
+#: 폴링 구현은 TASK-20260909T000000-prompt-autogen-delivery 에서 이 파일로 옮겼다 — `llm-state.js`
+#: 는 `admin.js` 의 상태를 import 하므로 관리 콘솔 밖(프로필 '내 프롬프트')에서 쓸 수 없었고,
+#: 그것이 위임 결과가 그 화면에 도달하지 못한 구조적 이유였다. **계약은 그대로**이고 검사 대상
+#: 파일만 옮긴다.
+_POLL_JS = (_SRC / "feature-0003-agent-web-ui" / "src" / "static" / "console-job-poll.js")
 
 
 def _await_fn() -> str:
-    src = _LLM_STATE_JS.read_text(encoding="utf-8")
+    src = _POLL_JS.read_text(encoding="utf-8")
     fn = src[src.index("export async function awaitDelegatedResult("):]
     return fn[:fn.index("\n}\n")]
+
+
+def test_llm_state_still_exposes_the_poller_to_existing_callers():
+    """구현을 옮겨도 기존 import 경로(`admin/llm-state.js`)는 살아 있어야 한다.
+
+    `admin/metadata.js` 등이 그 경로로 가져다 쓴다 — 끊기면 관리 콘솔의 메타데이터 자동완성이
+    조용히 죽는다(이 feature 가 반복해 겪은 «연결이 없던» 형태).
+    """
+    src = _LLM_STATE_JS.read_text(encoding="utf-8")
+    assert "console-job-poll.js?v=dev" in src
+    assert "awaitDelegatedResult" in src and "jobPhaseLabel" in src
 
 
 def test_auth_failures_stop_immediately_instead_of_retrying_to_timeout():
@@ -323,7 +339,7 @@ def test_terminal_errors_are_marked_by_value_not_by_message():
 
     메시지 문자열로 구분하면 문구를 고치는 날 재시도 루프가 조용히 되살아난다.
     """
-    src = _LLM_STATE_JS.read_text(encoding="utf-8")
+    src = _POLL_JS.read_text(encoding="utf-8")
     assert "err.terminal = true" in src
     assert "e.terminal === true" in _await_fn()
     assert "test(e.message)" not in src, "메시지 regex 로 종료 여부를 판정한다"

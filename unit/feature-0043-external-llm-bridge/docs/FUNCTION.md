@@ -3644,3 +3644,55 @@ Codex 설정을 변경하지 않는다. [OpenAI 공식 문서](https://learn.cha
 - AC-RUR-2: 파싱 전 실패도 감독이 종료를 감지한다. 유한 백오프, 정상 종료 알림, 명시적 해제 후 재기동 0을 검증한다.
 - AC-RUR-3: 기존 HTTPS/CA/고정 다운로드 경로/크기·문법·해시 검사와 토큰 환경변수 전달 계약을 유지한다. 앱 설치기 적용 확인 계약은 유지한다.
 - 정본 실측: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+## 위임 결과는 «봉투 + 폴링» 으로 화면에 닿는다 (TASK-20260909T000000-prompt-autogen-delivery)
+
+### 계약
+
+게이트가 닫힌 배포에서 콘솔 작업(자동작성 3진입점 · 메타데이터 자동완성 등)은 개인 AI 로 위임된다.
+그때 서버는 **스트림이 아니라 봉투**를 준다:
+
+```json
+{"bridge_pending": true, "task_id": "j_…", "job_kind": "prompt_generate",
+ "poll_url": "/api/profile/ai-jobs/j_…", "message": "…연결된 본인 AI 에 맡겼습니다…"}
+```
+
+화면은 응답 `content-type` 이 `application/json` 이면 이 봉투로 보고(`looksDelegatedEnvelope`),
+`poll_url` 을 국면이 끝날 때까지 따라간다(`awaitDelegatedResult`). 판정과 폴링의 **단일 지점**은
+`static/console-job-poll.js` 이고 **아무것도 import 하지 않는다** — 관리 콘솔·프로필 양쪽이 쓰기
+때문이다. `admin/llm-state.js` 는 같은 이름을 re-export 해 기존 호출부를 유지한다.
+
+> ⚠ 이 모듈이 admin 상태를 다시 import 하면 프로필 화면이 그 순간 다시 결과를 못 받는다 —
+> 원래 결함(2026-09-08 라이브)의 구조적 뿌리가 정확히 그것이었다. 구조 테스트가 잠근다.
+
+### 폴링 주소는 «가장 좁은 권한» 이 아니라 «진입점과 같은 권한» 이다
+
+`poll_url` 은 `/api/profile/ai-jobs/{task_id}`(로그인만, `AccountId` 스코프)다. 위임을 여는
+세 진입점 중 **개인 프롬프트 자동작성은 `console.access` 를 요구하지 않는다**
+(`JOB_SPECS['prompt_generate']['perms'] == ()` 가 그 사실의 기록). 관리자 전용 주소를 주면 그
+사용자는 작업이 정상 적재·완료돼도 결과를 영영 못 받는다. 종전 `/api/admin/ai-jobs/{task_id}` 는
+호환으로 남으며, **두 경로는 같은 조립 함수**(`_console_jobs.build_job_status_payload`)를 쓴다 —
+계약이 갈리면 화면은 어느 경로로 물었는지에 따라 다른 사실을 듣는다.
+
+### 「제출됐다」와 「AI 가 해냈다」는 다른 사실이다
+
+러너는 자기 AI 가 실패하면 그 사유를 **답변 본문에 적어 제출한다**(`agent/handler.py` — 대화 축에서는
+옳다: 침묵보다 낫다). 그 답이 콘솔 작업 축에 오면 «결과물» 이 되어 폼을 덮고 화면은 완료라 말한다.
+서버가 러너의 고정 꼬리표(`shared.bridge_tasks.RUNNER_DEGRADED_NOTICE`)로 판정해 응답에 `degraded`·
+`degraded_reason` 을 싣고, 화면은 그때 **본문을 덮지 않고 사유만** 보인다. 상태(`phase`)는
+`done` 그대로 둔다 — 러너는 제 할 일을 했고, 해석만 덧붙이는 것이다.
+
+> ⚠ **약한 고리**: `submit_answer` 에는 실패를 구조적으로 신고하는 채널이 없다(답변 텍스트뿐).
+> 이 판정은 문구 의존이며, 러너 정본과의 동기는
+> `test_runner_degraded_notice_matches_the_runner_source` 가 잠근다. 근본 해소(제출 API 에 실패
+> 플래그 + 구 러너 폴백)는 별도 작업이다.
+
+### 수용 기준
+
+| id | 기준 |
+|---|---|
+| `AC-20260909T000000-delivery-1` | 러너가 연결된 계정이 '내 프롬프트 > 자동 작성' 을 누르면 진행 국면이 보이고 **생성된 프롬프트가 입력란에 채워진다** |
+| `AC-20260909T000000-delivery-2` | `console.access` 없는 계정도 위 1이 성립한다(폴링이 403 이 아니다) |
+| `AC-20260909T000000-delivery-3` | 관리 콘솔의 역할·제품 프롬프트 자동작성도 같은 경로로 결과가 도달한다 |
+| `AC-20260909T000000-delivery-4` | 러너 실패 대체문이 오면 입력란은 **덮이지 않고** 사유가 표시된다 |
+| `AC-20260909T000000-delivery-5` | 게이트가 열린 배포에서는 종전 SSE 토큰 스트리밍이 그대로 동작한다 |
