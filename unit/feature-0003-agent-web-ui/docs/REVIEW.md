@@ -8613,3 +8613,7 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS (통합 회귀67 PASS)
 - Artifact: feature-0014 docs/reviews/20260909T144000-caddy-probe.md의 최신 main 통합 재검토
 - Human Approval Needed: no
+
+## REV-20260909T170000-auth-transition-installed-verification [SKIPPED:non-policy-doc]
+
+코드 추가 변경 없이 설치된 DQA와 서빙 자산 검증 결과를 기록한다. 실제 3회 왕복·70관측·노출0, 두 replica 14파일 일치이며 보안·UX·디자인·backend/qa 소스 리뷰의 검증 범위를 이 실측과 구분한다.

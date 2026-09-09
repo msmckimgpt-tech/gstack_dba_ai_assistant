@@ -310,3 +310,7 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 - Verdict: PASS (통합 회귀67 PASS)
 - Artifact: feature-0014 docs/reviews/20260909T144000-caddy-probe.md의 최신 main 통합 재검토
 - Human Approval Needed: no
+
+## REV-20260909T170000-edge-probe-recovery-shipped [SKIPPED:non-policy-doc]
+
+소스 추가 변경 없이 배포·프로세스·설치 DQA 실측 결과를 기록한다. source review PASS와 운영 실측의 범위를 분리했다.

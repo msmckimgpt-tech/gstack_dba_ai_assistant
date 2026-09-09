@@ -224,3 +224,8 @@ source_of_truth: true
 - Caddy init:true/PID 256을 정의했다. 라이브에는 PID 제한만 무중단 갱신했으며 init은 향후 재생성 시 적용된다.
 - 기존 게이트의 timeout 정규식이 curl --connect-timeout을 명령으로 오인하는 검사를 수정했다. 지속적인 compose ps 실패는 이제 미확인 상대를 통과시키지 않는 RC1을 검증한다.
 - 관련 49 PASS, 실제 정상 probe 5회·잘못된 SNI 차단·zombie 99 유지. [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md).
+
+
+## CHG-20260909T170000-edge-probe-recovery-shipped
+
+PR #1656/cf55c659 배포 exit 0·두 replica ready·90초 soak PASS를 기록했다. Caddy PID 및 zombie 99개는 유지되어 probe 누적 재발이 없으며, init 실행환경 미반영 사실을 보존했다. 원래 설치 DQA 전환도 통과했다.

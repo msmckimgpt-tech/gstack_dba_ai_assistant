@@ -79,3 +79,31 @@ main PR #1653의 배포 자동 갱신을 합쳤다. 저장 대화·첨부 선택
 - 전체 회귀를 다시 완주한 결과가 아니므로 전체 PASS로 주장하지 않는다. GitHub PR #1652 checks는 없음.
 
 중간 병합 커밋 c06babc7의 Task-Cycle 값에 실제 feature ID 대신 worktree 별칭을 써 post-commit 검사가 feature directory not found 경고를 남겼다. pre-commit 실제 feature 검사는 PASS였고, 다음 커밋에서 정식 `feature-0003-agent-web-ui` trailer와 완료 검사를 사용한다.
+
+## 설치 DQA 배포본 최종 확인
+
+Environment: DQA-client
+Result: PASS
+Build: 서버 cf55c659, 자산 stamp 11c0bb4da7ce; 기존 설치 DQAConnect.exe PID 29732와 WebView2 PID 38028
+Scenario: 배포된 서버에서 관리 콘솔 ↔ 작업 화면 전환 중 로그인폼 노출 여부
+Evidence: `artifacts/auth-transition/installed-fixed.json`, `deployed-hashes.json`
+
+동일 사용자 앱·기존 로그인 상태에서 실제 버튼으로 3회 왕복했다. 작업 복귀 모두 성공.
+
+| 회차 | UIAutomation 관측 | 로그인 입력란 노출 | 초기화 상태 관측 | 복귀 시간 |
+|---|---:|---:|---:|---:|
+| 1 | 37 | 0 | 34 | 3,948ms |
+| 2 | 18 | 0 | 15 | 1,983ms |
+| 3 | 15 | 0 | 12 | 1,666ms |
+
+총 70개 관측에서 로그인 입력란 노출 0. 수정 전 1회 47개 관측 중 43개 노출과 대비된다. 프레임 전수검사가 아닌 UIAutomation 샘플링이다. 프레임 단위 무노출은 별도 전체 제품 WebView2 fixture의 3회 왕복/15 PASS 근거로 구분한다. 앱 재설치·종료·로그아웃·AI 요청은 하지 않았다. 입력 초안과 진행 요청이 없는지 먼저 확인했다.
+
+두 서버 replica 모두 cf55c659/stamp 11c0bb4da7ce이며 핵심 HTML/JS/CSS/router 7파일씩 총 14개 SHA-256 일치(빌드 스탬프 정규화 후 비교)를 확인했다. 코드 PR #1652, 배포 점검 복구 PR #1656. 롤링 교체 후 설치앱 확인을 수행했으며 배포 스크립트의 최종 soak 결과는 아래에 기록한다.
+
+## 출하 완료
+
+- PR #1652: main 59fd70f6. 배포 차단 원인 보완 PR #1656: main cf55c659.
+- `bash bin/deploy-web.sh --web-only` 재실행 **exit 0**. web-a/b cf55c659 ready, 엣지 후보 복귀 확인, 90초 soak PASS, UI 완료 신호 stamp 11c0bb4da7ce 게시. 로그 `artifacts/auth-transition/deploy-final.log`.
+- 기존 Caddy PID 3619937 유지, pids_limit 256, zombie ssl_client 99개로 배포 전후 증가 0. init은 아직 실행 중 컨테이너에 반영되지 않았으며 미래 재생성을 위한 방어 설정이다. 즉시 재발 차단은 HTTPS probe의 호스트 PID tree 이전으로 달성했다.
+- web-only 범위라 AI 대화 스모크·worker/bridge 재배포는 실행하지 않았다. 이번 수용은 인증된 화면 전환이며 AI 요청 성공을 주장하지 않는다.
+- 코드/소스 리뷰, 격리 fixture, 서버 hash/soak, 설치 사용자 앱 왕복을 각각 확인했다. 과거 NOT-RUN 항목은 배포 전 이력이며 위 설치 DQA PASS가 동일 시나리오의 최종 판정이다.

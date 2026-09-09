@@ -21,7 +21,7 @@ source_of_truth: true
 - [x] 실측 원인: threads 24 + ssl_client zombie 99, pids.current 123/max 128, 제한 도달 180회
 - [x] 현재 PID 3619937 유지, 한도 256으로 내부 실행 복구
 - [x] 근본 경로 수정, 관련 49 PASS, 실제 probe 5회 후 zombie 99 유지·잘못된 SNI 차단
-- [ ] 후속 PR 병합·원래 로그인 화면 수정 배포 완주
+- [x] PR #1656 병합, cf55c659 web-only 배포 exit 0·90초 soak PASS 및 설치 DQA 3회 왕복 성공
 
 
 ## TASK-20260909T140000-deploy-refresh — 완료 신호 게시

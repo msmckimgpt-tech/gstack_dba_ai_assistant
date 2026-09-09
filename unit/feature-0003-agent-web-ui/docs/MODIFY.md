@@ -6469,3 +6469,9 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260909T160000-auth-transition-deploy-recovery
 
 - 로그인 화면 수정 배포 중 발견한 Caddy PID 소진을 복구하고 재발 probe 경로를 수정했다. 정본은 feature-0014의 TASK/Run이다. 기존 web·Caddy를 내리지 않았다.
+
+
+## CHG-20260909T170000-auth-transition-installed-verification
+
+- 실제 설치 DQA PID 29732를 유지한 채 배포본 cf55c659에서 3회 왕복했다. 70개 UIAutomation 관측에서 로그인 입력란 노출 0, 작업 복귀 3/3 성공.
+- 두 replica의 핵심 7파일/자산 스탬프 일치를 확인했다. 설치앱 샘플링과 fixture의 프레임 검증을 별도 증거로 기록했다.
