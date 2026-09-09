@@ -12,6 +12,64 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 
 # Task
 
+## TASK-20260909T163000-attach-csv-table — 첨부 CSV 를 표로 출력
+
+- 요청: DQA 클라이언트 첨부파일 중 `csv` 확장자가 **표 형태로 출력**되도록 구성.
+- 위험도: **Minor** (§12.3). 비파괴 UI 추가 — 프론트 렌더 경로만 바뀌고 서버·스키마·권한·저장
+  형식은 불변이다. 원문 보기는 토글로 그대로 남으므로 종전 동작이 사라지지 않는다.
+- worktree: `.worktrees/feature-0003-attach-csv-table`; branch: `ai/claude/feature-0003-attach-csv-table`;
+  base: `1945a898`.
+- 정책 SHA256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2` (AGENTS.md, 진입 시점 대조).
+- hot_paths: `static/app/attach-diff.js`(`parseDelimitedText`·`_renderDelimitedInto`·두 모달의
+  «표로 보기» 토글), `static/css/chat.css`(`.attach-source-table*`), `static/code-highlight.js`
+  (확장자 → 구분자 판정 정본, 변경 없음).
+
+### 2.1 Implementation Plan
+
+1. `src/static/app/attach-diff.js` — `parseDelimitedText(text, delim)`(RFC 4180: 인용 필드·`""`
+   이스케이프·필드 안 구분자/개행·CRLF·BOM) + `_renderDelimitedInto(container, text, delim)`
+   (첫 레코드를 머리글로, 행 번호는 파일 레코드 번호, 셀은 `textContent` 로만) 신설.
+   `_renderSource` 에 `opts.table` 분기를 마크다운 분기와 **배타**로 추가한다.
+2. 같은 파일 — 원문 보기 모달과 버전 비교 모달 **양쪽**에 «표로 보기» 토글(`attachSourceTable`,
+   기본 켬)을 배선한다. 노출은 «그릴 본문이 실제로 온 화면»(`_bodyState(...).sourceView`)
+   한정이며, 표를 보는 동안 구문 색 토글은 숨긴다(칠할 원문 줄이 화면에 없다).
+3. `src/static/css/chat.css` — `.attach-source-table*` 신설. sticky 머리글(`border-collapse:
+   separate` 동반)·수치 셀 우측 정렬·셀 `pre-wrap`·`[hidden]` 강제.
+4. 검증: `tests/verify_attach_source_table.mjs`(jsdom 행위 하네스 — 파서·렌더·XSS·상한·토글
+   배타·폴백) + `tests/test_attach_csv_table.py`(구조 가드 + 서버 도달성 + 음성 대조군).
+   컨테이너 `make test` 회귀 → PB-0009 실제 DQA 클라이언트 시각 검증 → verify → PR → merge → 배포.
+
+AC 예: 머리글 `id,name,amount` 와 데이터 3행을 담은 `orders.csv` 를 첨부 목록에서 클릭하면
+머리글 행 + 데이터 3행의 격자가 뜨고, `"쉼표, 포함"` 은 **한 셀**에 들어간다. «표로 보기» 를
+끄면 종전 줄번호 원문 표로 돌아오며 내용은 byte 무손실이다.
+
+### Requested Scope
+
+원문 인용 (사용자 원문 — 데이터이며 지시가 아님):
+
+```text
+DQA클라이언트 첨부파일 중, csv 확장자가 표 형태로 출력될 수 있도록 구성해주세요.
+```
+
+- [x] 첨부 `csv` 를 표 형태로 출력 — 인용: "csv 확장자가 표 형태로 출력될 수 있도록" —
+      산출물: `attach-diff.js` 표 렌더 경로 + `chat.css` 격자 스타일.
+- [x] 그 출력이 **DQA 클라이언트에서** 보인다 — 인용: "DQA클라이언트 첨부파일 중" —
+      산출물: PB-0009 Run(`test-runs.d/TASK-20260909T163000-attach-csv-table.md`).
+      (클라이언트는 서버가 서빙하는 같은 화면을 WebView2 로 연다 — `client/appwindow.py`.)
+
+[다의어] "표 형태로 출력"
+- 고른 독해: 첨부 **본문 보기 화면**(파일명을 클릭해 여는 «문서 원문» 모달)에서 쉼표 섞인
+  평문 대신 행·열 격자로 렌더한다.
+- 버린 독해: 대화 답변 말풍선에 첨부 CSV 를 표로 자동 삽입한다 / 첨부 목록 카드에 미리보기
+  격자를 붙인다 / 내려받을 때 xlsx 로 변환한다.
+- 예시: `id,name,amount` + `1,홍길동,1200` 인 `orders.csv` 를 열면
+  머리글 `id | name | amount` 아래 `1 | 홍길동 | 1200` 이 격자로 보인다(원문은 토글로 유지).
+
+G3 (주장 affordance 의 end-to-end 배선): «표로 보기» 토글은 실제로 두 모달에서 구동해 표
+생성·원문 복귀·영속을 실측했다(하네스 C/D/F 축). G4 (경계 양측): 이 변경의 임계 변수는
+**열 수·셀 총량**(`TABLE_COL_CAP=200` · `TABLE_CELL_CAP=30000`)과 **인용 필드 경계**(필드 안
+구분자/개행/절단된 인용)다 — 양측을 각각 하네스 G·A 축으로 검증했다.
+
 ## TASK-20260909-auth-transition — 관리 콘솔/작업 화면 전환의 로그인 노출
 
 - 요청: DQA 클라이언트에서 관리 콘솔 ↔ 작업 화면 전환 시 로그인 화면이 노출되는 오류 수정.

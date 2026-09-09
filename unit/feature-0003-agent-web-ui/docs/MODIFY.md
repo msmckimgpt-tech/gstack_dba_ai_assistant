@@ -9,6 +9,51 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260909T163000-attach-csv-table (첨부 `.csv`/`.tsv` 표 렌더, Minor §12.3)
+
+**변경**:
+
+- `src/static/app/attach-diff.js`
+  - **신규** `parseDelimitedText(text, delim)` — RFC 4180 파서(export: 하네스가 정본을 직접
+    부를 수 있어야 자기 사본을 시험하지 않는다). 인용 필드·`""` 이스케이프·필드 안 구분자/개행·
+    CRLF·BOM·짝 없는 따옴표(절단본)·행별 열 수 불균일을 **값 보존**으로 처리한다.
+  - **신규** `_tableDelimiter(filename)` — 확장자 → 구분자. 판정 정본은 `code-highlight.js`
+    레지스트리 하나(`csv` → `,`, `tsv` → `\t`). 목록을 두 벌 두면 한쪽만 갱신된다.
+  - **신규** `_renderDelimitedInto(container, text, delim)` — 첫 레코드를 `<thead>`, 나머지를
+    `<tbody>`. 행 번호는 **파일 레코드 번호**(머리글=1), 수치 셀은 `is-num`(우측 정렬),
+    셀 값은 `textContent` 로만. 머리글 한 줄뿐이면 그 사실을 말한다.
+  - **신규** `TABLE_COL_CAP=200` · `TABLE_CELL_CAP=30000` + `_tableClipNotice`/`_tableFallbackNotice`.
+    서버는 줄 수만 자르고 열 수·셀 총량은 모른다 — 6,000행 × 300열이면 표를 만드는 순간 창이 멎는다.
+  - `_renderSource` — `opts.table` 분기 추가(마크다운 분기와 배타. 확장자 하나가 두 언어로
+    판정되지 않으므로 호출부에서도 동시에 켜지지 않는다). 실패 시 원문 표로 폴백.
+  - `_renderSourceBody`·`_renderBody` — 표 배너를 마크다운과 **같은 자리**에 싣는다(둘 다
+    채워질 수 없다). 폴백 시 컨트롤을 화면과 일치시키되 **저장값은 건드리지 않는다**(강등은
+    사용자의 선택이 아니므로 다음 열람에서 다시 시도한다).
+  - `openAttachmentSourceModal`·`openAttachmentDiffModal` — «표로 보기» 토글(`attachSourceTable`,
+    기본 켬) **양쪽에** 배선. 노출은 `sourceView` 한정, 표 렌더 중 구문 색 토글 숨김.
+    응답이 파일명을 정정하면 `tableDelim` 도 함께 재계산한다(말풍선 칩 경로는 파일명을 넘기지 않는다).
+- `src/static/css/chat.css` — `.attach-source-table*` 신설. sticky 머리글(+`border-collapse:
+  separate` — collapse 면 테두리가 함께 스크롤된다), `table-layout: auto` + `width: max-content`
+  (열 폭이 내용을 따라간다), 셀 `pre-wrap`(인용 필드는 여러 줄일 수 있다), 수치 셀 `tabular-nums`,
+  줄무늬. `.attach-source-tablewrap` 은 **자체 스크롤 컨테이너가 아니다**(sticky 기준이 부모
+  `.attach-diff-scroller` 여야 한다). `.attach-source-mdtoggle[hidden]`/`.attach-source-tabletoggle[hidden]`
+  강제 추가 — 이 파일이 두 번 겪은 «`display` 선언이 UA `[hidden]` 을 이기는» 트랩의 예방.
+- **신규** `tests/verify_attach_source_table.mjs` — jsdom 행위 하네스 73 단언(파서 계약·무손실
+  왕복·토글 판정·렌더 구조·XSS·원문 복귀/영속·상한·배타·폴백·CSS). 뮤턴트 **15종 전건 KILL**.
+- **신규** `tests/test_attach_csv_table.py` — 구조 가드 10건. **서버 도달성**(`Kind` 지도의 `csv`
+  ↔ `_VERSION_DIFF_TEXT_KINDS`)을 함께 단언한다 — 프론트만 고치고 서버 kind 가 막고 있으면
+  기능은 0% 인데 프론트 테스트는 전부 green 이다. 음성 대조군 3건 포함(§16.7 G11-b).
+
+**사유**: 사용자 요청(2026-09-09) "DQA클라이언트 첨부파일 중, csv 확장자가 표 형태로 출력될 수
+있도록 구성해주세요." 종전 화면은 CSV 를 줄 단위 평문으로 보여 주고 구문 색이 구분자만 강조했다
+— 열이 눈으로 갈리지 않아 사용자가 표를 머릿속에서 재구성해야 했다. `.md` 를 문서로 렌더한
+선행 요청과 같은 성격이라 같은 관용구(원문은 토글로 남기고 기본은 렌더)를 따랐다.
+
+**영향 범위**: 프론트 표시 계층 한정. 서버·스키마·마이그레이션·RBAC·엔드포인트·저장 형식 변경
+0. 원문 보기는 토글로 그대로 남으므로 종전 동작이 사라지지 않는다. `.md`·`.sql` 등 다른 확장자의
+화면은 불변(하네스 C5·C5b·H1·H2 가 무회귀를 고정).
+
+
 ## CHG-20260901T1900-conv-status-dot-wiring (사이드바 상태 배지 색 배선 복원 + 배선 게이트, Minor §12.3)
 
 **변경**:
