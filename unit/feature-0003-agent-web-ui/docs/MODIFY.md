@@ -6427,8 +6427,9 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260909T130116-session-installed-acceptance
 
 제품 코드 변경 없이 보완 배포 및 설치 DQA 실제 재개 결과를 기록한다. 첫 결속·후속 재개 둘 다 완료, 동일 native ID 및 상태4→6, 합성 문자열 회상 UI PASS. 다계정 그룹 앱 왕복 NOT-RUN은 유지한다.
+## CHG-20260909T135700-auth-transition
 
-
+사용자 제보의 로그인 전환 노출을 수정했다. 표시 상태 분리와 오류 재시도, DB503 및 성공 후 모달/대화URL정리. 기존 세션 쿠키·인가정책 유지. 독립리뷰 지적을 같은 작업에 반영했다. 상세는 TASK/Run 정본.
 ## CHG-20260909T140000-deploy-refresh
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - 변경/이유: 이미 열린 DQA가 구버전 코드를 유지하던 문제를 배포 완료 게시와 안전한 화면 재로드로 해결. feature-0003은 공개 메타데이터 API·3초 감지·계정별 선택 복원, feature-0014는 원자 게시·혼합 배포 억제·rollback/재시도 경계를 소유한다.
@@ -6450,3 +6451,10 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 
 ## CHG-20260909T142200-deploy-refresh-run-boundary
 - 수명주기 보완 커밋의 CLI 결과와 DQA-client 재실행/설치 검증 미완료를 명시하여 증거 누락을 보정. 코드 변경 없음.
+
+
+## CHG-20260909T150000-auth-transition-test-runtime
+
+- main의 배포 자동 갱신을 보존하도록 인증 초기화를 통합했다.
+- 전체/대상 검사에서 드러난 시험 컨테이너 Git/jsdom/acorn 누락을 Makefile에서 해결하고, 인증 JavaScript 행위 검사를 pytest 실행에 연결했다.
+- 관련 격리 회귀 141 PASS, 인증 Node 44 PASS, 통합 제품 WebView2 15 PASS. 전체 재실행 PASS와는 구분한다.

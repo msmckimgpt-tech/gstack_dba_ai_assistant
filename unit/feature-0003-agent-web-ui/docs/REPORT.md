@@ -8,6 +8,13 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260909-auth-transition — 로그인 화면 노출 수정
+
+초기 HTML이 로그인 폼을 표시하고 세션 확인 후 숨기던 순서를 수정했다. 확인중/미인증/오류 상태를 구분하고 오류에는 재시도를 제공한다. 로그인·2FA·회원가입도 같은 초기화 경로를 사용한다. DB 연결 실패는 미인증200 대신503이며 쿠키/인가계약은 유지한다. 재시도 시 대화 목적지를 보존하고 비밀번호 변경 모달은 초기화 성공 후 연다.
+
+독립 security/ux/design/backend/qa 리뷰의 지적을 모두 수정했다. 인증 Node 44건, 격리 컨테이너 관련 회귀 141건, 통합 제품 Shell/WebView2 fixture 15건 PASS. 최초 전체 검사에서 드러난 시험 의존성 누락은 보완 후 관련 검사를 통과했으며 전체 재실행 PASS로 간주하지 않는다. main 반영·배포·설치 DQA 사후 확인은 진행 중이다. 정본은 [Run](test-runs.d/20260909-auth-transition.md).
+
+
 ## 2026-09-09 — 배포 완료 자동 반영
 
 구현·독립 리뷰 PASS. 3초 감지, 안전한 시점 자동 적용, 대화/diff 선택 복원과 롤링 중 적용 억제를 구성했다. [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md)에 검증 경계를 기록한다. PR #1653/7fa75a51 서버 반영과 두 replica·edge 완료 신호 일치, 제품7파일 일치를 확인했다. 설치 DQA 최초 bootstrap 및 후속 자동 적용은 진행 중이다.

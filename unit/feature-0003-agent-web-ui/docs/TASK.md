@@ -12,6 +12,29 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 
 # Task
 
+## TASK-20260909-auth-transition — 관리 콘솔/작업 화면 전환의 로그인 노출
+
+- 요청: DQA 클라이언트에서 관리 콘솔 ↔ 작업 화면 전환 시 로그인 화면이 노출되는 오류 수정.
+- 위험도: Minor. 기존 세션/권한 판정은 유지하며 확인 전 표시와 초기화 실패 안내를 수정한다. 현재 사용자 수정 요청 및 AGENTS §16.5.1에 따라 구현·검증·출하한다.
+- worktree: `.worktrees/feature-0003-auth-transition`; branch: `ai/codex/feature-0003-auth-transition`; base: `7b889a26`.
+- 정책 SHA256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`.
+- hot_paths: `static/index.html:#authOverlay`, `static/app/auth.js` 표시 함수, `static/app.js:initialize/initializeWorkspace/restoreSession`.
+
+### 2.1 Implementation Plan
+
+1. `src/static/index.html`: 로그인 폼을 처음부터 숨기고 세션 확인 상태를 표시한다. 확인 중 작업 영역은 inert로 입력을 막는다.
+2. `src/static/app/auth.js`: 확인 중/로그인 필요/작업 화면/초기화 오류의 표시를 일관되게 전환한다. 오류는 재시도 버튼을 제공한다.
+3. `src/static/app.js:restoreSession/initializeWorkspace`: 인증 결과를 받은 뒤 화면을 선택한다. 최초 세션 응답을 재사용하고, 네트워크·작업 초기화 오류를 로그아웃으로 오인하지 않는다. next 목적지 판단 전에 실제 user를 설정한다.
+4. `src/routers/system.py:get_session`은 DB 연결 장애를503으로 구분하며 `static/css/base.css:.startup-status`는 기존 색상 토큰으로 읽기 대비를 보장한다. 회귀 테스트: 응답 지연, 인증 성공/실패, HTTP401/서버 오류/초기화 오류, 재시도, 로그아웃, 강제 비밀번호 변경 next 경계. security/ux/design 독립 리뷰와 실제 DQA 전환 확인 후 verify→PR→merge→web 배포.
+
+AC 예: 로그인된 DQA에서 관리 콘솔 → 작업 화면으로 돌아올 때 `/api/session`을 1초 지연해도 로그인 폼 노출 0회. 세션이 없을 때는 응답 확정 후 로그인 폼 표시. 통신 실패는 오류·재시도 표시이며 로그인 요구로 바뀌지 않는다.
+
+### Requested Scope
+- [x] 원인 재현 및 표시/초기화 수정
+- [x] 회귀·독립 리뷰·격리 WebView2 검증 및 설치 DQA 수정 전 재현
+- [x] 최신 main 통합, 시험 의존성 보완 및 관련 컨테이너 회귀 141건 PASS
+- [ ] main 반영·web 배포·결과 기록
+
 
 ## TASK-20260909T140000-deploy-refresh — 배포 완료 후 열린 DQA 자동 반영
 
