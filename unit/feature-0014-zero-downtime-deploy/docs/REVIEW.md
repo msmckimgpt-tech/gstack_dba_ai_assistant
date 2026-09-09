@@ -283,3 +283,9 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 - Artifact: [backend-security-qa](../../feature-0003-agent-web-ui/docs/reviews/20260909T140000-deploy-refresh-backend-security-qa.md)
 - Human Approval Needed: no
 - 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
+
+
+## REV-20260909T141300-deploy-refresh-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Reason: 코드 변경 없이 실제 서버 배포와 격리 재검증 결과를 기록하는 비정책 문서 후속. backend-security-qa가 기존 수치와 경계를 대조했고 web-only smoke 문구를 정정했다.
+- Timestamp: 2026-09-09T14:13:00+09:00

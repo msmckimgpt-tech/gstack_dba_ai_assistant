@@ -6434,3 +6434,8 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - 변경/이유: 이미 열린 DQA가 구버전 코드를 유지하던 문제를 배포 완료 게시와 안전한 화면 재로드로 해결. feature-0003은 공개 메타데이터 API·3초 감지·계정별 선택 복원, feature-0014는 원자 게시·혼합 배포 억제·rollback/재시도 경계를 소유한다.
 - 검증: 독립 backend/security/qa 85 PASS, Node 감지 9 시나리오, 기존 diff Node128 PASS, DQA Shell/WebView2 격리34/34 PASS. 상세 [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
 - API 추가는 GET `/api/ui-release` 한 개이며 DB·권한·인증 계약 변경 없음.
+
+
+## CHG-20260909T141300-deploy-refresh-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
