@@ -14,10 +14,10 @@ source_of_truth: true
 기능 추가/삭제, 파일 구조 변경 시 갱신한다.
 
 > **Freshness**: feature-0012 (web-router-modularization) 완결 반영 — `app.py` 19,650→3,722줄(-81%),
-> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 로 추출됨 — **40개 파일**(route-module 30 + `_` 접두 공유헬퍼 9 + `__init__` registrar, 2026-09-09 실측). (분할 완결 시점 HEAD `f7ad45d7`, 2026-07-13 = 당시 28개)
+> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 로 추출됨 — **41개 파일**(route-module 30 + `_` 접두 공유헬퍼 10 + `__init__` registrar, 2026-09-10 실측). (분할 완결 시점 HEAD `f7ad45d7`, 2026-07-13 = 당시 28개)
 
 > **AI 탐색 진입점 (재귀 4계층)**: 바꾸려는 것이 route/handler 라면 아래 순서로 좁혀 내려간다.
-> **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 200 route). ·
+> **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 270 route). ·
 > **L1~L3 MODULE/SYMBOL/TRAVERSE** → `docs/CODE_NAVIGATION.md` (모듈 purpose·endpoints·imports·callees, handler signature, down=callees/up=callers grep). ·
 > **TASK 카드** → `docs/CODE_TASKS.md` (Match keywords / Entry region / Reference regions / Recurse-via literal grep / Invariants / Verify).
 > 이 CODEBASE_MAP 은 그 위의 L−1 (파일·1줄 책임·링크) 지도다 — route 표는 여기서 복제하지 않고 ROUTEMAP 으로 위임한다.
@@ -55,7 +55,7 @@ repo/
     │       ├── app.py           # 4,000줄 (feature-0012 P5b 완결 시점 3,722 · -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
     │       ├── ui_release.py    # 완료 metadata 검증; /api/ui-release → static/ui-refresh.js → app/deploy-refresh.js
     │       ├── web_context.py   # leaf helper (app-internal 의존 0인 순수 컨텍스트 조각, 단방향 추출)
-    │       ├── routers/         # 도메인 APIRouter 패키지 — 40 파일 (§4a 참조)
+    │       ├── routers/         # 도메인 APIRouter 패키지 — 41 파일 (§4a 참조)
     │       │   ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include
     │       │   ├── <30 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
     │       │   └── _<shared helper>.py    # _attachment_diff·_audit_infra·_bootstrap_schema·_connect_funnel·_connect_steps·_console_jobs·_console_llm·_conv_store·_folder_store·_prompt_context (register_all 제외)
@@ -145,7 +145,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 |---------|------|-----------|
 | `feature-0001-platform-runtime` | 플랫폼 런타임/공통 자산 | (scaffold — `src/README.md`, `tests/README.md`) |
 | `feature-0002-agent-core` | Agent 핵심 로직 | `src/agent_core.py` (라이브 진입점 = in-process tool-calling 루프), `src/modules/*` (config/llm/knowledge/sql_ops 등), `tests/test_llm_api.py` |
-| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (4,000줄 조립 루트, 2026-08-25 실측) + `src/routers/*` (40 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
+| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (4,000줄 조립 루트, 2026-08-25 실측) + `src/routers/*` (41 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
 | `feature-0004-browser-automation` | 브라우저 자동화 | `src/app.py`, `src/ctl.py` |
 | `feature-0005-qa-mcp` | QA 및 MCP 테스트 | `src/mcp_tests.py` |
 | `feature-0006-lan-proxy-access` | LAN/프록시 접근 | (scaffold — `src/README.md`, `tests/README.md`) |
@@ -183,7 +183,7 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 | 공유 헬퍼 (10, `_` 접두) | `src/routers/_attachment_diff.py`·`_audit_infra.py`·`_bootstrap_schema.py`·`_connect_funnel.py`·`_connect_steps.py`·`_console_jobs.py`·`_console_llm.py`·`_conv_store.py`·`_folder_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유)·`_folder_store`=대화 폴더 PG 스토어(feature-0024)·`_console_jobs`=콘솔 작업 프롬프트 조립 + 개인 AI 산출물의 기존 저장경로 반영(feature-0043)·`_console_llm`=관리 콘솔 LLM 상태 판정 단일 정본(feature-0043) |
 | 등록기 | `src/routers/__init__.py` | `register_all(app)` — non-`_`·`router` 보유 모듈 자동발견 후 `(INCLUDE_ORDER, name)` 순 include. 신규 라우터 = `router` 심볼 가진 파일 추가만(꼬리 배선 편집 불필요) |
 
-> 파일 수 = 30 route-module + `__init__.py` + 9 `_` 접두 공유헬퍼 = **40 파일** (2026-09-09 실측) (task 표기 "8 공유모듈" 은 underscore 7 시점 값 — 현재는 `__init__` + 9 underscore = 10). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가. feature-0045 가 leaf `src/bridge_drain.py`(브리지 배포 연속성 — 개인 AI 의 대기·도구 호출을 **따로** 세는 in-flight 카운터 + lame-duck 드레인 미들웨어; 드레인 중 신규 도구 호출은 `503 X-Bridge-Draining` 으로 돌려보내되 제출·첨부 읽기는 받는다)를 추가하고, `routers/system.py` 에 배포 제어 창구 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용)을 두었다.
+> 파일 수 = 30 route-module + `__init__.py` + 10 `_` 접두 공유헬퍼 = **41 파일** (2026-09-10 실측) (task 표기 "8 공유모듈" 은 underscore 7 시점 값 — 현재는 `__init__` + 10 underscore = 11). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가. feature-0045 가 leaf `src/bridge_drain.py`(브리지 배포 연속성 — 개인 AI 의 대기·도구 호출을 **따로** 세는 in-flight 카운터 + lame-duck 드레인 미들웨어; 드레인 중 신규 도구 호출은 `503 X-Bridge-Draining` 으로 돌려보내되 제출·첨부 읽기는 받는다)를 추가하고, `routers/system.py` 에 배포 제어 창구 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용)을 두었다.
 
 ### 배선 규약 (7)
 

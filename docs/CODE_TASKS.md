@@ -8,7 +8,7 @@ ai_read_priority: 5
 # CODE_TASKS — TASK 카드 카탈로그 (변경유형 → 코드영역 → 재귀 실행)
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.
-     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 40개 파일(route-module 30 + 언더스코어 공유모듈 9 + `__init__`, 2026-09-09 재실측).
+     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 41개 파일(route-module 30 + 언더스코어 공유모듈 10 + `__init__`, 2026-09-10 재실측).
      source: routers/*.py + docs/ROUTEMAP.md + static/graph/ 실측(2026-07-13; routers 카운트는 2026-08-25 재실측). freshness 는 ROUTEMAP source_commit 로 검증. -->
 
 > **이 문서의 용도**: "무엇을 바꾸려는가"(변경유형)를 입력으로, **어느 파일:심볼에서 시작해 →
@@ -61,13 +61,13 @@ ai_read_priority: 5
 
 ---
 
-## 영역 지도 (routers/ 40파일, 2026-09-09 실측)
+## 영역 지도 (routers/ 41파일, 2026-09-10 실측)
 
 - **30 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
   - ⚠ `routers/client_release.py`(INCLUDE_ORDER=260, feature-0046 소유) 는 **`app` 을 import 하지 않는
     유일한 route-module** 이다 — 그래서 `app.py` 가 `/client` 마운트를 위해 이것만 직접 import 할 수 있다.
     다른 라우터를 그 자리에 올리면 순환이 생긴다(그 import 가 파일 상단이 아니라 마운트 직전에 있는 이유).
-- **9 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
+- **10 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
   - 첨부 비교 정렬: `routers/_attachment_diff.py:align_lines`·`unified_from_rows` → `routers/_conv_store.py:_build_version_diff_view` → `routers/attachments.py:get_attachment_version_diff` → `static/app/attach-diff.js`. 원문 equal, 정렬 제한 안내, 양쪽 줄번호·원문 복원을 함께 검증한다.
@@ -77,6 +77,8 @@ ai_read_priority: 5
   - `routers/_folder_store.py` — 대화 폴더 PG 스토어(feature-0024, `conversation_folders`·`folder_conversation_map`).
   - `routers/_console_jobs.py` — 콘솔 작업의 프롬프트 조립 + 개인 AI 산출물의 기존 저장경로 반영(feature-0043, 2026-08-31 신설).
   - `routers/_console_llm.py` — 관리 콘솔 LLM 상태 판정 단일 정본(feature-0043, 2026-08-31 신설).
+  - `routers/_connect_funnel.py` — 연결 퍼널 계측: 어느 단계에서 떨어지는가(feature-0043, ROADMAP ITEM-00).
+  - `routers/_connect_steps.py` — 연결 단계 체크리스트 판정(feature-0043, ITEM-03·ITEM-06). ⚠ 정본 TASK 는 「5단계 판정」인데 이 모듈의 `key` 는 4개다 — 미해소(wiki/hot.md Active Threads).
 - **공유 컨텍스트**: `src/web_context.py`(leaf, stdlib-only) · `shared/db.py`(repo-root, PG `_pg_connect`) ·
   `unit/feature-0003-agent-web-ui/src/modules/`(attachment mirror·group_members 등).
 - **app.py 잔류(4,000줄, 2026-08-25 실측)**: DI seam · 인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)

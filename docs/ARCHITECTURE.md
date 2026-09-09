@@ -71,7 +71,7 @@ ai_read_priority: 4
 | feature-0011-shared-extraction | shared/ 공통 모듈 추출. 기존 import·monkeypatch를 보존하는 모듈 alias shim. | [FUNCTION](../unit/feature-0011-shared-extraction/docs/FUNCTION.md) |
 | feature-0012-web-router-modularization | feature-0003의 APIRouter/web_context 분할 initiative. 구현은 완료된 경계이며 프론트 후속은 feature-0038이 승계. | [FUNCTION](../unit/feature-0012-web-router-modularization/docs/FUNCTION.md) |
 | feature-0013-relationship-diagrams | 관계 저장소·관계 질문 안내·Mermaid 렌더. sanitize 후 strict 렌더와 graceful fallback. | [FUNCTION](../unit/feature-0013-relationship-diagrams/docs/FUNCTION.md) |
-| feature-0014-zero-downtime-deploy | 웹 2-replica 무중단 배포 스파인. 직렬화·expand/contract·드레인·엣지 복귀 확인·soak·last-good 롤백. | [FUNCTION](../unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md) |
+| feature-0014-zero-downtime-deploy | 웹 2-replica 무중단 배포 스파인. 직렬화·expand/contract·드레인·엣지 복귀 확인·soak·last-good 롤백. 배포 완료를 `bin/lib/ui-release.sh` 가 원자 게시(`/srv/ui-release:ro`, REQ-20260909-deploy-refresh)하고, 프록시 점검은 Caddy 내부 자식이 아니라 격리 프로세스로 실행한다(REQ-20260909-caddy-probe · REQ-20260909-edge-probe-process-lifecycle). | [FUNCTION](../unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md) |
 | feature-0015-zd-hygiene-backup | 워커 graceful 종료·MySQL online-DDL 린트·백업 범위·복원 리허설. 단일 호스트 HA/DB 엔진 무중단은 범위 밖. | [FUNCTION](../unit/feature-0015-zd-hygiene-backup/docs/FUNCTION.md) |
 | feature-0016-metadata-graph | 관계형 SSOT를 AGE metadata_kb 그래프로 재생성 가능한 투영. 그래프 API·탐색 UI·노드 분석 연계; 투영은 원본 저장소가 아니다. | [FUNCTION](../unit/feature-0016-metadata-graph/docs/FUNCTION.md) |
 | feature-0016-zd-pg-pause-caddy | PG config/minor 재시작 PAUSE→재생성→RESUME(trap 보장). Caddyfile 변경만 검증 후 재생성; major/HA 범위 밖. | [FUNCTION](../unit/feature-0016-zd-pg-pause-caddy/docs/FUNCTION.md) |
@@ -103,7 +103,7 @@ ai_read_priority: 4
 | feature-0043-external-llm-bridge | 서버 계정 LLM fail-closed 차단과 개인 머신 pull 브리지. 도구/인증/원장은 0041 재사용, 사용자 LLM 자격증명 무보관(SECURITY §49). | [FUNCTION](../unit/feature-0043-external-llm-bridge/docs/FUNCTION.md) |
 | feature-0044-qa-staging-pipeline | 격리망 QA→라이브 build-once/deploy-many CI/CD 설계 rev.3. 구현 승인 대기; QA 데이터 운영 등급·임베딩 MCP 이관 선행. | [FUNCTION](../unit/feature-0044-qa-staging-pipeline/docs/FUNCTION.md) |
 | feature-0045-zd-bridge-continuity | 브리지 대기/진행 분리·비대칭 드레인·MCP 롤링·claim lease 만료·러너 재연결 백오프. 대기는 교대, 진행 왕복은 완주. | [FUNCTION](../unit/feature-0045-zd-bridge-continuity/docs/FUNCTION.md) |
-| feature-0046-native-client | 서비스의 주 사용 클라이언트(사용자 결정 2026-09-08). WebView2/트레이·loopback nonce/origin 경계·CA DER/러너 SHA 검증, 실제 릴리스 확인 후 광고. | [FUNCTION](../unit/feature-0046-native-client/docs/FUNCTION.md) |
+| feature-0046-native-client | 서비스의 주 사용 클라이언트(사용자 결정 2026-09-08). WebView2/트레이·loopback nonce/origin 경계·CA DER/러너 SHA 검증, 실제 릴리스 확인 후 광고. 1.3.0 부터 설치는 `versions/<버전>-<설치번호>` 슬롯에 배치하고 `active-slot.txt` 원자 교체로 다음 실행부터 적용한다(실행 중 앱·자식 러너 미종료). | [FUNCTION](../unit/feature-0046-native-client/docs/FUNCTION.md) |
 
 ## 5. source of truth 원칙
 동일한 사실을 여러 문서에 중복 확정하지 않는다.
@@ -120,6 +120,7 @@ ai_read_priority: 4
 |---------|----------|----------|------|
 | feature-0003-agent-web-ui | feature-0002-agent-core | uses | core import, Caddy forwarded-IP trust 설정은 SECURITY §9.7. |
 | feature-0003-agent-web-ui | feature-0006-lan-proxy-access | uses | core import, Caddy forwarded-IP trust 설정은 SECURITY §9.7. |
+| feature-0003-agent-web-ui | feature-0014-zero-downtime-deploy | uses | 0014 `bin/lib/ui-release.sh` 완료 게시(`/srv/ui-release:ro`)를 `/api/ui-release`(`ui_release.py`)가 읽어 대화 화면을 자동 갱신. 소비 계약 = 0003 REQ-20260909-deploy-refresh. |
 | feature-0004-browser-automation | feature-0001-platform-runtime | uses | 운영 런타임과 함께 구동. |
 | feature-0005-qa-mcp | feature-0001-platform-runtime | uses | Compose·환경값, 코어/MCP 모드와 브라우저 smoke 대상. |
 | feature-0005-qa-mcp | feature-0002-agent-core | uses | Compose·환경값, 코어/MCP 모드와 브라우저 smoke 대상. |

@@ -760,3 +760,13 @@ API 를 들이는 대신 서버가 `pg_trgm` 으로 문자 후보를 찾아 기�
   첨부를 여는 확인은 배포 후로 남겼다(fixture PASS 를 실제 앱 PASS 로 확대하지 않는다).
 
 [[Features/feature-0003-agent-web-ui]]
+## [2026-09-10] wiki-ingest
+
+- **doc_sync 09-10** — 직전 doc_sync META `e7a01382`(09-09) 이후 델타 **61 커밋 / 180 파일 / +12662 −882**, 착륙은 전부 2026-09-09 하루다. **신규 feature 0개** — `ls -d unit/feature-*` **46** = `Features/feature-*.md` 46 = Features MOC 렌더 행 46 = `docs/STATUS.md` 생성물 표 46행. 창의 무게중심은 feature-0003(73 touch) · feature-0046(53) · feature-0043(24) · feature-0014(12) · feature-0006(5) 이다.
+- **클라이언트가 창 안에서 두 번 더 올랐는데 미러 넷이 「1.2.4 가 최신」에 머물러 있었다.** 정본 `src/client/version.py` 는 창 안에서 1.2.4 → **1.3.0**(경유 1.2.5)이고 `FUNCTION.md` 는 「구현 버전 1.3.0 · 공개 채널도 1.3.0」 · 「1.2.5는 공유 링크의 목적지를 수용한다」를 적는다. 그런데 `hot` 의 actionable thread 는 「정본 `CLIENT_VERSION = 1.2.4` … 필요한 것은 1.2.4 이후 릴리스」, 카드 §4-5 · `Features/_Index` · `Architecture/Overview` §2.3 은 모두 「1.2.4 게시본에 없다 — 다음 릴리스가 전제」였다. **릴리스로 해소된 막힘을 「다음 릴리스 전제」로 남겨 두면 다음 창이 같은 항목을 다시 «막힌 일»로 읽는다.** 남은 것은 릴리스가 아니라 **설치본 종단 실측**이다(정본 원장 `test-runs.d/TASK-20260909T120000-client-125-share-entry.md` — 「자동검증 PASS / 격리 동결본 실측 PASS / 설치본 종단은 NOT-RUN」).
+- **`routers/` 파일 수가 8표면에 산재해 전부 낡았다.** 창 안에서 `_attachment_diff.py` 가 신설돼(`aa795a51`) 실측이 **41 파일 = route-module 30 + 언더스코어 공유헬퍼 10 + `__init__`** 인데 `CODEBASE_MAP`(4곳) · `CODE_TASKS`(3곳) · `CODE_NAVIGATION`(1곳)이 「40 파일 · 공유헬퍼 9」였다. 그 커밋이 `CODEBASE_MAP` 의 헬퍼 열거 표 한 행만 10 으로 고치고 나머지 7 표면을 남겼다. `CODE_TASKS` 의 「영역 지도」 열거는 더 오래된 결손을 함께 안고 있었다 — 9줄뿐이라 `_connect_funnel.py`·`_connect_steps.py` 두 모듈이 통째로 빠져 있다(창 밖 착륙분). **self-add 는 자기 파일 안에서도 완결하지 않는다.**
+- **report-only 이월 재실측**: ⓐ **해소** — `bin/gen-status.sh --check` 가 직전 창 rc=2(무효 `feature_status`)에서 **rc=1**(정상 「재생성 필요 · frontmatter 24 · passthrough 22 · 신규 0」)로 내려왔다. 정본 `feature-0046/docs/TASK.md` frontmatter 가 유효값 `in-progress` 다. ⓑ **이번 창에서 해소** — `docs/STATUS.md` 생성물 구간이 정본 frontmatter 와 3행 어긋나 있었다(feature-0003·feature-0043 은 갱신일·요지, feature-0046 은 상태 `review` vs `in-progress`). 정본 경로는 행 수기 편집이 아니라 재생성이라 `bin/gen-status.sh` 를 돌렸고, 생성물이 아닌 §5 집계는 그에 맞춰 손으로 맞췄다(review 11→10 · in-progress 32→33). ⓒ **해소** — `docs/STATUS.md` 의 glued `||` 는 **0건**(여러 창이 baseline 으로 이월하던 항목이 사라졌다). ⓓ **잔존** — `docs/SECURITY.md` 안 `S4U` 히트 **0** · 마지막 절은 여전히 §49. feature-0006 의 실행 계정 교정(SYSTEM → 사용자 + S4U · `RunLevel Highest`)은 권한 경계 변경인데 미러에 없다. 소유권은 doc_sync 가 아니다 — 착수 cycle 의 몫.
+- **직전 창의 Log entry 가 치환되지 않은 템플릿 토큰을 싣고 있다** — 09-09 wiki-ingest entry 의 「미러 정합 …건」 자리다. `edit_policy: append-only` 라 여기서는 사실만 남긴다: 그 커밋 메시지의 값은 「META 최종 58건 적용」이다.
+
+[[Features/feature-0046-native-client]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0014-zero-downtime-deploy]] · [[Features/feature-0006-lan-proxy-access]]
+
