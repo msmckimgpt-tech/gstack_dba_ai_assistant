@@ -11,3 +11,7 @@
 - security 정적 재검토 PASS. backend/qa는 관련 15건을 독립 실행하고 전체 49 PASS 로그·실제 probe와 PID/zombie를 확인하여 최종 PASS. 셸 구문·diff 검사 PASS.
 
 배포 재개와 설치 DQA 수용 결과는 feature-0003의 `20260909-auth-transition.md`를 정본으로 기록한다.
+
+## 배포 복구 완료
+
+PR #1656/cf55c659 main 반영 후 canonical web-only 배포 exit 0, 두 replica ready·엣지 복귀·90초 soak PASS, UI 완료 신호 게시. Caddy PID 3619937·zombie 99 유지 및 PID 한도 256 확인. init은 실행 중 미적용 상태로 명시한다. 설치 DQA 3회 왕복의 70개 관측 중 로그인 노출 0으로 원래 사용자 요청도 수용했다.
