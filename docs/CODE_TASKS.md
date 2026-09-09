@@ -340,6 +340,8 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 
 ## TASK 9 — 정적 자산 캐싱 / 캐시버스터(`?v=`) 변경
 
+열린 DQA 자동 반영은 `bin/lib/ui-release.sh:publish_ui_release` → `unit/feature-0003-agent-web-ui/src/ui_release.py:read_release` → `src/routers/system.py:get_ui_release` → `static/ui-refresh.js:createUiRefresh` → `static/app/deploy-refresh.js:installAppRefresh` 순서다. 두 replica 검증 후 완료를 원자 게시한다. 주 대화 화면의 선택을 복원하며 초안/신규 첨부/진행 요청을 보호한다. 최초 도입 전 페이지는 새 로드가 한 번 필요하다. 검증: `test_ui_release.py`, `test_ui_release_publication.py`, `test_ui_refresh.py`, `tests/windows/verify_deploy_refresh.py`.
+
 **Match keywords**: 캐시버스터·`?v=`·asset stamp·`Cache-Control`·immutable·no-store·배포 후 구버전 렌더·하드 리프레시.
 
 **Entry region**: 판정 주체는 **upstream** 이다 — `unit/feature-0003-agent-web-ui/src/static_cache.py`

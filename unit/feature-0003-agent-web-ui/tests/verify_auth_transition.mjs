@@ -139,9 +139,14 @@ function workspaceFixture({ search = '', user = session.user, refresh, askStatus
     restartClientPanel() {}, applyProductHydration() {},
     refreshWorkspace: refresh || (async id => { context.state.activeConversationId = id; }),
     fetchAskStatus: askStatus,
+    readAppRefreshResume: () => null, restoreAppRefresh: async () => {}, installAppRefresh() {},
+    messageLogEl: result.document.getElementById('messageLog'), _releaseRailBottomPin() {}, showToast() {},
+    workspaceModuleUrl: new URL('app.js?v=auth-fixture', base).href,
   });
+  // vm.Script has no import.meta; inject only the module URL supplied by the real ESM host.
+  const workspaceBody = fn('app.js', 'initializeWorkspace').replaceAll('import.meta.url', 'workspaceModuleUrl');
   vm.runInContext(fn('app/auth.js', 'showForceChangePasswordModal')
-    + '\n' + fn('app.js', 'initializeWorkspace'), context);
+    + '\n' + workspaceBody, context);
   return result;
 }
 
@@ -286,6 +291,52 @@ for (const method of ['password', 'totp', 'signup']) {
     });
     f.close();
   }
+}
+
+for (const search of ['', '?conversation=explicit-target']) {
+  const resume = { conversationId: 'saved-target', attachmentSelections: { 'saved-target': [[7, false]] } };
+  const events = [];
+  let finishUiRestore;
+  f = workspaceFixture({ search, user: { ...session.user, must_change_password: true } });
+  f.context.readAppRefreshResume = user => {
+    assert.equal(user, f.context.state.user);
+    return resume;
+  };
+  f.context.restoreAppRefresh = async (saved, options) => {
+    assert.equal(saved, resume);
+    assert.equal(options.state, f.context.state);
+    assert.equal(options.messageLog, f.document.getElementById('messageLog'));
+    events.push('restore-start');
+    await new Promise(resolve => { finishUiRestore = resolve; });
+    events.push('restore-finish');
+  };
+  f.context.installAppRefresh = options => {
+    assert.equal(options.state, f.context.state);
+    assert.equal(options.stamp, 'auth-fixture');
+    assert.equal(f.document.getElementById('forceChangePasswordModal'), null);
+    events.push('install');
+  };
+  const restoring = f.context.restoreSession();
+  await new Promise(resolve => setImmediate(resolve));
+  check(`automatic refresh preserves selections and ${search ? 'explicit destination priority' : 'saved destination'} while startup waits`, () => {
+    assert.equal(typeof finishUiRestore, 'function');
+    assert.equal(f.context.state.uiAttachmentSelections, resume.attachmentSelections);
+    assert.equal(f.context.state.activeConversationId, search ? 'explicit-target' : 'saved-target');
+    assert.equal(f.context.window.location.search, search);
+    assert.deepEqual(events, ['restore-start']);
+    assert.ok(f.visible('startupOverlay'));
+    assert.equal(f.document.getElementById('forceChangePasswordModal'), null);
+  });
+  finishUiRestore();
+  await restoring;
+  check(`automatic refresh completes before ${search ? 'deep-link cleanup and ' : ''}password-change presentation`, () => {
+    assert.deepEqual(events, ['restore-start', 'restore-finish', 'install']);
+    assert.equal(f.context.window.location.search, '');
+    assert.ok(f.document.getElementById('forceChangePasswordModal'));
+    assert.equal(f.visible('startupOverlay'), false);
+    assert.equal(f.visible('authOverlay'), false);
+  });
+  f.close();
 }
 
 // Prepare the same production functions for the isolated native WebView2 fixture.

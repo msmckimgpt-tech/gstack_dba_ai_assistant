@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260909T140000-deploy-refresh — 완료 신호 게시
+- 정본: feature-0003 TASK의 동명 항목. 사용자 요청으로 배포 완료→열린 DQA 자동 적용 승인.
+- Plan: `bin/deploy-web.sh:publish_ui_release` / `bin/lib/ui-release.sh`로 실제 두 replica ready·revision·stamp 일치 및 배포 검증 성공 뒤 공유 manifest 원자 게시. 실패·혼합 버전·모의 실행에는 미게시, rollback 및 재시도 검증.
+- AC: 미완료 배포는 새 release를 알리지 않는다. 완료 시 두 replica가 같은 완료 release를 반환한다. 기존 드레인·롤링·검증 게이트 유지.
+- [ ] 완료 신호 구현·검증·출하 결과 기록
+
+- [x] PR #1653/7fa75a51 배포 완료, 두 replica/edge 완료 메타데이터와 제품7파일 지문 확인. 설치 DQA 검증 진행 중.
+
 ## 1. Current Status
 - State: in-progress
 - Owner: AI (claude) / Human approved

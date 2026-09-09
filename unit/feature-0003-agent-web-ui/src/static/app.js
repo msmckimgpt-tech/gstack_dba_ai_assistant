@@ -1,3 +1,4 @@
+import { readAppRefreshResume, restoreAppRefresh, installAppRefresh } from "./app/deploy-refresh.js?v=dev";
 import { renderMessageContent, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange, onCapsChange } from "./app/connect-modal.js?v=dev";
@@ -135,6 +136,7 @@ export const ASK_ATTACH_POLL_WAIT_SEC = 45;
 export const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
 
 export const state = {
+  uiMutations: 0,
   // ITEM-P5b 후속 Phase A (state-intake, PLAN-APPROVED 2026-08-05): 도메인 추출을 막던
   // 모듈-스코프 공유 가변 let 을 state 프로퍼티로 편입 — renderConversationList(B1)·
   // 사이드바 catchup 이 core(initialize/handleLogout)와 양방향 재할당 결합이던 2건.
@@ -880,6 +882,9 @@ function _notifyMentions(incoming, hidden) {
 }
 
 export async function apiFetch(url, options = {}) {
+  const uiMutation = !["GET", "HEAD"].includes(String(options.method || "GET").toUpperCase());
+  if (uiMutation) state.uiMutations += 1;
+  try {
   const headers = new Headers(options.headers || {});
   if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -913,6 +918,7 @@ export async function apiFetch(url, options = {}) {
     throw error;
   }
   return payload;
+  } finally { if (uiMutation) state.uiMutations -= 1; }
 }
 
 export function formatDateTime(value = "") {
@@ -7894,7 +7900,9 @@ export async function initializeWorkspace(initialSession = null) {
   //   (1) deep-link(/?conversation=<id>, TASK-0263) — 명시 네비게이션이므로 그 대화를 활성화.
   //   (2) 진행 중 요청 이어받기(TASK-0041) — 직전 대화가 서버에서 처리 중이면 그 대화를 활성화.
   const _serverCid = state.session.conversation_id || "";
-  let _preferCid = "";
+  const uiResume = readAppRefreshResume(state.user);
+  state.uiAttachmentSelections = uiResume?.attachmentSelections || {};
+  let _preferCid = uiResume?.conversationId || "";
   let _hasDeepLink = false;
   let _allowCurrentFallback = false;
   let _resumeStatus = null;
@@ -7909,7 +7917,7 @@ export async function initializeWorkspace(initialSession = null) {
     }
   } catch (_) { /* URL 파싱 실패 무시 */ }
   // 진행 중 요청이 있으면 빈 화면 대신 그 대화를 선택해 이어받는다(아래 resume 블록과 status 공유).
-  if (!_preferCid && _serverCid) {
+  if (!_preferCid && _serverCid && !uiResume) {
     try {
       _resumeStatus = await fetchAskStatus(_serverCid);
       if (_resumeStatus && _resumeStatus.is_processing) _preferCid = _serverCid;
@@ -7964,6 +7972,10 @@ export async function initializeWorkspace(initialSession = null) {
         });
     }
   }
+  await restoreAppRefresh(uiResume, { state, messageLog: messageLogEl, renderComposer,
+    releaseScrollPin: _releaseRailBottomPin, notify: showToast });
+  installAppRefresh({ state, messageLog: messageLogEl, notify: showToast,
+    stamp: new URL(import.meta.url).searchParams.get("v") || "" });
   // 실패 후 재시도에도 목적지를 유지하고, 오류 화면 위에 강제 모달을 남기지 않는다.
   if (_hasDeepLink && window.history && window.history.replaceState) {
     window.history.replaceState({}, "", window.location.pathname);

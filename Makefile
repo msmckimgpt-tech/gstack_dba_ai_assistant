@@ -284,8 +284,9 @@ bridge-agent:  ## dev: 브리지 러너 배포본 빌드 (src/agent/ 패키지 �
 test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — 전용 compose 프로젝트(라이브 네트워크 미참여) + 라이브 DB/스냅샷 차단 env
 	@$(MAKE) -s dc-build SERVICE=agent DC_QUIET="$(DC_TEST)"
 	@$(DC_TEST) run --rm --no-deps $(TEST_ISOLATION_ENV) -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
-	  if ! command -v node >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then \
-	    apt-get update -qq >/tmp/node-test-install.log 2>&1 && apt-get install -y --no-install-recommends nodejs git >>/tmp/node-test-install.log 2>&1 || { cat /tmp/node-test-install.log; exit 1; }; \
+	  export NODE_PATH=/usr/share/nodejs; \
+	  if ! command -v node >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1 || ! node -e "require(\"jsdom\"); require(\"acorn\");" >/dev/null 2>&1; then \
+	    apt-get update -qq >/tmp/node-test-install.log 2>&1 && apt-get install -y --no-install-recommends nodejs git node-jsdom node-acorn >>/tmp/node-test-install.log 2>&1 || { cat /tmp/node-test-install.log; exit 1; }; \
 	  fi; \
 	  node --version || exit 1; \
 	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \

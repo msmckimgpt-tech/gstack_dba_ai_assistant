@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Function
 
+## REQ-20260909-deploy-refresh — 배포 완료 게시
+
+`bin/lib/ui-release.sh`는 롤링 시작 전에 pending을 원자 게시하고, 배포 scope에 필요한 readiness·edge·soak 및 해당 smoke 검증을 마친 두 replica의 revision/stamp가 일치할 때 complete를 게시한다. 전용 `artifacts/deploy/ui-release` 디렉터리를 web에 `/srv/ui-release:ro`로 제공한다. 같은 revision 재시도도 완료 marker를 확인하며 미완료이면 soak를 재검증한다. workers-only와 dry-run은 게시하지 않는다.
+
+rollback은 pending 기록 실패에도 서비스 복원을 계속한다. 복원된 이미지의 current 태그를 먼저 복구하고 완료를 게시한다. worker 복원 실패나 완료 기록 실패를 성공으로 보고하지 않는다. web-only는 기존 계약에 따라 대화 smoke를 실행하지 않는다. DQA 소비 계약은 feature-0003의 REQ-20260909-deploy-refresh를 따른다.
+
 ## 1. Summary
 web 서비스를 **무중단(zero-downtime)** 으로 재배포하는 구조를 도입한다. 현재 배포
 (`docker compose up -d --no-deps web`)는 단일 web 컨테이너를 recreate 하므로 Caddy 가

@@ -8506,7 +8506,6 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
 - Human Approval Needed: no
-
 ## REV-20260909T135700-auth-transition-security [SUBAGENT:security] — PASS
 - Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
 - Trigger: auth/session/인증 세션
@@ -8546,3 +8545,27 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS
 - Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-qa.md
 - Human Approval Needed: no
+## REV-20260909T140000-deploy-refresh-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [backend-security-qa](reviews/20260909T140000-deploy-refresh-backend-security-qa.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
+
+
+## REV-20260909T140000-deploy-refresh-ux-design [SUBAGENT:ux-design] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [ux-design](reviews/20260909T140000-deploy-refresh-ux-design.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
+
+
+## REV-20260909T141300-deploy-refresh-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Reason: 코드 변경 없이 실제 서버 배포와 격리 재검증 결과를 기록하는 비정책 문서 후속. backend-security-qa가 기존 수치와 경계를 대조했고 web-only smoke 문구를 정정했다.
+- Timestamp: 2026-09-09T14:13:00+09:00

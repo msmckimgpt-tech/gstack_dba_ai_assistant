@@ -74,6 +74,7 @@ STATE_DIR="$ARTIFACTS/deploy"
 CERT_ROOT="$ARTIFACTS/certs"
 LOCK_FILE="$LOCK_DIR/deploy-web.lock"
 STATE_FILE="$STATE_DIR/deploy-web.state"
+source "$REPO_ROOT/bin/lib/ui-release.sh"
 LASTGOOD_FILE="$STATE_DIR/deploy-web.last-good"
 PIN_FILE="$STATE_DIR/docker-compose.deploy-pin.yml"
 
@@ -203,6 +204,7 @@ preflight_privilege() {
     die2 "docker 데몬 접근 불가. 'sudo -E bin/deploy-web.sh' 로 실행하거나 scoped NOPASSWD sudoers 를 설정하세요 (헤더 참조). NEVER 'NOPASSWD: ALL'."
   fi
   mkdir -p "$LOCK_DIR" "$STATE_DIR"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$STATE_DIR/ui-release"
 }
 
 # 스크립트가 root 로 쓴 artifacts 산출물을 deploy-user 소유로 정규화(다음 non-root 실행 차단 방지).
@@ -1024,6 +1026,7 @@ auto_rollback() {  # $1 = 실패한 sha
   local agent_pin=""
   docker image inspect "$AGENT_IMAGE_REPO:current" >/dev/null 2>&1 && agent_pin="$AGENT_IMAGE_REPO:current"
   write_pin_overlay "$IMAGE_REPO:last-good" "$agent_pin"; set_dc_prod
+  ui_release_write pending "$good" || warn "UI pending 기록 실패 — 서비스 롤백을 먼저 진행합니다."
   local svc; for svc in "${REPLICAS[@]}"; do
     recreate_replica "$svc" "$good" || warn "$svc 롤백 recreate 문제 — 계속."
   done
@@ -1040,6 +1043,7 @@ auto_rollback() {  # $1 = 실패한 sha
   # 리뷰 M-2: ":current 태그 = 현재 배포본" 불변식 복원 — 미복원 시 다음 배포의 last-good
   # 회전이 실패 이미지를 last-good 으로 오염시켜 2연속 실패에서 롤백 불능이 된다.
   if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:last-good" "$IMAGE_REPO:current" 2>/dev/null || true; fi
+  if [ "$rb_ok" -eq 0 ]; then publish_ui_release "$good" || return 1; fi
 }
 
 # ── 워커(insight/ask) 롤아웃 (feature-0020) ─────────────────────────────────────
@@ -1764,6 +1768,7 @@ main() {
     docker image inspect "$IMAGE_REPO:last-good" >/dev/null 2>&1 || die "last-good 이미지($IMAGE_REPO:last-good) 없음."
     write_pin_overlay "$IMAGE_REPO:last-good" ""; set_dc_prod
     preflight_fileset; preflight_tls
+    ui_release_write pending "$good" || warn "UI pending 기록 실패 — 서비스 롤백을 먼저 진행합니다."
     local svc; for svc in "${REPLICAS[@]}"; do recreate_replica "$svc" "$good" || die "$svc 롤백 실패."; done
     # 하드닝(2026-07-11): recreate 직후 단발 프로브는 워밍업 창 오판 — auto_rollback 과 동일 60s 회복 대기.
     local rb_deadline=$(( SECONDS + 60 )) rb_ok=1
@@ -1773,10 +1778,13 @@ main() {
     done
     [ "$rb_ok" -eq 0 ] && log "롤백 완료 + edge 정상 ($good)." || die "롤백했으나 edge 비정상(60s 대기 후)."
     state_set current "$good"
+    # Restore the image alias before optional publication/worker steps can fail.
+    if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:last-good" "$IMAGE_REPO:current"; fi
     # feature-0020: 워커도 last-good 이 있으면 함께 롤백(web/워커 버전 정합).
     if [ "$SCOPE" != "web" ] && [ -n "$(agent_lastgood_sha)" ]; then
-      rollback_workers "$IMAGE_REPO:last-good" || warn "워커 롤백 부분 실패 — 수동 확인."
+      rollback_workers "$IMAGE_REPO:last-good" || die "워커 롤백 부분 실패 — UI 완료 신호를 게시하지 않습니다."
     fi
+    publish_ui_release "$good" || die "롤백 UI 완료 신호 게시 실패."
     normalize_ownership; exit 0
   fi
 
@@ -1793,9 +1801,9 @@ main() {
     log "이미 $TARGET_SHA 가 배포돼 있으나 **대화 스모크 미통과**(기록=${conv_smoke:-없음}) → no-op 하지 않고 검증까지 진행한다."
   elif [ "$FORCE_GATEWAY" -eq 0 ] && edge_ok; then
     case "$SCOPE" in
-      all)     if [ "$web_current" = "$TARGET_SHA" ] && [ "$agent_current" = "$TARGET_SHA" ]; then
+      all)     if [ "$web_current" = "$TARGET_SHA" ] && [ "$agent_current" = "$TARGET_SHA" ] && ui_release_complete_for "$TARGET_SHA"; then
                  log "이미 web+워커 $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등). (gateway/caddy 의 이미지-only 드리프트(re-pull)는 no-op 에서 미검사 — 필요 시 --force-gateway 또는 커밋 동반 배포.)"; normalize_ownership; exit 0; fi ;;
-      web)     if [ "$web_current" = "$TARGET_SHA" ]; then
+      web)     if [ "$web_current" = "$TARGET_SHA" ] && ui_release_complete_for "$TARGET_SHA"; then
                  log "이미 web $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등)."; normalize_ownership; exit 0; fi ;;
       workers) if [ "$agent_current" = "$TARGET_SHA" ]; then
                  log "이미 워커 $TARGET_SHA 배포됨 → no-op (멱등)."; normalize_ownership; exit 0; fi ;;
@@ -1846,6 +1854,7 @@ main() {
     asset_stamp_verify "$TARGET_SHA"
     bridge_runner_verify "$TARGET_SHA"
 
+    ui_release_write pending "$TARGET_SHA" || die "UI pending 신호 기록 실패 — 롤링 중단."
     step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
     # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.
     # ⚠ **조회 실패와 "정말 없음" 을 구분한다** — 둘을 빈 문자열로 합치면 일시적 compose 조회
@@ -1885,6 +1894,11 @@ main() {
     fi
     rollout_mcp_phase
     reconcile_caddy
+    if [ "$SCOPE" != "workers" ]; then
+      # state.current is written before soak: an interrupted attempt must verify again.
+      ui_release_write pending "$TARGET_SHA" || die "UI pending 신호 기록 실패."
+      soak_or_rollback "$TARGET_SHA" || exit 1
+    fi
   fi
 
   # feature-0020: 워커 + gateway 롤아웃 (web soak 통과 후 — 사용자 대면 경로 안정 확인 뒤 백그라운드 층).
@@ -1897,6 +1911,9 @@ main() {
 
   normalize_ownership
   conversation_smoke_or_fail
+  if [ "$SCOPE" != "workers" ]; then
+    publish_ui_release "$TARGET_SHA" || die "배포 UI 완료 신호 게시 실패 — 재실행으로 복구."
+  fi
   if [ "$DRY_RUN" -eq 1 ]; then
     step "배포 모의 실행 완료: $TARGET_SHA (scope=$SCOPE — 실제 적용·검증 미수행)"
   else

@@ -6427,7 +6427,16 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260909T130116-session-installed-acceptance
 
 제품 코드 변경 없이 보완 배포 및 설치 DQA 실제 재개 결과를 기록한다. 첫 결속·후속 재개 둘 다 완료, 동일 native ID 및 상태4→6, 합성 문자열 회상 UI PASS. 다계정 그룹 앱 왕복 NOT-RUN은 유지한다.
-
 ## CHG-20260909T135700-auth-transition
 
 사용자 제보의 로그인 전환 노출을 수정했다. 표시 상태 분리와 오류 재시도, DB503 및 성공 후 모달/대화URL정리. 기존 세션 쿠키·인가정책 유지. 독립리뷰 지적을 같은 작업에 반영했다. 상세는 TASK/Run 정본.
+## CHG-20260909T140000-deploy-refresh
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 변경/이유: 이미 열린 DQA가 구버전 코드를 유지하던 문제를 배포 완료 게시와 안전한 화면 재로드로 해결. feature-0003은 공개 메타데이터 API·3초 감지·계정별 선택 복원, feature-0014는 원자 게시·혼합 배포 억제·rollback/재시도 경계를 소유한다.
+- 검증: 독립 backend/security/qa 85 PASS, Node 감지 9 시나리오, 기존 diff Node128 PASS, DQA Shell/WebView2 격리34/34 PASS. 상세 [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
+- API 추가는 GET `/api/ui-release` 한 개이며 DB·권한·인증 계약 변경 없음.
+
+
+## CHG-20260909T141300-deploy-refresh-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
