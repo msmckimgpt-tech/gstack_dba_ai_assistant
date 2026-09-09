@@ -8584,3 +8584,10 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - Reason: 수명주기 보완 후 현재 DQA 검증 경계를 명시한 비정책 증거 기록. 코드 검증과 설치본 실행을 구분한다.
 - Timestamp: 2026-09-09T14:22:00+09:00
+
+
+## REV-20260909T150000-auth-transition-integration [SUBAGENT:ux,backend,qa]
+
+- PR #1653 통합 뒤 UX reviewer가 실제 초기화 함수의 자동 갱신 복원·deep-link·강제 비밀번호 변경 순서를 검증하여 44 PASS. 하네스 import.meta P2를 수정했다.
+- backend/qa reviewer는 통합 소스와 Makefile Git/jsdom/acorn 시험 의존성, pytest 인증 wrapper를 검토했다. 두 JS wrapper 독립 실행 PASS와 격리 컨테이너 141 PASS 로그를 확인했다.
+- Verdict: PASS, 잔여 P1/P2 없음. 이 리뷰 뒤 수용한 PR #1654/#1655의 갱신 종료 처리는 root가 기존 리뷰 및 변경 diff를 확인하고 두 JS wrapper를 재실행한다. 설치앱 검증은 Run의 배포 후 항목을 따른다.

@@ -6451,3 +6451,10 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 
 ## CHG-20260909T142200-deploy-refresh-run-boundary
 - 수명주기 보완 커밋의 CLI 결과와 DQA-client 재실행/설치 검증 미완료를 명시하여 증거 누락을 보정. 코드 변경 없음.
+
+
+## CHG-20260909T150000-auth-transition-test-runtime
+
+- main의 배포 자동 갱신을 보존하도록 인증 초기화를 통합했다.
+- 전체/대상 검사에서 드러난 시험 컨테이너 Git/jsdom/acorn 누락을 Makefile에서 해결하고, 인증 JavaScript 행위 검사를 pytest 실행에 연결했다.
+- 관련 격리 회귀 141 PASS, 인증 Node 44 PASS, 통합 제품 WebView2 15 PASS. 전체 재실행 PASS와는 구분한다.
