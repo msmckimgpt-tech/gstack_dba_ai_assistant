@@ -397,3 +397,26 @@ denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉�
 
 ⚠ **관측 하네스의 판정이 부정확했다** — 목표 지표가 아니라 모든 `lvl=WARN` 을 세어
 `VERDICT: WARN 잔존` 을 냈다. 그대로 받아썼다면 해소된 것을 미해소로 보고했을 것이다.
+
+## CHG-20260909T050000-portproxy-task-repair
+
+- 2026-09-09T06:31:09.941569+00:00; TASK-20260909T050000-portproxy-task-repair. **저장소 코드 변경 0** — Windows 예약작업
+  상태 복구 기록이다. 사용자 제보(5분마다 `run_hidden.vbs` 없음 오류창)의 원인은 예약작업
+  `mysql_ai_web_portproxy_sync` 의 `UserId=SYSTEM` + `LogonType=InteractiveToken` 손상 조합이었다.
+  cmdlet 은 못 보고 `Register-*` 는 거부하며 스케줄러만 실행하는 세 모순이 여기서 나왔다.
+- `run_hidden.vbs` 는 **불필요**로 판정(사용자 요청 선행 검토): 정본은 SYSTEM+ServiceAccount 라
+  Session 0 격리로 창이 뜨지 않으므로 숨김 래퍼가 필요 없고, vbs 경유는 로그온 전 미동작·권한·
+  실패지점 추가라는 대가만 남긴다.
+- 조치: `schtasks /delete` 로 손상 작업 제거 → 현재 운영 파라미터(`-ListenAddress 112.185.196.20`
+  등)를 승계해 재등록. 매핑·접속은 전 구간 유지.
+
+## CHG-20260909T060000-portproxy-task-rename
+
+- 2026-09-09T07:07:23.228056+00:00; 같은 TASK 의 최종 조치. 이벤트 로그가 `TaskName=\mysql_ai_web_portproxy_sync`·
+  `Action=wscript.exe` 를 잡아 **XML(powershell)과 레지스트리 캐시(wscript)의 불일치**를 확정했다.
+  같은 이름 재등록이 옛 캐시를 물려받으므로(두 번 재발) **새 이름 `mysql_ai_web_portproxy_sync2`**
+  로 등록했고, 그 작업은 `Get-ScheduledTask` 조회가 정상 동작한다(손상 없음).
+- sync 스크립트 직접 실행은 **exit 0**(`portproxy_action: unchanged`, 80·443 verify true) — rc=1 은
+  스크립트 결함이 아니다. 매핑·접속은 전 구간 유지.
+- 재발 종료는 **미확정**으로 남긴다: 관측 창 내내 기존 인스턴스가 살아 `IgnoreNew` 로 새 실행을
+  억제해, 「무재발」과 「억제」가 갈리지 않는다.
