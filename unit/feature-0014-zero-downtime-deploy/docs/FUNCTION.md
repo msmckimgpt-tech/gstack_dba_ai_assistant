@@ -8,6 +8,10 @@ source_of_truth: true
 
 # Function
 
+## REQ-20260909-edge-probe-process-lifecycle
+
+엣지 복귀 점검은 장수 Caddy에 HTTPS 자식 프로세스를 만들지 않는다. 호스트 nsenter/curl/dig로 Caddy network namespace와 실제 resolver·CA를 사용하며, DNS 결과와 공유 네트워크의 대상 IP가 일치하고 TLS/SNI/Host 검증 후 정확히 HTTP 200일 때만 통과한다. 메타데이터·DNS·TLS 조회 실패는 게이트 실패이며 HTTP fallback은 없다. 호스트 curl 설정 파일과 프록시 환경은 점검을 바꾸지 못한다.
+
 ## REQ-20260909-deploy-refresh — 배포 완료 게시
 
 `bin/lib/ui-release.sh`는 롤링 시작 전에 pending을 원자 게시하고, 배포 scope에 필요한 readiness·edge·soak 및 해당 smoke 검증을 마친 두 replica의 revision/stamp가 일치할 때 complete를 게시한다. 전용 `artifacts/deploy/ui-release` 디렉터리를 web에 `/srv/ui-release:ro`로 제공한다. 같은 revision 재시도도 완료 marker를 확인하며 미완료이면 soak를 재검증한다. workers-only와 dry-run은 게시하지 않는다.

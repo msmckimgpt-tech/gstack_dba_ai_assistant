@@ -6458,3 +6458,8 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - main의 배포 자동 갱신을 보존하도록 인증 초기화를 통합했다.
 - 전체/대상 검사에서 드러난 시험 컨테이너 Git/jsdom/acorn 누락을 Makefile에서 해결하고, 인증 JavaScript 행위 검사를 pytest 실행에 연결했다.
 - 관련 격리 회귀 141 PASS, 인증 Node 44 PASS, 통합 제품 WebView2 15 PASS. 전체 재실행 PASS와는 구분한다.
+
+
+## CHG-20260909T160000-auth-transition-deploy-recovery
+
+- 로그인 화면 수정 배포 중 발견한 Caddy PID 소진을 복구하고 재발 probe 경로를 수정했다. 정본은 feature-0014의 TASK/Run이다. 기존 web·Caddy를 내리지 않았다.

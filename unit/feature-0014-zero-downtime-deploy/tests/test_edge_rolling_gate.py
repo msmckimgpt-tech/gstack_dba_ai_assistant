@@ -85,6 +85,8 @@ def _mock_docker(tmp_path: Path, *, caddy_running: bool = True, ps_fail: bool = 
             #!/bin/sh
             case "$*" in
               *"ps -q caddy"*) {"exit 1" if ps_fail else ps_echo} ;;
+              *"ps -q web-"*) echo fake-peer-cid ;;
+              inspect*) printf '123 {{"shared":{{"IPAddress":"10.0.0.1"}}}}\\n456 {{"shared":{{"IPAddress":"10.0.0.2"}}}}\\n' ;;
               *"cat /etc/caddy/Caddyfile"*) printf '%s' "$FAKE_LIVE_CADDYFILE" ;;
               *livez*) {"exit 1" if False else 'exit ${FAKE_PEER_LIVE_RC:-0}'} ;;
               *reverse_proxy/upstreams*)
@@ -97,6 +99,10 @@ def _mock_docker(tmp_path: Path, *, caddy_running: bool = True, ps_fail: bool = 
         encoding="utf-8",
     )
     (binroot / "docker").chmod(0o755)
+    (binroot / "nsenter").write_text('#!/bin/sh\nif [ "$4" = dig ]; then printf 10.0.0.2; exit 0; fi\n[ "${FAKE_PEER_LIVE_RC:-0}" = 0 ] || exit "$FAKE_PEER_LIVE_RC"\nprintf 200\n')
+    (binroot / "nsenter").chmod(0o755)
+    (binroot / "awk").write_text('#!/bin/sh\ncase "$*" in *root/etc/resolv.conf*) echo 127.0.0.11 ;; *) exec /usr/bin/awk "$@" ;; esac\n')
+    (binroot / "awk").chmod(0o755)
     return binroot
 
 
@@ -138,6 +144,7 @@ def _run_harness(
                 f"EDGE_DEGRADE_FLOOR={degrade_floor}",
                 "DC=(docker compose -f docker-compose.yml)",
                 'WEB_PUBLIC_HOST="test.local"',
+                'ROOT_CA="/fixture/rootCA.pem"',
                 *[_extract_func(f) for f in funcs],
                 body,
             ]
@@ -579,7 +586,7 @@ def test_g4e_ps_failure_is_not_read_as_caddy_absent(tmp_path):
         fail_duration_s=1,
         degrade_floor=4,
     )
-    assert "RC=0" in proc.stdout
+    assert "RC=1" in proc.stdout
     assert "단정하지 않고" in proc.stderr, (
         f"ps 조회 실패를 미기동으로 처리했다(즉시 통과) — {proc.stderr!r}"
     )
@@ -693,7 +700,7 @@ def test_g9b_all_container_probes_have_kill_after():
     src = SCRIPT.read_text(encoding="utf-8")
     bare = [
         ln.strip() for ln in src.splitlines()
-        if re.search(r"\btimeout\s+\d", ln) and not re.search(r"\btimeout\s+-k\s", ln)
+        if re.search(r"(?<![\w-])timeout\s+\d", ln) and not re.search(r"\btimeout\s+-k\s", ln)
         and not ln.strip().startswith("#")
     ]
     assert bare == [], f"kill-after 없는 timeout 이 있다(TERM 무시 시 상한 미강제): {bare}"
@@ -762,3 +769,58 @@ def test_g10_replicas_share_a_single_cert_source():
     assert "WEB_TLS_CERT_FILE" not in svc.group(1), (
         "web-a/web-b 가 replica 별 cert 를 지정한다 — 위 전제가 깨졌다."
     )
+
+
+@pytest.mark.parametrize("status,dns,exit_code", [("200", "10.0.0.2", 0), ("204", "10.0.0.2", 1), ("301", "10.0.0.2", 1), ("503", "10.0.0.2", 1), ("200", "", 1), ("200", "10.0.0.9", 1)])
+def test_peer_probe_requires_exact_200_and_preserves_tls_boundary(tmp_path, status, dns, exit_code):
+    script = tmp_path / "probe.sh"
+    trace = tmp_path / "trace"
+    script.write_text("\n".join([
+        "set -euo pipefail",
+        "DC=(fake_compose)",
+        "WEB_PUBLIC_HOST=test.local",
+        "fake_compose() { echo fake-cid; }",
+        "awk() { echo 127.0.0.11; }",
+        "docker() { printf '%s\\n' '123 {\"shared\":{\"IPAddress\":\"10.0.0.1\"}}' '456 {\"unshared\":{\"IPAddress\":\"10.1.0.2\"},\"shared\":{\"IPAddress\":\"10.0.0.2\"}}'; }",
+        'timeout() { shift 3; "$@"; }',
+        f"nsenter() {{ if [ \"$4\" = dig ]; then printf '%s' '{dns}'; return; fi; printf '%s\\n' \"$@\" > '{trace}'; printf '{status}'; }}",
+        _extract_func("edge_peer_live"),
+        "edge_peer_live web-b",
+    ]))
+    result = subprocess.run(["bash", str(script)], capture_output=True, text=True)
+    assert result.returncode == exit_code, result.stderr
+    if dns != "10.0.0.2":
+        assert not trace.exists()
+        return
+    args = trace.read_text().splitlines()
+    assert args[:5] == ["--target", "123", "--net", "curl", "--disable"]
+    assert args[args.index("--cacert") + 1] == "/proc/123/root/certs/rootCA.pem"
+    assert args[args.index("--resolve") + 1] == "test.local:8000:10.0.0.2"
+    assert args[args.index("--header") + 1] == "Host: test.local"
+    assert args[args.index("--noproxy") + 1] == "*"
+    assert args[-1] == "https://test.local:8000/livez"
+    assert "--insecure" not in args and "-k" not in args
+
+
+@pytest.mark.parametrize("metadata", [
+    '0 {"shared":{"IPAddress":"10.0.0.1"}}\n456 {"shared":{"IPAddress":"10.0.0.2"}}',
+    '123 {"left":{"IPAddress":"10.0.0.1"}}\n456 {"right":{"IPAddress":"10.0.0.2"}}',
+    '123 {"shared":{"IPAddress":"10.0.0.1"}}\n456 {"shared":{"IPAddress":"invalid"}}',
+    'not-json',
+])
+def test_peer_probe_fails_closed_before_namespace_entry(tmp_path, metadata):
+    source = tmp_path / "metadata"
+    source.write_text(metadata)
+    marker = tmp_path / "entered"
+    script = tmp_path / "probe.sh"
+    script.write_text("\n".join([
+        "set -euo pipefail", "DC=(fake_compose)", "WEB_PUBLIC_HOST=test.local",
+        "fake_compose() { echo fake-cid; }",
+        f"docker() {{ cat '{source}'; }}",
+        'timeout() { shift 3; "$@"; }',
+        f"nsenter() {{ touch '{marker}'; }}",
+        _extract_func("edge_peer_live"), "edge_peer_live web-b",
+    ]))
+    result = subprocess.run(["bash", str(script)], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert not marker.exists()
