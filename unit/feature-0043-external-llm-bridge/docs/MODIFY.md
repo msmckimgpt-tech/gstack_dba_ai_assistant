@@ -4927,3 +4927,7 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 ## CHG-20260909T124035-session-integration-evidence
 
 최신 main 통합 284f6abd의 문서 동반 기록을 보완한다. 제품 코드 추가 변경 없음. 통합91건 PASS, 양측 변경 보존 확인. 병합 커밋의 post-commit 게이트는 추가 delta를 인식하지 못해 TASK/CHG/review 3항목 실패했고 이번 후속 문서 커밋으로 명시한다.
+
+## CHG-20260909T125141-session-claim-identity
+
+설치 DQA 첫 응답은 성공했으나 세션 상태가 생성되지 않았다. 실제 claim JSONResponse에 `conversation_id`가 없어 러너가 세션 사용을 건너뛰는 P1이었다. 인증·대화 접근 검사를 통과한 변수로 최상위 ID를 전달한다(1줄). 실제 전체 payload→handle_one→SessionBinding 두 호출 회귀를 추가해 수정 전 RED/후87 PASS를 확인했다. 기존 부분 계약 테스트와 CLI 실측이 실제 HTTP/앱 전달을 대신하지 못한 한계를 기록한다.

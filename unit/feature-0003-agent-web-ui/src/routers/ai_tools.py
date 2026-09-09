@@ -2979,6 +2979,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     response = JSONResponse({
         "task_id": task_id,
         "question": marked,
+        "conversation_id": str(conversation_id or ""),
         "conversation_context": marked_history,
         "conversation_session": {
             "account_id": account_id,

@@ -3711,3 +3711,5 @@ Codex 설정을 변경하지 않는다. [OpenAI 공식 문서](https://learn.cha
 
 정본: `src/agent/sessions.py` · `handler.py` · `invoke.py` · `prompt.py`, feature-0003 `routers/ai_tools.py::_recent_conversation_context,claim_request,submit_answer`.
 CLI 계약 확인: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive), [Claude CLI headless](https://code.claude.com/docs/en/headless), 설치된 CLI help 및 실제 두 번 호출(2026-09-09).
+
+REQ-20260909-session-continuity 연결 계약 보완: claim의 최상위 `conversation_id`도 필수 전달값이다. 하위 `conversation_session`만 있어도 러너는 대화를 결속할 수 없다. 서버 전체 응답을 러너에 그대로 전달하는 회귀가 이 경계를 검사한다.

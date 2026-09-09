@@ -14,6 +14,10 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 
 ## TASK-20260909-session-continuity — 그룹 문맥·세션 결속(참조)
 
+- [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.
+- [ ] 보완 서버 배포 후 설치 DQA 세션 파일 생성·동일 ID 재개 재검증.
+
+
 - 정본: [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) · [Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).
 - 변경: `routers/ai_tools.py`의 그룹 이력/claim/submit 계약, `routers/conversations.py` 질문 task 표기, 릴리즈 노트. 기존 계정·그룹 접근 인가 뒤에 문맥과 로그인 결속을 구성한다. 스키마·권한·새 route 변경 없음.
 - [x] 구현·회귀·backend/security/qa 패널. 배포/설치 DQA 판정은 정본 Run에 기록.

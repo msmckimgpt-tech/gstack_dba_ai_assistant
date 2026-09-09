@@ -8474,3 +8474,27 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Scope: TASK/REPORT/MODIFY/Run 출하·배포 증거 기록만, 동작 코드·정책 변경0. §18.8 독립 제품 리뷰 추가 대상 없음.
 - Evidence: PR #1646 MERGED, deploy exit0·46b70e26/2 replica ready·soak PASS, `deployed-result.json` 두 사본 일치, `served-asset-result.json` HTTPS200/자산 스탬프 및 내용 일치.
 - Boundary: fixture DQA21 PASS와 설치 사용자 세션 NOT-RUN을 유지. 최초 전체 실패 및 원인별 재검증을 전체 suite PASS로 바꾸지 않았다.
+
+## REV-20260909T125141-session-claim-backend [SUBAGENT:backend] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-security [SUBAGENT:security] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-security.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-qa [SUBAGENT:qa] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-qa.md
+- Human Approval Needed: no

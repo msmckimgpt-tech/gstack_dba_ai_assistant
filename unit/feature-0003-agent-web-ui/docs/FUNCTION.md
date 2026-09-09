@@ -5132,3 +5132,5 @@ DQA 첨부의 계보 내·계보 간 비교에서 SQL의 들여쓰기, 토큰 �
 - 범위: 기존 API 응답에 `truncated.alignment`만 추가. 인증/인가·저장 원문·SQL 실행·로컬 브리지 변경 없음. 임의 위치로 이동한 블록의 교차 연결, SQL 의미 분석, 줄 합치기/분할 정렬은 제공하지 않는다.
 
 - AC-DS-5: 정렬 예산 생략 여부는 빌더에서 끝나지 않고 실제 `/diff` 응답의 `truncated.alignment`로 전달되며, 원문 양쪽은 유지된다. API fake 회귀와 WebView2 안내 fixture가 각각 전달·표시 경계를 검증한다.
+
+REQ-20260909-session-continuity 연결 계약 보완: claim의 최상위 `conversation_id`도 필수 전달값이다. 하위 `conversation_session`만 있어도 러너는 대화를 결속할 수 없다. 서버 전체 응답을 러너에 그대로 전달하는 회귀가 이 경계를 검사한다.

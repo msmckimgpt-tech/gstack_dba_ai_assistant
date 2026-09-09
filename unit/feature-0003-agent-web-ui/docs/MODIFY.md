@@ -6419,3 +6419,7 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - Session: codex:root:01a08411-5b5d-7691-890c-509a2b60ed6d; TASK-20260909T120000-diff-similarity.
 - 문서만: PR #1646 main 46b70e26 반영, web-only 배포 exit0·두 replica ready·90초 soak PASS, 배포본 정렬/서빙 자산 일치를 TASK·REPORT·Run에 기록했다. 임시 검증 로그를 wrapper artifacts에 보존하고 Run 링크를 갱신했다.
 - DQA Shell fixture21 PASS와 설치 사용자 첨부/API NOT-RUN을 구분한다. 호스트 DNS 부재·snap build metadata 오류의 관측 및 실제 검증 경로도 Run에 기록했다. 동작 코드 변경0.
+
+## CHG-20260909T125141-session-claim-identity
+
+설치 DQA 첫 응답은 성공했으나 세션 상태가 생성되지 않았다. 실제 claim JSONResponse에 `conversation_id`가 없어 러너가 세션 사용을 건너뛰는 P1이었다. 인증·대화 접근 검사를 통과한 변수로 최상위 ID를 전달한다(1줄). 실제 전체 payload→handle_one→SessionBinding 두 호출 회귀를 추가해 수정 전 RED/후87 PASS를 확인했다. 기존 부분 계약 테스트와 CLI 실측이 실제 HTTP/앱 전달을 대신하지 못한 한계를 기록한다.

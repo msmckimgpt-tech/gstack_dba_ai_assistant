@@ -5206,3 +5206,27 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Related TASK: feature-0043-external-llm-bridge
 - Reason: 통합 게이트 증거 보완만 포함한 비정책 문서 변경. 제품 코드 추가 변경 없음. 이전 backend/security/qa PASS 및 통합91건 PASS 유지.
 - Timestamp: 2026-09-09T12:40:35.536759+09:00
+
+## REV-20260909T125141-session-claim-backend [SUBAGENT:backend] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-security [SUBAGENT:security] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-security.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-qa [SUBAGENT:qa] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-qa.md
+- Human Approval Needed: no
