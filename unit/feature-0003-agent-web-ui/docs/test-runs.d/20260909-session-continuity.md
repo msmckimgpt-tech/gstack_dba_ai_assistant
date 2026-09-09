@@ -2,10 +2,20 @@
 run_at: 2026-09-09T12:37:00+09:00
 session: codex:root:01a0841c-0298-7511-9088-828b547cd542
 scope: TASK-20260909-session-continuity
-verdict: NOT-RUN-client
+verdict: PASS-installed-codex
 ---
 
 # 대화 세션 재사용 설치 DQA 검증
+
+## 최종 재검증
+
+- Environment: DQA-client
+- Result: PASS
+- Scope: 기존 설치 DQA의 Codex 세션 생성·동일 대화 재개·화면 회상 응답.
+- Evidence: 서버9cd10571, 앱29732/WebView38028/러너49080. 동일 native ID, resumed=false→true, 확정 이력4→6. 실제 텍스트 READY2→DQA_SESSION_739:HARBOR_914. [정본](../../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).
+- Limit: 여러 계정 그룹 앱 왕복은 NOT-RUN이며 서버/프롬프트 회귀 PASS로 구분한다.
+
+## 초기 기록(보완 이전)
 
 - Environment: DQA-client
 - Result: NOT-RUN

@@ -15,7 +15,7 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 ## TASK-20260909-session-continuity — 그룹 문맥·세션 결속(참조)
 
 - [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.
-- [ ] 보완 서버 배포 후 설치 DQA 세션 파일 생성·동일 ID 재개 재검증.
+- [x] 보완 서버9cd10571 배포 및 설치 DQA 상태 생성·동일 ID 재개 PASS(4→6 이력, 실제 회상 UI 확인).
 
 
 - 정본: [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) · [Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).

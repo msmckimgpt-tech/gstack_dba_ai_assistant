@@ -2,10 +2,22 @@
 run_at: 2026-09-09T12:34:00+09:00
 session: codex:root:01a0841c-0298-7511-9088-828b547cd542
 scope: TASK-20260909-session-continuity
-verdict: PASS-code-cli
+verdict: PASS-installed-codex
 ---
 
 # 대화별 AI 세션과 그룹 문맥 검증
+
+## 최종 결과 — 설치 DQA 세션 재개 PASS
+
+PR #1649·#1650 main 반영 및 보완 서버 **9cd10571** web-only 배포 완료(exit 0). web-a/b healthy, 재시작 0, 90초 soak PASS. 소스/두 서버 ai_tools SHA와 서버/설치 Windows 러너 SHA가 일치한다.
+
+실행 중이던 설치 DQA 앱을 종료하지 않고 자동 갱신된 러너로 검증했다. 같은 합성 대화에서 첫 정상 결속 요청은 `resumed=false`, 후속 요청은 `resumed=true`; 둘 다 생성·제출 완료. **동일 상태 파일·동일 네이티브 ID, history_count 4→6**이다. 실제 UIAutomation 텍스트는 `DQA_SESSION_739_READY2` 뒤 `DQA_SESSION_739:HARBOR_914`와 정확히 일치한다. 후속 질문에는 문자열 값을 다시 주지 않았다.
+
+첫 결속: 12:55:42~12:56:14(`t_RPL09xC1SMeqYQeH`), 재개: 12:57:25~12:58:01(`t_a2FCrBRBY2TVWMWQ`). 앱 PID29732/WebView2 PID38028/러너 PID49080. 상세는 [추적 가능한 합성 증거](evidence/20260909-session-continuity.json), wrapper `artifacts/session-continuity/{dqa-session-result,dqa-final-ui,deployed-hashes}.json`, `deploy-fix.log`를 따른다.
+
+최종 관련 회귀 **87 passed**. 실제 Claude CLI 재개도 별도 2회 PASS다. **여러 계정이 실제 그룹 DQA에서 주고받는 왕복은 NOT-RUN**이며, 그룹 서버 함수·러너 프롬프트 회귀 PASS와 구분한다. 설치 앱에서 발견한 초기 누락 및 수정 전 RED는 아래에 보존한다.
+
+## 최초 구현 직후 검증 기록(배포 전)
 
 - worktree: `.worktrees/feature-0043-session-continuity`; branch: `ai/codex/feature-0043-session-continuity`; base `00981307`.
 - 사용자 요청: DQA에서 시작한 대화의 AI 세션 재사용, 그룹의 여러 참여자가 호출한 assistant 기록 유지.

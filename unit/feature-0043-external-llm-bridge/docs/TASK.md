@@ -15,7 +15,7 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 ## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
 
 - [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.
-- [ ] 보완 서버 배포 후 설치 DQA 세션 파일 생성·동일 ID 재개 재검증.
+- [x] 보완 서버9cd10571 배포 및 설치 DQA 상태 생성·동일 ID 재개 PASS(4→6 이력, 실제 회상 UI 확인).
 
 
 ### 2.1 Implementation Plan
@@ -33,7 +33,7 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 - [x] 구현 및 회귀 검증 — 넓은 회귀 1815 passed/1 skipped, 최종 집중 43 passed, 실제 Claude/Codex 각각 2회 동일 세션 회상 PASS.
 - [x] backend/security/qa 패널 최종 코드 PASS, 문서 기록. 완료 게이트 결과는 Run에 기록.
 - [x] 최신 main 통합 — 91건 PASS 및 양측 문서 변경 보존.
-- [ ] main 병합·배포·설치 DQA 실측 — CLI 실측과 별도 판정.
+- [x] PR #1649·#1650 main 반영·web 배포·설치 DQA Codex 두 요청 동일 세션 재개 실측. 다계정 그룹 앱 왕복은 NOT-RUN으로 별도 기록.
 
 ## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
 
