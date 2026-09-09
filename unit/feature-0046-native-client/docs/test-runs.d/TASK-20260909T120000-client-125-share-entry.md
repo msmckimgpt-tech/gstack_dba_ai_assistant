@@ -191,3 +191,23 @@ feature-0003 의 conftest 가 `app` 을 임포트하지 못해 그쪽 pytest 도
 이번 diff 의 feature-0003 몫은 **정적 자산 1개**(`release-notes-data.js`)이고 그것은 실 렌더러
 jsdom 34건 + 렌더 DOM 대조로 쟀다. 네이티브 595건은 로컬에서 전부 돌렸다.
 CI 가 돌아오면 이 커밋 범위를 다시 통과시켜 확인한다.
+
+### Run 7 — 배포 후 도달성 (post-deploy)
+
+Environment: live-https
+Result: PASS (도달성·서빙 내용 한정)
+Build: release `e88cc5c8` · asset_stamp `c291a63973c9` (두 replica 일치) · 채널 광고본 1.2.5
+Scenario: 릴리스노트 1.2.5 항목이 **실제로 서빙되는가**, 그리고 웹 재배포가 릴리스 채널을
+건드리지 않았는가.
+Evidence:
+- `bin/deploy-web.sh --web-only` → soak 90s 통과, 「UI 완료 신호 게시 — release=e88cc5c8
+  asset_stamp=c291a63973c9 (두 replica 일치)」, 브리지 연속성 끊김 0.
+- `GET /static/release-notes-data.js?v=c291a63973c9` **6회 표집** — 두 replica
+  (`weblb=5df2d558e0a2` · `4f7f93981a8e`) 모두 506,033 bytes 동일, 「받아 주세요 (1.2.5)」
+  1건 · 「DQA 앱 1.2.5 를 올렸습니다」 1건. ⚠ 롤링 창의 구 replica 가 새 `?v=` 에 옛 내용을
+  200 으로 주던 과거 함정 때문에 **한 번이 아니라 양쪽을 표집**한다.
+- 재배포 후에도 `GET /api/ai/client/latest` → 1.2.5 / `909d246b…` / 26,051,359,
+  `GET /client/DQAConnect-Setup-1.2.5.exe` → 200 + 같은 sha256.
+
+확인하지 **않은** 것: 브라우저·앱 창에서 그 항목이 **눈에 보이는지**. 잰 것은 서빙된 바이트와
+jsdom 렌더이고, 실제 화면은 Run 6 의 `NOT-RUN` 범위다.
