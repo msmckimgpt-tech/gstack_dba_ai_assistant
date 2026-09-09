@@ -1,0 +1,169 @@
+
+[deploy-web] === preflight: 권한 ===
+
+[deploy-web] === flock 획득 (전체 배포 직렬화, -w 600s) ===
+
+[deploy-web] === 배포 대상 SHA 결정 (origin/main coalesce) ===
+[deploy-web] 배포 대상 = origin/main HEAD = 2c5d6c66 (caller worktree commit 아님 — 최신 커밋 누락 방지)
+
+[deploy-web] === preflight: 프로덕션 file-set 격리 (-f docker-compose.yml only) ===
+[deploy-web] OK — web-a/web-b 호스트포트 없음, 두 replica 정의 확인.
+
+[deploy-web] === preflight: TLS (leaf SAN / CA / expiry) ===
+[deploy-web] OK — leaf SAN/CA/expiry 정상 (두 replica 공유 cert).
+
+[deploy-web] === web 이미지 빌드 (build-once, GIT_COMMIT=2c5d6c66 → mysql-ai-web:2c5d6c66) ===
+[deploy-web] last-good(mysql-ai-web) = e88cc5c8
+ Image mysql-ai-web:2c5d6c66 Building
+#1 [internal] load local bake definitions
+#1 reading from stdin 642B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 5.78kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.11-slim
+#3 DONE 3.2s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/16] FROM docker.io/library/python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 592.59kB 0.0s done
+#6 DONE 0.1s
+
+#7 [ 6/16] COPY unit/feature-0002-agent-core/src/agent_core.py ./agent_core.py
+#7 CACHED
+
+#8 [ 2/16] WORKDIR /app
+#8 CACHED
+
+#9 [ 7/16] COPY unit/feature-0002-agent-core/src/modules /app/modules
+#9 CACHED
+
+#10 [ 5/16] RUN pip install --no-cache-dir -r requirements.txt
+#10 CACHED
+
+#11 [10/16] COPY unit/feature-0002-agent-core/alembic.ini /app/alembic.ini
+#11 CACHED
+
+#12 [ 3/16] RUN apt-get update  && apt-get install -y --no-install-recommends locales tzdata default-mysql-client ca-certificates gnupg wget  && . /etc/os-release  && wget -qO /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc  && gpg --dearmor -o /usr/share/keyrings/pgdg.gpg /tmp/pgdg.asc  && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list  && apt-get update  && apt-get install -y --no-install-recommends postgresql-client-16  && apt-get purge -y --auto-remove gnupg wget  && rm -f /tmp/pgdg.asc  && sed -i 's/^# *ko_KR.UTF-8 UTF-8/ko_KR.UTF-8 UTF-8/' /etc/locale.gen  && locale-gen ko_KR.UTF-8  && rm -rf /var/lib/apt/lists/*
+#12 CACHED
+
+#13 [ 8/16] COPY shared /app/shared
+#13 CACHED
+
+#14 [ 9/16] COPY unit/feature-0002-agent-core/src/scripts /app/scripts
+#14 CACHED
+
+#15 [ 4/16] COPY unit/feature-0002-agent-core/src/requirements.txt ./requirements.txt
+#15 CACHED
+
+#16 [11/16] COPY unit/feature-0002-agent-core/alembic /app/alembic
+#16 CACHED
+
+#17 [12/16] COPY unit/feature-0003-agent-web-ui/src /app/web
+#17 DONE 0.5s
+
+#18 [13/16] COPY unit/feature-0041-external-ai-tool-surface/src/external_tool_mcp_http.py /app/ext_tools/external_tool_mcp_http.py
+#18 DONE 0.2s
+
+#19 [14/16] COPY unit/feature-0043-external-llm-bridge/src /app/bridge_src
+#19 DONE 0.2s
+
+#20 [15/16] RUN python3 /app/scripts/build_bridge_agent.py       --src /app/bridge_src/agent       --out /app/web/static/agent/bridge_agent.py       --stage-assets /app/bridge_src  && rm -rf /app/bridge_src
+#20 0.581 build_bridge_agent: /app/web/static/agent/bridge_agent.py (7313행) ← 20 모듈 · 자산 2개 배치
+#20 DONE 0.7s
+
+#21 [16/16] RUN python3 /app/scripts/inject_asset_stamp.py --root /app/web/static
+#21 1.037 inject_asset_stamp: stamp=aaffca7a36d4 files_rewritten=39 sidecar=/app/web/static/.asset-stamp
+#21 DONE 1.2s
+
+#22 exporting to image
+#22 exporting layers
+#22 exporting layers 0.4s done
+#22 writing image sha256:9bdc100f837b5f23666116de38e7d8917a4bb76fee814e81b7063938299c6bf8 done
+#22 naming to docker.io/library/mysql-ai-web:2c5d6c66 0.1s done
+#22 DONE 0.6s
+
+#23 resolving provenance for metadata file
+#23 DONE 0.0s
+open /tmp/.tmp-compose-build-metadataFile-5be9958e-4967-4a08-8709-66dd4eae827f.json1322869302: no such file or directory
+
+[deploy-web] WARN: compose build EXIT=1 이나 이미지(mysql-ai-web:2c5d6c66, GIT_COMMIT 일치) 정상 산출 — snap-docker metadata-file race 양성 무시(dc-build 동일 우회).
+Untagged: mysql-ai-web:59fd70f6
+Deleted: sha256:5f5c800bffaf12abe912f07f58be738e2a92eeba93782fd18437d3d2a973278c
+
+[deploy-web] === 마이그레이션: expand/contract 게이트 + 적용 (swap 전, image=mysql-ai-web:2c5d6c66) ===
+[migrate-lint] ✓ PASS head 단일성 검사:
+  head = 0059_attachment_relative_path (단일) · revision 59건 · 번호 중복 0 · MAX_MIGRATION 일치
+[migrate-lint] 검사 대상 revision 없음 (변경된 alembic revision 0건) → PASS
+적용할 pending 마이그레이션 없음 (current=0059_attachment_relative_path == head).
+[deploy-web] OK — baked 자산 스탬프 주입 확인(*.html/*.js 내 ?v=dev 잔존 0).
+[deploy-web] OK — 브리지 러너 배포본 존재·컴파일 확인(러너 + 설치 스크립트 2종).
+
+[deploy-web] === one-at-a-time 롤링 (항상 ≥1 healthy upstream) ===
+
+[deploy-web] === pre-drain: web-b 건강 확인 + web-a 진행 스트림 종료 대기 ===
+
+[deploy-web] === 엣지 후보 복귀 대기: web-b (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-b 엣지 후보 복귀 확인(fails=0 + Caddy→web-b /livez 200)
+[deploy-web]   web-a 조용함(active_streams=0 bridge_inflight=0, 드레인된 대기=0) — recreate 진행
+
+[deploy-web] === recreate web-a → 2c5d6c66 (one-at-a-time) ===
+ Container repo-web-a-1 Recreate
+ Container repo-web-a-1 Recreated
+ Container repo-web-a-1 Starting
+ Container repo-web-a-1 Started
+[deploy-web]   web-a ready (git_commit=2c5d6c66)
+
+[deploy-web] === 엣지 후보 복귀 대기: web-a (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-a 엣지 후보 복귀 확인(fails=0 + Caddy→web-a /livez 200)
+
+[deploy-web] === pre-drain: web-a 건강 확인 + web-b 진행 스트림 종료 대기 ===
+
+[deploy-web] === 엣지 후보 복귀 대기: web-a (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-a 엣지 후보 복귀 확인(fails=0 + Caddy→web-a /livez 200)
+[deploy-web]   web-b 조용함(active_streams=0 bridge_inflight=0, 드레인된 대기=1) — recreate 진행
+
+[deploy-web] === recreate web-b → 2c5d6c66 (one-at-a-time) ===
+ Container repo-web-b-1 Recreate
+ Container repo-web-b-1 Recreated
+ Container repo-web-b-1 Starting
+ Container repo-web-b-1 Started
+[deploy-web]   web-b ready (git_commit=2c5d6c66)
+
+[deploy-web] === 엣지 후보 복귀 대기: web-b (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-b 엣지 후보 복귀 확인(fails=0 + Caddy→web-b /livez 200)
+[deploy-web] scope=web — MCP 표면 롤아웃 skip(agent 이미지 미빌드).
+
+[deploy-web] === Caddyfile reconcile (변경 시에만 caddy recreate) ===
+[deploy-web] Caddyfile 무변경(sha 일치) + 이미지 일치 — caddy 유지(blip 0)
+
+[deploy-web] === post-cutover soak (90s) — edge + RestartCount 감시 ===
+[deploy-web] soak 통과 — 배포 안정.
+[deploy-web] WARN: 대화 스모크 skip — scope=web (ask-worker 미롤아웃). **대화 동작 미검증 상태로 종료된다.**
+[deploy-web] UI 완료 신호 게시 — release=2c5d6c66 asset_stamp=aaffca7a36d4 (두 replica 일치).
+
+[deploy-web] === 배포 완료: 2c5d6c66 (scope=web — 적용·검증·미수행 결과는 각 단계 로그 참조) ===
+[deploy-web] quiesce: 미수행(scope=web — ask-worker/gateway 미접촉)
+[deploy-web] 브리지 연속성: 대기는 드레인으로 교대했고 진행 중 왕복은 완주했다(끊김 0).
+
+=== 배포 결과 확인 (변경 범위 기준 — AGENTS §15.4.1·PB-0009) ===
+ [1] 실제 교체한 서비스의 대상 SHA·ready·soak 결과를 확인한다. 배포 생략/실패를 PASS로
+     합산하지 않는다. 워커 코드도 바뀌었다면 --web-only만으로 전체 배포를 완료했다고 하지 않는다.
+ [2] 대화 스모크는 실제 실행 결과를 기록한다. scope=web에서 미수행이면 대화 동작 PASS를
+     선언하지 않는다. 워커 surge를 실행한 범위에서는 잔존 인스턴스가 없는지 확인한다.
+ [3] 변경 자산의 버전 스탬프와 실제 서빙 내용을 대조한다. 기존 DQA 앱·연결을 임의로 종료하거나
+     브라우저 강제 새로고침을 사용자에게 위임해 검증을 대신하지 않는다.
+ [4] 실제 사용자 화면/동작이 바뀌면 PB-0009의 변경 범위에 따라 DQA 클라이언트에서 확인한다.
+     일반 브라우저 전용 호환 분기는 해당 분기와 DQA 내부 미호출 대조로 검증한다.
+     설치 앱 미검증은 NOT-RUN과 사유·수행한 하위 검증을 기록한다.
+ [5] 무중단을 주장하려면 배포 시간대의 Caddy 엣지 오류와 ready/드레인 기록을 확인한다.
+     soak PASS만으로 배포 전체 기간의 요청 무손실이나 실제 대화 성공을 추정하지 않는다.
+================================================================================
