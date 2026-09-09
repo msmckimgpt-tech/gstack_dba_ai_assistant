@@ -183,6 +183,25 @@ def test_p2_parse_robust_to_garbage():
 
 
 # ── M1: 정상 materialize (사용자 첨부 편집 = 별도 계보로 분기) ─────────────────
+
+def _meta_json_param(ins):
+    """INSERT 바인딩 튜플에서 MetaJson(=JSON 객체 문자열)을 **내용으로** 찾는다.
+
+    위치(`ins[10]`)로 집으면 INSERT 컬럼이 하나 늘 때마다 이 테스트가 함께 깨진다 —
+    실제로 REQ-20260908-attach-folder-tree 의 `RelativePath` 추가에서 그랬다. MetaJson 은
+    이 튜플에서 유일하게 JSON **객체**로 파싱되는 값이므로 그 성질로 찾는다.
+    """
+    import json as _json
+    for v in ins:
+        if not isinstance(v, str):
+            continue
+        try:
+            if isinstance(_json.loads(v), dict):
+                return v
+        except Exception:
+            continue
+    raise AssertionError(f"MetaJson 파라미터를 찾지 못함: {ins}")
+
 def test_m1_materialize_branches_from_user_chain(monkeypatch):
     """REQ-20260814-attach-version-branching: 사람이 올린 첨부를 편집하면 **새 계보의 v1** 이다.
 
@@ -221,8 +240,8 @@ def test_m1_materialize_branches_from_user_chain(monkeypatch):
     assert ins[-2] is None, f"분기는 새 계보의 root 여야 함(RootAttachmentId=NULL): {ins}"
     assert ins[-1] == 1, f"분기는 v1 이어야 함: {ins}"
     # 분기 지점이 MetaJson 에 남는다(스키마 미확장 트리 복원의 유일한 단서).
-    assert '"branch_of_attachment_id": 100' in ins[10]
-    assert '"branch_of_root_id": 100' in ins[10]
+    assert '"branch_of_attachment_id": 100' in _meta_json_param(ins)
+    assert '"branch_of_root_id": 100' in _meta_json_param(ins)
     # MinIO put 호출됨
     assert len(storage.put_calls) == 1
     # **사용자 계보를 supersede 하지 않는다** — 이 가드가 이 변경의 핵심이다.
@@ -263,7 +282,7 @@ def test_m1b_materialize_extends_assistant_chain(monkeypatch):
     ins = store.get("insert_params")
     assert ins[-2] == 200, f"연장은 기존 계보 root 를 유지해야 함: {ins}"
     assert ins[-1] == 2, f"연장은 v+1 이어야 함: {ins}"
-    assert '"branch_of_attachment_id"' not in ins[10], "연장은 분기가 아니다"
+    assert '"branch_of_attachment_id"' not in _meta_json_param(ins), "연장은 분기가 아니다"
     assert "superseded_sql" in store, "연장은 자기 계보의 구버전을 꺼야 한다"
 
 

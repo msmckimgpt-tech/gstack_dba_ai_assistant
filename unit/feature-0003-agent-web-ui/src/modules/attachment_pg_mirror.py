@@ -55,7 +55,7 @@ def read_pg_enabled() -> bool:
 # ── 컬럼 계약 ────────────────────────────────────────────────────────────────
 # MySQL 행을 (PascalCase) 재읽기할 때 쓰는 SELECT 컬럼(=정본 컬럼 순서).
 _MYSQL_ATTACH_COLS = (
-    "Id, ConversationId, AccountId, ObjectKey, OriginalFilename, FilenameHmac, MimeType, "
+    "Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath, FilenameHmac, MimeType, "
     "SizeBytes, SizeBucket, Sha256, Kind, UploadStatus, AttachmentDerivedMessages, CreatedAt, "
     "DeletedAt, DeletePending, DeleteReason, MetaJson, RootAttachmentId, VersionNumber, "
     "CreatedByRole, SupersededAt"
@@ -68,6 +68,7 @@ _PG_ATTACH_SELECT = """
     account_id AS "AccountId",
     object_key AS "ObjectKey",
     original_filename AS "OriginalFilename",
+    relative_path AS "RelativePath",
     filename_hmac AS "FilenameHmac",
     mime_type AS "MimeType",
     size_bytes AS "SizeBytes",
@@ -89,13 +90,13 @@ _PG_ATTACH_SELECT = """
 
 _PG_UPSERT_ATTACH = """
 INSERT INTO agent_runtime.core_attachments (
-    id, conversation_id, account_id, object_key, original_filename, filename_hmac,
+    id, conversation_id, account_id, object_key, original_filename, relative_path, filename_hmac,
     mime_type, size_bytes, size_bucket, sha256, kind, upload_status,
     attachment_derived_messages, created_at, deleted_at, delete_pending, delete_reason,
     meta_json, root_attachment_id, version_number, created_by_role, superseded_at
 ) VALUES (
     %(id)s, %(conversation_id)s, %(account_id)s, %(object_key)s, %(original_filename)s,
-    %(filename_hmac)s, %(mime_type)s, %(size_bytes)s, %(size_bucket)s, %(sha256)s, %(kind)s,
+    %(relative_path)s, %(filename_hmac)s, %(mime_type)s, %(size_bytes)s, %(size_bucket)s, %(sha256)s, %(kind)s,
     %(upload_status)s, %(attachment_derived_messages)s::jsonb, %(created_at)s::timestamptz,
     %(deleted_at)s::timestamptz, %(delete_pending)s, %(delete_reason)s, %(meta_json)s::jsonb,
     %(root_attachment_id)s, %(version_number)s, %(created_by_role)s, %(superseded_at)s::timestamptz
@@ -105,6 +106,7 @@ ON CONFLICT (id) DO UPDATE SET
     account_id = EXCLUDED.account_id,
     object_key = EXCLUDED.object_key,
     original_filename = EXCLUDED.original_filename,
+    relative_path = EXCLUDED.relative_path,
     filename_hmac = EXCLUDED.filename_hmac,
     mime_type = EXCLUDED.mime_type,
     size_bytes = EXCLUDED.size_bytes,
@@ -173,6 +175,9 @@ def _attach_row_to_params(row: dict[str, Any]) -> dict[str, Any]:
         "account_id": int(row.get("AccountId") or 0),
         "object_key": str(row.get("ObjectKey") or ""),
         "original_filename": str(row.get("OriginalFilename") or ""),
+        # REQ-20260908-attach-folder-tree: NULL 을 보존한다 — "" 로 접으면 「단일 파일」과
+        # 「폴더 루트 바로 아래 파일」이 구분되지 않는다.
+        "relative_path": (str(row["RelativePath"]) if row.get("RelativePath") else None),
         "filename_hmac": str(row.get("FilenameHmac") or ""),
         "mime_type": str(row.get("MimeType") or ""),
         "size_bytes": int(row.get("SizeBytes") or 0),

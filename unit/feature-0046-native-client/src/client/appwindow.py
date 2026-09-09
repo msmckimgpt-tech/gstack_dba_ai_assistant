@@ -113,8 +113,20 @@ def panel_url(base: str, port: int, nonce: str, path: str = "/") -> str:
     없이 앱 창을 그대로 DQA 로」). 앱 창은 연결 화면만 보여 주는 보조 창이 아니라 **그 자체가
     제품**이다. 연결 능력은 그 안의 대화 모달에서 쓰인다 — 창을 두 개 쓰게 하지 않는다.
     """
-    q = urllib.parse.urlencode({"client_port": int(port), "client_nonce": nonce})
-    return f"{str(base).rstrip('/')}{path}?{q}"
+    # ⚠ **좌표를 마지막에 강제로 얹는다** (적대 리뷰 2026-09-08 F1 — 방어 이중화).
+    #   종전에는 `f"{base}{path}?{q}"` 였는데, `path` 가 `?` 를 품으면 쿼리가 두 벌이 되고
+    #   브라우저의 `URLSearchParams.get()` 은 **첫 값**을 취한다 — 링크를 만든 쪽이
+    #   `client_port`·`client_nonce` 를 덮어쓸 수 있었다(실행 재현). 1차 방어는
+    #   `core.safe_app_path` 의 `?`·`#` 거부이고, 여기가 2차다: 경로에 무엇이 섞여 오든
+    #   **파싱해서 분리한 뒤** 우리 좌표를 마지막 값으로 만든다. 검증기 하나가 뚫려도
+    #   조립이 다시 막는다.
+    parts = urllib.parse.urlsplit(str(path) or "/")
+    merged = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    merged = [(k, v) for k, v in merged
+              if k not in ("client_port", "client_nonce")]
+    merged += [("client_port", str(int(port))), ("client_nonce", str(nonce))]
+    return (f"{str(base).rstrip('/')}{parts.path or '/'}"
+            f"?{urllib.parse.urlencode(merged)}")
 
 
 def open_app_window(url: str, exe: str | None = None,

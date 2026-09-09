@@ -71,14 +71,25 @@ def test_l2_view_count_moved_to_header_meta():
     assert meta and 'id="shareViewCount"' in meta.group(1), "조회수가 .share-meta 안에 없습니다."
 
 
-# ── L3: 액션 4종 보존 (배치 이동이 기능을 떨어뜨리지 않았다) ──────────────────
+# ── L3: 액션 보존 (배치 이동이 기능을 떨어뜨리지 않았다) ──────────────────────
+#
+# ⚠ **`shareLoginLink` 는 조건부다** (share-client-entry 2026-09-08).
+#   참여·fork 가 DQA 앱에서 일어나는 **앱 전용 분기**에서는 감춘다 — 그 링크로 로그인해도
+#   그 화면에 누를 버튼이 없어 링크 자체가 막다른 길이기 때문이다. 그러나 **열화 분기**
+#   (앱 링크 부재 · 받을 곳 부재 · 앱이 존재할 수 없는 기기)에서는 종전 웹 경로가 살아 있고
+#   그 경로에서 join·fork 를 가르는 조건은 `is_authenticated` 이므로, 미로그인 수신자에게
+#   이 링크가 **유일한 진입점**이다. 한때 이것을 무조건 제거했다가 열화 세 갈래 전부에서
+#   그 사람의 화면에 [링크 복사] 하나만 남는 상태를 만들었다(적대 리뷰 3R H2, 실측).
+#   가시성 분기는 `verify_share_client_entry.mjs` ③·③b 가 2차원 표로 잰다.
 def test_l3_all_action_controls_preserved():
     html = _read_static("share.html")
-    for element_id in ("shareCopyLinkBtn", "shareJoinBtn", "shareForkBtn", "shareLoginLink"):
+    for element_id in ("shareCopyLinkBtn", "shareJoinBtn", "shareForkBtn",
+                       "shareAppEntryBtn", "shareAppGetLink", "shareLoginLink"):
         assert f'id="{element_id}"' in html, f"{element_id} 가 사라졌습니다."
     js = _read_static("share.js")
     # share.js 는 id 로만 접근한다 — 이동 후에도 배선이 유지되는지 확인.
-    for element_id in ("shareCopyLinkBtn", "shareForkBtn", "shareViewCount"):
+    for element_id in ("shareCopyLinkBtn", "shareForkBtn", "shareViewCount",
+                       "shareAppEntryBtn", "shareLoginLink"):
         assert element_id in js
 
 

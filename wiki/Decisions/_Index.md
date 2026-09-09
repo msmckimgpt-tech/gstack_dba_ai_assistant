@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 | [[../../docs/DECISIONS\|docs/DECISIONS.md]] |
-| ADR 수 | 정본 45 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 14; `## ADR-` heading 은 46 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
+| ADR 수 | 정본 46 ADR (4자리 ADR-0001 ~ ADR-0031 = 31 · timestamp+slug = 15; `## ADR-` heading 은 47 — ADR-0025 가 정본 안 두 entry 로 존재) · mirror 31 page (ADR-0001 ~ ADR-0030 + ADR-0025 분리 2page) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -118,6 +118,8 @@ AI 가 ADR 작성 시 본 MOC 에 1줄 entry add + `Decisions/<adr-id>-<slug>.md
 | ADR-20260826T220000-vision-ownerless-inline-image-stays-open | 소유자 키 없는 inline image 는 provenance 신호를 세우지 않고 **열어 둔다**(재확인) — inline image JSON 은 web 이 쓰고 worker 가 읽는 파일 계약이라 롤링 배포 중 구·신 형식 공존 창에서 owner-less 를 막으면 1:1 사용자까지 쓰기 도구가 막힌다 (`REQ-20260814-vision-provenance` 유지) | accepted (재확인) | `docs/DECISIONS.md` |
 | ADR-20260907T175000-local-llm-decommission-scope-boundary | 로컬 LLM 폐기의 **외연 경계** — 의도적 미적용 3건(`bedrock-gateway` 컨테이너 미철거 등)을 사유와 함께 영구화(기록 없는 미적용은 누락과 구분되지 않는다) | accepted (사용자 결정 2026-09-07) | `docs/DECISIONS.md` |
 | ADR-20260907T185500-kb-external-search-without-embeddings | 임베딩 없는 KB 검색 — `pg_trgm` 문자 후보를 서버가 찾고 **의미 판단은 기존 외부 AI 연결**이 수행(새 임베딩 API 미도입 · 의미검색 동등 품질 미보장 고지) | accepted (사용자 결정 2026-09-07) | `docs/DECISIONS.md` |
+| ADR-20260908T024500-dqa-client-verification | **주 사용 환경과 UI 검증 정본** — 서비스는 일반 Windows 웹브라우저가 아니라 별도 DQA 클라이언트로 이용한다. 정본은 `docs/PROJECT.md` 의 `primary_ui_surface: dqa-client` + AGENTS §15.4.1·§16.6 + **PB-0009**이며 PB-0008 은 일반 브라우저 **보조 호환 경로**로 유지. 새 Run 은 DQA-client 와 명시 Result·증거·미검증 범위를 기록하고 브라우저/Node/CLI PASS 를 앱 전체 PASS 로 합산하지 않는다 | accepted (사용자 직접 지시 2026-09-08) | `docs/DECISIONS.md` |
+| ADR-20260908T024500-dqa-client-verification | 주 사용 환경과 UI 검증 정본 — 서비스는 일반 Windows 웹브라우저가 아니라 **별도 DQA 클라이언트**로 이용하고, UI 완료 검증 정본은 `primary_ui_surface: dqa-client` + PB-0009(PB-0008 은 일반 브라우저 호환 보조 경로). 브라우저/Node/CLI PASS 를 앱 전체 PASS 로 합산하지 않는다 | accepted (사용자 직접 지시 2026-09-08) | `docs/DECISIONS.md` |
 
 ## 3. Status legend
 

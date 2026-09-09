@@ -109,7 +109,7 @@ ai_read_priority: 4
 | 경로 | 메서드 | 인증 | 용도 | 도입 |
 |---|---|---|---|---|
 | `/share/{token}` | GET | anonymous | 대화 공유 페이지 (`share.html` FileResponse) | TASK-0058 (REQ-20260514-0001) |
-| `/api/public/share/{token}` | GET | anonymous | 공유된 대화 read-only 조회 (메시지 + SQL + 결과셋) | TASK-0058 |
+| `/api/public/share/{token}` | GET | anonymous | 공유된 대화 read-only 조회 (메시지 + SQL + 결과셋). **2026-09-08 추가**: 응답에 `client.{app_link, download_url}` — 참여·fork 를 DQA 앱으로 보내는 딥링크와 설치기 URL. **자격증명 없음**(딥링크에 토큰 미포함, `dqa_identity.app_open_url`), 실린 값은 origin·공유 토큰뿐이며 둘 다 요청자가 이미 손에 쥔 링크에 있다. `download_url` 이 가리키는 `/api/ai/client/latest`·`/client/{filename}` 은 이미 의도적 익명이다. ⚠ **앱 유도는 표시이지 집행이 아니다** — 링크에 `?client_port=…` 를 붙이면 유도를 건너뛰고 종전 웹 버튼이 뜬다(알려진 성질, 사용자 결정 2026-09-08). 자격은 join/fork 핸들러의 로그인 세션·공유 토큰 게이트가 집행하므로 권한은 변하지 않는다. ⚠ 이 화면은 사용자에게 **미서명 설치기 실행**을 안내한다(SmartScreen 경고 1회) — 그 자체가 피싱 템플릿으로 모사되기 쉬우므로, 안내 문구·다운로드 출처를 바꿀 때는 이 항을 함께 검토한다 | TASK-0058 · REQ-20260908-share-client-entry |
 | `/api/public/share/{token}/fork` | POST | **로그인 필요** + `conversation.create` | 공유받은 viewer 가 본인 계정으로 fork (`_optional_account` 가 아닌 `_require_account` 사용) | TASK-0058 |
 | `/llms.txt` | GET | anonymous | LLM 발견 표준 파일 (static contract, 데이터 0) | feature-0023 api-discovery (SEC-20260724) |
 | `/.well-known/ai-conversation-api.json` | GET | anonymous | AI Conversation API 매니페스트 (엔드포인트 카탈로그·인증·스코프, static contract) | feature-0023 api-discovery |
@@ -120,6 +120,8 @@ ai_read_priority: 4
 | `/api/session` | GET | anonymous (**축소 응답**) | 로그인 화면 부트스트랩의 인증 상태 판정. 미인증 응답 = `{"authenticated": false}` **뿐** | SEC-20260811 (아래 §7.3) |
 | `/api/llm/health` | GET | anonymous (**축소 응답**) | LLM 제한 상태점. 미인증 응답 = `{"state": ...}` **뿐** (probe 미트리거) | SEC-20260811 |
 | `/api/api-vault/options` | GET | anonymous (**빈 카탈로그**) | 모델 선택기 카탈로그. 미인증 응답 = `{"default_model": null, "models": []}` | SEC-20260811 |
+| `/api/ai/client/latest` | GET | anonymous | 네이티브 DQA 클라이언트 릴리스 매니페스트(버전·파일명·크기·sha256·상대 경로). 배포 중인 것이 없으면 **404**(200 + `available:false` 로 답하지 않는다). 모듈 docstring 이 「익명 · 인스턴스 데이터 0. RBAC 스코프: 없음」을 선언한다 — `routers/client_release.py` | feature-0046 §P0-AH 업데이트 채널 (2026-09-07) |
+| `/client/{filename}` | GET | anonymous | 설치기 실물(.exe) 다운로드. **지금 광고 중인 그 파일명만** 200 이고 그 외·과거 버전은 404(`filename != current_release()["filename"]` — 철회가 곧 도달 불가이며 `StaticFiles` 마운트를 쓰지 않는 이유). 익명 공유 화면의 `/api/public/share/{token}` 응답 `client.download_url` 이 이 경로를 안내하므로 위 share 행의 **미서명 설치기 실행 안내** 주의와 같은 항으로 읽는다 | feature-0046 §P0-AH 업데이트 채널 (2026-09-07) |
 
 ### 7.1 운영 정책
 

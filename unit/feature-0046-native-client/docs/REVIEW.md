@@ -1173,8 +1173,6 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Reason: 완료된 #1608 및 기존 채널의 실제 1.1.2 다운로드 결과를 문서에 기록한다. 정책·제품 코드·디자인 변경 없음. manifest 값뿐 아니라 실제 다운로드의 크기·SHA-256·전체 바이트를 Windows 검증본과 대조했다.
 - Timestamp: 2026-09-08T02:47:00Z
-
-
 ## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
 - Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
 - Trigger: API/성능/캐싱 keyword matched
@@ -1303,3 +1301,30 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 ## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
 - 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.
+## REV-20260908T125500-share-client-entry-deeplink [SUBAGENT:security] — CONCERN (2R 후)
+
+- Related TASK: feature-0003 TASK-20260908T125500-share-client-entry
+- Trigger: token/session/credential 인접(딥링크 파라미터·스킴 네임스페이스) — §18.8
+- Timestamp: 2026-09-08T12:55:00+09:00
+- Verdict: **1R BLOCK → 조치 → 2R BLOCK(B2·B3 이 이 feature) → 조치 → CONCERN**
+- Artifact: 웹 쪽 원장에 통합 —
+  `unit/feature-0003-agent-web-ui/docs/reviews/20260908T141000-share-client-entry-r2.md`
+- Human Approval Needed: no
+
+- **새 host(`open`)를 만들되 파서는 스킴만 본다.** 그래서 구버전 클라이언트에 새 링크가 와도
+  「모르는 주소라 무시」가 아니라 「목적지만 모른 채 앱은 뜬다」가 된다 — 의도된 degrade 이고
+  테스트가 그것을 잠근다.
+- **경로 검증을 조립·수용 양쪽에 둔 이유**와 `//evil` protocol-relative 위험은 FUNCTION P0-AJ 에
+  적었다. 두 벌이 갈리면 서버가 막은 값을 클라이언트가 받아들이거나 그 반대가 되므로,
+  테스트가 **같은 표로** 양쪽을 대조한다.
+- **`token` 을 받지 않는다 — 파서 단계에서.** `open` 은 `parse_scheme_url` 이 host 로 분기해
+  `base`·`path` 만 수용한다(적대 리뷰 1R-F3 조치). 조립 쪽(`app_open_url`)도 애초에 토큰을
+  싣지 않으므로 **양쪽이 함께** 배제하며, `test_an_open_link_cannot_smuggle_a_token` 이 그것을
+  잠근다. `bridge._plan_for` 의 `base` 일치 + `token` 존재 요구는 그 뒤의 **2차 방어**다.
+  (⚠ 이 문장의 첫 판은 「파서가 담기는 하지만」이라고 옛 동작을 기술했다 — 2R-C4 가 그것을
+  잡았다. 문서가 옛 동작을 말하면 다음 사람이 2차 방어에만 기대게 되고, 1차가 조용히 회귀할 때
+  잡을 근거가 없다.)
+- **잔여 위험**: 스킴 하이재킹(머신 전역 네임스페이스, 마지막 등록자 승)은 이 변경이 만들지
+  않았고 줄이지도 않는다 — `dqa_identity` docstring 이 기록한 기존 위협이며 근본 해소는 별도
+  cycle 이다. 다만 `open` 링크는 **토큰을 싣지 않으므로** 하이재킹 시 새는 것이 종전
+  `start` 링크보다 적다(서비스 주소 + 공유 토큰 — 둘 다 사용자가 이미 손에 쥔 링크에 있다).

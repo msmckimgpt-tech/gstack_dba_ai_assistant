@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 from fastapi import File
+from fastapi import Form
 from fastapi import UploadFile
 import hashlib
 import re
@@ -22,6 +23,9 @@ import secrets
 import asyncio
 from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
 import shared.bridge_tasks as _bridge_tasks  # feature-0043: 브리지 취소·점유 술어 단일 정본
+from shared.attachment_path import (  # REQ-20260908-attach-folder-tree: 경로 정규화 단일 정본
+    normalize_relative_path as _normalize_relative_path,
+)
 from shared.attachment_write import (  # feature-0043: 첨부 쓰기 후처리 단일 정본
     count_attachment_block_fences as _shared_count_attachment_block_fences,
     apply_assistant_attachment_blocks as _shared_apply_assistant_attachment_blocks,
@@ -2673,6 +2677,7 @@ async def upload_conversation_attachment(
     cid: str,
     request: Request,
     file: UploadFile = File(...),
+    relative_path: str | None = Form(None),
 ) -> JSONResponse:
     """첨부 multipart upload (BRIEFING §5.4 row 1).
 
@@ -2681,7 +2686,14 @@ async def upload_conversation_attachment(
     부작용: MinIO put_object + WebConversationAttachments INSERT + audit
     `attachment.upload` dispatch.
 
-    Response: `{id, kind, signed_url (사내망 다운로드 전용), size, sha256, status}`
+    REQ-20260908-attach-folder-tree — `relative_path` (선택): 폴더를 통째로 첨부할 때 각
+    파일의 **폴더 루트 기준 상대 경로**(`src/utils/helper.py`). 브라우저의
+    `webkitRelativePath` 또는 드롭된 디렉토리 엔트리에서 온다. 미전송 = 단일 파일 업로드.
+    값은 사용자 입력이므로 `shared.attachment_path.normalize_relative_path` 가 traversal·
+    절대경로·제어문자·과도한 깊이를 잘라낸다(위험하면 None — 파일은 올라가되 폴더 정보만
+    버린다: 경로는 부가 정보이지 업로드의 전제가 아니다).
+
+    Response: `{id, kind, relative_path, signed_url (사내망 다운로드 전용), size, sha256, status}`
     """
     try:
         from web.modules import storage_minio
@@ -2712,6 +2724,11 @@ async def upload_conversation_attachment(
         mime_type = (file.content_type or "").strip().lower()
         filename = (file.filename or "unnamed").strip()
         kind = app._infer_kind(filename, mime_type)
+
+        # REQ-20260908-attach-folder-tree: 폴더 첨부의 상대 경로. 정규화 실패/단일 파일 → None.
+        # 파일명이 권위다 — 경로의 마지막 세그먼트는 위 `filename` 으로 고정된다(둘이 어긋나면
+        # 목록·트리가 실제 파일과 다른 것을 가리킨다).
+        rel_path = _normalize_relative_path(relative_path, filename)
 
         # 본문 read — D8 size cap pre-check 위해 in-memory read.
         # Phase 11 (ingest pipeline) 진입 시 streaming upload + spool-to-disk 옵션 검토.
@@ -2745,7 +2762,10 @@ async def upload_conversation_attachment(
         #     "완전히 같은 파일이 아니라면 버전을 올린다"(사용자 요청) — 동일하면 버전 불변.
         #   - 내용 다름 → 같은 root 체인의 새 버전(CreatedByRole='user')으로 INSERT + 직전 supersede.
         # 체인 스코프 = (conversation_id, account_id, filename) — cross-account/conv 혼입 차단(IDOR).
-        prior_att = app._find_latest_same_name_attachment(conn, cid, int(account["id"]), filename)
+        # REQ-20260908-attach-folder-tree: 체인 스코프에 경로를 포함한다 — 파일명만으로
+        # 매칭하면 서로 다른 폴더의 동명 파일이 한 체인으로 합쳐져 서로를 supersede 한다.
+        prior_att = app._find_latest_same_name_attachment(
+            conn, cid, int(account["id"]), filename, relative_path=rel_path)
         version_root_id: int | None = None
         version_number = 1
         version_meta: dict | None = None
@@ -2814,10 +2834,10 @@ async def upload_conversation_attachment(
         # prior 있고 내용 다름 → root/version/version_meta 반영(사용자 버전).
         _ATTACH_INSERT_SQL = """
                 INSERT INTO WebConversationAttachments (
-                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, MetaJson, RootAttachmentId, VersionNumber, CreatedByRole
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'user')
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'user')
                 """
 
         def _insert_attachment_row(_ver: int) -> int:
@@ -2830,7 +2850,7 @@ async def upload_conversation_attachment(
             _c = conn.cursor()
             try:
                 _c.execute(_ATTACH_INSERT_SQL, (
-                    cid, int(account["id"]), object_key, filename, filename_hmac,
+                    cid, int(account["id"]), object_key, filename, rel_path, filename_hmac,
                     mime_type, len(body_bytes), size_bucket, sha256_hex, kind,
                     _meta, version_root_id, int(_ver),
                 ))
@@ -3051,7 +3071,15 @@ def _sort_attachment_rows_by_name(rows: list) -> list:
         # 키 이름은 PascalCase 가 계약이지만, 어느 read 경로가 snake_case 로 바뀌어도 정렬이
         # **조용히 무의미해지지 않게**(전부 빈 이름 → 원래 순서 유지) 두 표기를 모두 받는다.
         name = d.get("OriginalFilename") or d.get("original_filename") or ""
+        # REQ-20260908-attach-folder-tree (§18.8 ux [P1]): 폴더 첨부는 **같은 폴더 파일이
+        # 붙어 서야** 목록이 구조를 드러낸다. basename 만으로 정렬하면 `src/a.py`·`test/a.py`·
+        # `src/b.py` 가 `a.py, a.py, b.py` 로 서서 어느 것이 어느 폴더인지 알 수 없다.
+        # 디렉토리를 1차 키로 두면 트리를 평면화한 것과 같은 순서가 된다(경로 없는 단일 파일은
+        # 빈 문자열이라 종전처럼 앞에 모인다 — 폴더 밖 파일이 먼저, 그 다음 폴더별로).
+        rel = d.get("RelativePath") or d.get("relative_path") or ""
+        parent = str(rel).rsplit("/", 1)[0] if "/" in str(rel) else ""
         return (
+            _natural_filename_key(parent),
             _natural_filename_key(name),
             str(name),                                   # casefold 동률(A.sql vs a.sql) 안정화
             int(d.get("VersionNumber") or d.get("version_number") or 1),
@@ -3140,7 +3168,7 @@ def list_conversation_attachments(cid: str, request: Request, state: str = "acti
             cur.execute(
                 """
                 SELECT
-                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                     DeletePending, DeleteReason, MetaJson,
@@ -3305,7 +3333,7 @@ def _list_deleted_conversation_attachments(conn, cid: str, account=None) -> JSON
         cur.execute(
             """
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                 UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                 DeletePending, DeleteReason, MetaJson,
@@ -3373,6 +3401,22 @@ def _zip_entry_name(row: dict, *, mode: str, used: set[str]) -> str:
     raw = raw.replace("\\", "/").split("/")[-1]
     raw = _re.sub(r"[\x00-\x1f\x7f]", "", raw).strip().lstrip(".") or f"attachment-{row.get('Id')}"
     name = app._download_filename_with_version(raw, int(row.get("VersionNumber") or 1), mode)
+    # REQ-20260908-attach-folder-tree (§18.8 backend [P2]): 폴더로 올린 것은 **폴더로 돌려준다**.
+    # 평면 ZIP 은 `src/config.json`·`test/config.json` 을 `config.json`·`config_412.json` 으로
+    # 내보내 왕복이 닫히지 않는다 — 폴더 첨부가 제품 흐름이 된 지금 그 충돌은 흔한 경우다.
+    # 디렉토리 부분도 사용자 입력이므로 zip-slip 을 같은 규칙으로 막는다(세그먼트별 정제 +
+    # `.`/`..`·드라이브 접두 제거는 `normalize_relative_path` 가 이미 한 일이지만, 저장 이후
+    # 컬럼이 조작될 가능성까지 고려해 여기서도 방어한다 — 압축 해제는 파일시스템 쓰기다).
+    _rel = str(row.get("RelativePath") or "").replace("\\", "/")
+    if _rel and "/" in _rel:
+        _dir_segs = []
+        for _seg in _rel.rsplit("/", 1)[0].split("/"):
+            _seg = _re.sub(r"[\x00-\x1f\x7f]", "", _seg).strip().strip(".")
+            if not _seg or _seg in (".", "..") or (len(_seg) == 2 and _seg[1] == ":"):
+                continue
+            _dir_segs.append(_seg)
+        if _dir_segs:
+            name = "/".join(_dir_segs) + "/" + name
     stem, ext = _os.path.splitext(name)
     # id 접미 **한 번**으로는 부족하다 — 다른 첨부가 이미 `a_4.csv` 라는 이름을 갖고
     # 있으면 id=4 의 fallback 이 그것과 다시 충돌해 압축 해제 시 한쪽이 조용히 덮인다.
@@ -3477,7 +3521,7 @@ def bulk_download_conversation_attachments(
     try:
         cur.execute(
             f"""
-            SELECT Id, ObjectKey, OriginalFilename, SizeBytes, VersionNumber,
+            SELECT Id, ObjectKey, OriginalFilename, RelativePath, SizeBytes, VersionNumber,
                    RootAttachmentId, CreatedByRole, UploadStatus, CreatedAt
             FROM WebConversationAttachments
             WHERE ConversationId = %s AND DeletedAt IS NULL{where_latest}
@@ -5352,6 +5396,11 @@ async def ask(request: Request) -> JSONResponse:
                         conversation_id, exc_info=True,
                     )
 
+        # 표시 payload 는 **반드시 표시 이음매를 통과**한다. 여기만 우회하면 이 응답의 `steps`
+        # 가 `intent`(=`<도구명>: <문구>`)와 정화되지 않은 `work` 를 그대로 실어 나른다 —
+        # 판정축은 「렌더 여부」가 아니라 「나가는가」다(§16.8 B-2(a), 적대 검증 라운드 3 F3).
+        render_steps = [app._resolve_step_display(_s) if isinstance(_s, dict) else _s
+                        for _s in (render_steps or [])]
         result = {
             "output": render_output,
             "executed_sql": render_sql,

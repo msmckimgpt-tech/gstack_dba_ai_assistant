@@ -796,17 +796,41 @@ def _load_scoped_attachment_rows() -> list[dict]:
         cur = mem_conn.cursor()
         placeholders = ", ".join(["%s"] * len(ids))
         params: tuple = tuple(int(i) for i in ids) + (conversation_id,)
-        cur.execute(
-            # REQ-20260814-attach-version-branching: 계보 식별자(CreatedByRole/VersionNumber)를
-            # 함께 읽는다 — 동명 첨부가 여럿일 때 "어느 계보인지" 를 되물으려면 필요하다.
-            f"SELECT Id, OriginalFilename, Kind, ObjectKey, UploadStatus, MetaJson, "
-            f"CreatedByRole, VersionNumber, AccountId "
-            f"FROM WebConversationAttachments "
-            f"WHERE Id IN ({placeholders}) AND ConversationId = %s "
-            f"AND DeletedAt IS NULL AND DeletePending = 0 ORDER BY Id DESC",
-            params,
-        )
-        for row in (cur.fetchall() or []):
+        # REQ-20260814-attach-version-branching: 계보 식별자(CreatedByRole/VersionNumber)를
+        # 함께 읽는다 — 동명 첨부가 여럿일 때 "어느 계보인지" 를 되물으려면 필요하다.
+        # REQ-20260908-attach-folder-tree: 경로(row[9]) — 끝에 append 해 기존 index 보존.
+        _base = ("Id, OriginalFilename, Kind, ObjectKey, UploadStatus, MetaJson, "
+                 "CreatedByRole, VersionNumber, AccountId")
+
+        def _run(cols: str):
+            cur.execute(
+                f"SELECT {cols} "
+                f"FROM WebConversationAttachments "
+                f"WHERE Id IN ({placeholders}) AND ConversationId = %s "
+                f"AND DeletedAt IS NULL AND DeletePending = 0 ORDER BY Id DESC",
+                params,
+            )
+            return cur.fetchall() or []
+
+        try:
+            _fetched = _run(_base + ", RelativePath")
+        except Exception:
+            # §18.8 backend [P1]: `_build_attachment_context_section` 과 **같은 degrade** 를 여기에도
+            # 건다. 없으면 컬럼이 아직 없는 롤아웃 창(ask-worker 는 web 부트스트랩을 타지 않는
+            # 별 컨테이너다)에서 바깥 `except` 가 삼켜 `read_attachment` 가 **모든 파일에 대해**
+            # "참조할 수 있는 첨부가 아닙니다" 를 낸다 — 프롬프트에는 목록이 실려 있으므로
+            # 모델은 "있다고 들은 파일이 없다" 는 모순을 사용자에게 그대로 전한다.
+            logging.getLogger(__name__).warning(
+                "attach-folder-tree: read 경로도 RelativePath 없이 재조회 — 경로 지칭만 비활성.",
+                exc_info=True)
+            try:
+                _rb = getattr(mem_conn, "rollback", None)
+                if callable(_rb):
+                    _rb()
+            except Exception:
+                pass
+            _fetched = _run(_base)
+        for row in _fetched:
             rows.append({
                 "id": int(row[0] or 0),
                 "filename": str(row[1] or ""),
@@ -819,6 +843,9 @@ def _load_scoped_attachment_rows() -> list[dict]:
                 # REQ-20260814-attach-provenance-gate(§18.8 [P1]): 소유자 없이는 "타 멤버 파일인가" 를
                 # 판정할 수 없다 — read_attachment 로 본문을 끌어오는 경로가 게이트를 그냥 통과했다.
                 "account_id": int(row[8] or 0) if len(row) > 8 and row[8] is not None else 0,
+                # REQ-20260908-attach-folder-tree: 폴더 경로 — `read_attachment` 가 경로로도
+                # 파일을 지칭할 수 있게 한다(동명 파일이 여러 폴더에 있을 때의 유일한 구분자).
+                "relative_path": (str(row[9]) if len(row) > 9 and row[9] else ""),
             })
         cur.close()
     except Exception:
@@ -999,15 +1026,33 @@ def read_attachment_content(
                 f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
             )}
     elif filename:
-        want = str(filename).strip().lower()
-        # 정확 일치 우선, 없으면 부분 일치(모델이 경로·확장자를 다르게 적는 경우 흡수).
-        exact = [r for r in rows if r["filename"].lower() == want]
+        want = str(filename).strip().replace("\\", "/").lower()
+        # REQ-20260908-attach-folder-tree: `filename` 인자는 **파일명 또는 경로**를 받는다.
+        # 폴더 첨부에서 동명 파일이 여러 디렉토리에 있으면 경로가 유일한 구분자이고,
+        # 프롬프트(DIRECTORY STRUCTURE 블록)가 모델에게 경로를 넘기라고 안내한다 — 그 안내가
+        # 실제로 통해야 한다(안 통하면 모델은 "찾지 못했습니다" 를 받고 파일이 없다고 답한다).
+        #
+        # 우선순위: 경로 정확 → 파일명 정확 → 경로 접미(끝부분) → 파일명 부분.
+        # 접미 매칭은 모델이 `utils/helper.py` 처럼 트리의 중간부터 적는 경우를 흡수한다.
+        def _rp(r):
+            return str(r.get("relative_path") or "").lower()
+        exact_path = [r for r in rows if _rp(r) and _rp(r) == want]
+        exact_name = [r for r in rows if r["filename"].lower() == want]
+        suffix_path = [
+            r for r in rows
+            if _rp(r) and want and (_rp(r).endswith("/" + want) or _rp(r) == want)
+        ]
         partial = [r for r in rows if want and want in r["filename"].lower()]
-        cands = exact or partial
+        cands = exact_path or exact_name or suffix_path or partial
         if not cands:
+            # 경로가 있는 첨부는 **경로로** 안내한다 — 파일명만 나열하면 모델이 방금 실패한
+            # 지칭 방식을 그대로 다시 쓴다.
+            _avail = ", ".join(
+                repr(r.get("relative_path") or r["filename"]) for r in rows[:20]
+            )
             return {"ok": False, "error": (
                 f'"{filename}" 이라는 첨부를 이 대화에서 찾지 못했습니다. '
-                f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
+                f"사용 가능: {_avail}"
             )}
         # REQ-20260814-attach-version-branching (§18.8 적대 리뷰 [P1]): 동명 파일이 여럿인 것은
         # 이제 **정상 상태**다 — 사람 계보 head 와 AI 계보 head 가 같은 이름으로 공존한다.
@@ -1015,15 +1060,25 @@ def read_attachment_content(
         # 자기가 만든 수정본을 읽고 그것을 사용자 파일이라 서술한다(조용한 오독). 이름만으로
         # 가릴 수 없으면 **고르지 말고 되묻는다** — 어느 계보인지는 모델이 아는 정보다.
         if len(cands) > 1:
+            # REQ-20260908-attach-folder-tree: 후보가 **서로 다른 폴더**의 동명 파일일 수 있다 —
+            # 그때는 경로가 모델이 이미 아는 구분자이므로 계보 설명보다 경로를 앞세운다.
             _opts = ", ".join(
                 f"attachment_id={r['id']}"
-                f"({'AI 수정본' if str(r.get('created_by_role') or '') == 'assistant' else '사용자 업로드'}"
+                + (f" path=\"{r['relative_path']}\"" if r.get("relative_path") else "")
+                + f"({'AI 수정본' if str(r.get('created_by_role') or '') == 'assistant' else '사용자 업로드'}"
                 f" v{r.get('version_number') or 1})"
                 for r in cands[:8]
             )
+            _multi_dir = len({str(r.get("relative_path") or "") for r in cands}) > 1
+            _why = (
+                "서로 다른 폴더에 같은 이름의 파일이 있습니다 — 위 `path` 를 그대로 `filename` 에 "
+                "넘기거나 `attachment_id` 로 지정하세요"
+                if _multi_dir else
+                "사람이 올린 계보와 AI 수정 계보가 같은 이름으로 공존할 수 있습니다. "
+                "어느 것을 읽을지 `attachment_id` 로 지정하세요"
+            )
             return {"ok": False, "error": (
-                f'"{filename}" 이름의 첨부가 {len(cands)}건 있습니다(사람이 올린 계보와 AI 수정 계보가 '
-                f"같은 이름으로 공존할 수 있습니다). 어느 것을 읽을지 `attachment_id` 로 지정하세요 — {_opts}"
+                f'"{filename}" 이름의 첨부가 {len(cands)}건 있습니다({_why}) — {_opts}'
             )}
         target = cands[0]
     else:
@@ -2145,6 +2200,12 @@ def _assistant_lineage_ownership(uploader_account_id: Any, account_id: Any) -> s
     return "own" if uploader == caller else "other"
 
 
+# REQ-20260908-attach-folder-tree: 디렉토리 트리 블록의 줄 수 상한(§18.8 ux [P2]).
+# 200줄 ≈ 3.4KB ≈ 850 토큰 — 폴더 구조를 파악하기엔 충분하고, 매 턴 실려도 감당 가능하다.
+# 초과 시 `render_directory_tree` 가 디렉토리 단위로 접는다(파일 수는 남긴다).
+_ATTACHMENT_TREE_MAX_LINES = int(os.environ.get("ATTACHMENT_TREE_MAX_LINES") or 200)
+
+
 def _build_attachment_context_section(
     mem_conn,
     attachment_ids: list[int],
@@ -2202,7 +2263,10 @@ def _build_attachment_context_section(
                         f"SELECT id, conversation_id, original_filename, kind, mime_type, "
                         f"size_bytes, size_bucket, upload_status, meta_json::text, "
                         f"root_attachment_id, version_number, created_by_role, account_id, "
-                        f"(created_at AT TIME ZONE 'UTC') AS created_at "
+                        f"(created_at AT TIME ZONE 'UTC') AS created_at, "
+                        # REQ-20260908-attach-folder-tree: 폴더 경로(row[14]) — 끝에 append 해
+                        # 기존 positional index(0..13)를 보존한다.
+                        f"relative_path "
                         f"FROM agent_runtime.core_attachments "
                         f"WHERE id IN ({_ph}) AND {_scope_sql} "
                         f"AND deleted_at IS NULL AND delete_pending = 0 ORDER BY id ASC",
@@ -2225,19 +2289,47 @@ def _build_attachment_context_section(
                 _scope_sql, _scope_val = "ConversationId = %s", str(conversation_id)
             else:
                 _scope_sql, _scope_val = "AccountId = %s", int(account_id or 0)
-            cur.execute(
-                # REQ-20260713: 버전 컬럼 3개 append(row[9..11]) — 기존 positional index(0..8) 보존.
-                f"""
-                SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
-                       SizeBytes, SizeBucket, UploadStatus, MetaJson,
-                       RootAttachmentId, VersionNumber, CreatedByRole, AccountId, CreatedAt
-                FROM WebConversationAttachments
-                WHERE Id IN ({placeholders}) AND {_scope_sql} AND DeletedAt IS NULL AND DeletePending = 0
-                ORDER BY Id ASC
-                """,
-                tuple(int(i) for i in attachment_ids) + (_scope_val,),
+            # REQ-20260713: 버전 컬럼 3개 append(row[9..11]) — 기존 positional index(0..8) 보존.
+            # REQ-20260908-attach-folder-tree: 폴더 경로(row[14]) — 끝에 append.
+            _base_cols = (
+                "Id, ConversationId, OriginalFilename, Kind, MimeType, "
+                "SizeBytes, SizeBucket, UploadStatus, MetaJson, "
+                "RootAttachmentId, VersionNumber, CreatedByRole, AccountId, CreatedAt"
             )
-            rows = cur.fetchall() or []
+            _params = tuple(int(i) for i in attachment_ids) + (_scope_val,)
+
+            def _run(cols: str):
+                cur.execute(
+                    f"""
+                    SELECT {cols}
+                    FROM WebConversationAttachments
+                    WHERE Id IN ({placeholders}) AND {_scope_sql}
+                      AND DeletedAt IS NULL AND DeletePending = 0
+                    ORDER BY Id ASC
+                    """,
+                    _params,
+                )
+                return cur.fetchall() or []
+
+            try:
+                rows = _run(_base_cols + ", RelativePath")
+            except Exception:
+                # §18.8 security/backend [P2]: 컬럼이 아직 없는 배포(마이그레이션 전, 또는
+                # web 부트스트랩보다 agent-core 가 먼저 뜬 롤아웃 창)에서 이 SELECT 는
+                # `Unknown column` 으로 죽는다. 그것을 바깥 except 가 삼키면 **ATTACHED FILES
+                # 섹션이 통째로 사라지고** assistant 는 "첨부가 없습니다" 라고 답한다 —
+                # FR-attachment-change-false-absence 와 같은 실패 클래스다. 「폴더 기능이 아직
+                # 없는 상태」로 degrade 하는 것이 옳지, 첨부 인지 자체를 잃어서는 안 된다.
+                logging.getLogger(__name__).warning(
+                    "attach-folder-tree: RelativePath 컬럼 없이 재조회 — 폴더 구조 없이 진행"
+                    "(마이그레이션 미적용 또는 롤아웃 창).", exc_info=True)
+                try:
+                    conn_rollback = getattr(mem_conn, "rollback", None)
+                    if callable(conn_rollback):
+                        conn_rollback()
+                except Exception:
+                    pass
+                rows = _run(_base_cols)
         except Exception:
             return ""
         finally:
@@ -2291,10 +2383,17 @@ def _build_attachment_context_section(
         lines.append("<!-- ★ = 이번 요청에 새로 첨부 | ◆ = 이전 세션에서 첨부 (LLM 컨텍스트 유지) -->")
     # TASK-0284: 첨부 지칭 규칙 — LLM 이 답변에서 첨부를 일련번호(attachment_id)가 아닌 파일명으로
     # 언급하도록 강제. attachment_id 는 내부 식별자라 사용자에게 혼란을 준다(사용자 보고).
+    # REQ-20260908-attach-folder-tree (§18.8 ux [P3]): 폴더 첨부가 있으면 «파일명으로만 지칭»
+    # 규칙이 그 자리에서 완결되어야 한다 — 경로 예외를 트리 블록(수백 줄 뒤)에만 두면 모델이
+    # 첫 시도에 basename 을 쓰고 모호성 에러를 받는 왕복이 생긴다.
+    _any_folder = any((len(r) > 14 and r[14]) for r in rows)
     lines.append(
         "**REFER TO ATTACHMENTS BY FILENAME**: When you mention, cite, or discuss any attached file "
         "in your answer, always refer to it by its filename (the quoted name shown below, e.g. "
-        '`"sales.csv"`). NEVER refer to a file by its `attachment_id` number — that is an internal '
+        '`"sales.csv"`)'
+        + (', or by its `path` when the same name exists in more than one folder (e.g. '
+           '`"src/config.json"`)' if _any_folder else "")
+        + ". NEVER refer to a file by its `attachment_id` number — that is an internal "
         "identifier and confuses the user. If multiple files share a name, add a short distinguishing detail."
     )
     # feature-0003 attach-full-scope: 목록은 전량, 본문은 상한 안에서만 인라인된다. 상한 밖 파일도
@@ -2362,6 +2461,9 @@ def _build_attachment_context_section(
     _owner_kind_of: dict[int, str] = {}
     _ai_owned_seen = False
     _ai_locked_seen = False
+    # REQ-20260908-attach-folder-tree: 디렉토리 트리 렌더용 (relative_path, filename) 수집.
+    # 렌더는 순회 후 1회 — 파일마다 구조를 반복하면 상한을 먹는다.
+    tree_entries: list[tuple[str | None, str]] = []
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
@@ -2377,6 +2479,10 @@ def _build_attachment_context_section(
         created_at_raw = row[13] if len(row) > 13 else None
         # REQ-20260824-attach-original-baseline: 계보 식별자(row[9]) — 최초본 조회의 그룹 키.
         root_attachment_id = int(row[9]) if len(row) > 9 and row[9] is not None else None
+        # REQ-20260908-attach-folder-tree: 폴더 첨부의 상대 경로(row[14]). 빈 값 = 단일 파일.
+        # 컬럼이 아직 없는 배포(마이그레이션 전)에서는 row 가 짧을 수 있어 길이를 먼저 본다 —
+        # 없으면 폴더 없는 종전 동작으로 자연 폴백한다.
+        relative_path = str(row[14] or "") if len(row) > 14 and row[14] is not None else ""
         meta_obj: dict = {}
         try:
             meta_raw = row[8]
@@ -2569,9 +2675,76 @@ def _build_attachment_context_section(
             })
         # TASK-0284: 파일명을 맨 앞에 따옴표로 노출 — LLM 이 첨부를 attachment_id(일련번호)가 아닌
         # 파일명으로 지칭하게 한다(사용자 혼란 방지). attachment_id 는 보조 참조로 괄호 안에 둔다.
-        lines.append(
-            f'- file "{filename}" (attachment_id={attachment_id}) kind={kind} size={size_bucket} status={upload_status}{source_label}{version_label}{uploader_label}{meta_text}'
+        # REQ-20260908-attach-folder-tree: 폴더 안 파일이면 **어디에 있던 파일인지**를 같은 줄에
+        # 싣는다. 파일명만으로는 `src/config.json` 과 `test/config.json` 이 구분되지 않고, 모델이
+        # 둘을 한 파일로 합쳐 답한다. 트리 블록(아래)이 전체 구조를, 이 라벨이 파일별 자리를 준다.
+        # §18.8 security [P2]: 경로도 비신뢰 문자열이다 — 따옴표를 닫고 그 뒤에
+        # `kind=… 👤uploaded-by=you` 를 위조해 붙이면 모델의 출처 서술이 오염된다(집행은 코드가
+        # 하지만 서술은 이 라인이 만든다). 평탄화 + 따옴표 이스케이프로 라벨 경계를 지킨다.
+        path_label = (
+            f' path="{_flatten_untrusted_name(relative_path, cap=1024).replace(chr(34), chr(39))}"'
+            if relative_path else ""
         )
+        if relative_path:
+            tree_entries.append((relative_path, filename))
+        else:
+            tree_entries.append((None, filename))
+        lines.append(
+            f'- file "{filename}"{path_label} (attachment_id={attachment_id}) kind={kind} size={size_bucket} status={upload_status}{source_label}{version_label}{uploader_label}{meta_text}'
+        )
+
+    # REQ-20260908-attach-folder-tree: 폴더 구조 블록. **폴더 첨부가 실제로 있을 때만** 렌더한다
+    # (경로 있는 항목이 0 이면 종전 출력과 byte-동치 — 단일 파일만 쓰는 대화에 토큰을 물리지 않는다).
+    #
+    # 왜 목록 위에 트리가 또 필요한가: 파일 라인의 `path="..."` 는 파일 **하나의 자리**를 말하지만,
+    # 모델이 "이 폴더에 무엇이 있나 / 이 코드베이스가 어떻게 구성됐나" 를 답하려면 **형태 전체**가
+    # 한눈에 필요하다. 경로 문자열 N 개를 모델이 머릿속에서 트리로 재구성하게 두면 빠뜨린다.
+    _tree_has_folder = any(rp for rp, _ in tree_entries)
+    if _tree_has_folder:
+        try:
+            from shared.attachment_path import render_directory_tree as _render_tree
+            # §18.8 security [P1]: 경로 세그먼트와 파일명은 **업로더가 정하는 비신뢰 문자열**이다.
+            # 정제 없이 그리면 ``` 라는 이름의 파일 하나가 아래 코드펜스를 닫고, 그 뒤에 오는
+            # 권위 블록(FILE VERSION LINEAGES · AI-owned 범례 · 첨부 본문 datamark)이 통째로
+            # 프롬프트 산문으로 새어 나온다. 목록 라인보다 격상된 문맥이라 영향이 크다 —
+            # `_flatten_untrusted_name`(개행·제어문자·sentinel 제거) 과 동일 태세를 여기에도 건다.
+            def _safe_seg(x: str) -> str:
+                # 백틱은 공백을 끼워 펜스 런(```)이 성립하지 못하게 한다(문자는 보존).
+                return _flatten_untrusted_name(str(x or ""), cap=200).replace("`", "` ")
+            _safe_entries = []
+            for _rp, _label in tree_entries:
+                _srp = ("/".join(_safe_seg(seg) for seg in str(_rp).split("/") if seg)
+                        if _rp else None)
+                _safe_entries.append((_srp, _safe_seg(_label)))
+            # §18.8 ux [P2]: 트리에도 상한을 둔다. 첨부는 append-only 라 이 블록이 **매 턴**
+            # 실리고, 300 파일 폴더 하나가 ~2,500 토큰을 대화 끝까지 상시 점유한다(프롬프트의
+            # 다른 축은 모두 캡을 갖고 있는데 이 블록만 무제한이었다). 초과분은 자르지 않고
+            # 디렉토리 단위로 접어 「무엇이 얼마나 있는지」는 남긴다 — 무음 절단 금지.
+            _tree_lines = _render_tree(_safe_entries, max_lines=_ATTACHMENT_TREE_MAX_LINES)
+        except Exception:
+            _tree_lines = []
+        if _tree_lines:
+            lines.append("")
+            lines.append("### DIRECTORY STRUCTURE OF ATTACHED FOLDERS")
+            lines.append(
+                "The user attached one or more **folders**, not just loose files. The tree below is the "
+                "actual directory structure those files came from — the same structure the user sees on "
+                "their machine. Use it to reason about the project layout (what lives where, which files "
+                "are siblings, what a directory contains). Each file's own location is also on its list "
+                "line above as `path=\"...\"`. Files listed at the top level with no directory were "
+                "attached individually, not as part of a folder."
+            )
+            lines.append(
+                "When you refer to a file that exists in more than one directory, say which one you mean "
+                "by its path (e.g. `src/config.json`, not just `config.json`). "
+                "`read_attachment` accepts either the filename or the full path — pass the **path** when "
+                "the name alone is ambiguous."
+            )
+            # 구획은 마크다운 펜스가 아니라 **datamark sentinel** 이다 — 펜스는 파일명이 닫을 수
+            # 있지만 sentinel 은 `_datamark_untrusted` 가 내용에서 제거하므로 위조되지 않는다.
+            lines.append(_datamark_untrusted(
+                "\n".join(_tree_lines), "첨부 폴더 구조 (파일·폴더 이름은 사용자 제공 데이터)"))
+            lines.append("")
 
     # FR-attachment-version-bump-forks-new-root: 🤖AI-owned 범례 — 라벨이 실제로 붙은 턴에만,
     # **파일 수와 무관하게 한 번** 렌더한다(§18.8 codex [P2] 토큰 축). 갱신 방법은 여기에만 있고
