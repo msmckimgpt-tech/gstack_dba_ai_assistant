@@ -6412,3 +6412,9 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260909T123000-diff-similarity-sync
 - Session: codex diff-similarity; aa795a51 구현 및 76293899 main 통합 커밋을 원격 작업 브랜치에 반영했다. 통합 검증94건·컨테이너45건 기록을 최종 확인했다.
 - 병합 pre-commit 검증은 PASS였으나 post-commit 게이트는 TASK/MODIFY/REVIEW delta 3개를 미인식했다(`/tmp/post-commit-verify.b3XufR`). 새 문서 커밋으로 동기화 상태와 검증 증거를 명시하고 다시 검증한다. 코드/제품 동작 변경은 없다.
+
+
+## CHG-20260909T124000-diff-similarity-postdeploy
+- Session: codex:root:01a08411-5b5d-7691-890c-509a2b60ed6d; TASK-20260909T120000-diff-similarity.
+- 문서만: PR #1646 main 46b70e26 반영, web-only 배포 exit0·두 replica ready·90초 soak PASS, 배포본 정렬/서빙 자산 일치를 TASK·REPORT·Run에 기록했다. 임시 검증 로그를 wrapper artifacts에 보존하고 Run 링크를 갱신했다.
+- DQA Shell fixture21 PASS와 설치 사용자 첨부/API NOT-RUN을 구분한다. 호스트 DNS 부재·snap build metadata 오류의 관측 및 실제 검증 경로도 Run에 기록했다. 동작 코드 변경0.

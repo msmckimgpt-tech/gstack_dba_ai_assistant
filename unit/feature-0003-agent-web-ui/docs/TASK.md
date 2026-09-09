@@ -33,7 +33,7 @@ AC 예: `SET @CURRENT_DATE = CONVERT(varchar(10), GETDATE(), 20)` 앞에 TRY가 
 - [x] 정렬 구현 및 재현 회귀
 - [x] 독립 리뷰·검증·문서 정합
 - [x] 최신 main 통합 및 관련94건·컨테이너45건 재검증
-- [ ] main 반영·배포·DQA 검증 범위 기록
+- [x] main 반영·배포·DQA 검증 범위 기록 — PR #1646 / web 46b70e26 두 replica ready·soak PASS, 배포본 정렬·서빙 자산 일치. 설치 사용자 세션 NOT-RUN을 명시.
 
 
 ## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과 도달 (참조)
