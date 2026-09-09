@@ -5125,3 +5125,43 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 ## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
 - Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
 - 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.
+
+## REV-20260909T010000-prompt-autogen-delivery [CODEX:uncommitted] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: `codex review --uncommitted` (codex-cli 0.153.4) — TASK-20260909T000000-prompt-autogen-delivery
+  의 미커밋 변경 전량(프론트 4파일 · 라우터 3파일 · shared 1파일 · 테스트 2파일 · 문서).
+- **Trigger**: API/endpoint·엔드포인트 keyword matched (신설 `GET /api/profile/ai-jobs/{task_id}`)
+  + UI/screen·화면 keyword matched (자동 작성 3화면 동작 변경) → §18.8 표상 backend·security·qa·ux·design.
+  **채널 선택 근거**: 이 세션은 기본 지침으로 subagent(Agent 툴) 호출이 금지돼 있어, 사용자에게 1회
+  확인해 §18.8.1 이 check #9 accepted 로 인정하는 **codex 채널로 대체**하기로 결정받았다
+  (사용자 선택 2026-09-09). 자체 SKIP 이 아니다.
+- **판정**: **ACCEPTED — P1(GATE) 0건**. codex 결론: "검토한 변경사항에서 명확한 신규 결함을
+  발견하지 못했습니다."
+
+### reviewer 가 독립 수행한 것
+
+- 리뷰 도중 행위 하네스를 직접 구동: `node verify_prompt_autogen_delivery.mjs` → **15 passed, 0 failed**.
+- pytest 는 codex 샌드박스의 소켓 제한(`conftest._assert_live_stack_unreachable` 이 socket 생성)
+  으로 실행되지 못했다 — 그 축은 우리 컨테이너 회귀(§ Run 원장)가 담당한다.
+
+### reviewer 가 확인하지 못한 것 (정직 표기)
+
+- 실제 DQA 클라이언트에서의 사용자 동작. 라이브 검증은 PB-0009 축이며 러너 자격이 필요하다.
+
+### 본 cycle 이 스스로 잡아 고친 것 (리뷰 외)
+
+- `docs/TASK.md` §2.1 변경표의 심볼명이 계획 작성 시점의 가명(`RUNNER_FAILURE_NOTICE_MARKER` ·
+  `is_runner_failure_notice` · `build_console_job_status`)으로 남아 실제 구현명과 어긋나 있었다 →
+  `RUNNER_DEGRADED_NOTICE` · `runner_degraded_reason` · `_ai_job_status_response` 로 정정.
+- base(`cdd414e3`)에 이미 있던 회귀 2건을 함께 정합: 라우트 golden drift 2건
+  (`/api/ai/connect/identity` · `/api/ai/tools/get_tool_catalog`)과 명시 도구 수 계약(7→8).
+  후자는 매니페스트·MCP 어댑터 2벌 등재를 **확인한 뒤** 숫자만 옮겼고 계약은 그대로다.
+
+## REV-20260909T020000-prompt-autogen-postdeploy [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: 출하 후 실측 기록만(Run 원장 2종 + MODIFY CHG). **코드·정책 변경 0** — 배포된
+  `00981307` 에 대한 관측 결과를 원장에 옮기는 문서 cycle 이다.
+- **Trigger**: non-policy-doc → §18.8 표에 따라 panel SKIP. 본 cycle 이 기록하는 코드 변경
+  자체는 `REV-20260909T010000-prompt-autogen-delivery` 에서 이미 codex 채널로 ACCEPTED 됐다.

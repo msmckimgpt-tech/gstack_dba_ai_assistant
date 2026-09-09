@@ -8430,3 +8430,12 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 승인 근거: 현재 사용자 요청이 diff 유사 매칭 구현을 위임했으며 Minor 표시/계산 변경이다. wrapper FIRST_REQUEST.md의 deploy_scope: included 및 AGENTS §16.5.1에 따라 검증 후 web-only 배포를 수행한다. 권한·원본 저장·DB 실행 변경 없음.
 
 - QA 후속 검토(diff_review): 전체 회귀의 기존 사이드 패널 하네스 누락 원인 확인 및 4줄 수정. Node 69건과 관련 pytest PASS. route/tool 기대치는 최신 main에서 이미 정합되어 upstream merge로 수용한다.
+
+- origin/main(a8abac5f) 병합: TASK 상단의 독립 두 작업 추가는 양쪽 보존, ROUTEMAP 생성 지문 충돌은 현재 소스로 재생성. 동작 코드 충돌 없음. upstream의 route golden·도구 목록 기대 갱신을 수용한다.
+
+## REV-20260909T122500-diff-similarity-integration [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
+- Trigger: upstream merge / 병합·라우트 계약 정합
+- Timestamp: 2026-09-09T12:22:35.563603+09:00
+- Artifact: [통합 검토](reviews/20260909T122500-diff-similarity-integration.md)
+- Human Approval Needed: no

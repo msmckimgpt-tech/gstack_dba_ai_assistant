@@ -12,7 +12,7 @@ source_of_truth: false
 
 DQA 첨부 diff의 원문 완전 일치 기반 정렬을 공백·대소문자 정규화 앵커와 구문 유사도 정렬로 개선했다. 원문이 다른 줄은 계속 replace이며 문자열과 인용 식별자는 정렬에서도 구별한다. 반복 SQL·잘못 닫힌 인용 입력의 성능 문제를 독립 리뷰로 적발·해소했다. 계산 제한은 안내로 표시한다.
 
-집중 Python 91건, Node diff 128건·계보 24건, 실제 제품 Shell/WebView2 fixture 21건 PASS. 전체 회귀·원격 반영·배포 진행 중. 설치된 사용자 DQA와 실제 첨부/API 왕복은 아직 미검증이다. 실행 경로·원본 캡처는 `test-runs.d/TASK-20260909T120000-diff-similarity.md`에 기록한다. 정책 SHA256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`, 작업/브랜치는 TASK 정본.
+집중 Python 91건, Node diff 128건·계보 24건, 실제 제품 Shell/WebView2 fixture 21건 PASS. 최초 전체 회귀 8,358 PASS/16 FAIL/40 SKIP의 실패 원인을 모두 분류했다. 환경13건은 네트워크 없는 컨테이너에서 관련45건 PASS, 기존 테스트3건은 최신 main의2건 수정 수용 및 하네스1건 교정으로 재검증했다. 전체 재실행을 PASS로 주장하지 않는다. 최신 main 통합 후 관련94건 PASS. 원격 반영·배포 진행 중. 설치된 사용자 DQA와 실제 첨부/API 왕복은 아직 미검증이다. 실행 경로·원본 캡처는 `test-runs.d/TASK-20260909T120000-diff-similarity.md`에 기록한다. 정책 SHA256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`, 작업/브랜치는 TASK 정본.
 
 ## TASK-20260908T125500-step-tool-syntax-leak — 2026-09-08
 

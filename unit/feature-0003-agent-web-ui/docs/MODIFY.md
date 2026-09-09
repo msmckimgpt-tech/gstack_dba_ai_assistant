@@ -6404,3 +6404,7 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - 회귀·실제 DQA Shell fixture·독립 리뷰 증거: `test-runs.d/TASK-20260909T120000-diff-similarity.md`.
 
 - 전체 pytest에서 발견된 기존 사이드 패널 하네스는 제품 `setupAiJobsTab()` 의존 stub 누락이었다. stub과 실제 열림 전제 검사를 추가해 Node 69건·해당 pytest 단건 PASS. 제품 프로필 코드는 변경하지 않았다.
+
+## CHG-20260909T122000-diff-similarity-integration
+- Session: codex diff-similarity; 최신 origin/main a8abac5f 통합. TASK의 독립 신규 항목 두 개를 모두 보존하고 ROUTEMAP을 현재 소스에서 재생성했다. 동작 코드 충돌은 없었다.
+- 최초 전체 pytest 실패16건을 환경13건(격리 컨테이너 관련45건 PASS)·upstream 갱신2건·사이드 패널 테스트 stub1건으로 분류/해소. 최종 관련94건 PASS. 전체 suite를 재실행한 결과와 혼동하지 않는다.

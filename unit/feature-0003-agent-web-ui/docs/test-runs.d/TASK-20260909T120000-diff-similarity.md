@@ -10,7 +10,7 @@ verdict: PASS
 Environment: CLI
 Result: PASS
 Scenario: 정렬·원문 보존·patch 복원·인가/계보 회귀
-Evidence: `/tmp/dqa-diff-tests.log` — Python 91 passed (3.73s); `/tmp/dqa-diff-node.log` — Node diff 128 PASS; `/tmp/dqa-diff-tree-node.log` — 계보 UI 24 PASS; codenav-lint 및 신규 Python ruff PASS.
+Evidence: `/tmp/dqa-diff-tests.log` — Python 90 passed (3.73s), 별도 API 제한 전달1 passed (0.51s); `/tmp/dqa-diff-node.log` — Node diff 128 PASS; `/tmp/dqa-diff-tree-node.log` — 계보 UI 24 PASS; codenav-lint 및 신규 Python ruff PASS.
 Command: `PYTHONPATH=unit/feature-0002-agent-core/src:unit/feature-0003-agent-web-ui/src:. python3 -m pytest -q unit/feature-0003-agent-web-ui/tests/test_attachment_diff_similarity.py unit/feature-0003-agent-web-ui/tests/test_attachment_version_diff.py unit/feature-0003-agent-web-ui/tests/test_attach_version_branching.py --tb=short --disable-warnings -o addopts=''`
 
 Environment: DQA-client
@@ -30,4 +30,12 @@ Next: 배포 후 사용 중 DQA에서 같은 파일 두 버전을 다시 비교�
 
 ## 전체 회귀 및 배포
 
-전체 pytest 진행 중: `/tmp/dqa-diff-full-tests.log`. 원격 동기화 및 web-only 배포 결과는 후속 갱신한다.
+최초 전체 pytest: **8,358 passed / 16 failed / 40 skipped**, 564.16s (`/tmp/dqa-diff-full-tests.log`). 실패를 숨기거나 전체 PASS로 합산하지 않는다.
+
+- 환경 13건: 호스트 psycopg 부재6·컨테이너 전용 web.app import7. 의존성을 가진 제품 이미지에 현재 소스를 복사하고 `--network none` 및 테스트 DB 격리 변수로 재검증: **45 passed** (`/tmp/dqa-diff-container-tests.log`). 라이브 컨테이너/DB 접속 없음.
+- 기존 테스트 3건: main 대조에서 route·도구 목록2건은 이미 선행 수정되어 PASS. 최신 main merge로 수용했다. side-panel 하네스1건은 누락 주변 의존 stub을 추가하고 열림 전제 검사를 보강해 **Node69 PASS + pytest 단건 PASS**.
+- 추가 API 정렬 제한 전달 단건 **1 PASS** (`/tmp/dqa-diff-api-limit.log`). 집중 원래90건과 별도 실행이다.
+- 환경 재검증 중 Docker snap CLI가 호스트 `/tmp` 파일을 읽지 못해 task artifacts 경로로 staging을 옮겼다. 부분 복사 때 root conftest가 요구한 bridge source 부재를 보완한 뒤 성공했다.
+- 전체 suite를 같은 환경에서 다시 실행한 것은 아니다. 실패 원인을 각각 해소·재검증한 근거를 위와 같이 구분한다. 원격 동기화 및 web-only 배포 결과는 후속 기록한다.
+
+최신 main(a8abac5f) 통합 후 diff/계보/API·route golden·사이드패널·bridge tool 기대 **94 passed**, 11.86s (`/tmp/dqa-diff-final-tests.log`).

@@ -5,12 +5,79 @@ status: active
 edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
-feature_status_date: 2026-09-08
-feature_status_note: 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단
+feature_status_date: 2026-09-09
+feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 않던 결함 수정(3진입점 + 폴링 권한 축)
 
 ---
 
 # Task
+
+## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자 요청("DQA 계정 프로필 '프롬프트 > 내 프롬프트' 의 자동 작성이 동작하지
+  않아 수정 필요") + 범위 확정(AskUserQuestion 2026-09-09 — ① 자동 작성 3진입점 모두 ② 폴링
+  권한 축 함께). Major — 프론트 배선 + 조회 경로 추가. 인증·인가 **정책** 변경 없음(추가되는
+  조회 경로는 기존 admin 경로와 같은 `AccountId` 스코프로, 자기 계정이 만든 작업만 반환한다).
+- 라이브 실증(2026-09-08 19:56, 계정 10): `GET /api/auth/me/system-prompt/generate/stream` →
+  **200 OK**, `WebAiTasks j_LO28YKoH0ifGR5E7`(JobKind=prompt_generate, payload
+  `{"scope":"account","scope_id":10}`)가 적재되고 러너가 3초 만에 `submitted` 까지 마쳤다.
+  **서버는 정상 동작했고 화면만 결과를 받지 못했다.**
+- 근본 원인: feature-0043 전환 후 서버는 위임 시 SSE 가 아니라 `{"bridge_pending": true,
+  poll_url, task_id}` **JSON** 을 준다(`routers/_console_jobs.maybe_delegate`). 그런데 세
+  자동작성 화면은 전환 이전의 **SSE 전용 파서**로 남아 있어, 그 JSON 을 프레임으로 읽다가
+  `event:`/`data:` 가 없어 조용히 버린다 — 버튼만 원상복구되고 안내문은 "준비 중…" 에 멈춘다.
+  `admin/llm-state.js` 에 폴링 헬퍼(`awaitDelegatedResult`)가 이미 있으나 `admin/metadata.js`
+  한 곳만 쓴다.
+- 부수 결함: `maybe_delegate` 의 `poll_url` 이 `/api/admin/ai-jobs/{task_id}`(=`console.access`
+  요구)인데, 개인 프롬프트 자동작성은 **로그인만 요구하는 진입점**이다(`shared/bridge_tasks.py`
+  의 `prompt_generate.perms` 가 비어 있는 이유와 같은 사실). 화면을 고쳐도 일반 사용자는
+  폴링에서 403 이라 결과를 못 받는다.
+
+**변경 파일·심볼**
+
+| 경로 | 심볼 | 변경 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/console-job-poll.js` | `awaitDelegatedResult` · `jobPhaseLabel` · `isDelegatedFailureNotice` | 신설 — admin 전용 상태 의존이 없는 폴링 헬퍼를 공용 모듈로 |
+| `.../static/admin/llm-state.js` | 같은 두 심볼 | 공용 모듈에서 import 후 re-export (기존 import 경로 무회귀) |
+| `.../static/app.js` | `generateAccountPrompt` | 응답 content-type 분기 → `bridge_pending` 이면 폴링·국면 표시·결과 반영 |
+| `.../static/admin.js` | `buildSystemPromptEditor` 의 autoBtn 핸들러 | 동일 분기 + `setSystemPromptPending` 반영 |
+| `.../src/routers/profile.py` | `get_profile_ai_job` | 신설 `GET /api/profile/ai-jobs/{task_id}` — 로그인만, 본인 작업 스코프 |
+| `.../src/routers/admin_console.py` | `admin_ai_job_status` → `_ai_job_status_response` | 조회·응답을 공통 함수로 추출(두 경로가 같은 계약을 말하게). 조립 본체는 `_console_jobs.build_job_status_payload` |
+| `.../src/routers/_console_jobs.py` | `maybe_delegate` | `poll_url` → `/api/profile/ai-jobs/{task_id}` |
+| `shared/bridge_tasks.py` | `RUNNER_DEGRADED_NOTICE` · `runner_degraded_reason` | 러너가 실패를 안내문으로 대체 제출할 때 붙이는 고정 꼬리표를 상수화 + 사유 추출 |
+
+**접근 방법**: 위임 응답을 «스트림이 아니다» 로 인지하는 지점을 세 화면이 공유하는 한 모듈에
+두고, 결과 도달까지를 그 모듈이 책임진다. 서버는 두 폴링 경로가 **같은 조립 함수**를 쓰게 해
+"admin 은 되고 프로필은 안 되는" 갈림을 만들지 않는다. 러너가 실패를 안내문으로 대체 제출한
+경우(대화 축에서는 옳은 설계)에는 그 안내문을 프롬프트 본문으로 덮지 않고 경고로 보인다 —
+사용자가 편집 중이던 내용을 오류 문장이 밀어내지 않게.
+
+**완료 판정 기준 (acceptance criteria)**
+
+- AC-1: 러너가 연결된 계정이 '내 프롬프트 > 자동 작성' 을 누르면, 화면이 "연결된 AI 가 처리
+  중…" 국면을 보이다가 **생성된 프롬프트 본문이 textarea 에 채워진다**. (예: 위임 응답
+  `{"bridge_pending":true,"task_id":"j_X"}` → 폴링이 `{"phase":"done","result":"당신은 …"}`
+  를 주면 textarea 값이 `당신은 …` 이 된다.)
+- AC-2: `console.access` 없는 계정도 AC-1 이 성립한다 — 폴링이 403 이 아니다.
+- AC-3: 관리 콘솔의 역할 프롬프트·제품 프롬프트 '자동 작성' 도 같은 경로로 결과가 도달한다.
+- AC-4: 러너가 실패 안내문을 대체 제출한 경우 textarea 는 **덮이지 않고** 실패 사유가 안내에
+  표시된다.
+- AC-5: 게이트가 열린 배포(서버 LLM 직접 호출)에서는 종전 SSE 경로가 그대로 동작한다.
+- AC-6: 정적 모듈 스탬프 census(`?v=`)·라우트 스냅샷 등 기존 계약 회귀 0.
+
+- [x] 구현 — 3진입점 위임 분기 · 공용 폴링 모듈 · 프로필 폴링 경로 · degraded 판정
+- [x] 회귀·이음매 테스트 — 신규 pytest 21 · jsdom 행위 하네스 15 · **뮤턴트 2종 KILL**(원래 결함
+      재현 시 FAIL) · 컨테이너 `make test` exit 0/FAILED 0 · codex review ACCEPTED(P1 0)
+- [x] verify-completion PASS. 출하(commit/push/PR/main)·배포·라이브 도달 확인 결과는
+      [Run 원장](test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md)에 기록한다.
+      DQA-client 실측은 배포 후 Run 2 로 남는다(러너 자격 필요 — NOT-RUN 사유 기록).
+- [x] 출하·배포·라이브 도달 — PR #1644 머지(main `00981307`) · `deploy-web.sh --web-only` exit 0 ·
+      90초 soak 통과 · 서빙 자산 3축과 신규 라우트(401 vs 없는 경로 404 대조군) 실측.
+      머지 충돌 4파일은 §16.4 자율 해결 + 양측 순증분 대조로 검증했다.
+- [ ] **DQA-client 실측 1건 남음** — 러너가 연결된 상태에서 '내 프롬프트 > 자동 작성' 을 한 번
+      누르면 확인된다. 러너 (재)기동에 사람이 발급하는 `mat_` 토큰이 필요해 AI 단독으로 못 넘는다.
 
 ## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
 

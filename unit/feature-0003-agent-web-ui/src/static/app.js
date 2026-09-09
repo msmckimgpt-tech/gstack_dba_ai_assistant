@@ -27,6 +27,9 @@ import { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, rende
 // side-panel-exclusive: 우측 오버레이 사이드 패널(첨부·실행 단계·프로필)은 한 번에 하나만
 // 열린다. 등록·해제 규칙의 정본은 그 모듈이며, 여기서 조건을 다시 조립하지 않는다.
 import { registerSidePanel, openSidePanel } from "./app/side-panels.js?v=dev";
+// feature-0043 TASK-20260909T000000 — 자동작성이 개인 AI 에 위임되면 응답은 SSE 가 아니라
+// `bridge_pending` JSON 이다. 그 봉투를 해석하고 결과가 올 때까지 따라가는 공용 헬퍼.
+import { awaitDelegatedResult, jobPhaseLabel, looksDelegatedEnvelope } from "./console-job-poll.js?v=dev";
 export const authOverlayEl = document.getElementById("authOverlay");
 const loginFormEl = document.getElementById("loginForm");
 const signupFormEl = document.getElementById("signupForm");
@@ -2250,6 +2253,38 @@ async function generateAccountPrompt(btn) {
       finish();
       return;
     }
+    // ── 위임 분기 (feature-0043 TASK-20260909T000000) ────────────────────────────
+    //
+    // 서버 계정 LLM 이 차단된 배포에서 이 요청은 **개인 AI 에게 넘어간다**. 그때 서버는 200 에
+    // 스트림이 아니라 `{"bridge_pending": true, poll_url, task_id}` JSON 을 싣는다. 아래
+    // 분기가 없던 동안 그 응답은 SSE 파서에 들어가 `event:`/`data:` 가 없다는 이유로 조용히
+    // 버려졌고 — 요청은 200, 작업은 적재·완료, 화면만 "준비 중…" 에 멈춘 채였다
+    // (라이브 실증 2026-09-08 19:56). 결과가 화면에 닿는 경로를 여기서 잇는다.
+    if (looksDelegatedEnvelope(resp)) {
+      const envelope = await resp.json().catch(() => ({}));
+      if (!envelope || envelope.bridge_pending !== true) {
+        // 200 + JSON 인데 위임 봉투가 아니다 — 우리가 모르는 응답이다. 조용히 성공으로
+        // 읽지 않는다(그 침묵이 이 결함의 형태였다).
+        setMeta(`자동 생성 실패: ${(envelope && envelope.error) || "알 수 없는 응답"}`, true);
+        return;
+      }
+      setMeta(envelope.message || "연결된 본인 AI 에 맡겼습니다. 완료되면 여기에 채워집니다.");
+      const done = await awaitDelegatedResult(
+        envelope,
+        (phase) => setMeta(jobPhaseLabel(phase)),
+        { signal: controller.signal },
+      );
+      const finalText = String((done && done.result) || "");
+      if (!finalText.trim()) {
+        // 빈 결과를 채우면 사용자는 편집 중이던 본문을 잃고, 화면은 그것을 완료라 말한다.
+        setMeta("연결된 AI 가 빈 결과를 돌려주었습니다. 다시 시도해 보세요.", true);
+        return;
+      }
+      contentEl.value = finalText;
+      contentEl.scrollTop = 0;
+      setMeta(`연결된 AI 가 작성했습니다 (${finalText.length}자). 검토 후 '저장'을 누르세요.`);
+      return;
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -2266,7 +2301,13 @@ async function generateAccountPrompt(btn) {
     }
     if (buf.trim()) handleFrame(buf);
   } catch (error) {
-    if (!(error && error.name === "AbortError")) {
+    if (error && error.name === "AbortError") {
+      // 사용자/재진입 abort — 조용히 무시. 부분 본문은 그대로 둔다.
+    } else if (error && error.terminal === true) {
+      // 위임 폴링이 «더 기다려도 달라지지 않는다» 고 판정한 사유(세션 만료·취소·상한 초과·
+      // 연결된 AI 의 실패). 연결 오류로 뭉뚱그리면 사용자가 할 일이 가려진다.
+      setMeta(error.message, true);
+    } else {
       setMeta(`자동 생성 중단됨(연결 오류): ${error.message || error}`, true);
     }
   } finally {
