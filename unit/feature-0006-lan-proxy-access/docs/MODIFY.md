@@ -420,3 +420,15 @@ denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉�
   스크립트 결함이 아니다. 매핑·접속은 전 구간 유지.
 - 재발 종료는 **미확정**으로 남긴다: 관측 창 내내 기존 인스턴스가 살아 `IgnoreNew` 로 새 실행을
   억제해, 「무재발」과 「억제」가 갈리지 않는다.
+
+## CHG-20260909T070000-portproxy-s4u
+
+- 2026-09-09T10:00:50.020856+00:00; TASK-20260909T070000-portproxy-s4u. `register_mysql_ai_web_portproxy_task.ps1` 의 실행
+  계정을 `SYSTEM/ServiceAccount` → **사용자 계정/`S4U`** 로 교정하고 `-RunAsUser` 를 신설했다.
+  근거: WSL 이 LOCAL SYSTEM 을 지원하지 않아(`WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED`) SYSTEM 등록은
+  5분마다 rc=1 로 죽는다(실측). S4U 는 창 없이 WSL 조회가 된다(실측 rc=0).
+- 트리거에서 `AtLogOn` 제거(S4U 와 경고·의미 중복), `RepetitionDuration` 1일 → 3650일
+  (`[TimeSpan]::MaxValue` 는 등록 실패 — 실측).
+- 앞 CHG 의 「`run_hidden.vbs` 불요」 판정을 **정정**한다: 원래 구성에서 vbs 는 필요했다.
+  결론(되살리지 않는다)은 유지되나 이유가 다르다 — S4U 가 창 없이 동작하기 때문이다.
+- Major(§12.3): 실행 계정 변경. 인증·인가 정책 변경 아님(같은 사용자 권한, 승격 수준 유지).
