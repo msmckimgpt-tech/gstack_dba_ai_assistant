@@ -12,6 +12,30 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 
 # Task
 
+
+## TASK-20260909T140000-deploy-refresh — 배포 완료 후 열린 DQA 자동 반영
+
+- 요청/승인: 서버 무중단 갱신이 끝나면 DQA에서도 개선사항을 즉각 반영하도록 구성. 같은 세션 구현·검증·출하 포함, deploy_scope=included.
+- 위험도 Major: 열린 화면의 자동 갱신과 상태 복원. 입력·첨부·실행 중 작업은 갱신을 미뤄 보존한다. 인증/권한/DB/유료 AI 호출 변경 없음.
+- worktree `.worktrees/feature-0003-deploy-refresh`, branch `ai/codex/feature-0003-deploy-refresh`, base `7b889a26`.
+- 정책 SHA256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`, 이 worktree AGENTS.md 및 main 일치.
+
+### 2.1 Implementation Plan
+
+1. `src/ui_release.py:read_release`와 `routers/system.py:get_ui_release`: 전용 읽기 전용 mount의 완료 manifest를 작게 읽어 현재 replica commit/asset stamp가 일치하는 경우에만 완료 메타데이터를 반환한다. no-store·DB무접속, 실패/혼합 버전은 적용 보류.
+2. `bin/deploy-web.sh:publish_ui_release` 및 `bin/lib/ui-release.sh`: 두 replica의 실제 revision·stamp·ready를 대조하고 배포 검증 성공 뒤에만 원자 게시. rollback/멱등/모의실행/실패를 별도로 검증한다. feature-0014에 참조 계획·AC·Run을 함께 기록한다.
+3. `static/ui-refresh.js` 및 `static/app/deploy-refresh.js`: 3초 경량 감지, 중복·역전·오프라인·reload 반복 차단. 작성/신규 첨부/진행 작업/미저장 편집 중에는 대기하고 해제되면 자동 적용한다. 활성 대화·모델 선택·읽기 전용 diff 비교 쌍과 위치를 계정에 결속하여 한 번 복원한다. 본문·자격증명은 저장하지 않는다.
+4. `static/app.js` 초기화/API 동작 및 `static/app/attach-diff.js` 상태 캡처/복원 연결. 관련 Node·Python·배포 스크립트 테스트, 독립 backend/security/qa 및 ux/design 검토, DQA 실제 자동 갱신 시나리오를 수행한다.
+
+AC 예: 열려 있는 diff의 기준v1/비교v4를 유지한 채 배포 완료3초 내 변경을 감지해 최신 코드·결과를 표시한다. 입력 또는 첨부가 남아 있으면 손실 없이 적용을 보류하고 전송/취소로 안전해진 뒤 자동 적용한다. 롤링 중 구/신 replica 혼재·실패 때는 reload하지 않는다. 최초 감지 코드가 없는 기존 열린 페이지는 한 번 새 코드를 로드해야 한다는 bootstrap 한계를 별도 기록한다.
+
+### Requested Scope
+- [x] 배포 완료 신호와 replica 일치 검증
+- [x] DQA 자동 적용·작업 보호·대화와 diff 복원
+- [x] 독립 리뷰·회귀·DQA 실행 검증
+- [ ] main 반영·배포·실측 범위 기록
+
+
 ## TASK-20260909-session-continuity — 그룹 문맥·세션 결속(참조)
 
 - [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.

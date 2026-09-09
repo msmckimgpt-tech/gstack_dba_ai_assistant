@@ -1303,6 +1303,20 @@ function _attachSplitHandle(wrap, scroller, opts) {
  *   **계보 내 최신**(이 체인의 최고 버전)과 **시간순 최신**(같은 파일의 모든 계보 중 가장 나중).
  *   계보가 둘 이상이면 비교 기준을 고르는 토글을 띄운다. 하나뿐이면 종전과 동일한 화면이다.
  */
+export function captureAttachmentDiffState() {
+  const viewers = Array.from(document.querySelectorAll('[data-ui-refresh-restorable]'));
+  return viewers.length === 1 ? viewers[0]._dqaUiSnapshot?.() || null : null;
+}
+
+export async function restoreAttachmentDiffState(saved) {
+  if (!saved || !Number.isSafeInteger(saved.attachmentId) || saved.attachmentId <= 0
+      || !Array.isArray(saved.versions) || saved.versions.length > 200
+      || !Array.isArray(saved.lineages) || saved.lineages.length > 200) return;
+  await openAttachmentDiffModal(saved.attachmentId, saved.versions, saved.preselect, saved.lineages);
+  const viewer = document.querySelector('[data-ui-refresh-restorable] .attach-diff-scroller');
+  if (viewer && saved.anchor) _restoreScrollAnchor(viewer, saved.anchor);
+}
+
 export function openAttachmentDiffModal(attachmentId, versions, preselect, lineages) {
   const list = Array.isArray(versions) ? [...versions] : [];
   // 계보 목록은 head 가 2개 이상일 때만 뜻이 있다(하나면 '시간순' 이 곧 '계보 내' 다).
@@ -1415,8 +1429,9 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
         }
       }
       const ids = [...lins].reverse().map((l) => String(l.head_attachment_id));
-      fromSel.value = ids[ids.length - 2] ?? ids[0];
-      toSel.value = ids[ids.length - 1];
+      fromSel.value = ids.includes(String(preselect?.from))
+        ? String(preselect.from) : ids[ids.length - 2] ?? ids[0];
+      toSel.value = ids.includes(String(preselect?.to)) ? String(preselect.to) : ids[ids.length - 1];
       return;
     }
     for (const v of list) {
@@ -1789,7 +1804,18 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
     rerender();
   });
 
-  load();
+  backdrop.setAttribute("data-ui-refresh-restorable", "diff");
+  backdrop._dqaUiSnapshot = () => ({
+    attachmentId: Number(attachmentId),
+    versions: list.map(v => ({ id: v.id, version_number: v.version_number,
+      original_filename: v.original_filename, created_by_role: v.created_by_role, superseded: v.superseded })),
+    lineages: lins.map(l => ({ head_attachment_id: l.head_attachment_id, version_number: l.version_number,
+      original_filename: l.original_filename, is_assistant_generated: l.is_assistant_generated,
+      is_current_lineage: l.is_current_lineage })),
+    preselect: { axis, from: Number(fromSel.value), to: Number(toSel.value), truncated: preselect?.truncated },
+    anchor: _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller")),
+  });
+  return load();
 }
 
 /**

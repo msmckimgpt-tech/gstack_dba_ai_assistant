@@ -1,6 +1,6 @@
 {
-  "total_routes": 272,
-  "api_routes": 271,
+  "total_routes": 273,
+  "api_routes": 272,
   "ordered": [
     {
       "path": "/static",
@@ -165,6 +165,13 @@
       "path": "/api/public/share/{token}/fork",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ui-release",
+      "methods": [
+        "GET"
       ],
       "type": "APIRoute"
     },
