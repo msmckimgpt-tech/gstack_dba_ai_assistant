@@ -72,6 +72,7 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | callee 유형 | 어디로 | 찾는 법 (src/ 에서) |
 |---|---|---|
 | leaf helper | `web_context.py` | `grep -n "def _get_client_ip" web_context.py` |
+| 첨부 diff 정렬 | `routers/_attachment_diff.py` | `align_lines`·`unified_from_rows` (호출: `_conv_store.py:_build_version_diff_view`) |
 | 대화 store | `routers/_conv_store.py` | `grep -rn "def _share_load_active" routers/` |
 | 스키마 부트스트랩 | `routers/_bootstrap_schema.py` | `grep -rn "def _ensure_web_tables" routers/` |
 | 감사 인프라 | `routers/_audit_infra.py` | `grep -rn "def _audit_admin_mutation" routers/` |

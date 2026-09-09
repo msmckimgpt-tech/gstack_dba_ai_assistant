@@ -12,6 +12,30 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 
 # Task
 
+## TASK-20260909T120000-diff-similarity — SQL 유사 구문 비교 정렬
+
+- 요청: DQA 계보 비교에서 동일·유사 SQL이 엄격한 원문 매칭 때문에 분리되는 현상 개선.
+- 위험도: Minor. 비교 계산만 변경, 원문·권한·DB·외부 비용 변경 없음. 현재 사용자 요청으로 구현·검증·출하 승인 범위 충족.
+- worktree: `.worktrees/feature-0003-diff-similarity`; branch: `ai/codex/feature-0003-diff-similarity`; base: `dfc5717e`.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0003-diff-similarity/AGENTS.md`; SHA256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2` (main 동일).
+- hot_paths: `src/routers/_conv_store.py:_build_version_diff_view`, `src/routers/_attachment_diff.py` (모두 feature-0003).
+
+### 2.1 Implementation Plan
+
+1. `src/routers/_attachment_diff.py:align_lines` — 공백·대소문자를 정렬 키에서 정규화하고 빈 줄/제어문보다 내용 앵커를 우선한다. 남는 변경 블록은 비용 제한 안에서 토큰 유사도에 따른 순서 보존 최적 매칭을 적용한다.
+2. `src/routers/_conv_store.py:_build_version_diff_view` — 정렬 결과를 원문 equal/replace/insert/delete로 변환한다. equal은 원문이 정확히 같을 때만 허용한다. 통계·unified·양쪽 화면의 원문/줄번호를 동일 정렬에서 생성한다.
+3. `tests/test_attachment_version_diff.py`와 별도 정렬 회귀: TRY 래핑/들여쓰기, 삽입 앞뒤 유사 SQL, 반복 BEGIN/END, 문자열·식별자 변경, 좌우 원문 복원, full/context 일치, 계산 상한 검증.
+4. `src/routers/attachments.py:get_attachment_version_diff`·`static/app/attach-diff.js:_renderBody`는 `truncated.alignment` 및 제한 안내를 전달한다. 관련 backend/security/qa 및 표시 계약 독립 리뷰, 실제 DQA 접근 확인과 가용 화면 검증, verify→commit→PR→merge→web 배포.
+
+AC 예: `SET @CURRENT_DATE = CONVERT(varchar(10), GETDATE(), 20)` 앞에 TRY가 삽입되고 들여쓰기·형식이 바뀌어도 해당 SET끼리 replace 행에 정렬하며 `varchar`→`char` 등의 변경은 강조한다. 문자열 공백·대소문자 변경은 equal로 숨기지 않는다. 모든 원문 행은 순서대로 정확히 한 번 표시되며 계산 제한에도 소실되지 않는다.
+
+### Requested Scope
+- [x] 정렬 구현 및 재현 회귀
+- [x] 독립 리뷰·검증·문서 정합
+- [x] 최신 main 통합 및 관련94건·컨테이너45건 재검증
+- [ ] main 반영·배포·DQA 검증 범위 기록
+
+
 ## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과 도달 (참조)
 
 - 정본: [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) ·

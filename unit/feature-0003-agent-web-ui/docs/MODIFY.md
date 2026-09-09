@@ -6394,3 +6394,21 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - **적대 검증이 잡은 사실오류 1건 반영**: 아이콘 항목 제목의 `(1.1.1 · 1.1.2)` 표기를 `(1.1.2)` 로 정정했다. 1.1.1 은 러너 복구로 먼저 게시된 별개 릴리스이고 아이콘은 같은 번호를 다른 설치기로 덮지 않기 위해 1.1.2 로만 나갔다(정본 `unit/feature-0043-external-llm-bridge/docs/REPORT.md` · 머지 `6bf4ace3`). 직전 3블록은 제목에 버전 라벨을 쓴 적이 없어 신규 관례이기도 했다.
 - 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` §14.1 — 수기 bump 금지 명문). 실측 정합: 라이브 스탬프 `?v=94c87eec12e1`.
 - 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
+
+
+## CHG-20260909T120000-diff-similarity
+- Session: codex:root:01a08411-5b5d-7691-890c-509a2b60ed6d; TASK-20260909T120000-diff-similarity.
+- 원문 전체 동치 앵커+위치별 zip 때문에 TRY 래핑된 SQL이 삭제/추가 덩어리로 갈라졌다. 정렬을 `_attachment_diff.py`로 분리하고 토큰 정규화/순서 보존 fuzzy 및 큰 반복 입력의 bounded Myers를 적용했다.
+- 동일성은 원문 동치로 유지하고 단일 정렬에서 통계·unified·2열/단일열을 산출한다. 인용 내부 정규화 충돌과 미종결 인용 regex 비용 문제를 독립 리뷰에서 발견해 보존 스캐너로 수정했다.
+- 비용 제한 시 `truncated.alignment`를 응답·안내로 전달한다. 기존 Node 테스트의 계보 인자 추가 이전 stale 기대 4개도 현행 배선에 맞췄다.
+- 회귀·실제 DQA Shell fixture·독립 리뷰 증거: `test-runs.d/TASK-20260909T120000-diff-similarity.md`.
+
+- 전체 pytest에서 발견된 기존 사이드 패널 하네스는 제품 `setupAiJobsTab()` 의존 stub 누락이었다. stub과 실제 열림 전제 검사를 추가해 Node 69건·해당 pytest 단건 PASS. 제품 프로필 코드는 변경하지 않았다.
+
+## CHG-20260909T122000-diff-similarity-integration
+- Session: codex diff-similarity; 최신 origin/main a8abac5f 통합. TASK의 독립 신규 항목 두 개를 모두 보존하고 ROUTEMAP을 현재 소스에서 재생성했다. 동작 코드 충돌은 없었다.
+- 최초 전체 pytest 실패16건을 환경13건(격리 컨테이너 관련45건 PASS)·upstream 갱신2건·사이드 패널 테스트 stub1건으로 분류/해소. 최종 관련94건 PASS. 전체 suite를 재실행한 결과와 혼동하지 않는다.
+
+## CHG-20260909T123000-diff-similarity-sync
+- Session: codex diff-similarity; aa795a51 구현 및 76293899 main 통합 커밋을 원격 작업 브랜치에 반영했다. 통합 검증94건·컨테이너45건 기록을 최종 확인했다.
+- 병합 pre-commit 검증은 PASS였으나 post-commit 게이트는 TASK/MODIFY/REVIEW delta 3개를 미인식했다(`/tmp/post-commit-verify.b3XufR`). 새 문서 커밋으로 동기화 상태와 검증 증거를 명시하고 다시 검증한다. 코드/제품 동작 변경은 없다.

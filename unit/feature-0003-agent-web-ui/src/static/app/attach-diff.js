@@ -1112,6 +1112,12 @@ function _renderBody(bodyEl, data, mode, opts) {
   // P2) — 별도 톤(`is-note`)으로 낮춘다. 사유도 "길어서" 가 아니다: 길이 컷·표시 분량 상한·
   // 조각화 판단이 섞여 있고, 같은 길이의 윗줄은 마크되는데 아랫줄만 안 되는 경우가 있어
   // 길이를 사유로 말하면 사용자가 화면과 어긋난 설명을 읽는다.
+  if (tr.alignment) {
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice is-note";
+    el.textContent = "비교량이 많아 일부 구간의 유사한 줄 맞추기를 생략했습니다.";
+    bodyEl.appendChild(el);
+  }
   if (tr.intraline) {
     const el = document.createElement("div");
     el.className = "attach-diff-notice is-note";
