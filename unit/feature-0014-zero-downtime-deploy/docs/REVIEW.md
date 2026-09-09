@@ -296,3 +296,8 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 - backend/qa 독립 리뷰는 PID 123/128 및 zombie 99를 확인하고 host namespace probe와 init 방어를 제안했다. curlrc 오염 지적을 받아 --disable 첫 옵션을 추가했다. timeout 구조검사의 curl 옵션 오탐과 지속 ps 실패의 기대값을 교정했다.
 - security 최초 BLOCK: inspect IP 직결로 Docker DNS 장애를 놓치는 경계. 실제 Caddy resolver로 DNS를 조회하고 IP 일치를 요구하여 해소했다. 최종 정적 PASS, 잔여 지적 없음.
 - 실측과 최종 backend/qa 판정은 [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md)에 기록한다.
+
+
+## REV-20260909T170000-edge-probe-recovery-shipped [SKIPPED:non-policy-doc]
+
+소스 추가 변경 없이 배포·프로세스·설치 DQA 실측 결과를 기록한다. source review PASS와 운영 실측의 범위를 분리했다.

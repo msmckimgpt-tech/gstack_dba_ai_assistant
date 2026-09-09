@@ -82,4 +82,4 @@ web 서비스를 Caddy LB 뒤 **2-replica(web-a/web-b) 무중단 롤링** 으로
 
 ## 2026-09-09 — 로그인 화면 수정 배포의 Caddy 프로세스 복구
 
-PR #1652 첫 배포는 Caddy PID 예산 소진으로 web 교체 전에 안전 중단했다. 한도 무중단 상향 후 누적 경로를 제거하고 관련 회귀 49건과 실제 probe 5회/zombie 증가 0을 확인했다. 배포 재개 결과는 [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md)을 따른다. init 설정은 기록했지만 기존 단일 Caddy를 재생성한 것으로 보고하지 않는다.
+PR #1652 첫 배포는 Caddy PID 예산 소진으로 web 교체 전에 안전 중단했다. 한도 무중단 상향 후 누적 경로를 제거하고 관련 회귀 49건과 실제 probe 5회/zombie 증가 0을 확인했다. PR #1656/cf55c659 배포 재실행 exit 0·두 replica ready·90초 soak PASS. 배포 전후 Caddy PID와 zombie 99개 유지. 정본은 [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md)이다. init 설정은 기록했지만 기존 단일 Caddy를 재생성한 것으로 보고하지 않는다.

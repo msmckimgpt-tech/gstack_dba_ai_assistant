@@ -8596,3 +8596,8 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 ## REV-20260909T160000-auth-transition-deploy-recovery [SUBAGENT:backend,qa,security]
 
 배포 blocker의 독립 원인/보안 리뷰와 수정은 [feature-0014 REVIEW](../../feature-0014-zero-downtime-deploy/docs/REVIEW.md)에 기록한다. 원래 UI 소스 추가 변경은 없다.
+
+
+## REV-20260909T170000-auth-transition-installed-verification [SKIPPED:non-policy-doc]
+
+코드 추가 변경 없이 설치된 DQA와 서빙 자산 검증 결과를 기록한다. 실제 3회 왕복·70관측·노출0, 두 replica 14파일 일치이며 보안·UX·디자인·backend/qa 소스 리뷰의 검증 범위를 이 실측과 구분한다.
