@@ -3,112 +3,52 @@ doc_type: TASK
 feature_id: feature-0046-native-client
 status: active
 edit_policy: rewrite
-feature_status: implemented
-feature_status_date: 2026-09-08
+feature_status: in-progress
+feature_status_date: 2026-09-09
 ---
 
 # Task
 
-## TASK-20260908-codex-connect-fix
+## TASK-20260909-nondisruptive-update
 
-사용자 요청: Codex 연결 실패 수정 후 실제 DQA 클라이언트를 직접 제어해 연결·간단한 요청/응답까지 실측. Permission denied 위치는 자동 연결 제외하되 목록에 표시. CI용 gh-runner는 불필요하면 제거.
+요청: DQA 클라이언트 설치·업데이트 중 현재 작업과 연결을 유지한다.
+위험도 Minor (§12.3): 실행 파일 배치·업데이트 생명주기 변경. 인증/인가·데이터 형식·비용 변경 없음.
+현재 요청이 구현·검증을 위임했고 deploy_scope included(§16.5.1)이다.
 
 ## 2.1 Implementation Plan
 
-- Minor: 기존 연결 계약의 결함 수정. 별도 러너/Windows 브라우저는 사용자 절차에 없다.
-- `feature-0043/src/agent/lifecycle.py::_negotiate_client_caps`: 카탈로그 성공이 영속 상세를 반환하지 않는 계약을 처리하고 예외 기록을 복구한다. catalog + 빈 detail → 서버 heartbeat 수락 후 ready, stale/실패 위치는 ready 불가.
-- `feature-0046/src/client/core.py::{RuntimeState,probe_runtime,verify_answers,login}`: 권한 실패를 안전한 상태 코드로 분리한다. Permission denied → usable=false, 로그인 대행 불가. 실제 응답과 진단 출력만 있는 상태를 구분한다.
-- `feature-0046/src/client/discovery.py::{locations,DiscoveryCache}`: CI 계정 gh-runner를 탐색·기존 캐시에서 제외하고 권한 오류를 캐시 재사용으로 덮지 않는다.
-- `feature-0003/src/static/app/client-bridge.js::paint`와 client-connect.css: 사용 불가 위치/사유를 연결된 플랫폼에서도 표시하고 선택/자동 연결에서는 제외한다.
-- 테스트: catalog→receipt 회귀, 권한 거부/로그인 필요 구별, 오래된 성공 캐시 무효화, gh-runner 기존 캐시 제거, UI 비활성 위치 표시. 실제 앱 메뉴 업데이트 설치 → root Codex 연결 → 새 테스트 대화 요청/응답 실측.
-- 패널: backend/security/qa/ux/design, 최대 3회, P1 0 확인. 코드와 실측 증거를 구분한다.
+- `src/installer/DQAConnect.iss::{GetSlotDir,CurStepChanged}`: 매 설치마다 새로운 versions 하위 폴더에 완전한 앱·Python을 설치. 실행 중인 파일은 쓰거나 지우지 않는다. CloseApplications/RestartApplications를 끄고 SetupMutex로 설치기 동시 쓰기를 막는다.
+- `src/installer/Launcher.cs::Main`, `src/scripts/build_client.py::build_launcher`: 고정 DQALauncher.exe가 원자 교체되는 active-slot.txt를 읽어 완성된 슬롯을 실행. 시작 메뉴·바탕화면·자동시작·스킴이 같은 진입점을 사용한다. 런처는 기존 Windows .NET Framework 컴파일러로 빌드하며 기존 버전이 있으면 덮어쓰지 않는다.
+- `src/client/updater.py::{apply,run_flow,check_detail,settle_pending_install}`: 다운로드/재검증 후 설치기를 실행하고 종료코드와 실제 활성 슬롯을 확인. 앱 종료 콜백 제거, 연결 중에도 설치 가능, 설치 중 중복 차단, 현재 버전과 다음 실행 버전 구분.
+- `src/client/{bridge,gui}.py`: 업데이트 후 종료 배선 제거, 설치 진행·완료·실패를 GUI 상태에 노출. 미서명 자동 적용 기본 off는 유지.
+- `src/client/version.py`: 1.3.0. FUNCTION/REPORT/TEST/REVIEW/MODIFY와 릴리스 설명을 같은 결과로 정합.
 
-## Requested Scope
+## 수용 기준
 
-- [x] Codex 모델 조회 성공 이후 연결 완료 처리 수정·회귀 검증.
-- [x] 권한 거부 위치 자동 연결 제외, 목록에 사유 표시.
-- [x] gh-runner 탐색/캐시 제외.
-- [x] 제품 PR #1631 병합·8f1116cf 전체 서버 배포·공개1.2.4·실제 DQA1.2.3→1.2.4 업데이트 설치.
-- [x] 실제 DQA root Codex 연결·새 대화 응답 `42 DQA_CODEX_42`, 런타임32318ms/서버제출 성공 및 UI 표시 확인.
-- [x] 독립 backend/security/QA/UX 검토, 실제 증적 정리·제품 PR1631/표시 보완 PR1633 병합·배포 완료. 최종 비정책 증거 동기화는 이 기록의 후속 PR를 따른다.
+- AC1: DQA에서 응답 중 새 버전 설치 → 기존 앱 PID·러너 PID·로컬 연결·대화가 계속 살아 있고 강제 종료 0회.
+- AC2: 새 슬롯 검증·설치 성공 후에만 실행 대상 전환. 실패/취소/같은 버전 재설치가 현재 슬롯을 덮어쓰지 않는다.
+- AC3: 현재 앱을 사용자가 정상 종료한 뒤 실행 → 새 버전·같은 사용자 홈·로그인·연결 선택으로 복귀. 창 닫기(트레이 숨김)는 적용 시점이 아니다.
+- AC4: 설치기는 한 번만 실행되고, 준비된 같은 버전을 반복 권유하지 않는다. 다운로드/설치 실패는 기존 앱을 유지하며 실패를 표시한다.
+- AC5: Windows 설치기 직접 실행으로 legacy→새 구조, 새 구조→새 슬롯을 검증. 구버전 자체 업데이터의 종료 코드는 소급 수정할 수 없으므로 메뉴를 통한 최초 전환 한계를 별도 기록.
+
+## Verification plan
+
+- 의미 있는 회귀: 연결 중 업데이트, 설치 실패/중복, 활성 경로 검증, 설치 완료와 단순 spawn 구별, 확인 거절, 해시 실패.
+- Windows: 격리 설치 루트/홈의 실제 설치본과 장시간 자식 작업을 실행하고 설치 전후 PID·로그·연결을 측정. 기존 사용자 앱은 종료하지 않는다.
+- 독립 panel: backend/security/qa + ux/design(상태·확인 문구), 최대 3회, P1 0 확인.
+
+## 9. Requested Scope
+
+- [x] 구현 및 focused/native 회귀 — 산출물: src 및 회귀617 PASS/1 SKIP
+- [x] Windows 설치·업데이트·실패 경계 실측 — 산출물: 실제 설치본8시나리오 PASS, 실제제공자/핀/다중세션 미검증 명시
+- [x] 독립 리뷰·문서 정합 — 산출물: 독립 리뷰2인 및 docs
+- [ ] commit/push/PR 병합·출하·채널 바이트 검증
 
 ## Context
 
-- worktree: /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-codex-connect-fix
-- branch: ai/codex/feature-0046-codex-connect-fix; base 49f7fa41
-- AGENTS SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2
-- 이전 TASK: task-history/20260908-before-codex-connect-fix.md.
-- 실제1.2.1 receipt는 Codex failed, 동일 프로세스 로그는 catalog7종 성공 및 사용자 요청 응답 성공. catalog는 의도적으로 영속 detail에서 빠지지만 lifecycle은 detail[name]을 강제 참조한다. 예외 로그 호출도 필수 인자 누락.
-- CLI 진단에서 root/claude-corp 모두 홈 기준 로그인·무도구 응답 성공. 사용자의 Permission denied 사례와 동일 실행 경로를 대조하며, 계정 이름으로 불가능하다고 조작하지 않는다. OS 권한 변경은 하지 않는다.
-- share-client-entry 소유자에 core.py 영향 심볼 질의 20260908T054858508Z-61b4a3. 창/GUI 파일은 변경 계획 없음.
-
-- Issue #1625. 추가 발견: catalog 건강 오인/진단 JSON 생존 오인, 선택 위치 변경 뒤 재시도 소실, OS PermissionError 형 유실을 함께 수정. 전역 파일 세대는 무관한 AI 조회를 반복하므로 AI별 selection_id로 구현.
-
-- main 통합: PR1628 텍스트 선택/검색 수정·공개1.2.3, PR1629 첨부 전달 수정 통합. 새 버전은1.2.4. 앞 작업 TASK는 task-history/20260908-text-interaction-at-integration.md에 보존.
-
-- [x] 공개1.2.3의 텍스트 선택/검색 개선을 포함한 최신 main 통합 및 문서 충돌 해소. 출하 버전1.2.4.
-
-- [x] main통합 Windows1.2.4 빌드·native544 회귀 완료. heartbeat송신경쟁은 결정적 회귀로 추가 봉인.
-
-- [x] 제품 PR #1631 작성. main1.2.3 통합과1.2.4 빌드/지문 확정, 독립 검토 완료. 설치·요청 실측은 배포 후 수행.
-
-- [x] 최종 출하 대기 중 병합된 PR1627 프롬프트 전달 검증을 추가 통합했다. 네이티브1.2.4 바이너리 변경 없음.
-
-- [x] 최종 main의 프롬프트 전달/클라이언트 선택 회귀39 PASS(30.90s). PR1631 통합 결과 확정.
-
-- [x] 최종 표시 보완7ca6f2a4 웹 배포·실제 설치 앱 재시작·연결창 정상 문구 및 root 재연결 확인. 최신1.2.4 재확인, 원장 기록 완료.
-테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
-[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
-[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
-DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
-
-## TASK-20260908T125500-share-client-entry — 딥링크가 목적지 페이지까지 나른다
-
-feature-0003 이 소유한 cycle(웹 계약 정본:
-[feature-0003 TASK](../../feature-0003-agent-web-ui/docs/TASK.md))의 **클라이언트 쪽 몫**.
-
-- [x] `dqa-connect://open?…&path=/share/<token>` 수용 — `parse_scheme_url` · `safe_app_path`
-      (정본 `shared/dqa_identity` 의 사본, 테스트가 같은 표로 대조) · `ConnectPlan.path`.
-- [x] 세 껍데기 모두 목적지로 연다 — 내장 창(`Shell.navigate` 후 `show`) · 브라우저 앱 모드
-      (`reopen(dest)`) · 신규 실행(`panel_url(…, plan.path)`).
-- [x] **상주 중 도달** — `core.request_show(home, path)` + 별도 `show.path`(신호 파일에
-      줄을 보태면 먼저 떠 있는 구버전이 요청 자체를 버린다).
-- [x] 회귀 536 PASS. Run: [test-runs.d/TASK-20260908T125500-share-client-entry.md](test-runs.d/TASK-20260908T125500-share-client-entry.md)
-- [ ] **DQA-client 실측** — 1.1.2 설치기 빌드·게시 후. 현재 `NOT-RUN + Reason`(설치기 빌드는
-      Windows 전용이라 이 WSL 세션에서 변경 반영본을 띄울 수 없다). 서버만 배포하면 구버전
-      앱은 서비스 루트를 연다 — 파손이 아니라 의도된 degrade.
-
-## TASK-20260909T120000-client-125-share-entry — DQA 1.2.5: 공유 링크 목적지 수용 배포
-
-- 상태: 빌드·게시 완료 (1.2.5 라이브)
-- 배경: [feature-0003 REQ-20260908-share-client-entry](../../feature-0003-agent-web-ui/docs/FUNCTION.md)
-  가 서버·정적 자산까지 배포됐으나(main `fd2d5f1c`, 2026-09-08 20:07 KST), 딥링크의 목적지
-  경로(`path`) 수용은 **설치본 코드**라 클라이언트를 다시 내야 성립한다.
-  현재 채널 최신은 **1.2.4**(게시 2026-09-08 15:33 KST)로 그 머지보다 **4시간 반 앞서므로**
-  그 설치기에는 이 코드가 없다 — 지금 사용자가 공유 화면에서 [DQA 앱에서 참여 · fork] 를
-  누르면 앱은 뜨지만 **서비스 루트**를 연다(파손 아님, 의도된 degrade).
-- 위험: **Minor §12.3** — 버전 정본 2곳(`version.py` · `.iss` 폴백) + 빌드 산출물.
-  제품 로직·권한·스키마 변경 0.
-
-### 2.1 Implementation Plan
-
-1. `src/client/version.py` 의 `CLIENT_VERSION` 1.2.4 → **1.2.5**. `.iss` 의 `AppVersion`
-   폴백도 같이 — 갈리면 손으로 부른 ISCC 가 파일명과 버전이 어긋난 설치기를 낸다.
-2. Windows 에서 `build_client.py --service-base https://112.185.196.20` 실행
-   (PyInstaller 는 크로스컴파일하지 않는다 — WSL 에서 Windows Python 을 호출한다).
-3. `publish_release.py` 로 호스트 `artifacts/client-release` 에 반입 + 릴리스노트.
-4. 라이브 `GET /api/ai/client/latest` 가 1.2.5 를 광고하는지, sha256·크기가 실물과 맞는지 확인.
-5. **설치 후 실측** — 공유 링크 → [DQA 앱에서 참여 · fork] → 앱이 **그 대화**를 여는가.
-   feature-0003 의 `NOT-RUN` Run 5 를 이 결과로 갱신한다.
-
-### 수용 기준
-
-- [x] AC-1: 채널이 1.2.5 를 광고하고 실물 sha256·크기가 매니페스트와 일치한다.
-- [x] AC-2: **현재 소스의** `version.is_newer` 가 1.2.5 를 1.2.4 보다 새것으로 판정한다
-  (문자열 아닌 수치 비교). ⚠ 「**설치된** 1.2.4 가 [업데이트 확인] 에서 1.2.5 를 제안한다」는
-  대리 측정이 아니라 실측이 필요하고, 그것은 Run 6 의 `NOT-RUN` 에 있다(적대 리뷰 MED-5).
-- [~] AC-3: **격리 동결본**에서 신규 실행·상주 중·정본 딥링크 모두 그 대화를 연다(PASS,
-  `Environment: DQA-client-isolated`). **설치본** 실행과 OS 스킴 발사는 Run 6 `NOT-RUN` —
-  사용자가 1.2.5 를 수락한 뒤에 잰다. 무음 적용은 기본 꺼짐이고, 검증 편의로 사용자 앱을
-  종료·재설치하지 않는다(PB-0009 실행 3항).
-- [x] AC-4: 부적격 경로가 실린 링크는 앱이 뜨되 루트를 연다(의도된 degrade).
+- worktree: /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-nondisruptive-update
+- branch: ai/codex/feature-0046-nondisruptive-update; base bb962bb1
+- policy: AGENTS.md SHA-256 a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2
+- 이전 상태: [task-history](task-history/20260909-before-nondisruptive-update.md)
+- 현재 앱 계속 사용·다음 실행 적용을 합리적 기본값으로 고지. 사용자의 추가 선택이 도착하면 반영.
+- 외부 근거: https://jrsoftware.org/ishelp/topic_setup_closeapplications.htm (force는 미저장 작업을 잃게 할 수 있음), https://jrsoftware.org/ishelp/topic_installorder.htm (files→icons→registry→uninstall log→run), https://jrsoftware.org/ishelp/topic_setup_setupmutex.htm (설치 동시 실행 배제).

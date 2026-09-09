@@ -30,12 +30,7 @@
 5. **묻고 나서 적용한다** (사용자 결정 2026-09-07). 이 배포본은 서명되지 않았으므로 무음
    자동 설치는 「알 수 없는 게시자」 실행을 사용자 모르게 하는 일이 된다. 자동 적용은
    **홈 설정으로만** 켜지고 기본값은 꺼짐이다.
-6. **일하는 중임을 사람에게 말하고, 사람 없는 경로는 유휴에서만 돈다.** 러너는 이
-   프로세스의 자식이라 설치를 위해 우리가 끝나면 **답변 중인 질문이 함께 죽는다**.
-   ⚠ 확인창이 뜨는 경로에서는 그 사실을 **말하고 결정은 사람이 한다**(사용자가 「지금
-   업데이트」를 고를 자유를 빼앗지 않는다). 확인창이 없는 자동 경로에서는 그 결정을 대신할
-   사람이 없으므로 **연결이 살아 있으면 미룬다** — 이식 원본 `try_self_update` 의
-   `if active.count() > 0: return False` 와 같은 자리다.
+6. **현재 앱과 러너는 계속 실행한다.** 새 버전은 별도 슬롯에 설치하고 다음 실행부터 적용한다.
 7. **실패가 프로그램을 죽이지 않는다.** 못 받았거나 못 썼으면 있던 것으로 계속 돈다.
 """
 from __future__ import annotations
@@ -54,7 +49,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import core, version
+from . import core, version, installation
 
 #: 매니페스트를 묻는 자리. **고정이다** — 서버 응답의 값을 쓰지 않는다(규율 1).
 MANIFEST_PATH = "/api/ai/client/latest"
@@ -259,7 +254,7 @@ def settle_pending_install(home: Path,
         #   단정하는 쪽이 침묵보다 나쁘다(§16.7 G7-c). 기록에는 남긴다.
         log(home, f"apply UNKNOWN → stale marker {target} (age {int(age)}s)")
         return None
-    if not version.is_newer(target, current):
+    if not version.is_newer(target, current) or installation.active_version() == target:
         log(home, f"apply ok → now v{current}")
         return None
     log(home, f"apply FAILED → still v{current} (wanted {target})")
@@ -416,7 +411,8 @@ def check_detail(home: Path,
             # 403·500·502 를 한 덩어리로 접지 않는다 — 운영자가 원인을 가릴 값이다.
             return None, f"http-{code}"
         return None, type(exc).__name__
-    return parse_manifest_detail(raw, current)
+    prepared = installation.prepared_version(current)
+    return parse_manifest_detail(raw, prepared or current)
 
 
 def check(home: Path, current: str = version.CLIENT_VERSION) -> Update | None:
@@ -565,26 +561,13 @@ def verify(payload: bytes, update: Update) -> bool:
 
 # ── 적용 ─────────────────────────────────────────────────────────────────────────
 
-#: 설치기에 주는 인자. `/RELAUNCH` 는 우리 `.iss` 가 아는 값으로, 무음 설치 뒤 앱을 다시
-#: 띄운다 — 없으면 사용자는 「업데이트를 눌렀더니 프로그램이 사라졌다」를 본다.
-#:
-#: Inno의 기본값은 RestartApplications=yes다. 명시적으로 꺼 /RELAUNCH만 재기동을 맡긴다.
+# Keep the current app and all its children alive, including during unattended updates.
 SILENT_ARGS = ("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-               "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/RELAUNCH")
+               "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS")
 
 
 def confirm_text(update: Update, connected: bool, home: Path | None = None) -> str:
-    """적용 전 확인 문구. **지금 잃는 것과 어디서 받는지를 말한다.**
-
-    ⚠ 「업데이트할까요?」만 물으면 사용자는 연결이 끊긴다는 사실을 모른다 — 러너는 이
-    프로세스의 자식이라 설치를 위해 우리가 끝나면 함께 끝난다.
-
-    ⚠ **고정 서버가 동봉된 배포 주소와 다르면 두 주소를 나란히 보인다** (적대 리뷰 F5).
-    TOFU 고정은 「연결에 성공한 곳」을 앵커로 삼으므로, 한 번 성공한 악성 딥링크의 주소가
-    **이 컴퓨터에서 실행될 설치기의 출처**가 될 수 있다. 그것을 여기서 없애지는 못하지만
-    (첫 1회로 좁힌 것이 §P0-P 의 설계다) **눈에 보이게** 할 수는 있다 — `main()` 이 인자 없는
-    실행에서 이미 쓰는 술어와 같은 판정이다.
-    """
+    """Explain the installation source and when the new version takes effect."""
     lines = [f"{update.label} 로 업데이트합니다.",
              f"현재 버전: {version.CLIENT_VERSION}"]
     if update.notes:
@@ -595,32 +578,19 @@ def confirm_text(update: Update, connected: bool, home: Path | None = None) -> s
         bundled = core.bundled_service_base() or ""
         if pinned and bundled and pinned.rstrip("/") != bundled.rstrip("/"):
             lines.append("")
-            lines.append("⚠ 받는 곳이 이 프로그램에 들어 있는 주소와 다릅니다.")
-            lines.append(f"  설치 시:  {bundled}")
-            lines.append(f"  받을 곳:  {pinned}")
+            lines.append("⚠ 연결된 서버와 업데이트 서버가 다릅니다.")
+            lines.append(f"  연결 서버:  {pinned}")
+            lines.append(f"  업데이트 서버:  {bundled}")
             lines.append("직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
     lines.append("")
-    if connected:
-        lines.append("⚠ 지금 연결 중입니다 — 설치하는 동안 AI 연결이 끊기고, "
-                     "진행 중인 답변이 있으면 취소됩니다.")
-    lines.append("설치 후 프로그램이 자동으로 다시 시작됩니다.")
+    lines.append("현재 앱과 AI 연결은 유지됩니다.")
+    lines.append("새 버전은 DQA를 종료한 뒤 다시 실행할 때 적용됩니다.")
+    lines.append("창 닫기는 트레이로 숨기기이며, 업데이트 적용을 위한 종료가 아닙니다.")
     return "\n".join(lines)
 
 
 def apply(installer: Path) -> bool:
-    """설치기를 **떼어 내어** 띄운다. 성공하면 호출부가 **곧바로 이 프로그램을 끝내야 한다**.
-
-    ⚠ Windows 는 실행 중인 exe 를 잠근다. 우리가 살아 있으면 설치기는 파일을 갈아 끼우지
-    못한다 — `/CLOSEAPPLICATIONS` 가 재시작 관리자로 우리를 닫으려 시도하지만, 스스로
-    비켜 주는 쪽이 확실하다.
-
-    ⚠ `core.hidden_child_kwargs()` 를 **쓰지 않는다.** 그것은 콘솔 자식용이고(§P0-AD),
-    설치기는 자기 진행 창을 보여 줘야 하는 GUI 자식이다 — `SW_HIDE` 를 주면 설치가 조용히
-    도는 것처럼 보이다가 창 없이 끝난다.
-
-    ⚠ 부모가 죽어도 살아남아야 한다. `DETACHED_PROCESS` 로 프로세스 그룹을 끊는다 —
-    이 인자가 없으면 우리가 종료할 때 설치기가 함께 죽는 배치가 있다.
-    """
+    """Wait for the installer on the caller's worker thread; never stop the app."""
     exe = Path(installer)
     if not exe.is_file():
         return False
@@ -629,12 +599,10 @@ def apply(installer: Path) -> bool:
         kwargs["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0)
                                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
     try:
-        subprocess.Popen([str(exe), *SILENT_ARGS], **kwargs)  # noqa: S603
+        process = subprocess.Popen([str(exe), *SILENT_ARGS], **kwargs)  # noqa: S603
+        return process.wait() == 0
     except Exception:  # noqa: BLE001 — 못 띄웠으면 있던 버전으로 계속 돈다
         return False
-    return True
-
-
 def verify_file(path: Path, update: Update) -> bool:
     """**디스크의 그 파일**이 매니페스트가 말한 그것인가.
 
@@ -678,18 +646,7 @@ _FLOW_LOCK = threading.Lock()
 
 def run_flow(home: Path, *, target: Update, confirm=None, say=None,
              is_connected=None, require_idle: bool = False, on_started=None) -> dict:
-    """확인 → 받기 → **디스크 재검증** → (유휴 재확인) → 설치기 실행. 결과 dict.
-
-    ## 왜 여기 있는가 (호출부가 셋이다)
-
-    브리지(웹 패널·트레이)와 tkinter 껍데기가 **같은 순서**를 밟아야 한다. 종전에는 브리지만
-    이 순서를 갖고 있어서 tkinter 폴백 껍데기에는 업데이트 입구가 **0개**였다(적대 리뷰 C-2)
-    — `--app` 을 모르는 브라우저·정책으로 막힌 머신이 그 껍데기로 떨어지고, 그 머신은 영구히
-    낡은 채로 남으며 그 사실이 로그에조차 남지 않았다.
-
-    순서를 두 곳에 복제하는 것은 답이 아니다. 이 저장소가 반복해 적발한 드리프트 형태이고,
-    하필 그 순서에 무결성 판정이 들어 있다.
-    """
+    """Install into a separate slot; success requires exit 0 and an activated payload."""
     say = say or (lambda _l: None)
     if not running_frozen():
         return {"ok": False, "error": "not_frozen",
@@ -700,10 +657,6 @@ def run_flow(home: Path, *, target: Update, confirm=None, say=None,
         return {"ok": False, "error": "already_running", "detail": detail}
     try:
         connected = bool(is_connected()) if is_connected else False
-        if require_idle and connected:
-            detail = "연결 중이라 업데이트를 미뤘습니다 — 다음 유휴 시각에 다시 시도합니다."
-            say(detail)
-            return {"ok": False, "error": "busy", "detail": detail}
         if confirm is not None and not confirm(confirm_text(target, connected, home=home)):
             return {"ok": False, "error": "declined"}
 
@@ -725,28 +678,37 @@ def run_flow(home: Path, *, target: Update, confirm=None, say=None,
             path.unlink(missing_ok=True)
             return {"ok": False, "error": "verify_failed", "detail": detail}
 
-        # ⚠ **유휴를 다시 본다** (적대 리뷰 C-4). 진입 시점 1회 게이트는 다운로드가 최대
-        #   600초 걸릴 수 있어 그 창 안에서 시작된 질문을 **사람에게 아무것도 묻지 않고**
-        #   죽인다 — 규율 6 이 없애려던 결과다. 받아 둔 파일은 남겨 다음 회차가 재사용한다.
-        if require_idle and is_connected and is_connected():
-            detail = "받아 두었지만 연결 중이라 설치를 미뤘습니다 — 다음 유휴 시각에 적용합니다."
-            say(detail)
-            log(home, f"apply deferred (busy) → {target.version}")
-            return {"ok": False, "error": "busy", "detail": detail}
+        # Even a stale UI target must not reinstall a version already prepared.
+        active = installation.active_version()
+        if active and not version.is_newer(target.version, active):
+            return {"ok": True, "restarting": False, "prepared": True,
+                    "version": active, "detail": prepared_text(active)}
 
         # 띄우기 **전에** 시도를 남긴다 — 이 표식이 없으면 설치 실패를 판정할 근거가 사라진다.
         mark_pending_install(home, target.version)
+        _write_state(home, install_status="installing", install_error="")
+        say("새 버전을 설치하는 중입니다. 현재 작업을 계속할 수 있습니다.")
         if not apply(path):
-            detail = "설치 프로그램을 실행하지 못했습니다 — 지금 버전으로 계속합니다."
+            detail = "업데이트 설치를 완료하지 못했습니다 — 지금 버전과 연결을 유지합니다."
             say(detail)
-            log(home, f"spawn FAILED → {target.version}")
+            log(home, f"install FAILED → {target.version}")
+            _write_state(home, install_status="failed", install_error=detail)
             clear_pending_install(home)
-            return {"ok": False, "error": "spawn_failed", "detail": detail}
+            return {"ok": False, "error": "install_failed", "detail": detail}
 
-        say("설치 프로그램을 실행했습니다. 잠시 후 다시 시작됩니다.")
-        if on_started is not None:
-            on_started()
-        return {"ok": True, "restarting": True, "version": target.version}
+        if installation.active_version() != target.version:
+            detail = "설치 결과를 확인하지 못했습니다. 현재 버전과 연결을 유지합니다."
+            clear_pending_install(home)
+            _write_state(home, install_status="failed", install_error=detail)
+            log(home, f"activation FAILED → {target.version}")
+            return {"ok": False, "error": "activation_failed", "detail": detail}
+        clear_pending_install(home)
+        _write_state(home, install_status="prepared", install_error="")
+        detail = prepared_text(target.version)
+        say(detail)
+        log(home, f"prepared → {target.version}; running → {version.CLIENT_VERSION}")
+        return {"ok": True, "restarting": False, "prepared": True,
+                "version": target.version, "detail": detail}
     finally:
         _FLOW_LOCK.release()
 
@@ -759,3 +721,19 @@ def running_frozen() -> bool:
     가려 버린다 — 러너 `selfupdate.running_bundle_path` 가 지문으로 막는 것과 같은 축이다.
     """
     return bool(getattr(sys, "frozen", False))
+
+
+def prepared_text(target: str) -> str:
+    return (f"{target} 설치가 완료되었습니다. 현재 작업은 계속할 수 있습니다. "
+            "DQA를 종료한 뒤 다시 실행하면 새 버전이 적용됩니다.")
+
+
+def installation_status(home: Path) -> dict:
+    state = _state(home)
+    prepared = installation.prepared_version()
+    phase = state.get("install_status", "")
+    if phase == "prepared" and not prepared:
+        phase = ""
+    return {"state": phase,
+            "prepared_version": prepared,
+            "error": state.get("install_error", "")}
