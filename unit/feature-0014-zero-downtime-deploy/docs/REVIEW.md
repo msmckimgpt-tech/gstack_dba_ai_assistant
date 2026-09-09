@@ -289,3 +289,12 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - Reason: 코드 변경 없이 실제 서버 배포와 격리 재검증 결과를 기록하는 비정책 문서 후속. backend-security-qa가 기존 수치와 경계를 대조했고 web-only smoke 문구를 정정했다.
 - Timestamp: 2026-09-09T14:13:00+09:00
+
+
+## REV-20260909T144000-caddy-probe [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 배포 완료를 막은 Caddy PID 고갈·점검 프로세스 회수·상태 조회 실패·격리 probe cleanup.
+- Timestamp: 2026-09-09T14:40:00+09:00
+- Verdict: PASS
+- Artifact: [독립 검토](reviews/20260909T144000-caddy-probe.md)
+- Human Approval Needed: no

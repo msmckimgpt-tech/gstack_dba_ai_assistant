@@ -8547,3 +8547,12 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - Reason: 수명주기 보완 후 현재 DQA 검증 경계를 명시한 비정책 증거 기록. 코드 검증과 설치본 실행을 구분한다.
 - Timestamp: 2026-09-09T14:22:00+09:00
+
+
+## REV-20260909T144000-caddy-probe [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 배포 완료를 막은 Caddy PID 고갈·점검 프로세스 회수·상태 조회 실패·격리 probe cleanup.
+- Timestamp: 2026-09-09T14:40:00+09:00
+- Verdict: PASS
+- Artifact: [독립 검토](../../feature-0014-zero-downtime-deploy/docs/reviews/20260909T144000-caddy-probe.md)
+- Human Approval Needed: no

@@ -209,3 +209,6 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 ### 대화별 AI 세션 재사용 (2026-09-09)
 
 `unit/feature-0043-external-llm-bridge/src/agent/sessions.py:conversation_session`에서 실행 위치·계정·대화 결속과 잠금을 찾는다. `SessionBinding.commit`은 서버 제출 영수증을 확정한다. 서버 문맥은 `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:_recent_conversation_context`, 호출은 `claim_request`·`submit_answer`이다.
+
+
+배포 관측 프로세스는 `bin/lib/caddy-probe.sh`의 `caddy_read_file`(Docker archive)과 `caddy_probe`(같은 network namespace의 별도 init 프로세스)를 따른다. 기존 Caddy 안에 TLS 점검 자식을 만들지 않으며 자기 CID만 정리한다.

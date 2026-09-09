@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Function
 
+## REQ-20260909-caddy-probe — 프록시 점검 프로세스 격리
+
+배포는 Caddy 내부에 점검 자식을 만들지 않는다. 파일은 Docker archive로 읽고, admin·replica GET는 같은 네트워크 namespace와 실행 중 이미지 ID를 사용하는 별도 init 컨테이너에서 실행한다. 이미지 pull·환경/볼륨 공유 없이 자원과 시간을 제한하고, 생성된 자기 CID만 정리한다. 조회 실패를 미기동으로 오인하여 프록시를 재생성하지 않는다.
+
+Caddy 다음 생성에는 init과 PID 한도256을 적용한다. 기존 프로세스는 그대로 유지하며 이미 남은 좀비는 다음 정상 재생성 때 제거된다. 한도 조정만으로 자식 누수를 해결했다고 하지 않는다. 이번 배포는 probe 분리로 추가 생성 경로를 제거한다.
+
 ## REQ-20260909-deploy-refresh — 배포 완료 게시
 
 `bin/lib/ui-release.sh`는 롤링 시작 전에 pending을 원자 게시하고, 배포 scope에 필요한 readiness·edge·soak 및 해당 smoke 검증을 마친 두 replica의 revision/stamp가 일치할 때 complete를 게시한다. 전용 `artifacts/deploy/ui-release` 디렉터리를 web에 `/srv/ui-release:ro`로 제공한다. 같은 revision 재시도도 완료 marker를 확인하며 미완료이면 soak를 재검증한다. workers-only와 dry-run은 게시하지 않는다.

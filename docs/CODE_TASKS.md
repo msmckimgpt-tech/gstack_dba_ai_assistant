@@ -474,3 +474,8 @@ python3 bin/gen-routemap.py                                                     
 ### 그룹 문맥 또는 AI 세션이 이어지지 않을 때
 
 feature-0043 `src/agent/sessions.py`의 범위 키·지원 probe·최종 이력 영수증과 `prompt.py`의 최신 snapshot 전달을 확인한다. feature-0003 `routers/ai_tools.py:_recent_conversation_context`는 발언자·assistant 호출자와 80개/48,000자 상한을 구성한다. 세션 파일에는 본문/토큰이 없고, 임의 과거 세션을 찾는 `--last`를 쓰지 않는다. 회귀 정본: `unit/feature-0043-external-llm-bridge/tests/test_conversation_sessions.py`.
+
+
+## 배포 점검이 procReady / PID 한도로 실패할 때
+
+`bin/lib/caddy-probe.sh:caddy_read_file` / `caddy_probe`가 실행 중 Caddy 내부 fork를 피한다. `bin/deploy-web.sh:reconcile_caddy`는 상태 조회 실패와 실제 미기동을 구분한다. 다음 생성의 reaper·용량은 docker-compose.yml의 caddy init/pids_limit에 있다. 회귀는 feature-0014의 test_caddy_probe_isolation.py와 test_edge_rolling_gate.py.

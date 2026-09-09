@@ -46,6 +46,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SCRIPT = REPO_ROOT / "bin" / "deploy-web.sh"
+PROBE_LIBRARY = REPO_ROOT / "bin" / "lib" / "caddy-probe.sh"
 CADDYFILE = REPO_ROOT / "unit" / "feature-0006-lan-proxy-access" / "src" / "caddy" / "Caddyfile"
 
 LIVE_UPSTREAMS_JSON = (
@@ -85,7 +86,8 @@ def _mock_docker(tmp_path: Path, *, caddy_running: bool = True, ps_fail: bool = 
             #!/bin/sh
             case "$*" in
               *"ps -q caddy"*) {"exit 1" if ps_fail else ps_echo} ;;
-              *"cat /etc/caddy/Caddyfile"*) printf '%s' "$FAKE_LIVE_CADDYFILE" ;;
+              inspect*) printf 'sha256:fixture-image\\n' ;;
+              cp*) python3 -c 'import io, os, sys, tarfile; data=os.environ["FAKE_LIVE_CADDYFILE"].encode(); buf=io.BytesIO(); archive=tarfile.open(fileobj=buf, mode="w"); member=tarfile.TarInfo("Caddyfile"); member.size=len(data); archive.addfile(member, io.BytesIO(data)); archive.close(); sys.stdout.buffer.write(buf.getvalue())' ;;
               *livez*) {"exit 1" if False else 'exit ${FAKE_PEER_LIVE_RC:-0}'} ;;
               *reverse_proxy/upstreams*)
                   [ -n "$FAKE_HANG" ] && sleep "$FAKE_HANG"
@@ -137,6 +139,8 @@ def _run_harness(
                 f"EDGE_AVAIL_TIMEOUT={edge_avail_timeout}",
                 f"EDGE_DEGRADE_FLOOR={degrade_floor}",
                 "DC=(docker compose -f docker-compose.yml)",
+                f'STATE_DIR="{tmp_path}"',
+                f'source "{PROBE_LIBRARY}"',
                 'WEB_PUBLIC_HOST="test.local"',
                 *[_extract_func(f) for f in funcs],
                 body,
@@ -579,7 +583,7 @@ def test_g4e_ps_failure_is_not_read_as_caddy_absent(tmp_path):
         fail_duration_s=1,
         degrade_floor=4,
     )
-    assert "RC=0" in proc.stdout
+    assert "RC=1" in proc.stdout, "Caddy 조회 실패로 실제 도달성도 확인하지 못했으면 복귀로 처리하지 않는다."
     assert "단정하지 않고" in proc.stderr, (
         f"ps 조회 실패를 미기동으로 처리했다(즉시 통과) — {proc.stderr!r}"
     )
@@ -690,7 +694,7 @@ def test_g9b_all_container_probes_have_kill_after():
     `docker compose exec` 가 TERM 에 반응하지 않으면 배포가 그대로 멈춘다(적대 검증 P1, 4R).
     컨테이너를 찌르는 모든 조회에 `-k`(kill-after)가 붙어 있어야 한다.
     """
-    src = SCRIPT.read_text(encoding="utf-8")
+    src = SCRIPT.read_text(encoding="utf-8") + "\n" + PROBE_LIBRARY.read_text(encoding="utf-8")
     bare = [
         ln.strip() for ln in src.splitlines()
         if re.search(r"\btimeout\s+\d", ln) and not re.search(r"\btimeout\s+-k\s", ln)

@@ -75,6 +75,7 @@ CERT_ROOT="$ARTIFACTS/certs"
 LOCK_FILE="$LOCK_DIR/deploy-web.lock"
 STATE_FILE="$STATE_DIR/deploy-web.state"
 source "$REPO_ROOT/bin/lib/ui-release.sh"
+source "$REPO_ROOT/bin/lib/caddy-probe.sh"
 LASTGOOD_FILE="$STATE_DIR/deploy-web.last-good"
 PIN_FILE="$STATE_DIR/docker-compose.deploy-pin.yml"
 
@@ -297,9 +298,9 @@ preflight_tls() {
     #
     # 이 검사는 스스로 best-effort 라고 적어 두었으므로 **판정 불가는 skip 이 옳다.**
     # 내용이 PEM 인지 먼저 확인해, 「읽지 못했다」와 「달랐다」를 가른다.
-    caddy_pem="$("${DC[@]}" exec -T caddy cat /certs/rootCA.pem 2>/dev/null || true)"
+    caddy_pem="$(caddy_read_file /certs/rootCA.pem 2>/dev/null || true)"
     if ! printf '%s' "$caddy_pem" | head -1 | grep -q -- "-----BEGIN CERTIFICATE-----"; then
-      warn "Caddy 컨테이너의 rootCA 를 읽지 못했다(exec 불가 등) — CA 대조 skip. 배포는 계속."
+      warn "Caddy 컨테이너의 rootCA 파일 조회 실패 — CA 대조 skip. 배포는 계속."
       caddy_ca=""
     else
       caddy_ca="$(printf '%s' "$caddy_pem" | sha256sum 2>/dev/null | awk '{print $1}' || true)"
@@ -614,7 +615,7 @@ predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc �
   # 앱은 살아 있어도 엣지 passive 격리 중이면 LB 후보가 아니다(= 2026-08-11 사고 기전).
   if ! wait_edge_available "$other"; then
     err "$other 가 엣지 후보로 복귀하지 않았다 — 지금 $target 을 내리면 available upstream 0(전면 503)."
-    err "  진단: docker compose -f docker-compose.yml exec -T caddy wget -qO- $CADDY_ADMIN_URL/reverse_proxy/upstreams"
+    err "  진단: 격리 caddy_probe로 $CADDY_ADMIN_URL/reverse_proxy/upstreams 확인."
     err "  현재 상태 유지(=$target 이 계속 서빙) 후 원인 해결하고 재실행(멱등)."
     return 1
   fi
@@ -767,7 +768,7 @@ caddy_fail_duration_s() {  # 실행 중 Caddy 설정과 repo 소스 중 **큰** 
   local from_file from_live v out=0
   from_file="$(sed -n 's/^[[:space:]]*fail_duration[[:space:]]\{1,\}\([0-9]\{1,\}\)s.*/\1/p' "$CADDYFILE" 2>/dev/null | head -1 || true)"
   # 라이브 값 — 배포가 Caddyfile 을 바꾸는 창에서는 컨테이너가 아직 옛 설정으로 돌고 있다.
-  from_live="$(timeout -k 5 10 "${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null \
+  from_live="$(caddy_read_file /etc/caddy/Caddyfile 2>/dev/null \
     | sed -n 's/^[[:space:]]*fail_duration[[:space:]]\{1,\}\([0-9]\{1,\}\)s.*/\1/p' | head -1 || true)"
   for v in "$from_file" "$from_live"; do
     case "$v" in ''|*[!0-9]*) continue ;; esac
@@ -800,15 +801,15 @@ edge_peer_live() {  # $1 = svc → 0 = **Caddy 네트워크에서** 그 replica 
   #   ⚠ 전제(단일 cert 소스 공유)가 깨지면 위 논거가 무너진다 —
   #     `test_edge_rolling_gate.py::test_g10_replicas_share_a_single_cert_source` 가 그것을 잠근다.
   local svc="$1"
-  timeout -k 5 15 "${DC[@]}" exec -T caddy wget -q -T 3 --no-check-certificate \
+  caddy_probe -q -T 3 --no-check-certificate \
     --header="Host: $WEB_PUBLIC_HOST" -O /dev/null "https://$svc:8000/livez" 2>/dev/null
 }
 
 edge_upstream_fails() {  # $1 = svc → 그 upstream 의 passive fail 카운터. 조회·파싱 불가 시 빈 출력.
   local svc="$1" json rest obj v
-  # `timeout` 2겹: wget 자체(-T)와 docker exec 전체. 어느 한쪽이 응답 없이 멈추면 while 루프가
+  # `timeout` 2겹: wget 자체(-T)와 caddy_probe의 컨테이너 실행. 응답 없이 멈추면 while 루프가
   # deadline 을 재검사하지 못해 **배포가 flock 을 쥔 채 무기한 정지**한다(적대 검증 P1 지적).
-  json="$(timeout -k 5 15 "${DC[@]}" exec -T caddy wget -q -T 5 -O- "$CADDY_ADMIN_URL/reverse_proxy/upstreams" 2>/dev/null || true)"
+  json="$(caddy_probe -q -T 5 -O- "$CADDY_ADMIN_URL/reverse_proxy/upstreams" 2>/dev/null || true)"
   [ -n "$json" ] || return 0
   # 순수 bash 문자열 연산으로 파싱한다 — 호스트 python3 의존을 만들지 않고, `printf | grep`
   # 파이프라인이 pipefail 하에서 SIGPIPE(141)로 오판되던 기존 함정(preflight_fileset 주석)도 피한다.
@@ -921,17 +922,18 @@ restart_count() {  # $1 = svc
 reconcile_caddy() {
   step "Caddyfile reconcile (변경 시에만 caddy recreate)"
   [ -f "$CADDYFILE" ] || { warn "Caddyfile 없음($CADDYFILE) — reconcile skip"; return 0; }
-  if [ -z "$("${DC[@]}" ps -q caddy 2>/dev/null)" ]; then
+  local ccid
+  ccid="$(timeout -k 2 5 "${DC[@]}" ps -q caddy 2>/dev/null)" || die "Caddy 상태 조회 실패 — 기존 프록시 유지."
+  if [ -z "$ccid" ]; then
     log "caddy 미기동 — up -d caddy"; run "${DC[@]}" up -d --no-deps caddy; return 0
   fi
   local host_sha cont_sha
   host_sha="$(sha256sum "$CADDYFILE" 2>/dev/null | awk '{print $1}')"
-  cont_sha="$("${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+  cont_sha="$(caddy_read_file /etc/caddy/Caddyfile 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
   if [ -n "$cont_sha" ] && [ "$host_sha" = "$cont_sha" ]; then
     # feature-0020: config 무변경이어도 caddy 이미지 태그 갱신(caddy:2 re-pull)은 recreate 필요.
     # 단일 edge 라 recreate 는 수초 blip — 이미지 업그레이드 시에만 발생(평시 blip 0 유지).
-    local ccid cimg_run cimg_local
-    ccid="$("${DC[@]}" ps -q caddy 2>/dev/null | head -1)"
+    local cimg_run cimg_local
     cimg_run="$(docker inspect -f '{{.Image}}' "$ccid" 2>/dev/null || true)"
     cimg_local="$(docker image inspect "$(docker inspect -f '{{.Config.Image}}' "$ccid" 2>/dev/null)" -f '{{.Id}}' 2>/dev/null || true)"
     if [ -n "$cimg_run" ] && [ -n "$cimg_local" ] && [ "$cimg_run" != "$cimg_local" ]; then

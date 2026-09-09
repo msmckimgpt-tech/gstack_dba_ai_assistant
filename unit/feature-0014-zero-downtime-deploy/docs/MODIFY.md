@@ -213,3 +213,10 @@ source_of_truth: true
 ## CHG-20260909T141300-deploy-refresh-evidence
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
+
+
+## CHG-20260909T143400-caddy-probe
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping / TASK-20260909T140000-deploy-refresh
+- 배포 완료를 막은 Caddy ssl_client 좀비99/PID123/128 및 exec 실패를 진단. 점검을 같은 network namespace의 별도 init 컨테이너로 분리하고 Docker archive 파일 읽기·자기CID cleanup·조회 실패 fail-closed를 적용했다.
+- Caddy 다음생성 init:true/pids_limit256. 현재프로세스는재생성하지않는다. 현재한도256은동시작업중외부변경을관측하여중복변경하지않았다.
+- 실제검증·단위회귀·최종배포결과는 TASK-20260909T140000-deploy-refresh Run에분리기록한다.

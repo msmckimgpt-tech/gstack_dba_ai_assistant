@@ -16,6 +16,16 @@ source_of_truth: true
 
 - [x] PR #1653/7fa75a51 배포 완료, 두 replica/edge 완료 메타데이터와 제품7파일 지문 확인. 설치 DQA 검증 진행 중.
 
+## TASK-20260909T143400-caddy-probe-reaping — 완료 검증 실행 실패 복구
+
+- 승인 범위: 현재 요청의 서버 배포 완료를 막은 라이브 결함 복구. 앱/프록시 재시작 없이 검증을 복원하며 DB·권한 변경 없음. 위험 Major(배포 관측 경로/유한 PID 용량), 서비스 재생성은 하지 않는다.
+- 원인: Caddy에 ssl_client 좀비99개 + live threads24 = pids.current123/max128; kernel fork rejected. 배포2는 Caddyfile 읽기 exec 실패로 exit128, UI manifest pending 유지. 과거 개별 생성 경로는 소급 확정하지 않되 HTTPS wget 반복과 일치한다.
+- Plan: bin/lib/caddy-probe.sh의 caddy_read_file은 Docker archive 읽기로 교체하고 caddy_probe는 현재 이미지ID+같은 network namespace의 격리 --init sidecar에서 동일wget 인자를 실행한다. 원래 Caddy에서 probe 자식을 만들지 않는다. 타임아웃/실패 반환·현재 ready/soak 게이트는 유지한다.
+- Plan: compose의 Caddy init:true/pids_limit256을 다음 생성 계약으로 기록하고, 현재 컨테이너는 docker update --pids-limit256만 적용한다. PID/시작시각을 보존하고 CA검증edge와양replica를확인한다. 남은좀비99는기존PID1수거불가로다음정상재생성까지유지되지만추가생성경로를제거한다.
+- AC: PID 한도가 찬 Caddy에서도 파일/admin/replica 확인이 가능하고 기존Caddy PID가같다. 검사반복후Caddy좀비가증가하지않는다. 실패는completed로게시하지않고,검증재시도후에만complete게시.
+- [x] 구현·독립회귀·실제probe 반복 검증
+- [ ] 최신 main 통합·재시작 없는 한도 반영·배포 완료 재검증
+
 ## 1. Current Status
 - State: in-progress
 - Owner: AI (claude) / Human approved

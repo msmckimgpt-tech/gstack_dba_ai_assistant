@@ -6450,3 +6450,10 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 
 ## CHG-20260909T142200-deploy-refresh-run-boundary
 - 수명주기 보완 커밋의 CLI 결과와 DQA-client 재실행/설치 검증 미완료를 명시하여 증거 누락을 보정. 코드 변경 없음.
+
+
+## CHG-20260909T143400-caddy-probe
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping / TASK-20260909T140000-deploy-refresh
+- 배포 완료를 막은 Caddy ssl_client 좀비99/PID123/128 및 exec 실패를 진단. 점검을 같은 network namespace의 별도 init 컨테이너로 분리하고 Docker archive 파일 읽기·자기CID cleanup·조회 실패 fail-closed를 적용했다.
+- Caddy 다음생성 init:true/pids_limit256. 현재프로세스는재생성하지않는다. 현재한도256은동시작업중외부변경을관측하여중복변경하지않았다.
+- 실제검증·단위회귀·최종배포결과는 TASK-20260909T140000-deploy-refresh Run에분리기록한다.
