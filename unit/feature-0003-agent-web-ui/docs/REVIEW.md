@@ -8410,8 +8410,29 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - **미검증 정직 표기**: 공유-앱 진입의 딥링크 목적지 이동은 **게시된 최신본 1.2.4 에도 없다**(수용 코드가 마지막 버전 bump 뒤에 착륙 — 다음 릴리스 필요) · 미서명 설치 시 Windows 경고 1회 · [DQA 앱 받기] 노출 전환 미관측 · 앱 화면 실측 범위 한계 — 항목 detail 과 접힌 summary 양쪽에 명시했다.
 - **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
 - Human Approval Needed: **아니오**.
+## REV-20260909T123400-session-continuity-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-backend.md
+- Human Approval Needed: no
 
+## REV-20260909T123400-session-continuity-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-qa.md
+- Human Approval Needed: no
 
+## REV-20260909T123400-session-continuity-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-security.md
+- Human Approval Needed: no
 ## REV-20260909T120000-diff-similarity-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
 - Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
 - Trigger: API response·performance / 응답·성능 + UI alignment / 화면 정렬

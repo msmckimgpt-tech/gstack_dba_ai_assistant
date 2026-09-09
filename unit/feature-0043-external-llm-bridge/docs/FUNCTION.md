@@ -3696,3 +3696,18 @@ Codex 설정을 변경하지 않는다. [OpenAI 공식 문서](https://learn.cha
 | `AC-20260909T000000-delivery-3` | 관리 콘솔의 역할·제품 프롬프트 자동작성도 같은 경로로 결과가 도달한다 |
 | `AC-20260909T000000-delivery-4` | 러너 실패 대체문이 오면 입력란은 **덮이지 않고** 사유가 표시된다 |
 | `AC-20260909T000000-delivery-5` | 게이트가 열린 배포에서는 종전 SSE 토큰 스트리밍이 그대로 동작한다 |
+
+## REQ-20260909-session-continuity — 대화별 AI 세션 및 그룹 문맥
+
+연결한 AI가 지원하는 경우, 같은 서비스·로그인 계정·대화·실행 위치·현재 지침 범위에 결속한 Claude/Codex 세션을 재사용한다. 최초 연결은 이번 기능으로 생성한 실제 CLI 세션 ID에만 결속하며, 임의의 기존 CLI 대화나 `--last`를 찾아 재사용하지 않는다. 다른 그룹 참여자는 자기 계정의 AI 세션을 사용한다.
+
+- 매 요청마다 현재 서버에 보이는 그룹 질문과 assistant 답변을 발언자/호출자 표기와 함께 다시 전달한다. 최근 80개 메시지·48,000자 한도이며 생략 사실을 표시한다. 현재 질문은 task metadata로 한 번만 전달한다.
+- 서버 전체 이력의 누적 SHA-256은 편집·삭제 검출 기준점이다. 전송 커서가 아니므로 생성 중 다른 참여자가 추가한 메시지도 다음 프롬프트에 포함한다.
+- 성공적으로 대화에 전달된 최종 assistant까지 포함한 이력 영수증을 받아야 세션을 확정한다. 취소·실패·기록 변경·지침/로그인 범위 변경은 새 세션으로 전환한다. 잠금으로 같은 네이티브 세션의 동시 실행을 막는다.
+- CLI의 실행 전 세션 부재 오류가 요청한 UUID와 일치하고 stdout/실행 이벤트가 없을 때만 한 번 새 세션으로 복구한다. 쿼터·인증·실행 중 오류는 재실행하지 않는다. 미지원 AI·사용자 지정 명령·관리 작업은 기존 문맥 전달을 유지한다.
+- 상태 파일은 native ID·이력 개수·지문만 보관하며 토큰과 대화 본문은 저장하지 않는다. 이력 조회 실패는 점유를 해제하고 503으로 재시도를 요청한다.
+
+수용 기준: `AC-session-1` 동일 범위 재개와 다른 계정/대화/위치 격리, `AC-session-2` 그룹 A/B의 질문·assistant와 생성 중 추가 메시지를 다음 호출에 전달, `AC-session-3` 취소·제출 실패·편집/삭제·세션 소실 복구. 실행 증거: [Run](test-runs.d/20260909-session-continuity.md).
+
+정본: `src/agent/sessions.py` · `handler.py` · `invoke.py` · `prompt.py`, feature-0003 `routers/ai_tools.py::_recent_conversation_context,claim_request,submit_answer`.
+CLI 계약 확인: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive), [Claude CLI headless](https://code.claude.com/docs/en/headless), 설치된 CLI help 및 실제 두 번 호출(2026-09-09).

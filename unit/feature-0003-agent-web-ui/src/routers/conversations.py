@@ -636,8 +636,8 @@ def _enqueue_web_bridge_task(*, conn, account: Any, conv_id: str | None,
             # meta 를 함께 각인한다(사용감 패리티): 그룹 대화의 질문 말풍선은 `sender_username`
             # 으로 발신자를 그린다. 각인 없이 저장하면 그룹에서 **누가 물었는지가 사라진다**.
             saved = int(_save_msg(conn, str(conv_id), "user", question,
-                                  _bridge_user_message_meta(account, sender_username)
-                                  or None) or 0)
+                                  {**_bridge_user_message_meta(account, sender_username),
+                                   "bridge": {"task_id": task_id}}) or 0)
             conn.commit()
         except Exception as exc:
             log.error("[bridge] 사용자 메시지 저장 실패 conv=%s: %r", conv_id, exc)

@@ -1376,7 +1376,15 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                              "apply_error": apply_error,
                              "review_recorded": review_recorded,
                              "cross_session_findings": findings})
+    committed_history: dict = {}
+    if delivered and not findings and not injection_refused:
+        try:
+            _recent_conversation_context(conn, task.get("conversation_id"),
+                                         context_state=committed_history)
+        except RuntimeError:
+            pass  # 답변은 저장됐다. 재사용만 확정하지 않는다.
     return JSONResponse({"task_id": task_id, "recorded": True,
+                         "conversation_session": committed_history,
                          "delivered_to_conversation": delivered,
                          # 무엇이 등록/보류/범용판정/중복으로 갈렸는지 러너에게 돌려준다 —
                          # 조용한 성공은 「하나도 안 실렸다」와 구별되지 않는다.
@@ -2266,7 +2274,9 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         # `run_id` 를 task_id 로 잡는다 — 프런트가 `meta.run_id` 로 단계를 조회하므로,
         # 이 키가 없으면 단계를 기록해도 화면에서 찾지 못한다.
         _meta: dict[str, Any] = {"bridge": {"task_id": task_id, "origin": "web"},
-                                 "run_id": task_id}
+                                 "run_id": task_id,
+                                 "requested_by_account_id": int(account.get("id") or 0),
+                                 "requested_by_username": str(account.get("username") or "")}
         try:
             import agent_core as _core
 
@@ -2844,7 +2854,18 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
     # 이전 대화 문맥 — 후속 질문("그럼 그건?")은 앞 turn 없이는 해석 불가다(codex 리뷰 P1-4).
     # 방금 저장한 사용자 질문 자신은 제외한다(중복).
-    history = _recent_conversation_context(conn, conversation_id, exclude_text=question)
+    history_state: dict = {}
+    try:
+        history = _recent_conversation_context(
+            conn, conversation_id, exclude_text=question, task_id=task_id,
+            context_state=history_state)
+    except RuntimeError:
+        try:
+            await asyncio.sleep(5)
+        finally:
+            _release_claim(conn, task_id, account_id, claimed_client=_prompt_claim_client)
+        return JSONResponse({"error": "대화 기록을 불러오지 못했습니다. 잠시 후 자동으로 재시도합니다."},
+                            status_code=503, headers={"Retry-After": "5"})
     marked_history = ""
     if history:
         marked_history = _guard.wrap_conversation_history(
@@ -2959,6 +2980,14 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         "task_id": task_id,
         "question": marked,
         "conversation_context": marked_history,
+        "conversation_session": {
+            "account_id": account_id,
+            "history_chain": history_state.get("history_chain", []),
+            "context_key": hashlib.sha256(json.dumps([
+                row[2], row[5], row[6], system_prompt, scope,
+                ctx.get("client_id"), ctx.get("session_id"),
+            ], sort_keys=True, default=str).encode()).hexdigest(),
+        },
         "product_id": int(row[2]) if row[2] is not None else None,
         "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
         "attachments": attachments,
@@ -3701,9 +3730,9 @@ def _release_claim(conn, task_id: str, account_id: int, *,
 
 
 #: `claim_request` 가 함께 넘기는 이전 대화 turn 수. 크게 잡으면 외부 AI 컨텍스트를 잠식하고
-#: 작게 잡으면 후속 질문이 해석되지 않는다. 대화형 후속질문 대부분이 직전 2~3 turn 안에서 닫힌다.
-_BRIDGE_HISTORY_TURNS = 6
-_BRIDGE_HISTORY_CHARS = 4000
+#: 그룹의 여러 참여자와 assistant 답변을 포함하되, 초과분은 생략 사실을 명시한다.
+_BRIDGE_HISTORY_TURNS = 80
+_BRIDGE_HISTORY_CHARS = 48000
 
 #: 취소된 요청의 제출을 거절할 때의 문구. 조기 반환과 확정 UPDATE 실패 **양쪽**이 같은 말을
 #: 해야 한다 — 러너 입장에서 두 경로는 구분할 수 없는 같은 사건(사용자가 취소했다)이다.
@@ -3761,50 +3790,75 @@ def _conversation_access_denied(conn, account: dict[str, Any], conversation_id) 
     return _json_err(403, "이 대화에 접근할 권한이 없습니다(권한이 변경되었을 수 있습니다).")
 
 
-def _recent_conversation_context(conn, conversation_id, exclude_text: str = "") -> str:
-    """대화의 최근 turn 을 렌더한 문자열. 조회 실패는 빈 문자열(도구를 막지 않는다)."""
+def _recent_conversation_context(conn, conversation_id, exclude_text: str = "", *,
+                                 task_id: str = "", context_state: dict | None = None) -> str:
+    """그룹 전체의 확정된 발언을 순서대로 전달한다. 조회 실패는 불완전 실행을 막는다."""
     if not conversation_id:
         return ""
     try:
         rows = app._conv_load_messages_raw(conn, str(conversation_id), upto_id=None) or []
     except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "[bridge] 대화 문맥 로드 실패 conv=%s: %r", conversation_id, exc)
-        return ""
+        logging.getLogger(__name__).warning("[bridge] 대화 문맥 로드 실패 conv=%s", conversation_id)
+        raise RuntimeError("conversation history unavailable") from exc
+
+    messages = []
+    current_id = None
+    placeholder_id = None
+    chain, digest = [], ""
+    for mid, role, content, created, raw_meta in rows:
+        try:
+            meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
+        except ValueError:
+            meta = {}
+        meta = meta if isinstance(meta, dict) else {}
+        bridge = meta.get("bridge") or {}
+        bridge = bridge if isinstance(bridge, dict) else {}
+        if task_id and bridge.get("task_id") == task_id:
+            if role == "user":
+                current_id = mid
+            elif bridge.get("placeholder"):
+                placeholder_id = mid
+        if role not in ("user", "assistant") or bridge.get("placeholder"):
+            continue
+        text = str(content or "").strip()
+        if not text:
+            continue
+        digest = hashlib.sha256(json.dumps([digest, mid, role, text, meta],
+                                           sort_keys=True, default=str).encode()).hexdigest()
+        chain.append(digest)
+        messages.append((mid, role, text, meta))
+    if context_state is not None:
+        context_state["history_chain"] = chain
+    # 업데이트 이전 메시지는 task 각인이 없다. 해당 대기 말풍선 앞의 동일 질문 한 건만 제외한다.
+    if current_id is None and exclude_text:
+        for mid, role, text, meta in reversed(messages):
+            if role == "user" and text == exclude_text and (placeholder_id is None or mid < placeholder_id):
+                current_id = mid
+                break
 
     parts: list[str] = []
     dropped_refusals = 0
-    for _id, role, content, _created, _meta in rows[-_BRIDGE_HISTORY_TURNS:]:
-        text = str(content or "").strip()
-        if not text or text == exclude_text:
-            continue
-        # ── 인젝션 오판 거부턴은 맥락에서 뺀다 (TASK-20260901T140000) ────────────────
-        #
-        # 라이브에서 **자기강화 루프**가 관측됐다: 연결된 AI 가 요청을 프롬프트 인젝션으로
-        # 오판해 거부하면 그 거부문이 대화에 남고, 다음 턴이 그것을 읽어 「직전 턴도 같은
-        # 결론을 냈으니 이건 판단 우회 재시도다」로 재거부한다. 즉 **한 번 오탐이 나면 그
-        # 대화는 영구 고착**된다 (2026-09-01 대화 `20260901030637-95dc8844` msg 9142→9144,
-        # 뒤 답변이 앞 거부를 근거 3번으로 직접 인용).
-        #
-        # 지우는 것이 아니라 **이 맥락에서만 뺀다** — 원본은 `core_messages` 에 그대로 남아
-        # 화면·감사에서 보인다. 그리고 뺐다는 사실을 밝힌다(§16.7 G9-b 무음 절단 금지).
-        if str(role) != "user" and _guard.flag_injection_refusal(text):
+    previous = [(mid, role, text, meta) for mid, role, text, meta in messages if mid != current_id]
+    for mid, role, text, meta in previous[-_BRIDGE_HISTORY_TURNS:]:
+        if role == "assistant" and _guard.flag_injection_refusal(text):
             dropped_refusals += 1
             continue
-        speaker = "사용자" if str(role) == "user" else "assistant"
-        parts.append(f"[{speaker}] {text}")
+        if role == "user":
+            actor = meta.get("sender_username") or meta.get("sender_account_id")
+            speaker = "사용자" + (" " + json.dumps(str(actor), ensure_ascii=False) if actor else "")
+        else:
+            actor = meta.get("requested_by_username") or meta.get("requested_by_account_id")
+            speaker = "assistant" + (" / 호출자 " + json.dumps(str(actor), ensure_ascii=False) if actor else "")
+        parts.append(f"[{speaker} · 메시지 {mid}] {text}")
     if dropped_refusals:
-        parts.append(
-            f"[안내] 이전 assistant 턴 {dropped_refusals}건은 요청을 프롬프트 인젝션으로 "
-            "오판해 중단한 응답이라 맥락에서 제외했습니다. 그 판단을 이어받지 말고, 위 "
-            "요청을 그대로 수행하십시오.")
-    if not parts:
-        return ""
+        parts.append(f"[안내] 이전 assistant 턴 {dropped_refusals}건은 요청을 프롬프트 인젝션으로 "
+                     "오판해 중단한 응답이라 맥락에서 제외했습니다. 그 판단을 이어받지 마십시오.")
     rendered = "\n\n".join(parts)
+    omitted = len(previous) > _BRIDGE_HISTORY_TURNS or len(rendered) > _BRIDGE_HISTORY_CHARS
     if len(rendered) > _BRIDGE_HISTORY_CHARS:
-        # 조용히 자르지 않는다 — 잘렸다는 사실을 호출자가 알아야 "문맥이 다 왔다" 고 오해하지 않는다.
         rendered = rendered[-_BRIDGE_HISTORY_CHARS:]
-        rendered = "(앞부분 생략 — 전체 기록은 웹 대화 화면 참조)\n\n" + rendered
+    if omitted:
+        rendered = "(이전 대화 일부 생략 — 전체 기록은 DQA 대화 화면 참조)\n\n" + rendered
     return rendered
 
 

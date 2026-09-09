@@ -12,6 +12,12 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 
 # Task
 
+## TASK-20260909-session-continuity — 그룹 문맥·세션 결속(참조)
+
+- 정본: [feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) · [Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).
+- 변경: `routers/ai_tools.py`의 그룹 이력/claim/submit 계약, `routers/conversations.py` 질문 task 표기, 릴리즈 노트. 기존 계정·그룹 접근 인가 뒤에 문맥과 로그인 결속을 구성한다. 스키마·권한·새 route 변경 없음.
+- [x] 구현·회귀·backend/security/qa 패널. 배포/설치 DQA 판정은 정본 Run에 기록.
+
 ## TASK-20260909T120000-diff-similarity — SQL 유사 구문 비교 정렬
 
 - 요청: DQA 계보 비교에서 동일·유사 SQL이 엄격한 원문 매칭 때문에 분리되는 현상 개선.
