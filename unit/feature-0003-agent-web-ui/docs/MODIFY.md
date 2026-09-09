@@ -6439,3 +6439,14 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260909T141300-deploy-refresh-evidence
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
+
+
+## CHG-20260909T142000-deploy-refresh-stop
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 원인: stop이 타이머/리스너만 해제해 이미 대기 중인 응답은 새 로그인 초기화 뒤에도 재로드할 수 있었다. userdata 손실은 재현되지 않았지만 폐기한 감지기가 동작하는 결함이다.
+- 수정: 시작·응답 수신 뒤·적용 직전 수명주기를 확인하여 폐기한 감지기의 응답/알림/저장/재로드를 차단한다.
+- 검증: 독립 probe로 늦은 complete 재현 후 회귀 추가. 결과는 동명 Run에 기록.
+
+
+## CHG-20260909T142200-deploy-refresh-run-boundary
+- 수명주기 보완 커밋의 CLI 결과와 DQA-client 재실행/설치 검증 미완료를 명시하여 증거 누락을 보정. 코드 변경 없음.

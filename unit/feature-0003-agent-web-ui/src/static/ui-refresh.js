@@ -2,7 +2,7 @@
 const ATTEMPT_KEY = "dqa.uiRefresh.attempt.v1";
 
 export function createUiRefresh({ stamp, fetchRelease, canApply, prepare, apply,
-  storage, notify = () => {}, now = Date.now }) {
+  storage, notify = () => {}, now = Date.now, isActive = () => true }) {
   let baseline = null;
   let generation = 0;
   let inFlight = false;
@@ -10,11 +10,11 @@ export function createUiRefresh({ stamp, fetchRelease, canApply, prepare, apply,
   let notified = "";
 
   return async function check() {
-    if (inFlight || applied || !/^[a-f0-9]{12}$/.test(stamp)) return;
+    if (inFlight || applied || !isActive() || !/^[a-f0-9]{12}$/.test(stamp)) return;
     inFlight = true;
     try {
       const release = await fetchRelease();
-      if (release?.status !== "complete"
+      if (!isActive() || release?.status !== "complete"
           || !/^[a-f0-9]{12}$/.test(release.asset_stamp || "")
           || !/^[a-f0-9]{7,40}$/.test(release.release || "")
           || !Number.isSafeInteger(release.generation) || release.generation <= 0
@@ -44,7 +44,7 @@ export function createUiRefresh({ stamp, fetchRelease, canApply, prepare, apply,
         return;
       }
       // Both callbacks are synchronous: input cannot change between the final gate and navigation.
-      if (prepare(release) === false || !canApply()) return;
+      if (!isActive() || prepare(release) === false || !isActive() || !canApply()) return;
       storage.setItem(ATTEMPT_KEY, JSON.stringify({ target, at: now(), count: recent ? previous.count + 1 : 1 }));
       applied = true;
       try { apply(release); } catch (error) { applied = false; throw error; }
@@ -57,6 +57,7 @@ export function createUiRefresh({ stamp, fetchRelease, canApply, prepare, apply,
 }
 
 export function startUiRefresh(options) {
+  let stopped = false;
   const controller = createUiRefresh({
     storage: window.sessionStorage,
     apply: () => window.location.reload(),
@@ -72,8 +73,8 @@ export function startUiRefresh(options) {
       } finally { window.clearTimeout(timer); }
     },
     ...options,
+    isActive: () => !stopped,
   });
-  let stopped = false;
   let timer;
   const tick = async () => {
     await controller();
