@@ -35,3 +35,8 @@ Reason: 서버 배포 전. 기존 앱은 읽기 전용 UIA 확인만 수행했�
 - 현재 제품7파일의 SHA256이 배포본과 일치(빌드 stamp 문자열만 정규화). manifest는 배포 중 pending을 유지했고 검증 종료 뒤 complete로 바뀌었다.
 - 근거: wrapper `artifacts/dqa-deploy-refresh-20260909/{deployed-7fa75a51.json,release-events.jsonl,logs/dqa-refresh-deploy1.log}`.
 - 설치 DQA는 PID29732/정확한 설치경로로 고정했다. 읽기 전용 UIA에서 기본 '대화를 선택하세요', 활성 대화0, 빈 prompt, 진행/업로드/열린 modal 신호0을 확인했다. 구페이지는 감지 코드가 없어 최초 한 번 지원 IPC로 동일 제품페이지를 로드하는 bootstrap이 필요하다. 실제 조작과 후속 자동갱신 결과는 이어 기록한다.
+
+
+## 감지기 수명주기 후속
+
+설치 검증 준비 중 구 watcher stop 뒤 지연 응답 재로드를 별도 probe로 재현했다. 사용자 데이터 손실은 재현0이지만 폐기한 감지기는 동작하지 않아야 하므로 isActive 경계를 추가했다. Node **10 시나리오 PASS**(기존9에 stop/재설치 회귀 추가), pytest wrapper1 PASS. 수정 전2b5a49f7에서는 동일 회귀가 FAIL, 수정 후 실제 initializeWorkspace 연결5 probe 모두 구응답 reload0/resume저장0이다. 기존 전체8513/집중87/native34 결과는 이 후속 전 버전이며 후속의 집중 검증을 구분한다.

@@ -8532,3 +8532,12 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Related TASK: TASK-20260909T140000-deploy-refresh
 - Reason: 코드 변경 없이 실제 서버 배포와 격리 재검증 결과를 기록하는 비정책 문서 후속. backend-security-qa가 기존 수치와 경계를 대조했고 web-only smoke 문구를 정정했다.
 - Timestamp: 2026-09-09T14:13:00+09:00
+
+
+## REV-20260909T142000-deploy-refresh-stop [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 로그인 재초기화 후 폐기한 감지기의 지연 응답 재로드. 기존 reviewer 독립 재현 및 회귀 검토.
+- Timestamp: 2026-09-09T14:20:00+09:00
+- Verdict: PASS
+- Artifact: [stop 검토](reviews/20260909T142000-deploy-refresh-stop.md)
+- Human Approval Needed: no
