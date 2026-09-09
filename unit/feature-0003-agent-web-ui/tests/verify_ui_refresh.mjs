@@ -62,6 +62,56 @@ await test("input arriving during the request is protected", async () => {
   assert.equal(calls, 1); assert.equal(applied, 0);
 });
 
+await test("stopped requests have no side effects and a replacement watcher still applies", async () => {
+  for (const oldSafe of [false, true]) {
+    const store = storage(), timers = new Map(), effects = [];
+    let timerId = 0, resolveOld, resolveNew;
+    const target = () => {
+      const listeners = new Map();
+      return { listeners, hidden: false,
+        addEventListener(event, handler) {
+          if (!listeners.has(event)) listeners.set(event, new Set());
+          listeners.get(event).add(handler);
+        },
+        removeEventListener(event, handler) { listeners.get(event)?.delete(handler); },
+      };
+    };
+    const doc = target(), win = { ...target(), sessionStorage: store,
+      location: { reload: () => effects.push("reload") },
+      setTimeout: handler => { timers.set(++timerId, handler); return timerId; },
+      clearTimeout: id => timers.delete(id),
+    };
+    const watcherContext = vm.createContext({ window: win, document: doc });
+    vm.runInContext(source("ui-refresh.js").replace(/^export /gm, "")
+      + "\nglobalThis.start = startUiRefresh;", watcherContext);
+    const settle = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+    const options = label => ({ stamp: "aaaaaaaaaaaa", canApply: () => label === "new" || oldSafe,
+      notify: () => effects.push(`${label}:notify`), prepare: () => { effects.push(`${label}:prepare`); } });
+    const stopOld = watcherContext.start({ ...options("old"),
+      fetchRelease: () => new Promise(resolve => { resolveOld = resolve; }) });
+    stopOld();
+    for (const eventTarget of [doc, win]) {
+      assert.equal(Array.from(eventTarget.listeners.values()).reduce((n, handlers) => n + handlers.size, 0), 0);
+    }
+    const stopNew = watcherContext.start({ ...options("new"),
+      fetchRelease: () => new Promise(resolve => { resolveNew = resolve; }) });
+    resolveOld(release(2));
+    await settle();
+    assert.deepEqual(effects, [], `stopped watcher must be inert when safe=${oldSafe}`);
+    assert.equal(store.getItem("dqa.uiRefresh.attempt.v1"), null);
+    assert.equal(timers.size, 0, "stopped request must not schedule another poll");
+    resolveNew(release(3));
+    await settle();
+    assert.deepEqual(effects, ["new:prepare", "reload"]);
+    assert.equal(JSON.parse(store.getItem("dqa.uiRefresh.attempt.v1")).count, 1);
+    stopNew();
+    assert.equal(timers.size, 0);
+    for (const eventTarget of [doc, win]) {
+      assert.equal(Array.from(eventTarget.listeners.values()).reduce((n, handlers) => n + handlers.size, 0), 0);
+    }
+  }
+});
+
 await test("failed navigation is bounded across page instances", async () => {
   const store = storage(); let applied = 0;
   for (let attempt = 0; attempt < 4; attempt++) {
