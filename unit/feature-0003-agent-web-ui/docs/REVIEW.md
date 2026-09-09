@@ -8541,3 +8541,9 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS
 - Artifact: [stop 검토](reviews/20260909T142000-deploy-refresh-stop.md)
 - Human Approval Needed: no
+
+
+## REV-20260909T142200-deploy-refresh-run-boundary [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Reason: 수명주기 보완 후 현재 DQA 검증 경계를 명시한 비정책 증거 기록. 코드 검증과 설치본 실행을 구분한다.
+- Timestamp: 2026-09-09T14:22:00+09:00
