@@ -1,0 +1,31 @@
+{
+  "dist/DQAConnect-Setup-1.3.0.exe": {
+    "size": 26138425,
+    "sha256": "72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3"
+  },
+  "test-installers/DQAConnect-Setup-1.3.0.exe": {
+    "size": 26138446,
+    "sha256": "5c9c80fd424820a44220653d756358f14f8fd95e7b8667f4978aadca96b405e0"
+  },
+  "test-installers/DQAConnect-Setup-1.3.1.exe": {
+    "size": 26140687,
+    "sha256": "23e770c620a126f0cb84f2050dda2750f7baaa1fad63b6e1fe081c0431bcdd87"
+  },
+  "dist/DQAConnect/DQAConnect.exe": {
+    "size": 6038939,
+    "sha256": "6a121123e8ccb86f1fc11a236d77ab1ac3afb5ac472ce5784479d003857d8c8d"
+  },
+  "dist/DQALauncher.exe": {
+    "size": 169984,
+    "sha256": "c948529d19b69016f8c5f88c5a3fa60c55fb85f03184fa17bb7c7ca67501752c"
+  },
+  "test_variant": {
+    "changes": [
+      "isolated AppId/name/scheme/mutex",
+      "installed first-slot service.json points to localhost fixture"
+    ],
+    "synthetic_future_version": "1.3.1 (never publish)",
+    "release_version": "1.3.0"
+  },
+  "payload_match": true
+}

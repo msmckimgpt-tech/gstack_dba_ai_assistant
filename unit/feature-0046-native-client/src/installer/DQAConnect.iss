@@ -42,7 +42,7 @@
 ;   업데이트 판정은 «항상 새것»(무한 재설치) 또는 «영원히 최신»(아무도 못 받음) 중 하나로
 ;   고장난다. 어느 쪽이든 사용자에게는 원인이 보이지 않는다.
 #ifndef AppVersion
-  #define AppVersion "1.2.5"
+  #define AppVersion "1.3.0"
 #endif
 #define MyAppVersion AppVersion
 
@@ -71,13 +71,12 @@ SetupIconFile=..\client\assets\dqa.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
-UninstallDisplayIcon={app}\{#MyAppExe}
-; 구버전이 남긴 콘솔 자식도 닫는다. 종료 대상은 이 설치본의 실행 파일로 한정한다.
-CloseApplications=force
-CloseApplicationsFilter=DQAConnect.exe,python.exe,pythonw.exe
-; 재실행은 아래 /RELAUNCH 한 곳에서만 수행한다.
+UninstallDisplayIcon={app}\DQALauncher.exe
+CloseApplications=no
 RestartApplications=no
+SetupMutex=Global\DQAConnectSetup
 SetupLogging=yes
+ChangesAssociations=yes
 
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
@@ -101,15 +100,18 @@ Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
 Type: files; Name: "{userstartup}\{#MyAppName}.lnk"
 
 [Files]
-; 앱 폴더 전체 — `runtime\python.exe` 포함. 하나라도 빠지면 설치는 되고 연결만 실패한다.
-Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#AppDir}\*"; DestDir: "{code:GetSlotDir}"; Excludes: "install-complete.txt"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Verify the complete payload before shortcuts or activation can change.
+Source: "{#AppDir}\install-complete.txt"; DestDir: "{code:GetSlotDir}"; Flags: ignoreversion; AfterInstall: VerifySlot
+Source: "{#Launcher}"; DestDir: "{app}"; DestName: "DQALauncher.exe"; Flags: onlyifdoesntexist
+Source: "{#Launcher}"; DestDir: "{app}"; DestName: "DQAConnect.exe"; Flags: ignoreversion; Check: NeedsCompatibilityEntry; BeforeInstall: PreserveLegacyEntry
 
 [Icons]
 ; 아이콘은 **보이는 이름**을 쓴다 — 사용자가 누르는 것이 곧 DQA 다.
-Name: "{group}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"
+Name: "{group}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"
 Name: "{group}\{#MyDisplayName} 제거"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: startup
+Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks: desktopicon
+Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks: startup
 
 [Registry]
 ; `dqa-connect://` 스킴 핸들러 — 웹의 [내 AI 실행] 이 이 프로그램을 **연결 정보와 함께** 띄운다.
@@ -121,32 +123,153 @@ Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\{#MyAppExe}"; Tasks: st
 ; per-user 설치이므로 HKCU 에 쓴다(관리자 권한 불필요).
 Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: ""; ValueData: "URL:{#MyDisplayName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
-Root: HKCU; Subkey: "Software\Classes\dqa-connect\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExe},0"
-Root: HKCU; Subkey: "Software\Classes\dqa-connect\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExe}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\dqa-connect\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\DQALauncher.exe,0"
+Root: HKCU; Subkey: "Software\Classes\dqa-connect\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\DQALauncher.exe"" ""%1"""
+
+[UninstallDelete]
+Type: files; Name: "{app}\active-slot.txt"
+Type: files; Name: "{app}\DQAConnect.legacy*.exe"
 
 [Run]
-Filename: "{app}\{#MyAppExe}"; Description: "{#MyDisplayName} 실행"; Flags: nowait postinstall skipifsilent
-; feature-0046 client-update-channel: **업데이트로 무음 설치된 경우** 앱을 다시 띄운다.
-;
-; ⚠ 위 줄은 `skipifsilent` 라 무음 설치에서는 돌지 않는다. 그것이 없으면 사용자는
-;   [업데이트] 를 눌렀다가 **프로그램이 사라지는 것**을 본다 — 업데이트를 적용하려면 실행 중인
-;   exe 를 비켜 줘야 하므로 우리가 스스로 끝내기 때문이다(`client/updater.apply`).
-;
-; ⚠ 무음이면 **무조건** 다시 띄우지는 않는다. MDM·스크립트로 무음 배포하는 경로에서 남의
-;   세션에 창이 뜨면 안 된다. 우리 업데이터만 `/RELAUNCH` 를 준다(`updater.SILENT_ARGS`).
-Filename: "{app}\{#MyAppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchAfterSilentUpdate
+Filename: "{app}\DQALauncher.exe"; Description: "{#MyDisplayName} 실행"; Flags: nowait postinstall skipifsilent; Check: ActivationSucceeded
+; Legacy updaters request a relaunch. New updaters leave the running app alone.
+Filename: "{app}\DQALauncher.exe"; Flags: nowait runasoriginaluser; Check: RelaunchAfterSilentUpdate
 
 [Code]
+var
+  SlotName: String;
+  Activated: Boolean;
+  HadInstallation: Boolean;
+  LegacyBackup: String;
+
+function MoveFileEx(ExistingFile, NewFile: String; Flags: Cardinal): Boolean;
+  external 'MoveFileExW@kernel32.dll stdcall';
+
+function GetSlotDir(Param: String): String;
+var
+  N: Integer;
+begin
+  if SlotName = '' then
+  begin
+    if not ForceDirectories(ExpandConstant('{app}\versions')) then
+      RaiseException('설치 폴더를 만들지 못했습니다.');
+    N := 1;
+    repeat
+      SlotName := '{#MyAppVersion}-' + IntToStr(N);
+      if CreateDir(ExpandConstant('{app}\versions\') + SlotName) then Break;
+      if not DirExists(ExpandConstant('{app}\versions\') + SlotName) then
+        RaiseException('새 설치 폴더를 확보하지 못했습니다.');
+      N := N + 1;
+      if N > 10000 then RaiseException('설치 폴더 수가 너무 많습니다.');
+    until False;
+  end;
+  Result := ExpandConstant('{app}\versions\') + SlotName;
+end;
+
+function NeedsCompatibilityEntry: Boolean;
+begin
+  Result := True;
+  if FileExists(ExpandConstant('{app}\DQAConnect.exe')) and
+     FileExists(ExpandConstant('{app}\DQALauncher.exe')) then
+    Result := GetSHA256OfFile(ExpandConstant('{app}\DQAConnect.exe')) <>
+              GetSHA256OfFile(ExpandConstant('{app}\DQALauncher.exe'));
+end;
+
+procedure PreserveLegacyEntry;
+var
+  N: Integer;
+begin
+  if not FileExists(ExpandConstant('{app}\DQAConnect.exe')) then Exit;
+  LegacyBackup := ExpandConstant('{app}\DQAConnect.legacy.exe');
+  N := 1;
+  while FileExists(LegacyBackup) do
+  begin
+    LegacyBackup := ExpandConstant('{app}\DQAConnect.legacy-') + IntToStr(N) + '.exe';
+    N := N + 1;
+  end;
+  { Renaming preserves the running image and its original runtime directory. }
+  if not RenameFile(ExpandConstant('{app}\DQAConnect.exe'), LegacyBackup) then
+    RaiseException('기존 실행 경로를 보존하지 못했습니다. 현재 앱은 계속 실행됩니다.');
+end;
+
+procedure DeinitializeSetup;
+begin
+  if not Activated and (LegacyBackup <> '') and FileExists(LegacyBackup) then
+  begin
+    if FileExists(ExpandConstant('{app}\DQAConnect.exe')) and
+       not DeleteFile(ExpandConstant('{app}\DQAConnect.exe')) then
+    begin
+      Log('DQA compatibility entry retained; legacy backup remains reachable.');
+      Exit;
+    end;
+    if not RenameFile(LegacyBackup, ExpandConstant('{app}\DQAConnect.exe')) then
+      Log('DQA legacy backup retained; launcher fallback remains reachable.');
+  end;
+end;
+
+procedure VerifySlot;
+var
+  Code: Integer;
+begin
+  if not Exec(GetSlotDir('') + '\{#MyAppExe}', '--verify-install',
+              GetSlotDir(''), SW_HIDE, ewWaitUntilTerminated, Code) then
+    RaiseException('새 버전을 검사하지 못했습니다. 기존 버전을 유지합니다.');
+  if Code <> 0 then
+    RaiseException('새 버전의 실행 검사에 실패했습니다. 기존 버전을 유지합니다.');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  TempPointer, PointerFile: String;
+  Attempt: Integer;
+  ErrorCode: Cardinal;
+begin
+  if CurStep = ssInstall then
+    HadInstallation := FileExists(ExpandConstant('{app}\DQAConnect.exe')) or
+                       FileExists(ExpandConstant('{app}\active-slot.txt'));
+  if CurStep = ssPostInstall then
+  begin
+    PointerFile := ExpandConstant('{app}\active-slot.txt');
+    TempPointer := ExpandConstant('{app}\active-slot.pending');
+    if not SaveStringToFile(TempPointer, SlotName, False) then
+      RaiseException('새 버전의 실행 정보를 기록하지 못했습니다.');
+    { Replace only the pointer after the entire installation commits. }
+    for Attempt := 1 to 50 do
+    begin
+      Activated := MoveFileEx(TempPointer, PointerFile, 9);
+      if Activated then Break;
+      ErrorCode := DLLGetLastError;
+      Log('DQA activation retry: Windows error ' + IntToStr(ErrorCode));
+      { NTFS replacement of an open destination can also return ACCESS_DENIED. }
+      if (ErrorCode <> 5) and (ErrorCode <> 32) and (ErrorCode <> 33) then Break;
+      Sleep(100);
+    end;
+    if not Activated then
+    begin
+      DeleteFile(TempPointer);
+      RaiseException('새 버전 적용에 실패했습니다. 기존 실행 대상을 유지합니다.');
+    end;
+    Log('DQA activated slot ' + SlotName);
+  end;
+end;
+
+function ActivationSucceeded: Boolean;
+begin
+  Result := Activated and not HadInstallation;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := 0;
+  if not Activated then Result := 10;
+end;
+
 function RelaunchAfterSilentUpdate: Boolean;
 var
   I: Integer;
 begin
   Result := False;
-  if not WizardSilent then
-    Exit;
-  { ⚠ 인자 **하나씩** 대조한다. `Pos('/RELAUNCH', GetCmdTail)` 로 보면 다른 인자의 값
-    안에 그 문자열이 들어 있어도 참이 된다 — 실행 여부를 정하는 판정에 부분 문자열을 쓰지
-    않는다. }
+  if not WizardSilent or not Activated then Exit;
   for I := 1 to ParamCount do
     if CompareText(ParamStr(I), '/RELAUNCH') = 0 then
     begin

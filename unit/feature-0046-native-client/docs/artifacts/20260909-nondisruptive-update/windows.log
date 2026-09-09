@@ -1,0 +1,8 @@
+failed first migration restores legacy executable and launcher fallback
+legacy app survives migration of its original executable path
+installed app owns live runner
+in-app update keeps window connection draft and owned runner
+persistent activation lock fails without disturbing the running app or pointer
+global setup mutex rejects a concurrent installer
+same-version reinstall retries a brief pointer lock and uses a fresh slot
+old root executable path launches the new version with its existing browser cookie

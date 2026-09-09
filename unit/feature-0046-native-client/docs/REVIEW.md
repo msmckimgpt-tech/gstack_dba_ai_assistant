@@ -1355,3 +1355,21 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
   대화 작업 중이라 검증 편의로 종료·재설치하지 않는다.
 - 이연: 선재 결함 2건(빈 `ca_sha256` 의 CA 무검증 설치 · 매니페스트 불일치의 진단 표면 0)은
   버전 올리기 cycle 의 범위가 아니라 별도 cycle 로 남긴다 — 근거는 artifact 에 적었다.
+
+## REV-20260909T172132-nondisruptive-update_review [SUBAGENT:update_review]
+- Related TASK: TASK-20260909-nondisruptive-update
+- Trigger: 설치 업데이트
+- Timestamp: 2026-09-09T17:21:32+09:00
+- Verdict: PASS (P1 0건)
+- Artifact: [최종 독립 리뷰](reviews/20260909-nondisruptive-update_review.md)
+- Critical issue: 이전 pointer 공유/세션 잠금/legacy 복원/오래된 바로가기/완료 안내 결함 수정. Windows 최종 검증은 별도 원장.
+- Human Approval Needed: no
+
+## REV-20260909T172132-nondisruptive-update_ux_review [SUBAGENT:update_ux_review]
+- Related TASK: TASK-20260909-nondisruptive-update
+- Trigger: 설치 업데이트
+- Timestamp: 2026-09-09T17:21:32+09:00
+- Verdict: PASS (P1 0건)
+- Artifact: [최종 독립 리뷰](reviews/20260909-nondisruptive-update_ux_review.md)
+- Critical issue: 이전 pointer 공유/세션 잠금/legacy 복원/오래된 바로가기/완료 안내 결함 수정. Windows 최종 검증은 별도 원장.
+- Human Approval Needed: no

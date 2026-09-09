@@ -1,0 +1,20 @@
+{
+  "environment": "DQA-client-isolated",
+  "runner": "controlled fixture",
+  "steps": [
+    {
+      "name": "legacy app survives migration of its original executable path",
+      "version": "1.2.5",
+      "app_pid": 26356,
+      "runner_pid": 45112
+    },
+    {
+      "name": "installed app owns live runner",
+      "app_pid": 39412,
+      "runner_pid": 6116,
+      "slot": "1.3.0-1"
+    }
+  ],
+  "verdict": "FAIL",
+  "error": "TypeError(\"'NoneType' object is not subscriptable\")"
+}

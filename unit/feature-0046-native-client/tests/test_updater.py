@@ -267,9 +267,9 @@ def test_apply_refuses_a_missing_file(tmp_path):
     assert updater.apply(tmp_path / "nope.exe") is False
 
 
-def test_silent_args_relaunch_the_app():
+def test_silent_args_preserve_the_app():
     """무음 설치는 `[Run]` 의 `skipifsilent` 를 타지 않는다 — 우리가 다시 띄워야 한다."""
-    assert "/RELAUNCH" in updater.SILENT_ARGS
+    assert "/RELAUNCH" not in updater.SILENT_ARGS
     assert "/SILENT" in updater.SILENT_ARGS
 
 
@@ -302,8 +302,9 @@ def test_confirm_text_says_what_is_lost():
                          sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     text = updater.confirm_text(upd, connected=True)
     assert "9.9.9" in text and version.CLIENT_VERSION in text
-    assert "끊" in text          # 연결이 끊긴다는 사실을 말한다
-    assert "다시 시작" in text     # 그리고 돌아온다는 것도
+    assert "유지됩니다" in text
+    assert "종료한 뒤 다시 실행" in text
+    assert "취소됩니다" not in text
 
 
 # ── 7. 세 곳의 이름 규약이 같다 ─────────────────────────────────────────────────
@@ -609,7 +610,7 @@ def test_apply_installs_the_version_the_dialog_named(tmp_path, monkeypatch):
     assert seen == ["9.9.9"], f"확인창이 말한 버전과 다른 것을 받았다: {seen}"
 
 
-def test_the_unattended_path_defers_while_connected(tmp_path, monkeypatch):
+def test_the_unattended_path_can_download_while_connected(tmp_path, monkeypatch):
     """확인창이 없는 자동 경로에는 「지금 끊긴다」를 판단할 사람이 없다(F4, 규율 6)."""
     touched: list = []
     monkeypatch.setattr(updater, "download",
@@ -624,8 +625,8 @@ def test_the_unattended_path_defers_while_connected(tmp_path, monkeypatch):
         got = br.update_now(confirmed=True, target=_pending(), require_idle=True)
     finally:
         br.stop()
-    assert got["ok"] is False and got["error"] == "busy"
-    assert touched == [], "답변 중인데 업데이트를 진행했다"
+    assert got["ok"] is False and got["error"] == "download_failed"
+    assert len(touched) == 1
 
 
 def test_the_confirmed_human_path_is_not_blocked_while_connected(tmp_path, monkeypatch):
@@ -652,7 +653,8 @@ def test_confirm_text_warns_when_the_source_differs_from_the_bundled_address(tmp
     core.pin_server(home, "https://pinned.example")
     monkeypatch.setattr(core, "bundled_service_base", lambda: "https://bundled.example")
     text = updater.confirm_text(_pending(), connected=False, home=home)
-    assert "pinned.example" in text and "bundled.example" in text
+    assert "연결 서버:  https://pinned.example" in text
+    assert "업데이트 서버:  https://bundled.example" in text
     assert "아니요" in text
 
 
@@ -707,17 +709,17 @@ def test_a_relaunch_owner_is_single(tmp_path):
     """재기동 입구가 둘이면 우리가 아직 살아 있는 사이 새 인스턴스가 잠금에 막힌다(C5)."""
     assert "/RESTARTAPPLICATIONS" not in updater.SILENT_ARGS
     assert "/NORESTARTAPPLICATIONS" in updater.SILENT_ARGS
-    assert "/RELAUNCH" in updater.SILENT_ARGS
+    assert "/RELAUNCH" not in updater.SILENT_ARGS
     code = _iss_code_only(_ISS.read_text(encoding="utf-8"))
     assert re.search(r"^RestartApplications=no$", code, re.M)
 
 
-def test_installer_recovers_legacy_children_without_closing_shared_dll_users():
-    """1.1.2의 고아 Python은 일반 종료 요청에 응답하지 않아 무음 설치를 롤백시켰다."""
+def test_installer_never_closes_live_apps_or_overwrites_their_payload():
     code = _iss_code_only(_ISS.read_text(encoding="utf-8"))
-    assert re.search(r"^CloseApplications=force$", code, re.M)
-    match = re.search(r"^CloseApplicationsFilter=(.+)$", code, re.M)
-    assert match and set(match[1].split(",")) == {"DQAConnect.exe", "python.exe", "pythonw.exe"}
+    assert re.search(r"^CloseApplications=no$", code, re.M)
+    assert re.search(r"^SetupMutex=Global\\DQAConnectSetup$", code, re.M)
+    assert "CloseApplicationsFilter=" not in code
+    assert "/NOCLOSEAPPLICATIONS" in updater.SILENT_ARGS
     assert re.search(r"^SetupLogging=yes$", code, re.M)
 
 
@@ -898,17 +900,17 @@ _RELEASE_NOTES = (_UNIT.parents[0] / "feature-0003-agent-web-ui" / "src" / "stat
                   / "release-notes-data.js")
 
 
-def test_function_doc_names_the_current_channel():
+def test_function_doc_names_the_implemented_version():
     """정본 문서가 말하는 「현재 공개 채널」이 실제 정본 버전과 같아야 한다.
 
     ⚠ 이 봉인이 없어서 **한 번 낡았다** (적대 리뷰 2026-09-09 HIGH-1): 1.2.5 를 내면서
-      `FUNCTION.md` 는 「현재 공개 채널은 1.2.4이다」로 남았다. 사람이 읽는 정본이 라이브와
+      `FUNCTION.md` 는 「구현 버전은 1.2.4이다」로 남았다. 사람이 읽는 정본이 라이브와
       어긋나면 다음 사람은 틀린 전제로 판단한다. §16.7 G10 — 한 번 겪은 실패 유형은
       점수정이 아니라 구조로 잠근다.
     """
     doc = _FUNCTION_DOC.read_text(encoding="utf-8", errors="replace")
-    found = re.findall(r"현재 공개 채널은 \*\*([0-9]+(?:\.[0-9]+){0,3})\*\*이다", doc)
-    assert found, "FUNCTION.md 에 「현재 공개 채널은 **<버전>**이다」 문장이 없다"
+    found = re.findall(r"구현 버전은 \*\*([0-9]+(?:\.[0-9]+){0,3})\*\*이다", doc)
+    assert found, "FUNCTION.md 에 「구현 버전은 **<버전>**이다」 문장이 없다"
     assert len(set(found)) == 1, f"서로 다른 버전을 말하는 문장이 여럿이다: {sorted(set(found))}"
     assert found[0] == version.CLIENT_VERSION, (
         f"FUNCTION.md 는 {found[0]} 라고 말하는데 정본은 {version.CLIENT_VERSION} 이다")

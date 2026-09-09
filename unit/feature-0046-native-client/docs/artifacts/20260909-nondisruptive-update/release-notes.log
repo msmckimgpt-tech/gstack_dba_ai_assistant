@@ -1,0 +1,36 @@
+  PASS  [로드] window.RELEASE_NOTES 존재
+  PASS  [로드] window.ReleaseNotes.render 함수
+  PASS  [데이터] releases 비어있지 않음
+  PASS  [그룹] 전체 렌더 그룹 수 = 64
+  PASS  [접힘] 첫 그룹 aria-expanded=true
+  PASS  [접힘] 첫 그룹 본문 펼침(hidden=false)
+  PASS  [접힘] 둘째 그룹 aria-expanded=false
+  PASS  [접힘] 둘째 그룹 본문 접힘(hidden=true)
+  PASS  [카운트] 첫 그룹 배지 = 9건
+  PASS  [토글] 클릭 후 둘째 그룹 펼침
+  PASS  [토글] 재클릭 후 둘째 그룹 접힘
+  PASS  [표기] 첫 그룹 일자 한국어 포맷 (2026년 9월 9일)
+  PASS  [표기] 라벨 블록 노출 (그 이전 주요 업데이트)
+  PASS  [필터] 칩 4개(전체/작업/관리/공통)
+  PASS  [필터] 작업 화면 항목 수 = 308
+  PASS  [필터] 표시 항목 전부 작업 화면 영역
+  PASS  [필터] 작업 화면 그룹 수 = 60
+  PASS  [필터] 관리 콘솔 항목 수 = 163
+  PASS  [필터] 표시 항목 전부 관리 콘솔 영역
+  PASS  [펼치기] 모두 펼치기 → 전 그룹 펼침
+  PASS  [펼치기] 버튼 텍스트 '모두 접기'
+  PASS  [펼치기] 모두 접기 → 전 그룹 접힘
+  PASS  [작업화면] 관리 콘솔 항목 0건(.rn-area-admin)
+  PASS  [작업화면] 표시 항목 = work+common (350)
+  PASS  [작업화면] '관리 콘솔' 필터 칩 없음
+  PASS  [작업화면] 칩 = 전체/작업 화면/공통 (3)
+  PASS  [작업화면] 그룹 수 = 62
+  PASS  [관리콘솔] 기본 렌더는 관리 콘솔 항목 노출(회귀 없음)
+  PASS  [스크롤] admin release-notes pane overflow-y:auto 규칙 존재
+  PASS  [XSS] 제목에 <img> 엘리먼트 생성 안 됨
+  PASS  [XSS] 제목 텍스트가 원문 그대로
+  PASS  [XSS] summary 에 <script> 엘리먼트 없음
+  PASS  [CSS] .rn-group-body[hidden]{display:none} 가드 존재
+  PASS  [빈] releases 0 → .rn-empty 안내
+
+ALL PASS — passed 34, failed 0

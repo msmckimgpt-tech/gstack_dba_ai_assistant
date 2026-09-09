@@ -221,9 +221,10 @@ class ClientApp:
                 self.plan.home, target=found, confirm=confirm,
                 say=lambda line: self._post("log", line),
                 is_connected=lambda: bool(self.runner_proc
-                                          and self.runner_proc.poll() is None),
-                on_started=lambda: self._post("tray", "quit"))
-            if not got.get("ok") and got.get("error") != "declined":
+                                          and self.runner_proc.poll() is None))
+            if got.get("prepared"):
+                tell(got["detail"])
+            elif not got.get("ok") and got.get("error") != "declined":
                 tell(got.get("detail")
                      or f"업데이트를 적용하지 못했습니다 ({got.get('error')}).")
         except Exception:  # noqa: BLE001 — 업데이트 실패가 프로그램을 죽이지 않는다(규율 7)
@@ -675,11 +676,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--path", default="/", help=argparse.SUPPRESS)
     # ⚠ 진단 전용. **동결본이 창을 그릴 수 있는가**를 실행으로 답하게 한다 — 빌드가 이것을
     #   불러 확인한다. 파일 존재 검사로는 「담기긴 했는데 임포트가 깨진」 상태를 못 본다.
+    ap.add_argument("--verify-install", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--selftest", default="", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
+    if args.verify_install:
+        from .installation import verify_payload
+        return verify_payload()
     if args.selftest:
         return _selftest(args.selftest)
+
+    from .installation import redirect_to_active
+    if redirect_to_active(list(argv) if argv is not None else sys.argv[1:]):
+        return 0
 
     # 스킴으로 온 값이 **이긴다** — 사용자가 방금 웹에서 만든 최신 연결 정보이기 때문이다.
     link = parse_scheme_url(args.url)
@@ -696,12 +705,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     home = core.ConnectPlan(base="", token="").home
-    # ⚠ **직전 업데이트 시도의 결과를 여기서 판정한다** (적대 리뷰 F1). `apply()` 는 설치기를
-    #   띄웠는지만 알 수 있고 `/SUPPRESSMSGBOXES` 때문에 설치기도 조용하다 — 그 상태에서
-    #   우리는 스스로 종료하므로, 설치가 실패하면 사용자는 **프로그램이 사라지고 돌아오지
-    #   않는** 상태를 얻는다(화면은 방금 「다시 시작됩니다」라고 말했다). 다시 뜬 프로세스가
-    #   자기 버전으로 그 시도를 대조하는 것이 Inno 의 프로세스 모델과 무관하게 성립하는
-    #   유일한 결과 확인이다(§16.7 G14 — 처방은 결과 대조로 끝난다).
+    # Recover an interrupted installer result without mistaking a prepared slot for failure.
     unsettled = updater.settle_pending_install(home)
     if unsettled:
         tell(unsettled)
@@ -869,7 +873,7 @@ def _run_embedded(plan: core.ConnectPlan) -> "int | None":
     # 처음 닫았을 때 1회만 「여기 있습니다 · 종료는 우클릭 [종료]」를 말한다.
     shell.on_hidden = _hidden_notice(tray)
     br.resident_probe = lambda: _tray_alive(tray)
-    # 업데이트 설치는 실행 중인 exe 를 갈아 끼우므로 **우리가 비켜 줘야** 한다.
+    # The shell owns explicit shutdown; updates keep it running.
     br.on_quit = shell.quit
     stop = threading.Event()
     threading.Thread(target=_watch_show_requests,
@@ -931,7 +935,9 @@ def check_and_report(home) -> "updater.Update | None":
              "연결이 정상인지 확인한 뒤 다시 시도해 주세요.")
         return None
     if found is None:
-        tell(f"이미 최신입니다 (버전 {updater.version.CLIENT_VERSION}).")
+        prepared = updater.installation.prepared_version()
+        tell(updater.prepared_text(prepared) if prepared else
+             f"이미 최신입니다 (버전 {updater.version.CLIENT_VERSION}).")
         return None
     return found
 
@@ -964,7 +970,9 @@ def _update_flow(br) -> None:
         # ⚠ **실패도 말한다.** 이 경로에는 로그를 보여 줄 패널이 없다 — `br._say` 에만 남기면
         #   사용자는 확인창에서 [예] 를 누른 뒤 **아무 일도 일어나지 않는 것**을 본다.
         #   [아니요] 를 누른 경우(`declined`)는 사용자가 이미 아는 결과라 말하지 않는다.
-        if not got.get("ok") and got.get("error") != "declined":
+        if got.get("prepared"):
+            tell(got["detail"])
+        elif not got.get("ok") and got.get("error") != "declined":
             tell(got.get("detail")
                  or f"업데이트를 적용하지 못했습니다 ({got.get('error')}) — "
                     "지금 버전으로 계속합니다.")
