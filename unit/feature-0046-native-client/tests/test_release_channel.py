@@ -211,7 +211,11 @@ def test_the_download_route_reads_the_directory_at_request_time():
     assert "StaticFiles(directory=_client_release" not in src
     assert 'app.mount(\n    "/client"' not in src
     route = (_WEB_SRC / "routers" / "client_release.py").read_text(encoding="utf-8")
-    assert 'DOWNLOAD_PREFIX + "{filename}"' in route
+    # ⚠ 종전 단정 `'DOWNLOAD_PREFIX + "{filename}"' in route` 은 **항진명제였다**
+    #   (적대 리뷰 2026-09-09 L2). 그 문자열은 라우트가 아니라 「그렇게 쓰지 말라」고
+    #   설명하는 경고 주석에만 있었다 — 즉 라우트를 지워도 주석만 남으면 통과했다.
+    #   실제 데코레이터를 본다.
+    assert '@router.get("/client/{filename}")' in route
 
 
 def test_the_release_directory_is_mounted_into_web():
@@ -224,3 +228,66 @@ def test_the_server_default_matches_the_mount_point():
     """마운트 지점과 기본 경로가 갈리면 배포는 성공하고 다운로드만 조용히 없다."""
     src = (_WEB_SRC / "routers" / "client_release.py").read_text(encoding="utf-8")
     assert '"/srv/client"' in src
+
+
+# ── 게시 도구의 blast radius (적대 리뷰 2026-09-09 H1·M1) ────────────────────
+
+def test_the_publisher_refuses_to_guess_from_a_linked_worktree(publish, tmp_path, monkeypatch):
+    """연결된 worktree 에서는 기본 릴리스 디렉토리를 **추측하지 않는다**.
+
+    ⚠ 종전 기본값은 `parents[5]` 로 셌다. 그 셈은 `repo/` 안에서만 맞고, worktree 에서는
+      `<루트>/.worktrees/artifacts/client-release` 를 가리켰다 — 이 저장소에서는 그 경로가
+      마침 `../artifacts` 로 가는 심볼릭 링크라 **라이브 채널로 곧장 이어졌다**. 즉 아무
+      실험용 worktree 에서 `--setup` 한 번이면 서명되지 않은 그 바이너리가 전 사용자에게
+      나갔다(적대 리뷰 H1). 확인창도 dry-run 기본값도 없다.
+    """
+    mod = publish
+    root = tmp_path / "checkout"
+    (root / "unit" / "f" / "src" / "scripts").mkdir(parents=True)
+    (root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    script = root / "unit" / "f" / "src" / "scripts" / "publish_release.py"
+    script.write_text("", encoding="utf-8")
+
+    # 주 worktree: `.git` 이 디렉토리 → 앵커의 상위에서 artifacts 를 찾는다.
+    (root / ".git").mkdir()
+    monkeypatch.setattr(mod, "__file__", str(script))
+    assert mod._default_dir() == root.parent / "artifacts" / "client-release"
+
+    # 연결된 worktree: git 이 `.git` 을 **파일**로 둔다 → 추측하지 않는다.
+    (root / ".git").rmdir()
+    (root / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n", encoding="utf-8")
+    assert mod._default_dir() is None
+
+
+def test_the_publisher_requires_a_dir_when_it_cannot_tell(publish, monkeypatch, capsys):
+    """추측할 수 없으면 조용히 진행하지 않고 **멈춘다**."""
+    mod = publish
+    monkeypatch.setattr(mod, "_default_dir", lambda: None)
+    with pytest.raises(SystemExit):
+        mod.main(["--check"])
+    assert "--dir" in capsys.readouterr().err
+
+
+def test_rolling_back_applies_the_same_checks_as_publishing(publish, tmp_path):
+    """되돌리기(`--activate`)도 이름 규약·크기 하한을 본다.
+
+    ⚠ 종전에는 인자를 그대로 파일명에 끼워 넣었다(적대 리뷰 M1). `1.1.0-hotfix` 같은 값은
+      매니페스트에 적히지만 서버가 거절해 **채널 전체가 404** 가 되고, 클라이언트는 404 를
+      「아직 배포된 것이 없음」이라는 정상 상태로 읽어 아무도 오류를 남기지 않는다.
+      되돌리기는 **급할 때 쓰는 길**이라 조용한 실패가 가장 비싸다.
+    """
+    mod = publish
+    rel = tmp_path / "client-release"
+    rel.mkdir()
+    (rel / "DQAConnect-Setup-1.1.0-hotfix.exe").write_bytes(b"x" * mod.MIN_SETUP_BYTES)
+    with pytest.raises(SystemExit):
+        mod.activate("1.1.0-hotfix", rel)
+
+    (rel / "DQAConnect-Setup-0.0.1.exe").write_bytes(b"x" * 102)
+    with pytest.raises(SystemExit):
+        mod.activate("0.0.1", rel)
+
+    good = rel / "DQAConnect-Setup-1.0.0.exe"
+    good.write_bytes(b"x" * mod.MIN_SETUP_BYTES)
+    doc = mod.activate("1.0.0", rel)
+    assert doc["version"] == "1.0.0" and doc["size"] == mod.MIN_SETUP_BYTES

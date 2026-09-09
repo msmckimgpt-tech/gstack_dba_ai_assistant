@@ -1328,3 +1328,30 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
   않았고 줄이지도 않는다 — `dqa_identity` docstring 이 기록한 기존 위협이며 근본 해소는 별도
   cycle 이다. 다만 `open` 링크는 **토큰을 싣지 않으므로** 하이재킹 시 새는 것이 종전
   `start` 링크보다 적다(서비스 주소 + 공유 토큰 — 둘 다 사용자가 이미 손에 쥔 링크에 있다).
+
+## REV-20260909T142000-client-125-share-entry [SUBAGENT:security,backend,qa] — ACCEPTED
+
+- Related TASK: TASK-20260909T120000-client-125-share-entry
+- Trigger: API/contract·release-channel keyword matched (릴리스 매니페스트·다운로드
+  엔드포인트·버전 판정) — §18.8. 표시 변경 0 이라 ux·design 미호출.
+- Timestamp: 2026-09-09T14:20:00+09:00
+- Verdict: **security CONCERN · backend CONCERN · qa BLOCK → 조치 18건 → ACCEPTED**
+  (qa 의 BLOCK 은 완료 선언에 대한 것이고 릴리스 자체는 정상으로 재현됐다)
+- Artifact: [20260909T142000-client-125-share-entry](reviews/20260909T142000-client-125-share-entry.md)
+- Human Approval Needed: no
+
+- **가장 값비싼 지적은 「버전 상수 1줄」이라는 내 전제를 깬 것들이었다.** 게시 도구의 기본
+  릴리스 디렉토리가 연결된 worktree 에서도 **라이브 채널**을 가리켰고(H1), 롤백 경로는
+  `publish()` 가 거는 검사를 하나도 걸지 않았으며(M1), 정본 문서는 「현재 공개 채널은
+  1.2.4이다」로 남아 있었다(HIGH-1). 셋 다 이 diff 가 만든 것이 아니라 **이 diff 가 처음으로
+  건드려 드러난** 것이다.
+- **죽은 단정 3건**을 잡았다 — 두 건은 항진명제(`or` 뒤 느슨한 절 · 경고 주석이 만족시키는
+  문자열), 한 건은 봉인 부재. 조치는 전부 뮤턴트로 봉인을 확인했다.
+- **§16.6 위반**: 목적지 축 6칸을 내가 조립한 `--path` 로만 쟀는데, 상류가 만드는 스킴 URL 은
+  `parse_scheme_url` 을 한 번 더 지난다 — 그 분기가 1R-F3 의 토큰 배제 방어다. 정본
+  조립기가 만든 링크를 argv 한 칸으로 던져 라이브에서 다시 쟀다.
+- **PB-0009 라벨**: 격리 동결본 실측을 `DQA-client` 로 적으면 기계는 「설치본 실측」으로 읽는다.
+  `DQA-client-isolated` 로 나누고 설치본 시나리오는 `NOT-RUN` 으로 남겼다 — 사용자의 앱이
+  대화 작업 중이라 검증 편의로 종료·재설치하지 않는다.
+- 이연: 선재 결함 2건(빈 `ca_sha256` 의 CA 무검증 설치 · 매니페스트 불일치의 진단 표면 0)은
+  버전 올리기 cycle 의 범위가 아니라 별도 cycle 로 남긴다 — 근거는 artifact 에 적었다.

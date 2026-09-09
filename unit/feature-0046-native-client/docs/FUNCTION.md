@@ -16,7 +16,7 @@ Permission denied/EACCES/OS PermissionError는 permission_denied 상태로 분�
 
 ## 2026-09-08 — DQA AI별 연결
 
-1.2.1 설치기는 구버전이 남긴 내장 Python까지 종료해 업데이트 롤백을 방지한다. Windows Restart Manager의 대상은 이 설치본의 DQAConnect.exe/python.exe/pythonw.exe 파일로 한정한다. 재실행은 `/RELAUNCH` 한 곳에서 수행하며 Inno 설치 로그를 Windows 임시 폴더에 남긴다. 현재 공개 채널은 **1.2.4**이다. 1.2.4의 실제1.2.3→업데이트 설치 및 Codex 새 대화 응답을 검증했다. 1.2.3은 답변·텍스트 첨부 선택 및 기본 검색 단축키 설정을 복구한다. 실제1.1.2 앱의 [업데이트 확인]을 통해 설치·자동 재실행까지 검증했다. 기존 앱의 [업데이트 확인]에서 확인 후 적용하며, 서버의 최신 릴리스 API가 파일 크기·SHA-256과 다운로드 경로를 제공한다.
+1.2.1 설치기는 구버전이 남긴 내장 Python까지 종료해 업데이트 롤백을 방지한다. Windows Restart Manager의 대상은 이 설치본의 DQAConnect.exe/python.exe/pythonw.exe 파일로 한정한다. 재실행은 `/RELAUNCH` 한 곳에서 수행하며 Inno 설치 로그를 Windows 임시 폴더에 남긴다. 현재 공개 채널은 **1.2.5**이다 — 공유 링크의 목적지(`dqa-connect://open?…&path=`)를 수용해 앱이 **그 대화**를 연다. 그 코드는 2026-09-08 에 머지됐으나 1.2.4 는 그보다 앞선 게시본이라 담고 있지 않았다. 이 문장은 `tests/test_updater.py::test_function_doc_names_the_current_channel` 이 `CLIENT_VERSION` 과 대조한다 — 종전에는 아무도 보지 않아 한 번 낡았다(적대 리뷰 HIGH-1). 1.2.4의 실제1.2.3→업데이트 설치 및 Codex 새 대화 응답을 검증했다. 1.2.3은 답변·텍스트 첨부 선택 및 기본 검색 단축키 설정을 복구한다. 실제1.1.2 앱의 [업데이트 확인]을 통해 설치·자동 재실행까지 검증했다. 기존 앱의 [업데이트 확인]에서 확인 후 적용하며, 서버의 최신 릴리스 API가 파일 크기·SHA-256과 다운로드 경로를 제공한다.
 
 DQA 클라이언트를 실행하고 로그인하면 설치된 AI를 찾는다. AI별 사용 가능한 위치가 하나이면 자동 연결하고, Windows/WSL 배포판/계정 여러 곳에 있으면 해당 AI 카드에서만 선택한다. 이미 고른 위치가 다시 유효하면 자동 재사용한다. 별도 러너·Windows 브라우저 실행은 사용자 절차에 없다.
 

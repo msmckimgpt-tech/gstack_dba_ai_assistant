@@ -988,3 +988,27 @@ edit_policy: append-only
 - `tests/test_wsl_and_scheme.py`: 정본↔사본 **경로표 대조**(`_PATH_TABLE`) · 왕복(서버 조립
   → 클라이언트 파싱) · 토큰 부재 · 구버전 degrade · plan 도달.
 - `tests/test_standalone_launch.py`: 목적지 전달 5건 추가, 반환 계약 변경 반영.
+
+## CHG-20260909T120000-client-125-share-entry
+
+- Related TASK: TASK-20260909T120000-client-125-share-entry.
+- `src/client/version.py`: `CLIENT_VERSION` **1.2.4 → 1.2.5**. 제품 로직 변경 0 — 이 릴리스가
+  나르는 것은 2026-09-08 에 머지된 딥링크 목적지 수용(`safe_app_path` · `parse_scheme_url` 의
+  `path` · `ConnectPlan.path` · `Shell.navigate` · `request_show(home, path)`)이며, 그 코드는
+  이미 main 에 있으나 **설치본에는 없다**(1.2.4 가 그 머지보다 앞선다).
+- 빌드·게시 산출물은 커밋 대상이 아니다(러너와 같은 규약) — 반입 경로는 호스트
+  `artifacts/client-release`.
+- `src/installer/DQAConnect.iss`: `#define AppVersion` 폴백 **1.2.4 → 1.2.5**. 빌드는
+  `/DAppVersion=` 로 정본을 주입하므로 산출물은 이미 옳았지만, 폴백이 갈리면 **손으로 ISCC 를
+  부른 설치기**가 파일명과 프로그램이 말하는 버전을 서로 다르게 갖는다.
+  `tests/test_updater.py::test_iss_version_matches_the_canon` 이 이 어긋남을 잡아냈다 —
+  버전 상수 1줄만 고치면 되는 줄 알았던 변경이 실제로는 두 곳이었다.
+- `unit/feature-0003-agent-web-ui/src/static/release-notes-data.js` (cross-feature):
+  2026-09-09 블록에 1.2.5 항목 + 요약 한 줄. 종전 클라이언트 버전은 전부 항목이 있는데 이것만
+  없었고(적대 리뷰 MED-1), 9월 8일 노트가 「새 앱 버전을 받으신 뒤에만 성립합니다」라고 적어 둔
+  그 버전이 바로 이것이다. **정적 자산 변경이므로 웹 재배포가 필요하다.**
+- `unit/feature-0046-native-client/tests/test_updater.py`:
+  `test_the_build_and_the_iss_use_the_same_version_shape` 의 첫 단정이 **죽어 있던 것**을
+  복구했다(적대 리뷰 L1) — 패턴이 `"` 앞 백슬래시를 요구해 어떤 빌드 파일에도 맞지 않았고,
+  `or` 뒤 느슨한 절만으로 통과했다. 즉 「빌드 정규식이 정본과 같은 모양인가」를 아무도 보고
+  있지 않았다. 뮤턴트로 봉인 확인(빌드 정규식을 `[0-9.]*` 로 느슨하게 하면 적색).
