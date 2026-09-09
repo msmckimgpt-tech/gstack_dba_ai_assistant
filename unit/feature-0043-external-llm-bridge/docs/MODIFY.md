@@ -4923,3 +4923,7 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   검증용 러너를 기동해 위임이 성립하는 조건을 만든 뒤, 서버 왕복(`bridge_pending` → 폴링 `done`,
   655자)과 실제 브라우저 화면(「연결된 AI 가 작성했습니다 (559자)」 + 입력란 채워짐)을 모두 관측했다.
   Run 2 를 `NOT-RUN` → **PASS** 로 갱신. 검증 후 화면·러너·세션·토큰을 원상복구했다.
+
+## CHG-20260909T124035-session-integration-evidence
+
+최신 main 통합 284f6abd의 문서 동반 기록을 보완한다. 제품 코드 추가 변경 없음. 통합91건 PASS, 양측 변경 보존 확인. 병합 커밋의 post-commit 게이트는 추가 delta를 인식하지 못해 TASK/CHG/review 3항목 실패했고 이번 후속 문서 커밋으로 명시한다.

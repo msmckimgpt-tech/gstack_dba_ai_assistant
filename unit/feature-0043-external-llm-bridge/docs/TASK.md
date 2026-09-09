@@ -28,6 +28,7 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 - 진입 정책: `/root/download/docker/mysql_ai_delegated_dev/repo/AGENTS.md` SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; worktree 동일. CONTEXT `19555c9cf9e73f07d72e802c912c2127c0586b4d1dc1fc890c964ee1e7e31237`.
 - [x] 구현 및 회귀 검증 — 넓은 회귀 1815 passed/1 skipped, 최종 집중 43 passed, 실제 Claude/Codex 각각 2회 동일 세션 회상 PASS.
 - [x] backend/security/qa 패널 최종 코드 PASS, 문서 기록. 완료 게이트 결과는 Run에 기록.
+- [x] 최신 main 통합 — 91건 PASS 및 양측 문서 변경 보존.
 - [ ] main 병합·배포·설치 DQA 실측 — CLI 실측과 별도 판정.
 
 ## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제

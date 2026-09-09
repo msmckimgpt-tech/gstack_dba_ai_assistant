@@ -5201,3 +5201,8 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - 양쪽 부모의 base 이후 추가/변경 줄을 auto-merge 파일까지 포함해 현재 파일과 대조: 누락은 양쪽의 이전 ROUTEMAP 생성 스탬프 각 1줄뿐이며 최신 스탬프로 대체했다. 소스·테스트·문서 내용 삭제 0. 구현 충돌 없음.
 - 마지막 focused 회귀 43 PASS. 통합 검증 결과는 Run에 기록한다.
 - Human Approval Needed: no.
+
+## REV-20260909T124035-session-integration-docs [SKIPPED:non-policy-doc]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 통합 게이트 증거 보완만 포함한 비정책 문서 변경. 제품 코드 추가 변경 없음. 이전 backend/security/qa PASS 및 통합91건 PASS 유지.
+- Timestamp: 2026-09-09T12:40:35.536759+09:00
