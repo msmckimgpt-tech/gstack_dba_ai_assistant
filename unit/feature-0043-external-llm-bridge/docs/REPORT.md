@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260909-session-continuity — 대화별 AI 세션과 그룹 문맥
+
+Claude/Codex의 실제 세션 ID를 서비스·계정·대화·실행 위치·지침 범위에 결속했다. 매번 최신 그룹 기록을 다시 전달하므로 다른 참여자의 질문 및 assistant 답변도 이어서 참고한다. 기존 6개/4,000자 문맥은 80개/48,000자로 확장했고 생략 표시를 유지한다.
+
+제출 후 assistant까지 포함한 이력 지문으로 편집/삭제를 감지한다. 취소·실패는 상태를 확정하지 않고, 실제 세션 부재에만 한 번 복구한다. 이력 조회 실패는 불완전 문맥으로 AI를 실행하지 않도록 점유를 해제한다.
+
+검증: 넓은 회귀 **1815 passed, 1 skipped**(223.60초); 이후 예외/복구 최종 보완 집중 **43 passed**. 실제 Claude/Codex 각각 두 번 호출에서 동일 native ID 및 합성표식 회상 PASS. backend/security/qa 코드 검토 PASS. 서버 배포와 설치 Windows DQA의 실제 대화 결과는 별도 축으로 [Run](test-runs.d/20260909-session-continuity.md)에 기록한다.
+
 ## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
 
 사용자 신고: "DQA 계정 프로필에서 '프롬프트 > 내 프롬프트' 의 자동 작성 기능이 동작하지 않는다."

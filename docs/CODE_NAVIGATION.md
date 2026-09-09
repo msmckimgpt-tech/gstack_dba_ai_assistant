@@ -202,3 +202,7 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 ## 외부 AI 도구 catalog (2026-09-08)
 
 `/api/ai/tools/get_tool_catalog` → `routers/ai_tools.py:get_tool_catalog` → `src/external_tool_catalog.py:build_catalog`. 도구 실행은 `routers/ai_tools.py:run_structure_tool`; 서버 지침은 `_bridge_system_prompt`에서 `render_guidance`를 합성한다.
+
+### 대화별 AI 세션 재사용 (2026-09-09)
+
+`unit/feature-0043-external-llm-bridge/src/agent/sessions.py:conversation_session`에서 실행 위치·계정·대화 결속과 잠금을 찾는다. `SessionBinding.commit`은 서버 제출 영수증을 확정한다. 서버 문맥은 `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:_recent_conversation_context`, 호출은 `claim_request`·`submit_answer`이다.

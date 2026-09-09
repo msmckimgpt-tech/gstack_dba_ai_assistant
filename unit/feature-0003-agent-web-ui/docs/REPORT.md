@@ -8,6 +8,10 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260909-session-continuity — 그룹의 질문·assistant 문맥 유지
+
+대화 claim에 최신 그룹 문맥과 변경 지문을 제공하고, submit 성공 후 최종 assistant까지 포함한 이력 영수증을 반환한다. 질문과 assistant에 요청자/task를 식별할 metadata를 기록한다. 이력 조회 실패 시 불완전한 문맥으로 실행하지 않는다. 검증 및 배포 정본은 [feature-0043 Run](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md).
+
 ## TASK-20260908T125500-step-tool-syntax-leak — 2026-09-08
 
 **실행 단계 패널에서 도구 호출 구문 제거** (Major §12.3 — 표시 계층 + 비신뢰 입력 처리.

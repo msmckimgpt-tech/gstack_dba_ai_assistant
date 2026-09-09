@@ -5116,3 +5116,7 @@ specifier 는 `?v=` 토큰을 갖는다. `tests/test_static_module_stamp_census.
 ## 2026-09-08 — 연결 상태 안내
 
 현재 사용할 수 없는 위치의 안내는 공통 연결 패널에서 일반 텍스트로 표시한다. 기존 Markdown 강조 표식은 노출하지 않고 textContent로 출력하여 HTML을 실행하지 않는다.
+
+## REQ-20260909-session-continuity — 연결 AI의 대화 문맥
+
+그룹 대화의 다른 참여자 질문과 assistant 답변을 발언자/호출자 정보와 함께 claim에 전달한다. 로그인 범위와 대화 접근 인가를 통과한 요청에만 세션 결속 지문을 제공하고, 대화에 실제 전달된 최종 이력을 submit 영수증으로 반환한다. 상세 계약과 AC는 [feature-0043 FUNCTION](../../feature-0043-external-llm-bridge/docs/FUNCTION.md)의 REQ-20260909-session-continuity를 따른다.

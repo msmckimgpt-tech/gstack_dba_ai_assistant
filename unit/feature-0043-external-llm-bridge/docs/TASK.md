@@ -6,11 +6,29 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-09
-feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 않던 결함 수정(3진입점 + 폴링 권한 축)
+feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 유지 구현·검증, 출하 진행
 
 ---
 
 # Task
+
+## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자의 DQA 대화 세션 재사용 및 그룹 assistant 이력 유지 요청. Major, 기존 계정별 실행·대화 접근 인가를 유지하는 내부 실행/문맥 계약 변경.
+- 소유 경로: `src/agent/{sessions,invoke,handler,prompt,__init__}.py`, feature-0003 `src/routers/{ai_tools,conversations}.py`, 관련 테스트 및 기능 문서. 다른 세션 편집 보존.
+- `SessionBinding`은 서비스·인증 계정·대화·AI 실행 위치·제품/역할/지침별로 로컬 세션 ID를 결속한다. CLI JSON의 실제 ID만 사용하고 성공적으로 제출된 답변만 재사용 대상으로 확정한다. 취소/실패·대화 수정/삭제 시 재사용을 폐기한다.
+- Claude `--resume <id>`, Codex `exec resume <id>`를 적용한다. 세션 없음이 확인될 때 한 번만 새 세션으로 복구하며 권한/쿼터/네트워크 오류를 재실행하지 않는다. 비지원 런타임은 서버 문맥으로 계속 동작한다.
+- `_recent_conversation_context`는 발언자/호출자 구분, 진행 안내 제외, 정확한 현재 질문 제외, 전체 이력의 변경 지문을 제공한다. 매 호출에 그룹의 다른 사용자 및 assistant 기록을 최신 스냅샷으로 전달한다.
+- AC-1: 같은 계정 A의 같은 대화 두 질문은 첫 JSON의 세션 ID를 다음 CLI resume 인자에 사용한다. 다른 계정 B/대화/AI 위치는 별도 세션이다.
+- AC-2: 그룹 A 질문→assistant 답→B 질문→assistant 답→A 후속 질문은 A의 세션을 재사용하면서 B의 질문과 assistant 답을 발언자 정보와 함께 받는다.
+- AC-3: 취소·제출 실패·이력 변경 시 오염된 세션을 재사용하지 않는다. 세션 소실 시 서버 기록으로 복구하고, 기록 조회 실패는 불완전 실행을 차단한다.
+- 검증: CLI 어댑터/상태 파일/프로세스 경합/그룹 이력 행위 테스트, 기존 bridge 회귀, backend/security/qa 패널(AGENTS §18.8), verify-completion, 배포 산출물 대조, 가능한 실제 DQA 경로 확인. 마지막 패널 P1 0 필수(최대 3라운드).
+- 진입 정책: `/root/download/docker/mysql_ai_delegated_dev/repo/AGENTS.md` SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; worktree 동일. CONTEXT `19555c9cf9e73f07d72e802c912c2127c0586b4d1dc1fc890c964ee1e7e31237`.
+- [x] 구현 및 회귀 검증 — 넓은 회귀 1815 passed/1 skipped, 최종 집중 43 passed, 실제 Claude/Codex 각각 2회 동일 세션 회상 PASS.
+- [x] backend/security/qa 패널 최종 코드 PASS, 문서 기록. 완료 게이트 결과는 Run에 기록.
+- [ ] main 병합·배포·설치 DQA 실측 — CLI 실측과 별도 판정.
 
 ## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
 

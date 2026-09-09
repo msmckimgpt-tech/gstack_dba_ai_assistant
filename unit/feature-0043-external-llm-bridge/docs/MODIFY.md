@@ -4903,3 +4903,10 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `test_cancel_channel_adds_no_new_tool`(명시 도구 7→8, 매니페스트·MCP 어댑터 2벌 등재 확인 후 숫자만 이동).
 - 검증: pytest 21 신규 · jsdom 행위 하네스 15 · 뮤턴트 2종 KILL(원래 결함 재현 시 FAIL) ·
   `codex review --uncommitted` ACCEPTED(P1 0) · 컨테이너 `make test`.
+
+## CHG-20260909-session-continuity
+
+- 이유: 매 질문마다 새 CLI를 실행해 네이티브 대화 연결이 없었고, 서버 문맥 6개/4,000자는 여러 그룹 참여자가 호출한 assistant까지 이어가기 어려웠다.
+- 변경: 새 `agent/sessions.py`를 번들 순서에 등록하고 실제 CLI JSON ID 재개, 계정/대화/위치/지침 결속, 프로세스 잠금, 제출 후 이력 확정을 연결했다. handler의 잠금 수명은 생성·자기검토·제출을 포함한다. 최신 서버 snapshot은 재개 여부와 무관하게 전달한다.
+- 서버: 질문 task metadata와 assistant 호출자를 기록하고 정확한 현재 질문 제외, 진행문 제외, 80개/48,000자 문맥 및 전체 변경 지문을 반환한다. 실패한 이력 조회는 점유 해제·503이다. schema/권한/새 route 변경 없음.
+- 검증 및 남은 실측: [Run](test-runs.d/20260909-session-continuity.md).

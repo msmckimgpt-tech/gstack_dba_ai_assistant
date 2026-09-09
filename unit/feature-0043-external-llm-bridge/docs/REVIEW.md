@@ -5157,3 +5157,27 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - base(`cdd414e3`)에 이미 있던 회귀 2건을 함께 정합: 라우트 golden drift 2건
   (`/api/ai/connect/identity` · `/api/ai/tools/get_tool_catalog`)과 명시 도구 수 계약(7→8).
   후자는 매니페스트·MCP 어댑터 2벌 등재를 **확인한 뒤** 숫자만 옮겼고 계약은 그대로다.
+
+## REV-20260909T123400-session-continuity-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T123400-session-continuity-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-qa.md
+- Human Approval Needed: no
+
+## REV-20260909T123400-session-continuity-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-security.md
+- Human Approval Needed: no

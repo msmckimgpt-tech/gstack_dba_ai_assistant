@@ -6394,3 +6394,7 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - **적대 검증이 잡은 사실오류 1건 반영**: 아이콘 항목 제목의 `(1.1.1 · 1.1.2)` 표기를 `(1.1.2)` 로 정정했다. 1.1.1 은 러너 복구로 먼저 게시된 별개 릴리스이고 아이콘은 같은 번호를 다른 설치기로 덮지 않기 위해 1.1.2 로만 나갔다(정본 `unit/feature-0043-external-llm-bridge/docs/REPORT.md` · 머지 `6bf4ace3`). 직전 3블록은 제목에 버전 라벨을 쓴 적이 없어 신규 관례이기도 했다.
 - 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` §14.1 — 수기 bump 금지 명문). 실측 정합: 라이브 스탬프 `?v=94c87eec12e1`.
 - 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
+
+## CHG-20260909-session-continuity
+
+`routers/{ai_tools,conversations}.py`에 대화별 세션 결속 및 그룹 발언자/assistant 문맥 계약을 추가했다. 질문 중복 제외를 task ID로 식별하고, 제출 완료 이력을 반환해 최신 답변 편집/삭제를 검출한다. [feature-0043 변경 정본](../../feature-0043-external-llm-bridge/docs/MODIFY.md) 및 [검증](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md) 참조.

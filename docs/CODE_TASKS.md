@@ -467,3 +467,7 @@ python3 bin/gen-routemap.py                                                     
 ## 외부 AI 도구 catalog (2026-09-08)
 
 도구 404·인자 누락 조사: `routers/ai_tools.py`의 P0_TOOLS/P1_TOOLS·get_tool_catalog·run_structure_tool → `unit/feature-0003-agent-web-ui/src/external_tool_catalog.py` → feature-0041 MCP run_read_tool. 전체 노출/제한 매핑은 feature-0003 docs/TOOL_SURFACE_AUDIT.md.
+
+### 그룹 문맥 또는 AI 세션이 이어지지 않을 때
+
+feature-0043 `src/agent/sessions.py`의 범위 키·지원 probe·최종 이력 영수증과 `prompt.py`의 최신 snapshot 전달을 확인한다. feature-0003 `routers/ai_tools.py:_recent_conversation_context`는 발언자·assistant 호출자와 80개/48,000자 상한을 구성한다. 세션 파일에는 본문/토큰이 없고, 임의 과거 세션을 찾는 `--last`를 쓰지 않는다. 회귀 정본: `unit/feature-0043-external-llm-bridge/tests/test_conversation_sessions.py`.
