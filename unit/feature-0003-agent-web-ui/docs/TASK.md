@@ -32,6 +32,7 @@ AC 예: `SET @CURRENT_DATE = CONVERT(varchar(10), GETDATE(), 20)` 앞에 TRY가 
 ### Requested Scope
 - [x] 정렬 구현 및 재현 회귀
 - [x] 독립 리뷰·검증·문서 정합
+- [x] 최신 main 통합 및 관련94건·컨테이너45건 재검증
 - [ ] main 반영·배포·DQA 검증 범위 기록
 
 

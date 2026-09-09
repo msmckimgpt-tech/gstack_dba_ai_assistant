@@ -6408,3 +6408,7 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260909T122000-diff-similarity-integration
 - Session: codex diff-similarity; 최신 origin/main a8abac5f 통합. TASK의 독립 신규 항목 두 개를 모두 보존하고 ROUTEMAP을 현재 소스에서 재생성했다. 동작 코드 충돌은 없었다.
 - 최초 전체 pytest 실패16건을 환경13건(격리 컨테이너 관련45건 PASS)·upstream 갱신2건·사이드 패널 테스트 stub1건으로 분류/해소. 최종 관련94건 PASS. 전체 suite를 재실행한 결과와 혼동하지 않는다.
+
+## CHG-20260909T123000-diff-similarity-sync
+- Session: codex diff-similarity; aa795a51 구현 및 76293899 main 통합 커밋을 원격 작업 브랜치에 반영했다. 통합 검증94건·컨테이너45건 기록을 최종 확인했다.
+- 병합 pre-commit 검증은 PASS였으나 post-commit 게이트는 TASK/MODIFY/REVIEW delta 3개를 미인식했다(`/tmp/post-commit-verify.b3XufR`). 새 문서 커밋으로 동기화 상태와 검증 증거를 명시하고 다시 검증한다. 코드/제품 동작 변경은 없다.
