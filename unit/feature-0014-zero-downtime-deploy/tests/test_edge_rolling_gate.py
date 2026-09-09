@@ -46,6 +46,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SCRIPT = REPO_ROOT / "bin" / "deploy-web.sh"
+PROBE_LIBRARY = REPO_ROOT / "bin" / "lib" / "caddy-probe.sh"
 CADDYFILE = REPO_ROOT / "unit" / "feature-0006-lan-proxy-access" / "src" / "caddy" / "Caddyfile"
 
 LIVE_UPSTREAMS_JSON = (
@@ -86,8 +87,13 @@ def _mock_docker(tmp_path: Path, *, caddy_running: bool = True, ps_fail: bool = 
             case "$*" in
               *"ps -q caddy"*) {"exit 1" if ps_fail else ps_echo} ;;
               *"ps -q web-"*) echo fake-peer-cid ;;
-              inspect*) printf '123 {{"shared":{{"IPAddress":"10.0.0.1"}}}}\\n456 {{"shared":{{"IPAddress":"10.0.0.2"}}}}\\n' ;;
-              *"cat /etc/caddy/Caddyfile"*) printf '%s' "$FAKE_LIVE_CADDYFILE" ;;
+              inspect*)
+                  case "$*" in
+                    *NetworkSettings.Networks*) printf '123 {{"shared":{{"IPAddress":"10.0.0.1"}}}}\\n456 {{"shared":{{"IPAddress":"10.0.0.2"}}}}\\n' ;;
+                    *".Image"*) printf 'sha256:fixture-image\\n' ;;
+                    *) exit 97 ;;
+                  esac ;;
+              cp*) python3 -c 'import io, os, sys, tarfile; data=os.environ["FAKE_LIVE_CADDYFILE"].encode(); buf=io.BytesIO(); archive=tarfile.open(fileobj=buf, mode="w"); member=tarfile.TarInfo("Caddyfile"); member.size=len(data); archive.addfile(member, io.BytesIO(data)); archive.close(); sys.stdout.buffer.write(buf.getvalue())' ;;
               *livez*) {"exit 1" if False else 'exit ${FAKE_PEER_LIVE_RC:-0}'} ;;
               *reverse_proxy/upstreams*)
                   [ -n "$FAKE_HANG" ] && sleep "$FAKE_HANG"
@@ -143,6 +149,8 @@ def _run_harness(
                 f"EDGE_AVAIL_TIMEOUT={edge_avail_timeout}",
                 f"EDGE_DEGRADE_FLOOR={degrade_floor}",
                 "DC=(docker compose -f docker-compose.yml)",
+                f'STATE_DIR="{tmp_path}"',
+                f'source "{PROBE_LIBRARY}"',
                 'WEB_PUBLIC_HOST="test.local"',
                 'ROOT_CA="/fixture/rootCA.pem"',
                 *[_extract_func(f) for f in funcs],
@@ -586,7 +594,7 @@ def test_g4e_ps_failure_is_not_read_as_caddy_absent(tmp_path):
         fail_duration_s=1,
         degrade_floor=4,
     )
-    assert "RC=1" in proc.stdout
+    assert "RC=1" in proc.stdout, "Caddy 조회 실패로 실제 도달성도 확인하지 못했으면 복귀로 처리하지 않는다."
     assert "단정하지 않고" in proc.stderr, (
         f"ps 조회 실패를 미기동으로 처리했다(즉시 통과) — {proc.stderr!r}"
     )
@@ -697,7 +705,7 @@ def test_g9b_all_container_probes_have_kill_after():
     `docker compose exec` 가 TERM 에 반응하지 않으면 배포가 그대로 멈춘다(적대 검증 P1, 4R).
     컨테이너를 찌르는 모든 조회에 `-k`(kill-after)가 붙어 있어야 한다.
     """
-    src = SCRIPT.read_text(encoding="utf-8")
+    src = SCRIPT.read_text(encoding="utf-8") + "\n" + PROBE_LIBRARY.read_text(encoding="utf-8")
     bare = [
         ln.strip() for ln in src.splitlines()
         if re.search(r"(?<![\w-])timeout\s+\d", ln) and not re.search(r"\btimeout\s+-k\s", ln)
@@ -744,24 +752,17 @@ def test_g9d_initial_dual_start_guard_separates_query_failure():
 
 
 def test_g10_replicas_share_a_single_cert_source():
-    """양 replica 가 **같은 cert 소스**를 쓴다 — `edge_peer_live` 의 CA 갭 수용 근거가 이 전제다.
+    """양 replica의 인증서 배치 계약을 보존한다.
 
-    probe 는 busybox wget 제약으로 CA 를 검증하지 못한다(5R 적대 검증 P1). 그 갭이 실제 위험이
-    되려면 "Caddy 는 CA 검증 실패로 제외했는데 probe 만 200" 이어야 하고, 그건 **replica 마다 다른
-    leaf** 를 제시할 때만 성립한다. 이 구성은 두 replica 가 동일 `certs` 마운트 + 동일
-    `WEB_TLS_CERT_FILE` 을 쓰므로 성립하지 않는다(cert 교체 시 양쪽이 동시에 영향을 받고, 그 축은
-    `preflight_tls` 가 배포 전에 ABORT 한다).
-
-    누군가 replica 별 cert 를 도입하면 그 논거가 무너지므로 여기서 전제를 잠근다.
+    host curl probe는 이제 실제 Caddy CA와 SNI를 검증한다. 이와 별개로 두 replica가 같은
+    인증서 소스와 경로를 사용하는 배포 계약은 유지하며, preflight도 이 구성을 전제한다.
     """
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     m = re.search(r"^x-web-extra:.*?(?=^services:)", compose, re.S | re.M)
     assert m, "x-web-extra anchor 를 찾지 못했다 — web replica 정의 구조가 바뀌었다."
     block = m.group(0)
     assert block.count("certs:/certs:ro") == 1, (
-        "web replica 의 cert 마운트가 단일 공유 소스가 아니다. replica 별 cert 를 쓰면 "
-        "edge_peer_live 의 CA 미검증 갭이 실제 false-pass 위험이 된다 — probe 를 CA 검증 가능한 "
-        "수단으로 바꾸거나 게이트를 보강해야 한다."
+        "web replica 의 cert 마운트가 단일 공유 소스가 아니다 — TLS 배치와 preflight 계약을 함께 검토해야 한다."
     )
     # web-a/web-b 는 이 anchor 를 그대로 병합할 뿐 자체 cert 를 두지 않는다.
     svc = re.search(r"^  web-a:\n(.*?)^  caddy:", compose, re.S | re.M)

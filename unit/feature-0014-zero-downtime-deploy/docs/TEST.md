@@ -94,3 +94,8 @@ source_of_truth: true
 - 실행 결과: [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
 - test_ui_release.py / test_ui_release_publication.py: 공개 API와 실제 배포 셸 failure/rollback/mixed/idempotency.
 - test_ui_refresh.py / verify_ui_refresh.mjs / tests/windows/verify_deploy_refresh.py: 상태 보호·재로드·복원.
+
+
+## 2026-09-09 Caddy probe 격리
+- `test_caddy_probe_isolation.py`와 `test_edge_rolling_gate.py`: archive 오류·네트워크/HTTP 실패·timeout·자기CID cleanup·조회실패시미재생성 및 기존rollinggate 회귀.
+- 현재 Caddy에서 새 프로세스를 만들지 않는 실제 파일/admin/두 replica GET 대조. 최종 Run에 PID/시작시각·좀비증감·잔류probe를 기록한다.

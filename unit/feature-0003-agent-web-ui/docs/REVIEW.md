@@ -8586,6 +8586,14 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Timestamp: 2026-09-09T14:22:00+09:00
 
 
+## REV-20260909T144000-caddy-probe [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 배포 완료를 막은 Caddy PID 고갈·점검 프로세스 회수·상태 조회 실패·격리 probe cleanup.
+- Timestamp: 2026-09-09T14:40:00+09:00
+- Verdict: PASS
+- Artifact: [독립 검토](../../feature-0014-zero-downtime-deploy/docs/reviews/20260909T144000-caddy-probe.md)
+- Human Approval Needed: no
+
 ## REV-20260909T150000-auth-transition-integration [SUBAGENT:ux,backend,qa]
 
 - PR #1653 통합 뒤 UX reviewer가 실제 초기화 함수의 자동 갱신 복원·deep-link·강제 비밀번호 변경 순서를 검증하여 44 PASS. 하네스 import.meta P2를 수정했다.
@@ -8597,6 +8605,14 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 
 배포 blocker의 독립 원인/보안 리뷰와 수정은 [feature-0014 REVIEW](../../feature-0014-zero-downtime-deploy/docs/REVIEW.md)에 기록한다. 원래 UI 소스 추가 변경은 없다.
 
+
+## REV-20260909T145000-caddy-integration [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 최신 main의 TLS probe 강화와 admin/archive 격리 경로 통합.
+- Timestamp: 2026-09-09T14:50:00+09:00
+- Verdict: PASS (통합 회귀67 PASS)
+- Artifact: feature-0014 docs/reviews/20260909T144000-caddy-probe.md의 최신 main 통합 재검토
+- Human Approval Needed: no
 
 ## REV-20260909T170000-auth-transition-installed-verification [SKIPPED:non-policy-doc]
 
