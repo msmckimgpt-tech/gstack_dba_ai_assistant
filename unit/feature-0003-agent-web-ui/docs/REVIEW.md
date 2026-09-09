@@ -8446,3 +8446,10 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Trigger: 비정책 작업/검증 상태 기록만 갱신. 제품 코드는 통합 리뷰와 동일하다.
 - Timestamp: 2026-09-09T12:23:14.975225+09:00
 - 근거: 구현 및 통합 독립 리뷰 PASS, 관련94건·격리 컨테이너45건 로그. merge post-commit의 delta 미인식은 이번 일반 문서 커밋으로 재검증한다.
+
+
+## REV-20260909T124000-diff-similarity-postdeploy [SKIPPED:non-policy-doc] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity.
+- Scope: TASK/REPORT/MODIFY/Run 출하·배포 증거 기록만, 동작 코드·정책 변경0. §18.8 독립 제품 리뷰 추가 대상 없음.
+- Evidence: PR #1646 MERGED, deploy exit0·46b70e26/2 replica ready·soak PASS, `deployed-result.json` 두 사본 일치, `served-asset-result.json` HTTPS200/자산 스탬프 및 내용 일치.
+- Boundary: fixture DQA21 PASS와 설치 사용자 세션 NOT-RUN을 유지. 최초 전체 실패 및 원인별 재검증을 전체 suite PASS로 바꾸지 않았다.
