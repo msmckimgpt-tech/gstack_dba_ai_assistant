@@ -8,6 +8,53 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260909T170000-attach-csv-table [CODEX:attach-csv-table] — 첨부 CSV 표 렌더 (Minor §12.3)
+
+- **Trigger**: `UI/modal/layout` keyword matched (§18.8 dispatch 표 3행 — UI·모달·레이아웃 → ux, design).
+- **채널**: `/codex review` 경로(§18.8.1 항목 2 — `[CODEX:*]` index entry 는 check #9 가 accepted
+  review 로 인식한다). 본 세션은 Agent 도구 사용이 제한돼 있고 이 저장소에는 ux/design subagent
+  정의 파일이 없다(`.claude/agents/` 에 `improve-fit-reviewer` 만 존재) — 2026-09-01
+  `REV-20260901T190000-conv-status-dot-wiring` 이 같은 상황에서 택한 경로와 같다.
+  `codex exec -s read-only`, `model_reasoning_effort=high`, 판정 기준으로 `docs/CODE_REVIEW.md`
+  를 프롬프트에 명시했다.
+- **Verdict**: **PASS** — 확인 라운드에서 `[P1]` 0건 (§18.8 패널 수렴 계약 (a): P1 을 수정했으므로
+  확인 라운드 1회를 별도로 돌렸다. 1차 P1 2건 → 수정 → 2차 P1 0 · P2 1건 → 수정).
+
+### 1차 라운드 — `[P1]` 2건, 둘 다 재현 후 수용
+
+| # | codex 지적 | 재현 | 조치 |
+|---|---|---|---|
+| 1 | 꼬리 판정이 `h⏎""` 의 **명시적 빈 인용 필드**(정상 데이터 행)를 개행 뒤 빈 꼬리로 오인해 삭제 | ✅ `parseDelimitedText('h\n""')` → `[["h"]]`. 화면은 "머리글 행만 있고 데이터 행은 없습니다" 라고 **거짓을 말했다** | 꼬리 판정을 「마지막 레코드가 빈 필드 하나」 → **「원문이 개행으로 끝났고 그 뒤 아무것도 읽지 않았는가」**(`row`·`field` 비었고 인용도 없음)로 교체. 하네스 A15/A15b/A15c/A15d + D12 신설 |
+| 2 | 깨진 인용 `"a"b,c` 를 오류 표시·폴백 없이 `["ab","c"]` 로 변환 — 원문의 따옴표와 경계를 지우고 정상 데이터처럼 보여줌 | ✅ 표준 파서(Python `csv`·Excel)와 같은 동작이지만, **이 화면의 계약은 무손실**이라 «조용히» 가 문제다 | 파서에 `anomalies` out-param 신설 — 인용이 닫히지 않은 필드 + 닫힌 뒤 문자가 이어진 필드를 센다. 표 화면이 그 수를 배너로 신고한다("따옴표 형식이 표준과 다른 칸이 N개…"). 값은 그대로 살린다. 하네스 A16·A16b·A16c·A16d + D13/D13b 신설 |
+
+### 확인 라운드 — `[P1]` 0건, `[P2]` 1건 (수정이 만든 결함)
+
+| # | codex 지적 | 재현 | 조치 |
+|---|---|---|---|
+| 3 | CRLF 분기가 `endField()` 보다 **먼저** `i` 를 증가시켜 `"a"\r\n` 의 **정상** 인용 필드를 형식 이상으로 판정 → 정상 CSV 에 거짓 경고 | ✅ `quoteAnomalies: 1` | 개행 분기에서 `endField()` 를 CRLF 스킵보다 앞으로. 하네스 A16e(거짓 경고 0) + A16f(진짜 이상은 그대로 신고) 신설 |
+
+> 이 지적은 §18.8 수렴 계약 (a) 가 확인 라운드를 요구하는 이유의 실증이다 — **1차 P1 수정이
+> 새 결함을 만들었고**, 수정한 라운드에서 종결했다면 정상 CSV 에 거짓 경고가 붙은 채 출하됐다.
+
+### 하네스 실효성 — 뮤테이션 20종 전건 KILL
+
+「내가 만든 하네스가 내 결함만 잡는」 자기충족을 피하려고, 결함 클래스를 달리한 뮤턴트를
+정본에 실제로 적용해(diff 로 적용 확인) 돌렸다. 1차 15종(셀 innerHTML 주입·머리글 태그 변경·
+행 번호 off-by-one·구분자 배선 끊김·열 상한 무력화·`sourceView`→`hasBody`·BOM·`""` 이스케이프·
+꼬리 처리·구문색 배타·폴백 저장값 오염·빈 격자 방지 제거·인용 안 개행·수치 판정·파일명 정정),
+P1 수정 후 5종(꼬리 판정 회귀·형식이상 계수 제거·배너 무시·out-param 미기록·절단 인용 제외).
+**전건 KILL, 생존 0.** 다만 이 수치는 «내가 고른 표본» 이므로 사각지대 부재의 증거가 아니다 —
+실제로 codex 가 낸 3건 중 2건은 이 뮤턴트 집합이 가리키지 않던 축이었다.
+
+### 검증되지 않은 것 (정직 표기)
+
+- **실제 계정의 CSV 첨부를 연 것이 아니다.** PB-0009 Run 은 격리 Shell + fixture 응답이다
+  (`/static/app.js` shim · `/api/attachments/1/source` 고정 응답). 배포 후 실제 앱에서 실제
+  첨부를 여는 확인은 별도이며 그 사실을 Run 기록에 남겼다.
+- 열 상한(200)·셀 상한(30,000) 초과 표의 **실제 렌더 성능**은 재지 않았다 — jsdom 에서 절단
+  동작만 확인했다.
+
+
 ## REV-20260901T190000-conv-status-dot-wiring [CODEX:frontend-state-wiring] — 사이드바 상태 배지 색 배선 복원 (Minor §12.3)
 
 - **채널**: `/codex review` (gpt-5.6-sol, `model_reasoning_effort=high`, read-only sandbox).

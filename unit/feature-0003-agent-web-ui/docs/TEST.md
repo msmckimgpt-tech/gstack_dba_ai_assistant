@@ -116,6 +116,21 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260909T163000-attach-csv-table 첨부 `.csv`/`.tsv` 표 렌더 (Minor §12.3, 2026-09-09, feature-0003 프론트 단독) — **Environment: DQA-client (PASS — 격리 제품 Shell/WebView2 `Edg/152.0.0.0` 5축, `docs/test-runs.d/TASK-20260909T163000-attach-csv-table.md`. fixture 다 — 실제 계정의 첨부를 연 것이 아니며 배포 후 실제 앱 확인은 `NOT-RUN` 으로 남겼다)**
+
+- **파서 계약** (`tests/verify_attach_source_table.mjs` A1~A16f, jsdom): RFC 4180 — 인용 필드·`""` 이스케이프·필드 안 구분자/개행·CRLF·BOM·빈 필드·행별 열 수 불균일. **무손실 축**: 짝 없는 따옴표로 끝난 절단본(서버 cap 이 실제로 이 화면에 보낸다)·필드 중간 따옴표·명시적 빈 인용 필드 행(`h⏎""`)에서 값이 사라지지 않는다. **형식 이상 신고**: 인용이 닫히지 않은 필드 + 닫힌 뒤 문자가 이어진 필드를 세고, 정상 CSV·CRLF 정상 인용에는 신고 0(거짓 경고 금지).
+- **토글 판정** (C1~C9): `.csv`/`.tsv` 에서만, 그리고 **그릴 본문이 실제로 온 화면**에서만 노출(바이너리·빈 문서·조회 실패는 미노출). 표를 보는 동안 구문 색 토글은 숨는다. 호출부가 파일명을 안 넘긴 경로(말풍선 칩)는 응답의 `filename` 으로 판정이 정정된다.
+- **렌더 구조** (D1~D13b): `<thead>` 머리글 + 행 번호(파일 레코드 번호, 머리글=1) + 인용 필드가 한 셀 + 빈 필드도 셀로 존재 + 수치 셀 `is-num`. 마크다운 파이프라인 미경유. 머리글 한 줄뿐이면 그 사실을 말하고, 명시적 빈 인용 필드 행은 표에 남는다(거짓 «데이터 없음» 금지).
+- **XSS** (E1~E5): 셀 값의 `<script>`·`<img onerror>`·`javascript:` 가 요소가 되지 않고 텍스트로 남으며 실행되지 않는다.
+- **원문 복귀·영속** (F1~F6): 토글을 끄면 종전 줄 표로 돌아오고 내용은 byte 무손실, 선택은 다음 열람에 유지된다.
+- **상한** (G1~G4): 열 200 초과 · 셀 30,000 초과 시 잘라내고 배너로 알린다(무음 절단 금지).
+- **배타** (H1~H5): `.md` 에는 표 토글이 없고 **변경이 있는 비교 화면**에도 없다(줄 대조 보존). 내용이 같은 비교 화면(=원문 출력)에서는 뜨고 실제로 격자로 그려진다.
+- **폴백** (J1~J5): 표로 만들 수 없는 본문은 빈 격자 대신 원문 표 + 사유 배너로 강등하되, 강등은 사용자의 선택이 아니므로 저장값은 건드리지 않는다.
+- **CSS 계약** (I1~I6): sticky 머리글 + `border-collapse: separate`, `[hidden]` 강제, 표 wrap 이 자체 스크롤 컨테이너가 아님, 값 상한·줄바꿈이 **셀 래퍼**에 있음(td 에 두면 열 계산이 무시하고 행 번호 열을 덮어쓴다).
+- **구조 가드** (`tests/test_attach_csv_table.py` S1~S7 + 음성 대조군 N1~N3, pytest): 구성요소 실재 · **서버 도달성**(`Kind` 지도의 `csv` ↔ `_VERSION_DIFF_TEXT_KINDS` — 프론트만 고치면 기능 0%인데 프론트 테스트는 전부 green) · 구분자 정본 단일화 · `innerHTML` 부재 · **두 모달 모두 배선** · CSS 계약 · 행위 하네스 실행(또는 gap 기록).
+- **픽셀 실측** (`tests/pb0009_attach_csv_table.py`, 실제 DQA Shell): 격자 생성·셀 분할 / 열이 픽셀로 갈림(th x 단조 증가 + 같은 열 x 동일) / 수치 열 우측 끝 정렬 / 스크롤 후 머리글 고정(delta ≤ 2px) / 토글 해제 시 원문 복귀. jsdom·pytest 가 전건 green 인 상태에서 이 축이 픽셀 결함 2건(행 번호 세로 쪼개짐 · 긴 셀 `max-width` 무시)을 잡았다.
+
+
 ### 20260901T1900-conv-status-dot-wiring 사이드바 대화 상태 배지 색 배선 복원 + 동종 배선 게이트 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1900-conv-status-dot-wiring.md` · 배포 전 단계는 수정본 `src/static` 을 read-only bind-mount 한 별도 컨테이너 `https://localhost:18098/` 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
 
 - **제보 재현(배포본 `mysql-ai-web:5a4d49fc`)**: 사이드바 151개 항목 중 `is-done` **110건** ·

@@ -1,0 +1,114 @@
+{
+  "environment": "DQA-client",
+  "fixture": true,
+  "checks": {
+    "grid": {
+      "value": {
+        "head": [
+          "#",
+          "주문번호",
+          "고객명",
+          "금액",
+          "비고"
+        ],
+        "rows": [
+          [
+            "2",
+            "1001",
+            "홍길동",
+            "1200",
+            ""
+          ],
+          [
+            "3",
+            "1002",
+            "김,철수",
+            "30.5",
+            "쉼표, 포함된 비고"
+          ],
+          [
+            "4",
+            "1003",
+            "이영희",
+            "45000",
+            "정상"
+          ],
+          [
+            "5",
+            "1004",
+            "박민수",
+            "7",
+            "긴 값이 열 폭을 밀지 않는지 본다 가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+          ]
+        ],
+        "bodyRows": 44,
+        "numCells": 88
+      },
+      "pass": true
+    },
+    "columns_separate": {
+      "value": {
+        "th": [
+          {
+            "x": 34,
+            "w": 32
+          },
+          {
+            "x": 66,
+            "w": 112
+          },
+          {
+            "x": 177,
+            "w": 97
+          },
+          {
+            "x": 274,
+            "w": 86
+          },
+          {
+            "x": 360,
+            "w": 755
+          }
+        ],
+        "col2": [
+          177,
+          177,
+          177,
+          177,
+          177
+        ]
+      },
+      "pass": true
+    },
+    "numeric_right_aligned": {
+      "value": [
+        350,
+        350,
+        350,
+        350
+      ],
+      "pass": true
+    },
+    "sticky_header": {
+      "value": {
+        "scrollTop": 400,
+        "thTop": 135,
+        "scTop": 134,
+        "delta": 1
+      },
+      "pass": true
+    },
+    "back_to_source": {
+      "value": {
+        "table": 0,
+        "source": 1,
+        "firstLine": "주문번호,고객명,금액,비고",
+        "hlToggleShown": true
+      },
+      "pass": true
+    }
+  },
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0",
+  "last_error": null,
+  "verdict": "PASS"
+}
