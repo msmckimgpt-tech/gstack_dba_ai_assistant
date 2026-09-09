@@ -1373,3 +1373,10 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Artifact: [최종 독립 리뷰](reviews/20260909-nondisruptive-update_ux_review.md)
 - Critical issue: 이전 pointer 공유/세션 잠금/legacy 복원/오래된 바로가기/완료 안내 결함 수정. Windows 최종 검증은 별도 원장.
 - Human Approval Needed: no
+
+## REV-20260909T173353-nondisruptive-shipping [SKIPPED:doc-only-shipping-evidence]
+- Related TASK: TASK-20260909-nondisruptive-update
+- Timestamp: 2026-09-09T17:33:53+09:00
+- Verdict: PASS
+- Reason: PR1663에서 독립 검토를 끝낸 동일제품의 출하 증적만 추가한다. 실제채널/다운로드해시·웹반영·상태문서·테스트생성JSON의실행권한정규화이며 런타임코드/설치기/공개파일바이트 변경은0이다. 문서추가용독립코드리뷰를반복하지않으며 실제AI대화/핀/다중세션미검증은유지한다.
+- Human Approval Needed: no

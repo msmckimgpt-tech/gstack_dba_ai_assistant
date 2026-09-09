@@ -1019,3 +1019,7 @@ edit_policy: append-only
 - 변경: 불변 버전 폴더·실행검사·원자 포인터·고정 런처; 전역 설치잠금과 배타적 슬롯 확보; updater 종료/활성대상 검증과 앱생존; 준비/실패 GUI 안내. 1.3.0.
 - 독립 리뷰 수정: pointer 읽기의 삭제 공유, rename 오류5/32/33 제한 재시도, legacy 복원 fallback, 기존 실행경로 호환, tkinter 완료 안내와 bridge 준비버전 표시.
 - 근거/제한: [원장](test-runs.d/20260909-nondisruptive-update.md). 제어된 러너와 실제 AI 대화 검증을 구별한다.
+
+## CHG-20260909T173353-nondisruptive-shipping — 출하 증적 정합
+- Timestamp: 2026-09-09T17:33:53+09:00
+- 제품PR1663 병합,1.3.0 공개채널·다운로드바이트·웹배포 증적을추가하고 FUNCTION/REPORT/TASK를정합한다. Windows복사JSON·검증script의불필요한실행권한을644로정규화했다. 제품코드변경없음.

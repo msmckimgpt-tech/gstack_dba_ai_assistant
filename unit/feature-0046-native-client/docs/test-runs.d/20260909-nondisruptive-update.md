@@ -36,7 +36,8 @@ status: active
 
 ## 출하
 - 공개대상은1.3.0만. 시험용1.3.1은 배포하지 않는다.
-- PR병합·공개채널/다운로드바이트·웹노트반영 결과는 후속출하원장으로 기록한다.
+- PR1663병합2c5d6c66. 1.3.0공개(26,138,425bytes)·실제HTTPS다운로드SHA256 `72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3` 빌드와일치. [채널](../artifacts/20260909-nondisruptive-update/channel.json).
+- 웹노트반영:두replica2c5d6c66/ready/90초soakPASS,healthz200,자산stamp aaffca7a36d4. 웹배포를실제AI대화검증으로합산하지않는다.
 
 ## 실제 DQA에서 릴리스노트 렌더
 - Environment: DQA-client

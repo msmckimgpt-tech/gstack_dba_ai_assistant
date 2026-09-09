@@ -42,7 +42,7 @@ feature_status_date: 2026-09-09
 - [x] 구현 및 focused/native 회귀 — 산출물: src 및 회귀617 PASS/1 SKIP
 - [x] Windows 설치·업데이트·실패 경계 실측 — 산출물: 실제 설치본8시나리오 PASS, 실제제공자/핀/다중세션 미검증 명시
 - [x] 독립 리뷰·문서 정합 — 산출물: 독립 리뷰2인 및 docs
-- [ ] commit/push/PR 병합·출하·채널 바이트 검증
+- [x] commit/push/PR 병합·출하·채널 바이트 검증 — 산출물: PR1663/1.3.0공개/실제다운로드해시일치/웹배포ready·soakPASS
 
 ## Context
 

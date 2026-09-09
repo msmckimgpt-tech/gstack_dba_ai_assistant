@@ -26,6 +26,11 @@ DQA 1.3.0은 현재 앱과 AI 연결을 유지한 채 새 버전을 설치하고
 ## Git 동기화 결과
 
 - worktree: `.worktrees/feature-0046-nondisruptive-update`; branch `ai/codex/feature-0046-nondisruptive-update`.
-- pre/post verify, PR 병합,1.3.0 공개·채널검증: 진행 중.
+- 제품 commit `c039297d`, PR [#1663](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1663) 병합 `2c5d6c66`. pre/post verify PASS. GitHub Actions 실행 결과는 별도로 제공되지 않았다.
+- 1.3.0 공개:26,138,425 bytes, SHA-256 `72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3`. 실제 HTTPS/프로젝트CA 다운로드가 검증한빌드와일치. [채널 근거](artifacts/20260909-nondisruptive-update/channel.json).
+- 웹 릴리스노트 배포: main제품 `2c5d6c66`, web-a/web-b ready 및90초soak PASS, asset_stamp `aaffca7a36d4` 일치. healthz200·실제서빙노트·KEK주입존재(값비공개) 확인. [배포로그](artifacts/20260909-nondisruptive-update/deploy-web.log).
+- 배포 경고: compose의 임시metadata파일경합이 발생했으나 canonical배포기가 이미지/GIT_COMMIT 실물을 대조해 정상빌드를 확인하고계속했다. web-only이므로 대화스모크/워커교체는 수행하지 않았다.
+- 검증용Windows 앱은전부종료됐음을조회했고 격리설치제거도exit0. 사용자원본설치/앱은변경하지않았다.
+- 후속커밋은출하문서/증적/파일모드만변경하며 배포된제품코드·바이너리는동일하다.
 - 정책 SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2` (worktree 및 main 동일).
 - 이전 기록: [report history](report-history/20260909-before-nondisruptive-update.md).
