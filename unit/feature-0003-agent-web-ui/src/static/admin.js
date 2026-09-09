@@ -12,12 +12,12 @@ import { loadToolUsage } from "./admin/tools.js?v=dev";
 import {
   applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
   llmBlocked, delegationReady, jobDelegable,
-  awaitDelegatedResult, jobPhaseLabel,
+  awaitDelegatedResult, jobPhaseLabel, looksDelegatedEnvelope,
 } from "./admin/llm-state.js?v=dev";
 // 다른 admin/* 모듈이 "../admin.js" 로 가져다 쓰는 계약 보존 (aiops·usage 와 동형 re-export).
 export { applyLlmInactiveMarks, gateLlmControl, renderLlmNotice,
          llmBlocked, delegationReady, jobDelegable,
-         awaitDelegatedResult, jobPhaseLabel };
+         awaitDelegatedResult, jobPhaseLabel, looksDelegatedEnvelope };
 import {
   mountSettingsSections, rerenderRuntimeSettingsPanels,
   rsSaveValue, rsResetValue,
@@ -4536,6 +4536,41 @@ export function buildSystemPromptEditor({ scope, productId = null, roleId = null
           finish();
           return;
         }
+        // ── 위임 분기 (feature-0043 TASK-20260909T000000) ────────────────────────
+        //
+        // 게이트가 닫힌 배포에서 이 요청은 개인 AI 로 넘어가고, 서버는 스트림 대신
+        // `bridge_pending` JSON 을 준다. `gateLlmControl` 이 이 버튼을 «위임 가능하니
+        // 열어 둔다» 고 판정해 놓고 그 응답을 읽을 코드가 없으면, 눌러도 아무 일이
+        // 일어나지 않는 버튼이 된다 — 이 모듈이 P0-M·P0-T 에서 두 번 지운 그 상태다.
+        if (looksDelegatedEnvelope(resp)) {
+          const envelope = await resp.json().catch(() => ({}));
+          if (!envelope || envelope.bridge_pending !== true) {
+            metaEl.classList.add("admin-meta-warn");
+            metaEl.textContent = `자동 생성 실패: ${(envelope && envelope.error) || "알 수 없는 응답"}`;
+            return;
+          }
+          metaEl.textContent = envelope.message
+            || "연결된 본인 AI 에 맡겼습니다. 완료되면 여기에 채워집니다.";
+          const done = await awaitDelegatedResult(
+            envelope,
+            (phase) => { metaEl.textContent = jobPhaseLabel(phase); },
+            { signal: controller.signal },
+          );
+          const finalText = String((done && done.result) || "");
+          if (!finalText.trim()) {
+            metaEl.classList.add("admin-meta-warn");
+            metaEl.textContent = "연결된 AI 가 빈 결과를 돌려주었습니다. 다시 시도해 보세요.";
+            return;
+          }
+          textarea.value = finalText;
+          textarea.scrollTop = 0;
+          // 직접 경로의 `done` 프레임과 같은 자리 — 저장 전 본문을 잃지 않게 pending 에 굳힌다.
+          setSystemPromptPending({ scope, productId: resolveProductId(), roleId, accountId,
+                                   content: textarea.value });
+          metaEl.textContent = `연결된 AI 가 작성했습니다 (${finalText.length}자). `
+            + "검토 후 '저장'을 누르세요.";
+          return;
+        }
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
@@ -4555,6 +4590,11 @@ export function buildSystemPromptEditor({ scope, productId = null, roleId = null
       } catch (error) {
         if (error && error.name === "AbortError") {
           // 사용자/재진입 abort — 조용히 무시. 부분 본문은 textarea 에 남김.
+        } else if (error && error.terminal === true) {
+          // 위임 폴링이 «더 기다려도 달라지지 않는다» 고 판정한 사유(세션 만료·취소·
+          // 상한 초과·연결된 AI 의 실패). 연결 오류로 뭉뚱그리면 조치 경로가 가려진다.
+          metaEl.classList.add("admin-meta-warn");
+          metaEl.textContent = error.message;
         } else {
           metaEl.classList.add("admin-meta-warn");
           metaEl.textContent = `자동 생성 중단됨(연결 오류): ${error.message || error}`;

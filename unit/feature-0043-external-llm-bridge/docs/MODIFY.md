@@ -4879,3 +4879,27 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 ## CHG-20260908T162000-tool-surface
 
 - 2026-09-08T08:01:57.915443+00:00; TASK-20260908T162000-tool-surface. 외부 AI 도구 누락과 검색/권한 경계 보완의 정본은 feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md 및 해당 TASK/REPORT. 사용자 요청 범위로 기존 가드를 유지하고 조회5종을 연결한다.
+
+## CHG-20260909T000000-prompt-autogen-delivery
+
+- 2026-09-09T02:38:30.342995+00:00; TASK-20260909T000000-prompt-autogen-delivery. 사용자 신고("프로필 > 프롬프트 > 내 프롬프트 의
+  자동 작성이 동작하지 않는다")의 근본 원인은 **위임 봉투를 화면이 읽지 않은 것**이다. 게이트가 닫힌
+  배포에서 자동작성은 개인 AI 로 위임되고 서버는 SSE 대신 `{"bridge_pending":true, poll_url, task_id}`
+  JSON 을 주는데, 자동작성 3진입점(프로필 '내 프롬프트' · 관리 콘솔 역할/제품)은 전환 이전의 SSE 전용
+  파서로 남아 그 JSON 을 조용히 버렸다. 라이브 실증 2026-09-08 19:56 — 요청 200, `WebAiTasks
+  j_LO28YKoH0ifGR5E7` 적재·러너 3초 제출까지 정상, 화면만 무반응.
+- 변경: 폴링 헬퍼를 `static/console-job-poll.js`(의존 0)로 분리(종전 위치 `admin/llm-state.js` 는
+  `adminState` 를 import 해 관리 콘솔 밖에서 쓸 수 없었다 — 그것이 프로필 화면이 못 쓴 구조적 이유) ·
+  `llm-state.js` 는 re-export 로 기존 호출부 무회귀 · `app.js`·`admin.js` 가 SSE 소비 **앞**에서 위임
+  봉투 분기 · 로그인만 요구하는 `GET /api/profile/ai-jobs/{task_id}` 신설(스코프는 `AccountId` 로
+  admin 경로와 동일 — 권한 확대 아님) · 두 폴링 경로가 같은 조립 함수(`build_job_status_payload`) 사용 ·
+  러너 실패 대체문(`RUNNER_DEGRADED_NOTICE`) 판정으로 `degraded` 표시 → 화면이 프롬프트 본문을 덮지 않음 ·
+  폴링에 `AbortSignal` 지원.
+- 범위 결정: 사용자 확인(2026-09-09) — ① 자동 작성 3진입점 모두 ② 폴링 권한 축 함께.
+- 위험: Major(§12.3). 인증·인가 **정책** 변경 없음 — 추가 조회 경로는 자기 계정이 연 작업만 반환하며
+  기존 admin 경로와 같은 술어를 쓴다. 파괴적 데이터 변경·마이그레이션 없음.
+- 부수 정합(내 변경이 만든 것이 아님): base `cdd414e3` 에서 이미 붉던 `test_route_parity_p5b`(golden
+  drift 2건 — `/api/ai/connect/identity` · `/api/ai/tools/get_tool_catalog`)와
+  `test_cancel_channel_adds_no_new_tool`(명시 도구 7→8, 매니페스트·MCP 어댑터 2벌 등재 확인 후 숫자만 이동).
+- 검증: pytest 21 신규 · jsdom 행위 하네스 15 · 뮤턴트 2종 KILL(원래 결함 재현 시 FAIL) ·
+  `codex review --uncommitted` ACCEPTED(P1 0) · 컨테이너 `make test`.

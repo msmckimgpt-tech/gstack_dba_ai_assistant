@@ -38,9 +38,13 @@ from shared.bridge_tasks import (
 
 __all__ = [
     "apply_console_job_result",
+    "build_job_status_payload",
+    "console_job_body",
+    "console_job_payload",
     "extract_json_object",
     "maybe_delegate",
     "messages_to_prompt",
+    "poll_url_for",
 ]
 
 _log = logging.getLogger(__name__)
@@ -283,6 +287,114 @@ def maybe_delegate(request, account, *, job_kind: str, messages: Any,
         "bridge_pending": True,
         "task_id": task_id,
         "job_kind": job_kind,
-        "poll_url": f"/api/admin/ai-jobs/{task_id}",
+        "poll_url": poll_url_for(task_id),
         "message": f"{job_label(job_kind)}을(를) 연결된 본인 AI 에 맡겼습니다. 완료되면 여기에 채워집니다.",
     })
+
+
+# ── 진행/결과 조회 응답의 단일 조립 (TASK-20260909T000000-prompt-autogen-delivery) ──────
+#
+# 폴링 경로가 둘이다: 관리 콘솔용 `/api/admin/ai-jobs/{task_id}`(종전, `console.access`)와
+# 프로필용 `/api/profile/ai-jobs/{task_id}`(신설, 로그인만). **응답 계약은 하나여야 한다** —
+# 두 벌로 두면 한쪽만 고쳐지고, 화면은 어느 경로로 물었는지에 따라 다른 사실을 듣는다.
+# 권한은 각 라우트가 정하고, 무엇을 말하는지는 여기가 정한다.
+
+def poll_url_for(task_id: str) -> str:
+    """위임 응답에 실을 폴링 주소.
+
+    **프로필 경로**를 준다 — 위임을 여는 세 진입점 중 개인 프롬프트 자동작성은 `console.access`
+    를 요구하지 않는다(`JOB_SPECS['prompt_generate']['perms']` 가 비어 있는 것과 같은 사실).
+    관리 권한이 필요한 주소를 주면 그 사용자는 작업이 정상 적재·완료돼도 결과를 영영 못 받는다.
+    관리자에게도 이 경로가 맞다 — 스코프가 «자기 계정이 연 작업» 이라 admin 경로와 같은 것만
+    본다. 종전 admin 경로는 호환을 위해 남아 있다.
+    """
+    from urllib.parse import quote
+
+    return f"/api/profile/ai-jobs/{quote(str(task_id), safe='')}"
+
+
+def console_job_body(job) -> str:
+    """화면에 줄 **원문**. `JobResult`(정본) → 없으면 각인본을 벗겨 폴백.
+
+    폴백이 있는 이유: 원문 컬럼이 생기기 **이전에** 제출된 작업은 그 칸이 비어 있다. 그 행들을
+    버리면 사용자는 이미 AI 가 답한 작업을 다시 시켜야 한다.
+
+    새 코드가 폴백에 의존하지 않게 순서를 이렇게 둔다 — 정본이 있으면 파싱하지 않는다.
+    """
+    raw = job.get("result")
+    if raw:
+        return str(raw)
+    from session_guard import unwrap_external_answer
+
+    return unwrap_external_answer(job.get("answer") or "")
+
+
+def console_job_payload(raw):
+    """저장된 JSON payload → dict. 깨졌으면 `None`(화면은 그때 폼 컨텍스트로 폴백한다)."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def build_job_status_payload(job) -> dict:
+    """위임 작업 1건의 진행/결과 응답 본문.
+
+    ## 국면은 **서버가 한 단어로** 정한다
+
+    프런트가 `submitted && !error` 같은 조합을 다시 만들면 화면마다 갈리고, 갈리는 순간 느슨한
+    쪽이 사용자가 보는 진실이 된다(대화 축과 같은 규율).
+
+    ## `degraded` — 「제출됐다」와 「AI 가 해냈다」를 가른다
+
+    러너는 자기 AI 가 실패하면 사유를 **답변 본문에 적어** 제출한다(침묵보다 낫다는 대화 축의
+    옳은 결정). 그 답이 콘솔 작업 축에 오면 «결과물» 이 되어 폼을 덮으므로, 여기서 그 사실을
+    표시해 화면이 본문을 덮지 않게 한다. 판정 정본은 `shared.bridge_tasks.runner_degraded_reason`.
+    상태 자체는 `submitted`(러너는 제 할 일을 했다) 그대로 두고, **해석만** 덧붙인다.
+    """
+    from shared.bridge_tasks import job_label, runner_degraded_reason
+
+    status = str(job.get("status") or "")
+    submitted = status == "submitted"
+    applied = job.get("applied_at") is not None
+    error = str(job.get("apply_error") or "")
+    if status in ("canceled", "expired"):
+        phase = "canceled"
+    elif not submitted:
+        phase = "working" if job.get("claimed_by") is not None else "waiting"
+    elif error:
+        # 「제출됐지만 반영 실패」는 성공이 아니다 — 합치면 화면이 완료라 말하는데 값이 없다.
+        phase = "apply_failed"
+    else:
+        phase = "done"
+
+    # 본문은 **완료됐을 때만** 싣는다. 진행 중에 부분 결과를 흘리면 화면이 그것을 최종으로
+    # 읽고 폼에 채운 뒤, 잠시 뒤 다른 값으로 덮인다.
+    #
+    # ⚠ **각인본(`Answer`)을 주지 않는다** (2026-08-31 라이브 제보). 그것은 감사 보존·지연
+    #   인젝션 방어용이고, 화면에 그대로 주면 `⟦UNTRUSTED-DATA⟧ …` 래퍼가 통째로 폼
+    #   입력란에 들어간다. 원문은 제출 시점에 `JobResult` 로 따로 보존한다.
+    body = console_job_body(job) if submitted else None
+    degraded_reason = runner_degraded_reason(body) if body else None
+
+    return {
+        "task_id": job["task_id"],
+        "job_kind": job["job_kind"],
+        "label": job_label(job["job_kind"]),
+        "phase": phase,
+        "status": status,
+        "claimed": job.get("claimed_by") is not None,
+        "applied": applied,
+        "apply_error": error,
+        "result": body,
+        # 러너가 실패를 안내문으로 대체 제출했는가. 화면은 이 표시를 보고 본문을 덮지 않는다.
+        "degraded": degraded_reason is not None,
+        "degraded_reason": degraded_reason or "",
+        # 적재 시점에 굳힌 입력. 화면이 **서버 봉투를 재구성**하는 데 쓴다 — 직접 경로는
+        # `{target, suggestion}` 같은 봉투를 서버가 만들지만, 위임 결과는 AI 가 낸 본문뿐이라
+        # "이 답이 무엇에 대한 것인가" 를 화면이 알아야 폼의 어느 칸에 넣을지 정한다.
+        "payload": console_job_payload(job.get("payload")),
+    }

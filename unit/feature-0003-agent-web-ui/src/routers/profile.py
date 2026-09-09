@@ -193,6 +193,34 @@ async def put_profile_console_jobs(request: Request, account=Depends(app.get_cur
                          "jobs": {k: v for k, v in saved.items() if k in visible}})
 
 
+@router.get("/api/profile/ai-jobs/{task_id}")
+def get_profile_ai_job(task_id: str, request: Request,
+                       account=Depends(app.get_current_account),
+                       conn=Depends(app.get_conn)) -> JSONResponse:
+    """TASK-20260909T000000-prompt-autogen-delivery — 내가 맡긴 위임 작업의 진행/결과.
+
+    ## 왜 관리 경로만으로는 부족했나
+
+    위임 응답(`bridge_pending`)의 폴링 주소는 `/api/admin/ai-jobs/{task_id}` 하나였고 그것은
+    `console.access` 를 요구한다. 그런데 위임을 여는 세 진입점 중 **프로필 '내 프롬프트 >
+    자동 작성'** 은 로그인만 요구한다(`JOB_SPECS['prompt_generate']['perms']` 가 비어 있는
+    것이 그 사실의 기록이다). 그래서 관리 권한 없는 계정은 작업이 정상 적재되고 개인 AI 가
+    답을 제출해도 **결과를 받을 경로가 없었다** — 화면을 고쳐도 403 에서 끝난다.
+
+    ## 스코프 — 새로 열리는 것은 없다
+
+    `load_console_job(..., account_id=...)` 로 **자기 계정이 연 작업만** 조회한다. 관리 경로와
+    같은 술어이며, 이 라우트가 그보다 넓은 것을 보여 주지 않는다. 남의 task id 를 넣어도
+    없는 것과 같은 404 다(존재 여부를 응답 차이로 알아낼 수 없게).
+
+    응답 조립은 관리 경로와 **같은 함수**를 쓴다(`_console_jobs.build_job_status_payload`) —
+    두 경로가 다른 사실을 말하기 시작하면 화면은 어느 쪽으로 물었는지에 따라 다른 답을 듣는다.
+    """
+    from routers.admin_console import _ai_job_status_response
+
+    return _ai_job_status_response(task_id, account, conn)
+
+
 @router.get("/api/profile/usage/conversations")
 def profile_usage_conversations(request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """TASK-0263: 본인 사용량 차트 클릭 → 본인 대화목록(작업 화면 프로필 모달).

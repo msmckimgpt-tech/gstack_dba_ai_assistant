@@ -8,6 +8,68 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
+
+사용자 신고: "DQA 계정 프로필에서 '프롬프트 > 내 프롬프트' 의 자동 작성 기능이 동작하지 않는다."
+
+**진단 — 서버는 정상이었고 화면만 결과를 못 받았다.** 라이브 실증(2026-09-08 19:56, 계정 10):
+`GET /api/auth/me/system-prompt/generate/stream` 이 **200 OK**, `WebAiTasks j_LO28YKoH0ifGR5E7`
+(JobKind=prompt_generate, payload `{"scope":"account","scope_id":10}`)가 적재되고 러너가 3초 만에
+`submitted` 까지 마쳤다. feature-0043 전환 이후 이 요청은 개인 AI 로 위임되고 그때 서버는 SSE 가
+아니라 `{"bridge_pending": true, poll_url, task_id}` JSON 을 준다. 그런데 자동작성 3화면은 전환
+이전의 **SSE 전용 파서**로 남아 있어 그 JSON 을 프레임으로 읽다가 `event:`/`data:` 가 없다는
+이유로 조용히 버렸다 — 버튼만 원상복구되고 안내는 "준비 중…" 에 멈춘다. `admin/llm-state.js` 에
+폴링 헬퍼가 이미 있었지만 `admin/metadata.js` 한 곳만 썼고, 그 모듈이 `admin.js` 의 `adminState`
+를 import 해 **관리 콘솔 밖에서는 쓸 수 없었다**(프로필 화면이 못 쓴 구조적 이유).
+
+부수 결함 둘을 같은 cycle 에서 해소했다.
+- **폴링 권한 축**: `poll_url` 이 `/api/admin/ai-jobs/{task_id}`(=`console.access`)인데 개인
+  프롬프트 자동작성은 로그인만 요구하는 진입점이다(`JOB_SPECS['prompt_generate']['perms']` 가
+  비어 있는 것이 그 기록). 화면만 고치면 일반 사용자는 폴링 403 에서 끝난다.
+- **러너 실패가 '완료'로 도달**: 러너는 자기 AI 가 실패하면 사유를 답변 본문에 적어 제출한다
+  (대화 축에서는 옳은 설계 — 침묵보다 낫다). 콘솔 작업 축에서는 그 안내문이 «결과물» 이 되어
+  프롬프트 입력란을 덮고 화면은 그것을 완료라 말한다. 위 라이브 1건이 정확히 그 경우였다
+  (`JobResult` = "AI 가 오류로 끝났습니다(exit 1) … session limit"). 서버가 러너의 고정 꼬리표로
+  판정해 `degraded` 를 표시하고, 화면은 본문을 덮지 않고 사유를 보인다.
+
+**수정**: 폴링 헬퍼를 `static/console-job-poll.js`(의존 0)로 분리해 세 화면이 공유 ·
+`admin/llm-state.js` 는 re-export 로 기존 호출부 무회귀 · `app.js`·`admin.js` 가 SSE 소비 **앞**
+에서 위임 봉투를 분기 · 로그인만 요구하는 `GET /api/profile/ai-jobs/{task_id}` 신설(스코프는
+`AccountId` 로 admin 경로와 동일 — 권한을 넓히지 않는다) · 두 폴링 경로가 같은 조립 함수를 사용 ·
+폴링에 `AbortSignal` 지원(재진입 시 앞선 결과가 뒤 결과를 덮지 않게).
+
+**검증**
+- 신규 pytest 21건 PASS (`unit/feature-0043-external-llm-bridge/tests/test_prompt_autogen_delivery.py`)
+  — 봉투 계약·권한 축·degraded 판정·러너 정본 문구 동기·프론트 배선(import 누락 = 런타임
+  ReferenceError 이므로 별도 단정).
+- jsdom 행위 하네스 15건 PASS (`unit/feature-0003-agent-web-ui/tests/verify_prompt_autogen_delivery.mjs`)
+  — 정본 `generateAccountPrompt` 를 **진짜 헬퍼와 함께** 굴려 결과가 textarea 에 닿는지 확인.
+- **뮤턴트 역검증 2종 모두 KILL**: ① `degraded` 가드 제거 → S2 2건 FAIL ② 위임 분기 통째 제거
+  (=원래 결함 재현) → S1 3건 FAIL. 복구 후 15/15 PASS. baseline RED 를 실제로 확인했다.
+- 상세: [실행 기록](test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md).
+
+**검증 패널 (§18.8)**: 이 세션은 기본 지침으로 subagent 호출이 금지돼 있어, 사용자에게 1회
+확인해 §18.8.1 이 check #9 accepted 로 인정하는 **codex 채널**로 대체했다(사용자 선택 2026-09-09).
+`codex review --uncommitted` → **P1 0건 ACCEPTED**, 리뷰 도중 reviewer 가 행위 하네스를 직접 구동해
+15/15 PASS 를 재확인했다. 판정 원장: [REVIEW.md](REVIEW.md) `REV-20260909T010000-prompt-autogen-delivery`.
+
+**base 에 있던 회귀 2건을 함께 정합했다 (내 변경이 만든 것이 아니다)**: base `cdd414e3` 에서 이미
+`test_route_parity_p5b`(golden 269 vs 실제 271)와 `test_cancel_channel_adds_no_new_tool`(명시 도구
+7 vs 실제 8)이 붉었다 — 다른 cycle 이 `/api/ai/connect/identity` 와 `/api/ai/tools/get_tool_catalog`
+를 추가하며 이 두 계약을 갱신하지 않았다. golden 은 컨테이너에서 재생성(272/271)했고, 도구 수는
+그 도구의 4곳 정합(매니페스트/OpenAPI · MCP 어댑터 2벌 · `test_ux_parity` 초록)을 **확인한 뒤**
+7→8 로 옮겼다. 계약 자체는 그대로다(또 늘면 여전히 잡는다).
+
+**§8.1 개선 제안 (착수 안 함)**: `bin/gen-status.sh` 가 `feature-0046-native-client` 의
+`feature_status: implemented`(유효값 아님) 때문에 실패한다 — base·main 양쪽에서 재현되며, 그
+때문에 `docs/STATUS.md` 표가 이 cycle 에서 재생성되지 않았다. 남의 feature 문서라 손대지 않았다.
+
+**미해소로 남긴 것 (정직 표기)**: `submit_answer` 에는 러너가 실패를 **구조적으로** 신고하는
+채널이 없다(답변 텍스트뿐). 이번 판정은 러너가 붙이는 고정 꼬리표에 기대며, 그 문구가 바뀌면
+판정이 조용히 무력해진다 — `test_runner_degraded_notice_matches_the_runner_source` 가 그 동기를
+잠그지만, 근본 해소는 제출 API 에 실패 플래그를 더하는 별도 작업이다(구 러너 호환 필요).
+
+
 ## TASK-20260908-codex-connect-fix
 
 catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
