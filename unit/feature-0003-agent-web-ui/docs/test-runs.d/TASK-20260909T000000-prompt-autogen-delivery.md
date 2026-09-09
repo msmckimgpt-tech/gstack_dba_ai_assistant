@@ -26,9 +26,26 @@
     실제로 잡는다는 대조군.
   - 이 하위 검증은 **DOM 시뮬레이션**이며 실제 클라이언트 렌더·입력 경험을 대체하지 않는다.
 
-## Run 2 — 배포 후 (라이브)
+## Run 2 — 배포 후 (라이브, `00981307`)
 
-- Scenario: 동일
+- Scenario: 프로필 > 프롬프트 > 내 프롬프트 > [자동 작성] → 위임 결과가 입력란에 채워진다
 - Environment: DQA-client
-- Result: <배포 후 기록>
-- Reason: —
+- Result: NOT-RUN
+- Reason: 위임이 실제로 일어나려면 그 계정의 개인 AI 러너가 연결돼 있어야 한다. 러너 (재)기동에는
+  사람이 웹에서 발급하는 `mat_` 토큰이 필요해(러너가 저장하지 않는다) AI 단독으로 넘을 수 없다.
+  또한 기존 사용자 앱을 검증 편의로 종료하지 않는다(FIRST_REQUEST 사용자 결정). 러너가 연결된
+  상태에서 [자동 작성] 을 한 번 눌러 주시면 그 자리에서 확인된다.
+- 수행한 하위 검증 (배포 후 실측, 러너 없이 가능한 축):
+  - `GET /static/app.js?v=3f19ce1d878b` (505,813 B) — `looksDelegatedEnvelope` 2 · `bridge_pending` 3 ·
+    `console-job-poll.js` import 1. **배포가 브라우저가 받는 자산에 실제로 도달했다.**
+  - `GET /static/console-job-poll.js?v=3f19ce1d878b` → **200 · 9,445 B**(`awaitDelegatedResult` ·
+    `api/profile/ai-jobs` · `body.degraded === true`).
+  - `GET /static/admin.js?v=3f19ce1d878b` → `looksDelegatedEnvelope` 3 · `admin/llm-state.js` re-export 도달.
+  - `GET /api/profile/ai-jobs/j_LIVEPROBE` → **401**(라우트 등록 + 로그인만 요구) vs 없는 경로 **404**(대조군).
+  - 이 축들은 **도달·배선**을 증명하며 사용자 화면의 실제 렌더·입력 경험을 대체하지 않는다.
+
+## Environment: windows-browser
+
+- Result: NOT-RUN
+- Reason: PB-0009(DQA 클라이언트)가 주 검증 경로이고 이번 변경에 브라우저 전용 호환 분기가 없다.
+  보조 호환 검증을 대체 증거로 승격하지 않는다.

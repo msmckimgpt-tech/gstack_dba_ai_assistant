@@ -4903,3 +4903,11 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
   `test_cancel_channel_adds_no_new_tool`(명시 도구 7→8, 매니페스트·MCP 어댑터 2벌 등재 확인 후 숫자만 이동).
 - 검증: pytest 21 신규 · jsdom 행위 하네스 15 · 뮤턴트 2종 KILL(원래 결함 재현 시 FAIL) ·
   `codex review --uncommitted` ACCEPTED(P1 0) · 컨테이너 `make test`.
+
+## CHG-20260909T020000-prompt-autogen-postdeploy
+
+- 2026-09-09T03:03:21.021268+00:00; TASK-20260909T000000-prompt-autogen-delivery 의 **출하 후 기록**(코드 변경 0).
+  PR #1644 머지(main `00981307`) · `deploy-web.sh --web-only` exit 0 · 90초 soak 통과 ·
+  라이브 도달 3축 실측(서빙 `app.js`/`console-job-poll.js`/`admin.js` 에 새 배선 · 신규 라우트
+  401 vs 없는 경로 404 대조군)을 Run 원장에 기록했다. DQA-client 실측은 러너 자격이 필요해
+  `Result: NOT-RUN` + 사유·하위 검증으로 남겼다(PB-0009 · check #13).

@@ -73,6 +73,11 @@ feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 
 - [x] verify-completion PASS. 출하(commit/push/PR/main)·배포·라이브 도달 확인 결과는
       [Run 원장](test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md)에 기록한다.
       DQA-client 실측은 배포 후 Run 2 로 남는다(러너 자격 필요 — NOT-RUN 사유 기록).
+- [x] 출하·배포·라이브 도달 — PR #1644 머지(main `00981307`) · `deploy-web.sh --web-only` exit 0 ·
+      90초 soak 통과 · 서빙 자산 3축과 신규 라우트(401 vs 없는 경로 404 대조군) 실측.
+      머지 충돌 4파일은 §16.4 자율 해결 + 양측 순증분 대조로 검증했다.
+- [ ] **DQA-client 실측 1건 남음** — 러너가 연결된 상태에서 '내 프롬프트 > 자동 작성' 을 한 번
+      누르면 확인된다. 러너 (재)기동에 사람이 발급하는 `mat_` 토큰이 필요해 AI 단독으로 못 넘는다.
 
 ## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
 

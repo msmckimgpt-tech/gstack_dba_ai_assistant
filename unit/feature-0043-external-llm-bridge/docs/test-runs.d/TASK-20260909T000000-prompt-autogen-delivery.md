@@ -94,6 +94,33 @@ base `cdd414e3` 에서 이미 붉었다 — 다른 cycle 이 라우트 2개를 �
 amend 는 §16.3 이 금지하므로 후속 커밋에서 올바른 trailer 로 정정했다. 첫 커밋의 잘못된 값은
 이력에 남으며, 이 문단이 그 대응 기록이다.
 
+## 4b. 출하 · 배포 · 라이브 도달 (POST-DEPLOY)
+
+| 단계 | 결과 |
+|---|---|
+| PR | **#1644** — `ai/claude/feature-0043-prompt-autogen-delivery` → `main` |
+| 머지 충돌 | main 이 21 commit 앞서 CONFLICTING → §16.4 자율 해결(4파일). 결과 검증: **양쪽 부모 대비 삭제 파일 0건** · 내 고유 심볼 5종 생존 · main 고유 산출물 표본 4종 생존 · `node --check` OK. 머지 커밋 `0be2b954` |
+| 머지 후 재검증 | 핵심 pytest 85건 PASS · jsdom 15/15 PASS · 컨테이너 라우트/스탬프/캐시 계약 **30건 PASS** |
+| main 반영 | `dfc5717e` → **`00981307`** (`bin/cycle-finalize.sh --pr 1644`, worktree·로컬/원격 branch·REGISTRY 정리 완료) |
+| 배포 | `sudo -E bin/deploy-web.sh --web-only` **exit 0** — web-a/web-b 롤링(`git_commit=00981307`) · 엣지 후보 복귀 확인 · **90초 soak 통과** · Caddyfile 무변경(blip 0) · 브리지 연속성 끊김 0 |
+
+### 라이브 도달 확인 (배포됨 ≠ 브라우저에 도달함)
+
+`?v=` 스탬프가 붙은 **실제 서빙 URL** 로 받아 내용을 검사했다. 세 축 모두 통과.
+
+| 축 | 확인 | 결과 |
+|---|---|---|
+| 작업 화면 | `GET /static/app.js?v=3f19ce1d878b` (505,813 B) | `looksDelegatedEnvelope` 2 · `bridge_pending` 3 · `console-job-poll.js` import 1 |
+| 신규 모듈 | `GET /static/console-job-poll.js?v=3f19ce1d878b` | **HTTP 200 · 9,445 B** — `awaitDelegatedResult` · `api/profile/ai-jobs` · `body.degraded === true` 각 1 |
+| 관리 콘솔 | `GET /static/admin.js?v=3f19ce1d878b` + `admin/llm-state.js?v=…` | `looksDelegatedEnvelope` 3 · re-export 2건 · llm-state HTTP 200 |
+| 신규 라우트 | `GET /api/profile/ai-jobs/j_LIVEPROBE` (비로그인) | **401** `{"error":"로그인이 필요합니다."}` — 라우트 등록됨 + 로그인만 요구 |
+| 대조군 | `GET /api/profile/no-such-route-xyz/1` | **404** — 위 401 이 「없는 경로도 401」이 아님을 확인 |
+| 호환 경로 | `GET /api/admin/ai-jobs/j_LIVEPROBE` | 401 — 종전 경로 유지 |
+
+> 스탬프가 두 자산에서 동일(`3f19ce1d878b`)하다는 것은 `inject_asset_stamp.py` 가 이번 배포
+> 산출물에 적용됐다는 뜻이다. 스탬프 없는 참조가 있으면 브라우저가 옛 사본을 계속 쓰는데,
+> 그 축은 `test_static_module_stamp_census` 가 별도로 잠근다(위 30건에 포함).
+
 ## 5. 미검증 · 이월 (정직 표기)
 
 - **jsdom 하네스는 CI 에서 돌지 않을 수 있다.** `make test` 컨테이너는 node 를 설치하지만
