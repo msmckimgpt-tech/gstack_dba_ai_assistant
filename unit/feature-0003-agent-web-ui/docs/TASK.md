@@ -13994,3 +13994,10 @@ cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측
 - [x] 델타창 53커밋(non-merge, 착륙일 전량 2026-09-08) 중 사용자 체감 변화만 골라 `releases[]` 맨 앞에 `date: "2026-09-08"` 블록 prepend + `generated` 전진.
 - [x] 사용자향 평이화(내부 명칭·구현 비노출) 기계 스캔 0히트.
 - [x] `node --check` + 전용 하네스 `tests/verify_release_notes.mjs` baseline 유지 확인.
+
+## TASK-20260910T010301-doc-sync-rn-0910 릴리즈노트 2026-09-09 블록 items append (doc_sync 09-10)
+
+- [x] 델타창 61커밋(착륙일 전량 2026-09-09) 중 09-09·09-08 블록 어디에도 없는 사용자 체감 변화 3건을 골라 **기존 2026-09-09 블록의 `items` 에 append**(9→12). 착륙일 블록이 이미 owning feature 커밋으로 self-add 돼 있어 신규 블록 prepend 가 아니다 — `generated` 와 블록 수(64)는 불변.
+- [x] 같은 블록 안 self-add 항목의 정본 이탈 2건 정정: summary 의 「최신 = 1.2.5」 ↔ item 의 1.3.0 자기모순 해소, 1.3.0 항목에 정본이 명시한 경계(창 닫기는 적용 시점 아님 · 설치 누적 시 디스크 증가) 보강.
+- [x] 사용자향 평이화(내부 명칭·구현 비노출) 기계 스캔 0히트 · 미검증 사항을 항목 detail 과 접힌 summary 양쪽에 명시.
+- [x] `node --check` + 전용 하네스 `tests/verify_release_notes.mjs` baseline(34/0) 유지 확인.

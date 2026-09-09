@@ -8670,3 +8670,15 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Trigger: 최종 배포/설치 실측 결과를 기록하는 비정책 문서 변경.
 - Verdict: PASS. 제품 코드 변경 없음. 서버 exit0·완료 manifest·서빙7파일과 실제 설치 PID/문서 변화/적용 알림의 시각을 대조했다.
 - Artifact: test-runs.d/TASK-20260909T140000-deploy-refresh.md 최종 배포3. 독립 소스 리뷰/fixture 결과를 설치본 실제 사용자 첨부 검증으로 확대하지 않는다.
+
+## REV-20260910T010301-ai-claude-doc-sync-20260910-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-09 블록 items append (doc_sync 09-10)
+- Related TASK: TASK-20260910T010301-doc-sync-rn-0910
+- Timestamp: 2026-09-10T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 항목 3개 append + 기존 항목 문장 2건 정정**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스 + 적대 검증조로 검증했다.
+- **검증**: `node --check` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일). 블록 수 64 불변 · `generated` 불변 · 09-09 블록 items 9→12.
+- **적대 검증**(4축 sweep + 2조 교차검증, 6에이전트·1.15M 토큰): 커버리지 축이 창 61커밋을 전수 대조해 미커버 user-facing 3건을 확정했고, 내부 운영 변경(포트 전달 예약작업 계정 교정 · 엣지 점검 프로세스 격리 · 종료된 감지기 지연응답 차단)은 회원 화면 체감 변화가 없어 **RN 제외**로 판정했다(기술 색인만 — report-only 3건으로 기록). 교차검증조가 **self-add 항목의 정본 이탈 2건**을 추가 적발해 반영했다(summary 「최신 = 1.2.5」 ↔ item 1.3.0 자기모순 · 1.3.0 항목의 누락 경계 2건).
+- **평이화 준수**: 내부 명칭 기계 스캔 **0건**. 화면에 그대로 나타나는 라벨·앱 이름(DQA)·버전 번호만 인용했다(직전 블록들과 동일 관례).
+- **미검증 정직 표기**: 자동 갱신 실측 시 화면이 비어 있었다 · 표/비교 정렬은 사용자 계정 실제 첨부로의 확인 미완 · 지금 열려 있는 화면은 자동 갱신 코드가 없어 한 번은 직접 새로고침이 필요하다 — 항목 detail 과 **접힌 summary 양쪽**에 명시했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- Human Approval Needed: **아니오**.

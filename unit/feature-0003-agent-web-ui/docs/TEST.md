@@ -3814,3 +3814,13 @@ Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), fea
 ## 2026-09-09 Caddy probe 격리
 - `test_caddy_probe_isolation.py`와 `test_edge_rolling_gate.py`: archive 오류·네트워크/HTTP 실패·timeout·자기CID cleanup·조회실패시미재생성 및 기존rollinggate 회귀.
 - 현재 Caddy에서 새 프로세스를 만들지 않는 실제 파일/admin/두 replica GET 대조. 최종 Run에 PID/시작시각·좀비증감·잔류probe를 기록한다.
+
+## TASK-20260910T010301-doc-sync-rn-0910 릴리즈노트 items append 검증
+
+- `node --check src/static/release-notes-data.js` → PASS (JS 문법)
+- `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 하네스 실행을 위해 `jsdom@24` 를 `/tmp` 에 핀 설치했다(세션마다 부재할 수 있음).
+- 구조 실측: `date: "` 블록 **64 불변** · `generated` **2026-09-09 불변** · 최상단 블록 date `2026-09-09` · 그 블록 `title:` **9 → 12**.
+- 평이화 기계 스캔: append/정정한 문장에 대해 내부 명칭 패턴(feature-id·`.js`/`.py` 확장자·alembic·WebView2·jsdom·sha256·SSOT·frontmatter·pytest·APIRouter·subprocess·PyInstaller·manifest·replica) → **0 히트**.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 항목 3개 append + 문장 2건 정정**이고 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다. 아울러 이 창에서도 UI 검증 정본은 PB-0009(실제 DQA 앱)이며(ADR-20260908T024500), 배포 후 라이브 노출 확인은 wrapper 소관이다.
+- reconcile-first 실측(2026-09-10T01:0x+09:00, run 시작 시점): 서빙 `https://<host>/static/release-notes-data.js` 가 `origin/main` blob 과 **바이트 동일**(506,570 bytes) · `healthz` 200 → **파리티 갭 0**.
+- **Pass/Fail: PASS**.

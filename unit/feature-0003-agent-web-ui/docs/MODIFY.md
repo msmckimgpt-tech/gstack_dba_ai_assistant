@@ -6526,3 +6526,12 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - Related TASK: TASK-20260909T140000-deploy-refresh / TASK-20260909T143400-caddy-probe-reaping
 - PR #1658/4f570829 최종 배포 exit0, 두 replica·edge 완료 신호/소스 일치 및 Caddy 무재시작 실측을 기록했다.
 - 실제 설치 DQA의 자동 문서 변경1.242초·적용 알림4.438초를 확인했다. 최초 bootstrap의 병행 세션 기여, 현재 설치본 빈 작업 화면과 제품 Shell fixture34 PASS의 경계를 유지한다. 추가 제품 코드 변경 없음.
+
+## CHG-20260910T010301-ai-claude-doc-sync-rn-0910 — 릴리즈노트 2026-09-09 블록 items append (doc_sync 09-10)
+
+- `src/static/release-notes-data.js`: **기존 `date: "2026-09-09"` 블록의 `items` 에 3항목 append**(9→12). 착륙일 블록이 owning feature 커밋들로 이미 self-add 돼 있었으므로 prepend 가 아니라 append 다 — `generated: "2026-09-09"` **불변**, `releases` 블록 수 **64 불변**. 데이터만 — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- append 3항목: ① 첨부 `.csv`/`.tsv` 를 「문서 원문」 창에서 표로 출력 ② 첨부 버전 비교에서 모양만 다른 SQL 을 마주 보게 정렬 ③ 배포 완료 후 열어 둔 작업 화면의 자동 최신화(⚠ 지금 열린 화면은 한 번 새로고침 필요).
+- **self-add 항목의 정본 이탈 2건 정정**(적대 검증 적발): ⓐ 블록 summary 가 「알림 영역 [업데이트 확인] 에서 1.2.5 를 받으실 수 있습니다」로 끝나는데 같은 블록 item 은 1.3.0 을 말한다 — 두 릴리스가 같은 날 순서대로 나온 결과 self-add 가 서로를 모른 자기모순이라, 지금 받는 것이 1.3.0 이고 1.2.5 변화가 그 안에 포함됨을 잇고 append 3항목의 서사도 함께 실었다. ⓑ 1.3.0 항목 detail 에 정본이 명시한 두 경계(창 닫기 = 트레이 숨김이라 적용 시점이 아님 · 옛 슬롯을 지우지 않아 설치 누적 시 디스크 증가)가 빠져 있어 보강했다.
+- **미검증 정직 표기**: 자동 갱신은 열어 둔 앱에서 실측했으나 그때 화면이 비어 있었고, 표·비교 정렬은 사용자 계정 실제 첨부로의 확인이 남았다 — 항목 detail 과 **접힌 summary 양쪽**에 명시했다.
+- 캐시버스터 수기 bump 없음: 소스 `?v=dev` 고정 + 빌드 `inject_asset_stamp` content-hash 주입 + 배포 ABORT 가드(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
