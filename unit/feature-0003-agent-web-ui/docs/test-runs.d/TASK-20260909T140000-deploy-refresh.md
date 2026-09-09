@@ -25,4 +25,13 @@ Scenario: 설치본 최초 bootstrap 및 후속 배포 자동 적용
 Reason: 서버 배포 전. 기존 앱은 읽기 전용 UIA 확인만 수행했으며 종료/재설치/사용자 메시지 전송 없음.
 
 ## 전체 회귀/서버 배포
-전체 pytest: **8,513 passed / 13 failed / 40 skipped**, 508.47초. 실패는 호스트 psycopg 부재6건과 컨테이너 전용 web.app import7건으로, 격리 제품 컨테이너에서 재검증 중이다. 서버 배포 결과는 후속 기록한다. 전체 PASS로 표기하지 않는다.
+전체 pytest: **8,513 passed / 13 failed / 40 skipped**, 508.47초. 실패는 호스트 psycopg 부재6건과 컨테이너 전용 web.app import7건으로, 최신 소스293파일 지문을 확인하고 네트워크 차단·읽기 전용 root·임시 /shared의 격리 제품 컨테이너에서 해당 파일 **45 PASS**로 재검증했다. 근거: wrapper `artifacts/deploy-refresh-20260909/qa-container/{tests.log,result.xml,source-manifest.json,command.json,exit-code.txt}`. 첫 배포는 아래에 기록한다. 전체 PASS로 표기하지 않는다.
+
+
+## 배포 1 — 최초 도입
+
+- PR #1653 main `7fa75a51`, `bin/deploy-web.sh --web-only` exit0. 두 web replica ready·edge 복귀·90초soak PASS. 대화 smoke/worker/MCP 롤아웃은 scope=web 계약으로 미수행이다.
+- 두 replica와 CA 검증 edge의 `/api/ui-release`가 동일 `complete` revision7fa75a51/stamp311b2ded3afc/generation1788930763270 및 no-store를 반환했다.
+- 현재 제품7파일의 SHA256이 배포본과 일치(빌드 stamp 문자열만 정규화). manifest는 배포 중 pending을 유지했고 검증 종료 뒤 complete로 바뀌었다.
+- 근거: wrapper `artifacts/dqa-deploy-refresh-20260909/{deployed-7fa75a51.json,release-events.jsonl,logs/dqa-refresh-deploy1.log}`.
+- 설치 DQA는 PID29732/정확한 설치경로로 고정했다. 읽기 전용 UIA에서 기본 '대화를 선택하세요', 활성 대화0, 빈 prompt, 진행/업로드/열린 modal 신호0을 확인했다. 구페이지는 감지 코드가 없어 최초 한 번 지원 IPC로 동일 제품페이지를 로드하는 bootstrap이 필요하다. 실제 조작과 후속 자동갱신 결과는 이어 기록한다.

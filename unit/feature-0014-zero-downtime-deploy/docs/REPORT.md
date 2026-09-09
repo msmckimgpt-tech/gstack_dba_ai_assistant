@@ -10,7 +10,7 @@ source_of_truth: false
 
 ## 2026-09-09 — 배포 완료 자동 반영
 
-구현·독립 리뷰 PASS. 3초 감지, 안전한 시점 자동 적용, 대화/diff 선택 복원과 롤링 중 적용 억제를 구성했다. [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md)에 검증 경계를 기록한다. 서버 배포 및 설치 DQA 실측은 진행 전이다.
+구현·독립 리뷰 PASS. 3초 감지, 안전한 시점 자동 적용, 대화/diff 선택 복원과 롤링 중 적용 억제를 구성했다. [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md)에 검증 경계를 기록한다. PR #1653/7fa75a51 서버 반영과 두 replica·edge 완료 신호 일치, 제품7파일 일치를 확인했다. 설치 DQA 최초 bootstrap 및 후속 자동 적용은 진행 중이다.
 
 ## 1. Summary
 
