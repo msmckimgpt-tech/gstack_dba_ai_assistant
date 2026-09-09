@@ -8410,3 +8410,23 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - **미검증 정직 표기**: 공유-앱 진입의 딥링크 목적지 이동은 **게시된 최신본 1.2.4 에도 없다**(수용 코드가 마지막 버전 bump 뒤에 착륙 — 다음 릴리스 필요) · 미서명 설치 시 Windows 경고 1회 · [DQA 앱 받기] 노출 전환 미관측 · 앱 화면 실측 범위 한계 — 항목 detail 과 접힌 summary 양쪽에 명시했다.
 - **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
 - Human Approval Needed: **아니오**.
+
+
+## REV-20260909T120000-diff-similarity-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
+- Trigger: API response·performance / 응답·성능 + UI alignment / 화면 정렬
+- Timestamp: 2026-09-09T03:06:28.577234+00:00
+- Artifact: [독립 리뷰](reviews/20260909T120000-diff-similarity-backend-security-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260909T120000-diff-similarity-ux-design [SUBAGENT:ux-design] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
+- Trigger: API response·performance / 응답·성능 + UI alignment / 화면 정렬
+- Timestamp: 2026-09-09T03:06:28.577234+00:00
+- Artifact: [독립 리뷰](reviews/20260909T120000-diff-similarity-ux-design.md)
+- Human Approval Needed: no
+
+승인 근거: 현재 사용자 요청이 diff 유사 매칭 구현을 위임했으며 Minor 표시/계산 변경이다. wrapper FIRST_REQUEST.md의 deploy_scope: included 및 AGENTS §16.5.1에 따라 검증 후 web-only 배포를 수행한다. 권한·원본 저장·DB 실행 변경 없음.
+
+- QA 후속 검토(diff_review): 전체 회귀의 기존 사이드 패널 하네스 누락 원인 확인 및 4줄 수정. Node 69건과 관련 pytest PASS. route/tool 기대치는 최신 main에서 이미 정합되어 upstream merge로 수용한다.

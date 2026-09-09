@@ -8,6 +8,12 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260909T120000-diff-similarity — 2026-09-09
+
+DQA 첨부 diff의 원문 완전 일치 기반 정렬을 공백·대소문자 정규화 앵커와 구문 유사도 정렬로 개선했다. 원문이 다른 줄은 계속 replace이며 문자열과 인용 식별자는 정렬에서도 구별한다. 반복 SQL·잘못 닫힌 인용 입력의 성능 문제를 독립 리뷰로 적발·해소했다. 계산 제한은 안내로 표시한다.
+
+집중 Python 91건, Node diff 128건·계보 24건, 실제 제품 Shell/WebView2 fixture 21건 PASS. 전체 회귀·원격 반영·배포 진행 중. 설치된 사용자 DQA와 실제 첨부/API 왕복은 아직 미검증이다. 실행 경로·원본 캡처는 `test-runs.d/TASK-20260909T120000-diff-similarity.md`에 기록한다. 정책 SHA256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`, 작업/브랜치는 TASK 정본.
+
 ## TASK-20260908T125500-step-tool-syntax-leak — 2026-09-08
 
 **실행 단계 패널에서 도구 호출 구문 제거** (Major §12.3 — 표시 계층 + 비신뢰 입력 처리.

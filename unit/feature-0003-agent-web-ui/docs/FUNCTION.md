@@ -2875,8 +2875,8 @@ re-export 하여 `app/sidebar.js` 의 기존 import 를 보존한다.
 | 절단 표면화 | `truncated.{from_source,to_source,rows}` + `caps.{source_bytes,rows}` — 3종을 **각각** 보고(§16.7 G9-b) |
 | 응답 | `from`/`to`(버전 메타) · `unified_diff`(문자열) · `rows`(좌우 정렬 + `gap`) · `stats.{added,removed,left_lines,right_lines,identical}` |
 
-**단일 opcode 패스 불변식**: `_build_version_diff_view` 가 한 번의 `SequenceMatcher` opcode 순회에서
-`unified`(단일열용)와 `rows`(2열용)를 **함께** 산출한다. 두 표현을 별 경로로 만들면 같은 두 버전에
+**단일 정렬 불변식**: `_build_version_diff_view`가 `routers/_attachment_diff.py:align_lines`의
+공통 정렬에서 `unified`와 `rows`를 함께 산출한다. 두 표현을 별 경로로 만들면 같은 두 버전에
 대해 서로 다른 결과를 보일 수 있고, 그때 사용자는 어느 쪽을 믿을지 알 수 없다. 프론트 토글도
 재요청 없이 같은 응답을 재렌더한다.
 
@@ -5116,3 +5116,14 @@ specifier 는 `?v=` 토큰을 갖는다. `tests/test_static_module_stamp_census.
 ## 2026-09-08 — 연결 상태 안내
 
 현재 사용할 수 없는 위치의 안내는 공통 연결 패널에서 일반 텍스트로 표시한다. 기존 Markdown 강조 표식은 노출하지 않고 textContent로 출력하여 HTML을 실행하지 않는다.
+
+
+## REQ-20260909T120000-diff-similarity — 동일·유사 SQL 줄 정렬
+
+DQA 첨부의 계보 내·계보 간 비교에서 SQL의 들여쓰기, 토큰 사이 공백, 비인용 구문의 대소문자가 달라도 같은 구조의 줄을 먼저 연결한다. 남은 구간에서는 토큰 순서 유사도 0.60 이상 후보의 가중 합을 최대화하는 단조 매칭으로 삽입된 줄과 변경된 줄을 구별한다. 정렬 뒤 원문이 정확히 같은 줄만 `equal`이며 문자열/인용 식별자의 공백·대소문자는 정렬 키에서도 보존한다. 유사성은 SQL 의미 동치 판정이 아니다.
+
+- AC-DS-1: TRY/트랜잭션 도입으로 들여쓰기가 바뀐 쿠폰 SQL의 SET/SELECT/FROM/JOIN/WHERE/ORDER BY는 각 대응 줄과 같은 행에 놓인다. SET 날짜 표현의 varchar→char 및 숫자 변경은 기존 intra-line 표시로 남는다.
+- AC-DS-2: `'A'`와 `'a'`, 인용 식별자, 연산자, 주석, 원문 공백 변경은 숨기지 않는다. 양쪽 원문과 줄번호를 각각 순서대로 한 번 보존한다.
+- AC-DS-3: 반복 SQL 1,000~2,000행의 앞·중간·뒤에 새 구문을 넣어도 기존 줄이 전량 equal로 유지된다. full/context와 2열/단일열이 같은 정렬을 사용하며 unified patch로 목표 파일을 복원할 수 있다.
+- AC-DS-4: 행곱 1,000,000 이하만 SequenceMatcher, 그 이상은 탐색 1,000,000·추적 상태 40,000 상한의 Myers. fuzzy는 전체 요청의 40,000 셀·2,000,000 토큰곱 예산으로 제한한다. 소진 시 공통 앞뒤 구간과 원문을 보존하며 위치 정렬로 낮춘다. `truncated.alignment`와 화면 안내로 유사 정렬 생략을 알린다. 인용 토큰 스캔은 미종결 입력도 선형 소비한다.
+- 범위: 기존 API 응답에 `truncated.alignment`만 추가. 인증/인가·저장 원문·SQL 실행·로컬 브리지 변경 없음. 임의 위치로 이동한 블록의 교차 연결, SQL 의미 분석, 줄 합치기/분할 정렬은 제공하지 않는다.

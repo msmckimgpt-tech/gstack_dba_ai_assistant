@@ -614,9 +614,23 @@ def test_e1_adjacent_pair_diff(monkeypatch):
     assert body["stats"]["added"] == 1 and body["stats"]["removed"] == 1
     assert any(r["type"] == "replace" for r in body["rows"])
     assert "SELECT 3;" in body["unified_diff"]
-    # 절단 4종(내용 3 + 정밀도 1)을 **전부** 열거해 잠근다 — 키가 늘거나 줄면 여기가 먼저 깨진다.
+    # 절단 5종(내용 3 + 정밀도 2)을 **전부** 열거해 잠근다 — 키가 늘거나 줄면 여기가 먼저 깨진다.
     assert body["truncated"] == {
-        "from_source": False, "to_source": False, "rows": False, "intraline": False}
+        "from_source": False, "to_source": False, "rows": False, "intraline": False, "alignment": False}
+
+
+def test_e1b_alignment_budget_reaches_api_without_losing_source(monkeypatch):
+    from routers import _attachment_diff
+    monkeypatch.setattr(_attachment_diff, "_FUZZY_CELL_CAP", 0)
+    chain = [_row(vid=10, version=1), _row(vid=11, version=2, superseded=False)]
+    _endpoint_setup(monkeypatch, chain, {
+        "conv-1/u1/f.sql": b"SELECT id FROM users;",
+        "conv-1/u2/f.sql": b"SELECT name FROM users;",
+    })
+    body = _body(att_router.get_attachment_version_diff(11, _Request(from_version=1, to_version=2)))
+    assert body["truncated"]["alignment"] is True
+    assert body["rows"][0]["left"] == "SELECT id FROM users;"
+    assert body["rows"][0]["right"] == "SELECT name FROM users;"
 
 
 def test_e2_multi_step_pair_skips_intermediate(monkeypatch):

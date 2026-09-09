@@ -351,15 +351,15 @@ function extractFn(src, name) {
   const boxFn = extractFn(composerJs, "_renderAttachmentVersionsBox");
   ok("B2 버전 박스 함수 추출됨", !!boxFn);
   ok("B3 박스가 attachmentId 를 인자로 받는다(모달 권한 기준)",
-    /_renderAttachmentVersionsBox\(box, versions, attachmentId\)/.test(composerJs));
+    /_renderAttachmentVersionsBox\(box, versions, attachmentId, lineages\)/.test(composerJs));
   // 인자 안에 `Array.isArray(...)` 같은 중첩 괄호가 있어 `[^)]*` 로는 못 잡는다(한 줄 한정 스캔).
   ok("B4 호출부가 attachmentId 를 넘긴다",
-    /_renderAttachmentVersionsBox\(versionsBox,.*,\s*a\.id\)/.test(composerJs));
+    /_renderAttachmentVersionsBox\(versionsBox,.*,\s*a\.id,/.test(composerJs));
   // 사용자 요청 2026-08-13: 머리 진입점의 기본 쌍은 **최초 → 최신** 이다. 이 버튼은 체인 전체를
   // 대표하는 진입점이라 "이 파일이 처음부터 지금까지 어떻게 바뀌었나" 가 기대와 맞고, 직전↔최신은
   // 각 버전 행의 `⇄`(B6)가 이미 담당한다 — 두 진입점이 같은 쌍을 여는 중복도 사라진다.
   ok("B5 머리 진입점 = 최초 → 최신 사전선택",
-    /attach-list-versions-compare[\s\S]*?openAttachmentDiffModal\(\s*attachmentId, versions,\s*oldestNum === latestNum \? undefined : \{ from: oldestNum, to: latestNum \}\)/
+    /attach-list-versions-compare[\s\S]*?openAttachmentDiffModal\(\s*attachmentId, versions,\s*\(singleVersion \|\| oldestNum === latestNum\) \? undefined : \{ from: oldestNum, to: latestNum \},\s*lineages\)/
       .test(boxFn));
   // 번호는 배열 순서가 아니라 **값의 min** 으로 얻는다 — 중간 버전이 삭제된 체인(attach-manage
   // soft-delete)에서도 실제로 남아 있는 양 끝을 가리켜야 한다(없는 번호를 preselect 하면 select
@@ -367,7 +367,7 @@ function extractFn(src, name) {
   ok("B5b 최초 버전 번호는 값의 min 으로 얻는다(중간 버전 삭제 체인 방어)",
     /const oldestNum = vnums\.length \? Math\.min\(\.\.\.vnums\) : latestNum;/.test(boxFn));
   ok("B6 행 진입점 = 그 버전 ↔ 최신(다단계 비교 직행)",
-    /openAttachmentDiffModal\(attachmentId, versions, \{ from: vnum, to: latestNum \}\)/.test(boxFn));
+    /openAttachmentDiffModal\(attachmentId, versions, \{ from: vnum, to: latestNum \}, lineages\)/.test(boxFn));
   // 최신 행의 `⇄` 는 자기 자신과의 비교라 무의미 — 조건이 실제로 걸려 있는지.
   ok("B7 최신 행에는 비교 버튼을 두지 않는다", /if \(canCompare && !isLatest\)/.test(boxFn));
   ok("B8 단일 버전이면 비교 진입점 미노출", /const canCompare = versions\.length > 1/.test(boxFn));
@@ -523,6 +523,12 @@ console.log("\n[D] 줄 안 변경 구간 마크");
     M._renderBody(host2, SEG_DATA, "split", {});
     ok("D8c 절단이 없으면 배너도 없다(늑대소년 방지)",
       host2.querySelectorAll(".attach-diff-notice").length === 0);
+    const host3 = doc.createElement("div");
+    M._renderBody(host3, {...SEG_DATA, truncated: {alignment: true}}, "split", {});
+    ok("D8e 유사 줄 정렬 제한은 안내로 표시",
+      host3.querySelector(".attach-diff-notice.is-note")?.textContent.includes("유사한 줄 맞추기를 생략"));
+    ok("D8f 정렬 제한에도 원문 행 유지",
+      host3.querySelectorAll(".attach-diff-row").length === host2.querySelectorAll(".attach-diff-row").length);
     ok("D8d is-note 스타일이 CSS 에 실재", /\.attach-diff-notice\.is-note\s*\{/.test(chatCss));
   }
 
