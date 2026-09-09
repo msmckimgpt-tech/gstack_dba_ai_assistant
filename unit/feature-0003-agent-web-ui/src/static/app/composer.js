@@ -1823,6 +1823,8 @@ async function _loadConversationAttachments(convId) {
     const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
     const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
     const bucket = _ensureComposerBucket(String(convId));
+    const resumedChoices = state.uiAttachmentSelections?.[String(convId)];
+    const choices = new Map(Array.isArray(resumedChoices) ? resumedChoices : []);
     // Backend 의 ready 첨부만 default selected. uploading/failed 등 client-only pill 은 보존 (다른 컨텍스트에서 들어왔을 가능성 낮음).
     const serverIds = new Set(arr.map((a) => Number(a.id)));
     // conv-audit FR-attach-change-signal-client-only: **아직 전송하지 않은** 신규 표식은 보존한다.
@@ -1845,10 +1847,11 @@ async function _loadConversationAttachments(convId) {
         name: String(a.original_filename || ""),
         size: Number(a.size || 0),
         status: String(a.status || "ready") === "deleted" ? "failed" : "ready",
-        selected: true,
+        selected: choices.has(Number(a.id)) ? choices.get(Number(a.id)) !== false : true,
         source: keepNewIds.has(Number(a.id)) ? "new" : "session",
       });
     }
+    if (state.uiAttachmentSelections) delete state.uiAttachmentSelections[String(convId)];
     _renderAttachmentPills();
   } catch (exc) {
     // 403 / 404 등 graceful — 첨부 권한 없거나 대화 부재. (TASK-0161: 죽은 #composerAttachments hide 제거)

@@ -3783,3 +3783,9 @@ Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), fea
 - **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다. 아울러 이 창에서 UI 검증 정본이 PB-0009(실제 DQA 앱)로 옮겨졌으며(ADR-20260908T024500), 배포 후 라이브 노출 확인은 wrapper 소관이다.
 - reconcile-first 실측(2026-09-09T01:03:01+09:00, run 시작 시점): 서빙 `release-notes-data.js` 가 `origin/main` blob 과 **바이트 동일**(sha256 `d8b4285e60b2629c…`, 465,521 bytes) → **파리티 갭 0**. `artifacts/deploy/deploy-web.state` `current=2249addf` = HEAD · 배포 실패 마커 0.
 - **Pass/Fail: PASS**.
+
+
+## 2026-09-09 배포 완료 자동 반영
+- 실행 결과: [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
+- test_ui_release.py / test_ui_release_publication.py: 공개 API와 실제 배포 셸 failure/rollback/mixed/idempotency.
+- test_ui_refresh.py / verify_ui_refresh.mjs / tests/windows/verify_deploy_refresh.py: 상태 보호·재로드·복원.

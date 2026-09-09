@@ -203,3 +203,8 @@ source_of_truth: true
   대화 API 인증·라우팅을 대신 검증하지 않는다. 이 주장도 철회했다.
 - 보조 chokepoint(`_openai_chat_completion_with_deadline`)를 부르는 방식으로는 부족하다 —
   2026-08-25 에 그 방식으로 200 을 받고 "해소" 로 오판했다. **대화 경로 함수를 직접 불러야 한다.**
+
+
+## CHG-20260909T140000-deploy-refresh
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 완료 신호를 전용 읽기 전용 mount로 전달. 혼합 배포/실패/재시도/rollback 분기 보완. 독립 회귀85 PASS. 상세 [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).

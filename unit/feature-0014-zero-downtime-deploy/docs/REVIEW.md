@@ -273,3 +273,13 @@ qa 렌즈 확인: **2026-08-26 결함은 잡는다** — `_call_llm` 이 조립�
 - 후보 검증은 **gateway 드리프트가 있을 때만** 돈다(reconcile 이 드리프트 없으면 무접촉). 드리프트
   없는 배포에서는 최종 확인 1단만 작동한다 — 그 경우 실패는 여전히 "발견 후 수동 조치" 다.
 - 스모크가 보는 것은 기본 모델의 LLM 왕복 한 점이다(위 한계 참조).
+
+
+## REV-20260909T140000-deploy-refresh-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [backend-security-qa](../../feature-0003-agent-web-ui/docs/reviews/20260909T140000-deploy-refresh-backend-security-qa.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.

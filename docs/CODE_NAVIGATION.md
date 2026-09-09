@@ -18,6 +18,8 @@ ai_read_priority: 4
 
 ## 1. 어떻게 읽나 — 두 질문
 
+배포 자동 반영: `routers/system.py:get_ui_release` → `ui_release.py:read_release`가 현재 replica와 완료 manifest를 대조한다. 게시자는 `bin/lib/ui-release.sh:publish_ui_release`, 소비자는 `static/ui-refresh.js:createUiRefresh` → `static/app/deploy-refresh.js:appRefreshSafe`/`restoreAppRefresh`다. `app.js:initializeWorkspace`가 연결하며 계정별 선택 메타데이터만 보존한다.
+
 **Q1. "X 하는 코드가 어디 있나?"** → [ROUTEMAP.md](./ROUTEMAP.md) 에서 `method + path` 를 찾아 **router 파일:handler** 로 직행. auth 열이 권한 게이트를 미리 선고한다. 경로를 모르면 도메인 키워드로 라우터 색인(ROUTEMAP 상단 표)을 훑는다. 경로 리터럴을 안다면 바로:
 ```
 grep -rn "/api/new_conversation" routers/

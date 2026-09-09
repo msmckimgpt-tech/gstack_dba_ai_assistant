@@ -53,6 +53,7 @@ repo/
     ├── feature-0003-agent-web-ui/
     │   └── src/
     │       ├── app.py           # 4,000줄 (feature-0012 P5b 완결 시점 3,722 · -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
+    │       ├── ui_release.py    # 완료 metadata 검증; /api/ui-release → static/ui-refresh.js → app/deploy-refresh.js
     │       ├── web_context.py   # leaf helper (app-internal 의존 0인 순수 컨텍스트 조각, 단방향 추출)
     │       ├── routers/         # 도메인 APIRouter 패키지 — 40 파일 (§4a 참조)
     │       │   ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include

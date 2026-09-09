@@ -13,6 +13,7 @@ from shared.model_catalog import API_DEFAULT_MODEL
 from shared.model_catalog import PUBLIC_API_MODEL_OPTIONS
 from shared.llm_gate import server_llm_enabled
 import logging
+import asyncio
 import os
 from typing import Any
 
@@ -22,6 +23,16 @@ import oauth_store as _store   # feature-0043 P0-Z3: 러너 능력 신고(모델
 
 INCLUDE_ORDER = 60  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
+
+
+@router.get("/api/ui-release")
+async def get_ui_release() -> JSONResponse:
+    """Public build metadata only; pending until the whole deployment is verified."""
+    from ui_release import RELEASE_PATH, read_release
+
+    body = await asyncio.to_thread(
+        read_release, RELEASE_PATH, app.STATIC_DIR, os.environ.get("GIT_COMMIT", "unknown"))
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
 def _anonymous_provider_status() -> "dict[str, Any]":

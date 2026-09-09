@@ -141,6 +141,7 @@ x-web-extra: &web-extra
   volumes:
     - ../artifacts/shared:/shared
     - ../artifacts/certs:/certs:ro
+    - ../artifacts/deploy/ui-release:/srv/ui-release:ro
     # TASK-20260828T100000: 연결 지시문이 싣는 CA 지문은 **AI 가 실제로 내려받는 파일**
     # (`/trust/rootCA.crt` = 이 번들)에서 나와야 한다. `/certs/rootCA.pem` 으로 계산하면
     # CA 회전 후 `bin/trust-bundle.sh` 재조립이 누락된 순간 두 파일이 갈리고, 받는 쪽은

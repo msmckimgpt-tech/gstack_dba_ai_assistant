@@ -8,6 +8,10 @@ source_of_truth: false
 
 # Current Report
 
+## 2026-09-09 — 배포 완료 자동 반영
+
+구현·독립 리뷰 PASS. 3초 감지, 안전한 시점 자동 적용, 대화/diff 선택 복원과 롤링 중 적용 억제를 구성했다. [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md)에 검증 경계를 기록한다. 서버 배포 및 설치 DQA 실측은 진행 전이다.
+
 ## TASK-20260909-session-continuity — 그룹의 질문·assistant 문맥 유지
 
 **최종: PR #1649·#1650 반영, 서버9cd10571 두 replica 배포·90초 soak PASS. 설치 DQA Codex 동일 대화 두 요청의 같은 native ID, resumed=false→true, 확정 이력4→6 및 실제 회상 응답 PASS.** 여러 계정의 그룹 앱 왕복은 NOT-RUN이고 그룹 문맥은 서버/프롬프트 회귀로 확인했다. 초기 전달 누락은 아래 이력이며 수정과 재검증을 마쳤다.

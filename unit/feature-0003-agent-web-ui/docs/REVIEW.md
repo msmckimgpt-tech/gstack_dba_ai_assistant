@@ -8506,3 +8506,23 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
 - Human Approval Needed: no
+
+
+## REV-20260909T140000-deploy-refresh-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [backend-security-qa](reviews/20260909T140000-deploy-refresh-backend-security-qa.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
+
+
+## REV-20260909T140000-deploy-refresh-ux-design [SUBAGENT:ux-design] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [ux-design](reviews/20260909T140000-deploy-refresh-ux-design.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
