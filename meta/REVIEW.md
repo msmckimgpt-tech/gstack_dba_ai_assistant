@@ -1932,3 +1932,21 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - **검증**: `bin/wiki-lint.sh` total **32**(baseline 동일 · broken 1 = baseline) · `bin/ssot-lint.sh` **4 WARN**(baseline 동일 · 전량 tracked `.env*.bak*`) · `bin/gen-status.sh --check` **rc=0**(rc=1 → 해소) · 카운트 46 = wiki 카드 46 = STATUS 46행 · 신규 라인 glued `||` **0**(적용 중 발생한 표 행 접합 2건을 적발·분리) · `Log.md` append-only 준수 · §5 집계 = 표 재집계 일치.
 - **verify 한계 명시**: check #1(feature file scope)·#5(STATUS)는 v1.1 deferred 라 통과가 STATUS·wiki 정합을 보증하지 않는다 — 위 타깃별 기계 검증으로 대체했다.
 - Human Approval Needed: **아니오**.
+
+## REV-20260910T060000-META-0076-dqa-field-audit [SUBAGENT:improve-fit-reviewer(§18.8, R1)] — DQA 실무 검증 개선 요구서(DQA-01~09) 설계 로드맵 정합 리뷰 → PASS-with-fixes 반영
+- Related TASK: META-0076-dqa-field-audit
+- Timestamp: 2026-09-10T06:00:00+09:00
+- **cycle**: `ai/claude-corp/META-0076-dqa-field-audit`(base `36c5940f`). **승인 근거: 현재 사용자 직접 지시(2026-09-10)** — 첨부 요구서 2건의 개선 과제를 설계하고 구현은 opus 서브에이전트에 위임·오케스트레이션.
+- **changeset (pure-meta)**: `docs/improvements/dqa-field-audit-20260910/{DESIGN,EVIDENCE}.md` 신규 · `meta/TASK.md` 엔트리 · 본 entry. 코드 무변경.
+- **Trigger**: 설계 로드맵(ROADMAP 스키마) doc-only → §18.8.1 경량 경로 대신 프로젝트 전용 적대 리뷰어 `improve-fit-reviewer` 1라운드(0맥락 착수 계약·entry_point 실측·§7.1/§12.3/§13.2.5-A/§16.7 G1/§17/§18.4·SECURITY §28.6/§34/§44 정합).
+- **입력 근거**: 근거 원장 EVIDENCE(요구서 관측을 `[기록]/[관찰]/[코드]/[사용자]` 4등급으로 고정 — `admin-history.json` 실측: heavy 차단 26건 `error=''`, `step_index` 중복 7쌍, 89,623행 413, 1차 queued 18분57초) + Explore 5건 코드맵(DQA-01/02·03·04/06·05/07·08/09).
+- **R1 = PASS-with-fixes** (spot-check 45+ 참조 중 N 5건). 차단 5 · 비차단 10 · 커버리지 갭 6 → **전건 반영**:
+  1. ITEM-04a 의 실제 변경 지점이 `tools.py:3161` 이 아니라 **`shared/db.py:996 execute_sql`**(alias) — 전 호출자 폭발반경 → 기존 함수 무변경 + `execute_sql_stream` 신설, §17 shared MODIFY 명기.
+  2. ITEM-04b 신규 권한 코드 `conversation.export.read.*` + 역할 grant = §12.3 **Critical** → 설계 변경: 기존 `conversation.file.read.*`(SQL 결과 CSV 와 같은 권한) 재사용, 신규 코드 0건을 AC 로 고정.
+  3. ITEM-05b 비큐레이터 `user_confirmed` 경로 = Product 전 사용자 프롬프트 교차 주입면 → 소유자는 `proposed` 까지, 확정은 `kb.*.curate` 만; `confidence` enum 에 `proposed` 추가.
+  4. §17 shared 편집 미표기(01a·04a·07) → notes 추가. 5. entry_point 오류 5건(`oauth_store.py:644`, `submit_answer:1090`/`_deliver_web_bridge_answer:2239`, `build_bridge_agent.py` 실경로, `_build_step_payload` error 인자 「추가→전달」, ALTER 목록 `:2547-2560`+fast path) 정정.
+  6~15. §5 집계(18 ITEM) · alembic 「착수 시 MAX+1」 통일 · W2 `bridge_heartbeat` 동시 편집(02b 단독 소유, 09a 는 발신만) · cross-feature MODIFY 교차(08·04b·06a) · 02a `ON CONFLICT DO NOTHING`/NULL 폴백 · 03 헬퍼 「INSERT 1행만」(DELETE 상속 금지) · 02c Codex `-c mcp_servers` CLI override · 모호 AC 4건 판정식화(02b-1 영속 위치=`WebAiTasks.Phase`, 01a-3 러너2×50회, 05b-5 문구 검사로 재표현, 07-5 문서 판정식) · E-08a 원인 체인 `[코드]` 추가 · 02c 개정 테스트 목록(`grep -l strict-mcp` 8개).
+  - 커버리지 갭: DB 실패(`failed` decision·AC-02b-1 4케이스) · 내보내기 재시도(`/retry`, `retry_of`, partial|failed 한정) · reference_snapshot/lineage/dedup_key AC(05a-4, ITEM-10 c·d·e) · 순서 역전(AC-02b-2 `(step_index,row_id)`, `row_id` 커서) · 특수문자(AC-03-4) · 진행률/ETA 부정 단언(AC-02b-5).
+- **판정 유지**: Critical = 01a·01b·03(인가 판정·인가 데이터 생성 경로) — `blocked: needs-human-plan-approval`, 착수 전 AskUserQuestion. 04b·05b 는 신규 권한 코드 없음이 AC 로 고정된 조건에서 Major.
+- **verify**: META mode `--pre-commit META-0076-dqa-field-audit` — check #10/#11/#13/#14/#17/#18 PASS, #9 본 entry.
+- Human Approval Needed: **예 — 구현 ITEM-01a·01b·03 착수 승인**(설계 문서 자체의 랜딩은 아니오).

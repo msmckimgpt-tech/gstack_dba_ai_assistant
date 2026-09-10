@@ -58,3 +58,26 @@
 - [x] Backend/QA reviewed shared implementation; findings fixed, final PASS.
 - [ ] PR creation and merge after user confirmation.
 - Acceptance: descriptions explain when/what; command bodies, permissions and custom wrappers preserved.
+
+## META-0076-dqa-field-audit — DQA 실무 검증 개선 요구서 설계·오케스트레이션 (2026-09-10)
+
+- 요청(현재 사용자 직접 지시): 첨부 요구서 2건(`01_DQA_실무검증_개선요구서.md`·`02_DQA_개발AI_전달프롬프트.md`)의 DQA-01~09 개선 과제를 **설계**하고, 설계 완료 후 실제 구현은 **opus 서브에이전트에 위임**하며 본 세션은 오케스트레이션만 수행한다.
+- 상태: in-progress — 설계(EVIDENCE·DESIGN) 작성 중. 구현은 항목별 별도 feature cycle(ITEM-xx → `feature_id` 별 worktree)로 진행하며 본 META cycle 은 설계 산출물 + 오케스트레이션 원장만 소유한다.
+- 작업: worktree `.worktrees/META-0076-dqa-field-audit`, branch `ai/claude-corp/META-0076-dqa-field-audit`, base `36c5940f`.
+- 정책: `AGENTS.md` SHA-256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef` (진입 시점, worktree 동일).
+- 위험: 본 META cycle 자체는 **Minor**(docs/improvements 설계 문서 + meta 원장, 코드 무변경). 설계가 정의하는 구현 ITEM 중 ITEM-01(인수 계정 경계)·ITEM-03(Product 초기 권한)은 인가 코드 변경이라 **Critical** — 각 ITEM cycle 착수 전 §7.1·§12.3 명시 승인을 AskUserQuestion 으로 받는다(요구서의 항목별 완료 기준은 설계 입력이며 §12 승인을 대체하지 않는다). 나머지 ITEM 은 Major/Minor 로 설계 문서에 항목별 명시.
+- 근거 접근: 요구서 §7 근거 루트(`/mnt/e/.../dqa-work`)는 읽기 전용으로 필요한 파일만 확인했고, 원문 로그·SQL·계정 식별자 값은 산출물에 복제하지 않았다(EVIDENCE.md 인용 규칙).
+
+### 2.1 Implementation Plan (설계 cycle)
+
+1. `docs/improvements/dqa-field-audit-20260910/EVIDENCE.md` — 요구서 관측 항목별 근거 등급(`[기록]/[관찰]/[코드]/[사용자]`) 고정. 현 코드 file:line 확정 결함과 재현 필요 관찰을 구분.
+2. `docs/improvements/dqa-field-audit-20260910/DESIGN.md` — `_TEMPLATE-ROADMAP.md` 스키마(ITEM 단위: feature_id·risk·depends_on·entry_points·acceptance·guards) + 병렬 wave 계획(핫스팟 WIP ≤2, §13.2.5-A) + 검증 매핑(요구서 §6 필수 검증 → 테스트/실측). 다른 세션(opus 서브에이전트)이 0 맥락으로 읽고 착수 가능해야 한다.
+3. `meta/REVIEW.md` 엔트리(META mode check #9) → `verify-completion --pre-commit META-0076-dqa-field-audit` → commit → push → PR → merge(§16.5.1). 설계 문서가 main 에 랜딩된 뒤 각 ITEM 을 서브에이전트에 dispatch.
+4. 오케스트레이션 원장: 각 ITEM 의 worktree/branch/PR/검증 결과를 `DESIGN.md §5 진행 현황` 에 갱신(improve_cycle 상태 모델과 동일 — pending→in-progress→done/blocked).
+
+### 수용 기준
+
+- AC-META-0076-1: DESIGN.md 의 모든 ITEM 이 요구서 DQA-id·UX-id 를 인용하고 EVIDENCE 근거 ID 로 뒷받침된다(근거 없는 결함 단정 0).
+- AC-META-0076-2: 각 ITEM 이 `feature_id`(verify 정규식 충족)·entry_points(file:line)·acceptance(요구서 완료 기준 매핑)·guards 를 갖고, 종속 그래프가 DAG 다.
+- AC-META-0076-3: wave 계획이 같은 핫스팟 파일(`ai_tools.py`·`tools.py`·`_conv_store.py`·`handler.py`·`messages.js`)의 동시 편집을 2 이하로 제한한다.
+- AC-META-0076-4: Critical ITEM 은 사용자 승인 전 착수하지 않으며, 미승인 시 `blocked: needs-human-plan-approval` 로 표기된다.
