@@ -291,7 +291,7 @@ def test_valid_replacement_token_does_not_reuse_a_revoked_active_token(bridge, m
 
 def acknowledge(b, state="ready", instance=None):
     doc = {"instance":instance or b.plan.selection_instance, "pid":getattr(b._runner_proc,"pid",None),
-           "locations":{n:{"state":state,"failed_at":time.time_ns(),"target":{k:getattr(st,k) for k in ("path","where","distro","user")}}
+           "locations":{n:{"state":state,"failed_at":time.time_ns(),"target":{k:getattr(st,k) for k in ("path","where","distro","user")} | {"selection_id": b._selection_ids[n]}}
                         for n,st in b._selected.items()}}
     (b.plan.home/"runtime-selection.ready.json").write_text(json.dumps(doc))
 
@@ -374,3 +374,22 @@ def test_add_platform_during_supervisor_backoff_preserves_existing_selections(br
     assert set(json.loads((b.plan.home/"runtime-selection.json").read_text())) == set(b._selected)
     assert b._connection_state(gemini)["state"] == "pending"
     spawn.assert_called_once()
+
+
+def test_selection_ids_preserve_other_platform_and_reject_old_receipt(bridge):
+    b, _ = bridge
+    b.act('connect', {'id': 'claude'})
+    first = json.loads((b.plan.home/'runtime-selection.json').read_text())
+    b.act('connect', {'id': b._states[1].label})
+    both = json.loads((b.plan.home/'runtime-selection.json').read_text())
+    assert both['claude']['selection_id'] == first['claude']['selection_id']
+    acknowledge(b)
+    stale = (b.plan.home/'runtime-selection.ready.json').read_text()
+    acknowledge(b, state='failed')
+    b.act('connect', {'id':'claude'})
+    retry = json.loads((b.plan.home/'runtime-selection.json').read_text())
+    assert retry['claude']['selection_id'] != first['claude']['selection_id']
+    assert retry['codex']['selection_id'] == both['codex']['selection_id']
+    (b.plan.home/'runtime-selection.ready.json').write_text(stale)
+    assert b._connection_state(b._selected['claude'])['state'] == 'pending'
+    assert b._connection_state(b._selected['codex'])['state'] == 'ready'

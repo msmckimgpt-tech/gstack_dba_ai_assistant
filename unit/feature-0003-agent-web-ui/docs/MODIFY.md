@@ -9,6 +9,51 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260909T163000-attach-csv-table (첨부 `.csv`/`.tsv` 표 렌더, Minor §12.3)
+
+**변경**:
+
+- `src/static/app/attach-diff.js`
+  - **신규** `parseDelimitedText(text, delim)` — RFC 4180 파서(export: 하네스가 정본을 직접
+    부를 수 있어야 자기 사본을 시험하지 않는다). 인용 필드·`""` 이스케이프·필드 안 구분자/개행·
+    CRLF·BOM·짝 없는 따옴표(절단본)·행별 열 수 불균일을 **값 보존**으로 처리한다.
+  - **신규** `_tableDelimiter(filename)` — 확장자 → 구분자. 판정 정본은 `code-highlight.js`
+    레지스트리 하나(`csv` → `,`, `tsv` → `\t`). 목록을 두 벌 두면 한쪽만 갱신된다.
+  - **신규** `_renderDelimitedInto(container, text, delim)` — 첫 레코드를 `<thead>`, 나머지를
+    `<tbody>`. 행 번호는 **파일 레코드 번호**(머리글=1), 수치 셀은 `is-num`(우측 정렬),
+    셀 값은 `textContent` 로만. 머리글 한 줄뿐이면 그 사실을 말한다.
+  - **신규** `TABLE_COL_CAP=200` · `TABLE_CELL_CAP=30000` + `_tableClipNotice`/`_tableFallbackNotice`.
+    서버는 줄 수만 자르고 열 수·셀 총량은 모른다 — 6,000행 × 300열이면 표를 만드는 순간 창이 멎는다.
+  - `_renderSource` — `opts.table` 분기 추가(마크다운 분기와 배타. 확장자 하나가 두 언어로
+    판정되지 않으므로 호출부에서도 동시에 켜지지 않는다). 실패 시 원문 표로 폴백.
+  - `_renderSourceBody`·`_renderBody` — 표 배너를 마크다운과 **같은 자리**에 싣는다(둘 다
+    채워질 수 없다). 폴백 시 컨트롤을 화면과 일치시키되 **저장값은 건드리지 않는다**(강등은
+    사용자의 선택이 아니므로 다음 열람에서 다시 시도한다).
+  - `openAttachmentSourceModal`·`openAttachmentDiffModal` — «표로 보기» 토글(`attachSourceTable`,
+    기본 켬) **양쪽에** 배선. 노출은 `sourceView` 한정, 표 렌더 중 구문 색 토글 숨김.
+    응답이 파일명을 정정하면 `tableDelim` 도 함께 재계산한다(말풍선 칩 경로는 파일명을 넘기지 않는다).
+- `src/static/css/chat.css` — `.attach-source-table*` 신설. sticky 머리글(+`border-collapse:
+  separate` — collapse 면 테두리가 함께 스크롤된다), `table-layout: auto` + `width: max-content`
+  (열 폭이 내용을 따라간다), 셀 `pre-wrap`(인용 필드는 여러 줄일 수 있다), 수치 셀 `tabular-nums`,
+  줄무늬. `.attach-source-tablewrap` 은 **자체 스크롤 컨테이너가 아니다**(sticky 기준이 부모
+  `.attach-diff-scroller` 여야 한다). `.attach-source-mdtoggle[hidden]`/`.attach-source-tabletoggle[hidden]`
+  강제 추가 — 이 파일이 두 번 겪은 «`display` 선언이 UA `[hidden]` 을 이기는» 트랩의 예방.
+- **신규** `tests/verify_attach_source_table.mjs` — jsdom 행위 하네스 73 단언(파서 계약·무손실
+  왕복·토글 판정·렌더 구조·XSS·원문 복귀/영속·상한·배타·폴백·CSS). 뮤턴트 **15종 전건 KILL**.
+- **신규** `tests/test_attach_csv_table.py` — 구조 가드 10건. **서버 도달성**(`Kind` 지도의 `csv`
+  ↔ `_VERSION_DIFF_TEXT_KINDS`)을 함께 단언한다 — 프론트만 고치고 서버 kind 가 막고 있으면
+  기능은 0% 인데 프론트 테스트는 전부 green 이다. 음성 대조군 3건 포함(§16.7 G11-b).
+
+**사유**: 사용자 요청(2026-09-09) "DQA클라이언트 첨부파일 중, csv 확장자가 표 형태로 출력될 수
+있도록 구성해주세요." 종전 화면은 CSV 를 줄 단위 평문으로 보여 주고 구문 색이 구분자만 강조했다
+— 열이 눈으로 갈리지 않아 사용자가 표를 머릿속에서 재구성해야 했다. `.md` 를 문서로 렌더한
+선행 요청과 같은 성격이라 같은 관용구(원문은 토글로 남기고 기본은 렌더)를 따랐다.
+
+**영향 범위**: 프론트 표시 계층 한정. 서버·스키마·마이그레이션·RBAC·엔드포인트·저장 형식 변경
+0. 원문 보기는 토글로 그대로 남으므로 종전 동작이 사라지지 않는다. `.md`·`.sql` 등 다른 확장자의
+화면은 불변(하네스 C5·C5b·H1·H2 가 무회귀를 고정).
+
+
 ## CHG-20260901T1900-conv-status-dot-wiring (사이드바 상태 배지 색 배선 복원 + 배선 게이트, Minor §12.3)
 
 **변경**:
@@ -5997,8 +6042,161 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - PR #1606 및 서버·DQA 1.1.1 채널 배포 완료와 실제 앱 업데이트 조회·다운로드 검증을 TASK/REPORT/test-runs에 기록한다. 제품 코드·FUNCTION·정책 변경 없음.
+## CHG-20260908T125500-step-tool-syntax-leak
 
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak; REQ-20260908T125500-step-tool-syntax-leak; 위험도 Major §12.3(표시 계층 + 비신뢰 입력 처리, 스키마·RBAC·엔드포인트·마이그레이션 0).
+- Timestamp: 2026-09-08T13:20:00+09:00; session: claude ai/claude/feature-0003-step-tool-syntax-leak.
+- **변경과 이유**: 실행 단계 패널의 제목이 `describe_table {'schema_name': 'coupon', 'table_name': 'dbo.T_COUPON'}` 처럼 도구 호출 구문 그대로였다. 라이브 원장(`agent_runtime.steps`) 실측 — `work_source='external-ai'` **30행 중 19행(63%)** 이 그 형태. 출처는 연결된 개인 AI 가 `POST /api/ai/tools/<name>` 본문에 실어 보내는 `work` 이고, 브리지 프롬프트는 그 필드를 규정조차 하지 않아 **계약 없는 비신뢰 입력**이었다. 서버가 판정·대체하도록 바꿨다(프롬프트는 지시이지 집행이 아니고, 러너는 사용자 PC 에 있어 낡은 빌드가 남는다).
+- **파일**: `routers/_conv_store.py`(판정기 `_step_text_is_tool_syntax`·`_sanitize_step_narration`·파생 꼬리 `_derive_step_work_tail` 신설 + `_resolve_step_display` 배선) · `routers/ai_tools.py`(`_bridge_step_narration` 도구명 인자 + 적재 차단, `_bridge_live_steps` 표시 정합, `_bridge_derived_narration` 식별자 폴백 제거) · `app.py`(re-export 3) · `static/app.js`(`TOOL_LABEL_MAP` 7→28 · `toolLabel` 미지 폴백 `"도구"` · `stepTitleText` 신설) · `static/app/progress.js`(같은 폴백).
+- **저장된 원문은 건드리지 않는다** — 판정은 표시층 전용이다. 감사·재현 가치가 있고, 판정이 틀렸을 때 되돌릴 근거가 사라지지 않는다.
+- **적대 검증이 잡은 것 2건**: ① 라이브 19행 재생에서 **파생 문구 자신이 판정기에 걸림**(백틱 감싼 식별자로 시작 → `sanitize(derive(x))` 가 고정점 아님). (c) 규칙을 «인용 없는» 식별자로 좁히고 `test_l2_derived_narration_is_a_fixed_point` 로 서버 도구 census 전체에 불변식을 걸었다. ② codex P2 — **사유(reason)는 대체값이 없는 축**이라 (c) 를 적용하면 `order_items 테이블에 …` 같은 정상 설명이 순수 손실된다. 사유에는 (a)·(b) 만 적용하도록 세 이음매를 모두 좁혔다.
+- **검증**: `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`. 라이브 재생 유출 18→**0**, pytest 전량 PASS. (하네스·테스트 수치는 라운드 2·3 을 거쳐 바뀌었다 — 현행 값은 `docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md` 가 정본.)
+- **되돌리기**: 이 cycle 을 git revert 후 web 재배포. 데이터 변경이 없으므로 되돌리면 종전 표시(원문 그대로)로 즉시 복귀한다.
 
+## CHG-20260908T134000-step-tool-syntax-leak-r2
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak; 위험도 Major §12.3(변동 없음).
+- Timestamp: 2026-09-08T13:40:00+09:00; session: claude ai/claude/feature-0003-step-tool-syntax-leak.
+- **적대 검증 라운드 1 이 4명 전원 BLOCK 을 냈고, 그 뿌리는 초판 판정기였다.** backend 가
+  라이브 원장 **9,759행 전건 재생**으로 실측: 「인용 없는 snake_case 로 시작」 규칙이 걸러낸
+  412행 중 실제 도구 구문은 **18행뿐**, 394행(96%)이 정상 제목이었다(손익비 1:22). 이 도메인은
+  테이블 이름이 곧 사용자의 어휘라 그 형태를 금지 서명으로 쓸 수 없다.
+- **재설계**: 판정 서명을 (a) 인자 매핑 리터럴 + (b) **서버 도구 census 의 이름** 둘로 좁히고,
+  NFKC + 제로폭·bidi 제거로 전각 우회를 닫았다. 표시 문구를 만드는 **단일 이음매**
+  `_step_display_narration` 을 두어 완료·진행 두 경로가 그것만 부르게 했다 — 파생값 재정화
+  (비신뢰 `args` 재주입 차단) · 길이 상한 · 출처 정직화 · None-safe 를 한 자리에서 지킨다.
+- **사유 축 분리**: 사유에는 (a) 만 적용하고 표시 경로에 `_derive_step_reason` 파생을 배선했다.
+  대체가 없는 축에 같은 규칙을 쓰면 정상 설명이 순수 손실된다(라이브 8건 실측).
+- **함께 닫은 갈래**: `_DERIVED_WORK_TAIL` 인자 인지 콜러블 승격(진행/완료 제목 동일성) ·
+  `agent_core._derive_step_work` 3번째 인자 오배선 · census 를 정의 조회로 전환 + 배출 전용
+  2종 편입 · `intent` 를 공유 화이트리스트·진행 payload 에서 제거 · 프런트 백틱 제거 ·
+  activity 렌더러의 `intent` 폴백 제거 · 배지 폭 CSS 고정 · 라벨 어휘 교정.
+- **게이트 자체의 결함도 고쳤다**: `_fn_body` 가 주석을 제거하지 않아 존재 단언이 주석에
+  걸렸고(G11-a), 「make test 에 node 가 없다」는 **사실이 아닌 전제**로 만든 CI-gap 탈출구가
+  L6·L7·L8 을 동시에 무력화하고 있었다(Makefile 이 node 를 설치한다). 탈출구를 없애고
+  음성 대조군을 **산출물 주입**으로 바꿨다.
+- **검증**: 재생 후 버려진 제목 19건(전부 도구 표기) · 버려진 사유 **0건** · 잔존 유출 **0건**.
+  `docs/test-runs.d/TASK-20260908T125500-step-tool-syntax-leak.md`.
+- **되돌리기**: 데이터 변경 0 — git revert 후 web 재배포하면 종전 표시로 즉시 복귀한다.
+
+## CHG-20260908T124500-attach-folder-tree
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree (REQ-20260908-attach-folder-tree).
+- 첨부 전달의 단위를 **파일**에서 **폴더(디렉토리 트리)** 로 넓히고, 그 구조를 저장·표시·프롬프트
+  세 면에서 보존한다. 사용자 요청(2026-09-08).
+
+### 스키마 (additive · 기존 데이터 무손실)
+
+- `routers/_bootstrap_schema.py`: `WebConversationAttachments` CREATE 에 `RelativePath VARCHAR(1024) NULL`
+  추가 + 신규 `_ensure_attachment_relative_path_schema` (컬럼 존재 선확인 → `ALTER … ALGORITHM=INPLACE,
+  LOCK=NONE`, 실패는 error 로그로 표면화). **fast path(`_ensure_seed_catchup`)·slow path
+  (`_ensure_web_tables`) 양쪽 배선** — 운영 재기동은 slow path 를 안 타므로 fast 누락 시 컬럼이 영영 안 생긴다.
+- `alembic/versions/20260908_0059_attachment_relative_path.py` (+ `MAX_MIGRATION.txt`),
+  `scripts/agent_runtime_schema.sql`: PG `agent_runtime.core_attachments.relative_path varchar(1024)`.
+- `modules/attachment_pg_mirror.py`: dual-write 3면(MySQL SELECT 계약 · PG alias · UPSERT/params).
+
+### shared
+
+- **신규** `shared/attachment_path.py` — 경로 정규화·체인 키·트리 렌더의 단일 정본(web·agent-core 공용).
+  traversal(`..`)·절대경로·드라이브 접두·제어문자 제거, 깊이 32·길이 1024 상한, **파일명이 권위**
+  (경로 마지막 세그먼트를 업로드된 파일명으로 고정).
+
+### 백엔드 (feature-0003)
+
+- `routers/conversations.py`: 업로드가 `relative_path` 폼 필드 수용 → 정규화 → INSERT.
+  체인 조회에 경로 전달.
+- `routers/_conv_store.py`: `_find_latest_same_name_attachment` 스코프를
+  `(conv, account, RelativePath 또는 OriginalFilename)` 로 확장 — **경로 있는 행과 없는 행은 섞이지 않는다**.
+  assistant 편집본 INSERT 와 fork 복사가 원본 경로를 승계. `_serialize_attachment_for_api` 에 `relative_path`.
+- 첨부 표준 컬럼셋 SELECT 8곳에 `RelativePath` 추가.
+
+### 프론트 (feature-0003)
+
+- `static/index.html`: `+` 메뉴에 "폴더 첨부" 항목 + `#attachDirInput`(`webkitdirectory`).
+- `static/app/composer.js`: 업로드 파이프라인을 `(File, relativePath)` 쌍으로 일반화
+  (`_toAttachUploadItem`), 드롭 디렉토리 **재귀 순회**(`_collectDroppedUploadItems` — `readEntries` 를
+  빈 배열까지 반복해 큰 폴더의 뒷부분 유실 방지), 300개 상한(초과 시 **자르지 않고 멈춤**),
+  dedup 축에 경로 포함, pill 폴더 배지, 배치 요약을 "폴더 N개(파일 M개)" 로.
+- `static/css/chat.css`: `.pill-folder`.
+
+### assistant (feature-0002)
+
+- `agent_core.py`: 첨부 SELECT 2곳(PG/MySQL)에 경로를 **끝에 append**(row[14] — 기존 positional index 보존),
+  파일 라인에 `path="..."`, 순회 후 `## DIRECTORY STRUCTURE OF ATTACHED FOLDERS` 블록 1회 렌더
+  (**폴더 첨부가 있을 때만** — 없으면 종전 출력과 동치). `read_attachment` 가 경로로 파일을 지칭
+  (경로 정확 → 이름 정확 → 경로 접미 → 이름 부분), 다중 후보 안내에 경로 표기.
+- `modules/tools.py`: `read_attachment` 도구 설명·`filename` 파라미터가 경로 수용을 명시.
+
+### 테스트
+
+- **신규** `unit/feature-0002-agent-core/tests/test_attach_folder_tree.py` (22건),
+  `unit/feature-0003-agent-web-ui/tests/test_attach_folder_upload.py` (10건).
+- `test_attachment_versioning.py`: INSERT 바인딩 **위치 하드코딩**(`ins[10]`)을 내용 기반 조회
+  (`_meta_json_param`)로 교체 — 컬럼이 늘 때마다 무관한 테스트가 깨지던 취약성을 제거(이번에 실제로 깨졌다).
+
+## CHG-20260908T133000-attach-folder-tree-panel-fixes
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree · REV-20260908T133000-attach-folder-tree.
+- §18.8 full panel 적발분 반영 (P1 3 · P2 10 · P3 5). 상세 근거는 REVIEW entry.
+
+### 보안 (프롬프트 경계)
+
+- `agent_core.py`: 트리 블록 구획을 **마크다운 펜스 → datamark sentinel**(`_datamark_untrusted`)로
+  교체하고, 세그먼트·라벨을 `_flatten_untrusted_name` + 백틱 중화로 정제. `path="…"` 라벨도 동일
+  정제 + 따옴표 치환. 컬럼 부재 시 **경로 없이 재조회**하는 degrade 폴백(첨부 섹션 소실 차단).
+- `shared/attachment_path.py`: `filename` 권위 override 가 `.`/`..` 를 되살리던 경로 차단.
+
+### 방어 위치
+
+- `routers/_conv_store.py`: `_attachment_count_cap()`(기본 1000, `ATTACHMENT_MAX_COUNT_PER_CONV`)
+  신설 + 기존 conv 집계에 `COUNT(*)` 를 얹어 대화당 첨부 **개수** 상한을 서버에서 집행
+  (300 상한이 클라이언트에만 있어 API 직접 호출로 우회되던 것).
+
+### 프론트 (사용자가 실제로 보는 것)
+
+- `app/composer.js`: 계보 그룹 키를 경로 기반으로(백엔드 체인 스코프와 동일 술어) ·
+  **서버 목록 행에 폴더 칩** + 마지막 2단 표기 · 드롭 순회 진행 토스트 · 열거 상한 ·
+  잠금 검사를 순회 앞으로 · 파일 input 게이트 일치 · 상한 문구 통일 · 배치 요약에 실패 사유 ·
+  낱개/폴더 분리 집계 · 서버의 경로 거절을 화면이 덮던 폴백 교정 · pill DOM 순서(이름·폴더·크기).
+- `routers/conversations.py`: 목록 정렬 1차 키에 디렉토리 추가(같은 폴더 파일이 붙어 선다).
+- `css/chat.css`: `.pill-folder` `flex: 0 1 auto`(초판 `0 0 auto` 는 파일명을 먼저 잘랐다) ·
+  `--muted`(미정의 토큰) → `--text-2` · `.attach-list-item-folder` 폭 상한 + 줄바꿈 방지
+  (실 캡처에서 긴 칩이 행 버튼을 밀어 행 높이가 갈리던 것).
+- `index.html`: 드롭 오버레이·컴포저 안내·`+` aria-label 에 폴더 반영.
+
+### 프롬프트 예산
+
+- `agent_core.py`: `_ATTACHMENT_TREE_MAX_LINES`(200, env 조정) — 초과 시 디렉토리 단위로 접고
+  파일 수를 남긴다. `shared/attachment_path.render_directory_tree` 에 `max_lines` + 동명 leaf
+  dedup(`(N versions/lineages)`) 추가.
+
+### 테스트
+
+- `test_attach_folder_tree.py` +8건 (`PanelFindingsRegressionTest`·`SharedHelperHardeningTest`) —
+  펜스 탈출·개행 주입·라벨 위조·중복 leaf·트리 상한·경로 예외 문구·override traversal·접힘 관측성.
+  각 항목이 결함의 **기전**을 겨냥한다(§16.7 G10 — 점수정이 아니라 구조로 잠근다).
+
+## CHG-20260908T140000-attach-folder-tree-backend-round
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree · REV-20260908T133000-attach-folder-tree (라운드 2).
+- §18.8 backend·qa 렌즈 적발분 (P1 3 · P2 8 · P3 2). 뮤테이션 테스트가 「통과하는데 비어 있던」
+  구간을 드러냈다 — 상세 근거는 REVIEW 라운드 2.
+
+- `agent_core.py`: `_load_scoped_attachment_rows` 에 컬럼 부재 degrade 폴백(형제 함수와 동형).
+- `scripts/attachment_backfill.py`: PG 계약 4면 배선 + `ON CONFLICT` 가 **빈 경로만** 치유
+  (`COALESCE` — 기존 행 보존 멱등은 유지). docstring 정합.
+- `shared/attachment_path.py`: 깊이·길이 상한 초과를 **폐기 → 꼬리 보존**
+  (`…/en/messages.json`). 폐기하면 형제 파일이 한 체인으로 합쳐져 supersede 된다.
+- `routers/_conv_store.py`: `_load_filename_lineage_heads` 스코프를 경로 기반으로 ·
+  개수 캡을 live head(`SupersededAt IS NULL`) 기준으로.
+- `routers/attachments.py`: `/versions` 가 경로 스코프로 조회하고 `lineages[].relative_path` 노출.
+- `routers/conversations.py`: 일괄 다운로드 SELECT 에 경로 + `_zip_entry_name` 이 디렉토리 보존
+  (세그먼트별 zip-slip 방어 동반).
+- `routers/_bootstrap_schema.py`: ALTER 실패 로그 문구를 실제 blast radius(전 첨부 API 500)로 정정.
+- `static/app/composer.js`: `_mergeServerRelativePath` 헬퍼로 서버 경로 권위를 **3 병합 지점 전부**에
+  적용(초판은 1곳만 고쳐 lazy 생성·staged flush 가 마스킹을 유지했다).
+- 테스트 +12건 (`read_attachment` 경로 해소 4 · backend 적발분 회귀 7 · 상한 계약 재작성 1) —
+  신규 총 **52건**.
 ## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
 - Timestamp: 2026-09-08T12:34:00+09:00
 - Related TASK: TASK-20260908T120000-connect-discovery-ux
@@ -6023,3 +6221,354 @@ CSS 수정 효과도 실측했다: 파싱된 `checking` 셀렉터 **0 → 7건**
 - TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
 - 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
 - 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- 사용 불가 위치와 사유를 연결된 AI에서도 표시한다. 권한 거부는 선택/로그인 동작을 노출하지 않고, 로그인 필요인 answers:null 위치는 로그인 동선을 유지한다. 공통 client-connect.css로 주 SPA와 독립 연결 페이지 양쪽에 적용한다.
+- 테스트/실측 정본: feature-0046-native-client/docs/test-runs.d/20260908-codex-connect-fix.md.
+
+## CHG-20260908T063000-prompt-layers
+- Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
+## CHG-20260908T150000-attachment-boundary
+
+- Related: REQ-20260908-attachment-boundary / TASK-20260908T150000-attachment-boundary
+- Timestamp: 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+- 마지막 fence 탐색으로 후속 답변을 저장하던 결함 수정. outer/inner fence 추적, 인용 비실행. 성공 문구 제거와 빈본문 보존. REPORT 및 test-runs.d/TASK-20260908T150000-attachment-boundary.md 참조.
+
+## CHG-20260908T152700-attachment-boundary-deployed
+
+- 2026-09-08T06:27:43.349266+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. TASK-20260908T150000-attachment-boundary 출하 결과 기록. PR #1629, serving e8fd398b; full deployment exit 0, 7서비스 56검사, 10파일 읽기 전용 재현 PASS. 런타임 코드 추가 변경 없음.
+
+## CHG-20260908T153000-attachment-verification-format
+
+- TASK-20260908T150000-attachment-boundary 검증 기록의 EOF 서식 정리와 원격 동기화 체크 기록.
+
+## CHG-20260908-attachment-cycle-cleanup
+
+- Timestamp: 2026-09-08T06:38:22.052443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+Related TASK: TASK-20260908T150000-attachment-boundary. cycle-init/finalize의 worktree 목록 조기 종료 제거와 대용량 목록 회귀 2건 추가. 작업 정리 실패의 근본 원인인 pipefail/SIGPIPE를 해소한다. 기존 첫 경로 선택 의미 유지.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.
+- 실제 UI에서 발견한 사용 불가 안내의 Markdown 강조 표식을 공통 연결 패널에서 일반 텍스트로 표시한다.
+
+## CHG-20260908T160200-codex-verified-closeout
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+
+## CHG-20260908T162000-tool-surface
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:01:57.915443+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+조회 도구가 내부에는 있지만 외부 allowlist/MCP/러너 안내가 달라 HTTP404를 반환했다. explicit allowlist + core Schema의 catalog를 조립하고 5조회 연결·9제한 대체경로 전달. 검색 범위/현재 권한/EXPLAIN 검증 결함 보강. 상세 TOOL_SURFACE_AUDIT.md.
+
+## CHG-20260908T172000-tool-surface-deploy-proof
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Timestamp: 2026-09-08T08:20:41.263318+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea
+
+PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비스 healthy·90초 soak·56배포본 계약검사 PASS, 실제 task 권한 catalog/미허용 datasource/첨부 대체경로 확인. 실제 SQL Server는 새 웹·기존 워커·호스트 모두 연결 timeout이어서 프로시저 결과 성공과 구분한다. 신규 AI 응답0으로 fixed:deployed:unverified-live 유지. 정본: [배포·미실측 기록](test-runs.d/TASK-20260908T162000-tool-surface.md). 제품 코드 추가 변경 없이 증거·제한을 문서화한다.
+
+## CHG-20260908T160000-step-tool-syntax-postmerge
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak. 제품 코드 변경 **0** — 병합·증적만.
+- 최신 `origin/main`(cdd414e3, 46커밋) 흡수. 충돌 3건(FUNCTION·REPORT·TASK)은 전부 «양쪽 말미
+  append» 라 §16.4 자율 해결(양측 보존). 결과 검증(MUST): 양쪽 부모 대비 유실 파일 **0건**,
+  이 cycle 핵심 심볼 6종 생존, main 신규 파일 153건 생존, main 고유 변경분 == 병합본.
+- 병합 후 재검증 **8,267건 / 실패 2**. 그 2건(`test_route_parity_p5b` 골든 스냅샷 269→271,
+  `test_bridge_interrupt_stream` 명시 도구 라우트 7→8)은 **pristine origin/main 에서도 동일**하게
+  실패하는 선재 결함이다(다른 세션이 라우트를 추가하며 골든·개수 단언을 갱신하지 않음).
+  본 cycle 대비 차집합 0. 병합 전 단독 실행은 8,143건 전량 PASS.
+## CHG-20260908T125500-share-client-entry
+
+- Related TASK: TASK-20260908T125500-share-client-entry (REQ-20260908-share-client-entry).
+- `shared/dqa_identity.py`: `MAX_APP_PATH` · `safe_app_path()` · `app_open_url()` 신설 —
+  「이 화면을 앱에서 열어라」 딥링크의 **조립 정본**. 연결용 `scheme_url()` 은 무변경.
+- `unit/feature-0046-native-client/src/client/core.py`: `safe_app_path()` 사본(테스트가
+  정본과 같은 표로 대조) · `parse_scheme_url` 이 `path` 수용(부적격이면 키만 버림) ·
+  `ConnectPlan.path` · `request_show(home, path)` + `show.path` · `take_show_request` 가
+  bool → `str | None`(목적지 경로) 로 반환 계약 변경.
+- `client/gui.py`: `--path` 인자 · plan 주입 · 이미-실행 분기의 목적지 전달 ·
+  `_watch_show_requests(…, plan, br)` 가 `Shell.navigate` 후 `show()` ·
+  `_serve_confirms` 의 `reopen(dest)`. `client/window.py`: `Shell.navigate()` 신설.
+- `unit/feature-0003-agent-web-ui/src/routers/share.py`: `_share_client_entry()` 신설 +
+  `/api/public/share/{token}` 응답에 `client: {app_link, download_url}` 1블록 추가.
+  받기 URL 은 `oauth_as._client_download_url` 위임(판정 정본 1개). 기존 필드·게이트 무변경.
+- `static/share-client-context.js`(신규): 정본 `app/client-bridge.js` 를 import 해
+  `window.__dqaClientBridge` 로 얹는 어댑터. 좌표 규약을 재구현하지 않는다.
+- `static/share.html`: 액션 바에 `shareAppEntryBtn`·`shareAppGetLink`·`shareAppHint` 추가,
+  `shareLoginLink` 제거, 컨텍스트 모듈(module) → `share.js`(defer) 순서 계약.
+- `static/share.js`: `inClientApp()`·`appEntryIsUseful()`·`enterViaApp()` 신설, 액션
+  가시성 이원화, `_latestClient` 스냅샷. `static/share.css`: `.share-app-btn` ·
+  `.share-app-get` · `.share-app-hint` 규격(기존 hover/터치/reduced-motion 그룹에 편입).
+- 테스트: `test_share_client_entry.py`(신규 15) · `verify_share_client_entry.mjs`(신규 30,
+  jsdom + 양성 대조군) · `test_wsl_and_scheme.py`(양벌 경로표·왕복·degrade 추가) ·
+  `test_standalone_launch.py`(목적지 전달 5건 추가 + 반환 계약 갱신) ·
+  `test_share_bar_layout.py` L3(웹 로그인 링크 제거 반영).
+
+## CHG-20260908T141000-share-client-entry-panel
+
+- Related TASK: TASK-20260908T125500-share-client-entry. **적대 검증 2라운드 조치** —
+  1R(security·ux·qa 전원 BLOCK) → 조치 → 2R(security BLOCK · ux CONCERN) → 조치.
+  지적·근거 원문은 [reviews/…-r1.md](reviews/20260908T132000-share-client-entry-r1.md) ·
+  [reviews/…-r2.md](reviews/20260908T141000-share-client-entry-r2.md).
+
+### 보안
+
+- `shared/dqa_identity.py` · `client/core.py`: `safe_app_path` 가 **`?`·`#` 거부**(1R F1 —
+  통과하면 `panel_url` 쿼리가 두 벌이 되어 브리지 nonce 를 링크 제작자가 덮어쓴다, 실행 재현).
+- `client/appwindow.py`: `panel_url` 을 f-string 연결에서 **urlsplit + 좌표 강제 덮어쓰기**로
+  교체(방어 이중화 — 검증기가 뚫려도 조립이 막는다).
+- `client/core.py`: `parse_scheme_url` 이 host 로 **액션 분기**(`open` → `base`·`path` 만) —
+  1R F3. `_write_private()` 신설(0600 원자 교체) — 1R F2. 고아 정리를 **mtime 기반**으로 — 1R F4.
+  2R B2 로 `fchmod` 를 **POSIX 한정**(Windows 는 no-op·3.12 이하는 AttributeError), 2R B3 으로
+  **목적지 실패가 신호를 죽이지 않게** + 실패 경로 `close → unlink`.
+- `static/app/client-bridge.js`: 좌표 보관을 **allow-list** 로(`_PERSIST_SURFACES`) — 1R X1 의
+  deny-list 는 `/static/share.html` 로 뚫렸다(2R B1, 라이브 200 확인). 좌표 **모양 검사**
+  (포트·nonce 형식 + 쿼리 말미) — 2R C1(개수만 세면 흡수 파라미터로 우회된다).
+- `client/gui.py`: 딥링크 `base` 에도 **동봉값 대조** — 2R C2(pin 이 없으면 무경고였다).
+- `docs/SECURITY.md` §7: 익명 응답 새 필드 등재 + **우회 가능 범위**와 **미서명 설치기 실행
+  유도** 위험 명시.
+
+### UX
+
+- `static/share.js`: 열화 조건을 셋으로(앱 링크 부재 · **받을 곳 부재** · **앱이 존재할 수 없는
+  기기**) — 1R HIGH·§3. `already_member` 의 «대화로 이동» 을 게이트 밖으로 + 라벨·설명에서
+  «참여» 제거 — 1R MED·2R F3. 상시 설명 1줄 + live region 순서 교정 + 버튼 자체 피드백
+  (「앱을 여는 중...」) — 1R CONCERN·2R F2. `inClientApp` URL 2차 신호. `syncFooterSpacing`
+  (ResizeObserver) + **인쇄 가드** — 1R MED·2R F1. `compactFooterForNarrow`(좁은 폭에서 받기
+  링크를 안내문 안으로) — 2R F4. `setHintText`(자식 span 슬롯) — **그 조치가 만든 버그**:
+  `textContent` 대입이 안으로 접힌 링크를 삭제했다.
+- `static/share.html`: 안내 문단에 `#shareAppHintText` 슬롯. `static/share.css`:
+  `--share-muted` **미정의 변수** 교정(1R CONCERN) · `.share-app-get--inline` · 좁은 폭 축소 ·
+  `@media print { padding: 0 !important }`.
+
+### 테스트 (각 조치를 뮤턴트로 봉인 확인)
+
+- `test_embedded_window.py`: 내장 창 목적지 배선을 **실제 호출로** 검증(1R qa-F1 — 배선을 지워도
+  561건 전건 초록이었다). `Shell.navigate` 세 갈래.
+- `test_wsl_and_scheme.py`: 경로표에 `?`·`#`·경계 양측·표기 변종 추가. **상한 값 자체를 단정하는
+  테스트 별도 추가** — 경계를 상수에서 계산하면 상수와 표가 함께 움직여 **항진명제**가 된다(실측).
+  `open` 토큰 배제 · `panel_url` 스머글 방어 · 딥링크 base 게이트.
+- `test_standalone_launch.py`: 파일 권한 · 경합(fresh/aged 고아) · tkinter 갈래의 **의도적**
+  목적지 미사용 + 나머지 두 껍데기의 사용.
+- `test_share_client_entry.py`: 스킴 리터럴 금지 **모수를 디렉터리 순회**로(1R qa-F2 — 파일
+  하나만 보던 동안 어댑터에 리터럴을 넣어도 전부 초록) · 익명 응답 키 집합을 **AST 로** 판독
+  (2R §3-3 — 들여쓰기 정규식은 중첩 키를 오인한다) · allow-list 극성 단정.
+- `verify_share_client_entry.mjs`: 47 → **81건**. 재렌더 2회 시나리오(1R qa-F3) · 비-Windows
+  3종 · 이미-멤버 가시 컨트롤 집합 · 좌표 경로 표 6종 · 모양 검사 우회 4종 · 버튼 피드백.
+- `tests/headless/verify_share_bar_layout.py`: **T9**(안내 표시 × 4폭) + **T9-b 절대 예산 25%**
+  (2R F4 — `pad >= fh` 는 구현 되풀이라 바가 500px 여도 초록이었다) · 실기기 높이 · 플랫폼 고정 ·
+  스크립트 제거를 정규식으로(2R C2 — 목록이 stale 이었고 무해했던 이유가 `about:blank` 우연이었다).
+
+## CHG-20260908T150000-share-client-entry-r3
+
+- Related TASK: TASK-20260908T125500-share-client-entry. **적대 검증 3라운드(수렴 확인) 조치** —
+  판정 BLOCK, HIGH 2건이 **둘 다 2R 조치가 만든 회귀**였다. 원장:
+  [reviews/…-r3.md](reviews/20260908T150000-share-client-entry-r3.md).
+- `static/app/client-bridge.js`: `_adoptIfTheBridgeAcceptsIt()` 신설 — 익명 표면의 좌표를 그
+  페이지 한정으로 쓰되 **브리지 `ping` 이 수용할 때만** 보관한다(3R H1). 무조건 보관은 allow-list
+  를 되열고, 보관하지 않으면 앱 창이 첫 이동에 자격을 잃는다 — 그 사이가 이 함수다.
+- `static/share.html`·`share.js`·`share.css`: `shareLoginLink` **복원**, 단 열화 분기에서만
+  노출(3R H2). 앱 전용 분기에서는 종전대로 감춘다.
+- `static/share.js`: busy 중 라벨 대입 skip(3R C1) · 안내문 **토글**(3R C2).
+- `tests/headless/verify_share_bar_layout.py`: **T10** 인쇄 가드 신설(3R C3) · 증적 저장을
+  `--evidence` 뒤로(3R C5). 이 cycle 이 덮어쓴 2026-07-27 증적 3장은 **원복**했다.
+- `tests/verify_share_client_entry.mjs`: 81 → **108건**. **2차원 표** 도입 —
+  ③b(열화 4분기 × 미로그인/로그인 후) · Ⓓ(검증 후 보관 · 이동 후 좌표 계승 · 대조군) · ⑤d(busy
+  경합) · ⑨(재렌더 후 안내문). 3R 이 지적한 「축 하나만 훑는 검증」의 교차 칸을 메운다.
+- `tests/test_share_bar_layout.py`: L3 를 조건부 로그인 링크 계약으로 갱신.
+- 병합: main `cdd414e3`(48커밋) 흡수. 충돌 7건 — append-only 문서 4건은 **양측 보존**,
+  `docs/STATUS.md` 는 행별 분리(0002=upstream · 0003=mine), `docs/ROUTEMAP.md` 는 재생성,
+  `tests/test_client_bridge_runtime.py` 는 upstream 이 별도 하네스로 재작성했으므로 그것을
+  채택하고 **그 하네스(`verify_client_connections_dom.mjs`)의 테스트 nonce 를 실 규격으로**
+  맞췄다(6자 `secret` 은 이번에 추가된 좌표 모양 검사에 걸린다).
+
+## CHG-20260908T160000-share-postdeploy
+
+- Related TASK: TASK-20260908T160000-share-postdeploy.
+- `docs/test-runs.d/TASK-20260908T125500-share-client-entry.md`: Run 6(라이브 도달성) 추가.
+  코드·FUNCTION·정책 변경 없음 — 배포 후 실측 결과와 **미확인 경계**의 기록뿐이다.
+
+## CHG-20260908T163000-step-tool-syntax-postdeploy
+
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak. 제품 코드 변경 **0** — 배포 증적만.
+- PR #1637 병합(main `3658deee`) 후 `bin/deploy-web.sh --web-only` 로 web-a/b 재배포
+  (`mysql-ai-web:3658deee`, 둘 다 healthy · soak 통과 · Caddy 무변경).
+- POST-DEPLOY 실측 2축: ① **배포 컨테이너 안**에서 라이브 원장 10,114행 전건 재생 —
+  잔존 유출 **0** · 사유 손실 **0** · census 25 ② **라이브 엣지에서 내려받은 실제 자산**
+  (`app.js?v=737ff1e2c409`, 501,697B) 대조 — 신규 심볼 전건 존재, 제거한 폴백 4종 전부 0건,
+  라벨 표 30종.
+- 남은 미검증: DQA 클라이언트 **화면** 실측(앱 WebView2 디버깅 포트 부재 — PB-0009 NOT-RUN 유지).
+
+## CHG-20260908T203700-attach-folder-tree-postdeploy
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree (PR #1638 머지 후 배포 검증).
+- 제품 코드·정책 변경 **없음** — 라이브 배포 후 실측 결과와 캡처만 기록한다.
+- 배포 `4e3d70b0` · alembic 0059 적용 확인 · 양쪽 DB 컬럼 실재 · 라이브에서 폴더 첨부
+  end-to-end(동명 파일 v1 공존 포함)와 목록 폴더 칩 렌더 확인.
+- 정본: `docs/test-runs.d/TASK-20260908T203700-attach-folder-tree-postdeploy.md`.
+
+## CHG-20260908T204500-step-narration-seal
+
+- Related TASK: TASK-20260908T204500-step-narration-seal; 위험도 Minor §12.3.
+- 계기: TASK-20260908T125500 의 `verification_debt` 를 갚은 라운드 3 확인 검증(CONCERN, 유효
+  지적 7건). 라운드 2 조치 11건 중 8 CLOSED / 3 PARTIALLY.
+- **남은 노출 경로**: `/api/ask` 의 `steps` 가 표시 이음매를 우회해 `intent`(=`<도구명>: …`)를
+  실어 보냈다(라이브 3,382행). `_resolve_step_display` 를 통과시켜 닫았다. 앞선 cycle 의 커밋
+  문구 「신규 적재의 도구명 접두 제거」는 **브리지 적재 한정**이었다 — TASK 에 정정 기재.
+- **조치의 봉인**: 라운드 1~3 이 고친 6건이 되돌려도 전건 초록이었다(적대 검증 실측). 사유 축
+  배선 · 서버 규칙(a) 앵커 · scratch 문구 3종 · list_schemas 제목 · 파생 근거 구분 · 사이드 패널
+  폴백 억제 · ask payload 이음매를 **값·산출 단언**으로 잠갔고, **뮤턴트 8종 전건 KILL** 실증.
+- **정직 표기**: 서버가 역산한 근거를 「근거(추정)」 + muted 색으로 갈랐다(라이브 22행). 종전엔
+  AI 가 말한 근거와 같은 라벨이라 화면이 지어낸 문장을 AI 의 말처럼 보이게 했다.
+- **census 부분 실패**: 두 출처 중 하나만 실패해도 조용히 좁아지고 그 값이 프로세스 수명 동안
+  캐시됐다(브리지 2종 소실 실측). 이제 WARN + 폴백 보충 + **비캐시**로 복구 가능하게 했다.
+- 검증: `docs/test-runs.d/TASK-20260908T204500-step-narration-seal.md`.
+- 되돌리기: 데이터 변경 0 — git revert 후 web 재배포.
+
+## CHG-20260909T010301-ai-claude-doc-sync-rn-0909 — 릴리즈노트 2026-09-08 블록 신설 (doc_sync 09-09)
+
+- `src/static/release-notes-data.js`: `releases[]` 맨 앞에 `date: "2026-09-08"` 블록 prepend(62→63) + `generated` 2026-09-07 → 2026-09-08 전진. **데이터만** — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- 착륙일(09-08) 블록이 부재했으므로 append 가 아니라 prepend. 09-07 블록 이하 전량 보존.
+- REQ-20260618-0321 의 운영 규약("새 업데이트 추가는 `releases[]` 맨 앞에 일자 블록 추가, 렌더 로직 변경 불필요")을 그대로 따른 데이터 큐레이션이라 기능 계약 변경 0.
+- AC-0579(내부 정보 비노출) 준수 — 누출 패턴 기계 스캔 0건.
+- **적대 검증이 잡은 사실오류 1건 반영**: 아이콘 항목 제목의 `(1.1.1 · 1.1.2)` 표기를 `(1.1.2)` 로 정정했다. 1.1.1 은 러너 복구로 먼저 게시된 별개 릴리스이고 아이콘은 같은 번호를 다른 설치기로 덮지 않기 위해 1.1.2 로만 나갔다(정본 `unit/feature-0043-external-llm-bridge/docs/REPORT.md` · 머지 `6bf4ace3`). 직전 3블록은 제목에 버전 라벨을 쓴 적이 없어 신규 관례이기도 했다.
+- 캐시버스터 수기 bump 없음: 소스는 `?v=dev` 고정이고 빌드 `inject_asset_stamp` 가 content-hash 를 주입하며 배포 스크립트 ABORT 가드가 `?v=dev` 잔존으로 주입 누락을 판정한다(`docs/CONVENTIONS.md` §14.1 — 수기 bump 금지 명문). 실측 정합: 라이브 스탬프 `?v=94c87eec12e1`.
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
+## CHG-20260909-session-continuity
+
+`routers/{ai_tools,conversations}.py`에 대화별 세션 결속 및 그룹 발언자/assistant 문맥 계약을 추가했다. 질문 중복 제외를 task ID로 식별하고, 제출 완료 이력을 반환해 최신 답변 편집/삭제를 검출한다. [feature-0043 변경 정본](../../feature-0043-external-llm-bridge/docs/MODIFY.md) 및 [검증](../../feature-0043-external-llm-bridge/docs/test-runs.d/20260909-session-continuity.md) 참조.
+## CHG-20260909T120000-diff-similarity
+- Session: codex:root:01a08411-5b5d-7691-890c-509a2b60ed6d; TASK-20260909T120000-diff-similarity.
+- 원문 전체 동치 앵커+위치별 zip 때문에 TRY 래핑된 SQL이 삭제/추가 덩어리로 갈라졌다. 정렬을 `_attachment_diff.py`로 분리하고 토큰 정규화/순서 보존 fuzzy 및 큰 반복 입력의 bounded Myers를 적용했다.
+- 동일성은 원문 동치로 유지하고 단일 정렬에서 통계·unified·2열/단일열을 산출한다. 인용 내부 정규화 충돌과 미종결 인용 regex 비용 문제를 독립 리뷰에서 발견해 보존 스캐너로 수정했다.
+- 비용 제한 시 `truncated.alignment`를 응답·안내로 전달한다. 기존 Node 테스트의 계보 인자 추가 이전 stale 기대 4개도 현행 배선에 맞췄다.
+- 회귀·실제 DQA Shell fixture·독립 리뷰 증거: `test-runs.d/TASK-20260909T120000-diff-similarity.md`.
+
+- 전체 pytest에서 발견된 기존 사이드 패널 하네스는 제품 `setupAiJobsTab()` 의존 stub 누락이었다. stub과 실제 열림 전제 검사를 추가해 Node 69건·해당 pytest 단건 PASS. 제품 프로필 코드는 변경하지 않았다.
+
+## CHG-20260909T122000-diff-similarity-integration
+- Session: codex diff-similarity; 최신 origin/main a8abac5f 통합. TASK의 독립 신규 항목 두 개를 모두 보존하고 ROUTEMAP을 현재 소스에서 재생성했다. 동작 코드 충돌은 없었다.
+- 최초 전체 pytest 실패16건을 환경13건(격리 컨테이너 관련45건 PASS)·upstream 갱신2건·사이드 패널 테스트 stub1건으로 분류/해소. 최종 관련94건 PASS. 전체 suite를 재실행한 결과와 혼동하지 않는다.
+
+## CHG-20260909T123000-diff-similarity-sync
+- Session: codex diff-similarity; aa795a51 구현 및 76293899 main 통합 커밋을 원격 작업 브랜치에 반영했다. 통합 검증94건·컨테이너45건 기록을 최종 확인했다.
+- 병합 pre-commit 검증은 PASS였으나 post-commit 게이트는 TASK/MODIFY/REVIEW delta 3개를 미인식했다(`/tmp/post-commit-verify.b3XufR`). 새 문서 커밋으로 동기화 상태와 검증 증거를 명시하고 다시 검증한다. 코드/제품 동작 변경은 없다.
+
+
+## CHG-20260909T124000-diff-similarity-postdeploy
+- Session: codex:root:01a08411-5b5d-7691-890c-509a2b60ed6d; TASK-20260909T120000-diff-similarity.
+- 문서만: PR #1646 main 46b70e26 반영, web-only 배포 exit0·두 replica ready·90초 soak PASS, 배포본 정렬/서빙 자산 일치를 TASK·REPORT·Run에 기록했다. 임시 검증 로그를 wrapper artifacts에 보존하고 Run 링크를 갱신했다.
+- DQA Shell fixture21 PASS와 설치 사용자 첨부/API NOT-RUN을 구분한다. 호스트 DNS 부재·snap build metadata 오류의 관측 및 실제 검증 경로도 Run에 기록했다. 동작 코드 변경0.
+
+## CHG-20260909T125141-session-claim-identity
+
+설치 DQA 첫 응답은 성공했으나 세션 상태가 생성되지 않았다. 실제 claim JSONResponse에 `conversation_id`가 없어 러너가 세션 사용을 건너뛰는 P1이었다. 인증·대화 접근 검사를 통과한 변수로 최상위 ID를 전달한다(1줄). 실제 전체 payload→handle_one→SessionBinding 두 호출 회귀를 추가해 수정 전 RED/후87 PASS를 확인했다. 기존 부분 계약 테스트와 CLI 실측이 실제 HTTP/앱 전달을 대신하지 못한 한계를 기록한다.
+
+## CHG-20260909T130116-session-installed-acceptance
+
+제품 코드 변경 없이 보완 배포 및 설치 DQA 실제 재개 결과를 기록한다. 첫 결속·후속 재개 둘 다 완료, 동일 native ID 및 상태4→6, 합성 문자열 회상 UI PASS. 다계정 그룹 앱 왕복 NOT-RUN은 유지한다.
+## CHG-20260909T135700-auth-transition
+
+사용자 제보의 로그인 전환 노출을 수정했다. 표시 상태 분리와 오류 재시도, DB503 및 성공 후 모달/대화URL정리. 기존 세션 쿠키·인가정책 유지. 독립리뷰 지적을 같은 작업에 반영했다. 상세는 TASK/Run 정본.
+## CHG-20260909T140000-deploy-refresh
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 변경/이유: 이미 열린 DQA가 구버전 코드를 유지하던 문제를 배포 완료 게시와 안전한 화면 재로드로 해결. feature-0003은 공개 메타데이터 API·3초 감지·계정별 선택 복원, feature-0014는 원자 게시·혼합 배포 억제·rollback/재시도 경계를 소유한다.
+- 검증: 독립 backend/security/qa 85 PASS, Node 감지 9 시나리오, 기존 diff Node128 PASS, DQA Shell/WebView2 격리34/34 PASS. 상세 [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
+- API 추가는 GET `/api/ui-release` 한 개이며 DB·권한·인증 계약 변경 없음.
+
+
+## CHG-20260909T141300-deploy-refresh-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
+
+
+## CHG-20260909T142000-deploy-refresh-stop
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 원인: stop이 타이머/리스너만 해제해 이미 대기 중인 응답은 새 로그인 초기화 뒤에도 재로드할 수 있었다. userdata 손실은 재현되지 않았지만 폐기한 감지기가 동작하는 결함이다.
+- 수정: 시작·응답 수신 뒤·적용 직전 수명주기를 확인하여 폐기한 감지기의 응답/알림/저장/재로드를 차단한다.
+- 검증: 독립 probe로 늦은 complete 재현 후 회귀 추가. 결과는 동명 Run에 기록.
+
+
+## CHG-20260909T142200-deploy-refresh-run-boundary
+- 수명주기 보완 커밋의 CLI 결과와 DQA-client 재실행/설치 검증 미완료를 명시하여 증거 누락을 보정. 코드 변경 없음.
+
+
+## CHG-20260909T143400-caddy-probe
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping / TASK-20260909T140000-deploy-refresh
+- 배포 완료를 막은 Caddy ssl_client 좀비99/PID123/128 및 exec 실패를 진단. 점검을 같은 network namespace의 별도 init 컨테이너로 분리하고 Docker archive 파일 읽기·자기CID cleanup·조회 실패 fail-closed를 적용했다.
+- Caddy 다음생성 init:true/pids_limit256. 현재프로세스는재생성하지않는다. 현재한도256은동시작업중외부변경을관측하여중복변경하지않았다.
+- 실제검증·단위회귀·최종배포결과는 TASK-20260909T140000-deploy-refresh Run에분리기록한다.
+
+## CHG-20260909T150000-auth-transition-test-runtime
+
+- main의 배포 자동 갱신을 보존하도록 인증 초기화를 통합했다.
+- 전체/대상 검사에서 드러난 시험 컨테이너 Git/jsdom/acorn 누락을 Makefile에서 해결하고, 인증 JavaScript 행위 검사를 pytest 실행에 연결했다.
+- 관련 격리 회귀 141 PASS, 인증 Node 44 PASS, 통합 제품 WebView2 15 PASS. 전체 재실행 PASS와는 구분한다.
+
+
+## CHG-20260909T160000-auth-transition-deploy-recovery
+
+- 로그인 화면 수정 배포 중 발견한 Caddy PID 소진을 복구하고 재발 probe 경로를 수정했다. 정본은 feature-0014의 TASK/Run이다. 기존 web·Caddy를 내리지 않았다.
+
+
+## CHG-20260909T170000-auth-transition-installed-verification
+
+- 실제 설치 DQA PID 29732를 유지한 채 배포본 cf55c659에서 3회 왕복했다. 70개 UIAutomation 관측에서 로그인 입력란 노출 0, 작업 복귀 3/3 성공.
+- 두 replica의 핵심 7파일/자산 스탬프 일치를 확인했다. 설치앱 샘플링과 fixture의 프레임 검증을 별도 증거로 기록했다.
+
+
+## CHG-20260909T150100-deploy-refresh-installed-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh / TASK-20260909T143400-caddy-probe-reaping
+- PR #1658/4f570829 최종 배포 exit0, 두 replica·edge 완료 신호/소스 일치 및 Caddy 무재시작 실측을 기록했다.
+- 실제 설치 DQA의 자동 문서 변경1.242초·적용 알림4.438초를 확인했다. 최초 bootstrap의 병행 세션 기여, 현재 설치본 빈 작업 화면과 제품 Shell fixture34 PASS의 경계를 유지한다. 추가 제품 코드 변경 없음.
+
+## CHG-20260910T010301-ai-claude-doc-sync-rn-0910 — 릴리즈노트 2026-09-09 블록 items append (doc_sync 09-10)
+
+- `src/static/release-notes-data.js`: **기존 `date: "2026-09-09"` 블록의 `items` 에 3항목 append**(9→12). 착륙일 블록이 owning feature 커밋들로 이미 self-add 돼 있었으므로 prepend 가 아니라 append 다 — `generated: "2026-09-09"` **불변**, `releases` 블록 수 **64 불변**. 데이터만 — 렌더러(`release-notes.js`)·`index.html`/`admin.html`·`styles.css` 무접촉.
+- append 3항목: ① 첨부 `.csv`/`.tsv` 를 「문서 원문」 창에서 표로 출력 ② 첨부 버전 비교에서 모양만 다른 SQL 을 마주 보게 정렬 ③ 배포 완료 후 열어 둔 작업 화면의 자동 최신화(⚠ 지금 열린 화면은 한 번 새로고침 필요).
+- **self-add 항목의 정본 이탈 2건 정정**(적대 검증 적발): ⓐ 블록 summary 가 「알림 영역 [업데이트 확인] 에서 1.2.5 를 받으실 수 있습니다」로 끝나는데 같은 블록 item 은 1.3.0 을 말한다 — 두 릴리스가 같은 날 순서대로 나온 결과 self-add 가 서로를 모른 자기모순이라, 지금 받는 것이 1.3.0 이고 1.2.5 변화가 그 안에 포함됨을 잇고 append 3항목의 서사도 함께 실었다. ⓑ 1.3.0 항목 detail 에 정본이 명시한 두 경계(창 닫기 = 트레이 숨김이라 적용 시점이 아님 · 옛 슬롯을 지우지 않아 설치 누적 시 디스크 증가)가 빠져 있어 보강했다.
+- **미검증 정직 표기**: 자동 갱신은 열어 둔 앱에서 실측했으나 그때 화면이 비어 있었고, 표·비교 정렬은 사용자 계정 실제 첨부로의 확인이 남았다 — 항목 detail 과 **접힌 summary 양쪽**에 명시했다.
+- 캐시버스터 수기 bump 없음: 소스 `?v=dev` 고정 + 빌드 `inject_asset_stamp` content-hash 주입 + 배포 ABORT 가드(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
+
+
+## CHG-20260908T-transparent-taskbar
+- Related TASK: TASK-20260908T-transparent-taskbar; issue #1612.
+- 사유: 사용자 제보로 기존 5표면 검사가 Windows 작업 표시줄 식별자와 실제 버튼을 포함하지 않았음을 확인. 투명 배경 요구와 승인된 SVG 정리 방식 반영.
+- 변경: index/admin/share/ai-connect/oauth-callback/oauth-consent의 favicon은 같은 투명 DQA SVG/ICO를 쓴다. export_icon.py가 native 정본에서 web static/brand를 함께 재생성한다. 브라우저 프로필과 로그인 동선·화면 테마는 유지한다.
+- 검증 정본: feature-0046-native-client/docs/test-runs.d/20260908T-transparent-taskbar.md.
+
+## CHG-20260908T035000-transparent-verification
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- 로그인·사이드바·빈 대화·관리 사이드바 로고 이미지 4곳을 같은 SVG로 정합했다. 기존 크기와 배치는 유지한다.
+- 실제 잠금 화면이 작업 표시줄 캡처를 가리는 경우를 검수 도구에서 차단한다. 정상 종료 이전 PASS 기록도 바로잡았다. 최종 시각 확인과 배포는 잔여 단계로 명시한다.
+
+## CHG-20260908T035400-transparent-main-evidence
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- main 동기화 문서 충돌 4개는 양쪽 신규 기록을 모두 보존했다. 544cfed9/a92c9256 양 부모 삭제 파일·문서 제목 유실 0, 자동 병합 코드 포함 대조. 8231cffe 대비 native src 변경 0이므로 검증된 1.1.3 빌드와 동일하다.
+- 병합 후 native 536 PASS(50.204초), 웹 30 PASS. 디자인 추가 리뷰도 P1/P2/P3 0.
+- 동결본 속성·리소스·종료는 PASS지만 잠금 화면으로 최종 taskbar PNG는 NOT-RUN으로 남긴다. 일반 브라우저 결과를 앱 전체 검증으로 합산하지 않는다.
+
+## CHG-20260908T035530-transparent-handoff
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- draft PR #1617·검증된 1.1.3 후보·잠금 해제 후 재검수/배포 순서를 인계한다. 원격 CI check가 보고되지 않아 CI PASS로 주장하지 않는다.
+- 별도 검사 DQA 두 인스턴스는 정상 exit=0, 별도 Chrome/relay만 종료했다. 기존 사용자 앱과 프로필은 유지했다. 제품 코드 변경 없음.
+
+## CHG-20260910-transparent-icon-release
+
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- Verdict: PASS
+- Human Approval Needed: no
+- [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
+
+- main 통합 게이트가 과거 세션 재사용의 최종PASS→초기FAIL 역순 기록을 현재FAIL로 읽었다. feature-0043의 같은날 보완 실측 근거를 대조하고 해당 Run을 시간순/동일Scenario로 정합했다. 새 실측을 주장하지 않는다.

@@ -42,7 +42,7 @@ sources:
 ## 2. 상태
 
 - **단계**: in-progress (P0 도구 9종 + OAuth AS + 전송 어댑터 2종 구현 완료 · HTTP/SSE 를 `ext-tool-mcp` 서비스로 **라이브 기동** + 엣지 `/api/ai/mcp` · 상한 4종 콘솔 전용 패널 · **URL 접속 인증**(discovery + 동의 화면 + `/ai/connect`) 완료 · 1차 `a68fbbac` / 2차 `e1372f32` / 3차 `89b7cd54`→`feadc089` / 인증 접근성 `5f20ee88` 라이브 배포 + POST-DEPLOY 전건 실측 완료 · **2026-08-14 실사용 1·2차 제보 정합 5 cycle**: 제보 결함 5건 + 인가 완료 화면 `/ai/oauth/callback` · **P1 `execute_sql` 개방** + 단일 바인딩 스코프 격리 결함 수정 · **AC-7 외부 답변 보존·콘솔 3상태 열람 출하** · 엣지 401 호스트 정합 · 부하 게이트 코칭 정정 — 전건 라이브 배포·POST-DEPLOY 실측)
-- **마지막 갱신**: 2026-09-01
+- **마지막 갱신**: 2026-09-08 — **외부 dispatcher 제공 도구 7종 → 12종**(조회 5종 신규 연결: `search_routines`·`describe_routine`·`search_db_objects`·`describe_db_object`·`explain_query`). 사용자 증상은 `search_routines` HTTP 404 였고 원인은 코드에 구현돼 있는데 **외부 allowlist 누락**이었다. 목록·인자 규격·SQL 활성 상태는 `get_tool_catalog` 와 claim/`get_task_context` 의 `tool_catalog` 가 런타임에 알려 주며(명시 allowlist — 새 core 도구 자동 공개 없음), MCP 는 `run_read_tool` 이 서버 catalog 확인 후 전체 인자를 전달한다(이름별 wrapper 호환 유지). 제한이 남은 9종은 **대체 경로와 사유가 명시**된다. 정본 §4 의 「P1 이후로 이월 / 영구 제외」 어휘는 폐기. 상세 정본 `unit/feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md` · 배포 PR #1635 / `ca3fe660`(회귀 717 · 배포본 계약 56 PASS) · 상태 `fixed:deployed:unverified-live`(실제 프로시저 검색은 대상 SQL Server 접속 timeout 으로 500 — 원인 미확정)
 - **AI 작업자**: claude / feature-0041 cycle
 - **잔여**: 사람 1회 브라우저 인가가 필요한 **전 구간 e2e 실행**(절차서 `docs/E2E_RUNBOOK.md` + 스크립트 완비 — 인가 지점이 "신원 = 우리 로그인 세션" 축의 생성점이라 설계상 자동화 불가 · 실행 후 TEST.md §3 Run 기록으로 AC-1 종결)**뿐**이다. *해소됨(2026-08-14)*: **P1 `execute_sql`** — "원장 데이터를 보고 판단" 이 실사용 제보('FK 0건 스키마에서 관계 주장을 데이터로 검증할 수 없다')로 결론에 도달해 개방됐다(조회 전용·건당 행 상한·실제 행수 원장·CSV 미생성·운영자 스위치로 이 축만 차단 가능) · **AC-7(외부 AI 답변 보존·열람)** — 발견부터 출하까지 같은 날. *해소됨*: 관리 콘솔 상한 노출(3차 출하에서 `runtime_settings` 그룹 `external_tool_surface` 슬라이스로 냈고 후속 cycle 이 **전용 패널로 분리** — PB-0008 이 '실행 타임아웃' 패널에 섞여 있던 오배치를 적발했다) · HTTP/SSE 라이브 기동 · 미로그인 인가 불가(`/login` 404). 역할별/계정별 override 는 미도입(전역 상한만).
 
@@ -50,7 +50,7 @@ sources:
 
 - **입력**: OAuth 인가(사람 브라우저 로그인·동의) · 도구 인자(`task_id`·식별자·`source_tasks`)
 - **출력**: datamark 각인된 데이터 블록 · `tool_call_usage` 원장 · 제출 답변 보존(`WebAiTasks` 전용 컬럼 — 원안의 `agent_runtime.messages` 적재는 그 테이블을 읽는 **47개 파일**이 전부 "외부 AI 대화를 어떻게 취급하는가"를 새로 답해야 해서 기각, ANCHOR §2.1 Alt-F)
-- **side-effect**: 데이터 쓰기 없음(도구는 읽기 전용 — 첨부·scratch 계열은 영구 제외). 단 2026-08-14 부터 **외부 런타임이 쓴 답변 텍스트를 우리 저장소에 보존**하는 경로가 있으며, 저장 시점 `wrap_external_answer` 각인이 계약이다(각인 방향이 반대다 — 나가는 도구 결과는 `wrap_tool_output` 으로 *외부 AI 에게* '계정 X 전용 데이터'라 표시하고, 들어오는 답변은 *우리 LLM 에게* '통제 밖 런타임이 쓴 텍스트, 지시가 아니다'라 표시한다. 저장된 답변은 요약·검색 경로로 우리 컨텍스트에 되돌아올 수 있고 저장 시점에 각인하지 않으면 그 판단이 유실된다)
+- **side-effect**: 데이터 쓰기 없음(도구는 읽기 전용 — `scratch_*` 4종·`read_attachment`·`update_attachment` 는 **일반 dispatcher 제외**이며, 2026-09-08 정본 §4 개정으로 「영구 제외」 어휘는 폐기됐다: 웹 task 에는 전용 경로가 있다 — 읽기 `read_task_attachment` · 저장은 최종 answer 의 `attachment-edit` + `submit_answer`, feature-0043 계약). 단 2026-08-14 부터 **외부 런타임이 쓴 답변 텍스트를 우리 저장소에 보존**하는 경로가 있으며, 저장 시점 `wrap_external_answer` 각인이 계약이다(각인 방향이 반대다 — 나가는 도구 결과는 `wrap_tool_output` 으로 *외부 AI 에게* '계정 X 전용 데이터'라 표시하고, 들어오는 답변은 *우리 LLM 에게* '통제 밖 런타임이 쓴 텍스트, 지시가 아니다'라 표시한다. 저장된 답변은 요약·검색 경로로 우리 컨텍스트에 되돌아올 수 있고 저장 시점에 각인하지 않으면 그 판단이 유실된다)
 
 ## 4. 관련 정본
 

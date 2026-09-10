@@ -15,9 +15,14 @@ const tick = () => new Promise((resolve) => realTimeout(resolve, 10));
 const win = {id:"claude", name:"claude", where:"windows", path:"C:/claude.exe", usable:true};
 const wsl = {id:"claude (WSL · Ubuntu · alice)", name:"claude", where:"wsl", distro:"Ubuntu", user:"alice", path:"/home/alice/bin/claude", usable:true};
 const codex = {id:"codex (WSL · Ubuntu · root)", name:"codex", where:"wsl", distro:"Ubuntu", user:"root", path:"/root/bin/codex", usable:true};
+const fixtureNonce = "Nn7xQ2vK8pL3sT9bY1wJ4hR6dF0gM5cZ";
 let serial = 0;
 async function scenario({runtimes=[win,codex], preferences={}, fail=false, tokenFail=false, legacy=false, progressive=false, standalone=false, coordinates=true, resident=true, bridgeGone=false, pendingAck=false, ackFailure=false}={}) {
-  const dom = new JSDOM(readFileSync(`${staticRoot}/${standalone ? "ai-connect" : "index"}.html`, "utf8"), {url:"https://service.test/"+(coordinates?"?client_port=1234&client_nonce=secret":"")});
+  // ⚠ nonce 는 **브리지가 실제로 만드는 규격**이어야 한다 — `secrets.token_urlsafe(24)` 는
+  //   32자 URL-safe 다(`client/bridge.py`). 좌표 «모양 검사»(쿼리 스머글링 탐지,
+  //   2026-09-08 share-client-entry)가 규격 밖 값을 거부하므로, 짧은 가짜 값을 쓰면
+  //   이 하네스가 제품과 다른 것을 재게 된다(패널이 뜨지 않아 전건 실패한다).
+  const dom = new JSDOM(readFileSync(`${staticRoot}/${standalone ? "ai-connect" : "index"}.html`, "utf8"), {url:"https://service.test/"+(coordinates?"?client_port=1234&client_nonce="+fixtureNonce:"")});
   for (const name of ["document","location","history","sessionStorage","URLSearchParams","Event","HTMLElement"]) global[name] = dom.window[name];
   global.window = dom.window;
   global.setInterval = () => 0;
@@ -56,6 +61,20 @@ async function scenario({runtimes=[win,codex], preferences={}, fail=false, token
 }
 const results = {};
 {
+  const denied = {...codex, id:"codex (WSL · Ubuntu · blocked)", user:"blocked", usable:false, answers:false,
+    logged_in:true, can_login_here:false, error_code:"permission_denied", detail:"실행 권한이 없습니다 (Permission denied)."};
+  const s=await scenario({runtimes:[codex,denied],preferences:{codex:denied.id}});
+  assert.deepEqual(s.calls.filter(c=>c.action==="connect").map(c=>c.body.id),[codex.id]);
+  const card=s.doc.querySelector('[data-platform="codex"]');
+  assert(card.textContent.includes("blocked") && card.textContent.includes("Permission denied"));
+  assert.equal(card.querySelectorAll('input[type="radio"]').length,0);
+  assert.equal(card.querySelectorAll('.connect-ai-unavailable button').length,0);
+  const login=await scenario({runtimes:[{...codex,usable:false,logged_in:false,answers:null,can_login_here:true,detail:"로그인이 필요합니다."}]});
+  assert(login.doc.querySelector('.connect-ai-unavailable button').textContent.includes("로그인"));
+  results.denied_visible_but_never_connected=true;
+}
+
+{
   const s = await scenario();
   assert.deepEqual(s.calls.filter(c=>c.action==="connect").map(c=>c.body.id).sort(),[win.id,codex.id].sort());
   assert.equal(s.doc.querySelectorAll('input[type="radio"]').length,0);
@@ -63,8 +82,8 @@ const results = {};
   assert.equal(s.toasts.length,2);
   const requests=s.calls.filter(c=>c.action==="token");
   assert(requests.every(c=>c.credentials==="same-origin"&&!c.headers?.["X-DQA-Nonce"]));
-  assert(s.calls.filter(c=>c.action!=="token").every(c=>String(c.url).startsWith("http://127.0.0.1:1234/")&&c.headers["X-DQA-Nonce"]==="secret"));
-  assert(!s.dom.window.location.search.includes("secret"));
+  assert(s.calls.filter(c=>c.action!=="token").every(c=>String(c.url).startsWith("http://127.0.0.1:1234/")&&c.headers["X-DQA-Nonce"]===fixtureNonce));
+  assert(!s.dom.window.location.search.includes(fixtureNonce));
   s.mod.initClientPanel(()=>{},()=>{});
   s.doc.getElementById("connectClientRefresh").click(); await tick();
   assert.equal(s.calls.filter(c=>c.action==="connect").length,2);

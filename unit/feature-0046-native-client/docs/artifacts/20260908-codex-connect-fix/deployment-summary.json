@@ -1,0 +1,37 @@
+{
+  "recorded_at": 1788850931.409495,
+  "full": {
+    "sha": "8f1116cf",
+    "exit_code": 0,
+    "scope": "all",
+    "observations": [
+      "[deploy-web]   web-a ready (git_commit=8f1116cf)",
+      "[deploy-web]   web-b ready (git_commit=8f1116cf)",
+      "[deploy-web]   ext-tool-mcp-a healthy (GIT_COMMIT=8f1116cf)",
+      "[deploy-web]   ext-tool-mcp-b healthy (GIT_COMMIT=8f1116cf)",
+      "[deploy-web] soak 통과 — 배포 안정.",
+      "[deploy-web]   insight-worker healthy (GIT_COMMIT=8f1116cf)",
+      "[deploy-web]   ask-worker healthy (GIT_COMMIT=8f1116cf)",
+      "[deploy-web]   ops-scheduler healthy (GIT_COMMIT=8f1116cf)",
+      "[deploy-web]   insight-worker = 8f1116cf (healthy)",
+      "[deploy-web]   ask-worker = 8f1116cf (healthy)",
+      "[deploy-web]   ops-scheduler = 8f1116cf (healthy)",
+      "[deploy-web]   ext-tool-mcp-a = 8f1116cf (healthy)",
+      "[deploy-web]   ext-tool-mcp-b = 8f1116cf (healthy)",
+      "[deploy-web] === 배포 완료: 8f1116cf (scope=all — 적용·검증·미수행 결과는 각 단계 로그 참조) ==="
+    ]
+  },
+  "polish": {
+    "sha": "7ca6f2a4",
+    "exit_code": 0,
+    "scope": "web",
+    "observations": [
+      "[deploy-web]   web-a ready (git_commit=7ca6f2a4)",
+      "[deploy-web]   web-b ready (git_commit=7ca6f2a4)",
+      "[deploy-web] soak 통과 — 배포 안정.",
+      "[deploy-web] WARN: 대화 스모크 skip — scope=web (ask-worker 미롤아웃). **대화 동작 미검증 상태로 종료된다.**",
+      "[deploy-web] === 배포 완료: 7ca6f2a4 (scope=web — 적용·검증·미수행 결과는 각 단계 로그 참조) ==="
+    ]
+  },
+  "limitations": "Web-only polish rollout did not rerun server AI conversation smoke. Actual DQA Codex request proof is recorded separately."
+}

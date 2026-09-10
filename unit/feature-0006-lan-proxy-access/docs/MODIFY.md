@@ -397,3 +397,46 @@ denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉�
 
 ⚠ **관측 하네스의 판정이 부정확했다** — 목표 지표가 아니라 모든 `lvl=WARN` 을 세어
 `VERDICT: WARN 잔존` 을 냈다. 그대로 받아썼다면 해소된 것을 미해소로 보고했을 것이다.
+
+## CHG-20260909T050000-portproxy-task-repair
+
+- 2026-09-09T06:31:09.941569+00:00; TASK-20260909T050000-portproxy-task-repair. **저장소 코드 변경 0** — Windows 예약작업
+  상태 복구 기록이다. 사용자 제보(5분마다 `run_hidden.vbs` 없음 오류창)의 원인은 예약작업
+  `mysql_ai_web_portproxy_sync` 의 `UserId=SYSTEM` + `LogonType=InteractiveToken` 손상 조합이었다.
+  cmdlet 은 못 보고 `Register-*` 는 거부하며 스케줄러만 실행하는 세 모순이 여기서 나왔다.
+- `run_hidden.vbs` 는 **불필요**로 판정(사용자 요청 선행 검토): 정본은 SYSTEM+ServiceAccount 라
+  Session 0 격리로 창이 뜨지 않으므로 숨김 래퍼가 필요 없고, vbs 경유는 로그온 전 미동작·권한·
+  실패지점 추가라는 대가만 남긴다.
+- 조치: `schtasks /delete` 로 손상 작업 제거 → 현재 운영 파라미터(`-ListenAddress 112.185.196.20`
+  등)를 승계해 재등록. 매핑·접속은 전 구간 유지.
+
+## CHG-20260909T060000-portproxy-task-rename
+
+- 2026-09-09T07:07:23.228056+00:00; 같은 TASK 의 최종 조치. 이벤트 로그가 `TaskName=\mysql_ai_web_portproxy_sync`·
+  `Action=wscript.exe` 를 잡아 **XML(powershell)과 레지스트리 캐시(wscript)의 불일치**를 확정했다.
+  같은 이름 재등록이 옛 캐시를 물려받으므로(두 번 재발) **새 이름 `mysql_ai_web_portproxy_sync2`**
+  로 등록했고, 그 작업은 `Get-ScheduledTask` 조회가 정상 동작한다(손상 없음).
+- sync 스크립트 직접 실행은 **exit 0**(`portproxy_action: unchanged`, 80·443 verify true) — rc=1 은
+  스크립트 결함이 아니다. 매핑·접속은 전 구간 유지.
+- 재발 종료는 **미확정**으로 남긴다: 관측 창 내내 기존 인스턴스가 살아 `IgnoreNew` 로 새 실행을
+  억제해, 「무재발」과 「억제」가 갈리지 않는다.
+
+## CHG-20260909T070000-portproxy-s4u
+
+- 2026-09-09T10:00:50.020856+00:00; TASK-20260909T070000-portproxy-s4u. `register_mysql_ai_web_portproxy_task.ps1` 의 실행
+  계정을 `SYSTEM/ServiceAccount` → **사용자 계정/`S4U`** 로 교정하고 `-RunAsUser` 를 신설했다.
+  근거: WSL 이 LOCAL SYSTEM 을 지원하지 않아(`WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED`) SYSTEM 등록은
+  5분마다 rc=1 로 죽는다(실측). S4U 는 창 없이 WSL 조회가 된다(실측 rc=0).
+- 트리거에서 `AtLogOn` 제거(S4U 와 경고·의미 중복), `RepetitionDuration` 1일 → 3650일
+  (`[TimeSpan]::MaxValue` 는 등록 실패 — 실측).
+- 앞 CHG 의 「`run_hidden.vbs` 불요」 판정을 **정정**한다: 원래 구성에서 vbs 는 필요했다.
+  결론(되살리지 않는다)은 유지되나 이유가 다르다 — S4U 가 창 없이 동작하기 때문이다.
+- Major(§12.3): 실행 계정 변경. 인증·인가 정책 변경 아님(같은 사용자 권한, 승격 수준 유지).
+
+## CHG-20260910T100000-portproxy-closeout
+
+- 2026-09-10T01:03:19.218642+00:00; 재부팅 후 종결 확인(코드 변경 0). 유령 작업 소멸(부팅 후 11시간 · wscript 0건) ·
+  S4U 동기화 작업 **rc=0**(SYSTEM 시절 rc=1 에서 교정 확인) · `missed=0` · 매핑 유지 ·
+  옛 이름 `TaskCache\Tree` 빈 껍데기도 재부팅으로 소멸.
+- 앞 두 관측의 「무재발」 오판은 `IgnoreNew` 억제 때문이었고, 이번 판정은 인스턴스 0건 +
+  경계 130회 이상이라는 두 조건으로 구분된다.

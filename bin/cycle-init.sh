@@ -114,7 +114,7 @@ command -v git >/dev/null 2>&1 || die "git not found in PATH."
 git rev-parse --git-dir >/dev/null 2>&1 || die "Not inside a git repository (cwd: $(pwd))."
 
 # main worktree = `git worktree list --porcelain` 의 첫 entry.
-MAIN_WORKTREE_PATH="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')"
+MAIN_WORKTREE_PATH="$(git worktree list --porcelain | awk '/^worktree / && !seen {print substr($0,10); seen=1}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed."
 MAIN_BRANCH="$(git -C "$MAIN_WORKTREE_PATH" symbolic-ref --quiet --short HEAD)" \
   || die "main worktree is detached; a named branch is required."

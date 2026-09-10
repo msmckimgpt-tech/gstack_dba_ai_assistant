@@ -121,6 +121,7 @@ class Bridge:
         self.discovery = DiscoveryCache(plan.home)
         self._selected: dict[str, core.RuntimeState] = {}
         self._retry_after: dict[str, int] = {}
+        self._selection_ids: dict[str, str] = {}
         self._connect_lock = threading.RLock()
         self._connection_session = ""
         self._runner_ca = None
@@ -128,9 +129,7 @@ class Bridge:
         #: 이 판정을 본다. 껍데기가 세워 주기 전까지는 `None` 이고, 그때 `resident` 는
         #: 거짓이다 — 모르면 「유지된다」고 말하지 않는다.
         self.resident_probe: Callable[[], bool] | None = None
-        #: 껍데기가 **이 프로그램을 끝내는** 함수. 업데이트 설치는 실행 중인 exe 를 갈아
-        #: 끼우므로 우리가 비켜 줘야 한다 — 껍데기마다 끝내는 방법이 달라서 주입받는다
-        #: (내장 창은 `shell.quit`, 브라우저 셸은 `_SHELL_QUIT.set`).
+        #: Explicit application shutdown belongs to the shell.
         self.on_quit: Callable[[], None] | None = None
         #: 마지막 확인에서 발견한 새 버전. 트레이·패널·확인 문구가 **같은 값**을 본다 —
         #: 각자 다시 조회하면 확인창이 말한 버전과 실제로 받는 버전이 갈릴 수 있다.
@@ -304,7 +303,10 @@ class Bridge:
         if why:
             updater.log(self.plan.home, f"check FAILED — {why}")
         if found is None:
+            prepared = updater.installation.prepared_version()
             return {"ok": True, "current": version.CLIENT_VERSION, "available": None,
+                    "prepared_version": prepared,
+                    "detail": updater.prepared_text(prepared) if prepared and not why else "",
                     "error": why or None}
         self._say(f"새 버전이 있습니다 — {found.version}")
         return {"ok": True, "current": version.CLIENT_VERSION,
@@ -339,21 +341,7 @@ class Bridge:
     def update_now(self, confirmed: bool = False,
                    target: "updater.Update | None" = None,
                    require_idle: bool = False) -> dict:
-        """확인 → 내려받기 → 검사 → 설치기 실행 → 이 프로그램 종료.
-
-        트레이 메뉴와 웹 패널이 **같은 함수**를 부른다. 입구가 둘인데 코드패스가 갈리면
-        한쪽만 고쳐지는 드리프트가 난다(§P0-AC.1 이 트레이 「다시 연결」을 두지 않은 근거와
-        같은 축).
-
-        ⚠ `confirmed` 는 **호출부가 이미 사람에게 물었을 때만** 참이다. 기본값이 거짓인
-        이유는, 이 인자를 잊은 새 호출부가 «묻지 않고 설치하는» 경로가 되지 않게 하기
-        위해서다 — 실패는 안전한 쪽으로 기운다.
-
-        ⚠ `require_idle` 은 **사람이 없는 경로**(자동 적용)가 준다. 확인창이 뜨는 경로에서는
-        「지금 연결 중이라 답변이 죽는다」를 문구가 말하고 결정은 사람이 하지만, 자동 경로에는
-        그 결정을 대신할 사람이 없다 — 그래서 연결이 살아 있으면 미룬다(적대 리뷰 F4,
-        이식 원본 `try_self_update` 의 `if active.count() > 0: return False` 와 같은 자리).
-        """
+        """Install without interrupting the app or its runner. Confirmation remains required."""
         found = target or self.pending_update or updater.check(self.plan.home)
         if found is None:
             return {"ok": False, "error": "up_to_date",
@@ -362,13 +350,20 @@ class Bridge:
         # ⚠ **순서의 정본은 `updater.run_flow` 하나다** (적대 리뷰 C-2). 브리지(웹 패널·
         #   트레이)와 tkinter 껍데기가 같은 순서를 밟아야 하고, 그 순서 안에 무결성 판정과
         #   단일 실행 게이트가 들어 있다 — 두 곳에 복제하면 그 중 하나만 고쳐진다.
-        return updater.run_flow(
+        result = updater.run_flow(
             self.plan.home, target=found,
             confirm=None if confirmed else self._confirm,
             say=self._say,
             is_connected=lambda: self.connected,
-            require_idle=require_idle,
-            on_started=self._quit_soon)
+            require_idle=require_idle)
+        if result.get("prepared"):
+            self.pending_update = None
+            try:
+                self._notify("업데이트 설치 완료", result["detail"])
+            except Exception:
+                pass
+        return result
+
 
     def _quit_soon(self, delay: float = 1.5) -> None:
         """**응답을 보낸 뒤** 프로그램을 끝낸다.
@@ -395,6 +390,7 @@ class Bridge:
                 # 화면이 「업데이트 있음」을 그릴 근거. **서버가 아니라 이 프로그램이** 판정한다
                 # — 판정을 프런트가 조립하면 같은 사실을 두 곳이 다르게 말한다.
                 "version": version.CLIENT_VERSION,
+                "installation": updater.installation_status(self.plan.home),
                 "update": ({"version": pending.version, "notes": pending.notes}
                            if pending else None),
                 # ⚠ 패널이 「창을 닫아도 유지됩니다」를 말해도 되는지는 **트레이가 실제로 떠
@@ -516,10 +512,10 @@ class Bridge:
                     state = self._connection_state(st).get("state")
                     if state == "failed":
                         self._retry_after[st.name] = time.time_ns()
-                        self._write_selection(self._selected)
+                        self._write_selection(self._selected, changed_name=st.name)
                     return {"ok": True, "already_connected": state == "ready",
                             "pending": state != "ready", "id": st.label}
-                self._write_selection({**self._selected, st.name: st})
+                self._write_selection({**self._selected, st.name: st}, changed_name=st.name)
                 self._selected[st.name] = st
                 return {"ok": True, "pending": True, "id": st.label}
         self._say("연결을 준비하는 중…")
@@ -547,7 +543,7 @@ class Bridge:
             if self._stopping or generation != self._runner_generation:
                 return {"ok": False, "error": "cancelled"}
             if st:
-                self._write_selection({st.name: st})
+                self._write_selection({st.name: st}, changed_name=st.name)
                 plan = replace(plan, selection_file=str(plan.home / "runtime-selection.json"),
                                selection_instance=secrets.token_hex(16))
             proc = core.spawn_runner(plan, runner, ca, st, on_event=self._runner_event)
@@ -577,6 +573,8 @@ class Bridge:
             doc = json.loads(path.read_text(encoding="utf-8"))
             row = doc.get("locations", {}).get(st.name, {})
             target = {k: getattr(st, k) for k in ("path", "where", "distro", "user")}
+            if st.name in self._selection_ids:
+                target["selection_id"] = self._selection_ids[st.name]
             if (doc.get("instance") == self.plan.selection_instance and row.get("target") == target
                     and doc.get("pid") == getattr(self._runner_proc, "pid", None)):
                 if row.get("state") == "failed" and row.get("failed_at", 0) < self._retry_after.get(st.name, 0):
@@ -594,17 +592,20 @@ class Bridge:
             return {"ok": False, "state": "failed", "detail": "연결할 위치를 다시 선택해 주세요."}
         return {"ok": True, **self._connection_state(st)}
 
-    def _write_selection(self, selected):
+    def _write_selection(self, selected, *, changed_name=None):
         # 러너 하나에 위치를 원자적으로 전달한다. 새 플랫폼을 추가해도 기존 질문을 끊지 않는다.
         import os
         import tempfile
         self.plan.home.mkdir(parents=True, exist_ok=True)
+        ids = {name: (secrets.token_hex(16) if name == changed_name or name not in self._selection_ids
+                      else self._selection_ids[name]) for name in selected}
         fd, temp = tempfile.mkstemp(prefix=".runtime-selection-", dir=self.plan.home)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump({name: {k: getattr(st, k) for k in ("path", "where", "distro", "user")}
-                           for name, st in selected.items()}, stream, ensure_ascii=False)
+                           | {"selection_id": ids[name]} for name, st in selected.items()}, stream, ensure_ascii=False)
             os.replace(temp, self.plan.home / "runtime-selection.json")
+            self._selection_ids = ids
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)

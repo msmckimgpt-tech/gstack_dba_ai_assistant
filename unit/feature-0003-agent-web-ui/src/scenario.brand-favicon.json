@@ -1,0 +1,19 @@
+{
+  "name": "transparent-brand-favicon",
+  "base_url": "https://localhost",
+  "shot_dir": "/tmp/dqa-brand-favicon",
+  "steps": [
+    {
+      "action": "goto",
+      "url": "/static/index.html"
+    },
+    {
+      "action": "eval",
+      "script": "async () => { const names=['index','admin','share','ai-connect','oauth-callback','oauth-consent']; const pages=[]; for (const name of names) { const response=await fetch('/static/'+name+'.html'); if (!response.ok) throw new Error(name+': '+response.status); const doc=new DOMParser().parseFromString(await response.text(),'text/html'); const icons=[...doc.querySelectorAll('link[rel=\"icon\"]')].map(e=>e.getAttribute('href')); if (icons.length!==2 || !icons.some(x=>x.includes('/brand/dqa.svg?v=')) || !icons.some(x=>x.includes('/brand/dqa.ico?v='))) throw new Error('missing icons '+name); pages.push({name,icons}); } const icons=[...document.querySelectorAll('link[rel=\"icon\"]')].map(e=>e.href); const assets=[]; for (const url of icons) { const r=await fetch(url); if(!r.ok) throw new Error(url); assets.push({url,status:r.status,size:(await r.arrayBuffer()).byteLength,type:r.headers.get('content-type')}); } return {pages,assets}; }"
+    },
+    {
+      "action": "screenshot",
+      "path": "01-favicon-page.png"
+    }
+  ]
+}

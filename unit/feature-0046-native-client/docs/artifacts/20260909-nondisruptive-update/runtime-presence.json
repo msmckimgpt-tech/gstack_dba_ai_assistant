@@ -1,0 +1,10 @@
+{
+  "web-a": {
+    "git_commit": "2c5d6c66",
+    "AGENT_DATASOURCE_KEK_V1_present": true
+  },
+  "web-b": {
+    "git_commit": "2c5d6c66",
+    "AGENT_DATASOURCE_KEK_V1_present": true
+  }
+}

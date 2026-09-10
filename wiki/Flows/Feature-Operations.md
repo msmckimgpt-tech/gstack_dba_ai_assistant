@@ -260,6 +260,10 @@ flowchart TD
 - **`/healthz` soak 의 false-positive** — 동시에 무거운 PG 부하(그래프 sync)가 돌면 롤백으로 오판한다. web 재배포와 graph re-sync 를 순차화한다.
 - **롤링 창의 캐시 오염** — 구 replica 가 신 `?v=` URL 에 구 콘텐츠를 200 으로 답하면 `immutable` 로 고착됐다. 엣지의 무조건 immutable 을 제거하고, upstream 이 `?v=` == `static/.asset-stamp` 일 때만 immutable, 불일치는 `no-store` 로 바꿔 근본 해소했다.
 
+**(2026-09-09) 「완료」가 게시되는 사실이 됐다** — 위 순서도의 마지막 칸은 이제 파일로도 남는다. `bin/lib/ui-release.sh` 가 롤링 시작 **전** pending 을 원자 게시하고, 두 replica 의 revision·asset stamp 가 일치하고 readiness·edge·soak 를 통과한 뒤에만 complete 를 게시한다(전용 `artifacts/deploy/ui-release` → web `/srv/ui-release:ro` · workers-only·dry-run 은 게시하지 않는다 · rollback 은 pending 기록 실패에도 서비스 복원을 계속하고 복원 이미지의 current 태그를 먼저 되돌린 뒤 완료를 게시한다). 열려 있는 DQA 작업 화면이 그 신호를 3초 주기로 읽어 스스로 최신 코드를 적용한다 — 소비 쪽 계약은 feature-0003 의 동명 REQ 다(정본 `unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md` `REQ-20260909-deploy-refresh`).
+
+**함정이 하나 더 실측됐다 — 점검 프로세스가 배포를 막았다** (2026-09-09, 정본 `REQ-20260909-caddy-probe` · `REQ-20260909-edge-probe-process-lifecycle`). 장수 Caddy 안에서 HTTPS 점검 자식(`ssl_client`)을 만들던 경로가 좀비 99 + 스레드 24 로 `pids.current 123 / max 128` 을 채워 커널이 fork 를 거절했고, 로그인 화면 수정 PR #1652 의 첫 배포가 **web 교체 전에 안전 중단**했다(Caddyfile 읽기 exec 실패 `exit 128` · UI manifest pending 유지). 점검을 Caddy **밖으로** 뺐다 — 파일은 Docker archive 로 읽고, admin GET 은 같은 network namespace + 실행 중 이미지 ID 의 `--init` sidecar 로 격리하며, replica TLS 는 호스트 `nsenter`/`dig`/`curl` 로 실제 resolver·마운트 CA·공개 Host/SNI 를 검증해 **정확히 200** 일 때만 통과한다(조회 실패는 게이트 실패이지 미기동이 아니므로 프록시를 재생성하지 않는다 · HTTP fallback 없음). ⚠ compose 의 `init: true`·`pids_limit 256` 은 **다음 생성 계약**으로만 기록했고 실행 중 Caddy 는 재생성하지 않았다 — 기존 좀비 99 는 다음 정상 재생성까지 남으며 한도 상향을 해결로 적지 않는다. 검증 = 관련 49 PASS · 실제 probe 5회 후 좀비 증가 0 · PR #1656 / `cf55c659` 배포 `exit 0` · 90초 soak PASS · 배포 전후 Caddy PID 동일.
+
 ## 3. 특징
 
 - **경로 공용 정본** — 답변을 만든 주체가 안이든 밖이든 첨부 쓰기 시퀀스는 한 벌(`shared/attachment_write.py`).

@@ -97,7 +97,7 @@ def test_session_anonymous_omits_model_and_local_llm(client, monkeypatch):
 
 
 def test_session_anonymous_on_db_failure_also_minimal(client, monkeypatch):
-    """DB 미가용 fallback 경로도 동일하게 축소된다(우회로 차단)."""
+    """DB 장애는 재시도 가능한 오류이며 익명에게 내부 정보를 노출하지 않는다."""
 
     def _boom():
         raise RuntimeError("no db")
@@ -106,7 +106,11 @@ def test_session_anonymous_on_db_failure_also_minimal(client, monkeypatch):
     monkeypatch.setattr(appmod, "_is_local_llm_available", lambda: True)
     monkeypatch.setattr(appmod, "_resolve_session_default_model", lambda: "claude-haiku-4")
 
-    assert client.get("/api/session").json() == {"authenticated": False}
+    response = client.get("/api/session")
+    assert response.status_code == 503
+    assert set(response.json()) == {"error"}
+    assert "no db" not in response.text
+    assert "set-cookie" not in response.headers
 
 
 # ─────────────────────────────────────────────────────────────────────────────

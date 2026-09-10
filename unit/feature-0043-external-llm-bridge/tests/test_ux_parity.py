@@ -906,7 +906,7 @@ def test_guide_tool_count_matches_exposed_surface():
     structural = len(re.findall(r'"([a-z_]+)"', p0 + p1))
     # 구조·SQL 도구 + 작업 3종(open_task/get_task_context/submit_answer)
     # + 브리지 4종(wait_for_request/list_open_requests/claim_request/read_task_attachment)
-    expected = structural + 3 + 4
+    expected = structural + 3 + 4 + 1  # get_tool_catalog
     guide = (WEB_SRC / "static" / "ai-api-guide.md").read_text(encoding="utf-8")
     assert f"({expected}종)" in guide, (
         f"가이드의 도구 수가 실제({expected}종)와 다르다")
@@ -1537,10 +1537,11 @@ def test_runner_puts_system_prompt_first():
     assert '"system": [_APPEND_SYSTEM_FLAG' in src, "claude 명세에 시스템 채널이 없다"
 
 
-def test_prompt_failure_does_not_block_the_answer():
-    """프롬프트 조립 실패가 답변을 막지 않는다 — 막으면 설정 하나가 서비스를 세운다."""
+def test_prompt_failure_cannot_silently_drop_configured_layers():
     body = _func_source(AI_TOOLS, "_bridge_system_prompt")
-    assert 'return ""' in body and "logging" in body, "조용히 실패하거나, 실패로 답변을 막는다"
+    assert "strict=True" in body and "raise RuntimeError" in body
+    claim = _func_source(AI_TOOLS, "claim_request")
+    assert '_json_err(503,' in claim and '_release_claim(conn, task_id, account_id)' in claim
 
 
 # ── ③ 첨부 ───────────────────────────────────────────────────────────────────

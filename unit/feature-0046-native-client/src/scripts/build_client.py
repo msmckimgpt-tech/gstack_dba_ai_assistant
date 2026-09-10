@@ -15,9 +15,9 @@
 
     DQAConnect-Setup.exe            ← Inno Setup, per-user(관리자 불필요)
       └ %LOCALAPPDATA%\\Programs\\DQA Connect\\
-          DQAConnect.exe            ← PyInstaller onedir
-          _internal\\                ← GUI 런타임
-          runtime\\python.exe        ← 공식 임베더블 CPython (러너 실행용)
+          DQALauncher.exe           ← 고정 실행 진입점
+          active-slot.txt           ← 다음 실행할 버전 폴더
+          versions/<version>-<n>/   ← 독립 앱·GUI·Python 런타임
 
 **러너용 인터프리터를 동봉하는 것이 종속성 문제의 근본 해소다.** 사용자 머신에 파이썬이
 없어도 되고(이 클라이언트의 존재 이유다), `sys.executable` 함정도 hidden-import 추측도
@@ -266,6 +266,15 @@ def write_service_file(app_dir: Path, base: str) -> int:
     return 0
 
 
+def build_launcher(out: Path) -> Path:
+    compiler = Path(os.environ.get("WINDIR", "C:/Windows")) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    launcher = out / "DQALauncher.exe"
+    subprocess.run([str(compiler), "/nologo", "/target:winexe", "/platform:x64",
+                    "/reference:System.Windows.Forms.dll", f"/win32icon:{_ICON}",
+                    f"/out:{launcher}", str(_SRC / "installer/Launcher.cs")], check=True)
+    return launcher
+
+
 def main(argv: list[str] | None = None) -> int:
     _make_stdio_lossy()
     ap = argparse.ArgumentParser()
@@ -342,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     if write_service_file(app_dir, args.service_base) != 0:
         return 2
 
+    (app_dir / "install-complete.txt").write_text(_client_version(), encoding="utf-8")
+
     # ── 3. 설치기 컴파일 ───────────────────────────────────────────────────────
     setup = None
     if not args.skip_installer:
@@ -355,10 +366,11 @@ def main(argv: list[str] | None = None) -> int:
             #   `.iss` 의 폴백을 그대로 쓰면, 소스에서 버전을 올려도 설치기 파일명은 그대로라
             #   업데이트 채널이 「같은 버전의 다른 파일」을 광고하게 된다 — 이미 받은 머신은
             #   더 새것일 때만 받으므로 **영원히 낡은 채로** 남는다.
+            launcher = build_launcher(out)
             rc = subprocess.run(
-                [iscc, f"/DAppDir={app_dir}", f"/DAppVersion={_client_version()}",
+                [iscc, f"/DLauncher={launcher}", f"/DAppDir={app_dir}", f"/DAppVersion={_client_version()}",
                  f"/O{out}", str(_ISS)],
-                capture_output=True, text=True).returncode
+                text=True).returncode
             if rc != 0:
                 print("ERROR: 설치기 컴파일 실패", file=sys.stderr)
                 return rc

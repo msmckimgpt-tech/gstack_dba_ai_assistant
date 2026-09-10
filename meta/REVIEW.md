@@ -1896,7 +1896,6 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — reviewed three files and board core three files are byte-identical to independent review/test snapshot. No policy or tool conflict; upstream DQA changes preserved. Previous app test/deployment results are not attributed to the newer app implementation.
 - Artifact: meta/reviews/20260908T-cycle-idempotence.md; docs/improvements/delegation-friction-20260908/verification.json
 - Human Approval Needed: no — current delegated scope; no runtime change in this PR.
-
 ## REV-20260908T062000-skill-descriptions-backend [SUBAGENT:backend-reviewer] — PASS
 
 - Trigger: migration/마이그레이션 installer; shared META-0074 implementation reviewed by template panel.
@@ -1908,3 +1907,28 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Trigger: migration/마이그레이션 installer; shared META-0074 implementation reviewed by template panel.
 - Scope: project-meta
 - Artifact: meta/reviews/20260908-skill-descriptions-qa.md
+## REV-20260909T010301-doc-sync-20260909-010301 [SKIPPED:mirror-index-reconciliation] — doc_sync 09-09 META(wiki+정책문서) 정합
+- Related TASK: META-0075-doc-sync-0909
+- Trigger: 53커밋 창(`84bda1ce..2249addf`, 착륙일 전량 2026-09-08) 의 미러·색인 drift
+- Timestamp: 2026-09-09T01:03:01+09:00
+- Verdict: PASS
+- Artifact: meta/reviews/2026-09-09T01:03:01Z-doc-sync-0909.md
+- **[SKIPPED] 사유**: §18.8 — 본 변경은 정본(`unit/*/docs/*`·`docs/DECISIONS.md`)이 이미 확정한 사실을 미러 표면(wiki·STATUS·ARCHITECTURE 색인·CODEBASE_MAP)에 반영하는 **정합 편집**이다. 새 정책·구조 결정 저술 0건이라 적대 패널이 볼 판단 표면이 없다. 대신 4축 병렬 sweep + 2조 적대 교차검증(6에이전트·1.26M 토큰)으로 대체했다.
+- **검증**: 제안 80건 + 검증조 MISS 11건 → CONFIRMED 68 · CORRECTED 10 · REFUTED 2 → span 충돌 7건 정리(중복 3쌍은 1건만·D-09→X-20 채택·X-17/18/22→D-08 병합안 흡수) → **META 적용 58건**. `wiki-lint` total **32**(baseline 동일) · `ssot-lint` **4 WARN**(tracked secret 백업 4, baseline 동일) · 카운트 46 = wiki 카드 46 = Features MOC = STATUS 46행 · ADR 색인 3표면 = 정본 실측(heading 47 · timestamp+slug 15) · `Log.md` append-only 준수 · Log/hot 경로형 wikilink 리터럴 0.
+- **BLOCKER 표면화(report-only)**: `bin/gen-status.sh --check` 가 **rc=2** 다 — 정본 `unit/feature-0046-native-client/docs/TASK.md:6` 의 `feature_status: implemented` 가 무효값(허용: blocked/deprecated/done/in-progress/planned/review). 창 안에서 `in-progress`→`done`→`completed`→`implemented` 로 요동했다. 그 결과 `docs/STATUS.md:122`(생성물 구간) 의 `review` 행은 **어느 frontmatter 값과도 일치하지 않는 수기 오염**이다. 정본 frontmatter 수리는 owning feature cycle 소관이라 doc_sync 는 하지 않았고, 따라서 이 run 은 **생성물 구간 무접촉**(passthrough 행·표 밖 prose 만 편집)이다. 직전 창(META-0073)이 같은 회귀를 기록했으므로 **2창 연속 재발**이다.
+- **미적용 1건**: 검증조 MISS 중 `wiki/Architecture/Overview.md` §2.3 의 「첫 실 릴리스 미발행」 거짓 명제는 **다른 finding 이 이미 해소**해 별도 적용이 불필요했다(적용 후 재grep 0히트).
+- Human Approval Needed: no
+
+## REV-20260910T010301-doc-sync-20260910-010301 [SKIPPED:mirror-index-reconciliation] — doc_sync 09-10 META(wiki+정책문서) 정합
+- Related Meta-Cycle: doc-sync-20260910
+- Timestamp: 2026-09-10T01:03:01+09:00
+- 범위: `wiki/**`(카드 5 · MOC · Index/overview · Architecture/Overview · Flows · Log · hot) + `docs/**`(STATUS · ARCHITECTURE · SECURITY · CODEBASE_MAP · CODE_NAVIGATION · CODE_TASKS · RELEASE_NOTES). **색인·서사·미러만** — 정본(`unit/*/docs/*`·ADR 본문) 무접촉, 신규 구조 결정·신규 ADR 본문 0.
+- **[SKIPPED] 사유**: 정책-doc 변경이지만 내용이 **정본→미러 단방향 색인 정정**이라 적대 코드 패널이 볼 표면이 없다. 대신 4축 병렬 sweep + **2조 적대 교차검증**(6에이전트 · 1.15M 토큰 · 도구호출 340)으로 대체했다 — 각 조는 자기가 만들지 않은 축만 검증했고(cross-fault 방지) MISS 탐지를 명시 지시했다.
+- **판정 집계**: 제안 60 + 검증조 MISS 11 = 71건 → CONFIRMED 54 / CORRECTED 5 / REFUTED 1 / MISS 11. span 충돌 **13쌍**을 정본 대조로 해소(승자 = 더 넓은 span · 검증조 CONFIRMED · 정본 인용이 구체적인 쪽) → META 40건 + operational 3건 적용, report-only 14건.
+- **이 창의 축**: ① **부수 feature 누락 재발 패턴이 실증됐다** — feature-0014(12 touch)·feature-0006(5 touch)이 미러 3계층(카드·MOC·`docs/ARCHITECTURE.md`)에서 통째로 빠져 있었다. ② **창 최다 변경 feature 의 카드가 오히려 얕았다** — feature-0003(73 touch)은 owning 커밋이 CSV 표 1건만 self-add 했고 나머지 4건(위임 자동작성 결과 도달 · SQL 유사구문 diff 정렬 · 배포 후 자동 갱신 · 로그인 플래시 차단)이 없었으며, feature-0046(53 touch)은 1.2.5·1.3.0 두 릴리스가 통째로 없었다. ③ **self-add 표면이 거짓 명제를 남겼다** — feature-0046 카드가 「공유 딥링크 `path` 수용은 1.2.4 게시본에 없다 — 다음 릴리스가 전제」로 단정한 채였는데 이 창의 1.2.5 가 정확히 그 코드를 게시했다.
+- **이월 report-only 재실측**: 직전 창(META-0075)이 BLOCKER 로 표면화한 `bin/gen-status.sh --check` **rc=2 는 해소**됐다(정본 `feature-0046 TASK.md` 의 무효 `feature_status` 가 `in-progress` 로 정정). 남은 rc=1(생성물 행 stale)은 이번 창에서 `bash bin/gen-status.sh` 재생성으로 종결 → **rc=0**. 생성물이 아닌 §5 집계는 표에서 직접 재집계해 정합화(review 11→10 · in-progress 32→33). 직전 창들이 이월하던 `docs/STATUS.md` glued `||` 는 실측 **0건**으로 소멸 확인.
+- **적용하지 않은 것(report-only 14건)**: `wiki/Log.md` 의 빌드 플레이스홀더 노출·H2 중복은 `edit_policy: append-only` 라 과거 entry 를 치환하지 않았다 · 정본 `feature-0006 TASK.md` 내부모순은 정본 소관 · `docs/SECURITY.md` 의 예약작업 실행 계정(SYSTEM → 사용자 + S4U) 권한 경계는 정본 문면이 SECURITY 절 신설을 지지할 만큼 확정적이지 않아 보수 유지 · 내부 운영 변경 3건의 릴리즈노트 제외 판정.
+- **캐시버스터 수기 bump 없음**: `docs/CONVENTIONS.md` §14.1 이 `?v=dev` 고정 + 빌드 `inject_asset_stamp` content-hash 주입 + 「수기 bump 금지」를 명문화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 **stale** 이며 따르지 않았다(수기 실값은 배포 ABORT 가드를 무력화한다).
+- **검증**: `bin/wiki-lint.sh` total **32**(baseline 동일 · broken 1 = baseline) · `bin/ssot-lint.sh` **4 WARN**(baseline 동일 · 전량 tracked `.env*.bak*`) · `bin/gen-status.sh --check` **rc=0**(rc=1 → 해소) · 카운트 46 = wiki 카드 46 = STATUS 46행 · 신규 라인 glued `||` **0**(적용 중 발생한 표 행 접합 2건을 적발·분리) · `Log.md` append-only 준수 · §5 집계 = 표 재집계 일치.
+- **verify 한계 명시**: check #1(feature file scope)·#5(STATUS)는 v1.1 deferred 라 통과가 STATUS·wiki 정합을 보증하지 않는다 — 위 타깃별 기계 검증으로 대체했다.
+- Human Approval Needed: **아니오**.

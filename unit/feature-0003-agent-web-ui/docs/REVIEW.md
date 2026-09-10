@@ -8,6 +8,53 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260909T170000-attach-csv-table [CODEX:attach-csv-table] — 첨부 CSV 표 렌더 (Minor §12.3)
+
+- **Trigger**: `UI/modal/layout` keyword matched (§18.8 dispatch 표 3행 — UI·모달·레이아웃 → ux, design).
+- **채널**: `/codex review` 경로(§18.8.1 항목 2 — `[CODEX:*]` index entry 는 check #9 가 accepted
+  review 로 인식한다). 본 세션은 Agent 도구 사용이 제한돼 있고 이 저장소에는 ux/design subagent
+  정의 파일이 없다(`.claude/agents/` 에 `improve-fit-reviewer` 만 존재) — 2026-09-01
+  `REV-20260901T190000-conv-status-dot-wiring` 이 같은 상황에서 택한 경로와 같다.
+  `codex exec -s read-only`, `model_reasoning_effort=high`, 판정 기준으로 `docs/CODE_REVIEW.md`
+  를 프롬프트에 명시했다.
+- **Verdict**: **PASS** — 확인 라운드에서 `[P1]` 0건 (§18.8 패널 수렴 계약 (a): P1 을 수정했으므로
+  확인 라운드 1회를 별도로 돌렸다. 1차 P1 2건 → 수정 → 2차 P1 0 · P2 1건 → 수정).
+
+### 1차 라운드 — `[P1]` 2건, 둘 다 재현 후 수용
+
+| # | codex 지적 | 재현 | 조치 |
+|---|---|---|---|
+| 1 | 꼬리 판정이 `h⏎""` 의 **명시적 빈 인용 필드**(정상 데이터 행)를 개행 뒤 빈 꼬리로 오인해 삭제 | ✅ `parseDelimitedText('h\n""')` → `[["h"]]`. 화면은 "머리글 행만 있고 데이터 행은 없습니다" 라고 **거짓을 말했다** | 꼬리 판정을 「마지막 레코드가 빈 필드 하나」 → **「원문이 개행으로 끝났고 그 뒤 아무것도 읽지 않았는가」**(`row`·`field` 비었고 인용도 없음)로 교체. 하네스 A15/A15b/A15c/A15d + D12 신설 |
+| 2 | 깨진 인용 `"a"b,c` 를 오류 표시·폴백 없이 `["ab","c"]` 로 변환 — 원문의 따옴표와 경계를 지우고 정상 데이터처럼 보여줌 | ✅ 표준 파서(Python `csv`·Excel)와 같은 동작이지만, **이 화면의 계약은 무손실**이라 «조용히» 가 문제다 | 파서에 `anomalies` out-param 신설 — 인용이 닫히지 않은 필드 + 닫힌 뒤 문자가 이어진 필드를 센다. 표 화면이 그 수를 배너로 신고한다("따옴표 형식이 표준과 다른 칸이 N개…"). 값은 그대로 살린다. 하네스 A16·A16b·A16c·A16d + D13/D13b 신설 |
+
+### 확인 라운드 — `[P1]` 0건, `[P2]` 1건 (수정이 만든 결함)
+
+| # | codex 지적 | 재현 | 조치 |
+|---|---|---|---|
+| 3 | CRLF 분기가 `endField()` 보다 **먼저** `i` 를 증가시켜 `"a"\r\n` 의 **정상** 인용 필드를 형식 이상으로 판정 → 정상 CSV 에 거짓 경고 | ✅ `quoteAnomalies: 1` | 개행 분기에서 `endField()` 를 CRLF 스킵보다 앞으로. 하네스 A16e(거짓 경고 0) + A16f(진짜 이상은 그대로 신고) 신설 |
+
+> 이 지적은 §18.8 수렴 계약 (a) 가 확인 라운드를 요구하는 이유의 실증이다 — **1차 P1 수정이
+> 새 결함을 만들었고**, 수정한 라운드에서 종결했다면 정상 CSV 에 거짓 경고가 붙은 채 출하됐다.
+
+### 하네스 실효성 — 뮤테이션 20종 전건 KILL
+
+「내가 만든 하네스가 내 결함만 잡는」 자기충족을 피하려고, 결함 클래스를 달리한 뮤턴트를
+정본에 실제로 적용해(diff 로 적용 확인) 돌렸다. 1차 15종(셀 innerHTML 주입·머리글 태그 변경·
+행 번호 off-by-one·구분자 배선 끊김·열 상한 무력화·`sourceView`→`hasBody`·BOM·`""` 이스케이프·
+꼬리 처리·구문색 배타·폴백 저장값 오염·빈 격자 방지 제거·인용 안 개행·수치 판정·파일명 정정),
+P1 수정 후 5종(꼬리 판정 회귀·형식이상 계수 제거·배너 무시·out-param 미기록·절단 인용 제외).
+**전건 KILL, 생존 0.** 다만 이 수치는 «내가 고른 표본» 이므로 사각지대 부재의 증거가 아니다 —
+실제로 codex 가 낸 3건 중 2건은 이 뮤턴트 집합이 가리키지 않던 축이었다.
+
+### 검증되지 않은 것 (정직 표기)
+
+- **실제 계정의 CSV 첨부를 연 것이 아니다.** PB-0009 Run 은 격리 Shell + fixture 응답이다
+  (`/static/app.js` shim · `/api/attachments/1/source` 고정 응답). 배포 후 실제 앱에서 실제
+  첨부를 여는 확인은 별도이며 그 사실을 Run 기록에 남겼다.
+- 열 상한(200)·셀 상한(30,000) 초과 표의 **실제 렌더 성능**은 재지 않았다 — jsdom 에서 절단
+  동작만 확인했다.
+
+
 ## REV-20260901T190000-conv-status-dot-wiring [CODEX:frontend-state-wiring] — 사이드바 상태 배지 색 배선 복원 (Minor §12.3)
 
 - **채널**: `/codex review` (gpt-5.6-sol, `model_reasoning_effort=high`, read-only sandbox).
@@ -7773,8 +7820,287 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 - Related TASK: TASK-20260908T120000-runner-update-recovery.
 - Reason: 병합·배포·다운로드 검증 결과 및 완료 상태 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음.
 - Timestamp: 2026-09-08T11:38:45+09:00
+## REV-20260908T131500-step-tool-syntax-backend [SUBAGENT:backend] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: API/response shape/스키마 keyword matched — 단계 표시 payload 조립 변경
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-backend.md
+- Critical issue: 라이브 원장 9,759행 전건 재생 — 초판 규칙 (c)가 걸러낸 412행 중 실제 도구 구문은 18행뿐, 394행(96%)이 정상 제목(손익비 1:22)
+- Human Approval Needed: no
 
+## REV-20260908T131500-step-tool-syntax-security [SUBAGENT:security] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 비신뢰 입력(외부 AI narration) 처리 경로 신설
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-security.md
+- Critical issue: 파생 대체값이 비신뢰 `args` 를 무검증으로 제목에 주입해 판정기 우회가 완결된다(같은 요청에서 필드만 옮기면 유출 복귀) + 파생값 길이 무제한
+- Human Approval Needed: no
 
+## REV-20260908T131500-step-tool-syntax-qa [SUBAGENT:qa] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 신규 게이트·구조 가드 도입 — 검증 자체의 유효성 감사
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-qa.md
+- Critical issue: node 부재 사본에서 프런트 가드 전량 통과(주석 미제거 + CI-gap 마커가 탈출구를 영구 충족) — 「make test 에 node 없음」 전제 자체가 사실이 아니었다
+- Human Approval Needed: no
+
+## REV-20260908T131500-step-tool-syntax-ux-design [SUBAGENT:ux-design] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: UI/화면/레이아웃 keyword matched — 실행 단계 패널 배지·제목
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-ux-design.md
+- Critical issue: 파생 문구의 백틱이 `textContent` 로 리터럴 렌더 — 구문을 다른 구문으로 바꾼 셈 + activity 렌더러가 아직 `intent`(=`<도구명>: …`) 사용
+- Human Approval Needed: no
+
+## REV-20260908T131500-step-tool-syntax-codex [CODEX:step-tool-syntax] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.153.4 --uncommitted)
+- Trigger: 코드 변경 경량 채널 (§18.8.1) — subagent panel 과 병행
+- Timestamp: 2026-09-08T13:15:00+09:00
+- Verdict: BLOCK (P1 1건 + P2 1건)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T131500-codex.md
+- Critical issue: P1 파생 폴백 불완전(census 23종 중 12종 미분기) · P2 식별자로 시작하는 정상 사유가 대체 없이 삭제
+- Human Approval Needed: no
+
+## REV-20260908T142000-step-tool-syntax-r2-backend-security [SUBAGENT:backend-security] — CONCERN
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 라운드 2 확인 라운드 (§18.8 수렴 계약 (a))
+- Timestamp: 2026-09-08T14:20:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T142000-backend-security-r2.md
+- Critical issue: 라운드 1 P1 10건 중 9건 CLOSED. 잔여 — `intent` 가 인증 payload 에 잔존(3,254행) · census 폴백 무조건 합산 · 표시 경로의 사유 파생이 구분 없이 렌더
+- Human Approval Needed: no
+
+## REV-20260908T142000-step-tool-syntax-r2-qa-ux [SUBAGENT:qa-ux] — BLOCK
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Trigger: 라운드 2 확인 라운드 — 게이트 유효성 + 화면 어휘
+- Timestamp: 2026-09-08T14:20:00+09:00
+- Verdict: BLOCK
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T142000-qa-ux-r2.md
+- Critical issue: **라운드 1 수정이 만든 신규 결함 2건** — 「렌더러 전수」 가드의 모수가 app.js 한 파일(progress.js 회귀 무증상 통과) · 폴백 제목이 라벨을 되풀이(「테이블 구조 · 테이블 구조 단계」)
+- Human Approval Needed: no
+
+## REV-20260908T142000-step-tool-syntax-r2-codex [CODEX:step-tool-syntax-r2] — CONCERN
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.153.4 --uncommitted)
+- Trigger: 라운드 2 확인 — 경량 채널 (§18.8.1)
+- Timestamp: 2026-09-08T14:20:00+09:00
+- Verdict: CONCERN (P1 **0건**, P2 1건)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T142000-codex-r2.md
+- Critical issue: P2 — scratch SQL 의 변경 연산(DELETE/DROP)을 「조회」로 오기술
+- Human Approval Needed: no
+
+## REV-20260908T150000-step-tool-syntax-r3-codex [CODEX:step-tool-syntax-r3] — CONCERN
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.153.4 --uncommitted)
+- Trigger: 라운드 3 확인 라운드 (§18.8 수렴 계약 (a) — 수정한 라운드는 종결 근거가 아니다)
+- Timestamp: 2026-09-08T15:00:00+09:00
+- Verdict: CONCERN (P1 **0건**, P2 1건 — 수정 완료)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-codex-r3.md
+- Critical issue: P2 — 클라이언트 인자-리터럴 정규식에 앵커가 없어 서버가 보존한 산문 속 JSON 을 강등. 서버와 같은 호출-접두 앵커로 정렬 + 프런트 하네스에 회귀 케이스 2건 추가
+- Human Approval Needed: no
+
+## REV-20260908T150000-step-tool-syntax-r3-subagent [SKIPPED:channel-unavailable:subagent-panel]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 라운드 3 subagent 확인 패널이 **세션 한도(HTTP 429 `rate_limit`, reset 17:30 KST)** 로
+  중단됐다. §18.8.2 item 4 판정축 — 결제·조직정책 같은 **구조적 차단이 아니라 「대기」** 이므로
+  「불가」로 선언하지 않고 `verification_debt` 로 남긴다(아래 TASK.md 기재).
+- Timestamp: 2026-09-08T15:00:00+09:00
+- 대체 검증(실제 수행): ① codex 독립 채널 라운드 3 **P1 0건** ② 라운드 2 지적 11건을 작업자가
+  직접 실측 재확인(census 조회 산출 23종·scratch/브리지 포함, 조회 차단 시 9종으로 떨어져 가드가
+  FAIL 함, 빈 census 에서 정상 제목 생존, 사유 미조작(`missing`), 산문 속 JSON 서버 보존,
+  실기동 순서에서 순환 import 없음·census 25) ③ 컨테이너 전체 시험 **8,143건 PASS / 실패 0**
+  ④ 라이브 원장 9,759행 재생: 버려진 제목 19(전부 도구 표기)·사유 0·잔존 유출 0
+- 미검증으로 남는 것: subagent 4인 패널의 **독립적** 3차 교차검증. 다음 명시적 재개 또는 cycle
+  경계에서 복구 여부를 확인한다.
+- Human Approval Needed: no
+
+## REV-20260908T124500-attach-folder-tree
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree (REQ-20260908-attach-folder-tree).
+- Timestamp: 2026-09-08T12:45:00+09:00
+
+### 판단 근거 — 왜 이렇게 설계했나
+
+**1. `OriginalFilename` 을 경로로 바꾸지 않고 컬럼을 더했다.** 첨부를 파일명으로 지칭하는 계약이
+이미 넓게 퍼져 있다 — LLM 프롬프트의 `REFER TO ATTACHMENTS BY FILENAME`, `read_attachment(filename=…)`,
+검색 WHERE(`SECURITY §8.2`), 프론트 pill, 버전 체인. 그 의미를 바꾸면 이 cycle 의 범위를 훨씬 넘는
+회귀가 난다. **경로는 추가 축이지 대체가 아니다.**
+
+**2. 버전 체인 스코프에 경로를 넣은 것이 이 변경의 load-bearing 부분이다.** 스코프가
+`(conv, account, filename)` 인 채로 폴더를 받으면 `src/config.json` 과 `test/config.json` 이 한 체인으로
+합쳐져 **서로를 supersede** 한다 — 사용자가 올린 파일이 목록에서 사라진다. 컬럼만 추가하고 스코프를
+그대로 두는 것은 기능이 아니라 데이터 손실이므로, 같은 cycle 안에 있어야 했다.
+경로 있는 행과 없는 행을 **서로 배제**한 것도 같은 이유다(폴더 안 `a.txt` ≠ 따로 올린 `a.txt`).
+
+**3. 경로를 신뢰하지 않는다.** `webkitRelativePath` 는 브라우저가 보내는 사용자 입력이다. traversal·
+절대경로·드라이브 접두·제어문자를 제거하고 깊이·길이를 제한한다. 위험한 값은 **거절이 아니라 폴더
+정보 폐기(None)** 로 처리한다 — 파일 자체는 올라가야 한다(경로는 부가 정보이지 업로드의 전제가 아니다).
+경로의 마지막 세그먼트는 업로드된 파일명으로 고정한다: 클라이언트가 둘을 따로 보내므로 어긋날 수 있고,
+어긋나면 목록·트리가 실제 파일과 다른 것을 가리킨다.
+
+**4. 트리 블록을 목록과 **별도로** 렌더한다.** 파일 라인의 `path="..."` 는 파일 하나의 자리를 말하지만,
+"이 코드베이스가 어떻게 구성됐나" 를 답하려면 형태 전체가 한눈에 필요하다. 경로 문자열 N 개를 모델이
+머릿속에서 트리로 재구성하게 두면 빠뜨린다. 대신 **폴더 첨부가 실제로 있을 때만** 렌더해, 단일 파일만
+쓰는 대화의 프롬프트는 종전과 동치로 남긴다(토큰 회귀 0 — 테스트로 고정).
+
+**5. 프롬프트가 약속한 것을 도구가 실제로 이행한다.** 트리 블록은 모델에게 "경로로 지칭하라" 고
+안내하는데, `read_attachment` 가 경로를 못 받으면 그 안내가 곧 막다른 길이 된다(모델은 "찾지 못했습니다"
+를 받고 파일이 없다고 답한다). 매칭을 경로 정확 → 이름 정확 → 경로 접미 → 이름 부분 순으로 넓히고,
+실패 안내도 **경로로** 나열한다 — 파일명만 나열하면 모델이 방금 실패한 지칭 방식을 그대로 다시 쓴다.
+
+**6. 상한을 넘으면 자르지 않고 멈춘다.** 폴더 드롭은 `node_modules` 처럼 수천 개를 데려올 수 있고
+업로드는 파일당 1 요청이다. 조용히 일부만 올리면 사용자는 전부 올라간 줄 알고 assistant 에게 없는
+파일을 묻는다 — 300개 초과 시 업로드하지 않고 알린다.
+
+### 위험도 · 승인
+
+- §12.3 **Minor~Major**: 비파괴 컬럼 추가(nullable, backfill 없음) + 다수 파일 변경. 인증/인가·개인정보·
+  파괴적 데이터 변경 없음 → §12 사람 승인 대상 아님. `deploy_scope: included`(FIRST_REQUEST.md) 적용.
+- 마이그레이션은 expand-only(ADD COLUMN) — `migrate-lint` 비가산 DDL 없음. MySQL ALTER 는 online 절 명시.
+
+### 남은 리스크
+
+- **소급 데이터 없음**: 이전에 올린 첨부의 경로는 존재한 적 없는 정보라 backfill 하지 않는다. 기존 첨부는
+  계속 "폴더 아님" 으로 보인다 — 사실 그대로다.
+- **브라우저 의존**: `webkitdirectory`·`webkitGetAsEntry` 는 표준화 전 이름이지만 Chromium·Firefox·Safari
+  가 모두 지원한다. 미지원 환경은 `dataTransfer.files` 평면 폴백(폴더는 못 받되 파일은 받음).
+- assistant 가 **새 파일을 특정 폴더 안에 만드는** 것(`attachment-new` 에 경로 지정)은 이번 범위 밖 —
+  현재 AI 생성 신규 파일은 경로 NULL(폴더 밖)이다. 요청은 "전달·인지" 였고 그 축은 충족한다.
+
+## REV-20260908T133000-attach-folder-tree [SUBAGENT:security] [SUBAGENT:ux] [SUBAGENT:design] [SUBAGENT:backend] [SUBAGENT:qa] — SHIP-WITH-FIXES
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree (REQ-20260908-attach-folder-tree).
+- Trigger: `schema/스키마` + `migration/마이그레이션` + `API/endpoint` + `UI/layout/화면` keyword matched
+  → §18.8 dispatch 표의 cross-domain 다중 매칭 → **full panel** (security · backend · qa · ux · design).
+- Timestamp: 2026-09-08T13:30:00+09:00
+- 입력에 프로젝트 전제 동봉 (§18.8): `docs/SECURITY.md` 첨부 절(D7·D8·D12·D13·IDOR) · `docs/DECISIONS.md` ·
+  §12.3 위험도 등급 — 「의도된 구성」을 결함으로 올리지 않도록.
+
+### 적발 → 조치 (라운드 1)
+
+**[P1 security] 디렉토리 트리 블록의 코드펜스 탈출** — 파일명이 ```` ``` ```` 이면 렌더된 트리가
+프롬프트의 코드펜스를 **닫고**, 뒤따르는 권위 블록(`FILE VERSION LINEAGES` · AI-owned 범례 ·
+첨부 본문 datamark)이 통째로 산문으로 새어 나온다. 같은 함수의 다른 비신뢰 표면은 모두
+`_flatten_untrusted_name` + datamark 를 거치는데 새 블록만 맨살이었다.
+→ **조치**: 세그먼트·라벨을 `_flatten_untrusted_name` 으로 평탄화 + 백틱 런 중화, 구획을
+마크다운 펜스에서 **datamark sentinel** 로 교체(내용에서 sentinel 을 제거하므로 위조 불가).
+라이브 실측으로 확인 — `` ` ` ` `` 로 중화되고 다음 블록이 온전.
+
+**[P1 ux] 프론트가 다른 폴더의 동명 파일을 「같은 계보」로 묶었다** — 백엔드는 체인 스코프를
+경로로 고쳤는데 `_lineageByName` 이 basename 으로 묶어, `src/config.json` 과 `test/config.json` 이
+한 카드에 「계보 2개」로 서고 「⇄ 계보 비교」가 무관한 두 파일을 버전처럼 diff 했다.
+→ **조치**: 그룹 키를 `relative_path || original_filename`(= `path_or_filename` 과 같은 술어)로
+교체. 프론트·백엔드가 「같은 파일」을 같은 규칙으로 판정한다.
+
+**[P1 ux] 사용자는 폴더 구조를 끝내 못 봤다** — pill 배지는 컴포저 버킷 렌더러에만 있어, 목록
+패널을 열거나 대화를 다시 열면 서버 목록 렌더러가 **폴더 없는 평면 목록**으로 덮었다.
+「트리를 보존한다」면서 그것을 보는 것이 모델뿐이면 요청의 절반이다.
+→ **조치**: 서버 목록 행에 폴더 칩 + 정렬 1차 키에 디렉토리 추가(같은 폴더 파일이 붙어 선다).
+
+**[P2 security] `path="…"` 따옴표 미이스케이프** → 평탄화 + 따옴표 치환. (집행은 코드가 하므로
+인가 경계는 불변이었고, 오염 대상은 모델의 출처 **서술**이었다.)
+**[P2 security] `filename` 권위 override 가 `..` 재도입** (`normalize_relative_path("proj/x","..")`
+→ `proj/..`) → override 후 재검사. 현재 소비자는 없으나 계약 위반이고, 폴더 보존 ZIP 같은
+소비자가 생기는 순간 결함이 된다.
+**[P2 security] 서버측 개수 상한 부재** — 300 상한이 클라이언트에만 있어 API 직접 호출로 우회.
+D8 은 바이트만 본다 → `_attachment_count_cap()`(기본 1000, env 조정) 신설, 기존 conv 집계 쿼리에
+`COUNT(*)` 를 얹어 추가 스캔 없이 판정.
+**[P2 backend] 컬럼 부재 시 첨부 섹션 통째 소실** — ALTER 실패나 롤아웃 창(agent-core 가 web
+부트스트랩보다 먼저)에서 `Unknown column` → 바깥 `except` 가 삼켜 **"첨부가 없습니다"**.
+`FR-attachment-change-false-absence` 와 같은 실패 클래스다 → 컬럼 없이 재조회하는 degrade 폴백
+(폴더 기능만 잃고 첨부 인지는 유지). 초판의 `len(row) > 14` 가드는 도달 불가한 죽은 가드였다.
+**[P2 ux] 드롭 순회 중 무피드백 + `readAllDirEntries` 무상한** — 오버레이가 순회 **전에** 사라져
+수 초 침묵, 그리고 300 컷은 `isFile` 분기에만 있어 한 디렉토리 5만 엔트리를 다 읽은 뒤 판정.
+→ 진행 토스트 + 열거 상한(`MAX_FILES × 10`) + 잠금 검사를 순회 **앞으로**.
+**[P2 ux] pill flex 가 파일명을 먼저 잘랐다** — `flex: 0 0 auto` 는 「양보 안 함」이라 주석의
+주장과 정반대였고, `--muted` 는 **정의된 적 없는 토큰**이라 배지가 본문과 같은 잉크로 렌더됐다
+→ `flex: 0 1 auto` + 실재 토큰 `--text-2`, DOM 순서 `이름·폴더·크기`.
+**[P2 ux] 상한 문구가 진입점 3곳에서 제각각** → `_attachFolderTooManyMessage()` 로 통일(총계를
+아는 경로만 규모를 말하고, 순회가 멈춘 경로는 「300개를 넘습니다」로 정직하게).
+**[P2 ux] 파일/폴더 input 게이트 비일관** — 폴더·드롭은 연결 잠금을 보는데 파일만 통과 → 일치.
+**[P2 ux] 배치 요약이 실패 사유를 버렸다** — 폴더 첨부는 부분 실패가 정상 시나리오인데 사유가
+요약에 없어 pill 을 하나하나 호버해야 했다 → 대표 사유 1건 동반.
+**[P2 ux] 트리 토큰 무상한** — 첨부는 append-only 라 300 파일 폴더가 ~2,500 토큰을 **매 턴**
+점유(다른 축은 모두 캡 보유) → `ATTACHMENT_TREE_MAX_LINES`(200), 초과는 디렉토리 단위로 **접고**
+파일 수를 남긴다(무음 절단 금지).
+**[P2 ux] 트리가 같은 파일을 두 번 그렸다** — assistant 편집본이 경로를 승계하므로(정상 상태)
+같은 leaf 가 둘 → dedup 후 `(N versions/lineages)` 표기.
+**[P3]** 죽은 import 제거 · 오버레이·aria 문구에 폴더 반영 · 서버의 경로 **거절**(null)을 화면이
+클라이언트 값으로 덮던 폴백 교정 · 배치 요약이 낱개 파일을 폴더 안으로 세던 것 분리 ·
+「파일명으로 지칭」 규칙에 경로 예외를 **그 자리에서** 완결.
+
+### 라운드 2 (수정 확인) — 패널 수렴 계약 (a)
+
+수정이 새 결함을 만들지 않았는지 **실 브라우저로 재확인**: 인젝션 중화 · 목록 폴더 칩 6/6 렌더
+(잘림 0) · 행 높이 55px 균일. 초판 교정에서 **긴 폴더 칩이 행 버튼을 다음 줄로 밀어 행 높이가
+갈리던 것**을 시각 캡처가 새로 적발해(P2 급) 폭 상한 + 마지막 2단 표기로 해소했다 —
+element 상태만 봤다면 놓쳤을 픽셀-클래스 결함이다(§16.6).
+
+### 미채택 (근거)
+
+- **유니코드 look-alike 분리자**(`／` U+FF0F 등) 미폴딩 · NFC/NFD 미정규화 — 표시 spoofing 축이고
+  경로가 어떤 resolve 에도 쓰이지 않아 실피해가 없다. 폴딩은 정당한 파일명(전각 문자를 쓰는
+  실제 파일)을 훼손할 위험이 있어 **이 cycle 에서 하지 않는다**. 경로를 파일시스템·아카이브에
+  결합하는 소비자가 생기면 그때 정규화를 함께 도입한다(REPORT.md 잔여 리스크에 기록).
+- **경로 대소문자 collation 충돌**(`Src/` ↔ `src/` 가 한 체인) — 기존 `OriginalFilename` 동작과
+  동일하고, 자기 계정·자기 대화 안에서만 일어나며 append-only + 복구 가능이라 위험이 낮다.
+  바꾸면 파일명 축과 규칙이 갈려 새 비대칭이 생긴다.
+
+### 라운드 2 — backend·qa 렌즈 (뮤테이션 테스트 동반)
+
+이 렌즈는 **"테스트가 무엇을 실제로 잡는가"** 를 뮤테이션으로 검사해, 통과하는 스위트가
+비어 있던 구간 3곳을 드러냈다. 지적의 성격이 앞 라운드와 달랐다 — 코드가 틀린 것이 아니라
+**틀려도 아무도 모르는** 상태였다.
+
+**[P1] `_load_scoped_attachment_rows` 에 degrade 폴백 누락** — 형제 함수
+(`_build_attachment_context_section`)는 컬럼 부재 시 재조회하는데 이쪽은 없었다. ask-worker 는
+web 부트스트랩을 타지 않는 **별 컨테이너**라 컬럼 없이 먼저 뜰 수 있고, 그러면 `read_attachment`
+가 **모든 파일에 대해** "참조할 수 없다" 를 낸다 — 프롬프트에는 목록이 실려 있으므로 모델은
+"있다고 들은 파일이 없다" 는 모순을 사용자에게 그대로 전한다. 한쪽만 고친 것이 결함이었다.
+→ 같은 2-shot 패턴 적용.
+
+**[P1] `read_attachment` 경로 해소가 전혀 테스트되지 않았다** — `cands = exact_path or
+exact_name or suffix_path or partial` 를 `exact_name or partial` 로 바꿔도 스위트가 통과했다.
+트리 블록과 도구 스펙이 모델에게 "경로로 지칭하라" 고 **지시**하는데, 그 지시가 통하는지 묻는
+테스트가 0이었다. 테스트 파일 docstring 이 그 계약을 주장하고 있었다는 점이 더 나쁘다.
+→ `read_attachment_content` 를 직접 호출하는 4건 추가(경로 정확·접미·모호성 안내·부재 안내).
+
+**[P1] backfill 스크립트가 PG 계약의 «4번째 면»이었다** — 미러 모듈만 고쳤고, 그것을 검사하는
+테스트도 미러 모듈만 grep 했다. backfill 은 `relative_path` 를 NULL 로 넣는데
+`ON CONFLICT DO NOTHING` 이라 **재실행으로도 복구되지 않는다** — read backend 를 PG 로 돌리는
+순간 cutover 이전 폴더가 영구히 평면 목록이 된다. → 4면 배선 + `COALESCE` 로 빈 경로만 치유
+(기존 행 보존이라는 멱등 계약은 유지).
+
+**[P2] 상한 초과를 폐기하면 이 REQ 가 닫으려던 결함이 되돌아온다** — 깊은 지역화 트리의
+`…/en/messages.json`·`…/ko/messages.json` 이 둘 다 None 이 되면 두 번째가 「경로 없음」 분기로
+떨어져 파일명으로 첫 번째를 supersede 한다. 사용자는 2개를 올렸는데 1개가 남고 토스트는
+"새 버전" 이라 한다 — **무음**이라는 점이 최악이다. → 폐기 대신 **꼬리 보존**(`…/en/messages.json`).
+구분에 쓰이는 정보는 경로의 끝이고 잘리는 것은 공통 접두다.
+
+**[P2] 승계 두 줄(assistant 편집·fork)이 뮤테이션 생존** → 소스 계약 테스트로 고정.
+**[P2] `/versions` 의 `lineages[]` 가 파일명 스코프** — 폴더 안 `src/`·`test/`·`dist/config.json`
+이 「한 파일의 경쟁 계보 3개」로 뜨고 전부 `user` 라 구분 수단이 없다(폴더 이전엔 불가능했던
+상태) → 체인 스코프와 같은 술어로 + `lineages[].relative_path` 노출.
+**[P2] 프론트 3곳 중 2곳이 여전히 서버 거절을 마스킹** (lazy 대화 생성·staged flush — 하필
+«새 대화에 폴더를 처음 떨어뜨리는» 흐름) → `_mergeServerRelativePath` 로 통일.
+**[P2] 개수 캡이 superseded 행까지 셈** — 「폴더를 고쳐 다시 올린다」는 표준 흐름이 스스로 쿼터를
+소진하고, 화면에 없는 행이 원인이라 안내가 무의미해진다 → live head 만 센다.
+**[P2] 부트스트랩 에러 문구가 거짓** — "평평한 목록으로 폴백" 이라 적었지만 실제로는 첨부
+목록·업로드·버전·휴지통이 전부 500 이다 → 사실대로.
+**[P2] 일괄 다운로드가 폴더를 평면화** — `src/config.json`·`test/config.json` 이
+`config.json`·`config_412.json` 으로 나가 왕복이 닫히지 않았다 → ZIP 엔트리명에 디렉토리 보존
+(디렉토리 부분도 zip-slip 방어 통과).
+**[P3]** STATUS 테스트 건수 drift(32→52) 정정 · **MySQL `ROW_FORMAT=Dynamic` 라이브 확인**
+(`VARCHAR(1024)` 추가가 InnoDB in-row 한계에 걸리지 않음 — ALTER 성공이 그 확인).
+
+**미채택**: PG/MySQL positional 대칭 테스트 · 경로 대소문자 collation · 모호성 안내의 혼합
+후보 문구 — 모두 실피해가 없거나(대칭은 현재 코드가 일치) 기존 파일명 축과 동일 동작이라,
+이 cycle 의 범위 밖으로 두고 REPORT 잔여 리스크에 남긴다.
 ## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
 - Related TASK: feature-0003-agent-web-ui / TASK-20260908T120000-connect-discovery-ux
 - Trigger: API/성능/캐싱 keyword matched
@@ -7827,3 +8153,577 @@ XSS 가 생겼을 때 「사람 없이 프로세스가 뜨는 것」을 막던 �
 ## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
 
 - 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
+## REV-20260908T151500-codex-connect-fix [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T151000-codex-connect-fix; Issue #1625.
+- Trigger: API/응답 계약, permission/실행 권한, caching/캐시, UI/연결 화면.
+- Dispatch: update_installer_review(backend/security), update_install_qa(qa), connect_ux_review(ux/design). 독립 도메인 검토 및 수정 확인.
+- P1 수정: catalog 빈 detail KeyError/남은 성공행/예외 기록 누락, catalog 건강 오인, error JSON 생존 오인, 로그인 필요 위치 소실. P2 수정: 공통 CSS 적용면, OS PermissionError 형 보존, A→B→A 선택 경쟁.
+- QA가 후속 선택 실패 후 재시도 소실과 전역 파일 세대의 불필요한 재조회 2건을 적발했다. watcher 백오프와 플랫폼별 selection_id로 수정 후12건 PASS.
+- Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.4 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+
+## REV-20260908T060223-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
+- Trigger: API/엔드포인트 및 query/쿼리
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T060223-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
+- Trigger: API/응답 및 개인정보 비노출
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T060223-security.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-qa-ux-design [SUBAGENT:qa-ux-design] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0003-agent-web-ui)
+- Trigger: API/계약, 여섯 계층 수용 기준, toast 한 줄 UX/design
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T060223-qa-ux-design.md
+- Human Approval Needed: no
+
+- 배포 승인 근거: 현재 사용자 개선 위임 + wrapper FIRST_REQUEST.md deploy_scope: included, AGENTS.md §16.5.1. 인증/인가·파괴적 변경 없음.
+## REV-20260908T150000-attachment-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: API/contract 응답 본문 계약
+- Timestamp: 2026-09-08T06:09:53.549929+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-attachment-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T150000-attachment-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: API/contract 응답 본문 계약
+- Timestamp: 2026-09-08T06:09:53.549929+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-attachment-security.md
+- Human Approval Needed: no
+
+## REV-20260908T150000-attachment-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: API/contract 응답 본문 계약
+- Timestamp: 2026-09-08T06:09:53.549929+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T150000-attachment-qa.md
+- Human Approval Needed: no
+
+## REV-20260908T152700-attachment-deployed [SKIPPED:non-policy-doc] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: 비정책 검증 결과 문서만 변경
+- Timestamp: 2026-09-08T06:27:43.349266+00:00
+- Verdict: PASS
+- Human Approval Needed: no
+- 기존 코드 3패널 PASS 후 실행 결과만 기록; 추가 코드/정책 변경 없음.
+
+## REV-20260908T153000-attachment-docs [SKIPPED:non-policy-doc] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: 검증 문서 서식과 원격 동기화 체크만 변경
+- Verdict: PASS
+- Human Approval Needed: no
+
+## REV-20260908T153500-cycle-list-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: lifecycle cleanup SIGPIPE
+- Timestamp: 2026-09-08T06:38:22.052443+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908-cycle-list-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T153500-cycle-list-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908T150000-attachment-boundary
+- Trigger: lifecycle cleanup SIGPIPE
+- Timestamp: 2026-09-08T06:38:22.052443+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908-cycle-list-qa.md
+- Human Approval Needed: no
+
+## REV-20260908T155000-codex-actual-proof [SUBAGENT:ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 실제 DQA에서 안내 강조 기호 노출을 발견해 client-bridge.js의 표시만 보완했다. textContent 유지, 기존 DOM12 PASS, 독립 UX/code P1/P2 0. 표시 수정의 배포 후 UI 관찰은 별도 원장에 기록한다.
+
+## REV-20260908T155500-codex-live-evidence [SUBAGENT:qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 독립 읽기 검토: 실제1.2.3→1.2.4 설치/지문, 새 대화 동일 task의 송신→32318ms/delivered→UIA 답변, 위치 변경 ready→완료 toast 자료 정합 PASS. 공개 manifest 및 실제 파일 SHA를 독립 재계산했다.
+- WebView PID47356/내장 runner47700의 부모가 native29672임을 WMI로 재확인. 데이터에 인증정보·이메일은 없으며 사용자명·로컬 경로·task/PID/선택 식별자 등 운영 메타데이터는 포함된다.
+- UI 최초 렌더 시간·픽셀 스크린샷·현장 Permission denied 재현은 PASS 범위에 포함하지 않는다. root복원은 이어서 실제 ready/toast로 확인했다. 안내 표식 수정본의 배포 후 관찰은 별도 후속이다.
+
+## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
+- 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.
+
+## REV-20260908T162000-tool-surface-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908T162000-tool-surface
+- Trigger: API/query 도구 계약·조회 경계
+- Timestamp: 2026-09-08T08:03:31.170056+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T162000-tool-surface-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T162000-tool-surface-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908T162000-tool-surface
+- Trigger: API/query 도구 계약·조회 경계
+- Timestamp: 2026-09-08T08:03:31.170056+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T162000-tool-surface-security.md
+- Human Approval Needed: no
+
+## REV-20260908T162000-tool-surface-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260908T162000-tool-surface
+- Trigger: API/query 도구 계약·조회 경계
+- Timestamp: 2026-09-08T08:03:31.170056+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T162000-tool-surface-qa.md
+- Human Approval Needed: no
+
+## REV-20260908T172000-tool-surface-deploy-proof [SKIPPED:docs-only] — 배포 증거 기록
+
+- Related TASK: TASK-20260908T162000-tool-surface
+- Reason: 제품 코드·정책 변경 없이 배포 실측과 미검증 경계를 기록하는 비정책 문서 후속. 구현 패널 backend/security/qa는 REV-20260908T162000에서 PASS했다.
+- Review: 7서비스 56건은 배포 모듈 계약 검사이며 실제 DB 결과/AI 응답과 구별했다. 실제 계정 권한 경로는 catalog200·미바인딩403·첨부대체404를 확인했고 search_routines500은 TCP timeout이다. 기존 버전 워커·호스트에서도 연결 실패하여 누락404와 같은 원인으로 합치지 않았다.
+- Evidence: test-runs.d/TASK-20260908T162000-tool-surface.md. 신규 assistant0을 verified로 승격하지 않으며 기존 사용자 대화/첨부는 보존했다. 민감한 접속정보·DB 정의는 문서에 전재하지 않았다.
+
+## REV-20260908T160000-step-tool-syntax-postmerge [SKIPPED:merge-only-no-product-change]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 제품 코드 델타 0 — `origin/main` 흡수 병합과 검증 증적 기록뿐이다. 병합 자체의 검증은
+  §16.4 「해결 결과 검증(MUST)」로 수행했다(양쪽 부모 대비 유실 0 · 양측 고유 변경 생존 ·
+  auto-merge 파일 포함 대조). 코드 축의 적대 검증은 REV-20260908T131500-* / T142000-* /
+  T150000-* 3라운드가 이미 덮는다.
+- Timestamp: 2026-09-08T16:00:00+09:00
+## REV-20260908T125500-share-client-entry [SUBAGENT:security,ux,qa] — CONCERN (3R 후)
+
+- Related TASK: TASK-20260908T125500-share-client-entry
+- Trigger: UI/screen/layout 키워드(공유 화면 액션 바) + token/session 인접(딥링크 파라미터) — §18.8
+- Timestamp: 2026-09-08T12:55:00+09:00 (1R) · 2026-09-08T14:10:00+09:00 (2R)
+- Verdict: **1R BLOCK ×3 → 조치 → 2R security BLOCK·ux CONCERN → 조치 → 3R BLOCK(HIGH 2) →
+  조치 → CONCERN(이연 9건 기록)**
+- Artifact: [r1](reviews/20260908T132000-share-client-entry-r1.md) ·
+  [r2](reviews/20260908T141000-share-client-entry-r2.md) ·
+  [r3](reviews/20260908T150000-share-client-entry-r3.md)
+- Human Approval Needed: no (§12.3 Major — 착수 전 사용자 결정 2건을 AskUserQuestion 으로 받음)
+
+### 패널 결과 요약 — 두 라운드가 무엇을 바꿨나
+
+**1R (security·ux·qa 전원 BLOCK).** 지적이 실재했고, 그중 둘은 **이 cycle 이 새로 만든 위험**
+이었다: ① `safe_app_path` 가 `?`·`#` 를 통과시켜 `panel_url` 의 쿼리가 두 벌이 되고, 브라우저가
+**첫 값**을 취하므로 링크 제작자가 브리지 nonce 를 덮어쓸 수 있었다(실행 재현) ② 브리지 좌표
+캡처가 **익명 공유 페이지**로 내려와, 링크 한 줄로 origin 전역 `sessionStorage` 를 심을 수 있었다.
+그 밖에 `show.path` 의 토큰 평문 기록, `open` 링크의 토큰 수용, 받을 곳 없는 배포에서의 막다른
+길, 하단 바가 대화 말미를 영구히 가리는 문제(chromium 실측 320px 에서 **102px 초과**),
+그리고 **내장 창 목적지 배선이 561건 중 한 건도 지키지 않던** 사실(뮤턴트 실증)이 나왔다.
+
+**2R (조치 재검증 — security BLOCK · ux CONCERN).** 「넣었다」와 「성립한다」가 갈렸다:
+① X1 조치(`/^\/share\//` deny-list)가 **뚫렸다** — 같은 문서가 `/static/share.html` 로도 익명
+200 이라(라이브 확인) 정규식을 비껴갔다. allow-list 로 극성을 뒤집었다. ② `os.fchmod` 가
+**배포 플랫폼에서 no-op** 이었다(실 Windows 실측 `0o666`). ③ 목적지 쓰기 실패가 **요청 자체를
+삼켰다**. ④ 여백 동기화가 **인쇄를 깨뜨렸다**. ⑤ T9 가 **항진명제**라 예산을 고정하지 못했다.
+
+**이 라운드가 스스로 잡은 것**도 셋이다 — 경계 테스트를 상수에서 계산했더니 상수와 표가 함께
+움직여 항진명제가 됐고, 좁은 폭 조치가 `textContent` 대입으로 받기 링크를 **삭제**했으며,
+하네스 두 곳의 테스트 nonce 가 실제 규격 밖이라 제품과 다른 것을 재고 있었다.
+
+**3R (수렴 확인 — BLOCK, HIGH 2건).** 「지금 랜딩해도 되는가」만 물었고 답은 아니오였다.
+**둘 다 2R 조치가 만든 회귀**이며, 세 스위트를 재현해 **초록임을 확인한 상태에서** 실행으로
+재현됐다 — 초록은 커버리지의 증거가 아니다. ① allow-list 가 **앱 창의 좌표를 첫 이동에서
+영구히 잃게** 만들어, 그 창이 자기를 브라우저로 오인하고 결국 **자기 자신에게 딥링크를 쏘는**
+2026-09-07 제보 결함의 조건이 재현됐다. ② 로그인 링크를 무조건 지운 탓에 **열화 3분기 전부에서
+미로그인 수신자의 제품 진입이 0개**가 됐다(2R 의 이연 근거를 하네스 자신이 반증했다).
+
+리뷰어의 진단이 정확했다 — **「진입점을 만들었으나 진입 이후를 설계하지 않았다」**가 두 HIGH 의
+공통 형태이고, 검증도 **축 하나를 고정하고 다른 축만 훑어** 교차 칸이 비어 있었다. 그래서
+좌표는 «검증 후» 세션으로 올리고(페이지가 아니라 세션이 정본), 하네스를 **2차원 표**로 바꿨다.
+
+### 판단 근거 (유지되는 것)
+
+- **왜 프런트 유도까지인가.** join/fork 를 직접 POST 하려면 이미 «유효 로그인 세션 + 유효 공유
+  토큰» 이 있어야 하므로, 우회로 얻는 것은 **권한이 아니라 «어느 화면에서 눌렀는가»** 뿐이다.
+  ⚠ 2R 이 지적한 대로 그 문장이 보증하는 것은 「우회해도 아무 일 없다」이지 「우회 **수단**이
+  무해하다」가 아니다 — 그래서 우회 수단(브리지 좌표) 쪽을 따로 닫았고, **어디까지 우회되는지**
+  를 코드 주석과 `docs/SECURITY.md` 에 명시했다(`?client_port=` 하나로 유도는 건너뛴다).
+- **왜 서버가 딥링크를 조립하는가 / 왜 토큰을 싣지 않는가 / 왜 경로 검증이 양쪽에 있는가** —
+  1R artifact 및 `shared/dqa_identity.py` docstring 참조.
+- **왜 「앱 전용」에 열화 조건이 셋인가**(앱 링크 부재 · 받을 곳 부재 · 앱이 존재할 수 없는 기기).
+  사용자 결정은 「앱 전용 **+ 받기 안내**」였다. 받기 안내가 성립하지 않는 배포·기기에서 앱 전용만
+  집행하면 **결정의 절반만** 적용되어 수신자가 설치할 방법도 돌아갈 길도 없는 화면을 본다.
+  조건이 갖춰졌을 때만 결정을 적용하는 편이 결정에 더 충실하다.
+
+### 이연 (9건 — 근거·분류는 3R artifact §4, 3R 리뷰어가 «유지 동의»)
+
+브라우저 명령줄·기록의 토큰(H1 의 «IPC 로 목적지 전달» 과 **같은 뿌리** — 함께 다루면 효율적) ·
+스킴 하이재킹 노출 빈도 · `server.json` 미인증 · mtime 시계 전진·symlink · 열화 모드 미관측
+(**H2 가 열화 분기에서 났으므로 우선순위 한 칸 상향**) · `/static/*.html` 이중 노출 ·
+`ai-connect.js` 좌표 사본 · `verify_side_panel_exclusive.mjs` C3 선재 실패(main 동일) ·
+공개 base 를 설정값으로 고정(3R C4 — 완화 둘이 서 있음을 리뷰어가 확인).
+
+### 배포 근거
+
+wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included` + AGENTS.md §16.5.1. web 자산 변경이므로
+`bin/deploy-web.sh --web-only` 범위이며, 재배포로 원복되지 않는 side-effect(파괴적 DB 마이그레이션·
+외부 발송·외부 리소스 삭제)는 **없다**(§12 Critical 미해당). ⚠ **클라이언트 재배포는 이 cycle 의
+범위 밖** — 딥링크 `path` 수용은 설치본 코드이고 빌드는 Windows 전용이다.
+
+### 판단 근거
+
+- **왜 프런트 유도까지인가 (서버 집행을 넣지 않은 이유).** join/fork 를 직접 POST 하려면
+  이미 «유효 로그인 세션 + 유효 공유 토큰» 이 있어야 한다 — 우회로 얻는 것은 **권한이 아니라
+  «어느 화면에서 눌렀는가»** 뿐이다. 즉 이것은 보안 경계가 아니라 UX 경계이고, 프런트 집행이
+  비례한다. 서버 집행의 두 형태는 각각 대가가 컸다: 「앱 연결 보유 계정만」은 *AI 연결과 무관한
+  그룹 참여*까지 묶고, 「앱 창 세션 표식」은 브리지↔서버 증명 채널 신설 + 구버전 앱 즉시 차단을
+  부른다. 사용자 결정으로 전자를 택했다. **표시-집행 비대칭을 코드 주석·FUNCTION·본 항목에
+  명시**해 다음 사람이 이것을 인가 통제로 오해하지 않게 한다.
+- **왜 서버가 딥링크를 조립하는가.** 스킴·경로 규칙의 정본은 `shared/dqa_identity` 다. 프런트가
+  문자열을 만들면 개명·규칙 변경이 도달하지 않는 자리가 하나 더 생긴다 — 그 모듈이 만들어진
+  이유가 정확히 그것이다(옛 이름이 리터럴로 21곳). 테스트 C5 가 `share.js` 에 스킴 리터럴이
+  없음을 잠근다.
+- **왜 토큰을 싣지 않는가.** 이 링크는 *공유 링크를 받은 사람*의 화면에서 만들어진다. 앱 창은
+  기본 브라우저 프로필(또는 내장 창 세션)로 열려 로그인 세션이 따라오므로, 베어러를 한 번 더
+  실으면 얻는 것 없이 노출 지점만 는다. 연결용 `scheme_url()`(토큰 실음)과 축이 다르므로
+  함수를 나눴다.
+- **경로 검증을 왜 양쪽에 두는가.** `usable_base` 가 「어느 서버인가」를 본다면 `safe_app_path`
+  는 「그 서버 안 어디인가」를 본다. base 만 검사하면 `path=//evil.example/x` 가 통과하는데,
+  브라우저는 그것을 protocol-relative URL 로 읽어 **다른 origin 을 앱 창에 띄운다**. 클라이언트는
+  동결 배포본이라 `shared/` 를 import 하지 않으므로 사본을 두되, 테스트가 **같은 표로 양쪽을
+  대조**한다(`_PATH_TABLE`).
+- **부적격 경로를 왜 «거부» 가 아니라 «키 버림» 으로 처리하는가.** 나쁜 링크 하나가 앱 실행
+  자체를 막으면 사용자는 「눌렀는데 아무 일도 없다」를 겪고 스스로 진단하지 못한다. 목적지만
+  잃고 루트를 여는 것은 구버전 클라이언트의 동작과 **같은 형태**라 예측 가능하다.
+- **`take_show_request` 반환 계약 변경(bool → `str|None`)의 대가.** 호출부 3곳과 기존 테스트
+  5건을 함께 갱신했다. 목적지를 «신호 파일 두 번째 줄» 로 넣지 않은 이유는 상주 프로그램이라
+  **이미 떠 있는 쪽이 구버전일 수 있기** 때문이다 — 종전 형식은 파일 전체를 `float()` 로 읽으므로
+  줄을 보태면 구버전이 요청 자체를 버린다(사용자에겐 「눌렀는데 아무 일도 없다」). 별도
+  `show.path` 파일이면 구버전은 그것을 모른 채 창만 연다. 목적지를 잃는 것과 요청을 잃는 것은
+  다르다.
+- **하네스 자체의 결함을 먼저 잡았다.** `verify_share_client_entry.mjs` 첫 작성본은
+  `runScripts: "outside-only"` 라 `share.js` 가 **한 줄도 실행되지 않았고**, 그런데도 「버튼이
+  안 보인다」류 단정이 전부 통과했다 — 초기 HTML 이 이미 `hidden` 이기 때문이다. 즉 스크립트를
+  아예 안 돌려도 초록이 나오는 하네스였다(§16.7 G14 — 처방은 결과 대조로 끝난다). ⓪번 양성
+  대조군을 세워 그 형태를 봉인했다.
+- **선재 실패 구분.** `test_share_redaction_invariant.py` 7건은 main 에서도 동일하게 실패하는
+  로컬 환경 의존 항목이다 — 회귀 판정은 main 대비 차집합으로 했다.
+
+### 리스크 · 미해소
+
+- **클라이언트 재배포 전까지 목적지 이동은 성립하지 않는다.** 서버만 배포하면 구버전 앱이
+  서비스 루트를 연다(파손 아님, degrade). 설치기 빌드는 Windows 전용이라 feature-0046 릴리스
+  채널 절차를 따른다 — 이 cycle 은 서버·프런트까지이며, 그 사실을 REPORT 에 남긴다.
+- `static/ai-connect.js` 의 좌표 규약 자체 구현은 이번 범위 밖(§8.1 기록만).
+
+### 배포 근거
+
+wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결정) + AGENTS.md
+§16.5.1. web 자산 변경이므로 `bin/deploy-web.sh --web-only` 범위이며, DB 마이그레이션·외부
+발송·외부 리소스 삭제 등 재배포로 원복되지 않는 side-effect 는 **없다**(§12 Critical 미해당).
+
+## REV-20260908T160000-share-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: TASK-20260908T160000-share-postdeploy.
+- Reason: 배포 후 라이브 실측 결과와 그 검증의 미확인 경계를 test-runs 에 기록만 한다.
+  제품 코드·FUNCTION·정책·권한 변경 0 — §18.8 dispatch 표의 「비정책 doc-only」 행.
+- Timestamp: 2026-09-08T16:00:00+09:00
+
+## REV-20260908T163000-step-tool-syntax-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T125500-step-tool-syntax-leak / feature-0003-agent-web-ui
+- Reason: 제품 코드 델타 0 — 배포 후 실측 결과 기록뿐이다. 코드 축의 적대 검증은
+  REV-20260908T131500-* / T142000-* / T150000-* 3라운드가 덮는다.
+- Timestamp: 2026-09-08T16:30:00+09:00
+
+## REV-20260908T203700-attach-folder-tree-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: TASK-20260908T124500-attach-folder-tree.
+- Reason: 배포 후 실측 결과·캡처 기록만 보충한다. 제품 코드·FUNCTION·정책 변경 없음
+  (구현분의 검증 패널은 REV-20260908T133000-attach-folder-tree 가 이미 2라운드 수행).
+- Timestamp: 2026-09-08T20:37:00+09:00
+
+## REV-20260908T204500-step-narration-r3-panel [SUBAGENT:backend-security-qa-ux] — CONCERN
+- Related TASK: TASK-20260908T204500-step-narration-seal / feature-0003-agent-web-ui
+- Trigger: 라운드 3 확인 라운드 — TASK-20260908T125500 의 `verification_debt` 상환
+- Timestamp: 2026-09-08T20:45:00+09:00
+- Verdict: CONCERN (P1 0 · medium 3 + concern 4)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260908T204500-r3-panel.md
+- Critical issue: 라운드 1~3 조치 6건이 **뮤턴트로 봉인되지 않아** 되돌려도 전건 초록 · `/api/ask` 의 `steps` 가 표시 이음매를 우회해 `intent` 유출(라이브 3,382행) · 적재층의 사유 파생이 화면에서 구분되지 않음(22행)
+- 조치: 본 cycle 에서 전건 반영 + **뮤턴트 8종 KILL 실증**. 잔여 3건은 TASK 에 후속으로 명시.
+- Human Approval Needed: no
+
+## REV-20260909T010301-ai-claude-doc-sync-20260909-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-08 블록 신설 (doc_sync 09-09)
+- Related TASK: TASK-20260909T010301-doc-sync-rn-0909
+- Timestamp: 2026-09-09T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 블록 1개 prepend + `generated` 전진**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스 + 적대 검증조로 검증했다.
+- **검증**: `node --check` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일). `date:` 블록 62→63 · `generated` 09-07 → 09-08.
+- **적대 검증**: 구조·규약·정직성은 전건 통과(34/0 유지 · 내부 노출 기계 스캔 0 · 접힌 summary 에 「설치본 코드라 새 앱을 받으신 뒤에만 성립」 계열 고지 존재 · 미확인 미래약속 0). 사실오류 **1건 적발·반영** — 아이콘 항목 제목의 `(1.1.1 · 1.1.2)` → `(1.1.2)`(1.1.1 은 러너 복구로 먼저 게시된 별개 릴리스, 아이콘은 1.1.2 로만 배포. 정본 `feature-0043 REPORT.md` · `MODIFY.md` · 머지 `6bf4ace3`). 직전 3블록이 제목에 버전 라벨을 쓴 적 없다는 관례 근거도 함께 확인.
+- **평이화 준수**: 내부 명칭 기계 스캔 **0건**. 화면에 그대로 나타나는 라벨·앱 이름(DQA)·버전 번호만 인용했다(직전 블록들과 동일 관례).
+- **미검증 정직 표기**: 공유-앱 진입의 딥링크 목적지 이동은 **게시된 최신본 1.2.4 에도 없다**(수용 코드가 마지막 버전 bump 뒤에 착륙 — 다음 릴리스 필요) · 미서명 설치 시 Windows 경고 1회 · [DQA 앱 받기] 노출 전환 미관측 · 앱 화면 실측 범위 한계 — 항목 detail 과 접힌 summary 양쪽에 명시했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- Human Approval Needed: **아니오**.
+## REV-20260909T123400-session-continuity-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T123400-session-continuity-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-qa.md
+- Human Approval Needed: no
+
+## REV-20260909T123400-session-continuity-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-security.md
+- Human Approval Needed: no
+## REV-20260909T120000-diff-similarity-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
+- Trigger: API response·performance / 응답·성능 + UI alignment / 화면 정렬
+- Timestamp: 2026-09-09T03:06:28.577234+00:00
+- Artifact: [독립 리뷰](reviews/20260909T120000-diff-similarity-backend-security-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260909T120000-diff-similarity-ux-design [SUBAGENT:ux-design] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
+- Trigger: API response·performance / 응답·성능 + UI alignment / 화면 정렬
+- Timestamp: 2026-09-09T03:06:28.577234+00:00
+- Artifact: [독립 리뷰](reviews/20260909T120000-diff-similarity-ux-design.md)
+- Human Approval Needed: no
+
+승인 근거: 현재 사용자 요청이 diff 유사 매칭 구현을 위임했으며 Minor 표시/계산 변경이다. wrapper FIRST_REQUEST.md의 deploy_scope: included 및 AGENTS §16.5.1에 따라 검증 후 web-only 배포를 수행한다. 권한·원본 저장·DB 실행 변경 없음.
+
+- QA 후속 검토(diff_review): 전체 회귀의 기존 사이드 패널 하네스 누락 원인 확인 및 4줄 수정. Node 69건과 관련 pytest PASS. route/tool 기대치는 최신 main에서 이미 정합되어 upstream merge로 수용한다.
+
+- origin/main(a8abac5f) 병합: TASK 상단의 독립 두 작업 추가는 양쪽 보존, ROUTEMAP 생성 지문 충돌은 현재 소스로 재생성. 동작 코드 충돌 없음. upstream의 route golden·도구 목록 기대 갱신을 수용한다.
+
+## REV-20260909T122500-diff-similarity-integration [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity; feature-0003-agent-web-ui
+- Trigger: upstream merge / 병합·라우트 계약 정합
+- Timestamp: 2026-09-09T12:22:35.563603+09:00
+- Artifact: [통합 검토](reviews/20260909T122500-diff-similarity-integration.md)
+- Human Approval Needed: no
+
+
+## REV-20260909T123000-diff-similarity-sync [SKIPPED:non-policy-doc] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity
+- Trigger: 비정책 작업/검증 상태 기록만 갱신. 제품 코드는 통합 리뷰와 동일하다.
+- Timestamp: 2026-09-09T12:23:14.975225+09:00
+- 근거: 구현 및 통합 독립 리뷰 PASS, 관련94건·격리 컨테이너45건 로그. merge post-commit의 delta 미인식은 이번 일반 문서 커밋으로 재검증한다.
+
+
+## REV-20260909T124000-diff-similarity-postdeploy [SKIPPED:non-policy-doc] — PASS
+- Related TASK: TASK-20260909T120000-diff-similarity.
+- Scope: TASK/REPORT/MODIFY/Run 출하·배포 증거 기록만, 동작 코드·정책 변경0. §18.8 독립 제품 리뷰 추가 대상 없음.
+- Evidence: PR #1646 MERGED, deploy exit0·46b70e26/2 replica ready·soak PASS, `deployed-result.json` 두 사본 일치, `served-asset-result.json` HTTPS200/자산 스탬프 및 내용 일치.
+- Boundary: fixture DQA21 PASS와 설치 사용자 세션 NOT-RUN을 유지. 최초 전체 실패 및 원인별 재검증을 전체 suite PASS로 바꾸지 않았다.
+
+## REV-20260909T125141-session-claim-backend [SUBAGENT:backend] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-security [SUBAGENT:security] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-security.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-qa [SUBAGENT:qa] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-qa.md
+- Human Approval Needed: no
+
+## REV-20260909T130116-session-installed-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0003-agent-web-ui / TASK-20260909-session-continuity
+- Trigger: 설치 DQA 실측, API/응답 계약
+- Timestamp: 2026-09-09T13:01:16.237752+09:00
+- Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
+- Human Approval Needed: no
+## REV-20260909T135700-auth-transition-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: auth/session/인증 세션
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-security.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-ux [SUBAGENT:ux] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: UI/screen/화면 전환
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-ux.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-design [SUBAGENT:design] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: UI/layout/화면 디자인
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-design.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: API/response/세션 오류 응답
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T135700-auth-transition-qa [SUBAGENT:qa] — PASS
+- Related TASK: TASK-20260909-auth-transition / feature-0003-agent-web-ui
+- Trigger: API/test/오류 및 재시도 검증
+- Timestamp: 2026-09-09T04:58:22.941065+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260909-auth-transition-qa.md
+- Human Approval Needed: no
+## REV-20260909T140000-deploy-refresh-backend-security-qa [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [backend-security-qa](reviews/20260909T140000-deploy-refresh-backend-security-qa.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
+
+
+## REV-20260909T140000-deploy-refresh-ux-design [SUBAGENT:ux-design] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 공개 API·배포 신호·자동 갱신·상태 복원. AGENTS §18.8에 따라 기존 subagent 재사용.
+- Timestamp: 2026-09-09T14:00:00+09:00
+- Verdict: PASS
+- Artifact: [ux-design](reviews/20260909T140000-deploy-refresh-ux-design.md)
+- Human Approval Needed: no
+- 정합: ROUTEMAP 재생성 및 CODE_NAVIGATION/CODEBASE_MAP/CODE_TASKS 완료 신호 경로 갱신.
+
+
+## REV-20260909T141300-deploy-refresh-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Reason: 코드 변경 없이 실제 서버 배포와 격리 재검증 결과를 기록하는 비정책 문서 후속. backend-security-qa가 기존 수치와 경계를 대조했고 web-only smoke 문구를 정정했다.
+- Timestamp: 2026-09-09T14:13:00+09:00
+
+
+## REV-20260909T142000-deploy-refresh-stop [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Trigger: 로그인 재초기화 후 폐기한 감지기의 지연 응답 재로드. 기존 reviewer 독립 재현 및 회귀 검토.
+- Timestamp: 2026-09-09T14:20:00+09:00
+- Verdict: PASS
+- Artifact: [stop 검토](reviews/20260909T142000-deploy-refresh-stop.md)
+- Human Approval Needed: no
+
+
+## REV-20260909T142200-deploy-refresh-run-boundary [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- Reason: 수명주기 보완 후 현재 DQA 검증 경계를 명시한 비정책 증거 기록. 코드 검증과 설치본 실행을 구분한다.
+- Timestamp: 2026-09-09T14:22:00+09:00
+
+
+## REV-20260909T144000-caddy-probe [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 배포 완료를 막은 Caddy PID 고갈·점검 프로세스 회수·상태 조회 실패·격리 probe cleanup.
+- Timestamp: 2026-09-09T14:40:00+09:00
+- Verdict: PASS
+- Artifact: [독립 검토](../../feature-0014-zero-downtime-deploy/docs/reviews/20260909T144000-caddy-probe.md)
+- Human Approval Needed: no
+
+## REV-20260909T150000-auth-transition-integration [SUBAGENT:ux,backend,qa]
+
+- PR #1653 통합 뒤 UX reviewer가 실제 초기화 함수의 자동 갱신 복원·deep-link·강제 비밀번호 변경 순서를 검증하여 44 PASS. 하네스 import.meta P2를 수정했다.
+- backend/qa reviewer는 통합 소스와 Makefile Git/jsdom/acorn 시험 의존성, pytest 인증 wrapper를 검토했다. 두 JS wrapper 독립 실행 PASS와 격리 컨테이너 141 PASS 로그를 확인했다.
+- Verdict: PASS, 잔여 P1/P2 없음. 이 리뷰 뒤 수용한 PR #1654/#1655의 갱신 종료 처리는 root가 기존 리뷰 및 변경 diff를 확인하고 두 JS wrapper를 재실행한다. 설치앱 검증은 Run의 배포 후 항목을 따른다.
+
+
+## REV-20260909T160000-auth-transition-deploy-recovery [SUBAGENT:backend,qa,security]
+
+배포 blocker의 독립 원인/보안 리뷰와 수정은 [feature-0014 REVIEW](../../feature-0014-zero-downtime-deploy/docs/REVIEW.md)에 기록한다. 원래 UI 소스 추가 변경은 없다.
+
+
+## REV-20260909T145000-caddy-integration [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping
+- Trigger: 최신 main의 TLS probe 강화와 admin/archive 격리 경로 통합.
+- Timestamp: 2026-09-09T14:50:00+09:00
+- Verdict: PASS (통합 회귀67 PASS)
+- Artifact: feature-0014 docs/reviews/20260909T144000-caddy-probe.md의 최신 main 통합 재검토
+- Human Approval Needed: no
+
+## REV-20260909T170000-auth-transition-installed-verification [SKIPPED:non-policy-doc]
+
+코드 추가 변경 없이 설치된 DQA와 서빙 자산 검증 결과를 기록한다. 실제 3회 왕복·70관측·노출0, 두 replica 14파일 일치이며 보안·UX·디자인·backend/qa 소스 리뷰의 검증 범위를 이 실측과 구분한다.
+
+
+## REV-20260909T150100-deploy-refresh-installed-evidence [SKIPPED:non-policy-doc]
+- Trigger: 최종 배포/설치 실측 결과를 기록하는 비정책 문서 변경.
+- Verdict: PASS. 제품 코드 변경 없음. 서버 exit0·완료 manifest·서빙7파일과 실제 설치 PID/문서 변화/적용 알림의 시각을 대조했다.
+- Artifact: test-runs.d/TASK-20260909T140000-deploy-refresh.md 최종 배포3. 독립 소스 리뷰/fixture 결과를 설치본 실제 사용자 첨부 검증으로 확대하지 않는다.
+
+## REV-20260910T010301-ai-claude-doc-sync-20260910-010301 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-09-09 블록 items append (doc_sync 09-10)
+- Related TASK: TASK-20260910T010301-doc-sync-rn-0910
+- Timestamp: 2026-09-10T01:03:01+09:00
+- 범위: `src/static/release-notes-data.js` **데이터 항목 3개 append + 기존 항목 문장 2건 정정**. 렌더 로직(`release-notes.js`)·HTML·캐시버스터 토큰 **무접촉**. 제품 코드 변경 0.
+- **[SKIPPED] 사유**: §18.8 표 첫 행 — 사용자향 릴리즈노트는 비정책 doc(정적 큐레이션 데이터)이라 적대 패널이 볼 코드 표면이 없다. 대신 전용 하네스 + 적대 검증조로 검증했다.
+- **검증**: `node --check` PASS · `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34/0**(baseline 동일). 블록 수 64 불변 · `generated` 불변 · 09-09 블록 items 9→12.
+- **적대 검증**(4축 sweep + 2조 교차검증, 6에이전트·1.15M 토큰): 커버리지 축이 창 61커밋을 전수 대조해 미커버 user-facing 3건을 확정했고, 내부 운영 변경(포트 전달 예약작업 계정 교정 · 엣지 점검 프로세스 격리 · 종료된 감지기 지연응답 차단)은 회원 화면 체감 변화가 없어 **RN 제외**로 판정했다(기술 색인만 — report-only 3건으로 기록). 교차검증조가 **self-add 항목의 정본 이탈 2건**을 추가 적발해 반영했다(summary 「최신 = 1.2.5」 ↔ item 1.3.0 자기모순 · 1.3.0 항목의 누락 경계 2건).
+- **평이화 준수**: 내부 명칭 기계 스캔 **0건**. 화면에 그대로 나타나는 라벨·앱 이름(DQA)·버전 번호만 인용했다(직전 블록들과 동일 관례).
+- **미검증 정직 표기**: 자동 갱신 실측 시 화면이 비어 있었다 · 표/비교 정렬은 사용자 계정 실제 첨부로의 확인 미완 · 지금 열려 있는 화면은 자동 갱신 코드가 없어 한 번은 직접 새로고침이 필요하다 — 항목 detail 과 **접힌 summary 양쪽**에 명시했다.
+- **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
+- Human Approval Needed: **아니오**.
+
+
+## REV-20260908T034000-transparent-design [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar / feature-0046-native-client / feature-0003-agent-web-ui
+- Trigger: UI/아이콘·설치·웹 진입점 디자인
+- Timestamp: 2026-09-08T03:37:54+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Findings: P1/P2/P3 0. 실제 알파·소형 가독성·웹 자산 동일성·제작기록 정합 확인.
+- Human Approval Needed: no
+
+## REV-20260908T035000-transparent-ux [SUBAGENT:icon_ux_review] — CONCERN
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/창·작업 표시줄·아이콘
+- Timestamp: 2026-09-08T03:50:00Z
+- Verdict: CONCERN — 코드 P1/P2/P3 0, Windows 잠금 해제 후 최종 frozen 시각 확인 잔여
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T035400-transparent-merge-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: main의 현재 검증 정책과 타 세션 변경을 보존한 문서 병합·회귀 결과 보충. native 제품 코드 변화 0, 정책을 재작성하지 않았다. 고정 양 부모의 삭제/제목 유실 0.
+- Timestamp: 2026-09-08T03:55:39Z
+
+## REV-20260908T035401-transparent-inner-logo [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/로그인·사이드바·빈 대화 로고
+- Verdict: PASS
+- Findings: P1/P2/P3 0. 4개 이미지의 22/36/40px 크기·배치 유지, 실제 Windows 로그인 렌더의 투명 심볼 확인. Taskbar 잠금 해제 후 검수는 별도이다.
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Human Approval Needed: no
+
+## REV-20260908T035530-transparent-handoff [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: draft PR/검증 파일/대기 사유/프로세스 정리의 실제 결과 기록. 제품 코드·정책·디자인 변경 없음.
+- Timestamp: 2026-09-08T03:55:39Z
+
+## 20260910-transparent-icon-release
+
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- Verdict: PASS
+- Human Approval Needed: no
+- [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).

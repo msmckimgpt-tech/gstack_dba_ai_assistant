@@ -143,7 +143,10 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
         f" 최대 {_GLOSSARY_MAX}개. 담을 것이 없으면 `{_GLOSSARY_MARK} []` 로 적어라.",
     ]
     if ctxt:
-        parts += ["", "── 이전 대화 ──", ctxt]
+        parts += ["", "── 이전 대화 ──",
+                  "아래는 DQA에 저장된 최신 대화 기록이다. 그룹에서는 다른 사용자의 질문과 그 AI의 답변도 "
+                  "함께 포함된다. 기록의 발언자를 구분하고, 이미 처리한 질문에 다시 답하지 말고 맨 아래 "
+                  "현재 질문에 답하라. 이전 실행과 충돌하면 이 기록과 이번 요청의 도구·지침을 기준으로 삼아라.", ctxt]
     if atts:
         names = ", ".join(f"{a.get('filename')}(id={a.get('attachment_id')})" for a in atts)
         parts += ["", f"첨부 {len(atts)}건: {names}",

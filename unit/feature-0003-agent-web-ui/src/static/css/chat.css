@@ -961,6 +961,45 @@
   background: #e8f0ff;
   color: #2563eb;
 }
+/* attach-folder-tree: 폴더 첨부의 부모 폴더 배지.
+   §18.8 ux [P2] 교정 — 초판은 `flex: 0 0 auto` 였는데, 그것은 「이 항목은 절대 양보하지
+   않는다」는 뜻이라 pill 안에서 **수축 가능한 유일한 항목인 파일명이 먼저 잘렸다**(주석이
+   주장한 것과 정반대 효과). 폴더는 보조 정보이므로 먼저 양보해야 한다: `flex: 0 1 auto`
+   + `min-width: 0` 로 수축을 허용하고 상한도 폭 비례로 둔다.
+   색은 `var(--muted)`(정의된 적 없는 토큰 → 상속되어 본문과 같은 진한 잉크로 렌더됐다)
+   대신 실재 토큰 `--text-2`(#5a5852)를 쓴다 — `--text-muted`(#807d72)는 이 저장소 실측에서
+   `--surface-2` 위 3.58:1 로 WCAG AA 미달이고 10px 배지라 large-text 예외도 없다. */
+.composer-attachment-pill .pill-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(96px, 40%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.composer-attachment-pill .pill-folder::before {
+  content: "📁 ";
+}
+/* attach-folder-tree: 서버 목록(첨부 패널) 행의 폴더 칩. 메타줄에 놓여 이름줄을 다투지 않는다.
+   실 브라우저 캡처(2026-09-08)에서 깊은 경로(`my-project/src/utils`)가 메타줄을 넘겨 다운로드·
+   삭제 버튼을 다음 줄로 밀어냈다 — 행 높이가 파일마다 달라진다. 칩이 먼저 양보하도록 폭 상한을
+   두고(전체 경로는 title 이 진다) 줄바꿈을 막는다. */
+.attach-list-item-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.attach-list-item-meta { flex-wrap: nowrap; }
 .composer-attachment-pill .pill-toggle {
   border: none;
   background: transparent;
@@ -3215,6 +3254,12 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
    `el.hidden = true` 를 줘도 select 가 그대로 보인다("고를 것이 하나뿐인 컨트롤을 두지 않는다"
    는 계약이 CSS 층에서 무력화). jsdom 은 `.hidden` 속성만 보므로 이 축은 CSS 로만 닫힌다. */
 .attach-source-cmpctl[hidden] { display: none; }
+/* 마크다운·표 토글은 같은 트랩의 반대편이다 — `display` 를 선언하지 않아 UA 의
+   `[hidden]{display:none}` 가 그대로 듣는다. 그래도 명시해 둔다: 이 그룹에 정렬 규칙을 얹는
+   순간 같은 트랩이 다시 열리고(이 파일이 두 번 겪은 기전), 그러면 "칠할/그릴 본문이 없으면
+   숨김" 계약이 CSS 층에서만 조용히 무력화된다(jsdom 은 `.hidden` 속성만 보므로 못 잡는다). */
+.attach-source-mdtoggle[hidden],
+.attach-source-tabletoggle[hidden] { display: none; }
 /* diff 표가 없는 화면(내용 동일·바이너리·같은 버전·조회 실패)의 diff 전용 컨트롤은 **비활성**이다
    — 숨기면 `.attach-diff-stats{margin-left:auto}` 때문에 컨트롤 바가 통째로 흔들린다(버전 쌍을
    오가며 훑을 때 누르려던 버튼이 이동). 비활성은 위치를 지키면서 "지금은 쓸 수 없다" 를 말한다. */
@@ -3336,6 +3381,73 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+/* ── 첨부 표 렌더 뷰 (사용자 요청 2026-09-09) ─────────────────────────────────
+   `.csv`/`.tsv` 첨부를 **격자**로 보여 준다. 위 마크다운 뷰와 같은 성격(원문은 토글로 남기고
+   기본은 렌더)이라 컨테이너 관용구를 맞추되, 표는 «열 정렬» 이 읽기의 전부라 규칙이 다르다:
+   - `table-layout: auto` + `width: max-content` — 열 폭이 내용을 따라간다. diff 표(`fixed` +
+     colgroup)는 좌우 대조가 목적이라 폭을 고정하지만, 데이터 표에서 폭을 고정하면 짧은 열이
+     낭비되고 긴 열이 전부 접힌다.
+   - 넓은 표는 `.attach-diff-scroller`(부모)가 가로로 스크롤한다 — 여기서 또 `overflow` 를 두면
+     스크롤 컨테이너가 둘이 되어 아래 sticky 머리글의 기준이 이 요소로 바뀐다(머리글이 안 붙는다). */
+.attach-source-tablewrap {
+  background: var(--surface, #fff);
+}
+.attach-source-table {
+  border-collapse: separate;   /* sticky 머리글에서 collapse 는 테두리를 함께 스크롤시킨다 */
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.attach-source-table th,
+.attach-source-table td {
+  padding: 4px 9px;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* 값은 셀 안의 block 래퍼가 담는다 — `td` 에 직접 `max-width` 를 주면 `table-layout: auto`
+   의 열 계산이 그것을 무시한다(실측: 40자 값 하나가 열 폭 750px). 래퍼에는 상한이 듣는다.
+   줄바꿈·연속 공백을 보존하는 것도 여기서 한다 — `td` 에 두면 그 규칙이 행 번호 열까지
+   덮어써(특이성 (0,2,1) > (0,1,0)) 두 자리 번호가 세로로 쪼개진다(실측 캡처에서 적발). */
+.attach-source-table-cell {
+  max-width: 420px;
+  /* 셀 값에 줄바꿈·연속 공백이 들어 있을 수 있다(인용 필드) — 원문 그대로 보이게 한다. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.attach-source-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  font-weight: 600;
+  border-bottom: 2px solid var(--border);
+}
+/* 행 번호 — 파일의 레코드 번호다(머리글이 1). 원문 뷰의 줄번호 열과 같은 시각 언어를 쓴다.
+   래퍼 없이 `td` 에 직접 담으므로 여기서 `nowrap` 을 선언한다 — 번호가 접히면 행 높이가
+   배로 뛰어 표 전체가 성기게 보인다(실측 캡처: 10행부터 `1`/`0` 이 두 줄로 쪼개졌다). */
+.attach-source-table-no {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  user-select: none;
+}
+/* 수치 셀은 우측 정렬 + 등폭 숫자 — 자릿수가 세로로 맞아야 표에서 크기 비교가 된다. */
+.attach-source-table td.is-num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+/* 줄무늬 — 열이 많은 표에서 시선이 행을 벗어나지 않게. 머리글·번호 열보다 약한 대비로 둔다. */
+.attach-source-table tbody tr:nth-child(even) td { background: var(--bg); }
+.attach-source-table tbody tr:nth-child(even) td.attach-source-table-no { background: var(--surface-2); }
 .attach-diff-table {
   border-collapse: collapse;
   width: 100%;

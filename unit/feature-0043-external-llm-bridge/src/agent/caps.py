@@ -1932,11 +1932,14 @@ def schedule_health_recheck(only: str | None = None) -> bool:
             # 협상 경로를 그대로 재사용한다 — 「응답하는가」를 판정하는 기준이 두 벌이 되면
             # 한쪽은 반드시 낡는다(이 파일이 반복해 지켜 온 규율).
             got = detect_runtimes(only, cached=None, probe=True)
-            if got:
+            alive = [r for r in got if r.get("source") in _LIVE_ANSWER_SOURCES or
+                     (r.get("runtime") in _RUNTIME_SPECS and
+                      verify_ai_liveness(r["runtime"], list(_RUNTIME_SPECS[r["runtime"]]["argv"]))[0])]
+            if alive:
                 note_ai_outcome(True)
                 log_event("caps.health_recovered",
                           "연결된 AI 가 다시 응답합니다 — 다음 질문은 정상 처리됩니다.",
-                          runtimes=[r.get("runtime") or r.get("name") for r in got])
+                          runtimes=[r.get("runtime") or r.get("name") for r in alive])
         except Exception as exc:  # noqa: BLE001  (배경 확인 실패가 러너를 흔들지 않는다)
             log_event("caps.health_recheck_failed",
                       "회복 확인이 실패했습니다 — 다음 기회에 다시 확인합니다",
@@ -1994,7 +1997,7 @@ def verify_ai_liveness(kind: str, argv: list,
     got = _ask_json(list(argv or []), _LIVENESS_PROMPT,
                     float(timeout if timeout is not None else _LIVENESS_TIMEOUT_SEC),
                     reason_out=_why)
-    if isinstance(got, dict):
+    if isinstance(got, dict) and got.get("alive") is True:
         return True, ""
     reason = str(_why.get("reason") or "").strip()
     return False, (f"이 컴퓨터의 {kind} 가 응답하지 않습니다"

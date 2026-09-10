@@ -1,0 +1,15 @@
+{
+  "manifest": {
+    "version": "1.3.0",
+    "filename": "DQAConnect-Setup-1.3.0.exe",
+    "sha256": "72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3",
+    "size": 26138425,
+    "published_at": "2026-09-09T08:30:16+00:00",
+    "notes": "설치 중에도 DQA와 AI 연결을 유지하고 새 버전은 정상 종료 후 다음 실행부터 적용합니다. 최초 전환도 작업을 유지하려면 설치 파일을 직접 실행하세요. 1.2.x의 기존 업데이트 메뉴는 최초 전환 때 한 번 재시작됩니다.",
+    "path": "/client/DQAConnect-Setup-1.3.0.exe"
+  },
+  "download_bytes": 26138425,
+  "download_sha256": "72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3",
+  "same_as_verified_build": true,
+  "TLS": "project CA validated"
+}

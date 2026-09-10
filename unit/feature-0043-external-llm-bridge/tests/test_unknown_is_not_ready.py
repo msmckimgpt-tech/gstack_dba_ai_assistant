@@ -345,3 +345,30 @@ def test_cached_caps_path_still_settles_the_state(mod, monkeypatch, tmp_path):
     assert asked, "아무것도 묻지 않았다 — 생존 확인 자체가 불리지 않았다(죽은 배선)"
     assert any("alive" in p for p in asked), (
         f"협상은 건너뛴 것이 맞는데 생존 확인 질문이 없다: {asked!r}")
+
+
+@pytest.mark.parametrize('answer', [{'error': 'Permission denied'}, {'alive': False}, {'alive': 'true'}, {}])
+def test_liveness_rejects_diagnostics_and_false_payloads(mod, monkeypatch, answer):
+    monkeypatch.setattr(mod, '_ask_json', lambda *a, **kw: answer)
+    assert mod.verify_ai_liveness('codex', ['codex', 'exec'])[0] is False
+
+
+@pytest.mark.parametrize('alive', [False, True])
+def test_catalog_health_recovery_requires_actual_answer(mod, monkeypatch, alive):
+    import threading
+    done = threading.Event()
+    calls = []
+    monkeypatch.setattr(mod, 'detect_runtimes', lambda *a, **kw: [{'runtime': 'codex', 'source': 'catalog'}])
+    def verify(name, argv):
+        calls.append(name)
+        done.set()
+        return alive, ''
+    monkeypatch.setattr(mod, 'verify_ai_liveness', verify)
+    mod.note_ai_unusable('unavailable')
+    mod.reset_health_recheck()
+    assert mod.schedule_health_recheck('codex')
+    assert done.wait(2)
+    for thread in list(threading.enumerate()):
+        if thread.name == 'bridge-health-recheck': thread.join(2)
+    assert calls == ['codex']
+    assert mod.ai_health()[0] is alive

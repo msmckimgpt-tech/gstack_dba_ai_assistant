@@ -8,6 +8,12 @@ source_of_truth: false
 
 # Current Report
 
+## 2026-09-09 — 배포 완료 자동 반영
+
+**PR #1653/#1655/#1658 반영, 최종 서버4f570829 배포 및 실제 설치 DQA 자동 갱신 PASS.** 두 replica·엣지 복귀와90초 soak 후에만 완료를 게시한다. 설치 앱의 프로세스를 유지한 채 완료 게시 후1.242초에 문서 변경,4.438초에 적용 알림을 관측했다. 최초 코드 로드 이후 이번 배포에는 수동 새로고침이나 앱 조작이 없었다.
+
+3초 주기 감지와 안전한 시점 적용, 대화/diff 복원을 구성했다. 입력·신규 첨부·실행 작업이 있으면 보류한다. 최종 제품 Shell fixture34/34, 배포 통합67·watcher10·인증44 PASS. 실제 설치본은 빈 작업 화면의 자동 갱신을 확인했으며 초안/첨부/diff 복원은 fixture 범위다. Caddy 점검 자식 누적 경로도 수정하여 기존 프록시를 유지하고 배포를 완료했다. [정본 Run](test-runs.d/TASK-20260909T140000-deploy-refresh.md)에 최초 실패, 환경별 검증과 배포 범위를 구분했다.
+
 ## 1. Summary
 
 **2026-08-11 TASK-20260811T1557-edge-rolling-gate — 롤링이 엣지 관점에서는 무중단이 아니던 근본 결함 수정** (Major §12.3 — 배포 스파인. 데이터/스키마/API/RBAC 무변경). 사용자 보고 "최근 배포 과정 중 서비스가 멈춘다" 로 착수. **근본 원인**: `recreate_replica` 의 게이트가 **컨테이너 내부 `/readyz`**(= 앱이 떴다)까지만 보고 **엣지가 그 replica 를 다시 LB 후보로 쓰는지**는 보지 않았다. Caddy 는 실패한 upstream 을 `fail_duration`(30s) 동안 후보에서 빼는데 실측 롤링 간격은 **10초**(web-a 12:39:54 → web-b 12:40:04)라, web-a 가 아직 격리 중인 상태에서 web-b 를 내려 **available upstream 0** 이 됐다. **라이브 실측**: 엣지 에러 `no upstreams available` **71건/6h**, 전면 503 창 **6회 × 12~17초**, 503 duration 이 전부 `5.01s`(= `lb_try_duration` 소진), 그 창에서 active health 는 양 replica 모두 `host is up`(= passive 격리가 유일 원인), 503 종료 시각이 매 창 "먼저 내린 replica 첫 실패 + 30s" 와 일치. **왜 무증상이었나**: soak 는 web-b recreate 후 시작하고 edge 실패를 blip 으로 관용(`EDGE_FLAP_MAX`)하며 503 은 격리 타이머로 자연 회복하므로 **배포는 매번 성공으로 보고**됐고, `feature-0014/tests/` 는 testpaths 밖이라 이 불변식을 잠그는 테스트가 0건이었다 — 사용자가 유일 backstop. **해소**: `wait_edge_available` 신설(Caddy admin API `/reverse_proxy/upstreams` 의 upstream 별 `fails==0` 확인) + **2층 배선** — recreate 말미 선제 대기(비차단, 롤백 경로 보호) / `predrain` 에서 **상대의 복귀를 fail-closed 로 확인**하고 미복귀면 배포 중단(기존 replica 가 계속 서빙 = 무중단 유지). admin 조회는 `timeout` 2겹(hang 시 flock 을 쥔 채 정지 차단), degrade 대기 기준은 **max(repo Caddyfile, 컨테이너 파일) 에 floor 30s**(파일은 '런타임 적용값' 이 아니므로 관측된 최악값 이상을 기다린다). `predrain` 은 **3조건 fail-closed**(상대 존재·상대 ready·상대 엣지 복귀). **Caddyfile 은 값 원복** — 초안의 `fail_duration 30s→3s` 는 적대 검증이 "`/livez` 는 통과하며 특정 요청만 5xx 인 upstream 이 3초마다 재투입된다"(실장애 격리 10배 약화)를 지적해 철회하고, 결합 사실만 주석으로 고정했다. **검증**: 신규 **39 PASS** · **뮤테이션 17종 전건 KILLED** · codex 적대 리뷰 **5라운드**(1R P1 3·P2 3 / 2R P1 2·P2 2 / 3R P1 1·P2 3 / 4R P1 4·P2 1 전건 반영 · 5R P1 1 은 성립 전제를 실측 반박 후 **근거 기록 + 전제 테스트 잠금**으로 수용) · 라이브 admin 응답 파싱 실측. **게이트 판정 2축**: passive 격리 해제(`fails==0`) **+ Caddy→replica 실도달**(`edge_peer_live` — Caddy 컨테이너에서 그 replica 의 health_uri 를 직접 200 확인, active health probe 와 동일 조건). 전자만 보면 active health 가 제외한 replica 를 복귀로 오판한다. **한계(정직)**: Caddy 내부 healthy 플래그 자체는 admin API 가 노출하지 않아, '방금 실패를 기록해 아직 unhealthy 마킹 중이나 지금은 200' 인 최대 `health_interval`(2s) 창은 폴링(1s)이 흡수한다. **라이브 실증 완료(2026-08-11 17:30~17:35, main 8cad9cd7)** — 배포 창 `no upstreams available` = **0**, 요청 **172건 전부 200**(수정 전 12:40 배포: 111요청 중 503×8·502×1·끊김×1, 전면 503 13초). 게이트 발동 로그 확인(`fails=1 격리 해제 대기` → `복귀 확인(fails=0 + Caddy→web-b /livez 200)`). Caddyfile 변경으로 caddy recreate 를 동반한 배포였는데 그 blip 도 0. 전체 회귀의 기존 실패 1건(OAuth 토큰 갱신)은 **main 기준선에서도 동일**함을 확인. 정본: TASK `20260811T1557-edge-rolling-gate` · CHG/REV-20260811T155700-edge-rolling-gate · Run=test-runs.d/20260811T1557-edge-rolling-gate.md.
@@ -74,3 +80,8 @@ web 서비스를 Caddy LB 뒤 **2-replica(web-a/web-b) 무중단 롤링** 으로
 
 ## 8. 개선 제안 (기록만)
 - insight-worker SIGTERM graceful 핸들러(web 배포와 무관하나 quiet-time 재빌드 안전성 향상).
+
+
+## 2026-09-09 — 로그인 화면 수정 배포의 Caddy 프로세스 복구
+
+PR #1652 첫 배포는 Caddy PID 예산 소진으로 web 교체 전에 안전 중단했다. 한도 무중단 상향 후 누적 경로를 제거하고 관련 회귀 49건과 실제 probe 5회/zombie 증가 0을 확인했다. PR #1656/cf55c659 배포 재실행 exit 0·두 replica ready·90초 soak PASS. 배포 전후 Caddy PID와 zombie 99개 유지. 정본은 [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md)이다. init 설정은 기록했지만 기존 단일 Caddy를 재생성한 것으로 보고하지 않는다.

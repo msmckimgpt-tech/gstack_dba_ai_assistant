@@ -1,0 +1,18 @@
+[
+  {
+    "At": "2026-09-08T15:50:12.3365303+09:00",
+    "NativePid": 29672,
+    "UIAPid": 47356,
+    "Id": "",
+    "Name": "Codex · WSL · Ubuntu · claude-corp 연결 완료",
+    "Offscreen": false
+  },
+  {
+    "At": "2026-09-08T15:52:39.4900308+09:00",
+    "NativePid": 29672,
+    "UIAPid": 47356,
+    "Id": "",
+    "Name": "Codex · WSL · Ubuntu · root 연결 완료",
+    "Offscreen": false
+  }
+]

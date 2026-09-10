@@ -2128,7 +2128,10 @@ _SHARE_REDACTED_META_KEYS = ("final_sql", "sql", "result_rows", "result_text", "
 # 메인 UI(인증 사용자)는 csv_paths(서버 파일 경로) / preview(결과 전문) 를 받아도 되지만,
 # 공유 페이지는 익명이므로 이들 raw payload·서버 경로를 제거하고 share.js 가 실제로 렌더하는
 # 필드(쿼리 전환 navigator + 결과 미리보기 표)만 남긴다.
-_SHARE_STEP_ALLOWED_KEYS = ("tool", "sql", "reason", "intent", "work", "result_summary")
+# ⚠ `intent` 는 서버가 `<도구명>: <문구>` 로 조립한 값이라 **내부 식별자를 담는다**
+# (라이브 실측: 익명 공유 페이로드에 `describe_table: describe_table {...}` 21행).
+# 화면이 쓰지 않으므로 화이트리스트에서 뺀다 — 남기면 devtools·공유 HTML 로 그대로 보인다.
+_SHARE_STEP_ALLOWED_KEYS = ("tool", "sql", "reason", "work", "result_summary")
 _SHARE_RESULT_SUMMARY_ALLOWED_KEYS = ("preview_table",)
 
 
@@ -3511,6 +3514,7 @@ from routers._bootstrap_schema import (  # noqa: E402
     _seed_main_mysql_datasource,
     _ensure_web_product_datasources_schema,
     _ensure_attachment_version_schema,
+    _ensure_attachment_relative_path_schema,
     _ensure_avatar_icon_schema,
     _ensure_bootstrap_admin,
     _ensure_bridge_heartbeat_schema,
@@ -3760,7 +3764,13 @@ from routers._conv_store import (  # noqa: E402
     _extract_intent_from_content,
     _normalize_topic,
     _normalize_step_text,
+    _step_text_is_tool_syntax,
+    _sanitize_step_narration,
     _derive_step_work,
+    _derive_step_work_tail,
+    _step_display_narration,
+    _tool_name_census,
+    _query_tool_names,
     _summarize_rationale,
     _msg_outside_window,
     _inline_tmp_dir,
@@ -3943,6 +3953,7 @@ from routers._conv_store import (  # noqa: E402
     _conversation_scope_key,
     _ask_worker_age_sec,
     _attachment_size_caps,
+    _attachment_count_cap,
     _conversation_owned_by_account,
     _is_worker_mode,
     _open_memory_connection,

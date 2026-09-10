@@ -553,6 +553,8 @@ def _ensure_web_tables():
         app._ensure_web_conversation_attachment_provider_files_schema(conn)
         # TASK-0274: 첨부 버전 관리 컬럼 보장 (slow path — 기존 배포 첨부 테이블에 컬럼 backfill).
         app._ensure_attachment_version_schema(conn)
+        # REQ-20260908-attach-folder-tree: 폴더 첨부 상대 경로 컬럼 보장 (slow path).
+        app._ensure_attachment_relative_path_schema(conn)
         # feature-0043 (TASK-20260828T150000): 브리지 하트비트 컬럼 보장 (slow path).
         app._ensure_bridge_heartbeat_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
@@ -1845,6 +1847,10 @@ def _ensure_web_conversation_attachments_schema(conn) -> None:
                 AccountId BIGINT NOT NULL,
                 ObjectKey VARCHAR(512) NOT NULL,
                 OriginalFilename VARCHAR(255) NOT NULL,
+                -- REQ-20260908-attach-folder-tree: 폴더 업로드의 **폴더 루트 기준 상대 경로**
+                -- (예: `src/utils/helper.py`). 단일 파일 업로드는 NULL — 「경로 있음 = 폴더의 일부」.
+                -- OriginalFilename 은 basename 을 유지한다(기존 전 경로가 파일명으로 첨부를 지칭).
+                RelativePath VARCHAR(1024) NULL,
                 FilenameHmac CHAR(64) NOT NULL,
                 MimeType VARCHAR(128) NOT NULL,
                 SizeBytes BIGINT NOT NULL,
@@ -2751,6 +2757,57 @@ def _ensure_attachment_version_schema(conn) -> None:
     finally:
         cur.close()
 
+def _ensure_attachment_relative_path_schema(conn) -> None:
+    """REQ-20260908-attach-folder-tree: WebConversationAttachments.RelativePath idempotent ALTER.
+
+    폴더(디렉토리 트리)를 통째로 첨부할 때 각 파일이 **폴더 안 어디에 있었는지**를 보존한다.
+    NULL = 단일 파일 업로드(폴더 아님), 값 = 선택한 폴더 루트 기준 상대 경로(`src/a/b.py`).
+
+    `_ensure_attachment_version_schema`(TASK-0274) 와 동형으로 fast-path
+    (`_ensure_seed_catchup`)·slow-path(`_ensure_web_tables`) **양쪽**에서 호출한다 —
+    운영 재기동은 slow path 를 안 타므로 fast path 에 없으면 컬럼이 기존 배포 DB 에 영영
+    생기지 않고, SELECT 가 'Unknown column' 으로 깨지거나(하드 회귀) 기능이 조용히
+    폴백한다(무음 회귀). 두 경로 배선은 `test_attach_folder_tree.py` 가 소스로 고정한다.
+
+    VARCHAR(1024): 깊은 트리(중첩 폴더)를 담되 인덱스는 걸지 않는다 — 조회 축은 여전히
+    (ConversationId, AccountId) 이고 경로는 그 안에서 비교된다.
+
+    CONVENTIONS §13.1 (MySQL online DDL): 컬럼 존재를 먼저 확인해 멱등을 보장하고
+    (bare `try/except: pass` 금지 — 비-online 에러가 silent skip 되면 스키마가 조용히
+    누락된다), ALTER 는 `ALGORITHM=INPLACE, LOCK=NONE` 으로 온라인을 강제한다. 실패는
+    삼키지 않고 error 로그로 표면화한다 — 컬럼이 없으면 폴더 첨부가 경로 없이 저장되어
+    (평평한 파일 목록) 기능이 조용히 반쪽이 되기 때문이다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+            "AND TABLE_NAME='WebConversationAttachments' AND COLUMN_NAME='RelativePath'"
+        )
+        if int((cur.fetchone() or [0])[0]) > 0:
+            return
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationAttachments ADD COLUMN RelativePath VARCHAR(1024) NULL, ALGORITHM=INPLACE, LOCK=NONE"
+            )
+        except Exception as _alter_exc:
+            # §18.8 backend [P2]: 초판 문구는 "평평한 목록으로 폴백" 이라 적었는데 **거짓이다**.
+            # web 의 첨부 SELECT 는 전부 이 컬럼을 참조하므로(목록·업로드 체인 조회·버전·휴지통),
+            # 컬럼이 없으면 폴백이 아니라 그 표면들이 500 을 낸다. 사실대로 적는다 — 잘못된
+            # 안내는 운영자가 문제의 크기를 과소평가하게 만든다.
+            logging.getLogger(__name__).error(
+                "[attach-folder-tree] WebConversationAttachments.RelativePath 컬럼 추가 실패 — "
+                "첨부 목록·업로드·버전·휴지통 API 가 'Unknown column' 으로 500 을 낸다"
+                "(폴더 기능만 꺼지는 것이 아니다). 운영자 수동 ALTER 필요: %r", _alter_exc,
+            )
+    except Exception as _probe_exc:
+        # information_schema 조회 자체가 불가한 환경(테스트 더블 등) — 부트스트랩을 막지 않는다.
+        logging.getLogger(__name__).warning(
+            "[attach-folder-tree] RelativePath 컬럼 존재 확인 실패 — ALTER 를 건너뛴다: %r", _probe_exc,
+        )
+    finally:
+        cur.close()
+
 def _ensure_bridge_heartbeat_schema(conn) -> None:
     """feature-0043 (TASK-20260828T150000): 브리지 연결 하트비트 컬럼 idempotent ALTER.
 
@@ -2970,6 +3027,9 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
     _ensure_attachment_version_schema(conn)
+    # REQ-20260908-attach-folder-tree: 폴더 첨부 상대 경로(RelativePath) fast-path 보정.
+    #   fast path 누락은 기존 운영 DB 에 컬럼이 영영 안 생기는 함정이다(slow path 미경유 재기동).
+    _ensure_attachment_relative_path_schema(conn)
     # feature-0043 (TASK-20260828T150000): 브리지 하트비트 컬럼 fast-path 보정.
     _ensure_bridge_heartbeat_schema(conn)
     # TASK-20260618T044318/061703: DB allowlist 규칙 테이블 + Source/RuleId + 다중규칙(UNIQUE 제거·SortOrder)

@@ -43,6 +43,7 @@ import os
 import threading
 from typing import Callable
 
+from . import branding
 from .branding import ICON_PATH
 
 #: WebView2 런타임이 설치되는 자리. Edge 를 깐 Win10·기본 Win11 에는 있다.
@@ -101,6 +102,7 @@ class Shell:
         self.title = title
         self.storage = storage
         self._window = None
+        self._brand_hwnd: int | None = None
         #: 닫기를 **숨김으로** 바꿔도 되는가를 **닫는 순간 묻는다**. 기본값은 「안 된다」 —
         #: 모르면 숨기지 않는다(모르는 채 숨기는 쪽의 실패가 훨씬 나쁘다, §P0-R).
         self.can_hide: Callable[[], bool] = lambda: False
@@ -117,6 +119,7 @@ class Shell:
     # ── 수명 ──────────────────────────────────────────────────────────────────
     def run(self) -> bool:
         """창을 띄우고 **닫힐 때까지 돌아오지 않는다.** 못 띄웠으면 `False`."""
+        branding.initialize_process()
         try:
             import webview
         except Exception:  # noqa: BLE001
@@ -124,16 +127,45 @@ class Shell:
         try:
             self._window = webview.create_window(
                 self.title, self.url, width=1180, height=820,
-                min_size=(900, 600), confirm_close=False)
+                min_size=(900, 600), confirm_close=False, text_select=True)
             self._window.events.closing += self._on_closing
-            self._window.events.loaded += lambda: self._ready.set()
+            self._window.events.loaded += self._on_loaded
+            self._window.events.before_show += self._brand_window
             os.makedirs(self.storage, exist_ok=True)
             webview.start(gui="edgechromium", private_mode=False,
                           storage_path=self.storage, icon=str(ICON_PATH))
             return True
         except Exception:  # noqa: BLE001 — 못 띄우면 호출부가 폴백한다
+            self._release_branding()
             self._window = None
             return False
+
+    def _brand_window(self) -> None:
+        if os.name == "nt" and self._window is not None:
+            self._brand_hwnd = int(self._window.native.Handle.ToInt64())
+            branding.configure_window(self._brand_hwnd)
+
+    def _release_branding(self) -> bool:
+        if self._brand_hwnd is not None:
+            branding.clear_window(self._brand_hwnd)
+            self._brand_hwnd = None
+        return True
+
+    def _on_loaded(self) -> None:
+        """pywebview가 끈 기본 검색을 WebView2 소유 UI 스레드에서 복구한다."""
+        try:
+            from System import Action
+
+            native = self._window.native
+
+            def enable_shortcuts():
+                native.webview.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = True
+
+            native.Invoke(Action(enable_shortcuts))
+        except Exception as exc:  # 창은 유지하되 단축키 설정 실패를 기록한다.
+            self.last_error = f"text interaction: {exc!r}"
+        finally:
+            self._ready.set()
 
     def _on_closing(self) -> bool:
         """`False` 를 돌려주면 pywebview 가 닫기를 취소한다.
@@ -146,18 +178,18 @@ class Shell:
         숨기지 않는다」를 어기는 것이고, 그 실패가 정확히 이 껍데기가 막으려던 상태다.
         """
         if self._quitting:
-            return True
+            return self._release_branding()
         try:
             if not self.can_hide():
-                return True
+                return self._release_branding()
         except Exception as exc:  # noqa: BLE001 — 판정 불가 = 숨기지 않는다
             self.last_error = f"can_hide: {exc!r}"
-            return True
+            return self._release_branding()
         try:
             self._window.hide()
         except Exception as exc:  # noqa: BLE001 — 숨기지 못하면 닫히는 편이 낫다
             self.last_error = f"hide: {exc!r}"
-            return True
+            return self._release_branding()
         # ⚠ 숨김이 **성립한 뒤에만** 알린다. 실패 경로에서 알리면 「알림 영역에 있습니다」를
         #   말해 놓고 창이 닫혀 프로그램이 끝나는, 화면이 거짓을 말하는 형태가 된다(§P0-R).
         if self.on_hidden is not None:
@@ -166,6 +198,24 @@ class Shell:
             except Exception as exc:  # noqa: BLE001 — 안내 실패가 숨김을 되돌리지는 않는다
                 self.last_error = f"on_hidden: {exc!r}"
         return False
+
+    def navigate(self, url: str) -> bool:
+        """이 창을 **다른 자리로 옮긴다**. 못 옮기면 `False` — 호출부는 그래도 창을 띄운다.
+
+        상주 중에 「이 대화를 앱에서 열기」가 오면 새 창을 만들 수는 없다(창은 하나이고
+        `webview.start()` 는 한 번만 돈다). 그래서 있는 창을 그 자리로 보낸다.
+
+        ⚠ 실패를 **삼키되 조용하지 않게** 한다(`last_error` — `can_hide`·`hide` 와 같은 규약).
+        여기서 예외를 올리면 폴링 스레드가 죽고, 그 뒤로는 「창 열기」 자체가 영영 안 된다.
+        """
+        if self._window is None:
+            return False
+        try:
+            self._window.load_url(url)
+            return True
+        except Exception as exc:  # noqa: BLE001 — 이동 실패가 창을 못 띄우게 하지는 않는다
+            self.last_error = f"navigate: {exc!r}"
+            return False
 
     def show(self) -> None:
         """트레이 [창 열기]·두 번째 실행의 요청이 부른다. 워커 스레드에서 온다."""

@@ -245,6 +245,27 @@ def read_task_attachment(task_id: str, attachment_id: int | None = None,
                   "start_line": start_line, "max_lines": max_lines, "reason": reason})
 
 
+def get_tool_catalog(task_id: str) -> str:
+    return _post("/api/ai/tools/get_tool_catalog", {"task_id": task_id})
+
+
+def run_read_tool(task_id: str, tool_name: str, arguments: dict[str, Any],
+                  reason: str = "") -> str:
+    """서버의 현재 조사 도구 목록을 확인한 뒤 전체 인자를 그대로 전달한다."""
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", tool_name):
+        return json.dumps({"error": "invalid_tool_name"})
+    raw = get_tool_catalog(task_id)
+    try:
+        catalog = json.loads(raw)
+        names = {t["name"] for t in catalog["tool_catalog"]["tools"]}
+    except (ValueError, KeyError, TypeError):
+        return raw
+    if tool_name not in names:
+        return json.dumps({"error": "tool_not_exposed", "available_tools": sorted(names)})
+    return _post(f"/api/ai/tools/{tool_name}",
+                 {"task_id": task_id, "reason": reason, "arguments": arguments})
+
+
 def list_schemas(task_id: str, datasource: str | None = None, reason: str = "") -> str:
     return _post("/api/ai/tools/list_schemas",
                  {"task_id": task_id, "reason": reason,
@@ -305,6 +326,12 @@ def get_table_indexes(task_id: str, schema_name: str, table: str,
                                 "datasource": datasource}})
 
 
+_register("get_tool_catalog", get_tool_catalog,
+          "현재 task의 조사 도구 전체 목록·JSON 인자 스키마·제한과 대체 경로를 확인한다.")
+_register("run_read_tool", run_read_tool,
+          "get_tool_catalog에 있는 모든 조사 도구를 호출한다. search_routines/describe_routine/"
+          "search_db_objects/describe_db_object/explain_query를 포함하며 database/offset 등 인자를 "
+          "arguments에 그대로 담는다. 서버의 제품·SQL·추출 가드를 적용한다.")
 _register("open_task", open_task,
           "작업을 열고 원 질문을 서비스에 기록한다. 반환된 task_id 를 이후 모든 호출에 쓴다.")
 _register("get_task_context", get_task_context,

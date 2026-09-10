@@ -1,0 +1,9 @@
+{
+  "api_status": 200,
+  "download_status": 200,
+  "version": "1.2.3",
+  "size": 26048286,
+  "sha256": "85b69a01da88019031c7cead689d6c7c4359d750b58f7ed32a22958424c5d672",
+  "tls": "verified using project trust bundle",
+  "installed_user_app_changed": false
+}

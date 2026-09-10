@@ -10,13 +10,15 @@ ai_read_priority: 4
 <!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-13 · source_commit: f7ad45d7 -->
 > **이 문서가 답하는 것**: "바꿀 코드를 어떻게 *찾고*, 지금 보는 게 *뭘 하는지* 어떻게 *알고*, 인접 코드로 어떻게 *건너가나*."
 > **정본 아님(reference)**: 사실의 정본은 코드(`routers/`·`app.py`)와 [ROUTEMAP.md](./ROUTEMAP.md)(L0, 자동 생성). 본 문서는 그 위를 걷는 *지도*다 — 링크가 아니라 **이름과 grep 명령**을 준다(matklad codemap 원칙).
-> **대상 코드**: `unit/feature-0003-agent-web-ui/src/` — app.py(19,650→**3,722줄**, -81%)의 핸들러 전량이 `routers/` 37개 파일로 추출됨(2026-09-01 실측 — 29 route-module `@router` + 7 언더스코어 공유모듈 + `__init__` registrar — feature-0026 이 `admin_perf.py`(HTTP 성능 스냅샷, INCLUDE_ORDER=250)·leaf 계측 `src/perf_metrics.py` 추가; feature-0014 가 leaf `src/static_cache.py` — `/static` mount 를 감싸 "요청 `?v=` == 빌드 스탬프" 일 때만 immutable 을 부여하는 ASGI 래퍼 — 추가). feature-0045 가 leaf `src/bridge_drain.py`(브리지 배포 연속성 — 개인 AI 의 대기·도구 호출을 **따로** 세는 in-flight 카운터 + lame-duck 드레인 미들웨어; 드레인 중 신규 도구 호출은 `503 X-Bridge-Draining` 으로 돌려보내되 제출·첨부 읽기는 받는다)를 추가하고, `routers/system.py` 에 배포 제어 창구 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용)을 두었다. leaf helper 는 `src/web_context.py`. feature-0046 이 `routers/client_release.py`(네이티브 클라이언트 배포본의 매니페스트 단일 표면, INCLUDE_ORDER=260)를 추가했다 — **`app` 을 import 하지 않는 유일한 route-module** 이라 `app.py` 가 `/client` 마운트를 위해 이것만 직접 import 하며, 그 import 는 순환 조건의 표시로 마운트 직전에 둔다. 실물은 이미지가 아니라 호스트 bind-mount(`/srv/client:ro`)로 오고, 반입 경로는 `unit/feature-0046-native-client/src/scripts/publish_release.py` 하나다.
+> **대상 코드**: `unit/feature-0003-agent-web-ui/src/` — app.py(19,650→**3,722줄**, -81%)의 핸들러 전량이 `routers/` 41개 파일로 추출됨(2026-09-10 실측 — 30 route-module `@router` + 10 언더스코어 공유모듈 + `__init__` registrar — feature-0026 이 `admin_perf.py`(HTTP 성능 스냅샷, INCLUDE_ORDER=250)·leaf 계측 `src/perf_metrics.py` 추가; feature-0014 가 leaf `src/static_cache.py` — `/static` mount 를 감싸 "요청 `?v=` == 빌드 스탬프" 일 때만 immutable 을 부여하는 ASGI 래퍼 — 추가). feature-0045 가 leaf `src/bridge_drain.py`(브리지 배포 연속성 — 개인 AI 의 대기·도구 호출을 **따로** 세는 in-flight 카운터 + lame-duck 드레인 미들웨어; 드레인 중 신규 도구 호출은 `503 X-Bridge-Draining` 으로 돌려보내되 제출·첨부 읽기는 받는다)를 추가하고, `routers/system.py` 에 배포 제어 창구 `/internal/bridge-{drain,activity,reclaim}`(loopback 전용)을 두었다. leaf helper 는 `src/web_context.py`. feature-0046 이 `routers/client_release.py`(네이티브 클라이언트 배포본의 매니페스트 단일 표면, INCLUDE_ORDER=260)를 추가했다 — **`app` 을 import 하지 않는 유일한 route-module** 이라 `app.py` 가 `/client` 마운트를 위해 이것만 직접 import 하며, 그 import 는 순환 조건의 표시로 마운트 직전에 둔다. 실물은 이미지가 아니라 호스트 bind-mount(`/srv/client:ro`)로 오고, 반입 경로는 `unit/feature-0046-native-client/src/scripts/publish_release.py` 하나다.
 
 > **grep 실행 위치**: 이하 모든 grep 은 **코드 루트 `unit/feature-0003-agent-web-ui/src/`** 에서 실행한다(여기서 `routers/`·`app.py`·`web_context.py` 가 형제, 테스트는 `../tests/`). 정규식 앵커 없이 **리터럴 grep** 만 쓴다.
 
 ---
 
 ## 1. 어떻게 읽나 — 두 질문
+
+배포 자동 반영: `routers/system.py:get_ui_release` → `ui_release.py:read_release`가 현재 replica와 완료 manifest를 대조한다. 게시자는 `bin/lib/ui-release.sh:publish_ui_release`, 소비자는 `static/ui-refresh.js:createUiRefresh` → `static/app/deploy-refresh.js:appRefreshSafe`/`restoreAppRefresh`다. `app.js:initializeWorkspace`가 연결하며 계정별 선택 메타데이터만 보존한다.
 
 **Q1. "X 하는 코드가 어디 있나?"** → [ROUTEMAP.md](./ROUTEMAP.md) 에서 `method + path` 를 찾아 **router 파일:handler** 로 직행. auth 열이 권한 게이트를 미리 선고한다. 경로를 모르면 도메인 키워드로 라우터 색인(ROUTEMAP 상단 표)을 훑는다. 경로 리터럴을 안다면 바로:
 ```
@@ -72,6 +74,7 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | callee 유형 | 어디로 | 찾는 법 (src/ 에서) |
 |---|---|---|
 | leaf helper | `web_context.py` | `grep -n "def _get_client_ip" web_context.py` |
+| 첨부 diff 정렬 | `routers/_attachment_diff.py` | `align_lines`·`unified_from_rows` (호출: `_conv_store.py:_build_version_diff_view`) |
 | 대화 store | `routers/_conv_store.py` | `grep -rn "def _share_load_active" routers/` |
 | 스키마 부트스트랩 | `routers/_bootstrap_schema.py` | `grep -rn "def _ensure_web_tables" routers/` |
 | 감사 인프라 | `routers/_audit_infra.py` | `grep -rn "def _audit_admin_mutation" routers/` |
@@ -197,4 +200,17 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | graph | `_metaShowGraph`(barrel — 위 표) · 스코프 드롭다운은 **admin.js** `_metaPopulateScopeSelect`(graph/ 아님 주의) |
 | settings | `renderRuntimeTimeouts` · `renderModelThinkingBudgets` |
 
-**app.js(8,562줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일. fetch 라인에서 엔클로징 함수 역산: `awk 'NR<=<라인>' app.js | grep -n "^function\|^async function" | tail -1`.
+**app.js(9,085줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일. fetch 라인에서 엔클로징 함수 역산: `awk 'NR<=<라인>' app.js | grep -n "^function\|^async function" | tail -1`.
+
+## 외부 AI 도구 catalog (2026-09-08)
+
+`/api/ai/tools/get_tool_catalog` → `routers/ai_tools.py:get_tool_catalog` → `src/external_tool_catalog.py:build_catalog`. 도구 실행은 `routers/ai_tools.py:run_structure_tool`; 서버 지침은 `_bridge_system_prompt`에서 `render_guidance`를 합성한다.
+
+### 대화별 AI 세션 재사용 (2026-09-09)
+
+`unit/feature-0043-external-llm-bridge/src/agent/sessions.py:conversation_session`에서 실행 위치·계정·대화 결속과 잠금을 찾는다. `SessionBinding.commit`은 서버 제출 영수증을 확정한다. 서버 문맥은 `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py:_recent_conversation_context`, 호출은 `claim_request`·`submit_answer`이다.
+
+
+배포 관측 프로세스는 `bin/lib/caddy-probe.sh`의 `caddy_read_file`(Docker archive)과 `caddy_probe`(같은 network namespace의 별도 init 프로세스)를 따른다. 기존 Caddy 안에 TLS 점검 자식을 만들지 않으며 자기 CID만 정리한다.
+
+통합 경계(2026-09-09): replica TLS 확인은 PR #1656의 `bin/deploy-web.sh:edge_peer_live`가 호스트 nsenter/dig/curl로 실제 DNS·CA·SNI를 확인한다. `caddy_probe`의 격리 init 컨테이너는 admin HTTP GET에 사용한다.

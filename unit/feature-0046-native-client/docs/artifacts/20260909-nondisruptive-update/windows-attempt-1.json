@@ -1,0 +1,7 @@
+{
+  "environment": "DQA-client-isolated",
+  "runner": "controlled fixture",
+  "steps": [],
+  "verdict": "FAIL",
+  "error": "<HTTPError 403: 'Forbidden'>"
+}

@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+
+from .sessions import _SESSION_MISSING, decode_session_output, session_command
 import os
 import re
 import shlex
@@ -347,7 +349,8 @@ def _with_dqa_network(cmd: list[str], kind: str, base: str | None) -> list[str]:
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                         env: dict | None = None,
                         stdin_text: str | None = None,
-                        timeout_sec: float | None = None) -> tuple[bool, str]:
+                        timeout_sec: float | None = None,
+                        session_result: dict | None = None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
@@ -450,6 +453,19 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   exe=_exe, dur_ms=_dur, stdout_bytes=len(box.get("out") or ""))
         note_ai_outcome(False, "연결된 AI 의 종료 상태를 확인할 수 없습니다.")
         return False, "내 AI 의 종료 상태를 확인하지 못했습니다."
+    if session_result is not None:
+        success, answer = decode_session_output(session_result, box.get("out", ""),
+                                                 box.get("err", ""), int(proc.returncode))
+        log_event("ai.session.result", runtime=session_result["kind"],
+                  resumed=bool(session_result.get("resume")), completed=success,
+                  dur_ms=_dur, exit=proc.returncode)
+        if answer != _SESSION_MISSING:
+            note_ai_outcome(success, "연결된 AI가 답변을 완료하지 못했습니다.")
+            if not success:
+                answer = describe_cli_failure(int(proc.returncode or 1),
+                                              session_result.get("failure_detail") or answer,
+                                              box.get("err", ""))
+        return success, answer
     if proc.returncode != 0:
         # ⚠ 자식의 출력 **전문**(각 상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
         #   잘려 있어서, 정작 원인이 적힌 뒷부분이 사라지는 일이 잦았다.
@@ -732,7 +748,8 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
                  caps: dict | None = None,
                  system: str | None = None,
                  token: str | None = None,
-                 api_base: str | None = None, api_ca: str | None = None) -> tuple[bool, str]:
+                 api_base: str | None = None, api_ca: str | None = None,
+                 session: dict | None = None) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
     `model`·`effort` 는 사용자가 **웹에서 고른 것**이다 (P0-Z3). 유효성은 `runtimes`(이 러너가
@@ -789,6 +806,9 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
             return False, "DQA 서비스 주소가 올바르지 않아 AI 연결을 시작하지 못했습니다."
     # 명령줄 상한 (TASK-20260902T140000). Windows 는 32,767자에서 `CreateProcess` 가 거절하고,
     # 그 거절이 라이브에서 **그 계정의 모든 질문**을 죽였다(운영자 지침 34,962자).
+    fresh_cmd = list(cmd)
+    if session is not None and not custom:
+        cmd = session_command(cmd, session)
     cmd, _stdin_text, _fit = _fit_cmdline(kind, cmd, prompt)
     if _fit == "overflow":
         # 예외를 맞으러 가지 않는다 — 종전에는 그대로 `Popen` 해 `[WinError 206]` 문자열이
@@ -806,5 +826,15 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
             child_env.pop("BRIDGE_CA", None)
             if api_ca:
                 child_env["BRIDGE_CA"] = os.path.abspath(api_ca)
-    return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
-                               stdin_text=_stdin_text)
+    kwargs = {"session_result": session} if session is not None else {}
+    ok, answer = _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
+                                     stdin_text=_stdin_text, **kwargs)
+    if session is not None and answer == _SESSION_MISSING and not _canceled():
+        session.pop("resume", None)
+        log_event("ai.session.recreated", "기존 AI 세션이 없어 대화 기록으로 다시 시작합니다.", runtime=kind)
+        cmd, stdin_text, fit = _fit_cmdline(kind, session_command(fresh_cmd, session), prompt)
+        if fit == "overflow":
+            return False, _CMDLINE_OVERFLOW_MSG
+        return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
+                                   stdin_text=stdin_text, session_result=session)
+    return ok, answer

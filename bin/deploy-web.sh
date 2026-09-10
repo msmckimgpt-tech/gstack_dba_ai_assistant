@@ -74,6 +74,8 @@ STATE_DIR="$ARTIFACTS/deploy"
 CERT_ROOT="$ARTIFACTS/certs"
 LOCK_FILE="$LOCK_DIR/deploy-web.lock"
 STATE_FILE="$STATE_DIR/deploy-web.state"
+source "$REPO_ROOT/bin/lib/ui-release.sh"
+source "$REPO_ROOT/bin/lib/caddy-probe.sh"
 LASTGOOD_FILE="$STATE_DIR/deploy-web.last-good"
 PIN_FILE="$STATE_DIR/docker-compose.deploy-pin.yml"
 
@@ -203,6 +205,7 @@ preflight_privilege() {
     die2 "docker 데몬 접근 불가. 'sudo -E bin/deploy-web.sh' 로 실행하거나 scoped NOPASSWD sudoers 를 설정하세요 (헤더 참조). NEVER 'NOPASSWD: ALL'."
   fi
   mkdir -p "$LOCK_DIR" "$STATE_DIR"
+  [ "$DRY_RUN" -eq 1 ] || mkdir -p "$STATE_DIR/ui-release"
 }
 
 # 스크립트가 root 로 쓴 artifacts 산출물을 deploy-user 소유로 정규화(다음 non-root 실행 차단 방지).
@@ -295,9 +298,9 @@ preflight_tls() {
     #
     # 이 검사는 스스로 best-effort 라고 적어 두었으므로 **판정 불가는 skip 이 옳다.**
     # 내용이 PEM 인지 먼저 확인해, 「읽지 못했다」와 「달랐다」를 가른다.
-    caddy_pem="$("${DC[@]}" exec -T caddy cat /certs/rootCA.pem 2>/dev/null || true)"
+    caddy_pem="$(caddy_read_file /certs/rootCA.pem 2>/dev/null || true)"
     if ! printf '%s' "$caddy_pem" | head -1 | grep -q -- "-----BEGIN CERTIFICATE-----"; then
-      warn "Caddy 컨테이너의 rootCA 를 읽지 못했다(exec 불가 등) — CA 대조 skip. 배포는 계속."
+      warn "Caddy 컨테이너의 rootCA 파일 조회 실패 — CA 대조 skip. 배포는 계속."
       caddy_ca=""
     else
       caddy_ca="$(printf '%s' "$caddy_pem" | sha256sum 2>/dev/null | awk '{print $1}' || true)"
@@ -612,7 +615,7 @@ predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc �
   # 앱은 살아 있어도 엣지 passive 격리 중이면 LB 후보가 아니다(= 2026-08-11 사고 기전).
   if ! wait_edge_available "$other"; then
     err "$other 가 엣지 후보로 복귀하지 않았다 — 지금 $target 을 내리면 available upstream 0(전면 503)."
-    err "  진단: docker compose -f docker-compose.yml exec -T caddy wget -qO- $CADDY_ADMIN_URL/reverse_proxy/upstreams"
+    err "  진단: 격리 caddy_probe로 $CADDY_ADMIN_URL/reverse_proxy/upstreams 확인."
     err "  현재 상태 유지(=$target 이 계속 서빙) 후 원인 해결하고 재실행(멱등)."
     return 1
   fi
@@ -765,7 +768,7 @@ caddy_fail_duration_s() {  # 실행 중 Caddy 설정과 repo 소스 중 **큰** 
   local from_file from_live v out=0
   from_file="$(sed -n 's/^[[:space:]]*fail_duration[[:space:]]\{1,\}\([0-9]\{1,\}\)s.*/\1/p' "$CADDYFILE" 2>/dev/null | head -1 || true)"
   # 라이브 값 — 배포가 Caddyfile 을 바꾸는 창에서는 컨테이너가 아직 옛 설정으로 돌고 있다.
-  from_live="$(timeout -k 5 10 "${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null \
+  from_live="$(caddy_read_file /etc/caddy/Caddyfile 2>/dev/null \
     | sed -n 's/^[[:space:]]*fail_duration[[:space:]]\{1,\}\([0-9]\{1,\}\)s.*/\1/p' | head -1 || true)"
   for v in "$from_file" "$from_live"; do
     case "$v" in ''|*[!0-9]*) continue ;; esac
@@ -775,38 +778,45 @@ caddy_fail_duration_s() {  # 실행 중 Caddy 설정과 repo 소스 중 **큰** 
   printf '%s' "$out"
 }
 
-edge_peer_live() {  # $1 = svc → 0 = **Caddy 네트워크에서** 그 replica 의 health_uri 가 200
-  # Caddy 의 active health probe 를 그대로 재현한다 — 같은 컨테이너·같은 경로·같은 Host·같은 TLS
-  # 조건. passive `fails` 만 보면 active health 가 제외한 replica 를 "복귀" 로 오판할 수 있다
-  # (적대 검증 P1): 컨테이너 내부 /readyz 는 200 이고 fails 도 0 인데 Caddy→replica 도달이
-  # 끊긴 상태가 성립하며, 그 상대를 믿고 다음 replica 를 내리면 다시 upstream 0 이 된다.
-  # Host 는 실 트래픽과 동일하게 공개 호스트로 — 앱 TrustedHost 가 내부 서비스명을 400 거부한다.
-  # ⚠ **http fallback 을 두지 않는다** — Caddyfile 의 transport 는 `tls` 고정이라 엣지는 https 로만
-  # 붙는다. web 이 TLS 없이 같은 포트에 HTTP 로 떴다면 Caddy 는 그 replica 를 제외하는데, http 로
-  # 폴백하는 probe 는 200 을 받아 **false-pass** 한다(적대 검증 P1, 4R).
-  # 한계와 그 전제(5R 적대 검증 — 수용된 잔여 리스크): caddy 이미지의 busybox wget 은 CA 를
-  # 지정할 수 없어 `--no-check-certificate` 로 붙는다. 즉 이 probe 는 "TLS 로 도달해 200 을
-  # 받는가" 까지이고 CA/SAN 검증은 하지 못한다. 그래서 "Caddy 는 CA 검증 실패로 제외했는데
-  # probe 만 200" 인 false-pass 가 이론상 가능하다.
-  #   그 시나리오가 성립하려면 **replica 마다 다른 leaf** 를 제시해야 하는데, 이 구성은
-  #   `x-web-extra` 가 양 replica 에 **동일한 `../artifacts/certs` 마운트 + 동일 WEB_TLS_CERT_FILE**
-  #   을 주므로 성립하지 않는다(둘은 항상 같은 cert 를 제시한다). cert 를 교체했는데 Caddy 가
-  #   옛 CA 를 들고 있으면 **양쪽이 동시에** 제외되어 배포 이전에 이미 전면 503 이고, 그 축은
-  #   `preflight_tls` 의 (2) rootCA 검증·(4) 컨테이너 CA 대조가 배포 시작 전에 ABORT 시킨다.
-  #   실제로 한쪽만 TLS 도달 불가가 되는 경우(예: 그 replica 가 cert 를 못 읽어 평문 기동)는
-  #   http 폴백이 없으므로 handshake 실패 → probe 실패로 이 게이트가 잡는다.
-  #   ⚠ 전제(단일 cert 소스 공유)가 깨지면 위 논거가 무너진다 —
-  #     `test_edge_rolling_gate.py::test_g10_replicas_share_a_single_cert_source` 가 그것을 잠근다.
-  local svc="$1"
-  timeout -k 5 15 "${DC[@]}" exec -T caddy wget -q -T 3 --no-check-certificate \
-    --header="Host: $WEB_PUBLIC_HOST" -O /dev/null "https://$svc:8000/livez" 2>/dev/null
+edge_peer_live() {  # $1 = svc → Caddy network namespace에서 replica TLS/Host/CA 확인
+  # busybox HTTPS wget의 ssl_client가 Caddy PID1 아래 zombie로 누적되지 않도록
+  # 호스트 curl을 네트워크 namespace에만 진입시킨다. PID tree와 wait는 호스트에 남는다.
+  local svc="$1" caddy_id peer_id info target pid peer_ip resolver resolved code
+  case "$svc" in web-a|web-b) ;; *) return 1 ;; esac
+  caddy_id="$(timeout -k 5 10 "${DC[@]}" ps -q caddy)" || return 1
+  peer_id="$(timeout -k 5 10 "${DC[@]}" ps -q "$svc")" || return 1
+  [ -n "$caddy_id" ] && [ -n "$peer_id" ] || return 1
+  info="$(timeout -k 5 10 docker inspect --format '{{.State.Pid}} {{json .NetworkSettings.Networks}}' "$caddy_id" "$peer_id")" || return 1
+  target="$(printf '%s\n' "$info" | python3 -c '
+import ipaddress, json, sys
+rows = [line.split(" ", 1) for line in sys.stdin.read().splitlines()]
+if len(rows) != 2 or any(int(row[0]) <= 0 for row in rows):
+    sys.exit(1)
+left, right = (json.loads(row[1]) for row in rows)
+common = sorted(set(left) & set(right))
+if not common:
+    sys.exit(1)
+address = ipaddress.ip_address(right[common[0]]["IPAddress"])
+print(rows[0][0], address)
+')" || return 1
+  read -r pid peer_ip <<< "$target"
+  resolver="$(awk '$1 == "nameserver" { print $2; exit }' "/proc/$pid/root/etc/resolv.conf")" || return 1
+  [ -n "$resolver" ] || return 1
+  resolved="$(timeout -k 5 10 nsenter --target "$pid" --net dig "+time=3" "+tries=1" "+short" "@$resolver" "$svc" A)" || return 1
+  [ "$resolved" = "$peer_ip" ] || return 1
+  # 내부 IP에 고정하되 SNI/Host는 Caddy와 맞춘다. HTTP fallback은 허용하지 않는다.
+  code="$(timeout -k 5 15 nsenter --target "$pid" --net curl --disable --silent --show-error \
+    --noproxy '*' --connect-timeout 3 --max-time 5 --cacert "/proc/$pid/root/certs/rootCA.pem" \
+    --resolve "$WEB_PUBLIC_HOST:8000:$peer_ip" --header "Host: $WEB_PUBLIC_HOST" \
+    --output /dev/null --write-out '%{http_code}' "https://$WEB_PUBLIC_HOST:8000/livez" 2>/dev/null)" || return 1
+  [ "$code" = 200 ]
 }
 
 edge_upstream_fails() {  # $1 = svc → 그 upstream 의 passive fail 카운터. 조회·파싱 불가 시 빈 출력.
   local svc="$1" json rest obj v
-  # `timeout` 2겹: wget 자체(-T)와 docker exec 전체. 어느 한쪽이 응답 없이 멈추면 while 루프가
+  # `timeout` 2겹: wget 자체(-T)와 caddy_probe의 컨테이너 실행. 응답 없이 멈추면 while 루프가
   # deadline 을 재검사하지 못해 **배포가 flock 을 쥔 채 무기한 정지**한다(적대 검증 P1 지적).
-  json="$(timeout -k 5 15 "${DC[@]}" exec -T caddy wget -q -T 5 -O- "$CADDY_ADMIN_URL/reverse_proxy/upstreams" 2>/dev/null || true)"
+  json="$(caddy_probe -q -T 5 -O- "$CADDY_ADMIN_URL/reverse_proxy/upstreams" 2>/dev/null || true)"
   [ -n "$json" ] || return 0
   # 순수 bash 문자열 연산으로 파싱한다 — 호스트 python3 의존을 만들지 않고, `printf | grep`
   # 파이프라인이 pipefail 하에서 SIGPIPE(141)로 오판되던 기존 함정(preflight_fileset 주석)도 피한다.
@@ -919,17 +929,18 @@ restart_count() {  # $1 = svc
 reconcile_caddy() {
   step "Caddyfile reconcile (변경 시에만 caddy recreate)"
   [ -f "$CADDYFILE" ] || { warn "Caddyfile 없음($CADDYFILE) — reconcile skip"; return 0; }
-  if [ -z "$("${DC[@]}" ps -q caddy 2>/dev/null)" ]; then
+  local ccid
+  ccid="$(timeout -k 2 5 "${DC[@]}" ps -q caddy 2>/dev/null)" || die "Caddy 상태 조회 실패 — 기존 프록시 유지."
+  if [ -z "$ccid" ]; then
     log "caddy 미기동 — up -d caddy"; run "${DC[@]}" up -d --no-deps caddy; return 0
   fi
   local host_sha cont_sha
   host_sha="$(sha256sum "$CADDYFILE" 2>/dev/null | awk '{print $1}')"
-  cont_sha="$("${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+  cont_sha="$(caddy_read_file /etc/caddy/Caddyfile 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
   if [ -n "$cont_sha" ] && [ "$host_sha" = "$cont_sha" ]; then
     # feature-0020: config 무변경이어도 caddy 이미지 태그 갱신(caddy:2 re-pull)은 recreate 필요.
     # 단일 edge 라 recreate 는 수초 blip — 이미지 업그레이드 시에만 발생(평시 blip 0 유지).
-    local ccid cimg_run cimg_local
-    ccid="$("${DC[@]}" ps -q caddy 2>/dev/null | head -1)"
+    local cimg_run cimg_local
     cimg_run="$(docker inspect -f '{{.Image}}' "$ccid" 2>/dev/null || true)"
     cimg_local="$(docker image inspect "$(docker inspect -f '{{.Config.Image}}' "$ccid" 2>/dev/null)" -f '{{.Id}}' 2>/dev/null || true)"
     if [ -n "$cimg_run" ] && [ -n "$cimg_local" ] && [ "$cimg_run" != "$cimg_local" ]; then
@@ -1024,6 +1035,7 @@ auto_rollback() {  # $1 = 실패한 sha
   local agent_pin=""
   docker image inspect "$AGENT_IMAGE_REPO:current" >/dev/null 2>&1 && agent_pin="$AGENT_IMAGE_REPO:current"
   write_pin_overlay "$IMAGE_REPO:last-good" "$agent_pin"; set_dc_prod
+  ui_release_write pending "$good" || warn "UI pending 기록 실패 — 서비스 롤백을 먼저 진행합니다."
   local svc; for svc in "${REPLICAS[@]}"; do
     recreate_replica "$svc" "$good" || warn "$svc 롤백 recreate 문제 — 계속."
   done
@@ -1040,6 +1052,7 @@ auto_rollback() {  # $1 = 실패한 sha
   # 리뷰 M-2: ":current 태그 = 현재 배포본" 불변식 복원 — 미복원 시 다음 배포의 last-good
   # 회전이 실패 이미지를 last-good 으로 오염시켜 2연속 실패에서 롤백 불능이 된다.
   if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:last-good" "$IMAGE_REPO:current" 2>/dev/null || true; fi
+  if [ "$rb_ok" -eq 0 ]; then publish_ui_release "$good" || return 1; fi
 }
 
 # ── 워커(insight/ask) 롤아웃 (feature-0020) ─────────────────────────────────────
@@ -1764,6 +1777,7 @@ main() {
     docker image inspect "$IMAGE_REPO:last-good" >/dev/null 2>&1 || die "last-good 이미지($IMAGE_REPO:last-good) 없음."
     write_pin_overlay "$IMAGE_REPO:last-good" ""; set_dc_prod
     preflight_fileset; preflight_tls
+    ui_release_write pending "$good" || warn "UI pending 기록 실패 — 서비스 롤백을 먼저 진행합니다."
     local svc; for svc in "${REPLICAS[@]}"; do recreate_replica "$svc" "$good" || die "$svc 롤백 실패."; done
     # 하드닝(2026-07-11): recreate 직후 단발 프로브는 워밍업 창 오판 — auto_rollback 과 동일 60s 회복 대기.
     local rb_deadline=$(( SECONDS + 60 )) rb_ok=1
@@ -1773,10 +1787,13 @@ main() {
     done
     [ "$rb_ok" -eq 0 ] && log "롤백 완료 + edge 정상 ($good)." || die "롤백했으나 edge 비정상(60s 대기 후)."
     state_set current "$good"
+    # Restore the image alias before optional publication/worker steps can fail.
+    if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:last-good" "$IMAGE_REPO:current"; fi
     # feature-0020: 워커도 last-good 이 있으면 함께 롤백(web/워커 버전 정합).
     if [ "$SCOPE" != "web" ] && [ -n "$(agent_lastgood_sha)" ]; then
-      rollback_workers "$IMAGE_REPO:last-good" || warn "워커 롤백 부분 실패 — 수동 확인."
+      rollback_workers "$IMAGE_REPO:last-good" || die "워커 롤백 부분 실패 — UI 완료 신호를 게시하지 않습니다."
     fi
+    publish_ui_release "$good" || die "롤백 UI 완료 신호 게시 실패."
     normalize_ownership; exit 0
   fi
 
@@ -1793,9 +1810,9 @@ main() {
     log "이미 $TARGET_SHA 가 배포돼 있으나 **대화 스모크 미통과**(기록=${conv_smoke:-없음}) → no-op 하지 않고 검증까지 진행한다."
   elif [ "$FORCE_GATEWAY" -eq 0 ] && edge_ok; then
     case "$SCOPE" in
-      all)     if [ "$web_current" = "$TARGET_SHA" ] && [ "$agent_current" = "$TARGET_SHA" ]; then
+      all)     if [ "$web_current" = "$TARGET_SHA" ] && [ "$agent_current" = "$TARGET_SHA" ] && ui_release_complete_for "$TARGET_SHA"; then
                  log "이미 web+워커 $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등). (gateway/caddy 의 이미지-only 드리프트(re-pull)는 no-op 에서 미검사 — 필요 시 --force-gateway 또는 커밋 동반 배포.)"; normalize_ownership; exit 0; fi ;;
-      web)     if [ "$web_current" = "$TARGET_SHA" ]; then
+      web)     if [ "$web_current" = "$TARGET_SHA" ] && ui_release_complete_for "$TARGET_SHA"; then
                  log "이미 web $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등)."; normalize_ownership; exit 0; fi ;;
       workers) if [ "$agent_current" = "$TARGET_SHA" ]; then
                  log "이미 워커 $TARGET_SHA 배포됨 → no-op (멱등)."; normalize_ownership; exit 0; fi ;;
@@ -1846,6 +1863,7 @@ main() {
     asset_stamp_verify "$TARGET_SHA"
     bridge_runner_verify "$TARGET_SHA"
 
+    ui_release_write pending "$TARGET_SHA" || die "UI pending 신호 기록 실패 — 롤링 중단."
     step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
     # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.
     # ⚠ **조회 실패와 "정말 없음" 을 구분한다** — 둘을 빈 문자열로 합치면 일시적 compose 조회
@@ -1885,6 +1903,11 @@ main() {
     fi
     rollout_mcp_phase
     reconcile_caddy
+    if [ "$SCOPE" != "workers" ]; then
+      # state.current is written before soak: an interrupted attempt must verify again.
+      ui_release_write pending "$TARGET_SHA" || die "UI pending 신호 기록 실패."
+      soak_or_rollback "$TARGET_SHA" || exit 1
+    fi
   fi
 
   # feature-0020: 워커 + gateway 롤아웃 (web soak 통과 후 — 사용자 대면 경로 안정 확인 뒤 백그라운드 층).
@@ -1897,6 +1920,9 @@ main() {
 
   normalize_ownership
   conversation_smoke_or_fail
+  if [ "$SCOPE" != "workers" ]; then
+    publish_ui_release "$TARGET_SHA" || die "배포 UI 완료 신호 게시 실패 — 재실행으로 복구."
+  fi
   if [ "$DRY_RUN" -eq 1 ]; then
     step "배포 모의 실행 완료: $TARGET_SHA (scope=$SCOPE — 실제 적용·검증 미수행)"
   else

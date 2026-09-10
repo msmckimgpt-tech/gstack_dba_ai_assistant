@@ -116,6 +116,21 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260909T163000-attach-csv-table 첨부 `.csv`/`.tsv` 표 렌더 (Minor §12.3, 2026-09-09, feature-0003 프론트 단독) — **Environment: DQA-client (PASS — 격리 제품 Shell/WebView2 `Edg/152.0.0.0` 5축, `docs/test-runs.d/TASK-20260909T163000-attach-csv-table.md`. fixture 다 — 실제 계정의 첨부를 연 것이 아니며 배포 후 실제 앱 확인은 `NOT-RUN` 으로 남겼다)**
+
+- **파서 계약** (`tests/verify_attach_source_table.mjs` A1~A16f, jsdom): RFC 4180 — 인용 필드·`""` 이스케이프·필드 안 구분자/개행·CRLF·BOM·빈 필드·행별 열 수 불균일. **무손실 축**: 짝 없는 따옴표로 끝난 절단본(서버 cap 이 실제로 이 화면에 보낸다)·필드 중간 따옴표·명시적 빈 인용 필드 행(`h⏎""`)에서 값이 사라지지 않는다. **형식 이상 신고**: 인용이 닫히지 않은 필드 + 닫힌 뒤 문자가 이어진 필드를 세고, 정상 CSV·CRLF 정상 인용에는 신고 0(거짓 경고 금지).
+- **토글 판정** (C1~C9): `.csv`/`.tsv` 에서만, 그리고 **그릴 본문이 실제로 온 화면**에서만 노출(바이너리·빈 문서·조회 실패는 미노출). 표를 보는 동안 구문 색 토글은 숨는다. 호출부가 파일명을 안 넘긴 경로(말풍선 칩)는 응답의 `filename` 으로 판정이 정정된다.
+- **렌더 구조** (D1~D13b): `<thead>` 머리글 + 행 번호(파일 레코드 번호, 머리글=1) + 인용 필드가 한 셀 + 빈 필드도 셀로 존재 + 수치 셀 `is-num`. 마크다운 파이프라인 미경유. 머리글 한 줄뿐이면 그 사실을 말하고, 명시적 빈 인용 필드 행은 표에 남는다(거짓 «데이터 없음» 금지).
+- **XSS** (E1~E5): 셀 값의 `<script>`·`<img onerror>`·`javascript:` 가 요소가 되지 않고 텍스트로 남으며 실행되지 않는다.
+- **원문 복귀·영속** (F1~F6): 토글을 끄면 종전 줄 표로 돌아오고 내용은 byte 무손실, 선택은 다음 열람에 유지된다.
+- **상한** (G1~G4): 열 200 초과 · 셀 30,000 초과 시 잘라내고 배너로 알린다(무음 절단 금지).
+- **배타** (H1~H5): `.md` 에는 표 토글이 없고 **변경이 있는 비교 화면**에도 없다(줄 대조 보존). 내용이 같은 비교 화면(=원문 출력)에서는 뜨고 실제로 격자로 그려진다.
+- **폴백** (J1~J5): 표로 만들 수 없는 본문은 빈 격자 대신 원문 표 + 사유 배너로 강등하되, 강등은 사용자의 선택이 아니므로 저장값은 건드리지 않는다.
+- **CSS 계약** (I1~I6): sticky 머리글 + `border-collapse: separate`, `[hidden]` 강제, 표 wrap 이 자체 스크롤 컨테이너가 아님, 값 상한·줄바꿈이 **셀 래퍼**에 있음(td 에 두면 열 계산이 무시하고 행 번호 열을 덮어쓴다).
+- **구조 가드** (`tests/test_attach_csv_table.py` S1~S7 + 음성 대조군 N1~N3, pytest): 구성요소 실재 · **서버 도달성**(`Kind` 지도의 `csv` ↔ `_VERSION_DIFF_TEXT_KINDS` — 프론트만 고치면 기능 0%인데 프론트 테스트는 전부 green) · 구분자 정본 단일화 · `innerHTML` 부재 · **두 모달 모두 배선** · CSS 계약 · 행위 하네스 실행(또는 gap 기록).
+- **픽셀 실측** (`tests/pb0009_attach_csv_table.py`, 실제 DQA Shell): 격자 생성·셀 분할 / 열이 픽셀로 갈림(th x 단조 증가 + 같은 열 x 동일) / 수치 열 우측 끝 정렬 / 스크롤 후 머리글 고정(delta ≤ 2px) / 토글 해제 시 원문 복귀. jsdom·pytest 가 전건 green 인 상태에서 이 축이 픽셀 결함 2건(행 번호 세로 쪼개짐 · 긴 셀 `max-width` 무시)을 잡았다.
+
+
 ### 20260901T1900-conv-status-dot-wiring 사이드바 대화 상태 배지 색 배선 복원 + 동종 배선 게이트 (Minor §12.3, 2026-09-01, feature-0003 프론트 단독) — **Environment: Windows-browser (PASS — `docs/test-runs.d/TASK-20260901T1900-conv-status-dot-wiring.md` · 배포 전 단계는 수정본 `src/static` 을 read-only bind-mount 한 별도 컨테이너 `https://localhost:18098/` 실측, 배포본 자산 재확인은 POST-DEPLOY 잔여)**
 
 - **제보 재현(배포본 `mysql-ai-web:5a4d49fc`)**: 사이드바 151개 항목 중 `is-done` **110건** ·
@@ -3771,3 +3786,41 @@ Scenario: 격리 동결 DQA 1.2.0 실행 파일의 연결·위치 선택·재시
 Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), feature-0046 artifacts의 native-results.json.
 
 서비스/API/벤더 응답과 app.js toast 초기화는 대역이다. 네이티브 픽셀 캡처는 빈 면으로 NOT-RUN이며 동일 제품 UI의 Windows Chrome 렌더는 별도 보조 증거다. 실제 벤더 계정 호출·사용자 설치본 교체의 PASS를 뜻하지 않는다.
+
+- TASK-20260908-prompt-layer-delivery: 여섯 계층 전달·오류·재시도·점유 교체 회귀는 [개별 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md)을 참조한다.
+
+## TASK-20260909T010301-doc-sync-rn-0909 릴리즈노트 블록 신설 검증
+
+- `node --check src/static/release-notes-data.js` → PASS (JS 문법)
+- `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 하네스 실행을 위해 `jsdom@24` 를 `/tmp` 에 핀 설치했다(세션마다 부재할 수 있음).
+- 구조 실측: `date: "` 블록 62 → **63** · `generated` 2026-09-07 → **2026-09-08**.
+- 평이화 기계 스캔: 신규 블록에 대해 내부 명칭 패턴(feature-id·`.js`/`.py` 확장자·alembic·WebView2·jsdom·sha256·SSOT·frontmatter·pytest·APIRouter·subprocess·PyInstaller) → **0 히트**.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 블록 1개 추가**이고 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다. 아울러 이 창에서 UI 검증 정본이 PB-0009(실제 DQA 앱)로 옮겨졌으며(ADR-20260908T024500), 배포 후 라이브 노출 확인은 wrapper 소관이다.
+- reconcile-first 실측(2026-09-09T01:03:01+09:00, run 시작 시점): 서빙 `release-notes-data.js` 가 `origin/main` blob 과 **바이트 동일**(sha256 `d8b4285e60b2629c…`, 465,521 bytes) → **파리티 갭 0**. `artifacts/deploy/deploy-web.state` `current=2249addf` = HEAD · 배포 실패 마커 0.
+- **Pass/Fail: PASS**.
+
+
+## 2026-09-09 배포 완료 자동 반영
+- 실행 결과: [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
+- test_ui_release.py / test_ui_release_publication.py: 공개 API와 실제 배포 셸 failure/rollback/mixed/idempotency.
+- test_ui_refresh.py / verify_ui_refresh.mjs / tests/windows/verify_deploy_refresh.py: 상태 보호·재로드·복원.
+
+
+## 2026-09-09 최종 갱신 감지기
+- 최신 lifecycle 보완 포함 Node10 PASS 및 격리 DQA34/34 PASS(21파일 지문 일치).
+- 설치 DQA는 최초 페이지 로드 실패로 NOT-RUN. 앱/AI 연결을 종료하지 않았다. 상세 TASK-20260909T140000-deploy-refresh Run의 최종 경계 참조.
+
+
+## 2026-09-09 Caddy probe 격리
+- `test_caddy_probe_isolation.py`와 `test_edge_rolling_gate.py`: archive 오류·네트워크/HTTP 실패·timeout·자기CID cleanup·조회실패시미재생성 및 기존rollinggate 회귀.
+- 현재 Caddy에서 새 프로세스를 만들지 않는 실제 파일/admin/두 replica GET 대조. 최종 Run에 PID/시작시각·좀비증감·잔류probe를 기록한다.
+
+## TASK-20260910T010301-doc-sync-rn-0910 릴리즈노트 items append 검증
+
+- `node --check src/static/release-notes-data.js` → PASS (JS 문법)
+- `NODE_PATH=/tmp/node_modules node tests/verify_release_notes.mjs` → **ALL PASS 34, failed 0** (baseline 동일). 하네스 실행을 위해 `jsdom@24` 를 `/tmp` 에 핀 설치했다(세션마다 부재할 수 있음).
+- 구조 실측: `date: "` 블록 **64 불변** · `generated` **2026-09-09 불변** · 최상단 블록 date `2026-09-09` · 그 블록 `title:` **9 → 12**.
+- 평이화 기계 스캔: append/정정한 문장에 대해 내부 명칭 패턴(feature-id·`.js`/`.py` 확장자·alembic·WebView2·jsdom·sha256·SSOT·frontmatter·pytest·APIRouter·subprocess·PyInstaller·manifest·replica) → **0 히트**.
+- **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 항목 3개 append + 문장 2건 정정**이고 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다. 아울러 이 창에서도 UI 검증 정본은 PB-0009(실제 DQA 앱)이며(ADR-20260908T024500), 배포 후 라이브 노출 확인은 wrapper 소관이다.
+- reconcile-first 실측(2026-09-10T01:0x+09:00, run 시작 시점): 서빙 `https://<host>/static/release-notes-data.js` 가 `origin/main` blob 과 **바이트 동일**(506,570 bytes) · `healthz` 200 → **파리티 갭 0**.
+- **Pass/Fail: PASS**.

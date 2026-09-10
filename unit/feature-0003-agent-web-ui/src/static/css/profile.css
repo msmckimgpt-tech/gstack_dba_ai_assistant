@@ -624,6 +624,10 @@
   letter-spacing: .3px;
   align-self: flex-start;
   margin-bottom: 2px;
+  /* 한국어 라벨(최장 7자 — 예외 2종)이 pill 안에서 접히거나 잘리지 않게 못박는다. 사용자가 패널을
+     좁혀도 배지는 자기 크기를 지키고, 줄바꿈은 헤더의 시각 요소가 담당한다. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .step-title {
   font-size: 12px;
@@ -664,6 +668,11 @@
   margin-top: 1px;
   font-size: 11px;
   line-height: 1.45;
+  color: var(--text-muted, #6b7280);
+}
+/* 서버가 도구 목적에서 역산한 근거는 AI 가 말한 근거와 **다른 색**으로 적는다 —
+   라벨 문구(「근거(추정)」)에 더해 시각으로도 갈라, 색만 보고 스캔해도 구분된다. */
+.step-reason-label.is-derived {
   color: var(--text-muted, #6b7280);
 }
 .step-reason-label {

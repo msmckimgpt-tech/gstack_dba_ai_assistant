@@ -212,3 +212,38 @@ PY
 
 ## 13. Pre-approved Changes
 - 비파괴적 운영 자산 재배치와 경로 수정
+
+## 동기화 예약작업의 실행 계정 — SYSTEM 이 아니라 사용자 계정 + S4U
+
+### 왜 SYSTEM 이면 안 되는가 (실측 2026-09-09)
+
+`sync_mysql_ai_web_portproxy.ps1` 은 `wsl.exe -d <distro> -- bash -lc …` 로 WSL 안의 기본 라우트
+IP 를 읽는다. **WSL 은 LOCAL SYSTEM 계정을 지원하지 않는다.**
+
+| 실행 계정 | WSL 조회 | 콘솔 창 |
+|---|---|---|
+| `SYSTEM` (`ServiceAccount`) | **불가** — `WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED` · `EXIT=-1` | — |
+| 사용자 계정 + `Interactive` | 가능 (`EXIT=0`) | **5분마다 뜬다** |
+| **사용자 계정 + `S4U`** | **가능** (`EXIT=0`) | **안 뜬다** |
+
+SYSTEM 으로 등록하면 작업은 5분마다 돌면서 매번 **rc=1** 로 죽는다 — 등록은 성공하고 스케줄러
+상태도 「사용」이라 **겉보기로는 정상이며**, 실패는 `LastTaskResult` 를 봐야 드러난다. 라이브가
+그 상태였다.
+
+### 왜 `run_hidden.vbs` 가 있었나 — 그리고 왜 이제 필요 없는가
+
+사용자 계정 + `Interactive` 로 등록하면 5분마다 PowerShell 콘솔 창이 화면에 뜬다. 그것을 숨기려고
+`wscript`+`run_hidden.vbs` 래퍼를 씌우는 우회가 실제로 쓰였고, **그 vbs 가 사라지자 5분마다
+「스크립트 파일을 찾을 수 없습니다」 오류창**이 떴다(사용자 제보 2026-09-09).
+
+`S4U`(Service-For-User)는 비밀번호 저장 없이 **로그온 세션 없이** 실행하므로 창이 뜨지 않으면서
+WSL 조회도 된다. 그래서 **vbs 래퍼는 이제 불필요하다** — 다만 그것은 「원래 불필요했다」는 뜻이
+아니다. SYSTEM 도 Interactive 도 아닌 **제3의 선택지를 쓰기 때문에** 불필요해진 것이다.
+
+### 등록 계약
+
+- `-RunAsUser` 기본값 = **스크립트를 실행하는 사용자**(`$env:USERDOMAIN\$env:USERNAME`). SYSTEM 아님.
+- `-RunLevel Highest` 유지 — `netsh interface portproxy` 변경에 승격이 필요하다.
+- 트리거는 **부팅 + 5분 반복(3650일)** 뿐이다. `AtLogOn` 은 S4U 와 함께 「일부 트리거만 시작」
+  경고를 내고 의미도 없어 제거했다. `RepetitionDuration` 에 `[TimeSpan]::MaxValue` 를 주면
+  `Duration:P99999999DT23H59M59S` 로 **등록이 실패**한다(실측) — 유한값을 쓴다.

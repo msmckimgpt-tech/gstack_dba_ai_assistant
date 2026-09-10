@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 
 from .logs import _log
 from .runtimes import _CLI_ADAPTERS, _RUNTIME_SPECS, _WIN_EXEC_EXTS, _WIN_KNOWN_EXTS
@@ -220,6 +221,10 @@ def client_runtime_selection() -> dict | None:
                 value = row.get(key, "")
                 if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
                     return {}
+            selection_id = row.get("selection_id")
+            if selection_id is not None and (not isinstance(selection_id, str)
+                                              or not re.fullmatch(r"[0-9a-f]{32}", selection_id)):
+                return {}
             selected[name] = row
         return selected
     except (OSError, ValueError):

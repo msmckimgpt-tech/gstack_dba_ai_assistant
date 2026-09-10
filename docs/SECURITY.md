@@ -109,7 +109,7 @@ ai_read_priority: 4
 | 경로 | 메서드 | 인증 | 용도 | 도입 |
 |---|---|---|---|---|
 | `/share/{token}` | GET | anonymous | 대화 공유 페이지 (`share.html` FileResponse) | TASK-0058 (REQ-20260514-0001) |
-| `/api/public/share/{token}` | GET | anonymous | 공유된 대화 read-only 조회 (메시지 + SQL + 결과셋) | TASK-0058 |
+| `/api/public/share/{token}` | GET | anonymous | 공유된 대화 read-only 조회 (메시지 + SQL + 결과셋). **2026-09-08 추가**: 응답에 `client.{app_link, download_url}` — 참여·fork 를 DQA 앱으로 보내는 딥링크와 설치기 URL. **자격증명 없음**(딥링크에 토큰 미포함, `dqa_identity.app_open_url`), 실린 값은 origin·공유 토큰뿐이며 둘 다 요청자가 이미 손에 쥔 링크에 있다. `download_url` 이 가리키는 `/api/ai/client/latest`·`/client/{filename}` 은 이미 의도적 익명이다. ⚠ **앱 유도는 표시이지 집행이 아니다** — 링크에 `?client_port=…` 를 붙이면 유도를 건너뛰고 종전 웹 버튼이 뜬다(알려진 성질, 사용자 결정 2026-09-08). 자격은 join/fork 핸들러의 로그인 세션·공유 토큰 게이트가 집행하므로 권한은 변하지 않는다. ⚠ 이 화면은 사용자에게 **미서명 설치기 실행**을 안내한다(SmartScreen 경고 1회) — 그 자체가 피싱 템플릿으로 모사되기 쉬우므로, 안내 문구·다운로드 출처를 바꿀 때는 이 항을 함께 검토한다 | TASK-0058 · REQ-20260908-share-client-entry |
 | `/api/public/share/{token}/fork` | POST | **로그인 필요** + `conversation.create` | 공유받은 viewer 가 본인 계정으로 fork (`_optional_account` 가 아닌 `_require_account` 사용) | TASK-0058 |
 | `/llms.txt` | GET | anonymous | LLM 발견 표준 파일 (static contract, 데이터 0) | feature-0023 api-discovery (SEC-20260724) |
 | `/.well-known/ai-conversation-api.json` | GET | anonymous | AI Conversation API 매니페스트 (엔드포인트 카탈로그·인증·스코프, static contract) | feature-0023 api-discovery |
@@ -120,6 +120,8 @@ ai_read_priority: 4
 | `/api/session` | GET | anonymous (**축소 응답**) | 로그인 화면 부트스트랩의 인증 상태 판정. 미인증 응답 = `{"authenticated": false}` **뿐** | SEC-20260811 (아래 §7.3) |
 | `/api/llm/health` | GET | anonymous (**축소 응답**) | LLM 제한 상태점. 미인증 응답 = `{"state": ...}` **뿐** (probe 미트리거) | SEC-20260811 |
 | `/api/api-vault/options` | GET | anonymous (**빈 카탈로그**) | 모델 선택기 카탈로그. 미인증 응답 = `{"default_model": null, "models": []}` | SEC-20260811 |
+| `/api/ai/client/latest` | GET | anonymous | 네이티브 DQA 클라이언트 릴리스 매니페스트(버전·파일명·크기·sha256·상대 경로). 배포 중인 것이 없으면 **404**(200 + `available:false` 로 답하지 않는다). 모듈 docstring 이 「익명 · 인스턴스 데이터 0. RBAC 스코프: 없음」을 선언한다 — `routers/client_release.py` | feature-0046 §P0-AH 업데이트 채널 (2026-09-07) |
+| `/client/{filename}` | GET | anonymous | 설치기 실물(.exe) 다운로드. **지금 광고 중인 그 파일명만** 200 이고 그 외·과거 버전은 404(`filename != current_release()["filename"]` — 철회가 곧 도달 불가이며 `StaticFiles` 마운트를 쓰지 않는 이유). 익명 공유 화면의 `/api/public/share/{token}` 응답 `client.download_url` 이 이 경로를 안내하므로 위 share 행의 **미서명 설치기 실행 안내** 주의와 같은 항으로 읽는다 | feature-0046 §P0-AH 업데이트 채널 (2026-09-07) |
 
 ### 7.1 운영 정책
 
@@ -1950,6 +1952,7 @@ ZIP 반출이 가능하다. 넓어진 것은 **참조 가능 범위**이지 접�
 | **콘솔 작업 위임 설정** (2026-09-02) | 위임할 모델·추론등급을 계정이 항목별로 정한다(`WebAccounts.ConsoleJobPrefs`). 능력은 «그 요청을 보낸 러너» 의 것으로 읽는다(`runner_capabilities_for_session`; 세션 비결합 토큰만 계정 축 폴백) — 계정 축으로만 읽으면 A 러너 목록으로 판정해 B 러너에게 보내고, 거절이 붙은 이상 그것은 멀쩡한 러너를 막는 장애가 된다. 거절은 적재 게이트 · 대기 목록 필터 · claim 최종 방어 **세 겹이 같은 정본**(`resolve_console_job_request`)을 쓴다(갈리면 «목록엔 보이는데 집으면 거절» 이 된다). 아무것도 고르지 않은 계정은 종전 폴백으로 돌고 절대 거절되지 않는다. claim 이 확정한 `(runtime, model, effort)` 가 `WebAiTasks` 행에 남는다. 근거 정본 FUNCTION.md AC-20260902T110000-console-job-model-prefs |
 | **KB 근거 자동 주입** (2026-09-02) | 접지 지식이 「외부 AI 가 도구를 부르면 받음」(`get_task_context`)에서 **점유 응답에 무조건 실림**(`claim_request` → `kb_context`/`kb_notes`)으로 바뀌었다 — 도구 호출 없이도 KB 가 외부 AI 프롬프트로 나간다. 경계는 종전과 같다: product scope 는 그 task 의 `ProductId` 로만 해석 · 값이 없으면 블록 자체를 생략 · 층별 fail-soft. 정본 feature-0002 TASK `20260902T110000-kb-prompt-grounding`. |
 | **「AI 작업」 항목 노출** (2026-09-02) | 목록은 `JOB_SPECS` 전량이 아니라 그 계정이 실제로 열 수 있는 종류만이다(`visible_console_job_kinds` — GET·PUT 에 **같은 필터**). **표시 축이지 집행이 아니다** — 각 기능의 서버 게이트는 종전 그대로이고 신규 권한 코드는 0 이다. 저장은 보이는 항목만 교체하고 **보이지 않는 종류의 기존 설정은 보존**한다(권한이 빠진 계정의 저장 한 번이 예전 선택을 지우지 않게). 본문이 dict 가 아니면 400 — 「의도한 비우기」와 「깨진 본문」이 서버에서 같은 모양이면 사고가 200 을 받고 설정을 조용히 지운다. 권한을 프런트에서 판정하지 않는 이유는 `can()` 이 인자를 무시하는 display-permissive 헬퍼라 한쪽 갈래가 영구히 죽기 때문이다. 근거 정본 FUNCTION.md AC-20260902T160000-ai-jobs-perm-gate |
+| **위임 결과 폴링의 권한 축** (2026-09-09) | `GET /api/profile/ai-jobs/{task_id}` 는 **로그인만** 요구하고 `load_console_job(..., account_id=...)` 로 **자기 계정이 연 작업만** 조회한다 — 남의 task id 는 존재 여부를 응답 차이로 알 수 없게 404 다. 종전 폴링 주소 `/api/admin/ai-jobs/{task_id}` 는 `console.access` 를 요구했는데 위임을 여는 세 진입점 중 개인 프롬프트 자동작성은 그 권한을 요구하지 않아(`JOB_SPECS['prompt_generate']['perms'] == ()`) 결과가 도달할 경로가 없었다. 즉 **넓힌 것이 아니라 진입점과 같은 권한**으로 맞춘 것이고, 두 경로는 응답을 **같은 함수**(`_console_jobs.build_job_status_payload`)로 조립해 계약이 갈리지 않게 한다. 근거 정본 `unit/feature-0043-external-llm-bridge/docs/FUNCTION.md` §「위임 결과는 «봉투 + 폴링» 으로 화면에 닿는다」 |
 
 ### 49.4 남는 위험 (수용, 명시)
 

@@ -50,9 +50,29 @@ SETUP_NAME_RE = re.compile(r"^DQAConnect-Setup-(?P<ver>[0-9]+(\.[0-9]+){0,3})\.e
 
 MANIFEST_NAME = "manifest.json"
 
-#: 기본 릴리스 디렉토리 — `docker-compose.yml` 의 `x-web-extra` 가 `/srv/client` 로 붙이는 곳.
-#: 이 파일 기준 `repo/unit/feature-0046-native-client/src/scripts/` → wrapper 는 4단계 위.
-_DEFAULT_DIR = Path(__file__).resolve().parents[5] / "artifacts" / "client-release"
+def _default_dir() -> "Path | None":
+    """기본 릴리스 디렉토리 — 못 찾으면 **추측하지 않고** `None`. 그러면 `--dir` 을 요구한다.
+
+    ⚠ 종전에는 `parents[5]` 로 셌다(적대 리뷰 2026-09-09 H1). 그 셈은 `repo/` 안에서만
+      맞는다. **연결된 worktree** 에서 부르면 `<루트>/.worktrees/artifacts/client-release`
+      를 가리키는데, 이 저장소에서는 그 경로가 마침 `../artifacts` 로 가는 심볼릭 링크라
+      **라이브 채널로 곧장 이어졌다** — 즉 아무 실험용 worktree 에서 `--setup` 한 번이면
+      서명되지 않은 그 바이너리가 **전 사용자에게** 나간다. 확인창도, dry-run 기본값도 없다.
+      반대로 그 링크가 없어지면 조용히 `mkdir` 해 **미끼 디렉토리**를 만들고, 바로 뒤의
+      `check()` 는 그 미끼를 보고 초록을 찍는다.
+
+    그래서 두 가지를 한다:
+      1. 앵커는 `docker-compose.yml` 이 있는 체크아웃 루트다(`parents[N]` 세기를 버린다).
+      2. 그 루트가 **연결된 worktree** 면 `None` — 어디로 내는지는 사람이 말해야 한다.
+         (git 은 연결된 worktree 의 루트에 `.git` 을 **파일**로 둔다. 주 worktree 는 디렉토리다.)
+    """
+    for parent in Path(__file__).resolve().parents:
+        if not (parent / "docker-compose.yml").is_file():
+            continue
+        if (parent / ".git").is_file():
+            return None
+        return parent.parent / "artifacts" / "client-release"
+    return None
 
 MIN_SETUP_BYTES = 1_000_000
 
@@ -165,15 +185,26 @@ def activate(version: str, release_dir: Path, notes: str = "") -> dict:
     ⚠ 이미 새 버전을 설치한 머신은 **자동으로 내려가지 않는다** — 클라이언트는 더 새것일
     때만 받기 때문이다. 그 머신들은 다음 상위 버전에서 합류한다.
     """
+    # ⚠ `publish()` 가 거는 검사를 **여기에도** 건다 (적대 리뷰 2026-09-09 M1). 되돌리기는
+    #   급할 때 쓰는 길인데, 종전에는 이름 규약도 크기 하한도 보지 않고 인자를 그대로
+    #   파일명에 끼워 넣었다. `--activate 1.1.0-hotfix` 같은 값은 매니페스트에 적히지만
+    #   서버 `_VERSION_RE` 가 거절해 **채널 전체가 404** 가 되고, 클라이언트는 404 를
+    #   「아직 배포된 것이 없음」이라는 **정상 상태**로 읽어 아무도 오류를 남기지 않는다.
     name = f"DQAConnect-Setup-{version}.exe"
+    if not SETUP_NAME_RE.match(name):
+        raise SystemExit(f"버전 표기가 규약과 다릅니다: {version}\n"
+                         "  기대: 숫자와 점만 (예: 1.2.4). 서버가 거절하면 채널이 통째로 닫힙니다.")
     target = release_dir / name
     if not target.is_file():
         raise SystemExit(f"그 버전이 릴리스 디렉토리에 없습니다: {target}")
+    size = target.stat().st_size
+    if size < MIN_SETUP_BYTES:
+        raise SystemExit(f"그 설치기가 너무 작습니다({size:,} bytes) — 반쪽 파일로 되돌리지 않습니다.")
     doc = {
         "version": version,
         "filename": name,
         "sha256": _sha256(target),
-        "size": target.stat().st_size,
+        "size": size,
         "published_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "notes": str(notes or "").strip()[:400],
     }
@@ -217,7 +248,8 @@ def prune(release_dir: Path, keep: int) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--setup", help="올릴 설치기 경로 (DQAConnect-Setup-<버전>.exe)")
-    ap.add_argument("--dir", default=str(_DEFAULT_DIR), help="릴리스 디렉토리")
+    ap.add_argument("--dir", default=None,
+                    help="릴리스 디렉토리 (연결된 worktree 에서는 **필수**)")
     ap.add_argument("--notes", default="", help="사용자에게 보일 한 줄 설명(≤400자)")
     ap.add_argument("--activate", help="이미 올라온 버전으로 되돌린다(롤백)")
     ap.add_argument("--prune", type=int, help="최근 N개만 남기고 옛 설치기 삭제")
@@ -225,7 +257,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="서버가 이 디렉토리를 어떻게 볼지 확인만 한다")
     args = ap.parse_args(argv)
 
-    release_dir = Path(args.dir).resolve()
+    chosen = args.dir or _default_dir()
+    if chosen is None:
+        ap.error("릴리스 디렉토리를 알 수 없습니다 — `--dir <경로>` 로 명시하세요.\n"
+                 "  연결된 worktree 에서는 기본값을 쓰지 않습니다: 여기서의 추측 한 번이\n"
+                 "  서명되지 않은 설치기를 전 사용자에게 내보낼 수 있습니다(적대 리뷰 H1).")
+    release_dir = Path(chosen).resolve()
     if args.check and not (args.setup or args.activate or args.prune):
         return check(release_dir)
 

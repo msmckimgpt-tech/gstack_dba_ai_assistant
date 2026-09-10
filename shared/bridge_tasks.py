@@ -70,6 +70,8 @@ __all__ = [
     "runner_can_take",
     "version_at_least",
     "FORMAT_NOTE",
+    "RUNNER_DEGRADED_NOTICE",
+    "runner_degraded_reason",
     "messages_to_prompt",
     "JOB_SPECS",
     "job_spec",
@@ -1072,6 +1074,45 @@ FORMAT_NOTE = {
     "json": ("답변은 **JSON 하나만** 출력하라. 코드펜스·머리말·맺음말 없이 객체 또는 배열만."),
     "text": ("답변 본문만 출력하라. 머리말·맺음말·따옴표 감싸기 없이."),
 }
+
+
+#: 러너가 **자기 AI 가 실패했을 때** 답변 자리에 대체 안내문을 넣고 붙이는 고정 꼬리표.
+#: 정본은 러너의 `agent/handler.py`(실패·빈 응답 → 안내문 대체 제출)이며, 이 상수는 그것과
+#: 같은 문자열이어야 한다 — `test_prompt_autogen_delivery` 가 두 곳의 동기를 잠근다.
+#:
+#: ## 왜 서버가 이걸 알아야 하는가 (TASK-20260909T000000-prompt-autogen-delivery)
+#:
+#: 러너가 실패를 침묵하지 않고 답변으로 말하는 것은 **대화 축에서는 옳다** — 말풍선에 사유가
+#: 뜨는 편이 30분 대기보다 낫다. 그런데 콘솔 작업 축에서는 그 답변이 곧 «결과물» 이라, 그대로
+#: 두면 안내문이 프롬프트 입력란을 덮어쓰고 화면은 그것을 «완료» 라고 말한다. 사용자가 편집
+#: 중이던 본문이 오류 문장으로 사라지는 것이 그 형태다.
+#:
+#: `submit_answer` 에는 실패를 신고하는 별도 채널이 없고(답변 텍스트뿐), 이미 사용자 머신에
+#: 설치된 러너는 우리가 고쳐도 즉시 도달하지 않는다. 그래서 판정을 **서버 한 곳**에 두고,
+#: 화면들은 서버가 준 표시만 읽는다 — 문구 매칭이 화면마다 흩어지지 않게.
+RUNNER_DEGRADED_NOTICE = "(이 답변은 연결된 AI 에서 생성하지 못해 자동 안내로 대체된 것입니다.)"
+
+#: 사용자에게 보일 사유의 길이 상한. 원문 전체를 화면 한 줄에 실으면 안내가 본문을 밀어낸다.
+_DEGRADED_REASON_MAX_CHARS = 300
+
+
+def runner_degraded_reason(answer: Any) -> str | None:
+    """이 답변이 러너의 **실패 대체 안내문**이면 사용자에게 보일 사유, 아니면 `None`.
+
+    판정은 꼬리표 하나로 한다. 본문 문구(“AI 가 오류로 끝났습니다…”)는 런타임·사유마다 다르지만
+    꼬리표는 러너가 이 경로에서만 붙이는 고정 문자열이다 — 본문으로 판정하면 정상 답변이 그
+    문장을 인용하기만 해도 오탐한다.
+
+    빈 문자열이 아니라 `None` 을 돌려주는 이유: 호출부가 «실패 아님» 과 «실패인데 사유가 비었음»
+    을 구분할 수 있어야 한다. 후자도 실패로 다뤄야 하며, 그때는 사유 없이 실패만 말한다.
+    """
+    text = str(answer or "")
+    if RUNNER_DEGRADED_NOTICE not in text:
+        return None
+    reason = text.replace(RUNNER_DEGRADED_NOTICE, "").strip()
+    if len(reason) > _DEGRADED_REASON_MAX_CHARS:
+        reason = reason[:_DEGRADED_REASON_MAX_CHARS].rstrip() + "…"
+    return reason
 
 
 def messages_to_prompt(messages: Any, response_format: str = "text") -> str:

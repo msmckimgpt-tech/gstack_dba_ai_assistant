@@ -93,6 +93,20 @@ def test_quit_closes_even_with_a_tray(tmp_path):
     assert getattr(sh._window, "killed", False) is True
 
 
+def test_taskbar_properties_survive_hide_and_are_released_before_close(monkeypatch, tmp_path):
+    sh = _shell(tmp_path, can_hide=True)
+    sh._brand_hwnd = 123
+    cleared = []
+    monkeypatch.setattr(window_mod.branding, 'clear_window', cleared.append)
+    assert sh._on_closing() is False
+    assert not cleared and sh._brand_hwnd == 123
+    sh._quitting = True
+    assert sh._on_closing() is True
+    assert cleared == [123] and sh._brand_hwnd is None
+    assert sh._on_closing() is True
+    assert cleared == [123]
+
+
 def test_a_window_that_cannot_hide_is_closed_instead(tmp_path):
     """숨기지 못하면 닫히는 편이 낫다 — 반쯤 살아 있는 상태가 가장 나쁘다."""
     sh = _shell(tmp_path, can_hide=True)
@@ -230,7 +244,8 @@ def _fake_webview(monkeypatch, *, fail=False):
     class _Win:
         def __init__(self, title, url, **kw):
             self.title, self.url, self.kw = title, url, kw
-            self.events = types.SimpleNamespace(closing=_Events(), loaded=_Events())
+            self.events = types.SimpleNamespace(closing=_Events(), loaded=_Events(),
+                                                before_show=_Events())
 
         def hide(self):
             made["hidden"] = True
@@ -478,6 +493,123 @@ def test_the_second_launch_can_reopen_the_embedded_window():
     assert "take_show_request" in seg and "shell.show()" in seg
 
 
+# ── 목적지 전달이 **창까지 도달하는가** (share-client-entry 2026-09-08) ──────────────
+#
+# ⚠ 이 블록이 없던 동안, `_watch_show_requests` 의 navigate 배선을 **통째로 지워도**
+#   클라이언트 테스트 561건이 전건 초록이었다(적대 리뷰 qa-F1, 뮤턴트로 실증). 소스 문자열
+#   단정(`_fn`)은 「그 줄이 있는가」를 볼 뿐 「그 값이 창까지 가는가」를 보지 못한다.
+#   그리고 같은 시나리오의 실측 Run 은 `NOT-RUN` 이라, 그 기능은 **어떤 채널로도 지켜지지
+#   않는 상태**였다. 설치기 빌드가 Windows 전용인 것은 실 앱 실측을 막을 뿐, 가짜 shell 로
+#   순서를 재는 것을 막지 않는다.
+
+class _RecordingShell:
+    """`navigate`/`show` 호출을 순서대로 기록하는 최소 shell."""
+
+    def __init__(self, navigate_ok: bool = True):
+        self.calls: list = []
+        self._navigate_ok = navigate_ok
+
+    def navigate(self, url):
+        self.calls.append(("navigate", url))
+        return self._navigate_ok
+
+    def show(self):
+        self.calls.append(("show", None))
+
+
+def _drain_watch(home, shell, plan=None, br=None, timeout=1.0):
+    """폴링 스레드를 한 바퀴 이상 돌리고 멈춘다."""
+    import time
+
+    stop = threading.Event()
+    t = threading.Thread(
+        target=gui._watch_show_requests,
+        args=(home, shell, stop, plan, br, 0.01), daemon=True)
+    t.start()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not shell.calls:
+        time.sleep(0.01)
+    stop.set()
+    t.join(timeout)
+    return shell.calls
+
+
+def test_the_destination_reaches_the_embedded_window(tmp_path):
+    """`request_show(home, "/share/tok")` → 그 경로로 **옮긴 뒤** 보인다."""
+    plan = types.SimpleNamespace(base="https://svc.example")
+    br = types.SimpleNamespace(port=41234, nonce="n-abc")
+    core.request_show(tmp_path, "/share/tok123")
+    calls = _drain_watch(tmp_path, _RecordingShell(), plan, br)
+    assert [c[0] for c in calls] == ["navigate", "show"], (
+        f"목적지가 창까지 가지 않는다: {calls}")
+    assert "/share/tok123" in calls[0][1], calls[0][1]
+    assert "client_nonce=n-abc" in calls[0][1], "브리지 좌표가 빠졌다"
+
+
+def test_moving_happens_before_showing(tmp_path):
+    """순서가 반대면 사용자는 이전 화면을 한 번 본 뒤 페이지가 갈아 끼워지는 것을 본다 —
+    「엉뚱한 곳이 열렸다」로 읽힌다."""
+    plan = types.SimpleNamespace(base="https://svc.example")
+    br = types.SimpleNamespace(port=1, nonce="n")
+    core.request_show(tmp_path, "/share/x")
+    calls = _drain_watch(tmp_path, _RecordingShell(), plan, br)
+    assert calls.index(("show", None)) > 0
+    assert calls[0][0] == "navigate"
+
+
+def test_a_plain_show_request_does_not_navigate(tmp_path):
+    """목적지 없는 요청(아이콘 재클릭)은 **그냥 창을 연다** — 엉뚱한 이동을 만들지 않는다."""
+    plan = types.SimpleNamespace(base="https://svc.example")
+    br = types.SimpleNamespace(port=1, nonce="n")
+    core.request_show(tmp_path)
+    calls = _drain_watch(tmp_path, _RecordingShell(), plan, br)
+    assert [c[0] for c in calls] == ["show"], calls
+
+
+def test_the_window_still_opens_when_moving_fails(tmp_path):
+    """이동에 실패해도 **창은 뜬다** — 사용자가 요청한 최소 결과가 그것이다."""
+    plan = types.SimpleNamespace(base="https://svc.example")
+    br = types.SimpleNamespace(port=1, nonce="n")
+    core.request_show(tmp_path, "/share/x")
+    calls = _drain_watch(tmp_path, _RecordingShell(navigate_ok=False), plan, br)
+    assert ("show", None) in calls, "이동 실패가 창을 못 뜨게 했다"
+
+
+# ── `Shell.navigate` 자체의 두 갈래 ─────────────────────────────────────────────
+
+def test_navigate_without_a_window_is_a_no_op():
+    shell = gui.window_mod.Shell("https://s", title="t", storage="/tmp/x")
+    assert shell.navigate("https://s/share/x") is False
+    assert shell.last_error is None, "창이 없는 것은 오류가 아니라 아직 없는 것이다"
+
+
+def test_navigate_swallows_but_records_a_failure():
+    """예외를 올리면 폴링 스레드가 죽고 그 뒤로 「창 열기」가 영영 안 된다."""
+    shell = gui.window_mod.Shell("https://s", title="t", storage="/tmp/x")
+
+    class _Boom:
+        def load_url(self, url):
+            raise RuntimeError("webview gone")
+
+    shell._window = _Boom()
+    assert shell.navigate("https://s/share/x") is False
+    assert shell.last_error and "navigate" in shell.last_error
+
+
+def test_navigate_reaches_the_webview():
+    """양성 대조군 — 정상 경로에서 실제로 `load_url` 이 불린다."""
+    shell = gui.window_mod.Shell("https://s", title="t", storage="/tmp/x")
+    seen = []
+
+    class _Win:
+        def load_url(self, url):
+            seen.append(url)
+
+    shell._window = _Win()
+    assert shell.navigate("https://s/share/x") is True
+    assert seen == ["https://s/share/x"]
+
+
 def test_the_reopen_watcher_stops_with_the_shell():
     """⚠ 데몬 스레드라도 **멈추는 신호**가 있어야 한다 — 없으면 종료 뒤에도 창이 뜬다."""
     assert "stop.wait" in _fn("_watch_show_requests")
@@ -654,3 +786,41 @@ def test_the_upgrade_path_is_preserved():
     assert "AppId={{7C4B1F2E-9A3D-4E58-B1C6-DQA0CONNECT01}" in iss
     assert "DefaultDirName={autopf}\\{#MyAppName}" in iss, \
         "설치 폴더까지 바꾸면 업그레이드가 아니라 두 벌 설치가 된다"
+
+
+def test_text_selection_and_loaded_shortcuts_are_wired(monkeypatch, tmp_path):
+    made = _fake_webview(monkeypatch)
+    sh = window_mod.Shell("about:blank", "DQA", str(tmp_path))
+    assert sh.run()
+    assert made["window"].kw["text_select"] is True
+    assert sh._on_loaded in made["window"].events.loaded.handlers
+    assert not made["start_kw"].get("debug", False)
+
+
+def test_loaded_enables_native_find_on_ui_thread(monkeypatch, tmp_path):
+    sh = _shell(tmp_path, False)
+    settings = types.SimpleNamespace(AreBrowserAcceleratorKeysEnabled=False,
+                                     AreDevToolsEnabled=False)
+    calls = []
+    def invoke(callback):
+        calls.append("ui")
+        callback()
+    sh._window.native = types.SimpleNamespace(
+        Invoke=invoke, webview=types.SimpleNamespace(
+            CoreWebView2=types.SimpleNamespace(Settings=settings)))
+    monkeypatch.setitem(sys.modules, "System", types.SimpleNamespace(Action=lambda fn: fn))
+    sh._on_loaded()
+    assert calls == ["ui"]
+    assert settings.AreBrowserAcceleratorKeysEnabled is True
+    assert settings.AreDevToolsEnabled is False
+    assert sh._ready.is_set()
+    assert sh.last_error is None
+
+
+def test_shortcut_failure_is_observable_without_losing_window(monkeypatch, tmp_path):
+    sh = _shell(tmp_path, False)
+    monkeypatch.setitem(sys.modules, "System", types.SimpleNamespace(Action=lambda fn: fn))
+    sh._on_loaded()
+    assert sh._window is not None
+    assert sh._ready.is_set()
+    assert sh.last_error.startswith("text interaction:")

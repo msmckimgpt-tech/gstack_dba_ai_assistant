@@ -27,8 +27,8 @@ sources:
 |---|---|
 | 분류 | `#wiki/article` |
 | 정본 | `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` (웹 UI) · feature-0038 (프론트 모듈 분할) |
-| 코드 | `src/static/index.html` (작업 화면) · `admin.html` (관리 콘솔) · `share.html` (공유 뷰) · `ai-connect.html` (연결 안내) · `static/app/*.js` (11 모듈) |
-| 시각검증 | `visual_verification_scope: always` — 화면 변경은 실 Windows 브라우저(PB-0008) 검증 후 완료 선언 |
+| 코드 | `src/static/index.html` (작업 화면) · `admin.html` (관리 콘솔) · `share.html` (공유 뷰) · `ai-connect.html` (연결 안내) · `static/app/*.js` (12 모듈) · `share-client-context.js` (공유 화면이 정본 브리지 모듈을 얹는 어댑터, 2026-09-08) |
+| 시각검증 | `visual_verification_scope: always` — 화면 변경은 **실제 DQA 클라이언트(PB-0009)** 검증 후 완료 선언 (2026-09-08 ADR-20260908T024500 · 일반 Windows 브라우저 PB-0008 은 **보조 호환 경로**) |
 
 ## 목차
 
@@ -321,7 +321,7 @@ feature-0043 의 P0-G 가 정한 규율이 화면 전체에 적용된다.
 - **배타 오버레이 계약** — 우측 패널은 한 번에 하나, 닫기는 소유 모듈이 책임(티커 정지·backdrop 정리 포함).
 - **대기가 대화에 남는다** — 사라지는 토스트가 아니라 말풍선이라, 나중에 열어도 무슨 일이 있었는지 보인다.
 - **표시는 넓게, 거부는 서버가** — 프론트 권한 게이트는 display-permissive 이고 실제 403 은 백엔드가 낸다.
-- **화면 변경은 실 브라우저 검증 후 완료** — `visual_verification_scope: always` (PB-0008).
+- **화면 변경은 실제 DQA 앱 검증 후 완료** — `visual_verification_scope: always` (**PB-0009**, 2026-09-08 ADR-20260908T024500). 일반 Windows 브라우저(PB-0008)는 보조 호환 경로이며 브라우저·Node·CLI PASS 를 앱 전체 PASS 로 합산하지 않는다.
 
 ## 4. 평가
 
