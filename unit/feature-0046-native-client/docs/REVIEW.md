@@ -1448,3 +1448,9 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Human Approval Needed: no
 
 실행 근거: 사용자가 앱 내부 무설치 갱신 구성을 직접 요청했다. 기존 승인된 per-user 슬롯/신뢰 서버·CA/사용자 확인 경계를 유지한다. /client는 동일 제품 바이너리의 ZIP 포장만 추가하며 계정 데이터·새 인증 경로를 노출하지 않는다. deploy_scope included는 wrapper FIRST_REQUEST 및 AGENTS §16.5.1의 기존 선언이다. review-panel 글로벌 resolver는 프로젝트 미등록으로 실패했고, 다른 프로젝트 명령을 대체 호출하지 않고 §18.8 명시 독립 subagent 절차를 수행했다.
+
+## REV-20260910T115000-inapp-update-release [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
+- Trigger: 출하 증적·상태 문서만 변경, 정책·제품 코드 변경 없음 (§18.8.1).
+- Verification: 실제 배포/채널/Windows 결과 JSON과 문서 수치·버전·해시를 대조. 구현 독립 리뷰를 재실행한 결과가 아니다.
+- POLICY-ANCHOR: §16.5.1 included, §18.8.1 docs-only. 완료 정책 SHA-256 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.

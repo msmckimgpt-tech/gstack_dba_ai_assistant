@@ -27,8 +27,12 @@ DQA 1.4.0부터 클라이언트가 업데이트 ZIP을 직접 받아 검증하�
 ## 출하 상태
 
 - worktree: `.worktrees/feature-0046-inapp-update`; branch: `ai/codex/feature-0046-inapp-update`.
-- 1.4.0 실제 Windows Setup·Update ZIP 빌드를 완료했다. 현재 단계는 병합·웹 배포·공개 채널 게시 전이다. 공개 성공은 후속 출하 Run으로 기록한다.
-- deploy_scope: included. 정책 SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`.
+- 제품 commit `223f08ae`, [PR #1670](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1670), 병합·배포 `c684d12a`. 1.4.0 Setup·Update ZIP 공개를 완료했다. 웹 두 replica ready·90초 soak PASS, 실제 서빙 릴리스노트 일치.
+- Windows에서 실제 운영 서버의 1.4.0 ZIP 발견·다운로드·CA·크기·SHA-256 일치 PASS. 격리 설치본 내부 갱신 검증과 별도로 기록한다. GitHub check run은 없으므로 원격 CI PASS로 주장하지 않는다.
+- 추가로 실제 1.3.1 동결 앱에서 기존 업데이트 메뉴→1.4.0 최초 전환을 검증했다. 현재 앱/러너/draft 유지, 재실행 시 새 버전·동일 프로필 복귀 PASS.
+- 배포 시 compose metadata-file 경합 경고가 있었으나 canonical 배포기가 생성 이미지의 GIT_COMMIT 정합을 확인하고 두 replica·soak 검사를 완료했다. web-only 배포이며 실제 제공자 대화 스모크는 미수행이다.
+- [출하 실측 원장](test-runs.d/20260910-inapp-update-release.md)에 채널 지문·배포·Windows 실서버 다운로드·검증용 설치 제거 결과를 기록했다.
+- deploy_scope: included. 착수 정책 SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; 병합 시 template_version 메타데이터만 v3.54.3으로 전진한 것을 diff로 확인했다. 배포·완료 정책 SHA-256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`.
 - 이전 동작·출하 이력: [1.3.0 기록](report-history/20260910-before-inapp-update.md), [통합 main 1.3.1 기록](report-history/20260910-main-icon-before-inapp.md).
 
 ## 남는 특성

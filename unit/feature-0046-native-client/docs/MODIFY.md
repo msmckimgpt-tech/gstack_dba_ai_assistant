@@ -1066,3 +1066,9 @@ edit_policy: append-only
 - Changes: 1.4.0 updater는 Update ZIP만 수신한다. 경로·압축량·무결성·실행 검사 후 새 슬롯을 활성화하고 현재 프로세스를 유지한다. builder/publisher/server는 Setup/ZIP을 같은 채널로 게시·철회하고 동시 게시 및 원본 변조를 거부한다. 기존 설치기와 공통 mutex, 같은 버전 불변 파일, 제거 시 소유 slots 정리를 적용한다.
 - Migration: 1.3.x 이하의 최초 전환만 기존 앱 내 설치기 경로가 필요하다. 1.2.x의 기존 자체 종료는 소급 변경할 수 없다.
 - Verification: test-runs.d/20260910-inapp-update.md에 CLI/실제 Windows/채널 축을 구분 기록.
+
+## CHG-20260910T115000-inapp-update-release
+- Type: docs
+- Related TASK: TASK-20260910-inapp-update
+- Why: 구현 검증과 실제 출하 완료를 구분해 후속 세션이 채널·설치본 검증을 재추정하지 않게 한다.
+- Change: PR1670 병합·1.4.0 공개·web-only 배포·실서버 다운로드 지문과 1.3.1 최초 전환·제거 결과를 REPORT/TASK/출하 Run에 정합했다. 제품 코드·바이너리 변경 없음.
