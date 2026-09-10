@@ -370,3 +370,29 @@ legacy skip 은 순수한 정리 동기였고 실제로 무해해 보였다. 그
 그대로 받아썼다면 **해소된 것을 미해소로** 보고했을 것이다. 방향은 반대지만 뿌리는 이 cycle 이
 두 번 만난 것과 같다 — 「판정식의 모수가 판정 대상과 일치하는가」. 자동 판정의 출력이 아니라
 **그 판정이 무엇을 세었는지**를 봐야 한다.
+
+## REV-20260909T050000-portproxy-task-repair [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: Windows 예약작업 복구 기록(문서만). **저장소 코드 변경 0** — 제품 소스·정책 doc 미변경.
+- **Trigger**: non-policy-doc → §18.8 표에 따라 panel SKIP. 저장소의 register/sync 스크립트는
+  손대지 않았고(정본이 이미 옳다), 변경된 것은 사용자 머신의 작업 등록 상태다.
+
+## REV-20260909T070000-portproxy-s4u [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: Windows 등록 스크립트 1개(`register_mysql_ai_web_portproxy_task.ps1`) + feature 문서.
+  제품 서버 코드·정책 doc 미변경.
+- **Trigger**: 변경 diff 에 API/스키마/UI 신호 없음 — Windows 예약작업 등록 파라미터. §18.8 표의
+  코드 변경이나 dispatch 키워드 0건이며, 판정 근거가 **실측 3종**(SYSTEM 불가 · Interactive 창 ·
+  S4U 성공)으로 이미 확보돼 bundle-only reviewer 가 더할 것이 없다.
+- **검증**: 프로브 작업 3회(SYSTEM / 사용자 Interactive / 사용자 S4U)로 각 조합의 WSL 조회 결과를
+  실측했고, 교정한 파라미터 조합(S4U + 5분반복 3650일)으로 라이브 작업을 실제 재등록해
+  `logon=S4U user=mckim runlevel=Highest` 를 확인했다.
+
+## REV-20260910T100000-portproxy-closeout [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-10
+- **범위**: 종결 실측 기록만(문서). 코드 변경 0.
+- **Trigger**: non-policy-doc → panel SKIP. 실측 대상 코드는 `REV-20260909T070000-portproxy-s4u`
+  에서 이미 판정됐다.

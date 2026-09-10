@@ -1,13 +1,15 @@
+import { readAppRefreshResume, restoreAppRefresh, installAppRefresh } from "./app/deploy-refresh.js?v=dev";
 import { renderMessageContent, buildResultTable, parseMarkdownTablePreview, _buildMessageAttachChip, _msgAvatarEl, _mentionsUser, _assistantSpeakerFor } from "./app/messages.js?v=dev";
 import { loadFolders, createFolderFlow, openMoveConversationDialog, moveConversationToFolder, createFolderAndMove, moveFolderTo, undoFolderDelete, openFolderMenu, openFolderSettings, deleteFolderFlow, renameFolderFlow, _folderChildren, _folderTotalConvCount, _syncNewFolderBtn, _toggleFolder, _startFolderRename, _commitFolderRename, _cancelFolderRename, _focusFolderRenameInput, _folderById, _folderDepthCap, _offerFolderUndo, renderConversationList, requestSidebarReorderAnimation, bumpSidebarDataVersion, _scheduleSidebarCatchup, _maybeSyncConversationListUnread, renameConversationFlow } from "./app/sidebar.js?v=dev";
 import { bindConnectModal, bindConnState, refreshConnState, onComposeGateChange, onCapsChange } from "./app/connect-modal.js?v=dev";
+import { suspendClientPanel, restartClientPanel } from "./app/client-bridge.js?v=dev";
 import { handleBridgePending, resumeBridgePolling, abandonBridgeTasks, _bridgePendingHere, _applyMention, _attachShareRangeEsc, _bindComposerActionsEvents, _bindComposerAttachmentEvents, _closeMentionAC, _composerCurrentModel, _composerCurrentReasoningLevel, _composerModelSelectorHidden, _composerReasoningValid, _detachShareRangeEsc, _ensureMentionMembers, _loadConversationAttachments, _mentionAC, _mentionCtx, _openMentionAC, _renderAttachmentPills, _renderComposerModelMenu, resetAttachListStateForConversationSwitch, _renderMentionAC, _resetComposerModelSelection, _updateComposerModelLabel, _updateComposerReasoningLabel, attachAndWaitForResult, renderComposer, sendPrompt, _downloadAttachmentById } from "./app/composer.js?v=dev";
 import { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, scheduleRunDetectPolling, startElapsedTimer, startProgressPolling, startRunDetectPolling, stopElapsedTimer, stopProgressPolling, stopRunDetectPolling } from "./app/progress.js?v=dev";
 // composer.js 의 "../app.js" import 계약 보존 (re-export) — run 추적/진행 표시 진입점.
 export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgress, startElapsedTimer, startProgressPolling };
 // messages.js 의 "../app.js" import 계약 보존 (re-export) — 첨부 다운로드 진입점.
 export { _downloadAttachmentById };
-import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget } from "./app/auth.js?v=dev";
+import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, showStartupPending, showStartupError, handleLogin, handleSignup, showForceChangePasswordModal, consumeNextTarget } from "./app/auth.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
 export { bindBackdropDismiss };
@@ -26,6 +28,9 @@ import { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, rende
 // side-panel-exclusive: 우측 오버레이 사이드 패널(첨부·실행 단계·프로필)은 한 번에 하나만
 // 열린다. 등록·해제 규칙의 정본은 그 모듈이며, 여기서 조건을 다시 조립하지 않는다.
 import { registerSidePanel, openSidePanel } from "./app/side-panels.js?v=dev";
+// feature-0043 TASK-20260909T000000 — 자동작성이 개인 AI 에 위임되면 응답은 SSE 가 아니라
+// `bridge_pending` JSON 이다. 그 봉투를 해석하고 결과가 올 때까지 따라가는 공용 헬퍼.
+import { awaitDelegatedResult, jobPhaseLabel, looksDelegatedEnvelope } from "./console-job-poll.js?v=dev";
 export const authOverlayEl = document.getElementById("authOverlay");
 const loginFormEl = document.getElementById("loginForm");
 const signupFormEl = document.getElementById("signupForm");
@@ -131,6 +136,7 @@ export const ASK_ATTACH_POLL_WAIT_SEC = 45;
 export const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
 
 export const state = {
+  uiMutations: 0,
   // ITEM-P5b 후속 Phase A (state-intake, PLAN-APPROVED 2026-08-05): 도메인 추출을 막던
   // 모듈-스코프 공유 가변 let 을 state 프로퍼티로 편입 — renderConversationList(B1)·
   // 사이드바 catchup 이 core(initialize/handleLogout)와 양방향 재할당 결합이던 2건.
@@ -876,6 +882,9 @@ function _notifyMentions(incoming, hidden) {
 }
 
 export async function apiFetch(url, options = {}) {
+  const uiMutation = !["GET", "HEAD"].includes(String(options.method || "GET").toUpperCase());
+  if (uiMutation) state.uiMutations += 1;
+  try {
   const headers = new Headers(options.headers || {});
   if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -909,6 +918,7 @@ export async function apiFetch(url, options = {}) {
     throw error;
   }
   return payload;
+  } finally { if (uiMutation) state.uiMutations -= 1; }
 }
 
 export function formatDateTime(value = "") {
@@ -2249,6 +2259,38 @@ async function generateAccountPrompt(btn) {
       finish();
       return;
     }
+    // ── 위임 분기 (feature-0043 TASK-20260909T000000) ────────────────────────────
+    //
+    // 서버 계정 LLM 이 차단된 배포에서 이 요청은 **개인 AI 에게 넘어간다**. 그때 서버는 200 에
+    // 스트림이 아니라 `{"bridge_pending": true, poll_url, task_id}` JSON 을 싣는다. 아래
+    // 분기가 없던 동안 그 응답은 SSE 파서에 들어가 `event:`/`data:` 가 없다는 이유로 조용히
+    // 버려졌고 — 요청은 200, 작업은 적재·완료, 화면만 "준비 중…" 에 멈춘 채였다
+    // (라이브 실증 2026-09-08 19:56). 결과가 화면에 닿는 경로를 여기서 잇는다.
+    if (looksDelegatedEnvelope(resp)) {
+      const envelope = await resp.json().catch(() => ({}));
+      if (!envelope || envelope.bridge_pending !== true) {
+        // 200 + JSON 인데 위임 봉투가 아니다 — 우리가 모르는 응답이다. 조용히 성공으로
+        // 읽지 않는다(그 침묵이 이 결함의 형태였다).
+        setMeta(`자동 생성 실패: ${(envelope && envelope.error) || "알 수 없는 응답"}`, true);
+        return;
+      }
+      setMeta(envelope.message || "연결된 본인 AI 에 맡겼습니다. 완료되면 여기에 채워집니다.");
+      const done = await awaitDelegatedResult(
+        envelope,
+        (phase) => setMeta(jobPhaseLabel(phase)),
+        { signal: controller.signal },
+      );
+      const finalText = String((done && done.result) || "");
+      if (!finalText.trim()) {
+        // 빈 결과를 채우면 사용자는 편집 중이던 본문을 잃고, 화면은 그것을 완료라 말한다.
+        setMeta("연결된 AI 가 빈 결과를 돌려주었습니다. 다시 시도해 보세요.", true);
+        return;
+      }
+      contentEl.value = finalText;
+      contentEl.scrollTop = 0;
+      setMeta(`연결된 AI 가 작성했습니다 (${finalText.length}자). 검토 후 '저장'을 누르세요.`);
+      return;
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -2265,7 +2307,13 @@ async function generateAccountPrompt(btn) {
     }
     if (buf.trim()) handleFrame(buf);
   } catch (error) {
-    if (!(error && error.name === "AbortError")) {
+    if (error && error.name === "AbortError") {
+      // 사용자/재진입 abort — 조용히 무시. 부분 본문은 그대로 둔다.
+    } else if (error && error.terminal === true) {
+      // 위임 폴링이 «더 기다려도 달라지지 않는다» 고 판정한 사유(세션 만료·취소·상한 초과·
+      // 연결된 AI 의 실패). 연결 오류로 뭉뚱그리면 사용자가 할 일이 가려진다.
+      setMeta(error.message, true);
+    } else {
       setMeta(`자동 생성 중단됨(연결 오류): ${error.message || error}`, true);
     }
   } finally {
@@ -3387,8 +3435,10 @@ export function renderPendingAssistantBubble(pending) {
   } else if (steps.length) {
     const latest = steps[steps.length - 1];
     const lbl = latest.tool ? toolLabel(latest.tool) : "";
-    const work = latest.work || latest.intent || "";
-    currentStepEl.textContent = lbl ? `${lbl} · ${work}` : work || `단계 ${steps.length}`;
+    const info = stepTitleInfo(latest, steps.length - 1);
+    // 폴백 제목은 라벨을 되풀이한 말이다 — 그때는 라벨만 쓴다.
+    currentStepEl.textContent = (lbl && !info.isFallback)
+      ? `${lbl} · ${info.text}` : (lbl || info.text);
   } else {
     currentStepEl.textContent = "시작 중…";
   }
@@ -3407,18 +3457,88 @@ export function renderPendingAssistantBubble(pending) {
   return row;
 }
 
-const TOOL_LABEL_MAP = {
+// 실행 단계 배지의 사람 이름. **모수는 서버가 낼 수 있는 도구 전체**여야 한다 —
+// 빠진 이름은 배지에 그대로 나가 사용자가 내부 식별자(`search_tables`)를 읽게 된다
+// (사용자 제보 2026-09-08). `tests/test_step_tool_syntax_leak.py` 가 서버의 도구 목록을
+// 실제로 조회해 이 표와 대조한다(손으로 나열한 모수는 다음 도구에서 다시 벌어진다 —
+// AGENTS.md §16.7 G12-b).
+export const TOOL_LABEL_MAP = {
+  // 내부 에이전트 조사 도구 (`modules/tools.py`)
   execute_sql: "SQL 실행",
+  explain_query: "실행 계획",
+  list_schemas: "DB 목록",
+  describe_schema: "테이블 목록",
+  describe_table: "테이블 구조",
+  describe_routine: "프로시저 정의",
+  search_tables: "테이블 찾기",
+  search_routines: "프로시저 찾기",
+  search_db_objects: "통합 찾기",
+  describe_db_object: "정의 보기",
+  get_sample_rows: "샘플 데이터",
+  get_table_indexes: "인덱스 확인",
+  get_foreign_keys: "외래키 확인",
+  check_table_coverage: "첨부 대조",
+  graph_navigate: "관계도 탐색",
+  scratch_import: "임시 저장",
+  scratch_sql: "임시 SQL",
+  scratch_list: "임시 목록",
+  scratch_reset: "임시 비움",
+  read_attachment: "첨부 읽기",
+  update_attachment: "첨부 저장",
+  // 외부 AI 브리지 표면 (`routers/ai_tools.py`)
+  get_task_context: "질문 파악",
+  read_task_attachment: "첨부 읽기",
+  // 정의표에는 없고 코드가 직접 단계로 남기는 이름 (라이브 원장 실측)
+  materialize_attachment: "첨부 저장",
+  query_sql: "SQL 실행",
+  // 옛 기록에만 남아 있는 이름 — 지우면 과거 대화의 배지가 "도구" 로 뭉개진다.
   schema_lookup: "스키마 조회",
   list_tables: "테이블 목록",
-  describe_table: "테이블 구조",
   search_data: "데이터 검색",
   generate_report: "리포트 생성",
   plan: "계획 수립",
 };
 
-function toolLabel(toolName) {
-  return TOOL_LABEL_MAP[toolName] || toolName || "도구";
+// 모르는 도구는 **이름을 노출하지 않고** 일반 라벨로 떨어뜨린다. 내부 식별자는 사용자의
+// 어휘가 아니다(AGENTS.md §16.8 B-2). 무엇을 했는지는 배지가 아니라 제목(work)이 말하며,
+// 그 제목은 서버가 도구·인자에서 한국어로 파생한다.
+export function toolLabel(toolName) {
+  return TOOL_LABEL_MAP[toolName] || "도구";
+}
+
+// 단계 제목. `work` 가 정본이고, 없을 때도 **내부 식별자로 떨어지지 않는다** —
+// 종전 폴백 두 단(intent · tool)은 각각 `describe_table: …` 과 `describe_table` 을 그대로
+// 내보내는 경로였다(intent 는 서버가 `<도구명>: <문구>` 로 조립한다).
+//
+// **백틱을 벗긴다.** 서버 파생 문구는 식별자를 마크다운 인용(``coupon`.`T_COUPON``)으로
+// 감싸는데 이 자리는 `textContent` 라 백틱이 **글자 그대로** 찍힌다. 사용자가 지적한 것이
+// 「기계 표기가 화면에 나온다」이므로, 그것을 다른 기계 표기로 바꾸면 같은 지적이 재발한다.
+// 서버의 백틱은 원장·감사 가치가 있으니 두고 **표시층에서만** 벗긴다.
+export function stripDisplayTicks(text) {
+  return String(text || "").replace(/`([^`]*)`/g, "$1").replace(/`/g, "");
+}
+
+// 인자 매핑 리터럴의 서명. 서버 판정기(`_conv_store._STEP_ARGS_LITERAL_RE`)와 **같은 형태**의
+// 얇은 심층 방어다 — 정본은 서버이고 이 줄은 서버측 누락 1건이 그대로 화면에 닿는 것을
+// 막는다. 서버가 유일 실패점이 되는 구조를 계약으로 굳히지 않는다.
+//
+// ⚠ **서버와 같이 맨앞 앵커**를 쓴다. 앵커 없이 「어디에나 있으면 강등」으로 두면
+// `설정값 {'theme': 'dark'} 이 든 컬럼을 확인한다` 처럼 **서버가 일부러 살려 보낸 정상 문구**를
+// 클라이언트가 지운다 — 심층 방어가 서버 판정을 뒤집는 셈이다(codex 적대 리뷰 라운드 3 P2).
+const STEP_ARGS_LITERAL_RE = /^(?:[A-Za-z_][A-Za-z0-9_]*\s*)?[{]\s*['"][A-Za-z_][A-Za-z0-9_]*['"]\s*:/;
+
+// 폴백으로 만든 제목인지까지 돌려준다. 호출측이 그것을 모르면 라벨과 나란히 놓을 때
+// 「테이블 구조 · 테이블 구조 단계」처럼 같은 말을 두 번 하게 된다(라운드 2 실측).
+export function stepTitleInfo(step, idx) {
+  const s = step || {};
+  const work = stripDisplayTicks(s.work).trim();
+  if (work && !STEP_ARGS_LITERAL_RE.test(work)) return { text: work, isFallback: false };
+  if (s.tool) return { text: `${toolLabel(s.tool)} 단계`, isFallback: true };
+  return { text: `단계 ${(idx || 0) + 1}`, isFallback: true };
+}
+
+export function stepTitleText(step, idx) {
+  return stepTitleInfo(step, idx).text;
 }
 
 // step 의 "결과 보기" 펼침 상태 영속화용 안정 키.
@@ -3468,7 +3588,10 @@ function _stepResultKey(step, idx) {
 
 // step 하나를 상세 표시 DOM 요소로 변환.
 // compact=true 이면 SQL/결과 미리보기 생략 (pending bubble 헤더용).
-export function buildStepDetailEl(step, idx, { compact = false } = {}) {
+// `hideFallbackTitle` — 호출측이 **이미 배지를 그린** 자리에서 쓴다. 폴백 제목은 라벨을
+// 되풀이한 말이라(「테이블 구조」+「테이블 구조 단계」) 나란히 두면 같은 말이 두 번 나온다
+// (대기 말풍선과 같은 규칙 — 적대 검증 라운드 3 C1).
+export function buildStepDetailEl(step, idx, { compact = false, hideFallbackTitle = false } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "step-detail";
 
@@ -3493,10 +3616,13 @@ export function buildStepDetailEl(step, idx, { compact = false } = {}) {
   }
 
   // work 제목
-  const title = document.createElement("strong");
-  title.className = "step-title";
-  title.textContent = step.work || step.intent || step.tool || `단계 ${(idx || 0) + 1}`;
-  wrap.appendChild(title);
+  const titleInfo = stepTitleInfo(step, idx);
+  if (!(hideFallbackTitle && titleInfo.isFallback)) {
+    const title = document.createElement("strong");
+    title.className = "step-title";
+    title.textContent = titleInfo.text;
+    wrap.appendChild(title);
+  }
 
   // reason — 각 실행 단계의 수행 근거를 사용자에게 노출(작업이 합리적으로 진행됐음을
   // 명시적으로 알 수 있게). 데이터는 step.reason(LLM tool_notes)에 이미 존재.
@@ -3505,7 +3631,16 @@ export function buildStepDetailEl(step, idx, { compact = false } = {}) {
     reasonEl.className = "step-reason";
     const reasonLabel = document.createElement("span");
     reasonLabel.className = "step-reason-label";
-    reasonLabel.textContent = "근거";
+    // 서버가 도구 목적에서 **역산한** 근거는 AI 가 말한 근거와 구분해 적는다. 구분 없이
+    // 같은 「근거」로 그리면 화면이 «지어낸 문장» 을 «AI 가 말한 것» 으로 보이게 한다 —
+    // 「지어내지 않는다」가 이 기능의 명시 계약이다(적대 검증 라운드 2 F3 · 라운드 3 C3).
+    const reasonDerived = String(step.reason_source || "") === "derived";
+    reasonLabel.textContent = reasonDerived ? "근거(추정)" : "근거";
+    if (reasonDerived) reasonLabel.classList.add("is-derived");
+    if (reasonDerived) {
+      reasonEl.title = "이 근거는 연결된 AI 가 말한 것이 아니라, 서버가 도구의 목적에서 "
+        + "역산한 설명입니다.";
+    }
     reasonEl.appendChild(reasonLabel);
     const reasonText = document.createElement("span");
     reasonText.className = "step-reason-text";
@@ -4056,7 +4191,9 @@ function _buildStepActivityRow(step, idx, tm, { isRunningNow, cumulativeFrom }) 
 
   const textEl = document.createElement("span");
   textEl.className = "step-activity-text";
-  textEl.textContent = step.work || step.intent || "내부 동작";
+  // `intent` 는 서버가 `<도구명>: …` 로 조립한 값이라 식별자를 담는다 — 쓰지 않는다.
+  const actWork = stripDisplayTicks(step.work).trim();
+  textEl.textContent = (actWork && !STEP_ARGS_LITERAL_RE.test(actWork)) ? actWork : "내부 동작";
   row.appendChild(textEl);
 
   const timeEl = document.createElement("span");
@@ -4078,7 +4215,7 @@ function _buildStepActivityRow(step, idx, tm, { isRunningNow, cumulativeFrom }) 
   if (Number.isFinite(tm.startTs)) parts.push(`시작 ${_fmtStepClock(tm.startTs)}`);
   if (step.reason) parts.push(step.reason);
   if (isRunningNow) parts.push("이 구간은 아직 진행 중입니다 (경과는 1초마다 갱신됩니다)");
-  row.title = parts.join(" · ") || String(step.work || "내부 동작");
+  row.title = parts.join(" · ") || actWork || "내부 동작";
   return row;
 }
 
@@ -4199,7 +4336,8 @@ function _renderStepSidePanelBody(pending) {
       itemHeader.appendChild(timeEl);
     }
     item.appendChild(itemHeader);
-    item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
+    // 헤더가 이미 배지를 그렸다 — 폴백 제목은 그 라벨의 되풀이이므로 넣지 않는다.
+    item.appendChild(buildStepDetailEl(step, idx, { compact: false, hideFallbackTitle: !!step.tool }));
     body.appendChild(item);
   });
   // 내부 결과셋 + 외부 패널 스크롤 복원(동기 + rAF). rAF 로 layout 확정 후 재적용해
@@ -7693,6 +7831,7 @@ async function loadVaultOptions() {
 // feature-0038 Cycle 8: 인증 표면 세그먼트 2 은 app/auth.js 로 분리 (구 L11685–11859).
 
 async function handleLogout() {
+  suspendClientPanel();
   // 열려있는 드로어를 먼저 닫아야 로그아웃 후 뒤에 드로어가 남지 않음
   closeProfile();
   stopProgressPolling({ reset: true });
@@ -7730,12 +7869,12 @@ async function handleLogout() {
   showAuthOverlay();
 }
 
-export async function initializeWorkspace() {
+export async function initializeWorkspace(initialSession = null) {
   // TASK-20260729T152000-ratelimit-scope: 계정 경계 2중 방어 — handleLogout 이 캐시를 비우지만,
   // 세션 만료 후 페이지 새로고침 없이 다시 로그인하는 경로(handleLogin → 여기)는 logout 을 거치지
   // 않는다. 워크스페이스 초기화 시점에도 대화 본문 캐시를 비워 계정 간 잔류를 차단한다.
   _branchViewCacheClear();
-  state.session = await apiFetch("/api/session");
+  state.session = initialSession || await apiFetch("/api/session");
   // TASK-20260619T014034: LLM provider 제한 상태 초기 적용 + hybrid 폴링 시작 + 선제 probe(로드 직후 1회).
   try {
     applyLlmProviderStatus(state.session && state.session.llm_provider_status);
@@ -7743,10 +7882,7 @@ export async function initializeWorkspace() {
     pollLlmHealth();
   } catch (_) { /* noop */ }
   state.user = state.session.user;
-  // TASK-0061 Phase 6 (AC-0095): 새로고침 후에도 must_change_password 가 true 면 강제 modal.
-  if (state.user && state.user.must_change_password) {
-    showForceChangePasswordModal();
-  }
+  restartClientPanel();
   state.products = Array.isArray(state.session.products) ? state.session.products : [];
   state.default_product_id = state.session.default_product_id || null;
   // TASK-0047: 제품 선호 hydrate (서버 pref + 대화별 product → state).
@@ -7764,7 +7900,10 @@ export async function initializeWorkspace() {
   //   (1) deep-link(/?conversation=<id>, TASK-0263) — 명시 네비게이션이므로 그 대화를 활성화.
   //   (2) 진행 중 요청 이어받기(TASK-0041) — 직전 대화가 서버에서 처리 중이면 그 대화를 활성화.
   const _serverCid = state.session.conversation_id || "";
-  let _preferCid = "";
+  const uiResume = readAppRefreshResume(state.user);
+  state.uiAttachmentSelections = uiResume?.attachmentSelections || {};
+  let _preferCid = uiResume?.conversationId || "";
+  let _hasDeepLink = false;
   let _allowCurrentFallback = false;
   let _resumeStatus = null;
   try {
@@ -7772,16 +7911,13 @@ export async function initializeWorkspace() {
     const _deep = (_qp.get("conversation") || "").trim();
     if (_deep) {
       _preferCid = _deep;
+      _hasDeepLink = true;
       // 명시 deep-link — 미존재/비소유 시 기존 서버 current 폴백 동작 보존(TASK-0263).
       _allowCurrentFallback = true;
-      // URL 정리(새로고침·공유 시 깔끔) — history state 만 교체(재탐색 없음).
-      if (window.history && window.history.replaceState) {
-        window.history.replaceState({}, "", window.location.pathname);
-      }
     }
   } catch (_) { /* URL 파싱 실패 무시 */ }
   // 진행 중 요청이 있으면 빈 화면 대신 그 대화를 선택해 이어받는다(아래 resume 블록과 status 공유).
-  if (!_preferCid && _serverCid) {
+  if (!_preferCid && _serverCid && !uiResume) {
     try {
       _resumeStatus = await fetchAskStatus(_serverCid);
       if (_resumeStatus && _resumeStatus.is_processing) _preferCid = _serverCid;
@@ -7836,10 +7972,22 @@ export async function initializeWorkspace() {
         });
     }
   }
+  await restoreAppRefresh(uiResume, { state, messageLog: messageLogEl, renderComposer,
+    releaseScrollPin: _releaseRailBottomPin, notify: showToast });
+  installAppRefresh({ state, messageLog: messageLogEl, notify: showToast,
+    stamp: new URL(import.meta.url).searchParams.get("v") || "" });
+  // 실패 후 재시도에도 목적지를 유지하고, 오류 화면 위에 강제 모달을 남기지 않는다.
+  if (_hasDeepLink && window.history && window.history.replaceState) {
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+  if (state.user && state.user.must_change_password) {
+    showForceChangePasswordModal();
+  }
 }
 
 async function initialize() {
   applyMotionPref(); // anim-pref: 저장된 애니메이션 효과 설정을 <html data-motion> 에 반영(페이지 1회).
+  document.getElementById("startupRetryBtn").addEventListener("click", restoreSession);
   document.querySelectorAll("[data-auth-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       toggleAuthPane(button.dataset.authTab);
@@ -8193,9 +8341,15 @@ async function initialize() {
 
   toggleAuthPane("login");
 
+  await restoreSession();
+}
+
+export async function restoreSession() {
+  showStartupPending();
   try {
     const session = await apiFetch("/api/session");
     state.session = session;
+    state.user = session.user || null;
     state.products = Array.isArray(session.products) ? session.products : [];
     state.default_product_id = session.default_product_id || null;
     if (!session.authenticated) {
@@ -8209,15 +8363,20 @@ async function initialize() {
     // feature-0041: 이미 로그인된 채로 `?next=` 를 들고 들어온 경우(다른 탭에서 로그인 등)
     // 작업 화면을 그리지 않고 바로 원래 목적지로 보낸다.
     if (consumeNextTarget()) return;
+    await initializeWorkspace(session);
     hideAuthOverlay();
-    state.user = session.user;
-    await initializeWorkspace();
   } catch (error) {
-    showAuthOverlay();
-    renderAccountState();
-    renderAccessNotice();
-    renderComposer();
-    showToast(error.message || "초기화에 실패했습니다.", true);
+    // 통신/작업 초기화 실패는 세션 만료가 아니다.
+    if (error.status === 401) {
+      state.user = null;
+      state.session = null;
+      showAuthOverlay();
+      renderAccountState();
+      renderAccessNotice();
+      renderComposer();
+    } else {
+      showStartupError();
+    }
   }
 }
 

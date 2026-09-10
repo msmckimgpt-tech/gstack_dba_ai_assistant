@@ -452,6 +452,8 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_attachments (
     account_id                  bigint        NOT NULL,
     object_key                  varchar(512)  NOT NULL,
     original_filename           varchar(255)  NOT NULL,
+    -- REQ-20260908-attach-folder-tree: 폴더 업로드의 폴더-루트 기준 상대 경로. NULL=단일 파일.
+    relative_path               varchar(1024),
     filename_hmac               char(64)      NOT NULL,
     mime_type                   varchar(128)  NOT NULL,
     size_bytes                  bigint        NOT NULL,

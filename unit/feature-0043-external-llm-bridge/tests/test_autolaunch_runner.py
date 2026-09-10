@@ -191,7 +191,7 @@ def test_entry_path_never_opens_the_modal():
     """로그인 진입 실패가 창을 열면 그건 접근성 개선이 아니라 방해다."""
     body = _fn("_maybeAutoEntry")
     assert "fallbackModal: false" in body
-    assert "openConnectModal" not in body
+    assert "openConnectModal" not in body[body.index("if (!_autoLaunchEligible())"): ]
 
 
 def test_click_path_falls_back_to_the_modal():

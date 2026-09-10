@@ -21,11 +21,19 @@
   <link rel="stylesheet" href="/static/css/admin.css?v=dev" />
   <link rel="stylesheet" href="/static/css/profile.css?v=dev" />
   <link rel="stylesheet" href="/static/css/search-audit.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/client-connect.css?v=dev" />
 </head>
 <body>
 
+  <div class="auth-screen" id="startupOverlay">
+    <div class="auth-card">
+      <p class="startup-status" id="startupStatus" role="status" aria-live="polite">화면을 불러오는 중입니다.</p>
+      <button type="button" class="btn-primary btn-full hidden" id="startupRetryBtn">다시 시도</button>
+    </div>
+  </div>
+
   <!-- ─── Auth Screen ─────────────────────────────────────────────── -->
-  <div class="auth-screen" id="authOverlay">
+  <div class="auth-screen hidden" id="authOverlay">
     <div class="auth-card">
       <div class="auth-logo">
         <img src="/static/brand/dqa.svg?v=dev" alt="DQA" width="36" height="36" style="display:block;" />
@@ -88,7 +96,7 @@
   <!-- ─── App Shell ──────────────────────────────────────────────── -->
   <!-- REQ-20260518-0004: ChatGPT 패턴 layout — sidebar 가 전체 height, topbar 가 chat-pane width 만.
        brand 는 sidebar 의 첫 child, 대화 제목 + 관리 콘솔은 chat-column 의 topbar. chat-header 폐기. -->
-  <div class="app-shell" id="appFrame">
+  <div class="app-shell" id="appFrame" inert>
 
       <!-- Sidebar (full height — brand 포함) -->
       <aside class="sidebar">
@@ -188,6 +196,7 @@
                     stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <strong>여기에 파일을 놓으세요</strong>
+              <span>폴더도 그대로 놓을 수 있습니다</span>
           </div>
         </div>
 
@@ -250,7 +259,7 @@
           <!-- TASK-0161: 죽은 composer-attachments DOM 제거 (첨부 UI 는 #attachSidePanel 로 이전 완료). state.composerAttachments 버킷은 live 유지. -->
           <!-- TASK-0094 Phase 6: drag-drop overlay — 사용자가 composer 영역에 파일을 끌어다 놓으면 표면화. -->
           <div class="composer-drop-overlay hidden" id="composerDropOverlay" aria-hidden="true">
-            <span>파일을 끌어다 놓아서 첨부</span>
+            <span>파일·폴더를 끌어다 놓아서 첨부</span>
           </div>
           <!-- TASK-20260619T014034: LLM provider 외부요인 제한(자격증명 만료 등) 직접 배너.
                restricted 동안 상시 노출 — 사용자가 명시적으로 확인. /api/llm/health 폴링이 토글. -->
@@ -325,7 +334,7 @@
                  으로 통합. multiple 비활성 (한 번에 한 파일). -->
             <button type="button" class="composer-actions-btn" id="composerActionsBtn"
                     title="파일 첨부 / 모델 선택"
-                    aria-label="추가 동작 (파일 첨부 / 모델 선택)"
+                    aria-label="추가 동작 (파일 첨부 / 폴더 첨부 / 모델 선택)"
                     aria-haspopup="menu"
                     aria-expanded="false">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -339,6 +348,15 @@
                   <path d="M16.5 6.5L9 14a3 3 0 104.24 4.24l8.49-8.48a5 5 0 10-7.07-7.07L4.93 12.43" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
                 <span class="composer-actions-label">파일 첨부</span>
+              </button>
+              <!-- attach-folder-tree: 폴더를 통째로 첨부한다. 파일 첨부와 다른 input 을 쓰는 이유는
+                   `webkitdirectory` 가 있는 input 은 **폴더만** 고를 수 있어(파일 선택 불가) 하나로
+                   겸할 수 없기 때문이다. -->
+              <button type="button" class="composer-actions-item" id="composerActionsAttachDirItem" role="menuitem">
+                <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                </svg>
+                <span class="composer-actions-label">폴더 첨부</span>
               </button>
               <button type="button" class="composer-actions-item" id="composerActionsListItem" role="menuitem">
                 <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -388,6 +406,17 @@
             <input type="file"
                    id="attachFileInput"
                    class="hidden"
+                   multiple
+                   aria-hidden="true" />
+            <!-- attach-folder-tree: 폴더 단위 첨부. `webkitdirectory` 는 표준화 전 접두사이지만
+                 Chromium·Firefox·Safari 가 모두 이 이름으로 지원한다(`directory` 는 아직 아니다).
+                 선택된 각 File 은 `webkitRelativePath` 로 「선택한 폴더 루트 기준 상대 경로」를
+                 들고 오며, 그 값이 서버의 `relative_path` 가 된다. -->
+            <input type="file"
+                   id="attachDirInput"
+                   class="hidden"
+                   webkitdirectory
+                   directory
                    multiple
                    aria-hidden="true" />
             <!-- UX-COMPACT: Product chip 왼쪽으로 이동 (textarea 앞) -->
@@ -723,12 +752,7 @@
              그래서 이 창에는 명령도, 복사 버튼도, 「연결 준비」도 없다. 남은 길은 하나 —
              DQA 앱. 그 대가로 **앱이 없는 사용자에게는 다른 길이 없다**(사용자가 그 대가를
              알고 고른 것이다). 그래서 받기 안내를 아래에 둔다 — 없애면 막다른 길이 된다. -->
-        <p class="connect-modal-why">
-          내 AI를 이 서비스에 연결하면 질문에 답할 수 있습니다.
-          연결은 <strong>DQA 앱</strong>이 합니다 — 앱 창이 이 컴퓨터의 AI를 찾아 바로
-          연결하고, 한 번 연결한 뒤에는 <strong>시작 메뉴의 아이콘</strong>만 눌러도
-          그 창이 열립니다.
-        </p>
+        <p class="connect-modal-why" id="connectModalWhy">DQA 앱에서 이 컴퓨터의 AI를 연결하세요.</p>
         <div class="connect-modal-actions">
           <!-- feature-0043 P0-AC: 이미 설치한 머신에서 프로그램을 다시 띄우는 경로.
                브라우저는 샌드박스라 프로세스를 직접 못 띄우므로, 설치가 등록해 둔
@@ -742,18 +766,14 @@
              「앱 창을 그대로 DQA 로」). 그 창에서는 웹이 이 컴퓨터의 AI 를 직접 다룰 수
              있으므로, 명령을 복사해 붙일 이유가 없다. 평범한 브라우저 방문에서는
              나타나지 않고 종전 경로가 그대로 남는다. -->
-        <section id="connectClientPanel" hidden style="margin-bottom:12px">
-          <p class="connect-modal-hint"><strong>이 컴퓨터의 AI</strong>
-             — 이 창에서 바로 연결할 수 있습니다.</p>
-          <ul id="connectClientList" style="list-style:none;padding-left:0;margin:8px 0"></ul>
-          <!-- ⚠ **비워 둔 채 렌더한다.** 채우는 것은 브리지의 `status.resident` 를 받은
-               뒤다 — 이 창을 닫아도 되는지는 트레이가 실제로 떠 있는가에 달렸고, 그것을
-               아는 것은 껍데기뿐이다. 프런트가 추정하면 트레이 없는 머신에서 거짓이 된다. -->
-          <p class="connect-modal-hint" id="connectClientResidency"></p>
-          <div class="connect-modal-actions">
+        <section id="connectClientPanel" class="connect-client-panel" hidden aria-label="이 컴퓨터의 AI 연결">
+          <div class="connect-client-toolbar">
+            <h3 id="connectClientSummary">이 컴퓨터의 AI</h3>
             <button type="button" class="connect-modal-btn" id="connectClientRefresh">다시 찾기</button>
-            <button type="button" class="connect-modal-btn connect-modal-btn--primary" id="connectClientConnect" disabled>이 서비스에 연결</button>
           </div>
+          <ul id="connectClientList" class="connect-ai-list"></ul>
+          <p class="connect-modal-hint connect-client-residency" id="connectClientResidency"></p>
+          <button type="button" id="connectClientConnect" hidden disabled>연결</button>
         </section>
         <!-- ROADMAP ITEM-06 — **받을 수 있을 때만** 보인다. 서버가 실물 존재를 확인해
              `client_download` 를 낼 때만 채워진다(`_paintClientDownload`). 없는 다운로드를

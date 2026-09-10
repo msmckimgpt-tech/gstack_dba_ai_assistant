@@ -32,7 +32,7 @@ def test_application_shortcuts_share_runtime_identity():
     assert appid == branding.APP_USER_MODEL_ID
     icons = source.split('[Icons]', 1)[1].split('[Registry]', 1)[0]
     app_shortcuts = [line for line in icons.splitlines()
-                     if line.startswith('Name:') and '{#MyAppExe}' in line]
+                     if line.startswith('Name:') and 'DQALauncher.exe' in line]
     assert len(app_shortcuts) == 3
     assert all('AppUserModelID: "{#MyAppUserModelID}"' in line for line in app_shortcuts)
 
@@ -61,3 +61,20 @@ def test_web_shells_use_the_same_icon_assets_as_the_native_client():
         html = (web / f'{name}.html').read_text()
         assert html.count('<img src="/static/brand/dqa.svg?v=dev"') == count
         assert '/static/logo-dqa.svg' not in html
+
+
+def test_installed_relaunch_survives_slot_removal(monkeypatch, tmp_path):
+    from client import installation
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'versions/1.3.1-1/DQAConnect.exe'))
+    monkeypatch.setattr(installation, 'install_root', lambda: tmp_path)
+    launcher = tmp_path / 'DQALauncher.exe'
+    icon = tmp_path / 'dqa.ico'
+    launcher.touch()
+    icon.touch()
+    assert branding.relaunch_command() == subprocess.list2cmdline([str(launcher)])
+    assert branding.relaunch_icon() == icon
+    launcher.unlink()
+    icon.unlink()
+    assert branding.relaunch_command() == subprocess.list2cmdline([sys.executable])
+    assert branding.relaunch_icon() == branding.ICON_PATH

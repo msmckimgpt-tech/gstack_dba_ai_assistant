@@ -21,216 +21,446 @@
  * ⚠ 주소에서 바로 읽고 **지운다**. 앱은 라우팅하며 주소를 갈아 끼우므로 나중에 읽으면 없다.
  *   그리고 nonce 가 주소창·기록에 계속 남아 있을 이유가 없다.
  */
+/* ⚠ **좌표를 «보관» 하는 페이지와 «읽기만» 하는 페이지를 가른다** (적대 리뷰 2026-09-08 X1·B1).
+ *
+ * 이 흡수 로직은 원래 **로그인해야 도달하는 앱 루트**에만 있었다. 2026-09-08 에 공유 화면이
+ * 이 모듈을 쓰게 되면서, 같은 코드가 **익명 접근 페이지**(`/share/<token>`)에서도 돌게 됐다.
+ * 그 페이지는 «모르는 사람에게 링크로 건네는 것이 정상 사용» 인 유일한 화면이므로, 흡수를
+ * 그대로 두면 링크 한 줄로 이런 일이 일어난다:
+ *
+ *     https://svc/share/<tok>?client_port=1&client_nonce=EVIL
+ *       → sessionStorage["dqa.bridge"] 에 공격자 좌표가 **심긴다**
+ *       → history.replaceState 가 그 흔적을 주소창에서 지운다
+ *       → 피해자가 같은 탭에서 앱 루트로 이동하면 connect-modal 이 그 좌표로 연결을 걸고,
+ *         세션 결속 베어러가 공격자가 지정한 로컬 포트로 나간다
+ *
+ * 그래서 **저장은 보관해도 되는 표면에서만** 한다.
+ *
+ * ⚠⚠ **극성이 중요하다 — 익명 표면을 «열거해 막는» 방식은 실제로 뚫렸다** (2R B1, 실측).
+ *   첫 조치는 `/^\/share\//` 를 deny-list 로 뒀는데, 같은 문서가 정적 마운트를 통해
+ *   `/static/share.html` 로도 **익명 200** 으로 서빙된다(라이브 확인). 그 pathname 은
+ *   정규식을 그냥 비껴가므로 공격은 링크 한 줄만 바꿔 그대로 성립했다. 판정을 «URL 이
+ *   어떻게 생겼는가» 로 한 것이 원인이다.
+ *
+ *   그래서 **allow-list 로 뒤집는다** — 보관해도 되는 자리는 앱 셸이 여는 **서비스 루트
+ *   하나**뿐이고(`appwindow.panel_url` 의 기본 경로), 그 외에는 전부 그 페이지 한정
+ *   (`ephemeral`)으로 열화한다. 새 페이지가 생겨도 기본값이 «저장 안 함» 이라 같은 구멍이
+ *   다시 열리지 않는다.
+ */
+const _PERSIST_SURFACES = new Set(["/", "/index.html"]);
+
+/* ⚠ **보관 허용 표면 밖에서도 «앱이 연 창» 은 좌표를 다음 화면으로 가져가야 한다** (3R H1).
+ *
+ * allow-list 는 「링크 발신자가 좌표를 심는 것」을 정확히 막았지만, 그 대가로 **앱이 스스로 연
+ * 목적지**(`/share/<token>`)에서도 좌표가 그 페이지에서 끝나게 됐다. 그런데 그 화면의 출구는
+ * 셋 다 다른 경로로 나간다 — 참여 성공 → `/?conversation=…`, fork 성공 → `/`,
+ * 이미-멤버 이동 → `/?conversation=…`. 즉 **앱 창이 첫 클릭에 자기 자격을 잃고** 그 세션 내내
+ * 자기를 평범한 브라우저로 오인한다. 그러면 `connect-modal` 의 가드가 전부 뒤집혀,
+ * 앱 창 안에서 「DQA 앱 받기」가 그려지고 결국 **앱 창이 자기 자신에게 딥링크를 쏜다**
+ * (2026-09-07 사용자 제보 결함의 조건이 그대로 재현된다).
+ *
+ * ⚠ 그렇다고 **그냥 보관하면 allow-list 를 되여는 것**이다 — 공격자가 보낸
+ * `/share/tok?client_port=…&client_nonce=<규격에 맞는 32자>` 도 같은 경로를 탄다.
+ *
+ * 그래서 **«검증 후 보관»** 한다: 그 좌표가 가리키는 로컬 브리지에 `ping` 을 쏘고, **그것이
+ * 실제로 수용될 때만** 보관한다. 공격자가 만든 nonce 는 우리 브리지가 `403 nonce` 로 거부하고
+ * (`bridge.authorize` 의 `compare_digest`), 공격자 포트에 아무것도 없으면 연결 자체가 실패한다.
+ * 즉 **앱이 연 창만 통과**한다.
+ *
+ * ⚠ 비동기라 «이 페이지의 판정» 에는 쓰이지 않는다 — 그것은 위 `ephemeral` 이 즉시 답한다.
+ *   여기서 하는 일은 **다음 화면을 위한 보관**뿐이다.
+ */
+function _adoptIfTheBridgeAcceptsIt(port, nonce) {
+  try {
+    fetch("http://127.0.0.1:" + encodeURIComponent(port) + "/ping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-DQA-Nonce": nonce },
+      body: "{}",
+    }).then(function (r) {
+      if (!r || !r.ok) return null;          // 403 nonce · 405 · 그 밖의 거부
+      return r.json().catch(function () { return null; });
+    }).then(function (b) {
+      if (!b || b.ok !== true) return;       // 브리지가 우리 것이 아니거나 거부했다
+      try {
+        sessionStorage.setItem("dqa.bridge", JSON.stringify({ port: port, nonce: nonce }));
+      } catch (_) { /* 저장소가 막힌 환경 — 이 창에서만 쓰고 끝난다 */ }
+    }).catch(function () { /* 그 포트에 아무것도 없다 — 보관하지 않는다 */ });
+  } catch (_) { /* fetch 부재 환경 */ }
+}
+
 export const clientBridge = (function () {
   try {
     const q = new URLSearchParams(location.search);
     const port = q.get("client_port"), nonce = q.get("client_nonce");
-    if (port && nonce) {
-      sessionStorage.setItem("dqa.bridge", JSON.stringify({ port: port, nonce: nonce }));
+    // ⚠ **이 겹은 «독립 방어» 가 아니라 «조립 규약 위반 탐지» 다** (적대 리뷰 2R-C1).
+    //   처음에는 「좌표가 두 번 이상이면 스머글링」으로만 봤는데, 흡수 파라미터를 하나 끼우면
+    //   (`?client_port=1&x=?client_port=REAL&client_nonce=REAL`) 개수가 각각 1 이 되어
+    //   **공격자 포트 + 진짜 nonce** 조합이 통과한다(실행 재현). 지금은 1겹(`safe_app_path`)
+    //   과 2겹(`panel_url` 재조립)이 막고 있어 실익이 없지만, 이것을 대등한 한 겹으로 적어
+    //   두면 다음 사람이 앞의 둘을 걷어낼 때 남는 것이 **뚫리는 휴리스틱** 하나다.
+    //   그래서 개수 대신 **모양**을 본다 — 우리 조립기(`appwindow.panel_url`)가 내는 값은
+    //   ① 포트는 1~5 자리 숫자 ② nonce 는 URL-safe 토큰 ③ 좌표가 쿼리의 **마지막 두 개**다.
+    const _keys = [...q.keys()];
+    const tampered =
+      q.getAll("client_port").length > 1 || q.getAll("client_nonce").length > 1
+      || !/^\d{1,5}$/.test(String(port || ""))
+      || !/^[A-Za-z0-9._~-]{8,128}$/.test(String(nonce || ""))
+      || _keys[_keys.length - 2] !== "client_port"
+      || _keys[_keys.length - 1] !== "client_nonce";
+    const persist = _PERSIST_SURFACES.has(location.pathname);
+    let ephemeral = null;
+    if (port && nonce && !tampered) {
+      if (persist) sessionStorage.setItem("dqa.bridge", JSON.stringify({ port: port, nonce: nonce }));
+      else {
+        ephemeral = { port: port, nonce: nonce };
+        _adoptIfTheBridgeAcceptsIt(port, nonce);
+      }
+    }
+    if (port || nonce) {
       q.delete("client_port"); q.delete("client_nonce");
       const rest = q.toString();
       history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
     }
+    if (ephemeral) return ephemeral;
     const raw = sessionStorage.getItem("dqa.bridge");
     return raw ? JSON.parse(raw) : null;
   } catch (_) { return null; }   // 시크릿 모드 등에서 저장소가 막혀도 앱은 돈다
 })();
 
-/** 연결 프로그램에 부탁한다. 좌표가 없으면 `null` — 호출부가 웹 경로로 남는다. */
-/* ── 연결 프로그램 패널 (2026-09-04) ─────────────────────────────────────────────
- *
- * 앱 창 안에서는 웹이 이 컴퓨터의 AI 를 **직접** 다룰 수 있다. 그래서 명령을 복사해
- * 붙이라고 하지 않는다 — 그럴 이유가 없는 창이다.
- *
- * ⚠ 평범한 브라우저 방문에서는 좌표가 없어 이 패널이 켜지지 않고, 종전 경로가 그대로 남는다.
- *   연결 프로그램이 없는 사용자를 막다른 길에 세우지 않는다.
- * ⚠ 위험 동작(로그인·연결)은 2026-09-07 부터 **묻지 않는다**(사용자 결정). 브리지가
- *   끝난 뒤 알림 영역으로 알린다 — 막지는 못하지만 모르게 일어나지는 않는다.
- */
-export function bridgeCall(action, body) {
+const NAMES = { claude: "Claude", codex: "Codex", gemini: "Gemini" };
+const ORDER = Object.keys(NAMES);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function bridgeCall(action, body) {
   if (!clientBridge) return null;
-  return fetch("http://127.0.0.1:" + encodeURIComponent(clientBridge.port) + "/" + action, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-DQA-Nonce": clientBridge.nonce },
-    body: JSON.stringify(body || {})
-  }).then(function (r) { return r.json(); });
-}
-
-/* ── 자동 연결 (사용자 결정 2026-09-07) ─────────────────────────────────────────
- *
- * > 각 AI플랫폼 별로 고유한 서비스가 확인된다면 해당 연결은 자동으로 연결되도록
- * > 수행해주세요. (중복되는 플랫폼이 있을때만 구성)
- *
- * 고를 것이 없으면 묻지 않는다. 「고를 것」은 **같은 플랫폼이 두 자리에 있을 때**뿐이다 —
- * `claude` 가 Windows 와 WSL 양쪽에 있으면 어느 쪽인지는 사람만 안다.
- *
- * ⚠ **서로 다른 플랫폼이 여럿인 것은 갈림이 아니다.** 러너는 요청마다 런타임을 바꿔 답할 수
- *   있으므로(`agent/handler.py`), 한 번 연결하면 나머지도 모델 메뉴에서 그대로 고를 수 있다.
- *   여기서 정하는 것은 «어느 것으로 시작할까» 이지 «어느 것만 쓸까» 가 아니다.
- */
-const _PRIMARY_ORDER = ["claude", "codex", "gemini"];
-
-/** 같은 플랫폼이 둘 이상 쓸 수 있는가 — 그때만 사람에게 고르게 한다. */
-export function ambiguousPlatforms(runtimes) {
-  const seen = new Map();
-  (runtimes || []).filter((r) => r.usable).forEach((r) => {
-    const key = String(r.name || r.id || "");
-    seen.set(key, (seen.get(key) || 0) + 1);
-  });
-  return [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k);
-}
-
-/** 자동으로 시작할 하나. 없으면 `null`.
- *
- *  ⚠ 순서를 고정한다 — 「탐지된 순서」로 두면 같은 컴퓨터에서 실행할 때마다 다른 AI 로
- *  연결될 수 있고, 사용자는 그 이유를 알 방법이 없다.
- */
-export function primaryRuntime(runtimes) {
-  const usable = (runtimes || []).filter((r) => r.usable);
-  if (usable.length === 0) return null;
-  for (const name of _PRIMARY_ORDER) {
-    const hit = usable.find((r) => String(r.name || "") === name);
-    if (hit) return hit;
-  }
-  return usable[0];
-}
-
-/** 이번 연결에 쓸 값(딥링크와 같은 봉투). 못 받으면 빈 문자열 — 브리지가 폴백을 쓴다.
- *
- * ⚠ 실패를 삼키고 빈 문자열로 돌려준다. 여기서 예외를 던지면 **딥링크로 켠 창**까지 연결이
- *   막힌다 — 그쪽은 이미 값을 갖고 있어 이 호출이 없어도 성립한다.
- */
-function _connectLaunch() {
-  return fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (b) {
-      return String((b && b.launch && b.launch.protocol) || "");
-    })
-    .catch(function () { return ""; });
-}
-
-/* 상주 안내. **브리지가 말해 주는 것만** 옮긴다 — 프런트가 「트레이가 있겠지」라고 추정하면
- * 트레이가 못 뜬 머신에서 거짓말이 된다(§P0-R). 값이 오기 전에는 비워 둔다.
- *
- * ⚠ 상태 한 줄(`_status`)과 달리 이것은 **주입받지 않는다.** 저것은 모달이 이미 갖고 있던
- *   헬퍼라 호출부가 주는 것이 옳지만, 이 안내는 **이 패널에만 있는 요소**이고 다른 호출부가
- *   달리 그릴 이유가 없다. 주입 인자를 늘리면 호출부가 알아야 할 것만 늘어난다.
- */
-function _paintResidency(resident) {
-  const el = document.getElementById("connectClientResidency");
-  if (!el) return;
-  el.textContent = resident
-    ? "이 창을 닫아도 연결은 유지됩니다 — 알림 영역(시계 옆)에 남아 있습니다."
-    : "이 창을 닫으면 연결도 끝납니다.";
-}
-
-export function initClientPanel(setStatus) {
-  // ⚠ 상태 표시는 **호출부가 준다.** 이 모듈은 모달의 내부 헬퍼를 알지 못한다 —
-  //   분리하면서 `_status` 를 그대로 부른 탓에 `ReferenceError` 로 탐지가 죽었다
-  //   (실측 2026-09-04: 패널은 떴는데 목록이 영원히 비어 있었다).
-  const _status = typeof setStatus === "function" ? setStatus : function () {};
-  const panel = document.getElementById("connectClientPanel");
-  // ⚠ **성립 여부를 돌려준다.** 호출부가 「했다」를 이 값으로 판정한다 — 요소가 아직 없어
-  //   일찍 반환했는데 호출부가 완료로 표시하면 영영 다시 시도하지 않는다(실측 2026-09-04).
-  if (!panel || !clientBridge) return false;
-  panel.hidden = false;
-  const listEl = document.getElementById("connectClientList");
-  const connectBtn = document.getElementById("connectClientConnect");
-  let chosen = null;
-
-  const paint = (runtimes) => {
-    listEl.innerHTML = "";
-    const usable = (runtimes || []).filter((r) => r.usable);
-    (runtimes || []).forEach((r) => {
-      const li = document.createElement("li");
-      li.style.margin = "6px 0";
-      const label = document.createElement("label");
-      if (r.usable) {
-        const radio = document.createElement("input");
-        radio.type = "radio"; radio.name = "dqa-modal-rt"; radio.value = r.id;
-        radio.style.marginRight = "8px";
-        radio.checked = chosen ? chosen === r.id : r.id === usable[0].id;
-        if (radio.checked) chosen = r.id;
-        radio.addEventListener("change", () => { chosen = r.id; });
-        label.appendChild(radio);
-      }
-      label.appendChild(document.createTextNode(
-        (r.usable ? "\u2705 " : r.logged_in ? "\u274c " : "\u23f3 ") + r.id));
-      li.appendChild(label);
-      const d = document.createElement("div");
-      d.style.cssText = "margin-left:22px;opacity:.8;font-size:.92em";
-      d.textContent = r.usable ? r.path
-        : (r.detail || (r.logged_in ? "답을 받지 못했습니다" : "로그인이 필요합니다"));
-      li.appendChild(d);
-      if (!r.usable && !r.logged_in && r.can_login_here) {
-        const b = document.createElement("button");
-        b.type = "button"; b.className = "connect-modal-btn";
-        b.style.cssText = "margin-left:22px;margin-top:4px";
-        b.textContent = "로그인";
-        b.addEventListener("click", () => {
-          _status(r.id + " 로그인 명령을 실행하는 중…");
-          bridgeCall("login", { id: r.id }).then((res) => {
-            _status(res.detail || (res.ok ? "로그인했습니다." : "로그인하지 못했습니다."),
-                    res.ok ? "ok" : "error");
-            if (res.ok) refresh();
-          });
-        });
-        li.appendChild(b);
-      }
-      listEl.appendChild(li);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), action === "connect" ? 180000 : 90000);
+  try {
+    const response = await fetch("http://127.0.0.1:" + encodeURIComponent(clientBridge.port) + "/" + action, {
+      method: "POST", headers: { "Content-Type": "application/json", "X-DQA-Nonce": clientBridge.nonce },
+      body: JSON.stringify(body || {}), signal: controller.signal
     });
-    connectBtn.disabled = usable.length === 0;
-  };
+    if (response.ok === false) throw new Error("DQA 앱이 요청을 처리하지 못했습니다.");
+    return await response.json();
+  } finally { clearTimeout(timer); }
+}
 
-  /** 골라 둔 것으로 연결한다. 자동·수동이 **같은 경로**를 쓴다. */
-  const doConnect = (id, auto) => {
-    _status(auto ? "쓸 수 있는 AI 를 찾았습니다 — 바로 연결하는 중…" : "연결하는 중…");
-    return _connectLaunch()
-      .then((launch) => bridgeCall("connect", { id: id, launch: launch }))
-      .then((res) => {
-        _status(res.ok ? "연결됐습니다." : (res.detail || "연결하지 못했습니다."),
-                res.ok ? "ok" : "error");
-        return res;
-      })
-      .catch((e) => _status("연결하지 못했습니다. (" + e.message + ")", "error"));
-  };
+export function ambiguousPlatforms(runtimes) {
+  return ORDER.filter((name) => (runtimes || []).filter((r) => r.name === name && r.usable).length > 1);
+}
 
-  const refresh = (auto) => {
-    _status("이 컴퓨터의 AI 를 찾는 중… (실제로 답하는지 확인하므로 수십 초 걸립니다)");
-    return bridgeCall("discover", {}).then((res) => {
-      const rts = res.runtimes || [];
-      paint(rts);
-      const usable = rts.filter((r) => r.usable);
-      if (usable.length === 0) {
-        _status("쓸 수 있는 AI 를 찾지 못했습니다.", "error");
+export function primaryRuntime(runtimes) {
+  return ORDER.map((name) => (runtimes || []).find((r) => r.name === name && r.usable)).find(Boolean) || null;
+}
+
+function runtimeKey(r) { return JSON.stringify([r.name,r.where,r.path,r.distro || "",r.user || ""]); }
+
+function locationLabel(r) {
+  return r.where === "wsl" ? ["WSL", r.distro, r.user].filter(Boolean).join(" · ") : "Windows";
+}
+
+async function connectLaunch() {
+  const response = await fetch("/api/ai/connect/token", { method: "POST", credentials: "same-origin" });
+  if (!response.ok) throw new Error("로그인 상태를 확인한 뒤 다시 연결해 주세요.");
+  const body = await response.json();
+  const launch = String(body?.launch?.protocol || "");
+  if (!launch) throw new Error("연결 정보를 받지 못했습니다.");
+  return {launch, connection_session: String(body.connection_session || "")};
+}
+
+function node(tag, className, text) {
+  const el = document.createElement(tag);
+  el.className = className || "";
+  if (text) el.textContent = text;
+  return el;
+}
+
+let panelController = null;
+
+export function suspendClientPanel() { panelController?.suspend(); }
+export function restartClientPanel() { panelController?.restart(); }
+
+export function initClientPanel(setStatus, notify, needsAttention) {
+  const panel = document.getElementById("connectClientPanel");
+  if (!panel || !clientBridge) return false;
+  if (panelController) { panelController.sync(); return true; }
+  document.documentElement.classList.add("dqa-client-connected-view");
+  panel.hidden = false;
+  panel.classList.remove("aic-hidden");
+  const status = typeof setStatus === "function" ? setStatus : () => {};
+  const list = document.getElementById("connectClientList");
+  const refreshButton = document.getElementById("connectClientRefresh");
+  const legacyButton = document.getElementById("connectClientConnect");
+  if (legacyButton) legacyButton.hidden = true;
+  const intro = document.getElementById("connectModalWhy");
+  if (intro) intro.textContent = "이 컴퓨터의 AI를 연결해 질문에 사용하세요.";
+  const cards = new Map();
+  const connections = new Map();
+  const pending = new Set();
+  const attempted = new Set();
+  const changing = new Set();
+  const errors = new Map();
+  let runtimes = [], preferences = {}, completed = new Set(), discovering = false;
+  let refreshing = false, supported = false, refreshAgain = false;
+  let generation = 0, suspended = false;
+  let launchReady = null;
+  const getLaunch = () => launchReady || (launchReady = connectLaunch().catch((error) => {
+    launchReady = null; throw error;
+  }));
+  let attentionShown = false;
+  function attention() {
+    if (!attentionShown && needsAttention) { attentionShown = true; needsAttention(); }
+  }
+  const notices = [];
+  let notifying = false;
+  async function announce(message) {
+    notices.push(message);
+    if (notifying) return;
+    notifying = true;
+    while (notices.length) {
+      try { if (notify) notify(notices.shift()); else status(notices.shift(), "ok"); }
+      catch (_) { /* 알림 실패가 연결을 되돌리지 않는다. */ }
+      await sleep(2600);
+    }
+    notifying = false;
+  }
+
+  function button(text, onClick) {
+    const el = node("button", "connect-modal-btn", text);
+    el.type = "button";
+    el.addEventListener("click", onClick);
+    return el;
+  }
+
+  function paint() {
+    for (const name of ORDER) {
+      const options = runtimes.filter((r) => r.name === name);
+      const usable = options.filter((r) => r.usable);
+      const active = connections.get(name);
+      const busy = pending.has(name);
+      const waiting = discovering && !completed.has(name);
+      const error = errors.get(name);
+      const state = busy ? "connecting" : active ? "connected" : waiting ? "scanning" : error ? "error" : usable.length > 1 ? "choose" : usable.length ? "ready" : "unavailable";
+      const signature = JSON.stringify([state, options, active, error, supported, changing.has(name)]);
+      if (cards.get(name)?.signature === signature) continue;
+      const old = cards.get(name)?.element;
+      const li = node("li", "connect-ai-card");
+      li.dataset.platform = name; li.dataset.state = state;
+      const header = node("div", "connect-ai-header");
+      const icon = node("span", "connect-ai-icon", {claude:"C", codex:"Co", gemini:"G"}[name]);
+      icon.setAttribute("aria-hidden", "true");
+      const copy = node("div", "connect-ai-copy");
+      copy.appendChild(node("h3", "connect-ai-name", NAMES[name]));
+      const label = busy ? "연결 중…" : active ? locationLabel(active) : waiting ? "설치된 위치 확인 중…" : usable.length > 1 ? "연결할 위치를 선택하세요" : usable.length ? locationLabel(usable[0]) : options.length ? "연결 상태를 확인해 주세요" : "이 컴퓨터에서 찾지 못했습니다";
+      copy.appendChild(node("p", "connect-ai-location", label));
+      header.append(icon, copy);
+      const badge = node("span", "connect-ai-badge", {connecting:"연결 중", connected:"연결됨", scanning:"찾는 중", error:"연결 실패", choose:"위치 선택", ready:"연결 가능", unavailable:"미연결"}[state]);
+      header.appendChild(badge); li.appendChild(header);
+      if (active && usable.length > 1 && !busy && !waiting) {
+        li.appendChild(button(changing.has(name) ? "위치 선택 닫기" : "위치 변경", () => {
+          if (changing.has(name)) changing.delete(name); else changing.add(name);
+          paint();
+        }));
+      }
+      if ((!active || changing.has(name)) && !busy && !waiting && supported) {
+        if (usable.length > 1) {
+          const fieldset = node("fieldset", "connect-ai-choices");
+          fieldset.appendChild(node("legend", "connect-ai-legend", NAMES[name] + " 연결 위치"));
+          for (const r of usable) {
+            const label = node("label", "connect-ai-choice");
+            const radio = document.createElement("input");
+            radio.type = "radio"; radio.name = "dqa-location-" + name; radio.value = r.id;
+            radio.checked = active?.id === r.id;
+            radio.addEventListener("change", () => connect(r));
+            label.append(radio, node("span", "", locationLabel(r)));
+            fieldset.appendChild(label);
+          }
+          li.appendChild(fieldset);
+        } else if (usable.length) {
+          const retry = button(error ? "다시 연결" : "연결", () => connect(usable[0]));
+          retry.classList.add("connect-modal-btn--primary");
+          li.appendChild(retry);
+        }
+      }
+      const unavailable = options.filter((r) => !r.usable && (r.answers !== null || r.logged_in === false || r.error_code));
+      if (unavailable.length) {
+        const locations = node("ul", "connect-ai-unavailable");
+        locations.setAttribute("aria-label", "현재 사용할 수 없는 위치");
+        for (const r of unavailable) {
+          const item = node("li", "connect-ai-unavailable-location");
+          const detail = (r.detail || "응답을 확인하지 못했습니다.").replace(/\*\*([^*]+)\*\*/g, "$1");
+          item.append(node("strong", "", locationLabel(r)),
+            node("span", "connect-ai-detail", detail));
+          if (!r.logged_in && r.can_login_here && !busy && !waiting && supported) {
+            item.appendChild(button("로그인", async () => {
+              pending.add(name); paint();
+              try {
+                const result = await bridgeCall("login", {id: r.id});
+                if (!result.ok) throw new Error(result.detail || "로그인을 완료하지 못했습니다.");
+                attempted.delete(name); errors.delete(name);
+                pending.delete(name);
+                await refresh(true);
+              } catch (e) { errors.set(name, e.message); }
+              finally { pending.delete(name); paint(); }
+            }));
+          }
+          locations.appendChild(item);
+        }
+        li.appendChild(locations);
+      }
+      if (error) li.appendChild(node("p", "connect-ai-error", error));
+      const restoreFocus = old && old.contains(document.activeElement);
+      if (old) old.replaceWith(li); else list.appendChild(li);
+      if (restoreFocus) { li.tabIndex = -1; li.focus(); }
+      cards.set(name, {element:li, signature});
+    }
+    const summary = document.getElementById("connectClientSummary");
+    if (summary) summary.textContent = discovering ? "AI를 찾고 있습니다" : connections.size ? connections.size + "개 AI 연결됨" : "이 컴퓨터의 AI";
+  }
+
+  async function connect(runtime) {
+    const name = runtime.name;
+    if (suspended || pending.has(name) || (connections.has(name) && runtimeKey(connections.get(name)) === runtimeKey(runtime))) return;
+    const epoch = generation;
+    attempted.add(name); pending.add(name); connections.delete(name); errors.delete(name); paint();
+    try {
+      const launch = await getLaunch();
+      if (epoch !== generation) return;
+      const result = await bridgeCall("connect", {id: runtime.id, ...launch});
+      if (epoch !== generation) return;
+      if (!result?.ok) throw new Error(result?.detail || "연결하지 못했습니다. 다시 시도해 주세요.");
+      if (result.pending) {
+        const deadline = Date.now() + 300000;
+        while (true) {
+          const ready = await bridgeCall("connection_status", {name, id: runtime.id});
+          if (epoch !== generation) return;
+          if (ready.state === "ready") break;
+          if (!ready.ok || ready.state === "failed") throw new Error(ready.detail || "모델 확인에 실패했습니다.");
+          if (Date.now() > deadline) throw new Error("모델 확인이 지연됩니다. 잠시 뒤 다시 연결해 주세요.");
+          await sleep(800);
+        }
+      }
+      connections.set(name, runtime);
+      changing.delete(name);
+      preferences[name] = runtime.id;
+      if (!result.already_connected) announce(NAMES[name] + " · " + locationLabel(runtime) + " 연결 완료");
+      status("질문에 사용할 AI가 연결됐습니다.", "ok");
+    } catch (e) {
+      if (epoch !== generation) return;
+      errors.set(name, e.name === "AbortError" ? "연결 확인이 지연됩니다. 다시 확인해 주세요." : e.message);
+      attention();
+    }
+    finally { if (epoch === generation) { pending.delete(name); paint(); } }
+  }
+
+  function accept(result) {
+    runtimes = result.runtimes || [];
+    preferences = result.preferences || preferences;
+    discovering = result.discovering === true;
+    completed = new Set(result.completed_platforms || (discovering ? [] : ORDER));
+    paint();
+    if (supported) for (const name of completed) {
+      if (pending.has(name)) continue;
+      const usable = runtimes.filter((r) => r.name === name && r.usable);
+      const active = connections.get(name);
+      if (active) {
+        const current = usable.find((r) => r.id === active.id);
+        if (current) { if (runtimeKey(current) !== runtimeKey(active)) connect(current); continue; }
+        connections.delete(name); attempted.delete(name); paint();
+      }
+      if (attempted.has(name)) continue;
+      const remembered = usable.find((r) => r.id === preferences[name]);
+      const pick = remembered || (usable.length === 1 ? usable[0] : null);
+      if (pick) connect(pick);
+      else if (usable.length > 1) attention();
+    }
+    if (result.ok === false) { attention(); status(result.error || "AI를 찾지 못했습니다.", "error"); }
+  }
+
+  async function sync() {
+    if (suspended) return;
+    const epoch = generation;
+    const result = await bridgeCall("status", {});
+    if (epoch !== generation) return;
+    if (!result?.ok) throw new Error("DQA 앱의 상태를 확인하지 못했습니다.");
+    supported = (result.client_features || []).includes("platform_connections");
+    const residency = document.getElementById("connectClientResidency");
+    if (residency) residency.textContent = result.resident ? "창을 닫아도 AI 연결은 유지됩니다." : "창을 닫으면 AI 연결도 종료됩니다.";
+    if (supported) {
+      for (const [name] of connections) if (!pending.has(name)) connections.delete(name);
+      if (!launchReady || result.connection_session === (await getLaunch()).connection_session) {
+        for (const r of result.connections || []) {
+          if (!completed.has(r.name) || runtimes.some((candidate) => candidate.usable && runtimeKey(candidate) === runtimeKey(r))) connections.set(r.name, r);
+        }
+      }
+    }
+    paint();
+    return result;
+  }
+
+  async function refresh(force = false) {
+    if (suspended) return;
+    if (refreshing) { refreshAgain = refreshAgain || force; return; }
+    const epoch = generation;
+    refreshing = true; refreshButton.disabled = true;
+    status(force ? "AI를 다시 확인합니다. 짧은 응답 확인에 AI 사용량이 소모됩니다." : "설치된 AI를 찾는 중…");
+    try {
+      launchReady = null;
+      await getLaunch();
+      if (epoch !== generation) return;
+      await sync();
+      if (epoch !== generation) return;
+      if (!supported) {
+        attention();
+        status("AI별 자동 연결을 사용하려면 DQA 앱을 업데이트해 주세요.");
+        if (!document.getElementById("connectClientUpdate")) {
+          const update = button("DQA 앱 업데이트", async () => {
+            update.disabled = true;
+            try {
+              const check = await bridgeCall("update_check", {});
+              if (!check?.available) { status(check?.detail || "받을 수 있는 업데이트를 확인하지 못했습니다."); return; }
+              const result = await bridgeCall("update_apply", {});
+              status(result.detail || (result.ok ? "업데이트를 시작했습니다." : "업데이트를 시작하지 못했습니다."));
+            } catch (_) { status("업데이트를 확인하지 못했습니다. 다시 시도해 주세요.", "error"); }
+            finally { update.disabled = false; }
+          });
+          update.id = "connectClientUpdate"; panel.appendChild(update);
+        }
         return;
       }
-      // ⚠ 자동 연결은 **패널을 처음 켤 때 한 번**이다 — `auto` 를 참으로 주는 호출이
-      //   맨 아래 첫 조회 하나뿐이라는 것이 그 보장이다([다시 찾기] 는 거짓을 준다).
-      //   플래그를 따로 두었다가 지웠다: 되메우는 것이 호출 지점이라 그 플래그는 **도달할 수
-      //   없었고**(뮤테이션에서 등가로 드러났다), 시험할 수 없는 가드는 다음 사람에게
-      //   「여기 방어가 있다」는 거짓 인상만 남긴다.
-      const amb = ambiguousPlatforms(rts);
-      if (auto && amb.length === 0) {
-        const pick = primaryRuntime(rts);
-        if (pick) { doConnect(pick.id, true); return; }
+      if (force) { attempted.clear(); errors.clear(); }
+      let result = await bridgeCall("discover", {background:true, force});
+      if (epoch !== generation) return;
+      accept(result);
+      while (result.discovering) {
+        await sleep(800);
+        result = await bridgeCall("discovery_status", {});
+        if (epoch !== generation) return;
+        accept(result);
       }
-      _status(amb.length
-        ? "같은 AI 가 여러 자리에 있습니다 — 어느 것으로 연결할지 골라 주세요."
-        : "쓸 수 있는 AI 를 찾았습니다.", "ok");
-    }).catch((e) => _status("이 컴퓨터의 연결 기능에 닿지 못했습니다. (" + e.message + ")",
-                          "error"));
-  };
-
-  document.getElementById("connectClientRefresh")
-    .addEventListener("click", () => refresh(false));
-  connectBtn.addEventListener("click", () => { doConnect(chosen, false); });
-  // 창이 살아 있음을 알린다 — 브리지는 이 신호로 수명을 판정한다.
-  setInterval(() => { const p = bridgeCall("ping", {}); if (p) p.catch(() => {}); }, 20000);
-  // ⚠ `discover` 와 **따로** 묻는다. 저것은 실제로 답하는지 확인하느라 수십 초 걸리는데,
-  //   「창을 닫아도 되는가」는 그 전에 알아야 하는 안내다.
-  const st = bridgeCall("status", {});
-  if (st) st.then((res) => _paintResidency(!!(res && res.resident))).catch(() => {});
-  refresh(true);
+      if (!pending.size) status(result.ok === false ? result.error : "", result.ok === false ? "error" : undefined);
+    } catch (error) {
+      if (epoch === generation) {
+        attention();
+        status(error.message || "DQA 앱에 연결하지 못했습니다. 앱을 다시 열고 시도해 주세요.", "error");
+      }
+    }
+    finally {
+      if (epoch === generation) {
+        discovering = false; refreshing = false; refreshButton.disabled = false; paint();
+        if (refreshAgain) { refreshAgain = false; refresh(true); }
+      }
+    }
+  }
+  refreshButton.addEventListener("click", () => refresh(true));
+  function suspend() {
+    generation++; suspended = true; launchReady = null;
+    notices.length = 0; pending.clear(); attempted.clear(); errors.clear(); connections.clear();
+    refreshing = false; refreshAgain = false; attentionShown = false; paint();
+  }
+  panelController = {sync: () => sync().catch(() => {}), suspend,
+    restart: () => { suspend(); suspended = false; refresh(); }};
+  setInterval(() => { bridgeCall("ping", {}).catch(() => {}); sync().catch(() => {}); }, 20000);
+  refresh();
   return true;
 }

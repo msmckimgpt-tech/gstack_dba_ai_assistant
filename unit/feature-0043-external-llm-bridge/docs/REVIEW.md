@@ -5019,3 +5019,222 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
   파일 read-only·정확한 hostname allowlist·기존 서버측 권한/관리 제약 유지, 사용자 설정 파일 무변경.
 - 전체 브리지 1658 passed/1 skipped, 집중 103 passed/1 skipped, ruff PASS.
 - 첫 PR의 앱 첨부 실패는 숨기지 않고 후속 원장·PR #1609에 기록했다. 후속 배포 종단 확인 대기.
+
+
+## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/성능/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-backend.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: auth/인증/token/세션 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-security.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: API/검증/performance/캐싱 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-qa.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-ux [SUBAGENT:ux] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/화면/모달 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-ux.md)
+- Human Approval Needed: no
+
+
+## REV-20260908T123400-connect-discovery-design [SUBAGENT:design] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260908T120000-connect-discovery-ux
+- Trigger: UI/디자인/대비 keyword matched
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Verdict: PASS
+- Artifact: [review](reviews/20260908T123400-connect-discovery-design.md)
+- Human Approval Needed: no
+
+## REV-20260908T150000-connect-release-evidence [SKIPPED:non-policy-evidence-only] — ACCEPTED
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 직전 backend/security/QA/UX/design SHIP 이후 코드 변경 없이 이미 수행한 native 2회 결과·설치기 지문·최신 main 통합 결과를 기록한다. 신규 동작·정책·권한 경계가 없어 패널을 반복하지 않는다. 검증 파일의 값과 실행 로그를 대조했다.
+
+## REV-20260908T041713-connect-published [SKIPPED:non-policy-deploy-evidence] — ACCEPTED
+
+- 동일 TASK의 최종 배포·다운로드 증거만 기록했다. 직전 기능 패널 SHIP 후 제품 소스 변경 없음. 실행 종료코드·공개 API·파일 지문을 직접 대조했다. 새 동작이나 정책이 없어 패널을 반복하지 않는다.
+## REV-20260908T151500-codex-connect-fix [SUBAGENT:backend,security,qa,ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T151000-codex-connect-fix; Issue #1625.
+- Trigger: API/응답 계약, permission/실행 권한, caching/캐시, UI/연결 화면.
+- Dispatch: update_installer_review(backend/security), update_install_qa(qa), connect_ux_review(ux/design). 독립 도메인 검토 및 수정 확인.
+- P1 수정: catalog 빈 detail KeyError/남은 성공행/예외 기록 누락, catalog 건강 오인, error JSON 생존 오인, 로그인 필요 위치 소실. P2 수정: 공통 CSS 적용면, OS PermissionError 형 보존, A→B→A 선택 경쟁.
+- QA가 후속 선택 실패 후 재시도 소실과 전역 파일 세대의 불필요한 재조회 2건을 적발했다. watcher 백오프와 플랫폼별 selection_id로 수정 후12건 PASS.
+- Final: backend/security P1/P2 0, QA12 PASS, UX/design P1/P2 0/DOM12 PASS. 실제 설치본1.2.4 이후 UI/요청은 배포 후 추가 증거로 확인한다. 코드 검토 PASS를 실제 사용자 요청 성공으로 대체하지 않는다.
+
+## REV-20260908T152500-heartbeat-snapshot [SUBAGENT:backend,security,qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T152000-codex-heartbeat-snapshot.
+- Trigger: API/응답 계약·concurrency/상태 경합.
+- QA가 빈/옛 요청 성공 응답이 미송신 새 catalog의 source를 바꾸는 실제 경쟁을 결정적으로 재현했다. 송신 snapshot의 동일행만 cache로 전환하도록 수정 후119 PASS. 기본 runtimes=None(능력 미신고)과[](명시 빈목록)의 기존 계약도 보존했다.
+- backend/security 좁은 확인과 QA 결정적 회귀: 기존 source단정을 유지하여 새 미송신행/변경선택의 잘못된 인정이 없음을 확인.
+## REV-20260908T060223-backend [SUBAGENT:backend] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0043-external-llm-bridge)
+- Trigger: API/엔드포인트 및 query/쿼리
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T060223-backend.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-security [SUBAGENT:security] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0043-external-llm-bridge)
+- Trigger: API/응답 및 개인정보 비노출
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T060223-security.md
+- Human Approval Needed: no
+
+## REV-20260908T060223-qa-ux-design [SUBAGENT:qa-ux-design] — PASS
+- Related TASK: TASK-20260908-prompt-layer-delivery (feature-0043-external-llm-bridge)
+- Trigger: API/계약, 여섯 계층 수용 기준, toast 한 줄 UX/design
+- Timestamp: 2026-09-08T06:02:23.950021+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260908T060223-qa-ux-design.md
+- Human Approval Needed: no
+
+- 배포 승인 근거: 현재 사용자 개선 위임 + wrapper FIRST_REQUEST.md deploy_scope: included, AGENTS.md §16.5.1. 인증/인가·파괴적 변경 없음.
+
+## REV-20260908T155000-codex-actual-proof [SUBAGENT:ux,design] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 실제 DQA에서 안내 강조 기호 노출을 발견해 client-bridge.js의 표시만 보완했다. textContent 유지, 기존 DOM12 PASS, 독립 UX/code P1/P2 0. 표시 수정의 배포 후 UI 관찰은 별도 원장에 기록한다.
+
+## REV-20260908T155500-codex-live-evidence [SUBAGENT:qa] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T155000-codex-actual-proof.
+- 독립 읽기 검토: 실제1.2.3→1.2.4 설치/지문, 새 대화 동일 task의 송신→32318ms/delivered→UIA 답변, 위치 변경 ready→완료 toast 자료 정합 PASS. 공개 manifest 및 실제 파일 SHA를 독립 재계산했다.
+- WebView PID47356/내장 runner47700의 부모가 native29672임을 WMI로 재확인. 데이터에 인증정보·이메일은 없으며 사용자명·로컬 경로·task/PID/선택 식별자 등 운영 메타데이터는 포함된다.
+- UI 최초 렌더 시간·픽셀 스크린샷·현장 Permission denied 재현은 PASS 범위에 포함하지 않는다. root복원은 이어서 실제 ready/toast로 확인했다. 안내 표식 수정본의 배포 후 관찰은 별도 후속이다.
+
+## REV-20260908T160200-codex-verified-closeout [SKIPPED:non-policy-doc] — ACCEPTED
+- Related TASK: TASK-20260908-codex-connect-fix; CHG-20260908T160200-codex-verified-closeout.
+- 앞 독립 UX/QA 검토 후 제품 코드는 변경하지 않았다. 실제 설치 앱의 최종 UIA·공개 파일 바이트·업데이트 최신창·배포 요약만 추가한다. root 복원·toast 2건을 원장에 보존하고 현장 Permission denied 미재현은 그대로 표시한다.
+
+## REV-20260909T010000-prompt-autogen-delivery [CODEX:uncommitted] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: `codex review --uncommitted` (codex-cli 0.153.4) — TASK-20260909T000000-prompt-autogen-delivery
+  의 미커밋 변경 전량(프론트 4파일 · 라우터 3파일 · shared 1파일 · 테스트 2파일 · 문서).
+- **Trigger**: API/endpoint·엔드포인트 keyword matched (신설 `GET /api/profile/ai-jobs/{task_id}`)
+  + UI/screen·화면 keyword matched (자동 작성 3화면 동작 변경) → §18.8 표상 backend·security·qa·ux·design.
+  **채널 선택 근거**: 이 세션은 기본 지침으로 subagent(Agent 툴) 호출이 금지돼 있어, 사용자에게 1회
+  확인해 §18.8.1 이 check #9 accepted 로 인정하는 **codex 채널로 대체**하기로 결정받았다
+  (사용자 선택 2026-09-09). 자체 SKIP 이 아니다.
+- **판정**: **ACCEPTED — P1(GATE) 0건**. codex 결론: "검토한 변경사항에서 명확한 신규 결함을
+  발견하지 못했습니다."
+
+### reviewer 가 독립 수행한 것
+
+- 리뷰 도중 행위 하네스를 직접 구동: `node verify_prompt_autogen_delivery.mjs` → **15 passed, 0 failed**.
+- pytest 는 codex 샌드박스의 소켓 제한(`conftest._assert_live_stack_unreachable` 이 socket 생성)
+  으로 실행되지 못했다 — 그 축은 우리 컨테이너 회귀(§ Run 원장)가 담당한다.
+
+### reviewer 가 확인하지 못한 것 (정직 표기)
+
+- 실제 DQA 클라이언트에서의 사용자 동작. 라이브 검증은 PB-0009 축이며 러너 자격이 필요하다.
+
+### 본 cycle 이 스스로 잡아 고친 것 (리뷰 외)
+
+- `docs/TASK.md` §2.1 변경표의 심볼명이 계획 작성 시점의 가명(`RUNNER_FAILURE_NOTICE_MARKER` ·
+  `is_runner_failure_notice` · `build_console_job_status`)으로 남아 실제 구현명과 어긋나 있었다 →
+  `RUNNER_DEGRADED_NOTICE` · `runner_degraded_reason` · `_ai_job_status_response` 로 정정.
+- base(`cdd414e3`)에 이미 있던 회귀 2건을 함께 정합: 라우트 golden drift 2건
+  (`/api/ai/connect/identity` · `/api/ai/tools/get_tool_catalog`)과 명시 도구 수 계약(7→8).
+  후자는 매니페스트·MCP 어댑터 2벌 등재를 **확인한 뒤** 숫자만 옮겼고 계약은 그대로다.
+## REV-20260909T123400-session-continuity-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T123400-session-continuity-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-qa.md
+- Human Approval Needed: no
+
+## REV-20260909T123400-session-continuity-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: session/세션, API/응답 계약
+- Timestamp: 2026-09-09T12:34:00+09:00
+- Verdict: PASS (코드 검토, 확인된 차단 결함 없음)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T123400-session-continuity-security.md
+- Human Approval Needed: no
+## REV-20260909T020000-prompt-autogen-postdeploy [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: 출하 후 실측 기록만(Run 원장 2종 + MODIFY CHG). **코드·정책 변경 0** — 배포된
+  `00981307` 에 대한 관측 결과를 원장에 옮기는 문서 cycle 이다.
+- **Trigger**: non-policy-doc → §18.8 표에 따라 panel SKIP. 본 cycle 이 기록하는 코드 변경
+  자체는 `REV-20260909T010000-prompt-autogen-delivery` 에서 이미 codex 채널로 ACCEPTED 됐다.
+
+## REV-20260909T040000-prompt-autogen-liveverify [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-09
+- **범위**: 라이브 실측 기록만(Run 원장 2종 + 스크린샷 + MODIFY CHG). **코드 변경 0**.
+- **Trigger**: non-policy-doc → §18.8 표에 따라 panel SKIP. 실측 대상 코드는
+  `REV-20260909T010000-prompt-autogen-delivery`(codex 채널, P1 0)에서 이미 ACCEPTED.
+
+## REV-20260909T124000-session-continuity-main-integration [CODEX:integration] — PASS
+
+- `5951389b`에 `62afb45b`(origin/main)를 통합했다. 충돌은 ROUTEMAP 생성 스탬프와 feature-0003 FUNCTION/REPORT/TASK의 독립 신규 문서 절 4곳이다. 양쪽 절을 모두 보존하고 ROUTEMAP은 생성기로 재생성했다.
+- 양쪽 부모의 base 이후 추가/변경 줄을 auto-merge 파일까지 포함해 현재 파일과 대조: 누락은 양쪽의 이전 ROUTEMAP 생성 스탬프 각 1줄뿐이며 최신 스탬프로 대체했다. 소스·테스트·문서 내용 삭제 0. 구현 충돌 없음.
+- 마지막 focused 회귀 43 PASS. 통합 검증 결과는 Run에 기록한다.
+- Human Approval Needed: no.
+
+## REV-20260909T124035-session-integration-docs [SKIPPED:non-policy-doc]
+- Related TASK: feature-0043-external-llm-bridge
+- Reason: 통합 게이트 증거 보완만 포함한 비정책 문서 변경. 제품 코드 추가 변경 없음. 이전 backend/security/qa PASS 및 통합91건 PASS 유지.
+- Timestamp: 2026-09-09T12:40:35.536759+09:00
+
+## REV-20260909T125141-session-claim-backend [SUBAGENT:backend] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-backend.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-security [SUBAGENT:security] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-security.md
+- Human Approval Needed: no
+
+## REV-20260909T125141-session-claim-qa [SUBAGENT:qa] — 코드 수정 타당, 설치 재검증 대기
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: API/응답 계약 누락
+- Timestamp: 2026-09-09T12:51:41.964427+09:00
+- Verdict: PASS-code (설치 클라이언트 수용은 배포 후 별도)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T125141-session-claim-qa.md
+- Human Approval Needed: no
+
+## REV-20260909T130116-session-installed-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260909-session-continuity
+- Trigger: 설치 DQA 실측, API/응답 계약
+- Timestamp: 2026-09-09T13:01:16.237752+09:00
+- Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
+- Human Approval Needed: no

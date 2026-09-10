@@ -2155,13 +2155,17 @@ def _materialize_assistant_attachment_edits(
             cur.execute(
                 """
                 INSERT INTO WebConversationAttachments (
-                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, MetaJson, RootAttachmentId, VersionNumber, CreatedByRole
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'assistant')
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'assistant')
                 """,
                 (
                     conversation_id, account_id, object_key, filename,
+                    # REQ-20260908-attach-folder-tree: 원본이 폴더 안 파일이면 **그 자리를 승계**한다.
+                    # 승계하지 않으면 경로 기반 체인이 끊겨(부모는 경로 있음, 자식은 없음) 다음
+                    # 재업로드가 이 수정본을 못 찾고, 트리에서도 파일이 폴더 밖으로 튀어나온다.
+                    (str(src.get("RelativePath")) if src.get("RelativePath") else None),
                     app._hmac_filename(filename), mime_type, len(body_bytes),
                     app._size_bucket(len(body_bytes)), sha256_hex, new_kind,
                     # message_id_space="display": message_id 은 _load_latest_assistant_message 가
@@ -2776,7 +2780,7 @@ def _copy_conversation_attachments(
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            "SELECT Id, ObjectKey, OriginalFilename, FilenameHmac, MimeType, SizeBytes, "
+            "SELECT Id, ObjectKey, OriginalFilename, RelativePath, FilenameHmac, MimeType, SizeBytes, "
             "SizeBucket, Sha256, Kind, UploadStatus, MetaJson, CreatedAt "
             "FROM WebConversationAttachments "
             "WHERE ConversationId = %s AND DeletedAt IS NULL ORDER BY Id ASC",
@@ -2832,11 +2836,13 @@ def _copy_conversation_attachments(
             try:
                 wcur.execute(
                     "INSERT INTO WebConversationAttachments "
-                    "(ConversationId, AccountId, ObjectKey, OriginalFilename, FilenameHmac, "
+                    "(ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath, FilenameHmac, "
                     " MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus, MetaJson) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         new_cid, int(fork_account_id), new_key, filename,
+                        # REQ-20260908-attach-folder-tree: 이어받은 대화에서도 폴더 구조를 유지한다.
+                        (str(att.get("RelativePath")) if att.get("RelativePath") else None),
                         att.get("FilenameHmac"), mime, size_bytes,
                         att.get("SizeBucket"), att.get("Sha256"), kind, new_status, new_meta,
                     ),
@@ -4096,6 +4102,10 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
         "kind": str(row.get("Kind") or ""),
         "mime_type": str(row.get("MimeType") or ""),
         "original_filename": str(row.get("OriginalFilename") or ""),
+        # REQ-20260908-attach-folder-tree: 폴더 첨부의 폴더-루트 기준 상대 경로.
+        # None = 폴더에 속하지 않는 단일 파일 — 프론트가 그 사실로 그룹핑을 가른다.
+        # `original_filename` 은 계속 basename 이다(경로는 추가 축이지 대체가 아니다).
+        "relative_path": (str(row["RelativePath"]) if row.get("RelativePath") else None),
         "size": int(row.get("SizeBytes") or 0),
         "size_bucket": str(row.get("SizeBucket") or ""),
         "sha256": str(row.get("Sha256") or ""),
@@ -4226,27 +4236,20 @@ def _parse_attachment_new_blocks(answer: str) -> list[dict[str, Any]]:
     return out
 
 def _resolve_step_display(step: dict[str, Any]) -> dict[str, Any]:
+    """완료 답변의 단계 1건을 표시용으로 고른다. 문구 판정·파생은 `_step_display_narration`
+    **단일 이음매**가 전담한다 — 진행 중 경로(`ai_tools._bridge_live_steps`)도 같은 함수를
+    부르므로 제출 순간 제목이 바뀌지 않는다."""
     item = dict(step or {})
-    stored_work = app._normalize_step_text(item.get("work"), 255)
-    stored_reason = app._normalize_step_text(item.get("reason"), 500)
-    work_source = str(item.get("work_source") or "").strip()
-    reason_source = str(item.get("reason_source") or "").strip()
-    if stored_work:
-        item["work"] = stored_work
-        item["work_source"] = work_source or "llm"
-    else:
-        item["work"] = app._derive_step_work(
-            str(item.get("tool") or ""),
-            item.get("args") if isinstance(item.get("args"), dict) else {},
-            str(item.get("sql") or ""),
-        )
-        item["work_source"] = "legacy"
-    if stored_reason:
-        item["reason"] = stored_reason
-        item["reason_source"] = reason_source or "llm"
-    else:
-        item["reason"] = ""
-        item["reason_source"] = "missing"
+    work, work_source, reason, reason_source = app._step_display_narration(item)
+    # `intent` 는 서버가 `<도구명>: <문구>` 로 조립한 값이라 **내부 식별자를 담는다**
+    # (라이브 실측: census 도구명이 든 행 3,254 · 인자 리터럴까지 든 행 14). 화면은 쓰지
+    # 않으므로 표시 payload 에서 뺀다 — 진행 경로·익명 공유와 **같은 규율**이다. 원장 컬럼은
+    # 감사 가치가 있어 그대로 둔다(이 cycle 의 「저장 원문 불가침」과 정합).
+    item.pop("intent", None)
+    item["work"] = work
+    item["work_source"] = work_source
+    item["reason"] = reason
+    item["reason_source"] = reason_source
     return item
 
 def _load_last_run_id(conn, conversation_id: str) -> str:
@@ -4455,7 +4458,7 @@ def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[t
         try:
             cur.execute(
                 """
-                SELECT Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                SELECT Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                        MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus,
                        CreatedAt, DeletedAt, DeletePending, DeleteReason, MetaJson,
                        RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
@@ -6130,47 +6133,50 @@ def _size_bucket(size_bytes: int) -> str:
 _ATTACHMENT_BLOCK_TAGS = ("```attachment-edit", "```attachment-new")
 
 def _attachment_block_spans(answer: str, tag: str) -> list[tuple[int, int, str, str]]:
-    """<tag> 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로 추출(TASK-0286
-    보안리뷰 MAJOR 수정 규율 유지). 여는 ```` ```<tag> ```` 다음 줄을 JSON 헤더로, **다음 attachment
-    블록(edit/new 무관) 여는 펜스 직전까지의 마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
-    일반 ``` 코드펜스를 허용하고(닫는 펜스는 블록의 가장 마지막 ```), **잘-형성된(각자 닫힌)
-    edit/new 블록이 공존**할 때 상호 본문 삼킴을 막는다.
+    """파일의 첫 유효 닫힘까지만 추출한다. 답변의 후속 코드펜스는 파일에 속하지 않는다.
 
-    알려진 한계(§18.8 backend 패널, 실트리거 ≈0 for SQL/CSV): 한 블록의 **본문 안**에 상대 태그
-    (예: edit 본문에 `` ```attachment-new `` 로 시작하는 줄)가 나타나면 그 줄을 경계로 오인해 바깥
-    블록이 조기 종료/드롭될 수 있다. 이는 자기 문서화용 마크다운/텍스트에서만 현실성이 있고
-    SQL/CSV 첨부에는 사실상 발생하지 않는다. 대안(상대 태그를 경계로 무시)은 더 흔한 공존 케이스를
-    깨므로 현 트레이드오프를 유지한다(회귀 테스트로 동작 고정 — test_attachment_new).
+    내부 코드펜스는 문자/길이로 추적한다. 단독 펜스를 포함하는 파일은 더 긴 외곽
+    펜스(예: ````attachment-new)를 사용한다. 일반 코드블록 안의 예시는 실행하지 않는다.
     """
-    text = answer or ""
-    if tag not in text:
-        return []
-    lines = text.split("\n")
-    n = len(lines)
-    # 경계 = 모든 attachment 블록(edit/new) 여는 펜스. 이 블록 다음의 첫 경계가 next_open.
-    boundaries = [i for i, ln in enumerate(lines)
-                  if any(ln.strip().startswith(t) for t in _ATTACHMENT_BLOCK_TAGS)]
-    opens = [i for i, ln in enumerate(lines) if lines[i].strip().startswith(tag)]
+    lines = (answer or "").split("\n")
+    wanted = tag.lstrip("`")
     spans: list[tuple[int, int, str, str]] = []
-    for oi in opens:
-        next_open = n
-        for b in boundaries:
-            if b > oi:
-                next_open = b
-                break
-        if oi + 1 >= n:
+    outer: tuple[str, int] | None = None
+    nested: tuple[str, int] | None = None
+    active: tuple[int, str] | None = None
+    for i, line in enumerate(lines):
+        match = app.re.fullmatch(r" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?", line)
+        if not match:
             continue
-        header_line = lines[oi + 1]
-        # 닫는 펜스: (헤더 다음 .. 다음 블록 직전) 중 정확히 "```" 인 **마지막** 줄.
-        close_idx = -1
-        for j in range(min(next_open, n) - 1, oi + 1, -1):
-            if lines[j].strip() == "```":
-                close_idx = j
-                break
-        if close_idx < 0:
+        fence, info = match.group(1), match.group(2).strip()
+        marker, length = fence[0], len(fence)
+        if outer is None:
+            outer = (marker, length)
+            if marker == "`" and info in ("attachment-edit", "attachment-new") and i + 1 < len(lines):
+                active = (i, info)
             continue
-        body = "\n".join(lines[oi + 2:close_idx])
-        spans.append((oi, close_idx, header_line, body))
+        if active is None:
+            if not info and marker == outer[0] and length >= outer[1]:
+                outer = None
+            continue
+        if nested is not None:
+            if (not info and marker == outer[0] and length >= outer[1]
+                    and (marker != nested[0] or outer[1] > nested[1])):
+                nested = None  # 더 긴 외곽 닫힘은 내부 파일의 EOF를 확정한다.
+            else:
+                if not info and marker == nested[0] and length >= nested[1]:
+                    nested = None
+                continue
+        if not info and marker == outer[0] and length >= outer[1]:
+            oi, kind = active
+            if kind == wanted:
+                spans.append((oi, i, lines[oi + 1], "\n".join(lines[oi + 2:i])))
+            outer = active = None
+        elif info in ("attachment-edit", "attachment-new") and marker == outer[0] and length >= outer[1]:
+            # 잘린 블록은 다음 파일까지 삼키지 않는다. 짧은 펜스의 예시는 내부 본문이다.
+            outer, active = (marker, length), (i, info)
+        elif info or marker != outer[0] or length < outer[1]:
+            nested = (marker, length)
     return spans
 
 def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
@@ -6267,11 +6273,250 @@ def _normalize_step_text(value: Any, max_len: int = 500) -> str:
         return text
     return text[: max_len - 1].rstrip() + "…"
 
+
+# ── 실행 단계 문구의 «도구 구문» 차단 ────────────────────────────────────────────
+#
+# 사용자 제보(2026-09-08): 실행 단계 패널의 제목이 `describe_table {'schema_name': 'coupon',
+# 'table_name': 'dbo.T_COUPON'}` 처럼 **도구 호출 구문 그대로** 나왔다.
+#
+# 출처는 외부 AI 다. `POST /api/ai/tools/<name>` 본문의 `work`/`reason` 은 연결된 개인 AI 가
+# 채우는 **비신뢰 입력**인데(프롬프트는 `reason` 만 규정하고 `work` 는 규정조차 하지 않는다),
+# 서버가 그대로 저장하고 화면이 그대로 그렸다. 라이브 원장 실측에서 `work_source='external-ai'`
+# 30행 중 19행(63%)이 그 형태였다.
+#
+# **프롬프트로는 닫히지 않는다** — 프롬프트 계약은 지시이지 집행이 아니고(같은 판단이
+# `prompt.py` 의 승인요구 탐지에도 적혀 있다), 러너는 사용자 PC 에 있어 낡은 빌드가 남는다.
+#
+# ⚠ **판정 축은 «호출 표기» 이지 «식별자처럼 보임» 이 아니다 (v2, 적대 검증 후 재설계).**
+#   초판은 「인용 없는 snake_case 로 시작」을 규칙에 넣었다. 라이브 원장 **9,759행 전건 재생**
+#   결과 그 규칙이 걸러낸 412행 중 **실제 도구 구문은 18행뿐이고 394행(96%)이 정상 제목**이었다
+#   (`dk_game_release_240의 Character 테이블 구조 확인` · `log_v2 스키마의 테이블 목록 조회` …
+#   전부 `work_source='llm'`, 즉 제보와 무관한 내부 에이전트 경로). 손익비 1:22 였다.
+#   이 도메인은 **테이블 이름이 곧 사용자의 어휘**라 그 형태를 금지 서명으로 쓸 수 없다.
+#   지금은 「서버가 실제로 가진 도구 이름」만 서명으로 본다 — 모수를 조회로 얻는다(§16.7 G12-b).
+#
+# ⚠ 이 판정은 **표시층 전용**이다. 저장된 원문은 건드리지 않는다(감사·재현 가치가 있고,
+#   판정이 틀렸을 때 되돌릴 근거가 사라진다). 화면에 나가는 값만 고른다.
+#
+# AGENTS.md §16.8 B-2(a) — 내부 경로·프로토콜명을 그대로 노출하지 않는다.
+
+#: **호출 형태**의 인자 매핑 리터럴 — 문구 맨앞(선택적으로 식별자 접두 뒤)의
+#: `{'k': …}` / `{"k": …}`. 파이썬 repr·JSON 양쪽.
+#:
+#: ⚠ 두 번 좁혔다.
+#:   ① `(k='v')` kwargs 가지 제거 — SQL 산문의 `(CREATE_OPTIONS='partitioned')` 를 도구 인자로
+#:      오인해 정상 사유를 통째로 지웠다(적대 검증 라운드 1).
+#:   ② **맨앞 앵커** — 「어디에나 있으면 차단」은 `설정값 {'theme': 'dark'} 이 든 컬럼을
+#:      확인한다` 같은 정상 제목까지 지운다(라운드 2). JSON 컬럼·샘플 값이 일상 어휘인
+#:      도메인이라 그 형태는 금지 서명이 될 수 없다. 도구 «호출» 은 언제나 이름+인자가
+#:      문구의 머리에 오므로 앵커가 서명을 좁히면서 실 유출 14/14 를 그대로 잡는다.
+_STEP_ARGS_LITERAL_RE = app.re.compile(
+    r"""^(?:[A-Za-z_][A-Za-z0-9_]*\s*)?[{]\s*['"][A-Za-z_][A-Za-z0-9_]*['"]\s*:""")
+
+#: 판정 전에 지우는 제로폭·양방향 제어문자. 전각→반각은 NFKC 가 처리한다.
+#: 없으면 `describe＿table`(전각 밑줄)·`execute\u200bsql` 같은 형태가 화면상 동일하게 보이면서
+#: 판정을 통과한다(적대 검증 실측).
+_STEP_INVISIBLE_RE = app.re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+#: 판정 입력 상한. 판정은 접두부로 충분하고, 호출측의 캡 누락에 의존하지 않는다.
+_STEP_SCAN_CAP = 2000
+
+#: 이 저장소가 **실제로 낼 수 있는** 도구 이름. 정의(`modules.tools`)에 없는 두 이름은
+#: 코드가 직접 `agent_runtime.steps.tool` 에 쓰는 것이라(라이브 원장 실측: `materialize_attachment`
+#: 48행 · `query_sql` 1행) 정의 census 만 보면 영구히 빠진다.
+_EXTRA_EMITTED_TOOLS = ("materialize_attachment", "query_sql")
+
+#: 조회가 **전부** 실패했을 때만 쓰는 폴백. 비어 있는 census 로 조용히 통과시키지 않기
+#: 위한 안전망이며, 정상 경로에서는 합쳐지지 않는다 — 무조건 합치면 그 순간 이 가드는
+#: §16.7 G12-b 가 금지하는 «손 열거 모수» 가 되고, 새 도구가 늘어도 테스트가 결손을 못 본다
+#: (적대 검증 라운드 2: 조회 산출 17종 + 무조건 합산 23종 → 6종이 오직 손 목록에서만 왔다).
+_FALLBACK_TOOL_NAMES = (
+    "execute_sql", "explain_query", "list_schemas", "describe_schema", "describe_table",
+    "describe_routine", "search_tables", "search_routines", "search_db_objects",
+    "describe_db_object", "get_sample_rows", "get_table_indexes", "get_foreign_keys",
+    "check_table_coverage", "graph_navigate", "scratch_import", "scratch_sql",
+    "scratch_list", "scratch_reset", "read_attachment", "update_attachment",
+    "get_task_context", "read_task_attachment",
+)
+
+_TOOL_NAME_CENSUS: "frozenset[str] | None" = None
+_TOOL_NAME_QUERIED: "frozenset[str] | None" = None
+_TOOL_NAME_RE = None
+
+
+def _query_tool_names() -> "tuple[frozenset[str], bool]":
+    """레지스트리 **조회**로만 얻은 도구 이름과, 모든 출처가 성공했는지 여부 `(names, complete)`.
+
+    ⚠ 모수는 `_TOOL_HANDLERS`(실 디스패치 표)다. `scratch_tool_defs()` 는 런타임 스위치
+      (`AGENT_SCRATCH_ENABLED`)에 걸려 꺼진 프로세스에서 `[]` 를 돌려주고 scratch 4종이
+      census 에서 빠졌다(실측). 게이트는 «부를 수 있는가» 를 정하지 부를 이름을 없애지 않는다.
+
+    ⚠ **부분 실패를 성공으로 접지 않는다.** 두 출처 중 하나만 실패해도 census 가 조용히
+      좁아지고(브리지 2종 소실 실측), 좁아진 census 는 판정기와 라벨 가드의 모수를 **동시에**
+      줄여 「가드가 결손을 못 보는」 상태를 만든다.
+    """
+    names: set[str] = set()
+    complete = True
+    try:
+        import modules.tools as _t
+
+        got = {str(k) for k in (getattr(_t, "_TOOL_HANDLERS", {}) or {})}
+        for d in list(getattr(_t, "TOOL_DEFINITIONS_FULL", []) or []):
+            fn = str(((d or {}).get("function") or {}).get("name") or "").strip()
+            if fn:
+                got.add(fn)
+        complete = complete and bool(got)
+        names |= got
+    except Exception:
+        complete = False
+    try:
+        from routers import ai_tools as _at   # 브리지 표면 — 지연 import(순환 안전)
+
+        got = {str(k) for k in (getattr(_at, "_BRIDGE_ONLY_NARRATION", {}) or {})}
+        got |= {str(k) for k in (getattr(_at, "EXPOSED_TOOLS", ()) or ())}
+        complete = complete and bool(got)
+        names |= got
+    except Exception:
+        complete = False
+    return frozenset(n for n in names if n), complete
+
+
+def _tool_name_census() -> "frozenset[str]":
+    """서버가 낼 수 있는 도구 이름 전체 = **조회 산출** + 배출 전용 상수.
+
+    조회가 부분이라도 실패하면 폴백으로 메우고 WARN 을 남기며 **캐시하지 않는다** —
+    다음 호출에서 다시 조회해 정상 복구가 가능하게 한다.
+    """
+    global _TOOL_NAME_CENSUS, _TOOL_NAME_QUERIED
+    if _TOOL_NAME_CENSUS is not None:
+        return _TOOL_NAME_CENSUS
+    queried, complete = _query_tool_names()
+    names = set(queried) | set(_EXTRA_EMITTED_TOOLS)
+    if not complete:
+        # 조회가 **부분이라도** 실패했다 — 서명이 좁아지면 규칙 (b) 가 조용히 약해진다.
+        logging.getLogger(__name__).warning(
+            "[step-narration] 도구 census 조회가 불완전하다(조회 %d종) — 폴백으로 보충하고 "
+            "**캐시하지 않는다**. 캐시하면 기동 순서 때문에 한 번 좁아진 모수가 프로세스 "
+            "수명 동안 고정된다", len(queried))
+        names.update(_FALLBACK_TOOL_NAMES)
+        return frozenset(names)
+    _TOOL_NAME_QUERIED = queried
+    _TOOL_NAME_CENSUS = frozenset(names)
+    return _TOOL_NAME_CENSUS
+
+
+def _tool_name_re():
+    """census 의 모든 이름을 «독립 식별자» 로 찾는 하나의 정규식(캐시)."""
+    global _TOOL_NAME_RE
+    if _TOOL_NAME_RE is None:
+        names = sorted(_tool_name_census(), key=len, reverse=True)
+        if not names:
+            # ⚠ `alts` 가 비면 `(?:)` 가 되어 **모든 문자열**에 매칭된다 — 실행 단계 제목이
+            #   전멸하는데 예외도 로그도 없다(라운드 2 실측). 절대 매칭되지 않는 패턴을 준다.
+            _TOOL_NAME_RE = app.re.compile(r"(?!x)x")
+        else:
+            alts = "|".join(app.re.escape(n) for n in names)
+            _TOOL_NAME_RE = app.re.compile(
+                rf"(?<![A-Za-z0-9_])(?:{alts})(?![A-Za-z0-9_])", app.re.IGNORECASE)
+    return _TOOL_NAME_RE
+
+
+def _step_scan_body(text: Any) -> str:
+    """판정용 정규화 — NFKC + 비가시문자 제거 + 공백 접기 + 상한."""
+    import unicodedata
+
+    body = str(text or "")[: _STEP_SCAN_CAP * 4]
+    body = unicodedata.normalize("NFKC", body)
+    body = _STEP_INVISIBLE_RE.sub("", body)
+    return app.re.sub(r"\s+", " ", body.strip())[: _STEP_SCAN_CAP]
+
+
+def _step_text_is_tool_syntax(text: Any, tool: Any = "", allow_tool_names: bool = True) -> bool:
+    """이 문구가 «사람의 문장» 이 아니라 «도구 호출 표기» 인가.
+
+    둘 중 하나면 참이다:
+
+      (a) 인자 매핑 리터럴을 담고 있다 — `{'keyword': 'x'}` · `{"keyword": "x"}`.
+      (b) **서버 도구 census 의 이름**이 독립 식별자로 등장한다 — `execute_sql 검증` ·
+          `list_schemas` · `다음은 search_tables 로 확인한다`. 모수는 이 단계의 도구 하나가
+          아니라 census 전체다(§16.7 G12 — 가드의 모수 = 노출면 전체).
+
+    `allow_tool_names=False` 면 (b) 를 끈다.
+
+    ⚠ **대체값이 없는 축에는 (b) 를 쓰지 않는다.** 사유(reason)가 그렇다 — 사유는 산문이라
+      「… 단일 execute_sql 쿼리로 UNION 집계하여 …」처럼 도구 이름을 **설명 안에서 언급**하는
+      것이 자연스럽고, 그 문장을 지우면 「왜」 칸이 통째로 빈다(적대 검증 실측 8건).
+      사유에는 (a) 만 적용한다 — 인자 매핑 리터럴은 산문에 우연히 나타나지 않는다.
+    """
+    body = _step_scan_body(text)
+    if not body:
+        return False
+    if _STEP_ARGS_LITERAL_RE.search(body):
+        return True
+    if not allow_tool_names:
+        return False
+    name = str(tool or "").strip()
+    if name and app.re.search(
+            rf"(?<![A-Za-z0-9_]){app.re.escape(name)}(?![A-Za-z0-9_])", body, app.re.IGNORECASE):
+        return True
+    return bool(_tool_name_re().search(body))
+
+
+def _sanitize_step_narration(text: Any, tool: Any = "", max_len: int = 500,
+                             allow_tool_names: bool = True) -> str:
+    """표시용 단계 문구. 도구 표기면 ""(호출측이 파생 문구로 대체한다)."""
+    body = _normalize_step_text(text, max_len)
+    return "" if _step_text_is_tool_syntax(body, tool, allow_tool_names) else body
+
+
+def _step_display_narration(step: Any) -> "tuple[str, str, str, str]":
+    """표시용 `(work, work_source, reason, reason_source)` 를 만드는 **단일 이음매**.
+
+    완료 경로(`_resolve_step_display`)와 진행 중 경로(`ai_tools._bridge_live_steps`)가 **둘 다
+    이 함수만** 부른다. 두 경로가 각자 정화·파생하면 같은 행이 제출 순간 다른 제목으로 바뀌고
+    (실측: `read_task_attachment` 의 첨부 파일명이 완료본에서 사라졌다), 한쪽에만 정화가 빠지면
+    그 경로가 곧 우회로가 된다(적대 검증: 파생값이 비신뢰 `args` 를 무검증으로 제목에 주입).
+
+    계약 세 가지:
+      1. **나가는 값은 반드시 정화를 통과한다** — 저장 문구든 파생 문구든 같은 판정을 받는다.
+         파생값도 `args` 에서 만들어지고 `args` 역시 비신뢰이므로, 파생 후 재정화가 필수다.
+      2. **길이 상한이 파생값에도 걸린다** — 저장 문구만 캡하면 파생이 캡을 우회한다
+         (실측: `keyword` 100KB → 제목 100,014자).
+      3. **출처를 정직하게 가른다** — 원문 부재 `legacy` / 원문을 버림 `derived` / 통과 `llm`.
+    """
+    item = step if isinstance(step, dict) else {}
+    tool = str(item.get("tool") or "")
+    args = item.get("args") if isinstance(item.get("args"), dict) else {}
+    sql = str(item.get("sql") or "")
+    raw_work = str(item.get("work") or "").strip()
+    raw_reason = str(item.get("reason") or "").strip()
+
+    work = _sanitize_step_narration(raw_work, tool, 255)
+    if work:
+        work_source = str(item.get("work_source") or "").strip() or "llm"
+    else:
+        derived = _derive_step_work(tool, args, sql)
+        work = _sanitize_step_narration(derived, tool, 255) or _DERIVED_WORK_UNKNOWN
+        work_source = "derived" if raw_work else "legacy"
+
+    # 사유는 (a) 만 본다 — 위 판정기 주석의 ⚠ 참조.
+    #
+    # ⚠ **여기서 사유를 파생하지 않는다.** 라운드 1 의 권고 중 하나가 파생 배선이었고 실제로
+    #   넣어 봤으나, 규칙을 좁혀 «버려지는 사유» 가 라이브 9,759행에서 0건이 된 지금은 얻는
+    #   것이 없고 잃는 것이 있다 — 저장 사유가 아예 없던 644행(6.6%)에 서버가 도구 목적에서
+    #   역산한 문장이 새로 붙는데, 화면에는 `reason_source` 를 읽는 코드가 한 줄도 없어
+    #   **AI 가 말한 근거와 구분되지 않는다**(적대 검증 라운드 2 F3). 「지어내지 않는다」가
+    #   이 기능의 명시 계약이라, 구분 표시 없는 파생은 계약 위반 쪽이다. 없으면 비운다.
+    reason = _sanitize_step_narration(raw_reason, tool, 500, allow_tool_names=False)
+    reason_source = (str(item.get("reason_source") or "").strip() or "llm") if reason else "missing"
+    return work, work_source, reason, reason_source
+
+
 def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: str = "") -> str:
     payload = args if isinstance(args, dict) else {}
     tool_name = str(tool or "").strip().lower()
     if tool_name == "list_schemas":
-        return "사용자 스키마 목록을 확인한다"
+        return "DB(스키마) 목록을 확인한다"
     if tool_name == "describe_schema":
         schema = str(payload.get("schema_name") or "").strip()
         return f"`{schema}` 스키마의 테이블 목록을 확인한다" if schema else "스키마의 테이블 목록을 확인한다"
@@ -6343,9 +6588,100 @@ def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: s
         if target:
             return f"`{target}` 데이터를 조회한다"
         return "SQL을 실행한다"
-    if tool_name:
-        return f"`{tool_name}` 도구를 실행한다"
-    return "단계를 수행한다"
+    return _derive_step_work_tail(tool_name, payload)
+
+
+#: 위 분기가 모르는 도구의 문구. **여기서 새로 짓는 것은 이 표시층에만 있는 도구뿐**이고,
+#: 나머지는 내부 경로(`agent_core._derive_step_work`)에 위임한다 — 같은 도구가 경로에 따라
+#: 다르게 표현되면 둘 중 하나는 반드시 낡는다.
+#:
+#: 값이 **인자를 받는 함수**인 이유: 상수 문자열이면 대상(파일명·키워드)이 문구에서 사라져,
+#: 옆 행은 「무엇을 찾았는지」를 말하는데 이 행만 못 말하는 비대칭이 생긴다. 실측으로도
+#: `read_task_attachment` 의 첨부 파일명이 완료본에서만 사라져 진행/완료 제목이 갈렸다.
+def _first_sql_table(sql: Any) -> str:
+    """SQL 에서 첫 대상 테이블 하나. 못 찾으면 ""."""
+    try:
+        tables = app._extract_sql_tables(str(sql or ""))
+    except Exception:
+        return ""
+    return str(tables[0]) if tables else ""
+
+
+def _q(v: Any) -> str:
+    t = str(v or "").strip()
+    return f"`{t}`" if t else ""
+
+
+_DERIVED_WORK_TAIL: "dict[str, Any]" = {
+    "graph_navigate": lambda a: (
+        f"{_q(a.get('node'))} 에서 메타데이터 관계도를 탐색한다" if a.get("node")
+        else "메타데이터 관계도를 탐색한다"),
+    "search_db_objects": lambda a: (
+        f"{_q(a.get('keyword'))} 이름으로 테이블·프로시저를 함께 찾는다" if a.get("keyword")
+        else "이름으로 테이블·프로시저를 함께 찾는다"),
+    "describe_db_object": lambda a: (
+        f"{_q(a.get('object_name') or a.get('name'))} 의 정의를 확인한다"
+        if (a.get("object_name") or a.get("name")) else "DB 객체의 정의를 확인한다"),
+    "scratch_import": lambda a: (
+        f"조회 결과를 임시 작업 영역 {_q(a.get('dest_table'))} 로 저장한다"
+        if a.get("dest_table") else "조회 결과를 임시 작업 영역에 저장한다"),
+    # ⚠ 「조회」로 쓰지 않는다 — 이 도구는 CREATE/INSERT/UPDATE/DELETE/DROP 도 받는다
+    #   (`modules/tools.py`). 읽기로 기술하면 실행 이력이 **변경을 조회로 오기술**한다
+    #   (codex 적대 리뷰 라운드 2 P2). 연산 중립 문구를 쓴다.
+    "scratch_sql": lambda a: (
+        f"임시 작업 영역의 {_q(_first_sql_table(a.get('sql')))} 에 SQL을 실행한다"
+        if _first_sql_table(a.get("sql")) else "임시 작업 영역에서 SQL을 실행한다"),
+    "scratch_list": lambda a: "임시 작업 영역의 데이터 목록을 확인한다",
+    "scratch_reset": lambda a: "임시 작업 영역을 비운다",   # 라벨도 「임시 비움」
+    "update_attachment": lambda a: (
+        f"첨부 파일 \"{a.get('filename')}\" 을 새 버전으로 저장한다" if a.get("filename")
+        else "첨부 파일을 새 버전으로 저장한다"),
+    "materialize_attachment": lambda a: (
+        f"첨부 파일 \"{a.get('filename')}\" 을 대화에 저장한다" if a.get("filename")
+        else "고친 첨부 파일을 대화에 저장한다"),
+    "query_sql": lambda a: "데이터를 조회한다",
+    "get_task_context": lambda a: "이 질문이 어느 업무 영역인지 확인한다",
+    "read_task_attachment": lambda a: (
+        f"첨부 파일 \"{a.get('filename')}\" 의 내용을 읽는다" if a.get("filename")
+        else "첨부 파일의 내용을 읽는다"),
+}
+
+#: 어느 경로도 문구를 모를 때. **도구 이름을 넣지 않는다** — 종전 폴백
+#: ``f"`{tool_name}` 도구를 실행한다"`` 가 사용자 화면에 내부 식별자를 그대로 내보내는
+#: 경로였다(2026-09-08 제보의 한 갈래). 「무엇을」은 배지의 한국어 라벨이 말한다.
+_DERIVED_WORK_UNKNOWN = "요청한 작업을 수행한다"
+
+
+def _derive_step_work_tail(tool_name: str, payload: dict[str, Any]) -> str:
+    """분기표가 모르는 도구의 표시 문구. **식별자를 절대 되돌려 주지 않는다.**
+
+    반환값이 판정기를 통과하지 못하면 일반 문구로 강등한다 — `sanitize(derive(x))` 를
+    **구조적으로** 고정점으로 만든다. 분기를 하나씩 채워 지키는 방식은 도구가 늘 때마다
+    다시 벌어진다(§16.7 G12-b — 모수는 조회로 얻는다).
+    """
+    if not tool_name:
+        return "단계를 수행한다"
+    args = payload if isinstance(payload, dict) else {}
+    fn = _DERIVED_WORK_TAIL.get(tool_name)
+    if fn is not None:
+        try:
+            known = str(fn(args) or "").strip()
+        except Exception:
+            known = ""
+        if known:
+            return known
+    try:
+        import agent_core as _core
+
+        # ⚠ 세 번째 인자는 `tool_result` 다(`sql_text` 가 아니다). 값을 흘려 넣으면 그쪽
+        #   분기가 `` `{tool}` 도구를 실행한다 `` 를 켜서 식별자가 새 나온다(적대 검증 C4).
+        text = str(_core._derive_step_work(tool_name, args) or "").strip()
+    except Exception:
+        text = ""
+    if text and text != "단계를 수행한다" and not _step_text_is_tool_syntax(text, tool_name):
+        return text
+    return _DERIVED_WORK_UNKNOWN
+
 
 def _summarize_rationale(steps: list[dict[str, Any]]) -> str:
     if not steps:
@@ -6746,7 +7082,6 @@ def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None =
         return ""
     last_step = steps[-1]
     work = str(last_step.get("work") or "").strip()
-    intent = str(last_step.get("intent") or "").strip()
     summary = last_step.get("result_summary")
     rows = None
     cols = None
@@ -6755,9 +7090,9 @@ def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None =
         cols = summary.get("cols")
     parts: list[str] = []
     if work:
+        # `intent`(=`<도구명>: …`) 폴백을 뺐다 — 표시 이음매가 `work` 를 항상 채우고,
+        # 그 값이 비는 경우에도 도구 식별자를 요약 문장에 넣지 않는다.
         parts.append(f"실행 완료: {work}")
-    elif intent:
-        parts.append(f"실행 완료: {intent}")
     if rows is not None:
         if cols is not None:
             parts.append(f"결과: {rows}행, {cols}열")
@@ -6932,7 +7267,8 @@ def _check_attachment_size_caps(
     try:
         cur.execute(
             """
-            SELECT COALESCE(SUM(SizeBytes), 0)
+            SELECT COALESCE(SUM(SizeBytes), 0),
+                   SUM(CASE WHEN SupersededAt IS NULL THEN 1 ELSE 0 END)
             FROM WebConversationAttachments
             WHERE ConversationId = %s AND DeletedAt IS NULL AND DeletePending = 0
             """,
@@ -6940,6 +7276,17 @@ def _check_attachment_size_caps(
         )
         row = cur.fetchone()
         conv_used = int((row[0] if row else 0) or 0)
+        # REQ-20260908-attach-folder-tree (§18.8 security [P2]): **개수** 축.
+        # D8 캡은 바이트만 본다 — 1바이트 파일은 대화당 캡 안에서 수천만 건이 들어갈 수 있고,
+        # 각 건이 INSERT + MinIO put + 미러 upsert + 이 집계 스캔을 유발한다. 폴더 첨부가
+        # 제품 흐름이 된 이상(프론트 300개 상한은 클라이언트에만 있어 API 직접 호출로 우회된다)
+        # 서버가 같은 축을 가져야 한다 — 방어를 신뢰 경계 **안쪽**에 둔다.
+        #
+        # §18.8 backend [P2]: **살아 있는 head 만** 센다. superseded 구버전까지 세면 "폴더를 고쳐
+        # 다시 올린다" 는 이 기능의 표준 흐름이 쿼터를 스스로 소진한다 — 300 파일 폴더를 세 번
+        # 갱신하면 1050 행인데 사용자 화면에는 300 개뿐이라, "새 대화를 시작하라" 는 안내가
+        # 원인과 무관해진다(보이지 않는 행이 채운 쿼터다).
+        conv_count = int((row[1] if row and len(row) > 1 else 0) or 0)
 
         cur.execute(
             """
@@ -6967,6 +7314,12 @@ def _check_attachment_size_caps(
         logging.getLogger(__name__).warning(
             "_check_attachment_size_caps: PG cap read failed (MySQL 권위값 유지)", exc_info=True)
 
+    per_conv_count = app._attachment_count_cap()
+    if per_conv_count > 0 and conv_count + 1 > per_conv_count:
+        return False, (
+            f"대화당 첨부 개수 한도({per_conv_count}개)를 초과했습니다. "
+            "새 대화를 시작하거나 폴더를 나눠서 올려 주세요."
+        )
     if conv_used + n > per_conv:
         return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
     if account_used + n > per_account:
@@ -7081,7 +7434,7 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
         cur.execute(
             """
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                 UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                 DeletePending, DeleteReason, MetaJson,
@@ -7115,7 +7468,8 @@ def _iso_utc_z(value) -> str | None:
 
 
 def _load_filename_lineage_heads(
-    conn, conversation_id: str, filename: str, *, limit: int = 20
+    conn, conversation_id: str, filename: str, *, limit: int = 20,
+    relative_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """같은 대화·같은 파일명의 **모든 계보 head** 를 시간순(최신 우선)으로.
 
@@ -7134,15 +7488,26 @@ def _load_filename_lineage_heads(
         return []
     # cursor 획득도 try 안에 둔다 — 밖에 두면 획득 실패가 호출측으로 전파돼 이 축의 fail-soft
     # 계약이 깨진다(이 저장소에서 반복된 결함: 자원 획득을 try 밖에 두기).
+    # REQ-20260908-attach-folder-tree (§18.8 backend [P2]): 계보 스코프도 **체인 스코프와 같은
+    # 술어**여야 한다. 파일명만으로 묶으면 폴더 안의 `src/config.json`·`test/config.json`·
+    # `dist/config.json` 이 「한 파일의 경쟁 계보 3개」로 뜨고, 전부 `created_by_role='user'` 라
+    # 화면에 구분 수단이 없다 — 폴더가 들어오기 전에는 불가능했던 상태다.
+    _rp = (str(relative_path).strip() if relative_path else "")
+    if _rp:
+        _match_sql = "RelativePath = %s"
+        _match_val: Any = _rp
+    else:
+        _match_sql = "OriginalFilename = %s AND (RelativePath IS NULL OR RelativePath = '')"
+        _match_val = str(filename)
     cur = None
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
-            """
+            f"""
             SELECT Id, RootAttachmentId, AccountId, CreatedByRole, VersionNumber,
-                   OriginalFilename, CreatedAt, MetaJson
+                   OriginalFilename, RelativePath, CreatedAt, MetaJson
             FROM WebConversationAttachments
-            WHERE ConversationId = %s AND OriginalFilename = %s
+            WHERE ConversationId = %s AND {_match_sql}
               AND SupersededAt IS NULL AND DeletedAt IS NULL AND DeletePending = 0
             ORDER BY CreatedAt DESC, Id DESC
             LIMIT %s
@@ -7152,7 +7517,7 @@ def _load_filename_lineage_heads(
             # 않았다. 그룹 카드가 목록 기준 전체 계보 수(예: `계보 21`)를 말하는데 비교 화면엔
             # 20개만 뜨면, 화면이 없는 것을 있다고 말한 셈이 된다. 초과분 1건은 아래에서 버리고
             # 대신 `_truncated` 표식을 실어 호출부가 사용자에게 밝힐 수 있게 한다.
-            (str(conversation_id), str(filename), int(limit) + 1),
+            (str(conversation_id), _match_val, int(limit) + 1),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
         _over_cap = len(rows) > int(limit)
@@ -7188,34 +7553,49 @@ def _load_filename_lineage_heads(
 
 
 def _find_latest_same_name_attachment(
-    conn, conversation_id: str, account_id: int, filename: str
+    conn, conversation_id: str, account_id: int, filename: str,
+    relative_path: str | None = None,
 ) -> dict[str, Any] | None:
     """REQ-20260713-attach-user-version: 사용자 재업로드 버전 체인 편입 판정용.
 
-    대화 내 **같은 파일명·같은 account** 의 최신(비-superseded·비-deleted·비-pending)
+    대화 내 **같은 파일(경로 포함)·같은 account** 의 최신(비-superseded·비-deleted·비-pending)
     첨부 1건을 반환한다(없으면 None). 반환 dict 는 `_load_attachment_row` 와 동형 컬럼셋.
 
-    버전 체인은 `(conversation_id, account_id, OriginalFilename)` 로 스코프한다:
+    버전 체인은 `(conversation_id, account_id, RelativePath 또는 OriginalFilename)` 로
+    스코프한다:
       - 다른 멤버가 올린 동명 파일(그룹 대화)이나 다른 대화의 첨부와 체인이 섞이지 않게 —
         cross-account/cross-conversation 체인 하이재킹(IDOR) 방어.
+      - **REQ-20260908-attach-folder-tree**: 폴더 첨부가 들어온 뒤로 파일명만으로 스코프하면
+        `src/config.json` 과 `test/config.json` 이 **한 체인으로 합쳐져 서로를 supersede** 한다
+        — 사용자가 올린 파일이 목록에서 사라진다. 폴더가 있는 이상 「같은 파일」의 정의는
+        경로다. 경로 없는 첨부(단일 파일)끼리는 종전대로 파일명으로 매칭한다.
       - `SupersededAt IS NULL` 로 체인의 현재 head 만 매칭한다(구버전에는 붙지 않음).
     업로드 경로(MySQL INSERT 직후)에서 호출되므로 write-consistent 한 MySQL(conn)에서
     직접 읽는다(PG 미러 지연 회피).
     """
     if not (conversation_id and account_id and filename):
         return None
+    # 경로가 있으면 경로로, 없으면 파일명으로 매칭한다. 이때 **경로 있는 행과 없는 행이 서로
+    # 섞이지 않아야** 한다 — 폴더 안의 `a.txt` 와 따로 올린 `a.txt` 는 다른 파일이다.
+    _rp = (str(relative_path).strip() if relative_path else "")
+    if _rp:
+        _match_sql = "AND RelativePath = %s"
+        _match_params: tuple[Any, ...] = (_rp,)
+    else:
+        _match_sql = "AND OriginalFilename = %s AND (RelativePath IS NULL OR RelativePath = '')"
+        _match_params = (str(filename),)
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """
+            f"""
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                 UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                 DeletePending, DeleteReason, MetaJson,
                 RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
             FROM WebConversationAttachments
-            WHERE ConversationId = %s AND AccountId = %s AND OriginalFilename = %s
+            WHERE ConversationId = %s AND AccountId = %s {_match_sql}
               AND DeletedAt IS NULL AND DeletePending = 0 AND SupersededAt IS NULL
               -- REQ-20260814-attach-version-branching (§18.8 적대 리뷰 [P1]): **사용자 계보만**
               -- 편입 대상이다. AI 수정본이 별도 계보로 분기한 뒤로는 같은 파일명에 head 가 둘
@@ -7226,7 +7606,7 @@ def _find_latest_same_name_attachment(
             ORDER BY VersionNumber DESC, Id DESC
             LIMIT 1
             """,
-            (str(conversation_id), int(account_id), str(filename)),
+            (str(conversation_id), int(account_id)) + _match_params,
         )
         row = cur.fetchone()
         return dict(row) if row else None
@@ -7406,7 +7786,7 @@ def _load_attachment_version_chain(
             cur.execute(
                 """
                 SELECT
-                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
                     DeletePending, DeleteReason, MetaJson,
@@ -7684,7 +8064,7 @@ def _build_version_diff_view(
     """두 버전 본문의 비교 뷰(unified 문자열 + 좌우 정렬 행)를 만든다.
 
     `unified` 는 단일열 렌더용 git 형식 문자열, `rows` 는 2열 렌더용 좌우 정렬 행이다.
-    한 번의 `SequenceMatcher` opcode 로 **두 표현을 함께** 만들어, 두 뷰가 서로 다른
+    공백·대소문자 정규화 앵커와 토큰 유사도로 정렬한 뒤 **두 표현을 함께** 만들어, 두 뷰가 서로 다른
     비교 결과를 보이는 일이 구조적으로 없게 한다(프론트 토글은 같은 데이터의 두 표현).
 
     - `context_lines=None` → 전체 맥락 유지(동일한 줄도 전부 행으로 방출).
@@ -7704,83 +8084,36 @@ def _build_version_diff_view(
       눈으로 찾아야 한다 — 긴 줄·CSV·SQL 에서 실제로 그 탐색이 사용자 부담이었다. 계산이 성립하지
       않는 줄에는 키 자체를 붙이지 않으므로 프론트는 종전의 줄 단위 경로를 그대로 탄다.
     """
-    import difflib
+    from ._attachment_diff import align_lines, unified_from_rows
 
     left_lines = (left_text or "").splitlines()
     right_lines = (right_text or "").splitlines()
-
-    unified = "\n".join(
-        difflib.unified_diff(
-            left_lines,
-            right_lines,
-            fromfile=f"{filename} (v{left_version})",
-            tofile=f"{filename} (v{right_version})",
-            lineterm="",
-            n=(3 if context_lines is None else max(0, int(context_lines))),
-        )
+    added = removed = 0
+    flat: list[dict[str, Any]] = []
+    aligned, alignment_limited = align_lines(left_lines, right_lines)
+    for li, rj in aligned:
+        left = left_lines[li] if li is not None else None
+        right = right_lines[rj] if rj is not None else None
+        if li is None:
+            tag = "insert"
+        elif rj is None:
+            tag = "delete"
+        else:
+            # 정렬용 정규화가 문자열 값·대소문자·공백 변경을 숨겨서는 안 된다.
+            tag = "equal" if left == right else "replace"
+        flat.append({
+            "type": tag,
+            "left_no": li + 1 if li is not None else None, "left": left,
+            "right_no": rj + 1 if rj is not None else None, "right": right,
+        })
+        added += tag in ("insert", "replace")
+        removed += tag in ("delete", "replace")
+    unified = unified_from_rows(
+        flat, f"{filename} (v{left_version})", f"{filename} (v{right_version})",
+        3 if context_lines is None else max(0, int(context_lines)),
     )
 
-    sm = difflib.SequenceMatcher(None, left_lines, right_lines, autojunk=False)
-    opcodes = sm.get_opcodes()
-    added = removed = 0
-
-    # 1차 패스 — opcode 를 좌우 정렬 행으로 펼친다(맥락 축약 전).
-    flat: list[dict[str, Any]] = []
-    for tag, i1, i2, j1, j2 in opcodes:
-        if tag == "equal":
-            for off in range(i2 - i1):
-                flat.append({
-                    "type": "equal",
-                    "left_no": i1 + off + 1, "left": left_lines[i1 + off],
-                    "right_no": j1 + off + 1, "right": right_lines[j1 + off],
-                })
-        elif tag == "replace":
-            span = max(i2 - i1, j2 - j1)
-            for off in range(span):
-                li = i1 + off
-                rj = j1 + off
-                has_l = li < i2
-                has_r = rj < j2
-                if has_l and has_r:
-                    flat.append({
-                        "type": "replace",
-                        "left_no": li + 1, "left": left_lines[li],
-                        "right_no": rj + 1, "right": right_lines[rj],
-                    })
-                    added += 1
-                    removed += 1
-                elif has_l:
-                    flat.append({
-                        "type": "delete",
-                        "left_no": li + 1, "left": left_lines[li],
-                        "right_no": None, "right": None,
-                    })
-                    removed += 1
-                else:
-                    flat.append({
-                        "type": "insert",
-                        "left_no": None, "left": None,
-                        "right_no": rj + 1, "right": right_lines[rj],
-                    })
-                    added += 1
-        elif tag == "delete":
-            for off in range(i2 - i1):
-                flat.append({
-                    "type": "delete",
-                    "left_no": i1 + off + 1, "left": left_lines[i1 + off],
-                    "right_no": None, "right": None,
-                })
-                removed += 1
-        elif tag == "insert":
-            for off in range(j2 - j1):
-                flat.append({
-                    "type": "insert",
-                    "left_no": None, "left": None,
-                    "right_no": j1 + off + 1, "right": right_lines[j1 + off],
-                })
-                added += 1
-
-    # 내용 동일 판정은 **opcode 집계로만** 한다 — 축약·행 상한(rows)에 영향받지 않게.
+    # 내용 동일 판정은 **전체 정렬의 원문 변경 집계로만** 한다 — 축약·행 상한(rows)에 영향받지 않게.
     # 2차 패스보다 앞에서 확정해야 축약 분기가 이 값을 읽을 수 있다.
     identical = (added == 0 and removed == 0)
 
@@ -7835,7 +8168,7 @@ def _build_version_diff_view(
 
     # 3차 패스 — intra-line 세그먼트. **표시 대상으로 확정된 행에만** 계산한다(축약·행 상한
     # 뒤에 두는 이유 = 화면에 안 나올 행의 비용을 치르지 않기 위해). 두 뷰가 같은 세그먼트를
-    # 보도록 서버가 한 번만 산출한다 — 단일 opcode 패스 불변식(`unified`/`rows`)의 연장이다.
+    # 보도록 서버가 한 번만 산출한다 — 단일 정렬 불변식(`unified`/`rows`)의 연장이다.
     # 프론트가 각자 계산하면 2열과 단일열이 같은 줄에 다른 강조를 그릴 수 있다.
     #
     # 상한 3겹: 행별 문자쌍 컷(결정론적) · 패스 경과시간(실측 backstop) · 응답 바이트.
@@ -7881,7 +8214,8 @@ def _build_version_diff_view(
         },
         # `intraline` 은 **정밀도** 절단이다(줄 단위 차이는 온전). 그래도 표면화하는 이유:
         # 마크가 없는 줄을 "통째로 바뀐 줄" 로 오독할 수 있어서다.
-        "truncated": {"rows": rows_truncated, "intraline": intraline_skipped},
+        "truncated": {"rows": rows_truncated, "intraline": intraline_skipped,
+                      "alignment": alignment_limited},
     }
 
 
@@ -7934,6 +8268,22 @@ def _attachment_size_caps() -> tuple[int, int, int]:
         max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_CONV") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV)),
         max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_ACCOUNT") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT)),
     )
+
+def _attachment_count_cap() -> int:
+    """REQ-20260908-attach-folder-tree: 대화당 첨부 **개수** 상한 (0 = 무제한).
+
+    D8 은 바이트만 본다 — 폴더 첨부가 제품 흐름이 된 뒤로는 「작은 파일 수천 개」가 용량 캡을
+    한참 밑돌면서도 대화당 행·오브젝트·집계 스캔을 그만큼 늘린다. 프론트의 300개 상한은
+    클라이언트에만 있어 API 직접 호출로 우회되므로, 같은 축의 방어를 서버에 둔다.
+
+    기본 1000 — 프론트 1회 상한(300)의 3배 남짓이라 정상적인 폴더 첨부(여러 번 나눠 올리는
+    경우 포함)를 막지 않으면서 무한 증식만 끊는다. env `ATTACHMENT_MAX_COUNT_PER_CONV` 로 조정.
+    """
+    try:
+        v = int(os.getenv("ATTACHMENT_MAX_COUNT_PER_CONV") or 1000)
+    except (TypeError, ValueError):
+        v = 1000
+    return max(0, v)
 
 def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) -> bool:
     owner_account_id = app._conversation_owner_account_id(conn, conversation_id)

@@ -109,8 +109,9 @@ wiki/
 - **mirrors/sources 대상 범위 (2026-08-05 명문화)**: `sources:` 선언 대상은 **미러 성격 카드**
   (Features·Decisions·Architecture·Glossary 등 정본을 요약-참조하는 카드)다. **자생 콘텐츠**
   (concepts·entities·syntheses·raw — 특정 정본 문서의 미러가 아닌 위키 고유 지식)와 **구조 파일**
-  (README·Index·hot·Log·`_Index`·`_template-*`)은 비대상 — 부재가 drift 가 아니다. 실측(2026-08-28):
-  미러 성격 카드 87개 전원 sources 보유(백필 완료 — feature-0043 카드 포함), 부재 34개는 전부 비대상.
+  (README·Index·hot·Log·`_Index`·`_template-*`)은 비대상 — 부재가 drift 가 아니다. 실측(2026-09-09):
+  미러 성격 카드 94개 전원 sources 보유(Features 48 · Decisions 32 · Flows 6 · Architecture 3 · 루트 2 · Glossary 1 · `_templates/` 2),
+  부재 34개는 전부 비대상(concepts 15 · entities 12 · README · hot · Log · raw/README · sources 2 · syntheses 1).
 
 ## 6. 안 하는 것
 

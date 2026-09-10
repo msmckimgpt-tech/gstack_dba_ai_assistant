@@ -21,8 +21,8 @@
 # Usage:
 #   bash bin/cycle-finalize.sh --pr <PR-NUMBER>
 #     [--merge-strategy merge|squash|rebase]   (default: merge)
-#     [--keep-worktree]                        (cleanup step 5 skip)
-#     [--keep-branch]                          (local branch 보존)
+#     [--keep-worktree]                        (worktree + local/remote branch 보존; step 5 skip)
+#     [--keep-branch]                          (worktree 제거, local/remote branch 보존)
 #     [--target-worktree <path>]               (main 에서 named worktree 정리 — cwd 파생 SELF override)
 #     [--branch <name>]                        (--target-worktree 대안: branch 로 worktree 지정)
 #     [--dry-run]                              (mutation 명령 출력만)
@@ -114,7 +114,7 @@ SELF_BRANCH="$(git -C "$SELF_WORKTREE_PATH" branch --show-current)"
 # main worktree 식별 — `git worktree list --porcelain` 의 첫 entry.
 # 자기 자신이 main worktree 일 수도 있다 (그 경우 cleanup step 5 의 cwd 이동 불요).
 MAIN_WORKTREE_PATH="$(git -C "$SELF_WORKTREE_PATH" worktree list --porcelain \
-  | awk '/^worktree /{print substr($0,10); exit}')"
+  | awk '/^worktree / && !seen {print substr($0,10); seen=1}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed (git worktree list returned empty)."
 
 # ── target worktree override (v3.35.0) ────────────────────────────────────
@@ -303,12 +303,54 @@ esac
 # ── agent-board 완료 이정표 (§22.15, v3.54.1) — best-effort, 절대 막지 않음 ──────────
 # 머지가 확정된 시점에 «완료» status 를 게시한다. Codex/Claude native id 로 자기 sid 를 유추(board.sh milestone).
 _CF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+_CF_SID=""
+_CF_LEGACY_BINDING=0
+if [ -n "${CODEX_THREAD_ID:-}" ]; then
+  _CF_SID="codex:$(id -un):$CODEX_THREAD_ID"
+elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  _CF_SID="claude:$(id -un):$CLAUDE_CODE_SESSION_ID"
+elif [ -n "${AGENT_BOARD_SID:-}" ] && [ -n "${AGENT_BOARD_TOKEN:-}" ] && [ -f "$_CF_DIR/lib/board_fs.py" ]; then
+  # Legacy Claude hooks export only SID/token. Verify that existing binding.
+  if _CF_SID=$(python3 -B - "$_CF_DIR/lib/board_fs.py" "$MAIN_WORKTREE_PATH" 2>/dev/null <<'PY'
+import importlib.util
+import os
+import sys
+
+root = None
+try:
+    spec = importlib.util.spec_from_file_location("cycle_board", sys.argv[1])
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)
+    sid = os.environ["AGENT_BOARD_SID"]
+    _, root, _, log = core.open_board(sys.argv[2], sid)
+    if root is None:
+        raise ValueError("no board")
+    core.authz_session(root, sid, os.environ["AGENT_BOARD_TOKEN"], log,
+                       ("active", "muted", "done", "suspended", "ended"))
+    print(sid)
+except Exception:
+    sys.exit(1)
+finally:
+    if root is not None:
+        root.close()
+PY
+  ); then
+    _CF_LEGACY_BINDING=1
+  else
+    _CF_SID=""
+  fi
+fi
 if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DIR/board.sh" ]; then
-  _pr_title="$(printf "%s" "$PR_STATE_JSON" | python3 -c 'import json,sys
+  if [ -z "$_CF_SID" ]; then
+    log_warn "agent-board 자동 완료 생략 — native session id 미확인, 검증된 SID/token 바인딩 없음; 다른 세션 SID를 사용하지 않습니다."
+  else
+    _pr_title="$(printf "%s" "$PR_STATE_JSON" | python3 -c 'import json,sys
 try: print((json.load(sys.stdin).get("title") or "")[:120])
 except Exception: print("")' 2>/dev/null)"
-  ( cd "$MAIN_WORKTREE_PATH" && bash "$_CF_DIR/board.sh" milestone --kind status \
+    ( export AGENT_BOARD_SID="$_CF_SID"; unset AGENT_BOARD_TOKEN
+      cd "$MAIN_WORKTREE_PATH" && bash "$_CF_DIR/board.sh" milestone --kind status \
       -m "완료 PR #$PR_NUMBER ($SELF_BRANCH) merged${_pr_title:+ — $_pr_title}" ) >/dev/null || true
+  fi
 fi
 
 # ── Step 2: main 최신화 (필수 — 사용자 추가 요구 사항) ────────────────────
@@ -383,41 +425,60 @@ if [ "$KEEP_WORKTREE" -eq 0 ] && [ "${CURRENT_PWD#"$SELF_REAL"}" != "$CURRENT_PW
 fi
 
 # ── Step 5: worktree remove + branch delete ──────────────────────────────
+WORKTREE_RESULT="kept: $SELF_REAL"
 if [ "$KEEP_WORKTREE" -eq 0 ]; then
   log_step "Step 5a: git worktree remove $SELF_REAL"
   run_or_dryrun "git -C $MAIN_REAL worktree remove $SELF_REAL"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    WORKTREE_RESULT="dry-run: would remove $SELF_REAL"
+  else
+    WORKTREE_RESULT="removed: $SELF_REAL"
+  fi
 else
   log_info "Step 5a (worktree remove): skip (--keep-worktree)"
 fi
 
-if [ "$KEEP_BRANCH" -eq 0 ]; then
+BRANCH_KEEP_REASON=""
+if [ "$KEEP_WORKTREE" -eq 1 ]; then
+  BRANCH_KEEP_REASON="--keep-worktree"
+elif [ "$KEEP_BRANCH" -eq 1 ]; then
+  BRANCH_KEEP_REASON="--keep-branch"
+fi
+
+LOCAL_BRANCH_RESULT="kept ($BRANCH_KEEP_REASON): $SELF_BRANCH"
+if [ -z "$BRANCH_KEEP_REASON" ]; then
   log_step "Step 5b: git branch -d $SELF_BRANCH"
   # merged 검증 — branch -d 는 unmerged 시 실패. squash/rebase merge 인 경우 fail.
   if [ "$DRY_RUN" -eq 1 ]; then
     printf "[dry-run] git -C %s branch -d %s\n" "$MAIN_REAL" "$SELF_BRANCH" >&2
+    LOCAL_BRANCH_RESULT="dry-run: would delete $SELF_BRANCH"
   else
     if ! git -C "$MAIN_REAL" branch -d "$SELF_BRANCH" 2>&1; then
+      LOCAL_BRANCH_RESULT="retained (delete failed): $SELF_BRANCH"
       log_warn "git branch -d failed (unmerged?). squash/rebase merge 의 경우 정상 — force-delete 필요."
       log_warn "다음 명령을 사용자 확인 후 직접 실행 (silent force-delete 차단):"
       log_warn "  git -C $MAIN_REAL branch -D $SELF_BRANCH"
       log_warn "본 script 는 silent -D 를 진행하지 않습니다. cleanup 의 다른 step 은 완료된 상태."
+    else
+      LOCAL_BRANCH_RESULT="deleted: $SELF_BRANCH"
     fi
   fi
 else
-  log_info "Step 5b (branch delete): skip (--keep-branch)"
+  log_info "Step 5b (branch delete): skip ($BRANCH_KEEP_REASON)"
 fi
 
 # ── Step 5c: 원격 브랜치 정리 (best-effort — --delete-branch decouple) ─────
 # Step 1a 에서 --delete-branch 를 제거(worktree-first 호환)했으므로 원격 브랜치는
 # 여기서 best-effort 로 정리한다. 파괴적 원격 op 라 가드를 좁힌다:
-#   (a) KEEP_BRANCH=0,
+#   (a) KEEP_WORKTREE=0 이고 KEEP_BRANCH=0,
 #   (b) PR head ref == 방금 finalize 한 로컬 브랜치(SELF_BRANCH) — PR 재타깃/오인자
 #       시 무관 원격 브랜치 오삭제 방지 (Step 5b 와 동일 대상만 삭제),
 #   (c) leading-dash ref 거부 — git 옵션 오해석 방지,
 #   (d) main/master backstop.
 # 삭제 결과는 3분기로 관측: 성공 / 이미 없음(정상) / 실재 실패(네트워크·auth, WARN).
 # 어느 경우도 cycle 을 중단하지 않는다 (로컬 정리는 Step 5b 가 이미 완료).
-if [ "$KEEP_BRANCH" -eq 0 ] \
+REMOTE_BRANCH_RESULT="skipped (head ref unknown, mismatched or protected): ${PR_HEAD_REF:-unknown}"
+if [ -z "$BRANCH_KEEP_REASON" ] \
    && [ -n "$PR_HEAD_REF" ] \
    && [ "$PR_HEAD_REF" = "$SELF_BRANCH" ] \
    && [ "${PR_HEAD_REF#-}" = "$PR_HEAD_REF" ] \
@@ -425,17 +486,24 @@ if [ "$KEEP_BRANCH" -eq 0 ] \
   log_step "Step 5c: git push origin --delete $PR_HEAD_REF (원격 브랜치 정리, best-effort)"
   if [ "$DRY_RUN" -eq 1 ]; then
     printf "[dry-run] git -C %s push origin --delete %s\n" "$MAIN_REAL" "$PR_HEAD_REF" >&2
+    REMOTE_BRANCH_RESULT="dry-run: would delete $PR_HEAD_REF"
   else
     if push_err="$(git -C "$MAIN_REAL" push origin --delete "$PR_HEAD_REF" 2>&1)"; then
+      REMOTE_BRANCH_RESULT="deleted: $PR_HEAD_REF"
       log_info "원격 브랜치 '$PR_HEAD_REF' 삭제 완료."
     elif printf '%s' "$push_err" | grep -qiE 'remote ref does not exist|does not exist'; then
+      REMOTE_BRANCH_RESULT="already absent: $PR_HEAD_REF"
       log_info "원격 브랜치 '$PR_HEAD_REF' 이미 없음 (GitHub auto-delete 등) — 정상."
     else
+      REMOTE_BRANCH_RESULT="delete failed (state unconfirmed): $PR_HEAD_REF"
       log_warn "원격 브랜치 '$PR_HEAD_REF' 삭제 실패 (네트워크/auth?): $push_err. 무시하고 계속 — 다른 cleanup step 은 완료."
     fi
   fi
 else
-  log_info "Step 5c (원격 브랜치 정리): skip (--keep-branch / head ref 미상 / SELF_BRANCH 불일치 / main)"
+  if [ -n "$BRANCH_KEEP_REASON" ]; then
+    REMOTE_BRANCH_RESULT="skipped ($BRANCH_KEEP_REASON): ${PR_HEAD_REF:-unknown}"
+  fi
+  log_info "Step 5c (원격 브랜치 정리): $REMOTE_BRANCH_RESULT"
 fi
 
 # ── Step 6: REGISTRY entry 이동 (옵션) ───────────────────────────────────
@@ -525,8 +593,25 @@ fi
 # ── 종료 보고 ─────────────────────────────────────────────────────────────
 # ── agent-board done (§22.15 «완료 세션은 board.sh done», v3.54.1) — best-effort ────────────
 # 정리까지 끝난 세션은 게시판 주입을 더 받지 않는다. 같은 세션에 새 일이 오면 `board.sh reactivate` 로 되살린다.
-if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DIR/board.sh" ] && [ -n "${CODEX_THREAD_ID:-}${CLAUDE_CODE_SESSION_ID:-}${AGENT_BOARD_SID:-}" ]; then
-  ( cd "$MAIN_WORKTREE_PATH" && bash "$_CF_DIR/board.sh" done ) >/dev/null 2>&1 || log_warn "agent-board done 실패 — 세션이 직접 'bash bin/board.sh done' (§22.15)"
+_CF_DONE_BOARD="$MAIN_REAL/bin/board.sh"
+# Prefer main after cleanup; an externally installed helper may also survive.
+if [ ! -f "$_CF_DONE_BOARD" ] && [ -f "$_CF_DIR/board.sh" ]; then
+  _CF_DONE_BOARD="$_CF_DIR/board.sh"
+fi
+if [ "$DRY_RUN" -eq 0 ] && [ -f "$_CF_DONE_BOARD" ] && [ -n "$_CF_SID" ]; then
+  if _CF_DONE_OUTPUT=$( ( [ "$_CF_LEGACY_BINDING" -eq 1 ] || unset AGENT_BOARD_TOKEN
+    cd "$MAIN_REAL" && bash "$_CF_DONE_BOARD" done --sid "$_CF_SID" ) 2>&1 ); then
+    :
+  else
+    _CF_DONE_RC=$?
+    # This transition error is emitted only after the core authenticates the session.
+    if [ "$_CF_DONE_RC" -eq 3 ] && printf '%s\n' "$_CF_DONE_OUTPUT" | grep -Fxq 'board: transition:done->done'; then
+      log_info "agent-board 이미 완료 — 본인 세션 done 상태 확인."
+    else
+      log_warn "agent-board done 실패 — 세션이 직접 'bash bin/board.sh done --sid $_CF_SID' (§22.15)"
+    fi
+  fi
+  unset _CF_DONE_OUTPUT
 fi
 
 log_step "cycle-finalize 완료"
@@ -535,8 +620,9 @@ cat >&2 <<EOF
 종료 보고:
   PR:                 #$PR_NUMBER ($MERGE_STRATEGY)
   main HEAD:          $MAIN_HEAD_BEFORE → $MAIN_HEAD_AFTER
-  removed worktree:   $([ "$KEEP_WORKTREE" -eq 0 ] && echo "$SELF_REAL" || echo "(kept)")
-  deleted branch:     $([ "$KEEP_BRANCH" -eq 0 ] && echo "$SELF_BRANCH" || echo "(kept)")
+  worktree cleanup:   $WORKTREE_RESULT
+  local branch:       $LOCAL_BRANCH_RESULT
+  remote branch:      $REMOTE_BRANCH_RESULT
   REGISTRY hint:      $REGISTRY_RESULT
   dry-run:            $([ "$DRY_RUN" -eq 1 ] && echo yes || echo no)
 

@@ -1,0 +1,164 @@
+{
+  "started_at": 1788842936.2874012,
+  "initial_pid": 32716,
+  "events": [
+    {
+      "at": 1788842936.3095741,
+      "kind": "baseline",
+      "processes": [
+        {
+          "pid": 32716,
+          "parent": 28544,
+          "name": "DQAConnect.exe",
+          "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe"
+        }
+      ],
+      "version": "1.1.2"
+    },
+    {
+      "at": 1788842936.3348374,
+      "kind": "accepted_update_confirmation",
+      "dialog": {
+        "hwnd": 44569662,
+        "pid": 32716,
+        "class": "#32770",
+        "text": "DQA",
+        "visible": true,
+        "id": 0,
+        "children": [
+          {
+            "hwnd": 4266766,
+            "pid": 32716,
+            "class": "Button",
+            "text": "예(&Y)",
+            "visible": true,
+            "id": 6
+          },
+          {
+            "hwnd": 16850052,
+            "pid": 32716,
+            "class": "Button",
+            "text": "아니요(&N)",
+            "visible": true,
+            "id": 7
+          },
+          {
+            "hwnd": 9379048,
+            "pid": 32716,
+            "class": "Static",
+            "text": "",
+            "visible": true,
+            "id": 20
+          },
+          {
+            "hwnd": 39459594,
+            "pid": 32716,
+            "class": "Static",
+            "text": "DQA 1.2.0 로 업데이트합니다.\n현재 버전: 1.1.2\n\nDQA에서 AI별 자동 연결과 Windows·WSL 위치 재사용을 지원합니다. 연결 상태와 완료 알림을 개선했습니다.\n\n설치 후 프로그램이 자동으로 다시 시작됩니다.",
+            "visible": true,
+            "id": 65535
+          }
+        ]
+      }
+    },
+    {
+      "at": 1788842936.3686743,
+      "kind": "window",
+      "hwnd": 37428382,
+      "pid": 32716,
+      "class": "WindowsForms10.Window.8.app.0.aec740_r54_ad1",
+      "title": "DQA",
+      "text": "DQA — Database Query Assistant\nChrome Legacy Window"
+    },
+    {
+      "at": 1788842937.7876198,
+      "kind": "process_started",
+      "pid": 49976,
+      "parent": 32716,
+      "name": "DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe",
+      "exe": "C:\\Users\\mckim\\.dqa-connect\\update\\DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe"
+    },
+    {
+      "at": 1788842939.073461,
+      "kind": "process_started",
+      "pid": 33576,
+      "parent": 49976,
+      "name": "DQAConnect-Setup-1.2.0.exe.dklr9l_3.tmp",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Temp\\is-CK0ZDVV18L.tmp\\DQAConnect-Setup-1.2.0.exe.dklr9l_3.tmp"
+    },
+    {
+      "at": 1788842940.188891,
+      "kind": "window",
+      "hwnd": 5119262,
+      "pid": 33576,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.0",
+      "text": "설치 준비 중\n컴퓨터에 DQA Connect 설치를 준비하는 중입니다.\n취소"
+    },
+    {
+      "at": 1788842940.189695,
+      "kind": "window",
+      "hwnd": 7347726,
+      "pid": 33576,
+      "class": "TApplication",
+      "title": "",
+      "text": ""
+    },
+    {
+      "at": 1788842941.8066025,
+      "kind": "process_exited",
+      "pid": 32716,
+      "parent": 28544,
+      "name": "DQAConnect.exe",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Programs\\DQA Connect\\DQAConnect.exe",
+      "exit_code": 0
+    },
+    {
+      "at": 1788842941.8219001,
+      "kind": "window",
+      "hwnd": 5119262,
+      "pid": 33576,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.0",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n응용 프로그램을 닫는 중...\n취소"
+    },
+    {
+      "at": 1788842972.5141864,
+      "kind": "window",
+      "hwnd": 5119262,
+      "pid": 33576,
+      "class": "TWizardForm",
+      "title": "설치 - DQA Connect 버전 1.2.0",
+      "text": "설치 중\n컴퓨터에 DQA Connect을(를) 설치하는 동안 잠시 기다려 주세요.\n변경 내용을 롤백하는 중...\n취소"
+    },
+    {
+      "at": 1788842974.066308,
+      "kind": "process_exited",
+      "pid": 49976,
+      "parent": 32716,
+      "name": "DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe",
+      "exe": "C:\\Users\\mckim\\.dqa-connect\\update\\DQAConnect-Setup-1.2.0.exe.dklr9l_3.exe",
+      "exit_code": 5
+    },
+    {
+      "at": 1788842974.0668905,
+      "kind": "process_exited",
+      "pid": 33576,
+      "parent": 49976,
+      "name": "DQAConnect-Setup-1.2.0.exe.dklr9l_3.tmp",
+      "exe": "C:\\Users\\mckim\\AppData\\Local\\Temp\\is-CK0ZDVV18L.tmp\\DQAConnect-Setup-1.2.0.exe.dklr9l_3.tmp",
+      "exit_code": 5
+    }
+  ],
+  "success": false,
+  "finished_at": 1788843116.3480277,
+  "installed_version": "1.1.2",
+  "exe_sha256": "2ff55f5d80dcb96601491f84516b8d5512941dc4e0ff4af08bbb91021a5fe4a1",
+  "processes": [],
+  "update_state": {
+    "last_check": 1788842839.2397254,
+    "last_error": "",
+    "pending_install": "1.2.0",
+    "pending_at": 1788842937.1393802
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "at": 1788842839.1469913,
+  "pid": 32716,
+  "tray": 18554386,
+  "items": [
+    {
+      "position": 0,
+      "id": 1024,
+      "text": "창 열기"
+    },
+    {
+      "position": 1,
+      "id": 0,
+      "text": ""
+    },
+    {
+      "position": 2,
+      "id": 1026,
+      "text": "연결 끊기"
+    },
+    {
+      "position": 3,
+      "id": 1027,
+      "text": "업데이트 확인"
+    },
+    {
+      "position": 4,
+      "id": 0,
+      "text": ""
+    },
+    {
+      "position": 5,
+      "id": 1029,
+      "text": "종료"
+    }
+  ],
+  "selected": {
+    "position": 3,
+    "id": 1027,
+    "text": "업데이트 확인"
+  },
+  "entry": "native tray popup -> resolved command ID -> WM_COMMAND",
+  "dialogs": [
+    {
+      "hwnd": 44569662,
+      "pid": 32716,
+      "class": "#32770",
+      "text": "DQA",
+      "visible": true,
+      "id": 0,
+      "children": [
+        {
+          "hwnd": 4266766,
+          "pid": 32716,
+          "class": "Button",
+          "text": "예(&Y)",
+          "visible": true,
+          "id": 6
+        },
+        {
+          "hwnd": 16850052,
+          "pid": 32716,
+          "class": "Button",
+          "text": "아니요(&N)",
+          "visible": true,
+          "id": 7
+        },
+        {
+          "hwnd": 9379048,
+          "pid": 32716,
+          "class": "Static",
+          "text": "",
+          "visible": true,
+          "id": 20
+        },
+        {
+          "hwnd": 39459594,
+          "pid": 32716,
+          "class": "Static",
+          "text": "DQA 1.2.0 로 업데이트합니다.\n현재 버전: 1.1.2\n\nDQA에서 AI별 자동 연결과 Windows·WSL 위치 재사용을 지원합니다. 연결 상태와 완료 알림을 개선했습니다.\n\n설치 후 프로그램이 자동으로 다시 시작됩니다.",
+          "visible": true,
+          "id": 65535
+        }
+      ]
+    }
+  ]
+}

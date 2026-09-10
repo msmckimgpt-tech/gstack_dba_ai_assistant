@@ -30,12 +30,23 @@ def initialize_process() -> None:
 def relaunch_command() -> str:
     # Startup arguments can contain a delegated token. Never persist them in shell metadata.
     if getattr(sys, "frozen", False):
-        return subprocess.list2cmdline([sys.executable])
+        from .installation import install_root
+        launcher = install_root() / "DQALauncher.exe"
+        return subprocess.list2cmdline([str(launcher) if launcher.is_file() else sys.executable])
     python = Path(sys.executable)
     windowless = python.with_name("pythonw.exe")
     if os.name == "nt" and windowless.is_file():
         python = windowless
     return subprocess.list2cmdline([str(python), str(ICON_PATH.parents[2] / "dqa_connect.py")])
+
+
+def relaunch_icon() -> Path:
+    if getattr(sys, "frozen", False):
+        from .installation import install_root
+        stable = install_root() / "dqa.ico"
+        if stable.is_file():
+            return stable
+    return ICON_PATH
 
 
 def _check(result: int) -> None:
@@ -50,7 +61,7 @@ def configure_window(hwnd: int) -> None:
     try:
         _set_window_properties(hwnd, (
             (2, relaunch_command()),
-            (3, f"{ICON_PATH},0"),
+            (3, f"{relaunch_icon()},0"),
             (4, "DQA"),
             (5, APP_USER_MODEL_ID),  # Setting ID last refreshes the taskbar metadata.
         ))

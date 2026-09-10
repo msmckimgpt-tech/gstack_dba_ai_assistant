@@ -1,0 +1,7 @@
+{
+  "version": "1.2.4",
+  "installer_size": 26045699,
+  "installer_sha256": "a0535a088c9d000e776b12f5b817d311b7bce1f82da890b3dcee1cb02b494429",
+  "exe_sha256": "99ff3b5d47605427d5d39ac47976da9f654c27fc6e8070a38846944def1b4748",
+  "source": "Windows Python3.14/PyInstaller/Inno Setup; main1.2.3 text selection and search included"
+}

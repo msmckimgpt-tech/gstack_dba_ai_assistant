@@ -1,0 +1,16 @@
+{
+  "version": "1.2.5",
+  "filename": "DQAConnect-Setup-1.2.5.exe",
+  "sha256": "909d246b8a2b19a8e395905377d5bc1c07a0bf02f012aae79b97fd3ed5d905d7",
+  "size": 26051359,
+  "published_at": "2026-09-09T04:53:08+00:00",
+  "notes": "공유 링크에서 [DQA 앱에서 참여 · fork] 로 앱을 열면 그 대화로 바로 들어갑니다. 앱이 이미 떠 있는 경우에도 같습니다. 목적지가 부적격하면 무시하고 첫 화면을 엽니다.",
+  "path": "/client/DQAConnect-Setup-1.2.5.exe",
+  "_verified": {
+    "downloaded_over": "https://112.185.196.20/client/DQAConnect-Setup-1.2.5.exe",
+    "downloaded_bytes": 26051359,
+    "downloaded_sha256": "909d246b8a2b19a8e395905377d5bc1c07a0bf02f012aae79b97fd3ed5d905d7",
+    "matches_manifest": true,
+    "previous_release_404": "GET /client/DQAConnect-Setup-1.2.4.exe → 404 (설계: 광고 중인 파일만 서빙)"
+  }
+}

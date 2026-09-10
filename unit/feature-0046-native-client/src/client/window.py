@@ -127,9 +127,9 @@ class Shell:
         try:
             self._window = webview.create_window(
                 self.title, self.url, width=1180, height=820,
-                min_size=(900, 600), confirm_close=False)
+                min_size=(900, 600), confirm_close=False, text_select=True)
             self._window.events.closing += self._on_closing
-            self._window.events.loaded += lambda: self._ready.set()
+            self._window.events.loaded += self._on_loaded
             self._window.events.before_show += self._brand_window
             os.makedirs(self.storage, exist_ok=True)
             webview.start(gui="edgechromium", private_mode=False,
@@ -150,6 +150,22 @@ class Shell:
             branding.clear_window(self._brand_hwnd)
             self._brand_hwnd = None
         return True
+
+    def _on_loaded(self) -> None:
+        """pywebview가 끈 기본 검색을 WebView2 소유 UI 스레드에서 복구한다."""
+        try:
+            from System import Action
+
+            native = self._window.native
+
+            def enable_shortcuts():
+                native.webview.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = True
+
+            native.Invoke(Action(enable_shortcuts))
+        except Exception as exc:  # 창은 유지하되 단축키 설정 실패를 기록한다.
+            self.last_error = f"text interaction: {exc!r}"
+        finally:
+            self._ready.set()
 
     def _on_closing(self) -> bool:
         """`False` 를 돌려주면 pywebview 가 닫기를 취소한다.
@@ -182,6 +198,24 @@ class Shell:
             except Exception as exc:  # noqa: BLE001 — 안내 실패가 숨김을 되돌리지는 않는다
                 self.last_error = f"on_hidden: {exc!r}"
         return False
+
+    def navigate(self, url: str) -> bool:
+        """이 창을 **다른 자리로 옮긴다**. 못 옮기면 `False` — 호출부는 그래도 창을 띄운다.
+
+        상주 중에 「이 대화를 앱에서 열기」가 오면 새 창을 만들 수는 없다(창은 하나이고
+        `webview.start()` 는 한 번만 돈다). 그래서 있는 창을 그 자리로 보낸다.
+
+        ⚠ 실패를 **삼키되 조용하지 않게** 한다(`last_error` — `can_hide`·`hide` 와 같은 규약).
+        여기서 예외를 올리면 폴링 스레드가 죽고, 그 뒤로는 「창 열기」 자체가 영영 안 된다.
+        """
+        if self._window is None:
+            return False
+        try:
+            self._window.load_url(url)
+            return True
+        except Exception as exc:  # noqa: BLE001 — 이동 실패가 창을 못 띄우게 하지는 않는다
+            self.last_error = f"navigate: {exc!r}"
+            return False
 
     def show(self) -> None:
         """트레이 [창 열기]·두 번째 실행의 요청이 부른다. 워커 스레드에서 온다."""

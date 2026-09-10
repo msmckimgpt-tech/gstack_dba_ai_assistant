@@ -178,6 +178,7 @@ async function build({ nullProfileEls = false, supportsInert = true } = {}) {
     function _renderStepSidePanelBody() { __calls.renderStepBody++; }
     function _stopStepPanelTicker() { __calls.stopTicker++; }
     function renderProfile() { __calls.renderProfile++; }
+    function setupAiJobsTab() {}
     function switchProfileTab() {}
     function setupProfileDrawerResize() {}
     function _applyProfileDrawerWidth() {}
@@ -276,6 +277,8 @@ async function build({ nullProfileEls = false, supportsInert = true } = {}) {
   t.api.openStepSidePanel({ steps: [] });
   const before = t.calls.stopTicker;
   t.api.openProfile("prompt");
+  if (t.errors.length) console.error("C3 프로필 열기 오류:", t.errors);
+  ok("C3 프로필 open → 오류 보고 없음", t.errors.length === 0);
   ok("C3 프로필 open → 프로필 열림", t.open("profileDrawer"));
   ok("C3 프로필 open → backdrop 열림", t.open("profileBackdrop"));
   ok("C3 프로필 open → 단계 닫힘", !t.open("stepSidePanel"));
@@ -288,6 +291,7 @@ async function build({ nullProfileEls = false, supportsInert = true } = {}) {
 {
   const t = await build();
   t.api.openProfile("prompt");
+  ok("C4 전제: 프로필과 backdrop 이 실제로 열림", t.open("profileDrawer") && t.open("profileBackdrop"));
   t.api.openAttachSidePanel();
   ok("C4 첨부 open → 첨부 열림", t.open("attachSidePanel"));
   ok("C4 첨부 open → 프로필 닫힘", !t.open("profileDrawer"));

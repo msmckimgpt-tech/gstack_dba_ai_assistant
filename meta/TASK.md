@@ -8,11 +8,11 @@
 
 ## TASK-20260908T020000-delegation-friction — 개발 위탁 병목 정합
 
-- 상태: review — 구현·검증 완료, PR/배포 결과 확인 중
+- 상태: done — PR #1616 병합·web 배포·실제 자산 확인 완료; 전달 중 발견한 정리 도구 보완도 구현·독립 검증 완료
 - 요청: Claude·Codex 개발 대화와 구현 결과를 대조하고 불필요·부족·과도한 정책을 수정해 반복 병목을 해소한다(현재 사용자의 직접 지시).
 - 작업: `ai/codex/meta-delegation-friction-20260908`; base `76a76ddd`; 별도 worktree. 기존 main의 미추적 파일 보존.
 - 승인 근거: 현재 요청이 정책 개선 및 그에 필요한 검증 도구 수정을 직접 위임했다. 추가 설계 승인이나 기존 대화의 승인 마커를 만들지 않는다.
-- 위험: Major(후속 작업자 행동·검증에 영향); 인증/인가·데이터 변경 없음. 새로 연결한 테스트가 실제 연결 실패 안내의 삭제된 UI 참조를 검출해 `connect-modal.js`의 안내 두 문구도 수정한다(동작·권한 변경 없음).
+- 위험: Major(후속 작업자 행동·검증에 영향); 인증/인가·데이터 변경 없음. 새로 연결한 테스트가 실제 연결 실패 안내의 삭제된 UI 참조를 검출해 `connect-modal.js`의 안내를 수정했다. 최신 main의 트레이 안내를 보존한 최종 제품 차이는 자동 연결 실패 안내 한 문구다(동작·권한 변경 없음).
 
 ### 2.1 Implementation Plan
 
@@ -33,7 +33,7 @@
 ### 검증·인계
 
 - 정책 경로: worktree `AGENTS.md` 및 공유 main `AGENTS.md`(진입 시 같은 `76a76ddd`). 내용 SHA-256은 EVIDENCE/REPORT에 실제 실행값 기록.
-- hot_paths: `AGENTS.md`, `bin/cycle-finalize.sh`, `pyproject.toml`, `docs/STATUS.md`, `unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js`; 각 파일 소유권을 worker별 분리. 기존 활성 런타임 작업은 건드리지 않고 실패 안내 두 문구만 변경한다.
+- hot_paths: `AGENTS.md`, `bin/cycle-finalize.sh`, `pyproject.toml`, `docs/STATUS.md`, `unit/feature-0003-agent-web-ui/src/static/app/connect-modal.js`; 각 파일 소유권을 worker별 분리. 기존 활성 런타임 작업을 보존하며, 최종 제품 차이는 실패 안내 한 문구다.
 - 범위 보완: Makefile/CI/pytest 경로 정본화, 실제 검증 누락이 드러낸 native-client 테스트 경계 수정. 검증·인계 정본은 `docs/improvements/delegation-friction-20260908/REPORT.md`에 기록한다.
 
 - 추가 사용자 지시(2026-09-08): 일반 Windows 웹브라우저가 아닌 별도 DQA 클라이언트로 서비스 사용. §15.4.1·§16.6, PROJECT, PB-0009, check #13을 해당 기준으로 정합화한다. 기존 사용자 앱을 검증 편의로 종료하지 않는다.
@@ -41,3 +41,9 @@
 - [x] 원본 16개 목적 표집·구현 대조와 승인/읽기/재개 정책 정합 완료.
 - [x] 현재 색인 압축·원본/상태/링크 보존, DQA 주 경로 정합 완료.
 - [x] 최신 main ec913f94 합류, 전체 8,059 PASS/16 skip/실패0·Bats69·도구24 및 독립 리뷰 완료.
+
+- [x] 최신 main 8f49f1fc 추가 합류: feature0043 1671 PASS/1 skip, workflow Bats69 PASS, board Bats134 PASS/4 skip, Python 도구34 PASS.
+- [x] PR #1616 merge a92c9256, 정본 web-only 배포 exit0·양 replica healthy·90초 soak·CA 검증된 healthz200·실제 서빙 자산 확인. GitHub Actions 비활성, 설치 DQA 흐름/대화 스모크 NOT-RUN은 REPORT에 별도 기록.
+- [x] 전달 중 재현한 보존 옵션/삭제 후 본인 board 완료/허위 완료 출력 수정: lifecycle33 PASS·독립6 PASS·deploy quiesce34 PASS·독립 출력6조합. 마지막 보완은 host 도구와 문서이며 배포 앱 소스 변경 없음.
+
+- [x] PR #1618 merge d81325ff, 본 작업 worktree·로컬/원격 브랜치·REGISTRY 정리 완료. 관측된 이미-done 경고와 직접-init의 강제 새 세션 안내를 후속 출력 정합 대상으로 수정; 실제 auth/board core 전이 정책은 유지. 검증은 추가 리뷰와 REPORT 참조.

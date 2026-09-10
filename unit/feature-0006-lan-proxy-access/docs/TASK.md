@@ -8,6 +8,191 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260910T100000-portproxy-closeout — 재부팅 후 종결 확인
+
+사용자 재부팅(2026-09-09 22:51) 후 2026-09-10 10:01 실측. **전건 해소 확인.**
+
+| 축 | 관측 | 판정 |
+|---|---|---|
+| 유령 작업(오류창) | 부팅 후 **669.7분(약 11시간)** 경과, `wscript.exe` **0건** | **소멸** — 5분 주기라면 130회 넘는 실행 기회가 있었고, 살아 있는 인스턴스가 없어 `IgnoreNew` 억제 가설도 배제된다 |
+| S4U 동기화 작업 | `state=Ready` · `logon=S4U user=mckim runlevel=Highest` · `repeat=PT5M dur=P3650D` · **`lastrun=09/10 09:59:59 rc=0`** · `next=10:04:04` · **`missed=0`** | **정상 동작** — SYSTEM 시절 rc=1 이던 것이 rc=0 |
+| portproxy 매핑 | `112.185.196.20:80/443 → 172.26.154.233` | 유지 |
+| 옛 이름 잔재 | XML 없음 · `TaskCache\Tree\<옛이름>` **이미 소멸**(재부팅 시 스케줄러가 빈 껍데기 정리) | 정리 완료 |
+
+### 이 cycle 의 판정 규칙이 실제로 필요했다
+
+앞 두 창(15:15~15:27 · 15:57~16:05)에서 「무재발」로 두 번 오판했는데, 그때는 **떠 있는 오류창
+인스턴스가 `MultipleInstances IgnoreNew` 로 새 실행을 억제**하고 있었다. 이번 판정이 신뢰되는
+이유는 ① 인스턴스가 0건이라 억제할 것이 없고 ② 관측 창이 11시간(경계 130회 이상)이기 때문이다.
+**「무재발」은 관측 길이와 억제 상태를 함께 적어야 근거가 된다.**
+
+- [x] 재부팅 후 유령 소멸 · S4U rc=0 · 매핑 유지 확인 — 종결
+
+## TASK-20260909T070000-portproxy-s4u — 실행 계정 교정 (SYSTEM → 사용자 + S4U)
+
+앞 TASK(`…-portproxy-task-repair`)의 **판정 하나를 정정**한다.
+
+### 정정 — 「`run_hidden.vbs` 불요」는 근거가 부족했다
+
+앞 TASK 는 「정본이 SYSTEM+ServiceAccount 로 등록하므로 Session 0 격리로 창이 안 뜬다 → vbs 불요」
+로 판정했다. **그 전제가 틀렸다.** SYSTEM 으로는 애초에 이 스크립트가 동작하지 않는다:
+
+| 실행 계정 | WSL 조회 | 콘솔 창 | 근거 |
+|---|---|---|---|
+| SYSTEM | **불가** | — | `WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED` · `EXIT=-1` (프로브 작업 실측) |
+| 사용자 + Interactive | 가능 | **뜸** | `inet 172.26.154.233/20` · `EXIT=0` |
+| **사용자 + S4U** | **가능** | **안 뜸** | `Register-ScheduledTask … -LogonType S4U` 후 실행 rc=0 |
+
+즉 원래 구성(사용자 계정 + vbs 숨김)은 **비정본 우회가 아니라 SYSTEM 제약을 피한 실용적 해법**
+이었고, vbs 는 그 구성에서 필요했다. 그것을 「불요」로 단정한 것은 오판이다.
+
+**다만 결론(=vbs 를 되살릴 필요는 없다)은 유지된다** — 이유가 다르다. S4U 라는 제3의 선택지가
+창 없이도 WSL 조회를 가능하게 하므로 vbs 가 필요 없어진다. 「원래 불필요했다」가 아니라
+「이제 불필요해졌다」이다.
+
+### 변경
+
+- `src/windows/register_mysql_ai_web_portproxy_task.ps1`
+  - `-UserId "SYSTEM" -LogonType ServiceAccount` → `-UserId $RunAsUser -LogonType S4U`
+  - `-RunAsUser` 파라미터 신설(기본값 = 실행 사용자). `-RunLevel Highest` 유지.
+  - 트리거에서 `AtLogOn` 제거(S4U 와 「일부 트리거만 시작」 경고 · 의미 중복),
+    `RepetitionDuration` 1일 → 3650일(하루 뒤 반복이 멎던 문제).
+- `docs/FUNCTION.md` — 실행 계정 계약 절 신설(위 표 + 등록 계약).
+
+### 라이브 적용
+
+사용자 머신의 `mysql_ai_web_portproxy_sync2` 를 S4U 로 재등록했다(`logon=S4U user=mckim
+runlevel=Highest`, `repeat=PT5M dur=P3650D`). 매핑·접속은 유지된다.
+
+### 남은 것
+
+- **유령 작업은 재부팅 전까지 계속된다** — 옛 이름 `mysql_ai_web_portproxy_sync` 가 스케줄러
+  메모리에만 남아 wscript 를 실행한다(디스크·레지스트리는 정리됨, `schtasks /change` 는
+  「시스템에 없습니다」). 사용자가 재부팅하기로 했다.
+- 재부팅 후 S4U 작업의 `LastTaskResult` 가 0인지 확인이 남는다(재등록 직후 조회는 `267009`
+  = 실행 중 상태였다).
+
+- [x] SYSTEM 불가 실증 + S4U 대안 실증 (사용자 요청 "먼저 실증")
+- [x] 정본 등록 스크립트 교정 + FUNCTION 계약 명시
+- [x] 라이브 작업 S4U 재등록
+- [x] **재부팅 후 종결 확인 (2026-09-10 10:01)** — 아래 §종결 실측
+
+## TASK-20260909T050000-portproxy-task-repair — 예약작업 손상으로 5분마다 오류창 (사용자 제보)
+
+사용자 제보(스크린샷): `Windows Script Host — 스크립트 파일 "C:\ProgramData\mysql_ai_web_portproxy\run_hidden.vbs"을(를) 찾을 수 없습니다.` 가 반복 표시.
+
+### 진단 — 「등록은 있는데 목록에 없는」 손상 작업
+
+| 관측 | 값 |
+|---|---|
+| `wscript.exe` 부모 | `svchost.exe`(PID 2464) → 그 서비스는 **`Schedule`(Task Scheduler)** |
+| 실행 주기 | 5분 정각(12:14:00 · 12:19 · 12:24 · 13:59 · 15:04 · 15:09) |
+| 소유자 / 세션 | `DESKTOP-CK5SFCJ\mckim` / **SessionId 1**(사용자 대화형) |
+| `run_hidden.vbs` 실물 | **없음**(`C:\ProgramData\mysql_ai_web_portproxy\` 에는 ps1 3개 + 백업만) |
+| 저장소 자산 | register/sync 모두 **vbs 를 쓰지 않는다** — `powershell.exe` 직접 실행. 배포본도 동일(md5·크기 일치) |
+| `Get-ScheduledTask` | `mysql_ai_web_portproxy_sync` **조회 불가** |
+| `schtasks /query /tn` | **조회됨** — 액션은 정본과 동일한 powershell 직접 실행 |
+| `Register-ScheduledTask` | `파일이 이미 있으므로 만들 수 없습니다` (= 등록은 존재) |
+| 작업 XML | `<UserId>S-1-5-18</UserId>`(SYSTEM) + **`<LogonType>InteractiveToken</LogonType>`** |
+
+**근본 원인**: `SYSTEM` + `InteractiveToken` 은 유효하지 않은 조합이다. 이 상태에서
+① cmdlet 은 그 작업을 파싱하지 못해 목록에서 사라지고 ② `Register-*` 는 "이미 있다"며 거부하고
+③ Task Scheduler 서비스는 실행은 시도한다 — 세 모순이 한 원인에서 나온다. 정본 등록 스크립트는
+`New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest` 이므로
+**이 상태는 정본이 만든 것이 아니다**.
+
+### `run_hidden.vbs` 는 필요한가 — 아니다 (사용자 요청으로 선행 검토)
+
+vbs 래퍼의 용도는 **콘솔 창 숨김**이다. 사용자 계정 + 대화형으로 등록하면 5분마다 PowerShell
+검은 창이 뜨므로 `wscript` 로 감싼다. 그러나 정본은 **SYSTEM + ServiceAccount** 로 등록하고,
+SYSTEM 작업은 **Session 0 격리**라 사용자 데스크톱에 창을 띄우지 못한다 → 숨김 래퍼가 원천적으로
+불필요하다. 오히려 vbs 경유는 세 가지를 잃는다:
+
+1. **로그온 전 동작 불가** — 정본 트리거는 부팅·로그온·5분주기 3종. 사용자 계정 작업은 로그인해야 돈다.
+2. **권한** — `netsh interface portproxy` 변경은 승격 필요. 정본은 `RunLevel Highest`.
+3. **실패 지점 추가** — 파일 하나가 사라지면 5분마다 오류창(= 이번 증상).
+
+즉 vbs 는 **비정본 등록 방식의 증상**이지 복원 대상이 아니다.
+
+### 조치
+
+- `schtasks /delete` 로 손상 작업 제거(cmdlet 은 못 지운다) → XML 소멸 확인.
+- 정본 파라미터를 **현재 운영값 그대로 승계**해 재등록: `-ListenAddress 112.185.196.20`
+  (정본 기본값 `127.0.0.1` 을 쓰면 LAN 접속 경로가 끊긴다) · `-DistroName Ubuntu` ·
+  `-RemoteAddresses LocalSubnet`. sync 는 80/443(+레거시 18080)만 다루므로 `0.0.0.0:6379`·
+  `0.0.0.0:28080` 매핑은 무영향.
+- **매핑·접속은 전 구간 유지**(`112.185.196.20:80/443 → 172.26.154.233`, healthz 200).
+
+### ⚠ 진짜 원인 — 「XML 과 레지스트리 캐시의 불일치」 (이벤트 로그로 확정)
+
+작업 스케줄러 이벤트 로그(임시 활성화)가 결정적 증거를 냈다:
+
+```
+EV id=200  TaskName=\mysql_ai_web_portproxy_sync  Action=C:\Windows\System32\wscript.exe
+EV id=129  TaskName=\mysql_ai_web_portproxy_sync  PID=35340
+```
+
+같은 작업의 **XML 파일 내용은 `Command=powershell.exe`** 다(`C:\Windows\System32\Tasks` 229개
+파일 전수 검색으로 확인 — 매칭 1건, 그 안에 vbs 없음). 즉 **정의(XML)와 실행 액션(레지스트리
+`TaskCache`)이 어긋나 있고 스케줄러는 캐시 쪽을 실행한다.**
+
+이것이 모든 모순을 설명한다 — 왜 `Get-ScheduledTask` 로 안 보이는지, 왜 `Register-*` 가
+「이미 있다」며 거부하는지, 그리고 **왜 삭제 후 같은 이름으로 재등록해도 vbs 가 되살아나는지**
+(같은 이름이 옛 캐시를 물려받는다). 이 cycle 에서 두 번 복원했는데도 재발한 이유가 이것이다.
+
+관측된 재발 시각: 12:14 · 12:19 · 12:24 · 13:59 · 15:04 · 15:09 · 15:34 · 15:49 · 15:54 — 5분 정각.
+중간의 공백은 **떠 있는 오류창 인스턴스가 `MultipleInstances IgnoreNew` 로 새 실행을 억제**한
+것이며(닫으면 다음 경계에 다시 뜬다), 이를 「해결됨」으로 오독하지 않도록 매번 창을 닫고 재관측했다.
+
+### 최종 조치 (사용자 결정 2026-09-09)
+
+1. **새 이름으로 등록** — 옛 이름은 캐시가 오염됐으므로 `mysql_ai_web_portproxy_sync2` 로
+   `schtasks /create /sc MINUTE /mo 5 /ru SYSTEM /rl HIGHEST`. 등록 후 **`Get-ScheduledTask` 조회가
+   정상 동작**(=손상 없음)함을 확인했다. 저장소 등록 스크립트는 `-TaskName` 파라미터를 받으므로
+   정본 변경은 필요 없다.
+2. **레지스트리 고아 항목 제거** — 옛 이름 작업을 지우고 XML 이 사라진 뒤에도 그 이름으로 실행이
+   계속됐으므로(15:54 실측), `TaskCache\{Tree,Tasks,Plain,Boot,Logon,Maintenance}` 의 해당 GUID
+   항목을 **`reg export` 백업 후** 삭제했다.
+
+### 실측 결과 (2026-09-09 15:51~16:06)
+
+| 항목 | 결과 |
+|---|---|
+| 새 작업 `mysql_ai_web_portproxy_sync2` | 등록 성공 · **`Get-ScheduledTask` 조회 정상**(= 손상 없음) · SYSTEM · 5분 주기 |
+| 옛 이름 작업 | `schtasks /delete` 성공 · **XML 소멸 확인** · `TaskCache\Tree\<옛이름>` 은 **Id·속성이 빈 껍데기**만 남음(실행 근거 아님) |
+| 레지스트리 고아 항목 | `Tree` Id 조회·`Tasks` 역탐색 모두 **0건** — 삭제 대상이 이미 없었다(앞선 `schtasks /delete` 가 함께 지웠다) |
+| sync 스크립트 직접 실행 | **exit 0** · `portproxy_action: "unchanged"`(멱등) · 80·443 `verify_listen`·`verify_connect` 모두 `true` |
+| 매핑·접속 | 전 구간 유지 — `112.185.196.20:80/443 → 172.26.154.233`, `healthz 200` |
+| 8분 재발 관측(15:57~16:05) | **0건** |
+
+### ⚠ 재발 종료는 아직 단정하지 않는다 (정직 표기)
+
+8분 무재발은 관측됐으나, **그 창 내내 15:54:00 에 뜬 인스턴스(pid 4896)가 살아 있었다.** 이 작업은
+`MultipleInstances IgnoreNew` 라 살아 있는 인스턴스가 새 실행을 억제하므로, 「무재발」과
+「억제됨」이 관측만으로 갈리지 않는다. 이 cycle 에서 같은 착시를 두 번 겪었다(15:15~15:27 ·
+15:57~16:05) — **떠 있는 창을 닫은 뒤 5분 경계를 2회 이상 지켜봐야 확정된다.**
+
+남은 확인은 사용자가 화면의 오류창에서 [확인]을 누른 뒤 10분 관찰하는 것으로 충분하다.
+다시 뜬다면 스케줄러 서비스의 메모리 캐시가 원인이며(서비스 재시작은 보호되어 불가), 그때는
+**재부팅**이 남은 수단이다.
+
+### 미해소 · 주의
+
+- `Register-ScheduledTask`(cmdlet)는 이 머신에서 계속 `매개 변수가 틀립니다`(0x80070057)로 실패해
+  `schtasks /create` 로 등록했다. 등록 후에도 **cmdlet 조회는 여전히 안 된다**(`schtasks` 로는 정상).
+  작업 정의가 아니라 이 머신의 조회 계층 문제로 보이나 원인 미규명.
+- 레지스트리 `TaskCache\Tasks` 229건 전수 스캔에서 `run_hidden` 참조 **0건** — 고아 항목 가설은 기각.
+- 작업 스케줄러 이벤트 로그(임시 활성화 후 원복)로 12분 관측 시 잡힌 wscript 실행 작업은
+  `\WSL Load Monitor`(1분 주기, `E:\wsl-load-monitor\Run-WslLoadMonitorHidden.vbs`, 파일 존재, 무관)뿐.
+- **재발 종료 여부는 별도 관측으로 판정한다** — 12분 무출현이 관측됐으나 그 시점 기존 인스턴스가
+  살아 있어 `MultipleInstances IgnoreNew` 로 억제됐을 가능성을 배제하지 못했다.
+
+- [x] 원인 진단 + `run_hidden.vbs` 필요성 검토(불요 판정)
+- [x] 손상 작업 제거 + 정본 파라미터 승계 재등록 + 매핑·접속 무결 확인
+- [x] 새 이름(`_sync2`)으로 정상 등록 + sync 직접 실행 exit 0 + 매핑·접속 무결
+- [ ] **재발 종료 확정** — 떠 있는 인스턴스가 억제 중이라 미확정. 창을 닫고 5분 경계 2회 관측 필요.
+      재발 시 남은 수단은 재부팅(스케줄러 메모리 캐시).
+
 ## 1. Current Status
 - State: in-progress
 - Owner: AI

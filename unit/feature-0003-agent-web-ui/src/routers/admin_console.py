@@ -71,7 +71,7 @@ def admin_ai_job_status(task_id: str, request: Request,
                         account=Depends(app.require_permission(
                             "console.access", message="관리 콘솔 접근 권한이 필요합니다.")),
                         conn=Depends(app.get_conn)) -> JSONResponse:
-    """feature-0043 TASK-20260831T100000 — 위임한 콘솔 작업의 진행/결과 폴링.
+    """feature-0043 TASK-20260831T100000 — 위임한 콘솔 작업의 진행/결과 폴링 (관리 콘솔 경로).
 
     ## 왜 대화 축(`/api/ai/bridge_status`)을 재사용하지 않는가
 
@@ -86,8 +86,25 @@ def admin_ai_job_status(task_id: str, request: Request,
 
     없는 task 와 남의 task 를 구분하지 않는다(둘 다 404) — 구분하면 응답 차이로 남의 task id
     존재 여부를 알아낼 수 있다.
+
+    ## 프로필 경로와의 관계 (TASK-20260909T000000-prompt-autogen-delivery)
+
+    같은 조회를 로그인만으로 하는 `/api/profile/ai-jobs/{task_id}` 가 생겼고, 신규 위임 응답의
+    `poll_url` 은 그쪽을 가리킨다. 이 경로는 **호환을 위해 남는다** — 응답 조립은 두 경로가
+    같은 함수를 쓰므로 계약이 갈리지 않는다. 스코프도 동일(`AccountId`)해서 이 라우트가 더
+    많은 것을 보여 주지 않는다. 권한만 더 좁다.
     """
-    from shared.bridge_tasks import job_label, load_console_job
+    return _ai_job_status_response(task_id, account, conn)
+
+
+def _ai_job_status_response(task_id: str, account, conn) -> JSONResponse:
+    """위임 작업 조회의 공통 본문 — 권한은 라우트가, 내용은 여기가 정한다.
+
+    프로필 경로(`routers/profile.py`)도 이 함수를 부른다. 두 경로가 같은 스코프·같은 응답을
+    말하게 해, "admin 으로 물으면 보이는데 프로필로 물으면 안 보이는" 갈림을 만들지 않는다.
+    """
+    from routers._console_jobs import build_job_status_payload
+    from shared.bridge_tasks import load_console_job
 
     if conn is None:
         return app._json_error("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
@@ -95,71 +112,26 @@ def admin_ai_job_status(task_id: str, request: Request,
     job = load_console_job(conn, str(task_id), account_id=account_id)
     if job is None:
         return app._json_error("작업을 찾을 수 없습니다.", 404)
-
-    status = str(job.get("status") or "")
-    submitted = status == "submitted"
-    applied = job.get("applied_at") is not None
-    error = str(job.get("apply_error") or "")
-    # 국면은 **서버가 한 단어로** 정한다 — 프런트가 조합하면 화면마다 갈린다(대화 축과 같은 규율).
-    if status in ("canceled", "expired"):
-        phase = "canceled"
-    elif not submitted:
-        phase = "working" if job.get("claimed_by") is not None else "waiting"
-    elif error:
-        # 「제출됐지만 반영 실패」는 성공이 아니다 — 합치면 화면이 완료라 말하는데 값이 없다.
-        phase = "apply_failed"
-    else:
-        phase = "done"
-    return JSONResponse({
-        "task_id": job["task_id"],
-        "job_kind": job["job_kind"],
-        "label": job_label(job["job_kind"]),
-        "phase": phase,
-        "status": status,
-        "claimed": job.get("claimed_by") is not None,
-        "applied": applied,
-        "apply_error": error,
-        # 본문은 **완료됐을 때만** 싣는다. 진행 중에 부분 결과를 흘리면 화면이 그것을 최종으로
-        # 읽고 폼에 채운 뒤, 잠시 뒤 다른 값으로 덮인다.
-        #
-        # ⚠ **각인본(`Answer`)을 주지 않는다** (2026-08-31 라이브 제보). 그것은 감사 보존·지연
-        #   인젝션 방어용이고, 화면에 그대로 주면 `⟦UNTRUSTED-DATA⟧ …` 래퍼가 통째로 폼
-        #   입력란에 들어간다. 원문은 제출 시점에 `JobResult` 로 따로 보존한다.
-        "result": (_console_job_body(job) if submitted else None),
-        # 적재 시점에 굳힌 입력. 화면이 **서버 봉투를 재구성**하는 데 쓴다 — 직접 경로는
-        # `{target, suggestion}` 같은 봉투를 서버가 만들지만, 위임 결과는 AI 가 낸 본문뿐이라
-        # "이 답이 무엇에 대한 것인가" 를 화면이 알아야 폼의 어느 칸에 넣을지 정한다.
-        "payload": _console_job_payload(job.get("payload")),
-    })
+    return JSONResponse(build_job_status_payload(job))
 
 
 def _console_job_body(job) -> str:
-    """화면에 줄 **원문**. `JobResult`(정본) → 없으면 각인본을 벗겨 폴백.
+    """호환 별칭 — 정본은 `routers._console_jobs.console_job_body`.
 
-    폴백이 있는 이유: 이 수정 **이전에** 제출된 작업은 원문 컬럼이 비어 있다. 그 행들을
-    버리면 사용자는 이미 AI 가 답한 작업을 다시 시켜야 한다.
-
-    새 코드가 폴백에 의존하지 않게 순서를 이렇게 둔다 — 정본이 있으면 파싱하지 않는다.
+    본체를 그리로 옮긴 이유: 프로필 경로도 같은 조립을 쓰는데, 그 구현이 `console.access`
+    라우터 모듈 안에만 있으면 «관리 콘솔용» 이라는 잘못된 계층 신호를 준다. 이름은 기존
+    호출부(테스트 포함)를 위해 남긴다.
     """
-    raw = job.get("result")
-    if raw:
-        return str(raw)
-    from session_guard import unwrap_external_answer
+    from routers._console_jobs import console_job_body
 
-    return unwrap_external_answer(job.get("answer") or "")
+    return console_job_body(job)
 
 
 def _console_job_payload(raw):
-    """저장된 JSON payload → dict. 깨졌으면 `None`(화면은 그때 폼 컨텍스트로 폴백한다)."""
-    if not raw:
-        return None
-    try:
-        import json as _json
+    """호환 별칭 — 정본은 `routers._console_jobs.console_job_payload`."""
+    from routers._console_jobs import console_job_payload
 
-        parsed = _json.loads(raw)
-    except (TypeError, ValueError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return console_job_payload(raw)
 
 
 @router.get("/api/admin/permissions")

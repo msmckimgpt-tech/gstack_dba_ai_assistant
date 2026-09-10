@@ -4831,3 +4831,107 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 
 - TASK: TASK-20260908T020000-delegation-friction
 - 최신 main의 DQA 1.1.2·러너 복구·트레이 안내를 보존한 통합본의 전체 회귀와 독립 리뷰 결과를 기록했다. JUnit 8,075건 중 8,059 PASS/16 skipped/실패0이며 native-client 531건을 포함한다. 설치 앱의 미검증 범위는 별도로 유지한다.
+
+## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Related TASK: TASK-20260908T120000-connect-discovery-ux
+- 이유: 모든 AI를 하나의 선택으로 묶던 흐름을 플랫폼별로 바꾸고, 매번 위치를 고르는 비용과 잘못된 완료 알림을 줄인다.
+- 변경: DQA가 지정한 `BRIDGE_RUNTIME_SELECTION`이 있으면 그 파일의 플랫폼/실행 경로/WSL 배포판·사용자만 사용한다. 잘못된 파일은 임의 자동 탐색으로 우회하지 않는다. WSL 실행은 배포판·계정·홈을 명시하고 프롬프트를 argv의 리터럴 값으로 전달한다. 기존 WSLENV 토큰 전달과 DQA 호스트 네트워크 범위 설정을 유지한다.
+- 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
+- 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.
+
+## CHG-20260908-connect-release-evidence
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 최종 DQA 1.2.0 실행 파일에서 첫 연결과 재시작 선택 재사용을 확인한 JSON을 보존했다. native 픽셀 캡처 불가와 서비스/API/벤더 대역 범위를 명시했다. 설치기 26,037,943 bytes, SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`.
+
+## CHG-20260908T041713-connect-published
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
+- 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+- 테스트/실측 정본: feature-0046-native-client/docs/test-runs.d/20260908-codex-connect-fix.md.
+
+## CHG-20260908T063000-prompt-layers
+- Timestamp: 2026-09-08T06:01:15.332094+00:00; Session: 01a07f86-30e8-7493-ab26-ae82792def88; Related TASK: TASK-20260908-prompt-layer-delivery.
+- 여섯 계층 SQL 조회 실패 은폐와 제품 이름 조회에 의한 지침 누락을 수정했다. API는 불완전한 지침을 실행하지 않으며 재시도 안내·5초 간격·점유자 비교를 적용한다. 러너 진단은 길이/해시/실제 채널만 기록한다.
+## CHG-20260908T150000-attachment-boundary-cross-ref
+
+- 2026-09-08T06:09:53.549929+00:00; Session: 01a07f94-148f-7253-a515-1a7a66a97cea. feature-0003-agent-web-ui REQ-20260908-attachment-boundary 동반: core 첨부 권위 지침·worker 빈 성공본문 및 bridge recall 보존. 검증 정본: feature-0003-agent-web-ui/docs/REPORT.md, TASK-20260908T150000-attachment-boundary. 단일 primary feature verify.
+
+## CHG-20260908T152000-codex-heartbeat-snapshot
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- 통합 회귀가 빈/옛 heartbeat 요청 도중 게시된 새 catalog를 미송신 상태에서 cache로 강등하는 경쟁을 발견했다.
+- 항상 실제 송신 snapshot을 유지하고 성공 처리 시 같은 행만 cache로 전환한다. 새 선택·모델은 다음 실제 수락을 기다린다.
+- 빈 요청/옛 선택 요청 모두 결정적 회귀로 검증한다. 기존 source==catalog 단정을 약화하지 않았다.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.
+
+## CHG-20260908T160200-codex-verified-closeout
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+
+## CHG-20260908T162000-tool-surface
+
+- 2026-09-08T08:01:57.915443+00:00; TASK-20260908T162000-tool-surface. 외부 AI 도구 누락과 검색/권한 경계 보완의 정본은 feature-0003-agent-web-ui/docs/TOOL_SURFACE_AUDIT.md 및 해당 TASK/REPORT. 사용자 요청 범위로 기존 가드를 유지하고 조회5종을 연결한다.
+
+## CHG-20260909T000000-prompt-autogen-delivery
+
+- 2026-09-09T02:38:30.342995+00:00; TASK-20260909T000000-prompt-autogen-delivery. 사용자 신고("프로필 > 프롬프트 > 내 프롬프트 의
+  자동 작성이 동작하지 않는다")의 근본 원인은 **위임 봉투를 화면이 읽지 않은 것**이다. 게이트가 닫힌
+  배포에서 자동작성은 개인 AI 로 위임되고 서버는 SSE 대신 `{"bridge_pending":true, poll_url, task_id}`
+  JSON 을 주는데, 자동작성 3진입점(프로필 '내 프롬프트' · 관리 콘솔 역할/제품)은 전환 이전의 SSE 전용
+  파서로 남아 그 JSON 을 조용히 버렸다. 라이브 실증 2026-09-08 19:56 — 요청 200, `WebAiTasks
+  j_LO28YKoH0ifGR5E7` 적재·러너 3초 제출까지 정상, 화면만 무반응.
+- 변경: 폴링 헬퍼를 `static/console-job-poll.js`(의존 0)로 분리(종전 위치 `admin/llm-state.js` 는
+  `adminState` 를 import 해 관리 콘솔 밖에서 쓸 수 없었다 — 그것이 프로필 화면이 못 쓴 구조적 이유) ·
+  `llm-state.js` 는 re-export 로 기존 호출부 무회귀 · `app.js`·`admin.js` 가 SSE 소비 **앞**에서 위임
+  봉투 분기 · 로그인만 요구하는 `GET /api/profile/ai-jobs/{task_id}` 신설(스코프는 `AccountId` 로
+  admin 경로와 동일 — 권한 확대 아님) · 두 폴링 경로가 같은 조립 함수(`build_job_status_payload`) 사용 ·
+  러너 실패 대체문(`RUNNER_DEGRADED_NOTICE`) 판정으로 `degraded` 표시 → 화면이 프롬프트 본문을 덮지 않음 ·
+  폴링에 `AbortSignal` 지원.
+- 범위 결정: 사용자 확인(2026-09-09) — ① 자동 작성 3진입점 모두 ② 폴링 권한 축 함께.
+- 위험: Major(§12.3). 인증·인가 **정책** 변경 없음 — 추가 조회 경로는 자기 계정이 연 작업만 반환하며
+  기존 admin 경로와 같은 술어를 쓴다. 파괴적 데이터 변경·마이그레이션 없음.
+- 부수 정합(내 변경이 만든 것이 아님): base `cdd414e3` 에서 이미 붉던 `test_route_parity_p5b`(golden
+  drift 2건 — `/api/ai/connect/identity` · `/api/ai/tools/get_tool_catalog`)와
+  `test_cancel_channel_adds_no_new_tool`(명시 도구 7→8, 매니페스트·MCP 어댑터 2벌 등재 확인 후 숫자만 이동).
+- 검증: pytest 21 신규 · jsdom 행위 하네스 15 · 뮤턴트 2종 KILL(원래 결함 재현 시 FAIL) ·
+  `codex review --uncommitted` ACCEPTED(P1 0) · 컨테이너 `make test`.
+## CHG-20260909-session-continuity
+
+- 이유: 매 질문마다 새 CLI를 실행해 네이티브 대화 연결이 없었고, 서버 문맥 6개/4,000자는 여러 그룹 참여자가 호출한 assistant까지 이어가기 어려웠다.
+- 변경: 새 `agent/sessions.py`를 번들 순서에 등록하고 실제 CLI JSON ID 재개, 계정/대화/위치/지침 결속, 프로세스 잠금, 제출 후 이력 확정을 연결했다. handler의 잠금 수명은 생성·자기검토·제출을 포함한다. 최신 서버 snapshot은 재개 여부와 무관하게 전달한다.
+- 서버: 질문 task metadata와 assistant 호출자를 기록하고 정확한 현재 질문 제외, 진행문 제외, 80개/48,000자 문맥 및 전체 변경 지문을 반환한다. 실패한 이력 조회는 점유 해제·503이다. schema/권한/새 route 변경 없음.
+- 검증 및 남은 실측: [Run](test-runs.d/20260909-session-continuity.md).
+## CHG-20260909T020000-prompt-autogen-postdeploy
+
+- 2026-09-09T03:03:21.021268+00:00; TASK-20260909T000000-prompt-autogen-delivery 의 **출하 후 기록**(코드 변경 0).
+  PR #1644 머지(main `00981307`) · `deploy-web.sh --web-only` exit 0 · 90초 soak 통과 ·
+  라이브 도달 3축 실측(서빙 `app.js`/`console-job-poll.js`/`admin.js` 에 새 배선 · 신규 라우트
+  401 vs 없는 경로 404 대조군)을 Run 원장에 기록했다. DQA-client 실측은 러너 자격이 필요해
+  `Result: NOT-RUN` + 사유·하위 검증으로 남겼다(PB-0009 · check #13).
+
+## CHG-20260909T040000-prompt-autogen-liveverify
+
+- 2026-09-09T03:28:34.666188+00:00; 사용자 요청("실측까지 진행해주세요")에 따른 **라이브 실측 기록**(코드 변경 0).
+  검증용 러너를 기동해 위임이 성립하는 조건을 만든 뒤, 서버 왕복(`bridge_pending` → 폴링 `done`,
+  655자)과 실제 브라우저 화면(「연결된 AI 가 작성했습니다 (559자)」 + 입력란 채워짐)을 모두 관측했다.
+  Run 2 를 `NOT-RUN` → **PASS** 로 갱신. 검증 후 화면·러너·세션·토큰을 원상복구했다.
+
+## CHG-20260909T124035-session-integration-evidence
+
+최신 main 통합 284f6abd의 문서 동반 기록을 보완한다. 제품 코드 추가 변경 없음. 통합91건 PASS, 양측 변경 보존 확인. 병합 커밋의 post-commit 게이트는 추가 delta를 인식하지 못해 TASK/CHG/review 3항목 실패했고 이번 후속 문서 커밋으로 명시한다.
+
+## CHG-20260909T125141-session-claim-identity
+
+설치 DQA 첫 응답은 성공했으나 세션 상태가 생성되지 않았다. 실제 claim JSONResponse에 `conversation_id`가 없어 러너가 세션 사용을 건너뛰는 P1이었다. 인증·대화 접근 검사를 통과한 변수로 최상위 ID를 전달한다(1줄). 실제 전체 payload→handle_one→SessionBinding 두 호출 회귀를 추가해 수정 전 RED/후87 PASS를 확인했다. 기존 부분 계약 테스트와 CLI 실측이 실제 HTTP/앱 전달을 대신하지 못한 한계를 기록한다.
+
+## CHG-20260909T130116-session-installed-acceptance
+
+제품 코드 변경 없이 보완 배포 및 설치 DQA 실제 재개 결과를 기록한다. 첫 결속·후속 재개 둘 다 완료, 동일 native ID 및 상태4→6, 합성 문자열 회상 UI PASS. 다계정 그룹 앱 왕복 NOT-RUN은 유지한다.

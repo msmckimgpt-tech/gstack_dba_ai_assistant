@@ -8,244 +8,44 @@ source_of_truth: true
 
 # Report
 
-## TASK-20260908T113000-bridge-token-env — 2026-09-08
+## TASK-20260909-nondisruptive-update
 
-클라이언트 회귀 테스트를 현재 이벤트 등록·실패 안내·앱 내부 실행 버튼 숨김 경로에 정합. DQA 클라이언트 단독 사용 기준 유지. 내부 토큰 전달 복구는 feature-0043 소유.
-집중 회귀 검증 및 UX/design 리뷰 후 PR·배포 진행. 최종 배포 증거는 PR과 feature-0043 검증 원장 참조.
+DQA 1.3.0은 현재 앱과 AI 연결을 유지한 채 새 버전을 설치하고, 사용자가 정상 종료한 다음 실행부터 적용한다. 실행 중인 전체 앱·Python을 덮어쓰던 구조를 매번 새 versions 폴더에 설치하는 구조로 바꿨다. payload 실행 검사와 설치 완료 후에만 원자적으로 실행 대상을 교체한다.
 
+고정 런처를 바로가기·자동시작·스킴이 공유한다. 기존 루트 실행 파일은 rename으로 보존하고 같은 이름에 호환 런처를 배치해 오래된 실행 경로도 유지한다. 새 구조의 이전 슬롯 실행도 활성 슬롯으로 전달한다. 설치 완료 후에는 현재 앱을 다시 열거나 종료하지 않는다. 실패는 현재 앱을 유지하고 알리며, 단순 installer spawn을 성공으로 기록하지 않는다.
 
-## 1. 현재 상태
+기존1.2.x 자체 업데이터의 종료 코드는 소급 변경할 수 없다. 최초 전환도 중단 없이 하려면 새 설치기를 직접 실행한다. 그 뒤1.3.0 이상의 업데이트 메뉴는 작업을 유지한다. 창 닫기는 트레이 숨김이므로 새 버전 적용 시점이 아니다. 미서명 자동 적용 기본 off 유지. 실행 중일 수 있는 옛 슬롯을 삭제하지 않아 설치 횟수에 따라 디스크 사용량이 증가한다.
 
-**2026-09-08 — DQA 1.1.2 마상 브랜드 아이콘.** 공식 심볼의 사선과 시안→보라→마젠타 흐름을 Q·데이터 2행으로 정리했다. 앱 창·트레이·EXE·바로가기·설치/제거 프로그램이 같은 ICO를 사용한다. 웹 테마는 사용자 확정 범위에서 제외했다. 검증·릴리스 상세는 `test-runs.d/20260908T020049-brand-icon.md`가 정본이다. **PR #1608 병합(2e50db70) 및 1.1.2 배포 완료.** 공개 엣지의 최신 릴리스 조회와 설치기 다운로드 모두 200이며 검증한 Windows 빌드와 크기·SHA-256·전체 바이트가 같다. 기존 앱의 [업데이트 확인] 또는 연결 화면 다운로드로 적용한다. 사용자 머신에서 설치·제거를 실행한 것으로 보고하지 않는다.
+## 검증
 
-이하 2026-09-07 채널 작업 기록과 미검증 경계는 기존 이력이다.
+- CLI: native 전체617 passed /1 skipped, focused112 passed. 릴리스노트 렌더34개 통과.
+- 독립 리뷰2명: backend/security/QA, UX/design. 최대3회 범위에서 P1/P2 전부 수정 후 번들 PASS. 실제 Windows 수용 판정과 구분한다.
+- Windows: 실제 설치한 DQA의 격리 홈/설치 경로, 제어된 페이지·자식 러너로 8개 설치 시나리오 및 실제 노트 렌더·이전 슬롯 실행 전환 통과. 실제 사용자의 앱/토큰/로그인 저장소는 변경하지 않았다.
+- [최종 실측 원장](test-runs.d/20260909-nondisruptive-update.md)에 성공·실패·미검증 경계를 함께 기록한다.
 
-**2026-09-07 — 다른 머신이 새 버전을 받을 수 있다.** 그 전까지 이 프로그램에는 **자기 버전이라는
-개념 자체가 없었고**, 배포물이 서버에 도달하는 경로도 없었다(`ROADMAP §10.2` 미해결). 이번
-cycle 이 그 둘을 함께 세웠다 — 반입 · 서빙 · 수신 · 롤백이 한 바퀴 돈다.
+## Git 동기화 결과
 
-흐름은 한 방향이고 각 단계에 정본이 하나다:
+- worktree: `.worktrees/feature-0046-nondisruptive-update`; branch `ai/codex/feature-0046-nondisruptive-update`.
+- 제품 commit `c039297d`, PR [#1663](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1663) 병합 `2c5d6c66`. pre/post verify PASS. GitHub Actions 실행 결과는 별도로 제공되지 않았다.
+- 1.3.0 공개:26,138,425 bytes, SHA-256 `72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3`. 실제 HTTPS/프로젝트CA 다운로드가 검증한빌드와일치. [채널 근거](artifacts/20260909-nondisruptive-update/channel.json).
+- 웹 릴리스노트 배포: main제품 `2c5d6c66`, web-a/web-b ready 및90초soak PASS, asset_stamp `aaffca7a36d4` 일치. healthz200·실제서빙노트·KEK주입존재(값비공개) 확인. [배포로그](artifacts/20260909-nondisruptive-update/deploy-web.log).
+- 배포 경고: compose의 임시metadata파일경합이 발생했으나 canonical배포기가 이미지/GIT_COMMIT 실물을 대조해 정상빌드를 확인하고계속했다. web-only이므로 대화스모크/워커교체는 수행하지 않았다.
+- 검증용Windows 앱은전부종료됐음을조회했고 격리설치제거도exit0. 사용자원본설치/앱은변경하지않았다.
+- 후속커밋은출하문서/증적/파일모드만변경하며 배포된제품코드·바이너리는동일하다.
+- 정책 SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2` (worktree 및 main 동일).
+- 이전 기록: [report history](report-history/20260909-before-nondisruptive-update.md).
 
-| 단계 | 정본 | 산출물 |
-|---|---|---|
-| 버전 | `src/client/version.py` | 빌드가 `.iss` 에 주입, 테스트가 대조 |
-| 반입 | `src/scripts/publish_release.py` | 호스트 `artifacts/client-release/` |
-| 서빙 | `feature-0003/src/routers/client_release.py` | `GET /api/ai/client/latest` · `/client/<파일>` |
-| 수신 | `src/client/updater.py` | 트레이 [업데이트 확인] → 확인창 → 설치 |
+## TASK-20260910-transparent-icon-release
 
-사용자 결정 2026-09-07: **확인 후 적용**(자동은 홈 설정 토글, 기본 꺼짐) · **호스트 릴리스
-디렉토리** 반입. 규율은 러너 자기 갱신(`feature-0043/src/agent/selfupdate.py`)에서 이식했다 —
-같은 위험을 두 번 다르게 풀면 한쪽만 고쳐지는 드리프트가 난다.
+사용자 요청: 전진한 버전을 반영하여 투명 아이콘을 배포까지 완료한다. 이전 SVG 승인과 마상 브랜드 방향을 유지한다.
 
-**실측**: feature 스위트 **506/506 PASS**(신규 124건) · 결함 주입 **15/15**(되돌리면 FAIL,
-§16.7 G11-b) · 실 TLS 서버 **종단 8단계 PASS**(반입 → 서빙 → 수신 → 무결성 거절, 받은 바이트가
-올린 바이트와 byte-동일).
+- 현재 main/공개 채널 1.3.0을 통합하고 1.3.1을 준비한다. 슬롯 설치와 실행 중 연결 유지, 텍스트 선택·검색 등 최신 기능을 보존한다.
+- 안정 실행기·ICO 경로를 창 재실행 속성/바로가기/프로토콜/제거 표시에 사용하고 기존 실행기의 PE 아이콘도 무중단 교체한다.
+- 정책 SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 위험도 Minor, 사용자 배포 명시 승인.
+- 이전 아이콘 작업/잠금 화면으로 시각 검수 보류한 증적: [20260910-before-icon-release.md](report-history/20260910-before-icon-release.md). 1.1.3 후보는 게시하지 않는다.
 
-**라이브**: `main` **697ffa84** 로 배포 완료 — 배포본에서 채널을 다시 쟀다(§4).
-격리 스위트가 통과한 것과 배포된 이미지가 그 채널을 서빙하는 것은 다른 축이며, 특히
-「호스트 디렉토리가 컨테이너 안으로 정말 들어오는가」는 compose 를 고친 것만으로는 증거가
-되지 않는다. ⚠ 다만 그 실측은 **web-a 컨테이너 내부 포트**로 쟀다 — **엣지(caddy) 경유와
-web-b 는 재지 않았고**, 사용자 표면(연결 화면의 「연결 프로그램 받기」)도 브라우저로 보지
-않았다(§4.1). 지금 광고 중인 릴리스는 **없다**(404) — 그것이 정상이다.
+## 2026-09-10 — 투명 아이콘 1.3.1 검증
 
-**적대 검증 2라운드**(§18.8): 1라운드 BLOCK(P1 3 · P2 3 · cross-domain 6) → 수정 →
-확인 라운드 BLOCK(P1 2 · cross-domain 6) → 수정. 2라운드 P1 2건은 **1라운드 수정이 새로 넣은
-코드**에 있었고, 그래서 처방을 국소 수정이 아니라 **판정면 재배치**로 올렸다 — 취득 파일을
-흐름별로 유일화하고 `apply()` 직전에 그 파일을 다시 세며(`verify_file`), 순서의 정본을
-`updater.run_flow` 하나로 모으고 프로세스당 단일 실행 게이트를 뒀다.
-
-이전(2026-09-04): 닫기 = 트레이로 · 종료 = 아이콘 우클릭 [종료] 3 껍데기 공통 계약.
-
-## 2. 남은 리스크
-
-- ⚠ **§18.8 3라운드 패널은 돌리지 못했다.** 수렴 계약 (a) 는 「마지막 라운드 P1 0」을 종결
-  조건으로 두는데, 2라운드 P1 5건을 고친 뒤의 확인은 **패널이 아니라 자체 실측**이다 —
-  세션 사용량 한도(429, reset 17:00 KST)로 3라운드를 띄울 수 없었다. 그 대신 2라운드가
-  지목한 각 결함에 **회귀 게이트를 코드로 박고**(두 스레드 동시 실행 · `verify_file` ·
-  단일 실행 · 파리티 실물 대조 · 매니페스트 실패 사유) **결함 주입 15/15 로 되돌리면 FAIL**
-  함을 확인했다. 그것을 「P1 0 확인」과 동일시하지 않는다 — 다음 세션의 첫 작업으로
-  3라운드를 돌리는 것이 옳다.
-- ⛔ **설치기 실제 실행은 미실측.** `updater.apply()` 의 인자·detach 플래그와 `.iss` 의
-  `/RELAUNCH` 분기까지는 잠겼지만, **파일을 실제로 갈아 끼우고 다시 뜨는 그 한 걸음**은
-  Windows 빌드 머신이 있어야 잰다. 「인자가 맞다」와 「설치가 된다」는 다른 축이다 —
-  추정을 실측으로 보고하지 않는다(§16.7 G7-c). Windows 머신이 생기면 **가장 먼저 볼 넷**:
-  ① `PrivilegesRequired=lowest` + `…OverridesAllowed=dialog` 조합에서 무음 설치가 권한 선택
-  대화상자를 어떻게 처리하는가(억제되지 않으면 업데이트가 **아무 창도 없이 멈춘다**)
-  ② `/RELAUNCH` 가 Inno 의 미지 스위치로 조용히 무시되지 않는가 ③ `ParamStr` 분기가 실제로
-  참이 되는가 ④ 관리자 설치 머신에 per-user 무음 업데이트가 **두 번째 사본**을 만들지 않는가.
-- **미서명 설치기의 잔여 위협에 분리 서명을 검토하지 않았다.** 적대 리뷰가 제기한 대안이다 —
-  동결 exe 에 공개키를 박고 매니페스트에 분리 서명을 얹으면, **서버 침해·릴리스 디렉토리
-  쓰기 획득** 시나리오에서 유일하게 남는 방어선이 생긴다(지금 그 시나리오의 잔여 방어는
-  0 이다 — sha256 도 공격자가 함께 바꾼다). EV 코드 서명보다 비용이 낮다. 키 관리 결정이
-  선행이라 이 cycle 범위 밖이며, **미검토가 아니라 이연**으로 기록한다.
-- ~~**릴리스 디렉토리 첫 생성이 사람 몫이다.**~~ → **이 인스턴스에서는 해소**(2026-09-07).
-  릴리스 디렉토리가 없으면 docker 가 **root 소유로 만들어** 비-root 퍼블리시가 막히므로,
-  배포 **전에** 배포 사용자 소유로 선생성했다(현재 `claude-corp:claude-corp`, 컨테이너 안에서
-  `1001:1002`). ⚠ **다른 인스턴스에는 그대로 남는 함정이고, 처방의 경로를 틀리면 함정이
-  그대로 발동한다.** compose 의 마운트 원본은 `../artifacts/client-release` 이고 project dir 은
-  `repo/` 다 — 그 cwd 에서 `mkdir -p artifacts/client-release` 를 치면 **아무도 마운트하지 않는
-  `repo/artifacts/client-release` 미끼**가 생기고(그 디렉토리는 실재한다) 진짜 경로는 여전히
-  root 소유로 만들어진다. 옳은 처방:
-  `mkdir -p <project_root>/artifacts/client-release`(또는 `repo/` 에서 `mkdir -p ../artifacts/…`).
-  같은 오문이 `docker-compose.yml` 주석에도 있었고 이 cycle 에서 함께 고쳤다 — 그 주석이
-  이 처방의 원천이다.
-- ⚠ **사람용 다운로드 버튼에는 버전 게이트가 없다.** `client_release.download_url()` 은
-  릴리스가 **존재하면** URL 을 돌려주고 버전을 비교하지 않으므로, 연결 화면의
-  「연결 프로그램 받기」는 `updater.py` 의 `is_newer` 판정 **밖**이다. 정상 운용에서는 문제가
-  아니다(올린 것은 곧 최신이다). 문제가 되는 경우는 **의도적으로 낮은 버전을 올릴 때**이며,
-  이번 배포 검증이 정확히 그것을 했다 — §4.2 참조. 앞으로 그런 검증은 라이브 디렉토리가
-  아니라 `CLIENT_RELEASE_DIR` 을 가리킨 격리 인스턴스에서 한다.
-- ~~`/client` 마운트는 기동 시점 판정이다~~ → **해소**(2026-09-07 2라운드). StaticFiles
-  마운트를 라우트로 바꿔 **요청 시점에** 디렉토리를 읽는다 — 나중에 생긴 디렉토리도 재시작
-  없이 서빙되고, 내린 버전은 도달 불가가 되며, 호스트 디렉토리의 무관한 파일도 공개되지 않는다.
-- **미서명 배포의 대가가 커졌다.** 서명이 없으므로 무결성의 근거는 **고정 출처 + sha256**
-  뿐이고, 그 둘은 서버가 온전할 때만 성립한다. 릴리스 디렉토리에 쓸 수 있는 상대는 그
-  서버의 모든 클라이언트에 코드를 실행시킬 수 있다 — 그 디렉토리의 권한이 곧 이 채널의 경계다.
-- **웹 패널이 아직 업데이트를 그리지 않는다(의도).** 브리지 `status` 는 `version`·`update` 를
-  이미 싣지만 `static/**` 변경은 check #13 시각검증 hard gate 를 켜고, 그 패널을 띄우면
-  `discover` 가 자동으로 돌아 **사용자의 AI 사용량을 쓴다**. PB-0008 을 치를 cycle 에 묶는다.
-  그때까지 입구는 트레이 하나이며 **그것은 실재하고 동작한다**(§P0-R).
-- **패널의 상주 문구는 아직 1회 스냅샷이다** (이전 cycle 잔여, 같은 `static/**` 사유).
-- **로그온 자동시작은 여전히 「바로 연결」이 아니다** — 토큰을 저장하지 않으므로(§0.1)
-  무인 재연결은 토큰 보관 설계가 선행이다.
-- **gemini 미지원** — 로그인 대행 명령 미실측. 화면이 그 사실을 말한다.
-- ⛔ **BLOCKED(권한) — CI 가 이 feature 의 테스트를 여전히 돌리지 않는다.**
-  `unit/feature-0046-native-client/tests` 가 `.github/workflows/ci.yml` 의 pytest 경로 목록에
-  없다(2026-09-03 신설 이후 계속). `pyproject.toml` `testpaths` 에는 있지만 **CI 는 경로를
-  명시 호출하므로 `testpaths` 를 보지 않는다.** 푸시가 `workflow` 스코프 부재로 거부되어
-  **AI 에게는 이 파일을 바꿀 수단이 없다.** 조치는 ci.yml 에 1줄 — 사람 또는 workflow 스코프
-  토큰. 그 전까지 이 feature 의 **506건은 로컬에서만** 검증된다. 이번 cycle 이 그 수를
-  177 → 506 으로 키웠으므로 이 구멍의 대가도 함께 커졌다 — 그중 124건이 **이 채널의
-  무결성·동시성 계약**을 잠그는 것이고, CI 는 그것을 한 번도 돌리지 않는다.
-- ⚠ 선재 실패 1건 — `feature-0003` `test_share_redaction_invariant::test_share_sanitize_step_handles_malformed`
-  는 `main`(`3dbf79c9`)에서도 동일하게 FAIL 한다. 이 cycle 의 회귀가 아니며 이 cycle 이
-  건드린 `share` 경로도 없다.
-
-## 3. Git 동기화 결과
-
-- 커밋: 본 cycle
-- verify-completion: PASS
-- Push / PR: 완료 — PR #1591 머지 → `main` **697ffa84**
-- cycle-finalize: 완료 (worktree 제거 · 로컬/원격 브랜치 삭제 · REGISTRY 이관)
-
-## 4. 배포 결과 (2026-09-07)
-
-`deploy_scope: included` 에 따라 머지 후 배포까지 진행했다. **머지는 코드 완료이고 배포가
-완료가 아니다**(§16.3 deploy-backed) — 그래서 이 절에 적는 것은 로그가 아니라 **실측**이다.
-
-- **배포본**: 전 서비스 `697ffa84` · 전부 healthy (web-a·web-b / insight·ask-worker /
-  ops-scheduler / ext-tool-mcp-a·b). soak 90s 통과 · 대화 경로 스모크 통과 ·
-  pending 마이그레이션 0 · KEK(`AGENT_DATASOURCE_KEK_V1`) 주입 확인 ·
-  서빙 HTML 의 `?v=dev` 잔존 0 · surge 잔존 없음.
-- **채널 실측 10 PASS + 1 미경유** (상세: `test-runs.d/20260907T180000-live-deploy-verify.md`).
-  요지는 셋이다 — ① 호스트 릴리스 디렉토리가 `/srv/client` 로 **read-only 실물 마운트**됨을
-  컨테이너 안에서 확인 ② 릴리스가 없으면 **404**(200+`available:false` 가 아니다)
-  ③ 올린 바이트가 **sha256·크기까지 그대로** 내려오고, **공고 안 된 이름과 같은 디렉토리의
-  다른 파일은 404** 다. ③의 뒤쪽 절이 `StaticFiles` 마운트를 라우트로 바꾼 이유이며,
-  마운트 시절이라면 `manifest.json` 이 200 으로 내려갔다.
-  ⚠ **「11단계」로 세지 않는다.** 경로 탈출 칸(`/client/../etc/passwd` → 404)은 응답 본문이
-  `{"detail":"Not Found"}` = **Starlette 의 라우트 미매칭**이었다 — 이 라우트의 404 는
-  `{"error":"not_found"}` 다. `{filename}` 이 단일 세그먼트 컨버터라 다중 세그먼트 경로는 어떤
-  코드 상태에서도 핸들러에 닿지 않으므로 **그 칸은 실패할 수 있는 축이 아니었고 내 가드를 한
-  번도 타지 않았다**(실제 traversal 방어는 `current_release()` 의 `resolve().parent` 대조이며
-  매니페스트가 선언한 파일명으로만 도달한다).
-  ⚠ **프로브 채널**: 전부 `docker exec repo-web-a-1` → 컨테이너 내부 8000. **엣지 경유·web-b
-  는 재지 않았다** — caddy 액세스 로그에 이 두 경로의 200 은 한 건도 없다.
-- **현재 채널 상태**: 광고 중인 릴리스 **없음**(`/api/ai/client/latest` → 404 `no_release`),
-  릴리스 디렉토리 잔재 **0**. 이것이 정상이며 의도다 — 첫 실 릴리스는 Windows 빌드 머신에서
-  `build_client.py` 로 설치기를 만들어 `publish_release.py --setup` 으로 반입하는 시점에 생긴다.
-
-### 4.1 검증 방법이 라이브에 연 창 — 38초 (적대 리뷰 P1-1)
-
-실 설치기가 없어 합성 파일로 쟀고, 버전을 정본(`1.1.0`)보다 **낮은 `1.0.0`** 으로 잡았다.
-그 선택은 `updater.py` 자동 갱신 경로를 확실히 덮는다(`is_newer` 거짓). **그러나 그것을
-「라이브에 창을 열지 않았다」로 적었던 것은 틀렸다** — 사람용 다운로드 표면은 그 안전판 밖이고,
-창은 실재했다:
-
-| 시각(UTC) | 사건 |
-|---|---|
-| 08:58:06 | `manifest.json` 기록 — **창 열림** |
-| 08:58:18.65 | `/api/ai/client/latest` 200 · `/client/…-1.0.0.exe` 200 (관측) |
-| 08:58:43.9 | 두 파일 삭제 — **창 닫힘** |
-| 08:58:44.87 | 두 경로 404 복귀 확인 |
-
-**약 38초**(200 관측 구간 26.2초). 그 창 동안 미연결 사용자가 연결 화면을 열었다면
-「연결 프로그램 받기」 버튼이 나타나 **설치기가 아닌 1,200,004 byte 파일**을 받을 수 있었다.
-그 시각 실제 사용자 세션이 라이브에 붙어 있었다(caddy 로그의 WebView2 요청 08:52~08:57,
-09:01:59 신규 세션) — **연결 화면을 연 사람이 없었던 것은 설계가 아니라 운이다.**
-
-**실피해는 없었다(실측)**: 그 창의 `/client/` 요청은 내 프로브 1건뿐이고, 외부
-클라이언트(`dqa-connect-agent/1`)의 매니페스트 요청은 **0건**이다.
-
-**교정**: 앞으로 이런 검증은 라이브 릴리스 디렉토리를 쓰지 않는다 — `CLIENT_RELEASE_DIR` 을
-다른 디렉토리로 가리킨 **격리 인스턴스**에서 잰다. 그러면 창 자체가 생기지 않는다.
-
-### 4.2 배포 중 관측 2건 — 둘 다 이 cycle 의 코드와 무관
-
-- **1차 배포는 ABORT 했다 (caddy exec 채널 파손).** 표면 문구는 「web-b 가 엣지 후보로
-  복귀하지 않았다」였지만 같은 순간 엣지는 200 이었고 caddy 프로세스도 살아 있었다. 실인과는
-  `docker compose exec -T caddy …` 가 `procReady not received` 로 죽는 것 — 스크립트가 그
-  채널로 Caddy admin API 를 읽으므로 「업스트림 미복귀」로 보인다. 같은 파손이 과거엔
-  「rootCA 회전 누락」으로도 위장했다. `restart caddy` 후 재실행(멱등)으로 완주.
-  **deploy-web 의 ABORT 는 인증서·업스트림보다 exec 채널을 먼저 의심하는 것이 빠르다.**
-- **배포 창 안에 13초 엣지 정지가 한 번 있었다 — 행위 종류는 특정, 행위자는 미특정.**
-  caddy 08:58:10.5Z SIGTERM → 08:58:23.6Z 재서빙. `docker inspect`
-  (`created=2026-08-28` · `RestartCount=0` · `StartedAt=08:58:22Z`, 컨테이너 1개)가 이것을
-  **기존 컨테이너의 stop/start** 로 특정한다 — recreate 가 아니므로 `deploy-web.sh` 의
-  `--force-recreate`/`up -d` 경로와 도커 데몬 재시작이 배제된다. 배제 논거를 정정한다
-  (적대 리뷰 P2-2): ~~「모든 compose 호출이 `--no-deps`」~~ 는 근거가 못 된다(caddy 는 아무의
-  의존 서비스가 아니고, 스크립트는 `--no-deps` 를 붙인 채 caddy 를 **직접** 만지는 경로를
-  셋 갖는다 — 다만 전부 recreate 라 위 동일성이 배제한다). **자기 배제도 성립하지 않는다** —
-  내 `restart` 는 08:50:48Z 1회이나 「짝이 하나 있다」에서 「두 번째는 내가 아니다」는 나오지
-  않고, 더구나 **같은 세션이 08:58:18~08:58:43 에 라이브 릴리스 디렉토리를 조작 중이었다**(§4.1).
-  탐색 범위에서 **`Makefile` 을 빠뜨렸었다** — `make up`·`web-down`·`web-tls-down` 에
-  `stop caddy` 가 있어 병행 세션의 `make up` 류가 낼 수 있는 경로이나 **발화 증거는 없다**.
-  `docker events` 는 과거를 보관하지 않아 **행위자는 특정하지 못했다.** 사용자 영향은
-  실측했다 — 그 13초 창에 caddy 가 받은 요청은 **0건**(08:57:15 다음이 09:01:59).
-  ⚠ 이 관측이 배포 체크리스트 [5] 의 해석을 바꾼다: `no upstreams available` 카운트 0 은
-  **Caddy 자신이 죽은 구간을 애초에 셀 수 없고**, 롤링 창에 caddy 가 받은 요청도 정적 파일
-  4건뿐이었다 — 그러니 0 은 「그 창에 요청이 있었다는 전제 아래에서만」 롤링 속도의 약한
-  증거이고, 요청 수를 함께 세지 않으면 **아무 증거도 아니다**.
-
-## TASK-20260908T120000-runner-update-recovery — 러너 경합·종료 복구
-
-설치 시 직접 덮어쓰기를 없애고 러너와 같은 임시파일·fsync·replace·sidecar 락 규약을 적용한다. 자기가 띄운 러너를 감독하여 1/2/4/8/16초 백오프로 최대 5회 재기동한다. 60초 이상 정상 생존하면 예산을 재설정한다. 정상 종료 또는 복구 소진은 연결 단절 알림, 명시적 연결 해제·앱 종료는 재기동 취소다. stdout/stderr를 계속 비워 파이프 막힘과 파싱 전 오류 유실을 방지한다.
-
-Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/교차 갱신 4개 조합 모두 **2/2 복귀**, 각 계정 생존 PID 1개 및 후속 요청 대기를 확인했다. 동시 감독 사례 다운로드 간격 3.43ms. Linux에서도 동일 4개 조합을 실제 프로세스로 검증한다.
-
-빌드 지문을 매번 디스크에서 읽는 뮤턴트는 `run.ready` A=2/B=1로 실패했다. 따라서 한 대만 복귀하는 회귀를 완료로 인정하지 않는다. 상세 결과·명령·한계는 `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
-
-2026-09-08 PR #1606 병합 후 서버 배포와 DQA 1.1.1 설치기 채널 반입을 완료했다. 사용자의 기존 앱에 감독 기능이 들어가려면 **1.1.1 설치 후 재연결**이 필요하다. 이미 종료된 옛 러너는 서버 파일 교체만으로 소급 복구되지 않는다. 이번 실측은 실제 OS/실제 프로세스 + 격리 HTTPS 서버이며, 실제 사용자 AI 작업을 실행하거나 계정 15시간 단절의 전체 원인을 재현했다고 주장하지 않는다.
-
-## TASK-20260908T120000-runner-update-recovery — 배포 후 완료 기록
-
-- 서버 코드 `0f58a1de2f53883bbff1158f87c7637a85323d88`를 web-a/b에 롤링 배포했다. ready/soak PASS, 배포 구간 Caddy `no upstreams available` 0건. 변경된 서버 제공 러너·정적 자산을 배포했고 worker 배포·실제 AI 대화는 이번 검증 대상이 아니다.
-- 공식 클라이언트 채널 1.1.1 게시 완료. 실제 Windows 앱의 updater 코드가 1.1.0에서 1.1.1을 발견하고 설치기 25,731,162 bytes를 다운로드해 SHA-256 일치를 확인했다. 설치기를 실행해 사용자 설치본을 바꾸지는 않았다.
-- 사용자는 **DQA 앱에서 1.1.1로 업데이트한 뒤 다시 연결**한다. 별도 러너 실행·터미널 명령은 필요 없다. 실제 두 러너 복귀 및 파싱 전 실패 복구 실측은 아래 정본에 기록했다.
-- 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
-
-## 2026-09-08 — 투명 아이콘/작업 표시줄 검수 (#1612)
-
-투명 SVG 정본과 PNG/ICO, Windows 앱 식별자·창 relaunch 속성·바로가기 ID, 웹 6진입점 favicon을 반영했다. 네이티브 529건·웹 30건, Windows 빌드/5표면/실제 작업 표시줄과 소스·동결본 식별자, Windows 브라우저 소스 검증 PASS. 기존 사용 중인 설치/앱은 유지했다. 현재 남은 단계는 PR 병합·1.1.3 채널/웹 배포·라이브 검증이다. 상세는 test-runs.d/20260908T-transparent-taskbar.md.
-
-
-### TASK-20260908T020000-delegation-friction — 교차 검증 보완
-
-테스트 수집 누락 복구로 드러난 연결 안내/테스트 경계 오류를 함께 수정한다. 변경·검증 정본은
-[feature-0043 TASK](../../feature-0043-external-llm-bridge/docs/TASK.md) 및
-[위탁 병목 개선 REPORT](../../../docs/improvements/delegation-friction-20260908/REPORT.md)다.
-DQA 클라이언트가 주 사용 환경이며 브라우저 인계 경로 검증을 앱 전체 검증으로 합산하지 않는다.
-
-### 투명 아이콘 최신 상태 — 2026-09-08
-
-소스 8231cffe, main 병합 2838ce58. 병합 후 native 전체 **536 PASS**, 웹 **30 PASS**, 아이콘/자산 일치·Windows 5표면·source Tk/WebView2 생명주기·frozen 속성/정상 종료 PASS. 내부 로고 4곳의 Windows Chrome 로그인 렌더·디자인 PASS. **현재 Windows 잠금 화면이 최종 taskbar 캡처를 가려 시각 검수는 대기**하며, 최종 frozen PNG를 PASS라고 보았던 이전 판정은 철회했다. 사용 중인 앱은 유지했다.
-
-배포 후보는 artifacts/dqa-transparent-icon/DQAConnect-Setup-1.1.3.exe, 25,876,951 bytes, SHA-256 132d5d715b73673c60c78cb54e1957f9b5c117612c4d1a26e9b9fbc75df903ac. 기존 채널의 1.1.2를 아직 전환하지 않았다. 잠금 해제 후 최종 검수→병합→기존 채널 게시→web-only rolling 배포→실제 다운로드/앱 로고 확인을 수행한다.
-
-### 재개 위치
-
-- Draft PR: [#1617](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617), branch `ai/codex/feature-0046-transparent-taskbar-icon`, worktree `../.worktrees/feature-0046-transparent-taskbar-icon`(wrapper 기준 `.worktrees/...`). 원격 CI check 없음; 로컬 536+30 PASS와 실제 Windows 부분 증적을 정본으로 둔다.
-- Windows 잠금 해제 요청에 대한 응답 대기. 검사 편의를 위한 사용자 잠금 해제·기존 앱 종료·재설치는 하지 않았다. 후보 설치기와 해시는 위 최신 상태 참조.
-- 이후: 최신 tests/windows를 Windows 임시 `dqa-transparent-icon/tests`에 복사→`verify_frozen_taskbar.py --app <dist/DQAConnect/DQAConnect.exe> --out <새 경로>`→유효 taskbar PNG 직접 확인. `capture_taskbar.ps1`가 LockScreenBackstopFrame을 거부하므로 상태가 같으면 반복하지 않는다.
-- 실제 앱 내부 로고도 확인한다(PB-0009). 별도 frozen 진단 프로세스에만 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`를 주는 두 시도에서 CDP endpoint가 나타나지 않았다. 레지스트리/사용자 앱은 변경하지 않았고 두 인스턴스는 자기 트레이 종료 exit0. 필요 시 지원되는 앱 검수 방식 또는 잠금 해제 후 실제 화면으로 확인한다. 일반 Chrome 결과를 앱 검증으로 바꾸지 않는다.
-- 검수 후 PR ready/병합·`publish_release.py --setup <1.1.3> --dir <wrapper>/artifacts/client-release`·main `bin/deploy-web.sh --web-only`·rootCA TLS 검증한 manifest/실제 다운로드 hash·웹/앱 자산 검증→완료 문서와 자기 worktree 정리. 새 버전 게시 전에 main/channel에 1.1.3 충돌이 없는지 확인한다.
+Environment: DQA-client
+Result: PASS
+Scenario: 실제 Windows동결본/격리설치본의 아이콘·업데이트·실패보존·바로가기·제거. native624/웹30/노트34도PASS. 실제사용자계정/유료AI는검증대상이아니다. [정본](test-runs.d/20260910-transparent-icon-release.md). PR1617병합·채널/웹배포는다음단계다.

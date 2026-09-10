@@ -13,6 +13,7 @@
        규칙은 그대로 두고 **토큰의 출처만** 시스템으로 옮긴다. -->
   <link rel="stylesheet" href="/static/css/base.css?v=dev" />
   <link rel="stylesheet" href="/static/ai-connect.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/client-connect.css?v=dev" />
 </head>
 <body class="aic-body">
   <main class="aic-card">
@@ -28,12 +29,7 @@
       <!-- feature-0043 P0-X: 이 화면과 대화 모달은 **같은 것**을 보여야 한다. 한쪽만
            경로를 남기면 링크를 새 탭으로 연 사용자와 모달에서 본 사용자가 다른 안내를
            받는다 — 2026-09-07 의 「전면 제거」도 두 화면에 **함께** 적용한다. -->
-      <p class="aic-why">
-        내 AI를 이 서비스에 연결하면 질문에 답할 수 있습니다.
-        연결은 <strong>DQA 앱</strong>이 합니다 — 앱 창이 이 컴퓨터의 AI를 찾아 바로
-        연결하고, 한 번 연결한 뒤에는 <strong>시작 메뉴의 아이콘</strong>만 눌러도
-        그 창이 열립니다.
-      </p>
+      <p class="aic-why" id="connectModalWhy">DQA 앱에서 이 컴퓨터의 AI를 연결하세요.</p>
 
       <!-- ROADMAP ITEM-06: 클라이언트를 **받을 수 있을 때만** 보인다. 서버가 실물 존재를
            확인해 `client_download` 를 낼 때만 채워진다 — 없는 다운로드를 안내하면 사용자는
@@ -53,19 +49,16 @@
            `?client_port=&client_nonce=` 가 붙고, 그때만 나타난다. 화면은 서비스에 하나만
            두기로 한 결정(P0-S)의 실체다 — 클라이언트 안에 화면 사본을 만들지 않는다.
            브리지가 붙지 않은 평범한 방문에서는 **아무것도 보이지 않는다**. -->
-      <section id="clientPanel" class="aic-hidden" style="margin-bottom:14px">
-        <p class="aic-handoff-hint"><strong id="clientPanelTitle">이 컴퓨터의 AI</strong></p>
-        <ul id="clientRuntimes" style="list-style:none;padding-left:0;margin:8px 0"></ul>
-        <div class="aic-actions" style="justify-content:flex-start">
-          <button type="button" class="aic-btn" id="clientRefresh">다시 찾기</button>
-          <button type="button" class="aic-btn aic-btn--primary" id="clientConnect" disabled>이 서비스에 연결</button>
-        </div>
-        <p class="aic-status" id="clientPanelStatus"></p>
-        <!-- ⚠ 비워 둔 채 렌더한다. 채우는 것은 `status.resident` 를 받은 뒤이고, 그 값은
-             **껍데기가 알림 영역 아이콘을 실제로 띄웠을 때만** 참이다. 프런트가 추정해
-             「닫아도 유지됩니다」를 먼저 쓰면 트레이 없는 머신에서 거짓이 된다(P0-R). -->
-        <p class="aic-handoff-hint" id="clientResidency"></p>
-      </section>
+        <section id="connectClientPanel" class="connect-client-panel" hidden aria-label="이 컴퓨터의 AI 연결">
+          <div class="connect-client-toolbar">
+            <h3 id="connectClientSummary">이 컴퓨터의 AI</h3>
+            <button type="button" class="connect-modal-btn" id="connectClientRefresh">다시 찾기</button>
+          </div>
+          <ul id="connectClientList" class="connect-ai-list"></ul>
+          <p class="connect-modal-hint connect-client-residency" id="connectClientResidency"></p>
+          <button type="button" id="connectClientConnect" hidden disabled>연결</button>
+        </section>
+      <p id="clientPanelStatus" role="status" aria-live="polite"></p>
       <section id="connectSteps" class="aic-hidden" style="margin-bottom:12px">
         <p class="aic-handoff-hint"><strong id="stepsSummary"></strong></p>
         <ul id="stepsList" style="list-style:none;padding-left:0;margin:8px 0"></ul>
@@ -110,6 +103,7 @@
     </section>
 
   </main>
+  <div id="clientConnectToast" class="connect-client-toast" role="status" aria-live="polite" hidden></div>
   <script src="/static/ai-connect.js?v=dev"></script>
 </body>
 </html>

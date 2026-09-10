@@ -5,12 +5,126 @@ status: active
 edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
-feature_status_date: 2026-09-08
-feature_status_note: 러너 동시 갱신·종료 복구 및 DQA 1.1.1 배포 완료
+feature_status_date: 2026-09-09
+feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 유지 구현·검증, 출하 진행
 
 ---
 
 # Task
+
+## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
+
+- [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.
+- [x] 보완 서버9cd10571 배포 및 설치 DQA 상태 생성·동일 ID 재개 PASS(4→6 이력, 실제 회상 UI 확인).
+
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자의 DQA 대화 세션 재사용 및 그룹 assistant 이력 유지 요청. Major, 기존 계정별 실행·대화 접근 인가를 유지하는 내부 실행/문맥 계약 변경.
+- 소유 경로: `src/agent/{sessions,invoke,handler,prompt,__init__}.py`, feature-0003 `src/routers/{ai_tools,conversations}.py`, 관련 테스트 및 기능 문서. 다른 세션 편집 보존.
+- `SessionBinding`은 서비스·인증 계정·대화·AI 실행 위치·제품/역할/지침별로 로컬 세션 ID를 결속한다. CLI JSON의 실제 ID만 사용하고 성공적으로 제출된 답변만 재사용 대상으로 확정한다. 취소/실패·대화 수정/삭제 시 재사용을 폐기한다.
+- Claude `--resume <id>`, Codex `exec resume <id>`를 적용한다. 세션 없음이 확인될 때 한 번만 새 세션으로 복구하며 권한/쿼터/네트워크 오류를 재실행하지 않는다. 비지원 런타임은 서버 문맥으로 계속 동작한다.
+- `_recent_conversation_context`는 발언자/호출자 구분, 진행 안내 제외, 정확한 현재 질문 제외, 전체 이력의 변경 지문을 제공한다. 매 호출에 그룹의 다른 사용자 및 assistant 기록을 최신 스냅샷으로 전달한다.
+- AC-1: 같은 계정 A의 같은 대화 두 질문은 첫 JSON의 세션 ID를 다음 CLI resume 인자에 사용한다. 다른 계정 B/대화/AI 위치는 별도 세션이다.
+- AC-2: 그룹 A 질문→assistant 답→B 질문→assistant 답→A 후속 질문은 A의 세션을 재사용하면서 B의 질문과 assistant 답을 발언자 정보와 함께 받는다.
+- AC-3: 취소·제출 실패·이력 변경 시 오염된 세션을 재사용하지 않는다. 세션 소실 시 서버 기록으로 복구하고, 기록 조회 실패는 불완전 실행을 차단한다.
+- 검증: CLI 어댑터/상태 파일/프로세스 경합/그룹 이력 행위 테스트, 기존 bridge 회귀, backend/security/qa 패널(AGENTS §18.8), verify-completion, 배포 산출물 대조, 가능한 실제 DQA 경로 확인. 마지막 패널 P1 0 필수(최대 3라운드).
+- 진입 정책: `/root/download/docker/mysql_ai_delegated_dev/repo/AGENTS.md` SHA-256 `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`; worktree 동일. CONTEXT `19555c9cf9e73f07d72e802c912c2127c0586b4d1dc1fc890c964ee1e7e31237`.
+- [x] 구현 및 회귀 검증 — 넓은 회귀 1815 passed/1 skipped, 최종 집중 43 passed, 실제 Claude/Codex 각각 2회 동일 세션 회상 PASS.
+- [x] backend/security/qa 패널 최종 코드 PASS, 문서 기록. 완료 게이트 결과는 Run에 기록.
+- [x] 최신 main 통합 — 91건 PASS 및 양측 문서 변경 보존.
+- [x] PR #1649·#1650 main 반영·web 배포·설치 DQA Codex 두 요청 동일 세션 재개 실측. 다계정 그룹 앱 왕복은 NOT-RUN으로 별도 기록.
+
+## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자 요청("DQA 계정 프로필 '프롬프트 > 내 프롬프트' 의 자동 작성이 동작하지
+  않아 수정 필요") + 범위 확정(AskUserQuestion 2026-09-09 — ① 자동 작성 3진입점 모두 ② 폴링
+  권한 축 함께). Major — 프론트 배선 + 조회 경로 추가. 인증·인가 **정책** 변경 없음(추가되는
+  조회 경로는 기존 admin 경로와 같은 `AccountId` 스코프로, 자기 계정이 만든 작업만 반환한다).
+- 라이브 실증(2026-09-08 19:56, 계정 10): `GET /api/auth/me/system-prompt/generate/stream` →
+  **200 OK**, `WebAiTasks j_LO28YKoH0ifGR5E7`(JobKind=prompt_generate, payload
+  `{"scope":"account","scope_id":10}`)가 적재되고 러너가 3초 만에 `submitted` 까지 마쳤다.
+  **서버는 정상 동작했고 화면만 결과를 받지 못했다.**
+- 근본 원인: feature-0043 전환 후 서버는 위임 시 SSE 가 아니라 `{"bridge_pending": true,
+  poll_url, task_id}` **JSON** 을 준다(`routers/_console_jobs.maybe_delegate`). 그런데 세
+  자동작성 화면은 전환 이전의 **SSE 전용 파서**로 남아 있어, 그 JSON 을 프레임으로 읽다가
+  `event:`/`data:` 가 없어 조용히 버린다 — 버튼만 원상복구되고 안내문은 "준비 중…" 에 멈춘다.
+  `admin/llm-state.js` 에 폴링 헬퍼(`awaitDelegatedResult`)가 이미 있으나 `admin/metadata.js`
+  한 곳만 쓴다.
+- 부수 결함: `maybe_delegate` 의 `poll_url` 이 `/api/admin/ai-jobs/{task_id}`(=`console.access`
+  요구)인데, 개인 프롬프트 자동작성은 **로그인만 요구하는 진입점**이다(`shared/bridge_tasks.py`
+  의 `prompt_generate.perms` 가 비어 있는 이유와 같은 사실). 화면을 고쳐도 일반 사용자는
+  폴링에서 403 이라 결과를 못 받는다.
+
+**변경 파일·심볼**
+
+| 경로 | 심볼 | 변경 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/console-job-poll.js` | `awaitDelegatedResult` · `jobPhaseLabel` · `isDelegatedFailureNotice` | 신설 — admin 전용 상태 의존이 없는 폴링 헬퍼를 공용 모듈로 |
+| `.../static/admin/llm-state.js` | 같은 두 심볼 | 공용 모듈에서 import 후 re-export (기존 import 경로 무회귀) |
+| `.../static/app.js` | `generateAccountPrompt` | 응답 content-type 분기 → `bridge_pending` 이면 폴링·국면 표시·결과 반영 |
+| `.../static/admin.js` | `buildSystemPromptEditor` 의 autoBtn 핸들러 | 동일 분기 + `setSystemPromptPending` 반영 |
+| `.../src/routers/profile.py` | `get_profile_ai_job` | 신설 `GET /api/profile/ai-jobs/{task_id}` — 로그인만, 본인 작업 스코프 |
+| `.../src/routers/admin_console.py` | `admin_ai_job_status` → `_ai_job_status_response` | 조회·응답을 공통 함수로 추출(두 경로가 같은 계약을 말하게). 조립 본체는 `_console_jobs.build_job_status_payload` |
+| `.../src/routers/_console_jobs.py` | `maybe_delegate` | `poll_url` → `/api/profile/ai-jobs/{task_id}` |
+| `shared/bridge_tasks.py` | `RUNNER_DEGRADED_NOTICE` · `runner_degraded_reason` | 러너가 실패를 안내문으로 대체 제출할 때 붙이는 고정 꼬리표를 상수화 + 사유 추출 |
+
+**접근 방법**: 위임 응답을 «스트림이 아니다» 로 인지하는 지점을 세 화면이 공유하는 한 모듈에
+두고, 결과 도달까지를 그 모듈이 책임진다. 서버는 두 폴링 경로가 **같은 조립 함수**를 쓰게 해
+"admin 은 되고 프로필은 안 되는" 갈림을 만들지 않는다. 러너가 실패를 안내문으로 대체 제출한
+경우(대화 축에서는 옳은 설계)에는 그 안내문을 프롬프트 본문으로 덮지 않고 경고로 보인다 —
+사용자가 편집 중이던 내용을 오류 문장이 밀어내지 않게.
+
+**완료 판정 기준 (acceptance criteria)**
+
+- AC-1: 러너가 연결된 계정이 '내 프롬프트 > 자동 작성' 을 누르면, 화면이 "연결된 AI 가 처리
+  중…" 국면을 보이다가 **생성된 프롬프트 본문이 textarea 에 채워진다**. (예: 위임 응답
+  `{"bridge_pending":true,"task_id":"j_X"}` → 폴링이 `{"phase":"done","result":"당신은 …"}`
+  를 주면 textarea 값이 `당신은 …` 이 된다.)
+- AC-2: `console.access` 없는 계정도 AC-1 이 성립한다 — 폴링이 403 이 아니다.
+- AC-3: 관리 콘솔의 역할 프롬프트·제품 프롬프트 '자동 작성' 도 같은 경로로 결과가 도달한다.
+- AC-4: 러너가 실패 안내문을 대체 제출한 경우 textarea 는 **덮이지 않고** 실패 사유가 안내에
+  표시된다.
+- AC-5: 게이트가 열린 배포(서버 LLM 직접 호출)에서는 종전 SSE 경로가 그대로 동작한다.
+- AC-6: 정적 모듈 스탬프 census(`?v=`)·라우트 스냅샷 등 기존 계약 회귀 0.
+
+- [x] 구현 — 3진입점 위임 분기 · 공용 폴링 모듈 · 프로필 폴링 경로 · degraded 판정
+- [x] 회귀·이음매 테스트 — 신규 pytest 21 · jsdom 행위 하네스 15 · **뮤턴트 2종 KILL**(원래 결함
+      재현 시 FAIL) · 컨테이너 `make test` exit 0/FAILED 0 · codex review ACCEPTED(P1 0)
+- [x] verify-completion PASS. 출하(commit/push/PR/main)·배포·라이브 도달 확인 결과는
+      [Run 원장](test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md)에 기록한다.
+      DQA-client 실측은 배포 후 Run 2 로 남는다(러너 자격 필요 — NOT-RUN 사유 기록).
+- [x] 출하·배포·라이브 도달 — PR #1644 머지(main `00981307`) · `deploy-web.sh --web-only` exit 0 ·
+      90초 soak 통과 · 서빙 자산 3축과 신규 라우트(401 vs 없는 경로 404 대조군) 실측.
+      머지 충돌 4파일은 §16.4 자율 해결 + 양측 순증분 대조로 검증했다.
+- [x] **DQA-client 실측 완료** (2026-09-09, 사용자 요청 "실측까지 진행") — 검증용 러너를 직접
+      기동해(`agent.lifecycle`, codex) 실제 브라우저에서 [자동 작성] 클릭 → 「맡겼습니다」 →
+      「연결된 AI 가 처리 중…」 → **「연결된 AI 가 작성했습니다 (559자)」 + 입력란 채워짐** 관측.
+      서버 축도 `bridge_pending` → 폴링 `done`(655자)로 왕복 확인. Run 원장 §4c.
+
+## TASK-20260908-codex-connect-fix — 연결 완료/사용 불가 위치 후속 수정
+
+- Minor. 정본: feature-0046-native-client/docs/TASK.md. Issue #1625.
+- Plan: catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+- [x] 코드 변경 및 집중 회귀 검증.
+- [x] 전체8f1116cf 배포·DQA1.2.4 업데이트·실제 root Codex 새 대화 응답 확인. 정본: native test-runs.d/20260908-codex-connect-fix.md.
+
+## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검증
+
+### 2.1 Implementation Plan
+- 승인 근거: 현재 사용자 요청(전역 → 제품 → 역할 전역 → 역할 제품 → 개인 전역 → 개인 제품 검토·개선). Major: 프롬프트 조회 실패 처리와 진단 개선; 인증·인가 변경 없음.
+- `unit/feature-0002-agent-core/src/agent_core.py::compose_system_prompt`: strict 조회 모드로 설정 부재와 조회 실패를 구분한다. 제품 표시명 조회 실패가 제품 지침을 누락시키지 않게 분리한다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py::_bridge_system_prompt,claim_request`: strict 모드를 사용하고 실패하면 점유 해제·503으로 불완전 지침 실행을 차단한다.
+- `unit/feature-0043-external-llm-bridge/src/agent/handler.py::handle_one`: 전달 길이·SHA-256·실제 채널을 원문 없이 기록한다. 생성 러너 2벌을 재생성한다.
+- 테스트: 여섯 고유 문자열이 최종 프롬프트에 정확히 한 번, 요청 순서대로 존재; auto 모드에서 전역 3계층만 적용; 빈 설정/조회 오류/표시명 오류/계정·제품 전환/긴 프롬프트를 검증한다.
+- 완료 기준 예시: G→P→RG→RP→AG→AP를 설정하면 Claude 시스템 채널 또는 Codex 본문에 동일 순서로 모두 전달된다. 역할 조회 SQL 실패는 빈 설정으로 처리되지 않고 AI 실행 전 재시도 가능한 실패가 된다.
+- 본문 전달은 모든 런타임의 시스템 역할 보장을 뜻하지 않는다. 파일 전달 옵션은 검토했으나 이번 변경은 기존 CLI·인증 설정을 유지하면서 누락 차단과 실전달 검증을 강화한다.
+- 검증 패널: backend/security/qa(API 및 SQL 조회 오류 계약) + toast 1줄 제거 UX/design 검토, 최대 3회. 최종 PASS. 공유 hot_paths: core compose_system_prompt, ai_tools claim/release/working, handler dispatch; composer.js 한 줄 삭제. 배포 포함(FIRST_REQUEST.md).
+- [x] 구현·단위/통합 회귀·검증 패널
+- [x] verify-completion PASS. 출하 단계(commit/push/PR/main/배포)의 최종 SHA·실행 결과는 해당 PR의 Git 동기화 결과와 배포 로그를 따른다.
+
 
 ## TASK-20260908T020000-delegation-friction — 테스트 수집 정본화
 
@@ -3326,3 +3440,13 @@ MCP 는 버전·능력 협상, GH 러너는 기본 자동 업데이트, Tailscal
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
 
 - [x] TASK-20260908T020000-delegation-friction: 최신 main ec913f94 합류 뒤 전체 8,059 PASS/16 skip/실패0, Bats69/도구24 및 독립107/check13 20 결과를 최종 원장에 기록했다. 실제 DQA 앱 사용자 흐름은 NOT-RUN으로 구분했다.
+
+## TASK-20260908T120000-connect-discovery-ux
+
+DQA 클라이언트 AI별 자동 연결·위치 캐시 공동 변경. 현재 계획·요청 범위·통합 검증은 `unit/feature-0046-native-client/docs/TASK.md`에 기록한다.
+
+- [x] 이번 TASK의 선택 위치 실행·플랫폼별 모델 협상·서버 수락 receipt·자동 복구 통합 구현 및 회귀 검증 완료. 설치기/배포 결과는 feature-0046 REPORT와 공동 TEST run 참조.
+
+- [x] 최종 Windows 실행 파일의 native-results.json 2회 PASS와 설치기 크기/해시를 원장에 보존했다. 설치기 배포는 서버 반영 후 수행한다.
+
+- [x] PR #1619 병합, 서버 92cfa2c2 전체 배포·상태/서빙 확인, DQA 1.2.0 공개 및 실제 다운로드 크기/SHA-256 대조 완료.

@@ -17,6 +17,7 @@ import {
   apiFetch,
   applyTimeoutExtensionState,
   buildStepDetailEl,
+  stepTitleText,
   canCancelConversation,
   clearPendingBubble,
   clearRunDetectTimer,
@@ -89,7 +90,7 @@ export function renderProgress(statusPayload = null) {
   if (progressSummaryEl) {
     if (steps.length > 0) {
       const latest = steps[steps.length - 1] || {};
-      const label = latest.work || latest.intent || latest.tool || "단계";
+      const label = stepTitleText(latest, steps.length - 1);
       progressSummaryEl.textContent = `${steps.length}단계 · ${label}`;
     } else {
       progressSummaryEl.textContent = status === "processing" ? "시작 중..." : "";

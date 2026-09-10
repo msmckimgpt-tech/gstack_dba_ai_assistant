@@ -177,6 +177,9 @@ class RuntimeState:
     #: 로그인돼 있었지만 답하지 못했다 — 종전 클라이언트는 그것을 「연결할 준비가
     #: 되었습니다」로 표시했다. **인증 상태는 가용성의 증거가 아니다.**
     answers: bool | None = None
+    distro: str = ""
+    user: str = ""
+    error_code: str = ""
 
     @property
     def installed(self) -> bool:
@@ -185,23 +188,33 @@ class RuntimeState:
     @property
     def usable(self) -> bool:
         """이 런타임으로 **정말 답을 받을 수 있는가**. 화면·선택은 이 값을 본다."""
-        return bool(self.installed and self.answers)
+        return bool(self.installed and self.answers and not self.error_code)
 
     def argv(self, *args: str) -> list[str]:
         """이 런타임을 실행하는 argv. WSL 이면 `wsl.exe` 를 앞에 둔다."""
         if self.where == "wsl":
-            return [_wsl_exe(), "-e", str(self.path), *args]
+            prefix = [_wsl_exe()]
+            if self.distro:
+                prefix += ["-d", self.distro]
+            if self.user:
+                prefix += ["-u", self.user]
+            if self.distro or self.user:
+                return prefix + ["--cd", "~", "-e", "bash", "-lc", 'exec "$@"', "dqa", str(self.path), *args]
+            return prefix + ["-e", str(self.path), *args]
         return [str(self.path), *args]
 
     @property
     def label(self) -> str:
         """사람에게 보이는 이름. 같은 CLI 가 두 자리에 있을 수 있으므로 자리를 밝힌다."""
-        return f"{self.name} (WSL)" if self.where == "wsl" else self.name
+        if self.where == "wsl":
+            location = " · ".join(filter(None, ("WSL", self.distro, self.user)))
+            return f"{self.name} ({location})"
+        return self.name
 
     @property
     def can_login_here(self) -> bool:
         """이 클라이언트가 **로그인을 대행할 수 있는가**. 아니면 화면이 안내로 강등한다."""
-        return bool(_CLI.get(self.name, {}).get("login"))
+        return bool(_CLI.get(self.name, {}).get("login")) and self.error_code != "permission_denied"
 
 
 def _is_windows() -> bool:
@@ -263,7 +276,7 @@ def hidden_child_kwargs() -> dict:
     return kw
 
 
-def _run(argv: list[str], timeout: int = 30) -> tuple[int, str]:
+def _run(argv: list[str], timeout: int = 30, encoding: str = "utf-8", *, stdout_only: bool = False) -> tuple[int, str]:
     """자식 실행 — **셸을 거치지 않는다**(argv 직접).
 
     ⚠ 자식 입출력은 **UTF-8 명시**다. 로케일 인코딩(한국어 윈도우 `cp949`)에 맡기면 인코딩
@@ -275,11 +288,13 @@ def _run(argv: list[str], timeout: int = 30) -> tuple[int, str]:
     """
     try:
         p = subprocess.run(argv, capture_output=True, timeout=timeout,
-                           encoding="utf-8", errors="replace",
+                           encoding=encoding, errors="replace",
                            **hidden_child_kwargs())
-        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+        return p.returncode, ((p.stdout or "") + ("" if stdout_only and p.returncode == 0 else (p.stderr or ""))).strip()
     except FileNotFoundError:
         return 127, "실행 파일을 찾지 못했습니다."
+    except PermissionError:
+        return 126, _PERMISSION_DETAIL
     except subprocess.TimeoutExpired:
         return 124, "응답이 없어 중단했습니다."
     except Exception as exc:  # noqa: BLE001
@@ -309,6 +324,20 @@ _PING_PROMPT = "OK 라고만 답하세요."
 _PING_TIMEOUT = 60
 
 
+_PERMISSION_DETAIL = "실행 권한이 없습니다 (Permission denied). 이 위치는 자동 연결에서 제외됩니다."
+
+
+def _permission_denied(output: str) -> bool:
+    return bool(re.search(r"permission denied|access is denied|eacces|errno 13|winerror 5|액세스가 거부|권한이 거부", output, re.I))
+
+
+def _mark_permission_denied(st: RuntimeState) -> RuntimeState:
+    st.answers = False
+    st.error_code = "permission_denied"
+    st.detail = _PERMISSION_DETAIL
+    return st
+
+
 def verify_answers(st: RuntimeState, timeout: int = _PING_TIMEOUT) -> RuntimeState:
     """**정말 답하는지** 한 번 물어본다. `st.answers` 를 채워 돌려준다.
 
@@ -335,8 +364,12 @@ def verify_answers(st: RuntimeState, timeout: int = _PING_TIMEOUT) -> RuntimeSta
         st.detail = "이 AI 를 어떻게 부르는지 알려져 있지 않습니다."
         return st
     rc, out = _run(st.argv(*[a.replace("{prompt}", _PING_PROMPT) for a in ask]),
-                   timeout=timeout)
-    st.answers = (rc == 0 and bool((out or "").strip()))
+                   timeout=timeout, stdout_only=True)
+    if _permission_denied(out):
+        return _mark_permission_denied(st)
+    st.error_code = ""
+    # 종료 성공/진단 출력만으로는 응답 성공이 아니다. 짧은 확인 질문의 답을 확인한다.
+    st.answers = rc == 0 and bool(re.fullmatch(r"[\s\"'`*]*OK[.!\s\"'`*]*", out or "", re.I))
     if not st.answers:
         st.detail = ("설치·로그인은 되어 있는데 **답을 받지 못했습니다**"
                      if st.logged_in else st.detail or "답을 받지 못했습니다")
@@ -365,9 +398,9 @@ def discover_runtime(name: str) -> list[RuntimeState]:
 
 
 def probe_runtime(name: str, where: str = "windows",
-                  path: str | None = None) -> RuntimeState:
+                  path: str | None = None, distro: str = "", user: str = "") -> RuntimeState:
     """설치 여부 + 로그인 여부를 한 번에. **토큰은 만지지 않는다** (§0.1)."""
-    st = RuntimeState(name=name, where=where,
+    st = RuntimeState(name=name, where=where, distro=distro, user=user,
                       path=path if path is not None else which_runtime(name))
     if not st.installed:
         st.detail = "이 컴퓨터에 설치되어 있지 않습니다."
@@ -377,6 +410,9 @@ def probe_runtime(name: str, where: str = "windows",
         st.detail = "로그인 상태를 확인하는 명령이 알려져 있지 않습니다."
         return st
     rc, out = _run(st.argv(*status))
+    if _permission_denied(out):
+        st.logged_in = None
+        return _mark_permission_denied(st)
     st.logged_in = (rc == 0)
     # claude 는 JSON 을 낸다 — 계정까지 보여 줄 수 있다. 못 읽어도 rc 판정은 유효하다.
     try:
@@ -404,6 +440,8 @@ def login(target: "str | RuntimeState", timeout: int = 300) -> tuple[bool, str]:
         name=str(target), path=which_runtime(str(target)), where="windows")
     if not st.installed:
         return False, "설치되어 있지 않습니다."
+    if st.error_code == "permission_denied":
+        return False, _PERMISSION_DETAIL
     argv = _CLI.get(st.name, {}).get("login")
     if not argv:
         return False, ("이 AI 는 이 프로그램에서 로그인을 대신 실행할 수 없습니다. "
@@ -496,6 +534,14 @@ class ConnectPlan:
     #: `feature-0043/tests/test_name_ssot.py` 가 이 리터럴을 대조한다(이 모듈도 배포본이
     #: 동결되는 stdlib 경로라 import 하지 않는다).
     home: Path = field(default_factory=lambda: Path.home() / ".dqa-connect")
+    #: 앱 창이 **처음 열 자리**. 기본은 서비스 루트이고, 웹의 공유 화면이
+    #: `dqa-connect://open?...&path=/share/<token>` 으로 보내면 그 대화로 바로 간다.
+    #: ⚠ 연결 4값과 달리 이 값은 **화면의 목적지일 뿐** 자격증명이 아니다 — 앱 창은 브라우저
+    #: 세션(또는 내장 창 자신의 세션)으로 인증되고, 여기에는 토큰이 실리지 않는다.
+    path: str = "/"
+
+    selection_file: str = ""
+    selection_instance: str = ""
 
     @property
     def host(self) -> str:
@@ -610,6 +656,40 @@ def _write_server_doc(home: Path, **fields) -> None:
     (home / _SERVER_PIN).write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
 
 
+#: 앱 창이 열 수 있는 목적지 경로의 길이 상한. **정본은 `shared/dqa_identity.MAX_APP_PATH`**
+#: 이며 이 모듈은 동결 배포본이라 그것을 import 하지 않는다(`SCHEME` 리터럴과 같은 사정).
+#: `feature-0046/tests/test_wsl_and_scheme.py` 가 두 벌을 대조한다.
+MAX_APP_PATH = 512
+
+
+def safe_app_path(value: str) -> str | None:
+    """딥링크가 실어 온 **목적지 경로**를 검사한다. 부적격이면 `None`.
+
+    ⚠ `usable_base` 와 축이 다르다 — 저것은 «어느 서버인가», 이것은 «그 서버 안 어디인가».
+    base 만 검사하면 `path=//evil.example/x` 가 통과하는데, 브라우저는 그것을
+    **protocol-relative URL** 로 읽어 다른 origin 을 앱 창에 띄운다. 우리 주소로 검사를
+    통과한 뒤 남의 사이트가 열리는 형태다.
+
+    규칙의 **정본은 `shared/dqa_identity.safe_app_path`** 이고 여기는 사본이다(위 상수와
+    같은 사정). 두 벌이 갈리면 서버가 조립한 링크를 클라이언트가 거부하거나, 더 나쁘게는
+    서버가 막은 값을 클라이언트가 받아들인다 — 테스트가 같은 표로 양쪽을 대조한다.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return "/"
+    if len(raw) > MAX_APP_PATH:
+        return None
+    if not raw.startswith("/") or raw.startswith("//"):
+        return None
+    if "\\" in raw or ".." in raw:
+        return None
+    if "?" in raw or "#" in raw:
+        return None
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+        return None
+    return raw
+
+
 def usable_base(value: str) -> str:
     """웹 주소로 **열어도 되는 값**만 통과시킨다. 아니면 빈 문자열.
 
@@ -718,47 +798,166 @@ def acquire_single_instance(home: Path):
 #: 「창을 다시 띄워 달라」는 요청 파일. 두 번째 실행이 적고 먼저 뜬 쪽이 읽어 지운다.
 _SHOW_REQ = "show.req"
 
+#: 그 요청이 **어디를 열어야 하는지**. 신호와 갈라 둔 이유는 `request_show` docstring 참조.
+_SHOW_PATH = "show.path"
+
 #: 요청의 유효 시간(초). 지난 것은 무시한다 — 아무도 읽지 않은 요청이 남아 있다가
 #: 다음 실행에서 **엉뚱하게 창을 하나 더** 여는 것을 막는다.
 _SHOW_TTL = 30.0
 
 
-def request_show(home: Path) -> None:
-    """이미 떠 있는 쪽에 **창을 다시 열어 달라**고 남긴다.
+def request_show(home: Path, path: str = "/") -> None:
+    """이미 떠 있는 쪽에 **창을 다시 열어 달라**고 남긴다. 목적지가 있으면 함께 남긴다.
 
     ## 왜 대화상자가 아닌가
 
     사용자가 앱 창을 닫고(브라우저 창이라 닫는 것이 자연스럽다) 아이콘을 다시 누르는 것은
     흔한 경로다. 거기서 「이미 실행 중입니다 — 트레이에서 [창 열기]」라고 답하면, 사용자는
     **아이콘을 눌렀는데 앱이 안 뜨는** 경험을 한 번 더 한다. 이 프로그램이 고치려던 그것이다.
+
+    ## 왜 목적지를 **별도 파일**에 두는가 (한 파일에 두 줄로 적지 않는다)
+
+    이 프로그램은 상주하므로, 딥링크가 올 때 **이미 떠 있는 쪽이 구버전**일 수 있다
+    (업데이트 직전·직후). 종전 형식은 파일 전체를 `float()` 로 읽으므로, 여기에 두 번째 줄을
+    보태면 구버전은 그 파일을 **깨진 값**으로 보고 요청 자체를 버린다 — 사용자는 「앱에서 열기」를
+    눌렀는데 아무 일도 일어나지 않는다. 별도 파일이면 구버전은 그것을 **모른 채** 종전대로
+    창만 연다(루트). 목적지를 잃는 것과 요청을 잃는 것은 다르다.
     """
     import time
+    safe = safe_app_path(path) or "/"
     try:
         home.mkdir(parents=True, exist_ok=True)
+        # ⚠ 목적지를 **먼저** 쓴다. 신호(`show.req`)가 먼저 놓이면 그 사이에 폴링이 끼어들어
+        #   목적지 없는 요청으로 소비할 수 있다(0.5초 주기 — 실제로 열린 창이다).
+        target = home / _SHOW_PATH
+        if safe != "/":
+            # ⚠ **목적지 실패가 신호를 죽이지 않는다** (적대 리뷰 2026-09-08 2R-B3).
+            #   종전에는 둘이 한 `try` 안에 있어 목적지 쓰기가 던지면 `show.req` 조차 쓰이지
+            #   않았고, 상주 중인 앱은 **창을 아예 열지 않았다** — 이 함수가 파일을 둘로 가른
+            #   근거(「목적지를 잃는 것과 요청을 잃는 것은 다르다」)를 구현이 배반한 형태다.
+            #   여기서 삼키면 목적지만 잃고 루트로 degrade 한다(문서가 약속한 동작).
+            try:
+                _write_private(target, safe)
+            except Exception:  # noqa: BLE001 — 선택적 값의 실패가 필수 값을 죽이지 않는다
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+        else:
+            # 지난 요청의 잔재를 남기지 않는다 — 남으면 다음 「그냥 창 열기」가 엉뚱한 곳으로 간다.
+            try:
+                target.unlink()
+            except OSError:
+                pass
         (home / _SHOW_REQ).write_text(str(time.time()), encoding="utf-8")
     except OSError:
         pass
 
 
-def take_show_request(home: Path) -> bool:
-    """요청이 있으면 **소비하고** True. 없거나 낡았으면 False.
+def _write_private(target: Path, body: str) -> None:
+    """소유자만 읽을 수 있게, 심볼릭 링크를 따라가지 않고, **원자적으로** 쓴다.
+
+    ## 왜 이 파일만 특별한가 (적대 리뷰 2026-09-08 F2·F4)
+
+    이 홈에 지금까지 있던 것은 서버 주소(`server.json`) · 공개 CA · 공개 러너 코드 · 업데이트
+    상태뿐이었다. `show.path` 는 **비밀을 담는 첫 파일**이다 — 목적지가 `/share/<token>` 이면
+    그 토큰은 익명 열람 권한을 그대로 주는 베어러다. `write_text` 의 기본 모드(umask 에 따라
+    0644)로 두면 같은 머신의 다른 로컬 계정이 읽을 수 있고, 그것은 「링크를 받은 사람만 본다」는
+    공유 모델이 「그 머신의 아무 계정이나 본다」로 바뀌는 일이다. 이 저장소는 감사 로그에
+    토큰 **8자 프리픽스만** 남기도록 이미 성문화해 두었는데(`docs/SECURITY.md`), 홈에 64자
+    전문을 평문으로 남기는 것은 같은 규율의 반대편이다.
+
+    ⚠ **홈 디렉토리 자체의 모드는 바꾸지 않는다.** 그 디렉토리는 러너와 공유하며(CA·설정),
+    모드를 좁히는 것은 이 cycle 의 범위 밖 부작용을 만들 수 있다. 여기서는 **이 파일**만
+    좁히고, 디렉토리 권한 정리는 별도 판단으로 남긴다.
+
+    ⚠ **Windows 에서는 모드로 좁힐 수 없다 — 그 사실을 숨기지 않는다** (적대 리뷰
+    2026-09-08 2R-B2, 실 Windows CPython 실측: 같은 시퀀스가 예외 없이 성공하고 결과는
+    `0o666`). Windows 는 POSIX 모드 비트를 read-only 속성으로만 매핑하므로 `fchmod` 로
+    「소유자만」을 만들 수 없다. 그 플랫폼에서 이 파일을 지키는 것은 **`%USERPROFILE%` 의
+    ACL** 이고, 그것은 표준 사용자 간 읽기를 이미 막는다 — 즉 조치가 필요한 곳(홈이 관례적
+    으로 0755 인 Unix·WSL)에서 동작하고, 동작하지 않는 곳에서는 애초에 필요가 적다.
+    그래도 **docstring 이 거짓을 말하지 않도록** 여기 적어 둔다.
+
+    ⚠ `os.fchmod` 는 Windows 에서 CPython 3.13+ 에만 존재한다 — `getattr` 로 방어한다.
+    없는 것을 부르면 `AttributeError` 가 나는데 호출부의 `except OSError` 가 그것을 잡지
+    못해 **두 번째 실행이 트레이스백으로 죽는다**(frozen windowed exe 라 사용자에게는
+    「눌렀는데 아무 일도 없다」로 보인다).
+
+    ⚠ 임시 파일 → `os.replace` 원자 교체다. 직접 쓰면 폴러가 **반쯤 쓰인 경로**를 읽을 수 있다.
+    실패 경로에서는 **fd 를 먼저 닫고** 지운다 — Windows 는 열려 있는 파일을 지우지 못해
+    `.show-*.tmp` 가 남는다(실측 `PermissionError [WinError 32]`).
+    """
+    import os
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".show-", suffix=".tmp")
+    closed = False
+    try:
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None and os.name != "nt":
+            fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            closed = True          # fdopen 이 성공한 순간부터 fd 소유권은 파일 객체에 있다
+            fh.write(body)
+        os.replace(tmp, target)
+    except BaseException:
+        if not closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def take_show_request(home: Path) -> str | None:
+    """요청이 있으면 **소비하고** 목적지 경로(기본 `"/"`). 없거나 낡았으면 `None`.
 
     ⚠ 읽기만 하고 지우지 않으면 창이 0.5초마다 계속 열린다.
+
+    ⚠ 반환은 **경로이지 불리언이 아니다.** 호출부는 여전히 `if take_show_request(...)` 로
+    쓸 수 있다 — 유효한 요청은 최소 `"/"` 라 참이고, 없으면 `None` 이라 거짓이다.
     """
     import time
-    path = home / _SHOW_REQ
+    req = home / _SHOW_REQ
+    target = home / _SHOW_PATH
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = req.read_text(encoding="utf-8")
     except OSError:
-        return False
+        # 신호가 없으면 목적지도 의미가 없다. 남아 있으면 다음 요청에 **엉뚱하게 실린다**.
+        #
+        # ⚠ 그러나 **즉시** 지우면 안 된다 (적대 리뷰 2026-09-08 F4). `request_show` 는
+        #   목적지 → 신호 순으로 쓰는데, 그 사이(수 마이크로초)에 0.5초 폴러가 끼어들면
+        #   여기서 «신호 없음» 을 보고 **방금 쓴 목적지를 지운다** — 순서로 해결했다고 적어
+        #   둔 그 경합이 정리 로직 때문에 반대 방향으로 되살아난다. 그래서 **TTL 을 넘긴
+        #   것만** 고아로 본다. 쓰기 창(밀리초)과 TTL(30초) 사이에는 충분한 거리가 있다.
+        try:
+            if time.time() - target.stat().st_mtime > _SHOW_TTL:
+                target.unlink()
+        except OSError:
+            pass
+        return None
     try:
-        path.unlink()
+        req.unlink()
     except OSError:
         pass
     try:
-        return (time.time() - float(raw.strip())) <= _SHOW_TTL
+        dest = safe_app_path(target.read_text(encoding="utf-8")) or "/"
+    except OSError:
+        dest = "/"
+    try:
+        target.unlink()
+    except OSError:
+        pass
+    try:
+        fresh = (time.time() - float(raw.strip())) <= _SHOW_TTL
     except ValueError:
-        return False
+        return None
+    return dest if fresh else None
 
 
 class _NoLock:
@@ -799,12 +998,42 @@ def parse_scheme_url(url: str) -> dict:
     if parsed.scheme.lower() != "dqa-connect":
         return {}
     q = urllib.parse.parse_qs(parsed.query)
-    wanted = ("base", "token", "ca_sha256", "agent_sha256")
+    # ── 액션별 키 집합 (적대 리뷰 2026-09-08 F3) ─────────────────────────────────
+    # 두 번째 동사(`open`)를 만들면서 파서에 동사 개념을 넣지 않으면, 「open 은 토큰을 싣지
+    # 않는다」는 **조립 측 관례일 뿐 수용 측 계약이 아니다.** 그리고 이번 변경은 위험을 정확히
+    # 그 방향으로 키운다 — 지금까지 이 스킴을 누르는 사람은 연결 화면까지 간 계정 소유자뿐이었는데,
+    # 이제 제품이 «남이 보낸 공유 링크를 받은 사람» 에게 스킴 클릭을 정상 동작으로 학습시킨다.
+    # 그 사람에게 `open?base=<진짜 서버>&token=<공격자 토큰>` 은 진짜와 구분되지 않고,
+    # `base` 가 같으니 `server_changed` 확인창도 뜨지 않는다.
+    #
+    # ⚠ 구버전 degrade 는 그대로다 — 구버전은 host 를 보지 않으므로 새 링크에서도 `base` 를
+    #   읽어 루트를 연다. 여기서 키를 좁히는 것은 **신버전의 수용 계약**이다.
+    action = (parsed.netloc or "").lower()
+    if action == "open":
+        wanted: tuple[str, ...] = ("base",)
+    else:
+        # `start` 와 미상 액션 — 종전 연결 4값. 미상을 `start` 로 다루는 것은 하위호환이며,
+        # 그 경로의 값은 어차피 CA 지문·러너 체크섬 대조가 다시 검증한다.
+        wanted = ("base", "token", "ca_sha256", "agent_sha256")
     out: dict = {}
     for key in wanted:
         vals = q.get(key) or []
         if vals and str(vals[0]).strip():
             out[key] = str(vals[0]).strip()
+    # ── 목적지 경로 (`dqa-connect://open?...&path=/share/<token>`) ────────────────────
+    # 웹의 공유 화면이 「이 대화를 앱에서 열어라」로 보낸다. 연결 4값과 **다른 축**이라
+    # 위 루프에 섞지 않는다 — 저쪽은 값이 있으면 그대로 싣지만, 경로는 `safe_app_path`
+    # 를 통과해야만 싣는다.
+    #
+    # ⚠ 부적격이면 **키를 버린다**(예외도, 중단도 아니다). 그러면 호출부는 목적지를 모르는
+    #   상태가 되어 서비스 루트를 연다 — 구버전 클라이언트가 이 키를 몰라서 하는 것과 **같은
+    #   동작**이다. 나쁜 값 하나가 앱 실행 자체를 막으면, 사용자는 「눌렀는데 아무 일도 없다」를
+    #   겪고 그것을 스스로 진단하지 못한다.
+    path_vals = q.get("path") or []
+    if path_vals:
+        safe = safe_app_path(str(path_vals[0]))
+        if safe and safe != "/":
+            out["path"] = safe
     return out
 
 
@@ -979,7 +1208,39 @@ def runner_runtime_env(st: "RuntimeState | None") -> dict:
     """
     if st is None or not st.path:
         return {}
-    return {f"BRIDGE_AI_PATH_{st.name.upper()}": str(st.path)}
+    env = {f"BRIDGE_AI_PATH_{st.name.upper()}": str(st.path)}
+    if st.where == "wsl":
+        if st.distro:
+            env[f"BRIDGE_AI_WSL_DISTRO_{st.name.upper()}"] = st.distro
+        if st.user:
+            env[f"BRIDGE_AI_WSL_USER_{st.name.upper()}"] = st.user
+    return env
+
+
+def connection_identity(plan: ConnectPlan, ca_path: Path) -> str:
+    """힌트 대신 서버가 검증한 Bearer의 세션을 사용한다. 리다이렉트에 토큰을 넘기지 않는다."""
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    context = ssl.create_default_context(cafile=str(ca_path))
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect())
+    request = urllib.request.Request(plan.base + "/api/ai/connect/identity", data=b"{}",
+                                     headers={"Authorization": "Bearer " + plan.token,
+                                              "Content-Type": "application/json"}, method="POST")
+    with opener.open(request, timeout=20) as response:
+        doc = json.loads(response.read(65536))
+    session = str(doc.get("connection_session") or "")
+    if not session or not doc.get("account_id"):
+        raise ValueError("missing authenticated session")
+    return session
+
+
+def runner_state_env(plan: ConnectPlan, st: "RuntimeState | None") -> dict:
+    if plan.selection_file:
+        return {"BRIDGE_RUNTIME_SELECTION": plan.selection_file,
+                "BRIDGE_RUNTIME_INSTANCE": plan.selection_instance,
+                "BRIDGE_STATE_DIR": str(plan.home / "runners" / sha256_of(plan.base.encode())[:24])}
+    return {}
 
 
 def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
@@ -990,9 +1251,10 @@ def check_connection(plan: ConnectPlan, runner: Path, ca_path: Path,
     화면이 갈라 말해야 한다(feature-0043 REQ-20260901-win-ai-detect).
     """
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path), "--check"]
-    argv += runner_runtime_args(_as_state(runtime))
+    argv += [] if plan.selection_file else runner_runtime_args(_as_state(runtime))
     env_token = dict(os.environ, BRIDGE_TOKEN=plan.token,
-                     **runner_runtime_env(_as_state(runtime)))
+                     **runner_runtime_env(_as_state(runtime)),
+                     **runner_state_env(plan, _as_state(runtime)))
     try:
         p = subprocess.run(argv, capture_output=True, timeout=120,
                            encoding="utf-8", errors="replace", env=env_token,
@@ -1006,9 +1268,10 @@ def spawn_runner(plan: ConnectPlan, runner: Path, ca_path: Path,
                  runtime: "str | RuntimeState | None" = None, *, on_event=None):
     """러너를 상주시킨다. **토큰은 환경변수로만** 넘긴다 — 명령줄에 실으면 프로세스 목록에 뜬다."""
     argv = [runner_python(), str(runner), "--base", plan.base, "--ca", str(ca_path)]
-    argv += runner_runtime_args(_as_state(runtime))
+    argv += [] if plan.selection_file else runner_runtime_args(_as_state(runtime))
     kw: dict = {"env": dict(os.environ, BRIDGE_TOKEN=plan.token, DQA_RUNNER_SUPERVISED="1",
-                            **runner_runtime_env(_as_state(runtime))),
+                            **runner_runtime_env(_as_state(runtime)),
+                            **runner_state_env(plan, _as_state(runtime))),
                 "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT,
                 "encoding": "utf-8", "errors": "replace"}
     # 콘솔 창이 뜨지 않게 — GUI 앱에서 검은 창이 깜빡이면 그것만으로 「고장」으로 읽힌다.

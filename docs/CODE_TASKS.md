@@ -8,7 +8,7 @@ ai_read_priority: 5
 # CODE_TASKS — TASK 카드 카탈로그 (변경유형 → 코드영역 → 재귀 실행)
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.
-     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 37개 파일(route-module 29 + 언더스코어 공유모듈 7 + `__init__`, 2026-09-01 재실측).
+     app.py 19,650 → 3,722 줄(-81%, P5b 완결 시점). 핸들러 전량이 routers/ 로 추출됨 — 41개 파일(route-module 30 + 언더스코어 공유모듈 10 + `__init__`, 2026-09-10 재실측).
      source: routers/*.py + docs/ROUTEMAP.md + static/graph/ 실측(2026-07-13; routers 카운트는 2026-08-25 재실측). freshness 는 ROUTEMAP source_commit 로 검증. -->
 
 > **이 문서의 용도**: "무엇을 바꾸려는가"(변경유형)를 입력으로, **어느 파일:심볼에서 시작해 →
@@ -61,21 +61,24 @@ ai_read_priority: 5
 
 ---
 
-## 영역 지도 (routers/ 38파일, 2026-09-07 실측)
+## 영역 지도 (routers/ 41파일, 2026-09-10 실측)
 
 - **30 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
   - ⚠ `routers/client_release.py`(INCLUDE_ORDER=260, feature-0046 소유) 는 **`app` 을 import 하지 않는
     유일한 route-module** 이다 — 그래서 `app.py` 가 `/client` 마운트를 위해 이것만 직접 import 할 수 있다.
     다른 라우터를 그 자리에 올리면 순환이 생긴다(그 import 가 파일 상단이 아니라 마운트 직전에 있는 이유).
-- **8 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
+- **10 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
+  - 첨부 비교 정렬: `routers/_attachment_diff.py:align_lines`·`unified_from_rows` → `routers/_conv_store.py:_build_version_diff_view` → `routers/attachments.py:get_attachment_version_diff` → `static/app/attach-diff.js`. 원문 equal, 정렬 제한 안내, 양쪽 줄번호·원문 복원을 함께 검증한다.
   - `routers/_prompt_context.py` — 프롬프트 컨텍스트 조립(admin_roles·admin_products·auth·conversations 소비).
   - `routers/_audit_infra.py` — 감사 인프라 헬퍼(전 라우터 소비).
   - `routers/_bootstrap_schema.py` — 웹 테이블/시드 부트스트랩(startup 기계가 호출, DDL idempotent).
   - `routers/_folder_store.py` — 대화 폴더 PG 스토어(feature-0024, `conversation_folders`·`folder_conversation_map`).
   - `routers/_console_jobs.py` — 콘솔 작업의 프롬프트 조립 + 개인 AI 산출물의 기존 저장경로 반영(feature-0043, 2026-08-31 신설).
   - `routers/_console_llm.py` — 관리 콘솔 LLM 상태 판정 단일 정본(feature-0043, 2026-08-31 신설).
+  - `routers/_connect_funnel.py` — 연결 퍼널 계측: 어느 단계에서 떨어지는가(feature-0043, ROADMAP ITEM-00).
+  - `routers/_connect_steps.py` — 연결 단계 체크리스트 판정(feature-0043, ITEM-03·ITEM-06). ⚠ 정본 TASK 는 「5단계 판정」인데 이 모듈의 `key` 는 4개다 — 미해소(wiki/hot.md Active Threads).
 - **공유 컨텍스트**: `src/web_context.py`(leaf, stdlib-only) · `shared/db.py`(repo-root, PG `_pg_connect`) ·
   `unit/feature-0003-agent-web-ui/src/modules/`(attachment mirror·group_members 등).
 - **app.py 잔류(4,000줄, 2026-08-25 실측)**: DI seam · 인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)
@@ -339,6 +342,8 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 
 ## TASK 9 — 정적 자산 캐싱 / 캐시버스터(`?v=`) 변경
 
+열린 DQA 자동 반영은 `bin/lib/ui-release.sh:publish_ui_release` → `unit/feature-0003-agent-web-ui/src/ui_release.py:read_release` → `src/routers/system.py:get_ui_release` → `static/ui-refresh.js:createUiRefresh` → `static/app/deploy-refresh.js:installAppRefresh` 순서다. 두 replica 검증 후 완료를 원자 게시한다. 주 대화 화면의 선택을 복원하며 초안/신규 첨부/진행 요청을 보호한다. 최초 도입 전 페이지는 새 로드가 한 번 필요하다. 검증: `test_ui_release.py`, `test_ui_release_publication.py`, `test_ui_refresh.py`, `tests/windows/verify_deploy_refresh.py`.
+
 **Match keywords**: 캐시버스터·`?v=`·asset stamp·`Cache-Control`·immutable·no-store·배포 후 구버전 렌더·하드 리프레시.
 
 **Entry region**: 판정 주체는 **upstream** 이다 — `unit/feature-0003-agent-web-ui/src/static_cache.py`
@@ -463,3 +468,18 @@ python3 bin/gen-routemap.py                                                     
 | route 역탐색 | `grep -rn '"/api/부분경로"' src/routers/` |
 | ROUTEMAP drift 게이트 | `python3 bin/gen-routemap.py --check` |
 | 전체 검증 | `make test` (agent 컨테이너 pytest + ruff, `--no-deps`) |
+
+## 외부 AI 도구 catalog (2026-09-08)
+
+도구 404·인자 누락 조사: `routers/ai_tools.py`의 P0_TOOLS/P1_TOOLS·get_tool_catalog·run_structure_tool → `unit/feature-0003-agent-web-ui/src/external_tool_catalog.py` → feature-0041 MCP run_read_tool. 전체 노출/제한 매핑은 feature-0003 docs/TOOL_SURFACE_AUDIT.md.
+
+### 그룹 문맥 또는 AI 세션이 이어지지 않을 때
+
+feature-0043 `src/agent/sessions.py`의 범위 키·지원 probe·최종 이력 영수증과 `prompt.py`의 최신 snapshot 전달을 확인한다. feature-0003 `routers/ai_tools.py:_recent_conversation_context`는 발언자·assistant 호출자와 80개/48,000자 상한을 구성한다. 세션 파일에는 본문/토큰이 없고, 임의 과거 세션을 찾는 `--last`를 쓰지 않는다. 회귀 정본: `unit/feature-0043-external-llm-bridge/tests/test_conversation_sessions.py`.
+
+
+## 배포 점검이 procReady / PID 한도로 실패할 때
+
+`bin/lib/caddy-probe.sh:caddy_read_file` / `caddy_probe`가 실행 중 Caddy 내부 fork를 피한다. `bin/deploy-web.sh:reconcile_caddy`는 상태 조회 실패와 실제 미기동을 구분한다. 다음 생성의 reaper·용량은 docker-compose.yml의 caddy init/pids_limit에 있다. 회귀는 feature-0014의 test_caddy_probe_isolation.py와 test_edge_rolling_gate.py.
+
+통합 경계(2026-09-09): replica TLS 확인은 PR #1656의 `bin/deploy-web.sh:edge_peer_live`가 호스트 nsenter/dig/curl로 실제 DNS·CA·SNI를 확인한다. `caddy_probe`의 격리 init 컨테이너는 admin HTTP GET에 사용한다.

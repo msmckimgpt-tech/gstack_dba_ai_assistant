@@ -1,0 +1,91 @@
+[
+  {
+    "ObservedAt": "2026-09-08T15:46:57.9029785+09:00",
+    "Index": 76,
+    "Name": "DQA 연결 확인용 테스트입니다. 도구를 사용하지 말고 17 + 25의 결과와 DQA_CODEX_42만 한 대화 메뉴 열기",
+    "Type": "ControlType.Button",
+    "Id": "",
+    "Class": "conv-item is-own is-active",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "ObservedAt": "2026-09-08T15:46:58.0039792+09:00",
+    "Index": 98,
+    "Name": "DQA 연결 확인용 테스트입니다. 도구를 사용하지 말고 17 + 25의 결과와 DQA_CODEX_42만 한",
+    "Type": "ControlType.Text",
+    "Id": "conversationTitle",
+    "Class": "chat-title",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "ObservedAt": "2026-09-08T15:46:58.0119797+09:00",
+    "Index": 106,
+    "Name": "DQA 연결 확인용 테스트입니다. 도구를 사용하지 말고 17 + 25의 결과와 DQA_CODEX_42만 한 줄로 답해주세요.",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "ObservedAt": "2026-09-08T15:46:58.0189786+09:00",
+    "Index": 114,
+    "Name": "42 DQA_CODEX_42",
+    "Type": "ControlType.Text",
+    "Id": "",
+    "Class": "",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "TextPatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "ObservedAt": "2026-09-08T15:46:58.0259828+09:00",
+    "Index": 120,
+    "Name": "2026. 09. 08. 오후 03:45 · 내 질문 · DQA 연결 확인용 테스트입니다. 도구를 사용하지 말고 17 + 25의 결과와 DQA_CODEX_42만 한 ",
+    "Type": "ControlType.Button",
+    "Id": "",
+    "Class": "message-point-dot is-user",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  },
+  {
+    "ObservedAt": "2026-09-08T15:46:58.0309804+09:00",
+    "Index": 121,
+    "Name": "2026. 09. 08. 오후 03:45 · Assistant · 42 DQA_CODEX_42",
+    "Type": "ControlType.Button",
+    "Id": "",
+    "Class": "message-point-dot is-assistant is-active",
+    "Enabled": true,
+    "Offscreen": false,
+    "Pid": 47356,
+    "Patterns": [
+      "InvokePatternIdentifiers.Pattern",
+      "ScrollItemPatternIdentifiers.Pattern"
+    ]
+  }
+]

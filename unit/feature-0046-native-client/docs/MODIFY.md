@@ -894,7 +894,6 @@ edit_policy: append-only
 ## CHG-20260908T024700-brand-published
 - Related TASK: TASK-20260908-brand-icon
 - PR #1608 병합 및 1.1.2 라이브 릴리스 완료. TASK/REPORT/검증 기록·릴리스 노트에 실제 엣지 다운로드 200, 26,023,355 bytes, 검증 빌드와 SHA-256/byte 동일을 기록했다. 코드·아이콘 자산 변경 없음.
-
 ## CHG-20260908T-transparent-taskbar
 - Related TASK: TASK-20260908T-transparent-taskbar; issue #1612.
 - 사유: 사용자 제보로 기존 5표면 검사가 Windows 작업 표시줄 식별자와 실제 버튼을 포함하지 않았음을 확인. 투명 배경 요구와 승인된 SVG 정리 방식 반영.
@@ -919,3 +918,138 @@ edit_policy: append-only
 - Related TASK: TASK-20260908T-transparent-taskbar / #1612
 - draft PR #1617·검증된 1.1.3 후보·잠금 해제 후 재검수/배포 순서를 인계한다. 원격 CI check가 보고되지 않아 CI PASS로 주장하지 않는다.
 - 별도 검사 DQA 두 인스턴스는 정상 exit=0, 별도 Chrome/relay만 종료했다. 기존 사용자 앱과 프로필은 유지했다. 제품 코드 변경 없음.
+## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
+- Timestamp: 2026-09-08T12:34:00+09:00
+- Related TASK: TASK-20260908T120000-connect-discovery-ux
+- 이유: 모든 AI를 하나의 선택으로 묶던 흐름을 플랫폼별로 바꾸고, 매번 위치를 고르는 비용과 잘못된 완료 알림을 줄인다.
+- 변경: DQA 클라이언트를 실행하고 로그인하면 설치된 AI를 찾는다. AI별 사용 가능한 위치가 하나이면 자동 연결하고, Windows/WSL 배포판/계정 여러 곳에 있으면 해당 AI 카드에서만 선택한다. 이미 고른 위치가 다시 유효하면 자동 재사용한다. 별도 러너·Windows 브라우저 실행은 사용자 절차에 없다.
+- 통합: main `8f49f1fc`의 아이콘/감독 프로세스/WSL 토큰/네트워크 개선을 보존했다.
+- 검증: 이번 TASK의 test-runs.d 기록 및 REVIEW index를 참조한다. 코드 정본 탐색은 기존 core/bridge/client-bridge 앵커와 ROUTEMAP을 사용했고 새 인증 endpoint로 ROUTEMAP을 재생성한다.
+
+## CHG-20260908-connect-discovery-main-integration
+
+- Timestamp: 2026-09-08T12:58:44+09:00
+- TASK: TASK-20260908T120000-connect-discovery-ux
+- 최신 main의 연결 안내·행위 검증과 현재 자동 연결 변경을 통합했다. DQA 실행 버튼은 앱 내부에 노출하지 않고, 일반 브라우저 호환 경로의 무응답은 실제 존재하는 DQA 앱/버튼으로 안내한다. 네이티브 코드 재변경 없이 527건 PASS, 수집 계약 18건 PASS.
+
+## CHG-20260908-connect-release-evidence
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 최종 DQA 1.2.0 실행 파일에서 첫 연결과 재시작 선택 재사용을 확인한 JSON을 보존했다. native 픽셀 캡처 불가와 서비스/API/벤더 대역 범위를 명시했다. 설치기 26,037,943 bytes, SHA-256 `a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692`.
+
+## CHG-20260908T041713-connect-published
+
+- TASK: TASK-20260908T120000-connect-discovery-ux / Issue #1615
+- 이유: 코드 완료와 라이브 배포·설치기 반입을 구분해 후속 세션이 현재 결과를 확인하도록 한다.
+- 결과: PR #1619 / 서버 92cfa2c2 전체 배포 완료, DQA 1.2.0 공개, 실제 수신 26,037,943 bytes/SHA-256 일치. 실제 native fixture 결과와 픽셀 캡처 미확인을 분리했다. 소스 코드 변경 없음.
+
+## CHG-20260908-update-install-recovery — 실제 업데이트 롤백 수정
+- Related TASK: TASK-20260908-update-install-proof; issue #1622.
+- 실제 Windows 1.1.2 업데이트 메뉴→확인→설치에서 고아 내장 Python의 파일 잠금으로 1.2.0 설치가 exit 5 롤백하는 결함을 재현했다.
+- 1.2.1: 설치기의 강제 종료 대상을 패키지 실행 파일 세 개로 제한하고, Windows 기본 자동 재시작을 명시적으로 꺼 `/RELAUNCH`만 사용한다. 설치 상세 로그도 기본 활성화한다.
+- 기존 1.1.2 업데이터에도 적용되도록 수정의 핵심을 새 설치기에 두었다. 전역 프로세스 이름 kill이나 외부 Python 정리는 사용하지 않는다.
+- 검증: updater/supervisor 95 PASS. Windows 빌드·실제 업데이트 재검증 결과는 후속 기록에 추가한다.
+
+## CHG-20260908-update-install-evidence-eol — Windows 증적 정규화
+- Windows 생성 증적의 CRLF를 저장소 LF로 정규화했다. 원본은 Windows 임시 작업 폴더에 보존하며 결과 값은 동일하다.
+
+## CHG-20260908-update-install-measured — 실제 업데이트 설치 성공
+- 1.2.1 공개 후 기존1.1.2 메뉴에서 설치·자동 재시작·최신 버전 확인 완료. 고아 프로세스 수동 종료 없이 회귀 상황 그대로 PASS.
+- setup둘exit0(43.737초), 같은 경로의 새DQA1개, 실제 exe/다운로드 SHA, pending해소, applyok, 5초 안정 실행 대조. 원본 증적과 전체 압축 설치 로그 보존.
+- FUNCTION/REPORT/TASK를 현재 설치·배포 상태로 동기화했다. 제품 코드는 직전 검토 후 바뀌지 않았다.
+## CHG-20260908T151000-codex-connect-fix
+- Related TASK: TASK-20260908-codex-connect-fix; Issue #1625.
+- core: PermissionError 및 CLI 권한 실패의 안전한 상태 코드, 진단 출력과 실제 OK 응답 분리.
+- discovery: gh-runner 신규/기존 캐시 제외, 권한 실패가 성공 캐시로 덮이지 않음.
+- bridge: AI별 selection_id 유지/갱신 및 해당 receipt만 수락. 다른 AI 추가 시 기존 선택 id 보존.
+- native1.2.4 버전, 실제 설치용 Windows 빌드. runner/UI 변경은 각 기능 MODIFY에 기록.
+- 검증: native 회귀·DOM12시나리오·독립 패널, 실제 설치본 업데이트/AI 요청은 후속 증거로 분리.
+## CHG-20260908T150900-codex-text-interaction — 텍스트 상호작용 복구
+- Timestamp: 2026-09-08T15:09:00+09:00; Session: codex text-interaction; Issue #1626.
+- `Shell.run`의 text_select 기본 False를 True로 바꿔 pywebview의 전역 선택 차단을 제거했다.
+- loaded 이벤트에서 소유 UI 스레드로 WebView2 기본 검색 단축키를 활성화했다. 디버그/개발자 도구는 비활성 상태를 유지한다.
+- 네이티브 버전 1.2.3 빌드; 동료 작업의 1.2.4와 구분한다. 첨부 본문 CSS·줄번호 제외 규칙을 유지한다.
+
+## CHG-20260908T151800-codex-text-published — 공개 채널 검증 기록
+- Timestamp: 2026-09-08T15:18:00+09:00; Session: codex text-interaction.
+- PR #1628 병합·1.2.3 공개채널 다운로드 크기/SHA 일치 기록. 검색 UI NOT-RUN과 Issue #1626을 유지한다.
+- 변경은 현재 문서·검증 JSON 및 증거 파일의 불필요한 실행비트 정리다. 제품 코드 변경 없음.
+
+## CHG-20260908T152700-codex-release-integration
+- Related TASK: TASK-20260908-codex-connect-fix; product PR #1631.
+- 공개1.2.3을 통합하여1.2.4로 올렸다. 텍스트 선택/검색 개선을 보존했다.
+- native544 PASS, runner 집중119 PASS, DOM12 PASS, Windows 설치기26,045,699bytes/SHA a0535a088c9d000e776b12f5b817d311b7bce1f82da890b3dcee1cb02b494429.
+- merge commit의 combined diff를 검증 도구가 일반 cycle delta로 인식하지 못해 이 통합 결과를 일반 문서 commit에도 기록한다. 실제 사용자 검증은 아직 배포 후 일정이며 PASS로 표기하지 않는다.
+
+## CHG-20260908T153000-codex-prompt-integration
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1627의 프롬프트 전달 계약 수정을 통합하고 양 작업의 문서 기록을 보존했다. 네이티브 소스/빌드 변화는 없다. 관련 runner 회귀를 추가 검증한다.
+
+## CHG-20260908T153300-codex-integration-verified
+- Related TASK: TASK-20260908-codex-connect-fix.
+- 최신 main 통합 뒤 prompt delivery/선택 회귀39 PASS, native544 및 heartbeat집중119 PASS 결과를 현재 출하 기록에 연결했다. 설치기 바이트는 기존1.2.4 빌드와 동일하다.
+
+## CHG-20260908T155000-codex-actual-proof
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1631/8f1116cf 전체 배포, 실제 DQA1.2.3→1.2.4 업데이트 설치와 root Codex 새 대화 왕복 증거를 문서화했다. Permission denied 현장 미재현 및 UIA/픽셀 증거 경계도 기록한다.
+
+## CHG-20260908T160200-codex-verified-closeout
+- Related TASK: TASK-20260908-codex-connect-fix.
+- PR1633/7ca6f2a4 웹 배포 후 실제 설치 DQA에서 안내 문구 정상 표시·root 자동 복원 확인,1.2.4 최신 버전 확인 및 배포 범위를 증거와 함께 기록. 이 후속은 비정책 문서·JSON만 변경한다.
+## CHG-20260908T125500-share-client-entry-deeplink
+
+- Related TASK: feature-0003 `TASK-20260908T125500-share-client-entry` (웹 계약 소유).
+- `client/core.py`: `MAX_APP_PATH` · `safe_app_path()`(정본 `shared/dqa_identity` 의 사본 —
+  동결 배포본이라 import 하지 않는다) · `parse_scheme_url` 의 `path` 수용(부적격이면 키만
+  버림) · `ConnectPlan.path` · `request_show(home, path)` + `show.path` 별도 파일 ·
+  `take_show_request` 반환 계약 bool → `str | None`.
+- `client/gui.py`: `--path`(SUPPRESS) · plan 주입 시 재검증 · 이미-실행 분기가 목적지 전달 ·
+  `_run_embedded`/`_run_browser_shell` 이 `panel_url(…, plan.path)` ·
+  `_watch_show_requests(…, plan, br)` 가 `navigate` 후 `show` · `_serve_confirms` 의
+  `reopen(dest)`.
+- `client/window.py`: `Shell.navigate(url)` 신설 — 실패는 `last_error` 로 남기고 삼킨다
+  (여기서 예외를 올리면 폴링 스레드가 죽어 「창 열기」 자체가 영영 안 된다).
+- `tests/test_wsl_and_scheme.py`: 정본↔사본 **경로표 대조**(`_PATH_TABLE`) · 왕복(서버 조립
+  → 클라이언트 파싱) · 토큰 부재 · 구버전 degrade · plan 도달.
+- `tests/test_standalone_launch.py`: 목적지 전달 5건 추가, 반환 계약 변경 반영.
+
+## CHG-20260909T120000-client-125-share-entry
+
+- Related TASK: TASK-20260909T120000-client-125-share-entry.
+- `src/client/version.py`: `CLIENT_VERSION` **1.2.4 → 1.2.5**. 제품 로직 변경 0 — 이 릴리스가
+  나르는 것은 2026-09-08 에 머지된 딥링크 목적지 수용(`safe_app_path` · `parse_scheme_url` 의
+  `path` · `ConnectPlan.path` · `Shell.navigate` · `request_show(home, path)`)이며, 그 코드는
+  이미 main 에 있으나 **설치본에는 없다**(1.2.4 가 그 머지보다 앞선다).
+- 빌드·게시 산출물은 커밋 대상이 아니다(러너와 같은 규약) — 반입 경로는 호스트
+  `artifacts/client-release`.
+- `src/installer/DQAConnect.iss`: `#define AppVersion` 폴백 **1.2.4 → 1.2.5**. 빌드는
+  `/DAppVersion=` 로 정본을 주입하므로 산출물은 이미 옳았지만, 폴백이 갈리면 **손으로 ISCC 를
+  부른 설치기**가 파일명과 프로그램이 말하는 버전을 서로 다르게 갖는다.
+  `tests/test_updater.py::test_iss_version_matches_the_canon` 이 이 어긋남을 잡아냈다 —
+  버전 상수 1줄만 고치면 되는 줄 알았던 변경이 실제로는 두 곳이었다.
+- `unit/feature-0003-agent-web-ui/src/static/release-notes-data.js` (cross-feature):
+  2026-09-09 블록에 1.2.5 항목 + 요약 한 줄. 종전 클라이언트 버전은 전부 항목이 있는데 이것만
+  없었고(적대 리뷰 MED-1), 9월 8일 노트가 「새 앱 버전을 받으신 뒤에만 성립합니다」라고 적어 둔
+  그 버전이 바로 이것이다. **정적 자산 변경이므로 웹 재배포가 필요하다.**
+- `unit/feature-0046-native-client/tests/test_updater.py`:
+  `test_the_build_and_the_iss_use_the_same_version_shape` 의 첫 단정이 **죽어 있던 것**을
+  복구했다(적대 리뷰 L1) — 패턴이 `"` 앞 백슬래시를 요구해 어떤 빌드 파일에도 맞지 않았고,
+  `or` 뒤 느슨한 절만으로 통과했다. 즉 「빌드 정규식이 정본과 같은 모양인가」를 아무도 보고
+  있지 않았다. 뮤턴트로 봉인 확인(빌드 정규식을 `[0-9.]*` 로 느슨하게 하면 적색).
+
+## CHG-20260909-nondisruptive-update — 사용 중 설치와 다음 실행 적용
+- Timestamp: 2026-09-09T17:21:32+09:00
+- 원인: 설치기가 실행 중인 앱·내장Python을 덮어쓰며 강제로 종료하고, updater가 spawn 직후 성공·재시작으로 처리했다.
+- 변경: 불변 버전 폴더·실행검사·원자 포인터·고정 런처; 전역 설치잠금과 배타적 슬롯 확보; updater 종료/활성대상 검증과 앱생존; 준비/실패 GUI 안내. 1.3.0.
+- 독립 리뷰 수정: pointer 읽기의 삭제 공유, rename 오류5/32/33 제한 재시도, legacy 복원 fallback, 기존 실행경로 호환, tkinter 완료 안내와 bridge 준비버전 표시.
+- 근거/제한: [원장](test-runs.d/20260909-nondisruptive-update.md). 제어된 러너와 실제 AI 대화 검증을 구별한다.
+
+## CHG-20260909T173353-nondisruptive-shipping — 출하 증적 정합
+- Timestamp: 2026-09-09T17:33:53+09:00
+- 제품PR1663 병합,1.3.0 공개채널·다운로드바이트·웹배포 증적을추가하고 FUNCTION/REPORT/TASK를정합한다. Windows복사JSON·검증script의불필요한실행권한을644로정규화했다. 제품코드변경없음.
+
+## CHG-20260910-transparent-icon-release — 최신1.3.0 통합과 투명 아이콘 출하 준비
+- Timestamp: 2026-09-10T11:11:47+09:00
+- TASK: TASK-20260910-transparent-icon-release
+- 1.3.1 버전, 안정launcher/ICO, 기존launcher 교체, 실패활성화차단, 실패완료안내, 신규/upgrade제거 정합. 옛1.1.3후보미게시. mainDOM테스트nonce기대값정합.
+- native624/웹30/노트34·실제Windows설치/아이콘/실패/제거 증적: [원장](test-runs.d/20260910-transparent-icon-release.md).

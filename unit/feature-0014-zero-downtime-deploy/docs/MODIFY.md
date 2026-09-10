@@ -203,3 +203,35 @@ source_of_truth: true
   대화 API 인증·라우팅을 대신 검증하지 않는다. 이 주장도 철회했다.
 - 보조 chokepoint(`_openai_chat_completion_with_deadline`)를 부르는 방식으로는 부족하다 —
   2026-08-25 에 그 방식으로 200 을 받고 "해소" 로 오판했다. **대화 경로 함수를 직접 불러야 한다.**
+
+
+## CHG-20260909T140000-deploy-refresh
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 완료 신호를 전용 읽기 전용 mount로 전달. 혼합 배포/실패/재시도/rollback 분기 보완. 독립 회귀85 PASS. 상세 [TASK-20260909T140000-deploy-refresh](test-runs.d/TASK-20260909T140000-deploy-refresh.md).
+
+
+## CHG-20260909T141300-deploy-refresh-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh
+- 초기 서버 배포/완료 신호/제품 지문과 환경 실패45PASS 재검증 기록. web-only smoke 미수행 경계를 명확히 함. 설치 DQA 검증은 진행 중으로 유지.
+## CHG-20260909T143400-caddy-probe
+- Related TASK: TASK-20260909T143400-caddy-probe-reaping / TASK-20260909T140000-deploy-refresh
+- 배포 완료를 막은 Caddy ssl_client 좀비99/PID123/128 및 exec 실패를 진단. 점검을 같은 network namespace의 별도 init 컨테이너로 분리하고 Docker archive 파일 읽기·자기CID cleanup·조회 실패 fail-closed를 적용했다.
+- Caddy 다음생성 init:true/pids_limit256. 현재프로세스는재생성하지않는다. 현재한도256은동시작업중외부변경을관측하여중복변경하지않았다.
+- 실제검증·단위회귀·최종배포결과는 TASK-20260909T140000-deploy-refresh Run에분리기록한다.
+## CHG-20260909T160000-edge-probe-process-lifecycle
+
+- 배포 차단을 만든 Caddy BusyBox HTTPS probe의 ssl_client zombie 누적을 확인했다. host nsenter/curl/dig 방식으로 PID tree를 호스트에 유지하면서 동일 네트워크·DNS·TLS 경계를 검증한다.
+- Caddy init:true/PID 256을 정의했다. 라이브에는 PID 제한만 무중단 갱신했으며 init은 향후 재생성 시 적용된다.
+- 기존 게이트의 timeout 정규식이 curl --connect-timeout을 명령으로 오인하는 검사를 수정했다. 지속적인 compose ps 실패는 이제 미확인 상대를 통과시키지 않는 RC1을 검증한다.
+- 관련 49 PASS, 실제 정상 probe 5회·잘못된 SNI 차단·zombie 99 유지. [Run](test-runs.d/20260909-auth-transition-deploy-recovery.md).
+
+
+## CHG-20260909T170000-edge-probe-recovery-shipped
+
+PR #1656/cf55c659 배포 exit 0·두 replica ready·90초 soak PASS를 기록했다. Caddy PID 및 zombie 99개는 유지되어 probe 누적 재발이 없으며, init 실행환경 미반영 사실을 보존했다. 원래 설치 DQA 전환도 통과했다.
+
+
+## CHG-20260909T150100-deploy-refresh-installed-evidence
+- Related TASK: TASK-20260909T140000-deploy-refresh / TASK-20260909T143400-caddy-probe-reaping
+- PR #1658/4f570829 최종 배포 exit0, 두 replica·edge 완료 신호/소스 일치 및 Caddy 무재시작 실측을 기록했다.
+- 실제 설치 DQA의 자동 문서 변경1.242초·적용 알림4.438초를 확인했다. 최초 bootstrap의 병행 세션 기여, 현재 설치본 빈 작업 화면과 제품 Shell fixture34 PASS의 경계를 유지한다. 추가 제품 코드 변경 없음.

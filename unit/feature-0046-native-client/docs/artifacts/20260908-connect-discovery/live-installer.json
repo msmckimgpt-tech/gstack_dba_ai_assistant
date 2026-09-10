@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-09-08T04:13:10.833709+00:00",
+  "tls_verified": true,
+  "manifest": {
+    "version": "1.2.0",
+    "filename": "DQAConnect-Setup-1.2.0.exe",
+    "sha256": "a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692",
+    "size": 26037943,
+    "published_at": "2026-09-08T04:12:43+00:00",
+    "notes": "DQA에서 AI별 자동 연결과 Windows·WSL 위치 재사용을 지원합니다. 연결 상태와 완료 알림을 개선했습니다.",
+    "path": "/client/DQAConnect-Setup-1.2.0.exe"
+  },
+  "download_url": "https://112.185.196.20/client/DQAConnect-Setup-1.2.0.exe",
+  "http_status": 200,
+  "size": 26037943,
+  "sha256": "a808db762c37688e1f4ab4a54249d0d09b40d8ac96430293be21ab79205a9692",
+  "matches_windows_build": true
+}

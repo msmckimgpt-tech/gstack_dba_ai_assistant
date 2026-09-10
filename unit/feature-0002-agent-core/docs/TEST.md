@@ -274,3 +274,5 @@ source_of_truth: true
 - Related TASK: TASK-20260907T181510-kb-external-search
 - Result: PASS — 최종 회귀 203건, 실제 격리 PostgreSQL 포함.
 - Evidence: [실행 기록](test-runs.d/TASK-20260907T181510-kb-external-search.md).
+
+- TASK-20260908-prompt-layer-delivery: 여섯 계층 전달·오류·재시도·점유 교체 회귀는 [개별 Run](test-runs.d/TASK-20260908-prompt-layer-delivery.md)을 참조한다.

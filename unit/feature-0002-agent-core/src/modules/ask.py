@@ -363,7 +363,7 @@ def _postprocess_attachment_blocks(cid: str, account_id: Any,
         # 영속 성공 시에만 result.answer 를 교체한다(§18.8 MINOR): UPDATE 가 실패했는데
         # result_json 만 stripped 로 두면 ops view 와 실제 저장 메시지가 어긋난다.
         if _res.get("answer_persisted"):
-            result["answer"] = str(_res.get("answer") or content)
+            result["answer"] = str(_res.get("answer", content))
 
         if edited or created:
             result["edited_attachments"] = edited

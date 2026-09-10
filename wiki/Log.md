@@ -683,3 +683,90 @@ API 를 들이는 대신 서버가 `pg_trgm` 으로 문자 후보를 찾아 기�
   생존 확인이 죽던 것) · 원장 화석 영구화 · 무음 강등. **내가 쓴 테스트가 그 P1 들을 통과시키고
   있었고**, 축을 넓혀 교정한 뒤 회귀 8건을 신설했다.
 - 함께: 칩 툴팁 6종을 2문단으로 · 컴포저 안내 문단 제거(높이 정합) · 카탈로그 미수신 강등에 토스트.
+
+## [2026-09-08] feature | 공유 링크: 열람은 브라우저, 참여·fork 는 DQA 앱## [2026-09-08] feature | 공유 링크: 열람은 브라우저, 참여·fork 는 DQA 앱
+
+- 대화를 링크로 공유했을 때 **열람은 평범한 웹브라우저**(익명 포함 · 종전과 동일)이고 **참여(join)·fork 는 DQA 앱**을 거친다. 서버가 `client:{app_link, download_url}` 를 응답에 싣고(받기 URL 은 실물 판정 정본에 위임) 딥링크는 `shared/dqa_identity.app_open_url` 이 조립하며 **베어러 토큰을 싣지 않는다** — 앱 창은 브라우저 세션으로 인증되므로 더 실으면 노출 지점만 는다.
+- 클라이언트는 `dqa-connect://open?…&path=/share/<token>` 을 받아 **그 대화**를 연다. 상주 중이면 `Shell.navigate` 로 옮긴 뒤 보이고(순서가 반대면 「엉뚱한 곳이 열렸다」로 읽힌다), 목적지는 신호 파일 둘째 줄이 아니라 **별도 `show.path`** 로 전달한다 — 종전 형식은 파일 전체를 `float()` 로 읽어 줄을 보태면 **먼저 떠 있는 구버전**이 요청 자체를 버린다.
+- 앱 전용은 **전제가 갖춰졌을 때만** 적용한다 — 앱 링크 부재 · 받을 곳 부재 · 앱이 존재할 수 없는 기기 세 경우에는 종전 웹 경로로 열화하고 그 분기의 미로그인 수신자에게 로그인 진입을 남긴다(사용자 결정은 「앱 전용 + 받기 안내」였고, 받기가 성립하지 않는 곳에서 앱 전용만 집행하면 결정의 절반만 적용된다).
+- ⚠ **표시이지 집행이 아니다** — 서버 join/fork 게이트는 무변경이고 우회로 얻는 것은 권한이 아니라 «어느 화면에서 눌렀는가» 뿐이다. 그 범위를 코드 주석과 `docs/SECURITY.md` §7 에 명시했다.
+- 적대 검증(§18.8) 3라운드가 모두 결함을 잡았고 뒤로 갈수록 «직전 조치가 만든 회귀»였다 — 1R 전원 BLOCK(쿼리 스머글링으로 브리지 nonce 탈취 · 익명 페이지의 좌표 심기), 2R(X1 조치가 `/static/share.html` 로 뚫림 · `fchmod` 가 배포 플랫폼에서 no-op · 목적지 실패가 요청을 삼킴), 3R(allow-list 가 앱 창의 좌표를 첫 이동에 잃게 함 · 로그인 링크 제거로 열화 3분기 전부에서 미로그인 진입 0). 계약 26 · jsdom 108 · 클라이언트 전건 · 실 렌더 20 PASS, 회귀 차집합 0.
+- DQA-client 실측은 클라이언트 재배포 뒤로 `NOT-RUN + Reason`. 이연 9건은 근거와 함께 남겼다.
+
+[[Features/feature-0003-agent-web-ui]] · [[Features/feature-0046-native-client]]
+
+## [2026-09-09] wiki-ingest
+
+- **doc_sync 09-09** — 직전 doc_sync META `84bda1ce`(09-08) 이후 델타 **53 커밋(non-merge) / 머지 47건 · 변경 파일 397**, 착륙은 전부 2026-09-08 하루다. **신규 feature 0개** — `ls -d unit/feature-*` **46** = `Features/feature-*.md` 46 = Features MOC 렌더 행 46(`^|` 57줄 · glued 파이프 0) = `Index` §2.3 = `Architecture/Overview` 머리표 「46 카드」. 무게중심은 **feature-0046(155파일)** 이고 feature-0003 96 · feature-0043 51 · feature-0002 22 · feature-0041 6 이다. 미러 정합 <<APPLIED_COUNT>>건.
+- **정본이 «주 사용 표면»을 바꿨는데 미러 다섯 표면이 옛 게이트를 현재시제로 말하고 있었다.** ADR-20260908T024500 + `docs/PROJECT.md` `primary_ui_surface: dqa-client` + `playbooks/PB-0009-dqa-client-verification.md`(신규 73줄)가 UI 검증 정본을 **실제 DQA 클라이언트**로 옮기고 PB-0008 을 **보조 호환 경로**로 재범주화했다. 그런데 `Flows/User-Journeys`(머리표 시각검증 행 · §3 특징) · `Features/_Index` 0008 행 · `overview` §2.1 · `Architecture/Overview` §2.3 이 전부 「화면 변경은 실 Windows 브라우저(PB-0008) 검증 후 완료 선언」이었고 **wiki 전체의 PB-0009 히트는 0** 이었다. 정책 게이트의 재범주화는 카운트 sweep 정규식에 걸리지 않는다.
+- **클라이언트가 하루에 다섯 번 게시됐는데 미러는 「첫 실 릴리스 미발행」에 머물러 있었다.** 1.1.1 → 1.1.2(브랜드 아이콘) → 1.2.0(AI별 자동 연결·위치 재사용) → 1.2.1(고아 내장 Python 파일 잠금으로 exit 5 롤백하던 설치 복구) → 1.2.3(텍스트 선택·Ctrl+F) → 1.2.4(Codex 연결 완료 판정·권한 거부 위치 제외). `Architecture/Overview` §2.3 은 「첫 실 릴리스 미발행 … 엣지 경유 다운로드·web-b replica·설치기 실제 실행은 미실측」, `Features/_Index` 는 「미실측: 설치기 실제 실행」, 카드 §4-5 는 「아직 못 본 것: 설치기 실제 실행」이었으나 정본은 **트레이 [업데이트 확인] 에서 1.2.3→1.2.4 설치 수락 · 11.153초 새 앱 시작 · 14.186초 설치기 두 프로세스 exit 0 · 엣지 200 + byte-동일**을 기록한다. **해소를 기록하지 않으면 다음 창이 같은 항목을 다시 «남은 일»로 읽는다.**
+- **「영구 제외」가 폐기됐는데 미러 두 표면이 그 말을 유지했다.** 정본 `feature-0041/docs/FUNCTION.md` §4 가 이번 창에 재작성돼 「P1 이후로 이월 / 영구 제외」가 **「대체 경로 사용 / 일반 dispatcher 제외 / 현재 제공 계약」** 으로 바뀌었고, 신규 정본 `feature-0003/docs/TOOL_SURFACE_AUDIT.md` 가 외부 dispatcher 제공 도구를 **7 → 12**(신규 연결 5종 = `search_routines`·`describe_routine`·`search_db_objects`·`describe_db_object`·`explain_query`)로 적는다. 그런데 `Flows/External-AI-Bridge` §2.8 은 「구조 조회 6종 … `execute_sql` 은 이 표면에 없다(P1) … 쓰기·첨부·scratch 계열은 영구 제외」였고 `Features/feature-0041` §3 도 「첨부·scratch 계열은 영구 제외」였다.
+- **부수 feature 누락이 또 재발했다.** feature-0041 은 창에서 커밋 1건(6파일)뿐인데 그 1건이 도구 표면의 계약을 바꿨다. 카드(마지막 갱신 2026-09-01) · MOC 요지 셀 · §2.3 어디에도 창의 변화가 없었다. **소수 커밋 feature 를 파일 수로 정렬해 버리면 계약 변경을 놓친다.**
+- **ADR 색인 3표면이 신규 ADR 을 모른다.** 정본 `docs/DECISIONS.md` 에 `ADR-20260908T024500-dqa-client-verification` 가 append 돼 `## ADR-` heading 46→**47** · timestamp+slug 14→**15** 가 됐는데 `Decisions/_Index` 머리표(「정본 45 ADR … timestamp+slug = 14 … heading 은 46」)와 §2.2 mirror 미보유 표(마지막 행이 09-07)와 `Index` §2.4(「timestamp+slug ADR 14건」)가 그대로였다. **정본은 wiki 색인 self-add 를 하지 않는다.**
+- **feature 커밋 self-add 가 Log 에 제목만 남겼다.** `800bd16f` 가 `## [2026-09-08] feature | …` H2 를 **본문 없이** append 했다(다른 모든 entry 는 bullet 본문 + wikilink 꼬리). append-only 규약 아래 치환 없이 그 아래로 본문을 이어 붙였다. **self-add 표면도 정본 대조 대상이다 — 자기 갱신이 완결이라고 가정하지 않는다.**
+- **report-only 이월 재실측**: ⓐ **해소** — feature-0046 `FUNCTION.md` 의 빌드 플래그 모순이 정리됐다(:856 이 `--onedir --windowed` 로 §P0-J 와 일치). ⓑ **잔존** — `_connect_steps.py::build_steps` docstring 은 「연결 단계 5행」인데 `"key":` 는 **4개**(connected·listening·ai·answered). ⓒ **잔존** — `docs/SECURITY.md` 안 `feature-0046` 히트 **0** · 마지막 절은 여전히 §49.6. 다만 `800bd16f` 가 §7 공유 표면 행에 `client.{app_link, download_url}`·미서명 설치기 실행 안내를 적재했다(부분 진전). 소유권은 doc_sync 가 아니다 — 착수 cycle 의 몫(§18.8.1 적대 패널 필요). ⓓ **신규** — feature-0046 `TASK.md` frontmatter 가 `feature_status: implemented` 인데 그 값은 `bin/gen-status.sh` 의 허용 어휘 밖이라 `--check` 가 ERROR 를 내고 그 행이 생성 대상에서 빠진다(`docs/STATUS.md` 의 `review` 는 passthrough 값). 미러는 STATUS 표면과 같은 어휘(`review`)를 따랐다.
+
+[[Features/feature-0046-native-client]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0002-agent-core]] · [[Features/feature-0041-external-ai-tool-surface]]
+
+## [2026-09-09] fix | '자동 작성' 위임 결과가 화면에 도달하지 않던 문제 — 3진입점 + 폴링 권한 축
+
+- 사용자 신고: "프로필 > 프롬프트 > 내 프롬프트 의 자동 작성이 동작하지 않는다."
+- **서버는 정상이었다.** 라이브 실증(09-08 19:56): 요청 200 · `WebAiTasks j_LO28YKoH0ifGR5E7`
+  적재 · 러너가 3초 만에 `submitted`. 화면만 결과를 못 받았다.
+- 원인은 **봉투 모양**이다. 게이트가 닫힌 배포에서 자동작성은 개인 AI 로 위임되고 서버는 SSE 가
+  아니라 `{"bridge_pending":true, poll_url, task_id}` JSON 을 준다. 자동작성 3화면은 전환 이전의
+  **SSE 전용 파서**라 그 JSON 을 프레임으로 읽다가 `event:`/`data:` 가 없어 조용히 버렸다.
+- 폴링 헬퍼(`awaitDelegatedResult`)는 **이미 있었지만** `admin/llm-state.js` 안에 있었고 그 모듈은
+  `admin.js` 의 `adminState` 를 import 한다 → **관리 콘솔 밖에서는 쓸 수 없었다.** 이것이 프로필
+  화면이 그 헬퍼를 못 쓴 구조적 이유다. `static/console-job-poll.js`(의존 0)로 분리했다.
+- 부수 결함 둘: ① `poll_url` 이 `/api/admin/ai-jobs/…`(=`console.access`)인데 개인 프롬프트
+  자동작성은 **로그인만 요구하는 진입점**이라(`JOB_SPECS['prompt_generate']['perms'] == ()`) 일반
+  사용자는 화면을 고쳐도 403 이다 → 로그인만 요구하는 `GET /api/profile/ai-jobs/{task_id}` 신설
+  (스코프는 `AccountId` 로 admin 경로와 동일 — 권한 확대 아님). ② 러너는 자기 AI 가 실패하면 사유를
+  **답변 본문에 적어** 제출하는데(대화 축에서는 옳다), 폼 축에서는 그 안내문이 «결과물» 이 되어
+  프롬프트 입력란을 덮는다 → 서버가 러너의 고정 꼬리표로 `degraded` 를 표시하고 화면은 본문을
+  덮지 않는다. 09-08 그 1건이 정확히 이 경우였다(개인 AI 세션 한도).
+- 검증: 신규 pytest 21 · jsdom 행위 하네스 15 · **뮤턴트 2종 KILL**(위임 분기 제거 = 원래 결함
+  재현 시 S1 FAIL — baseline RED 실증) · codex review ACCEPTED(P1 0).
+- 부수: base `cdd414e3` 에 이미 붉던 2건 정합(라우트 golden drift · 명시 도구 수 7→8).
+
+## [2026-09-09] feature | 첨부 CSV 를 표(격자)로 출력
+
+- **첨부 `.csv`/`.tsv` 는 이제 «문서 원문» 모달에서 격자로 보인다** (사용자 요청 2026-09-09).
+  종전에는 줄번호 + 평문 표에 구문 색으로 **구분자만** 강조했다 — 열을 사용자가 머릿속에서
+  맞춰야 했다. `.md` 를 문서로 렌더한 선행 경로(REQ-20260812T2030)와 같은 관용구다: 기본은
+  렌더, 원문은 «표로 보기» 토글로 남기고 끄면 종전 화면이 **byte 동일**로 돌아온다.
+- 판정면은 기존 것을 재사용한다 — 확장자→구분자는 `code-highlight.js` 레지스트리 하나,
+  노출 조건은 `_bodyState(...).sourceView`(그릴 본문이 실제로 온 화면). ⚠ **변경이 있는 비교
+  화면에는 뜨지 않는다** — 줄 대조를 격자로 바꾸면 어느 줄이 바뀌었는지가 사라진다. 두 모달
+  (원문 보기 · 버전 비교의 내용 동일 화면)에 **같이** 배선했다(한쪽만 하면 같은 CSV 가 화면에
+  따라 표로도 평문으로도 보인다).
+- ⚠ **셀은 값이지 마크업이 아니다** — 마크다운 경로가 `marked`+`DOMPurify` 를 거치는 이유는
+  그쪽 **입력이 마크업**이기 때문이고 여기 입력은 **값**이다. `textContent` 로만 넣어 공격면을
+  만들지 않는다. ⚠ 서버는 줄 수만 자르고 **열 수·셀 총량은 모른다** → 프론트 상한
+  (`TABLE_COL_CAP=200` · `TABLE_CELL_CAP=30000`) + 절단 배너.
+- **codex 적대 리뷰가 «조용한 데이터 변형» 두 갈래를 잡았다.** ① 꼬리 판정이 `h⏎""` 의 명시적
+  빈 인용 필드(정상 데이터 행)를 지워 화면이 「데이터 행은 없습니다」라고 **거짓을 말했다** →
+  판정을 「원문이 개행으로 끝났고 그 뒤 아무것도 읽지 않았는가」로 교체. ② 깨진 인용 `"a"b` 를
+  표준 파서처럼 조용히 `ab` 로 읽었다 → 값은 살리되 **형식 이상 개수를 배너로 신고**. 확인
+  라운드가 ①②의 수정이 만든 P2(CRLF 에서 거짓 경고)를 다시 잡았다 — **수정한 라운드는 종결
+  근거가 아니다**(§18.8 수렴 계약 (a) 의 실증).
+- **자동 검증 전건 green 상태에서 시각 캡처가 픽셀 결함 2건을 잡았다.** 행 번호가 세로로
+  쪼개졌고(`td` 의 `pre-wrap` 이 특이성 (0,2,1) 로 `.attach-source-table-no` 의 `nowrap` 을
+  이겼다) 긴 셀의 `max-width` 가 무시됐다(`table-layout: auto` 는 `td` 의 상한을 폭의 정본으로
+  보지 않는다). 둘 다 **선언은 있고 효과는 없던** 자리다 — 값을 block 래퍼로 옮겨 해소.
+- 검증: jsdom 88 · 구조 가드 10 · 첨부 집중 회귀 174 · 컨테이너 `make test` exit 0 ·
+  격리 DQA Shell(WebView2 Edg/152) 5축 PASS. 뮤턴트 20종 전건 KILL. 실제 설치 앱에서 실제
+  첨부를 여는 확인은 배포 후로 남겼다(fixture PASS 를 실제 앱 PASS 로 확대하지 않는다).
+
+[[Features/feature-0003-agent-web-ui]]
+## [2026-09-10] wiki-ingest
+
+- **doc_sync 09-10** — 직전 doc_sync META `e7a01382`(09-09) 이후 델타 **61 커밋 / 180 파일 / +12662 −882**, 착륙은 전부 2026-09-09 하루다. **신규 feature 0개** — `ls -d unit/feature-*` **46** = `Features/feature-*.md` 46 = Features MOC 렌더 행 46 = `docs/STATUS.md` 생성물 표 46행. 창의 무게중심은 feature-0003(73 touch) · feature-0046(53) · feature-0043(24) · feature-0014(12) · feature-0006(5) 이다.
+- **클라이언트가 창 안에서 두 번 더 올랐는데 미러 넷이 「1.2.4 가 최신」에 머물러 있었다.** 정본 `src/client/version.py` 는 창 안에서 1.2.4 → **1.3.0**(경유 1.2.5)이고 `FUNCTION.md` 는 「구현 버전 1.3.0 · 공개 채널도 1.3.0」 · 「1.2.5는 공유 링크의 목적지를 수용한다」를 적는다. 그런데 `hot` 의 actionable thread 는 「정본 `CLIENT_VERSION = 1.2.4` … 필요한 것은 1.2.4 이후 릴리스」, 카드 §4-5 · `Features/_Index` · `Architecture/Overview` §2.3 은 모두 「1.2.4 게시본에 없다 — 다음 릴리스가 전제」였다. **릴리스로 해소된 막힘을 「다음 릴리스 전제」로 남겨 두면 다음 창이 같은 항목을 다시 «막힌 일»로 읽는다.** 남은 것은 릴리스가 아니라 **설치본 종단 실측**이다(정본 원장 `test-runs.d/TASK-20260909T120000-client-125-share-entry.md` — 「자동검증 PASS / 격리 동결본 실측 PASS / 설치본 종단은 NOT-RUN」).
+- **`routers/` 파일 수가 8표면에 산재해 전부 낡았다.** 창 안에서 `_attachment_diff.py` 가 신설돼(`aa795a51`) 실측이 **41 파일 = route-module 30 + 언더스코어 공유헬퍼 10 + `__init__`** 인데 `CODEBASE_MAP`(4곳) · `CODE_TASKS`(3곳) · `CODE_NAVIGATION`(1곳)이 「40 파일 · 공유헬퍼 9」였다. 그 커밋이 `CODEBASE_MAP` 의 헬퍼 열거 표 한 행만 10 으로 고치고 나머지 7 표면을 남겼다. `CODE_TASKS` 의 「영역 지도」 열거는 더 오래된 결손을 함께 안고 있었다 — 9줄뿐이라 `_connect_funnel.py`·`_connect_steps.py` 두 모듈이 통째로 빠져 있다(창 밖 착륙분). **self-add 는 자기 파일 안에서도 완결하지 않는다.**
+- **report-only 이월 재실측**: ⓐ **해소** — `bin/gen-status.sh --check` 가 직전 창 rc=2(무효 `feature_status`)에서 **rc=1**(정상 「재생성 필요 · frontmatter 24 · passthrough 22 · 신규 0」)로 내려왔다. 정본 `feature-0046/docs/TASK.md` frontmatter 가 유효값 `in-progress` 다. ⓑ **이번 창에서 해소** — `docs/STATUS.md` 생성물 구간이 정본 frontmatter 와 3행 어긋나 있었다(feature-0003·feature-0043 은 갱신일·요지, feature-0046 은 상태 `review` vs `in-progress`). 정본 경로는 행 수기 편집이 아니라 재생성이라 `bin/gen-status.sh` 를 돌렸고, 생성물이 아닌 §5 집계는 그에 맞춰 손으로 맞췄다(review 11→10 · in-progress 32→33). ⓒ **해소** — `docs/STATUS.md` 의 glued `||` 는 **0건**(여러 창이 baseline 으로 이월하던 항목이 사라졌다). ⓓ **잔존** — `docs/SECURITY.md` 안 `S4U` 히트 **0** · 마지막 절은 여전히 §49. feature-0006 의 실행 계정 교정(SYSTEM → 사용자 + S4U · `RunLevel Highest`)은 권한 경계 변경인데 미러에 없다. 소유권은 doc_sync 가 아니다 — 착수 cycle 의 몫.
+- **직전 창의 Log entry 가 치환되지 않은 템플릿 토큰을 싣고 있다** — 09-09 wiki-ingest entry 의 「미러 정합 …건」 자리다. `edit_policy: append-only` 라 여기서는 사실만 남긴다: 그 커밋 메시지의 값은 「META 최종 58건 적용」이다.
+
+[[Features/feature-0046-native-client]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0043-external-llm-bridge]] · [[Features/feature-0014-zero-downtime-deploy]] · [[Features/feature-0006-lan-proxy-access]]
+

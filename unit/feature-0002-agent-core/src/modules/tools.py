@@ -1643,6 +1643,9 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
                 "`attachment_id` 로 지정하면 된다(이때는 filename 이 아니라 attachment_id 를 쓴다). "
                 "버전 비교·'처음과 뭐가 달라졌나' 질문에서 원본 본문이 아직 프롬프트에 없으면 "
                 "이 도구로 먼저 읽고 답한다. "
+                "**폴더로 첨부된 파일은 경로로도 지칭할 수 있다** — filename 에 "
+                "'my-project/src/utils/helper.py' 처럼 목록의 `path=\"...\"` 값을 그대로 넘긴다. "
+                "같은 이름의 파일이 여러 폴더에 있으면 이름만으로는 갈리지 않으므로 경로를 쓴다. "
                 "csv/xlsx 의 데이터 분석은 sandbox 테이블을 execute_sql 로 조회하는 편이 낫고, "
                 "이 도구는 원본 텍스트(헤더·서식 확인 등) 용도다. 이미지 파일은 읽을 수 없다."
             ),
@@ -1651,7 +1654,12 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
                 "properties": {
                     "filename": {
                         "type": "string",
-                        "description": "읽을 파일 이름(ATTACHED FILES 목록에 표시된 이름). 예: 'sales.csv'.",
+                        "description": (
+                            "읽을 파일 이름 **또는 경로**(ATTACHED FILES 목록에 표시된 이름·경로). "
+                            "예: 'sales.csv', 'my-project/src/utils/helper.py'. 폴더로 첨부된 파일은 "
+                            "목록 라인의 `path=\"...\"` 값을 그대로 넘길 수 있고, 같은 이름의 파일이 "
+                            "여러 폴더에 있으면 **경로로 지정해야** 어느 것인지 갈린다."
+                        ),
                     },
                     "attachment_id": {
                         "type": "integer",
@@ -2349,7 +2357,26 @@ def _search_tables_mssql(conn, args: dict, keyword: str) -> str:
     return "\n".join(parts)
 
 
+def _mysql_scoped_search(conn, args: dict, handler) -> str | None:
+    """인스턴스 카탈로그 검색도 제품의 허용 스키마별로만 실행한다."""
+    allow = _ACTIVE_SCHEMA_ALLOWLIST_DISPLAY.get()
+    if _mssql_active() or _safe_ident(args.get("schema_name", "")) or allow is None:
+        return None
+    targets = sorted(s for s in allow if _safe_ident(s) and _is_user_schema(s))
+    if not targets:
+        return "검색 가능한 스키마가 없습니다(빈 접근목록)."
+    parts = [handler(conn, {**args, "schema_name": schema})
+             for schema in targets[:_SEARCH_TABLES_DB_CAP]]
+    if len(targets) > _SEARCH_TABLES_DB_CAP:
+        parts.append(f"허용 스키마 {len(targets)}개 중 {_SEARCH_TABLES_DB_CAP}개만 검색했습니다. "
+                     "나머지는 schema_name으로 지정하세요. 미검색 범위의 부재를 단정하지 마세요.")
+    return "\n\n".join(parts)
+
+
 def _tool_search_tables(conn, args: dict) -> str:
+    scoped = _mysql_scoped_search(conn, args, _tool_search_tables)
+    if scoped is not None:
+        return scoped
     keyword = _safe_ident(args.get("keyword", ""))
     if not keyword:
         return "오류: keyword는 필수입니다."
@@ -2651,6 +2678,9 @@ def _tool_search_routines(conn, args: dict) -> str:
     `keyword` 는 **선택**이다(§18.8 MAJOR): 원 마찰의 질문이 "몇 개나 있나" 라는 **열거**였는데
     필수로 두면 모델이 와일드카드로 우회하게 된다. 미지정이면 필터 없이 열거한다.
     """
+    scoped = _mysql_scoped_search(conn, args, _tool_search_routines)
+    if scoped is not None:
+        return scoped
     keyword = _safe_ident(args.get("keyword", ""))
     if _mssql_active():
         return _search_routines_mssql(conn, args, keyword)
@@ -3291,6 +3321,11 @@ def _tool_explain_query(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
         return "오류: sql은 필수입니다."
+    from .sql_guard import validate_sql_for_sandbox
+    guard = validate_sql_for_sandbox(
+        sql, forbidden_schemas=_INTERNAL_SCHEMAS, dialect=_dialects.active().sqlglot)
+    if not guard.ok:
+        return f"오류: 보안 정책상 차단된 SQL — {guard.error_reason}. 실행계획은 단일 SELECT/CTE만 허용됩니다."
     # P6: AST 추출 + 무자격/cross-DB + allowlist (execute_sql 과 동일 신뢰경계).
     err = _freeform_sql_access_error(sql)
     if err:
@@ -3725,6 +3760,9 @@ def _tool_search_db_objects(conn, args: dict) -> str:
     "DB 내부 구조를 탐색할 때 …객체를 탐색하는 도구가 없다" 에 대한 1-call 답이다. 역할별로
     지원 상태를 먼저 판정하므로, 미지원 역할이 0건으로 섞여 허위 부재를 만들지 않는다.
     """
+    scoped = _mysql_scoped_search(conn, args, _tool_search_db_objects)
+    if scoped is not None:
+        return scoped
     import modules.db_object_roles as _r
     role, err = _dbobj_role_arg(args)
     if err:

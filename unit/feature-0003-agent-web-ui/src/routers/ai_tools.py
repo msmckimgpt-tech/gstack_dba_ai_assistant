@@ -25,6 +25,7 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import threading
 import json
@@ -174,7 +175,7 @@ def _claim_console_job(conn, account, ctx, *, task_id: str, prompt: str,
 
     | 대화 | 콘솔 작업 |
     |---|---|
-    | 5단계 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
+    | 6계층 시스템 프롬프트를 서버가 조립 | 프롬프트가 **이미 완성**돼 적재돼 있다 |
     | 이전 대화 문맥·첨부 | 없다 (대화가 없다) |
     | 말풍선 진행 표시·제목 규약 | 없다 (화면이 폼·그래프다) |
 
@@ -406,6 +407,8 @@ import tool_ledger as _ledger       # noqa: E402
 P0_TOOLS = frozenset({
     "list_schemas", "describe_schema", "describe_table",
     "search_tables", "get_foreign_keys", "get_table_indexes",
+    "search_routines", "describe_routine", "search_db_objects", "describe_db_object",
+    "explain_query",
 })
 
 # P1 (2026-08-14): 자유 SELECT. 구조만으로는 **관계 주장을 데이터로 검증할 수 없다**는 실사용
@@ -418,6 +421,13 @@ P0_TOOLS = frozenset({
 #   ② 원장에 **실제 행수**를 기록한다(렌더 문자열의 줄 수로 세면 시간당 행 상한이 장식이 된다).
 P1_TOOLS = frozenset({"execute_sql"})
 EXPOSED_TOOLS = P0_TOOLS | P1_TOOLS
+
+def _tool_catalog() -> dict[str, Any]:
+    import modules.tools as _tools
+    from external_tool_catalog import build_catalog
+    return build_catalog(_tools.TOOL_DEFINITIONS_FULL, P0_TOOLS, P1_TOOLS,
+                         sql_enabled=_sql_enabled())
+
 
 # 운영자 스위치. 데이터 추출 축이라 구조 조회와 별개로 끌 수 있어야 한다.
 _SQL_ENABLED_KEY = "AGENT_EXT_TOOL_SQL_ENABLED"
@@ -542,6 +552,13 @@ def require_ai_token(request: Request, conn=Depends(app.get_conn)) -> dict[str, 
         raise app._AuthError(f"이 토큰에는 {_REQUIRED_SCOPE} 권한이 없습니다.", 403)
     return {"account": account, "client_id": resolved.get("client_id"),
             "session_id": resolved.get("session_id"), "scopes": resolved.get("scopes")}
+
+
+@router.post("/api/ai/connect/identity")
+def connect_identity(ctx=Depends(require_ai_token)) -> dict:
+    """클라이언트 연결 재사용에 필요한 인증된 세션 식별자만 반환한다."""
+    return {"connection_session": str(ctx.get("session_id") or ""),
+            "account_id": int(ctx["account"]["id"])}
 
 
 def _pg():
@@ -961,7 +978,8 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
         account=str(account.get("username") or account.get("id")),
         conversation_id=task.get("conversation_id"), task_id=task_id, source="task_context")
 
-    response = JSONResponse({"task_id": task_id, "context": marked, "notes": notes})
+    response = JSONResponse({"task_id": task_id, "context": marked, "notes": notes,
+                             "tool_catalog": _tool_catalog()})
     try:
         _ledger.record(_pg(), account_id=int(account.get("id") or 0), tool="get_task_context",
                        client_id=ctx.get("client_id"), task_id=task_id,
@@ -971,7 +989,7 @@ async def get_task_context(request: Request, ctx=Depends(require_ai_token),
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
     _renew_claim_lease(conn, task_id, int(account.get("id") or 0))
-    _ctx_work, _ctx_reason = _bridge_step_narration(body, {})
+    _ctx_work, _ctx_reason = _bridge_step_narration(body, {}, "get_task_context")
     _record_bridge_step(
         conn, task, "get_task_context",
         {k: v for k, v in (("focus", str(body.get("focus") or "").strip()),) if v},
@@ -1358,7 +1376,15 @@ async def submit_answer(request: Request, ctx=Depends(require_ai_token),
                              "apply_error": apply_error,
                              "review_recorded": review_recorded,
                              "cross_session_findings": findings})
+    committed_history: dict = {}
+    if delivered and not findings and not injection_refused:
+        try:
+            _recent_conversation_context(conn, task.get("conversation_id"),
+                                         context_state=committed_history)
+        except RuntimeError:
+            pass  # 답변은 저장됐다. 재사용만 확정하지 않는다.
     return JSONResponse({"task_id": task_id, "recorded": True,
+                         "conversation_session": committed_history,
                          "delivered_to_conversation": delivered,
                          # 무엇이 등록/보류/범용판정/중복으로 갈렸는지 러너에게 돌려준다 —
                          # 조용한 성공은 「하나도 안 실렸다」와 구별되지 않는다.
@@ -1637,27 +1663,32 @@ def _bridge_derived_narration(tool_name: str, args: dict[str, Any] | None) -> tu
     """
     payload = args if isinstance(args, dict) else {}
     tool = str(tool_name or "").strip().lower()
+    # 문구(work)는 표시층 정본(`_conv_store._derive_step_work_tail`)에 위임한다 — 진행 중과
+    # 완료본이 같은 표를 봐야 제출 순간 제목이 바뀌지 않는다(적대 검증 실측: 첨부 파일명 소실).
     if tool in _BRIDGE_ONLY_NARRATION:
-        work, reason = _BRIDGE_ONLY_NARRATION[tool]
-        name = str(payload.get("filename") or "").strip()
-        if tool == "read_task_attachment" and name:
-            work = f'첨부 파일 "{name}" 의 내용을 읽는다'
-        return work, reason
+        return app._derive_step_work_tail(tool, payload), _BRIDGE_ONLY_NARRATION[tool][1]
     try:
         import agent_core as _core
 
         work = str(_core._derive_step_work(tool, payload) or "").strip()
         reason = str(_core._derive_step_reason(tool, payload) or "").strip()
-        # 내부 헬퍼가 모르는 도구는 "단계를 수행한다" 로 떨어진다 — 도구 이름이라도 남긴다.
-        if tool and work in ("", "단계를 수행한다"):
-            work = f"`{tool}` 도구를 실행한다"
+        # 내부 헬퍼가 모르는 도구는 "단계를 수행한다" 로 떨어진다. 종전엔 그 자리에
+        # ``f"`{tool}` 도구를 실행한다"`` 로 **도구 이름이라도 남겼는데**, 그것이 곧
+        # 사용자 화면의 식별자 노출이었다(2026-09-08 제보의 한 갈래).
+        if tool and (work in ("", "단계를 수행한다")
+                     or app._step_text_is_tool_syntax(work, tool)):
+            work = app._derive_step_work_tail(tool, payload)
         return work, reason
     except Exception:
         # 파생 실패가 단계 기록 자체를 막지는 않는다(빈 문구로라도 단계는 남는다).
-        return (f"`{tool}` 도구를 실행한다" if tool else ""), ""
+        try:
+            return (app._derive_step_work_tail(tool, payload) if tool else ""), ""
+        except Exception:
+            return "", ""
 
 
-def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any]) -> tuple[str, str]:
+def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any],
+                           tool_name: str = "") -> tuple[str, str]:
     """개인 AI 가 함께 보낸 단계 narration `(work, reason)` 을 꺼내고 **인자에서 제거**한다.
 
     내부 경로(`agent_core`)는 LLM 이 도구 호출 인자에 실어 보낸 `work`/`reason` 을 pop 해서
@@ -1666,13 +1697,31 @@ def _bridge_step_narration(body: dict[str, Any], arguments: dict[str, Any]) -> t
 
     **제거가 핵심이다.** 남겨두면 `execute_tool` 이 알 수 없는 인자를 받는다(도구에 따라
     거절되거나 조용히 무시되는데, 어느 쪽이든 narration 때문에 조사가 실패하면 안 된다).
+
+    ## 도구 «구문» 은 여기서 떨군다 (사용자 제보 2026-09-08)
+
+    이 값은 **비신뢰 입력**이다 — 프롬프트(`feature-0043 prompt.compose_prompt`)는 `reason`
+    만 규정하고 `work` 는 규정조차 하지 않으므로, 개인 AI 가 즉흥으로 채운다. 라이브에서
+    실제로 온 것은 `describe_table {'schema_name': 'coupon', 'table_name': 'dbo.T_COUPON'}`
+    — 자기 도구 호출을 그대로 옮겨 적은 문자열이었고, 그것이 사용자 화면 「실행 단계」의
+    제목으로 그대로 나갔다.
+
+    빈 문자열로 떨구면 호출측(`_record_bridge_step`)이 `_bridge_derived_narration` 의 한국어
+    파생 문구로 대체한다 — 같은 사실을 담고 식별자는 담지 않는다. 프롬프트에 「이렇게 쓰지
+    마라」를 더하지 않는 이유는 그것이 **지시이지 집행이 아니고**, 러너는 사용자 PC 에 있어
+    낡은 빌드가 남기 때문이다. 판정 정본은 `_conv_store._step_text_is_tool_syntax` 하나이며,
+    이미 적재된 행은 표시 시점(`_resolve_step_display`·`_bridge_live_steps`)에서 같은 판정을
+    받는다.
     """
     out: list[str] = []
-    for key in ("work", "reason"):
+    # 사유(reason)는 «선두 식별자» 규칙에서 뺀다 — 그 축에는 파생 대체가 없어 걸러내면 설명이
+    # 순수 손실이 되고, 사유는 산문이라 테이블 이름으로 시작하는 것이 자연스럽다.
+    for key, leading in (("work", True), ("reason", False)):
         inline = arguments.pop(key, None)
         raw = body.get(key)
         picked = raw if raw not in (None, "") else inline
-        out.append(str(picked or "").strip()[:500])
+        out.append(app._sanitize_step_narration(str(picked or "")[:500], tool_name,
+                                                allow_tool_names=leading))
     return out[0], out[1]
 
 
@@ -1839,7 +1888,11 @@ def _record_bridge_step(conn, task: dict[str, Any], tool_name: str, args: dict[s
         # intent 는 도구 기반으로 고정한다. 내부 경로는 첫 단계에 원 질문을 쓰지만, 여기서는
         # 번호가 INSERT 시점에 정해져 "내가 첫 단계인가" 를 미리 알 수 없다(그걸 알려고 미리
         # 조회하면 방금 없앤 경합이 되돌아온다). 질문은 이미 말풍선에 있다.
-        intent = f"{tool_name}: {work_text or tool_name}"
+        # ⚠ 종전 `f"{tool_name}: {work_text or tool_name}"` 는 **도구 식별자를 원장에 새로
+        #   적재**했고, 그 컬럼이 표시 payload 로 나갔다(라이브 3,254행). 접두를 없애 신규
+        #   행부터 끊는다 — 표시층은 `intent` 를 더 이상 내보내지 않으므로 이 값은 원장
+        #   가독성용이다.
+        intent = work_text or ""
         entry = _core._build_step_payload(
             run_id=task_id, step_index=0, tool_name=tool_name, intent=intent,
             args=args, tool_result=tool_result,
@@ -1966,7 +2019,8 @@ def _materialize_bridge_steps(conversation_id: str, task_id: str) -> int:
                     " result_summary_json, error_text, created_at) "
                     "VALUES (%s,%s,%s,'tool',%s,%s,%s,'bridge-ledger',%s,'derived',%s,%s,%s,%s)",
                     (conversation_id, task_id, n, tool,
-                     f"{tool}: {work_text or tool}"[:255], work_text or None, reason_text or None,
+                     # 도구명 접두를 넣지 않는다 — 이 컬럼이 표시 payload 로 나가던 경로였다.
+                     (work_text or "")[:255], work_text or None, reason_text or None,
                      json.dumps(args, ensure_ascii=False),
                      json.dumps(summary, ensure_ascii=False),
                      (str(r[7] or "") if str(r[6] or "") not in ("ok", "") else None), r[8]))
@@ -2028,7 +2082,7 @@ def _replace_bridge_placeholder(conn, conversation_id: str, task_id: str,
 
 def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversation_id: str,
                                     message_id: int, answer: str,
-                                    task_id: str) -> tuple[str, list, list]:
+                                    task_id: str) -> tuple[str | None, list, list]:
     """답변의 ```attachment-edit```/```attachment-new``` 블록을 **실제 첨부로** 만든다.
 
     ## 왜 필요한가 (사용자 제보 2026-08-28)
@@ -2051,7 +2105,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
     느슨한 쪽이 사용자가 보는 진실이 된다. 이 함수는 브리지 맥락(task_id 로깅, 회수 store 에
     넘길 정리본 반환)만 얹는다.
 
-    Returns: `(정리본 or "", edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
+    Returns: `(정리본 or None, edited, created)` — 정리본은 **영속에 성공했을 때만** 준다.
     """
     log = logging.getLogger(__name__)
     try:
@@ -2061,7 +2115,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
     except Exception as exc:
         # 후처리 실패가 답변 전달을 막지 않는다 — 답변은 이미 저장됐고 사용자는 그것을 봐야 한다.
         log.error("[bridge] 첨부 후처리 실패 task=%s conv=%s: %r", task_id, conversation_id, exc)
-        return "", [], []
+        return None, [], []
 
     edited = list(res.get("edited") or [])
     created = list(res.get("created") or [])
@@ -2071,7 +2125,7 @@ def _materialize_bridge_attachments(conn, *, account: dict[str, Any], conversati
                  len(res.get("skipped") or []), int(res.get("undelivered") or 0))
     # 본문이 바뀌었고 **영속까지 됐을 때만** 정리본을 돌려준다. 실패했는데 정리본을 돌려주면
     # 회수 store 와 화면 본문이 갈린다(표시본엔 블록이 남는데 회수본엔 없다).
-    return (str(res.get("answer") or "") if res.get("answer_persisted") else "",
+    return (str(res.get("answer") or "") if res.get("answer_persisted") else None,
             edited, created)
 
 
@@ -2220,7 +2274,9 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
         # `run_id` 를 task_id 로 잡는다 — 프런트가 `meta.run_id` 로 단계를 조회하므로,
         # 이 키가 없으면 단계를 기록해도 화면에서 찾지 못한다.
         _meta: dict[str, Any] = {"bridge": {"task_id": task_id, "origin": "web"},
-                                 "run_id": task_id}
+                                 "run_id": task_id,
+                                 "requested_by_account_id": int(account.get("id") or 0),
+                                 "requested_by_username": str(account.get("username") or "")}
         try:
             import agent_core as _core
 
@@ -2293,7 +2349,7 @@ def _deliver_web_bridge_answer(conn, task_id: str, account: dict[str, Any], answ
             # 첨부 블록을 정리한 본문이 있으면 **그것을** 남긴다 — 회수본에 원문 블록이 남으면
             # 다음 턴 LLM 컨텍스트에 파일 전문이 통째로 다시 실린다(표시본은 이미 정리됨).
             _core._save_message(conn, str(conversation_id), "assistant",
-                                content=(_clean or answer))
+                                content=(_clean if _clean is not None else answer))
         except Exception as exc:
             logging.getLogger(__name__).error(
                 "[bridge] core store 답변 기록 실패 task=%s conv=%s — 표시본만 남는다: %r",
@@ -2695,6 +2751,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
         return _json_err(409, _stale_runner_notice(_claim_yield_to))
     _claim_scope_sql, _claim_scope_params = _dispatch_scope_sql(
         _runner_job_grants(conn, ctx, request), account_id)
+    _prompt_claim_client = _claimed_client_value(ctx.get("client_id"), body.get("runner_instance"))
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2715,7 +2772,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
             # 인스턴스를 새겨 두면 `bridge_heartbeat` 의 사망 신고가 그 점유만 정확히 놓는다.
             # 신고하지 않는 구 러너는 종전과 같은 값이 들어간다(호환).
             (account_id,
-             _claimed_client_value(ctx.get("client_id"), body.get("runner_instance")),
+             _prompt_claim_client,
              task_id, *_claim_scope_params))
         claimed = int(cur.rowcount or 0)
         conn.commit()
@@ -2759,7 +2816,7 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
     # ── 콘솔 작업이면 여기서 갈린다 (TASK-20260831T100000) ──────────────────────────
     #
-    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 5단계 시스템 프롬프트 ·
+    # 대화 경로의 나머지(대화 접근 재검증 · 이전 문맥 · 첨부 · 6계층 시스템 프롬프트 ·
     # 진행 표시 · 제목 규약)는 **콘솔 작업에 하나도 해당하지 않는다.** 억지로 통과시키면
     # 없는 대화를 조회하고 없는 말풍선을 갱신하려 든다 — 각각은 fail-soft 지만, 합치면
     # "왜 이 작업만 느린가" 를 아무도 설명하지 못하는 상태가 된다.
@@ -2797,7 +2854,18 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
 
     # 이전 대화 문맥 — 후속 질문("그럼 그건?")은 앞 turn 없이는 해석 불가다(codex 리뷰 P1-4).
     # 방금 저장한 사용자 질문 자신은 제외한다(중복).
-    history = _recent_conversation_context(conn, conversation_id, exclude_text=question)
+    history_state: dict = {}
+    try:
+        history = _recent_conversation_context(
+            conn, conversation_id, exclude_text=question, task_id=task_id,
+            context_state=history_state)
+    except RuntimeError:
+        try:
+            await asyncio.sleep(5)
+        finally:
+            _release_claim(conn, task_id, account_id, claimed_client=_prompt_claim_client)
+        return JSONResponse({"error": "대화 기록을 불러오지 못했습니다. 잠시 후 자동으로 재시도합니다."},
+                            status_code=503, headers={"Retry-After": "5"})
     marked_history = ""
     if history:
         marked_history = _guard.wrap_conversation_history(
@@ -2809,11 +2877,23 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     # 전달돼, 개인 머신 AI 가 "첨부가 없다" 고 전제하고 답했다(웹 대화 사용감과 어긋남).
     attachments = _task_attachment_list(conn, row[4], conversation_id)
 
-    # 운영자가 설정한 5단계 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
+    # 운영자가 설정한 6계층 시스템 프롬프트 + 이 요청이 바라보는 제품·데이터소스.
     # 둘 다 빠져 있어서, 브리지 답변만 다른 규칙으로·어디를 보는지 모른 채 만들어졌다.
-    system_prompt = _bridge_system_prompt(
-        conn, product_id=row[2], role_id=row[5], account_id=account_id,
-        product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
+    try:
+        system_prompt = _bridge_system_prompt(
+            conn, product_id=row[2], role_id=row[5], account_id=account_id,
+            product_mode=str(row[6] or "pinned"), conversation_id=conversation_id)
+    except RuntimeError:
+        notice = "답변 지침을 불러오지 못해 대기 중입니다. 잠시 후 자동으로 다시 시도합니다."
+        _mark_bridge_working(conn, task_id, conversation_id, text=notice)
+        # 구버전 러너는 Retry-After를 무시한다. 점유를 유지한 비동기 대기로 재시도를 제한한다.
+        try:
+            await asyncio.sleep(5)
+        finally:
+            _release_claim(conn, task_id, account_id, claimed_client=_prompt_claim_client)
+        response = _json_err(503, notice)
+        response.headers["Retry-After"] = "5"
+        return response
     scope = _bridge_product_scope(conn, row[2])
     # 출처 고지는 운영자 지침 **앞**에 둔다 — 러너가 `system_prompt` 를 프롬프트 맨 앞에
     # 놓으므로, 받는 AI 가 역할 지침을 읽기 **전에** 이 실행이 어디서 왔는지 알게 된다.
@@ -2823,6 +2903,9 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
                                 product_name=str(scope.get("product_name") or "")),
         system_prompt.strip(),
     ) if x)
+    logging.getLogger(__name__).info(
+        "bridge.system_prompt task=%s chars=%s sha256=%s",
+        task_id, len(system_prompt), hashlib.sha256(system_prompt.encode("utf-8")).hexdigest())
     # ── 큐레이션 KB 근거를 **점유 응답에 실어 보낸다** (2026-09-02) ────────────────────
     #
     # ⚠ 왜 도구(`get_task_context`)로 충분하지 않았나 — 라이브 실증
@@ -2896,13 +2979,23 @@ async def claim_request(request: Request, ctx=Depends(require_ai_token),
     response = JSONResponse({
         "task_id": task_id,
         "question": marked,
+        "conversation_id": str(conversation_id or ""),
         "conversation_context": marked_history,
+        "conversation_session": {
+            "account_id": account_id,
+            "history_chain": history_state.get("history_chain", []),
+            "context_key": hashlib.sha256(json.dumps([
+                row[2], row[5], row[6], system_prompt, scope,
+                ctx.get("client_id"), ctx.get("session_id"),
+            ], sort_keys=True, default=str).encode()).hexdigest(),
+        },
         "product_id": int(row[2]) if row[2] is not None else None,
         "asked_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3] or ""),
         "attachments": attachments,
         # AI 가 이 지침을 **답변 생성의 시스템 프롬프트로** 써야 한다(단순 참고가 아니다).
         "system_prompt": system_prompt,
         "scope": scope,
+        "tool_catalog": _tool_catalog(),
         # 관리 콘솔이 큐레이션한 KB 근거(용어사전·ENUM·설명·샘플·관계). **도구를 부르지 않아도**
         # 받는다 — 위 주석 참조(라이브에서 AI 가 `get_task_context` 를 안 불러 0 기여였다).
         # 빈 문자열이면 매칭된 근거가 없다는 뜻이고, 러너는 이 블록을 통째로 생략한다.
@@ -3115,7 +3208,8 @@ def _announce_no_progress(phase: str, task_id: str, conversation_id,
     _mark_bridge_no_progress(task_id, conversation_id, int(claimed_age_sec // 60))
 
 
-def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
+def _mark_bridge_working(conn, task_id: str, conversation_id, *,
+                         text: str | None = None) -> bool:
     """대기 말풍선을 **'처리 중'** 으로 바꾼다. 점유 직후 1회.
 
     사용자 제보(2026-08-27): "AI 가 연결이 완수되었는지, 답변을 진행중인건지 알 방법이 없다."
@@ -3147,7 +3241,8 @@ def _mark_bridge_working(conn, task_id: str, conversation_id) -> bool:
                     "  AND (meta_json -> 'bridge' ->> 'task_id') = %s "
                     "  AND (meta_json -> 'bridge' ->> 'placeholder') = 'true' "
                     "RETURNING id",
-                    (_BRIDGE_WORKING_TEXT, str(conversation_id), str(task_id)))
+                    (text if text is not None else _BRIDGE_WORKING_TEXT,
+                     str(conversation_id), str(task_id)))
                 hit = cur.fetchone() is not None
             pg.commit()
             return hit
@@ -3245,35 +3340,27 @@ def account_is_listening(account_id: int, conn=None) -> bool:
 
 def _bridge_system_prompt(conn, *, product_id, role_id, account_id,
                           product_mode: str, conversation_id) -> str:
-    """이 요청에 적용될 **5단계 시스템 프롬프트**(전역·제품·역할·계정·개인).
-
-    브리지는 `agent_core` 를 타지 않으므로 이 프롬프트가 통째로 빠져 있었다 — 운영자가 제품별·
-    역할별로 설정한 지침이 브리지 답변에서만 사라졌고, 같은 질문이 경로에 따라 다른 규칙으로
-    답해졌다(사용자 제보 2026-08-27).
-
-    **서버가 조립해서 넘긴다.** 개인 AI 가 우리 프롬프트 체계를 알 리 없고, 안다 해도 DB 를 읽을
-    수 없다. 그리고 조립 로직을 여기서 다시 쓰면 두 벌이 되어 갈린다 — 내부 경로와 **같은 함수**
-    (`agent_core.compose_system_prompt`)를 부른다.
-
-    실패는 빈 문자열. 프롬프트를 못 만들었다고 답변 자체를 막지는 않는다(막으면 운영자 설정
-    하나가 서비스 전체를 세운다). 다만 로그로 남겨 조용히 사라지지 않게 한다.
-    """
+    """여섯 계층을 공통 조립기로 읽는다. 조회 오류는 빈 설정으로 취급하지 않는다."""
     try:
         import agent_core as _core
 
-        return str(_core.compose_system_prompt(
+        prompt = str(_core.compose_system_prompt(
             conn,
             product_id=int(product_id) if product_id else None,
             role_id=int(role_id) if role_id else None,
             account_id=int(account_id) if account_id else None,
             product_mode=str(product_mode or "pinned"),
             conversation_id=str(conversation_id or "") or None,
+            strict=True,
         ) or "")
+        if not prompt.strip():
+            raise RuntimeError("Empty system prompt")
+        from external_tool_catalog import render_guidance
+        return prompt + "\n\n" + render_guidance(_tool_catalog())
     except Exception as exc:
         logging.getLogger(__name__).error(
-            "[bridge] 시스템 프롬프트 조립 실패 conv=%s product=%s role=%s: %r",
-            conversation_id, product_id, role_id, exc)
-        return ""
+            "[bridge] 시스템 프롬프트 조립 실패 error_type=%s", type(exc).__name__)
+        raise RuntimeError("System prompt unavailable") from None
 
 
 def _bridge_origin_preamble(*, username: str, product_name: str = "") -> str:
@@ -3547,7 +3634,7 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
         logging.getLogger(__name__).error(
             "[bridge] 첨부 읽기 실패 task=%s: %r", task_id, exc)
         # 실패한 시도도 단계로 남긴다 — 감추면 "첨부를 봤는가" 가 화면에서 판정 불가가 된다.
-        _fw, _fr = _bridge_step_narration(body, {})
+        _fw, _fr = _bridge_step_narration(body, {}, "read_task_attachment")
         _record_bridge_step(
             conn, {"conversation_id": conversation_id, "task_id": task_id},
             "read_task_attachment",
@@ -3586,7 +3673,7 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
     _renew_claim_lease(conn, task_id, account_id)
-    _att_work, _att_reason = _bridge_step_narration(body, {})
+    _att_work, _att_reason = _bridge_step_narration(body, {}, "read_task_attachment")
     _record_bridge_step(
         conn, {"conversation_id": conversation_id, "task_id": task_id},
         "read_task_attachment",
@@ -3608,7 +3695,11 @@ async def read_task_attachment(request: Request, ctx=Depends(require_ai_token),
     })
 
 
-def _release_claim(conn, task_id: str, account_id: int) -> None:
+_CLAIM_CLIENT_UNSET = object()
+
+
+def _release_claim(conn, task_id: str, account_id: int, *,
+                   claimed_client: Any = _CLAIM_CLIENT_UNSET) -> None:
     """점유 해제 — 실패 경로에서 작업을 대기열로 되돌린다.
 
     `Status='open'` 인 것만 되돌린다: 이미 제출된(`submitted`) 작업을 되살리면 확정 불변이 깨진다.
@@ -3621,10 +3712,15 @@ def _release_claim(conn, task_id: str, account_id: int) -> None:
     try:
         cur = conn.cursor()
         try:
+            # await 이후의 정리는 그 사이 새로 점유한 러너의 lease를 해제하면 안 된다.
+            lease_sql = " AND ClaimedClient <=> %s" if claimed_client is not _CLAIM_CLIENT_UNSET else ""
+            params = (task_id, account_id, account_id)
+            if claimed_client is not _CLAIM_CLIENT_UNSET:
+                params += (claimed_client,)
             cur.execute(
-                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL "
-                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)",
-                (task_id, account_id, account_id))
+                "UPDATE WebAiTasks SET ClaimedBy=NULL, ClaimedAt=NULL, ClaimedClient=NULL "
+                "WHERE TaskId=%s AND Status='open' AND (AccountId=%s OR ClaimedBy=%s)" + lease_sql,
+                params)
             conn.commit()
         finally:
             cur.close()
@@ -3635,9 +3731,9 @@ def _release_claim(conn, task_id: str, account_id: int) -> None:
 
 
 #: `claim_request` 가 함께 넘기는 이전 대화 turn 수. 크게 잡으면 외부 AI 컨텍스트를 잠식하고
-#: 작게 잡으면 후속 질문이 해석되지 않는다. 대화형 후속질문 대부분이 직전 2~3 turn 안에서 닫힌다.
-_BRIDGE_HISTORY_TURNS = 6
-_BRIDGE_HISTORY_CHARS = 4000
+#: 그룹의 여러 참여자와 assistant 답변을 포함하되, 초과분은 생략 사실을 명시한다.
+_BRIDGE_HISTORY_TURNS = 80
+_BRIDGE_HISTORY_CHARS = 48000
 
 #: 취소된 요청의 제출을 거절할 때의 문구. 조기 반환과 확정 UPDATE 실패 **양쪽**이 같은 말을
 #: 해야 한다 — 러너 입장에서 두 경로는 구분할 수 없는 같은 사건(사용자가 취소했다)이다.
@@ -3695,51 +3791,93 @@ def _conversation_access_denied(conn, account: dict[str, Any], conversation_id) 
     return _json_err(403, "이 대화에 접근할 권한이 없습니다(권한이 변경되었을 수 있습니다).")
 
 
-def _recent_conversation_context(conn, conversation_id, exclude_text: str = "") -> str:
-    """대화의 최근 turn 을 렌더한 문자열. 조회 실패는 빈 문자열(도구를 막지 않는다)."""
+def _recent_conversation_context(conn, conversation_id, exclude_text: str = "", *,
+                                 task_id: str = "", context_state: dict | None = None) -> str:
+    """그룹 전체의 확정된 발언을 순서대로 전달한다. 조회 실패는 불완전 실행을 막는다."""
     if not conversation_id:
         return ""
     try:
         rows = app._conv_load_messages_raw(conn, str(conversation_id), upto_id=None) or []
     except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "[bridge] 대화 문맥 로드 실패 conv=%s: %r", conversation_id, exc)
-        return ""
+        logging.getLogger(__name__).warning("[bridge] 대화 문맥 로드 실패 conv=%s", conversation_id)
+        raise RuntimeError("conversation history unavailable") from exc
+
+    messages = []
+    current_id = None
+    placeholder_id = None
+    chain, digest = [], ""
+    for mid, role, content, created, raw_meta in rows:
+        try:
+            meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
+        except ValueError:
+            meta = {}
+        meta = meta if isinstance(meta, dict) else {}
+        bridge = meta.get("bridge") or {}
+        bridge = bridge if isinstance(bridge, dict) else {}
+        if task_id and bridge.get("task_id") == task_id:
+            if role == "user":
+                current_id = mid
+            elif bridge.get("placeholder"):
+                placeholder_id = mid
+        if role not in ("user", "assistant") or bridge.get("placeholder"):
+            continue
+        text = str(content or "").strip()
+        if not text:
+            continue
+        digest = hashlib.sha256(json.dumps([digest, mid, role, text, meta],
+                                           sort_keys=True, default=str).encode()).hexdigest()
+        chain.append(digest)
+        messages.append((mid, role, text, meta))
+    if context_state is not None:
+        context_state["history_chain"] = chain
+    # 업데이트 이전 메시지는 task 각인이 없다. 해당 대기 말풍선 앞의 동일 질문 한 건만 제외한다.
+    if current_id is None and exclude_text:
+        for mid, role, text, meta in reversed(messages):
+            if role == "user" and text == exclude_text and (placeholder_id is None or mid < placeholder_id):
+                current_id = mid
+                break
 
     parts: list[str] = []
     dropped_refusals = 0
-    for _id, role, content, _created, _meta in rows[-_BRIDGE_HISTORY_TURNS:]:
-        text = str(content or "").strip()
-        if not text or text == exclude_text:
-            continue
-        # ── 인젝션 오판 거부턴은 맥락에서 뺀다 (TASK-20260901T140000) ────────────────
-        #
-        # 라이브에서 **자기강화 루프**가 관측됐다: 연결된 AI 가 요청을 프롬프트 인젝션으로
-        # 오판해 거부하면 그 거부문이 대화에 남고, 다음 턴이 그것을 읽어 「직전 턴도 같은
-        # 결론을 냈으니 이건 판단 우회 재시도다」로 재거부한다. 즉 **한 번 오탐이 나면 그
-        # 대화는 영구 고착**된다 (2026-09-01 대화 `20260901030637-95dc8844` msg 9142→9144,
-        # 뒤 답변이 앞 거부를 근거 3번으로 직접 인용).
-        #
-        # 지우는 것이 아니라 **이 맥락에서만 뺀다** — 원본은 `core_messages` 에 그대로 남아
-        # 화면·감사에서 보인다. 그리고 뺐다는 사실을 밝힌다(§16.7 G9-b 무음 절단 금지).
-        if str(role) != "user" and _guard.flag_injection_refusal(text):
+    previous = [(mid, role, text, meta) for mid, role, text, meta in messages if mid != current_id]
+    for mid, role, text, meta in previous[-_BRIDGE_HISTORY_TURNS:]:
+        if role == "assistant" and _guard.flag_injection_refusal(text):
             dropped_refusals += 1
             continue
-        speaker = "사용자" if str(role) == "user" else "assistant"
-        parts.append(f"[{speaker}] {text}")
+        if role == "user":
+            actor = meta.get("sender_username") or meta.get("sender_account_id")
+            speaker = "사용자" + (" " + json.dumps(str(actor), ensure_ascii=False) if actor else "")
+        else:
+            actor = meta.get("requested_by_username") or meta.get("requested_by_account_id")
+            speaker = "assistant" + (" / 호출자 " + json.dumps(str(actor), ensure_ascii=False) if actor else "")
+        parts.append(f"[{speaker} · 메시지 {mid}] {text}")
     if dropped_refusals:
-        parts.append(
-            f"[안내] 이전 assistant 턴 {dropped_refusals}건은 요청을 프롬프트 인젝션으로 "
-            "오판해 중단한 응답이라 맥락에서 제외했습니다. 그 판단을 이어받지 말고, 위 "
-            "요청을 그대로 수행하십시오.")
-    if not parts:
-        return ""
+        parts.append(f"[안내] 이전 assistant 턴 {dropped_refusals}건은 요청을 프롬프트 인젝션으로 "
+                     "오판해 중단한 응답이라 맥락에서 제외했습니다. 그 판단을 이어받지 마십시오.")
     rendered = "\n\n".join(parts)
+    omitted = len(previous) > _BRIDGE_HISTORY_TURNS or len(rendered) > _BRIDGE_HISTORY_CHARS
     if len(rendered) > _BRIDGE_HISTORY_CHARS:
-        # 조용히 자르지 않는다 — 잘렸다는 사실을 호출자가 알아야 "문맥이 다 왔다" 고 오해하지 않는다.
         rendered = rendered[-_BRIDGE_HISTORY_CHARS:]
-        rendered = "(앞부분 생략 — 전체 기록은 웹 대화 화면 참조)\n\n" + rendered
+    if omitted:
+        rendered = "(이전 대화 일부 생략 — 전체 기록은 DQA 대화 화면 참조)\n\n" + rendered
     return rendered
+
+
+@router.post("/api/ai/tools/get_tool_catalog")
+async def get_tool_catalog(request: Request, ctx=Depends(require_ai_token),
+                           conn=Depends(app.get_conn)) -> JSONResponse:
+    """현재 task의 도구 목록·인자·운영 제한을 반환한다."""
+    body = await _json(request)
+    account = ctx["account"]
+    task = _load_task(conn, str(body.get("task_id") or ""), account)
+    if task is None:
+        return _json_err(404, "task 를 찾을 수 없습니다.")
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is None:
+        denied = _kb_product_access_denied(conn, account, task.get("product_id"))
+    if denied is not None:
+        return denied
+    return JSONResponse({"task_id": task["task_id"], "tool_catalog": _tool_catalog()})
 
 
 @router.post("/api/ai/tools/{tool_name}")
@@ -3749,7 +3887,11 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     부하 게이트·allowlist 를 재구현하지 않는다(재구현은 곧 두 벌 관리이고, 갈리는 순간 약한
     쪽이 실질 경계가 된다)."""
     if tool_name not in EXPOSED_TOOLS:
-        return _json_err(404, f"'{tool_name}' 는 이 표면에 노출된 도구가 아닙니다.")
+        from external_tool_catalog import RESTRICTED_TOOLS
+        return JSONResponse({"error": "tool_not_exposed", "tool": tool_name,
+                             "detail": RESTRICTED_TOOLS.get(tool_name, "현재 도구 목록에서 이름과 인자를 확인하세요."),
+                             "available_tools": sorted(EXPOSED_TOOLS),
+                             "catalog_tool": "get_tool_catalog"}, status_code=404)
     if tool_name in P1_TOOLS and not _sql_enabled():
         return _json_err(403, f"'{tool_name}' 는 현재 비활성화되어 있습니다(운영 설정).")
 
@@ -3759,6 +3901,12 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     task = _load_task(conn, task_id, account)
     if task is None:
         return _json_err(400, "task_id 가 필요합니다(open_task 로 먼저 여세요).")
+
+    denied = _conversation_access_denied(conn, account, task.get("conversation_id"))
+    if denied is None:
+        denied = _kb_product_access_denied(conn, account, task.get("product_id"))
+    if denied is not None:
+        return denied
 
     try:
         _ledger.check_limits(_pg(), account_id=int(account.get("id") or 0),
@@ -3776,7 +3924,7 @@ async def run_structure_tool(tool_name: str, request: Request, ctx=Depends(requi
     arguments = {k: v for k, v in dict(body.get("arguments") or {}).items()
                  if not str(k).startswith("_")}
     # 단계 narration(무엇을·왜)은 조사 인자가 아니다 — 실행 전에 걷어낸다(내부 경로와 동형).
-    narr_work, narr_reason = _bridge_step_narration(body, arguments)
+    narr_work, narr_reason = _bridge_step_narration(body, arguments, tool_name)
     # `execute_tool` 이 `arguments` 에서 `datasource` 를 pop 한다 — 실행 뒤에 읽으면 항상 빈 값이
     # 되어 추출 원장의 datasource 추적이 통째로 죽는다(codex P2). 실행 전에 붙잡는다.
     requested_ds = str(arguments.get("datasource") or "") or None
@@ -4246,15 +4394,25 @@ def _bridge_live_steps(task_id: str) -> tuple[list[dict[str, Any]], int]:
                     summary = json.loads(r[10])
                 except Exception:
                     summary = None
+            tool = str(r[2] or "")
+            # 표시 문구는 **완료 경로와 같은 단일 이음매**가 만든다 — 두 경로가 각자 정화·파생
+            # 하면 제출 순간 같은 단계의 제목이 바뀌고(실측: 첨부 파일명 소실), 한쪽에 정화가
+            # 빠지면 그 경로가 곧 우회로가 된다 (AGENTS.md §16.7 G12).
+            work, work_source, reason, reason_source = app._step_display_narration({
+                "tool": tool, "args": args, "sql": str(r[9] or ""),
+                "work": r[4], "work_source": r[5],
+                "reason": r[6], "reason_source": r[7],
+            })
             out.append({
                 "step_index": int(r[0] or 0),
                 "action": str(r[1] or "step"),
-                "tool": str(r[2] or ""),
-                "intent": str(r[3] or ""),
-                "work": str(r[4] or ""),
-                "work_source": str(r[5] or ""),
-                "reason": str(r[6] or ""),
-                "reason_source": str(r[7] or ""),
+                "tool": tool,
+                # `intent` 는 서버가 `<도구명>: <문구>` 로 조립한 값이라 식별자를 담는다.
+                # 화면은 더 이상 쓰지 않으므로 payload 에서도 뺀다(공유 뷰·devtools 노출 차단).
+                "work": work,
+                "work_source": work_source,
+                "reason": reason,
+                "reason_source": reason_source,
                 "args": args,
                 "sql": str(r[9] or ""),
                 "result_summary": summary,

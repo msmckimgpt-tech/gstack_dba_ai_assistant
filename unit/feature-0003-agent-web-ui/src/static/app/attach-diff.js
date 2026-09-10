@@ -109,6 +109,227 @@ function _isMarkdownFile(filename) {
   return detectCodeLanguage(filename) === "md";
 }
 
+// ── 구분자 표 렌더 (사용자 요청 2026-09-09) ─────────────────────────────────
+// "DQA 클라이언트 첨부파일 중 csv 확장자가 표 형태로 출력될 수 있도록" — `.csv` 첨부를 열면
+// 쉼표가 섞인 평문 대신 **행·열 격자**로 보여 준다. `.md` 를 문서로 보여 주는 위 경로와 같은
+// 성격(원문은 토글로 남기고 기본은 렌더)이라 관용구·저장 키 형태·토글 배타 규칙을 그대로 맞춘다.
+//
+// **마크다운과 달리 외부 렌더 파이프라인을 쓰지 않는다**: 셀 값은 전부 `textContent` 로만
+// 들어가므로 마크업이 생기지 않는다(sanitize·원격 리소스 중립화가 필요한 표면 자체가 없다).
+// 마크다운 경로가 `marked`+`DOMPurify` 를 거치는 이유는 그쪽 입력이 *마크업*이기 때문이고,
+// 여기 입력은 *값*이다 — 값에 파서를 물리면 없는 공격면을 새로 만든다.
+//
+// `.tsv` 도 같은 렌더러가 받는다. 구분자는 확장자로 정한다(`code-highlight.js` 의 CSV 토크나이저와
+// 같은 규칙) — 첫 줄 추론은 같은 파일이 두 화면에서 다르게 갈릴 수 있어 채택하지 않는다.
+const TABLE_RENDER_KEY = "attachSourceTable";   // "0" 이면 원문 보기 (기본: 표)
+function _readTableRenderOn() {
+  try { return localStorage.getItem(TABLE_RENDER_KEY) !== "0"; } catch (e) { return true; }
+}
+function _writeTableRenderOn(on) {
+  try { localStorage.setItem(TABLE_RENDER_KEY, on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
+
+// DOM 상한 — 행 수는 서버가 `_VERSION_DIFF_ROW_CAP` 으로 이미 자르지만, **열 수와 셀 총량은
+// 서버가 모른다**(줄 배열만 보낸다). 6,000행 × 300열이면 180만 셀이라 표를 만드는 순간 창이
+// 멎는다. 상한을 넘으면 조용히 버리지 않고 배너로 알린다(§16.7 G9-b — 무음 절단 금지).
+const TABLE_COL_CAP = 200;
+const TABLE_CELL_CAP = 30000;
+
+/** 이 첨부가 표로 렌더할 대상인가 → 구분자 문자, 아니면 `null`. */
+function _tableDelimiter(filename) {
+  const lang = detectCodeLanguage(filename);
+  if (lang === "csv") return ",";
+  if (lang === "tsv") return "\t";
+  return null;
+}
+
+/**
+ * 구분자 텍스트를 레코드 배열로 파싱한다 (RFC 4180 — 인용 필드·`""` 이스케이프·멀티라인 필드).
+ *
+ * **무손실이 계약**이다. 깨진 입력(짝 없는 따옴표, 인용 필드 중간에서 끊긴 절단본)도 값을
+ * 버리지 않는다 — 이 화면에는 서버가 앞부분만 잘라 보낸 본문이 실제로 도착한다
+ * (`/source` 의 `truncated.source`·`truncated.rows`). 파싱이 값을 삼키면 사용자는 잘린
+ * 사실은 배너로 알면서 **무엇이 사라졌는지는 모르는** 상태가 된다.
+ *
+ * 인용 시작은 **필드 첫 글자에서만** 인정한다(Excel·RFC 4180 동일). `a"b` 의 따옴표는
+ * 리터럴이며, 그렇게 읽는 편이 임의 업로드본에서 열이 통째로 밀리는 사고를 막는다.
+ *
+ * **형식 이상은 삼키지 않고 신고한다** (`anomalies` out-param). 표준 CSV 파서(Python `csv`·
+ * Excel)는 `"a"b` 를 조용히 `ab` 로 읽는데, 이 화면의 계약은 무손실이므로 그 «조용히» 가
+ * 문제다 — 값이 원문과 달라졌다는 사실을 사용자가 알아야 원문 보기로 확인할 수 있다.
+ *
+ * @param {string} text  원본 텍스트
+ * @param {string} delim 구분자 한 글자 (`,` 또는 `\t`)
+ * @param {{quoteAnomalies?: number}} [anomalies] 채워 넣을 객체(선택) —
+ *   `quoteAnomalies` 는 «닫힌 인용 뒤에 문자가 이어진 필드» + «인용이 닫히지 않고 끝난 필드» 수.
+ * @returns {Array<Array<string>>} 레코드 배열 (각 레코드는 필드 문자열 배열)
+ */
+export function parseDelimitedText(text, delim, anomalies) {
+  let src = String(text == null ? "" : text);
+  // UTF-8 BOM — 남겨 두면 첫 머리글 이름이 보이지 않는 글자로 시작해 "왜 안 맞지" 가 된다.
+  if (src.charCodeAt(0) === 0xfeff) src = src.slice(1);
+  const d = String(delim || ",").charAt(0) || ",";
+  const records = [];
+  let row = [];
+  let field = "";
+  let quoted = false;   // 이 필드가 인용으로 시작했는가 (닫힌 뒤에도 유지 — 아래 주석 참조)
+  let inQuotes = false;
+  let odd = 0;          // 형식 이상 필드 수 — 값이 원문과 달라진 자리
+  let closedAt = -1;    // 이 필드의 인용이 닫힌 위치(-1 = 아직/해당없음)
+  let i = 0;
+  const n = src.length;
+  const endField = () => {
+    // 인용이 닫히지 않은 채 필드가 끝났거나(절단본), 닫힌 뒤에 문자가 이어진 필드
+    // (`"a"b`)는 **값이 원문과 달라진** 자리다. 값은 살리되 그 사실을 세어 둔다.
+    if (inQuotes || (quoted && closedAt >= 0 && i > closedAt)) odd += 1;
+    row.push(field); field = ""; quoted = false; closedAt = -1;
+  };
+  while (i < n) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        // `""` 는 이스케이프된 따옴표 한 글자. 그 외의 `"` 는 인용 종료.
+        if (src[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i += 1; closedAt = i; continue;
+      }
+      field += ch; i += 1; continue;
+    }
+    if (ch === '"' && field === "" && !quoted) { inQuotes = true; quoted = true; i += 1; continue; }
+    if (ch === d) { endField(); i += 1; continue; }
+    if (ch === "\n" || ch === "\r") {
+      // ⚠ **`endField()` 를 CRLF 스킵보다 먼저** 부른다. 순서를 뒤집으면 `i` 가 한 칸 앞서
+      // 있는 상태로 형식 이상을 판정해(`i > closedAt`) `"a"\r\n` 같은 **정상** 인용 필드가
+      // 「따옴표 형식 이상」으로 신고된다 — 정상 CSV 에 거짓 경고가 뜬다
+      // (codex 적대 리뷰 확인 라운드 [P2]).
+      endField();
+      if (ch === "\r" && src[i + 1] === "\n") i += 1;
+      records.push(row);
+      row = [];
+      i += 1;
+      continue;
+    }
+    field += ch; i += 1;
+  }
+  // EOF. **빈 꼬리 판정은 «마지막 문자가 개행이었는가» 로 한다** — 「마지막 레코드가 빈 필드
+  // 하나」로 판정하면 `h⏎""` 의 **명시적 빈 인용 필드**(정상 데이터 행)가 꼬리로 오인돼
+  // 통째로 사라진다. 그러면 화면이 「데이터 행은 없습니다」라고 **거짓을 말한다**
+  // (codex 적대 리뷰 [P1] — 무손실 계약의 정면 위반이었다).
+  // 개행 직후 EOF 면 아직 아무 문자도 읽지 않은 상태다: `row`·`field` 가 비고 인용도 없다.
+  const trailingEmpty = row.length === 0 && field === "" && !quoted && !inQuotes
+    && n > 0 && (src[n - 1] === "\n" || src[n - 1] === "\r");
+  if (!trailingEmpty) {
+    // `inQuotes` 로 끝났다면 절단된 인용 필드다 — 여기까지 읽은 값을 그대로 살린다.
+    endField();
+    records.push(row);
+  }
+  if (anomalies && typeof anomalies === "object") anomalies.quoteAnomalies = odd;
+  return records;
+}
+
+/** 이 셀 값이 수치인가 — 표에서 수치 열을 우측 정렬하기 위한 판정(값은 바꾸지 않는다). */
+function _isNumericCell(s) {
+  return /^\s*[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?\s*$/.test(String(s || ""));
+}
+
+/**
+ * 구분자 본문을 컨테이너에 **표**로 렌더한다.
+ *
+ * 첫 레코드를 머리글로 쓴다 — CSV 에 머리글 유무를 알리는 표식이 없으므로 추정이지만,
+ * **행 번호를 파일 레코드 번호 그대로**(머리글 = 1) 매겨 추정 사실이 화면에서 읽히게 한다.
+ * 머리글이 아니었더라도 값은 사라지지 않는다(첫 행이 굵게 보일 뿐).
+ *
+ * @returns {{ok: boolean, rows: number, cols: number, colsClipped: boolean, rowsClipped: boolean}}
+ *   `ok:false` 면 호출자가 원문 표로 폴백한다.
+ */
+function _renderDelimitedInto(container, text, delim) {
+  const fail = { ok: false, rows: 0, cols: 0, colsClipped: false, rowsClipped: false,
+    quoteAnomalies: 0 };
+  let records;
+  const anomalies = {};
+  try { records = parseDelimitedText(text, delim, anomalies); } catch (e) { return fail; }
+  if (!Array.isArray(records) || records.length === 0) return fail;
+  // 값이 하나도 없는 입력(빈 문서·개행만)은 표로 만들 것이 없다 — 원문 경로가 "비어 있습니다"
+  // 를 이미 말하므로 여기서 빈 격자를 그리지 않는다.
+  const hasValue = records.some((r) => r.some((c) => String(c || "").length > 0));
+  if (!hasValue) return fail;
+
+  let cols = 0;
+  for (const r of records) cols = Math.max(cols, r.length);
+  const colsClipped = cols > TABLE_COL_CAP;
+  if (colsClipped) cols = TABLE_COL_CAP;
+  const maxRows = Math.max(1, Math.floor(TABLE_CELL_CAP / Math.max(1, cols)));
+  const rowsClipped = records.length > maxRows;
+  const shown = rowsClipped ? records.slice(0, maxRows) : records;
+
+  const table = document.createElement("table");
+  table.className = "attach-source-table";
+  table.setAttribute("aria-label", `표 ${shown.length}행 × ${cols}열`);
+
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  const hno = document.createElement("th");
+  hno.className = "attach-source-table-no";
+  hno.scope = "col";
+  // 행 번호 열은 시각 보조다 — 매 셀 낭독은 표를 읽을 수 없게 만든다(원문 뷰와 같은 판단).
+  hno.setAttribute("aria-hidden", "true");
+  hno.textContent = "#";
+  htr.appendChild(hno);
+  // 값은 **셀 안의 div** 에 넣는다. `td` 에 직접 넣고 `max-width` 를 주면 `table-layout: auto`
+  // 가 그 상한을 무시해(폭의 정본이 열 알고리즘이다) 긴 값 한 칸이 표를 통째로 늘린다
+  // — 실측: 40자 값 하나가 열 폭 750px 을 만들었다. block 래퍼에는 상한이 그대로 듣는다.
+  const cellDiv = (v) => {
+    const d = document.createElement("div");
+    d.className = "attach-source-table-cell";
+    d.textContent = v;   // 값은 값으로만 넣는다 — 마크업이 생길 자리가 없다
+    return d;
+  };
+  const head = shown[0] || [];
+  for (let c = 0; c < cols; c++) {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.appendChild(cellDiv(String(head[c] == null ? "" : head[c])));
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (let r = 1; r < shown.length; r++) {
+    const rec = shown[r];
+    const tr = document.createElement("tr");
+    const tdNo = document.createElement("td");
+    tdNo.className = "attach-source-table-no";
+    tdNo.setAttribute("aria-hidden", "true");
+    // 파일의 레코드 번호 그대로 — 머리글이 1이므로 데이터 첫 행은 2다. 머리글 추정이 틀렸을 때
+    // 사용자가 "1번 행이 머리글 자리로 갔다" 를 번호만으로 알아본다.
+    tdNo.textContent = String(r + 1);
+    tr.appendChild(tdNo);
+    for (let c = 0; c < cols; c++) {
+      const td = document.createElement("td");
+      const v = rec[c] == null ? "" : String(rec[c]);
+      if (_isNumericCell(v)) td.className = "is-num";
+      td.appendChild(cellDiv(v));
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+
+  const wrap = document.createElement("div");
+  wrap.className = "attach-source-tablewrap";
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+  if (tbody.children.length === 0) {
+    // 머리글 한 줄뿐인 파일. 빈 표만 두면 "고장" 으로 읽히므로 사실을 말한다.
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice";
+    el.textContent = "머리글 행만 있고 데이터 행은 없습니다.";
+    container.appendChild(el);
+  }
+  return { ok: true, rows: shown.length, cols, colsClipped, rowsClipped,
+    quoteAnomalies: Number(anomalies.quoteAnomalies || 0) };
+}
+
 /** 원문 행 배열 → 원본 텍스트. `gap` 행은 본문이 아니므로 제외한다. */
 function _sourceText(data) {
   const rows = Array.isArray(data && data.rows) ? data.rows : [];
@@ -886,6 +1107,36 @@ function _mdFallbackNotice() {
   return el;
 }
 
+// 표 렌더의 두 배너 — 마크다운 쪽과 같은 이유로 문구를 한 곳에 둔다(두 화면이 같은 사실을
+// 다른 말로 알리면 한쪽만 고쳐지는 방식으로 갈라진다).
+function _tableClipNotice({ colsClipped, rowsClipped, quoteAnomalies }) {
+  const parts = [];
+  if (rowsClipped) parts.push("행");
+  if (colsClipped) parts.push(`열(앞 ${TABLE_COL_CAP}개)`);
+  const odd = Number(quoteAnomalies || 0);
+  if (!parts.length && !odd) return null;
+  const el = document.createElement("div");
+  el.className = "attach-diff-notice is-warn";
+  const msgs = [];
+  if (parts.length) {
+    msgs.push(`표가 너무 커서 ${parts.join(" · ")}을 앞부분만 그렸습니다.`);
+  }
+  // 값이 원문과 달라진 자리를 **세어서** 알린다. 표준 CSV 파서는 `"a"b` 를 조용히 `ab` 로
+  // 읽는데, 조용한 변형은 사용자가 그것을 원본으로 믿게 만든다(codex 적대 리뷰 [P1]).
+  if (odd) {
+    msgs.push(`따옴표 형식이 표준과 다른 칸이 ${odd}개 있어 그 값은 원문과 다르게 보일 수 있습니다.`);
+  }
+  el.textContent = `${msgs.join(" ")} 정확한 원문은 "표로 보기" 를 끄고 확인하세요.`;
+  return el;
+}
+
+function _tableFallbackNotice() {
+  const el = document.createElement("div");
+  el.className = "attach-diff-notice is-warn";
+  el.textContent = "표로 만들 수 있는 내용이 없어 원문으로 표시합니다.";
+  return el;
+}
+
 // 원문 렌더 — **두 버전의 내용이 동일할 때** 쓰는 제3의 표현(사용자 요청 2026-08-07:
 // "파일 내용이 동일하다면 문서 원문을 출력").
 //
@@ -907,6 +1158,19 @@ function _renderSource(container, data, opts) {
       return;
     }
     if (typeof opts.onMdFallback === "function") opts.onMdFallback();
+  }
+
+  // 표 렌더 경로 — `.csv`/`.tsv` 첨부를 격자로 출력한다(사용자 요청 2026-09-09).
+  // 마크다운 분기와 **상호 배타**다: 확장자 하나가 두 언어로 판정되지 않으므로 호출부에서
+  // 둘이 동시에 켜질 수 없고, 여기서도 위 분기가 먼저 `return` 한다.
+  // 실패(파싱 불가·빈 내용) 시 **조용히 비우지 않고** 아래 원문 표로 떨어진다.
+  if (opts && opts.table) {
+    const res = _renderDelimitedInto(container, _sourceText(data), opts.tableDelim || ",");
+    if (res.ok) {
+      if (typeof opts.onTableRendered === "function") opts.onTableRendered(res);
+      return;
+    }
+    if (typeof opts.onTableFallback === "function") opts.onTableFallback();
   }
 
   const table = document.createElement("table");
@@ -1039,6 +1303,12 @@ function _renderSourceBody(bodyEl, data, opts) {
       // 선택이 아니라 실패로 인한 강등이므로 다음 열람에서 다시 시도한다.
       if (typeof o.onMdFallbackSync === "function") o.onMdFallbackSync();
     },
+    // 표 렌더는 마크다운과 **배타**라 같은 배너 자리를 공유한다(둘 다 채워질 수 없다).
+    onTableRendered: (res) => { mdNotice = _tableClipNotice(res); },
+    onTableFallback: () => {
+      mdNotice = _tableFallbackNotice();
+      if (typeof o.onTableFallbackSync === "function") o.onTableFallbackSync();
+    },
   });
   wrap.appendChild(scroller);
   if (mdNotice) bodyEl.appendChild(mdNotice);
@@ -1112,6 +1382,12 @@ function _renderBody(bodyEl, data, mode, opts) {
   // P2) — 별도 톤(`is-note`)으로 낮춘다. 사유도 "길어서" 가 아니다: 길이 컷·표시 분량 상한·
   // 조각화 판단이 섞여 있고, 같은 길이의 윗줄은 마크되는데 아랫줄만 안 되는 경우가 있어
   // 길이를 사유로 말하면 사용자가 화면과 어긋난 설명을 읽는다.
+  if (tr.alignment) {
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice is-note";
+    el.textContent = "비교량이 많아 일부 구간의 유사한 줄 맞추기를 생략했습니다.";
+    bodyEl.appendChild(el);
+  }
   if (tr.intraline) {
     const el = document.createElement("div");
     el.className = "attach-diff-notice is-note";
@@ -1154,6 +1430,11 @@ function _renderBody(bodyEl, data, mode, opts) {
         mdNotice = _mdFallbackNotice();
         // 원문 보기 모달과 같은 이유로 컨트롤을 화면과 일치시킨다(codex [P2]) — 저장값은 불변.
         if (typeof opts.onMdFallbackSync === "function") opts.onMdFallbackSync();
+      },
+      onTableRendered: (res) => { mdNotice = _tableClipNotice(res); },
+      onTableFallback: () => {
+        mdNotice = _tableFallbackNotice();
+        if (typeof opts.onTableFallbackSync === "function") opts.onTableFallbackSync();
       },
     });
     if (mdNotice) bodyEl.appendChild(mdNotice);
@@ -1297,6 +1578,20 @@ function _attachSplitHandle(wrap, scroller, opts) {
  *   **계보 내 최신**(이 체인의 최고 버전)과 **시간순 최신**(같은 파일의 모든 계보 중 가장 나중).
  *   계보가 둘 이상이면 비교 기준을 고르는 토글을 띄운다. 하나뿐이면 종전과 동일한 화면이다.
  */
+export function captureAttachmentDiffState() {
+  const viewers = Array.from(document.querySelectorAll('[data-ui-refresh-restorable]'));
+  return viewers.length === 1 ? viewers[0]._dqaUiSnapshot?.() || null : null;
+}
+
+export async function restoreAttachmentDiffState(saved) {
+  if (!saved || !Number.isSafeInteger(saved.attachmentId) || saved.attachmentId <= 0
+      || !Array.isArray(saved.versions) || saved.versions.length > 200
+      || !Array.isArray(saved.lineages) || saved.lineages.length > 200) return;
+  await openAttachmentDiffModal(saved.attachmentId, saved.versions, saved.preselect, saved.lineages);
+  const viewer = document.querySelector('[data-ui-refresh-restorable] .attach-diff-scroller');
+  if (viewer && saved.anchor) _restoreScrollAnchor(viewer, saved.anchor);
+}
+
 export function openAttachmentDiffModal(attachmentId, versions, preselect, lineages) {
   const list = Array.isArray(versions) ? [...versions] : [];
   // 계보 목록은 head 가 2개 이상일 때만 뜻이 있다(하나면 '시간순' 이 곧 '계보 내' 다).
@@ -1356,6 +1651,10 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
     // 보이지 않는다는 이 모듈의 계약.
     '    <label class="attach-source-mdtoggle" hidden><input type="checkbox" class="attach-source-md-cb">' +
     '<span>마크다운으로 보기</span></label>' +
+    // 표 렌더 토글 — 마크다운 토글과 **같은 자리·같은 조건**(원문을 출력하는 화면 한정)이다.
+    // `.csv`/`.tsv` 에서만 뜨므로 마크다운 토글과 동시에 보이지 않는다.
+    '    <label class="attach-source-tabletoggle" hidden><input type="checkbox" class="attach-source-table-cb">' +
+    '<span>표로 보기</span></label>' +
     // 구문 하이라이트 토글 — **색이 실제로 칠해질 수 있을 때만** 표시한다(아래 `syncHlToggle`).
     // 옆의 맥락 토글과 같은 체크박스 관용구를 쓴다(같은 성격의 on/off 를 다른 위젯으로 두지 않는다).
     '    <label class="attach-diff-hltoggle" hidden><input type="checkbox" class="attach-diff-hl">' +
@@ -1409,8 +1708,9 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
         }
       }
       const ids = [...lins].reverse().map((l) => String(l.head_attachment_id));
-      fromSel.value = ids[ids.length - 2] ?? ids[0];
-      toSel.value = ids[ids.length - 1];
+      fromSel.value = ids.includes(String(preselect?.from))
+        ? String(preselect.from) : ids[ids.length - 2] ?? ids[0];
+      toSel.value = ids.includes(String(preselect?.to)) ? String(preselect.to) : ids[ids.length - 1];
       return;
     }
     for (const v of list) {
@@ -1479,13 +1779,24 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
   // (원문 보기 모달이 비교를 수행하게 되면서 사본이 세 벌이 될 자리였다).
   const mdRenderable = (data, kind) =>
     _isMarkdownFile(filename) && _bodyState(data, kind || "diff").sourceView;
+  // 표 렌더도 같은 조건이다 — 줄 대조 diff 를 격자로 바꾸면 어느 줄이 바뀌었는지가 사라진다.
+  const tableWrap = backdrop.querySelector(".attach-source-tabletoggle");
+  const tableCb = backdrop.querySelector(".attach-source-table-cb");
+  const tableDelim = _tableDelimiter(filename);
+  let tableOn = _readTableRenderOn();
+  tableCb.checked = tableOn;
+  const tableRenderable = (data, kind) =>
+    Boolean(tableDelim) && _bodyState(data, kind || "diff").sourceView;
   const syncHlToggle = (data, kind) => {
     const md = mdRenderable(data, kind);
     mdWrap.hidden = !md;
     if (md) mdCb.checked = mdOn;
-    // 렌더된 문서에는 칠할 원문 줄이 없다 → `md && mdOn` 이면 구문 색 토글을 숨긴다.
+    const tbl = tableRenderable(data, kind);
+    tableWrap.hidden = !tbl;
+    if (tbl) tableCb.checked = tableOn;
+    // 렌더된 문서·표에는 칠할 원문 줄이 없다 → 그 상태면 구문 색 토글을 숨긴다.
     const paintable = Boolean(detectedLang) && _bodyState(data, kind || "diff").hasBody
-      && !(md && mdOn);
+      && !(md && mdOn) && !(tbl && tableOn);
     hlWrap.hidden = !paintable;
     if (!paintable) return;
     hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
@@ -1548,6 +1859,16 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
     md: mdOn && mdRenderable(curData(), viewKind),
     onMdFallbackSync: () => {
       mdCb.checked = false;
+      hlWrap.hidden = !detectedLang;
+      if (detectedLang) {
+        hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+        hlCb.checked = hlOn;
+      }
+    },
+    table: tableOn && tableRenderable(curData(), viewKind),
+    tableDelim,
+    onTableFallbackSync: () => {
+      tableCb.checked = false;
       hlWrap.hidden = !detectedLang;
       if (detectedLang) {
         hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
@@ -1783,7 +2104,27 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect, linea
     rerender();
   });
 
-  load();
+  // 표 ↔ 원문 전환. 마크다운 토글과 같은 이유로 스크롤을 보존하지 않는다 — 격자와 줄 표는
+  // 좌표계가 달라, 보던 위치를 그대로 얹으면 엉뚱한 곳으로 튄다.
+  tableCb.addEventListener("change", () => {
+    tableOn = tableCb.checked;
+    _writeTableRenderOn(tableOn);
+    syncHlToggle(curData(), viewKind);
+    rerender(false);
+  });
+
+  backdrop.setAttribute("data-ui-refresh-restorable", "diff");
+  backdrop._dqaUiSnapshot = () => ({
+    attachmentId: Number(attachmentId),
+    versions: list.map(v => ({ id: v.id, version_number: v.version_number,
+      original_filename: v.original_filename, created_by_role: v.created_by_role, superseded: v.superseded })),
+    lineages: lins.map(l => ({ head_attachment_id: l.head_attachment_id, version_number: l.version_number,
+      original_filename: l.original_filename, is_assistant_generated: l.is_assistant_generated,
+      is_current_lineage: l.is_current_lineage })),
+    preselect: { axis, from: Number(fromSel.value), to: Number(toSel.value), truncated: preselect?.truncated },
+    anchor: _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller")),
+  });
+  return load();
 }
 
 /**
@@ -1862,6 +2203,10 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     // 렌더된 문서에는 칠할 원문 줄이 없어 그 토글이 아무 일도 하지 않는 거짓 어포던스가 된다.
     '    <label class="attach-source-mdtoggle" hidden><input type="checkbox" class="attach-source-md-cb">' +
     '<span>마크다운으로 보기</span></label>' +
+    // 표 렌더 토글 — `.csv`/`.tsv` 첨부에서만 보인다(사용자 요청 2026-09-09). 기본 켬이며 끄면
+    // 종전의 줄번호+원문 표로 돌아간다. 마크다운 토글과 자리·관용구·배타 규칙이 같다.
+    '    <label class="attach-source-tabletoggle" hidden><input type="checkbox" class="attach-source-table-cb">' +
+    '<span>표로 보기</span></label>' +
     // 구문 색 토글은 비교 모달과 **같은 관용구·같은 저장 키**다 — 한쪽에서 끈 사용자가 다른
     // 쪽에서 다시 켜야 한다면 그건 두 기능이 아니라 한 기능의 일관성 결함이다.
     '    <label class="attach-diff-hltoggle" hidden><input type="checkbox" class="attach-diff-hl">' +
@@ -1894,6 +2239,8 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   const hlLabel = backdrop.querySelector(".attach-diff-hl-label");
   const mdWrap = backdrop.querySelector(".attach-source-mdtoggle");
   const mdCb = backdrop.querySelector(".attach-source-md-cb");
+  const tableWrap = backdrop.querySelector(".attach-source-tabletoggle");
+  const tableCb = backdrop.querySelector(".attach-source-table-cb");
   const cmpWrap = backdrop.querySelector(".attach-source-cmpctl");
   const cmpSel = backdrop.querySelector(".attach-source-cmp");
   const viewToggleEl = backdrop.querySelector(".attach-diff-viewtoggle");
@@ -1907,6 +2254,11 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   hlCb.checked = hlOn;
   let mdOn = _readMdRenderOn();
   mdCb.checked = mdOn;
+  // 구분자는 `detectedLang` 과 같은 정본(`code-highlight.js` 레지스트리)에서 오고, 응답이 준
+  // 파일명으로 정정될 수 있으므로 `let` 이다(아래 `load()` 에서 함께 재계산).
+  let tableDelim = _tableDelimiter(fnameEl.textContent);
+  let tableOn = _readTableRenderOn();
+  tableCb.checked = tableOn;
   // 보기 방식·맥락·중앙선 비율은 비교 모달과 **같은 저장 키**를 쓴다 — 한 화면에서 고른 표시
   // 방식이 다른 화면에서 리셋되면 두 기능처럼 보인다.
   let mode = _readViewMode();
@@ -1929,6 +2281,9 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   /** 이 화면에 마크다운으로 렌더할 본문이 실제로 있는가 (파일명만으로 판정하지 않는다). */
   const mdRenderable = (data, kind) =>
     _isMarkdownFile(fnameEl.textContent) && _bodyState(data, kind || viewKind).sourceView;
+  /** 표로 렌더할 본문이 실제로 있는가 — 판정 구조는 위와 같다(파일명 + 본문 도착). */
+  const tableRenderable = (data, kind) =>
+    Boolean(tableDelim) && _bodyState(data, kind || viewKind).sourceView;
 
   const syncToggles = (data, kind) => {
     const k = kind || viewKind;
@@ -1937,9 +2292,13 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     const md = mdRenderable(data, k);
     mdWrap.hidden = !md;
     if (md) mdCb.checked = mdOn;
-    // 마크다운으로 보는 동안 구문 색 토글은 숨긴다(칠할 원문 줄이 화면에 없다 — 거짓 어포던스).
+    const tbl = tableRenderable(data, k);
+    tableWrap.hidden = !tbl;
+    if (tbl) tableCb.checked = tableOn;
+    // 마크다운·표로 보는 동안 구문 색 토글은 숨긴다(칠할 원문 줄이 화면에 없다 — 거짓 어포던스).
     const state = _bodyState(data, k);
-    const paintable = Boolean(detectedLang) && state.hasBody && !(md && mdOn);
+    const paintable = Boolean(detectedLang) && state.hasBody
+      && !(md && mdOn) && !(tbl && tableOn);
     hlWrap.hidden = !paintable;
     if (paintable) {
       hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
@@ -1966,7 +2325,7 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   // padding + border-bottom 만 남아 제목 아래에 정체불명의 빈 띠가 그어졌다(§18.8 design 지적).
   const syncControlsBar = () => {
     controlsEl.hidden = !statsEl.textContent && hlWrap.hidden && mdWrap.hidden
-      && cmpWrap.hidden && viewToggleEl.hidden;
+      && tableWrap.hidden && cmpWrap.hidden && viewToggleEl.hidden;
   };
   syncControlsBar();
 
@@ -2000,6 +2359,8 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     rows: (curData() && curData().rows) || [],
     lang: hlOn ? detectedLang : null,
     md: mdOn && mdRenderable(curData(), viewKind),
+    table: tableOn && tableRenderable(curData(), viewKind),
+    tableDelim,
     onRatioChange: (r) => { ratio = r; },
     // gap 국소 전개는 이 모달에 두지 않는다 — 전개는 "전체 맥락" 재요청 + 쌍별 캐시가 필요한
     // 비교 전용 흐름이고, 여기서 더 보려면 "동일한 줄도 모두 보기" 라는 대안 경로가 이미 있다.
@@ -2007,6 +2368,15 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     onExpandGap: null,
     onMdFallbackSync: () => {
       mdCb.checked = false;
+      hlWrap.hidden = !detectedLang;
+      if (detectedLang) {
+        hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+        hlCb.checked = hlOn;
+      }
+      syncControlsBar();
+    },
+    onTableFallbackSync: () => {
+      tableCb.checked = false;
       hlWrap.hidden = !detectedLang;
       if (detectedLang) {
         hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
@@ -2120,6 +2490,9 @@ export function openAttachmentSourceModal(attachmentId, opts) {
       if (data.filename && data.filename !== fnameEl.textContent) {
         fnameEl.textContent = String(data.filename);
         detectedLang = detectCodeLanguage(fnameEl.textContent);
+        // 구분자도 함께 정정한다 — 빠뜨리면 호출부가 이름을 안 넘긴 경로(말풍선 칩)에서
+        // `.csv` 첨부의 표 토글이 끝내 뜨지 않는다(판정이 갱신 전 이름에 묶인다).
+        tableDelim = _tableDelimiter(fnameEl.textContent);
       }
       thisVersion = Number(data.version?.version_number || 1);
       fillCompareSelect(data);
@@ -2178,6 +2551,15 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     mdOn = mdCb.checked;
     _writeMdRenderOn(mdOn);
     syncToggles(curData(), viewKind);   // 구문 색 토글 노출이 md 상태에 종속된다
+    syncControlsBar();
+    render({ keepScroll: false });
+  });
+
+  // 표 ↔ 원문 전환. 마크다운 토글과 같은 이유로 스크롤을 보존하지 않는다(좌표계가 다르다).
+  tableCb.addEventListener("change", () => {
+    tableOn = tableCb.checked;
+    _writeTableRenderOn(tableOn);
+    syncToggles(curData(), viewKind);
     syncControlsBar();
     render({ keepScroll: false });
   });

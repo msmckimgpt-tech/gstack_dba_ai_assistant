@@ -238,7 +238,10 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
         lineages_truncated = False
         try:
             heads = app._load_filename_lineage_heads(
-                conn, str(base.get("ConversationId") or ""), str(base.get("OriginalFilename") or ""))
+                conn, str(base.get("ConversationId") or ""), str(base.get("OriginalFilename") or ""),
+                # REQ-20260908-attach-folder-tree: 경로가 있으면 그 경로의 계보만 — 다른 폴더의
+                # 동명 파일을 「경쟁 계보」로 세우지 않는다(§18.8 backend [P2]).
+                relative_path=(str(base.get("RelativePath")) if base.get("RelativePath") else None))
             lineages_truncated = bool(heads and heads[0].pop("_lineage_heads_truncated", False))
             for h in heads:
                 _h_root = int(h.get("RootAttachmentId") or 0) or int(h.get("Id") or 0)
@@ -253,6 +256,8 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
                     # 첨부 시각은 UTC 저장 — 전송도 UTC 임을 명시한다(같은 계약 공유).
                     "created_at": app._iso_utc_z(h.get("CreatedAt")),
                     "branched_from_attachment_id": int(_meta.get("branch_of_attachment_id") or 0) or None,
+                    # 클라이언트가 계보를 구분해 라벨할 수 있도록 경로도 싣는다.
+                    "relative_path": (str(h["RelativePath"]) if h.get("RelativePath") else None),
                     "is_current_lineage": _h_root == root_id,
                 })
         except Exception:
@@ -627,15 +632,16 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
             "rows": view["rows"],
             "stats": view["stats"],
             "identical": bool(view["stats"]["identical"]),
-            # 절단 4종을 각각 표면화한다 — 어느 쪽이 잘렸는지 모르면 사용자가 diff 를
-            # 전체로 오인한다(§16.7 G9-b). 앞의 3종은 **내용** 절단, `intraline` 은
-            # **정밀도** 절단(줄 단위 차이는 온전하고 글자 단위 마크만 생략)이라 성질이 다르므로
+            # 절단 5종을 각각 표면화한다 — 어느 쪽이 잘렸는지 모르면 사용자가 diff 를
+            # 전체로 오인한다(§16.7 G9-b). 앞의 3종은 **내용** 절단, 나머지는
+            # **정밀도** 절단(글자 마크 또는 유사 줄 정렬 생략)이라 성질이 다르므로
             # 프론트 문구도 달리 간다.
             "truncated": {
                 "from_source": bool(truncated_sides.get("from")),
                 "to_source": bool(truncated_sides.get("to")),
                 "rows": bool(view["truncated"]["rows"]),
                 "intraline": bool(view["truncated"].get("intraline")),
+                "alignment": bool(view["truncated"].get("alignment")),
             },
             "caps": {"source_bytes": cap, "rows": int(app._VERSION_DIFF_ROW_CAP)},
         })
@@ -963,7 +969,7 @@ def _load_attachment_row_mysql(conn, attachment_id: int) -> dict[str, Any] | Non
         cur.execute(
             """
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 MimeType, SizeBytes, Sha256, Kind, UploadStatus, CreatedAt,
                 DeletedAt, DeletePending, DeleteReason,
                 RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
@@ -1066,7 +1072,7 @@ def _load_attachment_chain(
         cur.execute(
             f"""
             SELECT
-                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename, RelativePath,
                 MimeType, SizeBytes, Sha256, Kind, UploadStatus, CreatedAt,
                 DeletedAt, DeletePending, DeleteReason,
                 RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt

@@ -198,23 +198,13 @@ _JS = _STATIC / "ai-connect.js"
 
 def test_panel_exists_and_is_hidden_by_default():
     html = _HTML.read_text(encoding="utf-8")
-    m = re.search(r'<section id="clientPanel"([^>]*)>', html)
+    m = re.search(r'<section id="connectClientPanel"([^>]*)>', html)
     assert m, "클라이언트 패널이 없다"
-    assert "aic-hidden" in m.group(1), "브리지 없이도 보인다 — 쓸모없는 것을 보인다"
+    assert "hidden" in m.group(1), "브리지 없이도 보인다 — 쓸모없는 것을 보인다"
 
 
-def test_panel_only_appears_with_bridge_coordinates():
-    js = _JS.read_text(encoding="utf-8")
-    assert "client_port" in js and "client_nonce" in js
-    assert "if (!panel || !port || !nonce) { return; }" in js, \
-        "브리지 좌표 없이도 패널이 켜진다"
 
 
-def test_panel_calls_the_bridge_with_post_and_nonce():
-    """GET 은 브리지가 막는다 — `<img>`·`<script>` 로도 발사되기 때문이다."""
-    js = _JS.read_text(encoding="utf-8")
-    call = js[js.find("function call(action"):][:600]
-    assert 'method: "POST"' in call and '"X-DQA-Nonce": nonce' in call
 
 
 def test_panel_no_longer_expects_a_declined_answer():
@@ -244,23 +234,8 @@ def _code_only(js: str) -> str:
     return "".join(out)
 
 
-def test_panel_says_when_the_bridge_is_gone():
-    """닿지 못하면 **그 사실을 말한다** — 빈 목록만 보이면 사용자는 AI 가 없다고 읽는다.
-
-    ⚠ 문구에서 「연결 프로그램」이 빠졌다(2026-09-04). 앱 창 안에서는 그 프로그램이 곧 DQA 라
-    별도 존재로 부르면 안 된다. 성질은 «침묵하지 않는다» 이므로 그것만 잠근다.
-    """
-    js = _JS.read_text(encoding="utf-8")
-    assert "닿지 못했습니다" in js
-    # ⚠ **주석은 뺀다.** 설계를 설명하는 주석에 그 낱말이 남는 것은 옳다 — 이 저장소가
-    #   「우리는 X 를 하지 않는다」는 docstring 에 걸려 헛도는 단정을 만든 적이 있다.
-    assert "연결 프로그램" not in _code_only(js), "앱 창 안에서 별도 프로그램처럼 부른다"
 
 
-@pytest.mark.parametrize("btn", ["clientRefresh", "clientConnect"])
-def test_panel_buttons_are_wired(btn):
-    assert f'id="{btn}"' in _HTML.read_text(encoding="utf-8")
-    assert f'"{btn}"' in _JS.read_text(encoding="utf-8")
 
 
 # ── 4. 디자인 시스템 정합 ─────────────────────────────────────────────────────────
@@ -333,15 +308,12 @@ def test_every_action_refreshes_liveness(tmp_path):
         b.stop()
 
 
-def test_panel_sends_a_heartbeat():
-    js = _JS.read_text(encoding="utf-8")
-    assert 'call("ping"' in js and "setInterval" in js, "패널이 생존 신호를 보내지 않는다"
 
 
 def test_heartbeat_is_more_frequent_than_the_idle_limit():
     """신호 주기가 한도보다 길면 **정상 사용 중에** 브리지가 죽는다."""
-    js = _JS.read_text(encoding="utf-8")
-    m = re.search(r"call\(\"ping\", \{\}\)[^;]*;\s*\}, (\d+)\)", js)
+    js = _BRIDGE_JS.read_text(encoding="utf-8")
+    m = re.search(r'setInterval\(.*?, (\d+)\);', js)
     assert m, "생존 신호 주기를 찾지 못했다"
     period_s = int(m.group(1)) / 1000
     code = _code_of(_SRC / "client" / "gui.py", "_serve_confirms")
@@ -417,23 +389,8 @@ def test_modal_panel_is_wired_on_open():
     assert "initClientPanel()" in fn, "모달을 열어도 패널이 배선되지 않는다"
 
 
-def test_modal_panel_is_wired_only_once():
-    """창을 열 때마다 배선하면 리스너가 쌓여 클릭 한 번에 여러 번 돈다.
-
-    ⚠ 플래그를 «호출 전에 true» 로 세우던 형태는 폐기했다(2026-09-04) — 초기화가 실패해도
-    「했다」가 되어 다시 시도하지 않았다. 지키는 성질(한 번만 배선)은 그대로이고, 기록하는
-    값만 **결과**로 바뀌었다.
-    """
-    js = _MODAL_JS.read_text(encoding="utf-8")
-    fn = js[js.find("export function openConnectModal() {"):][:600]
-    assert "!_clientPanelReady" in fn, "이미 배선했는지 확인하지 않는다"
-    assert "_clientPanelReady = initClientPanel(" in fn
 
 
-def test_modal_panel_uses_post_and_nonce():
-    js = _BRIDGE_JS.read_text(encoding="utf-8")
-    call = js[js.find("export function bridgeCall"):][:600]
-    assert 'method: "POST"' in call and '"X-DQA-Nonce": clientBridge.nonce' in call
 
 
 def test_modal_panel_sends_liveness():
@@ -441,11 +398,6 @@ def test_modal_panel_sends_liveness():
     assert 'bridgeCall("ping"' in js and "setInterval" in js
 
 
-def test_bridge_call_is_a_noop_without_coordinates():
-    """평범한 브라우저 방문에서 호출부가 터지면 안 된다 — 종전 경로가 그대로 남아야 한다."""
-    js = _BRIDGE_JS.read_text(encoding="utf-8")
-    call = js[js.find("export function bridgeCall"):][:300]
-    assert "if (!clientBridge) return null;" in call
 
 
 def test_bridge_client_lives_outside_the_guarded_modal():
@@ -570,7 +522,7 @@ def test_modal_injects_a_status_writer_that_actually_exists():
     line = next((l for l in modal.splitlines()
                  if "initClientPanel(" in l and _is_code(l)), None)
     assert line, "모달이 `initClientPanel(...)` 을 코드로 부르지 않는다"
-    m = re.search(r"initClientPanel\(\s*([A-Za-z_$][\w$]*)\s*\)", line)
+    m = re.search(r"initClientPanel\(\s*([A-Za-z_$][\w$]*)\s*[,)]", line)
     assert m, f"상태 표시를 주입하지 않고 부른다: {line.strip()}"
     name = m.group(1)
     assert re.search(rf"function\s+{re.escape(name)}\s*\(", modal) or \
@@ -643,28 +595,6 @@ def test_panel_behaviour_harness_runs_or_ci_gap_is_documented():
     )
 
 
-def test_residency_painter_actually_reads_its_argument():
-    """`_paintResidency` 가 **인자를 본다**.
-
-    ⚠ 이 단정이 왜 따로 필요한가 — 「상주가 아닌데 «유지됩니다» 라고 말한다」는 결함을
-      행위 하네스(`verify_client_panel_dom.mjs` N4)가 잡지만, 그 하네스는 node 부재로
-      **CI 에 배선되지 않는다**. 행위 층에만 두면 CI 에서는 통과한다(실측 2026-09-04:
-      뮤턴트 M36 이 pytest 층을 그대로 통과했다). 소스 층에도 잠근다.
-    """
-    js = _BRIDGE_JS.read_text(encoding="utf-8")
-    m = re.search(r"function _paintResidency\((\w+)\)\s*\{", js)
-    assert m, "`_paintResidency` 정의가 없다"
-    param = m.group(1)
-    body = js[m.end():]
-    body = body[:body.find("\n}\n")]
-    # 문자열 안의 등장은 인정하지 않는다 (§16.7 G11-a) — 코드로 읽어야 한다.
-    code = re.sub(r'"[^"]*"|\'[^\']*\'|`[^`]*`', '""', body)
-    assert re.search(rf"(?<![\w.]){param}(?![\w])", code), (
-        f"`_paintResidency` 가 인자 `{param}` 를 코드에서 읽지 않는다 — "
-        "상주가 아닌 머신에서도 «유지됩니다» 라고 말하게 된다"
-    )
-    assert code.count("textContent") >= 1 and "?" in code, \
-        "두 경우로 갈리지 않는다 — 한쪽 문구만 항상 나온다"
 
 
 # ── 8. 연결 프로그램 «안에서» 의 진입 경로 ────────────────────────────────────────

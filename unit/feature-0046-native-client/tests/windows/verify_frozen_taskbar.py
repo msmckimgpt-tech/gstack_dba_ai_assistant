@@ -62,12 +62,31 @@ try:
     else: raise AssertionError('No branded frozen window')
     result['windows'] = own
     result['properties'] = values
-    assert values['2']['value'] == subprocess.list2cmdline([str(app)])
-    assert values['3']['value'] == str(app.parent / '_internal/client/assets/dqa.ico')+',0'
+    installed = app.parent.parent.name == 'versions'
+    root = app.parent.parent.parent if installed else app.parent
+    launcher = root / 'DQALauncher.exe'
+    expected_exe = launcher if installed and launcher.is_file() else app
+    stable_icon = root / 'dqa.ico'
+    expected_icon = stable_icon if installed and stable_icon.is_file() else app.parent / '_internal/client/assets/dqa.ico'
+    assert values['2']['value'] == subprocess.list2cmdline([str(expected_exe)])
+    assert values['3']['value'] == str(expected_icon)+',0'
     assert values['4']['value'] == 'DQA'
     assert all(v['vt']==31 for v in values.values())
     time.sleep(1)
     result['taskbar'] = capture_taskbar(out)
+    from PIL import ImageGrab
+    rectangle = W.RECT()
+    u.GetWindowRect.argtypes = [W.HWND, ctypes.POINTER(W.RECT)]
+    assert u.GetWindowRect(shown[0], ctypes.byref(rectangle))
+    u.WindowFromPoint.argtypes = [W.POINT]
+    u.WindowFromPoint.restype = W.HWND
+    u.GetAncestor.argtypes = [W.HWND, W.UINT]
+    u.GetAncestor.restype = W.HWND
+    center = W.POINT((rectangle.left + rectangle.right)//2, (rectangle.top + rectangle.bottom)//2)
+    assert u.GetAncestor(u.WindowFromPoint(center), 2) == shown[0], 'Probe window is occluded'
+    screenshot = ImageGrab.grab(bbox=(rectangle.left, rectangle.top, rectangle.right, rectangle.bottom))
+    screenshot.save(out / 'dqa-window.png')
+    result['window_screenshot'] = str(out / 'dqa-window.png')
     assert (profile / '.dqa-connect/window').is_dir()
     checks_passed = True
 finally:

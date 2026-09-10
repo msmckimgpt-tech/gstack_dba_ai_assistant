@@ -40,7 +40,7 @@ python3 -m venv /tmp/dqa-icon-build
 
 ## 적용 경로
 
-`branding.ICON_PATH`를 Tk·WebView2·트레이가 사용하고 PyInstaller는 ICO만 런타임 데이터로 동봉한다. EXE 리소스에도 같은 ICO가 들어간다. 시작 메뉴·바탕화면·스킴·프로그램 제거 항목은 이 EXE를 참조한다. 설치기는 `SetupIconFile`로 같은 ICO를 Setup/Uninstall에 적용한다.
+`branding.ICON_PATH`를 Tk·WebView2·트레이가 사용하고 PyInstaller는 ICO만 런타임 데이터로 동봉한다. EXE 리소스에도 같은 ICO가 들어간다. 시작 메뉴·바탕화면·자동시작·스킴의 실행 대상은 고정 `DQALauncher.exe`이며, 표시 아이콘과 프로그램 제거 항목은 설치 루트의 `dqa.ico`를 참조한다. 창의 재실행 정보도 이 안정 경로를 사용한다. 기존 실행기의 PE 아이콘은 실행 중인 앱을 종료하지 않고 교체하며 실패하면 새 슬롯을 활성화하지 않는다. 설치기는 `SetupIconFile`로 같은 ICO를 Setup/Uninstall에 적용한다.
 
 웹의 6개 HTML 진입점도 같은 SVG/ICO를 favicon으로 연결하고, 로그인·사이드바·빈 대화·관리 사이드바의 4개 로고 이미지는 같은 SVG를 사용한다. `export_icon.py`가 `feature-0003`의 `static/brand` 복사본까지 갱신한다. 브라우저 폴백(`--app`)은 이 사이트 아이콘을 사용할 수 있으며 창 그룹은 브라우저가 관리한다. 사이트 색상 테마는 유지한다.
 

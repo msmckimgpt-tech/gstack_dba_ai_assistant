@@ -8,7 +8,105 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260909-session-continuity — 대화별 AI 세션과 그룹 문맥
+
+**최종: PR #1649·#1650 반영, 서버9cd10571 두 replica 배포·90초 soak PASS. 설치 DQA Codex 동일 대화 두 요청의 같은 native ID, resumed=false→true, 확정 이력4→6 및 실제 회상 응답 PASS.** 여러 계정의 그룹 앱 왕복은 NOT-RUN이고 그룹 문맥은 서버/프롬프트 회귀로 확인했다. 초기 전달 누락은 아래 이력이며 수정과 재검증을 마쳤다.
+
+
+설치 DQA 실측에서 첫 답변은 정상 도착했지만 세션 저장이 없었다. 원인은 실제 claim 응답의 최상위 `conversation_id` 누락이다. 전달 필드 1줄과 전체 응답→러너 재개 회귀를 추가했으며 수정 전 RED/수정 후 관련87건 PASS. 최초 코드/CLI PASS를 설치 DQA 세션 PASS로 간주하지 않는다. 보완 배포 후 동일 ID 실측까지 통과했다.
+
+
+Claude/Codex의 실제 세션 ID를 서비스·계정·대화·실행 위치·지침 범위에 결속했다. 매번 최신 그룹 기록을 다시 전달하므로 다른 참여자의 질문 및 assistant 답변도 이어서 참고한다. 기존 6개/4,000자 문맥은 80개/48,000자로 확장했고 생략 표시를 유지한다.
+
+제출 후 assistant까지 포함한 이력 지문으로 편집/삭제를 감지한다. 취소·실패는 상태를 확정하지 않고, 실제 세션 부재에만 한 번 복구한다. 이력 조회 실패는 불완전 문맥으로 AI를 실행하지 않도록 점유를 해제한다.
+
+검증: 넓은 회귀 **1815 passed, 1 skipped**(223.60초); 이후 예외/복구 최종 보완 집중 **43 passed**. 실제 Claude/Codex 각각 두 번 호출에서 동일 native ID 및 합성표식 회상 PASS. backend/security/qa 코드 검토 PASS. 서버 배포와 설치 Windows DQA의 실제 대화 결과는 별도 축으로 [Run](test-runs.d/20260909-session-continuity.md)에 기록한다.
+
+## TASK-20260909T000000-prompt-autogen-delivery — '자동 작성' 결과가 화면에 도달하지 않던 문제
+
+사용자 신고: "DQA 계정 프로필에서 '프롬프트 > 내 프롬프트' 의 자동 작성 기능이 동작하지 않는다."
+
+**진단 — 서버는 정상이었고 화면만 결과를 못 받았다.** 라이브 실증(2026-09-08 19:56, 계정 10):
+`GET /api/auth/me/system-prompt/generate/stream` 이 **200 OK**, `WebAiTasks j_LO28YKoH0ifGR5E7`
+(JobKind=prompt_generate, payload `{"scope":"account","scope_id":10}`)가 적재되고 러너가 3초 만에
+`submitted` 까지 마쳤다. feature-0043 전환 이후 이 요청은 개인 AI 로 위임되고 그때 서버는 SSE 가
+아니라 `{"bridge_pending": true, poll_url, task_id}` JSON 을 준다. 그런데 자동작성 3화면은 전환
+이전의 **SSE 전용 파서**로 남아 있어 그 JSON 을 프레임으로 읽다가 `event:`/`data:` 가 없다는
+이유로 조용히 버렸다 — 버튼만 원상복구되고 안내는 "준비 중…" 에 멈춘다. `admin/llm-state.js` 에
+폴링 헬퍼가 이미 있었지만 `admin/metadata.js` 한 곳만 썼고, 그 모듈이 `admin.js` 의 `adminState`
+를 import 해 **관리 콘솔 밖에서는 쓸 수 없었다**(프로필 화면이 못 쓴 구조적 이유).
+
+부수 결함 둘을 같은 cycle 에서 해소했다.
+- **폴링 권한 축**: `poll_url` 이 `/api/admin/ai-jobs/{task_id}`(=`console.access`)인데 개인
+  프롬프트 자동작성은 로그인만 요구하는 진입점이다(`JOB_SPECS['prompt_generate']['perms']` 가
+  비어 있는 것이 그 기록). 화면만 고치면 일반 사용자는 폴링 403 에서 끝난다.
+- **러너 실패가 '완료'로 도달**: 러너는 자기 AI 가 실패하면 사유를 답변 본문에 적어 제출한다
+  (대화 축에서는 옳은 설계 — 침묵보다 낫다). 콘솔 작업 축에서는 그 안내문이 «결과물» 이 되어
+  프롬프트 입력란을 덮고 화면은 그것을 완료라 말한다. 위 라이브 1건이 정확히 그 경우였다
+  (`JobResult` = "AI 가 오류로 끝났습니다(exit 1) … session limit"). 서버가 러너의 고정 꼬리표로
+  판정해 `degraded` 를 표시하고, 화면은 본문을 덮지 않고 사유를 보인다.
+
+**수정**: 폴링 헬퍼를 `static/console-job-poll.js`(의존 0)로 분리해 세 화면이 공유 ·
+`admin/llm-state.js` 는 re-export 로 기존 호출부 무회귀 · `app.js`·`admin.js` 가 SSE 소비 **앞**
+에서 위임 봉투를 분기 · 로그인만 요구하는 `GET /api/profile/ai-jobs/{task_id}` 신설(스코프는
+`AccountId` 로 admin 경로와 동일 — 권한을 넓히지 않는다) · 두 폴링 경로가 같은 조립 함수를 사용 ·
+폴링에 `AbortSignal` 지원(재진입 시 앞선 결과가 뒤 결과를 덮지 않게).
+
+**검증**
+- 신규 pytest 21건 PASS (`unit/feature-0043-external-llm-bridge/tests/test_prompt_autogen_delivery.py`)
+  — 봉투 계약·권한 축·degraded 판정·러너 정본 문구 동기·프론트 배선(import 누락 = 런타임
+  ReferenceError 이므로 별도 단정).
+- jsdom 행위 하네스 15건 PASS (`unit/feature-0003-agent-web-ui/tests/verify_prompt_autogen_delivery.mjs`)
+  — 정본 `generateAccountPrompt` 를 **진짜 헬퍼와 함께** 굴려 결과가 textarea 에 닿는지 확인.
+- **뮤턴트 역검증 2종 모두 KILL**: ① `degraded` 가드 제거 → S2 2건 FAIL ② 위임 분기 통째 제거
+  (=원래 결함 재현) → S1 3건 FAIL. 복구 후 15/15 PASS. baseline RED 를 실제로 확인했다.
+- 상세: [실행 기록](test-runs.d/TASK-20260909T000000-prompt-autogen-delivery.md).
+
+**검증 패널 (§18.8)**: 이 세션은 기본 지침으로 subagent 호출이 금지돼 있어, 사용자에게 1회
+확인해 §18.8.1 이 check #9 accepted 로 인정하는 **codex 채널**로 대체했다(사용자 선택 2026-09-09).
+`codex review --uncommitted` → **P1 0건 ACCEPTED**, 리뷰 도중 reviewer 가 행위 하네스를 직접 구동해
+15/15 PASS 를 재확인했다. 판정 원장: [REVIEW.md](REVIEW.md) `REV-20260909T010000-prompt-autogen-delivery`.
+
+**base 에 있던 회귀 2건을 함께 정합했다 (내 변경이 만든 것이 아니다)**: base `cdd414e3` 에서 이미
+`test_route_parity_p5b`(golden 269 vs 실제 271)와 `test_cancel_channel_adds_no_new_tool`(명시 도구
+7 vs 실제 8)이 붉었다 — 다른 cycle 이 `/api/ai/connect/identity` 와 `/api/ai/tools/get_tool_catalog`
+를 추가하며 이 두 계약을 갱신하지 않았다. golden 은 컨테이너에서 재생성(272/271)했고, 도구 수는
+그 도구의 4곳 정합(매니페스트/OpenAPI · MCP 어댑터 2벌 · `test_ux_parity` 초록)을 **확인한 뒤**
+7→8 로 옮겼다. 계약 자체는 그대로다(또 늘면 여전히 잡는다).
+
+**§8.1 개선 제안 (착수 안 함)**: `bin/gen-status.sh` 가 `feature-0046-native-client` 의
+`feature_status: implemented`(유효값 아님) 때문에 실패한다 — base·main 양쪽에서 재현되며, 그
+때문에 `docs/STATUS.md` 표가 이 cycle 에서 재생성되지 않았다. 남의 feature 문서라 손대지 않았다.
+
+**미해소로 남긴 것 (정직 표기)**: `submit_answer` 에는 러너가 실패를 **구조적으로** 신고하는
+채널이 없다(답변 텍스트뿐). 이번 판정은 러너가 붙이는 고정 꼬리표에 기대며, 그 문구가 바뀌면
+판정이 조용히 무력해진다 — `test_runner_degraded_notice_matches_the_runner_source` 가 그 동기를
+잠그지만, 근본 해소는 제출 API 에 실패 플래그를 더하는 별도 작업이다(구 러너 호환 필요).
+
+
+## TASK-20260908-codex-connect-fix
+
+catalog 상세 부재를 허용하고, 실제 생존 확인 뒤 신고한다. 생존 확인은 alive:true만 인정하며 배경 건강 회복도 같은 기준을 적용한다. AI별 선택 세대를 보존하고 위치 변경 후 실패를 watcher가 기존 백오프로 재시도한다. 로그 예외의 원래 형식/스택을 보존한다.
+
+구현·배포·실측 결과 정본은 feature-0046-native-client/docs/REPORT.md와 해당 test-runs.d 원장이다. 전체8f1116cf 배포 및 실제 DQA1.2.4 업데이트/새 Codex 요청 `42 DQA_CODEX_42` 응답을 확인했다(32318ms, delivered=true).
+
+## TASK-20260908-prompt-layer-delivery — 여섯 계층 전달 검토·개선
+- 요청한 여섯 계층의 누적 순서는 정상. 계정 개인 설정은 `WebSystemPrompts`의 account scope 전역/제품 행이다.
+- 수정: 지침 SQL 조회 오류를 빈 설정으로 숨기던 경로 차단; 제품 표시명 오류와 내용 조회 분리; 오류 안내·5초 비동기 재시도; 최초 점유자에 한정한 정리; 전달 원문 없는 길이·SHA-256·채널 진단.
+- 검증: 집중 회귀 180건 PASS, ruff PASS, ES module 구문 PASS. 독립 backend/security/QA 및 한 줄 toast 제거의 UX/design 리뷰 PASS. 전체 bridge 회귀 결과는 Run에 기록한다.
+- DQA 앱: 실행 중인 DQAConnect/WebView2 확인, 디버그 포트 미개방. 기존 사용자 앱을 재시작하지 않아 화면 오류 안내의 새 시나리오는 NOT-RUN.
+- 상세: [전달 감사](../../feature-0043-external-llm-bridge/docs/PROMPT_DELIVERY.md), [실행 기록](test-runs.d/TASK-20260908-prompt-layer-delivery.md).
+- Policy SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. Session: 01a07f86-30e8-7493-ab26-ae82792def88.
+- Git 동기화 결과: verify·commit·push·PR/main·배포는 아래 계획대로 자동 진행하며 최종 SHA/PR는 GitHub PR 결과를 정본으로 사용한다. 배포 전 검증 기록이며 배포 성공을 선기록하지 않는다.
+
 **2026-09-08 검증 도구 정합**: Makefile·CI·직접 pytest의 테스트 목록을 루트 `pyproject.toml`로 통합했다. 기존 Makefile/CI 9경로를 유지하며 native-client 515건을 추가 연결했고, 전체 8,017건 collection rc=0 및 수집 계약 18건 PASS를 확인했다. [실행 기록](test-runs.d/TASK-20260908T020000-delegation-friction.md). 제품 동작 변경이나 라이브 검증 결과를 뜻하지 않는다.
+
+## TASK-20260908T120000-connect-discovery-ux — DQA 1.2.0
+
+DQA가 지정한 `BRIDGE_RUNTIME_SELECTION`이 있으면 그 파일의 플랫폼/실행 경로/WSL 배포판·사용자만 사용한다. 잘못된 파일은 임의 자동 탐색으로 우회하지 않는다. WSL 실행은 배포판·계정·홈을 명시하고 프롬프트를 argv의 리터럴 값으로 전달한다. 기존 WSLENV 토큰 전달과 DQA 호스트 네트워크 범위 설정을 유지한다.
+
+Issue #1615. 자동 연결·중복 위치 선택·클라이언트 캐시·모델 등록 후 toast를 구현했다. 최신 main의 아이콘/자동 복구를 통합했다. 검증과 릴리스 결과는 `test-runs.d/20260908T123400-connect-discovery.md`에 기록한다.
+
 
 ## TASK-20260908T115500-bridge-network — 라이브 후속 수정
 
@@ -1878,3 +1976,7 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 - 공식 클라이언트 채널 1.1.1 게시 완료. 실제 Windows 앱의 updater 코드가 1.1.0에서 1.1.1을 발견하고 설치기 25,731,162 bytes를 다운로드해 SHA-256 일치를 확인했다. 설치기를 실행해 사용자 설치본을 바꾸지는 않았다.
 - 사용자는 **DQA 앱에서 1.1.1로 업데이트한 뒤 다시 연결**한다. 별도 러너 실행·터미널 명령은 필요 없다. 실제 두 러너 복귀 및 파싱 전 실패 복구 실측은 아래 정본에 기록했다.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
+
+## DQA 연결 개선 배포 결과 — 2026-09-08
+
+PR #1619 / 서버 92cfa2c2 전체 배포 및 DQA 1.2.0 설치기 공개 완료. 실제 다운로드 크기·SHA-256이 Windows 원본과 일치한다. 최종 검증/미확인 경계와 증거 정본은 feature-0046 REPORT의 배포 완료 절과 공동 실행 원장이다.
